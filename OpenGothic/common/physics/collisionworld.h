@@ -39,9 +39,9 @@ class CollisionWorld final {
     ~CollisionWorld();
     CollisionWorld(const CollisionWorld&) = delete;
 
-    // Native contact slop, metres. Jolt's 2 cm default let resting 1.9 cm cut
-    // boards sit their whole thickness deep and leave through one-sided terrain.
-    static constexpr float penetrationSlop = .005f;
+    // Contact slop of broken pieces (C_Fragment), metres; everything else keeps Jolt's 2 cm.
+    // At 2 cm resting 1.9 cm cut boards sat their whole thickness deep and left through one-sided terrain.
+    static constexpr float fragmentPenetrationSlop = .005f;
 
     static float         toMeters(float v);
     static JPH::Vec3     toMeters(const Tempest::Vec3& v);

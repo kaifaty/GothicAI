@@ -529,7 +529,7 @@ namespace {
                   cave ? "cave below water" : "ten-centimetre shallows",double(object.position().y),
                   int(object.isSleeping()),double(object.velocity().length()));
       require(object.isSleeping(),"a float without sufficient water depth must settle on the bottom without jitter");
-      // CollisionWorld sets the native contact slop (0.5 cm). The movable
+      // CollisionWorld keeps Jolt's default contact slop (2 cm). The movable
       // hull's 1 mm convex radius preserves its outer bounds, so its lowest
       // transformed corner may penetrate the floor by that slop, not more.
       float lowest=std::numeric_limits<float>::infinity();
@@ -540,7 +540,7 @@ namespace {
         }
       const JPH::PhysicsSettings contact;
       const float floorClearance=lowest-floorY;
-      require(floorClearance>=-CollisionWorld::penetrationSlop*100.f-.01f &&
+      require(floorClearance>=-contact.mPenetrationSlop*100.f-.01f &&
               floorClearance<=contact.mSpeculativeContactDistance*100.f+.01f,
               "shallow and cave bodies must rest in the native floor contact band, without excess penetration or hovering");
       tickWater(world,1800);
@@ -2271,7 +2271,7 @@ namespace {
       // Centres over the floor at y=0: the wood slab 0..4, hoop 1 on the ground, hoop 2 on hoop 1,
       // the small wood slab through both hoops onto the large one. Version 2 keeps the authored stack.
       const float expected[2][4]={{2,1,3,5},{2,5,7,9}};
-      const float slop=CollisionWorld::penetrationSlop*100.f+.1f;
+      const float slop=CollisionWorld::fragmentPenetrationSlop*100.f+.1f;
       for(int version=0;version<2;++version)
         for(int piece=0;piece<4;++piece)
           requireNear(stacked[version][piece],expected[version][piece],slop,
@@ -2384,6 +2384,30 @@ namespace {
                 fragments.size(),double(lowestCenter),double(lowestVertex));
     require(lowestCenter>=0.f,"a rapidly rotating convex fragment must never fall through one-sided terrain");
     require(lowestVertex>=-6.f,"rotating fragment vertices must stay within the native contact band of uneven terrain");
+
+    // Fine slop: a 4 cm board born 1.5 cm deep in the floor is pushed out to 0.5 cm as a fragment;
+    // as an item it stays within Jolt's 2 cm slop and is not pushed at all.
+    CollisionWorld flat;
+    JPH::TriangleList ground;
+    ground.emplace_back(JPH::Float3(-5,0,-5),JPH::Float3(-5,0,5),JPH::Float3(5,0,-5));
+    ground.emplace_back(JPH::Float3(5,0,-5),JPH::Float3(-5,0,5),JPH::Float3(5,0,5));
+    const auto groundShape=JPH::MeshShapeSettings(ground).Create();
+    require(!groundShape.HasError(),"the fine slop fixture needs a one-sided floor");
+    auto groundBody=flat.addCollisionBody(groundShape.Get(),at(0,0,0),.8f,DynamicWorld::C_Landscape);
+    const auto board=JPH::BoxShapeSettings(JPH::Vec3(.5f,.02f,.1f),.001f).Create();
+    require(!board.HasError(),"the fine slop fixture needs a thin board");
+    auto fragment=flat.addDynamicBody(board.Get(),at(-150,.5f,0),.8f,8.f,DynamicWorld::C_Fragment);
+    auto item=flat.addDynamicBody(board.Get(),at(150,.5f,0),.8f,8.f,DynamicWorld::C_Item);
+    for(int i=0;i<120;++i) flat.tick(16);
+    float depth[2]={};
+    for(int k=0;k<2;++k)
+      for(const auto& contact:flat.overlaps(k==0 ? *fragment : *item,0.f,1u<<DynamicWorld::C_Landscape))
+        depth[k]=std::max(depth[k],contact.depth);
+    std::printf("Fine slop: board born 1.5 cm deep, after 2 s fragment %.3f cm, item %.3f cm\n",double(depth[0]),double(depth[1]));
+    require(fragment->position().y>0.f && depth[0]<=CollisionWorld::fragmentPenetrationSlop*100.f+.05f,
+            "a fragment must be pushed out to its 0.5 cm slop");
+    require(item->position().y>0.f && depth[1]>1.f && depth[1]<2.f,
+            "an item must keep Jolt's 2 cm slop: only C_Fragment uses the fine slop");
     }
 
   void testMovableVobLegacyCollision() {
@@ -4885,7 +4909,7 @@ namespace {
       };
 
     const auto check=[](const char* name, const auto& points, JPH::Vec3Arg position, JPH::QuatArg rotation,
-                       float volume, const JPH::VertexList& vertices, int supportLayer, bool upstreamCrosses) {
+                       float volume, const JPH::VertexList& vertices, int supportLayer) {
       JPH::ConvexHullShapeSettings hullSettings(points,int(std::size(points)),.00025f);
       hullSettings.mHullTolerance=.0001f;
       hullSettings.mMaxErrorConvexRadius=.0001f;
@@ -4936,24 +4960,20 @@ namespace {
           require(minComAbove>=0,"deepest contact must keep blade COM above the support on every step");
           require(recovered==0,"deepest contact must hold each blade without recovery");
           }
-        else if(upstreamCrosses)
-          require(crossed>0 && crossed<=20,"upstream manifold must reproduce the blade crossing within twenty steps");
         else
-          require(crossed==0,"the 0.5 cm contact slop alone must hold this blade even with the upstream manifold");
+          require(crossed>0 && crossed<=20,"upstream manifold must reproduce the blade crossing within twenty steps");
         }
       };
     check("OLDWORLD 1644",canePoints,{-126.0437775f,29.5590572f,-336.4428711f},
           {-.000000022f,.939692676f,-.000000008f,.342020154f},.00205267756f,
           {{-126.625645f,29.5296582f,-336.858516f},
            {-125.506016f,29.5296582f,-335.660703f},
-           {-125.335527f,29.5296582f,-335.977812f}},DynamicWorld::C_Object,true);
+           {-125.335527f,29.5296582f,-335.977812f}},DynamicWorld::C_Object);
     check("ADDONWORLD 6863",rapierPoints,{42.7198410f,-32.5431252f,258.7348328f},
           {0,0,0,1},.00332153379f,
           {{42.4582031f,-32.5876465f,257.429688f},
            {40.8759204f,-32.5876465f,260.700645f},
-           {43.5833301f,-32.5876465f,259.642266f}},DynamicWorld::C_Landscape,
-          // It crossed at step 1 under Jolt's 2 cm slop; at 0.5 cm its COM stays 0.84 cm above.
-          false);
+           {43.5833301f,-32.5876465f,259.642266f}},DynamicWorld::C_Landscape);
     }
 
   void testItemWake() {

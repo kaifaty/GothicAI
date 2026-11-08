@@ -415,7 +415,8 @@ struct CollisionWorld::Impl final : JPH::ContactListener, JPH::PhysicsStepListen
     auto settings = system.GetPhysicsSettings();
     settings.mTimeBeforeSleep = 2.f;
     settings.mPointVelocitySleepThreshold = 0.8f;
-    settings.mPenetrationSlop = CollisionWorld::penetrationSlop;
+    settings.mFineSlopLayers = 1u<<DynamicWorld::C_Fragment;
+    settings.mFinePenetrationSlop = CollisionWorld::fragmentPenetrationSlop;
     settings.mDeepestContactLayers = 1u<<DynamicWorld::C_Item;
     system.SetPhysicsSettings(settings);
     system.SetContactListener(this);

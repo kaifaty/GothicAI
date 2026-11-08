@@ -158,11 +158,59 @@ void fracturePiecesBreak(FracturePieces& state,World& world,uintptr_t parent,std
     piece.start=apply(body->transform,piece.center);
     item.pieces.push_back(std::move(piece));
     }
+  // Where each piece starts: centre over the ground under it and native hull depth into it.
+  std::string start="[";
+  float deepest=0;
+  size_t under=0;
+  for(const auto& part:world.physic()->fragmentSnapshot()) {
+    if(part.parentId!=parent || part.piece>=item.pieces.size())continue;
+    const auto center=apply(part.transform,item.pieces[part.piece].center);
+    const auto floor=world.physic()->landRay(center+Vec3(0,100,0),400);
+    const float height=floor.hasCol?Vec3::dotProduct(center-floor.v,floor.n):0.f;
+    const float native=world.physic()->fragmentGroundPenetration(parent,part.piece);
+    deepest=std::max(deepest,native);
+    under+=floor.hasCol && height<-1.f;
+    if(start.size()>1)start+=',';
+    start+="["+std::to_string(part.piece)+","+ragdollNumber(height)+","+ragdollNumber(native)+"]";
+    }
+  event("destruction2_start","\"case\":"+jsonStr(item.label)+",\"visual\":"+jsonStr(item.visual)+",\"pieces\":"+
+    std::to_string(item.pieces.size())+",\"below_ground\":"+std::to_string(under)+",\"max_native_ground_penetration_cm\":"+
+    ragdollNumber(deepest)+",\"piece_height_native\":"+start+"]");
   state.breaks.push_back(std::move(item));
+  }
+
+// Frame by frame for 5 s: the first frame a piece's centre is under the ground, with the frame before it.
+void fracturePiecesTrack(FracturePieces::Break& item,World& world) {
+  const uint64_t now=world.tickCount();
+  if(now-item.breakTime>5000)return;
+  for(const auto& part:world.physic()->fragmentSnapshot()) {
+    if(part.parentId!=item.parent || part.piece>=item.pieces.size())continue;
+    auto& piece=item.pieces[part.piece];
+    if(piece.fellReported)continue;
+    const auto center=apply(part.transform,piece.center);
+    const auto floor=world.physic()->landRay(center+Vec3(0,100,0),400);
+    const float height=floor.hasCol?Vec3::dotProduct(center-floor.v,floor.n):-1000.f;
+    if(height<-1.f) {
+      piece.fellReported=true;
+      event("destruction2_fell","\"case\":"+jsonStr(item.label)+",\"visual\":"+jsonStr(item.visual)+",\"piece\":"+
+        std::to_string(part.piece)+",\"group\":"+jsonStr(piece.group)+",\"extent_cm\":["+ragdollNumber(piece.extent[0])+","+
+        ragdollNumber(piece.extent[1])+","+ragdollNumber(piece.extent[2])+"],\"after_break_ms\":"+std::to_string(now-item.breakTime)+
+        ",\"frame_ms\":"+std::to_string(now-piece.lastTime)+",\"floor_hit\":"+(floor.hasCol?"true":"false")+
+        ",\"floor_normal\":"+ragdollVector(floor.n)+",\"height_cm\":"+ragdollNumber(height)+
+        ",\"center_cm\":"+ragdollVector(center)+",\"velocity_cm_s\":"+ragdollVector(part.velocity)+
+        ",\"omega\":"+ragdollVector(part.angularVelocity)+",\"before\":{\"height_cm\":"+ragdollNumber(piece.lastHeight)+
+        ",\"native_ground_penetration_cm\":"+ragdollNumber(piece.lastNative)+",\"center_cm\":"+ragdollVector(piece.lastCenter)+
+        ",\"velocity_cm_s\":"+ragdollVector(piece.lastVelocity)+",\"omega\":"+ragdollVector(piece.lastOmega)+"}");
+      continue;
+      }
+    piece.lastTime=now;piece.lastCenter=center;piece.lastVelocity=part.velocity;piece.lastOmega=part.angularVelocity;
+    piece.lastHeight=height;piece.lastNative=world.physic()->fragmentGroundPenetration(item.parent,part.piece);
+    }
   }
 
 void fracturePiecesTick(FracturePieces& state,World& world) {
   for(auto& item:state.breaks) {
+    fracturePiecesTrack(item,world);
     if(item.samples>=std::size(SampleMs) || world.tickCount()-item.breakTime<SampleMs[item.samples])continue;
     const uint64_t at=SampleMs[item.samples++];
     std::vector<const DynamicWorld::FragmentSnapshot*> parts(item.pieces.size(),nullptr);
