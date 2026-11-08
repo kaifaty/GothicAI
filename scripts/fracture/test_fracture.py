@@ -19,6 +19,8 @@ from unittest.mock import patch
 import zlib
 
 import numpy as np
+from scipy.optimize import linprog
+from scipy.spatial import ConvexHull
 
 import debris
 import fracture
@@ -248,6 +250,18 @@ def node(name, rows, texture="OWN_WOOD.TGA", group="WOOD"):
     return (name, rows, [texture] * len(rows), [group] * len(rows))
 
 
+def written(data):
+    """The hulls of each piece of version 3 bytes, as point arrays."""
+    pieces, lines = [], data.decode("ascii").splitlines()
+    for i, line in enumerate(lines):
+        if line.startswith("piece "):
+            pieces.append([])
+        elif line.startswith("hull "):
+            count = int(line.split()[1])
+            pieces[-1].append(np.array([[float(x) for x in row.split()] for row in lines[i + 1:i + 1 + count]]))
+    return pieces
+
+
 def hull_counts(data):
     return [int(line.split()[6]) for line in data.decode("ascii").splitlines() if line.startswith("piece ")]
 
@@ -300,6 +314,65 @@ class TestDebris(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no closed detail"):
             debris.cut([node("open", bar((0, 0, 0), (1, 1, 1))[:-1]), node("b", bar((5, 0, 0), (6, 1, 1)))], self.glb)
 
+    def test_v3_ring_in_16_prisms_within_2_mm_of_its_inner_side(self):
+        # a hoop: 8 mm thick, 6 cm wide, on the polygon of 20 staves with an inner radius of 32 cm
+        nodes = [node("hoop", band(32, 0.8, 6, 0, 2 * np.pi, 20), "OWN_IRON.TGA", "METAL"),
+                 node("board", bar((60, 0, 0), (70, 2, 10)))]
+        data = debris.cut(nodes, self.glb)
+        self.assertEqual(hull_counts(data), [16, 1])     # one prism per arc: 12 single facets, 4 over a corner
+        ring = debris.validate(data, self.glb)["classes"]["ring"]
+        self.assertLessEqual(ring["inward"], debris.INWARD)
+        self.assertLessEqual(ring["outside"], debris.OUTSIDE)
+        self.assertGreater(ring["cover"], 0.7)
+        # no point of a hull lies deeper inside the staves' polygon than 2 mm: the deepest point of each hull
+        # below every side of the polygon (linprog over the point and its depth)
+        middle = np.arange(20) * 2 * np.pi / 20 + np.pi / 20
+        sides = np.c_[np.cos(middle), np.zeros(20), np.sin(middle), np.ones(20)]
+        depths = []
+        for points in written(data)[0]:
+            hull = ConvexHull(points).equations
+            deepest = linprog([0, 0, 0, -1], A_ub=np.r_[np.c_[hull[:, :3], np.zeros(len(hull))], sides],
+                              b_ub=np.r_[-hull[:, 3], np.full(20, 32 * np.cos(np.pi / 20))],
+                              bounds=[(None, None)] * 3 + [(None, 10)])
+            depths.append(-deepest.fun)
+        self.assertLessEqual(max(depths), debris.INWARD)
+        self.assertEqual(sum(d > 0 for d in depths), 4)  # the four prisms over a corner reach into the staves
+
+    def test_v3_torn_edge_teeth_only_draw(self):
+        board, _ = uv_board()
+        halves = crate_debris.broken("plank", board, np.random.default_rng(3), [])
+        nodes = [node(half.name, solid(100 * np.asarray([w for w, _ in half.triangles()]))) for half in halves]
+        data = debris.cut(nodes, self.glb)
+        self.assertEqual(hull_counts(data), [1, 1])      # each half one hull of its body behind the valleys
+        torn = debris.validate(data, self.glb)["classes"]["torn"]
+        self.assertGreaterEqual(torn["cover"], debris.COVER)
+        self.assertLessEqual(torn["outside"], debris.OUTSIDE)
+        for half, hulls in zip(halves, written(data)):
+            # the tear: the outline points off the board's corners, in cm along the board
+            tear = np.array([p for p in half.top if abs(abs(p[0]) - 1) > 1e-9]) * board.size[:2] / 2 * 100
+            teeth = -1 if half.name.endswith("-2") else 1   # the side the teeth point to
+            valleys = (teeth * tear[:, 0]).min()
+            peaks = tear[teeth * tear[:, 0] > valleys + 1.0]
+            self.assertGreater(len(peaks), 3)
+            equations = ConvexHull(hulls[0]).equations
+            for l, w in peaks:                               # every peak 1 cm beyond the valleys lies outside
+                point = board.centre * 100 + np.array([l, w, 0]) @ (board.matrix * 100 / (board.size * 50)).T
+                self.assertGreater((equations[:, :3] @ point + equations[:, 3]).max(), 0, (half.name, l, w))
+
+    def test_v3_refuses_a_hull_beyond_8_mm(self):
+        nodes = [node("board", bar((0, 0, 0), (40, 2, 10))), node("stave", band(30, 2.5, 8, 0.2, 1.2, 10, (0, 0, 40)))]
+        with patch.object(debris, "MAX_HULLS", 1):         # the bent stave cannot keep within 8 mm in one hull
+            with self.assertRaisesRegex(ValueError, r"stave: hulls stand \d+\.\d mm outside the detail "
+                                                    r"\(limit 8 mm\) within 1 hulls"):
+                debris.cut(nodes, self.glb)
+        lines = debris.cut(nodes, self.glb).decode("ascii").splitlines()
+        first = lines.index("hull 8")                        # the board's hull: its floor moved 2 cm down
+        for k in range(first + 1, first + 9):
+            x, y, z = map(float, lines[k].split())
+            lines[k] = f"{x} {-2.0 if y < 1 else y} {z}"
+        with self.assertRaisesRegex(ValueError, r"piece 0: hull 0 stands 20\.0 mm outside its details"):
+            debris.validate(("\n".join(lines) + "\n").encode("ascii"), self.glb)
+
     def test_content_writes_v3_beside_debris_and_v2_without(self):
         boards = [node("a", bar((0, 0, 0), (40, 2, 10))), node("b", bar((0, 2, 0), (40, 4, 10)))]
         text = "".join(f"node {name}\n" + "".join(
@@ -350,41 +423,50 @@ def notched_bar():
     return solid(triangles)
 
 
+def uv_board(dark=()):
+    """A 100 x 20 x 2 cm crate board along x (in metres, as the baked crate), each face its own uv island at
+    1 uv per metre; faces in `dark` sample black. Returns the Board and the islands {(axis, sign): u0, u1, v0, v1}."""
+    size = np.array([1.0, 0.2, 0.02])
+    corners = {(i, j, k): (np.array([i, j, k]) - 0.5) * size for i in (0, 1) for j in (0, 1) for k in (0, 1)}
+    islands = {}
+    positions, uvs = [], []
+    origin = 0.0
+    for axis in range(3):
+        for sign in (0, 1):
+            quad = [key for key in corners if key[axis] == sign]
+            others = [k for k in range(3) if k != axis]
+            ring = sorted(quad, key=lambda key: np.arctan2(key[others[1]] - 0.5, key[others[0]] - 0.5))
+            if sign == 0:
+                ring = ring[::-1]
+            uv = [(origin + corners[key][others[0]] + size[others[0]] / 2,
+                   corners[key][others[1]] + size[others[1]] / 2) for key in ring]
+            islands[axis, 1 if sign else -1] = (origin, origin + size[others[0]], 0, size[others[1]])
+            origin += size[others[0]] + 0.1
+            for t in ((0, 1, 2), (0, 2, 3)):
+                positions.append([corners[ring[i]] for i in t])
+                uvs.append([uv[i] for i in t])
+    positions = np.asarray(positions).reshape(-1, 3)
+    uvs = np.asarray(uvs).reshape(-1, 2)
+    faces = np.arange(len(positions)).reshape(-1, 3)
+
+    def lum(uv):
+        for face, (u0, u1, v0, v1) in islands.items():
+            if u0 - 1e-6 <= uv[:, 0].min() and uv[:, 0].max() <= u1 + 1e-6:
+                return 0.0 if face in dark else 0.05
+        raise AssertionError("uv outside every island")
+
+    return crate_debris.Board(positions, uvs, faces, lum), islands
+
+
+def island(uv, islands):
+    """The face whose uv island holds all of `uv`."""
+    return next((face for face, (u0, u1, v0, v1) in islands.items()
+                 if u0 - 1e-6 <= uv[:, 0].min() and uv[:, 0].max() <= u1 + 1e-6 and
+                 v0 - 1e-6 <= uv[:, 1].min() and uv[:, 1].max() <= v1 + 1e-6), None)
+
+
 class TestCrateBoards(unittest.TestCase):
     """The crate's split and broken boards keep their uv on their own board's islands, unstretched."""
-
-    def board(self, dark=()):
-        # a 100 x 20 x 2 cm board along x, each face its own uv island at 1 uv per metre
-        size = np.array([1.0, 0.2, 0.02])
-        corners = {(i, j, k): (np.array([i, j, k]) - 0.5) * size for i in (0, 1) for j in (0, 1) for k in (0, 1)}
-        islands = {}
-        positions, uvs = [], []
-        origin = 0.0
-        for axis in range(3):
-            for sign in (0, 1):
-                quad = [key for key in corners if key[axis] == sign]
-                others = [k for k in range(3) if k != axis]
-                ring = sorted(quad, key=lambda key: np.arctan2(key[others[1]] - 0.5, key[others[0]] - 0.5))
-                if sign == 0:
-                    ring = ring[::-1]
-                uv = [(origin + corners[key][others[0]] + size[others[0]] / 2,
-                       corners[key][others[1]] + size[others[1]] / 2) for key in ring]
-                islands[axis, 1 if sign else -1] = (origin, origin + size[others[0]], 0, size[others[1]])
-                origin += size[others[0]] + 0.1
-                for t in ((0, 1, 2), (0, 2, 3)):
-                    positions.append([corners[ring[i]] for i in t])
-                    uvs.append([uv[i] for i in t])
-        positions = np.asarray(positions).reshape(-1, 3)
-        uvs = np.asarray(uvs).reshape(-1, 2)
-        faces = np.arange(len(positions)).reshape(-1, 3)
-
-        def lum(uv):
-            for face, (u0, u1, v0, v1) in islands.items():
-                if u0 - 1e-6 <= uv[:, 0].min() and uv[:, 0].max() <= u1 + 1e-6:
-                    return 0.0 if face in dark else 0.05
-            raise AssertionError("uv outside every island")
-
-        return crate_debris.Board(positions, uvs, faces, lum), islands
 
     def check(self, pieces, islands, board):
         for piece in pieces:
@@ -401,7 +483,7 @@ class TestCrateBoards(unittest.TestCase):
     def test_split_and_break_faces_take_their_boards_islands(self):
         for dark in ((), ((1, 1), (1, -1), (0, 1), (0, -1), (2, -1))):
             with self.subTest(dark=dark):
-                board, islands = self.board(dark)
+                board, islands = uv_board(dark)
                 rng = np.random.default_rng(3)
                 strips = crate_debris.split("plank", board, rng, 3, [])
                 halves = crate_debris.broken("plank", board, rng, [])
@@ -411,6 +493,16 @@ class TestCrateBoards(unittest.TestCase):
                 # the new faces: a split shows the long edge (or the front when it is dark), a break the end
                 kinds = {kind[0] for piece in strips + halves for kind in piece.sides}
                 self.assertEqual(kinds, {"face", "split", "break"})
+                expected = {"split": {(1, 1), (1, -1)}, "break": {(0, 1), (0, -1)}}
+                for piece in strips + halves:
+                    for i, kind in enumerate(piece.sides):
+                        if kind[0] not in expected:
+                            continue
+                        j = (i + 1) % len(piece.top)
+                        quad = np.array([[*piece.top[i], 1], [*piece.bottom[i], -1],
+                                         [*piece.bottom[j], -1], [*piece.top[j], 1]])
+                        self.assertIn(island(piece.side_uv(kind, quad), islands),
+                                      {board.front} if dark else expected[kind[0]], (piece.name, kind))
                 for pieces in (strips, halves):   # each piece closed; nothing lost, nothing doubled
                     volume = 0.0
                     for piece in pieces:
