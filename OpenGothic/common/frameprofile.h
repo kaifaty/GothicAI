@@ -34,7 +34,8 @@ enum class Zone : size_t {
   AnimationNpcPass, MeleeShadow, MeleeContacts, InteractiveAnimation, LogicalBodySync,
   // PfxObjects::preFrameUpdate, and the CPU wait of a synchronous buffer upload (Metal).
   PfxPrepare, UploadWait,
-  // WorldView::updateRtScene: the ray-tracing scene refresh, TLAS and landscape BLAS builds included.
+  // WorldView::updateRtScene: the ray-tracing scene refresh, landscape BLAS builds and the recording of the TLAS build
+  // into the frame (pass RT-TLAS) included.
   RtScene, Count
   };
 enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, IdenticalBytes,

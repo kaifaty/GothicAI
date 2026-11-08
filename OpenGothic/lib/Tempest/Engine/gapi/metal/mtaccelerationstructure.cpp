@@ -8,6 +8,7 @@
 #include "utility/compiller_hints.h"
 
 #include <Tempest/Log>
+#include <algorithm>
 #include <unordered_map>
 
 #if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
@@ -15,6 +16,20 @@
 #endif
 
 using namespace Tempest::Detail;
+
+// A build of its own command buffer on the frame queue, without waiting: the frames committed after it see the
+// structure (Metal keeps the order of a queue for tracked resources), and the command buffer retains what it reads.
+static void submitBuild(MtDevice& dx, MTL::CommandBuffer& cmd, const char* what) {
+  cmd.addCompletedHandler(^(MTL::CommandBuffer* completed) {
+    if(completed->status()!=MTL::CommandBufferStatusCompleted)
+      Tempest::Log::e("metal: ", what, " build failed, status ", int(completed->status()));
+    });
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  profileGpu(&cmd);
+#endif
+  auto guard = dx.lockUpload(0);
+  dx.submitUpload(cmd, 0);
+  }
 
 void MtBlasBuildCtx::pushGeometry(MtDevice& dx,
                                   const MtBuffer& vbo, size_t vboSz, size_t stride,
@@ -86,16 +101,7 @@ MtAccelerationStructure::MtAccelerationStructure(MtDevice& dx, const Tempest::Ab
   auto enc = cmd->accelerationStructureCommandEncoder();
   enc->buildAccelerationStructure(impl.get(), ctx.desc.get(), scratch.get(), 0);
   enc->endEncoding();
-#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
-  profileGpu(cmd);
-#endif
-  cmd->commit();
-  // TODO: implement proper upload engine
-  cmd->waitUntilCompleted();
-
-  MTL::CommandBufferStatus s = cmd->status();
-  if(s!=MTL::CommandBufferStatus::CommandBufferStatusCompleted)
-    throw DeviceLostException();
+  submitBuild(dx, *cmd, "blas");
   }
 
 MtAccelerationStructure::~MtAccelerationStructure() {
@@ -106,74 +112,95 @@ MtTopAccelerationStructure::MtTopAccelerationStructure(MtDevice& dx, const RtIns
                                                        AccelerationStructure*const* as, size_t asSize)
   :owner(dx) {
   auto pool = NsPtr<NS::AutoreleasePool>::init();
-  instances = NsPtr<MTL::Buffer>(dx.impl->newBuffer(sizeof(MTL::AccelerationStructureUserIDInstanceDescriptor)*asSize,
+  instances = NsPtr<MTL::Buffer>(dx.impl->newBuffer(sizeof(MTL::AccelerationStructureUserIDInstanceDescriptor)*std::max<size_t>(asSize,1),
                                                     hostVisibleResourceOptions(*dx.impl)));
   if(instances==nullptr)
     throw std::system_error(GraphicsErrc::OutOfVideoMemory);
 
-  std::unordered_map<MTL::Resource*,uint32_t> usedBlas;
-  blas.reserve(asSize);
-  for(size_t i=0; i<asSize; ++i) {
-    auto& obj = reinterpret_cast<MTL::AccelerationStructureUserIDInstanceDescriptor*>(instances->contents())[i];
-
-    for(int x=0; x<4; ++x)
-      for(int y=0; y<3; ++y)
-        obj.transformationMatrix[x][y]  = inst[i].mat.at(x,y);
-    obj.options                         = nativeFormat(inst[i].flags);
-    obj.mask                            = inst[i].mask;
-    obj.intersectionFunctionTableOffset = 0;
-    obj.accelerationStructureIndex      = uint32_t(i);
-    obj.userID                          = inst[i].id;
-
-    auto* ax = reinterpret_cast<MtAccelerationStructure*>(as[i]);
-    auto it = usedBlas.find(ax->impl.get());
-    if(it!=usedBlas.end()) {
-      obj.accelerationStructureIndex = it->second;
-      } else {
-      obj.accelerationStructureIndex = uint32_t(blas.size());
-      usedBlas[ax->impl.get()] = uint32_t(blas.size());
-      blas.push_back(ax->impl.get());
-      }
-    }
+  const size_t count = pack(inst, as, asSize, instances->contents());
   if(instances->storageMode()==MTL::StorageModeManaged)
     instances->didModifyRange(NS::Range(0,instances->length()));
 
-  auto asArray = NsPtr<NS::Array>(NS::Array::array(reinterpret_cast<NS::Object**>(blas.data()), blas.size()));
-  auto desc    = NsPtr<MTL::InstanceAccelerationStructureDescriptor>::init();
-  if(desc==nullptr)
-    throw std::system_error(GraphicsErrc::OutOfHostMemory);
-  desc->retain();
-  desc->setInstanceDescriptorBuffer(instances.get());
-  desc->setInstanceDescriptorBufferOffset(0);
-  desc->setInstanceDescriptorStride(sizeof(MTL::AccelerationStructureUserIDInstanceDescriptor));
-  desc->setInstanceCount(asSize);
-  desc->setInstancedAccelerationStructures(asArray.get());
-  desc->setInstanceDescriptorType(MTL::AccelerationStructureInstanceDescriptorTypeUserID);
-
-  if(dx.prop.transposedRtMatrix && false) {
-    //TODO: vulkan/dx-like matrices
-    desc->setInstanceTransformationMatrixLayout(MTL::MatrixLayoutRowMajor);
-    }
-
-  auto sz = dx.impl->accelerationStructureSizes(desc.get());
+  auto desc = buildDesc(instances.get(), count);
+  auto sz   = dx.impl->accelerationStructureSizes(desc.get());
   impl = NsPtr<MTL::AccelerationStructure>(dx.impl->newAccelerationStructure(sz.accelerationStructureSize));
   if(impl==nullptr)
     throw std::system_error(GraphicsErrc::OutOfVideoMemory);
 
-  auto scratch = NsPtr<MTL::Buffer>(dx.impl->newBuffer(sz.buildScratchBufferSize,MTL::ResourceStorageModePrivate));
-  if(scratch==nullptr && sz.buildScratchBufferSize>0)
+  auto scratch = NsPtr<MTL::Buffer>(dx.impl->newBuffer(std::max<size_t>(sz.buildScratchBufferSize,1),MTL::ResourceStorageModePrivate));
+  if(scratch==nullptr)
     throw std::system_error(GraphicsErrc::OutOfVideoMemory);
 
   auto cmd = dx.queue->commandBuffer();
   auto enc = cmd->accelerationStructureCommandEncoder();
   enc->buildAccelerationStructure(impl.get(), desc.get(), scratch.get(), 0);
   enc->endEncoding();
-#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
-  profileGpu(cmd);
-#endif
-  cmd->commit();
-  // TODO: implement proper upload engine
-  cmd->waitUntilCompleted();
+  submitBuild(dx, *cmd, "tlas");
+  }
+
+MtTopAccelerationStructure::MtTopAccelerationStructure(MtDevice& dx, size_t cap)
+  :owner(dx), capacity(cap) {
+  auto pool = NsPtr<NS::AutoreleasePool>::init();
+  auto desc = buildDesc(nullptr, cap);
+  auto sz   = dx.impl->accelerationStructureSizes(desc.get());
+  impl = NsPtr<MTL::AccelerationStructure>(dx.impl->newAccelerationStructure(sz.accelerationStructureSize));
+  if(impl==nullptr)
+    throw std::system_error(GraphicsErrc::OutOfVideoMemory);
+  scratch = NsPtr<MTL::Buffer>(dx.impl->newBuffer(std::max<size_t>(sz.buildScratchBufferSize,1),MTL::ResourceStorageModePrivate));
+  if(scratch==nullptr)
+    throw std::system_error(GraphicsErrc::OutOfVideoMemory);
+  }
+
+size_t MtTopAccelerationStructure::pack(const RtInstance* inst, AccelerationStructure*const* as, size_t count, void* out) {
+  auto* dst = reinterpret_cast<MTL::AccelerationStructureUserIDInstanceDescriptor*>(out);
+
+  std::unordered_map<MTL::Resource*,uint32_t> usedBlas;
+  blas.clear();
+  size_t ret = 0;
+  for(size_t i=0; i<count; ++i) {
+    if(as[i]==nullptr)
+      continue;
+    auto* ax  = reinterpret_cast<MtAccelerationStructure*>(as[i])->impl.get();
+    auto& obj = dst[ret];
+    for(int x=0; x<4; ++x)
+      for(int y=0; y<3; ++y)
+        obj.transformationMatrix[x][y]  = inst[i].mat.at(x,y);
+    obj.options                         = nativeFormat(inst[i].flags);
+    obj.mask                            = inst[i].mask;
+    obj.intersectionFunctionTableOffset = 0;
+    obj.userID                          = inst[i].id;
+
+    auto it = usedBlas.find(ax);
+    if(it!=usedBlas.end()) {
+      obj.accelerationStructureIndex = it->second;
+      } else {
+      obj.accelerationStructureIndex = uint32_t(blas.size());
+      usedBlas[ax] = uint32_t(blas.size());
+      blas.push_back(ax);
+      }
+    ++ret;
+    }
+  return ret;
+  }
+
+NsPtr<MTL::InstanceAccelerationStructureDescriptor> MtTopAccelerationStructure::buildDesc(MTL::Buffer* ibo, size_t count) const {
+  // autoreleased: the descriptor retains it
+  auto* asArray = NS::Array::array(reinterpret_cast<NS::Object* const*>(blas.data()), blas.size());
+  auto  desc    = NsPtr<MTL::InstanceAccelerationStructureDescriptor>::init();
+  if(desc==nullptr || asArray==nullptr)
+    throw std::system_error(GraphicsErrc::OutOfHostMemory);
+  desc->setInstanceDescriptorBuffer(ibo);
+  desc->setInstanceDescriptorBufferOffset(0);
+  desc->setInstanceDescriptorStride(sizeof(MTL::AccelerationStructureUserIDInstanceDescriptor));
+  desc->setInstanceCount(count);
+  desc->setInstancedAccelerationStructures(asArray);
+  desc->setInstanceDescriptorType(MTL::AccelerationStructureInstanceDescriptorTypeUserID);
+
+  if(owner.prop.transposedRtMatrix && false) {
+    //TODO: vulkan/dx-like matrices
+    desc->setInstanceTransformationMatrixLayout(MTL::MatrixLayoutRowMajor);
+    }
+  return desc;
   }
 
 MtTopAccelerationStructure::~MtTopAccelerationStructure() {

@@ -6,8 +6,19 @@
 
 using namespace Tempest;
 
-AccelerationStructure::AccelerationStructure(Device& dev, AbstractGraphicsApi::PRtAs&& impl)
-  :impl(std::move(impl)) {
+AccelerationStructure::AccelerationStructure(Device& dev, AbstractGraphicsApi::PRtAs&& impl, size_t capacity)
+  :impl(std::move(impl)), cap(capacity) {
+  }
+
+AccelerationStructure::AccelerationStructure(AccelerationStructure&& other)
+  :impl(std::move(other.impl)), cap(other.cap) {
+  other.cap = 0;
+  }
+
+AccelerationStructure& AccelerationStructure::operator=(AccelerationStructure&& other) {
+  std::swap(impl, other.impl);
+  std::swap(cap,  other.cap);
+  return *this;
   }
 
 bool Tempest::AccelerationStructure::isEmpty() const {

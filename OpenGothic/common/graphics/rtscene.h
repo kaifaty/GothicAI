@@ -1,11 +1,15 @@
 #pragma once
 
 #include <Tempest/AccelerationStructure>
+#include <Tempest/CommandBuffer>
 #include <Tempest/DescriptorArray>
+#include <Tempest/Encoder>
 #include <Tempest/StorageBuffer>
 #include <Tempest/Texture2d>
 
 #include <vector>
+
+#include "resources.h"
 
 class Material;
 class StaticMesh;
@@ -39,7 +43,8 @@ class RtScene {
 
     void addInstance(const Tempest::Matrix4x4& pos, const Tempest::AccelerationStructure& blas,
                      const Material& mat, const StaticMesh& mesh, size_t firstIndex, size_t iboLength, Category cat);
-    void buildTlas();
+    // Records the build of the TLAS into the frame's command buffer (debug marker "RT-TLAS")
+    void buildTlas(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
     bool refreshTextures();
 
     Tempest::AccelerationStructure             tlas;
@@ -81,6 +86,11 @@ class RtScene {
     uint64_t                       textureGeneration = 0;
     Tempest::AccelerationStructure blasStaticOpaque;
     Tempest::AccelerationStructure blasStaticAt;
+
+    // Instances of the TLAS in the backend's layout: packed on the CPU, read by the build on the GPU. One buffer
+    // per frame in flight, so that a build never overwrites instances an earlier frame still builds from.
+    std::vector<uint8_t>           instanceBytes;
+    Tempest::StorageBuffer         instances[Resources::MaxFramesInFlight];
 
     mutable bool                   needToUpdate = true;
   };

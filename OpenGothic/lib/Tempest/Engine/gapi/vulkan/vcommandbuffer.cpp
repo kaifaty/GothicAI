@@ -269,11 +269,17 @@ static void toStage(VDevice& dev, VkPipelineStageFlags& stage, VkAccessFlags& ac
     }
 
   if(dev.props.raytracing.rayQuery) {
+    // ray queries of compute and graphics shaders read the TLAS a build wrote in this command buffer
+    if((rs&SyncStage::ComputeRead)==SyncStage::ComputeRead)
+      acc |= VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+    if((rs&SyncStage::GraphicsRead)==SyncStage::GraphicsRead)
+      acc |= VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
     if((rs&SyncStage::RtAsRead)==SyncStage::RtAsRead) {
       ret |= VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
       ret |= VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT;
       ret |= VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
       acc |= VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+      acc |= VK_ACCESS_SHADER_READ_BIT; // instances and other inputs of a build
       }
     if((rs&SyncStage::RtAsWrite)==SyncStage::RtAsWrite) {
       ret |= VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
@@ -666,7 +672,7 @@ void VCommandBuffer::handleSync(const ShaderReflection::LayoutDesc& lay, const S
       case ShaderReflection::Tlas: {
         //NOTE: Tlas tracking is not really implemented
         assert((bindings.array & (1u << i))==0);
-        nonUniqId = reinterpret_cast<VAccelerationStructure*>(data)->data.nonUniqId;
+        nonUniqId = reinterpret_cast<VTopAccelerationStructure*>(data)->data.nonUniqId;
         break;
         }
       case ShaderReflection::Sampler:
@@ -1143,16 +1149,25 @@ void VCommandBuffer::buildBlas(VkAccelerationStructureKHR dest, AbstractGraphics
   device.vkCmdBuildAccelerationStructures(impl, 1, &buildGeometryInfo, &pbuildRangeInfo);
   }
 
+void VCommandBuffer::buildTlas(AbstractGraphicsApi::AccelerationStructure& as, const AbstractGraphicsApi::Buffer* instances, size_t count) {
+  auto& tlas = reinterpret_cast<VTopAccelerationStructure&>(as);
+  assert(count<=tlas.capacity);
+  buildTlas(tlas.impl, tlas.data, instances, uint32_t(count), tlas.scratch);
+  // Work is recorded: a render pass begins a chunk of its own, and its barriers go ahead of it, after the build
+  if(state==Idle)
+    state = Compute;
+  }
+
 void VCommandBuffer::buildTlas(VkAccelerationStructureKHR dest,
                                AbstractGraphicsApi::Buffer& tbo,
-                               const AbstractGraphicsApi::Buffer& instances, uint32_t numInstances,
+                               const AbstractGraphicsApi::Buffer* instances, uint32_t numInstances,
                                AbstractGraphicsApi::Buffer& scratch) {
   VkAccelerationStructureGeometryInstancesDataKHR geometryInstancesData = {};
   geometryInstancesData.sType                 = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
   geometryInstancesData.pNext                 = NULL;
   geometryInstancesData.arrayOfPointers       = VK_FALSE;
-  if(numInstances>0)
-    geometryInstancesData.data.deviceAddress  = reinterpret_cast<const VBuffer&>(instances).toDeviceAddress(device);
+  if(numInstances>0 && instances!=nullptr)
+    geometryInstancesData.data.deviceAddress  = reinterpret_cast<const VBuffer*>(instances)->toDeviceAddress(device);
 
   VkAccelerationStructureGeometryKHR geometry = {};
   geometry.sType                              = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
@@ -1180,8 +1195,10 @@ void VCommandBuffer::buildTlas(VkAccelerationStructureKHR dest,
   buildRangeInfo.firstVertex                  = 0;
   buildRangeInfo.transformOffset              = 0;
 
-  // make sure TLAS is ready
-  resState.onUavUsage(NonUniqResId::I_None, reinterpret_cast<const VBuffer&>(tbo).nonUniqId, PipelineStage::S_RtAs);
+  // Wait for the writers of the instances and for the readers of the structure and its scratch: one id covers both,
+  // the scratch belongs to this structure alone. A ray query that binds the structure later waits for this build.
+  const NonUniqResId read = instances!=nullptr ? reinterpret_cast<const VBuffer*>(instances)->nonUniqId : NonUniqResId::I_None;
+  resState.onUavUsage(read, reinterpret_cast<const VBuffer&>(tbo).nonUniqId, PipelineStage::S_RtAs);
   resState.flush(*this);
 
   VkAccelerationStructureBuildRangeInfoKHR* pbuildRangeInfo = &buildRangeInfo;
