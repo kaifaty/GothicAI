@@ -1,0 +1,172 @@
+#pragma once
+
+#include <Tempest/Matrix4x4>
+#include <Tempest/Vec>
+
+#include "asset/modeltypes.h"
+#include "ikmath.h"
+
+#include <filesystem>
+#include <functional>
+#include <map>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+#include <vector>
+
+class Skeleton;
+
+// A render skeleton of our own under a Gothic one (reports/engine/2026-11-modern-skeleton, step 1): the game keeps
+// its skeleton (HUMANS.MDH: animations, events, IK, hit zones), our meshes sit on the rig, and every frame the rig's
+// pose is made from Gothic's final world matrices. The rig's skeleton is an ordinary hierarchy record
+// (models/models.json), in the same space and scale as the source one. The algorithm is solve() of
+// scripts/content/hero_body/retarget_pilot.py, without its metres and Blender frame.
+//
+// models/render-rigs.json of our content:
+//   {"format": "gothic-render-rigs", "version": 1,
+//    "rigs": {"<rig>": {
+//       "skeleton": "HUM_RIG_MPFB.MDH",          the rig's hierarchy record
+//       "source":   "HUMANS.MDH",                the Gothic hierarchy it follows
+//       "bones":  [{"name": "thigh_l", "source": "BIP01 L THIGH", "align": [w, x, y, z]}, ...],
+//       "root":   {"bone": "pelvis", "source": "BIP01 PELVIS"},
+//       "legs":   [{"thigh": "thigh_l", "calf": "calf_l", "foot": "foot_l", "ball": "ball_l",
+//                   "source_foot": "BIP01 L FOOT", "source_knee": "BIP01 L CALF", "ankle": [x, y, z]}],
+//       "fingers":[{"source_hand": "BIP01 L HAND", "source_finger": "BIP01 L FINGER0",
+//                   "chains": [["index_01_l", "index_02_l", "index_03_l"], ...], "shares": [1.0, 0.9, 0.7]}],
+//       "sockets":{"ZS_RIGHTHAND": {"bone": "hand_r", "offset": [16 floats]}}}},
+//    "meshes": {"<mesh>": "<rig>"}}
+// - bones: nodes of the rig's skeleton. source - the Gothic node whose turn the bone takes; align - a turn of the
+//   bone's bind pose onto the Gothic one, a quaternion (w, x, y, z), column vectors, world (model) frame. A node not
+//   listed, or listed without source, follows its parent rigidly as in the bind pose. align without source is unused.
+// - root: the bone that is placed by the source node (the pelvis); the other bones are placed by their parent.
+// - legs: the chain thigh -> calf -> foot -> ball (each the parent of the next); ankle - the IK target, cm in the
+//   frame of source_foot; the knee bends towards source_knee.
+// - fingers: the turn of source_finger against source_hand is spread over each chain, share i on phalanx i.
+// - sockets: a Gothic node (ZS_*) carried by a rig bone: M_bone(t) * offset; offset column-major as in the records.
+// - meshes: mesh name -> rig, the name upper case, without folder and extension.
+// legs, fingers, sockets and meshes may be left out. Unknown fields are errors. A broken file loads no rig, a broken
+// rig is left out alone, each with a message "render rigs: ..." or "render rig <name>: ...".
+struct RenderRigSpec final {
+  struct Bone final {
+    std::string  name, source;
+    IkMath::Quat align;
+    };
+  struct Leg final {
+    std::string   thigh, calf, foot, ball, sourceFoot, sourceKnee;
+    Tempest::Vec3 ankle;
+    };
+  struct Fingers final {
+    std::string                           sourceHand, sourceFinger;
+    std::vector<std::vector<std::string>> chains;
+    std::vector<float>                    shares;
+    };
+  struct Socket final {
+    std::string        source, bone;
+    Tempest::Matrix4x4 offset;
+    };
+
+  std::string          name, skeleton, source;
+  std::vector<Bone>    bones;
+  std::string          rootBone, rootSource;
+  std::vector<Leg>     legs;
+  std::vector<Fingers> fingers;
+  std::vector<Socket>  sockets;
+  };
+
+class RenderRig final {
+  public:
+    ~RenderRig();
+
+    // Throws std::runtime_error("render rig <name>: ...") when a name is missing from its skeleton, the rig has more
+    // than Resources::MAX_NUM_SKELETAL_NODES bones, or a part does not fit (a leg out of chain, a bone in two parts).
+    static std::unique_ptr<RenderRig> build(const RenderRigSpec& spec, const asset::ModelHierarchy& rig,
+                                            const asset::ModelHierarchy& source);
+
+    std::string_view name()        const { return rigName; }
+    // the rig's skeleton: the palette is in the order of its nodes, as a mesh bound to it expects
+    const Skeleton&  skeleton()    const { return *own; }
+    size_t           bones()       const { return bone.size(); }
+    // the nodes solve() reads; fits() - the source skeleton is the one the rig was made for (names in order)
+    size_t           sourceNodes() const { return sourceNames.size(); }
+    bool             fits(const Skeleton& source) const;
+
+    // The rig's world matrices out[bones()] from the source's final world matrices source[sourceCount] (Pose::tr,
+    // after IK and ragdoll). No allocation. False: too few source matrices, out is not written.
+    bool             solve(const Tempest::Matrix4x4* source, size_t sourceCount, Tempest::Matrix4x4* out) const;
+
+    // the socket of a source node (ZS_RIGHTHAND) over the solved palette: M_bone(t) * offset; false - none
+    bool             socket(std::string_view sourceNode, const Tempest::Matrix4x4* palette, Tempest::Matrix4x4& out) const;
+    bool             socket(size_t sourceNode, const Tempest::Matrix4x4* palette, Tempest::Matrix4x4& out) const;
+
+  private:
+    RenderRig() = default;
+
+    enum class Role : uint8_t { Plain, Thigh, Calf, Foot, Phalanx };
+    static constexpr size_t None = size_t(-1);
+
+    struct Bone final {
+      size_t             parent = None;  // rig node; None - under the source's root node
+      size_t             source = None;  // source node of the turn; None - rigid behind the parent
+      Tempest::Matrix4x4 local;          // bind pose under the parent's
+      IkMath::Mat3       turn = {};      // R_source_bind^T * align * R_bind: R = R_source(t) * turn
+      Role               role = Role::Plain;
+      size_t             part = 0;       // the leg or the fingers
+      float              share = 0;      // of the finger's bend
+      };
+    struct Leg final {
+      size_t        thigh = None, calf = None, foot = None;
+      size_t        sourceFoot = None, sourceKnee = None;
+      Tempest::Vec3 ankle;               // in the frame of sourceFoot
+      };
+    struct Fingers final {
+      size_t        hand = None, finger = None;
+      IkMath::Mat3  bind = {};           // R_finger_bind^T * R_hand_bind
+      };
+    struct Socket final {
+      std::string        name;
+      size_t             source = None, bone = None;
+      Tempest::Matrix4x4 offset;
+      };
+
+    Tempest::Matrix4x4 place(size_t i, const Tempest::Matrix4x4* source, const Tempest::Matrix4x4* out) const;
+    void               solveLeg(const Leg& leg, const Tempest::Matrix4x4* source, Tempest::Matrix4x4* out) const;
+
+    std::string               rigName;
+    std::unique_ptr<Skeleton> own;
+    std::vector<std::string>  sourceNames;
+    std::vector<Bone>         bone;
+    std::vector<size_t>       order;       // parents first
+    size_t                    sourceRoot   = None;
+    size_t                    sourceNeeded = 0;
+    size_t                    rootBone     = None, rootSource = None;
+    Tempest::Vec3             rootLocal;   // the root bone's bind place in the source node's bind frame
+    std::vector<Leg>          legs;
+    std::vector<Fingers>      fingers;
+    std::vector<Socket>       sockets;
+  };
+
+// models/render-rigs.json: read at once, each rig built on its first ask and kept by name.
+class RenderRigIndex final {
+  public:
+    using Lookup = std::function<bool(std::string_view record, asset::ModelHierarchy& out)>;
+    using Report = std::function<void(const std::string& message)>;
+
+    RenderRigIndex(Lookup lookup, Report report);
+    ~RenderRigIndex();
+
+    void             read(const std::filesystem::path& file);  // no file: no rigs, as without the feature
+    void             parse(std::string_view json);
+    size_t           size() const { return specs.size(); }
+
+    // nullptr: no such rig or a broken one (reported once)
+    const RenderRig* rig(std::string_view name);
+    const RenderRig* rigOfMesh(std::string_view mesh);
+
+  private:
+    Lookup                                                      lookup;
+    Report                                                      report;
+    std::map<std::string,RenderRigSpec,std::less<>>             specs;
+    std::map<std::string,std::string,std::less<>>               meshes;
+    std::unordered_map<std::string,std::unique_ptr<RenderRig>>  built;  // nullptr: tried and broken
+  };

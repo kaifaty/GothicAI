@@ -49,6 +49,7 @@
 #include "graphics/mesh/submesh/pfxemittermesh.h"
 #include "graphics/mesh/submesh/packedmesh.h"
 #include "graphics/mesh/facerig.h"
+#include "graphics/mesh/renderrig.h"
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/protomesh.h"
 #include "graphics/mesh/animation.h"
@@ -888,10 +889,15 @@ void Resources::indexBaseContent() {
 
 void Resources::indexContentModels() {
   contentModels.clear();
+  renderRigs.reset();
   const auto root = contentDir();
   if(root.empty())
     return;
   const auto folder = root/"models";
+  renderRigs = std::make_unique<RenderRigIndex>(
+      [](std::string_view record, asset::ModelHierarchy& out) { return loadHierarchyData(record,out); },
+      [](const std::string& message) { Log::e(message); });
+  renderRigs->read(folder/"render-rigs.json");
   const auto index = folder/"models.json";
   std::ifstream file(index,std::ios::binary);
   if(!file) {
@@ -2788,6 +2794,16 @@ const Skeleton* Resources::loadSkeleton(std::string_view name) {
   if(s==nullptr)
     return nullptr;
   return s->skeleton.get();
+  }
+
+const RenderRig* Resources::loadRenderRig(std::string_view name) {
+  std::lock_guard<std::recursive_mutex> g(inst->sync);
+  return inst->renderRigs ? inst->renderRigs->rig(name) : nullptr;
+  }
+
+const RenderRig* Resources::renderRigOfMesh(std::string_view mesh) {
+  std::lock_guard<std::recursive_mutex> g(inst->sync);
+  return inst->renderRigs ? inst->renderRigs->rigOfMesh(mesh) : nullptr;
   }
 
 const Animation* Resources::loadAnimation(std::string_view name) {
