@@ -1,0 +1,30 @@
+# The seam between the hero's body and the Gothic head, close up (reports/content/2026-11-hero-body/naked-body.md):
+# front, side and back at head height, then a one-handed riposte close from the side (the neck and shoulders
+# in motion). Run it with the original root and with a test root that replaces HUM_BODY_NAKED0.
+#   TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=ryzen WORLD=NEWWORLD.ZEN OPENGOTHIC_CONTENT=<root or empty> \
+#     scripts/bench.sh scripts/bench/hero-body-neck.bench <out>
+seed 73013
+cheat god
+set time 12 0
+goto NW_CITY_MERCHANT_TRADE_04
+wait 3000
+watch player
+overlay off
+cam look 160
+cam follow 95 165 0
+wait 3000
+shot neck_front
+cam follow 95 165 70
+wait 3000
+shot neck_side
+cam follow 95 165 180
+wait 3000
+shot neck_back
+melee-shadow weapon 1h
+cam look 140
+cam follow 160 150 90
+wait 2500
+rec riposte_close
+ani player T_1HRIPOSTE
+wait 2200
+stop
