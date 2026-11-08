@@ -7,7 +7,7 @@ details plus open trims (nail heads) that only draw. Its physics is up to 16 con
 approximation of its details rather than their copy (the shape rule, same README):
 
 - no point of a hull's shape stands more than 8 mm outside its detail, and the shapes cover at least 85%
-  of each detail's volume;
+  of each detail's volume (70% of a ring's);
 - a torn end's teeth and splinters beyond the line of its valleys only draw: the body is cut there by the
   plane through the valleys (the lower envelope of the tear) and its hulls are built from the body;
 - a bent detail (a stave) falls into equal lengths until each length's hull keeps within 8 mm;
@@ -35,6 +35,8 @@ from scipy.spatial import ConvexHull, HalfspaceIntersection, QhullError
 
 OUTSIDE = 0.8        # cm, the farthest a hull's shape stands outside its detail
 COVER = 0.85         # the least share of a detail's volume its piece's hull shapes cover
+RING_COVER = 0.70    # the same for a ring (a hoop, a thin bent band): its hulls stand at most 8 mm out and 2 mm
+                     # into the staves, and 16 prisms cover no more of a band 8 mm thick (0.73-0.75 of the barrel's)
 INWARD = 0.2         # cm, the deepest a ring's prism reaches inside the ring's inner surface
 SMALL = 0.02         # a closed detail under this share of its piece's largest joins the nearest hull
 SHARP = math.cos(math.radians(15))   # a concave edge sharper than 15 degrees marks a tear ...
@@ -888,8 +890,8 @@ def hulls(pieces, names):
             except ValueError as error:
                 raise ValueError(f'{name}: {error}') from None
             share = sum(volume(W, G)[0] for W, G in parts) / volumes[k]
-            if share < COVER:
-                raise ValueError(f'{name}: hulls cover {share:.3f} of a detail (least {COVER})')
+            if share < (least := RING_COVER if euler(F) == 0 else COVER):
+                raise ValueError(f'{name}: hulls cover {share:.3f} of a detail (least {least})')
             made.extend(parts)
         if len(made) > MAX_HULLS:
             raise ValueError(f'{name}: {len(made)} hulls exceed {MAX_HULLS}')
@@ -1035,7 +1037,7 @@ def validate(data: bytes, glb: bytes | None):
     """Check version 3 bytes as the game reads them: counts, the GLB binding, closed details, hulls, the shape
     rule and the overlaps of different pieces. Returns dict(pieces, hulls, volume, hull_volume, largest (cm3),
     overlap, outside (cm), cover and classes: per class of the pieces' largest details (board, bent, torn, ring)
-    pieces, hulls, outside, cover, overlap and for rings inward (cm))."""
+    pieces, hulls, outside, overlap and for rings inward (cm); cover per class of each detail itself)."""
     lines = iter(data.decode('ascii').splitlines())
     if next(lines) != 'GOTHIC_FRACTURE 3':
         raise ValueError('expected version 3')
@@ -1118,11 +1120,13 @@ def validate(data: bytes, glb: bytes | None):
                     raise ValueError(f'piece {index}: hull {k} reaches {10 * deep:.1f} mm inside the ring '
                                      f'(limit {10 * INWARD:.0f} mm)')
                 stats['inward'] = max(stats['inward'], deep)
-        for W, G, _ in closed:
+        for W, G, _ in closed:   # each detail by its own class: a hoop's rivets and seam plate are no ring
+            own = kind(W, G)
             share = coverage(triangles(W, G), shapes)
-            if share < COVER:
-                raise ValueError(f'piece {index}: hulls cover {share:.3f} of a detail (least {COVER})')
-            stats['cover'] = min(stats['cover'], share)
+            if share < (least := RING_COVER if own == 'ring' else COVER):
+                raise ValueError(f'piece {index}: hulls cover {share:.3f} of a {own} detail (least {least})')
+            row = classes.setdefault(own, dict(pieces=0, hulls=0, outside=0.0, cover=1.0, overlap=0.0))
+            row['cover'] = min(row['cover'], share)
         hull_planes[-h:] = [(i, p, lo, hi, cls) for i, p, lo, hi in hull_planes[-h:]]
     if next(lines, None) is not None:
         raise ValueError('trailing data')
