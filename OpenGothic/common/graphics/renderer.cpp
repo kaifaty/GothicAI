@@ -2548,12 +2548,15 @@ void Renderer::prepareFog(Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview
         cmd.setPipeline(shaders.fogEpipolarOcclusion);
         cmd.dispatchThreads(occlusionLut.size());
         } else {
+        // drawShadowMap cleared the map and drew nothing: the mask follows from the clear value alone
+        const bool emptyMap = !(wview.mainLight().dir().y > Camera::minShadowY);
         cmd.setFramebuffer({});
         cmd.setBinding(2, zbuffer, Sampler::nearest());
         cmd.setBinding(3, scene.uboGlobal[SceneGlobals::V_Main]);
         cmd.setBinding(4, occlusionLut);
-        cmd.setBinding(5, shadowMap[1], Resources::shadowSampler());
-        cmd.setPipeline(shaders.fogOcclusion);
+        if(!emptyMap)
+          cmd.setBinding(5, shadowMap[1], Resources::shadowSampler());
+        cmd.setPipeline(emptyMap ? shaders.fogOcclusionEmpty : shaders.fogOcclusion);
         cmd.dispatchThreads(occlusionLut.size());
         }
       break;

@@ -131,6 +131,7 @@ void Shaders::compileShaders() noexcept {
   fogViewLut3d       = computeShader("fog_view_lut.comp.sprv");
   fogViewLutSep      = computeShader("fog_view_lut_sep.comp.sprv");
   fogOcclusion       = computeShader("fog3d.comp.sprv");
+  fogOcclusionEmpty  = computeShader("fog3d_empty.comp.sprv");
 
   skyExposure        = computeShader("sky_exposure.comp.sprv");
   sky                = postEffect("sky");

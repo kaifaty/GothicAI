@@ -75,7 +75,9 @@ if [[ "$REMOTE_RUN" == 0 ]]; then
     NAS_OUT="/mnt/shared/gothic-ai/perf-stand/runs/${OUT##*/}"
     remote mkdir -p "$SOURCE/OpenGothic" "$SOURCE/scripts/bench" "$REMOTE_OUT"
     remote df -h "$REMOTE_HOME"
-    rsync -a --delete --exclude='/build*/' --exclude='.git' "$ROOT/OpenGothic/" "$RYZEN_HOST:$SOURCE/OpenGothic/"
+    # The stand's build tree is shared by every checkout that runs here. Copy by content and stamp the
+    # copied files now: kept source times older than the last build's objects would skip their rebuild.
+    rsync -a --checksum --no-times --delete --exclude='/build*/' --exclude='.git' "$ROOT/OpenGothic/" "$RYZEN_HOST:$SOURCE/OpenGothic/"
     rsync -a "$ROOT/scripts/ryzen-build.sh" "$ROOT/scripts/perf.sh" "$ROOT/scripts/perf_report.py" "$ROOT/scripts/base-ensure.sh" "$ROOT/scripts/ryzen_game.py" "$RYZEN_HOST:$SOURCE/scripts/"
     rsync -a --delete --exclude='/build*/' "$ROOT/scripts/convert/" "$RYZEN_HOST:$SOURCE/scripts/convert/"
     rsync -a "$ROOT"/scripts/bench/perf-*.bench "$RYZEN_HOST:$SOURCE/scripts/bench/"
