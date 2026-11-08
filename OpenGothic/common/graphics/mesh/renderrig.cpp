@@ -23,7 +23,7 @@ namespace {
   throw std::runtime_error(what);
   }
 
-std::string quoted(std::string_view s) {
+std::string quote(std::string_view s) {
   return "\""+std::string(s)+"\"";
   }
 
@@ -34,7 +34,7 @@ std::string_view str(const rapidjson::Value& v) {
 void onlyFields(const rapidjson::Value& obj, std::initializer_list<std::string_view> known, const std::string& where) {
   for(const auto& m:obj.GetObject())
     if(std::find(known.begin(),known.end(),str(m.name))==known.end())
-      fail(where+"unknown field "+quoted(str(m.name)));
+      fail(where+"unknown field "+quote(str(m.name)));
   }
 
 std::string name(const rapidjson::Value& obj, const char* key, const std::string& where, bool required = true) {
@@ -159,7 +159,7 @@ RenderRigSpec parseRig(std::string_view rigName, const rapidjson::Value& v) {
       fail("sockets must be an object: source node -> {bone, offset}");
     for(const auto& m:v["sockets"].GetObject()) {
       const std::string node(str(m.name));
-      const std::string where = "sockets["+quoted(node)+"]: ";
+      const std::string where = "sockets["+quote(node)+"]: ";
       if(node.empty() || !m.value.IsObject())
         fail(where+"expected a source node name and an object");
       onlyFields(m.value,{"bone","offset"},where);
@@ -241,13 +241,13 @@ std::unique_ptr<RenderRig> RenderRig::build(const RenderRigSpec& spec, const ass
   auto error = [&](const std::string& what) { fail(prefix+what); };
   auto checkTree = [&](const asset::ModelHierarchy& h, const std::string& file) {
     if(h.nodes.empty())
-      error("skeleton "+quoted(file)+" has no nodes");
+      error("skeleton "+quote(file)+" has no nodes");
     if(h.nodes.size()>Resources::MAX_NUM_SKELETAL_NODES)
-      error(std::to_string(h.nodes.size())+" bones in "+quoted(file)+", more than "+
+      error(std::to_string(h.nodes.size())+" bones in "+quote(file)+", more than "+
             std::to_string(Resources::MAX_NUM_SKELETAL_NODES));
     for(const auto& n:h.nodes)
       if(n.parent_index<-1 || n.parent_index>=int(h.nodes.size()))
-        error("skeleton "+quoted(file)+": node "+quoted(n.name)+" has no parent "+std::to_string(n.parent_index));
+        error("skeleton "+quote(file)+": node "+quote(n.name)+" has no parent "+std::to_string(n.parent_index));
     };
   checkTree(rigH,spec.skeleton);
   checkTree(sourceH,spec.source);
@@ -272,19 +272,19 @@ std::unique_ptr<RenderRig> RenderRig::build(const RenderRigSpec& spec, const ass
         }
       }
     if(r->order.size()==before)
-      error("skeleton "+quoted(spec.skeleton)+" has a loop of parents");
+      error("skeleton "+quote(spec.skeleton)+" has a loop of parents");
     }
 
   auto rigNode = [&](const std::string& n, const char* what) {
     const size_t i = rig.findNode(n);
     if(i==None)
-      error(std::string(what)+" "+quoted(n)+" is not in skeleton "+quoted(spec.skeleton));
+      error(std::string(what)+" "+quote(n)+" is not in skeleton "+quote(spec.skeleton));
     return i;
     };
   auto sourceNode = [&](const std::string& n) {
     const size_t i = src.findNode(n);
     if(i==None)
-      error("source "+quoted(n)+" is not in skeleton "+quoted(spec.source));
+      error("source "+quote(n)+" is not in skeleton "+quote(spec.source));
     return i;
     };
   auto inverse = [](Matrix4x4 m) {
@@ -295,7 +295,7 @@ std::unique_ptr<RenderRig> RenderRig::build(const RenderRigSpec& spec, const ass
   // the bind poses, once; a bone without a parent goes under the source's root node
   r->sourceRoot = src.findRootNode();
   if(r->sourceRoot==None)
-    error("skeleton "+quoted(spec.source)+" has no root node");
+    error("skeleton "+quote(spec.source)+" has no root node");
   r->bone.resize(count);
   for(size_t i=0; i<count; ++i) {
     auto& b = r->bone[i];
@@ -306,7 +306,7 @@ std::unique_ptr<RenderRig> RenderRig::build(const RenderRigSpec& spec, const ass
   for(const auto& sb:spec.bones) {
     const size_t i = rigNode(sb.name,"bone");
     if(listed[i])
-      error("bone "+quoted(sb.name)+" is listed twice");
+      error("bone "+quote(sb.name)+" is listed twice");
     listed[i] = 1;
     if(sb.source.empty())
       continue;
@@ -323,7 +323,7 @@ std::unique_ptr<RenderRig> RenderRig::build(const RenderRigSpec& spec, const ass
   auto take = [&](size_t i, Role role, size_t part) {
     auto& b = r->bone[i];
     if(b.role!=Role::Plain)
-      error("bone "+quoted(rig.nodes[i].name)+" is in two legs or fingers");
+      error("bone "+quote(rig.nodes[i].name)+" is in two legs or fingers");
     b.role = role;
     b.part = part;
     };
@@ -515,12 +515,12 @@ void RenderRigIndex::read(const std::filesystem::path& file) {
   std::error_code ec;
   if(!std::filesystem::exists(file,ec)) {
     if(ec)
-      report("render rigs: cannot read "+quoted(file.string())+": "+ec.message());
+      report("render rigs: cannot read "+quote(file.string())+": "+ec.message());
     return;
     }
   std::ifstream in(file,std::ios::binary);
   if(!in) {
-    report("render rigs: cannot read "+quoted(file.string()));
+    report("render rigs: cannot read "+quote(file.string()));
     return;
     }
   const std::string text{std::istreambuf_iterator<char>(in),std::istreambuf_iterator<char>()};
@@ -572,11 +572,11 @@ void RenderRigIndex::parse(std::string_view json) {
   for(const auto& m:doc["meshes"].GetObject()) {
     const std::string key = meshKey(str(m.name));
     if(key.empty() || !m.value.IsString()) {
-      report("render rigs: mesh "+quoted(str(m.name))+": expected a mesh name and a rig name");
+      report("render rigs: mesh "+quote(str(m.name))+": expected a mesh name and a rig name");
       continue;
       }
     if(specs.find(str(m.value))==specs.end()) {
-      report("render rigs: mesh "+quoted(str(m.name))+": no rig "+quoted(str(m.value)));
+      report("render rigs: mesh "+quote(str(m.name))+": no rig "+quote(str(m.value)));
       continue;
       }
     meshes[key] = std::string(str(m.value));
@@ -600,10 +600,10 @@ const RenderRig* RenderRigIndex::rig(std::string_view rigName) {
         found = lookup && lookup(file,out);
         }
       catch(const std::exception& e) {
-        fail("render rig "+s.name+": skeleton record "+quoted(file)+": "+e.what());
+        fail("render rig "+s.name+": skeleton record "+quote(file)+": "+e.what());
         }
       if(!found)
-        fail("render rig "+s.name+": no skeleton record "+quoted(file));
+        fail("render rig "+s.name+": no skeleton record "+quote(file));
       };
     asset::ModelHierarchy rigH {}, sourceH {};
     record(s.skeleton,rigH);
