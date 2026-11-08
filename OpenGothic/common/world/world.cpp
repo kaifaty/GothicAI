@@ -141,12 +141,12 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     windRooms.reset(world.bsp.mode,std::move(world.rooms));
     auto worldCloth=WorldCloth::extract(worldMesh,&chunks);
     const bool streamLandscape=residency && !Resources::isHeadless() && !Gothic::inst().isBenchmarkMode() &&
-        !CommandLine::inst().isRayQuery() && !Shaders::options().doRtScene && !Shaders::options().doSoftwareRT;
+        !CommandLine::inst().isRayQuery() && !Shaders::options().doRtScene;
     if(residency && !Resources::isHeadless() && !streamLandscape) {
       if(Gothic::inst().isBenchmarkMode())
         Tempest::Log::i("Landscape streaming disabled: built-in benchmark requires the complete landscape");
       else
-        Tempest::Log::i("Landscape streaming disabled: RT, GI or SWRT requires a whole-world BVH");
+        Tempest::Log::i("Landscape streaming disabled: RT or GI requires a whole-world BVH");
       }
 
     const bool probeSerial = LoadProbe::serial();

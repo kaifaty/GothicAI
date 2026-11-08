@@ -95,8 +95,6 @@ Renderer::Renderer() {
   settings.giMethod         = Gothic::options().doGi;
   settings.vsmEnabled       = Shaders::options().doVirtualShadow;
   settings.rtsmEnabled      = Shaders::options().doSoftwareShadow;
-  settings.swrEnabled       = Shaders::options().swRenderingPreset>0;
-  settings.swrtEnabled      = Shaders::options().doSoftwareRT;
   if(const char* stats = std::getenv("OPENGOTHIC_VSM_STATS"))
     settings.vsmStats = std::string_view(stats)=="1";
   // OPENGOTHIC_VSM_LAMP=hard|flat: the lamp shadow filter for a study of its cost
@@ -643,12 +641,6 @@ void Renderer::resetViewport(Tempest::Size res, Tempest::Size fullRes) {
   // volumetric sky
   sky.occlusionLut = StorageImage();
 
-  // software renderer
-  swr.outputImage = StorageImage();
-
-  // swrt
-  swrt.outputImage = StorageImage();
-
   resetSkyFog();
   }
 
@@ -809,14 +801,12 @@ void Renderer::dbgDraw(Tempest::Painter& p) {
     return;
 
   std::vector<const Texture2d*> tex;
-  //tex.push_back(&textureCast(swr.outputImage));
   //tex.push_back(&textureCast(hiz.hiZ));
   //tex.push_back(&textureCast(hiz.smProj));
   //tex.push_back(&textureCast(hiz.hiZSm1));
   //tex.push_back(&textureCast(shadowMap[1]));
   //tex.push_back(&textureCast<const Texture2d&>(shadowMap[0]));
   //tex.push_back(&textureCast<const Texture2d&>(vsm.pageData));
-  //tex.push_back(&textureCast<const Texture2d&>(swrt.outputImage));
   tex.push_back(&textureCast<const Texture2d&>(surf.irrImage));
 
   static int size = 400;
@@ -931,11 +921,8 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   prepareEpipolar(cmd, wview);
 
   drawVsm(cmd, wview);
-  drawSwr(cmd, wview);
   drawRtsm(cmd, wview);
   drawRtsmOmni(cmd, wview);
-
-  drawSwRT(cmd, wview);
 
   { FrameProfile::Scope timing(FrameProfile::Zone::EncodeMain); prepareIrradiance(cmd, wview); }
   prepareExposure(cmd, wview);
@@ -986,7 +973,6 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   drawProbesHitDbg(cmd);
   drawSurfelsDbg(cmd, wview);
   drawVsmDbg(cmd, wview);
-  drawSwrDbg(cmd, wview);
   drawRtsmDbg(cmd, wview);
   drawRayQueryDbg(cmd, wview);
   //
@@ -1434,37 +1420,6 @@ void Renderer::drawSunMoon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const 
   cmd.draw(nullptr, 0, 6);
   }
 
-void Renderer::drawSwRT(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview) {
-  if(!settings.swrtEnabled)
-    return;
-  FrameProfile::Scope timing(FrameProfile::Zone::EncodeMain);
-
-  const auto& scene     = wview.sceneGlobals();
-  const auto& bvh       = wview.landscape().bvh();
-  const auto  originLwc = scene.originLwc;
-
-  if(swrt.outputImage.size()!=zbuffer.size()) {
-    Resources::recycle(std::move(swrt.outputImage));
-    auto& device = Resources::device();
-    // swrt.outputImage = device.image2d(TextureFormat::R32U, zbuffer.size());
-    swrt.outputImage = device.image2d(TextureFormat::RGBA8, zbuffer.size());
-    }
-
-  cmd.setFramebuffer({});
-  cmd.setDebugMarker("Raytracing");
-  //cmd.setPipeline(shaders.swRaytracing8);
-  cmd.setPipeline(shaders.swRaytracing);
-  cmd.setPushData(&originLwc, sizeof(originLwc));
-  cmd.setBinding(0, swrt.outputImage);
-  cmd.setBinding(1, scene.uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(2, gbufDiffuse);
-  cmd.setBinding(3, gbufNormal);
-  cmd.setBinding(4, zbuffer);
-  cmd.setBinding(5, bvh);
-
-  cmd.dispatchThreads(swrt.outputImage.size());
-  }
-
 void Renderer::stashSceneAux(Encoder<CommandBuffer>& cmd) {
   auto& device = Resources::device();
   if(!device.properties().hasSamplerFormat(zBufferFormat))
@@ -1494,22 +1449,6 @@ void Renderer::drawVsmDbg(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const W
   cmd.setBinding(8, wview.sceneGlobals().vsmDbg);
   cmd.setPushData(&settings.vsmMipBias, sizeof(settings.vsmMipBias));
   cmd.setPipeline(shaders.vsmDbg);
-  cmd.draw(nullptr, 0, 3);
-  }
-
-void Renderer::drawSwrDbg(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview) {
-  static bool enable = true;
-  if(!enable || !settings.swrEnabled)
-    return;
-
-  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}});
-  cmd.setDebugMarker("SWR-dbg");
-  cmd.setBinding(0, swr.outputImage);
-  cmd.setBinding(1, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(2, gbufDiffuse, Sampler::nearest());
-  cmd.setBinding(3, gbufNormal,  Sampler::nearest());
-  cmd.setBinding(4, zbuffer,     Sampler::nearest());
-  cmd.setPipeline(shaders.swRenderingDbg);
   cmd.draw(nullptr, 0, 3);
   }
 
@@ -2181,65 +2120,6 @@ void Renderer::drawRtsmOmni(Tempest::Encoder<Tempest::CommandBuffer>& cmd, World
 
     cmd.setPipeline(shaders.rtsmRenderingOmni);
     cmd.dispatchThreads(outputImageClr.size());
-    }
-  }
-
-void Renderer::drawSwr(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview) {
-  if(!settings.swrEnabled)
-    return;
-  FrameProfile::Scope timing(FrameProfile::Zone::EncodeMain);
-
-  const auto& scene        = wview.sceneGlobals();
-  const auto& clusters     = wview.clusters();
-  const auto& buckets      = wview.drawBuckets();
-  const auto& instanceSsbo = wview.instanceSsbo();
-
-  auto& outputImage = usesImage2d(swr.outputImage, TextureFormat::R32U, zbuffer.size());
-
-  cmd.setFramebuffer({});
-  cmd.setDebugMarker("SW-rendering");
-
-  struct Push { uint32_t firstMeshlet; uint32_t meshletCount; float znear; } push = {};
-  push.firstMeshlet = 0;
-  push.meshletCount = uint32_t(clusters.size());
-  push.znear        = scene.znear;
-
-  cmd.setBinding(0, outputImage);
-  cmd.setBinding(1, scene.uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(2, *scene.gbufNormals);
-  cmd.setBinding(3, *scene.zbuffer);
-  cmd.setBinding(4, clusters.ssbo());
-  cmd.setBinding(5, buckets.ibo());
-  cmd.setBinding(6, buckets.vbo());
-  cmd.setBinding(7, buckets.textures());
-  cmd.setBinding(8, Sampler::bilinear());
-
-  auto* pso = &Shaders::inst().swRendering;
-  switch(Shaders::options().swRenderingPreset) {
-    case 1: {
-      cmd.setPushData(&push, sizeof(push));
-      cmd.setPipeline(*pso);
-      //cmd.dispatch(10);
-      cmd.dispatch(clusters.size());
-      break;
-      }
-    case 2: {
-      IVec2  tileSize = IVec2(128);
-      int    tileX    = (outputImage.w()+tileSize.x-1)/tileSize.x;
-      int    tileY    = (outputImage.h()+tileSize.y-1)/tileSize.y;
-      cmd.setPushData(&push, sizeof(push));
-      cmd.setPipeline(*pso);
-      cmd.dispatch(size_t(tileX), size_t(tileY)); //outputImage.size());
-      break;
-      }
-    case 3: {
-      cmd.setBinding(9,  *scene.lights);
-      cmd.setBinding(10, instanceSsbo);
-      cmd.setPushData(&push, sizeof(push));
-      cmd.setPipeline(*pso);
-      cmd.dispatchThreads(outputImage.size());
-      break;
-      }
     }
   }
 

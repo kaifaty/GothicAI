@@ -76,7 +76,6 @@ void Shaders::setupOptions() {
   opts.doMeshShading    = gpu.meshlets.meshShader && CommandLine::inst().isMeshShading();
   opts.doSoftwareShadow = Shaders::isRtsmSupported() && CommandLine::inst().isSoftwareShadow();
   opts.doVirtualShadow  = Shaders::isVsmSupported()  && CommandLine::inst().isVirtualShadow();
-  opts.doSoftwareRT     = false;
   opts.doMaterialMaps   = Resources::materialMapsEnabled();
   }
 
@@ -421,25 +420,6 @@ void Shaders::compileShaders() noexcept {
     rtsmRendering    = computeShader("rtsm_rendering.comp.sprv");
     rtsmRenderingOmni= computeShader("rtsm_omni_rendering.comp.sprv");
     rtsmDbg          = postEffect("rtsm_dbg", RenderState::ZTestMode::Always);
-    }
-
-  swRaytracing    = computeShader("sw_raytracing.comp.sprv");
-  swRaytracing8   = computeShader("sw_raytracing8.comp.sprv");
-  swRaytracing64  = computeShader("sw_raytracing64.comp.sprv");
-
-  if(options().swRenderingPreset>0) {
-    switch(options().swRenderingPreset) {
-      case 1:
-        swRendering = computeShader("sw_rendering_imm.comp.sprv");
-        break;
-      case 2:
-        swRendering = computeShader("sw_rendering_tbr.comp.sprv");
-        break;
-      case 3:
-        swRendering = computeShader("sw_light.comp.sprv");
-        break;
-      }
-    swRenderingDbg = postEffect("vbuffer_blit", RenderState::ZTestMode::Always);
     }
 
   {
