@@ -257,6 +257,10 @@ const Matrix4x4* MdlVisual::skinPalette(size_t& count) const {
   return renderedPose.empty() ? skInst->transform() : renderedPose.data();
   }
 
+const Skeleton* MdlVisual::skinSkeleton() const {
+  return bodyRig!=nullptr ? &bodyRig->skeleton() : skeleton;
+  }
+
 bool MdlVisual::bindBodyRig() {
   const RenderRig* const was   = bodyRig;
   const ProtoMesh*       proto = view.protoMesh();

@@ -130,11 +130,10 @@ class MdlVisual final {
                                                    const std::vector<size_t>& bones, float weight);
     bool                           clearPhysicalPose();
     const Tempest::Matrix4x4&       renderedBone(size_t bone) const;
-    // The body on a render skeleton of its own (graphics/mesh/renderrig, models/render-rigs.json): the rig, nullptr -
-    // the body is on the visual's skeleton. skinPalette: the matrices the body's skin is drawn with and their count,
-    // the rig's (its bone indices) when it has one, else renderedBone's.
-    const RenderRig*               renderRig() const { return bodyRig; }
+    // The body's skin as drawn, on a render skeleton of its own (graphics/mesh/renderrig, models/render-rigs.json)
+    // when it has one: its matrices and their count, else renderedBone's; the skeleton its bone indices are of.
     const Tempest::Matrix4x4*      skinPalette(size_t& count) const;
+    const Skeleton*                skinSkeleton() const;
     struct ArrowPinProbe {
       size_t             bone=size_t(-1);
       Tempest::Matrix4x4 local, world;
