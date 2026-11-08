@@ -2519,6 +2519,18 @@ std::vector<DynamicWorld::FragmentSnapshot> DynamicWorld::fragmentSnapshot() con
   return result;
   }
 
+float DynamicWorld::fragmentGroundPenetration(uintptr_t parentId, size_t piece) const {
+  for(const auto* obj:movableVobs->bodies) {
+    if(reinterpret_cast<uintptr_t>(obj)!=parentId || piece>=obj->fragments.size() || obj->fragments[piece]==nullptr)
+      continue;
+    float depth=0;
+    for(const auto& contact:world->overlaps(*obj->fragments[piece],0.f,(1u<<C_Landscape)|(1u<<C_Object)))
+      depth=std::max(depth,contact.depth);
+    return depth;
+    }
+  return 0;
+  }
+
 std::vector<DynamicWorld::WaterBodySnapshot> DynamicWorld::waterBodySnapshot() const {
   std::vector<WaterBodySnapshot> result;
   std::unordered_map<const CollisionWorld::CollisionBody*,std::pair<const BodyData*,size_t>> identity;

@@ -552,6 +552,8 @@ class DynamicWorld final {
       float friction = 0;
       };
     std::vector<FragmentSnapshot> fragmentSnapshot() const;
+    // Bench-only: the deepest native contact of one piece with landscape and static objects, centimetres.
+    float fragmentGroundPenetration(uintptr_t parentId, size_t piece) const;
     struct WaterBodySnapshot {
       uintptr_t id = 0, parentId = 0;
       const Ragdoll* ragdoll = nullptr;

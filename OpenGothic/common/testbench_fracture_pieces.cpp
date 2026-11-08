@@ -174,7 +174,7 @@ void fracturePiecesTick(FracturePieces& state,World& world) {
     std::vector<JPH::Mat44> poses(parts.size());
     std::vector<Vec3> low(parts.size()),high(parts.size());
     size_t missing=0,flat=0,onEdge=0,upright=0,sleeping=0,restingAsleep=0,fell=0,metal=0,metalOnGround=0;
-    float maxJitter=0,maxFloor=0,maxVisible=0,maxPieces=0,maxSpeed=0;
+    float maxJitter=0,maxFloor=0,maxNative=0,maxVisible=0,maxPieces=0,maxSpeed=0;
     std::string rows="[";
     for(size_t i=0;i<parts.size();++i) {
       auto& piece=item.pieces[i];
@@ -224,8 +224,11 @@ void fracturePiecesTick(FracturePieces& state,World& world) {
           const auto pose=JPH::Mat44::sRotationTranslation(JPH::Quat::sFromTo(JPH::Vec3::sAxisY(),normal),top-normal*.5f);
           if(piece.hull!=nullptr)ground=penetration(piece.hull.GetPtr(),poses[i],box.GetPtr(),pose);
           }
-        maxFloor=std::max(maxFloor,ground);maxVisible=std::max(maxVisible,visible);
+        // The plane under the centre misses curved ground under a 1.1 m stave: also the native contact itself.
+        const float native=below?0.f:world.physic()->fragmentGroundPenetration(item.parent,i);
+        maxFloor=std::max(maxFloor,ground);maxNative=std::max(maxNative,native);maxVisible=std::max(maxVisible,visible);
         extra=",\"jitter_cm\":"+ragdollNumber(jitter)+",\"floor_penetration_cm\":"+ragdollNumber(ground)+
+          ",\"native_floor_penetration_cm\":"+ragdollNumber(native)+
           ",\"visible_floor_penetration_cm\":"+ragdollNumber(visible)+
           ",\"lowest_over_floor_cm\":"+ragdollNumber(std::isfinite(lowest)?lowest:0.f);
         }
@@ -252,7 +255,7 @@ void fracturePiecesTick(FracturePieces& state,World& world) {
           const float depth=penetration(item.pieces[i].hull.GetPtr(),poses[i],item.pieces[j].hull.GetPtr(),poses[j]);
           if(depth>maxPieces) {maxPieces=depth;worstA=i;worstB=j;}
           }
-      pairs=",\"max_floor_penetration_cm\":"+ragdollNumber(maxFloor)+",\"max_visible_floor_penetration_cm\":"+
+      pairs=",\"max_floor_penetration_cm\":"+ragdollNumber(maxFloor)+",\"max_native_floor_penetration_cm\":"+ragdollNumber(maxNative)+",\"max_visible_floor_penetration_cm\":"+
         ragdollNumber(maxVisible)+",\"max_piece_penetration_cm\":"+ragdollNumber(maxPieces)+
         ",\"worst_piece_pair\":["+std::to_string(worstA)+","+std::to_string(worstB)+"],\"max_jitter_cm\":"+
         ragdollNumber(maxJitter)+",\"metal\":"+std::to_string(metal)+",\"metal_on_ground\":"+std::to_string(metalOnGround);
