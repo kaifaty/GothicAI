@@ -431,7 +431,7 @@ def mode_series(args: argparse.Namespace, manifest: dict[str, Any], mode: str,
     workdir.mkdir()
     # Same settings bytes as reference; no renderer/audio path consumes them.
     (workdir / "Gothic.ini").write_bytes((args.reference / "run/Gothic.ini").read_bytes())
-    runner = Runner([str(args.runner), "-g", str(args.assets), "-g2", "-devmode", "--save", str(args.save),
+    runner = Runner([str(args.runner), "-g", str(args.assets), "-devmode", "--save", str(args.save),
                      "--scenario", str(scenario), "--output", str(output),
                      "--mode", mode, "--stdio"], workdir, output,
                     environment=rng_environment(animation_rng, fixture))
@@ -530,7 +530,7 @@ def rendered_series(args: argparse.Namespace, manifest: dict[str, Any]) -> dict[
                         "OPENGOTHIC_BENCH": str(args.scenario), "OPENGOTHIC_BENCH_OUT": str(output)})
     argv = ["/usr/bin/time", "-v", "-o", str(output / "resources.txt"),
             "/usr/bin/xvfb-run", "-a", "-s", "-screen 0 640x480x24",
-            str(args.rendered), "-g", str(args.assets), "-g2", "-window", "-devmode", "-save", "1"]
+            str(args.rendered), "-g", str(args.assets), "-window", "-devmode", "-save", "1"]
     subprocess.run(["bash", str(Path(__file__).with_name("base-ensure.sh")), str(args.assets)],
                    env=dict(environment, GAME_BIN=str(args.rendered)), check=True)
     started = time.monotonic()
@@ -664,7 +664,7 @@ def reset_series(args: argparse.Namespace) -> dict[str, Any]:
     workdir = output / "run"
     workdir.mkdir()
     (workdir / "Gothic.ini").write_bytes((args.reference / "run/Gothic.ini").read_bytes())
-    runner = Runner([str(args.runner), "-g", str(args.assets), "-g2", "-devmode", "--save", str(args.save),
+    runner = Runner([str(args.runner), "-g", str(args.assets), "-devmode", "--save", str(args.save),
                      "--scenario", str(args.scenario), "--output", str(output / "initial"),
                      "--mode", "lockstep", "--stdio"], workdir, output,
                     environment=rng_environment("isolated"))

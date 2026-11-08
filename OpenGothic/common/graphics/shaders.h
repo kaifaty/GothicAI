@@ -32,9 +32,6 @@ class Shaders {
       bool     doVirtualShadow   = false;
       bool     doSoftwareShadow  = false;
       bool     doMaterialMaps    = false;
-
-      bool     doSoftwareRT      = false;
-      uint32_t swRenderingPreset = 0;
       };
 
     static Shaders& inst(bool waitCompiler = true);
@@ -59,7 +56,7 @@ class Shaders {
     Tempest::RenderPipeline  stash;
     Tempest::RenderPipeline  bink;
 
-    Tempest::ComputePipeline ssao, ssaoBlur;
+    Tempest::ComputePipeline ssao, ssaoBlur, ssaoMips;
 
     Tempest::ComputePipeline irradiance;
 
@@ -72,7 +69,7 @@ class Shaders {
     // Blood on the GBuffer (physics stage 8, step 4c): albedo RGB, and roughness with material maps
     Tempest::RenderPipeline  bloodDecal, bloodDecalAlbedo; // with and without the ORM target
     Tempest::RenderPipeline  sun;
-    Tempest::ComputePipeline cloudsLut, fogOcclusion;
+    Tempest::ComputePipeline cloudsLut, fogOcclusion, fogOcclusionEmpty;
     Tempest::ComputePipeline fogViewLut3d, fogViewLutSep;
     Tempest::ComputePipeline skyExposure;
 
@@ -90,7 +87,7 @@ class Shaders {
     Tempest::RenderPipeline  cmaa2DeferredColorApply2x2;
     Tempest::RenderPipeline  taaResolve, taaSharpen;
     // temporal upscale (MetalFX Temporal): camera motion vectors, tonemapping with the bloom in it
-    Tempest::RenderPipeline  motionCamera, tonemappingBloom;
+    Tempest::RenderPipeline  motionCamera, tonemappingBloom, tonemappingTaa;
 
     // HUD
 
@@ -160,13 +157,6 @@ class Shaders {
 
     Tempest::ComputePipeline rtsmRendering, rtsmRenderingOmni; //reference
     Tempest::RenderPipeline  rtsmDbg;
-
-    Tempest::ComputePipeline swRaytracing, swRaytracing64;
-    Tempest::ComputePipeline swRaytracing8;
-
-    // Software rendering
-    Tempest::ComputePipeline swRendering;
-    Tempest::RenderPipeline  swRenderingDbg;
 
     // Inventory
     Tempest::RenderPipeline  inventory;

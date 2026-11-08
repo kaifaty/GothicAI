@@ -214,8 +214,8 @@ data = {
     'renderer': 'lavapipe', 'display': 'Xvfb', 'headless': False,
     'sim_fps': 30, 'realtime': True, 'model': None,
     'trace_enabled': True, 'hd_textures_enabled': False, 'audio_driver': 'OpenAL null',
-    'game_version': 'Gothic II Night of the Raven (explicit -g2)',
-    'argv': ['-g', str(root / 'assets'), '-g2', '-window', '-devmode', '-save', '1'],
+    'game_version': 'Gothic II Night of the Raven',
+    'argv': ['-g', str(root / 'assets'), '-window', '-devmode', '-save', '1'],
     'settings_sha256': sha(out / 'run/Gothic.ini'), 'asset_hash_coverage': 'all regular files in assets',
     'toolchain': json.loads((root / 'toolchain/vulkan-1.4.341.0/manifest.json').read_text()),
     'runtime_limits': {'cpu_quota_percent': 200, 'memory_max_gib': 12, 'tasks_max': 128, 'wall_timeout_sec': 900, 'renderer_threads': 2},
@@ -281,7 +281,7 @@ GQ_JOB_ID_FILE="$out/gq-job-id" "${launch[@]}" \
   "$out/reference/Gothic2Notr" "$suite_source/scripts/base-ensure.sh" "$task_root/assets" \
   /usr/bin/time -v -o "$out/resources.txt" \
   /usr/bin/xvfb-run -a -s '-screen 0 640x480x24' "$out/reference/Gothic2Notr" \
-  -g "$task_root/assets" -g2 -window -devmode -save 1 > "$out/launcher.log" 2>&1 &
+  -g "$task_root/assets" -window -devmode -save 1 > "$out/launcher.log" 2>&1 &
 launch_pid=$!
 if gq_available && [[ "$baseline_interrupted" == 1 ]]; then stop_baseline; fi
 failed=0

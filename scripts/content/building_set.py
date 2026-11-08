@@ -66,12 +66,13 @@ from seam_fix import seamless
 
 LUMINANCE = np.array([.2126, .7152, .0722])
 # Caches the engine reads beside an own GLB, checked by the GLB's size and CRC32 (docs/physics.md):
-# suffix → header, the table of OpenGothic/data and its classes that need the cache, the command that cuts it.
+# suffix → accepted headers, the table of OpenGothic/data and its classes that need the cache, the command that cuts it.
 # DynamicWorld loads offline convex parts only for tables and cupboards; FractureMesh breaks a destructible
 # only with its pieces, and scripts/fracture.sh content cuts these four classes.
 CACHES = {
-    '.convex-parts': ('GOTHIC_CONVEX_PARTS 1', 'movable-vobs.csv', ('table', 'cupboard'), 'scripts/convex-parts.sh content'),
-    '.fracture': ('GOTHIC_FRACTURE 2', 'destructible-vobs.csv', ('crate', 'barrel', 'pot', 'fence'), 'scripts/fracture.sh content'),
+    '.convex-parts': (('GOTHIC_CONVEX_PARTS 1',), 'movable-vobs.csv', ('table', 'cupboard'), 'scripts/convex-parts.sh content'),
+    '.fracture': (('GOTHIC_FRACTURE 2', 'GOTHIC_FRACTURE 3'), 'destructible-vobs.csv', ('crate', 'barrel', 'pot', 'fence'),
+                  'scripts/fracture.sh content'),
 }
 # A destructible's debris (its pieces as parts, reports/content/2026-11-wood-fracture) travels with its GLB;
 # beside it the `.fracture` must be version 3, cut from that debris.
@@ -489,7 +490,7 @@ def stale_caches(content: Path) -> dict[str, list[str]]:
         return {}
     entries = sorted(json.loads(index.read_text()).items())
     stale = {}
-    for suffix, (tag, table, classes, _) in CACHES.items():
+    for suffix, (tags, table, classes, _) in CACHES.items():
         rules = [line.split(',')[:2] for line in (remaster.ROOT / 'OpenGothic/data' / table).read_text().splitlines()
                  if line and not line.startswith('#')]
         for visual, entry in entries:
@@ -502,8 +503,9 @@ def stale_caches(content: Path) -> dict[str, list[str]]:
             if cache.is_file():
                 with cache.open('rb') as stream:  # a .fracture runs to megabytes; only its first two lines matter
                     header = [stream.readline().decode('ascii', 'replace').rstrip('\n') for _ in range(2)]
-            wanted = DEBRIS_TAG if suffix == '.fracture' and glb.with_suffix(DEBRIS).is_file() else tag
-            if header != [wanted, f'source {len(source)} {zlib.crc32(source):08x}']:
+            # beside its debris a GLB's pieces are cut only into version 3
+            wanted = (DEBRIS_TAG,) if suffix == '.fracture' and glb.with_suffix(DEBRIS).is_file() else tags
+            if len(header) != 2 or header[0] not in wanted or header[1] != f'source {len(source)} {zlib.crc32(source):08x}':
                 stale.setdefault(suffix, []).append(key)
     return stale
 

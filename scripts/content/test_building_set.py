@@ -146,7 +146,7 @@ def staged_prop(root, name, prefix='OWN'):
 
 
 def fracture(glb, version=2):
-    """The head of a `.fracture` cut from these GLB bytes (scripts/fracture.sh content)."""
+    """The head of a source-bound `.fracture` cut from these GLB bytes (scripts/fracture.sh content)."""
     return f'GOTHIC_FRACTURE {version}\nsource {len(glb)} {zlib.crc32(glb):08x}\npieces 12\n'
 
 
@@ -237,7 +237,8 @@ def test_enable_needs_fresh_convex_parts_for_tables_and_cupboards(tmp_path, monk
         building_set.enable('city-2')
 
 
-def test_enable_needs_fresh_fracture_for_destructibles(tmp_path, monkeypatch):
+@pytest.mark.parametrize('version', [2, 3])
+def test_enable_needs_fresh_fracture_for_destructibles(tmp_path, monkeypatch, version):
     monkeypatch.setenv('GOTHIC_AI_DATA', str(tmp_path))
     staged(tmp_path, 'roofs-1', {'ROOF_01.TGA': 'roofs-1-roof-01'})
     staged_prop(tmp_path, 'crate-1')
@@ -251,16 +252,17 @@ def test_enable_needs_fresh_fracture_for_destructibles(tmp_path, monkeypatch):
         building_set.enable('city-1')
     assert not (tmp_path / 'content').exists()
     out = tmp_path / 'content-staging/city-1/meshes/crate-1'
-    (out / 'model.fracture').write_text(fracture(b'glb crate-2'))       # cut from other bytes of the same size
+    (out / 'model.fracture').write_text(fracture(b'glb crate-2', version))  # cut from other bytes of the same size
     with pytest.raises(ValueError, match='no fresh .fracture for NW_HARBOUR_CRATE_01'):
         building_set.enable('city-1')
-    (out / 'model.fracture').write_text(fracture(b'glb crate-1').replace('FRACTURE 2', 'FRACTURE 1'))  # the originals' version
+    (out / 'model.fracture').write_text(fracture(b'glb crate-1', 1))  # the originals' version
     with pytest.raises(ValueError, match='no fresh .fracture for NW_HARBOUR_CRATE_01'):
         building_set.enable('city-1')
-    (out / 'model.fracture').write_text(fracture(b'glb crate-1'))
+    (out / 'model.fracture').write_text(fracture(b'glb crate-1', version))
     building_set.enable('city-1')
-    assert (tmp_path / 'content/meshes/crate-1/model.fracture').read_text() == fracture(b'glb crate-1')
-    (out / 'model.debris.glb').write_bytes(b'debris')          # with debris beside it, version 2 is stale
+    assert (tmp_path / 'content/meshes/crate-1/model.fracture').read_text() == fracture(b'glb crate-1', version)
+    (out / 'model.debris.glb').write_bytes(b'debris')          # with debris beside it, only version 3 is fresh
+    (out / 'model.fracture').write_text(fracture(b'glb crate-1', 2))
     with pytest.raises(ValueError, match='no fresh .fracture for NW_HARBOUR_CRATE_01'):
         building_set.enable('city-1')
     (out / 'model.fracture').write_text(fracture(b'glb crate-1', 3))

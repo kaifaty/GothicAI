@@ -131,11 +131,11 @@ std::string_view TalkGestures::moodName(Mood m) {
   return "neutral";
   }
 
-void TalkGestures::setGestures(std::vector<uint32_t> durationMs, bool gothic2) {
+void TalkGestures::setGestures(std::vector<uint32_t> durationMs) {
   duration = std::move(durationMs);
   kind.resize(duration.size());
   for(size_t i=0; i<kind.size(); ++i)
-    kind[i] = (gothic2 && i<std::size(G2Kind)) ? G2Kind[i] : Lively;
+    kind[i] = (i<std::size(G2Kind)) ? G2Kind[i] : Lively;
   }
 
 void TalkGestures::lineStart(uint64_t now) {

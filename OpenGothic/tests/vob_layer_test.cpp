@@ -823,8 +823,8 @@ struct WorldDataContract {
   static void saves(const Fixture& fixture) {
     const auto* gameDir=std::getenv("GOTHIC_DIR");
     require(gameDir && *gameDir,"save interchange needs prepared GOTHIC_DIR");
-    const char* args[]={"gothic-vob-layer-test","-g",gameDir,"-g2"};
-    CommandLine commandLine(4,args);
+    const char* args[]={"gothic-vob-layer-test","-g",gameDir};
+    CommandLine commandLine(3,args);
     setenv("OPENGOTHIC_FRACTURE","",1);
     setenv("OPENGOTHIC_TEXTURES","",1);
     setenv("OPENGOTHIC_PHYSICS_THREADS","0",1);

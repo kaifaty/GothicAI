@@ -33,7 +33,6 @@ list(APPEND _ZK_SOURCES
         src/vobs/VirtualObject.cc
         src/vobs/Zone.cc
 
-        src/addon/daedalus.cc
         src/addon/texcvt.cc
 
         src/archive/ArchiveAscii.cc
@@ -45,7 +44,6 @@ list(APPEND _ZK_SOURCES
         src/CutsceneLibrary.cc
         src/DaedalusScript.cc
         src/Date.cc
-        src/DaedalusVm.cc
         src/Error.cc
         src/Font.cc
         src/Logger.cc

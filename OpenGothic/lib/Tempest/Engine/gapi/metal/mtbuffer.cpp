@@ -9,6 +9,7 @@
 
 #if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
 #include "gapi/metalapi.h"
+#include "frameprofile.h"
 #endif
 
 using namespace Tempest::Detail;
@@ -94,8 +95,13 @@ void MtDevice::uploadBuffer(MTL::Buffer& target, const void* data, size_t off, s
 #endif
   submitUpload(*cmd,stage->allocatedSize());
   guard.unlock();
-  if(wait)
+  if(wait) {
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+    // The command buffer starts after everything committed before it: inside a frame this waits for the GPU
+    FrameProfile::Scope timing(FrameProfile::Zone::UploadWait);
+#endif
     cmd->waitUntilCompleted();
+    }
   }
 
 std::unique_lock<std::mutex> MtDevice::lockUpload(size_t size) {

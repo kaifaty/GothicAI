@@ -353,38 +353,23 @@ void GameScript::initCommon() {
     throw std::runtime_error("spellFxInstanceNames and/or spellFxAniLetters not found");
     }
 
-  if(owner.version().game==2) {
-    auto* currency = vm.find_symbol_by_name("TRADE_CURRENCY_INSTANCE");
-    itMi_Gold      = currency!=nullptr ? vm.find_symbol_by_name(currency->get_string()) : nullptr;
-    if(itMi_Gold!=nullptr){ // FIXME
-      auto item = vm.init_instance<daedalus::IItem>(itMi_Gold);
-      goldTxt = item->name;
-      }
-    auto* tradeMul = vm.find_symbol_by_name("TRADE_VALUE_MULTIPLIER");
-    tradeValMult   = tradeMul != nullptr ? tradeMul->get_float() : 1.0f;
+  auto* currency = vm.find_symbol_by_name("TRADE_CURRENCY_INSTANCE");
+  itMi_Gold      = currency!=nullptr ? vm.find_symbol_by_name(currency->get_string()) : nullptr;
+  if(itMi_Gold!=nullptr){ // FIXME
+    auto item = vm.init_instance<daedalus::IItem>(itMi_Gold);
+    goldTxt = item->name;
+    }
+  auto* tradeMul = vm.find_symbol_by_name("TRADE_VALUE_MULTIPLIER");
+  tradeValMult   = tradeMul != nullptr ? tradeMul->get_float() : 1.0f;
 
-    auto* vtime     = vm.find_symbol_by_name("VIEW_TIME_PER_CHAR");
-    viewTimePerChar = vtime != nullptr ? vtime->get_float() : 550.f;
-    if(viewTimePerChar<=0.f)
-      viewTimePerChar = 550.f;
-
-    ItKE_lockpick     = vm.find_symbol_by_name("ItKE_lockpick");
-    B_RefreshAtInsert = vm.find_symbol_by_name("B_RefreshAtInsert");
-    } else {
-    itMi_Gold      = vm.find_symbol_by_name("ItMiNugget");
-    if(itMi_Gold!=nullptr) { // FIXME
-      auto item = vm.init_instance<daedalus::IItem>(itMi_Gold);
-      goldTxt = item->name;
-      }
-    //
-    tradeValMult    = 1.f;
+  auto* vtime     = vm.find_symbol_by_name("VIEW_TIME_PER_CHAR");
+  viewTimePerChar = vtime != nullptr ? vtime->get_float() : 550.f;
+  if(viewTimePerChar<=0.f)
     viewTimePerChar = 550.f;
-    ItKE_lockpick   = vm.find_symbol_by_name("itkelockpick");
-    }
 
-  if(auto v = vm.find_symbol_by_name("DAM_CRITICAL_MULTIPLIER")) {
-    damCriticalMultiplier = v->get_int();
-    }
+  ItKE_lockpick     = vm.find_symbol_by_name("ItKE_lockpick");
+  B_RefreshAtInsert = vm.find_symbol_by_name("B_RefreshAtInsert");
+
   if(auto v = vm.find_symbol_by_name("RANGED_CHANCE_MINDIST"))
     rangedChanceMin = v->get_float();
   if(auto v = vm.find_symbol_by_name("RANGED_CHANCE_MAXDIST"))
@@ -1055,8 +1040,6 @@ void GameScript::printCannotBuyError(Npc &npc) {
 void GameScript::printMobMissingItem(Npc &npc) {
   auto id = vm.find_symbol_by_name("player_mob_missing_item");
   if(id==nullptr) {
-    if(owner.version().game==1)
-      owner.player()->playAnimByName("T_DONTKNOW", BS_NONE);
     return;
     }
   ScopeVar self(*vm.global_self(), npc.handlePtr());
@@ -1066,8 +1049,6 @@ void GameScript::printMobMissingItem(Npc &npc) {
 void GameScript::printMobMissingKey(Npc& npc) {
   auto id = vm.find_symbol_by_name("player_mob_missing_key");
   if(id==nullptr) {
-    if(owner.version().game==1)
-      owner.player()->playAnimByName("T_DONTKNOW", BS_NONE);
     return;
     }
   ScopeVar self(*vm.global_self(), npc.handlePtr());
@@ -1077,8 +1058,6 @@ void GameScript::printMobMissingKey(Npc& npc) {
 void GameScript::printMobAnotherIsUsing(Npc &npc) {
   auto id = vm.find_symbol_by_name("player_mob_another_is_using");
   if(id==nullptr) {
-    if(owner.version().game==1)
-      owner.player()->playAnimByName("T_DONTKNOW", BS_NONE);
     return;
     }
   ScopeVar self(*vm.global_self(), npc.handlePtr());
@@ -1088,8 +1067,6 @@ void GameScript::printMobAnotherIsUsing(Npc &npc) {
 void GameScript::printMobMissingKeyOrLockpick(Npc& npc) {
   auto id = vm.find_symbol_by_name("player_mob_missing_key_or_lockpick");
   if(id==nullptr) {
-    if(owner.version().game==1)
-      owner.player()->playAnimByName("T_DONTKNOW", BS_NONE);
     return;
     }
   ScopeVar self(*vm.global_self(), npc.handlePtr());
@@ -1099,8 +1076,6 @@ void GameScript::printMobMissingKeyOrLockpick(Npc& npc) {
 void GameScript::printMobMissingLockpick(Npc& npc) {
   auto id = vm.find_symbol_by_name("player_mob_missing_lockpick");
   if(id==nullptr) {
-    if(owner.version().game==1)
-      owner.player()->playAnimByName("T_DONTKNOW", BS_NONE);
     return;
     }
   ScopeVar self(*vm.global_self(), npc.handlePtr());
@@ -1247,20 +1222,13 @@ void GameScript::invokePickLock(Npc& npc, int bSuccess, int bBrokenOpen) {
 
 void GameScript::invokeRefreshAtInsert(Npc& npc) {
   LoadProbe::Startup::Detail::Scope detail("refresh_at_insert");
-  if(B_RefreshAtInsert==nullptr || owner.version().game!=2)
+  if(B_RefreshAtInsert==nullptr)
     return;
   ScopeVar self(*vm.global_self(), npc.handlePtr());
   vm.call_function<void>(B_RefreshAtInsert);
   }
 
 CollideMask GameScript::canNpcCollideWithSpell(Npc& npc, Npc* shooter, int32_t spellId) {
-  if(owner.version().game==1) {
-    auto& spl = spellDesc(spellId);
-    if(npc.isTargetableBySpell(TargetType(spl.target_collect_type)))
-      return COLL_DOEVERYTHING; else
-      return COLL_DONOTHING;
-    }
-
   auto fn   = vm.find_symbol_by_name("C_CanNpcCollideWithSpell");
   if(fn==nullptr)
     return COLL_DOEVERYTHING;
@@ -1270,26 +1238,9 @@ CollideMask GameScript::canNpcCollideWithSpell(Npc& npc, Npc* shooter, int32_t s
   return CollideMask(vm.call_function<int>(fn, spellId));
   }
 
-// Gothic 1 only differentiates between the two worldmap types with and
-// without the orc addition and does this inside the code, not the script
-int GameScript::playerHotKeyScreenMap_G1(Npc& pl) {
-  size_t map = findSymbolIndex("itwrworldmap_orc");
-  if(map==size_t(-1) || pl.itemCount(map)<1)
-    map = findSymbolIndex("itwrworldmap");
-
-  if(map==size_t(-1) || pl.itemCount(map)<1)
-    return -1;
-
-  pl.useItem(map);
-
-  return int(map);
-  }
-
 int GameScript::playerHotKeyScreenMap(Npc& pl) {
   auto fn   = vm.find_symbol_by_name("player_hotkey_screen_map");
   if(fn==nullptr) {
-    if(owner.version().game==1)
-      return playerHotKeyScreenMap_G1(pl);
     return -1;
     }
 
@@ -1482,8 +1433,6 @@ uint32_t GameScript::messageTime(std::string_view id) const {
 void GameScript::printNothingToGet() {
   auto id = vm.find_symbol_by_name("player_plunder_is_empty");
   if(id==nullptr) {
-    if(owner.version().game==1)
-      owner.player()->playAnimByName("T_DONTKNOW", BS_NONE);
     return;
     }
   ScopeVar self(*vm.global_self(), owner.player()->handlePtr());
@@ -1531,7 +1480,7 @@ Attitude GameScript::personAttitude(const Npc &p0, const Npc &p1) const {
   }
 
 bool GameScript::isFriendlyFire(const Npc& src, const Npc& dst) const {
-  const int AIV_PARTYMEMBER = (owner.version().game==2) ? 15 : 36;
+  const int AIV_PARTYMEMBER = 15;
   if(src.isPlayer())
     return false;
   if(personAttitude(src, dst)==ATT_FRIENDLY)
@@ -1749,10 +1698,6 @@ int GameScript::npcDamDiveTime() {
   if(id==nullptr)
     return 0;
   return id->get_int();
-  }
-
-int32_t GameScript::criticalDamageMultiplyer() const {
-  return damCriticalMultiplier;
   }
 
 uint32_t GameScript::lockPickId() const {
@@ -3042,9 +2987,6 @@ void GameScript::ai_output(std::shared_ptr<daedalus::INpc> selfRef, std::shared_
   auto target = findNpc(targetRef);
   auto self   = findNpc(selfRef);
 
-  if(target==nullptr && owner.version().game==1)
-    target = findNpc(vm.global_other());
-
   if(self!=nullptr && target!=nullptr) {
     self->aiPush(AiQueue::aiOutput(*target,outputname,aiOutOrderId));
     ++aiOutOrderId;
@@ -3134,9 +3076,6 @@ void GameScript::ai_outputsvm(std::shared_ptr<daedalus::INpc> selfRef, std::shar
   auto target = findNpc(targetRef);
   auto self   = findNpc(selfRef);
 
-  if(target==nullptr && owner.version().game==1)
-    target = findNpc(vm.global_other());
-
   if(self!=nullptr && target!=nullptr) {
     self->aiPush(AiQueue::aiOutputSvm(*target,name,aiOutOrderId));
     ++aiOutOrderId;
@@ -3146,9 +3085,6 @@ void GameScript::ai_outputsvm(std::shared_ptr<daedalus::INpc> selfRef, std::shar
 void GameScript::ai_outputsvm_overlay(std::shared_ptr<daedalus::INpc> selfRef, std::shared_ptr<daedalus::INpc> targetRef, std::string_view name) {
   auto target = findNpc(targetRef);
   auto self   = findNpc(selfRef);
-
-  if(target==nullptr && owner.version().game==1)
-    target = findNpc(vm.global_other());
 
   if(self!=nullptr && target!=nullptr) {
     self->aiPush(AiQueue::aiOutputSvmOverlay(*target,name,aiOutOrderId));

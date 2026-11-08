@@ -500,7 +500,6 @@ RUN_MODE=window
 if [[ "$BENCH_HEADLESS" == 1 ]]; then
   RUN_MODE='headless lockstep'
   GAME_ARGS=("${RUNNER_BIN:-$(dirname "$GAME_BIN")/gothic-body-runner}" -g "$GOTHIC_DIR" -devmode "${START_ARGS[@]}")
-  if [[ "${RYZEN_BENCH:-}" == 1 ]]; then GAME_ARGS+=(-g2); fi
   GAME_ARGS+=(--game-parity --scenario "$SCEN" --output "$OUT" --mode lockstep)
   WINDOW_ENV=()
 else

@@ -139,8 +139,6 @@ class KeyCodec final {
     static auto keyToStr(Tempest::Event::KeyType k) -> string_frm<64>;
     static auto keyToStr(Tempest::Event::MouseButton k) -> string_frm<64>;
 
-    void        setDefaultKeysG1();
-    void        setDefaultKeysG1Alt();
     void        setupSettings();
     KeyPair     setup(const char* kp);
     static auto parse(std::string_view kp) -> KeyPair;

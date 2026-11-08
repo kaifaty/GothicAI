@@ -42,6 +42,9 @@
 #include <chrono>
 #include <unordered_set>
 #include <stdexcept>
+#include <cstdlib>
+#include <locale>
+#include <sstream>
 
 #include "graphics/mesh/submesh/packedmesh.h"
 #include "world/objects/item.h"
@@ -61,6 +64,43 @@ constexpr uint32_t landscapeMask = (1u << DynamicWorld::C_Landscape) | (1u << Dy
                                     (1u << DynamicWorld::C_MovableQuery);
 constexpr uint32_t visualMask    = landscapeMask | (1u << DynamicWorld::C_SmallVobQuery);
 constexpr uint32_t waterMask     = 1u << DynamicWorld::C_Water;
+
+struct FractureMotion {
+  float hit = 250.f, falloff = 45.f, outward = 60.f, spin = 4.f, cap = 450.f;
+
+  static FractureMotion load() {
+    FractureMotion motion;
+    const auto* env=std::getenv("OPENGOTHIC_FRACTURE_MOTION");
+    if(env==nullptr || env[0]=='\0') return motion;
+    const auto invalid=[](const std::string& entry, const char* reason) {
+      Tempest::Log::e("Invalid OPENGOTHIC_FRACTURE_MOTION entry '",entry,"': ",reason,"; using defaults");
+      return FractureMotion{};
+      };
+    std::istringstream entries(env);
+    for(std::string entry;std::getline(entries,entry,',');) {
+      std::istringstream field(entry);
+      field.imbue(std::locale::classic());
+      std::string key;
+      float value=0;
+      if(!std::getline(field,key,'=') || !(field>>value) || !(field>>std::ws).eof() ||
+         !std::isfinite(value) || value<0.f)
+        return invalid(entry,"expected key=value with a finite non-negative number");
+      const auto first=key.find_first_not_of(" \t\r\n\f\v");
+      if(first==std::string::npos) return invalid(entry,"missing key");
+      key=key.substr(first,key.find_last_not_of(" \t\r\n\f\v")-first+1);
+      if(key=="hit") motion.hit=value;
+      else if(key=="falloff") {
+        if(value==0.f) return invalid(entry,"falloff must be greater than zero");
+        motion.falloff=value;
+        }
+      else if(key=="outward") motion.outward=value;
+      else if(key=="spin") motion.spin=value;
+      else if(key=="cap") motion.cap=value;
+      else return invalid(entry,"unknown key");
+      }
+    return motion;
+    }
+  };
 
 bool isNpcMoveSkipped(const Tempest::Vec3& displacement) {
   constexpr float eps = 2.f; // Legacy component-wise two centimetre skip.
@@ -161,6 +201,7 @@ struct DynamicWorld::MovableVobs {
   std::unordered_map<std::string,std::shared_ptr<Shape>> shapes;
   std::vector<BodyData*> bodies;
   std::vector<MovableVobContacts> census;
+  const FractureMotion fractureMotion = FractureMotion::load();
   double validationMs = 0;
   bool finalized = false;
   bool enabled = true;
@@ -197,7 +238,7 @@ struct DynamicWorld::BodyData {
   std::function<void(const Tempest::Matrix4x4&)> transformCallback;
   const FractureRule* fractureRule = nullptr;
   float health = 0, breakImpulse = 0;
-  Tempest::Vec3 breakPoint;
+  Tempest::Vec3 breakPoint, breakDirection;
   bool pendingBreak = false, fragmentsWereSleeping = true;
   std::vector<std::unique_ptr<CollisionWorld::DynamicBody>> fragments;
   std::vector<int64_t> fragmentSleepTime;
@@ -2034,6 +2075,7 @@ bool DynamicWorld::meleeStrike(BodyData& obj,const Tempest::Vec3& direction,cons
   obj.traceCulprit=obj.body->traceCulprit();
   obj.breakImpulse=impulse;
   obj.breakPoint=point;
+  obj.breakDirection=direction;
   return true;
   }
 
@@ -2219,7 +2261,7 @@ void DynamicWorld::loadDestructionVobs(Serialize& fin) {
       std::string traceCulprit;
       if(schema>=2)
         fin.read(traceTimeEncoded,traceCulprit);
-      if(pieceCount>20)
+      if(pieceCount>64)
         return;
       std::vector<Piece> pieces(pieceCount);
       bool valid=std::isfinite(health) && health>=0.f && PhysicsSave::validTransform(matrix) &&
@@ -2261,10 +2303,12 @@ void DynamicWorld::loadDestructionVobs(Serialize& fin) {
           if(!piece.present)
             continue;
           const float mass=float(obj->movableMass*mesh.pieces[i].volume/mesh.volume);
-          auto body=world->addDynamicBody(mesh.pieces[i].hull,piece.matrix,obj->movableShape->friction,mass,C_Fragment);
+          const auto group=mesh.version==3 ? mesh.pieces[i].group : obj->movableShape->material;
+          const float friction=mesh.version==3 ? materialFriction(group) : obj->movableShape->friction;
+          auto body=world->addDynamicBody(mesh.pieces[i].hull,piece.matrix,friction,mass,C_Fragment);
           body->setLabel(obj->visual+" fragment");
-          body->setNoiseProfile(impactMaterial(obj->movableShape->material),obj->movableShape->material,obj->visual+" fragment");
-          body->setBuoyancyFraction(vobBuoyancyFraction(obj->movableShape->material));
+          body->setNoiseProfile(impactMaterial(group),group,obj->visual+" fragment");
+          body->setBuoyancyFraction(vobBuoyancyFraction(group));
           body->restoreTransform(piece.matrix,piece.sleeping);
           if(!piece.sleeping)
             body->setVelocity(piece.velocity,piece.omega);
@@ -2467,7 +2511,7 @@ std::vector<DynamicWorld::FragmentSnapshot> DynamicWorld::fragmentSnapshot() con
       const auto& body=*obj->fragments[i];
       result.push_back({reinterpret_cast<uintptr_t>(obj),obj->pose->zenId,i,body.isSleeping(),
                         body.matrix(),body.velocity(),body.angularVelocity(),obj->fragmentPermanent[i],
-                        obj->fragmentSleepTime[i]});
+                        obj->fragmentSleepTime[i],body.friction()});
       }
   return result;
   }
@@ -2608,7 +2652,7 @@ std::vector<DynamicWorld::RagdollSupport> DynamicWorld::ragdollSupports(const Ra
   }
 
 void DynamicWorld::damageMovableVob(BodyData& obj,float impulse,const Tempest::Vec3& point,bool arrow,
-                                  std::string_view impactCulprit) {
+                                  std::string_view impactCulprit,const Tempest::Vec3& direction) {
   if(!movableVobs->destructionEnabled || obj.fractureRule==nullptr || obj.movableShape->fracture==nullptr ||
      obj.body==nullptr || obj.pose->broken || obj.pendingBreak || !std::isfinite(impulse) || impulse<=0.f)
     return;
@@ -2623,6 +2667,7 @@ void DynamicWorld::damageMovableVob(BodyData& obj,float impulse,const Tempest::V
   obj.traceCulprit=impactCulprit.empty() ? obj.body->traceCulprit() : impactCulprit;
   obj.breakImpulse=impulse;
   obj.breakPoint=point;
+  obj.breakDirection=direction;
   }
 
 void DynamicWorld::breakMovableVob(BodyData& obj) {
@@ -2632,22 +2677,38 @@ void DynamicWorld::breakMovableVob(BodyData& obj) {
   const auto velocity=obj.body->velocity(),omega=obj.body->angularVelocity();
   const auto center=obj.body->centerOfMass();
   const auto& mesh=*obj.movableShape->fracture;
+  const auto& motion=movableVobs->fractureMotion;
+  const auto hit=obj.breakDirection.quadLength()>1.e-12f ? Tempest::Vec3::normalize(obj.breakDirection) : Tempest::Vec3();
   std::vector<std::unique_ptr<CollisionWorld::DynamicBody>> fragments;
   fragments.reserve(mesh.pieces.size());
   // All hulls, triangle data and GPU meshes are prepared while loading the
   // visual. The replacement only installs native bodies and transfers motion.
-  for(const auto& piece:mesh.pieces) {
+  for(size_t i=0;i<mesh.pieces.size();++i) {
+    const auto& piece=mesh.pieces[i];
     const float mass=float(obj.movableMass*piece.volume/mesh.volume);
-    auto body=world->addDynamicBody(piece.hull,matrix,obj.movableShape->friction,mass,C_Fragment);
+    const auto group=mesh.version==3 ? piece.group : obj.movableShape->material;
+    const float friction=mesh.version==3 ? materialFriction(group) : obj.movableShape->friction;
+    auto body=world->addDynamicBody(piece.hull,matrix,friction,mass,C_Fragment);
     body->setLabel(obj.visual+" fragment");
-    body->setNoiseProfile(impactMaterial(obj.movableShape->material),obj.movableShape->material,obj.visual+" fragment");
-    body->setBuoyancyFraction(vobBuoyancyFraction(obj.movableShape->material));
+    body->setNoiseProfile(impactMaterial(group),group,obj.visual+" fragment");
+    body->setBuoyancyFraction(vobBuoyancyFraction(group));
     const auto r=(body->centerOfMass()-center)*.01f;
     const Tempest::Vec3 tangential(omega.y*r.z-omega.z*r.y,omega.z*r.x-omega.x*r.z,omega.x*r.y-omega.y*r.x);
     // A small separation velocity releases touching cut faces. Linear and
     // angular momentum inherited from the intact body remain the base motion.
-    const auto outward=r.quadLength()>1.e-6f ? Tempest::Vec3::normalize(r)*40.f : Tempest::Vec3();
-    body->setVelocity(velocity+tangential*100.f+outward,omega);
+    auto outward=r.quadLength()>1.e-6f ? Tempest::Vec3::normalize(r) : Tempest::Vec3();
+    auto spin=Tempest::Vec3();
+    if(mesh.version==3) {
+      const float distance=(body->centerOfMass()-obj.breakPoint).length();
+      outward=outward*motion.outward+hit*(motion.hit*std::exp(-distance/motion.falloff));
+      const float speed=outward.length();
+      if(speed>motion.cap) outward*=motion.cap/speed;
+      const Tempest::Vec3 axis(hit.y*r.z-hit.z*r.y,hit.z*r.x-hit.x*r.z,hit.x*r.y-hit.y*r.x);
+      if(axis.quadLength()>1.e-12f)
+        spin=Tempest::Vec3::normalize(axis)*(motion.spin*float(i%8+1)/8.f);
+      }
+    else outward*=40.f;
+    body->setVelocity(velocity+tangential*100.f+outward,omega+spin);
     fragments.push_back(std::move(body));
     }
   obj.current=matrix;
@@ -2764,7 +2825,7 @@ size_t DynamicWorld::applyMovableVobImpulse(const Tempest::Vec3& center, float r
       obj->body->setTraceCulprit(culprit);
     if(obj->className=="fence" || obj->body->addImpulse(force,culprit,pointCm)) {
       ++count;
-      damageMovableVob(*obj,force.length(),pointCm!=nullptr ? *pointCm : target);
+      damageMovableVob(*obj,force.length(),pointCm!=nullptr ? *pointCm : target,false,{},force);
       }
     }
   return count;
@@ -2868,7 +2929,7 @@ void DynamicWorld::moveBullet(BulletBody &b, const Tempest::Vec3& dir, uint64_t 
           target.body->setTraceCulprit(culprit);
           target.body->addImpulseAtPoint(impulse,hit.point,culprit);
           }
-        damageMovableVob(target,impulse.length(),hit.point,true);
+        damageMovableVob(target,impulse.length(),hit.point,true,{},b.direction());
         }
       }
     if(isSpell){
@@ -3075,7 +3136,10 @@ void DynamicWorld::configureMeleeBench(int substeps) { world->configureMeleeBenc
 void DynamicWorld::updateMeleeBlade(const Npc* owner,const Tempest::Matrix4x4& hand,float lengthCm) { world->updateMeleeBlade(owner,hand,lengthCm); }
 void DynamicWorld::removeMeleeBlade(const Npc* owner) { world->removeMeleeBlade(owner); }
 void DynamicWorld::updateShadowBody(Npc* owner,const std::vector<MeleeBodyCapsule>& capsules) { world->updateShadowBody(owner,capsules); }
+void DynamicWorld::updateShadowBody(Npc* owner,const MeleeShadowBody& body,size_t* slotHint) { world->updateShadowBody(owner,body,slotHint); }
+void DynamicWorld::boundShadowBody(MeleeShadowBody& body) { CollisionWorld::boundShadowBody(body); }
 void DynamicWorld::removeShadowBody(const Npc* owner) { world->removeShadowBody(owner); }
+bool DynamicWorld::shadowBody(const Npc* owner,MeleeShadowBody& out) const { return world->shadowBody(owner,out); }
 void DynamicWorld::updateShadowBlade(const Npc* owner,uint64_t swingId,const std::vector<MeleeBladeSegment>& segments,
                                      uint64_t timeMs,double activeBeginMs,double activeEndMs,float walkableCos,
                                      Tempest::Vec3 forward, MeleeImpact::Weapon weapon) {
@@ -3134,6 +3198,7 @@ float DynamicWorld::materialFriction(asset::MaterialGroup mat) {
     case asset::MaterialGroup::SNOW:
       return 0.2f;
     case asset::MaterialGroup::NONE:
+    case asset::MaterialGroup::CLAY:
       break;
     }
   return 0.75f;
@@ -3143,6 +3208,7 @@ float DynamicWorld::materialDensity(asset::MaterialGroup mat) {
   switch (mat) {
     case asset::MaterialGroup::UNDEFINED:
     case asset::MaterialGroup::NONE:
+    case asset::MaterialGroup::CLAY:
       return 2000.0f;
     case asset::MaterialGroup::METAL:
       return 7800.f;
@@ -3757,7 +3823,7 @@ bool DynamicWorld::Item::touchedByNpc() const {
 
 bool DynamicWorld::Item::addImpulse(const Tempest::Vec3& impulseNs, Npc* culprit) {
   if(obj==nullptr || obj->body==nullptr || !obj->body->addImpulse(impulseNs,culprit)) return false;
-  if(obj->movableShape!=nullptr) owner->damageMovableVob(*obj,impulseNs.length(),obj->body->centerOfMass());
+  if(obj->movableShape!=nullptr) owner->damageMovableVob(*obj,impulseNs.length(),obj->body->centerOfMass(),false,{},impulseNs);
   return true;
   }
 

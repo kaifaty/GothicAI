@@ -882,7 +882,8 @@ def _add_voice_args(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--voice-files",
         action="store_true",
-        help="the game may name a wav the hero says instead of the microphone (the test bench, shorts/)",
+        help=("the game may name a wav the hero says instead of the microphone "
+              "(the test bench, gothic-shorts)"),
     )
 
 

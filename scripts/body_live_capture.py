@@ -229,7 +229,7 @@ async def capture(args) -> int:
         game_guard()
         with (out / "game.log").open("w") as log:
             game = await asyncio.create_subprocess_exec(str(args.game.resolve()), "-g", str(args.assets),
-                "-g2", "-window", "-devmode", "-save", "1", cwd=run, env=env,
+                "-window", "-devmode", "-save", "1", cwd=run, env=env,
                 stdout=log, stderr=asyncio.subprocess.STDOUT)
             await asyncio.wait_for(game.wait(), timeout=180)
         await asyncio.wait_for(session_done.wait(), timeout=5)

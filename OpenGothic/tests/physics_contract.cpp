@@ -1,3 +1,4 @@
+#define MINIZ_NO_ZLIB_COMPATIBLE_NAMES
 #include "asset/fromzenkit.h"
 #include "physics/collisionworld.h"
 #include "physics/dynamicworld.h"
@@ -16,6 +17,7 @@
 #include "world/bodytraces.h"
 #include "world/bloodstains.h"
 #include "gothic.h"
+#include "basemesh.h"
 
 #include <Tempest/Log>
 #include <Tempest/MemReader>
@@ -50,6 +52,7 @@
 #include <filesystem>
 #include <fstream>
 #include <chrono>
+#include <random>
 #include <string>
 #include <utility>
 #include <vector>
@@ -2013,6 +2016,190 @@ namespace {
       require(!object.isBroken() && world.fragmentSnapshot().empty(),
               "uncached visuals must preserve intact legacy physics even after a large impulse");
       }
+    }
+
+  void testOwnFractureMotion() {
+    const auto root=std::filesystem::temp_directory_path()/
+                    ("gothic-fracture-motion-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(root/"meshes");
+    const auto* oldContentValue=std::getenv("OPENGOTHIC_CONTENT");
+    const bool hadContent=oldContentValue!=nullptr;
+    const std::string oldContent=hadContent ? oldContentValue : "";
+    const auto* oldMotionValue=std::getenv("OPENGOTHIC_FRACTURE_MOTION");
+    const bool hadMotion=oldMotionValue!=nullptr;
+    const std::string oldMotion=hadMotion ? oldMotionValue : "";
+    setenv("OPENGOTHIC_CONTENT",root.c_str(),1);
+    setenv("OPENGOTHIC_FRACTURE_MOTION","hit=250,falloff=45,outward=60,spin=4,cap=450",1);
+    constexpr const char* visual="NW_NATURE_FENCE_01.MRM";
+    constexpr uint32_t zenId=6403;
+    auto parent=movableCollisionBox({100,100,100});
+    parent.sub_meshes[0].mat.name="WOOD";
+    writeBaseMesh(parent,"NW_NATURE_FENCE_01",root/"meshes/model.glb");
+    std::ofstream(root/"meshes/meshes.json")<<R"({"NW_NATURE_FENCE_01":{"glb":"model.glb"}})";
+    {
+      Resources resources;
+      bool replaced=false;
+      const auto loaded=Resources::loadVisualMesh(visual,&replaced);
+      Resources::MeshReplacementSource source;
+      require(replaced && Resources::meshReplacementLoaded(visual,&source),
+              "motion fixture must bind its sidecar to a successfully loaded own GLB");
+      ProtoMesh proto(PackedMesh(loaded,PackedMesh::PK_Visual,true),visual);
+      const auto write=[&](size_t version,size_t count) {
+        std::ofstream file(root/"meshes/model.fracture");
+        file<<"GOTHIC_FRACTURE "<<version<<"\nsource "<<source.size<<' '<<std::hex<<source.crc32<<std::dec
+            <<"\npieces "<<count<<'\n';
+        for(size_t i=0;i<count;++i) {
+          const Tempest::Vec3 center=version==3 ? Tempest::Vec3(-42.f+12.f*float(i%8),-24.f+12.f*float(i/8),0) :
+                                               Tempest::Vec3(i&1 ? 25.f : -25.f,i&2 ? 25.f : -25.f,i&4 ? 25.f : -25.f);
+          auto piece=movableBox(version==3 ? Tempest::Vec3(10,10,10) : Tempest::Vec3(50,50,50));
+          for(auto& p:piece.positions) { p.x+=center.x; p.y+=center.y; p.z+=center.z; }
+          file<<"piece "<<(version==3 ? 1000 : 125000)<<' '<<center.x<<' '<<center.y<<' '<<center.z<<' ';
+          if(version==3) {
+            file<<(i%2==0 ? "WOOD" : "METAL")<<" 1 12\nhull 8\n";
+            for(const auto& p:piece.positions) file<<p.x<<' '<<p.y<<' '<<p.z<<'\n';
+            }
+          else file<<"12\n";
+          for(const auto& triangle:piece.sub_meshes[0].triangles) {
+            file<<"tri WOOD.TGA\n";
+            for(const auto index:triangle.wedges) {
+              const auto& p=piece.positions[index];
+              file<<p.x<<' '<<p.y<<' '<<p.z<<" 0 1 0 0 0\n";
+              }
+            }
+          }
+        require(bool(file),"motion fixture must write the complete sidecar");
+        };
+      const auto birth=at(0,1000,0);
+      const auto make=[&](DynamicWorld& world) {
+        // A static fence isolates the added fracture velocity from transferred
+        // parent momentum, damping and integration.
+        return world.addMovableVob(proto,visual,birth,.04f,true,"fence",true,zenId);
+        };
+      const auto strike=[&](DynamicWorld& target) {
+        MeleeBladeContact contact {};
+        contact.world=contact.stopsSwing=true;
+        contact.movableVob=target.movableVobSnapshot()[0].id;
+        contact.point={-50,1000,0};
+        contact.velocityCmS={250,0,0};
+        std::vector<uintptr_t> struck;
+        return target.meleeStoppedMovableVob(contact,40,1000,FractureRule::Melee::OneHand,nullptr,struck);
+        };
+      write(3,40);
+      DynamicWorld world(nullptr,asset::WorldMesh{});
+      auto object=make(world);
+      require(object.fractureMesh()!=nullptr && object.fractureMesh()->pieces.size()==40,
+              "version 3 physics must preload all forty authored pieces");
+      require(strike(world),"the own fence must break through the stopped blade's directed melee path");
+      world.tick(0);
+      const auto pieces=world.fragmentSnapshot();
+      require(object.isBroken() && pieces.size()==40,"version 3 must replace the parent with forty native fragments");
+      float mean=0;
+      const auto water=world.waterBodySnapshot();
+      for(const auto& piece:pieces) {
+        mean+=piece.velocity.x/40.f;
+        requireNear(piece.friction,piece.piece%2==0 ? .4f : 1.1f,.000001f,
+                    "fragment friction must use the authored wood or metal group");
+        requireNear(waterBody(water,zenId,piece.piece).targetFraction,piece.piece%2==0 ? .6f : 7.8f,.000001f,
+                    "fragment buoyancy must use the authored wood or metal group");
+        require(piece.velocity.length()<=450.001f && piece.angularVelocity.length()<=4.00001f,
+                "the added motion and deterministic spin must respect their limits");
+        }
+      require(mean>0 && pieces[16].velocity.x>pieces[23].velocity.x,
+              "the directed mean must be positive and the near central piece faster than the far central piece");
+      const auto saved=saveArchive([&](Serialize& output) { world.saveMovableVobs(output); });
+      DynamicWorld restored(nullptr,asset::WorldMesh{});
+      auto restoredObject=make(restored);
+      loadMovables(restored,saved);
+      const auto restoredPieces=restored.fragmentSnapshot();
+      require(restoredObject.isBroken() && restoredPieces.size()==40,
+              "save and load must restore all forty version 3 fragments");
+      const auto restoredWater=restored.waterBodySnapshot();
+      for(size_t i=0;i<pieces.size();++i) {
+        requireMatrix(restoredPieces[i].transform,pieces[i].transform,"forty-piece saves must restore each pose");
+        requireNear((restoredPieces[i].velocity-pieces[i].velocity).length(),0,.001f,
+                    "forty-piece saves must restore each velocity");
+        requireNear((restoredPieces[i].angularVelocity-pieces[i].angularVelocity).length(),0,.001f,
+                    "forty-piece saves must restore each spin");
+        requireNear(restoredPieces[i].friction,i%2==0 ? .4f : 1.1f,.000001f,
+                    "restored fragments must retain per-piece friction");
+        requireNear(waterBody(restoredWater,zenId,i).targetFraction,i%2==0 ? .6f : 7.8f,.000001f,
+                    "restored fragments must retain per-piece buoyancy");
+        }
+      write(3,39);
+      DynamicWorld mismatched(nullptr,asset::WorldMesh{});
+      auto mismatchedObject=make(mismatched);
+      loadMovables(mismatched,saved);
+      require(!mismatchedObject.isBroken() && mismatched.fragmentSnapshot().empty(),
+              "a changed sidecar piece count must skip saved debris without breaking the intact object");
+
+      write(3,40);
+      for(const char* config:{"hit=250, cap=450","hit=abc"}) {
+        setenv("OPENGOTHIC_FRACTURE_MOTION",config,1);
+        std::vector<std::string> errors;
+        Tempest::Log::setOutputCallback([&](Tempest::Log::Mode mode,const char* line) {
+          if(mode==Tempest::Log::Error && std::string_view(line).find("OPENGOTHIC_FRACTURE_MOTION")!=std::string_view::npos)
+            errors.emplace_back(line);
+          });
+        try {
+          DynamicWorld configured(nullptr,asset::WorldMesh{});
+          auto configuredObject=make(configured);
+          setenv("OPENGOTHIC_FRACTURE_MOTION","cap=0",1);
+          require(strike(configured),"whitespace or an invalid motion override must not prevent destruction");
+          configured.tick(0);
+          const auto configuredPieces=configured.fragmentSnapshot();
+          require(configuredObject.isBroken() && configuredPieces.size()==pieces.size(),
+                  "whitespace and invalid motion overrides must preserve every fragment");
+          for(size_t i=0;i<pieces.size();++i) {
+            requireNear((configuredPieces[i].velocity-pieces[i].velocity).length(),0,.0001f,
+                        "trimmed defaults and invalid overrides must retain the full default linear motion");
+            requireNear((configuredPieces[i].angularVelocity-pieces[i].angularVelocity).length(),0,.0001f,
+                        "trimmed defaults and invalid overrides must retain the full default spin");
+            }
+          }
+        catch(...) { Tempest::Log::setOutputCallback({}); throw; }
+        Tempest::Log::setOutputCallback({});
+        require(errors.size()==(std::string_view(config)=="hit=abc" ? 1u : 0u),
+                "invalid motion overrides must log one error per world; whitespace must be accepted silently");
+        if(!errors.empty()) {
+          constexpr std::string_view prefix="Invalid OPENGOTHIC_FRACTURE_MOTION entry 'hit=abc': ";
+          const auto fallback=errors[0].find("; using defaults");
+          require(errors[0].starts_with(prefix) && fallback!=std::string::npos && fallback>prefix.size(),
+                  "an invalid motion override must identify its entry and explain why defaults were selected");
+          }
+        }
+      setenv("OPENGOTHIC_FRACTURE_MOTION","hit=500,falloff=90,outward=0,spin=0,cap=50",1);
+      DynamicWorld capped(nullptr,asset::WorldMesh{});
+      auto cappedObject=make(capped);
+      require(strike(capped),"the environment override fixture must receive a directed melee hit");
+      capped.tick(0);
+      require(cappedObject.isBroken(),"motion overrides must preserve destruction");
+      for(const auto& piece:capped.fragmentSnapshot()) {
+        requireNear(piece.velocity.x,50.f,.0001f,"motion overrides must cap the added hit velocity");
+        requireNear(piece.velocity.y,0.f,.0001f,"outward=0 must suppress vertical separation");
+        requireNear(piece.angularVelocity.length(),0.f,.0001f,"spin=0 must suppress added spin");
+        }
+
+      write(2,8);
+      DynamicWorld legacy(nullptr,asset::WorldMesh{});
+      auto legacyObject=make(legacy);
+      require(legacy.meleeMovableVobs({-100,1000,0},{1,0,0},150,40,1000,FractureRule::Melee::OneHand)==1,
+              "version 2 must retain the original melee destruction path");
+      legacy.tick(0);
+      const auto legacyPieces=legacy.fragmentSnapshot();
+      require(legacyObject.isBroken() && legacyPieces.size()==8,"version 2 must retain its original eight pieces");
+      for(const auto& piece:legacyPieces) {
+        const auto expected=Tempest::Vec3::normalize(legacyObject.fractureMesh()->pieces[piece.piece].center)*40.f;
+        requireNear((piece.velocity-expected).length(),0,.0001f,
+                    "version 2 must retain exactly forty centimetres per second outward despite motion overrides");
+        requireNear(piece.angularVelocity.length(),0.f,.0001f,"version 2 must not receive added spin");
+        }
+      std::printf("Own fracture v3: forty pieces, WOOD 0.4 / METAL 1.1 friction; hit mean %.6f, near %.6f > far %.6f cm/s; "
+                  "save/load and changed-count skip; whitespace and invalid override fallback; override cap 50; v2 outward 40 cm/s passed\n",
+                  double(mean),double(pieces[16].velocity.x),double(pieces[23].velocity.x));
+      }
+    if(hadContent) setenv("OPENGOTHIC_CONTENT",oldContent.c_str(),1); else unsetenv("OPENGOTHIC_CONTENT");
+    if(hadMotion) setenv("OPENGOTHIC_FRACTURE_MOTION",oldMotion.c_str(),1); else unsetenv("OPENGOTHIC_FRACTURE_MOTION");
+    std::filesystem::remove_all(root);
     }
 
   void testRotatingFragments() {
@@ -5703,8 +5890,245 @@ namespace {
     }
   }
 
+namespace {
+  // Shadow bodies as they were published before owner slots: a linear find per
+  // publication, erase_if per removal. Casts must see exactly these bodies, in
+  // this order: equal-time contacts on the same bone keep it.
+  struct ReferenceShadowBodies final {
+    struct Body final {
+      const Npc*                    owner = nullptr;
+      std::vector<MeleeBodyCapsule> capsules;
+      JPH::AABox                    bounds;
+      };
+    std::vector<Body> bodies;
+
+    void update(const Npc* owner, const std::vector<MeleeBodyCapsule>& capsules) {
+      JPH::AABox bounds;
+      for(const auto& capsule:capsules) {
+        const auto from=CollisionWorld::toMeters(capsule.from),to=CollisionWorld::toMeters(capsule.to);
+        const auto radius=JPH::Vec3::sReplicate(capsule.radiusCm*.01f);
+        bounds.Encapsulate(JPH::AABox(JPH::Vec3::sMin(from,to)-radius,JPH::Vec3::sMax(from,to)+radius));
+        }
+      auto it=std::find_if(bodies.begin(),bodies.end(),[owner](const Body& body) { return body.owner==owner; });
+      if(it==bodies.end()) {
+        bodies.push_back({owner,capsules,bounds});
+        } else {
+        it->capsules=capsules;
+        it->bounds=bounds;
+        }
+      }
+
+    void remove(const Npc* owner) {
+      std::erase_if(bodies,[owner](const Body& body) { return body.owner==owner; });
+      }
+    };
+
+  std::array<uint32_t,3> bitsOf(const Tempest::Vec3& v) {
+    return {std::bit_cast<uint32_t>(v.x),std::bit_cast<uint32_t>(v.y),std::bit_cast<uint32_t>(v.z)};
+    }
+
+  std::array<uint32_t,3> bitsOf(JPH::Vec3Arg v) {
+    return bitsOf(Tempest::Vec3(v.GetX(),v.GetY(),v.GetZ()));
+    }
+
+  bool sameShadowBody(const MeleeShadowBody& body, const ReferenceShadowBodies::Body& expected) {
+    if(!body.valid || body.capsules.size()!=expected.capsules.size() ||
+       bitsOf(body.boundsMin)!=bitsOf(expected.bounds.mMin) || bitsOf(body.boundsMax)!=bitsOf(expected.bounds.mMax))
+      return false;
+    for(size_t i=0; i<body.capsules.size(); ++i) {
+      const auto& a=body.capsules[i];
+      const auto& b=expected.capsules[i];
+      if(bitsOf(a.from)!=bitsOf(b.from) || bitsOf(a.to)!=bitsOf(b.to) ||
+         std::bit_cast<uint32_t>(a.radiusCm)!=std::bit_cast<uint32_t>(b.radiusCm) || a.bone!=b.bone || a.zone!=b.zone)
+        return false;
+      }
+    return true;
+    }
+
+  // The published list equals the reference body for body and in order, and
+  // every owner's slot leads to its own body; owners without one have no slot.
+  void requireReferenceShadowBodies(const CollisionWorld& world, const ReferenceShadowBodies& reference,
+                                    const std::vector<const Npc*>& owners, const char* message) {
+    const auto published=world.shadowBodies();
+    bool same=published.size()==reference.bodies.size();
+    for(size_t i=0; same && i<published.size(); ++i)
+      same=published[i].first==reference.bodies[i].owner && sameShadowBody(published[i].second,reference.bodies[i]);
+    for(const auto* owner:owners) {
+      MeleeShadowBody slot;
+      const bool found=world.shadowBody(owner,slot);
+      auto it=std::find_if(reference.bodies.begin(),reference.bodies.end(),[owner](const auto& body) { return body.owner==owner; });
+      same=same && found==(it!=reference.bodies.end()) && (!found || sameShadowBody(slot,*it));
+      }
+    require(same,message);
+    }
+
+  std::vector<MeleeBodyCapsule> shadowCapsules(size_t owner, uint32_t pose) {
+    // Two or three capsules, a different place for every owner and pose.
+    std::vector<MeleeBodyCapsule> capsules;
+    const float x=float(owner)*37.f+float(pose%7)*1.25f, z=float(pose%5)*-3.5f;
+    for(size_t i=0; i<2+(owner+pose)%2; ++i)
+      capsules.push_back({{x,90.f+float(i)*20.f,z},{x+float(i),110.f+float(i)*20.f,z+2.f},3.f+float(i),i+owner,uint8_t(1+i%3)});
+    return capsules;
+    }
+
+  void testShadowBodySlots() {
+    std::array<int,8> identities{};
+    std::vector<const Npc*> owners;
+    for(auto& identity:identities)
+      owners.push_back(reinterpret_cast<const Npc*>(&identity));
+    auto npc=[&](size_t i) { return const_cast<Npc*>(owners[i]); };
+
+    {
+      CollisionWorld world;
+      ReferenceShadowBodies reference;
+      auto publish=[&](size_t owner, uint32_t pose) {
+        const auto capsules=shadowCapsules(owner,pose);
+        world.updateShadowBody(npc(owner),capsules);
+        reference.update(owners[owner],capsules);
+        };
+      auto remove=[&](size_t owner) {
+        world.removeShadowBody(owners[owner]);
+        reference.remove(owners[owner]);
+        };
+      for(size_t i=0; i<6; ++i)
+        publish(i,0);
+      requireReferenceShadowBodies(world,reference,owners,"first publications append bodies in order");
+      for(size_t i=0; i<6; ++i)
+        publish(i,1);
+      requireReferenceShadowBodies(world,reference,owners,"republishing updates every body in its own slot");
+
+      // removeShadowBody in the middle: the bodies behind it move down a slot.
+      remove(2);
+      for(size_t i=3; i<6; ++i)
+        publish(i,2);
+      requireReferenceShadowBodies(world,reference,owners,"a removed body leaves the later slots pointing at their owners");
+      remove(2);
+      remove(7);
+      requireReferenceShadowBodies(world,reference,owners,"removing an owner without a body changes nothing");
+
+      // A damage script in the middle of the shadow loop spawns one NPC and
+      // removes two: one published already this frame, one not yet.
+      publish(0,3);
+      publish(1,3);
+      publish(6,3);
+      remove(4);
+      remove(0);
+      publish(3,3);
+      publish(5,3);
+      publish(6,4);
+      requireReferenceShadowBodies(world,reference,owners,"spawn and removal mid-loop keep slots and order");
+
+      // Publishing again after removal appends at the end, as before.
+      publish(2,5);
+      publish(0,5);
+      publish(2,6);
+      requireReferenceShadowBodies(world,reference,owners,"a body published again after removal returns at the end");
+
+      // Any sequence: the slot table never disagrees with the linear search.
+      std::mt19937 random(20261108);
+      for(uint32_t step=0; step<4000; ++step) {
+        const size_t owner=random()%owners.size();
+        if(random()%4==0)
+          remove(owner); else
+          publish(owner,step);
+        if(step%97==0)
+          requireReferenceShadowBodies(world,reference,owners,"random publications and removals match the linear search");
+        }
+      requireReferenceShadowBodies(world,reference,owners,"random publications and removals match the linear search");
+      }
+
+    // NPCs publish posed bodies with a serial and their slot hint. The same
+    // serial is not copied again; a hint gone stale after a removal, or a body
+    // written by another path in between, still ends in the owner's own slot.
+    {
+      CollisionWorld world;
+      ReferenceShadowBodies reference;
+      std::array<MeleeShadowBody,4> posed;
+      std::array<size_t,4> hints;
+      hints.fill(size_t(-1));
+      uint64_t serial=0;
+      auto pose=[&](size_t owner, uint32_t at) {
+        posed[owner].capsules=shadowCapsules(owner,at);
+        CollisionWorld::boundShadowBody(posed[owner]);
+        posed[owner].serial=++serial;
+        };
+      auto publish=[&](size_t owner) {
+        world.updateShadowBody(npc(owner),posed[owner],&hints[owner]);
+        reference.update(owners[owner],posed[owner].capsules);
+        };
+      for(size_t i=0; i<4; ++i) {
+        pose(i,0);
+        publish(i);
+        }
+      require(hints==std::array<size_t,4>{0,1,2,3},"slot hints follow the publication order");
+      publish(1);
+      requireReferenceShadowBodies(world,reference,owners,"a serial published again keeps its body");
+      world.removeShadowBody(owners[0]);
+      reference.remove(owners[0]);
+      pose(2,1);
+      for(size_t i=1; i<4; ++i)
+        publish(i);
+      require(hints[1]==0 && hints[2]==1 && hints[3]==2,"hints stale after a removal are corrected");
+      requireReferenceShadowBodies(world,reference,owners,"stale hints publish into the owners' slots");
+      world.updateShadowBody(npc(3),shadowCapsules(3,9));
+      reference.update(owners[3],shadowCapsules(3,9));
+      publish(3);
+      requireReferenceShadowBodies(world,reference,owners,"a body written in between is replaced by the posed serial");
+      publish(0);
+      require(hints[0]==3,"an owner published again after removal gets the last slot");
+      requireReferenceShadowBodies(world,reference,owners,"an owner published again keeps its posed body");
+      }
+
+    // An NPC destroyed before another NPC's blade is flushed: its body is gone
+    // from that cast, and contacts already recorded on it are dropped.
+    for(const bool recorded:{false,true}) {
+      CollisionWorld world;
+      ReferenceShadowBodies reference;
+      auto* attacker=npc(0);
+      auto* first=npc(1);
+      auto* second=npc(2);
+      auto* third=npc(3);
+      auto publish=[&](Npc* owner, const std::vector<MeleeBodyCapsule>& capsules) {
+        world.updateShadowBody(owner,capsules);
+        reference.update(owner,capsules);
+        };
+      publish(attacker,{{{0,0,-300},{0,20,-300},1.f,0,1}});
+      publish(first,{{{-30,0,0},{-30,20,0},1.f,0,1}});
+      publish(second,{{{30,0,0},{30,20,0},1.f,0,1}});
+      publish(third,{{{0,0,50},{0,20,50},1.f,0,1}});
+      const MeleeBladeSegment before{{-100,1,0},{-100,20,0},{1,0,0},2.f};
+      const MeleeBladeSegment after{{100,1,0},{100,20,0},{1,0,0},2.f};
+      world.updateShadowBlade(attacker,1,{before},0,0,100);
+      world.updateShadowBlade(attacker,1,{after},100,0,100);
+      if(recorded)
+        world.flushShadowBlades();
+      world.removeShadowBody(first);
+      reference.remove(first);
+      if(!recorded)
+        world.flushShadowBlades();
+      const auto hits=world.takeShadowBladeContacts(attacker);
+      require(hits.size()==1 && hits[0].npc==second,
+              recorded ? "a destroyed NPC's recorded contact is dropped before the attacker takes it"
+                       : "a body removed before the flush is not cast against");
+      requireReferenceShadowBodies(world,reference,owners,"removal during a swing keeps the other slots");
+      // The next frame moves the survivors; a new swing finds them in their slots.
+      publish(second,{{{60,0,0},{60,20,0},1.f,0,1}});
+      publish(third,{{{0,0,2},{0,20,2},1.f,0,1}});
+      requireReferenceShadowBodies(world,reference,owners,"survivors republish into their own slots");
+      world.removeShadowBlade(attacker);
+      world.updateShadowBlade(attacker,2,{before},200,200,300);
+      world.updateShadowBlade(attacker,2,{after},300,200,300);
+      world.flushShadowBlades();
+      const auto next=world.takeShadowBladeContacts(attacker);
+      require(next.size()==2 && next[0].npc==third && next[1].npc==second,
+              "a swing after the removal hits the republished bodies where they moved");
+      }
+    }
+  }
+
 int main() {
   try {
+    testShadowBodySlots();
     testCompoundChunkSeams();
     if(const auto* only=std::getenv("OPENGOTHIC_COMPOUND_SEAMS_ONLY"); only && std::string_view(only)=="1")
       return EXIT_SUCCESS;
@@ -5745,6 +6169,7 @@ int main() {
     testMovableVobArrowIdentity();
     testSkinnedMeshMinimum();
     testDestruction();
+    testOwnFractureMotion();
     testRotatingFragments();
     testPhysicsNoise();
     testRagdollNoise();

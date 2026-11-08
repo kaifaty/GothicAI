@@ -194,7 +194,7 @@
 **Запуск.** Новая игра в мире, сразу после стартовых скриптов (день 0, 08:00), без единого шага мира:
 
 ```sh
-gothic-body-runner -g "$GOTHIC_DIR" -g2 --world NEWWORLD.ZEN --society-export /abs/out/society-world.json
+gothic-body-runner -g "$GOTHIC_DIR" --world NEWWORLD.ZEN --society-export /abs/out/society-world.json
 ```
 
 Раннер пишет файл, печатает в журнал строку `society export:` с числами и временем и выходит с кодом 0. База выбирается как у игры (`OPENGOTHIC_BASE_FINGERPRINT` и прочие). Код — [`game/societyexport.cpp`](../OpenGothic/game/societyexport.cpp). Проверка — цель `gothic-society-export-contract` (`EXCLUDE_FROM_ALL`). Она дважды запускает раннер на данных игры (`GOTHIC_DIR`) и сверяет файл, как описано ниже в «Проверке». На Ryzen: `~/.codex/checks/gothic/engine-targets.sh . gothic-society-export-contract`.

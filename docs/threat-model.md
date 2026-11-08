@@ -4,6 +4,8 @@
 
 Документ описывает `main` на 2026-10-31. PR, который добавляет слушающий порт, команду моста, секрет, загрузчик файлов, скачивание, инструмент модели или удаление файлов в скриптах, правит и этот документ.
 
+Инструмент роликов живёт в приватном репозитории `kaifaty/gothic-shorts`.
+
 ## Система коротко
 
 Gothic AI — одиночная игра. Движок OpenGothic с ИИ-мостом и Python-сервисы работают на компьютере игрока, модели — у внешних провайдеров или на своей GPU-машине. Подробная карта — [`docs/README.md`](README.md).
@@ -27,7 +29,6 @@ Gothic AI — одиночная игра. Движок OpenGothic с ИИ-мо�
 2. **Секреты:**
    - токены входа ChatGPT в `~/.config/gothic-ai/chatgpt.json`;
    - ключи API (Inworld, OpenAI) в `~/.config/gothic-ai/secrets.toml` лаунчера или в `.env`;
-   - OAuth YouTube для `shorts/`;
    - ssh-доступ к машинам разработки.
 3. **Квота и деньги игрока:** подписка ChatGPT, платные Inworld TTS и STT.
 4. **Приватность игрока:** голос с микрофона, реплики, память NPC (`memory.sqlite3`), трассы ходов (`traces/`), журналы.
@@ -129,7 +130,6 @@ Gothic AI — одиночная игра. Движок OpenGothic с ИИ-мо�
 ### 8. Секреты на диске и в журналах
 
 - `chatgpt.json` и `secrets.toml` пишутся сразу с правами 0600. Файл `.env` и каталог `secrets/` в `.gitignore`.
-- Токен YouTube сначала пишется с правами по umask и только потом получает 0600 (`shorts/.../youtube.py`).
 - С `--verbose` сервер включает DEBUG для всех журналов и глушит до WARNING `httpx`, `httpcore`, `openai` и `websockets`. Эти библиотеки на DEBUG пишут заголовки, в том числе рукопожатие WebSocket Responses с `Authorization: Bearer`. ASR и TTS так же глушат свои HTTP-библиотеки и `websockets`.
 - Трассы ходов (`traces/*.jsonl`) хранят полные инструкции, реплики игрока и вызовы инструментов; файлы создаются с правами по умолчанию.
 - `deploy-gpu.sh show` печатает значения `GPU_*` в терминал.
@@ -154,7 +154,7 @@ Gothic AI — одиночная игра. Движок OpenGothic с ИИ-мо�
   - Actions закреплены тегами, не SHA;
   - `SHA256SUMS` и манифест лежат в том же выпуске; подписи кода нет.
 - **Зависимости Python:**
-  - `uv.lock` с хешами у `server`, сервисов, лаунчера, `libs/chatgpt-auth`, `shorts`, `site`;
+  - `uv.lock` с хешами у `server`, сервисов, лаунчера, `libs/chatgpt-auth`, `site`;
   - у `body-service` lock нет;
   - `scripts/content/requirements.txt` закреплён `==` без хешей.
 - **Библиотеки C++** лежат в `OpenGothic/lib/` файлами, их коммиты записаны в `VENDORED.md`.
