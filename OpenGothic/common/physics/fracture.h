@@ -27,8 +27,20 @@ struct FractureMesh {
     asset::MaterialGroup group = asset::MaterialGroup::UNDEFINED;
     std::vector<Triangle> triangles;
     JPH::ShapeRefC hull;
+    // Format 3: the convex hulls of the piece (hull is one of them or their compound).
+    std::vector<JPH::ShapeRefC> hulls;
+    };
+  // Format 3 bonds (reports/physics/2026-11-destruction-bonds): pieces a < b joined at
+  // `point`, source-visual centimetres. A file without the block has none.
+  enum class BondKind : uint8_t { Nail, Hoop, Groove, Dowel, Along, Across };
+  static constexpr size_t BondKinds = 6;
+  struct Bond {
+    uint32_t a = 0, b = 0;
+    BondKind kind = BondKind::Nail;
+    Tempest::Vec3 point;
     };
   std::vector<Piece> pieces;
+  std::vector<Bond> bonds;
   double volume = 0;
   size_t version = 0;
 
@@ -43,9 +55,33 @@ bool fractureMaterialsCollide(asset::MaterialGroup a, asset::MaterialGroup b);
 // Native filter of one format 3 break: the group ID is the break, the sub-group the
 // piece index, and the table disables only the pairs fractureMaterialsCollide rejects.
 JPH::Ref<JPH::GroupFilter> fractureGroupFilter(const FractureMesh& mesh);
+// The same between the bond groups of one break (sub-group = group index): a group of
+// METAL pieces only does not collide with the groups that hold WOOD.
+JPH::Ref<JPH::GroupFilter> fractureGroupFilter(const FractureMesh& mesh, const std::vector<uint32_t>& pieceGroup,
+                                               uint32_t groups);
+
+// What broke the prop: the bond radius depends on it, a spell's force breaks every bond.
+enum class FractureHit : uint8_t { Fist, OneHand, TwoHand, Arrow, Impact, Spell };
+
+// Bond rule numbers, OPENGOTHIC_FRACTURE_BONDS="fist=20,one=35,two=55,arrow=12,impact=30,
+// nail=1,hoop=1,groove=1.2,dowel=0.8,along=0.7,across=1.5,ring=0.5"; an invalid entry logs
+// one error and keeps every default.
+struct FractureBonds {
+  float radius[5] = {20.f, 35.f, 55.f, 12.f, 30.f}; // centimetres by FractureHit, Fist..Impact
+  float strength[FractureMesh::BondKinds] = {1.f, 1.f, 1.2f, .8f, .7f, 1.5f}; // by BondKind
+  float ring = .5f; // a hoop that lost more than this share of its HOOP bonds lets go of all
+  static FractureBonds load();
+  };
+
+// The bond groups left after a blow of `hit` at `point` (source-visual centimetres): group
+// index per piece, groups numbered by their smallest piece. Without bonds or for a spell,
+// every piece is its own group (group == piece). `broken`, when given, gets each bond's fate.
+std::vector<uint32_t> fractureGroups(const FractureMesh& mesh, const FractureBonds& rule, FractureHit hit,
+                                     const Tempest::Vec3& point, std::vector<bool>* broken = nullptr);
 
 struct FractureRule {
   enum class Melee { Fist, OneHand, TwoHand };
+  static FractureHit hit(Melee kind);
   std::string visualPattern, className;
   float health = 100;
   float threshold = 5; // newton seconds per kilogram (delta velocity, m/s)

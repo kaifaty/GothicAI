@@ -142,11 +142,12 @@ struct FracturePieces {
     float lastHeight=0,lastNative=0;
     std::vector<Tempest::Vec3> vertices;
     JPH::ShapeRefC hull;
+    uint32_t bondGroup=0; // bond group at the break: pieces of one group share one body
     };
   struct Break {
     uintptr_t parent=0;
     std::string label,visual;
-    size_t version=0,samples=0;
+    size_t version=0,samples=0,groups=0;
     uint64_t breakTime=0;
     std::vector<Piece> pieces;
     };

@@ -4757,7 +4757,7 @@ std::string destructionFragments(World& world) {
     const auto& center=part.centerOfMass;
     const auto water=world.physic()->waterRay(center,50);
     const auto above=world.physic()->rayStatic(center+Vec3(0,2000,0),center);
-    result+="{\"parent_id\":"+std::to_string(part.parentId)+",\"piece\":"+std::to_string(part.piece)+
+    result+="{\"parent_id\":"+std::to_string(part.parentId)+",\"piece\":"+std::to_string(part.piece)+",\"bond_group\":"+std::to_string(part.bondGroup)+
       ",\"sleeping\":"+(part.sleeping?"true":"false")+",\"position_cm\":"+ragdollVector(movablePosition(part.transform))+
       ",\"velocity_cm_s\":"+ragdollVector(part.velocity)+",\"max_displacement_cm\":"+
       ragdollNumber(bench.destructionFragmentTravel[key])+",\"center_cm\":"+ragdollVector(center)+

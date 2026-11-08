@@ -551,7 +551,11 @@ class DynamicWorld final {
       int64_t asleepSince = -1;
       float friction = 0;
       Tempest::Vec3 centerOfMass;
+      // Bond group of the piece: pieces of one group share one native body (its pose, motion,
+      // sleep, permanence and centre of mass). Without bonds it equals the piece.
+      uint32_t bondGroup = 0;
       };
+    // One entry per surviving piece, in piece order.
     std::vector<FragmentSnapshot> fragmentSnapshot() const;
     // Bench-only: the deepest native contact of one piece with landscape and static objects, centimetres.
     float fragmentGroundPenetration(uintptr_t parentId, size_t piece) const;
@@ -755,7 +759,8 @@ class DynamicWorld final {
                                float weaponDamage, float strength, FractureRule::Melee kind, Npc* attacker);
     void           validateMovableVobs();
     void           syncMovableVob(BodyData& body);
-    void           damageMovableVob(BodyData& body, float impulse, const Tempest::Vec3& point, bool arrow = false,
+    void           damageMovableVob(BodyData& body, float impulse, const Tempest::Vec3& point,
+                                    FractureHit hit = FractureHit::Impact,
                                     std::string_view impactCulprit = {}, const Tempest::Vec3& direction = {});
     void           breakMovableVob(BodyData& body);
     void           syncFragments(BodyData& body);
