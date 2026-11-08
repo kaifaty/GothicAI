@@ -11,7 +11,7 @@ config: {"glb": model with tile UVs in metres and zone-key materials (barrel.py)
          "island_scale": {KEY: share}, "despeckle": {"radius": 6, "below": 0.6, "lift": 0.7}, "edge_radius": 0.006, "wet_height": 0.18, "algae": 0.7, "bleach": 0.35,
          "planks_per_tile": {KEY: n}, "seam_width": 0.07, "seam_dark": 0.75, "contrast": {KEY: gamma},
          "nodes": [NODE NAME, ...], "tile_normal": {KEY: strength}, "edge_wear": {KEY: share},
-         "measure_ao": {KEY: min baked AO},
+         "measure_ao": {KEY: min baked AO}, "ao_floor": {KEY: min AO}, "tiles": {KEY: tile dir},
          "crevice": {"distance": 0.02, "dirt": 0.7, "colour": [r, g, b]},
          "seam": {"radius": 0.012, "gain": 4.0, "dark": 0.5, "colour": [r, g, b]},
          "streaks": {"length": 0.25, "rust": 0.6, "dirt": 0.35, "rust_colour": [r, g, b], "column": 0.012},
@@ -27,7 +27,11 @@ gets more local contrast and is scaled back to its measured mean colour: the
 original reads by painted contrast, not by a brighter mean.
 Writes atlas PNGs, model.glb with the atlas as its only UV map, metrics.json.
 With "nodes" (a MOB with several attachments, chest.py) the GLB's objects are
-baked into one atlas together and exported again as those named nodes.
+baked into one atlas together and exported again as those named nodes; "*" takes every object
+of the GLB (the pieces of model.debris.glb, barrel_debris.py). A negative "_part" keeps its face's sector.
+"tiles" points a zone at another tile folder than maps_dir/<key lower> (relative: under content-staging).
+"ao_floor" holds a zone's baked AO and crevice AO at least at its value: faces that touch another piece
+in the baked pose and are seen once the pieces fall apart.
 The stage-1 filter (bakeoff.filtered_maps) stretches every tile's relief to the full
 range: a wood tile's normal leans 38 degrees on average, canvas 64, where real grain is a
 few. Baked at full strength the wood read in game as an embossed imitation and cloth as
@@ -122,6 +126,8 @@ scene.world = world
 bpy.ops.import_scene.gltf(filepath=str(staging / cfg["glb"]))  # an absolute path stays as it is
 meshes = [o for o in scene.objects if o.type == "MESH"]
 node_names = cfg.get("nodes", [])
+if node_names == "*":  # every object of the GLB is a node (model.debris.glb: one node per piece)
+    node_names = [o.name for o in meshes]
 if node_names:  # remember each face's node through the join
     if sorted(o.name for o in meshes) != sorted(node_names):
         raise SystemExit(f"GLB objects {[o.name for o in meshes]} do not match nodes {node_names}")
@@ -191,7 +197,8 @@ if "_PART" in mesh.attributes:  # the builder numbered its parts (a POINT attrib
     values = np.empty(len(mesh.vertices), np.float32)
     mesh.attributes["_PART"].data.foreach_get("value", values)
     first_vertex = np.array([mesh.loops[p.loop_start].vertex_index for p in mesh.polygons])
-    part = np.rint(values[first_vertex]).astype(int)
+    numbered = np.rint(values[first_vertex]).astype(int)
+    part = np.where(numbered >= 0, numbered, part)  # a negative number keeps the sector (barrel debris hoops)
 spread = cfg.get("tone_spread", 0.28)
 tones = 1 + spread * rng.uniform(-1, 1, max(int(part.max()) + 1, sectors + lid_planks))
 light = cfg.get("light_part")
@@ -246,7 +253,7 @@ z0, height = lo[2], hi[2] - lo[2]
 for slot in obj.material_slots:
     mat = slot.material
     key = mat.name.split(".")[0]
-    folder = staging / cfg["maps_dir"] / key.lower()
+    folder = staging / cfg.get("tiles", {}).get(key, Path(cfg["maps_dir"]) / key.lower())
     metal = key in metal_keys
     mat.use_nodes = True
     nodes, links = mat.node_tree.nodes, mat.node_tree.links
@@ -421,6 +428,14 @@ normal = bake_pass("normal", "NORMAL", samples=cfg.get("colour_samples", 16))
 ao = bake_pass("ao", "AO", samples=cfg.get("ao_samples", 64))[:, :, 0]
 glow = bake_pass("glow", "EMIT", "glow", samples=cfg.get("colour_samples", 16))[:, :, 0] if cfg.get("glow") else None
 
+zone_texel = np.floor(zone + 1e-3).astype(int) - 1
+floor_ao = np.zeros((size, size))
+for key, value in cfg.get("ao_floor", {}).items():
+    # Faces hidden in the baked pose (a debris stave's joints, the band under its hoop, the hoop's inside)
+    # touch another piece and bake black; once the pieces fall apart they are seen, so their AO is held up.
+    if key in keys:
+        floor_ao[zone_texel == keys.index(key)] = value
+ao = np.maximum(ao, floor_ao)
 strength = cfg.get("ao_strength", 0.85)
 albedo = colour * (1 - strength * (1 - ao))[..., None]
 if "despeckle" in cfg:
@@ -449,7 +464,7 @@ if any(k in cfg for k in ("crevice", "streaks", "wet_roughness", "moss", "seam",
     if "crevice" in cfg:
         spec = cfg["crevice"]
         world.light_settings.distance = spec.get("distance", 0.02)
-        crevice = bake_pass("crevice", "AO", samples=cfg.get("ao_samples", 64))[:, :, 0]
+        crevice = np.maximum(bake_pass("crevice", "AO", samples=cfg.get("ao_samples", 64))[:, :, 0], floor_ao)
         world.light_settings.distance = cfg.get("ao_distance", 0.15)
         gap = np.clip((1 - crevice) / 0.5, 0, 1) * ~zone_metal
         dirt = spec.get("dirt", 0.7) * gap
