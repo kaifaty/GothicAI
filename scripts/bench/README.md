@@ -347,7 +347,11 @@ the centre's travel, the angle of a flat piece's face and long axis from vertica
 real ground (`native_floor_penetration_cm`, Jolt `CollideShape` against landscape and static objects)
 and into the other pieces (format 3 METAL–WOOD pairs of one break are skipped: they never collide),
 the visible (vertex) penetration below that plane and below the ground under each vertex
-(`visible_terrain_penetration_cm`), hoops on the ground (`metal_on_ground`) and the 13→15 s jitter. Run with the
+(`visible_terrain_penetration_cm`), hoops on the ground (`metal_on_ground`) and the 13→15 s jitter. Every break also
+writes `destruction2_start` (each piece's centre over the ground and native hull depth at birth) and,
+frame by frame for 5 s, `destruction2_fell` for the first frame a piece's centre is under the ground or
+over no ground, with its previous frame; a fallen piece's row adds the static surface above and under
+it and water at it. Run with the
 `own-content-fracture` settings plus `TEMPEST_WINDOW_SIZE=1280x720`; `OPENGOTHIC_FRACTURE_MOTION`
 varies the version 3 piece motion. Inside a `movable measure` window the pieces are not sampled: the
 timed frames stay free of bench work.

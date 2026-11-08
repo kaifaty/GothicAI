@@ -236,6 +236,16 @@ void fracturePiecesTick(FracturePieces& state,World& world) {
       const auto floor=world.physic()->landRay(center+Vec3(0,100,0),400);
       const bool below=!floor.hasCol || Vec3::dotProduct(center-floor.v,floor.n)<-1.f;
       if(below)++fell;else resting.push_back(moved);
+      std::string where;
+      if(below) {
+        // A fallen piece: the static surface straight above or below it within 20 m, and water at it.
+        const auto above=world.physic()->rayStatic(center+Vec3(0,2000,0),center);
+        const auto under=world.physic()->rayStatic(center+Vec3(0,5,0),center-Vec3(0,2000,0));
+        const auto water=world.physic()->waterRay(center+Vec3(0,50,0),50);
+        where=",\"static_above_cm\":"+(above.hasCol?ragdollNumber(above.v.y-center.y):std::string("null"))+
+          ",\"static_under_cm\":"+(under.hasCol?ragdollNumber(center.y-under.v.y):std::string("null"))+
+          ",\"water\":"+(water.hasCol?"true":"false")+",\"water_depth_cm\":"+ragdollNumber(water.wdepth);
+        }
       const auto thin=Vec3::normalize(rotate(part.transform,piece.thin));
       const auto along=Vec3::normalize(rotate(part.transform,piece.longAxis));
       // Angle of the broad face from vertical, and of the long axis from vertical, degrees.
@@ -296,7 +306,7 @@ void fracturePiecesTick(FracturePieces& state,World& world) {
         ",\"stave\":"+(piece.stave?"true":"false")+",\"center_cm\":"+ragdollVector(center)+
         ",\"displacement_cm\":"+ragdollNumber(moved)+",\"face_from_vertical_deg\":"+ragdollNumber(face)+
         ",\"long_from_vertical_deg\":"+ragdollNumber(length)+",\"sleeping\":"+(part.sleeping?"true":"false")+
-        ",\"speed_cm_s\":"+ragdollNumber(speed)+",\"fell\":"+(below?"true":"false")+extra+"}";
+        ",\"speed_cm_s\":"+ragdollNumber(speed)+",\"fell\":"+(below?"true":"false")+where+extra+"}";
       }
     rows+="]";
     std::string pairs;
