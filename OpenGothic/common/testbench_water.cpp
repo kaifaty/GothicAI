@@ -1094,4 +1094,103 @@ void prepareWaterSpell(Water& state,const WaterContext& context,World& world,Npc
     ",\"caster_cm\":"+ragdollVector(caster)+",\"dummy_cm\":"+ragdollVector(dummy));
   }
 
+bool waterCommand(Water& waterState,const WaterContext& context,const std::vector<std::string>& a,World& w,Npc& pl,PlayerControl& ctrl) {
+  const std::string& c = a[0];
+  if(c=="water" && a.size()==2 && (a[1]=="on" || a[1]=="off")) {
+    Gothic::settingsSetI("GAME","buoyancy",a[1]=="on");
+    w.physic()->setBuoyancyEnabled(a[1]=="on");
+    }
+  else if(c=="water" && a.size()==3 && a[1]=="setup")prepareWaterFixture(waterState,context,w,pl,a[2]);
+  else if(c=="water-bodies" && a.size()==3 && a[1]=="setup") {
+    if(a[2]=="deep")prepareSpellFixture(w,pl,"wind");
+    prepareWaterBodiesFixture(waterState,context,w,pl,a[2]);
+    }
+  else if(c=="water-bodies" && a.size()==2 && a[1]=="kill-human") {
+    if(waterState.actors.empty() || waterState.caseName!="bodies-deep" || waterState.actors.front().npc->isDown()) {
+      arenaAbort("water corpse kill requires the living human at the prepared water lip");return true;
+      }
+    waterState.killOnThrow=true;
+    event("water_bodies_death_armed","\"actor_id\":"+std::to_string(w.npcId(waterState.actors.front().npc))+
+      ",\"minimum_wind_speed_cm_s\":100,\"minimum_displacement_cm\":50");
+    }
+  else if(c=="water-bodies" && a.size()==3 && a[1]=="checkpoint")waterBodiesCheckpoint(waterState,context,w,a[2]);
+  else if(c=="water-bodies" && a.size()==3 && a[1]=="initial")waterBodiesInitial(waterState,context,w,pl,a[2]);
+  else if(c=="water-bodies" && a.size()==2 && a[1]=="reset-motion") {
+    waterState.reference.clear();waterState.travel.clear();waterState.sample=uint64_t(-1);waterFields(waterState,context,w);
+    waterBodiesCheckpoint(waterState,context,w,"motion-reference");
+    }
+  else if(c=="water-bodies" && a.size()==3 && a[1]=="save") {
+    try {
+      if(waterState.actors.empty() || std::any_of(waterState.actors.begin(),waterState.actors.end(),[](const auto& actor) {
+        return !actor.npc->ragdollBody() || !actor.npc->ragdollBody()->isSleeping();
+        })) {arenaAbort("water body save requires every observed corpse to have slept");return true;}
+      waterBodiesCheckpoint(waterState,context,w,"saved");saveMovableSession(w,a[2]);
+      }
+    catch(const std::exception& error) {arenaAbort(error.what());}
+    }
+  else if(c=="water-bodies" && a.size()==3 && a[1]=="loot-ready")waterBodiesLootReady(waterState,w,pl,a[2]);
+  else if(c=="water-bodies" && a.size()==2 && a[1]=="loot")waterBodiesLoot(waterState,context,w,pl,ctrl);
+  else if(c=="water" && a.size()==2 && a[1]=="torch")waterTorch(waterState,w,pl);
+  else if(c=="water" && a.size()==3 && a[1]=="checkpoint")waterCheckpoint(waterState,context,w,a[2]);
+  else if(c=="water" && a.size()==3 && a[1]=="initial")waterInitial(waterState,context,w,pl,ctrl,a[2]);
+  else if(c=="water" && a.size()==2 && a[1]=="push-ready")prepareWaterSpell(waterState,context,w,pl,true);
+  else if(c=="water" && a.size()==2 && a[1]=="fireball-ready")prepareWaterSpell(waterState,context,w,pl,false);
+  else if(c=="water" && a.size()==3 && a[1]=="save") {
+    try {
+      for(const auto& body:w.physic()->waterBodySnapshot())
+        if(waterOwns(waterState,body) && !body.sleeping) {
+          arenaAbort("water save requires every observed body to have settled and slept");return true;
+          }
+      waterCheckpoint(waterState,context,w,"saved");saveMovableSession(w,a[2]);
+      }
+    catch(const std::exception& error) {arenaAbort(error.what());}
+    }
+  else if(c=="water" && a.size()==2 && a[1]=="swim-ready") {
+    const auto all=w.physic()->movableVobSnapshot();
+    const auto barrel=std::find_if(all.begin(),all.end(),[&](const auto& body){return body.zenId==waterState.barrelZen;});
+    if(barrel==all.end() || barrel->broken) {arenaAbort("water swim requires the intact native barrel");return true;}
+    auto center=(barrel->localBounds[0]+barrel->localBounds[1])*.5f;barrel->transform.project(center);
+    Vec3 surface;
+    if(!waterProbe(w,Vec3(center.x,waterState.center.y,center.z),160.f,6000.f,surface)) {
+      arenaAbort("water swim barrel has not reached deep enough real water");return true;
+      }
+    pl.closeWeapon(true);pl.clearAiQueue();pl.stopWalking();pl.setDirection(waterState.direction);
+    pl.setPosition(surface-waterState.direction*280.f-Vec3(0,100,0));pl.updateTransform();
+    waterState.heroStart=pl.position();waterState.heroLast=pl.position();waterState.heroMaxStep=0;
+    waterState.swim=true;waterState.sawSwim=false;
+    context.cam=C_Hold;lookFrom(surface-waterState.direction*600.f+Vec3(250,250,0),surface);
+    event("water_swim_begin","\"barrel_cm\":"+ragdollVector(center)+",\"hero_cm\":"+ragdollVector(pl.position())+
+      ",\"direction\":"+ragdollVector(waterState.direction));
+    }
+  else if(c=="water" && a.size()==2 && a[1]=="pickup-ready") {
+    if(waterState.items.empty()) {arenaAbort("water pickup requires the fixture arrow");return true;}
+    waterState.swim=false;
+    const auto point=waterState.items.front()->midPosition();
+    const auto floor=w.physic()->landRay(point+Vec3(70,100,0),6000.f);
+    if(!floor.hasCol) {arenaAbort("water pickup requires real ground beneath the item");return true;}
+    const auto water=w.physic()->waterRay(floor.v+Vec3(0,.1f,0),0);
+    pl.closeWeapon(true);pl.clearAiQueue();pl.stopWalking();
+    auto at=point+Vec3(70,0,0);at.y=water.hasCol && water.wdepth-floor.v.y>150.f?water.wdepth-100.f:floor.v.y;
+    pl.setPosition(at);pl.setDirection(point-at);pl.updateTransform();
+    event("water_pickup_ready","\"item_cm\":"+ragdollVector(point)+",\"hero_cm\":"+ragdollVector(at));
+    }
+  else if(c=="water" && a.size()==2 && a[1]=="pickup") {
+    if(waterState.items.empty()) {arenaAbort("water pickup fixture arrow is absent");return true;}
+    auto* item=waterState.items.front();
+    const auto symbol=item->clsId();
+    const auto before=pl.itemCount(symbol);
+    const auto point=item->midPosition();const auto state=pl.bodyStateMasked();
+    const bool swimming=pl.isSwim();
+    const bool accepted=ctrl.interact(*item);
+    if(accepted)waterState.items.erase(waterState.items.begin());
+    event("water_pickup","\"accepted\":"+std::string(accepted?"true":"false")+
+      ",\"body_state\":"+std::to_string(unsigned(state))+",\"swimming\":"+(swimming?"true":"false")+
+      ",\"inventory_before\":"+std::to_string(before)+",\"inventory_after\":"+std::to_string(pl.itemCount(symbol))+
+      ",\"distance_cm\":"+ragdollNumber((pl.position()-point).length())+
+      ",\"item_cm\":"+ragdollVector(point));
+    }
+  else return false;
+  return true;
+  }
+
 }

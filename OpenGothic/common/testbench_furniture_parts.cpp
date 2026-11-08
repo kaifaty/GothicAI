@@ -576,4 +576,25 @@ void furniturePerformanceReport(FurnitureParts& state,World& world) {
   if(!pass)arenaAbort("furniture loaded-world performance exceeded its active-scene budget or lost coverage");
   }
 
+bool furniturePartsCommand(FurnitureParts& state,const std::vector<std::string>& a,World& w,Npc& pl) {
+  const std::string& c = a[0];
+  if(c=="furniture-parts" && a.size()==2 && a[1]=="setup") furnitureSetup(state,w,pl);
+  else if(c=="furniture-parts" && a.size()==2 && a[1]=="trace") furnitureTraceBegin(state,w);
+  else if(c=="furniture-parts" && a.size()==2 && a[1]=="trace-report") furnitureTraceReport(state,w);
+  else if(c=="furniture-parts" && a.size()==2 && a[1]=="remove-table") furnitureRemoveTable(state,w);
+  else if(c=="furniture-parts" && a.size()==2 && a[1]=="table-items") furnitureTableItems(state,w,pl);
+  else if(c=="furniture-parts" && a.size()==2 && a[1]=="shelf-item") furnitureCupboardItem(state,w,pl);
+  else if(c=="furniture-parts" && a.size()==2 && a[1]=="items-report") furnitureItemReport(state,w);
+  else if(c=="furniture-parts" && a.size()==2 && a[1]=="clear-items") furnitureClearDrops(state,w);
+  else if(c=="furniture-parts" && a.size()==2 && a[1]=="ragdoll") furnitureRagdoll(state,w,pl);
+  else if(c=="furniture-parts" && a.size()==2 && a[1]=="ragdoll-report") furnitureRagdollReport(state,w);
+  else if(c=="furniture-parts" && a.size()==2 && a[1]=="walk") furnitureWalk(state,w,pl);
+  else if(c=="furniture-parts" && a.size()==2 && a[1]=="npc-walk") furnitureWalk(state,w,pl,true);
+  else if(c=="furniture-parts" && a.size()==2 && a[1]=="walk-report") furnitureWalkReport(state,w,pl);
+  else if(c=="furniture-parts" && a.size()==2 && a[1]=="performance") furniturePerformance(state,w,pl);
+  else if(c=="furniture-parts" && a.size()==2 && a[1]=="performance-report") furniturePerformanceReport(state,w);
+  else return false;
+  return true;
+  }
+
 }

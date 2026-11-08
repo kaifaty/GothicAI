@@ -517,6 +517,20 @@ extern std::string outDir;
 void say(const std::string& s);
 Tempest::Vec3 facing(const Npc& pl);
 Npc* findNpc(World& w, Npc& pl, const std::string& name);
+float num(const std::vector<std::string>& a,size_t i,float def);
+void prepareSpellFixture(World& world,Npc& player,std::string_view fixture);
+void destructionCheckpoint(World& world);
+void saveMovableSession(World& world,const std::string& label);
+
+bool monsterCharacterCommand(MonsterCharacter& state,const MonsterCharacterContext& context,const std::vector<std::string>& a,World& w,Npc& pl);
+bool characterCommand(Character& state,const CharacterContext& context,const std::vector<std::string>& a,World& w,Npc& pl,PlayerControl& ctrl);
+bool placedItemsCommand(PlacedItems& state,const std::vector<std::string>& a,World& w,Npc& pl,PlayerControl& ctrl);
+bool itemHullsCommand(ItemHulls& state,const std::vector<std::string>& a,World& w,Npc& pl);
+bool fracturePiecesCommand(const std::vector<uintptr_t>& ids,Npc* actor,const Tempest::Vec3& stand,const Tempest::Vec3& direction,CamMode& cam,bool& cutPending,const std::vector<std::string>& a,World& w);
+bool waterCommand(Water& waterState,const WaterContext& context,const std::vector<std::string>& a,World& w,Npc& pl,PlayerControl& ctrl);
+bool furniturePartsCommand(FurnitureParts& state,const std::vector<std::string>& a,World& w,Npc& pl);
+bool npcSimCommand(NpcDuel& duelState,NpcTierTest& tierState,NpcSpeedTest& speedState,size_t& pc,const std::vector<std::string>& prog,const std::vector<std::string>& a,World& w,Npc& pl);
+
 void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl);
 
 void lookFrom(const Tempest::Vec3& org,const Tempest::Vec3& tgt);
