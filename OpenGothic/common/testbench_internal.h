@@ -24,6 +24,7 @@
 #include "physics/dynamicworld.h"
 #include "physics/physics.h"
 #include "physics/physicmesh.h"
+#include "physics/physicmeshshape.h"
 #include "physics/ragdoll.h"
 #include "utils/keycodec.h"
 #include "world/waypoint.h"
@@ -192,6 +193,85 @@ struct CharacterContext {
   uint64_t& step;
   Npc*& subject;
   std::vector<KeyCodec::Action>& taps;
+};
+
+struct MonsterCharacter {
+  struct MonsterCharacterRoute {
+    Npc* npc=nullptr;
+    WayPoint destination,heroDestination;
+    bool heroRun=false,isolatedLedge=false;
+    std::string name,animation;
+    Tempest::Vec3 start,goal,lastPosition,lastVisual,progressPosition,lastSupported,attackStart;
+    uint64_t began=0,arrived=0,progressTime=0,attackEnded=0;
+    unsigned stalls=0,falls=0,cvFrames=0,swimFrames=0,callbacks=0;
+    float maxPhysicalJump=0,maxVisualJump=0,attackDistance=0,attackRise=0,tolerance=60;
+    bool active=false,reached=false,stalled=false,falling=false,wasAirborne=false,sawSwim=false,leftWater=false,chase=false,attack=false;
+    Tempest::Vec3 savedPosition;
+    unsigned restoreSteps=0;
+  } monsterCharacterRoute;
+  // Source shape must outlive the collision handle that borrows its mesh.
+  std::unique_ptr<PhysicMeshShape> monsterCharacterLedgeShape;
+  DynamicWorld::Item monsterCharacterLedgeBody;
+  struct MonsterCharacterFrame {
+    std::string route,animation;
+    uint64_t time=0,dt=0,npc=0;
+    Tempest::Vec3 root,visual;
+    bool enabled=false,active=false,moving=false,air=false,fall=false,swim=false;
+    float bodyYaw=0;
+    CharacterMoveFrame move;
+  };
+  std::vector<MonsterCharacterFrame> monsterCharacterFrames;
+  struct MonsterCharacterExtra {
+    Npc* npc=nullptr;
+    std::string role;
+    std::vector<WayPoint> points;
+    size_t next=0;
+    bool loop=false,queued=false,stalled=false,falling=false,wasAirborne=false;
+    Tempest::Vec3 start,lastPosition,lastVisual,progressPosition,lastSupported;
+    uint64_t progressTime=0,arrived=0;
+    unsigned arrivals=0,stalls=0,falls=0,cvFrames=0;
+    float maxPhysicalJump=0,maxVisualJump=0,travel=0;
+  };
+  std::deque<MonsterCharacterExtra> monsterCharacterExtras;
+  struct MonsterCharacterProp {
+    std::unique_ptr<MovableFixture> fixture;
+    std::string role;
+    Tempest::Vec3 start,lastIntact;
+    uintptr_t id=0;
+    float travel=0;
+    unsigned fragments=0;
+    bool broken=false;
+  };
+  std::vector<MonsterCharacterProp> monsterCharacterProps;
+  MonsterCharacterProp monsterCharacterBarrel;
+  struct MonsterCharacterPerformance {
+    uint64_t time=0,dt=0;
+    float physics=0,wall=0,maximumDistance=0;
+    unsigned nearby=0,virtualNearby=0,moving=0;
+    bool captured=false,normal=false;
+  };
+  std::vector<MonsterCharacterPerformance> monsterCharacterPerformance;
+  bool monsterCharacterMeasuring=false,monsterCharacterHasWall=false,monsterCharacterCrowd=false,monsterCharacterPack=false;
+  std::chrono::steady_clock::time_point monsterCharacterLastWall;
+  const Npc* monsterCharacterRenderRequest=nullptr;
+  Tempest::Vec3 monsterCharacterHeroStart;
+  uint32_t monsterCharacterSeed=1;
+  unsigned monsterCharacterMinNearby=20,monsterCharacterMaxNearby=0;
+  float monsterCharacterMaximumDistance=0;
+};
+
+// References to shared bench fields used by the monster CharacterVirtual fixtures.
+struct MonsterCharacterContext {
+  Character& character;
+  CharacterContext characterContext;
+  CamMode& cam;
+  bool& camAuto;
+  Npc*& subject;
+  Tempest::Vec3& ragdollArenaTarget;
+  std::vector<Tempest::Vec3>& ragdollArenaPlaces;
+  std::string& ragdollArenaWaypoint;
+  bool& rec;
+  bool& recVideo;
 };
 
 struct Water {
@@ -451,8 +531,25 @@ uintptr_t destructionAdd(World& world,std::string_view name,const Tempest::Vec3&
 extern const bool npcCharacterTrace;
 extern const char* characterMoveFrameColumns;
 
+Tempest::Vec3 rotY(const Tempest::Vec3& v,float deg);
+bool chooseRagdollArena(World& world,Npc& player);
 bool slopeAt(World& w, const Tempest::Vec3& p, float& angle, Tempest::Vec3& down, float& rough);
 void prepareMovableFixture(World& world,Npc& player);
+
+void monsterCharacterError(std::string_view reason);
+Npc* monsterCharacterActor(World& world,std::string_view instance,const Tempest::Vec3& at);
+void monsterCharacterClear(MonsterCharacter& state,const MonsterCharacterContext& context,World& world);
+void monsterCharacterLedge(MonsterCharacter& state,const MonsterCharacterContext& context,World& world,Npc& player,std::string_view species,float height,float bottom=0.f);
+void monsterCharacterPack(MonsterCharacter& state,const MonsterCharacterContext& context,World& world,Npc& player);
+void monsterCharacterCliff(MonsterCharacter& state,const MonsterCharacterContext& context,World& world,Npc& player,bool higher=false);
+void monsterCharacterCrowd(MonsterCharacter& state,const MonsterCharacterContext& context,World& world,Npc& player);
+void monsterCharacterPrepare(MonsterCharacter& state,const MonsterCharacterContext& context,World& world,Npc& player,const std::string& name);
+void monsterCharacterBegin(MonsterCharacter& state,World& world);
+void monsterCharacterEnd(MonsterCharacter& state,const MonsterCharacterContext& context,World& world);
+void monsterCharacterAttack(MonsterCharacter& state,const MonsterCharacterContext& context,World& world,Npc& player,const std::string& species);
+void monsterCharacterSnapshot(World& world,Npc& player,std::string_view label);
+void monsterCharacterSave(MonsterCharacter& state,World& world,Npc& player);
+void monsterCharacterFields(MonsterCharacter& state,const MonsterCharacterContext& context,World& world,uint64_t dt);
 
 void npcCharacterStopMotionTrace(Character& state,World* world);
 bool characterFloor(World& world,const Tempest::Vec3& at,Tempest::Vec3& floor,float depth=600.f);

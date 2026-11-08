@@ -15,7 +15,11 @@ Their `Water` state and `WaterContext` references to shared bench fields are in 
 Hero and human NPC CharacterVirtual fixtures, observations and helpers live in `common/testbench_character.cpp`.
 Their `Character` state and `CharacterContext` references are in `testbench_internal.h`;
 shared movement samples (`CharacterMoveFrame`) and walkers (`LivingWalker`) are declared there too.
-The independent `ownMeshChest*` and `monsterCharacter*` families stay in `testbench.cpp`.
+The independent `ownMeshChest*` family stays in `testbench.cpp`.
+
+Ground-monster CharacterVirtual fixtures, observations and helpers live in `common/testbench_monster.cpp`.
+Their `MonsterCharacter` state and `MonsterCharacterContext` references are in `testbench_internal.h`.
+`monsterCharacterRenderProof`, `monsterCharacterCamera` and `TestBench::monsterCharacterCollision` stay in `testbench.cpp`.
 
 Runs a scenario through the windowed game or the headless runner and records metrics and a report.
 Windowed scenarios can also capture video with a debug overlay and point at suspicious frames.
@@ -1545,7 +1549,7 @@ physics contracts pass after explicit signed Guild comparisons in the fixture.
 
 `OpenGothic/common/testbench.cpp` and `testbench_<family>.cpp` (including healing in
 `testbench_healing.cpp`, water / corpse-water in `testbench_water.cpp` and hero / human NPC
-CharacterVirtual in `testbench_character.cpp`), inert unless `OPENGOTHIC_BENCH` is set. Hooks: the fixed time step and
+CharacterVirtual in `testbench_character.cpp` and ground monsters in `testbench_monster.cpp`), inert unless `OPENGOTHIC_BENCH` is set. Hooks: the fixed time step and
 the capture in `MainWindow` (in film mode the captured frame replaces the window's), the AI bridge's lines
 and voices (`TestBench::aiLine`, `aiVoiceEnd`, `aiHeard`, `aiBusy`), an npc's lines of the game and SVMs
 (`TestBench::npcOutput` in `Npc::nextAiAction`), the OpenAL loopback device in Tempest's
