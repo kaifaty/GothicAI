@@ -7,6 +7,7 @@ view clean
 goto NW_XARDAS_TOWER_VALLEY_091   # flat open ground
 face -106                         # a rock behind, open in front
 wait 500
+clear 2500
 equip ItRw_Bow_L_01
 give ItRw_Arrow 50
 insert Sheep
@@ -55,11 +56,11 @@ release action
 wait 800
 stop
 aim on
-tap bow
+disarm
 wait 1500
 equip ItRw_Crossbow_L_01
 give ItRw_Bolt 50
-tap bow
+draw bow
 wait 2000
 goto NW_XARDAS_TOWER_VALLEY_091
 face -106
@@ -74,14 +75,14 @@ wait 2500
 release action
 wait 800
 stop
-tap bow
+disarm
 wait 1500
 equip ItRw_Bow_L_01
 pin off
 goto NW_FOREST_PATH_16              # a 21 degree slope
-wait 500
+wait 1000
 face across
-tap bow
+draw bow
 wait 1500
 cam follow 300 60 90
 pin SHEEP 1000 0 300
@@ -129,6 +130,7 @@ release action
 wait 800
 stop
 goto SHIP_DECK_23                 # a ship in the harbour, 3.8 m down from the deck to the quay
+clear 2500
 wait 500
 edge 112.5                        # 35 cm from the edge
 cam follow 330 60 90
@@ -156,7 +158,7 @@ wait 800
 stop
 pin off
 aimat off
-tap bow
+disarm
 wait 1500
 equip ItRu_FireBolt
 tap spell
@@ -191,7 +193,7 @@ goto NW_XARDAS_TOWER_VALLEY_091
 cheat full
 ani player S_RUN
 face -106
-wait 500
+wait 1000
 clear 2500
 equip ItRw_Bow_L_01
 give ItRw_Arrow 50
