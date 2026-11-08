@@ -210,7 +210,7 @@ Decider — отдельный сервис на dev-ubuntu, по аналоги
 ## Источники
 
 **Игры:**
-- OpenGothic, `common/world/worldobjects.cpp`, `objects/npc.cpp`; [PR #720](https://github.com/Try/OpenGothic/pull/720);
+- OpenGothic, `common/world/worldobjects.cpp`, [`objects/npc_perception.cpp`](../OpenGothic/common/world/objects/npc_perception.cpp); [PR #720](https://github.com/Try/OpenGothic/pull/720);
 - скрипты G2 [g2_classic](https://github.com/dosinabox/g2_classic) (`Perception.d`, `AI_Constants.d`);
 - [LOD Trader, Game AI Pro гл. 14](http://www.gameaipro.com/GameAIPro/GameAIPro_Chapter14_Phenomenal_AI_Level-of-Detail_Control_with_the_LOD_Trader.pdf);
 - [1000 NPCs at 60 FPS](http://www.gameaipro.com/GameAIPro3/GameAIPro3_Chapter34_1000_NPCs_at_60_FPS.pdf);

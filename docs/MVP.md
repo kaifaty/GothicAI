@@ -151,7 +151,7 @@ uv run gothic-tts tag-voices
 - **Микрофон записывает сервер, а не игра.** Игра шлёт только `ptt_start` и `ptt_stop`. Модуль `voice-in` на сервере пишет звук с микрофона Mac и отправляет его в ASR-сервис. Захват аудио в движок добавлять не нужно.
 - **Точки расширения в апстриме** (подробно в разборе кода):
   - сигнал на каждый кадр (`gothic.cpp`);
-  - флаг `externalCtrl` и перехват восприятий (`npc.cpp`);
+  - флаг `externalCtrl` и перехват восприятий ([`npc_perception.cpp`](../OpenGothic/common/world/objects/npc_perception.cpp));
   - реестр сгенерированных реплик в `messageByName`/`messageTime` (`gamescript.cpp:1325`);
   - перехват начала разговора;
   - хук для неизвестных команд Marvin;
