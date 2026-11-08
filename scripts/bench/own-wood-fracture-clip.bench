@@ -1,0 +1,62 @@
+# The wood fracture clip of a content set: our harbour barrel, then our crate, broken by the
+# native one-handed attack. Each prop: a close "intact" frame, a side take from the blow until
+# the pieces sleep, then the close "pieces" frame from the same camera. `destruction2_pieces`
+# gives the guards 5, 13 and 15 s after the break. The hero strikes towards +z.
+seed 73013
+cheat god
+set time 12 0
+movable on
+living on
+noise on
+destruction on
+overlay off
+ui off
+view full
+
+destruction2 setup barrel 1h
+destruction2 view 165 60 -60 0 -20 30
+wait 800
+shot barrel-close-before
+wait 100
+destruction2 view 280 110 50 0 -15 50
+wait 800
+shot barrel-side-before
+wait 100
+rec barrel-side
+destruction2 attack
+wait 10000
+stop
+destruction2 checkpoint
+wait 4500
+destruction2 view 165 60 -60 0 -20 30
+wait 800
+shot barrel-close-after
+wait 100
+destruction2 view 280 110 50 0 -15 50
+wait 300
+shot barrel-side-after
+wait 100
+
+destruction2 setup crate 1h
+destruction2 view 165 60 -60 0 -20 30
+wait 800
+shot crate-close-before
+wait 100
+destruction2 view 280 110 50 0 -15 50
+wait 800
+shot crate-side-before
+wait 100
+rec crate-side
+destruction2 attack
+wait 10000
+stop
+destruction2 checkpoint
+wait 4500
+destruction2 view 165 60 -60 0 -20 30
+wait 800
+shot crate-close-after
+wait 100
+destruction2 view 280 110 50 0 -15 50
+wait 300
+shot crate-side-after
+wait 100
