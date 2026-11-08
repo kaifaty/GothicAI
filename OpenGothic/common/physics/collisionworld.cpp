@@ -485,7 +485,7 @@ struct CollisionWorld::Impl final : JPH::ContactListener, JPH::PhysicsStepListen
       const bool second=b.GetObjectLayer()==DynamicWorld::C_Ragdoll && accepts(a);
       if(first || second) {
         float speed=0;
-        for(uint i=0;i<manifold.mRelativeContactPointsOn1.size();++i) {
+        for(JPH::uint i=0;i<manifold.mRelativeContactPointsOn1.size();++i) {
           const auto point=manifold.GetWorldSpaceContactPointOn1(i);
           speed=std::max(speed,(a.GetPointVelocity(point)-b.GetPointVelocity(point)).Dot(manifold.mWorldSpaceNormal));
           }
@@ -506,7 +506,7 @@ struct CollisionWorld::Impl final : JPH::ContactListener, JPH::PhysicsStepListen
         const auto& item=first?a:b;
         const auto& other=first?b:a;
         const auto subshape=first?manifold.mSubShapeID2:manifold.mSubShapeID1;
-        for(uint i=0;i<manifold.mRelativeContactPointsOn1.size();++i) {
+        for(JPH::uint i=0;i<manifold.mRelativeContactPointsOn1.size();++i) {
           ItemSolverContact entry;
           entry.nativeStep=simulationStep;
           entry.itemBodyId=item.GetID().GetIndexAndSequenceNumber();
