@@ -7,6 +7,9 @@
 #include <Tempest/StorageBuffer>
 #include <Tempest/Texture2d>
 
+#include <functional>
+#include <queue>
+#include <unordered_map>
 #include <vector>
 
 #include "resources.h"
@@ -14,9 +17,14 @@
 class Material;
 class StaticMesh;
 
+// The scene of the ray queries, kept between frames. Every object in it holds a slot: an instance of the TLAS and
+// its own entry of rtDesc. A change of an object rewrites its slot, and the frame uploads the changed slots and
+// rebuilds the TLAS (pass RT-TLAS); a frame without changes records nothing. The solid and alpha-tested landscape
+// is two merged BLAS, built once, whose entries are the prefix of rtDesc.
 class RtScene {
   public:
     RtScene();
+    ~RtScene();
 
     enum Category : uint8_t {
       None,
@@ -38,13 +46,26 @@ class RtScene {
       uint32_t bits: 8;
       };
 
-    void notifyTlas(const Material& m, RtScene::Category cat) const;
-    bool isUpdateRequired() const;
+    static constexpr uint32_t NoSlot = uint32_t(-1);
 
-    void addInstance(const Tempest::Matrix4x4& pos, const Tempest::AccelerationStructure& blas,
-                     const Material& mat, const StaticMesh& mesh, size_t firstIndex, size_t iboLength, Category cat);
-    // Records the build of the TLAS into the frame's command buffer (debug marker "RT-TLAS")
-    void buildTlas(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
+    // The objects the scene holds: these categories and materials
+    static bool isSupported(const Material& mat, Category cat);
+    // A supported landscape object of the merged BLAS rather than of a slot (water keeps a slot)
+    static bool isMergedLandscape(const Material& mat, Category cat);
+
+    // A slot of an object: compact, a freed one is given again. A slot is inactive (rays never meet it) until set.
+    uint32_t allocSlot();
+    void     freeSlot(uint32_t slot);
+    // The state of the slot's object; a hidden object keeps its slot with mask 0
+    void     setSlot(uint32_t slot, const Tempest::Matrix4x4& pos, const Tempest::AccelerationStructure& blas,
+                     const Material& mat, const StaticMesh& mesh, size_t firstIndex, size_t iboLength, bool visible);
+
+    // The merged landscape anew from every visible object of it: begin, add each, and the next commit builds it
+    void beginLandscape();
+    void addLandscape(const Material& mat, const StaticMesh& mesh, size_t firstIndex, size_t iboLength);
+
+    // Uploads the changed slots and records the TLAS build into the frame (debug marker "RT-TLAS"), if anything changed
+    void commit(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
     bool refreshTextures();
 
     Tempest::AccelerationStructure             tlas;
@@ -55,43 +76,77 @@ class RtScene {
     Tempest::StorageBuffer                     rtDesc;
 
   private:
-    struct BuildBlas {
+    // Instances 0 and 1 of the TLAS are the merged landscape, slot s is instance LandscapeInstances+s
+    static constexpr uint32_t LandscapeInstances = 2;
+
+    struct Slot {
+      Tempest::RtInstance inst;          // id is set when packed: the prefix of rtDesc goes first
+      RtObjectDesc        desc      = {};
+      uint32_t            triangles = 0;
+      bool                used      = false;
+      bool                dirty     = false;
+      };
+
+    struct Merged {
       std::vector<Tempest::RtGeometry> geom;
-      std::vector<RtObjectDesc>        rtDesc;
+      std::vector<RtObjectDesc>        desc;
+      Tempest::AccelerationStructure   blas;
       };
 
-    struct Build {
-      std::vector<const Tempest::Texture2d*>     tex;
-      std::vector<const Tempest::StorageBuffer*> vbo;
-      std::vector<const Tempest::StorageBuffer*> ibo;
-
-      std::vector<RtObjectDesc>                  rtDesc;
-      std::vector<Tempest::RtInstance>           inst;
-
-      BuildBlas                                  staticOpaque;
-      BuildBlas                                  staticAt;
-#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
-      uint64_t                                   triangles = 0;
-#endif
+    struct BucketKey {
+      const Tempest::Texture2d*     tex;
+      const Tempest::StorageBuffer* vbo;
+      const Tempest::StorageBuffer* ibo;
+      bool operator==(const BucketKey& o) const { return tex==o.tex && vbo==o.vbo && ibo==o.ibo; }
+      };
+    struct BucketHash {
+      size_t operator()(const BucketKey& k) const;
       };
 
-    uint32_t aquireBucketId(const Material& mat, const StaticMesh& mesh);
-    void     addInstance(const BuildBlas& build, Tempest::AccelerationStructure& blas, Tempest::RtInstanceFlags flags);
+    // The CPU copy of a buffer of the GPU: written in place, its changed blocks reach the GPU inside the frame by the
+    // patch shader (as InstanceStorage::commit), so the frames in flight read it in the order of the queue
+    struct Mirror {
+      std::vector<uint8_t>   cpu;
+      std::vector<uint32_t>  dirty;      // bit per block
+      bool                   anyDirty = false;
+      Tempest::StorageBuffer patch[Resources::MaxFramesInFlight];
+      std::vector<uint8_t>   patchCpu;
+
+      void resize(size_t bytes);
+      void mark(size_t offset, size_t size);
+      // Records the patch of `gpu`; a `gpu` smaller than the copy is replaced by a new one with a margin, written whole
+      void commit(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, Tempest::StorageBuffer& gpu);
+      };
+
+    uint32_t     bucketId(const Material& mat, const StaticMesh& mesh);
+    RtObjectDesc objectDesc(const Material& mat, const StaticMesh& mesh, size_t firstIndex);
+    void         markSlot(uint32_t slot);
+    void         packInstance(size_t index, const Tempest::RtInstance& inst);
+    void         buildLandscape();
 #if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
-    void     logBuild(double buildMs) const;
+    void         logBuild(const char* reason, double buildMs) const;
 #endif
 
-    Build                          build;
-    std::vector<const Tempest::Texture2d*> textureIdentities;
-    uint64_t                       textureGeneration = 0;
-    Tempest::AccelerationStructure blasStaticOpaque;
-    Tempest::AccelerationStructure blasStaticAt;
+    std::vector<Slot>                                         slots;
+    std::priority_queue<uint32_t,std::vector<uint32_t>,std::greater<uint32_t>> freeSlots;
+    std::vector<uint32_t>                                     dirtySlots;
 
-    // Instances of the TLAS in the backend's layout: packed on the CPU, read by the build on the GPU. One buffer
-    // per frame in flight, so that a build never overwrites instances an earlier frame still builds from.
-    std::vector<uint8_t>           instanceBytes;
-    Tempest::StorageBuffer         instances[Resources::MaxFramesInFlight];
+    // Meshes and textures live for the session (the mesh cache, the landscape of the world): buckets are never freed
+    std::unordered_map<BucketKey,uint32_t,BucketHash>         buckets;
+    std::vector<const Tempest::Texture2d*>                    bucketTex;
+    std::vector<const Tempest::StorageBuffer*>                bucketVbo;
+    std::vector<const Tempest::StorageBuffer*>                bucketIbo;
+    size_t                                                    bucketsUploaded = size_t(-1);
+    uint64_t                                                  textureGeneration = 0;
 
-    mutable bool                   needToUpdate = true;
+    Merged                                                    landscape[LandscapeInstances];
+    uint32_t                                                  prefix = 0;  // entries of the landscape in rtDesc
+    bool                                                      landscapeDirty = false;
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+    uint64_t                                                  landscapeTriangles = 0;
+#endif
+
+    Mirror                                                    instanceCpu;  // the TLAS instances, the backend's layout
+    Mirror                                                    descCpu;      // rtDesc
+    Tempest::StorageBuffer                                    instanceGpu;
   };
-

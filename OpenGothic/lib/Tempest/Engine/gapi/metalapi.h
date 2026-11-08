@@ -36,8 +36,8 @@ class MetalApi : public AbstractGraphicsApi {
     PRtAs          createTopAccelerationStruct(Device* d, const RtInstance* inst, AccelerationStructure*const* as, size_t size) override;
     PRtAs          createTopAccelerationStruct(Device* d, size_t capacity) override;
     size_t         rtInstanceSize() const override;
-    size_t         packRtInstances(Device* d, AccelerationStructure& tlas, const RtInstance* inst,
-                                   AccelerationStructure*const* as, size_t count, void* out) override;
+    void           packRtInstance(Device* d, AccelerationStructure& tlas, const RtInstance& inst,
+                                  AccelerationStructure* as, void* slot) override;
 
     DescArray*     createDescriptors(Device* d, AbstractGraphicsApi::Texture** tex, size_t cnt, uint32_t mipLevel) override;
     DescArray*     createDescriptors(Device* d, AbstractGraphicsApi::Texture** tex, size_t cnt, uint32_t mipLevel, const Sampler& smp) override;

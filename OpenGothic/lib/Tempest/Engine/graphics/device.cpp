@@ -404,13 +404,11 @@ size_t Device::rtInstanceSize() const {
   return api.rtInstanceSize();
   }
 
-size_t Device::packRtInstances(AccelerationStructure& tlas, const RtInstance* inst, size_t count, void* out) {
+void Device::packRtInstance(AccelerationStructure& tlas, const RtInstance& inst, void* slot) {
   if(tlas.impl.handler==nullptr || tlas.capacity()==0)
     throw std::system_error(Tempest::GraphicsErrc::InvalidAccelerationStructure);
-  std::vector<AbstractGraphicsApi::AccelerationStructure*> as(count);
-  for(size_t i=0; i<count; ++i)
-    as[i] = inst[i].blas!=nullptr ? inst[i].blas->impl.handler : nullptr;
-  return api.packRtInstances(dev, *tlas.impl.handler, inst, as.data(), count, out);
+  auto* blas = inst.blas!=nullptr ? inst.blas->impl.handler : nullptr;
+  api.packRtInstance(dev, *tlas.impl.handler, inst, blas, slot);
   }
 
 Pixmap Device::readPixels(const Texture2d &t, uint32_t mip) {

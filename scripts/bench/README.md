@@ -240,6 +240,7 @@ The complete column set is:
 | `palette_calls`, `identical_calls`, `patch_calls`, `patch_blocks` | Counts |
 | `palette_bytes`, `identical_bytes`, `patch_bytes`, `grow_bytes`, `upload_execution_bytes` | Bytes |
 | `draw_calls`, `dispatch_calls` | Encoded draw and compute dispatch counts; dispatch counting currently covers Metal |
+| `rt_tlas_builds`, `rt_dirty_slots` | With `-rt 1`: TLAS builds recorded into the frame (0 or 1) and slots of the ray scene written into it |
 | `gpu_ns`, `gpu_done`, `gpu_buffers` | Sum of the attempt's command buffer GPU time in nanoseconds (Metal `GPUEndTime-GPUStartTime`, Vulkan a timestamp pair per buffer); 1 only when all submitted buffers have valid timing; submitted buffer count |
 
 The complete `<zone>` list (each produces all four columns above):
@@ -260,13 +261,16 @@ pass skipped or whose bones moved since (a script, a sync on read).
 `pfx_prepare` is `PfxObjects::preFrameUpdate` inside the frame encode. `upload_wait` is the CPU wait of a
 synchronous buffer upload on Metal (`MtBuffer::update` of a device-memory buffer): inside a frame it lasts
 until the GPU finishes what was committed before, so a nonzero value there is a stall.
-`rt_scene` is `WorldView::updateRtScene` (only with `-rt 1`): the walk over the visual objects, the landscape
-BLAS and TLAS builds and the descriptor arrays when the scene is rebuilt, a texture refresh otherwise. Every
-`RtScene::buildTlas` of a frame-profile build also logs one line,
-`render: rt scene instances=<N> blas=<N> triangles=<N> tlas_bytes=<N> blas_bytes=<N> build_ms=<ms>`:
-TLAS instances, unique BLAS among them, triangles summed over the instances (index ranges / 3),
-the TLAS storage, the sum over the unique BLAS storage and the CPU time of `buildTlas`. The bytes are the
-Vulkan acceleration-structure sizes (`accelerationStructureSize`); Metal keeps none and writes `-1`.
+`rt_scene` is `WorldView::updateRtScene` (only with `-rt 1`): the objects marked since the last frame (moved, shown,
+hidden, created, freed) into their slots of the ray scene, and in a frame with changes the patch of the changed slots
+and the TLAS build recorded into it (pass `RT-TLAS`); a frame without changes records nothing. The two merged landscape
+BLAS are built once, and the descriptor arrays of the buckets anew only when a bucket is new. Only these heavy events
+log a line in a frame-profile build,
+`render: rt scene reason=<landscape|bucket> instances=<N> blas=<N> triangles=<N> tlas_bytes=<N> blas_bytes=<N> build_ms=<ms> slots=<N> buckets=<N>`:
+instances that rays meet (the merged landscape and the visible slots), unique BLAS among them, triangles summed over
+them (index ranges / 3), the TLAS storage, the sum over the unique BLAS storage, the CPU time of that frame's
+`RtScene::commit`, the slots given out and the buckets. The bytes are the Vulkan acceleration-structure sizes
+(`accelerationStructureSize`); Metal keeps none and writes `-1`.
 
 `npc_full_tick` and `npc_simplified_tick` split the `Npc::tick` loop inside `world_logic` by NPC simulation
 tier (`common/world/npcsimtier.h`); their calls count runs of consecutive same-tier NPCs, not NPCs. The

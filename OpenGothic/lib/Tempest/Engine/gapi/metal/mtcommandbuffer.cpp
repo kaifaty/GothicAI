@@ -1071,7 +1071,7 @@ void MtCommandBuffer::setPipeline(AbstractGraphicsApi::Pipeline &p) {
 void MtCommandBuffer::buildTlas(AbstractGraphicsApi::AccelerationStructure& as, const AbstractGraphicsApi::Buffer* instances,
                                 size_t count) {
   // An encoder of its own; Metal orders it before the encoders that bind the structure later in this command buffer
-  // (tracked resources), and they make its BLAS resident by the list pack() left (useResource).
+  // (tracked resources), and they make its BLAS resident by the list its instances index (useResource).
   auto& tlas = reinterpret_cast<MtTopAccelerationStructure&>(as);
   auto  pool = NsPtr<NS::AutoreleasePool>::init();
   auto* ibo  = instances!=nullptr ? reinterpret_cast<const MtBuffer*>(instances)->impl.get() : nullptr;

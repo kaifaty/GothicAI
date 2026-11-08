@@ -803,13 +803,12 @@ bool WorldView::updateLights(const gtime gameTime) {
   return true;
   }
 
-bool WorldView::updateRtScene(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId) {
+void WorldView::updateRtScene(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId) {
   if(!Shaders::options().doRtScene)
-    return false;
+    return;
   FrameProfile::Scope profile(FrameProfile::Zone::RtScene);
-  if(visuals.updateRtScene(sGlobal.rtScene, cmd, fId))
-    return true;
-  return sGlobal.rtScene.refreshTextures();
+  visuals.updateRtScene(sGlobal.rtScene, cmd, fId);
+  sGlobal.rtScene.refreshTextures();
   }
 
 void WorldView::postFrameupdate() {

@@ -689,11 +689,11 @@ namespace Tempest {
       virtual PRtAs      createTopAccelerationStruct(Device* d, const RtInstance* geom, AccelerationStructure*const* as, size_t geomSize);
       // Top-level structure with its own memory for `capacity` instances, built by CommandBuffer::buildTlas.
       virtual PRtAs      createTopAccelerationStruct(Device* d, size_t capacity);
-      // Size of one instance in the backend's layout, and packing of instances for a build of `tlas`:
-      // as[i] is the BLAS of inst[i], instances with a null one are skipped. Returns the number written.
+      // Size of one instance in the backend's layout, and packing of one instance of `tlas` into its slot
+      // (Device::packRtInstance): `as` is the BLAS of `inst`, null for an inactive instance.
       virtual size_t     rtInstanceSize() const;
-      virtual size_t     packRtInstances(Device* d, AccelerationStructure& tlas, const RtInstance* inst,
-                                         AccelerationStructure*const* as, size_t count, void* out);
+      virtual void       packRtInstance(Device* d, AccelerationStructure& tlas, const RtInstance& inst,
+                                        AccelerationStructure* as, void* slot);
 
       virtual void       readPixels   (Device* d, Pixmap& out, const PTexture t,
                                        TextureFormat frm, const uint32_t w, const uint32_t h, uint32_t mip, bool storageImg) = 0;
