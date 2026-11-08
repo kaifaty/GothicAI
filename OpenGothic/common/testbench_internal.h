@@ -36,6 +36,7 @@ class MoveTrigger;
 class Npc;
 class PlayerControl;
 class Skeleton;
+class Sound;
 class World;
 struct HeroDeed;
 enum PercType : uint8_t;
@@ -73,6 +74,103 @@ enum CamMode : uint8_t {
 struct QuestSite { bool ready=false; Tempest::Vec3 dry={}, direction={}; float waterY=0; std::string waypoint; };
 struct SpellActor {Npc* npc=nullptr;std::string role;};
 struct MovableFixture { ObjVisual visual; DynamicWorld::Item body; };
+
+struct BodyAnimationEntry {
+  uint32_t seed = 0;
+  unsigned side = 0;
+  uint64_t time = 0;
+  std::string animation;
+  int variant = 0;
+  uint64_t sourceSeq = 0;
+  unsigned consumed = 0;
+  };
+
+struct BodyAnimationActor {
+  const Npc* npc = nullptr;
+  uint32_t rng = 0;
+  uint64_t solverCalls = 0, controlledCalls = 0, fallbackCalls = 0, accepted = 0;
+  uint64_t lastTime = uint64_t(-1);
+  int lastVariant = -1;
+  };
+
+struct BodyAnimationControl {
+  enum Mode { Default, Isolated, Replay };
+  Mode mode = Default;
+  bool initialized = false;
+  bool valid = true;
+  bool active = false;
+  bool totalsWritten = false;
+  uint32_t seed = 0;
+  uint64_t errors = 0, errorsAtStart = 0;
+  BodyAnimationActor actors[4];
+  unsigned actorCount = 2;
+  std::vector<BodyAnimationEntry> fixture;
+  std::string sourceEventsHash;
+  };
+
+struct BodyImpact {
+  Npc* npc=nullptr;
+  Npc* animated=nullptr;
+  Npc* witness=nullptr;
+  Npc* player=nullptr;
+  Npc* culprit=nullptr;
+  Tempest::Vec3 anchor;
+  std::unique_ptr<PhysicMeshShape> floorShape,wallShape,ledgeShape;
+  DynamicWorld::Item floor,wall,ledge;
+  std::string mode;
+  float value=0,maximumSpeed=0,launchSpeed=0;
+  int hpBefore=0,animatedBefore=0,damage=0,capsuleDamage=0,questGuard=0;
+  uint64_t started=0;
+  size_t impacts=0,deeds=0,murders=0,defeats=0,weapon=size_t(-1);
+  bool ready=false,tracing=false,observing=false,duel=false,sawAir=false,guardSaved=false;
+  struct DuelBody {Npc* npc=nullptr;bool knocked=false;int damage=0;float speed=0;uint64_t since=0;};
+  std::vector<DuelBody> duelBodies;
+  void deed(const HeroDeed& value);
+  void perception(Npc& observer,Npc& other,Npc* victim,PercType value);
+};
+
+// References to shared bench fields used by P30 commands and their hooks.
+struct BodyContext {
+  bool& bodyLive;
+  std::string& bodyLiveWait;
+  std::chrono::steady_clock::time_point& bodyLiveDeadline;
+  BodyAnimationControl& bodyAnimation;
+  Npc*& duelA;
+  Npc*& duelB;
+  uint64_t& duelFrom;
+  uint64_t& duelEnd;
+  bool& duelWaiting;
+  std::vector<Npc*>& observeActors;
+  uint64_t& observeFrom;
+  uint64_t& observeEnd;
+  bool& observeActive;
+  Tempest::Vec3& observeVisibleA;
+  Tempest::Vec3& observeVisibleB;
+  bool& observeVisibleSaved;
+  std::string& observeProbeCase;
+  std::unique_ptr<::Sound>& probeSound;
+  uint64_t& probeSoundStart;
+  uint64_t& probeSoundDuration;
+  bool& probeOccluded;
+  Npc*& subject;
+  uint32_t& lcg;
+  size_t& pc;
+  const std::vector<std::string>& prog;
+  uint64_t& time;
+  uint64_t& waitUntil;
+};
+
+// References to shared bench fields used by the body-impact fixtures.
+struct BodyImpactContext {
+  BodyImpact& bodyImpact;
+  Npc*& subject;
+  std::vector<SpellActor>& spellActors;
+  std::vector<Npc*>& crew;
+  bool& spellTrace;
+  bool& bodyTrace;
+  uint64_t& time;
+  uint64_t& waitUntil;
+};
 
 struct Destruction {
   std::vector<std::unique_ptr<MovableFixture>> destructionFixtures;
@@ -623,6 +721,30 @@ bool fracturePiecesCommand(const std::vector<uintptr_t>& ids,Npc* actor,const Te
 bool waterCommand(Water& waterState,const WaterContext& context,const std::vector<std::string>& a,World& w,Npc& pl,PlayerControl& ctrl);
 bool furniturePartsCommand(FurnitureParts& state,const std::vector<std::string>& a,World& w,Npc& pl);
 bool npcSimCommand(NpcDuel& duelState,NpcTierTest& tierState,NpcSpeedTest& speedState,size_t& pc,const std::vector<std::string>& prog,const std::vector<std::string>& a,World& w,Npc& pl);
+
+const char* envStr(const char* name);
+float groundY(World& w,float x,float z,float y);
+const char* policyName(NpcProcessPolicy p);
+
+BodyContext bodyContext();
+void stopBodyLive();
+void setupArena(World& w,Npc& pl);
+bool waitingForBodyLive();
+const char* animationModeName();
+void animationControlError(const std::string& reason);
+bool beginAnimationControl(uint32_t seed,const std::vector<Npc*>& actors);
+bool beginAnimationControl(uint32_t seed,Npc& first,Npc& second);
+unsigned animationActorIndex(const Npc& npc);
+std::string animationActorFields(unsigned index);
+BodyAnimationEntry* animationFixtureEntry(unsigned side,uint64_t time);
+void observeAnimationAttempt(const Npc& npc,const std::string& fields,uint64_t gameTime);
+void endAnimationControl();
+void animationControlTotals();
+bool bodyCommand(const BodyContext& context,const std::vector<std::string>& a,World& w,Npc& pl);
+
+BodyImpactContext bodyImpactContext();
+void bodyImpactTick(World& world);
+bool bodyImpactCommand(BodyImpact& state,const BodyImpactContext& context,const std::vector<std::string>& a,World& w,Npc& pl);
 
 void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl);
 
