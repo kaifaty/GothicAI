@@ -8,6 +8,10 @@ Healing observations, commands and checks live in `common/testbench_healing.cpp`
 in `testbench_internal.h` keeps the current use separate from walk-speed references retained across `begin`.
 Family functions take that state by reference; the dispatcher also passes the melee-shadow actors.
 
+Water and corpse-water fixtures, observations and helpers live in `common/testbench_water.cpp`.
+Their `Water` state and `WaterContext` references to shared bench fields are in `testbench_internal.h`;
+`waterFilm*` stays in `testbench.cpp` and uses the same shared water helpers.
+
 Runs a scenario through the windowed game or the headless runner and records metrics and a report.
 Windowed scenarios can also capture video with a debug overlay and point at suspicious frames.
 
@@ -1535,7 +1539,7 @@ and checks its identity and exact matrix on reload. Linux builds and all four
 physics contracts pass after explicit signed Guild comparisons in the fixture.
 
 `OpenGothic/common/testbench.cpp` and `testbench_<family>.cpp` (including healing in
-`testbench_healing.cpp`), inert unless `OPENGOTHIC_BENCH` is set. Hooks: the fixed time step and
+`testbench_healing.cpp` and water / corpse-water in `testbench_water.cpp`), inert unless `OPENGOTHIC_BENCH` is set. Hooks: the fixed time step and
 the capture in `MainWindow` (in film mode the captured frame replaces the window's), the AI bridge's lines
 and voices (`TestBench::aiLine`, `aiVoiceEnd`, `aiHeard`, `aiBusy`), an npc's lines of the game and SVMs
 (`TestBench::npcOutput` in `Npc::nextAiAction`), the OpenAL loopback device in Tempest's
