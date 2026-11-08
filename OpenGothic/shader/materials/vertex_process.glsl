@@ -18,7 +18,8 @@ struct Vertex {
   vec4  weight;
   vec3  normal;
   vec2  uv;
-  uint  color;
+  uint  color;       // not a colour: 0 when normalLocal is valid (Resources::VertexA)
+  uvec4 normalLocal; // the normal in each bone's rest frame, octahedral snorm16x2
 #elif (MESH_TYPE==T_PFX)
   vec3  pos;
   vec3  normal;
@@ -30,6 +31,17 @@ struct Vertex {
 #endif
   };
 
+#if (MESH_TYPE==T_SKINING)
+// The octahedral snorm16x2 of packOctNormal (packedmesh.cpp)
+vec3 octNormal(uint bits) {
+  const vec2 e = unpackSnorm2x16(bits);
+  vec3 n = vec3(e, 1.0 - abs(e.x) - abs(e.y));
+  if(n.z<0.0)
+    n.xy = (1.0 - abs(n.yx)) * vec2(n.x>=0.0 ? 1.0 : -1.0, n.y>=0.0 ? 1.0 : -1.0);
+  return normalize(n);
+  }
+#endif
+
 Vertex pullVertex(uint bucketId, uint id) {
 #if defined(BINDLESS)
   nonuniformEXT uint vi = bucketId;
@@ -38,7 +50,7 @@ Vertex pullVertex(uint bucketId, uint id) {
 #endif
   Vertex ret;
 #if (MESH_TYPE==T_SKINING)
-  id *=23;
+  id *=27;
   ret.normal = vec3(vbo[vi].vertices[id + 0], vbo[vi].vertices[id + 1], vbo[vi].vertices[id + 2]);
   ret.uv     = vec2(vbo[vi].vertices[id + 3], vbo[vi].vertices[id + 4]);
   ret.color  = floatBitsToUint(vbo[vi].vertices[id + 5]);
@@ -48,6 +60,8 @@ Vertex pullVertex(uint bucketId, uint id) {
   ret.pos3   = vec3(vbo[vi].vertices[id + 15], vbo[vi].vertices[id + 16], vbo[vi].vertices[id + 17]);
   ret.boneId = uvec4(unpackUnorm4x8(floatBitsToUint(vbo[vi].vertices[id + 18]))*255.0);
   ret.weight = vec4(vbo[vi].vertices[id + 19], vbo[vi].vertices[id + 20], vbo[vi].vertices[id + 21], vbo[vi].vertices[id + 22]);
+  ret.normalLocal = uvec4(floatBitsToUint(vbo[vi].vertices[id + 23]), floatBitsToUint(vbo[vi].vertices[id + 24]),
+                          floatBitsToUint(vbo[vi].vertices[id + 25]), floatBitsToUint(vbo[vi].vertices[id + 26]));
 #elif (MESH_TYPE==T_LANDSCAPE) || (MESH_TYPE==T_OBJ) || (MESH_TYPE==T_MORPH)
   id *= 9;
   ret.pos    = vec3(vbo[vi].vertices[id + 0], vbo[vi].vertices[id + 1], vbo[vi].vertices[id + 2]);
@@ -160,6 +174,19 @@ vec3 processVertexCommon(out Varyings shOut, in Vertex v, uint bucketId, uint in
     const vec3  t3 = (pullMatrix(boneId.w)*vec4(v.pos3,1.0)).xyz;
 
     pos = (t0*v.weight.x + t1*v.weight.y + t2*v.weight.z + t3*v.weight.w) + dpos;
+
+#if defined(MAT_NORMAL)
+    // Shading follows the bones like the position. The fatness offset above keeps the rest normal, as the shadow
+    // passes do, so the surface stays where they put it.
+    if(v.color==0u) {
+      const vec3 n = mat3(pullMatrix(boneId.x))*octNormal(v.normalLocal.x)*v.weight.x +
+                     mat3(pullMatrix(boneId.y))*octNormal(v.normalLocal.y)*v.weight.y +
+                     mat3(pullMatrix(boneId.z))*octNormal(v.normalLocal.z)*v.weight.z +
+                     mat3(pullMatrix(boneId.w))*octNormal(v.normalLocal.w)*v.weight.w;
+      if(dot(n,n)>1e-12)
+        normal = normalize(n);
+      }
+#endif
   }
 #elif (MESH_TYPE==T_OBJ || MESH_TYPE==T_MORPH)
   vec3 dpos = normal*obj.fatness;
