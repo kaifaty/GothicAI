@@ -58,8 +58,9 @@ The plan is relative to the workspace, as with `dub`; the workspace is a folder 
 
 Remotion renders the muted picture at the plan's dimensions (H.264, CRF 18, BT.709 in limited range:
 `remotion.config.ts` sets the colour space, Remotion 4 would write BT.601 in full range) and three WAV stems. The command joins the picture with
-the game/ending stem, takes each speech window from the first to the last word of a nonempty `lines` entry,
-and calls `gothic_shorts.levels.publish`. That shared function calibrates the voice, effects, music and ending,
+the game/ending stem, takes each speech window from the first to the last word of a nonempty `lines` entry
+(a plan without captions, such as a long video whose captions go up as a separate track, takes them from its
+`voice` clips: `words` trims each clean take to its speech), and calls `gothic_shorts.levels.publish`. That shared function calibrates the voice, effects, music and ending,
 masters the mix, and checks the decoded AAC: voice −14 LUFS, true peak ≤ −1 dBTP, the balance between stems,
 and zero clicks. It prints the table and writes a sibling `.levels.json` report. A failed check returns a
 nonzero exit code and removes the output video. Temporary pictures and stems are removed on success or failure.
