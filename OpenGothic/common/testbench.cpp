@@ -2067,15 +2067,15 @@ std::string stateName(World& w, const Npc& n) {
   return sym!=nullptr ? sym->name() : "-";
   }
 
-}
-
-namespace {
-
 // a point is hidden if something is between it and the camera (not counting the ground right at the point)
 bool hidden(World& w, const Vec3& from, const Vec3& to) {
   auto r = w.physic()->ray(from,to);
   return r.hasCol && (r.v-to).length()>15.f;
   }
+
+}
+
+namespace {
 
 Vec3 camOrigin(World& w, const Npc& pl, float angle) {
   const Vec3  p = pl.position();
