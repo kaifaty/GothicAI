@@ -2901,7 +2901,7 @@ void DynamicWorld::breakMovableVob(BodyData& obj) {
   noise.body=reinterpret_cast<uintptr_t>(&obj);
   world->emitPhysicsNoise(noise);
   if(TestBench::isActive())
-    TestBench::destructionBreak(reinterpret_cast<uintptr_t>(&obj),obj.fragments.size(),
+    TestBench::destructionBreak(reinterpret_cast<uintptr_t>(&obj),obj.fragmentGroup.size(),
                                float(std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count()));
   }
 
