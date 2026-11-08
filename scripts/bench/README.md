@@ -340,7 +340,7 @@ with before/after screenshots and a checkpoint of the pieces each. Run it with
 [wood fracture](../../reports/content/2026-11-wood-fracture/README.md#клип-было--стало-и-ограждения):
 per prop a close `<prop>-close-before|after.png` pair, a take `<prop>-side.mp4` from the blow
 until the pieces sleep (the hero strikes towards +z; both cameras stand at an angle on the struck
-+x/-z side, the close one 2.8 m off, the take 3.6 m) and
++x/-z side, the close one 2.9 m off, the take 3.8 m) and
 `destruction2 view <camera xyz> <target xyz>` places the held camera in centimetres from the centre
 of the prop. Each break writes `destruction2_pieces` 0.5, 1, 2, 5, 13 and 15 s after it: per piece
 the centre's travel, the angle of a flat piece's face and long axis from vertical, sleep, speed and
