@@ -13392,7 +13392,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     bench.destructionMeleeRunning=true;bench.destructionMeleeNext=w.tickCount();
     bench.destructionMeleeDeadline=w.tickCount()+90000;bench.waitUntil=bench.time+90034;
     }
-  else if(c=="destruction2" && a.size()==2 && a[1]=="checkpoint") destructionCheckpoint(w);
+  else if(c=="destruction2" && a.size()==2 && (a[1]=="checkpoint" || a[1]=="stand")) a[1]=="checkpoint" ? destructionCheckpoint(w) : fracturePiecesStand(bench.destructionMeleeActor,bench.destructionMeleeStand,bench.destructionMeleeFacing);
   else if(c=="destruction2" && a.size()==8 && a[1]=="view") {
     // view <camera xyz> <target xyz>: centimetres from the centre of the prop, held after the break
     const auto view=fracturePiecesView(w,bench.destructionIds,Vec3(num(a,2,0),num(a,3,0),num(a,4,0)),Vec3(num(a,5,0),num(a,6,0),num(a,7,0)));

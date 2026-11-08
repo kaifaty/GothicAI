@@ -14,6 +14,7 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 
 #include "physics/fracture.h"
+#include "world/objects/npc.h"
 #include "world/world.h"
 
 using namespace Tempest;
@@ -372,6 +373,17 @@ std::optional<std::pair<Vec3,Vec3>> fracturePiecesView(World& world,const std::v
     return std::make_pair(center+camera,center+target);
     }
   return std::nullopt;
+  }
+
+void fracturePiecesStand(Npc* actor,const Vec3& stand,const Vec3& facing) {
+  if(actor==nullptr) {
+    event("destruction2_stand","\"moved\":false");
+    return;
+    }
+  const Vec3 from=actor->position();
+  actor->setPosition(stand);actor->setDirection(facing);actor->updateTransform();
+  event("destruction2_stand","\"moved\":true,\"from_cm\":"+ragdollVector(from)+",\"to_cm\":"+ragdollVector(actor->position())+
+        ",\"distance_cm\":"+ragdollNumber((actor->position()-from).length()));
   }
 
 }

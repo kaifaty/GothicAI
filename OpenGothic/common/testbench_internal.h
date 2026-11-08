@@ -244,6 +244,9 @@ void fracturePiecesBreak(FracturePieces& state,World& world,uintptr_t parent,std
 void fracturePiecesTick(FracturePieces& state,World& world);
 std::optional<std::pair<Tempest::Vec3,Tempest::Vec3>> fracturePiecesView(World& world,const std::vector<uintptr_t>& ids,
                                                                          const Tempest::Vec3& camera,const Tempest::Vec3& target);
+// `destruction2 stand`: the actor back where it stood before the blow, facing the same way
+// (the close "pieces" frame after the take: the lunge leaves the hero inside the prop).
+void fracturePiecesStand(Npc* actor,const Tempest::Vec3& stand,const Tempest::Vec3& facing);
 
 void placedItemsCensus(World& world);
 void placedItemsProbe(PlacedItems& state,World& world,Npc& player);
