@@ -246,9 +246,10 @@ void testFractureBonds() {
     require(blastObject.isBroken() && groupsOf(blast)==std::vector<uint32_t>({0,1,2,3,4,5,6,7}) &&
             bodiesOf(blast,zenId).size()==8,"a spell's force must break every bond");
 
-    // The ring: tall staves side by side and a hoop across their tops, far from a blow low on
-    // the -x side. The blow reaches three staves; of six that is half and the hoop holds the
-    // other three; of five it is more than half and the hoop lets go of all.
+    // The ring: tall staves side by side and a hoop across their tops, the blow on the hoop at
+    // the -x end. The hoop is the nearest piece, yet the blade strikes the stave under it and the
+    // hoop counts only its staves: the blow reaches three of them; of six that is half and the
+    // hoop holds the other three; of five it is more than half and the hoop lets go of all.
     for(const int staves:{6,5}) {
       std::vector<Box> barrel;
       std::ostringstream hoops;
@@ -261,7 +262,7 @@ void testFractureBonds() {
       write(barrel,hoops.str());
       DynamicWorld ring(nullptr,asset::WorldMesh{});
       auto ringObject=make(ring);
-      require(strike(ring,{-44,1000-25,0}),"the ring fixture must take the blow");
+      require(strike(ring,{-44,1000+32,0}),"the ring fixture must take the blow");
       ring.tick(0);
       const auto groups=groupsOf(ring);
       require(ringObject.isBroken() && groups.size()==size_t(staves+1),"the ring fixture must keep every piece");
