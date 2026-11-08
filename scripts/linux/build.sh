@@ -13,7 +13,7 @@
 #     symbols stay out of the dynamic table that the engine's -rdynamic exports: a Vulkan driver loaded into
 #     the game binds to its own libstdc++, not to this copy.
 #
-# Needs CMake 3.21+, Ninja, a C++20 GCC (CC and CXX; CI uses gcc-12 and g++-12), the X11, Xcursor and
+# Needs CMake 3.21+, Ninja, a C++20 GCC (CC and CXX; CI uses gcc-13 and g++-13), the X11, Xcursor and
 # ALSA/PulseAudio/PipeWire headers, and the Vulkan SDK: VULKAN_SDK with include/, the loader's libvulkan.so
 # where the linker finds it (LunarG's Linux SDK keeps it in lib/VulkanLoader/lib, so CI puts that folder on
 # LIBRARY_PATH) and glslangValidator on PATH. The first configure fetches IXWebSocket from GitHub.

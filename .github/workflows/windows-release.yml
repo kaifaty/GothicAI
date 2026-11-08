@@ -40,7 +40,9 @@ env:
   VULKAN_SDK_VERSION: 1.4.357.0  # the version upstream OpenGothic's CI builds with
   # the Linux SDK tarball of that version, as LunarG publishes it (sdk/sha/.../linux/...tar.xz.txt)
   VULKAN_SDK_LINUX_SHA256: 0f09bf6a0625e346bf004be70b92907e934a4c76606b323441b2baf3a5a0e66d
-  GCC_VERSION: "12"  # Linux: Ubuntu 22.04's own g++-12, libstdc++ and libgcc linked statically
+  # Linux: g++-13 from the ubuntu-toolchain-r/test PPA (GCC 12 of 22.04 raises a false -Werror=restrict in
+  # std::string, fixed in libstdc++ 13); libstdc++ and libgcc linked statically, so the glibc floor stays 2.35
+  GCC_VERSION: "13"
   UV_VERSION: 0.10.4  # matches the projects' uv_build>=0.10.4,<0.11 backend
   UV_PYTHON: "3.12"  # what players get: the services pin 3.12
   PYTHONUTF8: "1"

@@ -152,7 +152,7 @@ Gothic AI — одиночная игра. Движок OpenGothic с ИИ-мо�
   - `uv` скачивается по закреплённой версии и сверяется с опубликованным SHA-256 (обе платформы);
   - установщик Vulkan SDK для Windows скачивается и запускается без сверки: его хеш только печатается;
   - Linux SDK Vulkan сверяется с SHA-256, закреплённым в workflow, и с опубликованным LunarG; в архив игры Vulkan не попадает;
-  - GCC 12 и заголовки X11 и звука на Linux ставятся из apt Ubuntu 22.04; если поднять `GCC_VERSION` выше её GCC, шаг подключит PPA `ubuntu-toolchain-r/test`, которому тогда доверяем;
+  - заголовки X11 и звука на Linux ставятся из apt Ubuntu 22.04, а GCC 13 — из PPA `ubuntu-toolchain-r/test`: его шаг подключает, когда в Ubuntu нужного GCC нет. Этому PPA мы доверяем: его компилятор и статическая libstdc++ входят в бинарники архива;
   - IXWebSocket берётся через `FetchContent` по тегу, без коммита и хеша;
   - новые Actions (`upload-artifact`, `download-artifact`, `checkout` job `linux`) закреплены SHA; Actions job `windows` — тегами;
   - архив Linux — только glibc и системные библиотеки из явного списка `scripts/linux/package.sh`: libstdc++ и libgcc внутри бинарников, их символы не экспортируются; официальному `uv` разрешён `libgcc_s.so.1`;
