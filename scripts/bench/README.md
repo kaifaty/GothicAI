@@ -3,7 +3,7 @@
 ## Как работает сейчас
 
 Bench families are extracted into `common/testbench_<family>.cpp`, with shared state types and helpers in `testbench_internal.h`.
-The dispatcher calls one `bool <family>Command(...)` wrapper in each extracted family file:
+The dispatcher calls `bool <family>Command(...)` wrappers for the extracted command groups:
 `npc_sim`, `water`, `character`, `monster`, `furniture_parts`, `placed_items`, `item_hulls`, `fracture_pieces`, `destruction`, `body_impact`, `body`, `movable`, `noise` and `spell`.
 Each wrapper handles its command branches in their original order and returns whether it matched.
 Tick and reset remain in `testbench.cpp`, along with water-film and monster camera/follow commands.
