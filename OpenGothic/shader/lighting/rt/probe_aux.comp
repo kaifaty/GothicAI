@@ -17,8 +17,8 @@ layout(binding = 3, std430) buffer Fbo0 { int cursor; uint list[]; } freeList;
 #if defined(STATS)
 // read back by the CPU a frame slot later (FrameProfile: gi_probes_live, gi_probes_traced, gi_probes_from_hits,
 // gi_probes_freed)
-layout(binding = 4, std430) writeonly buffer Stats {
-  uint live; uint traced; uint slots; uint freeSlots; uint fromHits; uint freed;
+layout(binding = 4, std430) buffer Stats {
+  uint live; uint traced; uint slots; uint freeSlots; uint fromHits; uint freed; uint dbgLookups; uint dbgFailed;
   } stats;
 #endif
 layout(binding = 5, std430) buffer Nbo  { uint newList[]; };   // probes to trace, probe_allocation.comp
@@ -261,6 +261,10 @@ void main_stats() {
   stats.freeSlots = freeSlots;
   stats.fromHits  = probeHeader.hitCount;
   stats.freed     = probeHeader.freedCount;
+  stats.dbgLookups = probeHeader.padd1[0]; // GIDEBUG
+  stats.dbgFailed  = probeHeader.padd1[1];
+  probeHeader.padd1[0] = 0;
+  probeHeader.padd1[1] = 0;
   }
 #endif
 

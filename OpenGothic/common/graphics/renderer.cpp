@@ -2393,7 +2393,7 @@ void Renderer::prepareIrradiance(Encoder<CommandBuffer>& cmd, WorldView& wview) 
   }
 
 // probe_stats: live, traced, slots, free slots, allocated at hits, freed (probe_aux.comp, Stats)
-static constexpr uint32_t giStatsCount = 6;
+static constexpr uint32_t giStatsCount = 8; // GIDEBUG: 6
 
 // GIDEBUG(temporary, step 2b-1): OPENGOTHIC_GI_DEBUG="r=<cm> cap=<n> off=<n> log=1"
 static struct GiDebug { float r=-1; int cap=-1, off=-1; bool log=false; bool read=false; } giDebug;
@@ -2420,7 +2420,7 @@ void Renderer::readGiStats(uint8_t fId) {
   uint32_t v[giStatsCount] = {};
   Resources::device().readBytes(gi.stats[fId], v, sizeof(v));
   if(giDebugGet().log && (gi.frame%30)==0)
-    Log::i("GIDEBUG frame ", gi.frame, " live ", v[0], " traced ", v[1], " slots ", v[2], " free ", v[3], " fromHits ", v[4], " freed ", v[5]);
+    Log::i("GIDEBUG frame ", gi.frame, " live ", v[0], " traced ", v[1], " slots ", v[2], " free ", v[3], " fromHits ", v[4], " freed ", v[5], " lookups ", v[6], " failed ", v[7]);
   FrameProfile::add(FrameProfile::Amount::GiProbesLive,     v[0]);
   FrameProfile::add(FrameProfile::Amount::GiProbesTraced,   v[1]);
   FrameProfile::add(FrameProfile::Amount::GiProbesFromHits, v[4]);

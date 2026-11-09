@@ -275,8 +275,10 @@ vec3 bounce(vec3 pos, vec3 norm, uint probeId, uint stamp, bool hasPrev) {
   // in the hit's direction. One more ray of the path from such a hit made a hut at noon 3-10 % lighter (the sky over
   // the street seen through the door) for +0,4 ms in combat: over the budget (step-2.md, «2а»).
   uint id = 0;
+  atomicAdd(probeHeader.padd1[0], 1); // GIDEBUG
   if(findProbe(pos, norm, stamp, id))
     return probeReadAmbient(probesLightingPrev, id, norm, vec3(0));
+  atomicAdd(probeHeader.padd1[1], 1); // GIDEBUG
   return readSelf(probeId, hasPrev, norm);
   }
 
