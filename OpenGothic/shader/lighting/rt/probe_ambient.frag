@@ -40,7 +40,6 @@ layout(location = 0) out vec4 outColor;
 
 vec4 colorSum  = vec4(0);
 bool err       = false;
-float dbgBadW = 0, dbgAllW = 0, dbgCount = 0; // GIDEBUG
 #if defined(MATERIAL_MAPS)
 bool ownMaterial = false;
 float skyVisibilitySum = 0.0;
@@ -108,9 +107,6 @@ void addProbe(vec3 wpos, uint probeId, uint bits, vec3 pixelPos, vec3 pixelNorm)
   weight *= max(0.01, dot(normalize(ldir), pixelNorm));
   // distnace based weight
   weight *= 1.0/(dot(ldir,ldir) + 0.00001);
-  dbgAllW += weight; dbgCount += 1; // GIDEBUG
-  if((bits & BAD_BIT)!=0)
-    dbgBadW += weight;
   if((bits & BAD_BIT)!=0)
     weight *= 0.00001;
 
@@ -182,7 +178,7 @@ void main() {
 
   const vec3  basePos = unprojectDepth(z);
   // must be exactly same as in allocation !
-  const int   lod     = probeGridLod(basePos, scene.camPos, abs(scene.probeLodScale));
+  const int   lod     = probeGridLod(basePos, scene.camPos, scene.probeLodScale);
   const vec3  pos     = basePos + norm*probeCageBias;
 
   gather(basePos, pos, norm, lod);
@@ -228,10 +224,6 @@ void main() {
 #endif
   color *= scene.exposure;
   outColor = vec4(color, 1);
-  if(scene.probeLodScale<0) { // GIDEBUG: red - the share of the weight of bad probes, green - no probe (sky), blue - corners found / 8
-    const bool none = colorSum.w<=minW;
-    outColor = vec4(dbgAllW>0 ? dbgBadW/dbgAllW : 0, 0, dbgCount/8.0, 1);
-    }
 
   // outColor = vec4(srgbEncode(linear), 0);
   // outColor = vec4(0.001 * vec3(harmonicR.r/max(harmonicR.g, 0.000001)), 0);

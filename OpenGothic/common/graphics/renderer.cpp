@@ -16,7 +16,6 @@
 #include "camera.h"
 #include "frameprofile.h"
 #include "gothic.h"
-#include <cstring> // GIDEBUG
 #include "utils/string_frm.h"
 
 using namespace Tempest;
@@ -2393,39 +2392,14 @@ void Renderer::prepareIrradiance(Encoder<CommandBuffer>& cmd, WorldView& wview) 
   }
 
 // probe_stats: live, traced, slots, free slots, allocated at hits, freed (probe_aux.comp, Stats)
-static constexpr uint32_t giStatsCount = 8; // GIDEBUG: 6
-
-// GIDEBUG(temporary, step 2b-1): OPENGOTHIC_GI_DEBUG="r=<cm> cap=<n> off=<n> log=1"
-struct GiDebug { float r=-1; int cap=-1, off=-1; bool log=false; bool read=false; uint32_t flags=0; bool viz=false; };
-static GiDebug giDebug;
-const GiDebug& giDebugGet();
-bool giDebugViz() { return giDebugGet().viz; }
-const GiDebug& giDebugGet() {
-  if(!giDebug.read) {
-    giDebug.read = true;
-    if(const char* e = std::getenv("OPENGOTHIC_GI_DEBUG")) {
-      std::string s = e;
-      auto val = [&](const char* k) -> const char* { auto i = s.find(k); return i==std::string::npos ? nullptr : s.c_str()+i+std::strlen(k); };
-      if(auto v = val("r="))   giDebug.r   = std::strtof(v, nullptr);
-      if(auto v = val("cap=")) giDebug.cap = std::atoi(v);
-      if(auto v = val("off=")) giDebug.off = std::atoi(v);
-      if(auto v = val("log=")) giDebug.log = std::atoi(v)!=0;
-      if(auto v = val("pt="))  giDebug.flags |= std::atoi(v)!=0 ? 1u : 0u;
-      if(auto v = val("viz=")) giDebug.viz = std::atoi(v)!=0;
-      Log::i("GIDEBUG r=", giDebug.r, " cap=", giDebug.cap, " off=", giDebug.off, " log=", giDebug.log);
-      }
-    }
-  return giDebug;
-  }
+static constexpr uint32_t giStatsCount = 6;
 
 void Renderer::readGiStats(uint8_t fId) {
   // the counters this frame slot wrote last time: its fence has been waited for, the buffer is host-visible
-  if(!(FrameProfile::enabled() || giDebugGet().log) || !gi.statsWritten[fId] || gi.stats[fId].isEmpty())
+  if(!FrameProfile::enabled() || !gi.statsWritten[fId] || gi.stats[fId].isEmpty())
     return;
   uint32_t v[giStatsCount] = {};
   Resources::device().readBytes(gi.stats[fId], v, sizeof(v));
-  if(giDebugGet().log && (gi.frame%30)==0)
-    Log::i("GIDEBUG frame ", gi.frame, " live ", v[0], " traced ", v[1], " slots ", v[2], " free ", v[3], " fromHits ", v[4], " freed ", v[5], " lookups ", v[6], " failed ", v[7]);
   FrameProfile::add(FrameProfile::Amount::GiProbesLive,     v[0]);
   FrameProfile::add(FrameProfile::Amount::GiProbesTraced,   v[1]);
   FrameProfile::add(FrameProfile::Amount::GiProbesFromHits, v[4]);
@@ -2441,7 +2415,7 @@ void Renderer::readGiStats(uint8_t fId) {
 // - giOffPeriod: a probe no pixel takes is relit and integrated once in so many frames.
 static constexpr float    giExpire      = 5.f;
 static constexpr uint32_t giReserve     = 8192;
-static constexpr float    giHitRadius   = 2000.f;
+static constexpr float    giHitRadius   = 1000.f;
 static constexpr uint32_t giMaxRequests = 512;
 static constexpr uint32_t giOffPeriod   = 2;
 
@@ -2645,17 +2619,15 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
     uint32_t offPeriod;
     float    hitRadius;
     uint32_t maxRequests;
-    uint32_t dbgFlags; // GIDEBUG
     } push = {};
   push.alpha       = 1.f - std::exp(-dt/giTau);
   push.frameId     = gi.frame++;
   push.relitPeriod = 4;
   while(push.relitPeriod<32 && float(push.relitPeriod*2)*gi.frameTime<=giRefresh*1.5f)
     push.relitPeriod *= 2;  // 30 fps: every 8th sample a frame, 60 fps: 16th, 120 fps: 32nd
-  push.offPeriod   = giDebugGet().off>0 ? uint32_t(giDebugGet().off) : giOffPeriod;
-  push.hitRadius   = giDebugGet().r>=0 ? giDebugGet().r : giHitRadius;
-  push.dbgFlags    = giDebugGet().flags;
-  push.maxRequests = giDebugGet().cap>=0 ? uint32_t(std::min(giDebugGet().cap, int(giMaxRequests))) : giMaxRequests;
+  push.offPeriod   = giOffPeriod;
+  push.hitRadius   = giHitRadius;
+  push.maxRequests = giMaxRequests;
 
   cmd.setDebugMarker("GI-Lighting");
   cmd.setBinding(0, probesLightingPrev);
@@ -2694,7 +2666,7 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
   cmd.setPipeline(shaders.probeLighting);
   cmd.dispatch(1024);
 
-  if(FrameProfile::enabled() || giDebugGet().log) {
+  if(FrameProfile::enabled()) {
     auto& stats = gi.stats[fId];
     if(stats.isEmpty())
       stats = Resources::device().ssbo(BufferHeap::Readback, Uninitialized, giStatsCount*sizeof(uint32_t));
