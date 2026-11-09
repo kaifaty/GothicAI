@@ -11,6 +11,9 @@ female runs: G=$B/HUMANS-S_RUNL.MAN.json BABE=$B/HUMANS_BABE-S_RUNL.MAN.json. On
 - hand height over the pelvis, 25 / 23 / 15 cm;
 - knee in the swing and the ankle's rise: 129° and 62 cm for Gothic, 81-104° and 22-35 cm for Kimodo's runs.
 The base (feet apart at stance) is printed too, but runners do run on a narrow line: Gothic's 16 cm is a style.
+Posture: the forward tilt of the chest (SPINE2 -> NECK), the neck (NECK -> HEAD) and the head's up axis; a loop
+whose chest and neck lean forward while the head tips back to look ahead reads as hunched (S4: +11.6°, +25.6°,
+-5.4° against Gothic's stance -8.6°, +11.4°, 0°).
 """
 from __future__ import annotations
 
@@ -67,8 +70,15 @@ def cues(skel: ga.Skeleton, path: str) -> dict[str, float]:
                                    P(f"BIP01 {s} FOOT") - P(f"BIP01 {s} CALF"))).max() for s in "LR"),
         "ankle rise cm": max(np.ptp(P(f"BIP01 {s} FOOT")[:, 1]) for s in "LR"),
     }
-    trunk = P("BIP01 NECK") - P("BIP01 PELVIS")
-    out["lean °"] = np.degrees(np.arctan2(trunk @ ahead, trunk[:, 1])).mean()
+    def tilt(v: np.ndarray) -> float:  # mean forward tilt along the travel, + = tipped forward
+        return float(np.degrees(np.arctan2(v @ ahead, v[:, 1])).mean())
+
+    out["lean °"] = tilt(P("BIP01 NECK") - P("BIP01 PELVIS"))
+    # posture against Gothic's stance S_RUN (chest -8.6°, neck +11.4°, head 0°): a chest and neck tipped forward
+    # with the head thrown back to look ahead read as a hunch
+    out["chest °"] = tilt(P("BIP01 NECK") - P("BIP01 SPINE2"))
+    out["neck °"] = tilt(P("BIP01 HEAD") - P("BIP01 NECK"))
+    out["head °"] = tilt(np.array([w[idx["BIP01 HEAD"]][:3, :3] @ np.array([1.0, 0, 0]) for w in W]))  # its up axis
     return {k: float(v) for k, v in out.items()}
 
 
