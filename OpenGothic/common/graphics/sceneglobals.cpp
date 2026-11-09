@@ -253,6 +253,8 @@ void SceneGlobals::setResolution(uint32_t w, uint32_t h) {
   const float bias    = 4 + std::max(std::log2(float(w*h)/float(1920*1080)), 0.f);
   const float tanHalf = std::tan(Gothic::options().cameraFov*0.5f*float(M_PI)/180.f);
   uboGlobalCpu.probeLodScale = std::exp2(bias) * (4.f*tanHalf/float(h)) / 25.f;
+  extern bool giDebugViz(); // GIDEBUG
+  if(giDebugViz()) uboGlobalCpu.probeLodScale = -uboGlobalCpu.probeLodScale;
   }
 
 void SceneGlobals::setHiZ(const Tempest::Texture2d& t) {

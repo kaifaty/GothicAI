@@ -2396,8 +2396,11 @@ void Renderer::prepareIrradiance(Encoder<CommandBuffer>& cmd, WorldView& wview) 
 static constexpr uint32_t giStatsCount = 8; // GIDEBUG: 6
 
 // GIDEBUG(temporary, step 2b-1): OPENGOTHIC_GI_DEBUG="r=<cm> cap=<n> off=<n> log=1"
-static struct GiDebug { float r=-1; int cap=-1, off=-1; bool log=false; bool read=false; uint32_t flags=0; } giDebug;
-static const GiDebug& giDebugGet() {
+struct GiDebug { float r=-1; int cap=-1, off=-1; bool log=false; bool read=false; uint32_t flags=0; bool viz=false; };
+static GiDebug giDebug;
+const GiDebug& giDebugGet();
+bool giDebugViz() { return giDebugGet().viz; }
+const GiDebug& giDebugGet() {
   if(!giDebug.read) {
     giDebug.read = true;
     if(const char* e = std::getenv("OPENGOTHIC_GI_DEBUG")) {
@@ -2408,6 +2411,7 @@ static const GiDebug& giDebugGet() {
       if(auto v = val("off=")) giDebug.off = std::atoi(v);
       if(auto v = val("log=")) giDebug.log = std::atoi(v)!=0;
       if(auto v = val("pt="))  giDebug.flags |= std::atoi(v)!=0 ? 1u : 0u;
+      if(auto v = val("viz=")) giDebug.viz = std::atoi(v)!=0;
       Log::i("GIDEBUG r=", giDebug.r, " cap=", giDebug.cap, " off=", giDebug.off, " log=", giDebug.log);
       }
     }

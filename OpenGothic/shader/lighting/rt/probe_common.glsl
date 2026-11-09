@@ -139,7 +139,7 @@ vec3 probeReadAmbient(in sampler2D irradiance, uint id, vec3 nx, vec3 probeNorm)
 // 2/lodScale, each next one twice as far and twice as coarse (scene.probeLodScale, SceneGlobals::setResolution).
 // The one function for the pixels (allocation, probe_ambient.frag), the hits (probe_lighting.comp) and the lookups.
 int probeGridLod(vec3 pos, vec3 camPos, float lodScale) {
-  const float d = distance(pos, camPos)*lodScale;
+  const float d = distance(pos, camPos)*abs(lodScale); // GIDEBUG: abs
   return clamp(int(log2(max(d, 1e-6))), 0, 12);
   }
 
