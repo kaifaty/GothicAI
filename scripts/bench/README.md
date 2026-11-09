@@ -89,6 +89,12 @@ Their `NpcCommands` state and `NpcCommandsContext` references are in `testbench_
 intervening `npcSimCommand` and `archeryCommand` calls retain their order in `exec`.
 Animation, appearance and capture commands stay in `testbench.cpp`.
 
+Scenario timing, logging, routing, movement and input commands live in `common/testbench_control.cpp`.
+Conversation and AI probes live in `common/testbench_dialog.cpp`.
+Their `ControlContext` / `DialogContext` references are in `testbench_internal.h`; shared helpers have one definition.
+Each family runs at its first original branch, guarded only by its command names.
+Intervening animation, camera and capture commands retain their positions in `exec`; tick/reset stay in `testbench.cpp`.
+
 Runs a scenario through the windowed game or the headless runner and records metrics and a report.
 Windowed scenarios can also capture video with a debug overlay and point at suspicious frames.
 
@@ -1622,7 +1628,7 @@ physics contracts pass after explicit signed Guild comparisons in the fixture.
 
 `OpenGothic/common/testbench.cpp` and `testbench_<family>.cpp` (including healing in
 `testbench_healing.cpp`, water / corpse-water in `testbench_water.cpp` and hero / human NPC
-CharacterVirtual in `testbench_character.cpp` and ground monsters in `testbench_monster.cpp`, destruction in `testbench_destruction.cpp`, physics-trace debug commands in `testbench_traces.cpp`, movable objects/candles, physics noise and spells in `testbench_movables.cpp`, item wake in `testbench_item_wake.cpp` and living bodies in `testbench_living.cpp`, ragdolls in `testbench_ragdoll.cpp` and own meshes / chests in `testbench_own_mesh.cpp`, archery in `testbench_archery.cpp`, melee in `testbench_melee.cpp` and routine return / guard in `testbench_routine.cpp`, manual-aim spot probes in `testbench_aim_spots.cpp`, hero / NPC commands in `testbench_npc_commands.cpp`, physics / world / time in `testbench_world.cpp`), inert unless `OPENGOTHIC_BENCH` is set. Hooks: the fixed time step and
+CharacterVirtual in `testbench_character.cpp` and ground monsters in `testbench_monster.cpp`, destruction in `testbench_destruction.cpp`, physics-trace debug commands in `testbench_traces.cpp`, movable objects/candles, physics noise and spells in `testbench_movables.cpp`, item wake in `testbench_item_wake.cpp` and living bodies in `testbench_living.cpp`, ragdolls in `testbench_ragdoll.cpp` and own meshes / chests in `testbench_own_mesh.cpp`, archery in `testbench_archery.cpp`, melee in `testbench_melee.cpp` and routine return / guard in `testbench_routine.cpp`, manual-aim spot probes in `testbench_aim_spots.cpp`, hero / NPC commands in `testbench_npc_commands.cpp`, physics / world / time in `testbench_world.cpp`, scenario control in `testbench_control.cpp` and conversation / AI probes in `testbench_dialog.cpp`), inert unless `OPENGOTHIC_BENCH` is set. Hooks: the fixed time step and
 the capture in `MainWindow` (in film mode the captured frame replaces the window's), the AI bridge's lines
 and voices (`TestBench::aiLine`, `aiVoiceEnd`, `aiHeard`, `aiBusy`), an npc's lines of the game and SVMs
 (`TestBench::npcOutput` in `Npc::nextAiAction`), the OpenAL loopback device in Tempest's
