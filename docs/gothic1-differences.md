@@ -29,8 +29,8 @@
 | Разрешённые состояния игрока включали `ZS_MAGICFEAR` | Вместо него `ZS_WHIRLWIND`; общие девять состояний: `ZS_DEAD`, `ZS_UNCONSCIOUS`, `ZS_MAGICFREEZE`, `ZS_PYRO`, `ZS_ASSESSMAGIC`, `ZS_ASSESSSTOPMAGIC`, `ZS_ZAPPED`, `ZS_SHORTZAPPED`, `ZS_MAGICSLEEP` | [`Npc::isPlayerEnabledState`](../OpenGothic/common/world/objects/npc_routine.cpp) |
 | При отсутствии loop-функции состояния `loop=0` | `loop=1` для NotR; прежний помощник требовал `game==2 && patch>=5`, поэтому G2 classic тоже получал `0` | [`Npc::tickRoutine`](../OpenGothic/common/world/objects/npc_routine.cpp); помощник — `common/utils/versioninfo.h:10` |
 | Для целей-орков `trueGuild > 37`; нежить — `GIL_G1_ZOMBIE`, `GIL_G1_UNDEADORC`, `GIL_G1_SKELETON` (30, 31, 32) | Орки: `trueGuild > 58`; нежить — `GIL_GOBBO_SKELETON`, `GIL_SUMMONED_GOBBO_SKELETON`, `GIL_SKELETON`, `GIL_SUMMONED_SKELETON`, `GIL_SKELETON_MAGE`, `GIL_SHADOWBEAST_SKELETON`, `GIL_ZOMBIE`. Общие проверки `ALL`, `NPCS`, людей прежние | `common/world/objects/npc.cpp:8070` |
-| `invokeSpell` при финальной отправке заклинания пропускалась | Вызывается перед общей логикой снаряда/эффекта | `common/world/objects/npc.cpp:8098` |
-| Начало анимации заклинания пробовалось только при наличии `T_MAGRUN_2_<ani>CAST` | `startAnimSpell` вызывается без предварительного `hasAnim`; его результат обрабатывается как прежде | `common/world/objects/npc.cpp:10620` |
+| `invokeSpell` при финальной отправке заклинания пропускалась | Вызывается перед общей логикой снаряда/эффекта | `common/world/objects/npc_ranged.cpp:30` |
+| Начало анимации заклинания пробовалось только при наличии `T_MAGRUN_2_<ani>CAST` | `startAnimSpell` вызывается без предварительного `hasAnim`; его результат обрабатывается как прежде | `common/world/objects/npc_ranged.cpp:169` |
 | Признак дракона в правиле удаления тел всегда ложный | Признак `guild()==GIL_DRAGON` | `common/world/world.cpp:725` |
 
 ## Правила
@@ -48,8 +48,8 @@
 | При ошибке взлома порог поломки отмычки — `100 - talentValue(TALENT_PICKLOCK)` | Порог — ловкость; сравнение с `script.rand(100)` и последующие вызовы `G_PickLock` прежние | `common/game/playercontrol.cpp:1517` |
 | На экране талантов 12 позиций, значение из `talentValue` | 22 позиции (`TALENT_MAX_G2`), значение из `hitChance` | `common/ui/gamemenu.cpp:1265` |
 | Для взлома игроку хватало отмычек независимо от навыка | Нужны и отмычки, и ненулевой `talentSkill(TALENT_PICKLOCK)` | `common/world/objects/interactive.cpp:676` |
-| После `invokeMana` движок отнимал единицу маны и для NPC при результате не `SPL_SENDCAST` проверял остаток `>0` | Этого дополнительного списания и assert нет | `common/world/objects/npc.cpp:10654` |
-| Шанс попадания стрелы — ловкость / 100; отдельный шанс критического удара — значение таланта лука/арбалета / 100 | Шанс попадания из `hitchance` лука/арбалета / 100; отдельного параметра критического удара нет | `common/world/objects/npc.cpp:10782` |
+| После `invokeMana` движок отнимал единицу маны и для NPC при результате не `SPL_SENDCAST` проверял остаток `>0` | Этого дополнительного списания и assert нет | `common/world/objects/npc_ranged.cpp:199` |
+| Шанс попадания стрелы — ловкость / 100; отдельный шанс критического удара — значение таланта лука/арбалета / 100 | Шанс попадания из `hitchance` лука/арбалета / 100; отдельного параметра критического удара нет | `common/world/objects/npc_ranged.cpp:324` |
 
 ## Интерфейс и старт
 
