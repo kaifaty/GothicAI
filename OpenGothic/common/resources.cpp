@@ -1814,8 +1814,8 @@ std::vector<const Texture2d*> Resources::textureChanges(uint64_t since) {
 
 // Bench `deterministic on` (common/testbench.cpp, reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md).
 // The Full/Tail demotion runs on a wall-clock delay and on memory pressure: with `benchTexturesSettle` texturesReady()
-// also waits until no demotion is pending and no reload is in flight; while `benchTexturesFrozen` updateTextures()
-// changes nothing, so the levels of a shot depend on what is seen, not on how long the loading took.
+// also waits for the timed demotions, a reload in flight and, above the texture target, the demotion LRU (below it
+// the LRU never moves); while `benchTexturesFrozen` updateTextures() changes nothing, so levels depend on the view.
 bool benchTexturesSettle = false;
 bool benchTexturesFrozen = false;
 
@@ -1823,9 +1823,19 @@ bool Resources::texturesReady() {
   if(inst==nullptr || inst->dev==nullptr)
     return true;
   std::lock_guard<std::recursive_mutex> guard(inst->sync);
-  if(benchTexturesSettle && (!inst->textureDemotions.empty() || !inst->textureDemotionLru.empty() || inst->textureReload))
+  if(benchTexturesSettle && (!inst->textureDemotions.empty() || inst->textureReload ||
+                             (!inst->textureDemotionLru.empty() && Texture2d::liveBytes()>inst->textureTarget)))
     return false;
   return inst->textureMissing.empty() && inst->texturePromotions.empty();
+  }
+
+std::string Resources::texturesWaitState() {
+  if(inst==nullptr || inst->dev==nullptr)
+    return "none";
+  std::lock_guard<std::recursive_mutex> guard(inst->sync);
+  return "missing="+std::to_string(inst->textureMissing.size())+" promotions="+std::to_string(inst->texturePromotions.size())+
+         " demotions="+std::to_string(inst->textureDemotions.size())+" demotion_lru="+std::to_string(inst->textureDemotionLru.size())+
+         " reload="+std::to_string(int(bool(inst->textureReload)))+" settle="+std::to_string(int(benchTexturesSettle));
   }
 
 TextureFormat Resources::textureFormat(const Texture2d* texture) {

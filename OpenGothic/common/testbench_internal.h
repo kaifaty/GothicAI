@@ -261,6 +261,38 @@ struct RagdollContext {
   Npc& (*subjectOf)(Npc&);
 };
 
+struct WorldBench {
+  std::string perfSegment;
+  uint64_t    perfFrame = 0;
+  bool        perfArmed = false;
+  bool        waitStreaming = false;
+  std::chrono::steady_clock::time_point streamingDeadline;
+  // `deterministic on`: a `shot` does not depend on how many frames the loading took
+  // (reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md)
+  bool        deterministic = false;
+  uint64_t streamingNearBefore = 0, streamingFarBefore = 0;
+  uint64_t streamingPublishedBefore = 0, streamingReleasedBefore = 0;
+  Resources::TextureStats streamingTexturesBefore;
+  uint64_t streamingVobCreatedBefore = 0, streamingVobReleasedBefore = 0;
+  double streamingVobMissingBefore = 0;
+  uint64_t streamingNpcTransitionsBefore = 0;
+#ifdef OPENGOTHIC_ENABLE_APP_CADENCE
+  bool        cadenceVerified=false,cadenceWait=false;
+  uint32_t    cadenceDown=0;
+#endif
+  };
+
+struct WorldContext {
+  WorldBench& world;
+  RagdollBench& ragdoll;
+  std::vector<Npc*>& crew;
+  Npc*& subject;
+  uint64_t& time;
+  uint64_t& waitUntil;
+  const Tempest::Vec3& camPos;
+  Npc& (*subjectOf)(Npc&);
+  };
+
 struct SpellActor {Npc* npc=nullptr;std::string role;};
 struct MovableFixture { ObjVisual visual; DynamicWorld::Item body; };
 
@@ -1451,6 +1483,9 @@ void arrowFields(World& world);
 float aimSegmentDistance(const Tempest::Vec3& p, const Tempest::Vec3& q, const Tempest::Vec3& a, const Tempest::Vec3& b, float& along);
 float aimBoxDistance(const Tempest::Vec3& from, const Tempest::Vec3& to, const Tempest::Vec3 (&box)[2]);
 std::vector<std::string> split(std::string_view s);
+WorldContext worldContext();
+bool worldCommand(const WorldContext& context,const std::string& line,const std::vector<std::string>& a,
+                  World& w,Npc& pl,PlayerControl& ctrl);
 NpcCommandsContext npcCommandsContext();
 bool npcCommandsCommand(const NpcCommandsContext& context,const std::string& line,const std::vector<std::string>& a,
                         World& w,Npc& pl,PlayerControl& ctrl);

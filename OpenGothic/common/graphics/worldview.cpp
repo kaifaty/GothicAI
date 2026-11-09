@@ -170,6 +170,9 @@ struct WorldView::VobStreaming : std::enable_shared_from_this<VobStreaming> {
     }
 
   bool ready() const { return residency.stats().vobPending==0 && !workQueued; }
+  std::string waitState() const {
+    return "pending="+std::to_string(residency.stats().vobPending)+" queued="+std::to_string(int(workQueued));
+    }
   };
 
 struct WorldView::LandscapeStreaming {
@@ -356,6 +359,17 @@ struct WorldView::LandscapeStreaming {
       wake.notify_one();
       }
     return packed;
+    }
+
+  std::string waitState() {
+    std::lock_guard guard(mutex);
+    size_t missing=0;
+    for(size_t i=0;i<chunks.size();++i)
+      if(residency.desired(i)!=ChunkResidency::State::Outside && !chunks[i].gpu && !chunks[i].failed)
+        ++missing;
+    return "packing="+std::to_string(int(packing))+" ready_packs="+std::to_string(readyCount)+
+           " jobs="+std::to_string(jobs.size())+" residency_idle="+std::to_string(int(residency.idle()))+
+           " missing_chunks="+std::to_string(missing);
     }
 
   bool ready() {
@@ -566,6 +580,13 @@ void WorldView::finishLandscapeUpdate() {
 
 bool WorldView::landscapeReady() const {
   return (!streaming || streaming->ready()) && (!vobStreaming || vobStreaming->ready()) && Resources::texturesReady();
+  }
+
+std::string WorldView::landscapeWaitState() const {
+  std::string ret="landscape: "+(streaming ? streaming->waitState() : std::string("whole"));
+  if(vobStreaming)
+    ret+="; vobs: "+vobStreaming->waitState();
+  return ret+"; textures: "+Resources::texturesWaitState();
   }
 
 const LightSource& WorldView::mainLight() const {

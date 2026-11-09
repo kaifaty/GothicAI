@@ -303,7 +303,7 @@ void MdlVisual::pushBodyPose() {
     view.setPose(pos,source);
     return;
     }
-  if(!bodyRig->solve(source,skInst->boneCount(),rigPalette.data())) {
+  if(!bodyRig->solve(source,skInst->boneCount(),rigPalette.data(),RenderRig::Hands{rigHold,rigWorld})) {
     // the Gothic pose is not there yet: the rig's bind pose where the body stands
     const auto& bind = bodyRig->skeleton().tr;
     for(size_t i=0; i<rigPalette.size() && i<bind.size(); ++i)
@@ -322,7 +322,7 @@ Matrix4x4 MdlVisual::attachMatrix(size_t node) const {
 const Matrix4x4* MdlVisual::skinOf(const Matrix4x4* bones, size_t n, std::vector<Matrix4x4>& rig, size_t& count) const {
   if(bodyRig!=nullptr) {
     rig.resize(bodyRig->bones());
-    if(bodyRig->solve(bones,n,rig.data())) {
+    if(bodyRig->solve(bones,n,rig.data(),RenderRig::Hands{rigHold,rigWorld})) {
       count = rig.size();
       return rig.data();
       }
@@ -1392,11 +1392,28 @@ bool MdlVisual::updateAnimation(Npc* npc, Interactive* mobsi, World& world, uint
   if(npc!=nullptr && npc==Pose::probeNpc)
     pose.probe(Pose::subjectProbe);
 
-  if(changed) {
+  // the render rig's arms: one thing in both hands (a 2H weapon, a bow, a crossbow, a spell) - the left hand holds on
+  // to the right as Gothic's does; at a mob (a ladder, a workbench) - the hands go onto Gothic's
+  bool handsMoved = false;
+  if(bodyRig!=nullptr && npc!=nullptr) {
+    const auto  ws    = npc->weaponState();
+    const float hold  = (ws==WeaponState::W2H || ws==WeaponState::Bow || ws==WeaponState::CBow ||
+                         ws==WeaponState::Mage) ? 1.f : 0.f;
+    const float world = npc->interactive()!=nullptr ? 1.f : 0.f;
+    const float ease  = 1.f - std::exp(-float(dt)/150.f);
+    const float h = rigHold  + (hold -rigHold )*ease;
+    const float w = rigWorld + (world-rigWorld)*ease;
+    auto settle = [](float v, float goal) { return std::abs(v-goal)<1e-3f ? goal : v; };
+    handsMoved = settle(h,hold)!=rigHold || settle(w,world)!=rigWorld;
+    rigHold    = settle(h,hold);
+    rigWorld   = settle(w,world);
+    }
+
+  if(changed || handsMoved) {
     FrameProfile::Scope timing(FrameProfile::Zone::PaletteCpu,FrameProfile::watchedActor(npc));
     pushBodyPose();
     }
-  return changed;
+  return changed || handsMoved;
   }
 
 bool MdlVisual::updateGaze(Npc& npc, uint64_t dt) {

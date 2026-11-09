@@ -171,6 +171,7 @@ class Resources final {
     static uint64_t                  textureGeneration();
     static std::vector<const Tempest::Texture2d*> textureChanges(uint64_t since);
     static bool                      texturesReady();
+    static std::string               texturesWaitState();
     static Tempest::TextureFormat    textureFormat(const Tempest::Texture2d* texture);
     class TextureLoadScope {
       public:

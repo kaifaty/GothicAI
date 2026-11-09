@@ -170,13 +170,23 @@ if RIG:
                      f'thigh_{sd}': (G(f'BIP01 {S} CALF')[:3, 3] - G(f'BIP01 {S} THIGH')[:3, 3]),
                      f'calf_{sd}': (ankle_world(S) - G(f'BIP01 {S} CALF')[:3, 3]),
                      f'foot_{sd}': (G(f'BIP01 {S} TOE0')[:3, 3] - ankle_world(S))})
+    # the spine and the neck as Gothic's bind holds them: MPFB's own curve (the upper back 17 degrees and the neck 8.5
+    # further forward than Gothic's) bent our hero over in every pose Gothic leans in (reports/engine/
+    # 2026-11-modern-skeleton, «Аудит»); the head keeps its own turn (where the face looks is Gothic's)
+    DIRS.update({'spine_01': G('BIP01 SPINE1')[:3, 3] - G('BIP01 SPINE')[:3, 3],
+                 'spine_02': G('BIP01 SPINE2')[:3, 3] - G('BIP01 SPINE1')[:3, 3],
+                 'spine_03': G('BIP01 NECK')[:3, 3] - G('BIP01 SPINE2')[:3, 3],
+                 'neck_01': G('BIP01 HEAD')[:3, 3] - G('BIP01 NECK')[:3, 3]})
     tails = {b['name']: np.array(b['tail']) for b in rig['bones']}
+    # the spine's segments joint to joint, as Gothic's (a bone's tail in MPFB need not sit on the next joint)
+    CHAIN = {'spine_01': 'spine_02', 'spine_02': 'spine_03', 'spine_03': 'neck_01', 'neck_01': 'head'}
     align, bones_out = {}, []
     for b, M in zip(rig['bones'], rig_bind):
         n = b['name']; e = {'name': n}
         if n in MAP:
             e['source'] = 'BIP01 ' + MAP[n]
-            A = rot_between(tails[n] - M[:3, 3], DIRS[n]) if n in DIRS else np.eye(3)   # spine, neck, head stay
+            ours = (rig_bind[ridx[CHAIN[n]]][:3, 3] if n in CHAIN else tails[n]) - M[:3, 3]
+            A = rot_between(ours, DIRS[n]) if n in DIRS else np.eye(3)   # the pelvis, head stay
             align[n] = A; e['align'] = quat(A)
         bones_out.append(e)
     # the fist (mpfb_export.py): a phalanx takes the turn of Gothic's FINGER0, the thumb the hand's, on top of the
@@ -198,22 +208,23 @@ if RIG:
         off = np.linalg.inv(Mb) @ Mg
         return {'bone': bone, 'offset': off.T.reshape(-1).tolist()}
     head_shift = np.array([0.0, 0.0, rig['head_dz_cm']])
-    # Gothic's clips are made for legs 2.6 cm shorter than HUMANS.MDH's bind (thigh 40.9 + shin 44.9 against 39.3 +
-    # 49.1), ours are fitted to the bind: the pelvis rises by LIFT of its height over the lower ankle, the IK eases the
-    # last SOFT cm (reports/engine/2026-11-modern-skeleton, «Ноги»; chosen on rig_solve.py's table). Twist bones and
-    # the shoulder rhythm - «Верх тела» (rig_parts.py); the twist bones are in the rig only when mpfb_export.py made them
-    LIFT, SOFT = rig_parts.LIFT, rig_parts.SOFT
+    # Gothic's clips have legs of their own lengths (the shin 44.9 or 49.1 cm), ours are fitted to the bind: the knees
+    # bend as Gothic's, the pelvis takes the height that needs, a foot on the ground pivots about Gothic's ball (root
+    # knees); the IK eases the last SOFT cm (reports/engine/2026-11-modern-skeleton, «Ноги», «Аудит»). Twist bones and
+    # the shoulder rhythm - «Верх тела»; the arms - «Аудит» (rig_parts.py); the twist bones are in the rig only when
+    # mpfb_export.py made them
+    SOFT = rig_parts.SOFT
     twists, shoulders = rig_parts.table()
     twists = [t for t in twists if t['bone'] in ridx]
     table = {'format': 'gothic-render-rigs', 'version': 1, 'rigs': {RIGNAME: {
         'skeleton': RIGNAME + '.MDH', 'source': 'HUMANS.MDH', 'bones': bones_out,
-        'root': {'bone': 'pelvis', 'source': 'BIP01 PELVIS', 'lift': LIFT},
+        'root': {'bone': 'pelvis', 'source': 'BIP01 PELVIS', 'knees': rig_parts.KNEES},
         'legs': [{'thigh': f'thigh_{sd}', 'calf': f'calf_{sd}', 'foot': f'foot_{sd}', 'ball': f'ball_{sd}',
                   'source_foot': f'BIP01 {S} FOOT', 'source_knee': f'BIP01 {S} CALF',
                   'ankle': (np.linalg.inv(G(f'BIP01 {S} FOOT')) @ np.r_[ankle_world(S), 1.0])[:3].tolist(),
                   'soft': SOFT}
                  for sd, S in (('l', 'L'), ('r', 'R'))],
-        'twists': twists, 'shoulders': shoulders,
+        'twists': twists, 'shoulders': shoulders, 'arms': rig_parts.arms(),
         'sockets': {'BIP01 HEAD': socket('BIP01 HEAD', 'head', head_shift),
                     'ZS_RIGHTHAND': socket('ZS_RIGHTHAND', 'hand_r'), 'ZS_LEFTHAND': socket('ZS_LEFTHAND', 'hand_l')}}},
         'meshes': {MESH: RIGNAME}}

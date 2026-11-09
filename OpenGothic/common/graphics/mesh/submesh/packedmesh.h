@@ -67,6 +67,9 @@ class PackedMesh {
     PackedMesh(const asset::SoftSkinMesh& mesh);
 
     static std::vector<uint32_t> landscapeMaterialMap(const asset::WorldMesh& mesh);
+    // Bounds of the vertices the landscape polygons use, as bbox() of PK_VisualLnd
+    // gives without packing; compiled world meshes store a zero bbox.
+    static std::pair<Tempest::Vec3,Tempest::Vec3> landscapeBbox(const asset::WorldMesh& mesh);
 
     void debug(std::ostream &out) const;
 

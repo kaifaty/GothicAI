@@ -590,6 +590,7 @@ struct Bench {
   std::string                 inputAnimation;
 
   Melee melee;
+  WorldBench world;
 
   CamMode     cam       = C_Game;
   float       camDist   = 220;
@@ -611,14 +612,6 @@ struct Bench {
   std::string recName;
   uint64_t    recFrame  = 0;
   uint64_t    recStart  = 0;
-  std::string perfSegment;
-  uint64_t    perfFrame = 0;
-  bool        perfArmed = false;
-  bool        waitStreaming = false;
-  std::chrono::steady_clock::time_point streamingDeadline;
-  // `deterministic on`: a `shot` does not depend on how many frames the loading took
-  // (reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md)
-  bool        deterministic = false;
   bool        frozen        = false; // the world stands still: `streaming wait` waits in deterministic mode
   bool        renderReset   = false; // the renderer drops its temporal state before this frame's picture
   uint32_t    settleSteps   = 0;     // fixed steps left between the end of `streaming wait` and the next command
@@ -644,12 +637,6 @@ struct Bench {
   std::vector<double> streamingWarmupFarMs;
   size_t streamingWarmupFarMaxPerFrame = 0;
   double streamingWarmupQueueMaxMs = 0;
-  uint64_t streamingNearBefore = 0, streamingFarBefore = 0;
-  uint64_t streamingPublishedBefore = 0, streamingReleasedBefore = 0;
-  Resources::TextureStats streamingTexturesBefore;
-  uint64_t streamingVobCreatedBefore = 0, streamingVobReleasedBefore = 0;
-  double streamingVobMissingBefore = 0;
-  uint64_t streamingNpcTransitionsBefore = 0;
   std::vector<Vec3> routePoints;
   size_t      routeNext = 0;
   Vec3        routePosition;
@@ -743,10 +730,6 @@ struct Bench {
   std::vector<SavedItemProbe> savedItemProbes;
   uint64_t savedItemStart=0,savedItemSample=uint64_t(-1);
   bool savedItemTracing=false;
-#ifdef OPENGOTHIC_ENABLE_APP_CADENCE
-  bool        cadenceVerified=false,cadenceWait=false;
-  uint32_t    cadenceDown=0;
-#endif
   RagdollBench ragdoll;
   using BirthLive = RagdollBench::BirthLive;
   Npc*        duelA        = nullptr; // bodyduel: bench-owned NPCs, never resolved by their script symbols
@@ -859,6 +842,10 @@ DestructionContext destructionContext() {
 }
 
 namespace testbench_detail {
+
+WorldContext worldContext() {
+  return {bench.world,bench.ragdoll,bench.crew,bench.subject,bench.time,bench.waitUntil,bench.camPos,subjectOf};
+  }
 
 NpcCommandsContext npcCommandsContext() {
   return {bench.npcCommands,bench.healing,bench.holds,bench.taps,bench.pinned,bench.pinAt,
@@ -3586,110 +3573,6 @@ void tickRoute(Npc& player, uint64_t dt) {
   player.setPosition(bench.routePosition);face(player,direction);player.updateTransform();
   }
 
-// The migration oracle deliberately uses the public game API. A generated input file is replayed
-// verbatim by the other backend: even waypoint ground adjustment must not change the queries.
-void physicsDump(World& w, const Npc& pl, size_t count, uint32_t seed, const std::string& input) {
-  struct Query { Vec3 from, to; float radius=0; };
-  std::vector<Query> queries;
-  if(!input.empty()) {
-    std::ifstream file(input);
-    Query q;
-    while(file >> q.from.x >> q.from.y >> q.from.z >> q.to.x >> q.to.y >> q.to.z >> q.radius)
-      queries.push_back(q);
-    if(queries.empty() || !file.eof()) {
-      say("physics dump failed: malformed or empty query file " + input);
-      return;
-      }
-    } else {
-    std::vector<Spot> points;
-    w.findWayPoint(pl.position(),[&](const WayPoint& wp) {
-      Spot point;
-      point.name=wp.name;
-      point.pos=wp.pos;
-      points.push_back(point);
-      return false;
-      });
-    std::sort(points.begin(),points.end(),[](const Spot& a, const Spot& b) { return a.name<b.name; });
-    if(points.empty()) {
-      say("physics dump failed: no waypoints");
-      return;
-      }
-    auto next = [&]() {
-      seed ^= seed<<13;
-      seed ^= seed>>17;
-      seed ^= seed<<5;
-      return seed;
-      };
-    if(seed==0) seed=1;
-    auto random = [&](float lo, float hi) { return lo+(hi-lo)*(float(next()>>8)/16777216.f); };
-    queries.reserve(count);
-    for(size_t i=0;i<count;++i) {
-      const auto& point=points[next()%points.size()];
-      Query q;
-      q.from=point.pos+Vec3(random(-500,500),random(50,1500),random(-500,500));
-      if(i%4<2) {
-        // Vertical ground probes cover the directions used by Foot IK and locomotion.
-        q.to=q.from-Vec3(0,random(500,4000),0);
-        }
-      else if(i%4==2) {
-        q.to=q.from+Vec3(random(-5000,5000),random(-1000,1000),random(-5000,5000));
-        }
-      else {
-        q.to=points[next()%points.size()].pos+Vec3(random(-500,500),random(50,1500),random(-500,500));
-        }
-      static constexpr float radii[]={0.1f,1.f,5.f,25.f,50.f,100.f};
-      q.radius=radii[next()%6];
-      queries.push_back(q);
-      }
-    say("physics dump waypoints " + std::to_string(points.size()));
-    }
-  std::FILE* queryFile=std::fopen((outDir+"/physics-queries.tsv").c_str(),"w");
-  std::FILE* resultFile=std::fopen((outDir+"/physics-results.jsonl").c_str(),"w");
-  if(queryFile==nullptr || resultFile==nullptr) {
-    if(queryFile!=nullptr) std::fclose(queryFile);
-    if(resultFile!=nullptr) std::fclose(resultFile);
-    say("physics dump failed: cannot create output files");
-    return;
-    }
-  for(const auto& q:queries)
-    std::fprintf(queryFile,"%.9g %.9g %.9g %.9g %.9g %.9g %.9g\n",double(q.from.x),double(q.from.y),double(q.from.z),
-                 double(q.to.x),double(q.to.y),double(q.to.z),double(q.radius));
-  std::fclose(queryFile);
-  for(int kind=0;kind<2;++kind) {
-    const char* name=kind==0 ? "ray" : "sphere";
-    auto cast = [&](const Query& q) { return kind==0 ? w.physic()->ray(q.from,q.to) : w.physic()->sweep(q.from,q.to,q.radius); };
-    for(size_t i=0;i<std::min<size_t>(4096,queries.size());++i)
-      (void)cast(queries[i]);
-    std::vector<double> batchTimes;
-    // Timing batches avoids the clock overhead dominating cheap individual queries. JSON/file IO
-    // happens outside the timed block, and every batch has the same mixture in both backends.
-    constexpr size_t batchSize=256;
-    for(size_t begin=0;begin<queries.size();begin+=batchSize) {
-      const size_t end=std::min(begin+batchSize,queries.size());
-      std::vector<DynamicWorld::RayLandResult> results(end-begin);
-      const auto start=std::chrono::steady_clock::now();
-      for(size_t i=begin;i<end;++i)
-        results[i-begin]=cast(queries[i]);
-      const auto elapsed=std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-start).count();
-      batchTimes.push_back(double(elapsed)/double(end-begin));
-      for(size_t i=begin;i<end;++i) {
-        const auto& r=results[i-begin];
-        const std::string sector=jsonStr(r.sector!=nullptr ? r.sector : "");
-        std::fprintf(resultFile,"{\"kind\":\"%s\",\"id\":%zu,\"hit\":%s,\"point\":[%.9g,%.9g,%.9g],\"normal\":[%.9g,%.9g,%.9g],\"material\":%u,\"sector\":%s,\"fraction\":%.9g}\n",
-                     name,i,r.hasCol ? "true" : "false",r.hasCol ? double(r.v.x) : 0.0,r.hasCol ? double(r.v.y) : 0.0,r.hasCol ? double(r.v.z) : 0.0,
-                     double(r.n.x),double(r.n.y),double(r.n.z),unsigned(r.mat),sector.c_str(),double(r.hitFraction));
-        }
-      }
-    std::sort(batchTimes.begin(),batchTimes.end());
-    if(!batchTimes.empty()) {
-      const auto percentile=[&](double p) { return batchTimes[size_t(p*double(batchTimes.size()-1))]; };
-      say(std::string("physics timing ")+name+" count "+std::to_string(queries.size())+
-          " batch 256 ns/query p50 "+std::to_string(percentile(0.5))+" p95 "+std::to_string(percentile(0.95)));
-      }
-    }
-  std::fclose(resultFile);
-  say("physics dump complete " + std::to_string(queries.size()) + " rays and spheres");
-  }
 
 }
 
@@ -4007,60 +3890,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
   else if(itemWakeCommand(a,w,pl)) return;
   else if(placedItemsCommand(bench.placedItems,a,w,pl,ctrl)) return;
   else if(itemHullsCommand(bench.itemHulls,a,w,pl)) return;
-  else if(c=="physics" && a.size()>1 && a[1]=="dump") {
-    physicsDump(w,pl,size_t(std::clamp(num(a,2,100000),1.f,1000000.f)),uint32_t(num(a,3,73013)),a.size()>4 ? a[4] : "");
-    }
-  else if(c=="physics" && a.size()==2 && a[1]=="flags-check") {
-    struct Flag {const char* key;bool Gothic::PhysicsFlags::*member;};
-    const Flag flags[]{
-      {"ragdoll",&Gothic::PhysicsFlags::ragdoll},
-      {"ragdoll_quest_guard",&Gothic::PhysicsFlags::questGuard},
-      {"living_bodies",&Gothic::PhysicsFlags::livingBodies},
-      {"arrow_physics",&Gothic::PhysicsFlags::arrowPhysics},
-      {"arrow_sticking",&Gothic::PhysicsFlags::arrowSticking},
-      {"spell_physics",&Gothic::PhysicsFlags::spellPhysics},
-      {"body_impact_damage",&Gothic::PhysicsFlags::bodyImpactDamage},
-      {"body_traces",&Gothic::PhysicsFlags::bodyTraces},
-      {"blood",&Gothic::PhysicsFlags::blood},
-      {"movable_vobs",&Gothic::PhysicsFlags::movableVobs},
-      {"item_hulls",&Gothic::PhysicsFlags::itemHulls},
-      {"item_deepest_contact",&Gothic::PhysicsFlags::itemDeepestContact},
-      {"ragdoll_birth_guard",&Gothic::PhysicsFlags::ragdollBirthGuard},
-      {"furniture_parts",&Gothic::PhysicsFlags::furnitureParts},
-      {"placed_items",&Gothic::PhysicsFlags::placedItems},
-      {"cloth",&Gothic::PhysicsFlags::cloth}
-      };
-    auto& npc=subjectOf(pl);
-    const auto tick=w.tickCount();
-    bool pass=true;
-    for(const auto& flag:flags) {
-      const int original=Gothic::settingsGetI("GAME",flag.key);
-      pass&=(Gothic::physicsFlags().*flag.member)==(original!=0);
-      for(const std::string_view phase:{"off","on","restore"}) {
-        const int value=phase=="restore" ? original : int(phase=="on");
-        Gothic::settingsSetI("GAME",flag.key,value);
-        const bool immediate=Gothic::physicsFlags().*flag.member;
-        npc.prepareRagdoll();npc.prepareLivingBody();
-        const int configured=Gothic::settingsGetI("GAME",flag.key);
-        const bool cached=Gothic::physicsFlags().*flag.member;
-        const bool same=w.tickCount()==tick;
-        const bool ok=immediate==(value!=0) && cached==(configured!=0) && configured==value && same;
-        pass&=ok;
-        event("physics_flags_check","\"flag\":"+jsonStr(flag.key)+",\"phase\":"+jsonStr(phase)+
-          ",\"original\":"+std::to_string(original)+",\"configured\":"+std::to_string(configured)+
-          ",\"cached\":"+(cached?"true":"false")+",\"prepared\":true,\"same_dispatch\":"+(same?"true":"false")+
-          ",\"pass\":"+(ok?"true":"false"));
-        }
-      }
-    if(!pass) arenaAbort("physics flag snapshot differs in same dispatch");
-    }
-  else if(c=="physics" && a.size()==2 && a[1]=="stats") {
-    const auto stats=w.physic()->physicsStats();
-    char text[200];
-    std::snprintf(text,sizeof(text),"physics stats step_ms=%.6f bodies=%zu rays=%llu",
-                  double(stats.stepMilliseconds),stats.bodies,(unsigned long long)stats.rays);
-    say(text);
-    }
+  else if(c=="physics" && worldCommand(worldContext(),line,a,w,pl,ctrl)) return;
   else if(c=="traces" && a.size()>=2) {
     std::string command=a[1],value,error;
     for(size_t i=2;i<a.size();++i)command+=' '+a[i];
@@ -4222,24 +4052,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     catch(const std::exception& error) {arenaAbort(error.what());}
     }
   else if(noiseCommand(movablesContext(),a,w,pl,ctrl)) return;
-  else if(c=="world-data" && a.size()==2 && (a[1]=="prepare" || a[1]=="check")) {
-    Interactive* door=nullptr;
-    for(uint32_t id=0;auto* mob=w.mobsiById(id);++id)
-      if(mob->isDoor() && mob->stateCount()>0 && (!door || mob->zenId()<door->zenId()))
-        door=mob;
-    if(!door) {arenaAbort("world-data needs an authored door with an open state");return;}
-    if(a[1]=="prepare") {
-      door->setAsCracked(true);
-      door->resetPositionToTA(1);
-      }
-    const bool pass=door->stateId()==1 && door->isCracked() && !door->isLocked();
-    event("world_data_door","\"operation\":"+jsonStr(a[1])+",\"pass\":"+(pass?"true":"false")+
-      ",\"zen_id\":"+std::to_string(door->zenId())+",\"mob_id\":"+std::to_string(w.mobsiId(door))+
-      ",\"state\":"+std::to_string(door->stateId())+",\"cracked\":"+(door->isCracked()?"true":"false")+
-      ",\"locked\":"+(door->isLocked()?"true":"false")+
-      ",\"world_load_ms\":"+ragdollNumber(float(w.loadMilliseconds())));
-    if(!pass)arenaAbort("world-data door lost its open or cracked state");
-    }
+  else if(c=="world-data" && worldCommand(worldContext(),line,a,w,pl,ctrl)) return;
   else if(ownMeshCommand(ownMeshContext(),a,w,pl,ctrl)) return;
 
 
@@ -4253,75 +4066,12 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
   else if((c=="sticking" || c=="arrow") && archeryCommand(archeryContext(),line,a,w,pl,ctrl)) return;
   else if(livingCommand(livingContext(),a,w,pl,ctrl)) return;
   else if(meleeCommand(meleeContext(),a,w,pl,ctrl)) return;
-#ifdef OPENGOTHIC_ENABLE_APP_CADENCE
-  else if(c=="cadence" && a.size()==2 && a[1]=="normal") {
-    AppCadence::enable(outDir+"/appcadence.csv");FootIk::setProbing(false);
-    }
-  else if(c=="cadence" && a.size()==2 && a[1]=="check") {
-    uint32_t models=0,dead=0,parts=0;
-    const auto* skeleton=bench.crew.empty() ? nullptr : bench.crew.front()->visualSkeleton();
-    for(const auto* npc:bench.crew) {
-      if(skeleton!=nullptr && npc->visualSkeleton()==skeleton && TestBench::ragdollBodyDrawable(*npc)) ++models;
-      if(npc->isDead()) ++dead;
-      if(const auto* body=npc->ragdollBody()) parts+=uint32_t(body->partCount());
-      }
-    if(bench.crew.size()!=20 || models!=20 || dead!=0 || parts!=0) { arenaAbort("cadence requires twenty loaded live humans");return; }
-    bench.cadenceVerified=true;AppCadence::counts(true,models,dead,parts,0,0);
-    FrameProfile::setActors(bench.crew);
-    }
-  else if(c=="cadence" && a.size()==3 && a[1]=="die") {
-    if(!bench.cadenceVerified || !AppCadence::normalClock() || (a[2]!="on" && a[2]!="off") || !AppCadence::arm(a[2]=="on")) { arenaAbort("cadence death start failed");return; }
-    for(auto* npc:bench.crew) { npc->setLastHitBy(&pl);if(npc->setRagdollDown(true)) ++bench.cadenceDown;npc->prepareRagdoll(); }
-    }
-  else if(c=="cadence" && a.size()==2 && a[1]=="wait") bench.cadenceWait=true;
-  else if(c=="cadence" && a.size()==2 && a[1]=="report") {
-    uint32_t models=0,dead=0,parts=0,asleep=0;
-    for(const auto* npc:bench.crew) {
-      if(TestBench::ragdollBodyDrawable(*npc)) ++models;
-      if(npc->isDead()) ++dead;
-      if(const auto* body=npc->ragdollBody()) { parts+=uint32_t(body->partCount());if(body->isSleeping())++asleep; }
-      }
-    AppCadence::counts(false,models,dead,parts,asleep,bench.cadenceDown);
-    }
-#else
-  else if(c=="cadence") {
-    arenaAbort("cadence requires a build with OPENGOTHIC_ENABLE_APP_CADENCE=ON");
-    }
-#endif
+  else if(c=="cadence" && worldCommand(worldContext(),line,a,w,pl,ctrl)) return;
   else if(ragdollCommand(ragdollContext(),line,a,w,pl,ctrl)) return;
 
 
   else if(routineCommand(routineContext(),a,w,pl,ctrl)) return;
-  else if(c=="waitragdoll") {
-    Npc* npc=a.size()>1 ? findNpc(w,pl,a[1]) : nullptr;
-    const std::string state=a.size()>2 ? a[2] : "";
-    const float timeout=num(a,3,30000);
-    if(npc==nullptr || a.size()<3 || a.size()>4 || !std::isfinite(timeout) || timeout<=0 ||
-       (state!="sleep" && state!="recovery" && state!="getup" && state!="knockdown")) {
-      say("waitragdoll failed: expected <npc> sleep|recovery|getup|knockdown [timeout ms]");
-      event("ragdoll_error","\"command\":"+jsonStr(line));
-      return;
-      }
-    bench.ragdoll.waitRagdollNpc=npc; bench.ragdoll.waitRagdollState=state;
-    bench.ragdoll.waitRagdollEnd=bench.time+uint64_t(std::min(timeout,300000.f));
-    }
-  else if(c=="standup" && a.size()==2) {
-    Npc* npc=findNpc(w,pl,a[1]);
-    if(npc==nullptr || npc->isDead() || !npc->isUnconscious()) {
-      say("standup failed: expected an unconscious NPC");
-      event("ragdoll_error","\"command\":"+jsonStr(line));
-      return;
-      }
-    npc->clearAiQueue();
-    npc->setExternalControl(false);
-    npc->clearState(false); // The normal ZS_Unconscious End hook may enqueue AI_StandUp.
-    if(npc->isAiQueueEmpty())
-      npc->aiPush(AiQueue::aiStandup());
-    event("ragdoll_standup","\"actor\":"+jsonStr(TestBench::who(npc))+
-          ",\"t_game_ms\":"+std::to_string(w.tickCount())+
-          ",\"control\":\"normal unconscious End hook and native AI_StandUp after sleep\"");
-    say("standup "+symName(w,npc));
-    }
+  else if((c=="waitragdoll" || c=="standup") && worldCommand(worldContext(),line,a,w,pl,ctrl)) return;
 
 
   else if(c=="ragdoll" && a.size()==2 && a[1]=="frame20") {
@@ -4329,184 +4079,11 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     }
 
 
-  else if(c=="crowd" && a.size()==3) {
-    const size_t instance=w.script().findSymbolIndex(a[1]);
-    const float count=num(a,2,0);
-    if(instance==size_t(-1) || count!=20 || !bench.crew.empty()) {
-      say("crowd failed: expected one fresh twenty-NPC fixture");
-      event("ragdoll_error","\"command\":"+jsonStr(line));
-      return;
-      }
-    const Vec3 center=pl.position()+facing(pl)*1000.f;
-    for(int i=0;i<20;++i) {
-      Vec3 at=bench.ragdoll.ragdollArenaPlaces.size()==20 ? bench.ragdoll.ragdollArenaPlaces[size_t(i)] :
-              center+Vec3(float(i%5)*250.f-500.f,0,float(i/5)*250.f-375.f);
-      const float ground=groundY(w,at.x,at.z,at.y+200);
-      if(!std::isfinite(ground)) {
-        event("ragdoll_error","\"reason\":\"twenty-NPC fixture has no ground\"");
-        continue;
-        }
-      at.y=ground;
-      Npc* npc=w.addNpc(instance,at);
-      if(npc==nullptr) { event("ragdoll_error","\"reason\":\"twenty-NPC fixture insertion failed\""); continue; }
-      npc->setExternalControl(true); npc->clearAiQueue(); npc->clearState(false);
-      npc->setDirection(pl.position()-at); npc->updateTransform();
-      bench.crew.push_back(npc);
-      }
-    if(bench.ragdoll.ragdollArenaPlaces.size()==20 && bench.crew.size()!=20) { arenaAbort("arena insertion must retain all twenty actors"); return; }
-    if(bench.crew.size()==20) {
-      bench.subject=bench.crew[7];
-      exec("watch watched",w,pl,ctrl);
-      }
-    say("crowd "+std::to_string(bench.crew.size()));
-    event("ragdoll_crowd","\"actors\":"+std::to_string(bench.crew.size()));
-    }
-  else if(c=="down" && a.size()==3 && a[1]=="all" && (a[2]=="dead" || a[2]=="ko")) {
-    size_t down=0;
-    std::string bodies="[";
-    for(auto* npc:bench.crew) {
-      npc->setLastHitBy(&pl);
-      if(npc->setRagdollDown(a[2]=="dead")) ++down;
-      npc->prepareRagdoll();
-      if(bodies.size()>1) bodies+=",";
-      const auto* body=npc->ragdollBody();
-      const auto* skeleton=npc->visualSkeleton();
-      bodies+="{\"actor_id\":"+std::to_string(w.npcId(npc))+",\"symbol\":"+jsonStr(symName(w,npc))+
-              ",\"skeleton\":"+jsonStr(skeleton!=nullptr ? skeleton->name() : std::string_view())+
-              ",\"part_count\":"+std::to_string(body!=nullptr ? body->partCount() : 0)+",\"bone_indices\":[";
-      if(body!=nullptr)
-        for(size_t i=0;i<body->boneIndices().size();++i)
-          bodies+=(i>0 ? "," : "")+std::to_string(body->boneIndices()[i]);
-      bodies+="]}";
-      }
-    event("ragdoll_down_bulk","\"actors\":"+std::to_string(bench.crew.size())+",\"down\":"+std::to_string(down)+",\"bodies\":"+bodies+"]");
-    say("down all "+std::to_string(down));
-    }
-  else if(c=="down") {
-    Npc* npc=a.size()>1 ? findNpc(w,pl,a[1]) : nullptr;
-    if(a.size()!=3 || npc==nullptr || (a[2]!="dead" && a[2]!="ko")) {
-      say("down failed: expected down <npc> dead|ko: "+line);
-      event("ragdoll_error","\"command\":"+jsonStr(line));
-      return;
-      }
-    const bool inAirBefore=npc->isInAir();
-    if(npc!=&pl)
-      npc->setLastHitBy(&pl);
-    npc->setRagdollDown(a[2]=="dead");
-    npc->prepareRagdoll();
-    say("down "+symName(w,npc)+" "+a[2]+(npc->isDown() ? "" : " failed"));
-    event("ragdoll_down","\"actor\":"+jsonStr(TestBench::who(npc))+",\"death\":"+
-          (a[2]=="dead" ? "true" : "false")+",\"down\":"+(npc->isDown() ? "true" : "false")+
-          ",\"in_air_before\":"+(inAirBefore ? "true" : "false")+
-          ",\"parts\":"+std::to_string(npc->ragdollBody()!=nullptr ? npc->ragdollBody()->partCount() : 0));
-    }
-  else if(c=="push") {
-    Npc* npc=a.size()>1 ? findNpc(w,pl,a[1]) : nullptr;
-    const Vec3 direction(num(a,2,0),num(a,3,0),num(a,4,0));
-    const float magnitude=num(a,5,0), length=direction.length();
-    const bool numbers=a.size()==6 && isNumber(a[2]) && isNumber(a[3]) && isNumber(a[4]) && isNumber(a[5]);
-    if(!numbers || npc==nullptr || npc->ragdollBody()==nullptr || !std::isfinite(length) || length<1e-6f ||
-       !std::isfinite(magnitude) || magnitude<0) {
-      say("push failed: expected a physical body and finite direction/impulse: "+line);
-      event("ragdoll_error","\"command\":"+jsonStr(line));
-      return;
-      }
-    const Vec3 impulse=direction*(magnitude/length);
-    npc->addRagdollImpulse(impulse);
-    say("push "+symName(w,npc)+" impulse="+ragdollVector(impulse));
-    event("ragdoll_push","\"actor\":"+jsonStr(TestBench::who(npc))+",\"impulse_ns\":"+ragdollVector(impulse));
-    }
+  else if((c=="crowd" || c=="down" || c=="push") && worldCommand(worldContext(),line,a,w,pl,ctrl)) return;
   else dispatched=false;
   if(dispatched) return;
   dispatched=true;
-  if(c=="world") {
-    if(a.size()<2 || a.size()>3 || !Resources::hasWorld(a[1])) {
-      arenaAbort("world expects an indexed ZEN and an optional waypoint");
-      return;
-      }
-    say("world change requested: "+a[1]);
-    w.triggerChangeWorld(a[1],a.size()==3 ? std::string_view(a[2]) : std::string_view{});
-    // Yield until the next native tick schedules loading; tick() then waits for its completion.
-    bench.waitUntil = bench.time+1;
-    }
-  else if(c=="world-check") {
-    if(a.size()!=2 || !std::equal(w.name().begin(),w.name().end(),a[1].begin(),a[1].end(),[](char x,char y) {
-        return std::toupper(static_cast<unsigned char>(x))==std::toupper(static_cast<unsigned char>(y));
-        })) {
-      arenaAbort("world-check did not reach the requested world");
-      return;
-      }
-    say("world check passed: "+a[1]);
-    event("world_check","\"world\":"+jsonStr(w.name())+",\"pass\":true");
-    }
-  else if(c=="perf") {
-#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE && defined(OPENGOTHIC_ENABLE_APP_CADENCE)
-    if(a.size()==3 && a[1]=="sample" && a[2].size()<64 && AppCadence::normalClock()) {
-      if(!bench.perfArmed) {
-        if(!AppCadence::arm(false)) {arenaAbort("perf sample could not arm app cadence");return;}
-        bench.perfArmed=true;
-        }
-      bench.perfSegment=a[2];bench.perfFrame=0;
-      bench.streamingTexturesBefore=Resources::textureStats();
-      if(auto* residency=w.chunkResidency()) {
-        bench.streamingNearBefore=residency->stats().transitionsNear;
-        bench.streamingFarBefore=residency->stats().transitionsFar;
-        bench.streamingPublishedBefore=residency->stats().published;
-        bench.streamingReleasedBefore=residency->stats().released;
-        bench.streamingVobCreatedBefore=residency->stats().vobCreated;
-        bench.streamingVobReleasedBefore=residency->stats().vobReleased;
-        bench.streamingVobMissingBefore=residency->stats().vobNearMissingSeconds;
-        bench.streamingNpcTransitionsBefore=w.npcSimTierStats().toFull+w.npcSimTierStats().toSimplified;
-        }
-      FrameProfile::setActors(bench.crew);
-      event("perf_segment","\"segment\":"+jsonStr(bench.perfSegment)+
-        ",\"camera_cm\":"+ragdollVector(bench.camPos)+",\"actors\":"+std::to_string(bench.crew.size())+
-        ",\"residency_manager\":"+(w.chunkResidency()!=nullptr ? "true" : "false"));
-      }
-    else if(a.size()==2 && a[1]=="stop") {
-      if(bench.perfSegment.starts_with("streaming-flythrough/")) {
-        const auto textures=Resources::textureStats();
-        char textureSeconds[48];
-        std::snprintf(textureSeconds,sizeof(textureSeconds),"%.9g",textures.nearTailSeconds-bench.streamingTexturesBefore.nearTailSeconds);
-        event("streaming_end","\"segment\":"+jsonStr(bench.perfSegment)+
-          ",\"gpu_mb\":"+std::to_string(double(tempestProbeGpuBytes())/1048576.0)+
-          ",\"tex_promoted\":"+std::to_string(textures.promoted-bench.streamingTexturesBefore.promoted)+
-          ",\"tex_demoted\":"+std::to_string(textures.demoted-bench.streamingTexturesBefore.demoted)+
-          ",\"tex_near_tail_seconds\":"+textureSeconds);
-        }
-      bench.perfSegment.clear();
-      }
-    else arenaAbort("perf expects sample <segment under 64 bytes> or stop, after cadence normal");
-#else
-    arenaAbort("perf requires OPENGOTHIC_ENABLE_FRAME_PROFILE=ON and OPENGOTHIC_ENABLE_APP_CADENCE=ON");
-#endif
-    }
-  else if(c=="streaming") {
-    if(a.size()<2 || a.size()>3 || a[1]!="wait" || (a.size()==3 && !isNumber(a[2]))) {
-      arenaAbort("streaming expects wait [timeout_ms]");
-      return;
-      }
-    const float timeout=num(a,2,60000);
-    if(!std::isfinite(timeout) || timeout<=0 || timeout>300000) {
-      arenaAbort("streaming wait timeout must be in (0, 300000] ms");
-      return;
-      }
-    bench.waitStreaming=true;
-    bench.streamingDeadline=std::chrono::steady_clock::now()+
-      std::chrono::milliseconds(uint64_t(timeout));
-    // Camera and desired residency are updated after this bench tick.
-    bench.waitUntil=bench.time+1;
-    }
-  else if(c=="deterministic") {
-    if(a.size()!=2 || (a[1]!="on" && a[1]!="off")) {
-      arenaAbort("deterministic expects on or off");
-      return;
-      }
-    bench.deterministic=a[1]=="on";
-    benchTexturesSettle=bench.deterministic;
-    benchTexturesFrozen=false;
-    say("deterministic "+a[1]);
-    }
+  if((c=="world" || c=="world-check" || c=="perf" || c=="streaming" || c=="deterministic") && worldCommand(worldContext(),line,a,w,pl,ctrl)) return;
   else if(c=="wait") {
     if(a.size()>1 && a[1]=="real")
       bench.realWaitUntil=std::chrono::steady_clock::now()+std::chrono::milliseconds(uint64_t(num(a,2,1000)));
@@ -5738,16 +5315,16 @@ bool streamingWaitTick(World& w) {
   if(bench.time<bench.waitUntil)
     return true;
   if(!w.landscapeReady()) {
-    if(std::chrono::steady_clock::now()<bench.streamingDeadline) {
-      bench.frozen=bench.deterministic;
+    if(std::chrono::steady_clock::now()<bench.world.streamingDeadline) {
+      bench.frozen=bench.world.deterministic;
       return true;
       }
-    bench.waitStreaming=false;
+    bench.world.waitStreaming=false;
     bench.frozen=false;
-    arenaAbort("streaming wait timed out before all Near/Far landscape and vob visuals were published");
+    arenaAbort("streaming wait timed out before all Near/Far landscape and vob visuals were published ("+(w.view() ? w.view()->landscapeWaitState() : std::string("no view"))+")");
     return true;
     }
-  bench.waitStreaming=false;
+  bench.world.waitStreaming=false;
   bench.frozen=false;
   std::string publications="[";
   for(size_t i=0;i<bench.streamingWarmupFarMs.size();++i) {
@@ -5763,7 +5340,7 @@ bool streamingWaitTick(World& w) {
   bench.streamingWarmupFarMs.clear();
   bench.streamingWarmupFarMaxPerFrame=0;
   bench.streamingWarmupQueueMaxMs=0;
-  if(bench.deterministic) {
+  if(bench.world.deterministic) {
     bench.renderReset=true;
     bench.ordered=true;
     benchTexturesFrozen=true; // the levels stay as they are now until the shot
@@ -5876,7 +5453,7 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
       ",\"parts\":"+std::to_string(body?body->partCount():0)+",\"hazards\":"+std::to_string(npc->ragdollQuestReturnState().hazards));
     }
 #ifdef OPENGOTHIC_ENABLE_APP_CADENCE
-  if(bench.cadenceWait) { if(!AppCadence::done()) return;bench.cadenceWait=false; }
+  if(bench.world.cadenceWait) { if(!AppCadence::done()) return;bench.world.cadenceWait=false; }
 #endif
   if(bench.observeActive) {
     const auto now = w.tickCount();
@@ -5901,7 +5478,7 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
       return;
     }
   while(bench.pc<bench.prog.size() || bench.speaking || bench.waitReply || !bench.waitAiKey.empty() || !bench.bodyLiveWait.empty() ||
-        bench.npcCommands.downNpc!=nullptr || bench.ragdoll.waitRagdollNpc!=nullptr || bench.duelWaiting || bench.npcDuel.active || bench.waitStreaming ||
+        bench.npcCommands.downNpc!=nullptr || bench.ragdoll.waitRagdollNpc!=nullptr || bench.duelWaiting || bench.npcDuel.active || bench.world.waitStreaming ||
         std::chrono::steady_clock::now()<bench.realWaitUntil) {
     if(bench.speaking) {
       if(bench.time<bench.speakUntil)
@@ -5910,7 +5487,7 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
       }
     if(waitingForReply() || waitingForAi() || waitingForBodyLive())
       return;
-    if(bench.waitStreaming && streamingWaitTick(w))
+    if(bench.world.waitStreaming && streamingWaitTick(w))
       return;
     if(bench.ragdoll.waitRagdollNpc!=nullptr) {
       const auto* npc=bench.ragdoll.waitRagdollNpc;
@@ -5991,15 +5568,15 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
       }
     const std::string line = bench.prog[bench.pc++];
     exec(line,w,pl,ctrl);
-    if(bench.routeActive || bench.placedItems.probing || bench.waitStreaming || NavBench::running() || NavDemos::running() ||
+    if(bench.routeActive || bench.placedItems.probing || bench.world.waitStreaming || NavBench::running() || NavDemos::running() ||
        NpcDayJournal::running() || bench.npcTierTest.npc || bench.npcSpeedTest.npc) return;
     if(bench.movables.spellWaitFrozen>=0 || bench.movables.spellEquipPending) return;
     if(bench.routine.questWait || bench.routine.questStandingWait || bench.routine.routinePhase) return;
 #ifdef OPENGOTHIC_ENABLE_APP_CADENCE
-    if(bench.cadenceWait) return;
+    if(bench.world.cadenceWait) return;
 #endif
     }
-  if(bench.time>=bench.waitUntil && std::chrono::steady_clock::now()>=bench.realWaitUntil && !bench.waitArrive && bench.npcCommands.volleyLeft==0 && bench.npcCommands.downNpc==nullptr && bench.ragdoll.waitRagdollNpc==nullptr && !bench.duelWaiting && !bench.npcDuel.active && !bench.waitStreaming && bench.settleSteps==0 && bench.bodyLiveWait.empty())
+  if(bench.time>=bench.waitUntil && std::chrono::steady_clock::now()>=bench.realWaitUntil && !bench.waitArrive && bench.npcCommands.volleyLeft==0 && bench.npcCommands.downNpc==nullptr && bench.ragdoll.waitRagdollNpc==nullptr && !bench.duelWaiting && !bench.npcDuel.active && !bench.world.waitStreaming && bench.settleSteps==0 && bench.bodyLiveWait.empty())
     finish();
   }
 
@@ -6841,7 +6418,7 @@ bool TestBench::filming() {
   return scenarioPath!=nullptr && realtime;
   }
 
-bool TestBench::deterministic() { return bench.started && !bench.done && bench.deterministic; }
+bool TestBench::deterministic() { return bench.started && !bench.done && bench.world.deterministic; }
 
 bool TestBench::simulationFrozen() { return bench.started && !bench.done && bench.frozen; }
 
@@ -7096,7 +6673,7 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
   if(!bench.loaded)
     loadScenario();
 
-  if(!bench.perfSegment.empty())FrameProfile::sample(bench.perfSegment,bench.perfFrame);
+  if(!bench.world.perfSegment.empty())FrameProfile::sample(bench.world.perfSegment,bench.world.perfFrame);
 
   auto world  = Gothic::inst().world();
   auto player = Gothic::inst().player();
@@ -7539,7 +7116,7 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
 
   updateCamera(*world,subjectOf(*player));
 
-  if(bench.perfArmed)FrameProfile::sample(bench.perfSegment,bench.perfFrame++);
+  if(bench.world.perfArmed)FrameProfile::sample(bench.world.perfSegment,bench.world.perfFrame++);
 
   if(bench.ragdoll.ragdollCoverageActive) {
     auto sample=ragdollCoverageSample(*world);
@@ -7572,7 +7149,7 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
 
 void TestBench::sampleStreaming(const World& world) {
   if(scenarioPath==nullptr || bench.done)return;
-  const bool measuring=bench.perfSegment.starts_with("streaming-flythrough/");
+  const bool measuring=bench.world.perfSegment.starts_with("streaming-flythrough/");
   const bool shots=std::filesystem::path(scenarioPath).filename()=="streaming-shots.bench";
   if(!measuring && !shots && std::filesystem::path(scenarioPath).filename()!="streaming-flythrough.bench")return;
   const auto* residency=world.chunkResidency();
@@ -7589,26 +7166,26 @@ void TestBench::sampleStreaming(const World& world) {
     bench.streamingWarmupQueueMaxMs=std::max(bench.streamingWarmupQueueMaxMs,stats.workMs);
     return;
     }
-  bench.streamingSamples.push_back({bench.perfSegment,bench.perfFrame,stats.updateMs,stats.workMs,
-    stats.near,stats.far,stats.outside,stats.transitionsNear-bench.streamingNearBefore,
-    stats.transitionsFar-bench.streamingFarBefore,stats.publicationTimesMs,
-    stats.published-bench.streamingPublishedBefore,stats.released-bench.streamingReleasedBefore,
+  bench.streamingSamples.push_back({bench.world.perfSegment,bench.world.perfFrame,stats.updateMs,stats.workMs,
+    stats.near,stats.far,stats.outside,stats.transitionsNear-bench.world.streamingNearBefore,
+    stats.transitionsFar-bench.world.streamingFarBefore,stats.publicationTimesMs,
+    stats.published-bench.world.streamingPublishedBefore,stats.released-bench.world.streamingReleasedBefore,
     stats.landscapePageUsedBytes,stats.landscapePageFreeBytes,stats.landscapePageRetiredBytes,stats.landscapePageCount,
     Resources::textureStats(),stats.vobNear,stats.vobFar,stats.vobOutside,stats.vobPending,stats.vobNearMissing,
-    stats.vobCreated-bench.streamingVobCreatedBefore,stats.vobReleased-bench.streamingVobReleasedBefore,
-    stats.vobPublicationMs,stats.vobNearMissingSeconds-bench.streamingVobMissingBefore});
+    stats.vobCreated-bench.world.streamingVobCreatedBefore,stats.vobReleased-bench.world.streamingVobReleasedBefore,
+    stats.vobPublicationMs,stats.vobNearMissingSeconds-bench.world.streamingVobMissingBefore});
   const auto& tiers=world.npcSimTierStats();
   auto& sample=bench.streamingSamples.back();
   sample.npcFull=tiers.full;
   sample.npcSimplified=tiers.simplified;
   // Transitions since the previous sample, like near_transitions and far_transitions.
-  sample.npcTierTransitions=tiers.toFull+tiers.toSimplified-bench.streamingNpcTransitionsBefore;
-  bench.streamingNpcTransitionsBefore=tiers.toFull+tiers.toSimplified;
+  sample.npcTierTransitions=tiers.toFull+tiers.toSimplified-bench.world.streamingNpcTransitionsBefore;
+  bench.world.streamingNpcTransitionsBefore=tiers.toFull+tiers.toSimplified;
   sample.npcFullTickMs=tiers.fullTickMs;
   sample.npcSimplifiedTickMs=tiers.simplifiedTickMs;
-  bench.streamingNearBefore=stats.transitionsNear;bench.streamingFarBefore=stats.transitionsFar;
-  bench.streamingPublishedBefore=stats.published;bench.streamingReleasedBefore=stats.released;
-  bench.streamingVobCreatedBefore=stats.vobCreated;bench.streamingVobReleasedBefore=stats.vobReleased;
+  bench.world.streamingNearBefore=stats.transitionsNear;bench.world.streamingFarBefore=stats.transitionsFar;
+  bench.world.streamingPublishedBefore=stats.published;bench.world.streamingReleasedBefore=stats.released;
+  bench.world.streamingVobCreatedBefore=stats.vobCreated;bench.world.streamingVobReleasedBefore=stats.vobReleased;
   }
 
 bool TestBench::withUi() {
