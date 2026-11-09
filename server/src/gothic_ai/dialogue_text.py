@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 from . import commands
 from .dialogue_constants import REACTION_WORDS_MAX, SVM_EVENTS, SVM_HINT
-from .protocol import MOODS, Mood, Snapshot
+from .protocol import MOODS, Cue, Mood, Snapshot
 
 _MARKDOWN = re.compile(r"[*_#`~]+")
 _SPACES = re.compile(r"\s+")
@@ -314,9 +314,35 @@ def mood_of(tag: str) -> Mood | None:
     return _MOOD_ALIASES.get(t)
 
 
+_CUE_ALIASES: dict[str, Cue] = {
+    "flash": "flash", "вспышка бровей": "flash",
+    "doubt": "doubt", "сомнение": "doubt",
+    "smirk": "smirk", "ухмылка": "smirk",
+    "press": "press", "поджатые губы": "press",
+    "disgust": "disgust", "брезгливость": "disgust",
+    "squint": "squint", "прищур": "squint",
+    "frown": "frown", "хмурится": "frown",
+    "chin": "chin", "подбородок": "chin",
+    "wince": "wince", "поморщился": "wince",
+}
+
+
 @dataclass(frozen=True)
 class MoodTag:
     mood: Mood
+
+
+@dataclass(frozen=True)
+class CueTag:
+    cue: Cue
+
+
+@dataclass(frozen=True)
+class FeltTag:
+    felt: Mood
+
+
+SpeechPiece = str | MoodTag | CueTag | FeltTag
 
 
 class MoodTags:
@@ -327,9 +353,9 @@ class MoodTags:
     def __init__(self) -> None:
         self._buf = ""
 
-    def feed(self, text: str) -> list[str | MoodTag]:
+    def feed(self, text: str) -> list[SpeechPiece]:
         self._buf += text
-        out: list[str | MoodTag] = []
+        out: list[SpeechPiece] = []
         while self._buf:
             i = self._buf.find("[")
             if i < 0:
@@ -351,9 +377,15 @@ class MoodTags:
                 out.append(f"[{tag}]")
             elif (mood := mood_of(tag)) is not None:
                 out.append(MoodTag(mood))
+            elif (cue := _CUE_ALIASES.get(tag.strip().lower())) is not None:
+                out.append(CueTag(cue))
+            elif tag.strip().lower().startswith("felt:"):
+                felt = mood_of(tag.strip()[5:])
+                if felt is not None and felt != "neutral":
+                    out.append(FeltTag(felt))
         return out
 
-    def flush(self) -> list[str | MoodTag]:
+    def flush(self) -> list[SpeechPiece]:
         rest, self._buf = self._buf, ""
         return [rest] if rest else []
 
