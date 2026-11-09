@@ -1,6 +1,6 @@
 # server/ — ИИ-сервер
 
-Модули и их связи — [карта проекта](../docs/README.md#модули-сервера), сообщения игры — [`docs/protocol.md`](../docs/protocol.md). Общие правила — корневой [`AGENTS.md`](../AGENTS.md).
+Модули и их связи — [карта проекта](../docs/map/server.md#модули-сервера), сообщения игры — [`docs/protocol.md`](../docs/protocol.md). Общие правила — корневой [`AGENTS.md`](../AGENTS.md).
 
 - **После правки:** `python3 scripts/check.py run` из корня — тесты, которые отвечают за изменённые файлы, — и `uv run ruff check <файлы>`. Полный `pytest` руками не гоняем: выбор проверяет CI PR. На Ryzen (`scripts/ryzen.sh pytest <файлы>`) — тесты, которым нужны данные игры.
 - **Один сценарий e2e на правку:** `SCENARIO=<имя> scripts/ryzen.sh e2e`, на Mac — `SCENARIO=<имя> scripts/e2e.sh`. Сценарий пройден, когда все значения результата начинаются с `done`. Группы `OFF` / `GIVEN` выбирают `off`; живые наборы запускаются вручную вне регрессии через `scripts/e2e-live.sh` и тратят квоту подписки. [Правила](../docs/e2e.md).

@@ -71,8 +71,6 @@ class Shaders {
     Tempest::ComputePipeline fogViewLut3d, fogViewLutSep;
     Tempest::ComputePipeline skyExposure;
 
-    Tempest::RenderPipeline  skyPathTrace;
-
     Tempest::RenderPipeline  underwaterT, underwaterS;
     Tempest::RenderPipeline  waterReflection, waterReflectionSSR;
 
@@ -131,8 +129,7 @@ class Shaders {
     Tempest::ComputePipeline vsmClear, vsmClearOmni, vsmCullLights, vsmMarkPages, vsmMarkOmniPages, vsmPostprocessOmni;
     Tempest::ComputePipeline vsmTrimPages, vsmSortPages, vsmListPages, vsmClumpPages, vsmAllocPages, vsmAlloc2Pages, vsmMergePages;
     Tempest::ComputePipeline vsmPackDraw0, vsmPackDraw1;
-    Tempest::ComputePipeline vsmFogPages, vsmFogShadow, vsmFogTrace;
-    Tempest::RenderPipeline  vsmFog;
+    Tempest::ComputePipeline vsmFogPages, vsmFogShadow;
     Tempest::RenderPipeline  vsmDirectLight;
     Tempest::RenderPipeline  vsmDbg;
 

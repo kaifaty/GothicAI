@@ -40,7 +40,7 @@ from .protocol import (
     ThreatControlCmd,
     TriggerFired,
 )
-from .scenarios.common import FixedDecider, _until, model_off
+from .scenarios.common import FixedDecider, SharedBodyWatch, _until, model_off
 from .talk import TalkDesk
 from .triggers import STATE, removal, trigger
 
@@ -473,7 +473,7 @@ async def fight_reactions(
     link.listeners.append(trace.message)
     link.raw_body_listeners.append(trace.body)
     send = link.send
-    body_watch = link.body_watch
+    body_watch = SharedBodyWatch(link, "fight_reactions setup")
 
     async def recorded(cmd: Any) -> None:
         if isinstance(cmd, ActionCmd | NpcActCmd):
@@ -715,7 +715,7 @@ async def fight_reactions(
             await link.story_effect(CAVALORN, [{"do": "party", "value": 1}])
             symbols = await link.story_eval(CAVALORN, [["sym", n] for n in (CAVALORN, monster, "PC_HERO")])
             trace.symbols = dict(zip(symbols, (CAVALORN, monster, "PLAYER"), strict=True))
-            await link.body_watch([CAVALORN, monster, "PLAYER"])
+            await body_watch.watch([CAVALORN, monster, "PLAYER"])
             if not await _until(lambda: all(n in trace.positions for n in (CAVALORN, monster, "PLAYER")), 5):
                 raise GameError("fight_reactions setup: missing body observations")
             if case == "wolf":
@@ -981,30 +981,11 @@ async def fight_reactions(
             if not await talk.hold(BANDITS[1], "listen"):
                 raise GameError("fight_reactions setup: cannot hold listening bandit")
             watch = [CAVALORN, *BANDITS, "PLAYER"]
-            watched: tuple[tuple[str, ...], int] | None = None
-            watch_stats: dict[str, Any] = {}
-
-            async def passive_body_watch(
-                npcs: list[str], rate_hz: int = 20, timeout: float = 5.0,
-            ) -> dict[str, Any]:
-                nonlocal watched, watch_stats
-                # The pilot shares one native subscription with this passive trace. Keep
-                # all four actors and their order when it watches or unwatches one fighter.
-                actors = list(dict.fromkeys([*watch, *(npc.upper() for npc in npcs)]))
-                if len(actors) > 4:
-                    raise GameError("fight_reactions setup: passive body watch exceeds four actors")
-                signature = (tuple(actors), rate_hz)
-                if watched != signature or watch_stats.get("generation") != link.body_generation:
-                    watch_stats = await body_watch(actors, rate_hz=rate_hz, timeout=timeout)
-                    watched = signature
-                return watch_stats
-
-            link.body_watch = passive_body_watch  # type: ignore[method-assign]
             symbols = await link.story_eval(
                 CAVALORN, [["sym", "PC_HERO" if n == "PLAYER" else n] for n in watch]
             )
             trace.symbols = dict(zip(symbols, watch, strict=True))
-            await link.body_watch(watch)
+            await body_watch.watch(watch)
             if not await _until(lambda: all(n in trace.positions for n in watch), 5):
                 raise GameError("fight_reactions setup: missing bandit body observations")
 
@@ -1381,13 +1362,15 @@ async def fight_reactions(
                 )
     finally:
         dialogue.event_turn = event_turn  # type: ignore[method-assign]
-        link.body_watch = body_watch  # type: ignore[method-assign]
-        for npc in parked:
-            await link.detach(npc)
-        link.send = send  # type: ignore[method-assign]
-        link.listeners.remove(trace.message)
-        link.raw_body_listeners.remove(trace.body)
-        await link.body_watch([])
+        try:
+            for npc in parked:
+                await link.detach(npc)
+            link.send = send  # type: ignore[method-assign]
+            link.listeners.remove(trace.message)
+            link.raw_body_listeners.remove(trace.body)
+            await body_watch.watch([])
+        finally:
+            body_watch.close()
         planner.builder.traits = old_traits
         planner.allow = old_allow
         if runner is not None:

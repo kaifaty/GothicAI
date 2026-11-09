@@ -62,9 +62,7 @@ class CommandLine {
     // ray tracing is off everywhere, -rt 1 turns it on: the scene rebuilt the whole TLAS
     // whenever an object moved, 4-8 FPS indoors on an M1 (docs/performance.md, 2026-10-28)
     bool                isRQuery     = false;
-#if defined(__ANDROID__)
-    bool                isMeshSh     = false;
-#elif defined(__OSX__)
+#if defined(__OSX__)
     bool                isMeshSh     = false;  // slower on M1 (reports/render-features/2026-10-18)
 #else
     bool                isMeshSh     = true;

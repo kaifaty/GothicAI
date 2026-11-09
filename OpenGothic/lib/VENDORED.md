@@ -7,9 +7,8 @@ automatically; to update one, copy the needed parts of a newer upstream version 
 | Directory | Upstream | Commit | License | Left out |
 |---|---|---|---|---|
 | `Tempest/` | https://github.com/Try/Tempest | a4ac4029b848ef9f4e5636049dd657663c499a45 | MIT | `Examples/`, `Tests/` |
-| `ZenKit/` | https://github.com/GothicKit/ZenKit | 083cc5f5592726aed435f8e863a6e09e92748a4d (v1.3.0-63) | MIT | `tests/`, `docs/`, `examples/`, `assets/` |
+| `ZenKit/` | https://github.com/GothicKit/ZenKit | 083cc5f5592726aed435f8e863a6e09e92748a4d (v1.3.0-63) | MIT | `tests/`, `docs/`, `examples/`, `assets/`; ZenKit tests are not built |
 | `ZenKit/vendor/libsquish/` | https://github.com/lmichaelis/phoenix-libsquish | 53167b39beee3c7ff441c4ee6ba522c2db27dad4 | MIT | — |
-| `ZenKit/vendor/doctest/` | https://github.com/doctest/doctest | 1da23a3e8119ec5cce4f9388e91b065e20bf06f5 (v2.4.12) | MIT | `scripts/data/` (kept because ZenKit's CMake would download it otherwise) |
 | `recastnavigation/` | https://github.com/recastnavigation/recastnavigation | 6dc1667f580357e8a2154c28b7867bea7e8ad3a7 (v1.6.0) | zlib | everything but `Recast/{Include,Source}`, `Detour/{Include,Source}` and `License.txt`; local minimal CMake builds these two libraries only |
 | `JoltPhysics/` | https://github.com/jrouwe/JoltPhysics | e77f175595e64cb44218cc9d9d56fc365ad0e36a (v5.6.0) | MIT | everything but `Jolt/`, `Build/CMakeLists.txt` and `LICENSE` (examples, test framework, unit/performance tests, viewer, documentation, assets and build helper scripts omitted) |
 | `dmusic/` | https://github.com/GothicKit/dmusic | b73b270b94714b8ec8d9d0b2a9f3a5c445da52d1 | MIT | `docs/`, `examples/` |

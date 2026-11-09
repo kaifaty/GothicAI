@@ -1205,8 +1205,10 @@ class Npc final {
       uint64_t         elapsed = 0; // played clip time, including speed and hit stop (barge contact/super armor)
       };
     std::optional<MeleeDodgeLayer> meleeDodgeLayer() const;
-    // An incoming blow, arrow or spell inside the dodge's window: true, it does not pass (logged)
+    // An incoming blow, arrow or spell inside the dodge's window (meleeGuard): true, it does not pass (logged)
     bool                          meleeDodgeEvades(Npc& other, std::string_view kind);
+    // Its dodge, jump back and parade against this attacker's melee blow, by MeleeDodge::guard
+    MeleeDodge::Guard             meleeGuard(const Npc& attacker) const;
     void                          meleeDodgeNote(const std::string& text, std::string_view phase, const std::string& fields);
     void                          tickMeleeBarge();
     void                          meleeBargeNote(const Npc* target, uint64_t elapsed, std::string_view outcome, std::string_view predicted = {});
