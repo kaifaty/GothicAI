@@ -8,6 +8,7 @@
 #include "resources.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
@@ -208,6 +209,31 @@ std::string floats(const Matrix4x4& m) {
 std::string vec(const Vec3& v) {
   return "["+std::to_string(v.x)+","+std::to_string(v.y)+","+std::to_string(v.z)+"]";
   }
+
+// node i and all below it turned about the node's place by `degrees` around a world axis
+void bend(const Skel& s, std::vector<Matrix4x4>& w, size_t i, const Vec3& axis, float degrees) {
+  const Vec3 at = position(w[i]);
+  const Matrix4x4 r = placed(at,Matrix4x4::mkIdentity())*turn(axis,degrees)*placed(at*-1.f,Matrix4x4::mkIdentity());
+  for(size_t j=0; j<s.joints.size(); ++j) {
+    bool below = j==i;
+    for(int p=s.joints[j].parent; p>=0 && !below; p=s.joints[size_t(p)].parent)
+      below = size_t(p)==i;
+    if(below)
+      w[j] = r*w[j];
+    }
+  }
+
+// the same about a given point
+void bendAbout(const Skel& s, std::vector<Matrix4x4>& w, size_t i, const Vec3& at, const Vec3& axis, float degrees) {
+  const Matrix4x4 r = placed(at,Matrix4x4::mkIdentity())*turn(axis,degrees)*placed(at*-1.f,Matrix4x4::mkIdentity());
+  for(size_t j=0; j<s.joints.size(); ++j) {
+    bool below = j==i;
+    for(int p=s.joints[j].parent; p>=0 && !below; p=s.joints[size_t(p)].parent)
+      below = size_t(p)==i;
+    if(below)
+      w[j] = r*w[j];
+    }
+  }
 }
 
 int main() {
@@ -258,6 +284,46 @@ int main() {
       {"fore_full",    4, {18, 90, 0.5f}},
       {"hand",         4, {18, 88, 0}},
       });
+    // (i, j) two legs and two arms: Gothic's and ours - longer legs, a longer trunk, other arms
+    const Skel source2({
+      {"BIP01",           -1, {0, 90, 0}},
+      {"BIP01 PELVIS",     0, {0, 90, 0}},
+      {"BIP01 SPINE",      1, {0, 102, 0}},
+      {"BIP01 L THIGH",    1, {10, 85, 0}},
+      {"BIP01 L CALF",     3, {10, 45, 2}},
+      {"BIP01 L FOOT",     4, {10, 8, 0}},
+      {"BIP01 L TOE0",     5, {10, 0, 12}},
+      {"BIP01 R THIGH",    1, {-10, 85, 0}},
+      {"BIP01 R CALF",     7, {-10, 45, 2}},
+      {"BIP01 R FOOT",     8, {-10, 8, 0}},
+      {"BIP01 R TOE0",     9, {-10, 0, 12}},
+      {"BIP01 L UPPERARM", 2, {18, 140, 0}},
+      {"BIP01 L FOREARM", 11, {18, 119, -1}},
+      {"BIP01 L HAND",    12, {18, 98, 0}},
+      {"BIP01 R UPPERARM", 2, {-18, 140, 0}},
+      {"BIP01 R FOREARM", 14, {-18, 119, -1}},
+      {"BIP01 R HAND",    15, {-18, 98, 0}},
+      });
+    const Skel body({
+      {"root",     -1, {0, 0, 0}},
+      {"pelvis",    0, {0, 93, 0}},
+      {"thigh_l",   1, {9, 89, 1}},
+      {"calf_l",    2, {9, 47, 3}},
+      {"foot_l",    3, {9, 8, -1}},
+      {"ball_l",    4, {9, 1, 12}},
+      {"thigh_r",   1, {-9, 89, 1}},
+      {"calf_r",    6, {-9, 47, 3}},
+      {"foot_r",    7, {-9, 8, -1}},
+      {"ball_r",    8, {-9, 1, 12}},
+      {"spine",     1, {0, 106, -1}},
+      {"upper_l",  10, {20, 146, 0}},
+      {"lower_l",  11, {20, 121, -1}},
+      {"hand_l",   12, {20, 96, 0}},
+      {"finger_l", 13, {20, 88, 1}},
+      {"upper_r",  10, {-20, 146, 0}},
+      {"lower_r",  15, {-20, 121, -1}},
+      {"hand_r",   16, {-20, 96, 0}},
+      });
     std::vector<Joint> many;
     for(int i=0; i<int(Resources::MAX_NUM_SKELETAL_NODES)+1; ++i)
       many.push_back({"node"+std::to_string(i),i-1,{0,float(i),0}});
@@ -270,6 +336,8 @@ int main() {
       {"HAND.MDH", hand.hierarchy()},
       {"BIG.MDH",  big.hierarchy()},
       {"ARM.MDH",  arm.hierarchy()},
+      {"SRC2.MDH", source2.hierarchy()},
+      {"BODY.MDH", body.hierarchy()},
       };
     std::vector<std::string> messages;
     RenderRigIndex index([&](std::string_view name, asset::ModelHierarchy& out) {
@@ -286,6 +354,25 @@ int main() {
     const Vec3   ankle = apply(inverse(source.world[sFoot]),position(source.world[sFoot])+Vec3(0,-2,4));
     const Matrix4x4 offset = placed(Vec3(1,-2,3),turn(Vec3(0.3f,0.9f,0.1f),35));
 
+    const Vec3 ankleL = apply(inverse(source2.world[source2.find("BIP01 L FOOT")]),
+                              position(source2.world[source2.find("BIP01 L FOOT")])+Vec3(0,-2,4));
+    const Vec3 ankleR = apply(inverse(source2.world[source2.find("BIP01 R FOOT")]),
+                              position(source2.world[source2.find("BIP01 R FOOT")])+Vec3(0,-2,4));
+    std::string bodyBones;
+    for(const auto& [rig,src]:std::vector<std::pair<std::string,std::string>>{
+          {"pelvis","BIP01 PELVIS"},{"spine","BIP01 SPINE"},{"thigh_l","BIP01 L THIGH"},{"calf_l","BIP01 L CALF"},
+          {"foot_l","BIP01 L FOOT"},{"ball_l","BIP01 L TOE0"},{"thigh_r","BIP01 R THIGH"},{"calf_r","BIP01 R CALF"},
+          {"foot_r","BIP01 R FOOT"},{"ball_r","BIP01 R TOE0"},{"upper_l","BIP01 L UPPERARM"},
+          {"lower_l","BIP01 L FOREARM"},{"hand_l","BIP01 L HAND"},{"upper_r","BIP01 R UPPERARM"},
+          {"lower_r","BIP01 R FOREARM"},{"hand_r","BIP01 R HAND"}})
+      bodyBones += std::string(bodyBones.empty() ? "" : ",")+"{\"name\": \""+rig+"\", \"source\": \""+src+"\"}";
+    const std::string bodyLegs = R"("legs": [{"thigh": "thigh_l", "calf": "calf_l", "foot": "foot_l", "ball": "ball_l",
+                  "source_foot": "BIP01 L FOOT", "source_knee": "BIP01 L CALF", "ankle": )"+vec(ankleL)+R"(},
+                 {"thigh": "thigh_r", "calf": "calf_r", "foot": "foot_r", "ball": "ball_r",
+                  "source_foot": "BIP01 R FOOT", "source_knee": "BIP01 R CALF", "ankle": )"+vec(ankleR)+R"(}])";
+    const std::string bodyArms = R"("arms": [{"upper": "upper_l", "lower": "lower_l", "hand": "hand_l",
+                  "source_hand": "BIP01 L HAND", "holds": "hand_r"},
+                 {"upper": "upper_r", "lower": "lower_r", "hand": "hand_r", "source_hand": "BIP01 R HAND"}])";
     std::string sameBones;
     for(const auto& j:same.joints)
       sameBones += std::string(sameBones.empty() ? "" : ",")+"{\"name\": \""+j.name+"\", \"source\": \""+j.name+"\", \"align\": [1,0,0,0]}";
@@ -329,6 +416,22 @@ int main() {
                  "bones": [{"name": "chest", "source": "BIP01 SPINE"}, {"name": "upper", "source": "BIP01 L UPPERARM"},
                            {"name": "hand", "source": "BIP01 L HAND"}],
                  "root": {"bone": "chest", "source": "BIP01 SPINE"}},
+        "KNEES":  {"skeleton": "BODY.MDH", "source": "SRC2.MDH", "bones": [)"+bodyBones+R"(],
+                   "root": {"bone": "pelvis", "source": "BIP01 PELVIS", "knees": true}, )"+bodyLegs+R"(},
+        "PLAIN2": {"skeleton": "BODY.MDH", "source": "SRC2.MDH", "bones": [)"+bodyBones+R"(],
+                   "root": {"bone": "pelvis", "source": "BIP01 PELVIS"}, )"+bodyLegs+R"(},
+        "ARMS2":  {"skeleton": "BODY.MDH", "source": "SRC2.MDH", "bones": [)"+bodyBones+R"(],
+                   "root": {"bone": "pelvis", "source": "BIP01 PELVIS"}, )"+bodyLegs+R"(, )"+bodyArms+R"(},
+        "BAD_KNEES":  {"skeleton": "LEG.MDH", "source": "SRC.MDH",
+                       "bones": [{"name": "root", "source": "BIP01"}, {"name": "thigh_l", "source": "BIP01 L THIGH"},
+                                 {"name": "calf_l", "source": "BIP01 L CALF"}],
+                       "root": {"bone": "root", "source": "BIP01", "knees": true},
+                       "legs": [{"thigh": "thigh_l", "calf": "calf_l", "foot": "foot_l", "ball": "ball_l",
+                                 "source_foot": "BIP01 L FOOT", "source_knee": "BIP01 L CALF", "ankle": [0,0,0]}]},
+        "BAD_HOLDS":  {"skeleton": "BODY.MDH", "source": "SRC2.MDH", "bones": [)"+bodyBones+R"(],
+                       "root": {"bone": "pelvis", "source": "BIP01 PELVIS"},
+                       "arms": [{"upper": "upper_l", "lower": "lower_l", "hand": "hand_l", "source_hand": "BIP01 L HAND",
+                                 "holds": "finger_l"}]},
         "BAD_BONE":   {"skeleton": "LEG.MDH", "source": "SRC.MDH", "bones": [{"name": "knee_l"}],
                        "root": {"bone": "pelvis", "source": "BIP01 PELVIS"}},
         "BAD_SOURCE": {"skeleton": "LEG.MDH", "source": "SRC.MDH", "bones": [{"name": "pelvis", "source": "BIP01 R THIGH"}],
@@ -348,7 +451,7 @@ int main() {
       })";
     index.parse(json);
     require(messages.empty(),"a good file is read without messages: "+(messages.empty() ? "" : messages[0]));
-    require(index.size()==12,"twelve rigs are read");
+    require(index.size()==17,"seventeen rigs are read");
 
     // (a) the same skeleton repeats the source
     const RenderRig* sameRig = index.rig("SAME");
@@ -383,7 +486,7 @@ int main() {
     // (b, c) the leg: IK onto the ankle, out of reach - straight
     const RenderRig* legRig = index.rig("LEG");
     require(legRig!=nullptr && index.rigOfMesh("models/hum_body_test.asc")==legRig,"the leg rig loads, by its mesh too");
-    require(index.meshTable().size()==1 && index.meshTable().count("HUM_BODY_TEST")==1 && index.rigNames().size()==12,
+    require(index.meshTable().size()==1 && index.meshTable().count("HUM_BODY_TEST")==1 && index.rigNames().size()==17,
             "the table lists its rigs and meshes");
     // a bone's Gothic node: its source, else its parent's, else the source's root
     require(legRig->sourceOf(leg.find("ball_l"))==source.find("BIP01 L TOE0") &&
@@ -570,6 +673,157 @@ int main() {
       require(raised>=50,"the poses raise the arm: "+std::to_string(raised));
     }
 
+    // (i) knees: the knees bend as Gothic's, a foot on the ground keeps its ball on Gothic's, one in the air takes
+    // Gothic's turns, legs that do not carry leave the pelvis where it was
+    {
+      const RenderRig* kneesRig = index.rig("KNEES");
+      const RenderRig* plainRig = index.rig("PLAIN2");
+      require(kneesRig!=nullptr && plainRig!=nullptr,"the knee rigs load");
+      std::vector<Matrix4x4> o(Resources::MAX_NUM_SKELETAL_NODES), p(Resources::MAX_NUM_SKELETAL_NODES);
+      const Vec3 X(1,0,0);
+      struct LegIds { size_t th, ca, fo, ba, sTh, sCa, sFo; };
+      const LegIds legsIds[2] = {
+        {body.find("thigh_l"),body.find("calf_l"),body.find("foot_l"),body.find("ball_l"),
+         source2.find("BIP01 L THIGH"),source2.find("BIP01 L CALF"),source2.find("BIP01 L FOOT")},
+        {body.find("thigh_r"),body.find("calf_r"),body.find("foot_r"),body.find("ball_r"),
+         source2.find("BIP01 R THIGH"),source2.find("BIP01 R CALF"),source2.find("BIP01 R FOOT")}};
+      auto relRot = [&](const std::vector<Matrix4x4>& w, size_t s) {
+        return linearOnly(w[s])*inverse(linearOnly(source2.world[s]));
+        };
+      // our knee's flex with Gothic's turns (align 1) and as solved, degrees
+      auto fkFlex = [&](const std::vector<Matrix4x4>& w, const LegIds& l) {
+        const Vec3 a1 = apply(relRot(w,l.sTh),position(body.world[l.ca])-position(body.world[l.th]));
+        const Vec3 a2 = apply(relRot(w,l.sCa),position(body.world[l.fo])-position(body.world[l.ca]));
+        return angle(a1,a2);
+        };
+      auto flex = [&](const LegIds& l) {
+        return angle(position(o[l.ca])-position(o[l.th]),position(o[l.fo])-position(o[l.ca]));
+        };
+      auto gothicBall = [&](const std::vector<Matrix4x4>& w, const LegIds& l) {
+        return apply(w[l.sFo],apply(inverse(source2.world[l.sFo]),position(body.world[l.ba])));
+        };
+      auto check = [&](const std::vector<Matrix4x4>& w, const std::string& what, bool lAir, bool rAir) {
+        require(kneesRig->solve(w.data(),w.size(),o.data()) && plainRig->solve(w.data(),w.size(),p.data()),what+" is solved");
+        for(size_t n=0; n<2; ++n) {
+          const auto& l = legsIds[n];
+          const std::string side = n==0 ? " (left)" : " (right)";
+          require(std::abs(flex(l)-fkFlex(w,l))<=0.2,what+": the knee bends as Gothic's"+side+": "+std::to_string(flex(l))+
+                  " not "+std::to_string(fkFlex(w,l)));
+          if(!(n==0 ? lAir : rAir))
+            require(distance(position(o[l.ba]),gothicBall(w,l))<=0.05,what+": the ball stays on Gothic's"+side+": "+
+                    std::to_string(distance(position(o[l.ba]),gothicBall(w,l))));
+          else
+            require(maxDiff(linearOnly(o[l.fo]),linearOnly(p[l.fo]))<=1e-4,what+": the foot in the air keeps Gothic's turn"+side);
+          }
+        const Vec3 a = position(o[body.find("pelvis")]), b = position(p[body.find("pelvis")]);
+        require(std::abs(a.x-b.x)<=1e-3 && std::abs(a.z-b.z)<=1e-3 && std::abs(a.y-b.y)<=10.01,
+                what+": the pelvis moves only up or down, by 10 cm at most");
+        };
+      const auto bindW = source2.pose(source2.bindTurns(),Matrix4x4::mkIdentity());
+      // standing
+      check(bindW,"standing",false,false);
+      // a squat: the knees forward, the shins back, the feet flat again
+      for(float deep:{20.f,45.f,70.f}) {
+        auto w = bindW;
+        for(const auto& l:legsIds) {
+          bend(source2,w,l.sTh,X,-deep);
+          bend(source2,w,l.sCa,X,2.f*deep);
+          bend(source2,w,l.sFo,X,-deep);
+          }
+        check(w,"a squat of "+std::to_string(int(deep)),false,false);
+        }
+      // toe-off: the left heel up about the ball, the knee a little bent
+      for(float heel:{10.f,25.f,40.f}) {
+        auto w = bindW;
+        const auto& l = legsIds[0];
+        bend(source2,w,l.sTh,X,-10);
+        bend(source2,w,l.sCa,X,15);
+        const Vec3 ball = gothicBall(w,l);
+        float sign = 1;
+        {
+          auto t = w;
+          bendAbout(source2,t,l.sFo,ball,X,heel);
+          sign = position(t[l.sFo]).y>position(w[l.sFo]).y ? 1.f : -1.f;
+        }
+        bendAbout(source2,w,l.sFo,ball,X,sign*heel);
+        check(w,"toe-off, the heel up "+std::to_string(int(heel)),false,false);
+        }
+      // a step: the right leg up in the air, the left one standing
+      {
+        auto w = bindW;
+        const auto& r = legsIds[1];
+        bend(source2,w,r.sTh,X,-60);
+        bend(source2,w,r.sCa,X,70);
+        require(gothicBall(w,r).y-gothicBall(w,legsIds[0]).y>8.5f,"the step lifts the foot off the ground");
+        check(w,"a step",false,true);
+      }
+      // lying: no leg carries, the pelvis stays where the plain rig puts it
+      {
+        const auto w = source2.pose(source2.bindTurns(),turn(X,-90));
+        require(kneesRig->solve(w.data(),w.size(),o.data()) && plainRig->solve(w.data(),w.size(),p.data()),"lying is solved");
+        require(distance(position(o[body.find("pelvis")]),position(p[body.find("pelvis")]))<=1e-3,
+                "lying, the legs do not move the pelvis");
+      }
+      // any pose: finite, the legs keep their lengths
+      for(int n=0; n<300; ++n) {
+        const auto w = source2.randomPose(60,randomObject());
+        require(kneesRig->solve(w.data(),w.size(),o.data()),"a random pose is solved");
+        for(size_t i=0; i<body.joints.size(); ++i)
+          require(finite(o[i]),"no NaN with knees, pose "+std::to_string(n));
+        for(const auto& l:legsIds)
+          require(std::abs(distance(position(o[l.ca]),position(o[l.th]))-distance(body.joints[l.ca].at,body.joints[l.th].at))<=1e-3 &&
+                  std::abs(distance(position(o[l.fo]),position(o[l.ca]))-distance(body.joints[l.fo].at,body.joints[l.ca].at))<=1e-3,
+                  "with knees the legs keep their lengths, pose "+std::to_string(n));
+        }
+    }
+
+    // (j) arms: without hands they are FK; `world` puts the wrists on Gothic's, `hold` the left one where Gothic holds
+    // it against the right hand
+    {
+      const RenderRig* armsRig  = index.rig("ARMS2");
+      const RenderRig* plainRig = index.rig("PLAIN2");
+      require(armsRig!=nullptr,"the arms rig loads");
+      std::vector<Matrix4x4> o(Resources::MAX_NUM_SKELETAL_NODES), p(Resources::MAX_NUM_SKELETAL_NODES);
+      const size_t ul = body.find("upper_l"), ll = body.find("lower_l"), hl = body.find("hand_l"), fl = body.find("finger_l");
+      const size_t ur = body.find("upper_r"), lr = body.find("lower_r"), hr = body.find("hand_r");
+      const size_t gL = source2.find("BIP01 L HAND"), gR = source2.find("BIP01 R HAND");
+      const double l1 = distance(body.joints[ll].at,body.joints[ul].at), l2 = distance(body.joints[hl].at,body.joints[ll].at);
+      int worldReached = 0, held = 0;
+      for(int n=0; n<300; ++n) {
+        const auto w = source2.randomPose(50,randomObject());
+        const std::string at = ", pose "+std::to_string(n);
+        require(armsRig->solve(w.data(),w.size(),o.data()) && plainRig->solve(w.data(),w.size(),p.data()),"arms are solved"+at);
+        for(size_t i=0; i<body.joints.size(); ++i)
+          require(maxDiff(o[i],p[i])<=1e-4,"without hands the arms are as the other bones"+at);
+
+        require(armsRig->solve(w.data(),w.size(),o.data(),RenderRig::Hands{0,1}),"world hands are solved"+at);
+        for(const auto& [u,lo,h,g]:std::vector<std::array<size_t,4>>{{ul,ll,hl,gL},{ur,lr,hr,gR}}) {
+          require(std::abs(distance(position(o[lo]),position(o[u]))-l1)<=1e-3 &&
+                  std::abs(distance(position(o[h]),position(o[lo]))-l2)<=1e-3,"the arm keeps its lengths"+at);
+          if(distance(position(w[g]),position(o[u]))<l1+l2-0.5) {
+            ++worldReached;
+            require(distance(position(o[h]),position(w[g]))<=0.01,"world: the wrist on Gothic's"+at);
+            }
+          require(maxDiff(linearOnly(o[h]),linearOnly(p[h]))<=1e-4,"the hand keeps its turn"+at);
+          }
+        require(distance(position(o[fl]),apply(o[hl],position(body.local[fl])))<=1e-3,"the finger follows the solved hand"+at);
+
+        require(armsRig->solve(w.data(),w.size(),o.data(),RenderRig::Hands{1,0}),"held hands are solved"+at);
+        for(size_t i:{ur,lr,hr})
+          require(maxDiff(o[i],p[i])<=1e-4,"hold: the right arm as the other bones"+at);
+        // the left wrist in the right hand's frame, ours turned back to Gothic's axes, against Gothic's
+        const Matrix4x4 frame = linearOnly(o[hr])*inverse(linearOnly(body.world[hr]))*linearOnly(source2.world[gR]);
+        const Vec3 ours   = apply(inverse(frame),position(o[hl])-position(o[hr]));
+        const Vec3 gothic = apply(inverse(linearOnly(w[gR])),position(w[gL])-position(w[gR]));
+        const Vec3 want   = position(o[hr]) + apply(frame,gothic);
+        if(distance(want,position(o[ul]))<l1+l2-0.5) {
+          ++held;
+          require(distance(ours,gothic)<=0.01,"hold: the left wrist where Gothic holds it"+at+": "+std::to_string(distance(ours,gothic)));
+          }
+        }
+      require(worldReached>=200 && held>=100,"the arm poses reach: "+std::to_string(worldReached)+" "+std::to_string(held));
+    }
+
     // (f) each broken rig is left out with its reason, once
     const std::map<std::string,std::string> broken = {
       {"BAD_BONE",   "bone \"knee_l\" is not in skeleton \"LEG.MDH\""},
@@ -578,6 +832,8 @@ int main() {
       {"BAD_RECORD", "no skeleton record \"NONE.MDH\""},
       {"BAD_TWIST",  "the twist bone \"fore\" has children"},
       {"BAD_RHYTHM", "the arm \"upper\" has no source"},
+      {"BAD_KNEES",  "legs[0]: knees need the thigh \"thigh_l\" right under the root bone"},
+      {"BAD_HOLDS",  "arms: \"finger_l\" is not the hand of an arm that holds nothing"},
       };
     for(const auto& [rig,why]:broken) {
       messages.clear();
@@ -610,6 +866,16 @@ int main() {
            "legs": [{"thigh": "thigh_l", "calf": "calf_l", "foot": "foot_l", "ball": "ball_l", "source_foot": "BIP01 L FOOT",
                      "source_knee": "BIP01 L CALF", "ankle": [0,0,0], "soft": -1}]}}})",
                                                                             "render rig R: legs[0]: soft must be a number from 0 to 20"},
+      {R"({"format": "gothic-render-rigs", "version": 1, "rigs": {"R": {"skeleton": "LEG.MDH", "source": "SRC.MDH",
+           "bones": [{"name": "pelvis"}], "root": {"bone": "pelvis", "source": "BIP01 PELVIS", "lift": 0.04, "knees": true}}}})",
+                                                                            "render rig R: root: lift and knees exclude each other"},
+      {R"({"format": "gothic-render-rigs", "version": 1, "rigs": {"R": {"skeleton": "LEG.MDH", "source": "SRC.MDH",
+           "bones": [{"name": "pelvis"}], "root": {"bone": "pelvis", "source": "BIP01 PELVIS", "knees": 1}}}})",
+                                                                            "render rig R: root: knees must be true or false"},
+      {R"({"format": "gothic-render-rigs", "version": 1, "rigs": {"R": {"skeleton": "LEG.MDH", "source": "SRC.MDH",
+           "bones": [{"name": "pelvis"}], "root": {"bone": "pelvis", "source": "BIP01 PELVIS"},
+           "arms": [{"upper": "thigh_l", "lower": "calf_l", "hand": "foot_l", "source_hand": "BIP01 L FOOT", "soft": 30}]}}})",
+                                                                            "render rig R: arms[0]: soft must be a number from 0 to 20"},
       };
     for(const auto& [text,why]:files) {
       messages.clear();

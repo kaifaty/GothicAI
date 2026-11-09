@@ -1,7 +1,8 @@
 """The render rig's extra parts on MPFB's game_engine rig, one table for the export, the writer and the offline bench
 (reports/engine/2026-11-modern-skeleton, «Ноги» and «Верх тела»). Plain data, no imports.
 
-- LIFT, SOFT: the pelvis lift and the legs' soft IK (render-rigs.json root.lift, legs[].soft).
+- KNEES, SOFT: the knees bend as Gothic's (render-rigs.json root.knees; it replaced the pelvis lift of «Ноги») and the
+  legs' soft IK (legs[].soft).
 - TWISTS: twist bones. name, parent, of, against, axis, t, share: a bone under `parent` at `t` of the way to `axis`
   turns about the parent's axis by share x the twist of `of` against `against` (render-rigs.json twists). The upper
   arm's and the thigh's own twist is taken off near the shoulder and the hip (share < 0); the hand's twist is put on
@@ -10,9 +11,12 @@
 - TWIST_NODES: how a parent's skin weight spreads along it over itself and its twist bones: (t, bone), linear between.
 - SHOULDER: the scapulohumeral rhythm - the clavicle turns further towards the arm by SHARE x (rise - FROM), at most
   MAX degrees (render-rigs.json shoulders).
+- arms(): the arms' IK (render-rigs.json arms): the left hand holds on to the right one (a 2H hilt, a bow) and both go
+  onto Gothic's at a mob, as the game says; ARM_SOFT cm of soft reach («Аудит»).
 """
 
-LIFT, SOFT = 0.038, 0.5
+KNEES, SOFT = True, 0.5
+ARM_SOFT = 1.0
 
 TWISTS = [  # name, parent, of, against, axis, t, share
     ('upperarm_twist_01_{s}', 'upperarm_{s}', 'upperarm_{s}', 'clavicle_{s}', 'lowerarm_{s}', 0.0, -1.0),
@@ -34,6 +38,12 @@ SIDES = ('l', 'r')
 def twists(sd):
     """TWISTS of one side with the names filled in."""
     return [tuple(x.format(s=sd) if isinstance(x, str) else x for x in row) for row in TWISTS]
+
+
+def arms():
+    """The arms entries of render-rigs.json, the held one after the one it holds."""
+    return [{'upper': f'upperarm_{sd}', 'lower': f'lowerarm_{sd}', 'hand': f'hand_{sd}', 'source_hand': f'BIP01 {sd.upper()} HAND',
+             'soft': ARM_SOFT, **({'holds': 'hand_r'} if sd == 'l' else {})} for sd in ('r', 'l')]
 
 
 def table():

@@ -375,6 +375,7 @@ class MdlVisual final {
     std::vector<Tempest::Matrix4x4> renderedPose;
     std::vector<uint8_t>           renderedMask;
     const RenderRig*               bodyRig = nullptr;  // the body's render skeleton, its palette as last solved
+    float                          rigHold = 0, rigWorld = 0;  // its arms (RenderRig::Hands), eased towards the npc's state
     std::vector<Tempest::Matrix4x4> rigPalette;
     friend bool TestBench::ragdollBodyDrawable(const Npc& npc);
     friend struct MeshGltfTest;
