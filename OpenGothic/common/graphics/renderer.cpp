@@ -365,12 +365,14 @@ void Renderer::togglePathtrace() {
 void Renderer::onWorldChanged() {
   sky.lutIsInitialized = false;
   taa.valid            = false;
+  ssao.valid           = false;
   gi.resetHistory      = true;
   resetSkyFog();
   }
 
 void Renderer::resetTemporal() {
-  taa.valid = false;
+  taa.valid  = false;
+  ssao.valid = false;
   taa.frame = 0;
   taa.cur   = 0;
   }
@@ -379,6 +381,12 @@ void Renderer::updateCamera(const WorldView& wview, const Camera& camera) {
   proj        = camera.projective();
   viewProj    = camera.viewProj();
   viewProjLwc = camera.viewProjLwc();
+
+  // without jitter, as the TAA takes it: SSAO reprojects its history by the camera even with the TAA off
+  ssao.view.proj    = proj;
+  ssao.view.viewLwc = camera.viewLwc();
+  ssao.view.origin  = camera.originLwc();
+  ssao.camCuts      = camera.cuts();
 
   for(size_t i=0; i<Resources::ShadowLayers; ++i)
     shadowMatrix[i] = camera.viewShadow(wview.mainLight().dir(),i);
@@ -1918,19 +1926,30 @@ void Renderer::drawSky(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
   }
 
 void Renderer::prepareSSAO(Encoder<CommandBuffer>& cmd, WorldView& wview) {
-  if(!settings.zCloudShadowScale)
+  // a frame without SSAO breaks the history
+  if(!settings.zCloudShadowScale) {
+    ssao.valid = false;
     return;
+    }
   // the probes of -gi 1 trace the occlusion of their light themselves: their ambient takes no SSAO (probe_ambient.frag)
-  if(settings.giMethod==GiMethod::Probes)
+  if(settings.giMethod==GiMethod::Probes) {
+    ssao.valid = false;
     return;
-  // ssao
+    }
+  // ssao: the projection comes from the scene (jittered, as the depth); the push carries the history's reprojection
   struct PushSsao {
-    Matrix4x4 proj;
-    Matrix4x4 projInv;
+    Matrix4x4 reproject;
+    uint32_t  frame = 0;
+    uint32_t  reset = 0;
     } push;
-  push.proj    = proj;
-  push.projInv = proj;
-  push.projInv.inverse();
+  if(ssao.camCuts!=ssao.cuts || Taa::isCameraJump(ssao.view, ssao.prev))
+    ssao.valid = false;
+  // both ends with this frame's jitter, as the TAA does: a camera that stands still reads the same texel
+  const auto jitter = taa.active ? Taa::jitterMatrix(taa.jitter, uint32_t(zbuffer.w()), uint32_t(zbuffer.h()))
+                                 : Matrix4x4::mkIdentity();
+  push.reproject = ssao.valid ? Taa::reprojection(ssao.view, ssao.prev, jitter) : Matrix4x4::mkIdentity();
+  push.frame     = ssao.frame;
+  push.reset     = ssao.valid ? 0 : 1;
 
   auto& device = Resources::device();
   const auto aoSize = effectResolution();
@@ -1938,9 +1957,15 @@ void Renderer::prepareSSAO(Encoder<CommandBuffer>& cmd, WorldView& wview) {
     Resources::recycle(std::move(ssao.ssaoBuf));
     Resources::recycle(std::move(ssao.ssaoBlur));
     Resources::recycle(std::move(ssao.depthHalf));
-    ssao.ssaoBuf   = device.image2d(ssao.aoFormat, aoSize);
-    ssao.ssaoBlur  = device.image2d(ssao.aoFormat, zbuffer.size());
-    ssao.depthHalf = device.image2d(TextureFormat::R32F, aoSize);
+    Resources::recycle(std::move(ssao.history[0]));
+    Resources::recycle(std::move(ssao.history[1]));
+    ssao.ssaoBuf    = device.image2d(ssao.aoFormat, aoSize);
+    ssao.ssaoBlur   = device.image2d(ssao.aoFormat, zbuffer.size());
+    ssao.depthHalf  = device.image2d(TextureFormat::R32F, aoSize);
+    ssao.history[0] = device.image2d(TextureFormat::RGBA16F, aoSize);
+    ssao.history[1] = device.image2d(TextureFormat::RGBA16F, aoSize);
+    ssao.valid      = false;
+    push.reset      = 1;
     }
 
   cmd.setFramebuffer({});
@@ -1955,13 +1980,18 @@ void Renderer::prepareSSAO(Encoder<CommandBuffer>& cmd, WorldView& wview) {
 
   cmd.setBinding(0, ssao.ssaoBuf);
   cmd.setBinding(1, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(2, gbufDiffuse, Sampler::nearest(ClampMode::ClampToEdge));
-  cmd.setBinding(3, gbufNormal,  Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setBinding(4, zbuffer,     Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setBinding(5, ssao.depthHalf, Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(6, ssao.history[ssao.cur^1], Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(7, ssao.history[ssao.cur]);
   cmd.setPushData(&push, sizeof(push));
   cmd.setPipeline(shaders.ssao);
   cmd.dispatchThreads(ssao.ssaoBuf.size());
+  ssao.prev  = ssao.view;
+  ssao.cuts  = ssao.camCuts;
+  ssao.valid = true;
+  ssao.cur  ^= 1;
+  ssao.frame++;
 
   cmd.setDebugMarker("SSAO-blur");
   cmd.setBinding(0, ssao.ssaoBlur);

@@ -230,6 +230,14 @@ class Renderer final {
       Tempest::StorageImage     ssaoBuf;
       Tempest::StorageImage     ssaoBlur;
       Tempest::StorageImage     depthHalf; // R32F depth at half size for the samples of ssao.comp, ssao_depth.comp
+      // the occlusion over frames (ssao.comp): two histories in turn, H and M per sample, linear depth, frames
+      Tempest::StorageImage     history[2];
+      uint8_t                   cur       = 0;     // history[cur] is written this frame, the other one read
+      uint32_t                  frame     = 0;     // the cycle of 4 frames picks the samples
+      uint32_t                  cuts      = 0;     // Camera::cuts() of the last traced frame
+      uint32_t                  camCuts   = 0;     // and of this frame
+      bool                      valid     = false; // the history holds the last frame of this view
+      Taa::View                 view, prev;        // this frame's camera without jitter, and the last traced one
       } ssao;
 
     struct Cmaa2 {
