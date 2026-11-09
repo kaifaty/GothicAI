@@ -777,7 +777,9 @@ class DynamicWorld final {
     void           breakRemnant(BodyData& body, uint32_t group);
     bool           meleeStoppedRemnant(const MeleeBladeContact& contact, float weaponDamage, float strength,
                                        FractureRule::Melee kind, Npc* attacker, std::vector<uintptr_t>& struck);
-    // `fragment` is the native body (CollisionWorld::CollisionBody*): a remnant's parent and group, if it is one.
+    // `fragment` is the native body (CollisionWorld::CollisionBody*): the prop and group of that live body
+    // of debris and its piece count; remnantOf only for a remnant (several pieces).
+    BodyData*      fragmentOf(uintptr_t fragment, uint32_t& group, size_t& pieces) const;
     BodyData*      remnantOf(uintptr_t fragment, uint32_t& group) const;
     void           arrowRemnant(uintptr_t fragment, const Tempest::Vec3& point, const Tempest::Vec3& direction, Npc* culprit);
     size_t         spellRemnants(BodyData& body, const Tempest::Vec3& center, float radius,

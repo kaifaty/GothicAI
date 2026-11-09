@@ -9,7 +9,7 @@
 // volume share x `remnant`, and a blow past it breaks the bonds still intact inside it by the same
 // rule as the first break. A single piece is one part: it only moves.
 
-DynamicWorld::BodyData* DynamicWorld::remnantOf(uintptr_t fragment, uint32_t& group) const {
+DynamicWorld::BodyData* DynamicWorld::fragmentOf(uintptr_t fragment, uint32_t& group, size_t& pieces) const {
   if(fragment==0)
     return nullptr;
   // The pointer came from a query: it is trusted only as one of the live bodies of debris.
@@ -18,13 +18,19 @@ DynamicWorld::BodyData* DynamicWorld::remnantOf(uintptr_t fragment, uint32_t& gr
     for(uint32_t g=0;g<obj->fragments.size();++g) {
       if(obj->fragments[g].get()!=body)
         continue;
-      const auto pieces=std::count(obj->fragmentGroup.begin(),obj->fragmentGroup.end(),g);
-      if(pieces<2 || g>=obj->fragmentRemnant.size() || obj->fractureRule==nullptr || obj->movableShape->fracture==nullptr)
+      if(g>=obj->fragmentRemnant.size() || obj->fractureRule==nullptr || obj->movableShape->fracture==nullptr)
         return nullptr;
+      pieces=size_t(std::count(obj->fragmentGroup.begin(),obj->fragmentGroup.end(),g));
       group=g;
       return obj;
       }
   return nullptr;
+  }
+
+DynamicWorld::BodyData* DynamicWorld::remnantOf(uintptr_t fragment, uint32_t& group) const {
+  size_t pieces=0;
+  auto* obj=fragmentOf(fragment,group,pieces);
+  return pieces>=2 ? obj : nullptr;
   }
 
 void DynamicWorld::damageRemnant(BodyData& obj, uint32_t group, float damage, float impulse, const Tempest::Vec3& point,
@@ -149,7 +155,8 @@ bool DynamicWorld::meleeStoppedRemnant(const MeleeBladeContact& contact, float w
      !std::isfinite(contact.point.x) || !std::isfinite(contact.point.y) || !std::isfinite(contact.point.z))
     return false;
   uint32_t group=0;
-  auto* obj=remnantOf(contact.fragment,group);
+  size_t pieces=0;
+  auto* obj=fragmentOf(contact.fragment,group,pieces);
   if(obj==nullptr)
     return false;
   // One swing strikes a prop once, whole or broken: `struck` holds the prop's snapshot id.
@@ -163,11 +170,14 @@ bool DynamicWorld::meleeStoppedRemnant(const MeleeBladeContact& contact, float w
   const float damage=obj->fractureRule->meleeDamage(kind,weaponDamage,strength);
   if(!std::isfinite(damage) || damage<=0.f)
     return false;
-  // The same push as the intact prop takes from this blow.
+  // The same push as the intact prop takes from this blow. A single piece only moves: it is
+  // one part and does not break further, nor does it count as a strike on the prop.
   const float impulse=damage*.02f;
   auto& body=*obj->fragments[group];
   body.setTraceCulprit(attacker);
   body.addImpulseAtPoint(direction*impulse,contact.point,attacker);
+  if(pieces<2)
+    return false;
   damageRemnant(*obj,group,damage,impulse,contact.point,FractureRule::hit(kind),direction);
   struck.push_back(id);
   return true;

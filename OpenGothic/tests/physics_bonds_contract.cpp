@@ -186,8 +186,10 @@ void testFractureRemnants(const WriteFixture& write, const MakeFixture& make, ui
           "damage adds up: the second blow breaks the near bonds, the far boards stay one body");
   require(!blowOn(world,5,nearEnd,0,40,Melee::OneHand,again),"one swing must not break a remnant twice");
   std::vector<uintptr_t> single;
+  const auto before=world.fragmentSnapshot()[0].velocity;
   require(!blowOn(world,0,{-45,0,0},40,1000,Melee::OneHand,single) && bodiesOf(world,zenId).size()==6,
           "a single piece must not split");
+  require((world.fragmentSnapshot()[0].velocity-before).length()>1.f,"a single piece a blade stops at only takes its push");
   // After loading, the same bonds, groups and damage: the same blow gives the same result.
   DynamicWorld loaded(nullptr,asset::WorldMesh{});
   auto loadedObject=make(loaded);
