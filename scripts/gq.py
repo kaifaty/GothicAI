@@ -35,6 +35,10 @@ PROFILES = {
         "threads": 28,
         "mem": 20 * GIB,
         "display": 3,
+        # --display-column takes a whole column: 0 = slots 0 and 2 (left, top
+        # and bottom), 1 = slot 1 (right). Column i starts at slot i, so
+        # GQ_DISPLAY_SLOT names both the column and its first slot.
+        "display_columns": [[0, 2], [1]],
         "gpu_mem": 10 * GIB,
         "quiet": True,
         "min_disk": 20 * GIB,
@@ -159,6 +163,14 @@ def exclusive_display(job):
         job.get("display_exclusive", False) or not job.get("display_shared", False))
 
 
+def display_slots(job, capacity):
+    """Slots an active game holds. Records saved before columns hold one slot,
+    or every slot when they are not shared."""
+    if exclusive_display(job):
+        return range(capacity)
+    return job.get("display_slots") or [job.get("display_slot", 0)]
+
+
 def systemctl(*args):
     return subprocess.run(["systemctl", "--user", *args], capture_output=True, text=True)
 
@@ -280,6 +292,7 @@ class Queue:
         # Called only within a transaction: journal lines from different processes never interleave.
         record = {k: job.get(k) for k in ("id", "owner", "class", "name", "threads", "mem",
                                         "gpu_mem", "display", "display_shared", "display_exclusive", "display_slot",
+                                        "display_column", "display_layout", "display_slots",
                                         "cpu_quota", "interactive", "max", "submitted", "start")}
         record.update(event=event, time=self.now(), **extra)
         with (self.home / "journal.jsonl").open("a", encoding="utf-8") as output:
@@ -331,8 +344,18 @@ class Queue:
             raise QueueError("неизвестный класс")
         if spec["class"] == "quiet" and not p["quiet"]:
             raise QueueError("quiet недоступен: иди на Ryzen")
+        layout = spec.get("display_layout")
+        if layout is not None and (not isinstance(layout, str) or not layout):
+            raise QueueError("--display-layout требует непустую метку")
+        if spec.get("display_column"):
+            if not p.get("display_columns"):
+                raise QueueError(f"--display-column: у профиля {self.profile_name} нет столбцов окна")
+            if not (spec["display"] and spec["display_shared"]) or spec["display_exclusive"]:
+                raise QueueError("--display-column требует --display --display-shared без --display-exclusive")
+            if layout is None:
+                raise QueueError("--display-column требует --display-layout")
         if self.profile_name == "dev-ubuntu" and any(spec.get(key) for key in (
-                "display", "display_shared", "display_exclusive", "interactive")):
+                "display", "display_shared", "display_exclusive", "display_layout", "interactive")):
             raise QueueError("окна на dev-ubuntu нет: иди на Ryzen")
         for key in ("threads", "mem", "max"):
             if not math.isfinite(spec[key]) or spec[key] <= 0:
@@ -364,6 +387,8 @@ class Queue:
         spec.setdefault("display", False)
         spec.setdefault("display_shared", False)
         spec.setdefault("display_exclusive", False)
+        spec.setdefault("display_column", False)
+        spec.setdefault("display_layout", None)
         if spec["display_exclusive"]:
             spec["display"] = True
         if spec.get("cpu_quota") is not None:
@@ -495,6 +520,7 @@ class Queue:
                     job.update(status="queued", start=None, retry_pending=True)
                     job.pop("retry", None)
                     job.pop("display_slot", None)
+                    job.pop("display_slots", None)
                     self.event(job, "deferred", reason="legacy lock")
                     continue
                 try:
@@ -623,6 +649,8 @@ class Queue:
             exclusive_waiting = next((index for index, j in enumerate(queued)
                                       if exclusive_display(j)), None)
             interactive_waiting = any(j.get("interactive") for j in queued)
+            # The first shared game whose window layout differs from a running one.
+            layout_waiting = None
             if free < self.profile["min_disk"]:
                 return
             batch_blocked = False
@@ -682,30 +710,47 @@ class Queue:
                         if kind == "batch":
                             batch_blocked = True
                         continue
-                slot = None
+                slot = column = None
                 if job["display"]:
-                    # Drain games ahead of the oldest exclusive, then admit no
+                    # Drain games ahead of the oldest exclusive (or of the oldest
+                    # game waiting for another window layout), then admit no
                     # later games. Earlier batches retain FIFO; quiet retains its
                     # class priority, otherwise the two admission gates can cycle.
-                    if (not interactive and exclusive_waiting is not None and index > exclusive_waiting
-                            and kind != "quiet"):
+                    if (not interactive and kind != "quiet" and any(
+                            barrier is not None and index > barrier
+                            for barrier in (exclusive_waiting, layout_waiting))):
                         if kind == "batch":
                             batch_blocked = True
                         continue
                     capacity = self.profile.get("display", 1)
                     occupied = set()
+                    layouts = set()
                     for current in active:
                         if current["display"]:
                             # Persisted jobs without display_shared are legacy
                             # clients and reserve every slot, even if they have one.
-                            occupied.update(range(capacity) if exclusive_display(current)
-                                            else [current.get("display_slot", 0)])
+                            occupied.update(display_slots(current, capacity))
+                            if not exclusive_display(current):
+                                layouts.add(current.get("display_layout"))
                     available = set(range(capacity)) - occupied
-                    if not available or (exclusive_display(job) and occupied):
+                    columns = self.profile.get("display_columns", [])
+                    if exclusive_display(job):
+                        slot = None if occupied else min(available, default=None)
+                    elif layouts - {job.get("display_layout")}:
+                        # Clients place windows by their own grid: an unlabelled
+                        # (older) layout would overlap another, so never mix them.
+                        if layout_waiting is None:
+                            layout_waiting = index
+                    elif job.get("display_column"):
+                        column = next((number for number, slots in enumerate(columns)
+                                       if set(slots) <= available), None)
+                        slot = column
+                    else:
+                        slot = min(available, default=None)
+                    if slot is None:
                         if kind == "batch":
                             batch_blocked = True
                         continue
-                    slot = min(available)
                 with (contextlib.nullcontext(True) if interactive else self.legacy_probe(kind == "quiet")) as available:
                     if not available:
                         break
@@ -713,6 +758,8 @@ class Queue:
                            launcher={"pid": os.getpid(), "start": process_token(os.getpid())})
                 if slot is not None:
                     job["display_slot"] = slot
+                if column is not None:
+                    job["display_slots"] = list(columns[column])
                 active.append(job)
                 launch.append(dict(job))
                 if kind == "quiet":
@@ -1106,6 +1153,8 @@ def status(queue):
             continue
         display = "все" if exclusive_display(job) else str(int(job["display"]))
         slot = job.get("display_slot", 0 if job["display"] and job["status"] in ACTIVE else "—")
+        if job.get("display_slots"):
+            slot = ",".join(map(str, job["display_slots"]))
         resources = (f"{job['threads']}t {job['mem']/GIB:g}G gpu={job['gpu_mem']/GIB:g}G "
                      f"окно={display} слот={slot}")
         start = time.strftime("%H:%M:%S", time.localtime(job["start"])) if job["start"] else "—"
@@ -1140,6 +1189,10 @@ def parser():
         r.add_argument("--display-shared", action="store_true",
                        help="делить слоты окна с другими совместимыми заявками --display")
         r.add_argument("--display-exclusive", action="store_true")
+        r.add_argument("--display-column", action="store_true",
+                       help="с --display-shared: занять целый свободный столбец слотов окна")
+        r.add_argument("--display-layout", metavar="TAG",
+                       help="метка раскладки окон: общие заявки с разными метками не идут вместе")
         r.add_argument("--interactive", action="store_true",
                        help="игра пользователя: quick --display-exclusive, ждёт только занятые окна")
         r.add_argument("--cpu-quota", type=cpu_quota)
@@ -1190,6 +1243,7 @@ def main(argv=None):
                 "class": args.class_, "threads": args.threads, "mem": args.mem, "gpu_mem": args.gpu_mem,
                 "display": args.display, "display_shared": args.display_shared,
                 "display_exclusive": args.display_exclusive,
+                "display_column": args.display_column, "display_layout": args.display_layout,
                 "interactive": args.interactive,
                 "cpu_quota": args.cpu_quota, "max": args.max,
                 "name": args.name, "owner": owner(), "command": command}
