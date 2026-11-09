@@ -54,7 +54,7 @@ layout(binding = 5) uniform sampler2D skyLUT;
 layout(binding = 12) uniform sampler2D probesLightingPrev;
 layout(binding = 13, std430) readonly buffer Hbo { uint hashTable[]; };
 layout(binding = 14, std430) buffer Pbo { ProbesHeader probeHeader; Probe probe[]; };
-layout(binding = 15, std430) readonly buffer BVH { PTreeNode node[]; } lightsTree;
+layout(binding = 15, std430) readonly buffer BVH { BVHNode node[]; } lightsTree; // lights_bvh.comp
 layout(binding = 16, r32ui) uniform restrict uimage2D probesRadiance;
 layout(binding = 17, std430) readonly buffer Nbo { uint newList[]; }; // the new probes, probe_allocation.comp
 
@@ -96,77 +96,73 @@ float sunLight(vec3 norm, vec3 pos) {
   return lamb * shadowRay(pos, scene.sunDir, TMax);
   }
 
-// Lamps by the path tracer's tree (pathtrace.frag, sampleLocalLight), its pdf and its point-light formula. One pick
-// divided by its probability is the tracer's estimate; it averages thousands of them, a probe's sample keeps one
-// (the key is fixed, so the light does not flicker). A lamp the tree picks with probability 0,136 next to a wall
-// 18 m away then lit one sample of a probe 6,7 times too bright for good: a square on the wall of
-// harbour-night-1 (step-2.md, «2а»). So a sample resamples: LampCandidates picks by the tree with stratified keys,
-// each weighed by its unshadowed light over its pdf; one of them by that weight gets the shadow ray, and
-// f/phat * sum(w)/M is the estimate (resampled importance sampling: unbiased, the shadow the only part left to chance).
-const int LampCandidates = 8;
+// Lamps: every lamp whose range holds the point, found in the bounding-box tree of the lamps (lights_bvh.comp, the
+// one the surfels walk), each by the path tracer's point-light formula (pathtrace.frag, samplePointLight). One of
+// them, chosen in proportion to its unshadowed light, gets the shadow ray with the tracer's padding; the estimate is
+// f/phat * sum(phat) (resampled importance sampling over the exact set: unbiased, only the shadow is left to chance).
+// Why not the tracer's own pick (sampleLocalLight: one lamp by the flux/d^2 weights of the stochastic tree, divided
+// by its probability): the tracer averages thousands of picks, a probe's sample keeps one (its key is fixed, so the
+// light does not flicker). A lamp the tree picks with probability 0,136 next to a wall 18 m away lit a probe's
+// sample 6,7 times too bright for good, a square on the wall of harbour-night-1; eight resampled tree picks still
+// missed lamps of probability 0,014 and lit a softer patch 9 times too bright (step-2.md, «2а»).
+vec3 localLight(vec3 norm, vec3 pos, float pick) {
+  uint  stack[32];
+  uint  ptr     = 0;
+  uint  node    = 0 | BVH_BoxNode;
+  uint  count   = 0;
+  float pSum    = 0;
+  float pHat    = 0;
+  vec3  lampPos = vec3(0), lampColor = vec3(0);
+  float lampRange = 0;
 
-uint pickLamp(vec3 norm, vec3 pos, float key, out float pdf) {
-  pdf = 1.0;
-  uint node = 0 | BVH_BoxNode;
   [[loop]]
-  for(int depth=0; depth<64; ++depth) {
+  while(true) {
     const uint type = bvhGetNodeType(node);
-    if(type==BVH_LightNode)
-      return node & 0x0FFFFFFF;
-    if(type!=BVH_BoxNode)
-      return 0xFFFFFFFFu;
-    const PTreeNode n      = lightsTree.node[node & 0x0FFFFFFF];
-    const float     wLeft  = bvhLightsNodeWeight(pos, norm, n.centerL, n.weightL);
-    const float     wRight = bvhLightsNodeWeight(pos, norm, n.centerR, n.weightR);
-    const float     pLeft  = wLeft /(wLeft + wRight);
-    const float     pRight = wRight/(wLeft + wRight);
-    if(key < pLeft) {
-      pdf *= pLeft;
-      node = n.ptrL;
-      key  = key/pLeft;
-      } else {
-      pdf *= pRight;
-      node = n.ptrR;
-      key  = (key-pLeft)/pRight;
+    if(type==BVH_LightNode) {
+      const BVHNode n     = lightsTree.node[node & 0x0FFFFFFF];
+      const float   range = uintBitsToFloat(n.ptrL);
+      const vec3    d     = pos - n.lmin;
+      const float   len   = length(d);
+      const float   lum   = lightIntensity(norm, len, d/max(len, 0.001), range) * luma(n.lmax);
+      if(lum>0) {
+        pSum += lum;
+        // weighted reservoir: this lamp stays with probability lum/pSum
+        if(fract(pick + float(count)*0.6180339887)*pSum < lum) {
+          pHat      = lum;
+          lampPos   = n.lmin;
+          lampColor = n.lmax;
+          lampRange = range;
+          }
+        ++count;
+        }
       }
-    }
-  return 0xFFFFFFFFu;
-  }
-
-vec3 localLight(vec3 norm, vec3 pos, float key, float pick) {
-  float wSum   = 0;
-  uint  chosen = 0xFFFFFFFFu;
-  float pHat   = 0;
-  [[loop]]
-  for(int i=0; i<LampCandidates; ++i) {
-    float pdf = 0;
-    const uint lamp = pickLamp(norm, pos, fract(key + float(i)/float(LampCandidates)), pdf);
-    if(lamp==0xFFFFFFFFu || pdf<0.001)
-      continue; // numerically unstable + fireflys, as in the path tracer
-    const PTreeNode n   = lightsTree.node[lamp];
-    const vec3      dir = n.centerL - pos;
-    const float     len = length(dir);
-    const float     lum = lightIntensity(norm, len, -dir/max(len, 0.001), n.weightR) * luma(n.centerR);
-    if(lum<=0)
-      continue;
-    const float w = lum/pdf;
-    wSum += w;
-    // weighted reservoir: the candidate stays with probability w/wSum
-    if(fract(pick + float(i)*0.6180339887)*wSum < w) {
-      chosen = lamp;
-      pHat   = lum;
+    else if(type==BVH_BoxNode) {
+      const BVHNode n     = lightsTree.node[node & 0x0FFFFFFF];
+      const bool    left  = bvhIntersectBox(pos, n.lmin, n.lmax);
+      const bool    right = bvhIntersectBox(pos, n.rmin, n.rmax);
+      if(left && right && ptr<stack.length()) {
+        stack[ptr++] = n.ptrR;
+        node = n.ptrL;
+        continue;
+        }
+      if(left || right) {
+        node = left ? n.ptrL : n.ptrR;
+        continue;
+        }
       }
+    if(ptr==0)
+      break;
+    node = stack[--ptr];
     }
-  if(chosen==0xFFFFFFFFu)
+  if(pHat<=0)
     return vec3(0);
 
-  const PTreeNode n = lightsTree.node[chosen];
-  const vec3  ldir        = n.centerL - pos;
+  const vec3  ldir        = lampPos - pos;
   const float dist        = length(ldir);
-  const float rayDistance = dist - n.weightR*0.0375; // padding of the path tracer, a light may stand in a wall
+  const float rayDistance = dist - lampRange*0.0375; // padding of the path tracer, a light may stand in a wall
   const float shadow      = rayDistance<=0 ? 1.0 : shadowRay(pos, ldir/max(dist, 0.001), rayDistance);
   // f/phat is the lamp's colour over its luminance and the shadow: the intensity cancels
-  return n.centerR/luma(n.centerR) * shadow * (wSum/float(LampCandidates));
+  return lampColor/luma(lampColor) * shadow * pSum;
   }
 
 vec3 skyRadiance(vec3 origin, vec3 dir) {
@@ -251,19 +247,17 @@ vec4 shadeSample(const vec3 rayOrigin, const vec3 rayDirection, uint probeId, ui
   const vec3 albedo = min(textureAlbedo(diff.rgb), vec3(0.95));
   const vec3 at     = pos + norm*0.5; // the hit distance is 16-bit: off the surface for the shadow rays
 
-  // The keys of the lamp choice go through the samples of the probe as a low-discrepancy sequence (golden-ratio
-  // steps in 32-bit fixed point). They stay the same from frame to frame and for a probe made again at the same
+  // The key of the lamp choice goes through the samples of the probe as a low-discrepancy sequence (golden-ratio
+  // steps in 32-bit fixed point). It stays the same from frame to frame and for a probe made again at the same
   // place: a new choice at every relight flickered (the cube's change passed the reset). The light still follows
-  // the lamps, the sun and the time of day; the choice only spreads the error over the probes.
+  // the lamps, the sun and the time of day; the choice only spreads the error of the shadow over the probes.
   const uint  seed = probeGridPosHash(ivec3(round(rayOrigin/probeGridStep)));
   const uint  k    = sampleId*2654435769u + seed*2447445413u;
-  const uint  k2   = sampleId*3242174889u + seed*2654435769u + 0x9E3779B9u;
-  const float key  = float(k  >> 8) * (1.0/16777216.0);
-  const float pick = float(k2 >> 8) * (1.0/16777216.0);
+  const float pick = float(k >> 8) * (1.0/16777216.0);
 
   vec3 direct = vec3(0);
   direct += sunLight(norm, at) * scene.sunColor;
-  direct += localLight(norm, at, key, pick) * (max(1.0, scene.exposure) / scene.exposure);
+  direct += localLight(norm, at, pick) * (max(1.0, scene.exposure) / scene.exposure);
 
   vec3 hit = albedo * direct * Fd_Lambert;
   hit += albedo * bounce(pos, norm, probeId, hasPrev); // Fd_Lambert is in the probes' integration

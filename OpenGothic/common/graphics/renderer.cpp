@@ -2096,9 +2096,10 @@ void Renderer::prepareLightsBvh(Tempest::Encoder<Tempest::CommandBuffer>& cmd, W
   auto& bvhAlux    = usesSsbo(lightsTree.bvhAlux,     shaders.lightsBvh.sizeofBuffer(2, numLights * 2));
   auto& ctrl       = usesSsboInit(lightsTree.bvhCtrl, shaders.lightsBvh.sizeofBuffer(3, (numLights + 31 )/32));
 
-  // the stochastic tree of the path tracer: the probes of -gi 1 pick a lamp at their hits by it too
-  const bool ltree = settings.pathTraceEnabled || settings.giMethod==GiMethod::Probes;
-  const bool lbvh  = (settings.giMethod==GiMethod::IrrC);
+  // the stochastic tree of the path tracer; the bounding boxes of the lamps' ranges for the surfels and the probes of
+  // -gi 1 (all lamps at a hit, probe_lighting.comp)
+  const bool ltree = settings.pathTraceEnabled;
+  const bool lbvh  = (settings.giMethod==GiMethod::IrrC || settings.giMethod==GiMethod::Probes);
 
   cmd.setDebugMarker("LightsTree");
   cmd.setFramebuffer({});
@@ -2578,7 +2579,7 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
   cmd.setBinding(12,probesLightingPrev, Sampler::nearest());
   cmd.setBinding(13,hashTable);
   cmd.setBinding(14,probes);
-  cmd.setBinding(15,lightsTree.tree);
+  cmd.setBinding(15,lightsTree.bvh);
   cmd.setBinding(16,probesRadiance);
   cmd.setBinding(17,newList);
   // a thread per relit sample of every slot: the rays keep all lanes busy
