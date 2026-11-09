@@ -102,6 +102,10 @@ class Synthesizer:
 
             async def words(timings: list[WordTiming], pending_words=pending_words) -> None:
                 pending_words.extend(timings)
+                # Providers await their callbacks before returning or moving to a fallback.
+                if first is not None and on_words is not None:  # noqa: B023
+                    await on_words(list(pending_words))
+                    pending_words.clear()
 
             async def send(pcm: bytes, p: TtsProvider = p, pending_words=pending_words) -> None:
                 if pending_words and on_words is not None:

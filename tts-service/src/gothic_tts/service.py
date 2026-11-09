@@ -9,6 +9,7 @@
                        (at the loudness of the game's own dialogue, see loudness.py)
                        or, with word timings from the line's start:
                        {"type":"audio","id":"7","data":"<base64 PCM>","words":[["Hello",0.0,0.3]]}
+                       (`data` is empty for late timestamps, including after the final PCM chunk)
     service -> client  {"type":"done","id":"7","audio_s":2.1,"first_chunk_s":0.06,"latency_s":1.1}
     service -> client  {"type":"error","id":"7","detail":"..."}
 
@@ -282,6 +283,9 @@ class TtsService:
 
         async def words(timings: list[WordTiming]) -> None:
             pending_words.extend(timings)
+            if current:
+                await _send(conn, {"type": "audio", "id": req, "data": "", "words": pending_words})
+                pending_words.clear()
 
         async def chunk(pcm: bytes, p: TtsProvider) -> None:
             if not current:

@@ -1,5 +1,4 @@
 import asyncio
-import base64
 import json
 import time
 from collections.abc import AsyncIterator
@@ -1598,14 +1597,20 @@ async def scene_tts(per_char: float = 0.01, fail: bool = False, *, words: bool =
             await ws.send(json.dumps(start))
             pcm = b"\0\1" * int(16000 * per_char * len(msg["text"]))
             half = len(pcm) // 4 * 2
+            await ws.send(pcm[:half])
+            if words:
+                timings = [
+                    [word, i / 100, (i + 1) / 100] for i, word in enumerate(msg["text"].split())
+                ]
+                split = len(timings) // 2
+                await ws.send(json.dumps({
+                    "type": "audio", "id": msg["id"], "data": "", "words": timings[:split],
+                }))
+            await ws.send(pcm[half:])
             if words:
                 await ws.send(json.dumps({
-                    "type": "audio", "id": msg["id"], "data": base64.b64encode(pcm[:half]).decode(),
-                    "words": [[msg["text"].split()[0], 0.0, 0.01]],
+                    "type": "audio", "id": msg["id"], "data": "", "words": timings[split:],
                 }))
-            else:
-                await ws.send(pcm[:half])
-            await ws.send(pcm[half:])
             await ws.send(json.dumps({"type": "done", "id": msg["id"]}))
 
     async with serve(handler, "127.0.0.1", 0) as server:
@@ -1630,10 +1635,14 @@ async def test_a_scene_is_said_in_turn_each_line_whole_and_to_the_other():
     assert all(m["stream"] and "audio" not in m and "reply" not in m for m in says)
     # each line goes out whole: the game knows its length when it starts (never a WAV: a hush can't stop it)
     flow = [m["type"] for m in fake.received if m["type"] in ("say", "say_audio", "say_end")]
-    assert flow == ["say", "say_audio", "say_audio", "say_end"] * 3
-    assert [m.get("words") for m in fake.received if m["type"] == "say_audio"] == [
-        [[0, 0.0, 0.01]], None,
-    ] * 3
+    assert flow == ["say", "say_audio", "say_audio", "say_audio", "say_end"] * 3
+    for line in play.lines:
+        chunks = [m for m in fake.received if m["type"] == "say_audio" and m["line"] == line.line]
+        count = len(line.text.split())
+        assert "words" not in chunks[0]
+        assert chunks[1]["words"] == [[i, i / 100, (i + 1) / 100] for i in range(count // 2)]
+        assert chunks[2]["data"] == ""
+        assert chunks[2]["words"] == [[i, i / 100, (i + 1) / 100] for i in range(count // 2, count)]
     assert fake.say_ends == {line.line: round(line.audio_s, 3) for line in play.lines}
     # the next line only once the one before has been heard: started, its voice over, a breath
     for line, (_, sent_at) in zip(play.lines[:-1], fake.says[1:], strict=True):

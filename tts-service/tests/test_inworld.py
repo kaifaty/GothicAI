@@ -155,10 +155,16 @@ async def _speak(p: InworldTTS, voice: Voice = XARDAS) -> tuple[bytes, float]:
     return b"".join(parts), seconds
 
 
-async def test_recorded_russian_word_timestamps(api) -> None:
-    # Six paid measurement requests on 2026-11-09; only audio and word arrays are retained.
+@pytest.mark.parametrize("incomplete", [False, True])
+async def test_recorded_russian_word_timestamps(api, caplog, incomplete) -> None:
+    # Six paid ASYNC measurement requests on 2026-11-10; only audio and word arrays are retained.
     recording = json.loads((Path(__file__).parent / "fixtures/inworld-word-timestamps.json").read_text())
-    recording[-1]["result"].pop("timestampInfo")  # audio without alignment remains valid
+    if incomplete:
+        first_alignment = next(
+            msg["result"]["timestampInfo"]["wordAlignment"] for msg in recording
+            if msg["result"].get("timestampInfo", {}).get("wordAlignment", {}).get("words")
+        )
+        first_alignment["wordEndTimeSeconds"].pop()
     bodies = []
 
     def transport(request):
@@ -166,24 +172,29 @@ async def test_recorded_russian_word_timestamps(api) -> None:
         return httpx.Response(200, content="\n".join(json.dumps(msg) for msg in recording))
 
     p = InworldTTS(voice="test-voice", transport=httpx.MockTransport(transport), keep_warm=0)
-    chunks, words = [], []
+    chunks, words, events = [], [], []
 
     async def chunk(pcm):
         chunks.append(pcm)
+        events.append("audio")
 
     async def timings(items):
         words.extend(items)
+        events.append("words")
 
     try:
         duration = await p.synthesize("Слушай внимательно, у нас мало времени.", XARDAS, chunk, timings)
     finally:
         await p.aclose()
-    assert bodies[0]["timestampType"] == "WORD" and bodies[0]["timestampTransportStrategy"] == "SYNC"
-    assert [word[0] for word in words] == ["Слушай", "внимательно", "у", "нас", "мало", "времени"]
-    assert words[1][1:] == (0.36, 1.05) and words[-1][1:] == (1.64, 2.17)
+    assert bodies[0]["timestampType"] == "WORD" and bodies[0]["timestampTransportStrategy"] == "ASYNC"
+    expected = ["Слушай", "внимательно", "у", "нас", "мало", "времени"]
+    assert [word[0] for word in words] == (expected[1:] if incomplete else expected)
+    assert words[-1][1:] == (1.67, 2.15)
     assert all(0 <= start <= end <= duration for _, start, end in words)
     assert all(a[2] <= b[1] for a, b in zip(words, words[1:], strict=False))
-    assert duration == pytest.approx(2.52) and len(chunks) == len(recording)
+    assert duration == pytest.approx(2.49) and len(chunks) == 6
+    assert events[0] == "audio" and events[-1] == "words"
+    assert caplog.text.count("skipping word timestamps with mismatched array lengths") == int(incomplete)
     disabled = make_provider("inworld:timestamps=false,keep_warm=0")
     try:
         assert "timestampType" not in disabled._body("Hi", "test-voice", "")

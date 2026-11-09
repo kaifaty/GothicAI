@@ -89,6 +89,8 @@ class DialogueVoiceMixin:
             speech = await self._scene_tts.stream(
                 line.text, persona.voice_id, persona.voice, start, chunk, style, on_words=words
             )
+            if pending_words:
+                await chunk(b"")
         except TtsError as err:
             self._tts_off(line.npc, line.name, err)
             return None
@@ -135,6 +137,8 @@ class DialogueVoiceMixin:
             speech = await self._story_tts.stream(
                 text, persona.voice_id, persona.voice, start, chunk, on_words=words,
             )
+            if pending_words:
+                await chunk(b"")
         except TtsError as err:
             self._tts_off(npc, name, err)
             return None

@@ -172,7 +172,7 @@ class InworldTTS:
             body["instruction"] = instruction
         if self.timestamps:
             body["timestampType"] = "WORD"
-            body["timestampTransportStrategy"] = "SYNC"
+            body["timestampTransportStrategy"] = "ASYNC"
         if self.delivery and self.steerable:
             body["deliveryMode"] = self.delivery.upper()
         return body
@@ -201,15 +201,22 @@ class InworldTTS:
                         raise TtsError(f"inworld: {failure}")
                     result = msg.get("result", {})
                     alignment = result.get("timestampInfo", {}).get("wordAlignment", {})
-                    # SYNC's timings are absolute, including in later audio chunks (live TTS-2).
-                    words = [
-                        (word, float(start), float(end))
-                        for word, start, end in zip(
-                            alignment.get("words", []), alignment.get("wordStartTimeSeconds", []),
-                            alignment.get("wordEndTimeSeconds", []), strict=True,
+                    tokens = alignment.get("words", [])
+                    starts = alignment.get("wordStartTimeSeconds", [])
+                    ends = alignment.get("wordEndTimeSeconds", [])
+                    # Both delivery strategies use absolute times from the line's start.
+                    if len(tokens) == len(starts) == len(ends):
+                        words = [
+                            (word, float(start), float(end))
+                            for word, start, end in zip(tokens, starts, ends, strict=True)
+                            if any(c.isalnum() for c in word)
+                        ]
+                    else:
+                        log.warning(
+                            "inworld: skipping word timestamps with mismatched array lengths (%d/%d/%d)",
+                            len(tokens), len(starts), len(ends),
                         )
-                        if any(c.isalnum() for c in word)
-                    ]
+                        words = []
                     if words and on_words is not None:
                         await on_words(words)
                     data = carry + base64.b64decode(result.get("audioContent", ""))

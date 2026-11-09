@@ -141,15 +141,17 @@ class TtsClient:
                             )
                         case "audio":
                             pcm = base64.b64decode(ev["data"])
-                            first = first or time.monotonic() - started
-                            size += len(pcm)
+                            if pcm:
+                                first = first or time.monotonic() - started
+                                size += len(pcm)
                             timings = [(str(w), float(start), float(end)) for w, start, end in ev["words"]]
                             if words is None:
                                 words = []
                             words.extend(timings)
                             if on_words is not None:
                                 await on_words(timings)
-                            await on_chunk(pcm)
+                            if pcm:
+                                await on_chunk(pcm)
                         case "error":
                             raise TtsError(str(ev.get("detail")))
             except (OSError, WebSocketException, TimeoutError) as err:

@@ -1069,6 +1069,8 @@ class DialogueManager(
                             MOOD_DELIVERY[mood] if mood else "",
                             on_words=words,
                         )
+                        if pending_words:
+                            await chunk(b"")
                         self._audio[line] = speech.audio_s
                         await self.link.send(
                             SayEndCmd(npc=conv.npc, line=line, audio_s=round(speech.audio_s, 3))

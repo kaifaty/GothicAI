@@ -30,9 +30,17 @@ async def fake_tts(delay: float = 0.0, *, words: bool = False):
             )
             pcm = b"\0\1" * (800 * len(msg["text"]))
             if words:
+                timings = [[word, i / 10, (i + 1) / 10] for i, word in enumerate(msg["text"].split())]
+                split = len(timings) // 2
+                half = len(pcm) // 4 * 2
+                await ws.send(pcm[:half])
+                if split:
+                    await ws.send(json.dumps({
+                        "type": "audio", "id": msg["id"], "data": "", "words": timings[:split],
+                    }))
+                await ws.send(pcm[half:])
                 await ws.send(json.dumps({
-                    "type": "audio", "id": msg["id"], "data": base64.b64encode(pcm).decode(),
-                    "words": [[word, i / 10, (i + 1) / 10] for i, word in enumerate(msg["text"].split())],
+                    "type": "audio", "id": msg["id"], "data": "", "words": timings[split:],
                 }))
             else:
                 await ws.send(pcm)
@@ -61,15 +69,20 @@ async def test_lines_are_voiced_in_order_and_actions_wait_for_them():
     flow = [m for m in fake.received if m["type"] in ("say", "say_audio", "say_end", "action")]
     kinds = [m["type"] for m in flow]
     # each line: say with its first audio, the rest of the audio, its end; the action after both lines
-    assert kinds == ["say", "say_audio", "say_end", "say", "say_audio", "say_end", "action"]
+    assert kinds == ["say", "say_audio", "say_audio", "say_audio", "say_end"] * 2 + ["action"]
     assert requests[0]["voice"]["id"] == XARDAS and "old man" in requests[0]["voice"]["description"]
 
-    say, chunk, end = flow[0], flow[1], flow[2]
+    say, first, second, tail, end = flow[:5]
     assert say["stream"] is True and say["rate"] == 16000 and "audio" not in say
-    assert chunk["line"] == say["line"] == end["line"]
-    assert len(base64.b64decode(chunk["data"])) == 2 * 800 * len(say["text"])
+    assert first["line"] == second["line"] == tail["line"] == say["line"] == end["line"]
+    assert sum(len(base64.b64decode(chunk["data"])) for chunk in (first, second, tail)) == (
+        2 * 800 * len(say["text"])
+    )
     assert end["audio_s"] == pytest.approx(0.05 * len(say["text"]))
-    assert chunk["words"] == [[i, i / 10, (i + 1) / 10] for i in range(len(say["text"].split()))]
+    count = len(say["text"].split())
+    assert "words" not in first and tail["data"] == ""
+    assert second["words"] == [[i, i / 10, (i + 1) / 10] for i in range(count // 2)]
+    assert tail["words"] == [[i, i / 10, (i + 1) / 10] for i in range(count // 2, count)]
 
 
 async def test_the_mood_of_a_line_steers_its_voice():
@@ -110,14 +123,17 @@ async def test_a_line_of_the_director_gets_the_npcs_voice():
         await _until(lambda: sum(m["type"] == "say_end" for m in fake.received) == 2)
 
     flow = [(m["type"], m["line"]) for m in fake.received if m["type"] in ("say", "say_audio", "say_end")]
-    assert flow == [(t, line) for line in ("AIB_G1", "AIB_G2") for t in ("say", "say_audio", "say_end")]
+    assert flow == [
+        (t, line) for line in ("AIB_G1", "AIB_G2")
+        for t in ("say", "say_audio", "say_audio", "say_audio", "say_end")
+    ]
     say = next(m for m in fake.received if m["type"] == "say")
     assert say["stream"] is True and say["rate"] == 16000 and say["text"] == "Выбирай."
     assert requests[0]["voice"]["id"] == XARDAS and "old man" in requests[0]["voice"]["description"]
     assert dialogue.story_voiced("AIB_G1") == pytest.approx(0.05 * len("Выбирай."))
-    assert [m["words"] for m in fake.received if m["type"] == "say_audio"] == [
-        [[0, 0.0, 0.1]], [[0, 0.0, 0.1]],
-    ]
+    chunks = [m for m in fake.received if m["type"] == "say_audio"]
+    assert [m.get("words") for m in chunks] == [None, None, [[0, 0.0, 0.1]]] * 2
+    assert all(chunk["data"] == "" for chunk in chunks[2::3])
 
 
 def test_word_alignment_uses_subtitle_indices_and_skips_insertions():
