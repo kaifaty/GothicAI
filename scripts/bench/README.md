@@ -62,7 +62,7 @@ Their `RagdollBench` / `OwnMesh` state types and context references are in `test
 Archery fixtures, observations, aim helpers and commands live in `common/testbench_archery.cpp`.
 Their `ArcheryBench` state, shared `Trail` type and `ArcheryContext` references are in `testbench_internal.h`.
 `archeryCommand` is called at the first branch of each of nine command groups, guarded by that group's command names.
-`aimCameraFrame`, `quiver`, `bowgeom`, `hold`, `TestBench::arrowAt`, tick/reset and camera placement stay in `testbench.cpp`.
+`aimCameraFrame`, `quiver`, `bowgeom`, `TestBench::arrowAt`, tick/reset and camera placement stay in `testbench.cpp`.
 
 Physics, world-data, cadence, waitragdoll / standup, crowd / down / push and world / performance /
 streaming / deterministic commands live in `common/testbench_world.cpp`, along with `physicsDump`.
