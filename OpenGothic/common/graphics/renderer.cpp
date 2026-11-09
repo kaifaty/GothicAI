@@ -2463,9 +2463,14 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
   // (probe_prune). Otherwise after noon to midnight the day's light, hundreds of times the night's, takes seconds to
   // die out through the bounces of probes that light each other off the screen: a hut at 23:00 had cells 5 times
   // the reference 3 s after the jump (step-2b.md, «2б-1: сделано»). The time of day going on by itself moves far
-  // less than giDayJump in a frame.
+  // less than giDayJump in a frame. OPENGOTHIC_GI_JUMP_RESET=0 turns this off: a measure of how the light dies out
+  // in the chains of probes without a jump (a fire put out), scripts/bench/gi-decay.bench.
+  static const bool giJumpReset = []() {
+    const char* v = std::getenv("OPENGOTHIC_GI_JUMP_RESET");
+    return v==nullptr || std::string_view(v)!="0";
+    }();
   const int64_t giDayJump  = 10*60*1000; // ms of the game's time
-  const bool    lightReset = !restart && gi.lastDayTime>=0 && gi.dayTime>=0 &&
+  const bool    lightReset = giJumpReset && !restart && gi.lastDayTime>=0 && gi.dayTime>=0 &&
                              std::abs(gi.dayTime-gi.lastDayTime)>giDayJump;
   gi.lastDayTime = gi.dayTime;
   if(lightReset)

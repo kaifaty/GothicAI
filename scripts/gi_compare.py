@@ -8,6 +8,7 @@
 uv run scripts/gi_compare.py ROOT [--variants off,gi1,gi2] SHOT...
 uv run scripts/gi_compare.py --response CLIP.mp4
 uv run scripts/gi_compare.py --turn CLIP.mp4
+uv run scripts/gi_compare.py --decay CLIP.mp4
 
 
 ROOT holds one directory per variant with <SHOT>.png from scripts/bench/gi-clips.bench, and pt/ from
@@ -23,6 +24,11 @@ summary over all shots.
 --response takes a clip of gi-clips.bench (hut-response: 22:00, then 12:00 in the same view 1 s later, 30 frames
 per second) and prints how long each cell takes to come within 10% of its new brightness, counted from the frame
 the time changes in. Direct light changes at once, so the slowest cells show the lag of the reflected light.
+
+--decay takes a clip of scripts/bench/gi-decay.bench (noon, then 22:00 1 s later, 30 frames per second) and prints, as
+--response does, when every cell is within 10% of its end (night) brightness, and how many times brighter than it the
+cells are 0.5, 1 and 2 s after the change: the day's light dying out in the probes. Cells count from the shots'
+threshold of nearly black.
 
 --turn takes the clip hut-turn of scripts/bench/gi-turn.bench (the camera stands 1 s, turns 180 degrees at once, stands
 3 s, turns back, stands 2 s; 30 frames per second) and compares the frame before the turn with the first frame after
@@ -58,7 +64,7 @@ def clip_cells(path, w=320, h=180):
     return np.array([cells(f) for f in lum])
 
 
-def response(path, at=1.0, fps=30, settle=0.1):
+def response(path, at=1.0, fps=30, settle=0.1, lit=0.005, marks=()):
     # The exposure follows the sky at once, so after the change it stays put: a cell's brightness then moves only
     # with its light. The reflected light of a shaded cell starts from about nothing (the night's light is tiny
     # at the day's exposure), so the time to come within 10% of the new brightness is its lag; lit cells settle
@@ -69,7 +75,7 @@ def response(path, at=1.0, fps=30, settle=0.1):
     t0 = max(near, key=lambda t: abs(mean[t] - mean[t - 1]))  # the first frame after the change
     after = c[-8:].mean(axis=0)
     noise = c[-20:].std(axis=0)  # the encoder and the TAA jitter: a cell this close to its end has settled
-    keep = after > 0.005
+    keep = after > lit
     frames = []
     for i in np.flatnonzero(keep):
         late = np.flatnonzero(np.abs(c[t0:, i] - after[i]) > max(settle * after[i], 3 * noise[i]))
@@ -82,6 +88,10 @@ def response(path, at=1.0, fps=30, settle=0.1):
     if len(frames):
         print(f'- within {settle:.0%} of the new brightness: median {np.median(frames) * 1000 / fps:.0f} ms, '
               f'slowest cell {frames.max() * 1000 / fps:.0f} ms ({frames.max()} frames at {fps} per second)')
+    for t in marks:  # the frame t s after the change: t0 is the first one after it, at 1/fps
+        k = min(len(c) - 1, t0 + round(t * fps) - 1)
+        r = c[k, keep] / after[keep]
+        print(f'- {t:g} s after the change: brightest cell {r.max():.2f}x its end, median {np.median(r):.2f}x')
 
 
 def turn(path, at=1.0, back=4.0, fps=30, window=0.5):
@@ -113,12 +123,16 @@ def main():
     ap.add_argument('--variants', default='off,gi1,gi2')
     ap.add_argument('--response', type=Path, help='a clip with a sharp change of light: the time to settle')
     ap.add_argument('--turn', type=Path, help='a clip of a turn and back (gi-turn.bench): the change it leaves')
+    ap.add_argument('--decay', type=Path, help='a clip of noon to night (gi-decay.bench): the light dying out')
     args = ap.parse_args()
     if args.response:
         response(args.response)
         return
     if args.turn:
         turn(args.turn)
+        return
+    if args.decay:
+        response(args.decay, lit=0.002, marks=(0.5, 1, 2))
         return
     if args.root is None or not args.shots:
         ap.error('ROOT and SHOT... are required without --response')
