@@ -47,19 +47,24 @@ def main():
         assert len(label) == last['pieces'], f'{case}: {len(label)} names for {last["pieces"]} pieces'
         keys = ['pieces', 'groups', 'bodies', 'single_pieces', 'largest_group_volume_fraction', 'fell', 'bodies_fell',
                 'sleeping', 'bodies_sleeping', 'max_native_floor_penetration_cm', 'max_visible_terrain_penetration_cm',
-                'max_piece_penetration_cm', 'metal_on_ground', 'metal', 'median_displacement_cm', 'max_jitter_cm']
+                'max_piece_penetration_cm', 'metal_on_ground', 'metal', 'median_displacement_cm', 'max_jitter_cm',
+                'hero_debris_penetration_cm', 'hero_piece_penetration_cm']
         entry = {'15s': {key: last.get(key) for key in keys}}
         for at in (500, 2000, 15000):
             parts = groups(samples[at], label)
             entry[f'{at}ms'] = {'bodies': samples[at]['bodies'], 'largest': parts[0],
                                 'joined': [part for part in parts[1:] if len(part) > 1],
                                 'single': sorted(part[0] for part in parts if len(part) == 1)}
-        if '-remnant-' in case:
-            base, ordinal = case.split('-remnant-')
-            done = complete.get((base, int(ordinal)))
-            breaks = [row for row in rows if row['kind'] == 'destruction_break' and row.get('remnant')]
+        base, _, ordinal = case.partition('-remnant-')
+        breaks = [row for row in rows if row['kind'] == 'destruction_break' and row['case'] == base]
+        index = int(ordinal) if ordinal else 0
+        entry['break_ms'] = breaks[index]['break_ms'] if index < len(breaks) else None
+        if ordinal:
+            done = complete.get((base, index))
             entry['swings'] = done and done['swings']
-            entry['break_ms'] = [row['break_ms'] for row in breaks if row['case'] == base]
+        walk = [row for row in rows if row['kind'] == 'destruction2_walk' and row['case'] == case]
+        if walk:
+            entry['walk'] = {key: walk[0][key] for key in ('length_cm', 'pieces_on_path', 'passes')}
         result[case] = entry
     print(json.dumps(result, ensure_ascii=False, indent=1))
 
