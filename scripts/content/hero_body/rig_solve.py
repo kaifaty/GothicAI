@@ -1,6 +1,6 @@
 """The render rig's solve in numpy: a copy of RenderRig::solve (OpenGothic/common/graphics/mesh/renderrig.cpp) for
 offline previews and measurements, plus the leg variants under study (reports/engine/2026-11-modern-skeleton,
-«Ноги на беге»).
+«Ноги»).
 
     uv run --with numpy python -I rig_solve.py <models dir of the base> <content dir> <CLIP> [...]   # knee/feet table
 
@@ -9,8 +9,8 @@ Variants of the legs (`legs=`):
 - pole:   the same target, the knee towards the thigh's own front (the rig thigh's turn from its bind);
 - shin:   pole + the ankle carried by Gothic's calf (a point of its shin), the foot turned onto Gothic's ball;
 - fk:     no IK: the thigh, calf and foot take Gothic's turns like the other bones;
-- v2:     what the engine does from «Ноги на беге»: the knee towards the rig's own bind knee carried by the thigh's
-          turn, the pelvis raised by `share` of its height over the lower of Gothic's ankles (Gothic's clips are made
+- v2:     what the engine does since «Ноги»: the knee towards the model's front of the bind pose carried by the
+          thigh's turn (as pole), the pelvis raised by `share` of its height over the lower of Gothic's ankles (Gothic's clips are made
           for legs 2.6 cm shorter than its bind skeleton, ours are fitted to the bind), soft IK over the last `soft` cm.
 """
 import json, math, sys
