@@ -216,9 +216,9 @@ int lookupProbe(vec3 pos, vec3 norm, int lod, out uint id, out ivec3 gridPos) {
       return 0;
     const Probe p = probe[probeId];
     if((p.bits & TRACED_BIT)!=0 && probeIsSame(p.pos, wpos, lod)) {
+      id = probeId;
       if((p.bits & (NEW_BIT | BAD_BIT | UNUSED_BIT))!=0)
         return 1;
-      id = probeId;
       return 2;
       }
     probeId = p.pNext;
@@ -242,24 +242,31 @@ void requestProbe(ivec3 gridPos, vec3 norm) {
   voteTable[h] = probeRequestKey | i;
   }
 
+void stampProbe(uint id, uint stamp) {
+  if(int(probe[id].lastUse - stamp)<0)
+    atomicMax(probe[id].lastUse, stamp);
+  }
+
 bool findProbe(vec3 pos, vec3 norm, uint stamp, out uint id) {
   // The probe of the last frame at a hit, on the screen or not. A hit near the camera without one requests it; till
   // it is there, the probe of the next coarser lod at the hit (its corners are corners of this lod too) stands in.
   // Taking a probe stamps its use (probe_prune frees what nobody uses): with the stamp of the probe whose sample
   // takes it, so probes that take each other's light off the screen live no longer than the last use from it.
+  // A bad probe at the hit is stamped too: freed, it would be requested and traced again.
   const int lod = probeGridLod(pos, scene.camPos, scene.probeLodScale);
   ivec3 gridPos;
   int   found = lookupProbe(pos, norm, lod, id, gridPos);
   if(found==0 && distance(pos, scene.camPos)<hitRadius)
     requestProbe(gridPos, norm);
+  if(found==1 && id!=0)
+    stampProbe(id, stamp);
   if(found!=2 && lod<12) {
     ivec3 coarse;
     found = lookupProbe(pos, norm, lod+1, id, coarse);
     }
   if(found!=2)
     return false;
-  if(int(probe[id].lastUse - stamp)<0)
-    atomicMax(probe[id].lastUse, stamp);
+  stampProbe(id, stamp);
   return true;
   }
 
