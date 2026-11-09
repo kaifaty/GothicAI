@@ -1001,6 +1001,52 @@ struct Healing {
   float walkSpeed[2] = {};
 };
 
+struct NpcCommands {
+  int64_t     npcDayStart = 0;
+  uint64_t    npcDayMinutes = 0;
+  // volley: shots by hand in a row - press, draw to volleyDraw, hold volleyHold, let go, wait for the
+  // next arrow
+  int         volleyLeft  = 0;
+  int         volleyPhase = 0;
+  uint64_t    volleyHold  = 0;
+  float       volleyDraw  = 1;
+  uint64_t    volleyJitter = 0;  // ms more to hold, at random up to that (the sway is a function of time)
+  uint64_t    volleyHoldNow = 0;
+  // wander: the crew walks the waynet from waypoint to waypoint near the hero (docs/navigation.md, stage 0)
+  std::vector<Npc*>            wanderers;
+  std::vector<const WayPoint*> wanderPoints;
+  size_t                       wanderLegs = 0;
+  Npc*        downNpc      = nullptr; // waitdown: till either participant falls
+  Npc*        downOther    = nullptr;
+  uint64_t    downFrom = 0, downEnd = 0;
+  uint64_t    volleyT     = 0;
+  struct StunDrift {
+    Npc* target=nullptr;
+    Npc* attacker=nullptr;
+    Tempest::Vec3 origin,axis;
+    uint64_t start=0;
+    unsigned next=0;
+  } stunDrift;
+};
+
+struct NpcCommandsContext {
+  NpcCommands& npcCommands;
+  Healing& healing;
+  std::vector<Hold>& holds;
+  std::vector<KeyCodec::Action>& taps;
+  Npc*& pinned;
+  Tempest::Vec3& pinAt;
+  uint32_t& scenarioSeed;
+  uint32_t& lcg;
+  uint32_t& monsterCharacterSeed;
+  std::vector<Npc*>& crew;
+  uint64_t& time;
+  Melee& melee;
+  ArcheryBench& archery;
+  Npc*& subject;
+  void (*stunDriftSample)(World&,uint64_t,uint64_t);
+};
+
 struct NpcTierTest {
   Npc* npc = nullptr;
   const WayPoint* ends[2] = {};
@@ -1368,6 +1414,10 @@ void arrowFields(World& world);
 float aimSegmentDistance(const Tempest::Vec3& p, const Tempest::Vec3& q, const Tempest::Vec3& a, const Tempest::Vec3& b, float& along);
 float aimBoxDistance(const Tempest::Vec3& from, const Tempest::Vec3& to, const Tempest::Vec3 (&box)[2]);
 std::vector<std::string> split(std::string_view s);
+NpcCommandsContext npcCommandsContext();
+bool npcCommandsCommand(const NpcCommandsContext& context,const std::string& line,const std::vector<std::string>& a,
+                        World& w,Npc& pl,PlayerControl& ctrl);
+
 ArcheryContext archeryContext();
 bool archeryCommand(const ArcheryContext& context,const std::string& line,const std::vector<std::string>& a,
                     World& w,Npc& pl,PlayerControl& ctrl);
