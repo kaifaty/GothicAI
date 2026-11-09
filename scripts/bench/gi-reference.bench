@@ -19,7 +19,7 @@ goto pos 3924 -73 -6663
 clear 3000
 watch player
 cam look 110
-cam world 160 170 0
+cam world 160 170 270
 wait 10000
 cam hold
 wait 12000
@@ -88,7 +88,7 @@ goto NW_FARM1_INHOUSE_02
 clear 3000
 watch player
 cam look 110
-cam world 120 170 0
+cam world 140 160 45
 wait 10000
 cam hold
 wait 12000
@@ -108,13 +108,13 @@ goto NW_CITY_HABOUR_POOR_AREA_PATH_06
 clear 3000
 watch player
 cam look 120
-cam world 500 200 180
+cam world 500 200 270
 wait 10000
 cam hold
 wait 12000
 shot harbour-night-1
 wait 3000
-cam world 500 200 90
+cam world 500 200 180
 wait 300
 cam hold
 wait 12000
@@ -127,13 +127,13 @@ goto NW_FOREST_PATH_66
 clear 3000
 watch player
 cam look 130
-cam world 400 140 0
+cam world 400 140 90
 wait 10000
 cam hold
 wait 12000
 shot forest-1
 wait 3000
-cam world 400 140 90
+cam world 400 140 180
 wait 300
 cam hold
 wait 12000
