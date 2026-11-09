@@ -33,6 +33,7 @@ Kinds:
 - pelvis {"window": [...], "roll": 0.5}: the hips' roll seen from the front (one hip up, the other down) keeps the
         share `roll` of its swing about the cycle's mean; the trunk keeps its turn and the legs reach the same feet,
         so only the hips move. A strong hip drop reads as a woman's gait (Gothic's own female run: 11°, male: 5°).
+        The roll is seen along the record's travel; a record that stays in place names it: "axis": [x, 0, z].
 
 {"loop": true} in fixes.json: the record is a moving loop - its last frame is the first again, moved by the
 travel (loop_cycle.py). Windows may then run past the last cycle frame and go on from frame 0 (a window [18, 23,
