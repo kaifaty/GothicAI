@@ -2396,7 +2396,7 @@ void Renderer::prepareIrradiance(Encoder<CommandBuffer>& cmd, WorldView& wview) 
 static constexpr uint32_t giStatsCount = 8; // GIDEBUG: 6
 
 // GIDEBUG(temporary, step 2b-1): OPENGOTHIC_GI_DEBUG="r=<cm> cap=<n> off=<n> log=1"
-static struct GiDebug { float r=-1; int cap=-1, off=-1; bool log=false; bool read=false; } giDebug;
+static struct GiDebug { float r=-1; int cap=-1, off=-1; bool log=false; bool read=false; uint32_t flags=0; } giDebug;
 static const GiDebug& giDebugGet() {
   if(!giDebug.read) {
     giDebug.read = true;
@@ -2407,6 +2407,7 @@ static const GiDebug& giDebugGet() {
       if(auto v = val("cap=")) giDebug.cap = std::atoi(v);
       if(auto v = val("off=")) giDebug.off = std::atoi(v);
       if(auto v = val("log=")) giDebug.log = std::atoi(v)!=0;
+      if(auto v = val("pt="))  giDebug.flags |= std::atoi(v)!=0 ? 1u : 0u;
       Log::i("GIDEBUG r=", giDebug.r, " cap=", giDebug.cap, " off=", giDebug.off, " log=", giDebug.log);
       }
     }
@@ -2640,6 +2641,7 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
     uint32_t offPeriod;
     float    hitRadius;
     uint32_t maxRequests;
+    uint32_t dbgFlags; // GIDEBUG
     } push = {};
   push.alpha       = 1.f - std::exp(-dt/giTau);
   push.frameId     = gi.frame++;
@@ -2648,6 +2650,7 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
     push.relitPeriod *= 2;  // 30 fps: every 8th sample a frame, 60 fps: 16th, 120 fps: 32nd
   push.offPeriod   = giDebugGet().off>0 ? uint32_t(giDebugGet().off) : giOffPeriod;
   push.hitRadius   = giDebugGet().r>=0 ? giDebugGet().r : giHitRadius;
+  push.dbgFlags    = giDebugGet().flags;
   push.maxRequests = giDebugGet().cap>=0 ? uint32_t(std::min(giDebugGet().cap, int(giMaxRequests))) : giMaxRequests;
 
   cmd.setDebugMarker("GI-Lighting");
