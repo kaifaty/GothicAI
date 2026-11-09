@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import io
 import itertools
 import json
@@ -21,6 +22,33 @@ DEFAULT_TTS_URL = "ws://127.0.0.1:47820"
 
 StartCallback = Callable[[int, str], Awaitable[None]]  # sample rate, provider
 ChunkCallback = Callable[[bytes], Awaitable[None]]  # 16-bit mono PCM
+WordTiming = tuple[str, float, float]  # word, start and end from the line's first audio
+WordCallback = Callable[[list[WordTiming]], Awaitable[None]]
+
+
+class WordMatcher:
+    """Match successive TTS words to whitespace-separated subtitle words, preserving their indices."""
+
+    def __init__(self, text: str) -> None:
+        self.words = [self._normalize(word) for word in text.split()]
+        self.position = 0
+
+    @staticmethod
+    def _normalize(word: str) -> str:
+        return "".join(c for c in word.lower() if c.isalnum())
+
+    def match(self, words: list[WordTiming]) -> list[tuple[int, float, float]]:
+        matched = []
+        for word, start, end in words:
+            normalized = self._normalize(word)
+            if not normalized:
+                continue
+            for index in range(self.position, len(self.words)):
+                if self.words[index] == normalized:
+                    matched.append((index, round(start, 3), round(end, 3)))
+                    self.position = index + 1
+                    break
+        return matched
 
 
 class TtsError(RuntimeError):
@@ -34,6 +62,7 @@ class Speech:
     provider: str
     latency_s: float
     first_chunk_s: float = 0.0
+    words: list[WordTiming] | None = None
 
 
 class TtsClient:
@@ -59,7 +88,7 @@ class TtsClient:
             pcm.extend(data)
 
         s = await self.stream(text, voice_id, description, start, chunk, style)
-        return Speech(_wav(bytes(pcm), rate), s.audio_s, s.provider, s.latency_s, s.first_chunk_s)
+        return Speech(_wav(bytes(pcm), rate), s.audio_s, s.provider, s.latency_s, s.first_chunk_s, s.words)
 
     async def stream(
         self,
@@ -69,6 +98,8 @@ class TtsClient:
         on_start: StartCallback,
         on_chunk: ChunkCallback,
         style: str = "",
+        *,
+        on_words: WordCallback | None = None,
     ) -> Speech:
         """Speak `text`, passing audio on as it is generated (`on_start` comes before the first chunk).
         `style`: how to say it, in English ("say angrily"); empty for the voice's usual manner."""
@@ -89,6 +120,7 @@ class TtsClient:
                     request["style"] = style
                 await ws.send(json.dumps(request, ensure_ascii=False))
                 rate, provider, size, first = 0, "", 0, 0.0
+                words: list[WordTiming] | None = None
                 while True:
                     msg = await asyncio.wait_for(ws.recv(), self.timeout)
                     if isinstance(msg, bytes):
@@ -104,7 +136,20 @@ class TtsClient:
                             rate, provider = int(ev["sample_rate"]), str(ev.get("provider", ""))
                             await on_start(rate, provider)
                         case "done":
-                            return Speech(b"", size / 2 / rate, provider, time.monotonic() - started, first)
+                            return Speech(
+                                b"", size / 2 / rate, provider, time.monotonic() - started, first, words
+                            )
+                        case "audio":
+                            pcm = base64.b64decode(ev["data"])
+                            first = first or time.monotonic() - started
+                            size += len(pcm)
+                            timings = [(str(w), float(start), float(end)) for w, start, end in ev["words"]]
+                            if words is None:
+                                words = []
+                            words.extend(timings)
+                            if on_words is not None:
+                                await on_words(timings)
+                            await on_chunk(pcm)
                         case "error":
                             raise TtsError(str(ev.get("detail")))
             except (OSError, WebSocketException, TimeoutError) as err:

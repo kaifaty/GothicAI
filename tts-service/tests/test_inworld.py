@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -14,7 +15,7 @@ import pytest
 
 from gothic_tts import cli, service
 from gothic_tts.cli import load_env_file
-from gothic_tts.providers import TtsError, Voice, inworld
+from gothic_tts.providers import TtsError, Voice, inworld, make_provider
 from gothic_tts.providers.fake import FakeProvider
 from gothic_tts.providers.inworld import CHECK_VOICE, PREVIEW_TEXTS, InworldTTS
 from gothic_tts.service import TtsService
@@ -152,6 +153,42 @@ async def _speak(p: InworldTTS, voice: Voice = XARDAS) -> tuple[bytes, float]:
 
     seconds = await p.synthesize("Ты снова здесь.", voice, on_chunk)
     return b"".join(parts), seconds
+
+
+async def test_recorded_russian_word_timestamps(api) -> None:
+    # Six paid measurement requests on 2026-11-09; only audio and word arrays are retained.
+    recording = json.loads((Path(__file__).parent / "fixtures/inworld-word-timestamps.json").read_text())
+    recording[-1]["result"].pop("timestampInfo")  # audio without alignment remains valid
+    bodies = []
+
+    def transport(request):
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, content="\n".join(json.dumps(msg) for msg in recording))
+
+    p = InworldTTS(voice="test-voice", transport=httpx.MockTransport(transport), keep_warm=0)
+    chunks, words = [], []
+
+    async def chunk(pcm):
+        chunks.append(pcm)
+
+    async def timings(items):
+        words.extend(items)
+
+    try:
+        duration = await p.synthesize("Слушай внимательно, у нас мало времени.", XARDAS, chunk, timings)
+    finally:
+        await p.aclose()
+    assert bodies[0]["timestampType"] == "WORD" and bodies[0]["timestampTransportStrategy"] == "SYNC"
+    assert [word[0] for word in words] == ["Слушай", "внимательно", "у", "нас", "мало", "времени"]
+    assert words[1][1:] == (0.36, 1.05) and words[-1][1:] == (1.64, 2.17)
+    assert all(0 <= start <= end <= duration for _, start, end in words)
+    assert all(a[2] <= b[1] for a, b in zip(words, words[1:], strict=False))
+    assert duration == pytest.approx(2.52) and len(chunks) == len(recording)
+    disabled = make_provider("inworld:timestamps=false,keep_warm=0")
+    try:
+        assert "timestampType" not in disabled._body("Hi", "test-voice", "")
+    finally:
+        await disabled.aclose()
 
 
 async def test_voice_designed_once_then_reused(api, tmp_path) -> None:

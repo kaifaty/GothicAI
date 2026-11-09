@@ -17,6 +17,7 @@ PR, который добавляет фичу или выключатель, д
 
 | Фича | Как выключить | Модуль | Проверка | Документ |
 |---|---|---|---|---|
+| Время слов TTS, v62: индексы `say.text.split()` и начало/конец в `say_audio.words`/`say.words` | `--provider inworld:timestamps=false` | `tts-service/src/gothic_tts/providers/inworld.py`, `fake.py`, `service.py`; `tts.py`, `dialogue.py`, `dialogue_voice.py`, `protocol.py` | `test_inworld.py`, `test_service.py`, `test_tts.py`, `test_protocol.py`, `test_dialogue.py`; e2e `tts` с `TTS=fake` | [protocol.md](protocol.md#время-слов-v62), [MVP.md](MVP.md#голоса-npc-tts) |
 | Автоматическая регрессия групп `OFF` и `GIVEN` одной командой, до трёх игр на Ryzen или по одной на Mac | не запускать `scripts/e2e-regression.sh` | `scripts/e2e-regression.sh`, `scenarios/groups.py` (`RUN`) | `scripts/tests/test_e2e_live.py`; e2e `graph`, `lie`, `deal` | [e2e.md](e2e.md#автоматическая-регрессия) |
 | Ручные живые наборы e2e: повторения, доли, факты игры, расшифровки и запросы | не запускать `scripts/e2e-live.sh` | `scenarios/live.py`, `scripts/e2e-live.sh` | `test_live.py`, `scripts/tests/test_e2e_live.py`; живые `haggle`, `surrender_live` | [e2e.md](e2e.md#живая-группа) |
 | Живые решения NPC и режиссёра: 9 и 8 случаев без «дано», зачёт по фактам | не запускать `SUITE=live_npc` / `live_director` | `scenarios/live_npc.py`, `scenarios/live_director.py`, живые режимы сценариев группы 2 | `test_live.py`, `test_cli.py`; по одному `RUNS=1 LLM=chatgpt` | [NPC](e2e.md#live_npc), [режиссёр](e2e.md#live_director) |

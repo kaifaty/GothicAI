@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 # story_program), v24: choices in the director's dialogs (steps choice, clear_choices; debug choices, talk,
 # menu, menu_pick), v25: story_program.own (the scripts' program under the director's), v26: the director's
 # lines in the npc's voice (line_voice).
-PROTOCOL_VERSION = 60
+PROTOCOL_VERSION = 62
 NOISE_PROTOCOL = 36  # npc_event noise and npc_act investigate
 TRACE_PROTOCOL = 37  # visible physical traces and game time on noise events
 PACE_PROTOCOL = 38  # go_to_waypoint.pace: a guide keeps the hero's pace; start_activity.place
@@ -1593,6 +1593,7 @@ class SayCmd(_Command):
     line: str
     text: str
     audio: str | None = None
+    words: list[tuple[int, float, float]] | None = None  # v62: subtitle word index, start/end seconds
     stream: bool | None = None
     rate: int | None = None
     reply: str | None = None  # the line is part of this reply, already shown with chat_text
@@ -1626,6 +1627,7 @@ class SayAudioCmd(_Command):
     npc: str
     line: str
     data: str
+    words: list[tuple[int, float, float]] | None = None  # v62: times from the line's first audio
 
 
 class SayEndCmd(_Command):

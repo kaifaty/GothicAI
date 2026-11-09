@@ -133,10 +133,23 @@ async def test_websocket_speak(service) -> None:
         start = json.loads(await ws.recv())
         assert start == {"type": "start", "id": "1", "sample_rate": 16000, "provider": "fake"}
         size = 0
-        while isinstance(msg := await ws.recv(), bytes):
-            size += len(msg)
-        done = json.loads(msg)
+        words = []
+        while True:
+            msg = await ws.recv()
+            if isinstance(msg, bytes):
+                size += len(msg)
+                continue
+            event = json.loads(msg)
+            if event["type"] == "audio":
+                assert all(word[1] >= size / 2 / 16000 for word in event["words"])
+                words.extend(event["words"])
+                size += len(base64.b64decode(event["data"]))
+                continue
+            done = event
+            break
         assert done["type"] == "done" and done["audio_s"] == pytest.approx(size / 2 / 16000)
+        assert [word[0] for word in words] == ["Драконы", "уже", "здесь."]
+        assert words[0][1] == 0 and words[-1][2] <= size / 2 / 16000
         assert fake.calls[0][1] == Voice("x", "", None)
 
         await ws.send(json.dumps({"type": "speak", "id": "2", "text": "  "}))

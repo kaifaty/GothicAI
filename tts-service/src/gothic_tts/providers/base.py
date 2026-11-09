@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from typing import Protocol
 
 ChunkCallback = Callable[[bytes], Awaitable[None]]
+WordTiming = tuple[str, float, float]  # token, start/end seconds from the beginning of the line
+WordsCallback = Callable[[list[WordTiming]], Awaitable[None]]
 
 
 @dataclass(frozen=True)
@@ -36,8 +38,10 @@ class TtsProvider(Protocol):
 
     async def warmup(self) -> None: ...
 
-    async def synthesize(self, text: str, voice: Voice, on_chunk: ChunkCallback) -> float:
-        """Speak `text`, passing PCM chunks as they are generated. Returns the audio length in seconds."""
+    async def synthesize(
+        self, text: str, voice: Voice, on_chunk: ChunkCallback, on_words: WordsCallback | None = None,
+    ) -> float:
+        """Speak `text`; optional word timings precede their PCM chunk. Returns audio length in seconds."""
         ...
 
     async def aclose(self) -> None: ...

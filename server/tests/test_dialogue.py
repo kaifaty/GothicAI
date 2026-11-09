@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import time
 from collections.abc import AsyncIterator
@@ -1137,7 +1138,9 @@ class OneVoiceTts(TtsClient):
         self.finishing: dict[str, asyncio.Event] = {}
         self.failed: set[str] = set()
 
-    async def stream(self, text, voice_id, description, on_start, on_chunk, style="") -> Speech:
+    async def stream(
+        self, text, voice_id, description, on_start, on_chunk, style="", *, on_words=None,
+    ) -> Speech:
         self.requested.append(text)
         if text in self.held:
             await self.held[text].wait()
@@ -1580,7 +1583,7 @@ SCENE = [
 
 
 @asynccontextmanager
-async def scene_tts(per_char: float = 0.01, fail: bool = False):
+async def scene_tts(per_char: float = 0.01, fail: bool = False, *, words: bool = False):
     """TTS service stand-in: `per_char` seconds of audio per character in two chunks, or an error."""
     requests: list[dict] = []
 
@@ -1595,7 +1598,13 @@ async def scene_tts(per_char: float = 0.01, fail: bool = False):
             await ws.send(json.dumps(start))
             pcm = b"\0\1" * int(16000 * per_char * len(msg["text"]))
             half = len(pcm) // 4 * 2
-            await ws.send(pcm[:half])
+            if words:
+                await ws.send(json.dumps({
+                    "type": "audio", "id": msg["id"], "data": base64.b64encode(pcm[:half]).decode(),
+                    "words": [[msg["text"].split()[0], 0.0, 0.01]],
+                }))
+            else:
+                await ws.send(pcm[:half])
             await ws.send(pcm[half:])
             await ws.send(json.dumps({"type": "done", "id": msg["id"]}))
 
@@ -1611,7 +1620,7 @@ def _scene_dialogue(link, pace: float = 0.05, **kwargs) -> DialogueManager:
 
 async def test_a_scene_is_said_in_turn_each_line_whole_and_to_the_other():
     fake = FakeGame()
-    async with scene_tts() as (url, requests), connected(fake) as link:
+    async with scene_tts(words=True) as (url, requests), connected(fake) as link:
         dialogue = _scene_dialogue(link, tts=TtsClient(url))
         play = dialogue.play_scene(SCENE, quiet=True)
         await asyncio.wait_for(play.task, 10)
@@ -1622,6 +1631,9 @@ async def test_a_scene_is_said_in_turn_each_line_whole_and_to_the_other():
     # each line goes out whole: the game knows its length when it starts (never a WAV: a hush can't stop it)
     flow = [m["type"] for m in fake.received if m["type"] in ("say", "say_audio", "say_end")]
     assert flow == ["say", "say_audio", "say_audio", "say_end"] * 3
+    assert [m.get("words") for m in fake.received if m["type"] == "say_audio"] == [
+        [[0, 0.0, 0.01]], None,
+    ] * 3
     assert fake.say_ends == {line.line: round(line.audio_s, 3) for line in play.lines}
     # the next line only once the one before has been heard: started, its voice over, a breath
     for line, (_, sent_at) in zip(play.lines[:-1], fake.says[1:], strict=True):
