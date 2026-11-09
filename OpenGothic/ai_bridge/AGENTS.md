@@ -1,6 +1,6 @@
 # OpenGothic/ai_bridge/ — мост игры к ИИ-серверу
 
-Что где в мосте — [карта проекта](../../docs/README.md#движок-наши-подсистемы), сообщения — [`docs/protocol.md`](../../docs/protocol.md), граф сюжета — [`docs/story-graph.md`](../../docs/story-graph.md). Общие правила — корневой [`AGENTS.md`](../../AGENTS.md).
+Что где в мосте — [карта проекта](../../docs/map/engine.md#движок-наши-подсистемы), сообщения — [`docs/protocol.md`](../../docs/protocol.md), граф сюжета — [`docs/story-graph.md`](../../docs/story-graph.md). Общие правила — корневой [`AGENTS.md`](../../AGENTS.md).
 
 - **После правки:** сборка `scripts/build-engine.sh` и один сценарий e2e, который задевает правку (`SCENARIO=<имя> scripts/ryzen.sh e2e`; на Ryzen игра собирается под Linux тем же кодом). Конвертер `storygraph/` собирается отдельно, команды и режимы `--check` — в `docs/story-graph.md`.
 - **Предупреждения — ошибки:** `AiBridge` собирается с `-Wall -Wconversion -Werror`. Apple clang на Mac и gcc на Ryzen ловят разное: код, собранный на одной машине, может не собраться на другой.
