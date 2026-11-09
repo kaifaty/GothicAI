@@ -282,6 +282,7 @@ class Renderer final {
       const uint32_t            maxProbes = atlasDim*atlasDim; // 65536
 
       Tempest::StorageBuffer    voteTable, hashTable, freeList, newList, voteTiles;
+      Tempest::StorageBuffer    requests;           // the age histogram and the requests of probes at hits
       Tempest::StorageBuffer    probes;
       Tempest::StorageImage     probesGBuffDiff;
       Tempest::StorageImage     probesGBuffNorm;
@@ -295,6 +296,7 @@ class Renderer final {
       bool                      resetHistory = false; // another world: the probes start over, as on the first frame
       // the counters of probe_stats (live probes, traced in the frame), read back a frame slot later (FrameProfile)
       Tempest::StorageBuffer    stats[Resources::MaxFramesInFlight];
+      static constexpr uint32_t statsCount = 6;
       bool                      statsWritten[Resources::MaxFramesInFlight] = {};
       } gi;
 

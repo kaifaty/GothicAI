@@ -7,6 +7,7 @@
 
 uv run scripts/gi_compare.py ROOT [--variants off,gi1,gi2] SHOT...
 uv run scripts/gi_compare.py --response CLIP.mp4
+uv run scripts/gi_compare.py --turn CLIP.mp4
 
 
 ROOT holds one directory per variant with <SHOT>.png from scripts/bench/gi-clips.bench, and pt/ from
@@ -22,6 +23,10 @@ summary over all shots.
 --response takes a clip of gi-clips.bench (hut-response: 22:00, then 12:00 in the same view 1 s later, 30 frames
 per second) and prints how long each cell takes to come within 10% of its new brightness, counted from the frame
 the time changes in. Direct light changes at once, so the slowest cells show the lag of the reflected light.
+
+--turn takes the clip hut-turn of scripts/bench/gi-turn.bench (the camera stands 1 s, turns 180 degrees at once, stands
+3 s, turns back, stands 2 s; 30 frames per second) and compares the frame before the turn with the first frame after
+the return, cell by cell, as above: the light of probes that live on off the screen comes back as it was.
 """
 import argparse
 import subprocess
@@ -79,15 +84,41 @@ def response(path, at=1.0, fps=30, settle=0.1):
               f'slowest cell {frames.max() * 1000 / fps:.0f} ms ({frames.max()} frames at {fps} per second)')
 
 
+def turn(path, at=1.0, back=4.0, fps=30, window=0.5):
+    # The two cuts are the largest jumps of the frame near their times (the view changes whole); the light of the
+    # probes settling after the return moves the cells far less.
+    c = clip_cells(path)
+    jump = np.median(np.abs(np.diff(np.log(c + 1e-4), axis=0)), axis=1)  # jump[t]: frame t+1 against frame t
+
+    def cut(t):
+        lo, hi = max(0, round((t - window) * fps)), min(len(jump), round((t + window) * fps))
+        return lo + int(np.argmax(jump[lo:hi])) + 1  # the first frame after the cut
+
+    t0, t1 = cut(at), cut(back)
+    before, after = c[t0 - 1], c[t1]
+    keep = before > 0.002
+    change = np.abs(after[keep] / before[keep] - 1)
+    print(f'{path}: {len(c)} frames, turn at frame {t0}, back at frame {t1}, {keep.sum()} of {c.shape[1]} cells lit enough')
+    settle = next((k for k in range(t1, len(c)) if np.abs(c[k][keep] / before[keep] - 1).max() <= 0.05), None)
+    if settle is not None:
+        print(f'- every cell within 5% of the frame before the turn from frame {settle - t1 + 1} after the return')
+    print(f'- turn: first frame after the return, max cell change {change.max() * 100:.1f}%, '
+          f'median {np.median(change) * 100:.1f}%')
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('root', type=Path, nargs='?')
     ap.add_argument('shots', nargs='*')
     ap.add_argument('--variants', default='off,gi1,gi2')
     ap.add_argument('--response', type=Path, help='a clip with a sharp change of light: the time to settle')
+    ap.add_argument('--turn', type=Path, help='a clip of a turn and back (gi-turn.bench): the change it leaves')
     args = ap.parse_args()
     if args.response:
         response(args.response)
+        return
+    if args.turn:
+        turn(args.turn)
         return
     if args.root is None or not args.shots:
         ap.error('ROOT and SHOT... are required without --response')

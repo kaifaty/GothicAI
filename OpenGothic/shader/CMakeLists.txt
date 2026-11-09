@@ -361,6 +361,8 @@ add_shader(probe_hit_dbg.frag        lighting/rt/probe_hit_dbg.frag)
 
 add_shader(probe_init.comp           lighting/rt/probe_aux.comp        -DINIT)
 add_shader(probe_clear.comp          lighting/rt/probe_aux.comp        -DCLEAR)
+add_shader(probe_clear_votes.comp    lighting/rt/probe_aux.comp        -DCLEAR_VOTES)
+add_shader(probe_hit_alloc.comp      lighting/rt/probe_aux.comp        -DHIT_ALLOC)
 add_shader(probe_clear_hash.comp     lighting/rt/probe_aux.comp        -DCLEAR_HASH)
 add_shader(probe_make_hash.comp      lighting/rt/probe_aux.comp        -DMAKE_HASH)
 add_shader(probe_prune.comp          lighting/rt/probe_aux.comp        -DPRUNE)

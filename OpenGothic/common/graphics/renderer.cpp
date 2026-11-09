@@ -2394,12 +2394,26 @@ void Renderer::readGiStats(uint8_t fId) {
   // the counters this frame slot wrote last time: its fence has been waited for, the buffer is host-visible
   if(!FrameProfile::enabled() || !gi.statsWritten[fId] || gi.stats[fId].isEmpty())
     return;
-  uint32_t v[4] = {};
+  uint32_t v[gi.statsCount] = {};
   Resources::device().readBytes(gi.stats[fId], v, sizeof(v));
-  FrameProfile::add(FrameProfile::Amount::GiProbesLive,   v[0]);
-  FrameProfile::add(FrameProfile::Amount::GiProbesTraced, v[1]);
+  FrameProfile::add(FrameProfile::Amount::GiProbesLive,     v[0]);
+  FrameProfile::add(FrameProfile::Amount::GiProbesTraced,   v[1]);
+  FrameProfile::add(FrameProfile::Amount::GiProbesFromHits, v[4]);
+  FrameProfile::add(FrameProfile::Amount::GiProbesFreed,    v[5]);
   gi.statsWritten[fId] = false;
   }
+
+// Probes of -gi 1 independent of the view (step 2b of the ray-tracing revisit, step-2b.md «2б-1: сделано»):
+// - giExpire: s, a probe nobody uses (no pixel, no sample of another probe) for longer is freed;
+// - giReserve: places kept free for a frame's allocations, the probes of the oldest use go first to keep them;
+// - giHitRadius: cm, a hit of a probe's ray this close to the camera without a probe requests one;
+// - giMaxRequests: requests a frame (the probes allocated at hits in the next frame);
+// - giOffPeriod: a probe no pixel takes is relit and integrated once in so many frames.
+static constexpr float    giExpire      = 5.f;
+static constexpr uint32_t giReserve     = 8192;
+static constexpr float    giHitRadius   = 2000.f;
+static constexpr uint32_t giMaxRequests = 512;
+static constexpr uint32_t giOffPeriod   = 2;
 
 void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wview) {
   if(settings.giMethod!=GiMethod::Probes || !settings.zCloudShadowScale) {
@@ -2414,6 +2428,8 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
   auto& probes             = usesSsbo(gi.probes,    gi.maxProbes*32 + 64);       // probes and header
   auto& freeList           = usesSsbo(gi.freeList,  gi.maxProbes*sizeof(uint32_t) + sizeof(int32_t));
   auto& newList            = usesSsbo(gi.newList,   gi.maxProbes*sizeof(uint32_t)); // allocated in the frame: traced
+  // probe_aux.comp, Rbo: the ages of the live probes (64 buckets) and the requests of probes at hits (16 bytes each)
+  auto& requests           = usesSsbo(gi.requests,  (64 + giMaxRequests*4)*sizeof(uint32_t));
   // a flag per 16x8 tile of the screen (the allocation's workgroup): a missing probe was voted for there
   auto& voteTiles          = usesSsbo(gi.voteTiles, ((uint32_t(zbuffer.w())+15)/16)*((uint32_t(zbuffer.h())+7)/8)*sizeof(uint32_t));
   auto& probesGBuffDiff    = usesImage2d(gi.probesGBuffDiff,    TextureFormat::RGBA8, gi.atlasDim*16, gi.atlasDim*16); // 16x16 tile
@@ -2447,9 +2463,12 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
     cmd.setBinding(3, freeList);
     cmd.setBinding(5, newList);
     cmd.setBinding(6, voteTiles);
+    cmd.setBinding(7, requests);
     cmd.setPipeline(shaders.probeInit);
     cmd.dispatch(1);
     cmd.setPipeline(shaders.probeClearHash);
+    cmd.dispatchThreads(maxHash);
+    cmd.setPipeline(shaders.probeClearVotes);
     cmd.dispatchThreads(maxHash);
 
     cmd.setBinding(0, probesLighting);
@@ -2458,6 +2477,23 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
     cmd.dispatchThreads(probesLighting.size());
     gi.lastTick = scene.tickCount;
     }
+  // The world time of a frame (smoothed), s: the blend over time, the turns of the relight and the expiry of the probes
+  const uint64_t tick = scene.tickCount;
+  const float    dt   = tick>gi.lastTick ? std::min(float(tick-gi.lastTick)*0.001f, 0.25f) : 0.f;
+  gi.lastTick = tick;
+  if(dt>0)
+    gi.frameTime = gi.frameTime>0 ? gi.frameTime + (dt-gi.frameTime)*0.1f : dt;
+  const float frameTime = gi.frameTime>0 ? gi.frameTime : 1.f/60.f;
+
+  struct PushClear {
+    uint32_t frame;
+    uint32_t expireAge;
+    uint32_t reserve;
+    } pushClear = {};
+  pushClear.frame     = gi.frame;
+  pushClear.expireAge = uint32_t(std::clamp(giExpire/frameTime, 2.f, 65535.f));
+  pushClear.reserve   = giReserve;
+
   static bool alloc = true;
   cmd.setDebugMarker("GI-Alloc");
   cmd.setBinding(0, voteTable);
@@ -2466,8 +2502,10 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
   cmd.setBinding(3, freeList);
   cmd.setBinding(5, newList);
   cmd.setBinding(6, voteTiles);
+  cmd.setBinding(7, requests);
+  cmd.setPushData(pushClear);
   cmd.setPipeline(shaders.probeClear);
-  cmd.dispatchThreads(maxHash);
+  cmd.dispatchThreads(std::max<size_t>(voteTiles.byteSize()/sizeof(uint32_t), 64));
 
   if(alloc) {
     cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
@@ -2489,6 +2527,7 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
     cmd.setBinding(3, freeList);
     cmd.setBinding(5, newList);
     cmd.setBinding(6, voteTiles);
+    cmd.setBinding(7, requests);
     cmd.setPipeline(shaders.probePrune);
     cmd.dispatchThreads(gi.maxProbes);
 
@@ -2504,6 +2543,19 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
     cmd.setBinding(9, voteTiles);
     cmd.setPipeline(shaders.probeAlocation);
     cmd.dispatchThreads(sceneDepth.size());
+
+    // the requests of probes at hits of the last frame's lighting, then the vote table is clean for this frame's
+    cmd.setBinding(0, voteTable);
+    cmd.setBinding(1, hashTable);
+    cmd.setBinding(2, probes);
+    cmd.setBinding(3, freeList);
+    cmd.setBinding(5, newList);
+    cmd.setBinding(6, voteTiles);
+    cmd.setBinding(7, requests);
+    cmd.setPipeline(shaders.probeHitAlloc);
+    cmd.dispatchThreads(giMaxRequests);
+    cmd.setPipeline(shaders.probeClearVotes);
+    cmd.dispatchThreads(maxHash);
     }
 
   cmd.setDebugMarker("GI-Trace");
@@ -2540,22 +2592,23 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
   const float    giTau     = 0.1f;
   // an old probe's samples are relit in turns, all of them in about this time: so many per frame, by the frame time
   const float    giRefresh = 0.25f;
-  const uint64_t tick      = scene.tickCount;
-  const float    dt        = tick>gi.lastTick ? std::min(float(tick-gi.lastTick)*0.001f, 0.25f) : 0.f;
-  gi.lastTick = tick;
-  if(dt>0)
-    gi.frameTime = gi.frameTime>0 ? gi.frameTime + (dt-gi.frameTime)*0.1f : dt;
 
   struct Push {
     float    alpha;
     uint32_t frameId;
     uint32_t relitPeriod;
+    uint32_t offPeriod;
+    float    hitRadius;
+    uint32_t maxRequests;
     } push = {};
   push.alpha       = 1.f - std::exp(-dt/giTau);
   push.frameId     = gi.frame++;
   push.relitPeriod = 4;
   while(push.relitPeriod<32 && float(push.relitPeriod*2)*gi.frameTime<=giRefresh*1.5f)
     push.relitPeriod *= 2;  // 30 fps: every 8th sample a frame, 60 fps: 16th, 120 fps: 32nd
+  push.offPeriod   = giOffPeriod;
+  push.hitRadius   = giHitRadius;
+  push.maxRequests = giMaxRequests;
 
   cmd.setDebugMarker("GI-Lighting");
   cmd.setBinding(0, probesLightingPrev);
@@ -2582,6 +2635,8 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
   cmd.setBinding(15,lightsTree.bvh);
   cmd.setBinding(16,probesRadiance);
   cmd.setBinding(17,newList);
+  cmd.setBinding(18,voteTable);
+  cmd.setBinding(19,requests);
   // a thread per relit sample of every slot: the rays keep all lanes busy
   cmd.setPipeline(shaders.probeRelight);
   cmd.dispatchThreads(gi.maxProbes*(256/push.relitPeriod));
@@ -2595,7 +2650,7 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
   if(FrameProfile::enabled()) {
     auto& stats = gi.stats[fId];
     if(stats.isEmpty())
-      stats = Resources::device().ssbo(BufferHeap::Readback, Uninitialized, 4*sizeof(uint32_t));
+      stats = Resources::device().ssbo(BufferHeap::Readback, Uninitialized, gi.statsCount*sizeof(uint32_t));
     cmd.setDebugMarker("GI-Stats");
     cmd.setBinding(0, voteTable);
     cmd.setBinding(1, hashTable);
@@ -2604,6 +2659,7 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
     cmd.setBinding(4, stats);
     cmd.setBinding(5, newList);
     cmd.setBinding(6, voteTiles);
+    cmd.setBinding(7, requests);
     cmd.setPipeline(shaders.probeStats);
     cmd.dispatch(1);
     gi.statsWritten[fId] = true;
