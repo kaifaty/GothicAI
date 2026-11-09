@@ -194,7 +194,7 @@ void say(const std::string& s) {
 
 }
 
-namespace {
+namespace testbench_detail {
 
 std::vector<std::string> split(std::string_view s) {
   std::vector<std::string> ret;
@@ -345,13 +345,6 @@ Vec3 facing(const Npc& pl) {
 
 namespace {
 
-const char* leanLineName(Aim::LeanLine line) {
-  switch(line) {
-    case Aim::LeanLine::Shot: return "shot";
-    case Aim::LeanLine::Head: return "head";
-    default: return "none";
-    }
-  }
 
 // Reuse the hero's skeleton prediction at a candidate perch without teleporting him during a search.
 Vec3 perchHead(const Npc& pl, const Vec3& origin, const Vec3& forward, const Vec3& target, float angle) {
@@ -793,16 +786,7 @@ struct Bench {
   Matrix4x4 traceOrigin;
   Vec3 traceCenter,traceVisible,traceBlocked,traceFar,traceWall,traceShotDirection;
   bool traceReady=false;
-  Npc* arrowNpc=nullptr;
-  std::string arrowCase,arrowAim;
-  float arrowDraw=1.f;
-  uint64_t arrowSampleTick=0;
-  bool arrowTrace=false,arrowKoOnHit=false;
-  uint32_t arrowSeenHits=0;
-  bool stickingTrace=false;
-  std::string stickingCase;
-  uint64_t stickingSampleTick=0;
-  Vec3 stickingWorldPoint;
+  ArcheryBench archery;
   using BodyImpact = testbench_detail::BodyImpact;
   BodyImpact bodyImpact;
   struct SavedItemProbe {
@@ -838,23 +822,11 @@ struct Bench {
   std::unique_ptr<::Sound> probeSound;
   uint64_t    probeSoundStart = 0, probeSoundDuration = 0;
   bool        probeOccluded = false;
-  std::vector<std::pair<Npc*,Vec3>> archers; // archer: they stand there and shoot at archerAt...
-  Npc*        archerAt     = nullptr;
-  bool        archerDice   = false;       // ...by the dice
   uint64_t    volleyT     = 0;
-  // aimat: the manual aim aims there instead of the mouse, every frame
-  Npc*           aimNpc   = nullptr;
-  HitZones::Zone aimZone  = HitZones::Body;
-  bool        aimLeg    = false;  // aimat ... leg: the middle of the legs' capsules (limb takes the arms too)
-  bool           aimFixed = false;
-  bool           aimRaw   = false; // no holding over for the drop of the arrow
-  bool           aimMouse = false; // the game's camera turns onto it, as the mouse would: the shot from the
-                                   // center of the screen
   bool           crossValid = false;
   Vec3           crossPrev  = {}; // on the screen, -1..1
   float          aspect     = 4.f/3.f; // of the captured frame
   float          uiScale    = 1;       // of the game's interface
-  Vec3           aimAt    = {};
   // joints of the watched one's animated pose in the last two frames: a pop is a jump of the second difference
   std::vector<Vec3> anim1, anim2;
   // the hero placed around the subject: distance, angle from its facing (0 in front), orbiting
@@ -868,7 +840,7 @@ struct Bench {
   std::string zonesNpc;         // showzones: the npc whose hit zones the overlay draws
   bool        zonesOnly = false; // the overlay draws the hit zones only
   // overlay trail: the way each arrow flew, kept trailKeep ms after its last move; nothing else drawn
-  struct Trail { const void* key = nullptr; std::vector<Vec3> pts; uint64_t last = 0; };
+  using Trail = testbench_detail::Trail;
   bool        trailOn   = false;
   bool        trailLine = false;  // ...and a dashed straight line along the way it left: the bow's line
   uint64_t    trailKeep = 1500;
@@ -952,6 +924,11 @@ DestructionContext destructionContext() {
 }
 
 namespace testbench_detail {
+
+ArcheryContext archeryContext() {
+  return {bench.archery,bench.living,bench.crew,bench.subject,bench.ragdoll.ragdollArenaTarget,bench.cam,
+          bench.trails,bench.camAngle,bench.camDist,bench.camHeight,bench.camLook};
+  }
 
 MeleeContext meleeContext() {
   return {bench.melee,bench.crew,bench.living.livingWalkers,bench.ragdoll.ragdollArenaPlaces,bench.ragdoll.ragdollArenaTarget};
@@ -1683,53 +1660,6 @@ bool npcShot(World& w, Npc& player, Vec3& org, Vec3& tgt) {
   return true;
   }
 
-// the point aimed at: the middle of a zone of the npc; `leg`: the limb capsules below the knees' height (limb
-// alone is the middle of arms and legs, at the hips)
-bool aimPoint(Npc& n, HitZones::Zone z, bool leg, Vec3& out) {
-  if(leg) {
-    std::vector<HitZones::Posed> caps;
-    n.hitZonesPosed(caps);
-    const float knees = n.position().y + 80.f;
-    Vec3  sum   = {};
-    float count = 0;
-    for(auto& c:caps) {
-      const Vec3 m = (c.a+c.b)*0.5f;
-      if(c.zone==HitZones::Limb && m.y<knees) {
-        sum   += m;
-        count += 1;
-        }
-      }
-    if(count>0) {
-      out = sum*(1.f/count);
-      return true;
-      }
-    }
-  return n.hitZoneCenter(z,out);
-  }
-
-// cam arrow: beside the newest arrow (from the hero until one flies), looking a little ahead of it
-void arrowShot(World& w, Npc& pl, Vec3& org, Vec3& tgt) {
-  Vec3 head = pl.position() + Vec3(0,150,0);
-  Vec3 dir  = facing(pl);
-  const Bench::Trail* tr = nullptr;
-  for(auto& t:bench.trails)
-    if(t.pts.size()>=2 && (tr==nullptr || t.last>=tr->last))
-      tr = &t;
-  if(tr!=nullptr) {
-    head = tr->pts.back();
-    Vec3 d = tr->pts[1]-tr->pts[0];
-    d.y = 0;
-    if(d.length()>1e-3f)
-      dir = d/d.length();
-    }
-  const Vec3 side = Vec3(-dir.z,0,dir.x)*(bench.camAngle<0 ? -1.f : 1.f);
-  org = head + side*bench.camDist + Vec3(0,bench.camHeight,0);
-  tgt = head + dir*bench.camLook;
-  // the ground may rise beside the way: keep the camera a man's height over it
-  const float g = groundY(w,org.x,org.z,org.y+400);
-  if(!std::isnan(g) && org.y<g+120)
-    org.y = g+120;
-  }
 
 void updateCamera(World& w, Npc& pl) {
   bench.occl = 0;
@@ -1824,26 +1754,7 @@ void updateCamera(World& w, Npc& pl) {
     }
   }
 
-// degrees between where the arrow points and the aim (sway, the turn lagging); -1 not aiming by hand
-float manualAimOff(Npc& pl) {
-  Vec3 pos, dir;
-  if(!pl.hasManualAim() || !pl.arrowRay(pos,dir))
-    return -1;
-  const Vec3 want = Vec3::normalize(pl.manualAimPoint()-pos);
-  return std::acos(std::clamp(Vec3::dotProduct(dir,want),-1.f,1.f))*180.f/float(M_PI);
-  }
 
-const char* archerStage(Archer::Stage s) {
-  switch(s) {
-    case Archer::Lowered:   return "lowered";
-    case Archer::Raising:   return "raising";
-    case Archer::Nocked:    return "nocked";
-    case Archer::Drawing:   return "drawing";
-    case Archer::Held:      return "held";
-    case Archer::Reloading: return "reloading";
-    }
-  return "?";
-  }
 // the faces a mood shows (the bridge's say.mood)
 struct FaceColumn { const char* column; const char* anim; };
 const FaceColumn FaceColumns[] = {
@@ -1984,84 +1895,6 @@ void writeAnim() {
 
 namespace {
 
-bool arrowAimPoint(Npc& npc, Vec3& point) {
-  const auto* skeleton=npc.visualSkeleton();
-  if(skeleton==nullptr || bench.arrowAim.empty()) return false;
-  if(bench.arrowAim=="world") {point=bench.stickingWorldPoint;return true;}
-  if(bench.arrowAim=="corpse") {
-    if(const auto* body=npc.ragdollBody()) {
-      const auto state=body->state();
-      const auto wanted=arrowBone(*skeleton,"SPINE2");
-      for(const auto& part:state.parts)
-        if(part.bone==wanted) {point=part.centerOfMassMeters*100.f;return true;}
-      }
-    return false;
-    }
-  const bool leg=bench.arrowAim=="leg";
-  const bool chest=bench.arrowAim=="chest";
-  const auto first=arrowBone(*skeleton,chest ? "SPINE1" : leg ? "L CALF" : "L UPPERARM");
-  auto second=arrowBone(*skeleton,chest ? "SPINE2" : leg ? "L FOOT" : "L FOREARM");
-  if(chest && second==size_t(-1)) second=arrowBone(*skeleton,"NECK");
-  if(first==size_t(-1) || second==size_t(-1)) return false;
-  const auto& a=npc.animationBone(first);const auto& b=npc.animationBone(second);
-  point=Vec3(a.at(3,0)+b.at(3,0),a.at(3,1)+b.at(3,1),a.at(3,2)+b.at(3,2))*.5f;
-  return true;
-  }
-
-size_t npcArrowPins(World& world) {
-  size_t count=0;
-  for(uint32_t i=0;i<world.npcCount();++i)
-    if(const auto* npc=world.npcById(i)) count+=npc->stuckArrowCount();
-  return count;
-  }
-
-void stickingFields(World& world) {
-  if(!bench.stickingTrace || world.tickCount()==bench.stickingSampleTick) return;
-  bench.stickingSampleTick=world.tickCount();
-  const auto* npc=bench.arrowNpc;
-  const auto* living=npc ? npc->livingBody() : nullptr;
-  const auto* corpse=npc ? npc->ragdollBody() : nullptr;
-  const auto* body=living ? living : corpse;
-  const auto physics=world.physic()->physicsStats();
-  std::string pins="[",worldPins="[";
-  if(npc) {
-    bench.arrowSeenHits=npc->arrowPhysicsProbe().hits;
-    for(size_t i=0;i<npc->stuckArrowCount();++i) {
-      Npc::ArrowPinProbe pin;
-      if(!npc->stuckArrowProbe(i,pin)) {arenaAbort("stuck NPC pin has no actual draw node");return;}
-      if(i) pins+=',';
-      pins+="{\"index\":"+std::to_string(i)+",\"bone\":"+std::to_string(pin.bone)+
-        ",\"local\":"+ragdollMatrix(pin.local)+",\"world\":"+ragdollMatrix(pin.world)+
-        ",\"expected\":"+ragdollMatrix(npc->renderedBone(pin.bone)*pin.local)+
-        ",\"render_bone\":"+ragdollMatrix(npc->renderedBone(pin.bone))+
-        ",\"animation_bone\":"+ragdollMatrix(npc->animationBone(pin.bone))+"}";
-      }
-    }
-  for(size_t i=0;i<world.stuckArrowCount();++i) {
-    Matrix4x4 actual;
-    if(!world.stuckArrowTransform(i,actual)) {arenaAbort("stuck world pin has no actual draw node");return;}
-    if(i) worldPins+=',';
-    worldPins+="{\"index\":"+std::to_string(i)+",\"world\":"+ragdollMatrix(actual)+"}";
-    }
-  event("arrow_sticking_frame","\"case\":"+jsonStr(bench.stickingCase)+
-    ",\"t_game_ms\":"+std::to_string(world.tickCount())+
-    ",\"feature\":"+(Gothic::settingsGetI("GAME","arrow_sticking")?"true":"false")+
-    ",\"npc_present\":"+(npc?"true":"false")+
-    ",\"root_cm\":"+ragdollVector(npc?npc->position():Vec3())+
-    ",\"yaw_deg\":"+ragdollNumber(npc?npc->rotation():0.f)+
-    ",\"ko\":"+(npc && npc->isUnconscious()?"true":"false")+
-    ",\"dead\":"+(npc && npc->isDead()?"true":"false")+
-    ",\"recovering\":"+(npc && npc->isRagdollBlending()?"true":"false")+
-    ",\"collision_overlap\":"+(npc && npc->hasCollision()?"true":"false")+
-    ",\"living_parts\":"+std::to_string(living?living->partCount():0)+
-    ",\"corpse_parts\":"+std::to_string(corpse?corpse->partCount():0)+
-    ",\"weight\":"+ragdollNumber(body?body->reactionWeight():0.f)+
-    ",\"world_bodies\":"+std::to_string(physics.bodies)+",\"physics_ms\":"+ragdollNumber(physics.stepMilliseconds)+
-    ",\"npc_pin_count\":"+std::to_string(npc?npc->stuckArrowCount():0)+
-    ",\"all_npc_pin_count\":"+std::to_string(npcArrowPins(world))+
-    ",\"world_pin_count\":"+std::to_string(world.stuckArrowCount())+
-    ",\"npc_pins\":"+pins+"],\"world_pins\":"+worldPins+"]");
-  }
 
 void spellFields(World& world) {
   if(!bench.movables.spellTrace || bench.movables.spellSampleTick==world.tickCount()) return;
@@ -3480,57 +3313,6 @@ void waterFilmBegin(World& world,Npc& player) {
   event("water_film_begin","\"scene\":"+jsonStr(bench.waterFilm));
   }
 
-void arrowFields(World& world) {
-  auto* npc=bench.arrowNpc;
-  if(!bench.arrowTrace || npc==nullptr || world.tickCount()==bench.arrowSampleTick) return;
-  bench.arrowSampleTick=world.tickCount();
-  const auto& hit=npc->arrowPhysicsProbe();
-  bench.arrowSeenHits=hit.hits;
-  const auto* living=npc->livingBody();const auto* corpse=npc->ragdollBody();
-  const auto* body=living!=nullptr ? living : corpse;
-  const auto* skeleton=npc->visualSkeleton();
-  const auto physics=world.physic()->physicsStats();
-  std::vector<Matrix4x4> native;
-  const bool posed=body!=nullptr && body->getPose(native);
-  std::string bones="[",active="[";
-  if(body!=nullptr) {
-    for(const auto bone:body->reactionBones()) {
-      if(active.size()>1) active+=',';
-      active+=std::to_string(bone);
-      }
-    if(posed && skeleton!=nullptr)
-      for(const auto bone:body->boneIndices()) {
-        if(bone>=native.size() || bone>=skeleton->nodes.size()) continue;
-        if(bones.size()>1) bones+=',';
-        const auto parent=skeleton->nodes[bone].parent;
-        bones+="{\"id\":"+std::to_string(bone)+",\"name\":"+jsonStr(skeleton->nodes[bone].name)+
-          ",\"parent\":"+(parent<skeleton->nodes.size() ? std::to_string(parent) : "null")+
-          ",\"native\":"+ragdollMatrix(native[bone])+",\"animation\":"+ragdollMatrix(npc->animationBone(bone));
-        if(parent<native.size())
-          bones+=",\"native_parent\":"+ragdollMatrix(native[parent])+",\"animation_parent\":"+ragdollMatrix(npc->animationBone(parent));
-        bones+='}';
-        }
-    }
-  const auto& flinch=Flinch::subjectProbe;
-  event("arrow_reaction_frame","\"case\":"+jsonStr(bench.arrowCase)+
-    ",\"t_game_ms\":"+std::to_string(world.tickCount())+
-    ",\"feature\":"+(Gothic::settingsGetI("GAME","arrow_physics") ? "true" : "false")+
-    ",\"root_cm\":"+ragdollVector(npc->position())+
-    ",\"dead\":"+(npc->isDead()?"true":"false")+",\"ko\":"+(npc->isUnconscious()?"true":"false")+
-    ",\"living_parts\":"+std::to_string(living ? living->partCount() : 0)+
-    ",\"corpse_parts\":"+std::to_string(corpse ? corpse->partCount() : 0)+
-    ",\"world_bodies\":"+std::to_string(physics.bodies)+",\"physics_ms\":"+ragdollNumber(physics.stepMilliseconds)+
-    ",\"kinematic\":"+(body!=nullptr && body->isKinematic()?"true":"false")+
-    ",\"weight\":"+ragdollNumber(body ? body->reactionWeight() : 0.f)+
-    ",\"reaction_bones\":"+active+"]"+
-    ",\"hits\":"+std::to_string(hit.hits)+",\"applied\":"+std::to_string(hit.applied)+
-    ",\"corpse_impulses\":"+std::to_string(hit.corpseImpulses)+
-    ",\"hit_bone\":"+(hit.bone!=size_t(-1) ? std::to_string(hit.bone) : "null")+
-    ",\"point_cm\":"+ragdollVector(hit.point)+",\"impulse_ns\":"+ragdollVector(hit.impulseNs)+
-    ",\"strength\":"+ragdollNumber(hit.strength)+
-    ",\"flinch_active\":"+(flinch.active?"true":"false")+",\"flinch_hits\":"+std::to_string(flinch.hits)+
-    ",\"bones\":"+bones+"]");
-  }
 
 void writeRow(Npc& pl) {
   if(bench.csv==nullptr) {
@@ -4514,108 +4296,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
   dispatched=true;
   if(spellCommand(movablesContext(),a,w,pl,ctrl)) return;
   else if(bodyImpactCommand(bench.bodyImpact,bodyImpactContext(),a,w,pl)) return;
-  else if(c=="sticking" && a.size()==2 && a[1]=="setup") {
-    bench.stickingTrace=true;bench.arrowTrace=false;
-    event("arrow_sticking_setup","\"default_enabled\":"+
-      std::string(Gothic::settingsGetI("GAME","arrow_sticking")?"true":"false"));
-    }
-  else if(c=="sticking" && a.size()==3 && a[1]=="case") {
-    bench.stickingCase=a[2];bench.stickingTrace=true;
-    event("arrow_sticking_case","\"case\":"+jsonStr(a[2])+
-      ",\"npc_pins_before\":"+std::to_string(bench.arrowNpc?bench.arrowNpc->stuckArrowCount():0)+
-      ",\"world_pins_before\":"+std::to_string(w.stuckArrowCount()));
-    }
-  else if(c=="sticking" && a.size()==3 && a[1]=="feature")
-    Gothic::settingsSetI("GAME","arrow_sticking",a[2]=="on");
-  else if(c=="sticking" && a.size()==2 && a[1]=="world") {
-    const auto ahead=facing(pl),side=Vec3(-ahead.z,0,ahead.x);
-    const auto target=pl.position()+ahead*450.f+side*220.f;
-    const auto floor=w.physic()->landRay(target+Vec3(0,300,0),900.f);
-    if(!floor.hasCol) {arenaAbort("arrow sticking ground target has no world surface");return;}
-    bench.stickingWorldPoint=floor.v;bench.arrowAim="world";bench.arrowDraw=1.f;
-    bench.aimNpc=nullptr;bench.aimFixed=false;
-    bench.cam=C_Hold;
-    lookFrom(floor.v-ahead*230.f+side*180.f+Vec3(0,125,0),floor.v+Vec3(0,10,0));
-    event("arrow_sticking_world_target","\"point_cm\":"+ragdollVector(floor.v)+",\"normal\":"+ragdollVector(floor.n));
-    }
-  else if(c=="sticking" && a.size()==2 && a[1]=="motion") {
-    auto* npc=bench.arrowNpc;
-    if(npc==nullptr || npc->isDown()) {arenaAbort("arrow pin motion needs a living target");return;}
-    bench.living.livingWalkers.clear();bench.living.livingWalkers.emplace_back();auto& walk=bench.living.livingWalkers.back();
-    walk.npc=npc;
-    walk.ends[0]=WayPoint(npc->position()+Vec3(250,0,0),"FP_ARROW_PIN_A");
-    walk.ends[1]=WayPoint(npc->position(),"FP_ARROW_PIN_B");
-    for(auto& point:walk.ends) {
-      const auto floor=w.physic()->landRay(point.pos+Vec3(0,200,0),500);
-      if(!floor.hasCol) {arenaAbort("arrow pin walking path has no ground");return;}
-      point.pos.y=floor.v.y;point.groundPos=point.pos;
-      }
-    npc->setWalkMode(WalkBit::WM_Walk);bench.living.livingMotion=true;
-    }
-  else if(c=="sticking" && a.size()==2 && (a[1]=="still" || a[1]=="turn")) {
-    if(auto* npc=bench.arrowNpc) {
-      bench.living.livingMotion=false;bench.living.livingWalkers.clear();npc->clearAiQueue();npc->stopWalking();
-      npc->setExternalControl(true);npc->setAnim(Npc::Anim::Idle);
-      npc->setDirection(a[1]=="turn" ? rotY(facing(*npc),90.f) : pl.position()-npc->position());npc->updateTransform();
-      }
-    }
-  else if(c=="sticking" && a.size()==2 && a[1]=="remove") {
-    const auto pins=npcArrowPins(w),bodies=w.physic()->physicsStats().bodies,worldPins=w.stuckArrowCount();
-    exec("arrow cleanup",w,pl,ctrl);
-    event("arrow_sticking_remove","\"npc_pins_before\":"+std::to_string(pins)+
-      ",\"npc_pins_after\":"+std::to_string(npcArrowPins(w))+
-      ",\"world_pins_before\":"+std::to_string(worldPins)+",\"world_pins_after\":"+std::to_string(w.stuckArrowCount())+
-      ",\"bodies_before\":"+std::to_string(bodies)+",\"bodies_after\":"+std::to_string(w.physic()->physicsStats().bodies));
-    }
-  else if(c=="sticking" && a.size()==2 && a[1]=="stop") {
-    bench.stickingTrace=false;bench.arrowAim.clear();
-    }
-  else if(c=="arrow" && a.size()==2 && (a[1]=="setup" || a[1]=="replace")) {
-    if(a[1]=="setup") {
-      if(!chooseRagdollArena(w,pl)) {arenaAbort("arrow fixture needs supported empty ground");return;}
-      exec("clear 2500",w,pl,ctrl);
-      pl.setDirection({0,0,1});pl.updateTransform();
-      } else exec("arrow cleanup",w,pl,ctrl);
-    const auto symbol=w.script().findSymbolIndex("BAU_904_BAUER");
-    auto at=bench.ragdoll.ragdollArenaTarget-Vec3(0,80,400);
-    auto* npc=w.addNpc(symbol,at);
-    if(npc==nullptr) {arenaAbort("arrow fixture NPC insertion failed");return;}
-    npc->clearAiQueue();npc->clearState(false);npc->setExternalControl(true);
-    npc->setDirection(pl.position()-at);npc->updateTransform();
-    npc->handle().attribute[ATR_HITPOINTS]=10000;
-    npc->handle().attribute[ATR_HITPOINTSMAX]=10000;
-    bench.arrowNpc=npc;bench.subject=npc;bench.crew.push_back(npc);
-    bench.arrowSeenHits=0;bench.arrowSampleTick=0;
-    exec("watch watched",w,pl,ctrl);
-    event("arrow_reaction_setup","\"actors\":1,\"root_pinned\":false,\"position_cm\":"+ragdollVector(npc->position()));
-    }
-  else if(c=="arrow" && a.size()==3 && a[1]=="case") {
-    bench.arrowCase=a[2];bench.arrowTrace=true;
-    event("arrow_reaction_case","\"case\":"+jsonStr(a[2])+",\"hits_before\":"+
-      std::to_string(bench.arrowNpc ? bench.arrowNpc->arrowPhysicsProbe().hits : 0));
-    }
-  else if(c=="arrow" && a.size()>=3 && a[1]=="aim") {
-    bench.arrowAim=a[2];bench.arrowDraw=std::clamp(num(a,3,1.f),.1f,1.f);
-    bench.aimNpc=nullptr;bench.aimFixed=false;
-    }
-  else if(c=="arrow" && a.size()==3 && a[1]=="feature")
-    Gothic::settingsSetI("GAME","arrow_physics",a[2]=="on");
-  else if(c=="arrow" && a.size()==2 && a[1]=="ko-on-hit")
-    bench.arrowKoOnHit=true;
-  else if(c=="arrow" && a.size()==2 && a[1]=="cleanup") {
-    if(auto* npc=bench.arrowNpc) {
-      bench.arrowTrace=false;bench.arrowAim.clear();bench.arrowNpc=nullptr;bench.arrowKoOnHit=false;
-      const auto before=w.physic()->physicsStats().bodies;
-      const auto parts=(npc->livingBody()?npc->livingBody()->partCount():0)+(npc->ragdollBody()?npc->ragdollBody()->partCount():0);
-      exec("watch player",w,pl,ctrl);bench.crew.clear();w.removeNpc(*npc);
-      const auto after=w.physic()->physicsStats().bodies;
-      event("arrow_reaction_cleanup","\"parts\":"+std::to_string(parts)+",\"before\":"+
-        std::to_string(before)+",\"after\":"+std::to_string(after));
-      }
-    }
-  else if(c=="arrow" && a.size()==2 && a[1]=="stop") {
-    bench.arrowTrace=false;bench.arrowAim.clear();
-    }
+  else if((c=="sticking" || c=="arrow") && archeryCommand(archeryContext(),line,a,w,pl,ctrl)) return;
   else if(livingCommand(livingContext(),a,w,pl,ctrl)) return;
   else if(meleeCommand(meleeContext(),a,w,pl,ctrl)) return;
 #ifdef OPENGOTHIC_ENABLE_APP_CADENCE
@@ -5523,13 +5204,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     n->aiPush(AiQueue::aiGoToPoint(*wp));
     say("npcgo " + symName(w,n) + " " + a[2]);
     }
-  else if(c=="bowstrength") {
-    // bowstrength on|off: strength sets a bow's draw speed and limit (game/archery)
-    const std::string m = a.size()>1 ? a[1] : "";
-    if(m=="on" || m=="off")
-      Archery::setBowStrengthEnabled(m=="on"); else
-      say("unknown bowstrength command: " + line);
-    }
+  else if(c=="bowstrength" && archeryCommand(archeryContext(),line,a,w,pl,ctrl)) return;
   else if(c=="sfx") {
     // sfx <name>...: the files a sound effect plays (its variants _A1.. too), whether they load
     for(size_t k=1; k<a.size(); ++k) {
@@ -5555,22 +5230,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     pl.setAnimSpeed(a[1],num(a,2,1));
     say("animspeed " + a[1] + " " + a[2]);
     }
-  else if(c=="bowdraw") {
-    // bowdraw on|off: the hand draws the string as far as the bow is drawn, the reload holds the aim
-    // (graphics/mesh/bowdraw)
-    const std::string m = a.size()>1 ? a[1] : "";
-    if(m=="on" || m=="off")
-      BowDraw::setEnabled(m=="on"); else
-      say("unknown bowdraw command: " + line);
-    }
-  else if(c=="bowrelease") {
-    // bowrelease on|off: the release as an archer's (the hand to the ear, the bow kicks, turns and rings in
-    // the hand); off: as before (graphics/mesh/bowdraw)
-    const std::string m = a.size()>1 ? a[1] : "";
-    if(m=="on" || m=="off")
-      BowDraw::setReleaseEnabled(m=="on"); else
-      say("unknown bowrelease command: " + line);
-    }
+  else if((c=="bowdraw" || c=="bowrelease") && archeryCommand(archeryContext(),line,a,w,pl,ctrl)) return;
   else if(c=="showzones") {
     // showzones <npc symbol>|player|off: the overlay draws the npc's hit zones (capsules on its bones: the head
     // red, the trunk yellow, the limbs blue)
@@ -5594,10 +5254,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
         pl.addOverlay(a[i],0); else
         say("bladepath " + pl.bladePath(a[i],length));
     }
-  else if(c=="aimwalk") {
-    // aimwalk on|off: the legs step under the aim (graphics/mesh/aimwalk)
-    AimWalk::setEnabled(a.size()<2 || a[1]!="off");
-    }
+  else if(c=="aimwalk" && archeryCommand(archeryContext(),line,a,w,pl,ctrl)) return;
   else if(c=="bowgeom") {
     // bowgeom: the bow and the bow hand in the arrow's frame, as posed now
     say(pl.bowDump());
@@ -5789,27 +5446,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
                   double(q.mouth.x),double(q.mouth.y),double(q.mouth.z));
     say(buf);
     }
-  else if(c=="arrows") {
-    // arrows <npc|player> <n>: it carries exactly n arrows of its bow; the quiver on its hip shows them by
-    // steps (graphics/mesh/quiver)
-    Npc*        n   = findNpc(w,pl,a.size()>1 ? a[1] : "player");
-    const Item* bow = n!=nullptr ? n->currentRangedWeapon() : nullptr;
-    if(bow==nullptr || bow->handle().munition<=0) {
-      say("arrows: no bow " + line);
-      return;
-      }
-    const size_t cls  = size_t(bow->handle().munition);
-    const size_t have = n->inventory().itemCount(cls);
-    const size_t want = size_t(std::max(0.f,num(a,2,0)));
-    if(want>have)
-      n->addItem(cls,want-have); else
-    if(want<have)
-      n->delItem(cls,uint32_t(have-want));
-    n->updateQuiver();
-    const auto q = n->quiverProbe();
-    say("arrows " + symName(w,n) + " " + std::to_string(n->inventory().itemCount(cls)) + " shown " +
-        std::to_string(q.arrows) + (q.on ? "" : " (no quiver)"));
-    }
+  else if(c=="arrows" && archeryCommand(archeryContext(),line,a,w,pl,ctrl)) return;
   else if(c=="npcequip") {
     // npcequip <npc> <item> [count]: into its inventory, the first one put on (a bow and its arrows)
     Npc* n = findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
@@ -5822,40 +5459,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     n->useItem(id,Item::NSLOT,true);
     say("npcequip " + symName(w,n) + " " + a[2]);
     }
-  else if(c=="arc") {
-    // arc <npc> <count> <dist> <step deg>: that many of it stand that far in front of the hero, a step
-    // apart round it, facing it (`all` of fight)
-    const size_t id = w.script().findSymbolIndex(a.size()>1 ? a[1] : "");
-    if(id==size_t(-1)) {
-      say("arc: no npc " + line);
-      return;
-      }
-    const int   cnt  = int(num(a,2,4));
-    const float d    = num(a,3,1500);
-    const float step = num(a,4,15);
-    std::string out  = "arc";
-    bench.crew.clear();
-    for(int i=0; i<cnt; ++i) {
-      const float an  = (pl.rotation() + (float(i)-float(cnt-1)*0.5f)*step)*float(M_PI)/180.f;
-      Vec3        pos = pl.position() + Vec3(std::cos(an),0,std::sin(an))*d;
-      DynamicWorld::RayLandResult r;
-      for(float y=pos.y+1500; y>pos.y-1500 && !r.hasCol; y-=400)
-        r = w.physic()->ray({pos.x,y,pos.z},{pos.x,y-450,pos.z});
-      if(r.hasCol)
-        pos.y = r.v.y;
-      Npc* n = w.addNpc(id,pos);
-      if(n==nullptr)
-        continue;
-      const Vec3 dir = pl.position()-pos;
-      n->setDirection(Vec3(dir.x,0,dir.z));
-      n->updateTransform();
-      bench.crew.push_back(n);
-      char buf[100];
-      std::snprintf(buf,sizeof(buf)," %.0f %.0f %.0f",pos.x,pos.y,pos.z);
-      out += buf;
-      }
-    say(out);
-    }
+  else if(c=="arc" && archeryCommand(archeryContext(),line,a,w,pl,ctrl)) return;
   else if(c=="wander" && a.size()>1 && a[1]=="stats") {
     size_t walking = 0;
     for(auto* n:bench.wanderers)
@@ -6011,82 +5615,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     say("npcaim " + std::string(ArcherAi::isEnabled() ? "on" : "off") + (ArcherAi::mode==ArcherAi::PerArrow ? " arrow" : " second") +
         " sigma " + std::to_string(ArcherAi::forcedSigma) + " lead " + (ArcherAi::leadOn ? "on" : "off"));
     }
-  else if(c=="archers") {
-    // One primary ranged weapon per NPC: equipped first, otherwise the strongest in its inventory.
-    uint32_t total = 0, weak = 0, dice = 0;
-    for(uint32_t id=0; id<w.npcCount(); ++id) {
-      auto* n = w.npcById(id);
-      if(n==nullptr || n->isPlayer())
-        continue;
-      const Item* weapon = n->currentRangedWeapon();
-      if(weapon==nullptr)
-        for(auto item=n->inventory().iterator(Inventory::T_Inventory); item.isValid(); ++item) {
-          if((item->mainFlag() & ITM_CAT_FF)==0)
-            continue;
-          if(weapon==nullptr || std::make_pair(item->handle().damage_total,item->handle().value)>
-                                std::make_pair(weapon->handle().damage_total,weapon->handle().value))
-            weapon = &*item;
-          }
-      if(weapon==nullptr)
-        continue;
-      const auto st = Archery::stats(*n,weapon);
-      const bool below = st.bowStrength && st.burstDraw<Archery::MinDraw;
-      const bool burst = st.bowStrength && st.steadyDraw<Archery::MinDraw && !below;
-      const char* mode = below ? "dice (draw below minimum)" : (burst ? "hands burst" : "hands steady");
-      const auto name = n->displayName();
-      const auto symbol = symName(w,n);
-      const auto weaponName = w.script().findSymbol(weapon->clsId())->name();
-      char buf[640];
-      std::snprintf(buf,sizeof(buf),"archers npc %s name %.*s: str %d dex %d weapon %.*s damage %d need %.2f r %.4f f_s %.4f f_b %.4f mode %s",
-                    symbol.c_str(),int(name.size()),name.data(),
-                    n->attribute(ATR_STRENGTH),n->attribute(ATR_DEXTERITY),
-                    int(weaponName.size()),weaponName.data(),
-                    int(weapon->handle().damage_total),double(st.need),double(st.strength),
-                    double(st.steadyDraw),double(st.burstDraw),mode);
-      say(buf);
-      ++total;
-      weak += st.strength<1.f ? 1u : 0u;
-      dice += below ? 1u : 0u;
-      }
-    say("archers summary: total " + std::to_string(total) + " r<1 " + std::to_string(weak) + " dice " + std::to_string(dice));
-    }
-  else if(c=="archer") {
-    // archer <npc|all> at <npc|player> [dice] | archer off: it stands where it is and shoots at the target
-    // every time it can, by hand (npcaim on) or by the dice: no fight AI, no perception's wait (the aim's
-    // calibration); all: the npcs of arc
-    auto release = [&]() {
-      for(auto& [n,at]:bench.archers)
-        if(n!=nullptr) {
-          n->archerAi().cancel(*n);
-          n->setExternalControl(false);
-          }
-      bench.archers.clear();
-      };
-    if(a.size()>1 && a[1]=="off") {
-      release();
-      bench.archerAt = nullptr;
-      say("archer off");
-      return;
-      }
-    std::vector<Npc*> who;
-    if(a.size()>1 && a[1]=="all")
-      who = bench.crew; else
-    if(Npc* n = findNpc(w,pl,a.size()>1 ? a[1] : "nearest"))
-      who.push_back(n);
-    release();
-    bench.archerAt   = findNpc(w,pl,a.size()>3 ? a[3] : "player");
-    bench.archerDice = a.size()>4 && a[4]=="dice";
-    for(auto n:who) {
-      if(n==bench.archerAt || n->isDown())
-        continue;
-      n->setInteraction(nullptr,true);
-      n->clearAiQueue();
-      n->clearState(false);
-      n->setExternalControl(true);
-      bench.archers.emplace_back(n,n->position());
-      }
-    say("archer " + std::to_string(bench.archers.size()) + " at " + symName(w,bench.archerAt) + (bench.archerDice ? " by the dice" : ""));
-    }
+  else if((c=="archers" || c=="archer") && archeryCommand(archeryContext(),line,a,w,pl,ctrl)) return;
   else if(c=="still") {
     // still <npc|player> on|off: hit, it neither stumbles nor flinches (a target that keeps its pose, as
     // its zones were dumped)
@@ -6154,53 +5683,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     bench.volleyT     = bench.time;
     say("volley " + std::to_string(bench.volleyLeft));
     }
-  else if(c=="aimat") {
-    // aimat <npc|nearest> [head|body|limb|leg] | aimat <x> <y> <z> | aimat ahead [dist] [height] | aimat off: the
-    // manual aim aims there
-    // instead of the mouse - the middle of a zone of the npc, every frame. A last word `mouse`: the game's camera
-    // turns onto it as the mouse would, the hero with it, the shot goes from the center of the screen
-    auto a = split(line);
-    bench.aimNpc   = nullptr;
-    bench.aimFixed = false;
-    bench.aimMouse = a.size()>2 && a.back()=="mouse";
-    if(bench.aimMouse) {
-      a.pop_back();
-      ctrl.setAimOverride(false);
-      }
-    if(a.size()>1 && a[1]=="off") {
-      ctrl.setAimOverride(false);
-      say("aimat off");
-      return;
-      }
-    if(a.size()>1 && a[1]=="ahead") {
-      // aimat ahead [dist cm 2000] [height cm 140]: a point that far ahead of the hero as it faces now
-      const Vec3 f   = facing(pl);
-      bench.aimFixed = true;
-      bench.aimAt    = pl.position() + f*num(a,2,2000) + Vec3(0,num(a,3,140),0);
-      ctrl.setAimOverride(!bench.aimMouse,bench.aimAt);
-      say(std::string("aimat ahead") + (bench.aimMouse ? " mouse" : ""));
-      return;
-      }
-    if(a.size()>3 && (std::isdigit(uint8_t(a[1][0])) || a[1][0]=='-')) {
-      bench.aimFixed = true;
-      bench.aimAt    = Vec3(num(a,1,0),num(a,2,0),num(a,3,0));
-      ctrl.setAimOverride(!bench.aimMouse,bench.aimAt);
-      say("aimat " + a[1] + " " + a[2] + " " + a[3] + (bench.aimMouse ? " mouse" : ""));
-      return;
-      }
-    Npc* n = findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
-    if(n==nullptr || n==&pl) {
-      say("aimat: no npc " + line);
-      return;
-      }
-    const std::string z = a.size()>2 ? a[2] : "body";
-    bench.aimNpc  = n;
-    bench.aimZone = z=="head" ? HitZones::Head : (z=="limb" || z=="leg" ? HitZones::Limb : HitZones::Body);
-    bench.aimLeg  = z=="leg";
-    bench.aimRaw  = a.size()>3 && a[3]=="raw";
-    say("aimat " + symName(w,n) + " " + std::string(HitZones::name(bench.aimZone)) + (bench.aimRaw ? " raw" : "") +
-        (bench.aimMouse ? " mouse" : ""));
-    }
+  else if(c=="aimat" && archeryCommand(archeryContext(),line,a,w,pl,ctrl)) return;
   else if(c=="immortal") {
     // immortal <npc|nearest> on|off: arrows hit it, it does not die (counting hits)
     Npc* n = findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
@@ -6278,16 +5761,16 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     for(auto n:gone) {
       out += " " + symName(w,n);
       bench.crew.erase(std::remove(bench.crew.begin(),bench.crew.end(),n),bench.crew.end());
-      bench.archers.erase(std::remove_if(bench.archers.begin(),bench.archers.end(),[n](auto& x){ return x.first==n; }),bench.archers.end());
-      if(bench.archerAt==n) {
+      bench.archery.archers.erase(std::remove_if(bench.archery.archers.begin(),bench.archery.archers.end(),[n](auto& x){ return x.first==n; }),bench.archery.archers.end());
+      if(bench.archery.archerAt==n) {
         // their target gone: archer off
-        for(auto& [x,at]:bench.archers)
+        for(auto& [x,at]:bench.archery.archers)
           if(x!=nullptr) {
             x->archerAi().cancel(*x);
             x->setExternalControl(false);
             }
-        bench.archers.clear();
-        bench.archerAt = nullptr;
+        bench.archery.archers.clear();
+        bench.archery.archerAt = nullptr;
         }
       if(bench.pinned==n)
         bench.pinned = nullptr;
@@ -6347,28 +5830,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     if(!n->isDown() && hp1*3<n->attribute(ATR_HITPOINTSMAX))
       n->changeAttribute(ATR_HITPOINTS,n->attribute(ATR_HITPOINTSMAX)-hp1,false);
     }
-  else if(c=="aim") {
-    // aim on|off: the upper body turns and bends to the target with a bow, a crossbow, a spell
-    const std::string m = a.size()>1 ? a[1] : "";
-    if(m=="on" || m=="off")
-      Aim::setEnabled(m=="on"); else
-      say("unknown aim command: " + line);
-    }
-  else if(c=="aimlean") {
-    // aimlean auto|degrees: force a settled pose for the head prediction check, without changing aim direction.
-    if(a.size()>1 && a[1]=="auto") {
-      Aim::playerLeanOverride = -1.f;
-      say("aimlean auto");
-      }
-    else if(a.size()>1) {
-      const float degrees = std::clamp(num(a,1,0),0.f,Aim::LeanMax);
-      Aim::playerLeanOverride = degrees*float(M_PI)/180.f;
-      say("aimlean " + std::to_string(degrees));
-      }
-    else {
-      say("aimlean: expected auto or degrees 0..70");
-      }
-    }
+  else if((c=="aim" || c=="aimlean") && archeryCommand(archeryContext(),line,a,w,pl,ctrl)) return;
   else if(c=="lean") {
     // lean on|off: the lean into turns and on slopes (graphics/mesh/lean)
     const std::string m = a.size()>1 ? a[1] : "";
@@ -7316,10 +6778,10 @@ void tickVolley(PlayerControl& ctrl) {
       }
     case 2:
       if(t>=bench.volleyHoldNow) {
-        if(bench.aimNpc!=nullptr) {
+        if(bench.archery.aimNpc!=nullptr) {
           // where it aims, the middle of the zone: the log compares the arrow's flight with it
-          Vec3 c = bench.aimNpc->collosionCenter();
-          aimPoint(*bench.aimNpc,bench.aimZone,bench.aimLeg,c);
+          Vec3 c = bench.archery.aimNpc->collosionCenter();
+          aimPoint(*bench.archery.aimNpc,bench.archery.aimZone,bench.archery.aimLeg,c);
           char buf[160];
           std::snprintf(buf,sizeof(buf),"aim zone %.1f %.1f %.1f",c.x,c.y,c.z);
           TestBench::note(buf);
@@ -8884,15 +8346,15 @@ void TestBench::note(const char* text) {
       say(buf);
       event("note","\"text\":"+jsonStr(buf));
       }
-    if(bench.arrowKoOnHit && std::string_view(text).starts_with("arrow hit ") && bench.arrowNpc!=nullptr &&
-       bench.arrowNpc->arrowPhysicsProbe().hits>bench.arrowSeenHits && !bench.arrowNpc->isDown()) {
+    if(bench.archery.arrowKoOnHit && std::string_view(text).starts_with("arrow hit ") && bench.archery.arrowNpc!=nullptr &&
+       bench.archery.arrowNpc->arrowPhysicsProbe().hits>bench.archery.arrowSeenHits && !bench.archery.arrowNpc->isDown()) {
       // This note runs inside real projectile damage, after queueArrowPhysics
       // and before the next sequential native prepare. Ordinary arrows kill;
       // only the benchmark forces KO to exercise the same pending-hit handoff.
-      bench.arrowKoOnHit=false;
-      bench.arrowNpc->setRagdollDown(false);
-      event("arrow_reaction_forced_ko","\"case\":"+jsonStr(bench.arrowCase)+
-        ",\"hits\":"+std::to_string(bench.arrowNpc->arrowPhysicsProbe().hits));
+      bench.archery.arrowKoOnHit=false;
+      bench.archery.arrowNpc->setRagdollDown(false);
+      event("arrow_reaction_forced_ko","\"case\":"+jsonStr(bench.archery.arrowCase)+
+        ",\"hits\":"+std::to_string(bench.archery.arrowNpc->arrowPhysicsProbe().hits));
       }
     }
   }
@@ -9500,16 +8962,16 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
         });
     say(std::string(bench.inDialog ? "dialog started:" : "dialog ended") + who);
     }
-  for(auto& [n,at]:bench.archers) {
+  for(auto& [n,at]:bench.archery.archers) {
     // the archer harness: where it was set, at the target, the bow drawn, arrows; an arrow every time it
     // can (no fight AI, no perception's wait)
-    if(n==nullptr || bench.archerAt==nullptr || n->isDown())
+    if(n==nullptr || bench.archery.archerAt==nullptr || n->isDown())
       continue;
-    const Vec3 d = bench.archerAt->position()-at;
+    const Vec3 d = bench.archery.archerAt->position()-at;
     n->setPosition(at);
     n->setDirection(Vec3(d.x,0,d.z));
     n->updateTransform();
-    n->setTarget(bench.archerAt);
+    n->setTarget(bench.archery.archerAt);
     const auto ws = n->weaponState();
     if(auto rw = n->currentRangedWeapon(); rw!=nullptr && n->itemCount(size_t(rw->handle().munition))<5)
       n->addItem(size_t(rw->handle().munition),20);
@@ -9517,7 +8979,7 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
       n->drawWeaponBow();
       continue;
       }
-    if(!bench.archerDice && n->archerAi().isDriving(*n))
+    if(!bench.archery.archerDice && n->archerAi().isDriving(*n))
       n->archerAi().attack(*n);
     else if(!n->shootBow())
       n->aimBow();
@@ -9528,12 +8990,12 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
     bench.pinned->setDirection(Vec3(d.x,0,d.z));
     bench.pinned->updateTransform();
     }
-  if(bench.aimNpc!=nullptr || (bench.aimMouse && bench.aimFixed)) {
-    Vec3 at = bench.aimAt;
-    if(bench.aimNpc!=nullptr && !aimPoint(*bench.aimNpc,bench.aimZone,bench.aimLeg,at) &&
-       !bench.aimNpc->hitZoneCenter(HitZones::Body,at))
-      at = bench.aimNpc->collosionCenter();
-    if(bench.aimNpc!=nullptr && !bench.aimRaw) {
+  if(bench.archery.aimNpc!=nullptr || (bench.archery.aimMouse && bench.archery.aimFixed)) {
+    Vec3 at = bench.archery.aimAt;
+    if(bench.archery.aimNpc!=nullptr && !aimPoint(*bench.archery.aimNpc,bench.archery.aimZone,bench.archery.aimLeg,at) &&
+       !bench.archery.aimNpc->hitZoneCenter(HitZones::Body,at))
+      at = bench.archery.aimNpc->collosionCenter();
+    if(bench.archery.aimNpc!=nullptr && !bench.archery.aimRaw) {
       // Aim for the release draw throughout drawing, so the changing trajectory does not shake the aim.
       const auto st = Archery::stats(*player,player->currentRangedWeapon());
       Vec3       nock, dir;
@@ -9545,7 +9007,7 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
       at = Archery::launch(nock,at,Archery::speedAt(st,draw));
       }
     auto cam = Gothic::inst().camera();
-    if(!bench.aimMouse) {
+    if(!bench.archery.aimMouse) {
       ctrl.setAimOverride(true,at);
       }
     else if(cam!=nullptr && cam->isAim()) {
@@ -9571,13 +9033,13 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
       player->setDirection(yaw*180.f/float(M_PI));
       }
     }
-  if(bench.arrowNpc!=nullptr && !bench.arrowAim.empty()) {
+  if(bench.archery.arrowNpc!=nullptr && !bench.archery.arrowAim.empty()) {
     Vec3 at;
-    if(arrowAimPoint(*bench.arrowNpc,at)) {
+    if(arrowAimPoint(*bench.archery.arrowNpc,at)) {
       Vec3 nock,direction;
       if(!player->arrowRay(nock,direction)) nock=player->position()+Vec3(0,145,0);
       const auto stats=Archery::stats(*player,player->currentRangedWeapon());
-      ctrl.setAimOverride(true,Archery::launch(nock,at,Archery::speedAt(stats,bench.arrowDraw)));
+      ctrl.setAimOverride(true,Archery::launch(nock,at,Archery::speedAt(stats,bench.archery.arrowDraw)));
       }
     }
   // the hero speaks to an npc (as the bridge does with his voice), it thinks of an answer
@@ -9865,72 +9327,6 @@ void sightFrame(int w, int h, const std::string& shot) {
     }
   }
 
-// Closest points of two closed segments. The first parameter also locates the closest
-// point along the actual camera ray; capsules are the same posed shapes as arrow hits.
-float aimSegmentDistance(const Vec3& p, const Vec3& q, const Vec3& a, const Vec3& b, float& along) {
-  const Vec3 u=q-p, v=b-a, w=p-a;
-  const float uu=Vec3::dotProduct(u,u), vv=Vec3::dotProduct(v,v);
-  const float uv=Vec3::dotProduct(u,v), uw=Vec3::dotProduct(u,w), vw=Vec3::dotProduct(v,w);
-  float s=0, t=0;
-  if(uu<=1e-6f) {
-    t=vv>1e-6f ? std::clamp(vw/vv,0.f,1.f) : 0.f;
-    }
-  else if(vv<=1e-6f) {
-    s=std::clamp(-uw/uu,0.f,1.f);
-    }
-  else {
-    const float den=uu*vv-uv*uv;
-    if(den>1e-6f)
-      s=std::clamp((uv*vw-uw*vv)/den,0.f,1.f);
-    t=(uv*s+vw)/vv;
-    if(t<0) { t=0; s=std::clamp(-uw/uu,0.f,1.f); }
-    if(t>1) { t=1; s=std::clamp((uv-uw)/uu,0.f,1.f); }
-    }
-  along=s;
-  return (p+u*s-a-v*t).length();
-  }
-
-// Exact segment/AABB distance: between crossings of the six box planes the squared
-// distance is one quadratic. The runtime attachment matrix turns this into an OBB test.
-float aimBoxDistance(const Vec3& from, const Vec3& to, const Vec3 (&box)[2]) {
-  const float p[3]={from.x,from.y,from.z}, d[3]={to.x-from.x,to.y-from.y,to.z-from.z};
-  const float low[3]={box[0].x,box[0].y,box[0].z}, high[3]={box[1].x,box[1].y,box[1].z};
-  float cuts[8]={0,1};
-  size_t count=2;
-  for(size_t i=0;i<3;++i)
-    if(std::abs(d[i])>1e-6f)
-      for(float bound:{low[i],high[i]}) {
-        const float t=(bound-p[i])/d[i];
-        if(t>0 && t<1) cuts[count++]=t;
-        }
-  // at most 8: insertion sort (std::sort over the array trips GCC 15's -Warray-bounds on Linux)
-  for(size_t a=1;a<count;++a)
-    for(size_t b=a;b>0 && cuts[b-1]>cuts[b];--b)
-      std::swap(cuts[b-1],cuts[b]);
-  auto distance2=[&](float t) {
-    float value=0;
-    for(size_t i=0;i<3;++i) {
-      const float x=p[i]+d[i]*t;
-      const float gap=x-std::clamp(x,low[i],high[i]);
-      value+=gap*gap;
-      }
-    return value;
-    };
-  float closest=distance2(0);
-  for(size_t k=1;k<count;++k) {
-    const float mid=(cuts[k-1]+cuts[k])*0.5f;
-    float dd=0, pd=0;
-    for(size_t i=0;i<3;++i) {
-      const float x=p[i]+d[i]*mid;
-      if(x>=low[i] && x<=high[i]) continue;
-      dd+=d[i]*d[i];
-      pd+=(p[i]-(x<low[i] ? low[i] : high[i]))*d[i];
-      }
-    const float t=dd>1e-6f ? std::clamp(-pd/dd,cuts[k-1],cuts[k]) : mid;
-    closest=std::min(closest,std::min(distance2(t),distance2(cuts[k])));
-    }
-  return std::sqrt(closest);
-  }
 
 void aimCameraFrame(const std::string& shot) {
   auto* pl=Gothic::inst().player();
@@ -10059,9 +9455,9 @@ void TestBench::capture(Pixmap& frame, float uiScale) {
     std::snprintf(label,sizeof(label),"LIVE %zu  NATIVE KIN %zu / %zu PARTS  DYNAMIC %zu",counts.alive,counts.kinematic,counts.parts,counts.dynamic);
     cv.text(6,26,label,2,Text);cv.text(6,46,"OVERLAY = GAME HIT ZONES (NOT NATIVE SHAPES)",2,Text);
     }
-  if(pm.w()>0 && bench.arrowTrace && bench.arrowNpc!=nullptr) {
+  if(pm.w()>0 && bench.archery.arrowTrace && bench.archery.arrowNpc!=nullptr) {
     Canvas cv;cv.px=reinterpret_cast<uint8_t*>(pm.data());cv.w=int(pm.w());cv.h=int(pm.h());
-    const auto& npc=*bench.arrowNpc;
+    const auto& npc=*bench.archery.arrowNpc;
     const auto* body=npc.livingBody()!=nullptr ? npc.livingBody() : npc.ragdollBody();
     const auto& hit=npc.arrowPhysicsProbe();
     const auto* skeleton=npc.visualSkeleton();
@@ -10071,16 +9467,16 @@ void TestBench::capture(Pixmap& frame, float uiScale) {
                      (body->reactionWeight()>0.f ? "ACTIVE MOTORS" : "LIMP"));
     char label[200];
     cv.rect(0,0,std::min(cv.w,790),66,{0,0,0,190});
-    cv.text(6,6,"ARROW PHYSICS: "+bench.arrowCase,2,Text);
+    cv.text(6,6,"ARROW PHYSICS: "+bench.archery.arrowCase,2,Text);
     std::snprintf(label,sizeof(label),"NATIVE %s  WEIGHT %.3f  PARTS %zu",mode,
                   double(body!=nullptr ? body->reactionWeight() : 0.f),body!=nullptr ? body->partCount() : 0);
     cv.text(6,26,label,2,Text);
     std::snprintf(label,sizeof(label),"HIT %.*s  IMPULSE %.2f NS",int(std::min<size_t>(bone.size(),38)),bone.data(),double(hit.impulseNs.length()));
     cv.text(6,46,label,2,Text);
     }
-  if(pm.w()>0 && bench.stickingTrace) {
+  if(pm.w()>0 && bench.archery.stickingTrace) {
     Canvas cv;cv.px=reinterpret_cast<uint8_t*>(pm.data());cv.w=int(pm.w());cv.h=int(pm.h());
-    const auto* npc=bench.arrowNpc;auto* world=Gothic::inst().world();
+    const auto* npc=bench.archery.arrowNpc;auto* world=Gothic::inst().world();
     float error=0;
     if(npc)
       for(size_t i=0;i<npc->stuckArrowCount();++i) {
@@ -10090,7 +9486,7 @@ void TestBench::capture(Pixmap& frame, float uiScale) {
         error=std::max(error,Vec3(pin.world.at(3,0)-expected.at(3,0),pin.world.at(3,1)-expected.at(3,1),pin.world.at(3,2)-expected.at(3,2)).length());
         }
     char label[200];cv.rect(0,0,std::min(cv.w,790),66,{0,0,0,190});
-    cv.text(6,6,"ARROW STICKING: "+bench.stickingCase,2,Text);
+    cv.text(6,6,"ARROW STICKING: "+bench.archery.stickingCase,2,Text);
     std::snprintf(label,sizeof(label),"ACTUAL DRAW PINS  NPC %zu  WORLD %zu  ERROR %.4f CM",npc?npc->stuckArrowCount():0,
       world?world->stuckArrowCount():0,double(error));
     cv.text(6,26,label,2,Text);

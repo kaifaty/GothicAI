@@ -24,6 +24,9 @@
 #include "game/meleedodge.h"
 #include "game/ragdollsave.h"
 #include "graphics/objvisual.h"
+#include "graphics/mesh/hitzones.h"
+#include "graphics/mesh/aim.h"
+#include "world/objects/archer.h"
 #include "game/inventory.h"
 #include "physics/charactervirtualdiagnostics.h"
 #include "physics/dynamicworld.h"
@@ -538,6 +541,47 @@ struct Living {
   std::vector<Tempest::Vec3> seatPreviousParts,seatPreviousItems;
   uint64_t seatSampleTick=0;
   std::string seatPhase;
+  };
+
+struct ArcheryBench {
+  Npc* arrowNpc=nullptr;
+  std::string arrowCase,arrowAim;
+  float arrowDraw=1.f;
+  uint64_t arrowSampleTick=0;
+  bool arrowTrace=false,arrowKoOnHit=false;
+  uint32_t arrowSeenHits=0;
+  bool stickingTrace=false;
+  std::string stickingCase;
+  uint64_t stickingSampleTick=0;
+  Tempest::Vec3 stickingWorldPoint;
+  std::vector<std::pair<Npc*,Tempest::Vec3>> archers; // archer: they stand there and shoot at archerAt...
+  Npc*        archerAt     = nullptr;
+  bool        archerDice   = false;       // ...by the dice
+  // aimat: the manual aim aims there instead of the mouse, every frame
+  Npc*           aimNpc   = nullptr;
+  HitZones::Zone aimZone  = HitZones::Body;
+  bool        aimLeg    = false;  // aimat ... leg: the middle of the legs' capsules (limb takes the arms too)
+  bool           aimFixed = false;
+  bool           aimRaw   = false; // no holding over for the drop of the arrow
+  bool           aimMouse = false; // the game's camera turns onto it, as the mouse would: the shot from the
+                                   // center of the screen
+  Tempest::Vec3           aimAt    = {};
+  };
+
+struct Trail { const void* key = nullptr; std::vector<Tempest::Vec3> pts; uint64_t last = 0; };
+
+struct ArcheryContext {
+  ArcheryBench& archery;
+  Living& living;
+  std::vector<Npc*>& crew;
+  Npc*& subject;
+  Tempest::Vec3& ragdollArenaTarget;
+  CamMode& cam;
+  std::vector<Trail>& trails;
+  float& camAngle;
+  float& camDist;
+  float& camHeight;
+  float& camLook;
   };
 
 struct LivingCounts {
@@ -1311,6 +1355,22 @@ void itemWakeEventDebris(World& world,Npc& player);
 void itemWakeCheckpoint(World& world);
 bool itemWakeCommand(const std::vector<std::string>& a,World& w,Npc& pl);
 ItemWakeContext itemWakeContext();
+
+const char* leanLineName(Aim::LeanLine line);
+bool aimPoint(Npc& n, HitZones::Zone z, bool leg, Tempest::Vec3& out);
+void arrowShot(World& w, Npc& pl, Tempest::Vec3& org, Tempest::Vec3& tgt);
+float manualAimOff(Npc& pl);
+const char* archerStage(Archer::Stage s);
+bool arrowAimPoint(Npc& npc, Tempest::Vec3& point);
+size_t npcArrowPins(World& world);
+void stickingFields(World& world);
+void arrowFields(World& world);
+float aimSegmentDistance(const Tempest::Vec3& p, const Tempest::Vec3& q, const Tempest::Vec3& a, const Tempest::Vec3& b, float& along);
+float aimBoxDistance(const Tempest::Vec3& from, const Tempest::Vec3& to, const Tempest::Vec3 (&box)[2]);
+std::vector<std::string> split(std::string_view s);
+ArcheryContext archeryContext();
+bool archeryCommand(const ArcheryContext& context,const std::string& line,const std::vector<std::string>& a,
+                    World& w,Npc& pl,PlayerControl& ctrl);
 
 LivingCounts livingCounts();
 std::string livingCountFields(const LivingCounts& s, World& world);
