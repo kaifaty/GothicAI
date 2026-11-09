@@ -350,7 +350,9 @@ void Shaders::compileShaders() noexcept {
     }
 
   if(Shaders::isLightsTreeSupported()) {
-    lightsMorton   = computeShader("lights_morton.comp.sprv");
+    // the sort in 32 KB of shared memory where a workgroup has more (Metal gives 32 KB in all)
+    const bool sharedSort = Resources::device().properties().compute.maxSharedMemory>=33*1024;
+    lightsMorton   = computeShader(sharedSort ? "lights_morton_shared.comp.sprv" : "lights_morton.comp.sprv");
     lightsTopology = computeShader("lights_topology.comp.sprv");
     lightsTree     = computeShader("lights_tree.comp.sprv");
     lightsBvh      = computeShader("lights_bvh.comp.sprv");

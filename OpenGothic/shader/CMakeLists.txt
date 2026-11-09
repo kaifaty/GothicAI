@@ -402,6 +402,7 @@ add_shader(surf_lighting.comp        lighting/surfels/surf_lighting.comp)
 add_shader(pathtrace.frag        lighting/pt/pathtrace.frag -DRAY_QUERY -DRAY_QUERY_AT)
 
 add_shader(lights_morton.comp    lighting/lightstree/lights_morton.comp)
+add_shader(lights_morton_shared.comp lighting/lightstree/lights_morton.comp -DSHARED_SORT)
 add_shader(lights_topology.comp  lighting/lightstree/lights_topology.comp)
 add_shader(lights_tree.comp      lighting/lightstree/lights_tree.comp)
 add_shader(lights_bvh.comp       lighting/lightstree/lights_bvh.comp)
