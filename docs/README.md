@@ -64,6 +64,8 @@ CharacterVirtual героя и NPC и проверка спящих предме
 
 Ragdoll, физические тела живых NPC, возврат после падения, импульсы заклинаний и стрел — в [`npc_ragdoll.cpp`](../OpenGothic/common/world/objects/npc_ragdoll.cpp).
 
+Тень ближнего боя — досягаемость клинка по позе, окна удара, контакты, шаги в замахе и остановка кадра — в [`npc_melee_shadow.cpp`](../OpenGothic/common/world/objects/npc_melee_shadow.cpp). Её состояние `Npc::MeleeShadow`, `Npc::MeleeReach` и общие с уроном и рипостом помощники журнала `melee-blade-shadow.jsonl` объявлены в [`npc_melee_shadow.h`](../OpenGothic/common/world/objects/npc_melee_shadow.h); урон, парирование и `implAttack` остаются в `npc.cpp`.
+
 Сохранение и загрузка NPC — в [`npc_save.cpp`](../OpenGothic/common/world/objects/npc_save.cpp), таланты, атрибуты, гильдии и отношение — в [`npc_attributes.cpp`](../OpenGothic/common/world/objects/npc_attributes.cpp). Объявление общего состояния превращения — в [`npc_transformback.h`](../OpenGothic/common/world/objects/npc_transformback.h), его методы остаются в `npc.cpp`.
 
 Подвижные объекты, мебель, разрушение, обломки и их сохранения — в [`dynamicworld_movables.cpp`](../OpenGothic/common/physics/dynamicworld_movables.cpp); оболочки предметов и перепись расставленных предметов с отпечатком входов — в [`dynamicworld_items.cpp`](../OpenGothic/common/physics/dynamicworld_items.cpp); общие `DynamicWorld::MovableVobs`, `BodyData`, `ItemHulls` и помощники — в [`dynamicworld_internal.h`](../OpenGothic/common/physics/dynamicworld_internal.h).
