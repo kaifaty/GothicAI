@@ -181,9 +181,9 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
               }
             }
           }
-          const auto& bounds=worldMesh.bbox;
-          view=std::make_unique<WorldView>(std::pair{Tempest::Vec3(bounds.min.x,bounds.min.y,bounds.min.z),
-                                                    Tempest::Vec3(bounds.max.x,bounds.max.y,bounds.max.z)},wname);
+          // worldMesh.bbox is zero for compiled worlds; the sky and fog take the
+          // observer's height from the lowest landscape vertex (SceneGlobals::setWorld).
+          view=std::make_unique<WorldView>(PackedMesh::landscapeBbox(worldMesh),wname);
           }
         else {
           PackedMesh vmesh(worldMesh,PackedMesh::PK_VisualLnd);
@@ -218,6 +218,13 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     if(wviewFut.valid())
       wview = wviewFut.get();
     if(wview) {
+      const auto vb=wview->bbox(), bb=bspBounds();
+      char line[320];
+      std::snprintf(line,sizeof(line),"World bounds (streaming=%d): view min=(%.1f %.1f %.1f) max=(%.1f %.1f %.1f)"
+                    " bsp min=(%.1f %.1f %.1f) max=(%.1f %.1f %.1f)",int(streamLandscape),
+                    vb.first.x,vb.first.y,vb.first.z,vb.second.x,vb.second.y,vb.second.z,
+                    bb.first.x,bb.first.y,bb.first.z,bb.second.x,bb.second.y,bb.second.z);
+      Tempest::Log::i(line);
       wview->setTextureResidency(residency.get());
       if(residency && !Gothic::inst().isBenchmarkMode())
         wview->startVobStreaming(*residency);

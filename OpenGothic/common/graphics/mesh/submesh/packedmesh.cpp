@@ -731,6 +731,21 @@ void PackedMesh::packPhysics(const asset::WorldMesh& mesh, PkgType type) {
     }
   }
 
+std::pair<Vec3,Vec3> PackedMesh::landscapeBbox(const asset::WorldMesh& mesh) {
+  auto& vbo = mesh.vertices;
+  auto& ibo = mesh.polygons.vertex_indices;
+  if(ibo.empty())
+    return {};
+  Vec3 lo(vbo[ibo[0]].x,vbo[ibo[0]].y,vbo[ibo[0]].z);
+  Vec3 hi = lo;
+  for(const auto i:ibo) {
+    const auto& p = vbo[i];
+    lo.x = std::min(lo.x,p.x); lo.y = std::min(lo.y,p.y); lo.z = std::min(lo.z,p.z);
+    hi.x = std::max(hi.x,p.x); hi.y = std::max(hi.y,p.y); hi.z = std::max(hi.z,p.z);
+    }
+  return {lo,hi};
+  }
+
 std::vector<uint32_t> PackedMesh::landscapeMaterialMap(const asset::WorldMesh& mesh) {
   std::vector<uint32_t> mat(mesh.materials.size());
   for(size_t i=0; i<mesh.materials.size(); ++i)
