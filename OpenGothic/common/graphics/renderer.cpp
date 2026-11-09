@@ -593,7 +593,9 @@ void Renderer::resetViewport(Tempest::Size res, Tempest::Size fullRes) {
   gbufNormal    = device.attachment(TextureFormat::R32U, w,h);
   if(Shaders::options().doMaterialMaps)
     gbufOrm = device.attachment(TextureFormat::RGBA8, w,h);
-  gbufMotion    = device.attachment(TextureFormat::RG16F, w,h);
+  // RG16F is a required colour attachment format in Vulkan and Metal; the wider one only where a device lacks it
+  const bool rg16f = device.properties().hasAttachFormat(TextureFormat::RG16F);
+  gbufMotion    = device.attachment(rg16f ? TextureFormat::RG16F : TextureFormat::RGBA16F, w,h);
 
   ssao     = decltype(ssao)();
   epipolar = decltype(epipolar)();

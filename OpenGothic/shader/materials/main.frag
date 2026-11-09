@@ -719,7 +719,9 @@ vec2 motionResidual() {
   const float w1 = s.z + d.z;
   if(w0<=0.0 || w1<=0.0)
     return vec2(0); // behind the previous camera: no history to point at
-  return ((s.xy + d.xy)/w1 - s.xy/w0)*0.5;
+  // ((s.xy + d.xy)/w1 - s.xy/w0)*0.5 over one denominator: exactly 0 for d=0, also by the near plane, where the two
+  // divisions of the plain form round apart by up to pixels
+  return (d.xy*w0 - s.xy*d.z)/(w0*w1)*0.5;
 #else
   return vec2(0);
 #endif

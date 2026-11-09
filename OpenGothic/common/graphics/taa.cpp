@@ -157,8 +157,10 @@ Vec2 Taa::motionResidual(const Matrix4x4& reprojectClip, const Matrix4x4& viewPr
   const float w0 = prevStatic.w, w1 = prevStatic.w + prevDelta.w;
   if(w0<=0 || w1<=0)
     return Vec2();
-  return Vec2(((prevStatic.x + prevDelta.x)/w1 - prevStatic.x/w0)*0.5f,
-              ((prevStatic.y + prevDelta.y)/w1 - prevStatic.y/w0)*0.5f);
+  // ((s+d)/w1 - s/w0)*0.5 over one denominator, as main.frag: exactly 0 for d=0
+  const float den = w0*w1;
+  return Vec2((prevDelta.x*w0 - prevStatic.x*prevDelta.w)/den*0.5f,
+              (prevDelta.y*w0 - prevStatic.y*prevDelta.w)/den*0.5f);
   }
 
 float Taa::rotationAngle(const Matrix4x4& a, const Matrix4x4& b) {
