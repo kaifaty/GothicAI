@@ -327,17 +327,18 @@ bool Animation::Sequence::extractFrames(uint64_t& frameA,uint64_t& frameB,bool& 
   if(frameA==frameB)
     return false;
 
+  const uint64_t count = animCls==Animation::Loop ? d.loopFrames() : numFrames;
   if(animCls==Animation::Loop){
-    frameA%=numFrames;
-    frameB%=numFrames;
+    frameA%=count;
+    frameB%=count;
     } else {
     frameA = std::min<uint64_t>(frameA,numFrames);
     frameB = std::min<uint64_t>(frameB,numFrames);
     }
 
   if(reverse) {
-    frameA = numFrames-frameA;
-    frameB = numFrames-frameB;
+    frameA = count-frameA;
+    frameB = count-frameB;
     std::swap(frameA,frameB);
     }
 
@@ -710,6 +711,15 @@ void Animation::AnimData::setupMoveTr() {
     translate.y = samples[0].position.y;
     translate.z = samples[0].position.z;
     }
+  }
+
+uint32_t Animation::AnimData::loopFrames() const {
+  static const float minTravel = 1.f; // cm over a cycle, along the ground
+  if(numFrames<2 || tr.empty())
+    return numFrames;
+  if(moveTr.x*moveTr.x+moveTr.z*moveTr.z<minTravel*minTravel)
+    return numFrames;
+  return numFrames-1;
   }
 
 uint32_t Animation::AnimData::optimalFrame(int32_t frame) const {
