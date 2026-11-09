@@ -47,7 +47,7 @@ static constexpr uint64_t PipelineCacheSaveDelay = 20000;
 MainWindow::MainWindow(Device& device)
   : Window(TestBench::isActive() ?
       (std::getenv("OPENGOTHIC_BENCH_VISIBLE")!=nullptr && std::strcmp(std::getenv("OPENGOTHIC_BENCH_VISIBLE"),"1")==0 ? Normal : Minimized) : Maximized),
-    device(device),swapchain(device,hwnd()),
+    device(device),swapchain(SystemApi::isOffscreen() ? Swapchain() : Swapchain(device,hwnd())),
     atlas(device),rootMenu(keycodec),inventory(keycodec),
     dialogs(inventory),document(keycodec),
     console(*this),
@@ -57,6 +57,21 @@ MainWindow::MainWindow(Device& device)
     player(dialogs,inventory) {
   Gothic::inst().onSettingsChanged.bind(this,&MainWindow::onSettings);
   onSettings();
+
+  if(SystemApi::isOffscreen()) {
+    offscreen = device.attachment(TextureFormat::RGBA8,uint32_t(w()),uint32_t(h()));
+    // 200 by default: a window on Ryzen's 199.92 Hz screen with FIFO, one frame per game step
+    uint64_t fps = 200;
+    if(const char* v = std::getenv("TEMPEST_OFFSCREEN_FPS")) {
+      char* end = nullptr;
+      const auto n = std::strtoull(v,&end,10);
+      if(end!=v && *end=='\0')
+        fps = uint64_t(n); else
+        Log::e("TEMPEST_OFFSCREEN_FPS is not a number: ",v,", using ",fps);
+      }
+    offscreenFrameInv = fps>0 ? 1000u/fps : 0;
+    Log::i("[offscreen] frame ",w(),"x",h(),", limit ",fps," fps (",offscreenFrameInv," ms)");
+    }
 
   setWindowTitle("Gothic II");
 
@@ -447,11 +462,13 @@ void MainWindow::drawChunks(Painter& p, const World& world, const Camera& camera
 void MainWindow::resizeEvent(SizeEvent&) {
   for(auto& i:fence)
     i.wait();
-  swapchain.reset();
+  if(SystemApi::isOffscreen())
+    offscreen = device.attachment(TextureFormat::RGBA8,uint32_t(w()),uint32_t(h())); else
+    swapchain.reset();
   if(TestBench::isActive())
-    Log::i("[bench] drawable ",swapchain.w(),"x",swapchain.h());
+    Log::i("[bench] drawable ",frameW(),"x",frameH());
   if(auto camera = Gothic::inst().camera())
-    camera->setViewport(swapchain.w(),swapchain.h());
+    camera->setViewport(frameW(),frameH());
 
   if(SystemApi::isFullscreen(hwnd())) {
     setCursorPosition(Point(w()/2,h()/2));
@@ -1307,7 +1324,7 @@ Attachment MainWindow::screenshotWithUi() {
   device.waitIdle();
   dispatchPaintEvent(uiLayer,atlas);
   uiMesh[cmdId].update(device,uiLayer);
-  auto img = device.attachment(TextureFormat::RGBA8,swapchain.w(),swapchain.h());
+  auto img = device.attachment(TextureFormat::RGBA8,frameW(),frameH());
   CommandBuffer cmd;
   {
   auto enc = cmd.startEncoding(device);
@@ -1387,7 +1404,7 @@ void MainWindow::onStartLoading() {
 void MainWindow::onWorldLoaded() {
   dMouse = Point();
   if(TestBench::isActive())
-    Log::i("[bench] drawable ",swapchain.w(),"x",swapchain.h());
+    Log::i("[bench] drawable ",frameW(),"x",frameH());
   if(TestBench::isActive())
     if(auto* world = Gothic::inst().world())
       Log::i("[bench] world ready: ",world->name());
@@ -1467,6 +1484,20 @@ void MainWindow::setGameImpl(std::unique_ptr<GameSession> &&w) {
 void MainWindow::clearInput() {
   player.clearInput();
   std::memset(mouseP,0,sizeof(mouseP));
+  }
+
+Attachment& MainWindow::frameImage() {
+  if(SystemApi::isOffscreen())
+    return offscreen;
+  return swapchain[swapchain.currentImage()];
+  }
+
+uint32_t MainWindow::frameW() const {
+  return SystemApi::isOffscreen() ? uint32_t(offscreen.w()) : swapchain.w();
+  }
+
+uint32_t MainWindow::frameH() const {
+  return SystemApi::isOffscreen() ? uint32_t(offscreen.h()) : swapchain.h();
   }
 
 void MainWindow::setFullscreen(bool fs) {
@@ -1573,12 +1604,14 @@ void MainWindow::render(){
     {
     FrameProfile::Scope timing(FrameProfile::Zone::Encode);
     auto enc = cmd.startEncoding(device);
-    renderer.draw(swapchain[swapchain.currentImage()],enc,cmdId,uiMesh[cmdId],numMesh[cmdId],inventory,video);
+    renderer.draw(frameImage(),enc,cmdId,uiMesh[cmdId],numMesh[cmdId],inventory,video);
     }
     { FrameProfile::Scope timing(FrameProfile::Zone::Submit); sync = device.submit(cmd); }
     profile.flag(FrameProfile::Flag::SubmitCompleted);
-    { FrameProfile::Scope timing(FrameProfile::Zone::Present); device.present(swapchain); }
-    profile.flag(FrameProfile::Flag::PresentCompleted);
+    if(!SystemApi::isOffscreen()) {
+      { FrameProfile::Scope timing(FrameProfile::Zone::Present); device.present(swapchain); }
+      profile.flag(FrameProfile::Flag::PresentCompleted);
+      }
     if(LoadProbe::enabled() && Gothic::inst().isInGame() && Gothic::inst().checkLoading()==Gothic::LoadState::Idle)
       LoadProbe::presented();
     if(!pipelineCacheSaved && Gothic::inst().isInGame() && Gothic::inst().checkLoading()==Gothic::LoadState::Idle) {
@@ -1596,6 +1629,8 @@ void MainWindow::render(){
 
     auto t = Application::tickCount();
     auto frameTime = maxFpsInv;
+    if(SystemApi::isOffscreen())
+      frameTime = std::max(frameTime,offscreenFrameInv); // no present waits for the screen: keep a window's pace
     if(!Gothic::inst().isInGame() && !video.isActive())
       frameTime = std::max<uint64_t>(frameTime,16);
     if(t-time<frameTime) {
@@ -1616,7 +1651,8 @@ void MainWindow::render(){
     profile.outcome(FrameProfile::Outcome::Error);
     Log::e("swapchain is outdated - reset renderer");
     device.waitIdle();
-    swapchain.reset();
+    if(!SystemApi::isOffscreen())
+      swapchain.reset();
     }
   }
 

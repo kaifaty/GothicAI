@@ -1,5 +1,8 @@
 # Stage 3 logic: two native one-handed humans beside the same real wall.
 # Save the paladin during a physical knockdown, without making him unconscious.
+# Since #546 weapon skill scales the knockdown threshold (the trained knight's 1h/2h: x1.7), and melee_stagger
+# (#641) turns a full posture into a stun, adding x1.3 for his plate: he stood the bandit's 60 s. Stage 3 keeps
+# its own rule here: stagger off (melee-stagger.bench covers it), an untrained paladin under a master bandit.
 seed 73013
 cheat god
 set time 12 0
@@ -23,8 +26,9 @@ wait 34
 pin off
 arc PAL_255_RITTER 1 0 0
 npcequip PAL_255_RITTER ITMW_1H_COMMON_01
-stats npc PAL_255_RITTER hpmax 100000 hp 100000 str 60
-stats npc BDT_1013_BANDIT_L str 60
+stats npc PAL_255_RITTER hpmax 100000 hp 100000 str 60 1h 0 2h 0
+stats npc BDT_1013_BANDIT_L str 60 1h 100
+toggle melee_stagger
 watch PAL_255_RITTER
 place 900 90
 release all
@@ -35,4 +39,5 @@ waitragdoll PAL_255_RITTER knockdown 60000
 ragdoll session-save PAL_255_RITTER stage3-down
 waitragdoll PAL_255_RITTER getup 9000
 wait 1000
+toggle melee_stagger
 stop

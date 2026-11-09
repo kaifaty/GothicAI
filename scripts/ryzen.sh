@@ -115,10 +115,7 @@ desktop() {
       if info="$(DISPLAY=":${socket##*/X}" XAUTHORITY="$auth" xdpyinfo 2>/dev/null)"; then
         export DISPLAY=":${socket##*/X}" XAUTHORITY="$auth"
         RYZEN_SCREEN_SIZE="$(printf '%s\n' "$info" | awk '/dimensions:/ {print $2; exit}')"
-        export VK_DRIVER_FILES=/usr/share/vulkan/icd.d/nvidia_icd.json
-        export VK_ICD_FILENAMES="$VK_DRIVER_FILES"
-        [[ -r "$VK_DRIVER_FILES" ]] || { echo 'Missing NVIDIA Vulkan ICD' >&2; exit 1; }
-        export ALSOFT_DRIVERS=null TEMPEST_BACKGROUND=1
+        nvidia_vulkan
         echo "Ryzen: Xwayland $DISPLAY, NVIDIA Vulkan"
         return
       fi
@@ -126,6 +123,23 @@ desktop() {
   done
   echo 'No accessible Xwayland display. Need a running user desktop or a GPU-capable headless compositor.' >&2
   exit 1
+}
+
+nvidia_vulkan() {
+  # The NVIDIA driver only, no sound device, the game never takes the focus.
+  export VK_DRIVER_FILES=/usr/share/vulkan/icd.d/nvidia_icd.json
+  export VK_ICD_FILENAMES="$VK_DRIVER_FILES"
+  [[ -r "$VK_DRIVER_FILES" ]] || { echo 'Missing NVIDIA Vulkan ICD' >&2; exit 1; }
+  export ALSOFT_DRIVERS=null TEMPEST_BACKGROUND=1
+}
+
+offscreen_session() {
+  # The engine draws into its own image (TEMPEST_OFFSCREEN=1): it opens no X or
+  # Wayland display and shows nothing on the screen (reports/compute/2026-11-09-offscreen-bench).
+  unset DISPLAY WAYLAND_DISPLAY XAUTHORITY
+  nvidia_vulkan
+  export TEMPEST_OFFSCREEN=1 TEMPEST_WINDOW_SIZE="${TEMPEST_WINDOW_SIZE:-800x600}"
+  echo "Ryzen: bench offscreen $TEMPEST_WINDOW_SIZE, no display"
 }
 
 window_position() {
@@ -485,7 +499,7 @@ remote_bench() {
   local state="$1" run="$2" scenario="$3" rc started=$SECONDS
   echo 'Ryzen: game admitted'
   if [[ "${RYZEN_AI_TUNNEL:-0}" == 1 ]]; then
-    # This command runs only after gq grants the window. The Mac opens the
+    # This command runs only after gq admits the game. The Mac opens the
     # reverse forwarding on its lock-holding SSH connection, then acknowledges.
     echo 'Ryzen: waiting for AI tunnel'
     until [[ -f "$state/inputs/$run/tunnel-ready" ]]; do sleep 0.2; done
@@ -507,9 +521,15 @@ PY
   game_settings
   if [[ "${BENCH_HEADLESS:-0}" != 1 ]]; then
     command -v ffmpeg >/dev/null || { echo 'Missing tool: ffmpeg' >&2; return 1; }
-    desktop
-    # An exclusive bench keeps its window where it was (Mutter centres it).
-    if [[ "${RYZEN_BENCH_COLUMN:-0}" == 1 ]]; then bench_window_position || return; fi
+    if [[ "${RYZEN_BENCH_OFFSCREEN:-0}" == 1 ]]; then
+      offscreen_session
+    else
+      # The window was asked for: draw into it even with TEMPEST_OFFSCREEN from the Mac.
+      unset TEMPEST_OFFSCREEN
+      desktop
+      # An exclusive bench keeps its window where it was (Mutter centres it).
+      if [[ "${RYZEN_BENCH_COLUMN:-0}" == 1 ]]; then bench_window_position || return; fi
+    fi
   fi
   require_prepared bench "$state" "$run" "$scenario"
   local out="$state/runs/$run"
@@ -1390,6 +1410,18 @@ e2e_display_exclusive() {
   esac
 }
 
+bench_window() {
+  # A bench draws offscreen, without a window or gq's display, unless one of
+  # these needs the window: a person (RYZEN_BENCH_WINDOW, KEEP, a visible bench),
+  # frame timing, which only presenting measures (OPENGOTHIC_FPS_LOG, the quiet
+  # class), or the streaming flythrough, which measures frames.
+  [[ "${RYZEN_BENCH_WINDOW:-0}" != 1 && "${KEEP:-0}" != 1 ]] || return 0
+  [[ "${OPENGOTHIC_BENCH_VISIBLE:-0}" != 1 && "${OPENGOTHIC_FPS_LOG:-0}" != 1 ]] || return 0
+  [[ "${BENCH_CLASS:-quick}" != quiet ]] || return 0
+  [[ "$(basename "$BENCH_SCENARIO" .bench)" != streaming-flythrough ]] || return 0
+  return 1
+}
+
 bench_display_exclusive() {
   # A covered Xwayland window drops to ~1 FPS, so a bench shares the screen
   # only with its default 800x600 window placed in its own column.
@@ -1407,6 +1439,13 @@ game_queue_args() {
   if [[ "$ACTION" == bench ]]; then
     if [[ "${BENCH_HEADLESS:-0}" == 1 ]]; then
       GQ_ARGS=(--class "${BENCH_CLASS:-batch}" --threads 4 --mem 6G --max "${RYZEN_MAX:-30m}" --wait-max "$LOCK_WAIT")
+    elif ! bench_window; then
+      # Offscreen: the same game without --display, so no window slot to wait for.
+      # Peak ~0.7 GB of video memory per offscreen game (2026-11-09), as e2e: 2G,
+      # so RAM (4 x 5G), not video memory, caps parallel benches.
+      GQ_ARGS=(--class "${BENCH_CLASS:-quick}" --threads 4 --mem 5G --max "${RYZEN_MAX:-30m}" --wait-max "$LOCK_WAIT"
+               --gpu-mem 2G)
+      GAME_ENV=(RYZEN_BENCH_OFFSCREEN=1)
     else
       # Measured ~1.4 GB of video memory per bench game: three games fit in 10G.
       GQ_ARGS+=(--gpu-mem 3G)

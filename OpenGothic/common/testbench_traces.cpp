@@ -72,7 +72,10 @@ bool physicsTracesDebug(const PhysicsTracesContext& context,World& world,Npc& pl
       const float angle=float(i)*float(M_PI)/48.f;
       const Vec3 direction(std::cos(angle),0,std::sin(angle));
       const auto hit=world.physic()->ray(from,from+direction*1000.f);
-      if(!hit.hasCol || std::abs(hit.n.y)>.25f || (hit.v-from).length()<180)continue;
+      // Arrows glance off stone and metal (DynamicWorld::moveBullet) and stick wherever they come down:
+      // the fixture's arrow must stick in the wall it aims at.
+      const bool glances=hit.mat==asset::MaterialGroup::STONE || hit.mat==asset::MaterialGroup::METAL;
+      if(!hit.hasCol || std::abs(hit.n.y)>.25f || (hit.v-from).length()<180 || glances)continue;
       context.traceWall=hit.v;context.traceShotDirection=direction;wallFound=true;break;
       }
     if(!wallFound)return fail("trace fixture lacks a real vertical tavern wall");

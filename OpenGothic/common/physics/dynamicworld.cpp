@@ -381,6 +381,13 @@ DynamicWorld::RayLandResult DynamicWorld::landRay(const Tempest::Vec3& from, flo
   return toResult(world->rayCast(from,to,landscapeMask,false),to);
   }
 
+DynamicWorld::RayLandResult DynamicWorld::floorRay(const Tempest::Vec3& from, float maxDy) const {
+  world->updateAabbs();
+  constexpr uint32_t floorMask = 1u << C_Landscape;
+  const auto to = Tempest::Vec3(from.x,from.y-maxDy,from.z);
+  return toResult(world->rayCast(from,to,floorMask,false),to);
+  }
+
 DynamicWorld::RayLandResult DynamicWorld::landSweep(const Tempest::Vec3& from, float R, float maxDy) const {
   world->updateAabbs();
   if(maxDy==0)

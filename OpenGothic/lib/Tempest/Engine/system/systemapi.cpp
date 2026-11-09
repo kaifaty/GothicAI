@@ -10,6 +10,9 @@
 #include <Tempest/Event>
 #include <Tempest/Window>
 
+#include <cstdlib>
+#include <cstring>
+
 using namespace Tempest;
 
 static EventDispatcher dispatcher;
@@ -112,6 +115,18 @@ SystemApi& SystemApi::inst() {
   static iOSApi api;
 #endif
   return api;
+  }
+
+bool SystemApi::isOffscreen() {
+#if defined(__UNIX__)
+  static const bool offscreen = [] {
+    const char* v = std::getenv("TEMPEST_OFFSCREEN");
+    return v!=nullptr && std::strcmp(v,"1")==0;
+    }();
+  return offscreen;
+#else
+  return false;
+#endif
   }
 
 void SystemApi::dispatchOverlayRender(Tempest::Window &w, PaintEvent& e) {

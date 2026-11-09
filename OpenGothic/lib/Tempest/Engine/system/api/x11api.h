@@ -36,6 +36,7 @@ class X11Api final: SystemApi {
     bool     implIsRunning() override;
 
     void     alignGeometry(Window *w, Tempest::Window& owner);
+    Window*  createOffscreen(Tempest::Window *owner, uint32_t width, uint32_t height);
 
     std::unique_ptr<Private> impl;
 

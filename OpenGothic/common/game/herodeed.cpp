@@ -116,9 +116,16 @@ std::shared_ptr<HeroDeed> HeroDeed::snapshot(Npc& hero, std::string_view kind, N
     // A preflight happens before the actor walks there. Read the target's
     // native ground material (the same source as MoveAlgo::portalName), with
     // the BSP sector as fallback, rather than borrowing the actor's old room.
-    const auto ground = world.physic()->landRay(*ownershipPosition+Tempest::Vec3(0,50,0),500);
-    d->room = ground.hasCol && ground.sector!=nullptr && ground.sector[0]!='\0' ?
-              std::string_view(ground.sector) : world.roomAt(*ownershipPosition);
+    // A target on a table, a shelf or a chest's own mesh first meets that prop, which has no sector:
+    // the room is the world floor under it, as MoveAlgo keeps the last floor room under a standing npc.
+    const auto from = *ownershipPosition+Tempest::Vec3(0,50,0);
+    const auto hasSector = [](const DynamicWorld::RayLandResult& hit) {
+      return hit.hasCol && hit.sector!=nullptr && hit.sector[0]!='\0';
+      };
+    auto ground = world.physic()->landRay(from,500);
+    if(!hasSector(ground))
+      ground = world.physic()->floorRay(from,500);
+    d->room = hasSector(ground) ? std::string_view(ground.sector) : world.roomAt(*ownershipPosition);
     }
   d->roomGuild = world.guildOfRoom(d->room);
   d->roomOwner = resolveRoomOwner(hero,d->room);

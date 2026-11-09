@@ -9,6 +9,7 @@
 
 #include <Tempest/Application>
 #include <Tempest/Log>
+#include <Tempest/SystemApi>
 #include <cstring>
 #include <array>
 #if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
@@ -141,7 +142,9 @@ void VDevice::createLogicalDevice(VkPhysicalDevice pdev) {
     queueCnt++;
     }
 
-  std::vector<const char*> rqExt = requiredExtensions;
+  std::vector<const char*> rqExt;
+  if(!SystemApi::isOffscreen())
+    rqExt = requiredExtensions; // VK_KHR_swapchain: an offscreen device never presents
   if(props.hasMemRq2) {
     rqExt.push_back(VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME);
     }
@@ -843,7 +846,8 @@ void VDevice::deviceQueueProps(VkPhysicalDevice device, VkProps& props) {
     static const VkQueueFlags rqFlag = (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT);
 
     const bool graphicsSupport = ((queueFamily.queueFlags & rqFlag)==rqFlag);
-    const bool presentSupport  = VSwapchain::checkPresentationSupport(device, i);
+    // offscreen: no display to ask and no present queue
+    const bool presentSupport  = !SystemApi::isOffscreen() && VSwapchain::checkPresentationSupport(device, i);
 
     if(graphicsSupport)
       graphics = i;
