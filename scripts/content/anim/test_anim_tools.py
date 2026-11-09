@@ -572,3 +572,69 @@ def test_fix_layer_keep_leaves_a_child_where_it_was_when_its_parent_is_fixed():
     assert all(not np.allclose(after[f][t][:3, :3], before[f][t][:3, :3]) for f in (2, 3, 4, 5))  # the thigh turned
     assert all(np.allclose(after[f][c][:3, :3], before[f][c][:3, :3], atol=1e-6) for f in range(8))  # the calf did not
     assert np.array_equal(anim.rotations[[0, 7]], orig[[0, 7]])  # outside the window, as it was
+
+
+def gothic_run():
+    models = base_models()
+    if models is None or not (models / "HUMANS-S_RUNL.MAN.json").exists():
+        pytest.skip("no converted base")
+    return ga.read_skeleton(models / "HUMANS.MDH.json"), ga.read_animation(models / "HUMANS-S_RUNL.MAN.json")
+
+
+def test_fix_layer_wrist_brings_a_bent_hand_back_to_the_forearm_line():
+    import fix_layer
+    skel, anim = gothic_run()
+    c = anim.node_indices.index(skel.index("BIP01 R HAND"))
+    bend = fix_layer.rot([0, 0, 1], np.radians(50))  # 50° about the hand's own z
+    anim.rotations[:, c] = [rs.mat_to_quat(ga.quat_matrix(q) @ bend) for q in anim.rotations[:, c]]
+    i_fore, i_hand, i_tip = (skel.index(f"BIP01 R {b}") for b in ("FOREARM", "HAND", "FINGER0"))
+
+    def bends():
+        out = []
+        for f in range(anim.frame_count):
+            W = ga.world_pose(skel, anim, f)
+            u, v = W[i_hand][:3, 3] - W[i_fore][:3, 3], W[i_tip][:3, 3] - W[i_hand][:3, 3]
+            out.append(np.degrees(np.arccos(np.clip(u @ v / np.linalg.norm(u) / np.linalg.norm(v), -1, 1))))
+        return np.array(out)
+
+    assert bends().min() > 40
+    fore = anim.rotations[:, anim.node_indices.index(i_fore)].copy()
+    fix_layer.apply(skel, anim, [{"kind": "wrist", "limbs": ["R arm"], "window": [0, 0, 99, 99], "max": 10}], floor=0.0)
+    assert bends().max() < 10.5
+    assert np.array_equal(anim.rotations[:, anim.node_indices.index(i_fore)], fore)  # only the hand turns
+
+
+def test_fix_layer_pelvis_halves_the_hip_roll_and_keeps_the_feet_and_the_trunk():
+    import fix_layer
+    skel, anim = gothic_run()
+    n = anim.frame_count - 1  # Gothic's run is a moving loop: its last frame is the first, moved on
+    feet, trunk = [skel.index(f"BIP01 {s} FOOT") for s in "LR"], skel.index("BIP01 SPINE")
+    lt, rt = skel.index("BIP01 L THIGH"), skel.index("BIP01 R THIGH")
+    before = [ga.world_pose(skel, anim, f) for f in range(n + 1)]
+    ahead = before[n][0][:3, 3] - before[0][0][:3, 3]
+    ahead[1] = 0
+    side = np.cross([0, 1.0, 0], ahead / np.linalg.norm(ahead))
+    roll = lambda W: fix_layer.hip_roll(W, lt, rt, side)
+    fix_layer.apply(skel, anim, [{"kind": "pelvis", "window": [0, 0, n - 1, n - 1], "roll": 0.5}], floor=0.0, cycle=n)
+    after = [ga.world_pose(skel, anim, f) for f in range(n + 1)]
+    r0, r1 = np.array([roll(W) for W in before[:n]]), np.array([roll(W) for W in after[:n]])
+    assert np.allclose(r1 - r1.mean(), 0.5 * (r0 - r0.mean()), atol=np.radians(0.3))
+    for f in range(n):
+        assert all(np.allclose(after[f][i][:3, 3], before[f][i][:3, 3], atol=0.05) for i in feet)
+        assert np.allclose(after[f][trunk][:3, :3], before[f][trunk][:3, :3], atol=1e-6)
+    assert np.array_equal(anim.rotations[n], anim.rotations[0])  # the seam frame is the first again
+
+
+def test_fix_layer_loop_window_runs_over_the_seam():
+    import fix_layer
+    skel, anim = gothic_run()
+    n = anim.frame_count - 1
+    orig = anim.rotations.copy()
+    travel = anim.positions[n, 0] - anim.positions[0, 0]
+    fix = {"kind": "rot", "bone": "BIP01 R CALF", "window": [n - 3, n - 1, n + 1, n + 3], "axis": [0, 1, 0], "deg": 20}
+    fix_layer.apply(skel, anim, [fix], floor=0.0, cycle=n)
+    c = anim.node_indices.index(skel.index("BIP01 R CALF"))
+    changed = [f for f in range(n) if not np.array_equal(anim.rotations[f, c], orig[f, c])]
+    assert changed == [0, 1, 2, n - 2, n - 1]  # frames n-3 and n+3 are the window's zero ends
+    assert np.array_equal(anim.rotations[n], anim.rotations[0])
+    assert np.allclose(anim.positions[n, 0], anim.positions[0, 0] + travel)

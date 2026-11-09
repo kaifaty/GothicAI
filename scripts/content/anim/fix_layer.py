@@ -27,7 +27,16 @@ Kinds:
         of the neck would swing the sword arm;
 - raise {"window": [...], "cm": 12}: the whole body rises, by the root's height only: the engine moves the NPC by
         the root's XZ, so the path stays. For a trunk that rolls over a shoulder sunk into the floor; a hand or foot
-        on the ground rises with it, and a later `lift` with negative cm puts it back.
+        on the ground rises with it, and a later `lift` with negative cm puts it back;
+- wrist {"limbs": ["L arm", "R arm"], "window": [...], "max": 10}: a hand bent off its forearm's line by more than
+        `max` degrees comes back to it, keeping its twist: Kimodo's runners carry a limp, bent wrist;
+- pelvis {"window": [...], "roll": 0.5}: the hips' roll seen from the front (one hip up, the other down) keeps the
+        share `roll` of its swing about the cycle's mean; the trunk keeps its turn and the legs reach the same feet,
+        so only the hips move. A strong hip drop reads as a woman's gait (Gothic's own female run: 11°, male: 5°).
+
+{"loop": true} in fixes.json: the record is a moving loop - its last frame is the first again, moved by the
+travel (loop_cycle.py). Windows may then run past the last cycle frame and go on from frame 0 (a window [18, 23,
+25, 29] in a 21-frame cycle covers 18..20 and 0..8), and the last frame is rebuilt from the first.
 
 The legs and arms are solved by two-bone IK: the knee or elbow stays in its own plane. With `"joint_clear": cm` on
 a step, lift or tuck the plane turns only as far as it takes to keep the knee or elbow that high over the floor.
@@ -41,8 +50,8 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import gothic_anim as ga  # noqa: E402
-import retarget_soma as rs  # noqa: E402
+import gothic_anim as ga
+import retarget_soma as rs
 
 LIMBS = {"L leg": ("BIP01 L THIGH", "BIP01 L CALF", "BIP01 L FOOT"), "R leg": ("BIP01 R THIGH", "BIP01 R CALF", "BIP01 R FOOT"),
          "L arm": ("BIP01 L UPPERARM", "BIP01 L FOREARM", "BIP01 L HAND"),
@@ -62,6 +71,11 @@ def weight(window, f: int) -> float:
         return 1.0
     x = (f - a) / (b - a) if f < b else (d - f) / (d - c)
     return x * x * (3 - 2 * x)
+
+
+def weight_at(window, f: int, cycle: int = 0) -> float:
+    """weight() of a loop: a window may run past the cycle's last frame and go on from its first."""
+    return max(weight(window, f), weight(window, f + cycle)) if cycle else weight(window, f)
 
 
 def rot(axis, rad: float) -> np.ndarray:
@@ -143,6 +157,12 @@ def two_bone(clip: Clip, f: int, W: np.ndarray, limb: str, target: np.ndarray, e
     clip.set_world_rot(f, W, end, end_rot)
 
 
+def hip_roll(W: np.ndarray, i_left: int, i_right: int, side: np.ndarray) -> float:
+    """How far the left hip joint is over the right one, as an angle seen along the travel (radians)."""
+    v = W[i_left][:3, 3] - W[i_right][:3, 3]
+    return float(np.arctan2(v[1], abs(v @ side)))
+
+
 def toe_lift(W: np.ndarray, ie: int, it: int, height: float) -> tuple[float, np.ndarray]:
     """The smallest pitch of the foot about its ankle (and the axis) that puts the toe node at `height`."""
     A, v = W[ie][:3, 3], W[it][:3, 3] - W[ie][:3, 3]
@@ -159,13 +179,21 @@ def toe_lift(W: np.ndarray, ie: int, it: int, height: float) -> tuple[float, np.
     return min(ts, key=abs), k
 
 
-def apply(skel: ga.Skeleton, anim: ga.Animation, fixes: list, floor: float) -> list[str]:
+def apply(skel: ga.Skeleton, anim: ga.Animation, fixes: list, floor: float, cycle: int = 0) -> list[str]:
+    """cycle > 0: the record is a moving loop of `cycle` frames plus its seam frame (the first again, moved by the
+    travel); windows wrap over the seam and the seam frame is rebuilt from the first at the end."""
     clip = Clip(skel, anim)
     log = []
+    count = cycle or anim.frame_count
+    travel = anim.positions[-1, 0] - anim.positions[0, 0]
+
+    def wt(window, f):
+        return weight_at(window, f, cycle)
+
     first = [clip.world(f) for f in range(anim.frame_count)] if any(fx["kind"] == "keep" for fx in fixes) else None
     for fx in fixes:
         win = window_of(fx)
-        frames = [f for f in range(anim.frame_count) if weight(win, f) > 0]
+        frames = [f for f in range(count) if wt(win, f) > 0]
         kind = fx["kind"]
         above = floor + fx["joint_clear"] if "joint_clear" in fx else None  # the knee or elbow stays over the floor
         if kind == "step":
@@ -180,7 +208,7 @@ def apply(skel: ga.Skeleton, anim: ga.Animation, fixes: list, floor: float) -> l
         elif kind in ("lift", "tuck"):
             iu, ie = (skel.index(LIMBS[fx["limb"]][j]) for j in (0, 2))
             for f in frames:
-                W, w = clip.world(f), weight(win, f)
+                W, w = clip.world(f), wt(win, f)
                 H, A = W[iu][:3, 3], W[ie][:3, 3]
                 target = A + fx["cm"] * w * UP if kind == "lift" else H + (1 - (1 - fx["k"]) * w) * (A - H)
                 two_bone(clip, f, W, fx["limb"], target, W[ie][:3, :3].copy(), above)
@@ -206,14 +234,14 @@ def apply(skel: ga.Skeleton, anim: ga.Animation, fixes: list, floor: float) -> l
                     t, k = toe_lift(W, ie, it, height)
                     v = W[it][:3, 3] - W[ie][:3, 3]
                     sign = 1.0 if (rot(k, 0.01) @ v)[1] > v[1] else -1.0  # the way that lifts the toe
-                    t = sign * ease[f] * weight(win, f)
+                    t = sign * ease[f] * wt(win, f)
                     clip.set_world_rot(f, W, foot, rot(k, t) @ W[ie][:3, :3])
                     log.append(f"soles {foot} f{f}: {np.degrees(t):+.0f}°")
         elif kind == "rot":
             i = skel.index(fx["bone"])
             for f in frames:
                 W = clip.world(f)
-                R = rot(fx["axis"], np.radians(fx["deg"]) * weight(win, f))
+                R = rot(fx["axis"], np.radians(fx["deg"]) * wt(win, f))
                 clip.set_world_rot(f, W, fx["bone"], W[i][:3, :3] @ R if fx.get("space", "local") == "local" else R @ W[i][:3, :3])
         elif kind == "calm":
             c = clip.col[skel.index(fx["bone"])]
@@ -224,26 +252,71 @@ def apply(skel: ga.Skeleton, anim: ga.Animation, fixes: list, floor: float) -> l
             for f in frames:
                 g = np.exp(-0.5 * ((np.arange(len(q)) - f) / fx.get("sigma", 1.5)) ** 2)
                 m = (g[:, None] * q).sum(0)
-                anim.rotations[f, c] = rs.slerp(q[f], m / np.linalg.norm(m), weight(win, f))
+                anim.rotations[f, c] = rs.slerp(q[f], m / np.linalg.norm(m), wt(win, f))
         elif kind == "hold":
             for bone in fx["bones"]:
                 c = clip.col[skel.index(bone)]
                 q0 = anim.rotations[fx["frame"], c].copy()
                 for f in frames:
                     q = q0 if q0 @ anim.rotations[f, c] >= 0 else -q0
-                    anim.rotations[f, c] = rs.slerp(anim.rotations[f, c], q, weight(win, f))
+                    anim.rotations[f, c] = rs.slerp(anim.rotations[f, c], q, wt(win, f))
         elif kind == "keep":
             for f in frames:
                 W = clip.world(f)
                 for bone in fx["bones"]:
                     i = skel.index(bone)
-                    clip.set_world_rot(f, W, bone, slerp_m(W[i][:3, :3], first[f][i][:3, :3], weight(win, f)))
+                    clip.set_world_rot(f, W, bone, slerp_m(W[i][:3, :3], first[f][i][:3, :3], wt(win, f)))
         elif kind == "raise":
             c = clip.col[0]
             for f in frames:
-                anim.positions[f, c, 1] += fx["cm"] * weight(win, f)
+                anim.positions[f, c, 1] += fx["cm"] * wt(win, f)
+        elif kind == "wrist":
+            top = np.radians(fx.get("max", 10.0))
+            for limb in fx.get("limbs", ["L arm", "R arm"]):
+                fore, hand = LIMBS[limb][1], LIMBS[limb][2]
+                i_fore, i_hand, i_tip = (skel.index(b) for b in (fore, hand, hand.replace("HAND", "FINGER0")))
+                for f in frames:
+                    W = clip.world(f)
+                    d_fore = W[i_hand][:3, 3] - W[i_fore][:3, 3]
+                    d_hand = W[i_tip][:3, 3] - W[i_hand][:3, 3]
+                    bend = np.arccos(np.clip(d_fore @ d_hand / np.linalg.norm(d_fore) / np.linalg.norm(d_hand), -1, 1))
+                    if bend <= top:
+                        continue
+                    k = np.cross(d_hand, d_fore)  # a turn about it brings the hand towards the forearm's line
+                    t = (bend - top) * wt(win, f)
+                    clip.set_world_rot(f, W, hand, rot(k / np.linalg.norm(k), t) @ W[i_hand][:3, :3])
+                    log.append(f"wrist {hand} f{f}: {np.degrees(bend):.0f}° -> {np.degrees(bend - t):.0f}°")
+        elif kind == "pelvis":
+            # the hips' roll (one hip up, the other down, seen from the front) kept to the share `roll` of its swing
+            # about the mean; the trunk keeps its turn and the legs reach the same feet, so only the hips move
+            i_root, i_pel = skel.index("BIP01"), skel.index("BIP01 PELVIS")
+            i_lt, i_rt = skel.index("BIP01 L THIGH"), skel.index("BIP01 R THIGH")
+            ahead = clip.world(anim.frame_count - 1)[i_root][:3, 3] - clip.world(0)[i_root][:3, 3]
+            ahead[1] = 0.0
+            ahead = np.asarray(fx["axis"], float) if "axis" in fx else ahead / np.linalg.norm(ahead)
+            side = np.cross(UP, ahead)
+            rolls = np.array([hip_roll(clip.world(f), i_lt, i_rt, side) for f in range(count)])
+            mean = rolls.mean()
+            if ((clip.world(0)[i_lt][:3, 3] - clip.world(0)[i_rt][:3, 3]) @ side) < 0:
+                ahead = -ahead  # the turn below must lower the left hip when the roll is positive
+            for f in frames:
+                W = clip.world(f)
+                feet = {limb: (W[skel.index(LIMBS[limb][2])][:3, 3].copy(), W[skel.index(LIMBS[limb][2])][:3, :3].copy())
+                        for limb in ("L leg", "R leg")}
+                trunk = W[skel.index("BIP01 SPINE")][:3, :3].copy()
+                t = (1 - fx["roll"]) * (rolls[f] - mean) * wt(win, f)
+                clip.set_world_rot(f, W, "BIP01 PELVIS", rot(ahead, -t) @ W[i_pel][:3, :3])
+                clip.set_world_rot(f, W, "BIP01 SPINE", trunk)
+                for limb, (at, turn) in feet.items():
+                    two_bone(clip, f, W, limb, at, turn)
+                log.append(f"pelvis f{f}: roll {np.degrees(rolls[f] - mean):+.1f}° -> "
+                           f"{np.degrees(hip_roll(W, i_lt, i_rt, side) - mean):+.1f}°")
         else:
             raise SystemExit(f"unknown fix kind {kind}")
+    if cycle:  # the seam frame is the first frame again, moved by the travel
+        anim.rotations[cycle] = anim.rotations[0]
+        anim.positions[cycle] = anim.positions[0]
+        anim.positions[cycle, 0] = anim.positions[0, 0] + travel
     return log
 
 
@@ -259,10 +332,15 @@ def main():
     skel = ga.read_skeleton(B / "HUMANS.MDH.json")
     spec = json.loads(fixes_path.read_text())
     orig, anim = ga.read_animation(src), ga.read_animation(src)
-    log = apply(skel, anim, spec["fixes"], floor_of(skel, ga.read_animation(B / f"{spec['stance']}.MAN.json")))
-    outside = [f for f in range(anim.frame_count) if all(weight(window_of(fx), f) == 0 for fx in spec["fixes"])]
+    cycle = anim.frame_count - 1 if spec.get("loop") else 0
+    log = apply(skel, anim, spec["fixes"], floor_of(skel, ga.read_animation(B / f"{spec['stance']}.MAN.json")), cycle)
+    count = cycle or anim.frame_count
+    outside = [f for f in range(count) if all(weight_at(window_of(fx), f, cycle) == 0 for fx in spec["fixes"])]
     still = np.ones(anim.positions.shape[:2], bool)  # only `raise` moves a position: the root's, in its window
-    still[[f for fx in spec["fixes"] if fx["kind"] == "raise" for f in range(anim.frame_count) if weight(window_of(fx), f) > 0], 0] = False
+    still[[f for fx in spec["fixes"] if fx["kind"] == "raise" for f in range(count) if weight_at(window_of(fx), f, cycle) > 0], 0] = False
+    if cycle:  # the seam frame follows the first
+        still[cycle] = still[0]
+        outside += [cycle] if 0 in outside else []
     assert np.array_equal(orig.rotations[outside], anim.rotations[outside]) and np.array_equal(orig.positions[still], anim.positions[still])
     assert np.array_equal(orig.positions[:, 0, [0, 2]], anim.positions[:, 0, [0, 2]])  # the path is the same
     ga.write_animation(out, anim, f"fix_layer:{src.name} {fixes_path.name}")
