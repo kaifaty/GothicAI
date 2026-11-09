@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import math
+import re
 import struct
 
-from .base import ChunkCallback, TtsError, Voice
+from .base import ChunkCallback, TtsError, Voice, WordsCallback
 
 
 def _flag(v: str | bool) -> bool:
@@ -32,14 +33,26 @@ class FakeProvider:
         if self.fail:
             raise TtsError("fake provider failure")
 
-    async def synthesize(self, text: str, voice: Voice, on_chunk: ChunkCallback) -> float:
+    async def synthesize(
+        self, text: str, voice: Voice, on_chunk: ChunkCallback, on_words: WordsCallback | None = None,
+    ) -> float:
         self.calls.append((text, voice))
         await asyncio.sleep(self.delay)
         if self.fail:
             raise TtsError("fake provider failure")
         n = int(len(text) * self.ms_per_char / 1000 * self.rate)
         pcm = struct.pack(f"<{n}h", *(int(3000 * math.sin(i * self.tone_phase_step)) for i in range(n)))
+        words = [
+            (m.group(), m.start() / len(text) * n / self.rate, m.end() / len(text) * n / self.rate)
+            for m in re.finditer(r"\S+", text)
+        ]
         for i in range(0, len(pcm), 3200):
+            if on_words is not None:
+                current = [
+                    word for word in words if i / 2 / self.rate <= word[1] < (i + 3200) / 2 / self.rate
+                ]
+                if current:
+                    await on_words(current)
             await on_chunk(pcm[i : i + 3200])
         return n / self.rate
 

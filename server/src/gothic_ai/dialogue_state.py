@@ -141,7 +141,8 @@ class TurnExtension(Protocol):
         ...
 
 
-Voice = tuple[int, list[bytes], float]  # a line's whole voice: sample rate, 16-bit mono PCM chunks, seconds
+# A line's whole voice: sample rate, (PCM, subtitle word timings) chunks, seconds.
+Voice = tuple[int, list[tuple[bytes, list[tuple[int, float, float]] | None]], float]
 
 
 @dataclass

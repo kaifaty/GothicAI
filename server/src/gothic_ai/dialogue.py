@@ -158,7 +158,7 @@ from .protocol import (
     Snapshot,
 )
 from .trace import StepTrace, TraceWriter, TurnTrace
-from .tts import TtsClient, TtsError
+from .tts import TtsClient, TtsError, WordMatcher, WordTiming
 
 if TYPE_CHECKING:
     from .perception import Sight
@@ -1006,6 +1006,14 @@ class DialogueManager(
                 if line in conv.hushed:
                     continue  # the hero interrupted the npc before this line
                 if time.monotonic() >= self._tts_paused_until:
+                    matcher = WordMatcher(text)
+                    pending_words: list[tuple[int, float, float]] = []
+
+                    async def words(
+                        timings: list[WordTiming], matcher: WordMatcher = matcher,
+                        pending_words: list[tuple[int, float, float]] = pending_words,
+                    ) -> None:
+                        pending_words.extend(matcher.match(timings))
 
                     async def start(
                         rate: int,
@@ -1049,12 +1057,19 @@ class DialogueManager(
                         self._svm_started(conv, line)
                         self._bark_started(conv, line)
 
-                    async def chunk(pcm: bytes, line: str = line) -> None:
+                    async def chunk(
+                        pcm: bytes, line: str = line,
+                        pending_words: list[tuple[int, float, float]] = pending_words,
+                    ) -> None:
                         if line in conv.hushed:
                             return
                         await self.link.send(
-                            SayAudioCmd(npc=conv.npc, line=line, data=base64.b64encode(pcm).decode())
+                            SayAudioCmd(
+                                npc=conv.npc, line=line, data=base64.b64encode(pcm).decode(),
+                                words=pending_words.copy() or None,
+                            )
                         )
+                        pending_words.clear()
 
                     try:
                         speech = await self.tts.stream(
@@ -1064,7 +1079,10 @@ class DialogueManager(
                             start,
                             chunk,
                             MOOD_DELIVERY[mood] if mood else "",
+                            on_words=words,
                         )
+                        if pending_words:
+                            await chunk(b"")
                         self._audio[line] = speech.audio_s
                         await self.link.send(
                             SayEndCmd(npc=conv.npc, line=line, audio_s=round(speech.audio_s, 3))

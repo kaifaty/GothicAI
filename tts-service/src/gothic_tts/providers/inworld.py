@@ -25,7 +25,7 @@ from typing import Any
 
 import httpx
 
-from .base import ChunkCallback, TtsError, Voice
+from .base import ChunkCallback, TtsError, Voice, WordsCallback
 
 log = logging.getLogger(__name__)
 
@@ -63,6 +63,7 @@ class InworldTTS:
         api_key_env: str = "INWORLD_API_KEY",
         timeout: str | float = 10.0,
         keep_warm: str | float = KEEP_WARM_S,
+        timestamps: str | bool = True,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self.model = model
@@ -70,6 +71,7 @@ class InworldTTS:
         self.language = language
         self.rate = int(rate)
         self.delivery = delivery  # STABLE / BALANCED / CREATIVE (TTS-2 only)
+        self.timestamps = timestamps in (True, "1", "true", "yes")
         self.cache = Path(cache)
         self.base_url = base_url.rstrip("/")
         self.api_key_env = api_key_env
@@ -133,19 +135,21 @@ class InworldTTS:
             except TtsError as err:  # a line will find out too, and the synthesizer handles that
                 log.debug("inworld: keep-warm request failed: %s", err)
 
-    async def synthesize(self, text: str, voice: Voice, on_chunk: ChunkCallback) -> float:
+    async def synthesize(
+        self, text: str, voice: Voice, on_chunk: ChunkCallback, on_words: WordsCallback | None = None,
+    ) -> float:
         self._start_keeper()
         preset = voice.preset or self.voice
         if preset:
-            return await self._stream(text, preset, self._instruction(voice, preset=True), on_chunk)
+            return await self._stream(text, preset, self._instruction(voice, preset=True), on_chunk, on_words)
         voice_id = await self._library(voice)
         instruction = self._instruction(voice, preset=False)  # the description is in the voice itself
         try:
-            return await self._stream(text, voice_id, instruction, on_chunk)
+            return await self._stream(text, voice_id, instruction, on_chunk, on_words)
         except _UnknownVoice:
             log.warning("inworld: voice %s of %s is gone, making it again", voice_id, voice.id)
             self._forget(voice.id)
-            return await self._stream(text, await self._library(voice), instruction, on_chunk)
+            return await self._stream(text, await self._library(voice), instruction, on_chunk, on_words)
 
     async def _library(self, voice: Voice) -> str:
         return await (self._cloned(voice) if voice.sample else self._designed(voice))
@@ -166,11 +170,17 @@ class InworldTTS:
         }
         if instruction:
             body["instruction"] = instruction
+        if self.timestamps:
+            body["timestampType"] = "WORD"
+            body["timestampTransportStrategy"] = "ASYNC"
         if self.delivery and self.steerable:
             body["deliveryMode"] = self.delivery.upper()
         return body
 
-    async def _stream(self, text: str, voice_id: str, instruction: str, on_chunk: ChunkCallback) -> float:
+    async def _stream(
+        self, text: str, voice_id: str, instruction: str, on_chunk: ChunkCallback,
+        on_words: WordsCallback | None = None,
+    ) -> float:
         body = self._body(text, voice_id, instruction)
         size = 0
         self._used = time.monotonic()
@@ -189,7 +199,27 @@ class InworldTTS:
                         if isinstance(failure, dict):
                             failure = failure.get("message", failure)
                         raise TtsError(f"inworld: {failure}")
-                    data = carry + base64.b64decode(msg.get("result", {}).get("audioContent", ""))
+                    result = msg.get("result", {})
+                    alignment = result.get("timestampInfo", {}).get("wordAlignment", {})
+                    tokens = alignment.get("words", [])
+                    starts = alignment.get("wordStartTimeSeconds", [])
+                    ends = alignment.get("wordEndTimeSeconds", [])
+                    # Both delivery strategies use absolute times from the line's start.
+                    if len(tokens) == len(starts) == len(ends):
+                        words = [
+                            (word, float(start), float(end))
+                            for word, start, end in zip(tokens, starts, ends, strict=True)
+                            if any(c.isalnum() for c in word)
+                        ]
+                    else:
+                        log.warning(
+                            "inworld: skipping word timestamps with mismatched array lengths (%d/%d/%d)",
+                            len(tokens), len(starts), len(ends),
+                        )
+                        words = []
+                    if words and on_words is not None:
+                        await on_words(words)
+                    data = carry + base64.b64decode(result.get("audioContent", ""))
                     cut = len(data) // 2 * 2  # whole samples only
                     carry = data[cut:]
                     if cut:

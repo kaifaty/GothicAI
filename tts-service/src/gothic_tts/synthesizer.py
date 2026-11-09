@@ -20,6 +20,7 @@ from dataclasses import dataclass
 
 from .loudness import Leveler, Line
 from .providers import TtsError, TtsProvider, Voice
+from .providers.base import WordsCallback, WordTiming
 from .providers.inworld import InworldTTS, _UnknownVoice
 
 log = logging.getLogger(__name__)
@@ -84,6 +85,7 @@ class Synthesizer:
         on_chunk: SpeechCallback,
         *,
         original_voice: Voice | None = None,
+        on_words: WordsCallback | None = None,
     ) -> Speech:
         """Raises TtsError when every provider failed or is out (or one failed after it started speaking)."""
         started = time.monotonic()
@@ -96,18 +98,35 @@ class Synthesizer:
             selected = original_voice if original_voice is not None and p.supports_cloning else voice
             first: float | None = None
             line = leveler.start(p.name, selected.id, p.rate) if leveler is not None else None
+            pending_words: list[WordTiming] = []
 
-            async def chunk(pcm: bytes, p: TtsProvider = p, line: Line | None = line) -> None:
+            async def words(timings: list[WordTiming], pending_words=pending_words) -> None:
+                pending_words.extend(timings)
+                # Providers await their callbacks before returning or moving to a fallback.
+                if first is not None and on_words is not None:  # noqa: B023
+                    await on_words(list(pending_words))
+                    pending_words.clear()
+
+            async def send(pcm: bytes, p: TtsProvider = p, pending_words=pending_words) -> None:
+                if pending_words and on_words is not None:
+                    await on_words(list(pending_words))
+                    pending_words.clear()
+                await on_chunk(pcm, p)
+
+            async def chunk(pcm: bytes, line: Line | None = line) -> None:
                 nonlocal first
                 if first is None:
                     first = time.monotonic() - started
                 if line is not None:
                     pcm = line.process(pcm)
                 if pcm:
-                    await on_chunk(pcm, p)
+                    await send(pcm)
 
             try:
-                audio_s = await p.synthesize(text, selected, chunk)
+                if on_words is None:
+                    audio_s = await p.synthesize(text, selected, chunk)
+                else:
+                    audio_s = await p.synthesize(text, selected, chunk, on_words=words)
             except TtsError as err:
                 if (
                     selected is original_voice and first is None
@@ -125,7 +144,7 @@ class Synthesizer:
             gain = ""
             if leveler is not None and line is not None:
                 if tail := line.flush():
-                    await on_chunk(tail, p)
+                    await send(tail)
                 if not selected.style:
                     leveler.learn(p.name, selected.id, line)
                 gain = f", {line.gain_db:+.1f} dB"
