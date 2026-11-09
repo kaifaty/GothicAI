@@ -2016,7 +2016,6 @@ void waterFilmFraming(World& world,uint32_t width,uint32_t height);
 void loadScenario();
 void run(World& w,Npc& pl,PlayerControl& ctrl);
 void stopRecording();
-void expandForeach(size_t at,World& w,Npc& pl);
 void writeHeartbeat(const World& world);
 void finish();
 void writeRow(Npc& pl);

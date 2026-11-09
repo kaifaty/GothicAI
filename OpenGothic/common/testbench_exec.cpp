@@ -44,10 +44,6 @@ void replaceAll(std::string& s, std::string_view from, std::string_view to) {
     s.replace(p,from.size(),to);
   }
 
-}
-
-namespace testbench_detail {
-
 // foreach slope <min deg> <max deg> <count> | foreach stairs <count> | foreach wp <name part> <count>
 // ... end: the body runs at each spot, after a teleport; $NAME, $I, $ANGLE are replaced
 void expandForeach(size_t at, World& w, Npc& pl) {
@@ -96,6 +92,10 @@ void expandForeach(size_t at, World& w, Npc& pl) {
   bench.prog.insert(bench.prog.begin()+long(at),out.begin(),out.end());
   bench.pc = at;
   }
+
+}
+
+namespace testbench_detail {
 
 // This fixture changes only preparation. After the native stand-up is queued,
 // NPC samples and completion checks are passive: no path, state or movement command.
