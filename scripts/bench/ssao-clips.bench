@@ -1,4 +1,4 @@
-# SSAO deinterleave (reports/engine/2026-11-08-ssao-deinterleave): the same clips before and after, judged side by
+# SSAO deinterleave (reports/engine/2026-11-08-ssao-deinterleave) and SSAO over frames: the same clips before and after, judged side by
 # side as clips. Places where AO shows: eaves, corners and people in the market, a slow camera turn by the roofs
 # (does the 2x2 pattern swim), the forest road, the candle-lit harbour house.
 #   TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=ryzen scripts/bench.sh scripts/bench/ssao-clips.bench
@@ -59,4 +59,23 @@ rec ssao-interior
 wait 3500
 cam world 160 170 180
 wait 3500
+stop
+# 5. A moving occluder over still surfaces (SSAO over frames, reports/engine/2026-11-08-ssao-temporal): the hero walks
+# along the shop front past the stall while the camera stands, then it turns after him. Look for the dark contact
+# shade left behind his feet and body.
+cam cut
+set time 12 0
+goto NW_CITY_MERCHANT_TRADE_04
+watch player
+walkmode walk
+cam look 350
+cam world 450 200 300
+wait 10000
+cam hold
+walkto NW_CITY_MERCHANT_SHOP01_FRONT_03
+wait 300
+rec ssao-trail
+wait 4000
+cam fixed
+wait 4000
 stop
