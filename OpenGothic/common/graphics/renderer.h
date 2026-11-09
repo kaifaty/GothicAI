@@ -281,7 +281,7 @@ class Renderer final {
       const uint32_t            atlasDim  = 256; // sqrt(maxProbes)
       const uint32_t            maxProbes = atlasDim*atlasDim; // 65536
 
-      Tempest::StorageBuffer    voteTable, hashTable, freeList;
+      Tempest::StorageBuffer    voteTable, hashTable, freeList, newList, voteTiles;
       Tempest::StorageBuffer    probes;
       Tempest::StorageImage     probesGBuffDiff;
       Tempest::StorageImage     probesGBuffNorm;
@@ -291,6 +291,7 @@ class Renderer final {
       Tempest::StorageImage     probesRadiance;     // R32UI, RGB9E5: the radiance of each sample, relit in turns
       uint32_t                  frame    = 0;       // turns the samples relit in a frame
       uint64_t                  lastTick = 0;       // the world's tick of the last lighting, for the blend over time
+      float                     frameTime = 0;      // smoothed world time of a frame, s: how many samples to relight
       // the counters of probe_stats (live probes, traced in the frame), read back a frame slot later (FrameProfile)
       Tempest::StorageBuffer    stats[Resources::MaxFramesInFlight];
       bool                      statsWritten[Resources::MaxFramesInFlight] = {};

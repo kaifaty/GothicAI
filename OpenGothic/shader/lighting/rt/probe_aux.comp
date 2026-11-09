@@ -18,6 +18,8 @@ layout(binding = 3, std430) buffer Fbo0 { int cursor; uint list[]; } freeList;
 // read back by the CPU a frame slot later (FrameProfile: gi_probes_live, gi_probes_traced)
 layout(binding = 4, std430) writeonly buffer Stats { uint live; uint traced; uint slots; uint freeSlots; } stats;
 #endif
+layout(binding = 5, std430) buffer Nbo  { uint newList[]; };   // probes to trace, probe_allocation.comp
+layout(binding = 6, std430) buffer Tbo  { uint voteTiles[]; }; // screen tiles with a vote, probe_allocation.comp
 
 void hashmapInsert(const uint probeId) {
   const vec3 gridPos = probe[probeId].pos/probeGridStep;
@@ -35,6 +37,8 @@ void main_init() {
     probeHeader.iterator    = 0;
     probeHeader.iterator2   = 0;
     probeHeader.tracedCount = 0;
+    probeHeader.newCount    = 1; // the sky probe
+    newList[0]              = 0;
     freeList.cursor         = 0;
 
     Probe p;
@@ -51,6 +55,9 @@ void main_clear() {
 
   if(threadID<voteTable.length()) {
     voteTable[threadID] = 0xFFFFFFFF;
+    }
+  if(threadID<voteTiles.length()) {
+    voteTiles[threadID] = 0;
     }
 
   if(threadID==0) {
@@ -75,12 +82,15 @@ void main_prune() {
   if(probeId>=probeHeader.count)
     return;
 
-  if(probeId==0)
-    return; // sky
+  if(probeId==0) {
+    probe[0].bits &= ~NEW_BIT; // the sky, traced once
+    return;
+    }
 
   probe[probeId].pNext = 0xFFFFFFFF;
   if((probe[probeId].bits & REUSE_BIT)!=0) {
-    probe[probeId].bits &= ~(REUSE_BIT | UNUSED_BIT);
+    // traced in an earlier frame: no longer new (probe_trace.comp sets the bit)
+    probe[probeId].bits &= ~(REUSE_BIT | UNUSED_BIT | NEW_BIT);
     return;
     }
 
@@ -91,6 +101,8 @@ void main_prune() {
 
 void main_mkHash() {
   const uint probeId = gl_GlobalInvocationID.x;
+  if(probeId==0)
+    probeHeader.newCount = 0; // traced already, the next allocation lists anew
   if(probeId>=probeHeader.count)
     return;
 

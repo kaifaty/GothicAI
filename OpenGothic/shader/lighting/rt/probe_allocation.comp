@@ -21,6 +21,8 @@ layout(binding = 4, std430) buffer          Hbo0 { uint voteTable[]; };
 layout(binding = 5, std430) readonly buffer Hbo  { uint hashTable[]; };
 layout(binding = 6, std430) buffer          Pbo  { ProbesHeader probeHeader; Probe probe[]; };
 layout(binding = 7, std430) buffer          Fbo0 { int cursor; uint list[]; } freeList;
+layout(binding = 8, std430) buffer          Nbo  { uint newList[]; };   // allocated this frame: probe_trace.comp
+layout(binding = 9, std430) buffer          Tbo  { uint voteTiles[]; }; // a vote in the workgroup's tile
 
 shared ivec3 pLow, pHigh;
 shared uint  tidSh;
@@ -74,6 +76,8 @@ void processProbe(ivec3 gridPos, vec3 pos, int lod, vec3 pixelPos, vec3 pixelNor
 #if defined(VOTE)
   if(reuseProbe(h, pos, lod))
     return;
+  // the allocation pass skips the tiles without a vote
+  voteTiles[gl_WorkGroupID.x + gl_WorkGroupID.y*gl_NumWorkGroups.x] = 1;
   // the table only goes down: a smaller vote seen already makes this one useless
   if(voteTable[h] > threadId)
     atomicMin(voteTable[h], threadId);
@@ -91,6 +95,7 @@ void processProbe(ivec3 gridPos, vec3 pos, int lod, vec3 pixelPos, vec3 pixelNor
   p.normal      = pixelNorm;
   p.bits        = 0;
   probe[cursor] = p;
+  newList[atomicAdd(probeHeader.newCount, 1)] = cursor;
 #endif
   }
 
@@ -107,6 +112,11 @@ void probeLoop(in probeQuery pq, const vec3 basePos, const vec3 norm, const int 
   }
 
 void main() {
+#if defined(ALLOC)
+  // no pixel of this tile voted (a missing probe): nothing to allocate here, the same in the whole workgroup
+  if(voteTiles[gl_WorkGroupID.x + gl_WorkGroupID.y*gl_NumWorkGroups.x]==0)
+    return;
+#endif
   tidSh = 0xFFFFFFFF;
   barrier();
 

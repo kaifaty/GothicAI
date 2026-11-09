@@ -57,7 +57,8 @@ struct ProbesHeader { // 64 bytes
   uint iterator2;
   uint tracedCount;
   uint watch; //debug
-  uint padd1[11];
+  uint newCount; // probes allocated this frame, listed for probe_trace.comp
+  uint padd1[10];
   };
 
 struct Probe { // 32 bytes

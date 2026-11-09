@@ -17,15 +17,16 @@
 // Light at the points the rays of a probe hit (gbuffer of probe_trace.comp), as the path tracer lights a hit
 // (lighting/pt/pathtrace.frag): the sun and the lamps of the lights tree with a shadow ray, the sky on a miss, and
 // the bounce off the probes themselves from the last frame instead of the path's next bounces.
-// Every frame a sample of an old probe is relit once in relitPeriod frames, the others keep their radiance in
-// probesRadiance; a new probe relights all its samples. The probe's ambient cube is the integral of all its
-// samples, blended over time with the last frame's cube (reset on a sharp change, as in DDGI).
+// RELIGHT (probe_relight.comp): a thread relights one sample of an old probe, each sample once in relitPeriod
+// frames, into its radiance in probesRadiance. Otherwise (probe_lighting.comp) a workgroup integrates a probe's
+// 256 samples into its ambient cube, blended over time with the last frame's cube (reset on a sharp change, as in
+// DDGI); a new probe has no radiance yet, it lights all its samples here.
 
 layout(primitive_culling);
 layout(local_size_x = 64) in;
 
 const uint  samplesCount = 4;
-const uint  samplesTotal = gl_WorkGroupSize.x*samplesCount;
+const uint  samplesTotal = 256;
 const uint  NoSample     = 0xFFFFFFFFu;  // probesRadiance: the sample does not count (a ray down into the void)
 const float TMax         = 500*100;      // the shadow rays of the path tracer
 const vec3  NightSky     = vec3(0.3, 0.26, 1)*0.15; // pathtrace.frag: added to the sky of a miss
@@ -53,13 +54,14 @@ layout(binding = 14, std430) buffer Pbo { ProbesHeader probeHeader; Probe probe[
 layout(binding = 15, std430) readonly buffer BVH { PTreeNode node[]; } lightsTree;
 layout(binding = 16, r32ui) uniform restrict uimage2D probesRadiance;
 
+#if !defined(RELIGHT)
 shared vec4 samples[gl_WorkGroupSize.x][3][2]; // 6 Kb
 #if defined(MATERIAL_MAPS)
 // Keep sky visibility separate from the counts used by the RGB integration.
 shared vec2 skySamples[gl_WorkGroupSize.x][3][2];
 #endif
 shared uint shProbeId;
-shared vec3 selfPrev[6]; // the probe's own cube of the last frame (axis*2 + side)
+#endif
 
 float luma(vec3 c) {
   return dot(c, vec3(0.2126, 0.7152, 0.0722));
@@ -145,12 +147,9 @@ vec3 skyRadiance(vec3 origin, vec3 dir) {
   return sky + NightSky;
   }
 
-vec3 readSelf(vec3 n) {
-  vec3 ret = vec3(0);
-  ret += selfPrev[0 + (n.x>=0 ? 1 : 0)] * (n.x*n.x);
-  ret += selfPrev[2 + (n.y>=0 ? 1 : 0)] * (n.y*n.y);
-  ret += selfPrev[4 + (n.z>=0 ? 1 : 0)] * (n.z*n.z);
-  return ret;
+vec3 readSelf(uint probeId, bool hasPrev, vec3 n) {
+  // the probe's own light of the last frame in the hit's direction; a new probe has none
+  return hasPrev ? probeReadAmbient(probesLightingPrev, probeId, n, vec3(0)) : vec3(0);
   }
 
 bool findProbe(vec3 pos, vec3 norm, out uint id) {
@@ -192,68 +191,16 @@ bool findProbe(vec3 pos, vec3 norm, out uint id) {
   return false;
   }
 
-bool traceHit(vec3 origin, vec3 dir, out vec3 albedo, out vec3 norm, out float rayT) {
-  // a ray of probe_trace.comp: front faces, the alpha test of vegetation
-  rayQueryEXT rayQuery;
-  rayQueryInitializeEXT(rayQuery, topLevelAS, gl_RayFlagsSkipAABBEXT | gl_RayFlagsCullBackFacingTrianglesEXT, 0xFF,
-                        origin, 0.0, dir, probeRayDistance);
-  rayQueryProceedShadow(rayQuery);
-  if(rayQueryGetIntersectionTypeEXT(rayQuery, true) == gl_RayQueryCommittedIntersectionNoneEXT)
-    return false;
-
-  const HitDesc hit   = pullCommitedHitDesc(rayQuery);
-  const uint    id    = hit.instanceId;
-  const uvec3   index = pullTrinagleIds(id, hit.primitiveId);
-  const vec3    b     = hit.baryCoord;
-  const vec2    uv    = b.x*pullTexcoord(id,index.x) + b.y*pullTexcoord(id,index.y) + b.z*pullTexcoord(id,index.z);
-  const vec3    nr    = b.x*pullNormal(id,index.x)   + b.y*pullNormal(id,index.y)   + b.z*pullNormal(id,index.z);
-
-  rayT = rayQueryGetIntersectionTEXT(rayQuery, true);
-  norm = normalize(mat3(rayQueryGetIntersectionObjectToWorldEXT(rayQuery, true))*nr);
-  // the mip of the path tracer's later bounces (pathtrace_common.glsl, rayPathTextureLOD)
-  const float mip = log2(max(rayT, 1.0)/500.0) - log2(max(abs(dot(dir, norm)), 0.05));
-  albedo = textureAlbedo(textureLod(sampler2D(textures[nonuniformEXT(id)], smp), uv, max(mip, 0.0)).rgb);
-  return true;
-  }
-
-vec3 pathBounce(vec3 pos, vec3 norm, inout Random rng) {
-  // no probe of the last frame at the hit (off the screen or hidden): one more bounce of the path, cosine-weighted,
-  // lit as the hit itself; a single sample of the irradiance over pi
-  const vec3 dir = randCosWeightedHemisphereDirection(norm, rng);
-  const vec3 org = pos + norm*0.5;
-  vec3  albedo, n2;
-  float t;
-  if(!traceHit(org, dir, albedo, n2, t))
-    return skyRadiance(pos, dir);
-
-  const vec3 p2 = org + dir*t;
-  if(dot(n2, dir)>0)
-    n2 = -n2;
-  albedo = min(albedo, vec3(0.95));
-  const vec3 at = p2 + n2*0.5;
-
-  vec3 direct = vec3(0);
-  direct += sunLight(n2, at) * scene.sunColor;
-  direct += localLight(n2, at, randf(rng)) * (max(1.0, scene.exposure) / scene.exposure);
-
-  uint id = 0;
-  const vec3 ind = findProbe(p2, n2, id) ? probeReadAmbient(probesLightingPrev, id, n2, vec3(0)) : readSelf(n2);
-  return albedo*direct*Fd_Lambert + albedo*ind;
-  }
-
-vec3 bounce(vec3 pos, vec3 norm, inout Random rng) {
-  // the light of the hit's own surroundings: the probe there, else one more bounce of the path
+vec3 bounce(vec3 pos, vec3 norm, uint probeId, bool hasPrev) {
+  // The light of the hit's own surroundings: the probe there, else this probe's own in the hit's direction.
+  // One more ray from the hit instead changed the hut at noon by 1 % and cost as much as the rest of the lighting.
   uint id = 0;
   if(findProbe(pos, norm, id))
     return probeReadAmbient(probesLightingPrev, id, norm, vec3(0));
-#if defined(SELF_BOUNCE)
-  return readSelf(norm);
-#else
-  return pathBounce(pos, norm, rng);
-#endif
+  return readSelf(probeId, hasPrev, norm);
   }
 
-vec4 shadeSample(const vec3 rayOrigin, const vec3 rayDirection, uint probeId, uint sampleId) {
+vec4 shadeSample(const vec3 rayOrigin, const vec3 rayDirection, uint probeId, uint sampleId, bool hasPrev) {
   const ivec2 uv     = gbufferCoord(probeId, sampleId);
   const vec4  diff   = texelFetch(gbufferDiff, uv, 0);
   const uint  bits   = uint(diff.a*255.0+0.5);
@@ -287,11 +234,26 @@ vec4 shadeSample(const vec3 rayOrigin, const vec3 rayDirection, uint probeId, ui
   direct += localLight(norm, at, key) * (max(1.0, scene.exposure) / scene.exposure);
 
   vec3 hit = albedo * direct * Fd_Lambert;
-  Random rng = srand(uvec3(seed, sampleId, 0)); // the same path every frame, as the lamp
-  hit += albedo * bounce(pos, norm, rng); // Fd_Lambert is in the probes' integration
+  hit += albedo * bounce(pos, norm, probeId, hasPrev); // Fd_Lambert is in the probes' integration
   return vec4(hit, 1);
   }
 
+#if defined(RELIGHT)
+void main() {
+  const uint perProbe = samplesTotal/relitPeriod;
+  const uint probeId  = gl_GlobalInvocationID.x/perProbe;
+  if(probeId>=probeHeader.count)
+    return;
+  const uint bits = probe[probeId].bits;
+  if((bits & (UNUSED_BIT | NEW_BIT))!=0 || (bits & TRACED_BIT)==0)
+    return; // a new probe lights all its samples in probe_lighting.comp
+
+  const uint sampleId = (gl_GlobalInvocationID.x%perProbe)*relitPeriod + (frameId + probeId)%relitPeriod;
+  const vec3 dir      = sampleSphere(sampleId, samplesTotal, 0);
+  const vec4 clr      = shadeSample(probe[probeId].pos, dir, probeId, sampleId, true);
+  imageStore(probesRadiance, gbufferCoord(probeId, sampleId), uvec4(clr.a>0 ? packRGB9E5(clr.rgb) : NoSample));
+  }
+#else
 void storeSample(vec3 dir, vec4 val) {
   if(val.a==0)
     return;
@@ -323,7 +285,6 @@ float resolveSkyVisibility(vec2 sampleWeights) {
 
 void processLighting(const uint probeId, const bool fresh) {
   const vec3 origin = probe[probeId].pos;
-  const uint phase  = (frameId + probeId) % relitPeriod;
 
   for(uint i=0; i<samplesCount; ++i) {
     const uint  sampleId = gl_LocalInvocationIndex*samplesCount+i;
@@ -331,8 +292,8 @@ void processLighting(const uint probeId, const bool fresh) {
     const ivec2 uv       = gbufferCoord(probeId, sampleId);
 
     vec4 clr = vec4(0);
-    if(fresh || (sampleId % relitPeriod)==phase) {
-      clr = shadeSample(origin, dir, probeId, sampleId);
+    if(fresh) {
+      clr = shadeSample(origin, dir, probeId, sampleId, false);
       imageStore(probesRadiance, uv, uvec4(clr.a>0 ? packRGB9E5(clr.rgb) : NoSample));
       } else {
       const uint v = imageLoad(probesRadiance, uv).r;
@@ -366,10 +327,6 @@ void processProbe(const uint probeId) {
     skySamples[laneId][i][0] = vec2(0);
     skySamples[laneId][i][1] = vec2(0);
 #endif
-    }
-  if(laneId<6) {
-    const ivec2 uv = lightBufferCoord(probeId) + ivec2(laneId/2, laneId%2);
-    selfPrev[laneId] = fresh ? vec3(0) : texelFetch(probesLightingPrev, uv, 0).rgb;
     }
   barrier();
 
@@ -411,7 +368,7 @@ void processProbe(const uint probeId) {
 
     vec3 ret = est;
     if(!fresh) {
-      const vec3  hist   = selfPrev[laneId];
+      const vec3  hist   = texelFetch(probesLightingPrev, lightBufferCoord(probeId)+ivec2(axis,side), 0).rgb;
       const float lh     = luma(hist);
       const float ln     = luma(est);
       const float eps    = 0.0005/max(scene.exposure, 1e-6); // dark on the screen: no reset on noise there
@@ -435,3 +392,4 @@ void main() {
     barrier();
     }
   }
+#endif
