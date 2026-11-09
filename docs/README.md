@@ -58,6 +58,8 @@
 
 Физика тонких клинков: `[GAME] item_deepest_contact=1` сохраняет глубину EPA только для `C_Item`; `placed-items-diagnose-{1644,6863}` и варианты `-control` проверяют 300 шагов ON/OFF, контракт — `gothic-physics-contract`. [Отчёт и офлайн-стенд](../reports/physics/2026-10-31-thin-blades/README.md), [текущее поведение](physics.md#как-работает-сейчас).
 
+Клинки ближнего боя и тени тел — в [`collisionworld_melee.cpp`](../OpenGothic/common/physics/collisionworld_melee.cpp), плавучесть и вода — в [`collisionworld_water.cpp`](../OpenGothic/common/physics/collisionworld_water.cpp).
+
 CharacterVirtual героя и NPC и проверка спящих предметов рядом с ними — в [`collisionworld_character.cpp`](../OpenGothic/common/physics/collisionworld_character.cpp); общий `CollisionWorld::Impl` и фильтры — в [`collisionworld_internal.h`](../OpenGothic/common/physics/collisionworld_internal.h).
 
 Ragdoll, физические тела живых NPC, возврат после падения, импульсы заклинаний и стрел — в [`npc_ragdoll.cpp`](../OpenGothic/common/world/objects/npc_ragdoll.cpp).
