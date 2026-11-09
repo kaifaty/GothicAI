@@ -41,8 +41,6 @@ class Renderer final {
       None,
       VolumetricLQ,
       VolumetricHQ,
-      Epipolar,
-      PathTrace,
       };
     Tempest::Size internalResolution(Tempest::Size src) const;
     float         internalResolutionScale() const;
@@ -334,7 +332,6 @@ class Renderer final {
       Tempest::StorageBuffer    pageTblOmni;
       Tempest::StorageBuffer    visibleLights;
 
-      Tempest::StorageImage     fogDbg;
       Tempest::StorageImage     vsmDbg;
 
       uint64_t                  statsTime = 0; // last OPENGOTHIC_VSM_STATS line, ms
