@@ -1,5 +1,6 @@
 // a2f-weights: wav (16 kHz mono) -> per-frame ARKit skin + tongue weights as CSV.
-// usage: a2f-weights <regression|diffusion> <model.json> <identity> <in.wav> <out.csv>
+// usage: a2f-weights <regression|diffusion> <model.json> <identity> <in.wav> <out.csv> [emotion]
+// emotion: one label for the whole line, "anger=0.8,disgust=0.3" with the v3.0 names below; neutral when left out.
 #include "audio2face/audio2face.h"
 #include "audio2x/cuda_utils.h"
 #include "AudioFile.h"
@@ -23,7 +24,7 @@ struct Frame { long long t; std::vector<float> w; };
 struct Sink { std::mutex m; std::vector<Frame> frames; };
 
 int main(int argc, char** argv) {
-  if (argc != 6) { std::cerr << "usage: a2f-weights <regression|diffusion> <model.json> <identity> <in.wav> <out.csv>\n"; return 2; }
+  if (argc != 6 && argc != 7) { std::cerr << "usage: a2f-weights <regression|diffusion> <model.json> <identity> <in.wav> <out.csv> [emotion]\n"; return 2; }
   const std::string mode = argv[1];
   const std::size_t identity = std::strtoul(argv[3], nullptr, 10);
   CHECK_RESULT(nva2x::SetCudaDeviceIfNeeded(0));
@@ -53,8 +54,22 @@ int main(int argc, char** argv) {
   }, &sink));
 
   auto& emo = bundle->GetEmotionAccumulator(0);
-  std::vector<float> neutral(emo.GetEmotionSize(), 0.0f);
-  CHECK_RESULT(emo.Accumulate(0, nva2x::HostTensorFloatConstView{neutral.data(), neutral.size()}, bundle->GetCudaStream().Data()));
+  std::vector<float> emotion(emo.GetEmotionSize(), 0.0f);
+  if (argc == 7) {   // the order of network_info.json "emotions" of v3.0
+    static const char* names[] = {"amazement", "anger", "cheekiness", "disgust", "fear", "grief", "joy", "outofbreath", "pain", "sadness"};
+    CHECK_ERROR(emotion.size() == 10);
+    std::string spec = argv[6];
+    for (std::size_t at = 0; at < spec.size();) {
+      std::size_t end = spec.find(',', at); if (end == std::string::npos) end = spec.size();
+      const std::string item = spec.substr(at, end - at); const std::size_t eq = item.find('=');
+      CHECK_ERROR(eq != std::string::npos);
+      std::size_t k = 0; while (k < 10 && item.compare(0, eq, names[k]) != 0) ++k;
+      CHECK_ERROR(k < 10);
+      emotion[k] = std::strtof(item.c_str() + eq + 1, nullptr);
+      at = end + 1;
+    }
+  }
+  CHECK_RESULT(emo.Accumulate(0, nva2x::HostTensorFloatConstView{emotion.data(), emotion.size()}, bundle->GetCudaStream().Data()));
   CHECK_RESULT(emo.Close());
 
   CHECK_RESULT(bundle->GetAudioAccumulator(0).Accumulate(nva2x::HostTensorFloatConstView{audio.data(), audio.size()}, bundle->GetCudaStream().Data()));
