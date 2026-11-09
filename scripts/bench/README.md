@@ -18,7 +18,7 @@ Their `Water` state and `WaterContext` references to shared bench fields are in 
 Hero and human NPC CharacterVirtual fixtures, observations and helpers live in `common/testbench_character.cpp`.
 Their `Character` state and `CharacterContext` references are in `testbench_internal.h`;
 shared movement samples (`CharacterMoveFrame`) and walkers (`LivingWalker`) are declared there too.
-The independent `ownMeshChest*` family stays in `testbench.cpp`.
+The independent `ownMeshChest*` family lives in `common/testbench_own_mesh.cpp`.
 
 Ground-monster CharacterVirtual fixtures, observations and helpers live in `common/testbench_monster.cpp`.
 Their `MonsterCharacter` state and `MonsterCharacterContext` references are in `testbench_internal.h`.
