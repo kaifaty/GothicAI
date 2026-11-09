@@ -93,6 +93,12 @@ class Animation final {
 
       void                                        setupMoveTr();
       void                                        setupEvents(float fpsRate);
+      // Frames of one cycle when the sequence loops. A loop that carries the body (walk, run, strafe, swim) ends
+      // on the first frame of its next cycle moved by the travel: that is how Gothic's loops are cut and how moveTr
+      // and tr count them (numFrames-1 steps per cycle). Its pose then wraps over numFrames-1 frames too, or it
+      // would stand still on the repeated frame once per cycle while the body moves on. Loops in place wrap over
+      // all frames, as before.
+      uint32_t                                    loopFrames() const;
       // the frame of the sequence an optimal-frame tag (DEF_OPT_FRAME) points at
       uint32_t                                    optimalFrame(int32_t frame) const;
       };
