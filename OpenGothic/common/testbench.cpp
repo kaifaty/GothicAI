@@ -1996,7 +1996,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     event("physics_traces_debug","\"command\":"+jsonStr(command)+",\"sample\":"+value);
     }
   else if(destructionCommand(bench.destruction,destructionContext(),a,w,pl,ctrl)) return;
-  else if(fracturePiecesCommand(bench.fracturePieces,bench.destruction,destructionContext(),bench.cutPending,a,w)) return;
+  else if(fracturePiecesCommand(bench.fracturePieces,bench.destruction,destructionContext(),bench.cutPending,a,w,pl,ctrl)) return;
   else dispatched=false;
   if(dispatched) return;
   dispatched=true;
@@ -3624,7 +3624,7 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
       }
     }
   destructionFields(bench.destruction,destructionContext(),*world);
-  if(!bench.movables.movableMeasuring)fracturePiecesTick(bench.fracturePieces,bench.destruction,destructionContext(),*world);
+  if(!bench.movables.movableMeasuring)fracturePiecesTick(bench.fracturePieces,bench.destruction,destructionContext(),*world,*player,ctrl);
   if(bench.destruction.destructionSupportTrace && bench.destruction.destructionTrace &&
      world->tickCount()-bench.destruction.destructionStart>=bench.destruction.destructionSupportNext) {
     bench.destruction.destructionSupportNext=world->tickCount()-bench.destruction.destructionStart+1000;

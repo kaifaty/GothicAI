@@ -227,6 +227,7 @@ struct RemnantGroup {
   Matrix4x4 transform;
   double volumeShare=0;
   uintptr_t body=0;
+  Vec3 centerOfMass;
   };
 
 std::vector<RemnantGroup> fracturePiecesGroups(World& world,Destruction& destruction,const FractureMesh& mesh) {
@@ -234,7 +235,7 @@ std::vector<RemnantGroup> fracturePiecesGroups(World& world,Destruction& destruc
   for(const auto& part:world.physic()->fragmentSnapshot()) {
     if(!destructionOwns(destruction,part.parentId) || part.piece>=mesh.pieces.size())continue;
     auto found=std::find_if(result.begin(),result.end(),[&](const auto& g){return g.group==part.bondGroup;});
-    if(found==result.end()) {result.push_back({part.bondGroup,{},part.transform,0,part.body});found=result.end()-1;}
+    if(found==result.end()) {result.push_back({part.bondGroup,{},part.transform,0,part.body,part.centerOfMass});found=result.end()-1;}
     found->pieces.push_back(part.piece);
     found->volumeShare+=mesh.pieces[part.piece].volume/mesh.volume;
     }
@@ -242,12 +243,18 @@ std::vector<RemnantGroup> fracturePiecesGroups(World& world,Destruction& destruc
   return result;
   }
 
-// Where the actor stands to strike a group: 75 cm beyond its drawn vertices, facing its middle.
-// A blow lands where the last one opened the group: its loose pieces lie there and the blade
-// passes the breach. From the side of `from` (the first blow's stand) by 30 degree steps, the
-// first side where a ray at half the group's height meets the group's own body first, at most
-// 20 cm inside its outer bound: a wall faces the actor there.
-struct RemnantAim { Vec3 stand,facing,middle; int angle=0; bool clear=false; };
+// Where the actor stands to strike a group. The native forward attack (S_1HATTACK, 1H) brings its
+// blade down onto the top of what stands before the actor at 126 cm forward and 28 cm to the right of
+// its feet (blade log `melee-blade-shadow.jsonl` of the remnant clip, top contacts at 110 cm: 125.8-128.9
+// and 27.3-28.9 cm in six runs). A loose piece the blade meets first stops it, and the group does not
+// break. So, from the side of `from` (the first blow's stand) by 30 degree steps, on the line from that
+// side to the group's centre of mass: by 2 cm from its outer bound inwards, a ray down from above finds
+// the first point of the group's own material. A loose piece found first higher than 30 cm under the
+// group's top, or within 20 cm around that point higher than it, closes the side. The actor stands
+// facing along the line with the blade's landing on that point.
+constexpr float LandingForward=126.f,LandingRight=28.f;
+
+struct RemnantAim { Vec3 stand,facing,middle,landing; int angle=0; bool clear=false; };
 
 RemnantAim remnantAim(World& world,const RemnantGroup& group,const FractureMesh& mesh,const Vec3& from) {
   RemnantAim aim;
@@ -261,22 +268,51 @@ RemnantAim remnantAim(World& world,const RemnantGroup& group,const FractureMesh&
         low=Vec3(std::min(low.x,p.x),std::min(low.y,p.y),std::min(low.z,p.z));
         high=Vec3(std::max(high.x,p.x),std::max(high.y,p.y),std::max(high.z,p.z));
         }
-  aim.middle=(low+high)*.5f;
+  aim.middle=group.centerOfMass;
   Vec3 base(from.x-aim.middle.x,0,from.z-aim.middle.z);
   base=base.length()>1.e-3f?Vec3::normalize(base):Vec3(0,0,-1);
-  const float half=(low.y+high.y)*.5f;
-  for(int step=0;step<12;++step) {
+  const float above=high.y+50.f;
+  // The first body of debris straight down at `at`, and the height where it is met.
+  const auto down=[&](const Vec3& at,float& height) {
+    float distance=-1;
+    const auto id=world.physic()->fragmentRay(Vec3(at.x,above,at.z),Vec3(at.x,low.y-20.f,at.z),&distance);
+    height=above-distance;
+    return id;
+    };
+  const auto place=[&](const Vec3& outward,const Vec3& point) {
+    const Vec3 facing=outward*-1.f,right(facing.z,0,-facing.x);
+    aim.landing=point;aim.facing=facing;
+    aim.stand=point-facing*LandingForward-right*LandingRight;
+    };
+  for(int step=0;step<12 && !aim.clear;++step) {
     const int angle=(step+1)/2*30*(step%2?1:-1);
     const float a=float(angle)*float(M_PI)/180.f;
     const Vec3 outward(base.x*std::cos(a)-base.z*std::sin(a),0,base.x*std::sin(a)+base.z*std::cos(a));
     float reach=0;
     for(const auto& p:points)reach=std::max(reach,Vec3::dotProduct(p-aim.middle,outward));
-    const auto stand=aim.middle+outward*(reach+75.f);
-    float distance=-1;
-    const bool clear=world.physic()->fragmentRay(Vec3(stand.x,half,stand.z),Vec3(aim.middle.x,half,aim.middle.z),&distance)==group.body &&
-                     distance<=95.f;
-    if(step==0 || clear) {aim.stand=stand;aim.facing=outward*-1.f;aim.angle=angle;aim.clear=clear;}
-    if(clear)break;
+    if(step==0)place(outward,aim.middle+outward*reach);
+    for(float s=reach;s>=-reach;s-=2.f) {
+      const auto at=aim.middle+outward*s;
+      float height=0;
+      const auto id=down(at,height);
+      if(id==0)continue;
+      if(id!=group.body) {
+        if(height>high.y-30.f)break;
+        continue;
+        }
+      bool covered=false;
+      const Vec3 across(outward.z,0,-outward.x);
+      for(float u=-20.f;u<=20.f && !covered;u+=10.f)
+        for(float v=-20.f;v<=20.f && !covered;v+=10.f) {
+          float near=0;
+          const auto other=down(at+outward*u+across*v,near);
+          covered=other!=0 && other!=group.body && near>height;
+          }
+      if(covered)break;
+      place(outward,Vec3(at.x,height,at.z));
+      aim.angle=angle;aim.clear=true;
+      break;
+      }
     }
   return aim;
   }
@@ -355,12 +391,126 @@ void fracturePiecesRemnantTick(FracturePieces& state,Destruction& destruction,co
   event("destruction2_remnant_attempt","\"case\":"+jsonStr(destruction.destructionCase)+",\"ordinal\":"+std::to_string(attack.ordinal)+
     ",\"accepted\":"+(accepted?"true":"false")+",\"swing\":"+std::to_string(attack.swings)+",\"actor_cm\":"+ragdollVector(stand)+
     ",\"facing\":"+ragdollVector(aim.facing)+",\"target_middle_cm\":"+ragdollVector(aim.middle)+
-    ",\"side_deg\":"+std::to_string(aim.angle)+",\"clear\":"+(aim.clear?"true":"false")+",\"target_pieces\":"+std::to_string(parts.front().pieces.size())+
+    ",\"side_deg\":"+std::to_string(aim.angle)+",\"clear\":"+(aim.clear?"true":"false")+",\"landing_cm\":"+ragdollVector(aim.landing)+
+    ",\"target_pieces\":"+std::to_string(parts.front().pieces.size())+
     ",\"bodies\":"+std::to_string(parts.size()));
   }
 
-void fracturePiecesTick(FracturePieces& state,Destruction& destruction,const DestructionContext& context,World& world) {
+// The loose pieces of the fixture prop (all but its largest group): piece and world centre.
+std::vector<std::pair<size_t,Vec3>> debrisCentres(World& world,Destruction& destruction,const FractureMesh& mesh,uint32_t largest) {
+  std::vector<std::pair<size_t,Vec3>> result;
+  for(const auto& part:world.physic()->fragmentSnapshot())
+    if(destructionOwns(destruction,part.parentId) && part.piece<mesh.pieces.size() && part.bondGroup!=largest)
+      result.emplace_back(part.piece,apply(part.transform,mesh.pieces[part.piece].center));
+  return result;
+  }
+
+float segmentDistance(const Vec3& a,const Vec3& b,const Vec3& p) {
+  const Vec2 ab(b.x-a.x,b.z-a.z),ap(p.x-a.x,p.z-a.z);
+  const float t=std::clamp(Vec2::dotProduct(ap,ab)/std::max(Vec2::dotProduct(ab,ab),1e-6f),0.f,1.f);
+  return (ap-ab*t).length();
+  }
+
+// One pass of the walk begins: the hero faces `direction` and holds forward.
+void debrisWalkPass(FracturePieces::DebrisWalk& walk,Npc& hero,const Vec3& direction,World& world,Npc& pl,PlayerControl& ctrl,
+                    Destruction& destruction,uint32_t largest) {
+  hero.stopWalking();hero.setDirection(direction);hero.updateTransform();
+  walk.passStart=hero.position();walk.passTime=world.tickCount();
+  walk.progress=0;walk.maxAbove=-1e9f;walk.minAbove=1e9f;walk.noGround=false;
+  walk.debris=debrisCentres(world,destruction,*walk.mesh,largest);
+  exec("press forward",world,pl,ctrl);
+  }
+
+// `destruction2 walk <length>`: after the breaks the hero walks a straight line of `length` cm through
+// the loose pieces and back, holding forward (4 s at most per pass). The line passes the centre of the
+// loose pieces, clear of the largest group (its radius plus 40 cm), along the direction (30 degree
+// steps) that passes most of them within 40 cm. Per pass: progress along the line, the height of the
+// feet over the ground under them, and the loose pieces it moved.
+void fracturePiecesWalkTick(FracturePieces& state,Destruction& destruction,const DestructionContext& context,World& world,Npc& pl,PlayerControl& ctrl) {
+  auto& walk=state.walk;
+  auto* hero=destruction.destructionMeleeActor;
+  if(!walk.running || hero==nullptr)return;
+  const auto along=walk.pass==0?walk.direction:walk.direction*-1.f;
+  const auto pos=hero->position();
+  walk.progress=std::max(walk.progress,Vec3::dotProduct(pos-walk.passStart,along));
+  const auto ground=world.physic()->landRay(pos+Vec3(0,100,0),400);
+  if(ground.hasCol) {
+    walk.maxAbove=std::max(walk.maxAbove,pos.y-ground.v.y);walk.minAbove=std::min(walk.minAbove,pos.y-ground.v.y);
+    }
+  else walk.noGround=true;
+  const uint64_t elapsed=world.tickCount()-walk.passTime;
+  if(walk.progress<walk.length && elapsed<4000)return;
+  exec("release forward",world,pl,ctrl);
+  const auto parts=fracturePiecesGroups(world,destruction,*walk.mesh);
+  const uint32_t largest=parts.empty()?uint32_t(-1):parts.front().group;
+  size_t moved=0;
+  for(const auto& [piece,centre]:debrisCentres(world,destruction,*walk.mesh,largest))
+    for(const auto& [was,before]:walk.debris)
+      if(was==piece && (centre-before).length()>2.f) ++moved;
+  if(walk.passes.size()>1)walk.passes+=',';
+  walk.passes+="{\"pass\":"+std::to_string(walk.pass)+",\"progress_cm\":"+ragdollNumber(walk.progress)+
+    ",\"ratio\":"+ragdollNumber(walk.progress/walk.length)+",\"time_ms\":"+std::to_string(elapsed)+
+    ",\"max_above_ground_cm\":"+ragdollNumber(walk.maxAbove)+",\"min_above_ground_cm\":"+ragdollNumber(walk.minAbove)+
+    ",\"no_ground\":"+(walk.noGround?"true":"false")+",\"moved_pieces\":"+std::to_string(moved)+
+    ",\"end_cm\":"+ragdollVector(pos)+"}";
+  if(walk.pass==0) {
+    walk.pass=1;
+    debrisWalkPass(walk,*hero,walk.direction*-1.f,world,pl,ctrl,destruction,largest);
+    return;
+    }
+  walk.running=false;walk.mesh.reset();context.waitUntil=context.time;
+  event("destruction2_walk","\"case\":"+jsonStr(destruction.destructionCase)+",\"length_cm\":"+ragdollNumber(walk.length)+
+    ",\"start_cm\":"+ragdollVector(walk.start)+",\"direction\":"+ragdollVector(walk.direction)+
+    ",\"pieces_on_path\":"+std::to_string(walk.onPath)+",\"passes\":["+walk.passes+"]");
+  }
+
+bool debrisWalkSetup(FracturePieces& state,Destruction& destruction,const DestructionContext& context,World& w,Npc& pl,PlayerControl& ctrl,float length) {
+  auto& walk=state.walk;
+  walk={};
+  auto* hero=destruction.destructionMeleeActor;
+  for(const auto& body:w.physic()->movableVobSnapshot())
+    if(destructionOwns(destruction,body.id) && body.broken) {walk.mesh=FractureMesh::load(body.visual);break;}
+  if(hero==nullptr || walk.mesh==nullptr || !(walk.mesh->volume>0))return false;
+  const auto parts=fracturePiecesGroups(w,destruction,*walk.mesh);
+  if(parts.size()<2)return false;
+  const auto& remnant=parts.front();
+  const auto debris=debrisCentres(w,destruction,*walk.mesh,remnant.group);
+  Vec3 centre;
+  for(const auto& [piece,c]:debris)centre+=c;
+  centre/=float(debris.size());
+  float radius=0;
+  for(const auto piece:remnant.pieces)
+    for(const auto& triangle:walk.mesh->pieces[piece].triangles)
+      for(const auto& vertex:triangle.vertices) {
+        const auto p=apply(remnant.transform,vertex.position);
+        radius=std::max(radius,Vec2(p.x-remnant.centerOfMass.x,p.z-remnant.centerOfMass.z).length());
+        }
+  Vec3 away(centre.x-remnant.centerOfMass.x,0,centre.z-remnant.centerOfMass.z);
+  away=away.length()>1e-3f?Vec3::normalize(away):Vec3(0,0,-1);
+  size_t best=0;bool found=false;
+  for(int shift=0;shift<=10 && !found;++shift,centre+=away*20.f)
+    for(int step=0;step<6;++step) {
+      const float a=float(step)*float(M_PI)/6.f;
+      const Vec3 dir(std::cos(a),0,std::sin(a));
+      const auto from=centre-dir*(length*.5f),to=centre+dir*(length*.5f);
+      if(segmentDistance(from,to,remnant.centerOfMass)<radius+40.f)continue;
+      size_t near=0;
+      for(const auto& [piece,c]:debris)near+=segmentDistance(from,to,c)<=40.f;
+      if(!found || near>best) {best=near;found=true;walk.start=from;walk.direction=dir;}
+      }
+  if(!found)return false;
+  const auto floor=w.physic()->landRay(walk.start+Vec3(0,150,0),400);
+  if(floor.hasCol)walk.start.y=floor.v.y;
+  walk.running=true;walk.length=length;walk.onPath=best;
+  hero->closeWeapon(true);hero->clearAiQueue();hero->setPosition(walk.start);hero->updateTransform();
+  debrisWalkPass(walk,*hero,walk.direction,w,pl,ctrl,destruction,remnant.group);
+  context.waitUntil=context.time+10034;
+  return true;
+  }
+
+void fracturePiecesTick(FracturePieces& state,Destruction& destruction,const DestructionContext& context,World& world,Npc& pl,PlayerControl& ctrl) {
   fracturePiecesRemnantTick(state,destruction,context,world);
+  fracturePiecesWalkTick(state,destruction,context,world,pl,ctrl);
   for(auto& item:state.breaks) {
     fracturePiecesTrack(item,world);
     if(item.samples>=std::size(SampleMs) || world.tickCount()-item.breakTime<SampleMs[item.samples])continue;
@@ -536,7 +686,7 @@ void fracturePiecesStand(Npc* actor,const Vec3& stand,const Vec3& facing) {
         ",\"distance_cm\":"+ragdollNumber((actor->position()-from).length()));
   }
 
-bool fracturePiecesCommand(FracturePieces& state,Destruction& destruction,const DestructionContext& context,bool& cutPending,const std::vector<std::string>& a,World& w) {
+bool fracturePiecesCommand(FracturePieces& state,Destruction& destruction,const DestructionContext& context,bool& cutPending,const std::vector<std::string>& a,World& w,Npc& pl,PlayerControl& ctrl) {
   const std::string& c = a[0];
   if(c=="destruction2" && a.size()==2 && (a[1]=="checkpoint" || a[1]=="stand"))
     a[1]=="checkpoint" ? destructionCheckpoint(w) : fracturePiecesStand(destruction.destructionMeleeActor,destruction.destructionMeleeStand,destruction.destructionMeleeFacing);
@@ -559,6 +709,9 @@ bool fracturePiecesCommand(FracturePieces& state,Destruction& destruction,const 
     attack.bodies=parts.size();attack.pieces=parts.front().pieces.size();attack.largest=parts.front().volumeShare;
     attack.next=w.tickCount();attack.deadline=w.tickCount()+uint64_t(attack.limit)*2200+30000;
     context.waitUntil=context.time+uint64_t(attack.limit)*2200+30034;
+    }
+  else if(c=="destruction2" && a.size()==3 && a[1]=="walk") {
+    if(!debrisWalkSetup(state,destruction,context,w,pl,ctrl,num(a,2,300)))arenaAbort("destruction walk needs a broken fixture prop with loose pieces");
     }
   else return false;
   return true;

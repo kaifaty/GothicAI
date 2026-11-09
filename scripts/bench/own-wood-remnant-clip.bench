@@ -4,7 +4,8 @@
 # re-aims the hero at the largest group before each swing and swings until that group breaks,
 # at most 6 times; its event counts the swings. One take per prop, from the first blow until the
 # pieces sleep after the third remnant break; `destruction2 stand` moves the hero out before
-# each close frame. `destruction2_pieces` samples every break 0.5..15 s after it.
+# each close frame. `destruction2_pieces` samples every break 0.5..15 s after it. Then the hero
+# walks 3 m through the loose pieces and back (`destruction2 walk 300`), still in the take.
 # @timeout 900
 seed 73013
 cheat god
@@ -59,7 +60,6 @@ destruction2 view 300 120 -200 0 -10 -10
 wait 300
 destruction2 remnant 6
 wait 15500
-stop
 destruction2 checkpoint
 destruction2 stand
 destruction2 view 240 100 -140 20 5 -20
@@ -68,6 +68,9 @@ shot barrel-close-break4
 wait 100
 destruction2 view 300 120 -200 0 -10 -10
 wait 300
+destruction2 walk 300
+wait 1500
+stop
 shot barrel-side-after
 wait 100
 
@@ -113,7 +116,6 @@ destruction2 view 300 120 -200 0 -10 -10
 wait 300
 destruction2 remnant 6
 wait 15500
-stop
 destruction2 checkpoint
 destruction2 stand
 destruction2 view 240 100 -140 20 5 -20
@@ -122,5 +124,8 @@ shot crate-close-break4
 wait 100
 destruction2 view 300 120 -200 0 -10 -10
 wait 300
+destruction2 walk 300
+wait 1500
+stop
 shot crate-side-after
 wait 100
