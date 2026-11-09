@@ -318,27 +318,32 @@ RemnantAim remnantAim(World& world,const RemnantGroup& group,const FractureMesh&
   }
 
 // How deep the hero's capsule (25 cm, 180 cm tall, feet at its position) stands in the pieces of
-// groups a character collides with (from 0.5 m, their joint local bounds), centimetres.
-float heroInDebris(const FracturePieces::Break& item,const std::vector<const DynamicWorld::FragmentSnapshot*>& parts,const Npc* hero) {
-  if(hero==nullptr)return 0;
+// groups a character collides with (from 0.5 m, their joint local bounds), centimetres: first in
+// remnants (groups of several pieces), second in single pieces, which a light piece on the ground lets
+// the feet pass by design.
+std::pair<float,float> heroInDebris(const FracturePieces::Break& item,const std::vector<const DynamicWorld::FragmentSnapshot*>& parts,const Npc* hero) {
+  if(hero==nullptr)return {0.f,0.f};
   std::vector<JPH::AABox> bounds(item.groups);
+  std::vector<size_t> members(item.groups,0);
   for(size_t i=0;i<item.pieces.size();++i)
     if(item.pieces[i].hull!=nullptr && item.pieces[i].bondGroup<item.groups) {
       // A shape's local bounds are about its centre of mass.
       auto box=item.pieces[i].hull->GetLocalBounds();
       box.Translate(item.pieces[i].hull->GetCenterOfMass());
       bounds[item.pieces[i].bondGroup].Encapsulate(box);
+      ++members[item.pieces[i].bondGroup];
       }
   const JPH::ShapeRefC capsule=new JPH::CapsuleShape(.65f,.25f);
   const auto feet=hero->position();
   const auto pose=JPH::Mat44::sTranslation(JPH::Vec3(feet.x*.01f,(feet.y+90.f)*.01f,feet.z*.01f));
-  float depth=0;
+  std::pair<float,float> depth{0.f,0.f};
   for(size_t i=0;i<parts.size() && i<item.pieces.size();++i) {
     const auto& piece=item.pieces[i];
     if(parts[i]==nullptr || piece.hull==nullptr || piece.bondGroup>=item.groups)continue;
     const auto size=bounds[piece.bondGroup].GetSize();
     if(std::max({size.GetX(),size.GetY(),size.GetZ()})<CollisionWorld::fragmentBlockSize)continue;
-    depth=std::max(depth,penetration(capsule.GetPtr(),pose,piece.hull.GetPtr(),joltPose(parts[i]->transform)));
+    auto& slot=members[piece.bondGroup]>1?depth.first:depth.second;
+    slot=std::max(slot,penetration(capsule.GetPtr(),pose,piece.hull.GetPtr(),joltPose(parts[i]->transform)));
     }
   return depth;
   }
@@ -647,6 +652,7 @@ void fracturePiecesTick(FracturePieces& state,Destruction& destruction,const Des
       total+=groupVolume[g];largestGroup=std::max(largestGroup,groupVolume[g]);singles+=groupPieces[g]==1;
       bodies+=groupPresent[g];bodiesAsleep+=groupPresent[g] && groupAsleep[g];bodiesFell+=groupPresent[g] && groupFell[g];
       }
+    const auto heroDepth=heroInDebris(item,parts,destruction.destructionMeleeActor);
     const std::string groups=",\"groups\":"+std::to_string(item.groups)+",\"largest_group_volume_fraction\":"+
       ragdollNumber(total>0?float(largestGroup/total):0.f)+",\"single_pieces\":"+std::to_string(singles)+
       ",\"bodies\":"+std::to_string(bodies)+",\"bodies_sleeping\":"+std::to_string(bodiesAsleep)+
@@ -661,7 +667,8 @@ void fracturePiecesTick(FracturePieces& state,Destruction& destruction,const Des
       ",\"sleeping\":"+std::to_string(sleeping)+",\"resting_sleeping\":"+std::to_string(restingAsleep)+",\"max_speed_cm_s\":"+ragdollNumber(maxSpeed)+
       ",\"largest_volume_cm3\":"+ragdollNumber(largest)+",\"median_volume_cm3\":"+ragdollNumber(middle)+
       ",\"largest_to_median\":"+ragdollNumber(middle>0?largest/middle:0.f)+groups+pairs+
-      ",\"hero_debris_penetration_cm\":"+ragdollNumber(heroInDebris(item,parts,destruction.destructionMeleeActor))+",\"rows\":"+rows);
+      ",\"hero_debris_penetration_cm\":"+ragdollNumber(heroDepth.first)+",\"hero_piece_penetration_cm\":"+ragdollNumber(heroDepth.second)+
+      ",\"rows\":"+rows);
     }
   }
 
