@@ -287,6 +287,14 @@ int main() {
                 "root": {"bone": "pelvis", "source": "BIP01 PELVIS"},
                 "legs": [{"thigh": "thigh_l", "calf": "calf_l", "foot": "foot_l", "ball": "ball_l",
                           "source_foot": "BIP01 L FOOT", "source_knee": "BIP01 L CALF", "ankle": )"+vec(ankle)+R"(}]},
+        "LIFT": {"skeleton": "LEG.MDH", "source": "SRC.MDH",
+                "bones": [{"name": "root"}, {"name": "pelvis", "source": "BIP01 PELVIS"},
+                          {"name": "thigh_l", "source": "BIP01 L THIGH"}, {"name": "calf_l", "source": "BIP01 L CALF"},
+                          {"name": "foot_l", "source": "BIP01 L FOOT"}, {"name": "ball_l", "source": "BIP01 L TOE0"}],
+                "root": {"bone": "pelvis", "source": "BIP01 PELVIS", "lift": 0.04},
+                "legs": [{"thigh": "thigh_l", "calf": "calf_l", "foot": "foot_l", "ball": "ball_l",
+                          "source_foot": "BIP01 L FOOT", "source_knee": "BIP01 L CALF", "ankle": )"+vec(ankle)+R"(,
+                          "soft": 1.0}]},
         "HAND": {"skeleton": "HAND.MDH", "source": "SRC.MDH",
                  "bones": [{"name": "hand_l", "source": "BIP01 L HAND"}],
                  "root": {"bone": "hand_l", "source": "BIP01 L HAND"},
@@ -306,7 +314,7 @@ int main() {
       })";
     index.parse(json);
     require(messages.empty(),"a good file is read without messages: "+(messages.empty() ? "" : messages[0]));
-    require(index.size()==7,"seven rigs are read");
+    require(index.size()==8,"eight rigs are read");
 
     // (a) the same skeleton repeats the source
     const RenderRig* sameRig = index.rig("SAME");
@@ -341,7 +349,7 @@ int main() {
     // (b, c) the leg: IK onto the ankle, out of reach - straight
     const RenderRig* legRig = index.rig("LEG");
     require(legRig!=nullptr && index.rigOfMesh("models/hum_body_test.asc")==legRig,"the leg rig loads, by its mesh too");
-    require(index.meshTable().size()==1 && index.meshTable().count("HUM_BODY_TEST")==1 && index.rigNames().size()==7,
+    require(index.meshTable().size()==1 && index.meshTable().count("HUM_BODY_TEST")==1 && index.rigNames().size()==8,
             "the table lists its rigs and meshes");
     // a bone's Gothic node: its source, else its parent's, else the source's root
     require(legRig->sourceOf(leg.find("ball_l"))==source.find("BIP01 L TOE0") &&
@@ -350,7 +358,7 @@ int main() {
             "a leg bone belongs to its source node");
     const size_t th = leg.find("thigh_l"), ca = leg.find("calf_l"), fo = leg.find("foot_l"), ba = leg.find("ball_l");
     const double L1 = distance(leg.joints[ca].at,leg.joints[th].at), L2 = distance(leg.joints[fo].at,leg.joints[ca].at);
-    const size_t sCalf = source.find("BIP01 L CALF");
+    const size_t sThigh = source.find("BIP01 L THIGH");
     // the foot's own turn: R_source(t) * R_source_bind^T * R_bind (align 1)
     const Matrix4x4 footTurn = relative(source.world[sFoot],leg.world[fo]);
     int reached = 0, stretched = 0, poled = 0;
@@ -373,12 +381,16 @@ int main() {
       if(reach<L1+L2-0.5 && reach>std::abs(L1-L2)+0.5) {
         ++reached;
         require(distance(F,T)<=0.01,"the foot stands on the target within 0.01 cm"+at+": "+std::to_string(distance(F,T)));
-        const Vec3 u = (T-H)*float(1.0/reach), toPole = position(w[sCalf])-H;
-        const float along = u.x*toPole.x + u.y*toPole.y + u.z*toPole.z;
-        const Vec3 side = toPole-u*along, knee = K-H;
-        if(length(side)>1.0) {
+        // the knee's way: the model's front (+z) of the bind pose carried by Gothic's thigh turn (align 1)
+        const Vec3 u = (T-H)*float(1.0/reach);
+        const Vec3 front = apply(linearOnly(w[sThigh])*inverse(linearOnly(source.world[sThigh])),Vec3(0,0,1));
+        const float along = u.x*front.x + u.y*front.y + u.z*front.z;
+        const Vec3 side = front-u*along, knee = K-H;
+        if(length(side)>0.2) {
           ++poled;
-          require(side.x*knee.x + side.y*knee.y + side.z*knee.z>0,"the knee lies on the pole's side"+at);
+          const double off = length(knee-u*float(u.x*knee.x + u.y*knee.y + u.z*knee.z));
+          require(side.x*knee.x + side.y*knee.y + side.z*knee.z>=0.999*length(side)*off,
+                  "the knee bends towards the thigh's front"+at);
           }
         }
       else if(reach>L1+L2) {
@@ -390,6 +402,43 @@ int main() {
     require(reached>=50 && poled>=50 && stretched>=20,"the poses cover reach and stretch: "+std::to_string(reached)+" "+
             std::to_string(poled)+" "+std::to_string(stretched));
     require(distance(apply(source.world[sFoot],ankle),position(leg.world[th]))>L1+L2,"the bind pose is out of reach");
+
+    // (g) lift: the pelvis rises by 0.04 of its height over the ankle target; soft: the last 1 cm of reach come slowly
+    const RenderRig* liftRig = index.rig("LIFT");
+    require(liftRig!=nullptr,"the lifted leg rig loads");
+    {
+      const size_t pe = leg.find("pelvis");
+      std::vector<Matrix4x4> lifted(Resources::MAX_NUM_SKELETAL_NODES);
+      int soft = 0, hard = 0;
+      for(int n=0; n<400; ++n) {
+        const auto w = source.randomPose(70,randomObject());
+        require(legRig->solve(w.data(),w.size(),out.data()) && liftRig->solve(w.data(),w.size(),lifted.data()),
+                "the lifted pose is solved");
+        const std::string at = ", pose "+std::to_string(n);
+        const Vec3   P = position(out[pe]), Q = position(lifted[pe]);
+        const double low  = std::min(double(P.y),double(apply(w[sFoot],ankle).y));
+        const double rise = 0.04*(P.y-low);
+        require(std::abs(Q.y-P.y-rise)<=1e-3 && std::abs(Q.x-P.x)<=1e-4 && std::abs(Q.z-P.z)<=1e-4,
+                "the pelvis rises by the share of its height over the ankle"+at+": "+std::to_string(Q.y-P.y)+" not "+
+                std::to_string(rise));
+        const Vec3   H = position(lifted[th]), K = position(lifted[ca]), F = position(lifted[fo]);
+        const Vec3   T = apply(w[sFoot],ankle);
+        const double reach = distance(T,H), near = L1+L2-1.0;
+        require(std::abs(distance(K,H)-L1)<=1e-3 && std::abs(distance(F,K)-L2)<=1e-3,"soft IK keeps the lengths"+at);
+        if(reach<near-0.01 && reach>std::abs(L1-L2)+0.5) {
+          ++hard;
+          require(distance(F,T)<=0.01,"short of the soft zone the foot stands on the target"+at);
+          }
+        else if(reach>near+0.01) {
+          ++soft;
+          const double want = near + 1.0*(1.0-std::exp(-(reach-near)/1.0));
+          require(std::abs(distance(F,H)-want)<=2e-3 && angle(F-H,T-H)<=0.05,
+                  "in the soft zone the foot falls short along the target's line"+at+": "+std::to_string(distance(F,H))+
+                  " not "+std::to_string(want));
+          }
+        }
+      require(soft>=20 && hard>=50,"the lifted poses cover both zones: "+std::to_string(soft)+" "+std::to_string(hard));
+    }
 
     // (d) the finger's bend over the phalanges: 60 degrees of FINGER0 against the hand -> 60, 54, 42
     const RenderRig* handRig = index.rig("HAND");
@@ -435,6 +484,14 @@ int main() {
       {R"({"format": "gothic-render-rigs", "version": 1, "rigs": {"R": {"skeleton": "LEG.MDH", "source": "SRC.MDH",
            "bones": [{"name": "pelvis", "turn": [1,0,0,0]}], "root": {"bone": "pelvis", "source": "BIP01 PELVIS"}}}})",
                                                                             "render rig R: bones[0]: unknown field \"turn\""},
+      {R"({"format": "gothic-render-rigs", "version": 1, "rigs": {"R": {"skeleton": "LEG.MDH", "source": "SRC.MDH",
+           "bones": [{"name": "pelvis"}], "root": {"bone": "pelvis", "source": "BIP01 PELVIS", "lift": 2}}}})",
+                                                                            "render rig R: root: lift must be a number from 0 to 0.5"},
+      {R"({"format": "gothic-render-rigs", "version": 1, "rigs": {"R": {"skeleton": "LEG.MDH", "source": "SRC.MDH",
+           "bones": [{"name": "pelvis"}], "root": {"bone": "pelvis", "source": "BIP01 PELVIS"},
+           "legs": [{"thigh": "thigh_l", "calf": "calf_l", "foot": "foot_l", "ball": "ball_l", "source_foot": "BIP01 L FOOT",
+                     "source_knee": "BIP01 L CALF", "ankle": [0,0,0], "soft": -1}]}}})",
+                                                                            "render rig R: legs[0]: soft must be a number from 0 to 20"},
       };
     for(const auto& [text,why]:files) {
       messages.clear();
