@@ -245,7 +245,7 @@ preparation_needed() { [[ "$TEST_PREPARE" == 1 ]]; }
         if action == 'bench':
             # A bench draws offscreen by default: no window slot and no window flags.
             self.assertEqual(options[3:], ['--class', 'quick', '--threads', '4', '--mem', '5G', '--max', '9m',
-                                           '--wait-max', '23', '--gpu-mem', '3G', '--name', 'bench smoke'])
+                                           '--wait-max', '23', '--gpu-mem', '2G', '--name', 'bench smoke'])
             self.assertIn('RYZEN_BENCH_OFFSCREEN=1', command)
             return
         for name, value in [('--class', 'quick'),
@@ -314,7 +314,7 @@ preparation_needed() { [[ "$TEST_PREPARE" == 1 ]]; }
         options = self.queue_options(requests[0])
         self.assertEqual(options, ['--host', 'fake', 'run', '--class', 'quick', '--threads', '4',
                                   '--mem', '5G', '--max', '9m', '--wait-max', '23',
-                                  '--gpu-mem', '3G', '--name', 'bench npc-day-parity'])
+                                  '--gpu-mem', '2G', '--name', 'bench npc-day-parity'])
         self.assertIn('RYZEN_BENCH_OFFSCREEN=1', requests[0])
 
     def test_dev_ubuntu_headless_build_and_game_use_host_resources(self):

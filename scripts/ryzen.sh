@@ -1441,8 +1441,10 @@ game_queue_args() {
       GQ_ARGS=(--class "${BENCH_CLASS:-batch}" --threads 4 --mem 6G --max "${RYZEN_MAX:-30m}" --wait-max "$LOCK_WAIT")
     elif ! bench_window; then
       # Offscreen: the same game without --display, so no window slot to wait for.
+      # Peak ~0.7 GB of video memory per offscreen game (2026-11-09), as e2e: 2G,
+      # so RAM (4 x 5G), not video memory, caps parallel benches.
       GQ_ARGS=(--class "${BENCH_CLASS:-quick}" --threads 4 --mem 5G --max "${RYZEN_MAX:-30m}" --wait-max "$LOCK_WAIT"
-               --gpu-mem 3G)
+               --gpu-mem 2G)
       GAME_ENV=(RYZEN_BENCH_OFFSCREEN=1)
     else
       # Measured ~1.4 GB of video memory per bench game: three games fit in 10G.
