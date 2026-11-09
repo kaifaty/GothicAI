@@ -21,6 +21,8 @@
 
 #include "resources.h"
 #include "game/constants.h"
+#include "game/meleedodge.h"
+#include "game/ragdollsave.h"
 #include "graphics/objvisual.h"
 #include "game/inventory.h"
 #include "physics/charactervirtualdiagnostics.h"
@@ -71,6 +73,91 @@ enum CamMode : uint8_t {
   C_Two,      // the hero and the npc from the side
   C_Arrow,    // from the side of the newest arrow's way, going along with it (overlay trail records it)
   };
+
+struct QuestSite { bool ready=false; Tempest::Vec3 dry={}, direction={}; float waterY=0; std::string waypoint; };
+
+struct LivingWalker;
+
+struct Melee {
+  // `dodge ... before <attacker> <ms>`: the melee dodge waits for the attacker's next blow to come that near
+  struct DodgeArm {
+    Npc*                  npc      = nullptr;
+    Npc*                  attacker = nullptr;
+    MeleeDodge::Direction dir      = MeleeDodge::Direction::Back;
+    uint64_t              leadMs   = 0;
+    uint64_t              until    = 0;
+    };
+  std::optional<DodgeArm> dodgeArm;
+
+  // Respond to an actual native AI charge, leaving its decision and RNG untouched.
+  struct MeleeAiResponse {
+    Npc* npc = nullptr;
+    Npc* attacker = nullptr;
+    bool parry = false;
+    uint64_t until = 0;
+    };
+  std::optional<MeleeAiResponse> meleeAiResponse;
+
+  bool meleeFixture=false,meleeMeasuring=false,meleeSteady=false,meleeBrawl=false;
+  uint32_t meleeAttackStarts=0;
+  std::string meleeMode,meleePelvis;
+  uint64_t meleeMotionFrom=0;
+  std::vector<Npc*> meleeShadowActors;
+  std::vector<Tempest::Vec3> meleeShadowPlaces;
+  Tempest::Vec3 meleeShadowWall,meleeShadowForward;
+  std::string meleeShadowWeapon;
+};
+
+struct MeleeContext {
+  Melee& melee;
+  std::vector<Npc*>& crew;
+  std::deque<LivingWalker>& livingWalkers;
+  std::vector<Tempest::Vec3>& ragdollArenaPlaces;
+  Tempest::Vec3& ragdollArenaTarget;
+};
+
+struct Routine {
+  QuestSite   questCliff,questWater;
+  Npc*        questNpc = nullptr;
+  std::string questCase;
+  Tempest::Vec3        questStable = {};
+  bool        questTrace=false,questWaterCase=false,questSawDrop=false,questSawWater=false,questWait=false,questLaunched=false,questStandingWait=false;
+  uint64_t    questDeadline=0,questWallNs=0;
+  uint32_t    questLastReturns=0;
+  struct RoutineReturnCase {
+    std::string label, symbol, type;
+    Tempest::Vec3 start;
+    bool failed=false;
+    Npc* npc=nullptr;
+    uint32_t npcId=uint32_t(-1);
+    int32_t hp=0;
+    std::vector<uint8_t> fixture;
+    };
+  std::vector<RoutineReturnCase> routineCases;
+  std::vector<size_t> routineRetries;
+  size_t routineIndex=0, routineRetryIndex=0;
+  bool routineRetry=false;
+  Npc* routineNpc=nullptr;
+  int routinePhase=0;
+  uint64_t routineSince=0, routineUp=0, routineFrame=0, routineDeadline=90000;
+  uint32_t routineReturns=0, routineGuardBase=0, routineJumps=0, routineMobJumps=0, routineClamps=0;
+  RagdollSave::QuestReturn routinePreviousGuard;
+  Tempest::Vec3 routinePrevious, routineUpPosition;
+  Interactive* routinePreviousMob=nullptr;
+  float routineTravel=0, routineMaxStep=0, routineMinHero=0, routineRouteLength=0;
+  bool routineBelow=false, routineHasRoute=false;
+  std::string routinePathFirst, routinePathLast, routinePathSample;
+};
+
+struct RoutineContext {
+  Routine& routine;
+  Npc*& pinned;
+  Tempest::Vec3& pinAt;
+  std::FILE*& csv;
+  Npc*& subject;
+  uint64_t& time;
+  Npc& (*subjectOf)(Npc&);
+};
 
 struct OwnMesh {
   uint32_t ownMeshZen=uint32_t(-1);
@@ -161,7 +248,6 @@ struct RagdollContext {
   Npc& (*subjectOf)(Npc&);
 };
 
-struct QuestSite { bool ready=false; Tempest::Vec3 dry={}, direction={}; float waterY=0; std::string waypoint; };
 struct SpellActor {Npc* npc=nullptr;std::string role;};
 struct MovableFixture { ObjVisual visual; DynamicWorld::Item body; };
 
@@ -1114,6 +1200,19 @@ void prepareWaterSpell(Water& state,const WaterContext& context,World& world,Npc
 void healingObserve(Healing& state,World& world,Npc& player);
 void healingCommand(Healing& state,const std::vector<std::string>& a,World& world,Npc& player,PlayerControl& ctrl,
                     const std::vector<Npc*>& meleeShadowActors);
+
+bool dodgeDirection(std::string_view name,MeleeDodge::Direction& dir);
+void meleeDodgeFields(World& world);
+void meleeAiResponseFields(World& world);
+void meleePhysicsCamera();
+bool meleeCommand(const MeleeContext& context,const std::vector<std::string>& a,World& w,Npc& pl,PlayerControl& ctrl);
+MeleeContext meleeContext();
+
+const char* questReason(uint8_t hazards);
+void questFields(World& world,Npc& npc,bool csv);
+void routineReturnTick(World& world,Npc& player,PlayerControl& ctrl);
+bool routineCommand(const RoutineContext& context,const std::vector<std::string>& a,World& w,Npc& pl,PlayerControl& ctrl);
+RoutineContext routineContext();
 
 void ragdollSessionArchive(const std::vector<std::string>& args, World& world, Npc& player, uint64_t initialDt=0);
 void writeRagdoll(Npc& player);
