@@ -165,9 +165,12 @@ void main() {
     tangent[1] = cross(norm, tangent[0]);
     tangent[2] = norm;
 
-    // a fixed rotation per texel: the cycle then passes the same 32 directions the single-frame trace did
+    // a fixed rotation per texel: the cycle then passes the same 32 directions the single-frame trace did.
+    // The phase of the cycle turns over a 2x2 block: every block traces all four quarters of the set each frame,
+    // and the blur averages them. With one phase for the screen the whole frame pulsed with the cycle: the
+    // quarters differ, and the history (at least 1/8 of a new frame) does not even them out.
     const float f0 = M_PI*2.0*wangHashNoise(uvec2(fragCoord), 0);
-    const uint  k  = push.frame % cycle;
+    const uint  k  = (push.frame + uint(fragCoord.x&1) + 2u*uint(fragCoord.y&1)) % cycle;
     for(uint it=0; it<itersPerFrame; ++it)
       calcOcclussion(pos0, f0, k*itersPerFrame+it, numIter);
     }
@@ -214,11 +217,17 @@ void main() {
         hist = hp;
       }
     }
-  // a moving occluder leaves no depth change on the surface under it: the history must stay near this frame
+  // a moving occluder leaves no depth change on the surface under it: the history must stay near this frame.
+  // Clamped, not dropped: a dropped history leaves a texel with this frame's 8 samples, and in the forest that
+  // lightened the AO by 0.02 (report). The clamp keeps the history's mass kHit*H + M and moves its ratio.
   if(hist.w>0.0 && fresh) {
-    const float o = occlusionOf(hist.x, hist.y);
-    if(o<lo-clampMargin || o>hi+clampMargin)
-      hist = vec4(0);
+    const float mass = kHit*hist.x + hist.y;
+    const float o    = occlusionOf(hist.x, hist.y);
+    const float oc   = clamp(o, lo-clampMargin, hi+clampMargin);
+    if(oc!=o && mass>0.0) {
+      hist.x = oc*mass/kHit;
+      hist.y = (1.0-oc)*mass;
+      }
     }
 
   vec2  acc    = hist.xy;
