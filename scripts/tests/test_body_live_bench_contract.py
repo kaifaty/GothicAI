@@ -4,6 +4,8 @@ from pathlib import Path
 
 COMMON = Path(__file__).resolve().parents[2] / "OpenGothic/common"
 SOURCE = (COMMON / "testbench.cpp").read_text()
+LOOP_SOURCE = (COMMON / "testbench_loop.cpp").read_text()
+REPORT_SOURCE = (COMMON / "testbench_report.cpp").read_text()
 CAMERA_SOURCE = (COMMON / "testbench_camera.cpp").read_text()
 BODY_SOURCE = (COMMON / "testbench_body.cpp").read_text()
 
@@ -29,7 +31,7 @@ def test_live_sink_is_opt_in_and_cannot_replace_replay_or_arena_sink():
 def test_live_sink_is_removed_at_finish_and_reconfigure_only_if_owned():
     stop = section('void stopBodyLive() {', 'const char* animationModeName()', BODY_SOURCE)
     assert stop.index('if(!context.bodyLive)') < stop.index('BodyController::setSink({})')
-    assert 'stopBodyLive();' in section('void finish() {', 'const char*')
+    assert 'stopBodyLive();' in section('void finish() {', 'std::string ragdollNumber(', REPORT_SOURCE)
     configure = section('void TestBench::configure(', 'void TestBench::holdBefore(')
     assert configure.index('stopBodyLive();') < configure.index('bench.~Bench();')
 
@@ -58,7 +60,7 @@ def test_readiness_wait_is_asynchronous_and_times_out_explicitly():
     assert 'event("body_live_ready"' in waiting and 'event("body_live_error"' in waiting
     assert 'context.pc=context.prog.size();' in waiting
     assert 'sleep' not in waiting
-    run = section('void run(', 'void drawLeg(')
+    run = section('void run(', 'void renderSound(', LOOP_SOURCE)
     assert 'waitingForAi() || waitingForBodyLive()' in run
     assert '!bench.bodyLiveWait.empty() ||' in run
     event = section('void event(std::string_view kind', 'Npc* npcBySymbol(')
