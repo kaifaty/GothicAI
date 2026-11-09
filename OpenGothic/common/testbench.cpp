@@ -220,15 +220,15 @@ float num(const std::vector<std::string>& a, size_t i, float def) {
   return i<a.size() ? std::strtof(a[i].c_str(),nullptr) : def;
   }
 
-}
-
-namespace {
-
 bool isNumber(const std::string& s) {
   char* end = nullptr;
   std::strtof(s.c_str(),&end);
   return end!=s.c_str() && *end=='\0';
   }
+
+}
+
+namespace {
 
 std::string rest(const std::string& line) {
   const size_t sp = line.find(' ');

@@ -1122,6 +1122,7 @@ Tempest::Vec3 facing(const Npc& pl);
 Npc* findNpc(World& w, Npc& pl, const std::string& name);
 bool hidden(World& w,const Tempest::Vec3& from,const Tempest::Vec3& to);
 float num(const std::vector<std::string>& a,size_t i,float def);
+bool isNumber(const std::string& s);
 void prepareSpellFixture(World& world,Npc& player,std::string_view fixture);
 void destructionCheckpoint(World& world);
 
