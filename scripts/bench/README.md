@@ -524,6 +524,18 @@ the ground, and the result line reports whether it sleeps at the final checkpoin
 varies the version 3 piece motion, `OPENGOTHIC_FRACTURE_BONDS` the bond rule. Inside a `movable measure` window the pieces are not sampled: the
 timed frames stay free of bench work.
 
+`own-wood-remnant-clip` takes the [repeat blows on remnants](../../reports/physics/2026-11-destruction-bonds/README.md#второй-шаг-повторный-удар)
+with the same place, seed, noon and cameras: per prop one take `<prop>-remnant.mp4` from the accepted
+one-handed blow until the pieces sleep after three more breaks, and a close frame
+`<prop>-close-break1..4.png` after each break (`destruction2 stand` first). `destruction2 remnant <n>`
+strikes the largest bond group of the broken fixture prop: before each swing the hero stands 75 cm
+before that group's -z bound (its drawn vertices) facing +z, and swings the native attack until the
+prop has more bodies or `n` swings are spent (`destruction2_remnant_attempt` per swing,
+`destruction2_remnant_complete` with `broken`, `swings`, bodies and the largest group before and after,
+and every group's pieces). Every break, the first and each remnant's, writes `destruction_break` (with
+`remnant`) and `destruction2_start` / `destruction2_pieces` under its own case: `<case>-remnant-<n>` for
+the n-th remnant break, sampled from its own moment. The scenario declares `# @timeout 900`.
+
 Corpse water: `water-bodies` records a real harbour WindFist throw, a dead wolf and a
 sinking skeleton, then saves `session-water-bodies.sav` and tries normal corpse loot
 from dry ground and while swimming. `water-bodies-shallow` observes a corpse on the
