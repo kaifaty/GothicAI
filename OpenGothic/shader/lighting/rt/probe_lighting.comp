@@ -339,7 +339,7 @@ void main() {
     const uint sampleId = gl_LocalInvocationIndex;
     const vec3 dir      = sampleSphere(sampleId, samplesTotal, 0);
     const vec4 clr      = shadeSample(probe[probeId].pos, dir, probeId, sampleId, probe[probeId].lastUse, false);
-    imageStore(probesRadiance, gbufferCoord(probeId, sampleId), uvec4(clr.a>0 ? packRGB9E5(clr.rgb) : NoSample));
+    imageStore(probesRadiance, gbufferCoord(probeId, sampleId), uvec4(clr.a>0 ? packRGB9E5(clr.rgb*probeStoreScale) : NoSample));
     }
   }
 #elif defined(RELIGHT)
@@ -362,7 +362,7 @@ void main() {
   const uint sampleId = (gl_GlobalInvocationID.x%perProbe)*relitPeriod + turn%relitPeriod;
   const vec3 dir      = sampleSphere(sampleId, samplesTotal, 0);
   const vec4 clr      = shadeSample(probe[probeId].pos, dir, probeId, sampleId, probe[probeId].lastUse, true);
-  imageStore(probesRadiance, gbufferCoord(probeId, sampleId), uvec4(clr.a>0 ? packRGB9E5(clr.rgb) : NoSample));
+  imageStore(probesRadiance, gbufferCoord(probeId, sampleId), uvec4(clr.a>0 ? packRGB9E5(clr.rgb*probeStoreScale) : NoSample));
   }
 #else
 void storeSample(vec3 dir, vec4 val) {
@@ -406,7 +406,7 @@ void processLighting(const uint probeId, const bool fresh) {
     vec4 clr = vec4(0);
     const uint v = imageLoad(probesRadiance, uv).r;
     if(v!=NoSample)
-      clr = vec4(unpackRGB9E5(v), 1);
+      clr = vec4(unpackRGB9E5(v)*(1.0/probeStoreScale), 1);
     storeSample(dir, clr);
 #if defined(MATERIAL_MAPS)
     if(fresh) {
@@ -480,7 +480,7 @@ void processProbe(const uint probeId) {
 
     vec3 ret = est;
     if(!fresh) {
-      const vec3  hist   = texelFetch(probesLightingPrev, lightBufferCoord(probeId)+ivec2(axis,side), 0).rgb;
+      const vec3  hist   = texelFetch(probesLightingPrev, lightBufferCoord(probeId)+ivec2(axis,side), 0).rgb*(1.0/probeStoreScale);
       const float lh     = luma(hist);
       const float ln     = luma(est);
       const float eps    = 0.0005/max(scene.exposure, 1e-6); // dark on the screen: no reset on noise there
@@ -488,7 +488,7 @@ void processProbe(const uint probeId) {
       ret = mix(hist, est, change>ResetChange ? 1.0 : a);
       }
     const ivec2 uv = lightBufferCoord(probeId);
-    imageStore(probesLighting, uv+ivec2(axis,side), vec4(ret, 1));
+    imageStore(probesLighting, uv+ivec2(axis,side), vec4(ret*probeStoreScale, 1));
     }
   }
 

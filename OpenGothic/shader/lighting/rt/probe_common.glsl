@@ -32,6 +32,13 @@ float probeReadSkyVisibility(uint bits, vec3 norm) {
   }
 #endif
 
+// The probes keep their light scaled down by this: the samples' radiance (RGB9E5, up to 65408) and the cubes (RGBA16F,
+// up to 65504). By day a lamp lights a surface next to it with 10^5..10^6: the path tracer's factor max(1,exposure)/
+// exposure is about 1/8e-6 at noon (sky_exposure.comp). Clipped, the plank hut at noon lost half of the lamps' bounce,
+// a quarter of its reflected light (step-2b.md, «2б-1: пересмотр»). 2^-8 holds up to 1,7e7; a dark corner at night
+// (1e-3) keeps a precision of about 1,5 %.
+const float probeStoreScale = 1.0/256.0;
+
 // RGB9E5 (shared exponent) in an R32UI texel, rounded to nearest: the radiance of a probe's sample
 uint packRGB9E5(vec3 rgb) {
   const float maxValue = 65408.0; // (511/512) * 2^16
@@ -131,7 +138,7 @@ vec3 probeReadAmbient(in sampler2D irradiance, uint id, vec3 nx, vec3 probeNorm)
   ret += texelFetch(irradiance, uv + ivec2(0,d.x), 0).rgb * n.x;
   ret += texelFetch(irradiance, uv + ivec2(1,d.y), 0).rgb * n.y;
   ret += texelFetch(irradiance, uv + ivec2(2,d.z), 0).rgb * n.z;
-  return ret;
+  return ret * (1.0/probeStoreScale);
   }
 
 // The lod of the probe grid at a point: by its distance to the camera, not by the depth of the view, so a probe off
