@@ -221,9 +221,8 @@ class TurnState:
     mood: Mood | None = None  # of the lines being said (the model's last tag)
     cues: list[SayCue] = field(default_factory=list)
     felt: tuple[Mood, int] | None = None
-    face_text: str = ""  # unsent text, including the last completed line until its trailing tags arrive
+    face_text: str = ""  # text still in the sentence splitter, with face-tag offsets
     face_tags: list[tuple[int, CueTag | FeltTag]] = field(default_factory=list)
-    ready_lines: deque[str] = field(default_factory=deque)
     text: str = ""  # everything said in the turn, all steps
     pending_text: str = ""  # only the last unfinished word, held across stream chunks
     discarded_text: str = ""  # a tool leak, skipped through its sentence's end or the end of the step
@@ -331,49 +330,42 @@ class TurnState:
         for p in pieces:
             if isinstance(p, MoodTag):
                 if p.mood != self.mood:
-                    self.ready_lines.extend(self.splitter.flush())
-                    yield from self._ready_lines(final=True)
+                    yield from self._tagged_lines(self.splitter.flush())
                     self.mood = p.mood
                 continue
             if isinstance(p, (CueTag, FeltTag)):
                 self.face_tags.append((len(self.face_text), p))
                 continue
             self.face_text += p
-            self.ready_lines.extend(self.splitter.feed(p))
-            yield from self._ready_lines()
+            yield from self._tagged_lines(self.splitter.feed(p))
         if flush:
-            self.ready_lines.extend(self.splitter.flush())
-            yield from self._ready_lines(final=True)
+            yield from self._tagged_lines(self.splitter.flush())
+            if self.face_tags:
+                log.debug("%s: discarded face tags without following words: %s", self.reply, self.face_tags)
+            self.face_text = ""
+            self.face_tags.clear()
 
-    def _ready_lines(self, *, final: bool = False) -> Iterator[str]:
-        while self.ready_lines:
-            line = self.ready_lines[0]
+    def _tagged_lines(self, lines: list[str]) -> Iterator[str]:
+        for line in lines:
             start = self.face_text.index(line)
             end = start + len(line)
-            last = len(self.ready_lines) == 1 and not self.face_text[end:].strip()
-            if last and not final and not self.pending_text.strip():
-                break  # a trailing tag must still be able to anchor to this line's last word
-            self.ready_lines.popleft()
             self.cues = []
             self.felt = None
             rest = []
             words = len(to_game_text(line).split())
             for at, tag in self.face_tags:
-                if at < end or (last and final):
-                    word = min(len(to_game_text(line[: max(0, at - start)]).split()), words - 1)
-                    if words and isinstance(tag, CueTag):
+                word = len(to_game_text(line[: max(0, at - start)]).split())
+                if at < end and word < words:
+                    if isinstance(tag, CueTag):
                         if len(self.cues) < 2 and all(c.cue != tag.cue for c in self.cues):
                             self.cues.append(SayCue(cue=tag.cue, word=word))
-                    elif words and self.felt is None:
+                    elif self.felt is None:
                         self.felt = (tag.felt, word)
                 else:
                     rest.append((at - end, tag))
             self.face_tags = rest
             self.face_text = self.face_text[end:]
             yield line
-        if final:
-            self.face_text = ""
-            self.face_tags.clear()
 
     def strip_line(self, line: str) -> str:
         """Remove the first words until a nonempty answer line is ready to be said."""

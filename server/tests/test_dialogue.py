@@ -1149,13 +1149,13 @@ async def test_face_tags_anchor_to_words_without_reaching_chat_voice_or_memory(v
     ),
     (
         "[neutral] Я тебя прекрасно помню. [wince]",
-        [("Я тебя прекрасно помню.", "neutral", [{"cue": "wince", "word": 3}])],
+        [("Я тебя прекрасно помню.", "neutral", None)],
     ),
     (
         "[neutral] Да. [doubt] [angry] Нет, даже не думай. [press]",
         [
-            ("Да.", "neutral", [{"cue": "doubt", "word": 0}]),
-            ("Нет, даже не думай.", "angry", [{"cue": "press", "word": 3}]),
+            ("Да.", "neutral", None),
+            ("Нет, даже не думай.", "angry", [{"cue": "doubt", "word": 0}]),
         ],
     ),
     (
@@ -1166,7 +1166,8 @@ async def test_face_tags_anchor_to_words_without_reaching_chat_voice_or_memory(v
         ],
     ),
 ])
-async def test_face_cues_keep_line_boundaries_limits_and_trailing_word(reply, expected):
+async def test_face_cues_keep_line_boundaries_limits_and_discard_trailing_tags(reply, expected, caplog):
+    caplog.set_level("DEBUG", logger="gothic_ai.dialogue")
     fake = FakeGame()
     async with connected(fake) as link:
         dialogue = DialogueManager(link, FakeBackend(reply, chunk=3, delay=0), PersonaProvider(None))
@@ -1175,6 +1176,8 @@ async def test_face_cues_keep_line_boundaries_limits_and_trailing_word(reply, ex
         await _until(lambda: fake.statuses[-1:] == ["idle"])
     says = [(m["text"], m.get("mood"), m.get("cues")) for m in fake.received if m["type"] == "say"]
     assert says == expected
+    if reply.endswith("]"):
+        assert "discarded face tags without following words" in caplog.text
 
 
 class OneVoiceGame(FakeGame):

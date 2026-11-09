@@ -18,6 +18,7 @@ from gothic_ai.dialogue import (
     to_game_text,
     tool_leak,
 )
+from gothic_ai.dialogue_state import TurnState
 from gothic_ai.dialogue_text import _CUE_ALIASES, _MOOD_ALIASES, CueTag, FeltTag
 from gothic_ai.gamedata import base, ou
 from gothic_ai.gamedata.ou import lines_from_messages, npc_dialog_key, npc_lines
@@ -154,6 +155,24 @@ def test_face_tags_stream_without_stage_directions_and_moods_win(monkeypatch):
     assert _run(MoodTags(), "[glance][roll][unknown][felt:neutral][felt:calm][felt:unknown] Да.") == [" Да."]
     monkeypatch.setitem(_CUE_ALIASES, "smile", "smirk")
     assert _run(MoodTags(), "[smile]") == [MoodTag("friendly")]
+
+
+@pytest.mark.parametrize("tag", ["doubt", "felt:afraid"])
+def test_ready_line_is_sent_immediately_and_face_tags_need_following_words(tag, caplog):
+    s = TurnState(reply="r", splitter=SentenceSplitter(), started=0)
+    assert list(s.lines(s.spoken(s.moods.feed(
+        "[neutral] Подожди здесь, я сейчас схожу за ним. ",
+    ), set(), "X"))) == ["Подожди здесь, я сейчас схожу за ним."]
+    assert list(s.lines(s.spoken(s.moods.feed(f"[{tag}]"), set(), "X"))) == []
+    assert list(s.lines(s.spoken(s.moods.feed(
+        "[angry] Теперь можешь идти дальше. ",
+    ), set(), "X"))) == ["Теперь можешь идти дальше."]
+    assert [cue.model_dump() for cue in s.cues] == ([{"cue": "doubt", "word": 0}] if tag == "doubt" else [])
+    assert s.felt == (("afraid", 0) if tag == "felt:afraid" else None)
+    caplog.set_level("DEBUG", logger="gothic_ai.dialogue")
+    assert list(s.lines(s.spoken(s.moods.feed(f"[{tag}]"), set(), "X"), flush=True)) == []
+    assert not s.face_tags
+    assert "discarded face tags without following words" in caplog.text
 
 
 def test_long_brackets_and_unclosed_ones_are_text():

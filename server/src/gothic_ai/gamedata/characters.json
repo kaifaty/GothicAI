@@ -515,8 +515,7 @@
    "courage": 1,
    "talk": 5,
    "pushy": 5,
-   "strangers": 2,
-   "lie_skill": 0.5
+   "strangers": 2
   },
   "BDT_1014_BANDIT_L": {
    "npc": "BDT_1014_BANDIT_L",
@@ -528,8 +527,7 @@
    "courage": 4,
    "talk": 2,
    "pushy": 4,
-   "strangers": 1,
-   "lie_skill": 0.5
+   "strangers": 1
   },
   "BDT_1015_BANDIT_L": {
    "npc": "BDT_1015_BANDIT_L",
@@ -541,8 +539,7 @@
    "courage": 2,
    "talk": 3,
    "pushy": 2,
-   "strangers": 2,
-   "lie_skill": 0.5
+   "strangers": 2
   },
   "BDT_1021_LEUCHTTURMBANDIT": {
    "npc": "BDT_1021_LEUCHTTURMBANDIT",

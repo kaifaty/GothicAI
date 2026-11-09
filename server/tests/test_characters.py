@@ -177,7 +177,7 @@ def test_law_conditions_do_not_disable_card_samples(graph):
     ],
 )
 def test_bandit_cards(expected):
-    assert characters.load()[expected.npc] == replace(expected, lie_skill=0.5)
+    assert characters.load()[expected.npc] == expected
 
 
 @pytest.mark.parametrize(
