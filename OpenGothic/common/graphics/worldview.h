@@ -39,6 +39,7 @@ class WorldView {
     void prepareLandscapeWork();
     void finishLandscapeUpdate();
     bool landscapeReady() const;
+    std::string landscapeWaitState() const;
 
     const LightSource&        mainLight() const;
     const Tempest::Vec3&      ambientLight() const;

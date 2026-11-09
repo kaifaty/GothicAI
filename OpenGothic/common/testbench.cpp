@@ -6860,7 +6860,7 @@ bool streamingWaitTick(World& w) {
       }
     bench.waitStreaming=false;
     bench.frozen=false;
-    arenaAbort("streaming wait timed out before all Near/Far landscape and vob visuals were published");
+    arenaAbort("streaming wait timed out before all Near/Far landscape and vob visuals were published ("+(w.view() ? w.view()->landscapeWaitState() : std::string("no view"))+")");
     return true;
     }
   bench.waitStreaming=false;
