@@ -153,12 +153,18 @@ add_geom_shader(main_mph_d_at  "-DMESH_TYPE=3" -DDEPTH_ONLY -DATEST)
 add_geom_shader(main_mph_v     "-DMESH_TYPE=3" -DDEPTH_ONLY -DVIRTUAL_SHADOW)
 add_geom_shader(main_mph_v_at  "-DMESH_TYPE=3" -DDEPTH_ONLY -DVIRTUAL_SHADOW -DATEST)
 
+# the G-buffer pass of objects: the previous vertex for motion vectors (graphics plan 1b). The same vertex work as
+# main_obj/ani/mph, which the emissive, multiply and ghost passes keep using
+add_geom_shader(main_obj_g     "-DMESH_TYPE=1" -DGBUFFER_MOTION)
+add_geom_shader(main_ani_g     "-DMESH_TYPE=2" -DGBUFFER_MOTION)
+add_geom_shader(main_mph_g     "-DMESH_TYPE=3" -DGBUFFER_MOTION)
+
 # The legacy variants remain in use when there is no material table. Position
 # varyings for the cotangent frame are needed only on the material-map path.
 add_geom_shader(main_lnd_orm      "-DMESH_TYPE=0" -DFLAT_NORMAL -DMATERIAL_MAPS)
-add_geom_shader(main_obj_orm      "-DMESH_TYPE=1" -DMATERIAL_MAPS)
-add_geom_shader(main_ani_orm      "-DMESH_TYPE=2" -DMATERIAL_MAPS)
-add_geom_shader(main_mph_orm      "-DMESH_TYPE=3" -DMATERIAL_MAPS)
+add_geom_shader(main_obj_g_orm    "-DMESH_TYPE=1" -DMATERIAL_MAPS -DGBUFFER_MOTION)
+add_geom_shader(main_ani_g_orm    "-DMESH_TYPE=2" -DMATERIAL_MAPS -DGBUFFER_MOTION)
+add_geom_shader(main_mph_g_orm    "-DMESH_TYPE=3" -DMATERIAL_MAPS -DGBUFFER_MOTION)
 add_geom_shader(main_lnd_d_at_orm "-DMESH_TYPE=0" -DFLAT_NORMAL -DDEPTH_ONLY -DATEST -DMATERIAL_MAPS)
 add_geom_shader(main_obj_d_at_orm "-DMESH_TYPE=1" -DDEPTH_ONLY -DATEST -DMATERIAL_MAPS)
 add_geom_shader(main_ani_d_at_orm "-DMESH_TYPE=2" -DDEPTH_ONLY -DATEST -DMATERIAL_MAPS)
@@ -186,8 +192,8 @@ add_frag_shader(main_lnd_v     -DFLAT_NORMAL -DDEPTH_ONLY -DVIRTUAL_SHADOW)
 add_frag_shader(main_lnd_v_at  -DFLAT_NORMAL -DDEPTH_ONLY -DVIRTUAL_SHADOW -DATEST)
 
 # materials objects
-add_frag_shader(main_obj_g     -DGBUFFER)
-add_frag_shader(main_obj_g_at  -DGBUFFER -DATEST)
+add_frag_shader(main_obj_g     -DGBUFFER -DGBUFFER_MOTION)
+add_frag_shader(main_obj_g_at  -DGBUFFER -DGBUFFER_MOTION -DATEST)
 add_frag_shader(main_obj_f     -DFORWARD)
 add_frag_shader(main_obj_e     -DEMISSIVE)
 add_frag_shader(main_obj_m     -DEMISSIVE -DMULTIPLY)
@@ -201,8 +207,8 @@ add_frag_shader(main_obj_v_at  -DDEPTH_ONLY -DVIRTUAL_SHADOW -DATEST)
 add_frag_shader(main_lnd_g_s_orm  -DFLAT_NORMAL -DGBUFFER -DSIMPLE_MAT -DMATERIAL_MAPS)
 add_frag_shader(main_lnd_g_orm    -DFLAT_NORMAL -DGBUFFER -DMATERIAL_MAPS)
 add_frag_shader(main_lnd_g_at_orm -DFLAT_NORMAL -DGBUFFER -DATEST -DMATERIAL_MAPS)
-add_frag_shader(main_obj_g_orm    -DGBUFFER -DMATERIAL_MAPS)
-add_frag_shader(main_obj_g_at_orm -DGBUFFER -DATEST -DMATERIAL_MAPS)
+add_frag_shader(main_obj_g_orm    -DGBUFFER -DGBUFFER_MOTION -DMATERIAL_MAPS)
+add_frag_shader(main_obj_g_at_orm -DGBUFFER -DGBUFFER_MOTION -DATEST -DMATERIAL_MAPS)
 add_frag_shader(main_lnd_d_at_orm -DFLAT_NORMAL -DDEPTH_ONLY -DATEST -DMATERIAL_MAPS)
 add_frag_shader(main_obj_d_at_orm -DDEPTH_ONLY -DATEST -DMATERIAL_MAPS)
 
@@ -282,6 +288,7 @@ add_shader(irradiance.comp           lighting/irradiance.comp)
 add_shader(sky_exposure.comp         lighting/sky_exposure.comp)
 
 add_shader(tonemapping.frag          lighting/tonemapping.frag)
+add_shader(motion_view.frag          antialiasing/motion_view.frag)
 add_shader(bloom_down_karis.frag     bloom/bloom_down.frag -DKARIS)
 add_shader(bloom_down.frag           bloom/bloom_down.frag)
 add_shader(bloom_up.frag             bloom/bloom_up.frag)

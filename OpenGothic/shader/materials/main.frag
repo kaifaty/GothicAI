@@ -34,6 +34,9 @@ layout(location = 0) out vec4 outDiffuse;
 layout(location = 1) out uint outNormal;
 #if defined(MATERIAL_MAPS)
 layout(location = 2) out vec4 outOrm;
+layout(location = 3) out vec2 outMotion; // Renderer::gbufMotion: after the material maps
+#else
+layout(location = 2) out vec2 outMotion;
 #endif
 #elif defined(WATER)
 layout(location = 0) out vec4 outColor;
@@ -703,6 +706,26 @@ void mainWater(vec4 t) {
   }
 #endif
 
+#if defined(GBUFFER)
+// Motion vectors of objects (graphics plan 1b): where the point was a frame ago minus where it would be had it stood
+// still, texture coordinates, current -> previous (Taa::motionResidual). Landscape and particles: 0
+vec2 motionResidual() {
+#if defined(MAT_MOTION)
+  if(scene.motionVectors==0u)
+    return vec2(0);
+  const vec3  s  = shInp.prevStatic;
+  const vec3  d  = shInp.prevDelta;
+  const float w0 = s.z;
+  const float w1 = s.z + d.z;
+  if(w0<=0.0 || w1<=0.0)
+    return vec2(0); // behind the previous camera: no history to point at
+  return ((s.xy + d.xy)/w1 - s.xy/w0)*0.5;
+#else
+  return vec2(0);
+#endif
+  }
+#endif
+
 void main() {
 #if defined(MAT_UV)
 #if defined(ANTITILE_MATERIAL)
@@ -730,6 +753,7 @@ void main() {
 #else
   mainGBuffer(t);
 #endif
+  outMotion = motionResidual();
 #if defined(ATEST) && defined(MATERIAL_MAPS)
   if(alphaTest<0.5)
     discard;
