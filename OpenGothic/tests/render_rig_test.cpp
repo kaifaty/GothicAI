@@ -7,6 +7,7 @@
 #include "graphics/mesh/skeleton.h"
 #include "resources.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
@@ -20,6 +21,8 @@
 using namespace Tempest;
 
 namespace {
+
+constexpr double Pi = 3.14159265358979323846;
 size_t assertions = 0;
 
 void require(bool condition, const std::string& message) {
@@ -48,7 +51,7 @@ double length(const Vec3& a) {
 // degrees between two directions
 double angle(const Vec3& a, const Vec3& b) {
   const double c = (double(a.x)*b.x + double(a.y)*b.y + double(a.z)*b.z)/(length(a)*length(b));
-  return std::acos(std::max(-1.0,std::min(1.0,c)))*180.0/M_PI;
+  return std::acos(std::max(-1.0,std::min(1.0,c)))*180.0/Pi;
   }
 
 // degrees of the turn from a to b (their linear parts)
@@ -57,7 +60,7 @@ double turnAngle(const Matrix4x4& a, const Matrix4x4& b) {
   for(int k=0; k<3; ++k)
     for(int r=0; r<3; ++r)
       trace += double(a.at(k,r))*b.at(k,r);  // trace of a^T b
-  return std::acos(std::max(-1.0,std::min(1.0,(trace-1.0)/2.0)))*180.0/M_PI;
+  return std::acos(std::max(-1.0,std::min(1.0,(trace-1.0)/2.0)))*180.0/Pi;
   }
 
 Matrix4x4 linearOnly(Matrix4x4 m) {
@@ -244,6 +247,17 @@ int main() {
       {"middle_02_l",  4, {17, 76.5f, 1.4f}},
       {"middle_03_l",  5, {17, 73.8f, 1.6f}},
       });
+    // (h) an arm with twist bones and a clavicle that follows the arm's rise
+    const Skel arm({
+      {"chest",       -1, {0, 130, 0}},
+      {"clav",         0, {5, 140, 1}},
+      {"upper",        1, {18, 140, 0}},
+      {"upper_twist",  2, {18, 140, 0}},
+      {"fore",         2, {18, 114, 0.5f}},
+      {"fore_twist",   4, {18, 101, 0.5f}},
+      {"fore_full",    4, {18, 90, 0.5f}},
+      {"hand",         4, {18, 88, 0}},
+      });
     std::vector<Joint> many;
     for(int i=0; i<int(Resources::MAX_NUM_SKELETAL_NODES)+1; ++i)
       many.push_back({"node"+std::to_string(i),i-1,{0,float(i),0}});
@@ -255,6 +269,7 @@ int main() {
       {"LEG.MDH",  leg.hierarchy()},
       {"HAND.MDH", hand.hierarchy()},
       {"BIG.MDH",  big.hierarchy()},
+      {"ARM.MDH",  arm.hierarchy()},
       };
     std::vector<std::string> messages;
     RenderRigIndex index([&](std::string_view name, asset::ModelHierarchy& out) {
@@ -301,6 +316,19 @@ int main() {
                  "fingers": [{"source_hand": "BIP01 L HAND", "source_finger": "BIP01 L FINGER0",
                               "chains": [["index_01_l", "index_02_l", "index_03_l"], ["middle_01_l", "middle_02_l", "middle_03_l"]],
                               "shares": [1.0, 0.9, 0.7]}]},
+        "ARM":  {"skeleton": "ARM.MDH", "source": "SRC.MDH",
+                 "bones": [{"name": "chest", "source": "BIP01 SPINE"}, {"name": "upper", "source": "BIP01 L UPPERARM"},
+                           {"name": "hand", "source": "BIP01 L HAND"}],
+                 "root": {"bone": "chest", "source": "BIP01 SPINE"},
+                 "twists": [{"bone": "upper_twist", "of": "upper", "against": "clav", "axis": "fore", "share": -1.0},
+                            {"bone": "fore_twist", "of": "hand", "against": "fore", "axis": "hand", "share": 0.5},
+                            {"bone": "fore_full", "of": "hand", "against": "fore", "axis": "hand", "share": 1.0}],
+                 "shoulders": [{"clavicle": "clav", "arm": "upper", "elbow": "fore", "chest": "chest",
+                                "share": 0.5, "from": 30, "max": 40}]},
+        "ARM_FLAT": {"skeleton": "ARM.MDH", "source": "SRC.MDH",
+                 "bones": [{"name": "chest", "source": "BIP01 SPINE"}, {"name": "upper", "source": "BIP01 L UPPERARM"},
+                           {"name": "hand", "source": "BIP01 L HAND"}],
+                 "root": {"bone": "chest", "source": "BIP01 SPINE"}},
         "BAD_BONE":   {"skeleton": "LEG.MDH", "source": "SRC.MDH", "bones": [{"name": "knee_l"}],
                        "root": {"bone": "pelvis", "source": "BIP01 PELVIS"}},
         "BAD_SOURCE": {"skeleton": "LEG.MDH", "source": "SRC.MDH", "bones": [{"name": "pelvis", "source": "BIP01 R THIGH"}],
@@ -308,13 +336,19 @@ int main() {
         "BAD_BIG":    {"skeleton": "BIG.MDH", "source": "SRC.MDH", "bones": [{"name": "node0"}],
                        "root": {"bone": "node0", "source": "BIP01"}},
         "BAD_RECORD": {"skeleton": "NONE.MDH", "source": "SRC.MDH", "bones": [{"name": "pelvis"}],
-                       "root": {"bone": "pelvis", "source": "BIP01 PELVIS"}}
+                       "root": {"bone": "pelvis", "source": "BIP01 PELVIS"}},
+        "BAD_TWIST":  {"skeleton": "ARM.MDH", "source": "SRC.MDH", "bones": [{"name": "chest"}],
+                       "root": {"bone": "chest", "source": "BIP01 SPINE"},
+                       "twists": [{"bone": "fore", "of": "hand", "against": "upper", "axis": "hand", "share": 0.5}]},
+        "BAD_RHYTHM": {"skeleton": "ARM.MDH", "source": "SRC.MDH", "bones": [{"name": "chest"}],
+                       "root": {"bone": "chest", "source": "BIP01 SPINE"},
+                       "shoulders": [{"clavicle": "clav", "arm": "upper", "elbow": "fore", "chest": "chest", "share": 0.5}]}
         },
       "meshes": {"HUM_BODY_TEST.MDM": "LEG"}
       })";
     index.parse(json);
     require(messages.empty(),"a good file is read without messages: "+(messages.empty() ? "" : messages[0]));
-    require(index.size()==8,"eight rigs are read");
+    require(index.size()==12,"twelve rigs are read");
 
     // (a) the same skeleton repeats the source
     const RenderRig* sameRig = index.rig("SAME");
@@ -349,7 +383,7 @@ int main() {
     // (b, c) the leg: IK onto the ankle, out of reach - straight
     const RenderRig* legRig = index.rig("LEG");
     require(legRig!=nullptr && index.rigOfMesh("models/hum_body_test.asc")==legRig,"the leg rig loads, by its mesh too");
-    require(index.meshTable().size()==1 && index.meshTable().count("HUM_BODY_TEST")==1 && index.rigNames().size()==8,
+    require(index.meshTable().size()==1 && index.meshTable().count("HUM_BODY_TEST")==1 && index.rigNames().size()==12,
             "the table lists its rigs and meshes");
     // a bone's Gothic node: its source, else its parent's, else the source's root
     require(legRig->sourceOf(leg.find("ball_l"))==source.find("BIP01 L TOE0") &&
@@ -462,12 +496,88 @@ int main() {
           }
       }
 
+    // (h) twist bones and the shoulder rhythm
+    {
+      const RenderRig* armRig  = index.rig("ARM");
+      const RenderRig* flatRig = index.rig("ARM_FLAT");
+      require(armRig!=nullptr && flatRig!=nullptr,"the arm rigs load");
+      const size_t ch = arm.find("chest"), cl = arm.find("clav"), up = arm.find("upper"), ut = arm.find("upper_twist"),
+                   fo = arm.find("fore"), ft = arm.find("fore_twist"), ff = arm.find("fore_full"), ha = arm.find("hand");
+      auto rot = [](const Matrix4x4& m) { return IkMath::rotationOf(m); };
+      // the twist of `rel` (a turn in some frame) about unit `axis` of that frame, degrees; and the angle of a turn
+      auto twistAbout = [](const IkMath::Mat3& rel, const Vec3& axis) {
+        IkMath::Quat q = IkMath::toQuat(rel);
+        if(q.w<0)
+          q = {-q.w,-q.x,-q.y,-q.z};
+        return 2.0*std::atan2(double(q.x*axis.x + q.y*axis.y + q.z*axis.z),double(q.w))*180.0/Pi;
+        };
+      auto turnOf = [](const IkMath::Mat3& r) {
+        return std::acos(std::clamp((double(r.m[0][0])+r.m[1][1]+r.m[2][2]-1.0)/2.0,-1.0,1.0))*180.0/Pi;
+        };
+      // a bone's turn against another from the bind pose, in the other's frame
+      auto against = [&](const std::vector<Matrix4x4>& o, size_t of, size_t x) {
+        return IkMath::mul(IkMath::mul(IkMath::transpose(rot(o[x])),rot(o[of])),
+                           IkMath::transpose(IkMath::mul(IkMath::transpose(rot(arm.world[x])),rot(arm.world[of]))));
+        };
+      auto axisIn = [&](size_t frame, size_t from, size_t to) {
+        const Vec3 d = position(arm.world[to])-position(arm.world[from]);
+        return IkMath::normalize(IkMath::mul(IkMath::transpose(rot(arm.world[frame])),d));
+        };
+      std::vector<Matrix4x4> o(Resources::MAX_NUM_SKELETAL_NODES), f(Resources::MAX_NUM_SKELETAL_NODES);
+      require(armRig->solve(source.world.data(),source.world.size(),o.data()),"the arm's bind pose is solved");
+      for(size_t i:{ut,ft,ff})
+        require(maxDiff(relative(o[size_t(arm.joints[i].parent)],o[i]),linearOnly(arm.local[i]))<=1e-4,
+                "in the bind pose a twist bone sits as bound: "+arm.joints[i].name);
+      int raised = 0;
+      for(int n=0; n<400; ++n) {
+        const auto w = source.randomPose(120,randomObject());
+        require(armRig->solve(w.data(),w.size(),o.data()) && flatRig->solve(w.data(),w.size(),f.data()),
+                "the arm pose is solved");
+        const std::string at = ", pose "+std::to_string(n);
+        // a twist bone turns against its parent only about the parent's axis
+        for(size_t i:{ut,ft,ff}) {
+          const size_t p = size_t(arm.joints[i].parent);
+          const auto   r = against(o,i,p);
+          const Vec3   a = axisIn(p,p,i==ut ? fo : ha);
+          require(std::abs(std::abs(twistAbout(r,a))-turnOf(r))<=0.05,"a twist bone turns about its parent's axis"+at);
+          }
+        // share 1: the full twist of the hand against the forearm; 0.5: half of it; -1: none of the upper arm's
+        const Vec3   aFore = axisIn(fo,fo,ha);
+        const double hand  = twistAbout(against(o,ha,fo),aFore);
+        require(std::abs(twistAbout(against(o,ff,fo),aFore)-hand)<=0.05,"share 1 takes the hand's whole twist"+at);
+        require(std::abs(twistAbout(against(o,ft,fo),aFore)-0.5*hand)<=0.05,"share 0.5 takes half of it"+at);
+        const Vec3 aUpper = axisIn(cl,up,fo);
+        require(std::abs(twistAbout(against(o,ut,cl),aUpper))<=0.05,
+                "share -1 takes the upper arm's twist off: "+std::to_string(twistAbout(against(o,ut,cl),aUpper))+at);
+        // the rhythm: the clavicle turns further towards the arm by 0.5 x (rise - 30), at most 40 degrees
+        const Vec3 armDir = IkMath::normalize(position(f[fo])-position(f[up]));
+        const Vec3 down   = IkMath::normalize(IkMath::mul(rot(f[ch]),IkMath::mul(IkMath::transpose(rot(arm.world[ch])),Vec3(0,-1,0))));
+        const Vec3 clavF  = IkMath::normalize(position(f[up])-position(f[cl]));
+        const double rise = std::acos(std::clamp(double(IkMath::dot(armDir,down)),-1.0,1.0))*180.0/Pi;
+        const double gap  = std::acos(std::clamp(double(IkMath::dot(clavF,armDir)),-1.0,1.0))*180.0/Pi;
+        const double want = std::min({40.0,0.5*std::max(0.0,rise-30.0),gap});
+        const double got  = turnOf(IkMath::mul(rot(o[cl]),IkMath::transpose(rot(f[cl]))));
+        require(std::abs(got-want)<=0.05,"the clavicle turns by the rhythm: "+std::to_string(got)+" not "+
+                std::to_string(want)+at);
+        const Vec3 clavO = IkMath::normalize(position(o[up])-position(o[cl]));
+        if(want>0.5) {
+          ++raised;
+          require(IkMath::dot(clavO,armDir)>IkMath::dot(clavF,armDir),"the clavicle turns towards the arm"+at);
+          }
+        require(maxDiff(linearOnly(o[up]),linearOnly(f[up]))<=1e-4,"the arm keeps its own turn"+at);
+        require(distance(position(o[up]),apply(o[cl],position(arm.local[up])))<=1e-3,"the arm hangs on the clavicle"+at);
+        }
+      require(raised>=50,"the poses raise the arm: "+std::to_string(raised));
+    }
+
     // (f) each broken rig is left out with its reason, once
     const std::map<std::string,std::string> broken = {
       {"BAD_BONE",   "bone \"knee_l\" is not in skeleton \"LEG.MDH\""},
       {"BAD_SOURCE", "source \"BIP01 R THIGH\" is not in skeleton \"SRC.MDH\""},
       {"BAD_BIG",    "97 bones in \"BIG.MDH\", more than 96"},
       {"BAD_RECORD", "no skeleton record \"NONE.MDH\""},
+      {"BAD_TWIST",  "the twist bone \"fore\" has children"},
+      {"BAD_RHYTHM", "the arm \"upper\" has no source"},
       };
     for(const auto& [rig,why]:broken) {
       messages.clear();
@@ -484,6 +594,14 @@ int main() {
       {R"({"format": "gothic-render-rigs", "version": 1, "rigs": {"R": {"skeleton": "LEG.MDH", "source": "SRC.MDH",
            "bones": [{"name": "pelvis", "turn": [1,0,0,0]}], "root": {"bone": "pelvis", "source": "BIP01 PELVIS"}}}})",
                                                                             "render rig R: bones[0]: unknown field \"turn\""},
+      {R"({"format": "gothic-render-rigs", "version": 1, "rigs": {"R": {"skeleton": "LEG.MDH", "source": "SRC.MDH",
+           "bones": [{"name": "pelvis"}], "root": {"bone": "pelvis", "source": "BIP01 PELVIS"},
+           "twists": [{"bone": "calf_l", "of": "foot_l", "against": "thigh_l", "axis": "foot_l", "share": 3}]}}})",
+                                                                            "render rig R: twists[0]: share must be a number from -2 to 2"},
+      {R"({"format": "gothic-render-rigs", "version": 1, "rigs": {"R": {"skeleton": "LEG.MDH", "source": "SRC.MDH",
+           "bones": [{"name": "pelvis"}], "root": {"bone": "pelvis", "source": "BIP01 PELVIS"},
+           "shoulders": [{"clavicle": "thigh_l", "arm": "calf_l", "elbow": "foot_l", "chest": "pelvis", "max": 100}]}}})",
+                                                                            "render rig R: shoulders[0]: max must be a number from 0 to 90"},
       {R"({"format": "gothic-render-rigs", "version": 1, "rigs": {"R": {"skeleton": "LEG.MDH", "source": "SRC.MDH",
            "bones": [{"name": "pelvis"}], "root": {"bone": "pelvis", "source": "BIP01 PELVIS", "lift": 2}}}})",
                                                                             "render rig R: root: lift must be a number from 0 to 0.5"},

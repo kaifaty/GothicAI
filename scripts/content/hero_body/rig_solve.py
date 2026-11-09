@@ -12,13 +12,17 @@ Variants of the legs (`legs=`):
 - v2:     what the engine does since «Ноги»: the knee towards the model's front of the bind pose carried by the
           thigh's turn (as pole), the pelvis raised by `share` of its height over the lower of Gothic's ankles (Gothic's clips are made
           for legs 2.6 cm shorter than its bind skeleton, ours are fitted to the bind), soft IK over the last `soft` cm.
+Upper body («Верх тела»): `Rig.rhythm` turns the clavicles with the arm's rise; `twist_bones()` gives the twist bones of
+rig_parts.TWISTS for a solved pose and `twist_of()` measures a bone's twist.
 """
 import json, math, sys
 from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'anim'))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import gothic_anim as ga
+from rig_parts import TWISTS  # the twist bones (rig_parts.py)
 
 inv = np.linalg.inv
 FWD = np.array([0.0, 0.0, 1.0])     # Gothic model frame: z ahead, y up
@@ -71,19 +75,42 @@ class Rig:
             L['front'] = Rb[L['thigh']][:3, :3].T @ FWD
             self.legs.append(L)
             self.role[L['thigh']] = ('T', k); self.role[L['calf']] = ('C', k); self.role[L['foot']] = ('F', k)
+        self.names = [nd.name for nd in rk.nodes]
         depth = lambda i: 0 if self.parent[i] < 0 else 1 + depth(self.parent[i])
         self.order = sorted(range(n), key=depth)
+
+    rhythm = None    # (share, from, max degrees): the clavicle rises with the arm above `from` by `share` of the excess
 
     def place(self, i, W, out):
         p = self.parent[i]
         m = (out[p] if p >= 0 else W[0]) @ self.local[i]
         if self.source[i] is not None:
             m[:3, :3] = W[self.source[i]][:3, :3] @ self.turn[i]
+        if self.rhythm and self.names[i].startswith('clavicle_'):
+            m[:3, :3] = self.shoulder(i, W, out, m) @ m[:3, :3]
         if i == self.root_b:
             m[:3, 3] = (W[self.root_s] @ self.root_local)[:3]
             m[1, 3] *= self.lift               # the pelvis' height over the ground scaled to our legs
             m[1, 3] += self.dy                 # v2: the pelvis raised by a share of its height over the lower ankle
         return m
+
+    def shoulder(self, i, W, out, m):
+        """Scapulohumeral rhythm: the extra turn of clavicle i towards its arm, from the arm's rise in the chest."""
+        sd = self.names[i][-1]; ri, Rb = self.ri, self.Rb
+        up, lo, ch = ri[f'upperarm_{sd}'], ri[f'lowerarm_{sd}'], ri['spine_03']
+        R_up = W[self.source[up]][:3, :3] @ self.turn[up]
+        arm = R_up @ Rb[up][:3, :3].T @ (Rb[lo][:3, 3] - Rb[up][:3, 3]); arm /= np.linalg.norm(arm)
+        down = out[ch][:3, :3] @ Rb[ch][:3, :3].T @ np.array([0, -1.0, 0])
+        rise = math.degrees(math.acos(np.clip(arm @ down, -1, 1)))
+        share, start = self.rhythm[:2]
+        cap = self.rhythm[2] if len(self.rhythm) > 2 else 90.0
+        extra = math.radians(min(cap, share * max(0.0, rise - start)))
+        clav = m[:3, :3] @ Rb[i][:3, :3].T @ (Rb[up][:3, 3] - Rb[i][:3, 3]); clav /= np.linalg.norm(clav)
+        ax = np.cross(clav, arm)
+        if np.linalg.norm(ax) < 1e-6 or extra <= 0:
+            return np.eye(3)
+        extra = min(extra, math.acos(np.clip(clav @ arm, -1, 1)))
+        return rot_axis(ax / np.linalg.norm(ax), extra)
 
     def leg(self, L, W, out, legs):
         th = out[L['thigh']]; hip = th[:3, 3].copy()
@@ -154,6 +181,51 @@ class Rig:
             if r and r[0] == 'T':
                 self.leg(self.legs[r[1]], W, out, legs)
         return np.array(out)
+
+
+def quat_of(R):
+    w = math.sqrt(max(0.0, 1 + np.trace(R))) / 2
+    if w > 1e-6:
+        v = np.array([R[2, 1] - R[1, 2], R[0, 2] - R[2, 0], R[1, 0] - R[0, 1]]) / (4 * w)
+    else:                                   # a half turn: the axis from the largest diagonal
+        i = int(np.argmax(np.diag(R))); v = np.zeros(3); v[i] = math.sqrt(max(0.0, (R[i, i] + 1) / 2))
+        for j in range(3):
+            if j != i:
+                v[j] = (R[i, j] + R[j, i]) / (4 * v[i])
+    return w, v
+
+
+def rot_axis(ax, ang):
+    vx = np.array([[0, -ax[2], ax[1]], [ax[2], 0, -ax[0]], [-ax[1], ax[0], 0]])
+    return np.eye(3) + math.sin(ang) * vx + (1 - math.cos(ang)) * vx @ vx
+
+
+def twist_of(rig, P, of, against, axis_bone, parent):
+    """Signed twist (rad) of `of` against `against` from the bind, about the bind axis parent -> axis_bone."""
+    ri, Rb = rig.ri, rig.Rb
+    X, Y = ri[against], ri[of]
+    D = (P[X][:3, :3].T @ P[Y][:3, :3]) @ (Rb[X][:3, :3].T @ Rb[Y][:3, :3]).T
+    a = Rb[ri[axis_bone]][:3, 3] - Rb[ri[parent]][:3, 3]; a = Rb[X][:3, :3].T @ (a / np.linalg.norm(a))
+    w, v = quat_of(D)
+    if w < 0:
+        w, v = -w, -v
+    return 2 * math.atan2(v @ a, w)
+
+
+def twist_bones(rig, P, sides='lr'):
+    """World matrices of the twist bones for a solved pose P: {name: 4x4}."""
+    out = {}
+    ri, Rb = rig.ri, rig.Rb
+    for s in sides:
+        for name, parent, of, against, axis_bone, t, share in TWISTS:
+            name, parent, of, against, axis_bone = (x.format(s=s) for x in (name, parent, of, against, axis_bone))
+            B = P[ri[parent]]
+            head = B[:3, 3] + t * ((B @ inv(Rb[ri[parent]]) @ Rb[ri[axis_bone]])[:3, 3] - B[:3, 3])
+            ax = (B @ inv(Rb[ri[parent]]) @ Rb[ri[axis_bone]])[:3, 3] - B[:3, 3]; ax /= np.linalg.norm(ax)
+            M = B.copy(); M[:3, 3] = head
+            M[:3, :3] = rot_axis(ax, share * twist_of(rig, P, of, against, axis_bone, parent)) @ B[:3, :3]
+            out[name] = M
+    return out
 
 
 def flex(a, b, c):
