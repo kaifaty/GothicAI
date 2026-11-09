@@ -4,7 +4,8 @@ import sys
 from PIL import Image, ImageDraw, ImageFont
 out, line, cols = sys.argv[1], sys.argv[2], sys.argv[3:]
 NAMES = {'mpfb v3fix': 'MPFB, с поправкой губ (сейчас)', 'mpfb v3': 'MPFB, без поправки',
-         'ict v3fix': 'ICT, с поправкой губ', 'mark v3': 'Mark, без поправки'}
+         'ict v3fix': 'ICT, с поправкой губ', 'mark v3': 'Mark, без поправки',
+         'mpfb smpfb': 'MPFB, решатель под MPFB', 'ict sict': 'ICT, решатель под ICT'}
 F = '/System/Library/Fonts/Supplemental/Arial.ttf'
 im = Image.new('RGB', (480*len(cols), 64), (22, 22, 22))
 d = ImageDraw.Draw(im)

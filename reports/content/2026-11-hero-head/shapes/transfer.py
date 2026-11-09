@@ -184,6 +184,10 @@ Q = trimesh.registration.nricp_amberg(sub_u, tgt, source_landmarks=lm_idx, targe
                                       use_vertex_normals=True)*u
 dist = cKDTree(VS).query(Q)[0]
 face_zone = np.linalg.norm(V[outer_v]-(fh['mc']+(fh['eye']['Left']+fh['eye']['Right'])/2)/2, axis=1) < 1.2*fh['u']
+pos_o = -np.ones(len(V), int); pos_o[outer_v] = np.arange(len(outer_v))
+lm_after = {n: float(np.linalg.norm(Q[pos_o[int(cKDTree(V).query(fh['lm'][n])[1])]]-(fs['lm'][n] @ (s*R).T+t))*1000)
+            for n in names}
+print('landmarks after the registration, mm:', {n: round(v, 1) for n, v in lm_after.items()})
 print('registered: distance to source skin median %.2f mm, 95%% %.2f mm; face %.2f / %.2f mm'
       % (np.median(dist)*1000, np.percentile(dist, 95)*1000, np.median(dist[face_zone])*1000,
          np.percentile(dist[face_zone], 95)*1000))
@@ -277,6 +281,7 @@ np.savez_compressed(os.path.join(WD, SRC+'.npz'), **res_out)
 mag = {n: [float(np.linalg.norm(hero['S'][n], axis=1).max()*1000), float(np.linalg.norm(new[n], axis=1).max()*1000)]
        for n in ARKIT if n not in KEEP}
 info = dict(src=SRC, scale=float(s), landmarks=names, landmark_residual_mm=(res*1000).round(2).tolist(),
+            landmark_after_registration_mm=lm_after,
             registered_median_mm=float(np.median(dist)*1000), registered_p95_mm=float(np.percentile(dist, 95)*1000),
             correspondence_p95_mm=float(np.percentile(corr, 95)*1000), jaw_teeth_ratio=ratio,
             max_shift_mm_hero_vs_new=mag, swapped=bool(fh['hand'] != frame_and_landmarks(src)['hand']))
@@ -284,3 +289,45 @@ json.dump(info, open(os.path.join(WD, SRC+'.json'), 'w'), indent=1)
 for n in ('jawOpen', 'mouthClose', 'mouthRollLower', 'mouthPucker', 'mouthSmileLeft', 'browInnerUp'):
     print('  %-16s max shift: hero %5.1f mm, %s %5.1f mm' % (n, mag[n][0], SRC, mag[n][1]))
 print('teeth ratio', {k: round(v, 2) for k, v in ratio.items()})
+
+# 6. the other way (face-shapes.md, "Решатель под наши формы"): the shapes a head plays, carried onto Mark's mesh, so
+# that Audio2Face's own solver finds the weights for them. Every Mark point takes the shift of the nearest registered
+# skin points of the hero (mouth and lids only within their own half), turned back into Mark's frame and centimetres.
+#   python transfer.py mark <work dir> mpfb,ict,mark   ->  <work dir>/solver/bs_skin_<set>.npz
+# mpfb is the head as built; ict and mark are <set>.npz written by earlier runs (mark there is the round-trip check).
+if len(sys.argv) > 3:
+    assert SRC == 'mark', 'the solver works on Mark'
+    mk = np.load(os.path.join(FS, 'mark/bs_skin_Mark.npz'))
+    nm_s = np.linalg.norm(VS-fh['mc'], axis=1) < 0.7*fh['u']
+    ne_s = np.minimum(*[np.linalg.norm(VS-fh['eye'][k], axis=1) for k in ('Left', 'Right')]) < 0.45*fh['u']
+    ridx = np.zeros((len(VS), K), int); rw = np.zeros((len(VS), K))
+    rgroups = [(~nm_s & ~ne_s, np.ones(len(Q), bool))]
+    for zone, ms, mh in ((nm_s, js, jh[outer_v]), (ne_s & ~nm_s, ls, lh[outer_v])):
+        rgroups += [(zone & ms, mh), (zone & ~ms, ~mh)]
+    for sel, mh in rgroups:
+        if not sel.any():
+            continue
+        pool = np.nonzero(mh)[0]
+        dq, jq = cKDTree(Q[pool]).query(VS[sel], k=K)
+        wq = 1/np.maximum(dq, 1e-4)**2
+        ridx[sel], rw[sel] = pool[jq], wq/wq.sum(1, keepdims=True)
+    gap = cKDTree(Q).query(VS[mk['frontalMask']])[0]*1000
+    print('solver mask (%d Mark points) to the registered hero skin: median %.2f mm, 95%% %.2f mm, max %.1f mm'
+          % (len(gap), np.median(gap), np.percentile(gap, 95), gap.max()))
+    os.makedirs(os.path.join(WD, 'solver'), exist_ok=True)
+    np.savez(os.path.join(WD, 'solver', 'reg.npz'), Q=Q, outer_v=outer_v, VS=VS, s=s, R=R, t=t)   # for checks
+    for name in sys.argv[3].split(','):
+        if name == 'mpfb':
+            SH = hero['S']
+        else:
+            e = np.load(os.path.join(WD, name+'.npz'))
+            SH = {n: e['face|'+n]-V for n in ARKIT}
+        out = {k: mk[k] for k in mk.files}
+        for n in ARKIT:
+            if n != 'tongueOut':                # the solver leaves it out (bsSolveActivePoses); Mark's own stays
+                dn = (SH[n][outer_v][ridx]*rw[..., None]).sum(1)
+                out[n] = (dn @ R/s).astype(mk[n].dtype)
+        np.savez(os.path.join(WD, 'solver', 'bs_skin_%s.npz' % name), **out)   # uncompressed, like NVIDIA's
+        print('solver shapes %s: jawOpen %.2f cm, mouthClose %.2f cm (Mark %.2f / %.2f)' % (
+            name, np.linalg.norm(out['jawOpen'], axis=1).max(), np.linalg.norm(out['mouthClose'], axis=1).max(),
+            np.linalg.norm(mk['jawOpen'], axis=1).max(), np.linalg.norm(mk['mouthClose'], axis=1).max()))

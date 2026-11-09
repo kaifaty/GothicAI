@@ -1,6 +1,7 @@
 # Guard rail of face-shapes.md: how often the lower lip rides up over the upper one while the jaw is nearly closed.
 # Plays the Audio2Face weights on each shape set at the midline lip contact and measures the gap along "down".
 #   python lip_gap.py <work dir> <weights dir>      (in ~/.local/share/gothic-ai/mpfb/venv)
+# <clip>.smpfb.csv and <clip>.sict.csv are weights from the solver given those shapes (transfer.py step 6).
 import os, sys, glob
 import numpy as np
 WD, WT = (os.path.expanduser(a) for a in sys.argv[1:3])
@@ -31,17 +32,30 @@ lo = np.nonzero(front & (jaw > 0.4*jaw[front].max()))[0]
 up = np.nonzero(front & (jaw < 0.2*jaw[front].max()))[0]
 iu, il = up[np.argmax(((V[up]-pc) @ down))], lo[np.argmin(((V[lo]-pc) @ down))]
 print('contact: upper %d lower %d, rest gap %.2f mm' % (iu, il, ((V[il]-V[iu]) @ down)*1000))
-rows = []
-for col, (s, w) in {'MPFB с поправкой': ('mpfb', 'v3fix'), 'MPFB без поправки': ('mpfb', 'v3'),
-                    'ICT с поправкой': ('ict', 'v3fix'), 'ICT без поправки': ('ict', 'v3'),
-                    'Mark без поправки': ('mark', 'v3')}.items():
+def gaps(s, w):
     D = np.stack([sets[s][n][[iu, il]] for n in ARKIT])          # (52, 2, 3)
-    over, closed, worst = 0, 0, 0.0
+    G, J = [], []
     for f in sorted(glob.glob(os.path.join(WT, '*.%s.csv' % w))):
         W = np.loadtxt(f, delimiter=',')[:, 1:1+len(ARKIT)]
         P = V[[iu, il]][None]+np.einsum('fk,kpc->fpc', W, D)
-        gap = (P[:, 1]-P[:, 0]) @ down
-        c = W[:, ARKIT.index('jawOpen')] < 0.15
-        closed += c.sum(); over += (c & (gap < -0.002)).sum(); worst = min(worst, gap[c].min() if c.any() else 0)
-    rows.append((col, over/closed, worst))
-    print('%-20s lower lip over the upper by > 2 mm: %4.1f %% of near-closed frames, worst %.1f mm' % (col, 100*over/closed, worst*1000))
+        G.append((P[:, 1]-P[:, 0]) @ down); J.append(W[:, ARKIT.index('jawOpen')])
+    return (np.concatenate(G), np.concatenate(J)) if G else (None, None)
+# the reference is what the network itself drew: Mark's shapes with its weights. Where its lips close (an m, p, b),
+# a set must close them too: a set that never rides over may just never close
+ref, _ = gaps('mark', 'v3')
+rows = []
+for col, (s, w) in {'MPFB с поправкой': ('mpfb', 'v3fix'), 'MPFB без поправки': ('mpfb', 'v3'),
+                    'ICT с поправкой': ('ict', 'v3fix'), 'ICT без поправки': ('ict', 'v3'),
+                    'Mark без поправки': ('mark', 'v3'),
+                    'MPFB, решатель под MPFB': ('mpfb', 'smpfb'), 'ICT, решатель под ICT': ('ict', 'sict')}.items():
+    gap, jaw_w = gaps(s, w)
+    if gap is None:
+        continue
+    c = jaw_w < 0.15
+    over = (c & (gap < -0.002)).sum()/c.sum()
+    shut = ref < 0.001
+    open_ = (shut & (gap > 0.003)).sum()/shut.sum()
+    rows.append((col, over, gap[c].min(), open_))
+    print('%-24s over the upper > 2 mm: %4.1f %% of near-closed frames, worst %5.1f mm | open > 3 mm where Mark '
+          'closes: %4.1f %% | gap vs Mark: mean %.1f mm' % (col, 100*over, gap[c].min()*1000, 100*open_,
+                                                          np.abs(gap-ref).mean()*1000))

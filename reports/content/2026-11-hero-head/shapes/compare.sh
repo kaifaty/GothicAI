@@ -1,12 +1,13 @@
 #!/bin/bash
-# The comparison clip of face-shapes.md: six Audio2Face v3.0 lines, four columns (MPFB with the lip fix, MPFB raw,
-# ICT with the fix, Mark raw), with their sound. Frames by ../a2f/render_a2f.py, labels by label.py, ffmpeg joins.
-#   compare.sh <work dir with head-{mpfb,ict,mark}.glb> <weights dir> <clips dir> <out.mp4>
+# The comparison clip of face-shapes.md: six Audio2Face v3.0 lines, four columns (by default MPFB with the lip fix,
+# MPFB raw, ICT with the fix, Mark raw), with their sound. Frames by ../a2f/render_a2f.py, labels by label.py.
+#   [COLS="mpfb v3fix,mark v3,mpfb smpfb,ict sict"] compare.sh <work dir with head-{mpfb,ict,mark}.glb> <weights dir> <clips dir> <out.mp4>
+# A column is "<head> <weights>": <weights dir>/<line>.<weights>.csv played on <work dir>/head-<head>.glb.
 set -euo pipefail
 W=$1; WT=$2; CL=$3; OUT=$4
 H=$(cd "$(dirname "$0")" && pwd)
 BL=/Applications/Blender.app/Contents/MacOS/Blender
-COLS=("mpfb v3fix" "mpfb v3" "ict v3fix" "mark v3")
+IFS=, read -r -a COLS <<< "${COLS:-mpfb v3fix,mpfb v3,ict v3fix,mark v3}"
 LINES=(inworld_hero inworld_xardas orig_hero orig_sylvio orig_biff player_mic)
 render() {  # head weights line
   local d="$W/frames/$3/$1-$2"
