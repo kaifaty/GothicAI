@@ -36,6 +36,13 @@ CommandLine::CommandLine(int argc, const char** argv) {
   // OPENGOTHIC_VSM=0|1: the default of -vsm for benches and scripts that cannot pass flags; -vsm wins
   if(const char* vsm = std::getenv("OPENGOTHIC_VSM"))
     isVsm = boolArg(vsm);
+  // OPENGOTHIC_RT=0|1 and OPENGOTHIC_GI=0|1|2: the same for -rt and -gi (the GI clips of a bench); the flags win
+  if(const char* rt = std::getenv("OPENGOTHIC_RT"))
+    isRQuery = boolArg(rt);
+  if(const char* gi = std::getenv("OPENGOTHIC_GI"); gi!=nullptr && *gi!='\0') {
+    isGi    = GiMethod(std::clamp(std::max(0, intArg(gi)), 0, GiMethod::Count-1));
+    isGiSet = true;
+    }
   if(argc<1)
     return;
 
