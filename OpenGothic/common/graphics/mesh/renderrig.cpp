@@ -19,6 +19,8 @@ using IkMath::Mat3;
 
 namespace {
 
+constexpr float Degree = 3.14159265358979f/180.f;  // M_PI is not standard (MSVC)
+
 [[noreturn]] void fail(const std::string& what) {
   throw std::runtime_error(what);
   }
@@ -61,6 +63,17 @@ std::vector<float> numbers(const rapidjson::Value& v, size_t count, const std::s
   return ret;
   }
 
+// a number field within [lo, hi] (`range` names it in the message); 0 when it is left out
+float number(const rapidjson::Value& obj, const char* key, double lo, double hi, const char* range,
+             const std::string& where) {
+  if(!obj.HasMember(key))
+    return 0;
+  const auto& v = obj[key];
+  if(!v.IsNumber() || !std::isfinite(v.GetDouble()) || v.GetDouble()<lo || v.GetDouble()>hi)
+    fail(where+key+" must be a number from "+range);
+  return float(v.GetDouble());
+  }
+
 const rapidjson::Value* list(const rapidjson::Value& obj, const char* key, const std::string& where) {
   if(!obj.HasMember(key))
     return nullptr;
@@ -72,7 +85,7 @@ const rapidjson::Value* list(const rapidjson::Value& obj, const char* key, const
 RenderRigSpec parseRig(std::string_view rigName, const rapidjson::Value& v) {
   if(!v.IsObject())
     fail("the rig must be an object");
-  onlyFields(v,{"skeleton","source","bones","root","legs","fingers","sockets"},"");
+  onlyFields(v,{"skeleton","source","bones","root","legs","fingers","twists","shoulders","sockets"},"");
   RenderRigSpec s;
   s.name     = std::string(rigName);
   s.skeleton = name(v,"skeleton","");
@@ -100,16 +113,22 @@ RenderRigSpec parseRig(std::string_view rigName, const rapidjson::Value& v) {
 
   if(!v.HasMember("root") || !v["root"].IsObject())
     fail("root must be an object");
-  onlyFields(v["root"],{"bone","source"},"root: ");
+  onlyFields(v["root"],{"bone","source","lift"},"root: ");
   s.rootBone   = name(v["root"],"bone","root: ");
   s.rootSource = name(v["root"],"source","root: ");
+  if(v["root"].HasMember("lift")) {
+    const auto& lift = v["root"]["lift"];
+    if(!lift.IsNumber() || !std::isfinite(lift.GetDouble()) || lift.GetDouble()<0 || lift.GetDouble()>0.5)
+      fail("root: lift must be a number from 0 to 0.5");
+    s.rootLift = float(lift.GetDouble());
+    }
 
   if(auto legs = list(v,"legs","")) {
     for(const auto& l:legs->GetArray()) {
       const std::string where = "legs["+std::to_string(s.legs.size())+"]: ";
       if(!l.IsObject())
         fail(where+"must be an object");
-      onlyFields(l,{"thigh","calf","foot","ball","source_foot","source_knee","ankle"},where);
+      onlyFields(l,{"thigh","calf","foot","ball","source_foot","source_knee","ankle","soft"},where);
       RenderRigSpec::Leg leg;
       leg.thigh      = name(l,"thigh",where);
       leg.calf       = name(l,"calf",where);
@@ -121,6 +140,12 @@ RenderRigSpec parseRig(std::string_view rigName, const rapidjson::Value& v) {
         fail(where+"no ankle");
       const auto a = numbers(l["ankle"],3,where+"ankle");
       leg.ankle = {a[0],a[1],a[2]};
+      if(l.HasMember("soft")) {
+        const auto& soft = l["soft"];
+        if(!soft.IsNumber() || !std::isfinite(soft.GetDouble()) || soft.GetDouble()<0 || soft.GetDouble()>20)
+          fail(where+"soft must be a number from 0 to 20");
+        leg.soft = float(soft.GetDouble());
+        }
       s.legs.push_back(std::move(leg));
       }
     }
@@ -151,6 +176,42 @@ RenderRigSpec parseRig(std::string_view rigName, const rapidjson::Value& v) {
         fs.chains.push_back(std::move(chain));
         }
       s.fingers.push_back(std::move(fs));
+      }
+    }
+
+  if(auto twists = list(v,"twists","")) {
+    for(const auto& t:twists->GetArray()) {
+      const std::string where = "twists["+std::to_string(s.twists.size())+"]: ";
+      if(!t.IsObject())
+        fail(where+"must be an object");
+      onlyFields(t,{"bone","of","against","axis","share"},where);
+      RenderRigSpec::Twist tw;
+      tw.bone    = name(t,"bone",where);
+      tw.of      = name(t,"of",where);
+      tw.against = name(t,"against",where);
+      tw.axis    = name(t,"axis",where);
+      if(!t.HasMember("share"))
+        fail(where+"no share");
+      tw.share   = number(t,"share",-2,2,"-2 to 2",where);
+      s.twists.push_back(std::move(tw));
+      }
+    }
+
+  if(auto shoulders = list(v,"shoulders","")) {
+    for(const auto& sh:shoulders->GetArray()) {
+      const std::string where = "shoulders["+std::to_string(s.shoulders.size())+"]: ";
+      if(!sh.IsObject())
+        fail(where+"must be an object");
+      onlyFields(sh,{"clavicle","arm","elbow","chest","share","from","max"},where);
+      RenderRigSpec::Shoulder r;
+      r.clavicle = name(sh,"clavicle",where);
+      r.arm      = name(sh,"arm",where);
+      r.elbow    = name(sh,"elbow",where);
+      r.chest    = name(sh,"chest",where);
+      r.share    = number(sh,"share",0,1,"0 to 1",where);
+      r.from     = number(sh,"from",0,180,"0 to 180",where);
+      r.max      = number(sh,"max",0,90,"0 to 90",where);
+      s.shoulders.push_back(std::move(r));
       }
     }
 
@@ -319,6 +380,7 @@ std::unique_ptr<RenderRig> RenderRig::build(const RenderRigSpec& spec, const ass
   r->rootBone   = rigNode(spec.rootBone,"root bone");
   r->rootSource = sourceNode(spec.rootSource);
   r->rootLocal  = apply(inverse(src.tr[r->rootSource]),IkMath::position(rig.tr[r->rootBone]));
+  r->lift       = spec.rootLift;
 
   auto take = [&](size_t i, Role role, size_t part) {
     auto& b = r->bone[i];
@@ -344,6 +406,10 @@ std::unique_ptr<RenderRig> RenderRig::build(const RenderRigSpec& spec, const ass
     leg.sourceFoot = sourceNode(l.sourceFoot);
     leg.sourceKnee = sourceNode(l.sourceKnee);
     leg.ankle      = l.ankle;
+    leg.front      = IkMath::mul(IkMath::transpose(IkMath::rotationOf(rig.tr[leg.thigh])),Vec3(0,0,1));
+    leg.soft       = l.soft;
+    leg.length     = IkMath::length(IkMath::position(r->bone[leg.calf].local)) +
+                     IkMath::length(IkMath::position(r->bone[leg.foot].local));
     take(leg.thigh,Role::Thigh,r->legs.size());
     take(leg.calf, Role::Calf, r->legs.size());
     take(leg.foot, Role::Foot, r->legs.size());
@@ -362,6 +428,71 @@ std::unique_ptr<RenderRig> RenderRig::build(const RenderRigSpec& spec, const ass
         }
     r->fingers.push_back(fs);
     }
+
+  auto bindAt = [&](size_t i) { return IkMath::position(rig.tr[i]); };
+  auto inFrame = [&](size_t i, const Vec3& dir) {  // a world direction of the bind pose in bone i's frame
+    return IkMath::mul(IkMath::transpose(IkMath::rotationOf(rig.tr[i])),dir);
+    };
+  for(const auto& t:spec.twists) {
+    const std::string where = "twists["+std::to_string(r->twists.size())+"]: ";
+    Twist tw;
+    tw.bone    = rigNode(t.bone,"bone");
+    tw.of      = rigNode(t.of,"bone");
+    tw.against = rigNode(t.against,"bone");
+    tw.parent  = rig.nodes[tw.bone].parent;
+    const size_t axis = rigNode(t.axis,"bone");
+    if(tw.parent==None)
+      error(where+"the twist bone "+quote(t.bone)+" has no parent");
+    if(r->bone[tw.bone].source!=None)
+      error(where+"the twist bone "+quote(t.bone)+" has a source");
+    for(size_t i=0; i<count; ++i)
+      if(rig.nodes[i].parent==tw.bone)
+        error(where+"the twist bone "+quote(t.bone)+" has children");
+    if(tw.of==tw.bone || tw.against==tw.bone || tw.of==tw.against)
+      error(where+"of, against and the bone must differ");
+    const Vec3 dir = bindAt(axis)-bindAt(tw.parent);
+    if(IkMath::length(dir)<IkMath::Eps)
+      error(where+"the axis "+quote(t.axis)+" sits on the parent");
+    tw.axisAgainst = inFrame(tw.against,IkMath::normalize(dir));
+    tw.axisParent  = inFrame(tw.parent,IkMath::normalize(dir));
+    tw.bindRel     = IkMath::mul(IkMath::transpose(IkMath::rotationOf(rig.tr[tw.against])),IkMath::rotationOf(rig.tr[tw.of]));
+    tw.share       = t.share;
+    take(tw.bone,Role::Twist,r->twists.size());
+    r->twists.push_back(tw);
+    }
+  for(const auto& t:r->twists)
+    if(r->bone[t.of].role==Role::Twist || r->bone[t.against].role==Role::Twist)
+      error("twists: a twist bone cannot be another one's of or against");
+
+  for(const auto& sh:spec.shoulders) {
+    const std::string where = "shoulders["+std::to_string(r->shoulders.size())+"]: ";
+    Shoulder rh;
+    rh.clavicle = rigNode(sh.clavicle,"bone");
+    rh.arm      = rigNode(sh.arm,"bone");
+    rh.chest    = rigNode(sh.chest,"bone");
+    const size_t elbow = rigNode(sh.elbow,"bone");
+    if(r->bone[rh.arm].source==None)
+      error(where+"the arm "+quote(sh.arm)+" has no source");
+    bool above = false;
+    for(size_t p=rig.nodes[rh.clavicle].parent; p!=None && !above; p=rig.nodes[p].parent)
+      above = p==rh.chest;
+    if(!above)
+      error(where+"the chest "+quote(sh.chest)+" is not above the clavicle "+quote(sh.clavicle));
+    if(r->bone[rh.clavicle].shoulder!=None)
+      error(where+"the clavicle "+quote(sh.clavicle)+" has two rhythms");
+    const Vec3 clav = bindAt(rh.arm)-bindAt(rh.clavicle), arm = bindAt(elbow)-bindAt(rh.arm);
+    if(IkMath::length(clav)<IkMath::Eps || IkMath::length(arm)<IkMath::Eps)
+      error(where+"a bone of zero length");
+    rh.clavAxis  = inFrame(rh.clavicle,IkMath::normalize(clav));
+    rh.armAxis   = inFrame(rh.arm,IkMath::normalize(arm));
+    rh.chestDown = inFrame(rh.chest,Vec3(0,-1,0));
+    rh.share     = sh.share;
+    rh.from      = sh.from*Degree;
+    rh.max       = sh.max*Degree;
+    r->bone[rh.clavicle].shoulder = r->shoulders.size();
+    r->shoulders.push_back(rh);
+    }
+
   for(const auto& s:spec.sockets) {
     Socket socket;
     socket.name   = s.source;
@@ -401,27 +532,39 @@ bool RenderRig::fits(const Skeleton& source) const {
 bool RenderRig::solve(const Matrix4x4* source, size_t sourceCount, Matrix4x4* out) const {
   if(source==nullptr || out==nullptr || sourceCount<sourceNeeded)
     return false;
+  float rise = 0;
+  if(lift>0 && !legs.empty()) {
+    const float root = apply(source[rootSource],rootLocal).y;
+    float       low  = root;
+    for(const auto& l:legs)
+      low = std::min(low,apply(source[l.sourceFoot],l.ankle).y);
+    rise = lift*(root-low);
+    }
   for(const size_t i:order) {
     const Role role = bone[i].role;
-    if(role==Role::Calf || role==Role::Foot)
-      continue;  // with their thigh
-    out[i] = place(i,source,out);
+    if(role==Role::Calf || role==Role::Foot || role==Role::Twist)
+      continue;  // with their thigh; the twists last
+    out[i] = place(i,source,out,rise);
     if(role==Role::Thigh)
       solveLeg(legs[bone[i].part],source,out);
     }
+  for(const auto& t:twists)
+    solveTwist(t,out);
   return true;
   }
 
 // A bone by its parent: the place from the parent as in the bind pose, the turn of its source node from the bind
-// pose (R_source(t) * R_source_bind^T * align * R_bind) or the parent's; the root by its source node; a phalanx
-// turned further by its share of the finger's bend.
-Matrix4x4 RenderRig::place(size_t i, const Matrix4x4* source, const Matrix4x4* out) const {
+// pose (R_source(t) * R_source_bind^T * align * R_bind) or the parent's; the root by its source node, raised by
+// `lift` cm; a phalanx turned further by its share of the finger's bend.
+Matrix4x4 RenderRig::place(size_t i, const Matrix4x4* source, const Matrix4x4* out, float lift) const {
   const Bone& b = bone[i];
   Matrix4x4 m = (b.parent!=None ? out[b.parent] : source[sourceRoot])*b.local;
   if(b.source!=None)
     setLinear(m,IkMath::mul(linear(source[b.source]),b.turn));
+  if(b.shoulder!=None)
+    setLinear(m,IkMath::mul(rhythm(shoulders[b.shoulder],m,source,out),linear(m)));
   if(i==rootBone)
-    setPosition(m,apply(source[rootSource],rootLocal));
+    setPosition(m,apply(source[rootSource],rootLocal)+Vec3(0,lift,0));
   if(b.role==Role::Phalanx) {
     const auto& f = fingers[b.part];
     // the finger's turn against the hand from the bind pose, in world: R_f(t) * R_f_bind^T * R_h_bind * R_h(t)^T
@@ -435,9 +578,10 @@ Matrix4x4 RenderRig::place(size_t i, const Matrix4x4* source, const Matrix4x4* o
   return m;
   }
 
-// Two-bone IK onto the ankle of the source foot, the knee towards the source knee. The axis of a bone is the way to
+// Two-bone IK onto the ankle of the source foot, the knee towards the thigh's front. The axis of a bone is the way to
 // its child in the bind pose; the thigh and the calf take the shortest turn onto the solved directions, the foot keeps
-// its turn and stands on the target. A target out of reach: the leg straight towards it.
+// its turn and stands on the target. A target out of reach: the leg straight towards it. With soft, the last soft cm
+// of reach come as 1 - e^-x: the foot stops short of a far target and the knee never snaps straight.
 void RenderRig::solveLeg(const Leg& leg, const Matrix4x4* source, Matrix4x4* out) const {
   using IkMath::length;
   using IkMath::normalize;
@@ -459,13 +603,25 @@ void RenderRig::solveLeg(const Leg& leg, const Matrix4x4* source, Matrix4x4* out
   // the triangle in double: a straight leg cancels most of l1^2 - along^2
   const Vec3   u     = toTarget*(1.f/dist);
   const double d1 = l1, d2 = l2;
-  const double d     = std::clamp(double(dist),std::abs(d1-d2)+1e-6,d1+d2);
+  double       d     = std::clamp(double(dist),std::abs(d1-d2)+1e-6,d1+d2);
+  if(leg.soft>0 && leg.length>IkMath::Eps) {
+    const double s    = double(leg.soft)*(d1+d2)/double(leg.length);  // the npc's scale too
+    const double near = d1+d2-s;
+    if(dist>near && near>std::abs(d1-d2))
+      d = near + s*(1.0-std::exp(-(double(dist)-near)/s));
+    }
   const double along = (d1*d1 - d2*d2 + d*d)/(2.0*d);
   const double up    = std::sqrt(std::max(d1*d1 - along*along,0.0));
   const Vec3   end   = hip + u*float(d);
 
-  const Vec3 pole = IkMath::position(source[leg.sourceKnee]) - hip;
-  Vec3 side = pole - u*IkMath::dot(pole,u);
+  // the knee's way: the thigh's front, robust on a straight leg (Gothic's knee point lies on the line there and gave
+  // a random side - the knees knocked inwards); along the leg (a thigh raised level) - towards Gothic's knee
+  const Vec3 front = IkMath::mul(linear(thigh),leg.front);
+  Vec3 side = front - u*IkMath::dot(front,u);
+  if(length(side)<0.05f*length(front)) {
+    const Vec3 pole = IkMath::position(source[leg.sourceKnee]) - hip;
+    side = pole - u*IkMath::dot(pole,u);
+    }
   if(length(side)<IkMath::Eps)
     side = a1 - u*IkMath::dot(a1,u);  // the pole on the line: the knee keeps its side
   if(length(side)<IkMath::Eps)
@@ -482,6 +638,40 @@ void RenderRig::solveLeg(const Leg& leg, const Matrix4x4* source, Matrix4x4* out
   Matrix4x4 foot = place(leg.foot,source,out);
   setPosition(foot,end);
   out[leg.foot] = foot;
+  }
+
+// The scapulohumeral rhythm: as the arm rises from the chest's down past `from`, the clavicle turns further towards
+// it by share of the excess, at most `max` and never past the arm. The arm's turn comes from its source here: the
+// clavicle is placed before it.
+Mat3 RenderRig::rhythm(const Shoulder& s, const Matrix4x4& clavicle, const Matrix4x4* source, const Matrix4x4* out) const {
+  const Mat3  none    = {{{1,0,0},{0,1,0},{0,0,1}}};
+  const Bone& arm     = bone[s.arm];
+  const Vec3  armDir  = IkMath::normalize(IkMath::mul(IkMath::mul(linear(source[arm.source]),arm.turn),s.armAxis));
+  const Vec3  down    = IkMath::normalize(IkMath::mul(linear(out[s.chest]),s.chestDown));
+  const Vec3  clavDir = IkMath::normalize(IkMath::mul(linear(clavicle),s.clavAxis));
+  const float rise    = std::acos(std::clamp(IkMath::dot(armDir,down),-1.f,1.f));
+  float       extra   = std::min(s.max,s.share*std::max(0.f,rise-s.from));
+  const Vec3  axis    = IkMath::cross(clavDir,armDir);
+  if(extra<=0 || IkMath::length(axis)<IkMath::Eps)
+    return none;
+  extra = std::min(extra,std::acos(std::clamp(IkMath::dot(clavDir,armDir),-1.f,1.f)));
+  return IkMath::axisAngle(IkMath::normalize(axis),extra);
+  }
+
+// A twist bone: rigid behind its parent, then turned about the parent's axis by share x the twist of `of` against
+// `against` from the bind pose (the twist part of a swing-twist split about the bind axis)
+void RenderRig::solveTwist(const Twist& t, Matrix4x4* out) const {
+  Matrix4x4  m   = out[t.parent]*bone[t.bone].local;
+  const Mat3 rel = IkMath::mul(IkMath::mul(IkMath::transpose(IkMath::rotationOf(out[t.against])),
+                                           IkMath::rotationOf(out[t.of])),IkMath::transpose(t.bindRel));
+  IkMath::Quat q = IkMath::toQuat(rel);
+  if(q.w<0)
+    q = {-q.w,-q.x,-q.y,-q.z};
+  const float along = q.x*t.axisAgainst.x + q.y*t.axisAgainst.y + q.z*t.axisAgainst.z;
+  const float twist = 2.f*std::atan2(along,q.w);
+  const Vec3  axis  = IkMath::normalize(IkMath::mul(linear(out[t.parent]),t.axisParent));
+  setLinear(m,IkMath::mul(IkMath::axisAngle(axis,t.share*twist),linear(m)));
+  out[t.bone] = m;
   }
 
 bool RenderRig::socket(std::string_view sourceNode, const Matrix4x4* palette, Matrix4x4& out) const {
