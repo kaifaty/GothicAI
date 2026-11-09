@@ -80,6 +80,10 @@ def gothic_node(b):
     if base.split('_')[0] in ('index', 'middle', 'ring', 'pinky'): return f'BIP01 {side} FINGER0'
     raise KeyError(b)
 
+if RIG:   # twist bones on the armature, the arms' and thighs' skin spread over them (rig_parts.py, «Верх тела»)
+    import twist_bones
+    Mw = np.array(bm.matrix_world)
+    twist_weights = twist_bones.add(rig, bm, (np.c_[co, np.ones(nv)] @ Mw.T)[:, :3])
 bones = list(rig.data.bones.keys())
 if RIG:
     groups = bones

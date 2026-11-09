@@ -156,6 +156,11 @@ void routineReturnBegin(World& world,Npc& player) {
   if(!skeleton || skeleton->findNode("BIP01 L FOOT")==size_t(-1) || skeleton->findNode("BIP01 R FOOT")==size_t(-1)) {
     arenaAbort("routine-return human has no native foot bones");return;
     }
+  // The hero is parked far away, so residency tiers would make the actor and its neighbours
+  // Simplified: no dry anchor, no ragdoll, graph movement and ghost bodies. Keep the whole
+  // world on the native near-hero tier; the override is bench-only and never saved.
+  for(uint32_t i=0;i<world.npcCount();++i)
+    if(auto* other=world.npcById(i))other->setSimTierOverride(NpcSimTier::Full);
   npc->setInteraction(nullptr,true);npc->clearAiQueue();npc->clearState(false);
   npc->clearGoTo();npc->stopWalking();npc->closeWeapon(true);npc->setAnim(Npc::Anim::Idle);npc->setExternalControl(true);
   npc->setPosition(c.start);npc->updateTransform();
@@ -348,7 +353,8 @@ void routineReturnTick(World& world,Npc& player,PlayerControl& ctrl) {
   const auto capsuleFloor=world.physic()->landRay(physicsPosition+Vec3(0,npc->navigationClearance()+1,0),20000);
   const bool belowRoot=floor.hasCol && position.y<floor.v.y-20.f;
   const bool belowCapsule=capsuleFloor.hasCol && capsuleBottom<capsuleFloor.v.y-20.f;
-  const bool belowBounds=capsuleBottom<world.view()->bbox().first.y;
+  // The streamed WorldView carries the importer's zero mesh bbox; the BSP root bounds the level.
+  const bool belowBounds=capsuleBottom<world.bspBounds().first.y;
   if(benchState.routinePhase==4 && (belowCapsule || belowBounds))benchState.routineBelow=true;
   // Animation roots and feet may go below support while the physical capsule is above it.
   const auto left=npc->mapBone("BIP01 L FOOT"),right=npc->mapBone("BIP01 R FOOT");

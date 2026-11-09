@@ -61,6 +61,16 @@ struct Hold {
   uint64_t         until;
   };
 
+struct Spot {
+  std::string name;
+  float       angle = 0;
+  float       rough = 0;
+  float       dist  = 0;
+  Tempest::Vec3 pos;
+  };
+
+enum SpotKind { K_Slope, K_Stairs, K_Name };
+
 enum CamMode : uint8_t {
   C_Game,
   C_Follow, // around the player, relative to its facing
@@ -75,14 +85,6 @@ enum CamMode : uint8_t {
   C_NpcFace,  // the npc's face, from the hero's side
   C_Two,      // the hero and the npc from the side
   C_Arrow,    // from the side of the newest arrow's way, going along with it (overlay trail records it)
-  };
-
-struct Spot {
-  std::string name;
-  float       angle = 0;
-  float       rough = 0;
-  float       dist  = 0;
-  Tempest::Vec3        pos;
   };
 
 struct QuestSite { bool ready=false; Tempest::Vec3 dry={}, direction={}; float waterY=0; std::string waypoint; };
@@ -1041,6 +1043,52 @@ struct Healing {
   float walkSpeed[2] = {};
 };
 
+struct NpcCommands {
+  int64_t     npcDayStart = 0;
+  uint64_t    npcDayMinutes = 0;
+  // volley: shots by hand in a row - press, draw to volleyDraw, hold volleyHold, let go, wait for the
+  // next arrow
+  int         volleyLeft  = 0;
+  int         volleyPhase = 0;
+  uint64_t    volleyHold  = 0;
+  float       volleyDraw  = 1;
+  uint64_t    volleyJitter = 0;  // ms more to hold, at random up to that (the sway is a function of time)
+  uint64_t    volleyHoldNow = 0;
+  // wander: the crew walks the waynet from waypoint to waypoint near the hero (docs/navigation.md, stage 0)
+  std::vector<Npc*>            wanderers;
+  std::vector<const WayPoint*> wanderPoints;
+  size_t                       wanderLegs = 0;
+  Npc*        downNpc      = nullptr; // waitdown: till either participant falls
+  Npc*        downOther    = nullptr;
+  uint64_t    downFrom = 0, downEnd = 0;
+  uint64_t    volleyT     = 0;
+  struct StunDrift {
+    Npc* target=nullptr;
+    Npc* attacker=nullptr;
+    Tempest::Vec3 origin,axis;
+    uint64_t start=0;
+    unsigned next=0;
+  } stunDrift;
+};
+
+struct NpcCommandsContext {
+  NpcCommands& npcCommands;
+  Healing& healing;
+  std::vector<Hold>& holds;
+  std::vector<KeyCodec::Action>& taps;
+  Npc*& pinned;
+  Tempest::Vec3& pinAt;
+  uint32_t& scenarioSeed;
+  uint32_t& lcg;
+  uint32_t& monsterCharacterSeed;
+  std::vector<Npc*>& crew;
+  uint64_t& time;
+  Melee& melee;
+  ArcheryBench& archery;
+  Npc*& subject;
+  void (*stunDriftSample)(World&,uint64_t,uint64_t);
+};
+
 struct NpcTierTest {
   Npc* npc = nullptr;
   const WayPoint* ends[2] = {};
@@ -1113,10 +1161,13 @@ extern std::string outDir;
 
 void say(const std::string& s);
 Tempest::Vec3 facing(const Npc& pl);
+void face(Npc& pl,const Tempest::Vec3& dir);
+std::vector<Spot> findSpots(World& w,const Npc& pl,SpotKind kind,float a0,float a1,std::string_view part,size_t count);
+bool aimSpotsCommand(bool& hasPrev,const std::string& line,const std::vector<std::string>& a,World& w,Npc& pl);
 Npc* findNpc(World& w, Npc& pl, const std::string& name);
 bool hidden(World& w,const Tempest::Vec3& from,const Tempest::Vec3& to);
-bool isNumber(const std::string& s);
 float num(const std::vector<std::string>& a,size_t i,float def);
+bool isNumber(const std::string& s);
 void prepareSpellFixture(World& world,Npc& player,std::string_view fixture);
 void destructionCheckpoint(World& world);
 
@@ -1412,6 +1463,9 @@ std::vector<std::string> split(std::string_view s);
 WorldContext worldContext();
 bool worldCommand(const WorldContext& context,const std::string& line,const std::vector<std::string>& a,
                   World& w,Npc& pl,PlayerControl& ctrl);
+NpcCommandsContext npcCommandsContext();
+bool npcCommandsCommand(const NpcCommandsContext& context,const std::string& line,const std::vector<std::string>& a,
+                        World& w,Npc& pl,PlayerControl& ctrl);
 
 ArcheryContext archeryContext();
 bool archeryCommand(const ArcheryContext& context,const std::string& line,const std::vector<std::string>& a,

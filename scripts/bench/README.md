@@ -4,7 +4,7 @@
 
 Bench families are extracted into `common/testbench_<family>.cpp`, with shared state types and helpers in `testbench_internal.h`.
 The dispatcher calls `bool <family>Command(...)` wrappers for the extracted command groups:
-`npc_sim`, `water`, `character`, `monster`, `furniture_parts`, `placed_items`, `item_hulls`, `fracture_pieces`, `destruction`, `body_impact`, `body`, `movable`, `noise`, `spell`, `item_wake`, `living`, `melee`, `routine` and `world`.
+`npc_sim`, `water`, `character`, `monster`, `furniture_parts`, `placed_items`, `item_hulls`, `fracture_pieces`, `destruction`, `body_impact`, `body`, `movable`, `noise`, `spell`, `item_wake`, `living`, `melee`, `routine`, `aim_spots`, `npc_commands` and `world`.
 Each wrapper handles its command branches in their original order and returns whether it matched.
 Tick and reset remain in `testbench.cpp`, along with water-film and monster camera/follow commands.
 Healing observations, commands and checks live in `common/testbench_healing.cpp`; its `Healing` state
@@ -64,12 +64,24 @@ Their `WorldBench` state, shared waypoint `Spot` and `WorldContext` references a
 `worldCommand` runs at the first original branch of each of six groups, guarded by that group's command names.
 `traces`, `ragdoll frame20`, tick/reset, camera/capture code and `TestBench::` methods stay in `testbench.cpp`.
 
+Manual-aim spot probes (`cansee`, `slopes`/`stairs`, `ledges`, `corner`, `walls`, `perches`, `edge`, `edgedist`)
+and their private perch helpers live in `common/testbench_aim_spots.cpp`.
+`aimSpotsCommand` runs at the first branch of each of two groups, guarded by that group's command names,
+with a reference to the shared `hasPrev` field. `Spot` / `SpotKind` and shared helper declarations are in
+`testbench_internal.h`; `findSpots`, `views`, camera/capture code and `expandForeach` stay in `testbench.cpp`.
+
 Melee-shadow and melee-physics fixtures, dodge / AI-response helpers and commands live in `common/testbench_melee.cpp`.
 Routine-return and guard fixtures, observations, shared hazard-site helpers and commands live in `common/testbench_routine.cpp`.
 Their `Melee` / `Routine` state types and context references are in `testbench_internal.h`;
 `meleeCommand` and `routineCommand` run at their groups' first original branches.
-The `dodge` command, tick/reset, camera/capture code and `TestBench::` hooks stay in `testbench.cpp`;
+Tick/reset, camera/capture code and `TestBench::` hooks stay in `testbench.cpp`;
 `meleePhysicsCamera` retains the fixture's original camera setup there.
+
+Hero and NPC inventory, placement, stats, routines, fights, aiming, hits and dodge commands live in `common/testbench_npc_commands.cpp`.
+Their `NpcCommands` state and `NpcCommandsContext` references are in `testbench_internal.h`.
+`npcCommandsCommand` runs at the first original branch of each of four groups, guarded by that group's command names;
+intervening `npcSimCommand` and `archeryCommand` calls retain their order in `exec`.
+Animation, appearance and capture commands stay in `testbench.cpp`.
 
 Runs a scenario through the windowed game or the headless runner and records metrics and a report.
 Windowed scenarios can also capture video with a debug overlay and point at suspicious frames.
@@ -1603,7 +1615,7 @@ physics contracts pass after explicit signed Guild comparisons in the fixture.
 
 `OpenGothic/common/testbench.cpp` and `testbench_<family>.cpp` (including healing in
 `testbench_healing.cpp`, water / corpse-water in `testbench_water.cpp` and hero / human NPC
-CharacterVirtual in `testbench_character.cpp` and ground monsters in `testbench_monster.cpp`, destruction in `testbench_destruction.cpp`, movable objects/candles, physics noise and spells in `testbench_movables.cpp`, item wake in `testbench_item_wake.cpp` and living bodies in `testbench_living.cpp`, ragdolls in `testbench_ragdoll.cpp` and own meshes / chests in `testbench_own_mesh.cpp`, archery in `testbench_archery.cpp`, melee in `testbench_melee.cpp` and routine return / guard in `testbench_routine.cpp`, physics / world / time in `testbench_world.cpp`), inert unless `OPENGOTHIC_BENCH` is set. Hooks: the fixed time step and
+CharacterVirtual in `testbench_character.cpp` and ground monsters in `testbench_monster.cpp`, destruction in `testbench_destruction.cpp`, movable objects/candles, physics noise and spells in `testbench_movables.cpp`, item wake in `testbench_item_wake.cpp` and living bodies in `testbench_living.cpp`, ragdolls in `testbench_ragdoll.cpp` and own meshes / chests in `testbench_own_mesh.cpp`, archery in `testbench_archery.cpp`, melee in `testbench_melee.cpp` and routine return / guard in `testbench_routine.cpp`, manual-aim spot probes in `testbench_aim_spots.cpp`, hero / NPC commands in `testbench_npc_commands.cpp`, physics / world / time in `testbench_world.cpp`), inert unless `OPENGOTHIC_BENCH` is set. Hooks: the fixed time step and
 the capture in `MainWindow` (in film mode the captured frame replaces the window's), the AI bridge's lines
 and voices (`TestBench::aiLine`, `aiVoiceEnd`, `aiHeard`, `aiBusy`), an npc's lines of the game and SVMs
 (`TestBench::npcOutput` in `Npc::nextAiAction`), the OpenAL loopback device in Tempest's
