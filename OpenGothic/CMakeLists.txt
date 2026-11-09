@@ -702,7 +702,7 @@ if(NOT ANDROID AND NOT IOS)
   add_executable(gothic-ragdoll-contract EXCLUDE_FROM_ALL tests/physics_ragdoll_contract.cpp)
   target_link_libraries(gothic-ragdoll-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_executable(gothic-ragdoll-save-contract EXCLUDE_FROM_ALL tests/ragdoll_save_contract.cpp)
-  target_link_libraries(gothic-ragdoll-save-contract PRIVATE OpenGothic AiBridge)
+  target_link_libraries(gothic-ragdoll-save-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_custom_target(check-ragdoll-save
     COMMAND $<TARGET_FILE:gothic-ragdoll-save-contract>
     DEPENDS gothic-ragdoll-save-contract USES_TERMINAL)
