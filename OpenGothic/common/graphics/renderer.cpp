@@ -2614,8 +2614,11 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
   // the blend of the probes' cubes over time: 90 % of a change in 2.3*tau (step-2.md, «2а»), by the world's clock,
   // so a slow frame or a recording at 30 frames per second responds in the same time
   const float    giTau     = 0.1f;
-  // an old probe's samples are relit in turns, all of them in about this time: so many per frame, by the frame time
-  const float    giRefresh = 0.25f;
+  // an old probe's samples are relit in turns, all of them in about this time: so many per frame, by the frame time.
+  // A change of light goes through the chains of probes a relight at a time: noon to night without the reset of a jump
+  // left all cells of a hut within 10 % of the night in 1,9 s at 0,25 s, in 1,1 s at 0,125 s; twice the relights cost
+  // 0,07-0,10 ms on the stand at 1440p (step-2b.md, «2б-1: пересмотр»)
+  const float    giRefresh = 0.125f;
 
   struct Push {
     float    alpha;
@@ -2629,7 +2632,7 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
   push.frameId     = gi.frame++;
   push.relitPeriod = 4;
   while(push.relitPeriod<32 && float(push.relitPeriod*2)*gi.frameTime<=giRefresh*1.5f)
-    push.relitPeriod *= 2;  // 30 fps: every 8th sample a frame, 60 fps: 16th, 120 fps: 32nd
+    push.relitPeriod *= 2;  // 30 fps: every 4th sample a frame, 60 fps: 8th, 120 fps: 16th, 250 fps: 32nd
   push.offPeriod   = giOffPeriod;
   push.hitRadius   = giHitRadius;
   push.maxRequests = giMaxRequests;
