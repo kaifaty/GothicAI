@@ -28,6 +28,8 @@ VIEWS = (argv[5] if len(argv) > 5 else 'side,back').split(',')
 LOOPS = int(os.environ.get('LOOPS', 1))
 RES = (int(os.environ.get('W', 420)), int(os.environ.get('H', 640)))
 ZOOM = os.environ.get('ZOOM', 'whole')            # whole | legs | upper
+FOCUS = os.environ.get('FOCUS', '')               # a rig bone the camera follows frame by frame (hand_r), FSIZE m wide
+FSIZE = float(os.environ.get('FSIZE', 0.6))
 
 rig = rs.Rig(MODELS, CONTENT)
 arm = bpy.data.objects['Human.rig']; body = bpy.data.objects['Human']
@@ -94,7 +96,27 @@ def pose_gothic(W):
     gme.vertices.foreach_set('co', np.array([to_b(p) for p in P]).ravel())
     gme.update()
 
-order = sorted(bones, key=lambda b: len(b.parent_recursive))
+# TWIST=1: the twist bones of rig_solve.TWISTS are added to the armature and the parents' skin weights spread over
+# them along the bone (rig_solve.TWIST_NODES)
+TWIST = os.environ.get('TWIST', '') == '1'
+if os.environ.get('RHYTHM'):                      # share,from: the clavicle rises with the arm (rig_solve.Rig.rhythm)
+    rig.rhythm = tuple(float(x) for x in os.environ['RHYTHM'].split(','))
+if TWIST:
+    masks = [m for m in body.modifiers if m.type == 'MASK']
+    for m in masks:
+        m.show_viewport = m.show_render = False
+    arm.data.pose_position = 'REST'
+    dg = bpy.context.evaluated_depsgraph_get(); ev = body.evaluated_get(dg)
+    co = np.array([tuple(body.matrix_world @ v.co) for v in ev.data.vertices])
+    arm.data.pose_position = 'POSE'
+    for m in masks:
+        m.show_viewport = m.show_render = True
+    assert len(co) == len(body.data.vertices), 'the evaluated body lost vertices'
+    import twist_bones
+    moved = twist_bones.add(arm, body, co)
+    rest.update({b.name: np.array(b.matrix_local) for b in arm.data.bones})
+    print(f'PREVIEW twist bones added, {moved} skin weights spread')
+order = sorted(arm.data.bones, key=lambda b: len(b.parent_recursive))
 for pbn in arm.pose.bones:
     pbn.rotation_mode = 'QUATERNION'
 
@@ -104,6 +126,9 @@ def pose_ours(P):
         if b.name not in rig.ri:
             continue
         pose[b.name] = mat_b(P[rig.ri[b.name]])
+    if TWIST:
+        for name, M in rs.twist_bones(rig, P).items():
+            pose[name] = mat_b(M)
     for b in order:
         if b.name not in pose:
             continue
@@ -121,10 +146,13 @@ cam = bpy.data.objects.new('view', cam_d); sc.collection.objects.link(cam); sc.c
 FR = {'whole': (0.95, 2.2), 'legs': (0.5, 1.15), 'upper': (1.35, 1.0)}
 VIEW_DIR = {'side': (1, 0, 0), 'back': (0, 1, 0), 'front': (0, -1, 0), 'quarter': (0.7, -0.7, 0)}
 
-def frame_cam(view, centre):
+def frame_cam(view, centre, at=None):
     h, size = FR[ZOOM]
     cam_d.ortho_scale = size
     c = Vector((centre[0], centre[1], ground_z + h))
+    if at is not None:                            # follow a bone: its own place, FSIZE wide
+        cam_d.ortho_scale = FSIZE
+        c = Vector(tuple(at))
     cam.location = c + Vector(VIEW_DIR[view]) * 5
     cam.rotation_euler = (c - cam.location).to_track_quat('-Z', 'Y').to_euler()
 
@@ -147,6 +175,9 @@ for clip in CLIPS:
             frame_cam(view, centre)
             d = OUT / clip / f'{name}-{view}'; d.mkdir(parents=True, exist_ok=True)
             for i, W in enumerate(frames):
+                if FOCUS:
+                    src = rig.source[rig.ri[FOCUS]]
+                    frame_cam(view, centre, to_b(W[src][:3, 3]))
                 if var is None:
                     pose_gothic(W)
                 else:

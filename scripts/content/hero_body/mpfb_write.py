@@ -14,6 +14,7 @@ import numpy as np
 from PIL import Image
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fit
+import rig_parts
 
 run, mdh, orig, skin_png, root, repo = map(Path, sys.argv[1:7])
 NECK = sys.argv[7] if len(sys.argv) > 7 else '#8a604a'
@@ -199,8 +200,11 @@ if RIG:
     head_shift = np.array([0.0, 0.0, rig['head_dz_cm']])
     # Gothic's clips are made for legs 2.6 cm shorter than HUMANS.MDH's bind (thigh 40.9 + shin 44.9 against 39.3 +
     # 49.1), ours are fitted to the bind: the pelvis rises by LIFT of its height over the lower ankle, the IK eases the
-    # last SOFT cm (reports/engine/2026-11-modern-skeleton, «Ноги»; chosen on rig_solve.py's table)
-    LIFT, SOFT = 0.038, 0.5
+    # last SOFT cm (reports/engine/2026-11-modern-skeleton, «Ноги»; chosen on rig_solve.py's table). Twist bones and
+    # the shoulder rhythm - «Верх тела» (rig_parts.py); the twist bones are in the rig only when mpfb_export.py made them
+    LIFT, SOFT = rig_parts.LIFT, rig_parts.SOFT
+    twists, shoulders = rig_parts.table()
+    twists = [t for t in twists if t['bone'] in ridx]
     table = {'format': 'gothic-render-rigs', 'version': 1, 'rigs': {RIGNAME: {
         'skeleton': RIGNAME + '.MDH', 'source': 'HUMANS.MDH', 'bones': bones_out,
         'root': {'bone': 'pelvis', 'source': 'BIP01 PELVIS', 'lift': LIFT},
@@ -209,6 +213,7 @@ if RIG:
                   'ankle': (np.linalg.inv(G(f'BIP01 {S} FOOT')) @ np.r_[ankle_world(S), 1.0])[:3].tolist(),
                   'soft': SOFT}
                  for sd, S in (('l', 'L'), ('r', 'R'))],
+        'twists': twists, 'shoulders': shoulders,
         'sockets': {'BIP01 HEAD': socket('BIP01 HEAD', 'head', head_shift),
                     'ZS_RIGHTHAND': socket('ZS_RIGHTHAND', 'hand_r'), 'ZS_LEFTHAND': socket('ZS_LEFTHAND', 'hand_l')}}},
         'meshes': {MESH: RIGNAME}}
