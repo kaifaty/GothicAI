@@ -26,33 +26,6 @@ namespace {
     std::fprintf(stderr,"FAIL: %s: actual %s, expected %s\n",message,actual.c_str(),expected);
     std::exit(EXIT_FAILURE);
     }
-
-  // What a melee blow meets, as each place reports it: a parade's jump back pose both blocks and jumps back, and
-  // each place takes the block first.
-  enum class Met : uint8_t { NotHit, Hit, Evaded, Blocked };
-
-  Met met(bool down, const MeleeDodge::Guard& g) {
-    if(down)
-      return Met::NotHit;
-    return g.blocked ? Met::Blocked : (g.evaded() ? Met::Evaded : Met::Hit);
-    }
-
-  // The three places as they ask Npc::meleeGuard (MeleeDodge::guard). Each checks a body down itself, and only
-  // the damage knows a blow that ignores defence: a barge or a riposte, never seen by the shadow.
-  // Npc::takeDamage: a body down returns first, a dodge's window before, a jump back and a parade after.
-  Met damage(const MeleeDodge::GuardSituation& s, bool down, bool ignoreDefence) {
-    return met(down,down || ignoreDefence ? MeleeDodge::Guard{} : MeleeDodge::guard(s));
-    }
-
-  // Npc::consumeMeleeContacts: the blade's contact with the body.
-  Met contact(const MeleeDodge::GuardSituation& s, bool down) {
-    return met(down,down ? MeleeDodge::Guard{} : MeleeDodge::guard(s));
-    }
-
-  // Npc::commitDamage: the native blow, observed for the shadow just before takeDamage.
-  Met observed(const MeleeDodge::GuardSituation& s, bool down) {
-    return met(down,down ? MeleeDodge::Guard{} : MeleeDodge::guard(s));
-    }
   }
 
 int main() {
@@ -295,7 +268,7 @@ int main() {
     require(refusal(s)==Refusal::Busy,"not from another state");
   }
 
-  // The guard against a melee blow: one rule for the damage and both views of the melee shadow.
+  // The guard against a melee blow (Npc::meleeGuard asks it for the damage and both views of the melee shadow).
   {
     struct Case final {
       const char*    name;
@@ -324,18 +297,6 @@ int main() {
                      int(g.dodged),int(g.jumpedBack),int(g.blocked));
         std::exit(EXIT_FAILURE);
         }
-      const auto expected = met(false,c.expected);
-      const Met at[] = {damage(c.situation,false,false),contact(c.situation,false),observed(c.situation,false)};
-      const char* place[] = {"the damage","the blade's contact","the observed native blow"};
-      for(size_t i=0; i<3; ++i)
-        if(at[i]!=expected) {
-          std::fprintf(stderr,"FAIL: guard, %s: %s meets %d, the damage rule %d\n",c.name,place[i],
-                       int(at[i]),int(expected));
-          std::exit(EXIT_FAILURE);
-          }
-      require(damage(c.situation,true,false)==Met::NotHit && contact(c.situation,true)==Met::NotHit &&
-              observed(c.situation,true)==Met::NotHit,"a body down is no target anywhere");
-      require(damage(c.situation,false,true)==Met::Hit,"a blow that ignores defence meets no guard");
       }
   }
   std::puts("melee dodge contract passed");
