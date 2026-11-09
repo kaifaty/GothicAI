@@ -565,8 +565,9 @@ class DynamicWorld final {
     std::vector<FragmentSnapshot> fragmentSnapshot() const;
     // Bench-only: the deepest native contact of one piece with landscape and static objects, centimetres.
     float fragmentGroundPenetration(uintptr_t parentId, size_t piece) const;
-    // Bench-only: the first body of debris on a segment (FragmentSnapshot::body), zero without one.
-    uintptr_t fragmentRay(const Tempest::Vec3& from, const Tempest::Vec3& to) const;
+    // Bench-only: the first body of debris on a segment (FragmentSnapshot::body), zero without one;
+    // `distance` gets the centimetres to it.
+    uintptr_t fragmentRay(const Tempest::Vec3& from, const Tempest::Vec3& to, float* distance = nullptr) const;
     struct WaterBodySnapshot {
       uintptr_t id = 0, parentId = 0;
       const Ragdoll* ragdoll = nullptr;

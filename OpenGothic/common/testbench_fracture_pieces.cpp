@@ -243,9 +243,10 @@ std::vector<RemnantGroup> fracturePiecesGroups(World& world,Destruction& destruc
   }
 
 // Where the actor stands to strike a group: 75 cm beyond its drawn vertices, facing its middle.
-// The pieces an earlier blow broke off lie and stand where that blow landed, and a blade stops at
-// the first of them: from the side of `from` (the first blow's stand) by 30 degree steps, the first
-// side where a ray at the height of the group's top meets the group's own body before any other.
+// A blow lands where the last one opened the group: its loose pieces lie there and the blade
+// passes the breach. From the side of `from` (the first blow's stand) by 30 degree steps, the
+// first side where a ray at half the group's height meets the group's own body first, at most
+// 20 cm inside its outer bound: a wall faces the actor there.
 struct RemnantAim { Vec3 stand,facing,middle; int angle=0; bool clear=false; };
 
 RemnantAim remnantAim(World& world,const RemnantGroup& group,const FractureMesh& mesh,const Vec3& from) {
@@ -263,7 +264,7 @@ RemnantAim remnantAim(World& world,const RemnantGroup& group,const FractureMesh&
   aim.middle=(low+high)*.5f;
   Vec3 base(from.x-aim.middle.x,0,from.z-aim.middle.z);
   base=base.length()>1.e-3f?Vec3::normalize(base):Vec3(0,0,-1);
-  const float top=std::min(high.y-10.f,low.y+100.f);
+  const float half=(low.y+high.y)*.5f;
   for(int step=0;step<12;++step) {
     const int angle=(step+1)/2*30*(step%2?1:-1);
     const float a=float(angle)*float(M_PI)/180.f;
@@ -271,7 +272,9 @@ RemnantAim remnantAim(World& world,const RemnantGroup& group,const FractureMesh&
     float reach=0;
     for(const auto& p:points)reach=std::max(reach,Vec3::dotProduct(p-aim.middle,outward));
     const auto stand=aim.middle+outward*(reach+75.f);
-    const bool clear=world.physic()->fragmentRay(Vec3(stand.x,top,stand.z),Vec3(aim.middle.x,top,aim.middle.z))==group.body;
+    float distance=-1;
+    const bool clear=world.physic()->fragmentRay(Vec3(stand.x,half,stand.z),Vec3(aim.middle.x,half,aim.middle.z),&distance)==group.body &&
+                     distance<=95.f;
     if(step==0 || clear) {aim.stand=stand;aim.facing=outward*-1.f;aim.angle=angle;aim.clear=clear;}
     if(clear)break;
     }

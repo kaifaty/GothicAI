@@ -27,8 +27,10 @@ DynamicWorld::BodyData* DynamicWorld::fragmentOf(uintptr_t fragment, uint32_t& g
   return nullptr;
   }
 
-uintptr_t DynamicWorld::fragmentRay(const Tempest::Vec3& from, const Tempest::Vec3& to) const {
+uintptr_t DynamicWorld::fragmentRay(const Tempest::Vec3& from, const Tempest::Vec3& to, float* distance) const {
   const auto hit=world->rayCast(from,to,1u<<C_Fragment,false);
+  if(distance!=nullptr)
+    *distance=hit.hasHit ? (hit.point-from).length() : -1.f;
   return hit.hasHit ? reinterpret_cast<uintptr_t>(hit.body) : 0;
   }
 
