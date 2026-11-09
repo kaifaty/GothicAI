@@ -22,7 +22,7 @@
 | Расширение имени анимации не заменялось | Перед загрузкой замена `MDS` на `MSB` | `common/resources.cpp:2408` |
 | Заклинание с `spellId=47` (`SPL_STORMFIST`) считалось снарядом принудительно | Только общая эвристика `target_collect_algo`: исключены `NONE`, `CASTER`, `FOCUS`, `ALL_FALLBACK_NONE` | `common/world/objects/item.cpp:368` |
 | Исключение дракона при возврате мёртвого NPC к распорядку отключено | `guild()==GIL_DRAGON` сохраняет исключение из раннего возврата для мёртвых без миссионных предметов | `common/world/objects/npc.cpp:1036` |
-| Индекс члена партии в контактах клинка — `36` | Индекс `15`; сама проверка союзников прежняя | `common/world/objects/npc.cpp:2711` |
+| Индекс члена партии в контактах клинка — `36` | Индекс `15`; сама проверка союзников прежняя | `common/world/objects/npc_melee_shadow.cpp:994` |
 | Монстр: `16 < guild < 37`; человек: `guild < 16` | Монстр: `16 < guild < 58`; человек: `guild < 16` | [`isMonster`, `isHuman`](../OpenGothic/common/world/objects/npc_attributes.cpp); значения гильдий — `common/game/constants.h:8` и `common/game/constants.h:81` |
 | Друг: тип `NpcType::G1_FRIEND` (число `3`) | Тип `NpcType::G2_FRIEND` (число `2`) | [`isFriend`](../OpenGothic/common/world/objects/npc_attributes.cpp); числа — `common/daedalus/classes.h:109` |
 | Наличие блока в наблюдении тела проверялось по `T_1HPARADE_O` / `T_2HPARADE_O` | Проверяется суффикс `0`; этот просмотр не делает броска RNG | `common/world/objects/npc.cpp:5745` |
