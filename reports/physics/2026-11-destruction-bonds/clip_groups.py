@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
-"""Bond groups of an own-wood-fracture-clip run: guards and which pieces stayed joined.
+"""Bond groups of an own-wood-fracture-clip or own-wood-remnant-clip run: guards and which pieces stayed joined.
 
     python3 clip_groups.py <bench out> <nodes dir>
+
+A remnant-clip run has a break per case `<prop>-1h` and `<prop>-1h-remnant-<n>`; each remnant break also gets the
+swings of its `destruction2_remnant_complete`.
 
 <nodes dir> holds `<prop>.nodes` from `fracture-gltf-extract --nodes model.debris.glb`: its node order is
 the piece order of model.fracture (scripts/fracture/debris.py), so piece numbers get the generator's names.
@@ -28,7 +31,13 @@ def main():
     out, nodes = Path(sys.argv[1]), Path(sys.argv[2])
     rows = [json.loads(line) for line in (out / 'events.jsonl').read_text().splitlines()]
     result = {}
-    for case, prop in PROPS.items():
+    cases = []
+    for base, prop in PROPS.items():
+        cases.append((base, prop))
+        cases += sorted(((row['case'], prop) for row in rows if row['kind'] == 'destruction2_start' and
+                         row['case'].startswith(base + '-remnant-')), key=lambda c: int(c[0].rsplit('-', 1)[1]))
+    complete = {(row['case'], row['ordinal']): row for row in rows if row['kind'] == 'destruction2_remnant_complete'}
+    for case, prop in dict.fromkeys(cases):
         label = names(nodes / f'{prop}.nodes')
         samples = {row['after_break_ms']: row for row in rows
                    if row['kind'] == 'destruction2_pieces' and row['case'] == case}
@@ -45,6 +54,12 @@ def main():
             entry[f'{at}ms'] = {'bodies': samples[at]['bodies'], 'largest': parts[0],
                                 'joined': [part for part in parts[1:] if len(part) > 1],
                                 'single': sorted(part[0] for part in parts if len(part) == 1)}
+        if '-remnant-' in case:
+            base, ordinal = case.split('-remnant-')
+            done = complete.get((base, int(ordinal)))
+            breaks = [row for row in rows if row['kind'] == 'destruction_break' and row.get('remnant')]
+            entry['swings'] = done and done['swings']
+            entry['break_ms'] = [row['break_ms'] for row in breaks if row['case'] == base]
         result[case] = entry
     print(json.dumps(result, ensure_ascii=False, indent=1))
 

@@ -65,6 +65,8 @@ class ClothBulletBenchDriver final {
       }
   };
 
+struct FractureMesh;
+
 namespace testbench_detail {
 
 struct Hold {
@@ -1143,8 +1145,12 @@ struct FracturePieces {
     size_t bodies=0,pieces=0;
     double largest=0;
     uint64_t next=0,deadline=0;
+    std::shared_ptr<const FractureMesh> mesh;
     };
   RemnantAttack remnant;
+  // Remnant attacks of the current case, counted from its setup.
+  std::string remnantCase;
+  unsigned remnantAttacks=0;
   };
 
 struct Healing {

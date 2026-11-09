@@ -12,7 +12,9 @@
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
 #include <Jolt/Physics/Collision/CollisionDispatch.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
+#include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 
+#include "physics/collisionworld.h"
 #include "physics/fracture.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
@@ -109,7 +111,10 @@ void fracturePiecesBreak(FracturePieces& state,World& world,uintptr_t parent,std
   if(!mesh || mesh->pieces.empty())return;
   FracturePieces::Break item;
   // A later break of the same prop is a remnant's: its own label and samples from its moment.
-  const auto remnant=size_t(std::count_if(state.breaks.begin(),state.breaks.end(),[parent](const auto& b) {return b.parent==parent;}));
+  // The parent's address may be reused by the next fixture prop: its case tells them apart.
+  const auto remnant=size_t(std::count_if(state.breaks.begin(),state.breaks.end(),[&](const auto& b) {
+    return b.parent==parent && b.label.rfind(label,0)==0;
+    }));
   item.parent=parent;item.label=std::string(label)+(remnant>0?"-remnant-"+std::to_string(remnant):"");
   item.visual=body->visual;item.version=mesh->version;
   item.breakTime=world.tickCount();
@@ -221,39 +226,79 @@ struct RemnantGroup {
   std::vector<size_t> pieces;
   Matrix4x4 transform;
   double volumeShare=0;
-  Vec3 low,high; // world bounds of its drawn vertices, the largest group only
   };
 
-std::vector<RemnantGroup> fracturePiecesGroups(World& world,Destruction& destruction) {
+std::vector<RemnantGroup> fracturePiecesGroups(World& world,Destruction& destruction,const FractureMesh& mesh) {
   std::vector<RemnantGroup> result;
-  const auto snapshot=world.physic()->fragmentSnapshot();
-  std::shared_ptr<const FractureMesh> mesh;
-  for(const auto& part:snapshot) {
-    if(!destructionOwns(destruction,part.parentId))continue;
-    if(mesh==nullptr) {
-      for(const auto& body:world.physic()->movableVobSnapshot())
-        if(body.id==part.parentId) {mesh=FractureMesh::load(body.visual);break;}
-      if(mesh==nullptr || !(mesh->volume>0))return {};
-      }
+  for(const auto& part:world.physic()->fragmentSnapshot()) {
+    if(!destructionOwns(destruction,part.parentId) || part.piece>=mesh.pieces.size())continue;
     auto found=std::find_if(result.begin(),result.end(),[&](const auto& g){return g.group==part.bondGroup;});
-    if(found==result.end()) {result.push_back({part.bondGroup,{},part.transform,0,{},{}});found=result.end()-1;}
+    if(found==result.end()) {result.push_back({part.bondGroup,{},part.transform,0});found=result.end()-1;}
     found->pieces.push_back(part.piece);
-    if(part.piece<mesh->pieces.size())found->volumeShare+=mesh->pieces[part.piece].volume/mesh->volume;
+    found->volumeShare+=mesh.pieces[part.piece].volume/mesh.volume;
     }
   std::stable_sort(result.begin(),result.end(),[](const auto& a,const auto& b){return a.volumeShare>b.volumeShare;});
-  if(!result.empty() && mesh!=nullptr) {
-    // The largest group's world bounds by its drawn vertices: where the actor stands to strike it.
-    auto& largest=result.front();
-    largest.low=Vec3(1e9f,1e9f,1e9f);largest.high=Vec3(-1e9f,-1e9f,-1e9f);
-    for(const auto piece:largest.pieces)
-      for(const auto& triangle:mesh->pieces[piece].triangles)
-        for(const auto& vertex:triangle.vertices) {
-          const auto p=apply(largest.transform,vertex.position);
-          largest.low=Vec3(std::min(largest.low.x,p.x),std::min(largest.low.y,p.y),std::min(largest.low.z,p.z));
-          largest.high=Vec3(std::max(largest.high.x,p.x),std::max(largest.high.y,p.y),std::max(largest.high.z,p.z));
-          }
-    }
   return result;
+  }
+
+// Where the actor stands to strike a group: outside it, 75 cm beyond its drawn vertices on the
+// horizontal line from its middle through its piece (not METAL) nearest to `from`, facing that
+// middle. A blow at the middle of the group can meet only the gap an earlier break left there.
+struct RemnantAim { Vec3 stand,facing,middle; size_t piece=0; };
+
+RemnantAim remnantAim(const RemnantGroup& group,const FractureMesh& mesh,const Vec3& from) {
+  RemnantAim aim;
+  Vec3 low(1e9f,1e9f,1e9f),high(-1e9f,-1e9f,-1e9f);
+  std::vector<Vec3> points;
+  float nearest=std::numeric_limits<float>::infinity();
+  Vec3 target;
+  for(const auto piece:group.pieces) {
+    for(const auto& triangle:mesh.pieces[piece].triangles)
+      for(const auto& vertex:triangle.vertices) {
+        const auto p=apply(group.transform,vertex.position);
+        points.push_back(p);
+        low=Vec3(std::min(low.x,p.x),std::min(low.y,p.y),std::min(low.z,p.z));
+        high=Vec3(std::max(high.x,p.x),std::max(high.y,p.y),std::max(high.z,p.z));
+        }
+    const auto center=apply(group.transform,mesh.pieces[piece].center);
+    const float distance=Vec2(center.x-from.x,center.z-from.z).length();
+    if(mesh.pieces[piece].group!=asset::MaterialGroup::METAL && distance<nearest) {nearest=distance;target=center;aim.piece=piece;}
+    }
+  aim.middle=(low+high)*.5f;
+  Vec3 outward(target.x-aim.middle.x,0,target.z-aim.middle.z);
+  if(!std::isfinite(nearest) || outward.length()<1.f)outward=Vec3(from.x-aim.middle.x,0,from.z-aim.middle.z);
+  outward=outward.length()>1.e-3f?Vec3::normalize(outward):Vec3(0,0,-1);
+  float reach=0;
+  for(const auto& p:points)reach=std::max(reach,Vec3::dotProduct(p-aim.middle,outward));
+  aim.stand=aim.middle+outward*(reach+75.f);
+  aim.facing=outward*-1.f;
+  return aim;
+  }
+
+// How deep the hero's capsule (25 cm, 180 cm tall, feet at its position) stands in the pieces of
+// groups a character collides with (from 0.5 m, their joint local bounds), centimetres.
+float heroInDebris(const FracturePieces::Break& item,const std::vector<const DynamicWorld::FragmentSnapshot*>& parts,const Npc* hero) {
+  if(hero==nullptr)return 0;
+  std::vector<JPH::AABox> bounds(item.groups);
+  for(size_t i=0;i<item.pieces.size();++i)
+    if(item.pieces[i].hull!=nullptr && item.pieces[i].bondGroup<item.groups) {
+      // A shape's local bounds are about its centre of mass.
+      auto box=item.pieces[i].hull->GetLocalBounds();
+      box.Translate(item.pieces[i].hull->GetCenterOfMass());
+      bounds[item.pieces[i].bondGroup].Encapsulate(box);
+      }
+  const JPH::ShapeRefC capsule=new JPH::CapsuleShape(.65f,.25f);
+  const auto feet=hero->position();
+  const auto pose=JPH::Mat44::sTranslation(JPH::Vec3(feet.x*.01f,(feet.y+90.f)*.01f,feet.z*.01f));
+  float depth=0;
+  for(size_t i=0;i<parts.size() && i<item.pieces.size();++i) {
+    const auto& piece=item.pieces[i];
+    if(parts[i]==nullptr || piece.hull==nullptr || piece.bondGroup>=item.groups)continue;
+    const auto size=bounds[piece.bondGroup].GetSize();
+    if(std::max({size.GetX(),size.GetY(),size.GetZ()})<CollisionWorld::fragmentBlockSize)continue;
+    depth=std::max(depth,penetration(capsule.GetPtr(),pose,piece.hull.GetPtr(),joltPose(parts[i]->transform)));
+    }
+  return depth;
   }
 
 std::string remnantGroupRows(const std::vector<RemnantGroup>& groups) {
@@ -267,14 +312,14 @@ std::string remnantGroupRows(const std::vector<RemnantGroup>& groups) {
   return rows+"]";
   }
 
-// `destruction2 remnant <n>`: re-aim the actor at the largest group before each swing (the same
-// side and stand-off as the first blow: 75 cm before its -z bound, facing +z) and swing the
-// native attack until the prop has more bodies, or n swings were spent.
+// `destruction2 remnant <n>`: re-aim the actor at the largest group before each swing (remnantAim
+// from the stand of the first blow) and swing the native attack until the prop has more bodies, or
+// n swings were spent.
 void fracturePiecesRemnantTick(FracturePieces& state,Destruction& destruction,const DestructionContext& context,World& world) {
   auto& attack=state.remnant;
   if(!attack.running)return;
   auto* actor=destruction.destructionMeleeActor;
-  const auto parts=fracturePiecesGroups(world,destruction);
+  const auto parts=fracturePiecesGroups(world,destruction,*attack.mesh);
   const auto complete=[&](bool broken) {
     attack.running=false;context.waitUntil=context.time;
     event("destruction2_remnant_complete","\"case\":"+jsonStr(destruction.destructionCase)+",\"ordinal\":"+std::to_string(attack.ordinal)+
@@ -284,26 +329,27 @@ void fracturePiecesRemnantTick(FracturePieces& state,Destruction& destruction,co
       ",\"largest_pieces_after\":"+std::to_string(parts.empty()?0:parts.front().pieces.size())+
       ",\"largest_fraction_after\":"+ragdollNumber(parts.empty()?0.f:float(parts.front().volumeShare))+
       ",\"actor_cm\":"+(actor?ragdollVector(actor->position()):std::string("null"))+",\"groups\":"+remnantGroupRows(parts));
+    attack.mesh.reset();
     };
   if(parts.size()>attack.bodies) {complete(true);return;}
   if(actor==nullptr || parts.empty() || world.tickCount()>=attack.deadline) {
-    attack.running=false;context.waitUntil=0;arenaAbort("destruction remnant lost its actor or prop");return;
+    attack.running=false;attack.mesh.reset();context.waitUntil=0;arenaAbort("destruction remnant lost its actor or prop");return;
     }
   if(world.tickCount()<attack.next)return;
   if(attack.swings>=attack.limit) {complete(false);return;}
-  const auto& largest=parts.front();
-  const auto center=(largest.low+largest.high)*.5f;
-  Vec3 stand(center.x,center.y,largest.low.z-75.f);
-  const auto floor=world.physic()->landRay(Vec3(stand.x,center.y+100,stand.z),300);
+  const auto aim=remnantAim(parts.front(),*attack.mesh,destruction.destructionMeleeStand);
+  auto stand=aim.stand;
+  const auto floor=world.physic()->landRay(Vec3(stand.x,aim.middle.y+100,stand.z),300);
   if(floor.hasCol)stand.y=floor.v.y;
   actor->stopWalking();actor->clearSpeed();actor->setPosition(stand);
-  actor->setDirection(destruction.destructionMeleeFacing);actor->updateTransform();
+  actor->setDirection(aim.facing);actor->updateTransform();
   const bool accepted=actor->doAttack(Npc::Anim::Attack,BS_HIT);
   if(accepted)++attack.swings;
   attack.next=world.tickCount()+(accepted?2200:100);
   event("destruction2_remnant_attempt","\"case\":"+jsonStr(destruction.destructionCase)+",\"ordinal\":"+std::to_string(attack.ordinal)+
     ",\"accepted\":"+(accepted?"true":"false")+",\"swing\":"+std::to_string(attack.swings)+",\"actor_cm\":"+ragdollVector(stand)+
-    ",\"target_center_cm\":"+ragdollVector(center)+",\"target_pieces\":"+std::to_string(largest.pieces.size())+
+    ",\"facing\":"+ragdollVector(aim.facing)+",\"target_middle_cm\":"+ragdollVector(aim.middle)+
+    ",\"target_piece\":"+std::to_string(aim.piece)+",\"target_pieces\":"+std::to_string(parts.front().pieces.size())+
     ",\"bodies\":"+std::to_string(parts.size()));
   }
 
@@ -458,7 +504,8 @@ void fracturePiecesTick(FracturePieces& state,Destruction& destruction,const Des
       ",\"flat_long_axis_within_30_of_vertical\":"+std::to_string(upright)+
       ",\"sleeping\":"+std::to_string(sleeping)+",\"resting_sleeping\":"+std::to_string(restingAsleep)+",\"max_speed_cm_s\":"+ragdollNumber(maxSpeed)+
       ",\"largest_volume_cm3\":"+ragdollNumber(largest)+",\"median_volume_cm3\":"+ragdollNumber(middle)+
-      ",\"largest_to_median\":"+ragdollNumber(middle>0?largest/middle:0.f)+groups+pairs+",\"rows\":"+rows);
+      ",\"largest_to_median\":"+ragdollNumber(middle>0?largest/middle:0.f)+groups+pairs+
+      ",\"hero_debris_penetration_cm\":"+ragdollNumber(heroInDebris(item,parts,destruction.destructionMeleeActor))+",\"rows\":"+rows);
     }
   }
 
@@ -495,12 +542,14 @@ bool fracturePiecesCommand(FracturePieces& state,Destruction& destruction,const 
     }
   else if(c=="destruction2" && a.size()==3 && a[1]=="remnant") {
     // remnant <n>: strike the largest group of the broken fixture prop, at most n swings
-    const auto parts=fracturePiecesGroups(w,destruction);
-    if(!destruction.destructionMeleeActor || parts.empty()) {arenaAbort("destruction remnant needs a broken fixture prop");return true;}
     auto& attack=state.remnant;
     attack={};
-    attack.running=true;attack.limit=std::max(1u,unsigned(num(a,2,6)));attack.ordinal=unsigned(std::count_if(state.breaks.begin(),state.breaks.end(),
-      [&](const auto& b){return destructionOwns(destruction,b.parent);}));
+    for(const auto& body:w.physic()->movableVobSnapshot())
+      if(destructionOwns(destruction,body.id) && body.broken) {attack.mesh=FractureMesh::load(body.visual);break;}
+    const auto parts=attack.mesh && attack.mesh->volume>0 ? fracturePiecesGroups(w,destruction,*attack.mesh) : std::vector<RemnantGroup>{};
+    if(!destruction.destructionMeleeActor || parts.empty()) {attack.mesh.reset();arenaAbort("destruction remnant needs a broken fixture prop");return true;}
+    if(state.remnantCase!=destruction.destructionCase) {state.remnantCase=destruction.destructionCase;state.remnantAttacks=0;}
+    attack.running=true;attack.limit=std::max(1u,unsigned(num(a,2,6)));attack.ordinal=++state.remnantAttacks;
     attack.bodies=parts.size();attack.pieces=parts.front().pieces.size();attack.largest=parts.front().volumeShare;
     attack.next=w.tickCount();attack.deadline=w.tickCount()+uint64_t(attack.limit)*2200+30000;
     context.waitUntil=context.time+uint64_t(attack.limit)*2200+30034;
