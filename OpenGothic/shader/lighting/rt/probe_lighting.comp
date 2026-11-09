@@ -105,7 +105,19 @@ float sunLight(vec3 norm, vec3 pos) {
 // light does not flicker). A lamp the tree picks with probability 0,136 next to a wall 18 m away lit a probe's
 // sample 6,7 times too bright for good, a square on the wall of harbour-night-1; eight resampled tree picks still
 // missed lamps of probability 0,014 and lit a softer patch 9 times too bright (step-2.md, «2а»).
-vec3 localLight(vec3 norm, vec3 pos, float pick) {
+// A sample of a probe is a cone of 1/256 of the sphere, not a ray: its light is the average over the spot the cone
+// covers on the hit's surface (rho2: the spot's radius squared). For the 1/d^2 of a lamp over a disc of radius rho
+// under it that is ln(1 + rho^2/d^2)/rho^2: the lamp's formula takes the distance with that 1/d^2. A point next to
+// a lamp 18 m away is a spot 2,3 m wide for the probe; read as a point it lit a probe's cube 1,6 times too bright
+// (the square of harbour-night-1). Near the probe the spot is small and the formula is the point light's.
+float coneDistance(float dist, float rho2) {
+  const float d2 = max(dist*dist, 1e-4);
+  if(rho2<=1e-3*d2)
+    return dist;
+  return sqrt(rho2/log(1.0 + rho2/d2));
+  }
+
+vec3 localLight(vec3 norm, vec3 pos, float pick, float rho2) {
   uint  stack[32];
   uint  ptr     = 0;
   uint  node    = 0 | BVH_BoxNode;
@@ -123,7 +135,7 @@ vec3 localLight(vec3 norm, vec3 pos, float pick) {
       const float   range = uintBitsToFloat(n.ptrL);
       const vec3    d     = pos - n.lmin;
       const float   len   = length(d);
-      const float   lum   = lightIntensity(norm, len, d/max(len, 0.001), range) * luma(n.lmax);
+      const float   lum   = lightIntensity(norm, coneDistance(len, rho2), d/max(len, 0.001), range) * luma(n.lmax);
       if(lum>0) {
         pSum += lum;
         // weighted reservoir: this lamp stays with probability lum/pSum
@@ -257,7 +269,9 @@ vec4 shadeSample(const vec3 rayOrigin, const vec3 rayDirection, uint probeId, ui
 
   vec3 direct = vec3(0);
   direct += sunLight(norm, at) * scene.sunColor;
-  direct += localLight(norm, at, pick) * (max(1.0, scene.exposure) / scene.exposure);
+  // the spot of the sample's cone on the hit's surface: half-angle 0,125 rad for 1/256 of the sphere, wider at a slant
+  const float rho2 = (rayT*0.125)*(rayT*0.125)/max(abs(dot(norm, rayDirection)), 0.1);
+  direct += localLight(norm, at, pick, rho2) * (max(1.0, scene.exposure) / scene.exposure);
 
   vec3 hit = albedo * direct * Fd_Lambert;
   hit += albedo * bounce(pos, norm, probeId, hasPrev); // Fd_Lambert is in the probes' integration
