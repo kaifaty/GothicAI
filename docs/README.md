@@ -60,6 +60,8 @@
 
 CharacterVirtual героя и NPC и проверка спящих предметов рядом с ними — в [`collisionworld_character.cpp`](../OpenGothic/common/physics/collisionworld_character.cpp); общий `CollisionWorld::Impl` и фильтры — в [`collisionworld_internal.h`](../OpenGothic/common/physics/collisionworld_internal.h).
 
+Ragdoll, физические тела живых NPC, возврат после падения, импульсы заклинаний и стрел — в [`npc_ragdoll.cpp`](../OpenGothic/common/world/objects/npc_ragdoll.cpp).
+
 Подвижные объекты, мебель, разрушение, обломки и их сохранения — в [`dynamicworld_movables.cpp`](../OpenGothic/common/physics/dynamicworld_movables.cpp); общие `DynamicWorld::MovableVobs`, `BodyData` и помощники — в [`dynamicworld_internal.h`](../OpenGothic/common/physics/dynamicworld_internal.h).
 
 Контракт физики `gothic-physics-contract` остаётся одним бинарником: [общие помощники](../OpenGothic/tests/physics_contract_common.h), [лучи, рельеф и контакты](../OpenGothic/tests/physics_contract_rays.cpp), [NPC и CharacterVirtual](../OpenGothic/tests/physics_contract_npc.cpp), [предметы и вода](../OpenGothic/tests/physics_contract_items.cpp), [подвижные объекты, мебель и разрушение](../OpenGothic/tests/physics_contract_movables.cpp), [шум и удары тел](../OpenGothic/tests/physics_contract_noise.cpp); `main`, фиксированный шаг, смешанные проверки, минимум скелетного меша и кровь — в [`physics_contract.cpp`](../OpenGothic/tests/physics_contract.cpp), связи обломков — в прежнем [`physics_bonds_contract.cpp`](../OpenGothic/tests/physics_bonds_contract.cpp).
