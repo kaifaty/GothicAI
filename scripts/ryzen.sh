@@ -6,12 +6,18 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RYZEN_HOST="${RYZEN_HOST:-ryzen}"
 DEV_UBUNTU=0
-BUILD_MEM=12G
+# memory.peak of 219 Ryzen builds (with page cache): median 1.72, max 9.52 GiB.
+# 10G leaves room for two 5G games in gq's 20G pool.
+BUILD_MEM=10G
 if [[ "$RYZEN_HOST" == "${DEV_UBUNTU_HOST:-dev-ubuntu}" ]]; then
   DEV_UBUNTU=1
   RYZEN_JOBS="${RYZEN_JOBS:-6}"
-  BUILD_MEM=10G
 fi
+# Shared windows follow window layout 2 (gq --display-layout 2). Two columns
+# 910 px apart: an 800x600 bench frame is 850x687 with Mutter's decorations,
+# plus a 60 px gap. Column 0 holds e2e slots 0 (top) and 2 (bottom) or one bench,
+# column 1 holds slot 1 or one bench. gq never mixes it with older layouts.
+DISPLAY_LAYOUT=2
 LOCK_WAIT="${RYZEN_LOCK_WAIT:-900}"
 [[ "$LOCK_WAIT" =~ ^[0-9]+$ ]] || { echo 'RYZEN_LOCK_WAIT must be seconds' >&2; exit 2; }
 
@@ -122,6 +128,29 @@ desktop() {
   exit 1
 }
 
+window_position() {
+  # <column> <row> <description>: place TEMPEST_WINDOW_SIZE in layout 2.
+  local column="$1" row="$2" what="$3" width height screen_width screen_height x y
+  [[ "$TEMPEST_WINDOW_SIZE" =~ ^([0-9]+)x([0-9]+)$ ]] || {
+    echo "Invalid TEMPEST_WINDOW_SIZE for $what" >&2; return 2;
+  }
+  width=$((10#${BASH_REMATCH[1]})) height=$((10#${BASH_REMATCH[2]}))
+  [[ "${RYZEN_SCREEN_SIZE:-}" =~ ^([0-9]+)x([0-9]+)$ ]] || {
+    echo "No screen dimensions from xdpyinfo for $what" >&2; return 2;
+  }
+  screen_width=$((10#${BASH_REMATCH[1]})) screen_height=$((10#${BASH_REMATCH[2]}))
+  (( width > 0 && height > 0 )) || return 2
+  # Keep clear of the dock/panel (which clamp a requested 0,0). Mutter's frame
+  # and shadow add 50x87 px to the client (640x360 -> 690x447, measured).
+  x=$((100 + column * 910))
+  y=$((100 + row * (height + 100)))
+  if (( x + width + 50 > screen_width || y + height + 87 > screen_height )); then
+    echo "$what does not fit screen $RYZEN_SCREEN_SIZE" >&2
+    return 2
+  fi
+  export TEMPEST_WINDOW_POS="$x,$y"
+}
+
 e2e_window_position() {
   [[ -z "${TEMPEST_WINDOW_POS+x}" ]] || return 0
   if [[ "$TEMPEST_WINDOW_SIZE" != 640x360 ]]; then
@@ -129,27 +158,18 @@ e2e_window_position() {
     export TEMPEST_WINDOW_POS=0,0
     return 0
   fi
-  local slot="$1" width height screen_width screen_height columns x y
-  [[ "$TEMPEST_WINDOW_SIZE" =~ ^([0-9]+)x([0-9]+)$ ]] || {
-    echo 'Invalid TEMPEST_WINDOW_SIZE for e2e placement' >&2; return 2;
-  }
-  width=$((10#${BASH_REMATCH[1]})) height=$((10#${BASH_REMATCH[2]}))
-  [[ "${RYZEN_SCREEN_SIZE:-}" =~ ^([0-9]+)x([0-9]+)$ ]] || {
-    echo 'No screen dimensions from xdpyinfo for e2e placement' >&2; return 2;
-  }
-  screen_width=$((10#${BASH_REMATCH[1]})) screen_height=$((10#${BASH_REMATCH[2]}))
-  (( width > 0 && height > 0 )) || return 2
-  # Mutter's measured frames are 690x447 for a 640x360 client. Keep clear of
-  # the dock/panel (which clamp a requested 0,0), decorations and shadows.
-  columns=$(((screen_width - 200 + 60) / (width + 60)))
-  (( columns > 0 )) || columns=1
-  x=$((100 + (slot % columns) * (width + 60)))
-  y=$((100 + (slot / columns) * (height + 100)))
-  if (( x + width > screen_width || y + height > screen_height )); then
-    echo "E2e window $TEMPEST_WINDOW_SIZE in slot $slot does not fit screen $RYZEN_SCREEN_SIZE" >&2
-    return 2
-  fi
-  export TEMPEST_WINDOW_POS="$x,$y"
+  # Slots 0 and 2 are the top and bottom of column 0, slot 1 is column 1.
+  window_position $(($1 % 2)) $(($1 / 2)) "E2e window $TEMPEST_WINDOW_SIZE in slot $1"
+}
+
+bench_window_position() {
+  # gq gave this bench a whole column; GQ_DISPLAY_SLOT is its number.
+  local column="${GQ_DISPLAY_SLOT:-0}"
+  [[ "$column" =~ ^[0-9]+$ ]] || { echo 'Invalid GQ_DISPLAY_SLOT' >&2; return 2; }
+  column=$((10#$column))
+  export TEMPEST_WINDOW_SIZE="${TEMPEST_WINDOW_SIZE:-800x600}"
+  window_position "$column" 0 "Bench window $TEMPEST_WINDOW_SIZE in column $column" || return
+  echo "Ryzen: bench column $column; window $TEMPEST_WINDOW_SIZE at $TEMPEST_WINDOW_POS; screen $RYZEN_SCREEN_SIZE"
 }
 
 source_digest() {
@@ -488,6 +508,8 @@ PY
   if [[ "${BENCH_HEADLESS:-0}" != 1 ]]; then
     command -v ffmpeg >/dev/null || { echo 'Missing tool: ffmpeg' >&2; return 1; }
     desktop
+    # An exclusive bench keeps its window where it was (Mutter centres it).
+    if [[ "${RYZEN_BENCH_COLUMN:-0}" == 1 ]]; then bench_window_position || return; fi
   fi
   require_prepared bench "$state" "$run" "$scenario"
   local out="$state/runs/$run"
@@ -1368,15 +1390,32 @@ e2e_display_exclusive() {
   esac
 }
 
+bench_display_exclusive() {
+  # A covered Xwayland window drops to ~1 FPS, so a bench shares the screen
+  # only with its default 800x600 window placed in its own column.
+  [[ "${RYZEN_DISPLAY_EXCLUSIVE:-}" != 1 ]] || return 0
+  [[ "${TEMPEST_WINDOW_SIZE:-800x600}" == 800x600 && -z "${TEMPEST_WINDOW_POS+x}" ]] || return 0
+  # KEEP leaves the window to a person; the visible flythrough measures frames.
+  [[ "${KEEP:-0}" != 1 && "${OPENGOTHIC_BENCH_VISIBLE:-0}" != 1 ]] || return 0
+  [[ "$(basename "$BENCH_SCENARIO" .bench)" != streaming-flythrough ]] || return 0
+  return 1
+}
+
 game_queue_args() {
   GQ_ARGS=(--class "${BENCH_CLASS:-quick}" --threads 4 --mem 5G --display --max "${RYZEN_MAX:-30m}" --wait-max "$LOCK_WAIT")
+  GAME_ENV=()
   if [[ "$ACTION" == bench ]]; then
     if [[ "${BENCH_HEADLESS:-0}" == 1 ]]; then
       GQ_ARGS=(--class "${BENCH_CLASS:-batch}" --threads 4 --mem 6G --max "${RYZEN_MAX:-30m}" --wait-max "$LOCK_WAIT")
     else
-      # Arbitrary benchmark windows can cover neighbours and affect their cadence.
-      # Keep the legacy exclusive display reservation even with a private tunnel.
-      GQ_ARGS+=(--gpu-mem 4G)
+      # Measured ~1.4 GB of video memory per bench game: three games fit in 10G.
+      GQ_ARGS+=(--gpu-mem 3G)
+      if bench_display_exclusive; then
+        GQ_ARGS+=(--display-exclusive)
+      else
+        GQ_ARGS+=(--display-shared --display-column --display-layout "$DISPLAY_LAYOUT")
+        GAME_ENV=(RYZEN_BENCH_COLUMN=1)
+      fi
     fi
     GQ_ARGS+=(--name "bench $(basename "$BENCH_SCENARIO" .bench)")
     if [[ -n "${RYZEN_BENCH_ARCHIVE:-}" ]]; then GQ_ARGS+=(--archive "$RYZEN_BENCH_ARCHIVE"); fi
@@ -1387,7 +1426,7 @@ game_queue_args() {
        e2e_display_exclusive "${SCENARIO:-m0}"; then
       GQ_ARGS+=(--display-exclusive)
     else
-      GQ_ARGS+=(--display-shared)
+      GQ_ARGS+=(--display-shared --display-layout "$DISPLAY_LAYOUT")
     fi
   fi
 }
@@ -1397,7 +1436,7 @@ run_game() {
   if [[ "$ACTION" == bench ]]; then scenario="$STATE/inputs/$RUN/$(basename "$BENCH_SCENARIO")"; fi
   if preparation_needed "$scenario"; then
     if [[ "$ACTION" == bench ]]; then name="bench $(basename "$BENCH_SCENARIO" .bench)"; else name="e2e ${SCENARIO:-m0}"; fi
-    GQ_ARGS=(--class quick --threads "$JOBS" --mem "${BUILD_MEM:-12G}" --max "${RYZEN_MAX:-30m}" --name "build $name")
+    GQ_ARGS=(--class quick --threads "$JOBS" --mem "${BUILD_MEM:-10G}" --max "${RYZEN_MAX:-30m}" --name "build $name")
     if [[ "${DEV_UBUNTU:-0}" == 1 ]]; then GQ_ARGS+=(--wait-max "$LOCK_WAIT"); fi
     QUEUE_RUN="$RUN-build"
     run_quick env "${ENV_ARGS[@]}" bash "$STATE/source/scripts/ryzen.sh" __remote prepare \
@@ -1410,6 +1449,7 @@ run_game() {
   fi
   game_queue_args
   QUEUE_RUN="$RUN-game"
+  if (( ${#GAME_ENV[@]} )); then set -- env "${GAME_ENV[@]}" "$@"; fi
   run_quick "$@"
 }
 
