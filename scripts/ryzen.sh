@@ -499,7 +499,7 @@ remote_bench() {
   local state="$1" run="$2" scenario="$3" rc started=$SECONDS
   echo 'Ryzen: game admitted'
   if [[ "${RYZEN_AI_TUNNEL:-0}" == 1 ]]; then
-    # This command runs only after gq grants the window. The Mac opens the
+    # This command runs only after gq admits the game. The Mac opens the
     # reverse forwarding on its lock-holding SSH connection, then acknowledges.
     echo 'Ryzen: waiting for AI tunnel'
     until [[ -f "$state/inputs/$run/tunnel-ready" ]]; do sleep 0.2; done
