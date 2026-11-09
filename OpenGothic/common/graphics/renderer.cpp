@@ -7,6 +7,7 @@
 #include <Tempest/Log>
 #include <Tempest/StorageImage>
 #include <cassert>
+#include <cmath>
 #include <cstdio>
 
 #include "ui/inventorymenu.h"
