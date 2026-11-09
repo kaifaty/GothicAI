@@ -304,6 +304,7 @@ void Shaders::compileShaders() noexcept {
     probeAlocation = computeShader("probe_allocation.comp.sprv");
     probeTrace     = computeShader("probe_trace.comp.sprv");
     probeRelight   = computeShader("probe_relight.comp.sprv");
+    probeRelightNew= computeShader("probe_relight_new.comp.sprv");
     probeLighting  = computeShader(string_frm("probe_lighting", materialMaps, ".comp.sprv"));
     probeStats     = computeShader("probe_stats.comp.sprv");
 

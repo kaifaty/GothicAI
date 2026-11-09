@@ -369,6 +369,7 @@ add_shader(probe_vote.comp           lighting/rt/probe_allocation.comp -DVOTE)
 add_shader(probe_allocation.comp     lighting/rt/probe_allocation.comp -DALLOC)
 add_shader(probe_trace.comp          lighting/rt/probe_trace.comp      -DRAY_QUERY -DRAY_QUERY_AT)
 add_shader(probe_relight.comp        lighting/rt/probe_lighting.comp -DRELIGHT)
+add_shader(probe_relight_new.comp    lighting/rt/probe_lighting.comp -DRELIGHT_NEW)
 add_shader(probe_lighting.comp       lighting/rt/probe_lighting.comp)
 add_shader(probe_lighting_orm.comp   lighting/rt/probe_lighting.comp -DMATERIAL_MAPS)
 

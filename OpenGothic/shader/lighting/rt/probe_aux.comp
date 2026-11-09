@@ -37,8 +37,8 @@ void main_init() {
     probeHeader.iterator    = 0;
     probeHeader.iterator2   = 0;
     probeHeader.tracedCount = 0;
-    probeHeader.newCount    = 1; // the sky probe
-    newList[0]              = 0;
+    probeHeader.newCount    = 0;
+    probeHeader.iterator3   = 0;
     freeList.cursor         = 0;
 
     Probe p;
@@ -64,7 +64,9 @@ void main_clear() {
     probeHeader.count       = min(probeHeader.count, probe.length());
     probeHeader.iterator    = 0;
     probeHeader.iterator2   = 0;
+    probeHeader.iterator3   = 0;
     probeHeader.tracedCount = 0;
+    probeHeader.newCount    = 0;
     freeList.cursor         = 0;
     }
   }
@@ -83,7 +85,10 @@ void main_prune() {
     return;
 
   if(probeId==0) {
-    probe[0].bits &= ~NEW_BIT; // the sky, traced once
+    // the sky: listed for the trace once, then no longer new
+    if((probe[0].bits & TRACED_BIT)==0)
+      newList[atomicAdd(probeHeader.newCount, 1)] = 0;
+    probe[0].bits &= ~NEW_BIT;
     return;
     }
 
@@ -101,8 +106,6 @@ void main_prune() {
 
 void main_mkHash() {
   const uint probeId = gl_GlobalInvocationID.x;
-  if(probeId==0)
-    probeHeader.newCount = 0; // traced already, the next allocation lists anew
   if(probeId>=probeHeader.count)
     return;
 

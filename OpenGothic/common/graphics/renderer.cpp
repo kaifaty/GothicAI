@@ -2565,10 +2565,14 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
   cmd.setBinding(14,probes);
   cmd.setBinding(15,lightsTree.tree);
   cmd.setBinding(16,probesRadiance);
+  cmd.setBinding(17,newList);
   // a thread per relit sample of every slot: the rays keep all lanes busy
   cmd.setPipeline(shaders.probeRelight);
   cmd.dispatchThreads(gi.maxProbes*(256/push.relitPeriod));
-  // a workgroup per probe: the integral of the samples, the new probes light all theirs
+  // the new probes: all samples, a thread each
+  cmd.setPipeline(shaders.probeRelightNew);
+  cmd.dispatch(256);
+  // a workgroup per probe: the integral of the samples
   cmd.setPipeline(shaders.probeLighting);
   cmd.dispatch(1024);
 
