@@ -249,6 +249,18 @@ void Renderer::setupSettings() {
       Log::i("render: taa = ", logged, ", sharpness = ", settings.taaSharpness, ", mip bias = ", settings.taaMipBias);
       }
   }
+  // SSAO over frames (reports/engine/2026-11-08-ssao-temporal), on by default: OPENGOTHIC_SSAO_HISTORY=0 traces the
+  // whole set of 32 every frame and keeps no history (the same look, at the former cost)
+  {
+    settings.ssaoHistory = true;
+    if(const char* e = std::getenv("OPENGOTHIC_SSAO_HISTORY"))
+      settings.ssaoHistory = std::string_view(e)!="0";
+    static int logged = -1;
+    if(logged!=int(settings.ssaoHistory)) {
+      logged = int(settings.ssaoHistory);
+      Log::i("render: ssao history = ", logged);
+      }
+  }
   // A study of the temporal upscale (graphics plan 1g, reports/render-features/2026-11-05-upscale), test benches only:
   // OPENGOTHIC_RENDER_SCALE=0.5..1 draws the scene at that share of the frame over vidResIndex;
   // OPENGOTHIC_UPSCALE=temporal puts MetalFX Temporal in place of the TAA resolve when the scene is drawn smaller than
@@ -1939,8 +1951,9 @@ void Renderer::prepareSSAO(Encoder<CommandBuffer>& cmd, WorldView& wview) {
   // ssao: the projection comes from the scene (jittered, as the depth); the push carries the history's reprojection
   struct PushSsao {
     Matrix4x4 reproject;
-    uint32_t  frame = 0;
-    uint32_t  reset = 0;
+    uint32_t  frame   = 0;
+    uint32_t  reset   = 0;
+    uint32_t  fullSet = 0; // the whole set this frame, no history
     } push;
   if(ssao.camCuts!=ssao.cuts || Taa::isCameraJump(ssao.view, ssao.prev))
     ssao.valid = false;
@@ -1949,7 +1962,8 @@ void Renderer::prepareSSAO(Encoder<CommandBuffer>& cmd, WorldView& wview) {
                                  : Matrix4x4::mkIdentity();
   push.reproject = ssao.valid ? Taa::reprojection(ssao.view, ssao.prev, jitter) : Matrix4x4::mkIdentity();
   push.frame     = ssao.frame;
-  push.reset     = ssao.valid ? 0 : 1;
+  push.reset     = ssao.valid && settings.ssaoHistory ? 0 : 1;
+  push.fullSet   = settings.ssaoHistory ? 0 : 1;
 
   auto& device = Resources::device();
   const auto aoSize = effectResolution();

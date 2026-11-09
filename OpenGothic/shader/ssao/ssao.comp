@@ -18,6 +18,7 @@ layout(push_constant, std140) uniform PushConstant {
   mat4 reproject; // this frame's NDC and depth -> the history's NDC (Taa::reprojection)
   uint frame;     // the cycle of 4 frames picks the samples
   uint reset;     // no history: this frame alone
+  uint fullSet;   // the whole set of 32 this frame (OPENGOTHIC_SSAO_HISTORY=0); reset is set with it
   } push;
 
 layout(binding  = 0) uniform writeonly image2D result;
@@ -170,9 +171,11 @@ void main() {
     // and the blur averages them. With one phase for the screen the whole frame pulsed with the cycle: the
     // quarters differ, and the history (at least 1/8 of a new frame) does not even them out.
     const float f0 = M_PI*2.0*wangHashNoise(uvec2(fragCoord), 0);
-    const uint  k  = (push.frame + uint(fragCoord.x&1) + 2u*uint(fragCoord.y&1)) % cycle;
-    for(uint it=0; it<itersPerFrame; ++it)
-      calcOcclussion(pos0, f0, k*itersPerFrame+it, numIter);
+    const uint  k     = (push.frame + uint(fragCoord.x&1) + 2u*uint(fragCoord.y&1)) % cycle;
+    const uint  iters = push.fullSet!=0u ? numIter : itersPerFrame;
+    const uint  first = push.fullSet!=0u ? 0u      : k*itersPerFrame;
+    for(uint it=0; it<iters; ++it)
+      calcOcclussion(pos0, f0, first+it, numIter);
     }
 
   // per sample of the frame's set, the samples beyond the screen counting as nothing: then four frames sum to
@@ -180,7 +183,7 @@ void main() {
   // to the screen's edge weighed as much as a full one, and the ground at the bottom of the forest shot came out
   // lighter. No sample on the screen tells nothing.
   const bool fresh = sumN>0.0;
-  const vec2 cur   = vec2(sumH, sumM)/float(itersPerFrame*samplesPerStep);
+  const vec2 cur   = vec2(sumH, sumM)/float((push.fullSet!=0u ? numIter : itersPerFrame)*samplesPerStep);
 
   curOcc[gl_LocalInvocationID.x][gl_LocalInvocationID.y] = fresh ? occlusionOf(cur.x, cur.y) : -1.0;
   barrier();

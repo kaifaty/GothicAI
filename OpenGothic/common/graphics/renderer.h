@@ -145,6 +145,7 @@ class Renderer final {
       bool           aaEnabled          = false;
       bool           taaEnabled         = false;
       float          taaSharpness       = 0.75f; // RCAS after the resolve, 0..1
+      bool           ssaoHistory        = true;  // SSAO: 8 samples a frame with a history; off: 32 a frame
       float          taaMipBias         = -0.5f; // material textures of the main view with TAA
       // a study of the temporal upscale (graphics plan 1g): MetalFX Temporal in place of the TAA resolve
       bool           temporalUpscale    = false; // OPENGOTHIC_UPSCALE=temporal, on Metal
