@@ -31,6 +31,26 @@ float probeReadSkyVisibility(uint bits, vec3 norm) {
   }
 #endif
 
+// RGB9E5 (shared exponent) in an R32UI texel, rounded to nearest: the radiance of a probe's sample
+uint packRGB9E5(vec3 rgb) {
+  const float maxValue = 65408.0; // (511/512) * 2^16
+  rgb = clamp(rgb, vec3(0), vec3(maxValue));
+  const float maxc = max(rgb.r, max(rgb.g, rgb.b));
+  int   e     = max(-16, int(floor(log2(max(maxc, 1e-30))))) + 1;
+  float denom = exp2(float(e - 9));
+  if(uint(floor(maxc/denom + 0.5))==512u) {
+    denom *= 2.0;
+    e     += 1;
+    }
+  const uvec3 m = min(uvec3(floor(rgb/denom + 0.5)), uvec3(511u));
+  return m.r | (m.g << 9) | (m.b << 18) | (uint(e + 15) << 27);
+  }
+
+vec3 unpackRGB9E5(uint v) {
+  const float scale = exp2(float(int(v >> 27) - 15 - 9));
+  return vec3(float(v & 0x1FFu), float((v >> 9) & 0x1FFu), float((v >> 18) & 0x1FFu)) * scale;
+  }
+
 struct ProbesHeader { // 64 bytes
   uint count;
   uint iterator;

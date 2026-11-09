@@ -14,6 +14,10 @@ layout(binding = 0, std430) buffer Hbo0 { uint voteTable[]; };
 layout(binding = 1, std430) buffer Hbo  { uint hashTable[]; };
 layout(binding = 2, std430) buffer Pbo  { ProbesHeader probeHeader; Probe probe[]; };
 layout(binding = 3, std430) buffer Fbo0 { int cursor; uint list[]; } freeList;
+#if defined(STATS)
+// read back by the CPU a frame slot later (FrameProfile: gi_probes_live, gi_probes_traced)
+layout(binding = 4, std430) writeonly buffer Stats { uint live; uint traced; uint slots; uint freeSlots; } stats;
+#endif
 
 void hashmapInsert(const uint probeId) {
   const vec3 gridPos = probe[probeId].pos/probeGridStep;
@@ -100,6 +104,20 @@ void main_mkHash() {
     hashmapInsert(probeId);
   }
 
+#if defined(STATS)
+void main_stats() {
+  if(gl_GlobalInvocationID.x!=0)
+    return;
+  // after the allocation: the free list holds the dead slots left, probe zero is the sky
+  const uint slots     = min(probeHeader.count, uint(probe.length()));
+  const uint freeSlots = min(uint(max(freeList.cursor, 0)), slots-1);
+  stats.live      = slots - 1 - freeSlots;
+  stats.traced    = probeHeader.tracedCount;
+  stats.slots     = slots;
+  stats.freeSlots = freeSlots;
+  }
+#endif
+
 void main() {
 #if defined(INIT)
   main_init();
@@ -111,5 +129,7 @@ void main() {
   main_mkHash();
 #elif defined(PRUNE)
   main_prune();
+#elif defined(STATS)
+  main_stats();
 #endif
   }

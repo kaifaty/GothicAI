@@ -48,19 +48,22 @@ uint allocProbe() {
   }
 
 bool reuseProbe(const uint h, vec3 pos, int lod) {
-  const uint probeId = hashTable[h];
-  if(probeId>=probeHeader.count)
-    return false;
+  // the chain of the bucket (probe_aux.comp, hashmapInsert): a probe behind another one in its bucket was taken
+  // for missing, voted for again and traced anew every frame
+  uint probeId = hashTable[h];
 
   [[loop]]
   for(int i=0; i<8; ++i) {
-    Probe p = probe[probeId];
-    if((p.bits & TRACED_BIT)==0)
-      continue;
-    if(!probeIsSame(p.pos, pos, lod))
-      continue;
-    atomicOr(probe[probeId].bits, REUSE_BIT);
-    return true;
+    if(probeId>=probeHeader.count)
+      return false;
+    const Probe p = probe[probeId];
+    if((p.bits & TRACED_BIT)!=0 && probeIsSame(p.pos, pos, lod)) {
+      // many pixels share a corner: one atomic per probe and frame is enough
+      if((p.bits & REUSE_BIT)==0)
+        atomicOr(probe[probeId].bits, REUSE_BIT);
+      return true;
+      }
+    probeId = p.pNext;
     }
 
   return false;
@@ -71,7 +74,9 @@ void processProbe(ivec3 gridPos, vec3 pos, int lod, vec3 pixelPos, vec3 pixelNor
 #if defined(VOTE)
   if(reuseProbe(h, pos, lod))
     return;
-  atomicMin(voteTable[h], threadId);
+  // the table only goes down: a smaller vote seen already makes this one useless
+  if(voteTable[h] > threadId)
+    atomicMin(voteTable[h], threadId);
 #elif defined(ALLOC)
   if(voteTable[h] != threadId)
     return;

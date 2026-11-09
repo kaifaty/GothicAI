@@ -3,23 +3,40 @@
 #extension GL_EXT_control_flow_attributes : enable
 #extension GL_GOOGLE_include_directive    : enable
 
+#define RAY_QUERY
+#define RAY_QUERY_AT
+
+#include "lighting/rt/rt_common.glsl"
 #include "lighting/rt/probe_common.glsl"
-// #include "lighting/rt/rt_common.glsl"
+#include "lighting/lightstree/lights_common.glsl"
 #include "lighting/tonemapping.glsl"
 #include "scene.glsl"
 #include "common.glsl"
+#include "random.glsl"
 
+// Light at the points the rays of a probe hit (gbuffer of probe_trace.comp), as the path tracer lights a hit
+// (lighting/pt/pathtrace.frag): the sun and the lamps of the lights tree with a shadow ray, the sky on a miss, and
+// the bounce off the probes themselves from the last frame instead of the path's next bounces.
+// Every frame a sample of an old probe is relit once in relitPeriod frames, the others keep their radiance in
+// probesRadiance; a new probe relights all its samples. The probe's ambient cube is the integral of all its
+// samples, blended over time with the last frame's cube (reset on a sharp change, as in DDGI).
+
+layout(primitive_culling);
 layout(local_size_x = 64) in;
 
-const  uint samplesCount = 4;
-const  uint samplesTotal = gl_WorkGroupSize.x*samplesCount;
+const uint  samplesCount = 4;
+const uint  samplesTotal = gl_WorkGroupSize.x*samplesCount;
+const uint  NoSample     = 0xFFFFFFFFu;  // probesRadiance: the sample does not count (a ray down into the void)
+const float TMax         = 500*100;      // the shadow rays of the path tracer
+const vec3  NightSky     = vec3(0.3, 0.26, 1)*0.15; // pathtrace.frag: added to the sky of a miss
+// a change of the cube over this (relative, by luminance) drops its history
+const float ResetChange  = 0.33;
 
-shared vec4 samples[gl_WorkGroupSize.x][3][2]; // 6 Kb
-#if defined(MATERIAL_MAPS)
-// Keep sky visibility separate from the counts used by the RGB integration.
-shared vec2 skySamples[gl_WorkGroupSize.x][3][2];
-#endif
-shared uint shProbeId;
+layout(push_constant, std140) uniform Push {
+  float alpha;       // weight of the new estimate in the blend with the last frame, from dt
+  uint  frameId;
+  uint  relitPeriod; // an old probe's sample is relit once in so many frames
+  };
 
 layout(binding = 0, std140) readonly buffer UboScene { // ubo is broken on NVidia?
   SceneDesc scene;
@@ -28,36 +45,194 @@ layout(binding = 1) uniform writeonly image2D probesLighting;
 layout(binding = 2) uniform sampler2D gbufferDiff;
 layout(binding = 3) uniform sampler2D gbufferNorm;
 layout(binding = 4) uniform sampler2D gbufferRayT;
-
 layout(binding = 5) uniform sampler2D skyLUT;
-layout(binding = 6) uniform sampler2D textureSm1;
-layout(binding = 7) uniform sampler2D probesLightingPrev;
+// 6..11: the ray scene, rt_common.glsl
+layout(binding = 12) uniform sampler2D probesLightingPrev;
+layout(binding = 13, std430) readonly buffer Hbo { uint hashTable[]; };
+layout(binding = 14, std430) buffer Pbo { ProbesHeader probeHeader; Probe probe[]; };
+layout(binding = 15, std430) readonly buffer BVH { PTreeNode node[]; } lightsTree;
+layout(binding = 16, r32ui) uniform restrict uimage2D probesRadiance;
 
-layout(binding = 8, std430) buffer Hbo { uint hashTable[]; };
-layout(binding = 9, std430) buffer Pbo { ProbesHeader probeHeader; Probe probe[]; };
+shared vec4 samples[gl_WorkGroupSize.x][3][2]; // 6 Kb
+#if defined(MATERIAL_MAPS)
+// Keep sky visibility separate from the counts used by the RGB integration.
+shared vec2 skySamples[gl_WorkGroupSize.x][3][2];
+#endif
+shared uint shProbeId;
+shared vec3 selfPrev[6]; // the probe's own cube of the last frame (axis*2 + side)
 
-float shadowResolve(in vec4 sh, float z) {
-  z  = clamp(z,0,0.99);
-  sh = step(sh,vec4(z));
-  return 0.25*(sh.x+sh.y+sh.z+sh.w);
+float luma(vec3 c) {
+  return dot(c, vec3(0.2126, 0.7152, 0.0722));
   }
 
-vec4 shadowSample(in sampler2D shadowMap, vec2 shPos) {
-  shPos.xy = shPos.xy*vec2(0.5,0.5)+vec2(0.5);
-  return textureGather(shadowMap,shPos);
+bool planetOcclusion(float y, vec3 sunDir) {
+  // lighting/direct_light.frag: the sun under the horizon
+  const float h = RPlanet + max(y*0.1, 0);
+  return rayIntersect(vec3(0,h,0), sunDir, RPlanet)>=0;
   }
 
-float calcShadow(vec3 shPos1) {
-  //shPos1.y = max(0,shPos1.y);
-  vec4  lay1 = shadowSample(textureSm1,shPos1.xy);
-  float v1   = shadowResolve(lay1,shPos1.z);
-  return v1;
-  }
-
-float shadowFactor(vec4 shPos) {
-  if(abs(shPos.x)>=shPos.w && abs(shPos.y)>=shPos.w)
+float shadowRay(vec3 origin, vec3 dir, float tMax) {
+  // the shadow ray of the path tracer (pathtrace_common.glsl): shadow casters, alpha test, front faces
+  rayQueryEXT rayQuery;
+  rayQueryInitializeEXT(rayQuery, topLevelAS, RayFlagsShadow, CM_ShadowCaster, origin, 1.0, dir, tMax);
+  rayQueryProceedShadow(rayQuery);
+  if(rayQueryGetIntersectionTypeEXT(rayQuery, true) == gl_RayQueryCommittedIntersectionNoneEXT)
     return 1;
-  return calcShadow(shPos.xyz/shPos.w);
+  return 0;
+  }
+
+float sunLight(vec3 norm, vec3 pos) {
+  // pathtrace.frag, sampleDirectLight
+  const float lamb = max(dot(norm, scene.sunDir), 0);
+  if(lamb<=0 || planetOcclusion(pos.y, scene.sunDir))
+    return 0;
+  return lamb * shadowRay(pos, scene.sunDir, TMax);
+  }
+
+float pointLight(vec3 norm, vec3 pos, vec3 lightPos, float range) {
+  // pathtrace.frag, samplePointLight
+  const vec3  ldir      = lightPos - pos;
+  const float dist      = length(ldir);
+  const vec3  dir       = ldir/max(dist, 0.001);
+  const float intensity = lightIntensity(norm, dist, -dir, range);
+  if(intensity<=0)
+    return 0;
+  const float rayDistance = dist - range*0.0375; // padding of the path tracer, a light may stand in a wall
+  if(rayDistance<=0)
+    return intensity;
+  return intensity * shadowRay(pos, dir, rayDistance);
+  }
+
+vec3 localLight(vec3 norm, vec3 pos, float key) {
+  // pathtrace.frag, sampleLocalLight: one lamp by the weights of the tree, divided by its probability
+  float pdf  = 1.0;
+  uint  node = 0 | BVH_BoxNode;
+  [[loop]]
+  for(int depth=0; depth<64; ++depth) {
+    const uint type = bvhGetNodeType(node);
+    if(type==BVH_LightNode)
+      break;
+    if(type!=BVH_BoxNode)
+      return vec3(0);
+    const PTreeNode n      = lightsTree.node[node & 0x0FFFFFFF];
+    const float     wLeft  = bvhLightsNodeWeight(pos, norm, n.centerL, n.weightL);
+    const float     wRight = bvhLightsNodeWeight(pos, norm, n.centerR, n.weightR);
+    const float     pLeft  = wLeft /(wLeft + wRight);
+    const float     pRight = wRight/(wLeft + wRight);
+    if(key < pLeft) {
+      pdf *= pLeft;
+      node = n.ptrL;
+      key  = key/pLeft;
+      } else {
+      pdf *= pRight;
+      node = n.ptrR;
+      key  = (key-pLeft)/pRight;
+      }
+    }
+  if(bvhGetNodeType(node)!=BVH_LightNode)
+    return vec3(0);
+
+  const PTreeNode n = lightsTree.node[node & 0x0FFFFFFF];
+  if(pdf < 0.001)
+    return vec3(0); // numerically unstable + fireflys, as in the path tracer
+  const float intensity = pointLight(norm, pos, n.centerL, n.weightR);
+  return (intensity * n.centerR) / pdf;
+  }
+
+vec3 skyRadiance(vec3 origin, vec3 dir) {
+  // the sky of a miss in the path tracer
+  vec3 sky = textureSkyLUT(skyLUT, vec3(0,RPlanet+max(origin.y*0.01,0),0), dir, scene.sunDir) * scene.GSunIntensity;
+  return sky + NightSky;
+  }
+
+vec3 readSelf(vec3 n) {
+  vec3 ret = vec3(0);
+  ret += selfPrev[0 + (n.x>=0 ? 1 : 0)] * (n.x*n.x);
+  ret += selfPrev[2 + (n.y>=0 ? 1 : 0)] * (n.y*n.y);
+  ret += selfPrev[4 + (n.z>=0 ? 1 : 0)] * (n.z*n.z);
+  return ret;
+  }
+
+bool findProbe(vec3 pos, vec3 norm, out uint id) {
+  // the probe of the last frame at a hit the camera sees: the lod and the cage of probe_allocation.comp there
+  const vec4 clip = scene.viewProject*vec4(pos,1);
+  if(clip.w<=0)
+    return false;
+  const vec3 ndc = clip.xyz/clip.w;
+  if(any(greaterThanEqual(abs(ndc.xy), vec2(1))) || ndc.z<0 || ndc.z>=SKY_DEPTH)
+    return false;
+
+  const ivec2 screenSize = scene.screenRes;
+  const ivec2 fragCoord  = clamp(ivec2((ndc.xy*0.5+0.5)*vec2(screenSize)), ivec2(0), screenSize-1);
+  const int   lod        = probeGridComputeLod(fragCoord, screenSize, ndc.z, scene.viewProjectInv, scene.probeGridBias);
+  const float step       = probeGridStep*(1 << lod);
+
+  // the corner of the cage furthest along the normal: allocation keeps the corners on the normal's side
+  const ivec3 px   = ivec3(round((pos + norm*(probeCageBias + 0.5*step))/step));
+  const vec3  wpos = vec3(px)*step;
+  if(dot(wpos - pos, norm)<0)
+    return false;
+
+  const ivec3 gridPos = px*(1 << lod);
+  uint probeId = hashTable[probeGridPosHash(gridPos) % hashTable.length()];
+  [[loop]]
+  for(int i=0; i<8; ++i) {
+    if(probeId>=probeHeader.count)
+      return false;
+    const Probe p = probe[probeId];
+    if((p.bits & TRACED_BIT)!=0 && probeIsSame(p.pos, wpos, lod)) {
+      // a new probe has no light of the last frame yet; a bad one sits in a wall
+      if((p.bits & (NEW_BIT | BAD_BIT | UNUSED_BIT))!=0)
+        return false;
+      id = probeId;
+      return true;
+      }
+    probeId = p.pNext;
+    }
+  return false;
+  }
+
+vec3 bounce(vec3 pos, vec3 norm) {
+  // the light of the hit's own surroundings: the probe there, else this probe's in the hit's direction
+  uint id = 0;
+  if(findProbe(pos, norm, id))
+    return probeReadAmbient(probesLightingPrev, id, norm, vec3(0));
+  return readSelf(norm);
+  }
+
+vec4 shadeSample(const vec3 rayOrigin, const vec3 rayDirection, uint probeId, uint sampleId) {
+  const ivec2 uv     = gbufferCoord(probeId, sampleId);
+  const vec4  diff   = texelFetch(gbufferDiff, uv, 0);
+  const uint  bits   = uint(diff.a*255.0+0.5);
+  const bool  sky    = (bits & 0x4)!=0;
+  const bool  badbit = (bits & 0x2)!=0;
+
+  if(sky)
+    return vec4(skyRadiance(rayOrigin, rayDirection), badbit ? 0 : 1);
+
+  const vec4  nr     = texelFetch(gbufferNorm, uv, 0);
+  const float rt     = texelFetch(gbufferRayT, uv, 0).r;
+  const float rayT   = rt * probeRayDistance;
+  const vec3  pos    = rayOrigin + rayT*rayDirection;
+
+  vec3 norm = normalize(nr.xyz*2.0-vec3(1));
+  if(dot(norm, rayDirection)>0)
+    norm = -norm; // backfaces are fine for the path tracer: they face the probe
+  const vec3 albedo = min(textureAlbedo(diff.rgb), vec3(0.95));
+  const vec3 at     = pos + norm*0.5; // the hit distance is 16-bit: off the surface for the shadow rays
+
+  // a lamp per sample; the key goes through the samples of the probe as a low-discrepancy sequence
+  // (golden-ratio steps in 32-bit fixed point), turned at every relight
+  const uint  k   = sampleId*2654435769u + (frameId/relitPeriod)*3242174889u + probeId*2447445413u;
+  const float key = float(k >> 8) * (1.0/16777216.0);
+
+  vec3 direct = vec3(0);
+  direct += sunLight(norm, at) * scene.sunColor;
+  direct += localLight(norm, at, key) * (max(1.0, scene.exposure) / scene.exposure);
+
+  vec3 hit = albedo * direct * Fd_Lambert;
+  hit += albedo * bounce(pos, norm); // Fd_Lambert is in the probes' integration
+  return vec4(hit, 1);
   }
 
 void storeSample(vec3 dir, vec4 val) {
@@ -89,117 +264,43 @@ float resolveSkyVisibility(vec2 sampleWeights) {
   }
 #endif
 
-vec3 resolveHit(const vec3 rayOrigin, const vec3 rayDirection, float rayT, vec3 normal, bool opaque, float shMap) {
-  float dt = dot(normal, scene.sunDir);
-  if(!opaque) {
-    // atificial lit on vegetation, as RT can't capture small bright light leaks from the trees
-    // dt = dt*0.5 + 0.5;
-    dt = abs(dt);
-    }
-
-  const float lambert     = max(0, dt); //max(opaque ? 0 : 0.2, dt);
-  const float shadow      = max(0, shMap);
-  const vec3  lluminance = scene.sunColor * lambert * shadow * Fd_Lambert;
-
-  return lluminance;
-  }
-
-vec3 resolveMiss(const vec3 rayOrigin, const vec3 rayDirection) {
-  // PERF: need to preload sky lut early in shader
-  return textureSkyLUT(skyLUT, vec3(0,RPlanet,0), rayDirection, scene.sunDir) * scene.GSunIntensity;
-  }
-
-vec3 resolveSecondBounce(vec3 pos, vec3 norm, float rayT, uint selfProbeId) {
-#if 0
-  return scene.ambient;
-#elif 1
-  vec3 ambient   = scene.ambient;
-  vec3 sky       = probeReadAmbient(probesLightingPrev, 0, norm, vec3(0,1,0));
-  vec3 luminance = vec3(0);
-
-  luminance += ambient;
-  luminance += sky*0.8;
-  return luminance;
-#endif
-  }
-
-vec4 processSample(const vec3 rayOrigin, const vec3 rayDirection, uint probeId, uint sampleId) {
-  const ivec2 uv     = gbufferCoord(probeId, sampleId);
-  const vec4  diff   = texelFetch(gbufferDiff, uv, 0);
-  const vec4  nr     = texelFetch(gbufferNorm, uv, 0);
-  const float rt     = texelFetch(gbufferRayT, uv, 0).r;
-  const uint  bits   = uint(diff.a*255.0+0.5);
-  const bool  sky    = (bits & 0x4)!=0;
-  const bool  badbit = (bits & 0x2)!=0;
-
-  if(sky) {
-    vec3 hit = resolveMiss(rayOrigin, rayDirection);
-    // if(badbit)
-    //   hit *= 0.001;
-    return vec4(hit, badbit ? 0 : 1);
-    }
-#if 0
-  {
-  vec3 hit = resolveMiss(rayOrigin, rayDirection);
-  return vec4(hit, badbit ? 0 : 1);
-  }
-#endif
-
-  const bool opaque  = (bits & 0x1)!=0;
-  const bool semiSky = (bits & 0x8)!=0;
-
-  const vec3  albedo  = textureAlbedo(diff.rgb);
-  const vec3  norm    = normalize(nr.xyz*2.0-vec3(1));
-
-  const float rayT    = rt * probeRayDistance;
-  const vec3  pos     = rayOrigin + rayT*rayDirection;
-
-  // TODO: rt-shadow lighting ?
-  vec4  shCoord = scene.viewShadow[1]*vec4(pos,1);
-  float shadow  = shadowFactor(shCoord);
-
-  vec3 hit = vec3(0);
-  hit += albedo * resolveHit(rayOrigin, rayDirection, rayT, norm, opaque, shadow);
-  hit += albedo * resolveSecondBounce(pos, norm, rayT, probeId);
-
-  if(semiSky) {
-    // avoid pitch-black lighting in forrest
-    //hit = (hit*0.25 + resolveMiss(rayOrigin, rayDirection)*0.75);
-    //hit = vec3(1,0,0)*scene.GSunIntensity;
-    }
-
-  if(badbit) {
-    // hit = vec3(1,0,0)*scene.GSunIntensity; //0.01;
-    // hit *= 0.5;
-    }
-
-  return vec4(hit, 1);
-  }
-
-void processLighting(const uint probeId) {
+void processLighting(const uint probeId, const bool fresh) {
   const vec3 origin = probe[probeId].pos;
+  const uint phase  = (frameId + probeId) % relitPeriod;
 
   for(uint i=0; i<samplesCount; ++i) {
-    uint sampleId = gl_LocalInvocationIndex*samplesCount+i;
-    vec3 dir      = sampleSphere(sampleId, samplesTotal, 0);
-    vec4 clr      = processSample(origin, dir, probeId, sampleId);
+    const uint  sampleId = gl_LocalInvocationIndex*samplesCount+i;
+    const vec3  dir      = sampleSphere(sampleId, samplesTotal, 0);
+    const ivec2 uv       = gbufferCoord(probeId, sampleId);
+
+    vec4 clr = vec4(0);
+    if(fresh || (sampleId % relitPeriod)==phase) {
+      clr = shadeSample(origin, dir, probeId, sampleId);
+      imageStore(probesRadiance, uv, uvec4(clr.a>0 ? packRGB9E5(clr.rgb) : NoSample));
+      } else {
+      const uint v = imageLoad(probesRadiance, uv).r;
+      if(v!=NoSample)
+        clr = vec4(unpackRGB9E5(v), 1);
+      }
     storeSample(dir, clr);
 #if defined(MATERIAL_MAPS)
-    const uint bits = uint(texelFetch(gbufferDiff, gbufferCoord(probeId, sampleId), 0).a*255.0+0.5);
-    // processSample rejects invalid sky misses through its validity alpha.
-    storeSkySample(dir, clr.a, (bits & 0x4)!=0);
+    if(fresh) {
+      // the sky visibility depends on the trace only: a new probe counts it
+      const uint bits = uint(texelFetch(gbufferDiff, uv, 0).a*255.0+0.5);
+      storeSkySample(dir, clr.a, (bits & 0x4)!=0);
+      }
 #endif
     }
   }
 
 void processProbe(const uint probeId) {
   const uint laneId = gl_LocalInvocationIndex;
+  const uint bits   = probe[probeId].bits;
 
-  const bool traced = ((probe[probeId].bits & TRACED_BIT)!=0);
-  const bool skip   = ((probe[probeId].bits & UNUSED_BIT)!=0);
-
-  if(skip)
+  if((bits & UNUSED_BIT)!=0)
     return;
+  // a new probe or a slot taken again: no history, all samples now
+  const bool fresh = (bits & NEW_BIT)!=0 || (bits & TRACED_BIT)==0;
 
   for(int i=0; i<3; ++i) {
     samples[laneId][i][0] = vec4(0);
@@ -209,9 +310,13 @@ void processProbe(const uint probeId) {
     skySamples[laneId][i][1] = vec2(0);
 #endif
     }
+  if(laneId<6) {
+    const ivec2 uv = lightBufferCoord(probeId) + ivec2(laneId/2, laneId%2);
+    selfPrev[laneId] = fresh ? vec3(0) : texelFetch(probesLightingPrev, uv, 0).rgb;
+    }
   barrier();
 
-  processLighting(probeId);
+  processLighting(probeId, fresh);
   barrier();
 
   for(uint i=gl_WorkGroupSize.x; i>0;) {
@@ -230,7 +335,7 @@ void processProbe(const uint probeId) {
     }
 
 #if defined(MATERIAL_MAPS)
-  if(laneId==0) {
+  if(laneId==0 && fresh) {
     vec3 negativeVisibility, positiveVisibility;
     for(int axis=0; axis<3; ++axis) {
       negativeVisibility[axis] = resolveSkyVisibility(skySamples[0][axis][0]);
@@ -240,19 +345,24 @@ void processProbe(const uint probeId) {
     }
 #endif
 
-  if(laneId<3) {
-    vec4 a = samples[0][laneId][0];
-    vec4 b = samples[0][laneId][1];
-
-    if(a.w>0)
-      a.rgb /= a.w;
-    if(b.w>0)
-      b.rgb /= b.w;
-
+  if(laneId<6) {
+    const uint axis = laneId/2;
+    const uint side = laneId%2;
+    vec4 s = samples[0][axis][side];
     // Need to mul by 2, because it's uniform sampling; https://www.rorydriscoll.com/2009/01/07/better-sampling/
-    const ivec2 uv  = lightBufferCoord(probeId);
-    imageStore(probesLighting, uv+ivec2(laneId,0), a * 2.0);
-    imageStore(probesLighting, uv+ivec2(laneId,1), b * 2.0);
+    const vec3 est = (s.w>0 ? s.rgb/s.w : vec3(0)) * 2.0;
+
+    vec3 ret = est;
+    if(!fresh) {
+      const vec3  hist   = selfPrev[laneId];
+      const float lh     = luma(hist);
+      const float ln     = luma(est);
+      const float eps    = 0.0005/max(scene.exposure, 1e-6); // dark on the screen: no reset on noise there
+      const float change = abs(ln-lh)/max(max(ln, lh), eps);
+      ret = mix(hist, est, change>ResetChange ? 1.0 : alpha);
+      }
+    const ivec2 uv = lightBufferCoord(probeId);
+    imageStore(probesLighting, uv+ivec2(axis,side), vec4(ret, 1));
     }
   }
 

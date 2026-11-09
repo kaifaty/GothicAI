@@ -206,9 +206,10 @@ void main() {
   const vec3  linear  = textureAlbedo(diff);
   const float ao      = textureSsao();
 
+  // the night sky of the path tracer is in the probes' misses (probe_lighting.comp): no NightAmbient on top,
+  // it would light the corners the probes see no sky from
   vec3 luminance  = vec3(0);
   luminance += colorSum.rgb;
-  luminance += (norm.y*0.25+0.75) * NightAmbient * Fd_Lambert;
 
   vec3 color = linear;
   color *= luminance;

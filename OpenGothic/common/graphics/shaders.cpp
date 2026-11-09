@@ -304,6 +304,7 @@ void Shaders::compileShaders() noexcept {
     probeAlocation = computeShader("probe_allocation.comp.sprv");
     probeTrace     = computeShader("probe_trace.comp.sprv");
     probeLighting  = computeShader(string_frm("probe_lighting", materialMaps, ".comp.sprv"));
+    probeStats     = computeShader("probe_stats.comp.sprv");
 
     state.setBlendSource  (RenderState::BlendMode::One);
     state.setBlendDest    (RenderState::BlendMode::SrcAlpha);  // for debugging
@@ -419,9 +420,9 @@ bool Shaders::isLightsTreeSupported() {
 
 bool Shaders::isGi1Supported() {
   auto& gpu = Resources::device().properties();
-  if(!gpu.raytracing.rayQuery)
+  if(!gpu.raytracing.rayQuery || !isLightsTreeSupported())
     return false;
-  if(!gpu.hasStorageFormat(R11G11B10UF) || !gpu.hasStorageFormat(R16))
+  if(!gpu.hasStorageFormat(RGBA16F) || !gpu.hasStorageFormat(R32U) || !gpu.hasStorageFormat(R16))
     return false;
   if(gpu.tex2d.maxSize<4096 || gpu.compute.maxInvocations<256 || !gpu.descriptors.nonUniformIndexing)
     return false;
