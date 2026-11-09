@@ -1,5 +1,4 @@
 #include "testbench_internal.h"
-#include "testbench.h"
 
 #include <algorithm>
 #include <cmath>
