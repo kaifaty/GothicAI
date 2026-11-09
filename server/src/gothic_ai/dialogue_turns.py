@@ -20,7 +20,7 @@ from .dialogue_constants import (
     STEP_RETRIES,
 )
 from .dialogue_state import Conversation, StaleTurn, TurnState
-from .dialogue_text import MoodTag, SentenceSplitter, game_time, to_game_text
+from .dialogue_text import SentenceSplitter, SpeechPiece, game_time, to_game_text
 from .embeddings import EmbedError
 from .game import GameError
 from .llm import Item, LLMError, Message, Tool, ToolCall, ToolChoice, ToolResult
@@ -490,7 +490,7 @@ class DialogueTurnsMixin:
         await self._feed_lines(conv, state, pieces, flush=True)
 
     async def _feed_lines(
-        self, conv: Conversation, state: TurnState, pieces: list[str | MoodTag], *, flush: bool = False
+        self, conv: Conversation, state: TurnState, pieces: list[SpeechPiece], *, flush: bool = False
     ) -> None:
         for line in state.lines(pieces, flush=flush):
             await self._line(conv, state, line)
@@ -498,13 +498,19 @@ class DialogueTurnsMixin:
     async def _line(self, conv: Conversation, state: TurnState, line: str) -> None:
         if state.first_line is None:
             state.first_line = time.monotonic() - state.started
+        original = to_game_text(line)
         line = state.strip_line(line)
         if not line:
             return
+        removed = len(original.split()) - len(to_game_text(line).split())
+        cues = [c.model_copy(update={"word": max(0, c.word - removed)}) for c in state.cues]
+        felt = (state.felt[0], max(0, state.felt[1] - removed)) if state.felt else None
         # «Браго, …»: from this line on it speaks to him (the two look at each other), and he may answer
         if self.floor is not None and (who := self.floor.called(conv.npc, line)) is not None:
             state.to = who
-        await self._say(conv, line, state.reply, state.overlay, state.mood, to=state.to)
+        await self._say(
+            conv, line, state.reply, state.overlay, state.mood, to=state.to, cues=cues or None, felt=felt
+        )
 
     async def _tool(self, conv: Conversation, call: ToolCall, state: TurnState) -> ToolOutcome:
         """Handle a call of the model. Checks run here, against what the npc has and sees: a rejection

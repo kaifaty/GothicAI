@@ -13,7 +13,7 @@ from .dialogue_text import to_game_text
 from .game import GameError
 from .persona import MOOD_DELIVERY
 from .protocol import HushCmd, LineVoice, Mood, SayAudioCmd, SayCmd, SayEndCmd
-from .tts import TtsClient, TtsError
+from .tts import TtsClient, TtsError, WordMatcher, WordTiming
 
 log = logging.getLogger("gothic_ai.dialogue")
 
@@ -65,7 +65,13 @@ class DialogueVoiceMixin:
             return None
         if self._scene_tts is None:
             self._scene_tts = TtsClient(self.tts.url, self.tts.timeout)
-        rate, chunks = 0, []
+        rate = 0
+        chunks: list[tuple[bytes, list[tuple[int, float, float]] | None]] = []
+        matcher = WordMatcher(line.text)
+        pending_words: list[tuple[int, float, float]] = []
+
+        async def words(timings: list[WordTiming]) -> None:
+            pending_words.extend(matcher.match(timings))
 
         # nothing else is awaited here: the client's lock is held while these run
         async def start(r: int, _provider: str) -> None:
@@ -73,15 +79,18 @@ class DialogueVoiceMixin:
             rate = r
 
         async def chunk(pcm: bytes) -> None:
-            chunks.append(pcm)
+            chunks.append((pcm, pending_words.copy() or None))
+            pending_words.clear()
 
         mood = MOOD_DELIVERY[line.mood] if line.mood else ""
         style = "; ".join(s for s in (mood, QUIET_STYLE if quiet else "") if s)
         persona = self.personas.get(line.npc, line.name)
         try:
             speech = await self._scene_tts.stream(
-                line.text, persona.voice_id, persona.voice, start, chunk, style
+                line.text, persona.voice_id, persona.voice, start, chunk, style, on_words=words
             )
+            if pending_words:
+                await chunk(b"")
         except TtsError as err:
             self._tts_off(line.npc, line.name, err)
             return None
@@ -108,16 +117,28 @@ class DialogueVoiceMixin:
             return None
         if self._story_tts is None:
             self._story_tts = TtsClient(self.tts.url, self.tts.timeout)
+        matcher = WordMatcher(text)
+        pending_words: list[tuple[int, float, float]] = []
+
+        async def words(timings: list[WordTiming]) -> None:
+            pending_words.extend(matcher.match(timings))
 
         async def start(rate: int, _provider: str) -> None:
             await self.link.send(SayCmd(npc=npc, line=line, text=text, stream=True, rate=rate))
 
         async def chunk(pcm: bytes) -> None:
-            await self.link.send(SayAudioCmd(npc=npc, line=line, data=base64.b64encode(pcm).decode()))
+            await self.link.send(SayAudioCmd(
+                npc=npc, line=line, data=base64.b64encode(pcm).decode(), words=pending_words.copy() or None,
+            ))
+            pending_words.clear()
 
         persona = self.personas.get(npc, name)
         try:
-            speech = await self._story_tts.stream(text, persona.voice_id, persona.voice, start, chunk)
+            speech = await self._story_tts.stream(
+                text, persona.voice_id, persona.voice, start, chunk, on_words=words,
+            )
+            if pending_words:
+                await chunk(b"")
         except TtsError as err:
             self._tts_off(npc, name, err)
             return None
@@ -160,8 +181,8 @@ class DialogueVoiceMixin:
                 to=line.to,
             )
         )
-        for pcm in chunks:
+        for pcm, words in chunks:
             await self.link.send(
-                SayAudioCmd(npc=line.npc, line=line.line, data=base64.b64encode(pcm).decode())
+                SayAudioCmd(npc=line.npc, line=line.line, data=base64.b64encode(pcm).decode(), words=words)
             )
         await self.link.send(SayEndCmd(npc=line.npc, line=line.line, audio_s=round(audio_s, 3)))

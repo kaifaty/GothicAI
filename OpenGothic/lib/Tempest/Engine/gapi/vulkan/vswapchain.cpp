@@ -16,9 +16,6 @@
 #  define VK_USE_PLATFORM_WIN32_KHR
 #  include <windows.h>
 #  include <vulkan/vulkan_win32.h>
-#elif defined(__ANDROID__)
-#  include <android/native_window.h>
-#  include <vulkan/vulkan_android.h>
 #elif defined(__UNIX__)
 #  define VK_USE_PLATFORM_XLIB_KHR
 #  include <X11/Xlib.h>
@@ -235,11 +232,6 @@ bool VSwapchain::checkPresentationSupport(VkPhysicalDevice device, uint32_t queu
 #if defined(__WINDOWS__)
   const bool presentSupport = vkGetPhysicalDeviceWin32PresentationSupportKHR(device, queueFamilyIndex)!=VK_FALSE;
   return presentSupport;
-#elif defined(__ANDROID__)
-  // All Android graphics queues support presentation.
-  (void)device;
-  (void)queueFamilyIndex;
-  return true;
 #elif defined(__UNIX__)
   bool presentSupport = false;
   if(auto dpy = reinterpret_cast<Display*>(X11Api::display())){
@@ -261,11 +253,6 @@ VkResult VSwapchain::createSurface(VkInstance instance, void* hwnd, VkSurfaceKHR
   createInfo.hinstance = GetModuleHandleA(nullptr);
   createInfo.hwnd      = HWND(hwnd);
   return vkCreateWin32SurfaceKHR(instance,&createInfo,nullptr,pSurface);
-#elif defined(__ANDROID__)
-  VkAndroidSurfaceCreateInfoKHR createInfo = {};
-  createInfo.sType  = VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR;
-  createInfo.window = reinterpret_cast<ANativeWindow*>(hwnd);
-  return vkCreateAndroidSurfaceKHR(instance,&createInfo,nullptr,pSurface);
 #elif defined(__UNIX__)
   VkXlibSurfaceCreateInfoKHR createInfo = {};
   createInfo.sType  = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR;

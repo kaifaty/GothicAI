@@ -13,11 +13,6 @@
 #include <Tempest/MetalApi>
 #endif
 
-#if defined(__IOS__) || defined(__ANDROID__)
-#include "utils/installdetect.h"
-#include <filesystem>
-#endif
-
 #include "utils/crashlog.h"
 #include "mainwindow.h"
 #include "gothic.h"
@@ -96,18 +91,6 @@ static void setupPipelineCache() {
   }
 
 int main(int argc,const char** argv) {
-#if defined(__ANDROID__)
-  {
-    auto appdir = InstallDetect::androidInternalDataPath();
-    std::filesystem::current_path(appdir);
-  }
-#elif defined(__IOS__)
-  {
-    auto appdir = InstallDetect::applicationSupportDirectory();
-    std::filesystem::current_path(appdir);
-  }
-#endif
-
   try {
     static Tempest::WFile logFile("log.txt");
     Tempest::Log::setOutputCallback([](Tempest::Log::Mode mode, const char* text) {

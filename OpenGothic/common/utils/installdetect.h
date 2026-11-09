@@ -3,19 +3,13 @@
 #include <Tempest/Platform>
 #include <string>
 
-#ifdef __ANDROID__
-#include <filesystem>
-#endif
-
 class InstallDetect final {
   public:
     InstallDetect();
 
     std::u16string detectG2();
-#if defined(__OSX__) || defined(__IOS__)
+#if defined(__OSX__)
     static std::u16string applicationSupportDirectory();
-#elif defined(__ANDROID__)
-    static std::filesystem::path androidInternalDataPath();
 #endif
 
   private:
@@ -26,7 +20,7 @@ class InstallDetect final {
     std::u16string pfiles, pfilesX86;
 #endif
 
-#if defined(__OSX__) || defined(__IOS__)
+#if defined(__OSX__)
     std::u16string appDir;
 #endif
   };
