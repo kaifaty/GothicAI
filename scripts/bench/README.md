@@ -270,6 +270,7 @@ The complete column set is:
 | `palette_bytes`, `identical_bytes`, `patch_bytes`, `grow_bytes`, `upload_execution_bytes` | Bytes |
 | `draw_calls`, `dispatch_calls` | Encoded draw and compute dispatch counts; dispatch counting currently covers Metal |
 | `rt_tlas_builds`, `rt_dirty_slots` | With `-rt 1`: TLAS builds recorded into the frame (0 or 1) and slots of the ray scene written into it |
+| `gi_probes_live`, `gi_probes_traced` | With `-gi 1`: probes alive after the allocation and probes traced anew, of a frame one or two frames back (`probe_stats` writes them into a host-visible buffer of the frame slot, the CPU reads it when the slot's fence is done; no wait); `per_frame` in the report is the mean |
 | `gpu_ns`, `gpu_done`, `gpu_buffers` | Sum of the attempt's command buffer GPU time in nanoseconds (Metal `GPUEndTime-GPUStartTime`, Vulkan a timestamp pair per buffer); 1 only when all submitted buffers have valid timing; submitted buffer count |
 
 The complete `<zone>` list (each produces all four columns above):

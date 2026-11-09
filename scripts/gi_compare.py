@@ -19,8 +19,8 @@ smaller than the ratios of scene radiance. The particle flames of fires are draw
 Prints a Markdown table per shot (median ratio to the reference, its range, cells off by more than 15%) and a
 summary over all shots.
 
---response takes a clip of gi-clips.bench (hut-response: 22:00, then 12:00 in the same view, 30 frames per
-second) and prints how long each cell takes to come within 10% of its new brightness, counted from the frame
+--response takes a clip of gi-clips.bench (hut-response: 22:00, then 12:00 in the same view 1 s later, 30 frames
+per second) and prints how long each cell takes to come within 10% of its new brightness, counted from the frame
 the time changes in. Direct light changes at once, so the slowest cells show the lag of the reflected light.
 """
 import argparse
@@ -53,19 +53,23 @@ def clip_cells(path, w=320, h=180):
     return np.array([cells(f) for f in lum])
 
 
-def response(path, fps=30, settle=0.1):
+def response(path, at=1.0, fps=30, settle=0.1):
+    # The exposure follows the sky at once, so after the change it stays put: a cell's brightness then moves only
+    # with its light. The reflected light of a shaded cell starts from about nothing (the night's light is tiny
+    # at the day's exposure), so the time to come within 10% of the new brightness is its lag; lit cells settle
+    # at once.
     c = clip_cells(path)
-    mean = c.mean(axis=1)
-    t0 = int(np.argmax(np.abs(np.diff(np.log(mean + 1e-6))))) + 1  # the first frame after the change
-    before, after = c[max(0, t0 - 5):t0].mean(axis=0), c[-8:].mean(axis=0)
-    keep = (np.abs(np.log((after + 1e-6) / (before + 1e-6))) > np.log(1.5)) & (after > 0.002)
+    mean = np.log(c.mean(axis=1) + 1e-6)
+    near = range(max(1, round(at * fps) - 3), min(len(c), round(at * fps) + 4))
+    t0 = max(near, key=lambda t: abs(mean[t] - mean[t - 1]))  # the first frame after the change
+    after = c[-8:].mean(axis=0)
+    keep = after > 0.005
     frames = []
     for i in np.flatnonzero(keep):
-        off = np.abs(c[t0:, i] - after[i]) > settle * abs(after[i] - before[i])
-        late = np.flatnonzero(off)
+        late = np.flatnonzero(np.abs(c[t0:, i] - after[i]) > settle * after[i])
         frames.append(int(late[-1]) + 2 if len(late) else 1)  # frames since the change, the settled one included
     frames = np.array(frames)
-    print(f'{path}: {len(c)} frames, change at frame {t0}, {len(frames)} of {c.shape[1]} cells changed more than 1.5x')
+    print(f'{path}: {len(c)} frames, change at frame {t0}, {len(frames)} of {c.shape[1]} cells lit enough')
     if len(frames):
         print(f'- within {settle:.0%} of the new brightness: median {np.median(frames) * 1000 / fps:.0f} ms, '
               f'slowest cell {frames.max() * 1000 / fps:.0f} ms ({frames.max()} frames at {fps} per second)')
