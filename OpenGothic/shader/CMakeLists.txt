@@ -333,6 +333,7 @@ add_shader(copy.frag                 copy.frag)
 add_shader(copy.comp                 copy.comp)
 add_shader(copy_img.comp             copy_img.comp)
 add_shader(patch.comp                patch.comp)
+add_shader(patch_copy.comp           patch_copy.comp)
 
 add_shader(ssao.comp                 ssao/ssao.comp)
 add_shader(ssao_blur.comp            ssao/ssao_blur.comp)

@@ -92,6 +92,7 @@ void Shaders::compileShaders() noexcept {
   copy      = postEffect("copy");
 
   patch     = computeShader("patch.comp.sprv");
+  patchCopy = computeShader("patch_copy.comp.sprv");
 
   stash     = postEffect("stash");
 
