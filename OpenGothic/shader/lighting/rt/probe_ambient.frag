@@ -27,7 +27,6 @@ layout(binding  = 0, std140) uniform UboScene {
   };
 layout(binding  = 1) uniform sampler2D  gbufDiffuse;
 layout(binding  = 2) uniform usampler2D gbufNormal;
-layout(binding  = 3) uniform sampler2D  ssao;
 layout(binding  = 4) uniform sampler2D  depth;
 layout(binding  = 5, std430) readonly buffer Hbo0 { uint hashTable[]; };
 layout(binding  = 6, std430) readonly buffer Pbo  { ProbesHeader probeHeader; Probe probe[]; };
@@ -174,14 +173,6 @@ void gather(vec3 basePos, vec3 pos, vec3 norm, int lod) {
     }
   }
 
-#if defined(SSAO)
-float textureSsao() {
-  vec2  uv = (gl_FragCoord.xy / vec2(textureSize(depth,0)));
-  return textureLod(ssao, uv, 0).r;
-  }
-#else
-float textureSsao() { return 1; }
-#endif
 
 void main() {
   const float minW    = uintBitsToFloat(0x00000008);
@@ -217,7 +208,6 @@ void main() {
 
   // const vec3  linear = vec3(1);
   const vec3  linear  = textureAlbedo(diff);
-  const float ao      = textureSsao();
 
   // the night sky of the path tracer is in the probes' misses (probe_lighting.comp): no NightAmbient on top,
   // it would light the corners the probes see no sky from
@@ -240,7 +230,6 @@ void main() {
              materialSpecularWeight(orm.g, orm.b) * clamp(skyVisibilitySum, 0.0, 1.0);
     }
 #endif
-  color *= ao;
   color *= scene.exposure;
   outColor = vec4(color, 1);
 

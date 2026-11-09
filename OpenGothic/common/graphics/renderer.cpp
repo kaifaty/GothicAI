@@ -1919,6 +1919,9 @@ void Renderer::drawSky(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
 void Renderer::prepareSSAO(Encoder<CommandBuffer>& cmd, WorldView& wview) {
   if(!settings.zCloudShadowScale)
     return;
+  // the probes of -gi 1 trace the occlusion of their light themselves: their ambient takes no SSAO (probe_ambient.frag)
+  if(settings.giMethod==GiMethod::Probes)
+    return;
   // ssao
   struct PushSsao {
     Matrix4x4 proj;
@@ -2812,7 +2815,6 @@ void Renderer::drawAmbient(Encoder<CommandBuffer>& cmd, const WorldView& view) {
     cmd.setPipeline(shaders.ambientLightSurf);
     }
   else if(settings.giMethod==GiMethod::Probes && settings.zCloudShadowScale) {
-    cmd.setBinding(3, ssao.ssaoBlur, Sampler::nearest());
     cmd.setBinding(4, zbuffer,       Sampler::nearest());
     cmd.setBinding(5, gi.hashTable);
     cmd.setBinding(6, gi.probes);
