@@ -15,6 +15,8 @@
 
 Брони:
 
+- v61 — занято: claude/face-cues-server (жесты лица и утечка лжи в `say`)
+- v62 — занято: claude/face-cues-words (время слов в `say_audio`)
 
 ### Что добавила каждая версия
 
