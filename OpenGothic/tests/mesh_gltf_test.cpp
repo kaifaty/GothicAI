@@ -2707,6 +2707,13 @@ void heroHeadGameCases(const std::string& game, const std::string& base) {
     require(hero->currentArmor()==armor,"the test must actually equip a different armor");
     MeshGltfTest::refreshBody(*hero);
     checkHead(*hero);
+    // the listed npc in the same armor: its own head and FaceRig stay
+    auto* mageArmor=mage->addItem(armorId,1);
+    require(mageArmor!=nullptr,"test armor must enter the listed NPC's inventory");
+    mage->useItem(armorId,Item::NSLOT,true);
+    require(mage->currentArmor()==mageArmor,"the test must actually equip the armor on the listed NPC");
+    MeshGltfTest::refreshBody(*mage);
+    checkMage(*mage);
 
     std::vector<uint8_t> bytes;
     {

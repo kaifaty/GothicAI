@@ -210,10 +210,14 @@ void SpeechCues::update(const FaceProfile& profile, uint64_t now, std::vector<St
     if(late<=LateMs) {
       st.at = now-std::min(now,late);
       } else {
-      // found late (its words came late): it starts now, a mouth one still ends in its pause
+      // found late (its words came late): it starts now, a mouth one still ends in its pause; its hold no longer
+      // than the slot's and no shorter than MinHoldMs, or than its own hold if that is shorter still
       st.at = now;
-      if(s.limit>=0)
-        st.hold = std::clamp(float(s.limit-int64_t(t))-p.delayMs-p.onMs-p.offMs,MinHoldMs,s.hold>=0 ? s.hold : p.holdMs);
+      if(s.limit>=0) {
+        const float hi = s.hold>=0 ? s.hold : p.holdMs;
+        const float lo = std::min(MinHoldMs,hi);
+        st.hold = std::clamp(float(s.limit-int64_t(t))-p.delayMs-p.onMs-p.offMs,lo,hi);
+        }
       }
     out.push_back(st);
     fired[i] = 1;

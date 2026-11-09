@@ -74,7 +74,9 @@ const char* Profile = R"({
     "smirk": {"zone": "mouth", "side": "L", "parts": [{"weights": {"mouthSmileLeft": 0.75},
                                           "delay_ms": 0, "on_ms": 200, "hold_ms": 400, "off_ms": 300}]},
     "press": {"zone": "mouth", "parts": [{"weights": {"jawOpen": 0.7},
-                                          "delay_ms": 0, "on_ms": 150, "hold_ms": 400, "off_ms": 200}]}
+                                          "delay_ms": 0, "on_ms": 150, "hold_ms": 400, "off_ms": 200}]},
+    "chin":  {"zone": "mouth", "parts": [{"weights": {"jawOpen": 0.5},
+                                          "delay_ms": 0, "on_ms": 150, "hold_ms": 50, "off_ms": 200}]}
   }
 })";
 
@@ -107,7 +109,7 @@ void profileCases(const GltfHeadMesh& head, const FaceProfile& p) {
   const std::string good = R"({"layer":1,"blend_in_ms":100,"blend_out_ms":100,"duration_ms":-1,"frame_ms":1000,"frames":[{"browDown":1}]})";
   require(FaceProfile::parse(anim(good),head)!=nullptr && FaceProfile::parse(anim(good),head)->cues.empty(),
           "the minimal profile must load, a profile without cues as before");
-  require(p.cues.size()==4 && p.findCue("doubt")->side=='L' && p.findCue("smirk")->mouth && !p.findCue("flash")->mouth &&
+  require(p.cues.size()==5 && p.findCue("doubt")->side=='L' && p.findCue("smirk")->mouth && !p.findCue("flash")->mouth &&
           p.findCue("doubt")->parts[0].mirrored[0].first==BrowUpRight && p.findCue("doubt")->parts[0].mirrored[1].first==BrowDown,
           "cues must be read with their zone, side and the shapes of the other side");
   const auto cue = [](const std::string& body) {
@@ -418,6 +420,19 @@ void timingCases(const FaceProfile& p) {
   plan->setWord(3,.5f,.8f);
   late->update(p,400,out);
   require(out.size()==1 && out[0].at==400,"the time of a word that comes later must replace the estimate");
+  // a mouth gesture with a hold under 0.1 s found late in its pause: it starts now with its own hold
+  plan = std::make_shared<Plan>("aaaa bbbb cccc dddd");
+  plan->cues = {{"chin",1,0}};
+  SpeechCues shortHold;
+  shortHold.voice(loud,0);
+  shortHold.start(plan,true,0);
+  out.clear();
+  shortHold.update(p,300,out);
+  require(out.empty(),"without words the mouth gesture must wait for the end of the sound");
+  plan->setWord(0,0.f,.1f); plan->setWord(1,.15f,.2f); plan->setWord(2,.5f,1.f);
+  shortHold.update(p,400,out);
+  require(out.size()==1 && out[0].name=="chin" && out[0].at==400 && close(out[0].hold,50.f),
+          "a late mouth gesture shorter than 0.1 s must keep its own hold");
   }
 }
 
