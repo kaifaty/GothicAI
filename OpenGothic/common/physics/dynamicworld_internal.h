@@ -139,3 +139,7 @@ struct DynamicWorld::BodyData {
   std::vector<uint32_t> fragmentGroup;
   std::function<void(bool,const std::vector<Tempest::Matrix4x4>&)> fractureCallback;
   };
+
+struct DynamicWorld::ItemHulls {
+  std::unordered_map<std::string,ItemHull> shapes;
+  };
