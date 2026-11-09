@@ -118,7 +118,7 @@
 
 ## Что уже есть в коде
 
-- **Прицеливание** (`common/graphics/mesh/aim.cpp`). Поворачивает и наклоняет корпус к любому направлению, умеет наклон через край. Направление берёт из `Aim::Input::dir`, его заполняет `MdlVisual::updateAim` (`mdlvisual.cpp:593`).
+- **Прицеливание** (`common/graphics/mesh/aim.cpp`). Поворачивает и наклоняет корпус к любому направлению, умеет наклон через край. Направление берёт из `Aim::Input::dir`, его заполняет [`MdlVisual::updateAim`](../OpenGothic/common/graphics/mdlvisual_pose.cpp).
 - **Стрела** — физическое тело. Скорость задаётся на выстрел: `WorldObjects::shootBullet(itm,pos,dir,tgRange,speed)`, `worldobjects.cpp:636`.
 - **Камера** (`camera.cpp`):
   - режим `Ranged` с коллизией о стены (`calcCameraColision`);

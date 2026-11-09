@@ -72,6 +72,8 @@ Ragdoll, физические тела живых NPC, возврат после
 
 Выбор и запуск атаки — `implAttack`, `doAttack`, удары и блоки кулаком и клинком, добивание — в [`npc_attack.cpp`](../OpenGothic/common/world/objects/npc_attack.cpp). Заклинания и лук — `commitSpell`, начало, тик и конец каста, выстрел из лука, ручной прицел, выпуск стрелы, зоны попадания и боезапас — в [`npc_ranged.cpp`](../OpenGothic/common/world/objects/npc_ranged.cpp); колчан остаётся в `npc.cpp`.
 
+Представление NPC — [`mdlvisual.cpp`](../OpenGothic/common/graphics/mdlvisual.cpp): анимации, тело, оверлеи, слоты и эффекты. Застрявшие стрелы и колчан — [`mdlvisual_quiver.cpp`](../OpenGothic/common/graphics/mdlvisual_quiver.cpp); обновления взгляда, наклона, прицела и вздрагивания — [`mdlvisual_pose.cpp`](../OpenGothic/common/graphics/mdlvisual_pose.cpp); диагностические дампы — [`mdlvisual_debug.cpp`](../OpenGothic/common/graphics/mdlvisual_debug.cpp).
+
 Наблюдение состояния и цели тела, идентичность и слои боевой позы, трассы снимков, видимости, ворот и попыток боя — в [`npc_observation.cpp`](../OpenGothic/common/world/objects/npc_observation.cpp).
 
 Сохранение и загрузка NPC — в [`npc_save.cpp`](../OpenGothic/common/world/objects/npc_save.cpp), таланты, атрибуты, гильдии и отношение — в [`npc_attributes.cpp`](../OpenGothic/common/world/objects/npc_attributes.cpp). Объявление общего состояния превращения — в [`npc_transformback.h`](../OpenGothic/common/world/objects/npc_transformback.h), его методы остаются в `npc.cpp`.
