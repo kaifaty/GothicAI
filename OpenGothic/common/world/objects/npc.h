@@ -254,6 +254,10 @@ class Npc final {
     void       stopAnim(std::string_view ani);
     void       startFaceAnim(std::string_view anim, float intensity, uint64_t duration);
     float      faceWeight(std::string_view anim);  // how much of the face anim shows now, 0..1 (test bench)
+    // the facial gestures of the line it starts to say (say.cues); a gesture by hand: side 'L'/'R', 0 - by the seed
+    void       startCues(std::shared_ptr<const SpeechCues::Plan> plan, bool voiced);
+    bool       startCue(std::string_view name, char side);
+    float      cueWeight(std::string_view name);   // how much of the gesture shows now, 0..1 (test bench)
     // a voiced line starts: the mouth follows the voice (LipSync)
     void       startSpeech(const Tempest::Sound& voice);
     void       startSpeech(std::shared_ptr<LipSync::Track> voice);

@@ -421,9 +421,7 @@ const ProtoMesh* Resources::loadCharacterHead(std::string_view instance) {
   std::string key(instance);
   for(auto& c:key)
     c=char(std::toupper(uint8_t(c)));
-  // The pilot replaces only this script instance, even if a package lists others.
-  if(key!="PC_HERO")
-    return nullptr;
+  // any script instance the table lists: the hero and the npcs with heads of their own
   std::lock_guard<std::recursive_mutex> guard(inst->sync);
   const auto it=inst->characterHeads.find(key);
   if(it==inst->characterHeads.end())
@@ -446,7 +444,7 @@ const ProtoMesh* Resources::loadCharacterHead(std::string_view instance) {
             throw std::runtime_error("unable to open the file");
           const std::string text{std::istreambuf_iterator<char>(file),std::istreambuf_iterator<char>()};
           mesh->face=FaceProfile::parse(text,*head);
-          Log::i("characters: face profile for ",key,": ",mesh->face->anims.size()," anims");
+          Log::i("characters: face profile for ",key,": ",mesh->face->anims.size()," anims, ",mesh->face->cues.size()," cues");
           }
         catch(const std::exception& error) {
           Log::e("characters: invalid face profile for ",key," in \"",entry.face.string(),"\": ",error.what(),

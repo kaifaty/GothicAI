@@ -42,6 +42,8 @@ const FaceColumn FaceColumns[] = {
   {"face_neutral","S_NEUTRAL"}, {"face_friendly","S_FRIENDLY"}, {"face_angry","S_ANGRY"},
   {"face_hostile","S_HOSTILE"}, {"face_afraid","S_FRIGHTENED"}, {"face_pain","T_HURT"},
   };
+// the facial gestures of the dictionary (say.cues, the own head's profile): cue_<name>
+const char* const CueColumns[] = {"flash","doubt","smirk","press","disgust","squint","frown","chin","wince"};
 
 void writeHeader() {
   std::fprintf(bench.csv,"seg,frame,t,x,y,z,rot,speed,bs,walk,occl,ik_valid,ik_on,ik_hardoff,ik_w,nlegs,bad,pelvis,chest,pelvis_target,pelvis_limit,floor");
@@ -64,6 +66,8 @@ void writeHeader() {
   for(auto& f:FaceColumns)
     std::fprintf(bench.csv,",%s",f.column);
   std::fprintf(bench.csv,",rig_on,rig_anims,rig_targets,rig_us,rig_n,rig_up_us");
+  for(auto* c:CueColumns)
+    std::fprintf(bench.csv,",cue_%s",c);
   std::fprintf(bench.csv,",f_on,f_bend,f_yaw,f_twist,f_head,f_hits,f_str,f_ht");
   std::fprintf(bench.csv,",hp_player,hp_subject");
   std::fprintf(bench.csv,",stamina_player,stamina_subject");
@@ -527,6 +531,9 @@ void writeRow(Npc& pl) {
   const auto& fr = FaceRig::subjectProbe;
   std::fprintf(bench.csv,",%d,%u,%u,%.1f,%u,%.1f",int(fr.valid),fr.anims,fr.targets,double(fr.blendUs),fr.blends,
                double(fr.uploadUs));
+  // its gestures as shown, 0..1
+  for(auto* c:CueColumns)
+    std::fprintf(bench.csv,",%.3f",s.cueWeight(c));
   // flinch of the watched one (or the hero)
   const auto& fl = bench.subject!=nullptr ? Flinch::subjectProbe : Flinch::playerProbe;
   std::fprintf(bench.csv,",%d,%.2f,%.1f,%.2f,%.2f,%u,%.2f,%.2f",int(fl.active),fl.bend,fl.bendYaw,fl.twist,fl.head,

@@ -25,11 +25,30 @@ struct FaceProfile final {
     std::vector<float> strength;  // per frame: how far it moves the vertices on average, 0..1 of the strongest
     };
 
+  // A facial gesture ("cues", reports/content/2026-11-hero-head/face-cues.md): a short curve of shape weights over
+  // the other layers. Each part rises from 0 to its weights over on_ms (a smooth step), holds, falls over off_ms.
+  struct Cue final {
+    struct Part final {
+      std::vector<std::pair<uint32_t,float>> weights;   // head target -> weight at the apex
+      std::vector<std::pair<uint32_t,float>> mirrored;  // the same on the other side (Left <-> Right)
+      float delayMs = 0, onMs = 0, holdMs = 0, offMs = 0;
+      };
+    std::string       name;
+    bool              mouth = false;  // zone "mouth": into the pauses of the voice; else "upper": at its word
+    char              side  = 0;      // 'L'/'R' of a one-sided gesture as written, 0: both sides
+    std::vector<Part> parts;
+
+    // ms from its start to its end; hold: the first part's hold instead of its own (below 0: its own)
+    float span(float hold = -1) const;
+    };
+
   std::vector<Anim>    anims;
+  std::vector<Cue>     cues;
   std::vector<uint8_t> mouth;  // per head target: a mouth shape (its name starts with a "mouth" prefix)
 
   const Anim* find(std::string_view name) const;
   size_t      index(std::string_view name) const;  // size_t(-1): none
+  const Cue*  findCue(std::string_view name) const;
 
   // Throws std::runtime_error with the reason: broken JSON, a wrong field, a target the head does not have.
   static std::unique_ptr<FaceProfile> parse(std::string_view json, const GltfHeadMesh& head);
@@ -54,7 +73,8 @@ class FaceRig final {
       float       blendUs = 0;      // the last blend, µs
       uint32_t    blends  = 0;      // blends so far
       float       uploadUs = 0;     // the last setDeformation of the head, µs (filled by its owner)
-      std::string shown;            // the active anims and their strength: "S_ANGRY 0.82 R_EYESBLINK 1.00"
+      uint32_t    cues    = 0;      // active gestures
+      std::string shown;            // the active anims and gestures, their strength: "S_ANGRY 0.82 doubt:R 0.64"
       };
 
     static constexpr float    Changed     = 1e-4f; // a weight change that deforms the head again
@@ -74,8 +94,14 @@ class FaceRig final {
     void   startAnim(std::string_view name, float intensity, uint64_t timeUntil, uint64_t now);
     // as VisualObjects::setMMShape: two frames mixed by alpha, set every frame by the owner (lip sync)
     void   setShape (std::string_view name, uint32_t frame0, uint32_t frame1, float alpha, float intensity, uint64_t now);
+    // a gesture of the profile's cues from `start` (it may lie a little in the past): mirror - the other side of
+    // a one-sided one, hold - ms of the first part's hold instead of its own (below 0: its own); false: no such cue
+    bool   startCue (std::string_view name, bool mirror, float hold, uint64_t start, uint64_t now);
     // as shown now: intensity and fade
     float  weight   (std::string_view name, uint64_t now) const;
+    // how far the gesture is shown now, 0..1 (the strongest of its parts and of its runs)
+    float  cueWeight(std::string_view name, uint64_t now) const;
+    const FaceProfile* faceProfile() const { return profile; }
     // per frame of the anim: how far it moves the vertices, 0..1 of its strongest (LipSync::setShapes)
     std::vector<float> strength(std::string_view name) const;
 
@@ -102,7 +128,16 @@ class FaceRig final {
       float    alpha     = 0;
       };
 
+    struct CueRun final {
+      size_t   cue    = 0;
+      bool     mirror = false;
+      float    hold   = -1;
+      uint64_t start  = 0;
+      };
+
     bool   isOn(const Slot& s, uint64_t now) const { return s.on && s.timeUntil>=now; }
+    float  cueEnvelope(const CueRun& r, size_t part, uint64_t now) const;
+    float  cueStrength(const CueRun& r, uint64_t now) const;
     float  fade(const Slot& s, uint64_t now) const;
     void   fadeOut(Slot& s, uint64_t now);
     Slot&  freeSlot(uint64_t now);
@@ -116,6 +151,7 @@ class FaceRig final {
     int32_t                    speechLayer = -1;  // the layer of VISEME
 
     std::vector<Slot>          slots;
+    std::vector<CueRun>        runs;      // the gestures shown now
     std::vector<float>         want;      // the weights now
     std::vector<float>         applied;   // the weights the deformation shows
     bool                       deformed = false;  // the head is not neutral

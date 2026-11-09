@@ -39,7 +39,130 @@ double number(const rapidjson::Value& obj, const char* key, const std::string& w
   return v.GetDouble();
   }
 
+size_t targetOf(const GltfHeadMesh& head, std::string_view name) {
+  for(size_t t=0; t<head.targets.size(); ++t)
+    if(head.targets[t].name==name)
+      return t;
+  return size_t(-1);
+  }
+
+// the name of the same shape on the other side: browDownLeft <-> browDownRight (as cues.py mirror)
+std::string mirrorName(std::string_view name) {
+  std::string ret;
+  for(size_t i=0; i<name.size();) {
+    if(name.compare(i,4,"Left")==0) {
+      ret += "Right";
+      i   += 4;
+      }
+    else if(name.compare(i,5,"Right")==0) {
+      ret += "Left";
+      i   += 5;
+      }
+    else {
+      ret += name[i];
+      ++i;
+      }
+    }
+  return ret;
+  }
+
+// a smooth step 0..1 (cues.py ease)
+float ease(float x) {
+  x = std::clamp(x,0.f,1.f);
+  return x*x*(3.f-2.f*x);
+  }
+
+void parseCues(const rapidjson::Value& list, const GltfHeadMesh& head, FaceProfile& ret) {
+  if(!list.IsObject())
+    fail("cues must be an object");
+  for(const auto& entry:list.GetObject()) {
+    const auto  name  = str(entry.name);
+    const auto  where = "cue "+quoted(name);
+    const auto& v     = entry.value;
+    if(name.empty())
+      fail("a cue without a name");
+    if(ret.findCue(name)!=nullptr)
+      fail(where+": listed twice");
+    if(!v.IsObject())
+      fail(where+": must be an object");
+    for(const auto& m:v.GetObject()) {
+      const auto key = str(m.name);
+      if(key!="zone" && key!="side" && key!="parts")
+        fail(where+": unknown field "+quoted(key));
+      }
+    FaceProfile::Cue c;
+    c.name = std::string(name);
+    const auto zone = v.HasMember("zone") && v["zone"].IsString() ? str(v["zone"]) : std::string_view();
+    if(zone!="upper" && zone!="mouth")
+      fail(where+": zone must be \"upper\" or \"mouth\"");
+    c.mouth = zone=="mouth";
+    if(v.HasMember("side")) {
+      const auto side = v["side"].IsString() ? str(v["side"]) : std::string_view();
+      if(side!="L" && side!="R")
+        fail(where+": side must be \"L\" or \"R\"");
+      c.side = side[0];
+      }
+    if(!v.HasMember("parts") || !v["parts"].IsArray() || v["parts"].Empty())
+      fail(where+": parts must be a non-empty list");
+    for(const auto& p:v["parts"].GetArray()) {
+      const auto at = where+" part "+std::to_string(c.parts.size());
+      if(!p.IsObject())
+        fail(at+": must be an object");
+      for(const auto& m:p.GetObject()) {
+        const auto key = str(m.name);
+        if(key!="weights" && key!="delay_ms" && key!="on_ms" && key!="hold_ms" && key!="off_ms")
+          fail(at+": unknown field "+quoted(key));
+        }
+      FaceProfile::Cue::Part part;
+      part.delayMs = float(number(p,"delay_ms",at));
+      part.onMs    = float(number(p,"on_ms",at));
+      part.holdMs  = float(number(p,"hold_ms",at));
+      part.offMs   = float(number(p,"off_ms",at));
+      if(part.delayMs<0 || part.holdMs<0)
+        fail(at+": delay_ms and hold_ms must not be negative");
+      if(part.onMs<=0 || part.offMs<=0)
+        fail(at+": on_ms and off_ms must be above 0");
+      if(!p.HasMember("weights") || !p["weights"].IsObject() || p["weights"].MemberCount()==0)
+        fail(at+": weights must be a non-empty object of target weights");
+      for(const auto& w:p["weights"].GetObject()) {
+        const auto target = str(w.name);
+        const auto id     = targetOf(head,target);
+        if(id==size_t(-1))
+          fail(at+": unknown target "+quoted(target));
+        if(!w.value.IsNumber() || !std::isfinite(w.value.GetDouble()) || w.value.GetDouble()<0 || w.value.GetDouble()>1)
+          fail(at+": the weight of "+quoted(target)+" must be a number 0..1");
+        const float weight = float(w.value.GetDouble());
+        part.weights.emplace_back(uint32_t(id),weight);
+        // a one-sided gesture is played on either side: its shapes must have their other side on the head
+        const auto other = c.side!=0 ? mirrorName(target) : std::string(target);
+        const auto oid   = targetOf(head,other);
+        if(oid==size_t(-1))
+          fail(at+": unknown target "+quoted(std::string_view(other))+" (the other side of "+quoted(target)+")");
+        part.mirrored.emplace_back(uint32_t(oid),weight);
+        }
+      c.parts.push_back(std::move(part));
+      }
+    ret.cues.push_back(std::move(c));
+    }
+  }
+
 }
+
+float FaceProfile::Cue::span(float hold) const {
+  float ret = 0;
+  for(size_t i=0; i<parts.size(); ++i) {
+    const auto& p = parts[i];
+    ret = std::max(ret, p.delayMs+p.onMs+(i==0 && hold>=0 ? hold : p.holdMs)+p.offMs);
+    }
+  return ret;
+  }
+
+const FaceProfile::Cue* FaceProfile::findCue(std::string_view name) const {
+  for(auto& c:cues)
+    if(c.name==name)
+      return &c;
+  return nullptr;
+  }
 
 const FaceProfile::Anim* FaceProfile::find(std::string_view name) const {
   const size_t i = index(name);
@@ -62,7 +185,7 @@ std::unique_ptr<FaceProfile> FaceProfile::parse(std::string_view json, const Glt
     fail("the profile must be a JSON object");
   for(const auto& m:doc.GetObject()) {
     const auto key = str(m.name);
-    if(key!="version" && key!="about" && key!="mouth" && key!="anims")
+    if(key!="version" && key!="about" && key!="mouth" && key!="anims" && key!="cues")
       fail("unknown field "+quoted(key));
     }
   if(!doc.HasMember("version") || !doc["version"].IsInt() || doc["version"].GetInt()!=1)
@@ -136,12 +259,7 @@ std::unique_ptr<FaceProfile> FaceProfile::parse(std::string_view json, const Glt
       std::vector<std::pair<uint32_t,float>> weights;
       for(const auto& w:f.GetObject()) {
         const auto target = str(w.name);
-        size_t id = size_t(-1);
-        for(size_t t=0; t<targets; ++t)
-          if(head.targets[t].name==target) {
-            id = t;
-            break;
-            }
+        const auto id     = targetOf(head,target);
         if(id==size_t(-1))
           fail(at+": unknown target "+quoted(target));
         if(!w.value.IsNumber() || !std::isfinite(w.value.GetDouble()) || w.value.GetDouble()<0 || w.value.GetDouble()>1)
@@ -183,6 +301,8 @@ std::unique_ptr<FaceProfile> FaceProfile::parse(std::string_view json, const Glt
 
     ret->anims.push_back(std::move(a));
     }
+  if(doc.HasMember("cues"))
+    parseCues(doc["cues"],head,*ret);
   return ret;
   }
 
@@ -195,6 +315,7 @@ void FaceRig::setup(const GltfHeadMesh* h, const FaceProfile* p) {
   head     = h;
   profile  = p;
   slots.clear();
+  runs.clear();
   want.clear();
   applied.clear();
   pos.clear();
@@ -342,6 +463,49 @@ float FaceRig::weight(std::string_view name, uint64_t now) const {
   return w;
   }
 
+bool FaceRig::startCue(std::string_view name, bool mirror, float hold, uint64_t start, uint64_t now) {
+  if(!isActive())
+    return false;
+  const auto* c = profile->findCue(name);
+  if(c==nullptr)
+    return false;
+  // several gestures, the same one too, may go at once; the ended ones go in update()
+  CueRun r;
+  r.cue    = size_t(c-profile->cues.data());
+  r.mirror = mirror && c->side!=0;
+  r.hold   = hold;
+  r.start  = std::min(start,now);
+  runs.push_back(r);
+  return true;
+  }
+
+float FaceRig::cueEnvelope(const CueRun& r, size_t part, uint64_t now) const {
+  // cues.py env: a smooth step up over on_ms, the hold, a smooth step down over off_ms
+  const auto& p    = profile->cues[r.cue].parts[part];
+  const float hold = part==0 && r.hold>=0 ? r.hold : p.holdMs;
+  const float t    = float(now>=r.start ? now-r.start : 0) - p.delayMs;
+  if(now<r.start || t<=0)
+    return 0;
+  return ease(t/p.onMs)*(1.f-ease((t-p.onMs-hold)/p.offMs));
+  }
+
+float FaceRig::cueStrength(const CueRun& r, uint64_t now) const {
+  float ret = 0;
+  for(size_t i=0; i<profile->cues[r.cue].parts.size(); ++i)
+    ret = std::max(ret,cueEnvelope(r,i,now));
+  return ret;
+  }
+
+float FaceRig::cueWeight(std::string_view name, uint64_t now) const {
+  if(!isActive())
+    return 0;
+  float w = 0;
+  for(auto& r:runs)
+    if(profile->cues[r.cue].name==name)
+      w = std::max(w,cueStrength(r,now));
+  return w;
+  }
+
 std::vector<float> FaceRig::strength(std::string_view name) const {
   if(!isActive())
     return {};
@@ -386,6 +550,17 @@ void FaceRig::mix(uint64_t now, std::vector<float>& out) const {
         out[t] += w*k*part*(damp && profile->mouth[t]!=0 ? quiet : 1.f);
       }
     }
+  // the gestures over all of it, not quieted by the voice (the mouth ones go into its pauses anyway)
+  for(auto& r:runs) {
+    const auto& c = profile->cues[r.cue];
+    for(size_t i=0; i<c.parts.size(); ++i) {
+      const float e = cueEnvelope(r,i,now);
+      if(e<=0)
+        continue;
+      for(auto& [t,w]:(r.mirror ? c.parts[i].mirrored : c.parts[i].weights))
+        out[t] += w*e;
+      }
+    }
   for(auto& w:out)
     w = std::clamp(w,0.f,1.f);
   }
@@ -393,6 +568,9 @@ void FaceRig::mix(uint64_t now, std::vector<float>& out) const {
 FaceRig::Result FaceRig::update(uint64_t now) {
   if(!isActive())
     return Result::Same;
+  runs.erase(std::remove_if(runs.begin(),runs.end(),[&](const CueRun& r) {
+    return now>r.start && float(now-r.start)>profile->cues[r.cue].span(r.hold);
+    }),runs.end());
   mix(now,want);
 
   bool zero = true;
@@ -551,6 +729,18 @@ void FaceRig::probe(Probe& p, uint64_t now) const {
     ++p.anims;
     char buf[64];
     std::snprintf(buf,sizeof(buf),"%s%s %.2f",p.shown.empty() ? "" : " ",profile->anims[s.anim].name.c_str(),double(k));
+    p.shown += buf;
+    }
+  for(auto& r:runs) {
+    const float k = cueStrength(r,now);
+    if(k<=0)
+      continue;
+    ++p.cues;
+    const auto& c = profile->cues[r.cue];
+    // a one-sided one with the side it is shown on: "doubt:R 0.64"
+    const char* side = c.side==0 ? "" : ((c.side=='L')!=r.mirror ? ":L" : ":R");
+    char buf[64];
+    std::snprintf(buf,sizeof(buf),"%s%s%s %.2f",p.shown.empty() ? "" : " ",c.name.c_str(),side,double(k));
     p.shown += buf;
     }
   for(auto w:applied)

@@ -459,6 +459,21 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     n->startFaceAnim(a[2],num(a,4,1),uint64_t(num(a,3,3000)));
     say("faceanim " + nameUtf8(*n) + " " + a[2]);
     }
+  else if(c=="facecue") {
+    // facecue <npc|nearest|player> <gesture> [L|R]: a facial gesture of its own head (flash, doubt, smirk...; the
+    // profile's cues); a one-sided one without a side goes on a side by the seed
+    Npc* n = findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
+    const char side = a.size()>3 && (a[3]=="L" || a[3]=="R") ? a[3][0] : 0;
+    if(n==nullptr || a.size()<3 || (a.size()>3 && side==0)) {
+      say("facecue: no npc, gesture or side L|R " + line);
+      return;
+      }
+    if(!n->startCue(a[2],side)) {
+      say("facecue: no gesture " + a[2] + " on the head of " + nameUtf8(*n));
+      return;
+      }
+    say("facecue " + nameUtf8(*n) + " " + a[2] + (side ? std::string(" ")+side : std::string()));
+    }
   else if(c=="ani") {
     // ani <npc|nearest|player> <anim> [force]: it plays an animation of its model script (T_YES,
     // T_DIALOGGESTURE_03); force cuts what plays now, as a hit reaction or a stun's stumble that a stand would wait for

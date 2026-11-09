@@ -444,6 +444,18 @@ float Npc::faceWeight(std::string_view anim) {
   return visual.faceWeight(*this,anim);
   }
 
+void Npc::startCues(std::shared_ptr<const SpeechCues::Plan> plan, bool voiced) {
+  visual.startCues(*this,std::move(plan),voiced);
+  }
+
+bool Npc::startCue(std::string_view name, char side) {
+  return visual.startCue(*this,name,side);
+  }
+
+float Npc::cueWeight(std::string_view name) {
+  return visual.cueWeight(*this,name);
+  }
+
 void Npc::startSpeech(const Tempest::Sound& voice) {
   visual.startSpeech(*this,LipSync::Track::fromSound(voice));
   }
