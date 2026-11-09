@@ -182,6 +182,8 @@ class World final {
     Item*                findItemByInstance(size_t instance, size_t n = 0);
     std::string_view     roomAt(const Tempest::Vec3& arr);
     bool                 isIndoor(const Tempest::Vec3& point) const;
+    // BSP root bounds: the whole level, independent of landscape streaming.
+    auto                 bspBounds() const -> std::pair<Tempest::Vec3,Tempest::Vec3>;
 
     void                 scaleTime(uint64_t& dt);
     void                 tick(uint64_t dt);

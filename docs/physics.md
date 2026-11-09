@@ -74,7 +74,7 @@
 - Физический меш ландшафта и статичных объектов делится до ребра ≤4 м (`[GAME] static_collision_split=1`; `=0` до загрузки мира или `STATIC_COLLISION_SPLIT=0` в стендах возвращает исходные треугольники): на гранях в десятки метров Jolt строил контакт с обратной нормалью и проталкивал предмет вниз. Лучи, материалы и секторы по-прежнему берутся из исходного меша; мебель и подвижные тела не делятся. Ландшафт NEWWORLD — 352 641 → 1 565 364 треугольника, память статичных форм 8,9 → 33 МБ; верхние ветви составной формы строятся в 4 потока, загрузка на Mac +5,7%.
 - Вода даёт плавучесть и сопротивление вещам и частям мёртвых/оглушённых тел. Скелеты и каменные существа тонут; позы тел, сдвиги вещей и обломки сохраняются.
 
-Основной код: [мир и предметы](../OpenGothic/common/physics/dynamicworld.cpp), [подвижные объекты, мебель, разрушение и сохранения](../OpenGothic/common/physics/dynamicworld_movables.cpp), [общие внутренние типы и помощники](../OpenGothic/common/physics/dynamicworld_internal.h), [Jolt и вода](../OpenGothic/common/physics/collisionworld.cpp), [CharacterVirtual героя и NPC](../OpenGothic/common/physics/collisionworld_character.cpp), [тела](../OpenGothic/common/physics/ragdoll.cpp), [движение](../OpenGothic/common/game/movealgo.cpp).
+Основной код: [мир и создание тел предметов](../OpenGothic/common/physics/dynamicworld.cpp), [оболочки предметов, перепись расставленных предметов и отпечаток её входов](../OpenGothic/common/physics/dynamicworld_items.cpp), [тела NPC](../OpenGothic/common/physics/dynamicworld_npc.cpp), [пули и ограничивающие коробки](../OpenGothic/common/physics/dynamicworld_bullets.cpp), [подвижные объекты, мебель, разрушение и сохранения](../OpenGothic/common/physics/dynamicworld_movables.cpp), [общие внутренние типы и помощники](../OpenGothic/common/physics/dynamicworld_internal.h), [Jolt](../OpenGothic/common/physics/collisionworld.cpp), [клинки и тени тел](../OpenGothic/common/physics/collisionworld_melee.cpp), [плавучесть и вода](../OpenGothic/common/physics/collisionworld_water.cpp), [CharacterVirtual героя и NPC](../OpenGothic/common/physics/collisionworld_character.cpp), [тела](../OpenGothic/common/physics/ragdoll.cpp), [движение](../OpenGothic/common/game/movealgo.cpp).
 Выбор вещей: [movablevobs.cpp](../OpenGothic/common/world/movablevobs.cpp), [таблица подвижных](../OpenGothic/data/movable-vobs.csv) и [разрушаемых](../OpenGothic/data/destructible-vobs.csv); следы — [world.cpp](../OpenGothic/common/world/world.cpp).
 
 Отключение в `[GAME]` Gothic.ini: `ragdoll=0`, `living_bodies=0`, `arrow_physics=0`, `arrow_sticking=0`, `spell_physics=0`;
@@ -212,10 +212,10 @@
   - Статичные меши — `PhysicMesh` из статичных тел (`objvisual.cpp:153-155`). Колышущиеся на ветру столкновений не имеют.
   - Модели (двери, сундуки, механизмы) — тела по костям, повторяют позу анимации (`objvisual.cpp:179-181`, `ObjVisual::syncPhysics`).
   - Механизмы `zCMover` — так же (`movetrigger.cpp:28`).
-- **NPC** — капсула, которую Bullet не симулирует (`HumShape`, `dynamicworld.cpp:58`; `NpcBody`, `:75`).
-  - Двигает её своя логика `NpcItem::implTryMove` (`:1360`), Bullet только отвечает, есть ли пересечение (`contactTest`, `collisionworld.cpp:137`).
-  - NPC между собой — свои эллипсоиды (`NpcBodyList`, `dynamicworld.cpp:138`).
-- **Стрелы и заклинания** — свой код (`moveBullet`, `:982`): против мира лучом, против NPC эллипсоидом и `HitZones`.
+- **NPC** — капсула, которую Bullet не симулирует (`NpcBody`, `dynamicworld_internal.h`).
+  - Двигает её своя логика `NpcItem::implTryMove` (`dynamicworld_npc.cpp`), Bullet только отвечает, есть ли пересечение (`contactTest`, `collisionworld.cpp:137`).
+  - NPC между собой — свои эллипсоиды (`NpcBodyList`, `dynamicworld_internal.h`).
+- **Стрелы и заклинания** — свой код (`moveBullet`, `dynamicworld_bullets.cpp`): против мира лучом, против NPC эллипсоидом и `HitZones`.
 - **Симуляция — только у выброшенных предметов:**
   - коробка по рамке, масса по плотности материала (`addDynamicObj`, `:940`);
   - `stepSimulation` вызывается, только когда такие есть (`collisionworld.cpp:310`);
@@ -520,7 +520,7 @@ Jolt повторяет симуляцию при тех же входах и т
 
 ## Риски
 
-1. **Ходьба на этапе 1** меняется на мелочах: ступени, края, порт Хориниса (`extPadding`, «Khorinis port hack», `dynamicworld.cpp:118`). Защита — тест лучей и маршруты стенда.
+1. **Ходьба на этапе 1** меняется на мелочах: ступени, края, порт Хориниса (`extPadding`, «Khorinis port hack», `dynamicworld_internal.h`). Защита — тест лучей и маршруты стенда.
 2. **Квестовые NPC.** Живые NPC-люди (`Npc::isHuman`), кроме героя, защищены точкой возврата и пределом падения независимо от `IMMORTAL`: после опасного KO NPC поднимается у последней устойчивой сухой позиции. Защита удерживает точку до конца подъёма; вода под твёрдой опорой не считается погружением. [Проверки](../reports/physics/2026-10-15-quest-ragdoll/validation-notes.md).
 3. **Распорядок из произвольной точки** — поиск пути от ближайшей путевой точки. Стенд `routine-return`: 5 из 12 мест после падения NPC не покидает; решение — обучаемая навигация.
 4. **Производительность M1 Pro.** Рендер уже тяжёлый. Тела только рядом с героем, сон вдали. Бюджет физики — p95 не больше 2 мс на кадр, максимум справочный.
