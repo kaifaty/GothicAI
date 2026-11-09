@@ -294,6 +294,8 @@ class Renderer final {
       uint64_t                  lastTick = 0;       // the world's tick of the last lighting, for the blend over time
       float                     frameTime = 0;      // smoothed world time of a frame, s: how many samples to relight
       bool                      resetHistory = false; // another world: the probes start over, as on the first frame
+      int64_t                   dayTime     = -1;  // the game's time of day (gtime, ms) of this frame, set by draw
+      int64_t                   lastDayTime = -1;  // of the last lighting: a jump starts the probes over
       // the counters of probe_stats (live probes, traced in the frame), read back a frame slot later (FrameProfile)
       Tempest::StorageBuffer    stats[Resources::MaxFramesInFlight];
       bool                      statsWritten[Resources::MaxFramesInFlight] = {};

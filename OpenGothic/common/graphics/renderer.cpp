@@ -16,6 +16,7 @@
 #include "camera.h"
 #include "frameprofile.h"
 #include "gothic.h"
+#include <cstring> // GIDEBUG
 #include "utils/string_frm.h"
 
 using namespace Tempest;
@@ -836,6 +837,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   if(requiresRtScene())
     wview.updateRtScene(cmd, fId);
   wview.updateLights(gameTime);
+  gi.dayTime = gameTime.toInt();
 
   if(requiresLightsTree())
     prepareLightsBvh(cmd, wview);
@@ -2393,12 +2395,32 @@ void Renderer::prepareIrradiance(Encoder<CommandBuffer>& cmd, WorldView& wview) 
 // probe_stats: live, traced, slots, free slots, allocated at hits, freed (probe_aux.comp, Stats)
 static constexpr uint32_t giStatsCount = 6;
 
+// GIDEBUG(temporary, step 2b-1): OPENGOTHIC_GI_DEBUG="r=<cm> cap=<n> off=<n> log=1"
+static struct GiDebug { float r=-1; int cap=-1, off=-1; bool log=false; bool read=false; } giDebug;
+static const GiDebug& giDebugGet() {
+  if(!giDebug.read) {
+    giDebug.read = true;
+    if(const char* e = std::getenv("OPENGOTHIC_GI_DEBUG")) {
+      std::string s = e;
+      auto val = [&](const char* k) -> const char* { auto i = s.find(k); return i==std::string::npos ? nullptr : s.c_str()+i+std::strlen(k); };
+      if(auto v = val("r="))   giDebug.r   = std::strtof(v, nullptr);
+      if(auto v = val("cap=")) giDebug.cap = std::atoi(v);
+      if(auto v = val("off=")) giDebug.off = std::atoi(v);
+      if(auto v = val("log=")) giDebug.log = std::atoi(v)!=0;
+      Log::i("GIDEBUG r=", giDebug.r, " cap=", giDebug.cap, " off=", giDebug.off, " log=", giDebug.log);
+      }
+    }
+  return giDebug;
+  }
+
 void Renderer::readGiStats(uint8_t fId) {
   // the counters this frame slot wrote last time: its fence has been waited for, the buffer is host-visible
-  if(!FrameProfile::enabled() || !gi.statsWritten[fId] || gi.stats[fId].isEmpty())
+  if(!(FrameProfile::enabled() || giDebugGet().log) || !gi.statsWritten[fId] || gi.stats[fId].isEmpty())
     return;
   uint32_t v[giStatsCount] = {};
   Resources::device().readBytes(gi.stats[fId], v, sizeof(v));
+  if(giDebugGet().log && (gi.frame%30)==0)
+    Log::i("GIDEBUG frame ", gi.frame, " live ", v[0], " traced ", v[1], " slots ", v[2], " free ", v[3], " fromHits ", v[4], " freed ", v[5]);
   FrameProfile::add(FrameProfile::Amount::GiProbesLive,     v[0]);
   FrameProfile::add(FrameProfile::Amount::GiProbesTraced,   v[1]);
   FrameProfile::add(FrameProfile::Amount::GiProbesFromHits, v[4]);
@@ -2457,6 +2479,19 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
   const bool restart = fisrtFrame || gi.resetHistory;
   gi.resetHistory = false;
 
+  // The time of day jumped (sleep, a script, `set time`): the places and hits of the probes hold, their light is of
+  // another time. Each live probe is lit again as a new one: all its samples, no history, the bounce from nothing
+  // (probe_prune). Otherwise after noon to midnight the day's light, hundreds of times the night's, takes seconds to
+  // die out through the bounces of probes that light each other off the screen: a hut at 23:00 had cells 5 times
+  // the reference 3 s after the jump (step-2b.md, «2б-1: сделано»). The time of day going on by itself moves far
+  // less than giDayJump in a frame.
+  const int64_t giDayJump  = 10*60*1000; // ms of the game's time
+  const bool    lightReset = !restart && gi.lastDayTime>=0 && gi.dayTime>=0 &&
+                             std::abs(gi.dayTime-gi.lastDayTime)>giDayJump;
+  gi.lastDayTime = gi.dayTime;
+  if(lightReset)
+    Log::i("render: gi probes lit anew (the time of day jumped)");
+
   cmd.setFramebuffer({});
   if(restart) {
     cmd.setDebugMarker("GI-Init");
@@ -2492,10 +2527,12 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
     uint32_t frame;
     uint32_t expireAge;
     uint32_t reserve;
+    uint32_t lightReset;
     } pushClear = {};
-  pushClear.frame     = gi.frame;
-  pushClear.expireAge = uint32_t(std::clamp(giExpire/frameTime, 2.f, 65535.f));
-  pushClear.reserve   = giReserve;
+  pushClear.frame      = gi.frame;
+  pushClear.expireAge  = uint32_t(std::clamp(giExpire/frameTime, 2.f, 65535.f));
+  pushClear.reserve    = giReserve;
+  pushClear.lightReset = lightReset ? 1 : 0;
 
   static bool alloc = true;
   cmd.setDebugMarker("GI-Alloc");
@@ -2609,9 +2646,9 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
   push.relitPeriod = 4;
   while(push.relitPeriod<32 && float(push.relitPeriod*2)*gi.frameTime<=giRefresh*1.5f)
     push.relitPeriod *= 2;  // 30 fps: every 8th sample a frame, 60 fps: 16th, 120 fps: 32nd
-  push.offPeriod   = giOffPeriod;
-  push.hitRadius   = giHitRadius;
-  push.maxRequests = giMaxRequests;
+  push.offPeriod   = giDebugGet().off>0 ? uint32_t(giDebugGet().off) : giOffPeriod;
+  push.hitRadius   = giDebugGet().r>=0 ? giDebugGet().r : giHitRadius;
+  push.maxRequests = giDebugGet().cap>=0 ? uint32_t(std::min(giDebugGet().cap, int(giMaxRequests))) : giMaxRequests;
 
   cmd.setDebugMarker("GI-Lighting");
   cmd.setBinding(0, probesLightingPrev);
@@ -2650,7 +2687,7 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
   cmd.setPipeline(shaders.probeLighting);
   cmd.dispatch(1024);
 
-  if(FrameProfile::enabled()) {
+  if(FrameProfile::enabled() || giDebugGet().log) {
     auto& stats = gi.stats[fId];
     if(stats.isEmpty())
       stats = Resources::device().ssbo(BufferHeap::Readback, Uninitialized, giStatsCount*sizeof(uint32_t));

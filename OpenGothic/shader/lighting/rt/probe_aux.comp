@@ -32,6 +32,7 @@ layout(push_constant, std140) uniform Push {
   uint frame;     // Renderer: the frame number, the stamp of a probe's use
   uint expireAge; // frames: a probe unused for longer is freed (the expiry T by the frame time)
   uint reserve;   // places kept free for the allocations of a frame: the oldest probes go first to keep them
+  uint lightReset; // the time of day jumped: every live probe is lit anew (Renderer::prepareGi)
   };
 #endif
 
@@ -62,6 +63,7 @@ void main_init() {
     probeHeader.frame       = 0;
     probeHeader.evictAge    = 0xFFFFFFFFu;
     probeHeader.expireAge   = 0xFFFFFFFFu;
+    probeHeader.lightReset  = 0;
     probeHeader.reqCount    = 0;
     probeHeader.hitCount    = 0;
     probeHeader.freedCount  = 0;
@@ -110,6 +112,7 @@ void main_clear() {
   if(threadID==0) {
     probeHeader.evictAge    = evictAge();
     probeHeader.expireAge   = expireAge;
+    probeHeader.lightReset  = lightReset;
     for(uint i=0; i<probeAgeBuckets; ++i)
       req.ageHistogram[i] = 0;
     probeHeader.frame       = frame;
@@ -199,6 +202,12 @@ void pruneProbe(const uint probeId) {
         bits |= SEEN_BIT;
       if((bits & TRACED_BIT)!=0)
         bits &= ~NEW_BIT;
+      if((bits & TRACED_BIT)!=0 && probeHeader.lightReset!=0) {
+        // lit anew: listed as new, probe_trace skips it (traced), probe_relight_new lights all its samples without
+        // the bounce of new probes, the integration takes no history
+        bits |= NEW_BIT;
+        newList[atomicAdd(probeHeader.newCount, 1)] = probeId;
+        }
       probe[probeId].bits = bits;
       atomicAdd(ageShared[min(age/ageBucketWidth(probeHeader.expireAge), probeAgeBuckets-1u)], 1);
       return;

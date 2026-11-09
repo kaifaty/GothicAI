@@ -66,7 +66,8 @@ struct ProbesHeader { // 64 bytes
   uint hitCount;   // probes allocated at hits this frame (counter)
   uint freedCount; // probes freed this frame (counter)
   uint expireAge;  // frames: the expiry T of an unused probe; the width of the age histogram's buckets follows it
-  uint padd1[3];
+  uint lightReset; // 1: the time of day jumped, every live probe is lit anew as a new one (probe_prune)
+  uint padd1[2];
   };
 
 struct Probe { // 32 bytes
