@@ -28,7 +28,8 @@ the time changes in. Direct light changes at once, so the slowest cells show the
 --decay takes a clip of scripts/bench/gi-decay.bench (noon, then 22:00 1 s later, 30 frames per second) and prints, as
 --response does, when every cell is within 10% of its end (night) brightness, and how many times brighter than it the
 cells are 0.5, 1 and 2 s after the change: the day's light dying out in the probes. Cells count from the shots'
-threshold of nearly black.
+threshold of nearly black; cells that flicker by more than 10% at the end (flames) are left out, and each cell is
+the median of 15 frames around it (a spark crossing a cell for a few frames is no lag; a falling light keeps its time).
 
 --turn takes the clip hut-turn of scripts/bench/gi-turn.bench (the camera stands 1 s, turns 180 degrees at once, stands
 3 s, turns back, stands 2 s; 30 frames per second) and compares the frame before the turn with the first frame after
@@ -64,7 +65,7 @@ def clip_cells(path, w=320, h=180):
     return np.array([cells(f) for f in lum])
 
 
-def response(path, at=1.0, fps=30, settle=0.1, lit=0.005, marks=()):
+def response(path, at=1.0, fps=30, settle=0.1, lit=0.005, marks=(), flicker=None, smooth=1):
     # The exposure follows the sky at once, so after the change it stays put: a cell's brightness then moves only
     # with its light. The reflected light of a shaded cell starts from about nothing (the night's light is tiny
     # at the day's exposure), so the time to come within 10% of the new brightness is its lag; lit cells settle
@@ -73,9 +74,18 @@ def response(path, at=1.0, fps=30, settle=0.1, lit=0.005, marks=()):
     mean = np.log(c.mean(axis=1) + 1e-6)
     near = range(max(1, round(at * fps) - 3), min(len(c), round(at * fps) + 4))
     t0 = max(near, key=lambda t: abs(mean[t] - mean[t - 1]))  # the first frame after the change
+    raw = c
+    if smooth > 1:  # a spark crossing a cell for a few frames is no lag: the median over `smooth` frames
+        h = smooth // 2
+        c = np.concatenate([c[:t0], np.array([np.median(c[max(t0, t - h):t + h + 1], axis=0) for t in range(t0, len(c))])])
     after = c[-8:].mean(axis=0)
     noise = c[-20:].std(axis=0)  # the encoder and the TAA jitter: a cell this close to its end has settled
     keep = after > lit
+    if flicker is not None:  # flames: a cell that jumps by more than this at the end never settles, it is no lag
+        flames = keep & (raw[-20:].std(axis=0) > flicker * raw[-8:].mean(axis=0))
+        if flames.any():
+            print(f'- {int(flames.sum())} cells flicker at the end by more than {flicker:.0%} (flames), left out')
+        keep &= ~flames
     frames = []
     for i in np.flatnonzero(keep):
         late = np.flatnonzero(np.abs(c[t0:, i] - after[i]) > max(settle * after[i], 3 * noise[i]))
@@ -132,7 +142,7 @@ def main():
         turn(args.turn)
         return
     if args.decay:
-        response(args.decay, lit=0.002, marks=(0.5, 1, 2))
+        response(args.decay, lit=0.002, marks=(0.5, 1, 2), flicker=0.1, smooth=15)
         return
     if args.root is None or not args.shots:
         ap.error('ROOT and SHOT... are required without --response')
