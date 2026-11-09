@@ -836,7 +836,7 @@ void stunDriftSample(World& world,uint64_t elapsed,uint64_t requested);
 DestructionContext destructionContext() {
   return {bench.cam,bench.movables.movableCenter,bench.movables.movableIds,bench.movables.movableMeasuring,bench.movables.movableReady,
           bench.movables.movableWalkStart,bench.movables.noiseHost,bench.movables.noiseSource,bench.movables.noiseTrace,bench.ragdoll.ragdollArenaTarget,
-          bench.ragdoll.ragdollArenaWaypoint,bench.movables.spellActors,bench.time,bench.waitUntil};
+          bench.ragdoll.ragdollArenaWaypoint,bench.movables.spellActors,bench.time,bench.waitUntil,bench.brokenSignals,scenarioPath};
   }
 
 }
@@ -892,7 +892,12 @@ LivingContext livingContext() {
 
 MovablesContext movablesContext() {
   return {bench.movables,bench.cam,bench.crew,bench.routine.questCliff,bench.routine.questWater,
-          bench.ragdoll.ragdollArenaTarget,bench.shot,bench.subject};
+          bench.ragdoll.ragdollArenaTarget,bench.shot,bench.subject,scenarioPath};
+  }
+
+PhysicsTracesContext physicsTracesContext() {
+  return {bench.traceHost,bench.traceTable,bench.traceOrigin,bench.traceCenter,bench.traceVisible,
+          bench.traceBlocked,bench.traceFar,bench.traceWall,bench.traceShotDirection,bench.traceReady};
   }
 
 BodyImpactContext bodyImpactContext() {
@@ -6073,374 +6078,17 @@ void TestBench::physicsNoiseBridgeEvent(const Npc& listener,uint64_t tick) {
 
 bool TestBench::physicsNoiseDebug(World& world,Npc& player,std::string_view command,
                                   std::string& value,std::string& error) {
-  const auto fail=[&](std::string_view message) {error=message;return false;};
-  const auto resetCounts=[] {
-    bench.movables.noiseBridgeImpacts=0;bench.movables.noiseBridgeLoudImpacts=0;bench.movables.noiseBridgeCulpritImpacts=0;
-    bench.movables.noiseBridgeUnseenCulpritImpacts=0;bench.movables.noiseBridgeCupImpacts=0;bench.movables.noiseBridgeCupMaxRadius=0;
-    bench.movables.noiseBridgeDialogueImpacts=0;bench.movables.noiseBridgeCombatImpacts=0;
-    bench.movables.noiseBridgeHeard.clear();
-    bench.movables.noiseBridgeEvents.clear();
-    };
-  if(command=="setup") {
-    world.physic()->setMovableVobsEnabled(true);world.physic()->setPhysicsNoiseEnabled(true);
-    prepareNoiseFixture(world,player);
-    if(!bench.movables.movableReady || !bench.movables.noiseHost)return fail("Coragon tavern fixture unavailable in this save");
-    world.script().skipImportantInfos(*bench.movables.noiseHost,player);
-    player.handle().attribute[ATR_HITPOINTS]=100000;
-    player.handle().attribute[ATR_HITPOINTSMAX]=100000;
-    bench.movables.noiseBridgeDebug=true;
-    }
-  if(!bench.movables.noiseBridgeDebug || !bench.movables.noiseHost)return fail("physics_noise setup required");
-  auto& npc=*bench.movables.noiseHost;
-  if(command.ends_with("-ready")) {
-    noiseRetireListeners();
-    const bool quiet=command=="quiet-ready";
-    if(command!="loud-ready" && command!="quiet-ready" && command!="dialogue-ready" &&
-       command!="combat-ready" && command!="throttle-ready")return fail("unknown physics_noise ready mode");
-    const auto source=quiet ? (bench.movables.movableWalkStart+bench.movables.movableWalkEnd)*.5f : bench.movables.movableCenter;
-    noiseBegin(world,command,source);
-    Vec3 point;
-    if(!noiseFloor(world,source,quiet?600.f:500.f,false,point))return fail("supported clear listener floor unavailable");
-    if(!noiseAddListener(world,"bridge",point,&npc))return fail("Coragon listener unavailable");
-    // The real instigator is behind the listener together with the impact.
-    // Its identity must be absent from the NPC's event even though native physics knows it.
-    auto hero=source+Vec3(0,0,100);
-    if(command=="dialogue-ready" || command=="combat-ready")hero=point+Vec3(0,0,80);
-    const auto floor=world.physic()->landRay(hero+Vec3(0,250,0),600);
-    if(floor.hasCol)hero.y=floor.v.y;
-    player.setPosition(hero);player.setDirection(point-hero);player.updateTransform();
-    if(command=="dialogue-ready") {
-      npc.clearAiQueue();npc.aiPush(AiQueue::aiProcessInfo(player));
-      }
-    if(command=="combat-ready") {
-      const auto state=world.script().findSymbolIndex("ZS_ATTACK");
-      if(state==size_t(-1))return fail("native ZS_ATTACK unavailable");
-      npc.clearAiQueue();npc.setTarget(&player);
-      npc.aiPush(AiQueue::aiStartState(ScriptFn(state),0,&player,nullptr,""));
-      }
-    resetCounts();
-    }
-  else if(command=="loud-hit" || command=="dialogue-hit" || command=="combat-hit" || command=="throttle-hit") {
-    if(command=="dialogue-hit" && !Gothic::inst().isNpcInDialog(npc))return fail("actual native dialogue has not opened");
-    if(command=="combat-hit" && npc.weaponState()==WeaponState::NoWeapon)return fail("actual native combat has not drawn a weapon");
-    if(command!="throttle-hit")resetCounts();
-    noisePushTable(world,&player);
-    }
-  else if(command=="cup-hit") {resetCounts();noiseDropItems(world,1);}
-  else if(command!="setup" && command!="sample")return fail("unknown physics_noise command");
-  const bool routine=npc.currentState().isValid() && npc.isInRoutine(npc.currentState());
-  std::string heard="[";
-  for(auto tick:bench.movables.noiseBridgeHeard) {if(heard.size()>1)heard+=',';heard+=std::to_string(tick);}
-  std::string bridgeEvents="[";
-  for(auto tick:bench.movables.noiseBridgeEvents) {if(bridgeEvents.size()>1)bridgeEvents+=',';bridgeEvents+=std::to_string(tick);}
-  value="{\"npc\":"+jsonStr(symName(world,&npc))+",\"position_cm\":"+ragdollVector(npc.position())+
-    ",\"source_cm\":"+ragdollVector(bench.movables.noiseSource)+",\"distance_cm\":"+
-    ragdollNumber((npc.position()-bench.movables.noiseSource).length())+",\"facing_error_deg\":"+
-    ragdollNumber(noiseFacingError(npc,bench.movables.noiseSource))+",\"can_see_hero\":"+(npc.canSeeNpc(player,false)?"true":"false")+
-    ",\"eligible\":"+(npc.canHearPhysicsNoise()?"true":"false")+
-    ",\"external\":"+(npc.isExternalControl()?"true":"false")+
-    ",\"investigating\":"+(npc.isPhysicsInvestigating()?"true":"false")+
-    ",\"player_distance_cm\":"+ragdollNumber((npc.position()-player.position()).length())+
-    ",\"dialogue\":"+(Gothic::inst().isNpcInDialog(npc)?"true":"false")+
-    ",\"combat\":"+(npc.weaponState()!=WeaponState::NoWeapon?"true":"false")+
-    ",\"ai_queue_empty\":"+(npc.isAiQueueEmpty()?"true":"false")+
-    ",\"routine_state\":"+(routine?"true":"false")+",\"state\":"+jsonStr(stateName(world,npc))+
-    ",\"t_game_ms\":"+std::to_string(world.tickCount())+
-    ",\"native_impacts\":"+std::to_string(bench.movables.noiseBridgeImpacts)+
-    ",\"native_loud_impacts\":"+std::to_string(bench.movables.noiseBridgeLoudImpacts)+
-    ",\"native_culprit_impacts\":"+std::to_string(bench.movables.noiseBridgeCulpritImpacts)+
-    ",\"native_unseen_culprit_loud_impacts\":"+std::to_string(bench.movables.noiseBridgeUnseenCulpritImpacts)+
-    ",\"native_cup_impacts\":"+std::to_string(bench.movables.noiseBridgeCupImpacts)+
-    ",\"native_cup_max_radius_cm\":"+ragdollNumber(bench.movables.noiseBridgeCupMaxRadius)+
-    ",\"audible_dialogue_loud_impacts\":"+std::to_string(bench.movables.noiseBridgeDialogueImpacts)+
-    ",\"audible_combat_loud_impacts\":"+std::to_string(bench.movables.noiseBridgeCombatImpacts)+
-    ",\"native_heard_ms\":"+heard+"],\"bridge_event_ms\":"+bridgeEvents+"]}";
-  return true;
+  return testbench_detail::physicsNoiseDebug(movablesContext(),world,player,command,value,error);
   }
 
 bool TestBench::physicsTracesDebug(World& world,Npc& player,std::string_view command,
                                   std::string& value,std::string& error) {
-  const auto fail=[&](std::string_view message) {error=message;return false;};
-  const auto park=[&](Npc& npc,const Vec3& point) {
-    npc.clearAiQueue();npc.clearState(false);npc.stopWalking();npc.setInteraction(nullptr,true);
-    npc.closeWeapon(true);npc.setPosition(point);npc.setExternalControl(false);
-    npc.setDirection(bench.traceCenter-point);npc.updateTransform();
-    npc.aiPush(AiQueue::aiWait(120000));
-    };
-  const auto floorAt=[&](Vec3& point) {
-    const auto floor=world.physic()->landRay(point+Vec3(0,180,0),400);
-    if(!floor.hasCol || floor.n.y<.8f || std::abs(floor.v.y-bench.traceCenter.y)>180)return false;
-    point.y=floor.v.y;
-    for(const auto offset:{Vec3(40,0,0),Vec3(-40,0,0),Vec3(0,0,40),Vec3(0,0,-40)})
-      if(world.physic()->ray(point+Vec3(0,85,0),point+offset+Vec3(0,85,0)).hasCol)return false;
-    return true;
-    };
-  if(command=="setup" || command.starts_with("reload ")) {
-    world.physic()->setMovableVobsEnabled(true);
-    Gothic::settingsSetI("GAME","arrow_sticking",1);
-    bench.traceHost=nullptr;
-    for(uint32_t i=0;i<world.npcCount();++i) {
-      auto* npc=world.npcById(i);if(!npc)continue;
-      auto name=symName(world,npc);
-      for(auto& c:name)c=char(std::toupper(static_cast<unsigned char>(c)));
-      if(name.find("CORAGON")!=std::string::npos || name.find("KORAGON")!=std::string::npos) {bench.traceHost=npc;break;}
-      }
-    if(!bench.traceHost)return fail("trace fixture requires Coragon in Khorinis");
-    const auto all=world.physic()->movableVobSnapshot();
-    const DynamicWorld::MovableVobSnapshot* table=nullptr;
-    if(command.starts_with("reload ")) {
-      const auto zenId=uint32_t(std::stoul(std::string(command.substr(7))));
-      for(const auto& body:all)if(body.zenId==zenId) {table=&body;break;}
-      }
-    else {
-      float nearest=1400.f*1400.f;
-      for(const auto& body:all) {
-        if(body.className!="table" || body.zenId==uint32_t(-1))continue;
-        const auto distance=(movablePosition(body.transform)-bench.traceHost->position()).quadLength();
-        if(distance<nearest) {nearest=distance;table=&body;}
-        }
-      }
-    if(!table)return fail("Coragon trace fixture lacks a native map table");
-    bench.traceTable=table->zenId;bench.traceOrigin=table->origin;
-    bench.traceCenter=(table->localBounds[0]+table->localBounds[1])*.5f;
-    table->origin.project(bench.traceCenter);
-    if(command=="setup" && !world.physic()->setMovableVobTransform(bench.traceTable,bench.traceOrigin))
-      return fail("trace table baseline restoration failed");
-    world.script().skipImportantInfos(*bench.traceHost,player);
-    player.handle().attribute[ATR_HITPOINTS]=100000;player.handle().attribute[ATR_HITPOINTSMAX]=100000;
-    bool wallFound=false;
-    const auto from=bench.traceCenter+Vec3(0,120,0);
-    for(unsigned i=0;i<96;++i) {
-      const float angle=float(i)*float(M_PI)/48.f;
-      const Vec3 direction(std::cos(angle),0,std::sin(angle));
-      const auto hit=world.physic()->ray(from,from+direction*1000.f);
-      if(!hit.hasCol || std::abs(hit.n.y)>.25f || (hit.v-from).length()<180)continue;
-      bench.traceWall=hit.v;bench.traceShotDirection=direction;wallFound=true;break;
-      }
-    if(!wallFound)return fail("trace fixture lacks a real vertical tavern wall");
-    bool supported=false;
-    for(unsigned i=0;i<48;++i) {
-      const float angle=float(i)*float(M_PI)/24.f;
-      auto point=bench.traceCenter+Vec3(std::cos(angle)*400,0,std::sin(angle)*400);
-      if(!floorAt(point))continue;
-      park(*bench.traceHost,point);bench.traceVisible=point;supported=true;break;
-      }
-    if(!supported)return fail("trace fixture lacks supported observer floor");
-    auto hero=bench.traceVisible+Vec3(100,0,0);
-    if(floorAt(hero)) {player.setPosition(hero);player.updateTransform();}
-    bench.traceReady=true;
-    }
-  if(!bench.traceReady || !bench.traceHost)return fail("physics_traces setup required");
-  auto& npc=*bench.traceHost;
-  if(command=="small" || command=="moved" || command=="tilted") {
-    auto matrix=bench.traceOrigin;
-    if(command=="tilted")matrix.rotate(35,0,0,1);
-    else matrix.set(3,0,matrix.at(3,0)+(command=="small"?10.f:80.f));
-    if(!world.physic()->setMovableVobTransform(bench.traceTable,matrix,&player))
-      return fail("native trace table transform failed");
-    }
-  else if(command=="arrow" || command=="arrows") {
-    const auto symbol=world.script().findSymbolIndex("ITRW_ARROW");
-    if(symbol==size_t(-1))return fail("native trace arrow instance missing");
-    Item arrow(world,symbol,Item::T_Inventory);
-    const unsigned count=command=="arrow"?1:7;
-    for(unsigned i=0;i<count;++i) {
-      const auto to=bench.traceWall+Vec3(0,float(i)*8,0);
-      const auto from=to-bench.traceShotDirection*80.f;
-      auto& bullet=world.shootArrow(arrow,from,bench.traceShotDirection,DynamicWorld::bulletSpeed);
-      bullet.setOrigin(&player);bullet.setPrecise(1.f);
-      }
-    }
-  else if(command=="visible" || command=="blocked" || command=="far") {
-    const auto traces=world.physicsTraces();
-    std::vector<const World::PhysicsTrace*> scene;
-    for(const auto& trace:traces)
-      if((trace.position-bench.traceCenter).length()<1300.f)scene.push_back(&trace);
-    if(scene.size()<2)return fail("trace observer placement requires table and wall arrow");
-    bool found=false;
-    // named arrays: a ?: over two initializer_lists copies the lists, and their arrays die with the expression
-    static constexpr float farDistances[]={1700,1900,2100,2400};
-    static constexpr float nearDistances[]={300,450,600,800,1000};
-    const std::span<const float> distances=command=="far"?std::span<const float>(farDistances):
-                                                          std::span<const float>(nearDistances);
-    for(float distance:distances) {
-      const unsigned steps=command=="far"?360:96;
-      for(unsigned i=0;i<steps;++i) {
-        const float angle=float(i)*float(M_PI)*2.f/float(steps);
-        auto point=bench.traceCenter+Vec3(std::cos(angle)*distance,0,std::sin(angle)*distance);
-        if(!floorAt(point))continue;
-        park(npc,point);
-        bool all=true,anyVisible=false;
-        for(const auto* trace:scene) {
-          bool visible=false;
-          for(const auto& sight:trace->sightPoints)
-            visible|=command=="visible"?npc.canRayHitPoint(sight,false):npc.canRayHitPoint(sight,true,2000.f);
-          const float cm=(trace->position-npc.position()).length();
-          anyVisible|=visible;
-          if(command=="blocked")all&=!visible && cm<1500;
-          else if(command=="far")all&=cm>1500;
-          else all&=visible && cm<1500;
-          }
-        if(command=="far")all&=anyVisible;
-        if(all) {found=true;break;}
-        }
-      if(found)break;
-      }
-    if(!found)return fail(command=="blocked"?"no supported observer behind a real wall":
-                         command=="far"?"no supported visible observer beyond 15m":
-                                        "no supported observer seeing both native traces");
-    if(command=="visible")bench.traceVisible=npc.position();
-    if(command=="blocked")bench.traceBlocked=npc.position();
-    if(command=="far")bench.traceFar=npc.position();
-    }
-  else if(command!="setup" && !command.starts_with("reload ") && command!="sample")
-    return fail("unknown physics_traces command");
-  std::string rows="[";
-  for(const auto& trace:world.physicsTraces()) {
-    if((trace.position-bench.traceCenter).length()>2500)continue;
-    bool visible=false;
-    for(const auto& point:trace.sightPoints)visible|=npc.canRayHitPoint(point,true,2000.f);
-    if(rows.size()>1)rows+=',';
-    const auto* wp=world.findWayPoint(trace.position);
-    rows+="{\"id\":"+jsonStr(trace.id)+",\"kind\":"+jsonStr(trace.kind)+",\"name\":"+jsonStr(trace.name)+
-      ",\"waypoint\":"+jsonStr(wp?wp->name:"")+",\"position_cm\":"+ragdollVector(trace.position)+
-      ",\"distance_cm\":"+ragdollNumber((trace.position-npc.position()).length())+
-      ",\"appeared_at\":"+std::to_string(trace.appearedAt)+",\"actor_truth\":"+jsonStr(trace.culprit)+
-      ",\"can_ray_hit_point\":"+(visible?"true":"false")+"}";
-    }
-  value="{\"npc\":"+jsonStr(symName(world,&npc))+",\"hero\":"+jsonStr(symName(world,&player))+
-    ",\"table_zen_id\":"+std::to_string(bench.traceTable)+
-    ",\"table_trace_id\":"+jsonStr(std::string(world.name())+":vob:"+std::to_string(bench.traceTable))+
-    ",\"npc_position_cm\":"+ragdollVector(npc.position())+",\"table_center_cm\":"+ragdollVector(bench.traceCenter)+
-    ",\"wall_cm\":"+ragdollVector(bench.traceWall)+",\"game_minutes\":"+std::to_string(world.time().toInt()/60000)+
-    ",\"truth\":"+rows+"]}";
-  return true;
+  return testbench_detail::physicsTracesDebug(physicsTracesContext(),world,player,command,value,error);
   }
 
 bool TestBench::destructionTracesDebug(World& world,Npc& player,std::string_view command,
                                       std::string& value,std::string& error) {
-  if(command.starts_with("signal ")) {
-    bench.brokenSignals.insert(std::string(command.substr(7)));
-    value="{}";
-    return true;
-    }
-  const auto fail=[&](std::string_view message) {error=message;return false;};
-  const auto park=[&](Npc& npc,const Vec3& point) {
-    npc.clearAiQueue();npc.clearState(false);npc.clearGoTo();npc.stopWalking();npc.setInteraction(nullptr,true);
-    npc.closeWeapon(true);npc.setPosition(point);npc.setExternalControl(false);
-    npc.setDirection(bench.destruction.destructionTraceSource-point);npc.updateTransform();
-    npc.aiPush(AiQueue::aiWait(120000));
-    };
-  const auto floorAt=[&](Vec3& point) {
-    const auto floor=world.physic()->landRay(point+Vec3(0,220,0),600);
-    if(!floor.hasCol || floor.n.y<.8f || std::abs(floor.v.y-bench.destruction.destructionTraceSource.y)>350)return false;
-    point.y=floor.v.y;
-    for(const auto offset:{Vec3(40,0,0),Vec3(-40,0,0),Vec3(0,0,40),Vec3(0,0,-40)})
-      if(world.physic()->ray(point+Vec3(0,85,0),point+offset+Vec3(0,85,0)).hasCol)return false;
-    return true;
-    };
-  if(command=="setup" || command.starts_with("reload ")) {
-    bench.destruction.destructionTraceDebug=false;bench.destruction.destructionMeleeRunning=false;
-    bench.destruction.destructionTraceHost=nullptr;bench.destruction.destructionTraceWorld=nullptr;
-    uint32_t zenId=19355;
-    if(command.starts_with("reload ")) {
-      try {zenId=uint32_t(std::stoul(std::string(command.substr(7))));}
-      catch(const std::exception&) {return fail("destruction trace reload requires a map-vob zen id");}
-      }
-    Gothic::settingsSetI("GAME","destruction",1);
-    world.physic()->setDestructionEnabled(true);
-    const auto bodies=world.physic()->movableVobSnapshot();
-    const auto found=std::find_if(bodies.begin(),bodies.end(),[&](const auto& body){return body.zenId==zenId;});
-    if(found==bodies.end() || found->className!="fence" || !found->destructible)
-      return fail("destruction trace fixture requires the authored Lobart farm fence");
-    if(command=="setup" && found->broken)return fail("destruction trace setup requires an intact farm fence");
-    for(uint32_t i=0;i<world.npcCount();++i) {
-      auto* npc=world.npcById(i);if(!npc)continue;
-      auto name=symName(world,npc);
-      for(auto& c:name)c=char(std::toupper(static_cast<unsigned char>(c)));
-      if(name.find("LOBART")!=std::string::npos) {bench.destruction.destructionTraceHost=npc;break;}
-      }
-    if(!bench.destruction.destructionTraceHost)return fail("destruction trace fixture requires Lobart");
-    bench.destruction.destructionTraceZen=zenId;
-    bench.destruction.destructionTraceSource=(found->localBounds[0]+found->localBounds[1])*.5f;
-    found->transform.project(bench.destruction.destructionTraceSource);
-    if(command=="setup") {
-      destructionFarmSetup(bench.destruction,destructionContext(),world,player,zenId);
-      if(bench.destruction.destructionFarmZen!=zenId || bench.destruction.destructionMeleeActor!=&player)
-        return fail("destruction trace native sword stance preparation failed");
-      }
-    world.script().skipImportantInfos(*bench.destruction.destructionTraceHost,player);
-    player.handle().attribute[ATR_HITPOINTS]=100000;player.handle().attribute[ATR_HITPOINTSMAX]=100000;
-    bool supported=false;
-    for(unsigned i=0;i<96;++i) {
-      const float angle=float(i)*float(M_PI)/48.f;
-      auto point=bench.destruction.destructionTraceSource+Vec3(std::cos(angle)*500,0,std::sin(angle)*500);
-      if(!floorAt(point))continue;
-      park(*bench.destruction.destructionTraceHost,point);supported=true;break;
-      }
-    if(!supported)return fail("destruction trace fixture lacks supported observer floor");
-    bench.destruction.destructionTraceWorld=&world;bench.destruction.destructionTraceDebug=true;
-    }
-  if(!bench.destruction.destructionTraceDebug || bench.destruction.destructionTraceWorld!=&world || !bench.destruction.destructionTraceHost)
-    return fail("destruction_traces setup or reload required");
-  auto& npc=*bench.destruction.destructionTraceHost;
-  const auto traceId=std::string(world.name())+":vob:"+std::to_string(bench.destruction.destructionTraceZen);
-  if(command=="break") {
-    if(bench.destruction.destructionFarmZen!=bench.destruction.destructionTraceZen || bench.destruction.destructionMeleeActor!=&player)
-      return fail("destruction trace break requires the original intact setup");
-    if(bench.destruction.destructionMeleeRunning)return fail("destruction trace native sword attack is already running");
-    const auto bodies=world.physic()->movableVobSnapshot();
-    const auto found=std::find_if(bodies.begin(),bodies.end(),[&](const auto& body){return body.zenId==bench.destruction.destructionTraceZen;});
-    if(found==bodies.end() || found->broken)return fail("destruction trace break requires its intact farm fence");
-    bench.destruction.destructionMeleeRunning=true;bench.destruction.destructionMeleeNext=world.tickCount();
-    bench.destruction.destructionMeleeDeadline=world.tickCount()+90000;
-    if(scenarioPath!=nullptr)bench.waitUntil=bench.time+90034;
-    }
-  else if(command=="visible" || command=="blocked") {
-    const auto traces=world.physicsTraces();
-    const auto source=std::find_if(traces.begin(),traces.end(),[&](const auto& trace){return trace.id==traceId && trace.kind=="broken";});
-    if(source==traces.end())return fail("destruction trace observer placement requires broken native debris");
-    bool found=false;
-    for(float distance:{300.f,450.f,600.f,800.f,1000.f,1250.f,1400.f}) {
-      for(unsigned i=0;i<192;++i) {
-        const float angle=float(i)*float(M_PI)/96.f;
-        auto point=bench.destruction.destructionTraceSource+Vec3(std::cos(angle)*distance,0,std::sin(angle)*distance);
-        if(!floorAt(point))continue;
-        park(npc,point);
-        if((source->position-point).length()>1500.f)continue;
-        bool visible=false;
-        for(const auto& sight:source->sightPoints)
-          visible|=npc.canRayHitPoint(sight,command=="blocked",2000.f);
-        if((command=="visible" && visible) || (command=="blocked" && !visible)) {found=true;break;}
-        }
-      if(found)break;
-      }
-    if(!found)return fail(command=="blocked"?"no supported Lobart position behind a real farm wall":
-                                             "no supported Lobart position seeing the native debris");
-    }
-  else if(command!="setup" && !command.starts_with("reload ") && command!="sample")
-    return fail("unknown destruction_traces command");
-  std::string rows="[";
-  for(const auto& trace:world.physicsTraces()) {
-    if(trace.id!=traceId || trace.kind!="broken")continue;
-    bool visible=false;
-    for(const auto& point:trace.sightPoints)visible|=npc.canRayHitPoint(point,true,2000.f);
-    const auto* wp=world.findWayPoint(trace.position);
-    if(rows.size()>1)rows+=',';
-    rows+="{\"id\":"+jsonStr(trace.id)+",\"kind\":"+jsonStr(trace.kind)+",\"name\":"+jsonStr(trace.name)+
-      ",\"waypoint\":"+jsonStr(wp?wp->name:"")+",\"position_cm\":"+ragdollVector(trace.position)+
-      ",\"distance_cm\":"+ragdollNumber((trace.position-npc.position()).length())+
-      ",\"appeared_at\":"+std::to_string(trace.appearedAt)+",\"actor_truth\":"+jsonStr(trace.culprit)+
-      ",\"can_ray_hit_point\":"+(visible?"true":"false")+"}";
-    }
-  value="{\"npc\":"+jsonStr(symName(world,&npc))+",\"hero\":"+jsonStr(symName(world,&player))+
-    ",\"zen_id\":"+std::to_string(bench.destruction.destructionTraceZen)+",\"trace_id\":"+jsonStr(traceId)+
-    ",\"source_position_cm\":"+ragdollVector(bench.destruction.destructionTraceSource)+
-    ",\"npc_position_cm\":"+ragdollVector(npc.position())+
-    ",\"game_minutes\":"+std::to_string(world.time().toInt()/60000)+
-    ",\"melee_running\":"+(bench.destruction.destructionMeleeRunning?"true":"false")+
-    ",\"melee_attempts\":"+std::to_string(bench.destruction.destructionMeleeAttempts)+",\"truth\":"+rows+"]}";
-  return true;
+  return testbench_detail::destructionTracesDebug(bench.destruction,destructionContext(),world,player,command,value,error);
   }
 
 void TestBench::destructionBreak(uintptr_t body,size_t pieces,float milliseconds) {
@@ -6486,80 +6134,11 @@ void TestBench::movementImpulseHandoff(const Npc& actor,std::string_view backend
   }
 
 void TestBench::physicsNoise(const PhysicsNoise& noise,std::string_view sound,bool played) {
-  if(bench.movables.noiseBridgeDebug && (noise.position-bench.movables.noiseSource).quadLength()<250.f*250.f) {
-    ++bench.movables.noiseBridgeImpacts;
-    if(noise.volume>=.35f)++bench.movables.noiseBridgeLoudImpacts;
-    if(noise.culprit)++bench.movables.noiseBridgeCulpritImpacts;
-    if(noise.what.find("BEER")!=std::string::npos) {
-      ++bench.movables.noiseBridgeCupImpacts;
-      bench.movables.noiseBridgeCupMaxRadius=std::max(bench.movables.noiseBridgeCupMaxRadius,noise.radius);
-      }
-    if(auto* world=Gothic::inst().world();world && bench.movables.noiseHost && noise.volume>=.35f) {
-      auto& npc=*bench.movables.noiseHost;
-      const float radius=noise.radius*std::max(0.f,1.f-world->physic()->soundOclusion(npc.mapHeadBone(),noise.position));
-      if(npc.qDistTo(noise.position)<=radius*radius) {
-        if(noise.culprit && !npc.canSeeNpc(*noise.culprit,false))++bench.movables.noiseBridgeUnseenCulpritImpacts;
-        if(Gothic::inst().isNpcInDialog(npc))++bench.movables.noiseBridgeDialogueImpacts;
-        if(npc.weaponState()!=WeaponState::NoWeapon && stateName(*world,npc)=="ZS_ATTACK")++bench.movables.noiseBridgeCombatImpacts;
-        }
-      }
-    }
-  if(scenarioPath==nullptr || !bench.movables.noiseTrace)return;
-  if(bench.movables.movableMeasuring) {++bench.movables.noiseMeasuredImpacts;return;}
-  const char* material="unknown";
-  switch(noise.material) {
-    case MAT_WOOD:material="wood";break;
-    case MAT_METAL:material="metal";break;
-    case MAT_STONE:material="stone";break;
-    case MAT_CLAY:material="clay";break;
-    case MAT_GLAS:material="glass";break;
-    case MAT_LEATHER:material="leather";break;
-    default:break;
-    }
-  auto* world=Gothic::inst().world();
-  std::string listeners="[";
-  if(world)for(const auto& listener:bench.movables.noiseListeners) {
-    if(listeners.size()>1)listeners+=',';
-    const auto head=listener.npc->mapHeadBone();
-    const auto occlusion=world->physic()->soundOclusion(head,noise.position);
-    listeners+="{\"role\":"+jsonStr(listener.role)+",\"npc_id\":"+std::to_string(noiseNpcId(listener.npc))+
-      ",\"distance_cm\":"+ragdollNumber((head-noise.position).length())+
-      ",\"occlusion\":"+ragdollNumber(occlusion)+",\"effective_radius_cm\":"+
-      ragdollNumber(noise.radius*(1.f-occlusion))+"}";
-    }
-  event("physics_noise","\"phase\":"+jsonStr(bench.movables.noisePhase)+",\"t_game_ms\":"+
-    std::to_string(world?world->tickCount():0)+",\"body\":"+std::to_string(noise.body)+
-    ",\"position_cm\":"+ragdollVector(noise.position)+",\"volume\":"+ragdollNumber(noise.volume)+
-    ",\"radius_cm\":"+ragdollNumber(noise.radius)+",\"impulse_ns\":"+ragdollNumber(noise.impulse)+
-    ",\"material\":"+jsonStr(material)+",\"surface_material\":"+std::to_string(int(noise.surface))+
-    ",\"what\":"+jsonStr(noise.what)+",\"culprit\":"+
-    (world && noise.culprit?std::to_string(noiseNpcId(noise.culprit)):"null")+
-    ",\"sound\":"+jsonStr(sound)+",\"played\":"+(played?"true":"false")+
-    ",\"listeners\":"+listeners+"]");
+  testbench_detail::physicsNoise(movablesContext(),noise,sound,played);
   }
 
 void TestBench::physicsNoiseHeard(const Npc& npc,const PhysicsNoise& noise,bool callbackDispatched) {
-  if(bench.movables.noiseBridgeDebug && &npc==bench.movables.noiseHost)
-    if(auto* world=Gothic::inst().world())bench.movables.noiseBridgeHeard.push_back(world->tickCount());
-  if(scenarioPath==nullptr || !bench.movables.noiseTrace)return;
-  if(bench.movables.movableMeasuring) {
-    ++bench.movables.noiseMeasuredHeard;
-    for(auto& listener:bench.movables.noiseListeners)
-      if(listener.npc==&npc)++listener.heard;
-    return;
-    }
-  auto* world=Gothic::inst().world();if(!world)return;
-  const auto id=noiseNpcId(&npc);
-  ++bench.movables.noisePerceptions[id];
-  std::string_view role;
-  for(auto& listener:bench.movables.noiseListeners)
-    if(listener.npc==&npc) {++listener.heard;role=listener.role;}
-  event("physics_noise_heard","\"phase\":"+jsonStr(bench.movables.noisePhase)+",\"t_game_ms\":"+
-    std::to_string(world->tickCount())+",\"npc_id\":"+std::to_string(id)+",\"role\":"+jsonStr(role)+
-    ",\"body\":"+std::to_string(noise.body)+",\"position_cm\":"+ragdollVector(noise.position)+
-    ",\"perception\":"+std::to_string(int(PERC_ASSESSQUIETSOUND))+
-    ",\"callback_dispatched\":"+(callbackDispatched?"true":"false")+
-    ",\"culprit\":"+(noise.culprit?std::to_string(noiseNpcId(noise.culprit)):"null"));
+  testbench_detail::physicsNoiseHeard(movablesContext(),npc,noise,callbackDispatched);
   }
 
 void TestBench::configure(std::string scenario, std::string output, int64_t seedOverride) {

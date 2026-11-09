@@ -907,4 +907,130 @@ bool destructionCommand(Destruction& state,const DestructionContext& context,con
   return true;
   }
 
+bool destructionTracesDebug(Destruction& state,const DestructionContext& context,World& world,Npc& player,std::string_view command,
+                                      std::string& value,std::string& error) {
+  if(command.starts_with("signal ")) {
+    context.brokenSignals.insert(std::string(command.substr(7)));
+    value="{}";
+    return true;
+    }
+  const auto fail=[&](std::string_view message) {error=message;return false;};
+  const auto park=[&](Npc& npc,const Vec3& point) {
+    npc.clearAiQueue();npc.clearState(false);npc.clearGoTo();npc.stopWalking();npc.setInteraction(nullptr,true);
+    npc.closeWeapon(true);npc.setPosition(point);npc.setExternalControl(false);
+    npc.setDirection(state.destructionTraceSource-point);npc.updateTransform();
+    npc.aiPush(AiQueue::aiWait(120000));
+    };
+  const auto floorAt=[&](Vec3& point) {
+    const auto floor=world.physic()->landRay(point+Vec3(0,220,0),600);
+    if(!floor.hasCol || floor.n.y<.8f || std::abs(floor.v.y-state.destructionTraceSource.y)>350)return false;
+    point.y=floor.v.y;
+    for(const auto offset:{Vec3(40,0,0),Vec3(-40,0,0),Vec3(0,0,40),Vec3(0,0,-40)})
+      if(world.physic()->ray(point+Vec3(0,85,0),point+offset+Vec3(0,85,0)).hasCol)return false;
+    return true;
+    };
+  if(command=="setup" || command.starts_with("reload ")) {
+    state.destructionTraceDebug=false;state.destructionMeleeRunning=false;
+    state.destructionTraceHost=nullptr;state.destructionTraceWorld=nullptr;
+    uint32_t zenId=19355;
+    if(command.starts_with("reload ")) {
+      try {zenId=uint32_t(std::stoul(std::string(command.substr(7))));}
+      catch(const std::exception&) {return fail("destruction trace reload requires a map-vob zen id");}
+      }
+    Gothic::settingsSetI("GAME","destruction",1);
+    world.physic()->setDestructionEnabled(true);
+    const auto bodies=world.physic()->movableVobSnapshot();
+    const auto found=std::find_if(bodies.begin(),bodies.end(),[&](const auto& body){return body.zenId==zenId;});
+    if(found==bodies.end() || found->className!="fence" || !found->destructible)
+      return fail("destruction trace fixture requires the authored Lobart farm fence");
+    if(command=="setup" && found->broken)return fail("destruction trace setup requires an intact farm fence");
+    for(uint32_t i=0;i<world.npcCount();++i) {
+      auto* npc=world.npcById(i);if(!npc)continue;
+      auto name=symName(world,npc);
+      for(auto& c:name)c=char(std::toupper(static_cast<unsigned char>(c)));
+      if(name.find("LOBART")!=std::string::npos) {state.destructionTraceHost=npc;break;}
+      }
+    if(!state.destructionTraceHost)return fail("destruction trace fixture requires Lobart");
+    state.destructionTraceZen=zenId;
+    state.destructionTraceSource=(found->localBounds[0]+found->localBounds[1])*.5f;
+    found->transform.project(state.destructionTraceSource);
+    if(command=="setup") {
+      destructionFarmSetup(state,context,world,player,zenId);
+      if(state.destructionFarmZen!=zenId || state.destructionMeleeActor!=&player)
+        return fail("destruction trace native sword stance preparation failed");
+      }
+    world.script().skipImportantInfos(*state.destructionTraceHost,player);
+    player.handle().attribute[ATR_HITPOINTS]=100000;player.handle().attribute[ATR_HITPOINTSMAX]=100000;
+    bool supported=false;
+    for(unsigned i=0;i<96;++i) {
+      const float angle=float(i)*float(M_PI)/48.f;
+      auto point=state.destructionTraceSource+Vec3(std::cos(angle)*500,0,std::sin(angle)*500);
+      if(!floorAt(point))continue;
+      park(*state.destructionTraceHost,point);supported=true;break;
+      }
+    if(!supported)return fail("destruction trace fixture lacks supported observer floor");
+    state.destructionTraceWorld=&world;state.destructionTraceDebug=true;
+    }
+  if(!state.destructionTraceDebug || state.destructionTraceWorld!=&world || !state.destructionTraceHost)
+    return fail("destruction_traces setup or reload required");
+  auto& npc=*state.destructionTraceHost;
+  const auto traceId=std::string(world.name())+":vob:"+std::to_string(state.destructionTraceZen);
+  if(command=="break") {
+    if(state.destructionFarmZen!=state.destructionTraceZen || state.destructionMeleeActor!=&player)
+      return fail("destruction trace break requires the original intact setup");
+    if(state.destructionMeleeRunning)return fail("destruction trace native sword attack is already running");
+    const auto bodies=world.physic()->movableVobSnapshot();
+    const auto found=std::find_if(bodies.begin(),bodies.end(),[&](const auto& body){return body.zenId==state.destructionTraceZen;});
+    if(found==bodies.end() || found->broken)return fail("destruction trace break requires its intact farm fence");
+    state.destructionMeleeRunning=true;state.destructionMeleeNext=world.tickCount();
+    state.destructionMeleeDeadline=world.tickCount()+90000;
+    if(context.scenarioPath!=nullptr)context.waitUntil=context.time+90034;
+    }
+  else if(command=="visible" || command=="blocked") {
+    const auto traces=world.physicsTraces();
+    const auto source=std::find_if(traces.begin(),traces.end(),[&](const auto& trace){return trace.id==traceId && trace.kind=="broken";});
+    if(source==traces.end())return fail("destruction trace observer placement requires broken native debris");
+    bool found=false;
+    for(float distance:{300.f,450.f,600.f,800.f,1000.f,1250.f,1400.f}) {
+      for(unsigned i=0;i<192;++i) {
+        const float angle=float(i)*float(M_PI)/96.f;
+        auto point=state.destructionTraceSource+Vec3(std::cos(angle)*distance,0,std::sin(angle)*distance);
+        if(!floorAt(point))continue;
+        park(npc,point);
+        if((source->position-point).length()>1500.f)continue;
+        bool visible=false;
+        for(const auto& sight:source->sightPoints)
+          visible|=npc.canRayHitPoint(sight,command=="blocked",2000.f);
+        if((command=="visible" && visible) || (command=="blocked" && !visible)) {found=true;break;}
+        }
+      if(found)break;
+      }
+    if(!found)return fail(command=="blocked"?"no supported Lobart position behind a real farm wall":
+                                             "no supported Lobart position seeing the native debris");
+    }
+  else if(command!="setup" && !command.starts_with("reload ") && command!="sample")
+    return fail("unknown destruction_traces command");
+  std::string rows="[";
+  for(const auto& trace:world.physicsTraces()) {
+    if(trace.id!=traceId || trace.kind!="broken")continue;
+    bool visible=false;
+    for(const auto& point:trace.sightPoints)visible|=npc.canRayHitPoint(point,true,2000.f);
+    const auto* wp=world.findWayPoint(trace.position);
+    if(rows.size()>1)rows+=',';
+    rows+="{\"id\":"+jsonStr(trace.id)+",\"kind\":"+jsonStr(trace.kind)+",\"name\":"+jsonStr(trace.name)+
+      ",\"waypoint\":"+jsonStr(wp?wp->name:"")+",\"position_cm\":"+ragdollVector(trace.position)+
+      ",\"distance_cm\":"+ragdollNumber((trace.position-npc.position()).length())+
+      ",\"appeared_at\":"+std::to_string(trace.appearedAt)+",\"actor_truth\":"+jsonStr(trace.culprit)+
+      ",\"can_ray_hit_point\":"+(visible?"true":"false")+"}";
+    }
+  value="{\"npc\":"+jsonStr(symName(world,&npc))+",\"hero\":"+jsonStr(symName(world,&player))+
+    ",\"zen_id\":"+std::to_string(state.destructionTraceZen)+",\"trace_id\":"+jsonStr(traceId)+
+    ",\"source_position_cm\":"+ragdollVector(state.destructionTraceSource)+
+    ",\"npc_position_cm\":"+ragdollVector(npc.position())+
+    ",\"game_minutes\":"+std::to_string(world.time().toInt()/60000)+
+    ",\"melee_running\":"+(state.destructionMeleeRunning?"true":"false")+
+    ",\"melee_attempts\":"+std::to_string(state.destructionMeleeAttempts)+",\"truth\":"+rows+"]}";
+  return true;
+  }
+
 }

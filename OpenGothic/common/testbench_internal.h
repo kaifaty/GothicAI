@@ -378,6 +378,7 @@ struct MovablesContext {
   Tempest::Vec3& ragdollArenaTarget;
   std::string& shot;
   Npc*& subject;
+  const char* const& scenarioPath;
 };
 
 struct BodyAnimationEntry {
@@ -465,6 +466,19 @@ struct BodyContext {
   uint64_t& waitUntil;
 };
 
+struct PhysicsTracesContext {
+  Npc*& traceHost;
+  uint32_t& traceTable;
+  Tempest::Matrix4x4& traceOrigin;
+  Tempest::Vec3& traceCenter;
+  Tempest::Vec3& traceVisible;
+  Tempest::Vec3& traceBlocked;
+  Tempest::Vec3& traceFar;
+  Tempest::Vec3& traceWall;
+  Tempest::Vec3& traceShotDirection;
+  bool& traceReady;
+};
+
 // References to shared bench fields used by the body-impact fixtures.
 struct BodyImpactContext {
   BodyImpact& bodyImpact;
@@ -533,6 +547,8 @@ struct DestructionContext {
   std::vector<SpellActor>& spellActors;
   uint64_t& time;
   uint64_t& waitUntil;
+  std::unordered_set<std::string>& brokenSignals;
+  const char* const& scenarioPath;
 };
 
 struct LivingWalker { Npc* npc=nullptr; WayPoint ends[2]; bool next=false,queued=false; int meleePhase=-1;uint64_t meleeAttackAt=0; };
@@ -1154,6 +1170,9 @@ void pushMovablePinnedTable(World& world);
 bool noiseCommand(const MovablesContext& context,const std::vector<std::string>& a,World& w,Npc& pl,PlayerControl& ctrl);
 bool movableCommand(const MovablesContext& context,const std::vector<std::string>& a,World& w,Npc& pl,PlayerControl& ctrl);
 bool spellCommand(const MovablesContext& context,const std::vector<std::string>& a,World& w,Npc& pl,PlayerControl& ctrl);
+bool physicsNoiseDebug(const MovablesContext& context,World& world,Npc& player,std::string_view command,std::string& value,std::string& error);
+void physicsNoise(const MovablesContext& context,const PhysicsNoise& noise,std::string_view sound,bool played);
+void physicsNoiseHeard(const MovablesContext& context,const Npc& npc,const PhysicsNoise& noise,bool callbackDispatched);
 MovablesContext movablesContext();
 bool chooseQuestSite(World& world,bool water,QuestSite& site,const std::function<bool(QuestSite&)>& accept={});
 
@@ -1171,6 +1190,7 @@ bool isNumber(const std::string& s);
 void prepareSpellFixture(World& world,Npc& player,std::string_view fixture);
 void destructionCheckpoint(World& world);
 
+bool destructionTracesDebug(Destruction& state,const DestructionContext& context,World& world,Npc& player,std::string_view command,std::string& value,std::string& error);
 bool destructionOwns(Destruction& state,uintptr_t id);
 std::string destructionRows(Destruction& state,World& world);
 std::string destructionFragments(Destruction& state,World& world);
@@ -1231,6 +1251,9 @@ void observeAnimationAttempt(const Npc& npc,const std::string& fields,uint64_t g
 void endAnimationControl();
 void animationControlTotals();
 bool bodyCommand(const BodyContext& context,const std::vector<std::string>& a,World& w,Npc& pl);
+
+PhysicsTracesContext physicsTracesContext();
+bool physicsTracesDebug(const PhysicsTracesContext& context,World& world,Npc& player,std::string_view command,std::string& value,std::string& error);
 
 BodyImpactContext bodyImpactContext();
 void bodyImpactTick(World& world);
