@@ -34,6 +34,9 @@ Kinds:
         share `roll` of its swing about the cycle's mean; the trunk keeps its turn and the legs reach the same feet,
         so only the hips move. A strong hip drop reads as a woman's gait (Gothic's own female run: 11°, male: 5°).
         The roll is seen along the record's travel; a record that stays in place names it: "axis": [x, 0, z].
+- steady {"bones": ["BIP01 NECK", "BIP01 HEAD"], "window": [...], "share": 0.4}: the last bone keeps the share of its
+        swing in the world about its mean over the record, and the turn that takes is spread evenly over the listed
+        bones: a runner holds the head still while the chest swings. Both clavicles hang on the neck: `keep` them.
 
 {"loop": true} in fixes.json: the record is a moving loop - its last frame is the first again, moved by the
 travel (loop_cycle.py). Windows may then run past the last cycle frame and go on from frame 0 (a window [18, 23,
@@ -287,6 +290,23 @@ def apply(skel: ga.Skeleton, anim: ga.Animation, fixes: list, floor: float, cycl
                     t = (bend - top) * wt(win, f)
                     clip.set_world_rot(f, W, hand, rot(k / np.linalg.norm(k), t) @ W[i_hand][:3, :3])
                     log.append(f"wrist {hand} f{f}: {np.degrees(bend):.0f}° -> {np.degrees(bend - t):.0f}°")
+        elif kind == "steady":
+            # the last bone keeps the share `share` of its swing in the world about its cycle mean (a runner holds
+            # the head still), and the turn that takes is spread evenly over the bones of the list, top down
+            bones = fx["bones"]
+            i_end = skel.index(bones[-1])
+            qs = np.array([quat(clip.world(f)[i_end][:3, :3]) for f in range(count)])
+            qs[(qs @ qs[0]) < 0] *= -1
+            mean = ga.quat_matrix(qs.mean(0) / np.linalg.norm(qs.mean(0)))
+            for f in frames:
+                W = clip.world(f)
+                now = W[i_end][:3, :3].copy()
+                goal = slerp_m(now, mean, (1 - fx["share"]) * wt(win, f))
+                part = slerp_m(np.eye(3), goal @ now.T, 1 / len(bones))
+                for bone in bones[:-1]:
+                    i = skel.index(bone)
+                    clip.set_world_rot(f, W, bone, part @ W[i][:3, :3])
+                clip.set_world_rot(f, W, bones[-1], goal)
         elif kind == "pelvis":
             # the hips' roll (one hip up, the other down, seen from the front) kept to the share `roll` of its swing
             # about the mean; the trunk keeps its turn and the legs reach the same feet, so only the hips move

@@ -638,3 +638,26 @@ def test_fix_layer_loop_window_runs_over_the_seam():
     assert changed == [0, 1, 2, n - 2, n - 1]  # frames n-3 and n+3 are the window's zero ends
     assert np.array_equal(anim.rotations[n], anim.rotations[0])
     assert np.allclose(anim.positions[n, 0], anim.positions[0, 0] + travel)
+
+
+def test_fix_layer_steady_holds_the_head_still_and_keep_leaves_the_arms():
+    import fix_layer
+    skel, anim = gothic_run()
+    n = anim.frame_count - 1
+    head, hands = skel.index("BIP01 HEAD"), [skel.index(f"BIP01 {s} HAND") for s in "LR"]
+
+    def swing(a):
+        qs = np.array([rs.mat_to_quat(ga.world_pose(skel, a, f)[head][:3, :3]) for f in range(n)])
+        qs[(qs @ qs[0]) < 0] *= -1
+        m = qs.mean(0) / np.linalg.norm(qs.mean(0))
+        return np.degrees(2 * np.arccos(np.clip(np.abs(qs @ m), -1, 1)))
+
+    before = [ga.world_pose(skel, anim, f) for f in range(n)]
+    s0 = swing(anim)
+    fix_layer.apply(skel, anim, [{"kind": "steady", "bones": ["BIP01 NECK", "BIP01 HEAD"], "window": [0, 0, n - 1, n - 1],
+                                  "share": 0.4},
+                                 {"kind": "keep", "bones": ["BIP01 L CLAVICLE", "BIP01 R CLAVICLE"],
+                                  "window": [0, 0, n - 1, n - 1]}], floor=0.0, cycle=n)
+    assert swing(anim).max() < 0.45 * s0.max()
+    after = [ga.world_pose(skel, anim, f) for f in range(n)]
+    assert all(np.allclose(after[f][i][:3, 3], before[f][i][:3, 3], atol=0.5) for f in range(n) for i in hands)
