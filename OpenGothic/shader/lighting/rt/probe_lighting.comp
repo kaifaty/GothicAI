@@ -12,7 +12,6 @@
 #include "lighting/tonemapping.glsl"
 #include "scene.glsl"
 #include "common.glsl"
-#include "random.glsl"
 
 // Light at the points the rays of a probe hit (gbuffer of probe_trace.comp), as the path tracer lights a hit
 // (lighting/pt/pathtrace.frag): the sun and the lamps of the lights tree with a shadow ray, the sky on a miss, and
@@ -196,58 +195,15 @@ bool findProbe(vec3 pos, vec3 norm, out uint id) {
   return false;
   }
 
-bool traceHit(vec3 origin, vec3 dir, out vec3 albedo, out vec3 norm, out float rayT) {
-  // a ray of probe_trace.comp: front faces, the alpha test of vegetation
-  rayQueryEXT rayQuery;
-  rayQueryInitializeEXT(rayQuery, topLevelAS, gl_RayFlagsSkipAABBEXT | gl_RayFlagsCullBackFacingTrianglesEXT, 0xFF,
-                        origin, 0.0, dir, probeRayDistance);
-  rayQueryProceedShadow(rayQuery);
-  if(rayQueryGetIntersectionTypeEXT(rayQuery, true) == gl_RayQueryCommittedIntersectionNoneEXT)
-    return false;
-
-  const HitDesc hit   = pullCommitedHitDesc(rayQuery);
-  const uint    id    = hit.instanceId;
-  const uvec3   index = pullTrinagleIds(id, hit.primitiveId);
-  const vec3    b     = hit.baryCoord;
-  const vec2    uv    = b.x*pullTexcoord(id,index.x) + b.y*pullTexcoord(id,index.y) + b.z*pullTexcoord(id,index.z);
-  const vec3    nr    = b.x*pullNormal(id,index.x)   + b.y*pullNormal(id,index.y)   + b.z*pullNormal(id,index.z);
-
-  rayT = rayQueryGetIntersectionTEXT(rayQuery, true);
-  norm = normalize(mat3(rayQueryGetIntersectionObjectToWorldEXT(rayQuery, true))*nr);
-  // the mip of the path tracer's later bounces (pathtrace_common.glsl, rayPathTextureLOD)
-  const float mip = log2(max(rayT, 1.0)/500.0) - log2(max(abs(dot(dir, norm)), 0.05));
-  albedo = textureAlbedo(textureLod(sampler2D(textures[nonuniformEXT(id)], smp), uv, max(mip, 0.0)).rgb);
-  return true;
-  }
-
-vec3 bounce(vec3 pos, vec3 norm, uint probeId, bool hasPrev, inout Random rng) {
-  // The light of the hit's own surroundings: the probe of the last frame there. A hit off the screen or hidden has
-  // none (probes stand only where the camera sees): then one more bounce of the path, cosine-weighted and lit as the
-  // hit itself, a single sample of the irradiance over pi. This probe's own light in the hit's direction instead
-  // left a hut at noon 10 % darker: it misses the sky over the street seen through the door.
+vec3 bounce(vec3 pos, vec3 norm, uint probeId, bool hasPrev) {
+  // The light of the hit's own surroundings: the probe of the last frame there; a hit off the screen or hidden has
+  // none (probes stand only where the camera sees), then this probe's own light in the hit's direction. One more
+  // ray of the path from such a hit made a hut at noon 3-10 % lighter (the sky over the street seen through the
+  // door) for +0,4 ms in combat: over the budget (step-2.md, «2а»).
   uint id = 0;
   if(findProbe(pos, norm, id))
     return probeReadAmbient(probesLightingPrev, id, norm, vec3(0));
-
-  const vec3 dir = randCosWeightedHemisphereDirection(norm, rng);
-  const vec3 org = pos + norm*0.5;
-  vec3  albedo, n2;
-  float t;
-  if(!traceHit(org, dir, albedo, n2, t))
-    return skyRadiance(pos, dir);
-
-  const vec3 p2 = org + dir*t;
-  if(dot(n2, dir)>0)
-    n2 = -n2;
-  albedo = min(albedo, vec3(0.95));
-  const vec3 at = p2 + n2*0.5;
-
-  vec3 direct = vec3(0);
-  direct += sunLight(n2, at) * scene.sunColor;
-  direct += localLight(n2, at, randf(rng)) * (max(1.0, scene.exposure) / scene.exposure);
-
-  const vec3 ind = findProbe(p2, n2, id) ? probeReadAmbient(probesLightingPrev, id, n2, vec3(0)) : readSelf(probeId, hasPrev, n2);
-  return albedo*direct*Fd_Lambert + albedo*ind;
+  return readSelf(probeId, hasPrev, norm);
   }
 
 vec4 shadeSample(const vec3 rayOrigin, const vec3 rayDirection, uint probeId, uint sampleId, bool hasPrev) {
@@ -284,8 +240,7 @@ vec4 shadeSample(const vec3 rayOrigin, const vec3 rayDirection, uint probeId, ui
   direct += localLight(norm, at, key) * (max(1.0, scene.exposure) / scene.exposure);
 
   vec3 hit = albedo * direct * Fd_Lambert;
-  Random rng = srand(uvec3(seed, sampleId, 0)); // the same path every frame, as the lamp
-  hit += albedo * bounce(pos, norm, probeId, hasPrev, rng); // Fd_Lambert is in the probes' integration
+  hit += albedo * bounce(pos, norm, probeId, hasPrev); // Fd_Lambert is in the probes' integration
   return vec4(hit, 1);
   }
 

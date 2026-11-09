@@ -10,9 +10,10 @@
 #include "common.glsl"
 
 layout(primitive_culling);
-layout(local_size_x = 64) in;
+// a thread per ray: a probe's 256 rays at once, not four in a row (the latency of a frame with few new probes)
+layout(local_size_x = 256) in;
 
-const  uint samplesCount = 4;
+const  uint samplesCount = 1;
 const  uint samplesTotal = gl_WorkGroupSize.x*samplesCount;
 
 shared uint shProbeId;
