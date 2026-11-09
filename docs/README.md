@@ -68,6 +68,8 @@ Ragdoll, физические тела живых NPC, возврат после
 
 Урон и реакции на удар — `commitDamage`, три `takeDamage`, `hitReaction`, равновесие и нокдаун, удары тел и урон от падения — в [`npc_damage.cpp`](../OpenGothic/common/world/objects/npc_damage.cpp). Приёмы ближнего боя — стамина, оглушение, удар в спину и супер-броня, парирование, перекаты и уклонения, таран, заряд, специальные приёмы ИИ и рипост — в [`npc_melee_moves.cpp`](../OpenGothic/common/world/objects/npc_melee_moves.cpp). Общие помощники трёх файлов (`meleeParadeLayer`, `meleeStaminaIdentity`, `meleeBeastFields`) объявлены в [`npc_melee.h`](../OpenGothic/common/world/objects/npc_melee.h).
 
+Наблюдение состояния и цели тела, идентичность и слои боевой позы, трассы снимков, видимости, ворот и попыток боя — в [`npc_observation.cpp`](../OpenGothic/common/world/objects/npc_observation.cpp).
+
 Сохранение и загрузка NPC — в [`npc_save.cpp`](../OpenGothic/common/world/objects/npc_save.cpp), таланты, атрибуты, гильдии и отношение — в [`npc_attributes.cpp`](../OpenGothic/common/world/objects/npc_attributes.cpp). Объявление общего состояния превращения — в [`npc_transformback.h`](../OpenGothic/common/world/objects/npc_transformback.h), его методы остаются в `npc.cpp`.
 
 Подвижные объекты, мебель, разрушение, обломки и их сохранения — в [`dynamicworld_movables.cpp`](../OpenGothic/common/physics/dynamicworld_movables.cpp); оболочки предметов и перепись расставленных предметов с отпечатком входов — в [`dynamicworld_items.cpp`](../OpenGothic/common/physics/dynamicworld_items.cpp); общие `DynamicWorld::MovableVobs`, `BodyData`, `ItemHulls` и помощники — в [`dynamicworld_internal.h`](../OpenGothic/common/physics/dynamicworld_internal.h).
