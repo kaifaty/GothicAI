@@ -2390,11 +2390,14 @@ void Renderer::prepareIrradiance(Encoder<CommandBuffer>& cmd, WorldView& wview) 
   cmd.dispatch(1);
   }
 
+// probe_stats: live, traced, slots, free slots, allocated at hits, freed (probe_aux.comp, Stats)
+static constexpr uint32_t giStatsCount = 6;
+
 void Renderer::readGiStats(uint8_t fId) {
   // the counters this frame slot wrote last time: its fence has been waited for, the buffer is host-visible
   if(!FrameProfile::enabled() || !gi.statsWritten[fId] || gi.stats[fId].isEmpty())
     return;
-  uint32_t v[gi.statsCount] = {};
+  uint32_t v[giStatsCount] = {};
   Resources::device().readBytes(gi.stats[fId], v, sizeof(v));
   FrameProfile::add(FrameProfile::Amount::GiProbesLive,     v[0]);
   FrameProfile::add(FrameProfile::Amount::GiProbesTraced,   v[1]);
@@ -2650,7 +2653,7 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
   if(FrameProfile::enabled()) {
     auto& stats = gi.stats[fId];
     if(stats.isEmpty())
-      stats = Resources::device().ssbo(BufferHeap::Readback, Uninitialized, gi.statsCount*sizeof(uint32_t));
+      stats = Resources::device().ssbo(BufferHeap::Readback, Uninitialized, giStatsCount*sizeof(uint32_t));
     cmd.setDebugMarker("GI-Stats");
     cmd.setBinding(0, voteTable);
     cmd.setBinding(1, hashTable);

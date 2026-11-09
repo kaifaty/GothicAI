@@ -296,7 +296,6 @@ class Renderer final {
       bool                      resetHistory = false; // another world: the probes start over, as on the first frame
       // the counters of probe_stats (live probes, traced in the frame), read back a frame slot later (FrameProfile)
       Tempest::StorageBuffer    stats[Resources::MaxFramesInFlight];
-      static constexpr uint32_t statsCount = 6;
       bool                      statsWritten[Resources::MaxFramesInFlight] = {};
       } gi;
 
