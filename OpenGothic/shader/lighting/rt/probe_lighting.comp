@@ -89,6 +89,7 @@ float shadowRay(vec3 origin, vec3 dir, float tMax) {
 
 float sunLight(vec3 norm, vec3 pos) {
   // pathtrace.frag, sampleDirectLight
+  // The horizon test is the raster sun's (direct_light.frag): no bounce of a sun the frame no longer shows.
   const float lamb = max(dot(norm, scene.sunDir), 0);
   if(lamb<=0 || planetOcclusion(pos.y, scene.sunDir))
     return 0;
@@ -258,6 +259,8 @@ void main() {
     if(i>=probeHeader.newCount)
       return;
     const uint probeId  = newList[i];
+    if(probeId>=probe.length())
+      continue; // as in probe_trace.comp; the same for the whole workgroup
     const uint sampleId = gl_LocalInvocationIndex;
     const vec3 dir      = sampleSphere(sampleId, samplesTotal, 0);
     const vec4 clr      = shadeSample(probe[probeId].pos, dir, probeId, sampleId, false);
@@ -272,7 +275,7 @@ void main() {
     return;
   const uint bits = probe[probeId].bits;
   if((bits & (UNUSED_BIT | NEW_BIT))!=0 || (bits & TRACED_BIT)==0)
-    return; // a new probe lights all its samples in probe_lighting.comp
+    return; // a new probe lights all its samples in probe_relight_new.comp
 
   const uint sampleId = (gl_GlobalInvocationID.x%perProbe)*relitPeriod + (frameId + probeId)%relitPeriod;
   const vec3 dir      = sampleSphere(sampleId, samplesTotal, 0);

@@ -365,6 +365,7 @@ void Renderer::togglePathtrace() {
 void Renderer::onWorldChanged() {
   sky.lutIsInitialized = false;
   taa.valid            = false;
+  gi.resetHistory      = true;
   resetSkyFog();
   }
 
@@ -2425,8 +2426,19 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
   const auto&  scene   = wview.sceneGlobals();
   const size_t maxHash = hashTable.byteSize()/sizeof(uint32_t);
 
+  // The game's clock went back (a save from earlier in the game, a new game) or the world changed: the probes' hits
+  // and light are of another place or time. With dt 0 their cubes would blend only at a sharp change until the clock
+  // came back to the old tick. They start over as on the first frame: all probes new, traced and lit, no history.
+  // A pause (the same tick) keeps them.
+  if(scene.tickCount<gi.lastTick)
+    gi.resetHistory = true;
+  if(gi.resetHistory && !fisrtFrame)
+    Log::i("render: gi probes start over (", scene.tickCount<gi.lastTick ? "the game's clock went back" : "another world", ")");
+  const bool restart = fisrtFrame || gi.resetHistory;
+  gi.resetHistory = false;
+
   cmd.setFramebuffer({});
-  if(fisrtFrame) {
+  if(restart) {
     cmd.setDebugMarker("GI-Init");
     cmd.setBinding(0, voteTable);
     cmd.setBinding(1, hashTable);
