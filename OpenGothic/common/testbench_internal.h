@@ -4,6 +4,10 @@
 #include <Tempest/Vec>
 #include <Tempest/Point>
 
+#include <condition_variable>
+#include <mutex>
+#include <thread>
+
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -20,6 +24,7 @@
 #include <utility>
 #include <vector>
 
+#include "ui/crosshair.h"
 #include "resources.h"
 #include "game/constants.h"
 #include "game/meleedodge.h"
@@ -38,6 +43,9 @@
 #include "physics/ragdoll.h"
 #include "utils/keycodec.h"
 #include "world/waypoint.h"
+
+class Camera;
+namespace Tempest { class Pixmap; }
 
 class Interactive;
 class MoveTrigger;
@@ -89,6 +97,44 @@ enum CamMode : uint8_t {
   C_Two,      // the hero and the npc from the side
   C_Arrow,    // from the side of the newest arrow's way, going along with it (overlay trail records it)
   };
+
+inline constexpr int Fps = 30;
+
+struct Rgba { uint8_t r,g,b,a; };
+extern const Rgba Text;
+
+struct Canvas {
+  uint8_t* px = nullptr;
+  int      w  = 0;
+  int      h  = 0;
+
+  void blend(int x, int y, Rgba c);
+  void rect(int x, int y, int rw, int rh, Rgba c);
+  void dot(float x, float y, int r, Rgba c);
+  void line(float x0, float y0, float x1, float y1, int r, Rgba c);
+  // a polyline stroked as the game strokes the crosshair: white over a dark edge, smooth; each pixel once
+  void stroke(const std::vector<Tempest::Vec2>& pt, float alpha, const Crosshair::Pen& pen);
+  int text(int x, int y, std::string_view s, int sc, Rgba c);
+};
+
+// frames go to ffmpeg from a thread of their own: the game goes on while a frame is written
+class VideoPipe final {
+  public:
+    explicit VideoPipe(std::FILE* f);
+    ~VideoPipe();
+    void push(std::vector<uint8_t>&& frame);
+
+  private:
+    static constexpr size_t MaxQueued = 4;
+    void loop();
+
+    std::FILE*                       f;
+    std::mutex                       sync;
+    std::condition_variable          cv;
+    std::deque<std::vector<uint8_t>> queue;
+    bool                             done = false;
+    std::thread                      th;
+};
 
 struct QuestSite { bool ready=false; Tempest::Vec3 dry={}, direction={}; float waterY=0; std::string waypoint; };
 
@@ -1147,6 +1193,147 @@ struct NpcCommands {
     unsigned next=0;
   } stunDrift;
 };
+
+struct CameraBench {
+  CamMode     cam       = C_Game;
+  float       camDist   = 220;
+  float       camHeight = 40;
+  float       camAngle  = 90;   // C_Follow: degrees from the facing (0 in front, 90 on the left); C_World: world yaw
+  float       camLook   = 45;   // look at this height above the player origin
+  bool        camLift   = true; // C_Follow, C_World: kept above the ground under it (off: where it is put,
+                                // a floor above it is no ground: under a gallery, in a hall)
+  bool        camAuto   = false;
+  int         occlTime  = 0;
+  Tempest::Vec3        camPos;
+  Tempest::PointF      camHeldAngles;
+  Tempest::PointF      camTurnAngles;
+  float       camTurnDegrees = 0;
+  uint64_t    camTurnStart = 0, camTurnDuration = 0;
+
+  bool        rec       = false;
+  bool        recVideo  = false;
+  std::string recName;
+  uint64_t    recFrame  = 0;
+  uint64_t    recStart  = 0;
+  std::string shot;
+  float       clip      = 0;     // > 0: everything closer to the camera than the subject minus this is clipped away
+  uint8_t     occl      = 0;    // bit per leg: the ankle is hidden from the camera
+  // the hero placed around the subject: distance, angle from its facing (0 in front), orbiting
+  float       placeDist  = 0;
+  float       placeAngle = 0;
+  float       orbitSpeed = 0;     // degrees per second
+  uint64_t    orbitUntil = 0;
+
+  // talking (gothic-shorts)
+  std::string camNpc;           // C_Shoulder, C_NpcFace, C_Two
+  // slowmo: the game runs `slow` times slower than the video (its sound is not recorded meanwhile)
+  float       slow      = 1;
+  uint64_t    slowAcc   = 0;      // microseconds of game time owed to the next frame
+  uint64_t    frameMs   = 0;      // the video's time of this frame, ms
+  // track: where an npc's head (or trunk) is in each recorded frame, for labels that follow it
+  std::vector<std::string> trackNpcs;
+  bool        trackHead = true;
+  // sight: the hero's line of sight to an npc in each recorded frame and shot (the focus' rays).
+  std::string sightNpc;
+  float       sightFan  = 700;
+  float       camSmooth = 0.12f; // share of the way to the wanted camera per frame; 1: no smoothing
+  bool        smValid   = false;
+  bool        cutPending = false; // `cam cut`: the next placement of the camera is a cut (Camera::markCut)
+  Tempest::Vec3        smOrg, smTgt;
+  // sound: the mix of the game (Tempest loopback), recorded with the video
+  std::FILE*  audio     = nullptr;
+  uint64_t    audioFrames = 0;
+  uint64_t    audioAcc  = 0;
+  std::vector<int16_t> mix;
+  struct VoiceStem {
+    std::mutex           sync;
+    std::string          path;
+    uint32_t             rate = 0;
+    uint64_t             sample = 0;
+    std::vector<int16_t> pcm;
+    bool                 stopped = false;
+    };
+  std::vector<std::shared_ptr<VoiceStem>> voiceStems;
+  std::chrono::steady_clock::time_point recWall;  // when the recording started
+};
+
+struct OverlayBench {
+  std::unique_ptr<VideoPipe> video;
+  uint32_t    videoW    = 0;
+  uint32_t    videoH    = 0;
+  bool        overlay   = true;
+  bool        ui        = false;  // the interface is in the captured frame
+  bool        zoom      = true;
+  bool        bright    = true;  // auto exposure: forests and interiors are too dark to see the legs
+  float          aspect     = 4.f/3.f; // of the captured frame
+  float          uiScale    = 1;       // of the game's interface
+  std::string zonesNpc;         // showzones: the npc whose hit zones the overlay draws
+  bool        zonesOnly = false; // the overlay draws the hit zones only
+  // overlay trail: the way each arrow flew, kept trailKeep ms after its last move; nothing else drawn
+  using Trail = testbench_detail::Trail;
+  bool        trailOn   = false;
+  bool        trailLine = false;  // ...and a dashed straight line along the way it left: the bow's line
+  uint64_t    trailKeep = 1500;
+  std::vector<Trail> trails;
+};
+
+struct OverlayContext {
+  CameraBench& camera;
+  OverlayBench& overlay;
+  Living& living;
+  std::vector<Npc*>& crew;
+  PlayerControl*& ctrl;
+  Npc*& subject;
+  uint64_t& time;
+  std::string& label;
+};
+
+struct CameraContext {
+  CameraBench& camera;
+  OverlayBench& overlay;
+  OverlayContext overlayContext;
+  Water& water;
+  RagdollBench& ragdoll;
+  MonsterCharacter& monster;
+  Character& character;
+  Living& living;
+  ArcheryBench& archery;
+  Movables& movables;
+  Routine& routine;
+  std::vector<Npc*>& crew;
+  Npc*& subject;
+  PlayerControl*& ctrl;
+  uint64_t& time;
+  std::vector<std::string>& prog;
+  size_t& pc;
+  bool& hasPrev;
+  std::vector<Tempest::Vec3>& anim1;
+  std::vector<Tempest::Vec3>& anim2;
+  bool& ordered;
+  bool& bodyLive;
+  const bool& ragdollPerf;
+  const bool& realtime;
+  Npc& (*subjectOf)(Npc&);
+  void (*waterFilmFraming)(World&,uint32_t,uint32_t);
+};
+
+void updateCamera(World& w,Npc& pl);
+void placeHero(World& w,Npc& pl);
+bool frameRagdollArena(size_t expected=20);
+void lookFrom(const CameraContext& ctx,const Tempest::Vec3& org,const Tempest::Vec3& tgt);
+void updateCamera(const CameraContext& ctx,World& w,Npc& pl);
+void placeHero(const CameraContext& ctx,World& w,Npc& pl);
+bool frameRagdollArena(const CameraContext& ctx,size_t expected);
+void capture(const CameraContext& ctx,Tempest::Pixmap& frame,float uiScale);
+void stopRecording(const CameraContext& ctx);
+void writeWavHeader(std::FILE* f,uint32_t rate,uint64_t frames,uint16_t channels=2);
+bool cameraCommand(const CameraContext& ctx,const std::string& line,const std::vector<std::string>& a,
+                   World& w,Npc& pl,PlayerControl& ctrl);
+bool overlayCommand(const OverlayContext& ctx,const std::vector<std::string>& a);
+void drawOverlay(const OverlayContext& ctx,Tempest::Pixmap& pm);
+void drawZones(const OverlayContext& ctx,Canvas& cv,Camera* cam);
+void drawArenaMark(Tempest::Pixmap& pm);
+void writeVideo(const OverlayContext& ctx,const Tempest::Pixmap& pm);
 
 struct ControlContext {
   uint64_t& time;

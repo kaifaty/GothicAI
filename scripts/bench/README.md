@@ -4,9 +4,9 @@
 
 Bench families are extracted into `common/testbench_<family>.cpp`, with shared state types and helpers in `testbench_internal.h`.
 The dispatcher calls `bool <family>Command(...)` wrappers for the extracted command groups:
-`npc_sim`, `water`, `character`, `monster`, `furniture_parts`, `placed_items`, `item_hulls`, `fracture_pieces`, `destruction`, `body_impact`, `body`, `movable`, `noise`, `spell`, `item_wake`, `living`, `melee`, `routine`, `aim_spots`, `npc_commands` and `world`.
+`npc_sim`, `water`, `character`, `monster`, `furniture_parts`, `placed_items`, `item_hulls`, `fracture_pieces`, `destruction`, `body_impact`, `body`, `movable`, `noise`, `spell`, `item_wake`, `living`, `melee`, `routine`, `aim_spots`, `npc_commands`, `world`, `camera` and `overlay`.
 Each wrapper handles its command branches in their original order and returns whether it matched.
-Tick and reset remain in `testbench.cpp`, along with water-film and monster camera/follow commands.
+Tick and reset remain in `testbench.cpp`.
 Healing observations, commands and checks live in `common/testbench_healing.cpp`; its `Healing` state
 in `testbench_internal.h` keeps the current use separate from walk-speed references retained across `begin`.
 Family functions take that state by reference; the dispatcher also passes the melee-shadow actors.
@@ -22,7 +22,7 @@ The independent `ownMeshChest*` family lives in `common/testbench_own_mesh.cpp`.
 
 Ground-monster CharacterVirtual fixtures, observations and helpers live in `common/testbench_monster.cpp`.
 Their `MonsterCharacter` state and `MonsterCharacterContext` references are in `testbench_internal.h`.
-`monsterCharacterRenderProof`, `monsterCharacterCamera` and `TestBench::monsterCharacterCollision` stay in `testbench.cpp`.
+`TestBench::monsterCharacterCollision` stays in `testbench.cpp`; camera/follow commands and render proof live in `testbench_camera.cpp`.
 
 Destruction fixtures, observations and commands live in `common/testbench_destruction.cpp`.
 Their `Destruction` state and `DestructionContext` references are in `testbench_internal.h`.
@@ -45,61 +45,74 @@ The dispatcher calls `movableCommand`, `noiseCommand` and `spellCommand` at each
 shared helpers used by other families retain one definition.
 The bodies of `TestBench::physicsNoiseDebug`, `physicsNoise` and `physicsNoiseHeard` live in that family,
 with one-line delegates passing `MovablesContext` from `testbench.cpp`.
-Camera/capture helpers and the other `TestBench::` hooks stay in `testbench.cpp`.
+The other `TestBench::` hooks stay in `testbench.cpp`.
 
 Item-wake fixtures, observations and commands live in `common/testbench_item_wake.cpp`.
 Living-body counts, observations and `living` / `living-seat` commands live in `common/testbench_living.cpp`.
 Their `ItemWake` / `Living` state and context references are in `testbench_internal.h`;
 `itemWakeCommand` and `livingCommand` run at their groups' first original branches.
-The shared `ragdollNumber`, `ragdollVector`, `ragdollMatrix` and camera/capture helpers stay in `testbench.cpp`.
+The shared `ragdollNumber`, `ragdollVector` and `ragdollMatrix` stay in `testbench.cpp`.
 
 Ragdoll archives, observations, arena checks and commands live in `common/testbench_ragdoll.cpp`.
 Own-mesh physics and chest fixtures and commands live in `common/testbench_own_mesh.cpp`.
 Their `RagdollBench` / `OwnMesh` state types and context references are in `testbench_internal.h`;
 `ragdollCommand` and `ownMeshCommand` run at their groups' first original branches.
-`ragdoll frame20`, camera/capture functions, shared ragdoll formatting helpers and `TestBench::` hooks stay in `testbench.cpp`.
+`ragdoll frame20`, shared ragdoll formatting helpers and the other `TestBench::` hooks stay in `testbench.cpp`.
 
 Archery fixtures, observations, aim helpers and commands live in `common/testbench_archery.cpp`.
 Their `ArcheryBench` state, shared `Trail` type and `ArcheryContext` references are in `testbench_internal.h`.
 `archeryCommand` is called at the first branch of each of nine command groups, guarded by that group's command names.
-`aimCameraFrame`, `quiver`, `bowgeom`, `TestBench::arrowAt`, tick/reset and camera placement stay in `testbench.cpp`.
+`quiver`, `bowgeom`, `TestBench::arrowAt` and tick/reset stay in `testbench.cpp`.
 
 Physics, world-data, cadence, waitragdoll / standup, crowd / down / push and world / performance /
 streaming / deterministic commands live in `common/testbench_world.cpp`, along with `physicsDump`.
 Their `WorldBench` state, shared waypoint `Spot` and `WorldContext` references are in `testbench_internal.h`.
 `worldCommand` runs at the first original branch of each of six groups, guarded by that group's command names.
-`traces`, `ragdoll frame20`, tick/reset, camera/capture code and `TestBench::` methods stay in `testbench.cpp`.
+`traces`, `ragdoll frame20`, tick/reset and the other `TestBench::` methods stay in `testbench.cpp`.
 
 Manual-aim spot probes (`cansee`, `slopes`/`stairs`, `ledges`, `corner`, `walls`, `perches`, `edge`, `edgedist`)
 and their private perch helpers live in `common/testbench_aim_spots.cpp`.
 `aimSpotsCommand` runs at the first branch of each of two groups, guarded by that group's command names,
 with a reference to the shared `hasPrev` field. `Spot` / `SpotKind` and shared helper declarations are in
-`testbench_internal.h`; `findSpots`, `views`, camera/capture code and `expandForeach` stay in `testbench.cpp`.
+`testbench_internal.h`; `findSpots` and `expandForeach` stay in `testbench.cpp`.
 
 Melee-shadow and melee-physics fixtures, dodge / AI-response helpers and commands live in `common/testbench_melee.cpp`.
 Routine-return and guard fixtures, observations, shared hazard-site helpers and commands live in `common/testbench_routine.cpp`.
 Their `Melee` / `Routine` state types and context references are in `testbench_internal.h`;
 `meleeCommand` and `routineCommand` run at their groups' first original branches.
-Tick/reset, camera/capture code and `TestBench::` hooks stay in `testbench.cpp`;
+Tick/reset and the other `TestBench::` hooks stay in `testbench.cpp`;
 `meleePhysicsCamera` retains the fixture's original camera setup there.
 
 Cloth fixtures and commands live in `common/testbench_cloth.cpp`; water film fixtures and commands
 live in `common/testbench_water_film.cpp`. Their `ClothBench` / `WaterFilm` state and
 `ClothContext` / `WaterFilmContext` references are in `testbench_internal.h`.
 `clothCommand` and `waterFilmCommand` run at their first original branches; tick, cold-load observation
-and capture hooks stay in `testbench.cpp` and pass the family context.
+hooks stay in `testbench.cpp` and pass the family context; the capture hook in
+`testbench_camera.cpp` reaches the same water-film family through a context delegate.
 
 Hero and NPC inventory, placement, stats, routines, fights, aiming, hits and dodge commands live in `common/testbench_npc_commands.cpp`.
 Their `NpcCommands` state and `NpcCommandsContext` references are in `testbench_internal.h`.
 `npcCommandsCommand` runs at the first original branch of each of four groups, guarded by that group's command names;
 intervening `npcSimCommand` and `archeryCommand` calls retain their order in `exec`.
-Animation, appearance and capture commands stay in `testbench.cpp`.
+Animation commands stay in `testbench.cpp`.
 
 Scenario timing, logging, routing, movement and input commands live in `common/testbench_control.cpp`.
 Conversation and AI probes live in `common/testbench_dialog.cpp`.
 Their `ControlContext` / `DialogContext` references are in `testbench_internal.h`; shared helpers have one definition.
 Each family runs at its first original branch, guarded only by its command names.
-Intervening animation, camera and capture commands retain their positions in `exec`; tick/reset stay in `testbench.cpp`.
+Intervening animation commands retain their positions in `exec`; tick/reset stay in `testbench.cpp`.
+
+Camera placement, `views`, framing/track/sight/aim telemetry and the body of `TestBench::capture` live in
+[`common/testbench_camera.cpp`](../../OpenGothic/common/testbench_camera.cpp).
+Raster overlays, exposure, hit zones, arrow trails, video piping and recording finalization live in
+[`common/testbench_overlay.cpp`](../../OpenGothic/common/testbench_overlay.cpp).
+`CameraBench` / `OverlayBench` own their original fields in `testbench_internal.h`; `Bench` inherits them
+so tick/reset and the other families keep their shared field access. `CameraContext` / `OverlayContext`
+carry references to that state and the other fields used by these families.
+`cameraCommand` and `overlayCommand` run at the first original branch of their groups; all eleven camera
+and both overlay command conditions depend only on `c`. Monster camera/follow calls retain their full
+argument guards in `exec`. `TestBench::capture` and the shared contextless camera helpers are one-line delegates.
+`Canvas` and `VideoPipe` have shared declarations and one definition per method in `testbench_overlay.cpp`.
 
 Runs a scenario through the windowed game or the headless runner and records metrics and a report.
 Windowed scenarios can also capture video with a debug overlay and point at suspicious frames.
