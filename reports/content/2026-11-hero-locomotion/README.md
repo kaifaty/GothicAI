@@ -232,6 +232,7 @@
 ## Решения пользователя
 
 - 2026-11-09: «Да, ходьба и бег» — после исследования; «Да, цикл бега» — начать пилот с цикла бега.
+- 2026-11-09: петля А отвергнута по ролику из игры: «бегает как девочка. Выглядит не очень прикольно».
 
 ## Пилот, шаг 1: цикл бега
 
@@ -307,6 +308,26 @@
 
 Ролик «Gothic | А» и дубли лежат на хранилище, в `anim/2026-11-09-locomotion-probe`.
 
+### Почему А читается как женский бег
+
+Пользователь отверг А: «бегает как девочка». Эталон — оба бега самой Gothic: мужской `HUMANS-S_RUNL` и женский `HUMANS_BABE-S_RUNL`. Меры на `BIP01` по одному циклу (`cues.py`, `gait.py` на хранилище):
+
+| | Gothic, мужской | Gothic, женский | А |
+|---|---|---|---|
+| таз вверх-вниз (наклон линии бёдер), размах | 4,8° | 11,3° | **17,9°** |
+| стопы на опоре врозь | 16 см | 4 см | 11 см |
+| поворот таза | 1° | 29° | 11° |
+| сгиб запястья | до 3° | до 8° | **до 70°** |
+| кисть от локтя наружу (+) | −10 см | −8 см | **0 см** |
+| кисть над тазом | 25 см | 23 см | **15 см** |
+| колено в махе / подъём стопы | 129° / 62 см | 127° / 62 см | 104° / 31 см |
+
+- **Главное — руки.** Кисти висят низко, на линии локтей, правое запястье согнуто на 60–70° весь цикл: руки болтаются в стороны. У Gothic кулаки прямые, перед корпусом.
+- **Таз** качается вверх-вниз сильнее, чем в женском беге Gothic. Это главный признак женской походки в исследованиях (Mather и Murdoch 1994: качание бёдер против качания плеч; Johnson и Tassinary 2005). У бегуний приведение бедра больше на 2–6° (обзор Xie и др. 2022).
+- **Чьё это.** Запястье и таз — у самой Kimodo: в SOMA у образца № 2 запястье 37–67°, таз 16,4°. Из 40 образцов бега он худший по обоим.
+- **Узкий шаг — не изъян.** Бегуны ставят стопы почти на одну линию, так дешевле (Arellano и Kram 2011). Широкий шаг Gothic — стилизация.
+- **Мощь.** У всех 40 образцов Kimodo захлёст пятки низкий: колено 81–104°, стопа на 22–31 см. Gothic поднимает пятку к ягодице: 129°, 62 см. Поэтому Kimodo на этой скорости — лёгкая трусца, а Gothic — силовой бег.
+
 ## Замеры Gothic
 
 `gait.py` — замер цикла по клипу базы:
@@ -341,3 +362,6 @@
 - Motion matching в For Honor: [обзор докладов GDC 2016](https://www.gamedeveloper.com/programming/most-inspiring-game-animation-tech-talks-of-2016), [CGWorld](https://cgworld.jp/feature/1604-gdc2016-03-2.html).
 - Witcher 3, патч 1.07: [PC Gamer](https://www.pcgamer.com/the-witcher-3-patch-107-geralts-new-movement-mode-analyzed).
 - Kimodo: [ограничения и советы](https://research.nvidia.com/labs/sil/projects/kimodo/docs/key_concepts/limitations.html), [статья](https://arxiv.org/abs/2603.15546).
+- Признаки пола в движении: Mather, Murdoch. Gender discrimination in biological motion displays based on dynamic cues. Proc R Soc B 258, 1994 (по обзору Troje и др., J Vision 6(8):7, 2006, [PDF](https://www.ocf.berkeley.edu/~knakayama/wp-content/uploads/2019/03/139JournalofvisionTroje06.pdf)); Johnson, Tassinary. Perceiving sex directly and indirectly: meaning in motion and morphology. [Psychological Science 16(11), 2005](https://www.psychologicalscience.org/journals/psychological-science/j.1467-9280.2005.01633.x/).
+- Бег мужчин и женщин: Xie и др. Sex-specific differences in biomechanics among runners: a systematic review with meta-analysis. [Front Physiol 13:994076, 2022](https://pmc.ncbi.nlm.nih.gov/articles/PMC9539551/), таблица 3.
+- Ширина шага на беге: Arellano, Kram. The effects of step width and arm swing on energetic cost and lateral balance during running. [J Biomech 44, 2011](https://grants.hhp.uh.edu/arellano/docs/J%20Biomech%202011%20Arellano.pdf).
