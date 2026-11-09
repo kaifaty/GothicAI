@@ -2612,11 +2612,11 @@ void heroHeadGameCases(const std::string& game, const std::string& base) {
   headGlbFile(fixture.root/"characters/hero/head.glb",true);
   // the hero without a face profile, an npc with one (and a gesture), the control npc not listed
   textFile(fixture.root/"characters/characters.json",
-           R"({"PC_HERO":{"head":"hero/head.glb"},"PC_MAGE":{"head":"hero/head.glb","face":"hero/head.face.json"}})");
+           R"({"PC_HERO":{"head":"hero/head.glb"},"NONE_100_XARDAS":{"head":"hero/head.glb","face":"hero/head.face.json"}})");
   textFile(fixture.root/"characters/hero/head.face.json",
            R"({"version":1,"mouth":["smile"],"anims":{"S_FRIENDLY":{"layer":1,"blend_in_ms":1000,"blend_out_ms":1000,)"
            R"("duration_ms":-1,"frame_ms":1000,"frames":[{"smile":0.5}]}},"cues":{"flash":{"zone":"upper","parts":)"
-           R"([{"weights":{"frown":0.6},"delay_ms":0,"on_ms":100,"hold_ms":80,"off_ms":160}]}}})");
+           R"([{"weights":{"normalOnly":0.6},"delay_ms":0,"on_ms":100,"hold_ms":80,"off_ms":160}]}}})");
   alphaDdsFile(fixture.root/"materials/head.dds",false);
   textFile(fixture.root/"materials/materials.json",R"({"OWN_TEST_BARREL_WOOD.TGA":{"albedo":"head.dds"}})");
   setenv("OPENGOTHIC_BASE",base.c_str(),1);
@@ -2680,13 +2680,13 @@ void heroHeadGameCases(const std::string& game, const std::string& base) {
             MeshGltfTest::visual(*npc).headMesh()==nullptr,"NPC Hum_Head_Pony must remain HUM_HEAD_PONY.MMB");
 
     // an npc listed in characters.json: its own head and face profile, the same contract as the hero's
-    const auto* mageSymbol=world.script().findSymbol("PC_MAGE");
+    const auto* mageSymbol=world.script().findSymbol("NONE_100_XARDAS");
     require(mageSymbol!=nullptr,"original game scripts must provide the listed NPC");
     const auto mageId=mageSymbol->index();
     auto* mage=world.addNpc(mageId,hero->position());
     require(mage!=nullptr,"listed NPC must spawn");
     mage->setVisualBody(0,0,0,0,"HUM_BODY_NAKED0","Hum_Head_Pony");
-    const auto* mageHead=Resources::loadCharacterHead("PC_MAGE");
+    const auto* mageHead=Resources::loadCharacterHead("NONE_100_XARDAS");
     const auto checkMage=[&](Npc& n) {
       require(mageHead!=nullptr && MeshGltfTest::head(n).protoMesh()==mageHead && MeshGltfTest::visual(n).headMesh()==mageHead->head.get() &&
               mageHead->face!=nullptr && MeshGltfTest::face(n).isActive(),"a listed NPC must get its own head and face profile");
@@ -2739,8 +2739,11 @@ void heroHeadGameCases(const std::string& game, const std::string& base) {
     require(MeshGltfTest::visual(*hero).headMesh()==nullptr && MeshGltfTest::head(*hero).protoMesh()==original,
             "--no-hero-head must restore the original hero head");
     MeshGltfTest::refreshBody(*mage);
-    require(MeshGltfTest::visual(*mage).headMesh()==nullptr && MeshGltfTest::head(*mage).protoMesh()==original &&
-            !MeshGltfTest::face(*mage).isActive(),"--no-hero-head must restore the original head of a listed NPC too");
+    // (the reload may find the world's own Xardas: his original head, whichever it is)
+    const auto* mageOriginal=MeshGltfTest::head(*mage).protoMesh();
+    require(MeshGltfTest::visual(*mage).headMesh()==nullptr && mageOriginal!=nullptr && mageOriginal!=mageHead &&
+            mageOriginal->head==nullptr && !mageOriginal->morph.empty() && !MeshGltfTest::face(*mage).isActive(),
+            "--no-hero-head must restore the original head of a listed NPC too");
     std::cout << "hero-head game: GLB, head bone, armor, setVisualBody, save reload, original and listed NPC, flag OFF passed\n";
     gothic.clearGame().reset();
   }
