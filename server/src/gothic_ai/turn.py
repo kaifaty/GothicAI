@@ -41,6 +41,18 @@ def tool_choice(step: int) -> ToolChoice | None:
     return "none" if step == MAX_STEPS - 1 else None
 
 
+REFUSAL_MAX = 400  # a long refusal (the things to choose from) is cut: the next turns need why, not all of it
+
+
+def refusal_note(name: str, output: str) -> str:
+    """What the npc keeps of a rejected call for its next turns: the history holds only words otherwise,
+    and it would make the same call again (a deal for a thing that is no item, twice in a row)."""
+    reason = output.removeprefix("Отклонено: ").strip()
+    if len(reason) > REFUSAL_MAX:
+        reason = reason[:REFUSAL_MAX].rstrip() + "…"
+    return f"{name} не прошёл: {reason}"
+
+
 def tool_output(outcome: ToolOutcome, said: str) -> str:
     """A rejection may correct spoken words, but does not start the hero's reply over."""
     if outcome.status != "rejected" or not said:

@@ -123,7 +123,8 @@ async def test_a_rejected_give_comes_back_within_the_turn_and_never_reaches_the_
     assert not [m for m in fake.received if m["type"] == "action"]
     assert fake.said[-1] == "Хотя нет, такого свитка у меня нет."
     history = dialogue.conversations[XARDAS].history
-    assert history[-1].content == "Держи свиток огненного шара. Хотя нет, такого свитка у меня нет."
+    assert history[-2].content == "Держи свиток огненного шара. Хотя нет, такого свитка у меня нет."
+    assert history[-1].content.startswith("[give_item не прошёл: У тебя нет предмета ITSC_FIREBALL")
 
 
 async def test_a_rejection_before_any_words_keeps_its_original_output():
