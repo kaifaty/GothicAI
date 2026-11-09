@@ -372,8 +372,8 @@ add_shader(probe_lighting.comp       lighting/rt/probe_lighting.comp)
 add_shader(probe_lighting_orm.comp   lighting/rt/probe_lighting.comp -DMATERIAL_MAPS)
 
 add_shader(probe_ambient.vert        triangle.vert)
-add_shader(probe_ambient.frag        lighting/rt/probe_ambient.frag)
-add_shader(probe_ambient_orm.frag     lighting/rt/probe_ambient.frag -DMATERIAL_MAPS)
+add_shader(probe_ambient.frag        lighting/rt/probe_ambient.frag --target-env vulkan1.1)
+add_shader(probe_ambient_orm.frag     lighting/rt/probe_ambient.frag -DMATERIAL_MAPS --target-env vulkan1.1)
 
 # Surfels
 add_shader(surf_dbg.vert             lighting/surfels/surf_dbg.vert)
