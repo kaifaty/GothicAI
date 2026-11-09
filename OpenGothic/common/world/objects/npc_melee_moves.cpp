@@ -461,6 +461,20 @@ bool Npc::isMeleeDodgeInvulnerable() const {
   return layer && now>=layer->origin && MeleeDodge::invulnerable(layer->move.kind,now-layer->origin);
   }
 
+MeleeDodge::Guard Npc::meleeGuard(const Npc& attacker) const {
+  const auto& pose = visual.pose();
+  const auto  now  = owner.tickCount();
+  MeleeDodge::GuardSituation s;
+  s.dodging     = isMeleeDodging();
+  s.dodgeWindow = isMeleeDodgeInvulnerable();
+  s.knockedDown = meleeKnockdown;
+  s.stunned     = isMeleeStunned();
+  s.jumpBack    = pose.isJumpBack(now) && fghAlgo.isInJumpBackAngle(*this,attacker);
+  s.parade      = pose.isDefence(now) && fghAlgo.isInFocusAngle(*this,attacker);
+  s.unblockable = attacker.isMonster() && attacker.inventory().activeWeapon()==nullptr;
+  return MeleeDodge::guard(s);
+  }
+
 std::optional<uint64_t> Npc::nextMeleeContactMs() const {
   const auto now = owner.tickCount();
   if(const auto contact = visual.pose().nextMeleeContact(now))
@@ -479,12 +493,10 @@ void Npc::meleeDodgeNote(const std::string& text, std::string_view phase, const 
 
 bool Npc::meleeDodgeEvades(Npc& other, std::string_view kind) {
   const auto layer = meleeDodgeLayer();
-  if(!layer)
+  if(!layer || !meleeGuard(other).dodged)
     return false;
   const auto now     = owner.tickCount();
   const auto elapsed = now>=layer->origin ? now-layer->origin : 0;
-  if(!MeleeDodge::invulnerable(layer->move.kind,elapsed))
-    return false;
   const auto window = MeleeDodge::invulnerability(layer->move.kind);
   if(kind=="melee")
     BodyObservations::noteEvent(*this,&other,"evaded",now);
