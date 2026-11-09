@@ -226,6 +226,7 @@ struct RemnantGroup {
   std::vector<size_t> pieces;
   Matrix4x4 transform;
   double volumeShare=0;
+  uintptr_t body=0;
   };
 
 std::vector<RemnantGroup> fracturePiecesGroups(World& world,Destruction& destruction,const FractureMesh& mesh) {
@@ -233,7 +234,7 @@ std::vector<RemnantGroup> fracturePiecesGroups(World& world,Destruction& destruc
   for(const auto& part:world.physic()->fragmentSnapshot()) {
     if(!destructionOwns(destruction,part.parentId) || part.piece>=mesh.pieces.size())continue;
     auto found=std::find_if(result.begin(),result.end(),[&](const auto& g){return g.group==part.bondGroup;});
-    if(found==result.end()) {result.push_back({part.bondGroup,{},part.transform,0});found=result.end()-1;}
+    if(found==result.end()) {result.push_back({part.bondGroup,{},part.transform,0,part.body});found=result.end()-1;}
     found->pieces.push_back(part.piece);
     found->volumeShare+=mesh.pieces[part.piece].volume/mesh.volume;
     }
@@ -241,18 +242,17 @@ std::vector<RemnantGroup> fracturePiecesGroups(World& world,Destruction& destruc
   return result;
   }
 
-// Where the actor stands to strike a group: outside it, 75 cm beyond its drawn vertices on the
-// horizontal line from its middle through its piece (not METAL) nearest to `from`, facing that
-// middle. A blow at the middle of the group can meet only the gap an earlier break left there.
-struct RemnantAim { Vec3 stand,facing,middle; size_t piece=0; };
+// Where the actor stands to strike a group: 75 cm beyond its drawn vertices, facing its middle.
+// The pieces an earlier blow broke off lie and stand where that blow landed, and a blade stops at
+// the first of them: from the side of `from` (the first blow's stand) by 30 degree steps, the first
+// side where a ray at the height of the group's top meets the group's own body before any other.
+struct RemnantAim { Vec3 stand,facing,middle; int angle=0; bool clear=false; };
 
-RemnantAim remnantAim(const RemnantGroup& group,const FractureMesh& mesh,const Vec3& from) {
+RemnantAim remnantAim(World& world,const RemnantGroup& group,const FractureMesh& mesh,const Vec3& from) {
   RemnantAim aim;
   Vec3 low(1e9f,1e9f,1e9f),high(-1e9f,-1e9f,-1e9f);
   std::vector<Vec3> points;
-  float nearest=std::numeric_limits<float>::infinity();
-  Vec3 target;
-  for(const auto piece:group.pieces) {
+  for(const auto piece:group.pieces)
     for(const auto& triangle:mesh.pieces[piece].triangles)
       for(const auto& vertex:triangle.vertices) {
         const auto p=apply(group.transform,vertex.position);
@@ -260,18 +260,21 @@ RemnantAim remnantAim(const RemnantGroup& group,const FractureMesh& mesh,const V
         low=Vec3(std::min(low.x,p.x),std::min(low.y,p.y),std::min(low.z,p.z));
         high=Vec3(std::max(high.x,p.x),std::max(high.y,p.y),std::max(high.z,p.z));
         }
-    const auto center=apply(group.transform,mesh.pieces[piece].center);
-    const float distance=Vec2(center.x-from.x,center.z-from.z).length();
-    if(mesh.pieces[piece].group!=asset::MaterialGroup::METAL && distance<nearest) {nearest=distance;target=center;aim.piece=piece;}
-    }
   aim.middle=(low+high)*.5f;
-  Vec3 outward(target.x-aim.middle.x,0,target.z-aim.middle.z);
-  if(!std::isfinite(nearest) || outward.length()<1.f)outward=Vec3(from.x-aim.middle.x,0,from.z-aim.middle.z);
-  outward=outward.length()>1.e-3f?Vec3::normalize(outward):Vec3(0,0,-1);
-  float reach=0;
-  for(const auto& p:points)reach=std::max(reach,Vec3::dotProduct(p-aim.middle,outward));
-  aim.stand=aim.middle+outward*(reach+75.f);
-  aim.facing=outward*-1.f;
+  Vec3 base(from.x-aim.middle.x,0,from.z-aim.middle.z);
+  base=base.length()>1.e-3f?Vec3::normalize(base):Vec3(0,0,-1);
+  const float top=std::min(high.y-10.f,low.y+100.f);
+  for(int step=0;step<12;++step) {
+    const int angle=(step+1)/2*30*(step%2?1:-1);
+    const float a=float(angle)*float(M_PI)/180.f;
+    const Vec3 outward(base.x*std::cos(a)-base.z*std::sin(a),0,base.x*std::sin(a)+base.z*std::cos(a));
+    float reach=0;
+    for(const auto& p:points)reach=std::max(reach,Vec3::dotProduct(p-aim.middle,outward));
+    const auto stand=aim.middle+outward*(reach+75.f);
+    const bool clear=world.physic()->fragmentRay(Vec3(stand.x,top,stand.z),Vec3(aim.middle.x,top,aim.middle.z))==group.body;
+    if(step==0 || clear) {aim.stand=stand;aim.facing=outward*-1.f;aim.angle=angle;aim.clear=clear;}
+    if(clear)break;
+    }
   return aim;
   }
 
@@ -337,7 +340,7 @@ void fracturePiecesRemnantTick(FracturePieces& state,Destruction& destruction,co
     }
   if(world.tickCount()<attack.next)return;
   if(attack.swings>=attack.limit) {complete(false);return;}
-  const auto aim=remnantAim(parts.front(),*attack.mesh,destruction.destructionMeleeStand);
+  const auto aim=remnantAim(world,parts.front(),*attack.mesh,destruction.destructionMeleeStand);
   auto stand=aim.stand;
   const auto floor=world.physic()->landRay(Vec3(stand.x,aim.middle.y+100,stand.z),300);
   if(floor.hasCol)stand.y=floor.v.y;
@@ -349,7 +352,7 @@ void fracturePiecesRemnantTick(FracturePieces& state,Destruction& destruction,co
   event("destruction2_remnant_attempt","\"case\":"+jsonStr(destruction.destructionCase)+",\"ordinal\":"+std::to_string(attack.ordinal)+
     ",\"accepted\":"+(accepted?"true":"false")+",\"swing\":"+std::to_string(attack.swings)+",\"actor_cm\":"+ragdollVector(stand)+
     ",\"facing\":"+ragdollVector(aim.facing)+",\"target_middle_cm\":"+ragdollVector(aim.middle)+
-    ",\"target_piece\":"+std::to_string(aim.piece)+",\"target_pieces\":"+std::to_string(parts.front().pieces.size())+
+    ",\"side_deg\":"+std::to_string(aim.angle)+",\"clear\":"+(aim.clear?"true":"false")+",\"target_pieces\":"+std::to_string(parts.front().pieces.size())+
     ",\"bodies\":"+std::to_string(parts.size()));
   }
 
