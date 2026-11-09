@@ -47,6 +47,12 @@ Their `ItemWake` / `Living` state and context references are in `testbench_inter
 `itemWakeCommand` and `livingCommand` run at their groups' first original branches.
 The shared `ragdollNumber`, `ragdollVector`, `ragdollMatrix` and camera/capture helpers stay in `testbench.cpp`.
 
+Ragdoll archives, observations, arena checks and commands live in `common/testbench_ragdoll.cpp`.
+Own-mesh physics and chest fixtures and commands live in `common/testbench_own_mesh.cpp`.
+Their `RagdollBench` / `OwnMesh` state types and context references are in `testbench_internal.h`;
+`ragdollCommand` and `ownMeshCommand` run at their groups' first original branches.
+`ragdoll frame20`, camera/capture functions, shared ragdoll formatting helpers and `TestBench::` hooks stay in `testbench.cpp`.
+
 Runs a scenario through the windowed game or the headless runner and records metrics and a report.
 Windowed scenarios can also capture video with a debug overlay and point at suspicious frames.
 
@@ -1579,7 +1585,7 @@ physics contracts pass after explicit signed Guild comparisons in the fixture.
 
 `OpenGothic/common/testbench.cpp` and `testbench_<family>.cpp` (including healing in
 `testbench_healing.cpp`, water / corpse-water in `testbench_water.cpp` and hero / human NPC
-CharacterVirtual in `testbench_character.cpp` and ground monsters in `testbench_monster.cpp`, destruction in `testbench_destruction.cpp`, movable objects/candles, physics noise and spells in `testbench_movables.cpp`, item wake in `testbench_item_wake.cpp` and living bodies in `testbench_living.cpp`), inert unless `OPENGOTHIC_BENCH` is set. Hooks: the fixed time step and
+CharacterVirtual in `testbench_character.cpp` and ground monsters in `testbench_monster.cpp`, destruction in `testbench_destruction.cpp`, movable objects/candles, physics noise and spells in `testbench_movables.cpp`, item wake in `testbench_item_wake.cpp` and living bodies in `testbench_living.cpp`, ragdolls in `testbench_ragdoll.cpp` and own meshes / chests in `testbench_own_mesh.cpp`), inert unless `OPENGOTHIC_BENCH` is set. Hooks: the fixed time step and
 the capture in `MainWindow` (in film mode the captured frame replaces the window's), the AI bridge's lines
 and voices (`TestBench::aiLine`, `aiVoiceEnd`, `aiHeard`, `aiBusy`), an npc's lines of the game and SVMs
 (`TestBench::npcOutput` in `Npc::nextAiAction`), the OpenAL loopback device in Tempest's

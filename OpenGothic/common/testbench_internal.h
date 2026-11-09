@@ -72,6 +72,95 @@ enum CamMode : uint8_t {
   C_Arrow,    // from the side of the newest arrow's way, going along with it (overlay trail records it)
   };
 
+struct OwnMesh {
+  uint32_t ownMeshZen=uint32_t(-1);
+  Tempest::Vec3 ownMeshAxis,ownMeshApproach,ownMeshHeroStart,ownMeshBodyStart;
+  float ownMeshMaxCrossTrack=0;
+  std::deque<std::pair<uint64_t,Tempest::Vec3>> ownMeshHeroHistory;
+  bool ownMeshWalking=false;
+  unsigned ownMeshArrowHits=0;
+  struct OwnMeshChest {
+    Interactive* chest=nullptr;
+    size_t lid=size_t(-1);
+    bool opened=false,sawTransition=false,taken=false;
+    std::string lastAnimation;
+    std::map<size_t,size_t> contents,heroBefore;
+  } ownMeshChest;
+};
+
+struct OwnMeshContext {
+  OwnMesh& ownMesh;
+  CamMode& cam;
+  bool& camAuto;
+};
+
+struct RagdollBench {
+  Npc*        waitRagdollNpc = nullptr;
+  std::string waitRagdollState;
+  uint64_t    waitRagdollEnd = 0;
+  bool        ragdollChurn = false;
+  uint64_t    ragdollPulseFrame = 0;
+  std::vector<Tempest::Vec3> ragdollArenaPlaces;
+  std::vector<float> ragdollArenaRadii;
+  Tempest::Vec3        ragdollArenaTarget;
+  std::string ragdollArenaWaypoint;
+  bool        ragdollArenaCamera = false;
+  std::string ragdollCoverageMode;
+  size_t      ragdollCoverageFrames = 0;
+  bool        ragdollCoverageActive = false;
+  bool        ragdollCoverageFailed = false;
+  struct BirthLive { Tempest::Vec3 position; uint64_t tick; bool inAir; };
+  Npc*        birthActor = nullptr;
+  std::string birthLabel;
+  std::deque<BirthLive> birthHistory;
+  Npc*        birthContinuation = nullptr;
+  std::string birthContinuationLabel;
+  uint64_t    birthTick = 0;
+  const Npc*  expectedRagdollLoot = nullptr;
+  bool        ragdollLootDidOpen = false;
+  struct PerfSample {
+    std::string segment;
+    uint64_t frame = 0;
+    float wallMs = 0, stepMs = 0;
+    size_t worldBodies = 0, actors = 0, corpses = 0, physical = 0, sleeping = 0, parts = 0, centersInView = 0, visibleMeshes = 0;
+    size_t physicalBeforeImpulse = 0, sleepingBeforeImpulse = 0;
+    uint64_t rays = 0;
+    };
+  std::vector<PerfSample> ragdollPerformance;
+  std::vector<PerfSample> ragdollCoverage;
+  std::chrono::steady_clock::time_point lastPerfFrame;
+  bool        hasPerfFrame = false;
+  float       perfWallMs = 0;
+  size_t      perfPhysicalBeforeImpulse = 0, perfSleepingBeforeImpulse = 0;
+  struct SavedNpc {
+    Npc* npc = nullptr;
+    std::vector<uint8_t> bytes;
+    std::optional<Ragdoll::State> body;
+    std::vector<std::pair<std::string,Tempest::Vec3>> bones;
+    Tempest::Vec3 position;
+    int hp = 0;
+    bool dead = false, unconscious = false, enabled = false;
+    };
+  std::unordered_map<std::string,SavedNpc> savedRagdollNpcs;
+  };
+
+struct RagdollContext {
+  RagdollBench& ragdoll;
+  std::vector<Npc*>& crew;
+  Tempest::Vec3& camPos;
+  std::FILE*& csv;
+  Npc*& subject;
+  std::unordered_map<const Npc*,uint64_t>& bodyIds;
+  uint64_t& nextBodyId;
+  uint64_t& step;
+  Npc*& questNpc;
+  uint64_t& recFrame;
+  std::string& recName;
+  const bool& ragdollTrace;
+  const bool& ragdollPerf;
+  Npc& (*subjectOf)(Npc&);
+};
+
 struct QuestSite { bool ready=false; Tempest::Vec3 dry={}, direction={}; float waterY=0; std::string waypoint; };
 struct SpellActor {Npc* npc=nullptr;std::string role;};
 struct MovableFixture { ObjVisual visual; DynamicWorld::Item body; };
@@ -1025,6 +1114,22 @@ void prepareWaterSpell(Water& state,const WaterContext& context,World& world,Npc
 void healingObserve(Healing& state,World& world,Npc& player);
 void healingCommand(Healing& state,const std::vector<std::string>& a,World& world,Npc& player,PlayerControl& ctrl,
                     const std::vector<Npc*>& meleeShadowActors);
+
+void ragdollSessionArchive(const std::vector<std::string>& args, World& world, Npc& player, uint64_t initialDt=0);
+void writeRagdoll(Npc& player);
+bool arenaProjected(const Tempest::Vec3& point);
+bool arenaMeshVisible(World& world, const Npc& npc);
+RagdollBench::PerfSample ragdollCoverageSample(World& world);
+void sampleRagdollPerformance(World& world);
+bool arenaModeMatches(const RagdollBench::PerfSample& sample, std::string_view mode);
+void arenaModelProof(World& world, const Npc& npc, size_t frame);
+bool arenaFullSchema(World& world, std::string_view mode);
+bool ragdollCommand(const RagdollContext& context,const std::string& line,const std::vector<std::string>& a,World& w,Npc& pl,PlayerControl& ctrl);
+RagdollContext ragdollContext();
+void ownMeshFields(World& world,Npc& player);
+void ownMeshChestFields(World& world,const Npc& player);
+bool ownMeshCommand(const OwnMeshContext& context,const std::vector<std::string>& a,World& w,Npc& pl,PlayerControl& ctrl);
+OwnMeshContext ownMeshContext();
 
 void event(std::string_view kind, const std::string& fields = {});
 std::string jsonStr(std::string_view s);
