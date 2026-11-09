@@ -63,13 +63,17 @@ def response(path, at=1.0, fps=30, settle=0.1):
     near = range(max(1, round(at * fps) - 3), min(len(c), round(at * fps) + 4))
     t0 = max(near, key=lambda t: abs(mean[t] - mean[t - 1]))  # the first frame after the change
     after = c[-8:].mean(axis=0)
+    noise = c[-20:].std(axis=0)  # the encoder and the TAA jitter: a cell this close to its end has settled
     keep = after > 0.005
     frames = []
     for i in np.flatnonzero(keep):
-        late = np.flatnonzero(np.abs(c[t0:, i] - after[i]) > settle * after[i])
+        late = np.flatnonzero(np.abs(c[t0:, i] - after[i]) > max(settle * after[i], 3 * noise[i]))
         frames.append(int(late[-1]) + 2 if len(late) else 1)  # frames since the change, the settled one included
     frames = np.array(frames)
     print(f'{path}: {len(c)} frames, change at frame {t0}, {len(frames)} of {c.shape[1]} cells lit enough')
+    first = c[t0, keep] / after[keep]
+    print(f'- first frame after the change: {np.median(first):.0%} of the new brightness (median of the cells), '
+          f'lowest {first.min():.0%}')
     if len(frames):
         print(f'- within {settle:.0%} of the new brightness: median {np.median(frames) * 1000 / fps:.0f} ms, '
               f'slowest cell {frames.max() * 1000 / fps:.0f} ms ({frames.max()} frames at {fps} per second)')

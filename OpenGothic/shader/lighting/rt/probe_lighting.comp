@@ -274,17 +274,20 @@ vec4 shadeSample(const vec3 rayOrigin, const vec3 rayDirection, uint probeId, ui
   const vec3 albedo = min(textureAlbedo(diff.rgb), vec3(0.95));
   const vec3 at     = pos + norm*0.5; // the hit distance is 16-bit: off the surface for the shadow rays
 
-  // a lamp per sample; the key goes through the samples of the probe as a low-discrepancy sequence
-  // (golden-ratio steps in 32-bit fixed point), turned at every relight
-  const uint  k   = sampleId*2654435769u + (frameId/relitPeriod)*3242174889u + probeId*2447445413u;
-  const float key = float(k >> 8) * (1.0/16777216.0);
+  // A lamp per sample; the key goes through the samples of the probe as a low-discrepancy sequence (golden-ratio
+  // steps in 32-bit fixed point). It stays the same from frame to frame and for a probe made again at the same
+  // place: a new choice at every relight flickered (the cube's change passed the reset). The light still follows
+  // the lamps, the sun and the time of day; the choice only spreads the error over the probes.
+  const uint  seed = probeGridPosHash(ivec3(round(rayOrigin/probeGridStep)));
+  const uint  k    = sampleId*2654435769u + seed*2447445413u;
+  const float key  = float(k >> 8) * (1.0/16777216.0);
 
   vec3 direct = vec3(0);
   direct += sunLight(norm, at) * scene.sunColor;
   direct += localLight(norm, at, key) * (max(1.0, scene.exposure) / scene.exposure);
 
   vec3 hit = albedo * direct * Fd_Lambert;
-  Random rng = srand(uvec3(probeId, sampleId, frameId));
+  Random rng = srand(uvec3(seed, sampleId, 0)); // the same path every frame, as the lamp
   hit += albedo * bounce(pos, norm, rng); // Fd_Lambert is in the probes' integration
   return vec4(hit, 1);
   }
