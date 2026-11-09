@@ -976,7 +976,7 @@ void Npc::consumeMeleeContacts() {
         // The blade bites into an intact board instead of passing it, and the board
         // takes this blow: the hit frame that applies destruction never comes now.
         MeleeDestructionBlow blow;
-        if(hit.movableVob!=0 && owner.physic()->destructionEnabled() && meleeDestructionBlow(blow)) {
+        if((hit.movableVob!=0 || hit.fragment!=0) && owner.physic()->destructionEnabled() && meleeDestructionBlow(blow)) {
           const bool struck = owner.physic()->meleeStoppedMovableVob(hit,blow.weaponDamage,blow.strength,blow.kind,
                                                                      this,swing.struckVobs);
           if(TestBench::isActive())

@@ -92,7 +92,8 @@ namespace CollisionWorldInternal {
     explicit QueryBroadPhaseFilter(uint32_t mask):mask(mask) {}
     bool ShouldCollide(JPH::BroadPhaseLayer layer) const override {
       constexpr uint32_t itemMask = (1u<<DynamicWorld::C_Item)|(1u<<DynamicWorld::C_Ragdoll)|
-                                    (1u<<DynamicWorld::C_LivingBody)|(1u<<DynamicWorld::C_ActiveBody)|(1u<<DynamicWorld::C_MovableVob);
+                                    (1u<<DynamicWorld::C_LivingBody)|(1u<<DynamicWorld::C_ActiveBody)|(1u<<DynamicWorld::C_MovableVob)|
+                                    (1u<<DynamicWorld::C_Fragment);
       constexpr uint32_t sensorMask = (1u<<DynamicWorld::C_Water)|(1u<<DynamicWorld::C_Ghost)|
                                       (1u<<DynamicWorld::C_MovableQuery)|(1u<<DynamicWorld::C_SmallVobQuery);
       if(layer==dynamicLayer)

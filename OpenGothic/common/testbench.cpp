@@ -2911,13 +2911,13 @@ bool TestBench::destructionTracesDebug(World& world,Npc& player,std::string_view
   return testbench_detail::destructionTracesDebug(bench.destruction,destructionContext(),world,player,command,value,error);
   }
 
-void TestBench::destructionBreak(uintptr_t body,size_t pieces,float milliseconds) {
+void TestBench::destructionBreak(uintptr_t body,size_t pieces,float milliseconds,bool remnant) {
   if(scenarioPath==nullptr || !bench.destruction.destructionTrace || !destructionOwns(bench.destruction,body))return;
   auto* world=Gothic::inst().world();
   if(world)destructionFields(bench.destruction,destructionContext(),*world);
   bench.destruction.destructionLastBreak=world?world->tickCount():0;bench.destruction.destructionSleepSampled=false;
   event("destruction_break","\"case\":"+jsonStr(bench.destruction.destructionCase)+",\"body\":"+std::to_string(body)+
-    ",\"pieces\":"+std::to_string(pieces)+",\"break_ms\":"+ragdollNumber(milliseconds)+
+    ",\"pieces\":"+std::to_string(pieces)+",\"remnant\":"+(remnant?"true":"false")+",\"break_ms\":"+ragdollNumber(milliseconds)+
     ",\"wall_ns\":"+std::to_string(std::chrono::duration_cast<std::chrono::nanoseconds>(
       std::chrono::steady_clock::now().time_since_epoch()).count())+
     ",\"t_game_ms\":"+std::to_string(world?world->tickCount():0)+",\"arrows\":"+std::to_string(bench.destruction.destructionArrows));

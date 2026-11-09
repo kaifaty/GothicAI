@@ -41,6 +41,15 @@ void DynamicWorld::moveBullet(BulletBody &b, const Tempest::Vec3& dir, uint64_t 
     world->wakeItemsInBounds(min,max);
     hit=world->rayCast(pos,to,visualMask|(1u<<C_Item),false);
     }
+  if(!isSpell && movableVobs->destructionEnabled) {
+    // An arrow stops at a remnant before the world behind it; single pieces it passes, as before.
+    std::vector<CollisionWorld::QueryResult> debris;
+    world->rayCast(pos,to,1u<<C_Fragment,false,&debris);
+    uint32_t group=0;
+    for(const auto& entry:debris)
+      if((!hit.hasHit || entry.fraction<hit.fraction) && remnantOf(reinterpret_cast<uintptr_t>(entry.body),group)!=nullptr)
+        hit=entry;
+    }
   const auto matId = hit.hasHit ? hit.material : asset::MaterialGroup::NONE;
   ArrowTrace::write(b,b.cb,"world_query",dt,nullptr,hit.hasHit,hit.fraction,hit.point,hit.normal,
                     unsigned(matId),hit.body!=nullptr ? unsigned(hit.body->category()) : 0);
@@ -107,6 +116,8 @@ void DynamicWorld::moveBullet(BulletBody &b, const Tempest::Vec3& dir, uint64_t 
         damageMovableVob(target,impulse.length(),hit.point,FractureHit::Arrow,{},b.direction());
         }
       }
+    else if(!isSpell && hit.body!=nullptr && hit.body->ptrType()==P_Fragment)
+      arrowRemnant(reinterpret_cast<uintptr_t>(hit.body),hit.point,b.direction(),b.cb!=nullptr ? b.cb->origin() : nullptr);
     if(isSpell){
       if(b.cb!=nullptr) {
         BulletWorldHit result;

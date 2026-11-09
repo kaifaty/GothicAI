@@ -1,6 +1,7 @@
 #define MINIZ_NO_ZLIB_COMPATIBLE_NAMES
 // Format 3 bonds of debris (reports/physics/2026-11-destruction-bonds): a blow breaks only
 // the bonds near it, joined pieces fall as one native body. Part of gothic-physics-contract.
+#include "physics/collisionworld.h"
 #include "physics/dynamicworld.h"
 #include "physics/fracture.h"
 #include "graphics/mesh/protomesh.h"
@@ -12,6 +13,9 @@
 #include <Tempest/Log>
 #include <Tempest/MemReader>
 #include <Tempest/MemWriter>
+
+#include <Jolt/Jolt.h>
+#include <Jolt/Physics/Collision/Shape/BoxShape.h>
 
 #include <algorithm>
 #include <chrono>
@@ -109,6 +113,250 @@ std::vector<uint32_t> groupsOf(const DynamicWorld& world) {
   std::vector<uint32_t> result;
   for(const auto& piece:world.fragmentSnapshot()) result.push_back(piece.bondGroup);
   return result;
+  }
+
+// Second step (repeat blows on remnants): helpers over the fixture of testFractureBonds.
+using WriteFixture=std::function<void(const std::vector<Box>&, const std::string&)>;
+using MakeFixture=std::function<DynamicWorld::Item(DynamicWorld&)>;
+
+Tempest::Vec3 project(const Tempest::Matrix4x4& matrix, Tempest::Vec3 point) {
+  matrix.project(point);
+  return point;
+  }
+
+// A blade stopped by the body of `piece`'s group at `local`, a point in the frame of the pieces.
+bool blowOn(DynamicWorld& world, size_t piece, const Tempest::Vec3& local, float weapon, float strength,
+            FractureRule::Melee kind, std::vector<uintptr_t>& struck) {
+  const auto target=world.fragmentSnapshot()[piece];
+  MeleeBladeContact contact {};
+  contact.world=contact.stopsSwing=true;
+  contact.fragment=target.body;
+  contact.point=project(target.transform,local);
+  contact.velocityCmS={250,0,0};
+  return world.meleeStoppedMovableVob(contact,weapon,strength,kind,nullptr,struck);
+  }
+
+bool blowOnProp(DynamicWorld& world, const Tempest::Vec3& point, FractureRule::Melee kind, std::vector<uintptr_t>& struck) {
+  MeleeBladeContact contact {};
+  contact.world=contact.stopsSwing=true;
+  contact.movableVob=world.movableVobSnapshot()[0].id;
+  contact.point=point;
+  contact.velocityCmS={250,0,0};
+  return world.meleeStoppedMovableVob(contact,40,1000,kind,nullptr,struck);
+  }
+
+void testFractureRemnants(const WriteFixture& write, const MakeFixture& make, uint32_t zenId) {
+  using Melee=FractureRule::Melee;
+  // The nailed row of eight boards; the one-handed side blow leaves boards 0..2 loose and the
+  // remnant 3..7 (x -10..40 cm). Its reserve: 100 health x 5/8 of the volume x remnant 0.5 = 31.25;
+  // a blade of weapon 0 and strength 40 deals (0 x 0.5 + 40 x 0.5) x 1 = 20.
+  std::vector<Box> row;
+  std::ostringstream nails;
+  nails<<"bonds 7\n";
+  for(int i=0;i<8;++i) {
+    row.push_back({{-35.f+10.f*float(i),0,0},{10,20,10},"WOOD"});
+    if(i<7) nails<<"bond "<<i<<' '<<i+1<<" NAIL "<<-30.f+10.f*float(i)<<" 0 0\n";
+    }
+  write(row,nails.str());
+  const auto firstBreak=[&](DynamicWorld& world, std::vector<uintptr_t>& swing) {
+    require(blowOnProp(world,{-50,1000,0},Melee::OneHand,swing),"the remnant fixture must take its first blow");
+    world.tick(0);
+    require(groupsOf(world)==std::vector<uint32_t>({0,1,2,3,3,3,3,3}),"the first blow leaves the remnant of boards 3..7");
+    };
+  // At x=-30 a one-handed blow (35 cm) reaches boards 3 and 4 (20 and 30 cm): bonds 3-4 and 4-5 go,
+  // 5..7 stay one body.
+  const Tempest::Vec3 nearEnd(-30,0,0);
+  const std::vector<uint32_t> second={0,1,2,3,4,5,5,5};
+  DynamicWorld world(nullptr,asset::WorldMesh{});
+  auto object=make(world);
+  std::vector<uintptr_t> swing;
+  firstBreak(world,swing);
+  require(!blowOn(world,3,nearEnd,40,1000,Melee::OneHand,swing),"the swing that broke the prop must not strike its remnant");
+  std::vector<uintptr_t> weak;
+  require(blowOn(world,3,nearEnd,0,40,Melee::OneHand,weak),"a stopped blade must strike the remnant");
+  world.tick(0);
+  require(bodiesOf(world,zenId).size()==4,"a blow below the remnant's reserve must not break it");
+  require(!blowOn(world,3,nearEnd,0,40,Melee::OneHand,weak),"one swing must strike a remnant once");
+  // Saved here, between the blows: 20 of 31.25 taken.
+  const auto saved=saveArchive([&](Serialize& output) { world.saveMovableVobs(output); });
+  std::vector<uintptr_t> again;
+  require(blowOn(world,3,nearEnd,0,40,Melee::OneHand,again),"the remnant must take the second weak blow");
+  world.tick(0);
+  require(groupsOf(world)==second && bodiesOf(world,zenId).size()==6,
+          "damage adds up: the second blow breaks the near bonds, the far boards stay one body");
+  require(!blowOn(world,5,nearEnd,0,40,Melee::OneHand,again),"one swing must not break a remnant twice");
+  std::vector<uintptr_t> single;
+  require(!blowOn(world,0,{-45,0,0},40,1000,Melee::OneHand,single) && bodiesOf(world,zenId).size()==6,
+          "a single piece must not split");
+  // After loading, the same bonds, groups and damage: the same blow gives the same result.
+  DynamicWorld loaded(nullptr,asset::WorldMesh{});
+  auto loadedObject=make(loaded);
+  loadMovables(loaded,saved);
+  require(loadedObject.isBroken() && groupsOf(loaded)==std::vector<uint32_t>({0,1,2,3,3,3,3,3}),
+          "a save between blows must restore the remnant");
+  std::vector<uintptr_t> afterLoad;
+  require(blowOn(loaded,3,nearEnd,0,40,Melee::OneHand,afterLoad),"the loaded remnant must take the blow");
+  loaded.tick(0);
+  require(groupsOf(loaded)==second,"a save must keep the remnant's damage: the next blow breaks it as without saving");
+
+  // remnant=0: the first blow on a remnant breaks it.
+  setenv("OPENGOTHIC_FRACTURE_BONDS","remnant=0",1);
+  DynamicWorld loose(nullptr,asset::WorldMesh{});
+  unsetenv("OPENGOTHIC_FRACTURE_BONDS");
+  auto looseObject=make(loose);
+  std::vector<uintptr_t> looseSwing,looseBlow;
+  firstBreak(loose,looseSwing);
+  require(blowOn(loose,3,nearEnd,0,1,Melee::Fist,looseBlow),"remnant=0 fixture must take the blow");
+  loose.tick(0);
+  require(bodiesOf(loose,zenId).size()>4,"with remnant=0 every blow must break the remnant");
+
+  // An arrow (0.12 kg at 40 m/s: 4.8 Ns, 40 health) at board 3's face: 12 cm reach the bond 4-5.
+  struct Arrow final : DynamicWorld::BulletCallback {
+    void onCollide(asset::MaterialGroup) override { ++hits; }
+    int hits=0;
+    } arrowContact;
+  DynamicWorld archery(nullptr,asset::WorldMesh{});
+  auto archeryObject=make(archery);
+  std::vector<uintptr_t> archerySwing;
+  firstBreak(archery,archerySwing);
+  auto* arrow=archery.bulletObj(&arrowContact);
+  arrow->setPosition(project(archery.fragmentSnapshot()[3].transform,{-35,0,0}));
+  arrow->setDirection({4,0,0});
+  archery.tick(17);
+  archery.deleteObj(arrow);
+  require(arrowContact.hits==1 && groupsOf(archery)==second && bodiesOf(archery,zenId).size()==6,
+          "an arrow must stop at the remnant and break the bonds near it");
+
+  // The force of a spell breaks every bond of the remnant; the loose boards stay as they are.
+  DynamicWorld blast(nullptr,asset::WorldMesh{});
+  auto blastObject=make(blast);
+  std::vector<uintptr_t> blastSwing;
+  firstBreak(blast,blastSwing);
+  const auto center=blast.fragmentSnapshot()[3].centerOfMass;
+  require(blast.applyMovableVobImpulse(center,100.f,[](const Tempest::Vec3&,float mass) {
+            return Tempest::Vec3(mass*1000.f,0,0);
+            },nullptr,&center)==1,"a spell must reach the remnant only");
+  blast.tick(0);
+  require(groupsOf(blast)==std::vector<uint32_t>({0,1,2,3,4,5,6,7}),"a spell's force must break every bond of the remnant");
+
+  // The ring counts the HOOP bonds broken by the first blow. Six staves under one hoop, joined
+  // side by side by ACROSS (strength 2: a fist's 20 cm reach 10 cm). A fist at stave 0 frees it
+  // and cuts stave 1's HOOP bond, stave 1 stays by its ACROSS bond: 2 of 6 lost, the hoop holds.
+  // A fist at stave 5 cuts the HOOP bonds of 5 and 4: 4 of 6 lost, the hoop lets go of all.
+  std::vector<Box> barrel;
+  std::ostringstream ring;
+  ring<<"bonds 11\n";
+  for(int i=0;i<6;++i) {
+    barrel.push_back({{-25.f+10.f*float(i),0,0},{10,60,10},"WOOD"});
+    ring<<"bond "<<i<<" 6 HOOP "<<-25.f+10.f*float(i)<<" 30 0\n";
+    if(i<5) ring<<"bond "<<i<<' '<<i+1<<" ACROSS "<<-20.f+10.f*float(i)<<" 0 0\n";
+    }
+  barrel.push_back({{0,32.5f,0},{60,5,10},"METAL"});
+  write(barrel,ring.str());
+  setenv("OPENGOTHIC_FRACTURE_BONDS","across=2",1);
+  const auto ringBreak=[&](DynamicWorld& ringWorld) {
+    std::vector<uintptr_t> first;
+    require(blowOnProp(ringWorld,{-32,1000,0},Melee::Fist,first),"the ring fixture must take the fist");
+    ringWorld.tick(0);
+    require(groupsOf(ringWorld)==std::vector<uint32_t>({0,1,1,1,1,1,1}),"a fist at stave 0 must free it alone");
+    };
+  const auto ringBlow=[&](DynamicWorld& ringWorld) {
+    std::vector<uintptr_t> blow;
+    require(blowOn(ringWorld,1,{32,0,0},40,1000,Melee::Fist,blow),"the ring remnant must take the fist");
+    ringWorld.tick(0);
+    return groupsOf(ringWorld);
+    };
+  DynamicWorld ringWorld(nullptr,asset::WorldMesh{}),ringLoaded(nullptr,asset::WorldMesh{}),ringOld(nullptr,asset::WorldMesh{});
+  unsetenv("OPENGOTHIC_FRACTURE_BONDS");
+  auto ringObject=make(ringWorld);
+  auto ringLoadedObject=make(ringLoaded);
+  auto ringOldObject=make(ringOld);
+  ringBreak(ringWorld);
+  const auto ringSave=saveArchive([&](Serialize& output) { ringWorld.saveMovableVobs(output); });
+  loadMovables(ringLoaded,ringSave);
+  // Schema 3 has no bond fates: bonds inside a group are whole, so stave 1 holds the hoop again.
+  const auto state=ringWorld.movableVobSnapshot()[0];
+  const auto pieces=ringWorld.fragmentSnapshot();
+  const auto legacy=saveArchive([&](Serialize& output) {
+    output.setEntry("worlds/",output.worldName(),"/destruction-vobs");
+    output.write(uint32_t(0x31534544),uint16_t(3),output.worldName(),uint32_t(1));
+    output.write(zenId,state.visual,state.origin,state.transform,0.f,true,uint32_t(pieces.size()),uint64_t(1),std::string());
+    output.write(false);
+    for(const auto& piece:pieces) output.write(piece.bondGroup);
+    output.write(uint32_t(2));
+    for(const size_t piece:{size_t(0),size_t(1)})
+      output.write(true,true,uint64_t(0),pieces[piece].transform,pieces[piece].velocity,pieces[piece].angularVelocity,false);
+    });
+  loadMovables(ringOld,legacy);
+  require(ringOldObject.isBroken() && groupsOf(ringOld)==groupsOf(ringWorld),"a schema 3 save must load its groups");
+  const auto ringGroups=ringBlow(ringWorld);
+  require(ringGroups==std::vector<uint32_t>({0,1,1,1,1,2,3}),
+          "the ring must count the HOOP bonds broken by the first blow: 4 of 6 lost lets the staves go");
+  require(ringBlow(ringLoaded)==ringGroups,"a save must keep every bond's fate: the next blow gives the same result");
+  require(ringBlow(ringOld)==std::vector<uint32_t>({0,1,1,1,1,2,1}),
+          "a schema 3 save joins the pieces of one group by all their bonds");
+  std::printf("Fracture remnants: weak blows 20+20 of 31.25 break the row's remnant into %zu bodies, the far boards one; "
+              "arrow and spell break it; ring counts earlier HOOP losses; damage and bonds survive save; schema 3 loads\n",
+              bodiesOf(world,zenId).size());
+  }
+
+// Debris from 0.5 m on stops a walker, which pushes it; a smaller piece is passed. A remnant that
+// appears around a walker is passed until they separate, then blocks again.
+void testCharacterDebris() {
+  constexpr float slope=.785398163f,radius=25.f;
+  const auto gap=[&](const CollisionWorld::CollisionBody& body, float walkerX, bool front) {
+    JPH::Vec3 min,max;
+    body.getAabb(min,max);
+    return front ? min.GetX()*100.f-(walkerX+radius) : walkerX-radius-max.GetX()*100.f;
+    };
+  for(const float half:{30.f,10.f}) {
+    CollisionWorld world;
+    auto floor=world.addCollisionBody(new JPH::BoxShape(JPH::Vec3(20,.5f,20)),at(0,-50,0),.7f,DynamicWorld::C_Landscape);
+    auto debris=world.addDynamicBody(new JPH::BoxShape(JPH::Vec3(half*.01f,.15f,half*.01f)),at(150,15,0),.6f,20.f,
+                                     DynamicWorld::C_Fragment);
+    for(int i=0;i<30;++i) world.tick(17);
+    auto walker=world.createVirtualCharacter(radius,180,{0,0,0});
+    CollisionWorld::CharacterMoveResult state;
+    float deepest=1.e9f;
+    for(int frame=0;frame<100;++frame) {
+      state=walker->move({5,0,0},17,50,slope,80,nullptr);
+      world.tick(17);
+      deepest=std::min(deepest,gap(*debris,state.position.x,true));
+      }
+    std::printf("CharacterVirtual and debris %.0f cm: walker x %.1f cm, deepest into it %.2f cm, debris x %.1f cm\n",
+                double(2*half),double(state.position.x),double(-deepest),double(debris->position().x));
+    if(half*2.f>=CollisionWorld::fragmentBlockSize*100.f)
+      require(deepest>-2.f && debris->position().x>155.f,"a walker must stop at a remnant and push it, not enter it");
+    else
+      require(state.position.x>450.f,"a walker must pass a piece under 0.5 m");
+    }
+  CollisionWorld world;
+  auto floor=world.addCollisionBody(new JPH::BoxShape(JPH::Vec3(20,.5f,20)),at(0,-50,0),.7f,DynamicWorld::C_Landscape);
+  auto walker=world.createVirtualCharacter(radius,180,{0,0,0});
+  for(int i=0;i<10;++i) walker->move({},17,50,slope,80,nullptr);
+  auto debris=world.addDynamicBody(new JPH::BoxShape(JPH::Vec3(.3f,.15f,.3f)),at(0,15,0),.6f,20.f,DynamicWorld::C_Fragment);
+  world.passCharacterOverlaps(*debris);
+  const auto start=debris->position();
+  for(int frame=0;frame<20;++frame) {
+    walker->move({},17,50,slope,80,nullptr);
+    world.tick(17);
+    }
+  const float pushed=(debris->position()-start).length();
+  CollisionWorld::CharacterMoveResult state;
+  for(int frame=0;frame<40;++frame) {
+    state=walker->move({5,0,0},17,50,slope,80,nullptr);
+    world.tick(17);
+    }
+  float deepest=1.e9f;
+  for(int frame=0;frame<60;++frame) {
+    state=walker->move({-5,0,0},17,50,slope,80,nullptr);
+    world.tick(17);
+    deepest=std::min(deepest,gap(*debris,state.position.x,false));
+    }
+  std::printf("CharacterVirtual inside a new remnant: pushed %.2f cm while inside; back from x 200: deepest %.2f cm\n",
+              double(pushed),double(-deepest));
+  require(pushed<1.f,"a remnant that appeared around a walker must be passed, not pushed away");
+  require(deepest>-2.f,"after they separate the remnant must block the walker again");
   }
 }
 
@@ -271,6 +519,9 @@ void testFractureBonds() {
       else
         require(groups==std::vector<uint32_t>({0,1,2,3,4,5}),"a hoop that lost more than half of its staves lets go of all");
       }
+
+    testFractureRemnants(write,make,zenId);
+    testCharacterDebris();
 
     // A wrong block does not load, with one line in the log that names the fault.
     const std::pair<const char*,const char*> invalid[]={

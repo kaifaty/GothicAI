@@ -6,6 +6,9 @@
 #include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Body/BodyFilter.h>
 #include <Jolt/Physics/Character/CharacterVirtual.h>
+#include <Jolt/Physics/Collision/CollideShape.h>
+#include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
+#include <Jolt/Physics/Collision/CollisionDispatch.h>
 #include <Jolt/Physics/Collision/ShapeFilter.h>
 
 #include <chrono>
@@ -19,8 +22,25 @@ namespace {
   // duplicate sensor geometry used by the legacy controller and aiming only.
   constexpr uint32_t characterMask = (1u<<DynamicWorld::C_Landscape)|(1u<<DynamicWorld::C_Object)|
                                      (1u<<DynamicWorld::C_Item)|(1u<<DynamicWorld::C_MovableVob)|
-                                     (1u<<DynamicWorld::C_Ragdoll);
+                                     (1u<<DynamicWorld::C_Ragdoll)|(1u<<DynamicWorld::C_Fragment);
 
+  // Debris blocks a character from the size that also stops a blade; smaller pieces stay
+  // passable. A body that appeared around this character is passed until they separate.
+  class CharacterBodyFilter final : public JPH::BodyFilter {
+    public:
+      explicit CharacterBodyFilter(const std::vector<JPH::BodyID>& passed):passed(passed) {}
+      bool ShouldCollide(const JPH::BodyID& id) const override {
+        return std::find(passed.begin(),passed.end(),id)==passed.end();
+        }
+      bool ShouldCollideLocked(const JPH::Body& body) const override {
+        if(body.GetObjectLayer()!=DynamicWorld::C_Fragment)
+          return true;
+        const auto size=body.GetShape()->GetLocalBounds().GetSize();
+        return std::max({size.GetX(),size.GetY(),size.GetZ()})>=CollisionWorld::fragmentBlockSize;
+        }
+    private:
+      const std::vector<JPH::BodyID>& passed;
+    };
   }
 
 struct CollisionWorld::VirtualCharacter::Impl final : JPH::CharacterContactListener {
@@ -28,7 +48,30 @@ struct CollisionWorld::VirtualCharacter::Impl final : JPH::CharacterContactListe
 
   static bool isPushable(const JPH::Body& body) {
     const auto layer = body.GetObjectLayer();
-    return body.IsDynamic() && (layer==DynamicWorld::C_Item || layer==DynamicWorld::C_MovableVob);
+    return body.IsDynamic() && (layer==DynamicWorld::C_Item || layer==DynamicWorld::C_MovableVob ||
+                                layer==DynamicWorld::C_Fragment);
+    }
+
+  // The character's capsule against a body, within `margin` metres.
+  bool overlaps(const JPH::Body& body, float margin) const {
+    JPH::CollideShapeSettings settings;
+    settings.mMaxSeparationDistance=margin;
+    JPH::AnyHitCollisionCollector<JPH::CollideShapeCollector> hit;
+    JPH::CollisionDispatch::sCollideShapeVsShape(character->GetShape(),body.GetShape(),JPH::Vec3::sOne(),JPH::Vec3::sOne(),
+                                                 JPH::Mat44(character->GetCenterOfMassTransform()),
+                                                 JPH::Mat44(body.GetCenterOfMassTransform()),{},{},settings,hit);
+    return hit.HadHit();
+    }
+
+  // A passed body is let go once it no longer touches the capsule within its padding.
+  void releasePassed() {
+    for(size_t i=0;i<passed.size();) {
+      JPH::BodyLockRead lock(world.impl->system.GetBodyLockInterface(),passed[i]);
+      if(lock.Succeeded() && overlaps(lock.GetBody(),character->GetCharacterPadding()))
+        ++i;
+      else
+        passed.erase(passed.begin()+ptrdiff_t(i));
+      }
     }
 
   static bool blocksAutomaticStairs(const JPH::Body& body) {
@@ -260,7 +303,8 @@ struct CollisionWorld::VirtualCharacter::Impl final : JPH::CharacterContactListe
       return;
     const auto& nativeBody = lock.GetBody();
     const auto layer = nativeBody.GetObjectLayer();
-    if((layer!=DynamicWorld::C_Item && layer!=DynamicWorld::C_MovableVob) || !nativeBody.IsDynamic() || contact.mIsSensorB)
+    if((layer!=DynamicWorld::C_Item && layer!=DynamicWorld::C_MovableVob && layer!=DynamicWorld::C_Fragment) ||
+       !nativeBody.IsDynamic() || contact.mIsSensorB)
       return;
     const float inverseMass = nativeBody.GetMotionProperties()->GetInverseMass();
     if(inverseMass<=0.f)
@@ -344,6 +388,7 @@ struct CollisionWorld::VirtualCharacter::Impl final : JPH::CharacterContactListe
   float pushSeconds = 0.f;
   float pushRemaining = 0.f;
   std::vector<std::pair<JPH::BodyID,float>> pushBodies;
+  std::vector<JPH::BodyID> passed; // debris that appeared around this character
   struct LimitedSteepFace {
     JPH::BodyID body;
     JPH::SubShapeID subShape;
@@ -388,6 +433,17 @@ CollisionWorld::VirtualCharacter::~VirtualCharacter() {
   characters.erase(std::remove(characters.begin(),characters.end(),this),characters.end());
   }
 
+void CollisionWorld::passCharacterOverlaps(const CollisionBody& body) {
+  if(impl->virtualCharacters.empty())
+    return;
+  JPH::BodyLockRead lock(impl->system.GetBodyLockInterface(),body.id);
+  if(!lock.Succeeded())
+    return;
+  for(auto* character:impl->virtualCharacters)
+    if(character->impl->overlaps(lock.GetBody(),0.f))
+      character->impl->passed.push_back(body.id);
+  }
+
 std::unique_ptr<CollisionWorld::VirtualCharacter> CollisionWorld::createVirtualCharacter(
     float radius, float height, const Tempest::Vec3& feet) {
   return std::unique_ptr<VirtualCharacter>(new VirtualCharacter(*this,radius,height,feet));
@@ -425,9 +481,11 @@ CollisionWorld::CharacterMoveResult CollisionWorld::VirtualCharacter::move(
   auto& world = *state.world.impl;
   const QueryBroadPhaseFilter broadFilter(characterMask);
   const QueryLayerFilter layerFilter(characterMask);
-  const JPH::BodyFilter bodyFilter;
+  const CharacterBodyFilter bodyFilter(state.passed);
   const JPH::ShapeFilter shapeFilter;
   state.culprit = culprit;
+  if(!state.passed.empty())
+    state.releasePassed();
   character.SetMass(std::max(mass,1.f));
   // Jolt uses metres, kilograms and seconds: this is a 450 N human push,
   // capped independently of the character's weight on a supporting body.
@@ -770,7 +828,7 @@ CollisionWorld::CharacterMoveResult CollisionWorld::VirtualCharacter::carry(uint
   const auto started = std::chrono::steady_clock::now();
   const QueryBroadPhaseFilter broadFilter(characterMask);
   const QueryLayerFilter layerFilter(characterMask);
-  const JPH::BodyFilter bodyFilter;
+  const CharacterBodyFilter bodyFilter(state.passed);
   const JPH::ShapeFilter shapeFilter;
   const float seconds = float(dt)*.001f;
   const auto velocity = character.GetLinearVelocity();

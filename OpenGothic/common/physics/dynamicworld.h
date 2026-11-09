@@ -72,6 +72,7 @@ struct MeleeBladeContact final {
   bool stopsSwing = false;
   bool windup = false;     // a wall met by a blade going back or up (wind-up, follow-through): passed
   uintptr_t movableVob = 0; // world contact with a movable vob body: its snapshot id, else zero
+  uintptr_t fragment = 0;   // world contact with a body of debris: that native body, else zero
   uint64_t step = 0;
   };
 
@@ -121,7 +122,8 @@ class DynamicWorld final {
       P_Item,
       P_Interactive,
       P_Editor,
-      P_MovableVob
+      P_MovableVob,
+      P_Fragment // a body of debris; the payload is its prop's BodyData
       };
 
     enum MoveCode : uint8_t {
@@ -556,6 +558,8 @@ class DynamicWorld final {
       // Bond group of the piece: pieces of one group share one native body (its pose, motion,
       // sleep, permanence and centre of mass). Without bonds it equals the piece.
       uint32_t bondGroup = 0;
+      // The group's native body: MeleeBladeContact::fragment of a blow on it.
+      uintptr_t body = 0;
       };
     // One entry per surviving piece, in piece order.
     std::vector<FragmentSnapshot> fragmentSnapshot() const;
@@ -765,6 +769,22 @@ class DynamicWorld final {
                                     FractureHit hit = FractureHit::Impact,
                                     std::string_view impactCulprit = {}, const Tempest::Vec3& direction = {});
     void           breakMovableVob(BodyData& body);
+    // Remnants (dynamicworld_remnants.cpp): a blow on a group of several pieces, its break on the
+    // next tick, and the blows of a stopped blade, an arrow and a spell's force.
+    void           damageRemnant(BodyData& body, uint32_t group, float damage, float impulse, const Tempest::Vec3& point,
+                                 FractureHit hit, const Tempest::Vec3& direction);
+    void           breakRemnants(BodyData& body);
+    void           breakRemnant(BodyData& body, uint32_t group);
+    bool           meleeStoppedRemnant(const MeleeBladeContact& contact, float weaponDamage, float strength,
+                                       FractureRule::Melee kind, Npc* attacker, std::vector<uintptr_t>& struck);
+    // `fragment` is the native body (CollisionWorld::CollisionBody*): a remnant's parent and group, if it is one.
+    BodyData*      remnantOf(uintptr_t fragment, uint32_t& group) const;
+    void           arrowRemnant(uintptr_t fragment, const Tempest::Vec3& point, const Tempest::Vec3& direction, Npc* culprit);
+    size_t         spellRemnants(BodyData& body, const Tempest::Vec3& center, float radius,
+                                 const std::function<Tempest::Vec3(const Tempest::Vec3&,float)>& impulse,
+                                 Npc* culprit, const Tempest::Vec3* pointCm);
+    void           chooseLastingGroups(BodyData& body);
+    void           emitBreakNoise(const BodyData& body, const Tempest::Vec3& center);
     void           syncFragments(BodyData& body);
     void           cleanupFragments(BodyData& body);
     void           saveDestructionVobs(Serialize& fout) const;

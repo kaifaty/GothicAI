@@ -796,7 +796,7 @@ void DynamicWorld::tick(uint64_t dt) {
     FrameProfile::Scope timing(FrameProfile::Zone::Destruction);
     for(auto* obj:movableVobs->bodies)
       if(movableVobs->enabled || obj->className=="fence" || obj->pose->broken) {
-        if(obj->pendingBreak) breakMovableVob(*obj);
+        if(obj->pendingBreak) breakMovableVob(*obj); else if(obj->pose->broken) breakRemnants(*obj);
         syncMovableVob(*obj);
         cleanupFragments(*obj);
         syncFragments(*obj);

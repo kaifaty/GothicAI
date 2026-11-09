@@ -73,6 +73,24 @@ inline ItemMaterial impactMaterial(asset::MaterialGroup material) {
     }
   }
 
+// Water displacement target of a prop's or a piece's wood (classless wood: solid wood).
+float vobBuoyancyFraction(asset::MaterialGroup material, std::string_view className = {});
+// The pieces of each bond group of one break, in piece order; groups by index.
+std::vector<std::vector<uint32_t>> fractureMembers(const std::vector<uint32_t>& pieceGroup);
+// The native body of one bond group of a break, in the parent's pose (dynamicworld_fragments.cpp).
+std::unique_ptr<CollisionWorld::DynamicBody> addFragmentBody(CollisionWorld& world, const FractureMesh& mesh,
+                                                             const std::vector<uint32_t>& members,
+                                                             const Tempest::Matrix4x4& matrix, float parentMass,
+                                                             asset::MaterialGroup parentMaterial, float parentFriction,
+                                                             const std::string& visual, const JPH::GroupFilter* filter,
+                                                             uint32_t breakGroup, uint32_t group, void* parent);
+// The motion of a new body of a break: the old body's motion at its centre of mass (`center` is the
+// old one's), and the blow by point 6 of the bonds note: a single piece also gets the outward push
+// and spin, a joined group only the decaying blow by its own centre of mass.
+void launchFragment(CollisionWorld::DynamicBody& fragment, const std::vector<uint32_t>& members, const FractureMotion& motion,
+                    const Tempest::Vec3& center, const Tempest::Vec3& velocity, const Tempest::Vec3& omega,
+                    const Tempest::Vec3& point, const Tempest::Vec3& direction, size_t version);
+
 inline double volumeScale(const Tempest::Matrix4x4& matrix) {
   const auto* m = matrix.data();
   return std::abs(double(m[0])*(double(m[5])*m[10]-double(m[9])*m[6])-
@@ -146,6 +164,17 @@ struct DynamicWorld::BodyData {
   std::vector<int64_t> fragmentSleepTime;
   std::vector<bool> fragmentPermanent;
   std::vector<uint32_t> fragmentGroup;
+  // Remnants, groups of several pieces, take blows again (second step of the bonds note): the
+  // fate of every bond and, per group, the damage taken and a blow left for the next tick.
+  struct Remnant {
+    float damage = 0, impulse = 0;
+    bool pending = false;
+    FractureHit hit = FractureHit::Impact;
+    Tempest::Vec3 point, direction;
+    };
+  std::vector<bool> fragmentBondBroken;
+  std::vector<Remnant> fragmentRemnant;
+  uint32_t fragmentCollisionGroup = 0;
   std::function<void(bool,const std::vector<Tempest::Matrix4x4>&)> fractureCallback;
   };
 

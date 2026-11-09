@@ -879,7 +879,7 @@ CollisionWorld::QueryResult CollisionWorld::rayCast(const Tempest::Vec3& from, c
       value.material = mesh->materialId(triangle);
       value.sector = mesh->sectorName(triangle);
       }
-    else if(value.body!=nullptr && value.body->category()==DynamicWorld::C_Item) {
+    else if(value.body!=nullptr && (value.body->category()==DynamicWorld::C_Item || value.body->category()==DynamicWorld::C_Fragment)) {
       value.material=value.body->noiseSurface;
       }
     if(body.GetObjectLayer()==DynamicWorld::C_Ragdoll)
