@@ -139,7 +139,7 @@ def test_v51_combat_hit_reports_actual_health_loss(kind):
 
 
 def test_v50_svm_lines_keep_the_native_meaning_and_addressee():
-    assert PROTOCOL_VERSION == 60
+    assert PROTOCOL_VERSION == 61
     msg = parse_game_message(_json({
         "type": "svm_line", "id": "svm-1", "npc": "X", "svm": "$KILLENEMY",
         "text": "Ещё одним монстром меньше.", "target": "WOLF", "overlay": True,
@@ -479,6 +479,17 @@ def test_hero_deed_requires_known_action_and_position():
 def test_action_command_omits_empty_fields():
     cmd = ActionCmd(id="a1", npc="X", action="wait", args={"ms": 500})
     assert cmd.to_json() == '{"type":"action","id":"a1","npc":"X","action":"wait","args":{"ms":500}}'
+
+
+def test_v61_say_serializes_optional_face_cues_and_leak():
+    assert PROTOCOL_VERSION == 61
+    fields = {"npc": "X", "line": "AIB_1", "text": "Ну да, конечно."}
+    assert json.loads(SayCmd(**fields).to_json()) == {"type": "say", **fields}
+    cues = [{"cue": "doubt", "word": 2}]
+    leak = {"felt": "afraid", "half": "upper", "word": 0}
+    assert json.loads(SayCmd(**fields, cues=cues, leak=leak).to_json()) == {
+        "type": "say", **fields, "cues": cues, "leak": leak,
+    }
 
 
 def test_v15_npc_to_npc():

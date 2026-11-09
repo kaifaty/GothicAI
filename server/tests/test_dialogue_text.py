@@ -18,6 +18,7 @@ from gothic_ai.dialogue import (
     to_game_text,
     tool_leak,
 )
+from gothic_ai.dialogue_text import _CUE_ALIASES, _MOOD_ALIASES, CueTag, FeltTag
 from gothic_ai.gamedata import base, ou
 from gothic_ai.gamedata.ou import lines_from_messages, npc_dialog_key, npc_lines
 from gothic_ai.persona import pick_samples, render_instructions
@@ -134,6 +135,25 @@ def test_mood_tag_synonyms_and_stage_directions():
     assert mood_of("задумчиво") is None
     # an unknown short tag is a stage direction: not said
     assert _run(MoodTags(), "[смеётся] Ха!") == [" Ха!"]
+
+
+@pytest.mark.parametrize(("cue", "russian"), [
+    ("flash", "вспышка бровей"), ("doubt", "сомнение"), ("smirk", "ухмылка"),
+    ("press", "поджатые губы"), ("disgust", "брезгливость"), ("squint", "прищур"),
+    ("frown", "хмурится"), ("chin", "подбородок"), ("wince", "поморщился"),
+])
+def test_face_cue_tags_have_a_closed_bilingual_dictionary(cue, russian):
+    assert _run(MoodTags(), f"[{cue}] [{russian}]") == [CueTag(cue), " ", CueTag(cue)]
+    assert _CUE_ALIASES.keys().isdisjoint(_MOOD_ALIASES)
+
+
+def test_face_tags_stream_without_stage_directions_and_moods_win(monkeypatch):
+    assert _run(MoodTags(), "[dou", "bt] Да [felt:ис", "пуг] нет.") == [
+        CueTag("doubt"), " Да ", FeltTag("afraid"), " нет.",
+    ]
+    assert _run(MoodTags(), "[glance][roll][unknown][felt:neutral][felt:calm][felt:unknown] Да.") == [" Да."]
+    monkeypatch.setitem(_CUE_ALIASES, "smile", "smirk")
+    assert _run(MoodTags(), "[smile]") == [MoodTag("friendly")]
 
 
 def test_long_brackets_and_unclosed_ones_are_text():

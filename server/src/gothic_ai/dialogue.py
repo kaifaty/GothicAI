@@ -124,6 +124,7 @@ from .dialogue_text import tool_leak as tool_leak
 from .dialogue_turns import DialogueTurnsMixin
 from .dialogue_voice import DialogueVoiceMixin
 from .executor import Intent
+from .face_cues import choose_leak
 from .game import GameError, GameLink
 from .journal import Journal
 from .llm import (
@@ -150,7 +151,9 @@ from .protocol import (
     Mood,
     SayAudioCmd,
     SayCmd,
+    SayCue,
     SayEndCmd,
+    SayLeak,
     Session,
     Snapshot,
 )
@@ -923,6 +926,8 @@ class DialogueManager(
         filler: bool = False,
         to: str | None = None,
         bark: Callable[[str], None] | None = None,
+        cues: list[SayCue] | None = None,
+        felt: tuple[Mood, int] | None = None,
     ) -> str | None:
         """A line of the npc's, voiced if there is TTS. `filler`: its first words before the answer (the
         npc goes on thinking after them, protocol v14); `reply` None: not a line of a reply's text; `to`:
@@ -932,6 +937,7 @@ class DialogueManager(
             return
         conv.said_at = time.monotonic()
         line = f"AIB_{next(self._line_ids)}"
+        leak = choose_leak(self, conv.npc, line, *felt) if felt else None
         if reply is not None:  # first words and answers to orders are not the reply's: no gesture is too late
             conv.last_lines.append(line)
             self._line_replies[line] = reply
@@ -960,6 +966,8 @@ class DialogueManager(
                     reply=reply,
                     overlay=overlay or None,
                     mood=mood,
+                    cues=cues,
+                    leak=leak,
                     filler=filler or None,
                     to=to,
                 )
@@ -979,7 +987,7 @@ class DialogueManager(
                     record("busy")
 
             conv.voicing.add_done_callback(finished)
-        conv.voice.put_nowait((line, text, reply, overlay, mood, filler, to))
+        conv.voice.put_nowait((line, text, reply, overlay, mood, filler, to, cues, leak))
         return line
 
     async def _voice(self, conv: Conversation, queue: asyncio.Queue[QueuedLine]) -> None:
@@ -989,7 +997,7 @@ class DialogueManager(
         preceding overlay, and an overlay cuts off unheard earlier turns before its first sound."""
         assert self.tts is not None
         while True:
-            line, text, reply, overlay, mood, filler, to = await queue.get()
+            line, text, reply, overlay, mood, filler, to, cues, leak = await queue.get()
             started = False
             spoken_at = 0.0
             await self._wait_floor(conv, line)
@@ -1009,6 +1017,8 @@ class DialogueManager(
                         mood: Mood | None = mood,
                         filler: bool = filler,
                         to: str | None = to,
+                        cues: list[SayCue] | None = cues,
+                        leak: SayLeak | None = leak,
                     ) -> None:
                         nonlocal started, spoken_at
                         if line in conv.hushed:
@@ -1030,6 +1040,8 @@ class DialogueManager(
                                 reply=reply,
                                 overlay=overlay or None,
                                 mood=mood,
+                                cues=cues,
+                                leak=leak,
                                 filler=filler or None,
                                 to=to,
                             )
@@ -1087,6 +1099,8 @@ class DialogueManager(
                             reply=reply,
                             overlay=overlay or None,
                             mood=mood,
+                            cues=cues,
+                            leak=leak,
                             filler=filler or None,
                             to=to,
                         )
