@@ -244,7 +244,7 @@ preparation_needed() { [[ "$TEST_PREPARE" == 1 ]]; }
         self.assertNotIn('RYZEN_BENCH_COLUMN=1', command)
         if action == 'bench':
             # A bench draws offscreen by default: no window slot and no window flags.
-            self.assertEqual(options[3:], ['--class', 'quick', '--threads', '4', '--mem', '5G', '--max', '9m',
+            self.assertEqual(options[3:], ['--class', 'quick', '--threads', '4', '--mem', '4G', '--max', '9m',
                                            '--wait-max', '23', '--gpu-mem', '2G', '--name', 'bench smoke'])
             self.assertIn('RYZEN_BENCH_OFFSCREEN=1', command)
             return
@@ -313,7 +313,7 @@ preparation_needed() { [[ "$TEST_PREPARE" == 1 ]]; }
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         options = self.queue_options(requests[0])
         self.assertEqual(options, ['--host', 'fake', 'run', '--class', 'quick', '--threads', '4',
-                                  '--mem', '5G', '--max', '9m', '--wait-max', '23',
+                                  '--mem', '4G', '--max', '9m', '--wait-max', '23',
                                   '--gpu-mem', '2G', '--name', 'bench npc-day-parity'])
         self.assertIn('RYZEN_BENCH_OFFSCREEN=1', requests[0])
 
