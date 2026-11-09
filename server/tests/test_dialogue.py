@@ -22,6 +22,7 @@ from gothic_ai.scenarios import basics as scenarios
 from gothic_ai.talk import TalkDesk
 from gothic_ai.trace import TraceWriter
 from gothic_ai.tts import Speech, TtsClient, TtsError
+from gothic_ai.turn import REFUSAL_MAX, refusal_note
 from tests.fake_game import FakeGame, connected
 
 XARDAS = "NONE_100_XARDAS"
@@ -2198,6 +2199,47 @@ async def test_a_rejection_remembers_the_first_words_and_the_main_reply(reply):
     assert result.output.count("Ишь ты!") == 1
 
 
+async def test_a_rejected_call_stays_in_the_history_for_the_next_turn():
+    """Only words used to be kept: Cavalorn proposed a deal the code had refused twice (2026-10-14)."""
+    fake = FakeGame()
+    scroll = ToolCall("give_item", {"item": "ITSC_FIREBALL", "count": 1})
+    llm = FakeBackend(
+        script=[
+            FakeStep("Держи свиток.", [scroll]),
+            FakeStep("", [scroll]),  # the same refusal again in the turn: one note
+            FakeStep(""),
+            FakeStep("Свитка у меня нет."),
+        ],
+        delay=0,
+    )
+    async with connected(fake) as link:
+        dialogue = DialogueManager(link, llm, PersonaProvider(None))
+        await link.attach(XARDAS)
+        dialogue.open(XARDAS, "Ксардас")
+        await dialogue.say_as_player(XARDAS, "Дай мне свиток.")
+        await _until(lambda: fake.statuses[-1:] == ["idle"])
+        history = dialogue.conversations[XARDAS].history
+        assert [m.role for m in history] == ["user", "assistant", "developer"]
+        assert history[1].content == "Держи свиток."
+        assert history[2].content.startswith("[give_item не прошёл: У тебя нет предмета ITSC_FIREBALL")
+        assert "Отклонено" not in history[2].content
+
+        await dialogue.say_as_player(XARDAS, "Ну так дай.")
+        await _until(lambda: len(llm.calls) == 4 and fake.statuses[-1:] == ["idle"])
+    request = llm.calls[3][1]
+    assert history[2] in request
+    assert request.index(history[2]) < request.index(Message("user", "Ну так дай."))
+
+
+def test_a_refusal_note_keeps_the_reason_and_cuts_a_long_one():
+    assert refusal_note("propose_deal", "Отклонено: нет таких предметов: ITWR_CAVALORNLETTER.") == (
+        "propose_deal не прошёл: нет таких предметов: ITWR_CAVALORNLETTER."
+    )
+    assert refusal_note("give_item", "У героя нет места.") == "give_item не прошёл: У героя нет места."
+    long = refusal_note("propose_deal", "Отклонено: " + "предмет, " * 100)
+    assert len(long) <= len("propose_deal не прошёл: ") + REFUSAL_MAX + 1 and long.endswith("…")
+
+
 async def test_first_words_do_not_end_a_turn_after_a_silent_accepted_call():
     fake = FakeGame()
     llm = FakeBackend(
@@ -2563,7 +2605,8 @@ async def test_a_rejection_after_the_quick_fight_line_keeps_the_next_step_silent
     assert "Ты уже сказал вслух" not in result.output
     assert "ничего не говори" not in result.output
     history = dialogue.conversations[XARDAS].history
-    assert history[-1].content == "Держись!"
+    assert history[-2].content == "Держись!"
+    assert history[-1].content.startswith("[give_item не прошёл: У тебя нет предмета ITSC_FIREBALL")
 
 
 async def test_surrender_probe_uses_a_separate_slot_and_leaves_the_npc_cache_intact():

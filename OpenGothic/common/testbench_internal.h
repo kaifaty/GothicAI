@@ -26,6 +26,7 @@
 #include "graphics/objvisual.h"
 #include "graphics/mesh/hitzones.h"
 #include "graphics/mesh/aim.h"
+#include "graphics/mesh/gaze.h"
 #include "world/objects/archer.h"
 #include "game/inventory.h"
 #include "physics/charactervirtualdiagnostics.h"
@@ -39,6 +40,7 @@
 
 class Interactive;
 class MoveTrigger;
+class Marvin;
 class Npc;
 class PlayerControl;
 class Skeleton;
@@ -1087,6 +1089,51 @@ struct NpcCommands {
   } stunDrift;
 };
 
+struct ControlContext {
+  uint64_t& time;
+  uint64_t& waitUntil;
+  std::chrono::steady_clock::time_point& realWaitUntil;
+  bool& waitArrive;
+  uint64_t& arriveEnd;
+  std::string& label;
+  bool& hasPrev;
+  std::vector<Hold>& holds;
+  std::vector<KeyCodec::Action>& taps;
+  Healing& healing;
+  uint64_t& inputTraceUntil;
+  std::vector<Tempest::Vec3>& routePoints;
+  size_t& routeNext;
+  Tempest::Vec3& routePosition;
+  float& routeSpeed;
+  double& routeLength;
+  uint64_t& routeStarted;
+  bool& routeActive;
+  bool& routeWasExternal;
+  Npc& (*subjectOf)(Npc&);
+};
+
+struct DialogContext {
+  uint64_t& time;
+  Npc*& hearNpc;
+  uint64_t& hearUntil;
+  uint64_t& hearEvery;
+  uint64_t& hearNext;
+  Npc*& thinkNpc;
+  uint64_t& thinkUntil;
+  bool& speaking;
+  uint64_t& speakUntil;
+  uint64_t& heroEndAt;
+  bool& waitReply;
+  bool& replyNeed;
+  uint64_t& replyFrom;
+  uint64_t& replyEnd;
+  uint64_t& replyQuiet;
+  std::string& waitAiKey;
+  std::string& waitAiStage;
+  uint64_t& waitAiEnd;
+  Npc& (*subjectOf)(Npc&);
+};
+
 struct NpcCommandsContext {
   NpcCommands& npcCommands;
   Healing& healing;
@@ -1177,6 +1224,16 @@ MovablesContext movablesContext();
 bool chooseQuestSite(World& world,bool water,QuestSite& site,const std::function<bool(QuestSite&)>& accept={});
 
 extern std::string outDir;
+
+std::string rest(const std::string& line);
+Npc* npcBySymbol(World& w,std::string_view symbol);
+Marvin& marvin();
+void press(PlayerControl& ctrl,KeyCodec::Action a);
+bool aiCommand(const std::string& cmd,std::string& reply);
+std::string nameUtf8(const Npc& n);
+const char* gazeSource(Gaze::Source s);
+bool controlCommand(const ControlContext& ctx,const std::string& line,const std::vector<std::string>& a,World& w,Npc& pl,PlayerControl& ctrl);
+bool dialogCommand(const DialogContext& ctx,const std::string& line,const std::vector<std::string>& a,World& w,Npc& pl);
 
 void say(const std::string& s);
 Tempest::Vec3 facing(const Npc& pl);
