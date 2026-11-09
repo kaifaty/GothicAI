@@ -35,7 +35,7 @@ const char* amountNames[Amounts]={"palette_calls","palette_bytes","identical_cal
   "npc_logic_early","npc_logic_late","npc_logic_events","npc_logic_event_mismatch",
   "npc_logic_wait_early","npc_logic_wait_late","npc_logic_reanchored","npc_logic_body_samples","npc_logic_weapon_samples",
   "npc_anim_deferred","npc_anim_catchup","npc_anim_sync_on_read",
-  "rt_tlas_builds","rt_dirty_slots"};
+  "rt_tlas_builds","rt_dirty_slots","gi_probes_live","gi_probes_traced"};
 uint64_t ns() {
   return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
   }

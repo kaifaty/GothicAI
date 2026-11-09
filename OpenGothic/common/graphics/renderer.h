@@ -71,7 +71,8 @@ class Renderer final {
     void prepareSSAO      (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview);
     void prepareFog       (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview);
     void prepareIrradiance(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview);
-    void prepareGi        (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview);
+    void prepareGi        (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& wview);
+    void readGiStats      (uint8_t fId);
     void prepareExposure  (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview);
     void prepareEpipolar  (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview);
 
@@ -280,13 +281,21 @@ class Renderer final {
       const uint32_t            atlasDim  = 256; // sqrt(maxProbes)
       const uint32_t            maxProbes = atlasDim*atlasDim; // 65536
 
-      Tempest::StorageBuffer    voteTable, hashTable, freeList;
+      Tempest::StorageBuffer    voteTable, hashTable, freeList, newList, voteTiles;
       Tempest::StorageBuffer    probes;
       Tempest::StorageImage     probesGBuffDiff;
       Tempest::StorageImage     probesGBuffNorm;
       Tempest::StorageImage     probesGBuffRayT;
-      Tempest::StorageImage     probesLighting;
+      Tempest::StorageImage     probesLighting;     // RGBA16F: the ambient cube of a probe, 3x2 texels
       Tempest::StorageImage     probesLightingPrev;
+      Tempest::StorageImage     probesRadiance;     // R32UI, RGB9E5: the radiance of each sample, relit in turns
+      uint32_t                  frame    = 0;       // turns the samples relit in a frame
+      uint64_t                  lastTick = 0;       // the world's tick of the last lighting, for the blend over time
+      float                     frameTime = 0;      // smoothed world time of a frame, s: how many samples to relight
+      bool                      resetHistory = false; // another world: the probes start over, as on the first frame
+      // the counters of probe_stats (live probes, traced in the frame), read back a frame slot later (FrameProfile)
+      Tempest::StorageBuffer    stats[Resources::MaxFramesInFlight];
+      bool                      statsWritten[Resources::MaxFramesInFlight] = {};
       } gi;
 
     struct {

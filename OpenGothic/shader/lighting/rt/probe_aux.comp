@@ -14,6 +14,12 @@ layout(binding = 0, std430) buffer Hbo0 { uint voteTable[]; };
 layout(binding = 1, std430) buffer Hbo  { uint hashTable[]; };
 layout(binding = 2, std430) buffer Pbo  { ProbesHeader probeHeader; Probe probe[]; };
 layout(binding = 3, std430) buffer Fbo0 { int cursor; uint list[]; } freeList;
+#if defined(STATS)
+// read back by the CPU a frame slot later (FrameProfile: gi_probes_live, gi_probes_traced)
+layout(binding = 4, std430) writeonly buffer Stats { uint live; uint traced; uint slots; uint freeSlots; } stats;
+#endif
+layout(binding = 5, std430) buffer Nbo  { uint newList[]; };   // probes to trace, probe_allocation.comp
+layout(binding = 6, std430) buffer Tbo  { uint voteTiles[]; }; // screen tiles with a vote, probe_allocation.comp
 
 void hashmapInsert(const uint probeId) {
   const vec3 gridPos = probe[probeId].pos/probeGridStep;
@@ -31,6 +37,8 @@ void main_init() {
     probeHeader.iterator    = 0;
     probeHeader.iterator2   = 0;
     probeHeader.tracedCount = 0;
+    probeHeader.newCount    = 0;
+    probeHeader.iterator3   = 0;
     freeList.cursor         = 0;
 
     Probe p;
@@ -48,12 +56,17 @@ void main_clear() {
   if(threadID<voteTable.length()) {
     voteTable[threadID] = 0xFFFFFFFF;
     }
+  if(threadID<voteTiles.length()) {
+    voteTiles[threadID] = 0;
+    }
 
   if(threadID==0) {
     probeHeader.count       = min(probeHeader.count, probe.length());
     probeHeader.iterator    = 0;
     probeHeader.iterator2   = 0;
+    probeHeader.iterator3   = 0;
     probeHeader.tracedCount = 0;
+    probeHeader.newCount    = 0;
     freeList.cursor         = 0;
     }
   }
@@ -71,12 +84,18 @@ void main_prune() {
   if(probeId>=probeHeader.count)
     return;
 
-  if(probeId==0)
-    return; // sky
+  if(probeId==0) {
+    // the sky: listed for the trace once, then no longer new
+    if((probe[0].bits & TRACED_BIT)==0)
+      newList[atomicAdd(probeHeader.newCount, 1)] = 0;
+    probe[0].bits &= ~NEW_BIT;
+    return;
+    }
 
   probe[probeId].pNext = 0xFFFFFFFF;
   if((probe[probeId].bits & REUSE_BIT)!=0) {
-    probe[probeId].bits &= ~(REUSE_BIT | UNUSED_BIT);
+    // traced in an earlier frame: no longer new (probe_trace.comp sets the bit)
+    probe[probeId].bits &= ~(REUSE_BIT | UNUSED_BIT | NEW_BIT);
     return;
     }
 
@@ -100,6 +119,20 @@ void main_mkHash() {
     hashmapInsert(probeId);
   }
 
+#if defined(STATS)
+void main_stats() {
+  if(gl_GlobalInvocationID.x!=0)
+    return;
+  // after the allocation: the free list holds the dead slots left, probe zero is the sky
+  const uint slots     = min(probeHeader.count, uint(probe.length()));
+  const uint freeSlots = min(uint(max(freeList.cursor, 0)), slots-1);
+  stats.live      = slots - 1 - freeSlots;
+  stats.traced    = probeHeader.tracedCount;
+  stats.slots     = slots;
+  stats.freeSlots = freeSlots;
+  }
+#endif
+
 void main() {
 #if defined(INIT)
   main_init();
@@ -111,5 +144,7 @@ void main() {
   main_mkHash();
 #elif defined(PRUNE)
   main_prune();
+#elif defined(STATS)
+  main_stats();
 #endif
   }

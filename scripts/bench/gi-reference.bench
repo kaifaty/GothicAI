@@ -19,7 +19,7 @@ goto pos 3924 -73 -6663
 clear 3000
 watch player
 cam look 110
-cam world 160 170 90
+cam world 160 170 270
 wait 10000
 cam hold
 wait 12000
@@ -59,6 +59,10 @@ cam hold
 wait 12000
 shot hut-night-1
 wait 1000
+# The response of the probes' light (step 2a): 22:00 -> 12:00 in the same view, 30 frames per second.
+set time 22 0
+wait 2000
+wait 2000
 
 # 3. Onar's stable at noon: the open side, the sunlit yard bounces in under the roof.
 set time 12 0
@@ -84,7 +88,7 @@ goto NW_FARM1_INHOUSE_02
 clear 3000
 watch player
 cam look 110
-cam world 180 170 0
+cam world 140 160 45
 wait 10000
 cam hold
 wait 12000
@@ -97,38 +101,39 @@ wait 12000
 shot farmhouse-day-2
 wait 1000
 
-# 5. The night harbour of perf-harbour-night: lamp posts on the quay, the houses around; a slow pan.
+# 5. A street of the harbour's poor quarter at midnight: lamp posts with fire light the ground and the walls
+#    around them; a slow pan.
 set time 0 0
-goto pos 5391 320 -5822
+goto NW_CITY_HABOUR_POOR_AREA_PATH_06
 clear 3000
 watch player
 cam look 120
-cam world 850 300 0
+cam world 500 200 270
 wait 10000
 cam hold
 wait 12000
 shot harbour-night-1
 wait 3000
-cam world 850 300 180
+cam world 500 200 180
 wait 300
 cam hold
 wait 12000
 shot harbour-night-2
 wait 2000
 
-# 6. The forest at noon under the crowns (perf-forest, sideways views): sky light and the bounce off the trunks.
+# 6. The forest at noon under the crowns: sky light through the crowns, the bounce off the trunks and the rocks.
 set time 12 0
-goto NW_FOREST_PATH_16
+goto NW_FOREST_PATH_66
 clear 3000
 watch player
-cam look 150
-cam world 500 300 90
+cam look 130
+cam world 400 140 90
 wait 10000
 cam hold
 wait 12000
 shot forest-1
 wait 3000
-cam world 500 300 270
+cam world 400 140 180
 wait 300
 cam hold
 wait 12000
