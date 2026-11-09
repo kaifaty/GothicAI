@@ -1329,4 +1329,171 @@ bool spellCommand(const MovablesContext& context,const std::vector<std::string>&
   return true;
   }
 
+bool physicsNoiseDebug(const MovablesContext& context,World& world,Npc& player,std::string_view command,
+                                  std::string& value,std::string& error) {
+  auto& state=context.movables;
+  const auto fail=[&](std::string_view message) {error=message;return false;};
+  const auto resetCounts=[&] {
+    state.noiseBridgeImpacts=0;state.noiseBridgeLoudImpacts=0;state.noiseBridgeCulpritImpacts=0;
+    state.noiseBridgeUnseenCulpritImpacts=0;state.noiseBridgeCupImpacts=0;state.noiseBridgeCupMaxRadius=0;
+    state.noiseBridgeDialogueImpacts=0;state.noiseBridgeCombatImpacts=0;
+    state.noiseBridgeHeard.clear();
+    state.noiseBridgeEvents.clear();
+    };
+  if(command=="setup") {
+    world.physic()->setMovableVobsEnabled(true);world.physic()->setPhysicsNoiseEnabled(true);
+    prepareNoiseFixture(world,player);
+    if(!state.movableReady || !state.noiseHost)return fail("Coragon tavern fixture unavailable in this save");
+    world.script().skipImportantInfos(*state.noiseHost,player);
+    player.handle().attribute[ATR_HITPOINTS]=100000;
+    player.handle().attribute[ATR_HITPOINTSMAX]=100000;
+    state.noiseBridgeDebug=true;
+    }
+  if(!state.noiseBridgeDebug || !state.noiseHost)return fail("physics_noise setup required");
+  auto& npc=*state.noiseHost;
+  if(command.ends_with("-ready")) {
+    noiseRetireListeners();
+    const bool quiet=command=="quiet-ready";
+    if(command!="loud-ready" && command!="quiet-ready" && command!="dialogue-ready" &&
+       command!="combat-ready" && command!="throttle-ready")return fail("unknown physics_noise ready mode");
+    const auto source=quiet ? (state.movableWalkStart+state.movableWalkEnd)*.5f : state.movableCenter;
+    noiseBegin(world,command,source);
+    Vec3 point;
+    if(!noiseFloor(world,source,quiet?600.f:500.f,false,point))return fail("supported clear listener floor unavailable");
+    if(!noiseAddListener(world,"bridge",point,&npc))return fail("Coragon listener unavailable");
+    // The real instigator is behind the listener together with the impact.
+    // Its identity must be absent from the NPC's event even though native physics knows it.
+    auto hero=source+Vec3(0,0,100);
+    if(command=="dialogue-ready" || command=="combat-ready")hero=point+Vec3(0,0,80);
+    const auto floor=world.physic()->landRay(hero+Vec3(0,250,0),600);
+    if(floor.hasCol)hero.y=floor.v.y;
+    player.setPosition(hero);player.setDirection(point-hero);player.updateTransform();
+    if(command=="dialogue-ready") {
+      npc.clearAiQueue();npc.aiPush(AiQueue::aiProcessInfo(player));
+      }
+    if(command=="combat-ready") {
+      const auto state=world.script().findSymbolIndex("ZS_ATTACK");
+      if(state==size_t(-1))return fail("native ZS_ATTACK unavailable");
+      npc.clearAiQueue();npc.setTarget(&player);
+      npc.aiPush(AiQueue::aiStartState(ScriptFn(state),0,&player,nullptr,""));
+      }
+    resetCounts();
+    }
+  else if(command=="loud-hit" || command=="dialogue-hit" || command=="combat-hit" || command=="throttle-hit") {
+    if(command=="dialogue-hit" && !Gothic::inst().isNpcInDialog(npc))return fail("actual native dialogue has not opened");
+    if(command=="combat-hit" && npc.weaponState()==WeaponState::NoWeapon)return fail("actual native combat has not drawn a weapon");
+    if(command!="throttle-hit")resetCounts();
+    noisePushTable(world,&player);
+    }
+  else if(command=="cup-hit") {resetCounts();noiseDropItems(world,1);}
+  else if(command!="setup" && command!="sample")return fail("unknown physics_noise command");
+  const bool routine=npc.currentState().isValid() && npc.isInRoutine(npc.currentState());
+  std::string heard="[";
+  for(auto tick:state.noiseBridgeHeard) {if(heard.size()>1)heard+=',';heard+=std::to_string(tick);}
+  std::string bridgeEvents="[";
+  for(auto tick:state.noiseBridgeEvents) {if(bridgeEvents.size()>1)bridgeEvents+=',';bridgeEvents+=std::to_string(tick);}
+  value="{\"npc\":"+jsonStr(symName(world,&npc))+",\"position_cm\":"+ragdollVector(npc.position())+
+    ",\"source_cm\":"+ragdollVector(state.noiseSource)+",\"distance_cm\":"+
+    ragdollNumber((npc.position()-state.noiseSource).length())+",\"facing_error_deg\":"+
+    ragdollNumber(noiseFacingError(npc,state.noiseSource))+",\"can_see_hero\":"+(npc.canSeeNpc(player,false)?"true":"false")+
+    ",\"eligible\":"+(npc.canHearPhysicsNoise()?"true":"false")+
+    ",\"external\":"+(npc.isExternalControl()?"true":"false")+
+    ",\"investigating\":"+(npc.isPhysicsInvestigating()?"true":"false")+
+    ",\"player_distance_cm\":"+ragdollNumber((npc.position()-player.position()).length())+
+    ",\"dialogue\":"+(Gothic::inst().isNpcInDialog(npc)?"true":"false")+
+    ",\"combat\":"+(npc.weaponState()!=WeaponState::NoWeapon?"true":"false")+
+    ",\"ai_queue_empty\":"+(npc.isAiQueueEmpty()?"true":"false")+
+    ",\"routine_state\":"+(routine?"true":"false")+",\"state\":"+jsonStr(stateName(world,npc))+
+    ",\"t_game_ms\":"+std::to_string(world.tickCount())+
+    ",\"native_impacts\":"+std::to_string(state.noiseBridgeImpacts)+
+    ",\"native_loud_impacts\":"+std::to_string(state.noiseBridgeLoudImpacts)+
+    ",\"native_culprit_impacts\":"+std::to_string(state.noiseBridgeCulpritImpacts)+
+    ",\"native_unseen_culprit_loud_impacts\":"+std::to_string(state.noiseBridgeUnseenCulpritImpacts)+
+    ",\"native_cup_impacts\":"+std::to_string(state.noiseBridgeCupImpacts)+
+    ",\"native_cup_max_radius_cm\":"+ragdollNumber(state.noiseBridgeCupMaxRadius)+
+    ",\"audible_dialogue_loud_impacts\":"+std::to_string(state.noiseBridgeDialogueImpacts)+
+    ",\"audible_combat_loud_impacts\":"+std::to_string(state.noiseBridgeCombatImpacts)+
+    ",\"native_heard_ms\":"+heard+"],\"bridge_event_ms\":"+bridgeEvents+"]}";
+  return true;
+  }
+
+void physicsNoise(const MovablesContext& context,const PhysicsNoise& noise,std::string_view sound,bool played) {
+  auto& state=context.movables;
+  if(state.noiseBridgeDebug && (noise.position-state.noiseSource).quadLength()<250.f*250.f) {
+    ++state.noiseBridgeImpacts;
+    if(noise.volume>=.35f)++state.noiseBridgeLoudImpacts;
+    if(noise.culprit)++state.noiseBridgeCulpritImpacts;
+    if(noise.what.find("BEER")!=std::string::npos) {
+      ++state.noiseBridgeCupImpacts;
+      state.noiseBridgeCupMaxRadius=std::max(state.noiseBridgeCupMaxRadius,noise.radius);
+      }
+    if(auto* world=Gothic::inst().world();world && state.noiseHost && noise.volume>=.35f) {
+      auto& npc=*state.noiseHost;
+      const float radius=noise.radius*std::max(0.f,1.f-world->physic()->soundOclusion(npc.mapHeadBone(),noise.position));
+      if(npc.qDistTo(noise.position)<=radius*radius) {
+        if(noise.culprit && !npc.canSeeNpc(*noise.culprit,false))++state.noiseBridgeUnseenCulpritImpacts;
+        if(Gothic::inst().isNpcInDialog(npc))++state.noiseBridgeDialogueImpacts;
+        if(npc.weaponState()!=WeaponState::NoWeapon && stateName(*world,npc)=="ZS_ATTACK")++state.noiseBridgeCombatImpacts;
+        }
+      }
+    }
+  if(context.scenarioPath==nullptr || !state.noiseTrace)return;
+  if(state.movableMeasuring) {++state.noiseMeasuredImpacts;return;}
+  const char* material="unknown";
+  switch(noise.material) {
+    case MAT_WOOD:material="wood";break;
+    case MAT_METAL:material="metal";break;
+    case MAT_STONE:material="stone";break;
+    case MAT_CLAY:material="clay";break;
+    case MAT_GLAS:material="glass";break;
+    case MAT_LEATHER:material="leather";break;
+    default:break;
+    }
+  auto* world=Gothic::inst().world();
+  std::string listeners="[";
+  if(world)for(const auto& listener:state.noiseListeners) {
+    if(listeners.size()>1)listeners+=',';
+    const auto head=listener.npc->mapHeadBone();
+    const auto occlusion=world->physic()->soundOclusion(head,noise.position);
+    listeners+="{\"role\":"+jsonStr(listener.role)+",\"npc_id\":"+std::to_string(noiseNpcId(listener.npc))+
+      ",\"distance_cm\":"+ragdollNumber((head-noise.position).length())+
+      ",\"occlusion\":"+ragdollNumber(occlusion)+",\"effective_radius_cm\":"+
+      ragdollNumber(noise.radius*(1.f-occlusion))+"}";
+    }
+  event("physics_noise","\"phase\":"+jsonStr(state.noisePhase)+",\"t_game_ms\":"+
+    std::to_string(world?world->tickCount():0)+",\"body\":"+std::to_string(noise.body)+
+    ",\"position_cm\":"+ragdollVector(noise.position)+",\"volume\":"+ragdollNumber(noise.volume)+
+    ",\"radius_cm\":"+ragdollNumber(noise.radius)+",\"impulse_ns\":"+ragdollNumber(noise.impulse)+
+    ",\"material\":"+jsonStr(material)+",\"surface_material\":"+std::to_string(int(noise.surface))+
+    ",\"what\":"+jsonStr(noise.what)+",\"culprit\":"+
+    (world && noise.culprit?std::to_string(noiseNpcId(noise.culprit)):"null")+
+    ",\"sound\":"+jsonStr(sound)+",\"played\":"+(played?"true":"false")+
+    ",\"listeners\":"+listeners+"]");
+  }
+
+void physicsNoiseHeard(const MovablesContext& context,const Npc& npc,const PhysicsNoise& noise,bool callbackDispatched) {
+  auto& state=context.movables;
+  if(state.noiseBridgeDebug && &npc==state.noiseHost)
+    if(auto* world=Gothic::inst().world())state.noiseBridgeHeard.push_back(world->tickCount());
+  if(context.scenarioPath==nullptr || !state.noiseTrace)return;
+  if(state.movableMeasuring) {
+    ++state.noiseMeasuredHeard;
+    for(auto& listener:state.noiseListeners)
+      if(listener.npc==&npc)++listener.heard;
+    return;
+    }
+  auto* world=Gothic::inst().world();if(!world)return;
+  const auto id=noiseNpcId(&npc);
+  ++state.noisePerceptions[id];
+  std::string_view role;
+  for(auto& listener:state.noiseListeners)
+    if(listener.npc==&npc) {++listener.heard;role=listener.role;}
+  event("physics_noise_heard","\"phase\":"+jsonStr(state.noisePhase)+",\"t_game_ms\":"+
+    std::to_string(world->tickCount())+",\"npc_id\":"+std::to_string(id)+",\"role\":"+jsonStr(role)+
+    ",\"body\":"+std::to_string(noise.body)+",\"position_cm\":"+ragdollVector(noise.position)+
+    ",\"perception\":"+std::to_string(int(PERC_ASSESSQUIETSOUND))+
+    ",\"callback_dispatched\":"+(callbackDispatched?"true":"false")+
+    ",\"culprit\":"+(noise.culprit?std::to_string(noiseNpcId(noise.culprit)):"null"));
+  }
+
 }
