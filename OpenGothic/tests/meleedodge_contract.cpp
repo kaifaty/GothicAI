@@ -26,6 +26,33 @@ namespace {
     std::fprintf(stderr,"FAIL: %s: actual %s, expected %s\n",message,actual.c_str(),expected);
     std::exit(EXIT_FAILURE);
     }
+
+  // What a melee blow meets, as each place reports it: a parade's jump back pose both blocks and jumps back, and
+  // each place takes the block first.
+  enum class Met : uint8_t { NotHit, Hit, Evaded, Blocked };
+
+  Met met(bool down, const MeleeDodge::Guard& g) {
+    if(down)
+      return Met::NotHit;
+    return g.blocked ? Met::Blocked : (g.evaded() ? Met::Evaded : Met::Hit);
+    }
+
+  // The three places as they ask Npc::meleeGuard (MeleeDodge::guard). Each checks a body down itself, and only
+  // the damage knows a blow that ignores defence: a barge or a riposte, never seen by the shadow.
+  // Npc::takeDamage: a body down returns first, a dodge's window before, a jump back and a parade after.
+  Met damage(const MeleeDodge::GuardSituation& s, bool down, bool ignoreDefence) {
+    return met(down,down || ignoreDefence ? MeleeDodge::Guard{} : MeleeDodge::guard(s));
+    }
+
+  // Npc::consumeMeleeContacts: the blade's contact with the body.
+  Met contact(const MeleeDodge::GuardSituation& s, bool down) {
+    return met(down,down ? MeleeDodge::Guard{} : MeleeDodge::guard(s));
+    }
+
+  // Npc::commitDamage: the native blow, observed for the shadow just before takeDamage.
+  Met observed(const MeleeDodge::GuardSituation& s, bool down) {
+    return met(down,down ? MeleeDodge::Guard{} : MeleeDodge::guard(s));
+    }
   }
 
 int main() {
@@ -266,6 +293,50 @@ int main() {
     require(refusal(s)==Refusal::Dodging,"not while dodging");
     s = fight; s.activity = Activity::Other;
     require(refusal(s)==Refusal::Busy,"not from another state");
+  }
+
+  // The guard against a melee blow: one rule for the damage and both views of the melee shadow.
+  {
+    struct Case final {
+      const char*    name;
+      GuardSituation situation;
+      Guard          expected;
+      };
+    const Case cases[] = {
+      {"open",                                 {},                                                 {}},
+      {"a jump back evades",                   {.jumpBack=true},                                   {.jumpedBack=true}},
+      {"a parade blocks",                      {.parade=true},                                     {.blocked=true}},
+      {"a parade's jump back pose does both",  {.jumpBack=true,.parade=true},                      {.jumpedBack=true,.blocked=true}},
+      {"no block against bare claws",          {.jumpBack=true,.parade=true,.unblockable=true},    {.jumpedBack=true}},
+      {"stunned: no parade",                   {.stunned=true,.parade=true},                       {}},
+      {"stunned: no jump back",                {.stunned=true,.jumpBack=true},                     {}},
+      {"knocked down: no parade",              {.knockedDown=true,.parade=true},                   {}},
+      {"knocked down: no jump back",           {.knockedDown=true,.jumpBack=true},                 {}},
+      {"a dodge's window passes",              {.dodging=true,.dodgeWindow=true,.jumpBack=true,.parade=true},
+                                                                                                   {.dodged=true}},
+      {"out of its window a dodge is open",    {.dodging=true,.jumpBack=true,.parade=true},        {}},
+      {"stun does not close a dodge's window", {.dodging=true,.dodgeWindow=true,.stunned=true},    {.dodged=true}},
+      };
+    for(const auto& c:cases) {
+      const auto g = guard(c.situation);
+      if(g.dodged!=c.expected.dodged || g.jumpedBack!=c.expected.jumpedBack || g.blocked!=c.expected.blocked) {
+        std::fprintf(stderr,"FAIL: guard, %s: dodged %d jumped back %d blocked %d\n",c.name,
+                     int(g.dodged),int(g.jumpedBack),int(g.blocked));
+        std::exit(EXIT_FAILURE);
+        }
+      const auto expected = met(false,c.expected);
+      const Met at[] = {damage(c.situation,false,false),contact(c.situation,false),observed(c.situation,false)};
+      const char* place[] = {"the damage","the blade's contact","the observed native blow"};
+      for(size_t i=0; i<3; ++i)
+        if(at[i]!=expected) {
+          std::fprintf(stderr,"FAIL: guard, %s: %s meets %d, the damage rule %d\n",c.name,place[i],
+                       int(at[i]),int(expected));
+          std::exit(EXIT_FAILURE);
+          }
+      require(damage(c.situation,true,false)==Met::NotHit && contact(c.situation,true)==Met::NotHit &&
+              observed(c.situation,true)==Met::NotHit,"a body down is no target anywhere");
+      require(damage(c.situation,false,true)==Met::Hit,"a blow that ignores defence meets no guard");
+      }
   }
   std::puts("melee dodge contract passed");
   }

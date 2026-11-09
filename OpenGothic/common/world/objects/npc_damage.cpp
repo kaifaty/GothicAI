@@ -148,17 +148,12 @@ void Npc::commitDamage() {
   auto* shadowTarget = shadow!=nullptr ? currentTarget : nullptr;
   int32_t hpBefore = 0;
   if(shadow!=nullptr) {
-    // Observe the same pre-call defence predicates; damage and its RNG still run once below.
-    const auto& targetPose = currentTarget->visual.pose();
+    // Observe the guard takeDamage below meets; damage and its RNG still run once below. Like takeDamage, a body
+    // down is not hit at all; this blow never ignores defence.
     const bool down = currentTarget->isDown();
-    // As takeDamage: a melee dodge evades inside its window only, and is neither a jump back nor a parade
-    const bool dodging = currentTarget->isMeleeDodging();
-    shadow->legacyDodge = !down && (dodging ? currentTarget->isMeleeDodgeInvulnerable() :
-                                    targetPose.isJumpBack(owner.tickCount()) &&
-                                    currentTarget->fghAlgo.isInJumpBackAngle(*currentTarget,*this));
-    shadow->legacyBlock = !down && !dodging && (!isMonster() || inventory().activeWeapon()!=nullptr) &&
-                         currentTarget->fghAlgo.isInFocusAngle(*currentTarget,*this) &&
-                         targetPose.isDefence(owner.tickCount());
+    const auto guard = down ? MeleeDodge::Guard{} : currentTarget->meleeGuard(*this);
+    shadow->legacyDodge = guard.evaded();
+    shadow->legacyBlock = guard.blocked;
     shadow->legacyHit = !down && !shadow->legacyDodge && !shadow->legacyBlock;
     shadow->legacyResult = down ? "target_down" : (shadow->legacyBlock ? "blocked" :
                                                  (shadow->legacyDodge ? "evaded" : "applied"));
@@ -419,12 +414,11 @@ void Npc::takeDamage(Npc &other, const Bullet* b, bool ignoreDefence, float mele
 
   assert(b==nullptr || !b->isSpell());
   const auto& pose    = visual.pose();
-  // Outside its window a dodge is open: it is no jump back and no parade
-  const bool  dodging = isMeleeDodging();
-  const bool  isJumpb = !dodging && !meleeKnockdown && !isMeleeStunned() && !ignoreDefence && pose.isJumpBack(owner.tickCount()) && fghAlgo.isInJumpBackAngle(*this,other);
-  const bool  isBlock = !dodging && !meleeKnockdown && !isMeleeStunned() && !ignoreDefence && (!other.isMonster() || other.inventory().activeWeapon()!=nullptr) &&
-                         fghAlgo.isInFocusAngle(*this,other) &&
-                         pose.isDefence(owner.tickCount());
+  // The guard is read again after stopping an investigation, which may stop the walk and change the pose.
+  // A blow that ignores defence (a barge, a riposte) meets none: no jump back, no parade, no dodge window above.
+  const auto  guard   = ignoreDefence ? MeleeDodge::Guard{} : meleeGuard(other);
+  const bool  isJumpb = guard.jumpedBack;
+  const bool  isBlock = guard.blocked;
   if((isBlock || isJumpb) && b==nullptr)
     BodyObservations::noteEvent(*this,&other,isBlock ? "blocked" : "evaded",owner.tickCount());
   const auto parade = meleeParadeLayer(pose,owner.tickCount());
