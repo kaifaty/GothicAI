@@ -61,6 +61,16 @@ struct Hold {
   uint64_t         until;
   };
 
+struct Spot {
+  std::string name;
+  float       angle = 0;
+  float       rough = 0;
+  float       dist  = 0;
+  Tempest::Vec3 pos;
+  };
+
+enum SpotKind { K_Slope, K_Stairs, K_Name };
+
 enum CamMode : uint8_t {
   C_Game,
   C_Follow, // around the player, relative to its facing
@@ -1073,6 +1083,9 @@ extern std::string outDir;
 
 void say(const std::string& s);
 Tempest::Vec3 facing(const Npc& pl);
+void face(Npc& pl,const Tempest::Vec3& dir);
+std::vector<Spot> findSpots(World& w,const Npc& pl,SpotKind kind,float a0,float a1,std::string_view part,size_t count);
+bool aimSpotsCommand(bool& hasPrev,const std::string& line,const std::vector<std::string>& a,World& w,Npc& pl);
 Npc* findNpc(World& w, Npc& pl, const std::string& name);
 bool hidden(World& w,const Tempest::Vec3& from,const Tempest::Vec3& to);
 float num(const std::vector<std::string>& a,size_t i,float def);
