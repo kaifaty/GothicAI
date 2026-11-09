@@ -4,6 +4,7 @@ from pathlib import Path
 
 COMMON = Path(__file__).resolve().parents[2] / "OpenGothic/common"
 SOURCE = (COMMON / "testbench.cpp").read_text()
+CAMERA_SOURCE = (COMMON / "testbench_camera.cpp").read_text()
 BODY_SOURCE = (COMMON / "testbench_body.cpp").read_text()
 
 
@@ -34,7 +35,7 @@ def test_live_sink_is_removed_at_finish_and_reconfigure_only_if_owned():
 
 
 def test_frame_samples_use_same_entities_as_actions_even_when_head_is_offscreen():
-    actor = section('void trackActorFrame(', 'void trackFrame(')
+    actor = section('void trackActorFrame(', 'void trackFrame(', CAMERA_SOURCE)
     assert actor.index('event("body_live_sample"') < actor.index('if(cam==nullptr)')
     assert actor.index('event("body_live_sample"') < actor.index('if(sx[main]<0)')
     assert 'BodyObservations::entityId(*n)' in actor
@@ -42,12 +43,12 @@ def test_frame_samples_use_same_entities_as_actions_even_when_head_is_offscreen(
     assert 'n->attribute(ATR_HITPOINTS)' in actor and 'target->attribute(ATR_HITPOINTS)' in actor
     # Each actor retains the original single-NPC track schema and its own name.
     assert 'jsonStr(symbol).c_str()' in actor and 'event("track",buf)' in actor
-    frame = section('void trackFrame(', '// sight:')
-    assert 'for(const auto& symbol:bench.trackNpcs)' in frame
-    assert 'trackActorFrame(*world,symbol,w,h)' in frame
-    command = section('else if(c=="track") {', 'else if(c=="sight") {')
-    assert "find(',',begin)" in command and 'bench.trackNpcs.clear()' in command
-    assert 'bench.trackNpcs.end(),symbol)==bench.trackNpcs.end()' in command
+    frame = section('void trackFrame(', '// sight:', CAMERA_SOURCE)
+    assert 'for(const auto& symbol:ctx.camera.trackNpcs)' in frame
+    assert 'trackActorFrame(ctx,*world,symbol,w,h)' in frame
+    command = section('else if(c=="track") {', 'else if(c=="sight") {', CAMERA_SOURCE)
+    assert "find(',',begin)" in command and 'ctx.camera.trackNpcs.clear()' in command
+    assert 'ctx.camera.trackNpcs.end(),symbol)==ctx.camera.trackNpcs.end()' in command
 
 
 def test_readiness_wait_is_asynchronous_and_times_out_explicitly():
