@@ -1301,7 +1301,8 @@ guard_ack() { :; }
 preparation_needed() { return 1; }
 ''' + '\n' + env_args + '\n'
             harness += '\n'.join(function(name) for name in (
-                'run_quick', 'e2e_display_exclusive', 'bench_display_exclusive', 'game_queue_args', 'run_game'))
+                'run_quick', 'e2e_display_exclusive', 'bench_window', 'bench_display_exclusive', 'game_queue_args',
+                'run_game'))
             harness += '\n' + ('run_quick' if action == 'pytest' else 'run_game')
             harness += ' env "${ENV_ARGS[@]}" bash "$STATE/source/scripts/ryzen.sh" __remote "$ACTION" "$STATE" "$RUN"\n'
         environment = {name: value for name, value in self.env.items()
