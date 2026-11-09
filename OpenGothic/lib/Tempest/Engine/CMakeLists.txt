@@ -2,8 +2,6 @@ cmake_minimum_required(VERSION 3.16)
 
 project(Tempest)
 
-include(cmake/TempestAndroid.cmake)
-
 set(CMAKE_CXX_STANDARD 20)
 
 option(TEMPEST_BUILD_SHARED "Build shared Tempest." ON)
@@ -11,11 +9,7 @@ option(TEMPEST_BUILD_SHARED "Build shared Tempest." ON)
 set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
 if(NOT CMAKE_OSX_DEPLOYMENT_TARGET)
-  if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
-    set(CMAKE_OSX_DEPLOYMENT_TARGET 15.0)
-  else()
     set(CMAKE_OSX_DEPLOYMENT_TARGET 12.0)
-  endif()
 endif()
 
 if(MSVC)
@@ -60,16 +54,6 @@ endif()
 ### Target platform
 if(WIN32)
   add_definitions(-DNOMINMAX)
-endif()
-
-if(IOS)
-  set(TEMPEST_BUILD_SHARED OFF)
-endif()
-
-if(ANDROID)
-  set(NATIVE_APP_GLUE_DIR "${CMAKE_ANDROID_NDK}/sources/android/native_app_glue")
-  add_library(native_app_glue STATIC "${NATIVE_APP_GLUE_DIR}/android_native_app_glue.c")
-  target_include_directories(native_app_glue PUBLIC "${NATIVE_APP_GLUE_DIR}")
 endif()
 
 ### Compilers
@@ -139,9 +123,6 @@ if(TEMPEST_BUILD_AUDIO)
   add_subdirectory("thirdparty/openal-soft" EXCLUDE_FROM_ALL)
   target_include_directories(${PROJECT_NAME} PRIVATE "thirdparty/openal-soft/include")
   target_link_libraries(${PROJECT_NAME} PRIVATE OpenAL)
-  if(IOS)
-    target_compile_options(OpenAL PRIVATE -Wno-nullability-completeness)
-  endif()
   if(NOT MSVC)
     target_compile_options(OpenAL PRIVATE -Wno-attributes -Wno-conversion -Wno-switch -Wno-unused-but-set-variable)
   endif()
@@ -159,13 +140,11 @@ if(TEMPEST_BUILD_VULKAN)
   add_definitions(-DVULKAN_HPP_NO_EXCEPTIONS)
   add_definitions(-DVULKAN_HPP_NO_SMART_HANDLE)
 
-  if(NOT ANDROID)
     if("${CMAKE_SIZEOF_VOID_P}" EQUAL "8")
       target_link_directories(${PROJECT_NAME} PRIVATE "$ENV{VULKAN_SDK}/lib")
     else()
       target_link_directories(${PROJECT_NAME} PRIVATE "$ENV{VULKAN_SDK}/Lib32")
     endif()
-  endif()
 
   target_include_directories(${PROJECT_NAME} PRIVATE "$ENV{VULKAN_SDK}/include")
   if(WIN32)
@@ -237,10 +216,17 @@ set(SPIRV_CROSS_ENABLE_TESTS   OFF CACHE INTERNAL "")
 set(SPIRV_CROSS_ENABLE_REFLECT OFF CACHE INTERNAL "")
 set(SPIRV_CROSS_STATIC         ON  CACHE INTERNAL "")
 set(SPIRV_CROSS_ENABLE_MSL     ON  CACHE INTERNAL "")
+if(WIN32 AND TEMPEST_BUILD_DIRECTX12)
+  set(SPIRV_CROSS_ENABLE_HLSL ON CACHE INTERNAL "")
+else()
+  set(SPIRV_CROSS_ENABLE_HLSL OFF CACHE INTERNAL "")
+endif()
 add_subdirectory("thirdparty/spirv_cross" EXCLUDE_FROM_ALL)
 target_link_libraries(${PROJECT_NAME} PRIVATE spirv-cross-core)
 target_link_libraries(${PROJECT_NAME} PRIVATE spirv-cross-glsl)
-target_link_libraries(${PROJECT_NAME} PRIVATE spirv-cross-hlsl)
+if(WIN32 AND TEMPEST_BUILD_DIRECTX12)
+  target_link_libraries(${PROJECT_NAME} PRIVATE spirv-cross-hlsl)
+endif()
 target_link_libraries(${PROJECT_NAME} PRIVATE spirv-cross-msl)
 
 ### squish
@@ -341,7 +327,7 @@ file(GLOB_RECURSE SOURCES
   "utility/*.cpp"
   )
 
-if(APPLE OR IOS)
+if(APPLE)
   enable_language(OBJCXX)
   file(GLOB_RECURSE ObjCSOURCES
     "*.mm"
@@ -363,14 +349,8 @@ set_target_properties(
 
 if(WIN32)
   target_link_libraries(${PROJECT_NAME} PRIVATE shlwapi Kernel32)
-elseif(IOS)
-  #NOTE: use -DCMAKE_SYSTEM_NAME=iOS on first configure
-  target_link_libraries(${PROJECT_NAME} PRIVATE "-framework UiKit" "-framework Foundation" "-framework QuartzCore" "-framework Metal" "-framework MetalFX")
 elseif(APPLE)
   target_link_libraries(${PROJECT_NAME} PRIVATE "-framework AppKit" "-framework QuartzCore" "-framework Metal" "-framework MetalFX")
-elseif(ANDROID)
-  target_link_libraries(${PROJECT_NAME} PRIVATE native_app_glue android dl log)
-  target_link_options(${PROJECT_NAME} INTERFACE "-Wl,-u,main" "-Wl,--export-dynamic-symbol=main")
 elseif(UNIX)
   target_link_libraries(${PROJECT_NAME} PRIVATE X11 Xcursor)
 endif()

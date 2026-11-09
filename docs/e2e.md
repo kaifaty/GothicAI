@@ -8,7 +8,7 @@
 
 Нужные сценарию TTS и ASR объявлены в `scripts/e2e-services.sh`: `e2e.sh` по нему запускает сервисы, а `dependency_projects` в `ryzen.sh` читает его из копии checkout и готовит соответствующие проекты через `uv sync --frozen` до занятия окна игры. `server` готовится всегда. Согласованность запуска и подготовки проверяет `scripts/tests/test_ryzen.py` без игры и SSH.
 
-P30 по умолчанию выключен до полного переобучения (решение пользователя 2026-11-03), бои ведёт native `FightAlgo`. `scripts/e2e.sh` явно передаёт `--neural-body --body-policy "$BODY_POLICY"` только сценариям сети: `neural`, `neural-companion`, `neural-group`, `neural-talk`, `neural-load`, `neural-soak`, `neural-still`. В `engine` URL не нужен; `service` по-прежнему требует `GOTHIC_BODY_URL`. Контроль `GOTHIC_SOAK_CONTROL=1` для `neural-soak` и все остальные сценарии получают `--no-neural-body`. Пассивное наблюдение тел в `crime_react`, `crime_meet`, `frame`, `npc_will` сохраняет `SharedBodyWatch` из `scenarios/common.py` и отбор по `script_symbol`; у `npc_deeds` и `fight_reactions_bandits` остаются свои обёртки.
+P30 по умолчанию выключен до полного переобучения (решение пользователя 2026-11-03), бои ведёт native `FightAlgo`. `scripts/e2e.sh` явно передаёт `--neural-body --body-policy "$BODY_POLICY"` только сценариям сети: `neural`, `neural-companion`, `neural-group`, `neural-talk`, `neural-load`, `neural-soak`, `neural-still`. В `engine` URL не нужен; `service` по-прежнему требует `GOTHIC_BODY_URL`. Контроль `GOTHIC_SOAK_CONTROL=1` для `neural-soak` и все остальные сценарии получают `--no-neural-body`. Пассивное наблюдение тел в `crime_react`, `crime_meet`, `frame`, `npc_will`, `npc_deeds` и `fight_reactions` использует одну реализацию `SharedBodyWatch` из `scenarios/common.py` и отбор по `script_symbol`. Она объединяет списки сценария и пилота с лимитом в четыре актора и кэшем по списку, частоте и поколению; смена или снятие списка сценария сохраняет акторов пилота и его частоту после снятия. Отказ движка сохраняет прежние списки и кэш. Проверки — `server/tests/test_shared_body_watch.py`.
 
 При `--llm off --scenario` фоновое приветствие главаря у стоянки (`bandit_hail`) включено только для сценариев, которые его проверяют: `bandit_parley`, `bandit_bounty`, `road_bandits`, `companion`. Остальные правила переговоров сохраняются: бандиты не нападают без повода и отвечают на слова героя. В обычной игре и с живой моделью приветствие работает как прежде.
 
@@ -230,7 +230,7 @@ SUITE=surrender_live RUNS=1 CASES=A_lobart,B_guard LLM=chatgpt scripts/e2e-live.
 | `C_brago` | Браго по характеру принимает просьбу унизить: `success` только при `accept_surrender(humiliate=true)`, `hero_yield`, `humiliated` и остановке боя | 3 |
 | `C_band` | В пещере под лестницей к башне Ксардаса герой в бою с `BDT_1015_BANDIT_L`, рядом атакует Браго (`BDT_1014_BANDIT_L`); фраза «Пацаны, обоссыте, но не бейте» идёт подручному по фокусу. `success` требует `accept_surrender` только Браго, его `hero_yield` и остановки обоих; унижение — наблюдаемое решение | 4 |
 
-Замысел оставляет решения A/B и `C_bandit` самому NPC ([пощада](npc-agent.md#пощада)); они `observed`, а несостоявшееся исполнение принятого инструмента — `failure`. Нет завершённого хода за срок — `no_decision`. После принятия наблюдаем ещё 20 секунд, чтобы заметить возврат боя. `C_band` проверяет передачу решения главарю, оставляя выбор `humiliate` ему; принятое унижение требует `humiliated`, как в `C_bandit`. Полный набор — восемь случаев, оценка 23 запроса за прогон, до замера.
+Замысел оставляет решения A/B и `C_bandit` самому NPC ([пощада](npc-agent-combat.md#пощада)); они `observed`, а несостоявшееся исполнение принятого инструмента — `failure`. Нет завершённого хода за срок — `no_decision`. После принятия наблюдаем ещё 20 секунд, чтобы заметить возврат боя. `C_band` проверяет передачу решения главарю, оставляя выбор `humiliate` ему; принятое унижение требует `humiliated`, как в `C_bandit`. Полный набор — восемь случаев, оценка 23 запроса за прогон, до замера.
 
 ### live_npc
 
@@ -482,6 +482,8 @@ SAVE=/Volumes/DevSSD/Dev/projects/gothic/save_slot_1.sav SUITE=live_deals RUNS=1
 `cards` не является набором: `cd server && uv run gothic-ai cards [--only SYM,...]` — [команда генерации](README.md#сервисы).
 
 ## План и журнал
+
+2026-11-09: `npc_deeds` и `fight_reactions` переведены на `SharedBodyWatch`; локальные объединение, лимит и кэш удалены (#799). Смена и снятие сценарного списка сохраняют список пилота, отказ движка — прежний сценарный список и частоту. Общие тесты проверяют остановку, смену списка, отказ, поколение и импорт обоих потребителей.
 
 2026-11-03: одиночный прогон `SCENARIO=<имя> scripts/e2e.sh` и `scripts/ryzen.sh e2e` берёт `timeout` и `save` из `RUN`. Причина — провал `errand` по `timeout after 240s` в одиночном прогоне: у него объявлено `timeout: 1500, save: True`, поход Лобарта к Андре длится около 6 минут, а `e2e.sh` давал всем 240 с и новую игру. Так 36 из 125 объявленных сценариев получали не свой таймаут (33 — короче объявленного), 58 — новую игру вместо слота 1. Исключения таймаута в `e2e.sh`, повторявшие `RUN` (`memprobe`, `neural-still`, `feat_fame`), убраны.
 
