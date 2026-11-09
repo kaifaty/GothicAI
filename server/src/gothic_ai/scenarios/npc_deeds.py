@@ -16,6 +16,7 @@ from .common import (
     HILDA,
     LOBART,
     VINO,
+    SharedBodyWatch,
     _logged,
     _save,
     _until,
@@ -62,24 +63,7 @@ async def npc_deeds(
     facts = service.chronicle.facts
     original_cards = service.cards
     original_gate, original_stage = rumors.gate, rumors.stage
-    body_watch = link.body_watch
-    passive_npcs: list[str] = []
-    watched: tuple[tuple[str, ...], int] | None = None
-    watch_stats: dict[str, Any] = {}
-
-    async def passive_body_watch(
-        npcs: list[str], rate_hz: int = 20, timeout: float = 5.0,
-    ) -> dict[str, Any]:
-        nonlocal watched, watch_stats
-        # The pilot shares this subscription; its release must not stop the passive trace.
-        actors = list(dict.fromkeys([*passive_npcs, *(npc.upper() for npc in npcs)]))
-        if len(actors) > 4:
-            raise GameError("npc_deeds setup: passive body watch exceeds four actors")
-        signature = (tuple(actors), rate_hz)
-        if watched != signature or watch_stats.get("generation") != link.body_generation:
-            watch_stats = await body_watch(actors, rate_hz=rate_hz, timeout=timeout)
-            watched = signature
-        return watch_stats
+    watch = SharedBodyWatch(link, "npc_deeds setup")
 
     received: list[NpcDeed | NpcActResult | NpcIdle] = []
     transfer_sight: dict[str, asyncio.Task[dict[str, Any]]] = {}
@@ -339,7 +323,6 @@ async def npc_deeds(
 
     link.listeners.append(record)
     link.raw_body_listeners.append(observe)
-    link.body_watch = passive_body_watch  # type: ignore[method-assign]
     try:
         await link.wait_world()
         if link.session is None:
@@ -495,8 +478,7 @@ async def npc_deeds(
              "npcs": {npc: pose.pos for npc, pose in attack_poses.items()}},
         ):
             return _logged(results)
-        passive_npcs[:] = [VINO, MALETH]
-        await link.body_watch(passive_npcs, rate_hz=20)
+        await watch.watch([VINO, MALETH], rate_hz=20)
         body_states[VINO].clear()
         body_states[MALETH].clear()
         prior = {str(f["id"]) for f in facts("npc_crime")}
@@ -603,8 +585,7 @@ async def npc_deeds(
              "summary": await attack_summary()},
         ):
             return _logged(results)
-        passive_npcs.clear()
-        await link.body_watch([])
+        await watch.watch([])
 
         # A second physical theft covers a world item's native owner. Lobart's courage alone is
         # raised to 3; he sees the pickup himself, defeats the thief and reclaims through the service.
@@ -642,8 +623,7 @@ async def npc_deeds(
         prior = {str(f["id"]) for f in facts("npc_crime")}
         body_latest.pop(VINO, None)
         body_latest.pop(LOBART, None)
-        passive_npcs[:] = [VINO, LOBART]
-        await link.body_watch(passive_npcs, rate_hz=20)
+        await watch.watch([VINO, LOBART], rate_hz=20)
         body_states[VINO].clear()
         body_states[LOBART].clear()
         await _until(lambda: {VINO, LOBART} <= body_latest.keys(), 5)
@@ -760,8 +740,7 @@ async def npc_deeds(
              "defense": facts("npc_crime_defense")},
         ):
             return _logged(results)
-        passive_npcs.clear()
-        await link.body_watch([])
+        await watch.watch([])
         check(
             "hero_unchanged", [f for f in facts() if f.get("fact") in {"crime", "crime_seen"}] == hero_facts,
         )
@@ -793,22 +772,22 @@ async def npc_deeds(
         )
         return _logged(results)
     finally:
-        link.body_watch = body_watch  # type: ignore[method-assign]
-        defense_stop.set()
-        if defense_task is not None:
-            await defense_task
-        if defense_pending:
-            await asyncio.gather(*defense_pending, return_exceptions=True)
-        for pending in transfer_sight.values():
-            if not pending.done():
-                pending.cancel()
-        if transfer_sight:
-            await asyncio.gather(*transfer_sight.values(), return_exceptions=True)
-        service.cards = original_cards
-        rumors.gate, rumors.stage = original_gate, original_stage
         try:
+            defense_stop.set()
+            if defense_task is not None:
+                await defense_task
+            if defense_pending:
+                await asyncio.gather(*defense_pending, return_exceptions=True)
+            for pending in transfer_sight.values():
+                if not pending.done():
+                    pending.cancel()
+            if transfer_sight:
+                await asyncio.gather(*transfer_sight.values(), return_exceptions=True)
+            service.cards = original_cards
+            rumors.gate, rumors.stage = original_gate, original_stage
             if not link.closed.is_set():
-                await link.body_watch([])
+                await watch.watch([])
         finally:
+            watch.close()
             link.listeners.remove(record)
             link.raw_body_listeners.remove(observe)
