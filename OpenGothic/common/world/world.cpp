@@ -1159,6 +1159,13 @@ bool World::isIndoor(const Tempest::Vec3& point) const {
   return windRooms.isIndoor(point);
   }
 
+auto World::bspBounds() const -> std::pair<Tempest::Vec3,Tempest::Vec3> {
+  if(bsp.nodes.empty())
+    return {};
+  const auto& b=bsp.nodes[0].bbox;
+  return {Tempest::Vec3(b.min.x,b.min.y,b.min.z),Tempest::Vec3(b.max.x,b.max.y,b.max.z)};
+  }
+
 World::BspSector* World::portalAt(std::string_view tag) {
   if(tag.empty())
     return nullptr;

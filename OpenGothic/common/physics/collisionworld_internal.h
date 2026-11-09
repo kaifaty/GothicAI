@@ -107,6 +107,7 @@ namespace CollisionWorldInternal {
   CollisionWorld::NativeTriangle traceTriangle(const JPH::Body& body, JPH::SubShapeID subShape,
                                                 JPH::Vec3Arg normal);
   int workerCount();
+  bool waterThing(int category);
   }
 
 using namespace CollisionWorldInternal;

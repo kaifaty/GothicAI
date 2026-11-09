@@ -676,3 +676,7 @@ struct DynamicWorld::BBoxList final {
   std::vector<BBoxBody*> body;
   DynamicWorld&          wrld;
   };
+
+struct DynamicWorld::ItemHulls {
+  std::unordered_map<std::string,ItemHull> shapes;
+  };
