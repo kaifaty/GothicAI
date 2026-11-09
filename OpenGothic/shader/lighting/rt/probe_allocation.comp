@@ -93,7 +93,7 @@ void processProbe(ivec3 gridPos, vec3 pos, int lod, vec3 pixelPos, vec3 pixelNor
   p.pNext       = 0xFFFFFFFF;
   p.normal      = packSnorm4x8(vec4(pixelNorm, 0));
   p.lastUse     = probeHeader.frame;
-  p.padd0       = 0;
+  p.turn        = 0;
   p.bits        = 0;
   probe[cursor] = p;
   newList[atomicAdd(probeHeader.newCount, 1)] = cursor;

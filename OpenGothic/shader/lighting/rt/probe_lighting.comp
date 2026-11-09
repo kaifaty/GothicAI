@@ -352,13 +352,14 @@ void main() {
   if((bits & (UNUSED_BIT | NEW_BIT))!=0 || (bits & TRACED_BIT)==0)
     return; // a new probe lights all its samples in probe_relight_new.comp
 
-  // a probe no pixel takes (only the bounce of other probes) is relit on one frame of offPeriod, its turns go on there
-  uint turn = frameId + probeId;
-  if((bits & SEEN_BIT)==0) {
-    if(turn%offPeriod!=0)
-      return;
-    turn /= offPeriod;
-    }
+  // a probe no pixel takes (only the bounce of other probes) is relit on one frame of offPeriod
+  if((bits & SEEN_BIT)==0 && (frameId + probeId)%offPeriod!=0)
+    return;
+  // The samples' turn is the probe's own count of relights (processProbe), not the frame's number. By the frame a probe
+  // the screen takes only on every other frame (an edge the TAA's jitter crosses) relit on those frames the samples of
+  // one parity, and skipped the other frames as one off the screen: half its samples kept the light of an hour before
+  // for good, squares in a hut at night after noon (step-2b.md, «2б-1: пересмотр»).
+  const uint turn     = probe[probeId].turn;
   const uint sampleId = (gl_GlobalInvocationID.x%perProbe)*relitPeriod + turn%relitPeriod;
   const vec3 dir      = sampleSphere(sampleId, samplesTotal, 0);
   const vec4 clr      = shadeSample(probe[probeId].pos, dir, probeId, sampleId, probe[probeId].lastUse, true);
@@ -490,6 +491,9 @@ void processProbe(const uint probeId) {
     const ivec2 uv = lightBufferCoord(probeId);
     imageStore(probesLighting, uv+ivec2(axis,side), vec4(ret*probeStoreScale, 1));
     }
+  // probe_relight relit it this frame (the same tests as there): the next frame takes the next samples
+  if(laneId==0 && !fresh)
+    probe[probeId].turn = probe[probeId].turn + 1;
   }
 
 void main() {

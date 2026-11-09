@@ -76,7 +76,7 @@ void main_init() {
     p.pNext   = 0xFFFFFFFF;
     p.normal  = packSnorm4x8(vec4(0,1,0,0));
     p.lastUse = 0;
-    p.padd0   = 0;
+    p.turn    = 0;
     p.bits    = 0;
     probe[0]  = p;
     }
@@ -164,7 +164,7 @@ void main_hitAlloc() {
   p.pNext       = 0xFFFFFFFF;
   p.normal      = r.normal;
   p.lastUse     = probeHeader.frame;
-  p.padd0       = 0;
+  p.turn        = 0;
   p.bits        = 0;
   probe[cursor] = p;
   newList[atomicAdd(probeHeader.newCount, 1)] = cursor;

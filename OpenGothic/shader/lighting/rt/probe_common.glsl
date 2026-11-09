@@ -82,7 +82,7 @@ struct Probe { // 32 bytes
   uint pNext;
   uint normal;  // packSnorm4x8: the normal of the pixel or the hit it was made for (debug)
   uint lastUse; // ProbesHeader::frame when a pixel or a sample of another probe last took it
-  uint padd0;
+  uint turn;    // the relights of the probe so far (probe_lighting.comp): which of its samples are relit next
   uint bits;
   };
 
