@@ -10,12 +10,23 @@ from collections.abc import Callable, Collection, Iterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
-from .dialogue_text import _SENTENCE_END, MoodTag, MoodTags, SentenceSplitter, strip_said, tool_leak
+from .dialogue_text import (
+    _SENTENCE_END,
+    CueTag,
+    FeltTag,
+    MoodTag,
+    MoodTags,
+    SentenceSplitter,
+    SpeechPiece,
+    strip_said,
+    to_game_text,
+    tool_leak,
+)
 from .executor import Intent
 from .llm import Message, Tool, ToolCall
 from .memory import NpcMemory
 from .persona import Persona
-from .protocol import HushCmd, Mood, Snapshot
+from .protocol import HushCmd, Mood, SayCue, SayLeak, Snapshot
 from .turn import ToolOutcome
 
 if TYPE_CHECKING:
@@ -76,8 +87,10 @@ class Conversation:
         return [t for t in (self.reply, self.compacting, self.voicing, *self.actions) if t is not None]
 
 
-# a line waiting for its voice: line id, text, reply, overlay, mood, filler, the npc it is said to
-QueuedLine = tuple[str, str, str | None, bool, Mood | None, bool, str | None]
+# A line waiting for its voice, including the face metadata already decided for its id.
+QueuedLine = tuple[
+    str, str, str | None, bool, Mood | None, bool, str | None, list[SayCue] | None, SayLeak | None
+]
 
 
 class Floor(Protocol):
@@ -207,6 +220,10 @@ class TurnState:
     started: float
     moods: MoodTags = field(default_factory=MoodTags)
     mood: Mood | None = None  # of the lines being said (the model's last tag)
+    cues: list[SayCue] = field(default_factory=list)
+    felt: tuple[Mood, int] | None = None
+    face_text: str = ""  # text still in the sentence splitter, with face-tag offsets
+    face_tags: list[tuple[int, CueTag | FeltTag]] = field(default_factory=list)
     text: str = ""  # everything said in the turn, all steps
     pending_text: str = ""  # only the last unfinished word, held across stream chunks
     discarded_text: str = ""  # a tool leak, skipped through its sentence's end or the end of the step
@@ -231,14 +248,14 @@ class TurnState:
 
     def spoken(
         self,
-        pieces: list[str | MoodTag],
+        pieces: list[SpeechPiece],
         names: Collection[str],
         npc: str,
         *,
         flush: bool = False,
-    ) -> list[str | MoodTag]:
+    ) -> list[SpeechPiece]:
         """Hold only unfinished words; a tool marker discards the unsaid rest of its sentence."""
-        out: list[str | MoodTag] = []
+        out: list[SpeechPiece] = []
 
         def accept(word: str) -> None:
             if not self.discarded_text:
@@ -260,6 +277,8 @@ class TurnState:
                             remove -= cut
                     if remove:
                         self.splitter._buf = self.splitter._buf[:-remove]
+                        self.face_text = self.face_text[:-remove]
+                        self.face_tags = [(at, tag) for at, tag in self.face_tags if at < len(self.face_text)]
                     self.discarded_text = prefix + word
                 else:
                     if not self.text or self.text[-1].isspace():
@@ -289,9 +308,10 @@ class TurnState:
                 self.pending_text = ""
 
         for p in pieces:
-            if isinstance(p, MoodTag):
+            if not isinstance(p, str):
                 finish_word()
-                out.append(p)
+                if isinstance(p, MoodTag) or not self.discarded_text:
+                    out.append(p)
                 continue
             self.pending_text += p
             end = 0
@@ -306,17 +326,47 @@ class TurnState:
                 self.discarded_text = ""
         return [p for p in out if p != ""]
 
-    def lines(self, pieces: list[str | MoodTag], *, flush: bool = False) -> Iterator[str]:
+    def lines(self, pieces: list[SpeechPiece], *, flush: bool = False) -> Iterator[str]:
         """Split speech into lines, flushing the previous mood before changing it."""
         for p in pieces:
             if isinstance(p, MoodTag):
                 if p.mood != self.mood:
-                    yield from self.splitter.flush()
+                    yield from self._tagged_lines(self.splitter.flush())
                     self.mood = p.mood
                 continue
-            yield from self.splitter.feed(p)
+            if isinstance(p, (CueTag, FeltTag)):
+                self.face_tags.append((len(self.face_text), p))
+                continue
+            self.face_text += p
+            yield from self._tagged_lines(self.splitter.feed(p))
         if flush:
-            yield from self.splitter.flush()
+            yield from self._tagged_lines(self.splitter.flush())
+            if self.face_tags:
+                log.debug("%s: discarded face tags without following words: %s", self.reply, self.face_tags)
+            self.face_text = ""
+            self.face_tags.clear()
+
+    def _tagged_lines(self, lines: list[str]) -> Iterator[str]:
+        for line in lines:
+            start = self.face_text.index(line)
+            end = start + len(line)
+            self.cues = []
+            self.felt = None
+            rest = []
+            words = len(to_game_text(line).split())
+            for at, tag in self.face_tags:
+                word = len(to_game_text(line[: max(0, at - start)]).split())
+                if at < end and word < words:
+                    if isinstance(tag, CueTag):
+                        if len(self.cues) < 2 and all(c.cue != tag.cue for c in self.cues):
+                            self.cues.append(SayCue(cue=tag.cue, word=word))
+                    elif self.felt is None:
+                        self.felt = (tag.felt, word)
+                else:
+                    rest.append((at - end, tag))
+            self.face_tags = rest
+            self.face_text = self.face_text[end:]
+            yield line
 
     def strip_line(self, line: str) -> str:
         """Remove the first words until a nonempty answer line is ready to be said."""

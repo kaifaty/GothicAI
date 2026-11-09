@@ -491,6 +491,17 @@ def test_action_command_omits_empty_fields():
     assert cmd.to_json() == '{"type":"action","id":"a1","npc":"X","action":"wait","args":{"ms":500}}'
 
 
+def test_v61_say_serializes_optional_face_cues_and_leak():
+    assert PROTOCOL_VERSION >= 61
+    fields = {"npc": "X", "line": "AIB_1", "text": "Ну да, конечно."}
+    assert json.loads(SayCmd(**fields).to_json()) == {"type": "say", **fields}
+    cues = [{"cue": "doubt", "word": 2}]
+    leak = {"felt": "afraid", "half": "upper", "word": 0}
+    assert json.loads(SayCmd(**fields, cues=cues, leak=leak).to_json()) == {
+        "type": "say", **fields, "cues": cues, "leak": leak,
+    }
+
+
 def test_v15_npc_to_npc():
     say = SayCmd(
         npc="BAU_950_LOBART", line="AIB_1", text="Слыхала?", stream=True, rate=24000, to="BAU_951_HILDA"

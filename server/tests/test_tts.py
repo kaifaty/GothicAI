@@ -53,7 +53,7 @@ async def fake_tts(delay: float = 0.0, *, words: bool = False):
 async def test_lines_are_voiced_in_order_and_actions_wait_for_them():
     fake = FakeGame()
     llm = FakeBackend(
-        "Держи, это поможет тебе. Береги его, другого не будет.",
+        "Держи, [doubt] это поможет тебе. Береги его, другого не будет.",
         delay=0,
         tool_calls=[ToolCall("give_item", {"item": "ITPO_HEALTH_01", "count": 1})],
     )
@@ -74,6 +74,8 @@ async def test_lines_are_voiced_in_order_and_actions_wait_for_them():
 
     say, first, second, tail, end = flow[:5]
     assert say["stream"] is True and say["rate"] == 16000 and "audio" not in say
+    assert say["cues"] == [{"cue": "doubt", "word": 1}]
+    assert requests[0]["text"] == say["text"]
     assert first["line"] == second["line"] == tail["line"] == say["line"] == end["line"]
     assert sum(len(base64.b64decode(chunk["data"])) for chunk in (first, second, tail)) == (
         2 * 800 * len(say["text"])

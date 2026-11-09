@@ -11,6 +11,7 @@ from gothic_ai.contracts import gold_text
 from gothic_ai.crimes import Crimes
 from gothic_ai.deals import Deals, LieRef
 from gothic_ai.dialogue import DialogueManager
+from gothic_ai.face_cues import choose_leak
 from gothic_ai.llm import ToolCall
 from gothic_ai.llm.fake import FakeBackend, FakeStep
 from gothic_ai.memory import MemoryStore
@@ -50,6 +51,21 @@ async def _setup(fake: FakeGame, llm: FakeBackend, store: MemoryStore, *, gates=
 
 def _shown(fake: FakeGame) -> list[dict]:
     return [m for m in fake.deals if m["type"] == "deal_show"]
+
+
+async def test_felt_leaks_need_a_dishonest_deal_intent_and_enabled_cheating():
+    fake = FakeGame(branch="A")
+    link_cm, dialogue, chronicle, deals = await _setup(fake, FakeBackend(delay=0), MemoryStore(":memory:"))
+    try:
+        chronicle.record({"fact": "npc_intent", "npc": XARDAS, "deal": "honest", "keeps": True})
+        assert all(choose_leak(dialogue, XARDAS, str(i), "afraid", 0) is None for i in range(1000))
+        chronicle.record({"fact": "npc_intent", "npc": XARDAS, "deal": "lie", "keeps": False})
+        leaks = [choose_leak(dialogue, XARDAS, str(i), "afraid", 0) for i in range(1000)]
+        assert abs(sum(leak is not None for leak in leaks) / 1000 - 0.28) <= 0.05
+        deals.cheat = False
+        assert all(choose_leak(dialogue, XARDAS, str(i), "afraid", 0) is None for i in range(1000))
+    finally:
+        await link_cm.__aexit__(None, None, None)
 
 
 async def test_haggle_then_accept_what_he_saw():

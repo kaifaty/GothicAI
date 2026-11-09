@@ -1580,6 +1580,18 @@ class PingCmd(_Command):
 # v9: how the npc looks while it says a line (and a moment after): a face of the game's heads
 Mood = Literal["neutral", "friendly", "angry", "hostile", "afraid", "pain"]
 MOODS: tuple[Mood, ...] = ("neutral", "friendly", "angry", "hostile", "afraid", "pain")
+Cue = Literal["flash", "doubt", "smirk", "press", "disgust", "squint", "frown", "chin", "wince"]
+
+
+class SayCue(_Command):
+    cue: Cue
+    word: int = Field(ge=0)
+
+
+class SayLeak(_Command):
+    felt: Literal["friendly", "angry", "hostile", "afraid", "pain"]
+    half: Literal["upper", "lower"]
+    word: int = Field(ge=0)
 
 
 class SayCmd(_Command):
@@ -1601,6 +1613,8 @@ class SayCmd(_Command):
     # are not ordered by the game: the server sends the next one when the previous has been said.
     overlay: bool | None = None
     mood: Mood | None = None  # v9: the face while the line is said; none: the face stays as it is
+    cues: list[SayCue] | None = None  # v61: gestures anchored to words in text.split()
+    leak: SayLeak | None = None  # v61: a true feeling briefly breaking through a lie
     # v14: "Хм...", "Что?!" said at once while the model thinks: the npc goes on thinking after it (the
     # eyes aside)
     filler: bool | None = None
