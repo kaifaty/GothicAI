@@ -64,9 +64,11 @@ CharacterVirtual героя и NPC и проверка спящих предме
 
 Ragdoll, физические тела живых NPC, возврат после падения, импульсы заклинаний и стрел — в [`npc_ragdoll.cpp`](../OpenGothic/common/world/objects/npc_ragdoll.cpp).
 
-Тень ближнего боя — досягаемость клинка по позе, окна удара, контакты, шаги в замахе и остановка кадра — в [`npc_melee_shadow.cpp`](../OpenGothic/common/world/objects/npc_melee_shadow.cpp). Её состояние `Npc::MeleeShadow`, `Npc::MeleeReach` и общие с уроном и рипостом помощники журнала `melee-blade-shadow.jsonl` объявлены в [`npc_melee_shadow.h`](../OpenGothic/common/world/objects/npc_melee_shadow.h); `implAttack` и `doAttack` остаются в `npc.cpp`.
+Тень ближнего боя — досягаемость клинка по позе, окна удара, контакты, шаги в замахе и остановка кадра — в [`npc_melee_shadow.cpp`](../OpenGothic/common/world/objects/npc_melee_shadow.cpp). Её состояние `Npc::MeleeShadow`, `Npc::MeleeReach` и общие с уроном и рипостом помощники журнала `melee-blade-shadow.jsonl` объявлены в [`npc_melee_shadow.h`](../OpenGothic/common/world/objects/npc_melee_shadow.h).
 
 Урон и реакции на удар — `commitDamage`, три `takeDamage`, `hitReaction`, равновесие и нокдаун, удары тел и урон от падения — в [`npc_damage.cpp`](../OpenGothic/common/world/objects/npc_damage.cpp). Приёмы ближнего боя — стамина, оглушение, удар в спину и супер-броня, парирование, перекаты и уклонения, таран, заряд, специальные приёмы ИИ и рипост — в [`npc_melee_moves.cpp`](../OpenGothic/common/world/objects/npc_melee_moves.cpp). Общие помощники трёх файлов (`meleeParadeLayer`, `meleeStaminaIdentity`, `meleeBeastFields`) объявлены в [`npc_melee.h`](../OpenGothic/common/world/objects/npc_melee.h).
+
+Выбор и запуск атаки — `implAttack`, `doAttack`, удары и блоки кулаком и клинком, добивание — в [`npc_attack.cpp`](../OpenGothic/common/world/objects/npc_attack.cpp). Заклинания и лук — `commitSpell`, начало, тик и конец каста, выстрел из лука, ручной прицел, выпуск стрелы, зоны попадания и боезапас — в [`npc_ranged.cpp`](../OpenGothic/common/world/objects/npc_ranged.cpp); колчан остаётся в `npc.cpp`.
 
 Сохранение и загрузка NPC — в [`npc_save.cpp`](../OpenGothic/common/world/objects/npc_save.cpp), таланты, атрибуты, гильдии и отношение — в [`npc_attributes.cpp`](../OpenGothic/common/world/objects/npc_attributes.cpp). Объявление общего состояния превращения — в [`npc_transformback.h`](../OpenGothic/common/world/objects/npc_transformback.h), его методы остаются в `npc.cpp`.
 
