@@ -108,8 +108,9 @@ float sunLight(vec3 norm, vec3 pos) {
 // A sample of a probe is a cone of 1/256 of the sphere, not a ray: its light is the average over the spot the cone
 // covers on the hit's surface (rho2: the spot's radius squared). For the 1/d^2 of a lamp over a disc of radius rho
 // under it that is ln(1 + rho^2/d^2)/rho^2: the lamp's formula takes the distance with that 1/d^2. A point next to
-// a lamp 18 m away is a spot 2,3 m wide for the probe; read as a point it lit a probe's cube 1,6 times too bright
-// (the square of harbour-night-1). Near the probe the spot is small and the formula is the point light's.
+// a lamp 18 m away is a spot 4,6 m wide for the probe; read as a point it left a patch on the wall of
+// harbour-night-1 (48 of 255 against 27 of the reference, now 31). Near the probe the spot is small and the formula
+// is the point light's.
 float coneDistance(float dist, float rho2) {
   const float d2 = max(dist*dist, 1e-4);
   if(rho2<=1e-3*d2)
