@@ -17,6 +17,7 @@
 #include <cstring>
 #include <Tempest/Log>
 #include <Tempest/Application>
+#include <Tempest/SystemApi>
 
 #include <libspirv/libspirv.h>
 
@@ -121,9 +122,12 @@ struct Tempest::VulkanApi::Impl {
 
     std::vector<const char*> rqExt = {
       VK_EXT_DEBUG_REPORT_EXTENSION_NAME,
-      VK_KHR_SURFACE_EXTENSION_NAME,
-      SURFACE_EXTENSION_NAME,
       };
+    if(!SystemApi::isOffscreen()) {
+      // offscreen windows have no surface to present to
+      rqExt.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
+      rqExt.push_back(SURFACE_EXTENSION_NAME);
+      }
 
     auto ext = instExtensionsList();
     if(extensionSupport(ext, VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME)) {
@@ -172,6 +176,8 @@ struct Tempest::VulkanApi::Impl {
     }
 
   bool checkDeviceExtensionSupport(VkPhysicalDevice device) const {
+    if(SystemApi::isOffscreen())
+      return true; // VK_KHR_swapchain is only needed to present
     auto ext = VDevice::extensionsList(device);
     for(auto& i:VDevice::requiredExtensions) {
       if(!extensionSupport(ext,i))

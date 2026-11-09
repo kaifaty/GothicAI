@@ -21,6 +21,8 @@
 #      BENCH_HEADLESS 1: runner in lockstep, 0: window; default: scenario's # @headless marker
 #      RUNNER_BIN    headless executable (default: gothic-body-runner beside GAME_BIN)
 #      TEMPEST_WINDOW_SIZE client frame size (default: 800x600)
+#      TEMPEST_OFFSCREEN=1 Linux: draw without a window or display (run mode offscreen; Ryzen's default)
+#      TEMPEST_OFFSCREEN_FPS offscreen frame limit (default: 200, the window's pace on Ryzen; 0: none)
 #      BENCH_VID_RES  [INTERNAL] vidResIndex of the run (default: 2 on macOS, 0 on Linux)
 #      SAVE          save to start from (default: save_slot_1.sav in the main checkout)
 #      WORLD         start a fresh game in this world instead (NEWWORLD.ZEN, OLDWORLD.ZEN, ADDONWORLD.ZEN, DRAGONISLAND.ZEN)
@@ -509,6 +511,8 @@ if [[ "$BENCH_HEADLESS" == 1 ]]; then
 else
   GAME_ARGS=("$GAME_BIN" -g "$GOTHIC_DIR" -window -devmode "${START_ARGS[@]}")
   WINDOW_ENV=(TEMPEST_BACKGROUND="$BACKGROUND" TEMPEST_WINDOW_SIZE="${TEMPEST_WINDOW_SIZE:-800x600}")
+  # Linux: the engine draws into its own image, no window, display or present (macOS ignores it)
+  if [[ "${TEMPEST_OFFSCREEN:-}" == 1 && "$(uname -s)" == Linux ]]; then RUN_MODE=offscreen; fi
 fi
 env ${WINDOW_ENV[@]+"${WINDOW_ENV[@]}"} BENCH_RUN_MODE="$RUN_MODE" \
   OPENGOTHIC_BENCH="$SCEN" OPENGOTHIC_BENCH_OUT="$OUT" ${KEEP:+OPENGOTHIC_BENCH_KEEP=1} \

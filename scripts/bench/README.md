@@ -153,8 +153,24 @@ GPU-memory resources. `RYZEN_BENCH_CLASS` still overrides the class; a `batch` r
 is capped at two hours. Unmarked windowed scenarios keep their existing queue settings.
 Both paths use the same completion marker, heartbeat, progress, watchdog and post-run checks below.
 The runner's final JSON status remains in `game.log`. `report.md` and `report.json` identify the run
-as `headless lockstep` or `window` and include the game's wall seconds; stdout still prints
+as `headless lockstep`, `window` or `offscreen` and include the game's wall seconds; stdout still prints
 `bench: game ran N s`.
+
+### Offscreen (`TEMPEST_OFFSCREEN`)
+
+`TEMPEST_OFFSCREEN=1` (Linux/Vulkan; macOS ignores it) runs the windowed game without a window. Tempest
+opens no X display (it runs with `DISPLAY`, `WAYLAND_DISPLAY` and `XAUTHORITY` unset), creates Vulkan
+without surface extensions, `VK_KHR_swapchain` or a present queue, and `MainWindow` draws each frame into
+its own image of `TEMPEST_WINDOW_SIZE` (default 800x600) instead of the swapchain, presenting nothing.
+Captures (`shot`, `rec`, `ui on`) are drawn as with a window, so stills, videos and `events.jsonl` match a
+windowed run. Nothing waits for the screen, so the limiter at the end of `render` holds a frame to at least
+`1000 / TEMPEST_OFFSCREEN_FPS` ms: default 200, the pace of a FIFO window on Ryzen's 199.92 Hz screen, one
+frame per game step; `0` removes the limit. `bench.sh` records the run mode `offscreen`; `rec` still needs
+`ffmpeg`. Without presenting these are meaningless: the frame profile's `Present` zone,
+`LoadProbe::presented`, `[app-cadence]` (`OPENGOTHIC_FPS_LOG=1`), FPS and low-1 %; frame timing stays
+with windowed benches. `scripts/ryzen.sh` runs benches offscreen by default; `RYZEN_BENCH_WINDOW=1` and
+the other [window conditions](../../docs/ryzen.md#как-работает-сейчас) bring the window back.
+[Note](../../reports/compute/2026-11-09-offscreen-bench/README.md).
 
 For performance comparisons (before/after or FPS), run both takes on the same machine:
 pin `BENCH_HOST=dev-ubuntu`, `BENCH_HOST=ryzen` or `BENCH_HOST=local`.
@@ -258,6 +274,8 @@ is accepted when every one of the four points gives 0 in at least one off ↔ on
 
 ## План и журнал
 
+- 2026-11-09: offscreen run mode (`TEMPEST_OFFSCREEN=1`, `TEMPEST_OFFSCREEN_FPS`): the game draws into its
+  own image without a window or display; Ryzen benches use it by default.
 - 2026-11-05: `deterministic on` for `streaming-shots`: frozen world during `streaming wait`, TAA reset,
   16 fixed steps, ordered visibility and settled texture levels before `shot`; byte-identical pairs
   at four points on Mac in most pairs, rare single-point residue in #946.
