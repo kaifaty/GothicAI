@@ -317,6 +317,74 @@ struct DestructionContext {
 
 struct LivingWalker { Npc* npc=nullptr; WayPoint ends[2]; bool next=false,queued=false; int meleePhase=-1;uint64_t meleeAttackAt=0; };
 
+struct ItemWake {
+  struct ItemWakeSample {
+    Item* item=nullptr;
+    std::string name;
+    Tempest::Vec3 initial,collisionBounds[2],boundsOrigin;
+    float floorY=0,travel=0,penetration=0;
+    bool bodyCreated=false,hadBody=false,fell=false,below=false,preparationDive=false;
+    };
+  std::vector<ItemWakeSample> itemWakeItems;
+  std::vector<Npc*> itemWakeActors;
+  Item* itemWakeMover=nullptr;
+  std::unique_ptr<PhysicMesh> itemWakeTable;
+  std::unique_ptr<ObjVisual> itemWakeTableVisual;
+  Tempest::Vec3 itemWakeBladePoints[3],itemWakePreviousTip,itemWakePreviousGrip,itemWakeSwordRoot;
+  std::vector<Tempest::Vec3> itemWakeBladePath;
+  size_t itemWakeBladePathEnd=0;
+  bool itemWakeBladeCrossed[3]{};
+  float itemWakeBladeSpeed=0,itemWakeSwordLength=0;
+  const Animation::Sequence* itemWakeSwordSequence=nullptr;
+  uint32_t itemWakeSwordOptimalFrame=0;
+  uint64_t itemWakeCalibrationEnd=0;
+  bool itemWakeCalibrationSample=false;
+  Tempest::Vec3 itemWakeCenter;
+  std::string itemWakeCase;
+  bool itemWakeSite=false,itemWakeRunning=false,itemWakePreparing=false;
+  uint64_t itemWakeSample=0,itemWakePulse=0,itemWakeStart=0,itemWakeWindow=0;
+  uint64_t itemWakeLastNativeStep=0,itemWakeZeroFrames=0,itemWakeFirstPhysicsTick=0,itemWakeLastPhysicsTick=0;
+  float itemWakeMinimumGap=std::numeric_limits<float>::infinity();
+  size_t itemWakeQueryOverlaps=0,itemWakeInitiallyBodyless=0;
+  std::vector<float> itemWakePhysics;
+  };
+
+struct Living {
+  std::deque<LivingWalker> livingWalkers;
+  bool livingFixture=false,livingDebug=false,livingMotion=false,livingMeasuring=false,livingMode=false;
+  std::string livingPhase;
+  Tempest::Vec3 livingHero;
+  std::vector<LivingPhysics> livingPhysics;
+  bool livingOverflow=false;
+  Npc* seatNpc=nullptr;
+  Npc* seatCorpse=nullptr;
+  Interactive* seatMob=nullptr;
+  std::vector<Item*> seatItems;
+  std::vector<Tempest::Vec3> seatPreviousParts,seatPreviousItems;
+  uint64_t seatSampleTick=0;
+  std::string seatPhase;
+  };
+
+struct LivingCounts {
+  size_t models=0,alive=0,kinematic=0,parts=0,dynamic=0,dynamicParts=0,duplicates=0;
+  };
+
+struct ItemWakeContext {
+  ItemWake& itemWake;
+  Destruction& destruction;
+  CamMode& cam;
+  Tempest::Vec3& ragdollArenaTarget;
+  };
+
+struct LivingContext {
+  Living& living;
+  std::vector<Npc*>& crew;
+  Npc*& subject;
+  std::FILE*& csv;
+  std::vector<Tempest::Vec3>& ragdollArenaPlaces;
+  bool (*frameRagdollArena)(size_t);
+  };
+
 struct CharacterMoveFrame {
   Tempest::Vec3 requested,acceptedDelta,steepNormal;
   uint64_t sequence=0,dt=0;
@@ -1028,5 +1096,23 @@ void placedItemsSave(World& world);
 void placedItemsPickupReady(PlacedItems& state,World& world,Npc& player);
 void placedItemsPickup(PlacedItems& state,World& world,Npc& player,PlayerControl& ctrl);
 void placedItemsPickupReport(PlacedItems& state,World& world,Npc& player);
+
+bool itemWakeTableItems(World& world,Npc& player,bool sword);
+void itemWakeFields(World& world);
+void itemWakeResetWindow(World& world,uint64_t window);
+void itemWakeSetup(World& world,Npc& player,std::string_view name);
+bool itemWakeBreakCrate(World& world,Npc& player);
+void itemWakeBegin(World& world,Npc& player);
+void itemWakeEventDebris(World& world,Npc& player);
+void itemWakeCheckpoint(World& world);
+bool itemWakeCommand(const std::vector<std::string>& a,World& w,Npc& pl);
+ItemWakeContext itemWakeContext();
+
+LivingCounts livingCounts();
+std::string livingCountFields(const LivingCounts& s, World& world);
+void livingFields(World& world);
+void livingSeatFields(World& world);
+bool livingCommand(const LivingContext& context,const std::vector<std::string>& a,World& w,Npc& pl,PlayerControl& ctrl);
+LivingContext livingContext();
 
 }

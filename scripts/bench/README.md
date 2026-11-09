@@ -4,7 +4,7 @@
 
 Bench families are extracted into `common/testbench_<family>.cpp`, with shared state types and helpers in `testbench_internal.h`.
 The dispatcher calls `bool <family>Command(...)` wrappers for the extracted command groups:
-`npc_sim`, `water`, `character`, `monster`, `furniture_parts`, `placed_items`, `item_hulls`, `fracture_pieces`, `destruction`, `body_impact`, `body`, `movable`, `noise` and `spell`.
+`npc_sim`, `water`, `character`, `monster`, `furniture_parts`, `placed_items`, `item_hulls`, `fracture_pieces`, `destruction`, `body_impact`, `body`, `movable`, `noise`, `spell`, `item_wake` and `living`.
 Each wrapper handles its command branches in their original order and returns whether it matched.
 Tick and reset remain in `testbench.cpp`, along with water-film and monster camera/follow commands.
 Healing observations, commands and checks live in `common/testbench_healing.cpp`; its `Healing` state
@@ -40,6 +40,12 @@ Movable-object, candle, physics-noise and spell fixtures and commands live in `c
 Their `Movables` state, shared `LivingPhysics` samples and `MovablesContext` references are in `testbench_internal.h`.
 The dispatcher calls `movableCommand`, `noiseCommand` and `spellCommand` at each group's first original branch;
 shared helpers used by other families retain one definition. Camera/capture helpers and `TestBench::` hooks stay in `testbench.cpp`.
+
+Item-wake fixtures, observations and commands live in `common/testbench_item_wake.cpp`.
+Living-body counts, observations and `living` / `living-seat` commands live in `common/testbench_living.cpp`.
+Their `ItemWake` / `Living` state and context references are in `testbench_internal.h`;
+`itemWakeCommand` and `livingCommand` run at their groups' first original branches.
+The shared `ragdollNumber`, `ragdollVector`, `ragdollMatrix` and camera/capture helpers stay in `testbench.cpp`.
 
 Runs a scenario through the windowed game or the headless runner and records metrics and a report.
 Windowed scenarios can also capture video with a debug overlay and point at suspicious frames.
@@ -1573,7 +1579,7 @@ physics contracts pass after explicit signed Guild comparisons in the fixture.
 
 `OpenGothic/common/testbench.cpp` and `testbench_<family>.cpp` (including healing in
 `testbench_healing.cpp`, water / corpse-water in `testbench_water.cpp` and hero / human NPC
-CharacterVirtual in `testbench_character.cpp` and ground monsters in `testbench_monster.cpp`, destruction in `testbench_destruction.cpp`, movable objects/candles, physics noise and spells in `testbench_movables.cpp`), inert unless `OPENGOTHIC_BENCH` is set. Hooks: the fixed time step and
+CharacterVirtual in `testbench_character.cpp` and ground monsters in `testbench_monster.cpp`, destruction in `testbench_destruction.cpp`, movable objects/candles, physics noise and spells in `testbench_movables.cpp`, item wake in `testbench_item_wake.cpp` and living bodies in `testbench_living.cpp`), inert unless `OPENGOTHIC_BENCH` is set. Hooks: the fixed time step and
 the capture in `MainWindow` (in film mode the captured frame replaces the window's), the AI bridge's lines
 and voices (`TestBench::aiLine`, `aiVoiceEnd`, `aiHeard`, `aiBusy`), an npc's lines of the game and SVMs
 (`TestBench::npcOutput` in `Npc::nextAiAction`), the OpenAL loopback device in Tempest's
