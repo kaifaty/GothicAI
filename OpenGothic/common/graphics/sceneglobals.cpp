@@ -1,5 +1,7 @@
 #include "sceneglobals.h"
 
+#include <cstddef>
+
 #include "graphics/shaders.h"
 #include "graphics/sky/sky.h"
 #include "worldview.h"
@@ -183,6 +185,14 @@ void SceneGlobals::setTaaFrame(bool active, uint32_t frame) {
   uboGlobalCpu.taaFrame  = active ? frame : 0;
   }
 
+void SceneGlobals::setMotion(bool enabled, const Tempest::Matrix4x4& reprojectClip,
+                             const Tempest::Matrix4x4& viewProjectPrev) {
+  static_assert(offsetof(UboGlobal, reprojectClip)%16==0, "std140: a mat4 starts at 16 bytes");
+  uboGlobalCpu.motionVectors   = enabled ? 1 : 0;
+  uboGlobalCpu.reprojectClip   = reprojectClip;
+  uboGlobalCpu.viewProjectPrev = viewProjectPrev;
+  }
+
 void SceneGlobals::setUnderWater(bool w) {
   uboGlobalCpu.underWater = w ? 1 : 0;
   }
@@ -209,6 +219,8 @@ void SceneGlobals::commitUbo(uint8_t fId) {
       ubo.mipBias      = 0;
       ubo.mipGradScale = 1;
       }
+    if(i!=V_Main)
+      ubo.motionVectors = 0;
     std::memcpy(ubo.frustrum, frustrum[i].f, sizeof(ubo.frustrum));
     }
 

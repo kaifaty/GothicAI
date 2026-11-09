@@ -635,6 +635,12 @@ void WorldView::preFrameUpdate(const Camera& camera, uint64_t tickCount, uint8_t
   visuals .preFrameUpdate();
   }
 
+void WorldView::setMotionVectors(bool enabled, const Tempest::Matrix4x4& reprojectClip,
+                                 const Tempest::Matrix4x4& viewProjectPrev) {
+  sGlobal.setMotion(enabled, reprojectClip, viewProjectPrev);
+  visuals.setInstanceHistory(enabled);
+  }
+
 void WorldView::prepareGlobals(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId) {
   sGlobal.prepareGlobals(cmd, fId);
   gLights.prepareGlobals(cmd, fId);

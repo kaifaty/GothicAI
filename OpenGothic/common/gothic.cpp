@@ -88,6 +88,7 @@ Gothic::Gothic() {
 
   opts.aaPreset = CommandLine::inst().aaPreset();
   opts.taa      = CommandLine::inst().doTaa();
+  opts.motionVectors = CommandLine::inst().motionVectors();
 
   wrldDef = CommandLine::inst().wrldDef;
 
@@ -183,6 +184,9 @@ Gothic::Gothic() {
   defaults->set("INTERNAL",     "spatialUpscale", 1); // MetalFX for reduced resolution, where supported
   // temporal AA by the camera (Renderer::setupSettings: also -taa 0 and OPENGOTHIC_TAA) and its sharpening, 0..1
   defaults->set("INTERNAL",     "taa", 1);
+  // motion vectors of objects into the G-buffer (graphics plan 1b), off until their look is accepted: -mv 1,
+  // [INTERNAL] motionVectors=1 or OPENGOTHIC_MOTION_VECTORS=1 (Renderer::setupSettings)
+  defaults->set("INTERNAL",     "motionVectors", 0);
   defaults->set("INTERNAL",     "taaSharpness", 0.75f);
   // VSM lamp shadows: the soft PCSS, or 0 hard in one gather (Renderer::setupSettings); hard on Metal, where the PCSS
   // costs ~11 ms GPU indoors on an M1 Pro

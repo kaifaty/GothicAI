@@ -43,6 +43,10 @@ struct SceneDesc {
   float mipGradScale; // exp2(mipBias), for textureGrad
   uint  taaFrame;  // TAA: the frame number, turns the lamp shadows' tap pattern (light.frag); 0 without TAA
   uint  taaActive; // 1 under TAA, 0 without it
+  uint  motionVectors; // motion vectors of objects into the G-buffer (main view only), 0 elsewhere
+  uint  motionPad0;
+  mat4  reprojectClip;   // this frame's clip -> the previous camera's, for a point that stood still (Taa::reprojection)
+  mat4  viewProjectPrev; // the previous camera with this frame's jitter: only on vec4(d,0)
   };
 
 struct LightSource {

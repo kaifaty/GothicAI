@@ -197,6 +197,7 @@ void Shaders::compileShaders() noexcept {
   }
 
   tonemapping        = postEffect("triangle_uv", "tonemapping",    RenderState::ZTestMode::Always);
+  motionView         = postEffect("triangle_uv", "motion_view",    RenderState::ZTestMode::Always);
   tonemappingUpscale = postEffect("triangle_uv", "tonemapping_up", RenderState::ZTestMode::Always);
   bloomDownKaris     = postEffect("triangle_uv", "bloom_down_karis", RenderState::ZTestMode::Always);
   bloomDown          = postEffect("triangle_uv", "bloom_down",       RenderState::ZTestMode::Always);
@@ -532,9 +533,12 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
   const char* typeFsD = nullptr;
   const char* typeFsV = nullptr;
 
+  // the G-buffer pass of objects has vertex variants of its own: they also compute the previous vertex for motion
+  // vectors (main_obj_g, main_ani_g, main_mph_g); landscape and particles write no motion of their own
+  const char* gbufVs = (t==DrawCommands::Landscape || t==DrawCommands::Pfx) ? "" : "_g";
   switch(alpha) {
     case Material::Solid:
-      typeVsM = "";
+      typeVsM = gbufVs;
       typeFsM = "_g";
       typeVsD = "_d";
       typeFsD = "_d";
@@ -544,7 +548,7 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
         typeFsM = "_g_s";
       break;
     case Material::AlphaTest:
-      typeVsM = "";
+      typeVsM = gbufVs;
       typeFsM = "_g_at";
       typeVsD = "_d_at";
       typeFsD = "_d_at";
