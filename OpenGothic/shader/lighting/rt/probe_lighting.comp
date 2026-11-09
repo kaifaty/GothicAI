@@ -118,7 +118,7 @@ float coneDistance(float dist, float rho2) {
   return sqrt(rho2/log(1.0 + rho2/d2));
   }
 
-vec3 localLight(vec3 norm, vec3 pos, float pick, float rho2) {
+vec3 localLight(vec3 norm, vec3 pos, uint key, float rho2) {
   uint  stack[32];
   uint  ptr     = 0;
   uint  node    = 0 | BVH_BoxNode;
@@ -139,8 +139,11 @@ vec3 localLight(vec3 norm, vec3 pos, float pick, float rho2) {
       const float   lum   = lightIntensity(norm, coneDistance(len, rho2), d/max(len, 0.001), range) * luma(n.lmax);
       if(lum>0) {
         pSum += lum;
-        // weighted reservoir: this lamp stays with probability lum/pSum
-        if(fract(pick + float(count)*0.6180339887)*pSum < lum) {
+        // weighted reservoir: this lamp stays with probability lum/pSum. Each candidate draws its own number from the
+        // sample's fixed key (a hash of the key and the candidate): one number stepped by the golden ratio for all
+        // of them kept equal lamps 0,285 / 0,382 / 0,333 and never kept the weakest of 1 : 2 : 5
+        uint h = key ^ (count*0x9E3779B9u);
+        if(float(wangHash(h) >> 8)*(1.0/16777216.0)*pSum < lum) {
           pHat      = lum;
           lampPos   = n.lmin;
           lampColor = n.lmax;
@@ -261,18 +264,18 @@ vec4 shadeSample(const vec3 rayOrigin, const vec3 rayDirection, uint probeId, ui
   const vec3 at     = pos + norm*0.5; // the hit distance is 16-bit: off the surface for the shadow rays
 
   // The key of the lamp choice goes through the samples of the probe as a low-discrepancy sequence (golden-ratio
-  // steps in 32-bit fixed point). It stays the same from frame to frame and for a probe made again at the same
+  // steps in 32-bit fixed point; localLight hashes it per candidate). It stays the same from frame to frame and for a
+  // probe made again at the same
   // place: a new choice at every relight flickered (the cube's change passed the reset). The light still follows
   // the lamps, the sun and the time of day; the choice only spreads the error of the shadow over the probes.
   const uint  seed = probeGridPosHash(ivec3(round(rayOrigin/probeGridStep)));
-  const uint  k    = sampleId*2654435769u + seed*2447445413u;
-  const float pick = float(k >> 8) * (1.0/16777216.0);
+  const uint  key  = sampleId*2654435769u + seed*2447445413u;
 
   vec3 direct = vec3(0);
   direct += sunLight(norm, at) * scene.sunColor;
   // the spot of the sample's cone on the hit's surface: half-angle 0,125 rad for 1/256 of the sphere, wider at a slant
   const float rho2 = (rayT*0.125)*(rayT*0.125)/max(abs(dot(norm, rayDirection)), 0.1);
-  direct += localLight(norm, at, pick, rho2) * (max(1.0, scene.exposure) / scene.exposure);
+  direct += localLight(norm, at, key, rho2) * (max(1.0, scene.exposure) / scene.exposure);
 
   vec3 hit = albedo * direct * Fd_Lambert;
   hit += albedo * bounce(pos, norm, probeId, hasPrev); // Fd_Lambert is in the probes' integration

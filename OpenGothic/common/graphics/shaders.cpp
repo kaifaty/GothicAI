@@ -423,6 +423,9 @@ bool Shaders::isLightsTreeSupported() {
   }
 
 bool Shaders::isGi1Supported() {
+  // Not checked: the subgroup operations of probe_ambient.frag (subgroupAllEqual, subgroupBallot, subgroupShuffle in
+  // the fragment stage, SPIR-V 1.3): Tempest does not report the supported stages and operations of subgroups. Run on
+  // an RTX 3080 (Vulkan) and an M1 Pro (Metal); a GPU with ray query but without them is not covered (step-2.md, «2а»).
   auto& gpu = Resources::device().properties();
   if(!gpu.raytracing.rayQuery || !isLightsTreeSupported())
     return false;
