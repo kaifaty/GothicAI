@@ -574,6 +574,49 @@ def test_deferred_column_game_releases_its_column_slots(queue):
     assert "display_slot" not in job and "display_slots" not in job
 
 
+# Verbatim from scripts/gq.py at 857f29589, the last gq before layout tags. Its live
+# pumps and run/wait clients keep this rule in memory after `gq install`.
+def exclusive_display_before_layouts(job):
+    # Sharing is opt-in: older clients cannot isolate their ports by slot.
+    return job.get("display", False) and (
+        job.get("display_exclusive", False) or not job.get("display_shared", False))
+
+
+def test_tagged_games_are_exclusive_for_gq_before_layouts(queue):
+    tagged = [enqueue(queue, **COLUMN), enqueue(queue, **SLOT)]
+    untagged = enqueue(queue, display=True, display_shared=True)
+    assert all(exclusive_display_before_layouts(queue.get(ident)) for ident in tagged)
+    queue.tick()
+    assert all(queue.get(ident)["status"] == "running" for ident in tagged)
+    assert all(exclusive_display_before_layouts(queue.get(ident)) for ident in tagged)
+    assert not exclusive_display_before_layouts(queue.get(untagged))
+
+
+def test_column_game_admitted_without_columns_holds_column_zero(queue):
+    column = start(queue, **COLUMN)
+    with queue.transaction() as state:
+        saved = next(job for job in state["jobs"] if job["id"] == column)
+        # What gq before columns records: one exclusive-looking slot 0.
+        saved.pop("display_slots")
+        saved["display_slot"] = 0
+    first, second, other_column = enqueue(queue, **SLOT), enqueue(queue, **SLOT), enqueue(queue, **COLUMN)
+    queue.tick()
+    assert queue.get(first)["display_slot"] == 1
+    assert queue.get(second)["status"] == queue.get(other_column)["status"] == "queued"
+
+
+def test_tagged_game_admitted_as_exclusive_lets_the_same_layout_share(queue):
+    tagged = start(queue, **SLOT)
+    with queue.transaction() as state:
+        saved = next(job for job in state["jobs"] if job["id"] == tagged)
+        # gq before layouts admitted it alone on an empty window, in slot 0.
+        assert (saved["display_slot"], saved["display_shared"]) == (0, False)
+    column, slot = enqueue(queue, **COLUMN), enqueue(queue, **SLOT)
+    queue.tick()
+    assert queue.get(column)["display_slots"] == [1]
+    assert queue.get(slot)["display_slot"] == 2
+
+
 def test_status_lists_every_slot_of_a_column_game(queue, gq, capsys):
     ident = start(queue, **COLUMN)
     gq.status(queue)
@@ -592,6 +635,15 @@ def test_column_request_requires_shared_display_and_layout(queue, gq, overrides,
     with pytest.raises(gq.QueueError) as failure:
         queue.submit(spec(**{**COLUMN, **overrides}))
     assert str(failure.value) == message
+    assert queue.jobs() == []
+
+
+@pytest.mark.parametrize("overrides", [{"display_shared": False}, {"display": False},
+                                       {"display_exclusive": True}])
+def test_layout_tag_requires_a_shared_display(queue, gq, overrides):
+    with pytest.raises(gq.QueueError) as failure:
+        queue.submit(spec(**{**SLOT, **overrides}))
+    assert str(failure.value) == "--display-layout требует --display --display-shared без --display-exclusive"
     assert queue.jobs() == []
 
 

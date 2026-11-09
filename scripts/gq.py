@@ -159,16 +159,22 @@ def same_attempt(job, snapshot):
 
 def exclusive_display(job):
     # Sharing is opt-in: older clients cannot isolate their ports by slot.
+    # A layout tag also marks a shared game: submit() saves those with
+    # display_shared=False for gq versions without layouts (see there).
     return job.get("display", False) and (
-        job.get("display_exclusive", False) or not job.get("display_shared", False))
+        job.get("display_exclusive", False)
+        or not (job.get("display_shared", False) or job.get("display_layout") is not None))
 
 
-def display_slots(job, capacity):
-    """Slots an active game holds. Records saved before columns hold one slot,
-    or every slot when they are not shared."""
+def display_slots(job, capacity, columns):
+    """Slots an active game holds: a column game holds its whole column, even when
+    a gq without columns admitted it (display_slot=0, no display_slots)."""
     if exclusive_display(job):
         return range(capacity)
-    return job.get("display_slots") or [job.get("display_slot", 0)]
+    slot = job.get("display_slot", 0)
+    if job.get("display_column") and 0 <= slot < len(columns):
+        return columns[slot]
+    return [slot]
 
 
 def systemctl(*args):
@@ -347,16 +353,19 @@ class Queue:
         layout = spec.get("display_layout")
         if layout is not None and (not isinstance(layout, str) or not layout):
             raise QueueError("--display-layout требует непустую метку")
-        if spec.get("display_column"):
-            if not p.get("display_columns"):
-                raise QueueError(f"--display-column: у профиля {self.profile_name} нет столбцов окна")
-            if not (spec["display"] and spec["display_shared"]) or spec["display_exclusive"]:
-                raise QueueError("--display-column требует --display --display-shared без --display-exclusive")
-            if layout is None:
-                raise QueueError("--display-column требует --display-layout")
+        if spec.get("display_column") and not p.get("display_columns"):
+            raise QueueError(f"--display-column: у профиля {self.profile_name} нет столбцов окна")
         if self.profile_name == "dev-ubuntu" and any(spec.get(key) for key in (
                 "display", "display_shared", "display_exclusive", "display_layout", "interactive")):
             raise QueueError("окна на dev-ubuntu нет: иди на Ryzen")
+        shared = spec["display"] and spec["display_shared"] and not spec["display_exclusive"]
+        if spec.get("display_column"):
+            if not shared:
+                raise QueueError("--display-column требует --display --display-shared без --display-exclusive")
+            if layout is None:
+                raise QueueError("--display-column требует --display-layout")
+        if layout is not None and not shared:
+            raise QueueError("--display-layout требует --display --display-shared без --display-exclusive")
         for key in ("threads", "mem", "max"):
             if not math.isfinite(spec[key]) or spec[key] <= 0:
                 raise QueueError(f"{key} должен быть положительным")
@@ -399,6 +408,12 @@ class Queue:
         if "owner" not in spec:
             spec["owner"] = owner()
         self.validate(spec)
+        if spec["display_layout"] is not None:
+            # Live pumps and run/wait clients of gq before layouts (857f29589) keep
+            # their old tick() after an install and read only display_shared. Saved
+            # as not shared, a tagged game is exclusive for them during the switch;
+            # this code reads its layout tag as shared.
+            spec["display_shared"] = False
         job = dict(spec, id=uuid.uuid4().hex[:12], status="queued", submitted=self.now(),
                    start=None, waiter=waiter, cwd=str(Path.cwd()), env=dict(os.environ))
         with self.transaction() as state:
@@ -723,17 +738,17 @@ class Queue:
                             batch_blocked = True
                         continue
                     capacity = self.profile.get("display", 1)
+                    columns = self.profile.get("display_columns", [])
                     occupied = set()
                     layouts = set()
                     for current in active:
                         if current["display"]:
                             # Persisted jobs without display_shared are legacy
                             # clients and reserve every slot, even if they have one.
-                            occupied.update(display_slots(current, capacity))
+                            occupied.update(display_slots(current, capacity, columns))
                             if not exclusive_display(current):
                                 layouts.add(current.get("display_layout"))
                     available = set(range(capacity)) - occupied
-                    columns = self.profile.get("display_columns", [])
                     if exclusive_display(job):
                         slot = None if occupied else min(available, default=None)
                     elif layouts - {job.get("display_layout")}:
@@ -1153,8 +1168,9 @@ def status(queue):
             continue
         display = "все" if exclusive_display(job) else str(int(job["display"]))
         slot = job.get("display_slot", 0 if job["display"] and job["status"] in ACTIVE else "—")
-        if job.get("display_slots"):
-            slot = ",".join(map(str, job["display_slots"]))
+        if job.get("display_column") and job["status"] in ACTIVE:
+            slot = ",".join(map(str, display_slots(job, queue.profile.get("display", 1),
+                                                   queue.profile.get("display_columns", []))))
         resources = (f"{job['threads']}t {job['mem']/GIB:g}G gpu={job['gpu_mem']/GIB:g}G "
                      f"окно={display} слот={slot}")
         start = time.strftime("%H:%M:%S", time.localtime(job["start"])) if job["start"] else "—"
