@@ -1135,6 +1135,16 @@ struct FracturePieces {
     std::vector<Piece> pieces;
     };
   std::vector<Break> breaks;
+  // `destruction2 remnant <n>`: the fixture's actor strikes the largest group of its broken prop,
+  // re-aimed before each swing, until the prop has more bodies or n swings are spent.
+  struct RemnantAttack {
+    bool running=false;
+    unsigned limit=0,swings=0,ordinal=0;
+    size_t bodies=0,pieces=0;
+    double largest=0;
+    uint64_t next=0,deadline=0;
+    };
+  RemnantAttack remnant;
   };
 
 struct Healing {
@@ -1530,7 +1540,7 @@ bool monsterCharacterCommand(MonsterCharacter& state,const MonsterCharacterConte
 bool characterCommand(Character& state,const CharacterContext& context,const std::vector<std::string>& a,World& w,Npc& pl,PlayerControl& ctrl);
 bool placedItemsCommand(PlacedItems& state,const std::vector<std::string>& a,World& w,Npc& pl,PlayerControl& ctrl);
 bool itemHullsCommand(ItemHulls& state,const std::vector<std::string>& a,World& w,Npc& pl);
-bool fracturePiecesCommand(const std::vector<uintptr_t>& ids,Npc* actor,const Tempest::Vec3& stand,const Tempest::Vec3& direction,CamMode& cam,bool& cutPending,const std::vector<std::string>& a,World& w);
+bool fracturePiecesCommand(FracturePieces& state,Destruction& destruction,const DestructionContext& context,bool& cutPending,const std::vector<std::string>& a,World& w);
 bool waterCommand(Water& waterState,const WaterContext& context,const std::vector<std::string>& a,World& w,Npc& pl,PlayerControl& ctrl);
 bool furniturePartsCommand(FurnitureParts& state,const std::vector<std::string>& a,World& w,Npc& pl);
 bool npcSimCommand(NpcDuel& duelState,NpcTierTest& tierState,NpcSpeedTest& speedState,size_t& pc,const std::vector<std::string>& prog,const std::vector<std::string>& a,World& w,Npc& pl);
@@ -1742,7 +1752,7 @@ void itemHullSample(ItemHulls& state,World& world);
 void itemHullReport(ItemHulls& state,World& world);
 
 void fracturePiecesBreak(FracturePieces& state,World& world,uintptr_t parent,std::string_view label);
-void fracturePiecesTick(FracturePieces& state,World& world);
+void fracturePiecesTick(FracturePieces& state,Destruction& destruction,const DestructionContext& context,World& world);
 std::optional<std::pair<Tempest::Vec3,Tempest::Vec3>> fracturePiecesView(World& world,const std::vector<uintptr_t>& ids,
                                                                          const Tempest::Vec3& camera,const Tempest::Vec3& target);
 // `destruction2 stand`: the actor back where it stood before the blow, facing the same way
