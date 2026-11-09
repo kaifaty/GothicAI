@@ -7,6 +7,7 @@
 #include <Tempest/Log>
 #include <Tempest/StorageImage>
 #include <cassert>
+#include <cmath>
 #include <cstdio>
 
 #include "ui/inventorymenu.h"
@@ -364,6 +365,7 @@ void Renderer::togglePathtrace() {
 void Renderer::onWorldChanged() {
   sky.lutIsInitialized = false;
   taa.valid            = false;
+  gi.resetHistory      = true;
   resetSkyFog();
   }
 
@@ -441,7 +443,7 @@ bool Renderer::requiresRtScene() const {
 bool Renderer::requiresLightsTree() const {
   if(!Shaders::isLightsTreeSupported())
     return false;
-  if(settings.giMethod==GiMethod::IrrC || settings.pathTraceEnabled)
+  if(settings.giMethod==GiMethod::IrrC || settings.giMethod==GiMethod::Probes || settings.pathTraceEnabled)
     return true;
   return false;
   }
@@ -629,8 +631,8 @@ void Renderer::resetShadowmap() {
   for(int i=0; i<Resources::ShadowLayers; ++i)
     Resources::recycle(std::move(shadowMap[i]));
 
-  const bool forceSm1 = (settings.giMethod==GiMethod::Probes || settings.giMethod==GiMethod::IrrC ||
-                         settings.pathTraceEnabled || sky.quality==PathTrace);
+  // the probes of -gi 1 light their hits with a shadow ray (probe_lighting.comp): no cascade for them under VSM
+  const bool forceSm1 = (settings.giMethod==GiMethod::IrrC || settings.pathTraceEnabled || sky.quality==PathTrace);
   for(int i=0; i<Resources::ShadowLayers; ++i) {
     if(!(i==1 && forceSm1)) {
       if(settings.vsmEnabled)
@@ -903,7 +905,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   prepareExposure(cmd, wview);
   FrameProfile::Scope lightingTiming(FrameProfile::Zone::EncodeMain);
   prepareFog (cmd, wview);
-  prepareGi  (cmd, wview);
+  prepareGi  (cmd, fId, wview);
   prepareSurfels(cmd, wview);
 
   cmd.setFramebuffer({{sceneLinear, Tempest::Discard, Tempest::Preserve}}, {zbuffer, Tempest::Readonly});
@@ -1918,6 +1920,9 @@ void Renderer::drawSky(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
 void Renderer::prepareSSAO(Encoder<CommandBuffer>& cmd, WorldView& wview) {
   if(!settings.zCloudShadowScale)
     return;
+  // the probes of -gi 1 trace the occlusion of their light themselves: their ambient takes no SSAO (probe_ambient.frag)
+  if(settings.giMethod==GiMethod::Probes)
+    return;
   // ssao
   struct PushSsao {
     Matrix4x4 proj;
@@ -2091,8 +2096,10 @@ void Renderer::prepareLightsBvh(Tempest::Encoder<Tempest::CommandBuffer>& cmd, W
   auto& bvhAlux    = usesSsbo(lightsTree.bvhAlux,     shaders.lightsBvh.sizeofBuffer(2, numLights * 2));
   auto& ctrl       = usesSsboInit(lightsTree.bvhCtrl, shaders.lightsBvh.sizeofBuffer(3, (numLights + 31 )/32));
 
+  // the stochastic tree of the path tracer; the bounding boxes of the lamps' ranges for the surfels and the probes of
+  // -gi 1 (all lamps at a hit, probe_lighting.comp)
   const bool ltree = settings.pathTraceEnabled;
-  const bool lbvh  = (settings.giMethod==GiMethod::IrrC);
+  const bool lbvh  = (settings.giMethod==GiMethod::IrrC || settings.giMethod==GiMethod::Probes);
 
   cmd.setDebugMarker("LightsTree");
   cmd.setFramebuffer({});
@@ -2383,10 +2390,22 @@ void Renderer::prepareIrradiance(Encoder<CommandBuffer>& cmd, WorldView& wview) 
   cmd.dispatch(1);
   }
 
-void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, WorldView& wview) {
+void Renderer::readGiStats(uint8_t fId) {
+  // the counters this frame slot wrote last time: its fence has been waited for, the buffer is host-visible
+  if(!FrameProfile::enabled() || !gi.statsWritten[fId] || gi.stats[fId].isEmpty())
+    return;
+  uint32_t v[4] = {};
+  Resources::device().readBytes(gi.stats[fId], v, sizeof(v));
+  FrameProfile::add(FrameProfile::Amount::GiProbesLive,   v[0]);
+  FrameProfile::add(FrameProfile::Amount::GiProbesTraced, v[1]);
+  gi.statsWritten[fId] = false;
+  }
+
+void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wview) {
   if(settings.giMethod!=GiMethod::Probes || !settings.zCloudShadowScale) {
     return;
     }
+  readGiStats(fId);
 
   const bool fisrtFrame = gi.voteTable.isEmpty();
 
@@ -2394,22 +2413,40 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, WorldView& wview) {
   auto& voteTable          = usesSsbo(gi.voteTable, gi.hashTable.byteSize());
   auto& probes             = usesSsbo(gi.probes,    gi.maxProbes*32 + 64);       // probes and header
   auto& freeList           = usesSsbo(gi.freeList,  gi.maxProbes*sizeof(uint32_t) + sizeof(int32_t));
+  auto& newList            = usesSsbo(gi.newList,   gi.maxProbes*sizeof(uint32_t)); // allocated in the frame: traced
+  // a flag per 16x8 tile of the screen (the allocation's workgroup): a missing probe was voted for there
+  auto& voteTiles          = usesSsbo(gi.voteTiles, ((uint32_t(zbuffer.w())+15)/16)*((uint32_t(zbuffer.h())+7)/8)*sizeof(uint32_t));
   auto& probesGBuffDiff    = usesImage2d(gi.probesGBuffDiff,    TextureFormat::RGBA8, gi.atlasDim*16, gi.atlasDim*16); // 16x16 tile
   auto& probesGBuffNorm    = usesImage2d(gi.probesGBuffNorm,    TextureFormat::RGBA8, gi.atlasDim*16, gi.atlasDim*16);
   auto& probesGBuffRayT    = usesImage2d(gi.probesGBuffRayT,    TextureFormat::R16,   gi.atlasDim*16, gi.atlasDim*16);
-  auto& probesLighting     = usesImage2d(gi.probesLighting,     TextureFormat::R11G11B10UF, gi.atlasDim*3, gi.atlasDim*2);
-  auto& probesLightingPrev = usesImage2d(gi.probesLightingPrev, TextureFormat::R11G11B10UF, uint32_t(gi.probesLighting.w()), uint32_t(gi.probesLighting.h()));
+  auto& probesRadiance     = usesImage2d(gi.probesRadiance,     TextureFormat::R32U,  gi.atlasDim*16, gi.atlasDim*16);
+  // RGBA16F: R11G11B10 shifts the colour and has no pure white (step-2.md, «Формат»)
+  auto& probesLighting     = usesImage2d(gi.probesLighting,     TextureFormat::RGBA16F, gi.atlasDim*3, gi.atlasDim*2);
+  auto& probesLightingPrev = usesImage2d(gi.probesLightingPrev, TextureFormat::RGBA16F, uint32_t(gi.probesLighting.w()), uint32_t(gi.probesLighting.h()));
 
   const auto&  scene   = wview.sceneGlobals();
   const size_t maxHash = hashTable.byteSize()/sizeof(uint32_t);
 
+  // The game's clock went back (a save from earlier in the game, a new game) or the world changed: the probes' hits
+  // and light are of another place or time. With dt 0 their cubes would blend only at a sharp change until the clock
+  // came back to the old tick. They start over as on the first frame: all probes new, traced and lit, no history.
+  // A pause (the same tick) keeps them.
+  if(scene.tickCount<gi.lastTick)
+    gi.resetHistory = true;
+  if(gi.resetHistory && !fisrtFrame)
+    Log::i("render: gi probes start over (", scene.tickCount<gi.lastTick ? "the game's clock went back" : "another world", ")");
+  const bool restart = fisrtFrame || gi.resetHistory;
+  gi.resetHistory = false;
+
   cmd.setFramebuffer({});
-  if(fisrtFrame) {
+  if(restart) {
     cmd.setDebugMarker("GI-Init");
     cmd.setBinding(0, voteTable);
     cmd.setBinding(1, hashTable);
     cmd.setBinding(2, probes);
     cmd.setBinding(3, freeList);
+    cmd.setBinding(5, newList);
+    cmd.setBinding(6, voteTiles);
     cmd.setPipeline(shaders.probeInit);
     cmd.dispatch(1);
     cmd.setPipeline(shaders.probeClearHash);
@@ -2419,14 +2456,16 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, WorldView& wview) {
     cmd.setBinding(1, Resources::fallbackBlack());
     cmd.setPipeline(shaders.copyImg);
     cmd.dispatchThreads(probesLighting.size());
+    gi.lastTick = scene.tickCount;
     }
-
   static bool alloc = true;
   cmd.setDebugMarker("GI-Alloc");
   cmd.setBinding(0, voteTable);
   cmd.setBinding(1, hashTable);
   cmd.setBinding(2, probes);
   cmd.setBinding(3, freeList);
+  cmd.setBinding(5, newList);
+  cmd.setBinding(6, voteTiles);
   cmd.setPipeline(shaders.probeClear);
   cmd.dispatchThreads(maxHash);
 
@@ -2439,6 +2478,8 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, WorldView& wview) {
     cmd.setBinding(5, hashTable);
     cmd.setBinding(6, probes);
     cmd.setBinding(7, freeList);
+    cmd.setBinding(8, newList);
+    cmd.setBinding(9, voteTiles);
     cmd.setPipeline(shaders.probeVote);
     cmd.dispatchThreads(sceneDepth.size());
 
@@ -2446,6 +2487,8 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, WorldView& wview) {
     cmd.setBinding(1, hashTable);
     cmd.setBinding(2, probes);
     cmd.setBinding(3, freeList);
+    cmd.setBinding(5, newList);
+    cmd.setBinding(6, voteTiles);
     cmd.setPipeline(shaders.probePrune);
     cmd.dispatchThreads(gi.maxProbes);
 
@@ -2457,6 +2500,8 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, WorldView& wview) {
     cmd.setBinding(5, hashTable);
     cmd.setBinding(6, probes);
     cmd.setBinding(7, freeList);
+    cmd.setBinding(8, newList);
+    cmd.setBinding(9, voteTiles);
     cmd.setPipeline(shaders.probeAlocation);
     cmd.dispatchThreads(sceneDepth.size());
     }
@@ -2474,6 +2519,7 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, WorldView& wview) {
   cmd.setBinding(9, scene.rtScene.vbo);
   cmd.setBinding(10,scene.rtScene.ibo);
   cmd.setBinding(11,scene.rtScene.rtDesc);
+  cmd.setBinding(12,newList);
   cmd.setPipeline(shaders.probeTrace);
   cmd.dispatch(1024); // TODO: dispath indirect?
 
@@ -2482,10 +2528,34 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, WorldView& wview) {
   cmd.setBinding(1, hashTable);
   cmd.setBinding(2, probes);
   cmd.setBinding(3, freeList);
+  cmd.setBinding(5, newList);
+  cmd.setBinding(6, voteTiles);
   cmd.setPipeline(shaders.probeClearHash);
   cmd.dispatchThreads(maxHash);
   cmd.setPipeline(shaders.probeMakeHash);
   cmd.dispatchThreads(gi.maxProbes);
+
+  // the blend of the probes' cubes over time: 90 % of a change in 2.3*tau (step-2.md, «2а»), by the world's clock,
+  // so a slow frame or a recording at 30 frames per second responds in the same time
+  const float    giTau     = 0.1f;
+  // an old probe's samples are relit in turns, all of them in about this time: so many per frame, by the frame time
+  const float    giRefresh = 0.25f;
+  const uint64_t tick      = scene.tickCount;
+  const float    dt        = tick>gi.lastTick ? std::min(float(tick-gi.lastTick)*0.001f, 0.25f) : 0.f;
+  gi.lastTick = tick;
+  if(dt>0)
+    gi.frameTime = gi.frameTime>0 ? gi.frameTime + (dt-gi.frameTime)*0.1f : dt;
+
+  struct Push {
+    float    alpha;
+    uint32_t frameId;
+    uint32_t relitPeriod;
+    } push = {};
+  push.alpha       = 1.f - std::exp(-dt/giTau);
+  push.frameId     = gi.frame++;
+  push.relitPeriod = 4;
+  while(push.relitPeriod<32 && float(push.relitPeriod*2)*gi.frameTime<=giRefresh*1.5f)
+    push.relitPeriod *= 2;  // 30 fps: every 8th sample a frame, 60 fps: 16th, 120 fps: 32nd
 
   cmd.setDebugMarker("GI-Lighting");
   cmd.setBinding(0, probesLightingPrev);
@@ -2493,18 +2563,51 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, WorldView& wview) {
   cmd.setPipeline(shaders.copyImg);
   cmd.dispatchThreads(probesLighting.size());
 
+  cmd.setPushData(push);
   cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
   cmd.setBinding(1, probesLighting);
   cmd.setBinding(2, probesGBuffDiff, Sampler::nearest());
   cmd.setBinding(3, probesGBuffNorm, Sampler::nearest());
   cmd.setBinding(4, probesGBuffRayT, Sampler::nearest());
   cmd.setBinding(5, sky.viewCldLut,  sky.sampler);
-  cmd.setBinding(6, shadowMap[1],    Sampler::bilinear());
-  cmd.setBinding(7, probesLightingPrev, Sampler::nearest());
-  cmd.setBinding(8, hashTable);
-  cmd.setBinding(9, probes);
+  cmd.setBinding(6, scene.rtScene.tlas);
+  cmd.setBinding(7, Sampler::bilinear());
+  cmd.setBinding(8, scene.rtScene.tex);
+  cmd.setBinding(9, scene.rtScene.vbo);
+  cmd.setBinding(10,scene.rtScene.ibo);
+  cmd.setBinding(11,scene.rtScene.rtDesc);
+  cmd.setBinding(12,probesLightingPrev, Sampler::nearest());
+  cmd.setBinding(13,hashTable);
+  cmd.setBinding(14,probes);
+  cmd.setBinding(15,lightsTree.bvh);
+  cmd.setBinding(16,probesRadiance);
+  cmd.setBinding(17,newList);
+  // a thread per relit sample of every slot: the rays keep all lanes busy
+  cmd.setPipeline(shaders.probeRelight);
+  cmd.dispatchThreads(gi.maxProbes*(256/push.relitPeriod));
+  // the new probes: all samples, a thread each
+  cmd.setPipeline(shaders.probeRelightNew);
+  cmd.dispatch(256);
+  // a workgroup per probe: the integral of the samples
   cmd.setPipeline(shaders.probeLighting);
   cmd.dispatch(1024);
+
+  if(FrameProfile::enabled()) {
+    auto& stats = gi.stats[fId];
+    if(stats.isEmpty())
+      stats = Resources::device().ssbo(BufferHeap::Readback, Uninitialized, 4*sizeof(uint32_t));
+    cmd.setDebugMarker("GI-Stats");
+    cmd.setBinding(0, voteTable);
+    cmd.setBinding(1, hashTable);
+    cmd.setBinding(2, probes);
+    cmd.setBinding(3, freeList);
+    cmd.setBinding(4, stats);
+    cmd.setBinding(5, newList);
+    cmd.setBinding(6, voteTiles);
+    cmd.setPipeline(shaders.probeStats);
+    cmd.dispatch(1);
+    gi.statsWritten[fId] = true;
+    }
   }
 
 void Renderer::prepareExposure(Encoder<CommandBuffer>& cmd, WorldView& wview) {
@@ -2725,7 +2828,6 @@ void Renderer::drawAmbient(Encoder<CommandBuffer>& cmd, const WorldView& view) {
     cmd.setPipeline(shaders.ambientLightSurf);
     }
   else if(settings.giMethod==GiMethod::Probes && settings.zCloudShadowScale) {
-    cmd.setBinding(3, ssao.ssaoBlur, Sampler::nearest());
     cmd.setBinding(4, zbuffer,       Sampler::nearest());
     cmd.setBinding(5, gi.hashTable);
     cmd.setBinding(6, gi.probes);

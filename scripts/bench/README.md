@@ -83,6 +83,13 @@ Their `Melee` / `Routine` state types and context references are in `testbench_i
 Tick/reset and the other `TestBench::` hooks stay in `testbench.cpp`;
 `meleePhysicsCamera` retains the fixture's original camera setup there.
 
+Cloth fixtures and commands live in `common/testbench_cloth.cpp`; water film fixtures and commands
+live in `common/testbench_water_film.cpp`. Their `ClothBench` / `WaterFilm` state and
+`ClothContext` / `WaterFilmContext` references are in `testbench_internal.h`.
+`clothCommand` and `waterFilmCommand` run at their first original branches; tick, cold-load observation
+hooks stay in `testbench.cpp` and pass the family context; the capture hook in
+`testbench_camera.cpp` reaches the same water-film family through a context delegate.
+
 Hero and NPC inventory, placement, stats, routines, fights, aiming, hits and dodge commands live in `common/testbench_npc_commands.cpp`.
 Their `NpcCommands` state and `NpcCommandsContext` references are in `testbench_internal.h`.
 `npcCommandsCommand` runs at the first original branch of each of four groups, guarded by that group's command names;
@@ -330,6 +337,7 @@ The complete column set is:
 | `palette_bytes`, `identical_bytes`, `patch_bytes`, `grow_bytes`, `upload_execution_bytes` | Bytes |
 | `draw_calls`, `dispatch_calls` | Encoded draw and compute dispatch counts; dispatch counting currently covers Metal |
 | `rt_tlas_builds`, `rt_dirty_slots` | With `-rt 1`: TLAS builds recorded into the frame (0 or 1) and slots of the ray scene written into it |
+| `gi_probes_live`, `gi_probes_traced` | With `-gi 1`: probes alive after the allocation and probes traced anew, of a frame one or two frames back (`probe_stats` writes them into a host-visible buffer of the frame slot, the CPU reads it when the slot's fence is done; no wait); `per_frame` in the report is the mean |
 | `gpu_ns`, `gpu_done`, `gpu_buffers` | Sum of the attempt's command buffer GPU time in nanoseconds (Metal `GPUEndTime-GPUStartTime`, Vulkan a timestamp pair per buffer); 1 only when all submitted buffers have valid timing; submitted buffer count |
 
 The complete `<zone>` list (each produces all four columns above):
@@ -1657,7 +1665,7 @@ and checks its identity and exact matrix on reload. Linux builds and all four
 physics contracts pass after explicit signed Guild comparisons in the fixture.
 
 `OpenGothic/common/testbench.cpp` and `testbench_<family>.cpp` (including healing in
-`testbench_healing.cpp`, water / corpse-water in `testbench_water.cpp` and hero / human NPC
+`testbench_healing.cpp`, cloth in `testbench_cloth.cpp`, water film in `testbench_water_film.cpp`, water / corpse-water in `testbench_water.cpp` and hero / human NPC
 CharacterVirtual in `testbench_character.cpp` and ground monsters in `testbench_monster.cpp`, destruction in `testbench_destruction.cpp`, physics-trace debug commands in `testbench_traces.cpp`, movable objects/candles, physics noise and spells in `testbench_movables.cpp`, item wake in `testbench_item_wake.cpp` and living bodies in `testbench_living.cpp`, ragdolls in `testbench_ragdoll.cpp` and own meshes / chests in `testbench_own_mesh.cpp`, archery in `testbench_archery.cpp`, melee in `testbench_melee.cpp` and routine return / guard in `testbench_routine.cpp`, manual-aim spot probes in `testbench_aim_spots.cpp`, hero / NPC commands in `testbench_npc_commands.cpp`, physics / world / time in `testbench_world.cpp`, scenario control in `testbench_control.cpp` and conversation / AI probes in `testbench_dialog.cpp`), inert unless `OPENGOTHIC_BENCH` is set. Hooks: the fixed time step and
 the capture in `MainWindow` (in film mode the captured frame replaces the window's), the AI bridge's lines
 and voices (`TestBench::aiLine`, `aiVoiceEnd`, `aiHeard`, `aiBusy`), an npc's lines of the game and SVMs

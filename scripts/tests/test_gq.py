@@ -2479,7 +2479,7 @@ def test_unit_lock_holder_detects_orphaned_children_in_its_own_cgroup(gq, tmp_pa
     assert gq.unit_has_children("abc", membership, tmp_path), "unreadable unit fails closed"
 
 
-def test_finish_journals_oom_kill_count_and_memory_peak_from_its_unit(
+def test_finish_journals_oom_kill_count_memory_and_swap_peaks_from_its_unit(
         queue, gq, tmp_path, monkeypatch):
     ident = start(queue, display=True, display_shared=True)
     group = f"/user.slice/gq-{ident}.service"
@@ -2487,6 +2487,7 @@ def test_finish_journals_oom_kill_count_and_memory_peak_from_its_unit(
     directory.mkdir(parents=True)
     (directory / "memory.events").write_text("low 0\nhigh 0\nmax 7\noom 2\noom_kill 1\n")
     (directory / "memory.peak").write_text("1832411136\n")
+    (directory / "memory.swap.peak").write_text("262144\n")
     membership = tmp_path / "membership"
     membership.write_text(f"0::{group}\n")
     assert gq.unit_cgroup(ident, membership) == group
@@ -2498,16 +2499,18 @@ def test_finish_journals_oom_kill_count_and_memory_peak_from_its_unit(
     queue.finish(ident, "signal", "killed", "9")
     finished = records(queue)[-1]
     assert finished["oom_kill"] == 1 and finished["memory_peak"] == 1832411136
+    assert finished["swap_peak"] == 262144
     assert finished["code"] == 137 and finished["display_slot"] == 0
 
 
 def test_missing_cgroup_counters_are_unknown_instead_of_zero(queue, gq, tmp_path):
     assert gq.cgroup_memory_stats("missing", "/missing", tmp_path) == {
-        "oom_kill": None, "memory_peak": None}
+        "oom_kill": None, "memory_peak": None, "swap_peak": None}
     ident = start(queue)
     queue.finish(ident, "success")
     finished = records(queue)[-1]
     assert finished["oom_kill"] is None and finished["memory_peak"] is None
+    assert finished["swap_peak"] is None
 
 
 def test_reconcile_prunes_a_thousand_old_jobs_but_wait_and_logs_use_the_archive(

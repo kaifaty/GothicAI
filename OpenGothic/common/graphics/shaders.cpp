@@ -303,7 +303,10 @@ void Shaders::compileShaders() noexcept {
     probePrune     = computeShader("probe_prune.comp.sprv");
     probeAlocation = computeShader("probe_allocation.comp.sprv");
     probeTrace     = computeShader("probe_trace.comp.sprv");
+    probeRelight   = computeShader("probe_relight.comp.sprv");
+    probeRelightNew= computeShader("probe_relight_new.comp.sprv");
     probeLighting  = computeShader(string_frm("probe_lighting", materialMaps, ".comp.sprv"));
+    probeStats     = computeShader("probe_stats.comp.sprv");
 
     state.setBlendSource  (RenderState::BlendMode::One);
     state.setBlendDest    (RenderState::BlendMode::SrcAlpha);  // for debugging
@@ -348,7 +351,9 @@ void Shaders::compileShaders() noexcept {
     }
 
   if(Shaders::isLightsTreeSupported()) {
-    lightsMorton   = computeShader("lights_morton.comp.sprv");
+    // the sort in 32 KB of shared memory where a workgroup has more (Metal gives 32 KB in all)
+    const bool sharedSort = Resources::device().properties().compute.maxSharedMemory>=33*1024;
+    lightsMorton   = computeShader(sharedSort ? "lights_morton_shared.comp.sprv" : "lights_morton.comp.sprv");
     lightsTopology = computeShader("lights_topology.comp.sprv");
     lightsTree     = computeShader("lights_tree.comp.sprv");
     lightsBvh      = computeShader("lights_bvh.comp.sprv");
@@ -418,10 +423,13 @@ bool Shaders::isLightsTreeSupported() {
   }
 
 bool Shaders::isGi1Supported() {
+  // Not checked: the subgroup operations of probe_ambient.frag (subgroupAllEqual, subgroupBallot, subgroupShuffle in
+  // the fragment stage, SPIR-V 1.3): Tempest does not report the supported stages and operations of subgroups. Run on
+  // an RTX 3080 (Vulkan) and an M1 Pro (Metal); a GPU with ray query but without them is not covered (step-2.md, «2а»).
   auto& gpu = Resources::device().properties();
-  if(!gpu.raytracing.rayQuery)
+  if(!gpu.raytracing.rayQuery || !isLightsTreeSupported())
     return false;
-  if(!gpu.hasStorageFormat(R11G11B10UF) || !gpu.hasStorageFormat(R16))
+  if(!gpu.hasStorageFormat(RGBA16F) || !gpu.hasStorageFormat(R32U) || !gpu.hasStorageFormat(R16))
     return false;
   if(gpu.tex2d.maxSize<4096 || gpu.compute.maxInvocations<256 || !gpu.descriptors.nonUniformIndexing)
     return false;

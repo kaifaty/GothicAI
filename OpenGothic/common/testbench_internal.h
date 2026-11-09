@@ -2,6 +2,7 @@
 
 #include <Tempest/Matrix4x4>
 #include <Tempest/Vec>
+#include <Tempest/Point>
 
 #include <condition_variable>
 #include <mutex>
@@ -345,6 +346,47 @@ struct SpellActor {Npc* npc=nullptr;std::string role;};
 struct MovableFixture { ObjVisual visual; DynamicWorld::Item body; };
 
 struct LivingPhysics { uint64_t time=0;uint64_t dt=0;float milliseconds=0;size_t bodies=0; };
+
+struct ClothBench {
+  uint32_t clothZen=uint32_t(-1);
+  std::string clothCase,clothObserverSupport="native-floor";
+  Tempest::Vec3 clothCenter,clothDirection=Tempest::Vec3(1,0,0);
+  bool clothTrace=false,clothMeasuring=false,clothOverflow=false,clothHold=false;
+  Tempest::Vec3 clothHeldPosition;
+  uint64_t clothSample=uint64_t(-1);
+  std::vector<LivingPhysics> clothPhysics;
+  std::unordered_map<uintptr_t,std::vector<Tempest::Vec3>> clothPrevious;
+  std::unordered_map<uintptr_t,bool> clothPreviousActive;
+  const void* clothArrow=nullptr;
+  Tempest::Vec3 clothShotTarget,clothShotNormal;
+  float clothArrowDownstream=0;
+  uint64_t clothShotAt=0,clothShotHitsBefore=0;
+  std::string clothShotKind;
+  Npc* clothArrowNpc=nullptr;
+};
+
+struct ClothContext {
+  ClothBench& cloth;
+  CamMode& cam;
+  Tempest::Vec3& camPos;
+  Tempest::PointF& camHeldAngles;
+  Tempest::PointF& camTurnAngles;
+  float& camTurnDegrees;
+  uint64_t& camTurnStart;
+  uint64_t& camTurnDuration;
+  Npc*& subject;
+  std::vector<Npc*>& crew;
+  uint64_t& time;
+  uint64_t& waitUntil;
+  void (*updateCamera)(World&,Npc&);
+};
+
+struct WaterFilm {
+  std::string waterFilm;
+  Tempest::Vec3 waterFilmLip;
+  bool waterFilmKill=false;
+  uint64_t waterFilmStart=0;
+};
 
 struct Movables {
   // Test-only props use the body API directly; the map allowlist contains only
@@ -955,6 +997,22 @@ struct WaterContext {
   bool& ragdollLootDidOpen;
 };
 
+struct WaterFilmContext {
+  WaterFilm& film;
+  Water& water;
+  Movables& movables;
+  Destruction& destruction;
+  WaterContext waterContext;
+  DestructionContext destructionContext;
+  CamMode& cam;
+  Tempest::Vec3& camPos;
+  Npc*& subject;
+  std::vector<Npc*>& crew;
+  bool& rec;
+  uint64_t& time;
+  uint64_t& recStart;
+};
+
 struct PlacedItems {
   std::vector<std::vector<size_t>> batches;
   std::vector<float> maximumTravel;
@@ -996,6 +1054,7 @@ struct FurnitureDrop {
   std::vector<Tempest::Vec3> vertices,collisionVertices;
   float supportY=0,supportLocalY=0;
   };
+
 struct FurnitureParts {
   uint32_t table=uint32_t(-1),cupboard=uint32_t(-1);
   std::string tableVisual;
@@ -1580,6 +1639,13 @@ void npcCharacterMarket(Character& state,const CharacterContext& context,World& 
 void npcCharacterFields(Character& state,const CharacterContext& context,World& world,Npc& player,uint64_t dt);
 bool prepareCharacterRideSupport(Character& state,World& world,Npc& player,bool kinematic,bool rotating,Tempest::Vec3& top);
 void writeCharacterMoveFrame(std::FILE* file,const CharacterMoveFrame& move);
+
+void clothFields(ClothContext ctx,World& world);
+void clothInitial(ClothContext ctx,World& world,std::string_view label);
+bool clothCommand(ClothContext ctx,const std::vector<std::string>& a,World& w,Npc& pl);
+void waterFilmTick(WaterFilmContext ctx,World& world);
+void waterFilmFraming(WaterFilmContext ctx,World& world,uint32_t width,uint32_t height);
+bool waterFilmCommand(WaterFilmContext ctx,const std::vector<std::string>& a,World& w,Npc& pl);
 
 bool waterOwns(Water& state,const DynamicWorld::WaterBodySnapshot& body);
 void waterFields(Water& state,const WaterContext& context,World& world);
