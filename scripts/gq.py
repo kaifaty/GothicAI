@@ -217,7 +217,7 @@ def unit_cgroup(job_id, membership_path=None):
 
 def cgroup_memory_stats(job_id, group=None, cgroup_root=None):
     group = unit_cgroup(job_id) or group
-    result = {"oom_kill": None, "memory_peak": None}
+    result = {"oom_kill": None, "memory_peak": None, "swap_peak": None}
     if not group:
         return result
     path = Path(cgroup_root or "/sys/fs/cgroup") / group.lstrip("/")
@@ -226,10 +226,13 @@ def cgroup_memory_stats(job_id, group=None, cgroup_root=None):
         result["oom_kill"] = int(events["oom_kill"])
     except (OSError, KeyError, ValueError):
         pass
-    try:
-        result["memory_peak"] = int((path / "memory.peak").read_text())
-    except (OSError, ValueError):
-        pass
+    # memory.peak counts page cache too. MemoryMax does not cap swap, so only
+    # memory.swap.peak tells anonymous memory pushed past the limit from cache.
+    for key, name in (("memory_peak", "memory.peak"), ("swap_peak", "memory.swap.peak")):
+        try:
+            result[key] = int((path / name).read_text())
+        except (OSError, ValueError):
+            pass
     return result
 
 
@@ -428,7 +431,7 @@ class Queue:
         job.update(status=reason, reason=reason, code=code, end=end)
         self.event(job, "finished", reason=reason, code=code,
                    oom_kill=job.get("oom_kill"), memory_peak=job.get("memory_peak"),
-                   wait=(job["start"] or end) - job["submitted"],
+                   swap_peak=job.get("swap_peak"), wait=(job["start"] or end) - job["submitted"],
                    duration=end - job["start"] if job["start"] else 0)
 
     def cancel(self, job_id, owner, force=False, reason="cancelled", *, expected=None, queued_only=False):
