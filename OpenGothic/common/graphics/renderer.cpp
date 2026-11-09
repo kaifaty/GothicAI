@@ -20,8 +20,6 @@
 
 using namespace Tempest;
 
-static const bool skyPathTrace = false;
-
 static uint32_t nextPot(uint32_t x) {
   x--;
   x |= x >> 1;
@@ -632,7 +630,7 @@ void Renderer::resetShadowmap() {
     Resources::recycle(std::move(shadowMap[i]));
 
   // the probes of -gi 1 light their hits with a shadow ray (probe_lighting.comp): no cascade for them under VSM
-  const bool forceSm1 = (settings.giMethod==GiMethod::IrrC || settings.pathTraceEnabled || sky.quality==PathTrace);
+  const bool forceSm1 = (settings.giMethod==GiMethod::IrrC || settings.pathTraceEnabled);
   for(int i=0; i<Resources::ShadowLayers; ++i) {
     if(!(i==1 && forceSm1)) {
       if(settings.vsmEnabled)
@@ -651,11 +649,7 @@ void Renderer::resetSkyFog() {
       q = Quality::VolumetricLQ;
       } else {
       q = Quality::VolumetricHQ;
-      // q = Quality::Epipolar;
       }
-
-    if(skyPathTrace)
-      q = PathTrace;
 
     if(sky.quality==q) {
       return;
@@ -678,12 +672,6 @@ void Renderer::resetSkyFog() {
       // fogLut and oclussion are decupled
       sky.fogLut3D   = device.image3d(sky.lutRGBFormat,  128,64,32);
       sky.fogLut3DMs = device.image3d(sky.lutRGBAFormat, 128,64,32);
-      break;
-    case Epipolar:
-      sky.fogLut3D   = device.image3d(sky.lutRGBFormat,  128,64,32);
-      sky.fogLut3DMs = device.image3d(sky.lutRGBAFormat, 128,64,32);
-      break;
-    case PathTrace:
       break;
     }
   }
@@ -1313,18 +1301,6 @@ void Renderer::drawFog(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const Worl
       cmd.setPipeline(shaders.fog3dHQ);
       break;
       }
-    case Epipolar: {
-      //cmd.setBinding(0, sky.fogLut3D,   Sampler::bilinear(ClampMode::ClampToEdge));
-      cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
-      cmd.setBinding(1, zbuffer,        Sampler::nearest());
-      cmd.setBinding(2, vsm.fogDbg,     Sampler::bilinear(ClampMode::ClampToEdge));
-      cmd.setBinding(3, epipolar.epipoles);
-      cmd.setBinding(4, sky.fogLut3DMs, Sampler::bilinear(ClampMode::ClampToEdge));
-      cmd.setPipeline(shaders.vsmFog);
-      break;
-      }
-    case PathTrace:
-      return;
     }
   cmd.draw(nullptr, 0, 3);
   }
@@ -1523,7 +1499,7 @@ void Renderer::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView&
   FrameProfile::Scope timing(FrameProfile::Zone::EncodeShadows);
 
   static bool omniLights = true;
-  const bool doVirtualFog = sky.quality!=VolumetricLQ && sky.quality!=PathTrace;
+  const bool doVirtualFog = sky.quality!=VolumetricLQ;
 
   auto& scene      = wview.sceneGlobals();
   auto& sceneUbo   = scene.uboGlobal[SceneGlobals::V_Main];
@@ -1889,18 +1865,6 @@ void Renderer::drawSky(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
   auto& scene = wview.sceneGlobals();
 
   cmd.setDebugMarker("Sky");
-  if(sky.quality==PathTrace) {
-    cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
-    cmd.setBinding(1, sky.transLut,     sky.sampler);
-    cmd.setBinding(2, sky.multiScatLut, sky.sampler);
-    cmd.setBinding(3, sky.cloudsLut,    Sampler::bilinear(ClampMode::ClampToEdge));
-    cmd.setBinding(4, zbuffer, Sampler::nearest());
-    cmd.setBinding(5, shadowMap[1], Resources::shadowSampler());
-    cmd.setPipeline(shaders.skyPathTrace);
-    cmd.draw(nullptr, 0, 3);
-    return;
-    }
-
   auto& skyShader = sky.quality==VolumetricLQ ? shaders.sky : shaders.skySep;
   cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
   cmd.setBinding(1, sky.transLut,     sky.sampler);
@@ -1974,10 +1938,9 @@ void Renderer::prepareSSAO(Encoder<CommandBuffer>& cmd, WorldView& wview) {
 
 void Renderer::prepareFog(Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview) {
   auto& scene  = wview.sceneGlobals();
-  auto& device = Resources::device();
 
   cmd.setDebugMarker("Fog-LUTs");
-  if(sky.quality!=PathTrace) {
+  {
     auto& shader = sky.quality==VolumetricLQ ? shaders.fogViewLut3d : shaders.fogViewLutSep;
     cmd.setFramebuffer({});
     cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
@@ -1985,13 +1948,13 @@ void Renderer::prepareFog(Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview
     cmd.setBinding(2, sky.multiScatLut, sky.sampler);
     cmd.setBinding(3, sky.cloudsLut,    Sampler::bilinear(ClampMode::ClampToEdge));
     cmd.setBinding(4, sky.fogLut3D,     Sampler::bilinear(ClampMode::ClampToEdge));
-    if(sky.quality==VolumetricHQ || sky.quality==Epipolar)
+    if(sky.quality==VolumetricHQ)
       cmd.setBinding(5, sky.fogLut3DMs);
     cmd.setPipeline(shader);
     cmd.dispatchThreads(uint32_t(sky.fogLut3D.w()), uint32_t(sky.fogLut3D.h()));
     }
 
-  if(settings.vsmEnabled && !settings.pathTraceEnabled && (sky.quality==VolumetricHQ || sky.quality==Epipolar)) {
+  if(settings.vsmEnabled && !settings.pathTraceEnabled && sky.quality==VolumetricHQ) {
     cmd.setFramebuffer({});
     cmd.setDebugMarker("VSM-epipolar-fog");
     cmd.setBinding(0, epipolar.epTrace);
@@ -2033,32 +1996,11 @@ void Renderer::prepareFog(Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview
         }
       break;
       }
-    case Epipolar:{
-      // experimental
-      if(vsm.fogDbg.isEmpty())
-        vsm.fogDbg = device.image2d(sky.lutRGBFormat, 1024, 2*1024);
-      cmd.setFramebuffer({});
-      cmd.setDebugMarker("VSM-trace");
-      cmd.setBinding(0, vsm.fogDbg);
-      cmd.setBinding(1, epipolar.epTrace);
-      cmd.setBinding(2, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
-      cmd.setBinding(3, epipolar.epipoles);
-      cmd.setBinding(4, zbuffer);
-      cmd.setBinding(5, sky.transLut,   sky.sampler);
-      cmd.setBinding(6, sky.cloudsLut,  Sampler::bilinear(ClampMode::ClampToEdge));
-      cmd.setBinding(7, sky.fogLut3DMs, Sampler::bilinear(ClampMode::ClampToEdge));
-      cmd.setPipeline(shaders.vsmFogTrace);
-      cmd.dispatchThreads(epipolar.epTrace.size());
-      break;
-      }
-    case PathTrace: {
-      break;
-      }
     }
   }
 
 void Renderer::prepareEpipolar(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview) {
-  const bool doVolumetricFog = sky.quality!=VolumetricLQ && sky.quality!=PathTrace;
+  const bool doVolumetricFog = sky.quality!=VolumetricLQ;
   if(!doVolumetricFog || !settings.vsmEnabled)
     return;
 
