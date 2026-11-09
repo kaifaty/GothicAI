@@ -175,9 +175,12 @@ void main() {
       calcOcclussion(pos0, f0, k*itersPerFrame+it, numIter);
     }
 
-  // per sample of this frame; no sample on the screen tells nothing
+  // per sample of the frame's set, the samples beyond the screen counting as nothing: then four frames sum to
+  // exactly the single-frame trace of 32. Divided by the samples on the screen instead, a frame that lost some
+  // to the screen's edge weighed as much as a full one, and the ground at the bottom of the forest shot came out
+  // lighter. No sample on the screen tells nothing.
   const bool fresh = sumN>0.0;
-  const vec2 cur   = fresh ? vec2(sumH, sumM)/sumN : vec2(0);
+  const vec2 cur   = vec2(sumH, sumM)/float(itersPerFrame*samplesPerStep);
 
   curOcc[gl_LocalInvocationID.x][gl_LocalInvocationID.y] = fresh ? occlusionOf(cur.x, cur.y) : -1.0;
   barrier();
