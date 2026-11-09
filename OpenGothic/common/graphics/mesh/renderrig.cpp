@@ -12,6 +12,7 @@
 #include <fstream>
 #include <initializer_list>
 #include <iterator>
+#include <limits>
 #include <stdexcept>
 
 using namespace Tempest;
@@ -19,7 +20,18 @@ using IkMath::Mat3;
 
 namespace {
 
-constexpr float Degree = 3.14159265358979f/180.f;  // M_PI is not standard (MSVC)
+constexpr float Pi     = 3.14159265358979f;  // M_PI is not standard (MSVC)
+constexpr float Degree = Pi/180.f;
+
+// knees (cm at the rig's bind size, scaled with the npc): a foot is on the ground while its ball is within
+// ContactNear of the lowest ball and leaves it by ContactFar; a leg carries the body from CarryFrom to CarryTo of its
+// hip-ankle line pointing down; the pelvis follows the lower ankles (Sigma), a leg on the ground but not carrying
+// gives way by Slack, the pelvis moves by MaxShift at most; a foot turns about its ball by PitchMax with the heel up
+constexpr float ContactNear = 2.f,  ContactFar = 8.f;
+constexpr float CarryFrom   = 0.35f, CarryTo   = 0.6f;
+constexpr float Sigma       = 3.f,  Slack      = 20.f, MaxShift = 10.f;
+constexpr float PitchMax    = 50.f*Degree;
+constexpr int   BandSteps   = 9;
 
 [[noreturn]] void fail(const std::string& what) {
   throw std::runtime_error(what);
@@ -85,7 +97,7 @@ const rapidjson::Value* list(const rapidjson::Value& obj, const char* key, const
 RenderRigSpec parseRig(std::string_view rigName, const rapidjson::Value& v) {
   if(!v.IsObject())
     fail("the rig must be an object");
-  onlyFields(v,{"skeleton","source","bones","root","legs","fingers","twists","shoulders","sockets"},"");
+  onlyFields(v,{"skeleton","source","bones","root","legs","fingers","twists","shoulders","arms","sockets"},"");
   RenderRigSpec s;
   s.name     = std::string(rigName);
   s.skeleton = name(v,"skeleton","");
@@ -113,7 +125,7 @@ RenderRigSpec parseRig(std::string_view rigName, const rapidjson::Value& v) {
 
   if(!v.HasMember("root") || !v["root"].IsObject())
     fail("root must be an object");
-  onlyFields(v["root"],{"bone","source","lift"},"root: ");
+  onlyFields(v["root"],{"bone","source","lift","knees"},"root: ");
   s.rootBone   = name(v["root"],"bone","root: ");
   s.rootSource = name(v["root"],"source","root: ");
   if(v["root"].HasMember("lift")) {
@@ -121,6 +133,13 @@ RenderRigSpec parseRig(std::string_view rigName, const rapidjson::Value& v) {
     if(!lift.IsNumber() || !std::isfinite(lift.GetDouble()) || lift.GetDouble()<0 || lift.GetDouble()>0.5)
       fail("root: lift must be a number from 0 to 0.5");
     s.rootLift = float(lift.GetDouble());
+    }
+  if(v["root"].HasMember("knees")) {
+    if(!v["root"]["knees"].IsBool())
+      fail("root: knees must be true or false");
+    s.rootKnees = v["root"]["knees"].GetBool();
+    if(s.rootKnees && s.rootLift>0)
+      fail("root: lift and knees exclude each other");
     }
 
   if(auto legs = list(v,"legs","")) {
@@ -212,6 +231,23 @@ RenderRigSpec parseRig(std::string_view rigName, const rapidjson::Value& v) {
       r.from     = number(sh,"from",0,180,"0 to 180",where);
       r.max      = number(sh,"max",0,90,"0 to 90",where);
       s.shoulders.push_back(std::move(r));
+      }
+    }
+
+  if(auto arms = list(v,"arms","")) {
+    for(const auto& a:arms->GetArray()) {
+      const std::string where = "arms["+std::to_string(s.arms.size())+"]: ";
+      if(!a.IsObject())
+        fail(where+"must be an object");
+      onlyFields(a,{"upper","lower","hand","source_hand","holds","soft"},where);
+      RenderRigSpec::Arm arm;
+      arm.upper      = name(a,"upper",where);
+      arm.lower      = name(a,"lower",where);
+      arm.hand       = name(a,"hand",where);
+      arm.sourceHand = name(a,"source_hand",where);
+      arm.holds      = name(a,"holds",where,false);
+      arm.soft       = number(a,"soft",0,20,"0 to 20",where);
+      s.arms.push_back(std::move(arm));
       }
     }
 
@@ -381,6 +417,11 @@ std::unique_ptr<RenderRig> RenderRig::build(const RenderRigSpec& spec, const ass
   r->rootSource = sourceNode(spec.rootSource);
   r->rootLocal  = apply(inverse(src.tr[r->rootSource]),IkMath::position(rig.tr[r->rootBone]));
   r->lift       = spec.rootLift;
+  r->knees      = spec.rootKnees;
+  if(r->knees && r->bone[r->rootBone].source==None)
+    error("root: knees need the root bone with a source");
+  if(r->knees && spec.legs.size()>MaxLegs)
+    error("root: knees take at most "+std::to_string(MaxLegs)+" legs");
 
   auto take = [&](size_t i, Role role, size_t part) {
     auto& b = r->bone[i];
@@ -410,6 +451,15 @@ std::unique_ptr<RenderRig> RenderRig::build(const RenderRigSpec& spec, const ass
     leg.soft       = l.soft;
     leg.length     = IkMath::length(IkMath::position(r->bone[leg.calf].local)) +
                      IkMath::length(IkMath::position(r->bone[leg.foot].local));
+    leg.ball       = ball;
+    leg.ballFoot   = apply(inverse(src.tr[leg.sourceFoot]),IkMath::position(rig.tr[ball]));
+    leg.footBind   = IkMath::transpose(IkMath::rotationOf(src.tr[leg.sourceFoot]));
+    if(r->knees) {
+      if(r->bone[leg.thigh].parent!=r->rootBone)
+        error(where+"knees need the thigh "+quote(l.thigh)+" right under the root bone");
+      if(r->bone[leg.thigh].source==None || r->bone[leg.calf].source==None || r->bone[leg.foot].source==None)
+        error(where+"knees need the thigh, the calf and the foot with a source");
+      }
     take(leg.thigh,Role::Thigh,r->legs.size());
     take(leg.calf, Role::Calf, r->legs.size());
     take(leg.foot, Role::Foot, r->legs.size());
@@ -493,6 +543,68 @@ std::unique_ptr<RenderRig> RenderRig::build(const RenderRigSpec& spec, const ass
     r->shoulders.push_back(rh);
     }
 
+  {
+    // the arms that hold another hand go after the ones they hold
+    std::vector<Arm>         held;
+    std::vector<std::string> holdsName;
+    for(const auto& a:spec.arms) {
+      const std::string where = "arms["+std::to_string(r->arms.size()+held.size())+"]: ";
+      Arm arm;
+      arm.upper      = rigNode(a.upper,"bone");
+      arm.lower      = rigNode(a.lower,"bone");
+      arm.hand       = rigNode(a.hand,"bone");
+      arm.sourceHand = sourceNode(a.sourceHand);
+      if(r->bone[arm.lower].parent!=arm.upper || r->bone[arm.hand].parent!=arm.lower)
+        error(where+"not a chain "+a.upper+" -> "+a.lower+" -> "+a.hand);
+      for(const size_t i:{arm.upper,arm.lower,arm.hand})
+        if(r->bone[i].source==None)
+          error(where+"the bone "+quote(rig.nodes[i].name)+" has no source");
+      if(IkMath::length(IkMath::position(r->bone[arm.lower].local))<IkMath::Eps ||
+         IkMath::length(IkMath::position(r->bone[arm.hand].local))<IkMath::Eps)
+        error(where+"a bone of zero length");
+      arm.back   = inFrame(arm.upper,Vec3(0,0,-1));
+      arm.soft   = a.soft;
+      arm.length = IkMath::length(IkMath::position(r->bone[arm.lower].local)) +
+                   IkMath::length(IkMath::position(r->bone[arm.hand].local));
+      const size_t part = r->arms.size()+held.size();
+      take(arm.upper,Role::ArmUpper,part);
+      take(arm.lower,Role::ArmLower,part);
+      take(arm.hand, Role::ArmHand, part);
+      if(a.holds.empty()) {
+        r->arms.push_back(arm);
+        } else {
+        held.push_back(arm);
+        holdsName.push_back(a.holds);
+        }
+      }
+    const size_t free = r->arms.size();
+    for(size_t n=0; n<held.size(); ++n) {
+      const size_t hand = rigNode(holdsName[n],"held hand");
+      for(size_t m=0; m<free; ++m)
+        if(r->arms[m].hand==hand)
+          held[n].holds = m;
+      if(held[n].holds==None)
+        error("arms: "+quote(holdsName[n])+" is not the hand of an arm that holds nothing");
+      r->arms.push_back(held[n]);
+      }
+    for(size_t m=0; m<r->arms.size(); ++m)
+      for(const size_t i:{r->arms[m].upper,r->arms[m].lower,r->arms[m].hand})
+        r->bone[i].part = m;
+    // the bones below an arm's forearm wait for the arm (the fingers); the twists come last anyway
+    for(const size_t i:r->order) {
+      const Role role = r->bone[i].role;
+      if(role==Role::ArmLower || role==Role::ArmHand || role==Role::Twist)
+        continue;
+      bool below = false;
+      for(size_t p=r->bone[i].parent; p!=None && !below; p=r->bone[p].parent)
+        below = r->bone[p].role==Role::ArmLower || r->bone[p].role==Role::ArmHand;
+      if(below) {
+        r->bone[i].afterArms = true;
+        r->afterArms.push_back(i);
+        }
+      }
+  }
+
   for(const auto& s:spec.sockets) {
     Socket socket;
     socket.name   = s.source;
@@ -517,6 +629,8 @@ std::unique_ptr<RenderRig> RenderRig::build(const RenderRigSpec& spec, const ass
     need(f.hand);
     need(f.finger);
     }
+  for(const auto& a:r->arms)
+    need(a.sourceHand);
   return r;
   }
 
@@ -529,11 +643,16 @@ bool RenderRig::fits(const Skeleton& source) const {
   return true;
   }
 
-bool RenderRig::solve(const Matrix4x4* source, size_t sourceCount, Matrix4x4* out) const {
+bool RenderRig::solve(const Matrix4x4* source, size_t sourceCount, Matrix4x4* out, const Hands& hands) const {
   if(source==nullptr || out==nullptr || sourceCount<sourceNeeded)
     return false;
   float rise = 0;
-  if(lift>0 && !legs.empty()) {
+  float carry[MaxLegs] = {};
+  float lowBall = 0, scale = 1;
+  if(knees && !legs.empty()) {
+    rise = kneeLift(source,carry,lowBall,scale);
+    }
+  else if(lift>0 && !legs.empty()) {
     const float root = apply(source[rootSource],rootLocal).y;
     float       low  = root;
     for(const auto& l:legs)
@@ -542,12 +661,19 @@ bool RenderRig::solve(const Matrix4x4* source, size_t sourceCount, Matrix4x4* ou
     }
   for(const size_t i:order) {
     const Role role = bone[i].role;
-    if(role==Role::Calf || role==Role::Foot || role==Role::Twist)
-      continue;  // with their thigh; the twists last
+    if(role==Role::Calf || role==Role::Foot || role==Role::Twist || role==Role::ArmLower || role==Role::ArmHand ||
+       bone[i].afterArms)
+      continue;  // with their thigh or arm; the twists last
     out[i] = place(i,source,out,rise);
-    if(role==Role::Thigh)
-      solveLeg(legs[bone[i].part],source,out);
+    if(role==Role::Thigh) {
+      const size_t n = bone[i].part;
+      solveLeg(legs[n],source,out,knees && n<MaxLegs ? carry[n] : 0.f,lowBall,scale);
+      }
     }
+  for(const auto& a:arms)
+    solveArm(a,source,out,hands);
+  for(const size_t i:afterArms)
+    out[i] = place(i,source,out,rise);
   for(const auto& t:twists)
     solveTwist(t,out);
   return true;
@@ -578,11 +704,119 @@ Matrix4x4 RenderRig::place(size_t i, const Matrix4x4* source, const Matrix4x4* o
   return m;
   }
 
+// knees: a foot on the ground pivots about Gothic's ball. The axis is the source foot's side turned as the foot is
+// (+ lifts the heel); the heel may go up by PitchMax beyond Gothic's own lift, or down to Gothic's flat foot.
+RenderRig::Pivot RenderRig::pivot(const Leg& leg, const Matrix4x4* source, float lowBall, float scale) const {
+  const Matrix4x4& mf = source[leg.sourceFoot];
+  const Bone&      fb = bone[leg.foot];
+  Pivot p;
+  p.ball = apply(mf,leg.ballFoot);
+  // our ankle from our ball, the foot turned as Gothic's: the ball lands on Gothic's exactly
+  p.r    = IkMath::mul(IkMath::mul(linear(source[fb.source]),fb.turn),IkMath::position(bone[leg.ball].local))*-1.f;
+  p.contact = std::clamp(1.f - (p.ball.y - lowBall - ContactNear*scale)/((ContactFar-ContactNear)*scale),0.f,1.f);
+  const Mat3 rot = IkMath::mul(IkMath::rotationOf(mf),leg.footBind);  // the foot's turn from its bind pose
+  p.k = IkMath::normalize(IkMath::mul(rot,Vec3(1,0,0)));
+  if(IkMath::mul(IkMath::axisAngle(p.k,0.01f),p.r).y<p.r.y)
+    p.k = p.k*-1.f;
+  const Vec3  fwd  = IkMath::mul(rot,Vec3(0,0,1));
+  const float heel = std::max(0.f,std::asin(std::clamp(-fwd.y,-1.f,1.f)));  // Gothic's own heel lift
+  p.lo = -heel;
+  p.hi = PitchMax - heel;
+  return p;
+  }
+
+// knees: how far the root goes up (world +y) for the knees to bend as Gothic's. A preferred shift: each leg's shift at
+// which its hip-ankle distance is our leg's at Gothic's knee angle (its reach), weighted by how low its ankle is and
+// how much it stands under the hip; a weak total shrinks it towards 0 (lying, sitting). Each leg on the ground then
+// allows a band of shifts - its foot turning about the ball through its range - and the root takes the preferred
+// shift moved into the bands' overlap, or the middle of the gap. carry[n]: how much leg n is on the ground and
+// carries; lowBall: the lowest ball; scale: the npc's size against the rig's bind.
+float RenderRig::kneeLift(const Matrix4x4* source, float* carry, float& lowBall, float& scale) const {
+  using IkMath::length;
+  const Bone& root = bone[rootBone];
+  const Mat3  rp   = IkMath::mul(linear(source[root.source]),root.turn);
+  const Vec3  pos  = apply(source[rootSource],rootLocal);
+  Vec3  hip[MaxLegs], ankle[MaxLegs];
+  float reach[MaxLegs] = {};
+  float lowAnkle = std::numeric_limits<float>::max();
+  lowBall = lowAnkle;
+  scale   = 1;
+  for(size_t n=0; n<legs.size(); ++n) {
+    const Leg& l  = legs[n];
+    const Bone& t = bone[l.thigh], &c = bone[l.calf];
+    hip[n] = pos + IkMath::mul(rp,IkMath::position(t.local));
+    const Vec3 a1 = IkMath::mul(IkMath::mul(linear(source[t.source]),t.turn),IkMath::position(c.local));
+    const Vec3 a2 = IkMath::mul(IkMath::mul(linear(source[c.source]),c.turn),IkMath::position(bone[l.foot].local));
+    reach[n] = length(a1+a2);
+    if(n==0 && l.length>IkMath::Eps)
+      scale = (length(a1)+length(a2))/l.length;
+    lowBall  = std::min(lowBall,apply(source[l.sourceFoot],l.ballFoot).y);
+    }
+  for(size_t n=0; n<legs.size(); ++n) {
+    const Pivot p = pivot(legs[n],source,lowBall,scale);
+    ankle[n] = p.ball+p.r;
+    lowAnkle = std::min(lowAnkle,ankle[n].y);
+    }
+  auto stands = [&](const Vec3& v) {  // the leg's line points down: it carries the body
+    const float down = -v.y/std::max(length(v),IkMath::Eps);
+    return std::clamp((down-CarryFrom)/(CarryTo-CarryFrom),0.f,1.f);
+    };
+  // the shift that puts the hip at `reach` from a point v below it (v = point - hip), the hip above; false - none
+  auto shiftTo = [](const Vec3& v, float reach, float& dy) {
+    const float h2 = reach*reach - v.x*v.x - v.z*v.z;
+    if(h2<0)
+      return false;
+    dy = v.y + std::sqrt(h2);
+    return true;
+    };
+
+  float num = 0, den = 0;
+  for(size_t n=0; n<legs.size(); ++n) {
+    const Vec3  v    = ankle[n]-hip[n];
+    const float disc = v.y*v.y - IkMath::dot(v,v) + reach[n]*reach[n];
+    if(disc<0)
+      continue;
+    const float r  = std::sqrt(disc);
+    const float dy = std::abs(v.y-r)<std::abs(v.y+r) ? v.y-r : v.y+r;
+    const float w  = std::exp(-(ankle[n].y-lowAnkle)/(Sigma*scale))*stands(v);
+    num += w*dy;
+    den += w;
+    }
+  const float prefer = num/std::max(den,1.f);
+
+  float lo = -std::numeric_limits<float>::max(), hi = std::numeric_limits<float>::max();
+  for(size_t n=0; n<legs.size(); ++n) {
+    const Pivot p = pivot(legs[n],source,lowBall,scale);
+    carry[n] = p.contact*stands(ankle[n]-hip[n]);
+    if(carry[n]<=0)
+      continue;
+    float bandLo = std::numeric_limits<float>::max(), bandHi = -bandLo;
+    for(int j=0; j<BandSteps; ++j) {
+      const float th = p.lo + (p.hi-p.lo)*float(j)/float(BandSteps-1);
+      float dy = 0;
+      if(shiftTo(p.ball + IkMath::mul(IkMath::axisAngle(p.k,th),p.r) - hip[n],reach[n],dy)) {
+        bandLo = std::min(bandLo,dy);
+        bandHi = std::max(bandHi,dy);
+        }
+      }
+    if(bandLo>bandHi)
+      continue;
+    const float give = (1.f-carry[n])*Slack*scale;
+    lo = std::max(lo,bandLo-give);
+    hi = std::min(hi,bandHi+give);
+    }
+  const float dy = lo<=hi ? std::clamp(prefer,lo,hi) : 0.5f*(lo+hi);
+  return std::clamp(dy,-MaxShift*scale,MaxShift*scale);
+  }
+
 // Two-bone IK onto the ankle of the source foot, the knee towards the thigh's front. The axis of a bone is the way to
 // its child in the bind pose; the thigh and the calf take the shortest turn onto the solved directions, the foot keeps
 // its turn and stands on the target. A target out of reach: the leg straight towards it. With soft, the last soft cm
 // of reach come as 1 - e^-x: the foot stops short of a far target and the knee never snaps straight.
-void RenderRig::solveLeg(const Leg& leg, const Matrix4x4* source, Matrix4x4* out) const {
+// knees: on the ground the ankle goes where the foot, turned about Gothic's ball by the share `carry` of what our
+// knee needs, puts it; in the air the leg's own Gothic turns decide (FK), the knee to Gothic's side.
+void RenderRig::solveLeg(const Leg& leg, const Matrix4x4* source, Matrix4x4* out, float carry, float lowBall,
+                         float scale) const {
   using IkMath::length;
   using IkMath::normalize;
   Matrix4x4& thigh = out[leg.thigh];
@@ -593,7 +827,33 @@ void RenderRig::solveLeg(const Leg& leg, const Matrix4x4* source, Matrix4x4* out
   out[leg.calf] = place(leg.calf,source,out);
   const Vec3 a2     = IkMath::mul(linear(out[leg.calf]),toFoot);
   const float l1 = length(a1), l2 = length(a2);
-  const Vec3  toTarget = apply(source[leg.sourceFoot],leg.ankle) - hip;
+  Vec3  target = apply(source[leg.sourceFoot],leg.ankle);
+  float ground = 1;                 // knees: the foot on the ground (pivot) against in the air (FK)
+  Mat3  footTurn = {{{1,0,0},{0,1,0},{0,0,1}}};
+  if(knees) {
+    const Pivot p = pivot(leg,source,lowBall,scale);
+    // the turn about the ball that puts the ankle at our reach from the hip: A cos + B sin = C on the circle
+    const float reach = length(a1+a2);
+    const Vec3  rpar  = p.k*IkMath::dot(p.k,p.r), rperp = p.r-rpar;
+    const Vec3  q     = p.ball - hip + rpar;
+    const float A = 2.f*IkMath::dot(q,rperp), B = 2.f*IkMath::dot(q,IkMath::cross(p.k,rperp));
+    const float C = reach*reach - IkMath::dot(q,q) - IkMath::dot(rperp,rperp);
+    const float R = std::sqrt(A*A + B*B), base = std::atan2(B,A);
+    float th = 0;
+    if(R>IkMath::Eps) {
+      if(std::abs(C)<=R) {
+        const float t1 = std::remainder(base+std::acos(C/R),2.f*Pi), t2 = std::remainder(base-std::acos(C/R),2.f*Pi);
+        th = std::abs(t1)<std::abs(t2) ? t1 : t2;
+        } else {
+        th = std::remainder(C>R ? base : base+Pi,2.f*Pi);
+        }
+      }
+    th = std::clamp(th,p.lo,p.hi)*carry;  // a foot that carries nothing stays as Gothic's
+    ground   = p.contact;
+    target   = (p.ball + IkMath::mul(IkMath::axisAngle(p.k,th),p.r))*ground + (hip+a1+a2)*(1.f-ground);
+    footTurn = IkMath::axisAngle(p.k,ground*th);
+    }
+  const Vec3  toTarget = target - hip;
   const float dist     = length(toTarget);
   if(l1<IkMath::Eps || l2<IkMath::Eps || dist<IkMath::Eps) {
     out[leg.foot] = place(leg.foot,source,out);  // nowhere to bend to: the leg as it stands
@@ -627,6 +887,11 @@ void RenderRig::solveLeg(const Leg& leg, const Matrix4x4* source, Matrix4x4* out
   if(length(side)<IkMath::Eps)
     side = IkMath::cross(u,std::abs(u.x)<0.9f ? Vec3(1,0,0) : Vec3(0,1,0));
   side = normalize(side);
+  if(knees && ground<1) {             // in the air: the side Gothic's knee bends to
+    const Vec3 own = a1 - u*IkMath::dot(a1,u);
+    if(length(own)>0.05f*l1)
+      side = normalize(side*ground + normalize(own)*(1.f-ground));
+    }
   const Vec3 knee = hip + u*float(along) + side*float(up);
 
   setLinear(thigh,IkMath::mul(IkMath::rotationBetween(normalize(a1),normalize(knee-hip)),linear(thigh)));
@@ -636,8 +901,82 @@ void RenderRig::solveLeg(const Leg& leg, const Matrix4x4* source, Matrix4x4* out
   setLinear(calf,IkMath::mul(IkMath::rotationBetween(normalize(axis),normalize(end-knee)),linear(calf)));
   out[leg.calf] = calf;
   Matrix4x4 foot = place(leg.foot,source,out);
+  if(knees)
+    setLinear(foot,IkMath::mul(footTurn,linear(foot)));
   setPosition(foot,end);
   out[leg.foot] = foot;
+  }
+
+// Two-bone IK of an arm, as the leg's: the elbow to the side Gothic's arm bends it, a little back so a straight arm
+// has one. The wrist: where the arm's own Gothic turns put it, moved by `hold` to where Gothic holds it against the
+// held hand (that arm is solved first) and by `world` onto Gothic's wrist. Both 0: the arm as the other bones.
+void RenderRig::solveArm(const Arm& a, const Matrix4x4* source, Matrix4x4* out, const Hands& hands) const {
+  using IkMath::length;
+  using IkMath::normalize;
+  out[a.lower] = place(a.lower,source,out);
+  const float hold  = a.holds!=None ? std::clamp(hands.hold,0.f,1.f) : 0.f;
+  const float world = std::clamp(hands.world,0.f,1.f);
+  if(!(hold>0) && !(world>0)) {
+    out[a.hand] = place(a.hand,source,out);
+    return;
+    }
+  Matrix4x4& upper   = out[a.upper];
+  const Vec3 shoulder = IkMath::position(upper);
+  const Vec3 toLower  = IkMath::position(bone[a.lower].local);
+  const Vec3 toHand   = IkMath::position(bone[a.hand].local);
+  const Vec3 a1 = IkMath::mul(linear(upper),toLower);
+  const Vec3 a2 = IkMath::mul(linear(out[a.lower]),toHand);
+  const float l1 = length(a1), l2 = length(a2);
+  Vec3 target = shoulder + a1 + a2;
+  if(hold>0) {
+    const Arm&       m  = arms[a.holds];
+    const Matrix4x4& gr = source[m.sourceHand];
+    const Vec3 rel  = IkMath::mul(IkMath::transpose(IkMath::rotationOf(gr)),
+                                  IkMath::position(source[a.sourceHand])-IkMath::position(gr));
+    const Vec3 want = IkMath::position(out[m.hand]) +
+                      IkMath::mul(IkMath::mul(IkMath::rotationOf(out[m.hand]),IkMath::transpose(bone[m.hand].turn)),rel);
+    target = target + (want-target)*hold;
+    }
+  if(world>0)
+    target = target + (IkMath::position(source[a.sourceHand])-target)*world;
+  const Vec3  toTarget = target - shoulder;
+  const float dist     = length(toTarget);
+  if(l1<IkMath::Eps || l2<IkMath::Eps || dist<IkMath::Eps) {
+    out[a.hand] = place(a.hand,source,out);
+    return;
+    }
+  const Vec3   u  = toTarget*(1.f/dist);
+  const double d1 = l1, d2 = l2;
+  double       d  = std::clamp(double(dist),std::abs(d1-d2)+1e-6,d1+d2);
+  if(a.soft>0 && a.length>IkMath::Eps) {
+    const double s    = double(a.soft)*(d1+d2)/double(a.length);
+    const double near = d1+d2-s;
+    if(dist>near && near>std::abs(d1-d2))
+      d = near + s*(1.0-std::exp(-(double(dist)-near)/s));
+    }
+  const double along = (d1*d1 - d2*d2 + d*d)/(2.0*d);
+  const double up    = std::sqrt(std::max(d1*d1 - along*along,0.0));
+  const Vec3   end   = shoulder + u*float(d);
+
+  Vec3 side = a1 - u*IkMath::dot(a1,u);
+  Vec3 back = IkMath::mul(linear(upper),a.back);
+  back = back - u*IkMath::dot(back,u);
+  if(length(back)>IkMath::Eps)
+    side = side + normalize(back)*(0.05f*l1);
+  if(length(side)<IkMath::Eps)
+    side = IkMath::cross(u,std::abs(u.x)<0.9f ? Vec3(1,0,0) : Vec3(0,1,0));
+  side = normalize(side);
+  const Vec3 elbow = shoulder + u*float(along) + side*float(up);
+
+  setLinear(upper,IkMath::mul(IkMath::rotationBetween(normalize(a1),normalize(elbow-shoulder)),linear(upper)));
+  Matrix4x4 lower = place(a.lower,source,out);
+  setPosition(lower,elbow);
+  const Vec3 axis = IkMath::mul(linear(lower),toHand);
+  setLinear(lower,IkMath::mul(IkMath::rotationBetween(normalize(axis),normalize(end-elbow)),linear(lower)));
+  out[a.lower] = lower;
+  Matrix4x4 hand = place(a.hand,source,out);
+  setPosition(hand,end);
+  out[a.hand] = hand;
   }
 
 // The scapulohumeral rhythm: as the arm rises from the chest's down past `from`, the clavicle turns further towards

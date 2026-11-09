@@ -5,9 +5,9 @@
         <CLIP>[,<CLIP>...] [variants: engine:1:0,v2:0.038:0.5] [views: side,back,front]
 
 Each variant is legs:lift:soft of rig_solve.py (for v2 the lift is its share over the lower ankle, else a scale of the
-pelvis height). The clip plays in place (Gothic's root travel taken out). Frames go to
-<out>/<clip>/<actor>-<view>/; the caller stacks them (ffmpeg hstack). Workbench, orthographic, the
-camera follows the pelvis. Gothic's body is HUM_BODY_NAKED0 skinned by plain linear blending of its bind positions.
+pelvis height; v4 - the engine's root knees, lift 1). HANDS=hold,world turns the arms' IK on (rig_solve.Rig.arm).
+The clip plays in place (Gothic's root travel taken out). Frames go to <out>/<clip>/<actor>-<view>/; the caller
+stacks them (ffmpeg hstack). Workbench, orthographic, the camera follows the pelvis. Gothic's body is HUM_BODY_NAKED0 skinned by plain linear blending of its bind positions.
 """
 import bpy, os, sys, math
 from pathlib import Path
@@ -30,8 +30,14 @@ RES = (int(os.environ.get('W', 420)), int(os.environ.get('H', 640)))
 ZOOM = os.environ.get('ZOOM', 'whole')            # whole | legs | upper
 FOCUS = os.environ.get('FOCUS', '')               # a rig bone the camera follows frame by frame (hand_r), FSIZE m wide
 FSIZE = float(os.environ.get('FSIZE', 0.6))
+NFR = int(os.environ.get('FRAMES', 0))            # only this many frames, evenly spread (frame sheets); <clip>/frames.txt
+HANDS = os.environ.get('HANDS', '')               # hold,world (0..1): the arms' IK as the game sets it (RenderRig::Hands)
 
 rig = rs.Rig(MODELS, CONTENT)
+if HANDS:
+    rig.arms_ik = True
+    rig.hold, rig.world = (float(x) for x in HANDS.split(','))
+    rig.arm_soft = 1.0
 arm = bpy.data.objects['Human.rig']; body = bpy.data.objects['Human']
 bones = arm.data.bones
 rest = {b.name: np.array(b.matrix_local) for b in bones}       # armature space (the armature sits at the origin)
@@ -167,6 +173,11 @@ for clip in CLIPS:
         W[:, 0, 3] -= r[0] - root0[0]; W[:, 2, 3] -= r[2] - root0[2]   # in place
         frames.append(W)
     centre = np.mean([to_b(W[rig.gi['BIP01 PELVIS']][:3, 3]) for W in frames], axis=0)   # the clip's own place
+    if NFR:
+        keep = sorted(set(np.linspace(0, len(frames) - 1, NFR).round().astype(int).tolist()))
+        frames = [frames[i] for i in keep]
+        (OUT / clip).mkdir(parents=True, exist_ok=True)
+        (OUT / clip / 'frames.txt').write_text(' '.join(map(str, keep)))
     actors = [('gothic', None)] + [(f'{l}-{lift:g}-{soft:g}', (l, lift, soft)) for l, lift, soft in VARIANTS]
     for name, var in actors:
         gob.hide_render = var is not None

@@ -160,6 +160,17 @@ bool livingCommand(const LivingContext& context,const std::vector<std::string>& 
     state.seatPhase="shift";
     event("living_seat_shift","\"distance_cm\":80");
     }
+  else if(c=="hero-mob" && a.size()==2) {
+    // the hero takes the nearest free mob of a scheme (BENCH, CHAIR, CAULDRON, BSANVIL, LAB, ...) as when the player
+    // uses it - the render rig at mobs (hero-rig-audit.bench); leave: it gets up, lets go
+    if(a[1]=="leave") {
+      pl.setInteraction(nullptr,false);
+      return true;
+      }
+    Interactive* mob=w.availableMob(pl,a[1]);
+    const bool   ok =mob!=nullptr && pl.setInteraction(mob);
+    event("hero_mob","\"scheme\":"+jsonStr(a[1])+",\"used\":"+(ok?"true":"false"));
+    }
   else if(c=="living" && a.size()==2 && (a[1]=="on" || a[1]=="off")) {
     Gothic::settingsSetI("GAME","living_bodies",a[1]=="on");state.livingPhase=a[1];
     }

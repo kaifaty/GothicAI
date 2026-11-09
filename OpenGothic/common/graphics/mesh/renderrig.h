@@ -29,7 +29,7 @@ class Skeleton;
 //       "skeleton": "HUM_RIG_MPFB.MDH",          the rig's hierarchy record
 //       "source":   "HUMANS.MDH",                the Gothic hierarchy it follows
 //       "bones":  [{"name": "thigh_l", "source": "BIP01 L THIGH", "align": [w, x, y, z]}, ...],
-//       "root":   {"bone": "pelvis", "source": "BIP01 PELVIS", "lift": 0.038},
+//       "root":   {"bone": "pelvis", "source": "BIP01 PELVIS", "knees": true},
 //       "legs":   [{"thigh": "thigh_l", "calf": "calf_l", "foot": "foot_l", "ball": "ball_l",
 //                   "source_foot": "BIP01 L FOOT", "source_knee": "BIP01 L CALF", "ankle": [x, y, z], "soft": 0.5}],
 //       "fingers":[{"source_hand": "BIP01 L HAND", "source_finger": "BIP01 L FINGER0",
@@ -38,6 +38,9 @@ class Skeleton;
 //                   "share": 1.0}],
 //       "shoulders": [{"clavicle": "clavicle_l", "arm": "upperarm_l", "elbow": "lowerarm_l", "chest": "spine_03",
 //                      "share": 0.33, "from": 45, "max": 30}],
+//       "arms":   [{"upper": "upperarm_r", "lower": "lowerarm_r", "hand": "hand_r", "source_hand": "BIP01 R HAND"},
+//                  {"upper": "upperarm_l", "lower": "lowerarm_l", "hand": "hand_l", "source_hand": "BIP01 L HAND",
+//                   "holds": "hand_r", "soft": 1.0}],
 //       "sockets":{"ZS_RIGHTHAND": {"bone": "hand_r", "offset": [16 floats]}}}},
 //    "meshes": {"<mesh>": "<rig>"}}
 // - bones: nodes of the rig's skeleton. source - the Gothic node whose turn the bone takes; align - a turn of the
@@ -47,6 +50,12 @@ class Skeleton;
 //   lift (0..0.5, default 0) raises it by that share of its height over the lower of the legs' IK targets: Gothic's
 //   clips are made for legs shorter than its bind skeleton (reports/engine/2026-11-modern-skeleton, «Ноги»), so legs
 //   fitted to the bind bend their knees without it. The lift is world up (+y), none when the targets are not below.
+//   knees (default false, not with lift): the knees bend as Gothic's whatever its clip's leg lengths («Аудит»). The
+//   root goes up or down (world +y) so that the legs that carry the body - a foot on the ground under the hip - reach
+//   their feet with our bone lengths at Gothic's knee angle; a foot on the ground keeps its ball where Gothic's is and
+//   turns about it (the heel up, or back down to Gothic's flat foot) for the rest; a foot in the air takes Gothic's
+//   turns as they are. Needs the root and each leg's thigh, calf and foot with a source, the thighs right under the
+//   root.
 // - legs: the chain thigh -> calf -> foot -> ball (each the parent of the next); ankle - the IK target, cm in the
 //   frame of source_foot. The knee bends towards the thigh's front: the model's front (+z) of the bind pose carried
 //   by the thigh's turn; source_knee only when that front lies along the leg. soft (cm, 0..20, default 0) - soft IK:
@@ -59,9 +68,14 @@ class Skeleton;
 // - shoulders: the scapulohumeral rhythm - the clavicle turns further towards its arm by share x (the arm's rise
 //   from the chest's down above `from` degrees), at most `max` degrees. arm needs a source; chest is an ancestor of
 //   the clavicle; the arm's axis is arm -> elbow in the bind pose.
+// - arms: the chain upper -> lower -> hand (each the parent of the next, each with a source) by two-bone IK, the elbow
+//   to the side Gothic's arm bends it (its back when straight), soft as for the legs. The wrist goes where solve()'s
+//   Hands say: by `world` onto Gothic's wrist (source_hand: a ladder, a workbench - our arms are not Gothic's length),
+//   by `hold` - an arm that holds another hand (holds) - where Gothic holds it against that hand (a 2H hilt, a bow);
+//   with both 0 the arm takes Gothic's turns as the other bones.
 // - sockets: a Gothic node (ZS_*) carried by a rig bone: M_bone(t) * offset; offset column-major as in the records.
 // - meshes: mesh name -> rig, the name upper case, without folder and extension.
-// legs, fingers, twists, shoulders, sockets and meshes may be left out. Unknown fields are errors. A broken file loads no rig, a broken
+// legs, fingers, twists, shoulders, arms, sockets and meshes may be left out. Unknown fields are errors. A broken file loads no rig, a broken
 // rig is left out alone, each with a message "render rigs: ..." or "render rig <name>: ...".
 struct RenderRigSpec final {
   struct Bone final {
@@ -90,21 +104,33 @@ struct RenderRigSpec final {
     std::string clavicle, arm, elbow, chest;
     float       share = 0, from = 0, max = 0;  // degrees
     };
+  struct Arm final {
+    std::string upper, lower, hand, sourceHand, holds;
+    float       soft = 0;
+    };
 
   std::string          name, skeleton, source;
   std::vector<Bone>    bones;
   std::string          rootBone, rootSource;
   float                rootLift = 0;
+  bool                 rootKnees = false;
   std::vector<Leg>     legs;
   std::vector<Fingers> fingers;
   std::vector<Twist>   twists;
   std::vector<Shoulder> shoulders;
+  std::vector<Arm>     arms;
   std::vector<Socket>  sockets;
   };
 
 class RenderRig final {
   public:
     ~RenderRig();
+
+    // where the arms put the wrists (render-rigs.json, arms), 0..1 each: the game's state, eased by the caller
+    struct Hands final {
+      float hold  = 0;  // two hands on one thing: a 2H weapon, a bow, a crossbow, a spell
+      float world = 0;  // the hands on the world: a ladder, a workbench, a chest
+      };
 
     // Throws std::runtime_error("render rig <name>: ...") when a name is missing from its skeleton, the rig has more
     // than Resources::MAX_NUM_SKELETAL_NODES bones, or a part does not fit (a leg out of chain, a bone in two parts).
@@ -121,7 +147,11 @@ class RenderRig final {
 
     // The rig's world matrices out[bones()] from the source's final world matrices source[sourceCount] (Pose::tr,
     // after IK and ragdoll). No allocation. False: too few source matrices, out is not written.
-    bool             solve(const Tempest::Matrix4x4* source, size_t sourceCount, Tempest::Matrix4x4* out) const;
+    bool             solve(const Tempest::Matrix4x4* source, size_t sourceCount, Tempest::Matrix4x4* out,
+                           const Hands& hands) const;
+    bool             solve(const Tempest::Matrix4x4* source, size_t sourceCount, Tempest::Matrix4x4* out) const {
+      return solve(source,sourceCount,out,Hands());
+      }
 
     // the socket of a source node (ZS_RIGHTHAND) over the solved palette: M_bone(t) * offset; false - none
     bool             socket(std::string_view sourceNode, const Tempest::Matrix4x4* palette, Tempest::Matrix4x4& out) const;
@@ -134,8 +164,9 @@ class RenderRig final {
   private:
     RenderRig() = default;
 
-    enum class Role : uint8_t { Plain, Thigh, Calf, Foot, Phalanx, Twist };
-    static constexpr size_t None = size_t(-1);
+    enum class Role : uint8_t { Plain, Thigh, Calf, Foot, Phalanx, Twist, ArmUpper, ArmLower, ArmHand };
+    static constexpr size_t None    = size_t(-1);
+    static constexpr size_t MaxLegs = 4;   // knees: per-leg state on the stack
 
     struct Bone final {
       size_t             parent = None;  // rig node; None - under the source's root node
@@ -146,14 +177,17 @@ class RenderRig final {
       size_t             part = 0;       // the leg, the fingers or the twist
       float              share = 0;      // of the finger's bend
       size_t             shoulder = None; // the clavicle's rhythm
+      bool               afterArms = false; // below an arm's forearm: placed once the arms are solved
       };
     struct Leg final {
-      size_t        thigh = None, calf = None, foot = None;
+      size_t        thigh = None, calf = None, foot = None, ball = None;
       size_t        sourceFoot = None, sourceKnee = None;
       Tempest::Vec3 ankle;               // in the frame of sourceFoot
       Tempest::Vec3 front;               // the knee's way: the model's front of the bind pose in the thigh's frame
       float         soft = 0;            // cm of soft reach at the bind size
       float         length = 0;          // thigh + calf in the bind pose
+      Tempest::Vec3 ballFoot;            // knees: our ball in the frame of sourceFoot, bind pose
+      IkMath::Mat3  footBind = {};       // knees: R_sourceFoot_bind^T
       };
     struct Fingers final {
       size_t        hand = None, finger = None;
@@ -176,10 +210,27 @@ class RenderRig final {
       Tempest::Vec3 clavAxis, armAxis, chestDown;  // in the bones' own frames, bind pose
       float         share = 0, from = 0, max = 0;  // radians for from and max
       };
+    struct Arm final {
+      size_t        upper = None, lower = None, hand = None, sourceHand = None;
+      size_t        holds = None;        // the arm whose hand this one holds on to
+      Tempest::Vec3 back;                // the elbow's way on a straight arm: the model's back in the upper's frame
+      float         soft = 0, length = 0;
+      };
+    // a foot on the ground (knees): Gothic's ball, the ankle's offset from it, the axis (+ lifts the heel), the turn
+    // range about it (radians) and how much the foot is on the ground
+    struct Pivot final {
+      Tempest::Vec3 ball, r, k;
+      float         lo = 0, hi = 0, contact = 0;
+      };
 
     Tempest::Matrix4x4 place(size_t i, const Tempest::Matrix4x4* source, const Tempest::Matrix4x4* out,
                              float lift = 0) const;
-    void               solveLeg(const Leg& leg, const Tempest::Matrix4x4* source, Tempest::Matrix4x4* out) const;
+    void               solveLeg(const Leg& leg, const Tempest::Matrix4x4* source, Tempest::Matrix4x4* out,
+                                float carry, float lowBall, float scale) const;
+    Pivot              pivot(const Leg& leg, const Tempest::Matrix4x4* source, float lowBall, float scale) const;
+    float              kneeLift(const Tempest::Matrix4x4* source, float* carry, float& lowBall, float& scale) const;
+    void               solveArm(const Arm& arm, const Tempest::Matrix4x4* source, Tempest::Matrix4x4* out,
+                                const Hands& hands) const;
     IkMath::Mat3       rhythm(const Shoulder& s, const Tempest::Matrix4x4& clavicle, const Tempest::Matrix4x4* source,
                               const Tempest::Matrix4x4* out) const;
     void               solveTwist(const Twist& t, Tempest::Matrix4x4* out) const;
@@ -194,10 +245,13 @@ class RenderRig final {
     size_t                    rootBone     = None, rootSource = None;
     Tempest::Vec3             rootLocal;   // the root bone's bind place in the source node's bind frame
     float                     lift = 0;    // share of the root's height over the lower leg target it is raised by
+    bool                      knees = false;
     std::vector<Leg>          legs;
     std::vector<Fingers>      fingers;
     std::vector<Twist>        twists;
     std::vector<Shoulder>     shoulders;
+    std::vector<Arm>          arms;        // the held ones after the ones they hold
+    std::vector<size_t>       afterArms;   // in order
     std::vector<Socket>       sockets;
   };
 

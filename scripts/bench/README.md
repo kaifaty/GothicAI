@@ -731,6 +731,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `goto <waypoint>`, `goto pos <x> <y> <z>` | teleport (`pos`: where no waypoint is, a roof, a rock) |
 | `walkto <waypoint>` | walk there (AI path) |
 | `walkmode walk\|run\|sneak` | |
+| `hero-mob <SCHEME>`, `hero-mob leave` | the hero takes the nearest free mob of that scheme (`BENCH`, `CHAIR`, `CAULDRON`, `BSANVIL`, `LAB`, ...) as when the player uses it, event `hero_mob` with `used`; `leave` gets up |
 | `face uphill\|downhill\|across\|<yaw deg>`, `face wp <waypoint>`, `face rel <deg>`, `turn <deg>` | turn the player at once; `rel`: the watched npc's facing turned by that much (the angles of `place`) |
 | `press\|release\|tap <key>`, `hold <key> <ms>`, `release all` | player input; keys: `forward back left right turnl turnr jump walk sneak weapon melee bow spell action parade breath dodge` (`dodge`: the melee dodge's own key, the way from the movement keys held at the press; `left`/`right` strafe; aiming a bow: hold `action`, a shot: `tap forward` while holding it; in the manual aim holding `action` draws, releasing shoots, `parade` lowers the bow, `breath` (= walk) holds the breath) |
 | `aimwalk on\|off` | the legs stepping under the aim (graphics/mesh/aimwalk); off: forward and back do nothing while aiming |

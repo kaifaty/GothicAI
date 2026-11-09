@@ -1,0 +1,123 @@
+# The render rig in the hero's whole range of motion (reports/engine/2026-11-modern-skeleton, «Аудит»): the knees in
+# bends and crouches, the posture, the left hand on a 2H hilt, the hands and the seat at mobs. Run it twice with the
+# same build, the content root before and after, and judge the takes side by side. A new game, noon, no armour.
+#   TIMEOUT=900 TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=local WORLD=NEWWORLD.ZEN OPENGOTHIC_CONTENT=<root> \
+#     scripts/bench.sh scripts/bench/hero-rig-audit.bench <abs out>
+seed 73013
+cheat god
+set time 12 0
+goto NW_CITY_MERCHANT_TRADE_04
+wait 3000
+watch player
+overlay off
+# locomotion: walk from the side, sneak from the side
+walkmode walk
+cam look 90
+cam follow 330 100 90
+wait 800
+rec walk_side
+walkto NW_CITY_MERCHANT_PATH_09
+wait 4500
+stop
+goto NW_CITY_MERCHANT_TRADE_04
+wait 1500
+walkmode sneak
+cam follow 330 90 90
+wait 800
+rec sneak_side
+walkto NW_CITY_MERCHANT_PATH_09
+wait 5000
+stop
+walkmode run
+goto NW_CITY_MERCHANT_TRADE_04
+wait 1500
+# bends: cheer, pick up from the ground, a 1H attack - from the side
+cam look 110
+cam follow 300 120 90
+wait 1500
+rec cheer_side
+ani player T_STAND_2_WATCHFIGHT force
+wait 700
+ani player T_WATCHFIGHT_YEAH force
+wait 2600
+stop
+rec pickup_side
+ani player C_STAND_2_IGET_1 force
+wait 1200
+ani player T_PLUNDER force
+wait 3000
+stop
+melee-shadow weapon 1h
+cam follow 380 140 90
+wait 2500
+rec attack1h_side
+ani player S_1HATTACK force
+wait 2400
+stop
+# a 2H weapon: the stance and an attack - the left hand on the hilt
+goto NW_CITY_MERCHANT_TRADE_04
+melee-shadow weapon 2h
+cam look 130
+cam follow 300 140 30
+wait 3000
+shot stance2h_front
+rec attack2h_front
+ani player S_2HATTACK force
+wait 2400
+stop
+cam follow 300 140 90
+wait 1500
+shot stance2h_side
+# mobs: sit on a bench, stir a cauldron, work an anvil and a lab table
+goto NW_CITY_UPTOWN_PATH_23_B
+wait 2500
+hero-mob BENCH
+wait 3500
+cam look 70
+cam follow 220 90 90
+wait 1500
+shot bench_side
+cam follow 220 90 20
+wait 1200
+shot bench_front
+rec bench_front
+wait 3000
+stop
+hero-mob leave
+wait 2500
+goto NW_CITY_HABOUR_POOR_AREA_CAULDRON
+wait 2500
+hero-mob CAULDRON
+wait 3500
+cam look 100
+cam follow 260 110 90
+wait 1200
+rec cauldron_side
+wait 3500
+stop
+hero-mob leave
+wait 2500
+goto NW_CITY_SMITH_ANVIL
+wait 2500
+hero-mob BSANVIL
+wait 3500
+cam look 110
+cam follow 260 120 60
+wait 1200
+rec anvil
+wait 4000
+stop
+hero-mob leave
+wait 2500
+goto NW_CITY_ALCHEMY_VELAX
+wait 2500
+hero-mob LAB
+wait 3500
+cam look 110
+cam follow 240 130 60
+wait 1200
+rec lab
+wait 4000
+stop
+hero-mob leave
+wait 2000
