@@ -22,7 +22,8 @@ const float BoxFar = 1e30;
 // Temporal AA by the camera (docs/graphics-plan.md, step 1a; reports/render-features/2026-11-03-taa):
 // the history moves with the camera over the depth of this frame, read by Catmull-Rom, clipped to the
 // variance box of the 3x3 neighbourhood in YCoCg and blended with weights by inverse luminance.
-// Objects that move by themselves have no vectors yet (1b): the clip holds back their trails.
+// Objects that move by themselves add their own residual (graphics plan 1b, Renderer::gbufMotion): the history
+// follows them; what has no vector (translucent, particles, water) is still held back by the clip alone.
 
 layout(push_constant, std430) uniform Push {
   mat4  reproject; // this frame's NDC and depth -> the history's NDC, both with this frame's jitter
@@ -33,6 +34,7 @@ layout(push_constant, std430) uniform Push {
 layout(binding = 0) uniform sampler2D current; // linear HDR, pre-exposed
 layout(binding = 1) uniform sampler2D depth;
 layout(binding = 2) uniform sampler2D history; // bilinear
+layout(binding = 3) uniform sampler2D motion;  // the objects' own motion, texture coordinates, current -> previous
 
 layout(location = 0) out vec4 outHistory; // the sharpening pass makes the scene from it (taa_sharpen.frag)
 
@@ -137,14 +139,14 @@ void main() {
       }
     }
 
-  // static world: the motion of the nearest point by the camera alone
+  // the motion of the nearest point: by the camera, plus its own move (0 for the static world and with -mv 0)
   const vec2  sizeF  = vec2(size);
   const vec2  ndcZ   = ((vec2(zPix) + 0.5)/sizeF)*2.0 - 1.0;
   const vec4  prev4  = push.reproject*vec4(ndcZ, zNear, 1.0);
   const vec2  uv     = (vec2(pix) + 0.5)/sizeF;
   vec2        histUv = vec2(-1);
   if(prev4.w>0.0)
-    histUv = uv + (prev4.xy/prev4.w - ndcZ)*0.5;
+    histUv = uv + (prev4.xy/prev4.w - ndcZ)*0.5 + texelFetch(motion, zPix, 0).xy;
 
   // the history from beyond the screen: this frame only
   if(any(lessThan(histUv, vec2(0))) || any(greaterThan(histUv, vec2(1)))) {

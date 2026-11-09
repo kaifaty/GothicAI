@@ -1205,6 +1205,7 @@ void Renderer::prepareSSAO(Encoder<CommandBuffer>& cmd, WorldView& wview) {
   cmd.setBinding(5, ssao.depthHalf, Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setBinding(6, ssao.history[ssao.cur^1], Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setBinding(7, ssao.history[ssao.cur]);
+  cmd.setBinding(8, gbufMotion, Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setPushData(&push, sizeof(push));
   cmd.setPipeline(shaders.ssao);
   cmd.dispatchThreads(ssao.ssaoBuf.size());

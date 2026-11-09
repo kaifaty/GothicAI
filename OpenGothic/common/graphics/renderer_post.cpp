@@ -218,6 +218,7 @@ void Renderer::drawTaa(Tempest::Encoder<Tempest::CommandBuffer>& cmd, bool fused
   cmd.setBinding(0, sceneLinear, Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setBinding(1, zbuffer,     Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setBinding(2, prev,        Sampler::bilinear(ClampMode::ClampToEdge));
+  cmd.setBinding(3, gbufMotion,  Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setPushData(push);
   cmd.setPipeline(shaders.taaResolve);
   cmd.draw(nullptr, 0, 3);
@@ -245,7 +246,8 @@ void Renderer::drawTemporalUpscale(Tempest::Encoder<Tempest::CommandBuffer>& cmd
   push.reproject = taa.valid ? taa.reproject : Matrix4x4::mkIdentity();
   cmd.setDebugMarker("Upscale-motion");
   cmd.setFramebuffer({{temporal.motion, Tempest::Discard, Tempest::Preserve}});
-  cmd.setBinding(0, zbuffer, Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(0, zbuffer,    Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(1, gbufMotion, Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setPushData(push);
   cmd.setPipeline(shaders.motionCamera);
   cmd.draw(nullptr, 0, 3);
