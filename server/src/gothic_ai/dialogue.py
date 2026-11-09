@@ -84,7 +84,7 @@ from .protocol import (
 from .quest_tools import AMEND
 from .trace import CallTrace, StepTrace, TraceWriter, TurnTrace
 from .tts import TtsClient, TtsError
-from .turn import MAX_STEPS, ToolOutcome, go_on, tool_choice, tool_output
+from .turn import MAX_STEPS, ToolOutcome, go_on, refusal_note, tool_choice, tool_output
 
 if TYPE_CHECKING:
     from .perception import Sight
@@ -2299,15 +2299,19 @@ class DialogueManager:
         await self.link.send(SayEndCmd(npc=line.npc, line=line.line, audio_s=round(audio_s, 3)))
 
     def _commit(
-        self, conv: Conversation, trigger: Message, text: str, kind: str, to: str | None = None
+        self, conv: Conversation, trigger: Message, kind: str, state: TurnState, said: str | None = None
     ) -> None:
+        """Remember the turn: its trigger, its words (`said`: only those the hero heard before he cut in),
+        then what the code refused it."""
         # one synchronous step: an interrupted reply and its replacement cannot interleave here.
         # What started the turn is remembered even when the npc said nothing (it may have acted).
         self._remember(conv, trigger.role, trigger.content)
-        if text := text.strip():
+        if text := (state.text if said is None else said).strip():
             self._remember(conv, "assistant", text)
             for listener in self.on_said:
-                listener(conv.npc, conv.persona.name, to_game_text(text), kind, to)
+                listener(conv.npc, conv.persona.name, to_game_text(text), kind, state.to)
+        for note in state.refused:  # the next turn knows the code said no, and why: not the same call again
+            self._note(conv, note)
         self._maybe_compact(conv)
 
     def _note(self, conv: Conversation, note: str) -> None:
@@ -2528,13 +2532,13 @@ class DialogueManager:
             log.error("%s: %s", conv.npc, err)
             self.journal.add("llm_error", npc=conv.npc, name=conv.persona.name, detail=str(err))
             if state.text:  # a turn that failed before a word was said is not remembered
-                self._commit(conv, trigger, state.text, kind, state.to)
+                self._commit(conv, trigger, kind, state)
             trace.close("llm_error")
             await self._status(conv, "error", str(err))
             return
         except StaleTurn:
             # what the turn was about is over: words now would be out of place
-            self._commit(conv, trigger, state.text, kind, state.to)
+            self._commit(conv, trigger, kind, state)
             trace.close("stale")
             await self._status(conv, "idle")
             return
@@ -2543,16 +2547,16 @@ class DialogueManager:
                 first.cancel()  # its gesture too: the hero speaks again
             if conv.cut is not None:  # the hero interrupted: only what was said counts
                 said, conv.cut = conv.cut, None
-                self._commit(conv, trigger, said, kind, state.to)
+                self._commit(conv, trigger, kind, state, said)
                 self._note(conv, "Герой перебил тебя" + ("" if said else ", ты не успел ничего сказать"))
                 trace.close("interrupted")
                 raise
-            self._commit(conv, trigger, state.text, kind, state.to)  # the npc remembers what it already said
+            self._commit(conv, trigger, kind, state)  # the npc remembers what it already said
             trace.close("cancelled")
             raise
         except Exception:
             if state.text:  # what the hero heard is remembered; _turn says the rest
-                self._commit(conv, trigger, state.text, kind, state.to)
+                self._commit(conv, trigger, kind, state)
             trace.close("error")
             raise
         finally:
@@ -2563,7 +2567,7 @@ class DialogueManager:
             if full is not None:
                 full.cancel()  # done by now, unless the turn ended before the line
 
-        self._commit(conv, trigger, state.text, kind, state.to)
+        self._commit(conv, trigger, kind, state)
         if kind == "player" and state.to is None and not state.end_requested and not state.follow_set:
             self._repair_follow_agreement(conv, trigger.content, state.text)
         trace.close(status)
@@ -2672,6 +2676,9 @@ class DialogueManager:
                 st.calls.append(
                     CallTrace(call.name, call.arguments, call.call_id, outcome.output, outcome.status)
                 )
+                note = refusal_note(call.name, outcome.output) if outcome.status == "rejected" else ""
+                if note and note not in state.refused:
+                    state.refused.append(note)
             if not go_on(outcomes, bool(state.text.strip())):
                 return "completed"
             if step == MAX_STEPS - 1:
@@ -3321,6 +3328,7 @@ class TurnState:
     dynamic_tools: bool = False  # no explicit tools: amendments refresh the offered list
     to: str | None = None  # the npc its lines are said to now, None: the hero
     act: bool = False  # its first step must call a tool (event_turn)
+    refused: list[str] = field(default_factory=list)  # its rejected calls: remembered after its words
 
     def spoken(
         self,
