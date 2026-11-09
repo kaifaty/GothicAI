@@ -68,24 +68,25 @@ stop
 cam follow 300 140 90
 wait 1500
 shot stance2h_side
-# mobs: sit on a bench, stir a cauldron, work an anvil and a lab table
-goto NW_CITY_UPTOWN_PATH_23_B
+# mobs: sit on a chair, stir a cauldron, work an anvil and a lab table - free ones at noon (benches and the nearer
+# cauldron and lab tables are taken by townsfolk; `clear` does not free them)
+goto NW_CITY_REICH02_SIT
 wait 2500
-hero-mob BENCH
+hero-mob CHAIR
 wait 3500
 cam look 70
 cam follow 220 90 90
 wait 1500
-shot bench_side
+shot chair_side
 cam follow 220 90 20
 wait 1200
-shot bench_front
-rec bench_front
+shot chair_front
+rec chair_front
 wait 3000
 stop
 hero-mob leave
 wait 2500
-goto NW_CITY_HABOUR_POOR_AREA_CAULDRON
+goto NW_CITY_PATH_HABOUR_13_C
 wait 2500
 hero-mob CAULDRON
 wait 3500
@@ -109,7 +110,7 @@ wait 4000
 stop
 hero-mob leave
 wait 2500
-goto NW_CITY_ALCHEMY_VELAX
+goto NW_CITY_HABOUR_POOR_AREA_HUT_08_WORK
 wait 2500
 hero-mob LAB
 wait 3500
