@@ -77,6 +77,14 @@ enum CamMode : uint8_t {
   C_Arrow,    // from the side of the newest arrow's way, going along with it (overlay trail records it)
   };
 
+struct Spot {
+  std::string name;
+  float       angle = 0;
+  float       rough = 0;
+  float       dist  = 0;
+  Tempest::Vec3        pos;
+  };
+
 struct QuestSite { bool ready=false; Tempest::Vec3 dry={}, direction={}; float waterY=0; std::string waypoint; };
 
 struct LivingWalker;
@@ -250,6 +258,38 @@ struct RagdollContext {
   const bool& ragdollPerf;
   Npc& (*subjectOf)(Npc&);
 };
+
+struct WorldBench {
+  std::string perfSegment;
+  uint64_t    perfFrame = 0;
+  bool        perfArmed = false;
+  bool        waitStreaming = false;
+  std::chrono::steady_clock::time_point streamingDeadline;
+  // `deterministic on`: a `shot` does not depend on how many frames the loading took
+  // (reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md)
+  bool        deterministic = false;
+  uint64_t streamingNearBefore = 0, streamingFarBefore = 0;
+  uint64_t streamingPublishedBefore = 0, streamingReleasedBefore = 0;
+  Resources::TextureStats streamingTexturesBefore;
+  uint64_t streamingVobCreatedBefore = 0, streamingVobReleasedBefore = 0;
+  double streamingVobMissingBefore = 0;
+  uint64_t streamingNpcTransitionsBefore = 0;
+#ifdef OPENGOTHIC_ENABLE_APP_CADENCE
+  bool        cadenceVerified=false,cadenceWait=false;
+  uint32_t    cadenceDown=0;
+#endif
+  };
+
+struct WorldContext {
+  WorldBench& world;
+  RagdollBench& ragdoll;
+  std::vector<Npc*>& crew;
+  Npc*& subject;
+  uint64_t& time;
+  uint64_t& waitUntil;
+  const Tempest::Vec3& camPos;
+  Npc& (*subjectOf)(Npc&);
+  };
 
 struct SpellActor {Npc* npc=nullptr;std::string role;};
 struct MovableFixture { ObjVisual visual; DynamicWorld::Item body; };
@@ -1075,6 +1115,7 @@ void say(const std::string& s);
 Tempest::Vec3 facing(const Npc& pl);
 Npc* findNpc(World& w, Npc& pl, const std::string& name);
 bool hidden(World& w,const Tempest::Vec3& from,const Tempest::Vec3& to);
+bool isNumber(const std::string& s);
 float num(const std::vector<std::string>& a,size_t i,float def);
 void prepareSpellFixture(World& world,Npc& player,std::string_view fixture);
 void destructionCheckpoint(World& world);
@@ -1368,6 +1409,10 @@ void arrowFields(World& world);
 float aimSegmentDistance(const Tempest::Vec3& p, const Tempest::Vec3& q, const Tempest::Vec3& a, const Tempest::Vec3& b, float& along);
 float aimBoxDistance(const Tempest::Vec3& from, const Tempest::Vec3& to, const Tempest::Vec3 (&box)[2]);
 std::vector<std::string> split(std::string_view s);
+WorldContext worldContext();
+bool worldCommand(const WorldContext& context,const std::string& line,const std::vector<std::string>& a,
+                  World& w,Npc& pl,PlayerControl& ctrl);
+
 ArcheryContext archeryContext();
 bool archeryCommand(const ArcheryContext& context,const std::string& line,const std::vector<std::string>& a,
                     World& w,Npc& pl,PlayerControl& ctrl);
