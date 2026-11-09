@@ -237,6 +237,8 @@ Ragdoll, физические тела живых NPC, возврат после
 | Сценарии e2e | `scenarios/`: группы моделей в `groups.py`, общее в `common.py`, поддельный Responses WS/HTTP-сервер — в `responses_server.py`; модуль каждой области — в списке «Сценарии по областям» ниже; точки входа — в `__init__.py` |
 | Диспетчер e2e | `scenarios/dispatch.py`: `run_scenario` выбирает сценарий, получает сервисы через `ScenarioContext` из `cli.serve` и возвращает код выхода |
 
+Тесты `bodypilot` — `server/tests/test_bodypilot_*.py`: захват управления, политика, наблюдения и действия, heartbeat, цели, освобождение управления, несколько боёв и сводки. Общий стенд — [`bodypilot_helpers.py`](../server/tests/bodypilot_helpers.py).
+
 ## Движок: наши подсистемы
 
 Расставленные `Item`: перепись исходных форм после мебели, спящие тела рядом с героем и необязательная связь с ZEN в сейве — `common/world/worldobjects.*`, `objects/item.*`, `physics/dynamicworld.*`; `[GAME] placed_items`, Marvin `toggle placed_items`, `PLACED_ITEMS=0` в стендах. Нативный контракт `gothic-placed-items-contract`, численные стенды `placed-items` / `placed-items-census` / `placed-items-reload` / `placed-items-performance`; [перепись, пробуждение и замеры](../reports/physics/2026-10-31-placed-items/README.md).
