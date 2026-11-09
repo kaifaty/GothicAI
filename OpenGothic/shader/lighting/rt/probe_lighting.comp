@@ -192,12 +192,65 @@ bool findProbe(vec3 pos, vec3 norm, out uint id) {
   return false;
   }
 
-vec3 bounce(vec3 pos, vec3 norm) {
-  // the light of the hit's own surroundings: the probe there, else this probe's in the hit's direction
+bool traceHit(vec3 origin, vec3 dir, out vec3 albedo, out vec3 norm, out float rayT) {
+  // a ray of probe_trace.comp: front faces, the alpha test of vegetation
+  rayQueryEXT rayQuery;
+  rayQueryInitializeEXT(rayQuery, topLevelAS, gl_RayFlagsSkipAABBEXT | gl_RayFlagsCullBackFacingTrianglesEXT, 0xFF,
+                        origin, 0.0, dir, probeRayDistance);
+  rayQueryProceedShadow(rayQuery);
+  if(rayQueryGetIntersectionTypeEXT(rayQuery, true) == gl_RayQueryCommittedIntersectionNoneEXT)
+    return false;
+
+  const HitDesc hit   = pullCommitedHitDesc(rayQuery);
+  const uint    id    = hit.instanceId;
+  const uvec3   index = pullTrinagleIds(id, hit.primitiveId);
+  const vec3    b     = hit.baryCoord;
+  const vec2    uv    = b.x*pullTexcoord(id,index.x) + b.y*pullTexcoord(id,index.y) + b.z*pullTexcoord(id,index.z);
+  const vec3    nr    = b.x*pullNormal(id,index.x)   + b.y*pullNormal(id,index.y)   + b.z*pullNormal(id,index.z);
+
+  rayT = rayQueryGetIntersectionTEXT(rayQuery, true);
+  norm = normalize(mat3(rayQueryGetIntersectionObjectToWorldEXT(rayQuery, true))*nr);
+  // the mip of the path tracer's later bounces (pathtrace_common.glsl, rayPathTextureLOD)
+  const float mip = log2(max(rayT, 1.0)/500.0) - log2(max(abs(dot(dir, norm)), 0.05));
+  albedo = textureAlbedo(textureLod(sampler2D(textures[nonuniformEXT(id)], smp), uv, max(mip, 0.0)).rgb);
+  return true;
+  }
+
+vec3 pathBounce(vec3 pos, vec3 norm, inout Random rng) {
+  // no probe of the last frame at the hit (off the screen or hidden): one more bounce of the path, cosine-weighted,
+  // lit as the hit itself; a single sample of the irradiance over pi
+  const vec3 dir = randCosWeightedHemisphereDirection(norm, rng);
+  const vec3 org = pos + norm*0.5;
+  vec3  albedo, n2;
+  float t;
+  if(!traceHit(org, dir, albedo, n2, t))
+    return skyRadiance(pos, dir);
+
+  const vec3 p2 = org + dir*t;
+  if(dot(n2, dir)>0)
+    n2 = -n2;
+  albedo = min(albedo, vec3(0.95));
+  const vec3 at = p2 + n2*0.5;
+
+  vec3 direct = vec3(0);
+  direct += sunLight(n2, at) * scene.sunColor;
+  direct += localLight(n2, at, randf(rng)) * (max(1.0, scene.exposure) / scene.exposure);
+
+  uint id = 0;
+  const vec3 ind = findProbe(p2, n2, id) ? probeReadAmbient(probesLightingPrev, id, n2, vec3(0)) : readSelf(n2);
+  return albedo*direct*Fd_Lambert + albedo*ind;
+  }
+
+vec3 bounce(vec3 pos, vec3 norm, inout Random rng) {
+  // the light of the hit's own surroundings: the probe there, else one more bounce of the path
   uint id = 0;
   if(findProbe(pos, norm, id))
     return probeReadAmbient(probesLightingPrev, id, norm, vec3(0));
+#if defined(SELF_BOUNCE)
   return readSelf(norm);
+#else
+  return pathBounce(pos, norm, rng);
+#endif
   }
 
 vec4 shadeSample(const vec3 rayOrigin, const vec3 rayDirection, uint probeId, uint sampleId) {
@@ -231,7 +284,8 @@ vec4 shadeSample(const vec3 rayOrigin, const vec3 rayDirection, uint probeId, ui
   direct += localLight(norm, at, key) * (max(1.0, scene.exposure) / scene.exposure);
 
   vec3 hit = albedo * direct * Fd_Lambert;
-  hit += albedo * bounce(pos, norm); // Fd_Lambert is in the probes' integration
+  Random rng = srand(uvec3(probeId, sampleId, frameId));
+  hit += albedo * bounce(pos, norm, rng); // Fd_Lambert is in the probes' integration
   return vec4(hit, 1);
   }
 
