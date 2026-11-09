@@ -1,0 +1,170 @@
+# Reflected light (GI): shots and clips of the places where it shows, for the review of step 2 of the ray-tracing
+# revisit (reports/render-features/2026-11-08-rt-revisit/step-2.md). Run it once per variant, the same window:
+#   OPENGOTHIC_RT=0                  TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh gi-clips
+#   OPENGOTHIC_RT=1 OPENGOTHIC_GI=1  TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh gi-clips
+#   OPENGOTHIC_RT=1 OPENGOTHIC_GI=2  TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh gi-clips
+# gi-reference.bench is the path-traced reference of the same shots: change both together.
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+cam lift off
+
+# 1. The candle- and torch-lit harbour house of perf-interior at night (views 2 and 3: the hearth, the shelves):
+#    fire light bounces off the walls, the corners away from it stay dark, no sky comes in; a slow pan.
+set time 22 0
+goto pos 3924 -73 -6663
+clear 3000
+watch player
+cam look 110
+cam world 160 170 90
+wait 10000
+cam hold
+shot interior-night-1
+wait 3000
+cam world 160 170 180
+wait 300
+cam hold
+shot interior-night-2
+rec interior-night-pan
+wait 1000
+cloth camera-turn 60 8000
+wait 1000
+stop
+
+# 2. A plank hut of the harbour's poor quarter: thin walls (light leaks), the sun through the gaps and the door at
+#    noon, at night the dark.
+set time 12 0
+goto NW_CITY_HABOUR_POOR_AREA_HUT_01_IN
+clear 3000
+watch player
+cam look 110
+cam world 180 170 0
+wait 10000
+cam hold
+shot hut-day-1
+wait 3000
+cam world 180 170 180
+wait 300
+cam hold
+shot hut-day-2
+wait 1000
+set time 23 0
+wait 3000
+cam world 180 170 0
+wait 300
+cam hold
+shot hut-night-1
+wait 1000
+
+# 3. Onar's stable at noon: the open side, the sunlit yard bounces in under the roof.
+set time 12 0
+goto NW_BIGFARM_STABLE_01_02
+clear 3000
+watch player
+cam look 120
+cam world 300 200 0
+wait 10000
+cam hold
+shot stable-day-1
+wait 3000
+cam world 300 200 180
+wait 300
+cam hold
+shot stable-day-2
+wait 1000
+
+# 4. Lobart's farmhouse at noon: daylight through the door and the windows.
+goto NW_FARM1_INHOUSE_02
+clear 3000
+watch player
+cam look 110
+cam world 180 170 0
+wait 10000
+cam hold
+shot farmhouse-day-1
+wait 3000
+cam world 180 170 180
+wait 300
+cam hold
+shot farmhouse-day-2
+wait 1000
+
+# 5. The night harbour of perf-harbour-night: lamp posts on the quay, the houses around; a slow pan.
+set time 0 0
+goto pos 5391 320 -5822
+clear 3000
+watch player
+cam look 120
+cam world 850 300 0
+wait 10000
+cam hold
+shot harbour-night-1
+wait 3000
+cam world 850 300 180
+wait 300
+cam hold
+shot harbour-night-2
+rec harbour-night-pan
+wait 1000
+cloth camera-turn 35 7000
+wait 1000
+stop
+
+# 6. The forest at noon under the crowns (perf-forest, sideways views): sky light and the bounce off the trunks.
+set time 12 0
+goto NW_FOREST_PATH_16
+clear 3000
+watch player
+cam look 150
+cam world 500 300 90
+wait 10000
+cam hold
+shot forest-1
+wait 3000
+cam world 500 300 270
+wait 300
+cam hold
+shot forest-2
+wait 1000
+
+# 7. The bandit cave by Lobart's farm at noon and at night: daylight from the mouth, the fire inside.
+goto NW_FARM1_BANDITS_CAVE_02
+clear 3000
+watch player
+cam look 120
+cam world 350 180 0
+wait 10000
+cam hold
+shot cave-day-1
+wait 3000
+cam world 350 180 180
+wait 300
+cam hold
+shot cave-day-2
+wait 1000
+set time 23 0
+wait 3000
+cam world 350 180 0
+wait 300
+cam hold
+shot cave-night-1
+wait 3000
+cam world 350 180 180
+wait 300
+cam hold
+shot cave-night-2
+wait 1000
+
+# 8. The market at noon (perf-market): the sun's bounce between the plastered walls and the ground.
+set time 12 0
+goto NW_CITY_MERCHANT_TRADE_04
+clear 3000
+watch player
+cam look 120
+cam world 700 280 90
+wait 10000
+cam hold
+shot market-day
+wait 1000

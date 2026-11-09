@@ -1,0 +1,181 @@
+# The path-traced reference (5 bounces, sun, sky and lamps; shader/lighting/pt/pathtrace.frag) of the gi-clips
+# views: the same shots, accumulated while the camera holds still. The hero, NPC and grass are not in the ray
+# scene, so they are missing from it. Run with rays on and no GI, the window of gi-clips:
+#   OPENGOTHIC_RT=1 OPENGOTHIC_GI=0 TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh gi-reference
+# Made from gi-clips.bench: shots get 12 s to accumulate, a clip becomes a 2 s wait (a path-traced shot is
+# written a few slow frames later: the next goto must not come first). Change both together.
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+cam lift off
+toggle pathtrace
+
+# 1. The candle- and torch-lit harbour house of perf-interior at night (views 2 and 3: the hearth, the shelves):
+#    fire light bounces off the walls, the corners away from it stay dark, no sky comes in; a slow pan.
+set time 22 0
+goto pos 3924 -73 -6663
+clear 3000
+watch player
+cam look 110
+cam world 160 170 90
+wait 10000
+cam hold
+wait 12000
+shot interior-night-1
+wait 3000
+cam world 160 170 180
+wait 300
+cam hold
+wait 12000
+shot interior-night-2
+wait 2000
+
+# 2. A plank hut of the harbour's poor quarter: thin walls (light leaks), the sun through the gaps and the door at
+#    noon, at night the dark.
+set time 12 0
+goto NW_CITY_HABOUR_POOR_AREA_HUT_01_IN
+clear 3000
+watch player
+cam look 110
+cam world 180 170 0
+wait 10000
+cam hold
+wait 12000
+shot hut-day-1
+wait 3000
+cam world 180 170 180
+wait 300
+cam hold
+wait 12000
+shot hut-day-2
+wait 1000
+set time 23 0
+wait 3000
+cam world 180 170 0
+wait 300
+cam hold
+wait 12000
+shot hut-night-1
+wait 1000
+
+# 3. Onar's stable at noon: the open side, the sunlit yard bounces in under the roof.
+set time 12 0
+goto NW_BIGFARM_STABLE_01_02
+clear 3000
+watch player
+cam look 120
+cam world 300 200 0
+wait 10000
+cam hold
+wait 12000
+shot stable-day-1
+wait 3000
+cam world 300 200 180
+wait 300
+cam hold
+wait 12000
+shot stable-day-2
+wait 1000
+
+# 4. Lobart's farmhouse at noon: daylight through the door and the windows.
+goto NW_FARM1_INHOUSE_02
+clear 3000
+watch player
+cam look 110
+cam world 180 170 0
+wait 10000
+cam hold
+wait 12000
+shot farmhouse-day-1
+wait 3000
+cam world 180 170 180
+wait 300
+cam hold
+wait 12000
+shot farmhouse-day-2
+wait 1000
+
+# 5. The night harbour of perf-harbour-night: lamp posts on the quay, the houses around; a slow pan.
+set time 0 0
+goto pos 5391 320 -5822
+clear 3000
+watch player
+cam look 120
+cam world 850 300 0
+wait 10000
+cam hold
+wait 12000
+shot harbour-night-1
+wait 3000
+cam world 850 300 180
+wait 300
+cam hold
+wait 12000
+shot harbour-night-2
+wait 2000
+
+# 6. The forest at noon under the crowns (perf-forest, sideways views): sky light and the bounce off the trunks.
+set time 12 0
+goto NW_FOREST_PATH_16
+clear 3000
+watch player
+cam look 150
+cam world 500 300 90
+wait 10000
+cam hold
+wait 12000
+shot forest-1
+wait 3000
+cam world 500 300 270
+wait 300
+cam hold
+wait 12000
+shot forest-2
+wait 1000
+
+# 7. The bandit cave by Lobart's farm at noon and at night: daylight from the mouth, the fire inside.
+goto NW_FARM1_BANDITS_CAVE_02
+clear 3000
+watch player
+cam look 120
+cam world 350 180 0
+wait 10000
+cam hold
+wait 12000
+shot cave-day-1
+wait 3000
+cam world 350 180 180
+wait 300
+cam hold
+wait 12000
+shot cave-day-2
+wait 1000
+set time 23 0
+wait 3000
+cam world 350 180 0
+wait 300
+cam hold
+wait 12000
+shot cave-night-1
+wait 3000
+cam world 350 180 180
+wait 300
+cam hold
+wait 12000
+shot cave-night-2
+wait 1000
+
+# 8. The market at noon (perf-market): the sun's bounce between the plastered walls and the ground.
+set time 12 0
+goto NW_CITY_MERCHANT_TRADE_04
+clear 3000
+watch player
+cam look 120
+cam world 700 280 90
+wait 10000
+cam hold
+wait 12000
+shot market-day
+wait 1000
