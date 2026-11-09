@@ -1,6 +1,7 @@
 #include "game/ragdollsave.h"
 #include "game/serialize.h"
 #include "resources.h"
+#include "asset/fromzenkit.h"
 #include "asset/modeltypes.h"
 
 #include <Tempest/MemReader>
@@ -168,7 +169,7 @@ namespace {
 
   void testAnimationSampleCompatibility() {
     const zenkit::AnimationSample source{{-0.f,12.25f,-34.5f},{.8f,-0.f,.6f,0.f}};
-    const asset::AnimationSample own{source.position,source.rotation};
+    const asset::AnimationSample own{asset::fromZenKit(source.position),asset::fromZenKit(source.rotation)};
     static_assert(sizeof(own)==sizeof(source));
     const auto bytes=archive([&](Serialize& output) {
       output.setEntry("animation/owned");
