@@ -146,7 +146,72 @@ void parseCues(const rapidjson::Value& list, const GltfHeadMesh& head, FaceProfi
     }
   }
 
+void parseLeaks(const rapidjson::Value& v, const GltfHeadMesh& head, FaceProfile& ret) {
+  // {"on_ms": 120, "hold_ms": 120, "off_ms": 160, "felt": {"afraid": {"upper": {target: weight}, "lower": {...}}}}
+  if(!v.IsObject())
+    fail("leaks must be an object");
+  for(const auto& m:v.GetObject()) {
+    const auto key = str(m.name);
+    if(key!="on_ms" && key!="hold_ms" && key!="off_ms" && key!="felt")
+      fail("leaks: unknown field "+quoted(key));
+    }
+  auto& time = ret.leakTime;
+  time.onMs   = float(number(v,"on_ms","leaks"));
+  time.holdMs = float(number(v,"hold_ms","leaks"));
+  time.offMs  = float(number(v,"off_ms","leaks"));
+  if(time.holdMs<0)
+    fail("leaks: hold_ms must not be negative");
+  if(time.onMs<=0 || time.offMs<=0)
+    fail("leaks: on_ms and off_ms must be above 0");
+  if(!v.HasMember("felt") || !v["felt"].IsObject())
+    fail("leaks: felt must be an object of the felt moods");
+  for(const auto& f:v["felt"].GetObject()) {
+    const auto felt  = str(f.name);
+    const auto where = "leak "+quoted(felt);
+    if(!FaceProfile::isFelt(felt))
+      fail(where+": unknown feeling (friendly, angry, hostile, afraid, pain)");
+    if(!f.value.IsObject())
+      fail(where+": must be an object of the halves upper and lower");
+    for(const auto& h:f.value.GetObject()) {
+      const auto half = str(h.name);
+      const auto at   = where+" "+std::string(half);
+      if(half!="upper" && half!="lower")
+        fail(where+": unknown half "+quoted(half)+" (upper or lower)");
+      if(!h.value.IsObject() || h.value.MemberCount()==0)
+        fail(at+": must be a non-empty object of target weights");
+      FaceProfile::Leak l;
+      l.felt  = std::string(felt);
+      l.lower = half=="lower";
+      for(const auto& w:h.value.GetObject()) {
+        const auto target = str(w.name);
+        const auto id     = targetOf(head,target);
+        if(id==size_t(-1))
+          fail(at+": unknown target "+quoted(target));
+        if(!w.value.IsNumber() || !std::isfinite(w.value.GetDouble()) || w.value.GetDouble()<0 || w.value.GetDouble()>1)
+          fail(at+": the weight of "+quoted(target)+" must be a number 0..1");
+        l.weights.emplace_back(uint32_t(id),float(w.value.GetDouble()));
+        l.peak = std::max(l.peak,float(w.value.GetDouble()));
+        }
+      ret.leaks.push_back(std::move(l));
+      }
+    }
+  }
+
 }
+
+bool FaceProfile::isFelt(std::string_view felt) {
+  for(auto f:Felt)
+    if(f==felt)
+      return true;
+  return false;
+  }
+
+const FaceProfile::Leak* FaceProfile::findLeak(std::string_view felt, bool lower) const {
+  for(auto& l:leaks)
+    if(l.felt==felt && l.lower==lower)
+      return &l;
+  return nullptr;
+  }
 
 float FaceProfile::Cue::span(float hold) const {
   float ret = 0;
@@ -185,7 +250,7 @@ std::unique_ptr<FaceProfile> FaceProfile::parse(std::string_view json, const Glt
     fail("the profile must be a JSON object");
   for(const auto& m:doc.GetObject()) {
     const auto key = str(m.name);
-    if(key!="version" && key!="about" && key!="mouth" && key!="anims" && key!="cues")
+    if(key!="version" && key!="about" && key!="mouth" && key!="anims" && key!="cues" && key!="leaks")
       fail("unknown field "+quoted(key));
     }
   if(!doc.HasMember("version") || !doc["version"].IsInt() || doc["version"].GetInt()!=1)
@@ -303,6 +368,8 @@ std::unique_ptr<FaceProfile> FaceProfile::parse(std::string_view json, const Glt
     }
   if(doc.HasMember("cues"))
     parseCues(doc["cues"],head,*ret);
+  if(doc.HasMember("leaks"))
+    parseLeaks(doc["leaks"],head,*ret);
   return ret;
   }
 
@@ -316,6 +383,10 @@ void FaceRig::setup(const GltfHeadMesh* h, const FaceProfile* p) {
   profile  = p;
   slots.clear();
   runs.clear();
+  leakRun  = LeakRun();
+  posed    = false;
+  posedEnd = 0;
+  squint.clear();
   want.clear();
   applied.clear();
   pos.clear();
@@ -337,6 +408,11 @@ void FaceRig::setup(const GltfHeadMesh* h, const FaceProfile* p) {
     speechLayer = v->layer;
   want   .assign(head->targets.size(),0.f);
   applied.assign(head->targets.size(),0.f);
+  squint .assign(head->targets.size(),0);
+  for(size_t t=0; t<head->targets.size(); ++t) {
+    const auto& n = head->targets[t].name;
+    squint[t] = n.compare(0,9,"eyeSquint")==0 || n.compare(0,11,"cheekSquint")==0;
+    }
   }
 
 float FaceRig::fade(const Slot& s, uint64_t now) const {
@@ -479,6 +555,49 @@ bool FaceRig::startCue(std::string_view name, bool mirror, float hold, uint64_t 
   return true;
   }
 
+bool FaceRig::startLeak(std::string_view felt, bool lower, uint64_t start, uint64_t now) {
+  if(!isActive())
+    return false;
+  const auto* l = profile->findLeak(felt,lower);
+  if(l==nullptr)
+    return false;
+  leakRun.leak  = size_t(l-profile->leaks.data());
+  leakRun.start = std::min(start,now);
+  leakRun.on    = true;
+  return true;
+  }
+
+float FaceRig::leakEnvelope(uint64_t now) const {
+  // as a cue's part (cues.py env)
+  if(!leakRun.on || now<=leakRun.start)
+    return 0;
+  const auto& lt = profile->leakTime;
+  const float t  = float(now-leakRun.start);
+  return ease(t/lt.onMs)*(1.f-ease((t-lt.onMs-lt.holdMs)/lt.offMs));
+  }
+
+float FaceRig::leakWeight(uint64_t now) const {
+  if(!isActive() || !leakRun.on)
+    return 0;
+  return leakEnvelope(now)*profile->leaks[leakRun.leak].peak;
+  }
+
+void FaceRig::setPosed(bool on, uint64_t now) {
+  if(on==posed)
+    return;
+  posed = on;
+  if(!on)
+    posedEnd = now;
+  }
+
+float FaceRig::posedCut(uint64_t now) const {
+  if(posed)
+    return 1;
+  if(posedEnd==0 || now>=posedEnd+PosedFadeMs)
+    return 0;
+  return 1.f-float(now>posedEnd ? now-posedEnd : 0)/float(PosedFadeMs);
+  }
+
 float FaceRig::cueEnvelope(const CueRun& r, size_t part, uint64_t now) const {
   // cues.py env: a smooth step up over on_ms, the hold, a smooth step down over off_ms
   const auto& p    = profile->cues[r.cue].parts[part];
@@ -523,6 +642,8 @@ void FaceRig::mix(uint64_t now, std::vector<float>& out) const {
       if(isOn(s,now) && profile->anims[s.anim].layer==speechLayer)
         speech = std::max(speech, s.intensity*fade(s,now));
   const float quiet = 1.f - SpeechMouth*std::clamp(speech,0.f,1.f);
+  // a posed smile: the squint of the expression cut
+  const float keep  = 1.f - posedCut(now);
 
   for(auto& s:slots) {
     const float k = s.intensity*fade(s,now);
@@ -547,7 +668,7 @@ void FaceRig::mix(uint64_t now, std::vector<float>& out) const {
       if(part<=0)
         continue;
       for(auto& [t,w]:a.frames[frame])
-        out[t] += w*k*part*(damp && profile->mouth[t]!=0 ? quiet : 1.f);
+        out[t] += w*k*part*(damp && profile->mouth[t]!=0 ? quiet : 1.f)*(squint[t]!=0 ? keep : 1.f);
       }
     }
   // the gestures over all of it, not quieted by the voice (the mouth ones go into its pauses anyway)
@@ -561,6 +682,10 @@ void FaceRig::mix(uint64_t now, std::vector<float>& out) const {
         out[t] += w*e;
       }
     }
+  // a leak the same way: added to all of it, putting out nothing
+  if(const float e = leakEnvelope(now); e>0)
+    for(auto& [t,w]:profile->leaks[leakRun.leak].weights)
+      out[t] += w*e;
   for(auto& w:out)
     w = std::clamp(w,0.f,1.f);
   }
@@ -571,6 +696,8 @@ FaceRig::Result FaceRig::update(uint64_t now) {
   runs.erase(std::remove_if(runs.begin(),runs.end(),[&](const CueRun& r) {
     return now>r.start && float(now-r.start)>profile->cues[r.cue].span(r.hold);
     }),runs.end());
+  if(leakRun.on && now>leakRun.start && float(now-leakRun.start)>profile->leakTime.span())
+    leakRun.on = false;
   mix(now,want);
 
   bool zero = true;
@@ -741,6 +868,12 @@ void FaceRig::probe(Probe& p, uint64_t now) const {
     const char* side = c.side==0 ? "" : ((c.side=='L')!=r.mirror ? ":L" : ":R");
     char buf[64];
     std::snprintf(buf,sizeof(buf),"%s%s%s %.2f",p.shown.empty() ? "" : " ",c.name.c_str(),side,double(k));
+    p.shown += buf;
+    }
+  if(const float k = leakWeight(now); k>0) {
+    const auto& l = profile->leaks[leakRun.leak];
+    char buf[64];
+    std::snprintf(buf,sizeof(buf),"%sleak:%s:%s %.2f",p.shown.empty() ? "" : " ",l.felt.c_str(),l.lower ? "lower" : "upper",double(k));
     p.shown += buf;
     }
   for(auto w:applied)

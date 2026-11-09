@@ -68,6 +68,7 @@ void writeHeader() {
   std::fprintf(bench.csv,",rig_on,rig_anims,rig_targets,rig_us,rig_n,rig_up_us");
   for(auto* c:CueColumns)
     std::fprintf(bench.csv,",cue_%s",c);
+  std::fprintf(bench.csv,",cue_leak");
   std::fprintf(bench.csv,",f_on,f_bend,f_yaw,f_twist,f_head,f_hits,f_str,f_ht");
   std::fprintf(bench.csv,",hp_player,hp_subject");
   std::fprintf(bench.csv,",stamina_player,stamina_subject");
@@ -534,6 +535,8 @@ void writeRow(Npc& pl) {
   // its gestures as shown, 0..1
   for(auto* c:CueColumns)
     std::fprintf(bench.csv,",%.3f",s.cueWeight(c));
+  // and a leak: its strongest weight as shown
+  std::fprintf(bench.csv,",%.3f",s.leakWeight());
   // flinch of the watched one (or the hero)
   const auto& fl = bench.subject!=nullptr ? Flinch::subjectProbe : Flinch::playerProbe;
   std::fprintf(bench.csv,",%d,%.2f,%.1f,%.2f,%.2f,%u,%.2f,%.2f",int(fl.active),fl.bend,fl.bendYaw,fl.twist,fl.head,

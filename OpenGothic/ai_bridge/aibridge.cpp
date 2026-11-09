@@ -32,6 +32,7 @@
 #include "stucklogger.h"
 #include "jsonread.h"
 #include "jsonwriter.h"
+#include "linecues.h"
 #include "npcfind.h"
 #include "textcodec.h"
 #include "voicebuffer.h"
@@ -50,45 +51,6 @@ constexpr const char* DefaultUrl      = "ws://127.0.0.1:47817";
 constexpr float       IntroCm         = 3000;  // -nointro: those this near the hero at the start
 
 constexpr uint32_t    MoodHoldMs      = 2000;  // the face of a line stays this long after it, then fades (a second)
-
-// the time of a line's words in its sound (v62): [[word, start s, end s], ...] of say, say_audio or say_end
-void readWords(const rapidjson::Value& msg, SpeechCues::Plan& plan) {
-  if(!msg.IsObject())
-    return;
-  const auto it = msg.FindMember("words");
-  if(it==msg.MemberEnd() || !it->value.IsArray())
-    return;
-  for(const auto& w:it->value.GetArray()) {
-    if(!w.IsArray() || w.Size()<3 || !w[0].IsInt() || w[0].GetInt()<0 || !w[1].IsNumber() || !w[2].IsNumber())
-      continue;
-    plan.setWord(size_t(w[0].GetInt()),float(w[1].GetDouble()),float(w[2].GetDouble()));
-    }
-  }
-
-// the facial gestures of a line (v61): [{"cue": name, "word": index of the word in its text}]; each one-sided one
-// goes on a side by the seed of the npc, the line and its place
-std::shared_ptr<SpeechCues::Plan> readCues(const rapidjson::Value& msg, const std::string& npc, const std::string& line,
-                                           std::string_view text, bool streamed) {
-  const auto it = msg.FindMember("cues");
-  if(it==msg.MemberEnd() || !it->value.IsArray() || it->value.Empty())
-    return nullptr;
-  auto plan = std::make_shared<SpeechCues::Plan>(text);
-  for(const auto& c:it->value.GetArray()) {
-    const auto name = JsonRead::str(c,"cue");
-    const auto word = JsonRead::integer(c,"word",-1);
-    if(name.empty() || word<0 || size_t(word)>=plan->words.size()) {
-      Log::e("[ai] say: a gesture without its word: ",line," ",name," ",word);
-      continue;
-      }
-    const auto seed = SpeechCues::seedOf(npc+"/"+line+"/"+std::to_string(plan->cues.size()));
-    plan->cues.push_back({std::string(name),uint32_t(word),SpeechCues::sideOf(seed)});
-    }
-  if(plan->cues.empty())
-    return nullptr;
-  plan->streamed = streamed;
-  readWords(msg,*plan);
-  return plan;
-  }
 
 // the face of the game's heads for a mood of a line (v9)
 std::string_view moodFace(std::string_view mood) {
@@ -1332,8 +1294,23 @@ bool AiBridge::Impl::onConsoleCommand(std::string_view cmd, std::string& reply) 
     return true;
     }
 
+  if(sub=="leak" && args.size()>4) {
+    // ai leak <npc|player> <felt> <upper|lower>: a leak of the felt emotion on its own head now, as a line that hides
+    // a lie, with the liar's two blinks after it
+    Npc* npc = lower(args[2])=="player" ? world->player() : npcBySymbol(*world,upperSymbol(args[2]));
+    const auto half = lower(args[4]);
+    if(npc==nullptr || (half!="upper" && half!="lower")) {
+      reply = npc==nullptr ? "no npc " + args[2] : "the half is upper or lower";
+      return true;
+      }
+    reply = npc->startLeak(lower(args[3]),half=="lower")
+              ? "leak " + lower(args[3]) + " " + half
+              : "no leak " + args[3] + " " + half + " on its head (an own head with leaks in its face profile)";
+    return true;
+    }
+
   reply = "usage: ai status | ai attach <npc> | ai detach [npc] | ai dialogs <npc> | ai skip <npc> | ai ptt start [<wav>]|stop|cancel"
-          " | ai cue <npc> <gesture> [L|R]";
+          " | ai cue <npc> <gesture> [L|R] | ai leak <npc> <felt> <upper|lower>";
   return true;
   }
 
@@ -1476,8 +1453,8 @@ void AiBridge::Impl::onSay(World& world, const rapidjson::Value& msg) {
   lines.add(line,symbol,TextCodec::fromUtf8(JsonRead::str(msg,"text")),std::move(wav),std::move(voice),
             std::string(JsonRead::str(msg,"reply")));
   lines.find(line)->mood   = std::string(JsonRead::str(msg,"mood"));
-  // say.leak (v61) is not played yet
-  lines.find(line)->cues   = readCues(msg,symbol,line,lines.find(line)->text,JsonRead::boolean(msg,"stream",false));
+  // its gestures and leak (v61)
+  lines.find(line)->cues   = LineCues::read(msg,symbol,line,lines.find(line)->text,JsonRead::boolean(msg,"stream",false));
   lines.find(line)->filler = JsonRead::boolean(msg,"filler",false);
   lines.find(line)->to     = toId;
   if(!JsonRead::boolean(msg,"overlay",false)) {
@@ -1510,7 +1487,7 @@ void AiBridge::Impl::onSayAudio(World& world, const rapidjson::Value& msg) {
   auto* line = lines.find(JsonRead::str(msg,"line"));
   // the time of the words may come with any piece of the voice, or at its end (v62)
   if(line!=nullptr && line->cues!=nullptr)
-    readWords(msg,*line->cues);
+    LineCues::readWords(msg,*line->cues);
   if(line==nullptr || line->voice==nullptr)
     return;
   if(JsonRead::str(msg,"type")=="say_audio") {
@@ -1914,6 +1891,9 @@ void AiBridge::Impl::onLineStarted(const LineLibrary::Line& line) {
       std::string list;
       for(auto& c:line.cues->cues)
         list += " " + c.name + "@" + std::to_string(c.word) + c.side;
+      if(const auto& l = line.cues->leak)
+        list += " leak:" + l->felt + (l->lower ? ":lower@" : ":upper@") + std::to_string(l->word) +
+                (line.cues->posed() ? " posed" : "");
       Log::i("[ai] cues ",line.npc," ",line.id,":",list);
       }
     }

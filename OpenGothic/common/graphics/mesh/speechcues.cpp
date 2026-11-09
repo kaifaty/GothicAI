@@ -3,7 +3,9 @@
 #include "facerig.h"
 
 #include <algorithm>
+#include <climits>
 #include <cmath>
+#include <cstdint>
 
 namespace {
 
@@ -41,11 +43,27 @@ uint32_t SpeechCues::seedOf(std::string_view s) {
   return h;
   }
 
+void SpeechCues::Out::clear() {
+  cues.clear();
+  leak      = false;
+  leakFelt.clear();
+  leakLower = false;
+  leakAt    = 0;
+  blinks    = 0;
+  reserve.clear();
+  posed     = false;
+  }
+
 void SpeechCues::start(std::shared_ptr<const Plan> p, bool voiced, uint64_t now) {
   plan     = std::move(p);
   planTick = now;
   bound    = false;
   fired.assign(plan!=nullptr ? plan->cues.size() : 0,0);
+  leakFired     = false;
+  leakStart     = -1;
+  blinksPlanned = false;
+  blinks.clear();
+  blinksFired   = 0;
   if(plan==nullptr)
     return;
   if(!voiced) {
@@ -166,9 +184,89 @@ SpeechCues::Slot SpeechCues::mouthSlot(const Plan::Cue& c, float delay, float on
   return best;
   }
 
-void SpeechCues::update(const FaceProfile& profile, uint64_t now, std::vector<Start>& out) {
+void SpeechCues::planBlinks(int64_t from, int64_t lastBlink, float leakMs) {
+  // at random by the seed of the npc and the line, in the sound from now on: away from each other, from the ordinary
+  // blink and from the leak (cues.py: the blinks of a lying segment)
+  blinks.clear();
+  const int64_t lo = from;
+  const int64_t hi = int64_t(heardMs())-int64_t(BlinkMs);
+  const int64_t a  = leakStart-int64_t(LeakClearMs);
+  const int64_t b  = leakStart+int64_t(std::lround(leakMs))+int64_t(LeakClearMs);
+  const auto ok = [&](int64_t x) {
+    if(x<lo || x>hi || (x+int64_t(BlinkMs)>a && x<b))
+      return false;
+    if(std::abs(x-lastBlink)<int64_t(BlinkGapMs))
+      return false;
+    for(auto y:blinks)
+      if(std::abs(x-y)<int64_t(BlinkGapMs))
+        return false;
+    return true;
+    };
+  uint32_t r = plan->seed*2654435761u | 1u;
+  for(int i=0; i<200 && blinks.size()<LiarBlinks && hi>=lo; ++i) {
+    r ^= r<<13;
+    r ^= r>>17;
+    r ^= r<<5;
+    const int64_t x = lo+int64_t(r%uint32_t(hi-lo+1));
+    if(ok(x))
+      blinks.push_back(x);
+    }
+  // a short line: the first places that are left, if any
+  for(int64_t x=lo; x<=hi && blinks.size()<LiarBlinks; x+=10)
+    if(ok(x))
+      blinks.push_back(x);
+  std::sort(blinks.begin(),blinks.end());
+  }
+
+bool SpeechCues::updateLeak(const FaceProfile& profile, uint64_t now, uint64_t t, uint64_t lastBlink, Out& out) {
+  if(!plan->leak.has_value())
+    return true;
+  const auto& l    = *plan->leak;
+  bool        done = true;
+  if(!leakFired) {
+    // as an upper gesture: a moment before its word
+    const int64_t w = wordMs(l.word);
+    const int64_t s = w>=0 ? std::max<int64_t>(0,w-int64_t(UpperLeadMs)) : -1;
+    if(s<0 || int64_t(t)<s) {
+      done = false;
+      } else {
+      const uint64_t late = t-uint64_t(s);
+      const uint64_t back = late<=LateMs ? std::min(now,late) : 0;
+      leakFired = true;
+      leakStart = int64_t(t-back);
+      if(profile.findLeak(l.felt,l.lower)!=nullptr) {
+        out.leak      = true;
+        out.leakFelt  = l.felt;
+        out.leakLower = l.lower;
+        out.leakAt    = now-back;
+        }
+      }
+    }
+  // the liar's blinks, once the time of the leak is sure (it started, or its word has its own time) and the length
+  // of the sound is known
+  if(!blinksPlanned) {
+    const bool sure = leakFired || (l.word<plan->words.size() && plan->words[l.word].start>=0);
+    if(!sure || !complete())
+      return false;
+    if(!leakFired)
+      leakStart = std::max<int64_t>(0,wordMs(l.word)-int64_t(UpperLeadMs));
+    const int64_t last = lastBlink==0 ? INT64_MIN/2 : int64_t(t)+(int64_t(lastBlink)-int64_t(now));
+    planBlinks(int64_t(t),last,profile.leaks.empty() ? 0.f : profile.leakTime.span());
+    blinksPlanned = true;
+    for(auto b:blinks)
+      out.reserve.push_back(now+uint64_t(b-int64_t(t)));
+    }
+  while(blinksFired<blinks.size() && int64_t(t)>=blinks[blinksFired]) {
+    ++out.blinks;
+    ++blinksFired;
+    }
+  return done && blinksFired==blinks.size();
+  }
+
+void SpeechCues::update(const FaceProfile& profile, uint64_t now, uint64_t lastBlink, Out& out) {
   if(plan==nullptr)
     return;
+  out.posed = plan->posed();
   if(!bound) {
     if(now-planTick<=BindMs)
       return;
@@ -219,9 +317,14 @@ void SpeechCues::update(const FaceProfile& profile, uint64_t now, std::vector<St
         st.hold = std::clamp(float(s.limit-int64_t(t))-p.delayMs-p.onMs-p.offMs,lo,hi);
         }
       }
-    out.push_back(st);
+    out.cues.push_back(st);
     fired[i] = 1;
     }
+  if(!updateLeak(profile,now,t,lastBlink,out))
+    done = false;
+  // a posed smile lasts as long as the line
+  if(plan->posed() && !(complete() && t>=heardMs()))
+    done = false;
   if(done)
     plan = nullptr;
   }

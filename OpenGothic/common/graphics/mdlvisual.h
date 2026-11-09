@@ -220,6 +220,9 @@ class MdlVisual final {
     // a gesture of the own head's profile now (the bench, the console): side 'L'/'R', 0 - by the seed; false: none
     bool                           startCue       (Npc& npc, std::string_view name, char side);
     float                          cueWeight      (const Npc& npc, std::string_view name) const;
+    // a leak of the own head's table now, as a line that hides a lie (with the liar's blinks); false: none
+    bool                           startLeak      (Npc& npc, std::string_view felt, bool lower);
+    float                          leakWeight     (const Npc& npc) const;
     const GltfHeadMesh*            headMesh() const;
     void                           stopDlgAnim    (Npc& npc);
     // a voiced line: the mouth follows the voice instead of the talk loop
@@ -350,7 +353,8 @@ class MdlVisual final {
     uint32_t                       blinkShift = 0;        // gaze shifts seen so far
     FaceRig                        face;                  // the own head's face anims (a profile), else none
     SpeechCues                     cues;                  // when the gestures of the line said now start
-    std::vector<SpeechCues::Start> cueStarts;
+    SpeechCues::Out                cueStarts;
+    static constexpr uint64_t      ManualLeakMs = 2000;   // a leak started by hand: the line it makes, ms
     uint32_t                       cueCount = 0;          // gestures started by hand: the seed of their side
     float                          faceUploadUs = 0;      // the last setDeformation of the face, µs (test bench)
     MeshAttach                     ammunition, stateItm;
