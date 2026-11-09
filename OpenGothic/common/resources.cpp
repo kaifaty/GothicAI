@@ -1814,8 +1814,8 @@ std::vector<const Texture2d*> Resources::textureChanges(uint64_t since) {
 
 // Bench `deterministic on` (common/testbench.cpp, reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md).
 // The Full/Tail demotion runs on a wall-clock delay and on memory pressure: with `benchTexturesSettle` texturesReady()
-// also waits until no timed demotion or reload is in flight and the LRU stays (demoted only under pressure); while
-// `benchTexturesFrozen` updateTextures() changes nothing, so the levels of a shot depend on what is seen, not on time.
+// also waits for the timed demotions, a reload in flight and, above the texture target, the demotion LRU (below it
+// the LRU never moves); while `benchTexturesFrozen` updateTextures() changes nothing, so levels depend on the view.
 bool benchTexturesSettle = false;
 bool benchTexturesFrozen = false;
 
