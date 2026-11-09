@@ -811,12 +811,7 @@ struct Bench {
   using FurnitureDrop = testbench_detail::FurnitureDrop;
   using FurnitureParts = testbench_detail::FurnitureParts;
   FurnitureParts furnitureParts;
-  uint32_t ownMeshZen=uint32_t(-1);
-  Vec3 ownMeshAxis,ownMeshApproach,ownMeshHeroStart,ownMeshBodyStart;
-  float ownMeshMaxCrossTrack=0;
-  std::deque<std::pair<uint64_t,Vec3>> ownMeshHeroHistory;
-  bool ownMeshWalking=false;
-  unsigned ownMeshArrowHits=0;
+  OwnMesh ownMesh;
   Water water;
   ItemHulls itemHulls;
   FracturePieces fracturePieces;
@@ -845,13 +840,6 @@ struct Bench {
   uint64_t waterFilmStart=0;
   Destruction destruction;
   Character character;
-  struct OwnMeshChest {
-    Interactive* chest=nullptr;
-    size_t lid=size_t(-1);
-    bool opened=false,sawTransition=false,taken=false;
-    std::string lastAnimation;
-    std::map<size_t,size_t> contents,heroBefore;
-  } ownMeshChest;
   MonsterCharacter monster;
   using PlacedItems = testbench_detail::PlacedItems;
   PlacedItems placedItems;
@@ -884,47 +872,12 @@ struct Bench {
   Npc*        downNpc      = nullptr; // waitdown: till either participant falls
   Npc*        downOther    = nullptr;
   uint64_t    downFrom = 0, downEnd = 0;
-  Npc*        waitRagdollNpc = nullptr;
-  std::string waitRagdollState;
-  uint64_t    waitRagdollEnd = 0;
 #ifdef OPENGOTHIC_ENABLE_APP_CADENCE
   bool        cadenceVerified=false,cadenceWait=false;
   uint32_t    cadenceDown=0;
 #endif
-  bool        ragdollChurn = false;
-  uint64_t    ragdollPulseFrame = 0;
-  std::vector<Vec3> ragdollArenaPlaces;
-  std::vector<float> ragdollArenaRadii;
-  Vec3        ragdollArenaTarget;
-  std::string ragdollArenaWaypoint;
-  bool        ragdollArenaCamera = false;
-  std::string ragdollCoverageMode;
-  size_t      ragdollCoverageFrames = 0;
-  bool        ragdollCoverageActive = false;
-  bool        ragdollCoverageFailed = false;
-  struct BirthLive { Vec3 position; uint64_t tick; bool inAir; };
-  Npc*        birthActor = nullptr;
-  std::string birthLabel;
-  std::deque<BirthLive> birthHistory;
-  Npc*        birthContinuation = nullptr;
-  std::string birthContinuationLabel;
-  uint64_t    birthTick = 0;
-  const Npc*  expectedRagdollLoot = nullptr;
-  bool        ragdollLootDidOpen = false;
-  struct PerfSample {
-    std::string segment;
-    uint64_t frame = 0;
-    float wallMs = 0, stepMs = 0;
-    size_t worldBodies = 0, actors = 0, corpses = 0, physical = 0, sleeping = 0, parts = 0, centersInView = 0, visibleMeshes = 0;
-    size_t physicalBeforeImpulse = 0, sleepingBeforeImpulse = 0;
-    uint64_t rays = 0;
-    };
-  std::vector<PerfSample> ragdollPerformance;
-  std::vector<PerfSample> ragdollCoverage;
-  std::chrono::steady_clock::time_point lastPerfFrame;
-  bool        hasPerfFrame = false;
-  float       perfWallMs = 0;
-  size_t      perfPhysicalBeforeImpulse = 0, perfSleepingBeforeImpulse = 0;
+  RagdollBench ragdoll;
+  using BirthLive = RagdollBench::BirthLive;
   Npc*        duelA        = nullptr; // bodyduel: bench-owned NPCs, never resolved by their script symbols
   Npc*        duelB        = nullptr;
   uint64_t    duelFrom = 0, duelEnd = 0;
@@ -1008,16 +961,6 @@ struct Bench {
   uint64_t    replyQuiet = 0;
   std::FILE*  events    = nullptr;
   std::unordered_map<const Npc*,uint64_t> bodyIds;
-  struct SavedNpc {
-    Npc* npc = nullptr;
-    std::vector<uint8_t> bytes;
-    std::optional<Ragdoll::State> body;
-    std::vector<std::pair<std::string,Vec3>> bones;
-    Vec3 position;
-    int hp = 0;
-    bool dead = false, unconscious = false, enabled = false;
-    };
-  std::unordered_map<std::string,SavedNpc> savedRagdollNpcs;
   uint64_t    nextBodyId = 0;
   uint64_t    bodySeq = 0;
   uint64_t    nativeChoices = 0;
@@ -1053,28 +996,38 @@ struct Bench {
 Bench bench;
 
 bool frameRagdollArena(size_t expected);
+Npc& subjectOf(Npc& pl);
 
 DestructionContext destructionContext() {
   return {bench.cam,bench.movables.movableCenter,bench.movables.movableIds,bench.movables.movableMeasuring,bench.movables.movableReady,
-          bench.movables.movableWalkStart,bench.movables.noiseHost,bench.movables.noiseSource,bench.movables.noiseTrace,bench.ragdollArenaTarget,
-          bench.ragdollArenaWaypoint,bench.movables.spellActors,bench.time,bench.waitUntil};
+          bench.movables.movableWalkStart,bench.movables.noiseHost,bench.movables.noiseSource,bench.movables.noiseTrace,bench.ragdoll.ragdollArenaTarget,
+          bench.ragdoll.ragdollArenaWaypoint,bench.movables.spellActors,bench.time,bench.waitUntil};
   }
 
 }
 
 namespace testbench_detail {
 
+OwnMeshContext ownMeshContext() {
+  return {bench.ownMesh,bench.cam,bench.camAuto};
+  }
+
+RagdollContext ragdollContext() {
+  return {bench.ragdoll,bench.crew,bench.camPos,bench.csv,bench.subject,bench.bodyIds,bench.nextBodyId,
+          bench.step,bench.questNpc,bench.recFrame,bench.recName,ragdollTrace,ragdollPerf,subjectOf};
+  }
+
 ItemWakeContext itemWakeContext() {
-  return {bench.itemWake,bench.destruction,bench.cam,bench.ragdollArenaTarget};
+  return {bench.itemWake,bench.destruction,bench.cam,bench.ragdoll.ragdollArenaTarget};
   }
 
 LivingContext livingContext() {
-  return {bench.living,bench.crew,bench.subject,bench.csv,bench.ragdollArenaPlaces,frameRagdollArena};
+  return {bench.living,bench.crew,bench.subject,bench.csv,bench.ragdoll.ragdollArenaPlaces,frameRagdollArena};
   }
 
 MovablesContext movablesContext() {
   return {bench.movables,bench.cam,bench.crew,bench.questCliff,bench.questWater,
-          bench.ragdollArenaTarget,bench.shot,bench.subject};
+          bench.ragdoll.ragdollArenaTarget,bench.shot,bench.subject};
   }
 
 BodyImpactContext bodyImpactContext() {
@@ -1111,7 +1064,7 @@ CharacterContext characterContext() {
 
 MonsterCharacterContext monsterCharacterContext() {
   return {bench.character,characterContext(),bench.cam,bench.camAuto,bench.subject,
-          bench.ragdollArenaTarget,bench.ragdollArenaPlaces,bench.ragdollArenaWaypoint,bench.rec,bench.recVideo};
+          bench.ragdoll.ragdollArenaTarget,bench.ragdoll.ragdollArenaPlaces,bench.ragdoll.ragdollArenaWaypoint,bench.rec,bench.recVideo};
   }
 
 WaterContext waterContext() {
@@ -1119,7 +1072,7 @@ WaterContext waterContext() {
           bench.movables.movableReady,bench.movables.movableCenter,bench.questWater,bench.destruction.destructionFixtures,
           bench.holds,bench.taps,bench.ctrl,bench.crew,bench.movables.spellActors,bench.movables.spellGuardTrace,
           bench.movables.spellRunes,bench.movables.spellCastingId,bench.movables.spellEquipPending,bench.movables.spellEquipUntil,
-          bench.expectedRagdollLoot,bench.ragdollLootDidOpen};
+          bench.ragdoll.expectedRagdollLoot,bench.ragdoll.ragdollLootDidOpen};
   }
 
 void writeHeartbeat(const World& world) {
@@ -1425,7 +1378,7 @@ void finish() {
     std::FILE* perf=std::fopen((outDir+"/ragdoll-performance.csv").c_str(),"w");
     if(perf!=nullptr) {
       std::fprintf(perf,"seg,frame,wall_ms,step_ms,world_bodies,rays,actors,corpses,physical,sleeping,parts,centers_in_view,physical_before_impulse,sleeping_before_impulse,visible_mesh_proxies\n");
-      for(const auto& sample:bench.ragdollPerformance)
+      for(const auto& sample:bench.ragdoll.ragdollPerformance)
         std::fprintf(perf,"%s,%llu,%.9g,%.9g,%zu,%llu,%zu,%zu,%zu,%zu,%zu,%zu,%zu,%zu,%zu\n",sample.segment.c_str(),
                      (unsigned long long)sample.frame,double(sample.wallMs),double(sample.stepMs),sample.worldBodies,
                      (unsigned long long)sample.rays,sample.actors,sample.corpses,sample.physical,sample.sleeping,sample.parts,sample.centersInView,
@@ -1435,10 +1388,10 @@ void finish() {
       event("ragdoll_error","\"reason\":\"cannot write deferred performance samples\"");
       }
     }
-  if(!bench.ragdollCoverage.empty()) {
+  if(!bench.ragdoll.ragdollCoverage.empty()) {
     if(auto* file=std::fopen((outDir+"/ragdoll-coverage.csv").c_str(),"w")) {
       std::fprintf(file,"mode,frame,actors,corpses,physical,sleeping,parts,centers_in_view,physical_before_impulse,sleeping_before_impulse,visible_meshes\n");
-      for(const auto& sample:bench.ragdollCoverage)
+      for(const auto& sample:bench.ragdoll.ragdollCoverage)
         std::fprintf(file,"%s,%llu,%zu,%zu,%zu,%zu,%zu,%zu,%zu,%zu,%zu\n",sample.segment.c_str(),
                      (unsigned long long)sample.frame,sample.actors,sample.corpses,sample.physical,sample.sleeping,
                      sample.parts,sample.centersInView,sample.physicalBeforeImpulse,sample.sleepingBeforeImpulse,sample.visibleMeshes);
@@ -1837,7 +1790,7 @@ void updateCamera(World& w, Npc& pl) {
     return;
     }
   if(bench.cam==C_RagdollArena) {
-    lookFrom(bench.camPos,bench.ragdollArenaTarget);
+    lookFrom(bench.camPos,bench.ragdoll.ragdollArenaTarget);
     return;
     }
   if(bench.cam==C_Game || bench.cam==C_Hold)
@@ -2029,519 +1982,12 @@ std::string ragdollMatrix(const Matrix4x4& value) {
   return result+"]";
   }
 
-std::string ragdollNativePrecision(const Ragdoll::PartState& part) {
-  return ",\"center_of_mass_meters\":"+ragdollVector(part.centerOfMassMeters)+
-    ",\"rotationxyzw\":["+ragdollNumber(part.rotation.x)+","+ragdollNumber(part.rotation.y)+","+
-      ragdollNumber(part.rotation.z)+","+ragdollNumber(part.rotation.w)+"]"+
-    ",\"linear_velocity_meters\":"+ragdollVector(part.linearVelocityMeters);
-  }
 
 }
+
 
 namespace {
 
-std::string ragdollAncestorFields(const Ragdoll::State& state) {
-  std::string result=",\"legacy_ancestors\":"+std::string(state.legacyAncestors ? "true" : "false")+",\"ancestors\":[";
-  for(size_t i=0;i<state.ancestors.size();++i) {
-    if(i>0) result+=',';
-    const auto& ancestor=state.ancestors[i];
-    result+="{\"bone\":"+std::to_string(ancestor.bone)+",\"anchor_bone\":"+std::to_string(ancestor.anchorBone)+
-      ",\"reference_transform\":"+ragdollMatrix(ancestor.referenceTransform)+"}";
-    }
-  return result+"]";
-  }
-
-}
-
-namespace testbench_detail {
-
-std::string ragdollInventory(const Npc& npc, World& world, Inventory::IteratorType type) {
-  std::map<size_t,size_t> counts;
-  for(auto item=npc.inventory().iterator(type);item.isValid();++item)
-    counts[item->clsId()]+=item.count();
-  std::string result="[";
-  for(const auto& [id,count]:counts) {
-    if(result.size()>1) result+=',';
-    const auto* symbol=world.script().findSymbol(id);
-    result+="{\"class_id\":"+std::to_string(id)+",\"class_name\":"+
-      jsonStr(symbol!=nullptr ? symbol->name() : std::string_view{})+",\"count\":"+std::to_string(count)+"}";
-    }
-  return result+"]";
-  }
-
-}
-
-namespace {
-
-std::vector<uint8_t> oldNpcArchive(const std::vector<uint8_t>& bytes) {
-  mz_zip_archive reader={}, writer={};
-  if(!mz_zip_reader_init_mem(&reader,bytes.data(),bytes.size(),0))
-    throw std::runtime_error("NPC archive reader initialization failed");
-  if(!mz_zip_writer_init_heap(&writer,0,0)) {
-    mz_zip_reader_end(&reader);
-    throw std::runtime_error("NPC archive writer initialization failed");
-    }
-  size_t removed=0;
-  for(mz_uint i=0;i<mz_zip_reader_get_num_files(&reader);++i) {
-    mz_zip_archive_file_stat stat;
-    if(!mz_zip_reader_file_stat(&reader,i,&stat)) {
-      mz_zip_writer_end(&writer); mz_zip_reader_end(&reader);
-      throw std::runtime_error("NPC archive entry read failed");
-      }
-    const std::string_view name(stat.m_filename);
-    if(name.ends_with("/ragdoll") || name.ends_with("/ragdoll-recovery")) {
-      ++removed;
-      continue;
-      }
-    if(!mz_zip_writer_add_from_zip_reader(&writer,&reader,i)) {
-      mz_zip_writer_end(&writer); mz_zip_reader_end(&reader);
-      throw std::runtime_error("NPC archive entry copy failed");
-      }
-    }
-  void* data=nullptr;
-  size_t size=0;
-  const bool finalized=mz_zip_writer_finalize_heap_archive(&writer,&data,&size)!=0;
-  mz_zip_writer_end(&writer); mz_zip_reader_end(&reader);
-  if(!finalized || removed!=2) {
-    mz_free(data);
-    throw std::runtime_error("old NPC fixture must remove exactly the two optional entries");
-    }
-  const auto* begin=static_cast<const uint8_t*>(data);
-  std::vector<uint8_t> result(begin,begin+size);
-  mz_free(data);
-  return result;
-  }
-
-void ragdollNpcArchive(const std::vector<std::string>& args, World& world, Npc& player) {
-  const bool saving=args[1]=="save";
-  Npc* npc=findNpc(world,player,args.size()>2 ? args[2] : "watched");
-  const bool old=!saving && args.size()==5 && args[4]=="old";
-  if(npc==nullptr || args.size()<4 || args.size()>5 || (saving && args.size()!=4) ||
-     (args.size()==5 && !old) || args[3].empty() || args[3].find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")!=std::string::npos) {
-    throw std::runtime_error("expected ragdoll save|restore <npc> <label> [old]");
-    }
-  const auto id=world.npcId(npc);
-  if(id==uint32_t(-1))
-    throw std::runtime_error("NPC archive actor does not belong to current world");
-  const auto& label=args[3];
-  if(saving) {
-    if(bench.savedRagdollNpcs.contains(label))
-      throw std::runtime_error("NPC archive label already exists");
-    Bench::SavedNpc saved;
-    saved.npc=npc; saved.position=npc->position(); saved.hp=npc->attribute(ATR_HITPOINTS);
-    saved.dead=npc->isDead(); saved.unconscious=npc->isUnconscious();
-    saved.enabled=Gothic::settingsGetI("GAME","ragdoll")!=0;
-    const auto& probe=npc==&player ? Pose::playerProbe : Pose::subjectProbe;
-    if(!probe.valid || probe.skeleton==nullptr || npc!=&subjectOf(player))
-      throw std::runtime_error("NPC archive fixture needs the watched actor's complete bone probe");
-    for(size_t i=0;i<probe.numBones;++i) {
-      const auto& name=probe.skeleton->nodes[i].name;
-      saved.bones.emplace_back(name,npc->mapBone(name));
-      }
-    {
-    MemWriter writer(saved.bytes);
-    Serialize out(writer); out.setContext(&world); out.setVersion(Serialize::Current);
-    npc->save(out,id,"/npc/");
-    }
-    // Inspect what the real NPC saver wrote, including a dormant body while disabled.
-    {
-    MemReader reader(saved.bytes); Serialize in(reader); in.setContext(&world); in.setVersion(Serialize::Current);
-    RagdollSave::Snapshot snapshot;
-    if(!in.setEntry("worlds/",world.name(),"/npc/",id,"/ragdoll") || !RagdollSave::load(in,snapshot))
-      throw std::runtime_error("actual NPC save did not write a valid optional body entry");
-    saved.body=std::move(snapshot.body);
-    }
-    std::ofstream file(outDir+"/npc-"+label+".zip",std::ios::binary);
-    file.write(reinterpret_cast<const char*>(saved.bytes.data()),std::streamsize(saved.bytes.size()));
-    if(!file)
-      throw std::runtime_error("unable to write the actual NPC archive fixture");
-    event("ragdoll_npc_archive","\"operation\":\"save\",\"label\":"+jsonStr(label)+
-          ",\"bytes\":"+std::to_string(saved.bytes.size())+",\"bone_count\":"+std::to_string(saved.bones.size())+
-          ",\"saved_body\":"+(saved.body ? "true" : "false")+
-          ",\"feature_enabled\":"+(saved.enabled ? "true" : "false")+
-          ",\"t_game_ms\":"+std::to_string(world.tickCount()));
-    bench.savedRagdollNpcs.emplace(label,std::move(saved));
-    say("ragdoll save "+label);
-    return;
-    }
-  auto found=bench.savedRagdollNpcs.find(label);
-  if(found==bench.savedRagdollNpcs.end() || found->second.npc!=npc)
-    throw std::runtime_error("NPC archive must restore the same saved actor lifetime");
-  const auto& saved=found->second;
-  const auto bytes=old ? oldNpcArchive(saved.bytes) : saved.bytes;
-  {
-  MemReader reader(bytes); Serialize in(reader); in.setContext(&world); in.setVersion(Serialize::Current);
-  npc->load(in,id,"/npc/"); npc->postValidate();
-  }
-  npc->prepareRagdoll(); npc->updateAnimation(0,true);
-  const bool enabled=Gothic::settingsGetI("GAME","ragdoll")!=0;
-  const auto* body=npc->ragdollBody();
-  bool matches=npc->attribute(ATR_HITPOINTS)==saved.hp && npc->isDead()==saved.dead && npc->isUnconscious()==saved.unconscious;
-  const bool expectedBody=!old && enabled && saved.body.has_value();
-  matches=matches && (body!=nullptr)==expectedBody;
-  float bodyPosition=0, bodyBasis=0, linear=0, angular=0;
-  if(expectedBody && body!=nullptr) {
-    const auto actual=body->state(); const auto& expected=*saved.body;
-    matches=matches && actual.version==expected.version && actual.skeleton==expected.skeleton && actual.parts.size()==expected.parts.size();
-    for(size_t i=0;i<16;++i) {
-      const float delta=std::abs(actual.rootTransform.data()[i]-expected.rootTransform.data()[i]);
-      matches=matches && std::isfinite(delta);
-      if(i>=12 && i<=14) bodyPosition=std::max(bodyPosition,delta); else bodyBasis=std::max(bodyBasis,delta);
-      }
-    if(actual.parts.size()==expected.parts.size())
-      for(size_t p=0;p<actual.parts.size();++p) {
-        const auto& a=actual.parts[p]; const auto& e=expected.parts[p];
-        matches=matches && a.bone==e.bone && a.sleeping==e.sleeping;
-        if(actual.version>=3) {
-          matches=matches && a.centerOfMassMeters==e.centerOfMassMeters && a.rotation==e.rotation &&
-            a.linearVelocityMeters==e.linearVelocityMeters;
-          }
-        for(size_t i=0;i<16;++i) {
-          const float delta=std::abs(a.transform.data()[i]-e.transform.data()[i]);
-          matches=matches && std::isfinite(delta);
-          if(i>=12 && i<=14) bodyPosition=std::max(bodyPosition,delta); else bodyBasis=std::max(bodyBasis,delta);
-          if(actual.version>=2) {
-            const float referenceDelta=std::abs(a.referenceTransform.data()[i]-e.referenceTransform.data()[i]);
-            matches=matches && std::isfinite(referenceDelta);
-            if(i>=12 && i<=14) bodyPosition=std::max(bodyPosition,referenceDelta); else bodyBasis=std::max(bodyBasis,referenceDelta);
-            }
-          }
-        linear=std::max(linear,(a.linearVelocity-e.linearVelocity).length());
-        angular=std::max(angular,(a.angularVelocity-e.angularVelocity).length());
-        matches=matches && std::isfinite((a.linearVelocity-e.linearVelocity).length()) && std::isfinite((a.angularVelocity-e.angularVelocity).length());
-        }
-    if(actual.version>=3) {
-      matches=matches && actual.legacyAncestors==expected.legacyAncestors && actual.ancestors.size()==expected.ancestors.size();
-      if(actual.ancestors.size()==expected.ancestors.size())
-        for(size_t a=0;a<actual.ancestors.size();++a) {
-          const auto& got=actual.ancestors[a]; const auto& saved=expected.ancestors[a];
-          matches=matches && got.bone==saved.bone && got.anchorBone==saved.anchorBone;
-          for(size_t i=0;i<16;++i) {
-            const float delta=std::abs(got.referenceTransform.data()[i]-saved.referenceTransform.data()[i]);
-            matches=matches && std::isfinite(delta);
-            if(i>=12 && i<=14) bodyPosition=std::max(bodyPosition,delta); else bodyBasis=std::max(bodyBasis,delta);
-            }
-          }
-      }
-    matches=matches && bodyPosition<=.001f && bodyBasis<=.00001f && linear<=.001f && angular<=.00001f;
-    }
-  const bool sameMode=!old && saved.enabled==enabled;
-  float boneDelta=0;
-  for(const auto& [name,before]:saved.bones) {
-    const float delta=(npc->mapBone(name)-before).length();
-    matches=matches && std::isfinite(delta);
-    boneDelta=std::max(boneDelta,delta);
-    }
-  if(sameMode) matches=matches && boneDelta<=.001f && (npc->position()-saved.position).length()<=.001f;
-  event("ragdoll_npc_archive","\"operation\":\"restore\",\"label\":"+jsonStr(label)+
-        ",\"old_without_optional_entries\":"+(old ? "true" : "false")+
-        ",\"matched\":"+(matches ? "true" : "false")+",\"body_expected\":"+(expectedBody ? "true" : "false")+
-        ",\"body_present\":"+(body!=nullptr ? "true" : "false")+
-        ",\"same_feature_mode\":"+(sameMode ? "true" : "false")+
-        ",\"max_world_bone_delta_cm\":"+ragdollNumber(boneDelta)+
-        ",\"max_part_position_delta_cm\":"+ragdollNumber(bodyPosition)+
-        ",\"max_part_basis_delta\":"+ragdollNumber(bodyBasis)+
-        ",\"max_linear_velocity_delta_cm_s\":"+ragdollNumber(linear)+
-        ",\"max_angular_velocity_delta_rad_s\":"+ragdollNumber(angular)+
-        ",\"t_game_ms\":"+std::to_string(world.tickCount()));
-  if(!matches)
-    throw std::runtime_error("actual NPC archive restore differs from saved pose, velocities, sleep or state");
-  say("ragdoll restore "+label+(old ? " old" : ""));
-  }
-
-void ragdollSessionArchive(const std::vector<std::string>& args, World& world, Npc& player, uint64_t initialDt=0) {
-  if(args.size()!=4 || args[3].empty() ||
-     args[3].find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")!=std::string::npos)
-    throw std::runtime_error("expected ragdoll session-save|session-snapshot|session-initial <npc> <label>");
-  Npc* npc=findNpc(world,player,args[2]);
-  const auto id=world.npcId(npc);
-  const auto* skeleton=npc!=nullptr ? npc->visualSkeleton() : nullptr;
-  if(npc==nullptr || id==uint32_t(-1) || skeleton==nullptr || skeleton->nodes.empty())
-    throw std::runtime_error("session archive needs an exact actor with a loaded skeleton");
-  const bool saving=args[1]=="session-save";
-  const bool initial=args[1]=="session-initial";
-  if(initial && initialDt!=0)
-    throw std::runtime_error("initial session snapshot must precede the first positive simulation step");
-  const auto* body=npc->ragdollBody();
-  const std::string prefix=outDir+"/session-"+args[3];
-  std::string fields="\"schema_version\":1,\"operation\":"+jsonStr(saving ? "save" : initial ? "initial" : "snapshot")+
-    ",\"world\":"+jsonStr(world.name())+",\"actor_id\":"+std::to_string(id)+
-    ",\"actor\":"+jsonStr(TestBench::who(npc))+",\"symbol\":"+jsonStr(symName(world,npc))+
-    ",\"handle_id\":"+std::to_string(npc->handle().id)+",\"t_game_ms\":"+std::to_string(world.tickCount())+
-    ",\"initial_dt\":"+(initial ? std::to_string(initialDt) : "null")+
-    ",\"feature_enabled\":"+(Gothic::settingsGetI("GAME","ragdoll")!=0 ? "true" : "false")+
-    ",\"dead\":"+(npc->isDead() ? "true" : "false")+
-    ",\"unconscious\":"+(npc->isUnconscious() ? "true" : "false")+
-    ",\"melee_knockdown\":"+(npc->isMeleeKnockedDown() ? "true" : "false")+
-    ",\"recovering\":"+(npc->isRagdollBlending() ? "true" : "false")+
-    ",\"hp\":"+std::to_string(npc->attribute(ATR_HITPOINTS))+
-    ",\"inventory\":"+ragdollInventory(*npc,world)+
-    ",\"position_cm\":"+ragdollVector(npc->position())+
-    ",\"object_transform\":"+ragdollMatrix(npc->transform())+
-    ",\"sleeping\":"+(body!=nullptr && body->isSleeping() ? "true" : "false")+
-    ",\"part_count\":"+std::to_string(body!=nullptr ? body->partCount() : 0)+",\"world_bones\":[";
-  for(size_t i=0;i<skeleton->nodes.size();++i) {
-    if(i>0) fields+=',';
-    const auto& name=skeleton->nodes[i].name;
-    fields+="{\"bone\":"+jsonStr(name)+",\"position_cm\":"+ragdollVector(npc->mapBone(name))+"}";
-    }
-  fields+="],\"snapshot\":";
-  if(body!=nullptr) {
-    const auto state=body->state();
-    fields+="{\"version\":"+std::to_string(state.version)+",\"skeleton\":"+jsonStr(state.skeleton)+
-      ",\"root\":"+ragdollMatrix(state.rootTransform)+",\"parts\":[";
-    for(size_t i=0;i<state.parts.size();++i) {
-      if(i>0) fields+=',';
-      const auto& part=state.parts[i];
-      fields+="{\"bone\":"+std::to_string(part.bone)+",\"transform\":"+ragdollMatrix(part.transform)+
-        ",\"reference_transform\":"+ragdollMatrix(part.referenceTransform)+
-        (state.version>=3 ? ragdollNativePrecision(part) : "")+
-        ",\"linear_velocity_cm_s\":"+ragdollVector(part.linearVelocity)+
-        ",\"angular_velocity_rad_s\":"+ragdollVector(part.angularVelocity)+
-        ",\"sleeping\":"+(part.sleeping ? "true" : "false")+"}";
-      }
-    fields+="]"+(state.version>=3 ? ragdollAncestorFields(state) : "")+"}";
-    } else {
-    fields+="null";
-    }
-  if(saving) {
-    std::vector<uint8_t> bytes;
-    {
-    MemWriter writer(bytes);
-    Serialize out(writer);
-    Pixmap preview(1,1,TextureFormat::RGBA8);
-    std::memset(preview.data(),0,4);
-    Gothic::inst().gameSession()->save(out,"ragdoll "+args[3],preview);
-    }
-    std::ofstream file(prefix+".sav",std::ios::binary);
-    file.write(reinterpret_cast<const char*>(bytes.data()),std::streamsize(bytes.size()));
-    if(!file)
-      throw std::runtime_error("cannot write full GameSession archive");
-    fields+=",\"archive\":"+jsonStr("session-"+args[3]+".sav")+",\"archive_bytes\":"+std::to_string(bytes.size());
-    }
-  std::ofstream json(prefix+".json",std::ios::binary);
-  json << '{' << fields << "}\n";
-  if(!json)
-    throw std::runtime_error("cannot write full session snapshot");
-  event("ragdoll_session_archive",fields);
-  say("ragdoll "+args[1]+" "+args[3]);
-  }
-
-void writeRagdoll(Npc& player) {
-  Npc& subject=subjectOf(player);
-  const Ragdoll* body=subject.ragdollBody();
-  const auto stats=subject.world().physic()->physicsStats();
-  const int mode=body!=nullptr ? 3 : 0; // Documented modes: off, kinematic, active, limp.
-  std::fprintf(bench.csv,",%.6f,%zu,%llu,%d,%d,%d",double(stats.stepMilliseconds),stats.bodies,
-               (unsigned long long)stats.rays,mode,body!=nullptr ? 1 : 0,
-               int(body!=nullptr && body->isSleeping()));
-
-  auto id=bench.bodyIds.find(&subject);
-  if(id==bench.bodyIds.end())
-    id=bench.bodyIds.emplace(&subject,++bench.nextBodyId).first;
-  const auto& probe=bench.subject!=nullptr ? Pose::subjectProbe : Pose::playerProbe;
-  const auto observed=subject.bodyObservationState();
-  std::string fields="\"schema_version\":1,\"actor_id\":"+std::to_string(id->second)+
-    ",\"actor\":"+jsonStr(TestBench::who(&subject))+",\"step\":"+std::to_string(bench.step)+
-    ",\"t_game_ms\":"+std::to_string(subject.world().tickCount())+
-    ",\"dead\":"+(subject.isDead() ? "true" : "false")+
-    ",\"unconscious\":"+(subject.isUnconscious() ? "true" : "false")+
-    ",\"recovering\":"+(subject.isRagdollBlending() ? "true" : "false")+
-    ",\"in_air\":"+(subject.isInAir() ? "true" : "false")+
-    ",\"ai_wait_ms\":"+std::to_string(observed.aiWaitMs)+
-    ",\"ani_wait_ms\":"+std::to_string(observed.aniWaitMs)+
-    ",\"output_wait_ms\":"+std::to_string(observed.outputWaitMs)+
-    ",\"animations\":"+jsonStr(subject.animNames())+
-    ",\"hp\":"+std::to_string(subject.attribute(ATR_HITPOINTS))+
-    ",\"position_cm\":"+ragdollVector(subject.position())+
-    ",\"mode\":"+std::to_string(mode)+",\"weight\":"+(body!=nullptr ? "1" : "0")+
-    ",\"sleeping\":"+(body!=nullptr && body->isSleeping() ? "true" : "false")+
-    ",\"part_count\":"+std::to_string(body!=nullptr ? body->partCount() : 0)+
-    ",\"world_bones\":[";
-  // Pose::probe is the animation before the procedural passes. mapBone reads the final
-  // visual world transform, so this measurement includes NPC movement at recovery.
-  if(probe.valid && probe.skeleton!=nullptr)
-    for(size_t i=0;i<probe.numBones;++i) {
-      if(i>0) fields+=',';
-      const auto& name=probe.skeleton->nodes[i].name;
-      fields+="{\"bone\":"+jsonStr(name)+",\"position_cm\":"+ragdollVector(subject.mapBone(name))+"}";
-      }
-  fields+="],\"snapshot\":";
-  if(body!=nullptr) {
-    const auto snapshot=body->state();
-    fields+="{\"version\":"+std::to_string(snapshot.version)+",\"skeleton\":"+jsonStr(snapshot.skeleton)+
-      ",\"root\":"+ragdollMatrix(snapshot.rootTransform)+",\"parts\":[";
-    for(size_t i=0;i<snapshot.parts.size();++i) {
-      if(i>0) fields+=',';
-      const auto& part=snapshot.parts[i];
-      fields+="{\"bone\":"+std::to_string(part.bone)+",\"transform\":"+ragdollMatrix(part.transform)+
-        ",\"reference_transform\":"+ragdollMatrix(part.referenceTransform)+
-        (snapshot.version>=3 ? ragdollNativePrecision(part) : "")+
-        ",\"linear_velocity_cm_s\":"+ragdollVector(part.linearVelocity)+
-        ",\"angular_velocity_rad_s\":"+ragdollVector(part.angularVelocity)+
-        ",\"sleeping\":"+(part.sleeping ? "true" : "false")+"}";
-      }
-    fields+="]"+(snapshot.version>=3 ? ragdollAncestorFields(snapshot) : "")+"}";
-    } else {
-    fields+="null";
-    }
-  event("ragdoll_frame",fields);
-  }
-
-bool arenaProjected(const Vec3& point) {
-  const auto* camera=Gothic::inst().camera();
-  if(camera==nullptr) return false;
-  float x=point.x,y=point.y,z=point.z,w=1;
-  camera->viewProj().project(x,y,z,w);
-  return std::isfinite(x) && std::isfinite(y) && std::isfinite(z) && std::isfinite(w) &&
-         w>0 && std::abs(x)<=.90f*w && std::abs(y)<=.90f*w && z>=0 && z<=w;
-  }
-
-// A conservative final-pose envelope, actual loaded mesh bounds, and anatomical
-// landscape/object sight lines. The untimed PNG independently verifies rendering.
-bool arenaMeshVisible(World& world, const Npc& npc) {
-  const auto* skeleton=npc.visualSkeleton();
-  const auto bounds=npc.bounds();
-  if(!TestBench::ragdollBodyDrawable(npc) || skeleton==nullptr || skeleton->nodes.empty() || !std::isfinite(bounds.rConservative) || bounds.rConservative<=0)
-    return false;
-  const auto object=npc.transform();
-  for(int c=0;c<8;++c) {
-    Vec3 p{bounds.bbox[c&1].x,bounds.bbox[(c>>1)&1].y,bounds.bbox[(c>>2)&1].z};
-    object.project(p);
-    if(!arenaProjected(p)) return false;
-    }
-  for(const auto& bone:skeleton->nodes) {
-    const auto p=npc.mapBone(bone.name);
-    for(int c=0;c<8;++c)
-      if(!arenaProjected(p+Vec3((c&1) ? 50.f : -50.f,(c&2) ? 50.f : -50.f,(c&4) ? 50.f : -50.f)))
-        return false;
-    }
-  for(const auto name:{"BIP01 PELVIS","BIP01 HEAD","BIP01 L FOOT","BIP01 R FOOT"})
-    if(skeleton->findNode(name)==size_t(-1) || hidden(world,bench.camPos,npc.mapBone(name)+Vec3(0,5,0)))
-      return false;
-  return true;
-  }
-
-bool arenaCheapVisible(const Npc& npc, size_t index) {
-  if(!TestBench::ragdollBodyDrawable(npc) || index>=bench.ragdollArenaRadii.size()) return false;
-  const double radius=bench.ragdollArenaRadii[index];
-  const auto center=npc.position();
-  const auto* camera=Gothic::inst().camera();
-  if(camera==nullptr || !std::isfinite(radius) || radius<=0) return false;
-  const auto vp=camera->viewProj();
-  float x=center.x,y=center.y,z=center.z,w=1;
-  vp.project(x,y,z,w);
-  if(!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) || !std::isfinite(w) || w<=0 ||
-     std::abs(x)>w || std::abs(y)>w || z<0 || z>w) return false;
-  // Conservative sphere NONREJECTION; full vertex/occlusion visibility is proven
-  // separately by all untimed posed envelopes. Never test the larger cube corners.
-  for(int plane=0;plane<6;++plane) {
-    double coefficients[4]={};
-    for(int column=0;column<4;++column) {
-      if(plane<4) coefficients[column]=.90*vp.at(column,3)+(plane%2==0 ? 1. : -1.)*vp.at(column,plane/2);
-      else coefficients[column]=plane==4 ? vp.at(column,2) : double(vp.at(column,3))-vp.at(column,2);
-      if(!std::isfinite(coefficients[column])) return false;
-      }
-    const double normal=std::sqrt(coefficients[0]*coefficients[0]+coefficients[1]*coefficients[1]+coefficients[2]*coefficients[2]);
-    const double distance=coefficients[0]*center.x+coefficients[1]*center.y+coefficients[2]*center.z+coefficients[3];
-    if(!std::isfinite(distance) || distance< -radius*normal) return false;
-    }
-  return true;
-  }
-
-Bench::PerfSample ragdollCoverageSample(World& world) {
-  Bench::PerfSample sample;
-  sample.physicalBeforeImpulse=bench.perfPhysicalBeforeImpulse;
-  sample.sleepingBeforeImpulse=bench.perfSleepingBeforeImpulse;
-  sample.actors=bench.crew.size();
-  const auto* camera=Gothic::inst().camera();
-  const auto vp=camera!=nullptr ? camera->viewProj() : Matrix4x4::mkIdentity();
-  for(size_t actor=0;actor<bench.crew.size();++actor) {
-    const auto* npc=bench.crew[actor];
-    if(npc->isDead()) ++sample.corpses;
-    const auto* body=npc->ragdollBody();
-    if(body!=nullptr) {
-      ++sample.physical; sample.parts+=body->partCount();
-      if(body->isSleeping()) ++sample.sleeping;
-      }
-    const auto center=npc->centerPosition();
-    float x=center.x,y=center.y,z=center.z,w=1;
-    vp.project(x,y,z,w);
-    if(camera!=nullptr && w>0 && std::abs(x)<=w && std::abs(y)<=w && z>=0 && z<=w)
-      ++sample.centersInView;
-    if(bench.ragdollArenaCamera && (ragdollPerf ? arenaCheapVisible(*npc,actor) : arenaMeshVisible(world,*npc))) ++sample.visibleMeshes;
-    }
-  return sample;
-  }
-
-void sampleRagdollPerformance(World& world) {
-  FrameProfile::sample(bench.recName,bench.recFrame);
-  auto sample=ragdollCoverageSample(world);
-  sample.segment=bench.recName; sample.frame=bench.recFrame; sample.wallMs=bench.perfWallMs;
-  const auto stats=world.physic()->physicsStats();
-  sample.stepMs=stats.stepMilliseconds; sample.worldBodies=stats.bodies; sample.rays=stats.rays;
-  bench.ragdollPerformance.push_back(std::move(sample));
-  }
-
-bool arenaModeMatches(const Bench::PerfSample& sample, std::string_view mode) {
-  const size_t physical=mode=="disabled" ? 0 : 20;
-  const size_t sleeping=mode=="sleeping" ? 20 : 0;
-  return sample.actors==20 && sample.corpses==20 && sample.centersInView==20 && sample.visibleMeshes==20 &&
-         sample.physical==physical && sample.physicalBeforeImpulse==physical && sample.sleeping==sleeping &&
-         sample.sleepingBeforeImpulse==sleeping && sample.parts==(physical==0 ? 0 : 480);
-  }
-
-void arenaModelProof(World& world, const Npc& npc, size_t frame) {
-  const auto* skeleton=npc.visualSkeleton();
-  if(skeleton==nullptr) return;
-  const float infinity=std::numeric_limits<float>::infinity();
-  Vec3 low{infinity,infinity,infinity},high{-infinity,-infinity,-infinity};
-  auto add=[&](const Vec3& point) {
-    low.x=std::min(low.x,point.x); low.y=std::min(low.y,point.y); low.z=std::min(low.z,point.z);
-    high.x=std::max(high.x,point.x); high.y=std::max(high.y,point.y); high.z=std::max(high.z,point.z);
-    };
-  const auto bounds=npc.bounds(); const auto object=npc.transform();
-  for(int corner=0;corner<8;++corner) {
-    Vec3 p{bounds.bbox[corner&1].x,bounds.bbox[(corner>>1)&1].y,bounds.bbox[(corner>>2)&1].z};
-    object.project(p); add(p);
-    }
-  for(const auto& bone:skeleton->nodes) {
-    const auto p=npc.mapBone(bone.name); add(p-Vec3(50,50,50)); add(p+Vec3(50,50,50));
-    }
-  Vec3 projectedLow{infinity,infinity,infinity},projectedHigh{-infinity,-infinity,-infinity};
-  bool projected=true;
-  const auto viewProjection=Gothic::inst().camera()->viewProj();
-  for(int corner=0;corner<8;++corner) {
-    float x=(corner&1) ? high.x : low.x,y=(corner&2) ? high.y : low.y,z=(corner&4) ? high.z : low.z,w=1;
-    viewProjection.project(x,y,z,w);
-    if(w<=0) { projected=false; continue; }
-    x/=w; y/=w; z/=w;
-    projected=projected && std::isfinite(x) && std::isfinite(y) && std::isfinite(z) &&
-              std::abs(x)<=.90f && std::abs(y)<=.90f && z>=0 && z<=1;
-    projectedLow.x=std::min(projectedLow.x,x); projectedLow.y=std::min(projectedLow.y,y); projectedLow.z=std::min(projectedLow.z,z);
-    projectedHigh.x=std::max(projectedHigh.x,x); projectedHigh.y=std::max(projectedHigh.y,y); projectedHigh.z=std::max(projectedHigh.z,z);
-    }
-  if(!projected) bench.ragdollCoverageFailed=true;
-  const auto iterator=std::find(bench.crew.begin(),bench.crew.end(),&npc);
-  const bool cheap=iterator!=bench.crew.end() && arenaCheapVisible(npc,size_t(iterator-bench.crew.begin()));
-  const float radius=iterator!=bench.crew.end() ? bench.ragdollArenaRadii[size_t(iterator-bench.crew.begin())] : 0;
-  bool contains=true;
-  for(int corner=0;corner<8;++corner) {
-    const Vec3 point{(corner&1) ? high.x : low.x,(corner&2) ? high.y : low.y,(corner&4) ? high.z : low.z};
-    contains=contains && (point-npc.position()).length()<=radius;
-    }
-  if(!cheap || !contains) bench.ragdollCoverageFailed=true;
-  event("ragdoll_coverage_model","\"coverage_frame\":"+std::to_string(frame)+",\"actor_id\":"+
-        std::to_string(world.npcId(&npc))+",\"model_bound_radius_cm\":"+std::to_string(bounds.rConservative)+
-        ",\"bone_count\":"+std::to_string(skeleton->nodes.size())+",\"world_min_cm\":"+ragdollVector(low)+
-        ",\"world_max_cm\":"+ragdollVector(high)+",\"ndc_min\":"+ragdollVector(projectedLow)+
-        ",\"ndc_max\":"+ragdollVector(projectedHigh)+",\"projected_with_margin\":"+(projected ? "true" : "false")+
-        ",\"body_drawable\":"+(TestBench::ragdollBodyDrawable(npc) ? "true" : "false")+
-        ",\"proxy_radius_cm\":"+std::to_string(radius)+",\"actor_origin_cm\":"+ragdollVector(npc.position())+
-        ",\"proxy_contains_envelope\":"+(contains ? "true" : "false")+
-        ",\"cheap_proxy_visible\":"+(cheap ? "true" : "false")+
-        ",\"visible\":"+(arenaMeshVisible(world,npc) ? "true" : "false"));
-  }
 
 // the animated pose of the watched one (or the hero): the largest second difference of a joint over
 // three frames (cm; a pop), which joint, the fastest joint (cm/s) and the playing animations
@@ -2795,193 +2241,6 @@ void spellFields(World& world) {
 
 }
 
-namespace {
-
-void ownMeshWalk(World& world,Npc& player) {
-  if(bench.ownMeshZen==uint32_t(-1)) {arenaAbort("own-mesh requires setup");return;}
-  auto start=bench.ownMeshAxis+bench.ownMeshApproach*270.f;
-  const auto floor=world.physic()->landRay(start+Vec3(0,200,0),700.f);
-  if(!floor.hasCol || floor.n.y<.8f) {arenaAbort("own-mesh approach has no supported ground");return;}
-  start.y=floor.v.y;
-  player.closeWeapon(true);player.clearAiQueue();player.stopWalking();player.clearSpeed();
-  player.setPosition(start);player.setDirection(-bench.ownMeshApproach);player.updateTransform();
-  bench.ownMeshHeroStart=start;bench.ownMeshHeroHistory.clear();bench.ownMeshWalking=true;bench.ownMeshMaxCrossTrack=0;
-  for(const auto& body:world.physic()->movableVobSnapshot())
-    if(body.zenId==bench.ownMeshZen)bench.ownMeshBodyStart=movablePosition(body.transform);
-  }
-
-void ownMeshSetup(World& world,Npc& player,uint32_t zenId,const Vec3& approach) {
-  const auto all=world.physic()->movableVobSnapshot();
-  const auto found=std::find_if(all.begin(),all.end(),[zenId](const auto& body){return body.zenId==zenId;});
-  if(found==all.end() || !found->visual.starts_with("NW_HARBOUR_BARREL_01") || approach.length()<.9f) {
-    arenaAbort("own-mesh requires the authored NW_HARBOUR_BARREL_01 and a horizontal approach");return;
-    }
-  bench.ownMeshZen=zenId;bench.ownMeshApproach=Vec3::normalize(approach);
-  bench.ownMeshAxis=(found->localBounds[0]+found->localBounds[1])*.5f;
-  found->origin.project(bench.ownMeshAxis);
-  std::string corridor="[";
-  for(float distance=270.f;distance>=90.f;distance-=30.f) {
-    auto point=bench.ownMeshAxis+bench.ownMeshApproach*distance;
-    const auto floor=world.physic()->landRay(point+Vec3(0,200,0),700.f);
-    if(!floor.hasCol || floor.n.y<.8f) {arenaAbort("own-mesh straight corridor has no supported ground");return;}
-    if(corridor.size()>1)corridor+=',';
-    corridor+=ragdollVector(floor.v);
-    }
-  ownMeshWalk(world,player);bench.ownMeshWalking=false;
-  bench.cam=C_Hold;
-  const auto camera=bench.ownMeshAxis+Vec3(-.25879f,0,.96593f)*430.f+Vec3(0,160,0);
-  lookFrom(camera,bench.ownMeshAxis);
-  event("own_mesh_setup","\"zen_id\":"+std::to_string(zenId)+",\"visual\":"+jsonStr(found->visual)+
-    ",\"origin\":"+ragdollMatrix(found->origin)+",\"axis_half_height_cm\":"+ragdollVector(bench.ownMeshAxis)+
-    ",\"approach_direction\":"+ragdollVector(bench.ownMeshApproach)+
-    ",\"approach_floor_cm\":"+corridor+"]"+
-    ",\"hero_start_cm\":"+ragdollVector(bench.ownMeshHeroStart)+",\"camera_cm\":"+ragdollVector(camera));
-  }
-
-void ownMeshArrow(World& world,Npc& player) {
-  if(bench.ownMeshZen==uint32_t(-1)) {arenaAbort("own-mesh arrow requires setup");return;}
-  const auto symbol=world.script().findSymbolIndex("ITRW_ARROW");
-  if(symbol==size_t(-1)) {arenaAbort("own-mesh arrow instance unavailable");return;}
-  const auto target=bench.ownMeshAxis,from=target+bench.ownMeshApproach*270.f;
-  const float speed=DynamicWorld::bulletSpeed;
-  const auto direction=Vec3::normalize(Archery::launch(from,target,speed)-from);
-  Item arrow(world,symbol,Item::T_Inventory);
-  auto& bullet=world.shootArrow(arrow,from,direction,speed);
-  bullet.setOrigin(&player);bullet.setPrecise(1.f);
-  bench.ownMeshArrowHits=0;
-  event("own_mesh_arrow","\"zen_id\":"+std::to_string(bench.ownMeshZen)+",\"from_cm\":"+
-    ragdollVector(from)+",\"target_cm\":"+ragdollVector(target)+",\"speed_cm_ms\":"+ragdollNumber(speed));
-  }
-
-void ownMeshClearance(World& world,Npc& player) {
-  if(bench.ownMeshZen==uint32_t(-1)) {arenaAbort("own-mesh clearance requires setup");return;}
-  auto bodies=world.physic()->movableVobContacts(100.f);
-  // With MOVABLE_VOBS=0 there is no native dynamic hull to overlap. Keep the
-  // same line/camera guards against the original source collision mesh.
-  if(!world.physic()->movableVobsEnabled()) {
-    for(const auto& source:world.physic()->movableVobSnapshot())if(source.zenId==bench.ownMeshZen) {
-      DynamicWorld::MovableVobContacts body;
-      body.zenId=source.zenId;body.visual=source.visual;body.disposition=source.disposition;
-      body.hullMin=body.hullMax=bench.ownMeshAxis;
-      for(unsigned corner=0;corner<8;++corner) {
-        Vec3 point(source.localBounds[corner&1].x,source.localBounds[(corner>>1)&1].y,source.localBounds[(corner>>2)&1].z);
-        source.origin.project(point);
-        body.hullMin=Vec3(std::min(body.hullMin.x,point.x),std::min(body.hullMin.y,point.y),std::min(body.hullMin.z,point.z));
-        body.hullMax=Vec3(std::max(body.hullMax.x,point.x),std::max(body.hullMax.y,point.y),std::max(body.hullMax.z,point.z));
-        }
-      bodies.push_back(std::move(body));break;
-      }
-    }
-  for(const auto& body:bodies) {
-    if(body.zenId!=bench.ownMeshZen)continue;
-    std::string contacts="[";float gap=100.f;
-    for(const auto& hit:body.contacts) {
-      const bool floor=hit.category==DynamicWorld::C_Landscape && hit.below;
-      if(!floor)gap=std::min(gap,-hit.depth);
-      if(contacts.size()>1)contacts+=',';
-      contacts+="{\"other\":"+jsonStr(hit.other)+",\"zen_id\":"+std::to_string(hit.otherZenId)+
-        ",\"category\":"+std::to_string(hit.category)+",\"floor_support\":"+(floor?"true":"false")+
-        ",\"depth_cm\":"+ragdollNumber(hit.depth)+",\"point_cm\":"+ragdollVector(hit.point)+"}";
-      }
-    event("own_mesh_clearance","\"zen_id\":"+std::to_string(body.zenId)+
-      ",\"enabled\":"+(body.enabled?"true":"false")+",\"disposition\":"+jsonStr(body.disposition)+
-      ",\"margin_cm\":100,\"minimum_non_floor_gap_cm\":"+(body.enabled?ragdollNumber(gap):"null")+",\"contacts\":"+contacts+"]");
-    if(gap<=0.f || (world.physic()->movableVobsEnabled() && !body.enabled)) {
-      arenaAbort("own-mesh barrel must retain a positive gap and remain movable when enabled");return;
-      }
-    const auto extent=(body.hullMax-body.hullMin)*.5f;
-    const auto axis=bench.ownMeshAxis;
-    const auto* camera=Gothic::inst().camera();bool framed=camera!=nullptr,visible=true;
-    Vec3 ndcMin(1e9f,1e9f,1e9f),ndcMax(-1e9f,-1e9f,-1e9f);
-    const auto eye=axis+Vec3(-.25879f,0,.96593f)*430.f+Vec3(0,160,0);
-    for(unsigned corner=0;corner<8;++corner) {
-      const Vec3 point((corner&1)?body.hullMax.x:body.hullMin.x,(corner&2)?body.hullMax.y:body.hullMin.y,
-                       (corner&4)?body.hullMax.z:body.hullMin.z);
-      float x=point.x,y=point.y,z=point.z,w=1;
-      if(camera)camera->viewProj().project(x,y,z,w);
-      if(w<=0)framed=false;
-      else {
-        x/=w;y/=w;z/=w;
-        framed=framed && std::abs(x)<.95f && std::abs(y)<.95f && z>=0.f && z<=1.f;
-        ndcMin=Vec3(std::min(ndcMin.x,x),std::min(ndcMin.y,y),std::min(ndcMin.z,z));
-        ndcMax=Vec3(std::max(ndcMax.x,x),std::max(ndcMax.y,y),std::max(ndcMax.z,z));
-        }
-      const auto hit=world.physic()->ray(eye,point);
-      const auto own=world.physic()->rayMovableVob(eye,point);
-      visible=visible && (!hit.hasCol || (own && own->zenId==bench.ownMeshZen));
-      }
-    event("own_mesh_camera","\"zen_id\":"+std::to_string(body.zenId)+",\"eye_cm\":"+ragdollVector(eye)+
-      ",\"framed\":"+(framed?"true":"false")+",\"visible\":"+(visible?"true":"false")+
-      ",\"ndc_min\":"+ragdollVector(ndcMin)+",\"ndc_max\":"+ragdollVector(ndcMax));
-    if(!framed || !visible) {arenaAbort("own-mesh camera must see the complete barrel from the free side");return;}
-    for(unsigned line=0;line<3;++line) {
-      const auto direction=line==2?-bench.ownMeshApproach:bench.ownMeshApproach;
-      float edge=std::numeric_limits<float>::infinity();
-      if(std::abs(direction.x)>.001f)edge=std::min(edge,extent.x/std::abs(direction.x));
-      if(std::abs(direction.z)>.001f)edge=std::min(edge,extent.z/std::abs(direction.z));
-      for(float y:{axis.y,body.hullMin.y+40.f,body.hullMin.y+110.f,body.hullMin.y+170.f}) {
-        if(line==1 && y!=axis.y)continue;
-        auto from=axis+direction*(edge+2.f);from.y=y;
-        const auto to=from+direction*200.f;
-        const auto hit=world.physic()->navigationRay(from,to,&player);
-        const auto visual=world.physic()->ray(from,to);
-        event("own_mesh_line","\"zen_id\":"+std::to_string(body.zenId)+",\"line\":"+
-          jsonStr(line==0?"hero_approach":line==1?"arrow":"push")+",\"from_cm\":"+ragdollVector(from)+
-          ",\"to_cm\":"+ragdollVector(to)+",\"length_cm\":200,\"physical_hit\":"+(hit.hasCol?"true":"false")+
-          ",\"physical_hit_distance_cm\":"+ragdollNumber(hit.hasCol?(hit.point-from).length():200.f)+
-          ",\"physical_kind\":"+std::to_string(unsigned(hit.kind))+",\"visual_hit\":"+(visual.hasCol?"true":"false")+
-          ",\"visual_hit_distance_cm\":"+ragdollNumber(visual.hasCol?(visual.v-from).length():200.f));
-        if(hit.hasCol || visual.hasCol) {arenaAbort("own-mesh approach, arrow and push require clear 200 cm lines");return;}
-        }
-      }
-    return;
-    }
-  arenaAbort("own-mesh clearance body disappeared");
-  }
-
-void ownMeshFields(World& world,Npc& player) {
-  if(!bench.ownMeshWalking)return;
-  const Vec3 side(-bench.ownMeshApproach.z,0,bench.ownMeshApproach.x);
-  const float crossTrack=Vec3::dotProduct(player.position()-bench.ownMeshHeroStart,side);
-  bench.ownMeshMaxCrossTrack=std::max(bench.ownMeshMaxCrossTrack,std::abs(crossTrack));
-  // Steer the held forward input back to the straight approach line. This
-  // prevents a slanted barrel facet from turning the test into a walk around
-  // it; all positions and velocities still come from the native controller.
-  player.setDirection(Vec3::normalize(-bench.ownMeshApproach-side*(crossTrack*.1f)));
-  bench.ownMeshHeroHistory.emplace_back(world.tickCount(),player.position());
-  while(bench.ownMeshHeroHistory.size()>1 &&
-        bench.ownMeshHeroHistory[1].first+500<world.tickCount())bench.ownMeshHeroHistory.pop_front();
-  }
-
-void ownMeshCheckpoint(World& world,Npc& player) {
-  if(bench.ownMeshZen==uint32_t(-1)) {arenaAbort("own-mesh checkpoint requires setup");return;}
-  ownMeshFields(world,player);
-  const auto hero=player.position(),delta=hero-bench.ownMeshAxis;
-  const auto& history=bench.ownMeshHeroHistory;
-  const uint64_t elapsed=history.empty()?0:world.tickCount()-history.front().first;
-  const auto movement=history.empty()?Vec3():hero-history.front().second;
-  const float speed=elapsed?Vec3(movement.x,0,movement.z).length()*1000.f/float(elapsed):0.f;
-  for(const auto& body:world.physic()->movableVobSnapshot()) {
-    if(body.zenId!=bench.ownMeshZen)continue;
-    const auto position=movablePosition(body.transform);
-    event("own_mesh_checkpoint","\"zen_id\":"+std::to_string(body.zenId)+
-      ",\"enabled\":"+(body.enabled?"true":"false")+",\"disposition\":"+jsonStr(body.disposition)+
-      ",\"hero_start_cm\":"+ragdollVector(bench.ownMeshHeroStart)+",\"hero_position_cm\":"+ragdollVector(hero)+
-      ",\"hero_axis_distance_cm\":"+ragdollNumber(std::hypot(delta.x,delta.z))+
-      ",\"max_cross_track_cm\":"+ragdollNumber(bench.ownMeshMaxCrossTrack)+
-      ",\"final_sample_ms\":"+std::to_string(elapsed)+",\"final_speed_cm_s\":"+ragdollNumber(speed)+
-      ",\"body_start_cm\":"+ragdollVector(bench.ownMeshBodyStart)+",\"body_position_cm\":"+ragdollVector(position)+
-      ",\"body_displacement_cm\":"+ragdollNumber((position-bench.ownMeshBodyStart).length())+
-      ",\"body_transform\":"+ragdollMatrix(body.transform)+",\"npc_contact\":"+(body.touchedByNpc?"true":"false")+
-      ",\"mass_kg\":"+ragdollNumber(body.mass)+",\"hull_volume_m3\":"+ragdollNumber(body.hullVolume)+
-      ",\"material_group\":"+std::to_string(unsigned(body.material))+",\"density_kg_m3\":"+ragdollNumber(body.density)+
-      ",\"mass_multiplier\":"+ragdollNumber(body.massMultiplier)+",\"arrow_hits\":"+std::to_string(bench.ownMeshArrowHits));
-    bench.ownMeshWalking=false;return;
-    }
-  arenaAbort("own-mesh authored body disappeared");
-  }
-
-}
 
 namespace testbench_detail {
 
@@ -4903,49 +4162,6 @@ void arenaAbort(std::string_view reason) {
   bench.pc=bench.prog.size(); bench.waitUntil=0;
   }
 
-bool chooseRagdollArena(World& world, Npc& player) {
-  if(!bench.crew.empty()) return false;
-  std::vector<const WayPoint*> candidates;
-  world.findWayPoint(player.position(),[&](const WayPoint& wp) { candidates.push_back(&wp); return false; });
-  const auto origin=player.position();
-  std::sort(candidates.begin(),candidates.end(),[&](const auto* a,const auto* b) {
-    const auto da=(a->pos-origin).quadLength(),db=(b->pos-origin).quadLength();
-    return da==db ? a->name<b->name : da<db;
-    });
-  size_t rejected=0;
-  for(const auto* waypoint:candidates) {
-    std::vector<Vec3> places;
-    float lowest=std::numeric_limits<float>::infinity(),highest=-lowest;
-    bool valid=true;
-    for(int i=0;i<20 && valid;++i) {
-      Vec3 place=waypoint->pos+Vec3(float(i%5)*250.f-500.f,0,float(i/5)*250.f-375.f);
-      const auto floor=world.physic()->landRay(place+Vec3(0,300,0),900);
-      if(!floor.hasCol || floor.n.y<.98f) { valid=false; break; }
-      place.y=floor.v.y;
-      for(float dx:{-150.f,0.f,150.f}) for(float dz:{-150.f,0.f,150.f}) {
-        const auto support=world.physic()->landRay(place+Vec3(dx,300,dz),600);
-        if(!support.hasCol || support.n.y<.98f || std::abs(support.v.y-place.y)>20.f) valid=false;
-        }
-      if(world.physic()->ray(place+Vec3(0,40,0),place+Vec3(0,3200,0)).hasCol) valid=false;
-      lowest=std::min(lowest,place.y); highest=std::max(highest,place.y);
-      places.push_back(place);
-      }
-    if(!valid || places.size()!=20 || highest-lowest>40.f) { ++rejected; continue; }
-    const Vec3 target{waypoint->pos.x,(lowest+highest)*.5f+80.f,waypoint->pos.z};
-    const Vec3 eye=target+Vec3(0,2600,1100);
-    for(const auto& place:places)
-      if(hidden(world,eye,place+Vec3(0,30,0))) valid=false;
-    if(!valid) { ++rejected; continue; }
-    bench.ragdollArenaPlaces=std::move(places); bench.ragdollArenaWaypoint=waypoint->name;
-    player.setPosition(target+Vec3(0,-80,-1200)); player.updateTransform();
-    bench.ragdollArenaTarget=target;
-    event("ragdoll_arena_site","\"waypoint\":"+jsonStr(waypoint->name)+",\"geometry_rejections\":"+
-          std::to_string(rejected)+",\"center\":"+ragdollVector(target)+",\"ground_min_cm\":"+
-          std::to_string(lowest)+",\"ground_max_cm\":"+std::to_string(highest)+",\"places\":20");
-    return true;
-    }
-  return false;
-  }
 
 }
 
@@ -4964,7 +4180,7 @@ bool frameRagdollArena(size_t expected=20) {
     const auto* skeleton=npc->visualSkeleton(); const auto bounds=npc->bounds();
     if(skeleton==nullptr || bounds.rConservative<=0 || !std::isfinite(bounds.rConservative)) return false;
     // The full proof pads each axis by50cm; a radial proxy needs the diagonal.
-    bench.ragdollArenaRadii.push_back(bounds.rConservative+std::sqrt(3.f)*50.f);
+    bench.ragdoll.ragdollArenaRadii.push_back(bounds.rConservative+std::sqrt(3.f)*50.f);
     const auto object=npc->transform();
     for(int c=0;c<8;++c) {
       Vec3 p{bounds.bbox[c&1].x,bounds.bbox[(c>>1)&1].y,bounds.bbox[(c>>2)&1].z}; object.project(p); add(p);
@@ -4979,153 +4195,16 @@ bool frameRagdollArena(size_t expected=20) {
   const float halfFov=std::min(halfY,std::atan(std::tan(halfY)*aspect));
   const float distance=((high-low)*.5f).length()*1.25f/std::sin(halfFov);
   if(!std::isfinite(distance) || distance<=0) return false;
-  bench.ragdollArenaTarget=(high+low)*.5f;
-  bench.camPos=bench.ragdollArenaTarget+Vec3(0,.9238795f*distance,.3826834f*distance);
-  bench.cam=C_RagdollArena; bench.ragdollArenaCamera=true; bench.camAuto=false; bench.smValid=false;
-  lookFrom(bench.camPos,bench.ragdollArenaTarget);
+  bench.ragdoll.ragdollArenaTarget=(high+low)*.5f;
+  bench.camPos=bench.ragdoll.ragdollArenaTarget+Vec3(0,.9238795f*distance,.3826834f*distance);
+  bench.cam=C_RagdollArena; bench.ragdoll.ragdollArenaCamera=true; bench.camAuto=false; bench.smValid=false;
+  lookFrom(bench.camPos,bench.ragdoll.ragdollArenaTarget);
   event("ragdoll_arena_camera","\"origin\":"+ragdollVector(bench.camPos)+",\"target\":"+
-        ragdollVector(bench.ragdollArenaTarget)+",\"bounds_min\":"+ragdollVector(low)+",\"bounds_max\":"+
+        ragdollVector(bench.ragdoll.ragdollArenaTarget)+",\"bounds_min\":"+ragdollVector(low)+",\"bounds_max\":"+
         ragdollVector(high)+",\"fov_y\":"+std::to_string(camera->fovY())+",\"aspect\":"+std::to_string(aspect));
   return true;
   }
 
-bool arenaFullSchema(World& world, std::string_view mode) {
-  if(bench.crew.size()!=20 || !bench.ragdollArenaCamera) return false;
-  std::unordered_set<size_t> ids;
-  std::vector<uint32_t> topology;
-  for(const auto* npc:bench.crew) {
-    const auto* skeleton=npc->visualSkeleton(); const auto* body=npc->ragdollBody();
-    if(!ids.insert(world.npcId(npc)).second || skeleton==nullptr || skeleton->name()!="HUMANS.MDS" ||
-       symName(world,npc)!="BDT_1013_BANDIT_L" || !npc->isDead() || !arenaMeshVisible(world,*npc)) return false;
-    if(mode=="disabled") { if(body!=nullptr) return false; continue; }
-    if(body==nullptr || body->partCount()!=24 || body->boneIndices().size()!=24) return false;
-    const auto& bones=body->boneIndices();
-    if(topology.empty()) topology.assign(bones.begin(),bones.end());
-    if(!std::equal(topology.begin(),topology.end(),bones.begin())) return false;
-    }
-  return true;
-  }
-
-
-std::string ownMeshChestInventory(World& world,const Npc& player) {
-  const auto& fixture=bench.ownMeshChest;
-  std::string rows="[";
-  for(const auto& [id,count]:fixture.contents) {
-    if(rows.size()>1)rows+=',';
-    rows+="{\"class\":"+jsonStr(world.script().findSymbol(id)->name())+
-      ",\"chest_before\":"+std::to_string(count)+",\"chest_now\":"+
-      std::to_string(fixture.chest->inventory().itemCount(id))+
-      ",\"hero_before\":"+std::to_string(fixture.heroBefore.at(id))+
-      ",\"hero_now\":"+std::to_string(player.inventory().itemCount(id))+"}";
-    }
-  return rows+"]";
-  }
-
-void ownMeshChestSnapshot(World& world,const Npc& player,std::string_view label) {
-  const auto& fixture=bench.ownMeshChest;
-  if(!fixture.chest) {arenaAbort("own-mesh-chest snapshot needs setup");return;}
-  const auto& visual=fixture.chest->objVisual();
-  const auto& lid=visual.bone(fixture.lid);
-  // Midpoint of the original lid's upper front bounding-box edge, in the
-  // lid node's local centimetres. Both models measure the same fixed point.
-  Vec3 front(0,27.36672f,-58.41916f);
-  lid.project(front);
-  event("own_mesh_chest_snapshot","\"label\":"+jsonStr(label)+
-    ",\"zen_id\":"+std::to_string(fixture.chest->zenId())+
-    ",\"mob_id\":"+std::to_string(world.mobsiId(fixture.chest))+
-    ",\"mob_cm\":"+ragdollVector(fixture.chest->position())+
-    ",\"state\":"+std::to_string(fixture.chest->stateId())+
-    ",\"animation\":"+jsonStr(visual.animNames())+
-    ",\"lid_node\":\"BIP01 CHEST_BIG_1\",\"lid_world\":"+ragdollMatrix(lid)+
-    ",\"front_probe_local_cm\":[0,27.36672,-58.41916],\"front_probe_world_cm\":"+ragdollVector(front)+
-    ",\"hero_cm\":"+ragdollVector(player.position())+
-    ",\"hero_attached\":"+(player.interactive()==fixture.chest?"true":"false")+
-    ",\"hero_gold\":"+std::to_string(player.inventory().itemCount(world.script().goldId()->index()))+
-    ",\"hero_inventory\":"+ragdollInventory(player,world)+
-    ",\"chest_empty\":"+(fixture.chest->inventory().isEmpty()?"true":"false")+
-    ",\"items\":"+ownMeshChestInventory(world,player));
-  }
-
-void ownMeshChestFields(World& world,const Npc& player) {
-  auto& fixture=bench.ownMeshChest;
-  if(!fixture.chest || !fixture.opened)return;
-  const auto animation=fixture.chest->objVisual().animNames();
-  if(animation.find("T_S0_2_S1")!=std::string::npos)fixture.sawTransition=true;
-  if(animation==fixture.lastAnimation)return;
-  fixture.lastAnimation=animation;
-  ownMeshChestSnapshot(world,player,"animation");
-  }
-
-void ownMeshChestSetup(World& world,Npc& player,const Vec3& near,uint32_t zenId,bool reload) {
-  auto& fixture=bench.ownMeshChest;
-  fixture=Bench::OwnMeshChest{};
-  for(uint32_t id=0;auto* mob=world.mobsiById(id);++id) {
-    if(mob->zenId()!=zenId || (mob->position()-near).length()>5.f)continue;
-    const auto* mesh=mob->objVisual().protoMesh();
-    if(!mob->isContainer() || !mesh || !mesh->fname.starts_with("CHESTBIG_NW_NORMAL_OPEN") ||
-       mesh->findNode("BIP01 CHEST_BIG_1")==size_t(-1) || mesh->findNode("ZS_POS0")==size_t(-1))continue;
-    fixture.chest=mob;fixture.lid=mesh->findNode("BIP01 CHEST_BIG_1");break;
-    }
-  if(!fixture.chest) {arenaAbort("own-mesh-chest could not find the exact authored CHESTBIG_NW_NORMAL_OPEN");return;}
-  auto& chest=*fixture.chest;
-  if(reload) {
-    // Observe the complete loaded session before moving its hero or changing
-    // container contents. The caller compares this snapshot with the save.
-    ownMeshChestSnapshot(world,player,"loaded");
-    const bool pass=chest.stateId()==1 && chest.inventory().isEmpty() &&
-      chest.objVisual().animNames().find("S_S1")!=std::string::npos;
-    event("own_mesh_chest_loaded","\"pass\":"+std::string(pass?"true":"false"));
-    if(!pass)arenaAbort("own-mesh-chest loaded session lost open state or taken contents");
-    return;
-    }
-  if(chest.isLocked() || !chest.isAvailable()) {arenaAbort("own-mesh-chest needs the free unlocked authored chest");return;}
-  const bool seeded=chest.inventory().isEmpty();
-  if(seeded)chest.inventory().addItem("ITMI_GOLD",1,world);
-  for(auto item=chest.inventory().iterator(Inventory::T_Inventory);item.isValid();++item)
-    fixture.contents[item->clsId()]+=item.count();
-  if(fixture.contents.empty()) {arenaAbort("own-mesh-chest has no transferable contents");return;}
-  for(const auto& [id,count]:fixture.contents)fixture.heroBefore[id]=player.inventory().itemCount(id);
-  player.setInteraction(nullptr,true);player.clearAiQueue();player.clearState(false);player.stopWalking();player.closeWeapon(true);
-  const auto socket=chest.nearestPoint(player);
-  auto away=socket-chest.position();away.y=0;
-  if(away.length()<1.f) {arenaAbort("own-mesh-chest has no horizontal use socket");return;}
-  away=Vec3::normalize(away);
-  characterFreezeNear(world,player,socket,socket);
-  Vec3 start;bool prepared=false;
-  for(float distance:{65.f,90.f,35.f,0.f}) {
-    auto at=socket+away*distance;
-    const auto floor=world.physic()->landRay(Vec3(at.x,socket.y+80.f,at.z),250.f);
-    const bool supported=floor.hasCol && floor.n.y>=.8f && std::abs(floor.v.y-chest.position().y)<=80.f;
-    if(!supported) {
-      event("own_mesh_chest_approach","\"socket_cm\":"+ragdollVector(socket)+
-        ",\"distance_cm\":"+ragdollNumber(distance)+",\"floor_cm\":"+ragdollVector(floor.v)+
-        ",\"supported\":false");
-      continue;
-      }
-    player.setPosition(floor.v);player.setDirection(chest.position()-floor.v);player.updateTransform();
-    const bool collision=player.hasCollision();
-    const float useDistance=(player.centerPosition()-socket).length();
-    const bool clear=!world.physic()->ray(floor.v+Vec3(0,100,0),socket+Vec3(0,100,0)).hasCol;
-    event("own_mesh_chest_approach","\"socket_cm\":"+ragdollVector(socket)+
-      ",\"distance_cm\":"+ragdollNumber(distance)+",\"floor_cm\":"+ragdollVector(floor.v)+
-      ",\"supported\":true,\"collision\":"+(collision?"true":"false")+
-      ",\"use_distance_cm\":"+ragdollNumber(useDistance)+",\"clear\":"+(clear?"true":"false"));
-    if(collision || useDistance>155.f || !clear)continue;
-    start=floor.v;prepared=true;break;
-    }
-  if(!prepared) {arenaAbort("own-mesh-chest has no supported collision-free ordinary interaction approach");return;}
-  const Vec3 side(-away.z,0,away.x),target=chest.position()+Vec3(0,65,0);
-  const auto camera=target+away*150.f+side*100.f+Vec3(0,100,0);
-  bench.cam=C_Hold;bench.camAuto=false;lookFrom(camera,target);
-  event("own_mesh_chest_setup","\"zen_id\":"+std::to_string(zenId)+
-    ",\"mob_id\":"+std::to_string(world.mobsiId(&chest))+
-    ",\"visual\":"+jsonStr(chest.objVisual().protoMesh()->fname)+
-    ",\"world\":"+jsonStr(world.name())+",\"mob_cm\":"+ragdollVector(chest.position())+
-    ",\"socket_cm\":"+ragdollVector(socket)+",\"hero_start_cm\":"+ragdollVector(start)+
-    ",\"camera_cm\":"+ragdollVector(camera)+",\"camera_target_cm\":"+ragdollVector(target)+
-    ",\"seeded_gold\":"+(seeded?"true":"false")+",\"items\":"+ownMeshChestInventory(world,player));
-  ownMeshChestSnapshot(world,player,"closed");
-  }
 
 bool monsterCharacterRenderProof(World& world,Npc& npc,std::string_view role) {
   npc.updateTransform();
@@ -5920,69 +4999,9 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       ",\"world_load_ms\":"+ragdollNumber(float(w.loadMilliseconds())));
     if(!pass)arenaAbort("world-data door lost its open or cracked state");
     }
-  else if(c=="own-mesh-chest" && a.size()==6 && (a[1]=="setup" || a[1]=="reload"))
-    ownMeshChestSetup(w,pl,Vec3(num(a,2,0),num(a,3,0),num(a,4,0)),uint32_t(std::stoul(a[5])),a[1]=="reload");
-  else if(c=="own-mesh-chest" && a.size()==2 && a[1]=="open") {
-    auto& fixture=bench.ownMeshChest;
-    if(!fixture.chest) {arenaAbort("own-mesh-chest open needs setup");return;}
-    ctrl.clearInput();ctrl.clearFocus();ctrl.tickFocus();
-    const bool selected=ctrl.focus().interactive==fixture.chest;
-    event("own_mesh_chest_focus","\"pass\":"+std::string(selected?"true":"false")+
-      ",\"selected_mob_id\":"+std::to_string(w.mobsiId(ctrl.focus().interactive))+
-      ",\"expected_mob_id\":"+std::to_string(w.mobsiId(fixture.chest))+
-      ",\"hero_cm\":"+ragdollVector(pl.position()));
-    if(!selected) {arenaAbort("own-mesh-chest ordinary focus did not select the exact authored chest");return;}
-    fixture.opened=ctrl.interact(*fixture.chest) && pl.interactive()==fixture.chest;
-    event("own_mesh_chest_open","\"pass\":"+std::string(fixture.opened?"true":"false")+
-      ",\"native_path\":\"PlayerControl::interact/InventoryMenu::open/Npc::setInteraction\"");
-    if(!fixture.opened)arenaAbort("own-mesh-chest native player interaction did not attach");
-    }
-  else if(c=="own-mesh-chest" && a.size()==3 && a[1]=="snapshot")ownMeshChestSnapshot(w,pl,a[2]);
-  else if(c=="own-mesh-chest" && a.size()==2 && a[1]=="take") {
-    auto& fixture=bench.ownMeshChest;
-    if(!fixture.chest || !fixture.opened || fixture.chest->stateId()!=1 ||
-       fixture.chest->objVisual().animNames().find("S_S1")==std::string::npos || !fixture.sawTransition) {
-      arenaAbort("own-mesh-chest take needs native T_S0_2_S1 followed by S_S1");return;
-      }
-    // Exactly the transfer called by InventoryMenu::onTakeStuff for a chest;
-    // this preserves native inventory removal and the player's taking deed.
-    for(const auto& [id,count]:fixture.contents)pl.addItem(id,*fixture.chest,count);
-    fixture.taken=true;
-    ownMeshChestSnapshot(w,pl,"taken");
-    }
-  else if(c=="own-mesh-chest" && a.size()==2 && a[1]=="check") {
-    const auto& fixture=bench.ownMeshChest;
-    bool pass=fixture.chest && fixture.opened && fixture.sawTransition && fixture.taken &&
-      fixture.chest->stateId()==1 && fixture.chest->inventory().isEmpty() &&
-      fixture.chest->objVisual().animNames().find("S_S1")!=std::string::npos;
-    for(const auto& [id,count]:fixture.contents)
-      pass=pass && pl.inventory().itemCount(id)==fixture.heroBefore.at(id)+count;
-    event("own_mesh_chest_check","\"pass\":"+std::string(pass?"true":"false")+
-      ",\"saw_transition\":"+(fixture.sawTransition?"true":"false")+
-      ",\"items\":"+ownMeshChestInventory(w,pl));
-    if(!pass)arenaAbort("own-mesh-chest did not preserve native open state and exact item gain");
-    }
-  else if(c=="own-mesh-chest" && a.size()==3 && a[1]=="save") {
-    if(!bench.ownMeshChest.chest || a[2].empty() ||
-       a[2].find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")!=std::string::npos) {
-      arenaAbort("own-mesh-chest save needs a chest fixture and a simple label");return;
-      }
-    try {
-      ownMeshChestSnapshot(w,pl,"saved");std::vector<uint8_t> bytes;
-      {MemWriter writer(bytes);Serialize out(writer);Pixmap preview(1,1,TextureFormat::RGBA8);std::memset(preview.data(),0,4);
-      Gothic::inst().gameSession()->save(out,"own mesh chest "+a[2],preview);}
-      std::ofstream file(outDir+"/session-"+a[2]+".sav",std::ios::binary);
-      file.write(reinterpret_cast<const char*>(bytes.data()),std::streamsize(bytes.size()));
-      if(!file)throw std::runtime_error("cannot write complete own-mesh-chest session save");
-      event("own_mesh_chest_save","\"archive\":"+jsonStr("session-"+a[2]+".sav")+",\"bytes\":"+std::to_string(bytes.size()));
-      } catch(const std::exception& error) {arenaAbort(error.what());}
-    }
-  else if(c=="own-mesh" && a.size()==5 && a[1]=="setup")
-    ownMeshSetup(w,pl,uint32_t(std::stoul(a[2])),Vec3(num(a,3,0),0,num(a,4,0)));
-  else if(c=="own-mesh" && a.size()==2 && a[1]=="arrow")ownMeshArrow(w,pl);
-  else if(c=="own-mesh" && a.size()==2 && a[1]=="clearance")ownMeshClearance(w,pl);
-  else if(c=="own-mesh" && a.size()==2 && a[1]=="walk")ownMeshWalk(w,pl);
-  else if(c=="own-mesh" && a.size()==2 && a[1]=="checkpoint")ownMeshCheckpoint(w,pl);
+  else if(ownMeshCommand(ownMeshContext(),a,w,pl,ctrl)) return;
+
+
   else if(furniturePartsCommand(bench.furnitureParts,a,w,pl)) return;
   else if(movableCommand(movablesContext(),a,w,pl,ctrl)) return;
   else dispatched=false;
@@ -6053,7 +5072,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       pl.setDirection({0,0,1});pl.updateTransform();
       } else exec("arrow cleanup",w,pl,ctrl);
     const auto symbol=w.script().findSymbolIndex("BAU_904_BAUER");
-    auto at=bench.ragdollArenaTarget-Vec3(0,80,400);
+    auto at=bench.ragdoll.ragdollArenaTarget-Vec3(0,80,400);
     auto* npc=w.addNpc(symbol,at);
     if(npc==nullptr) {arenaAbort("arrow fixture NPC insertion failed");return;}
     npc->clearAiQueue();npc->clearState(false);npc->setExternalControl(true);
@@ -6266,7 +5285,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     const auto bodyMode=mode=="full" ? Npc::MeleeBenchMode::Full : mode=="chain" ? Npc::MeleeBenchMode::Chain :
                         mode=="blade" ? Npc::MeleeBenchMode::Blade : mode=="game" ? Npc::MeleeBenchMode::Off : Npc::MeleeBenchMode::Base;
     for(int i=0;i<count;++i) {
-      auto* npc=w.addNpc(symbol,bench.ragdollArenaPlaces[size_t(i)+5]);
+      auto* npc=w.addNpc(symbol,bench.ragdoll.ragdollArenaPlaces[size_t(i)+5]);
       if(!npc) {arenaAbort("melee NPC insertion failed");return;}
       npc->clearAiQueue();npc->clearState(false);npc->setTarget(nullptr);npc->setExternalControl(true);
       npc->setDirection(pl.position()-npc->position());npc->updateTransform();
@@ -6285,9 +5304,9 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       npc->setWalkMode(WalkBit::WM_Walk);
       }
     // The same camera and world geometry are used for zero, one and ten actors.
-    bench.camPos=bench.ragdollArenaTarget+Vec3(0,2600,1100);
-    bench.cam=C_RagdollArena;bench.ragdollArenaCamera=true;bench.camAuto=false;bench.smValid=false;
-    lookFrom(bench.camPos,bench.ragdollArenaTarget);
+    bench.camPos=bench.ragdoll.ragdollArenaTarget+Vec3(0,2600,1100);
+    bench.cam=C_RagdollArena;bench.ragdoll.ragdollArenaCamera=true;bench.camAuto=false;bench.smValid=false;
+    lookFrom(bench.camPos,bench.ragdoll.ragdollArenaTarget);
     bench.meleeFixture=true;bench.meleeMotionFrom=w.tickCount();
     event("melee_physics_setup","\"actors\":"+std::to_string(count)+",\"mode\":"+jsonStr(mode)+
       ",\"pelvis\":"+jsonStr(pelvis)+",\"substeps\":"+std::to_string(substeps)+",\"animation_cycle_ms\":12000");
@@ -6315,7 +5334,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     for(size_t i=0;i<bench.crew.size();++i) {
       auto& npc=*bench.crew[i];
       const float angle=float(i)*float(M_PI)/3.f;
-      Vec3 position=bench.ragdollArenaTarget+Vec3(std::cos(angle)*220.f,0,std::sin(angle)*220.f);
+      Vec3 position=bench.ragdoll.ragdollArenaTarget+Vec3(std::cos(angle)*220.f,0,std::sin(angle)*220.f);
       const auto floor=w.physic()->landRay(position+Vec3(0,300,0),600.f);
       if(!floor.hasCol || floor.n.y<.98f) {arenaAbort("melee brawl actor has no level ground");return;}
       position.y=floor.v.y;
@@ -6408,60 +5427,8 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     arenaAbort("cadence requires a build with OPENGOTHIC_ENABLE_APP_CADENCE=ON");
     }
 #endif
-  else if(c=="ragdoll" && a.size()==2 && (a[1]=="on" || a[1]=="off")) {
-    Gothic::settingsSetI("GAME","ragdoll",a[1]=="on" ? 1 : 0);
-    say("ragdoll "+a[1]);
-    event("ragdoll_toggle","\"enabled\":"+std::string(a[1]=="on" ? "true" : "false"));
-    }
-  else if(c=="ragdoll" && a.size()>1 && (a[1]=="save" || a[1]=="restore")) {
-    try {
-      ragdollNpcArchive(a,w,pl);
-      } catch(const std::exception& error) {
-      say("ragdoll archive failed: "+std::string(error.what()));
-      event("ragdoll_error","\"command\":"+jsonStr(line)+",\"reason\":"+jsonStr(error.what()));
-      }
-    }
-  else if(c=="ragdoll" && a.size()>1 && (a[1]=="session-save" || a[1]=="session-snapshot" || a[1]=="session-initial")) {
-    try {
-      if(a[1]=="session-initial")
-        throw std::runtime_error("session-initial must be the first scenario command at dt=0");
-      ragdollSessionArchive(a,w,pl);
-      } catch(const std::exception& error) {
-      say("ragdoll session failed: "+std::string(error.what()));
-      event("ragdoll_error","\"command\":"+jsonStr(line)+",\"reason\":"+jsonStr(error.what()));
-      }
-    }
-  else if(c=="ragdoll" && a.size()==3 && a[1]=="loot") {
-    try {
-      Npc* npc=findNpc(w,pl,a[2]);
-      if(!ragdollTrace || npc==nullptr || npc==&pl || !npc->isDead() || npc->ragdollBody()==nullptr || pl.isDown())
-        throw std::runtime_error("loot fixture requires trace=1 and a physical corpse with a live player");
-      const auto inventory=ragdollInventory(*npc,w);
-      const auto lootable=ragdollInventory(*npc,w,Inventory::T_Ransack);
-      if(lootable=="[]")
-        throw std::runtime_error("loot fixture needs nonempty actual ransack inventory");
-      ctrl.clearFocus(); ctrl.tickFocus();
-      const auto focus=ctrl.focus();
-      const bool matched=focus.npc==npc;
-      event("ragdoll_loot_focus","\"expected_actor_id\":"+std::to_string(w.npcId(npc))+
-        ",\"selected_actor_id\":"+std::to_string(w.npcId(focus.npc))+
-        ",\"actor\":"+jsonStr(TestBench::who(npc))+
-        ",\"matched\":"+(matched ? "true" : "false")+
-        ",\"position_cm\":"+ragdollVector(npc->position())+",\"lootable_inventory\":"+lootable);
-      if(!matched)
-        throw std::runtime_error("ordinary player focus did not select the exact moved corpse");
-      bench.expectedRagdollLoot=npc; bench.ragdollLootDidOpen=false;
-      const bool interacted=ctrl.interact(*npc);
-      bench.expectedRagdollLoot=nullptr;
-      if(!interacted || !bench.ragdollLootDidOpen || inventory!=ragdollInventory(*npc,w))
-        throw std::runtime_error("ordinary rendered ransack did not open the exact corpse or changed inventory");
-      say("ragdoll loot "+symName(w,npc)+" verified exact native Ransack target; closed synchronously without transfer");
-      } catch(const std::exception& error) {
-      bench.expectedRagdollLoot=nullptr;
-      say("ragdoll loot failed: "+std::string(error.what()));
-      event("ragdoll_error","\"command\":"+jsonStr(line)+",\"reason\":"+jsonStr(error.what()));
-      }
-    }
+  else if(ragdollCommand(ragdollContext(),line,a,w,pl,ctrl)) return;
+
 
   else if(c=="routine-return" && a.size()==8 && a[1]=="case") {
     if(bench.routineRetry) {arenaAbort("routine-return case after retry");return;}
@@ -6581,8 +5548,8 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       event("ragdoll_error","\"command\":"+jsonStr(line));
       return;
       }
-    bench.waitRagdollNpc=npc; bench.waitRagdollState=state;
-    bench.waitRagdollEnd=bench.time+uint64_t(std::min(timeout,300000.f));
+    bench.ragdoll.waitRagdollNpc=npc; bench.ragdoll.waitRagdollState=state;
+    bench.ragdoll.waitRagdollEnd=bench.time+uint64_t(std::min(timeout,300000.f));
     }
   else if(c=="standup" && a.size()==2) {
     Npc* npc=findNpc(w,pl,a[1]);
@@ -6601,113 +5568,13 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
           ",\"control\":\"normal unconscious End hook and native AI_StandUp after sleep\"");
     say("standup "+symName(w,npc));
     }
-  else if(c=="ragdoll" && a.size()==4 && a[1]=="queued-standup") {
-    Npc* npc=findNpc(w,pl,a[2]);
-    const float delay=num(a,3,0);
-    if(npc==nullptr || npc->isDead() || !npc->isUnconscious() || npc->ragdollBody()==nullptr ||
-       !std::isfinite(delay) || delay<1 || delay>30000 || std::floor(delay)!=delay) {
-      event("ragdoll_error","\"command\":"+jsonStr(line));
-      return;
-      }
-    npc->setExternalControl(false);
-    // Keep ZS_Unconscious: ending it would let prepareRagdoll auto-recover before the queue.
-    npc->clearAiQueue();
-    npc->aiPush(AiQueue::aiWait(uint64_t(delay)));
-    npc->aiPush(AiQueue::aiStandup());
-    event("ragdoll_queued_standup","\"actor\":"+jsonStr(TestBench::who(npc))+
-          ",\"actor_id\":"+std::to_string(w.npcId(npc))+",\"t_game_ms\":"+std::to_string(w.tickCount())+
-          ",\"delay_ms\":"+std::to_string(uint64_t(delay))+
-          ",\"control\":\"normal AI_Wait then AI_StandUp queue; no direct recovery\"");
-    say("ragdoll queued-standup "+symName(w,npc));
-    }
-  else if(c=="ragdoll" && a.size()==3 && a[1]=="remove") {
-    Npc* npc=findNpc(w,pl,a[2]);
-    if(npc==nullptr || npc==&pl || npc->ragdollBody()==nullptr) {
-      say("ragdoll remove failed: expected a physical NPC corpse");
-      event("ragdoll_error","\"command\":"+jsonStr(line));
-      return;
-      }
-    const auto parts=npc->ragdollBody()->partCount();
-    const auto before=w.physic()->physicsStats().bodies;
-    w.removeNpc(*npc);
-    const auto after=w.physic()->physicsStats().bodies;
-    const bool removed=npc->ragdollBody()==nullptr && before>=parts && after==before-parts;
-    event("ragdoll_remove","\"parts\":"+std::to_string(parts)+",\"bodies_before\":"+
-          std::to_string(before)+",\"bodies_after\":"+std::to_string(after)+",\"matched\":"+(removed ? "true" : "false"));
-    if(!removed)
-      event("ragdoll_error","\"reason\":\"removing NPC retained native ragdoll parts\"");
-    if(bench.questNpc==npc) bench.questNpc=nullptr;
-    bench.crew.erase(std::remove(bench.crew.begin(),bench.crew.end(),npc),bench.crew.end());
-    if(bench.waitRagdollNpc==npc) bench.waitRagdollNpc=nullptr;
-    if(bench.subject==npc) exec("watch player",w,pl,ctrl);
-    say("ragdoll remove "+std::to_string(parts)+" parts");
-    }
-  else if(c=="ragdoll" && a.size()==2 && a[1]=="arena") {
-    if(!chooseRagdollArena(w,pl)) arenaAbort("no geometry-valid twenty-actor arena");
-    else exec("clear 2500",w,pl,ctrl);
-    }
+
+
   else if(c=="ragdoll" && a.size()==2 && a[1]=="frame20") {
     if(!frameRagdollArena()) arenaAbort("twenty loaded models required before framing arena");
     }
-  else if(c=="ragdoll" && a.size()==2 && a[1]=="awake20") {
-    if(bench.crew.size()!=20 || std::any_of(bench.crew.begin(),bench.crew.end(),[](const auto* npc) {
-         return npc->ragdollBody()==nullptr || npc->ragdollBody()->partCount()!=24;
-         })) { arenaAbort("awake20 requires twenty full physical humans"); return; }
-    for(auto* npc:bench.crew)
-      const_cast<Ragdoll*>(npc->ragdollBody())->setAllowSleeping(false);
-    event("ragdoll_benchmark_sleep_policy","\"actors\":20,\"allow_sleeping\":false,\"scope\":\"benchmark ACTIVE only; normal gameplay unchanged\"");
-    }
-  else if(c=="ragdoll" && a.size()==4 && a[1]=="birth-track") {
-    bench.birthActor=findNpc(w,pl,a[2]); bench.birthLabel=a[3]; bench.birthHistory.clear();
-    if(bench.birthActor==nullptr || bench.birthActor->isDown()) arenaAbort("birth-track requires a live actor");
-    }
-  else if(c=="ragdoll" && a.size()==5 && a[1]=="birth-down") {
-    auto* npc=findNpc(w,pl,a[2]);
-    if(npc==nullptr || npc!=bench.birthActor || bench.birthHistory.size()<4 || (a[3]!="dead" && a[3]!="ko")) {
-      arenaAbort("birth-down requires four ordinary live history samples and a matching actor"); return;
-      }
-    const auto current=bench.birthHistory.back(),previous=bench.birthHistory[bench.birthHistory.size()-2];
-    const auto elapsed=current.tick-previous.tick;
-    if(elapsed==0 || elapsed>250 || current.tick!=w.tickCount()) { arenaAbort("birth history must end at the actual current world tick"); return; }
-    const auto velocity=(current.position-previous.position)*(1000.f/float(elapsed));
-    std::string history="[";
-    for(const auto& sample:bench.birthHistory) {
-      if(history.size()>1) history+=',';
-      history+="{\"t_game_ms\":"+std::to_string(sample.tick)+",\"in_air\":"+(sample.inAir ? "true" : "false")+
-               ",\"position_cm\":"+ragdollVector(sample.position)+"}";
-      }
-    history+=']'; bench.birthActor=nullptr;
-    npc->setLastHitBy(&pl);
-    if(!npc->setRagdollDown(a[3]=="dead")) { arenaAbort("actual production down path refused birth oracle"); return; }
-    npc->prepareRagdoll();
-    const auto* body=npc->ragdollBody();
-    if(body==nullptr || body->partCount()!=24) { arenaAbort("birth oracle requires a complete native human"); return; }
-    const auto state=body->state();
-    std::string velocities="[";
-    for(const auto& part:state.parts) { if(velocities.size()>1) velocities+=','; velocities+=ragdollVector(part.linearVelocity); }
-    velocities+=']';
-    event("ragdoll_birth","\"label\":"+jsonStr(a[4])+",\"actor_id\":"+std::to_string(w.npcId(npc))+
-          ",\"t_game_ms\":"+std::to_string(w.tickCount())+",\"mode\":"+jsonStr(a[4]=="stationary" ? "stationary" : a[3])+
-          ",\"history\":"+history+",\"expected_velocity_cm_s\":"+ragdollVector(velocity)+",\"parts\":24,\"velocities_cm_s\":"+
-          velocities+",\"birth_pelvis_y_cm\":"+std::to_string(body->pelvisTransform().data()[13]));
-    ragdollSessionArchive({"ragdoll","session-snapshot",a[2],a[4]},w,pl,0);
-    bench.birthContinuation=npc; bench.birthContinuationLabel=a[4]; bench.birthTick=w.tickCount();
-    }
-  else if(c=="ragdoll" && a.size()==3 && (a[1]=="verify20" || a[1]=="coverage")) {
-    const auto& mode=a[2];
-    if((mode!="disabled" && mode!="active" && mode!="sleeping") || !arenaFullSchema(w,mode)) {
-      arenaAbort("twenty complete visible model/schema precondition failed"); return;
-      }
-    if(a[1]=="coverage") {
-      if(ragdollPerf) { arenaAbort("untimed coverage requires OPENGOTHIC_RAGDOLL_PERF=0"); return; }
-      bench.ragdollCoverageMode=mode; bench.ragdollCoverageFrames=0; bench.ragdollCoverageActive=true;
-      } else event("ragdoll_arena_verified","\"mode\":"+jsonStr(mode)+",\"actors\":20,\"visible_meshes\":20");
-    }
-  else if(c=="ragdoll" && a.size()==3 && a[1]=="churn" && (a[2]=="on" || a[2]=="off")) {
-    bench.ragdollChurn=a[2]=="on";
-    bench.ragdollPulseFrame=0;
-    say("ragdoll churn "+a[2]);
-    }
+
+
   else if(c=="crowd" && a.size()==3) {
     const size_t instance=w.script().findSymbolIndex(a[1]);
     const float count=num(a,2,0);
@@ -6718,7 +5585,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       }
     const Vec3 center=pl.position()+facing(pl)*1000.f;
     for(int i=0;i<20;++i) {
-      Vec3 at=bench.ragdollArenaPlaces.size()==20 ? bench.ragdollArenaPlaces[size_t(i)] :
+      Vec3 at=bench.ragdoll.ragdollArenaPlaces.size()==20 ? bench.ragdoll.ragdollArenaPlaces[size_t(i)] :
               center+Vec3(float(i%5)*250.f-500.f,0,float(i/5)*250.f-375.f);
       const float ground=groundY(w,at.x,at.z,at.y+200);
       if(!std::isfinite(ground)) {
@@ -6732,7 +5599,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       npc->setDirection(pl.position()-at); npc->updateTransform();
       bench.crew.push_back(npc);
       }
-    if(bench.ragdollArenaPlaces.size()==20 && bench.crew.size()!=20) { arenaAbort("arena insertion must retain all twenty actors"); return; }
+    if(bench.ragdoll.ragdollArenaPlaces.size()==20 && bench.crew.size()!=20) { arenaAbort("arena insertion must retain all twenty actors"); return; }
     if(bench.crew.size()==20) {
       bench.subject=bench.crew[7];
       exec("watch watched",w,pl,ctrl);
@@ -9578,7 +8445,7 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
       return;
     }
   while(bench.pc<bench.prog.size() || bench.speaking || bench.waitReply || !bench.waitAiKey.empty() || !bench.bodyLiveWait.empty() ||
-        bench.downNpc!=nullptr || bench.waitRagdollNpc!=nullptr || bench.duelWaiting || bench.npcDuel.active || bench.waitStreaming ||
+        bench.downNpc!=nullptr || bench.ragdoll.waitRagdollNpc!=nullptr || bench.duelWaiting || bench.npcDuel.active || bench.waitStreaming ||
         std::chrono::steady_clock::now()<bench.realWaitUntil) {
     if(bench.speaking) {
       if(bench.time<bench.speakUntil)
@@ -9589,22 +8456,22 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
       return;
     if(bench.waitStreaming && streamingWaitTick(w))
       return;
-    if(bench.waitRagdollNpc!=nullptr) {
-      const auto* npc=bench.waitRagdollNpc;
+    if(bench.ragdoll.waitRagdollNpc!=nullptr) {
+      const auto* npc=bench.ragdoll.waitRagdollNpc;
       const auto* body=npc->ragdollBody();
       const auto& quest=npc->ragdollQuestReturnState();
       const bool guardedReturn=quest.armed && quest.hazards!=0;
-      const bool ready=bench.waitRagdollState=="knockdown" ? npc->isMeleeKnockedDown() :
-                       bench.waitRagdollState=="sleep" ? body!=nullptr && body->isSleeping() :
-                       bench.waitRagdollState=="recovery" ? npc->isRagdollBlending() :
+      const bool ready=bench.ragdoll.waitRagdollState=="knockdown" ? npc->isMeleeKnockedDown() :
+                       bench.ragdoll.waitRagdollState=="sleep" ? body!=nullptr && body->isSleeping() :
+                       bench.ragdoll.waitRagdollState=="recovery" ? npc->isRagdollBlending() :
                        body==nullptr && !npc->isDown() && !npc->isMeleeKnockedDown() && !npc->isRagdollBlending() &&
                        (!guardedReturn || (npc->isStanding() && !quest.armed));
-      if(!ready && bench.time<bench.waitRagdollEnd)
+      if(!ready && bench.time<bench.ragdoll.waitRagdollEnd)
         return;
-      say("waitragdoll "+bench.waitRagdollState+(ready ? " reached" : " timeout"));
-      event(ready ? "ragdoll_wait" : "ragdoll_error","\"state\":"+jsonStr(bench.waitRagdollState)+
+      say("waitragdoll "+bench.ragdoll.waitRagdollState+(ready ? " reached" : " timeout"));
+      event(ready ? "ragdoll_wait" : "ragdoll_error","\"state\":"+jsonStr(bench.ragdoll.waitRagdollState)+
             ",\"reached\":"+(ready ? "true" : "false"));
-      bench.waitRagdollNpc=nullptr;
+      bench.ragdoll.waitRagdollNpc=nullptr;
       }
     if(tickNpcDuel(bench.npcDuel,w))return;
     if(bench.duelWaiting) {
@@ -9676,7 +8543,7 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
     if(bench.cadenceWait) return;
 #endif
     }
-  if(bench.time>=bench.waitUntil && std::chrono::steady_clock::now()>=bench.realWaitUntil && !bench.waitArrive && bench.volleyLeft==0 && bench.downNpc==nullptr && bench.waitRagdollNpc==nullptr && !bench.duelWaiting && !bench.npcDuel.active && !bench.waitStreaming && bench.settleSteps==0 && bench.bodyLiveWait.empty())
+  if(bench.time>=bench.waitUntil && std::chrono::steady_clock::now()>=bench.realWaitUntil && !bench.waitArrive && bench.volleyLeft==0 && bench.downNpc==nullptr && bench.ragdoll.waitRagdollNpc==nullptr && !bench.duelWaiting && !bench.npcDuel.active && !bench.waitStreaming && bench.settleSteps==0 && bench.bodyLiveWait.empty())
     finish();
   }
 
@@ -10828,8 +9695,8 @@ void TestBench::bodyForget(const Npc* npc) {
   if(bodyTraceAlive && bench.movables.noiseTrace)bench.movables.noiseNpcIds.erase(npc);
   if(bodyTracing() || (ragdollTrace && bodyTraceAlive && bench.started && !bench.done)) {
     bench.bodyIds.erase(npc);
-    for(auto it=bench.savedRagdollNpcs.begin();it!=bench.savedRagdollNpcs.end();) {
-      if(it->second.npc==npc) it=bench.savedRagdollNpcs.erase(it); else ++it;
+    for(auto it=bench.ragdoll.savedRagdollNpcs.begin();it!=bench.ragdoll.savedRagdollNpcs.end();) {
+      if(it->second.npc==npc) it=bench.ragdoll.savedRagdollNpcs.erase(it); else ++it;
       }
     for(auto& actor:bench.bodyAnimation.actors)
       if(actor.npc==npc)
@@ -10921,12 +9788,12 @@ void TestBench::note(const char* text) {
   }
 
 void TestBench::ownMeshArrowHit(uint32_t zenId,const Vec3& point,const Vec3& normal) {
-  if(!isActive() || !bench.started || bench.done || bench.ownMeshZen==uint32_t(-1))return;
-  const auto delta=point-bench.ownMeshAxis;
-  const bool matched=zenId==bench.ownMeshZen;
-  if(matched)++bench.ownMeshArrowHits;
+  if(!isActive() || !bench.started || bench.done || bench.ownMesh.ownMeshZen==uint32_t(-1))return;
+  const auto delta=point-bench.ownMesh.ownMeshAxis;
+  const bool matched=zenId==bench.ownMesh.ownMeshZen;
+  if(matched)++bench.ownMesh.ownMeshArrowHits;
   event("own_mesh_arrow_hit","\"zen_id\":"+std::to_string(zenId)+
-    ",\"expected_zen_id\":"+std::to_string(bench.ownMeshZen)+",\"matched\":"+(matched?"true":"false")+
+    ",\"expected_zen_id\":"+std::to_string(bench.ownMesh.ownMeshZen)+",\"matched\":"+(matched?"true":"false")+
     ",\"point_cm\":"+ragdollVector(point)+",\"normal\":"+ragdollVector(normal)+
     ",\"axis_distance_cm\":"+ragdollNumber(std::hypot(delta.x,delta.z))+
     ",\"half_height_error_cm\":"+ragdollNumber(delta.y));
@@ -11387,8 +10254,8 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
     const auto now=std::chrono::steady_clock::now();
     FrameProfile::observer(dt,now);
     FrameProfile::setActors(bench.crew);
-    bench.perfWallMs=bench.hasPerfFrame ? std::chrono::duration<float,std::milli>(now-bench.lastPerfFrame).count() : 0;
-    bench.lastPerfFrame=now; bench.hasPerfFrame=true;
+    bench.ragdoll.perfWallMs=bench.ragdoll.hasPerfFrame ? std::chrono::duration<float,std::milli>(now-bench.ragdoll.lastPerfFrame).count() : 0;
+    bench.ragdoll.lastPerfFrame=now; bench.ragdoll.hasPerfFrame=true;
     }
   // Independent privileged oracle at the same post-world/animation phase as the observer.
   // Setup commands run below and may leave real root motion for the next native substep; comparing
@@ -11444,36 +10311,36 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
     }
 
   bench.ctrl = &ctrl;
-  if(bench.birthActor!=nullptr && !bench.birthActor->isDown()) {
-    const Bench::BirthLive live{bench.birthActor->position(),world->tickCount(),bench.birthActor->isInAir()};
-    if(bench.birthHistory.empty() || live.tick>bench.birthHistory.back().tick) {
-      bench.birthHistory.push_back(live); if(bench.birthHistory.size()>4) bench.birthHistory.pop_front();
-      event("ragdoll_birth_live","\"label\":"+jsonStr(bench.birthLabel)+",\"actor_id\":"+std::to_string(world->npcId(bench.birthActor))+
+  if(bench.ragdoll.birthActor!=nullptr && !bench.ragdoll.birthActor->isDown()) {
+    const Bench::BirthLive live{bench.ragdoll.birthActor->position(),world->tickCount(),bench.ragdoll.birthActor->isInAir()};
+    if(bench.ragdoll.birthHistory.empty() || live.tick>bench.ragdoll.birthHistory.back().tick) {
+      bench.ragdoll.birthHistory.push_back(live); if(bench.ragdoll.birthHistory.size()>4) bench.ragdoll.birthHistory.pop_front();
+      event("ragdoll_birth_live","\"label\":"+jsonStr(bench.ragdoll.birthLabel)+",\"actor_id\":"+std::to_string(world->npcId(bench.ragdoll.birthActor))+
             ",\"t_game_ms\":"+std::to_string(live.tick)+",\"in_air\":"+(live.inAir ? "true" : "false")+
             ",\"position_cm\":"+ragdollVector(live.position));
       }
     }
-  if(bench.birthContinuation!=nullptr && world->tickCount()>bench.birthTick) {
-    const auto* body=bench.birthContinuation->ragdollBody();
+  if(bench.ragdoll.birthContinuation!=nullptr && world->tickCount()>bench.ragdoll.birthTick) {
+    const auto* body=bench.ragdoll.birthContinuation->ragdollBody();
     if(body!=nullptr)
-      event("ragdoll_birth_continuation","\"label\":"+jsonStr(bench.birthContinuationLabel)+",\"actor_id\":"+
-            std::to_string(world->npcId(bench.birthContinuation))+",\"t_game_ms\":"+std::to_string(world->tickCount())+
+      event("ragdoll_birth_continuation","\"label\":"+jsonStr(bench.ragdoll.birthContinuationLabel)+",\"actor_id\":"+
+            std::to_string(world->npcId(bench.ragdoll.birthContinuation))+",\"t_game_ms\":"+std::to_string(world->tickCount())+
             ",\"pelvis_y_cm\":"+std::to_string(body->pelvisTransform().data()[13])+",\"native_parts\":"+std::to_string(body->partCount()));
     else event("ragdoll_error","\"reason\":\"birth body missing on the next native tick\"");
-    bench.birthContinuation=nullptr;
+    bench.ragdoll.birthContinuation=nullptr;
     }
-  if((ragdollPerf || bench.ragdollArenaCamera)
+  if((ragdollPerf || bench.ragdoll.ragdollArenaCamera)
 #ifdef OPENGOTHIC_ENABLE_APP_CADENCE
      && !AppCadence::normalClock()
 #endif
      ) {
     // Coverage is sampled after the actual world step and BEFORE fixture commands
     // can wake bodies. A post-impulse "awake" flag alone could hide a sleeping tick.
-    bench.perfPhysicalBeforeImpulse=0; bench.perfSleepingBeforeImpulse=0;
+    bench.ragdoll.perfPhysicalBeforeImpulse=0; bench.ragdoll.perfSleepingBeforeImpulse=0;
     for(const auto* npc:bench.crew)
       if(const auto* body=npc->ragdollBody()) {
-        ++bench.perfPhysicalBeforeImpulse;
-        if(body->isSleeping()) ++bench.perfSleepingBeforeImpulse;
+        ++bench.ragdoll.perfPhysicalBeforeImpulse;
+        if(body->isSleeping()) ++bench.ragdoll.perfSleepingBeforeImpulse;
         }
     }
 #ifdef OPENGOTHIC_ENABLE_APP_CADENCE
@@ -11504,13 +10371,13 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
   renderSound(dt);
   if(bench.done)
     return false;
-  if(bench.ragdollChurn) {
+  if(bench.ragdoll.ragdollChurn) {
     for(size_t i=0;i<bench.crew.size();++i)
       if(bench.crew[i]->ragdollBody()!=nullptr) {
-        const float sign=((bench.ragdollPulseFrame+2)/5+i)%2==0 ? 1.f : -1.f;
+        const float sign=((bench.ragdoll.ragdollPulseFrame+2)/5+i)%2==0 ? 1.f : -1.f;
         bench.crew[i]->addRagdollImpulse({50.f*sign,5.f,25.f*sign});
         }
-    ++bench.ragdollPulseFrame;
+    ++bench.ragdoll.ragdollPulseFrame;
     }
   // a dialog (an npc with an important one comes to the hero) holds the player: say so
   if(Gothic::inst().isInDialog()!=bench.inDialog) {
@@ -11644,19 +10511,19 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
 
   if(bench.perfArmed)FrameProfile::sample(bench.perfSegment,bench.perfFrame++);
 
-  if(bench.ragdollCoverageActive) {
+  if(bench.ragdoll.ragdollCoverageActive) {
     auto sample=ragdollCoverageSample(*world);
-    sample.segment=bench.ragdollCoverageMode; sample.frame=bench.ragdollCoverageFrames++;
+    sample.segment=bench.ragdoll.ragdollCoverageMode; sample.frame=bench.ragdoll.ragdollCoverageFrames++;
     for(const auto* npc:bench.crew) arenaModelProof(*world,*npc,size_t(sample.frame));
-    if(!arenaModeMatches(sample,bench.ragdollCoverageMode) && !bench.ragdollCoverageFailed) {
-      bench.ragdollCoverageFailed=true;
+    if(!arenaModeMatches(sample,bench.ragdoll.ragdollCoverageMode) && !bench.ragdoll.ragdollCoverageFailed) {
+      bench.ragdoll.ragdollCoverageFailed=true;
       event("ragdoll_error","\"reason\":\"untimed twenty-body coverage failed\",\"coverage_frame\":"+std::to_string(sample.frame));
       }
-    bench.ragdollCoverage.push_back(std::move(sample));
-    if(bench.ragdollCoverageFrames==1020) {
-      bench.ragdollCoverageActive=false;
-      event("ragdoll_coverage_complete","\"mode\":"+jsonStr(bench.ragdollCoverageMode)+",\"frames\":1020,\"pass\":"+
-            (bench.ragdollCoverageFailed ? "false" : "true"));
+    bench.ragdoll.ragdollCoverage.push_back(std::move(sample));
+    if(bench.ragdoll.ragdollCoverageFrames==1020) {
+      bench.ragdoll.ragdollCoverageActive=false;
+      event("ragdoll_coverage_complete","\"mode\":"+jsonStr(bench.ragdoll.ragdollCoverageMode)+",\"frames\":1020,\"pass\":"+
+            (bench.ragdoll.ragdollCoverageFailed ? "false" : "true"));
       }
     }
 
@@ -11719,12 +10586,12 @@ bool TestBench::withUi() {
   }
 
 bool TestBench::ragdollLootOpened(const Npc& player, const Npc& target) {
-  if((!ragdollTrace && !bench.water.bodiesReady) || !bodyTraceAlive || scenarioPath==nullptr || !bench.started || bench.done || bench.expectedRagdollLoot!=&target)
+  if((!ragdollTrace && !bench.water.bodiesReady) || !bodyTraceAlive || scenarioPath==nullptr || !bench.started || bench.done || bench.ragdoll.expectedRagdollLoot!=&target)
     return false;
   auto* world=Gothic::inst().world();
   if(world==nullptr)
     return false;
-  bench.ragdollLootDidOpen=true;
+  bench.ragdoll.ragdollLootDidOpen=true;
   event("ragdoll_loot_open","\"player_actor_id\":"+std::to_string(world->npcId(&player))+
         ",\"target_actor_id\":"+std::to_string(world->npcId(&target))+",\"state\":\"Ransack\",\"close\":\"synchronous fixture after actual open\"");
   return true;
