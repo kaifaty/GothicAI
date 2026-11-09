@@ -1586,11 +1586,35 @@ float MdlVisual::faceWeight(const Npc& npc, std::string_view anim) const {
   return head.view.morphWeight(anim);
   }
 
+void MdlVisual::startCues(Npc& npc, std::shared_ptr<const SpeechCues::Plan> plan, bool voiced) {
+  cues.start(std::move(plan),voiced,npc.world().tickCount());
+  }
+
+bool MdlVisual::startCue(Npc& npc, std::string_view name, char side) {
+  const auto* profile = face.faceProfile();
+  const auto* cue     = profile!=nullptr ? profile->findCue(name) : nullptr;
+  if(cue==nullptr)
+    return false;
+  if(side==0)
+    side = SpeechCues::sideOf(SpeechCues::seedOf(name)^(uint32_t(npc.instanceSymbol())*2654435761u)^(cueCount++*40503u));
+  const uint64_t now = npc.world().tickCount();
+  return face.startCue(name,cue->side!=0 && side!=cue->side,-1,now,now);
+  }
+
+float MdlVisual::cueWeight(const Npc& npc, std::string_view name) const {
+  return face.cueWeight(name,npc.world().tickCount());
+  }
+
 void MdlVisual::updateFace(Npc& npc) {
   if(!face.isActive())
     return;
   const bool     probing = &npc==FaceRig::probeNpc;
   const uint64_t now     = npc.world().tickCount();
+  // the gestures of the line, far too: a face seen again shows them as they go
+  cueStarts.clear();
+  cues.update(*face.faceProfile(),now,cueStarts);
+  for(auto& s:cueStarts)
+    face.startCue(s.name,s.mirror,s.hold,s.at,now);
   // a far face stays as it was last shown, as a far one does not blink
   if(!head.view.isEmpty() && (npc.processPolicy()<=NpcProcessPolicy::AiNormal || probing)) {
     const auto r = face.update(now);
@@ -1655,6 +1679,7 @@ void MdlVisual::startSpeech(Npc& npc, std::shared_ptr<LipSync::Track> voice) {
         break;
         }
   mouth.setShapes(std::move(shapes));
+  cues.voice(voice,npc.world().tickCount());
   mouth.start(std::move(voice),npc.world().tickCount());
   }
 
@@ -1671,6 +1696,7 @@ void MdlVisual::updateMouth(Npc& npc, uint64_t dt) {
 
 void MdlVisual::stopDlgAnim(Npc& npc) {
   mouth.stop();
+  cues.stop();
   gestures.stop();
   gestureSeq = nullptr;
   const uint16_t count = 11;

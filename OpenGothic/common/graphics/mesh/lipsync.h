@@ -37,6 +37,10 @@ class LipSync final {
         float    peak (uint64_t from, uint64_t to) const;  // the largest level in [from,to]
         uint64_t durationMs() const;
         bool     isFinished() const;
+        // the first stretch of at least minMs after `from` where the level stays below `below`: [start, end) in ms,
+        // end - where the voice is back or the end of what has arrived. A stretch already going on at `from` is
+        // not one (the gestures want a pause after their word, not the one before it)
+        bool     quietRun(uint64_t from, float below, uint64_t minMs, uint64_t& start, uint64_t& end) const;
 
       private:
         struct Biquad final {

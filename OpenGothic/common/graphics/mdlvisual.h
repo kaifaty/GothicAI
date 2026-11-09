@@ -11,6 +11,7 @@
 #include "graphics/mesh/talkgestures.h"
 #include "graphics/mesh/eyeblink.h"
 #include "graphics/mesh/facerig.h"
+#include "graphics/mesh/speechcues.h"
 #include "graphics/mesh/quiver.h"
 #include "game/constants.h"
 #include "meshobjects.h"
@@ -214,6 +215,11 @@ class MdlVisual final {
     void                           startFaceAnim  (Npc& npc, std::string_view anim, float intensity, uint64_t duration);
     // how much of the face anim shows now, 0..1: the own head's FaceRig or the morphs of the original head
     float                          faceWeight     (const Npc& npc, std::string_view anim) const;
+    // the facial gestures of the line it starts to say (say.cues): they go with its voice (SpeechCues)
+    void                           startCues      (Npc& npc, std::shared_ptr<const SpeechCues::Plan> plan, bool voiced);
+    // a gesture of the own head's profile now (the bench, the console): side 'L'/'R', 0 - by the seed; false: none
+    bool                           startCue       (Npc& npc, std::string_view name, char side);
+    float                          cueWeight      (const Npc& npc, std::string_view name) const;
     const GltfHeadMesh*            headMesh() const;
     void                           stopDlgAnim    (Npc& npc);
     // a voiced line: the mouth follows the voice instead of the talk loop
@@ -343,6 +349,9 @@ class MdlVisual final {
     EyeBlink                       blink;
     uint32_t                       blinkShift = 0;        // gaze shifts seen so far
     FaceRig                        face;                  // the own head's face anims (a profile), else none
+    SpeechCues                     cues;                  // when the gestures of the line said now start
+    std::vector<SpeechCues::Start> cueStarts;
+    uint32_t                       cueCount = 0;          // gestures started by hand: the seed of their side
     float                          faceUploadUs = 0;      // the last setDeformation of the face, µs (test bench)
     MeshAttach                     ammunition, stateItm;
     std::vector<MeshAttach>        item;
