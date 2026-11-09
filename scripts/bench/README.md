@@ -53,6 +53,11 @@ Their `RagdollBench` / `OwnMesh` state types and context references are in `test
 `ragdollCommand` and `ownMeshCommand` run at their groups' first original branches.
 `ragdoll frame20`, camera/capture functions, shared ragdoll formatting helpers and `TestBench::` hooks stay in `testbench.cpp`.
 
+Archery fixtures, observations, aim helpers and commands live in `common/testbench_archery.cpp`.
+Their `ArcheryBench` state, shared `Trail` type and `ArcheryContext` references are in `testbench_internal.h`.
+`archeryCommand` is called at the first branch of each of nine command groups, guarded by that group's command names.
+`aimCameraFrame`, `quiver`, `bowgeom`, `hold`, `TestBench::arrowAt`, tick/reset and camera placement stay in `testbench.cpp`.
+
 Melee-shadow and melee-physics fixtures, dodge / AI-response helpers and commands live in `common/testbench_melee.cpp`.
 Routine-return and guard fixtures, observations, shared hazard-site helpers and commands live in `common/testbench_routine.cpp`.
 Their `Melee` / `Routine` state types and context references are in `testbench_internal.h`;
@@ -1592,7 +1597,7 @@ physics contracts pass after explicit signed Guild comparisons in the fixture.
 
 `OpenGothic/common/testbench.cpp` and `testbench_<family>.cpp` (including healing in
 `testbench_healing.cpp`, water / corpse-water in `testbench_water.cpp` and hero / human NPC
-CharacterVirtual in `testbench_character.cpp` and ground monsters in `testbench_monster.cpp`, destruction in `testbench_destruction.cpp`, movable objects/candles, physics noise and spells in `testbench_movables.cpp`, item wake in `testbench_item_wake.cpp` and living bodies in `testbench_living.cpp`, ragdolls in `testbench_ragdoll.cpp` and own meshes / chests in `testbench_own_mesh.cpp`, melee in `testbench_melee.cpp` and routine return / guard in `testbench_routine.cpp`), inert unless `OPENGOTHIC_BENCH` is set. Hooks: the fixed time step and
+CharacterVirtual in `testbench_character.cpp` and ground monsters in `testbench_monster.cpp`, destruction in `testbench_destruction.cpp`, movable objects/candles, physics noise and spells in `testbench_movables.cpp`, item wake in `testbench_item_wake.cpp` and living bodies in `testbench_living.cpp`, ragdolls in `testbench_ragdoll.cpp` and own meshes / chests in `testbench_own_mesh.cpp`, archery in `testbench_archery.cpp`, melee in `testbench_melee.cpp` and routine return / guard in `testbench_routine.cpp`), inert unless `OPENGOTHIC_BENCH` is set. Hooks: the fixed time step and
 the capture in `MainWindow` (in film mode the captured frame replaces the window's), the AI bridge's lines
 and voices (`TestBench::aiLine`, `aiVoiceEnd`, `aiHeard`, `aiBusy`), an npc's lines of the game and SVMs
 (`TestBench::npcOutput` in `Npc::nextAiAction`), the OpenAL loopback device in Tempest's
