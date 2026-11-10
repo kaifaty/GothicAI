@@ -960,8 +960,9 @@ The acceptance clip of the facial gestures and the leak of a lie in the game
 ([face-cues.md](../../reports/content/2026-11-hero-head/face-cues.md), "Приёмка", "В игре"): Vino with an own head
 says four lines with gesture tags and one lie through the real path — the server's parsing (`MoodTags`,
 `say.cues`, `say.leak`), the voice of `tts-service` with its word times (`say_audio.words`), the bridge's
-`LineCues`. The server's scenario `face_cues_demo` (`server/src/gothic_ai/scenarios/face_cues.py`) puts the hero
-110 cm in front of Vino at noon, takes him over and asks him 8 s later; `face-cues-clip.bench` films his face
+`LineCues`. The server's scenario `face_cues_demo` (`server/src/gothic_ai/scenarios/face_cues.py`) puts Vino on open
+ground in Lobart's yard (`NW_FARM1_PATH_01`, out of the field's crops) at noon, takes him over, puts the hero
+2 m in front of him and asks him 8 s later; `face-cues-clip.bench` films his face
 close up from 5.5 s on until he has been quiet 3 s. The leak is the server's trial (`p` at most 0.6); for a sure
 one the server runs with the debug flag `--debug-leak [upper|lower]` (every `[felt:…]` leaks, on that half).
 

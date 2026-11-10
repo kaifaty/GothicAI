@@ -27,13 +27,15 @@ FACE_REPLY = (
     "[friendly] [felt:afraid] Я весь вечер был в амбаре, [smirk] спроси кого хочешь. "
     "[angry] [frown] Всё, некогда мне, [press] иди отсюда."
 )
+FACE_SPOT = "NW_FARM1_PATH_01"  # open ground in Lobart's yard: nothing between the camera and his face
 STAGE_S = 8.0  # after the hero is put in front of the npc: the bench sets its camera and starts recording
 
 
 async def face_cues_demo(link: GameLink, dialogue: DialogueManager, npc: str = FACE_NPC) -> dict[str, str]:
-    """The hero is put in front of the npc (Vino) and asks him where he was; the npc answers with the given
-    tagged lines through the common off backend: the server's own parsing (`say.cues`, `say.leak`) and voice.
-    The leak of the lie is the server's trial; for a sure one start the server with `--debug-leak`."""
+    """The npc (Vino) is put on open ground, the hero in front of him, who asks him where he was; the npc
+    answers with the given tagged lines through the common off backend: the server's own parsing (`say.cues`,
+    `say.leak`) and voice. The leak of the lie is the server's trial; for a sure one start the server with
+    `--debug-leak`."""
     results: dict[str, str] = {}
     off = model_off(dialogue)
     dialogue.quick = None  # no first words: only the four lines
@@ -46,8 +48,9 @@ async def face_cues_demo(link: GameLink, dialogue: DialogueManager, npc: str = F
     await link.wait_world()
     await link.debug("time", hour=12, minute=0)
     await link.debug("skip_important", near=npc)  # his greeting would stop the hero
-    await link.debug("teleport", near=npc, distance=110)
+    await link.debug("npc_goto", npc=npc, waypoint=FACE_SPOT)
     await attach_when_free(link, npc)
+    await link.debug("teleport", near=npc, distance=200)  # farther: his gaze at the hero tilts his head less
     snap = await link.snapshot(npc, fresh=True)
     conv = dialogue.open(npc, snap.npc.name)
     log.info("face_cues_demo: %s in front of the hero, debug leak %s", npc, dialogue.debug_leak)

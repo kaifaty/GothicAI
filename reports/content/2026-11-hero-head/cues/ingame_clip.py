@@ -4,7 +4,8 @@
 # blinks) and sheet.jpg (for each gesture and the leak the frame before it and the frame at its apex).
 #   uv run --with pillow python ingame_clip.py <bench out dir> <out dir> [<segment, default clip>]
 # The times come from what was shown: the columns cue_*, cue_leak, bk_w, bk_n of metrics.csv for the watched npc;
-# the gestures of each line from its "[ai] cues" line in game.log, the line's start and length from events.jsonl.
+# the gestures of each line from its "[ai] cues" line in game.log, the line's start from events.jsonl, its end
+# from lip_on (the lips driven by its voice).
 import csv
 import json
 import re
@@ -122,8 +123,10 @@ def main():
     key, shots = [], []
     for i, line in enumerate(lines):
         f0 = line['frame']
-        f1 = f0 + round(line['ms']*FPS/1000)
         nxt = lines[i+1]['frame'] if i+1 < len(lines) else last+1
+        # the end of its voice: the last frame of [f0, next line) the lips are driven by it, else the bridge's time
+        voiced = [f for f in range(f0, nxt) if f in rows and rows[f].get('lip_on') == '1']
+        f1 = voiced[-1]+1 if voiced else f0 + round(line['ms']*FPS/1000)
         line['end'], line['next'] = f1, nxt
         words = line['text'].split()
         key.append(f'Реплика {i+1} ({line["id"] if "id" in line else "?"}), {t(f0)} – {t(f1)}, '
@@ -161,7 +164,7 @@ def main():
         key.append('')
     gestures = sorted({c['name'] for line in lines for c in line['cues']})
     lies = [i+1 for i, line in enumerate(lines) if line['leak']]
-    key.insert(0, f'Ключ клипа: {len(lines)} реплик {lines[0]["npc"] if lines else ""}, жесты: {", ".join(gestures)}; '
+    key.insert(0, f'Ключ клипа {lines[0]["npc"] if lines else ""}, реплик: {len(lines)}; жесты: {", ".join(gestures)}; '
                f'ложь — реплика {", ".join(map(str, lies)) or "нет"}. Время — от начала клипа, {FPS} кадров/с.\n')
     (out/'key.txt').write_text('\n'.join(key))
 

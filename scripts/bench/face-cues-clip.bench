@@ -6,12 +6,14 @@
 # "Face cues clip". Blinks stay on: the liar's two blinks are part of the clip.
 seed 73013
 cheat god
-view clean 30
-# the server sets the hour, puts the hero 110 cm in front of Vino, takes him over and waits 8 s before asking
+view clean 15
+overlay off
+# the server sets the hour, puts Vino in Lobart's yard and takes him over, puts the hero 2 m in front of him
+# and waits 8 s before asking
 wait 4000
 watch BAU_952_VINO
 wait 1500
-cam face 38 0 1
+cam face 40 0 10
 rec clip
 waitreply 120000 3000
 stop
