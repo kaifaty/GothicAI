@@ -538,8 +538,9 @@ strikes the largest bond group of the broken fixture prop with the native forwar
 swings, until the prop has more bodies. Before each swing it places the hero by where that attack's
 blade comes down: 126 cm forward and 28 cm right of the feet (`melee-blade-shadow.jsonl`, top contacts).
 From the first blow's side by 30 degree steps, rays straight down along the line to the group's centre of
-mass find the first point of the group's own body; a side with a loose piece found first, or higher
-within 20 cm of that point (rays every 4 cm), is skipped. Events: `destruction2_remnant_attempt` per swing (side, landing),
+mass find the first point of the group's own body no lower than 30 cm under its top (the floor of an open
+crate is out of the blade's reach); a side with a loose piece found first, or higher within 20 cm of that
+point (rays every 4 cm), is skipped. Events: `destruction2_remnant_attempt` per swing (side, landing),
 `destruction2_remnant_complete` with `broken`, `swings`, bodies and the largest group before and after,
 and every group's pieces. `destruction2 walk <cm>` then walks the hero, holding forward (4 s at most a
 pass), along a straight line through the centre of the loose pieces, clear of the largest group by its

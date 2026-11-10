@@ -253,8 +253,8 @@ std::vector<RemnantGroup> fracturePiecesGroups(World& world,Destruction& destruc
 // and 27.3-28.9 cm in six runs). A loose piece the blade meets first stops it, and the group does not
 // break. So, from the side of `from` (the first blow's stand) by 30 degree steps, on the line from that
 // side to the group's centre of mass: by 2 cm from its outer bound inwards, a ray down from above finds
-// the first point of the group's own material. A loose piece found first higher than 30 cm under the
-// group's top, or within 20 cm around that point higher than it, closes the side. The actor stands
+// the first point of the group's own material no lower than 30 cm under the group's top. A loose piece
+// found first higher than that, or within 20 cm around that point higher than it, closes the side. The actor stands
 // facing along the line with the blade's landing on that point.
 constexpr float LandingForward=126.f,LandingRight=28.f;
 
@@ -304,6 +304,8 @@ RemnantAim remnantAim(World& world,const RemnantGroup& group,const FractureMesh&
         if(height>high.y-30.f)break;
         continue;
         }
+      // The blade comes down near the top: the floor of an open crate is out of its reach.
+      if(height<high.y-30.f)continue;
       bool covered=false;
       const Vec3 across(outward.z,0,-outward.x);
       // A 4 cm grid: a stave is 5 cm thick, and one standing in the hoops stops the blade.
