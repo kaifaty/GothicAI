@@ -10,6 +10,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 
 #include "ui/inventorymenu.h"
 #include "ui/videowidget.h"
@@ -32,6 +33,8 @@ uint32_t RendererInternal::nextPot(uint32_t x) {
   x++;
   return x;
   }
+
+uint32_t Renderer::benchVsmLampSides = 0;
 
 Renderer::Renderer() {
   auto& device = Resources::device();
@@ -182,6 +185,16 @@ void Renderer::setupSettings() {
   settings.vsmLampNearCm      = Gothic::settingsGetF("INTERNAL","vsmLampNearCm");
   if(settings.vsmLampNearCm<=0)
     settings.vsmLampNearCm = 30;
+  // VSM lamps: which sides of a surface go into a lamp's cube faces (main.vert, meshShader): 1 the side away from the
+  // light alone (before 2026-11-10: a one-sided floor or wall lit by the lamp let its light through), 2 both sides of
+  // the world mesh (0 or unset), 3 both sides of objects too (the study's: false shadows by fireplaces and candles).
+  // OPENGOTHIC_VSM_LAMP_SIDES=1|2|3 (test benches) wins over the ini; without mesh shaders always 1
+  // (reports/render-features/2026-11-10-lamp-one-sided)
+  {
+    const char* env = std::getenv("OPENGOTHIC_VSM_LAMP_SIDES");
+    const int   v   = env!=nullptr ? std::atoi(env) : Gothic::settingsGetI("INTERNAL","vsmLampSides");
+    settings.vsmLampSides = uint32_t(v>=1 && v<=3 ? v : 2);
+  }
   // VSM lamps: the soft PCSS, or hard shadows in one gather (light.frag, VSM_LAMP_HARD). On Metal hard by default:
   // the PCSS costs ~11 ms GPU indoors on an M1 Pro (reports/render-features/2026-11-05-vsm-mac-hard/README.md).
   // OPENGOTHIC_VSM_LAMP_SOFT=0|1 (test benches) wins over the ini; the study switches (OPENGOTHIC_VSM_LAMP*,
@@ -756,6 +769,8 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   prepareMotion(wview);
   wview.setTaaReactiveLref(settings.taaReactiveLref);
   wview.setVsmLampNear(settings.vsmLampNearCm);
+  // the faces are two-sided only where the mesh shader draws them (main.vert); the vertex path culls as before
+  wview.setVsmLampSides(!Shaders::options().doMeshShading ? 1u : (benchVsmLampSides!=0 ? benchVsmLampSides : settings.vsmLampSides));
 
   static bool updFr = true;
   if(updFr){

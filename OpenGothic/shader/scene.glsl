@@ -48,7 +48,8 @@ struct SceneDesc {
   mat4  reprojectClip;   // this frame's clip -> the previous camera's, for a point that stood still (Taa::reprojection)
   mat4  viewProjectPrev; // the previous camera with this frame's jitter: only on vec4(d,0)
   float vsmLampNear;     // cm: a lamp's fixture this close to its light casts no shadow ([INTERNAL] vsmLampNearCm)
-  float vsmPad0, vsmPad1, vsmPad2;
+  uint  vsmLampSides;    // VSM lamps: a cube face keeps the far side (1), both of the world mesh (2), of objects too (3)
+  float vsmPad1, vsmPad2;
   };
 
 struct LightSource {
