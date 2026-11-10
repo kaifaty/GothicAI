@@ -321,7 +321,7 @@ RemnantAim remnantAim(World& world,const RemnantGroup& group,const FractureMesh&
   return aim;
   }
 
-// How deep the hero's capsule (25 cm, 180 cm tall, feet at its position) stands in the pieces of
+// How deep the hero's capsule (its controller's radius, 180 cm tall, feet at its position) stands in the pieces of
 // groups a character collides with (from 0.5 m, their joint local bounds), centimetres: first in
 // remnants (groups of several pieces), second in single pieces, which a light piece on the ground lets
 // the feet pass by design.
@@ -337,7 +337,8 @@ std::pair<float,float> heroInDebris(const FracturePieces::Break& item,const std:
       bounds[item.pieces[i].bondGroup].Encapsulate(box);
       ++members[item.pieces[i].bondGroup];
       }
-  const JPH::ShapeRefC capsule=new JPH::CapsuleShape(.65f,.25f);
+  const float radius=hero->navigationCapsule().x*.01f;
+  const JPH::ShapeRefC capsule=new JPH::CapsuleShape(.9f-radius,radius);
   const auto feet=hero->position();
   const auto pose=JPH::Mat44::sTranslation(JPH::Vec3(feet.x*.01f,(feet.y+90.f)*.01f,feet.z*.01f));
   std::pair<float,float> depth{0.f,0.f};
@@ -680,6 +681,7 @@ void fracturePiecesTick(FracturePieces& state,Destruction& destruction,const Des
       ",\"largest_volume_cm3\":"+ragdollNumber(largest)+",\"median_volume_cm3\":"+ragdollNumber(middle)+
       ",\"largest_to_median\":"+ragdollNumber(middle>0?largest/middle:0.f)+groups+pairs+
       ",\"hero_debris_penetration_cm\":"+ragdollNumber(heroDepth.first)+",\"hero_piece_penetration_cm\":"+ragdollNumber(heroDepth.second)+
+      ",\"hero_radius_cm\":"+ragdollNumber(destruction.destructionMeleeActor!=nullptr ? destruction.destructionMeleeActor->navigationCapsule().x : 0.f)+
       ",\"rows\":"+rows);
     }
   }

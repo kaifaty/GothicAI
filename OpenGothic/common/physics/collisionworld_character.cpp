@@ -92,6 +92,17 @@ struct CollisionWorld::VirtualCharacter::Impl final : JPH::CharacterContactListe
       }
     }
 
+  // Debris that slept against this character while it stood loses that support when it walks
+  // off, is moved or removed: wake it so it can fall.
+  void wakeLeaning() {
+    for(const auto id:leaning) {
+      JPH::BodyLockWrite lock(world.impl->system.GetBodyLockInterface(),id);
+      if(lock.Succeeded() && lock.GetBody().IsInBroadPhase() && !lock.GetBody().IsActive())
+        world.impl->system.GetBodyInterfaceNoLock().ActivateBody(id);
+      }
+    leaning.clear();
+    }
+
   static bool blocksAutomaticStairs(const JPH::Body& body) {
     if(isPushable(body))
       return true;
@@ -348,8 +359,16 @@ struct CollisionWorld::VirtualCharacter::Impl final : JPH::CharacterContactListe
     if(!contact.mHadCollision || pushSeconds<=0.f || pushRemaining<=0.f)
       return;
     // A sleeping piece of debris stays asleep unless the character walks into it: neither the
-    // weight of standing on it nor an overlap left by a piece fallen into the capsule pushes it.
+    // weight of standing on it, an overlap left by a piece fallen into the capsule nor the root
+    // sway of a standing stance pushes it. A piece that rests against a standing character is
+    // woken once it leaves (wakeLeaning).
     if(layer==DynamicWorld::C_Fragment && !nativeBody.IsActive()) {
+      if(standing) {
+        if(contact.mBodyB!=character->GetGroundBodyID() &&
+           std::find(leaning.begin(),leaning.end(),contact.mBodyB)==leaning.end())
+          leaning.push_back(contact.mBodyB);
+        return;
+        }
       const auto up = character->GetUp();
       const auto across = contact.mContactNormal-contact.mContactNormal.Dot(up)*up;
       if(across.IsNearZero(1.e-4f) || !((relative-relative.Dot(up)*up).Dot(across.Normalized())<-0.01f))
@@ -416,6 +435,8 @@ struct CollisionWorld::VirtualCharacter::Impl final : JPH::CharacterContactListe
   float pushMass = 70.f; // the character's mass for pushes, kept while the weight is withheld
   std::vector<std::pair<JPH::BodyID,float>> pushBodies;
   std::vector<JPH::BodyID> passed; // debris that appeared around this character
+  std::vector<JPH::BodyID> leaning; // sleeping debris it touched while standing
+  bool standing = false; // this move stands: no displacement, or only a stance's root sway
   struct LimitedSteepFace {
     JPH::BodyID body;
     JPH::SubShapeID subShape;
@@ -457,6 +478,7 @@ CollisionWorld::VirtualCharacter::VirtualCharacter(CollisionWorld& owner, float 
   }
 
 CollisionWorld::VirtualCharacter::~VirtualCharacter() {
+  impl->wakeLeaning();
   auto& characters = impl->world.impl->virtualCharacters;
   characters.erase(std::remove(characters.begin(),characters.end(),this),characters.end());
   }
@@ -478,6 +500,7 @@ std::unique_ptr<CollisionWorld::VirtualCharacter> CollisionWorld::createVirtualC
   }
 
 void CollisionWorld::VirtualCharacter::setPosition(const Tempest::Vec3& feet) {
+  impl->wakeLeaning();
   impl->character->SetPosition(JPH::RVec3(toMeters(feet)));
   impl->contactsDirty = true;
   impl->needsInitialUpdate = true;
@@ -512,6 +535,9 @@ CollisionWorld::CharacterMoveResult CollisionWorld::VirtualCharacter::move(
   const CharacterBodyFilter bodyFilter(state.passed);
   const JPH::ShapeFilter shapeFilter;
   state.culprit = culprit;
+  state.standing = displacement==Tempest::Vec3() || standing;
+  if(!state.standing && !state.leaning.empty())
+    state.wakeLeaning();
   if(!state.passed.empty())
     state.releasePassed();
   character.SetMass(std::max(mass,1.f));

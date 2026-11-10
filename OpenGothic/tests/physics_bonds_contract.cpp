@@ -15,7 +15,11 @@
 #include <Tempest/MemWriter>
 
 #include <Jolt/Jolt.h>
+#include <Jolt/Physics/Collision/CollideShape.h>
+#include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
+#include <Jolt/Physics/Collision/CollisionDispatch.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
+#include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 
 #include <algorithm>
 #include <chrono>
@@ -391,39 +395,104 @@ void testCharacterDebris() {
     require(walkerShift<.5f && remnantShift<.5f,"a walker made anew inside a remnant must pass it, not push out of it");
   }
   require(deepest>-2.f,"after they separate the remnant must block the walker again");
-  // A walker standing still on a stave, or against a board it walked into, from 0.5 m, leaves the
-  // piece to fall asleep no later than 2 s after it would alone, and never wakes it again.
-  struct Still { const char* what; float mass; bool onTop; };
-  for(const Still still:{Still{"on a 15 kg stave",15.f,true},Still{"on a 3 kg stave",3.f,true},Still{"against a 15 kg board",15.f,false}}) {
+  // A walker standing still, or in a stance that sways, on a stave, against a board it walked into,
+  // with a stave toppled against it or beside a stave at its toe, all from 0.5 m, leaves the piece
+  // to fall asleep no later than 2 s after it would alone, never wakes it again and does not enter
+  // it. A stave that fell asleep leaning on the walker falls once the walker steps away.
+  struct Still { const char* what; float mass; JPH::Vec3 half; Tempest::Vec3 centre; float tilt; Tempest::Vec3 feet; float walk; Tempest::Vec3 sway; };
+  // A fighting stance passes its root sway while the character stands: 1.5 cm to and fro, once a second.
+  const Tempest::Vec3 sway(0,0,1.5f);
+  const Still cases[]={
+    // A stave 110 x 5 x 12 cm lies flat, the walker on it.
+    {"on a 15 kg stave",15.f,{.55f,.025f,.06f},{0,2.5f,0},0.f,{0,5,0},0.f,{}},
+    {"on a 3 kg stave",3.f,{.55f,.025f,.06f},{0,2.5f,0},0.f,{0,5,0},0.f,{}},
+    {"swaying on a 15 kg stave",15.f,{.55f,.025f,.06f},{0,2.5f,0},0.f,{0,5,0},0.f,sway},
+    // A board 110 x 30 x 5 cm stands on its long edge; the walker walks into it.
+    {"swaying against a 15 kg board",15.f,{.55f,.15f,.025f},{0,15,0},0.f,{0,0,-(2.5f+radius+20.f)},2.f,sway},
+    // A stave stands 45 cm from the walker and topples onto it.
+    {"swaying with a 15 kg stave toppled against it",15.f,{.06f,.55f,.025f},{0,55,45},-5.f,{0,0,0},0.f,sway},
+    {"swaying with a 3 kg stave toppled against it",3.f,{.06f,.55f,.025f},{0,55,45},-5.f,{0,0,0},0.f,sway},
+    // A stave lies under the edge of the capsule's rounded foot, 0.6 cm below it.
+    {"swaying beside a 3 kg stave at its toe",3.f,{.06f,.025f,.55f},{22,2.5f,0},0.f,{0,0,0},0.f,{1.5f,0,0}},
+    };
+  for(const Still& still:cases) {
+    Tempest::Vec3 rest;
+    float lean=0.f,top=0.f,depth=0.f;
     const auto run=[&](bool walker,int& first,int& wakes) {
       CollisionWorld world;
       auto ground=world.addCollisionBody(new JPH::BoxShape(JPH::Vec3(20,.5f,20)),at(0,-50,0),.7f,DynamicWorld::C_Landscape);
-      // A stave 110 x 5 x 12 cm lies flat; a board 110 x 30 x 5 cm stands on its long edge.
-      const JPH::Vec3 half=still.onTop ? JPH::Vec3(.55f,.025f,.06f) : JPH::Vec3(.55f,.15f,.025f);
-      auto piece=world.addDynamicBody(new JPH::BoxShape(half),at(0,half.GetY()*100.f,0),.6f,still.mass,DynamicWorld::C_Fragment);
+      auto pose=at(still.centre.x,still.centre.y,still.centre.z);
+      if(still.tilt!=0.f) {
+        // Tilt about the stave's foot on the ground.
+        pose=at(still.centre.x,0,still.centre.z);
+        pose.rotateOX(still.tilt);
+        pose.translate(0,still.centre.y,0);
+        }
+      auto piece=world.addDynamicBody(new JPH::BoxShape(still.half),pose,.6f,still.mass,DynamicWorld::C_Fragment);
       std::unique_ptr<CollisionWorld::VirtualCharacter> character;
       if(walker)
-        character=world.createVirtualCharacter(radius,180,still.onTop ? Tempest::Vec3(0,5,0) : Tempest::Vec3(0,0,-(2.5f+radius+20.f)));
-      first=-1;wakes=0;
+        character=world.createVirtualCharacter(radius,180,still.feet);
+      first=-1;wakes=0;depth=0.f;
       bool was=false;
       for(int frame=0;frame<1800;++frame) {
-        if(character!=nullptr)
-          character->move({0,0,!still.onTop && frame<15 ? 2.f : 0.f},17,50,slope,80,nullptr);
+        CollisionWorld::CharacterMoveResult mv;
+        if(character!=nullptr) {
+          const bool walking=frame<15 && still.walk!=0.f;
+          const float phase=2.f*float(M_PI)/60.f;
+          const auto sway=still.sway*(std::sin(phase*float(frame+1))-std::sin(phase*float(frame)));
+          mv=character->move(walking ? Tempest::Vec3(0,0,still.walk) : sway,17,50,slope,80,nullptr,false,!walking);
+          }
         world.tick(17);
+        if(character!=nullptr && frame>=60) {
+          // How deep the walker's capsule stands in the piece, centimetres.
+          const JPH::ShapeRefC capsule=new JPH::CapsuleShape(.9f-radius*.01f,radius*.01f);
+          const JPH::ShapeRefC box=new JPH::BoxShape(still.half,0);
+          const auto m=piece->matrix();
+          const JPH::Mat44 pose(JPH::Vec4(m.at(0,0),m.at(0,1),m.at(0,2),0),JPH::Vec4(m.at(1,0),m.at(1,1),m.at(1,2),0),
+                                JPH::Vec4(m.at(2,0),m.at(2,1),m.at(2,2),0),JPH::Vec4(m.at(3,0)*.01f,m.at(3,1)*.01f,m.at(3,2)*.01f,1));
+          JPH::CollideShapeSettings settings;
+          JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> hits;
+          JPH::CollisionDispatch::sCollideShapeVsShape(capsule,box,JPH::Vec3::sOne(),JPH::Vec3::sOne(),
+                                                       JPH::Mat44::sTranslation(JPH::Vec3(mv.position.x,mv.position.y+90.f,mv.position.z)*.01f),
+                                                       pose,{},{},settings,hits);
+          for(const auto& hit:hits.mHits)
+            depth=std::max(depth,hit.mPenetrationDepth*100.f);
+          }
         const bool now=piece->isSleeping();
         if(now && first<0) first=frame;
         wakes+=was && !now;
         was=now;
+        }
+      rest=piece->position();
+      if(character!=nullptr && still.tilt!=0.f) {
+        JPH::Vec3 low,high;
+        piece->getAabb(low,high);
+        lean=high.GetY()*100.f;
+        // The walker steps away: a stave asleep against it falls.
+        for(int frame=0;frame<660;++frame) {
+          character->move({0,0,frame<60 ? -2.f : 0.f},17,50,slope,80,nullptr,false,frame>=60);
+          world.tick(17);
+          }
+        piece->getAabb(low,high);
+        top=high.GetY()*100.f;
         }
       return was;
       };
     int alone=0,first=0,wakes=0,unused=0;
     run(false,alone,unused);
     const bool asleep=run(true,first,wakes);
-    std::printf("CharacterVirtual still %s: asleep after %d frames (alone %d), woken %d, asleep at the end %d\n",
-                still.what,first,alone,wakes,int(asleep));
+    std::printf("CharacterVirtual still %s: asleep after %d frames (alone %d), woken %d, asleep at the end %d, "
+                "piece at (%.1f, %.1f, %.1f) cm, capsule in it %.2f cm\n",still.what,first,alone,wakes,int(asleep),
+                double(rest.x),double(rest.y),double(rest.z),double(depth));
     require(first>=0 && first<=alone+120 && wakes==0 && asleep,
             "a walker standing still must let the debris under or beside it sleep and not wake it");
+    // A piece under 10 kg is no floor, as a movable: a walker put on it stands through it.
+    if(still.mass>=10.f || still.feet.y<=0.f)
+      require(depth<=2.f,"a standing walker must not stand deeper than 2 cm in debris from 0.5 m");
+    if(still.tilt!=0.f) {
+      std::printf("CharacterVirtual steps away from the stave toppled against it: its top at %.1f cm before, %.1f cm after\n",double(lean),double(top));
+      require(top<10.f,"a stave asleep against a standing walker must fall once the walker leaves");
+      }
     }
   }
 }
