@@ -511,8 +511,8 @@ the centre's travel, the angle of a flat piece's face and long axis from vertica
 ground (`bodies`, `bodies_sleeping`, `bodies_fell`: pieces of one group share one body; without
 bonds a group is a piece); at 15 s the native hull penetration into a floor plane, into the
 real ground (`native_floor_penetration_cm`, Jolt `CollideShape` against landscape and static objects)
-and into the other pieces (format 3 METAL–WOOD pairs of one break and pieces of one bond group are
-skipped: they never collide),
+and into the other pieces (pairs the break's hoop filter never collides — a group of METAL only against a
+group with WOOD — and pieces of one bond group are skipped),
 the visible (vertex) penetration below that plane and below the ground under each vertex
 (`visible_terrain_penetration_cm`), hoops on the ground (`metal_on_ground`) and the 13→15 s jitter. Every break also
 writes `destruction2_start` (each piece's centre over the ground and native hull depth at birth) and,
