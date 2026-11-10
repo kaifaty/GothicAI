@@ -179,9 +179,10 @@ Resources::Resources(Tempest::Device &device)
   }
 
 Resources::~Resources() {
-  if(textureReload && textureReload->pending.valid())
-    textureReload->pending.wait();
-  textureReload.reset();
+  for(auto& reload:textureReloads)
+    if(reload->pending.valid())
+      reload->pending.wait();
+  textureReloads.clear();
   if(videoBase) videoBase->cancelled->store(true);
   if(videoWorker.joinable()) videoWorker.join();
   if(videoBase && videoBase->selection.publication.valid()) videoBase->selection.publication.wait();

@@ -42,7 +42,8 @@ void Landscape::init(const PackedMesh& packed, bool wholeWorld, const Vec3* text
       }
 
     Block b;
-    b.mesh = visual.get(mesh,material,sub.iboOffset,sub.iboLength,&packed.meshletBounds[id],DrawCommands::Landscape,texturePosition);
+    b.mesh = visual.get(mesh,material,sub.iboOffset,sub.iboLength,&packed.meshletBounds[id],DrawCommands::Landscape,texturePosition,
+                        &sub.texel);
     b.mesh.setObjMatrix(Matrix4x4::mkIdentity());
     blocks.emplace_back(std::move(b));
     }

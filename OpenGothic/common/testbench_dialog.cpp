@@ -1,4 +1,5 @@
 #include "testbench_internal.h"
+#include "texturedump.h"
 
 #include <algorithm>
 #include <cmath>
@@ -364,6 +365,7 @@ bool dialogCommand(const DialogContext& ctx,const std::string& line,const std::v
       w.probeMemory(text);
       LoadProbe::mark(text,-1,pages);
       }
+    TextureDump::write(text,w);
     }
   else if(c=="ai") {
     std::string reply;
