@@ -462,6 +462,11 @@ void selfTest(const fs::path& dir) {
   Check k;
   verifyMesh(m,back,1,"stress mesh: ",k);
   fs::remove(file);
+  // A mesh left as it was and not listed as skipped fails the check.
+  bool caught = false;
+  try { verifyMesh(m,m,1,"stress mesh: ",k); }
+  catch(const std::runtime_error&) { caught = true; }
+  require(caught,"stress mesh check: an unsplit mesh must fail");
 
   // Over the format: 65535 positions and one triangle give 65538.
   asset::StaticMesh big;

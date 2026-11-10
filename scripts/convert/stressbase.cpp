@@ -260,6 +260,10 @@ int build(const fs::path& baseArg, const fs::path& outArg, int subdivide, int me
             << "run the game with:\n"
             << "OPENGOTHIC_BASE=" << out.string() << "\n"
             << "OPENGOTHIC_BASE_CACHE=" << out.string() << ".cache\n";
+  // Fracture shards and convex parts are keyed by the mesh name only and live outside the base cache.
+  if(meshLevel>0)
+    std::cout << "OPENGOTHIC_FRACTURE=\n"
+              << "OPENGOTHIC_CONVEX_PARTS=" << out.string() << ".convex-parts\n";
   return 0;
   }
 
