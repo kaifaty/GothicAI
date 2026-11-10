@@ -1866,6 +1866,7 @@ struct Bench : OverlayBench, CameraBench {
   bool        frozen        = false; // the world stands still: `streaming wait` waits in deterministic mode
   bool        renderReset   = false; // the renderer drops its temporal state before this frame's picture
   uint32_t    settleSteps   = 0;     // fixed steps left between the end of `streaming wait` and the next command
+  uint32_t    holdFrames    = 0;     // frames the loaded world has stood still in a deterministic `streaming wait`
   bool        ordered       = false; // visibility appends clusters in order (slow): from the end of the wait to the shot
   struct StreamingSample {
     std::string segment;
