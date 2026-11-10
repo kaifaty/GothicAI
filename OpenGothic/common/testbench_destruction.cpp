@@ -10,6 +10,8 @@
 #include "game/playercontrol.h"
 #include "gothic.h"
 #include "graphics/mesh/protomesh.h"
+#include "graphics/mesh/pose.h"
+#include "physics/fracture.h"
 #include "graphics/mesh/skeleton.h"
 #include "resources.h"
 #include "world/aiqueue.h"
@@ -1031,6 +1033,181 @@ bool destructionTracesDebug(Destruction& state,const DestructionContext& context
     ",\"melee_running\":"+(state.destructionMeleeRunning?"true":"false")+
     ",\"melee_attempts\":"+std::to_string(state.destructionMeleeAttempts)+",\"truth\":"+rows+"]}";
   return true;
+  }
+
+}
+
+namespace testbench_detail {
+
+std::optional<DynamicWorld::MovableVobSnapshot> furnitureBody(World& world,uint32_t zenId) {
+  for(const auto& body:world.physic()->movableVobSnapshot())if(body.zenId==zenId)return body;
+  return {};
+  }
+
+void destructionCamera(World& world,const Vec3& source,const Vec3& direction) {
+  const Vec3 side(-direction.z,0,direction.x);
+  // Look back from the open end of the tavern. The caster-side view has a
+  // counter post between the lens and both objects. Check the real mesh rays
+  // to every prop before selecting a camera for the before/after pair.
+  for(float forward:{250.f,200.f,300.f,150.f,100.f})
+    for(float lateral:{-220.f,220.f,0.f,-300.f,300.f}) {
+      const auto camera=source+direction*forward+side*lateral+Vec3(0,190,0);
+      bool clear=true;
+      for(const auto& body:world.physic()->movableVobSnapshot()) {
+        if(!destructionOwns(bench.destruction,body.id))continue;
+        auto center=(body.localBounds[0]+body.localBounds[1])*.5f;body.transform.project(center);
+        const auto hit=world.physic()->ray(camera,center);
+        if(hit.hasCol && (hit.v-center).length()>85.f)clear=false;
+        }
+      if(!clear)continue;
+      bench.cam=C_Hold;lookFrom(camera,source+Vec3(0,55,0));
+      event("destruction_camera","\"case\":"+jsonStr(bench.destruction.destructionCase)+",\"camera_cm\":"+
+        ragdollVector(camera)+",\"target_cm\":"+ragdollVector(source+Vec3(0,55,0)));
+      return;
+      }
+  arenaAbort("destruction before/after camera has no clear view of both native props");
+  }
+
+void destructionSkinSample(const Npc& npc,const ProtoMesh& proto,const MdlVisual& mdl,const Matrix4x4& object,const Pose& pose) {
+  auto [cache,inserted]=bench.destruction.destructionSkinGeometry.try_emplace(&proto);
+  if(inserted)
+    for(const auto& mesh:proto.skined) {
+      std::vector<Resources::VertexA> vertices(mesh.vbo.size());
+      std::vector<uint32_t> indices(mesh.ibo.size());
+      if(vertices.empty() || indices.empty())continue;
+      Resources::device().readBytes(mesh.vbo,vertices.data(),vertices.size()*sizeof(vertices[0]));
+      Resources::device().readBytes(mesh.ibo,indices.data(),indices.size()*sizeof(indices[0]));
+      std::vector<bool> used(vertices.size(),false);
+      for(const auto index:indices)
+        if(index<vertices.size() && !used[index]) {
+          used[index]=true;
+          cache->second.push_back(vertices[index]);
+          }
+      }
+  const auto* skeleton=npc.visualSkeleton();const auto* skinSkeleton=mdl.skinSkeleton();size_t skinCount=0;const Matrix4x4* skin=mdl.skinPalette(skinCount); // as drawn: a render rig's
+  if(cache->second.empty() || !skeleton || !skinSkeleton)return;
+  // Probe a copy because AnimBlend::probe consumes its diagnostic counters.
+  // The real animation and its telemetry remain untouched.
+  Pose rawPose=pose;
+  Pose::Probe raw;
+  rawPose.probe(raw);
+  std::string rawBones="[";
+  if(raw.valid)
+    for(std::string_view name:{"BIP01 PELVIS","BIP01 SPINE2","BIP01 L THIGH","BIP01 L CALF","BIP01 L FOOT",
+                              "BIP01 R THIGH","BIP01 R CALF","BIP01 R FOOT"}) {
+      const auto bone=arrowBone(*skeleton,name);
+      if(bone>=raw.numBones)continue;
+      if(rawBones.size()>1)rawBones+=',';
+      rawBones+="{\"name\":"+jsonStr(name)+",\"bone\":"+std::to_string(bone)+
+        ",\"raw_model_cm\":"+ragdollVector(raw.joint[bone])+"}";
+      }
+  rawBones+=']';
+  Vec3 lowest,highest;
+  lowest.y=std::numeric_limits<float>::infinity();
+  highest.y=-std::numeric_limits<float>::infinity();
+  size_t lowestBone=size_t(-1);
+  size_t count=0;
+  for(const auto& vertex:cache->second) {
+    Vec3 point;
+    float weight=0;
+    for(size_t r=0;r<4;++r) {
+      if(vertex.weights[r]<=0.f || vertex.boneId[r]>=skinCount || vertex.boneId[r]>=skinSkeleton->nodes.size())continue;
+      Vec3 p(vertex.pos[r][0],vertex.pos[r][1],vertex.pos[r][2]);
+      skin[vertex.boneId[r]].project(p);
+      point+=p*vertex.weights[r];
+      weight+=vertex.weights[r];
+      }
+    if(weight<=0.f)continue;
+    // This is the shader's full weighted skinning, including the instance's
+    // normal displacement. Dominant-bone clouds and capsule radii are unused.
+    Vec3 normal;
+    normal.x=object.at(0,0)*vertex.norm[0]+object.at(1,0)*vertex.norm[1]+object.at(2,0)*vertex.norm[2];
+    normal.y=object.at(0,1)*vertex.norm[0]+object.at(1,1)*vertex.norm[1]+object.at(2,1)*vertex.norm[2];
+    normal.z=object.at(0,2)*vertex.norm[0]+object.at(1,2)*vertex.norm[1]+object.at(2,2)*vertex.norm[2];
+    point+=normal*(npc.fatness()*.5f);
+    if(!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z))continue;
+    ++count;
+    if(point.y<lowest.y) {
+      lowest=point;
+      lowestBone=vertex.boneId[size_t(std::max_element(vertex.weights,vertex.weights+4)-vertex.weights)];
+      }
+    if(point.y>highest.y)highest=point;
+    }
+  if(!count)return;
+  auto& physics=*npc.world().physic();
+  // The ordinary ray uses exact authored query triangles, excluding the NPC's
+  // own body. Begin above both the walking root and the lowest skin vertex:
+  // the latter can already be below the visible floor in the failing pose.
+  const Vec3 rayFrom(lowest.x,std::max(npc.position().y+20.f,lowest.y+20.f),lowest.z);
+  const Vec3 rayTo(lowest.x,std::min(npc.position().y,lowest.y)-600.f,lowest.z);
+  const auto floor=physics.landRay(rayFrom,rayFrom.y-rayTo.y);
+  bool found=floor.hasCol;
+  Vec3 support=floor.v,supportNormal=floor.n;
+  std::string kind="source_mesh",visual;
+  uintptr_t parent=0;
+  size_t piece=size_t(-1);
+  std::unordered_map<uintptr_t,std::string> visuals;
+  for(const auto& body:physics.movableVobSnapshot())visuals[body.id]=body.visual;
+  // Fragments have no intact query mesh. Intersect the visible cut triangles
+  // themselves, so a visible piece above the floor can be the real support.
+  for(const auto& fragment:physics.fragmentSnapshot()) {
+    const auto entry=visuals.find(fragment.parentId);
+    if(entry==visuals.end())continue;
+    const auto fracture=FractureMesh::load(entry->second);
+    if(!fracture || fragment.piece>=fracture->pieces.size())continue;
+    for(const auto& face:fracture->pieces[fragment.piece].triangles) {
+      Vec3 vertices[3];
+      for(size_t i=0;i<3;++i) {
+        vertices[i]=face.vertices[i].position;
+        fragment.transform.project(vertices[i]);
+        }
+      const auto a=vertices[1]-vertices[0],b=vertices[2]-vertices[0],p=lowest-vertices[0];
+      const float determinant=a.x*b.z-a.z*b.x;
+      if(std::abs(determinant)<1.e-5f)continue;
+      const float u=(p.x*b.z-p.z*b.x)/determinant,v=(a.x*p.z-a.z*p.x)/determinant;
+      if(u<0.f || v<0.f || u+v>1.f)continue;
+      const float y=vertices[0].y+u*a.y+v*b.y;
+      if(y>rayFrom.y || y<rayTo.y || (found && y<=support.y))continue;
+      found=true;support=Vec3(lowest.x,y,lowest.z);
+      supportNormal=Vec3::crossProduct(a,b);
+      if(supportNormal.quadLength()>1.e-8f)supportNormal=Vec3::normalize(supportNormal);
+      if(supportNormal.y<0.f)supportNormal*=-1.f;
+      kind="fragment";visual=entry->second;parent=fragment.parentId;piece=fragment.piece;
+      }
+    }
+  std::string probes="[";
+  const auto probe=[&](std::string_view label,const Vec3& point) {
+    if(probes.size()>1)probes+=',';
+    probes+=destructionFloorProbe(npc,label,point);
+    };
+  probe("root",npc.position());
+  probe("skin_lowest",lowest);probe("skin_highest",highest);
+  for(std::string_view name:{"BIP01 PELVIS","BIP01 L CALF","BIP01 L FOOT","BIP01 R CALF","BIP01 R FOOT"}) {
+    const auto bone=arrowBone(*skeleton,name);
+    if(bone==size_t(-1))continue;
+    Vec3 point;
+    npc.renderedBone(bone).project(point);
+    probe(name,point);
+    }
+  for(const auto& center:{std::pair("root",npc.position()),std::pair("skin_lowest",lowest)})
+    for(const auto& offset:{std::pair("+x",Vec3(30,0,0)),std::pair("-x",Vec3(-30,0,0)),
+                           std::pair("+z",Vec3(0,0,30)),std::pair("-z",Vec3(0,0,-30))})
+      probe(std::string(center.first)+offset.first,center.second+offset.second);
+  probes+=']';
+  bench.destruction.destructionSkinSample="{\"mesh\":"+jsonStr(proto.fname)+",\"indexed_vertices\":"+std::to_string(count)+
+    ",\"object_matrix\":"+ragdollMatrix(object)+
+    ",\"object_up\":"+ragdollVector(Vec3(object.at(1,0),object.at(1,1),object.at(1,2)))+
+    ",\"raw_model_bones\":"+rawBones+
+    ",\"lowest_world_cm\":"+ragdollVector(lowest)+",\"highest_world_cm\":"+ragdollVector(highest)+
+    ",\"lowest_dominant_bone\":"+(lowestBone<skinSkeleton->nodes.size()?jsonStr(skinSkeleton->nodes[lowestBone].name):"null")+
+    ",\"ray_from_cm\":"+ragdollVector(rayFrom)+",\"ray_to_cm\":"+ragdollVector(rayTo)+
+    ",\"support_found\":"+(found?"true":"false")+
+    ",\"support_kind\":"+jsonStr(kind)+",\"support_visual\":"+jsonStr(visual)+
+    ",\"support_parent_id\":"+std::to_string(parent)+",\"support_piece\":"+
+    (piece==size_t(-1)?"null":std::to_string(piece))+
+    ",\"support_world_cm\":"+(found?ragdollVector(support):"null")+
+    ",\"support_normal\":"+(found?ragdollVector(supportNormal):"null")+
+    ",\"gap_cm\":"+(found?ragdollNumber(lowest.y-support.y):"null")+",\"floor_probes\":"+probes+"}";
   }
 
 }

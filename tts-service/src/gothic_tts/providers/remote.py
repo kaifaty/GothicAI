@@ -6,7 +6,7 @@ import os
 
 import httpx
 
-from .base import ChunkCallback, TtsError, Voice
+from .base import ChunkCallback, TtsError, Voice, WordsCallback
 
 
 class OpenAISpeech:
@@ -41,7 +41,9 @@ class OpenAISpeech:
     async def warmup(self) -> None:
         self._key()
 
-    async def synthesize(self, text: str, voice: Voice, on_chunk: ChunkCallback) -> float:
+    async def synthesize(
+        self, text: str, voice: Voice, on_chunk: ChunkCallback, on_words: WordsCallback | None = None,
+    ) -> float:
         body = {
             "model": self.model,
             "input": text,

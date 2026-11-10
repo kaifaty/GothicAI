@@ -22,7 +22,30 @@ heavy_score = 122880
 
 [doc-file]
 priority = 1
-paths = ["docs/README.md", "docs/features.md"]
+paths = [
+    "docs/README.md",
+    "docs/features.md",
+    "docs/map/documents.md",
+    "docs/map/engine.md",
+    "docs/map/machines.md",
+    "docs/map/server.md",
+    "docs/map/tests.md",
+    "docs/features/server-talk.md",
+    "docs/features/server-body.md",
+    "docs/features/server-knowledge.md",
+    "docs/features/server-truth.md",
+    "docs/features/server-deals.md",
+    "docs/features/server-story.md",
+    "docs/features/engine-bridge.md",
+    "docs/features/engine-memory.md",
+    "docs/features/engine-physics.md",
+    "docs/features/engine-animation.md",
+    "docs/features/engine-render.md",
+    "docs/features/engine-archery.md",
+    "docs/features/off-by-default.md",
+    "docs/features/coverage-gaps.md",
+    "docs/features/dev-tools.md",
+]
 open_score = 153600
 close_score = 61440
 heavy_score = 307200

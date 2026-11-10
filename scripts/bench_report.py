@@ -390,20 +390,22 @@ def faces(segs):
     if not rows_all or FACES[0] not in rows_all[0]:
         return [], {}
     rig = "rig_on" in rows_all[0] and any(r["rig_on"] > 0 for r in rows_all)
+    # the facial gestures of the own head (cue_<name>), those that showed at all
+    cues = [c for c in rows_all[0] if c.startswith("cue_") and any(r[c] > 0 for r in rows_all)]
     if not rig and not any(r[c] > 0 for r in rows_all for c in FACES):
         return [], {}
     out = ["## Faces", "",
            "Face anims of the watched one as shown, the largest in a segment (0..1)." +
            (" FaceRig of its own head: active anims and targets with a weight at most, the blend of the deformation "
             "(median / max µs, blends) and its upload to the head (median µs)." if rig else ""), ""]
-    cols = list(FACES) + (["rig anims", "rig targets", "blend µs p50 / max (n)", "upload µs p50"] if rig else [])
+    cols = list(FACES) + cues + (["rig anims", "rig targets", "blend µs p50 / max (n)", "upload µs p50"] if rig else [])
     out.append("| segment | " + " | ".join(cols) + " |")
     out.append("|" + "---|" * (len(cols) + 1))
     blend_all = []
     for seg, rows in segs.items():
         if not rows:
             continue
-        cells = [f"{max(r[c] for r in rows):.2f}" for c in FACES]
+        cells = [f"{max(r[c] for r in rows):.2f}" for c in list(FACES) + cues]
         if rig:
             blended = [(b["rig_us"], b["rig_up_us"]) for a, b in zip(rows, rows[1:]) if b["rig_n"] > a["rig_n"]]
             blend_all += [u for u, _ in blended]

@@ -1586,11 +1586,61 @@ float MdlVisual::faceWeight(const Npc& npc, std::string_view anim) const {
   return head.view.morphWeight(anim);
   }
 
+void MdlVisual::startCues(Npc& npc, std::shared_ptr<const SpeechCues::Plan> plan, bool voiced) {
+  cues.start(std::move(plan),voiced,npc.world().tickCount());
+  }
+
+bool MdlVisual::startCue(Npc& npc, std::string_view name, char side) {
+  const auto* profile = face.faceProfile();
+  const auto* cue     = profile!=nullptr ? profile->findCue(name) : nullptr;
+  if(cue==nullptr)
+    return false;
+  if(side==0)
+    side = SpeechCues::sideOf(SpeechCues::seedOf(name)^(uint32_t(npc.instanceSymbol())*2654435761u)^(cueCount++*40503u));
+  const uint64_t now = npc.world().tickCount();
+  return face.startCue(name,cue->side!=0 && side!=cue->side,-1,now,now);
+  }
+
+float MdlVisual::cueWeight(const Npc& npc, std::string_view name) const {
+  return face.cueWeight(name,npc.world().tickCount());
+  }
+
+bool MdlVisual::startLeak(Npc& npc, std::string_view felt, bool lower) {
+  const auto* profile = face.faceProfile();
+  if(profile==nullptr || profile->findLeak(felt,lower)==nullptr)
+    return false;
+  // a line of its own without a voice: the leak now (its word 0.1 s on), the liar's blinks in the time after
+  auto plan = std::make_shared<SpeechCues::Plan>("leak");
+  plan->leak     = SpeechCues::Plan::Leak{std::string(felt),lower,0};
+  plan->silentMs = ManualLeakMs;
+  plan->seed     = SpeechCues::seedOf(felt)^(uint32_t(npc.instanceSymbol())*2654435761u)^(cueCount++*40503u);
+  plan->setWord(0,float(SpeechCues::UpperLeadMs)/1000.f,0.5f);
+  cues.start(std::move(plan),false,npc.world().tickCount());
+  return true;
+  }
+
+float MdlVisual::leakWeight(const Npc& npc) const {
+  return face.leakWeight(npc.world().tickCount());
+  }
+
 void MdlVisual::updateFace(Npc& npc) {
   if(!face.isActive())
     return;
   const bool     probing = &npc==FaceRig::probeNpc;
   const uint64_t now     = npc.world().tickCount();
+  // the gestures of the line, far too: a face seen again shows them as they go
+  cueStarts.clear();
+  cues.update(*face.faceProfile(),now,blink.lastBlink(),cueStarts);
+  for(auto& s:cueStarts.cues)
+    face.startCue(s.name,s.mirror,s.hold,s.at,now);
+  // a lie: the leak of the felt emotion, the liar's blinks (ordinary ones keep away from them), a smile put on
+  if(cueStarts.leak)
+    face.startLeak(cueStarts.leakFelt,cueStarts.leakLower,cueStarts.leakAt,now);
+  for(auto r:cueStarts.reserve)
+    blink.reserve(r);
+  for(uint32_t i=0; i<cueStarts.blinks && EyeBlink::isEnabled(); ++i)
+    face.startAnim("R_EYESBLINK",1,now+SpeechCues::LiarBlinkHold,now);
+  face.setPosed(cueStarts.posed,now);
   // a far face stays as it was last shown, as a far one does not blink
   if(!head.view.isEmpty() && (npc.processPolicy()<=NpcProcessPolicy::AiNormal || probing)) {
     const auto r = face.update(now);
@@ -1655,6 +1705,7 @@ void MdlVisual::startSpeech(Npc& npc, std::shared_ptr<LipSync::Track> voice) {
         break;
         }
   mouth.setShapes(std::move(shapes));
+  cues.voice(voice,npc.world().tickCount());
   mouth.start(std::move(voice),npc.world().tickCount());
   }
 
@@ -1671,6 +1722,7 @@ void MdlVisual::updateMouth(Npc& npc, uint64_t dt) {
 
 void MdlVisual::stopDlgAnim(Npc& npc) {
   mouth.stop();
+  cues.stop();
   gestures.stop();
   gestureSeq = nullptr;
   const uint16_t count = 11;
