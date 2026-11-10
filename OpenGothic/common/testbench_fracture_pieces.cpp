@@ -554,9 +554,11 @@ bool debrisWalkSetup(FracturePieces& state,Destruction& destruction,const Destru
   for(size_t i=0;i<blocks.size() && best==0;++i)
     for(int step=0;step<12;++step)
       tryLine(blocks[i].first,Vec3(std::cos(float(step)*float(M_PI)/12.f),0,std::sin(float(step)*float(M_PI)/12.f)));
-  if(best==0)
+  if(best==0) {
     arenaAbort("destruction walk: no straight line of "+std::to_string(int(length))+
                " cm passes within 10 cm of a loose piece from 0.5 m and keeps clear of the remnant");
+    return true; // the scenario ends here: no hero move, no forward key
+    }
   const auto floor=w.physic()->landRay(walk.start+Vec3(0,150,0),400);
   if(floor.hasCol)walk.start.y=floor.v.y;
   walk.running=true;walk.length=length;walk.onPath=best;

@@ -59,17 +59,25 @@ struct CollisionWorld::VirtualCharacter::Impl final : JPH::CharacterContactListe
     }
 
   // A controller created inside debris (the first move after a load, a teleport or a reset)
-  // passes it as one a new body of debris appeared around, until they separate.
+  // passes it as one a new body of debris appeared around, until they separate. A sleeping piece
+  // inside or near it (within its predictive contact distance) may have slept against the character:
+  // it is woken once the character leaves (wakeLeaning).
   void passDebrisInside() {
     const QueryBroadPhaseFilter broad(1u<<DynamicWorld::C_Fragment);
     const QueryLayerFilter layers(1u<<DynamicWorld::C_Fragment);
     JPH::CollideShapeSettings settings;
+    settings.mMaxSeparationDistance=character->GetCharacterVirtualSettings().mPredictiveContactDistance;
     JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> hits;
     world.impl->system.GetNarrowPhaseQuery().CollideShape(character->GetShape(),JPH::Vec3::sOne(),character->GetCenterOfMassTransform(),
                                                           settings,JPH::RVec3::sZero(),hits,broad,layers);
-    for(const auto& hit:hits.mHits)
-      if(std::find(passed.begin(),passed.end(),hit.mBodyID2)==passed.end())
-        passed.push_back(hit.mBodyID2);
+    for(const auto& hit:hits.mHits) {
+      const auto id=hit.mBodyID2;
+      if(hit.mPenetrationDepth>0.f && std::find(passed.begin(),passed.end(),id)==passed.end())
+        passed.push_back(id);
+      JPH::BodyLockRead lock(world.impl->system.GetBodyLockInterface(),id);
+      if(lock.Succeeded() && !lock.GetBody().IsActive() && std::find(leaning.begin(),leaning.end(),id)==leaning.end())
+        leaning.push_back(id);
+      }
     }
 
   // The character stands on a sleeping piece of debris.

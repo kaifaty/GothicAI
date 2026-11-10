@@ -438,7 +438,9 @@ void testCharacterDebris() {
   for(const Still& still:cases) {
     Tempest::Vec3 rest;
     float lean=0.f,top=0.f,depth=0.f;
-    const auto run=[&](bool walker,int& first,int& wakes) {
+    // `loaded`: before stepping away the game is saved and loaded, the stave restored asleep where
+    // it leaned and the walker's controller made anew.
+    const auto run=[&](bool walker,int& first,int& wakes,bool loaded=false) {
       CollisionWorld world;
       auto ground=world.addCollisionBody(new JPH::BoxShape(JPH::Vec3(20,.5f,20)),at(0,-50,0),.7f,DynamicWorld::C_Landscape);
       auto pose=at(still.centre.x,still.centre.y,still.centre.z);
@@ -454,6 +456,7 @@ void testCharacterDebris() {
         character=world.createVirtualCharacter(radius,180,still.feet);
       first=-1;wakes=0;depth=0.f;
       bool was=false;
+      Tempest::Vec3 feet=still.feet;
       for(int frame=0;frame<1800;++frame) {
         CollisionWorld::CharacterMoveResult mv;
         if(character!=nullptr) {
@@ -461,6 +464,7 @@ void testCharacterDebris() {
           const float phase=2.f*float(M_PI)/60.f;
           const auto sway=still.sway*(std::sin(phase*float(frame+1))-std::sin(phase*float(frame)));
           mv=character->move(walking ? Tempest::Vec3(0,0,still.walk) : sway,17,50,slope,80,nullptr,false,!walking);
+          feet=mv.position;
           }
         world.tick(17);
         if(character!=nullptr && frame>=60) {
@@ -488,6 +492,12 @@ void testCharacterDebris() {
         JPH::Vec3 low,high;
         piece->getAabb(low,high);
         lean=high.GetY()*100.f;
+        if(loaded) {
+          const auto saved=piece->matrix();
+          character.reset();
+          piece->restoreTransform(saved,true);
+          character=world.createVirtualCharacter(radius,180,feet);
+          }
         // The walker steps away: a stave asleep against it falls.
         for(int frame=0;frame<660;++frame) {
           character->move({0,0,frame<60 ? -2.f : 0.f},17,50,slope,80,nullptr,false,frame>=60);
@@ -512,6 +522,9 @@ void testCharacterDebris() {
     if(still.tilt!=0.f) {
       std::printf("CharacterVirtual steps away from the stave toppled against it: its top at %.1f cm before, %.1f cm after\n",double(lean),double(top));
       require(top<10.f,"a stave asleep against a standing walker must fall once the walker leaves");
+      run(true,unused,unused,true);
+      std::printf("CharacterVirtual steps away after a load: its top at %.1f cm before, %.1f cm after\n",double(lean),double(top));
+      require(top<10.f,"a stave asleep against a walker must fall once the walker leaves after a load too");
       }
     }
   }
