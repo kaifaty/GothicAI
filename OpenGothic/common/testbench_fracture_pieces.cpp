@@ -167,8 +167,9 @@ void fracturePiecesBreak(FracturePieces& state,World& world,uintptr_t parent,std
     piece.start=apply(body->transform,piece.center);
     item.pieces.push_back(std::move(piece));
     }
-  // Where each piece starts: centre over the ground under it and native hull depth into it.
-  std::string start="[";
+  // Where each piece starts: centre over the ground under it and native hull depth into it; and how
+  // it starts to move: its body's velocity (cm/s) and angular velocity (rad/s) set by the break.
+  std::string start="[",motion="[";
   float deepest=0;
   size_t under=0;
   for(const auto& part:world.physic()->fragmentSnapshot()) {
@@ -183,10 +184,13 @@ void fracturePiecesBreak(FracturePieces& state,World& world,uintptr_t parent,std
     under+=floor.hasCol && height<-1.f;
     if(start.size()>1)start+=',';
     start+="["+std::to_string(part.piece)+","+ragdollNumber(height)+","+ragdollNumber(native)+"]";
+    if(motion.size()>1)motion+=',';
+    motion+="{\"piece\":"+std::to_string(part.piece)+",\"group\":"+std::to_string(part.bondGroup)+",\"center_cm\":"+ragdollVector(center)+
+      ",\"velocity_cm_s\":"+ragdollVector(part.velocity)+",\"omega\":"+ragdollVector(part.angularVelocity)+"}";
     }
   event("destruction2_start","\"case\":"+jsonStr(item.label)+",\"remnant\":"+std::to_string(remnant)+",\"visual\":"+jsonStr(item.visual)+",\"pieces\":"+
     std::to_string(item.pieces.size())+",\"groups\":"+std::to_string(item.groups)+",\"below_ground\":"+std::to_string(under)+",\"max_native_ground_penetration_cm\":"+
-    ragdollNumber(deepest)+",\"piece_height_native\":"+start+"]");
+    ragdollNumber(deepest)+",\"piece_height_native\":"+start+"],\"motion\":"+motion+"]");
   state.breaks.push_back(std::move(item));
   }
 
