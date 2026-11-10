@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "resources.h"
+#include "graphics/mesh/texeldensity.h"
 
 class Bounds;
 
@@ -37,6 +38,7 @@ class PackedMesh {
       size_t           iboLength = 0;
       bool             alphaTest = true;
       bool             alphaTestRequired = false;
+      TexelDensity     texel;  // its triangles' lowest UV density and bounds, for the texture's mip level
       };
 
     struct Cluster final {
@@ -146,6 +148,7 @@ class PackedMesh {
                                        std::span<const uint32_t> vertexIds = {}, std::span<const uint32_t> featureIds = {});
 
     void   computeBbox();
+    void   measureTexels();
 
     void   dbgUtilization(const std::vector<Meshlet>& meshlets);
     void   dbgMeshlets(const asset::WorldMesh& mesh, const std::vector<Meshlet*>& meshlets);

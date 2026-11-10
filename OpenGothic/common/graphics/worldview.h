@@ -36,6 +36,8 @@ class WorldView {
     void startLandscapeStreaming(asset::WorldMesh&& mesh, ChunkResidency& residency, double preloadMs);
     void startVobStreaming(ChunkResidency& residency);
     void setTextureResidency(ChunkResidency* residency) { visuals.setTextureResidency(residency); }
+    // every owner's distance demand due now, before the first frame's synchronous texture loading
+    void flushTextureDemand() { visuals.updateTextureView(true); }
     void prepareLandscapeWork();
     void finishLandscapeUpdate();
     bool landscapeReady() const;

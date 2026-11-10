@@ -412,13 +412,15 @@ bool worldCommand(const WorldContext& context,const std::string& line,const std:
     else if(a.size()==2 && a[1]=="stop") {
       if(state.perfSegment.starts_with("streaming-flythrough/")) {
         const auto textures=Resources::textureStats();
-        char textureSeconds[48];
+        char textureSeconds[48], shortfallSeconds[48];
         std::snprintf(textureSeconds,sizeof(textureSeconds),"%.9g",textures.nearTailSeconds-state.streamingTexturesBefore.nearTailSeconds);
+        std::snprintf(shortfallSeconds,sizeof(shortfallSeconds),"%.9g",
+                      textures.shortfallSeconds-state.streamingTexturesBefore.shortfallSeconds);
         event("streaming_end","\"segment\":"+jsonStr(state.perfSegment)+
           ",\"gpu_mb\":"+std::to_string(double(tempestProbeGpuBytes())/1048576.0)+
           ",\"tex_promoted\":"+std::to_string(textures.promoted-state.streamingTexturesBefore.promoted)+
           ",\"tex_demoted\":"+std::to_string(textures.demoted-state.streamingTexturesBefore.demoted)+
-          ",\"tex_near_tail_seconds\":"+textureSeconds);
+          ",\"tex_near_tail_seconds\":"+textureSeconds+",\"tex_shortfall_seconds\":"+shortfallSeconds);
         }
       state.perfSegment.clear();
       }

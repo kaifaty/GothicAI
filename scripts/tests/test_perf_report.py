@@ -184,6 +184,8 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
                                          "tex_dynamic_bytes", "tex_dynamic_n", "tex_other_bytes", "tex_other_n",
                                          "tex_full_bytes", "tex_tail_bytes", "tex_promoted", "tex_demoted",
                                          "tex_promotion_queue", "tex_near_tail_n", "tex_near_tail_seconds",
+                                         *(f"tex_level{level}_bytes" for level in range(6)),
+                                         "tex_shortfall_n", "tex_shortfall_seconds",
                                          "vob_near", "vob_far", "vob_outside", "vob_created", "vob_released", "vob_pending",
                                          "vob_publication_ms", "vob_near_missing", "vob_near_missing_seconds"])
         writer.writeheader()
@@ -206,6 +208,8 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
                           "tex_promoted": 10+frame, "tex_demoted": 5+frame,
                           "tex_promotion_queue": 2-frame, "tex_near_tail_n": frame,
                           "tex_near_tail_seconds": 40+frame*.125,
+                          **{f"tex_level{level}_bytes": (level+1)*1048576 for level in range(6)},
+                          "tex_shortfall_n": 3-frame, "tex_shortfall_seconds": 7+frame,
                           "vob_near": 100+frame, "vob_far": 700-frame, "vob_outside": 200,
                           "vob_created": frame, "vob_released": int(frame==2), "vob_pending": 2-frame,
                           "vob_publication_ms": frame*.25, "vob_near_missing": frame,
@@ -218,7 +222,7 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
             {"kind": "perf_segment", "segment": "streaming-flythrough/run", "residency_manager": True},
             {"kind": "route_end", "speed_cm_s": 500, "pass": True},
             {"kind": "streaming_end", "segment": "streaming-flythrough/run", "gpu_mb": 320.5,
-             "tex_promoted": 3, "tex_demoted": 2, "tex_near_tail_seconds": .25},
+             "tex_promoted": 3, "tex_demoted": 2, "tex_near_tail_seconds": .25, "tex_shortfall_seconds": .5},
             {"kind": "streaming_ready", "far_publication_ms": [], "far_max_per_frame": 0, "queue_max_ms": .001},
             {"kind": "perf_segment", "segment": "streaming-flythrough/fly", "residency_manager": True},
             {"kind": "route_end", "speed_cm_s": 2000, "pass": True},
@@ -253,6 +257,9 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
     assert textures["tail_end_bytes"] == 6*1048576
     assert (textures["promoted"], textures["demoted"], textures["promotion_queue_peak"],
             textures["near_tail_peak"], textures["near_tail_seconds"]) == (3, 2, 2, 2, .25)
+    assert (textures["level_end_bytes"], textures["shortfall_peak"], textures["shortfall_seconds"]) == (
+        [(level+1)*1048576 for level in range(6)], 3, .5)
+    assert "| run | 1.00 / 2.00 / 3.00 / 4.00 / 5.00 / 6.00 | 3 | 0.500000000 |" in report.report_markdown(report.build_report(streaming))
     combined = report.build_report(streaming)["places"]["streaming-flythrough"]["summary"]["streaming"]["textures"]
     assert (combined["promoted"], combined["demoted"], combined["near_tail_seconds"]) == (8, 6, 1)
     vobs = data["run"]["streaming"]["vobs"]

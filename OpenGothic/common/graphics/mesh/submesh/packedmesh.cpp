@@ -453,6 +453,8 @@ PackedMesh::PackedMesh(const asset::WorldMesh& mesh, std::span<const uint32_t> t
   const auto materials=materialMap.empty() ? landscapeMaterialMap(mesh) : std::vector<uint32_t>();
   packMeshletsLnd(mesh,triangles,materialMap.empty() ? std::span<const uint32_t>(materials) : materialMap,vertexIds,featureIds);
   computeBbox();
+  // A chunk package: one texture owner per material, measured here on the packing thread.
+  measureTexels();
   }
 
 PackedMesh::PackedMesh(const asset::StaticMesh& mesh, PkgType type, bool explicitAlphaTest) {
@@ -469,6 +471,7 @@ PackedMesh::PackedMesh(const asset::StaticMesh& mesh, PkgType type, bool explici
   }
 
   packMeshletsObj(mesh,type,nullptr);
+  measureTexels();
   // Native MRM keeps its historical alpha heuristics. GLB declares OPAQUE or
   // MASK explicitly, including when both occur in one mesh.
   if(explicitAlphaTest) {
@@ -989,6 +992,13 @@ void PackedMesh::debug(std::ostream &out) const {
 
 std::pair<Vec3, Vec3> PackedMesh::bbox() const {
   return std::make_pair(mBbox[0],mBbox[1]);
+  }
+
+void PackedMesh::measureTexels() {
+  if(vertices.empty())
+    return;
+  for(auto& sub:subMeshes)
+    sub.texel = TexelDensity::measure(vertices.data(),vertices.size(),indices.data(),sub.iboOffset,sub.iboLength);
   }
 
 void PackedMesh::computeBbox() {

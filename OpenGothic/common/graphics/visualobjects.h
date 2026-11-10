@@ -4,6 +4,7 @@
 #include "drawclusters.h"
 #include "drawcommands.h"
 #include "instancestorage.h"
+#include "texturescreendemand.h"
 
 #include <unordered_set>
 #include <map>
@@ -83,11 +84,15 @@ class VisualObjects final {
 
     Item   get(const StaticMesh& mesh, const Material& mat, size_t iboOffset, size_t iboLength, bool staticDraw);
     Item   get(const AnimMesh& mesh,   const Material& mat, size_t iboOff, size_t iboLen, const InstanceStorage::Id& anim);
+    // texturePosition: a landscape package's chunk; texel: its triangles' UV density and world bounds
     Item   get(const StaticMesh& mesh, const Material& mat, size_t iboOff, size_t iboLen, const PackedMesh::Cluster* cluster, DrawCommands::Type type,
-               const Tempest::Vec3* texturePosition = nullptr);
+               const Tempest::Vec3* texturePosition = nullptr, const TexelDensity* texel = nullptr);
     // All Items referencing the mesh must have been released first.
     void   invalidate(const StaticMesh& mesh);
     void   setTextureResidency(ChunkResidency* residency);
+    // Evaluates the owners whose distance demand is due at the residency's view; `flush`: all of them, without
+    // the frame budget (before the first frame's synchronous texture loading).
+    void   updateTextureView(bool flush = false);
     bool   textureChunkActive(const Tempest::Vec3& position) const;
     ChunkResidency* textureResidencyManager() const;
 
@@ -172,7 +177,16 @@ class VisualObjects final {
       bool                textureChunkRegistered = false;
       bool                textureChunkedLandscape = false;
       bool                textureWorldOwner = false;
-      uint32_t            textureDistance = Resources::TextureAlwaysFull;
+      Resources::TextureNeed textureNeed;
+      // Measured on screen (texeldensity.h): a static mesh's submesh in mesh space, a landscape package's material in
+      // the world. textureTexel: in the world, where a static one was last placed (textureAnchor, its position).
+      bool                textureMeasured = false;
+      bool                texturePlaced = false;
+      bool                textureScheduled = false;
+      uint64_t            textureStamp = 0;     // of its entry in textureScreen
+      TexelDensity        textureLocal;
+      TexelDensity        textureTexel;
+      Tempest::Vec3       textureAnchor;
       Tempest::Vec3       texturePosition;
       std::pair<int32_t,int32_t> textureChunk;
       uint32_t            rtSlot  = RtScene::NoSlot;  // its slot of the ray scene
@@ -187,6 +201,9 @@ class VisualObjects final {
     void     updateTextureDemand(size_t id);
     void     setTextureDemand(Object& object, bool active);
     void     updateTextureFocus();
+    bool     textureScreenOwner(const Object& object) const;
+    void     scheduleTexture(Object& object, size_t id, double expiry);
+    void     unscheduleTexture(Object& object);
 
     uint32_t clusterId(const PackedMesh::Cluster* cx, size_t firstMeshlet, size_t meshletCount, uint16_t bucketId, uint16_t commandId);
     uint32_t clusterId(const DrawBuckets::Bucket& bucket, size_t firstMeshlet, size_t meshletCount, uint16_t bucketId, uint16_t commandId);
@@ -221,6 +238,12 @@ class VisualObjects final {
     ChunkResidency*            textureResidency = nullptr;
     uint64_t                   textureSubscription = 0;
     uint64_t                   textureFocusSubscription = 0;
+    uint64_t                   textureViewSubscription = 0;
+    TextureScreenDemand        textureScreen;
+    uint64_t                   textureStampNext = 0;
+    size_t                     textureScheduledCount = 0;
+    TextureScreenDemand::View  textureView;
+    bool                       textureScreenMode = false;
     std::map<std::pair<int32_t,int32_t>,std::unordered_set<size_t>> textureChunks;
 
     // Marks of the ray scene: objects move and appear from worker threads too (Interactive::updateAnimation)
