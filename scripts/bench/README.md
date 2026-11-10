@@ -624,7 +624,8 @@ Faces: `faces` (the face animations of a head one after another, then two of the
 `face-fade` (faces fade in and out, one gives way to the next, three a moment apart, the lips over a
 fading face), `mood-ai` (given lines of an AI server with moods: start `gothic-ai serve --scenario m1 --llm off
 --no-tts` on a port of your own and run the bench with `GOTHIC_AI_URL=ws://127.0.0.1:<port>`; with a TTS
-service instead of `--no-tts` the lines are voiced in their mood). Columns `face_neutral`, `face_friendly`,
+service instead of `--no-tts` the lines are voiced in their mood). Gestures and a lie of an own head in the game, close up with
+sound: `face-cues-clip` ([below](#face-cues-clip)). Columns `face_neutral`, `face_friendly`,
 `face_angry`, `face_hostile`, `face_afraid`, `face_pain` of `metrics.csv`: how much of each face of the
 watched npc shows, 0..1.
 Wolves: `wolf` (docs/beasts.md, no server: the bridge's `ai beast listen|sit|calm|flee|attack|resume` on the
@@ -952,6 +953,45 @@ plays), `NO_BUILD=1`, `TIMEOUT` (seconds, default 300), `KEEP=1`, `OPENGOTHIC_TE
 textures; by default those of `scripts/hd-textures.sh` when they have been made, as the launcher does;
 empty: the game's own), `SOUND` and `MUSIC` (volumes 0..1, default 0; with `TEMPEST_AUDIO_LOOPBACK=48000` a
 segment's sound goes into `<segment>.wav`).
+
+## Face cues clip
+
+The acceptance clip of the facial gestures and the leak of a lie in the game
+([face-cues.md](../../reports/content/2026-11-hero-head/face-cues.md), "Приёмка", "В игре"): Vino with an own head
+says four lines with gesture tags and one lie through the real path — the server's parsing (`MoodTags`,
+`say.cues`, `say.leak`), the voice of `tts-service` with its word times (`say_audio.words`), the bridge's
+`LineCues`. The server's scenario `face_cues_demo` (`server/src/gothic_ai/scenarios/face_cues.py`) puts Vino on open
+ground in Lobart's yard (`NW_FARM1_PATH_01`, out of the field's crops) at noon, takes him over, puts the hero
+2 m in front of him and asks him 8 s later; `face-cues-clip.bench` films his face
+close up without the overlay (`overlay off`: its text would be in the clip) from 5.5 s on until he has been
+quiet 3 s. The leak is the server's trial (`p` at most 0.6); for a sure
+one the server runs with the debug flag `--debug-leak [upper|lower]` (every `[felt:…]` leaks, on that half).
+
+Vino needs an own head with `cues` and `leaks` in its face profile: a content copy whose `characters.json` lists
+`BAU_952_VINO` (e.g. the hero head of `hero-head-2` with the sections of
+[`test-head.face.json`](../../reports/content/2026-11-hero-head/mpfb/test-head.face.json)). On the Mac, from the
+repository root (Ryzen gets the server through the bench's tunnel):
+
+```bash
+W=/tmp/face-cues-clip; mkdir -p $W
+(cd tts-service && uv run gothic-tts serve --port 47920 --provider inworld --fallback none) > $W/tts.log 2>&1 &
+(cd server && uv run gothic-ai serve --port 47921 --scenario face_cues_demo --llm off --exit-after --no-console \
+  --no-voice --no-brain --no-quick --tts-url ws://127.0.0.1:47920 --debug-leak upper \
+  --memory-db $W/memory.sqlite3 --trace-dir $W/traces) > $W/server.log 2>&1 &
+GOTHIC_AI_URL=ws://127.0.0.1:47921 OPENGOTHIC_CONTENT=<content root> TEMPEST_WINDOW_SIZE=1280x720 \
+  OPENGOTHIC_BENCH_REALTIME=1 TEMPEST_AUDIO_LOOPBACK=48000 SOUND=1 MUSIC=0 BENCH_HOST=ryzen \
+  scripts/bench.sh scripts/bench/face-cues-clip.bench
+uv run --with pillow python reports/content/2026-11-hero-head/cues/ingame_clip.py .bench/face-cues-clip-<time> <out>
+```
+
+`--provider inworld` spends four paid Inworld requests a take; `--provider fake` (a tone with word times) checks
+the staging for free. `ingame_clip.py` writes into `<out>`:
+- `clip.mp4` — the recording with its sound and "Реплика N" over each line;
+- `key.txt` — for each line its text and mood, each gesture with its word, start, apex and the weight of its
+  `cue_*` column at the apex, the lie with its felt mood, half and `cue_leak`, the liar's blinks (eyes shut by
+  `R_EYESBLINK` while `bk_n`, the ordinary blinks, stays);
+- `sheet.jpg` — the frame before and the apex of each gesture and of the leak.
+The gestures of each line come from its `[ai] cues` line in `game.log`, the times from `metrics.csv`.
 
 ## Native NPC calibration duels
 
