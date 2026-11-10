@@ -1,4 +1,4 @@
-# The registered head with a skin map, lit softly: front, three quarters, profile.
+# The registered head with a skin map, lit softly: front, three quarters, profile, from behind.
 #   blender -b <round>/reg_sub.blend -P render_skin.py -- views.json skin.png <out dir> <prefix> [part.npz part.png]... [--eye eye.png] [--size 900]
 # The cameras stand on the eye point of views.json, as likeness.py expects.
 # The parts of hair_cut.py and beard_shell.py are put on the head; a map with alpha is cut at one half, as the game's
@@ -24,6 +24,7 @@ for k in range(4, len(a)-1, 2):                                  # the parts: ha
     me.from_pydata(h['v'].tolist(), [], h['f'].tolist()); me.update()
     uvl = me.uv_layers.new(name='UVMap'); uvl.data.foreach_set('uv', h['uv'].reshape(-1).astype('f'))
     for p in me.polygons: p.use_smooth = True
+    if 'n' in h.files: me.normals_split_custom_set_from_vertices(h['n'].tolist())     # hair cards: normals of the hair's surface
     ho = bpy.data.objects.new(name, me); sc.collection.objects.link(ho)
     hmat = bpy.data.materials.new(name+'_tex'); hmat.use_nodes = True; hn = hmat.node_tree
     ht = hn.nodes.new('ShaderNodeTexImage'); ht.image = bpy.data.images.load(a[k+1])
@@ -51,7 +52,7 @@ sc.world.node_tree.nodes['Background'].inputs[1].default_value = 0.6
 sc.view_settings.view_transform = 'Standard'
 ex_, ey, ez = V['eye']                                         # the template's eye point: the registration moves the head's own eyes
 sc.render.resolution_x = sc.render.resolution_y = SIZE; cam.data.type = 'ORTHO'; cam.data.ortho_scale = 0.36
-for name, ang in (('front', 0), ('quarter', 35), ('profile', 90)):
+for name, ang in (('front', 0), ('quarter', 35), ('profile', 90), ('back', 150)):
     r = math.radians(ang)
     cam.location = Vector((math.sin(r)*3, -math.cos(r)*3+ (ey+0.06 if ang == 90 else 0)*0, ez-0.03)); cam.rotation_euler = (math.radians(90), 0, r)
     if ang == 90: cam.location.y = ey+0.06
