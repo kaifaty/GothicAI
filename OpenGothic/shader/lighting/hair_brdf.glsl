@@ -14,7 +14,8 @@
 // it is, and the paths through the hair take its square as the pigment (Karis' scatter is sqrt of the base colour).
 //
 // One set of numbers for every light: the look of dull, unwashed hair
-const float HairRoughness = 0.52; // the width of the highlights: sqr() is the longitudinal deviation, radians
+const float HairRoughness = 0.40; // the width of the highlights: sqr() is the longitudinal deviation, radians.
+                                  // At 0.52 the white highlight was a third of the scattered light: no highlight at all
 const float HairShift     = 0.035; // the tilt of the cuticle, radians; R sits at -2x, TT at +1x, TRT at +4x
 const float HairShiftVary = 0.035; // how far a strand's own tilt goes either way, by its number
 const float HairScatter   = 2.0;   // the scattered light against Karis' unit: head-on it matches a Lambert surface
@@ -88,10 +89,18 @@ vec3 hairBrdf(vec3 albedo, vec3 strand, vec3 view, vec3 light, float strandId, f
   return max(s, vec3(0));
   }
 
-// How much of a light reaches hair whose surface normal makes this cosine with it: the far side of a head of hair
-// is in the head's own shade even where a shadow map is too coarse to tell, the rim still catches the light
+// How much of a light reaches hair whose surface normal makes this cosine with it. Light cannot come out of the
+// head: past the terminator of the hair's surface it has crossed the whole hairstyle, and no shadow map of alpha
+// tested cards tells that. Only the rim, a centimetre of loose hair, lets it through: the cosine wraps a little
 float hairShell(float noL) {
-  return clamp(noL*0.5 + 0.5, 0.0, 1.0);
+  return clamp((noL + 0.3)/1.3, 0.0, 1.0);
+  }
+
+// How much of the light from behind gets through the hair to the eye (TT and the grazing reflection): all of it
+// where the light skims the hair's surface, none where it faces the hair or would have to cross the head. Without
+// it a lamp in front of the hero lights the back of his head with its own colour
+float hairBacklit(float noL) {
+  return clamp(1.0 - abs(noL)*1.5, 0.0, 1.0);
   }
 
 // the direction of the strands as a colour, for OPENGOTHIC_HAIR_DEBUG
