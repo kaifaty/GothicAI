@@ -254,9 +254,9 @@ void Renderer::setupSettings() {
       Log::i("render: motion vectors = ", logged, settings.motionView ? ", view = 1" : "");
       }
   }
-  // the TAA reactive mask (graphics plan 1v, reports/render-features/2026-11-10-taa-reactive), off by default until
-  // the look is accepted: [INTERNAL] taaReactive=1 turns it on, OPENGOTHIC_TAA_REACTIVE=0|1 (test benches) overrides
-  // it. OPENGOTHIC_TAA_REACTIVE_VIEW=1 shows the mask in place of the frame; _MAX and _LREF tune it on a stand
+  // the TAA reactive mask (graphics plan 1v, reports/render-features/2026-11-10-taa-reactive), on by default:
+  // [INTERNAL] taaReactive=0 turns it off, OPENGOTHIC_TAA_REACTIVE=0|1 (test benches) overrides it.
+  // OPENGOTHIC_TAA_REACTIVE_VIEW=1 shows the mask in place of the frame; _MAX and _LREF tune it on a stand
   {
     bool on = Gothic::settingsGetI("INTERNAL","taaReactive")!=0;
     if(const char* e = std::getenv("OPENGOTHIC_TAA_REACTIVE"))

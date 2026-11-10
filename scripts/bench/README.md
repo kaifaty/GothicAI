@@ -307,8 +307,8 @@ banner and tree, market turn); run it with `OPENGOTHIC_MOTION_VECTORS=0`, `=1` a
 Ryzen and measure with `reports/render-features/2026-11-10-motion-vectors/metrics.py`.
 
 `taa-reactive-stills` and `taa-reactive-clips` check the TAA reactive mask of particles and animated translucent
-(graphics plan 1v, [report](../../reports/render-features/2026-11-10-taa-reactive/step-1v.md)); the mask is off by
-default until the user accepts the clips. `taa-reactive-stills` takes stills of the night torch, the harbour braziers,
+(graphics plan 1v, [report](../../reports/render-features/2026-11-10-taa-reactive/step-1v.md)); the mask is on by
+default (the user accepted the clips on 2026-11-10). `taa-reactive-stills` takes stills of the night torch, the harbour braziers,
 a campfire by day, the waterfall below Xardas' tower, the thunderstorm rune and the shore; with
 `OPENGOTHIC_TAA_REACTIVE_VIEW=1` they show the mask (black exactly 0, red to white 0..1). `taa-reactive-clips` records
 clips 1-5 (the torch with its sparks, standing and passed by; braziers and smoke by day with the water; a fireball; the

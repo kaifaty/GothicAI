@@ -100,7 +100,7 @@ outHistory  = vec4(res, r);
 
 ### 3. Выключатель и отладка
 
-- До приёмки выключено. `[INTERNAL] taaReactive=1` или `OPENGOTHIC_TAA_REACTIVE=1` включают; после приёмки — по умолчанию, `=0` выключает. Строка в журнале: `render: taa reactive = 0|1`.
+- Включено по умолчанию с приёмки 2026-11-10; `[INTERNAL] taaReactive=0` или `OPENGOTHIC_TAA_REACTIVE=0` выключают. Строка в журнале: `render: taa reactive = 0|1`.
 - Выключенная маска: резолв её не читает, кадр совпадает с `main` байт в байт. Вложение остаётся в проходе: конвейеры пишут оба выхода.
 - `OPENGOTHIC_TAA_REACTIVE_VIEW=1` показывает маску вместо кадра.
 - Потолок и `Lref` — `OPENGOTHIC_TAA_REACTIVE_MAX`, `OPENGOTHIC_TAA_REACTIVE_LREF` для стенда.
