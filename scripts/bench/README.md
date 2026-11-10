@@ -285,17 +285,30 @@ Use `OPENGOTHIC_VOB_STREAMING=0` and `=1` to compare static vob residency. Claud
 the resulting frames on Mac.
 
 `streaming-shots` runs with `deterministic on`: the world stands still while `streaming wait`
-waits, then the TAA history starts over and 16 fixed steps run with visibility in cluster order
-before `shot`; texture levels settle and stand still until the shot. Two runs of one binary then
-give byte-identical `perf-market`, `perf-harbour`, `perf-forest` and `perf-island` PNGs at any
-load in most pairs, TAA on; a single point can still land in a second state (forest ≤ 68 px,
-island ≤ 0.8 %, max 3 levels; Ryzen 1–9 px; issue #946). `perf-market-teleport` is shot
-without a streaming wait by design and still depends on loading (two states, 5 pixels). Accept a
-render change off ↔ on as two consecutive runs on one host and binary, toggled by the feature's own
-variable: `uv run --no-project --with pillow --with numpy python
+waits, then the TAA history and the SSAO history start over at phase 0 and 16 fixed steps run with
+visibility in cluster order before `shot`; texture levels settle and stand still until the shot.
+Two runs of one binary then give byte-identical `perf-market`, `perf-harbour`, `perf-forest` and
+`perf-island` PNGs at any load in most pairs on Mac, TAA on; a single point can still land in a
+second state (forest ≤ 68 px, island ≤ 0.8 %, max 3 levels; issue #946). `perf-market-teleport` is
+shot without a streaming wait by design and still depends on loading. Accept a render change
+off ↔ on as two consecutive runs on one host and binary, toggled by the feature's own variable:
+`uv run --no-project --with pillow --with numpy python
 reports/engine/2026-11-03-streaming-optimisation/shots_diff.py off=<dir> on=<dir>` must report 0
-changed pixels at the four waited points. If a point differs, run off and on once more: the change
-is accepted when every one of the four points gives 0 in at least one off ↔ on pair. [Report](../../reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md).
+changed pixels at the four waited points (`--all-pairs` compares every pair of several runs). If a
+point differs, run off and on once more: the change is accepted when every one of the four points
+gives 0 in at least one off ↔ on pair. [Report](../../reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md).
+
+On Ryzen the virtual shadow maps are on, and their GPU passes depend on the order of shader
+invocations (issue #946): at 1920x1080 two runs of one binary differ by 0–60 pixels by 1–2 levels
+at a point, and one run in five puts the island into a second state (about 1 % of pixels, max 3,
+noise in the clouds). So at 1920x1080 on Ryzen:
+- the exact comparison runs both sides with `OPENGOTHIC_VSM=0`: five runs of one binary are
+  byte-identical at the four waited points, and off ↔ on must report 0 changed pixels;
+- with VSM (a change that touches shadows or what reads them) a point is accepted within 100
+  changed pixels and max 2 levels; an island in its second state is shot again.
+
+[Report](../../reports/engine/2026-11-10-still-shots-repeat/README.md): the cause of the 2026-11-10
+regression (the SSAO cycle's phase was not reset), the proof and what is left in VSM.
 
 `motion-vectors` and `motion-vectors-clips` check the motion vectors of objects (graphics plan 1b,
 [report](../../reports/render-features/2026-11-10-motion-vectors/step-1b.md)). `motion-vectors` takes stills: a still
@@ -306,8 +319,23 @@ world with a moving camera (creatures hidden, indoors), an NPC walking past a st
 banner and tree, market turn); run it with `OPENGOTHIC_MOTION_VECTORS=0`, `=1` and `OPENGOTHIC_TAA=0` at 1920x1080 on
 Ryzen and measure with `reports/render-features/2026-11-10-motion-vectors/metrics.py`.
 
+`taa-reactive-stills` and `taa-reactive-clips` check the TAA reactive mask of particles and animated translucent
+(graphics plan 1v, [report](../../reports/render-features/2026-11-10-taa-reactive/step-1v.md)); the mask is on by
+default (the user accepted the clips on 2026-11-10). `taa-reactive-stills` takes stills of the night torch, the harbour braziers,
+a campfire by day, the waterfall below Xardas' tower, the thunderstorm rune and the shore; with
+`OPENGOTHIC_TAA_REACTIVE_VIEW=1` they show the mask (black exactly 0, red to white 0..1). `taa-reactive-clips` records
+clips 1-5 (the torch with its sparks, standing and passed by; braziers and smoke by day with the water; a fireball; the
+waterfall); run it with `OPENGOTHIC_CONTENT=<abs>/reports/content/remaster/wall-torch/particles/content` (the sparks
+layer), `OPENGOTHIC_TAA_REACTIVE=0`, `=1`, `=1` with the view and `OPENGOTHIC_TAA=0` at 1920x1080 on Ryzen with
+`WORLD=NEWWORLD.ZEN`, and measure with `reports/render-features/2026-11-10-taa-reactive/metrics.py`.
+
 ## План и журнал
 
+- 2026-11-10: `taa-reactive-stills`, `taa-reactive-clips` (graphics plan 1v); `stats mana <n> circle <n>` lets the
+  hero cast a rune.
+- 2026-11-10: `deterministic on` also starts the SSAO history over at phase 0 of its sample cycle
+  (stills of one binary differed by 350–775 thousand pixels at 1920x1080); the exact comparison on
+  Ryzen runs with `OPENGOTHIC_VSM=0`, VSM stills take a tolerance; `shots_diff.py --all-pairs`.
 - 2026-11-09: offscreen run mode (`TEMPEST_OFFSCREEN=1`, `TEMPEST_OFFSCREEN_FPS`): the game draws into its
   own image without a window or display; Ryzen benches use it by default.
 - 2026-11-05: `deterministic on` for `streaming-shots`: frozen world during `streaming wait`, TAA reset,
@@ -867,7 +895,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `bowgeom` | the bow and the bow hand of the hero in the arrow's frame (x along it from its slot, y up, z to the side), cm: the bow's box, the grip, the string's middle at rest and drawn by `S_READY` and `S_DRAWN`, the bow hand's bones, the head |
 | `animspeed <anim> <k>` | the hero's animation of that name plays k times as fast from its next start (`Pose::setAnimSpeed`: a layer keeps its speed, the next one starts at 1). The manual aim sets `T_BOWRELOAD` from dexterity (`stats` prints it: `reload x`); this overrides it until dexterity changes. The hero's animation events go to bench.log (`anim event <type> <item> <slot>`, `anim morph <anim> <slot>`): at any tempo each once, in the same order |
 | `sfx <name>...` | the files a sound effect plays (its variants `_A1`..), `(missing)` if the game's data has no such file. The hero's sounds go to bench.log (`sound <name>`) |
-| `stats [npc <npc>] [str <n>] [dex <n>] [1h <n>] [2h <n>] [bow <n>] [cbow <n>] [hp <n>] [hpmax <n>] [talent auto\|0\|1\|2]` | the hero's (an npc's) strength, dexterity, hit chances (the skill), hit points; prints what the manual aim makes of them (sway, draw, hold, arrow speed). Arguments apply left to right. `talent` sets the trained archers' animations (`_BOWT1` at 30%, `_BOWT2` at 60% in G2; `auto` as the hit chances say), and the 1H/2H animation level only when that weapon's hit chance is explicit in the same command; with it or `npc` also `stats of <npc>: melee hit chances and animation levels, archery talent, reload ms, hp, point protection` |
+| `stats [npc <npc>] [str <n>] [dex <n>] [1h <n>] [2h <n>] [bow <n>] [cbow <n>] [hp <n>] [hpmax <n>] [mana <n>] [circle <n>] [talent auto\|0\|1\|2]` | the hero's (an npc's) strength, dexterity, hit chances (the skill), hit points; `mana` sets mana and its maximum, `circle` the magic circle (a rune's spell then casts); prints what the manual aim makes of them (sway, draw, hold, arrow speed). Arguments apply left to right. `talent` sets the trained archers' animations (`_BOWT1` at 30%, `_BOWT2` at 60% in G2; `auto` as the hit chances say), and the 1H/2H animation level only when that weapon's hit chance is explicit in the same command; with it or `npc` also `stats of <npc>: melee hit chances and animation levels, archery talent, reload ms, hp, point protection` |
 | `seed <n>` | the random numbers start over: the scripts' (the dice, the release cone), the bench's (`volley` jitter), the hero's sway |
 | `npcequip <npc> <item> [count]` | into the npc's inventory, the first put on |
 | `arc <npc> <count> <dist> <step deg>` | that many of the npc stand that far in front of the hero, a step apart round it, facing it: the crew of `fight all` (a new arc replaces it, `clear` takes the gone out) |

@@ -194,6 +194,10 @@ void SceneGlobals::setMotion(bool enabled, const Tempest::Matrix4x4& reprojectCl
   uboGlobalCpu.viewProjectPrev = viewProjectPrev;
   }
 
+void SceneGlobals::setTaaReactiveLref(float lref) {
+  uboGlobalCpu.reactiveLrefInv = 1.f/lref;
+  }
+
 void SceneGlobals::setUnderWater(bool w) {
   uboGlobalCpu.underWater = w ? 1 : 0;
   }

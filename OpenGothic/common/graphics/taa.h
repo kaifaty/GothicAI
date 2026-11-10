@@ -51,6 +51,18 @@ namespace Taa {
   // had it stood still. The shaders' formula (main.vert, main.frag), 0 for d=0
   Tempest::Vec2      motionResidual(const Tempest::Matrix4x4& reprojectClip, const Tempest::Matrix4x4& viewProjectPrev,
                                     const Tempest::Vec4& clipCur, const Tempest::Vec3& d);
+  // The resolve's blend (taa_resolve.frag) with the reactive mask (graphics plan 1v,
+  // reports/render-features/2026-11-10-taa-reactive): `alpha` the new frame's share, `lumCur` and `lumHist` the
+  // luminance (YCoCg Y) of this frame and of the clipped history, `mask` this frame's mask under the ceiling and
+  // `maskPrev` the last frame's from the history's alpha. k = max(mask, maskPrev) lifts the share to mix(alpha, 1, k)
+  // and fades the weights by inverse luminance by (1 - k); with k = 0 they are the weights without a mask
+  struct ResolveWeights {
+    float cur  = 0;
+    float hist = 0;
+    };
+  ResolveWeights     resolveWeights(float alpha, float lumCur, float lumHist, float mask, float maskPrev);
+  // the resolved value of one channel by those weights
+  float              resolveBlend(const ResolveWeights& w, float cur, float hist);
   // the frame moved farther than JumpDistance or turned more than JumpAngle
   bool               isCameraJump(const View& cur, const View& prev);
   // degrees between the two views' rotations

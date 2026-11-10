@@ -53,6 +53,8 @@
 //       Progress goes to stderr and the selected base path goes to stdout.
 //   content-convert formats
 //       Print the compiled base and video importer format hashes as JSON.
+//   content-convert stress-base <ready base> <out dir> --subdivide 0..3 | verify-stress-base <base> <copy>
+//       A copy of a ready base with every world triangle split in four N times (stressbase.h).
 //   content-convert --self-test
 //       Round trips of synthetic meshes, world data and presets; no game files.
 //
@@ -76,6 +78,7 @@
 #include "world/voblayer.h"
 #include "game/definitions/particlecontent.h"
 #include "gothicglb.h"
+#include "stressbase.h"
 
 #include <zenkit/Archive.hh>
 #include <zenkit/CutsceneLibrary.hh>
@@ -798,6 +801,7 @@ int selfTest() {
   }
 
   WorldData::selfTest(dir/"world-data");
+  StressBase::selfTest(dir);
   fs::remove_all(dir);
   std::cout << "self-test passed\n";
   return 0;
@@ -818,6 +822,7 @@ int main(int argc, char** argv) {
       }
     if(args.size()==1 && args[0]=="--self-test")
       return selfTest();
+    if(const auto stress=StressBase::run(args)) return *stress;
     if(args.size()==3 && args[0]=="check-particles") {
       const auto result=ParticleContent::check(args[1],args[2]);
       for(const auto& error:result.errors)
@@ -928,7 +933,7 @@ int main(int argc, char** argv) {
                  "       content-convert resolve-base|resolve-videos|resolve <gothic dir>\n"
                  "       content-convert sources|verify-sources <gothic dir> <dir>\n"
                  "       content-convert base <gothic dir> <dir>\n"
-                 "       content-convert formats\n"
+                 "       content-convert formats\n" << StressBase::usage <<
                  "       content-convert --self-test\n";
     return 2;
     }

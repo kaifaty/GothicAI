@@ -151,9 +151,13 @@ class Clip:
 
 
 def two_bone(clip: Clip, f: int, W: np.ndarray, limb: str, target: np.ndarray, end_rot: np.ndarray,
-             above: float | None = None):
+             above: float | None = None, guard: float = 0.0):
     """The limb's end to `target` with the model-space turn end_rot; the knee or elbow stays in its plane, unless
-    that plane puts it under `above` (the floor): then the plane turns about the hip-to-end line just enough."""
+    that plane puts it under `above` (the floor): then the plane turns about the hip-to-end line just enough.
+    `guard` (cm, legs): a nearly straight leg has no plane of its own - its knee is off the hip-to-ankle line by
+    millimetres, in any direction - and bending it more would throw the knee aside. The thigh's own hinge (its
+    local Y) says where the knee's front is; that direction is added to the knee's offset with the weight
+    `guard`, so it rules a straight leg and leaves a bent one alone."""
     up, mid, end = LIMBS[limb]
     iu, im, ie = (clip.skel.index(n) for n in (up, mid, end))
     H, K, A = W[iu][:3, 3], W[im][:3, 3], W[ie][:3, 3]
@@ -162,6 +166,12 @@ def two_bone(clip: Clip, f: int, W: np.ndarray, limb: str, target: np.ndarray, e
     dist = float(np.clip(np.linalg.norm(d), abs(l1 - l2) + 1e-3, l1 + l2 - 1e-3))
     u = d / np.linalg.norm(d)
     pole = (K - H) - ((K - H) @ u) * u
+    if guard and limb.endswith("leg"):
+        front = np.cross(W[iu][:3, :3] @ UP, u)
+        if front @ (W[iu][:3, :3] @ np.array([0.3, 0.0, 0.95])) < 0:
+            front = -front
+        if np.linalg.norm(front) > 1e-6:
+            pole = pole + guard * front / np.linalg.norm(front)
     v = pole / np.linalg.norm(pole) if np.linalg.norm(pole) > 1e-6 else W[im][:3, 1]
     ca = (l1 * l1 + dist * dist - l2 * l2) / (2 * l1 * dist)
     sa = np.sqrt(max(0.0, 1 - ca * ca))

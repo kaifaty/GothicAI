@@ -70,6 +70,17 @@ void Renderer::drawMotionView(Attachment& result, Encoder<CommandBuffer>& cmd) {
   cmd.draw(nullptr, 0, 3);
   }
 
+void Renderer::drawReactiveView(Attachment& result, Encoder<CommandBuffer>& cmd) {
+  if(!settings.taaReactiveView || taa.reactive.isEmpty())
+    return;
+  // debug: the frame is the TAA reactive mask as it was written, before the ceiling (reactive_view.frag)
+  cmd.setDebugMarker("Reactive-view");
+  cmd.setFramebuffer({{result, Tempest::Discard, Tempest::Preserve}});
+  cmd.setBinding(0, taa.reactive, Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setPipeline(shaders.reactiveView);
+  cmd.draw(nullptr, 0, 3);
+  }
+
 void Renderer::drawBloom(Encoder<CommandBuffer>& cmd, bool fused) {
   if(!settings.bloomEnabled || bloomChain[0].isEmpty())
     return;
@@ -207,9 +218,13 @@ void Renderer::drawTaa(Tempest::Encoder<Tempest::CommandBuffer>& cmd, bool fused
     Matrix4x4 reproject;
     float     alpha = 0.1f; // the share of the new frame
     uint32_t  reset = 0;    // no history: the frame as it is
+    float     reactiveMax = 0.9f; // the reactive mask (graphics plan 1v): its ceiling, and 0 when it is off
+    uint32_t  reactive    = 0;
     } push;
-  push.reproject = taa.reproject;
-  push.reset     = taa.valid ? 0 : 1;
+  push.reproject   = taa.reproject;
+  push.reset       = taa.valid ? 0 : 1;
+  push.reactiveMax = settings.taaReactiveMax;
+  push.reactive    = settings.taaReactive ? 1 : 0;
 
   auto& next = taa.history[taa.cur];
   auto& prev = taa.history[taa.cur^1];
@@ -219,6 +234,7 @@ void Renderer::drawTaa(Tempest::Encoder<Tempest::CommandBuffer>& cmd, bool fused
   cmd.setBinding(1, zbuffer,     Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setBinding(2, prev,        Sampler::bilinear(ClampMode::ClampToEdge));
   cmd.setBinding(3, gbufMotion,  Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(4, taa.reactive,Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setPushData(push);
   cmd.setPipeline(shaders.taaResolve);
   cmd.draw(nullptr, 0, 3);

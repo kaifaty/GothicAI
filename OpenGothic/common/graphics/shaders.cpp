@@ -198,6 +198,7 @@ void Shaders::compileShaders() noexcept {
 
   tonemapping        = postEffect("triangle_uv", "tonemapping",    RenderState::ZTestMode::Always);
   motionView         = postEffect("triangle_uv", "motion_view",    RenderState::ZTestMode::Always);
+  reactiveView       = postEffect("triangle_uv", "reactive_view",  RenderState::ZTestMode::Always);
   tonemappingUpscale = postEffect("triangle_uv", "tonemapping_up", RenderState::ZTestMode::Always);
   bloomDownKaris     = postEffect("triangle_uv", "bloom_down_karis", RenderState::ZTestMode::Always);
   bloomDown          = postEffect("triangle_uv", "bloom_down",       RenderState::ZTestMode::Always);

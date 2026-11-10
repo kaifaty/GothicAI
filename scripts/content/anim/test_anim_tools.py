@@ -716,3 +716,205 @@ def test_loop_idle_onto_holds_the_reference_pose_with_a_still_root(tmp_path, mon
     assert np.abs(W[:, head, :3, 3].mean(0) - Wr[head, :3, 3]).max() < 0.5            # the pose is the reference's
     assert np.ptp(W[:, head, :3, 3], axis=0).max() > 0.3                              # and the sample's motion is kept
     assert np.allclose(W[n], W[0], atol=1e-4)
+
+
+def test_trans_clip_mirror_swaps_the_sides_and_keeps_a_symmetric_stance():
+    import trans_clip
+    _, skel, stance = gothic_stance()
+    run = gothic_run()[1]
+    one = trans_clip.mirror(skel, stance)
+    bones = [i for i, n in enumerate(skel.nodes) if n.name.startswith("BIP01")]
+    A, B = ga.world_pose(skel, stance, 0), ga.world_pose(skel, one, 0)
+    assert np.abs(A[bones] - B[bones]).max() < 0.05                      # Gothic's stance is its own mirror image
+    m = trans_clip.mirror(skel, run)
+    lf, rf, lh, rh = (skel.index(f"BIP01 {b}") for b in ("L FOOT", "R FOOT", "L HAND", "R HAND"))
+    flip = np.array([-1.0, 1.0, 1.0])
+    for f in (0, 5, 10):
+        X, Y = ga.world_pose(skel, run, f), ga.world_pose(skel, m, f)
+        for a_, b_ in ((lf, rf), (rf, lf), (lh, rh), (rh, lh)):
+            assert np.allclose(Y[a_][:3, 3], flip * X[b_][:3, 3], atol=1e-3)
+        assert all(abs(np.linalg.det(Y[i][:3, :3]) - 1) < 1e-4 for i in bones)  # turns stay turns
+    twice = trans_clip.mirror(skel, m)
+    assert np.abs(ga.world_pose(skel, twice, 7) - ga.world_pose(skel, run, 7)).max() < 1e-3
+    slot = skel.index("ZS_SWORD")                                               # the sword stays on its own hip
+    c = run.node_indices.index(slot) if slot in run.node_indices else None
+    if c is not None:
+        assert np.array_equal(m.positions[:, c], run.positions[:, c])
+
+
+def test_trans_clip_lands_both_ends_and_keeps_the_way_straight(tmp_path, monkeypatch):
+    import trans_clip
+    models, skel, stance = gothic_stance()
+    run = gothic_run()[1]
+    src = tmp_path / "HUMANS-SRC.MAN.json"
+    ga.write_animation(src, run, "test")
+    out = tmp_path / "HUMANS-T_RUNL_2_RUN.MAN.json"
+    monkeypatch.setattr(sys, "argv", ["trans_clip.py", str(src), str(models), str(out), "--name", "T_RUNL_2_RUN",
+                                      "--next", "S_RUN", "--frames", "2,15", "--start",
+                                      f"{models / 'HUMANS-S_RUNL.MAN.json'}:0", "--end",
+                                      f"{models / 'HUMANS-S_RUN.MAN.json'}:0", "--fade", "0.1,0.2"])
+    trans_clip.main()
+    clip = ga.read_animation(out)
+    assert clip.name == "T_RUNL_2_RUN" and clip.next == "S_RUN" and clip.frame_count == 14
+    bones = [i for i, n in enumerate(skel.nodes) if n.name.startswith("BIP01") and "FOOT" not in n.name
+             and "TOE" not in n.name and "THIGH" not in n.name and "CALF" not in n.name]
+
+    def about_root(anim, f):
+        W = ga.world_pose(skel, anim, f)
+        return W[bones][:, :3, 3] - W[0][:3, 3] * np.array([1.0, 0.0, 1.0])
+
+    assert np.abs(about_root(clip, 0) - about_root(run, 0)).max() < 0.1          # the first frame: the loop's
+    assert np.abs(about_root(clip, 13) - about_root(stance, 0)).max() < 0.1      # the last frame: the stance
+    assert abs(clip.positions[-1, 0, 0] - clip.positions[0, 0, 0]) < 1e-3        # no drift aside
+    assert clip.positions[-1, 0, 2] - clip.positions[0, 0, 2] > 100              # and the way ahead is kept
+
+
+def test_run_style_lowers_the_hips_leans_the_trunk_opens_the_elbows_and_keeps_the_feet_and_the_seam():
+    import copy
+
+    import run_style
+    skel, run = gothic_run()
+    orig = copy.deepcopy(run)
+    run_style.style(skel, run, drop=6, lean=10, elbow=32, arm=13, loop=True)
+    ix = skel.index
+
+    def lean(W):
+        up = W[ix("BIP01 NECK")][:3, 3] - W[ix("BIP01 PELVIS")][:3, 3]
+        return np.degrees(np.arctan2(up[2], up[1]))
+
+    def bend(W, side):
+        s, e, h = (W[ix(f"BIP01 {side} {b}")][:3, 3] for b in ("UPPERARM", "FOREARM", "HAND"))
+        u, v = e - s, h - e
+        return np.degrees(np.arccos(u @ v / np.linalg.norm(u) / np.linalg.norm(v)))
+
+    for f in range(run.frame_count - 1):
+        A, B = ga.world_pose(skel, orig, f), ga.world_pose(skel, run, f)
+        assert abs(A[0][1, 3] - B[0][1, 3] - 6) < 1e-4                       # the hips came down
+        assert np.allclose(A[0][[0, 2], 3], B[0][[0, 2], 3], atol=1e-4)      # along the same way
+        for side in "LR":
+            foot = ix(f"BIP01 {side} FOOT")
+            assert np.abs(A[foot][:3, 3] - B[foot][:3, 3]).max() < 0.05      # to the same feet
+            assert np.abs(A[foot][:3, :3] - B[foot][:3, :3]).max() < 1e-3
+            assert bend(A, side) - bend(B, side) > 31                        # the elbows opened
+        assert 9 < lean(B) - lean(A) < 14                                    # the trunk leans from the hips
+        head = ix("BIP01 HEAD")
+        tip = np.degrees(np.arccos(np.clip((np.trace(A[head][:3, :3].T @ B[head][:3, :3]) - 1) / 2, -1, 1)))
+        assert tip < 4                                                       # and the head still looks ahead
+    assert np.allclose(run.rotations[-1], run.rotations[0]) and np.allclose(run.positions[-1, 1:], run.positions[0, 1:])
+    assert np.allclose(run.positions[-1, 0] - run.positions[0, 0], orig.positions[-1, 0] - orig.positions[0, 0])
+
+
+def test_run_style_share_and_bump_leave_the_stance_end_alone_and_lean_into_the_start():
+    import copy
+
+    import run_style
+    skel, run = gothic_run()
+    orig = copy.deepcopy(run)
+    run_style.style(skel, run, drop=6, lean=10, elbow=32, arm=13, w=[(0, 0.0), (5, 1.0)],
+                    wdrop=[(0, 0.0), (6, 0.0), (12, 1.0)], bumps=[(6.5, 6.5, 10.0)])
+    ix = skel.index
+
+    def lean(anim, f):
+        W = ga.world_pose(skel, anim, f)
+        up = W[ix("BIP01 NECK")][:3, 3] - W[ix("BIP01 PELVIS")][:3, 3]
+        return np.degrees(np.arctan2(up[2], up[1]))
+
+    first = np.abs(ga.world_pose(skel, run, 0) - ga.world_pose(skel, orig, 0))
+    assert first[:, :3, 3].max() < 0.05 and first[:, :3, :3].max() < 1e-3    # frame 0: the share and the bell are 0
+    assert np.allclose(run.positions[:7, 0, 1], orig.positions[:7, 0, 1])    # the drop waits for the push
+    assert abs(orig.positions[13, 0, 1] - run.positions[13, 0, 1] - 6) < 1e-4
+    gain = [lean(run, f) - lean(orig, f) for f in range(14)]
+    assert 18 < max(gain[5:9]) < 24 and 9 < gain[13] < 14                    # the bell on top of the carriage
+
+
+def test_retime_clip_squeezes_the_start_and_keeps_the_ends_and_the_way(tmp_path, monkeypatch):
+    import retime_clip
+    models, skel, _ = gothic_stance()
+    src = models / "HUMANS-T_RUN_2_RUNL.MAN.json"
+    if not src.exists():
+        pytest.skip("no converted base")
+    before = ga.read_animation(src)
+    last = before.frame_count - 1
+    out = tmp_path / "HUMANS-T_RUN_2_RUNL.MAN.json"
+    monkeypatch.setattr(sys, "argv", ["retime_clip.py", str(src), str(models), str(out), "--keys",
+                                      f"0:0,6:3,{last}:{last - 3}", "--no-lock"])
+    retime_clip.main()
+    after = ga.read_animation(out)
+    assert after.frame_count == before.frame_count - 3 and after.name == before.name and after.next == before.next
+    assert np.allclose(after.positions[0], before.positions[0]) and np.allclose(after.positions[-1], before.positions[-1])
+    assert np.allclose(np.abs((after.rotations[-1] * before.rotations[-1]).sum(-1)), 1, atol=1e-5)
+    assert np.allclose(after.positions[3], before.positions[6], atol=1e-3)       # frame 6 is played at frame 3
+    assert after.positions[1, 0, 2] - after.positions[0, 0, 2] > 1.5 * (before.positions[1, 0, 2] - before.positions[0, 0, 2])
+
+
+def test_two_bone_guard_bends_a_straight_leg_forward_whatever_way_its_knee_is_off_the_line():
+    import copy
+
+    import fix_layer as fl
+    models, skel, stance = gothic_stance()
+    ix = skel.index
+    hip, knee, foot = (ix(f"BIP01 L {b}") for b in ("THIGH", "CALF", "FOOT"))
+    aside = []
+    for nudge in (-0.3, 0.3):                       # the knee a hair to one side of the hip-ankle line, then the other
+        anim = copy.deepcopy(stance)
+        clip = fl.Clip(skel, anim)
+        W = clip.world(0)
+        H, K, A = (W[i][:3, 3].copy() for i in (hip, knee, foot))
+        reach = np.linalg.norm(K - H) + np.linalg.norm(A - K)
+        down = (A - H) / np.linalg.norm(A - H)
+        fl.two_bone(clip, 0, W, "L leg", H + down * (reach - 0.01) + np.array([nudge, 0.0, 0.0]), W[foot][:3, :3].copy())
+        straight = W[knee][:3, 3] - H
+        assert np.linalg.norm(straight - (straight @ down) * down) < 1.5      # the leg is straight now
+        target = H + down * (reach - 3.0)                                      # the hips come down by 3 cm
+        fl.two_bone(clip, 0, W, "L leg", target, W[foot][:3, :3].copy(), guard=3.0)
+        off = (W[knee][:3, 3] - H) - ((W[knee][:3, 3] - H) @ down) * down
+        assert off[2] > 8 and abs(off[0]) < 0.5 * off[2]                       # the knee goes forward, not aside
+        aside.append(off)
+    assert np.linalg.norm(aside[0] - aside[1]) < 3                             # and the same way for both nudges
+
+
+def test_knee_floor_brings_a_chain_drawn_into_a_line_back_to_the_bind_knee_and_leaves_a_bent_one():
+    import copy
+
+    import fix_layer as fl
+    import knee_floor as kf
+    models, skel, stance = gothic_stance()
+    ix = skel.index
+    hip, knee, foot = (ix(f"BIP01 L {b}") for b in ("THIGH", "CALF", "FOOT"))
+    floor = kf.bind_bend(skel)
+    assert 12 < floor < 15                                   # BIP01's chain is bent where the body's leg is straight
+    assert kf.raised(floor + 6.0, floor, 6.0) == pytest.approx(floor + 6.0)      # smooth where the two parts meet
+    assert kf.raised(floor + 20.0, floor, 6.0) == floor + 20.0
+    assert floor < kf.raised(0.0, floor, 6.0) < floor + 0.5
+    assert kf.raised(floor, floor, 6.0) == pytest.approx(floor + 6.0 / np.e)
+    for nudge in (-0.3, 0.3):                                # the knee a hair to one side of the line, then the other
+        anim = copy.deepcopy(stance)
+        clip = fl.Clip(skel, anim)
+        W = clip.world(0)
+        H, K, A = (W[i][:3, 3].copy() for i in (hip, knee, foot))
+        reach = np.linalg.norm(K - H) + np.linalg.norm(A - K)
+        down = (A - H) / np.linalg.norm(A - H)
+        fl.two_bone(clip, 0, W, "L leg", H + down * (reach - 0.01) + np.array([nudge, 0.0, 0.0]), W[foot][:3, :3].copy())
+        assert abs(kf.bend(clip.world(0), skel, "L leg")) < 3                    # a line: the knee bent backwards
+        other = kf.bend(clip.world(0), skel, "R leg")                            # the stance's own knee, at the floor
+        at, turn = clip.world(0)[foot][:3, 3].copy(), clip.world(0)[foot][:3, :3].copy()
+        rep = kf.lay(skel, anim, floor)
+        W = clip.world(0)
+        assert floor <= kf.bend(W, skel, "L leg") < floor + 0.5                  # back at the bind knee, to the front
+        assert rep["L leg"]["frames"] == anim.frame_count and rep["L leg"]["least_after"] >= floor
+        assert np.linalg.norm(W[foot][:3, 3] - at) < 0.7                         # the foot gives way by millimetres
+        assert np.allclose(W[foot][:3, :3], turn, atol=1e-5)                     # and keeps its turn
+        # the other leg stood at the floor: it comes up by its soft share, smoothly with the knees above
+        assert kf.bend(W, skel, "R leg") == pytest.approx(kf.raised(other, floor, 6.0), abs=0.05)
+        assert 1.5 < kf.bend(W, skel, "R leg") - other < 2.5
+    # a leg bent well over the floor is not touched
+    anim = copy.deepcopy(stance)
+    clip = fl.Clip(skel, anim)
+    W = clip.world(0)
+    H, A = W[hip][:3, 3].copy(), W[foot][:3, 3].copy()
+    fl.two_bone(clip, 0, W, "L leg", H + (A - H) * 0.9, W[foot][:3, :3].copy(), guard=3.0)
+    assert kf.bend(clip.world(0), skel, "L leg") > floor + 15
+    was = anim.rotations.copy()
+    rep = kf.lay(skel, anim, floor)
+    cols = [clip.col[i] for i in (hip, knee, foot)]
+    assert np.allclose(np.abs((anim.rotations[0, cols] * was[0, cols]).sum(-1)), 1, atol=1e-9)   # frame 0 is the bent one

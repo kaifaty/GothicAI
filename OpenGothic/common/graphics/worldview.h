@@ -69,6 +69,7 @@ class WorldView {
     // motion vectors of objects (graphics plan 1b): the previous copy of the instance buffer and the scene's part;
     // before preFrameUpdate, so that this frame's commit already keeps the history
     void setMotionVectors(bool enabled, const Tempest::Matrix4x4& reprojectClip, const Tempest::Matrix4x4& viewProjectPrev);
+    void setTaaReactiveLref(float lref);
     void setWindEnabled(bool enabled, uint64_t period);
     void setFog(const Tempest::StorageImage& lut, const Tempest::StorageImage& lutMs);
     void setClothWind(bool enabled, float scale);
