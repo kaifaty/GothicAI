@@ -6,6 +6,7 @@ const uint TRACED_BIT = 0x2;
 const uint REUSE_BIT  = 0x4;
 const uint BAD_BIT    = 0x8;
 const uint NEW_BIT    = 0x10; //for debug view
+const uint SEEN_BIT   = 0x20; // a pixel of this frame takes the probe (REUSE_BIT of the vote, kept through the frame)
 
 #if defined(MATERIAL_MAPS)
 uint probePackSkyVisibility(uint bits, vec3 negativeVisibility, vec3 positiveVisibility) {
@@ -30,6 +31,13 @@ float probeReadSkyVisibility(uint bits, vec3 norm) {
   return ret;
   }
 #endif
+
+// The probes keep their light scaled down by this: the samples' radiance (RGB9E5, up to 65408) and the cubes (RGBA16F,
+// up to 65504). By day a lamp lights a surface next to it with 10^5..10^6: the path tracer's factor max(1,exposure)/
+// exposure is about 1/8e-6 at noon (sky_exposure.comp). Clipped, the plank hut at noon lost half of the lamps' bounce,
+// a quarter of its reflected light (step-2b.md, «2б-1: пересмотр»). 2^-8 holds up to 1,7e7; a dark corner at night
+// (1e-3) keeps a precision of about 1,5 %.
+const float probeStoreScale = 1.0/256.0;
 
 // RGB9E5 (shared exponent) in an R32UI texel, rounded to nearest: the radiance of a probe's sample
 uint packRGB9E5(vec3 rgb) {
@@ -59,15 +67,34 @@ struct ProbesHeader { // 64 bytes
   uint watch; //debug
   uint newCount; // probes allocated this frame, listed for probe_trace.comp and probe_relight_new.comp
   uint iterator3;
-  uint padd1[9];
+  uint frame;      // the frame number: the stamp of a probe's use (Probe::lastUse)
+  uint evictAge;   // a probe unused for more frames is freed (probe_prune): the expiry, or less when places run out
+  uint reqCount;   // requests of probes at hits, for the next frame (probe_relight*, probe_hit_alloc)
+  uint hitCount;   // probes allocated at hits this frame (counter)
+  uint freedCount; // probes freed this frame (counter)
+  uint expireAge;  // frames: the expiry T of an unused probe; the width of the age histogram's buckets follows it
+  uint lightReset; // 1: the time of day jumped, every live probe is lit anew as a new one (probe_prune)
+  uint padd1[2];
   };
 
 struct Probe { // 32 bytes
   vec3 pos;
   uint pNext;
-  vec3 normal;
+  uint normal;  // packSnorm4x8: the normal of the pixel or the hit it was made for (debug)
+  uint lastUse; // ProbesHeader::frame when a pixel or a sample of another probe last took it
+  uint turn;    // the relights of the probe so far (probe_lighting.comp): which of its samples are relit next
   uint bits;
   };
+
+// A request for a probe at a hit (probe_lighting.comp), allocated in the next frame through the vote table
+struct ProbeRequest {
+  ivec3 gridPos; // probeQueryGridPos: in steps of lod 0
+  uint  normal;
+  };
+
+const uint  probeAgeBuckets = 64;   // the histogram of ages in probe_prune: which probes to free when places run out
+const uint  probeRequestKey = 0x80000000u; // voteTable: a request at a hit, above any pixel's vote
+const uint  probeRequestBusy = 0xFFFFFFFEu; // voteTable: a bucket a request is being written for
 
 const float dbgViewRadius    = 3;
 const float probeGridStep    = 25;
@@ -111,20 +138,16 @@ vec3 probeReadAmbient(in sampler2D irradiance, uint id, vec3 nx, vec3 probeNorm)
   ret += texelFetch(irradiance, uv + ivec2(0,d.x), 0).rgb * n.x;
   ret += texelFetch(irradiance, uv + ivec2(1,d.y), 0).rgb * n.y;
   ret += texelFetch(irradiance, uv + ivec2(2,d.z), 0).rgb * n.z;
-  return ret;
+  return ret * (1.0/probeStoreScale);
   }
 
-int probeGridComputeLod(ivec2 fragCoord, ivec2 screenSize, float z, mat4 viewProjectInv, float bias) {
-  const vec2  inPosL = vec2(2*(fragCoord+ivec2(-1,0))+ivec2(1,1))/vec2(screenSize) - vec2(1,1);
-  const vec2  inPosR = vec2(2*(fragCoord+ivec2(+1,0))+ivec2(1,1))/vec2(screenSize) - vec2(1,1);
-
-  const vec4  posL   = viewProjectInv*vec4(inPosL.xy,z,1);
-  const vec4  posR   = viewProjectInv*vec4(inPosR.xy,z,1);
-
-  const float dp     = distance(posL.xyz/posL.w, posR.xyz/posR.w)/probeGridStep;
-
-  const int ilog     = max(0, int(bias + log2(dp)));
-  return int(ilog);
+// The lod of the probe grid at a point: by its distance to the camera, not by the depth of the view, so a probe off
+// the screen or behind the camera has the lod it had on the screen. Spherical shells around the camera: lod 0 up to
+// 2/lodScale, each next one twice as far and twice as coarse (scene.probeLodScale, SceneGlobals::setResolution).
+// The one function for the pixels (allocation, probe_ambient.frag), the hits (probe_lighting.comp) and the lookups.
+int probeGridLod(vec3 pos, vec3 camPos, float lodScale) {
+  const float d = distance(pos, camPos)*lodScale;
+  return clamp(int(log2(max(d, 1e-6))), 0, 12);
   }
 
 bool probeIsSame(vec3 ppos, vec3 expectedPos, int lod) {

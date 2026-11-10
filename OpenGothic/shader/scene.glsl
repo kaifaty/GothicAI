@@ -37,7 +37,7 @@ struct SceneDesc {
   ivec2 hiZTileSize;
   ivec2 screenRes;
   vec4  cloudsDir;
-  float probeGridBias;
+  float probeLodScale; // the lod of the GI probes by the distance to the camera: probeGridLod (probe_common.glsl)
   uint  fogQuality; // 0 - none, 1 - fog LUT, 2 - separate single and multi-scattering LUTs
   float mipBias;     // TAA: material textures of the main view a little sharper (0 without TAA and in shadows)
   float mipGradScale; // exp2(mipBias), for textureGrad

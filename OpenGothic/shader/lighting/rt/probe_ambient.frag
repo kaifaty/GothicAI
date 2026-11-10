@@ -55,15 +55,6 @@ vec3 unprojectDepth(const float z) {
   return (ret.xyz/ret.w);
   }
 
-int probeGridComputeLod() {
-  ivec2 fragCoord  = ivec2(gl_FragCoord.xy);
-  ivec2 screenSize = textureSize(depth,0);
-
-  // must be exactly same as in allocation !
-  const float z = texelFetch(depth,fragCoord,0).x;
-  return probeGridComputeLod(fragCoord, screenSize, z, scene.viewProjectInv, scene.probeGridBias);
-  }
-
 float texLinearDepth(vec2 uv) {
   float d = textureLod(depth, uv, 0).x;
   return linearDepth(d, scene.clipInfo);
@@ -185,8 +176,9 @@ void main() {
   ownMaterial = orm.a>0.5;
 #endif
 
-  const int   lod     = probeGridComputeLod();
   const vec3  basePos = unprojectDepth(z);
+  // must be exactly same as in allocation !
+  const int   lod     = probeGridLod(basePos, scene.camPos, scene.probeLodScale);
   const vec3  pos     = basePos + norm*probeCageBias;
 
   gather(basePos, pos, norm, lod);

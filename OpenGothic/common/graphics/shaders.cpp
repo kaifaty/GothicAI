@@ -289,6 +289,8 @@ void Shaders::compileShaders() noexcept {
     probeVote      = computeShader("probe_vote.comp.sprv");
     probePrune     = computeShader("probe_prune.comp.sprv");
     probeAlocation = computeShader("probe_allocation.comp.sprv");
+    probeHitAlloc  = computeShader("probe_hit_alloc.comp.sprv");
+    probeClearVotes= computeShader("probe_clear_votes.comp.sprv");
     probeTrace     = computeShader("probe_trace.comp.sprv");
     probeRelight   = computeShader("probe_relight.comp.sprv");
     probeRelightNew= computeShader("probe_relight_new.comp.sprv");
