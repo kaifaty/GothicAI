@@ -641,6 +641,10 @@ void WorldView::setMotionVectors(bool enabled, const Tempest::Matrix4x4& reproje
   visuals.setInstanceHistory(enabled);
   }
 
+void WorldView::setTaaReactiveLref(float lref) {
+  sGlobal.setTaaReactiveLref(lref);
+  }
+
 void WorldView::prepareGlobals(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId) {
   sGlobal.prepareGlobals(cmd, fId);
   gLights.prepareGlobals(cmd, fId);

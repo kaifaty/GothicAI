@@ -319,8 +319,20 @@ world with a moving camera (creatures hidden, indoors), an NPC walking past a st
 banner and tree, market turn); run it with `OPENGOTHIC_MOTION_VECTORS=0`, `=1` and `OPENGOTHIC_TAA=0` at 1920x1080 on
 Ryzen and measure with `reports/render-features/2026-11-10-motion-vectors/metrics.py`.
 
+`taa-reactive-stills` and `taa-reactive-clips` check the TAA reactive mask of particles and animated translucent
+(graphics plan 1v, [report](../../reports/render-features/2026-11-10-taa-reactive/step-1v.md)); the mask is on by
+default (the user accepted the clips on 2026-11-10). `taa-reactive-stills` takes stills of the night torch, the harbour braziers,
+a campfire by day, the waterfall below Xardas' tower, the thunderstorm rune and the shore; with
+`OPENGOTHIC_TAA_REACTIVE_VIEW=1` they show the mask (black exactly 0, red to white 0..1). `taa-reactive-clips` records
+clips 1-5 (the torch with its sparks, standing and passed by; braziers and smoke by day with the water; a fireball; the
+waterfall); run it with `OPENGOTHIC_CONTENT=<abs>/reports/content/remaster/wall-torch/particles/content` (the sparks
+layer), `OPENGOTHIC_TAA_REACTIVE=0`, `=1`, `=1` with the view and `OPENGOTHIC_TAA=0` at 1920x1080 on Ryzen with
+`WORLD=NEWWORLD.ZEN`, and measure with `reports/render-features/2026-11-10-taa-reactive/metrics.py`.
+
 ## План и журнал
 
+- 2026-11-10: `taa-reactive-stills`, `taa-reactive-clips` (graphics plan 1v); `stats mana <n> circle <n>` lets the
+  hero cast a rune.
 - 2026-11-10: `deterministic on` also starts the SSAO history over at phase 0 of its sample cycle
   (stills of one binary differed by 350–775 thousand pixels at 1920x1080); the exact comparison on
   Ryzen runs with `OPENGOTHIC_VSM=0`, VSM stills take a tolerance; `shots_diff.py --all-pairs`.
@@ -883,7 +895,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `bowgeom` | the bow and the bow hand of the hero in the arrow's frame (x along it from its slot, y up, z to the side), cm: the bow's box, the grip, the string's middle at rest and drawn by `S_READY` and `S_DRAWN`, the bow hand's bones, the head |
 | `animspeed <anim> <k>` | the hero's animation of that name plays k times as fast from its next start (`Pose::setAnimSpeed`: a layer keeps its speed, the next one starts at 1). The manual aim sets `T_BOWRELOAD` from dexterity (`stats` prints it: `reload x`); this overrides it until dexterity changes. The hero's animation events go to bench.log (`anim event <type> <item> <slot>`, `anim morph <anim> <slot>`): at any tempo each once, in the same order |
 | `sfx <name>...` | the files a sound effect plays (its variants `_A1`..), `(missing)` if the game's data has no such file. The hero's sounds go to bench.log (`sound <name>`) |
-| `stats [npc <npc>] [str <n>] [dex <n>] [1h <n>] [2h <n>] [bow <n>] [cbow <n>] [hp <n>] [hpmax <n>] [talent auto\|0\|1\|2]` | the hero's (an npc's) strength, dexterity, hit chances (the skill), hit points; prints what the manual aim makes of them (sway, draw, hold, arrow speed). Arguments apply left to right. `talent` sets the trained archers' animations (`_BOWT1` at 30%, `_BOWT2` at 60% in G2; `auto` as the hit chances say), and the 1H/2H animation level only when that weapon's hit chance is explicit in the same command; with it or `npc` also `stats of <npc>: melee hit chances and animation levels, archery talent, reload ms, hp, point protection` |
+| `stats [npc <npc>] [str <n>] [dex <n>] [1h <n>] [2h <n>] [bow <n>] [cbow <n>] [hp <n>] [hpmax <n>] [mana <n>] [circle <n>] [talent auto\|0\|1\|2]` | the hero's (an npc's) strength, dexterity, hit chances (the skill), hit points; `mana` sets mana and its maximum, `circle` the magic circle (a rune's spell then casts); prints what the manual aim makes of them (sway, draw, hold, arrow speed). Arguments apply left to right. `talent` sets the trained archers' animations (`_BOWT1` at 30%, `_BOWT2` at 60% in G2; `auto` as the hit chances say), and the 1H/2H animation level only when that weapon's hit chance is explicit in the same command; with it or `npc` also `stats of <npc>: melee hit chances and animation levels, archery talent, reload ms, hp, point protection` |
 | `seed <n>` | the random numbers start over: the scripts' (the dice, the release cone), the bench's (`volley` jitter), the hero's sway |
 | `npcequip <npc> <item> [count]` | into the npc's inventory, the first put on |
 | `arc <npc> <count> <dist> <step deg>` | that many of the npc stand that far in front of the hero, a step apart round it, facing it: the crew of `fight all` (a new arc replaces it, `clear` takes the gone out) |

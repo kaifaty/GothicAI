@@ -24,17 +24,23 @@ const float BoxFar = 1e30;
 // variance box of the 3x3 neighbourhood in YCoCg and blended with weights by inverse luminance.
 // Objects that move by themselves add their own residual (graphics plan 1b, Renderer::gbufMotion): the history
 // follows them; what has no vector (translucent, particles, water) is still held back by the clip alone.
+// The reactive mask (graphics plan 1v, Renderer::taa.reactive) marks what changes by itself (particles, animated
+// translucent): there the new frame takes a larger share and the weights by luminance fade (Taa::resolveWeights).
+// The history's alpha keeps this frame's mask, so a pixel the flame has left trusts its history one frame later.
 
 layout(push_constant, std430) uniform Push {
   mat4  reproject; // this frame's NDC and depth -> the history's NDC, both with this frame's jitter
-  float alpha;     // the share of the new frame
-  uint  reset;     // no history: the frame as it is
+  float alpha;       // the share of the new frame
+  uint  reset;       // no history: the frame as it is
+  float reactiveMax; // the mask's ceiling
+  uint  reactive;    // 0: the mask is off and not read, the history's alpha is 1
   } push;
 
 layout(binding = 0) uniform sampler2D current; // linear HDR, pre-exposed
 layout(binding = 1) uniform sampler2D depth;
 layout(binding = 2) uniform sampler2D history; // bilinear
 layout(binding = 3) uniform sampler2D motion;  // the objects' own motion, texture coordinates, current -> previous
+layout(binding = 4) uniform sampler2D reactive; // the reactive mask of this frame, R8
 
 layout(location = 0) out vec4 outHistory; // the sharpening pass makes the scene from it (taa_sharpen.frag)
 
@@ -55,8 +61,9 @@ hvec3 ycocg2rgb(hvec3 c) {
                c.x - c.y - c.z);
   }
 
-// 5 bilinear taps of the 4x4 Catmull-Rom (the corner taps dropped, the weights renormalized)
-hvec3 sampleCatmullRom(vec2 uv, vec2 size) {
+// 5 bilinear taps of the 4x4 Catmull-Rom (the corner taps dropped, the weights renormalized); `centerA` is the alpha of
+// the centre tap (tc12, bilinear next to uv): the last frame's reactive mask without a sample of its own
+hvec3 sampleCatmullRom(vec2 uv, vec2 size, out float centerA) {
   const vec2 pos  = uv*size;
   const vec2 pos1 = floor(pos - 0.5) + 0.5;
   const vec2 f    = pos - pos1;
@@ -83,9 +90,11 @@ hvec3 sampleCatmullRom(vec2 uv, vec2 size) {
   const hfloat k3 = hfloat(w3.x *w12.y*kn);
   const hfloat k4 = hfloat(w12.x*w3.y *kn);
 
+  const vec4 h12 = textureLod(history, tc12, 0);
+  centerA = h12.a;
   hvec3 c = hvec3(textureLod(history, vec2(tc12.x, tc0.y ), 0).rgb)*k0
           + hvec3(textureLod(history, vec2(tc0.x,  tc12.y), 0).rgb)*k1
-          + hvec3(textureLod(history, tc12,                 0).rgb)*k2
+          + hvec3(h12.rgb)*k2
           + hvec3(textureLod(history, vec2(tc3.x,  tc12.y), 0).rgb)*k3
           + hvec3(textureLod(history, vec2(tc12.x, tc3.y ), 0).rgb)*k4;
 #if defined(FP16)
@@ -109,9 +118,12 @@ void main() {
   const ivec2 size = textureSize(current, 0);
   const ivec2 pix  = ivec2(gl_FragCoord.xy);
   const vec3  cur  = texelFetch(current, pix, 0).rgb;
+  // this frame's mask under the ceiling; the history's alpha takes it (1 with the mask off, as before)
+  const float r    = push.reactive!=0 ? min(texelFetch(reactive, pix, 0).r, push.reactiveMax) : 0.0;
+  const float outA = push.reactive!=0 ? r : 1.0;
 
   if(push.reset!=0) {
-    outHistory = vec4(cur, 1);
+    outHistory = vec4(cur, outA);
     return;
     }
 
@@ -150,11 +162,12 @@ void main() {
 
   // the history from beyond the screen: this frame only
   if(any(lessThan(histUv, vec2(0))) || any(greaterThan(histUv, vec2(1)))) {
-    outHistory = vec4(cur, 1);
+    outHistory = vec4(cur, outA);
     return;
     }
 
-  hvec3 hist = sampleCatmullRom(histUv, sizeF);
+  float histA = 0.0;
+  hvec3 hist  = sampleCatmullRom(histUv, sizeF, histA);
   if(any(isnan(hist)) || any(isinf(hist)))
     hist = hvec3(cur);
 
@@ -166,10 +179,15 @@ void main() {
   const hvec3 histY = clipToBox(bMin, bMax, rgb2ycocg(hist));
   hist = max(ycocg2rgb(histY), hvec3(0));
 
-  // weights by inverse luminance: one bright spark does not burn into the history
-  const float wCur  = push.alpha      /(1.0 + float(rgb2ycocg(hvec3(cur)).x));
-  const float wHist = (1.0-push.alpha)/(1.0 + float(histY.x));
+  // weights by inverse luminance: one bright spark does not burn into the history. Under the mask (this frame's or
+  // the last one's, which the history keeps) the new frame's share grows and the weights by luminance fade: a real
+  // spark keeps its light. With the mask 0 these are the weights without it (Taa::resolveWeights)
+  const float rPrev = push.reactive!=0 ? histA : 0.0;
+  const float k     = max(r, rPrev);
+  const float a     = mix(push.alpha, 1.0, k);
+  const float wCur  = a      /(1.0 + (1.0-k)*float(rgb2ycocg(hvec3(cur)).x));
+  const float wHist = (1.0-a)/(1.0 + (1.0-k)*float(histY.x));
   const vec3  res   = (cur*wCur + vec3(hist)*wHist)/(wCur + wHist);
 
-  outHistory = vec4(res, 1);
+  outHistory = vec4(res, outA);
   }

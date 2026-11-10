@@ -789,6 +789,8 @@ void Renderer::drawSurfelsDbg(Encoder<CommandBuffer>& cmd, const WorldView& wvie
   if(!enable)
     return;
 
+  // after the translucent pass, without its second attachment (the TAA reactive mask)
+  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}}, {zbuffer, Tempest::Preserve, Tempest::Preserve});
   cmd.setDebugMarker("GI-dbg");
   cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
   cmd.setBinding(1, surf.surfels);
@@ -806,6 +808,8 @@ void Renderer::drawProbesDbg(Encoder<CommandBuffer>& cmd, const WorldView& wview
   if(!enable)
     return;
 
+  // after the translucent pass, without its second attachment (the TAA reactive mask)
+  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}}, {zbuffer, Tempest::Preserve, Tempest::Preserve});
   cmd.setDebugMarker("GI-dbg");
   cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
   cmd.setBinding(1, gi.probesLighting);
@@ -823,6 +827,8 @@ void Renderer::drawProbesHitDbg(Encoder<CommandBuffer>& cmd) {
   if(!enable)
     return;
 
+  // after the translucent pass, without its second attachment (the TAA reactive mask)
+  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}}, {zbuffer, Tempest::Preserve, Tempest::Preserve});
   cmd.setDebugMarker("GI-dbg");
   cmd.setBinding(1, gi.probesLighting);
   cmd.setBinding(2, gi.probesGBuffDiff);
