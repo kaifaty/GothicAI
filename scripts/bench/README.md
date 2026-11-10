@@ -963,7 +963,8 @@ says four lines with gesture tags and one lie through the real path — the serv
 `LineCues`. The server's scenario `face_cues_demo` (`server/src/gothic_ai/scenarios/face_cues.py`) puts Vino on open
 ground in Lobart's yard (`NW_FARM1_PATH_01`, out of the field's crops) at noon, takes him over, puts the hero
 2 m in front of him and asks him 8 s later; `face-cues-clip.bench` films his face
-close up from 5.5 s on until he has been quiet 3 s. The leak is the server's trial (`p` at most 0.6); for a sure
+close up without the overlay (`overlay off`: its text would be in the clip) from 5.5 s on until he has been
+quiet 3 s. The leak is the server's trial (`p` at most 0.6); for a sure
 one the server runs with the debug flag `--debug-leak [upper|lower]` (every `[felt:…]` leaks, on that half).
 
 Vino needs an own head with `cues` and `leaks` in its face profile: a content copy whose `characters.json` lists
