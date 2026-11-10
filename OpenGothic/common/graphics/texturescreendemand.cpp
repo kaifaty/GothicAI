@@ -13,7 +13,7 @@ double TextureScreenDemand::distance(const Tempest::Vec3& p, const TexelDensity&
 TextureScreenDemand::Result TextureScreenDemand::evaluate(const View& view, const TexelDensity& texel, int32_t previous) {
   Result ret;
   if(!texel.valid()) {
-    ret.exponent = WholeChain;
+    ret.exponent = texel.flat ? Coarsest : WholeChain;
     return ret;
     }
   if(!view.known) {

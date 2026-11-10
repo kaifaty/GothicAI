@@ -12,8 +12,9 @@
 // per metre over its triangles - the most stretched triangle decides, it shows the largest texels - and the bounds of
 // the triangles counted. Triangles with no world area (under a square centimetre) or no UV area are left out.
 struct TexelDensity {
-  float         uvPerMetre = 0;  // 0: no usable triangle; such an owner keeps the whole chain
+  float         uvPerMetre = 0;  // 0: no usable triangle; such an owner keeps the whole chain, unless it is flat
   Tempest::Vec3 min, max;        // bounds of the counted triangles, in the units of the vertices
+  bool          flat = false;    // it has triangles, none with any world area: nothing to draw
 
   bool valid() const { return uvPerMetre>0; }
 

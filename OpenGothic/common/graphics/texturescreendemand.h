@@ -15,8 +15,10 @@
 // view odometer (ChunkResidency::viewOdometer) at which that margin runs out; a frame evaluates only the owners due.
 class TextureScreenDemand final {
   public:
-    // A reserved exponent: the whole chain, for an owner measured without a usable density.
+    // Reserved exponents: the whole chain, for an owner measured without a usable density (collapsed UVs); the
+    // coarsest allowed level, for one with nothing to draw (no triangle with any world area).
     static constexpr int32_t WholeChain = std::numeric_limits<int32_t>::max();
+    static constexpr int32_t Coarsest   = std::numeric_limits<int32_t>::min()+1;
 
     struct View {
       Tempest::Vec3 hero, camera;  // centimetres
@@ -32,7 +34,8 @@ class TextureScreenDemand final {
 
     // The demand of an owner with `texel` in world space (bounds in centimetres) and `previous` exponent: its exponent
     // from the nearer of the hero and the camera, due again when either may have come or gone by its margin. Without a
-    // view: the ring rule, due as soon as there is one. Without a density: the whole chain.
+    // view: the ring rule, due as soon as there is one. Without a density: the whole chain; with nothing to draw: the
+    // coarsest allowed level.
     static Result evaluate(const View& view, const TexelDensity& texel, int32_t previous = TextureLevels::NoExponent);
     // Distance in metres from `point` (centimetres) to the bounds of `texel`.
     static double distance(const Tempest::Vec3& point, const TexelDensity& texel);

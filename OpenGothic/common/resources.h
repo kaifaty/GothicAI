@@ -173,6 +173,8 @@ class Resources final {
       uint64_t shortfallCount = 0;
       double shortfallSeconds = 0;
       uint64_t loadsInFlight = 0;
+      // diagnostic totals: demand calls, full requeues of every record, loads started
+      uint64_t demandCalls = 0, requeues = 0, loadsStarted = 0;
       std::array<uint64_t,4> sourceBytes{}, sourceFullBytes{};
       std::array<uint64_t,4> categoryBytes{}, categoryCount{};
       };
@@ -529,6 +531,7 @@ class Resources final {
     uint64_t textureEpoch = 0, textureClock = 0;
     uint64_t texturesEvicted = 0, texturesReloaded = 0, texturesPromoted = 0, texturesDemoted = 0;
     uint32_t textureSkipMips = 2;
+    uint64_t textureDemandCalls = 0, textureRequeues = 0, textureLoadsStarted = 0;
     std::atomic<uint32_t> textureReserve{1};
     std::atomic<float> textureViewScale{11.f};  // log2 of the view scale the levels use (texturelevels.h)
     std::atomic<bool> textureScreen{true};

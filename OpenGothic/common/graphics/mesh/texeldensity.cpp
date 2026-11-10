@@ -15,6 +15,10 @@ TexelDensity TexelDensity::measure(const Resources::Vertex* vertices, size_t ver
   Vec3   lo( std::numeric_limits<float>::max());
   Vec3   hi(-std::numeric_limits<float>::max());
   const double scale = double(metresPerUnit);
+  // Below this a triangle draws nothing at any distance (0.01 mm2); collinear corners leave rounding noise.
+  constexpr double NoArea = 1e-8;
+  size_t triangles = 0;
+  bool   drawn     = false;
   for(size_t i=first; i+2<first+count; i+=3) {
     const uint32_t ia = indices[i+0], ib = indices[i+1], ic = indices[i+2];
     if(ia>=vertexCount || ib>=vertexCount || ic>=vertexCount)
@@ -31,6 +35,8 @@ TexelDensity TexelDensity::measure(const Resources::Vertex* vertices, size_t ver
     const double ny = e1[2]*e2[0]-e1[0]*e2[2];
     const double nz = e1[0]*e2[1]-e1[1]*e2[0];
     const double area = 0.5*std::sqrt(nx*nx+ny*ny+nz*nz);
+    ++triangles;
+    drawn = drawn || !(area<=NoArea);
     const double u1 = double(b.uv[0])-double(a.uv[0]), v1 = double(b.uv[1])-double(a.uv[1]);
     const double u2 = double(c.uv[0])-double(a.uv[0]), v2 = double(c.uv[1])-double(a.uv[1]);
     const double uvArea = 0.5*std::abs(u1*v2-v1*u2);
@@ -43,8 +49,10 @@ TexelDensity TexelDensity::measure(const Resources::Vertex* vertices, size_t ver
       lo.z = std::min(lo.z,v->pos[2]); hi.z = std::max(hi.z,v->pos[2]);
       }
     }
-  if(!std::isfinite(lowest) || !(lowest>0) || lowest>double(std::numeric_limits<float>::max()))
+  if(!std::isfinite(lowest) || !(lowest>0) || lowest>double(std::numeric_limits<float>::max())) {
+    ret.flat = triangles>0 && !drawn;
     return ret;
+    }
   ret.uvPerMetre = float(lowest);
   ret.min = lo;
   ret.max = hi;
@@ -53,6 +61,7 @@ TexelDensity TexelDensity::measure(const Resources::Vertex* vertices, size_t ver
 
 TexelDensity TexelDensity::placed(const Matrix4x4& m) const {
   TexelDensity ret;
+  ret.flat = flat;
   if(!valid())
     return ret;
   float axis = 0;

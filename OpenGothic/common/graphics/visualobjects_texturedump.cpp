@@ -41,3 +41,34 @@ void VisualObjects::dumpTextureOwners(const std::filesystem::path& file) const {
     }
   std::fclose(out);
   }
+
+void VisualObjects::reportTextureCensus() {
+  auto& c=textureCensus;
+  const auto now=std::chrono::steady_clock::now();
+  if(c.since==std::chrono::steady_clock::time_point{}) {
+    c.since=now;
+    return;
+    }
+  if(now-c.since<std::chrono::seconds(1))
+    return;
+  const auto r=Resources::textureStats();
+  char line[256];
+  std::snprintf(line,sizeof(line),"[texture-demand] s=%.2f calls=%llu placements=%llu evaluations=%llu stale=%llu compactions=%llu "
+                "focus_owners=%llu heap=%zu scheduled=%zu",
+                std::chrono::duration<double>(now-c.since).count(),(unsigned long long)c.demandCalls,
+                (unsigned long long)c.placements,(unsigned long long)c.evaluations,(unsigned long long)c.stale,
+                (unsigned long long)c.compactions,(unsigned long long)c.focusOwners,textureScreen.size(),textureScheduledCount);
+  Tempest::Log::i(line);
+  std::snprintf(line,sizeof(line),"[texture-demand] view_ms=%.3f view_max_ms=%.3f focus_ms=%.3f focus_max_ms=%.3f "
+                "resource_calls=%llu requeues=%llu loads=%llu odometer=%.1f",
+                c.viewMs,c.viewMaxMs,c.focusMs,c.focusMaxMs,(unsigned long long)(r.demandCalls-c.resourceCalls),
+                (unsigned long long)(r.requeues-c.requeues),(unsigned long long)(r.loadsStarted-c.loads),textureView.odometer);
+  Tempest::Log::i(line);
+  const bool enabled=c.enabled;
+  c=TextureCensus();
+  c.enabled=enabled;
+  c.since=now;
+  c.resourceCalls=r.demandCalls;
+  c.requeues=r.requeues;
+  c.loads=r.loadsStarted;
+  }

@@ -96,6 +96,8 @@ class VisualObjects final {
     void   updateTextureView(bool flush = false);
     // OPENGOTHIC_TEXTURE_DUMP (texturedump.h): every texture owner, as CSV
     void   dumpTextureOwners(const std::filesystem::path& file) const;
+    // OPENGOTHIC_TEXTURE_DUMP: a line a second with the demand work done since the last one
+    void   reportTextureCensus();
     bool   textureChunkActive(const Tempest::Vec3& position) const;
     ChunkResidency* textureResidencyManager() const;
 
@@ -244,10 +246,21 @@ class VisualObjects final {
     uint64_t                   textureViewSubscription = 0;
     TextureScreenDemand        textureScreen;
     uint64_t                   textureStampNext = 0;
+    struct TextureCensus {
+      bool     enabled = false;
+      uint64_t demandCalls = 0, placements = 0, evaluations = 0, stale = 0, compactions = 0, focusOwners = 0;
+      double   viewMs = 0, focusMs = 0, viewMaxMs = 0, focusMaxMs = 0;
+      uint64_t resourceCalls = 0, requeues = 0, loads = 0;  // Resources totals at the last line
+      std::chrono::steady_clock::time_point since{};
+      } textureCensus;
     size_t                     textureScheduledCount = 0;
     TextureScreenDemand::View  textureView;
     bool                       textureScreenMode = false;
-    std::map<std::pair<int32_t,int32_t>,std::unordered_set<size_t>> textureChunks;
+    struct TextureChunk {
+      std::unordered_set<size_t> ids;
+      uint32_t                   ring = uint32_t(-1);  // the ring the last focus change applied to it
+      };
+    std::map<std::pair<int32_t,int32_t>,TextureChunk> textureChunks;
 
     // Marks of the ray scene: objects move and appear from worker threads too (Interactive::updateAnimation)
     std::mutex                 rtSync;

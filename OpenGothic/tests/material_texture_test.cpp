@@ -1132,6 +1132,13 @@ void textureLevelMaths() {
   require(std::abs(second.uvPerMetre-2.f)<1e-6f,"a range of indices must measure only its triangles");
   require(!TexelDensity::measure(vertices.data(),vertices.size(),indices.data(),6,6).valid(),
           "an owner with only degenerate triangles must have no density");
+  const auto pointOnly=TexelDensity::measure(vertices.data(),vertices.size(),indices.data(),6,3);
+  const auto collapsed=TexelDensity::measure(vertices.data(),vertices.size(),indices.data(),9,3);
+  require(!pointOnly.valid() && pointOnly.flat && pointOnly.placed(Tempest::Matrix4x4::mkIdentity()).flat &&
+          !collapsed.valid() && !collapsed.flat && !TexelDensity::measure(vertices.data(),vertices.size(),indices.data(),6,6).flat,
+          "only an owner whose every triangle has no world area must count as having nothing to draw");
+  require(level(512,512,scale,TextureScreenDemand::Coarsest,1,3)==3 && level(256,256,scale,TextureScreenDemand::Coarsest,0,2)==2,
+          "the reserved coarsest exponent must give the lowest allowed level");
   auto transform=Tempest::Matrix4x4::mkIdentity();
   transform.translate(1000,0,0);
   transform.scale(2,2,2);
@@ -1141,8 +1148,12 @@ void textureLevelMaths() {
           "a placed owner must move its bounds and divide its density by its scale");
 
   TextureScreenDemand::View view;
-  require(TextureScreenDemand::evaluate(view,TexelDensity()).exponent==TextureScreenDemand::WholeChain,
+  require(TextureScreenDemand::evaluate(view,TexelDensity()).exponent==TextureScreenDemand::WholeChain &&
+          TextureScreenDemand::evaluate(view,collapsed).exponent==TextureScreenDemand::WholeChain,
           "an owner measured without a density must demand the whole chain");
+  require(TextureScreenDemand::evaluate(view,pointOnly).exponent==TextureScreenDemand::Coarsest &&
+          !TextureScreenDemand::evaluate(view,pointOnly).scheduled,
+          "an owner with nothing to draw must ask for the coarsest allowed level and not follow the distance");
   const auto unknown=TextureScreenDemand::evaluate(view,texel);
   require(unknown.exponent==NoExponent && unknown.scheduled && unknown.expiry<0,
           "before the first view an owner must keep the ring rule and be due at once");
@@ -1168,6 +1179,7 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
   write("lv-scaled.dds",mipDds(0x31545844,512,512,10));
   write("lv-stale.dds",mipDds(0x31545844,512,512,10));
   write("lv-hold.dds",mipDds(0x31545844,256,256,9));
+  write("lv-noarea.dds",mipDds(0x31545844,256,256,9));
   textFile(fixture.root/"materials/materials.json",R"({
     "LV_STREAM.TGA":{"albedo":"lv-albedo.dds","normal":"lv-maps.dds","orm":"lv-maps.dds"},
     "LV_FLAT.TGA":{"albedo":"lv-flat.dds"},
@@ -1175,7 +1187,8 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
     "LV_RING.TGA":{"albedo":"lv-ring.dds"},
     "LV_SCALED.TGA":{"albedo":"lv-scaled.dds","scale":2.17},
     "LV_STALE.TGA":{"albedo":"lv-stale.dds"},
-    "LV_HOLD.TGA":{"albedo":"lv-hold.dds"}
+    "LV_HOLD.TGA":{"albedo":"lv-hold.dds"},
+    "LV_NOAREA.TGA":{"albedo":"lv-noarea.dds"}
   })");
   setenv("OPENGOTHIC_TEXTURE_STREAMING","1",1);
   setenv("OPENGOTHIC_TEXTURE_MIPS","1",1);
@@ -1200,7 +1213,8 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
   }
   require(scaled.uvScale==2.17f && scaled.tex->w()==128,"the scaled fixture must carry its materials.json UV scale");
   const Material hold(source("LV_HOLD.TGA"),true);
-  require(hold.tex->w()==256,"a texture loaded outside the Far scope must be whole");
+  const Material noArea(source("LV_NOAREA.TGA"),true);
+  require(hold.tex->w()==256 && noArea.tex->w()==256,"a texture loaded outside the Far scope must be whole");
   const auto sides=[&](int albedo, int maps) {
     return material.tex->w()==albedo && material.normal->w()==maps && material.orm->w()==maps;
     };
@@ -1322,6 +1336,12 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
   Resources::textureDemand(hold,Resources::TextureCategory::Dynamic,true,2u);
   Resources::textureDemand(hold,Resources::TextureCategory::Dynamic,true,3u);
   Resources::textureDemand(hold,Resources::TextureCategory::Dynamic,false,2u);
+  // An owner whose triangles have no world area draws nothing: it asks for the coarsest allowed level.
+  StaticMesh pointMesh(noArea,{{{50,50,0},{0,0,1},{0,0},0xffffffffu},{{50,50,0},{0,0,1},{1,0},0xffffffffu},
+                               {{50,50,0},{0,0,1},{0,1},0xffffffffu}},{0,1,2});
+  auto pointOwner=visuals.get(pointMesh,noArea,0,pointMesh.sub[0].iboLength,true);
+  pointOwner.setObjMatrix(Tempest::Matrix4x4::mkIdentity());
+  require(pointMesh.sub[0].texel.flat,"a mesh of point triangles must be measured as having nothing to draw");
   std::this_thread::sleep_for(std::chrono::milliseconds(5100));
   tick();
   require(sides(512,256) && Resources::textureStats().demoted==0,"lowering must wait for memory above the target");
@@ -1337,11 +1357,13 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
     },"pressure must lower every eligible texture");
   require(firstObserved && sides(128,128) && near.tex->w()==512 && flat.tex->w()==256,
           "pressure must lower only to the wanted level and leave textures wanted whole");
+  waitFor([&] { return noArea.tex->w()==64; },"an owner with nothing to draw must let its texture go to the lowest level");
+  pointOwner=VisualObjects::Item();
   for(int i=0;i<20;++i) {
     tick();
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-  require(hold.tex->w()==256 && Resources::textureStats().demoted==3,
+  require(hold.tex->w()==256 && Resources::textureStats().demoted==4,
           "a ring-only owner within ring 3 must keep its texture whole under pressure");
   Resources::textureDemand(hold,Resources::TextureCategory::Dynamic,false,3u);
 

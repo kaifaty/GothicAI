@@ -505,6 +505,7 @@ void Resources::queueTexture(TextureRecord& record) {
   }
 
 void Resources::requeueTextures(const std::function<void()>& change) {
+  ++textureRequeues;
   for(auto& entry:textureRecords)
     unqueueTexture(entry.second);
   change();
@@ -643,6 +644,9 @@ Resources::TextureStats Resources::textureStats() {
   stats.shortfallCount=inst->textureMissing.size()+inst->texturePromotions.size();
   stats.shortfallSeconds=inst->shortfallSeconds;
   stats.loadsInFlight=inst->textureReloads.size();
+  stats.demandCalls=inst->textureDemandCalls;
+  stats.requeues=inst->textureRequeues;
+  stats.loadsStarted=inst->textureLoadsStarted;
   for(const auto& queue:inst->recycled)
     stats.retiredBytes+=queue.textureBytes;
   stats.liveBytes=Texture2d::liveBytes();
@@ -768,6 +772,7 @@ void Resources::textureDemand(const Material& material, TextureCategory category
 
 void Resources::implTextureDemand(const Material& material, TextureCategory category, const TextureNeed* release,
                                   const TextureNeed* add) {
+  ++textureDemandCalls;
   std::array<const Texture2d*,3> maps={material.tex,material.normal,material.orm};
   const auto unique=[&](const Texture2d* texture, size_t index) {
     for(size_t i=0;i<index && i<maps.size();++i)
@@ -904,6 +909,7 @@ void Resources::startTextureLoad(TextureRecord& record, uint8_t level, bool lowe
   reload->identity=record.texture;
   reload->level=level;
   reload->lowering=lowering;
+  ++textureLoadsStarted;
   record.loading=true;
   reload->pending=std::async(std::launch::async,[path=record.source,mipmaps=record.mipmaps,level,device=dev] {
     const auto started=LoadProbe::now();
