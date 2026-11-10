@@ -6,7 +6,8 @@ Give the stance (S_RUN) as one of the clips: the run is read against it. The mod
 A table per clip, or with --series every frame of each clip (speed, pelvis height, lean, knees, elbows, arms):
 - pelvis y: a runner is lower than he stands on the whole cycle (about 9-12 cm at mid-stance) and never above;
   Gothic's run and Kimodo's samples peak above the stance - the body reads as carried too high;
-- lean: the trunk (pelvis -> neck) from the vertical, + forward. Runners at 3.4 m/s: 7.3 ± 3.6°; a start leans
+- lean: the trunk (pelvis -> neck) from the vertical, + forward. The skeleton's own line is tipped back: the
+  stance reads -4.6°, so take every lean against the stance's. Runners at 3.4 m/s: 7.3 ± 3.6°; a start leans
   with its acceleration (about 5.8° per m/s², Gothic's own start peaks at 16°), a braking step leans 3° back;
 - knee at strike and at mid-stance (0 = straight): runners 18° and 46°;
 - elbow flex (0 = straight): about 90° in a run; 115-137° with the hands 21-40 cm over the pelvis is a boxer's
