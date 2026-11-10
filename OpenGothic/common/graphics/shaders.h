@@ -77,6 +77,7 @@ class Shaders {
 
     Tempest::RenderPipeline  tonemapping, tonemappingUpscale;
     Tempest::RenderPipeline  motionView; // debug: gbufMotion as the frame (OPENGOTHIC_MOTION_VIEW=1)
+    Tempest::RenderPipeline  reactiveView; // debug: the TAA reactive mask as the frame (OPENGOTHIC_TAA_REACTIVE_VIEW=1)
     Tempest::RenderPipeline  bloomDownKaris, bloomDown, bloomUp, bloomMix;
 
     // AA

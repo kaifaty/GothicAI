@@ -158,8 +158,10 @@ bool npcCommandsCommand(const NpcCommandsContext& context,const std::string& lin
     say("npcgo " + symName(w,n) + " " + a[2]);
     }
   else if(c=="stats") {
-    // stats [npc <npc>] [str <n>] [dex <n>] [1h <n>] [2h <n>] [bow <n>] [cbow <n>] [sneak <n>] [hp <n>] [hpmax <n>] [talent auto|0|1|2]:
-    // the hero's (an npc's) strength, dexterity, hit chances (the skill of the manual aim), hit points;
+    // stats [npc <npc>] [str <n>] [dex <n>] [1h <n>] [2h <n>] [bow <n>] [cbow <n>] [sneak <n>] [hp <n>] [hpmax <n>]
+    // [mana <n>] [circle <n>] [talent auto|0|1|2]:
+    // the hero's (an npc's) strength, dexterity, hit chances (the skill of the manual aim), hit points, mana (and its
+    // maximum), the magic circle;
     // talent: archery animations, plus melee weapons explicitly named in this command; auto follows hit chances
     Npc*   np = &pl;
     size_t i0 = 1;
@@ -214,6 +216,10 @@ bool npcCommandsCommand(const NpcCommandsContext& context,const std::string& lin
         h.attribute[ATR_HITPOINTS] = v;
       else if(a[i]=="hpmax")
         h.attribute[ATR_HITPOINTSMAX] = v;
+      else if(a[i]=="mana")
+        h.attribute[ATR_MANA] = h.attribute[ATR_MANAMAX] = v;
+      else if(a[i]=="circle")
+        n.setTalentSkill(TALENT_MAGE,v);
       else
         say("stats: unknown " + a[i]);
       }

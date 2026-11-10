@@ -115,6 +115,7 @@ class Renderer final {
 
     void drawRayQueryDbg  (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
     void drawMotionView   (Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd);
+    void drawReactiveView (Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void prepareMotion    (WorldView& wview);
     void drawProbesDbg    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
     void drawSurfelsDbg   (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
@@ -159,6 +160,13 @@ class Renderer final {
       bool           motionVectors      = false;
       bool           motionView         = false; // OPENGOTHIC_MOTION_VIEW=1: the frame shows gbufMotion (debug)
       float          motionViewPx       = 2;     // OPENGOTHIC_MOTION_VIEW_PX: px/frame of its full brightness
+      // the TAA reactive mask of particles and animated translucent (graphics plan 1v), on by default
+      // (setupSettings): [INTERNAL] taaReactive=0 turns it off, OPENGOTHIC_TAA_REACTIVE=0|1 over it. The mask is
+      // written either way; off, the resolve does not use it
+      bool           taaReactive        = false;
+      bool           taaReactiveView    = false; // OPENGOTHIC_TAA_REACTIVE_VIEW=1: the frame shows taa.reactive
+      float          taaReactiveMax     = 0.9f;  // OPENGOTHIC_TAA_REACTIVE_MAX: the mask's ceiling in the resolve
+      float          taaReactiveLref    = 0.25f; // OPENGOTHIC_TAA_REACTIVE_LREF: added light of a full mask
 
       float          zVidBrightness     = 0.5;
       float          zVidContrast       = 0.5;
@@ -259,6 +267,10 @@ class Renderer final {
     struct {
       Tempest::Attachment       history[2];
       Tempest::Attachment       output;
+      // the reactive mask (graphics plan 1v): R8, the second attachment of the translucent pass, cleared to 0 each
+      // frame; how much a pixel shows what changes by itself (particles, animated translucent). There with the TAA
+      // off too: the translucent pipelines always write it
+      Tempest::Attachment       reactive;
       uint8_t                   cur       = 0;     // history[cur] is written this frame, the other one read
       uint32_t                  frame     = 0;     // the jitter phase
       bool                      active    = false; // this frame is jittered and resolved
