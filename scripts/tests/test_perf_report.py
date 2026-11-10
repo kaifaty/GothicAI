@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 
@@ -48,10 +49,12 @@ def test_remote_perf_picks_base_of_stand_engine_format(tmp_path, converter):
         (tmp_path / "gothic-ai/game-settings/system").mkdir(parents=True, exist_ok=True)
         (tmp_path / "gothic-ai/game-settings/system" / name).write_text("")
     (tmp_path / "gothic-ai/game-base.json").write_text(json.dumps({"base": pointed, "videos": ""}))
-    for fingerprint, format_sha256 in ((pointed, old), (compatible, new), ("c" * 64, new)):
+    # The foreign installation's base sorts first: only the installation check skips it.
+    foreign = "0" * 64
+    for fingerprint, format_sha256 in ((pointed, old), (compatible, new), (foreign, new)):
         directory = tmp_path / ".cache/gothic-ai/base" / fingerprint
         directory.mkdir(parents=True)
-        archives = ["other"] if fingerprint == "c" * 64 else ["Data/Worlds.vdf"]
+        archives = ["other"] if fingerprint == foreign else ["Data/Worlds.vdf"]
         (directory / "base.json").write_text(json.dumps(
             {"format_sha256": format_sha256, "archives": archives, "loose_files": []}))
     game = tmp_path / "build/opengothic/Gothic2Notr"
@@ -61,7 +64,7 @@ def test_remote_perf_picks_base_of_stand_engine_format(tmp_path, converter):
         tool.write_text(f"#!/bin/sh\necho '{json.dumps({'base': new, 'videos': '0' * 64})}'\n")
         tool.chmod(0o755)
     harness = ('set -euo pipefail\nfail() { echo "perf: $*" >&2; exit 2; }\n'
-               f'ROOT={scripts.parent}\nGAME_BIN={game}\n' + select + 'echo "selected=$OPENGOTHIC_BASE_FINGERPRINT"\n')
+               f'ROOT={shlex.quote(str(scripts.parent))}\nGAME_BIN={shlex.quote(str(game))}\n' + select + 'echo "selected=$OPENGOTHIC_BASE_FINGERPRINT"\n')
     environment = {key: value for key, value in os.environ.items()
                    if not key.startswith(("OPENGOTHIC_", "GOTHIC_"))}
     environment.update(HOME=str(tmp_path), OPENGOTHIC_BASE_STORE="")
