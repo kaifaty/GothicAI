@@ -215,7 +215,9 @@ void testFractureRemnants(const WriteFixture& write, const MakeFixture& make, ui
   // An arrow (0.12 kg at 40 m/s: 4.8 Ns, 40 health) at board 3's face: 12 cm reach the bond 4-5.
   struct Arrow final : DynamicWorld::BulletCallback {
     void onCollide(asset::MaterialGroup) override { ++hits; }
-    int hits=0;
+    bool stopsAtWorldHit() const override { return true; }
+    void onWorldHit(const DynamicWorld::BulletWorldHit&) override { ++pinned; }
+    int hits=0,pinned=0;
     } arrowContact;
   DynamicWorld archery(nullptr,asset::WorldMesh{});
   auto archeryObject=make(archery);
@@ -228,6 +230,7 @@ void testFractureRemnants(const WriteFixture& write, const MakeFixture& make, ui
   archery.deleteObj(arrow);
   require(arrowContact.hits==1 && groupsOf(archery)==second && bodiesOf(archery,zenId).size()==6,
           "an arrow must stop at the remnant and break the bonds near it");
+  require(arrowContact.pinned==0,"an arrow stopped by debris must not be pinned to the static world");
 
   // The force of a spell breaks every bond of the remnant; the loose boards stay as they are.
   DynamicWorld blast(nullptr,asset::WorldMesh{});
@@ -358,6 +361,28 @@ void testCharacterDebris() {
   std::printf("CharacterVirtual inside a new remnant: pushed %.2f cm while inside; back from x 200: deepest %.2f cm\n",
               double(pushed),double(-deepest));
   require(pushed<1.f,"a remnant that appeared around a walker must be passed, not pushed away");
+  {
+    // A controller made anew while it still overlaps the remnant (a load, a teleport, a reset)
+    // passes it the same way: neither the walker nor the remnant moves.
+    CollisionWorld again;
+    auto ground=again.addCollisionBody(new JPH::BoxShape(JPH::Vec3(20,.5f,20)),at(0,-50,0),.7f,DynamicWorld::C_Landscape);
+    auto first=again.createVirtualCharacter(radius,180,{0,0,0});
+    for(int i=0;i<10;++i) first->move({},17,50,slope,80,nullptr);
+    auto remnant=again.addDynamicBody(new JPH::BoxShape(JPH::Vec3(.3f,.15f,.3f)),at(51,15,0),.6f,20.f,DynamicWorld::C_Fragment);
+    again.passCharacterOverlaps(*remnant);
+    const auto feet=first->move({},17,50,slope,80,nullptr).position;
+    first.reset();
+    auto remade=again.createVirtualCharacter(radius,180,feet);
+    const auto from=remnant->position();
+    CollisionWorld::CharacterMoveResult still;
+    for(int frame=0;frame<20;++frame) {
+      still=remade->move({},17,50,slope,80,nullptr);
+      again.tick(17);
+      }
+    const float walkerShift=(still.position-feet).length(),remnantShift=(remnant->position()-from).length();
+    std::printf("CharacterVirtual made anew in a remnant: walker %.3f cm, remnant %.3f cm\n",double(walkerShift),double(remnantShift));
+    require(walkerShift<.5f && remnantShift<.5f,"a walker made anew inside a remnant must pass it, not push out of it");
+  }
   require(deepest>-2.f,"after they separate the remnant must block the walker again");
   }
 }

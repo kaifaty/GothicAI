@@ -444,6 +444,7 @@ void DynamicWorld::loadDestructionVobs(Serialize& fin) {
           auto body=addFragmentBody(*world,mesh,members[i],piece.matrix,obj->movableMass,obj->movableShape->material,
                                     obj->movableShape->friction,obj->visual,breakFilter.GetPtr(),breakGroup,i,obj);
           body->restoreTransform(piece.matrix,piece.sleeping);
+          world->passCharacterOverlaps(*body);
           if(!piece.sleeping)
             body->setVelocity(piece.velocity,piece.omega);
           fragments[i]=std::move(body);

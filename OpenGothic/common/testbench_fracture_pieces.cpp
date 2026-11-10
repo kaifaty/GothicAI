@@ -628,12 +628,20 @@ void fracturePiecesTick(FracturePieces& state,Destruction& destruction,const Des
     std::string pairs;
     if(last) {
       size_t worstA=0,worstB=0;
+      // Format 3 hoops pass through the wood of their own break by design: as fractureGroupFilter,
+      // a group of METAL only does not collide with a group that holds WOOD. Joined pieces are one body.
+      std::vector<uint8_t> metalOnly(item.groups,1),wood(item.groups,0);
+      for(const auto& piece:item.pieces)
+        if(piece.bondGroup<item.groups) {
+          if(piece.material!=asset::MaterialGroup::METAL)metalOnly[piece.bondGroup]=0;
+          if(piece.material==asset::MaterialGroup::WOOD)wood[piece.bondGroup]=1;
+          }
       for(size_t i=0;i<parts.size();++i)
         for(size_t j=i+1;j<parts.size();++j) {
           if(parts[i]==nullptr || parts[j]==nullptr || item.pieces[i].hull==nullptr || item.pieces[j].hull==nullptr)continue;
-          // Format 3 hoops pass through the staves of their own break by design; joined pieces are one body.
-          if(item.version==3 && !fractureMaterialsCollide(item.pieces[i].material,item.pieces[j].material))continue;
-          if(item.pieces[i].bondGroup==item.pieces[j].bondGroup)continue;
+          const auto gi=item.pieces[i].bondGroup,gj=item.pieces[j].bondGroup;
+          if(gi==gj || gi>=item.groups || gj>=item.groups)continue;
+          if(item.version==3 && ((metalOnly[gi] && wood[gj]) || (metalOnly[gj] && wood[gi])))continue;
           if(low[i].x>high[j].x+3 || low[j].x>high[i].x+3 || low[i].y>high[j].y+3 || low[j].y>high[i].y+3 ||
              low[i].z>high[j].z+3 || low[j].z>high[i].z+3)continue;
           const float depth=penetration(item.pieces[i].hull.GetPtr(),poses[i],item.pieces[j].hull.GetPtr(),poses[j]);

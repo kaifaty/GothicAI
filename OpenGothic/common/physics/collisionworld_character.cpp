@@ -63,6 +63,20 @@ struct CollisionWorld::VirtualCharacter::Impl final : JPH::CharacterContactListe
     return hit.HadHit();
     }
 
+  // A controller created inside debris (the first move after a load, a teleport or a reset)
+  // passes it as one a new body of debris appeared around, until they separate.
+  void passDebrisInside() {
+    const QueryBroadPhaseFilter broad(1u<<DynamicWorld::C_Fragment);
+    const QueryLayerFilter layers(1u<<DynamicWorld::C_Fragment);
+    JPH::CollideShapeSettings settings;
+    JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> hits;
+    world.impl->system.GetNarrowPhaseQuery().CollideShape(character->GetShape(),JPH::Vec3::sOne(),character->GetCenterOfMassTransform(),
+                                                          settings,JPH::RVec3::sZero(),hits,broad,layers);
+    for(const auto& hit:hits.mHits)
+      if(std::find(passed.begin(),passed.end(),hit.mBodyID2)==passed.end())
+        passed.push_back(hit.mBodyID2);
+    }
+
   // A passed body is let go once it no longer touches the capsule within its padding.
   void releasePassed() {
     for(size_t i=0;i<passed.size();) {
@@ -426,6 +440,7 @@ CollisionWorld::VirtualCharacter::VirtualCharacter(CollisionWorld& owner, float 
                                                           JPH::Quat::sIdentity(),&owner.impl->system);
   impl->character->SetListener(impl.get());
   owner.impl->virtualCharacters.push_back(this);
+  impl->passDebrisInside();
   }
 
 CollisionWorld::VirtualCharacter::~VirtualCharacter() {
