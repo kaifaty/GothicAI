@@ -1,4 +1,5 @@
 #include "stressbase.h"
+#include "stressmeshes.h"
 
 #include "baseimport.h"
 #include "basestore.h"
@@ -26,7 +27,7 @@ namespace fs = std::filesystem;
 namespace StressBase {
 
 const char* const usage =
-  "       content-convert stress-base <ready base> <out dir> --subdivide 0..3\n"
+  "       content-convert stress-base <ready base> <out dir> --subdivide 0..3 [--meshes 0..3]\n"
   "       content-convert verify-stress-base <source base> <stress copy>\n";
 
 namespace {
@@ -47,11 +48,6 @@ uint64_t pairKey(uint32_t a, uint32_t b) {
   return (uint64_t(a)<<32) | b;
   }
 
-// Symmetric in its arguments: every triangle sharing an edge gets the same bits.
-float mid(float a, float b) {
-  return float((double(a)+double(b))*0.5);
-  }
-
 uint32_t midLight(uint32_t a, uint32_t b) {
   uint32_t r = 0;
   for(unsigned s=0; s<32; s+=8)
@@ -59,17 +55,9 @@ uint32_t midLight(uint32_t a, uint32_t b) {
   return r;
   }
 
-using D3 = std::array<double,3>;
-
 D3 corner(const asset::WorldMesh& m, size_t t, unsigned c) {
   const auto& v = m.vertices[m.polygons.vertex_indices[t*3+c]];
   return {v.x,v.y,v.z};
-  }
-
-D3 sub(const D3& a, const D3& b) { return {a[0]-b[0],a[1]-b[1],a[2]-b[2]}; }
-double dot(const D3& a, const D3& b) { return a[0]*b[0]+a[1]*b[1]+a[2]*b[2]; }
-D3 cross(const D3& a, const D3& b) {
-  return {a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]};
   }
 
 // Twice the area, oriented by the corner order.
@@ -77,8 +65,6 @@ D3 normal2(const asset::WorldMesh& m, size_t t) {
   const auto p0 = corner(m,t,0);
   return cross(sub(corner(m,t,1),p0),sub(corner(m,t,2),p0));
   }
-
-double length(const D3& v) { return std::sqrt(dot(v,v)); }
 
 fs::path fullPath(const fs::path& p) {
   return fs::weakly_canonical(fs::absolute(p));
@@ -152,9 +138,10 @@ void checkSource(const fs::path& base, BaseImport::Identity& identity) {
   require(BaseImport::matches(base,identity,false,&reason),"the source base is not ready: "+reason);
   }
 
-int build(const fs::path& baseArg, const fs::path& outArg, int subdivide) {
+int build(const fs::path& baseArg, const fs::path& outArg, int subdivide, int meshLevel) {
   const auto started = std::chrono::steady_clock::now();
   require(subdivide>=0 && subdivide<=maxSubdivide,"--subdivide must be 0..3");
+  require(meshLevel>=0 && meshLevel<=maxSubdivide,"--meshes must be 0..3");
   require(fs::is_directory(baseArg),"no ready base at "+baseArg.string());
   const auto base = fullPath(baseArg);
   const auto out  = fullPath(outArg);
@@ -209,13 +196,16 @@ int build(const fs::path& baseArg, const fs::path& outArg, int subdivide) {
                 << c.chunksBefore << " -> " << c.chunksAfter << " chunks" << std::endl;
       }
 
+    // Static meshes that fit the format after the split; the rest is linked below.
+    const auto meshes = Meshes::build(base,out,meshLevel);
+
     // Every other family as it is: hard links, or copies across file systems.
     const std::set<std::string> worlds(names.begin(),names.end());
     for(auto it=fs::recursive_directory_iterator(base); it!=fs::recursive_directory_iterator(); ++it) {
       const auto relative = it->path().lexically_relative(base);
       const auto name = relative.generic_string();
       require(!it->is_symlink(),"the source base contains a symbolic link: "+it->path().string());
-      if(name=="base.json" || name=="base-files.json")
+      if(name=="base.json" || name=="base-files.json" || meshes.written.count(name)!=0)
         continue;
       if(writtenWorldFile(relative,worlds)) {
         if(it->is_directory())
@@ -248,7 +238,7 @@ int build(const fs::path& baseArg, const fs::path& outArg, int subdivide) {
               ", \"triangles_after\": " + std::to_string(counts[i].after) +
               ", \"chunks_before\": " + std::to_string(counts[i].chunksBefore) +
               ", \"chunks_after\": " + std::to_string(counts[i].chunksAfter) + "}";
-    json += "\n  ]\n}\n";
+    json += "\n  ],\n  " + Meshes::json(meshes) + "\n}\n";
     gothicglb::writeFile(out/stressName,json.data(),json.size());
     // The identity stays; only base-files.json and its binding are rebuilt.
     BaseImport::writeBaseMetadata(out,identity);
@@ -265,7 +255,7 @@ int build(const fs::path& baseArg, const fs::path& outArg, int subdivide) {
     }
 
   const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now()-started).count();
-  std::cout << "stress base: " << out.string() << " (subdivide " << subdivide << ", " << linked << " files linked, "
+  std::cout << "stress base: " << out.string() << " (subdivide " << subdivide << ", meshes " << meshLevel << ", " << linked << " files linked, "
             << copied << " copied, " << std::fixed << std::setprecision(1) << seconds << " s)\n"
             << "run the game with:\n"
             << "OPENGOTHIC_BASE=" << out.string() << "\n"
@@ -367,10 +357,6 @@ std::pair<asset::Vec3,asset::Vec3> bounds(const asset::WorldMesh& m) {
       hi[ax] = std::max(hi[ax],m.vertices[v][ax]);
       }
   return {lo,hi};
-  }
-
-double relative(double a, double b) {
-  return a==b ? 0.0 : std::abs(a-b)/std::max(std::abs(a),std::abs(b));
   }
 
 // expected: triangles and chunks before and after, as stress.json records them.
@@ -578,12 +564,14 @@ int verify(const fs::path& baseArg, const fs::path& copyArg) {
   const auto names = worldNames(base);
   require(names==worldNames(copy),"the copy has other worlds than the source");
   const std::set<std::string> worlds(names.begin(),names.end());
+  const auto meshes = Meshes::recorded(stress,base);
   // Every other file, unreferenced.bin and the BSP, rooms and sectors included, is the source's.
   const auto filesS = manifestFiles(base), filesC = manifestFiles(copy);
   size_t same = 0;
   for(const auto& [path,sum]:filesC) {
     const fs::path relative(path);
-    const bool rewritten = path==stressName || (writtenWorldFile(relative,worlds) && relative.filename()!="unreferenced.bin");
+    const bool rewritten = path==stressName || meshes.written.count(path)!=0 ||
+                           (writtenWorldFile(relative,worlds) && relative.filename()!="unreferenced.bin");
     if(rewritten)
       continue;
     const auto found = filesS.find(path);
@@ -595,16 +583,19 @@ int verify(const fs::path& baseArg, const fs::path& copyArg) {
     require(filesC.count(path)!=0 || (writtenWorldFile(relative,worlds) && relative.filename()!="unreferenced.bin"),
             "file missing from the copy: "+path);
     }
-  std::cout << "unchanged files: " << same << " equal to the source (unreferenced.bin, bsp.bin, rooms.bin and "
-               "sectors.json among them)\n";
+  for(const auto& path:meshes.written)
+    require(filesC.count(path)!=0,"split mesh missing from the copy: "+path);
+  std::cout << "unchanged files: " << same << " equal to the source (unreferenced.bin, bsp.bin, rooms.bin, "
+               "sectors.json and " << meshes.skipped.size() << " skipped meshes among them)\n";
 
   for(const auto& name:names) {
     const auto r = recorded.find(name);
     require(r!=recorded.end(),"stress.json does not list world "+name);
     verifyWorld(base/"worlds"/name,copy/"worlds"/name,name,subdivide,r->second);
     }
+  Meshes::verify(base,copy,meshes);
   const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now()-started).count();
-  std::cout << "stress base verified: " << copy.string() << " (subdivide " << subdivide << ", " << std::fixed
+  std::cout << "stress base verified: " << copy.string() << " (subdivide " << subdivide << ", meshes " << meshes.level << ", " << std::fixed
             << std::setprecision(1) << seconds << " s)\n";
   return 0;
   }
@@ -681,16 +672,27 @@ std::optional<int> run(const std::vector<std::string>& args) {
   if(args.empty())
     return std::nullopt;
   if(args[0]=="stress-base") {
-    if(args.size()!=5 || args[3]!="--subdivide") {
+    // --subdivide N is required, --meshes M is optional and defaults to N.
+    std::map<std::string,int> levels;
+    for(size_t i=3; i+1<args.size() && args.size()%2==1; i+=2) {
+      const auto& flag = args[i];
+      const auto& value = args[i+1];
+      if((flag!="--subdivide" && flag!="--meshes") || levels.count(flag)!=0) {
+        levels.clear();
+        break;
+        }
+      if(value.size()!=1 || value[0]<'0' || value[0]>char('0'+maxSubdivide)) {
+        std::cerr << "content-convert: " << flag << " must be 0..3, got '" << value << "'\n";
+        return 2;
+        }
+      levels[flag] = value[0]-'0';
+      }
+    if(args.size()<5 || args.size()%2==0 || levels.count("--subdivide")==0) {
       std::cerr << "usage:\n" << usage;
       return 2;
       }
-    const auto& value = args[4];
-    if(value.size()!=1 || value[0]<'0' || value[0]>char('0'+maxSubdivide)) {
-      std::cerr << "content-convert: --subdivide must be 0..3, got '" << value << "'\n";
-      return 2;
-      }
-    return build(args[1],args[2],value[0]-'0');
+    const int n = levels["--subdivide"];
+    return build(args[1],args[2],n,levels.count("--meshes")!=0 ? levels["--meshes"] : n);
     }
   if(args[0]=="verify-stress-base") {
     if(args.size()!=3) {
@@ -762,6 +764,9 @@ void selfTest(const fs::path& dir) {
   const auto diff = compareWorldMeshes(canonicalWorldMesh(s),readWorldChunks(out));
   require(diff.empty(),"stress split round trip: "+diff);
   fs::remove_all(out);
+
+  Meshes::selfTest(dir/"stress-meshes");
+  fs::remove_all(dir/"stress-meshes");
   }
 
 }
