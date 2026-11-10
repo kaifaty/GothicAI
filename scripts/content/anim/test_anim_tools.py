@@ -825,3 +825,23 @@ def test_run_style_share_and_bump_leave_the_stance_end_alone_and_lean_into_the_s
     assert abs(orig.positions[13, 0, 1] - run.positions[13, 0, 1] - 6) < 1e-4
     gain = [lean(run, f) - lean(orig, f) for f in range(14)]
     assert 18 < max(gain[5:9]) < 24 and 9 < gain[13] < 14                    # the bell on top of the carriage
+
+
+def test_retime_clip_squeezes_the_start_and_keeps_the_ends_and_the_way(tmp_path, monkeypatch):
+    import retime_clip
+    models, skel, _ = gothic_stance()
+    src = models / "HUMANS-T_RUN_2_RUNL.MAN.json"
+    if not src.exists():
+        pytest.skip("no converted base")
+    before = ga.read_animation(src)
+    last = before.frame_count - 1
+    out = tmp_path / "HUMANS-T_RUN_2_RUNL.MAN.json"
+    monkeypatch.setattr(sys, "argv", ["retime_clip.py", str(src), str(models), str(out), "--keys",
+                                      f"0:0,6:3,{last}:{last - 3}", "--no-lock"])
+    retime_clip.main()
+    after = ga.read_animation(out)
+    assert after.frame_count == before.frame_count - 3 and after.name == before.name and after.next == before.next
+    assert np.allclose(after.positions[0], before.positions[0]) and np.allclose(after.positions[-1], before.positions[-1])
+    assert np.allclose(np.abs((after.rotations[-1] * before.rotations[-1]).sum(-1)), 1, atol=1e-5)
+    assert np.allclose(after.positions[3], before.positions[6], atol=1e-3)       # frame 6 is played at frame 3
+    assert after.positions[1, 0, 2] - after.positions[0, 0, 2] > 1.5 * (before.positions[1, 0, 2] - before.positions[0, 0, 2])
