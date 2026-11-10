@@ -291,6 +291,15 @@ reports/engine/2026-11-03-streaming-optimisation/shots_diff.py off=<dir> on=<dir
 changed pixels at the four waited points. If a point differs, run off and on once more: the change
 is accepted when every one of the four points gives 0 in at least one off ↔ on pair. [Report](../../reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md).
 
+`motion-vectors` and `motion-vectors-clips` check the motion vectors of objects (graphics plan 1b,
+[report](../../reports/render-features/2026-11-10-motion-vectors/step-1b.md)). `motion-vectors` takes stills: a still
+world with a moving camera (creatures hidden, indoors), an NPC walking past a still camera, the hero running with
+`cam follow`, a tree, the forest and the town banner in the wind. With `OPENGOTHIC_MOTION_VIEW=1` they show the vectors
+(hue the direction, brightness the length, black exactly 0; `OPENGOTHIC_MOTION_VIEW_PX` the scale); with
+`OPENGOTHIC_MOTION_VECTORS=0` every such still is black. `motion-vectors-clips` records clips a–e (walk, run, fight,
+banner and tree, market turn); run it with `OPENGOTHIC_MOTION_VECTORS=0`, `=1` and `OPENGOTHIC_TAA=0` at 1920x1080 on
+Ryzen and measure with `reports/render-features/2026-11-10-motion-vectors/metrics.py`.
+
 ## План и журнал
 
 - 2026-11-09: offscreen run mode (`TEMPEST_OFFSCREEN=1`, `TEMPEST_OFFSCREEN_FPS`): the game draws into its
