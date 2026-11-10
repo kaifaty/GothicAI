@@ -486,6 +486,25 @@ void mainGBuffer(vec4 t) {
     if((bucket[bucketId].flags & BK_ORM)!=0)
       outOrm.rgb = textureGrad(sampler2D(textureOrm[tId], samplerMain), uv, duvdx*scene.mipGradScale, duvdy*scene.mipGradScale).rgb;
     }
+  if((bucket[bucketId].flags & BK_HAIR)!=0) {
+    // Hair cards. The strands run along v, the root at v=0, so the strand's direction on the surface is where v
+    // grows: the cotangent frame's b, as in mappedNormal(). It goes into the G-buffer as an angle around the
+    // normal, in the channel of metal, which hair has none of; the normal there is the one the light passes will
+    // decode. r and g stay the hair map's shade and strand number
+    const vec3 n  = normalize(shInp.normal);
+    const vec3 py = cross(dpdy, n);
+    const vec3 px = cross(n, dpdx);
+    const vec3 nq = decodeNormal(outNormal);
+    vec3 dir = py*duvdx.y + px*duvdy.y;
+    dir -= nq*dot(nq, dir);
+    if(dot(dir,dir)>1e-20) {
+      outOrm.b     = encodeHairAngle(nq, dir);
+      outOrm.a     = 1.0;
+      outDiffuse.a = float(int(outDiffuse.a*255.0 + 0.5) | GBufHairBit)/255.0;
+      } else {
+      outOrm.b = 0.0; // a degenerate UV: plain Lambert, not a strand of unknown direction
+      }
+    }
   const float glow = bucket[bucketId].emissive;
   if(glow>0.0 && !maps.antitile && (bucket[bucketId].flags & BK_ORM)!=0) {
     // the ORM alpha marks the glowing texels (cracks of a burning log, the ember bed); they breathe slowly. Glowing

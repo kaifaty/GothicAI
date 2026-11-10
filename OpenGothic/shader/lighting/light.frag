@@ -15,6 +15,7 @@
 #include "common.glsl"
 #if defined(MATERIAL_MAPS)
 #include "lighting/material_brdf.glsl"
+#include "lighting/hair_brdf.glsl"
 #endif
 
 layout(early_fragment_tests) in;
@@ -511,7 +512,14 @@ void main() {
 
   const vec3 normal = normalFetch(gbufNormal, ivec2(gl_FragCoord.xy));
 
+#if defined(MATERIAL_MAPS)
+  // hair cards take the light by the shell term, not by the cosine of the hair's surface (hair_brdf.glsl)
+  const vec4 orm    = texelFetch(gbufOrm, ivec2(gl_FragCoord.xy), 0);
+  const bool isHair = orm.a>0.5 && isGBufHair(texelFetch(gbufDiffuse, ivec2(gl_FragCoord.xy), 0).a);
+  float lambert = isHair ? hairShell(-dot(normalize(ldir),normal)) : max(0.0,-dot(normalize(ldir),normal));
+#else
   float lambert = max(0.0,-dot(normalize(ldir),normal));
+#endif
   float light   = (lambert/max(factor, 0.005)) * (smoothFactor*smoothFactor);
   if(cookie>0.0)
     light *= cookieMask(normalize(ldir));
@@ -580,11 +588,13 @@ void main() {
 
   vec3 ret = linear * (color * light) * max(1.0, scene.exposure) * Fd_Lambert * 0.25;
 #if defined(MATERIAL_MAPS)
-  const vec4 orm = texelFetch(gbufOrm, ivec2(gl_FragCoord.xy), 0);
   if(orm.a>0.5) {
     const vec3 view = normalize(scene.camPos - surfacePos);
-    ret = materialBrdf(linear, normal, view, -normalize(ldir), orm.rgb) *
-          (color * light) * max(1.0, scene.exposure) * 0.25;
+    const vec3 brdf = isHair ? hairBrdf(linear, decodeHairDir(normal, orm.b), view, -normalize(ldir), orm.g, 1.0)
+                             : materialBrdf(linear, normal, view, -normalize(ldir), orm.rgb);
+    ret = brdf * (color * light) * max(1.0, scene.exposure) * 0.25;
+    if(isHair && (scene.viewFlags & VF_HAIR_DEBUG)!=0u)
+      ret = vec3(0);
     }
 #endif
 

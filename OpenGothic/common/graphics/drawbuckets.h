@@ -75,6 +75,7 @@ class DrawBuckets {
       BK_ANTITILE = 0x80,
       BK_ANTITILE_ROTATE = 0x100,
       BK_HASHED_ALPHA = 0x200,
+      BK_HAIR = 0x400,
       };
 
     struct BucketGpu final {

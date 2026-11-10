@@ -1,0 +1,125 @@
+# Hair on cards, steps 3-4 (reports/content/2026-11-npc-hair): the hero's own head with the card hairstyle under the
+# three lights of the hair note - a torch (Xardas' tower, the default save), the sun at noon in the Khorinis market,
+# the hearth and candle of the harbour house at 22:00. Under each: three quarters from the front and from behind
+# (a still each) and a walk of the camera round the head in steps of 45 degrees; in the market also a run from
+# behind. The highlights must slide along the strands as the camera goes round, not jump.
+#   TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=ryzen OPENGOTHIC_CONTENT=<content with the head> \
+#     scripts/bench.sh scripts/bench/hair-light.bench <out>
+# OPENGOTHIC_HAIR_DEBUG=1 shows the direction of the strands as a colour instead of light (step 3).
+# @timeout 900
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+cam lift off
+# 1. A torch: Xardas' tower
+set time 12 0
+watch nearest
+freeze nearest
+wait 500
+place 110 0
+wait 800
+watch player
+cam face 70 40 1
+wait 6000
+shot torch-quarter
+wait 300
+cam face 70 140 1
+wait 2500
+shot torch-back
+wait 300
+cam face 70 0 1
+wait 2500
+rec torch-round
+cam face 70 45 1
+wait 1500
+cam face 70 90 1
+wait 1500
+cam face 70 135 1
+wait 1500
+cam face 70 180 1
+wait 1500
+cam face 70 225 1
+wait 1500
+cam face 70 270 1
+wait 1500
+cam face 70 315 1
+wait 1500
+cam face 70 360 1
+wait 1500
+stop
+# 2. The sun: noon in the market, out of the houses' shade
+cam cut
+set time 12 0
+goto NW_CITY_MERCHANT_PATH_09
+watch player
+cam face 70 40 1
+wait 10000
+shot sun-quarter
+wait 300
+cam face 70 140 1
+wait 2500
+shot sun-back
+wait 300
+cam face 70 0 1
+wait 2500
+rec sun-round
+cam face 70 45 1
+wait 1500
+cam face 70 90 1
+wait 1500
+cam face 70 135 1
+wait 1500
+cam face 70 180 1
+wait 1500
+cam face 70 225 1
+wait 1500
+cam face 70 270 1
+wait 1500
+cam face 70 315 1
+wait 1500
+cam face 70 360 1
+wait 1500
+stop
+walkmode run
+cam look 150
+cam follow 150 165 180
+wait 3000
+rec sun-run
+walkto NW_CITY_MERCHANT_TRADE_04
+wait 6000
+stop
+# 3. The hearth and the candle: the harbour house of perf-interior at 22:00
+cam cut
+set time 22 0
+goto pos 3924 -73 -6663
+watch player
+cam face 70 40 1
+wait 10000
+shot candle-quarter
+wait 300
+cam face 70 140 1
+wait 2500
+shot candle-back
+wait 300
+cam face 70 0 1
+wait 2500
+rec candle-round
+cam face 70 45 1
+wait 1500
+cam face 70 90 1
+wait 1500
+cam face 70 135 1
+wait 1500
+cam face 70 180 1
+wait 1500
+cam face 70 225 1
+wait 1500
+cam face 70 270 1
+wait 1500
+cam face 70 315 1
+wait 1500
+cam face 70 360 1
+wait 1500
+stop
