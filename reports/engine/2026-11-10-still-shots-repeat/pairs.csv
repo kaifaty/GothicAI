@@ -174,3 +174,8 @@ ryzen,perf-harbour,g3,g4,9,0.00,1,0.0000
 ryzen,perf-forest,g3,g4,1,0.00,1,0.0000
 ryzen,perf-island,g3,g4,30,0.00,2,0.0000
 ryzen,perf-market-teleport,g3,g4,5,0.00,6,0.0000
+ryzen,perf-market,f1,m2,4,0.00,1,0.0000
+ryzen,perf-harbour,f1,m2,0,0.00,0,0.0000
+ryzen,perf-forest,f1,m2,1,0.00,1,0.0000
+ryzen,perf-island,f1,m2,17787,0.86,3,0.0025
+ryzen,perf-market-teleport,f1,m2,0,0.00,0,0.0000
