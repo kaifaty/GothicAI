@@ -64,11 +64,12 @@ rec rv-3-smoke-day
 wait 6000
 stop
 
-# 4. A fireball at dusk on the open farm road: the hero casts it at a sheep 6 m ahead, the camera 8.5 m on his left sees
-# the flight and the hit
+# 4. A fireball at night on the market's cobbles: the hero casts it along the open street at a sheep 12 m ahead; the
+# camera stands behind his right shoulder, so the ball flies through the frame and the hit stays in it
 cam cut
-set time 20 30
-goto NW_FARM1_PATH_CITY_13
+set time 23 0
+goto NW_CITY_MERCHANT_TRADE_04
+face wp NW_CITY_MERCHANT_PATH_09
 wait 500
 clear 2500
 stats mana 50000 circle 6
@@ -78,11 +79,11 @@ immortal SHEEP on
 equip ItRu_InstantFireball
 tap spell
 wait 1500
-pin SHEEP 600 0 0
-cam follow 850 220 90
-cam look 120
+pin SHEEP 1200 0 0
+cam follow 350 190 210
+cam look 150
 wait 1500
-set time 20 30
+set time 23 0
 rec rv-4-fireball
 wait 500
 press action
