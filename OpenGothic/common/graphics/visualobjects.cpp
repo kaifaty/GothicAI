@@ -550,6 +550,9 @@ void VisualObjects::updateTextureView(bool flush) {
   const auto deadline=std::chrono::steady_clock::now()+std::chrono::microseconds(250);
   for(size_t count=1;textureScreen.due(textureView.odometer,entry);++count) {
     textureScreen.pop();
+    // free() pops the empty tail of `objects`: an entry of a released owner can be past its end
+    if(entry.owner>=objects.size())
+      continue;
     auto& object=objects[entry.owner];
     if(object.isEmpty() || !object.textureScheduled || object.textureStamp!=entry.stamp)
       continue;
@@ -572,6 +575,8 @@ void VisualObjects::updateTextureView(bool flush) {
     }
   if(textureScreen.size()>2*textureScheduledCount+4096)
     textureScreen.compact([this](const TextureScreenDemand::Entry& e) {
+      if(e.owner>=objects.size())
+        return false;
       const auto& object=objects[e.owner];
       return !object.isEmpty() && object.textureScheduled && object.textureStamp==e.stamp;
       });

@@ -1166,12 +1166,14 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
   write("lv-near.dds",mipDds(0x31545844,512,512,10));
   write("lv-ring.dds",mipDds(0x31545844,256,256,9));
   write("lv-scaled.dds",mipDds(0x31545844,512,512,10));
+  write("lv-stale.dds",mipDds(0x31545844,512,512,10));
   textFile(fixture.root/"materials/materials.json",R"({
     "LV_STREAM.TGA":{"albedo":"lv-albedo.dds","normal":"lv-maps.dds","orm":"lv-maps.dds"},
     "LV_FLAT.TGA":{"albedo":"lv-flat.dds"},
     "LV_NEAR.TGA":{"albedo":"lv-near.dds"},
     "LV_RING.TGA":{"albedo":"lv-ring.dds"},
-    "LV_SCALED.TGA":{"albedo":"lv-scaled.dds","scale":2.17}
+    "LV_SCALED.TGA":{"albedo":"lv-scaled.dds","scale":2.17},
+    "LV_STALE.TGA":{"albedo":"lv-stale.dds"}
   })");
   setenv("OPENGOTHIC_TEXTURE_STREAMING","1",1);
   setenv("OPENGOTHIC_TEXTURE_MIPS","1",1);
@@ -1184,7 +1186,7 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
   Resources resources(device);
   Shaders shaders;
   shaders.waitCompiler();
-  Material material, flat, near, ring, scaled;
+  Material material, flat, near, ring, scaled, stale;
   {
   Resources::TextureLoadScope far(true);
   material=Material(source("LV_STREAM.TGA"),true);
@@ -1192,6 +1194,7 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
   near=Material(source("LV_NEAR.TGA"),true);
   ring=Material(source("LV_RING.TGA"),true);
   scaled=Material(source("LV_SCALED.TGA"),true);
+  stale=Material(source("LV_STALE.TGA"),true);
   }
   require(scaled.uvScale==2.17f && scaled.tex->w()==128,"the scaled fixture must carry its materials.json UV scale");
   const auto sides=[&](int albedo, int maps) {
@@ -1286,6 +1289,27 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
   auto blank=visuals.get(unmeasured,flat,0,unmeasured.sub[0].iboLength,true);
   blank.setObjMatrix(Tempest::Matrix4x4::mkIdentity());
   waitFor([&] { return flat.tex->w()==256; },"an owner without a UV density must demand the whole chain");
+
+  // Released owners at the end of `objects` shrink it while their entries stay in the queue: a few 10 m away come due
+  // after the camera moves 6 m, many 200 m away keep the queue big enough to be compacted. None may be evaluated.
+  {
+  StaticMesh staleMesh(stale,{{{0,0,0},{0,0,1},{0,0},0xffffffffu},{{100,0,0},{0,0,1},{1,0},0xffffffffu},
+                              {{0,100,0},{0,0,1},{0,1},0xffffffffu}},{0,1,2});
+  std::vector<VisualObjects::Item> released;
+  for(size_t i=0;i<4200+8;++i) {
+    auto at=Tempest::Matrix4x4::mkIdentity();
+    at.translate(i<8 ? 1000.f : 20000.f,0,float(i)*10.f);
+    released.push_back(visuals.get(staleMesh,stale,0,staleMesh.sub[0].iboLength,true));
+    released.back().setObjMatrix(at);
+    }
+  released.clear();
+  camera={-300,50,600};
+  for(int i=0;i<20;++i) {
+    tick();
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+  require(stale.tex->w()==128,"queue entries of released owners past the end of the objects must not be evaluated");
+  }
 
   // 2^-5: the albedo needs level 2, the maps level 1. Nothing is lowered within the target, even after the delay.
   Resources::textureDemand(material,stat,true,Need{3,-5});
