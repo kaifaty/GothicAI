@@ -496,6 +496,10 @@ void mainGBuffer(vec4 t) {
     const vec3 px = cross(n, dpdx);
     const vec3 nq = decodeNormal(outNormal);
     vec3 dir = py*duvdx.y + px*duvdy.y;
+    // the cotangent frame turns over where the vertex normal looks away from the face the eye sees: a card that
+    // stands off the hair's surface near its horizon
+    if(dot(n, cross(dpdx, dpdy))<0.0)
+      dir = -dir;
     dir -= nq*dot(nq, dir);
     if(dot(dir,dir)>1e-20) {
       outOrm.b     = encodeHairAngle(nq, dir);
