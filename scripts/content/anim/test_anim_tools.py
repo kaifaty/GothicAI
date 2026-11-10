@@ -979,3 +979,33 @@ def test_bvh_to_soma_reads_a_walk_along_any_way_as_a_walk_along_z_and_straighten
     assert np.abs(yaw - yaw.mean()).max() < 2.0                       # the heading's turn is gone
     whole = bs.convert(bvh, 150, 451)
     assert np.ptp(np.degrees(np.arctan2(whole["global_rot_mats"][:, 0, 0, 2], whole["global_rot_mats"][:, 0, 2, 2]))) > 100
+
+
+def test_loop_keys_tiles_a_loop_in_time_and_spreads_the_keys_evenly_under_kimodos_limit():
+    import loop_keys as lk
+
+    rng = np.random.default_rng(7)
+    n = 23                                                       # Gothic's walk: 24 frames at 25 fps
+    rot = random_quats(rng, (n + 1, 3))
+    rot[n] = rot[0]
+    pos = rng.normal(size=(n + 1, 3, 3))
+    pos[:, 0, 2] = np.linspace(0.0, 131.5, n + 1)
+    pos[n, 0, :2] = pos[0, 0, :2]
+    pos[n, 1:] = pos[0, 1:]
+    loop = ga.Animation(name="S_WALKL", next="S_WALKL", layer=1, fps=25.0, frame_count=n + 1,
+                        node_indices=[0, 3, 7], positions=pos, rotations=rot)
+    tiled = lk.tile(loop, 30.0, 170, "P_WALK30")
+    assert tiled.frame_count == 170 and tiled.fps == 30.0
+    # frame 6 of the record is 0.2 s: the loop's frame 5 exactly; frame 144 is 4.8 s: 5 cycles and frame 5 again
+    for t, cycles in ((6, 0), (144, 5)):
+        assert np.allclose(tiled.positions[t, 1:], pos[5, 1:])
+        assert np.allclose(tiled.positions[t, 0], pos[5, 0] + cycles * np.array([0.0, 0.0, 131.5]))
+        assert np.allclose(np.abs((tiled.rotations[t] * rot[5]).sum(-1)), 1.0)
+    assert np.all((tiled.rotations[1:] * tiled.rotations[:-1]).sum(-1) >= 0)      # no sign flips between frames
+    assert np.all(np.diff(tiled.positions[:, 0, 2]) > 0)                           # the root goes on over the seams
+
+    cycle = n / 25.0 * 30                                        # 27.6 Kimodo frames
+    assert lk.key_frames(cycle, 2) == [0, 14, 28, 41, 55, 69, 83, 97, 110, 124, 138, 152, 166]
+    assert lk.key_frames(cycle, 4)[:5] == [0, 7, 14, 21, 28] and lk.key_frames(cycle, 4)[-1] == 110
+    for per in (2, 4, 8):
+        assert len(lk.key_frames(cycle, per)) < 20

@@ -45,6 +45,7 @@ description: Own animations of moves for the Gothic AI game (combat port, step 6
 |---|---|
 | Генерация Kimodo: папки ходов, ключи, прогон | `scripts/content/anim/kimodo_moves.py`, `run_kimodo.sh` (README) |
 | Kimodo и готовые наборы образцов | `dev-ubuntu:~/gothic-ai/kimodo/<набор>/` (`dodge-st0`, `dodge-st2`, `dodge1`, `dist`, `v2`, `pilot1`, `pilot2`, …): `stance.json` и `<ход>/out/out_NN.npz`. Скопируй `rsync -a` в черновик, прежде чем мерить. У `v2` нет `stance.json`: допиши `{"stance": "HUMANS-S_1HRUN.MAN"}` |
+| Петля по ключевым позам готовой петли (решение пользователя 2026-11-10: ходьба, потом бег — по позам Gothic) | `scripts/content/anim/loop_keys.py --clip HUMANS-S_WALKL.MAN --keys 2,4,8` → `kimodo_moves.py` → `run_kimodo.sh`; резать `loop_cycle.py --period`. Запрос словами даёт прохожего, актёр — себя; позы Gothic держат осанку и руки |
 | Записи живого актёра 100STYLE (CC BY 4.0): 100 стилей ходьбы и бега, BVH 60 кадров/с | архив на хранилище `anim/100style/100STYLE.zip`; перевод — `scripts/content/anim/bvh_to_soma.py --straighten 2.5`, дальше как образец Kimodo (`retarget_soma.py --src-fps 60`). Актёр гуляет медленно (0,8–1,1 м/с) и кругами: бери отрезки с наименьшим поворотом, темп поднимай не больше чем на четверть |
 | Перенос, доводка, слой правок, упаковка | `scripts/content/anim/`: `retarget_soma.py`, `finish.py`, `fix_layer.py`, `content_pack.py`, `blender/gothic_rig.py` |
 | Скрипты этого скилла | `.claude/skills/own-animations/scripts/`, таблица ниже |
