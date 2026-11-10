@@ -173,6 +173,13 @@ BENCH_HOST=ryzen PERF_REPEAT=2 scripts/perf.sh market harbour
 Vulkan-проверка подтверждает механику стенда; диагноз Mac требует отдельного
 прогона Metal на Mac.
 
+Базу игры заявка замера выбирает по формату импорта собранного движка — его
+сообщает `content-convert formats` из `build-perf`. Если `~/gothic-ai/game-base.json`
+называет базу другого формата, берётся готовая база той же установки в нужном
+формате из кэша или хранилища, как у `bench.sh`, без `scripts/ryzen.sh setup`.
+Если такой базы нет, заявка падает до запуска игры. Явный
+`OPENGOTHIC_BASE_FINGERPRINT` важнее подбора.
+
 ### Цена набора контента (Ц1)
 
 ```bash
