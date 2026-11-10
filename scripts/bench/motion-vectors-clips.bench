@@ -38,6 +38,21 @@ rec mv-b-run
 wait 5000
 stop
 walkmode walk
+# e. The market with passers-by: the camera stands and slowly turns after the hero walking off. It follows b: after
+# the `cam hold` of c and d, `cam fixed` kept the held camera of the farm road
+cam cut
+goto NW_CITY_MERCHANT_TRADE_04
+watch player
+walkmode walk
+cam look 350
+cam world 700 280 270
+wait 10000
+cam fixed
+walkto NW_CITY_MERCHANT_SHOP01_FRONT_03
+wait 500
+rec mv-e-market
+wait 7000
+stop
 # c. A fight close to the camera: two bandits swing at the hero, who stands
 cam cut
 goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
@@ -73,18 +88,4 @@ wait 10000
 cam hold
 rec mv-d-tree
 wait 6000
-stop
-# e. The market with passers-by: the camera stands and slowly turns after the hero walking off
-cam cut
-goto NW_CITY_MERCHANT_TRADE_04
-watch player
-walkmode walk
-cam look 350
-cam world 700 280 270
-wait 10000
-cam fixed
-walkto NW_CITY_MERCHANT_SHOP01_FRONT_03
-wait 500
-rec mv-e-market
-wait 7000
 stop
