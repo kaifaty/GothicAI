@@ -35,6 +35,22 @@ namespace Taa {
   // jittered NDC: J*prev.proj*prev.viewLwc * T(cur.origin-prev.origin) * (J*cur.proj*cur.viewLwc)^-1.
   // Identity for a camera that stands still, wherever it is in the world.
   Tempest::Matrix4x4 reprojection(const View& cur, const View& prev, const Tempest::Matrix4x4& jitter);
+  // Motion vectors of objects (graphics plan 1b, reports/render-features/2026-11-10-motion-vectors): the previous
+  // camera with this frame's jitter, J*prev.proj*prev.viewLwc. Only its linear part is meant to be used, on a
+  // world-space offset vec4(d,0): the scene's viewProjectPrev
+  Tempest::Matrix4x4 viewProjectPrev(const View& prev, const Tempest::Matrix4x4& jitter);
+  // The scene's pair: reprojectClip = reprojection(cur, prev, jitter) and viewProjectPrev(prev, jitter); on a cut or
+  // the first frame (`continuous` false) identity and this frame's camera, so that only an object's own move counts
+  struct MotionCamera {
+    Tempest::Matrix4x4 reprojectClip;
+    Tempest::Matrix4x4 viewProjectPrev;
+    };
+  MotionCamera       motionCamera(const View& cur, const View& prev, bool continuous, const Tempest::Matrix4x4& jitter);
+  // The residual the G-buffer stores for a point at clip position `clipCur` of this frame that moved by `d` (world,
+  // previous - current) since the last one: where it was, in texture coordinates, minus where it would have been
+  // had it stood still. The shaders' formula (main.vert, main.frag), 0 for d=0
+  Tempest::Vec2      motionResidual(const Tempest::Matrix4x4& reprojectClip, const Tempest::Matrix4x4& viewProjectPrev,
+                                    const Tempest::Vec4& clipCur, const Tempest::Vec3& d);
   // the frame moved farther than JumpDistance or turned more than JumpAngle
   bool               isCameraJump(const View& cur, const View& prev);
   // degrees between the two views' rotations

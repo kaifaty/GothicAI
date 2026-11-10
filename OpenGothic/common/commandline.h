@@ -43,6 +43,7 @@ class CommandLine {
     Benchmark           isBenchmarkMode()  const { return isBenchmark;  }
     uint32_t            aaPreset()         const { return aaPresetId;   }
     bool                doTaa()            const { return isTaa;        }
+    int                 motionVectors()    const { return isMv;         }
     std::string_view    defaultSave()      const { return saveDef;    }
 
     std::string         wrldDef;
@@ -78,5 +79,6 @@ class CommandLine {
     bool                isGiSet      = false;  // -gi given: else Gothic picks by the device
     uint32_t            aaPresetId = 1;        // CMAA2; -aa 0 turns it off
     bool                isTaa      = true;     // temporal AA (replaces CMAA2); -taa 0 turns it off
+    int                 isMv       = -1;       // motion vectors of objects: -mv 0|1; -1 unset, the ini decides
   };
 
