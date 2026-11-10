@@ -20,14 +20,26 @@ if sched.get('eye_block') and LF is not None:
     from scipy.optimize import lsq_linear
     E=np.load(os.path.join(D,'eye_deltas.npz')); tn=list(E['names']); DD=E['D'].astype(np.float64)
     ln=list(LF['names']); src0=LF['src']; tgt0=LF['tgt']
-    for side,pre,mask in (('l','l_',m['leye']),('r','r_',m['reye'])):
+    skip=sched.get('eye_skip',['push'])                                                   # depth is the block's job
+    lam=sched.get('eye_lam',0.3); ax=[0,2]                                                # fit the lids as seen from the front
+    def eq(side,pre):
         idx=[i for i,n_ in enumerate(ln) if n_.startswith(pre)]
-        ti=[k for k,n_ in enumerate(tn) if n_.startswith(side+'-') and not any(x in n_ for x in sched.get('eye_skip',['push']))]   # depth is the block's job
-        ax=[0,2]                                                                            # fit the lids as seen from the front
+        ti=[k for k,n_ in enumerate(tn) if n_.startswith(side+'-') and not any(x in n_ for x in skip)]
         A=np.concatenate([DD[ti][:,src0[i],:][:,ax].T for i in idx])*1000; b=np.concatenate([(tgt0[i]-co[src0[i]])[ax] for i in idx])*1000
-        lam=sched.get('eye_lam',0.3); sol=lsq_linear(np.vstack([A,lam*np.eye(len(ti))]),np.concatenate([b,np.zeros(len(ti))]),bounds=(0,1)).x
-        co=co+np.tensordot(sol,DD[ti],1)
-        eye_info[side]={tn[ti[k]]:float(v) for k,v in enumerate(sol) if v>0.02}
+        return ti,A,b
+    if sched.get('eye_sym'):                                                              # one set of values for both eyes
+        (tl,Al,bl),(tr,Ar,br)=eq('l','l_'),eq('r','r_'); nl=[tn[k][2:] for k in tl]; nr=[tn[k][2:] for k in tr]
+        com=[n_ for n_ in nl if n_ in nr]; cl=[nl.index(n_) for n_ in com]; cr=[nr.index(n_) for n_ in com]
+        sol=lsq_linear(np.vstack([Al[:,cl],Ar[:,cr],lam*np.eye(len(com))]),np.concatenate([bl,br,np.zeros(len(com))]),bounds=(0,1)).x
+        for side,ti,cc in (('l',tl,cl),('r',tr,cr)):
+            co=co+np.tensordot(sol,DD[[ti[c] for c in cc]],1)
+            eye_info[side]={side+'-'+com[k]:float(v) for k,v in enumerate(sol) if v>0.02}
+    else:
+        for side,pre in (('l','l_'),('r','r_')):
+            ti,A,b=eq(side,pre)
+            sol=lsq_linear(np.vstack([A,lam*np.eye(len(ti))]),np.concatenate([b,np.zeros(len(ti))]),bounds=(0,1)).x
+            co=co+np.tensordot(sol,DD[ti],1)
+            eye_info[side]={tn[ti[k]]:float(v) for k,v in enumerate(sol) if v>0.02}
     for side,pre,mask in (('l','l_',m['leye']),('r','r_',m['reye'])):
         idx=[i for i,n_ in enumerate(ln) if n_.startswith(pre)]
         t_e=np.mean([tgt0[i]-co[src0[i]] for i in idx],0)
