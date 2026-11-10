@@ -4,6 +4,9 @@
 #   OPENGOTHIC_RT=1 OPENGOTHIC_GI=1  TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh gi-clips
 #   OPENGOTHIC_RT=1 OPENGOTHIC_GI=2  TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh gi-clips
 # gi-reference.bench is the path-traced reference of the same shots: change both together.
+# Every shot X is taken twice: as the player sees it, and X-bare without the hero, the npc and the particles
+# (view hide animated morph pfx), which the ray scene and so the reference lack (step 2b-2, step-2b.md). A shot is
+# written with the next frame drawn: the view changes a frame after it (wait 200), or the shot shows the change.
 seed 73013
 cheat god
 overlay off
@@ -22,11 +25,23 @@ cam world 160 170 270
 wait 10000
 cam hold
 shot interior-night-1
+wait 200
+view hide animated morph pfx
+wait 1000
+shot interior-night-1-bare
+wait 200
+view full
 wait 3000
 cam world 160 170 180
 wait 300
 cam hold
 shot interior-night-2
+wait 200
+view hide animated morph pfx
+wait 1000
+shot interior-night-2-bare
+wait 200
+view full
 rec interior-night-pan
 wait 1000
 cloth camera-turn 60 8000
@@ -44,11 +59,23 @@ cam world 180 170 0
 wait 10000
 cam hold
 shot hut-day-1
+wait 200
+view hide animated morph pfx
+wait 1000
+shot hut-day-1-bare
+wait 200
+view full
 wait 3000
 cam world 180 170 180
 wait 300
 cam hold
 shot hut-day-2
+wait 200
+view hide animated morph pfx
+wait 1000
+shot hut-day-2-bare
+wait 200
+view full
 wait 1000
 set time 23 0
 wait 3000
@@ -56,6 +83,12 @@ cam world 180 170 0
 wait 300
 cam hold
 shot hut-night-1
+wait 200
+view hide animated morph pfx
+wait 1000
+shot hut-night-1-bare
+wait 200
+view full
 wait 1000
 # The response of the probes' light (step 2a): 22:00 -> 12:00 in the same view, 30 frames per second.
 set time 22 0
@@ -76,11 +109,23 @@ cam world 300 200 0
 wait 10000
 cam hold
 shot stable-day-1
+wait 200
+view hide animated morph pfx
+wait 1000
+shot stable-day-1-bare
+wait 200
+view full
 wait 3000
 cam world 300 200 180
 wait 300
 cam hold
 shot stable-day-2
+wait 200
+view hide animated morph pfx
+wait 1000
+shot stable-day-2-bare
+wait 200
+view full
 wait 1000
 
 # 4. Lobart's farmhouse at noon: daylight through the door and the windows.
@@ -92,11 +137,23 @@ cam world 140 160 45
 wait 10000
 cam hold
 shot farmhouse-day-1
+wait 200
+view hide animated morph pfx
+wait 1000
+shot farmhouse-day-1-bare
+wait 200
+view full
 wait 3000
 cam world 180 170 180
 wait 300
 cam hold
 shot farmhouse-day-2
+wait 200
+view hide animated morph pfx
+wait 1000
+shot farmhouse-day-2-bare
+wait 200
+view full
 wait 1000
 
 # 5. A street of the harbour's poor quarter at midnight: lamp posts with fire light the ground and the walls
@@ -110,11 +167,23 @@ cam world 500 200 270
 wait 10000
 cam hold
 shot harbour-night-1
+wait 200
+view hide animated morph pfx
+wait 1000
+shot harbour-night-1-bare
+wait 200
+view full
 wait 3000
 cam world 500 200 180
 wait 300
 cam hold
 shot harbour-night-2
+wait 200
+view hide animated morph pfx
+wait 1000
+shot harbour-night-2-bare
+wait 200
+view full
 rec harbour-night-pan
 wait 1000
 cloth camera-turn 35 7000
@@ -131,11 +200,23 @@ cam world 400 140 90
 wait 10000
 cam hold
 shot forest-1
+wait 200
+view hide animated morph pfx
+wait 1000
+shot forest-1-bare
+wait 200
+view full
 wait 3000
 cam world 400 140 180
 wait 300
 cam hold
 shot forest-2
+wait 200
+view hide animated morph pfx
+wait 1000
+shot forest-2-bare
+wait 200
+view full
 wait 1000
 
 # 7. The bandit cave by Lobart's farm at noon and at night: daylight from the mouth, the fire inside.
@@ -147,11 +228,23 @@ cam world 350 180 0
 wait 10000
 cam hold
 shot cave-day-1
+wait 200
+view hide animated morph pfx
+wait 1000
+shot cave-day-1-bare
+wait 200
+view full
 wait 3000
 cam world 350 180 180
 wait 300
 cam hold
 shot cave-day-2
+wait 200
+view hide animated morph pfx
+wait 1000
+shot cave-day-2-bare
+wait 200
+view full
 wait 1000
 set time 23 0
 wait 3000
@@ -159,11 +252,23 @@ cam world 350 180 0
 wait 300
 cam hold
 shot cave-night-1
+wait 200
+view hide animated morph pfx
+wait 1000
+shot cave-night-1-bare
+wait 200
+view full
 wait 3000
 cam world 350 180 180
 wait 300
 cam hold
 shot cave-night-2
+wait 200
+view hide animated morph pfx
+wait 1000
+shot cave-night-2-bare
+wait 200
+view full
 wait 1000
 
 # 8. The market at noon (perf-market): the sun's bounce between the plastered walls and the ground.
@@ -176,4 +281,61 @@ cam world 700 280 90
 wait 10000
 cam hold
 shot market-day
+wait 200
+view hide animated morph pfx
+wait 1000
+shot market-day-bare
+wait 200
+view full
+wait 1000
+
+# 9. Leak views (step 2b-2): thin plank walls of the harbour's poor quarter, thinner than a probe cell of lod 0.
+#    A lamp inside hut 1 behind its north wall at night, the camera outside; the fireplace of hut 3 behind its east
+#    wall at night, the camera outside; the west wall of hut 6 in the noon sun, the camera inside on its shaded side.
+set time 23 0
+goto pos 1950 -120 -4700
+clear 3000
+watch player
+cam look 110
+cam world 200 150 90
+wait 10000
+cam hold
+shot leak-lamp-night
+wait 200
+view hide animated morph pfx
+wait 1000
+shot leak-lamp-night-bare
+wait 200
+view full
+wait 1000
+goto pos 4100 -110 -4735
+clear 3000
+watch player
+cam look 110
+cam world 200 150 0
+wait 10000
+cam hold
+shot leak-fire-night
+wait 200
+view hide animated morph pfx
+wait 1000
+shot leak-fire-night-bare
+wait 200
+view full
+wait 1000
+set time 12 0
+goto NW_CITY_HABOUR_POOR_AREA_HUT_06_IN
+clear 3000
+watch player
+cam look 110
+cam world 180 170 0
+wait 10000
+cam hold
+shot leak-sun-day
+wait 200
+view hide animated morph pfx
+wait 1000
+shot leak-sun-day-bare
+wait 200
+view full
 wait 1000
