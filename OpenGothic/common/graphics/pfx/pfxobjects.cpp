@@ -3,6 +3,7 @@
 #include <Tempest/Log>
 #include <cstring>
 
+#include "graphics/drawcommands.h"
 #include "graphics/sceneglobals.h"
 
 #include "pfxbucket.h"
@@ -17,6 +18,13 @@ PfxObjects::PfxObjects(WorldView& world, const SceneGlobals& scene, VisualObject
 PfxObjects::~PfxObjects() {
   // Buckets release demand through their ParticleFx declarations.
   bucket.clear();
+  }
+
+// `view hide pfx` of the test bench (DrawCommands::hidePfxObjects, debug only; not `view clean` or `nopfx`): the
+// particles and sprites go through these buckets, not the draw commands; the frames without them (gi-clips.bench,
+// X-bare) compare with the path tracer, whose ray scene has none
+static bool hiddenByBench() {
+  return DrawCommands::hidePfxObjects;
   }
 
 void PfxObjects::setViewerPos(const Vec3& pos) {
@@ -70,21 +78,29 @@ void PfxObjects::preFrameUpdate(uint8_t fId) {
   }
 
 void PfxObjects::drawGBuffer(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId) {
+  if(hiddenByBench())
+    return;
   for(auto& i:bucket)
     i.drawGBuffer(cmd, scene, fId);
   }
 
 void PfxObjects::drawShadow(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, int layer) {
+  if(hiddenByBench())
+    return;
   for(auto& i:bucket)
     i.drawShadow(cmd, scene, fId, layer);
   }
 
 void PfxObjects::drawMultiply(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId) {
+  if(hiddenByBench())
+    return;
   for(auto& i:bucket)
     i.drawMultiply(cmd, scene, fId);
   }
 
 void PfxObjects::drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId) {
+  if(hiddenByBench())
+    return;
   for(auto& i:bucket)
     i.drawTranslucent(cmd, scene, fId);
   }

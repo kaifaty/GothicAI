@@ -13,7 +13,8 @@
 # the brow cards when the brows are painted on the skin).
 # --hair <npz> <png> and --beard <npz> <png> add the parts cut from the generator's model (skin/hair_cut.py,
 # skin/beard_shell.py; metres, the frame of the registered head). The hair is rigid; the beard is bound to the skin
-# and follows every face shape; its map is cut by alpha.
+# and follows every face shape; its map is cut by alpha. A hair part with normals in its npz is hair cards
+# (scripts/content/npc/hair/hair_cards.py): the normals are kept and its map is cut by alpha too.
 import bpy, bmesh, os, sys, json, struct, subprocess, shutil
 import numpy as np
 from mathutils import Matrix
@@ -201,6 +202,9 @@ def make_part(src, name, keep, shapes):
         p.use_smooth = True
         p.material_index = 0
     ob.data.materials.clear()
+    if src.name in CUSTOM_NORMALS:                                     # the axes of to_export: (x, y, z) -> (-z, y, x)
+        n = CUSTOM_NORMALS[src.name]
+        ob.data.normals_split_custom_set_from_vertices(np.stack([-n[:, 2], n[:, 1], n[:, 0]], 1).tolist())
     parts.append(ob)
     return ob
 
@@ -214,11 +218,16 @@ if HERO:
     for o in bpy.data.objects:
         if o.parent == human and o.type == 'MESH' and ('eyebrow' in o.name or 'eyelashes' in o.name):
             rebind_to_skin(o, world(human, probe_neutral), world(human, neutral))
+CUSTOM_NORMALS = {}
+ob_name = lambda part: part+'_src'
+
 def npz_part(path, name):
     """A part of hair_cut.py or beard_shell.py as a mesh object in the human's frame."""
     h = np.load(os.path.expanduser(path)); me = bpy.data.meshes.new(name+'_src')
     me.from_pydata(h['v'].tolist(), [], h['f'].tolist()); me.update()
     me.uv_layers.new(name='UVMap').data.foreach_set('uv', h['uv'].reshape(-1).astype(np.float32))
+    if 'n' in h.files:                                                 # hair cards carry the normals of the hair's surface
+        CUSTOM_NORMALS[ob_name(name)] = h['n']
     ob = bpy.data.objects.new(name+'_src', me); bpy.context.scene.collection.objects.link(ob)
     ob.matrix_world = human.matrix_world.copy()
     return ob
@@ -289,7 +298,7 @@ jl = struct.unpack_from('<I', data, 12)[0]
 gj = json.loads(data[20:20+jl])
 for m in gj.get('materials', []):
     m.pop('pbrMetallicRoughness', None)
-    if m['name'].endswith(('BROWS', 'LASHES', 'BEARD')):
+    if m['name'].endswith(('BROWS', 'LASHES', 'BEARD')+(('HAIR',) if CUSTOM_NORMALS else ())):   # hair cards are cut by alpha, a hair shell is not
         m['alphaMode'] = 'MASK'
 for k in ('images', 'textures', 'samplers'):
     gj.pop(k, None)

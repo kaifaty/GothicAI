@@ -413,9 +413,10 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
   auto& probesGBuffNorm    = usesImage2d(gi.probesGBuffNorm,    TextureFormat::RGBA8, gi.atlasDim*16, gi.atlasDim*16);
   auto& probesGBuffRayT    = usesImage2d(gi.probesGBuffRayT,    TextureFormat::R16,   gi.atlasDim*16, gi.atlasDim*16);
   auto& probesRadiance     = usesImage2d(gi.probesRadiance,     TextureFormat::R32U,  gi.atlasDim*16, gi.atlasDim*16);
-  // RGBA16F: R11G11B10 shifts the colour and has no pure white (step-2.md, «Формат»)
-  auto& probesLighting     = usesImage2d(gi.probesLighting,     TextureFormat::RGBA16F, gi.atlasDim*3, gi.atlasDim*2);
-  auto& probesLightingPrev = usesImage2d(gi.probesLightingPrev, TextureFormat::RGBA16F, uint32_t(gi.probesLighting.w()), uint32_t(gi.probesLighting.h()));
+  // the L2 harmonics of irradiance, 7 texels of 4x2 a probe (probe_common.glsl): 1024x512, 4 MB. RGBA16F: R11G11B10
+  // shifts the colour, has no pure white (step-2.md, «Формат») and no sign. Integrated in place: the relight reads the
+  // last frame's before the integration writes this frame's, so no copy of the last frame is kept
+  auto& probesLighting     = usesImage2d(gi.probesLighting,     TextureFormat::RGBA16F, gi.atlasDim*gi.irrTileW, gi.atlasDim*gi.irrTileH);
 
   const auto&  scene   = wview.sceneGlobals();
   const size_t maxHash = hashTable.byteSize()/sizeof(uint32_t);
@@ -611,14 +612,8 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
   push.maxRequests = giMaxRequests;
 
   cmd.setDebugMarker("GI-Lighting");
-  cmd.setBinding(0, probesLightingPrev);
-  cmd.setBinding(1, probesLighting);
-  cmd.setPipeline(shaders.copyImg);
-  cmd.dispatchThreads(probesLighting.size());
-
   cmd.setPushData(push);
   cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(1, probesLighting);
   cmd.setBinding(2, probesGBuffDiff, Sampler::nearest());
   cmd.setBinding(3, probesGBuffNorm, Sampler::nearest());
   cmd.setBinding(4, probesGBuffRayT, Sampler::nearest());
@@ -629,7 +624,7 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
   cmd.setBinding(9, scene.rtScene.vbo);
   cmd.setBinding(10,scene.rtScene.ibo);
   cmd.setBinding(11,scene.rtScene.rtDesc);
-  cmd.setBinding(12,probesLightingPrev, Sampler::nearest());
+  cmd.setBinding(12,probesLighting, Sampler::nearest()); // the relight reads the last frame's
   cmd.setBinding(13,hashTable);
   cmd.setBinding(14,probes);
   cmd.setBinding(15,lightsTree.bvh);
@@ -643,7 +638,8 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
   // the new probes: all samples, a thread each
   cmd.setPipeline(shaders.probeRelightNew);
   cmd.dispatch(256);
-  // a workgroup per probe: the integral of the samples
+  // a workgroup per probe: the samples projected on the harmonics, in place
+  cmd.setBinding(1, probesLighting);
   cmd.setPipeline(shaders.probeLighting);
   cmd.dispatch(1024);
 
@@ -812,7 +808,7 @@ void Renderer::drawProbesDbg(Encoder<CommandBuffer>& cmd, const WorldView& wview
   cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}}, {zbuffer, Tempest::Preserve, Tempest::Preserve});
   cmd.setDebugMarker("GI-dbg");
   cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(1, gi.probesLighting);
+  cmd.setBinding(1, gi.probesLighting, Sampler::nearest());
   cmd.setBinding(2, gi.probes);
   cmd.setBinding(3, gi.hashTable);
   cmd.setPipeline(shaders.probeDbg);
@@ -863,7 +859,7 @@ void Renderer::drawAmbient(Encoder<CommandBuffer>& cmd, const WorldView& view) {
     cmd.setBinding(4, zbuffer,       Sampler::nearest());
     cmd.setBinding(5, gi.hashTable);
     cmd.setBinding(6, gi.probes);
-    cmd.setBinding(7, gi.probesLighting);
+    cmd.setBinding(7, gi.probesLighting, Sampler::nearest());
     cmd.setPipeline(shaders.probeAmbient);
     }
   else if(settings.zCloudShadowScale) {
