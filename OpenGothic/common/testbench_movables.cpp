@@ -1237,6 +1237,21 @@ bool spellCommand(const MovablesContext& context,const std::vector<std::string>&
             if(!floor.hasCol || floor.n.y<.85f ||
                w.physic()->waterRay(floor.v,15.f).hasCol ||
                w.physic()->ray(floor.v+Vec3(0,110,0),center.v+Vec3(0,110,0)).hasCol) continue;
+            // The wind pushes only through a clear line between the collision
+            // centres (World::applySpellImpact). Before the cast the hero drifts
+            // ~15 cm back and ~5 cm up while drawing the rune, so keep a margin:
+            // a fence rail just under the 110 cm line above shielded the target
+            // at NW_XARDAS_TOWER_VALLEY_02 once the hero had drifted.
+            bool clearLine=true;
+            for(float back:{0.f,15.f,30.f})
+              for(float up:{-10.f,0.f,10.f})
+                for(float targetUp:{-10.f,0.f,10.f}) {
+                  const auto from=floor.v+casterOffset-site.direction*back+Vec3(0,up,0);
+                  const auto to=center.v+targetOffset+Vec3(0,targetUp,0);
+                  const auto line=w.physic()->ray(from+Vec3::normalize(to-from)*2.f,to);
+                  clearLine=clearLine && (!line.hasCol || (line.v-to).length()<8.f);
+                  }
+            if(!clearLine) continue;
             if(!reachesHazard(center.v,floor.v)) continue;
             site.dry=center.v;hero=floor.v;return true;
             }
@@ -1270,7 +1285,14 @@ bool spellCommand(const MovablesContext& context,const std::vector<std::string>&
       ",\"site\":"+jsonStr(site.waypoint)+",\"stable_cm\":"+ragdollVector(site.dry)+
       ",\"hero_cm\":"+ragdollVector(hero)+",\"direction\":"+ragdollVector(site.direction)+
       ",\"cleared_monsters\":"+std::to_string(monsters.size())+",\"clear_radius_cm\":"+ragdollNumber(clearRadius)+
-      ",\"cliff_floor_cm\":"+ragdollVector(cliffFloor)+",\"support_margin_cm\":50");
+      ",\"cliff_floor_cm\":"+ragdollVector(cliffFloor)+",\"support_margin_cm\":50"+
+      ",\"caster_offset_cm\":"+ragdollVector(casterOffset)+",\"target_offset_cm\":"+ragdollVector(targetOffset)+
+      ",\"placed_caster_center_cm\":"+ragdollVector(pl.collosionCenter())+",\"placed_target_center_cm\":"+ragdollVector(npc->collosionCenter())+
+      ",\"placed_line_hit_cm\":"+[&]{
+        const auto from=pl.collosionCenter(),to=npc->collosionCenter();
+        const auto line=w.physic()->ray(from+Vec3::normalize(to-from)*2.f,to);
+        return line.hasCol ? ragdollVector(line.v) : std::string("null");
+        }());
     }
   else if(c=="spell" && a.size()==3 && a[1]=="target") {
     auto actor=std::find_if(state.spellActors.begin(),state.spellActors.end(),[&](const auto& value) {return value.role==a[2];});
