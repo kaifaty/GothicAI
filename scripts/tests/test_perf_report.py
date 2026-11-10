@@ -2,7 +2,9 @@
 import csv
 import importlib.util
 import json
+import os
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 
@@ -34,6 +36,45 @@ TASK=/remote/task
     result = subprocess.run(["bash", "-c", harness], check=True, capture_output=True)
     environment = dict(value.decode().split("=", 1) for value in result.stdout.split(b"\0") if value)
     assert environment.get("OPENGOTHIC_BASE_CACHE") == cache
+
+
+@pytest.mark.parametrize("converter", (True, False))
+def test_remote_perf_picks_base_of_stand_engine_format(tmp_path, converter):
+    # game-base.json names a base of another importer format; the stand's converter decides.
+    scripts = Path(__file__).parents[1]
+    source = (scripts / "perf.sh").read_text()
+    select = "  CONTENT_CONVERT=" + source.split("  CONTENT_CONVERT=", 1)[1].split("  export XDG_RUNTIME_DIR", 1)[0]
+    pointed, compatible, old, new = "a" * 64, "b" * 64, "1" * 64, "2" * 64
+    for name in ("Gothic.ini", "SystemPack.ini"):
+        (tmp_path / "gothic-ai/game-settings/system").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "gothic-ai/game-settings/system" / name).write_text("")
+    (tmp_path / "gothic-ai/game-base.json").write_text(json.dumps({"base": pointed, "videos": ""}))
+    # The foreign installation's base sorts first: only the installation check skips it.
+    foreign = "0" * 64
+    for fingerprint, format_sha256 in ((pointed, old), (compatible, new), (foreign, new)):
+        directory = tmp_path / ".cache/gothic-ai/base" / fingerprint
+        directory.mkdir(parents=True)
+        archives = ["other"] if fingerprint == foreign else ["Data/Worlds.vdf"]
+        (directory / "base.json").write_text(json.dumps(
+            {"format_sha256": format_sha256, "archives": archives, "loose_files": []}))
+    game = tmp_path / "build/opengothic/Gothic2Notr"
+    game.parent.mkdir(parents=True)
+    if converter:
+        tool = game.parent / "content-convert"
+        tool.write_text(f"#!/bin/sh\necho '{json.dumps({'base': new, 'videos': '0' * 64})}'\n")
+        tool.chmod(0o755)
+    harness = ('set -euo pipefail\nfail() { echo "perf: $*" >&2; exit 2; }\n'
+               f'ROOT={shlex.quote(str(scripts.parent))}\nGAME_BIN={shlex.quote(str(game))}\n' + select + 'echo "selected=$OPENGOTHIC_BASE_FINGERPRINT"\n')
+    environment = {key: value for key, value in os.environ.items()
+                   if not key.startswith(("OPENGOTHIC_", "GOTHIC_"))}
+    environment.update(HOME=str(tmp_path), OPENGOTHIC_BASE_STORE="")
+    result = subprocess.run(["bash", "-c", harness], env=environment, capture_output=True, text=True)
+    if converter:
+        assert result.returncode == 0, result.stderr
+        assert f"selected={compatible}" in result.stdout
+    else:
+        assert result.returncode == 2
+        assert "missing" in result.stderr and "content-convert" in result.stderr
 
 
 def profile(directory, rows, gpu=False, extra_zone=False, geometry=False):
