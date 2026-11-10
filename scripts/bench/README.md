@@ -285,17 +285,30 @@ Use `OPENGOTHIC_VOB_STREAMING=0` and `=1` to compare static vob residency. Claud
 the resulting frames on Mac.
 
 `streaming-shots` runs with `deterministic on`: the world stands still while `streaming wait`
-waits, then the TAA history starts over and 16 fixed steps run with visibility in cluster order
-before `shot`; texture levels settle and stand still until the shot. Two runs of one binary then
-give byte-identical `perf-market`, `perf-harbour`, `perf-forest` and `perf-island` PNGs at any
-load in most pairs, TAA on; a single point can still land in a second state (forest ≤ 68 px,
-island ≤ 0.8 %, max 3 levels; Ryzen 1–9 px; issue #946). `perf-market-teleport` is shot
-without a streaming wait by design and still depends on loading (two states, 5 pixels). Accept a
-render change off ↔ on as two consecutive runs on one host and binary, toggled by the feature's own
-variable: `uv run --no-project --with pillow --with numpy python
+waits, then the TAA history and the SSAO history start over at phase 0 and 16 fixed steps run with
+visibility in cluster order before `shot`; texture levels settle and stand still until the shot.
+Two runs of one binary then give byte-identical `perf-market`, `perf-harbour`, `perf-forest` and
+`perf-island` PNGs at any load in most pairs on Mac, TAA on; a single point can still land in a
+second state (forest ≤ 68 px, island ≤ 0.8 %, max 3 levels; issue #946). `perf-market-teleport` is
+shot without a streaming wait by design and still depends on loading. Accept a render change
+off ↔ on as two consecutive runs on one host and binary, toggled by the feature's own variable:
+`uv run --no-project --with pillow --with numpy python
 reports/engine/2026-11-03-streaming-optimisation/shots_diff.py off=<dir> on=<dir>` must report 0
-changed pixels at the four waited points. If a point differs, run off and on once more: the change
-is accepted when every one of the four points gives 0 in at least one off ↔ on pair. [Report](../../reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md).
+changed pixels at the four waited points (`--all-pairs` compares every pair of several runs). If a
+point differs, run off and on once more: the change is accepted when every one of the four points
+gives 0 in at least one off ↔ on pair. [Report](../../reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md).
+
+On Ryzen the virtual shadow maps are on, and their GPU passes depend on the order of shader
+invocations (issue #946): at 1920x1080 two runs of one binary differ by 0–60 pixels by 1–2 levels
+at a point, and one run in five puts the island into a second state (about 1 % of pixels, max 3,
+noise in the clouds). So at 1920x1080 on Ryzen:
+- the exact comparison runs both sides with `OPENGOTHIC_VSM=0`: five runs of one binary are
+  byte-identical at the four waited points, and off ↔ on must report 0 changed pixels;
+- with VSM (a change that touches shadows or what reads them) a point is accepted within 100
+  changed pixels and max 2 levels; an island in its second state is shot again.
+
+[Report](../../reports/engine/2026-11-10-still-shots-repeat/README.md): the cause of the 2026-11-10
+regression (the SSAO cycle's phase was not reset), the proof and what is left in VSM.
 
 `motion-vectors` and `motion-vectors-clips` check the motion vectors of objects (graphics plan 1b,
 [report](../../reports/render-features/2026-11-10-motion-vectors/step-1b.md)). `motion-vectors` takes stills: a still
@@ -308,6 +321,9 @@ Ryzen and measure with `reports/render-features/2026-11-10-motion-vectors/metric
 
 ## План и журнал
 
+- 2026-11-10: `deterministic on` also starts the SSAO history over at phase 0 of its sample cycle
+  (stills of one binary differed by 350–775 thousand pixels at 1920x1080); the exact comparison on
+  Ryzen runs with `OPENGOTHIC_VSM=0`, VSM stills take a tolerance; `shots_diff.py --all-pairs`.
 - 2026-11-09: offscreen run mode (`TEMPEST_OFFSCREEN=1`, `TEMPEST_OFFSCREEN_FPS`): the game draws into its
   own image without a window or display; Ryzen benches use it by default.
 - 2026-11-05: `deterministic on` for `streaming-shots`: frozen world during `streaming wait`, TAA reset,

@@ -378,6 +378,10 @@ void Renderer::resetTemporal() {
   camHistory.hasCur = false;
   taa.frame = 0;
   taa.cur   = 0;
+  // the phase of the SSAO cycle picks each texel's quarter of the sample set: a history that starts at another
+  // phase accumulates another picture, and the count of frames before the reset depends on the loading's wall time
+  ssao.frame = 0;
+  ssao.cur   = 0;
   }
 
 void Renderer::updateCamera(const WorldView& wview, const Camera& camera) {

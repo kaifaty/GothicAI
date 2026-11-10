@@ -24,6 +24,7 @@ class Renderer final {
 
     void onWorldChanged();
     // Bench `deterministic on`: the next frame starts the TAA history over at jitter phase 0
+    // and the SSAO history over at phase 0 of its sample cycle
     void resetTemporal();
 
     void draw(Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId,
