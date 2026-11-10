@@ -767,3 +767,61 @@ def test_trans_clip_lands_both_ends_and_keeps_the_way_straight(tmp_path, monkeyp
     assert np.abs(about_root(clip, 13) - about_root(stance, 0)).max() < 0.1      # the last frame: the stance
     assert abs(clip.positions[-1, 0, 0] - clip.positions[0, 0, 0]) < 1e-3        # no drift aside
     assert clip.positions[-1, 0, 2] - clip.positions[0, 0, 2] > 100              # and the way ahead is kept
+
+
+def test_run_style_lowers_the_hips_leans_the_trunk_opens_the_elbows_and_keeps_the_feet_and_the_seam():
+    import copy
+
+    import run_style
+    skel, run = gothic_run()
+    orig = copy.deepcopy(run)
+    run_style.style(skel, run, drop=6, lean=10, elbow=32, arm=13, loop=True)
+    ix = skel.index
+
+    def lean(W):
+        up = W[ix("BIP01 NECK")][:3, 3] - W[ix("BIP01 PELVIS")][:3, 3]
+        return np.degrees(np.arctan2(up[2], up[1]))
+
+    def bend(W, side):
+        s, e, h = (W[ix(f"BIP01 {side} {b}")][:3, 3] for b in ("UPPERARM", "FOREARM", "HAND"))
+        u, v = e - s, h - e
+        return np.degrees(np.arccos(u @ v / np.linalg.norm(u) / np.linalg.norm(v)))
+
+    for f in range(run.frame_count - 1):
+        A, B = ga.world_pose(skel, orig, f), ga.world_pose(skel, run, f)
+        assert abs(A[0][1, 3] - B[0][1, 3] - 6) < 1e-4                       # the hips came down
+        assert np.allclose(A[0][[0, 2], 3], B[0][[0, 2], 3], atol=1e-4)      # along the same way
+        for side in "LR":
+            foot = ix(f"BIP01 {side} FOOT")
+            assert np.abs(A[foot][:3, 3] - B[foot][:3, 3]).max() < 0.05      # to the same feet
+            assert np.abs(A[foot][:3, :3] - B[foot][:3, :3]).max() < 1e-3
+            assert bend(A, side) - bend(B, side) > 31                        # the elbows opened
+        assert 9 < lean(B) - lean(A) < 14                                    # the trunk leans from the hips
+        head = ix("BIP01 HEAD")
+        tip = np.degrees(np.arccos(np.clip((np.trace(A[head][:3, :3].T @ B[head][:3, :3]) - 1) / 2, -1, 1)))
+        assert tip < 4                                                       # and the head still looks ahead
+    assert np.allclose(run.rotations[-1], run.rotations[0]) and np.allclose(run.positions[-1, 1:], run.positions[0, 1:])
+    assert np.allclose(run.positions[-1, 0] - run.positions[0, 0], orig.positions[-1, 0] - orig.positions[0, 0])
+
+
+def test_run_style_share_and_bump_leave_the_stance_end_alone_and_lean_into_the_start():
+    import copy
+
+    import run_style
+    skel, run = gothic_run()
+    orig = copy.deepcopy(run)
+    run_style.style(skel, run, drop=6, lean=10, elbow=32, arm=13, w=[(0, 0.0), (5, 1.0)],
+                    wdrop=[(0, 0.0), (6, 0.0), (12, 1.0)], bumps=[(6.5, 6.5, 10.0)])
+    ix = skel.index
+
+    def lean(anim, f):
+        W = ga.world_pose(skel, anim, f)
+        up = W[ix("BIP01 NECK")][:3, 3] - W[ix("BIP01 PELVIS")][:3, 3]
+        return np.degrees(np.arctan2(up[2], up[1]))
+
+    first = np.abs(ga.world_pose(skel, run, 0) - ga.world_pose(skel, orig, 0))
+    assert first[:, :3, 3].max() < 0.05 and first[:, :3, :3].max() < 1e-3    # frame 0: the share and the bell are 0
+    assert np.allclose(run.positions[:7, 0, 1], orig.positions[:7, 0, 1])    # the drop waits for the push
+    assert abs(orig.positions[13, 0, 1] - run.positions[13, 0, 1] - 6) < 1e-4
+    gain = [lean(run, f) - lean(orig, f) for f in range(14)]
+    assert 18 < max(gain[5:9]) < 24 and 9 < gain[13] < 14                    # the bell on top of the carriage
