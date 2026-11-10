@@ -16,6 +16,10 @@ from the hips, elbows open. For a run loop and for the start and stops that meet
 - `--bump`: a bell of extra lean in degrees centred on a frame, `half` frames to each side; negative leans back.
   The lean of a body follows its acceleration (about 5.8° per m/s²): forward in a start, back in a stop.
 - `--loop`: a moving loop - the last frame is the first again, moved by the travel.
+- `--knee-guard CM` (3 by default): a walk puts the foot down on a nearly straight leg, and such a leg has no knee
+  plane of its own; lowering the hips would bend it in a random direction (a knee jumping 18 cm aside at every
+  heel strike, 2026-11-10). The guard tells the knee's front by the thigh's own hinge (`fix_layer.two_bone`).
+  The run V2 was built without it (`--knee-guard 0`): its legs are never straight.
 
 The same numbers give the same pose from the same pose, so a start that ends on a frame of the loop and a stop that
 begins on one still meet the styled loop when all three take the same --drop, --lean, --elbow and --arm with the
@@ -46,7 +50,7 @@ def share(pts: list[tuple[float, float]], f: int) -> float:
 
 def style(skel: ga.Skeleton, anim: ga.Animation, drop: float = 0.0, lean: float = 0.0, elbow: float = 0.0,
           arm: float = 0.0, w: list | None = None, wdrop: list | None = None, bumps: list | None = None,
-          loop: bool = False):
+          loop: bool = False, knee_guard: float = 0.0):
     """Lay the carriage over `anim` in place. w, wdrop: [(frame, share), ...]; bumps: [(centre, half, deg), ...]."""
     clip = fl.Clip(skel, anim)
     ix = skel.index
@@ -81,7 +85,7 @@ def style(skel: ga.Skeleton, anim: ga.Animation, drop: float = 0.0, lean: float 
                     t = min(np.radians(elbow * k), max(0.0, bend - np.radians(20)))
                     clip.set_world_rot(f, W, names[1], fl.rot(hinge / np.linalg.norm(hinge), -t) @ W[fore][:3, :3])
         for limb, (at, turn) in feet.items():
-            fl.two_bone(clip, f, W, limb, at, turn)
+            fl.two_bone(clip, f, W, limb, at, turn, guard=knee_guard)
     if loop:
         anim.positions[-1], anim.rotations[-1] = anim.positions[0], anim.rotations[0]
         anim.positions[-1, 0] = anim.positions[0, 0] + travel
@@ -103,11 +107,12 @@ def main():
     ap.add_argument("--w", default="")
     ap.add_argument("--wdrop", default="")
     ap.add_argument("--bump", action="append", default=[])
+    ap.add_argument("--knee-guard", type=float, default=3.0, help="cm; 0 - as the run V2 was built")
     a = ap.parse_args()
     skel = ga.read_skeleton(a.models / "HUMANS.MDH.json")
     anim = ga.read_animation(a.src)
     style(skel, anim, a.drop, a.lean, a.elbow, a.arm, points(a.w), points(a.wdrop),
-          [tuple(float(x) for x in b.split(",")) for b in a.bump], a.loop)
+          [tuple(float(x) for x in b.split(",")) for b in a.bump], a.loop, a.knee_guard)
     ga.write_animation(a.out, anim, f"{a.src.name} + run_style drop {a.drop} lean {a.lean} elbow {a.elbow} "
                                     f"arm {a.arm} w {a.w} wdrop {a.wdrop} bump {a.bump}")
 
