@@ -72,6 +72,15 @@ struct CollisionWorld::VirtualCharacter::Impl final : JPH::CharacterContactListe
         passed.push_back(hit.mBodyID2);
     }
 
+  // The character stands on a sleeping piece of debris.
+  bool sleepingDebrisSupport() const {
+    const auto id = character->GetGroundBodyID();
+    if(id.IsInvalid())
+      return false;
+    JPH::BodyLockRead lock(world.impl->system.GetBodyLockInterface(),id);
+    return lock.Succeeded() && lock.GetBody().GetObjectLayer()==DynamicWorld::C_Fragment && !lock.GetBody().IsActive();
+    }
+
   // A passed body is let go once it no longer touches the capsule within its padding.
   void releasePassed() {
     for(size_t i=0;i<passed.size();) {
@@ -338,6 +347,14 @@ struct CollisionWorld::VirtualCharacter::Impl final : JPH::CharacterContactListe
       }
     if(!contact.mHadCollision || pushSeconds<=0.f || pushRemaining<=0.f)
       return;
+    // A sleeping piece of debris stays asleep unless the character walks into it: neither the
+    // weight of standing on it nor an overlap left by a piece fallen into the capsule pushes it.
+    if(layer==DynamicWorld::C_Fragment && !nativeBody.IsActive()) {
+      const auto up = character->GetUp();
+      const auto across = contact.mContactNormal-contact.mContactNormal.Dot(up)*up;
+      if(across.IsNearZero(1.e-4f) || !((relative-relative.Dot(up)*up).Dot(across.Normalized())<-0.01f))
+        return;
+      }
 
     // Use the native effective contact mass, including the torque caused by an
     // off-centre push. Penetration recovery has the same damping as Jolt.
@@ -363,7 +380,7 @@ struct CollisionWorld::VirtualCharacter::Impl final : JPH::CharacterContactListe
       }
     // Ordinary walking has less effective effort against a heavier load than
     // a braced push. Keep this continuous in both masses; no furniture classes.
-    const float force = character->GetMaxStrength()*character->GetMass()/(character->GetMass()+bodyMass);
+    const float force = character->GetMaxStrength()*pushMass/(pushMass+bodyMass);
     const float available = std::min(pushRemaining,std::max(0.f,force*pushSeconds-used->second));
     const float amount = std::min(magnitude,available);
     if(amount<=0.f)
@@ -396,6 +413,7 @@ struct CollisionWorld::VirtualCharacter::Impl final : JPH::CharacterContactListe
   Npc* culprit = nullptr;
   float pushSeconds = 0.f;
   float pushRemaining = 0.f;
+  float pushMass = 70.f; // the character's mass for pushes, kept while the weight is withheld
   std::vector<std::pair<JPH::BodyID,float>> pushBodies;
   std::vector<JPH::BodyID> passed; // debris that appeared around this character
   struct LimitedSteepFace {
@@ -500,6 +518,7 @@ CollisionWorld::CharacterMoveResult CollisionWorld::VirtualCharacter::move(
   // Jolt uses metres, kilograms and seconds: this is a 450 N human push,
   // capped independently of the character's weight on a supporting body.
   character.SetMaxStrength(std::min(character.GetMass()*DynamicWorld::gravityMS,450.f));
+  state.pushMass = character.GetMass();
   const float seconds = float(dt)*0.001f;
   // Zero-dt contact refreshes do not end a physical contact's classification.
   if(dt>0) {
@@ -616,8 +635,15 @@ CollisionWorld::CharacterMoveResult CollisionWorld::VirtualCharacter::move(
     if(diagnostic!=nullptr)
       diagnostic->stairDesiredVelocity = toCentimeters(desiredVelocity);
     state.idleSupportMotionObserved = inferredGroundVelocity && onGround && idle;
+    // Jolt hands the character's weight to its support every update, and the impulse wakes a
+    // sleeping support: a character standing still on settled debris withholds it.
+    const bool restOnDebris = state.sleepingDebrisSupport();
+    if(restOnDebris)
+      character.SetMass(0.f);
     character.ExtendedUpdate(seconds,JPH::Vec3(0,-DynamicWorld::gravityMS,0),settings,
                              broadFilter,layerFilter,bodyFilter,shapeFilter,world.allocator);
+    if(restOnDebris)
+      character.SetMass(state.pushMass);
     state.idleSupportMotionObserved = false;
     // RefreshContacts only classifies the initial overlap. Let the first
     // physical solve after creation/teleport recover penetration with native

@@ -391,6 +391,40 @@ void testCharacterDebris() {
     require(walkerShift<.5f && remnantShift<.5f,"a walker made anew inside a remnant must pass it, not push out of it");
   }
   require(deepest>-2.f,"after they separate the remnant must block the walker again");
+  // A walker standing still on a stave, or against a board it walked into, from 0.5 m, leaves the
+  // piece to fall asleep no later than 2 s after it would alone, and never wakes it again.
+  struct Still { const char* what; float mass; bool onTop; };
+  for(const Still still:{Still{"on a 15 kg stave",15.f,true},Still{"on a 3 kg stave",3.f,true},Still{"against a 15 kg board",15.f,false}}) {
+    const auto run=[&](bool walker,int& first,int& wakes) {
+      CollisionWorld world;
+      auto ground=world.addCollisionBody(new JPH::BoxShape(JPH::Vec3(20,.5f,20)),at(0,-50,0),.7f,DynamicWorld::C_Landscape);
+      // A stave 110 x 5 x 12 cm lies flat; a board 110 x 30 x 5 cm stands on its long edge.
+      const JPH::Vec3 half=still.onTop ? JPH::Vec3(.55f,.025f,.06f) : JPH::Vec3(.55f,.15f,.025f);
+      auto piece=world.addDynamicBody(new JPH::BoxShape(half),at(0,half.GetY()*100.f,0),.6f,still.mass,DynamicWorld::C_Fragment);
+      std::unique_ptr<CollisionWorld::VirtualCharacter> character;
+      if(walker)
+        character=world.createVirtualCharacter(radius,180,still.onTop ? Tempest::Vec3(0,5,0) : Tempest::Vec3(0,0,-(2.5f+radius+20.f)));
+      first=-1;wakes=0;
+      bool was=false;
+      for(int frame=0;frame<1800;++frame) {
+        if(character!=nullptr)
+          character->move({0,0,!still.onTop && frame<15 ? 2.f : 0.f},17,50,slope,80,nullptr);
+        world.tick(17);
+        const bool now=piece->isSleeping();
+        if(now && first<0) first=frame;
+        wakes+=was && !now;
+        was=now;
+        }
+      return was;
+      };
+    int alone=0,first=0,wakes=0,unused=0;
+    run(false,alone,unused);
+    const bool asleep=run(true,first,wakes);
+    std::printf("CharacterVirtual still %s: asleep after %d frames (alone %d), woken %d, asleep at the end %d\n",
+                still.what,first,alone,wakes,int(asleep));
+    require(first>=0 && first<=alone+120 && wakes==0 && asleep,
+            "a walker standing still must let the debris under or beside it sleep and not wake it");
+    }
   }
 }
 
