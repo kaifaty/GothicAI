@@ -390,6 +390,7 @@ void DrawCommands::visibilityVsm(Encoder<CommandBuffer>& cmd) {
   }
 
 uint32_t DrawCommands::hiddenTypes = 0;
+bool     DrawCommands::hidePfxObjects = false;
 
 void DrawCommands::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   // return;
