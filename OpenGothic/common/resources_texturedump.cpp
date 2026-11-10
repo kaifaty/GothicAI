@@ -26,7 +26,7 @@ void Resources::dumpTextures(const std::filesystem::path& file) {
   std::fprintf(out,"id,name,kind,source_kind,format,width,height,mips,lowest,first_mip,resident,failed,loading,pinned,bytes,"
                    "wanted_bytes,category,demand_landscape,demand_static,demand_dynamic,demand_other,wanted,wanted_level,"
                    "ring_level,resolution_level,resolution_max,resolution_owners,whole_chain_owners,ring_need_min,"
-                   "ring_need_owners,ring_min,always_full,lowering,delay_ms,missing,promotion\n");
+                   "ring_need_owners,ring_min,always_full,lowering,delay_ms,missing,promotion,evictions,evictions_unowned,reloads\n");
   for(const auto& entry:r.textureRecords) {
     const auto& t=entry.second;
     const auto id=reinterpret_cast<uintptr_t>(t.texture);
@@ -80,8 +80,8 @@ void Resources::dumpTextures(const std::filesystem::path& file) {
       std::fprintf(out,",");
     else
       std::fprintf(out,"%u,",t.distances.begin()->first);
-    std::fprintf(out,"%u,%s,%.1f,%d,%d\n",alwaysFull,lowering,delayMs,int(r.textureMissing.count(const_cast<TextureRecord*>(&t))!=0),
-                 int(r.texturePromotions.count(const_cast<TextureRecord*>(&t))!=0));
+    std::fprintf(out,"%u,%s,%.1f,%d,%d,%u,%u,%u\n",alwaysFull,lowering,delayMs,int(r.textureMissing.count(const_cast<TextureRecord*>(&t))!=0),
+                 int(r.texturePromotions.count(const_cast<TextureRecord*>(&t))!=0),t.evictions,t.evictionsUnowned,t.reloads);
     }
   std::fclose(out);
   }

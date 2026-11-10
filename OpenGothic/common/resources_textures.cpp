@@ -886,8 +886,10 @@ void Resources::publishTexture(const std::shared_ptr<TextureReload>& reload) {
     record.firstMip=level;
     notifyTextureChanged(record);
     FrameProfile::textureEvent(FrameProfile::TextureActivity::Publish);
-    if(!wasResident)
+    if(!wasResident) {
       ++texturesReloaded;
+      ++record.reloads;
+      }
     else if(level<previous)
       ++texturesPromoted;
     else if(level>previous)
@@ -1066,6 +1068,8 @@ void Resources::updateTextures(ChunkResidency* residency) {
     resources.retireTexture(std::move(*record->texture));
     *record->texture=std::move(replacement);
     record->resident=false;
+    ++record->evictions;
+    record->evictionsUnowned+=record->lastDemand==0;
     resources.notifyTextureChanged(*record);
     ++resources.texturesEvicted;
     ++evictions;

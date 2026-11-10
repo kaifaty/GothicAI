@@ -495,6 +495,8 @@ class Resources final {
       TextureSource sourceKind = TextureSource::Other;
       uint64_t lastDemand = 0, lastNeededFull = 0, bytes = 0, changedGeneration = 0;
       std::tuple<uint64_t,uint64_t,uintptr_t> demotionKey{};
+      // for OPENGOTHIC_TEXTURE_DUMP: evictions (of them while it never had an owner) and reloads
+      uint32_t evictions = 0, evictionsUnowned = 0, reloads = 0;
       bool tail() const { return firstMip!=0; }
       bool hasTail() const { return lowest!=0; }
       bool wanted() const;
