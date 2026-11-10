@@ -1,5 +1,6 @@
 #include "testbench_internal.h"
 #include "testbench.h"
+#include "texturedump.h"
 
 #include <algorithm>
 #include <cctype>
@@ -410,6 +411,8 @@ bool worldCommand(const WorldContext& context,const std::string& line,const std:
         ",\"residency_manager\":"+(w.chunkResidency()!=nullptr ? "true" : "false"));
       }
     else if(a.size()==2 && a[1]=="stop") {
+      if(!state.perfSegment.empty())
+        TextureDump::write(state.perfSegment,w);
       if(state.perfSegment.starts_with("streaming-flythrough/")) {
         const auto textures=Resources::textureStats();
         char textureSeconds[48], shortfallSeconds[48];

@@ -6,6 +6,7 @@
 #include "instancestorage.h"
 #include "texturescreendemand.h"
 
+#include <filesystem>
 #include <unordered_set>
 #include <map>
 #include <mutex>
@@ -93,6 +94,8 @@ class VisualObjects final {
     // Evaluates the owners whose distance demand is due at the residency's view; `flush`: all of them, without
     // the frame budget (before the first frame's synchronous texture loading).
     void   updateTextureView(bool flush = false);
+    // OPENGOTHIC_TEXTURE_DUMP (texturedump.h): every texture owner, as CSV
+    void   dumpTextureOwners(const std::filesystem::path& file) const;
     bool   textureChunkActive(const Tempest::Vec3& position) const;
     ChunkResidency* textureResidencyManager() const;
 

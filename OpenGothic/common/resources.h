@@ -215,6 +215,8 @@ class Resources final {
     // log2 of the view scale the levels use (texturelevels.h)
     static float                     textureViewScaleLog2();
     static void                      updateTextures(ChunkResidency* residency);
+    // OPENGOTHIC_TEXTURE_DUMP (texturedump.h): every tracked texture with its levels and demand, as CSV
+    static void                      dumpTextures(const std::filesystem::path& file);
     static void                      configureTextures(std::string_view budget = {}, std::string_view skipMips = {}, std::string_view target = {},
                                                        std::string_view screenMips = {});
 

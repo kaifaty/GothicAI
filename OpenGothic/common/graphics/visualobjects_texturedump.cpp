@@ -1,0 +1,43 @@
+// OPENGOTHIC_TEXTURE_DUMP (texturedump.h): every texture owner of VisualObjects.
+#include "visualobjects.h"
+
+#include <Tempest/Log>
+
+#include <cstdio>
+
+void VisualObjects::dumpTextureOwners(const std::filesystem::path& file) const {
+  std::lock_guard<std::recursive_mutex> guard(textureSync);
+  std::FILE* out=std::fopen(file.string().c_str(),"w");
+  if(out==nullptr) {
+    Tempest::Log::e("texture dump: unable to write \"",file.string(),"\"");
+    return;
+    }
+  const auto& v=textureView;
+  std::fprintf(out,"# hero=%.1f;%.1f;%.1f camera=%.1f;%.1f;%.1f odometer=%.3f known=%d coarsest=%d screen=%d queue=%zu scheduled=%zu\n",
+               double(v.hero.x),double(v.hero.y),double(v.hero.z),double(v.camera.x),double(v.camera.y),double(v.camera.z),
+               v.odometer,int(v.known),v.coarsest,int(textureScreenMode),textureScreen.size(),textureScheduledCount);
+  std::fprintf(out,"id,type,category,world_owner,chunked_landscape,measured,placed,screen_owner,demand,scheduled,ring,resolution,"
+                   "local_uv,uv,min_x,min_y,min_z,max_x,max_y,max_z,pos_x,pos_y,pos_z,distance,tex,normal,orm,frames,ibo_len\n");
+  for(size_t id=0;id<objects.size();++id) {
+    const auto& o=objects[id];
+    if(o.isEmpty())
+      continue;
+    const auto& t=o.textureTexel;
+    const auto& mat=const_cast<Object&>(o).bucketId->mat;
+    const double distance=t.valid() && v.known ? std::min(TextureScreenDemand::distance(v.hero,t),TextureScreenDemand::distance(v.camera,t)) : -1;
+    std::fprintf(out,"%zu,%d,%d,%d,%d,%d,%d,%d,%d,%d,%u,",id,int(o.type),int(o.textureCategory),int(o.textureWorldOwner),
+                 int(o.textureChunkedLandscape),int(o.textureMeasured),int(o.texturePlaced),int(textureScreenOwner(o)),
+                 int(o.textureDemand),int(o.textureScheduled),o.textureNeed.ring);
+    if(o.textureNeed.resolution==TextureLevels::NoExponent)
+      std::fprintf(out,",");
+    else
+      std::fprintf(out,"%d,",o.textureNeed.resolution);
+    std::fprintf(out,"%.6g,%.6g,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.2f,%llx,%llx,%llx,%zu,%u\n",
+                 double(o.textureLocal.uvPerMetre),double(t.uvPerMetre),double(t.min.x),double(t.min.y),double(t.min.z),
+                 double(t.max.x),double(t.max.y),double(t.max.z),double(o.texturePosition.x),double(o.texturePosition.y),
+                 double(o.texturePosition.z),distance,
+                 (unsigned long long)reinterpret_cast<uintptr_t>(mat.tex),(unsigned long long)reinterpret_cast<uintptr_t>(mat.normal),
+                 (unsigned long long)reinterpret_cast<uintptr_t>(mat.orm),mat.frames.size(),o.iboLen);
+    }
+  std::fclose(out);
+  }
