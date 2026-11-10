@@ -160,9 +160,9 @@ class Renderer final {
       bool           motionVectors      = false;
       bool           motionView         = false; // OPENGOTHIC_MOTION_VIEW=1: the frame shows gbufMotion (debug)
       float          motionViewPx       = 2;     // OPENGOTHIC_MOTION_VIEW_PX: px/frame of its full brightness
-      // the TAA reactive mask of particles and animated translucent (graphics plan 1v), off by default:
-      // [INTERNAL] taaReactive=1, OPENGOTHIC_TAA_REACTIVE=0|1 over it. The mask is written either way; off, the
-      // resolve does not read it
+      // the TAA reactive mask of particles and animated translucent (graphics plan 1v), on by default
+      // (setupSettings): [INTERNAL] taaReactive=0 turns it off, OPENGOTHIC_TAA_REACTIVE=0|1 over it. The mask is
+      // written either way; off, the resolve does not use it
       bool           taaReactive        = false;
       bool           taaReactiveView    = false; // OPENGOTHIC_TAA_REACTIVE_VIEW=1: the frame shows taa.reactive
       float          taaReactiveMax     = 0.9f;  // OPENGOTHIC_TAA_REACTIVE_MAX: the mask's ceiling in the resolve
