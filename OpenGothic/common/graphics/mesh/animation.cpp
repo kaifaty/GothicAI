@@ -653,7 +653,7 @@ Tempest::Vec3 Animation::Sequence::translateXZ(uint64_t at) const {
 
   float    fr     = float(data->fpsRate*float(at))/1000.f;
   float    over   = 0;
-  if(animCls!=Loop && TransEnd::enabled() && TransEnd::past(fr,d.tr.size(),over)) {
+  if(animCls==Transition && !isFly() && TransEnd::enabled() && TransEnd::past(fr,d.tr.size(),over)) {
     // past the last sample the root has no step of its own: the body keeps the speed it ended with
     const Tempest::Vec3 prev = d.tr.size()>1 ? d.tr.back() : Tempest::Vec3();
     return Tempest::Vec3(TransEnd::extend(d.moveTr.x,prev.x,over),
