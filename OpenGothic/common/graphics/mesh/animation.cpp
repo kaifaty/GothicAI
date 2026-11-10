@@ -12,6 +12,7 @@
 #include "utils/string_frm.h"
 #include "resources.h"
 #include "stopfoot.h"
+#include "transend.h"
 
 #include <array>
 
@@ -644,11 +645,21 @@ Tempest::Vec3 Animation::Sequence::translateXZ(uint64_t at) const {
 
   if(animCls==Transition && !isFly()){
     uint64_t all=uint64_t(totalTime());
+    if(TransEnd::enabled())
+      all += uint64_t(1000.f/d.fpsRate); // the game frame that crosses the clip's end goes on at the end's speed
     if(at>all)
       at = all;
     }
 
   float    fr     = float(data->fpsRate*float(at))/1000.f;
+  float    over   = 0;
+  if(animCls==Transition && !isFly() && TransEnd::enabled() && TransEnd::past(fr,d.tr.size(),over)) {
+    // past the last sample the root has no step of its own: the body keeps the speed it ended with
+    const Tempest::Vec3 prev = d.tr.size()>1 ? d.tr.back() : Tempest::Vec3();
+    return Tempest::Vec3(TransEnd::extend(d.moveTr.x,prev.x,over),
+                         TransEnd::extend(d.moveTr.y,prev.y,over),
+                         TransEnd::extend(d.moveTr.z,prev.z,over));
+    }
   float    a      = std::fmod(fr,1.f);
   uint64_t frameA = uint64_t(fr);
   uint64_t frameB = frameA+1;
