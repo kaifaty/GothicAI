@@ -2,6 +2,7 @@
 """Heavier copies of the base textures for the content stress measurement.
 
     scripts/stress_textures.py <base>/textures <out dir> --scale 2|4|8
+    scripts/stress_textures.py --base <ready base> <out base> --scale 2|4|8
 
 Every DXT1/DXT3/DXT5 texture with a mip chain gets `log2(scale)` new top levels: each 4x4 block becomes
 four blocks with the same endpoints and its indices repeated 2x2. That is an exact nearest-neighbour
@@ -9,19 +10,27 @@ enlargement in the compressed domain, so nothing is re-encoded, the old top leve
 mip and the picture is the same. Bytes grow about `scale^2` times.
 
 The game reads the result with OPENGOTHIC_TEXTURES=<out dir> (reports/performance/2026-11-10-content-stress).
+With --base the result is a whole ready base for OPENGOTHIC_BASE: the enlarged textures, hard links to
+every other file of the source base and a rewritten file manifest; the identity and fingerprint stay.
+Run such a base with its own OPENGOTHIC_BASE_CACHE: the derived caches are keyed by the fingerprint.
 Textures without a mip chain (UI, fonts), other formats and sides that are not a multiple of 4 are
 left out and counted: the game then reads their base file.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
+import re
+import shutil
 import struct
 import sys
 from pathlib import Path
 
 import numpy as np
 
+MANIFEST = "base-files.json"
 MAGIC = b"DDS "
 HEADER = 128
 DDSD_MIPMAPCOUNT = 0x20000
@@ -134,17 +143,86 @@ def run(source: Path, out: Path, scale: int) -> dict:
     return report
 
 
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as file:
+        for block in iter(lambda: file.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _entry(path: str, size: int, sha: str) -> str:
+    return f'{{"path":{json.dumps(path, ensure_ascii=False)},"size":{size},"sha256":"{sha}"}}'
+
+
+def run_base(base: Path, out: Path, scale: int) -> dict:
+    """A ready base -> the same base with enlarged textures; everything else is hard-linked."""
+    steps = {2: 1, 4: 2, 8: 3}[scale]
+    for name in ("base.json", MANIFEST):
+        if not (base / name).is_file():
+            raise SystemExit(f"stress-textures: not a ready base, no {name}: {base}")
+    if out.exists() and any(out.iterdir()):
+        raise SystemExit(f"stress-textures: output is not empty: {out}")
+    target, source = out.resolve(), base.resolve()
+    live = [Path.home() / ".cache/gothic-ai/base", Path.home() / ".local/share/gothic-ai"]
+    for parent in [source, *(p.resolve() for p in live)]:
+        if target == parent or parent in target.parents:
+            raise SystemExit(f"stress-textures: output must be outside {parent}")
+    manifest = json.loads((base / MANIFEST).read_text())
+    report = {"scale": scale, "source": str(base), "written": 0, "bytes_before": 0, "bytes_after": 0, "skipped": {}}
+    entries = {}
+    for item in manifest["files"]:
+        name, src, dst = item["path"], base / item["path"], out / item["path"]
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        parts = name.split("/")
+        if len(parts) == 2 and parts[0] == "textures" and name.lower().endswith(".dds"):
+            data = src.read_bytes()
+            try:
+                result = enlarge(data, steps)
+            except Skip as reason:
+                report["skipped"][str(reason)] = report["skipped"].get(str(reason), 0) + 1
+            else:
+                dst.write_bytes(result)
+                entries[name] = _entry(name, len(result), hashlib.sha256(result).hexdigest())
+                report["written"] += 1
+                report["bytes_before"] += len(data)
+                report["bytes_after"] += len(result)
+                continue
+        try:
+            os.link(src, dst)
+        except OSError:          # another file system
+            shutil.copy2(src, dst)
+        entries[name] = _entry(name, item["size"], item["sha256"])
+    note = out / "stress-textures.json"
+    note.write_text(json.dumps(report, indent=2) + "\n")
+    entries[note.name] = _entry(note.name, note.stat().st_size, _sha256(note))
+    body = ",\n".join(entries[name] for name in sorted(entries))
+    (out / MANIFEST).write_text('{"format":"gothic-base-files","version":1,"files":[\n' + body + "\n]}\n")
+    identity = (base / "base.json").read_text()
+    binding = '"manifest":' + _entry(MANIFEST, (out / MANIFEST).stat().st_size, _sha256(out / MANIFEST))
+    identity, count = re.subn(r'"manifest":\{[^{}]*\}', lambda _: binding, identity)
+    if count != 1:
+        raise SystemExit("stress-textures: base.json has no single manifest binding")
+    (out / "base.json").write_text(identity)
+    return report
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("source", type=Path, help="<base>/textures")
-    parser.add_argument("out", type=Path, help="new folder for OPENGOTHIC_TEXTURES")
+    parser.add_argument("source", type=Path, help="<base>/textures, or a ready base with --base")
+    parser.add_argument("out", type=Path, help="new folder for OPENGOTHIC_TEXTURES, or for OPENGOTHIC_BASE with --base")
     parser.add_argument("--scale", type=int, choices=(2, 4, 8), default=2, help="side multiplier")
+    parser.add_argument("--base", action="store_true", help="write a whole ready base instead of a texture folder")
     args = parser.parse_args(argv)
-    report = run(args.source, args.out, args.scale)
+    report = (run_base if args.base else run)(args.source, args.out, args.scale)
     mib = 1 << 20
     print(f"stress-textures: {report['written']} textures x{args.scale}: "
           f"{report['bytes_before'] / mib:.1f} -> {report['bytes_after'] / mib:.1f} MiB; skipped {report['skipped']}")
-    print(f"OPENGOTHIC_TEXTURES={args.out.resolve()}")
+    if args.base:
+        print(f"OPENGOTHIC_BASE={args.out.resolve()}")
+        print(f"OPENGOTHIC_BASE_CACHE={args.out.resolve()}.cache")
+    else:
+        print(f"OPENGOTHIC_TEXTURES={args.out.resolve()}")
     return 0
 
 

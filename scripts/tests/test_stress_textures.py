@@ -1,4 +1,5 @@
 """stress_textures: the enlarged top level decodes to the old one with every texel repeated 2x2."""
+import hashlib
 import json
 import random
 import struct
@@ -123,3 +124,60 @@ def test_run_writes_and_counts(tmp_path):
         st.run(source, out, 2)
     with pytest.raises(SystemExit, match="outside"):
         st.run(source, source / "inner", 2)
+
+
+def make_base(root: Path) -> Path:
+    base = root / "base"
+    files = {
+        "sources/sources.json": b'{"sources":[]}',
+        "textures/WOOD.dds": dds(b"DXT1", 8, 8, chain(random.Random(2), b"DXT1", 8, 8)),
+        "textures/FONT.dds": dds(b"DXT1", 8, 8, [bytes(32)]),
+        "textures/textures.json": b'{"textures":{"WOOD":"WOOD.dds"}}',
+        "audio/00/a.wav": b"RIFF" + bytes(40),
+    }
+    for name, data in files.items():
+        (base / name).parent.mkdir(parents=True, exist_ok=True)
+        (base / name).write_bytes(data)
+    entries = [st._entry(name, len(files[name]), hashlib.sha256(files[name]).hexdigest()) for name in sorted(files)]
+    manifest = '{"format":"gothic-base-files","version":1,"files":[\n' + ",\n".join(entries) + "\n]}\n"
+    (base / "base-files.json").write_text(manifest)
+    binding = st._entry("base-files.json", len(manifest), hashlib.sha256(manifest.encode()).hexdigest())
+    (base / "base.json").write_text('{\n  "fingerprint":"' + "ab" * 32 + '",\n  "archives":[\n  {"name":"A.VDF"}\n  ]\n,\n'
+                                    '  "sources":' + entries[1] + ',\n  "manifest":' + binding + "\n}\n")
+    return base
+
+
+def check_ready_base(directory: Path) -> dict:
+    """The checks of BaseImport::matches with payload hashes (OpenGothic/common/baseidentity.cpp)."""
+    identity = json.loads((directory / "base.json").read_text())
+    raw = (directory / "base-files.json").read_bytes()
+    assert identity["manifest"] == {"path": "base-files.json", "size": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
+    names = [entry["path"] for entry in json.loads(raw)["files"]]
+    assert names == sorted(names) and len(set(names)) == len(names) and "sources/sources.json" in names
+    for entry in json.loads(raw)["files"]:
+        data = (directory / entry["path"]).read_bytes()
+        assert (len(data), hashlib.sha256(data).hexdigest()) == (entry["size"], entry["sha256"]), entry["path"]
+    return identity
+
+
+def test_base_copy_is_a_ready_base(tmp_path):
+    base = make_base(tmp_path)
+    before = check_ready_base(base)
+    out = tmp_path / "stress"
+
+    report = st.run_base(base, out, 2)
+
+    after = check_ready_base(out)
+    assert {k: v for k, v in after.items() if k != "manifest"} == {k: v for k, v in before.items() if k != "manifest"}
+    assert report["written"] == 1 and report["skipped"] == {"no mip chain": 1}
+    assert struct.unpack_from("<II", (out / "textures/WOOD.dds").read_bytes(), 12) == (16, 16)
+    assert (out / "audio/00/a.wav").stat().st_ino == (base / "audio/00/a.wav").stat().st_ino      # a hard link
+    assert (out / "textures/FONT.dds").read_bytes() == (base / "textures/FONT.dds").read_bytes()
+    assert json.loads((out / "stress-textures.json").read_text())["scale"] == 2
+    check_ready_base(base)                                                                          # the source is untouched
+    with pytest.raises(SystemExit, match="not empty"):
+        st.run_base(base, out, 2)
+    with pytest.raises(SystemExit, match="outside"):
+        st.run_base(base, base / "inner", 2)
+    with pytest.raises(SystemExit, match="not a ready base"):
+        st.run_base(tmp_path / "missing", tmp_path / "other", 2)
