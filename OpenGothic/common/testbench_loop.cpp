@@ -44,6 +44,13 @@ namespace {
 // holds all its jitter phases twice
 constexpr uint32_t DeterministicSettleSteps = 16;
 
+// `deterministic on`: frames the world stands still before that reset once everything is loaded, also when it was
+// loaded on arrival. A frame takes some of its state from the frames before it: the clouds' offset is the tick of the
+// frame before (SceneGlobals::setSky runs ahead of setTime), the exposure follows the sky two frames late. On a world
+// that stands still they catch up; without the hold the first frame of the new TAA history differed between a wait
+// that had to wait and one that had not, and the shot kept a trace of it in the clouds (issue #946)
+constexpr uint32_t DeterministicHoldFrames = 4;
+
 void tickRoute(Npc& player, uint64_t dt) {
   if(!bench.routeActive)return;
   if(bench.routeNext==bench.routePoints.size()) {
@@ -184,6 +191,7 @@ bool streamingWaitTick(World& w) {
   if(!w.landscapeReady()) {
     if(std::chrono::steady_clock::now()<bench.world.streamingDeadline) {
       bench.frozen=bench.world.deterministic;
+      bench.holdFrames=0;
       return true;
       }
     bench.world.waitStreaming=false;
@@ -191,6 +199,12 @@ bool streamingWaitTick(World& w) {
     arenaAbort("streaming wait timed out before all Near/Far landscape and vob visuals were published ("+(w.view() ? w.view()->landscapeWaitState() : std::string("no view"))+")");
     return true;
     }
+  if(bench.world.deterministic && bench.holdFrames<DeterministicHoldFrames) {
+    bench.frozen=true;
+    ++bench.holdFrames;
+    return true;
+    }
+  bench.holdFrames=0;
   bench.world.waitStreaming=false;
   bench.frozen=false;
   std::string publications="[";
