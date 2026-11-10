@@ -154,8 +154,23 @@ struct OmniFace {
   float sz;   // its size, texels
   vec3  Pf;   // the receiver, in face axes (z along the face's axis)
   vec3  nf;   // the receiver plane's normal, in face axes
+  float c;    // the plane: dot(nf, p) = c (negative: the light is on its side), with the offset of a two-sided map
+  float lo;   // the receiver depth on a texel's ray is kept within [lo, hi]*Pf.z
+  float hi;
   uint  face;
   };
+
+// A two-sided map (scene.vsmLampSides 2 and 3, main.vert) holds the lit surface itself and everything round it that
+// faces the light, where a far-side map held only the backs of things. At a glancing light the kernel of a surface spans
+// its plane's horizon, and three things keep its own plane and its surroundings from shadowing it there:
+// - the depth on a texel's ray is at most the receiver's own: a texel that misses the plane (above the horizon) was
+//   read against twice the receiver's depth, and the walls of a candle's niche shadowed the sill it stands on;
+// - nor is it raised to half the receiver's: a ray that meets the plane nearer is read against that depth;
+// - the plane moves towards the light by half a centimetre and a texel (a normal offset: its depth on a ray shrinks by
+//   that over the cosine, more at a glancing angle).
+// (reports/render-features/2026-11-10-lamp-one-sided)
+const float OmniPlaneOffset      = 0.5; // cm
+const float OmniPlaneOffsetTexel = 1.0; // texels of the face at the receiver
 
 OmniFace omniFace(const uint face, const uint pageD, const vec3 P, const vec3 n) {
   OmniFace f;
@@ -164,6 +179,14 @@ OmniFace omniFace(const uint face, const uint pageD, const vec3 P, const vec3 n)
   f.Pf   = vsmMapDirToFace(P, face);
   f.nf   = vsmMapDirToFace(n, face);
   f.face = face;
+  f.c    = dot(f.nf, f.Pf);
+  f.lo   = 0.5;
+  f.hi   = 2.0;
+  if(scene.vsmLampSides>=2u) {
+    f.c  = min(f.c + OmniPlaneOffset + OmniPlaneOffsetTexel*(2.0/f.sz)*f.Pf.z, 0.5*f.c);
+    f.lo = 0.0;
+    f.hi = 1.0;
+    }
   return f;
   }
 
@@ -182,15 +205,15 @@ float omniGatherFace(const vec3 d, const OmniFace f, const float R, const vec2 a
   const vec4 Y   = vec4(y01.y, y01.y, y01.x, y01.x);
 
   // receiver depth along the face's axis on each ray: the plane through P with normal n
-  const float c   = dot(f.nf, f.Pf);
+  const float c   = f.c;
   const vec4  den = f.nf.x*X + f.nf.y*Y + vec4(f.nf.z);
 #if defined(VSM_LAMP_PROBE)
   // 'flat': every texel against the receiver's own depth, without the plane along the rays
   const vec4  drc = push.probeMode==2 ? vec4(f.Pf.z)
-                                      : clamp(c/min(den, vec4(-1e-4)), vec4(0.5*f.Pf.z), vec4(2.0*f.Pf.z));
+                                      : clamp(c/min(den, vec4(-1e-4)), vec4(f.lo*f.Pf.z), vec4(f.hi*f.Pf.z));
   ++probeTaps;
 #else
-  const vec4  drc = clamp(c/min(den, vec4(-1e-4)), vec4(0.5*f.Pf.z), vec4(2.0*f.Pf.z));
+  const vec4  drc = clamp(c/min(den, vec4(-1e-4)), vec4(f.lo*f.Pf.z), vec4(f.hi*f.Pf.z));
 #endif
 
   // occluder depth along the axis; 0 is a cleared texel: nothing there

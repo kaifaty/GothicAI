@@ -47,6 +47,8 @@ class SceneGlobals final {
     void setTaaReactiveLref(float lref);
     // VSM lamps: an object nearer than this to a light (cm, along its cube face's axis) is no blocker of it
     void setVsmLampNear(float cm);
+    // VSM lamps: the sides of a surface a cube face keeps: 1 the far one, 2 both for the world mesh, 3 for objects too
+    void setVsmLampSides(uint32_t sides);
 
     void setTime(uint64_t time);
     void commitUbo(uint8_t fId);
@@ -148,7 +150,8 @@ class SceneGlobals final {
       Tempest::Matrix4x4              reprojectClip   = Tempest::Matrix4x4::mkIdentity(); // Taa::reprojection
       Tempest::Matrix4x4              viewProjectPrev = Tempest::Matrix4x4::mkIdentity(); // Taa::viewProjectPrev
       float                           vsmLampNear     = 30.f; // cm: VSM lamps, the fixture plane (main.vert)
-      float                           vsmPad[3]       = {};
+      uint32_t                        vsmLampSides    = 2;    // VSM lamps: the sides a cube face keeps (main.vert)
+      float                           vsmPad[2]       = {};
       };
 
     Tempest::UniformBuffer<UboGlobal> uboGlobalPf[Resources::MaxFramesInFlight][V_Count];

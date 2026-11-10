@@ -26,6 +26,8 @@ class Renderer final {
     // Bench `deterministic on`: the next frame starts the TAA history over at jitter phase 0
     // and the SSAO history over at phase 0 of its sample cycle
     void resetTemporal();
+    // bench `vsm sides 1|2|3|0`: the sides a lamp's cube face keeps (settings.vsmLampSides) instead of the setting
+    static uint32_t benchVsmLampSides;
 
     void draw(Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId,
               Tempest::VectorImage::Mesh& uiLayer, Tempest::VectorImage::Mesh& numOverlay,
@@ -192,6 +194,9 @@ class Renderer final {
       // [INTERNAL] vsmLampSoft (0 on Metal, 1 elsewhere), OPENGOTHIC_VSM_LAMP_SOFT=0|1 wins: the lamps' PCSS;
       // false: one gather per lamp and pixel (light_vsm_hard)
       bool           vsmLampSoft        = true;
+      // [INTERNAL] vsmLampSides, OPENGOTHIC_VSM_LAMP_SIDES wins: the sides a lamp's cube face keeps (1 the far side,
+      // 2 both sides of the world mesh, 3 of objects too; main.vert, meshShader)
+      uint32_t       vsmLampSides       = 2;
       } settings;
 
     Frustrum                  frustrum[SceneGlobals::V_Count];
