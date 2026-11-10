@@ -124,7 +124,10 @@ float sunLight(vec3 norm, vec3 pos) {
 // spot the cone covers on the hit's surface. A point next to a lamp 18 m away is a spot 4,6 m wide for the probe;
 // read as a point it left a patch on the wall of harbour-night-1 (48 of 255 against 27 of the reference). The mean
 // over the spot is exact in spotLight below; the formula of 2a for a lamp over the spot's centre (ln(1 + rho^2/d^2)
-// /rho^2 and the cosine at the centre) lit a slanted lamp's spot 0,31-0,89 of the exact (step-2b.md, «2б-3»).
+// /rho^2 and the cosine at the centre) lit a slanted lamp's spot 0,31-0,89 of the exact (step-2b.md, «2б-3»). The spot
+// is taken flat, on the hit's plane, and the shadow is the one ray from its centre: against hits jittered in the cone
+// on the real geometry, each with its own shadow ray, the reflected light of ten views differs by 3 % (median). The
+// lamps are found by the spot's centre: a lamp whose range takes a part of the spot but not its centre is left out.
 struct Spot {
   vec3  c;   // the centre: the hit, off the surface as the shadow rays
   vec3  n;   // the surface's normal, facing the probe
@@ -231,25 +234,6 @@ float spotLight(const Spot sp, vec3 lampPos, float range) {
   return max(0.25*h*range*sum/(M_PI*sp.a*sp.b), 0.0);
   }
 
-#if !defined(LAMP_WEIGHTS)
-#define LAMP_WEIGHTS 1
-#endif
-
-// The weight of a lamp in the choice (LAMP_WEIGHTS 0): the formula of 2a, the lamp over the spot's centre. For the
-// 1/d^2 of a lamp over a disc of radius rho under it the mean is ln(1 + rho^2/d^2)/rho^2: the lamp's formula takes
-// the distance with that 1/d^2, the cosine at the centre. Past the lamp's range it is still above zero while a part
-// of the spot is in range: the choice stays unbiased only if no lamp with light has the weight 0.
-float lampWeight(const Spot sp, vec3 lampPos, float range) {
-  const vec3  dl  = sp.c - lampPos;
-  const float len = length(dl);
-  const float d2  = max(len*len, 1e-4);
-  const float rho2 = sp.a*sp.b;
-  float dist = rho2<=1e-3*d2 ? len : sqrt(rho2/log(1.0 + rho2/d2));
-  if(dist>=range)
-    dist = max(len - sp.b, 0.0);
-  return lightIntensity(sp.n, dist, dl/max(len, 0.001), range);
-  }
-
 vec3 localLight(const Spot sp, uint key) {
   uint  stack[32];
   uint  ptr     = 0;
@@ -266,11 +250,10 @@ vec3 localLight(const Spot sp, uint key) {
     if(type==BVH_LightNode) {
       const BVHNode n     = lightsTree.node[node & 0x0FFFFFFF];
       const float   range = uintBitsToFloat(n.ptrL);
-#if LAMP_WEIGHTS==1
+      // the weight is the lamp's exact light over the spot: f/phat then holds the colour and the shadow alone. Weights
+      // by the formula of 2a and the exact light of the chosen lamp alone cost as much (step-2b.md, «2б-3») and add
+      // the noise of the choice: a sample takes a lamp whose f/phat differs from the others'
       const float   lum   = spotLight(sp, n.lmin, range) * luma(n.lmax);
-#else
-      const float   lum   = lampWeight(sp, n.lmin, range) * luma(n.lmax);
-#endif
       if(lum>0) {
         pSum += lum;
         // weighted reservoir: this lamp stays with probability lum/pSum. Each candidate draws its own number from the
@@ -311,13 +294,8 @@ vec3 localLight(const Spot sp, uint key) {
   const float dist        = length(ldir);
   const float rayDistance = dist - lampRange*0.0375; // padding of the path tracer, a light may stand in a wall
   const float shadow      = rayDistance<=0 ? 1.0 : shadowRay(sp.c, ldir/max(dist, 0.001), rayDistance);
-#if LAMP_WEIGHTS==1
-  // the weights are the lamps' exact light: f/phat is the lamp's colour over its luminance, the intensity cancels
+  // f/phat is the lamp's colour over its luminance and the shadow: the intensity cancels
   return lampColor/luma(lampColor) * shadow * pSum;
-#else
-  // f/phat: the exact light of the chosen lamp over its weight
-  return lampColor * (spotLight(sp, lampPos, lampRange) / pHat) * shadow * pSum;
-#endif
   }
 
 vec3 skyRadiance(vec3 origin, vec3 dir) {
