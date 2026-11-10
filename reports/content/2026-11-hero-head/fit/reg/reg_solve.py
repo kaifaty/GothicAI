@@ -161,11 +161,14 @@ w=np.zeros(len(co))
 cx,cy,ax,ay=600,640,350,470
 w=np.clip((1-np.hypot((U-cx)/ax,(Vv-cy)/ay))*12,0,1)*(co[:,1]<eye[1]+0.03)
 w=np.maximum(w,box(380,820,1000,1200)*(co[:,1]<eye[1]+0.06))
-w*=1-box(430,770,695,792)          # moustache
-w*=1-box(400,800,858,1110)         # goatee
-w*=1-box(405,470,760,900)*1; w*=1-box(730,795,760,900)
+if sched.get('bald'):                # a bald clean-shaven reference: no hair to mask, and the whole skull is data
+    w=np.maximum(w,np.clip((730-Vv)/20,0,1))
+else:
+    w*=1-box(430,770,695,792)          # moustache
+    w*=1-box(400,800,858,1110)         # goatee
+    w*=1-box(405,470,760,900)*1; w*=1-box(730,795,760,900)
+    w*=1-box(-1e9,1e9,-1e9,215,20)      # above the hairline
 w*=1-0.7*box(300,560,350,425); w*=1-0.7*box(640,900,350,425)   # brows are hair on the reference: weaker
-w*=1-box(-1e9,1e9,-1e9,215,20)      # above the hairline
 # around the eyeballs: the lids follow the landmarks, not the reference's eyes
 lc=co[m['leye']].mean(0); rc=co[m['reye']].mean(0)
 er=np.median(np.linalg.norm(co[m['leye']]-lc,axis=1))
@@ -228,7 +231,7 @@ for alpha,beta in zip(sched['alpha'],sched['beta']):
         cur[fi]=Dm@X
         nrm=vnormals(cur)[fi]
         dist,j=tree.query(cur[fi]); U_=rv[j]
-        cosn=np.einsum('ij,ij->i',nrm,rn[j])
+        cosn=np.abs(np.einsum('ij,ij->i',nrm,rn[j]))        # a generator winds its faces both ways: the sign of its normal means nothing
         wd=wf*(dist<sched['dmax'])*(cosn>sched['cos'])
         Wd=sparse.diags(wd)
         A=sparse.vstack([M,Wd@Dm,beta*Dl,eps*sparse.identity(4*nf)]).tocsc(); Bm=np.vstack([Bs,wd[:,None]*U_,beta*Ul,eps*X0])
