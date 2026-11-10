@@ -15,7 +15,10 @@ Variants of the legs (`legs=`):
 - v3:     a step to v4 (the pelvis by the knee's reach, a foot in the air from Gothic's shin); kept for the tables;
 - v4:     what the engine does with root knees («Аудит»): the pelvis at the height where the carrying legs reach their
           feet at Gothic's knee angle (knee_lift_v4), a foot on the ground pivots about Gothic's ball, one in the air
-          takes Gothic's turns (contact_target).
+          takes Gothic's turns (contact_target);
+- v5:     what the engine does with root heel («Пятка»): v4 with a leg that stands on its foot standing heel on heel
+          with Gothic's (pivot), the pelvis' lift and the legs' shares kept between solves (knee_lift_v5; reset()
+          at each clip, dt - the frame's seconds), a leg on the ground no straighter than Gothic's knee (leg).
 Arms («Аудит»): arms_ik with hold / world - RenderRig::solveArm.
 Upper body («Верх тела»): `Rig.rhythm` turns the clavicles with the arm's rise; `twist_bones()` gives the twist bones of
 rig_parts.TWISTS for a solved pose and `twist_of()` measures a bone's twist.
@@ -149,6 +152,9 @@ class Rig:
             target = (W[L['sf']] @ L['ankle'])[:3]
         tt = target - hip; dist = np.linalg.norm(tt); u = tt / dist
         d = min(max(dist, abs(l1 - l2) + 1e-6), l1 + l2)
+        if self.heel:                        # v5: no straighter than Gothic's knee: the foot stops short of a far target
+            dist = min(dist, max(np.linalg.norm(a1 + a2), abs(l1 - l2) + 1e-6))
+            d = min(d, dist)
         if self.soft > 0:                    # soft IK: the last few cm of reach come slowly, no knee snap
             ds = l1 + l2 - self.soft
             if dist > ds:
@@ -160,6 +166,8 @@ class Rig:
             side = front - u * (front @ u)
             if legs == 'v4':                     # in the air the knee goes to the side Gothic's knee bends to
                 c = self.contact[L['side']]; fks = a1 - u * (a1 @ u)
+                if self.heel and fks @ side < 0:     # v5: Gothic's knee bent backwards - ours bends to the front
+                    fks = np.zeros(3)
                 if np.linalg.norm(fks) > 0.05 * l1:
                     side = c * side / max(np.linalg.norm(side), 1e-9) + (1 - c) * fks / np.linalg.norm(fks)
         elif legs == 'engine':
@@ -225,24 +233,85 @@ class Rig:
 
     v4 = False
 
+    heel = False     # v5: the foot stands where Gothic's heel does (pivot)
+    thigh_down = (0.5, 0.8)  # v5: the thigh's downward share from which a leg starts to stand on its heel / fully does
+    shin_down = (0.2, 0.5)   # v5: the same for the shin
+    plant_tau = 0.3  # v5: seconds the heel's share takes to follow the pose
+    plant_prev = {}
+    toes_fade = (10.0, 25.0)  # v5: degrees of toes up over which the heel's own lift fades out
+    roll = (math.cos(math.radians(25)), math.cos(math.radians(45)))   # v5: Gothic's heel lift (its cosine) up to which
+                     # our foot rolls over its own ball, and from which it leaves the ground with Gothic's heel
+
+    def foot_low(self, M, W):
+        """The lowest of the foot's two ends on Gothic's foot: our ball and, v5, the point under Gothic's ankle."""
+        B = (W[M['sf']] @ M['ball_foot'])[:3]
+        if not self.heel:
+            return B[1]
+        rot = W[M['sf']][:3, :3] @ self.Sb[M['sf']][:3, :3].T
+        under = W[M['sf']][:3, 3] + rot @ np.array([0.0, self.Rb[M['ball']][1, 3] - self.Sb[M['sf']][1, 3], 0.0])
+        return min(B[1], under[1])
+
     def pivot(self, L, W):
         """v4: the foot's pivot on the ground - Gothic's ball B, the ankle's offset r from it, the axis k (+ lifts the heel),
-        the turn range lo..hi (rad) about it and how much the foot is on the ground (0..1)."""
+        the turn range lo..hi (rad) about it and how much the foot is on the ground (0..1).
+        v5: our foot is shorter than Gothic's (ankle to ball 14 cm against 23), so with the balls together our ankle
+        stands 9 cm ahead of Gothic's and the leg vaults over another point: the pelvis that keeps Gothic's knee rises
+        through the stance and drops at the next step. The foot stands heel on heel instead: the pivot is Gothic's ball
+        moved back by that difference - along the ground while the heel is up (the foot rolls over its own ball, which
+        stays put), along the foot while the toes are up (the foot turns about Gothic's ankle, no heel lift of its
+        own). On the ground: the lower of the ball and the point under Gothic's ankle is near the lowest one."""
         Mf = W[L['sf']]
         B = (Mf @ L['ball_foot'])[:3]
-        # our ankle from our ball, the foot turned as Gothic's: the ball lands on Gothic's exactly
-        A0 = B - W[self.source[L['foot']]][:3, :3] @ self.turn[L['foot']] @ self.local[L['ball']][:3, 3]
-        low = min((W[M['sf']] @ M['ball_foot'])[1] for M in self.legs)
-        c0, c1 = self.contact_cm
-        c = float(np.clip(1 - (B[1] - low - c0) / (c1 - c0), 0, 1))
         rot = Mf[:3, :3] @ self.Sb[L['sf']][:3, :3].T
+        fwd = rot @ FWD
+        up = 0.0                                 # degrees the toes point up
+        off = 1.0                                # v5: 0 - the heel is so high that the foot is leaving the ground
+        if self.heel:
+            delta = self.Rb[L['foot']][2, 3] - self.Sb[L['sf']][2, 3]   # bind: our ankle ahead of Gothic's
+            g = fwd
+            if fwd[1] < 0:
+                flat = np.array([fwd[0], 0.0, fwd[2]]); n = np.linalg.norm(flat)
+                s = float(np.clip((n - 0.2) / 0.3, 0, 1))        # a foot on end has no way along the ground
+                off = float(np.clip((n - self.roll[1]) / (self.roll[0] - self.roll[1]), 0, 1))
+                g = fwd * (1 - s) + flat / max(n, 1e-9) * s
+            else:
+                up = math.degrees(math.asin(np.clip(fwd[1], -1, 1)))
+            # only a leg that stands on its foot: one that does not point down (lying), whose thigh is level (a
+            # seat, a squat: the pelvis is held by something else) or whose shin is (kneeling) keeps ball on ball,
+            # as v4 has it. The share follows the pose over `plant_tau` seconds and only while the foot is near the
+            # ground: a lunge that levels the thigh for a moment does not drag the foot, a leg swung through the
+            # air comes down as it left
+            leg = Mf[:3, 3] - W[L['st']][:3, 3]; thigh = W[L['sk']][:3, 3] - W[L['st']][:3, 3]
+            shin = Mf[:3, 3] - W[L['sk']][:3, 3]
+            ramp = lambda v, a, b: float(np.clip((-v[1] / max(np.linalg.norm(v), 1e-9) - a) / (b - a), 0, 1))
+            share = min(ramp(leg, *self.carry), ramp(thigh, *self.thigh_down), ramp(shin, *self.shin_down))
+            if L['side'] not in self.planted:           # once a solve: pivot is asked several times
+                was = self.plant_prev.get(L['side'])
+                near = float(np.clip(1 - (self.foot_low(L, W) - min(self.foot_low(M, W) for M in self.legs) - self.contact_cm[0])
+                                     / (self.contact_cm[1] - self.contact_cm[0]), 0, 1))
+                self.planted[L['side']] = share if was is None else \
+                    was + (share - was) * (1 - math.exp(-self.dt / self.plant_tau)) * near
+            share = self.planted[L['side']]
+            B = B - delta * g * share
+            off = 1 - share * (1 - off)                 # a heel up on a leg that does not stand: kneeling
+        # our ankle from our ball, the foot turned as Gothic's: the ball lands on the pivot exactly
+        A0 = B - W[self.source[L['foot']]][:3, :3] @ self.turn[L['foot']] @ self.local[L['ball']][:3, 3]
+        low = min(self.foot_low(M, W) for M in self.legs)
+        c0, c1 = self.contact_cm
+        c = off * float(np.clip(1 - (self.foot_low(L, W) - low - c0) / (c1 - c0), 0, 1))
         k = rot @ np.array([1.0, 0, 0])
         r = A0 - B
         if (rot_axis(k, 0.01) @ r)[1] < r[1]:   # +theta lifts the heel
             k = -k
-        fwd = rot @ FWD
         phi = math.degrees(math.asin(np.clip(-fwd[1], -1, 1)))          # Gothic's heel lift from its bind
-        lo_, hi_ = math.radians(-max(0.0, phi) - self.pitch[0]), math.radians(self.pitch[1] - max(0.0, phi))
+        own = self.pitch[1] * float(np.clip(1 - (up - self.toes_fade[0]) / (self.toes_fade[1] - self.toes_fade[0]), 0, 1))
+        lo_, hi_ = math.radians(-max(0.0, phi) - self.pitch[0]), math.radians(own - max(0.0, phi))
+        self.match[L['side']] = 0.0
+        if self.heel and phi > 0:
+            # Gothic's ankle rises on a longer foot: ours turns further for the same rise, as far as it may
+            lever = np.linalg.norm((Mf @ L['ball_foot'])[:3] - Mf[:3, 3]) / max(np.linalg.norm(r), 1e-9)
+            want = math.asin(min(1.0, lever * math.sin(math.radians(phi)))) - math.radians(phi)
+            self.match[L['side']] = float(np.clip(want, 0.0, max(hi_, 0.0)))
         return B, r, k, lo_, hi_, c
 
     def knee_lift_v4(self, W):
@@ -282,6 +351,71 @@ class Rig:
         else:
             dy = 0.5 * (lo_all + hi_all)
         return float(np.clip(dy, -10.0, 10.0))
+
+    tau = 0.08       # v5: seconds the pelvis' lift takes to follow (1 - 1/e)
+    dt = 1.0 / 30    # v5: seconds since the last solve
+    prev = None      # v5: the lift of the last solve; None - the first one
+
+    def reset(self):
+        self.prev = None
+        self.plant_prev = {}
+
+    def knee_lift_v5(self, W):
+        """v5: the pelvis' lift over frames. Each leg near the ground and under the hip asks for the lift at which it
+        reaches its foot with Gothic's knee, the foot turned up as far as Gothic's longer foot lifts the ankle
+        (pivot); the legs are weighed by how low the ankle is, how much the leg stands and how much the foot is on
+        the ground. With no leg on the ground the last lift holds while a leg points down (a jump, the flight of a
+        run) and goes to 0 otherwise (lying). The lift follows its goal over `tau` seconds and is never under what a
+        carrying leg needs with its foot flat: a pelvis too low bends a straight knee by 17 degrees a cm, one too high
+        only lifts a foot off the ground (leg)."""
+        self.carrying = {L['side']: 0.0 for L in self.legs}
+        self.contact = {}
+        pr = self.root_b
+        Rp = W[self.source[pr]][:3, :3] @ self.turn[pr]
+        pos = (W[self.root_s] @ self.root_local)[:3]
+        legs = []
+        for L in self.legs:
+            hip = pos + Rp @ (inv(self.Rb[pr]) @ self.Rb[L['thigh']])[:3, 3]
+            a1 = W[self.source[L['thigh']]][:3, :3] @ self.turn[L['thigh']] @ self.local[L['calf']][:3, 3]
+            a2 = W[self.source[L['calf']]][:3, :3] @ self.turn[L['calf']] @ self.local[L['foot']][:3, 3]
+            reach = np.linalg.norm(a1 + a2)
+            B, r, k, lo_, hi_, c = self.pivot(L, W)
+            self.contact[L['side']] = c
+
+            def shift(th):
+                v = B + rot_axis(k, th) @ r - hip
+                h2 = reach ** 2 - v[0] ** 2 - v[2] ** 2
+                return v[1] + math.sqrt(h2) if h2 >= 0 else None
+
+            A = B + rot_axis(k, self.match[L['side']]) @ r
+            v = A - hip
+            stands = float(np.clip((-v[1] / max(np.linalg.norm(v), 1e-9) - self.carry[0]) / (self.carry[1] - self.carry[0]), 0, 1))
+            ys = [y for y in (shift(th) for th in np.linspace(lo_, hi_, 9)) if y is not None]
+            legs.append(dict(side=L['side'], ankle=A[1], wish=shift(self.match[L['side']]), stands=stands, c=c,
+                             low=min(ys) if ys else None))
+            self.carrying[L['side']] = c * stands
+        low = min(l['ankle'] for l in legs)
+        num = den = 0.0
+        for l in legs:
+            if l['wish'] is None:
+                continue
+            w = math.exp(-(l['ankle'] - low) / self.sigma) * l['stands'] * l['c']
+            num += w * l['wish']; den += w
+        trust = min(den, 1.0)
+        goal = trust * num / max(den, 1e-6)
+        if self.prev is None:
+            dy = goal
+        else:
+            goal += (1 - trust) * max(l['stands'] for l in legs) * self.prev
+            dy = self.prev + (goal - self.prev) * (1 - math.exp(-self.dt / self.tau))
+        for l in legs:
+            carry = self.carrying[l['side']]
+            if carry > 0 and l['low'] is not None:
+                dy = max(dy, l['low'] - (1 - carry) * 20.0)
+        dy = float(np.clip(dy, -10.0, 10.0))
+        self.prev = dy
+        self.plant_prev = dict(self.planted)
+        return dy
 
     arms_ik = False   # the arms of RenderRig::solveArm, by the game's hands (RenderRig::Hands, 0..1 each):
     hold = 0.0        # one thing in both hands (2H, bow, crossbow, spell): the left wrist where Gothic holds it
@@ -371,8 +505,15 @@ class Rig:
         out = [None] * len(self.parent)
         self.dy = 0.0
         self.contact = {}
+        self.heel = legs == 'v5'
+        if legs == 'v5':
+            legs = 'v4'
         self.v4 = legs == 'v4'
-        if legs == 'v4' and self.legs:
+        self.match = {}
+        self.planted = {}
+        if self.heel and self.legs:
+            self.dy = self.knee_lift_v5(W)
+        elif legs == 'v4' and self.legs:
             self.dy = self.knee_lift_v4(W)
         elif legs == 'v3' and self.legs:
             self.dy = self.knee_lift(W)
@@ -455,9 +596,9 @@ def measure(rig: Rig, anim, legs):
     for f in range(anim.frame_count):
         W = ga.world_pose(rig.sk, anim, f)
         P = rig.solve(W, legs)
-        keep = rig.lift, rig.share
+        keep = rig.lift, rig.share, rig.prev
         rig.lift, rig.share = 1.0, 0.0
-        F = rig.solve(W, 'fk'); rig.lift, rig.share = keep
+        F = rig.solve(W, 'fk'); rig.lift, rig.share, rig.prev = keep
         for L in rig.legs:
             s = L['side']; out_dir = np.array([-1.0 if s == 'l' else 1.0, 0, 0])
             gh, gk, gf = (W[L[k]][:3, 3] for k in ('st', 'sk', 'sf'))
