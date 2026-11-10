@@ -10,8 +10,10 @@
 #include "skeleton.h"
 #include "animmath.h"
 #include "ikmath.h"
+#include "stopfoot.h"
 
 #include <cmath>
+#include <cstdlib>
 #include <stdexcept>
 
 using namespace Tempest;
@@ -361,8 +363,11 @@ bool Pose::startAnim(const AnimationSolver& solver, const Animation::Sequence *s
       const bool swimFix = (i.sAnim==tickCount && i.bs==BS_SWIM && bs==BS_SWIM);
       const Animation::Sequence* tr=nullptr;
       if(i.seq->shortName!=nullptr && sq->shortName!=nullptr && !swimFix) {
-        string_frm tansition("T_",i.seq->shortName,"_2_",sq->shortName);
-        tr = solver.solveFrm(tansition);
+        tr = footTransition(solver,i,*sq,tickCount);
+        if(tr==nullptr) {
+          string_frm tansition("T_",i.seq->shortName,"_2_",sq->shortName);
+          tr = solver.solveFrm(tansition);
+          }
         }
       if(tr==nullptr && sq->shortName!=nullptr && i.bs==BS_STAND) {
         string_frm tansition("T_STAND_2_",sq->shortName);
@@ -384,6 +389,31 @@ bool Pose::startAnim(const AnimationSolver& solver, const Animation::Sequence *s
       }
   addLayer(sq,bs,comb,tickCount);
   return true;
+  }
+
+const Animation::Sequence* Pose::footTransition(const AnimationSolver& solver, const Layer& l,
+                                                const Animation::Sequence& to, uint64_t tickCount) const {
+  // out of a moving loop that is nearer to its half than to its start: the transition from the right foot, if any
+  auto& from = *l.seq;
+  if(!StopFoot::enabled() || from.animCls!=Animation::Loop || from.data==nullptr || from.reverse)
+    return nullptr;
+  const uint32_t frames = from.data->loopFrames();
+  if(frames==from.data->numFrames)
+    return nullptr; // stands in place
+  const uint64_t now = layerTime(l,tickCount);
+  if(now<l.sAnim || !StopFoot::isRight(StopFoot::phase(now-l.sAnim,from.data->fpsRate,frames)))
+    return nullptr;
+  const std::string right = StopFoot::rightName(from.shortName);
+  if(right.empty())
+    return nullptr;
+  string_frm tansition("T_",right,"_2_",to.shortName);
+  auto ret = solver.solveFrm(tansition);
+  if(ret!=nullptr && !ret->isSettle())
+    ret = nullptr; // the base's only right clip, T_WALKR_2_WALK, was cut for an older walk loop: see stopfoot.h
+  static const bool log = std::getenv("OPENGOTHIC_STOPFOOT_LOG")!=nullptr;
+  if(log)
+    Log::i("stopfoot: ",from.name," -> ",to.name,": ",ret ? ret->name.c_str() : "no right transition");
+  return ret;
   }
 
 bool Pose::stopAnim(std::string_view name) {
