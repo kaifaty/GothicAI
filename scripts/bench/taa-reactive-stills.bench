@@ -1,0 +1,135 @@
+# TAA reactive mask (graphics plan 1v, reports/render-features/2026-11-10-taa-reactive): stills of the places the
+# mask must mark or leave alone. Run with OPENGOTHIC_TAA_REACTIVE_VIEW=1 to see the mask (black exactly 0, red to
+# white up to 1) and without it for the frame itself, 1920x1080 on Ryzen:
+#   OPENGOTHIC_TAA_REACTIVE=1 OPENGOTHIC_TAA_REACTIVE_VIEW=1 TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=ryzen \
+#     scripts/bench.sh scripts/bench/taa-reactive-stills.bench
+# 1. night fire: the "Red Lantern" torch from 2 m along the wall (wall-torch-particles.bench) and the harbour braziers
+#    (taa-clips.bench, 5): the flame and its sparks marked, the wall 0
+# 2. a campfire by day: the tripod on the quay (city-hearth.bench)
+# 3. the waterfall below Xardas' tower, four directions: the falling water marked (scrolling texture), still
+#    translucent around it 0
+# 4. rain: the hero casts the thunderstorm (hold action, tap forward), the camera in front of him: its rain 0, its
+#    flashes marked
+# 5. the harbour shore with water at noon (the harbour camera of 1): 0
+# A shot is taken at the end of a frame: each one waits before the next command moves the camera.
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+cam lift off
+
+# 1. night fire
+view hide animated morph
+set time 0 0
+goto pos 400 -129 -2985
+wait 3000
+cam look 320
+cam world 100 294 90
+wait 5000
+set time 0 0
+wait 300
+cam hold
+wait 300
+shot reactive-torch-2m
+wait 300
+view full
+
+cam cut
+set time 0 0
+cam look -2033.524
+goto pos -3202.329 1917.000 -3435.690
+cam world 5999.906 -2000.000 -155.224859
+wait 34
+cam hold
+wait 6000
+set time 0 0
+wait 300
+shot reactive-harbour-night
+wait 300
+
+# 2. a campfire by day
+cam cut
+set time 12 0
+cam look -600.000
+goto pos -1688.000 1235.000 -8889.000
+cam world 449.642 -500.000 -170.139651
+wait 34
+cam hold
+wait 6000
+set time 12 0
+wait 300
+shot reactive-campfire-day
+wait 300
+
+# 3. the waterfall
+cam cut
+set time 12 0
+goto NW_XARDAS_TOWER_WATERFALL_01
+watch player
+cam look 150
+cam world 700 300 0
+wait 6000
+cam hold
+shot reactive-waterfall-0
+wait 300
+cam cut
+cam world 700 300 90
+wait 2000
+cam hold
+shot reactive-waterfall-90
+wait 300
+cam cut
+cam world 700 300 180
+wait 2000
+cam hold
+shot reactive-waterfall-180
+wait 300
+cam cut
+cam world 700 300 270
+wait 2000
+cam hold
+shot reactive-waterfall-270
+wait 300
+
+# 4. rain
+cam cut
+set time 12 0
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 500
+clear 2500
+equip ItRu_Thunderstorm
+tap spell
+wait 1500
+cam follow 600 250 0
+cam look 150
+wait 1000
+press action
+wait 900
+tap forward
+wait 1500
+shot reactive-rain-a
+wait 700
+shot reactive-rain-b
+wait 1500
+shot reactive-rain-c
+wait 300
+release action
+wait 1500
+shot reactive-rain-d
+wait 300
+
+# 5. the harbour shore at noon
+cam cut
+set time 12 0
+cam look -2033.524
+goto pos -3202.329 1917.000 -3435.690
+cam world 5999.906 -2000.000 -155.224859
+wait 34
+cam hold
+wait 6000
+set time 12 0
+wait 300
+shot reactive-shore
+wait 300
