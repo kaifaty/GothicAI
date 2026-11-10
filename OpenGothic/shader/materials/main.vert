@@ -28,18 +28,27 @@ layout(push_constant, std430) uniform Push {
   } push;
 #endif
 
+#if defined(VIRTUAL_SHADOW)
+// the four planes of the page's rect; objects have a fifth on a lamp's faces: the fixture plane (processVertexVsm)
+#if defined(LVL_OBJECT)
+#define VSM_CLIP_COUNT 5
+#else
+#define VSM_CLIP_COUNT 4
+#endif
+#endif
+
 #if defined(GL_VERTEX_SHADER)
 out gl_PerVertex {
   vec4  gl_Position;
 #if defined(VIRTUAL_SHADOW)
-  float gl_ClipDistance[4];
+  float gl_ClipDistance[VSM_CLIP_COUNT];
 #endif
   };
 #else
 out gl_MeshPerVertexEXT {
   vec4  gl_Position;
 #if defined(VIRTUAL_SHADOW)
-  float gl_ClipDistance[4];
+  float gl_ClipDistance[VSM_CLIP_COUNT];
 #endif
   } gl_MeshVerticesEXT[];
 #endif
@@ -117,21 +126,40 @@ vec4 processVertexVsm(out Varyings var, const Vertex vert, const uint bucketId, 
   const vec3 wpos = processVertexCommon(var, vert, bucketId, instanceId, vboOffset);
   const uint data = vsm.pageList[shadowPageId];
 
-  vec4 pos4;
+  vec4  pos4;
+  float fixture = 1.0;
   if(vsmPageIsOmni(data)) {
     const uvec2       page = unpackLightId(data);
     const LightSource lx   = lights[page.x];
     const vec3        pos  = vsmMapDirToFace((wpos - lx.pos)/lx.range, page.y);
 
     pos4 = vsmApplyProjective(pos);
+    // a lamp's own fixture (a brazier's basket, a lantern's frame, a candle holder) casts no shadow of its light:
+    // an object's part nearer than scene.vsmLampNear to the light along the face's axis is clipped away here, so the
+    // face keeps what stands behind it. Left out at the lookup instead, it took the wall behind it out of the map
+    // too, and the light passed the planks of a hut (reports/render-features/2026-11-10-lamp-wall-leak). The world
+    // mesh is never a fixture: it keeps the projection's near plane alone
+    fixture = pos.z - scene.vsmLampNear/lx.range;
     } else {
     pos4 = scene.viewProject*vec4(wpos,1.0);
     }
+
+  float clip[4];
+  pos4 = mapViewport(pos4, clip);
 #if defined(GL_VERTEX_SHADER)
-  return mapViewport(pos4, gl_ClipDistance);
-#else
-  return mapViewport(pos4, gl_MeshVerticesEXT[laneID].gl_ClipDistance);
+  [[unroll]] for(int i=0; i<4; ++i)
+    gl_ClipDistance[i] = clip[i];
+#if VSM_CLIP_COUNT>4
+  gl_ClipDistance[4] = fixture;
 #endif
+#else
+  [[unroll]] for(int i=0; i<4; ++i)
+    gl_MeshVerticesEXT[laneID].gl_ClipDistance[i] = clip[i];
+#if VSM_CLIP_COUNT>4
+  gl_MeshVerticesEXT[laneID].gl_ClipDistance[4] = fixture;
+#endif
+#endif
+  return pos4;
   }
 #endif
 

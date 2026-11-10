@@ -52,6 +52,8 @@ class SceneGlobals final {
     void setMotion(bool enabled, const Tempest::Matrix4x4& reprojectClip, const Tempest::Matrix4x4& viewProjectPrev);
     // the TAA reactive mask (graphics plan 1v): the added light on screen that makes an additive pixel fully reactive
     void setTaaReactiveLref(float lref);
+    // VSM lamps: an object nearer than this to a light (cm, along its cube face's axis) is no blocker of it
+    void setVsmLampNear(float cm);
 
     void setTime(uint64_t time);
     void commitUbo(uint8_t fId);
@@ -152,10 +154,10 @@ class SceneGlobals final {
       float                           reactiveLrefInv = 4.f; // TAA reactive mask: 1/Lref of added light (main.frag)
       Tempest::Matrix4x4              reprojectClip   = Tempest::Matrix4x4::mkIdentity(); // Taa::reprojection
       Tempest::Matrix4x4              viewProjectPrev = Tempest::Matrix4x4::mkIdentity(); // Taa::viewProjectPrev
-      uint32_t                        viewFlags     = 0; // VF_* of scene.glsl: VF_HIZ in V_HiZ only (commitUbo), VF_TAA
-      uint32_t                        viewPad0      = 0; // std140: the struct ends on 16 bytes
-      uint32_t                        viewPad1      = 0;
-      uint32_t                        viewPad2      = 0;
+      float                           vsmLampNear     = 30.f; // cm: VSM lamps, the fixture plane (main.vert)
+      uint32_t                        viewFlags       = 0; // VF_* of scene.glsl: VF_HIZ in V_HiZ only (commitUbo), VF_TAA
+      uint32_t                        viewPad0        = 0; // std140: the struct ends on 16 bytes
+      uint32_t                        viewPad1        = 0;
       };
 
     Tempest::UniformBuffer<UboGlobal> uboGlobalPf[Resources::MaxFramesInFlight][V_Count];

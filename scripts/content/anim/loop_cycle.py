@@ -1,13 +1,15 @@
 """Cut a locomotion loop out of a steady stretch of a retargeted move (walk, run) and close its seam.
 
     python3 scripts/content/anim/loop_cycle.py <in.MAN.json> <models dir> <out.MAN.json> --name S_RUNL \
-        --speed 345 [--window 1.0,5.8] [--strides 1] [--start left] [--report out.json]
+        --speed 345 [--window 1.0,5.8] [--strides 1] [--period S] [--start left] [--report out.json]
 
 The engine plays a moving loop the way Gothic's own loops are made: the last frame is the first frame of the next
 cycle, moved by the cycle's travel (`Animation::AnimData::setupMoveTr`). So the loop is written with N+1 frames,
 frame N = frame 0 + travel, rotations equal.
 
-1. The stride period comes from the autocorrelation of the toes' heights in the window.
+1. The stride period comes from the autocorrelation of the toes' heights in the window, or from `--period`: a walk
+   keyed to the poses of a known cycle has its period, and one that hardly lifts the feet (Gothic's own walk: the
+   toes rise by 5 cm) gives the autocorrelation nothing to hold on to.
 2. Of all frame pairs (a, a + period ± 2) in the window, the one whose in-place poses and velocities differ least
    is the cycle (`--strides` periods long).
 3. The seam's leftover - every node's local rotation and the root's in-place offset at the end against the start -
@@ -130,6 +132,7 @@ def main():
     ap.add_argument("--speed", type=float, required=True, help="cm/s the loop must travel")
     ap.add_argument("--window", default="1.0,5.8")
     ap.add_argument("--strides", type=int, default=1)
+    ap.add_argument("--period", type=float, default=0.0, help="the stride's period in seconds, when it is known")
     ap.add_argument("--start", choices=("left", "right"), default="left")
     ap.add_argument("--report", type=Path)
     a = ap.parse_args()
@@ -145,7 +148,7 @@ def main():
     h = toe_heights(W, idx)
     t0, t1 = (float(x) for x in a.window.split(","))
     f0, f1 = int(t0 * fps), min(src.frame_count - 2, int(t1 * fps))
-    T = period(h[f0:f1], fps) * a.strides
+    T = (a.period * fps if a.period else period(h[f0:f1], fps)) * a.strides
     n0 = round(T)
     best = None
     for n in range(n0 - 2, n0 + 3):
