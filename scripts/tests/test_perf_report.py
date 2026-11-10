@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shlex
+import shutil
 import subprocess
 import sys
 
@@ -131,6 +132,75 @@ def test_perf_content_arguments_and_abba(monkeypatch, tmp_path):
     assert all(env["PERF_REPEAT"] == "1" and env["NO_BUILD"] == "1" and "/wrong" not in env["PERF_ENV"]
                for _, env in calls)
     assert reports == [(tmp_path, 1, 3)]
+
+
+def test_perf_content_base_follows_stand_engine_format(monkeypatch, tmp_path):
+    # game-base.json names a base of another importer format; the built stand's converter decides.
+    pointed, compatible, old, new = "a" * 64, "b" * 64, "1" * 64, "2" * 64
+    home, shared = tmp_path / "home", tmp_path / "shared"
+    for name in ("Gothic.ini", "SystemPack.ini"):
+        (home / "gothic-ai/game-settings/system").mkdir(parents=True, exist_ok=True)
+        (home / "gothic-ai/game-settings/system" / name).write_text("")
+    (home / "gothic-ai/game-base.json").write_text(json.dumps({"base": pointed, "videos": ""}))
+    # The base of the engine's format is only in the shared store.
+    for root, fingerprint, format_sha256 in ((home / ".cache/gothic-ai/base", pointed, old),
+                                             (shared / "base", compatible, new)):
+        (root / fingerprint).mkdir(parents=True)
+        (root / fingerprint / "base.json").write_text(json.dumps(
+            {"format_sha256": format_sha256, "archives": ["Data/Worlds.vdf"], "loose_files": []}))
+        (root / fingerprint / "world.bin").write_text(fingerprint)
+    tool = tmp_path / "content-convert"
+    tool.write_text(f"#!/bin/sh\necho '{json.dumps({'base': new, 'videos': '0' * 64})}'\n")
+    tool.chmod(0o755)
+    for key in [key for key in os.environ if key.startswith(("OPENGOTHIC_", "GOTHIC_"))]:
+        monkeypatch.delenv(key)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(content, "SHARED", shared)
+
+    def tree(root):
+        return sorted((path.relative_to(root).as_posix(), path.stat().st_mtime_ns) for path in root.rglob("*"))
+    before = tree(home / ".cache"), tree(shared)
+    task = tmp_path / "task"
+    assert content.prepare_base(task, tool) == compatible
+    assert (task / "base-cache" / compatible / "world.bin").read_text() == compatible
+    assert [path.name for path in (task / "base-cache").iterdir()] == [compatible]
+    assert (tree(home / ".cache"), tree(shared)) == before
+    # A caller's fingerprint wins over the pick.
+    monkeypatch.setenv("OPENGOTHIC_BASE_FINGERPRINT", pointed)
+    assert content.prepare_base(task, tool) == pointed
+    assert (task / "base-cache" / pointed / "world.bin").read_text() == pointed
+    monkeypatch.delenv("OPENGOTHIC_BASE_FINGERPRINT")
+    with pytest.raises(ValueError, match="content-convert"):
+        content.prepare_base(task, tmp_path / "missing/content-convert")
+    shutil.rmtree(shared / "base" / compatible)
+    with pytest.raises(ValueError, match="no ready base"):
+        content.prepare_base(tmp_path / "other-task", tool)
+
+
+def test_perf_content_runs_on_base_picked_after_build(monkeypatch, tmp_path):
+    base = "c" * 64
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        script = command[-1] if command[0] == "ssh" else ""
+        stdout = "/remote" if "$HOME" in script else base + "\n" if "__base" in script else ""
+        return subprocess.CompletedProcess(command, 0, stdout=stdout)
+    monkeypatch.setattr(content.subprocess, "run", run)
+    monkeypatch.setattr(content.subprocess, "check_output", lambda command, **kwargs: "")
+    monkeypatch.setattr(content, "ROOT", tmp_path / "repo")
+    for key in ("BENCH_HOST", "OPENGOTHIC_BASE_FINGERPRINT"):
+        monkeypatch.delenv(key, raising=False)
+    assert content.launch(content.parse_args(["none", "none", "harbour"])) == 0
+    build, pick, measure = (next(index for index, command in enumerate(calls) if marker(command))
+                            for marker in (lambda command: "__build" in command,
+                                           lambda command: command[0] == "ssh" and "__base" in command[-1],
+                                           lambda command: "__run" in command))
+    assert build < pick < measure
+    assert f"OPENGOTHIC_BASE_FINGERPRINT={base}" in calls[measure]
+    assert not any(value.startswith("OPENGOTHIC_BASE_FINGERPRINT=") for value in calls[build])
+    metadata, = (tmp_path / "repo/.bench").glob("*/metadata.json")
+    assert json.loads(metadata.read_text())["base"] == base
 
 
 @pytest.mark.parametrize("b_ms,verdict", [(10.1, "в шуме"), (10.5, "в пороге"),
