@@ -116,6 +116,11 @@ CommandLine::CommandLine(int argc, const char** argv) {
       if(i<argc)
         isTaa = boolArg(argv[i]);
       }
+    else if(arg=="-mv") {
+      ++i;
+      if(i<argc)
+        isMv = boolArg(argv[i]) ? 1 : 0;
+      }
     else if(arg=="-aa") {
       ++i;
       if(i<argc) {

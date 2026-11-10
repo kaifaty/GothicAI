@@ -50,6 +50,7 @@ class Shaders {
     Tempest::ComputePipeline copyBuf;
     Tempest::ComputePipeline copyImg;
     Tempest::ComputePipeline patch;
+    Tempest::ComputePipeline patchCopy; // InstanceStorage history: cur -> prev by a list in the patch buffer
     Tempest::RenderPipeline  copy, downscale;
     Tempest::RenderPipeline  stash;
     Tempest::RenderPipeline  bink;
@@ -75,6 +76,7 @@ class Shaders {
     Tempest::RenderPipeline  waterReflection, waterReflectionSSR;
 
     Tempest::RenderPipeline  tonemapping, tonemappingUpscale;
+    Tempest::RenderPipeline  motionView; // debug: gbufMotion as the frame (OPENGOTHIC_MOTION_VIEW=1)
     Tempest::RenderPipeline  bloomDownKaris, bloomDown, bloomUp, bloomMix;
 
     // AA

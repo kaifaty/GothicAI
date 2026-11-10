@@ -720,6 +720,14 @@ const Tempest::StorageBuffer& VisualObjects::instanceSsbo() const {
   return instanceMem.ssbo();
   }
 
+const Tempest::StorageBuffer& VisualObjects::instanceSsboPrev() const {
+  return instanceMem.ssboPrev();
+  }
+
+void VisualObjects::setInstanceHistory(bool enabled) {
+  instanceMem.setHistory(enabled);
+  }
+
 uint32_t VisualObjects::clusterId(const PackedMesh::Cluster* cx, size_t firstMeshlet, size_t meshletCount, uint16_t bucketId, uint16_t commandId) {
   if(commandId==uint16_t(-1))
     return uint32_t(-1);

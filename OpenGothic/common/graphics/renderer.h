@@ -113,6 +113,8 @@ class Renderer final {
     void stashSceneAux    (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
 
     void drawRayQueryDbg  (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
+    void drawMotionView   (Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd);
+    void prepareMotion    (WorldView& wview);
     void drawProbesDbg    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
     void drawSurfelsDbg   (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
     void drawProbesHitDbg (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
@@ -151,6 +153,11 @@ class Renderer final {
       bool           upscaleMipBiasSet  = false; // OPENGOTHIC_UPSCALE_MIP_BIAS over log2(in/out) - 1
       float          upscaleMipBias     = 0;
       bool           bloomEnabled       = true;
+      // motion vectors of objects (graphics plan 1b), on by default: -mv 0, [INTERNAL] motionVectors=0,
+      // OPENGOTHIC_MOTION_VECTORS=0|1 over both
+      bool           motionVectors      = false;
+      bool           motionView         = false; // OPENGOTHIC_MOTION_VIEW=1: the frame shows gbufMotion (debug)
+      float          motionViewPx       = 2;     // OPENGOTHIC_MOTION_VIEW_PX: px/frame of its full brightness
 
       float          zVidBrightness     = 0.5;
       float          zVidContrast       = 0.5;
@@ -233,10 +240,7 @@ class Renderer final {
       Tempest::StorageImage     history[2];
       uint8_t                   cur       = 0;     // history[cur] is written this frame, the other one read
       uint32_t                  frame     = 0;     // the cycle of 4 frames picks the samples
-      uint32_t                  cuts      = 0;     // Camera::cuts() of the last traced frame
-      uint32_t                  camCuts   = 0;     // and of this frame
       bool                      valid     = false; // the history holds the last frame of this view
-      Taa::View                 view, prev;        // this frame's camera without jitter, and the last traced one
       } ssao;
 
     struct Cmaa2 {
@@ -256,14 +260,26 @@ class Renderer final {
       Tempest::Attachment       output;
       uint8_t                   cur       = 0;     // history[cur] is written this frame, the other one read
       uint32_t                  frame     = 0;     // the jitter phase
-      uint32_t                  cuts      = 0;     // Camera::cuts() of the last frame
       bool                      active    = false; // this frame is jittered and resolved
       bool                      valid     = false; // the history holds a frame of this view
       bool                      shot      = false; // screenshoot(): an image of the internal size
-      Taa::View                 prev;
       Tempest::Matrix4x4        reproject;
       Tempest::Vec2             jitter;              // this frame's offset, pixels of the internal resolution
       } taa;
+
+    // The main camera of this frame and of the drawn frame before it, without jitter (updateCamera). TAA, the SSAO
+    // history and the motion vectors of objects all reproject by this one pair; a cut (Camera::cuts), a jump
+    // (Taa::isCameraJump), a new world or a reset of the temporal state break it
+    struct {
+      Taa::View                 cur, prev;
+      uint32_t                  cuts       = 0;     // Camera::cuts() of `cur`
+      bool                      hasCur     = false;
+      bool                      continuous = false; // `prev` is the frame before `cur`, of the same shot
+      } camHistory;
+
+    // motion vectors of objects (graphics plan 1b): the objects' own motion, RG16F at the internal resolution, the
+    // residual against the camera's in texture coordinates, current -> previous; 0 where nothing moves by itself
+    Tempest::Attachment       gbufMotion;
 
     // the temporal upscale (graphics plan 1g, OPENGOTHIC_UPSCALE=temporal): MetalFX Temporal takes the place of the
     // TAA resolve and keeps the history itself; bloom and tonemapping go on at the swapchain's resolution
