@@ -293,8 +293,10 @@ void Eyes::update(const Input& in) {
     }
   last = at;
 
-  // the point from the middle of the eyes and the head's forward, in the world (the probe)
-  const Vec3  d  = at - project(in.head,center(*eyes));
+  // the point looked at from the middle of the eyes - without the eyes' own jumps around it (what Gaze turns the
+  // head to) - and the head's forward, in the world (the probe)
+  const Vec3  base = kind==Kind::Aside ? in.asideAt : (kind==Kind::Forward || kind==Kind::None) ? at : in.at;
+  const Vec3  d  = base - project(in.head,center(*eyes));
   const float dh = std::sqrt(d.x*d.x + d.z*d.z);
   const Vec3  fw = Vec3(in.head.at(2,0),in.head.at(2,1),in.head.at(2,2));
   rise   = d.y;

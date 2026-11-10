@@ -54,7 +54,7 @@ class Eyes final {
       bool     moving   = false; // in a saccade
       uint32_t saccades = 0;
       uint32_t big      = 0;     // of BigSaccade degrees and more
-      float    rise     = 0;     // cm the fixation point is above the middle of the eyes (world)
+      float    rise     = 0;     // cm the point looked at (without the eyes' own jumps) is above the middle of the eyes
       float    down     = 0;     // degrees it is below the level of the eyes (world)
       float    head     = 0;     // degrees the head's forward is above the level (world)
       };
