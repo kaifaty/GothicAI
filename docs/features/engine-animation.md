@@ -7,6 +7,7 @@
 | Фича | Как выключить | Модуль | Проверка | Документ |
 |---|---|---|---|---|
 | Инерциальные переходы | `OPENGOTHIC_ANIBLEND=0` | `animblend.*` | бенч `anim` | — |
+| Остановка по ноге: из петли хода с левой или правой ноги по фазе петли, если в своём контенте есть клип на правую (`T_RUNR_2_RUN`) с флагом `SETTLE` (64); такая остановка уступает другой анимации, когда корень встал. С клипами базы поведение прежнее | `OPENGOTHIC_STOPFOOT=0` | `stopfoot.*`, `pose.cpp` (`footTransition`), `animation.cpp` (`canInterrupt`) | контракт `gothic-stopfoot-contract` (`check-stopfoot`), бенч `hero-run-startstop` | [пилот, шаг 3](../../reports/content/2026-11-hero-locomotion/README.md#пилот-шаг-3-старт-и-остановки-бега) |
 | Foot IK, у четвероногих тоже | `OPENGOTHIC_FOOTIK=0` | `footik.*` | бенчи `ik-ab`, `ik-moves`, `ik-stairs`, `ik-sweep`, `quad-wolf`, `quad-zoo` | — |
 | Моргание | `OPENGOTHIC_BLINK=0` | `eyeblink.*` | бенчи `blink`, `listen` | — |
 | Жесты рук при речи | `OPENGOTHIC_GESTURES=0` | `talkgestures.*` | бенч `gestures` | — |
