@@ -72,3 +72,8 @@ void VisualObjects::reportTextureCensus() {
   c.requeues=r.requeues;
   c.loads=r.loadsStarted;
   }
+
+std::pair<uint64_t,uint64_t> VisualObjects::textureQueueDroppedPastEnd() const {
+  std::lock_guard<std::recursive_mutex> guard(textureSync);
+  return {textureDroppedPastEnd[0],textureDroppedPastEnd[1]};
+  }

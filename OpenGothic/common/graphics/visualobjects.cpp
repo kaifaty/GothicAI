@@ -79,10 +79,22 @@ void VisualObjects::Item::setTexturePosition(const Vec3& position) {
   if(obj.textureCategory!=Resources::TextureCategory::Static)
     return;
   const auto chunk=ChunkId::fromPosition(position.x,position.z);
-  // With levels by screen size a measured owner is placed again when it moves half a metre: its bounds decide.
+  // With levels by screen size a measured owner is placed again when it moves half a metre or turns or scales by about
+  // three degrees or five per cent: its bounds decide.
   const auto dx=position.x-obj.textureAnchor.x, dy=position.y-obj.textureAnchor.y, dz=position.z-obj.textureAnchor.z;
+  const auto turned=[&obj] {
+    float diff=0, norm=0;
+    for(int i=0;i<3;++i)
+      for(int k=0;k<3;++k) {
+        const float d=obj.pos.at(i,k)-obj.textureAxes[i][k];
+        diff+=d*d;
+        norm+=obj.textureAxes[i][k]*obj.textureAxes[i][k];
+        }
+    return diff>0.0025f*norm/3.f;
+    };
   if(obj.textureChunkRegistered && obj.textureChunk==std::pair{chunk.x,chunk.z} &&
-     (!obj.textureMeasured || !owner->textureScreenMode || (obj.texturePlaced && dx*dx+dy*dy+dz*dz<50.f*50.f)))
+     (!obj.textureMeasured || !owner->textureScreenMode ||
+      (obj.texturePlaced && dx*dx+dy*dy+dz*dz<50.f*50.f && !turned())))
     return;
   FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand);
   std::lock_guard<std::recursive_mutex> guard(owner->textureSync);
@@ -91,6 +103,9 @@ void VisualObjects::Item::setTexturePosition(const Vec3& position) {
   if(obj.textureMeasured) {
     obj.textureTexel=obj.textureLocal.placed(obj.pos);
     obj.textureAnchor=position;
+    for(int i=0;i<3;++i)
+      for(int k=0;k<3;++k)
+        obj.textureAxes[i][k]=obj.pos.at(i,k);
     obj.texturePlaced=true;
     }
   owner->updateTextureDemand(id);
@@ -556,6 +571,9 @@ void VisualObjects::updateTextureView(bool flush) {
       if(textureScreenMode && object.textureMeasured && !object.textureChunkedLandscape) {
         object.textureTexel=object.textureLocal.placed(object.pos);
         object.textureAnchor=object.texturePosition;
+        for(int i=0;i<3;++i)
+          for(int k=0;k<3;++k)
+            object.textureAxes[i][k]=object.pos.at(i,k);
         object.texturePlaced=true;
         }
       updateTextureDemand(id);
@@ -572,8 +590,10 @@ void VisualObjects::updateTextureView(bool flush) {
   for(size_t count=1;textureScreen.due(textureView.odometer,entry);++count) {
     textureScreen.pop();
     // free() pops the empty tail of `objects`: an entry of a released owner can be past its end
-    if(entry.owner>=objects.size())
+    if(entry.owner>=objects.size()) {
+      ++textureDroppedPastEnd[0];
       continue;
+      }
     auto& object=objects[entry.owner];
     if(object.isEmpty() || !object.textureScheduled || object.textureStamp!=entry.stamp) {
       ++textureCensus.stale;
@@ -607,8 +627,10 @@ void VisualObjects::updateTextureView(bool flush) {
   if(textureScreen.size()>2*textureScheduledCount+4096) {
     ++textureCensus.compactions;
     textureScreen.compact([this](const TextureScreenDemand::Entry& e) {
-      if(e.owner>=objects.size())
+      if(e.owner>=objects.size()) {
+        ++textureDroppedPastEnd[1];
         return false;
+        }
       const auto& object=objects[e.owner];
       return !object.isEmpty() && object.textureScheduled && object.textureStamp==e.stamp;
       });

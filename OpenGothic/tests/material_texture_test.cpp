@@ -1180,6 +1180,7 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
   write("lv-stale.dds",mipDds(0x31545844,512,512,10));
   write("lv-hold.dds",mipDds(0x31545844,256,256,9));
   write("lv-noarea.dds",mipDds(0x31545844,256,256,9));
+  write("lv-turn.dds",mipDds(0x31545844,512,512,10));
   textFile(fixture.root/"materials/materials.json",R"({
     "LV_STREAM.TGA":{"albedo":"lv-albedo.dds","normal":"lv-maps.dds","orm":"lv-maps.dds"},
     "LV_FLAT.TGA":{"albedo":"lv-flat.dds"},
@@ -1188,7 +1189,8 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
     "LV_SCALED.TGA":{"albedo":"lv-scaled.dds","scale":2.17},
     "LV_STALE.TGA":{"albedo":"lv-stale.dds"},
     "LV_HOLD.TGA":{"albedo":"lv-hold.dds"},
-    "LV_NOAREA.TGA":{"albedo":"lv-noarea.dds"}
+    "LV_NOAREA.TGA":{"albedo":"lv-noarea.dds"},
+    "LV_TURN.TGA":{"albedo":"lv-turn.dds"}
   })");
   setenv("OPENGOTHIC_TEXTURE_STREAMING","1",1);
   setenv("OPENGOTHIC_TEXTURE_MIPS","1",1);
@@ -1201,7 +1203,7 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
   Resources resources(device);
   Shaders shaders;
   shaders.waitCompiler();
-  Material material, flat, near, ring, scaled, stale;
+  Material material, flat, near, ring, scaled, stale, turn;
   {
   Resources::TextureLoadScope far(true);
   material=Material(source("LV_STREAM.TGA"),true);
@@ -1210,6 +1212,7 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
   ring=Material(source("LV_RING.TGA"),true);
   scaled=Material(source("LV_SCALED.TGA"),true);
   stale=Material(source("LV_STALE.TGA"),true);
+  turn=Material(source("LV_TURN.TGA"),true);
   }
   require(scaled.uvScale==2.17f && scaled.tex->w()==128,"the scaled fixture must carry its materials.json UV scale");
   const Material hold(source("LV_HOLD.TGA"),true);
@@ -1314,6 +1317,7 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
   StaticMesh staleMesh(stale,{{{0,0,0},{0,0,1},{0,0},0xffffffffu},{{100,0,0},{0,0,1},{1,0},0xffffffffu},
                               {{0,100,0},{0,0,1},{0,1},0xffffffffu}},{0,1,2});
   std::vector<VisualObjects::Item> released;
+  const auto droppedBefore=visuals.textureQueueDroppedPastEnd();
   for(size_t i=0;i<4200+8;++i) {
     auto at=Tempest::Matrix4x4::mkIdentity();
     at.translate(i<8 ? 1000.f : 20000.f,0,float(i)*10.f);
@@ -1327,6 +1331,9 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
   require(stale.tex->w()==128,"queue entries of released owners past the end of the objects must not be evaluated");
+  const auto dropped=visuals.textureQueueDroppedPastEnd();
+  require(dropped.first-droppedBefore.first==8 && dropped.second-droppedBefore.second==4200,
+          "the due loop must drop the 8 due entries and the compaction the 4200 others, all past the end of the objects");
   }
 
   // 2^-5: the albedo needs level 2, the maps level 1. Nothing is lowered within the target, even after the delay.
@@ -1375,6 +1382,26 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
   Resources::configureTextures({},{},"0");
   require(Resources::textureStats().promotionQueue==1,"switching levels back on must apply the same demand");
   Resources::textureDemand(ring,stat,false,Need{4,-3});
+
+  // An owner that turns without moving is placed again: a 20 m strip along x, 40 m from the hero along z, turned by
+  // 90 degrees about its centre comes from 39.9 to 30 m, 2^-5 -> 2^-4: its 512 texture goes from level 2 to level 1.
+  {
+  StaticMesh stripMesh(turn,{{{-1000,0,-10},{0,0,1},{0,0},0xffffffffu},{{1000,0,-10},{0,0,1},{20,0},0xffffffffu},
+                             {{-1000,0,10},{0,0,1},{0,0.2f},0xffffffffu},{{1000,0,10},{0,0,1},{20,0.2f},0xffffffffu}},
+                       {0,1,2, 2,1,3});
+  auto strip=visuals.get(stripMesh,turn,0,stripMesh.sub[0].iboLength,true);
+  auto at=Tempest::Matrix4x4::mkIdentity();
+  at.translate(hero.x,hero.y,hero.z-4000);
+  strip.setObjMatrix(at);
+  for(int i=0;i<10;++i) {
+    tick();
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+  require(turn.tex->w()==128,"a strip lying across the view 40 m away must keep the 512 texture's tail");
+  at.rotateOY(90);
+  strip.setObjMatrix(at);
+  waitFor([&] { return turn.tex->w()==256; },"an owner turned at the same position must be placed again and demand sharper");
+  }
   Resources::textureDemand(material,stat,false,Need{3,-5});
   owner=VisualObjects::Item();
   blank=VisualObjects::Item();

@@ -98,6 +98,9 @@ class VisualObjects final {
     void   dumpTextureOwners(const std::filesystem::path& file) const;
     // OPENGOTHIC_TEXTURE_DUMP: a line a second with the demand work done since the last one
     void   reportTextureCensus();
+    // Queue entries dropped because their owner is past the end of `objects`: by the due loop, by the compaction.
+    // For gothic-material-texture-test.
+    std::pair<uint64_t,uint64_t> textureQueueDroppedPastEnd() const;
     bool   textureChunkActive(const Tempest::Vec3& position) const;
     ChunkResidency* textureResidencyManager() const;
 
@@ -192,6 +195,7 @@ class VisualObjects final {
       TexelDensity        textureLocal;
       TexelDensity        textureTexel;
       Tempest::Vec3       textureAnchor;
+      float               textureAxes[3][3] = {};  // the axes of pos it was placed with
       Tempest::Vec3       texturePosition;
       std::pair<int32_t,int32_t> textureChunk;
       uint32_t            rtSlot  = RtScene::NoSlot;  // its slot of the ray scene
@@ -254,6 +258,7 @@ class VisualObjects final {
       std::chrono::steady_clock::time_point since{};
       } textureCensus;
     size_t                     textureScheduledCount = 0;
+    uint64_t                   textureDroppedPastEnd[2] = {};
     TextureScreenDemand::View  textureView;
     bool                       textureScreenMode = false;
     struct TextureChunk {
