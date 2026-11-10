@@ -153,7 +153,7 @@ class Renderer final {
       bool           upscaleMipBiasSet  = false; // OPENGOTHIC_UPSCALE_MIP_BIAS over log2(in/out) - 1
       float          upscaleMipBias     = 0;
       bool           bloomEnabled       = true;
-      // motion vectors of objects (graphics plan 1b), off by default: -mv 1, [INTERNAL] motionVectors=1,
+      // motion vectors of objects (graphics plan 1b), on by default: -mv 0, [INTERNAL] motionVectors=0,
       // OPENGOTHIC_MOTION_VECTORS=0|1 over both
       bool           motionVectors      = false;
       bool           motionView         = false; // OPENGOTHIC_MOTION_VIEW=1: the frame shows gbufMotion (debug)

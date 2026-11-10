@@ -133,4 +133,4 @@ motion = ((prevStatic.xy + prevDelta.xy)/(prevStatic.w + prevDelta.w) - prevStat
 - **Тесты:** `InstanceStorage` — правило трёх шагов на списках диапазонов (без устройства); `gothic-taa-test` — формула остатка против прямой проекции точки `p` и `p+d` прошлой камерой, ноль при `d=0`.
 - **Цена:** `perf.sh` рынок, лес, интерьер на Mac и Ryzen, до и после.
 
-До приёмки вида векторы выключены по умолчанию: `-mv 1`, `[INTERNAL] motionVectors=1` или `OPENGOTHIC_MOTION_VECTORS=1`.
+До приёмки вида векторы были выключены по умолчанию. Пользователь принял вид 10.11.2026; с тех пор они включены, выключают их `-mv 0`, `[INTERNAL] motionVectors=0` или `OPENGOTHIC_MOTION_VECTORS=0`.

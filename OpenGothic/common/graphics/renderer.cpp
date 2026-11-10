@@ -233,9 +233,9 @@ void Renderer::setupSettings() {
       Log::i("render: taa = ", logged, ", sharpness = ", settings.taaSharpness, ", mip bias = ", settings.taaMipBias);
       }
   }
-  // motion vectors of objects (graphics plan 1b, reports/render-features/2026-11-10-motion-vectors), off by default
-  // until the look is accepted: -mv 1 or [INTERNAL] motionVectors=1 turn them on, OPENGOTHIC_MOTION_VECTORS=0|1
-  // (test benches) overrides both. OPENGOTHIC_MOTION_VIEW=1 shows the vectors in place of the frame
+  // motion vectors of objects (graphics plan 1b, reports/render-features/2026-11-10-motion-vectors), on by default:
+  // -mv 0 or [INTERNAL] motionVectors=0 turn them off, OPENGOTHIC_MOTION_VECTORS=0|1 (test benches) overrides
+  // both. OPENGOTHIC_MOTION_VIEW=1 shows the vectors in place of the frame
   {
     bool mv = Gothic::options().motionVectors>=0 ? Gothic::options().motionVectors!=0
                                                  : Gothic::settingsGetI("INTERNAL","motionVectors")!=0;
