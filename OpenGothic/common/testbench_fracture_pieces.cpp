@@ -306,8 +306,9 @@ RemnantAim remnantAim(World& world,const RemnantGroup& group,const FractureMesh&
         }
       bool covered=false;
       const Vec3 across(outward.z,0,-outward.x);
-      for(float u=-20.f;u<=20.f && !covered;u+=10.f)
-        for(float v=-20.f;v<=20.f && !covered;v+=10.f) {
+      // A 4 cm grid: a stave is 5 cm thick, and one standing in the hoops stops the blade.
+      for(float u=-20.f;u<=20.f && !covered;u+=4.f)
+        for(float v=-20.f;v<=20.f && !covered;v+=4.f) {
           float near=0;
           const auto other=down(at+outward*u+across*v,near);
           covered=other!=0 && other!=group.body && near>height;

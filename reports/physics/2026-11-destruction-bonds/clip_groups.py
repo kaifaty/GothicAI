@@ -48,7 +48,7 @@ def main():
         keys = ['pieces', 'groups', 'bodies', 'single_pieces', 'largest_group_volume_fraction', 'fell', 'bodies_fell',
                 'sleeping', 'bodies_sleeping', 'max_native_floor_penetration_cm', 'max_visible_terrain_penetration_cm',
                 'max_piece_penetration_cm', 'metal_on_ground', 'metal', 'median_displacement_cm', 'max_jitter_cm',
-                'hero_debris_penetration_cm', 'hero_piece_penetration_cm']
+                'hero_debris_penetration_cm', 'hero_piece_penetration_cm', 'hero_light_piece_penetration_cm']
         entry = {'15s': {key: last.get(key) for key in keys}}
         for at in (500, 2000, 15000):
             parts = groups(samples[at], label)
