@@ -1,0 +1,23 @@
+diff --git a/OpenGothic/common/commandline.cpp b/OpenGothic/common/commandline.cpp
+index 77a4b2bb7..f56d76fc7 100644
+--- a/OpenGothic/common/commandline.cpp
++++ b/OpenGothic/common/commandline.cpp
+@@ -33,6 +33,18 @@ static int intArg(std::string_view v) {
+ 
+ CommandLine::CommandLine(int argc, const char** argv) {
+   instance = this;
++  // PROBE (reports/render-features/2026-11-10-taa-reactive/mac-cost.md, probes/vk-validation.patch): Khronos validation
++  // with synchronization checks on a bench, where flags and VK_* are not passed to the game:
++  // OPENGOTHIC_PROBE_VK_VALIDATION=1 takes the layer's manifest from ~/gothic-ai/taa-reactive/vk-layer (on Ryzen: the
++  // Steam copy of the layer, docs/world-streaming.md)
++  if(const char* on = std::getenv("OPENGOTHIC_PROBE_VK_VALIDATION"); on!=nullptr && std::strcmp(on, "1")==0) {
++    const char* home = std::getenv("HOME");
++    const std::string layer = std::string(home ? home : "") + "/gothic-ai/taa-reactive/vk-layer";
++    setenv("VK_ADD_LAYER_PATH", layer.c_str(), 1);
++    setenv("VK_LAYER_ENABLES", "VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT", 1);
++    setenv("VK_KHRONOS_VALIDATION_VALIDATE_SYNC", "true", 1);
++    isDebug = true;
++    }
+   // OPENGOTHIC_VSM=0|1: the default of -vsm for benches and scripts that cannot pass flags; -vsm wins
+   if(const char* vsm = std::getenv("OPENGOTHIC_VSM"))
+     isVsm = boolArg(vsm);

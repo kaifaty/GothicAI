@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 """Runs of the phase-cycling probe build (cycle.patch, OPENGOTHIC_PROBE_CYCLE=<ms>) -> paired differences per phase.
 
-    analyze_cycle.py <runs-dir> [--mode C] [--phase-ms 250] [--skip-ms 60] [--foreign 5] [--labels Translucent,TAA] [--table c|c2]
+    analyze_cycle.py <runs-dir> [--mode C] [--phase-ms 250] [--skip-ms 60] [--foreign 5] [--labels Translucent,TAA] [--table c|c2|fix]
+
+--mode is the series tag of the runs (the part of `<tag>.<n>-a<attempt>` before the dot, start-s4.sh / start-fix.sh), and
+--table the phase table of the build those runs ran:
+    series s4:  --mode C --table c    (build of cycle-c.patch)
+                --mode D --table c2   (build of cycle-c2.patch: the tag D is that build, `C2` in the binaries' folder)
+    series fix: --mode F --table fix  (build of cycle-fix.patch, on top of the fix)
+A pair element may be a tuple of phases that run the same mode: their per-view means are averaged.
 
 Each frame's phase is (begin_ns / phase) % 8 of its frameprofile.csv row (steady_clock, as Renderer::updateTaaProbe).
 A frame counts when its row begins at least --skip-ms after its phase started (the GPU of the last phase's frames is
@@ -27,7 +34,21 @@ TABLES = {
     "c2": (["N (main, mask on)", "N + mask cleared by its own pass", "O (mask off)", "O + no attachment",
             "O + resolve without mask", "Z (all of the mask out)", "N again (null pair)", "O + mask cleared by its own pass"],
            [(6, 0), (0, 5), (1, 0), (1, 5), (2, 5), (3, 2), (4, 2), (5, 2), (0, 2), (7, 2)]),
+    "fix": (["F (the fix)", "N (main's clear in the translucent pass)", "mask off, no attachment",
+             "Z (all of the mask out)", "F again", "N again", "mask off, no attachment, again", "Z again"],
+            [(4, 0), (5, 1), ((0, 4), (1, 5)), ((0, 4), (2, 6)), ((0, 4), (3, 7)), ((1, 5), (2, 6)), ((1, 5), (3, 7))]),
 }
+
+
+def value(means, phase, col):
+    """The per-view mean of a phase, or of several phases of the same mode."""
+    phases = phase if isinstance(phase, tuple) else (phase,)
+    xs = [means[ph][col] for ph in phases if col in means.get(ph, {})]
+    return statistics.fmean(xs) if xs else None
+
+
+def label(phase):
+    return "+".join(map(str, phase)) if isinstance(phase, tuple) else str(phase)
 
 
 def view_phases(leaf, place, labels, phase_ns, skip_ns):
@@ -123,10 +144,11 @@ def main():
         for a, b in PAIRS:
             cells = []
             for c in cols:
-                ds = [u[2][a][c] - u[2][b][c] for u in us if c in u[2][a] and c in u[2][b]]
+                ds = [value(u[2], a, c) - value(u[2], b, c) for u in us
+                      if value(u[2], a, c) is not None and value(u[2], b, c) is not None]
                 se = statistics.stdev(ds) / len(ds) ** 0.5 if len(ds) > 1 else float("nan")
                 cells.append(f"{statistics.fmean(ds):+.3f} ± {se:.3f}")
-            print(f"| {a} − {b} | " + " | ".join(cells) + " |")
+            print(f"| {label(a)} − {label(b)} | " + " | ".join(cells) + " |")
         bg = [u[5] for u in us if u[5] is not None] or [float("nan")]
         fg = [u[4] for u in us]
         print(f"\nforeign GPU during the counted views: {min(fg):.1f}…{max(fg):.1f} %, "
