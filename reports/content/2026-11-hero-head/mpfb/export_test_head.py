@@ -9,6 +9,11 @@
 # fit/reg (reg.npz over mpfb.npz), the rebuilt blink (blink.npz, closed frame) as eyeBlinkLeft/Right, the eyeballs
 # where the blink was built around them and the grey-blue iris; written as hero/head.glb, OWN_HERO_HEAD_*.
 #     ... -P export_test_head.py -- <content root> --hero <round dir> <reg work dir> <eye texture png>
+# --skin <png> and --brows <png> replace MPFB's skin and brow maps (skin/project.py; a transparent brow map hides
+# the brow cards when the brows are painted on the skin).
+# --hair <npz> <png> and --beard <npz> <png> add the parts cut from the generator's model (skin/hair_cut.py,
+# skin/beard_shell.py; metres, the frame of the registered head). The hair is rigid; the beard is bound to the skin
+# and follows every face shape; its map is cut by alpha.
 import bpy, bmesh, os, sys, json, struct, subprocess, shutil
 import numpy as np
 from mathutils import Matrix
@@ -209,6 +214,21 @@ if HERO:
     for o in bpy.data.objects:
         if o.parent == human and o.type == 'MESH' and ('eyebrow' in o.name or 'eyelashes' in o.name):
             rebind_to_skin(o, world(human, probe_neutral), world(human, neutral))
+def npz_part(path, name):
+    """A part of hair_cut.py or beard_shell.py as a mesh object in the human's frame."""
+    h = np.load(os.path.expanduser(path)); me = bpy.data.meshes.new(name+'_src')
+    me.from_pydata(h['v'].tolist(), [], h['f'].tolist()); me.update()
+    me.uv_layers.new(name='UVMap').data.foreach_set('uv', h['uv'].reshape(-1).astype(np.float32))
+    ob = bpy.data.objects.new(name+'_src', me); bpy.context.scene.collection.objects.link(ob)
+    ob.matrix_world = human.matrix_world.copy()
+    return ob
+
+EXTRA = {}
+for part in ('hair', 'beard'):
+    if '--'+part in ARGS:
+        i = ARGS.index('--'+part); EXTRA[part] = (npz_part(ARGS[i+1], part), os.path.abspath(os.path.expanduser(ARGS[i+2])))
+if 'beard' in EXTRA:
+    rebind_to_skin(EXTRA['beard'][0], world(human, neutral), world(human, neutral))
 nzc = nw[:, 2]
 make_part(human, 'face', lambda i: body[i] and nzc[i] >= cut_z, FACE)
 proxy = {o.name.split('.', 1)[1]: o for o in bpy.data.objects if o.parent == human and o.type == 'MESH'}
@@ -231,12 +251,21 @@ for l, d in zip(eyes.data.loops, eyes.data.uv_layers.active.data):
         eye_clear[l.vertex_index] = True
 make_part(eyes, 'eye_L', lambda i: ex[i] > 0 and not eye_clear[i], [])
 make_part(eyes, 'eye_R', lambda i: ex[i] < 0 and not eye_clear[i], [])
+if 'hair' in EXTRA:
+    make_part(EXTRA['hair'][0], 'hair', lambda i: True, [])
+if 'beard' in EXTRA:
+    make_part(EXTRA['beard'][0], 'beard', lambda i: True, FACE)
 
 MAT = {'face': 'SKIN', 'brows': 'BROWS', 'lashes': 'LASHES', 'teeth': 'TEETH', 'tongue': 'TONGUE', 'eye_L': 'EYE', 'eye_R': 'EYE'}
 TEX = {'SKIN': 'skins/middleage_caucasian_male/middleage_lightskinned_male_diffuse.png',
        'BROWS': 'eyebrows/eyebrow006/eyebrow006.png', 'LASHES': 'eyelashes/eyelashes01/eyelashes01.png',
        'TEETH': 'teeth/teeth_base/teeth.png', 'TONGUE': 'tongue/tongue01/tongue01_diffuse.png',
        'EYE': EYE_PNG if HERO else 'eyes/materials/grey_eye.png'}
+for key, flag in (('SKIN', '--skin'), ('BROWS', '--brows')):          # own maps instead of MPFB's: absolute PNG paths
+    if flag in ARGS:
+        TEX[key] = os.path.abspath(os.path.expanduser(ARGS[ARGS.index(flag)+1]))
+for part, (_, tex) in EXTRA.items():
+    MAT[part] = part.upper(); TEX[part.upper()] = tex
 mats = {}
 for ob in parts:
     key = MAT[ob.name]
@@ -260,7 +289,7 @@ jl = struct.unpack_from('<I', data, 12)[0]
 gj = json.loads(data[20:20+jl])
 for m in gj.get('materials', []):
     m.pop('pbrMetallicRoughness', None)
-    if m['name'].endswith(('BROWS', 'LASHES')):
+    if m['name'].endswith(('BROWS', 'LASHES', 'BEARD')):
         m['alphaMode'] = 'MASK'
 for k in ('images', 'textures', 'samplers'):
     gj.pop(k, None)
