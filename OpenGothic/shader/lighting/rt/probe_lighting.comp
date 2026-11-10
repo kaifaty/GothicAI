@@ -154,15 +154,20 @@ float lampFalloffIntegral(float x) {
 // the ellipse scaled to the unit circle by ia = (1/a, 1/b)): the chord [s1, s2] of the ray through the spot, then the
 // falloff integral between the distances to the lamp at its ends. The discriminant goes by the identity
 // (f.d)^2 - |d|^2 (|f|^2 - 1) = |d|^2 - (f x d)^2: no difference of two squares of the foot's distance in floats.
-float spotChord(vec2 dir, vec2 fs, vec2 ia, float h2, float iR) {
-  const vec2  ds   = dir*ia;
-  const float A    = dot(ds, ds);
-  const float B    = dot(fs, ds);
-  const float c    = fs.x*ds.y - fs.y*ds.x;
-  const float sq   = sqrt(max(A - c*c, 0.0));
-  const float s1   = max((-B - sq)/A, 0.0);
-  const float s2   = max((-B + sq)/A, 0.0);
-  return lampFalloffIntegral(sqrt(h2 + s2*s2)*iR) - lampFalloffIntegral(sqrt(h2 + s1*s1)*iR);
+// Without `near` the foot is in the spot (s1 = 0) and the caller subtracts the integral at the foot once.
+float spotChord(vec2 dir, vec2 fs, vec2 ia, float h2, float iR, bool near) {
+  const vec2  ds = dir*ia;
+  const float A  = dot(ds, ds);
+  const float B  = dot(fs, ds);
+  const float c  = fs.x*ds.y - fs.y*ds.x;
+  const float sq = sqrt(max(A - c*c, 0.0));
+  const float s2 = max((-B + sq)/A, 0.0);
+  float g = lampFalloffIntegral(sqrt(h2 + s2*s2)*iR);
+  if(near) {
+    const float s1 = max((-B - sq)/A, 0.0);
+    g -= lampFalloffIntegral(sqrt(h2 + s1*s1)*iR);
+    }
+  return g;
   }
 
 // The lamp's light (lightIntensity) averaged over the spot. In polar coordinates around the lamp's foot on the plane
@@ -195,13 +200,16 @@ float spotLight(const Spot sp, vec3 lampPos, float range) {
   float sum = 0;
   if(fn<1.1025) {
     // the foot is in the spot, or 5 % off its edge
+    const bool  near  = fn>=1.0;
     const float stepC = cos(2.0*M_PI/float(SpotDirs)), stepS = sin(2.0*M_PI/float(SpotDirs));
     vec2 dir = vec2(cos(sp.rot), sin(sp.rot));
     [[unroll]]
     for(uint i=0; i<SpotDirs; ++i) {
-      sum += spotChord(dir, fs, ia, h2, iR);
+      sum += spotChord(dir, fs, ia, h2, iR, near);
       dir  = vec2(dir.x*stepC - dir.y*stepS, dir.x*stepS + dir.y*stepC);
       }
+    if(!near)
+      sum -= float(SpotDirs)*lampFalloffIntegral(h*iR);
     sum *= 2.0*M_PI/float(SpotDirs);
     } else {
     // the tangents from the foot to the unit circle, mapped back on the ellipse
@@ -216,7 +224,7 @@ float spotLight(const Spot sp, vec3 lampPos, float range) {
     for(uint i=0; i<SpotDirs; ++i) {
       const float th = M_PI*(float(i) + 0.5)/float(SpotDirs);
       const float ph = p0 + dp*0.5*(1.0 - cos(th));
-      sum += spotChord(vec2(cos(ph), sin(ph)), fs, ia, h2, iR)*sin(th);
+      sum += spotChord(vec2(cos(ph), sin(ph)), fs, ia, h2, iR, true)*sin(th);
       }
     sum *= abs(dp)*0.5*M_PI/float(SpotDirs);
     }
