@@ -91,6 +91,8 @@
 
 Рендер: оркестрация кадра, G-буфер, вода, отражения, свет, SSAO и HiZ — [`renderer.cpp`](../../OpenGothic/common/graphics/renderer.cpp); GI и трассировка — [`renderer_gi.cpp`](../../OpenGothic/common/graphics/renderer_gi.cpp), виртуальные тени — [`renderer_vsm.cpp`](../../OpenGothic/common/graphics/renderer_vsm.cpp), небо, туман и экспозиция — [`renderer_sky.cpp`](../../OpenGothic/common/graphics/renderer_sky.cpp), сглаживание и постобработка — [`renderer_post.cpp`](../../OpenGothic/common/graphics/renderer_post.cpp). Общий помощник `nextPot` объявлен в [`renderer_internal.h`](../../OpenGothic/common/graphics/renderer_internal.h) и определён один раз в `renderer.cpp`.
 
+Граница движка и Готики (исследование, не решение): [слои и перепись](../../reports/engine/2026-11-10-engine-layers/README.md) — платформа, каркас RPG, Готика, импорт, мост ИИ и стенды; `census.py` там же считает включения против слоёв и файлы, достающие до VM Daedalus.
+
 ## Навигация: исследования и обучение
 
 [Учитель памяти: выход из «нет стартовой клетки»](../../reports/navigation/2026-11-04-teacher-stall/README.md): учитель без стартовой клетки выходит по клеткам, где стояли ноги, и по клеткам без опасности к ближайшей чистой. Морковка follow при потере обходит стену «на слух», а не стоит. Переключатели `navdemos teacher-exit` и `follow-lost` возвращают поведение main; [`nav-teacher-stall-remote.sh`](../../scripts/nav-teacher-stall-remote.sh) и [`nav_teacher_stall.py`](../../scripts/nav_teacher_stall.py) меряют все семейства validation и 03-follow-hero.
