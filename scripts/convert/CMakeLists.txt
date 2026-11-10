@@ -27,7 +27,7 @@ if(MSVC)
   target_compile_definitions(gothic-video-import PRIVATE _USE_MATH_DEFINES)
 endif()
 endif()
-add_executable(content-convert convert.cpp stressbase.cpp ../../OpenGothic/common/basestore.cpp
+add_executable(content-convert convert.cpp stressbase.cpp stressmeshes.cpp ../../OpenGothic/common/basestore.cpp
   ../../OpenGothic/common/world/voblayer.cpp ../../OpenGothic/common/world/movablevobs.cpp
   ../../OpenGothic/common/game/definitions/particlecontent.cpp
   ../../OpenGothic/common/game/definitions/definitiontypes.cpp)
