@@ -198,6 +198,10 @@ void SceneGlobals::setTaaReactiveLref(float lref) {
   uboGlobalCpu.reactiveLrefInv = 1.f/lref;
   }
 
+void SceneGlobals::setVsmLampNear(float cm) {
+  uboGlobalCpu.vsmLampNear = cm;
+  }
+
 void SceneGlobals::setUnderWater(bool w) {
   uboGlobalCpu.underWater = w ? 1 : 0;
   }
