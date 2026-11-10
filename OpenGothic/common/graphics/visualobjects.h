@@ -94,6 +94,9 @@ class VisualObjects final {
     InstanceStorage::Id alloc(size_t size);
     bool                realloc(InstanceStorage::Id& id, size_t size);
     auto                instanceSsbo() const -> const Tempest::StorageBuffer&;
+    // instanceMem as it was after the previous commit, or instanceSsbo() while history is off
+    auto                instanceSsboPrev() const -> const Tempest::StorageBuffer&;
+    void                setInstanceHistory(bool enabled);
 
     const DrawClusters& clusters()     const { return clustersMem; }
     const DrawCommands& drawCommands() const { return drawCmd; }

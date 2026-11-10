@@ -1,8 +1,10 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <vector>
 
 // Blinking. Every head of the game has R_EYESBLINK (the eyes closed, in and out in 40 ms), but OpenGothic
 // never played it: nobody blinked. People blink every few seconds at random, more often while they
@@ -37,6 +39,13 @@ class EyeBlink final {
 
     // per frame: true when a blink starts now, closed for `hold` ms (between fading in and out)
     bool           update(const Input& in, uint64_t& hold);
+    // a blink the caller starts itself at that tick (the liar's blinks of a line): none of its own comes closer
+    // than ReserveGapMs to it
+    void           reserve(uint64_t at);
+    // the tick of its last blink, or of the second of a double one still coming; 0: none
+    uint64_t       lastBlink() const { return std::max(last,second); }
+
+    static constexpr uint64_t ReserveGapMs = 500;
     void           probe(Probe& p) const;
 
     static Probe       subjectProbe;  // the npc the test bench watches
@@ -46,6 +55,7 @@ class EyeBlink final {
     uint64_t       interval(bool speaking, float rate);
     uint32_t       random();
 
+    std::vector<uint64_t> reserved;  // ticks of the caller's blinks to keep away from
     uint64_t       next      = 0;  // the next blink at random
     uint64_t       last      = 0;
     uint64_t       second    = 0;  // the second blink of a double one, 0: none

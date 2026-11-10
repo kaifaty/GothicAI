@@ -188,6 +188,8 @@ class Npc final {
     auto       fightDistanceTo(const Npc& npc) const -> Tempest::Vec3;
 
     void       updateAnimation(uint64_t dt, bool force = false);
+    // the own head's face and eyes, after the pose of the frame (main thread: it uploads the deformation)
+    void       updateFace() { visual.updateFace(*this); }
     void       updateTransform();
     // Animation LOD (world/animationlod.h): an NPC outside the frustum keeps the
     // skipped frames' dt here; the next updateAnimation of any caller applies it.
@@ -254,6 +256,13 @@ class Npc final {
     void       stopAnim(std::string_view ani);
     void       startFaceAnim(std::string_view anim, float intensity, uint64_t duration);
     float      faceWeight(std::string_view anim);  // how much of the face anim shows now, 0..1 (test bench)
+    // the facial gestures of the line it starts to say (say.cues); a gesture by hand: side 'L'/'R', 0 - by the seed
+    void       startCues(std::shared_ptr<const SpeechCues::Plan> plan, bool voiced);
+    bool       startCue(std::string_view name, char side);
+    float      cueWeight(std::string_view name);   // how much of the gesture shows now, 0..1 (test bench)
+    // a leak of a felt emotion (say.leak) by hand, with the liar's blinks; its strongest weight as shown now
+    bool       startLeak(std::string_view felt, bool lower);
+    float      leakWeight();
     // a voiced line starts: the mouth follows the voice (LipSync)
     void       startSpeech(const Tempest::Sound& voice);
     void       startSpeech(std::shared_ptr<LipSync::Track> voice);
@@ -522,8 +531,11 @@ class Npc final {
     // whom this npc talks or listens to, for a while: it looks at them (gaze)
     void      setTalkPartner(Npc* other, uint64_t ms);
     Npc*      talkPartner() const;
-    // where the gaze looks: the partner, where a script says, the hero's focus, what caught the eye
-    auto      gazeTarget(Tempest::Vec3& at) const -> Gaze::Source;
+    // it looks at a point until then, before anything else (the test bench)
+    void      lookAtPoint(const Tempest::Vec3& at, uint64_t until) { lookPoint = at; lookPointUntil = until; }
+    // where the gaze looks: the partner, where a script says, the hero's focus, what caught the eye; whom: the npc
+    // whose head it is, if it is one
+    auto      gazeTarget(Tempest::Vec3& at, const Npc** whom = nullptr) const -> Gaze::Source;
     Npc*      attentionTarget() const { return attention.target(); }
 
     bool      isAttackAnim() const;
@@ -724,6 +736,8 @@ class Npc final {
     Item*     currentShield();
     auto      mapWeaponBone() const -> Tempest::Vec3;
     auto      mapHeadBone() const -> Tempest::Vec3;
+    // where its eyes are (world): the centres of its own head's eyes, else above the head bone along its up
+    auto      mapEyes() const -> Tempest::Vec3;
     struct EyePose {
       Tempest::Vec3 origin = {}, forward = {1,0,0}, right = {0,0,1}, up = {0,1,0};
       bool animatedHead = false;
@@ -1366,6 +1380,8 @@ class Npc final {
     uint64_t                       talkUntil       =0;
     Attention                      attention;
     std::optional<Tempest::Vec2>    headInput; // transient yaw/pitch for this tick, no AI ownership
+    Tempest::Vec3                  lookPoint;
+    uint64_t                       lookPointUntil  =0;
     Archer                         arch;
     ArcherAi                       archAi;
     Tempest::Vec3                  aimDirPrev  = {};  // the manual aim's last direction (a turn shakes it)

@@ -41,6 +41,8 @@ class SceneGlobals final {
     // TAA: the bias of the material textures' mip level in the main view; shadows keep 0
     void setMipBias(float bias);
     void setTaaFrame(bool active, uint32_t frame);
+    // motion vectors of objects: on/off and the camera's part (identity and this frame's camera on a cut)
+    void setMotion(bool enabled, const Tempest::Matrix4x4& reprojectClip, const Tempest::Matrix4x4& viewProjectPrev);
 
     void setTime(uint64_t time);
     void commitUbo(uint8_t fId);
@@ -135,6 +137,12 @@ class SceneGlobals final {
       float                           mipGradScale = 1; // exp2(mipBias)
       uint32_t                        taaFrame     = 0; // TAA: the frame number (Renderer::prepareTaa), 0 without TAA
       uint32_t                        taaActive    = 0;
+      // motion vectors of objects (graphics plan 1b): the main view only (commitUbo), 0 in the other views.
+      // Both matrices carry this frame's jitter, so the residual has none (Taa::motionResidual)
+      uint32_t                        motionVectors = 0;
+      uint32_t                        motionPad0    = 0;
+      Tempest::Matrix4x4              reprojectClip   = Tempest::Matrix4x4::mkIdentity(); // Taa::reprojection
+      Tempest::Matrix4x4              viewProjectPrev = Tempest::Matrix4x4::mkIdentity(); // Taa::viewProjectPrev
       };
 
     Tempest::UniformBuffer<UboGlobal> uboGlobalPf[Resources::MaxFramesInFlight][V_Count];

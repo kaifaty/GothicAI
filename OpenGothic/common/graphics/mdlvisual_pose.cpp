@@ -1,4 +1,5 @@
 #include "mdlvisual.h"
+#include "mdlvisual_internal.h"
 
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/protomesh.h"
@@ -9,11 +10,13 @@
 #include <cmath>
 
 using namespace Tempest;
+using namespace MdlVisualInternal;
 
 bool MdlVisual::updateGaze(Npc& npc, uint64_t dt) {
   Pose& pose = *skInst;
   auto& gaze = pose.gazeIk();
   if(!gaze.isValid()) {
+    lookSource = Gaze::Source::None;
     if(&npc==Gaze::probeNpc)
       Gaze::subjectProbe = Gaze::Probe();
     return false;
@@ -27,19 +30,18 @@ bool MdlVisual::updateGaze(Npc& npc, uint64_t dt) {
   // a blow throws the head around: the gaze lets go while one stumbles
   if(!npc.isDown() && (npc.bodyStateMasked() & BS_MAX)!=BS_STUMBLE)
     in.source = npc.gazeTarget(in.target);
-  // thinking of an answer: the eyes go aside and up from the one it talks to (TalkGestures)
+  // the eyes of an own head look there too (updateEyes)
+  lookSource = Gaze::isEnabled() ? in.source : Gaze::Source::None;
+  lookAt     = in.target;
+  // thinking of an answer: the eyes go aside and up from the one it talks to (TalkGestures); with eyes of its
+  // own the head goes only a part of the way
   if(const auto& as = gestures.eyesAside(); as.weight>0.f && in.source==Gaze::Source::Talk) {
-    const Vec3  head = npc.mapHeadBone();
-    const Vec3  d    = in.target - head;
-    const float len  = std::sqrt(d.x*d.x + d.z*d.z);
-    if(len>1.f) {
-      const float yaw = as.yaw*as.weight;
-      const float c = std::cos(yaw), s = std::sin(yaw);
-      // around Up, + to the left as Gaze turns
-      const Vec3 r = {d.x*c - d.z*s, 0, d.x*s + d.z*c};
-      in.target = head + Vec3(r.x, d.y + len*std::tan(as.pitch*as.weight), r.z);
-      }
+    const float k = as.weight*(eyes.isActive() ? EyeAsideHead : 1.f);
+    in.target = asidePoint(npc.mapHeadBone(),in.target,as.yaw*k,as.pitch*k);
     }
+  // an own head with eyes turns so that its face points at the target from its eyes, not from the bone 11 cm below
+  // them (a point above the eyes would raise the head past it); the heads of the original aim from the bone
+  in.eyes = eyes.isActive() && eyesInHead(in.eyesAt);
   if(in.source!=Gaze::Source::None) {
     in.active   = true;
     // the hero's body is the player's; one walking or busy at a bench, a book turns the head only;

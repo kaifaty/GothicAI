@@ -7,6 +7,9 @@
     service -> client  {"type":"start","id":"7","sample_rate":48000,"provider":"voxcpm"}
     service -> client  binary frames: 16-bit little-endian mono PCM, as it is generated
                        (at the loudness of the game's own dialogue, see loudness.py)
+                       or, with word timings from the line's start:
+                       {"type":"audio","id":"7","data":"<base64 PCM>","words":[["Hello",0.0,0.3]]}
+                       (`data` is empty for late timestamps, including after the final PCM chunk)
     service -> client  {"type":"done","id":"7","audio_s":2.1,"first_chunk_s":0.06,"latency_s":1.1}
     service -> client  {"type":"error","id":"7","detail":"..."}
 
@@ -21,6 +24,7 @@ before starting the game.
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import logging
@@ -37,6 +41,7 @@ from websockets.http11 import Request, Response
 
 from . import originals
 from .providers import TtsError, TtsProvider, Voice
+from .providers.base import WordTiming
 from .providers.inworld import InworldTTS, _UnknownVoice
 from .synthesizer import Synthesizer
 
@@ -274,16 +279,30 @@ class TtsService:
             await _send(conn, {"type": "error", "id": req, "detail": "empty text"})
             return
         current: list[TtsProvider] = []
+        pending_words: list[WordTiming] = []
+
+        async def words(timings: list[WordTiming]) -> None:
+            pending_words.extend(timings)
+            if current:
+                await _send(conn, {"type": "audio", "id": req, "data": "", "words": pending_words})
+                pending_words.clear()
 
         async def chunk(pcm: bytes, p: TtsProvider) -> None:
             if not current:
                 current.append(p)
                 await _send(conn, {"type": "start", "id": req, "sample_rate": p.rate, "provider": p.name})
-            await conn.send(pcm)
+            if pending_words:
+                await _send(conn, {
+                    "type": "audio", "id": req, "data": base64.b64encode(pcm).decode(),
+                    "words": pending_words,
+                })
+                pending_words.clear()
+            else:
+                await conn.send(pcm)
 
         try:
             try:
-                s = await self.synthesizer.speak(text, voice, chunk, original_voice=original)
+                s = await self.synthesizer.speak(text, voice, chunk, original_voice=original, on_words=words)
             except _UnknownVoice:
                 if original is None or current:
                     raise
@@ -291,7 +310,7 @@ class TtsService:
                     alias: ready for alias, ready in self.original_voices.items() if ready.id != original.id
                 }
                 log.warning("original voice %s is gone; using designed voice until restart", original.id)
-                s = await self.synthesizer.speak(text, voice, chunk)
+                s = await self.synthesizer.speak(text, voice, chunk, on_words=words)
         except TtsError as err:
             await _send(conn, {"type": "error", "id": req, "detail": str(err)})
             return

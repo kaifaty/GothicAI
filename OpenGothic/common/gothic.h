@@ -103,6 +103,7 @@ class Gothic final {
       GiMethod doGi              = GiMethod::None;
       uint32_t aaPreset          = 0;
       bool     taa               = true;
+      int      motionVectors     = -1;   // -mv 0|1; -1: [INTERNAL] motionVectors decides
 
       bool     hideFocus         = false;
       float    cameraFov         = 67.5f;

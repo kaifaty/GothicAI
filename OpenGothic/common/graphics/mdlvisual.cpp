@@ -55,6 +55,16 @@ bool validRenderFrame(const Matrix4x4& m) {
          std::abs(m.at(2,3))<1e-5f && std::abs(m.at(3,3)-1.f)<1e-5f;
   }
 
+Vec3 asidePoint(const Vec3& head, const Vec3& target, float yaw, float pitch) {
+  const Vec3  d   = target - head;
+  const float len = std::sqrt(d.x*d.x + d.z*d.z);
+  if(len<=1.f)
+    return target;
+  const float c = std::cos(yaw), s = std::sin(yaw);
+  const Vec3  r = {d.x*c - d.z*s, 0, d.x*s + d.z*c};
+  return head + Vec3(r.x, d.y + len*std::tan(pitch), r.z);
+  }
+
 }
 
 namespace {
@@ -387,6 +397,8 @@ void MdlVisual::setVisualBody(Npc& npc, MeshObjects::Mesh &&h, MeshObjects::Mesh
   // a new view of the head: the face goes to it again (the anims go on)
   const auto* proto=head.view.protoMesh();
   face.setup(headMesh(),proto!=nullptr ? proto->face.get() : nullptr);
+  // the jumps of the eyes repeat for the same npc (the test bench)
+  eyes.setup(face.eyes(),uint32_t(npc.instanceSymbol()));
   implSetBody(&npc,npc.world(),std::move(body),version);
   head.view.setAsGhost(hnpcFlagGhost);
   head.view.setFatness(npc.fatness());
@@ -1071,6 +1083,25 @@ Vec3 MdlVisual::mapHeadBone() const {
   return mapBone(skeleton->BIP01_HEAD);
   }
 
+bool MdlVisual::eyesInHead(Vec3& at) const {
+  const auto* e = face.eyes();
+  if(e==nullptr || skeleton==nullptr || head.boneId!=skeleton->BIP01_HEAD)
+    return false;
+  // the head bone: x up, y across, z forward (the frame of a head's vertices)
+  at = (e->eye[0].center + e->eye[1].center)*0.5f;
+  return true;
+  }
+
+Vec3 MdlVisual::mapEyes() const {
+  const size_t bone = skeleton->BIP01_HEAD;
+  if(bone==size_t(-1) || bone>=skInst->boneCount())
+    return mapHeadBone();
+  Vec3 at = Vec3(EyesUp,0,0);
+  eyesInHead(at);
+  renderedBone(bone).project(at);
+  return at;
+  }
+
 void MdlVisual::stopAnim(Npc& npc, std::string_view anim) {
   skInst->stopAnim(anim);
   // Avoid issues with pfx on/off events within looped animations. Such as for Rupert and Bulko.
@@ -1555,7 +1586,8 @@ void MdlVisual::updateBlink(Npc& npc, uint64_t dt) {
   if(skInst==nullptr || head.view.isEmpty() || (npc.processPolicy()>NpcProcessPolicy::AiNormal && !probing))
     return;
   const uint64_t now = npc.world().tickCount();
-  const uint32_t sh  = skInst->gazeIk().shiftCount();
+  // the head turns elsewhere, or the eyes jump far
+  const uint32_t sh  = skInst->gazeIk().shiftCount() + eyes.bigSaccades();
 
   EyeBlink::Input in;
   in.now      = now;
@@ -1586,13 +1618,91 @@ float MdlVisual::faceWeight(const Npc& npc, std::string_view anim) const {
   return head.view.morphWeight(anim);
   }
 
-void MdlVisual::updateFace(Npc& npc) {
-  if(!face.isActive())
+void MdlVisual::startCues(Npc& npc, std::shared_ptr<const SpeechCues::Plan> plan, bool voiced) {
+  cues.start(std::move(plan),voiced,npc.world().tickCount());
+  }
+
+bool MdlVisual::startCue(Npc& npc, std::string_view name, char side) {
+  const auto* profile = face.faceProfile();
+  const auto* cue     = profile!=nullptr ? profile->findCue(name) : nullptr;
+  if(cue==nullptr)
+    return false;
+  if(side==0)
+    side = SpeechCues::sideOf(SpeechCues::seedOf(name)^(uint32_t(npc.instanceSymbol())*2654435761u)^(cueCount++*40503u));
+  const uint64_t now = npc.world().tickCount();
+  return face.startCue(name,cue->side!=0 && side!=cue->side,-1,now,now);
+  }
+
+float MdlVisual::cueWeight(const Npc& npc, std::string_view name) const {
+  return face.cueWeight(name,npc.world().tickCount());
+  }
+
+bool MdlVisual::startLeak(Npc& npc, std::string_view felt, bool lower) {
+  const auto* profile = face.faceProfile();
+  if(profile==nullptr || profile->findLeak(felt,lower)==nullptr)
+    return false;
+  // a line of its own without a voice: the leak now (its word 0.1 s on), the liar's blinks in the time after
+  auto plan = std::make_shared<SpeechCues::Plan>("leak");
+  plan->leak     = SpeechCues::Plan::Leak{std::string(felt),lower,0};
+  plan->silentMs = ManualLeakMs;
+  plan->seed     = SpeechCues::seedOf(felt)^(uint32_t(npc.instanceSymbol())*2654435761u)^(cueCount++*40503u);
+  plan->setWord(0,float(SpeechCues::UpperLeadMs)/1000.f,0.5f);
+  cues.start(std::move(plan),false,npc.world().tickCount());
+  return true;
+  }
+
+float MdlVisual::leakWeight(const Npc& npc) const {
+  return face.leakWeight(npc.world().tickCount());
+  }
+
+void MdlVisual::updateEyes(Npc& npc, uint64_t now) {
+  if(!eyes.isActive() || skInst==nullptr || head.boneId>=skInst->boneCount())
     return;
+  Eyes::Input in;
+  in.now      = now;
+  in.head     = renderedBone(head.boneId);
+  in.target   = lookSource!=Gaze::Source::None;
+  in.at       = lookAt;
+  // Gaze aims the head at one's head bone, the eyes go to its eyes (the bone is at the neck)
+  const Npc* whom = nullptr;
+  Vec3       at;
+  if(in.target && npc.gazeTarget(at,&whom)==lookSource && whom!=nullptr)
+    in.at = whom->mapEyes();
+  in.talk     = lookSource==Gaze::Source::Talk;
+  in.speaking = mouth.isSpeaking(now) || npc.speechLeft()>0;
+  in.left     = std::max(npc.speechLeft(),mouth.voiceLeft(now));
+  // thinking: the eyes go all the way aside (the head a part of it, updateGaze)
+  const auto& as = gestures.eyesAside();
+  in.aside    = in.talk && as.weight>=0.5f;
+  in.asideAt  = asidePoint(mapEyes(),in.at,as.yaw,as.pitch);
+  eyes.update(in);
+  face.setEyes(eyes.turn(0),eyes.turn(1));
+  }
+
+void MdlVisual::updateFace(Npc& npc) {
+  if(!face.isActive()) {
+    if(&npc==Eyes::probeNpc)
+      Eyes::subjectProbe = Eyes::Probe();
+    return;
+    }
   const bool     probing = &npc==FaceRig::probeNpc;
   const uint64_t now     = npc.world().tickCount();
-  // a far face stays as it was last shown, as a far one does not blink
+  // the gestures of the line, far too: a face seen again shows them as they go
+  cueStarts.clear();
+  cues.update(*face.faceProfile(),now,blink.lastBlink(),cueStarts);
+  for(auto& s:cueStarts.cues)
+    face.startCue(s.name,s.mirror,s.hold,s.at,now);
+  // a lie: the leak of the felt emotion, the liar's blinks (ordinary ones keep away from them), a smile put on
+  if(cueStarts.leak)
+    face.startLeak(cueStarts.leakFelt,cueStarts.leakLower,cueStarts.leakAt,now);
+  for(auto r:cueStarts.reserve)
+    blink.reserve(r);
+  for(uint32_t i=0; i<cueStarts.blinks && EyeBlink::isEnabled(); ++i)
+    face.startAnim("R_EYESBLINK",1,now+SpeechCues::LiarBlinkHold,now);
+  face.setPosed(cueStarts.posed,now);
+  // a far face stays as it was last shown, as a far one does not blink; its eyes stop
   if(!head.view.isEmpty() && (npc.processPolicy()<=NpcProcessPolicy::AiNormal || probing)) {
+    updateEyes(npc,now);
     const auto r = face.update(now);
     if(r!=FaceRig::Result::Same) {
       const auto start = std::chrono::steady_clock::now();
@@ -1606,6 +1716,8 @@ void MdlVisual::updateFace(Npc& npc) {
     face.probe(FaceRig::subjectProbe,now);
     FaceRig::subjectProbe.uploadUs = faceUploadUs;
     }
+  if(&npc==Eyes::probeNpc)
+    eyes.probe(Eyes::subjectProbe);
   }
 
 void MdlVisual::startMMAnim(Npc& npc, std::string_view anim, std::string_view bone) {
@@ -1655,6 +1767,7 @@ void MdlVisual::startSpeech(Npc& npc, std::shared_ptr<LipSync::Track> voice) {
         break;
         }
   mouth.setShapes(std::move(shapes));
+  cues.voice(voice,npc.world().tickCount());
   mouth.start(std::move(voice),npc.world().tickCount());
   }
 
@@ -1671,6 +1784,7 @@ void MdlVisual::updateMouth(Npc& npc, uint64_t dt) {
 
 void MdlVisual::stopDlgAnim(Npc& npc) {
   mouth.stop();
+  cues.stop();
   gestures.stop();
   gestureSeq = nullptr;
   const uint16_t count = 11;

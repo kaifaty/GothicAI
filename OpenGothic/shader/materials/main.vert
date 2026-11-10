@@ -274,6 +274,10 @@ void meshShader(const uvec4 task) {
 #if defined(MAT_NORMAL)
     shOut[laneID].normal.xyz = var.normal; // normal is vec3, applying the workaround
 #endif
+#if defined(MAT_MOTION)
+    shOut[laneID].prevStatic.xyz = var.prevStatic; // vec3, the same workaround
+    shOut[laneID].prevDelta.xyz  = var.prevDelta;
+#endif
     }
   }
 #endif

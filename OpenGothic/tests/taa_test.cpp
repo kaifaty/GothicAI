@@ -164,6 +164,107 @@ void movingCamera() {
   std::printf("moving camera: %d points, worst error %.4f px\n", tested, double(worst));
   }
 
+// Motion vectors of objects (graphics plan 1b): the residual against the direct projection of p and p+d
+void motionResidual() {
+  const Vec3 prevOrigin = Vec3(120000,4000,-95000);
+  const Vec3 move       = Vec3(31,-4,17);
+  const auto prev = mkView(prevOrigin,      Vec3(12,137,0));
+  const auto cur  = mkView(prevOrigin+move, Vec3(13,139.5f,0));
+  const auto rot  = mkViewLwc(Vec3(13,139.5f,0));
+  auto       inv  = rot;
+  inv.inverse();
+
+  // the camera's NDC of a world point given relative to the current camera, in double through the lwc chain
+  auto ndcOf = [](const Taa::View& v, const Matrix4x4& j, const Vec3& rel) {
+    auto m = j;
+    m.mul(v.proj);
+    m.mul(v.viewLwc);
+    const Vec4 c = apply(m, Vec4(rel.x, rel.y, rel.z, 1));
+    return Vec4(c.x/c.w, c.y/c.w, c.z/c.w, c.w);
+    };
+
+  const Vec3 ds[] = {Vec3(0,0,0), Vec3(3,0,0), Vec3(0,-2.5f,1), Vec3(-6,1,4), Vec3(0,0,12)};
+  float worst = 0, worstJitter = 0, zeroWorst = 0;
+  int   tested = 0;
+  for(bool jittered:{false, true}) {
+    const auto j  = jittered ? Taa::jitterMatrix(Taa::jitterPx(5), Width, Height) : Matrix4x4::mkIdentity();
+    const auto mc = Taa::motionCamera(cur, prev, true, j);
+    auto curVp = j;
+    curVp.mul(cur.proj);
+    curVp.mul(cur.viewLwc);
+    for(float a=-50; a<=50; a+=25)
+      for(float b=-25; b<=25; b+=25)
+        for(float dist:{200.f, 1500.f, 9000.f}) {
+          const float ra = a*float(M_PI)/180.f, rb = b*float(M_PI)/180.f;
+          Vec4 pv = Vec4(std::sin(ra)*std::cos(rb)*dist, std::sin(rb)*dist, std::cos(ra)*std::cos(rb)*dist, 1);
+          if(apply(cur.proj, pv).w<=0)
+            pv = Vec4(-pv.x, -pv.y, -pv.z, 1);
+          const Vec4 lwc  = apply(inv, pv);             // relative to the current camera
+          const Vec3 rel  = Vec3(lwc.x, lwc.y, lwc.z);
+          const Vec4 clip = apply(curVp, Vec4(rel.x, rel.y, rel.z, 1));
+          if(std::abs(clip.x/clip.w)>1 || std::abs(clip.y/clip.w)>1)
+            continue;
+          for(const Vec3& d:ds) {
+            const Vec2 r = Taa::motionResidual(mc.reprojectClip, mc.viewProjectPrev, clip, d);
+            // directly: the previous camera sees p and p+d; relative to it they are rel+move and rel+move+d
+            const Vec4 p0 = ndcOf(prev, j, rel+move);
+            const Vec4 p1 = ndcOf(prev, j, rel+move+d);
+            const float ex = (p1.x-p0.x)*0.5f, ey = (p1.y-p0.y)*0.5f;
+            const float err = std::hypot((r.x-ex)*float(Width), (r.y-ey)*float(Height));
+            if(d.x==0 && d.y==0 && d.z==0) {
+              require(r.x==0 && r.y==0, "d=0 gives a residual under a moving camera");
+              zeroWorst = std::max(zeroWorst, std::hypot(r.x, r.y));
+              }
+            worst = std::max(worst, err);
+            // no jitter in the residual: the same point and move without it
+            if(jittered) {
+              const auto m0 = Taa::motionCamera(cur, prev, true, Matrix4x4::mkIdentity());
+              auto vp0 = cur.proj;
+              vp0.mul(cur.viewLwc);
+              const Vec2 r0 = Taa::motionResidual(m0.reprojectClip, m0.viewProjectPrev,
+                                                  apply(vp0, Vec4(rel.x, rel.y, rel.z, 1)), d);
+              worstJitter = std::max(worstJitter, std::hypot((r.x-r0.x)*float(Width), (r.y-r0.y)*float(Height)));
+              }
+            ++tested;
+            }
+          }
+    }
+  require(tested>100, "too few motion points in view: " + std::to_string(tested));
+  require(worst<0.01f, "residual is off the direct projection by " + std::to_string(worst) + " px");
+  require(worstJitter<0.01f, "jitter leaks into the residual by " + std::to_string(worstJitter) + " px");
+
+  // a cut: no reprojection, the previous camera is this one; a still point gives 0, a moving one its move as this
+  // camera sees it
+  const auto j   = Taa::jitterMatrix(Taa::jitterPx(2), Width, Height);
+  const auto cut = Taa::motionCamera(cur, prev, false, j);
+  const auto id  = Matrix4x4::mkIdentity();
+  for(int c=0; c<4; ++c)
+    for(int r=0; r<4; ++r)
+      require(cut.reprojectClip.at(c,r)==id.at(c,r), "a cut reprojects the camera");
+  const auto same = Taa::viewProjectPrev(cur, j);
+  for(int c=0; c<4; ++c)
+    for(int r=0; r<4; ++r)
+      require(cut.viewProjectPrev.at(c,r)==same.at(c,r), "a cut takes another previous camera than this one");
+  auto curVp = j;
+  curVp.mul(cur.proj);
+  curVp.mul(cur.viewLwc);
+  const Vec3 rel  = Vec3(apply(inv, Vec4(0, 0, 900, 1)).x, apply(inv, Vec4(0, 0, 900, 1)).y, apply(inv, Vec4(0, 0, 900, 1)).z);
+  Vec3 relFront   = rel;
+  if(apply(curVp, Vec4(rel.x, rel.y, rel.z, 1)).w<=0)
+    relFront = Vec3(-rel.x, -rel.y, -rel.z);
+  const Vec4 clip = apply(curVp, Vec4(relFront.x, relFront.y, relFront.z, 1));
+  const Vec2 still = Taa::motionResidual(cut.reprojectClip, cut.viewProjectPrev, clip, Vec3());
+  require(still.x==0 && still.y==0, "a still point moves on a cut");
+  const Vec3 d   = Vec3(5,2,-3);
+  const Vec2 mv  = Taa::motionResidual(cut.reprojectClip, cut.viewProjectPrev, clip, d);
+  const Vec4 q0  = ndcOf(cur, j, relFront);
+  const Vec4 q1  = ndcOf(cur, j, relFront+d);
+  const float ce = std::hypot((mv.x-(q1.x-q0.x)*0.5f)*float(Width), (mv.y-(q1.y-q0.y)*0.5f)*float(Height));
+  require(ce<0.01f, "a moving point on a cut is off its own move by " + std::to_string(ce) + " px");
+  std::printf("motion residual: %d cases, worst %.5f px, jitter %.5f px, d=0 %.1g, cut %.5f px\n",
+              tested, double(worst), double(worstJitter), double(zeroWorst), double(ce));
+  }
+
 void cameraJump() {
   const Vec3 o = Vec3(120000,4000,-95000);
   const auto a = mkView(o, Vec3(10,40,0));
@@ -219,6 +320,7 @@ int main() {
     staticCamera();
     movingCamera();
     cameraJump();
+    motionResidual();
     std::cout << "{\"test\":\"taa\",\"passed\":true,\"assertions\":" << assertions << "}\n";
     return 0;
     }

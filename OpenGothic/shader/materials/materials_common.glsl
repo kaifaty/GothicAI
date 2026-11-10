@@ -53,6 +53,7 @@ const uint L_FogLut     = 17;
 const uint L_FogLutMs   = 18;
 const uint L_VsmPageTbl = 19; // the sun's virtual shadow map in the forward pass (vsm_sun_shadow.glsl)
 const uint L_VsmPageAtlas = 20;
+const uint L_InstancePrev = 21; // instanceMem after the previous frame (InstanceStorage::ssboPrev), motion vectors
 const uint L_VsmPages   = L_Shadow0;
 const uint L_VsmLights  = L_Shadow1;
 
@@ -87,7 +88,14 @@ const uint L_VsmLights  = L_Shadow1;
 #define MAT_COLOR 1
 #endif
 
-#if defined(MAT_UV) || defined(MAT_NORMAL) || defined(MAT_POSITION) || defined(MAT_COLOR)
+// Motion vectors of objects (graphics plan 1b): the G-buffer variants of objects carry where the point would be in the
+// previous camera had it stood still, and how far its own move shifts that; xyw of clip space, divided per fragment.
+// Landscape and particles write 0 without them
+#if defined(GBUFFER_MOTION)
+#define MAT_MOTION 1
+#endif
+
+#if defined(MAT_UV) || defined(MAT_NORMAL) || defined(MAT_POSITION) || defined(MAT_COLOR) || defined(MAT_MOTION)
 #define MAT_VARYINGS 1
 #endif
 
@@ -112,6 +120,11 @@ struct Varyings {
   vec4 color;
 #endif
 
+#if defined(MAT_MOTION)
+  vec3 prevStatic; // scene.reprojectClip * this frame's clip position: .xyw
+  vec3 prevDelta;  // scene.viewProjectPrev * vec4(previous - current world position, 0): .xyw
+#endif
+
 #if (MESH_TYPE==T_PFX) && defined(MAT_UV)
   vec3 flip; // atlas flipbook: the next frame's uv and the blend towards it (pfx.vert); flip.z<0 when off
 #endif
@@ -130,6 +143,10 @@ layout(binding = L_Scene,    std140) uniform UboScene     { SceneDesc scene;    
 layout(binding = L_Instance, std430) readonly buffer Mem  { uint    instanceMem[]; };
 layout(binding = L_Payload,  std430) readonly buffer Pbo  { uvec4   payload[];     };
 layout(binding = L_Bucket,   std140) readonly buffer Bbo  { Bucket  bucket[];      };
+#endif
+
+#if defined(MAT_MOTION) && defined(LVL_OBJECT)
+layout(binding = L_InstancePrev, std430) readonly buffer MemPrev { uint instanceMemPrev[]; };
 #endif
 
 #if (MESH_TYPE!=T_PFX)
@@ -238,6 +255,38 @@ MorphDesc pullMorphDesc(uint i) {
   ret.alpha16_intensity16 = instanceMem[i+3];
   return ret;
   }
+
+#if defined(MAT_MOTION) && defined(LVL_OBJECT)
+// the same records of the previous frame, always at the current pointers (InstanceStorage keeps a moved or new range
+// equal to the current one, see the note's rule)
+mat4 pullMatrixPrev(uint i) {
+  i *= 16;
+  mat4 ret;
+  for(uint c=0; c<4; ++c)
+    ret[c] = vec4(uintBitsToFloat(instanceMemPrev[i+c*4+0]), uintBitsToFloat(instanceMemPrev[i+c*4+1]),
+                  uintBitsToFloat(instanceMemPrev[i+c*4+2]), uintBitsToFloat(instanceMemPrev[i+c*4+3]));
+  return ret;
+  }
+
+mat4x3 pullInstanceMatPrev(uint i) {
+  i *= 16;
+  mat4x3 ret;
+  for(uint c=0; c<4; ++c)
+    ret[c] = vec3(uintBitsToFloat(instanceMemPrev[i+c*3+0]), uintBitsToFloat(instanceMemPrev[i+c*3+1]),
+                  uintBitsToFloat(instanceMemPrev[i+c*3+2]));
+  return ret;
+  }
+
+MorphDesc pullMorphDescPrev(uint i) {
+  i *= 4;
+  MorphDesc ret;
+  ret.indexOffset         = instanceMemPrev[i+0];
+  ret.sample0             = instanceMemPrev[i+1];
+  ret.sample1             = instanceMemPrev[i+2];
+  ret.alpha16_intensity16 = instanceMemPrev[i+3];
+  return ret;
+  }
+#endif
 
 vec3 pullPosition(uint instanceId) {
 #if defined(LVL_OBJECT)

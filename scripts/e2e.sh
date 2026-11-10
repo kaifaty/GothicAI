@@ -350,6 +350,9 @@
 #       TIMEOUT=420
 #   gossip_demo: given: Lobart's caught-lie fact and the scene's lines; a bench demonstration.
 #       Group 2, LLM=off via auto; SAVE=save_slot_1.sav; no TTS service.
+#   face_cues_demo: given: Vino's four lines with face gesture tags and one lie; a bench demonstration
+#       (scripts/bench/face-cues-clip.bench). The hero is put in front of him; checks that he says all four.
+#       Group 2, LLM=off via auto; SAVE=save_slot_1.sav; TTS=fake.
 #   day: given: Lobart exposes the turnip lie; Vino chooses to tell Malet; the scene's lines are given.
 #       Checks daily menus, walks, alternating voices and recipients, near/far facts and save/load.
 #       Group 2, LLM=off via auto; TTS=fake; SAVE=save_slot_1.sav; TIMEOUT=480
@@ -569,7 +572,7 @@ if [ -n "${QUICK_URL:-}" ]; then
   QUICK_ARGS=(--quick-url "$QUICK_URL")
 fi
 case "$SCENARIO" in
-  m1|m2|m3|m5|m5c|m5e|tts|combat_barks|mercy|hero_yield|humiliate)
+  m1|m2|m3|m5|m5c|m5e|tts|combat_barks|mercy|hero_yield|humiliate|face_cues_demo)
     BRAIN_ARGS=(--no-brain)
     QUICK_ARGS=(--no-quick)
     ;;

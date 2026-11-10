@@ -233,6 +233,39 @@ void Renderer::setupSettings() {
       Log::i("render: taa = ", logged, ", sharpness = ", settings.taaSharpness, ", mip bias = ", settings.taaMipBias);
       }
   }
+  // motion vectors of objects (graphics plan 1b, reports/render-features/2026-11-10-motion-vectors), on by default:
+  // -mv 0 or [INTERNAL] motionVectors=0 turn them off, OPENGOTHIC_MOTION_VECTORS=0|1 (test benches) overrides
+  // both. OPENGOTHIC_MOTION_VIEW=1 shows the vectors in place of the frame
+  {
+    bool mv = Gothic::options().motionVectors>=0 ? Gothic::options().motionVectors!=0
+                                                 : Gothic::settingsGetI("INTERNAL","motionVectors")!=0;
+    if(const char* e = std::getenv("OPENGOTHIC_MOTION_VECTORS"))
+      mv = std::string_view(e)!="0";
+    settings.motionVectors = mv;
+    settings.motionView    = false;
+    if(const char* e = std::getenv("OPENGOTHIC_MOTION_VIEW"))
+      settings.motionView = std::string_view(e)!="0";
+    settings.motionViewPx = 2;
+    if(const char* e = std::getenv("OPENGOTHIC_MOTION_VIEW_PX"))
+      settings.motionViewPx = std::max(std::strtof(e, nullptr), 1e-6f);
+    static int logged = -1;
+    if(logged!=int(settings.motionVectors)) {
+      logged = int(settings.motionVectors);
+      Log::i("render: motion vectors = ", logged, settings.motionView ? ", view = 1" : "");
+      }
+  }
+  // SSAO over frames (reports/engine/2026-11-08-ssao-temporal), on by default: OPENGOTHIC_SSAO_HISTORY=0 traces the
+  // whole set of 32 every frame and keeps no history (the same look, at the former cost)
+  {
+    settings.ssaoHistory = true;
+    if(const char* e = std::getenv("OPENGOTHIC_SSAO_HISTORY"))
+      settings.ssaoHistory = std::string_view(e)!="0";
+    static int logged = -1;
+    if(logged!=int(settings.ssaoHistory)) {
+      logged = int(settings.ssaoHistory);
+      Log::i("render: ssao history = ", logged);
+      }
+  }
   // A study of the temporal upscale (graphics plan 1g, reports/render-features/2026-11-05-upscale), test benches only:
   // OPENGOTHIC_RENDER_SCALE=0.5..1 draws the scene at that share of the frame over vidResIndex;
   // OPENGOTHIC_UPSCALE=temporal puts MetalFX Temporal in place of the TAA resolve when the scene is drawn smaller than
@@ -333,12 +366,16 @@ void Renderer::togglePathtrace() {
 void Renderer::onWorldChanged() {
   sky.lutIsInitialized = false;
   taa.valid            = false;
+  ssao.valid           = false;
+  camHistory.hasCur    = false;
   gi.resetHistory      = true;
   resetSkyFog();
   }
 
 void Renderer::resetTemporal() {
-  taa.valid = false;
+  taa.valid  = false;
+  ssao.valid = false;
+  camHistory.hasCur = false;
   taa.frame = 0;
   taa.cur   = 0;
   }
@@ -347,6 +384,18 @@ void Renderer::updateCamera(const WorldView& wview, const Camera& camera) {
   proj        = camera.projective();
   viewProj    = camera.viewProj();
   viewProjLwc = camera.viewProjLwc();
+
+  // without jitter: TAA, the SSAO history (also with the TAA off) and the motion vectors reproject by this pair
+  Taa::View view;
+  view.proj    = proj;
+  view.viewLwc = camera.viewLwc();
+  view.origin  = camera.originLwc();
+  camHistory.continuous = camHistory.hasCur && camera.cuts()==camHistory.cuts &&
+                          !Taa::isCameraJump(view, camHistory.cur);
+  camHistory.prev   = camHistory.cur;
+  camHistory.cur    = view;
+  camHistory.cuts   = camera.cuts();
+  camHistory.hasCur = true;
 
   for(size_t i=0; i<Resources::ShadowLayers; ++i)
     shadowMatrix[i] = camera.viewShadow(wview.mainLight().dir(),i);
@@ -544,6 +593,9 @@ void Renderer::resetViewport(Tempest::Size res, Tempest::Size fullRes) {
   gbufNormal    = device.attachment(TextureFormat::R32U, w,h);
   if(Shaders::options().doMaterialMaps)
     gbufOrm = device.attachment(TextureFormat::RGBA8, w,h);
+  // RG16F is a required colour attachment format in Vulkan and Metal; the wider one only where a device lacks it
+  const bool rg16f = device.properties().hasAttachFormat(TextureFormat::RG16F);
+  gbufMotion    = device.attachment(rg16f ? TextureFormat::RG16F : TextureFormat::RGBA16F, w,h);
 
   ssao     = decltype(ssao)();
   epipolar = decltype(epipolar)();
@@ -669,6 +721,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
 
   updateCamera(wview, camera);
   prepareTaa(wview, camera);
+  prepareMotion(wview);
 
   static bool updFr = true;
   if(updFr){
@@ -698,6 +751,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   wview.prepareGlobals(cmd,fId);
 
   if(settings.pathTraceEnabled) {
+    ssao.valid = false; // no SSAO in this frame: its history is not the frame before the next one
     drawPathtrace(cmd, wview, fId);
     mainTiming.finish();
     FrameProfile::Scope postTiming(FrameProfile::Zone::EncodePost);
@@ -793,6 +847,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     drawBloom(cmd);
     cmd.setDebugMarker("Tonemapping");
     drawTonemappingTemporal(result, cmd, wview);
+    drawMotionView(result, cmd);
     postTiming.finish();
     wview.postFrameupdate();
     return;
@@ -819,6 +874,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     }
   if(!upscale.input.isEmpty() && !shotNative)
     drawUpscale(result, cmd);
+  drawMotionView(result, cmd);
   postTiming.finish();
 
   //drawRayQueryDbg(cmd, wview);
@@ -915,11 +971,13 @@ void Renderer::drawGBuffer(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& 
   if(Shaders::options().doMaterialMaps) {
     cmd.setFramebuffer({{gbufDiffuse, Tempest::Vec4(), Tempest::Preserve},
                         {gbufNormal, Tempest::Vec4(), Tempest::Preserve},
-                        {gbufOrm, Tempest::Vec4(1,1,0,0), Tempest::Preserve}},
+                        {gbufOrm, Tempest::Vec4(1,1,0,0), Tempest::Preserve},
+                        {gbufMotion, Tempest::Vec4(), Tempest::Preserve}},
                        {zbuffer, Tempest::Preserve, Tempest::Preserve});
     } else {
     cmd.setFramebuffer({{gbufDiffuse, Tempest::Vec4(), Tempest::Preserve},
-                        {gbufNormal, Tempest::Vec4(), Tempest::Preserve}},
+                        {gbufNormal, Tempest::Vec4(), Tempest::Preserve},
+                        {gbufMotion, Tempest::Vec4(), Tempest::Preserve}},
                        {zbuffer, Tempest::Preserve, Tempest::Preserve});
     }
   view.drawGBuffer(cmd,fId);
@@ -1087,19 +1145,32 @@ void Renderer::drawLights(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
   }
 
 void Renderer::prepareSSAO(Encoder<CommandBuffer>& cmd, WorldView& wview) {
-  if(!settings.zCloudShadowScale)
+  // a frame without SSAO breaks the history
+  if(!settings.zCloudShadowScale) {
+    ssao.valid = false;
     return;
+    }
   // the probes of -gi 1 trace the occlusion of their light themselves: their ambient takes no SSAO (probe_ambient.frag)
-  if(settings.giMethod==GiMethod::Probes)
+  if(settings.giMethod==GiMethod::Probes) {
+    ssao.valid = false;
     return;
-  // ssao
+    }
+  // ssao: the projection comes from the scene (jittered, as the depth); the push carries the history's reprojection
   struct PushSsao {
-    Matrix4x4 proj;
-    Matrix4x4 projInv;
+    Matrix4x4 reproject;
+    uint32_t  frame   = 0;
+    uint32_t  reset   = 0;
+    uint32_t  fullSet = 0; // the whole set this frame, no history
     } push;
-  push.proj    = proj;
-  push.projInv = proj;
-  push.projInv.inverse();
+  if(!camHistory.continuous)
+    ssao.valid = false;
+  // both ends with this frame's jitter, as the TAA does: a camera that stands still reads the same texel
+  const auto jitter = taa.active ? Taa::jitterMatrix(taa.jitter, uint32_t(zbuffer.w()), uint32_t(zbuffer.h()))
+                                 : Matrix4x4::mkIdentity();
+  push.reproject = ssao.valid ? Taa::reprojection(camHistory.cur, camHistory.prev, jitter) : Matrix4x4::mkIdentity();
+  push.frame     = ssao.frame;
+  push.reset     = ssao.valid && settings.ssaoHistory ? 0 : 1;
+  push.fullSet   = settings.ssaoHistory ? 0 : 1;
 
   auto& device = Resources::device();
   const auto aoSize = effectResolution();
@@ -1107,9 +1178,15 @@ void Renderer::prepareSSAO(Encoder<CommandBuffer>& cmd, WorldView& wview) {
     Resources::recycle(std::move(ssao.ssaoBuf));
     Resources::recycle(std::move(ssao.ssaoBlur));
     Resources::recycle(std::move(ssao.depthHalf));
-    ssao.ssaoBuf   = device.image2d(ssao.aoFormat, aoSize);
-    ssao.ssaoBlur  = device.image2d(ssao.aoFormat, zbuffer.size());
-    ssao.depthHalf = device.image2d(TextureFormat::R32F, aoSize);
+    Resources::recycle(std::move(ssao.history[0]));
+    Resources::recycle(std::move(ssao.history[1]));
+    ssao.ssaoBuf    = device.image2d(ssao.aoFormat, aoSize);
+    ssao.ssaoBlur   = device.image2d(ssao.aoFormat, zbuffer.size());
+    ssao.depthHalf  = device.image2d(TextureFormat::R32F, aoSize);
+    ssao.history[0] = device.image2d(TextureFormat::RGBA16F, aoSize);
+    ssao.history[1] = device.image2d(TextureFormat::RGBA16F, aoSize);
+    ssao.valid      = false;
+    push.reset      = 1;
     }
 
   cmd.setFramebuffer({});
@@ -1124,13 +1201,17 @@ void Renderer::prepareSSAO(Encoder<CommandBuffer>& cmd, WorldView& wview) {
 
   cmd.setBinding(0, ssao.ssaoBuf);
   cmd.setBinding(1, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(2, gbufDiffuse, Sampler::nearest(ClampMode::ClampToEdge));
-  cmd.setBinding(3, gbufNormal,  Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setBinding(4, zbuffer,     Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setBinding(5, ssao.depthHalf, Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(6, ssao.history[ssao.cur^1], Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(7, ssao.history[ssao.cur]);
+  cmd.setBinding(8, gbufMotion, Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setPushData(&push, sizeof(push));
   cmd.setPipeline(shaders.ssao);
   cmd.dispatchThreads(ssao.ssaoBuf.size());
+  ssao.valid = true;
+  ssao.cur  ^= 1;
+  ssao.frame++;
 
   cmd.setDebugMarker("SSAO-blur");
   cmd.setBinding(0, ssao.ssaoBlur);

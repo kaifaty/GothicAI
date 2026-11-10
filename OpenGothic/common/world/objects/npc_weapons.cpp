@@ -225,17 +225,25 @@ WeaponState Npc::weaponState() const {
   return visual.fightMode();
   }
 
-Gaze::Source Npc::gazeTarget(Tempest::Vec3& at) const {
+Gaze::Source Npc::gazeTarget(Tempest::Vec3& at, const Npc** whom) const {
+  if(whom!=nullptr)
+    *whom = nullptr;
   if(headInput) {
     const float yaw = rotationRad()+headInput->x*float(M_PI)/180.f;
     const float pitch = headInput->y*float(M_PI)/180.f;
     at = mapHeadBone() + Vec3(std::cos(yaw)*std::cos(pitch),std::sin(pitch),std::sin(yaw)*std::cos(pitch))*1000.f;
     return Gaze::Source::Input;
     }
+  if(lookPointUntil>owner.tickCount()) {
+    at = lookPoint;
+    return Gaze::Source::Script;
+    }
   static const float focusDist = 800;
   const Vec3 eyes = {0,6,0}; // the eyes are a bit above the head bone
   if(auto other = talkPartner()) {
     at = other->mapHeadBone() + eyes;
+    if(whom!=nullptr)
+      *whom = other;
     return Gaze::Source::Talk;
     }
   if(physicsNoiseUntil>owner.tickCount() && Gothic::physicsFlags().physicsNoise && canHearPhysicsNoise()) {
@@ -244,6 +252,8 @@ Gaze::Source Npc::gazeTarget(Tempest::Vec3& at) const {
     }
   if(currentLookAtNpc!=nullptr && currentLookAtNpc!=this) {
     at = currentLookAtNpc->mapHeadBone() + eyes;
+    if(whom!=nullptr)
+      *whom = currentLookAtNpc;
     return Gaze::Source::Script;
     }
   if(currentLookAt!=nullptr) {
@@ -258,10 +268,14 @@ Gaze::Source Npc::gazeTarget(Tempest::Vec3& at) const {
     if(t==nullptr || t==this || weaponState()!=WeaponState::NoWeapon || qDistTo(*t)>focusDist*focusDist)
       return Gaze::Source::None;
     at = t->mapHeadBone() + eyes;
+    if(whom!=nullptr)
+      *whom = t;
     return Gaze::Source::Focus;
     }
   if(auto t = attention.target()) {
     at = t->mapHeadBone() + eyes;
+    if(whom!=nullptr)
+      *whom = t;
     return Gaze::Source::Attention;
     }
   return Gaze::Source::None;

@@ -32,6 +32,7 @@
 #include "stucklogger.h"
 #include "jsonread.h"
 #include "jsonwriter.h"
+#include "linecues.h"
 #include "npcfind.h"
 #include "textcodec.h"
 #include "voicebuffer.h"
@@ -43,7 +44,7 @@ using namespace Tempest;
 
 namespace {
 
-constexpr int         ProtocolVersion = 60;
+constexpr int         ProtocolVersion = 62;
 AiBridge*             activeBridge = nullptr;
 constexpr const char* SaveEntry       = "ai_bridge/session";  // own entry in save games
 constexpr const char* DefaultUrl      = "ws://127.0.0.1:47817";
@@ -1278,7 +1279,38 @@ bool AiBridge::Impl::onConsoleCommand(std::string_view cmd, std::string& reply) 
     return true;
     }
 
-  reply = "usage: ai status | ai attach <npc> | ai detach [npc] | ai dialogs <npc> | ai skip <npc> | ai ptt start [<wav>]|stop|cancel";
+  if(sub=="cue" && args.size()>3) {
+    // ai cue <npc|player> <gesture> [L|R]: a facial gesture of its own head now (flash, doubt, smirk...: the cues of
+    // its face profile); a one-sided one without a side goes on a side by the seed
+    Npc* npc = lower(args[2])=="player" ? world->player() : npcBySymbol(*world,upperSymbol(args[2]));
+    const auto side = args.size()>4 ? upperSymbol(args[4]) : std::string();
+    if(npc==nullptr || (!side.empty() && side!="L" && side!="R")) {
+      reply = npc==nullptr ? "no npc " + args[2] : "the side is L or R";
+      return true;
+      }
+    reply = npc->startCue(args[3],side.empty() ? char(0) : side[0])
+              ? "cue " + args[3] + (side.empty() ? "" : " " + side)
+              : "no gesture " + args[3] + " on its head (an own head with cues in its face profile)";
+    return true;
+    }
+
+  if(sub=="leak" && args.size()>4) {
+    // ai leak <npc|player> <felt> <upper|lower>: a leak of the felt emotion on its own head now, as a line that hides
+    // a lie, with the liar's two blinks after it
+    Npc* npc = lower(args[2])=="player" ? world->player() : npcBySymbol(*world,upperSymbol(args[2]));
+    const auto half = lower(args[4]);
+    if(npc==nullptr || (half!="upper" && half!="lower")) {
+      reply = npc==nullptr ? "no npc " + args[2] : "the half is upper or lower";
+      return true;
+      }
+    reply = npc->startLeak(lower(args[3]),half=="lower")
+              ? "leak " + lower(args[3]) + " " + half
+              : "no leak " + args[3] + " " + half + " on its head (an own head with leaks in its face profile)";
+    return true;
+    }
+
+  reply = "usage: ai status | ai attach <npc> | ai detach [npc] | ai dialogs <npc> | ai skip <npc> | ai ptt start [<wav>]|stop|cancel"
+          " | ai cue <npc> <gesture> [L|R] | ai leak <npc> <felt> <upper|lower>";
   return true;
   }
 
@@ -1421,6 +1453,8 @@ void AiBridge::Impl::onSay(World& world, const rapidjson::Value& msg) {
   lines.add(line,symbol,TextCodec::fromUtf8(JsonRead::str(msg,"text")),std::move(wav),std::move(voice),
             std::string(JsonRead::str(msg,"reply")));
   lines.find(line)->mood   = std::string(JsonRead::str(msg,"mood"));
+  // its gestures and leak (v61)
+  lines.find(line)->cues   = LineCues::read(msg,symbol,line,lines.find(line)->text,JsonRead::boolean(msg,"stream",false));
   lines.find(line)->filler = JsonRead::boolean(msg,"filler",false);
   lines.find(line)->to     = toId;
   if(!JsonRead::boolean(msg,"overlay",false)) {
@@ -1451,6 +1485,9 @@ void AiBridge::Impl::onSay(World& world, const rapidjson::Value& msg) {
 
 void AiBridge::Impl::onSayAudio(World& world, const rapidjson::Value& msg) {
   auto* line = lines.find(JsonRead::str(msg,"line"));
+  // the time of the words may come with any piece of the voice, or at its end (v62)
+  if(line!=nullptr && line->cues!=nullptr)
+    LineCues::readWords(msg,*line->cues);
   if(line==nullptr || line->voice==nullptr)
     return;
   if(JsonRead::str(msg,"type")=="say_audio") {
@@ -1847,6 +1884,17 @@ void AiBridge::Impl::onLineStarted(const LineLibrary::Line& line) {
     if(auto face = moodFace(line.mood); !face.empty()) {
       npc->startFaceAnim(face,1,line.time+MoodHoldMs);
       Log::i("[ai] face ",line.npc," ",face," for ",line.time+MoodHoldMs," ms");
+      }
+    if(line.cues!=nullptr) {
+      line.cues->silentMs = line.time;
+      npc->startCues(line.cues,voiced);
+      std::string list;
+      for(auto& c:line.cues->cues)
+        list += " " + c.name + "@" + std::to_string(c.word) + c.side;
+      if(const auto& l = line.cues->leak)
+        list += " leak:" + l->felt + (l->lower ? ":lower@" : ":upper@") + std::to_string(l->word) +
+                (line.cues->posed() ? " posed" : "");
+      Log::i("[ai] cues ",line.npc," ",line.id,":",list);
       }
     }
   if(to!=nullptr) {
