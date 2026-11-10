@@ -17,6 +17,7 @@ from gothic_ai.llm.fake import FakeBackend, FakeStep
 from gothic_ai.memory import MemoryStore
 from gothic_ai.parley import Parley
 from gothic_ai.persona import PersonaProvider
+from gothic_ai.protocol import SayLeak
 from gothic_ai.talk import Talk, TalkDesk
 from gothic_ai.trust import Trust
 from tests.fake_game import FakeGame, connected
@@ -64,6 +65,11 @@ async def test_felt_leaks_need_a_dishonest_deal_intent_and_enabled_cheating():
         assert abs(sum(leak is not None for leak in leaks) / 1000 - 0.28) <= 0.05
         deals.cheat = False
         assert all(choose_leak(dialogue, XARDAS, str(i), "afraid", 0) is None for i in range(1000))
+        dialogue.debug_leak = "lower"  # --debug-leak: every felt tag leaks, without a known lie
+        assert all(
+            choose_leak(dialogue, XARDAS, str(i), "afraid", 2) == SayLeak(felt="afraid", half="lower", word=2)
+            for i in range(100)
+        )
     finally:
         await link_cm.__aexit__(None, None, None)
 

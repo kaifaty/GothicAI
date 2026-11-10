@@ -195,6 +195,8 @@ class DialogueManager(
         svm_lines: bool = True,
     ) -> None:
         self.link = link
+        # debug `--debug-leak`: every [felt:...] leaks, on this half or "any" (face_cues.py); None: by chance
+        self.debug_leak: str | None = None
         self.journal = journal or Journal()  # lines and actions for the launcher (see journal.py)
         self.trace = trace  # every turn as a JSON line (see trace.py)
         self.budget = budget  # calls nobody asked for (summaries); the player's turns are only counted

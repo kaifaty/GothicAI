@@ -50,8 +50,14 @@ def _stakes(dialogue: DialogueManager, npc: str) -> float:
 def choose_leak(
     dialogue: DialogueManager, npc: str, line: str, felt: Mood, word: int,
 ) -> SayLeak | None:
-    """One reproducible trial per line, only for deception the server knows about."""
+    """One reproducible trial per line, only for deception the server knows about. `--debug-leak` (a debug
+    flag for filming the leak) skips the trial: every felt tag leaks, on its half or the drawn one."""
     npc = npc.upper()
+    if dialogue.debug_leak is not None:
+        rng = random.Random(zlib.crc32(f"{npc}:{line}".encode()))
+        half = rng.choice(("upper", "lower")) if dialogue.debug_leak == "any" else dialogue.debug_leak
+        log.info("%s %s: debug leak %s:%s at word %d", npc, line, felt, half, word)
+        return SayLeak(felt=felt, half=half, word=word)
     stakes = _stakes(dialogue, npc)
     if not stakes:
         log.debug("%s %s: discarded felt tag without known deception", npc, line)
