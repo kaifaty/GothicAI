@@ -1165,11 +1165,13 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
   write("lv-flat.dds",mipDds(0x31545844,256,256,9));
   write("lv-near.dds",mipDds(0x31545844,512,512,10));
   write("lv-ring.dds",mipDds(0x31545844,256,256,9));
+  write("lv-scaled.dds",mipDds(0x31545844,512,512,10));
   textFile(fixture.root/"materials/materials.json",R"({
     "LV_STREAM.TGA":{"albedo":"lv-albedo.dds","normal":"lv-maps.dds","orm":"lv-maps.dds"},
     "LV_FLAT.TGA":{"albedo":"lv-flat.dds"},
     "LV_NEAR.TGA":{"albedo":"lv-near.dds"},
-    "LV_RING.TGA":{"albedo":"lv-ring.dds"}
+    "LV_RING.TGA":{"albedo":"lv-ring.dds"},
+    "LV_SCALED.TGA":{"albedo":"lv-scaled.dds","scale":2.17}
   })");
   setenv("OPENGOTHIC_TEXTURE_STREAMING","1",1);
   setenv("OPENGOTHIC_TEXTURE_MIPS","1",1);
@@ -1182,14 +1184,16 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
   Resources resources(device);
   Shaders shaders;
   shaders.waitCompiler();
-  Material material, flat, near, ring;
+  Material material, flat, near, ring, scaled;
   {
   Resources::TextureLoadScope far(true);
   material=Material(source("LV_STREAM.TGA"),true);
   flat=Material(source("LV_FLAT.TGA"),true);
   near=Material(source("LV_NEAR.TGA"),true);
   ring=Material(source("LV_RING.TGA"),true);
+  scaled=Material(source("LV_SCALED.TGA"),true);
   }
+  require(scaled.uvScale==2.17f && scaled.tex->w()==128,"the scaled fixture must carry its materials.json UV scale");
   const auto sides=[&](int albedo, int maps) {
     return material.tex->w()==albedo && material.normal->w()==maps && material.orm->w()==maps;
     };
@@ -1268,6 +1272,15 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
   require(Resources::textureStats().promotionQueue==0,"a measured owner 40 m away must keep the 512 texture's tail");
   camera={-2000,50,0};
   waitFor([&] { return near.tex->w()==256; },"an owner must be evaluated again once the camera passes its margin");
+  // The same triangle with the UV scale 2.17 at 20 m: 2.17 UV units per metre, 2^-5, level 2 - the resident tail.
+  StaticMesh scaledMesh(scaled,{{{0,0,0},{0,0,1},{0,0},0xffffffffu},{{100,0,0},{0,0,1},{1,0},0xffffffffu},
+                                {{0,100,0},{0,0,1},{0,1},0xffffffffu}},{0,1,2});
+  auto scaledOwner=visuals.get(scaledMesh,scaled,0,scaledMesh.sub[0].iboLength,true);
+  scaledOwner.setObjMatrix(Tempest::Matrix4x4::mkIdentity());
+  for(int i=0;i<3;++i)
+    tick();
+  require(Resources::textureStats().promotionQueue==0 && scaled.tex->w()==128,
+          "an owner's density must include its material's UV scale");
   camera={-300,50,0};
   waitFor([&] { return near.tex->w()==512; },"a close owner must raise the texture to its whole chain");
   auto blank=visuals.get(unmeasured,flat,0,unmeasured.sub[0].iboLength,true);
@@ -1304,6 +1317,7 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
   Resources::textureDemand(material,stat,false,Need{3,-5});
   owner=VisualObjects::Item();
   blank=VisualObjects::Item();
+  scaledOwner=VisualObjects::Item();
   device.waitIdle();
   }
   unsetenv("OPENGOTHIC_TEXTURE_MIPS");
