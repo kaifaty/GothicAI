@@ -10,7 +10,7 @@
 # - the cap is a grid of directions around the skull's centre, poles at the ears; each cell takes the outer radius
 #   of the hair points in it. One more ring of cells dives 1 cm under the rim, so no gap opens over the scalp;
 # - the tail (the cord is leather, so it is taken by place) is a tube around its own axis, closed at the tip.
-# Writes hair.npz (v, f, uv per face corner; metres, the head's frame) and hair.png.
+# Writes hair.npz (v, f, uv per face corner; metres, the head's frame), hair.png and cap.npz.
 import sys, os, json
 import numpy as np
 from PIL import Image
@@ -25,6 +25,7 @@ eye = np.array(V['eye']); rv, rc = ref_model.load(raw, P, eye, OPT); rv = rv-eye
 x, y, z = rv.T
 r0 = ref_model.raw_colour(raw); hairlike = (r0[:, 0]-r0[:, 2] < 50) & (r0[:, 1] > 0.70*r0[:, 0])
 tailbox = (y > 0.150) & (z > -0.165) & (z < -0.045) & (np.abs(x) < 0.04)
+tailbox &= ~((r0.max(1)-r0.min(1) < 30) & (r0.max(1) > 70))             # the grey shirt behind the tail's tip is not hair
 cap = hairlike & ((y > 0.11) | (z > -0.005)) & (z > -0.085) & ~tailbox      # the shirt is grey like hair: nothing below the nape
 cap &= ~((np.abs(x) > 0.078) & (z < 0.015))                             # the shadowed hollows of the ears are dark like hair
 
@@ -93,6 +94,9 @@ ref[len(f)-na:] = ax
 flip = (fn*ref).sum(1) < 0
 f[flip] = f[flip][:, ::-1]; uv[flip] = uv[flip][:, ::-1]
 np.savez(os.path.join(OUT, 'hair.npz'), v=v, f=f, uv=uv)
+# the same surface as numbers, for laying hair cards on it (scripts/content/npc/hair/hair_cards.py): the grid of radii
+# around C (theta from +x, phi around x, 0 = down), and the tail's axis with its radii
+np.savez(os.path.join(OUT, 'cap.npz'), C=C+eye, D=D, r=rg, mask=mask, tail_c=tcen+eye, tail_ax=ax, tail_e1=e1, tail_e2=e2, tail_l=lc, tail_r=tg)
 
 # ---- the colour: every texel's point on the part takes the model's hair colour nearest to it
 src = cap | tailbox; tree = cKDTree(rv[src]+eye); csrc = rc[src]
