@@ -111,34 +111,57 @@ ivec2 gbufferCoord(const uint probeId, const uint sampleId) {
   return ivec2(x,y);
   }
 
-ivec2 lightBufferCoord(const uint probeId) {
+// The irradiance of a probe (step-2b.md, «2б-2: сделано»): L2 spherical harmonics of irradiance/pi with the cosine's
+// convolution in them (Ramamoorthi, Hanrahan 2001), 27 numbers in 7 RGBA16F texels, 4x2 a probe (one spare): 4 MB.
+// The cube of six faces it replaced read a slanted normal as a mix of faces that took the hemispheres round the axes,
+// directions behind the pixel's plane among them. Against the integral of the 256 samples by the pixel's normal (E5),
+// cell by cell in the reflected light: the cube 3,9 % off by day and 8,2 % by night, L2 1,4 % and 2,2 %, an
+// octahedron of 6x6 texels 2,3 % and 4,3 % for 0,1 ms more and 32 MB; a window against the ringing (Lanczos) 4,9 %.
+const int probeIrrTileW = 4;
+const int probeIrrTileH = 2;
+
+ivec2 probeIrrTileCoord(const uint probeId) {
   uint x = (probeId     ) & 0xFF;
   uint y = (probeId >> 8) & 0xFF;
-  x = (x * 3);
-  y = (y * 2);
-  return ivec2(x,y);
+  return ivec2(x*probeIrrTileW, y*probeIrrTileH);
+  }
+
+ivec2 probeIrrTexel(const uint probeId, int i) {
+  return probeIrrTileCoord(probeId) + ivec2(i%probeIrrTileW, i/probeIrrTileW);
+  }
+
+void probeSh9(vec3 d, out float y[9]) {
+  y[0] = 0.282095;
+  y[1] = 0.488603*d.y; y[2] = 0.488603*d.z; y[3] = 0.488603*d.x;
+  y[4] = 1.092548*d.x*d.y; y[5] = 1.092548*d.y*d.z; y[6] = 0.315392*(3.0*d.z*d.z-1.0);
+  y[7] = 1.092548*d.x*d.z; y[8] = 0.546274*(d.x*d.x-d.y*d.y);
+  }
+
+// irradiance/pi for a normal from the 27 coefficients (rgb of 9, in a row) packed into 7 texels; the ringing of a
+// bright patch in the dark may go below zero on the far side
+vec3 probeShEval(const vec4 t[7], vec3 n) {
+  float y[9];
+  probeSh9(n, y);
+  float f[28];
+  for(int i=0; i<7; ++i) {
+    f[4*i+0] = t[i].x; f[4*i+1] = t[i].y; f[4*i+2] = t[i].z; f[4*i+3] = t[i].w;
+    }
+  vec3 e = vec3(0);
+  for(int k=0; k<9; ++k)
+    e += vec3(f[3*k], f[3*k+1], f[3*k+2])*y[k];
+  return max(e, vec3(0));
   }
 
 uint probeGridPosHash(ivec3 gridPos) {
   return (gridPos.x * 18397) + (gridPos.y * 20483) + (gridPos.z * 29303);
   }
 
-vec3 probeReadAmbient(in sampler2D irradiance, uint id, vec3 nx, vec3 probeNorm) {
-  ivec2 uv  = lightBufferCoord(id);
-  ivec3 d;
-
-  vec3  n = nx;
-  d.x = n.x>=0 ? 1 : 0;
-  d.y = n.y>=0 ? 1 : 0;
-  d.z = n.z>=0 ? 1 : 0;
-
-  n = n*n;
-
-  vec3 ret = vec3(0);
-  ret += texelFetch(irradiance, uv + ivec2(0,d.x), 0).rgb * n.x;
-  ret += texelFetch(irradiance, uv + ivec2(1,d.y), 0).rgb * n.y;
-  ret += texelFetch(irradiance, uv + ivec2(2,d.z), 0).rgb * n.z;
-  return ret * (1.0/probeStoreScale);
+// irradiance/pi of the probe for a normal: 7 reads
+vec3 probeReadIrradiance(in sampler2D irradiance, uint id, vec3 n) {
+  vec4 t[7];
+  for(int i=0; i<7; ++i)
+    t[i] = texelFetch(irradiance, probeIrrTexel(id, i), 0);
+  return probeShEval(t, n) * (1.0/probeStoreScale);
   }
 
 // The lod of the probe grid at a point: by its distance to the camera, not by the depth of the view, so a probe off

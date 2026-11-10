@@ -310,8 +310,9 @@ class Renderer final {
       Tempest::StorageImage     probesGBuffDiff;
       Tempest::StorageImage     probesGBuffNorm;
       Tempest::StorageImage     probesGBuffRayT;
-      Tempest::StorageImage     probesLighting;     // RGBA16F: the ambient cube of a probe, 3x2 texels
-      Tempest::StorageImage     probesLightingPrev;
+      const uint32_t            irrTileW  = 4;   // probeIrrTileW/H of probe_common.glsl
+      const uint32_t            irrTileH  = 2;
+      Tempest::StorageImage     probesLighting;     // RGBA16F: the L2 harmonics of irradiance of a probe, 7 texels of 4x2
       Tempest::StorageImage     probesRadiance;     // R32UI, RGB9E5: the radiance of each sample, relit in turns
       uint32_t                  frame    = 0;       // turns the samples relit in a frame
       uint64_t                  lastTick = 0;       // the world's tick of the last lighting, for the blend over time
