@@ -163,6 +163,20 @@ Vec2 Taa::motionResidual(const Matrix4x4& reprojectClip, const Matrix4x4& viewPr
               (prevDelta.y*w0 - prevStatic.y*prevDelta.w)/den*0.5f);
   }
 
+Taa::ResolveWeights Taa::resolveWeights(float alpha, float lumCur, float lumHist, float mask, float maskPrev) {
+  // as taa_resolve.frag
+  const float k = std::max(mask, maskPrev);
+  const float a = alpha*(1.f-k) + 1.f*k;
+  ResolveWeights w;
+  w.cur  = a      /(1.f + (1.f-k)*lumCur);
+  w.hist = (1.f-a)/(1.f + (1.f-k)*lumHist);
+  return w;
+  }
+
+float Taa::resolveBlend(const ResolveWeights& w, float cur, float hist) {
+  return (cur*w.cur + hist*w.hist)/(w.cur + w.hist);
+  }
+
 float Taa::rotationAngle(const Matrix4x4& a, const Matrix4x4& b) {
   // trace(Ra^T Rb) = 1 + 2 cos(angle); a sign flip of both (the view's scale -1) cancels out
   double tr = 0, na = 0, nb = 0;

@@ -302,7 +302,8 @@ void finish() {
     say("realtime: " + std::string(bench.lagMs>200 ? "fell behind the wall clock by " + std::to_string(bench.lagMs) + " ms"
                                                    : "kept to the wall clock"));
   bench.done = true;
-  DrawCommands::hiddenTypes = 0;
+  DrawCommands::hiddenTypes    = 0;
+  DrawCommands::hidePfxObjects = false;
   if(auto c = Gothic::inst().camera()) {
     c->setMarvinMode(Camera::M_Normal);
     c->setNearClip(10);

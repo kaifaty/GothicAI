@@ -235,6 +235,7 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
     bx.turbidity          = i.mat.turbidity;
     bx.turbidityDepth     = i.mat.turbidityDepth;
     bx.emissive           = i.mat.emissive;
+    bx.reactive           = i.mat.taaReactive();
     bx.alphaWeight        = i.mat.alphaWeight;
     bx.envMapping         = i.mat.envMapping;
     if(i.staticMesh!=nullptr) {

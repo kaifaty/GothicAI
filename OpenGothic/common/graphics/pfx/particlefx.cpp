@@ -5,6 +5,8 @@
 #include "resources.h"
 #include "utils/string_frm.h"
 
+#include <cctype>
+
 using namespace Tempest;
 
 ParticleFx::ParticleFx(const Material& mat, const asset::VirtualObject& vob) {
@@ -146,6 +148,22 @@ ParticleFx::ParticleFx(const ParticleFx& proto, const VisualFx::Key& key)
 
 bool ParticleFx::isDecal() const {
   return ppsValue<0;
+  }
+
+float ParticleFx::taaReactive() const {
+  if(isDecal())
+    return visMaterial.taaReactive();
+  return isPrecipitation(dbgName) ? 0.f : 1.f;
+  }
+
+bool ParticleFx::isPrecipitation(std::string_view name) {
+  // G2's are MFX_THUNDERSTORM_RAIN and SNOW; MFX_FIRERAIN_* is falling fire, which stays reactive
+  std::string up(name);
+  for(auto& c:up)
+    c = char(std::toupper(static_cast<unsigned char>(c)));
+  if(up.find("SNOW")!=std::string::npos)
+    return true;
+  return up.find("RAIN")!=std::string::npos && up.find("FIRE")==std::string::npos;
   }
 
 bool ParticleFx::hasTrails() const {

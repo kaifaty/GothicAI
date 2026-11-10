@@ -824,7 +824,8 @@ bool cameraCommand(const CameraContext& ctx,const std::string& line,const std::v
     // Static and Movable objects share draw commands (same shaders), hiding them by type hides
     // parts of creatures too: what stands between the camera and the subject is clipped instead
     ctx.camera.clip = 0;
-    DrawCommands::hiddenTypes = 0;
+    DrawCommands::hiddenTypes    = 0;
+    DrawCommands::hidePfxObjects = false;
     if(m=="clean") {
       ctx.camera.clip = num(a,2,100);
       DrawCommands::hiddenTypes = (1u<<DrawCommands::Pfx);
@@ -840,6 +841,7 @@ bool cameraCommand(const CameraContext& ctx,const std::string& line,const std::v
         if(t=="movable")  DrawCommands::hiddenTypes |= (1u<<DrawCommands::Movable);
         if(t=="morph")    DrawCommands::hiddenTypes |= (1u<<DrawCommands::Morph);
         if(t=="pfx")      DrawCommands::hiddenTypes |= (1u<<DrawCommands::Pfx);
+        if(t=="pfx")      DrawCommands::hidePfxObjects = true; // the particles of PfxObjects too
         if(t=="animated") DrawCommands::hiddenTypes |= (1u<<DrawCommands::Animated);
         }
       }

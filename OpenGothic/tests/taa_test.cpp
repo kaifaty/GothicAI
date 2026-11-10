@@ -4,6 +4,7 @@
 
 #include <Tempest/Matrix4x4>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <iostream>
@@ -313,6 +314,31 @@ void upscaleSequence() {
     }
   }
 
+// the resolve's blend with the reactive mask (graphics plan 1v): the mask 0 changes nothing, a spark under it keeps
+// its light
+void reactiveWeights() {
+  const float alpha = 0.1f;
+  for(float lc : {0.f, 0.2f, 1.f, 5.f, 40.f})
+    for(float lh : {0.f, 0.2f, 1.f, 5.f}) {
+      const auto w = Taa::resolveWeights(alpha, lc, lh, 0.f, 0.f);
+      require(w.cur==alpha/(1.f+lc) && w.hist==(1.f-alpha)/(1.f+lh),
+              "mask 0 changes the weights at " + std::to_string(lc) + "/" + std::to_string(lh));
+      }
+  // a spark of luminance 5 over a background of 0.2, this frame's mask at the ceiling 0.9; without the mask it keeps 2 %
+  const float bg = 0.2f, spark = 5.f, ceiling = 0.9f;
+  const auto  w0   = Taa::resolveWeights(alpha, spark, bg, 0.f, 0.f);
+  const float off  = (Taa::resolveBlend(w0, spark, bg) - bg)/(spark - bg);
+  require(off<0.05f, "a spark without the mask keeps " + std::to_string(off));
+  const auto  w1   = Taa::resolveWeights(alpha, spark, bg, std::min(1.f, ceiling), 0.f);
+  const float kept = (Taa::resolveBlend(w1, spark, bg) - bg)/(spark - bg);
+  require(kept>=0.85f, "a spark under the mask 0.9 keeps " + std::to_string(kept) + " of its light");
+  // the last frame's mask alone gives the same: the pixel the flame has left does not trust its history
+  const auto  w2   = Taa::resolveWeights(alpha, bg, spark, 0.f, ceiling);
+  const auto  w3   = Taa::resolveWeights(alpha, bg, spark, ceiling, 0.f);
+  require(w2.cur==w3.cur && w2.hist==w3.hist, "the last frame's mask weighs unlike this frame's");
+  require(Taa::resolveBlend(w2, bg, spark) < bg + 0.15f*(spark-bg), "the trail of a spark stays in the history");
+  }
+
 int main() {
   try {
     jitterSequence();
@@ -321,6 +347,7 @@ int main() {
     movingCamera();
     cameraJump();
     motionResidual();
+    reactiveWeights();
     std::cout << "{\"test\":\"taa\",\"passed\":true,\"assertions\":" << assertions << "}\n";
     return 0;
     }

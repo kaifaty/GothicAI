@@ -285,6 +285,8 @@ bool MdlVisual::bindBodyRig() {
       Log::e("render rig ",rig->name(),": body \"",proto->fname,"\" ",why);
     rig = nullptr;
     }
+  if(bodyRig!=rig)
+    rigGait = rigGaitNow = RenderRig::Gait();
   bodyRig = rig;
   rigPalette.resize(rig!=nullptr ? rig->bones() : 0);
   view.setSkeleton(rig!=nullptr ? &rig->skeleton() : skeleton);
@@ -303,7 +305,14 @@ void MdlVisual::pushBodyPose() {
     view.setPose(pos,source);
     return;
     }
-  if(!bodyRig->solve(source,skInst->boneCount(),rigPalette.data(),RenderRig::Hands{rigHold,rigWorld})) {
+  // the legs' memory: every push of a frame is one step from what the last frame left (rigGait), so pushing twice
+  // in a frame - the place first, the pose after - does not step twice
+  RenderRig::Gait gait = rigGait;
+  const bool solved = bodyRig->solve(source,skInst->boneCount(),rigPalette.data(),RenderRig::Hands{rigHold,rigWorld},
+                                     &gait,rigStep);
+  if(solved)
+    rigGaitNow = gait;
+  if(!solved) {
     // the Gothic pose is not there yet: the rig's bind pose where the body stands
     const auto& bind = bodyRig->skeleton().tr;
     for(size_t i=0; i<rigPalette.size() && i<bind.size(); ++i)
@@ -322,6 +331,7 @@ Matrix4x4 MdlVisual::attachMatrix(size_t node) const {
 const Matrix4x4* MdlVisual::skinOf(const Matrix4x4* bones, size_t n, std::vector<Matrix4x4>& rig, size_t& count) const {
   if(bodyRig!=nullptr) {
     rig.resize(bodyRig->bones());
+    // without the legs' memory: these poses are not the drawn one (the bind pose, a pose asked for a fit)
     if(bodyRig->solve(bones,n,rig.data(),RenderRig::Hands{rigHold,rigWorld})) {
       count = rig.size();
       return rig.data();
@@ -961,6 +971,11 @@ bool MdlVisual::updateAnimation(Npc* npc, Interactive* mobsi, World& world, uint
 
   // the render rig's arms: one thing in both hands (a 2H weapon, a bow, a crossbow, a spell) - the left hand holds on
   // to the right as Gothic's does; at a mob (a ladder, a workbench) - the hands go onto Gothic's
+  // the render rig's legs: this frame steps from what the last one left
+  if(bodyRig!=nullptr) {
+    rigGait = rigGaitNow;
+    rigStep = float(dt)/1000.f;
+    }
   bool handsMoved = false;
   if(bodyRig!=nullptr && npc!=nullptr) {
     const auto  ws    = npc->weaponState();

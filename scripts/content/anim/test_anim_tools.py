@@ -871,3 +871,50 @@ def test_two_bone_guard_bends_a_straight_leg_forward_whatever_way_its_knee_is_of
         assert off[2] > 8 and abs(off[0]) < 0.5 * off[2]                       # the knee goes forward, not aside
         aside.append(off)
     assert np.linalg.norm(aside[0] - aside[1]) < 3                             # and the same way for both nudges
+
+
+def test_knee_floor_brings_a_chain_drawn_into_a_line_back_to_the_bind_knee_and_leaves_a_bent_one():
+    import copy
+
+    import fix_layer as fl
+    import knee_floor as kf
+    models, skel, stance = gothic_stance()
+    ix = skel.index
+    hip, knee, foot = (ix(f"BIP01 L {b}") for b in ("THIGH", "CALF", "FOOT"))
+    floor = kf.bind_bend(skel)
+    assert 12 < floor < 15                                   # BIP01's chain is bent where the body's leg is straight
+    assert kf.raised(floor + 6.0, floor, 6.0) == pytest.approx(floor + 6.0)      # smooth where the two parts meet
+    assert kf.raised(floor + 20.0, floor, 6.0) == floor + 20.0
+    assert floor < kf.raised(0.0, floor, 6.0) < floor + 0.5
+    assert kf.raised(floor, floor, 6.0) == pytest.approx(floor + 6.0 / np.e)
+    for nudge in (-0.3, 0.3):                                # the knee a hair to one side of the line, then the other
+        anim = copy.deepcopy(stance)
+        clip = fl.Clip(skel, anim)
+        W = clip.world(0)
+        H, K, A = (W[i][:3, 3].copy() for i in (hip, knee, foot))
+        reach = np.linalg.norm(K - H) + np.linalg.norm(A - K)
+        down = (A - H) / np.linalg.norm(A - H)
+        fl.two_bone(clip, 0, W, "L leg", H + down * (reach - 0.01) + np.array([nudge, 0.0, 0.0]), W[foot][:3, :3].copy())
+        assert abs(kf.bend(clip.world(0), skel, "L leg")) < 3                    # a line: the knee bent backwards
+        other = kf.bend(clip.world(0), skel, "R leg")                            # the stance's own knee, at the floor
+        at, turn = clip.world(0)[foot][:3, 3].copy(), clip.world(0)[foot][:3, :3].copy()
+        rep = kf.lay(skel, anim, floor)
+        W = clip.world(0)
+        assert floor <= kf.bend(W, skel, "L leg") < floor + 0.5                  # back at the bind knee, to the front
+        assert rep["L leg"]["frames"] == anim.frame_count and rep["L leg"]["least_after"] >= floor
+        assert np.linalg.norm(W[foot][:3, 3] - at) < 0.7                         # the foot gives way by millimetres
+        assert np.allclose(W[foot][:3, :3], turn, atol=1e-5)                     # and keeps its turn
+        # the other leg stood at the floor: it comes up by its soft share, smoothly with the knees above
+        assert kf.bend(W, skel, "R leg") == pytest.approx(kf.raised(other, floor, 6.0), abs=0.05)
+        assert 1.5 < kf.bend(W, skel, "R leg") - other < 2.5
+    # a leg bent well over the floor is not touched
+    anim = copy.deepcopy(stance)
+    clip = fl.Clip(skel, anim)
+    W = clip.world(0)
+    H, A = W[hip][:3, 3].copy(), W[foot][:3, 3].copy()
+    fl.two_bone(clip, 0, W, "L leg", H + (A - H) * 0.9, W[foot][:3, :3].copy(), guard=3.0)
+    assert kf.bend(clip.world(0), skel, "L leg") > floor + 15
+    was = anim.rotations.copy()
+    rep = kf.lay(skel, anim, floor)
+    cols = [clip.col[i] for i in (hip, knee, foot)]
+    assert np.allclose(np.abs((anim.rotations[0, cols] * was[0, cols]).sum(-1)), 1, atol=1e-9)   # frame 0 is the bent one

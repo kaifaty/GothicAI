@@ -27,7 +27,7 @@ PR, который добавляет фичу или выключатель, д
 | Движок: память | [engine-memory.md](features/engine-memory.md) | 11 | Память мира, восприятие и навигация. |
 | Движок: физика Jolt | [engine-physics.md](features/engine-physics.md) | 66 | Физика Jolt, тела, предметы и ближний бой. |
 | Движок: анимация | [engine-animation.md](features/engine-animation.md) | 14 | Анимация и движение персонажей. |
-| Движок: рендер | [engine-render.md](features/engine-render.md) | 54 | Рендер, материалы, свет и эффекты. |
+| Движок: рендер | [engine-render.md](features/engine-render.md) | 55 | Рендер, материалы, свет и эффекты. |
 | Движок: стрельба | [engine-archery.md](features/engine-archery.md) | 3 | Стрельба, прицеливание и снаряды. |
 | Выключено по умолчанию | [off-by-default.md](features/off-by-default.md) | 27 | Экспериментальные и явно запускаемые возможности. |
 | Пробелы покрытия | [coverage-gaps.md](features/coverage-gaps.md) | 0 | Возможности без e2e и бенчей или с отдельными условиями проверки. |

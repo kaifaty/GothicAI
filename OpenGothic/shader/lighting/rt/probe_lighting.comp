@@ -18,8 +18,10 @@
 // the bounce off the probes themselves from the last frame instead of the path's next bounces.
 // RELIGHT (probe_relight.comp): a thread relights one sample of an old probe, each sample once in relitPeriod
 // frames, into its radiance in probesRadiance. RELIGHT_NEW (probe_relight_new.comp): a new probe lights all its
-// samples. Then (probe_lighting.comp) a workgroup integrates a probe's 256 samples into its ambient cube, blended
-// over time with the last frame's cube (reset on a sharp change, as in DDGI); a new probe has no history.
+// samples. Both read the irradiance of the probes of the last frame (probesLighting: L2 harmonics,
+// probe_common.glsl). Then (probe_lighting.comp) a workgroup projects a probe's 256 samples on the harmonics and
+// blends them in place over time with its last ones (reset on a sharp change, as in DDGI); a new probe has no
+// history.
 
 layout(primitive_culling);
 #if defined(RELIGHT_NEW)
@@ -48,13 +50,17 @@ layout(push_constant, std140) uniform Push {
 layout(binding = 0, std140) readonly buffer UboScene { // ubo is broken on NVidia?
   SceneDesc scene;
   };
-layout(binding = 1) uniform writeonly image2D probesLighting;
+#if !defined(RELIGHT) && !defined(RELIGHT_NEW)
+layout(binding = 1, rgba16f) uniform restrict image2D probesLighting; // the harmonics, integrated in place
+#endif
 layout(binding = 2) uniform sampler2D gbufferDiff;
 layout(binding = 3) uniform sampler2D gbufferNorm;
 layout(binding = 4) uniform sampler2D gbufferRayT;
 layout(binding = 5) uniform sampler2D skyLUT;
 // 6..11: the ray scene, rt_common.glsl
-layout(binding = 12) uniform sampler2D probesLightingPrev;
+#if defined(RELIGHT) || defined(RELIGHT_NEW)
+layout(binding = 12) uniform sampler2D probesLighting; // the harmonics of the last frame
+#endif
 layout(binding = 13, std430) readonly buffer Hbo { uint hashTable[]; };
 layout(binding = 14, std430) buffer Pbo { ProbesHeader probeHeader; Probe probe[]; };
 layout(binding = 15, std430) readonly buffer BVH { BVHNode node[]; } lightsTree; // lights_bvh.comp
@@ -64,7 +70,10 @@ layout(binding = 18, std430) buffer Hbo0 { uint voteTable[]; };          // requ
 layout(binding = 19, std430) buffer Rbo  { uint ageHistogram[probeAgeBuckets]; ProbeRequest request[]; } req;
 
 #if !defined(RELIGHT) && !defined(RELIGHT_NEW)
-shared vec4 samples[gl_WorkGroupSize.x][3][2]; // 6 Kb
+shared vec4 shSum [gl_WorkGroupSize.x][9]; // a thread's sums of L*Y_k over its samples, their count in [0].w (9 Kb)
+shared vec4 shEst [7];                     // the coefficients of this frame, packed as the texels
+shared vec4 shHist[7];                     // and of the last frame
+shared uint shReset;
 #if defined(MATERIAL_MAPS)
 // Keep sky visibility separate from the counts used by the RGB integration.
 shared vec2 skySamples[gl_WorkGroupSize.x][3][2];
@@ -192,9 +201,10 @@ vec3 skyRadiance(vec3 origin, vec3 dir) {
   return sky + NightSky;
   }
 
+#if defined(RELIGHT) || defined(RELIGHT_NEW)
 vec3 readSelf(uint probeId, bool hasPrev, vec3 n) {
   // the probe's own light of the last frame in the hit's direction; a new probe has none
-  return hasPrev ? probeReadAmbient(probesLightingPrev, probeId, n, vec3(0)) : vec3(0);
+  return hasPrev ? probeReadIrradiance(probesLighting, probeId, n) : vec3(0);
   }
 
 // The probe of a hit at a lod, found in the world (no projection on the screen): the corner of the cage furthest along
@@ -276,7 +286,7 @@ vec3 bounce(vec3 pos, vec3 norm, uint probeId, uint stamp, bool hasPrev) {
   // the street seen through the door) for +0,4 ms in combat: over the budget (step-2.md, «2а»).
   uint id = 0;
   if(findProbe(pos, norm, stamp, id))
-    return probeReadAmbient(probesLightingPrev, id, norm, vec3(0));
+    return probeReadIrradiance(probesLighting, id, norm);
   return readSelf(probeId, hasPrev, norm);
   }
 
@@ -319,6 +329,7 @@ vec4 shadeSample(const vec3 rayOrigin, const vec3 rayDirection, uint probeId, ui
   hit += albedo * bounce(pos, norm, probeId, stamp, hasPrev); // Fd_Lambert is in the probes' integration
   return vec4(hit, 1);
   }
+#endif
 
 #if defined(RELIGHT_NEW)
 shared uint shIndex;
@@ -366,18 +377,6 @@ void main() {
   imageStore(probesRadiance, gbufferCoord(probeId, sampleId), uvec4(clr.a>0 ? packRGB9E5(clr.rgb*probeStoreScale) : NoSample));
   }
 #else
-void storeSample(vec3 dir, vec4 val) {
-  if(val.a==0)
-    return;
-
-  for(int i=0; i<3; ++i) {
-    float v = dir[i];
-    int   d = v>=0 ? 1 : 0;
-    v = abs(v);
-    samples[gl_LocalInvocationIndex][i][d] += vec4(val.rgb*v, 1);
-    }
-  }
-
 #if defined(MATERIAL_MAPS)
 void storeSkySample(vec3 dir, float valid, bool sky) {
   if(valid==0)
@@ -395,28 +394,36 @@ float resolveSkyVisibility(vec2 sampleWeights) {
   }
 #endif
 
-void processLighting(const uint probeId, const bool fresh) {
-  const vec3 origin = probe[probeId].pos;
-
+void loadSamples(const uint probeId, const bool fresh) {
+  // this thread's samples projected on the harmonics: L*Y_k, summed here, then over the workgroup in shSum
+  vec4 sum[9];
+  for(int k=0; k<9; ++k)
+    sum[k] = vec4(0);
   for(uint i=0; i<samplesCount; ++i) {
     const uint  sampleId = gl_LocalInvocationIndex*samplesCount+i;
     const vec3  dir      = sampleSphere(sampleId, samplesTotal, 0);
     const ivec2 uv       = gbufferCoord(probeId, sampleId);
 
     // a new probe's samples were lit this frame in probe_relight_new.comp, the others in turns
-    vec4 clr = vec4(0);
     const uint v = imageLoad(probesRadiance, uv).r;
-    if(v!=NoSample)
-      clr = vec4(unpackRGB9E5(v)*(1.0/probeStoreScale), 1);
-    storeSample(dir, clr);
+    if(v!=NoSample) {
+      const vec3 clr = unpackRGB9E5(v)*(1.0/probeStoreScale);
+      float y[9];
+      probeSh9(dir, y);
+      for(int k=0; k<9; ++k)
+        sum[k].rgb += clr*y[k];
+      sum[0].w += 1;
+      }
 #if defined(MATERIAL_MAPS)
     if(fresh) {
       // the sky visibility depends on the trace only: a new probe counts it
       const uint bits = uint(texelFetch(gbufferDiff, uv, 0).a*255.0+0.5);
-      storeSkySample(dir, clr.a, (bits & 0x4)!=0);
+      storeSkySample(dir, v!=NoSample ? 1.0 : 0.0, (bits & 0x4)!=0);
       }
 #endif
     }
+  for(int k=0; k<9; ++k)
+    shSum[gl_LocalInvocationIndex][k] = sum[k];
   }
 
 void processProbe(const uint probeId) {
@@ -433,63 +440,79 @@ void processProbe(const uint probeId) {
     return;
   const float a = off ? 1.0 - pow(1.0 - alpha, float(offPeriod)) : alpha;
 
-  for(int i=0; i<3; ++i) {
-    samples[laneId][i][0] = vec4(0);
-    samples[laneId][i][1] = vec4(0);
 #if defined(MATERIAL_MAPS)
+  for(int i=0; i<3; ++i) {
     skySamples[laneId][i][0] = vec2(0);
     skySamples[laneId][i][1] = vec2(0);
-#endif
     }
+#endif
+  loadSamples(probeId, fresh);
   barrier();
 
-  processLighting(probeId, fresh);
-  barrier();
+#if defined(MATERIAL_MAPS)
+  if(fresh) {
+    for(uint i=gl_WorkGroupSize.x; i>0;) {
+      i /= 2;
+      if(laneId<i) {
+        for(int r=0; r<3; ++r) {
+          skySamples[laneId][r][0] += skySamples[laneId+i][r][0];
+          skySamples[laneId][r][1] += skySamples[laneId+i][r][1];
+          }
+        }
+      barrier();
+      }
+    if(laneId==0) {
+      vec3 negativeVisibility, positiveVisibility;
+      for(int axis=0; axis<3; ++axis) {
+        negativeVisibility[axis] = resolveSkyVisibility(skySamples[0][axis][0]);
+        positiveVisibility[axis] = resolveSkyVisibility(skySamples[0][axis][1]);
+        }
+      probe[probeId].bits = probePackSkyVisibility(probe[probeId].bits, negativeVisibility, positiveVisibility);
+      }
+    }
+#endif
 
   for(uint i=gl_WorkGroupSize.x; i>0;) {
     i /= 2;
     if(laneId<i) {
-      for(int r=0; r<3; ++r) {
-        samples[laneId][r][0] += samples[laneId+i][r][0];
-        samples[laneId][r][1] += samples[laneId+i][r][1];
-#if defined(MATERIAL_MAPS)
-        skySamples[laneId][r][0] += skySamples[laneId+i][r][0];
-        skySamples[laneId][r][1] += skySamples[laneId+i][r][1];
-#endif
-        }
+      for(int k=0; k<9; ++k)
+        shSum[laneId][k] += shSum[laneId+i][k];
       }
     barrier();
     }
-
-#if defined(MATERIAL_MAPS)
-  if(laneId==0 && fresh) {
-    vec3 negativeVisibility, positiveVisibility;
-    for(int axis=0; axis<3; ++axis) {
-      negativeVisibility[axis] = resolveSkyVisibility(skySamples[0][axis][0]);
-      positiveVisibility[axis] = resolveSkyVisibility(skySamples[0][axis][1]);
+  if(laneId<7) {
+    // the coefficients of irradiance/pi: (4pi/N)*sum(L*Y_k) over the N samples that count, times A_l/pi = 1, 2/3, 1/4
+    // (the cosine's convolution); the texels hold them in a row, rgb of each
+    const float cnt = shSum[0][0].w;
+    const float s   = cnt>0 ? 4.0*M_PI/cnt*probeStoreScale : 0.0;
+    vec4 e = vec4(0);
+    for(int c=0; c<4; ++c) {
+      const int f = int(laneId)*4 + c;
+      const int k = min(f/3, 8);
+      if(f<27)
+        e[c] = shSum[0][k][f%3]*s*(k==0 ? 1.0 : (k<4 ? 2.0/3.0 : 0.25));
       }
-    probe[probeId].bits = probePackSkyVisibility(probe[probeId].bits, negativeVisibility, positiveVisibility);
+    shEst [laneId] = e;
+    shHist[laneId] = fresh ? e : imageLoad(probesLighting, probeIrrTexel(probeId, int(laneId)));
     }
-#endif
-
-  if(laneId<6) {
-    const uint axis = laneId/2;
-    const uint side = laneId%2;
-    vec4 s = samples[0][axis][side];
-    // Need to mul by 2, because it's uniform sampling; https://www.rorydriscoll.com/2009/01/07/better-sampling/
-    const vec3 est = (s.w>0 ? s.rgb/s.w : vec3(0)) * 2.0;
-
-    vec3 ret = est;
-    if(!fresh) {
-      const vec3  hist   = texelFetch(probesLightingPrev, lightBufferCoord(probeId)+ivec2(axis,side), 0).rgb*(1.0/probeStoreScale);
-      const float lh     = luma(hist);
-      const float ln     = luma(est);
-      const float eps    = 0.0005/max(scene.exposure, 1e-6); // dark on the screen: no reset on noise there
-      const float change = abs(ln-lh)/max(max(ln, lh), eps);
-      ret = mix(hist, est, change>ResetChange ? 1.0 : a);
-      }
-    const ivec2 uv = lightBufferCoord(probeId);
-    imageStore(probesLighting, uv+ivec2(axis,side), vec4(ret*probeStoreScale, 1));
+  if(laneId==0)
+    shReset = 0;
+  barrier();
+  if(laneId<6 && !fresh) {
+    // a sharp change, as the faces of the cube had it: the irradiance along an axis changes by more than ResetChange
+    vec3 ax = vec3(0);
+    ax[laneId/2] = (laneId%2)==0 ? 1.0 : -1.0;
+    const float lh     = luma(probeShEval(shHist, ax));
+    const float ln     = luma(probeShEval(shEst,  ax));
+    const float eps    = 0.0005/max(scene.exposure, 1e-6)*probeStoreScale; // dark on the screen: no reset on noise there
+    const float change = abs(ln-lh)/max(max(ln, lh), eps);
+    if(change>ResetChange)
+      atomicOr(shReset, 1u);
+    }
+  barrier();
+  if(laneId<7) {
+    const vec4 ret = mix(shHist[laneId], shEst[laneId], shReset!=0 ? 1.0 : a);
+    imageStore(probesLighting, probeIrrTexel(probeId, int(laneId)), ret);
     }
   // probe_relight relit it this frame (the same tests as there): the next frame takes the next samples
   if(laneId==0 && !fresh)
