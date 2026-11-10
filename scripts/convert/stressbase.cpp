@@ -2,6 +2,8 @@
 #include "stressmeshes.h"
 
 #include "baseimport.h"
+#include "baseformat.h"
+#include "basemesh.h"
 #include "basestore.h"
 #include "gothicglb.h"
 #include "worldchunksruntime.h"
@@ -124,6 +126,15 @@ void keepArchives(const fs::path& from, const fs::path& to) {
   gothicglb::writeFile(to/"world.json",text.data(),text.size());
   }
 
+std::map<std::string,std::string> manifestFiles(const fs::path& base) {
+  const auto doc = parseJson(base/"base-files.json");
+  require(doc.HasMember("files") && doc["files"].IsArray(),"invalid base-files.json in "+base.string());
+  std::map<std::string,std::string> files;
+  for(const auto& f:doc["files"].GetArray())
+    files[f["path"].GetString()] = f["sha256"].GetString();
+  return files;
+  }
+
 struct WorldCount {
   std::string name;
   uint64_t    before = 0, after = 0;
@@ -199,8 +210,11 @@ int build(const fs::path& baseArg, const fs::path& outArg, int subdivide, int me
     // Static meshes that fit the format after the split; the rest is linked below.
     const auto meshes = Meshes::build(base,out,meshLevel);
 
-    // Every other family as it is: hard links, or copies across file systems.
+    // Every other file of the source's manifest as it is: hard links, or copies across file systems.
+    // Files outside the manifest (macOS ._* files of a copy, for one) are not the base's and stay behind.
     const std::set<std::string> worlds(names.begin(),names.end());
+    const auto listed = manifestFiles(base);
+    size_t unlisted = 0;
     for(auto it=fs::recursive_directory_iterator(base); it!=fs::recursive_directory_iterator(); ++it) {
       const auto relative = it->path().lexically_relative(base);
       const auto name = relative.generic_string();
@@ -212,12 +226,16 @@ int build(const fs::path& baseArg, const fs::path& outArg, int subdivide, int me
           it.disable_recursion_pending();
         continue;
         }
-      const auto target = out/relative;
-      if(it->is_directory()) {
-        fs::create_directories(target);
+      // A directory is made with the first listed file in it.
+      if(it->is_directory())
+        continue;
+      if(listed.count(name)==0) {
+        ++unlisted;
         continue;
         }
       require(it->is_regular_file(),"unexpected entry in the source base: "+it->path().string());
+      const auto target = out/relative;
+      fs::create_directories(target.parent_path());
       std::error_code error;
       fs::create_hard_link(it->path(),target,error);
       if(!error) {
@@ -227,6 +245,7 @@ int build(const fs::path& baseArg, const fs::path& outArg, int subdivide, int me
       fs::copy_file(it->path(),target);
       ++copied;
       }
+    std::cout << unlisted << " files of the source are not in its manifest: skipped" << std::endl;
 
     std::string json = "{\n  \"format\": \"gothic-stress-base\",\n  \"version\": 1,\n  \"subdivide\": " +
                        std::to_string(subdivide) + ",\n  \"source\": {\"fingerprint\": \"" + identity.fingerprint +
@@ -268,15 +287,6 @@ int build(const fs::path& baseArg, const fs::path& outArg, int subdivide, int me
   }
 
 // ---- verification ----
-
-std::map<std::string,std::string> manifestFiles(const fs::path& base) {
-  const auto doc = parseJson(base/"base-files.json");
-  require(doc.HasMember("files") && doc["files"].IsArray(),"invalid base-files.json in "+base.string());
-  std::map<std::string,std::string> files;
-  for(const auto& f:doc["files"].GetArray())
-    files[f["path"].GetString()] = f["sha256"].GetString();
-  return files;
-  }
 
 uint64_t mix(uint64_t h, uint64_t v) {
   h ^= v + 0x9E3779B97F4A7C15ull + (h<<6) + (h>>2);
@@ -768,6 +778,48 @@ void selfTest(const fs::path& dir) {
   const auto diff = compareWorldMeshes(canonicalWorldMesh(s),readWorldChunks(out));
   require(diff.empty(),"stress split round trip: "+diff);
   fs::remove_all(out);
+
+  // A ready base with files outside its manifest: a ._* file in the root, next to a mesh and among
+  // the chunks. The copy and its manifest leave them out, and the copy verifies.
+  {
+  const auto src = dir/"stress-base-src", copy = dir/"stress-base-copy";
+  fs::create_directories(src/"sources");
+  gothicglb::writeFile(src/"sources"/"sources.json","{}",2);
+  const auto world = src/"worlds"/"STRESS";
+  writeWorldChunks(m,{"STRESS.ZEN",1,2},world);
+  const auto wj = gothicglb::readFile(world/"world.json");
+  std::string text(wj.begin(),wj.end());
+  text.insert(1,"\n  \"archives\": [],");
+  gothicglb::writeFile(world/"world.json",text.data(),text.size());
+  asset::StaticMesh mesh;
+  mesh.positions = {{0,0,0},{100,0,0},{0,100,0}};
+  mesh.bbox = {{0,0,0},{100,100,0}};
+  asset::SubMesh sm;
+  sm.mat = stone;
+  sm.wedges = {{{0,0,1},{0,0},0},{{0,0,1},{1,0},1},{{0,0,1},{0,1},2}};
+  sm.triangles = {{{0,1,2}}};
+  mesh.sub_meshes = {sm};
+  mesh.materials = {stone};
+  fs::create_directories(src/"meshes");
+  writeBaseMesh(mesh,"STRESS_MESH",src/"meshes"/"STRESS_MESH.glb");
+  const std::string index = R"({"format": "gothic-meshes", "version": 1, "archives": [], "meshes": {"STRESS_MESH": "STRESS_MESH.glb"}})";
+  gothicglb::writeFile(src/"meshes"/"meshes.json",index.data(),index.size());
+  BaseImport::Identity identity;
+  identity.fingerprint = std::string(64,'5');
+  identity.json = "{\"fingerprint\":\""+identity.fingerprint+"\",\"format\":\"gothic-base\",\"version\":2,"
+                  "\"format_sha256\":\""+std::string(BaseFormatSha256)+"\",\"archives\":[],\"loose_files\":[]}";
+  BaseImport::writeBaseMetadata(src,identity);
+  const std::vector<std::string> extra = {"._audio","meshes/._STRESS_MESH.glb","worlds/STRESS/chunks/._chunk.glb"};
+  for(const auto& e:extra)
+    gothicglb::writeFile(src/e,"junk",4);
+  require(build(src,copy,1,1)==0 && verify(src,copy)==0,"stress base of a base with unlisted files");
+  const auto files = manifestFiles(copy);
+  for(const auto& e:extra)
+    require(!fs::exists(copy/e) && files.count(e)==0,"stress base: "+e+" is not in the source's manifest but reached the copy");
+  require(files.count("meshes/STRESS_MESH.glb")!=0 && files.count("meshes/meshes.json")!=0,"stress base: listed files missing");
+  fs::remove_all(src);
+  fs::remove_all(copy);
+  }
 
   Meshes::selfTest(dir/"stress-meshes");
   fs::remove_all(dir/"stress-meshes");
