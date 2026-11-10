@@ -290,8 +290,10 @@ view full
 wait 1000
 
 # 9. Leak views (step 2b-2): thin plank walls of the harbour's poor quarter, thinner than a probe cell of lod 0.
-#    A lamp inside hut 1 behind its north wall at night, the camera outside; the fireplace of hut 3 behind its east
-#    wall at night, the camera outside; the west wall of hut 6 in the noon sun, the camera inside on its shaded side.
+#    A lamp inside hut 1 behind its north wall at night, the camera outside; the fireplace of hut 3 behind its north
+#    wall at night, the camera in the alley outside (the open door lets some of it out); the west wall of hut 6 in
+#    the noon sun, the camera inside on its shaded side. A wall the reference leaves nearly black is no test: its
+#    cells are left out of the comparison.
 set time 23 0
 goto pos 1950 -120 -4700
 clear 3000
@@ -308,11 +310,11 @@ shot leak-lamp-night-bare
 wait 200
 view full
 wait 1000
-goto pos 4100 -110 -4735
+goto pos 3837 -110 -4450
 clear 3000
 watch player
 cam look 110
-cam world 200 150 0
+cam world 200 150 90
 wait 10000
 cam hold
 shot leak-fire-night
