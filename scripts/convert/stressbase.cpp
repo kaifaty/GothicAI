@@ -6,6 +6,8 @@
 #include "worldchunksruntime.h"
 
 #include <rapidjson/document.h>
+#include <rapidjson/stringbuffer.h>
+#include <rapidjson/writer.h>
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -121,6 +123,21 @@ bool writtenWorldFile(const fs::path& relative, const std::set<std::string>& wor
   return *it=="chunks" || *it=="world.json" || *it=="unreferenced.bin";
   }
 
+// writeWorldChunks leaves out the archive index the import adds after it (baseimport.cpp,
+// addWorldArchives); the game's loader requires it (worldbase.cpp). The source's goes over unchanged.
+void keepArchives(const fs::path& from, const fs::path& to) {
+  const auto source = parseJson(from/"world.json");
+  require(source.HasMember("archives") && source["archives"].IsArray(),"world.json without archives: "+from.string());
+  rapidjson::StringBuffer archives;
+  rapidjson::Writer<rapidjson::StringBuffer> writer(archives);
+  source["archives"].Accept(writer);
+  const auto bytes = gothicglb::readFile(to/"world.json");
+  std::string text(bytes.begin(),bytes.end());
+  require(!text.empty() && text[0]=='{' && text.find("\"archives\"")==std::string::npos,"unexpected world.json: "+to.string());
+  text.insert(1,std::string("\n  \"archives\": ")+archives.GetString()+",");
+  gothicglb::writeFile(to/"world.json",text.data(),text.size());
+  }
+
 struct WorldCount {
   std::string name;
   uint64_t    before = 0, after = 0;
@@ -185,6 +202,7 @@ int build(const fs::path& baseArg, const fs::path& outArg, int subdivide) {
         mesh = StressBase::subdivide(mesh);
       // The importer's writer: the same contract for ids, order, flags and lightmaps.
       const auto written = writeWorldChunks(mesh,manifest.source,out/"worlds"/c.name,manifest.chunkSize);
+      keepArchives(source,out/"worlds"/c.name);
       require(written.triangles==c.after,"world "+c.name+": written triangle count differs");
       c.chunksAfter = written.chunks.size();
       std::cout << c.name << ": " << c.before << " -> " << c.after << " triangles (x" << factor << "), "
@@ -363,6 +381,16 @@ void verifyWorld(const fs::path& sourceDir, const fs::path& copyDir, const std::
   const auto mc = readWorldChunkManifest(copyDir);
   require(mc.source.world==ms.source.world && mc.source.size==ms.source.size && mc.source.crc32==ms.source.crc32 &&
           mc.chunkSize==ms.chunkSize && mc.materials.size()==ms.materials.size(),where+"world.json identity differs");
+  // Every world.json field but the counts and the chunk list is the source's, the archive index included.
+  {
+  const auto js = parseJson(sourceDir/"world.json"), jc = parseJson(copyDir/"world.json");
+  const std::set<std::string> recounted = {"triangles","vertices","features","chunks"};
+  require(js.MemberCount()==jc.MemberCount(),where+"world.json fields differ from the source");
+  for(const auto& m:js.GetObject()) {
+    const std::string key = m.name.GetString();
+    require(jc.HasMember(m.name) && (recounted.count(key)!=0 || jc[m.name]==m.value),where+"world.json "+key+" differs from the source");
+    }
+  }
   ChunkTable ts, tc;
   const auto s = readWorldChunks(sourceDir,{},&ts);
   // The game's reader: every chunk of the copy is parsed and stitched here.
