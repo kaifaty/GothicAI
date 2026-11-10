@@ -44,7 +44,7 @@ void DynamicWorld::moveBullet(BulletBody &b, const Tempest::Vec3& dir, uint64_t 
   if(!isSpell && movableVobs->destructionEnabled) {
     // An arrow stops at a remnant before the world behind it; single pieces it passes, as before.
     std::vector<CollisionWorld::QueryResult> debris;
-    world->rayCast(pos,to,1u<<C_Fragment,false,&debris);
+    world->rayCast(pos,to,fragmentMask,false,&debris);
     uint32_t group=0;
     for(const auto& entry:debris)
       if((!hit.hasHit || entry.fraction<hit.fraction) && remnantOf(reinterpret_cast<uintptr_t>(entry.body),group)!=nullptr)
@@ -196,7 +196,7 @@ void DynamicWorld::moveBullet(BulletBody &b, const Tempest::Vec3& dir, uint64_t 
       // Items have no attachment pose; do not pin their stopped arrow to the world.
       // Nor to debris: a remnant moves and breaks under it.
       if(attachAtWorldStop && matId!=asset::MaterialGroup::NONE &&
-         (hit.body==nullptr || (hit.body->category()!=C_Item && hit.body->category()!=C_Fragment))) {
+         (hit.body==nullptr || (hit.body->category()!=C_Item && !isFragment(hit.body->category())))) {
         BulletWorldHit result;
         result.point=b.position();
         result.normal=hit.normal;

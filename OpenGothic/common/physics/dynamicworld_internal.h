@@ -85,11 +85,12 @@ std::unique_ptr<CollisionWorld::DynamicBody> addFragmentBody(CollisionWorld& wor
                                                              const std::string& visual, const JPH::GroupFilter* filter,
                                                              uint32_t breakGroup, uint32_t group, void* parent);
 // The motion of a new body of a break: the old body's motion at its centre of mass (`center` is the
-// old one's), and the blow by point 6 of the bonds note: a single piece also gets the outward push
-// and spin, a joined group only the decaying blow by its own centre of mass.
+// old one's), and the blow by point 6 of the bonds note: a single piece also gets the spin and,
+// with `outward`, the push from the centre; a joined group only the decaying blow by its own centre
+// of mass. A remnant's break has no outward push: its loose staves fall by their own weight.
 void launchFragment(CollisionWorld::DynamicBody& fragment, const std::vector<uint32_t>& members, const FractureMotion& motion,
                     const Tempest::Vec3& center, const Tempest::Vec3& velocity, const Tempest::Vec3& omega,
-                    const Tempest::Vec3& point, const Tempest::Vec3& direction, size_t version);
+                    const Tempest::Vec3& point, const Tempest::Vec3& direction, size_t version, bool outward = true);
 
 inline double volumeScale(const Tempest::Matrix4x4& matrix) {
   const auto* m = matrix.data();

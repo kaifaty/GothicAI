@@ -39,7 +39,7 @@ class CollisionWorld final {
     ~CollisionWorld();
     CollisionWorld(const CollisionWorld&) = delete;
 
-    // Contact slop of broken pieces (C_Fragment), metres; everything else keeps Jolt's 2 cm.
+    // Contact slop of broken pieces (C_Fragment, C_FragmentSmall), metres; everything else keeps Jolt's 2 cm.
     // At 2 cm resting 1.9 cm cut boards sat their whole thickness deep and left through one-sided terrain.
     static constexpr float fragmentPenetrationSlop = .005f;
     // Debris from this largest extent on (metres) stops a blade and blocks characters; smaller

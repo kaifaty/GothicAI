@@ -184,6 +184,9 @@ void testFractureRemnants(const WriteFixture& write, const MakeFixture& make, ui
   world.tick(0);
   require(groupsOf(world)==second && bodiesOf(world,zenId).size()==6,
           "damage adds up: the second blow breaks the near bonds, the far boards stay one body");
+  for(const auto& body:bodiesOf(world,zenId))
+    if(body.piece<5)
+      require(body.category==DynamicWorld::C_FragmentSmall,"a 20 cm board must take the small debris layer characters pass");
   require(!blowOn(world,5,nearEnd,0,40,Melee::OneHand,again),"one swing must not break a remnant twice");
   std::vector<uintptr_t> single;
   const auto before=world.fragmentSnapshot()[0].velocity;
@@ -297,6 +300,8 @@ void testFractureRemnants(const WriteFixture& write, const MakeFixture& make, ui
   const auto ringGroups=ringBlow(ringWorld);
   require(ringGroups==std::vector<uint32_t>({0,1,1,1,1,2,3}),
           "the ring must count the HOOP bonds broken by the first blow: 4 of 6 lost lets the staves go");
+  for(const auto& body:bodiesOf(ringWorld,zenId))
+    require(body.category==DynamicWorld::C_Fragment,"a 60 cm stave or hoop must take the debris layer characters stop at");
   require(ringBlow(ringLoaded)==ringGroups,"a save must keep every bond's fate: the next blow gives the same result");
   require(ringBlow(ringOld)==std::vector<uint32_t>({0,1,1,1,1,2,1}),
           "a schema 3 save joins the pieces of one group by all their bonds");
@@ -317,8 +322,10 @@ void testCharacterDebris() {
   for(const float half:{30.f,10.f}) {
     CollisionWorld world;
     auto floor=world.addCollisionBody(new JPH::BoxShape(JPH::Vec3(20,.5f,20)),at(0,-50,0),.7f,DynamicWorld::C_Landscape);
+    // The layer the engine gives debris of this size (addFragmentBody).
     auto debris=world.addDynamicBody(new JPH::BoxShape(JPH::Vec3(half*.01f,.15f,half*.01f)),at(150,15,0),.6f,20.f,
-                                     DynamicWorld::C_Fragment);
+                                     2.f*half>=CollisionWorld::fragmentBlockSize*100.f ? DynamicWorld::C_Fragment
+                                                                                       : DynamicWorld::C_FragmentSmall);
     for(int i=0;i<30;++i) world.tick(17);
     auto walker=world.createVirtualCharacter(radius,180,{0,0,0});
     CollisionWorld::CharacterMoveResult state;

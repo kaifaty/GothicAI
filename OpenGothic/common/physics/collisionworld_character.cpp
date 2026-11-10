@@ -24,19 +24,14 @@ namespace {
                                      (1u<<DynamicWorld::C_Item)|(1u<<DynamicWorld::C_MovableVob)|
                                      (1u<<DynamicWorld::C_Ragdoll)|(1u<<DynamicWorld::C_Fragment);
 
-  // Debris blocks a character from the size that also stops a blade; smaller pieces stay
-  // passable. A body that appeared around this character is passed until they separate.
+  // Debris blocks a character from the size that also stops a blade: smaller pieces are
+  // C_FragmentSmall, outside characterMask. A body that appeared around this character is
+  // passed until they separate.
   class CharacterBodyFilter final : public JPH::BodyFilter {
     public:
       explicit CharacterBodyFilter(const std::vector<JPH::BodyID>& passed):passed(passed) {}
       bool ShouldCollide(const JPH::BodyID& id) const override {
         return std::find(passed.begin(),passed.end(),id)==passed.end();
-        }
-      bool ShouldCollideLocked(const JPH::Body& body) const override {
-        if(body.GetObjectLayer()!=DynamicWorld::C_Fragment)
-          return true;
-        const auto size=body.GetShape()->GetLocalBounds().GetSize();
-        return std::max({size.GetX(),size.GetY(),size.GetZ()})>=CollisionWorld::fragmentBlockSize;
         }
     private:
       const std::vector<JPH::BodyID>& passed;

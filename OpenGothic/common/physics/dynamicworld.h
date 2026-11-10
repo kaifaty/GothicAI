@@ -113,9 +113,12 @@ class DynamicWorld final {
       C_MovableVob = 10,
       C_MovableQuery = 11,
       C_SmallVobQuery = 12,
-      C_Fragment = 13,
+      C_Fragment = 13, // debris a character stops at: largest extent from CollisionWorld::fragmentBlockSize
       C_Cloth = 14,
+      C_FragmentSmall = 15, // smaller debris: characters pass it, it never enters their queries
       };
+    static constexpr uint32_t fragmentMask = (1u<<C_Fragment)|(1u<<C_FragmentSmall);
+    static constexpr bool isFragment(int category) { return category==C_Fragment || category==C_FragmentSmall; }
 
     enum PtrType {
       P_Null,

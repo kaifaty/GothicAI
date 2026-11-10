@@ -57,7 +57,16 @@ std::unique_ptr<CollisionWorld::DynamicBody> addFragmentBody(CollisionWorld& wor
     if(result.HasError()) Tempest::Log::e("fracture: bond group of ",visual,": ",result.GetError().c_str());
     else shape=result.Get();
     }
-  auto body=world.addDynamicBody(shape,matrix,friction,mass,DynamicWorld::C_Fragment);
+  // Debris from the size that stops a blade blocks characters; smaller pieces take another layer that
+  // their queries never collect. A body keeps its layer: only a remnant divides, into new bodies.
+  const auto size=shape->GetLocalBounds().GetSize();
+  float largest=0;
+  for(int axis=0;axis<3;++axis) {
+    const float scale=Tempest::Vec3(matrix.at(axis,0),matrix.at(axis,1),matrix.at(axis,2)).length();
+    largest=std::max(largest,size[uint(axis)]*scale);
+    }
+  const int category=largest>=CollisionWorld::fragmentBlockSize ? DynamicWorld::C_Fragment : DynamicWorld::C_FragmentSmall;
+  auto body=world.addDynamicBody(shape,matrix,friction,mass,category);
   if(filter!=nullptr) body->setFracturePiece(filter,breakGroup,group);
   // Blades, arrows and spells find the prop of a remnant by this payload.
   body->setPayload(parent,DynamicWorld::P_Fragment);
@@ -69,7 +78,7 @@ std::unique_ptr<CollisionWorld::DynamicBody> addFragmentBody(CollisionWorld& wor
 
 void launchFragment(CollisionWorld::DynamicBody& fragment, const std::vector<uint32_t>& members, const FractureMotion& motion,
                     const Tempest::Vec3& center, const Tempest::Vec3& velocity, const Tempest::Vec3& omega,
-                    const Tempest::Vec3& point, const Tempest::Vec3& direction, size_t version) {
+                    const Tempest::Vec3& point, const Tempest::Vec3& direction, size_t version, bool outward) {
   const auto hit=direction.quadLength()>1.e-12f ? Tempest::Vec3::normalize(direction) : Tempest::Vec3();
   const auto r=(fragment.centerOfMass()-center)*.01f;
   const Tempest::Vec3 tangential(omega.y*r.z-omega.z*r.y,omega.z*r.x-omega.x*r.z,omega.x*r.y-omega.y*r.x);
@@ -86,19 +95,19 @@ void launchFragment(CollisionWorld::DynamicBody& fragment, const std::vector<uin
   const size_t i=members.front();
   // A small separation velocity releases touching cut faces. Linear and
   // angular momentum inherited from the intact body remain the base motion.
-  auto outward=r.quadLength()>1.e-6f ? Tempest::Vec3::normalize(r) : Tempest::Vec3();
+  auto push=r.quadLength()>1.e-6f && outward ? Tempest::Vec3::normalize(r) : Tempest::Vec3();
   auto spin=Tempest::Vec3();
   if(version==3) {
     const float distance=(fragment.centerOfMass()-point).length();
-    outward=outward*motion.outward+hit*(motion.hit*std::exp(-distance/motion.falloff));
-    const float speed=outward.length();
-    if(speed>motion.cap) outward*=motion.cap/speed;
+    push=push*motion.outward+hit*(motion.hit*std::exp(-distance/motion.falloff));
+    const float speed=push.length();
+    if(speed>motion.cap) push*=motion.cap/speed;
     const Tempest::Vec3 axis(hit.y*r.z-hit.z*r.y,hit.z*r.x-hit.x*r.z,hit.x*r.y-hit.y*r.x);
     if(axis.quadLength()>1.e-12f)
       spin=Tempest::Vec3::normalize(axis)*(motion.spin*float(i%8+1)/8.f);
     }
-  else outward*=40.f;
-  fragment.setVelocity(velocity+tangential*100.f+outward,omega+spin);
+  else push*=40.f;
+  fragment.setVelocity(velocity+tangential*100.f+push,omega+spin);
   }
 }
 

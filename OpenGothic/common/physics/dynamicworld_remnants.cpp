@@ -28,7 +28,7 @@ DynamicWorld::BodyData* DynamicWorld::fragmentOf(uintptr_t fragment, uint32_t& g
   }
 
 uintptr_t DynamicWorld::fragmentRay(const Tempest::Vec3& from, const Tempest::Vec3& to, float* distance) const {
-  const auto hit=world->rayCast(from,to,1u<<C_Fragment,false);
+  const auto hit=world->rayCast(from,to,fragmentMask,false);
   if(distance!=nullptr)
     *distance=hit.hasHit ? (hit.point-from).length() : -1.f;
   return hit.hasHit ? reinterpret_cast<uintptr_t>(hit.body) : 0;
@@ -134,7 +134,7 @@ void DynamicWorld::breakRemnant(BodyData& obj, uint32_t group) {
     if(fresh[g]) {
       auto body=addFragmentBody(*world,mesh,pieces[g],matrix,obj.movableMass,obj.movableShape->material,
                                 obj.movableShape->friction,obj.visual,filter.GetPtr(),obj.fragmentCollisionGroup,g,&obj);
-      launchFragment(*body,pieces[g],movableVobs->fractureMotion,center,velocity,omega,blow.point,blow.direction,mesh.version);
+      launchFragment(*body,pieces[g],movableVobs->fractureMotion,center,velocity,omega,blow.point,blow.direction,mesh.version,false);
       world->passCharacterOverlaps(*body);
       fragments[g]=std::move(body);
       }
