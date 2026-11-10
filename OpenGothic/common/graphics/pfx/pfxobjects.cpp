@@ -20,11 +20,11 @@ PfxObjects::~PfxObjects() {
   bucket.clear();
   }
 
-// `view hide pfx` of the test bench (DrawCommands::hiddenTypes, debug only): the particles and sprites go through
-// these buckets, not the draw commands; the frames without them (gi-clips.bench, X-bare) compare with the path
-// tracer, whose ray scene has none
+// `view hide pfx` of the test bench (DrawCommands::hidePfxObjects, debug only; not `view clean` or `nopfx`): the
+// particles and sprites go through these buckets, not the draw commands; the frames without them (gi-clips.bench,
+// X-bare) compare with the path tracer, whose ray scene has none
 static bool hiddenByBench() {
-  return ((DrawCommands::hiddenTypes>>DrawCommands::Pfx) & 1u)!=0;
+  return DrawCommands::hidePfxObjects;
   }
 
 void PfxObjects::setViewerPos(const Vec3& pos) {
