@@ -45,6 +45,7 @@ description: Own animations of moves for the Gothic AI game (combat port, step 6
 |---|---|
 | Генерация Kimodo: папки ходов, ключи, прогон | `scripts/content/anim/kimodo_moves.py`, `run_kimodo.sh` (README) |
 | Kimodo и готовые наборы образцов | `dev-ubuntu:~/gothic-ai/kimodo/<набор>/` (`dodge-st0`, `dodge-st2`, `dodge1`, `dist`, `v2`, `pilot1`, `pilot2`, …): `stance.json` и `<ход>/out/out_NN.npz`. Скопируй `rsync -a` в черновик, прежде чем мерить. У `v2` нет `stance.json`: допиши `{"stance": "HUMANS-S_1HRUN.MAN"}` |
+| Записи живого актёра 100STYLE (CC BY 4.0): 100 стилей ходьбы и бега, BVH 60 кадров/с | архив на хранилище `anim/100style/100STYLE.zip`; перевод — `scripts/content/anim/bvh_to_soma.py --straighten 2.5`, дальше как образец Kimodo (`retarget_soma.py --src-fps 60`). Актёр гуляет медленно (0,8–1,1 м/с) и кругами: бери отрезки с наименьшим поворотом, темп поднимай не больше чем на четверть |
 | Перенос, доводка, слой правок, упаковка | `scripts/content/anim/`: `retarget_soma.py`, `finish.py`, `fix_layer.py`, `content_pack.py`, `blender/gothic_rig.py` |
 | Скрипты этого скилла | `.claude/skills/own-animations/scripts/`, таблица ниже |
 | Модели базы | `B=$(ls -td ~/.cache/gothic-ai/base/*/models \| head -1)`; путь печатает и `scripts/bench.sh` (`base: cache …`) |
@@ -67,6 +68,7 @@ description: Own animations of moves for the Gothic AI game (combat port, step 6
 | `variants_bench.py`, `compose_variants.py` | стенд «вариант рядом с ходом в игре» и ролик-сетка вариантов |
 | `levels_bench.py`, `take_sheet.py`, `compose_ba.py` | стенд хода на трёх уровнях; листы кадров из дублей игры; ролик «было \| стало» |
 | `gait_cues.py` | петля бега или ходьбы против мужского и женского бега Gothic: размах таза, стопы врозь, сгиб запястья, кисть от локтя, высота кистей, колено в махе, подъём стопы, наклон корпуса, груди, шеи и головы |
+| `walk_cues.py` | петля ходьбы по признакам весомой походки: темп и кадры на шаг, ноги врозь, рука от тела, ход таза и корпуса вбок, ход вверх-вниз, поворот бёдер и плеч и их противоход |
 | `stance_cues.py` | стойка на месте против стойки Gothic `S_RUN`: поза (стопы, вес, колени, кисти, локти, наклоны груди, шеи и головы), сколько в ней движения (таз, грудь, плечи, голова, кисти) и изъяны (ход лодыжки и носка, шов) |
 | `trans_cues.py` | переход между стойкой и петлёй (старт, остановка): время и путь, когда корень встал, расхождение поз и шага на обоих концах, где стоят стопы и сколько скользят, носки под полом, наклон корпуса |
 | `scripts/content/anim/knee_floor.py` | проход, а не замер, но его отчёт говорит, гнётся ли колено назад: наименьший сгиб цепочки `BIP01` до и после, сколько кадров поднято, на сколько сдвинулась стопа |

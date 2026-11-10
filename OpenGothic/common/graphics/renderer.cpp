@@ -175,9 +175,10 @@ void Renderer::setupSettings() {
       }
   }
 
-  // VSM lamps: blockers nearer than this to the light (its own basket, lantern frame or candle holder) cast no
-  // shadow; 0 or unset: 30 cm. With the light in its flame a brazier's basket is within it; a man by a torch or a
-  // candle on a table still casts a shadow (80 cm took that away)
+  // VSM lamps: objects nearer than this to the light along its cube face's axis (its own basket, lantern frame or
+  // candle holder) cast no shadow: they are clipped away from the lamp's faces (main.vert), so a wall behind them still
+  // shadows; the world mesh keeps the projection's near plane alone. 0 or unset: 30 cm. With the light in its flame a
+  // brazier's basket is within it; a man by a torch or a candle on a table still casts a shadow (80 cm took that away)
   settings.vsmLampNearCm      = Gothic::settingsGetF("INTERNAL","vsmLampNearCm");
   if(settings.vsmLampNearCm<=0)
     settings.vsmLampNearCm = 30;
@@ -754,6 +755,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   prepareTaa(wview, camera);
   prepareMotion(wview);
   wview.setTaaReactiveLref(settings.taaReactiveLref);
+  wview.setVsmLampNear(settings.vsmLampNearCm);
 
   static bool updFr = true;
   if(updFr){
@@ -1157,9 +1159,9 @@ void Renderer::drawLights(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
 
   auto& ibo  = Resources::cubeIbo();
   struct Push {
-    Vec3 originLwc; float vsmLampNear; uint32_t probeMode, probeStamp; float probeNarrow; uint32_t probeTaps[4], probeFlags;
+    Vec3 originLwc; uint32_t probeMode, probeStamp; float probeNarrow; uint32_t probeTaps[4], probeFlags;
     uint32_t probeExp;
-    } push = {scene.originLwc, settings.vsmLampNearCm, settings.vsmLampMode, 0, settings.vsmLampNarrow,
+    } push = {scene.originLwc, settings.vsmLampMode, 0, settings.vsmLampNarrow,
               {settings.vsmLampTaps[0], settings.vsmLampTaps[1], settings.vsmLampTaps[2], settings.vsmLampTaps[3]},
               settings.vsmLampFlags, settings.vsmLampExp};
   if(lights.directLightPso==&shaders.lightsVsmProbe) {
@@ -1173,9 +1175,7 @@ void Renderer::drawLights(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
       }
     }
   if(lights.directLightPso==&shaders.lightsVsmProbe)
-    cmd.setPushData(&push, sizeof(push));
-  else if(lights.directLightPso==&shaders.lightsVsm || lights.directLightPso==&shaders.lightsVsmHard)
-    cmd.setPushData(&push, offsetof(Push, probeMode)); else
+    cmd.setPushData(&push, sizeof(push)); else
     cmd.setPushData(&push.originLwc, sizeof(push.originLwc));
   cmd.setPipeline(*lights.directLightPso);
   cmd.draw(nullptr,ibo, 0,ibo.size(), 0,wview.lights().size());
