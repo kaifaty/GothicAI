@@ -422,6 +422,27 @@ std::vector<std::pair<size_t,Vec3>> debrisCentres(World& world,Destruction& dest
   return result;
   }
 
+// The loose pieces a character stops at (largest extent from 0.5 m; smaller ones it passes
+// through): world centre and the world vertices of each.
+std::vector<std::pair<Vec3,std::vector<Vec3>>> debrisBlocks(World& world,Destruction& destruction,const FractureMesh& mesh,uint32_t largest) {
+  std::vector<std::pair<Vec3,std::vector<Vec3>>> result;
+  for(const auto& part:world.physic()->fragmentSnapshot()) {
+    if(!destructionOwns(destruction,part.parentId) || part.piece>=mesh.pieces.size() || part.bondGroup==largest)continue;
+    Vec3 low(1e9f,1e9f,1e9f),high(-1e9f,-1e9f,-1e9f);
+    std::vector<Vec3> points;
+    for(const auto& triangle:mesh.pieces[part.piece].triangles)
+      for(const auto& vertex:triangle.vertices) {
+        const auto& v=vertex.position;
+        low=Vec3(std::min(low.x,v.x),std::min(low.y,v.y),std::min(low.z,v.z));
+        high=Vec3(std::max(high.x,v.x),std::max(high.y,v.y),std::max(high.z,v.z));
+        points.push_back(apply(part.transform,v));
+        }
+    if(points.empty() || std::max({high.x-low.x,high.y-low.y,high.z-low.z})<CollisionWorld::fragmentBlockSize*100.f)continue;
+    result.emplace_back(apply(part.transform,mesh.pieces[part.piece].center),std::move(points));
+    }
+  return result;
+  }
+
 float segmentDistance(const Vec3& a,const Vec3& b,const Vec3& p) {
   const Vec2 ab(b.x-a.x,b.z-a.z),ap(p.x-a.x,p.z-a.z);
   const float t=std::clamp(Vec2::dotProduct(ap,ab)/std::max(Vec2::dotProduct(ab,ab),1e-6f),0.f,1.f);
@@ -441,7 +462,8 @@ void debrisWalkPass(FracturePieces::DebrisWalk& walk,Npc& hero,const Vec3& direc
 // `destruction2 walk <length>`: after the breaks the hero walks a straight line of `length` cm through
 // the loose pieces and back, holding forward (4 s at most per pass). The line passes the centre of the
 // loose pieces, clear of the largest group (its radius plus 40 cm), along the direction (30 degree
-// steps) that passes most of them within 40 cm; a line with none of them on it does not count. Per
+// steps) that passes most pieces from 0.5 m within 10 cm of their hull; a line with none of them on
+// it does not count. Per
 // pass: progress along the line, the height of the feet over the ground under them, and the loose
 // pieces it moved; the walk counts only if it moved one.
 void fracturePiecesWalkTick(FracturePieces& state,Destruction& destruction,const DestructionContext& context,World& world,Npc& pl,PlayerControl& ctrl) {
@@ -513,25 +535,28 @@ bool debrisWalkSetup(FracturePieces& state,Destruction& destruction,const Destru
         }
   Vec3 away(centre.x-remnant.centerOfMass.x,0,centre.z-remnant.centerOfMass.z);
   away=away.length()>1e-3f?Vec3::normalize(away):Vec3(0,0,-1);
-  // A line counts only with a loose piece on it. The centre of the loose pieces first, moved away
-  // from the remnant by 20 cm steps; then a line through each loose piece itself.
+  // A line counts only with a loose piece on it: one the hero stops at and pushes (from 0.5 m),
+  // its hull within 10 cm of the line (the hero's capsule is 8 cm). The centre of the loose pieces
+  // first, moved away from the remnant by 20 cm steps; then a line through each such piece itself.
+  const auto blocks=debrisBlocks(w,destruction,*walk.mesh,remnant.group);
   size_t best=0;
   const auto tryLine=[&](const Vec3& middle,const Vec3& dir) {
     const auto from=middle-dir*(length*.5f),to=middle+dir*(length*.5f);
     if(segmentDistance(from,to,remnant.centerOfMass)<radius+40.f)return;
     size_t near=0;
-    for(const auto& [piece,c]:debris)near+=segmentDistance(from,to,c)<=40.f;
+    for(const auto& [c,points]:blocks)
+      near+=std::any_of(points.begin(),points.end(),[&](const Vec3& p) { return segmentDistance(from,to,p)<=10.f; });
     if(near>best) {best=near;walk.start=from;walk.direction=dir;}
     };
   for(int shift=0;shift<=10 && best==0;++shift,centre+=away*20.f)
     for(int step=0;step<6;++step)
       tryLine(centre,Vec3(std::cos(float(step)*float(M_PI)/6.f),0,std::sin(float(step)*float(M_PI)/6.f)));
-  for(size_t i=0;i<debris.size() && best==0;++i)
+  for(size_t i=0;i<blocks.size() && best==0;++i)
     for(int step=0;step<12;++step)
-      tryLine(debris[i].second,Vec3(std::cos(float(step)*float(M_PI)/12.f),0,std::sin(float(step)*float(M_PI)/12.f)));
+      tryLine(blocks[i].first,Vec3(std::cos(float(step)*float(M_PI)/12.f),0,std::sin(float(step)*float(M_PI)/12.f)));
   if(best==0)
     arenaAbort("destruction walk: no straight line of "+std::to_string(int(length))+
-               " cm passes a loose piece within 40 cm and keeps clear of the remnant");
+               " cm passes within 10 cm of a loose piece from 0.5 m and keeps clear of the remnant");
   const auto floor=w.physic()->landRay(walk.start+Vec3(0,150,0),400);
   if(floor.hasCol)walk.start.y=floor.v.y;
   walk.running=true;walk.length=length;walk.onPath=best;
