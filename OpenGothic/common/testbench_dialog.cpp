@@ -172,27 +172,32 @@ bool dialogCommand(const DialogContext& ctx,const std::string& line,const std::v
     Gothic::inst().dialogExec(chs[i-1],pl,n);
     }
   else if(c=="hear") {
-    // hear <npc|nearest> <ms> [every ms]: the hero speaks to it that long, his words come every so often
-    // (as the bridge does with his voice: it listens, nods now and then)
-    Npc* n = findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
-    if(n==nullptr || n==&pl) {
+    // hear <npc|nearest|player> <ms> [every ms]: the hero speaks to it that long, his words come every so often
+    // (as the bridge does with his voice: it listens, nods now and then); player: the hero listens to the nearest
+    Npc* n    = findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
+    Npc* from = n==&pl ? findNpc(w,pl,"nearest") : &pl;
+    if(n==nullptr || from==nullptr || from==n) {
       say("hear: no npc " + line);
       return true;
       }
     ctx.hearNpc   = n;
+    ctx.hearWith  = from;
     ctx.hearUntil = ctx.time + uint64_t(num(a,2,4000));
     ctx.hearEvery = uint64_t(std::max(100.f,num(a,3,600)));
     ctx.hearNext  = ctx.time;
     say("hear " + symName(w,n));
     }
   else if(c=="think") {
-    // think <npc|nearest> <ms>: it thinks of an answer that long (as on the AI server's `thinking`)
-    Npc* n = findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
-    if(n==nullptr || n==&pl) {
+    // think <npc|nearest|player> <ms>: it thinks of an answer that long (as on the AI server's `thinking`);
+    // the hero thinks of an answer to the nearest
+    Npc* n  = findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
+    Npc* to = n==&pl ? findNpc(w,pl,"nearest") : &pl;
+    if(n==nullptr || to==nullptr || to==n) {
       say("think: no npc " + line);
       return true;
       }
     ctx.thinkNpc   = n;
+    ctx.thinkWith  = to;
     ctx.thinkUntil = ctx.time + uint64_t(num(a,2,2500));
     say("think " + symName(w,n));
     }

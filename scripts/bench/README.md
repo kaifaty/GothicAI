@@ -626,8 +626,8 @@ struck standing and while aiming a bow, where the game has no stumble; a wolf: t
 Lip sync: `lips` (Xardas says a voiced line of the game, the camera at his face; then the same line
 with the old talk loop), `lips-dialog` (the hero talks to Xardas through the dialog window and picks
 the first choice: the lines of both are played the way the game plays them).
-The hero's head: `hero-head` (his face close up - still, the moods of the AI lines, a voiced dialog line - and
-running from behind in the market; the clips of the original and of the new head, side by side,
+The hero's head: `hero-head` (his face close up - still, the moods of the AI lines, a voiced dialog line, the eyes:
+he listens to Xardas, thinks, Xardas stands around him, he looks down and up - and running from behind in the market; the clips of the original and of the new head, side by side,
 [step 0](../../reports/content/2026-11-hero-head/test-head.md)).
 Faces: `faces` (the face animations of a head one after another, then two of them while Xardas speaks),
 `face-fade` (faces fade in and out, one gives way to the next, three a moment apart, the lips over a
@@ -854,6 +854,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `ani <npc\|nearest\|player> <name>` | it plays that animation, as `play_ani` does (`T_STAND_2_PEE` goes on to its loop `S_PEE`) |
 | `heropose kneel\|none\|check` | the hero kneels as after a surrender (`player_pose`), or gets up. After `heropose kneel` and `wait 2500`, `check` exercises actual mouse rotation through a movement tick (keeps kneeling and turns 15 degrees), then `ptt_start` (keeps kneeling), then `Forward` (ends kneeling). Success writes `heropose check passed` and the engine writes `[ai] hero pose kneel ends: key Forward` to `game.log`; the bridge must be enabled, no server connection is needed |
 | `place <dist> <angle>`, `orbit <deg> <ms>` | the hero stands around the watched npc (angle from its facing, 0 in front) or goes around it; not where no ground is found (inside a rock: it would fall through the world) |
+| `place <dist> <angle> <npc\|nearest>` | that npc stands so around the hero (angle from the hero's facing), facing him; the hero stays |
 | `gazeinfo` | gaze state of the watched npc to `bench.log`: why it looks, at whom |
 | `lean on\|off` | the lean into turns and on slopes |
 | `blend on\|off`, `blend param <name> <value>` | transitions between animations (`AnimBlend`; off: the old cross-fade); params `min`, `max`, `scale` (blend time, s), `turn` (rad/s), `move` (cm/s), `out`, `side`, `blow` (the longest switch into a blow of a weapon body, s) |
@@ -911,6 +912,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `perches [radius 3000] [count 15] [min drop 250] [max drop 1000]` | like `walls` on any top around the hero, waypoint or not (a roof, a rock, a wall's top): a grid of the highest surfaces you can stand on (slope up to 35 degrees, 1.9 m free above) at an edge with the foot 1 m out hidden from the head, seen leaning over, the sky above it; one a 2 m cell, the nearest first, as `goto pos <x y z>`, `face <yaw>` |
 | `npcgo <npc\|nearest> <waypoint> [walk\|run]` | the npc goes there by the AI path, running by default (`freeze` it first so its routine does not take it back) |
 | `lookat <npc\|nearest> <npc\|player\|off>` | as the script `AI_LookAtNpc` / `AI_StopLookAt` |
+| `gazeat <npc\|nearest\|player> <yaw> <pitch> <ms> [dist]` | it looks at a point that many degrees aside and up from its facing, `dist` cm (100) from its eyes (`mapEyes`), for `ms`, before anything else it would look at |
 | `nearby [radius]` | the npcs around the hero to `bench.log`: distance, where the hero is from their facing, where they look and why |
 | `pair <a> <b>` | how two npcs stand to each other, to `bench.log`: the distance; for each, where it faces (`at_other`, 0: right at the other), where it looks and why (`look`, `at`), its script state and for how long (`state`, `t` ms), body state, whether it uses a mob, how much of its AI runs (`ai`: `normal`, `far` beyond 30 m from the hero, `far2` beyond 60 m) |
 | `where <npc> [waypoint]` | where it is, how far from the hero (and from the waypoint), its state, whether its queue is busy (walking there), how much of its AI runs |
@@ -926,8 +928,8 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `lips on\|off`, `lips param <name> <value>`, `lips params` | lip sync (off: the old talk loop) and its parameters |
 | `gestures on\|off`, `gestures param <name> <value>`, `gestures params` | the hands while one speaks (`TalkGestures`; off: a random gesture when a line starts) and its parameters: `Tail`, `Wait`, `MinLeft`, `Slack` (ms), `Long`, `RestScale`; the head: `Nod` (degrees), `NodHz`, `Stress`, `NodGap` (ms), `SwayYaw`, `SwayRoll` (degrees), `SwayTime`, `SwayLag` (ms); listening and thinking: `ListenSway`, `ListenNod` (degrees), `ListenHz`, `ListenGap` (ms), `ListenProb`, `DoubleNod`, `ThinkDelay` (ms), `ThinkYaw`, `ThinkPitch`, `ThinkTilt` (degrees), `AsideTime` (ms) |
 | `blink on\|off`, `blink param <name> <value>`, `blink params` | blinking (`EyeBlink`; off: nobody blinks) and its parameters: `MinGap`, `RestMean`, `SpeakMean`, `MaxGap`, `Hold`, `PauseMs`, `SoonMs`, `DoubleGap` (ms), `PauseProb`, `ShiftProb`, `DoubleProb` |
-| `hear <npc\|nearest> <ms> [every ms]` | the hero speaks to it that long, his words come every so often (600 ms), as the bridge passes the partial transcripts of his voice: it listens, nods now and then |
-| `think <npc\|nearest> <ms>` | it thinks of an answer that long, as on the AI server's `thinking` status |
+| `hear <npc\|nearest\|player> <ms> [every ms]` | the hero speaks to it that long, his words come every so often (600 ms), as the bridge passes the partial transcripts of his voice: it listens, nods now and then; `player`: the hero listens to the nearest npc |
+| `think <npc\|nearest\|player> <ms>` | it thinks of an answer that long, as on the AI server's `thinking` status; `player`: the hero, of an answer to the nearest npc |
 | `ani <npc\|nearest\|player> <anim>` | it plays an animation of its model script (`T_YES`, `T_DIALOGGESTURE_03`) |
 | `foreach slope <min deg> <max deg> <count>` ... `end` | the body runs on that many slopes all over the world, after a teleport; `$I`, `$NAME`, `$ANGLE` are replaced |
 | `foreach stairs <count>`, `foreach wp <name part> <count>` | the same for stairs and named waypoints |

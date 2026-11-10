@@ -426,6 +426,82 @@ def faces(segs):
     return out, numbers
 
 
+# Eyes::Kind: what the eyes of an own head look at
+EYE_KIND = {0: "none", 1: "forward", 2: "eyes", 3: "mouth", 4: "away", 5: "aside", 6: "target"}
+
+
+def eyes(segs):
+    """the watched one's eyes per segment (an own head with "eyes" in its face profile, graphics/mesh/eyes):
+    saccades a second, the largest turn in the socket (the left eye's + yaw and the right one's - yaw are out),
+    beyond the limits, the error from the fixation point after landing (frames not in a saccade), where it
+    looked (share of the frames by kind), the point looked at from the middle of its eyes, without the eyes' own
+    jumps around it (median below their level, degrees, and above them, cm, the head's forward above the level,
+    degrees, and the eyes' pitch in the socket, degrees, the mean of both; over the frames at the other one's eyes,
+    else all) and the blend of the face (median µs of the blends in the segment)"""
+    rows_all = [r for rows in segs.values() for r in rows]
+    if not rows_all or "ey_on" not in rows_all[0] or not any(r["ey_on"] > 0 for r in rows_all):
+        return [], {}
+    out = ["## Eyes", "",
+           "The eyes of the watched one's own head: saccades a second (all, of 20° and more), the largest turn "
+           "in the socket out / in / up / down and beyond the profile's limits (degrees), the error from the "
+           "fixation point after landing (median / 90th percentile, degrees), where they looked (share of "
+           "the frames), the point looked at from the middle of the eyes in the world, without the eyes' own "
+           "jumps around it (median degrees below their level, cm above them, the head's forward above the level "
+           "in degrees, the eyes' pitch in the socket in degrees; at the other one's eyes, else all frames) and "
+           "the FaceRig blend (median µs, blends).", "",
+           "| segment | saccades/s (n, big) | out / in / up / down ° | beyond ° | error p50 / p90 ° | looked at | "
+           "point down ° / rise cm / head ° / socket ° (of) | blend µs p50 (n) |",
+           "|---|---|---|---|---|---|---|---|"]
+    landed_all, rates, blend_all, beyond_all, down_eye, head_point, socket = [], {}, [], 0.0, {}, {}, {}
+    for seg, rows in segs.items():
+        rows = [r for r in rows if r["ey_on"] > 0]
+        if len(rows) < 2:
+            continue
+        secs = max((rows[-1]["t"] - rows[0]["t"]) / 1000.0, 1e-3)
+        n = rows[-1]["ey_sac"] - rows[0]["ey_sac"]
+        big = rows[-1]["ey_big"] - rows[0]["ey_big"]
+        rates[seg] = n / secs
+        turn = (max(max(r["ey_ly"], -r["ey_ry"]) for r in rows), max(max(-r["ey_ly"], r["ey_ry"]) for r in rows),
+                max(max(r["ey_lp"], r["ey_rp"]) for r in rows), max(max(-r["ey_lp"], -r["ey_rp"]) for r in rows))
+        beyond = max(r["ey_over"] for r in rows)
+        beyond_all = max(beyond_all, beyond)
+        landed = sorted(r["ey_err"] for r in rows if r["ey_move"] == 0 and r["ey_err"] >= 0)
+        landed_all += landed
+        kinds = Counter(EYE_KIND.get(int(r["ey_kind"]), "?") for r in rows)
+        looked = ", ".join(f"{k} {v * 100 / len(rows):.0f}%" for k, v in kinds.most_common())
+        blended = sorted(b["rig_us"] for a, b in zip(rows, rows[1:]) if b["rig_n"] > a["rig_n"])
+        blend_all += blended
+        err = "-" if not landed else f"{landed[len(landed) // 2]:.2f} / {landed[int(len(landed) * 0.9)]:.2f}"
+        blend = "-" if not blended else f"{blended[len(blended) // 2]:.0f} ({len(blended)})"
+        point = "-"
+        if "ey_down" in rows[0]:
+            at_eye = [r for r in rows if int(r["ey_kind"]) == 2]
+            of = at_eye or rows
+            med = [sorted(r[k] for r in of)[len(of) // 2] for k in ("ey_down", "ey_dy", "ey_hp")]
+            pitch = sorted((r["ey_lp"] + r["ey_rp"]) / 2 for r in of)[len(of) // 2]
+            point = f"{med[0]:.1f} / {med[1]:.1f} / {med[2]:.1f} / {pitch:.1f} ({'eyes' if at_eye else 'all'})"
+            if at_eye:
+                down_eye[seg] = med[0]
+            # the head's pitch less the point's angle above the eyes: 0 when the face points at it from the eyes
+            head_point[seg] = med[2] + med[0]
+            socket[seg] = pitch
+        out.append(f"| {seg} | {n / secs:.2f} ({n:.0f}, {big:.0f}) | " + " / ".join(f"{v:.1f}" for v in turn) +
+                   f" | {beyond:.2f} | {err} | {looked} | {point} | {blend} |")
+    out.append("")
+    numbers = {"eyes_beyond_max": beyond_all, "eyes_saccades_per_s": rates, "eyes_down_at_eyes_p50": down_eye,
+               "eyes_head_minus_point_p50": head_point, "eyes_socket_pitch_p50": socket}
+    if landed_all:
+        landed_all.sort()
+        numbers["eyes_error_p50"] = landed_all[len(landed_all) // 2]
+    if blend_all:
+        blend_all.sort()
+        numbers["eyes_blend_us_p50"] = blend_all[len(blend_all) // 2]
+    out += [f"Eyes: beyond the limits at most {beyond_all:.2f}°" +
+            ("" if not landed_all else f", error after landing median {numbers['eyes_error_p50']:.2f}°") +
+            ("" if not blend_all else f", blend median {numbers['eyes_blend_us_p50']:.0f} µs") + ".", ""]
+    return out, numbers
+
+
 def arrows(out):
     """the arrows of the manual aim per segment, from bench.log: [(zone or 'miss', draw, flew cm)]. An arrow
     counts for the segment it was shot in: a far miss may come down when the next one runs (they come
@@ -1483,6 +1559,9 @@ def report(out):
     lines.append(f"Overview sheets (16 frames each): {os.path.join(out, 'sheets', '<segment>.png')}")
     lines.append("")
     more, numbers = faces(segs)
+    lines += more
+    summary.update(numbers)
+    more, numbers = eyes(segs)
     lines += more
     summary.update(numbers)
     lines += manual_aim(out, segs)

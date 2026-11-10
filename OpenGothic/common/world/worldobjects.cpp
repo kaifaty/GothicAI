@@ -1039,6 +1039,9 @@ void WorldObjects::updateAnimation(uint64_t dt) {
     });
   AnimationLod::endPass();
   npcPass.finish();
+  // the own heads' faces: the eyes aim from the heads as posed now; the deformation goes out on this thread
+  for(auto& i:npcArr)
+    i->updateFace();
   animationLodDeferred = deferred.load(std::memory_order_relaxed);
   FrameProfile::add(FrameProfile::Amount::NpcAnimDeferred,animationLodDeferred);
   // Retiring a shadow window can also run damage scripts here. Scripts may
