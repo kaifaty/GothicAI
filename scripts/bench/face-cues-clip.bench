@@ -1,0 +1,17 @@
+# The facial gestures and a lie in the game, close up and with sound (reports/content/2026-11-hero-head/face-cues.md,
+# acceptance "В игре"): Vino with an own head says four lines with gesture tags and one lie through the real path
+# (the server's parsing, say.cues/say.leak, the voice with its word times, LineCues). Needs an AI server whose
+# scenario puts the hero in front of Vino and asks him (face_cues_demo), with a TTS service and --debug-leak for a
+# sure leak, and an own head for BAU_952_VINO in characters.json; how to run it and make the clip — README.md,
+# "Face cues clip". Blinks stay on: the liar's two blinks are part of the clip.
+seed 73013
+cheat god
+view clean 30
+# the server sets the hour, puts the hero 110 cm in front of Vino, takes him over and waits 8 s before asking
+wait 4000
+watch BAU_952_VINO
+wait 1500
+cam face 38 0 1
+rec clip
+waitreply 120000 3000
+stop
