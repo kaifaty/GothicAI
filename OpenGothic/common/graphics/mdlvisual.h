@@ -15,12 +15,12 @@
 #include "graphics/mesh/gaze.h"
 #include "graphics/mesh/speechcues.h"
 #include "graphics/mesh/quiver.h"
+#include "graphics/mesh/renderrig.h"
 #include "game/constants.h"
 #include "meshobjects.h"
 #include "effect.h"
 
 class Serialize;
-class RenderRig;
 class ObjVisual;
 class Npc;
 struct NpcLogicalState;
@@ -400,6 +400,8 @@ class MdlVisual final {
     std::vector<uint8_t>           renderedMask;
     const RenderRig*               bodyRig = nullptr;  // the body's render skeleton, its palette as last solved
     float                          rigHold = 0, rigWorld = 0;  // its arms (RenderRig::Hands), eased towards the npc's state
+    RenderRig::Gait                rigGait, rigGaitNow;        // its legs' memory: as the last frame left it, as this one has it
+    float                          rigStep = 0;                // seconds of this frame
     std::vector<Tempest::Matrix4x4> rigPalette;
     friend bool TestBench::ragdollBodyDrawable(const Npc& npc);
     friend struct MeshGltfTest;
