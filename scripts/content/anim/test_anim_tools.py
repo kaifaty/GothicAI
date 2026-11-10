@@ -845,3 +845,29 @@ def test_retime_clip_squeezes_the_start_and_keeps_the_ends_and_the_way(tmp_path,
     assert np.allclose(np.abs((after.rotations[-1] * before.rotations[-1]).sum(-1)), 1, atol=1e-5)
     assert np.allclose(after.positions[3], before.positions[6], atol=1e-3)       # frame 6 is played at frame 3
     assert after.positions[1, 0, 2] - after.positions[0, 0, 2] > 1.5 * (before.positions[1, 0, 2] - before.positions[0, 0, 2])
+
+
+def test_two_bone_guard_bends_a_straight_leg_forward_whatever_way_its_knee_is_off_the_line():
+    import copy
+
+    import fix_layer as fl
+    models, skel, stance = gothic_stance()
+    ix = skel.index
+    hip, knee, foot = (ix(f"BIP01 L {b}") for b in ("THIGH", "CALF", "FOOT"))
+    aside = []
+    for nudge in (-0.3, 0.3):                       # the knee a hair to one side of the hip-ankle line, then the other
+        anim = copy.deepcopy(stance)
+        clip = fl.Clip(skel, anim)
+        W = clip.world(0)
+        H, K, A = (W[i][:3, 3].copy() for i in (hip, knee, foot))
+        reach = np.linalg.norm(K - H) + np.linalg.norm(A - K)
+        down = (A - H) / np.linalg.norm(A - H)
+        fl.two_bone(clip, 0, W, "L leg", H + down * (reach - 0.01) + np.array([nudge, 0.0, 0.0]), W[foot][:3, :3].copy())
+        straight = W[knee][:3, 3] - H
+        assert np.linalg.norm(straight - (straight @ down) * down) < 1.5      # the leg is straight now
+        target = H + down * (reach - 3.0)                                      # the hips come down by 3 cm
+        fl.two_bone(clip, 0, W, "L leg", target, W[foot][:3, :3].copy(), guard=3.0)
+        off = (W[knee][:3, 3] - H) - ((W[knee][:3, 3] - H) @ down) * down
+        assert off[2] > 8 and abs(off[0]) < 0.5 * off[2]                       # the knee goes forward, not aside
+        aside.append(off)
+    assert np.linalg.norm(aside[0] - aside[1]) < 3                             # and the same way for both nudges
