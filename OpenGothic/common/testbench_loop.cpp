@@ -900,8 +900,8 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
   if(bench.hearNpc!=nullptr) {
     if(bench.time<bench.hearUntil) {
       bench.hearNpc->listenTo(300);
-      bench.hearNpc->setTalkPartner(player,1000);
-      player->setTalkPartner(bench.hearNpc,1000);
+      bench.hearNpc->setTalkPartner(bench.hearWith,1000);
+      bench.hearWith->setTalkPartner(bench.hearNpc,1000);
       if(bench.time>=bench.hearNext) {
         bench.hearNpc->heardWords();
         bench.hearNext = bench.time + bench.hearEvery;
@@ -914,7 +914,8 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
   if(bench.thinkNpc!=nullptr) {
     if(bench.time<bench.thinkUntil) {
       bench.thinkNpc->thinkOfAnswer(300);
-      bench.thinkNpc->setTalkPartner(player,1000);
+      bench.thinkNpc->setTalkPartner(bench.thinkWith,1000);
+      bench.thinkWith->setTalkPartner(bench.thinkNpc,1000);
       } else {
       bench.thinkNpc->thinkOfAnswer(0);
       bench.thinkNpc = nullptr;

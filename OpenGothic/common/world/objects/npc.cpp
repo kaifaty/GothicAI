@@ -1002,7 +1002,6 @@ void Npc::tick(uint64_t dt) {
   visual.updateMouth(*this,dt);
   visual.updateGestures(*this,dt);
   visual.updateBlink(*this,dt);
-  visual.updateFace(*this);
 
   if(!visual.pose().hasAnim())
     setAnim(AnimationSolver::Idle);
@@ -1447,6 +1446,11 @@ Vec3 Npc::mapWeaponBone() const {
 Vec3 Npc::mapHeadBone() const {
   syncDeferredAnimation();
   return visual.mapHeadBone();
+  }
+
+Vec3 Npc::mapEyes() const {
+  syncDeferredAnimation();
+  return visual.mapEyes();
   }
 
 void Npc::setBloodHit(int64_t gameMs, const Vec3& wound) {

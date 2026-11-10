@@ -19,6 +19,7 @@
 #include "graphics/mesh/talkgestures.h"
 #include "graphics/mesh/eyeblink.h"
 #include "graphics/mesh/facerig.h"
+#include "graphics/mesh/eyes.h"
 #include "graphics/mesh/lean.h"
 #include "graphics/mesh/pose.h"
 #include "graphics/mesh/animblend.h"
@@ -66,6 +67,7 @@ void writeHeader() {
   for(auto& f:FaceColumns)
     std::fprintf(bench.csv,",%s",f.column);
   std::fprintf(bench.csv,",rig_on,rig_anims,rig_targets,rig_us,rig_n,rig_up_us");
+  std::fprintf(bench.csv,",ey_on,ey_kind,ey_ly,ey_lp,ey_ry,ey_rp,ey_err,ey_over,ey_move,ey_sac,ey_big,ey_dy,ey_down,ey_hp");
   for(auto* c:CueColumns)
     std::fprintf(bench.csv,",cue_%s",c);
   std::fprintf(bench.csv,",cue_leak");
@@ -532,6 +534,13 @@ void writeRow(Npc& pl) {
   const auto& fr = FaceRig::subjectProbe;
   std::fprintf(bench.csv,",%d,%u,%u,%.1f,%u,%.1f",int(fr.valid),fr.anims,fr.targets,double(fr.blendUs),fr.blends,
                double(fr.uploadUs));
+  // its eyes (Eyes): the fixation point's kind, degrees in the socket (left, right), from the point and beyond the
+  // limits, in a saccade, saccades and the big ones so far; the point above the eyes (cm), below their level and
+  // the head's forward above it (degrees, world)
+  const auto& ey = Eyes::subjectProbe;
+  std::fprintf(bench.csv,",%d,%u,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%d,%u,%u,%.1f,%.2f,%.2f",int(ey.valid),unsigned(ey.kind),
+               double(ey.yaw[0]),double(ey.pitch[0]),double(ey.yaw[1]),double(ey.pitch[1]),double(ey.error),double(ey.over),
+               int(ey.moving),ey.saccades,ey.big,double(ey.rise),double(ey.down),double(ey.head));
   // its gestures as shown, 0..1
   for(auto* c:CueColumns)
     std::fprintf(bench.csv,",%.3f",s.cueWeight(c));
