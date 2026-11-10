@@ -7,6 +7,7 @@
 #include "graphics/mesh/submesh/animmesh.h"
 #include "graphics/shaders.h"
 #include "frameprofile.h"
+#include "commandline.h"
 
 using namespace Tempest;
 
@@ -280,6 +281,10 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
       }
     if(i.mat.alpha==Material::Solid)
       bx.flags |= BK_SOLID;
+    // Our glTF MASK (brows, lashes, hair cards): under TAA its edge averages to the texel's coverage. The original's
+    // alpha test (foliage) keeps the fixed threshold
+    if(i.mat.alpha==Material::AlphaTest && i.mat.isAlphaTestRequired() && CommandLine::inst().doHashedAlpha())
+      bx.flags |= BK_HASHED_ALPHA;
     if(i.mat.alpha==Material::Water)
       bx.flags |= BK_WATER;
     bucket.push_back(bx);

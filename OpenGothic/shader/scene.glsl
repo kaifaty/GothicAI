@@ -41,12 +41,16 @@ struct SceneDesc {
   uint  fogQuality; // 0 - none, 1 - fog LUT, 2 - separate single and multi-scattering LUTs
   float mipBias;     // TAA: material textures of the main view a little sharper (0 without TAA and in shadows)
   float mipGradScale; // exp2(mipBias), for textureGrad
-  uint  taaFrame;  // TAA: the frame number, turns the lamp shadows' tap pattern (light.frag); 0 without TAA
-  uint  taaActive; // 1 under TAA, 0 without it
+  uint  taaFrame;  // TAA: the frame number (hashed alpha in main.frag, the lamp taps in light.frag); 0 without TAA
+  uint  taaActive; // 1 when the lamp shadows turn their taps by the TAA frame (OPENGOTHIC_VSM_LAMP_TAA), else 0
   uint  motionVectors; // motion vectors of objects into the G-buffer (main view only), 0 elsewhere
   float reactiveLrefInv; // TAA reactive mask: 1/Lref, the added light on screen of a fully reactive additive pixel
   mat4  reprojectClip;   // this frame's clip -> the previous camera's, for a point that stood still (Taa::reprojection)
   mat4  viewProjectPrev; // the previous camera with this frame's jitter: only on vec4(d,0)
+  uint  viewFlags; // VF_* below: the occluder pass, TAA
+  uint  viewPad0;
+  uint  viewPad1;
+  uint  viewPad2;
   };
 
 struct LightSource {
@@ -91,6 +95,9 @@ struct Cluster {
   uint  instanceId;
   };
 
+const uint VF_HIZ = 0x1; // the occluder pass (V_HiZ): it draws into the main view's depth ahead of the G-buffer
+const uint VF_TAA = 0x2; // TAA resolves the frame (also with MetalFX temporal)
+
 const uint BK_SOLID = 0x1;
 const uint BK_SKIN  = 0x2;
 const uint BK_MORPH = 0x4;
@@ -100,6 +107,7 @@ const uint BK_ORM    = 0x20;
 const uint BK_MATERIAL_MAPS = 0x40;
 const uint BK_ANTITILE = 0x80;
 const uint BK_ANTITILE_ROTATE = 0x100;
+const uint BK_HASHED_ALPHA = 0x200; // our glTF MASK: the alpha test takes a threshold per pixel and TAA frame (main.frag)
 
 struct Bucket {
   vec4  bbox[2];
