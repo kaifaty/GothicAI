@@ -293,13 +293,14 @@ wait 1000
 #    A lamp inside hut 1 behind its north wall at night, the camera outside; the fireplace of hut 3 behind its north
 #    wall at night, the camera in the alley outside (the open door lets some of it out); the west wall of hut 6 in
 #    the noon sun, the camera inside on its shaded side. A wall the reference leaves nearly black is no test: its
-#    cells are left out of the comparison.
+#    cells are left out of the comparison. The view of hut 1 keeps the sacks at its corner out of the frame: the
+#    raster lamp's own light lights them through the planks (its shadow, not the probes; step-2b.md, «2б-2»).
 set time 23 0
 goto pos 1950 -120 -4700
 clear 3000
 watch player
 cam look 110
-cam world 200 150 90
+cam world 200 150 105
 wait 10000
 cam hold
 shot leak-lamp-night
