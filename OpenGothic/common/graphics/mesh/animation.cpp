@@ -11,6 +11,9 @@
 
 #include "utils/string_frm.h"
 #include "resources.h"
+#include "stopfoot.h"
+
+#include <array>
 
 using namespace Tempest;
 
@@ -262,6 +265,11 @@ bool Animation::Sequence::canInterrupt(uint64_t now, uint64_t sTime, uint16_t co
   if(animCls==Animation::Transition) {
     if(size_t(cId+1)<data->defWindow.size() && data->defWindow.size()>0 && !data->defHitEnd.empty()) {
       return !((now-sTime)<=data->defWindow[cId+0]);
+      }
+    if(isSettle() && StopFoot::enabled()) {
+      // a stop of our own: the body has come to rest, the rest of the clip only straightens it up
+      const uint64_t frame = uint64_t(float(now-sTime)*data->fpsRate/1000.f);
+      return frame>=data->restFrame;
       }
     return false;
     }
@@ -697,6 +705,10 @@ void Animation::AnimData::setupMoveTr() {
       p.y = bi.y-a.y;
       p.z = bi.z-a.z;
       }
+    std::vector<std::array<float,2>> way(tr.size());
+    for(size_t i=0; i<tr.size(); ++i)
+      way[i] = {tr[i].x,tr[i].z};
+    restFrame = StopFoot::restFrame(way,moveTr.x,moveTr.z,fpsRate);
     static const float eps = 0.4f;
     for(auto& i:tr) {
       if(std::fabs(i.x)<eps && std::fabs(i.y)<eps && std::fabs(i.z)<eps)

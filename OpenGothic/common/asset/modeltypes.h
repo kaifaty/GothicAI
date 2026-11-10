@@ -134,7 +134,10 @@ enum class AnimationFlags : uint8_t {
   QUEUE = 4,
   FLY = 8,
   IDLE = 16,
-  INPLACE = 32
+  INPLACE = 32,
+  // ours, set only by own content: a transition that brings the body to rest gives way to any other animation
+  // once its root has stopped (graphics/mesh/stopfoot.h); the base's clips never carry it
+  SETTLE = 64
   };
 
 constexpr bool operator&(AnimationFlags a, AnimationFlags b) {

@@ -716,3 +716,54 @@ def test_loop_idle_onto_holds_the_reference_pose_with_a_still_root(tmp_path, mon
     assert np.abs(W[:, head, :3, 3].mean(0) - Wr[head, :3, 3]).max() < 0.5            # the pose is the reference's
     assert np.ptp(W[:, head, :3, 3], axis=0).max() > 0.3                              # and the sample's motion is kept
     assert np.allclose(W[n], W[0], atol=1e-4)
+
+
+def test_trans_clip_mirror_swaps_the_sides_and_keeps_a_symmetric_stance():
+    import trans_clip
+    _, skel, stance = gothic_stance()
+    run = gothic_run()[1]
+    one = trans_clip.mirror(skel, stance)
+    bones = [i for i, n in enumerate(skel.nodes) if n.name.startswith("BIP01")]
+    A, B = ga.world_pose(skel, stance, 0), ga.world_pose(skel, one, 0)
+    assert np.abs(A[bones] - B[bones]).max() < 0.05                      # Gothic's stance is its own mirror image
+    m = trans_clip.mirror(skel, run)
+    lf, rf, lh, rh = (skel.index(f"BIP01 {b}") for b in ("L FOOT", "R FOOT", "L HAND", "R HAND"))
+    flip = np.array([-1.0, 1.0, 1.0])
+    for f in (0, 5, 10):
+        X, Y = ga.world_pose(skel, run, f), ga.world_pose(skel, m, f)
+        for a_, b_ in ((lf, rf), (rf, lf), (lh, rh), (rh, lh)):
+            assert np.allclose(Y[a_][:3, 3], flip * X[b_][:3, 3], atol=1e-3)
+        assert all(abs(np.linalg.det(Y[i][:3, :3]) - 1) < 1e-4 for i in bones)  # turns stay turns
+    twice = trans_clip.mirror(skel, m)
+    assert np.abs(ga.world_pose(skel, twice, 7) - ga.world_pose(skel, run, 7)).max() < 1e-3
+    slot = skel.index("ZS_SWORD")                                               # the sword stays on its own hip
+    c = run.node_indices.index(slot) if slot in run.node_indices else None
+    if c is not None:
+        assert np.array_equal(m.positions[:, c], run.positions[:, c])
+
+
+def test_trans_clip_lands_both_ends_and_keeps_the_way_straight(tmp_path, monkeypatch):
+    import trans_clip
+    models, skel, stance = gothic_stance()
+    run = gothic_run()[1]
+    src = tmp_path / "HUMANS-SRC.MAN.json"
+    ga.write_animation(src, run, "test")
+    out = tmp_path / "HUMANS-T_RUNL_2_RUN.MAN.json"
+    monkeypatch.setattr(sys, "argv", ["trans_clip.py", str(src), str(models), str(out), "--name", "T_RUNL_2_RUN",
+                                      "--next", "S_RUN", "--frames", "2,15", "--start",
+                                      f"{models / 'HUMANS-S_RUNL.MAN.json'}:0", "--end",
+                                      f"{models / 'HUMANS-S_RUN.MAN.json'}:0", "--fade", "0.1,0.2"])
+    trans_clip.main()
+    clip = ga.read_animation(out)
+    assert clip.name == "T_RUNL_2_RUN" and clip.next == "S_RUN" and clip.frame_count == 14
+    bones = [i for i, n in enumerate(skel.nodes) if n.name.startswith("BIP01") and "FOOT" not in n.name
+             and "TOE" not in n.name and "THIGH" not in n.name and "CALF" not in n.name]
+
+    def about_root(anim, f):
+        W = ga.world_pose(skel, anim, f)
+        return W[bones][:, :3, 3] - W[0][:3, 3] * np.array([1.0, 0.0, 1.0])
+
+    assert np.abs(about_root(clip, 0) - about_root(run, 0)).max() < 0.1          # the first frame: the loop's
+    assert np.abs(about_root(clip, 13) - about_root(stance, 0)).max() < 0.1      # the last frame: the stance
+    assert abs(clip.positions[-1, 0, 0] - clip.positions[0, 0, 0]) < 1e-3        # no drift aside
+    assert clip.positions[-1, 0, 2] - clip.positions[0, 0, 2] > 100              # and the way ahead is kept
