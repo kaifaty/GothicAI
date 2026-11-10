@@ -299,8 +299,8 @@ set time 23 0
 goto pos 1950 -120 -4700
 clear 3000
 watch player
-cam look 110
-cam world 200 150 105
+cam look 180
+cam world 200 170 105
 wait 10000
 cam hold
 shot leak-lamp-night
