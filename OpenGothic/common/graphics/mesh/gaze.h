@@ -31,6 +31,8 @@ class Gaze final {
       Source        source  = Source::None;
       uint64_t      dt      = 0;
       Tempest::Vec3 talk    = {};      // the head moving with the voice: pitch (+ up), yaw, roll, radians
+      bool          eyes    = false;   // an own head with eyes: the face aims at the target from them...
+      Tempest::Vec3 eyesAt  = {};      // ...here in the frame of the head bone (else from the bone itself)
       };
 
     // State for the test bench, degrees
@@ -95,6 +97,10 @@ class Gaze final {
     // from the last pose
     Tempest::Vec3       hips    = {};       // facing of the hips as animated (at a mob it may differ from the npc)
     Tempest::Vec3       headPos = {};
+    bool                eyes     = false;   // aims from the eyes (Input::eyes)...
+    Tempest::Vec3       eyesAt   = {};      // ...in the frame of the head bone
+    Tempest::Vec3       eyesPos  = {};      // where they were drawn by the last pose, world
+    bool                eyesKnown = false;
     int                 faceAxis = -1;  // local axis of the head bone that points where the face does
     float               faceSign = 1;
     bool                faceFixed = false; // known from the bind pose

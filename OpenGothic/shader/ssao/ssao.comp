@@ -30,6 +30,7 @@ layout(binding  = 4) uniform sampler2D depthBuf;
 layout(binding  = 5) uniform sampler2D depthHalf; // ssao_depth.comp, the depth at this pass's size
 layout(binding  = 6) uniform sampler2D historyPrev;                  // H, M (per sample), linear depth, frames
 layout(binding  = 7, rgba16f) uniform writeonly image2D historyNext;
+layout(binding  = 8) uniform sampler2D motion; // the objects' own motion at the depth's size (graphics plan 1b)
 
 const uint  numSamples     = 32;
 const uint  numIter        = 8;
@@ -212,7 +213,9 @@ void main() {
   vec4 hist = vec4(0);
   if(push.reset==0u) {
     const vec4 prev4   = push.reproject*vec4(at0, 1.0);
-    const vec3 prevNdc = prev4.xyz/prev4.w;
+    vec3       prevNdc = prev4.xyz/prev4.w;
+    // plus the point's own move, read at the depth pixel this texel traced from (texture coordinates -> NDC)
+    prevNdc.xy += 2.0*texelFetch(motion, depthPix, 0).xy;
     // the inverse of inPos: the depth pixel, then the texel that traced from it
     const vec2  dpix = ((prevNdc.xy+vec2(1.0))*vec2(depthSize) - vec2(1.0))*0.5;
     const ivec2 t    = ivec2(floor(dpix/vec2(depthRatio) + vec2(0.5)));

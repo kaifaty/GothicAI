@@ -11,13 +11,16 @@
 #include "graphics/mesh/talkgestures.h"
 #include "graphics/mesh/eyeblink.h"
 #include "graphics/mesh/facerig.h"
+#include "graphics/mesh/eyes.h"
+#include "graphics/mesh/gaze.h"
+#include "graphics/mesh/speechcues.h"
 #include "graphics/mesh/quiver.h"
+#include "graphics/mesh/renderrig.h"
 #include "game/constants.h"
 #include "meshobjects.h"
 #include "effect.h"
 
 class Serialize;
-class RenderRig;
 class ObjVisual;
 class Npc;
 struct NpcLogicalState;
@@ -165,6 +168,8 @@ class MdlVisual final {
     auto                           mapBone(const size_t boneId) const -> Tempest::Vec3;
     auto                           mapWeaponBone() const -> Tempest::Vec3;
     auto                           mapHeadBone() const -> Tempest::Vec3;
+    // its eyes as drawn (world): the centres of the own head's eyes, else EyesUp above the head bone along its up
+    auto                           mapEyes() const -> Tempest::Vec3;
     // the arrow on the string as posed: its nock, where it points
     bool                           arrowRay(Tempest::Vec3& pos, Tempest::Vec3& dir) const;
     // Rendered bow/arrow attachment bounds for the camera's test-bench visibility diagnostic.
@@ -214,6 +219,14 @@ class MdlVisual final {
     void                           startFaceAnim  (Npc& npc, std::string_view anim, float intensity, uint64_t duration);
     // how much of the face anim shows now, 0..1: the own head's FaceRig or the morphs of the original head
     float                          faceWeight     (const Npc& npc, std::string_view anim) const;
+    // the facial gestures of the line it starts to say (say.cues): they go with its voice (SpeechCues)
+    void                           startCues      (Npc& npc, std::shared_ptr<const SpeechCues::Plan> plan, bool voiced);
+    // a gesture of the own head's profile now (the bench, the console): side 'L'/'R', 0 - by the seed; false: none
+    bool                           startCue       (Npc& npc, std::string_view name, char side);
+    float                          cueWeight      (const Npc& npc, std::string_view name) const;
+    // a leak of the own head's table now, as a line that hides a lie (with the liar's blinks); false: none
+    bool                           startLeak      (Npc& npc, std::string_view felt, bool lower);
+    float                          leakWeight     (const Npc& npc) const;
     const GltfHeadMesh*            headMesh() const;
     void                           stopDlgAnim    (Npc& npc);
     // a voiced line: the mouth follows the voice instead of the talk loop
@@ -224,7 +237,8 @@ class MdlVisual final {
     void                           setTalkMood    (std::string_view mood) { gestures.setMood(TalkGestures::moodOf(mood)); }
     void                           updateGestures (Npc& npc, uint64_t dt);
     void                           updateBlink    (Npc& npc, uint64_t dt);
-    // the own head's face (FaceRig): its weights to the deformation of the head, near only
+    // the own head's face (FaceRig): its eyes and weights to the deformation of the head, near only; after the pose
+    // of the frame (the eyes aim from the head as drawn), on the main thread (the upload)
     void                           updateFace     (Npc& npc);
     // the other one speaks to it, it thinks of an answer (TalkGestures)
     void                           listen         (uint64_t until) { gestures.listen(until); }
@@ -328,6 +342,9 @@ class MdlVisual final {
     void                       lookForGround(const Npc& npc, const Tempest::Vec3& hip, const Tempest::Vec3& mid,
                                              const Tempest::Vec3& bottom);
     void setupGestures();
+    void updateEyes(Npc& npc, uint64_t now);
+    // the middle of the own head's eyes in the frame of the head bone (false: no eyes of its own, Gaze aims from the bone)
+    bool eyesInHead(Tempest::Vec3& at) const;
 
     Tempest::Matrix4x4             pos;
     Tempest::Vec3                 textureOwnerPosition;
@@ -343,6 +360,13 @@ class MdlVisual final {
     EyeBlink                       blink;
     uint32_t                       blinkShift = 0;        // gaze shifts seen so far
     FaceRig                        face;                  // the own head's face anims (a profile), else none
+    Eyes                           eyes;                  // its eyeballs (an "eyes" section in the profile)
+    Gaze::Source                   lookSource = Gaze::Source::None;  // what Gaze looked at last (updateGaze)...
+    Tempest::Vec3                  lookAt;                // ...where: the eyes go there too
+    SpeechCues                     cues;                  // when the gestures of the line said now start
+    SpeechCues::Out                cueStarts;
+    static constexpr uint64_t      ManualLeakMs = 2000;   // a leak started by hand: the line it makes, ms
+    uint32_t                       cueCount = 0;          // gestures started by hand: the seed of their side
     float                          faceUploadUs = 0;      // the last setDeformation of the face, µs (test bench)
     MeshAttach                     ammunition, stateItm;
     std::vector<MeshAttach>        item;
@@ -376,6 +400,8 @@ class MdlVisual final {
     std::vector<uint8_t>           renderedMask;
     const RenderRig*               bodyRig = nullptr;  // the body's render skeleton, its palette as last solved
     float                          rigHold = 0, rigWorld = 0;  // its arms (RenderRig::Hands), eased towards the npc's state
+    RenderRig::Gait                rigGait, rigGaitNow;        // its legs' memory: as the last frame left it, as this one has it
+    float                          rigStep = 0;                // seconds of this frame
     std::vector<Tempest::Matrix4x4> rigPalette;
     friend bool TestBench::ragdollBodyDrawable(const Npc& npc);
     friend struct MeshGltfTest;

@@ -175,9 +175,10 @@ void Renderer::setupSettings() {
       }
   }
 
-  // VSM lamps: blockers nearer than this to the light (its own basket, lantern frame or candle holder) cast no
-  // shadow; 0 or unset: 30 cm. With the light in its flame a brazier's basket is within it; a man by a torch or a
-  // candle on a table still casts a shadow (80 cm took that away)
+  // VSM lamps: objects nearer than this to the light along its cube face's axis (its own basket, lantern frame or
+  // candle holder) cast no shadow: they are clipped away from the lamp's faces (main.vert), so a wall behind them still
+  // shadows; the world mesh keeps the projection's near plane alone. 0 or unset: 30 cm. With the light in its flame a
+  // brazier's basket is within it; a man by a torch or a candle on a table still casts a shadow (80 cm took that away)
   settings.vsmLampNearCm      = Gothic::settingsGetF("INTERNAL","vsmLampNearCm");
   if(settings.vsmLampNearCm<=0)
     settings.vsmLampNearCm = 30;
@@ -231,6 +232,51 @@ void Renderer::setupSettings() {
     if(logged!=int(settings.taaEnabled)) {
       logged = int(settings.taaEnabled);
       Log::i("render: taa = ", logged, ", sharpness = ", settings.taaSharpness, ", mip bias = ", settings.taaMipBias);
+      }
+  }
+  // motion vectors of objects (graphics plan 1b, reports/render-features/2026-11-10-motion-vectors), on by default:
+  // -mv 0 or [INTERNAL] motionVectors=0 turn them off, OPENGOTHIC_MOTION_VECTORS=0|1 (test benches) overrides
+  // both. OPENGOTHIC_MOTION_VIEW=1 shows the vectors in place of the frame
+  {
+    bool mv = Gothic::options().motionVectors>=0 ? Gothic::options().motionVectors!=0
+                                                 : Gothic::settingsGetI("INTERNAL","motionVectors")!=0;
+    if(const char* e = std::getenv("OPENGOTHIC_MOTION_VECTORS"))
+      mv = std::string_view(e)!="0";
+    settings.motionVectors = mv;
+    settings.motionView    = false;
+    if(const char* e = std::getenv("OPENGOTHIC_MOTION_VIEW"))
+      settings.motionView = std::string_view(e)!="0";
+    settings.motionViewPx = 2;
+    if(const char* e = std::getenv("OPENGOTHIC_MOTION_VIEW_PX"))
+      settings.motionViewPx = std::max(std::strtof(e, nullptr), 1e-6f);
+    static int logged = -1;
+    if(logged!=int(settings.motionVectors)) {
+      logged = int(settings.motionVectors);
+      Log::i("render: motion vectors = ", logged, settings.motionView ? ", view = 1" : "");
+      }
+  }
+  // the TAA reactive mask (graphics plan 1v, reports/render-features/2026-11-10-taa-reactive), on by default:
+  // [INTERNAL] taaReactive=0 turns it off, OPENGOTHIC_TAA_REACTIVE=0|1 (test benches) overrides it.
+  // OPENGOTHIC_TAA_REACTIVE_VIEW=1 shows the mask in place of the frame; _MAX and _LREF tune it on a stand
+  {
+    bool on = Gothic::settingsGetI("INTERNAL","taaReactive")!=0;
+    if(const char* e = std::getenv("OPENGOTHIC_TAA_REACTIVE"))
+      on = std::string_view(e)!="0";
+    settings.taaReactive     = on;
+    settings.taaReactiveView = false;
+    if(const char* e = std::getenv("OPENGOTHIC_TAA_REACTIVE_VIEW"))
+      settings.taaReactiveView = std::string_view(e)!="0";
+    settings.taaReactiveMax = 0.9f;
+    if(const char* e = std::getenv("OPENGOTHIC_TAA_REACTIVE_MAX"))
+      settings.taaReactiveMax = std::clamp(std::strtof(e, nullptr), 0.f, 1.f);
+    settings.taaReactiveLref = 0.25f;
+    if(const char* e = std::getenv("OPENGOTHIC_TAA_REACTIVE_LREF"))
+      settings.taaReactiveLref = std::max(std::strtof(e, nullptr), 1e-4f);
+    static int logged = -1;
+    if(logged!=int(settings.taaReactive)) {
+      logged = int(settings.taaReactive);
+      Log::i("render: taa reactive = ", logged, ", max = ", settings.taaReactiveMax, ", lref = ",
+             settings.taaReactiveLref, settings.taaReactiveView ? ", view = 1" : "");
       }
   }
   // SSAO over frames (reports/engine/2026-11-08-ssao-temporal), on by default: OPENGOTHIC_SSAO_HISTORY=0 traces the
@@ -346,6 +392,7 @@ void Renderer::onWorldChanged() {
   sky.lutIsInitialized = false;
   taa.valid            = false;
   ssao.valid           = false;
+  camHistory.hasCur    = false;
   gi.resetHistory      = true;
   resetSkyFog();
   }
@@ -353,8 +400,13 @@ void Renderer::onWorldChanged() {
 void Renderer::resetTemporal() {
   taa.valid  = false;
   ssao.valid = false;
+  camHistory.hasCur = false;
   taa.frame = 0;
   taa.cur   = 0;
+  // the phase of the SSAO cycle picks each texel's quarter of the sample set: a history that starts at another
+  // phase accumulates another picture, and the count of frames before the reset depends on the loading's wall time
+  ssao.frame = 0;
+  ssao.cur   = 0;
   }
 
 void Renderer::updateCamera(const WorldView& wview, const Camera& camera) {
@@ -362,11 +414,17 @@ void Renderer::updateCamera(const WorldView& wview, const Camera& camera) {
   viewProj    = camera.viewProj();
   viewProjLwc = camera.viewProjLwc();
 
-  // without jitter, as the TAA takes it: SSAO reprojects its history by the camera even with the TAA off
-  ssao.view.proj    = proj;
-  ssao.view.viewLwc = camera.viewLwc();
-  ssao.view.origin  = camera.originLwc();
-  ssao.camCuts      = camera.cuts();
+  // without jitter: TAA, the SSAO history (also with the TAA off) and the motion vectors reproject by this pair
+  Taa::View view;
+  view.proj    = proj;
+  view.viewLwc = camera.viewLwc();
+  view.origin  = camera.originLwc();
+  camHistory.continuous = camHistory.hasCur && camera.cuts()==camHistory.cuts &&
+                          !Taa::isCameraJump(view, camHistory.cur);
+  camHistory.prev   = camHistory.cur;
+  camHistory.cur    = view;
+  camHistory.cuts   = camera.cuts();
+  camHistory.hasCur = true;
 
   for(size_t i=0; i<Resources::ShadowLayers; ++i)
     shadowMatrix[i] = camera.viewShadow(wview.mainLight().dir(),i);
@@ -564,6 +622,11 @@ void Renderer::resetViewport(Tempest::Size res, Tempest::Size fullRes) {
   gbufNormal    = device.attachment(TextureFormat::R32U, w,h);
   if(Shaders::options().doMaterialMaps)
     gbufOrm = device.attachment(TextureFormat::RGBA8, w,h);
+  // RG16F is a required colour attachment format in Vulkan and Metal; the wider one only where a device lacks it
+  const bool rg16f = device.properties().hasAttachFormat(TextureFormat::RG16F);
+  gbufMotion    = device.attachment(rg16f ? TextureFormat::RG16F : TextureFormat::RGBA16F, w,h);
+  // the TAA reactive mask: the translucent pipelines write it also without TAA (graphics plan 1v)
+  taa.reactive  = device.attachment(TextureFormat::R8, w,h);
 
   ssao     = decltype(ssao)();
   epipolar = decltype(epipolar)();
@@ -683,12 +746,16 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   if(requiresRtScene())
     wview.updateRtScene(cmd, fId);
   wview.updateLights(gameTime);
+  gi.dayTime = gameTime.toInt();
 
   if(requiresLightsTree())
     prepareLightsBvh(cmd, wview);
 
   updateCamera(wview, camera);
   prepareTaa(wview, camera);
+  prepareMotion(wview);
+  wview.setTaaReactiveLref(settings.taaReactiveLref);
+  wview.setVsmLampNear(settings.vsmLampNearCm);
 
   static bool updFr = true;
   if(updFr){
@@ -718,6 +785,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   wview.prepareGlobals(cmd,fId);
 
   if(settings.pathTraceEnabled) {
+    ssao.valid = false; // no SSAO in this frame: its history is not the frame before the next one
     drawPathtrace(cmd, wview, fId);
     mainTiming.finish();
     FrameProfile::Scope postTiming(FrameProfile::Zone::EncodePost);
@@ -787,7 +855,10 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     }
 
   FrameProfile::Scope translucentTiming(FrameProfile::Zone::EncodeWater);
-  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}}, {zbuffer, Tempest::Preserve, Tempest::Preserve});
+  // the TAA reactive mask is the second attachment: each translucent pipeline writes it under its own blend
+  // (main.frag, graphics plan 1v), the TAA resolve reads it
+  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}, {taa.reactive, Tempest::Vec4(), Tempest::Preserve}},
+                     {zbuffer, Tempest::Preserve, Tempest::Preserve});
   cmd.setDebugMarker("Translucent");
   wview.drawTranslucent(cmd, fId);
   translucentTiming.finish();
@@ -813,6 +884,8 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     drawBloom(cmd);
     cmd.setDebugMarker("Tonemapping");
     drawTonemappingTemporal(result, cmd, wview);
+    drawMotionView(result, cmd);
+    drawReactiveView(result, cmd);
     postTiming.finish();
     wview.postFrameupdate();
     return;
@@ -839,6 +912,8 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     }
   if(!upscale.input.isEmpty() && !shotNative)
     drawUpscale(result, cmd);
+  drawMotionView(result, cmd);
+  drawReactiveView(result, cmd);
   postTiming.finish();
 
   //drawRayQueryDbg(cmd, wview);
@@ -935,11 +1010,13 @@ void Renderer::drawGBuffer(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& 
   if(Shaders::options().doMaterialMaps) {
     cmd.setFramebuffer({{gbufDiffuse, Tempest::Vec4(), Tempest::Preserve},
                         {gbufNormal, Tempest::Vec4(), Tempest::Preserve},
-                        {gbufOrm, Tempest::Vec4(1,1,0,0), Tempest::Preserve}},
+                        {gbufOrm, Tempest::Vec4(1,1,0,0), Tempest::Preserve},
+                        {gbufMotion, Tempest::Vec4(), Tempest::Preserve}},
                        {zbuffer, Tempest::Preserve, Tempest::Preserve});
     } else {
     cmd.setFramebuffer({{gbufDiffuse, Tempest::Vec4(), Tempest::Preserve},
-                        {gbufNormal, Tempest::Vec4(), Tempest::Preserve}},
+                        {gbufNormal, Tempest::Vec4(), Tempest::Preserve},
+                        {gbufMotion, Tempest::Vec4(), Tempest::Preserve}},
                        {zbuffer, Tempest::Preserve, Tempest::Preserve});
     }
   view.drawGBuffer(cmd,fId);
@@ -1082,9 +1159,9 @@ void Renderer::drawLights(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
 
   auto& ibo  = Resources::cubeIbo();
   struct Push {
-    Vec3 originLwc; float vsmLampNear; uint32_t probeMode, probeStamp; float probeNarrow; uint32_t probeTaps[4], probeFlags;
+    Vec3 originLwc; uint32_t probeMode, probeStamp; float probeNarrow; uint32_t probeTaps[4], probeFlags;
     uint32_t probeExp;
-    } push = {scene.originLwc, settings.vsmLampNearCm, settings.vsmLampMode, 0, settings.vsmLampNarrow,
+    } push = {scene.originLwc, settings.vsmLampMode, 0, settings.vsmLampNarrow,
               {settings.vsmLampTaps[0], settings.vsmLampTaps[1], settings.vsmLampTaps[2], settings.vsmLampTaps[3]},
               settings.vsmLampFlags, settings.vsmLampExp};
   if(lights.directLightPso==&shaders.lightsVsmProbe) {
@@ -1098,9 +1175,7 @@ void Renderer::drawLights(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
       }
     }
   if(lights.directLightPso==&shaders.lightsVsmProbe)
-    cmd.setPushData(&push, sizeof(push));
-  else if(lights.directLightPso==&shaders.lightsVsm || lights.directLightPso==&shaders.lightsVsmHard)
-    cmd.setPushData(&push, offsetof(Push, probeMode)); else
+    cmd.setPushData(&push, sizeof(push)); else
     cmd.setPushData(&push.originLwc, sizeof(push.originLwc));
   cmd.setPipeline(*lights.directLightPso);
   cmd.draw(nullptr,ibo, 0,ibo.size(), 0,wview.lights().size());
@@ -1124,12 +1199,12 @@ void Renderer::prepareSSAO(Encoder<CommandBuffer>& cmd, WorldView& wview) {
     uint32_t  reset   = 0;
     uint32_t  fullSet = 0; // the whole set this frame, no history
     } push;
-  if(ssao.camCuts!=ssao.cuts || Taa::isCameraJump(ssao.view, ssao.prev))
+  if(!camHistory.continuous)
     ssao.valid = false;
   // both ends with this frame's jitter, as the TAA does: a camera that stands still reads the same texel
   const auto jitter = taa.active ? Taa::jitterMatrix(taa.jitter, uint32_t(zbuffer.w()), uint32_t(zbuffer.h()))
                                  : Matrix4x4::mkIdentity();
-  push.reproject = ssao.valid ? Taa::reprojection(ssao.view, ssao.prev, jitter) : Matrix4x4::mkIdentity();
+  push.reproject = ssao.valid ? Taa::reprojection(camHistory.cur, camHistory.prev, jitter) : Matrix4x4::mkIdentity();
   push.frame     = ssao.frame;
   push.reset     = ssao.valid && settings.ssaoHistory ? 0 : 1;
   push.fullSet   = settings.ssaoHistory ? 0 : 1;
@@ -1167,11 +1242,10 @@ void Renderer::prepareSSAO(Encoder<CommandBuffer>& cmd, WorldView& wview) {
   cmd.setBinding(5, ssao.depthHalf, Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setBinding(6, ssao.history[ssao.cur^1], Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setBinding(7, ssao.history[ssao.cur]);
+  cmd.setBinding(8, gbufMotion, Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setPushData(&push, sizeof(push));
   cmd.setPipeline(shaders.ssao);
   cmd.dispatchThreads(ssao.ssaoBuf.size());
-  ssao.prev  = ssao.view;
-  ssao.cuts  = ssao.camCuts;
   ssao.valid = true;
   ssao.cur  ^= 1;
   ssao.frame++;
@@ -1197,14 +1271,17 @@ void Renderer::prepareIrradiance(Encoder<CommandBuffer>& cmd, WorldView& wview) 
   cmd.dispatch(1);
   }
 
+
 void Renderer::readGiStats(uint8_t fId) {
   // the counters this frame slot wrote last time: its fence has been waited for, the buffer is host-visible
   if(!FrameProfile::enabled() || !gi.statsWritten[fId] || gi.stats[fId].isEmpty())
     return;
-  uint32_t v[4] = {};
+  uint32_t v[RendererInternal::giStatsCount] = {};
   Resources::device().readBytes(gi.stats[fId], v, sizeof(v));
-  FrameProfile::add(FrameProfile::Amount::GiProbesLive,   v[0]);
-  FrameProfile::add(FrameProfile::Amount::GiProbesTraced, v[1]);
+  FrameProfile::add(FrameProfile::Amount::GiProbesLive,     v[0]);
+  FrameProfile::add(FrameProfile::Amount::GiProbesTraced,   v[1]);
+  FrameProfile::add(FrameProfile::Amount::GiProbesFromHits, v[4]);
+  FrameProfile::add(FrameProfile::Amount::GiProbesFreed,    v[5]);
   gi.statsWritten[fId] = false;
   }
 

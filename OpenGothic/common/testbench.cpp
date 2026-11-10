@@ -325,7 +325,8 @@ ControlContext controlContext() {
   }
 
 DialogContext dialogContext() {
-  return {bench.time,bench.hearNpc,bench.hearUntil,bench.hearEvery,bench.hearNext,bench.thinkNpc,bench.thinkUntil,
+  return {bench.time,bench.hearNpc,bench.hearWith,bench.hearUntil,bench.hearEvery,bench.hearNext,bench.thinkNpc,
+          bench.thinkWith,bench.thinkUntil,
           bench.speaking,bench.speakUntil,bench.heroEndAt,bench.waitReply,bench.replyNeed,bench.replyFrom,
           bench.replyEnd,bench.replyQuiet,bench.waitAiKey,bench.waitAiStage,bench.waitAiEnd,subjectOf};
   }

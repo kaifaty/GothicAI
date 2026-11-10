@@ -1,0 +1,82 @@
+# The facial gestures of an own head close up (reports/content/2026-11-hero-head/face-cues.md, step 3 of its order):
+# for each of the nine gestures of the face profile's cues a frame without it and a frame at its apex (the middle of
+# its hold), <gesture>-rest.png and <gesture>-apex.png; then one on an npc's own head (Xardas, if
+# characters.json lists NONE_100_XARDAS). Blinks are off, so no frame catches the lids. Needs an own head with cues:
+#   TEMPEST_WINDOW_SIZE=1280x720 OPENGOTHIC_CONTENT=<content root> BENCH_HOST=ryzen scripts/bench.sh scripts/bench/face-cues.bench
+# The sheet of the frames: reports/content/2026-11-hero-head/cues/engine_sheet.py <bench out dir> <sheet.jpg>
+seed 73013
+cheat god
+set time 12 0
+view clean 30
+blink off
+watch nearest
+freeze nearest
+wait 500
+place 110 0
+wait 800
+watch player
+cam face 38 0 1
+wait 1500
+shot flash-rest
+wait 300
+facecue player flash
+wait 140
+shot flash-apex
+wait 700
+shot doubt-rest
+wait 300
+facecue player doubt L
+wait 525
+shot doubt-apex
+wait 1100
+shot smirk-rest
+wait 300
+facecue player smirk L
+wait 400
+shot smirk-apex
+wait 1000
+shot press-rest
+wait 300
+facecue player press
+wait 350
+shot press-apex
+wait 900
+shot disgust-rest
+wait 300
+facecue player disgust
+wait 300
+shot disgust-apex
+wait 850
+shot squint-rest
+wait 300
+facecue player squint
+wait 650
+shot squint-apex
+wait 1250
+shot frown-rest
+wait 300
+facecue player frown
+wait 750
+shot frown-apex
+wait 1350
+shot chin-rest
+wait 300
+facecue player chin
+wait 350
+shot chin-apex
+wait 950
+shot wince-rest
+wait 300
+facecue player wince
+wait 130
+shot wince-apex
+wait 750
+watch nearest
+cam face 38 0 1
+wait 1500
+shot npc-smirk-rest
+wait 300
+facecue nearest smirk R
+wait 400
+shot npc-smirk-apex
+wait 1000

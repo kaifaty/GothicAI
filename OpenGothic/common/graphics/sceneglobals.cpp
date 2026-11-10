@@ -1,8 +1,11 @@
 #include "sceneglobals.h"
 
+#include <cstddef>
+
 #include "graphics/shaders.h"
 #include "graphics/sky/sky.h"
 #include "worldview.h"
+#include "gothic.h"
 
 static uint32_t nextPot(uint32_t x) {
   x--;
@@ -183,6 +186,22 @@ void SceneGlobals::setTaaFrame(bool active, uint32_t frame) {
   uboGlobalCpu.taaFrame  = active ? frame : 0;
   }
 
+void SceneGlobals::setMotion(bool enabled, const Tempest::Matrix4x4& reprojectClip,
+                             const Tempest::Matrix4x4& viewProjectPrev) {
+  static_assert(offsetof(UboGlobal, reprojectClip)%16==0, "std140: a mat4 starts at 16 bytes");
+  uboGlobalCpu.motionVectors   = enabled ? 1 : 0;
+  uboGlobalCpu.reprojectClip   = reprojectClip;
+  uboGlobalCpu.viewProjectPrev = viewProjectPrev;
+  }
+
+void SceneGlobals::setTaaReactiveLref(float lref) {
+  uboGlobalCpu.reactiveLrefInv = 1.f/lref;
+  }
+
+void SceneGlobals::setVsmLampNear(float cm) {
+  uboGlobalCpu.vsmLampNear = cm;
+  }
+
 void SceneGlobals::setUnderWater(bool w) {
   uboGlobalCpu.underWater = w ? 1 : 0;
   }
@@ -209,6 +228,8 @@ void SceneGlobals::commitUbo(uint8_t fId) {
       ubo.mipBias      = 0;
       ubo.mipGradScale = 1;
       }
+    if(i!=V_Main)
+      ubo.motionVectors = 0;
     std::memcpy(ubo.frustrum, frustrum[i].f, sizeof(ubo.frustrum));
     }
 
@@ -245,7 +266,13 @@ void SceneGlobals::setResolution(uint32_t w, uint32_t h) {
     uboGlobalCpu.hiZTileSize = Tempest::Point(int(hw)/hiZ->w(),int(hh)/hiZ->h());
     }
 
-  uboGlobalCpu.probeGridBias = 4 + std::max(std::log2(float(w*h)/float(1920*1080)), 0.f);
+  // The GI probes' lod by the distance to the camera (probeGridLod): lod 0 up to 2/probeLodScale, then each lod twice
+  // as far. The scale is the one the lod by the depth of the view had before (step 2b of the ray-tracing revisit):
+  // 2^bias times the width of two pixels per cm of depth in probe cells, bias 4 + log2 of the pixels over 1080p, the
+  // base field of view (aiming zooms it, the probes stay). 1440p: lod 0 up to 9,5 m, 1080p: 12,6 m.
+  const float bias    = 4 + std::max(std::log2(float(w*h)/float(1920*1080)), 0.f);
+  const float tanHalf = std::tan(Gothic::options().cameraFov*0.5f*float(M_PI)/180.f);
+  uboGlobalCpu.probeLodScale = std::exp2(bias) * (4.f*tanHalf/float(h)) / 25.f;
   }
 
 void SceneGlobals::setHiZ(const Tempest::Texture2d& t) {

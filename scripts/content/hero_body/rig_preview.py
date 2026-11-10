@@ -5,7 +5,7 @@
         <CLIP>[,<CLIP>...] [variants: engine:1:0,v2:0.038:0.5] [views: side,back,front]
 
 Each variant is legs:lift:soft of rig_solve.py (for v2 the lift is its share over the lower ankle, else a scale of the
-pelvis height; v4 - the engine's root knees, lift 1). HANDS=hold,world turns the arms' IK on (rig_solve.Rig.arm).
+pelvis height; v4 - the engine's root knees, v5 - with root heel, lift 1). HANDS=hold,world turns the arms' IK on (rig_solve.Rig.arm).
 The clip plays in place (Gothic's root travel taken out). Frames go to <out>/<clip>/<actor>-<view>/; the caller
 stacks them (ffmpeg hstack). Workbench, orthographic, the camera follows the pelvis. Gothic's body is HUM_BODY_NAKED0 skinned by plain linear blending of its bind positions.
 """

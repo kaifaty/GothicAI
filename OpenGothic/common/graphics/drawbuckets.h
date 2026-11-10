@@ -92,7 +92,8 @@ class DrawBuckets {
       float          turbidity        = 0.f;
       float          turbidityDepth   = 0.f;
       float          emissive         = 0.f;
-      uint32_t       padding2 = 0; // scalars: an array member here faulted the GPU on Metal
+      float          reactive         = 0.f; // Material::taaReactive (graphics plan 1v); scalars: an array member here
+                                             // faulted the GPU on Metal
       };
     static_assert(sizeof(BucketGpu)==96); // GPU array stride of Bucket in scene.glsl
 

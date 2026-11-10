@@ -21,6 +21,7 @@
 #include "graphics/mesh/talkgestures.h"
 #include "graphics/mesh/eyeblink.h"
 #include "graphics/mesh/facerig.h"
+#include "graphics/mesh/eyes.h"
 #include "graphics/mesh/lean.h"
 #include "graphics/mesh/pose.h"
 #include "graphics/mesh/skeleton.h"
@@ -459,6 +460,35 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     n->startFaceAnim(a[2],num(a,4,1),uint64_t(num(a,3,3000)));
     say("faceanim " + nameUtf8(*n) + " " + a[2]);
     }
+  else if(c=="facecue") {
+    // facecue <npc|nearest|player> <gesture> [L|R]: a facial gesture of its own head (flash, doubt, smirk...; the
+    // profile's cues); a one-sided one without a side goes on a side by the seed
+    Npc* n = findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
+    const char side = a.size()>3 && (a[3]=="L" || a[3]=="R") ? a[3][0] : 0;
+    if(n==nullptr || a.size()<3 || (a.size()>3 && side==0)) {
+      say("facecue: no npc, gesture or side L|R " + line);
+      return;
+      }
+    if(!n->startCue(a[2],side)) {
+      say("facecue: no gesture " + a[2] + " on the head of " + nameUtf8(*n));
+      return;
+      }
+    say("facecue " + nameUtf8(*n) + " " + a[2] + (side ? std::string(" ")+side : std::string()));
+    }
+  else if(c=="faceleak") {
+    // faceleak <npc|nearest|player> <felt> <upper|lower>: a leak of the felt emotion (friendly, angry, hostile, afraid,
+    // pain) on its own head now, as a line that hides a lie: with the liar's two blinks after it
+    Npc* n = findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
+    if(n==nullptr || a.size()<4 || (a[3]!="upper" && a[3]!="lower")) {
+      say("faceleak: no npc, felt or half upper|lower " + line);
+      return;
+      }
+    if(!n->startLeak(a[2],a[3]=="lower")) {
+      say("faceleak: no leak " + a[2] + " " + a[3] + " on the head of " + nameUtf8(*n));
+      return;
+      }
+    say("faceleak " + nameUtf8(*n) + " " + a[2] + " " + a[3]);
+    }
   else if(c=="ani") {
     // ani <npc|nearest|player> <anim> [force]: it plays an animation of its model script (T_YES,
     // T_DIALOGGESTURE_03); force cuts what plays now, as a hit reaction or a stun's stumble that a stand would wait for
@@ -518,6 +548,8 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     EyeBlink::subjectProbe     = EyeBlink::Probe();
     FaceRig::probeNpc          = n;
     FaceRig::subjectProbe      = FaceRig::Probe();
+    Eyes::probeNpc             = n;
+    Eyes::subjectProbe         = Eyes::Probe();
     Lean::probeNpc = bench.subject;
     Pose::probeNpc = bench.subject;
     bench.anim1.clear();
@@ -543,6 +575,19 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
                   symName(w,s.attentionTarget()).c_str(),int(g.valid),int(g.active),double(g.weight),double(g.error),
                   symName(w,pl.target()).c_str());
     say(buf);
+    }
+  else if(c=="gazeat") {
+    // gazeat <npc|nearest|player> <yaw> <pitch> <ms> [dist]: it looks at a point that many degrees aside (+ as
+    // its rotation goes) and up from its facing, dist cm (100) from its eyes, for ms
+    Npc* n = findNpc(w,pl,a.size()>1 ? a[1] : "player");
+    if(n==nullptr) {
+      say("gazeat: no npc " + line);
+      return;
+      }
+    const float yaw = (n->rotation()+num(a,2,0))*float(M_PI)/180.f, pitch = num(a,3,0)*float(M_PI)/180.f;
+    const Vec3  dir = Vec3(std::cos(yaw)*std::cos(pitch),std::sin(pitch),std::sin(yaw)*std::cos(pitch));
+    n->lookAtPoint(n->mapEyes() + dir*num(a,5,100),w.tickCount()+uint64_t(num(a,4,3000)));
+    say("gazeat " + symName(w,n) + " " + (a.size()>3 ? a[2]+" "+a[3] : std::string("0 0")));
     }
   else if(c=="lookat") {
     // lookat <npc|nearest> <npc|player|off>: as the script AI_LookAtNpc, AI_StopLookAt

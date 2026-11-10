@@ -18,8 +18,10 @@
 // the bounce off the probes themselves from the last frame instead of the path's next bounces.
 // RELIGHT (probe_relight.comp): a thread relights one sample of an old probe, each sample once in relitPeriod
 // frames, into its radiance in probesRadiance. RELIGHT_NEW (probe_relight_new.comp): a new probe lights all its
-// samples. Then (probe_lighting.comp) a workgroup integrates a probe's 256 samples into its ambient cube, blended
-// over time with the last frame's cube (reset on a sharp change, as in DDGI); a new probe has no history.
+// samples. Both read the irradiance of the probes of the last frame (probesLighting: L2 harmonics,
+// probe_common.glsl). Then (probe_lighting.comp) a workgroup projects a probe's 256 samples on the harmonics and
+// blends them in place over time with its last ones (reset on a sharp change, as in DDGI); a new probe has no
+// history.
 
 layout(primitive_culling);
 #if defined(RELIGHT_NEW)
@@ -40,26 +42,38 @@ layout(push_constant, std140) uniform Push {
   float alpha;       // weight of the new estimate in the blend with the last frame, from dt
   uint  frameId;
   uint  relitPeriod; // an old probe's sample is relit once in so many frames
+  uint  offPeriod;   // a probe no pixel takes this frame is relit and integrated once in so many frames
+  float hitRadius;   // cm: a hit this close to the camera without a probe requests one
+  uint  maxRequests; // requests per frame
   };
 
 layout(binding = 0, std140) readonly buffer UboScene { // ubo is broken on NVidia?
   SceneDesc scene;
   };
-layout(binding = 1) uniform writeonly image2D probesLighting;
+#if !defined(RELIGHT) && !defined(RELIGHT_NEW)
+layout(binding = 1, rgba16f) uniform restrict image2D probesLighting; // the harmonics, integrated in place
+#endif
 layout(binding = 2) uniform sampler2D gbufferDiff;
 layout(binding = 3) uniform sampler2D gbufferNorm;
 layout(binding = 4) uniform sampler2D gbufferRayT;
 layout(binding = 5) uniform sampler2D skyLUT;
 // 6..11: the ray scene, rt_common.glsl
-layout(binding = 12) uniform sampler2D probesLightingPrev;
+#if defined(RELIGHT) || defined(RELIGHT_NEW)
+layout(binding = 12) uniform sampler2D probesLighting; // the harmonics of the last frame
+#endif
 layout(binding = 13, std430) readonly buffer Hbo { uint hashTable[]; };
 layout(binding = 14, std430) buffer Pbo { ProbesHeader probeHeader; Probe probe[]; };
 layout(binding = 15, std430) readonly buffer BVH { BVHNode node[]; } lightsTree; // lights_bvh.comp
 layout(binding = 16, r32ui) uniform restrict uimage2D probesRadiance;
 layout(binding = 17, std430) readonly buffer Nbo { uint newList[]; }; // the new probes, probe_allocation.comp
+layout(binding = 18, std430) buffer Hbo0 { uint voteTable[]; };          // requests of probes at hits
+layout(binding = 19, std430) buffer Rbo  { uint ageHistogram[probeAgeBuckets]; ProbeRequest request[]; } req;
 
 #if !defined(RELIGHT) && !defined(RELIGHT_NEW)
-shared vec4 samples[gl_WorkGroupSize.x][3][2]; // 6 Kb
+shared vec4 shSum [gl_WorkGroupSize.x][9]; // a thread's sums of L*Y_k over its samples, their count in [0].w (9 Kb)
+shared vec4 shEst [7];                     // the coefficients of this frame, packed as the texels
+shared vec4 shHist[7];                     // and of the last frame
+shared uint shReset;
 #if defined(MATERIAL_MAPS)
 // Keep sky visibility separate from the counts used by the RGB integration.
 shared vec2 skySamples[gl_WorkGroupSize.x][3][2];
@@ -105,20 +119,122 @@ float sunLight(vec3 norm, vec3 pos) {
 // light does not flicker). A lamp the tree picks with probability 0,136 next to a wall 18 m away lit a probe's
 // sample 6,7 times too bright for good, a square on the wall of harbour-night-1; eight resampled tree picks still
 // missed lamps of probability 0,014 and lit a softer patch 9 times too bright (step-2.md, «2а»).
-// A sample of a probe is a cone of 1/256 of the sphere, not a ray: its light is the average over the spot the cone
-// covers on the hit's surface (rho2: the spot's radius squared). For the 1/d^2 of a lamp over a disc of radius rho
-// under it that is ln(1 + rho^2/d^2)/rho^2: the lamp's formula takes the distance with that 1/d^2. A point next to
-// a lamp 18 m away is a spot 4,6 m wide for the probe; read as a point it left a patch on the wall of
-// harbour-night-1 (48 of 255 against 27 of the reference, now 31). Near the probe the spot is small and the formula
-// is the point light's.
-float coneDistance(float dist, float rho2) {
-  const float d2 = max(dist*dist, 1e-4);
-  if(rho2<=1e-3*d2)
-    return dist;
-  return sqrt(rho2/log(1.0 + rho2/d2));
+//
+// A sample of a probe is a cone of 1/256 of the sphere, not a ray: its light is the lamp's light averaged over the
+// spot the cone covers on the hit's surface. A point next to a lamp 18 m away is a spot 4,6 m wide for the probe;
+// read as a point it left a patch on the wall of harbour-night-1 (48 of 255 against 27 of the reference). The mean
+// over the spot is exact in spotLight below; the formula of 2a for a lamp over the spot's centre (ln(1 + rho^2/d^2)
+// /rho^2 and the cosine at the centre) lit a slanted lamp's spot 0,31-0,89 of the exact (step-2b.md, «2б-3»). The spot
+// is taken flat, on the hit's plane, and the shadow is the one ray from its centre: against hits jittered in the cone
+// on the real geometry, each with its own shadow ray, the reflected light of ten views differs by 3 % (median). The
+// lamps are found by the spot's centre: a lamp whose range takes a part of the spot but not its centre is left out.
+struct Spot {
+  vec3  c;   // the centre: the hit, off the surface as the shadow rays
+  vec3  n;   // the surface's normal, facing the probe
+  vec3  e1;  // across the plane of incidence: semi-axis a
+  vec3  e2;  // along it: semi-axis b = a/cos(incidence)
+  float a;
+  float b;
+  float rot; // the first direction of the angular quadrature: fixed per sample, as the lamp's choice
+  };
+
+const uint SpotDirs = 8;
+
+// The tracer's falloff over its distance in units of the lamp's range, x = r/range (lights_common.glsl:
+// window(x)/max(x^2, 0.005)), is K(x)/x^2 with K = window * min(1, x^2/0.005). Its antiderivative, 0 at x = 0: in the
+// clip (closer than 0,07 of the range) the falloff is 1/0.005 (the window is 1 - 2,5e-5 there); past the clip it is
+// (1 - 2x^4 + x^8)/x^2; past the range 0.
+float lampFalloffIntegral(float x) {
+  const float xc = 0.0707106781; // sqrt(0.005)
+  if(x<=xc)
+    return x*200.0;
+  x = min(x, 1.0);
+  const float x3 = x*x*x;
+  return (2.0/xc + xc*xc*xc*(2.0/3.0)) - 1.0/x - x3*(2.0/3.0) + x3*x3*x*(1.0/7.0);
   }
 
-vec3 localLight(vec3 norm, vec3 pos, uint key, float rho2) {
+// The radial integral of the lamp along a direction dir from its foot f on the plane (both in the ellipse's frame,
+// the ellipse scaled to the unit circle by ia = (1/a, 1/b)): the chord [s1, s2] of the ray through the spot, then the
+// falloff integral between the distances to the lamp at its ends. The discriminant goes by the identity
+// (f.d)^2 - |d|^2 (|f|^2 - 1) = |d|^2 - (f x d)^2: no difference of two squares of the foot's distance in floats.
+// Without `near` the foot is in the spot (s1 = 0) and the caller subtracts the integral at the foot once.
+float spotChord(vec2 dir, vec2 fs, vec2 ia, float h2, float iR, bool near) {
+  const vec2  ds = dir*ia;
+  const float A  = dot(ds, ds);
+  const float B  = dot(fs, ds);
+  const float c  = fs.x*ds.y - fs.y*ds.x;
+  const float sq = sqrt(max(A - c*c, 0.0));
+  const float s2 = max((-B + sq)/A, 0.0);
+  float g = lampFalloffIntegral(sqrt(h2 + s2*s2)*iR);
+  if(near) {
+    const float s1 = max((-B - sq)/A, 0.0);
+    g -= lampFalloffIntegral(sqrt(h2 + s1*s1)*iR);
+    }
+  return g;
+  }
+
+// The lamp's light (lightIntensity) averaged over the spot. In polar coordinates around the lamp's foot on the plane
+// (h the lamp's height over it, s the distance from the foot, r^2 = h^2 + s^2, so s ds = r dr) the tracer's lamp is
+// E dA = 0.25 h K(r/range)/(r/range)^2 dr dphi: the cosine, 1/r^2, the window and the clip are all functions of r, so
+// the integral along a direction is closed (lampFalloffIntegral) and only the angle is a quadrature. SpotDirs
+// directions round the circle from the sample's angle when the foot is in the spot or near it; when it is outside, the
+// wedge of the tangents from the foot with Chebyshev nodes (the chords shrink like a square root at its ends). Against
+// Monte Carlo of the tracer's lamp over the ellipse in 575 cases (step-2b.md, «2б-3»): bias under 1,5 %, a sample's
+// own error 0,6 % on average, 3,7 % in 95 % of the cases.
+float spotLight(const Spot sp, vec3 lampPos, float range) {
+  const vec3  dl = lampPos - sp.c;
+  const float h  = dot(dl, sp.n);
+  if(h<=0)
+    return 0;
+  const float d2 = dot(dl, dl);
+  if(d2>=(range + sp.b)*(range + sp.b))
+    return 0; // the whole spot is past the lamp's range
+  if(sp.a*sp.b<=1e-3*d2) {
+    // a spot small against its distance to the lamp: the point light (the mean differs by (rho/d)^2)
+    const float d = max(sqrt(d2), 0.001);
+    return lightIntensity(sp.n, d, -dl/d, range);
+    }
+  const vec2  ia = vec2(1.0/sp.a, 1.0/sp.b);
+  const vec2  fs = vec2(dot(dl, sp.e1), dot(dl, sp.e2))*ia; // the foot in the frame of the unit circle
+  const vec2  f  = fs/ia;
+  const float h2 = h*h;
+  const float iR = 1.0/range;
+  const float fn = dot(fs, fs);
+  float sum = 0;
+  if(fn<1.1025) {
+    // the foot is in the spot, or 5 % off its edge
+    const bool  near  = fn>=1.0;
+    const float stepC = cos(2.0*M_PI/float(SpotDirs)), stepS = sin(2.0*M_PI/float(SpotDirs));
+    vec2 dir = vec2(cos(sp.rot), sin(sp.rot));
+    [[unroll]]
+    for(uint i=0; i<SpotDirs; ++i) {
+      sum += spotChord(dir, fs, ia, h2, iR, near);
+      dir  = vec2(dir.x*stepC - dir.y*stepS, dir.x*stepS + dir.y*stepC);
+      }
+    if(!near)
+      sum -= float(SpotDirs)*lampFalloffIntegral(h*iR);
+    sum *= 2.0*M_PI/float(SpotDirs);
+    } else {
+    // the tangents from the foot to the unit circle, mapped back on the ellipse
+    const vec2  u  = fs*inversesqrt(fn);
+    const vec2  v  = vec2(-u.y, u.x);
+    const float cg = inversesqrt(fn), sg = sqrt(max(1.0 - 1.0/fn, 0.0));
+    const vec2  t0 = (u*cg - v*sg)/ia - f;
+    const vec2  t1 = (u*cg + v*sg)/ia - f;
+    const float p0 = atan(t0.y, t0.x);
+    const float dp = atan(t0.x*t1.y - t0.y*t1.x, dot(t0, t1)); // the wedge, under pi
+    [[unroll]]
+    for(uint i=0; i<SpotDirs; ++i) {
+      const float th = M_PI*(float(i) + 0.5)/float(SpotDirs);
+      const float ph = p0 + dp*0.5*(1.0 - cos(th));
+      sum += spotChord(vec2(cos(ph), sin(ph)), fs, ia, h2, iR, true)*sin(th);
+      }
+    sum *= abs(dp)*0.5*M_PI/float(SpotDirs);
+    }
+  return max(0.25*h*range*sum/(M_PI*sp.a*sp.b), 0.0);
+  }
+
+vec3 localLight(const Spot sp, uint key) {
   uint  stack[32];
   uint  ptr     = 0;
   uint  node    = 0 | BVH_BoxNode;
@@ -134,9 +250,10 @@ vec3 localLight(vec3 norm, vec3 pos, uint key, float rho2) {
     if(type==BVH_LightNode) {
       const BVHNode n     = lightsTree.node[node & 0x0FFFFFFF];
       const float   range = uintBitsToFloat(n.ptrL);
-      const vec3    d     = pos - n.lmin;
-      const float   len   = length(d);
-      const float   lum   = lightIntensity(norm, coneDistance(len, rho2), d/max(len, 0.001), range) * luma(n.lmax);
+      // the weight is the lamp's exact light over the spot: f/phat then holds the colour and the shadow alone. Weights
+      // by the formula of 2a and the exact light of the chosen lamp alone cost as much (step-2b.md, «2б-3») and add
+      // the noise of the choice: a sample takes a lamp whose f/phat differs from the others'
+      const float   lum   = spotLight(sp, n.lmin, range) * luma(n.lmax);
       if(lum>0) {
         pSum += lum;
         // weighted reservoir: this lamp stays with probability lum/pSum. Each candidate draws its own number from the
@@ -154,8 +271,8 @@ vec3 localLight(vec3 norm, vec3 pos, uint key, float rho2) {
       }
     else if(type==BVH_BoxNode) {
       const BVHNode n     = lightsTree.node[node & 0x0FFFFFFF];
-      const bool    left  = bvhIntersectBox(pos, n.lmin, n.lmax);
-      const bool    right = bvhIntersectBox(pos, n.rmin, n.rmax);
+      const bool    left  = bvhIntersectBox(sp.c, n.lmin, n.lmax);
+      const bool    right = bvhIntersectBox(sp.c, n.rmin, n.rmax);
       if(left && right && ptr<stack.length()) {
         stack[ptr++] = n.ptrR;
         node = n.ptrL;
@@ -173,10 +290,10 @@ vec3 localLight(vec3 norm, vec3 pos, uint key, float rho2) {
   if(pHat<=0)
     return vec3(0);
 
-  const vec3  ldir        = lampPos - pos;
+  const vec3  ldir        = lampPos - sp.c;
   const float dist        = length(ldir);
   const float rayDistance = dist - lampRange*0.0375; // padding of the path tracer, a light may stand in a wall
-  const float shadow      = rayDistance<=0 ? 1.0 : shadowRay(pos, ldir/max(dist, 0.001), rayDistance);
+  const float shadow      = rayDistance<=0 ? 1.0 : shadowRay(sp.c, ldir/max(dist, 0.001), rayDistance);
   // f/phat is the lamp's colour over its luminance and the shadow: the intensity cancels
   return lampColor/luma(lampColor) * shadow * pSum;
   }
@@ -187,62 +304,96 @@ vec3 skyRadiance(vec3 origin, vec3 dir) {
   return sky + NightSky;
   }
 
+#if defined(RELIGHT) || defined(RELIGHT_NEW)
 vec3 readSelf(uint probeId, bool hasPrev, vec3 n) {
   // the probe's own light of the last frame in the hit's direction; a new probe has none
-  return hasPrev ? probeReadAmbient(probesLightingPrev, probeId, n, vec3(0)) : vec3(0);
+  return hasPrev ? probeReadIrradiance(probesLighting, probeId, n) : vec3(0);
   }
 
-bool findProbe(vec3 pos, vec3 norm, out uint id) {
-  // the probe of the last frame at a hit the camera sees: the lod and the cage of probe_allocation.comp there
-  const vec4 clip = scene.viewProject*vec4(pos,1);
-  if(clip.w<=0)
-    return false;
-  const vec3 ndc = clip.xyz/clip.w;
-  if(any(greaterThanEqual(abs(ndc.xy), vec2(1))) || ndc.z<0 || ndc.z>=SKY_DEPTH)
-    return false;
-
-  const ivec2 screenSize = scene.screenRes;
-  const ivec2 fragCoord  = clamp(ivec2((ndc.xy*0.5+0.5)*vec2(screenSize)), ivec2(0), screenSize-1);
-  const int   lod        = probeGridComputeLod(fragCoord, screenSize, ndc.z, scene.viewProjectInv, scene.probeGridBias);
-  const float step       = probeGridStep*(1 << lod);
-
-  // the corner of the cage furthest along the normal: allocation keeps the corners on the normal's side
+// The probe of a hit at a lod, found in the world (no projection on the screen): the corner of the cage furthest along
+// the normal, as the allocation keeps the corners on the normal's side. 0: no probe there, 1: there is one but it
+// cannot be taken (new: no light of the last frame yet; bad: it sits in a wall), 2: found.
+int lookupProbe(vec3 pos, vec3 norm, int lod, out uint id, out ivec3 gridPos) {
+  const float step = probeGridStep*(1 << lod);
   const ivec3 px   = ivec3(round((pos + norm*(probeCageBias + 0.5*step))/step));
   const vec3  wpos = vec3(px)*step;
+  gridPos = px*(1 << lod);
+  id      = 0;
   if(dot(wpos - pos, norm)<0)
-    return false;
+    return 1; // no corner on the normal's side: nothing to request either
 
-  const ivec3 gridPos = px*(1 << lod);
   uint probeId = hashTable[probeGridPosHash(gridPos) % hashTable.length()];
   [[loop]]
   for(int i=0; i<8; ++i) {
     if(probeId>=probeHeader.count)
-      return false;
+      return 0;
     const Probe p = probe[probeId];
     if((p.bits & TRACED_BIT)!=0 && probeIsSame(p.pos, wpos, lod)) {
-      // a new probe has no light of the last frame yet; a bad one sits in a wall
-      if((p.bits & (NEW_BIT | BAD_BIT | UNUSED_BIT))!=0)
-        return false;
       id = probeId;
-      return true;
+      if((p.bits & (NEW_BIT | BAD_BIT | UNUSED_BIT))!=0)
+        return 1;
+      return 2;
       }
     probeId = p.pNext;
     }
-  return false;
+  return 0;
   }
 
-vec3 bounce(vec3 pos, vec3 norm, uint probeId, bool hasPrev) {
-  // The light of the hit's own surroundings: the probe of the last frame there; a hit off the screen or hidden has
-  // none (probes stand only where the camera sees), then this probe's own light in the hit's direction. One more
-  // ray of the path from such a hit made a hut at noon 3-10 % lighter (the sky over the street seen through the
-  // door) for +0,4 ms in combat: over the budget (step-2.md, «2а»).
+void requestProbe(ivec3 gridPos, vec3 norm) {
+  // Through the vote table, cleared after this frame's allocation: the first sample to claim a bucket writes the
+  // request, probe_hit_alloc allocates it in the next frame unless a pixel votes there. Up to maxRequests a frame.
+  if(probeHeader.reqCount>=maxRequests)
+    return;
+  const uint h = probeGridPosHash(gridPos) % voteTable.length();
+  if(voteTable[h]!=0xFFFFFFFFu || atomicCompSwap(voteTable[h], 0xFFFFFFFFu, probeRequestBusy)!=0xFFFFFFFFu)
+    return;
+  const uint i = atomicAdd(probeHeader.reqCount, 1);
+  if(i>=maxRequests)
+    return; // the bucket stays taken until the table is cleared
+  req.request[i].gridPos = gridPos;
+  req.request[i].normal  = packSnorm4x8(vec4(norm, 0));
+  voteTable[h] = probeRequestKey | i;
+  }
+
+void stampProbe(uint id, uint stamp) {
+  if(int(probe[id].lastUse - stamp)<0)
+    atomicMax(probe[id].lastUse, stamp);
+  }
+
+bool findProbe(vec3 pos, vec3 norm, uint stamp, out uint id) {
+  // The probe of the last frame at a hit, on the screen or not. A hit near the camera without one requests it; till
+  // it is there, the probe of the next coarser lod at the hit (its corners are corners of this lod too) stands in.
+  // Taking a probe stamps its use (probe_prune frees what nobody uses): with the stamp of the probe whose sample
+  // takes it, so probes that take each other's light off the screen live no longer than the last use from it.
+  // A bad probe at the hit is stamped too: freed, it would be requested and traced again.
+  const int lod = probeGridLod(pos, scene.camPos, scene.probeLodScale);
+  ivec3 gridPos;
+  int   found = lookupProbe(pos, norm, lod, id, gridPos);
+  if(found==0 && distance(pos, scene.camPos)<hitRadius)
+    requestProbe(gridPos, norm);
+  if(found==1 && id!=0)
+    stampProbe(id, stamp);
+  if(found!=2 && lod<12) {
+    ivec3 coarse;
+    found = lookupProbe(pos, norm, lod+1, id, coarse);
+    }
+  if(found!=2)
+    return false;
+  stampProbe(id, stamp);
+  return true;
+  }
+
+vec3 bounce(vec3 pos, vec3 norm, uint probeId, uint stamp, bool hasPrev) {
+  // The light of the hit's own surroundings: the probe of the last frame there; without one, this probe's own light
+  // in the hit's direction. One more ray of the path from such a hit made a hut at noon 3-10 % lighter (the sky over
+  // the street seen through the door) for +0,4 ms in combat: over the budget (step-2.md, «2а»).
   uint id = 0;
-  if(findProbe(pos, norm, id))
-    return probeReadAmbient(probesLightingPrev, id, norm, vec3(0));
+  if(findProbe(pos, norm, stamp, id))
+    return probeReadIrradiance(probesLighting, id, norm);
   return readSelf(probeId, hasPrev, norm);
   }
 
-vec4 shadeSample(const vec3 rayOrigin, const vec3 rayDirection, uint probeId, uint sampleId, bool hasPrev) {
+vec4 shadeSample(const vec3 rayOrigin, const vec3 rayDirection, uint probeId, uint sampleId, uint stamp, bool hasPrev) {
   const ivec2 uv     = gbufferCoord(probeId, sampleId);
   const vec4  diff   = texelFetch(gbufferDiff, uv, 0);
   const uint  bits   = uint(diff.a*255.0+0.5);
@@ -273,14 +424,26 @@ vec4 shadeSample(const vec3 rayOrigin, const vec3 rayDirection, uint probeId, ui
 
   vec3 direct = vec3(0);
   direct += sunLight(norm, at) * scene.sunColor;
-  // the spot of the sample's cone on the hit's surface: half-angle 0,125 rad for 1/256 of the sphere, wider at a slant
-  const float rho2 = (rayT*0.125)*(rayT*0.125)/max(abs(dot(norm, rayDirection)), 0.1);
-  direct += localLight(norm, at, key, rho2) * (max(1.0, scene.exposure) / scene.exposure);
+  // the spot of the sample's cone on the hit's surface: half-angle 0,125 rad for 1/256 of the sphere, stretched along
+  // the plane of incidence at a slant
+  Spot sp;
+  sp.c = at;
+  sp.n = norm;
+  const vec3  across = cross(norm, rayDirection);
+  const float lx     = length(across);
+  sp.e1  = lx>1e-4 ? across/lx : normalize(abs(norm.x)<0.9 ? cross(norm, vec3(1,0,0)) : cross(norm, vec3(0,1,0)));
+  sp.e2  = cross(norm, sp.e1);
+  sp.a   = rayT*0.125;
+  sp.b   = sp.a/max(abs(dot(norm, rayDirection)), 0.1);
+  uint rk = key ^ 0x6A09E667u;
+  sp.rot = float(wangHash(rk) >> 8)*(2.0*M_PI/16777216.0);
+  direct += localLight(sp, key) * (max(1.0, scene.exposure) / scene.exposure);
 
   vec3 hit = albedo * direct * Fd_Lambert;
-  hit += albedo * bounce(pos, norm, probeId, hasPrev); // Fd_Lambert is in the probes' integration
+  hit += albedo * bounce(pos, norm, probeId, stamp, hasPrev); // Fd_Lambert is in the probes' integration
   return vec4(hit, 1);
   }
+#endif
 
 #if defined(RELIGHT_NEW)
 shared uint shIndex;
@@ -300,8 +463,8 @@ void main() {
       continue; // as in probe_trace.comp; the same for the whole workgroup
     const uint sampleId = gl_LocalInvocationIndex;
     const vec3 dir      = sampleSphere(sampleId, samplesTotal, 0);
-    const vec4 clr      = shadeSample(probe[probeId].pos, dir, probeId, sampleId, false);
-    imageStore(probesRadiance, gbufferCoord(probeId, sampleId), uvec4(clr.a>0 ? packRGB9E5(clr.rgb) : NoSample));
+    const vec4 clr      = shadeSample(probe[probeId].pos, dir, probeId, sampleId, probe[probeId].lastUse, false);
+    imageStore(probesRadiance, gbufferCoord(probeId, sampleId), uvec4(clr.a>0 ? packRGB9E5(clr.rgb*probeStoreScale) : NoSample));
     }
   }
 #elif defined(RELIGHT)
@@ -314,24 +477,20 @@ void main() {
   if((bits & (UNUSED_BIT | NEW_BIT))!=0 || (bits & TRACED_BIT)==0)
     return; // a new probe lights all its samples in probe_relight_new.comp
 
-  const uint sampleId = (gl_GlobalInvocationID.x%perProbe)*relitPeriod + (frameId + probeId)%relitPeriod;
+  // a probe no pixel takes (only the bounce of other probes) is relit on one frame of offPeriod
+  if((bits & SEEN_BIT)==0 && (frameId + probeId)%offPeriod!=0)
+    return;
+  // The samples' turn is the probe's own count of relights (processProbe), not the frame's number. By the frame a probe
+  // the screen takes only on every other frame (an edge the TAA's jitter crosses) relit on those frames the samples of
+  // one parity, and skipped the other frames as one off the screen: half its samples kept the light of an hour before
+  // for good, squares in a hut at night after noon (step-2b.md, «2б-1: пересмотр»).
+  const uint turn     = probe[probeId].turn;
+  const uint sampleId = (gl_GlobalInvocationID.x%perProbe)*relitPeriod + turn%relitPeriod;
   const vec3 dir      = sampleSphere(sampleId, samplesTotal, 0);
-  const vec4 clr      = shadeSample(probe[probeId].pos, dir, probeId, sampleId, true);
-  imageStore(probesRadiance, gbufferCoord(probeId, sampleId), uvec4(clr.a>0 ? packRGB9E5(clr.rgb) : NoSample));
+  const vec4 clr      = shadeSample(probe[probeId].pos, dir, probeId, sampleId, probe[probeId].lastUse, true);
+  imageStore(probesRadiance, gbufferCoord(probeId, sampleId), uvec4(clr.a>0 ? packRGB9E5(clr.rgb*probeStoreScale) : NoSample));
   }
 #else
-void storeSample(vec3 dir, vec4 val) {
-  if(val.a==0)
-    return;
-
-  for(int i=0; i<3; ++i) {
-    float v = dir[i];
-    int   d = v>=0 ? 1 : 0;
-    v = abs(v);
-    samples[gl_LocalInvocationIndex][i][d] += vec4(val.rgb*v, 1);
-    }
-  }
-
 #if defined(MATERIAL_MAPS)
 void storeSkySample(vec3 dir, float valid, bool sky) {
   if(valid==0)
@@ -349,28 +508,36 @@ float resolveSkyVisibility(vec2 sampleWeights) {
   }
 #endif
 
-void processLighting(const uint probeId, const bool fresh) {
-  const vec3 origin = probe[probeId].pos;
-
+void loadSamples(const uint probeId, const bool fresh) {
+  // this thread's samples projected on the harmonics: L*Y_k, summed here, then over the workgroup in shSum
+  vec4 sum[9];
+  for(int k=0; k<9; ++k)
+    sum[k] = vec4(0);
   for(uint i=0; i<samplesCount; ++i) {
     const uint  sampleId = gl_LocalInvocationIndex*samplesCount+i;
     const vec3  dir      = sampleSphere(sampleId, samplesTotal, 0);
     const ivec2 uv       = gbufferCoord(probeId, sampleId);
 
     // a new probe's samples were lit this frame in probe_relight_new.comp, the others in turns
-    vec4 clr = vec4(0);
     const uint v = imageLoad(probesRadiance, uv).r;
-    if(v!=NoSample)
-      clr = vec4(unpackRGB9E5(v), 1);
-    storeSample(dir, clr);
+    if(v!=NoSample) {
+      const vec3 clr = unpackRGB9E5(v)*(1.0/probeStoreScale);
+      float y[9];
+      probeSh9(dir, y);
+      for(int k=0; k<9; ++k)
+        sum[k].rgb += clr*y[k];
+      sum[0].w += 1;
+      }
 #if defined(MATERIAL_MAPS)
     if(fresh) {
       // the sky visibility depends on the trace only: a new probe counts it
       const uint bits = uint(texelFetch(gbufferDiff, uv, 0).a*255.0+0.5);
-      storeSkySample(dir, clr.a, (bits & 0x4)!=0);
+      storeSkySample(dir, v!=NoSample ? 1.0 : 0.0, (bits & 0x4)!=0);
       }
 #endif
     }
+  for(int k=0; k<9; ++k)
+    shSum[gl_LocalInvocationIndex][k] = sum[k];
   }
 
 void processProbe(const uint probeId) {
@@ -381,65 +548,89 @@ void processProbe(const uint probeId) {
     return;
   // a new probe or a slot taken again: no history, all samples now
   const bool fresh = (bits & NEW_BIT)!=0 || (bits & TRACED_BIT)==0;
+  // a probe no pixel takes is integrated on the frames it is relit on (probe_relight), with their time
+  const bool off   = !fresh && (bits & SEEN_BIT)==0;
+  if(off && (frameId + probeId)%offPeriod!=0)
+    return;
+  const float a = off ? 1.0 - pow(1.0 - alpha, float(offPeriod)) : alpha;
 
-  for(int i=0; i<3; ++i) {
-    samples[laneId][i][0] = vec4(0);
-    samples[laneId][i][1] = vec4(0);
 #if defined(MATERIAL_MAPS)
+  for(int i=0; i<3; ++i) {
     skySamples[laneId][i][0] = vec2(0);
     skySamples[laneId][i][1] = vec2(0);
-#endif
     }
+#endif
+  loadSamples(probeId, fresh);
   barrier();
 
-  processLighting(probeId, fresh);
-  barrier();
+#if defined(MATERIAL_MAPS)
+  if(fresh) {
+    for(uint i=gl_WorkGroupSize.x; i>0;) {
+      i /= 2;
+      if(laneId<i) {
+        for(int r=0; r<3; ++r) {
+          skySamples[laneId][r][0] += skySamples[laneId+i][r][0];
+          skySamples[laneId][r][1] += skySamples[laneId+i][r][1];
+          }
+        }
+      barrier();
+      }
+    if(laneId==0) {
+      vec3 negativeVisibility, positiveVisibility;
+      for(int axis=0; axis<3; ++axis) {
+        negativeVisibility[axis] = resolveSkyVisibility(skySamples[0][axis][0]);
+        positiveVisibility[axis] = resolveSkyVisibility(skySamples[0][axis][1]);
+        }
+      probe[probeId].bits = probePackSkyVisibility(probe[probeId].bits, negativeVisibility, positiveVisibility);
+      }
+    }
+#endif
 
   for(uint i=gl_WorkGroupSize.x; i>0;) {
     i /= 2;
     if(laneId<i) {
-      for(int r=0; r<3; ++r) {
-        samples[laneId][r][0] += samples[laneId+i][r][0];
-        samples[laneId][r][1] += samples[laneId+i][r][1];
-#if defined(MATERIAL_MAPS)
-        skySamples[laneId][r][0] += skySamples[laneId+i][r][0];
-        skySamples[laneId][r][1] += skySamples[laneId+i][r][1];
-#endif
-        }
+      for(int k=0; k<9; ++k)
+        shSum[laneId][k] += shSum[laneId+i][k];
       }
     barrier();
     }
-
-#if defined(MATERIAL_MAPS)
-  if(laneId==0 && fresh) {
-    vec3 negativeVisibility, positiveVisibility;
-    for(int axis=0; axis<3; ++axis) {
-      negativeVisibility[axis] = resolveSkyVisibility(skySamples[0][axis][0]);
-      positiveVisibility[axis] = resolveSkyVisibility(skySamples[0][axis][1]);
+  if(laneId<7) {
+    // the coefficients of irradiance/pi: (4pi/N)*sum(L*Y_k) over the N samples that count, times A_l/pi = 1, 2/3, 1/4
+    // (the cosine's convolution); the texels hold them in a row, rgb of each
+    const float cnt = shSum[0][0].w;
+    const float s   = cnt>0 ? 4.0*M_PI/cnt*probeStoreScale : 0.0;
+    vec4 e = vec4(0);
+    for(int c=0; c<4; ++c) {
+      const int f = int(laneId)*4 + c;
+      const int k = min(f/3, 8);
+      if(f<27)
+        e[c] = shSum[0][k][f%3]*s*(k==0 ? 1.0 : (k<4 ? 2.0/3.0 : 0.25));
       }
-    probe[probeId].bits = probePackSkyVisibility(probe[probeId].bits, negativeVisibility, positiveVisibility);
+    shEst [laneId] = e;
+    shHist[laneId] = fresh ? e : imageLoad(probesLighting, probeIrrTexel(probeId, int(laneId)));
     }
-#endif
-
-  if(laneId<6) {
-    const uint axis = laneId/2;
-    const uint side = laneId%2;
-    vec4 s = samples[0][axis][side];
-    // Need to mul by 2, because it's uniform sampling; https://www.rorydriscoll.com/2009/01/07/better-sampling/
-    const vec3 est = (s.w>0 ? s.rgb/s.w : vec3(0)) * 2.0;
-
-    vec3 ret = est;
-    if(!fresh) {
-      const vec3  hist   = texelFetch(probesLightingPrev, lightBufferCoord(probeId)+ivec2(axis,side), 0).rgb;
-      const float lh     = luma(hist);
-      const float ln     = luma(est);
-      const float eps    = 0.0005/max(scene.exposure, 1e-6); // dark on the screen: no reset on noise there
-      const float change = abs(ln-lh)/max(max(ln, lh), eps);
-      ret = mix(hist, est, change>ResetChange ? 1.0 : alpha);
-      }
-    const ivec2 uv = lightBufferCoord(probeId);
-    imageStore(probesLighting, uv+ivec2(axis,side), vec4(ret, 1));
+  if(laneId==0)
+    shReset = 0;
+  barrier();
+  if(laneId<6 && !fresh) {
+    // a sharp change, as the faces of the cube had it: the irradiance along an axis changes by more than ResetChange
+    vec3 ax = vec3(0);
+    ax[laneId/2] = (laneId%2)==0 ? 1.0 : -1.0;
+    const float lh     = luma(probeShEval(shHist, ax));
+    const float ln     = luma(probeShEval(shEst,  ax));
+    const float eps    = 0.0005/max(scene.exposure, 1e-6)*probeStoreScale; // dark on the screen: no reset on noise there
+    const float change = abs(ln-lh)/max(max(ln, lh), eps);
+    if(change>ResetChange)
+      atomicOr(shReset, 1u);
     }
+  barrier();
+  if(laneId<7) {
+    const vec4 ret = mix(shHist[laneId], shEst[laneId], shReset!=0 ? 1.0 : a);
+    imageStore(probesLighting, probeIrrTexel(probeId, int(laneId)), ret);
+    }
+  // probe_relight relit it this frame (the same tests as there): the next frame takes the next samples
+  if(laneId==0 && !fresh)
+    probe[probeId].turn = probe[probeId].turn + 1;
   }
 
 void main() {

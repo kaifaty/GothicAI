@@ -1353,6 +1353,8 @@ bool frameRagdollArena(size_t expected=20);
 void lookFrom(const CameraContext& ctx,const Tempest::Vec3& org,const Tempest::Vec3& tgt);
 void updateCamera(const CameraContext& ctx,World& w,Npc& pl);
 void placeHero(const CameraContext& ctx,World& w,Npc& pl);
+// one stands around the other, that far, at that angle from the other's facing, facing it
+void standAround(World& w,Npc& s,Npc& pl,float dist,float angle);
 bool frameRagdollArena(const CameraContext& ctx,size_t expected);
 void capture(const CameraContext& ctx,Tempest::Pixmap& frame,float uiScale);
 void stopRecording(const CameraContext& ctx);
@@ -1391,10 +1393,12 @@ struct ControlContext {
 struct DialogContext {
   uint64_t& time;
   Npc*& hearNpc;
+  Npc*& hearWith;
   uint64_t& hearUntil;
   uint64_t& hearEvery;
   uint64_t& hearNext;
   Npc*& thinkNpc;
+  Npc*& thinkWith;
   uint64_t& thinkUntil;
   bool& speaking;
   uint64_t& speakUntil;
@@ -1891,6 +1895,7 @@ struct Bench : OverlayBench, CameraBench {
   bool        frozen        = false; // the world stands still: `streaming wait` waits in deterministic mode
   bool        renderReset   = false; // the renderer drops its temporal state before this frame's picture
   uint32_t    settleSteps   = 0;     // fixed steps left between the end of `streaming wait` and the next command
+  uint32_t    holdFrames    = 0;     // frames the loaded world has stood still in a deterministic `streaming wait`
   bool        ordered       = false; // visibility appends clusters in order (slow): from the end of the wait to the shot
   struct StreamingSample {
     std::string segment;
@@ -1927,9 +1932,11 @@ struct Bench : OverlayBench, CameraBench {
   bool        hasPrev   = false;
   bool        inDialog  = false;
   Npc*        pinned    = nullptr;  // pin: held there every frame
-  Npc*        hearNpc   = nullptr;  // hear: it listens to the hero (words every hearEvery ms) until hearUntil
+  Npc*        hearNpc   = nullptr;  // hear: it listens to hearWith (words every hearEvery ms) until hearUntil
+  Npc*        hearWith  = nullptr;
   uint64_t    hearUntil = 0, hearEvery = 600, hearNext = 0;
-  Npc*        thinkNpc  = nullptr;  // think: it thinks of an answer until thinkUntil
+  Npc*        thinkNpc  = nullptr;  // think: it thinks of an answer to thinkWith until thinkUntil
+  Npc*        thinkWith = nullptr;
   uint64_t    thinkUntil = 0;
   Vec3        pinAt     = {};
   float       speed     = 0;

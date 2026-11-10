@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <initializer_list>
 #include <stdexcept>
 
 using namespace Tempest;
@@ -39,7 +40,343 @@ double number(const rapidjson::Value& obj, const char* key, const std::string& w
   return v.GetDouble();
   }
 
+size_t targetOf(const GltfHeadMesh& head, std::string_view name) {
+  for(size_t t=0; t<head.targets.size(); ++t)
+    if(head.targets[t].name==name)
+      return t;
+  return size_t(-1);
+  }
+
+// the name of the same shape on the other side: browDownLeft <-> browDownRight (as cues.py mirror)
+std::string mirrorName(std::string_view name) {
+  std::string ret;
+  for(size_t i=0; i<name.size();) {
+    if(name.compare(i,4,"Left")==0) {
+      ret += "Right";
+      i   += 4;
+      }
+    else if(name.compare(i,5,"Right")==0) {
+      ret += "Left";
+      i   += 5;
+      }
+    else {
+      ret += name[i];
+      ++i;
+      }
+    }
+  return ret;
+  }
+
+// a smooth step 0..1 (cues.py ease)
+float ease(float x) {
+  x = std::clamp(x,0.f,1.f);
+  return x*x*(3.f-2.f*x);
+  }
+
+void parseCues(const rapidjson::Value& list, const GltfHeadMesh& head, FaceProfile& ret) {
+  if(!list.IsObject())
+    fail("cues must be an object");
+  for(const auto& entry:list.GetObject()) {
+    const auto  name  = str(entry.name);
+    const auto  where = "cue "+quoted(name);
+    const auto& v     = entry.value;
+    if(name.empty())
+      fail("a cue without a name");
+    if(ret.findCue(name)!=nullptr)
+      fail(where+": listed twice");
+    if(!v.IsObject())
+      fail(where+": must be an object");
+    for(const auto& m:v.GetObject()) {
+      const auto key = str(m.name);
+      if(key!="zone" && key!="side" && key!="parts")
+        fail(where+": unknown field "+quoted(key));
+      }
+    FaceProfile::Cue c;
+    c.name = std::string(name);
+    const auto zone = v.HasMember("zone") && v["zone"].IsString() ? str(v["zone"]) : std::string_view();
+    if(zone!="upper" && zone!="mouth")
+      fail(where+": zone must be \"upper\" or \"mouth\"");
+    c.mouth = zone=="mouth";
+    if(v.HasMember("side")) {
+      const auto side = v["side"].IsString() ? str(v["side"]) : std::string_view();
+      if(side!="L" && side!="R")
+        fail(where+": side must be \"L\" or \"R\"");
+      c.side = side[0];
+      }
+    if(!v.HasMember("parts") || !v["parts"].IsArray() || v["parts"].Empty())
+      fail(where+": parts must be a non-empty list");
+    for(const auto& p:v["parts"].GetArray()) {
+      const auto at = where+" part "+std::to_string(c.parts.size());
+      if(!p.IsObject())
+        fail(at+": must be an object");
+      for(const auto& m:p.GetObject()) {
+        const auto key = str(m.name);
+        if(key!="weights" && key!="delay_ms" && key!="on_ms" && key!="hold_ms" && key!="off_ms")
+          fail(at+": unknown field "+quoted(key));
+        }
+      FaceProfile::Cue::Part part;
+      part.delayMs = float(number(p,"delay_ms",at));
+      part.onMs    = float(number(p,"on_ms",at));
+      part.holdMs  = float(number(p,"hold_ms",at));
+      part.offMs   = float(number(p,"off_ms",at));
+      if(part.delayMs<0 || part.holdMs<0)
+        fail(at+": delay_ms and hold_ms must not be negative");
+      if(part.onMs<=0 || part.offMs<=0)
+        fail(at+": on_ms and off_ms must be above 0");
+      if(!p.HasMember("weights") || !p["weights"].IsObject() || p["weights"].MemberCount()==0)
+        fail(at+": weights must be a non-empty object of target weights");
+      for(const auto& w:p["weights"].GetObject()) {
+        const auto target = str(w.name);
+        const auto id     = targetOf(head,target);
+        if(id==size_t(-1))
+          fail(at+": unknown target "+quoted(target));
+        if(!w.value.IsNumber() || !std::isfinite(w.value.GetDouble()) || w.value.GetDouble()<0 || w.value.GetDouble()>1)
+          fail(at+": the weight of "+quoted(target)+" must be a number 0..1");
+        const float weight = float(w.value.GetDouble());
+        part.weights.emplace_back(uint32_t(id),weight);
+        // a one-sided gesture is played on either side: its shapes must have their other side on the head
+        const auto other = c.side!=0 ? mirrorName(target) : std::string(target);
+        const auto oid   = targetOf(head,other);
+        if(oid==size_t(-1))
+          fail(at+": unknown target "+quoted(std::string_view(other))+" (the other side of "+quoted(target)+")");
+        part.mirrored.emplace_back(uint32_t(oid),weight);
+        }
+      c.parts.push_back(std::move(part));
+      }
+    ret.cues.push_back(std::move(c));
+    }
+  }
+
+void parseLeaks(const rapidjson::Value& v, const GltfHeadMesh& head, FaceProfile& ret) {
+  // {"on_ms": 120, "hold_ms": 120, "off_ms": 160, "felt": {"afraid": {"upper": {target: weight}, "lower": {...}}}}
+  if(!v.IsObject())
+    fail("leaks must be an object");
+  for(const auto& m:v.GetObject()) {
+    const auto key = str(m.name);
+    if(key!="on_ms" && key!="hold_ms" && key!="off_ms" && key!="felt")
+      fail("leaks: unknown field "+quoted(key));
+    }
+  auto& time = ret.leakTime;
+  time.onMs   = float(number(v,"on_ms","leaks"));
+  time.holdMs = float(number(v,"hold_ms","leaks"));
+  time.offMs  = float(number(v,"off_ms","leaks"));
+  if(time.holdMs<0)
+    fail("leaks: hold_ms must not be negative");
+  if(time.onMs<=0 || time.offMs<=0)
+    fail("leaks: on_ms and off_ms must be above 0");
+  if(!v.HasMember("felt") || !v["felt"].IsObject())
+    fail("leaks: felt must be an object of the felt moods");
+  for(const auto& f:v["felt"].GetObject()) {
+    const auto felt  = str(f.name);
+    const auto where = "leak "+quoted(felt);
+    if(!FaceProfile::isFelt(felt))
+      fail(where+": unknown feeling (friendly, angry, hostile, afraid, pain)");
+    if(!f.value.IsObject())
+      fail(where+": must be an object of the halves upper and lower");
+    for(const auto& h:f.value.GetObject()) {
+      const auto half = str(h.name);
+      const auto at   = where+" "+std::string(half);
+      if(half!="upper" && half!="lower")
+        fail(where+": unknown half "+quoted(half)+" (upper or lower)");
+      if(!h.value.IsObject() || h.value.MemberCount()==0)
+        fail(at+": must be a non-empty object of target weights");
+      FaceProfile::Leak l;
+      l.felt  = std::string(felt);
+      l.lower = half=="lower";
+      for(const auto& w:h.value.GetObject()) {
+        const auto target = str(w.name);
+        const auto id     = targetOf(head,target);
+        if(id==size_t(-1))
+          fail(at+": unknown target "+quoted(target));
+        if(!w.value.IsNumber() || !std::isfinite(w.value.GetDouble()) || w.value.GetDouble()<0 || w.value.GetDouble()>1)
+          fail(at+": the weight of "+quoted(target)+" must be a number 0..1");
+        l.weights.emplace_back(uint32_t(id),float(w.value.GetDouble()));
+        l.peak = std::max(l.peak,float(w.value.GetDouble()));
+        }
+      ret.leaks.push_back(std::move(l));
+      }
+    }
+  }
+
+void onlyFields(const rapidjson::Value& obj, std::initializer_list<std::string_view> keys, const std::string& where) {
+  for(const auto& m:obj.GetObject()) {
+    const auto key = str(m.name);
+    if(std::find(keys.begin(),keys.end(),key)==keys.end())
+      fail(where+": unknown field "+quoted(key));
+    }
+  }
+
+// the sphere through the vertices [first, end) by least squares: |p-c|^2 = r^2 as 2 p.c + (r^2 - c.c) = p.p
+bool fitSphere(const std::vector<asset::Vec3>& pos, uint32_t first, uint32_t end, Vec3& center, float& radius) {
+  if(end<first+4)
+    return false;
+  double mean[3] = {};
+  for(uint32_t i=first; i<end; ++i) {
+    mean[0] += pos[i].x;
+    mean[1] += pos[i].y;
+    mean[2] += pos[i].z;
+    }
+  for(auto& m:mean)
+    m /= double(end-first);
+  double a[4][5] = {};
+  for(uint32_t i=first; i<end; ++i) {
+    const double p[3] = {pos[i].x-mean[0], pos[i].y-mean[1], pos[i].z-mean[2]};
+    const double row[5] = {2*p[0], 2*p[1], 2*p[2], 1, p[0]*p[0]+p[1]*p[1]+p[2]*p[2]};
+    for(int r=0; r<4; ++r)
+      for(int c=0; c<5; ++c)
+        a[r][c] += row[r]*row[c];
+    }
+  for(int c=0; c<4; ++c) {
+    int best = c;
+    for(int r=c+1; r<4; ++r)
+      if(std::abs(a[r][c])>std::abs(a[best][c]))
+        best = r;
+    if(std::abs(a[best][c])<1e-9)
+      return false;
+    std::swap(a[c],a[best]);
+    for(int r=0; r<4; ++r) {
+      if(r==c)
+        continue;
+      const double k = a[r][c]/a[c][c];
+      for(int i=c; i<5; ++i)
+        a[r][i] -= k*a[c][i];
+      }
+    }
+  double x[4];
+  for(int i=0; i<4; ++i)
+    x[i] = a[i][4]/a[i][i];
+  const double r2 = x[3] + x[0]*x[0] + x[1]*x[1] + x[2]*x[2];
+  if(!(r2>0) || !std::isfinite(r2))
+    return false;
+  center = Vec3(float(x[0]+mean[0]),float(x[1]+mean[1]),float(x[2]+mean[2]));
+  radius = float(std::sqrt(r2));
+  return true;
+  }
+
+FaceProfile::Eyes parseEyes(const rapidjson::Value& v, const GltfHeadMesh& head) {
+  using Eyes = FaceProfile::Eyes;
+  if(!v.IsObject())
+    fail("eyes must be an object");
+  onlyFields(v,{"about","parts","limits_deg","lids"},"eyes");
+  if(v.HasMember("about") && !v["about"].IsString())
+    fail("eyes: about must be a string");
+  Eyes ret;
+
+  if(!v.HasMember("parts") || !v["parts"].IsObject())
+    fail("eyes: parts must be an object of the left and the right eye's head parts");
+  const auto& parts = v["parts"];
+  onlyFields(parts,{"left","right"},"eyes: parts");
+  const char* side[2] = {"left","right"};
+  for(int s=0; s<2; ++s) {
+    if(!parts.HasMember(side[s]) || !parts[side[s]].IsString())
+      fail(std::string("eyes: parts: ")+side[s]+" must be the name of a head part");
+    const auto name = str(parts[side[s]]);
+    auto&      e    = ret.eye[s];
+    e.part = head.parts.size();
+    for(size_t i=0; i<head.parts.size(); ++i)
+      if(head.parts[i].name==name)
+        e.part = i;
+    if(e.part==head.parts.size())
+      fail("eyes: parts: no head part "+quoted(name));
+    const auto& p = head.parts[e.part];
+    e.first = uint32_t(p.firstVertex);
+    e.end   = uint32_t(std::min(p.firstVertex+p.vertexCount,head.mesh.positions.size()));
+    if(!fitSphere(head.mesh.positions,e.first,e.end,e.center,e.radius))
+      fail("eyes: part "+quoted(name)+" is not a ball (no sphere fits its vertices)");
+    }
+  if(ret.eye[0].part==ret.eye[1].part)
+    fail("eyes: parts: the left and the right eye must be different parts");
+  const float apart = ret.eye[0].center.y - ret.eye[1].center.y;
+  if(std::abs(apart)<ret.eye[0].radius)
+    fail("eyes: the balls must stand apart across the head (y)");
+  ret.eye[0].outSign = apart>0 ? 1.f : -1.f;
+  ret.eye[1].outSign = -ret.eye[0].outSign;
+
+  const char* dir[4] = {"down","up","in","out"};
+  if(!v.HasMember("limits_deg") || !v["limits_deg"].IsObject())
+    fail("eyes: limits_deg must be an object");
+  const auto& lim = v["limits_deg"];
+  onlyFields(lim,{"down","up","in","out"},"eyes: limits_deg");
+  for(int d=0; d<4; ++d) {
+    const double deg = number(lim,dir[d],"eyes: limits_deg");
+    if(deg<=0 || deg>90)
+      fail(std::string("eyes: limits_deg: ")+dir[d]+" must be above 0 and up to 90");
+    ret.limit[d] = float(deg*M_PI/180.0);
+    }
+
+  if(!v.HasMember("lids") || !v["lids"].IsObject())
+    fail("eyes: lids must be an object of gaze directions");
+  const auto& lids = v["lids"];
+  onlyFields(lids,{"down","up","in","out"},"eyes: lids");
+  for(int d=0; d<4; ++d) {
+    if(!lids.HasMember(dir[d]))
+      continue;
+    const auto& list = lids[dir[d]];
+    if(!list.IsArray())
+      fail(std::string("eyes: lids: ")+dir[d]+" must be a list");
+    for(rapidjson::SizeType i=0; i<list.Size(); ++i) {
+      const auto  at = std::string("eyes: lids ")+dir[d]+" "+std::to_string(i);
+      const auto& l  = list[i];
+      if(!l.IsObject())
+        fail(at+": must be an object");
+      onlyFields(l,{"target","from","to","max"},at);
+      if(!l.HasMember("target") || !l["target"].IsString())
+        fail(at+": target must be a target name ({side} is Left or Right)");
+      const double from = number(l,"from",at), to = number(l,"to",at), max = number(l,"max",at);
+      if(from<0 || to<=from)
+        fail(at+": from must be 0 or more and to above it");
+      if(max<0 || max>1)
+        fail(at+": max must be a number 0..1");
+      for(int s=0; s<2; ++s) {
+        std::string name = std::string(str(l["target"]));
+        for(size_t p; (p = name.find("{side}"))!=std::string::npos;)
+          name.replace(p,6,s==0 ? "Left" : "Right");
+        Eyes::Lid lid;
+        const size_t id = targetOf(head,name);
+        if(id==size_t(-1))
+          fail(at+": unknown target "+quoted(std::string_view(name)));
+        lid.target = uint32_t(id);
+        lid.from = float(from);
+        lid.to   = float(to);
+        lid.max  = float(max);
+        ret.eye[s].lids[d].push_back(lid);
+        }
+      }
+    }
+  return ret;
+  }
+
 }
+
+bool FaceProfile::isFelt(std::string_view felt) {
+  for(auto f:Felt)
+    if(f==felt)
+      return true;
+  return false;
+  }
+
+const FaceProfile::Leak* FaceProfile::findLeak(std::string_view felt, bool lower) const {
+  for(auto& l:leaks)
+    if(l.felt==felt && l.lower==lower)
+      return &l;
+  return nullptr;
+  }
+
+float FaceProfile::Cue::span(float hold) const {
+  float ret = 0;
+  for(size_t i=0; i<parts.size(); ++i) {
+    const auto& p = parts[i];
+    ret = std::max(ret, p.delayMs+p.onMs+(i==0 && hold>=0 ? hold : p.holdMs)+p.offMs);
+    }
+  return ret;
+  }
+
+const FaceProfile::Cue* FaceProfile::findCue(std::string_view name) const {
+  for(auto& c:cues)
+    if(c.name==name)
+      return &c;
+  return nullptr;
+  }
 
 const FaceProfile::Anim* FaceProfile::find(std::string_view name) const {
   const size_t i = index(name);
@@ -62,7 +399,8 @@ std::unique_ptr<FaceProfile> FaceProfile::parse(std::string_view json, const Glt
     fail("the profile must be a JSON object");
   for(const auto& m:doc.GetObject()) {
     const auto key = str(m.name);
-    if(key!="version" && key!="about" && key!="mouth" && key!="anims")
+    if(key!="version" && key!="about" && key!="mouth" && key!="anims" && key!="cues" && key!="leaks" &&
+       key!="eyes")
       fail("unknown field "+quoted(key));
     }
   if(!doc.HasMember("version") || !doc["version"].IsInt() || doc["version"].GetInt()!=1)
@@ -136,12 +474,7 @@ std::unique_ptr<FaceProfile> FaceProfile::parse(std::string_view json, const Glt
       std::vector<std::pair<uint32_t,float>> weights;
       for(const auto& w:f.GetObject()) {
         const auto target = str(w.name);
-        size_t id = size_t(-1);
-        for(size_t t=0; t<targets; ++t)
-          if(head.targets[t].name==target) {
-            id = t;
-            break;
-            }
+        const auto id     = targetOf(head,target);
         if(id==size_t(-1))
           fail(at+": unknown target "+quoted(target));
         if(!w.value.IsNumber() || !std::isfinite(w.value.GetDouble()) || w.value.GetDouble()<0 || w.value.GetDouble()>1)
@@ -183,6 +516,12 @@ std::unique_ptr<FaceProfile> FaceProfile::parse(std::string_view json, const Glt
 
     ret->anims.push_back(std::move(a));
     }
+  if(doc.HasMember("cues"))
+    parseCues(doc["cues"],head,*ret);
+  if(doc.HasMember("leaks"))
+    parseLeaks(doc["leaks"],head,*ret);
+  if(doc.HasMember("eyes"))
+    ret->eyes = parseEyes(doc["eyes"],head);
   return ret;
   }
 
@@ -195,6 +534,11 @@ void FaceRig::setup(const GltfHeadMesh* h, const FaceProfile* p) {
   head     = h;
   profile  = p;
   slots.clear();
+  runs.clear();
+  leakRun  = LeakRun();
+  posed    = false;
+  posedEnd = 0;
+  squint.clear();
   want.clear();
   applied.clear();
   pos.clear();
@@ -210,12 +554,19 @@ void FaceRig::setup(const GltfHeadMesh* h, const FaceProfile* p) {
   deformed = false;
   dirty    = true;
   speechLayer = -1;
+  for(int i=0; i<2; ++i)
+    eyeWant[i] = eyeShown[i] = EyeTurn();
   if(!isActive())
     return;
   if(auto v = profile->find("VISEME"))
     speechLayer = v->layer;
   want   .assign(head->targets.size(),0.f);
   applied.assign(head->targets.size(),0.f);
+  squint .assign(head->targets.size(),0);
+  for(size_t t=0; t<head->targets.size(); ++t) {
+    const auto& n = head->targets[t].name;
+    squint[t] = n.compare(0,9,"eyeSquint")==0 || n.compare(0,11,"cheekSquint")==0;
+    }
   }
 
 float FaceRig::fade(const Slot& s, uint64_t now) const {
@@ -342,6 +693,99 @@ float FaceRig::weight(std::string_view name, uint64_t now) const {
   return w;
   }
 
+bool FaceRig::startCue(std::string_view name, bool mirror, float hold, uint64_t start, uint64_t now) {
+  if(!isActive())
+    return false;
+  const auto* c = profile->findCue(name);
+  if(c==nullptr)
+    return false;
+  // several gestures, the same one too, may go at once; the ended ones go in update()
+  CueRun r;
+  r.cue    = size_t(c-profile->cues.data());
+  r.mirror = mirror && c->side!=0;
+  r.hold   = hold;
+  r.start  = std::min(start,now);
+  runs.push_back(r);
+  return true;
+  }
+
+bool FaceRig::startLeak(std::string_view felt, bool lower, uint64_t start, uint64_t now) {
+  if(!isActive())
+    return false;
+  const auto* l = profile->findLeak(felt,lower);
+  if(l==nullptr)
+    return false;
+  leakRun.leak  = size_t(l-profile->leaks.data());
+  leakRun.start = std::min(start,now);
+  leakRun.on    = true;
+  return true;
+  }
+
+float FaceRig::leakEnvelope(uint64_t now) const {
+  // as a cue's part (cues.py env)
+  if(!leakRun.on || now<=leakRun.start)
+    return 0;
+  const auto& lt = profile->leakTime;
+  const float t  = float(now-leakRun.start);
+  return ease(t/lt.onMs)*(1.f-ease((t-lt.onMs-lt.holdMs)/lt.offMs));
+  }
+
+float FaceRig::leakWeight(uint64_t now) const {
+  if(!isActive() || !leakRun.on)
+    return 0;
+  return leakEnvelope(now)*profile->leaks[leakRun.leak].peak;
+  }
+
+void FaceRig::setPosed(bool on, uint64_t now) {
+  if(on==posed)
+    return;
+  posed = on;
+  if(!on)
+    posedEnd = now;
+  }
+
+float FaceRig::posedCut(uint64_t now) const {
+  if(posed)
+    return 1;
+  if(posedEnd==0 || now>=posedEnd+PosedFadeMs)
+    return 0;
+  return 1.f-float(now>posedEnd ? now-posedEnd : 0)/float(PosedFadeMs);
+  }
+
+float FaceRig::cueEnvelope(const CueRun& r, size_t part, uint64_t now) const {
+  // cues.py env: a smooth step up over on_ms, the hold, a smooth step down over off_ms
+  const auto& p    = profile->cues[r.cue].parts[part];
+  const float hold = part==0 && r.hold>=0 ? r.hold : p.holdMs;
+  const float t    = float(now>=r.start ? now-r.start : 0) - p.delayMs;
+  if(now<r.start || t<=0)
+    return 0;
+  return ease(t/p.onMs)*(1.f-ease((t-p.onMs-hold)/p.offMs));
+  }
+
+float FaceRig::cueStrength(const CueRun& r, uint64_t now) const {
+  float ret = 0;
+  for(size_t i=0; i<profile->cues[r.cue].parts.size(); ++i)
+    ret = std::max(ret,cueEnvelope(r,i,now));
+  return ret;
+  }
+
+float FaceRig::cueWeight(std::string_view name, uint64_t now) const {
+  if(!isActive())
+    return 0;
+  float w = 0;
+  for(auto& r:runs)
+    if(profile->cues[r.cue].name==name)
+      w = std::max(w,cueStrength(r,now));
+  return w;
+  }
+
+void FaceRig::setEyes(const EyeTurn& left, const EyeTurn& right) {
+  if(!hasEyes())
+    return;
+  eyeWant[0] = left;
+  eyeWant[1] = right;
+  }
+
 std::vector<float> FaceRig::strength(std::string_view name) const {
   if(!isActive())
     return {};
@@ -359,6 +803,8 @@ void FaceRig::mix(uint64_t now, std::vector<float>& out) const {
       if(isOn(s,now) && profile->anims[s.anim].layer==speechLayer)
         speech = std::max(speech, s.intensity*fade(s,now));
   const float quiet = 1.f - SpeechMouth*std::clamp(speech,0.f,1.f);
+  // a posed smile: the squint of the expression cut
+  const float keep  = 1.f - posedCut(now);
 
   for(auto& s:slots) {
     const float k = s.intensity*fade(s,now);
@@ -383,7 +829,40 @@ void FaceRig::mix(uint64_t now, std::vector<float>& out) const {
       if(part<=0)
         continue;
       for(auto& [t,w]:a.frames[frame])
-        out[t] += w*k*part*(damp && profile->mouth[t]!=0 ? quiet : 1.f);
+        out[t] += w*k*part*(damp && profile->mouth[t]!=0 ? quiet : 1.f)*(squint[t]!=0 ? keep : 1.f);
+      }
+    }
+  // the gestures over all of it, not quieted by the voice (the mouth ones go into its pauses anyway)
+  for(auto& r:runs) {
+    const auto& c = profile->cues[r.cue];
+    for(size_t i=0; i<c.parts.size(); ++i) {
+      const float e = cueEnvelope(r,i,now);
+      if(e<=0)
+        continue;
+      for(auto& [t,w]:(r.mirror ? c.parts[i].mirrored : c.parts[i].weights))
+        out[t] += w*e;
+      }
+    }
+  // a leak the same way: added to all of it, putting out nothing
+  if(const float e = leakEnvelope(now); e>0)
+    for(auto& [t,w]:profile->leaks[leakRun.leak].weights)
+      out[t] += w*e;
+  // the lids follow the eyes: per direction of each eye the shapes of the profile's table
+  if(profile->eyes) {
+    using Eyes = FaceProfile::Eyes;
+    constexpr float Deg = float(M_PI)/180.f;
+    for(int s=0; s<2; ++s) {
+      const auto& e     = profile->eyes->eye[s];
+      const float yo    = eyeWant[s].yaw*e.outSign/Deg;  // + outwards
+      const float pitch = eyeWant[s].pitch/Deg;
+      float       a[4]  = {};
+      a[Eyes::Down] = std::max(0.f,-pitch);
+      a[Eyes::Up]   = std::max(0.f, pitch);
+      a[Eyes::In]   = std::max(0.f,-yo);
+      a[Eyes::Out]  = std::max(0.f, yo);
+      for(int d=0; d<4; ++d)
+        for(auto& l:e.lids[d])
+          out[l.target] += l.max*std::clamp((a[d]-l.from)/(l.to-l.from),0.f,1.f);
       }
     }
   for(auto& w:out)
@@ -393,9 +872,23 @@ void FaceRig::mix(uint64_t now, std::vector<float>& out) const {
 FaceRig::Result FaceRig::update(uint64_t now) {
   if(!isActive())
     return Result::Same;
+  runs.erase(std::remove_if(runs.begin(),runs.end(),[&](const CueRun& r) {
+    return now>r.start && float(now-r.start)>profile->cues[r.cue].span(r.hold);
+    }),runs.end());
+  if(leakRun.on && now>leakRun.start && float(now-leakRun.start)>profile->leakTime.span())
+    leakRun.on = false;
   mix(now,want);
 
-  bool zero = true;
+  // the eyes turned since the head was deformed
+  bool turned = false, straight = true;
+  if(hasEyes())
+    for(int i=0; i<2; ++i) {
+      turned   = turned || std::abs(eyeWant[i].yaw-eyeShown[i].yaw)>EyeChanged ||
+                           std::abs(eyeWant[i].pitch-eyeShown[i].pitch)>EyeChanged;
+      straight = straight && eyeWant[i].yaw==0.f && eyeWant[i].pitch==0.f;
+      }
+
+  bool zero = straight;
   for(auto w:want)
     if(w>0) {
       zero = false;
@@ -405,6 +898,7 @@ FaceRig::Result FaceRig::update(uint64_t now) {
     if(!deformed && !dirty)
       return Result::Same;
     applied  = want;
+    eyeShown[0] = eyeShown[1] = EyeTurn();
     deformed = false;
     dirty    = false;
     return Result::Rest;
@@ -413,11 +907,30 @@ FaceRig::Result FaceRig::update(uint64_t now) {
   bool changed = dirty || !deformed;
   for(size_t i=0; i<want.size() && !changed; ++i)
     changed = std::abs(want[i]-applied[i])>Changed;
-  if(!changed)
+  if(!changed && !turned)
     return Result::Same;
   const bool whole = dirty || !deformed;  // the view has none of it: a rest or a new view
-  applied = want;
-  blend();
+  if(hasEyes()) {
+    // the rotation of each ball: pitch around y (z to x), then yaw around x (z to y); forward (0,0,1) goes to
+    // (sin pitch, cos pitch sin yaw, cos pitch cos yaw)
+    for(int i=0; i<2; ++i) {
+      eyeShown[i] = eyeWant[i];
+      const float cy = std::cos(eyeShown[i].yaw),   sy = std::sin(eyeShown[i].yaw);
+      const float cp = std::cos(eyeShown[i].pitch), sp = std::sin(eyeShown[i].pitch);
+      const float r[3][3] = {
+        {cp,      0,  sp   },
+        {-sy*sp,  cy, sy*cp},
+        {-cy*sp, -sy, cy*cp},
+        };
+      std::copy(&r[0][0],&r[0][0]+9,&eyeTurn[i][0][0]);
+      }
+    }
+  if(changed) {
+    applied = want;
+    blend();
+    } else {
+    turnEyes();
+    }
   if(whole) {
     changedFirst = 0;
     changedEnd   = uint32_t(head->renderVertexIds.size());
@@ -482,8 +995,24 @@ void FaceRig::prepare() {
   }
 
 void FaceRig::write(uint32_t v) {
-  const auto& p = pos[v];
-  const auto& n = nrm[v];
+  Vec3 p = pos[v];
+  Vec3 n = nrm[v];
+  if(const auto* ey = eyes())
+    for(int i=0; i<2; ++i) {
+      const auto& e = ey->eye[i];
+      if(v<e.first || v>=e.end)
+        continue;
+      // a rigid turn of the ball around its centre
+      const auto& r = eyeTurn[i];
+      const Vec3  d = p - e.center;
+      p = e.center + Vec3(r[0][0]*d.x + r[0][1]*d.y + r[0][2]*d.z,
+                          r[1][0]*d.x + r[1][1]*d.y + r[1][2]*d.z,
+                          r[2][0]*d.x + r[2][1]*d.y + r[2][2]*d.z);
+      n = Vec3(r[0][0]*n.x + r[0][1]*n.y + r[0][2]*n.z,
+               r[1][0]*n.x + r[1][1]*n.y + r[1][2]*n.z,
+               r[2][0]*n.x + r[2][1]*n.y + r[2][2]*n.z);
+      break;
+      }
   for(uint32_t i=drawnFirst[v]; i<drawnFirst[v+1]; ++i) {
     const uint32_t r = drawn[i];
     changedFirst = std::min(changedFirst,r);
@@ -535,8 +1064,25 @@ void FaceRig::blend() {
     mark[v] = 0;
     }
   moved.resize(keep);
+  writeEyes();
   blendUs = float(std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-start).count());
   ++blends;
+  }
+
+void FaceRig::writeEyes() {
+  if(const auto* ey = eyes())
+    for(auto& e:ey->eye)
+      for(uint32_t v=e.first; v<e.end; ++v)
+        write(v);
+  }
+
+void FaceRig::turnEyes() {
+  // only the balls turned: their vertices, the rest of the head as it is
+  if(basePos.size()!=head->mesh.positions.size() || deform.size()!=head->renderVertexIds.size()*2)
+    prepare();
+  changedFirst = uint32_t(-1);
+  changedEnd   = 0;
+  writeEyes();
   }
 
 void FaceRig::probe(Probe& p, uint64_t now) const {
@@ -551,6 +1097,24 @@ void FaceRig::probe(Probe& p, uint64_t now) const {
     ++p.anims;
     char buf[64];
     std::snprintf(buf,sizeof(buf),"%s%s %.2f",p.shown.empty() ? "" : " ",profile->anims[s.anim].name.c_str(),double(k));
+    p.shown += buf;
+    }
+  for(auto& r:runs) {
+    const float k = cueStrength(r,now);
+    if(k<=0)
+      continue;
+    ++p.cues;
+    const auto& c = profile->cues[r.cue];
+    // a one-sided one with the side it is shown on: "doubt:R 0.64"
+    const char* side = c.side==0 ? "" : ((c.side=='L')!=r.mirror ? ":L" : ":R");
+    char buf[64];
+    std::snprintf(buf,sizeof(buf),"%s%s%s %.2f",p.shown.empty() ? "" : " ",c.name.c_str(),side,double(k));
+    p.shown += buf;
+    }
+  if(const float k = leakWeight(now); k>0) {
+    const auto& l = profile->leaks[leakRun.leak];
+    char buf[64];
+    std::snprintf(buf,sizeof(buf),"%sleak:%s:%s %.2f",p.shown.empty() ? "" : " ",l.felt.c_str(),l.lower ? "lower" : "upper",double(k));
     p.shown += buf;
     }
   for(auto w:applied)

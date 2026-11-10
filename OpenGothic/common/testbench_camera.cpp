@@ -245,21 +245,25 @@ void updateCamera(const CameraContext& ctx,World& w, Npc& pl) {
     }
   }
 
-// the hero stands around the watched npc, facing it
-void placeHero(const CameraContext& ctx,World& w, Npc& pl) {
-  Npc& s = ctx.subjectOf(pl);
-  if(&s==&pl || ctx.camera.placeDist<=0)
-    return;
-  const float a   = (s.rotation()+ctx.camera.placeAngle)*float(M_PI)/180.f;
-  Vec3        pos = s.position() + Vec3(std::cos(a),0,std::sin(a))*ctx.camera.placeDist;
+void standAround(World& w, Npc& s, Npc& pl, float dist, float angle) {
+  const float a   = (s.rotation()+angle)*float(M_PI)/180.f;
+  Vec3        pos = s.position() + Vec3(std::cos(a),0,std::sin(a))*dist;
   const float g   = groundY(w,pos.x,pos.z,pos.y+100);
   if(std::isnan(g))
-    return; // inside a rock: the hero would fall through the world
+    return; // inside a rock: it would fall through the world
   pos.y = g;
   pl.setPosition(pos);
   const Vec3 d = s.position()-pos;
   pl.setDirection(Vec3(d.x,0,d.z));
   pl.updateTransform();
+  }
+
+// the hero stands around the watched npc, facing it
+void placeHero(const CameraContext& ctx,World& w, Npc& pl) {
+  Npc& s = ctx.subjectOf(pl);
+  if(&s==&pl || ctx.camera.placeDist<=0)
+    return;
+  standAround(w,s,pl,ctx.camera.placeDist,ctx.camera.placeAngle);
   }
 
 bool frameRagdollArena(const CameraContext& ctx,size_t expected) {
@@ -820,7 +824,8 @@ bool cameraCommand(const CameraContext& ctx,const std::string& line,const std::v
     // Static and Movable objects share draw commands (same shaders), hiding them by type hides
     // parts of creatures too: what stands between the camera and the subject is clipped instead
     ctx.camera.clip = 0;
-    DrawCommands::hiddenTypes = 0;
+    DrawCommands::hiddenTypes    = 0;
+    DrawCommands::hidePfxObjects = false;
     if(m=="clean") {
       ctx.camera.clip = num(a,2,100);
       DrawCommands::hiddenTypes = (1u<<DrawCommands::Pfx);
@@ -836,6 +841,7 @@ bool cameraCommand(const CameraContext& ctx,const std::string& line,const std::v
         if(t=="movable")  DrawCommands::hiddenTypes |= (1u<<DrawCommands::Movable);
         if(t=="morph")    DrawCommands::hiddenTypes |= (1u<<DrawCommands::Morph);
         if(t=="pfx")      DrawCommands::hiddenTypes |= (1u<<DrawCommands::Pfx);
+        if(t=="pfx")      DrawCommands::hidePfxObjects = true; // the particles of PfxObjects too
         if(t=="animated") DrawCommands::hiddenTypes |= (1u<<DrawCommands::Animated);
         }
       }
@@ -1005,7 +1011,18 @@ bool cameraCommand(const CameraContext& ctx,const std::string& line,const std::v
       }
     }
   else if(c=="place") {
-    // place <dist> <angle>: the hero stands that far from the watched npc, at that angle from its facing
+    // place <dist> <angle>: the hero stands that far from the watched npc, at that angle from its facing;
+    // place <dist> <angle> <npc|nearest>: that npc stands so around the hero, facing him, the hero stays
+    if(a.size()>3) {
+      Npc* n = findNpc(w,pl,a[3]);
+      if(n==nullptr || n==&pl) {
+        say("place: no npc " + line);
+        return true;
+        }
+      standAround(w,pl,*n,num(a,1,150),num(a,2,0));
+      say("place " + symName(w,n) + " " + a[1] + " " + a[2]);
+      return true;
+      }
     ctx.camera.placeDist  = num(a,1,150);
     ctx.camera.placeAngle = num(a,2,0);
     placeHero(ctx,w,pl);

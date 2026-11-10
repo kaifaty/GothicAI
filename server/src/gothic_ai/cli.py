@@ -1041,6 +1041,7 @@ def main() -> None:
             "initiative",
             "gossip",
             "gossip_demo",
+            "face_cues_demo",
             "day",
             "noise",
             "amends_deal",
@@ -1116,6 +1117,11 @@ def main() -> None:
     )
     p.add_argument(
         "--no-svm-lines", action="store_true", help="keep the humans' native SVM voices and subtitles"
+    )
+    p.add_argument(
+        "--debug-leak", nargs="?", const="any", choices=("any", "upper", "lower"),
+        help="debug, for filming: every [felt:...] tag leaks, without a known lie or the trial; "
+        "on this half of the face (default: the drawn one)",
     )
     p.add_argument("--no-combat-barks", action="store_true", help="disable quick-model combat cries")
     p.add_argument("--no-mercy", action="store_true", help="disable NPC and hero surrender and mercy")

@@ -15,11 +15,32 @@ layout(binding = 1, std430) buffer Hbo  { uint hashTable[]; };
 layout(binding = 2, std430) buffer Pbo  { ProbesHeader probeHeader; Probe probe[]; };
 layout(binding = 3, std430) buffer Fbo0 { int cursor; uint list[]; } freeList;
 #if defined(STATS)
-// read back by the CPU a frame slot later (FrameProfile: gi_probes_live, gi_probes_traced)
-layout(binding = 4, std430) writeonly buffer Stats { uint live; uint traced; uint slots; uint freeSlots; } stats;
+// read back by the CPU a frame slot later (FrameProfile: gi_probes_live, gi_probes_traced, gi_probes_from_hits,
+// gi_probes_freed)
+layout(binding = 4, std430) writeonly buffer Stats {
+  uint live; uint traced; uint slots; uint freeSlots; uint fromHits; uint freed;
+  } stats;
 #endif
 layout(binding = 5, std430) buffer Nbo  { uint newList[]; };   // probes to trace, probe_allocation.comp
 layout(binding = 6, std430) buffer Tbo  { uint voteTiles[]; }; // screen tiles with a vote, probe_allocation.comp
+// the ages of the live probes after probe_prune (probe_clear picks what to free when places run out) and the requests
+// of probes at hits (probe_lighting.comp)
+layout(binding = 7, std430) buffer Rbo  { uint ageHistogram[probeAgeBuckets]; ProbeRequest request[]; } req;
+
+#if defined(CLEAR)
+layout(push_constant, std140) uniform Push {
+  uint frame;     // Renderer: the frame number, the stamp of a probe's use
+  uint expireAge; // frames: a probe unused for longer is freed (the expiry T by the frame time)
+  uint reserve;   // places kept free for the allocations of a frame: the oldest probes go first to keep them
+  uint lightReset; // the time of day jumped: every live probe is lit anew (Renderer::prepareGi)
+  };
+#endif
+
+uint ageBucketWidth(uint expireAge) {
+  return max(1u, (expireAge + probeAgeBuckets - 1u)/probeAgeBuckets);
+  }
+
+shared uint ageShared[probeAgeBuckets];
 
 void hashmapInsert(const uint probeId) {
   const vec3 gridPos = probe[probeId].pos/probeGridStep;
@@ -39,36 +60,115 @@ void main_init() {
     probeHeader.tracedCount = 0;
     probeHeader.newCount    = 0;
     probeHeader.iterator3   = 0;
+    probeHeader.frame       = 0;
+    probeHeader.evictAge    = 0xFFFFFFFFu;
+    probeHeader.expireAge   = 0xFFFFFFFFu;
+    probeHeader.lightReset  = 0;
+    probeHeader.reqCount    = 0;
+    probeHeader.hitCount    = 0;
+    probeHeader.freedCount  = 0;
     freeList.cursor         = 0;
+    for(uint i=0; i<probeAgeBuckets; ++i)
+      req.ageHistogram[i] = 0;
 
     Probe p;
-    p.pos    = vec3(0);
-    p.pNext  = 0xFFFFFFFF;
-    p.normal = vec3(0,1,0);
-    p.bits   = 0;
-    probe[0] = p;
+    p.pos     = vec3(0);
+    p.pNext   = 0xFFFFFFFF;
+    p.normal  = packSnorm4x8(vec4(0,1,0,0));
+    p.lastUse = 0;
+    p.turn    = 0;
+    p.bits    = 0;
+    probe[0]  = p;
     }
   }
 
+#if defined(CLEAR)
+uint evictAge() {
+  // Places run out: free the probes of the oldest use first. The ages are those after the last frame's probe_prune
+  // and its new probes are the youngest; keep the youngest that leave `reserve` places free. A probe used in the
+  // last two frames stays anyway.
+  const uint width    = ageBucketWidth(expireAge);
+  const uint capacity = uint(probe.length()) - 1u - min(reserve, uint(probe.length())/2u);
+  uint       live     = probeHeader.newCount;
+  for(uint i=0; i<probeAgeBuckets; ++i) {
+    live += req.ageHistogram[i];
+    if(live>capacity)
+      return min(expireAge, max(i*width, 2u));
+    }
+  return expireAge;
+  }
+#endif
+
 void main_clear() {
+  // The vote table is cleared after the allocation (main_clearVotes): the requests of probes at hits wait in it
+  // from the lighting of the last frame.
   const uint threadID = gl_GlobalInvocationID.x;
 
-  if(threadID<voteTable.length()) {
-    voteTable[threadID] = 0xFFFFFFFF;
-    }
   if(threadID<voteTiles.length()) {
     voteTiles[threadID] = 0;
     }
 
+#if defined(CLEAR)
   if(threadID==0) {
+    probeHeader.evictAge    = evictAge();
+    probeHeader.expireAge   = expireAge;
+    probeHeader.lightReset  = lightReset;
+    for(uint i=0; i<probeAgeBuckets; ++i)
+      req.ageHistogram[i] = 0;
+    probeHeader.frame       = frame;
     probeHeader.count       = min(probeHeader.count, probe.length());
     probeHeader.iterator    = 0;
     probeHeader.iterator2   = 0;
     probeHeader.iterator3   = 0;
     probeHeader.tracedCount = 0;
     probeHeader.newCount    = 0;
+    probeHeader.hitCount    = 0;
+    probeHeader.freedCount  = 0;
     freeList.cursor         = 0;
     }
+#endif
+  }
+
+void main_clearVotes() {
+  // after the allocation: the lighting of this frame writes the requests of probes at hits into the clean table
+  const uint threadID = gl_GlobalInvocationID.x;
+  if(threadID<voteTable.length())
+    voteTable[threadID] = 0xFFFFFFFF;
+  if(threadID==0)
+    probeHeader.reqCount = 0;
+  }
+
+uint allocProbe() {
+  int cursor = atomicAdd(freeList.cursor, -1) - 1;
+  if(cursor>=0)
+    return freeList.list[cursor];
+  return atomicAdd(probeHeader.count, 1);
+  }
+
+void main_hitAlloc() {
+  // A thread per request of the last frame's lighting: the probe of a hit that had none. It won its bucket of the
+  // vote table unless a pixel of this frame voted there (pixels go first: their votes are smaller).
+  const uint i = gl_GlobalInvocationID.x;
+  if(i>=min(probeHeader.reqCount, uint(req.request.length())))
+    return;
+  const ProbeRequest r = req.request[i];
+  const uint h = probeGridPosHash(r.gridPos) % voteTable.length();
+  if(voteTable[h]!=(probeRequestKey | i))
+    return;
+
+  const uint cursor = allocProbe();
+  if(cursor>=probe.length())
+    return;
+  Probe p;
+  p.pos         = vec3(r.gridPos)*probeGridStep;
+  p.pNext       = 0xFFFFFFFF;
+  p.normal      = r.normal;
+  p.lastUse     = probeHeader.frame;
+  p.turn        = 0;
+  p.bits        = 0;
+  probe[cursor] = p;
+  newList[atomicAdd(probeHeader.newCount, 1)] = cursor;
+  atomicAdd(probeHeader.hitCount, 1);
   }
 
 void main_clrHash() {
@@ -79,11 +179,7 @@ void main_clrHash() {
     }
   }
 
-void main_prune() {
-  const uint probeId = gl_GlobalInvocationID.x;
-  if(probeId>=probeHeader.count)
-    return;
-
+void pruneProbe(const uint probeId) {
   if(probeId==0) {
     // the sky: listed for the trace once, then no longer new
     if((probe[0].bits & TRACED_BIT)==0)
@@ -93,15 +189,48 @@ void main_prune() {
     }
 
   probe[probeId].pNext = 0xFFFFFFFF;
-  if((probe[probeId].bits & REUSE_BIT)!=0) {
-    // traced in an earlier frame: no longer new (probe_trace.comp sets the bit)
-    probe[probeId].bits &= ~(REUSE_BIT | UNUSED_BIT | NEW_BIT);
-    return;
+  uint bits = probe[probeId].bits;
+  if((bits & UNUSED_BIT)==0) {
+    // A probe lives while it is used: a pixel takes it (the vote, REUSE_BIT) or a sample of another probe takes its
+    // light as its bounce (probe_lighting.comp). Both stamp lastUse; unused for longer than evictAge, it is freed.
+    const uint age = probeHeader.frame - probe[probeId].lastUse;
+    if(age<=probeHeader.evictAge) {
+      // traced in an earlier frame: no longer new (probe_trace.comp sets the bit)
+      const bool seen = (bits & REUSE_BIT)!=0;
+      bits &= ~(REUSE_BIT | SEEN_BIT);
+      if(seen)
+        bits |= SEEN_BIT;
+      if((bits & TRACED_BIT)!=0)
+        bits &= ~NEW_BIT;
+      if((bits & TRACED_BIT)!=0 && probeHeader.lightReset!=0) {
+        // lit anew: listed as new, probe_trace skips it (traced), probe_relight_new lights all its samples without
+        // the bounce of new probes, the integration takes no history
+        bits |= NEW_BIT;
+        newList[atomicAdd(probeHeader.newCount, 1)] = probeId;
+        }
+      probe[probeId].bits = bits;
+      atomicAdd(ageShared[min(age/ageBucketWidth(probeHeader.expireAge), probeAgeBuckets-1u)], 1);
+      return;
+      }
+    probe[probeId].bits = bits | UNUSED_BIT;
+    atomicAdd(probeHeader.freedCount, 1);
     }
 
-  probe[probeId].bits |= UNUSED_BIT;
   const uint cursor = atomicAdd(freeList.cursor, 1);
   freeList.list[cursor] = probeId;
+  }
+
+void main_prune() {
+  const uint probeId = gl_GlobalInvocationID.x;
+  const uint lane    = gl_LocalInvocationIndex;
+  if(lane<probeAgeBuckets)
+    ageShared[lane] = 0;
+  barrier();
+  if(probeId<probeHeader.count)
+    pruneProbe(probeId);
+  barrier();
+  if(lane<probeAgeBuckets && ageShared[lane]!=0)
+    atomicAdd(req.ageHistogram[lane], ageShared[lane]);
   }
 
 void main_mkHash() {
@@ -130,6 +259,8 @@ void main_stats() {
   stats.traced    = probeHeader.tracedCount;
   stats.slots     = slots;
   stats.freeSlots = freeSlots;
+  stats.fromHits  = probeHeader.hitCount;
+  stats.freed     = probeHeader.freedCount;
   }
 #endif
 
@@ -138,6 +269,10 @@ void main() {
   main_init();
 #elif defined(CLEAR)
   main_clear();
+#elif defined(CLEAR_VOTES)
+  main_clearVotes();
+#elif defined(HIT_ALLOC)
+  main_hitAlloc();
 #elif defined(CLEAR_HASH)
   main_clrHash();
 #elif defined(MAKE_HASH)

@@ -30,7 +30,7 @@ layout(binding  = 2) uniform usampler2D gbufNormal;
 layout(binding  = 4) uniform sampler2D  depth;
 layout(binding  = 5, std430) readonly buffer Hbo0 { uint hashTable[]; };
 layout(binding  = 6, std430) readonly buffer Pbo  { ProbesHeader probeHeader; Probe probe[]; };
-layout(binding  = 7) uniform sampler2D  probesLighting;
+layout(binding  = 7) uniform sampler2D  probesLighting; // the L2 harmonics of irradiance of the probes
 #if defined(MATERIAL_MAPS)
 layout(binding = 12) uniform sampler2D gbufOrm;
 layout(binding = 13) uniform sampler2D skyViewLut;
@@ -53,15 +53,6 @@ vec3 unprojectDepth(const float z) {
   const vec4  pos        = vec4(inPos.xy,z,1);
   const vec4  ret        = scene.viewProjectInv*pos;
   return (ret.xyz/ret.w);
-  }
-
-int probeGridComputeLod() {
-  ivec2 fragCoord  = ivec2(gl_FragCoord.xy);
-  ivec2 screenSize = textureSize(depth,0);
-
-  // must be exactly same as in allocation !
-  const float z = texelFetch(depth,fragCoord,0).x;
-  return probeGridComputeLod(fragCoord, screenSize, z, scene.viewProjectInv, scene.probeGridBias);
   }
 
 float texLinearDepth(vec2 uv) {
@@ -119,7 +110,7 @@ void addProbe(vec3 wpos, uint probeId, uint bits, vec3 pixelPos, vec3 pixelNorm)
   if((bits & BAD_BIT)!=0)
     weight *= 0.00001;
 
-  colorSum.rgb += probeReadAmbient(probesLighting, probeId, pixelNorm, vec3(0)) * weight;
+  colorSum.rgb += probeReadIrradiance(probesLighting, probeId, pixelNorm) * weight;
   colorSum.w   += weight;
 #if defined(MATERIAL_MAPS)
   if(ownMaterial)
@@ -185,8 +176,9 @@ void main() {
   ownMaterial = orm.a>0.5;
 #endif
 
-  const int   lod     = probeGridComputeLod();
   const vec3  basePos = unprojectDepth(z);
+  // must be exactly same as in allocation !
+  const int   lod     = probeGridLod(basePos, scene.camPos, scene.probeLodScale);
   const vec3  pos     = basePos + norm*probeCageBias;
 
   gather(basePos, pos, norm, lod);
@@ -194,7 +186,7 @@ void main() {
   if(colorSum.w<=minW) {
     // debug
     // colorSum = vec4(vec3(1,0,0)*scene.GSunIntensity,1);
-    colorSum.rgb = probeReadAmbient(probesLighting, 0, norm, vec3(0,1,0));
+    colorSum.rgb = probeReadIrradiance(probesLighting, 0, norm);
     colorSum.w   = 1;  // * Fd_Lambert is accounted in integration
 #if defined(MATERIAL_MAPS)
     skyVisibilitySum = 1.0;
@@ -224,7 +216,7 @@ void main() {
     const vec3 reflection = reflect(-view, norm);
     const vec3 sharpSky = textureSkyLUT(skyViewLut, vec3(0,RPlanet,0), reflection, scene.sunDir) * scene.GSunIntensity;
     // Probe zero contains unoccluded sky only, unlike the local GI radiance.
-    const vec3 sky = probeReadAmbient(probesLighting, 0, norm, vec3(0,1,0));
+    const vec3 sky = probeReadIrradiance(probesLighting, 0, norm);
     const vec3 reflectedSky = mix(sharpSky, sky, orm.g*orm.g);
     color += reflectedSky * materialEnvBrdf(materialF0(linear, orm.b), orm.g, noV) *
              materialSpecularWeight(orm.g, orm.b) * clamp(skyVisibilitySum, 0.0, 1.0);

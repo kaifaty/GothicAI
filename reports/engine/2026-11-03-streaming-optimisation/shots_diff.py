@@ -5,12 +5,14 @@
         --masks /tmp/masks LABEL_A=/run/a LABEL_B=/run/b [LABEL_C=/run/c ...]
 
 Compares every adjacent pair of the given runs (A↔B, C↔D, ...) over all streaming-shots PNGs;
-a shot missing on either side is an error (exit 1).
+with --all-pairs, every pair among the given runs (five runs give ten pairs).
+A shot missing on either side is an error (exit 1).
 A row per shot: changed pixels (|Δ| > 0 in any channel), their share, max and mean |Δ| over all channels.
 With --masks, writes <a>-<b>-<shot>.png: white where pixels differ.
 """
 import argparse
 import csv
+import itertools
 import sys
 from pathlib import Path
 
@@ -34,13 +36,15 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--masks", type=Path, help="directory for difference masks")
     p.add_argument("--host", default="mac")
+    p.add_argument("--all-pairs", action="store_true", help="compare every pair among the runs")
     p.add_argument("runs", nargs="+", help="LABEL=DIR, in pairs")
     args = p.parse_args()
-    if len(args.runs) % 2:
+    if not args.all_pairs and len(args.runs) % 2:
         p.error("runs come in pairs")
     runs = [r.split("=", 1) for r in args.runs]
+    pairs = itertools.combinations(runs, 2) if args.all_pairs else zip(runs[0::2], runs[1::2])
     rows = []
-    for (la, da), (lb, db) in zip(runs[0::2], runs[1::2]):
+    for (la, da), (lb, db) in pairs:
         for shot in SHOTS:
             fa, fb = Path(da) / f"{shot}.png", Path(db) / f"{shot}.png"
             if not fa.exists() or not fb.exists():

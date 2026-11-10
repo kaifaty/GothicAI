@@ -51,6 +51,35 @@ static bool bitAt(std::vector<uint32_t>& b, size_t id) {
   return bits & (1u << id);
   }
 
+// Calls run(begin,end) for every run of set bits among the first `count`;
+// word(w) gives the w-th 32-bit word of the bit set.
+template<class Word, class Run>
+static void scanRuns(size_t count, Word word, Run run) {
+  size_t begin = 0;
+  bool   open  = false;
+  for(size_t w=0; w*32<count; ++w) {
+    const uint32_t bits = word(w);
+    if(bits==0 && !open)
+      continue;
+    if(bits==UINT32_MAX && open)
+      continue;
+    const size_t end = std::min(count, w*32+32);
+    for(size_t i=w*32; i<end; ++i) {
+      const bool set = (bits >> (i%32)) & 1u;
+      if(set && !open) {
+        begin = i;
+        open  = true;
+        }
+      else if(!set && open) {
+        run(begin, i);
+        open = false;
+        }
+      }
+    }
+  if(open)
+    run(begin, count);
+  }
+
 using namespace Tempest;
 
 InstanceStorage::Id::Id(Id&& other) noexcept
@@ -146,25 +175,63 @@ InstanceStorage::~InstanceStorage() {
   uploadTh.join();
   }
 
-bool InstanceStorage::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
-  FrameProfile::Scope timing(FrameProfile::Zone::StorageCommit);
-  auto& device = Resources::device();
+size_t InstanceStorage::gpuBytes() const {
+  return (dataCpu.size() + 0xFFF) & ~size_t(0xFFF);
+  }
 
-  std::atomic_thread_fence(std::memory_order_acquire);
-  join();
+void InstanceStorage::setHistory(bool enabled) {
+  if(history==enabled)
+    return;
+  history      = enabled;
+  historyValid = false;
+  if(enabled) {
+    // nothing of the frames before is known: the next commit copies all of cur
+    durtyPrev.assign(durty.size(), 0);
+    fresh    .assign(durty.size(), 0);
+    } else {
+    Resources::recycle(std::move(dataGpuPrev));
+    std::vector<uint32_t>().swap(durtyPrev);
+    std::vector<uint32_t>().swap(fresh);
+    std::vector<Copy>().swap(saveBlock);
+    std::vector<Copy>().swap(freshBlock);
+    }
+  }
 
-  const size_t dataSize = (dataCpu.size() + 0xFFF) & ~size_t(0xFFF);
-  if(dataGpu.byteSize()!=dataSize) {
-    FrameProfile::Scope growth(FrameProfile::Zone::StorageGrow);
-    FrameProfile::add(FrameProfile::Amount::GrowBytes,dataCpu.size());
-    Resources::recycle(std::move(dataGpu));
-    dataGpu = device.ssbo(BufferHeap::Device,Tempest::Uninitialized,dataSize);
-    dataGpu.update(dataCpu);
+const Tempest::StorageBuffer& InstanceStorage::ssboPrev() const {
+  if(history && historyValid && !dataGpuPrev.isEmpty() && dataGpuPrev.byteSize()==dataGpu.byteSize())
+    return dataGpuPrev;
+  return dataGpu;
+  }
+
+void InstanceStorage::pushCopies(std::vector<Copy>& out, size_t firstBlock, size_t endBlock) {
+  // one workgroup of patch_copy.comp per Copy
+  static constexpr uint32_t chunkSz = 1024;
+  uint32_t at   = uint32_t(firstBlock*blockSz);
+  uint32_t size = uint32_t((endBlock-firstBlock)*blockSz);
+  while(size>0) {
+    Copy c;
+    c.at   = at;
+    c.size = std::min(size, chunkSz);
+    out.push_back(c);
+    at   += c.size;
+    size -= c.size;
+    }
+  }
+
+InstanceStorage::Plan InstanceStorage::planCommit(size_t gpuCapacity) {
+  Plan plan;
+  if(gpuCapacity!=gpuBytes()) {
+    // cur (and prev) are recreated from dataCpu: nothing is pending, no motion in this frame
+    plan.grow = true;
     std::memset(durty.data(), 0, durty.size()*sizeof(uint32_t));
-    return true;
+    if(history) {
+      std::fill(durtyPrev.begin(), durtyPrev.end(), 0);
+      std::fill(fresh.begin(),     fresh.end(),     0);
+      historyValid = true;
+      }
+    return plan;
     }
 
-  FrameProfile::Scope packing(FrameProfile::Zone::StoragePack);
   patchBlock.clear();
   size_t payloadSize = 0;
   for(size_t i = 0; i<blockCnt; ++i) {
@@ -197,13 +264,39 @@ bool InstanceStorage::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
       p.src       += p.size;
       }
     }
+  if(history) {
+    // durtyPrev and fresh follow durty in alloc; a mismatch would be a bug, keep it harmless
+    durtyPrev.resize(durty.size(), 0);
+    fresh    .resize(durty.size(), 0);
+    saveBlock.clear();
+    freshBlock.clear();
+    if(!historyValid) {
+      // first commit with history: after the patch prev becomes a full copy of cur
+      pushCopies(freshBlock, 0, (dataCpu.size()+blockSz-1)/blockSz);
+      } else {
+      // 1. save: dirty now or in the previous commit; cur still holds the previous state
+      scanRuns(blockCnt, [this](size_t w){ return durty[w] | durtyPrev[w]; }, [this](size_t b, size_t e){
+        pushCopies(saveBlock, b, e);
+        });
+      // 3. fresh: a new Id's past is its present
+      scanRuns(blockCnt, [this](size_t w){ return fresh[w]; }, [this](size_t b, size_t e){
+        pushCopies(freshBlock, b, e);
+        });
+      }
+    std::copy(durty.begin(), durty.end(), durtyPrev.begin());
+    std::fill(fresh.begin(), fresh.end(), 0);
+    historyValid = true;
+    }
   std::memset(durty.data(), 0, durty.size()*sizeof(durty[0]));
 
-  if(patchBlock.size()==0)
-    return false;
+  const bool copies = history && (saveBlock.size()>0 || freshBlock.size()>0);
+  if(patchBlock.size()==0 && !copies)
+    return plan;
 
   const size_t headerSize = patchBlock.size()*sizeof(Path);
-  patchCpu.resize(headerSize + payloadSize);
+  const size_t saveSize   = copies ? saveBlock .size()*sizeof(Copy) : 0;
+  const size_t freshSize  = copies ? freshBlock.size()*sizeof(Copy) : 0;
+  patchCpu.resize(headerSize + payloadSize + saveSize + freshSize);
   for(auto& i:patchBlock) {
     i.src += uint32_t(headerSize);
     std::memcpy(patchCpu.data()+i.src, dataCpu.data() + i.dst, i.size);
@@ -213,16 +306,67 @@ bool InstanceStorage::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
     i.dst  /= 4;
     i.size /= 4;
     }
-  std::memcpy(patchCpu.data(), patchBlock.data(), headerSize);
+  if(headerSize>0)
+    std::memcpy(patchCpu.data(), patchBlock.data(), headerSize);
+
+  plan.upload     = true;
+  plan.patchCount = uint32_t(patchBlock.size());
+  if(copies) {
+    auto pack = [this](std::vector<Copy>& list, size_t at) {
+      for(auto& i:list) {
+        // uint's in shader
+        i.at   /= 4;
+        i.size /= 4;
+        }
+      if(list.size()>0)
+        std::memcpy(patchCpu.data()+at, list.data(), list.size()*sizeof(Copy));
+      return uint32_t(at/4);
+      };
+    plan.saveBase   = pack(saveBlock,  headerSize + payloadSize);
+    plan.saveCount  = uint32_t(saveBlock.size());
+    plan.freshBase  = pack(freshBlock, headerSize + payloadSize + saveSize);
+    plan.freshCount = uint32_t(freshBlock.size());
+    }
+  return plan;
+  }
+
+bool InstanceStorage::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
+  FrameProfile::Scope timing(FrameProfile::Zone::StorageCommit);
+  auto& device = Resources::device();
+
+  std::atomic_thread_fence(std::memory_order_acquire);
+  join();
+
+  const size_t dataSize = gpuBytes();
+  if(dataGpu.byteSize()!=dataSize) {
+    FrameProfile::Scope growth(FrameProfile::Zone::StorageGrow);
+    FrameProfile::add(FrameProfile::Amount::GrowBytes,dataCpu.size());
+    planCommit(dataGpu.byteSize());
+    Resources::recycle(std::move(dataGpu));
+    dataGpu = device.ssbo(BufferHeap::Device,Tempest::Uninitialized,dataSize);
+    dataGpu.update(dataCpu);
+    if(history) {
+      // prev from the same CPU data: one frame without motion
+      Resources::recycle(std::move(dataGpuPrev));
+      dataGpuPrev = device.ssbo(BufferHeap::Device,Tempest::Uninitialized,dataSize);
+      dataGpuPrev.update(dataCpu);
+      }
+    return true;
+    }
+
+  FrameProfile::Scope packing(FrameProfile::Zone::StoragePack);
+  const Plan plan = planCommit(dataGpu.byteSize());
+  if(!plan.upload)
+    return false;
   FrameProfile::add(FrameProfile::Amount::PatchCalls,1);
-  FrameProfile::add(FrameProfile::Amount::PatchBytes,headerSize+payloadSize);
-  FrameProfile::add(FrameProfile::Amount::PatchBlocks,patchBlock.size());
+  FrameProfile::add(FrameProfile::Amount::PatchBytes,patchCpu.size());
+  FrameProfile::add(FrameProfile::Amount::PatchBlocks,plan.patchCount);
   packing.finish();
 
   FrameProfile::Scope dispatch(FrameProfile::Zone::StorageDispatch);
   auto& path = patchGpu[fId];
-  if(path.byteSize() < headerSize + payloadSize) {
-    path = device.ssbo(BufferHeap::Upload, Uninitialized, headerSize + payloadSize);
+  if(path.byteSize() < patchCpu.size()) {
+    path = device.ssbo(BufferHeap::Upload, Uninitialized, patchCpu.size());
     }
 
   {
@@ -232,11 +376,34 @@ bool InstanceStorage::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
   uploadCnd.notify_one();
   //path.update(patchCpu);
 
+  if(history && dataGpuPrev.byteSize()!=dataGpu.byteSize()) {
+    // history was just turned on: the plan's fresh list covers the whole buffer
+    Resources::recycle(std::move(dataGpuPrev));
+    dataGpuPrev = device.ssbo(BufferHeap::Device,Tempest::Uninitialized,dataGpu.byteSize());
+    }
+
+  // Copy lists live in this frame's patch buffer, uploaded by uploadTh and joined
+  // before submit, exactly like the patch headers.
+  auto copy = [&](uint32_t base, uint32_t count) {
+    cmd.setBinding(0, dataGpuPrev);
+    cmd.setBinding(1, dataGpu);
+    cmd.setBinding(2, path);
+    cmd.setPushData(base);
+    cmd.setPipeline(Shaders::inst().patchCopy);
+    cmd.dispatch(count);
+    };
+
   cmd.setFramebuffer({});
-  cmd.setBinding(0, dataGpu);
-  cmd.setBinding(1, path);
-  cmd.setPipeline(Shaders::inst().patch);
-  cmd.dispatch(patchBlock.size());
+  if(plan.saveCount>0)
+    copy(plan.saveBase, plan.saveCount);
+  if(plan.patchCount>0) {
+    cmd.setBinding(0, dataGpu);
+    cmd.setBinding(1, path);
+    cmd.setPipeline(Shaders::inst().patch);
+    cmd.dispatch(plan.patchCount);
+    }
+  if(plan.freshCount>0)
+    copy(plan.freshBase, plan.freshCount);
   return false;
   }
 
@@ -259,6 +426,7 @@ InstanceStorage::Id InstanceStorage::alloc(const size_t size) {
       auto ret = rgn[i];
       ret.asize = size;
       rgn.erase(rgn.begin()+intptr_t(i));
+      markFresh(ret);
       return Id(*this,ret);
       }
     }
@@ -274,6 +442,7 @@ InstanceStorage::Id InstanceStorage::alloc(const size_t size) {
     ret.asize = size;
     rgn[retId].begin += nsize;
     rgn[retId].size  -= nsize;
+    markFresh(ret);
     return Id(*this,ret);
     }
   Range r;
@@ -289,7 +458,19 @@ InstanceStorage::Id InstanceStorage::alloc(const size_t size) {
   // every newly reserved block, including padding, even if the first palette is
   // zero or a later realloc exposes padding without changing the CPU bytes.
   bitSetRange(durty,r.begin/blockSz,r.size/blockSz);
+  if(history) {
+    durtyPrev.resize(durty.size(), 0);
+    fresh    .resize(durty.size(), 0);
+    }
+  markFresh(r);
   return Id(*this,r);
+  }
+
+void InstanceStorage::markFresh(const Range& r) {
+  // alloc runs on the main thread only (see rgn), but the bit set shares words
+  // with neighbours, so mark it the same atomic way as durty
+  if(history)
+    bitSetRange(fresh,r.begin/blockSz,r.size/blockSz);
   }
 
 bool InstanceStorage::realloc(Id& id, const size_t size) {

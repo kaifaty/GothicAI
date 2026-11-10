@@ -37,10 +37,6 @@ vec3 unprojectDepth(const float z) {
   return (ret.xyz/ret.w);
   }
 
-int probeGridComputeLod() {
-  const float z = texelFetch(depth,fragCoord,0).x;
-  return probeGridComputeLod(fragCoord, screenSize, z, scene.viewProjectInv, scene.probeGridBias);
-  }
 
 uint allocProbe() {
   int cursor = atomicAdd(freeList.cursor, -1) - 1;
@@ -60,9 +56,12 @@ bool reuseProbe(const uint h, vec3 pos, int lod) {
       return false;
     const Probe p = probe[probeId];
     if((p.bits & TRACED_BIT)!=0 && probeIsSame(p.pos, pos, lod)) {
-      // many pixels share a corner: one atomic per probe and frame is enough
+      // many pixels share a corner: one atomic per probe and frame is enough. The stamp of its use keeps it alive
+      // (probe_prune); REUSE_BIT tells probe_prune the screen takes it (SEEN_BIT: relit at the full rate)
       if((p.bits & REUSE_BIT)==0)
         atomicOr(probe[probeId].bits, REUSE_BIT);
+      if(p.lastUse!=probeHeader.frame)
+        probe[probeId].lastUse = probeHeader.frame;
       return true;
       }
     probeId = p.pNext;
@@ -92,7 +91,9 @@ void processProbe(ivec3 gridPos, vec3 pos, int lod, vec3 pixelPos, vec3 pixelNor
   Probe p;
   p.pos         = pos;
   p.pNext       = 0xFFFFFFFF;
-  p.normal      = pixelNorm;
+  p.normal      = packSnorm4x8(vec4(pixelNorm, 0));
+  p.lastUse     = probeHeader.frame;
+  p.turn        = 0;
   p.bits        = 0;
   probe[cursor] = p;
   newList[atomicAdd(probeHeader.newCount, 1)] = cursor;
@@ -131,8 +132,8 @@ void main() {
   const float z    = texelFetch(depth,fragCoord,0).x;
   const bool  sky  = (z>=SKY_DEPTH);
 
-  const int  lod     = probeGridComputeLod();
   const vec3 basePos = unprojectDepth(z);
+  const int  lod     = probeGridLod(basePos, scene.camPos, scene.probeLodScale);
   const vec3 pos     = basePos + norm*probeCageBias;
 
   probeQuery pq;
