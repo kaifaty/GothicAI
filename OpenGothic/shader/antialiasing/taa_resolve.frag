@@ -61,8 +61,9 @@ hvec3 ycocg2rgb(hvec3 c) {
                c.x - c.y - c.z);
   }
 
-// 5 bilinear taps of the 4x4 Catmull-Rom (the corner taps dropped, the weights renormalized)
-hvec3 sampleCatmullRom(vec2 uv, vec2 size) {
+// 5 bilinear taps of the 4x4 Catmull-Rom (the corner taps dropped, the weights renormalized); `centerA` is the alpha of
+// the centre tap (tc12, bilinear next to uv): the last frame's reactive mask without a sample of its own
+hvec3 sampleCatmullRom(vec2 uv, vec2 size, out float centerA) {
   const vec2 pos  = uv*size;
   const vec2 pos1 = floor(pos - 0.5) + 0.5;
   const vec2 f    = pos - pos1;
@@ -89,9 +90,11 @@ hvec3 sampleCatmullRom(vec2 uv, vec2 size) {
   const hfloat k3 = hfloat(w3.x *w12.y*kn);
   const hfloat k4 = hfloat(w12.x*w3.y *kn);
 
+  const vec4 h12 = textureLod(history, tc12, 0);
+  centerA = h12.a;
   hvec3 c = hvec3(textureLod(history, vec2(tc12.x, tc0.y ), 0).rgb)*k0
           + hvec3(textureLod(history, vec2(tc0.x,  tc12.y), 0).rgb)*k1
-          + hvec3(textureLod(history, tc12,                 0).rgb)*k2
+          + hvec3(h12.rgb)*k2
           + hvec3(textureLod(history, vec2(tc3.x,  tc12.y), 0).rgb)*k3
           + hvec3(textureLod(history, vec2(tc12.x, tc3.y ), 0).rgb)*k4;
 #if defined(FP16)
@@ -163,7 +166,8 @@ void main() {
     return;
     }
 
-  hvec3 hist = sampleCatmullRom(histUv, sizeF);
+  float histA = 0.0;
+  hvec3 hist  = sampleCatmullRom(histUv, sizeF, histA);
   if(any(isnan(hist)) || any(isinf(hist)))
     hist = hvec3(cur);
 
@@ -178,7 +182,7 @@ void main() {
   // weights by inverse luminance: one bright spark does not burn into the history. Under the mask (this frame's or
   // the last one's, which the history keeps) the new frame's share grows and the weights by luminance fade: a real
   // spark keeps its light. With the mask 0 these are the weights without it (Taa::resolveWeights)
-  const float rPrev = push.reactive!=0 ? textureLod(history, histUv, 0).a : 0.0;
+  const float rPrev = push.reactive!=0 ? histA : 0.0;
   const float k     = max(r, rPrev);
   const float a     = mix(push.alpha, 1.0, k);
   const float wCur  = a      /(1.0 + (1.0-k)*float(rgb2ycocg(hvec3(cur)).x));
