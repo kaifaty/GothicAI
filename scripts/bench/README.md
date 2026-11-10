@@ -306,8 +306,20 @@ world with a moving camera (creatures hidden, indoors), an NPC walking past a st
 banner and tree, market turn); run it with `OPENGOTHIC_MOTION_VECTORS=0`, `=1` and `OPENGOTHIC_TAA=0` at 1920x1080 on
 Ryzen and measure with `reports/render-features/2026-11-10-motion-vectors/metrics.py`.
 
+`taa-reactive-stills` and `taa-reactive-clips` check the TAA reactive mask of particles and animated translucent
+(graphics plan 1v, [report](../../reports/render-features/2026-11-10-taa-reactive/step-1v.md)); the mask is off by
+default until the user accepts the clips. `taa-reactive-stills` takes stills of the night torch, the harbour braziers,
+a campfire by day, the waterfall below Xardas' tower, the thunderstorm rune and the shore; with
+`OPENGOTHIC_TAA_REACTIVE_VIEW=1` they show the mask (black exactly 0, red to white 0..1). `taa-reactive-clips` records
+clips 1-5 (the torch with its sparks, standing and passed by; braziers and smoke by day with the water; a fireball; the
+waterfall); run it with `OPENGOTHIC_CONTENT=<abs>/reports/content/remaster/wall-torch/particles/content` (the sparks
+layer), `OPENGOTHIC_TAA_REACTIVE=0`, `=1`, `=1` with the view and `OPENGOTHIC_TAA=0` at 1920x1080 on Ryzen with
+`WORLD=NEWWORLD.ZEN`, and measure with `reports/render-features/2026-11-10-taa-reactive/metrics.py`.
+
 ## План и журнал
 
+- 2026-11-10: `taa-reactive-stills`, `taa-reactive-clips` (graphics plan 1v); `stats mana <n> circle <n>` lets the
+  hero cast a rune.
 - 2026-11-09: offscreen run mode (`TEMPEST_OFFSCREEN=1`, `TEMPEST_OFFSCREEN_FPS`): the game draws into its
   own image without a window or display; Ryzen benches use it by default.
 - 2026-11-05: `deterministic on` for `streaming-shots`: frozen world during `streaming wait`, TAA reset,
