@@ -227,7 +227,9 @@ int build(const fs::path& baseArg, const fs::path& outArg, int subdivide) {
     for(size_t i=0; i<counts.size(); ++i)
       json += std::string(i ? "," : "") + "\n    {\"name\": " + gothicglb::jsonString(counts[i].name) +
               ", \"triangles_before\": " + std::to_string(counts[i].before) +
-              ", \"triangles_after\": " + std::to_string(counts[i].after) + "}";
+              ", \"triangles_after\": " + std::to_string(counts[i].after) +
+              ", \"chunks_before\": " + std::to_string(counts[i].chunksBefore) +
+              ", \"chunks_after\": " + std::to_string(counts[i].chunksAfter) + "}";
     json += "\n  ]\n}\n";
     gothicglb::writeFile(out/stressName,json.data(),json.size());
     // The identity stays; only base-files.json and its binding are rebuilt.
@@ -353,8 +355,9 @@ double relative(double a, double b) {
   return a==b ? 0.0 : std::abs(a-b)/std::max(std::abs(a),std::abs(b));
   }
 
+// expected: triangles and chunks before and after, as stress.json records them.
 void verifyWorld(const fs::path& sourceDir, const fs::path& copyDir, const std::string& name, int subdivide,
-                 uint64_t expectedBefore, uint64_t expectedAfter) {
+                 const std::array<uint64_t,4>& expected) {
   const auto where = "world "+name+": ";
   const auto ms = readWorldChunkManifest(sourceDir);
   const auto mc = readWorldChunkManifest(copyDir);
@@ -366,7 +369,8 @@ void verifyWorld(const fs::path& sourceDir, const fs::path& copyDir, const std::
   const auto c = readWorldChunks(copyDir,{},&tc);
   const size_t ns = s.polygons.material_indices.size(), nc = c.polygons.material_indices.size();
   const unsigned shift = unsigned(2*subdivide);
-  require(ns==expectedBefore && nc==expectedAfter,where+"stress.json triangle counts differ from the chunks");
+  require(ns==expected[0] && nc==expected[1] && ts.entries.size()==expected[2] && tc.entries.size()==expected[3],
+          where+"stress.json triangle or chunk counts differ from the chunks");
   require(nc==(uint64_t(ns)<<shift),where+std::to_string(nc)+" triangles, expected "+std::to_string(ns)+" x 4^"+
           std::to_string(subdivide));
   require(s.materials.size()==c.materials.size(),where+"material table differs");
@@ -538,9 +542,10 @@ int verify(const fs::path& baseArg, const fs::path& copyArg) {
           stress.HasMember("worlds") && stress["worlds"].IsArray(),"invalid stress.json or another source fingerprint");
   const int subdivide = stress["subdivide"].GetInt();
   require(subdivide>=0 && subdivide<=maxSubdivide,"stress.json: subdivide out of range");
-  std::map<std::string,std::pair<uint64_t,uint64_t>> recorded;
+  std::map<std::string,std::array<uint64_t,4>> recorded;
   for(const auto& w:stress["worlds"].GetArray())
-    recorded[w["name"].GetString()] = {w["triangles_before"].GetUint64(),w["triangles_after"].GetUint64()};
+    recorded[w["name"].GetString()] = {w["triangles_before"].GetUint64(),w["triangles_after"].GetUint64(),
+                                       w["chunks_before"].GetUint64(),w["chunks_after"].GetUint64()};
 
   const auto names = worldNames(base);
   require(names==worldNames(copy),"the copy has other worlds than the source");
@@ -568,7 +573,7 @@ int verify(const fs::path& baseArg, const fs::path& copyArg) {
   for(const auto& name:names) {
     const auto r = recorded.find(name);
     require(r!=recorded.end(),"stress.json does not list world "+name);
-    verifyWorld(base/"worlds"/name,copy/"worlds"/name,name,subdivide,r->second.first,r->second.second);
+    verifyWorld(base/"worlds"/name,copy/"worlds"/name,name,subdivide,r->second);
     }
   const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now()-started).count();
   std::cout << "stress base verified: " << copy.string() << " (subdivide " << subdivide << ", " << std::fixed
