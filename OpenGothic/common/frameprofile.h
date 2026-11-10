@@ -48,8 +48,9 @@ enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, Identic
   NpcAnimDeferred, NpcAnimCatchUp, NpcAnimSyncOnRead,
   // RtScene::commit: builds of the TLAS in the frame, slots of the ray scene written into it
   RtTlasBuilds, RtDirtySlots,
-  // -gi 1 (Renderer::readGiStats): live probes and probes traced in a frame, of a frame slot one or two frames back
-  GiProbesLive, GiProbesTraced, Count };
+  // -gi 1 (Renderer::readGiStats): live probes, probes traced in a frame (new), of them allocated at the hits of other
+  // probes' rays, and probes freed in the frame; of a frame slot one or two frames back
+  GiProbesLive, GiProbesTraced, GiProbesFromHits, GiProbesFreed, Count };
 enum class Outcome : uint8_t { Unfinished, Submitted, FenceBusy, Capture, Error };
 enum class Flag : uint32_t { SubmitCompleted=1, PresentCompleted=2,
   CaptureRequested=4, CaptureReadCompleted=8, FenceBusy=16, Error=32 };

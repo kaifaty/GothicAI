@@ -133,7 +133,7 @@ class SceneGlobals final {
       Tempest::Point                  screenRes = {};
       Tempest::Vec2                   cloudsDir[2] = {};
 
-      float                           probeGridBias = 3;
+      float                           probeLodScale = 0.002f; // 1/cm: probeGridLod in probe_common.glsl
       uint32_t                        fogQuality = 0;
       float                           mipBias      = 0; // TAA: the main view only (commitUbo), 0 in shadows
       float                           mipGradScale = 1; // exp2(mipBias)

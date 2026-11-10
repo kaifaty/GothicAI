@@ -285,17 +285,30 @@ Use `OPENGOTHIC_VOB_STREAMING=0` and `=1` to compare static vob residency. Claud
 the resulting frames on Mac.
 
 `streaming-shots` runs with `deterministic on`: the world stands still while `streaming wait`
-waits, then the TAA history starts over and 16 fixed steps run with visibility in cluster order
-before `shot`; texture levels settle and stand still until the shot. Two runs of one binary then
-give byte-identical `perf-market`, `perf-harbour`, `perf-forest` and `perf-island` PNGs at any
-load in most pairs, TAA on; a single point can still land in a second state (forest ≤ 68 px,
-island ≤ 0.8 %, max 3 levels; Ryzen 1–9 px; issue #946). `perf-market-teleport` is shot
-without a streaming wait by design and still depends on loading (two states, 5 pixels). Accept a
-render change off ↔ on as two consecutive runs on one host and binary, toggled by the feature's own
-variable: `uv run --no-project --with pillow --with numpy python
+waits, then the TAA history and the SSAO history start over at phase 0 and 16 fixed steps run with
+visibility in cluster order before `shot`; texture levels settle and stand still until the shot.
+Two runs of one binary then give byte-identical `perf-market`, `perf-harbour`, `perf-forest` and
+`perf-island` PNGs at any load in most pairs on Mac, TAA on; a single point can still land in a
+second state (forest ≤ 68 px, island ≤ 0.8 %, max 3 levels; issue #946). `perf-market-teleport` is
+shot without a streaming wait by design and still depends on loading. Accept a render change
+off ↔ on as two consecutive runs on one host and binary, toggled by the feature's own variable:
+`uv run --no-project --with pillow --with numpy python
 reports/engine/2026-11-03-streaming-optimisation/shots_diff.py off=<dir> on=<dir>` must report 0
-changed pixels at the four waited points. If a point differs, run off and on once more: the change
-is accepted when every one of the four points gives 0 in at least one off ↔ on pair. [Report](../../reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md).
+changed pixels at the four waited points (`--all-pairs` compares every pair of several runs). If a
+point differs, run off and on once more: the change is accepted when every one of the four points
+gives 0 in at least one off ↔ on pair. [Report](../../reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md).
+
+On Ryzen the virtual shadow maps are on, and their GPU passes depend on the order of shader
+invocations (issue #946): at 1920x1080 two runs of one binary differ by 0–60 pixels by 1–2 levels
+at a point, and one run in five puts the island into a second state (about 1 % of pixels, max 3,
+noise in the clouds). So at 1920x1080 on Ryzen:
+- the exact comparison runs both sides with `OPENGOTHIC_VSM=0`: five runs of one binary are
+  byte-identical at the four waited points, and off ↔ on must report 0 changed pixels;
+- with VSM (a change that touches shadows or what reads them) a point is accepted within 100
+  changed pixels and max 2 levels; an island in its second state is shot again.
+
+[Report](../../reports/engine/2026-11-10-still-shots-repeat/README.md): the cause of the 2026-11-10
+regression (the SSAO cycle's phase was not reset), the proof and what is left in VSM.
 
 `motion-vectors` and `motion-vectors-clips` check the motion vectors of objects (graphics plan 1b,
 [report](../../reports/render-features/2026-11-10-motion-vectors/step-1b.md)). `motion-vectors` takes stills: a still
@@ -320,6 +333,9 @@ layer), `OPENGOTHIC_TAA_REACTIVE=0`, `=1`, `=1` with the view and `OPENGOTHIC_TA
 
 - 2026-11-10: `taa-reactive-stills`, `taa-reactive-clips` (graphics plan 1v); `stats mana <n> circle <n>` lets the
   hero cast a rune.
+- 2026-11-10: `deterministic on` also starts the SSAO history over at phase 0 of its sample cycle
+  (stills of one binary differed by 350–775 thousand pixels at 1920x1080); the exact comparison on
+  Ryzen runs with `OPENGOTHIC_VSM=0`, VSM stills take a tolerance; `shots_diff.py --all-pairs`.
 - 2026-11-09: offscreen run mode (`TEMPEST_OFFSCREEN=1`, `TEMPEST_OFFSCREEN_FPS`): the game draws into its
   own image without a window or display; Ryzen benches use it by default.
 - 2026-11-05: `deterministic on` for `streaming-shots`: frozen world during `streaming wait`, TAA reset,
@@ -364,7 +380,7 @@ The complete column set is:
 | `palette_bytes`, `identical_bytes`, `patch_bytes`, `grow_bytes`, `upload_execution_bytes` | Bytes |
 | `draw_calls`, `dispatch_calls` | Encoded draw and compute dispatch counts; dispatch counting currently covers Metal |
 | `rt_tlas_builds`, `rt_dirty_slots` | With `-rt 1`: TLAS builds recorded into the frame (0 or 1) and slots of the ray scene written into it |
-| `gi_probes_live`, `gi_probes_traced` | With `-gi 1`: probes alive after the allocation and probes traced anew, of a frame one or two frames back (`probe_stats` writes them into a host-visible buffer of the frame slot, the CPU reads it when the slot's fence is done; no wait); `per_frame` in the report is the mean |
+| `gi_probes_live`, `gi_probes_traced`, `gi_probes_from_hits`, `gi_probes_freed` | With `-gi 1`: probes alive after the allocation, probes traced anew (allocated by pixels and at hits), of them allocated at the hits of other probes' rays (requests of the last frame), and probes freed (unused for longer than the expiry, or the oldest when places run out); of a frame one or two frames back (`probe_stats` writes them into a host-visible buffer of the frame slot, the CPU reads it when the slot's fence is done; no wait); `per_frame` in the report is the mean |
 | `gpu_ns`, `gpu_done`, `gpu_buffers` | Sum of the attempt's command buffer GPU time in nanoseconds (Metal `GPUEndTime-GPUStartTime`, Vulkan a timestamp pair per buffer); 1 only when all submitted buffers have valid timing; submitted buffer count |
 
 The complete `<zone>` list (each produces all four columns above):
@@ -912,6 +928,8 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `aim-cant.bench` | the bow canted for a quick shot (the mouse wheel, `wheel <delta>`: down cants, up straightens): round the arrow, the top limb toward the drawing hand; from the side, in front, as the target sees it, behind, the game's camera, aimed up and down; the hits upright and canted at 8 and 25 m. CSV `m_cant bd_cant` |
 | `crossbow.bench` | the crossbow by hand: a weak and a strong shooter (`stats ... reload x`: the reload by strength), lowered loaded and raised, lowered right after a shot; the bolt lies in the left hand, the aim lines it up (`bowgeom` prints where it lies) |
 | `humiliate-look.bench` | the humiliation after a surrender staged without the AI server: the hero kneels, Lobart 100 cm in front plays `T_STAND_2_PEE` and the aimed stream `PFX_GAI_PEE` arcs to the hero's chest; stills round them and a 2 s video from the side. Judge it at `TEMPEST_WINDOW_SIZE=1600x1000`: at 800x600 the stream is a few pixels |
+| `gi-turn.bench` | reflected light (`-gi 1`) through a turn of the camera: the plank hut of `gi-clips` at noon (view `hut-day-2`), clip `hut-turn` — the camera stands 1 s, turns 180° round the hero at once (`cam cut`, `cam world` at +180°), stands 3 s, turns back, stands 2 s. `uv run scripts/gi_compare.py --turn <out>/hut-turn.mp4` prints the largest and the median cell change between the frame before the turn and the first frame after the return (8×4 cells without the two middle columns). Run it with `OPENGOTHIC_RT=1 OPENGOTHIC_GI=1 TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen` ([step 2b](../../reports/render-features/2026-11-08-rt-revisit/step-2b.md)) |
+| `gi-decay.bench` | how the light of `-gi 1` dies out in the chains of probes: the plank hut and the bandit cave of `gi-clips` (views `hut-night-1`, `cave-night-1`), clips `hut-decay` and `cave-decay` — 1 s of noon, then `set time 22 0` and 14 s of night, the camera still. A jump of the time of day relights the probes from nothing; `OPENGOTHIC_GI_JUMP_RESET=0` turns that off, and the clip shows the day's light dying out as after a fire put out. `uv run scripts/gi_compare.py --decay <out>/hut-decay.mp4` prints how many times brighter than its end (night) the brightest and the median cell are 0.5, 1 and 2 s after the change, and when every cell is within 10% of it; cells that flicker at the end by more than 10% (flames) are left out, each cell is the median of 15 frames (sparks). Run it with `OPENGOTHIC_GI_JUMP_RESET=0 OPENGOTHIC_RT=1 OPENGOTHIC_GI=1 TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen` ([step 2b](../../reports/render-features/2026-11-08-rt-revisit/step-2b.md#2б-1-пересмотр)) |
 | `give <item> [count]`, `equip <item>` | into the hero's inventory; `equip` puts it on whatever the strength (`ItRw_Bow_L_01`, `ItRw_Arrow`, `ItRw_Crossbow_L_01`, `ItRw_Bolt`, `ItRu_FireBolt`) |
 | `put <npc\|nearest> <dist> <angle>` | the npc stands there on the ground from the hero (angle from the hero's facing), frozen |
 | `pin <npc\|nearest> <dist> <angle> <height>`, `pin off` | the npc hangs there from the hero, `height` above the hero's feet, every frame: a target above or below |

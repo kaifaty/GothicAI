@@ -402,6 +402,10 @@ void Renderer::resetTemporal() {
   camHistory.hasCur = false;
   taa.frame = 0;
   taa.cur   = 0;
+  // the phase of the SSAO cycle picks each texel's quarter of the sample set: a history that starts at another
+  // phase accumulates another picture, and the count of frames before the reset depends on the loading's wall time
+  ssao.frame = 0;
+  ssao.cur   = 0;
   }
 
 void Renderer::updateCamera(const WorldView& wview, const Camera& camera) {
@@ -741,6 +745,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   if(requiresRtScene())
     wview.updateRtScene(cmd, fId);
   wview.updateLights(gameTime);
+  gi.dayTime = gameTime.toInt();
 
   if(requiresLightsTree())
     prepareLightsBvh(cmd, wview);
@@ -1266,14 +1271,17 @@ void Renderer::prepareIrradiance(Encoder<CommandBuffer>& cmd, WorldView& wview) 
   cmd.dispatch(1);
   }
 
+
 void Renderer::readGiStats(uint8_t fId) {
   // the counters this frame slot wrote last time: its fence has been waited for, the buffer is host-visible
   if(!FrameProfile::enabled() || !gi.statsWritten[fId] || gi.stats[fId].isEmpty())
     return;
-  uint32_t v[4] = {};
+  uint32_t v[RendererInternal::giStatsCount] = {};
   Resources::device().readBytes(gi.stats[fId], v, sizeof(v));
-  FrameProfile::add(FrameProfile::Amount::GiProbesLive,   v[0]);
-  FrameProfile::add(FrameProfile::Amount::GiProbesTraced, v[1]);
+  FrameProfile::add(FrameProfile::Amount::GiProbesLive,     v[0]);
+  FrameProfile::add(FrameProfile::Amount::GiProbesTraced,   v[1]);
+  FrameProfile::add(FrameProfile::Amount::GiProbesFromHits, v[4]);
+  FrameProfile::add(FrameProfile::Amount::GiProbesFreed,    v[5]);
   gi.statsWritten[fId] = false;
   }
 

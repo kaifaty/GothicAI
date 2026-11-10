@@ -79,9 +79,10 @@ bool MdlVisual::updateLean(Npc& npc, uint64_t dt) {
   in.dt       = dt;
   in.position = npc.position();
   in.forward  = {std::cos(a), 0, std::sin(a)};
-  in.active   = (bs==(BS_WALK & BS_MAX) || bs==BS_RUN || bs==BS_SPRINT || bs==(BS_SNEAK & BS_MAX)) &&
-                !npc.isDown() && !npc.isInAir() && !npc.isSwim() && !npc.isDive() && !npc.isSlide() &&
-                npc.interactive()==nullptr && !pose.footIk().isQuadruped();
+  const bool ground = !npc.isDown() && !npc.isInAir() && !npc.isSwim() && !npc.isDive() && !npc.isSlide() &&
+                      npc.interactive()==nullptr && !pose.footIk().isQuadruped();
+  in.active   = (bs==(BS_WALK & BS_MAX) || bs==BS_RUN || bs==BS_SPRINT || bs==(BS_SNEAK & BS_MAX)) && ground;
+  in.grounded = in.active || (bs==(BS_STAND & BS_MAX) && ground);
   const bool changed = pose.updateLean(in);
   if(npc.isPlayer())
     lean.probe(Lean::playerProbe);

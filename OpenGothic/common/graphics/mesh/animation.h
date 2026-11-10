@@ -73,6 +73,7 @@ class Animation final {
       std::vector<uint32_t>                       nodeIndex;
       std::vector<Tempest::Vec3>                  tr;
       bool                                        hasMoveTr=false;
+      uint32_t                                    restFrame=0; // the root stays put from this frame on (StopFoot::restFrame)
 
       uint32_t                                    firstFrame=0;
       uint32_t                                    lastFrame =0;
@@ -111,6 +112,7 @@ class Animation final {
       bool                                   isMove()   const { return bool(flags & asset::AnimationFlags::MOVE);   }
       bool                                   isFly()    const { return bool(flags & asset::AnimationFlags::FLY);    }
       bool                                   isIdle()   const { return bool(flags & asset::AnimationFlags::IDLE);   }
+      bool                                   isSettle() const { return bool(flags & asset::AnimationFlags::SETTLE); }
       bool                                   isFinished(uint64_t now, uint64_t sTime, uint16_t comboLen) const;
       float                                  atkTotalTime(uint16_t comboLen) const;
       bool                                   canInterrupt(uint64_t now, uint64_t sTime, uint16_t comboLen) const;

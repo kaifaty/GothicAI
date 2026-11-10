@@ -1,0 +1,1 @@
+{"alpha": [40, 20, 10, 6, 4, 3], "beta": [10, 6, 4, 3, 2, 1.5], "iters": 20, "dmax": 3.0, "cos": 0.5, "zone_w": 3.0, "eye_block": true, "blk_in": 0.006, "blk_out": 0.016, "blk_fade": 0.008, "eye_lam": 0.4, "eye_skip": ["push", "eyeWide", "bag", "eyefold"], "eye_sym": true, "bald": true}
