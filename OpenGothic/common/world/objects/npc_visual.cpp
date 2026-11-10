@@ -456,6 +456,14 @@ float Npc::cueWeight(std::string_view name) {
   return visual.cueWeight(*this,name);
   }
 
+bool Npc::startLeak(std::string_view felt, bool lower) {
+  return visual.startLeak(*this,felt,lower);
+  }
+
+float Npc::leakWeight() {
+  return visual.leakWeight(*this);
+  }
+
 void Npc::startSpeech(const Tempest::Sound& voice) {
   visual.startSpeech(*this,LipSync::Track::fromSound(voice));
   }

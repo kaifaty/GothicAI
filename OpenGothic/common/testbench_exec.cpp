@@ -474,6 +474,20 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       }
     say("facecue " + nameUtf8(*n) + " " + a[2] + (side ? std::string(" ")+side : std::string()));
     }
+  else if(c=="faceleak") {
+    // faceleak <npc|nearest|player> <felt> <upper|lower>: a leak of the felt emotion (friendly, angry, hostile, afraid,
+    // pain) on its own head now, as a line that hides a lie: with the liar's two blinks after it
+    Npc* n = findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
+    if(n==nullptr || a.size()<4 || (a[3]!="upper" && a[3]!="lower")) {
+      say("faceleak: no npc, felt or half upper|lower " + line);
+      return;
+      }
+    if(!n->startLeak(a[2],a[3]=="lower")) {
+      say("faceleak: no leak " + a[2] + " " + a[3] + " on the head of " + nameUtf8(*n));
+      return;
+      }
+    say("faceleak " + nameUtf8(*n) + " " + a[2] + " " + a[3]);
+    }
   else if(c=="ani") {
     // ani <npc|nearest|player> <anim> [force]: it plays an animation of its model script (T_YES,
     // T_DIALOGGESTURE_03); force cuts what plays now, as a hit reaction or a stun's stumble that a stand would wait for

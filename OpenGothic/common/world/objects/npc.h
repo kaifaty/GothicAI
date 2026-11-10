@@ -258,6 +258,9 @@ class Npc final {
     void       startCues(std::shared_ptr<const SpeechCues::Plan> plan, bool voiced);
     bool       startCue(std::string_view name, char side);
     float      cueWeight(std::string_view name);   // how much of the gesture shows now, 0..1 (test bench)
+    // a leak of a felt emotion (say.leak) by hand, with the liar's blinks; its strongest weight as shown now
+    bool       startLeak(std::string_view felt, bool lower);
+    float      leakWeight();
     // a voiced line starts: the mouth follows the voice (LipSync)
     void       startSpeech(const Tempest::Sound& voice);
     void       startSpeech(std::shared_ptr<LipSync::Track> voice);

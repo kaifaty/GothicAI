@@ -444,7 +444,8 @@ const ProtoMesh* Resources::loadCharacterHead(std::string_view instance) {
             throw std::runtime_error("unable to open the file");
           const std::string text{std::istreambuf_iterator<char>(file),std::istreambuf_iterator<char>()};
           mesh->face=FaceProfile::parse(text,*head);
-          Log::i("characters: face profile for ",key,": ",mesh->face->anims.size()," anims, ",mesh->face->cues.size()," cues");
+          Log::i("characters: face profile for ",key,": ",mesh->face->anims.size()," anims, ",mesh->face->cues.size()," cues, ",
+                  mesh->face->leaks.size()," leaks");
           }
         catch(const std::exception& error) {
           Log::e("characters: invalid face profile for ",key," in \"",entry.face.string(),"\": ",error.what(),

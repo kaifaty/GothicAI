@@ -42,13 +42,32 @@ struct FaceProfile final {
     float span(float hold = -1) const;
     };
 
+  // A leak of a felt emotion through a lie ("leaks", face-cues.md step 4): for a moment one half of the face shows
+  // what the speaker feels. Its shapes at the apex are the felt-minus-neutral Audio2Face runs of that half
+  // (reports/content/2026-11-hero-head/cues/leak_table.py); it rises over on_ms, holds, falls over off_ms as a cue.
+  struct Leak final {
+    std::string felt;           // friendly, angry, hostile, afraid, pain (the moods of say)
+    bool        lower = false;  // the half: the expression shapes of the mouth, cheeks and nose; else brows and lids
+    std::vector<std::pair<uint32_t,float>> weights;  // head target -> weight at the apex
+    float       peak  = 0;      // the largest of them
+    };
+  struct LeakTime final {
+    float onMs = 0, holdMs = 0, offMs = 0;
+    float span() const { return onMs+holdMs+offMs; }
+    };
+  static constexpr std::string_view Felt[] = {"friendly","angry","hostile","afraid","pain"};
+  static bool isFelt(std::string_view felt);
+
   std::vector<Anim>    anims;
   std::vector<Cue>     cues;
+  std::vector<Leak>    leaks;     // none: the profile has no "leaks"
+  LeakTime             leakTime;
   std::vector<uint8_t> mouth;  // per head target: a mouth shape (its name starts with a "mouth" prefix)
 
   const Anim* find(std::string_view name) const;
   size_t      index(std::string_view name) const;  // size_t(-1): none
   const Cue*  findCue(std::string_view name) const;
+  const Leak* findLeak(std::string_view felt, bool lower) const;
 
   // Throws std::runtime_error with the reason: broken JSON, a wrong field, a target the head does not have.
   static std::unique_ptr<FaceProfile> parse(std::string_view json, const GltfHeadMesh& head);
@@ -74,12 +93,15 @@ class FaceRig final {
       uint32_t    blends  = 0;      // blends so far
       float       uploadUs = 0;     // the last setDeformation of the head, µs (filled by its owner)
       uint32_t    cues    = 0;      // active gestures
-      std::string shown;            // the active anims and gestures, their strength: "S_ANGRY 0.82 doubt:R 0.64"
+      // the active anims and gestures, their strength, and a leak with its strongest weight as shown:
+      // "S_ANGRY 0.82 doubt:R 0.64 leak:afraid:upper 0.45"
+      std::string shown;
       };
 
     static constexpr float    Changed     = 1e-4f; // a weight change that deforms the head again
     static constexpr float    SpeechMouth = 0.7f;  // a voice takes that much of the mouth from the other layers
     static constexpr uint64_t ShapeHold   = 250;   // ms a shape set by hand stays without being set again
+    static constexpr uint64_t PosedFadeMs = 300;   // the squint a posed smile cuts comes back over this
     // A target delta below both is not seen and not blended: exports carry normal noise on most of the mesh
     // (the MPFB test head: 357 thousand normal deltas, 104 thousand above 1e-3)
     static constexpr float    StillCm     = 1e-4f; // cm of position
@@ -97,6 +119,14 @@ class FaceRig final {
     // a gesture of the profile's cues from `start` (it may lie a little in the past): mirror - the other side of
     // a one-sided one, hold - ms of the first part's hold instead of its own (below 0: its own); false: no such cue
     bool   startCue (std::string_view name, bool mirror, float hold, uint64_t start, uint64_t now);
+    // a leak of the profile's table from `start` (it may lie a little in the past), over the other layers; it takes
+    // the place of one still going (a line has one at most); false: the profile has no such leak
+    bool   startLeak(std::string_view felt, bool lower, uint64_t start, uint64_t now);
+    // the leak shown now: its strongest weight as shown (at its apex, the table's largest), 0: none
+    float  leakWeight(uint64_t now) const;
+    // a smile put on (a friendly line that hides a lie): while on, the expression's squint - its eyeSquint* and
+    // cheekSquint* - is cut; after it, the squint comes back over PosedFadeMs. The gestures and a leak keep theirs
+    void   setPosed (bool on, uint64_t now);
     // as shown now: intensity and fade
     float  weight   (std::string_view name, uint64_t now) const;
     // how far the gesture is shown now, 0..1 (the strongest of its parts and of its runs)
@@ -135,7 +165,15 @@ class FaceRig final {
       uint64_t start  = 0;
       };
 
+    struct LeakRun final {
+      size_t   leak  = 0;
+      uint64_t start = 0;
+      bool     on    = false;
+      };
+
     bool   isOn(const Slot& s, uint64_t now) const { return s.on && s.timeUntil>=now; }
+    float  leakEnvelope(uint64_t now) const;
+    float  posedCut(uint64_t now) const;
     float  cueEnvelope(const CueRun& r, size_t part, uint64_t now) const;
     float  cueStrength(const CueRun& r, uint64_t now) const;
     float  fade(const Slot& s, uint64_t now) const;
@@ -152,6 +190,10 @@ class FaceRig final {
 
     std::vector<Slot>          slots;
     std::vector<CueRun>        runs;      // the gestures shown now
+    LeakRun                    leakRun;   // the leak shown now
+    bool                       posed    = false;
+    uint64_t                   posedEnd = 0;      // when the posed smile ended (0: never)
+    std::vector<uint8_t>       squint;            // per head target: eyeSquint*, cheekSquint* (a posed smile cuts them)
     std::vector<float>         want;      // the weights now
     std::vector<float>         applied;   // the weights the deformation shows
     bool                       deformed = false;  // the head is not neutral
