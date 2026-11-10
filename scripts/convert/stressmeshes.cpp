@@ -323,8 +323,10 @@ Built recorded(const rapidjson::Document& stress, const fs::path& base) {
   Built b;
   const auto index = meshIndex(base);
   b.meshes = index.size();
-  if(!stress.HasMember("meshes"))
+  if(!stress.HasMember("meshes")) {
+    b.counted = false;
     return b;
+    }
   const auto& m = stress["meshes"];
   require(m.IsObject() && m.HasMember("subdivide") && m["subdivide"].IsInt() && m.HasMember("count") &&
           m["count"].IsUint64() && m.HasMember("split") && m["split"].IsUint64() && m.HasMember("triangles_before") &&
@@ -379,7 +381,7 @@ void verify(const fs::path& base, const fs::path& copy, const Built& r) {
     after += triangles(c);
     ++split;
     }
-  require(before==r.trianglesBefore && after==r.trianglesAfter && split==r.split,
+  require(!r.counted || (before==r.trianglesBefore && after==r.trianglesAfter && split==r.split),
           "stress.json: mesh counts differ from the meshes ("+std::to_string(split)+" split, "+std::to_string(before)+
           " -> "+std::to_string(after)+" triangles)");
   std::cout << "meshes: " << split << " of " << index.size() << " split (level " << r.level << "), " << before << " -> "
@@ -461,7 +463,15 @@ void selfTest(const fs::path& dir) {
   require(diff.empty(),"stress mesh round trip: "+diff);
   Check k;
   verifyMesh(m,back,1,"stress mesh: ",k);
-  fs::remove(file);
+  // A copy made before meshes were split (stress.json without "meshes") is level 0 and passes.
+  fs::create_directories(dir/"meshes");
+  fs::rename(file,dir/"meshes"/"STRESS_MESH.glb");
+  const std::string index = R"({"meshes": {"STRESS_MESH": "STRESS_MESH.glb"}})";
+  gothicglb::writeFile(dir/"meshes"/"meshes.json",index.data(),index.size());
+  rapidjson::Document old;
+  old.Parse(R"({"subdivide": 1})");
+  verify(dir,dir,recorded(old,dir));
+  fs::remove_all(dir/"meshes");
   // A mesh left as it was and not listed as skipped fails the check.
   bool caught = false;
   try { verifyMesh(m,m,1,"stress mesh: ",k); }

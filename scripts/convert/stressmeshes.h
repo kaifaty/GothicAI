@@ -61,6 +61,7 @@ struct Built {
   uint64_t trianglesBefore = 0, trianglesAfter = 0;
   std::vector<std::pair<std::string,std::string>> skipped; // name, reason
   std::set<std::string> written;                            // base-relative paths, generic form
+  bool counted = true;                                      // false: stress.json has no mesh counts
   };
 
 // Writes every mesh of base/meshes/meshes.json that fits the format after `level` splits into
