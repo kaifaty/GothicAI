@@ -1,5 +1,7 @@
 #include "testbench_internal.h"
 
+#include <Tempest/Log>
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -439,8 +441,9 @@ void debrisWalkPass(FracturePieces::DebrisWalk& walk,Npc& hero,const Vec3& direc
 // `destruction2 walk <length>`: after the breaks the hero walks a straight line of `length` cm through
 // the loose pieces and back, holding forward (4 s at most per pass). The line passes the centre of the
 // loose pieces, clear of the largest group (its radius plus 40 cm), along the direction (30 degree
-// steps) that passes most of them within 40 cm. Per pass: progress along the line, the height of the
-// feet over the ground under them, and the loose pieces it moved.
+// steps) that passes most of them within 40 cm; a line with none of them on it does not count. Per
+// pass: progress along the line, the height of the feet over the ground under them, and the loose
+// pieces it moved; the walk counts only if it moved one.
 void fracturePiecesWalkTick(FracturePieces& state,Destruction& destruction,const DestructionContext& context,World& world,Npc& pl,PlayerControl& ctrl) {
   auto& walk=state.walk;
   auto* hero=destruction.destructionMeleeActor;
@@ -473,10 +476,18 @@ void fracturePiecesWalkTick(FracturePieces& state,Destruction& destruction,const
     debrisWalkPass(walk,*hero,walk.direction*-1.f,world,pl,ctrl,destruction,largest);
     return;
     }
+  // The walk counts only if it moved a loose piece, over both passes.
+  size_t movedAll=0;
+  for(const auto& [piece,centre]:debrisCentres(world,destruction,*walk.mesh,largest))
+    for(const auto& [was,before]:walk.debrisStart)
+      if(was==piece && (centre-before).length()>2.f) ++movedAll;
   walk.running=false;walk.mesh.reset();context.waitUntil=context.time;
+  if(movedAll==0)
+    Tempest::Log::e("[bench] destruction2 walk ",destruction.destructionCase,": no loose piece moved, the walk does not count");
   event("destruction2_walk","\"case\":"+jsonStr(destruction.destructionCase)+",\"length_cm\":"+ragdollNumber(walk.length)+
     ",\"start_cm\":"+ragdollVector(walk.start)+",\"direction\":"+ragdollVector(walk.direction)+
-    ",\"pieces_on_path\":"+std::to_string(walk.onPath)+",\"passes\":["+walk.passes+"]");
+    ",\"pieces_on_path\":"+std::to_string(walk.onPath)+",\"moved_pieces\":"+std::to_string(movedAll)+
+    ",\"counted\":"+(movedAll>0?"true":"false")+",\"passes\":["+walk.passes+"]");
   }
 
 bool debrisWalkSetup(FracturePieces& state,Destruction& destruction,const DestructionContext& context,World& w,Npc& pl,PlayerControl& ctrl,float length) {
@@ -502,23 +513,31 @@ bool debrisWalkSetup(FracturePieces& state,Destruction& destruction,const Destru
         }
   Vec3 away(centre.x-remnant.centerOfMass.x,0,centre.z-remnant.centerOfMass.z);
   away=away.length()>1e-3f?Vec3::normalize(away):Vec3(0,0,-1);
-  size_t best=0;bool found=false;
-  for(int shift=0;shift<=10 && !found;++shift,centre+=away*20.f)
-    for(int step=0;step<6;++step) {
-      const float a=float(step)*float(M_PI)/6.f;
-      const Vec3 dir(std::cos(a),0,std::sin(a));
-      const auto from=centre-dir*(length*.5f),to=centre+dir*(length*.5f);
-      if(segmentDistance(from,to,remnant.centerOfMass)<radius+40.f)continue;
-      size_t near=0;
-      for(const auto& [piece,c]:debris)near+=segmentDistance(from,to,c)<=40.f;
-      if(!found || near>best) {best=near;found=true;walk.start=from;walk.direction=dir;}
-      }
-  if(!found)return false;
+  // A line counts only with a loose piece on it. The centre of the loose pieces first, moved away
+  // from the remnant by 20 cm steps; then a line through each loose piece itself.
+  size_t best=0;
+  const auto tryLine=[&](const Vec3& middle,const Vec3& dir) {
+    const auto from=middle-dir*(length*.5f),to=middle+dir*(length*.5f);
+    if(segmentDistance(from,to,remnant.centerOfMass)<radius+40.f)return;
+    size_t near=0;
+    for(const auto& [piece,c]:debris)near+=segmentDistance(from,to,c)<=40.f;
+    if(near>best) {best=near;walk.start=from;walk.direction=dir;}
+    };
+  for(int shift=0;shift<=10 && best==0;++shift,centre+=away*20.f)
+    for(int step=0;step<6;++step)
+      tryLine(centre,Vec3(std::cos(float(step)*float(M_PI)/6.f),0,std::sin(float(step)*float(M_PI)/6.f)));
+  for(size_t i=0;i<debris.size() && best==0;++i)
+    for(int step=0;step<12;++step)
+      tryLine(debris[i].second,Vec3(std::cos(float(step)*float(M_PI)/12.f),0,std::sin(float(step)*float(M_PI)/12.f)));
+  if(best==0)
+    arenaAbort("destruction walk: no straight line of "+std::to_string(int(length))+
+               " cm passes a loose piece within 40 cm and keeps clear of the remnant");
   const auto floor=w.physic()->landRay(walk.start+Vec3(0,150,0),400);
   if(floor.hasCol)walk.start.y=floor.v.y;
   walk.running=true;walk.length=length;walk.onPath=best;
   hero->closeWeapon(true);hero->clearAiQueue();hero->setPosition(walk.start);hero->updateTransform();
   debrisWalkPass(walk,*hero,walk.direction,w,pl,ctrl,destruction,remnant.group);
+  walk.debrisStart=walk.debris;
   context.waitUntil=context.time+10034;
   return true;
   }

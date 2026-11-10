@@ -64,12 +64,12 @@ JPH::Ref<JPH::GroupFilter> fractureGroupFilter(const FractureMesh& mesh, const s
 enum class FractureHit : uint8_t { Fist, OneHand, TwoHand, Arrow, Impact, Spell };
 
 // Bond rule numbers, OPENGOTHIC_FRACTURE_BONDS="fist=20,one=35,two=55,arrow=12,impact=30,
-// nail=1,hoop=1,groove=1.2,dowel=0.8,along=0.7,across=1.5,ring=0.5,remnant=0.5"; an invalid
+// nail=1,hoop=1,groove=1.2,dowel=0.8,along=0.7,across=1.5,ring=0.75,remnant=0.5"; an invalid
 // entry logs one error and keeps every default.
 struct FractureBonds {
   float radius[5] = {20.f, 35.f, 55.f, 12.f, 30.f}; // centimetres by FractureHit, Fist..Impact
   float strength[FractureMesh::BondKinds] = {1.f, 1.f, 1.2f, .8f, .7f, 1.5f}; // by BondKind
-  float ring = .5f; // a hoop that lost more than this share of its HOOP bonds lets go of all
+  float ring = .75f; // a hoop that lost more than this share of its HOOP bonds lets go of all
   // A remnant (pieces still joined) holds class health x its volume share x remnant; 0 breaks on every blow.
   float remnant = .5f;
   static FractureBonds load();

@@ -251,39 +251,46 @@ void testFractureRemnants(const WriteFixture& write, const MakeFixture& make, ui
   blast.tick(0);
   require(groupsOf(blast)==std::vector<uint32_t>({0,1,2,3,4,5,6,7}),"a spell's force must break every bond of the remnant");
 
-  // The ring counts the HOOP bonds broken by the first blow. Six staves under one hoop, joined
-  // side by side by ACROSS (strength 2: a fist's 20 cm reach 10 cm). A fist at stave 0 frees it
-  // and cuts stave 1's HOOP bond, stave 1 stays by its ACROSS bond: 2 of 6 lost, the hoop holds.
-  // A fist at stave 5 cuts the HOOP bonds of 5 and 4: 4 of 6 lost, the hoop lets go of all.
-  std::vector<Box> barrel;
-  std::ostringstream ring;
-  ring<<"bonds 11\n";
-  for(int i=0;i<6;++i) {
-    barrel.push_back({{-25.f+10.f*float(i),0,0},{10,60,10},"WOOD"});
-    ring<<"bond "<<i<<" 6 HOOP "<<-25.f+10.f*float(i)<<" 30 0\n";
-    if(i<5) ring<<"bond "<<i<<' '<<i+1<<" ACROSS "<<-20.f+10.f*float(i)<<" 0 0\n";
-    }
-  barrel.push_back({{0,32.5f,0},{60,5,10},"METAL"});
-  write(barrel,ring.str());
-  setenv("OPENGOTHIC_FRACTURE_BONDS","across=2",1);
-  const auto ringBreak=[&](DynamicWorld& ringWorld) {
+  // The ring counts the HOOP bonds broken by the first blow. Staves under one hoop, joined side by
+  // side by ACROSS (strength 2: a fist's 20 cm reach 10 cm). A fist at stave 0 frees it and cuts
+  // stave 1's HOOP bond, stave 1 stays by its ACROSS bond. A fist at the last stave then cuts the
+  // HOOP bonds of the last two. Of five staves that is 4 lost, more than three quarters: the hoop
+  // lets go of all, though the second blow alone cut only 2 of 5. Of six it is 4 lost, two thirds:
+  // the hoop holds; with ring=0.5 in OPENGOTHIC_FRACTURE_BONDS it lets go.
+  const auto ringFixture=[&](int staves) {
+    std::vector<Box> barrel;
+    std::ostringstream ring;
+    ring<<"bonds "<<2*staves-1<<'\n';
+    for(int i=0;i<staves;++i) {
+      barrel.push_back({{-25.f+10.f*float(i),0,0},{10,60,10},"WOOD"});
+      ring<<"bond "<<i<<' '<<staves<<" HOOP "<<-25.f+10.f*float(i)<<" 30 0\n";
+      if(i+1<staves) ring<<"bond "<<i<<' '<<i+1<<" ACROSS "<<-20.f+10.f*float(i)<<" 0 0\n";
+      }
+    barrel.push_back({{-30.f+5.f*float(staves),32.5f,0},{10.f*float(staves),5,10},"METAL"});
+    write(barrel,ring.str());
+    };
+  const auto ringBreak=[&](DynamicWorld& ringWorld, int staves) {
     std::vector<uintptr_t> first;
     require(blowOnProp(ringWorld,{-32,1000,0},Melee::Fist,first),"the ring fixture must take the fist");
     ringWorld.tick(0);
-    require(groupsOf(ringWorld)==std::vector<uint32_t>({0,1,1,1,1,1,1}),"a fist at stave 0 must free it alone");
+    std::vector<uint32_t> expected(size_t(staves+1),1);
+    expected[0]=0;
+    require(groupsOf(ringWorld)==expected,"a fist at stave 0 must free it alone");
     };
-  const auto ringBlow=[&](DynamicWorld& ringWorld) {
+  const auto ringBlow=[&](DynamicWorld& ringWorld, int staves) {
     std::vector<uintptr_t> blow;
-    require(blowOn(ringWorld,1,{32,0,0},40,1000,Melee::Fist,blow),"the ring remnant must take the fist");
+    require(blowOn(ringWorld,1,{-25.f+10.f*float(staves-1)+7.f,0,0},40,1000,Melee::Fist,blow),"the ring remnant must take the fist");
     ringWorld.tick(0);
     return groupsOf(ringWorld);
     };
+  ringFixture(5);
+  setenv("OPENGOTHIC_FRACTURE_BONDS","across=2",1);
   DynamicWorld ringWorld(nullptr,asset::WorldMesh{}),ringLoaded(nullptr,asset::WorldMesh{}),ringOld(nullptr,asset::WorldMesh{});
   unsetenv("OPENGOTHIC_FRACTURE_BONDS");
   auto ringObject=make(ringWorld);
   auto ringLoadedObject=make(ringLoaded);
   auto ringOldObject=make(ringOld);
-  ringBreak(ringWorld);
+  ringBreak(ringWorld,5);
   const auto ringSave=saveArchive([&](Serialize& output) { ringWorld.saveMovableVobs(output); });
   loadMovables(ringLoaded,ringSave);
   // Schema 3 has no bond fates: bonds inside a group are whole, so stave 1 holds the hoop again.
@@ -301,14 +308,27 @@ void testFractureRemnants(const WriteFixture& write, const MakeFixture& make, ui
     });
   loadMovables(ringOld,legacy);
   require(ringOldObject.isBroken() && groupsOf(ringOld)==groupsOf(ringWorld),"a schema 3 save must load its groups");
-  const auto ringGroups=ringBlow(ringWorld);
-  require(ringGroups==std::vector<uint32_t>({0,1,1,1,1,2,3}),
-          "the ring must count the HOOP bonds broken by the first blow: 4 of 6 lost lets the staves go");
-  for(const auto& body:bodiesOf(ringWorld,zenId))
-    require(body.category==DynamicWorld::C_Fragment,"a 60 cm stave or hoop must take the debris layer characters stop at");
-  require(ringBlow(ringLoaded)==ringGroups,"a save must keep every bond's fate: the next blow gives the same result");
-  require(ringBlow(ringOld)==std::vector<uint32_t>({0,1,1,1,1,2,1}),
+  const auto ringGroups=ringBlow(ringWorld,5);
+  require(ringGroups==std::vector<uint32_t>({0,1,1,1,2,3}),
+          "the ring must count the HOOP bonds broken by the first blow: 4 of 5 lost lets the staves go");
+  require(ringBlow(ringLoaded,5)==ringGroups,"a save must keep every bond's fate: the next blow gives the same result");
+  require(ringBlow(ringOld,5)==std::vector<uint32_t>({0,1,1,1,2,1}),
           "a schema 3 save joins the pieces of one group by all their bonds");
+  ringFixture(6);
+  for(const char* bonds:{"across=2","across=2,ring=0.5"}) {
+    setenv("OPENGOTHIC_FRACTURE_BONDS",bonds,1);
+    DynamicWorld six(nullptr,asset::WorldMesh{});
+    unsetenv("OPENGOTHIC_FRACTURE_BONDS");
+    auto sixObject=make(six);
+    ringBreak(six,6);
+    const bool half=std::string_view(bonds).find("ring")!=std::string_view::npos;
+    require(ringBlow(six,6)==(half ? std::vector<uint32_t>({0,1,1,1,1,2,3}) : std::vector<uint32_t>({0,1,1,1,1,2,1})),
+            half ? "with ring=0.5 a hoop that lost 4 of 6 staves over two blows lets go"
+                 : "a hoop that lost 4 of 6 staves over two blows, two thirds, holds by default");
+    if(half)
+      for(const auto& body:bodiesOf(six,zenId))
+        require(body.category==DynamicWorld::C_Fragment,"a 60 cm stave or hoop must take the debris layer characters stop at");
+    }
   std::printf("Fracture remnants: weak blows 20+20 of 31.25 break the row's remnant into %zu bodies, the far boards one; "
               "arrow and spell break it; ring counts earlier HOOP losses; damage and bonds survive save; schema 3 loads\n",
               bodiesOf(world,zenId).size());
@@ -633,9 +653,20 @@ void testFractureBonds() {
 
     // The ring: tall staves side by side and a hoop across their tops, the blow on the hoop at
     // the -x end. The hoop is the nearest piece, yet the blade strikes the stave under it and the
-    // hoop counts only its staves: the blow reaches three of them; of six that is half and the
-    // hoop holds the other three; of five it is more than half and the hoop lets go of all.
-    for(const int staves:{6,5}) {
+    // hoop counts only its staves: the blow reaches three of them. By default (ring 0.75) a hoop
+    // holds while at most three quarters of its staves are lost: of five (60%) and of four (75%)
+    // it holds the rest. ring=0.5 in OPENGOTHIC_FRACTURE_BONDS: of six (50%) it holds, of five
+    // (60%) it lets go of all. More than three quarters, counted over two blows, is in
+    // testFractureRemnants.
+    struct RingCase { int staves; const char* bonds; std::vector<uint32_t> groups; const char* what; };
+    const RingCase ringCases[]={
+      {5,nullptr,{0,1,2,3,3,3},"a hoop that lost 3 of 5 staves holds the rest by default"},
+      {4,nullptr,{0,1,2,3,3},"a hoop that lost 3 of 4 staves, three quarters, holds the rest by default"},
+      {6,"ring=0.5",{0,1,2,3,3,3,3},"with ring=0.5 a hoop that lost half of its staves holds the rest"},
+      {5,"ring=0.5",{0,1,2,3,4,5},"with ring=0.5 a hoop that lost 3 of 5 staves lets go of all"},
+      };
+    for(const auto& ringCase:ringCases) {
+      const int staves=ringCase.staves;
       std::vector<Box> barrel;
       std::ostringstream hoops;
       hoops<<"bonds "<<staves<<'\n';
@@ -645,16 +676,13 @@ void testFractureBonds() {
         }
       barrel.push_back({{-30.f+5.f*float(staves),32.5f,0},{10.f*float(staves),5,10},"METAL"});
       write(barrel,hoops.str());
+      if(ringCase.bonds!=nullptr) setenv("OPENGOTHIC_FRACTURE_BONDS",ringCase.bonds,1);
       DynamicWorld ring(nullptr,asset::WorldMesh{});
+      unsetenv("OPENGOTHIC_FRACTURE_BONDS");
       auto ringObject=make(ring);
       require(strike(ring,{-44,1000+32,0}),"the ring fixture must take the blow");
       ring.tick(0);
-      const auto groups=groupsOf(ring);
-      require(ringObject.isBroken() && groups.size()==size_t(staves+1),"the ring fixture must keep every piece");
-      if(staves==6)
-        require(groups==std::vector<uint32_t>({0,1,2,3,3,3,3}),"a hoop that lost half of its staves holds the rest");
-      else
-        require(groups==std::vector<uint32_t>({0,1,2,3,4,5}),"a hoop that lost more than half of its staves lets go of all");
+      require(ringObject.isBroken() && groupsOf(ring)==ringCase.groups,ringCase.what);
       }
 
     testFractureRemnants(write,make,zenId);
@@ -694,7 +722,7 @@ void testFractureBonds() {
     requireNear(fallback.radius[1],35.f,0.f,"an invalid bond override must keep every default");
     unsetenv("OPENGOTHIC_FRACTURE_BONDS");
     std::printf("Fracture bonds: one-handed side blow 4 bodies of 8 boards (joined mass %.4f = 5 x %.4f kg); "
-                "spell 8 bodies; ring 6/5 staves; groups survive save, pending save and schema 2; %zu invalid blocks rejected\n",
+                "spell 8 bodies; ring 5/4 staves, 6/5 with ring=0.5; groups survive save, pending save and schema 2; %zu invalid blocks rejected\n",
                 double(joined->mass),double(single->mass),std::size(invalid));
   }
   if(hadContent) setenv("OPENGOTHIC_CONTENT",oldContent.c_str(),1); else unsetenv("OPENGOTHIC_CONTENT");

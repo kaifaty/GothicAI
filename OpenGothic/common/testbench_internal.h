@@ -1158,7 +1158,7 @@ struct FracturePieces {
     uint64_t passTime=0;
     size_t onPath=0;
     std::string passes;
-    std::vector<std::pair<size_t,Tempest::Vec3>> debris;
+    std::vector<std::pair<size_t,Tempest::Vec3>> debris,debrisStart; // loose pieces: this pass, the walk
     std::shared_ptr<const FractureMesh> mesh;
     };
   DebrisWalk walk;
