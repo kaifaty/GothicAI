@@ -201,56 +201,76 @@ FractureBonds FractureBonds::load() {
       rule.ring=value;
       known=true;
       }
+    if(key=="remnant") {
+      rule.remnant=value;
+      known=true;
+      }
     if(!known) return invalid(entry,"unknown key");
     }
   return rule;
   }
 
-std::vector<uint32_t> fractureGroups(const FractureMesh& mesh, const FractureBonds& rule, FractureHit hit,
-                                     const Tempest::Vec3& point, std::vector<bool>* broken) {
+void fractureCut(const FractureMesh& mesh, const FractureBonds& rule, FractureHit hit, const Tempest::Vec3& point,
+                 const std::vector<uint32_t>& members, std::vector<bool>& broken) {
   const size_t count=mesh.pieces.size();
-  std::vector<bool> cut(mesh.bonds.size(),true);
-  if(hit!=FractureHit::Spell && !mesh.bonds.empty()) {
-    const float radius=rule.radius[size_t(hit)];
-    const JPH::Vec3 at(point.x*.01f,point.y*.01f,point.z*.01f);
-    const auto metal=[&](uint32_t i) { return mesh.pieces[i].group==asset::MaterialGroup::METAL; };
-    std::vector<float> distance(count);
-    // The struck piece is the nearest one that is not METAL: a blade on a hoop hits the stave
-    // under it. A prop of metal only falls back to its nearest piece.
-    size_t struck=count,nearest=0;
-    for(size_t i=0;i<count;++i) {
-      distance[i]=hullDistanceCm(mesh.pieces[i],at);
-      if(distance[i]<distance[nearest]) nearest=i;
-      if(!metal(uint32_t(i)) && (struck==count || distance[i]<distance[struck])) struck=i;
-      }
-    if(struck==count) struck=nearest;
-    // A bond breaks within R / strength of its nearer piece; the struck piece loses every bond.
-    // A HOOP bond is measured at its stave only: the hoop holds while its ring is whole.
+  broken.resize(mesh.bonds.size(),false);
+  std::vector<uint8_t> member(count,0);
+  for(const auto i:members)
+    if(i<count) member[i]=1;
+  // Only bonds still intact inside this remnant take the blow.
+  const auto inside=[&](const FractureMesh::Bond& bond, size_t k) { return !broken[k] && member[bond.a] && member[bond.b]; };
+  if(hit==FractureHit::Spell) {
+    for(size_t k=0;k<mesh.bonds.size();++k)
+      if(inside(mesh.bonds[k],k)) broken[k]=true;
+    return;
+    }
+  if(members.empty() || mesh.bonds.empty()) return;
+  const float radius=rule.radius[size_t(hit)];
+  const JPH::Vec3 at(point.x*.01f,point.y*.01f,point.z*.01f);
+  const auto metal=[&](uint32_t i) { return mesh.pieces[i].group==asset::MaterialGroup::METAL; };
+  std::vector<float> distance(count,FLT_MAX);
+  // The struck piece is the nearest one that is not METAL: a blade on a hoop hits the stave
+  // under it. A remnant of metal only falls back to its nearest piece.
+  size_t struck=count,nearest=count;
+  for(const auto i:members) {
+    if(i>=count) continue;
+    distance[i]=hullDistanceCm(mesh.pieces[i],at);
+    if(nearest==count || distance[i]<distance[nearest]) nearest=i;
+    if(!metal(i) && (struck==count || distance[i]<distance[struck])) struck=i;
+    }
+  if(struck==count) struck=nearest;
+  // A bond breaks within R / strength of its nearer piece; the struck piece loses every bond.
+  // A HOOP bond is measured at its stave only: the hoop holds while its ring is whole.
+  for(size_t k=0;k<mesh.bonds.size();++k) {
+    const auto& bond=mesh.bonds[k];
+    if(!inside(bond,k)) continue;
+    const float reach=radius/rule.strength[size_t(bond.kind)];
+    float nearCm=std::min(distance[bond.a],distance[bond.b]);
+    if(bond.kind==FractureMesh::BondKind::Hoop && metal(bond.a)!=metal(bond.b))
+      nearCm=metal(bond.a) ? distance[bond.b] : distance[bond.a];
+    broken[k]=bond.a==struck || bond.b==struck || nearCm<=reach;
+    }
+  // The ring: a hoop that lost more than `ring` of its HOOP bonds, by this blow or before, has
+  // nothing to hold and falls.
+  for(const auto p:members) {
+    if(p>=count || !metal(p)) continue;
+    size_t total=0,lost=0;
     for(size_t k=0;k<mesh.bonds.size();++k) {
       const auto& bond=mesh.bonds[k];
-      const float reach=radius/rule.strength[size_t(bond.kind)];
-      float nearCm=std::min(distance[bond.a],distance[bond.b]);
-      if(bond.kind==FractureMesh::BondKind::Hoop && metal(bond.a)!=metal(bond.b))
-        nearCm=metal(bond.a) ? distance[bond.b] : distance[bond.a];
-      cut[k]=bond.a==struck || bond.b==struck || nearCm<=reach;
+      if(bond.kind!=FractureMesh::BondKind::Hoop || (bond.a!=p && bond.b!=p)) continue;
+      ++total;
+      lost+=broken[k];
       }
-    // The ring: a hoop that lost more than `ring` of its HOOP bonds has nothing to hold and falls.
-    for(size_t p=0;p<count;++p) {
-      if(mesh.pieces[p].group!=asset::MaterialGroup::METAL) continue;
-      size_t total=0,lost=0;
-      for(size_t k=0;k<mesh.bonds.size();++k) {
-        const auto& bond=mesh.bonds[k];
-        if(bond.kind!=FractureMesh::BondKind::Hoop || (bond.a!=p && bond.b!=p)) continue;
-        ++total;
-        lost+=cut[k];
-        }
-      if(total==0 || !(float(lost)>rule.ring*float(total))) continue;
-      for(size_t k=0;k<mesh.bonds.size();++k) {
-        const auto& bond=mesh.bonds[k];
-        if(bond.kind==FractureMesh::BondKind::Hoop && (bond.a==p || bond.b==p)) cut[k]=true;
-        }
+    if(total==0 || !(float(lost)>rule.ring*float(total))) continue;
+    for(size_t k=0;k<mesh.bonds.size();++k) {
+      const auto& bond=mesh.bonds[k];
+      if(bond.kind==FractureMesh::BondKind::Hoop && (bond.a==p || bond.b==p)) broken[k]=true;
       }
     }
+  }
+
+std::vector<uint32_t> fractureComponents(const FractureMesh& mesh, const std::vector<bool>& broken) {
+  const size_t count=mesh.pieces.size();
   std::vector<uint32_t> root(count);
   std::iota(root.begin(),root.end(),0u);
   const auto find=[&](uint32_t i) {
@@ -258,7 +278,7 @@ std::vector<uint32_t> fractureGroups(const FractureMesh& mesh, const FractureBon
     return i;
     };
   for(size_t k=0;k<mesh.bonds.size();++k)
-    if(!cut[k]) {
+    if(k<broken.size() && !broken[k]) {
       const auto a=find(mesh.bonds[k].a),b=find(mesh.bonds[k].b);
       root[std::max(a,b)]=std::min(a,b);
       }
@@ -269,6 +289,17 @@ std::vector<uint32_t> fractureGroups(const FractureMesh& mesh, const FractureBon
     if(label[r]==uint32_t(-1)) label[r]=next++;
     group[i]=label[r];
     }
+  return group;
+  }
+
+std::vector<uint32_t> fractureGroups(const FractureMesh& mesh, const FractureBonds& rule, FractureHit hit,
+                                     const Tempest::Vec3& point, std::vector<bool>* broken) {
+  // The intact prop is one remnant of every piece with every bond whole.
+  std::vector<uint32_t> all(mesh.pieces.size());
+  std::iota(all.begin(),all.end(),0u);
+  std::vector<bool> cut(mesh.bonds.size(),false);
+  fractureCut(mesh,rule,hit,point,all,cut);
+  auto group=fractureComponents(mesh,cut);
   if(broken!=nullptr) *broken=std::move(cut);
   return group;
   }

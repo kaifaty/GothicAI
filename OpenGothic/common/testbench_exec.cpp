@@ -203,7 +203,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     event("physics_traces_debug","\"command\":"+jsonStr(command)+",\"sample\":"+value);
     }
   else if(destructionCommand(bench.destruction,destructionContext(),a,w,pl,ctrl)) return;
-  else if(fracturePiecesCommand(bench.destruction.destructionIds,bench.destruction.destructionMeleeActor,bench.destruction.destructionMeleeStand,bench.destruction.destructionMeleeFacing,bench.cam,bench.cutPending,a,w)) return;
+  else if(fracturePiecesCommand(bench.fracturePieces,bench.destruction,destructionContext(),bench.cutPending,a,w,pl,ctrl)) return;
   else dispatched=false;
   if(dispatched) return;
   dispatched=true;

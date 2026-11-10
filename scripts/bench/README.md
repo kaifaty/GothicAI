@@ -549,8 +549,8 @@ the centre's travel, the angle of a flat piece's face and long axis from vertica
 ground (`bodies`, `bodies_sleeping`, `bodies_fell`: pieces of one group share one body; without
 bonds a group is a piece); at 15 s the native hull penetration into a floor plane, into the
 real ground (`native_floor_penetration_cm`, Jolt `CollideShape` against landscape and static objects)
-and into the other pieces (format 3 METAL–WOOD pairs of one break and pieces of one bond group are
-skipped: they never collide),
+and into the other pieces (pairs the break's hoop filter never collides — a group of METAL only against a
+group with WOOD — and pieces of one bond group are skipped),
 the visible (vertex) penetration below that plane and below the ground under each vertex
 (`visible_terrain_penetration_cm`), hoops on the ground (`metal_on_ground`) and the 13→15 s jitter. Every break also
 writes `destruction2_start` (each piece's centre over the ground and native hull depth at birth) and,
@@ -567,6 +567,32 @@ the ground, and the result line reports whether it sleeps at the final checkpoin
 `own-content-fracture` settings plus `TEMPEST_WINDOW_SIZE=1280x720`; `OPENGOTHIC_FRACTURE_MOTION`
 varies the version 3 piece motion, `OPENGOTHIC_FRACTURE_BONDS` the bond rule. Inside a `movable measure` window the pieces are not sampled: the
 timed frames stay free of bench work.
+
+`own-wood-remnant-clip` takes the [repeat blows on remnants](../../reports/physics/2026-11-destruction-bonds/README.md#клип-повторных-ударов)
+with the same place, seed, noon and cameras: per prop one take `<prop>-remnant.mp4` from the accepted
+one-handed blow through three more breaks to a walk over the pieces, and a close frame
+`<prop>-close-break1..4.png` after each break (`destruction2 stand` first). `destruction2 remnant <n>`
+strikes the largest bond group of the broken fixture prop with the native forward attack, at most `n`
+swings, until the prop has more bodies. Before each swing it places the hero by where that attack's
+blade comes down: 126 cm forward and 28 cm right of the feet (`melee-blade-shadow.jsonl`, top contacts).
+From the first blow's side by 30 degree steps, rays straight down along the line to the group's centre of
+mass find the first point of the group's own body no lower than 30 cm under its top (the floor of an open
+crate is out of the blade's reach); a side with a loose piece found first, or higher within 20 cm of that
+point (rays every 4 cm), is skipped. Events: `destruction2_remnant_attempt` per swing (side, landing),
+`destruction2_remnant_complete` with `broken`, `swings`, bodies and the largest group before and after,
+and every group's pieces. `destruction2 walk <cm>` then walks the hero, holding forward (4 s at most a
+pass), along a straight line through the centre of the loose pieces, clear of the largest group by its
+radius plus 40 cm, there and back. The line must pass within 10 cm of the hull of a loose piece from 0.5 m
+(one the hero pushes; smaller ones it walks through); failing that, lines through each such piece; with
+none the scenario aborts. `destruction2_walk` gives `pieces_on_path`, per pass the progress, the feet over
+and under the ground and the pieces moved, and over the walk `moved_pieces` and `counted` (true only if a
+piece moved). Every break, the first and each remnant's, writes `destruction_break` (with
+`remnant`) and `destruction2_start` / `destruction2_pieces` under its own case: `<case>-remnant-<n>` for
+the n-th remnant break, sampled from its own moment; `hero_debris_penetration_cm`,
+`hero_piece_penetration_cm` and `hero_light_piece_penetration_cm` give the depth of the hero's capsule (its
+controller's radius, `hero_radius_cm`) in remnants, in single pieces from 0.5 m and 10 kg, and in lighter ones,
+which are no floor: the feet pass into their tops by design.
+`reports/physics/2026-11-destruction-bonds/clip_groups.py` names the groups. The scenario declares `# @timeout 900`.
 
 Corpse water: `water-bodies` records a real harbour WindFist throw, a dead wolf and a
 sinking skeleton, then saves `session-water-bodies.sav` and tries normal corpse loot

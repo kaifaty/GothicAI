@@ -97,7 +97,7 @@ struct DynamicWorld::ItemTrace {
       result.bounds[0]=native.collisionBounds[0];
       result.bounds[1]=native.collisionBounds[1];
       constexpr uint32_t mask=(1u<<C_Landscape)|(1u<<C_Object)|(1u<<C_Item)|(1u<<C_Ragdoll)|
-                              (1u<<C_LivingBody)|(1u<<C_ActiveBody)|(1u<<C_MovableVob)|(1u<<C_Fragment);
+                              (1u<<C_LivingBody)|(1u<<C_ActiveBody)|(1u<<C_MovableVob)|fragmentMask;
       for(const auto& contact:world.overlaps(*native.body,2.f,mask,true)) {
         ItemTraceContact entry;
         entry.category=contact.category;
@@ -796,7 +796,7 @@ void DynamicWorld::tick(uint64_t dt) {
     FrameProfile::Scope timing(FrameProfile::Zone::Destruction);
     for(auto* obj:movableVobs->bodies)
       if(movableVobs->enabled || obj->className=="fence" || obj->pose->broken) {
-        if(obj->pendingBreak) breakMovableVob(*obj);
+        if(obj->pendingBreak) breakMovableVob(*obj); else if(obj->pose->broken) breakRemnants(*obj);
         syncMovableVob(*obj);
         cleanupFragments(*obj);
         syncFragments(*obj);
