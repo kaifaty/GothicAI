@@ -138,21 +138,6 @@ void Shaders::compileShaders() noexcept {
   fog                = fogShader ("fog");
   fog3dHQ            = fogShader ("fog3d_hq");
 
-  {
-    RenderState state;
-    state.setCullFaceMode (RenderState::CullMode::Front);
-    state.setBlendSource  (RenderState::BlendMode::One);
-    state.setBlendDest    (RenderState::BlendMode::SrcAlpha);
-    state.setZTestMode    (RenderState::ZTestMode::Always);
-    state.setZWriteEnabled(false);
-
-    auto sh      = GothicShader::get("triangle.vert.sprv");
-    auto vsLight = device.shader(sh.data,sh.len);
-    sh           = GothicShader::get("sky_pathtrace.frag.sprv");
-    auto fsLight = device.shader(sh.data,sh.len);
-    skyPathTrace = device.pipeline(Triangles, state, vsLight, fsLight);
-  }
-
   underwaterT        = inWaterShader("underwater_t", false);
   underwaterS        = inWaterShader("underwater_s", true);
   waterReflection    = reflectionShader("water_reflection.frag.sprv", opts.doMeshShading);
@@ -387,8 +372,6 @@ void Shaders::compileShaders() noexcept {
     vsmPackDraw1       = computeShader("vsm_pack_draws1.comp.sprv");
     vsmFogPages        = computeShader("vsm_fog_mark_pages.comp.sprv");
     vsmFogShadow       = computeShader("vsm_fog_shadow.comp.sprv");
-    vsmFogTrace        = computeShader("vsm_fog_trace.comp.sprv");
-    vsmFog             = fogShader("fog_epipolar");
 
     vsmDirectLight     = postEffect(string_frm("direct_light_vsm", materialMaps), RenderState::ZTestMode::NoEqual);
     vsmDbg             = postEffect("vsm_dbg", RenderState::ZTestMode::Always);

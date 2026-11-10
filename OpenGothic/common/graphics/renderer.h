@@ -41,8 +41,6 @@ class Renderer final {
       None,
       VolumetricLQ,
       VolumetricHQ,
-      Epipolar,
-      PathTrace,
       };
     Tempest::Size internalResolution(Tempest::Size src) const;
     float         internalResolutionScale() const;
@@ -145,6 +143,7 @@ class Renderer final {
       bool           aaEnabled          = false;
       bool           taaEnabled         = false;
       float          taaSharpness       = 0.75f; // RCAS after the resolve, 0..1
+      bool           ssaoHistory        = true;  // SSAO: 8 samples a frame with a history; off: 32 a frame
       float          taaMipBias         = -0.5f; // material textures of the main view with TAA
       // a study of the temporal upscale (graphics plan 1g): MetalFX Temporal in place of the TAA resolve
       bool           temporalUpscale    = false; // OPENGOTHIC_UPSCALE=temporal, on Metal
@@ -230,6 +229,14 @@ class Renderer final {
       Tempest::StorageImage     ssaoBuf;
       Tempest::StorageImage     ssaoBlur;
       Tempest::StorageImage     depthHalf; // R32F depth at half size for the samples of ssao.comp, ssao_depth.comp
+      // the occlusion over frames (ssao.comp): two histories in turn, H and M per sample, linear depth, frames
+      Tempest::StorageImage     history[2];
+      uint8_t                   cur       = 0;     // history[cur] is written this frame, the other one read
+      uint32_t                  frame     = 0;     // the cycle of 4 frames picks the samples
+      uint32_t                  cuts      = 0;     // Camera::cuts() of the last traced frame
+      uint32_t                  camCuts   = 0;     // and of this frame
+      bool                      valid     = false; // the history holds the last frame of this view
+      Taa::View                 view, prev;        // this frame's camera without jitter, and the last traced one
       } ssao;
 
     struct Cmaa2 {
@@ -337,7 +344,6 @@ class Renderer final {
       Tempest::StorageBuffer    pageTblOmni;
       Tempest::StorageBuffer    visibleLights;
 
-      Tempest::StorageImage     fogDbg;
       Tempest::StorageImage     vsmDbg;
 
       uint64_t                  statsTime = 0; // last OPENGOTHIC_VSM_STATS line, ms

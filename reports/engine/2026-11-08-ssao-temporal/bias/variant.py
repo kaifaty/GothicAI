@@ -1,6 +1,7 @@
 # Writes ssao.comp for a bias probe: variant.py <mode>
 # Run from the repository root; restore with git checkout. 0 main; 1 no early exit; 2 mean of 4 estimates of 8 samples (same rotation, the 4-frame cycle);
-# 4 mean of 2 estimates of 16 samples (2-frame cycle); 5 no direction cells: H/(H+M) over all 32 samples, sums are linear
+# 4 mean of 2 estimates of 16 samples (2-frame cycle); 5 no direction cells: H/(H+M) over all 32 samples, sums are linear;
+# 6 share of hits, 7 weighted share of hits / 2 (no cells, for an offline fit); 8 no cells, a hit weighs 1.3 (the fit)
 # 3 mean of 16 estimates of 8 samples (4 rotations x 4 subsets, a rotation that changes every cycle).
 import sys
 p='OpenGothic/shader/ssao/ssao.comp'
@@ -35,8 +36,10 @@ probe = '''
   if(valid) {
 #if 1'''
 rep('\n  if(valid) {\n#if 1', probe)
-if mode==5:
-    rep('void addHit(vec3 dir, float v) {\n', 'float sumH = 0, sumM = 0;\nvoid addHit(vec3 dir, float v) {\n  sumH += v; anySmp = 1u; return;\n')
+if mode in (5,6,7,8):
+    # 6 and 7 write the linear parts for an offline fit: 6 the share of hits p, 7 the weighted share a = sum(w)/n/2
+    rep('void addHit(vec3 dir, float v) {\n', 'float sumH = 0, sumM = 0, sumN = 0;\nvoid addHit(vec3 dir, float v) {\n  sumH += v; sumN += 1.0; anySmp = 1u; return;\n')
     rep('void addMis(vec3 dir) {\n', 'void addMis(vec3 dir) {\n  sumM += 1.0; anySmp = 1u; return;\n')
-    rep('float resolveOcclusion() {\n', 'float resolveOcclusion() {\n  return sumH+sumM>0.0 ? sumH/(sumH+sumM) : 0.0;\n')
+    out={8:'1.3*sumH/(1.3*sumH+sumM)',5:'sumH/(sumH+sumM)',6:'sumN/(sumN+sumM)',7:'0.5*sumH/(sumN+sumM)'}[mode]
+    rep('float resolveOcclusion() {\n', 'float resolveOcclusion() {\n  return sumN+sumM>0.0 ? '+out+' : 0.0;\n')
 open(p,'w').write(s)

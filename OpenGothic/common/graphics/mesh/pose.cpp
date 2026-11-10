@@ -555,16 +555,19 @@ bool Pose::updateFrame(const Animation::Sequence &s, BodyState bs, uint64_t sTim
   float    a       = float(frame%1000)/1000.f;
 
   if(s.animCls==Animation::Loop) {
-    frameA%=d.numFrames;
-    frameB%=d.numFrames;
+    // a loop that carries the body ends on its next cycle's first frame: that frame is not played twice
+    const uint64_t count = d.loopFrames();
+    frameA%=count;
+    frameB%=count;
     } else {
     frameA = std::min<uint64_t>(frameA,d.numFrames-1);
     frameB = std::min<uint64_t>(frameB,d.numFrames-1);
     }
 
   if(s.reverse) {
-    frameA = d.numFrames-1-frameA;
-    frameB = d.numFrames-1-frameB;
+    const uint64_t last = (s.animCls==Animation::Loop ? d.loopFrames() : d.numFrames)-1;
+    frameA = last-frameA;
+    frameB = last-frameB;
     }
 
   auto* sampleA = &d.samples[size_t(frameA*idSize)];

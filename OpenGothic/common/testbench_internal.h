@@ -2,6 +2,11 @@
 
 #include <Tempest/Matrix4x4>
 #include <Tempest/Vec>
+#include <Tempest/Point>
+
+#include <condition_variable>
+#include <mutex>
+#include <thread>
 
 #include <chrono>
 #include <cstdint>
@@ -19,6 +24,7 @@
 #include <utility>
 #include <vector>
 
+#include "ui/crosshair.h"
 #include "resources.h"
 #include "game/constants.h"
 #include "game/meleedodge.h"
@@ -28,6 +34,7 @@
 #include "graphics/mesh/aim.h"
 #include "graphics/mesh/gaze.h"
 #include "world/objects/archer.h"
+#include "world/objects/sound.h"
 #include "game/inventory.h"
 #include "physics/charactervirtualdiagnostics.h"
 #include "physics/dynamicworld.h"
@@ -37,6 +44,9 @@
 #include "physics/ragdoll.h"
 #include "utils/keycodec.h"
 #include "world/waypoint.h"
+
+class Camera;
+namespace Tempest { class Pixmap; }
 
 class Interactive;
 class MoveTrigger;
@@ -88,6 +98,44 @@ enum CamMode : uint8_t {
   C_Two,      // the hero and the npc from the side
   C_Arrow,    // from the side of the newest arrow's way, going along with it (overlay trail records it)
   };
+
+inline constexpr int Fps = 30;
+
+struct Rgba { uint8_t r,g,b,a; };
+extern const Rgba Text;
+
+struct Canvas {
+  uint8_t* px = nullptr;
+  int      w  = 0;
+  int      h  = 0;
+
+  void blend(int x, int y, Rgba c);
+  void rect(int x, int y, int rw, int rh, Rgba c);
+  void dot(float x, float y, int r, Rgba c);
+  void line(float x0, float y0, float x1, float y1, int r, Rgba c);
+  // a polyline stroked as the game strokes the crosshair: white over a dark edge, smooth; each pixel once
+  void stroke(const std::vector<Tempest::Vec2>& pt, float alpha, const Crosshair::Pen& pen);
+  int text(int x, int y, std::string_view s, int sc, Rgba c);
+};
+
+// frames go to ffmpeg from a thread of their own: the game goes on while a frame is written
+class VideoPipe final {
+  public:
+    explicit VideoPipe(std::FILE* f);
+    ~VideoPipe();
+    void push(std::vector<uint8_t>&& frame);
+
+  private:
+    static constexpr size_t MaxQueued = 4;
+    void loop();
+
+    std::FILE*                       f;
+    std::mutex                       sync;
+    std::condition_variable          cv;
+    std::deque<std::vector<uint8_t>> queue;
+    bool                             done = false;
+    std::thread                      th;
+};
 
 struct QuestSite { bool ready=false; Tempest::Vec3 dry={}, direction={}; float waterY=0; std::string waypoint; };
 
@@ -299,6 +347,47 @@ struct SpellActor {Npc* npc=nullptr;std::string role;};
 struct MovableFixture { ObjVisual visual; DynamicWorld::Item body; };
 
 struct LivingPhysics { uint64_t time=0;uint64_t dt=0;float milliseconds=0;size_t bodies=0; };
+
+struct ClothBench {
+  uint32_t clothZen=uint32_t(-1);
+  std::string clothCase,clothObserverSupport="native-floor";
+  Tempest::Vec3 clothCenter,clothDirection=Tempest::Vec3(1,0,0);
+  bool clothTrace=false,clothMeasuring=false,clothOverflow=false,clothHold=false;
+  Tempest::Vec3 clothHeldPosition;
+  uint64_t clothSample=uint64_t(-1);
+  std::vector<LivingPhysics> clothPhysics;
+  std::unordered_map<uintptr_t,std::vector<Tempest::Vec3>> clothPrevious;
+  std::unordered_map<uintptr_t,bool> clothPreviousActive;
+  const void* clothArrow=nullptr;
+  Tempest::Vec3 clothShotTarget,clothShotNormal;
+  float clothArrowDownstream=0;
+  uint64_t clothShotAt=0,clothShotHitsBefore=0;
+  std::string clothShotKind;
+  Npc* clothArrowNpc=nullptr;
+};
+
+struct ClothContext {
+  ClothBench& cloth;
+  CamMode& cam;
+  Tempest::Vec3& camPos;
+  Tempest::PointF& camHeldAngles;
+  Tempest::PointF& camTurnAngles;
+  float& camTurnDegrees;
+  uint64_t& camTurnStart;
+  uint64_t& camTurnDuration;
+  Npc*& subject;
+  std::vector<Npc*>& crew;
+  uint64_t& time;
+  uint64_t& waitUntil;
+  void (*updateCamera)(World&,Npc&);
+};
+
+struct WaterFilm {
+  std::string waterFilm;
+  Tempest::Vec3 waterFilmLip;
+  bool waterFilmKill=false;
+  uint64_t waterFilmStart=0;
+};
 
 struct Movables {
   // Test-only props use the body API directly; the map allowlist contains only
@@ -909,6 +998,22 @@ struct WaterContext {
   bool& ragdollLootDidOpen;
 };
 
+struct WaterFilmContext {
+  WaterFilm& film;
+  Water& water;
+  Movables& movables;
+  Destruction& destruction;
+  WaterContext waterContext;
+  DestructionContext destructionContext;
+  CamMode& cam;
+  Tempest::Vec3& camPos;
+  Npc*& subject;
+  std::vector<Npc*>& crew;
+  bool& rec;
+  uint64_t& time;
+  uint64_t& recStart;
+};
+
 struct PlacedItems {
   std::vector<std::vector<size_t>> batches;
   std::vector<float> maximumTravel;
@@ -950,6 +1055,7 @@ struct FurnitureDrop {
   std::vector<Tempest::Vec3> vertices,collisionVertices;
   float supportY=0,supportLocalY=0;
   };
+
 struct FurnitureParts {
   uint32_t table=uint32_t(-1),cupboard=uint32_t(-1);
   std::string tableVisual;
@@ -1088,6 +1194,147 @@ struct NpcCommands {
     unsigned next=0;
   } stunDrift;
 };
+
+struct CameraBench {
+  CamMode     cam       = C_Game;
+  float       camDist   = 220;
+  float       camHeight = 40;
+  float       camAngle  = 90;   // C_Follow: degrees from the facing (0 in front, 90 on the left); C_World: world yaw
+  float       camLook   = 45;   // look at this height above the player origin
+  bool        camLift   = true; // C_Follow, C_World: kept above the ground under it (off: where it is put,
+                                // a floor above it is no ground: under a gallery, in a hall)
+  bool        camAuto   = false;
+  int         occlTime  = 0;
+  Tempest::Vec3        camPos;
+  Tempest::PointF      camHeldAngles;
+  Tempest::PointF      camTurnAngles;
+  float       camTurnDegrees = 0;
+  uint64_t    camTurnStart = 0, camTurnDuration = 0;
+
+  bool        rec       = false;
+  bool        recVideo  = false;
+  std::string recName;
+  uint64_t    recFrame  = 0;
+  uint64_t    recStart  = 0;
+  std::string shot;
+  float       clip      = 0;     // > 0: everything closer to the camera than the subject minus this is clipped away
+  uint8_t     occl      = 0;    // bit per leg: the ankle is hidden from the camera
+  // the hero placed around the subject: distance, angle from its facing (0 in front), orbiting
+  float       placeDist  = 0;
+  float       placeAngle = 0;
+  float       orbitSpeed = 0;     // degrees per second
+  uint64_t    orbitUntil = 0;
+
+  // talking (gothic-shorts)
+  std::string camNpc;           // C_Shoulder, C_NpcFace, C_Two
+  // slowmo: the game runs `slow` times slower than the video (its sound is not recorded meanwhile)
+  float       slow      = 1;
+  uint64_t    slowAcc   = 0;      // microseconds of game time owed to the next frame
+  uint64_t    frameMs   = 0;      // the video's time of this frame, ms
+  // track: where an npc's head (or trunk) is in each recorded frame, for labels that follow it
+  std::vector<std::string> trackNpcs;
+  bool        trackHead = true;
+  // sight: the hero's line of sight to an npc in each recorded frame and shot (the focus' rays).
+  std::string sightNpc;
+  float       sightFan  = 700;
+  float       camSmooth = 0.12f; // share of the way to the wanted camera per frame; 1: no smoothing
+  bool        smValid   = false;
+  bool        cutPending = false; // `cam cut`: the next placement of the camera is a cut (Camera::markCut)
+  Tempest::Vec3        smOrg, smTgt;
+  // sound: the mix of the game (Tempest loopback), recorded with the video
+  std::FILE*  audio     = nullptr;
+  uint64_t    audioFrames = 0;
+  uint64_t    audioAcc  = 0;
+  std::vector<int16_t> mix;
+  struct VoiceStem {
+    std::mutex           sync;
+    std::string          path;
+    uint32_t             rate = 0;
+    uint64_t             sample = 0;
+    std::vector<int16_t> pcm;
+    bool                 stopped = false;
+    };
+  std::vector<std::shared_ptr<VoiceStem>> voiceStems;
+  std::chrono::steady_clock::time_point recWall;  // when the recording started
+};
+
+struct OverlayBench {
+  std::unique_ptr<VideoPipe> video;
+  uint32_t    videoW    = 0;
+  uint32_t    videoH    = 0;
+  bool        overlay   = true;
+  bool        ui        = false;  // the interface is in the captured frame
+  bool        zoom      = true;
+  bool        bright    = true;  // auto exposure: forests and interiors are too dark to see the legs
+  float          aspect     = 4.f/3.f; // of the captured frame
+  float          uiScale    = 1;       // of the game's interface
+  std::string zonesNpc;         // showzones: the npc whose hit zones the overlay draws
+  bool        zonesOnly = false; // the overlay draws the hit zones only
+  // overlay trail: the way each arrow flew, kept trailKeep ms after its last move; nothing else drawn
+  using Trail = testbench_detail::Trail;
+  bool        trailOn   = false;
+  bool        trailLine = false;  // ...and a dashed straight line along the way it left: the bow's line
+  uint64_t    trailKeep = 1500;
+  std::vector<Trail> trails;
+};
+
+struct OverlayContext {
+  CameraBench& camera;
+  OverlayBench& overlay;
+  Living& living;
+  std::vector<Npc*>& crew;
+  PlayerControl*& ctrl;
+  Npc*& subject;
+  uint64_t& time;
+  std::string& label;
+};
+
+struct CameraContext {
+  CameraBench& camera;
+  OverlayBench& overlay;
+  OverlayContext overlayContext;
+  Water& water;
+  RagdollBench& ragdoll;
+  MonsterCharacter& monster;
+  Character& character;
+  Living& living;
+  ArcheryBench& archery;
+  Movables& movables;
+  Routine& routine;
+  std::vector<Npc*>& crew;
+  Npc*& subject;
+  PlayerControl*& ctrl;
+  uint64_t& time;
+  std::vector<std::string>& prog;
+  size_t& pc;
+  bool& hasPrev;
+  std::vector<Tempest::Vec3>& anim1;
+  std::vector<Tempest::Vec3>& anim2;
+  bool& ordered;
+  bool& bodyLive;
+  const bool& ragdollPerf;
+  const bool& realtime;
+  Npc& (*subjectOf)(Npc&);
+  void (*waterFilmFraming)(World&,uint32_t,uint32_t);
+};
+
+void updateCamera(World& w,Npc& pl);
+void placeHero(World& w,Npc& pl);
+bool frameRagdollArena(size_t expected=20);
+void lookFrom(const CameraContext& ctx,const Tempest::Vec3& org,const Tempest::Vec3& tgt);
+void updateCamera(const CameraContext& ctx,World& w,Npc& pl);
+void placeHero(const CameraContext& ctx,World& w,Npc& pl);
+bool frameRagdollArena(const CameraContext& ctx,size_t expected);
+void capture(const CameraContext& ctx,Tempest::Pixmap& frame,float uiScale);
+void stopRecording(const CameraContext& ctx);
+void writeWavHeader(std::FILE* f,uint32_t rate,uint64_t frames,uint16_t channels=2);
+bool cameraCommand(const CameraContext& ctx,const std::string& line,const std::vector<std::string>& a,
+                   World& w,Npc& pl,PlayerControl& ctrl);
+bool overlayCommand(const OverlayContext& ctx,const std::vector<std::string>& a);
+void drawOverlay(const OverlayContext& ctx,Tempest::Pixmap& pm);
+void drawZones(const OverlayContext& ctx,Canvas& cv,Camera* cam);
+void drawArenaMark(Tempest::Pixmap& pm);
+void writeVideo(const OverlayContext& ctx,const Tempest::Pixmap& pm);
 
 struct ControlContext {
   uint64_t& time;
@@ -1394,6 +1641,13 @@ void npcCharacterFields(Character& state,const CharacterContext& context,World& 
 bool prepareCharacterRideSupport(Character& state,World& world,Npc& player,bool kinematic,bool rotating,Tempest::Vec3& top);
 void writeCharacterMoveFrame(std::FILE* file,const CharacterMoveFrame& move);
 
+void clothFields(ClothContext ctx,World& world);
+void clothInitial(ClothContext ctx,World& world,std::string_view label);
+bool clothCommand(ClothContext ctx,const std::vector<std::string>& a,World& w,Npc& pl);
+void waterFilmTick(WaterFilmContext ctx,World& world);
+void waterFilmFraming(WaterFilmContext ctx,World& world,uint32_t width,uint32_t height);
+bool waterFilmCommand(WaterFilmContext ctx,const std::vector<std::string>& a,World& w,Npc& pl);
+
 bool waterOwns(Water& state,const DynamicWorld::WaterBodySnapshot& body);
 void waterFields(Water& state,const WaterContext& context,World& world);
 std::string waterRows(Water& state,World& world);
@@ -1557,5 +1811,220 @@ void livingFields(World& world);
 void livingSeatFields(World& world);
 bool livingCommand(const LivingContext& context,const std::vector<std::string>& a,World& w,Npc& pl,PlayerControl& ctrl);
 LivingContext livingContext();
+
+
+using Tempest::Vec3;
+using Tempest::Matrix4x4;
+
+extern const char* scenarioPath;
+extern const bool keepRunning;
+extern const bool realtime;
+extern bool bodyTrace;
+extern bool bodyTraceAlive;
+extern const bool ragdollTrace;
+extern const bool ragdollPerf;
+
+struct Bench : OverlayBench, CameraBench {
+  bool navigationOnly = false; // navigation trials use the independent stuck journal
+  ~Bench() { bodyTraceAlive = false; }
+  std::vector<std::string> prog;
+  size_t      pc        = 0;
+  bool        loaded    = false;
+  bool        started   = false;
+  bool        done      = false;
+  std::string holdCommand;      // --fork-prefix: stop before this command
+  bool        heldNow   = false;
+  uint64_t    time      = 0;    // game time since the start, ms
+  uint64_t    step      = 0;    // fixed steps made
+  std::chrono::steady_clock::time_point heartbeatStart, heartbeatNext;
+
+  using NpcTierTest = testbench_detail::NpcTierTest;
+  NpcTierTest npcTierTest;
+
+  using NpcSpeedTest = testbench_detail::NpcSpeedTest;
+  NpcSpeedTest npcSpeedTest;
+
+  testbench_detail::Healing healing;
+
+  uint64_t    waitUntil = 0;
+  std::chrono::steady_clock::time_point realWaitUntil;
+  bool        waitArrive = false;
+  uint64_t    arriveEnd = 0;
+
+  std::vector<Hold>             holds;
+  std::vector<KeyCodec::Action> taps;
+  uint64_t                    inputTraceUntil = 0;
+  std::string                 inputAnimation;
+
+  Melee melee;
+  WorldBench world;
+
+  bool        frozen        = false; // the world stands still: `streaming wait` waits in deterministic mode
+  bool        renderReset   = false; // the renderer drops its temporal state before this frame's picture
+  uint32_t    settleSteps   = 0;     // fixed steps left between the end of `streaming wait` and the next command
+  bool        ordered       = false; // visibility appends clusters in order (slow): from the end of the wait to the shot
+  struct StreamingSample {
+    std::string segment;
+    uint64_t frame = 0;
+    double updateMs = 0, workMs = 0;
+    size_t near = 0, far = 0, outside = 0;
+    uint64_t nearTransitions = 0, farTransitions = 0;
+    std::vector<double> publicationTimesMs;
+    uint64_t published = 0, released = 0;
+    size_t pageUsedBytes = 0, pageFreeBytes = 0, pageRetiredBytes = 0, pageCount = 0;
+    Resources::TextureStats textures;
+    size_t vobNear = 0, vobFar = 0, vobOutside = 0, vobPending = 0, vobNearMissing = 0;
+    uint64_t vobCreated = 0, vobReleased = 0;
+    double vobPublicationMs = 0, vobNearMissingSeconds = 0;
+    size_t npcFull = 0, npcSimplified = 0;
+    uint64_t npcTierTransitions = 0;
+    double npcFullTickMs = 0, npcSimplifiedTickMs = 0;
+    };
+  std::vector<StreamingSample> streamingSamples;
+  std::vector<double> streamingWarmupFarMs;
+  size_t streamingWarmupFarMaxPerFrame = 0;
+  double streamingWarmupQueueMaxMs = 0;
+  std::vector<Vec3> routePoints;
+  size_t      routeNext = 0;
+  Vec3        routePosition;
+  float       routeSpeed = 0;
+  double      routeLength = 0;
+  uint64_t    routeStarted = 0;
+  bool        routeActive = false, routeWasExternal = false;
+
+  std::FILE*  csv       = nullptr;
+
+  Vec3        prevPos;
+  bool        hasPrev   = false;
+  bool        inDialog  = false;
+  Npc*        pinned    = nullptr;  // pin: held there every frame
+  Npc*        hearNpc   = nullptr;  // hear: it listens to the hero (words every hearEvery ms) until hearUntil
+  uint64_t    hearUntil = 0, hearEvery = 600, hearNext = 0;
+  Npc*        thinkNpc  = nullptr;  // think: it thinks of an answer until thinkUntil
+  uint64_t    thinkUntil = 0;
+  Vec3        pinAt     = {};
+  float       speed     = 0;
+  std::string label;            // free text on the overlay
+  Routine routine;
+  NpcCommands npcCommands;
+  Npc*        subject   = nullptr; // the camera watches this npc instead of the player (gaze)
+  PlayerControl* ctrl     = nullptr; // the player's input: the crosshair of the manual aim
+  uint32_t    lcg          = 1;  // the bench's own random numbers (seed)
+  uint32_t    scenarioSeed = 0;  // the last `seed <n>`
+  std::vector<Npc*> crew;        // arc: the npcs set out, `all` of fight
+  Living living;
+  Movables movables;
+  using FurnitureDrop = testbench_detail::FurnitureDrop;
+  using FurnitureParts = testbench_detail::FurnitureParts;
+  FurnitureParts furnitureParts;
+  OwnMesh ownMesh;
+  Water water;
+  ItemHulls itemHulls;
+  FracturePieces fracturePieces;
+  ClothBench cloth;
+
+
+  ItemWake itemWake;
+
+  WaterFilm waterFilm;
+  Destruction destruction;
+  Character character;
+  MonsterCharacter monster;
+  using PlacedItems = testbench_detail::PlacedItems;
+  PlacedItems placedItems;
+  Npc* traceHost=nullptr;
+  uint32_t traceTable=uint32_t(-1);
+  Matrix4x4 traceOrigin;
+  Vec3 traceCenter,traceVisible,traceBlocked,traceFar,traceWall,traceShotDirection;
+  bool traceReady=false;
+  ArcheryBench archery;
+  using BodyImpact = testbench_detail::BodyImpact;
+  BodyImpact bodyImpact;
+  struct SavedItemProbe {
+    Item* item=nullptr;
+    Matrix4x4 saved;
+    float maximumPositionDelta=0,maximumRotationDelta=0;
+    bool alwaysSleeping=true;
+  };
+  std::vector<SavedItemProbe> savedItemProbes;
+  uint64_t savedItemStart=0,savedItemSample=uint64_t(-1);
+  bool savedItemTracing=false;
+  RagdollBench ragdoll;
+  using BirthLive = RagdollBench::BirthLive;
+  Npc*        duelA        = nullptr; // bodyduel: bench-owned NPCs, never resolved by their script symbols
+  Npc*        duelB        = nullptr;
+  uint64_t    duelFrom = 0, duelEnd = 0;
+  bool        duelWaiting  = false;
+  using NpcDuel = testbench_detail::NpcDuel;
+  NpcDuel npcDuel;
+  std::vector<Npc*> observeActors;
+  uint64_t    observeFrom = 0, observeEnd = 0;
+  bool        observeActive = false;
+  Vec3        observeVisibleA, observeVisibleB;
+  bool        observeVisibleSaved = false;
+  std::string observeProbeCase;
+  std::unique_ptr<::Sound> probeSound;
+  uint64_t    probeSoundStart = 0, probeSoundDuration = 0;
+  bool        probeOccluded = false;
+  bool           crossValid = false;
+  Vec3           crossPrev  = {}; // on the screen, -1..1
+  // joints of the watched one's animated pose in the last two frames: a pop is a jump of the second difference
+  std::vector<Vec3> anim1, anim2;
+  // Opt-in live policy telemetry. The controller has one exclusive sink; arenas/replays own theirs.
+  bool        bodyLive = false;
+  std::string bodyLiveWait;
+  std::chrono::steady_clock::time_point bodyLiveDeadline;
+  bool        speaking  = false;  // the talk key is held while a recording is said
+  uint64_t    speakUntil = 0;
+  uint64_t    heroEndAt = 0;      // the hero's last phrase ended
+  uint64_t    lastLineAt = 0;     // an npc line of the AI started
+  uint64_t    busyAt    = 0;      // an npc of the AI spoke (or had a line waiting)
+  bool        waitReply = false;
+  std::string waitAiKey, waitAiStage;  // waitai: until the bridge says it got that far
+  std::unordered_set<std::string> brokenSignals; // explicit server barriers, independent of NPC lines
+  uint64_t    waitAiEnd = 0;
+  bool        replyNeed = false;  // a line has to start after replyFrom first
+  uint64_t    replyFrom = 0;
+  uint64_t    replyEnd  = 0;
+  uint64_t    replyQuiet = 0;
+  std::FILE*  events    = nullptr;
+  std::unordered_map<const Npc*,uint64_t> bodyIds;
+  uint64_t    nextBodyId = 0;
+  uint64_t    bodySeq = 0;
+  uint64_t    nativeChoices = 0;
+  BodyAnimationControl bodyAnimation;
+
+
+  std::chrono::steady_clock::time_point wallStart;
+  int64_t     lagMs     = 0;      // how far the game fell behind the wall clock (realtime)
+  };
+
+extern Bench bench;
+
+Npc& subjectOf(Npc& pl);
+ControlContext controlContext();
+DialogContext dialogContext();
+OverlayContext overlayContext();
+CameraContext cameraContext();
+DestructionContext destructionContext();
+CharacterContext characterContext();
+MonsterCharacterContext monsterCharacterContext();
+WaterContext waterContext();
+ClothContext clothContext();
+WaterFilmContext waterFilmContext();
+void waterFilmFraming(World& world,uint32_t width,uint32_t height);
+void loadScenario();
+void run(World& w,Npc& pl,PlayerControl& ctrl);
+void stopRecording();
+void writeHeartbeat(const World& world);
+void finish();
+void writeRow(Npc& pl);
+void spellFields(World& world);
+void stunDriftSample(World& world,uint64_t elapsed,uint64_t requested);
+void savedItemSample(World& world);
+void savedItemInitial(World& world,Npc& player,uint64_t initialDt);
+void savedItemReport(World& world);
+void destructionSkinSample(const Npc& npc,const ProtoMesh& proto,const MdlVisual& mdl,
+                           const Tempest::Matrix4x4& object,const Pose& pose);
 
 }

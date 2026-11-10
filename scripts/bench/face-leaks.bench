@@ -1,0 +1,79 @@
+# The leaks of a felt emotion on an own head close up (reports/content/2026-11-hero-head/face-cues.md, step 4 of its
+# order): for each felt mood and half of the face of the profile's leaks a frame without it and a frame at its apex
+# (0.18 s: the rise and half the hold), leak-<felt>-<half>-rest.png and leak-<felt>-<half>-apex.png. Blinks are off,
+# the liar's too, so no frame catches the lids. Needs an own head with leaks in its face profile:
+#   TEMPEST_WINDOW_SIZE=1280x720 OPENGOTHIC_CONTENT=<content root> BENCH_HOST=ryzen scripts/bench.sh scripts/bench/face-leaks.bench
+# The sheet of the frames: reports/content/2026-11-hero-head/cues/engine_sheet.py <bench out dir> <sheet.jpg>
+seed 73013
+cheat god
+set time 12 0
+view clean 30
+blink off
+watch nearest
+freeze nearest
+wait 500
+place 110 0
+wait 800
+watch player
+cam face 38 0 1
+wait 1500
+shot leak-friendly-upper-rest
+wait 300
+faceleak player friendly upper
+wait 180
+shot leak-friendly-upper-apex
+wait 700
+shot leak-friendly-lower-rest
+wait 300
+faceleak player friendly lower
+wait 180
+shot leak-friendly-lower-apex
+wait 700
+shot leak-angry-upper-rest
+wait 300
+faceleak player angry upper
+wait 180
+shot leak-angry-upper-apex
+wait 700
+shot leak-angry-lower-rest
+wait 300
+faceleak player angry lower
+wait 180
+shot leak-angry-lower-apex
+wait 700
+shot leak-hostile-upper-rest
+wait 300
+faceleak player hostile upper
+wait 180
+shot leak-hostile-upper-apex
+wait 700
+shot leak-hostile-lower-rest
+wait 300
+faceleak player hostile lower
+wait 180
+shot leak-hostile-lower-apex
+wait 700
+shot leak-afraid-upper-rest
+wait 300
+faceleak player afraid upper
+wait 180
+shot leak-afraid-upper-apex
+wait 700
+shot leak-afraid-lower-rest
+wait 300
+faceleak player afraid lower
+wait 180
+shot leak-afraid-lower-apex
+wait 700
+shot leak-pain-upper-rest
+wait 300
+faceleak player pain upper
+wait 180
+shot leak-pain-upper-apex
+wait 700
+shot leak-pain-lower-rest
+wait 300
+faceleak player pain lower
+wait 180
+shot leak-pain-lower-apex
+wait 700

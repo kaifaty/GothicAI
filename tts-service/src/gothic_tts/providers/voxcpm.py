@@ -11,7 +11,7 @@ import os
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import WebSocketException
 
-from .base import ChunkCallback, TtsError, Voice
+from .base import ChunkCallback, TtsError, Voice, WordsCallback
 
 log = logging.getLogger(__name__)
 
@@ -37,7 +37,9 @@ class VoxCPM:
         async with self._lock:
             await self._connection()
 
-    async def synthesize(self, text: str, voice: Voice, on_chunk: ChunkCallback) -> float:
+    async def synthesize(
+        self, text: str, voice: Voice, on_chunk: ChunkCallback, on_words: WordsCallback | None = None,
+    ) -> float:
         if voice.sample:
             raise TtsError("voxcpm: the bridge designs voices, it clones none from a recording")
         async with self._lock:

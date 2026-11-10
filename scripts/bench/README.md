@@ -4,16 +4,21 @@
 
 Bench families are extracted into `common/testbench_<family>.cpp`, with shared state types and helpers in `testbench_internal.h`.
 The dispatcher calls `bool <family>Command(...)` wrappers for the extracted command groups:
-`npc_sim`, `water`, `character`, `monster`, `furniture_parts`, `placed_items`, `item_hulls`, `fracture_pieces`, `destruction`, `body_impact`, `body`, `movable`, `noise`, `spell`, `item_wake`, `living`, `melee`, `routine`, `aim_spots`, `npc_commands` and `world`.
+`npc_sim`, `water`, `character`, `monster`, `furniture_parts`, `placed_items`, `item_hulls`, `fracture_pieces`, `destruction`, `body_impact`, `body`, `movable`, `noise`, `spell`, `item_wake`, `living`, `melee`, `routine`, `aim_spots`, `npc_commands`, `world`, `camera` and `overlay`.
 Each wrapper handles its command branches in their original order and returns whether it matched.
-Tick and reset remain in `testbench.cpp`, along with water-film and monster camera/follow commands.
+The dispatcher `exec` and `expandForeach` live in `common/testbench_exec.cpp`.
+The frame loop (`TestBench::tick`, `run`, waits, route/volley stepping and loopback sound) lives in `common/testbench_loop.cpp`.
+CSV/heartbeat writing, final reports and shared ragdoll formatting live in `common/testbench_report.cpp`.
+Saved-item archive observations live in `common/testbench_saved_items.cpp`.
+`Bench` is defined in `testbench_internal.h`; its single instance, dynamically initialized settings,
+reset/configuration, context builders and the remaining engine hooks stay in `testbench.cpp`.
 Healing observations, commands and checks live in `common/testbench_healing.cpp`; its `Healing` state
 in `testbench_internal.h` keeps the current use separate from walk-speed references retained across `begin`.
 Family functions take that state by reference; the dispatcher also passes the melee-shadow actors.
 
 Water and corpse-water fixtures, observations and helpers live in `common/testbench_water.cpp`.
 Their `Water` state and `WaterContext` references to shared bench fields are in `testbench_internal.h`;
-`waterFilm*` stays in `testbench.cpp` and uses the same shared water helpers.
+Water-film fixtures live in `testbench_water_film.cpp` and use the same shared water helpers.
 
 Hero and human NPC CharacterVirtual fixtures, observations and helpers live in `common/testbench_character.cpp`.
 Their `Character` state and `CharacterContext` references are in `testbench_internal.h`;
@@ -22,12 +27,13 @@ The independent `ownMeshChest*` family lives in `common/testbench_own_mesh.cpp`.
 
 Ground-monster CharacterVirtual fixtures, observations and helpers live in `common/testbench_monster.cpp`.
 Their `MonsterCharacter` state and `MonsterCharacterContext` references are in `testbench_internal.h`.
-`monsterCharacterRenderProof`, `monsterCharacterCamera` and `TestBench::monsterCharacterCollision` stay in `testbench.cpp`.
+`TestBench::monsterCharacterCollision` stays in `testbench.cpp`; camera/follow commands and render proof live in `testbench_camera.cpp`.
 
 Destruction fixtures, observations and commands live in `common/testbench_destruction.cpp`.
 Their `Destruction` state and `DestructionContext` references are in `testbench_internal.h`.
 `TestBench::destructionTracesDebug` delegates its body there through `DestructionContext`;
-`destructionCamera`, `destructionSkinSample` and the other `TestBench::destruction*` hooks stay in `testbench.cpp`.
+`destructionCamera`, `destructionSkinSample` and `furnitureBody` live in that family;
+the other `TestBench::destruction*` hooks stay in `testbench.cpp`.
 Shared helpers have one definition and declarations in `testbench_internal.h`.
 
 Body-impact fixtures and commands live in `common/testbench_body_impact.cpp`;
@@ -37,7 +43,7 @@ Physics-trace debug commands (movable tables and wall arrows) live in `common/te
 P30 commands (`bodyarena`, `bodylive`, `bodyreplay`, `bodyobserve`/`bodyapi`, `bodyduel`,
 `bodyobserveprobe`, `bodyprobe`) and their animation/live helpers live in `common/testbench_body.cpp`.
 `BodyAnimation*` state types and `BodyContext` references are in `testbench_internal.h`.
-The `TestBench::body*` hooks and `body_traces` command stay in `testbench.cpp`.
+The `TestBench::body*` hooks stay in `testbench.cpp`; the `body_traces` command lives in `testbench_exec.cpp`.
 
 Movable-object, candle, physics-noise and spell fixtures and commands live in `common/testbench_movables.cpp`.
 Their `Movables` state, shared `LivingPhysics` samples and `MovablesContext` references are in `testbench_internal.h`.
@@ -45,55 +51,74 @@ The dispatcher calls `movableCommand`, `noiseCommand` and `spellCommand` at each
 shared helpers used by other families retain one definition.
 The bodies of `TestBench::physicsNoiseDebug`, `physicsNoise` and `physicsNoiseHeard` live in that family,
 with one-line delegates passing `MovablesContext` from `testbench.cpp`.
-Camera/capture helpers and the other `TestBench::` hooks stay in `testbench.cpp`.
+The other `TestBench::` hooks stay in `testbench.cpp`.
 
 Item-wake fixtures, observations and commands live in `common/testbench_item_wake.cpp`.
 Living-body counts, observations and `living` / `living-seat` commands live in `common/testbench_living.cpp`.
 Their `ItemWake` / `Living` state and context references are in `testbench_internal.h`;
 `itemWakeCommand` and `livingCommand` run at their groups' first original branches.
-The shared `ragdollNumber`, `ragdollVector`, `ragdollMatrix` and camera/capture helpers stay in `testbench.cpp`.
+The shared `ragdollNumber`, `ragdollVector` and `ragdollMatrix` live in `testbench_report.cpp`.
 
 Ragdoll archives, observations, arena checks and commands live in `common/testbench_ragdoll.cpp`.
 Own-mesh physics and chest fixtures and commands live in `common/testbench_own_mesh.cpp`.
 Their `RagdollBench` / `OwnMesh` state types and context references are in `testbench_internal.h`;
 `ragdollCommand` and `ownMeshCommand` run at their groups' first original branches.
-`ragdoll frame20`, camera/capture functions, shared ragdoll formatting helpers and `TestBench::` hooks stay in `testbench.cpp`.
+`ragdoll frame20` lives in `testbench_exec.cpp`; shared ragdoll formatting helpers live in `testbench_report.cpp`.
 
 Archery fixtures, observations, aim helpers and commands live in `common/testbench_archery.cpp`.
 Their `ArcheryBench` state, shared `Trail` type and `ArcheryContext` references are in `testbench_internal.h`.
 `archeryCommand` is called at the first branch of each of nine command groups, guarded by that group's command names.
-`aimCameraFrame`, `quiver`, `bowgeom`, `TestBench::arrowAt`, tick/reset and camera placement stay in `testbench.cpp`.
+`quiver` and `bowgeom` live in `testbench_exec.cpp`; `TestBench::arrowAt` and reset stay in `testbench.cpp`.
 
 Physics, world-data, cadence, waitragdoll / standup, crowd / down / push and world / performance /
 streaming / deterministic commands live in `common/testbench_world.cpp`, along with `physicsDump`.
 Their `WorldBench` state, shared waypoint `Spot` and `WorldContext` references are in `testbench_internal.h`.
 `worldCommand` runs at the first original branch of each of six groups, guarded by that group's command names.
-`traces`, `ragdoll frame20`, tick/reset, camera/capture code and `TestBench::` methods stay in `testbench.cpp`.
+`traces` and `ragdoll frame20` live in `testbench_exec.cpp`; tick lives in `testbench_loop.cpp` and reset stays in `testbench.cpp`.
 
 Manual-aim spot probes (`cansee`, `slopes`/`stairs`, `ledges`, `corner`, `walls`, `perches`, `edge`, `edgedist`)
 and their private perch helpers live in `common/testbench_aim_spots.cpp`.
 `aimSpotsCommand` runs at the first branch of each of two groups, guarded by that group's command names,
 with a reference to the shared `hasPrev` field. `Spot` / `SpotKind` and shared helper declarations are in
-`testbench_internal.h`; `findSpots`, `views`, camera/capture code and `expandForeach` stay in `testbench.cpp`.
+`testbench_internal.h`; `findSpots` lives in `testbench_aim_spots.cpp` and `expandForeach` in `testbench_exec.cpp`.
 
 Melee-shadow and melee-physics fixtures, dodge / AI-response helpers and commands live in `common/testbench_melee.cpp`.
 Routine-return and guard fixtures, observations, shared hazard-site helpers and commands live in `common/testbench_routine.cpp`.
 Their `Melee` / `Routine` state types and context references are in `testbench_internal.h`;
 `meleeCommand` and `routineCommand` run at their groups' first original branches.
-Tick/reset, camera/capture code and `TestBench::` hooks stay in `testbench.cpp`;
+Tick lives in `testbench_loop.cpp`; reset and the other `TestBench::` hooks stay in `testbench.cpp`;
 `meleePhysicsCamera` retains the fixture's original camera setup there.
+
+Cloth fixtures and commands live in `common/testbench_cloth.cpp`; water film fixtures and commands
+live in `common/testbench_water_film.cpp`. Their `ClothBench` / `WaterFilm` state and
+`ClothContext` / `WaterFilmContext` references are in `testbench_internal.h`.
+`clothCommand` and `waterFilmCommand` run at their first original branches; tick and cold-load observation
+hooks in `testbench_loop.cpp` pass the family context; the capture hook in
+`testbench_camera.cpp` reaches the same water-film family through a context delegate.
 
 Hero and NPC inventory, placement, stats, routines, fights, aiming, hits and dodge commands live in `common/testbench_npc_commands.cpp`.
 Their `NpcCommands` state and `NpcCommandsContext` references are in `testbench_internal.h`.
 `npcCommandsCommand` runs at the first original branch of each of four groups, guarded by that group's command names;
 intervening `npcSimCommand` and `archeryCommand` calls retain their order in `exec`.
-Animation, appearance and capture commands stay in `testbench.cpp`.
+Animation commands live in `testbench_exec.cpp`.
 
 Scenario timing, logging, routing, movement and input commands live in `common/testbench_control.cpp`.
 Conversation and AI probes live in `common/testbench_dialog.cpp`.
 Their `ControlContext` / `DialogContext` references are in `testbench_internal.h`; shared helpers have one definition.
 Each family runs at its first original branch, guarded only by its command names.
-Intervening animation, camera and capture commands retain their positions in `exec`; tick/reset stay in `testbench.cpp`.
+Intervening animation commands retain their positions in `exec`; tick lives in `testbench_loop.cpp`, reset in `testbench.cpp`.
+
+Camera placement, `views`, framing/track/sight/aim telemetry and the body of `TestBench::capture` live in
+[`common/testbench_camera.cpp`](../../OpenGothic/common/testbench_camera.cpp).
+Raster overlays, exposure, hit zones, arrow trails, video piping and recording finalization live in
+[`common/testbench_overlay.cpp`](../../OpenGothic/common/testbench_overlay.cpp).
+`CameraBench` / `OverlayBench` own their original fields in `testbench_internal.h`; `Bench` inherits them
+so tick/reset and the other families keep their shared field access. `CameraContext` / `OverlayContext`
+carry references to that state and the other fields used by these families.
+`cameraCommand` and `overlayCommand` run at the first original branch of their groups; all eleven camera
+and both overlay command conditions depend only on `c`. Monster camera/follow calls retain their full
+argument guards in `exec`. `TestBench::capture` and the shared contextless camera helpers are one-line delegates.
+`Canvas` and `VideoPipe` have shared declarations and one definition per method in `testbench_overlay.cpp`.
 
 Runs a scenario through the windowed game or the headless runner and records metrics and a report.
 Windowed scenarios can also capture video with a debug overlay and point at suspicious frames.
@@ -599,7 +624,8 @@ Faces: `faces` (the face animations of a head one after another, then two of the
 `face-fade` (faces fade in and out, one gives way to the next, three a moment apart, the lips over a
 fading face), `mood-ai` (given lines of an AI server with moods: start `gothic-ai serve --scenario m1 --llm off
 --no-tts` on a port of your own and run the bench with `GOTHIC_AI_URL=ws://127.0.0.1:<port>`; with a TTS
-service instead of `--no-tts` the lines are voiced in their mood). Columns `face_neutral`, `face_friendly`,
+service instead of `--no-tts` the lines are voiced in their mood). Gestures and a lie of an own head in the game, close up with
+sound: `face-cues-clip` ([below](#face-cues-clip)). Columns `face_neutral`, `face_friendly`,
 `face_angry`, `face_hostile`, `face_afraid`, `face_pain` of `metrics.csv`: how much of each face of the
 watched npc shows, 0..1.
 Wolves: `wolf` (docs/beasts.md, no server: the bridge's `ai beast listen|sit|calm|flee|attack|resume` on the
@@ -888,6 +914,8 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `dialog <npc\|nearest>` | the hero talks to it, as with the action key: the dialog window opens |
 | `choose <n>` | runs the n-th choice (from 1) of the dialog with the watched npc, as if the player picked it |
 | `faceanim <npc\|nearest\|player> <anim> [ms] [intensity]` | a face animation of the head (`S_ANGRY`, `S_FRIENDLY`, `T_HURT`...) |
+| `facecue <npc\|nearest\|player> <gesture> [L\|R]` | a facial gesture of its own head (`flash`, `doubt`, `smirk`...: the `cues` of its face profile); a one-sided one without a side goes on a side by the seed; columns `cue_*` show the gestures |
+| `faceleak <npc\|nearest\|player> <felt> <upper\|lower>` | a leak of the felt emotion (`friendly`, `angry`, `hostile`, `afraid`, `pain`) on half of its own head's face (the `leaks` of its face profile) now, as a line that hides a lie: with the liar's two blinks in the 2 s after it; column `cue_leak` shows its strongest weight |
 | `lips on\|off`, `lips param <name> <value>`, `lips params` | lip sync (off: the old talk loop) and its parameters |
 | `gestures on\|off`, `gestures param <name> <value>`, `gestures params` | the hands while one speaks (`TalkGestures`; off: a random gesture when a line starts) and its parameters: `Tail`, `Wait`, `MinLeft`, `Slack` (ms), `Long`, `RestScale`; the head: `Nod` (degrees), `NodHz`, `Stress`, `NodGap` (ms), `SwayYaw`, `SwayRoll` (degrees), `SwayTime`, `SwayLag` (ms); listening and thinking: `ListenSway`, `ListenNod` (degrees), `ListenHz`, `ListenGap` (ms), `ListenProb`, `DoubleNod`, `ThinkDelay` (ms), `ThinkYaw`, `ThinkPitch`, `ThinkTilt` (degrees), `AsideTime` (ms) |
 | `blink on\|off`, `blink param <name> <value>`, `blink params` | blinking (`EyeBlink`; off: nobody blinks) and its parameters: `MinGap`, `RestMean`, `SpeakMean`, `MaxGap`, `Hold`, `PauseMs`, `SoonMs`, `DoubleGap` (ms), `PauseProb`, `ShiftProb`, `DoubleProb` |
@@ -927,6 +955,45 @@ plays), `NO_BUILD=1`, `TIMEOUT` (seconds, default 300), `KEEP=1`, `OPENGOTHIC_TE
 textures; by default those of `scripts/hd-textures.sh` when they have been made, as the launcher does;
 empty: the game's own), `SOUND` and `MUSIC` (volumes 0..1, default 0; with `TEMPEST_AUDIO_LOOPBACK=48000` a
 segment's sound goes into `<segment>.wav`).
+
+## Face cues clip
+
+The acceptance clip of the facial gestures and the leak of a lie in the game
+([face-cues.md](../../reports/content/2026-11-hero-head/face-cues.md), "Приёмка", "В игре"): Vino with an own head
+says four lines with gesture tags and one lie through the real path — the server's parsing (`MoodTags`,
+`say.cues`, `say.leak`), the voice of `tts-service` with its word times (`say_audio.words`), the bridge's
+`LineCues`. The server's scenario `face_cues_demo` (`server/src/gothic_ai/scenarios/face_cues.py`) puts Vino on open
+ground in Lobart's yard (`NW_FARM1_PATH_01`, out of the field's crops) at noon, takes him over, puts the hero
+2 m in front of him and asks him 8 s later; `face-cues-clip.bench` films his face
+close up without the overlay (`overlay off`: its text would be in the clip) from 5.5 s on until he has been
+quiet 3 s. The leak is the server's trial (`p` at most 0.6); for a sure
+one the server runs with the debug flag `--debug-leak [upper|lower]` (every `[felt:…]` leaks, on that half).
+
+Vino needs an own head with `cues` and `leaks` in its face profile: a content copy whose `characters.json` lists
+`BAU_952_VINO` (e.g. the hero head of `hero-head-2` with the sections of
+[`test-head.face.json`](../../reports/content/2026-11-hero-head/mpfb/test-head.face.json)). On the Mac, from the
+repository root (Ryzen gets the server through the bench's tunnel):
+
+```bash
+W=/tmp/face-cues-clip; mkdir -p $W
+(cd tts-service && uv run gothic-tts serve --port 47920 --provider inworld --fallback none) > $W/tts.log 2>&1 &
+(cd server && uv run gothic-ai serve --port 47921 --scenario face_cues_demo --llm off --exit-after --no-console \
+  --no-voice --no-brain --no-quick --tts-url ws://127.0.0.1:47920 --debug-leak upper \
+  --memory-db $W/memory.sqlite3 --trace-dir $W/traces) > $W/server.log 2>&1 &
+GOTHIC_AI_URL=ws://127.0.0.1:47921 OPENGOTHIC_CONTENT=<content root> TEMPEST_WINDOW_SIZE=1280x720 \
+  OPENGOTHIC_BENCH_REALTIME=1 TEMPEST_AUDIO_LOOPBACK=48000 SOUND=1 MUSIC=0 BENCH_HOST=ryzen \
+  scripts/bench.sh scripts/bench/face-cues-clip.bench
+uv run --with pillow python reports/content/2026-11-hero-head/cues/ingame_clip.py .bench/face-cues-clip-<time> <out>
+```
+
+`--provider inworld` spends four paid Inworld requests a take; `--provider fake` (a tone with word times) checks
+the staging for free. `ingame_clip.py` writes into `<out>`:
+- `clip.mp4` — the recording with its sound and "Реплика N" over each line;
+- `key.txt` — for each line its text and mood, each gesture with its word, start, apex and the weight of its
+  `cue_*` column at the apex, the lie with its felt mood, half and `cue_leak`, the liar's blinks (eyes shut by
+  `R_EYESBLINK` while `bk_n`, the ordinary blinks, stays);
+- `sheet.jpg` — the frame before and the apex of each gesture and of the leak.
+The gestures of each line come from its `[ai] cues` line in `game.log`, the times from `metrics.csv`.
 
 ## Native NPC calibration duels
 
@@ -1648,7 +1715,7 @@ and checks its identity and exact matrix on reload. Linux builds and all four
 physics contracts pass after explicit signed Guild comparisons in the fixture.
 
 `OpenGothic/common/testbench.cpp` and `testbench_<family>.cpp` (including healing in
-`testbench_healing.cpp`, water / corpse-water in `testbench_water.cpp` and hero / human NPC
+`testbench_healing.cpp`, cloth in `testbench_cloth.cpp`, water film in `testbench_water_film.cpp`, water / corpse-water in `testbench_water.cpp` and hero / human NPC
 CharacterVirtual in `testbench_character.cpp` and ground monsters in `testbench_monster.cpp`, destruction in `testbench_destruction.cpp`, physics-trace debug commands in `testbench_traces.cpp`, movable objects/candles, physics noise and spells in `testbench_movables.cpp`, item wake in `testbench_item_wake.cpp` and living bodies in `testbench_living.cpp`, ragdolls in `testbench_ragdoll.cpp` and own meshes / chests in `testbench_own_mesh.cpp`, archery in `testbench_archery.cpp`, melee in `testbench_melee.cpp` and routine return / guard in `testbench_routine.cpp`, manual-aim spot probes in `testbench_aim_spots.cpp`, hero / NPC commands in `testbench_npc_commands.cpp`, physics / world / time in `testbench_world.cpp`, scenario control in `testbench_control.cpp` and conversation / AI probes in `testbench_dialog.cpp`), inert unless `OPENGOTHIC_BENCH` is set. Hooks: the fixed time step and
 the capture in `MainWindow` (in film mode the captured frame replaces the window's), the AI bridge's lines
 and voices (`TestBench::aiLine`, `aiVoiceEnd`, `aiHeard`, `aiBusy`), an npc's lines of the game and SVMs

@@ -317,13 +317,11 @@ add_shader(sky_sep.frag              sky/sky.frag -DSEPARABLE)
 add_shader(fog3d.comp                sky/fog.frag -S comp -DVOLUMETRIC)
 add_shader(fog3d_empty.comp          sky/fog.frag -S comp -DVOLUMETRIC -DSHADOW_EMPTY)
 add_shader(fog3d_hq.frag             sky/fog.frag -DVOLUMETRIC)
-add_shader(fog_epipolar.frag         sky/fog_epipolar.frag)
 add_shader(fog.frag                  sky/fog.frag)
 #
 add_shader(fog_epipolar_vsm.comp       epipolar/fog_epipolar.comp)
 add_shader(fog_epipolar_occlusion.comp epipolar/fog_epipolar_occlusion.comp)
 
-add_shader(sky_pathtrace.frag        sky/sky_pathtrace.frag)
 
 add_shader(sun.vert                  sky/sun.vert)
 add_shader(sun.frag                  sky/sun.frag)
@@ -447,7 +445,6 @@ add_shader(vsm_postprocess_omni.comp virtual_shadow/vsm_postprocess_omni.comp)
 # virtual shadows: fog
 add_shader(vsm_fog_shadow.comp       virtual_shadow/vsm_fog_shadow.comp)
 add_shader(vsm_fog_mark_pages.comp   virtual_shadow/vsm_fog_shadow.comp -DPAGES)
-add_shader(vsm_fog_trace.comp        virtual_shadow/vsm_fog_trace.comp)
 
 add_shader(vsm_rendering.comp        virtual_shadow/vsm_rendering.comp)
 

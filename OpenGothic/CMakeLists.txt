@@ -22,11 +22,7 @@ endif()
 if(OPENGOTHIC_ENABLE_APP_CADENCE)
   target_compile_definitions(${PROJECT_NAME} PUBLIC OPENGOTHIC_ENABLE_APP_CADENCE=1)
 endif()
-if(ANDROID)
-  add_library(Gothic2Notr SHARED)
-else()
-  add_executable(Gothic2Notr)
-endif()
+add_executable(Gothic2Notr)
 
 if(MSVC)
   add_definitions(-D_USE_MATH_DEFINES)
@@ -66,16 +62,11 @@ if(WIN32)
   else()
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -mwindows -lstdc++fs")
   endif()
-elseif(IOS)
-  enable_language(OBJCXX)
-  set(CMAKE_OSX_DEPLOYMENT_TARGET 15.0)
 elseif(APPLE)
   enable_language(OBJCXX)
 endif()
 
-if(IOS)
-  file(GLOB_RECURSE ObjCSOURCES "common/*.mm")
-elseif(APPLE)
+if(APPLE)
   target_link_libraries(${PROJECT_NAME} "-framework AppKit")
   file(GLOB_RECURSE ObjCSOURCES "common/*.mm")
 endif()
@@ -135,8 +126,6 @@ endif()
 
 if(WIN32)
   target_link_libraries(${PROJECT_NAME} shlwapi DbgHelp)
-elseif(ANDROID)
-  target_link_libraries(${PROJECT_NAME} dl)
 elseif(UNIX)
   target_link_libraries(${PROJECT_NAME} -lpthread -ldl)
 endif()
@@ -275,7 +264,7 @@ if(WIN32)
 endif()
 
 # in debug mode, enable sanitizers
-if(${CMAKE_BUILD_TYPE} MATCHES "Debug" AND NOT ANDROID)
+if(${CMAKE_BUILD_TYPE} MATCHES "Debug")
   add_compile_options(-fsanitize=address)
   add_compile_options(-fsanitize=leak)
   add_link_options   (-fsanitize=address)
@@ -283,17 +272,6 @@ if(${CMAKE_BUILD_TYPE} MATCHES "Debug" AND NOT ANDROID)
 endif()
 
 # the game
-if(IOS)
-  set_directory_properties("${CMAKE_SOURCE_DIR}" PROPERTIES
-    PROPERTY XCODE_STARTUP_PROJECT "Gothic2Notr")
-  set_target_properties(Gothic2Notr PROPERTIES
-    MACOSX_BUNDLE_INFO_PLIST "Info.plist.in"
-    MACOSX_BUNDLE_GUI_IDENTIFIER "opengothic.gothic2"
-    MACOSX_BUNDLE_BUNDLE_VERSION 1
-    MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0"
-    XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "iPhone Developer")
-endif()
-
 target_sources(Gothic2Notr PRIVATE game/main.cpp)
 if(WIN32)
   target_sources(Gothic2Notr PRIVATE icon.rc)
@@ -305,7 +283,7 @@ add_subdirectory(ai_bridge)
 target_link_libraries(Gothic2Notr PRIVATE AiBridge)
 
 # Uses the shared engine/CPU simulation without constructing a window or graphics/audio device.
-if(UNIX AND NOT IOS AND NOT ANDROID)
+if(UNIX)
   add_executable(gothic-body-runner game/bodyrunner.cpp game/societyexport.cpp)
   target_link_libraries(gothic-body-runner PRIVATE OpenGothic AiBridge)
   # --society-export names the engine's commit: refreshed on every build of the runner, the header is
@@ -338,9 +316,10 @@ if(UNIX AND NOT IOS AND NOT ANDROID)
   add_executable(gothic-taa-test EXCLUDE_FROM_ALL tests/taa_test.cpp)
   target_link_libraries(gothic-taa-test PRIVATE OpenGothic AiBridge)
   target_compile_options(gothic-taa-test PRIVATE -Wall -Wconversion -Werror)
-  # The own head's face (graphics/mesh/facerig): a synthetic head and profile; CPU only, no device or game data.
+  # The own head's face (graphics/mesh/facerig): a synthetic head and profile, the bridge's say cues; CPU only, no device or game data.
   add_executable(gothic-facerig-test EXCLUDE_FROM_ALL tests/facerig_test.cpp)
   target_link_libraries(gothic-facerig-test PRIVATE OpenGothic AiBridge)
+  target_include_directories(gothic-facerig-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   target_compile_options(gothic-facerig-test PRIVATE -Wall -Wconversion -Werror)
   # Our render skeleton under a Gothic one (graphics/mesh/renderrig): synthetic skeletons and rig table; CPU only.
   add_executable(gothic-render-rig-test EXCLUDE_FROM_ALL tests/render_rig_test.cpp)
@@ -357,7 +336,6 @@ endif()
 
 # The society stand's core (common/society/README.md): the standard library and rapidjson only. Its include path
 # is set alone, without the engine's directories, so an engine header does not compile there.
-if(NOT ANDROID AND NOT IOS)
   file(GLOB SOCIETY_CORE_SOURCES common/society/*.cpp)
   add_library(society-core STATIC ${SOCIETY_CORE_SOURCES})
   set_property(TARGET society-core PROPERTY INCLUDE_DIRECTORIES "")
@@ -372,10 +350,8 @@ if(NOT ANDROID AND NOT IOS)
   if(NOT MSVC)
     target_compile_options(gothic-society-day PRIVATE -Wall -Wconversion -Werror)
   endif()
-endif()
 
 # Asset-free contracts; run explicitly with their check-* targets.
-if(NOT ANDROID AND NOT IOS)
   add_executable(gothic-navpolicy-contract EXCLUDE_FROM_ALL
     tests/navpolicy_contract.cpp common/navpolicy.cpp common/game/navigationmemory.cpp)
   target_include_directories(gothic-navpolicy-contract PRIVATE
@@ -715,20 +691,16 @@ if(NOT ANDROID AND NOT IOS)
   add_custom_target(check-instance-storage
     COMMAND $<TARGET_FILE:gothic-instance-storage-contract>
     DEPENDS gothic-instance-storage-contract USES_TERMINAL)
-endif()
 
 # editor
 
-if(NOT ANDROID AND NOT IOS)
   add_executable(gothic-npc-deeds-contract EXCLUDE_FROM_ALL tests/npc_deeds_contract.cpp)
   target_include_directories(gothic-npc-deeds-contract PRIVATE common)
   add_custom_target(check-npc-deeds
     COMMAND $<TARGET_FILE:gothic-npc-deeds-contract>
     DEPENDS gothic-npc-deeds-contract USES_TERMINAL)
-endif()
 
 # Navigation eye has an independent contract block to keep parallel navigation work isolated.
-if(NOT ANDROID AND NOT IOS)
   add_executable(gothic-navigation-eye-contract EXCLUDE_FROM_ALL tests/navigation_eye_contract.cpp)
   target_link_libraries(gothic-navigation-eye-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_custom_target(check-navigation-eye
@@ -756,14 +728,6 @@ if(NOT ANDROID AND NOT IOS)
   add_custom_target(check-followtrail
     COMMAND $<TARGET_FILE:gothic-followtrail-contract>
     DEPENDS gothic-followtrail-contract USES_TERMINAL)
-endif()
-
-if(ANDROID)
-  add_android_apk(OpenGothic-apk
-    PACKAGE_NAME org.opengothic.app
-    CODE Gothic2Notr
-    MANIFEST android/AndroidManifest.xml)
-endif()
 
 # installation
 install(TARGETS Gothic2Notr DESTINATION bin)

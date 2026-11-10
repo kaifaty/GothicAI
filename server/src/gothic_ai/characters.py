@@ -76,6 +76,11 @@ class Card:
     talk: int
     pushy: int
     strangers: int
+    lie_skill: float | None = None  # 0..1; absent: 0.3, or 0.5 for guild 9
+
+    def __post_init__(self) -> None:
+        if self.lie_skill is not None and not 0 <= self.lie_skill <= 1:
+            raise ValueError("lie_skill must be in 0..1")
 
     @property
     def lead(self) -> int:
@@ -143,7 +148,7 @@ def load(path: Path = CARDS_FILE) -> dict[str, Card]:
     for npc, c in data.get("cards", {}).items():
         try:
             out[npc.upper()] = Card(**{k: v for k, v in c.items() if k in names})
-        except TypeError as err:
+        except (TypeError, ValueError) as err:
             log.warning("characters: bad card %s: %s", npc, err)
     return out
 
