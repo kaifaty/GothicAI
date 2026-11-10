@@ -37,6 +37,14 @@ Kinds:
 - steady {"bones": ["BIP01 NECK", "BIP01 HEAD"], "window": [...], "share": 0.4}: the last bone keeps the share of its
         swing in the world about its mean over the record, and the turn that takes is spread evenly over the listed
         bones: a runner holds the head still while the chest swings. Both clavicles hang on the neck: `keep` them.
+- breath {"window": [...], "breaths": 2, "chest": 1.5, "shoulders": 0.7, "inhale": 0.4, "pause": 0.1}: breathing laid
+        over a standing loop, `breaths` whole breaths a cycle so the seam stays closed. On the way in (the share
+        `inhale` of a breath) the chest straightens by `chest` degrees, split between SPINE1 and SPINE2, and both
+        shoulders rise by `shoulders` cm (the clavicles turn); the way out is slower and ends in a rest of the share
+        `pause`. The lower back (SPINE) leans forward by as much as keeps the neck where it was, so the chest opens
+        and the head does not rock back with every breath. The head and the upper arms keep their turn in the world,
+        the neck gives half of it back, and the hands move only as the shoulders do. Kimodo's standing samples
+        do not breathe: their chest and shoulders drift, with no period of 3-5 s.
 
 {"loop": true} in fixes.json: the record is a moving loop - its last frame is the first again, moved by the
 travel (loop_cycle.py). Windows may then run past the last cycle frame and go on from frame 0 (a window [18, 23,
@@ -80,6 +88,16 @@ def weight(window, f: int) -> float:
 def weight_at(window, f: int, cycle: int = 0) -> float:
     """weight() of a loop: a window may run past the cycle's last frame and go on from its first."""
     return max(weight(window, f), weight(window, f + cycle)) if cycle else weight(window, f)
+
+
+def breath_level(breath: float, inhale: float, pause: float) -> float:
+    """0..1 over one breath: a smooth way in over the share `inhale`, a slower way out, a rest of the share `pause`."""
+    p = breath % 1.0
+    if p < inhale:
+        return 0.5 - 0.5 * np.cos(np.pi * p / inhale)
+    if p < 1.0 - pause:
+        return 0.5 + 0.5 * np.cos(np.pi * (p - inhale) / (1.0 - pause - inhale))
+    return 0.0
 
 
 def rot(axis, rad: float) -> np.ndarray:
@@ -332,6 +350,47 @@ def apply(skel: ga.Skeleton, anim: ga.Animation, fixes: list, floor: float, cycl
                     two_bone(clip, f, W, limb, at, turn)
                 log.append(f"pelvis f{f}: roll {np.degrees(rolls[f] - mean):+.1f}° -> "
                            f"{np.degrees(hip_roll(W, i_lt, i_rt, side) - mean):+.1f}°")
+        elif kind == "breath":
+            i_l, i_r = skel.index("BIP01 L UPPERARM"), skel.index("BIP01 R UPPERARM")
+            i_neck = skel.index("BIP01 NECK")
+            still = ["BIP01 L UPPERARM", "BIP01 R UPPERARM", "BIP01 HEAD"]
+            lift = {}  # per clavicle: radians a cm of shoulder rise, signed, measured on the first frame
+            for f in frames:
+                level = breath_level(f / count * fx.get("breaths", 2) + fx.get("phase", 0.0), fx.get("inhale", 0.4),
+                                     fx.get("pause", 0.1)) * wt(win, f)
+                if level <= 0:
+                    continue
+                W = clip.world(f)
+                before = {b: W[skel.index(b)][:3, :3].copy() for b in still + ["BIP01 NECK"]}
+                side = W[i_r][:3, 3] - W[i_l][:3, 3]
+                side[1] = 0.0
+                side /= np.linalg.norm(side)
+                ahead = np.cross(side, UP)
+                back = np.radians(fx.get("chest", 1.5)) * level
+                neck0 = W[i_neck][:3, 3].copy()
+                for bone, share in (("BIP01 SPINE1", 0.4), ("BIP01 SPINE2", 0.6)):
+                    i = skel.index(bone)
+                    up = W[i_neck][:3, 3] - W[i][:3, 3]
+                    way = 1.0 if (rot(side, 0.01) @ up) @ ahead < up @ ahead else -1.0  # the way that leans it back
+                    clip.set_world_rot(f, W, bone, rot(side, way * share * back) @ W[i][:3, :3])
+                # the lower back gives the lean back: the neck stays over the feet, the chest opens
+                i_low = skel.index("BIP01 SPINE")
+                for _ in range(2):
+                    up = W[i_neck][:3, 3] - W[i_low][:3, 3]
+                    way = 1.0 if (rot(side, 0.01) @ up) @ ahead > up @ ahead else -1.0  # the way that leans it forward
+                    off = (neck0 - W[i_neck][:3, 3]) @ ahead
+                    clip.set_world_rot(f, W, "BIP01 SPINE", rot(side, way * off / (up @ UP)) @ W[i_low][:3, :3])
+                for s_, i_arm in (("L", i_l), ("R", i_r)):
+                    bone = f"BIP01 {s_} CLAVICLE"
+                    i = skel.index(bone)
+                    if s_ not in lift:
+                        arm = W[i_arm][:3, 3] - W[i][:3, 3]
+                        lift[s_] = 0.01 / ((rot(ahead, 0.01) @ arm)[1] - arm[1])
+                    clip.set_world_rot(f, W, bone, rot(ahead, lift[s_] * fx.get("shoulders", 0.7) * level) @ W[i][:3, :3])
+                clip.set_world_rot(f, W, "BIP01 NECK", slerp_m(W[i_neck][:3, :3], before["BIP01 NECK"], 0.5))
+                for bone in still:
+                    clip.set_world_rot(f, W, bone, before[bone])
+            log.append(f"breath: {fx.get('breaths', 2)} a cycle, {count / anim.fps / fx.get('breaths', 2):.2f} s each")
         else:
             raise SystemExit(f"unknown fix kind {kind}")
     if cycle:  # the seam frame is the first frame again, moved by the travel

@@ -661,3 +661,58 @@ def test_fix_layer_steady_holds_the_head_still_and_keep_leaves_the_arms():
     assert swing(anim).max() < 0.45 * s0.max()
     after = [ga.world_pose(skel, anim, f) for f in range(n)]
     assert all(np.allclose(after[f][i][:3, 3], before[f][i][:3, 3], atol=0.5) for f in range(n) for i in hands)
+
+
+def gothic_stance():
+    models = base_models()
+    if models is None or not (models / "HUMANS-S_RUN.MAN.json").exists():
+        pytest.skip("no converted base")
+    return models, ga.read_skeleton(models / "HUMANS.MDH.json"), ga.read_animation(models / "HUMANS-S_RUN.MAN.json")
+
+
+def test_fix_layer_breath_lifts_the_shoulders_and_leaves_the_head_the_feet_and_the_seam():
+    import fix_layer
+    _, skel, anim = gothic_stance()
+    n = anim.frame_count - 1
+    anim.positions[:], anim.rotations[:] = anim.positions[0], anim.rotations[0]      # a still stance: only the breath moves
+    shoulders = [skel.index(f"BIP01 {s} UPPERARM") for s in "LR"]
+    still = [skel.index(b) for b in ("BIP01 HEAD", "BIP01 L FOOT", "BIP01 R FOOT")]
+    first = (anim.positions[0].copy(), anim.rotations[0].copy())
+    before = ga.world_pose(skel, anim, 0)
+    fix_layer.apply(skel, anim, [{"kind": "breath", "window": [0, 0, n - 1, n - 1], "breaths": 2, "chest": 1.5,
+                                  "shoulders": 0.7}], floor=0.0, cycle=n)
+    assert np.array_equal(anim.positions[0], first[0]) and np.array_equal(anim.rotations[0], first[1])
+    W = np.array([ga.world_pose(skel, anim, f) for f in range(n)])
+    rise = W[:, shoulders, 1, 3] - before[shoulders, 1, 3]
+    assert 0.5 < rise.max() < 0.9 and rise.min() > -0.05
+    assert np.abs(W[:, still][:, :, :3, 3] - before[still][:, :3, 3]).max() < 0.15
+    up = rise[:, 0]
+    peaks = [f for f in range(1, n - 1) if up[f] > up[f - 1] and up[f] >= up[f + 1] and up[f] > 0.5]
+    assert len(peaks) == 2                                                           # two breaths over the loop
+
+
+def test_loop_idle_onto_holds_the_reference_pose_with_a_still_root(tmp_path, monkeypatch):
+    import loop_idle
+    models, skel, anim = gothic_stance()
+    n = anim.frame_count - 1
+    sway = np.sin(2 * np.pi * np.arange(n + 1) / n)
+    anim.positions[:, 0, 0] += 1.0 * sway + 20.0                    # the sample stands off the origin and sways 2 cm
+    wobble = np.array([np.cos(0.02 * sway), 0 * sway, 0 * sway, np.sin(0.02 * sway)]).T
+    col = anim.node_indices.index(skel.index("BIP01 SPINE1"))
+    anim.rotations[:, col] = [rs.mat_to_quat(ga.quat_matrix(q) @ ga.quat_matrix(w)) for q, w in zip(anim.rotations[:, col], wobble)]
+    src, out = tmp_path / "HUMANS-SRC.MAN.json", tmp_path / "HUMANS-S_RUN.MAN.json"
+    ga.write_animation(src, anim, "test")
+    monkeypatch.setattr(sys, "argv", ["loop_idle.py", str(src), str(models), str(out), "--name", "S_RUN", "--onto",
+                                      "--frames", f"0,{n}", "--report", str(tmp_path / "rep.json")])
+    loop_idle.main()
+    loop, ref = ga.read_animation(out), ga.read_animation(models / "HUMANS-S_RUN.MAN.json")
+    assert loop.frame_count == n + 1
+    assert np.ptp(loop.positions[:, 0], axis=0).max() < 1e-4                          # the root stands still
+    feet = [skel.index(f"BIP01 {s} FOOT") for s in "LR"]
+    Wr = ga.world_pose(skel, ref, 0)
+    W = np.array([ga.world_pose(skel, loop, f) for f in range(n + 1)])
+    assert np.abs(W[:, feet][:, :, :3, 3] - Wr[feet][:, :3, 3]).max() < 0.05                   # the feet are pinned on the reference
+    head = skel.index("BIP01 HEAD")
+    assert np.abs(W[:, head, :3, 3].mean(0) - Wr[head, :3, 3]).max() < 0.5            # the pose is the reference's
+    assert np.ptp(W[:, head, :3, 3], axis=0).max() > 0.3                              # and the sample's motion is kept
+    assert np.allclose(W[n], W[0], atol=1e-4)
