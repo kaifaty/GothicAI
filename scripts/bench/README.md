@@ -582,8 +582,11 @@ point (rays every 4 cm), is skipped. Events: `destruction2_remnant_attempt` per 
 `destruction2_remnant_complete` with `broken`, `swings`, bodies and the largest group before and after,
 and every group's pieces. `destruction2 walk <cm>` then walks the hero, holding forward (4 s at most a
 pass), along a straight line through the centre of the loose pieces, clear of the largest group by its
-radius plus 40 cm, there and back: `destruction2_walk` gives per pass the progress, the feet over and under
-the ground and the pieces moved. Every break, the first and each remnant's, writes `destruction_break` (with
+radius plus 40 cm, there and back. The line must pass within 10 cm of the hull of a loose piece from 0.5 m
+(one the hero pushes; smaller ones it walks through); failing that, lines through each such piece; with
+none the scenario aborts. `destruction2_walk` gives `pieces_on_path`, per pass the progress, the feet over
+and under the ground and the pieces moved, and over the walk `moved_pieces` and `counted` (true only if a
+piece moved). Every break, the first and each remnant's, writes `destruction_break` (with
 `remnant`) and `destruction2_start` / `destruction2_pieces` under its own case: `<case>-remnant-<n>` for
 the n-th remnant break, sampled from its own moment; `hero_debris_penetration_cm`,
 `hero_piece_penetration_cm` and `hero_light_piece_penetration_cm` give the depth of the hero's capsule (its
