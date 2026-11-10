@@ -1167,13 +1167,15 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
   write("lv-ring.dds",mipDds(0x31545844,256,256,9));
   write("lv-scaled.dds",mipDds(0x31545844,512,512,10));
   write("lv-stale.dds",mipDds(0x31545844,512,512,10));
+  write("lv-hold.dds",mipDds(0x31545844,256,256,9));
   textFile(fixture.root/"materials/materials.json",R"({
     "LV_STREAM.TGA":{"albedo":"lv-albedo.dds","normal":"lv-maps.dds","orm":"lv-maps.dds"},
     "LV_FLAT.TGA":{"albedo":"lv-flat.dds"},
     "LV_NEAR.TGA":{"albedo":"lv-near.dds"},
     "LV_RING.TGA":{"albedo":"lv-ring.dds"},
     "LV_SCALED.TGA":{"albedo":"lv-scaled.dds","scale":2.17},
-    "LV_STALE.TGA":{"albedo":"lv-stale.dds"}
+    "LV_STALE.TGA":{"albedo":"lv-stale.dds"},
+    "LV_HOLD.TGA":{"albedo":"lv-hold.dds"}
   })");
   setenv("OPENGOTHIC_TEXTURE_STREAMING","1",1);
   setenv("OPENGOTHIC_TEXTURE_MIPS","1",1);
@@ -1197,6 +1199,8 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
   stale=Material(source("LV_STALE.TGA"),true);
   }
   require(scaled.uvScale==2.17f && scaled.tex->w()==128,"the scaled fixture must carry its materials.json UV scale");
+  const Material hold(source("LV_HOLD.TGA"),true);
+  require(hold.tex->w()==256,"a texture loaded outside the Far scope must be whole");
   const auto sides=[&](int albedo, int maps) {
     return material.tex->w()==albedo && material.normal->w()==maps && material.orm->w()==maps;
     };
@@ -1314,6 +1318,10 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
   // 2^-5: the albedo needs level 2, the maps level 1. Nothing is lowered within the target, even after the delay.
   Resources::textureDemand(material,stat,true,Need{3,-5});
   Resources::textureDemand(material,stat,false,Need{3,-4});
+  // An NPC's or item's ring demand moving from ring 2 to ring 3 keeps the whole chain, as under the ring rule.
+  Resources::textureDemand(hold,Resources::TextureCategory::Dynamic,true,2u);
+  Resources::textureDemand(hold,Resources::TextureCategory::Dynamic,true,3u);
+  Resources::textureDemand(hold,Resources::TextureCategory::Dynamic,false,2u);
   std::this_thread::sleep_for(std::chrono::milliseconds(5100));
   tick();
   require(sides(512,256) && Resources::textureStats().demoted==0,"lowering must wait for memory above the target");
@@ -1329,6 +1337,13 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
     },"pressure must lower every eligible texture");
   require(firstObserved && sides(128,128) && near.tex->w()==512 && flat.tex->w()==256,
           "pressure must lower only to the wanted level and leave textures wanted whole");
+  for(int i=0;i<20;++i) {
+    tick();
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+  require(hold.tex->w()==256 && Resources::textureStats().demoted==3,
+          "a ring-only owner within ring 3 must keep its texture whole under pressure");
+  Resources::textureDemand(hold,Resources::TextureCategory::Dynamic,false,3u);
 
   setenv("OPENGOTHIC_TEXTURE_SCREEN_MIPS","0",1);
   Resources::configureTextures({},{},"0");

@@ -480,9 +480,10 @@ void Resources::queueTexture(TextureRecord& record) {
       else if(record.firstMip>wanted)
         texturePromotions.insert(&record);
       }
-    // Lowering waits five seconds of eligibility. The ring rule also keeps an owner within ring 3.
-    const bool eligible=textureScreen ? wanted>record.firstMip
-                                      : wanted!=0 && (record.distances.empty() || record.distances.begin()->first>3);
+    // Lowering waits five seconds of eligibility. An owner judged by the ring rule keeps it within ring 3.
+    const auto& rings=textureScreen ? record.ringNeeds : record.distances;
+    const bool hold=!rings.empty() && rings.begin()->first<=3;
+    const bool eligible=textureScreen ? wanted>record.firstMip && !hold : wanted!=0 && !hold;
     if(eligible) {
       if(record.demoteAt==std::chrono::steady_clock::time_point{})
         record.demoteAt=std::chrono::steady_clock::now()+std::chrono::seconds(5);
@@ -858,7 +859,8 @@ void Resources::publishTexture(const std::shared_ptr<TextureReload>& reload) {
   record.loading=false;
   const auto wanted=wantedLevel(record);
   const auto level=reload->level;
-  const bool hold=!textureScreen && !record.distances.empty() && record.distances.begin()->first<=3;
+  const auto& rings=textureScreen ? record.ringNeeds : record.distances;
+  const bool hold=!rings.empty() && rings.begin()->first<=3;
   const bool delayElapsed=record.demoteAt!=std::chrono::steady_clock::time_point{} &&
                           record.demoteAt<=std::chrono::steady_clock::now();
   // The unpublished replacement is already included in the live counter.
