@@ -44,7 +44,7 @@ struct SceneDesc {
   uint  taaFrame;  // TAA: the frame number, turns the lamp shadows' tap pattern (light.frag); 0 without TAA
   uint  taaActive; // 1 under TAA, 0 without it
   uint  motionVectors; // motion vectors of objects into the G-buffer (main view only), 0 elsewhere
-  uint  motionPad0;
+  float reactiveLrefInv; // TAA reactive mask: 1/Lref, the added light on screen of a fully reactive additive pixel
   mat4  reprojectClip;   // this frame's clip -> the previous camera's, for a point that stood still (Taa::reprojection)
   mat4  viewProjectPrev; // the previous camera with this frame's jitter: only on vec4(d,0)
   };
@@ -117,7 +117,7 @@ struct Bucket {
   float turbidity;
   float turbidityDepth;
   float emissive;
-  uint  padding2; // scalars, as in BucketGpu: an array member faulted the GPU on Metal
+  float reactive; // the TAA reactive weight of the material: 1 with a texture animation, else 0 (graphics plan 1v)
   };
 
 #endif

@@ -188,6 +188,9 @@ Gothic::Gothic() {
   // (2026-11-10): -mv 0, [INTERNAL] motionVectors=0 or OPENGOTHIC_MOTION_VECTORS=0 turn them off
   // (Renderer::setupSettings)
   defaults->set("INTERNAL",     "motionVectors", 1);
+  // the TAA reactive mask of particles and animated translucent (graphics plan 1v), off until the look is accepted:
+  // [INTERNAL] taaReactive=1 or OPENGOTHIC_TAA_REACTIVE=1 (Renderer::setupSettings)
+  defaults->set("INTERNAL",     "taaReactive", 0);
   defaults->set("INTERNAL",     "taaSharpness", 0.75f);
   // VSM lamp shadows: the soft PCSS, or 0 hard in one gather (Renderer::setupSettings); hard on Metal, where the PCSS
   // costs ~11 ms GPU indoors on an M1 Pro

@@ -61,6 +61,7 @@ class PfxBucket {
 
     const ParticleFx&           decl;
     PfxObjects&                 parent;
+    const float                 reactive; // ParticleFx::taaReactive: the push data of main_pfx_f/_e (graphics plan 1v)
 
     bool                        isEmpty() const;
     void                        invalidateDecal();

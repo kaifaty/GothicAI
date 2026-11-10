@@ -289,6 +289,7 @@ add_shader(sky_exposure.comp         lighting/sky_exposure.comp)
 
 add_shader(tonemapping.frag          lighting/tonemapping.frag)
 add_shader(motion_view.frag          antialiasing/motion_view.frag)
+add_shader(reactive_view.frag        antialiasing/reactive_view.frag)
 add_shader(bloom_down_karis.frag     bloom/bloom_down.frag -DKARIS)
 add_shader(bloom_down.frag           bloom/bloom_down.frag)
 add_shader(bloom_up.frag             bloom/bloom_up.frag)

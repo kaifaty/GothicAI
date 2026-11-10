@@ -254,6 +254,30 @@ void Renderer::setupSettings() {
       Log::i("render: motion vectors = ", logged, settings.motionView ? ", view = 1" : "");
       }
   }
+  // the TAA reactive mask (graphics plan 1v, reports/render-features/2026-11-10-taa-reactive), off by default until
+  // the look is accepted: [INTERNAL] taaReactive=1 turns it on, OPENGOTHIC_TAA_REACTIVE=0|1 (test benches) overrides
+  // it. OPENGOTHIC_TAA_REACTIVE_VIEW=1 shows the mask in place of the frame; _MAX and _LREF tune it on a stand
+  {
+    bool on = Gothic::settingsGetI("INTERNAL","taaReactive")!=0;
+    if(const char* e = std::getenv("OPENGOTHIC_TAA_REACTIVE"))
+      on = std::string_view(e)!="0";
+    settings.taaReactive     = on;
+    settings.taaReactiveView = false;
+    if(const char* e = std::getenv("OPENGOTHIC_TAA_REACTIVE_VIEW"))
+      settings.taaReactiveView = std::string_view(e)!="0";
+    settings.taaReactiveMax = 0.9f;
+    if(const char* e = std::getenv("OPENGOTHIC_TAA_REACTIVE_MAX"))
+      settings.taaReactiveMax = std::clamp(std::strtof(e, nullptr), 0.f, 1.f);
+    settings.taaReactiveLref = 0.25f;
+    if(const char* e = std::getenv("OPENGOTHIC_TAA_REACTIVE_LREF"))
+      settings.taaReactiveLref = std::max(std::strtof(e, nullptr), 1e-4f);
+    static int logged = -1;
+    if(logged!=int(settings.taaReactive)) {
+      logged = int(settings.taaReactive);
+      Log::i("render: taa reactive = ", logged, ", max = ", settings.taaReactiveMax, ", lref = ",
+             settings.taaReactiveLref, settings.taaReactiveView ? ", view = 1" : "");
+      }
+  }
   // SSAO over frames (reports/engine/2026-11-08-ssao-temporal), on by default: OPENGOTHIC_SSAO_HISTORY=0 traces the
   // whole set of 32 every frame and keeps no history (the same look, at the former cost)
   {
@@ -596,6 +620,8 @@ void Renderer::resetViewport(Tempest::Size res, Tempest::Size fullRes) {
   // RG16F is a required colour attachment format in Vulkan and Metal; the wider one only where a device lacks it
   const bool rg16f = device.properties().hasAttachFormat(TextureFormat::RG16F);
   gbufMotion    = device.attachment(rg16f ? TextureFormat::RG16F : TextureFormat::RGBA16F, w,h);
+  // the TAA reactive mask: the translucent pipelines write it also without TAA (graphics plan 1v)
+  taa.reactive  = device.attachment(TextureFormat::R8, w,h);
 
   ssao     = decltype(ssao)();
   epipolar = decltype(epipolar)();
@@ -722,6 +748,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   updateCamera(wview, camera);
   prepareTaa(wview, camera);
   prepareMotion(wview);
+  wview.setTaaReactiveLref(settings.taaReactiveLref);
 
   static bool updFr = true;
   if(updFr){
@@ -821,7 +848,10 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     }
 
   FrameProfile::Scope translucentTiming(FrameProfile::Zone::EncodeWater);
-  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}}, {zbuffer, Tempest::Preserve, Tempest::Preserve});
+  // the TAA reactive mask is the second attachment: each translucent pipeline writes it under its own blend
+  // (main.frag, graphics plan 1v), the TAA resolve reads it
+  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}, {taa.reactive, Tempest::Vec4(), Tempest::Preserve}},
+                     {zbuffer, Tempest::Preserve, Tempest::Preserve});
   cmd.setDebugMarker("Translucent");
   wview.drawTranslucent(cmd, fId);
   translucentTiming.finish();
@@ -848,6 +878,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     cmd.setDebugMarker("Tonemapping");
     drawTonemappingTemporal(result, cmd, wview);
     drawMotionView(result, cmd);
+    drawReactiveView(result, cmd);
     postTiming.finish();
     wview.postFrameupdate();
     return;
@@ -875,6 +906,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   if(!upscale.input.isEmpty() && !shotNative)
     drawUpscale(result, cmd);
   drawMotionView(result, cmd);
+  drawReactiveView(result, cmd);
   postTiming.finish();
 
   //drawRayQueryDbg(cmd, wview);

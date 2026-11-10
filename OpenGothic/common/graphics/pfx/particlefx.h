@@ -141,6 +141,10 @@ class ParticleFx final {
 
     bool          isDecal() const;
     bool          hasTrails() const;
+    // the weight of the TAA reactive mask (graphics plan 1v): 1 for particles; 0 for rain and snow, thousands of
+    // thin particles over the whole frame; a sprite or decal vob as a mesh of its material (Material::taaReactive)
+    float         taaReactive() const;
+    static bool   isPrecipitation(std::string_view name);
 
     uint64_t      maxLifetime() const;
     uint64_t      effectPrefferedTime() const;
