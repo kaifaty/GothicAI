@@ -70,6 +70,7 @@ class WorldView {
     // before preFrameUpdate, so that this frame's commit already keeps the history
     void setMotionVectors(bool enabled, const Tempest::Matrix4x4& reprojectClip, const Tempest::Matrix4x4& viewProjectPrev);
     void setTaaReactiveLref(float lref);
+    void setVsmLampNear(float cm) { sGlobal.setVsmLampNear(cm); }
     void setWindEnabled(bool enabled, uint64_t period);
     void setFog(const Tempest::StorageImage& lut, const Tempest::StorageImage& lutMs);
     void setClothWind(bool enabled, float scale);

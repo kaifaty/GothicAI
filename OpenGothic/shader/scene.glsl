@@ -47,6 +47,8 @@ struct SceneDesc {
   float reactiveLrefInv; // TAA reactive mask: 1/Lref, the added light on screen of a fully reactive additive pixel
   mat4  reprojectClip;   // this frame's clip -> the previous camera's, for a point that stood still (Taa::reprojection)
   mat4  viewProjectPrev; // the previous camera with this frame's jitter: only on vec4(d,0)
+  float vsmLampNear;     // cm: a lamp's fixture this close to its light casts no shadow ([INTERNAL] vsmLampNearCm)
+  float vsmPad0, vsmPad1, vsmPad2;
   };
 
 struct LightSource {

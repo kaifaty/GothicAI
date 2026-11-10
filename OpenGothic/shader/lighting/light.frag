@@ -23,9 +23,6 @@ layout(location = 0) out vec4 outColor;
 
 layout(push_constant, std140) uniform Pbo {
   vec3  origin; //lwc
-#if defined(VIRTUAL_SHADOW)
-  float vsmLampNear; // cm: nothing this close to the light shadows it ([INTERNAL] vsmLampNearCm)
-#endif
 #if defined(VSM_LAMP_PROBE)
   uint  probeMode;  // OPENGOTHIC_VSM_LAMP: 0 the PCSS, 1 'hard' (one gather), 2 'flat' (no receiver plane), 3 truth
   uint  probeStamp; // not 0: count this frame (OPENGOTHIC_VSM_STATS), the stamp marks a pixel already lit
@@ -200,10 +197,9 @@ float omniGatherFace(const vec3 d, const OmniFace f, const float R, const vec2 a
   const vec4 occ  = (OmniZk/(z4 + OmniZk))*R;
   // a third of a texel, plus the 16-bit depth step at that distance (dz = k*R/d^2 per unit of distance)
   const vec4 bias = 0.3 + (0.6/f.sz)*drc + (2.0/(65535.0*OmniZk*R))*drc*drc;
-  // the lamp's own fixture (a brazier's basket, a lantern's frame round the flame) is no blocker: occluders
-  // nearer than vsmLampNear to the light are left out
-  const vec4 blk  = vec4(lessThan(occ, drc - bias)) * vec4(greaterThan(z4, vec4(0))) *
-                    vec4(greaterThanEqual(occ, vec4(push.vsmLampNear)));
+  // the lamp's own fixture (a brazier's basket, a lantern's frame round the flame) is not in the map: the faces are
+  // drawn without it (main.vert, processVertexVsm), so whatever stands behind it still shadows
+  const vec4 blk  = vec4(lessThan(occ, drc - bias)) * vec4(greaterThan(z4, vec4(0)));
 
   blockRatio += dot(blk, occ/drc);
   blockCount += dot(blk, vec4(1));
