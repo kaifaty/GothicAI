@@ -111,11 +111,13 @@ bool Lean::update(const Input& in) {
     return false;
 
   const float dt      = float(in.dt)/1000.f;
-  bool        on      = in.active && enabled && dt>0.f;
+  const Vec3  f       = normalize(Vec3(in.forward.x,0,in.forward.z));
+  // the body's way is followed while it stands too: a stop brakes after the run's state has ended
+  const bool  track   = (in.active || in.grounded) && enabled && dt>0.f && length(f)>0.5f;
+  const bool  on      = in.active && track;
   bool        changed = false;
 
-  const Vec3 f = normalize(Vec3(in.forward.x,0,in.forward.z));
-  if(on && length(f)>0.5f) {
+  if(track) {
     const Vec3  d     = in.position - prevPos;
     const float dh    = std::sqrt(d.x*d.x + d.z*d.z);
     const bool  jump  = !moving || dh>MaxSpeed*dt;
@@ -123,15 +125,22 @@ bool Lean::update(const Input& in) {
       // the first step, or a teleport: nothing to measure yet
       speed = 0;
       turn  = 0;
+      LeanAccel::reset(accel);
       } else {
-      const Vec3  left = normalize(cross(forward,Up));
-      const float w    = dot(f-forward,left)/dt;
       speed += (dh/dt - speed)*lag(dt,SpeedLag);
-      turn  += (w     - turn )*lag(dt,TurnLag);
-      if(dh>MinMove*dt) {
-        // along the facing: walking backwards up a slope leans back
-        const float s = d.y/dh * (dot(Vec3(d.x,0,d.z),f)<0 ? -1.f : 1.f);
-        slope += (std::clamp(s,-1.5f,1.5f) - slope)*lag(dt,SlopeLag);
+      LeanAccel::step(accel,dot(Vec3(d.x,0,d.z),f)/dt,dt);
+      if(on) {
+        const Vec3  left = normalize(cross(forward,Up));
+        const float w    = dot(f-forward,left)/dt;
+        turn  += (w - turn)*lag(dt,TurnLag);
+        if(dh>MinMove*dt) {
+          // along the facing: walking backwards up a slope leans back
+          const float s = d.y/dh * (dot(Vec3(d.x,0,d.z),f)<0 ? -1.f : 1.f);
+          slope += (std::clamp(s,-1.5f,1.5f) - slope)*lag(dt,SlopeLag);
+          }
+        } else {
+        turn  = 0;
+        slope = 0;
         }
       }
     prevPos = in.position;
@@ -142,7 +151,7 @@ bool Lean::update(const Input& in) {
     speed  = 0;
     turn   = 0;
     slope  = 0;
-    on     = false;
+    LeanAccel::reset(accel);
     }
 
   float rollGoal = 0, pitchGoal = 0;
@@ -153,6 +162,8 @@ bool Lean::update(const Input& in) {
     const float k = std::clamp(v/PitchFull, 0.f, 1.f);
     pitchGoal = slope>0 ? std::min(slope*PitchUp, MaxPitchUp)*k : std::max(slope*PitchDown, -MaxPitchDown)*k;
     }
+  if(track && LeanAccel::enabled())
+    pitchGoal += LeanAccel::pitch(accel);
   approach(roll, rollGoal, dt,changed);
   approach(pitch,pitchGoal,dt,changed);
   return changed;
@@ -182,4 +193,5 @@ void Lean::probe(Probe& p) const {
   p.speed  = speed;
   p.turn   = turn/Deg;
   p.slope  = std::atan(slope)/Deg;
+  p.accel  = accel.accel;
   }

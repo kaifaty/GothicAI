@@ -609,6 +609,15 @@ endif()
   add_custom_target(check-stopfoot
     COMMAND $<TARGET_FILE:gothic-stopfoot-contract>
     DEPENDS gothic-stopfoot-contract USES_TERMINAL)
+  add_executable(gothic-leanaccel-contract EXCLUDE_FROM_ALL
+    tests/leanaccel_contract.cpp common/graphics/mesh/leanaccel.cpp)
+  target_include_directories(gothic-leanaccel-contract PRIVATE common)
+  if(NOT MSVC)
+    target_compile_options(gothic-leanaccel-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  add_custom_target(check-leanaccel
+    COMMAND $<TARGET_FILE:gothic-leanaccel-contract>
+    DEPENDS gothic-leanaccel-contract USES_TERMINAL)
   add_executable(gothic-meleecharge-contract EXCLUDE_FROM_ALL
     tests/meleecharge_contract.cpp common/game/meleecharge.cpp common/game/meleestamina.cpp)
   target_include_directories(gothic-meleecharge-contract PRIVATE common)
