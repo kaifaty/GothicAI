@@ -158,6 +158,8 @@ bool Gaze::update(const Input& in) {
     source = in.source;
 
   npcForward = normalize(Vec3(in.forward.x,0,in.forward.z));
+  eyes       = in.eyes;
+  eyesAt     = in.eyesAt;
   if(on) {
     // the body facing: the hips as animated (at a mob the animation may turn the whole body), or the npc's
     const Vec3 f = length(hips)>0.5f ? hips : npcForward;
@@ -171,8 +173,6 @@ bool Gaze::update(const Input& in) {
       }
     forward = f;
     target  = in.target;
-    eyes    = in.eyes;
-    eyesAt  = in.eyesAt;
     // from the eyes as the last pose drew them: the head turned so moves them, the next update aims from there
     const Vec3 d  = target - (eyes && eyesKnown ? eyesPos : headPos);
     const Vec3 dh = Vec3(d.x,0,d.z);
