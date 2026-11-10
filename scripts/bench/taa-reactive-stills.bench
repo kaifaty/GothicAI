@@ -95,10 +95,10 @@ wait 300
 # 4. rain
 cam cut
 set time 12 0
-goto NW_XARDAS_TOWER_VALLEY_091
-face -106
+goto NW_FARM1_PATH_CITY_13
 wait 500
 clear 2500
+stats mana 50000 circle 6
 equip ItRu_Thunderstorm
 tap spell
 wait 1500
