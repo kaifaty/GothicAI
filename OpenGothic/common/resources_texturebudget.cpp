@@ -103,10 +103,12 @@ void Resources::chooseTextureStage(bool force, std::chrono::steady_clock::time_p
   if(dump==nullptr || dump[0]=='\0')
     return;
   char line[240];
-  std::snprintf(line,sizeof(line),"[texture-budget] stage=%u deepest=%zu target=%llu d0=%llu d=%llu live=%llu records=%zu pass_ms=%.3f",
+  std::snprintf(line,sizeof(line),"[texture-budget] stage=%u deepest=%zu target=%llu d0=%llu d=%llu live=%llu "
+                "device_budget=%llu usage=%llu records=%zu pass_ms=%.3f",
                 stage,textureSums.size()-1,(unsigned long long)textureTarget,(unsigned long long)textureSums.front(),
                 (unsigned long long)textureSums[std::min<size_t>(stage,textureSums.size()-1)],
-                (unsigned long long)Texture2d::liveBytes(),textureRecords.size(),
+                (unsigned long long)Texture2d::liveBytes(),(unsigned long long)textureDevice.budget,
+                (unsigned long long)textureDevice.usage,textureRecords.size(),
                 std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count());
   Log::i(line);
   }
