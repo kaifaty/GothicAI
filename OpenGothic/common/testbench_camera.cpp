@@ -858,8 +858,8 @@ bool cameraCommand(const CameraContext& ctx,const std::string& line,const std::v
     }
   else if(c=="vsm" && a.size()>2 && a[1]=="sides") {
     // vsm sides 1|2|3|0: the lamps' cube faces keep the far side of a surface alone (1, before 2026-11-10), both sides
-    // of the world mesh (2, the default), both sides of objects too (3, the study's), or as the setting says (0); for
-    // A/B shots of the same frame (reports/render-features/2026-11-10-lamp-one-sided)
+    // of the world mesh alone (2, 2026-11-10), both sides of objects too (3, the default since 2026-11-11), or as the
+    // setting says (0); for A/B shots of the same frame (reports/render-features/2026-11-11-lamp-objects-two-sided)
     Renderer::benchVsmLampSides = uint32_t(std::clamp(int(num(a,2,0)), 0, 3));
     }
   else if(c=="slowmo") {
