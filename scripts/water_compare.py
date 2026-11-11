@@ -83,7 +83,7 @@ def swimming(rows):
 def fragments(rows):
     crate = fixture_body(one(rows, 'water_setup'), 'crate')
     broken = checkpoint(rows, 'fragments')
-    pieces = [body for body in broken['bodies'] if body['category'] == 13 and
+    pieces = [body for body in broken['bodies'] if body['category'] in (13, 15) and
               body['zen_id'] == crate['zen_id']]
     require(pieces, 'fireball checkpoint has no fragments of the original crate')
     for piece in pieces:

@@ -274,7 +274,7 @@ void CollisionWorld::stepShadowBlades(float fraction, bool bodiesLocked) {
   if(!impl->hasShadowBlades.load(std::memory_order_acquire)) return;
   std::lock_guard<std::mutex> guard(impl->shadowMutex);
   constexpr uint32_t mask=(1u<<DynamicWorld::C_Landscape)|(1u<<DynamicWorld::C_Object)|
-                          (1u<<DynamicWorld::C_Item)|(1u<<DynamicWorld::C_MovableVob)|(1u<<DynamicWorld::C_Fragment);
+                          (1u<<DynamicWorld::C_Item)|(1u<<DynamicWorld::C_MovableVob)|DynamicWorld::fragmentMask;
   const QueryLayerFilter layers(mask);
   const QueryBroadPhaseFilter broad(mask);
   JPH::ShapeCastSettings settings;
@@ -384,8 +384,8 @@ void CollisionWorld::stepShadowBlades(float fraction, bool bodiesLocked) {
               }
             // Small loose objects receive momentum without arresting the
             // human swing or entering its damage/contact journal.
-            if((layer==DynamicWorld::C_Item || layer==DynamicWorld::C_Fragment || layer==DynamicWorld::C_MovableVob) &&
-               std::max({extent.GetX(),extent.GetY(),extent.GetZ()})<.5f) {
+            if((layer==DynamicWorld::C_Item || DynamicWorld::isFragment(layer) || layer==DynamicWorld::C_MovableVob) &&
+               std::max({extent.GetX(),extent.GetY(),extent.GetZ()})<fragmentBlockSize) {
               if(!contacts.back().item.IsInvalid())contacts.back().itemOnly=true;
               else contacts.pop_back();
               continue;
@@ -393,7 +393,7 @@ void CollisionWorld::stepShadowBlades(float fraction, bool bodiesLocked) {
             const auto normal=body.GetWorldSpaceSurfaceNormal(hit.mSubShapeID2,JPH::RVec3(contact.point.x*.01f,contact.point.y*.01f,contact.point.z*.01f));
             contact.normal={normal.GetX(),normal.GetY(),normal.GetZ()};
             contact.stopsSwing=normal.GetY()<blade.walkableCos || layer==DynamicWorld::C_Item ||
-                               layer==DynamicWorld::C_Fragment || layer==DynamicWorld::C_MovableVob;
+                               DynamicWorld::isFragment(layer) || layer==DynamicWorld::C_MovableVob;
             // The blow stops at a wall; the wind-up and the follow-through pass it, as the
             // original passes every wall: a blade going back from the facing, or lifted.
             const auto& v=contact.velocityCmS;
@@ -406,9 +406,11 @@ void CollisionWorld::stepShadowBlades(float fraction, bool bodiesLocked) {
             auto* object=reinterpret_cast<CollisionBody*>(body.GetUserData());
             if(object!=nullptr)
               contact.material=object->mesh!=nullptr ? object->mesh->materialId(Physics::triangleData(*body.GetShape(),hit.mSubShapeID2)) : object->noiseSurface;
-            // A board, crate or fence: the body that may take a stopped blow.
+            // A board, crate or fence, or a remnant of one: the body that may take a stopped blow.
             if(object!=nullptr && object->ptrType()==DynamicWorld::P_MovableVob)
               contact.movableVob=reinterpret_cast<uintptr_t>(object->payload());
+            else if(object!=nullptr && object->ptrType()==DynamicWorld::P_Fragment)
+              contact.fragment=reinterpret_cast<uintptr_t>(object);
             }
 
           auto bounds=cast.mShapeWorldBounds;

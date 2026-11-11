@@ -1,0 +1,131 @@
+# Repeat blows on remnants (reports/physics/2026-11-destruction-bonds, second step): the place,
+# seed, noon and cameras of own-wood-fracture-clip. Our harbour barrel, then our crate: the
+# accepted one-handed blow, then three blows at the largest remnant. `destruction2 remnant 6`
+# re-aims the hero at the largest group before each swing and swings until that group breaks,
+# at most 6 times; its event counts the swings. One take per prop, from the first blow until the
+# pieces sleep after the third remnant break; `destruction2 stand` moves the hero out before
+# each close frame. `destruction2_pieces` samples every break 0.5..15 s after it. Then the hero
+# walks 3 m through the loose pieces and back (`destruction2 walk 300`), still in the take.
+# @timeout 900
+seed 73013
+cheat god
+set time 12 0
+movable on
+living on
+noise on
+destruction on
+overlay off
+ui off
+view full
+
+destruction2 setup barrel 1h
+destruction2 view 240 100 -140 20 5 -20
+wait 800
+shot barrel-close-before
+wait 100
+destruction2 view 300 120 -200 0 -10 -10
+wait 800
+shot barrel-side-before
+wait 100
+rec barrel-remnant
+destruction2 attack
+wait 15000
+destruction2 checkpoint
+destruction2 stand
+destruction2 view 240 100 -140 20 5 -20
+wait 800
+shot barrel-close-break1
+wait 100
+destruction2 view 300 120 -200 0 -10 -10
+wait 300
+destruction2 remnant 6
+wait 15500
+destruction2 checkpoint
+destruction2 stand
+destruction2 view 240 100 -140 20 5 -20
+wait 800
+shot barrel-close-break2
+wait 100
+destruction2 view 300 120 -200 0 -10 -10
+wait 300
+destruction2 remnant 6
+wait 15500
+destruction2 checkpoint
+destruction2 stand
+destruction2 view 240 100 -140 20 5 -20
+wait 800
+shot barrel-close-break3
+wait 100
+destruction2 view 300 120 -200 0 -10 -10
+wait 300
+destruction2 remnant 6
+wait 15500
+destruction2 checkpoint
+destruction2 stand
+destruction2 view 240 100 -140 20 5 -20
+wait 800
+shot barrel-close-break4
+wait 100
+destruction2 view 300 120 -200 0 -10 -10
+wait 300
+destruction2 walk 300
+wait 1500
+stop
+shot barrel-side-after
+wait 100
+
+destruction2 setup crate 1h
+destruction2 view 240 100 -140 20 5 -20
+wait 800
+shot crate-close-before
+wait 100
+destruction2 view 300 120 -200 0 -10 -10
+wait 800
+shot crate-side-before
+wait 100
+rec crate-remnant
+destruction2 attack
+wait 15000
+destruction2 checkpoint
+destruction2 stand
+destruction2 view 240 100 -140 20 5 -20
+wait 800
+shot crate-close-break1
+wait 100
+destruction2 view 300 120 -200 0 -10 -10
+wait 300
+destruction2 remnant 6
+wait 15500
+destruction2 checkpoint
+destruction2 stand
+destruction2 view 240 100 -140 20 5 -20
+wait 800
+shot crate-close-break2
+wait 100
+destruction2 view 300 120 -200 0 -10 -10
+wait 300
+destruction2 remnant 6
+wait 15500
+destruction2 checkpoint
+destruction2 stand
+destruction2 view 240 100 -140 20 5 -20
+wait 800
+shot crate-close-break3
+wait 100
+destruction2 view 300 120 -200 0 -10 -10
+wait 300
+destruction2 remnant 6
+wait 15500
+destruction2 checkpoint
+destruction2 stand
+destruction2 view 240 100 -140 20 5 -20
+wait 800
+shot crate-close-break4
+wait 100
+destruction2 view 300 120 -200 0 -10 -10
+wait 300
+destruction2 walk 300
+wait 1500
+stop
+shot crate-side-after
+wait 100

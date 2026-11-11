@@ -283,15 +283,16 @@ void SpeechCues::update(const FaceProfile& profile, uint64_t now, uint64_t lastB
       continue;
     const auto& c   = plan->cues[i];
     const auto* cue = profile.findCue(c.name);
-    if(cue==nullptr || cue->parts.empty()) {
+    if(cue==nullptr || (cue->parts.empty() && !cue->look.has_value())) {
       fired[i] = 1;  // not in the dictionary of this head
       continue;
       }
-    const auto& p = cue->parts[0];
     Slot s;
     if(cue->mouth) {
+      const auto& p = cue->parts[0];
       s = mouthSlot(c,p.delayMs,p.onMs,p.holdMs,p.offMs);
       } else {
+      // an upper gesture or one of the eyes
       const int64_t w = wordMs(c.word);
       if(w>=0)
         s.start = std::max<int64_t>(0,w-int64_t(UpperLeadMs));
@@ -312,6 +313,7 @@ void SpeechCues::update(const FaceProfile& profile, uint64_t now, uint64_t lastB
       // than the slot's and no shorter than MinHoldMs, or than its own hold if that is shorter still
       st.at = now;
       if(s.limit>=0) {
+        const auto& p  = cue->parts[0];
         const float hi = s.hold>=0 ? s.hold : p.holdMs;
         const float lo = std::min(MinHoldMs,hi);
         st.hold = std::clamp(float(s.limit-int64_t(t))-p.delayMs-p.onMs-p.offMs,lo,hi);

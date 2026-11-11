@@ -44,8 +44,17 @@ void ChunkResidency::update(const Tempest::Vec3& hero, const Tempest::Vec3& came
   const auto nextHeroCell=ChunkId::fromPosition(hero.x,hero.z);
   const auto nextCameraCell=ChunkId::fromPosition(camera.x,camera.z);
   const bool focusChanged=!focused || heroCell!=nextHeroCell || cameraCell!=nextCameraCell;
+  if(focused) {
+    const auto moved=[](const Tempest::Vec3& a, const Tempest::Vec3& b) {
+      const double x=double(a.x)-b.x, y=double(a.y)-b.y, z=double(a.z)-b.z;
+      return std::sqrt(x*x+y*y+z*z);
+      };
+    lastMove=std::max(moved(hero,heroPosition),moved(camera,cameraPosition))*0.01;
+    odometer+=lastMove;
+    }
   heroCell=nextHeroCell;
   cameraCell=nextCameraCell;
+  heroPosition=hero;
   cameraPosition=camera;
   farDistance=zFar;
   focused=true;
@@ -93,6 +102,12 @@ void ChunkResidency::update(const Tempest::Vec3& hero, const Tempest::Vec3& came
     const auto callbacks=focusListeners;
     for(const auto& listener:callbacks)
       if(focusListeners.find(listener.first)!=focusListeners.end())
+        (*listener.second)();
+    }
+  if(!viewListeners.empty()) {
+    const auto callbacks=viewListeners;
+    for(const auto& listener:callbacks)
+      if(viewListeners.find(listener.first)!=viewListeners.end())
         (*listener.second)();
     }
   counters.peakNear=std::max(counters.peakNear,uint64_t(counters.near));
@@ -176,9 +191,16 @@ uint64_t ChunkResidency::subscribeFocus(FocusListener listener) {
   return subscription;
   }
 
+uint64_t ChunkResidency::subscribeView(FocusListener listener) {
+  const auto subscription=++nextSubscription;
+  viewListeners.emplace(subscription,std::make_shared<FocusListener>(std::move(listener)));
+  return subscription;
+  }
+
 void ChunkResidency::unsubscribe(uint64_t subscription) {
   listeners.erase(subscription);
   focusListeners.erase(subscription);
+  viewListeners.erase(subscription);
   }
 
 void ChunkResidency::enqueue(Work task) {

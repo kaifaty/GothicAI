@@ -19,7 +19,6 @@ class World;
 class Camera;
 class ParticleFx;
 class PackedMesh;
-class gtime;
 class ChunkResidency;
 class ObjVisual;
 struct ChunkId;
@@ -36,6 +35,9 @@ class WorldView {
     void startLandscapeStreaming(asset::WorldMesh&& mesh, ChunkResidency& residency, double preloadMs);
     void startVobStreaming(ChunkResidency& residency);
     void setTextureResidency(ChunkResidency* residency) { visuals.setTextureResidency(residency); }
+    // every owner's distance demand due now, before the first frame's synchronous texture loading
+    void flushTextureDemand() { visuals.updateTextureView(true); }
+    void dumpTextureOwners(const std::filesystem::path& file) const { visuals.dumpTextureOwners(file); }
     void prepareLandscapeWork();
     void finishLandscapeUpdate();
     bool landscapeReady() const;
@@ -71,6 +73,8 @@ class WorldView {
     void setMotionVectors(bool enabled, const Tempest::Matrix4x4& reprojectClip, const Tempest::Matrix4x4& viewProjectPrev);
     void setTaaReactiveLref(float lref);
     void setVsmLampNear(float cm) { sGlobal.setVsmLampNear(cm); }
+    void setVsmLampSides(uint32_t sides) { sGlobal.setVsmLampSides(sides); }
+    void setVsmStudy(uint32_t bits) { sGlobal.setVsmStudy(bits); }
     void setWindEnabled(bool enabled, uint64_t period);
     void setFog(const Tempest::StorageImage& lut, const Tempest::StorageImage& lutMs);
     void setClothWind(bool enabled, float scale);
@@ -79,7 +83,7 @@ class WorldView {
 
     void dbgLights      (DbgPainter& p) const;
 
-    bool updateLights(const gtime gameTime);
+    bool updateLights(int64_t gameTime);
     void updateRtScene(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
 
     void updateFrustrum (const Frustrum fr[]);

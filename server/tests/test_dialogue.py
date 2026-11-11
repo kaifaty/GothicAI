@@ -1148,6 +1148,12 @@ async def test_face_tags_anchor_to_words_without_reaching_chat_voice_or_memory(v
         ])],
     ),
     (
+        "[neutral] Ну, [glance] было дело, [roll] конечно, [eyeroll] герой.",
+        [("Ну, было дело, конечно, герой.", "neutral", [
+            {"cue": "glance", "word": 1}, {"cue": "roll", "word": 3},
+        ])],
+    ),
+    (
         "[neutral] Я тебя прекрасно помню. [wince]",
         [("Я тебя прекрасно помню.", "neutral", None)],
     ),

@@ -44,10 +44,10 @@ const FaceColumn FaceColumns[] = {
   {"face_hostile","S_HOSTILE"}, {"face_afraid","S_FRIGHTENED"}, {"face_pain","T_HURT"},
   };
 // the facial gestures of the dictionary (say.cues, the own head's profile): cue_<name>
-const char* const CueColumns[] = {"flash","doubt","smirk","press","disgust","squint","frown","chin","wince"};
+const char* const CueColumns[] = {"flash","doubt","smirk","press","disgust","squint","frown","chin","wince","glance","roll"};
 
 void writeHeader() {
-  std::fprintf(bench.csv,"seg,frame,t,x,y,z,rot,speed,bs,walk,occl,ik_valid,ik_on,ik_hardoff,ik_w,nlegs,bad,pelvis,chest,pelvis_target,pelvis_limit,floor");
+  std::fprintf(bench.csv,"seg,frame,t,wall_ms,x,y,z,rot,speed,bs,walk,occl,ik_valid,ik_on,ik_hardoff,ik_w,nlegs,bad,pelvis,chest,pelvis_target,pelvis_limit,floor");
   for(const char* s:{"l","r","fl","fr"}) {
     std::fprintf(bench.csv,",%s_plant,%s_has,%s_gy,%s_nx,%s_ny,%s_nz,%s_toehas,%s_toey,%s_smooth,%s_err,%s_knee,%s_tilt,%s_roll,%s_yaw,%s_out,%s_slack",
                  s,s,s,s,s,s,s,s,s,s,s,s,s,s,s,s);
@@ -130,6 +130,8 @@ void writeHeartbeat(const World& world) {
     return;
   bench.heartbeatNext = now+std::chrono::seconds(10);
   const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now-bench.heartbeatStart).count();
+  event("heartbeat","\"wall_ms\":"+std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(now-bench.heartbeatStart).count())+
+        ",\"step\":"+std::to_string(bench.step));
   const auto command = std::min(std::max(bench.pc,size_t(1)),bench.prog.size());
   char gameTime[80];
   std::snprintf(gameTime,sizeof(gameTime),"day %lld %02lld:%02lld",(long long)world.time().day(),
@@ -152,8 +154,11 @@ void writeHeartbeat(const World& world) {
   }
 
 void finish() {
-  if(auto* world=Gothic::inst().world())
+  if(auto* world=Gothic::inst().world()) {
+    bench.heartbeatNext = {};
+    writeHeartbeat(*world);
     NpcDayJournal::stop(*world,"bench_end");
+    }
   stopBodyLive();
   npcCharacterStopMotionTrace(bench.character,Gothic::inst().world());
   endAnimationControl();
@@ -166,7 +171,7 @@ void finish() {
   stopRecording();
   if(!bench.streamingSamples.empty()) {
     if(auto* file=std::fopen((outDir+"/streaming.csv").c_str(),"w")) {
-      std::fprintf(file,"segment,frame,update_ms,work_ms,near,far,outside,near_transitions,far_transitions,publication_ms,published,released,page_used_bytes,page_free_bytes,page_retired_bytes,page_count,tex_live_bytes,tex_retired_bytes,tex_peak_bytes,tex_live_n,tex_evicted,tex_reloaded,tex_landscape_bytes,tex_landscape_n,tex_static_bytes,tex_static_n,tex_dynamic_bytes,tex_dynamic_n,tex_other_bytes,tex_other_n,tex_full_bytes,tex_tail_bytes,tex_promoted,tex_demoted,tex_promotion_queue,tex_near_tail_n,tex_near_tail_seconds,vob_near,vob_far,vob_outside,vob_created,vob_released,vob_pending,vob_publication_ms,vob_near_missing,vob_near_missing_seconds,npc_full,npc_simplified,npc_tier_transitions,npc_full_tick_ms,npc_simplified_tick_ms\n");
+      std::fprintf(file,"segment,frame,update_ms,work_ms,near,far,outside,near_transitions,far_transitions,publication_ms,published,released,page_used_bytes,page_free_bytes,page_retired_bytes,page_count,tex_live_bytes,tex_retired_bytes,tex_peak_bytes,tex_live_n,tex_evicted,tex_reloaded,tex_landscape_bytes,tex_landscape_n,tex_static_bytes,tex_static_n,tex_dynamic_bytes,tex_dynamic_n,tex_other_bytes,tex_other_n,tex_full_bytes,tex_tail_bytes,tex_promoted,tex_demoted,tex_promotion_queue,tex_near_tail_n,tex_near_tail_seconds,tex_level0_bytes,tex_level1_bytes,tex_level2_bytes,tex_level3_bytes,tex_level4_bytes,tex_level5_bytes,tex_shortfall_n,tex_shortfall_seconds,tex_jumps,tex_jumps_open,tex_jump_sync_max_ms,tex_jump_zero_max_ms,vob_near,vob_far,vob_outside,vob_created,vob_released,vob_pending,vob_publication_ms,vob_near_missing,vob_near_missing_seconds,npc_full,npc_simplified,npc_tier_transitions,npc_full_tick_ms,npc_simplified_tick_ms\n");
       for(const auto& row:bench.streamingSamples) {
         std::fprintf(file,"%s,%llu,%.9g,%.9g,%zu,%zu,%zu,%llu,%llu,",row.segment.c_str(),
           (unsigned long long)row.frame,row.updateMs,row.workMs,row.near,row.far,row.outside,
@@ -187,6 +192,11 @@ void finish() {
           (unsigned long long)textures.fullBytes,(unsigned long long)textures.tailBytes,
           (unsigned long long)textures.promoted,(unsigned long long)textures.demoted,
           (unsigned long long)textures.promotionQueue,(unsigned long long)textures.nearTailCount,textures.nearTailSeconds);
+        for(const auto bytes:textures.levelBytes)
+          std::fprintf(file,",%llu",(unsigned long long)bytes);
+        std::fprintf(file,",%llu,%.9g",(unsigned long long)textures.shortfallCount,textures.shortfallSeconds);
+        std::fprintf(file,",%llu,%llu,%.9g,%.9g",(unsigned long long)textures.jumps,(unsigned long long)textures.jumpsOpen,
+          textures.jumpSyncMsMax,textures.jumpZeroMsMax);
         std::fprintf(file,",%zu,%zu,%zu,%llu,%llu,%zu,%.9g,%zu,%.9g",
           row.vobNear,row.vobFar,row.vobOutside,(unsigned long long)row.vobCreated,
           (unsigned long long)row.vobReleased,row.vobPending,row.vobPublicationMs,
@@ -442,8 +452,10 @@ void writeRow(Npc& pl) {
     }
   auto&      p   = FootIk::playerProbe;
   const Vec3 pos = pl.position();
-  std::fprintf(bench.csv,"%s,%llu,%llu,%.2f,%.2f,%.2f,%.1f,%.1f,%u,%u,%u,%d,%d,%d,%.3f,%u,%u,%.2f,%.2f,%.2f,%.2f,%.2f",
+  const auto wallMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-bench.heartbeatStart).count();
+  std::fprintf(bench.csv,"%s,%llu,%llu,%lld,%.2f,%.2f,%.2f,%.1f,%.1f,%u,%u,%u,%d,%d,%d,%.3f,%u,%u,%.2f,%.2f,%.2f,%.2f,%.2f",
                bench.recName.c_str(),(unsigned long long)bench.recFrame,(unsigned long long)(bench.time-bench.recStart),
+               (long long)wallMs,
                pos.x,pos.y,pos.z,pl.rotation(),bench.speed,unsigned(pl.bodyStateMasked()),unsigned(pl.walkMode()),unsigned(bench.occl),
                int(p.valid),int(p.enable),int(p.hardOff),p.weight,unsigned(p.numLegs),unsigned(p.badBones),p.pelvis,p.chest,p.target,p.limit,p.floorY);
   for(auto& l:p.leg) {

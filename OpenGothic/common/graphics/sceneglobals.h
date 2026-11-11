@@ -55,6 +55,10 @@ class SceneGlobals final {
     void setTaaReactiveLref(float lref);
     // VSM lamps: an object nearer than this to a light (cm, along its cube face's axis) is no blocker of it
     void setVsmLampNear(float cm);
+    // VSM lamps: the sides of a surface a cube face keeps: 1 the far one, 2 both for the world mesh, 3 for objects too
+    void setVsmLampSides(uint32_t sides);
+    // bench `vsm study <bits>`: the shadow test on a mesh's facets, VSM_STUDY_* of scene.glsl (0: the game's)
+    void setVsmStudy(uint32_t bits);
 
     void setTime(uint64_t time);
     void commitUbo(uint8_t fId);
@@ -159,9 +163,9 @@ class SceneGlobals final {
       Tempest::Matrix4x4              reprojectClip   = Tempest::Matrix4x4::mkIdentity(); // Taa::reprojection
       Tempest::Matrix4x4              viewProjectPrev = Tempest::Matrix4x4::mkIdentity(); // Taa::viewProjectPrev
       float                           vsmLampNear     = 30.f; // cm: VSM lamps, the fixture plane (main.vert)
+      uint32_t                        vsmLampSides    = 3;    // VSM lamps: the sides a cube face keeps (main.vert)
+      uint32_t                        vsmStudy        = 0;    // bench `vsm study`: VSM_STUDY_* of scene.glsl
       uint32_t                        viewFlags       = 0; // VF_* of scene.glsl: VF_HIZ in V_HiZ only (commitUbo), VF_TAA
-      uint32_t                        viewPad0        = 0; // std140: the struct ends on 16 bytes
-      uint32_t                        viewPad1        = 0;
       };
 
     Tempest::UniformBuffer<UboGlobal> uboGlobalPf[Resources::MaxFramesInFlight][V_Count];

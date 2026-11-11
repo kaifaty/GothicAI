@@ -1,4 +1,5 @@
 #include "bodycontroller.h"
+#include "bodyclock.h"
 #include "bodyobservations.h"
 #include "bodyenginepolicy.h"
 #include "world/objects/npc.h"
@@ -28,7 +29,7 @@
 #include <unordered_map>
 
 namespace {
-using Clock=std::chrono::steady_clock;
+using Clock=BodyClock;
 using PolicyAction=FightAlgo::PolicyAction;
 using Json=rapidjson::Document;
 constexpr size_t MaxEvents=512, MaxActors=4, MaxRetries=64;

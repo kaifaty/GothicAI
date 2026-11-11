@@ -1,4 +1,5 @@
 #include "particlecontent.h"
+#include "definitiontypes.h"
 
 #include "gothicglb.h"
 #include "programdata.h"
@@ -44,6 +45,21 @@ void fields(const Json& value, std::initializer_list<const char*> allowed) {
             "unknown field "+name);
     }
   }
+void overrideField(int32_t& field, const Json& value, const std::string& name) {
+  require(value.IsInt(),name+": expected int");
+  field=value.GetInt();
+  }
+void overrideField(float& field, const Json& value, const std::string& name) {
+  require(value.IsNumber(),name+": expected float");
+  const auto number=value.GetDouble();
+  require(std::isfinite(number) && std::abs(number)<=std::numeric_limits<float>::max(),
+          name+": float out of range");
+  field=float(number);
+  }
+void overrideField(std::string& field, const Json& value, const std::string& name) {
+  require(value.IsString(),name+": expected string");
+  field=text(value);
+  }
 void overrideFields(daedalus::DaedalusVm& vm, Def::ParticleEffect& effect, const Json& values) {
   require(values.IsObject(),"set: expected object");
   const auto* cls=vm.find_symbol_by_name("C_PARTICLEFX");
@@ -55,26 +71,14 @@ void overrideFields(daedalus::DaedalusVm& vm, Def::ParticleEffect& effect, const
     auto* symbol=vm.find_symbol_by_name("C_PARTICLEFX."+key);
     require(symbol!=nullptr && symbol->is_member() && cls!=nullptr && symbol->parent()==cls->index(),
             "unknown field "+name);
-    const auto& value=field.value;
-    switch(symbol->type()) {
-      case daedalus::DaedalusDataType::INT:
-        require(value.IsInt(),name+": expected int");
-        symbol->set_int(value.GetInt(),0,&effect);
-        break;
-      case daedalus::DaedalusDataType::FLOAT: {
-        require(value.IsNumber(),name+": expected float");
-        const auto number=value.GetDouble();
-        require(std::isfinite(number) && std::abs(number)<=std::numeric_limits<float>::max(),
-                name+": float out of range");
-        symbol->set_float(float(number),0,&effect);
-        break;
-        }
-      case daedalus::DaedalusDataType::STRING:
-        require(value.IsString(),name+": expected string");
-        symbol->set_string(text(value),0,&effect);
-        break;
-      default: throw std::runtime_error("unsupported field "+name);
+#define DEF_OVERRIDE_FIELD(type, fieldName, extent, symbolName) \
+    if(key==symbolName) { \
+      overrideField(effect.fieldName,field.value,name); \
+      continue; \
       }
+    DEF_PARTICLE_EFFECT_FIELDS(DEF_OVERRIDE_FIELD)
+#undef DEF_OVERRIDE_FIELD
+    throw std::runtime_error("unsupported field "+name);
     }
   }
 float number(const Json& value, const char* name, double lo, double hi, const char* range) {
@@ -117,10 +121,10 @@ bool hasBase(const daedalus::DaedalusScript& script, std::string_view name) {
 
 std::shared_ptr<Def::ParticleEffect> base(daedalus::DaedalusVm& vm, std::string_view name) {
   if(!hasBase(vm,name)) return nullptr;
-  auto result=std::make_shared<Def::ParticleEffect>();
+  auto result=std::make_shared<VmDef::ParticleEffect>();
   result->vis_tex_is_quadpoly=1;
   vm.init_instance(result,canonicalName(name));
-  return result;
+  return std::make_shared<Def::ParticleEffect>(result->copy());
   }
 
 std::unique_ptr<daedalus::DaedalusVm> openProgram(const fs::path& baseRoot) {
@@ -132,7 +136,7 @@ std::unique_ptr<daedalus::DaedalusVm> openProgram(const fs::path& baseRoot) {
   auto program=ProgramData::readProgram(index.path(*source),&sha256);
   require(sha256==source->recordSha256,"particle program identity differs from base index");
   auto script=daedalus::DaedalusScript::from_program(std::move(program));
-  Def::ParticleEffect::register_(script);
+  VmDef::ParticleEffect::register_(script);
   return std::make_unique<daedalus::DaedalusVm>(std::move(script),
       daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
   }

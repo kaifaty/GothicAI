@@ -1,11 +1,11 @@
 #include "shaders.h"
+#include "utils/workers.h"
 
 #include <Tempest/Application>
 #include <Tempest/Device>
 #include <Tempest/Log>
 #include <cassert>
 
-#include "gothic.h"
 #include "commandline.h"
 #include "resources.h"
 #include "loadprobe.h"
@@ -467,6 +467,10 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
   if(pt==PipelineType::T_Vsm) {
     // state.setZTestMode(RenderState::ZTestMode::Always); //FIXME
     state.setZTestMode(RenderState::ZTestMode::Greater); //FIXME
+    // the mesh shader culls by itself (main.vert, meshShader): the sun's pages as before, a lamp's faces not at all
+    if(options().doMeshShading && t!=DrawCommands::Pfx &&
+       !(mat.isTesselated() && Resources::device().properties().tesselationShader && t==DrawCommands::Landscape))
+      state.setCullFaceMode(RenderState::CullMode::NoCull);
     }
 
   switch(alpha) {

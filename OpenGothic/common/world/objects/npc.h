@@ -222,6 +222,7 @@ class Npc final {
                               int32_t bodyVer, int32_t bodyColor,
                               std::string_view body, std::string_view head);
     void       updateArmor   ();
+    std::string bodyVisual   () const;
     void       setSword      (MeshObjects::Mesh&& sword);
     void       setRangedWeapon(MeshObjects::Mesh&& bow);
     void       setShield     (MeshObjects::Mesh&& shield);

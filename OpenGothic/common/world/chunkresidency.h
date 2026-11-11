@@ -58,6 +58,8 @@ class ChunkResidency {
     static constexpr int32_t NearExitRadius = 3;
     static constexpr float FarExitMargin = float(ChunkId::Size);
     static constexpr auto WorkBudget = std::chrono::milliseconds(2);
+    // A larger move of the hero or the camera in one update is a jump (a teleport): metres
+    static constexpr double JumpDistance = 50;
 
     explicit ChunkResidency(const ChunkTable& table);
     static std::unique_ptr<ChunkResidency> create(const ChunkTable& table);
@@ -74,8 +76,21 @@ class ChunkResidency {
     const Stats& stats() const { return counters; }
     bool idle() const { return work.empty(); }
 
+    // The hero's and camera's positions of the last update (centimetres) and the odometer: how far, in metres, the
+    // nearer of them may have come to anything since the first update (the larger of their two moves, summed). An
+    // owner's demand by distance holds until the odometer passes the margin it was evaluated with.
+    bool viewKnown() const { return focused; }
+    const Tempest::Vec3& viewHero() const { return heroPosition; }
+    const Tempest::Vec3& viewCamera() const { return cameraPosition; }
+    double viewOdometer() const { return odometer; }
+    // The larger of the hero's and the camera's moves in the last update, metres; a jump past JumpDistance
+    double viewMove() const { return lastMove; }
+    bool   viewJumped() const { return lastMove>JumpDistance; }
+
     uint64_t subscribe(Listener listener);
     uint64_t subscribeFocus(FocusListener listener);
+    // Called at every update, after the chunk and focus listeners.
+    uint64_t subscribeView(FocusListener listener);
     void unsubscribe(uint64_t subscription);
     void enqueue(Work work);
     void recordPublication(double ms, bool far);
@@ -97,9 +112,13 @@ class ChunkResidency {
     uint64_t nextSubscription = 0;
     std::map<uint64_t,std::shared_ptr<Listener>> listeners;
     std::map<uint64_t,std::shared_ptr<FocusListener>> focusListeners;
+    std::map<uint64_t,std::shared_ptr<FocusListener>> viewListeners;
     ChunkId heroCell{}, cameraCell{};
     bool focused = false;
+    Tempest::Vec3 heroPosition;
     Tempest::Vec3 cameraPosition;
+    double odometer = 0;
+    double lastMove = 0;
     float farDistance = 0;
     std::deque<Work> work;
     std::deque<std::pair<Clock::time_point,size_t>> recentTransitions;

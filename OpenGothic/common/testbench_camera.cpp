@@ -15,6 +15,7 @@
 #include "game/playercontrol.h"
 #include "gothic.h"
 #include "graphics/drawcommands.h"
+#include "graphics/renderer.h"
 #include "graphics/mesh/footik.h"
 #include "graphics/mesh/skeleton.h"
 #include "world/objects/npc.h"
@@ -769,6 +770,12 @@ bool cameraCommand(const CameraContext& ctx,const std::string& line,const std::v
     else if(m=="hold") {
       ctx.camera.cam = C_Hold;  // a shot of a scene: the subject may fall out of it, the frame stays
       }
+    else if(m=="at" && a.size()>7) {
+      // cam at <x y z> <tx ty tz>: from a point of the world at another, then held; a cut
+      ctx.camera.cam        = C_Hold;
+      ctx.camera.cutPending = true;
+      lookFrom(ctx, Vec3(num(a,2,0),num(a,3,0),num(a,4,0)), Vec3(num(a,5,0),num(a,6,0),num(a,7,0)));
+      }
     else if(m=="shoulder" || m=="two" || (m=="face" && a.size()>2 && !isNumber(a[2]))) {
       // cam shoulder <npc> [dist 120] [height 15] [shoulder 1|-1]
       // cam face <npc> [dist 140] [height 0] [degrees from the hero 30]
@@ -848,6 +855,19 @@ bool cameraCommand(const CameraContext& ctx,const std::string& line,const std::v
     if(ctx.camera.clip<=0)
       if(auto cam = Gothic::inst().camera())
         cam->setNearClip(10);
+    }
+  else if(c=="vsm" && a.size()>2 && a[1]=="sides") {
+    // vsm sides 1|2|3|0: the lamps' cube faces keep the far side of a surface alone (1, before 2026-11-10), both sides
+    // of the world mesh alone (2, 2026-11-10), both sides of objects too (3, the default since 2026-11-11), or as the
+    // setting says (0); for A/B shots of the same frame (reports/render-features/2026-11-11-lamp-objects-two-sided)
+    Renderer::benchVsmLampSides = uint32_t(std::clamp(int(num(a,2,0)), 0, 3));
+    }
+  else if(c=="vsm" && a.size()>2 && a[1]=="study") {
+    // vsm study <bits>: the shadow test on a mesh's facets, for shots of one frame
+    // (reports/render-features/2026-11-11-facet-shards): 1 the sun takes the facet's plane over one pixel and 2 the
+    // lamps keep it on facets edge-on to them, both as before 2026-11-11; 4 the facets' classes and 8 the change of
+    // the sun's shadow as colours; 0 the game's
+    Renderer::benchVsmStudy = uint32_t(std::clamp(int(num(a,2,0)), 0, 15));
     }
   else if(c=="slowmo") {
     // slowmo <k>: the game runs k times slower than the video (1: normal); the game's sound is not recorded

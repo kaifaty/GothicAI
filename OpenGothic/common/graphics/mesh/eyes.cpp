@@ -53,6 +53,18 @@ Vec3 project(const Matrix4x4& m, Vec3 v) {
   return v;
   }
 
+// a smooth step 0..1 (the curve of the face's gestures, cues.py ease)
+float ease(float x) {
+  x = std::clamp(x,0.f,1.f);
+  return x*x*(3.f-2.f*x);
+  }
+
+float envelope(const FaceProfile::Cue::Look& l, float t) {
+  if(t<=0)
+    return 0;
+  return ease(t/l.onMs)*(1.f-ease((t-l.onMs-l.holdMs)/l.offMs));
+  }
+
 }
 
 float Eyes::bell(float t) {
@@ -159,6 +171,82 @@ void Eyes::pick(Mode m, bool fresh, bool lineStart, const Input& in) {
   nextPick = in.now + uint64_t(range(ms[0],ms[1]));
   }
 
+bool Eyes::startCue(const FaceProfile::Cue& cue, bool mirror, uint64_t start) {
+  if(eyes==nullptr || !cue.look.has_value())
+    return false;
+  look      = &cue;
+  lookFrom  = start;
+  lookBegun = false;
+  const char written = cue.side==0 ? 'L' : cue.side;
+  const char side    = mirror && cue.side!=0 ? (written=='L' ? 'R' : 'L') : written;
+  lookSign  = side=='L' ? 1.f : -1.f;
+  return true;
+  }
+
+float Eyes::cueWeight(std::string_view name, uint64_t now) const {
+  if(look==nullptr || look->name!=name || now<lookFrom)
+    return 0;
+  return envelope(*look->look,float(now-lookFrom));
+  }
+
+void Eyes::beginLook(bool target, const Input& in) {
+  lookBegun  = true;
+  lookTarget = target;  // else `fixed`: the point forward it looks at with nothing to look at
+  kind       = Kind::Gesture;
+  picked     = true;
+  // where the eyes are now from the base point, as seen from the middle of the eyes: an arc starts there
+  lookStart = Angles();
+  if(hasLast) {
+    const Vec3 base = target ? in.at : fixed;
+    for(int s=0; s<2; ++s) {
+      const auto a = want(s,base,true);
+      lookStart.yaw   += 0.5f*(shown[s].yaw/Deg   - a.yaw);
+      lookStart.pitch += 0.5f*(shown[s].pitch/Deg - a.pitch);
+      }
+    }
+  if(look->look->move==FaceProfile::Cue::Look::Move::Arc)
+    moving = false;  // no saccade under an arc: it goes on from where the eyes are
+  }
+
+void Eyes::endLook(Mode m, bool target, const Input& in) {
+  look      = nullptr;
+  lookBegun = false;
+  offset    = Angles();
+  picked    = true;
+  if(!in.roam) {
+    kind = target ? Kind::Target : Kind::Forward;
+    return;
+    }
+  if(m==Mode::Listen || m==Mode::Speak) {
+    // back on the other one: its eyes, for a usual look at them
+    const auto& f = m==Mode::Speak ? Speaking : Listening;
+    kind     = Kind::Eye;
+    side     = rand01()<0.5f ? 1.f : -1.f;
+    nextPick = in.now + uint64_t(range(f.eyeMs[0],f.eyeMs[1]));
+    return;
+    }
+  pick(m,true,false,in);
+  }
+
+Eyes::Angles Eyes::lookOffset(uint64_t now) const {
+  using Move = FaceProfile::Cue::Look::Move;
+  const auto& l = *look->look;
+  const float t = now>lookFrom ? float(now-lookFrom) : 0.f;
+  Angles      a;
+  if(l.move==Move::Jump) {
+    // there at once (the saccade takes it), back after the hold
+    if(t<l.onMs+l.holdMs)
+      a = {lookSign*l.sideDeg, l.upDeg};
+    return a;
+    }
+  // an arc: up and down by the gesture's curve, to the side and over to the other side by a sine over all of it;
+  // where the eyes were as it started fades out over on_ms
+  const float k = 1.f-ease(t/l.onMs);
+  a.yaw   = lookSign*l.sideDeg*std::sin(2.f*float(M_PI)*t/l.span()) + lookStart.yaw*k;
+  a.pitch = l.upDeg*envelope(l,t) + lookStart.pitch*k;
+  return a;
+  }
+
 Vec3 Eyes::point(const Input& in) const {
   const Vec3 c = project(in.head,center(*eyes));
   Vec3       base;
@@ -178,6 +266,9 @@ Vec3 Eyes::point(const Input& in) const {
     case Kind::Away:
     case Kind::Target:
       base = in.at;
+      break;
+    case Kind::Gesture:
+      base = lookTarget ? in.at : fixed;
       break;
     case Kind::Aside:
       base = in.asideAt;
@@ -213,7 +304,25 @@ void Eyes::update(const Input& in) {
   const bool lineStart = m==Mode::Speak && in.speaking && !speaking;
   const bool fresh     = !started || m!=mode;
   speaking = in.speaking;
-  if(!in.roam) {
+
+  // a gesture of the eyes takes the point for its time; it ends with it, or when what it looks from is gone
+  bool gesture = false;
+  if(look!=nullptr && in.now>=lookFrom) {
+    if(float(in.now-lookFrom)>=look->look->span() || (lookBegun && lookTarget!=target)) {
+      endLook(m,target,in);
+      } else {
+      if(!lookBegun)
+        beginLook(target,in);
+      offset  = lookOffset(in.now);
+      gesture = true;
+      }
+    }
+  const bool arc = gesture && look->look->move==FaceProfile::Cue::Look::Move::Arc;
+
+  if(gesture) {
+    // its own jumps wait
+    }
+  else if(!in.roam) {
     if(fresh) {
       kind   = target ? Kind::Target : Kind::Forward;
       offset = Angles();
@@ -264,8 +373,9 @@ void Eyes::update(const Input& in) {
       }
     }
   if(!moving) {
-    // the point moved, or another one: the eyes follow up to Pursuit, the rest stays as an error to jump over
-    const float cap = Pursuit*float(dt)/1000.f;
+    // the point moved, or another one: the eyes follow up to Pursuit, the rest stays as an error to jump over; an
+    // arc they follow as it goes
+    const float cap = arc ? 1e9f : Pursuit*float(dt)/1000.f;
     float       a   = 0;
     for(int s=0; s<2; ++s) {
       const Angles d = justLanded ? Angles() : Angles{w[s].yaw-was[s].yaw, w[s].pitch-was[s].pitch};
@@ -286,8 +396,8 @@ void Eyes::update(const Input& in) {
       for(int s=0; s<2; ++s)
         jumpErr[s] = err[s];
       ++saccades;
-      if(a>=BigSaccade)
-        ++big;
+      if(a>=BigSaccade && !gesture)
+        ++big;  // a gesture's jumps are no shift of the gaze
       }
     picked = false;
     }
@@ -295,7 +405,8 @@ void Eyes::update(const Input& in) {
 
   // the point looked at from the middle of the eyes - without the eyes' own jumps around it (what Gaze turns the
   // head to) - and the head's forward, in the world (the probe)
-  const Vec3  base = kind==Kind::Aside ? in.asideAt : (kind==Kind::Forward || kind==Kind::None) ? at : in.at;
+  const Vec3  base = kind==Kind::Aside ? in.asideAt : (kind==Kind::Forward || kind==Kind::None) ? at :
+                    (kind==Kind::Gesture && !lookTarget) ? fixed : in.at;
   const Vec3  d  = base - project(in.head,center(*eyes));
   const float dh = std::sqrt(d.x*d.x + d.z*d.z);
   const Vec3  fw = Vec3(in.head.at(2,0),in.head.at(2,1),in.head.at(2,2));
@@ -336,4 +447,8 @@ void Eyes::probe(Probe& p) const {
   p.rise     = rise;
   p.down     = down;
   p.head     = headUp;
+  if(look!=nullptr && lookBegun) {
+    p.cue       = look->name;
+    p.cueWeight = cueWeight(look->name,lastNow);
+    }
   }

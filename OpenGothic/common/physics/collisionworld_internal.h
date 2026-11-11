@@ -27,7 +27,7 @@ namespace CollisionWorldInternal {
   struct LayerInterface final : JPH::BroadPhaseLayerInterface {
     JPH::uint GetNumBroadPhaseLayers() const override { return 3; }
     JPH::BroadPhaseLayer GetBroadPhaseLayer(JPH::ObjectLayer layer) const override {
-      if(layer==DynamicWorld::C_Item || layer==DynamicWorld::C_Ragdoll || layer==DynamicWorld::C_LivingBody || layer==DynamicWorld::C_ActiveBody || layer==DynamicWorld::C_MovableVob || layer==DynamicWorld::C_Fragment)
+      if(layer==DynamicWorld::C_Item || layer==DynamicWorld::C_Ragdoll || layer==DynamicWorld::C_LivingBody || layer==DynamicWorld::C_ActiveBody || layer==DynamicWorld::C_MovableVob || DynamicWorld::isFragment(layer))
         return dynamicLayer;
       if(layer==DynamicWorld::C_Water || layer==DynamicWorld::C_Ghost || layer==DynamicWorld::C_MovableQuery || layer==DynamicWorld::C_SmallVobQuery)
         return sensorLayer;
@@ -58,7 +58,7 @@ namespace CollisionWorldInternal {
       if(b==DynamicWorld::C_LivingBody)
         return a==DynamicWorld::C_Item || a==DynamicWorld::C_Ragdoll || a==DynamicWorld::C_MovableVob;
       return (a==DynamicWorld::C_Item || b==DynamicWorld::C_Item ||
-              a==DynamicWorld::C_Fragment || b==DynamicWorld::C_Fragment ||
+              DynamicWorld::isFragment(a) || DynamicWorld::isFragment(b) ||
               a==DynamicWorld::C_Ragdoll || b==DynamicWorld::C_Ragdoll ||
               a==DynamicWorld::C_MovableVob || b==DynamicWorld::C_MovableVob) &&
              a!=DynamicWorld::C_Null && b!=DynamicWorld::C_Null;
@@ -73,7 +73,7 @@ namespace CollisionWorldInternal {
         return broad==dynamicLayer;
       if(layer==DynamicWorld::C_MovableQuery || layer==DynamicWorld::C_SmallVobQuery)
         return false;
-      return layer==DynamicWorld::C_Item || layer==DynamicWorld::C_Ragdoll || layer==DynamicWorld::C_ActiveBody || layer==DynamicWorld::C_MovableVob || layer==DynamicWorld::C_Fragment ||
+      return layer==DynamicWorld::C_Item || layer==DynamicWorld::C_Ragdoll || layer==DynamicWorld::C_ActiveBody || layer==DynamicWorld::C_MovableVob || DynamicWorld::isFragment(layer) ||
              (layer!=DynamicWorld::C_Null && broad==dynamicLayer);
       }
     };
@@ -92,7 +92,8 @@ namespace CollisionWorldInternal {
     explicit QueryBroadPhaseFilter(uint32_t mask):mask(mask) {}
     bool ShouldCollide(JPH::BroadPhaseLayer layer) const override {
       constexpr uint32_t itemMask = (1u<<DynamicWorld::C_Item)|(1u<<DynamicWorld::C_Ragdoll)|
-                                    (1u<<DynamicWorld::C_LivingBody)|(1u<<DynamicWorld::C_ActiveBody)|(1u<<DynamicWorld::C_MovableVob);
+                                    (1u<<DynamicWorld::C_LivingBody)|(1u<<DynamicWorld::C_ActiveBody)|(1u<<DynamicWorld::C_MovableVob)|
+                                    DynamicWorld::fragmentMask;
       constexpr uint32_t sensorMask = (1u<<DynamicWorld::C_Water)|(1u<<DynamicWorld::C_Ghost)|
                                       (1u<<DynamicWorld::C_MovableQuery)|(1u<<DynamicWorld::C_SmallVobQuery);
       if(layer==dynamicLayer)
@@ -148,7 +149,7 @@ struct CollisionWorld::Impl final : JPH::ContactListener, JPH::PhysicsStepListen
     auto settings = system.GetPhysicsSettings();
     settings.mTimeBeforeSleep = 2.f;
     settings.mPointVelocitySleepThreshold = 0.8f;
-    settings.mFineSlopLayers = 1u<<DynamicWorld::C_Fragment;
+    settings.mFineSlopLayers = DynamicWorld::fragmentMask;
     settings.mFinePenetrationSlop = CollisionWorld::fragmentPenetrationSlop;
     settings.mDeepestContactLayers = 1u<<DynamicWorld::C_Item;
     system.SetPhysicsSettings(settings);

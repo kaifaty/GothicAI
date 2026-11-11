@@ -9,6 +9,7 @@
 
 #include "graphics/material.h"
 #include "graphics/bounds.h"
+#include "graphics/mesh/texeldensity.h"
 
 #include "resources.h"
 
@@ -59,6 +60,7 @@ class StaticMesh {
       size_t                         iboLength = 0;
       std::string                    texName;
       Tempest::AccelerationStructure blas;
+      TexelDensity                   texel;  // lowest UV density and bounds in mesh space (texeldensity.h)
       };
 
     struct Morph {

@@ -1583,7 +1583,7 @@ struct BaseContentContract {
   static std::pair<std::shared_ptr<T>,std::string> definitionInstance(daedalus::DaedalusVm& vm, daedalus::DaedalusSymbol* symbol) {
     try {
       auto result=std::make_shared<T>();
-      if constexpr(std::is_same_v<T,daedalus::IParticleEffect> || std::is_same_v<T,Def::ParticleEffect>)
+      if constexpr(std::is_same_v<T,daedalus::IParticleEffect> || std::is_same_v<T,VmDef::ParticleEffect>)
         result->vis_tex_is_quadpoly=1;
       vm.init_instance(result,symbol);
       return {std::move(result),{}};
@@ -1621,7 +1621,7 @@ struct BaseContentContract {
       equal(loaded.first->symbol_index(),index,field+" native bound symbol");
       equal(source.find_symbol_by_instance(original.first)->index(),native.find_symbol_by_instance(loaded.first)->index(),
             field+" instance lookup index");
-      definitionFields(*original.first,*loaded.first,field);
+      definitionFields(*original.first,loaded.first->copy(),field);
       ++initialized;
       }
     std::printf("Definitions %.*s: %zu ordered instances, %zu initialized and %zu matching initialization errors\n",
@@ -1746,14 +1746,14 @@ struct BaseContentContract {
         };
       source->register_external("hlp_random",rejectRandom);
       native->register_external("hlp_random",rejectRandom);
-      if(request=="Camera.dat") definitionInstances<daedalus::ICamera,Def::Camera>(*source,*native,"CCAMSYS");
+      if(request=="Camera.dat") definitionInstances<daedalus::ICamera,VmDef::Camera>(*source,*native,"CCAMSYS");
       if(request=="Fight.dat") definitionFights(*source,*native);
-      if(request=="Sfx.dat") definitionInstances<daedalus::ISoundEffect,Def::SoundEffect>(*source,*native,"C_SFX");
-      if(request=="Music.dat") definitionInstances<daedalus::IMusicTheme,Def::MusicTheme>(*source,*native,"C_MusicTheme");
-      if(request=="ParticleFx.dat") definitionInstances<daedalus::IParticleEffect,Def::ParticleEffect>(*source,*native,"C_PARTICLEFX");
+      if(request=="Sfx.dat") definitionInstances<daedalus::ISoundEffect,VmDef::SoundEffect>(*source,*native,"C_SFX");
+      if(request=="Music.dat") definitionInstances<daedalus::IMusicTheme,VmDef::MusicTheme>(*source,*native,"C_MusicTheme");
+      if(request=="ParticleFx.dat") definitionInstances<daedalus::IParticleEffect,VmDef::ParticleEffect>(*source,*native,"C_PARTICLEFX");
       if(request=="VisualFx.dat") {
-        definitionInstances<daedalus::IEffectBase,Def::EffectBase>(*source,*native,"CFX_BASE");
-        definitionInstances<daedalus::IParticleEffectEmitKey,Def::ParticleEffectEmitKey>(*source,*native,"C_PARTICLEFXEMITKEY");
+        definitionInstances<daedalus::IEffectBase,VmDef::EffectBase>(*source,*native,"CFX_BASE");
+        definitionInstances<daedalus::IParticleEffectEmitKey,VmDef::ParticleEffectEmitKey>(*source,*native,"C_PARTICLEFXEMITKEY");
         }
       }
     }
@@ -3325,6 +3325,10 @@ int main() {
     BaseContentContract::require(dir && *dir,"OPENGOTHIC_BASE must point to a content-convert base with textures and meshes");
     const auto base=fs::absolute(dir);
     fs::create_directories(temporary);
+    // Fixtures point OPENGOTHIC_BASE at bases inside `temporary`, and an explicit base is saved as the
+    // installation's current base in the cache. Keep that pointer in the contract's own cache: in the shared
+    // ~/.cache it would send the game and every later check to a fixture, and a killed run leaves it there.
+    setenv("OPENGOTHIC_BASE_CACHE",(temporary/"base-cache").c_str(),1);
     const char* args[]={"gothic-basecontent-contract","-g",gothic};
     CommandLine commandLine(3,args);
     BaseContentContract::run(base,temporary);

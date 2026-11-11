@@ -1,7 +1,7 @@
 #include "particlefx.h"
+#include "gameservices.h"
 
 #include "utils/parser.h"
-#include "gothic.h"
 #include "resources.h"
 #include "utils/string_frm.h"
 
@@ -45,7 +45,7 @@ ParticleFx::ParticleFx(const Def::ParticleEffect& src, std::string_view name)
   ppsIsLooping        = src.pps_is_looping!=0;
   ppsIsSmooth         = src.pps_is_smooth!=0;
   ppsFPS              = src.pps_fps>0 ? src.pps_fps : 1.f;
-  ppsCreateEm         = Gothic::inst().loadParticleFx(src.pps_create_em_s);
+  ppsCreateEm         = GameServices::inst().loadParticleFx(src.pps_create_em_s);
   ppsCreateEmDelay    = uint64_t(src.pps_create_em_delay);
 
   shpType             = loadEmitType(src.shp_type_s);

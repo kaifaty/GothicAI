@@ -7,8 +7,10 @@
 // (graphics/mesh/eyes) on a head with two balls: the balls turned rigidly around their fitted centres (positions and
 // normals), the limits, convergence on a near point, the eyes turning back as the head turns, saccades by the main
 // sequence with a bell of speed and no overshoot, smooth pursuit and catch-up jumps, the lids by the profile's table
-// summed with the other weights, the same jumps for the same seed, rejections of the "eyes" section. CPU only: no
-// device, no game data.
+// summed with the other weights, the same jumps for the same seed, rejections of the "eyes" section. The gestures of
+// the eyes (cues of zone "eyes": glance by saccades, roll along an arc): how far and when, back on the point, no
+// shift of the gaze for EyeBlink, the point Gaze turns the head to stays, when a line plays them, a profile without
+// eyes leaving them out, rejections of "look". CPU only: no device, no game data.
 #include "graphics/mesh/eyeblink.h"
 #include "graphics/mesh/facerig.h"
 #include "graphics/mesh/eyes.h"
@@ -665,9 +667,10 @@ GltfHeadMesh makeEyeHead() {
   return head;
   }
 
-std::string eyeSection(const std::string& body) {
+std::string eyeSection(const std::string& body, const std::string& cues = "") {
   return R"({"version":1,"mouth":[],"anims":{"R_EYESBLINK":{"layer":4,"blend_in_ms":0,"blend_out_ms":0,"duration_ms":0,)"
-         R"("frame_ms":1000,"frames":[{"eyeBlinkLeft":1,"eyeBlinkRight":1}]}},"eyes":)" + body + "}";
+         R"("frame_ms":1000,"frames":[{"eyeBlinkLeft":1,"eyeBlinkRight":1}]}})" + (body.empty() ? "" : ",\"eyes\":"+body) +
+         (cues.empty() ? "" : ",\"cues\":"+cues) + "}";
   }
 
 const std::string EyeLids = R"("lids":{"down":[{"target":"eyeLookDown{side}","from":0,"to":20,"max":1},)"
@@ -967,6 +970,150 @@ void eyeMotionCases(const FaceProfile& p) {
   require(rate>=1 && rate<=3,"listening the eyes must jump 1-3 times a second, got "+std::to_string(rate));
   }
 
+// the gestures of the eyes as in test-head.face.json
+const std::string EyeCues = R"({"glance":{"zone":"eyes","side":"R","look":{"move":"jump","side_deg":22,"up_deg":-4,)"
+  R"("on_ms":80,"hold_ms":600,"off_ms":120}},"roll":{"zone":"eyes","side":"R","look":{"move":"arc","side_deg":10,)"
+  R"("up_deg":22,"on_ms":250,"hold_ms":300,"off_ms":300},"parts":[{"weights":{"eyeBlinkLeft":0.2,"eyeBlinkRight":0.2},)"
+  R"("delay_ms":0,"on_ms":250,"hold_ms":300,"off_ms":300}]}})";
+const std::string EyeBody = R"({"parts":{"left":"eye_L","right":"eye_R"},"limits_deg":{"out":35,"in":30,"up":25,"down":30},)" +
+                            EyeLids + "}";
+
+void eyeCueCases(const GltfHeadMesh& head) {
+  const auto p = FaceProfile::parse(eyeSection(EyeBody,EyeCues),head);
+  const auto* glance = p->findCue("glance");
+  const auto* roll   = p->findCue("roll");
+  require(glance!=nullptr && glance->look.has_value() && glance->parts.empty() && glance->side=='R' &&
+          roll!=nullptr && roll->look.has_value() && roll->parts.size()==1 &&
+          roll->look->move==FaceProfile::Cue::Look::Move::Arc && close(roll->span(),850.f),"the gestures of the eyes must be read");
+  // a head without eyes: the profile is read, its gestures of the eyes are left out
+  const auto blind = FaceProfile::parse(eyeSection("",EyeCues),head);
+  require(!blind->eyes.has_value() && blind->findCue("glance")==nullptr && blind->findCue("roll")==nullptr,
+          "without eyes the gestures of the eyes must be left out");
+  const auto rejected = [&](const std::string& cues, std::string_view reason) {
+    try {
+      (void)FaceProfile::parse(eyeSection(EyeBody,cues),head);
+      }
+    catch(const std::exception& e) {
+      require(std::string_view(e.what()).find(reason)!=std::string_view::npos,
+              "the look rejection must say why: want '"+std::string(reason)+"', got '"+e.what()+"'");
+      return;
+      }
+    require(false,"the gesture of the eyes must be rejected: "+std::string(reason));
+    };
+  const std::string look = R"("on_ms":80,"hold_ms":600,"off_ms":120})";
+  rejected(R"({"g":{"zone":"eyes"}})",                                              "cue \"g\": a gesture of the eyes must have look");
+  rejected(R"({"g":{"zone":"eyes","look":{"move":"spin","side_deg":22,"up_deg":0,)"+look+"}}", "cue \"g\": look: move must be");
+  rejected(R"({"g":{"zone":"eyes","look":{"move":"jump","side_deg":22,"up_deg":0,"speed":1,)"+look+"}}",
+           "cue \"g\": look: unknown field \"speed\"");
+  rejected(R"({"g":{"zone":"eyes","look":{"move":"jump","side_deg":22,)"+look+"}}", "cue \"g\": look: no up_deg");
+  rejected(R"({"g":{"zone":"eyes","look":{"move":"jump","side_deg":25,"up_deg":0,"on_ms":50,"hold_ms":600,"off_ms":120}}})",
+           "cue \"g\": look: a jump that far takes 76 ms");
+  rejected(R"({"g":{"zone":"eyes","look":{"move":"arc","side_deg":10,"up_deg":28,)"+look+"}}",
+           "cue \"g\": look: the turn must be within limits_deg");
+  rejected(R"({"g":{"zone":"upper","look":{"move":"jump","side_deg":22,"up_deg":0,)"+look+R"(,"parts":[]}})",
+           "cue \"g\": only a gesture of the eyes");
+
+  // the other one 110 cm ahead (talking), the eyes on it; Eyes keeps to it (no own jumps) between the gestures
+  const Tempest::Vec3 face = {EyeX, 0, EyeZ+110};  // the head bone is the frame (headMatrix(0) turned to the world)
+  Eyes eyes;
+  eyes.setup(&*p->eyes,7);
+  Eyes::Input in;
+  in.roam   = false;
+  in.target = true;
+  in.head   = headMatrix(0);
+  in.at     = headPoint(in.head,0,0,110);
+  Eyes::Probe pr;
+  uint64_t now = 1000;
+  const auto step = [&](uint64_t ms) {
+    now += ms;
+    in.now = now;
+    eyes.update(in);
+    eyes.probe(pr);
+    };
+  // degrees each eye looks away from the other one's face, and its turn from where it looked at it
+  float restYaw[2] = {}, restPitch[2] = {};
+  const auto off = [&](int s) {
+    const float y = pr.yaw[s]*Deg, pt = pr.pitch[s]*Deg;
+    const Tempest::Vec3 look = {std::sin(pt), std::cos(pt)*std::sin(y), std::cos(pt)*std::cos(y)};
+    Tempest::Vec3 to = face - Tempest::Vec3(EyeX, s==0 ? EyeY : -EyeY, EyeZ);
+    to /= to.length();
+    return std::acos(std::clamp(Tempest::Vec3::dotProduct(look,to),-1.f,1.f))/Deg;
+    };
+  for(int i=0; i<100; ++i)
+    step(10);
+  for(int s=0; s<2; ++s) {
+    restYaw[s]   = pr.yaw[s];
+    restPitch[s] = pr.pitch[s];
+    }
+  const float rise = pr.rise, down = pr.down;
+
+  // glance: a saccade 22 degrees aside and 4 down, the hold, a saccade back; on its side, mirrored to the other one
+  for(bool mirror:{false,true}) {
+    const auto big = pr.big, jumps = pr.saccades;
+    const uint64_t t0 = now;
+    require(eyes.startCue(*glance,mirror,t0),"glance must start");
+    float worstRise = 0;
+    while(now<t0+400) {
+      step(1);
+      worstRise = std::max({worstRise,std::abs(pr.rise-rise),std::abs(pr.down-down)});
+      }
+    for(int s=0; s<2; ++s) {
+      const float aside = (pr.yaw[s]-restYaw[s])*(mirror ? 1.f : -1.f);
+      require(off(s)>=19 && off(s)<=26 && aside>=19,"glance must look 20-25 degrees aside to its side, got "+
+              std::to_string(off(s))+" ("+std::to_string(aside)+" to its side)");
+      require(pr.pitch[s]-restPitch[s]<=-3 && pr.pitch[s]-restPitch[s]>=-5,"glance must look 3-5 degrees down");
+      }
+    require(pr.kind==Eyes::Kind::Gesture && pr.cue=="glance" && close(pr.cueWeight,1) && close(eyes.cueWeight("glance",now),1) &&
+            pr.saccades==jumps+1,"the probe must show glance at its apex, after one saccade");
+    while(now<t0+800-16) {
+      step(1);
+      worstRise = std::max({worstRise,std::abs(pr.rise-rise),std::abs(pr.down-down)});
+      }
+    require(off(0)<1 && off(1)<1,"0.8 s after it starts glance must be back on the other one (a frame early), got "+
+            std::to_string(off(0)));
+    while(now<t0+1000)
+      step(1);
+    require(off(0)<1 && off(1)<1 && pr.kind==Eyes::Kind::Target && pr.cue.empty() && eyes.cueWeight("glance",now)==0,
+            "after glance the eyes must stay on the other one");
+    require(pr.saccades==jumps+2 && pr.big==big,"glance must be two saccades and no shift of the gaze for EyeBlink");
+    require(worstRise<1e-3f,"the point Gaze turns the head to must stay while the eyes glance");
+    }
+
+  // roll: smoothly up near the limit, over the top from one side to the other, back down; no saccades
+  {
+    const auto big = pr.big, jumps = pr.saccades;
+    const uint64_t t0 = now;
+    require(eyes.startCue(*roll,false,t0),"roll must start");
+    float top = 0, left = 0, right = 0, worstStep = 0, prev = pr.pitch[0], prevYaw = pr.yaw[0], over = 0;
+    while(now<t0+900) {
+      step(1);
+      top       = std::max(top,std::min(pr.pitch[0]-restPitch[0],pr.pitch[1]-restPitch[1]));
+      left      = std::max(left,pr.yaw[0]-restYaw[0]);
+      right     = std::max(right,restYaw[0]-pr.yaw[0]);
+      worstStep = std::max({worstStep,std::abs(pr.pitch[0]-prev),std::abs(pr.yaw[0]-prevYaw)});
+      over      = std::max(over,pr.over);
+      prev      = pr.pitch[0];
+      prevYaw   = pr.yaw[0];
+      require(pr.pitch[0]<=25.001f && pr.pitch[1]<=25.001f,"roll must stay within the sockets");
+      }
+    require(top>=20,"roll must go at least 20 degrees up, got "+std::to_string(top));
+    require(right>=5 && left>=5,"roll must swing to its side and over to the other one");
+    require(worstStep<0.5f && pr.saccades==jumps && pr.big==big,
+            "roll must be smooth (no saccade, no shift of the gaze): a step of "+std::to_string(worstStep)+" deg/ms");
+    require(off(0)<1 && off(1)<1 && pr.cue.empty(),"after roll the eyes must be back on the other one");
+    }
+
+  // a line plays them as upper gestures: 0.1 s before the word, on the side of the seed
+  auto plan = std::make_shared<SpeechCues::Plan>("one two three four");
+  plan->cues = {{"glance",1,'L'},{"roll",3,'R'}};
+  plan->setWord(0,0.f,.4f); plan->setWord(1,.5f,.9f); plan->setWord(2,1.f,1.3f); plan->setWord(3,1.4f,2.f);
+  const auto f = play(*p,plan,voice(2000,{{0,2000}}));
+  require(f.size()==2 && f[0].name=="glance" && f[0].at==400 && f[0].mirror && f[1].name=="roll" && f[1].at==1300 && !f[1].mirror,
+          "a line must start the gestures of the eyes 0.1 s before their words, on their side");
+  const auto none = play(*blind,plan,voice(2000,{{0,2000}}));
+  require(none.empty(),"a head without eyes must leave the gestures of the eyes out");
+  }
+
 int main() {
   try {
     const auto head    = makeHead();
@@ -981,6 +1128,7 @@ int main() {
     eyeProfileCases(eyeHead,*eyeProfile);
     eyeRigCases(eyeHead,*eyeProfile);
     eyeMotionCases(*eyeProfile);
+    eyeCueCases(eyeHead);
     }
   catch(const std::exception& e) {
     std::cerr << "facerig test: FAIL: " << e.what() << " (after " << assertions << " checks)\n";
