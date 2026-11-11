@@ -122,22 +122,24 @@ bool npcCommandsCommand(const NpcCommandsContext& context,const std::string& lin
     say(buf);
     }
   else if(c=="pin") {
-    // pin <npc|nearest> <dist> <angle> <height> | pin off: the npc hangs there from the hero (angle from
-    // the hero's facing, height above the hero's feet), frozen, every frame: a target above or below
+    // pin <npc|nearest|player> <dist> <angle> <height> | pin off: hold the root every frame.
+    // The player retains normal input and aiming; NPC targets remain externally controlled.
     if(a.size()>1 && a[1]=="off") {
       context.pinned = nullptr;
       say("pin off");
       return true;
       }
     Npc* n = findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
-    if(n==nullptr || n==&pl) {
+    if(n==nullptr) {
       say("pin: no npc " + line);
       return true;
       }
-    n->setInteraction(nullptr,true);
-    n->clearAiQueue();
-    n->clearState(false);
-    n->setExternalControl(true);
+    if(n!=&pl) {
+      n->setInteraction(nullptr,true);
+      n->clearAiQueue();
+      n->clearState(false);
+      n->setExternalControl(true);
+      }
     const float an = (pl.rotation()+num(a,3,0))*float(M_PI)/180.f;
     context.pinned   = n;
     context.pinAt    = pl.position() + Vec3(std::cos(an)*num(a,2,800),num(a,4,0),std::sin(an)*num(a,2,800));
