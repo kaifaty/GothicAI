@@ -111,9 +111,9 @@ VisualFx::VisualFx(const Def::EffectBase& fx,
     c = char(std::toupper(c));
 
   for(int i=0; i<int(SpellFxKey::Count); ++i) {
-    if(!keyDefs[i])
+    if(!keyDefs[size_t(i)])
       continue;
-    keys  [i] = Key(*keyDefs[i]);
+    keys  [i] = Key(*keyDefs[size_t(i)]);
     hasKey[i] = true;
     }
 

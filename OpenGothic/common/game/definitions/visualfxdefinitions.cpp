@@ -43,7 +43,7 @@ const VisualFx* VisualFxDefinitions::get(std::string_view name) {
     if(id==nullptr)
       continue;
     auto key = vm->init_instance<VmDef::ParticleEffectEmitKey>(id);
-    keyDefs[i] = key->copy();
+    keyDefs[size_t(i)] = key->copy();
     }
 
   for(int i=1; ; ++i) {
