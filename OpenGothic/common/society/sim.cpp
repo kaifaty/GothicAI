@@ -176,6 +176,8 @@ const char* eventName(EventKind kind) {
     case EventKind::ActionChosen:      return "action_chosen";
     case EventKind::ActionFailed:      return "action_failed";
     case EventKind::ActivityFinished:  return "activity_finished";
+    case EventKind::PlaceHeld:         return "place_held";
+    case EventKind::PlaceReleased:     return "place_released";
     }
   return "?";
   }
@@ -335,6 +337,8 @@ void settle(Sim& sim, uint32_t npc) {
   if(s.state[npc]!=NoState && sim.world->followState[s.state[npc]]!=NoState)
     pushBody(s,s.now+SettleDelay,npc,Pending::Settle); else
     s.bodySeq[npc] = 0;
+  if(deciding(sim))
+    routinePlace(sim,npc);
   }
 
 // The state of the entry in force begins and runs until its end; the next state begins StartDelay after that.
@@ -500,6 +504,8 @@ void setState(Sim& sim, uint32_t npc, uint16_t state, ActivityReason reason, uin
     crossings(sim,npc);
     segment(sim,npc);
     }
+  if(deciding(sim))
+    routinePlace(sim,npc);
   }
 
 bool near(const World& w, uint32_t a, uint32_t b) {
@@ -541,6 +547,8 @@ void follow(Sim& sim, uint32_t npc) {
   s.flags[npc]  = uint8_t(s.flags[npc] | Moving);
   emit(sim,EventKind::TravelStarted,npc,0,s.place[npc],target,s.arrive[npc]);
   pushBody(s,s.arrive[npc],npc,Pending::Arrival);
+  if(deciding(sim))
+    routinePlace(sim,npc);
   }
 
 }
