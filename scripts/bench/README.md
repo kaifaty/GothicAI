@@ -1056,6 +1056,8 @@ GOTHIC_AI_URL=ws://127.0.0.1:47921 OPENGOTHIC_CONTENT=<content root> TEMPEST_WIN
 uv run --with pillow python reports/content/2026-11-hero-head/cues/ingame_clip.py .bench/face-cues-clip-<time> <out>
 ```
 
+The gestures of the eyes (glance, roll) take the same bench with `--scenario face_eyes_demo` (four lines with
+`glance`, `roll`, `doubt`, `frown`, no lie, no `--debug-leak`) and a face profile with `eyes`.
 `--provider inworld` spends four paid Inworld requests a take; `--provider fake` (a tone with word times) checks
 the staging for free. `ingame_clip.py` writes into `<out>`:
 - `clip.mp4` — the recording with its sound and "Реплика N" over each line;
