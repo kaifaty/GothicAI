@@ -338,6 +338,9 @@ layer), `OPENGOTHIC_TAA_REACTIVE=0`, `=1`, `=1` with the view and `OPENGOTHIC_TA
 
 ## План и журнал
 
+- 2026-11-11: `deterministic on` walks visibility clusters in a canonical order (sorted by sphere and meshlets,
+  not by the ids streaming handed out). On the Mac it removed the dependence on the id order; on Ryzen four
+  runs still give the discrete states of issue #946 (0–32 px), so the acceptance rule stays as it is.
 - 2026-11-10: a deterministic `streaming wait` holds the loaded world four frames before the reset (a still
   had a second state by whether the wait had to wait: clouds and exposure lag a frame or two); two
   shader fixes took the thread-order noise out of VSM, so stills are compared with VSM on again.
