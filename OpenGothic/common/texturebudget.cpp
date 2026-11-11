@@ -59,20 +59,6 @@ uint32_t TextureBudget::reserve(uint32_t stage, uint32_t reserve) {
   return stage==0 ? reserve : 0;
   }
 
-uint32_t TextureBudget::coarser(uint32_t stage, uint32_t ring) {
-  if(stage<=1)
-    return 0;
-  const uint32_t step = stage-1;
-  const uint32_t all  = step/3, part = step%3;
-  return all+((part>=1 && ring>=2) || (part>=2 && ring>=1) ? 1 : 0);
-  }
-
-uint8_t TextureBudget::coarsen(uint8_t level, uint8_t lowest, uint32_t stage, uint32_t ring, bool whole) {
-  if(whole || level>=lowest)
-    return std::min(level,lowest);
-  return uint8_t(std::min<uint32_t>(uint32_t(level)+coarser(stage,ring),lowest));
-  }
-
 void TextureBudget::Sums::clear() {
   d0 = 0;
   d1 = 0;

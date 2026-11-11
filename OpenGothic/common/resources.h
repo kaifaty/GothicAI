@@ -441,7 +441,7 @@ class Resources final {
     // the stage. A world load forces it before its first frame.
     void                 updateTextureBudget(bool force);
     void                 chooseTextureStage(bool force, std::chrono::steady_clock::time_point now);
-    std::vector<uint64_t> textureStageSums() const;
+    std::vector<uint64_t> textureStageSums();
     void                 accountTextureStage(std::chrono::steady_clock::time_point now);
     void                 logTextureBudget(std::chrono::steady_clock::time_point now);
     void                 textureBudgetStats(TextureStats& stats);
@@ -553,6 +553,9 @@ class Resources final {
       std::tuple<uint64_t,uint64_t,uintptr_t> demotionKey{};
       // for OPENGOTHIC_TEXTURE_DUMP: evictions (of them while it never had an owner) and reloads
       uint32_t evictions = 0, evictionsUnowned = 0, reloads = 0;
+      // step 3 (resources_texturebudget.cpp), filled once: 0.5*log2(width*height), the chain's bytes from each level
+      double stageTop = -1;
+      std::array<uint64_t,16> stageChain{};
       bool tail() const { return firstMip!=0; }
       bool hasTail() const { return lowest!=0; }
       bool wanted() const;

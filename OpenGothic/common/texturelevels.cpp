@@ -18,7 +18,12 @@ uint8_t TextureLevels::lowest(uint32_t width, uint32_t height, uint32_t mipCount
 uint8_t TextureLevels::level(uint32_t width, uint32_t height, float log2K, int32_t exponent, uint32_t reserve, uint8_t lowest) {
   if(exponent==NoExponent || width==0 || height==0)
     return 0;
-  const double top  = 0.5*std::log2(double(width)*double(height));
+  return levelAt(0.5*std::log2(double(width)*double(height)),log2K,exponent,reserve,lowest);
+  }
+
+uint8_t TextureLevels::levelAt(double top, float log2K, int32_t exponent, uint32_t reserve, uint8_t lowest) {
+  if(exponent==NoExponent)
+    return 0;
   const double need = std::floor(top-double(log2K)-double(exponent));
   if(!std::isfinite(need))
     return 0;

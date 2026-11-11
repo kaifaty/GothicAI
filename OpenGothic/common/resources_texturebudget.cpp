@@ -8,10 +8,10 @@
 
 #include <Tempest/Device>
 #include <Tempest/Log>
-#include <Tempest/Pixmap>
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 
@@ -106,7 +106,7 @@ void Resources::chooseTextureStage(bool force, std::chrono::steady_clock::time_p
   Log::i(line);
   }
 
-std::vector<uint64_t> Resources::textureStageSums() const {
+std::vector<uint64_t> Resources::textureStageSums() {
   TextureBudget::Sums sums;
   uint64_t tracked=0;
   // ready replacements not yet published are live but belong to no record's bytes
@@ -115,9 +115,8 @@ std::vector<uint64_t> Resources::textureStageSums() const {
       tracked+=LoadProbe::textureBytes(reload->ready);
   const float    log2K=textureViewScale;
   const uint32_t reserve=textureReserve;
-  std::array<uint64_t,33> chain{};
-  for(const auto& entry:textureRecords) {
-    const auto& r=entry.second;
+  for(auto& entry:textureRecords) {
+    auto& r=entry.second;
     if(r.resident)
       tracked+=r.bytes;
     if(!r.wanted())
@@ -126,29 +125,26 @@ std::vector<uint64_t> Resources::textureStageSums() const {
       sums.fixed(r.resident ? r.bytes : 0);
       continue;
       }
+    if(r.stageTop<0) {
+      r.stageTop=0.5*std::log2(double(r.width)*double(r.height));
+      for(uint32_t level=0;level<r.stageChain.size();++level)
+        r.stageChain[level]=TextureLevels::chainBytes(r.format,r.width,r.height,r.mipCount,level);
+      }
+    const auto bytes=[&](uint8_t level) {
+      return level<r.stageChain.size() ? r.stageChain[level] : TextureLevels::chainBytes(r.format,r.width,r.height,r.mipCount,level);
+      };
     const bool measured=!r.resolutions.empty() && r.lowest!=0 && !r.pinned && r.distances.count(TextureAlwaysFull)==0;
     if(!measured) {
       // whole by rule, or judged by the ring rule: the same level at every stage
       const auto level=wantedLevel(r);
-      sums.fixed(r.resident && r.firstMip==level ? r.bytes :
-                 TextureLevels::chainBytes(r.format,r.width,r.height,r.mipCount,level));
+      sums.fixed(r.resident && r.firstMip==level ? r.bytes : bytes(level));
       continue;
       }
     const auto exponent=r.resolutions.rbegin()->first;
-    const auto level0=TextureLevels::level(r.width,r.height,log2K,exponent,reserve,r.lowest);
-    const auto level1=TextureLevels::level(r.width,r.height,log2K,exponent,0,r.lowest);
+    const auto level0=TextureLevels::levelAt(r.stageTop,log2K,exponent,reserve,r.lowest);
+    const auto level1=reserve==0 ? level0 : TextureLevels::levelAt(r.stageTop,log2K,exponent,0,r.lowest);
     const uint8_t cap=r.ringNeeds.empty() ? r.lowest : r.ringNeeds.begin()->first<=2 ? 0 : tailLevel(r);
-    // the chain's bytes from each level the stages can give, in one pass from the smallest level up
-    const uint32_t mips=std::min<uint32_t>(std::max<uint32_t>(r.mipCount,1),uint32_t(chain.size()-1));
-    const uint32_t first=std::min<uint32_t>(std::min(level0,cap),mips-1);
-    const auto     block=Pixmap::blockSizeForFormat(r.format);
-    chain[mips]=0;
-    for(uint32_t i=mips; i-->first;) {
-      const auto c=Pixmap::blockCount(r.format,std::max<uint32_t>(1,r.width>>i),std::max<uint32_t>(1,r.height>>i));
-      chain[i]=chain[i+1]+uint64_t(c.w)*uint64_t(c.h)*block;
-      }
-    sums.measured(level0,level1,cap,r.lowest,r.distances.begin()->first,exponent==TextureBudget::WholeChain,
-                  [&](uint8_t level) { return chain[std::min<uint32_t>(level,mips)]; });
+    sums.measured(level0,level1,cap,r.lowest,r.distances.begin()->first,exponent==TextureBudget::WholeChain,bytes);
     }
   // everything live outside the records: UI, fonts, colours, placeholders
   const auto live=Texture2d::liveBytes();

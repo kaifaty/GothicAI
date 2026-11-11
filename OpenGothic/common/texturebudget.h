@@ -75,10 +75,19 @@ namespace TextureBudget {
   // How many levels coarser `stage` makes a texture whose nearest owner is in chunk ring `ring`. Stage 1 only drops
   // the reserve; each further stage adds one level, in turn for ring 2 and farther, for ring 1 and farther, for all:
   //   stage 2: ring >= 2 +1; 3: ring >= 1 +1; 4: all +1; 5: ring >= 2 +2; 6: ring >= 1 +2; 7: all +2; ...
-  uint32_t coarser(uint32_t stage, uint32_t ring);
+  inline uint32_t coarser(uint32_t stage, uint32_t ring) {
+    if(stage<=1)
+      return 0;
+    const uint32_t step = stage-1, all = step/3, part = step%3;
+    return all+((part>=1 && ring>=2) || (part>=2 && ring>=1) ? 1 : 0);
+    }
   // A level at the stage's reserve (texturelevels.h: level, clamped to [0, lowest]) made coarser by the stage for the
   // nearest ring `ring`, up to `lowest`; `whole` (an owner needs the whole chain) keeps it.
-  uint8_t  coarsen(uint8_t level, uint8_t lowest, uint32_t stage, uint32_t ring, bool whole);
+  inline uint8_t coarsen(uint8_t level, uint8_t lowest, uint32_t stage, uint32_t ring, bool whole) {
+    if(whole || level>=lowest)
+      return std::min(level,lowest);
+    return uint8_t(std::min<uint32_t>(uint32_t(level)+coarser(stage,ring),lowest));
+    }
 
   // D(s) for every stage at once: the bytes the demanded textures would take at stage s, from a difference array over
   // the stages. A texture adds its bytes at each level through `bytes(level)`.
