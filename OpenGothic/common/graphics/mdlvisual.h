@@ -343,6 +343,8 @@ class MdlVisual final {
                                              const Tempest::Vec3& bottom);
     void setupGestures();
     void updateEyes(Npc& npc, uint64_t now);
+    // a gesture of the profile from `at`: its shapes (FaceRig) and, of zone "eyes", what the eyes do (Eyes)
+    bool playCue(std::string_view name, bool mirror, float hold, uint64_t at, uint64_t now);
     // the middle of the own head's eyes in the frame of the head bone (false: no eyes of its own, Gaze aims from the bone)
     bool eyesInHead(Tempest::Vec3& at) const;
 

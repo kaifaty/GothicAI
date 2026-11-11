@@ -95,7 +95,12 @@
         "delay_ms": 0, "on_ms": 150, "hold_ms": 400, "off_ms": 250}]},
     "wince": {"zone": "upper", "parts": [
       {"weights": {"cheekSquintLeft": 0.65, "cheekSquintRight": 0.65, "eyeSquintLeft": 0.65, "eyeSquintRight": 0.65, "noseSneerLeft": 0.45, "noseSneerRight": 0.45, "browDownLeft": 0.3, "browDownRight": 0.3, "eyeBlinkLeft": 0.25, "eyeBlinkRight": 0.25},
-        "delay_ms": 0, "on_ms": 80, "hold_ms": 100, "off_ms": 200}]}
+        "delay_ms": 0, "on_ms": 80, "hold_ms": 100, "off_ms": 200}]},
+    "glance": {"zone": "eyes", "side": "R",
+      "look": {"move": "jump", "side_deg": 22, "up_deg": -4, "on_ms": 80, "hold_ms": 600, "off_ms": 120}},
+    "roll": {"zone": "eyes", "side": "R",
+      "look": {"move": "arc", "side_deg": 10, "up_deg": 22, "on_ms": 250, "hold_ms": 300, "off_ms": 300},
+      "parts": [{"weights": {"eyeBlinkLeft": 0.2, "eyeBlinkRight": 0.2}, "delay_ms": 0, "on_ms": 250, "hold_ms": 300, "off_ms": 300}]}
   },
   "leaks": {
     "on_ms": 120, "hold_ms": 120, "off_ms": 160,
