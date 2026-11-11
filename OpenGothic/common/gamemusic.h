@@ -1,6 +1,6 @@
 #pragma once
 
-#include "game/definitions/definitiontypes.h"
+#include "records/definitions.h"
 
 #include <Tempest/SoundDevice>
 #include <Tempest/SoundEffect>

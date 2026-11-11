@@ -44,6 +44,7 @@ struct ChunkTable;
 class ChunkResidency;
 
 namespace asset { struct WorldMesh; }
+namespace daedalus { class DaedalusScript; }
 
 namespace WorldData { struct Data; struct ZenFile; }
 namespace VideoData { class Reader; }

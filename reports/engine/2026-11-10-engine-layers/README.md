@@ -108,7 +108,7 @@ python3 scripts/engine_layers.py check --base origin/main # новые вклю�
 ## Порядок работы
 
 1. **Храповик.** Сделан 2026-11-11: шаг «Check engine layers» в `debt-ratchet.yml` запускает `engine_layers.py check` и предупреждает о каждом новом включении через границу. За первые сутки после переписи в `main` их пришло 5 (320 → 325): разнесённый код физики (`dynamicworld_fragments.cpp`, `dynamicworld_remnants.cpp`) и `texturedump.cpp`.
-2. **Записи определений без VM.** Чистые структуры `Def::*` уходят в платформу, привязка к членам VM — в Готику. Работа механическая и проверяется контрактами: 113 → 47.
+2. **Записи определений без VM — сделано 2026-11-11.** Простые структуры `Def::*` находятся в `common/records/definitions.h`, VM-типы и копирование — в `common/game/definitions/`; ключи эффектов передаёт `VisualFxDefinitions`. Итог `engine_layers.py report --json` относительно `main` `4b1218941`: `per_layer.platform.vm_transitive` 122 → **45**, `violations` 325 → **315**.
 3. **Интерфейс настроек и служб** вместо `Gothic::inst()` в платформе: 47 → 36.
 4. **Вид на мир для рендера и физики** вместо `world.h` и `npc.h`: 36 → 25, дальше `sound.h`, `serialize.h`, `bullet.h`, `item.h` — до 3.
 5. **Страж.** Когда в платформе не останется включений VM, к ней подключается страж в CMake по образцу `ZenKitGuard`: цели платформы не включают `daedalus/` и `game/gamescript.h`.

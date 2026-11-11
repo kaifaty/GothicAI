@@ -1,5 +1,6 @@
 #include "particlesdefinitions.h"
 #include "loadprobe.h"
+#include "definitiontypes.h"
 
 #include <Tempest/Log>
 
@@ -107,12 +108,13 @@ std::shared_ptr<Def::ParticleEffect> ParticlesDefinitions::peeStream() {
   auto id = vm->find_symbol_by_name("PEE");
   if(id==nullptr)
     return nullptr;
-  auto ret = std::make_shared<Def::ParticleEffect>();
-  ret->vis_tex_is_quadpoly = 1;
+  auto instance = std::make_shared<VmDef::ParticleEffect>();
+  instance->vis_tex_is_quadpoly = 1;
   {
     LoadProbe::Vobs::Scope probe("script_vm");
-    vm->init_instance(ret, id);
+    vm->init_instance(instance, id);
   }
+  auto ret = std::make_shared<Def::ParticleEffect>(instance->copy());
   // one key a hundred seconds long: the model keeps an effect only for its preferred time (MdlVisual::tick);
   // Npc::tickPeeStream stops it when the pose ends
   ret->pps_value          = PeeStream::pps;

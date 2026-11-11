@@ -832,15 +832,15 @@ void Gothic::setupCommonScriptClasses(daedalus::DaedalusScript& sc) {
   registerOpaque  ("C_SVM"); // structure is very customizable, so better to use type-less mapping
   registerIfExists("C_MENU",         daedalus::IMenu::register_);
   registerIfExists("C_MENU_ITEM",    daedalus::IMenuItem::register_);
-  registerIfExists("CCAMSYS",        Def::Camera::register_);
+  registerIfExists("CCAMSYS",        VmDef::Camera::register_);
   registerIfExists("C_MUSICSYS_CFG", daedalus::IMusicSystem::register_);
-  registerIfExists("C_MUSICTHEME",   Def::MusicTheme::register_);
+  registerIfExists("C_MUSICTHEME",   VmDef::MusicTheme::register_);
   registerIfExists("C_MUSICJINGLE",  daedalus::IMusicJingle::register_);
-  registerIfExists("C_PARTICLEFX",   Def::ParticleEffect::register_);
-  registerIfExists("CFX_BASE",       Def::EffectBase::register_);
-  registerIfExists("C_PARTICLEFXEMITKEY", Def::ParticleEffectEmitKey::register_);
+  registerIfExists("C_PARTICLEFX",   VmDef::ParticleEffect::register_);
+  registerIfExists("CFX_BASE",       VmDef::EffectBase::register_);
+  registerIfExists("C_PARTICLEFXEMITKEY", VmDef::ParticleEffectEmitKey::register_);
   registerOpaque  ("C_FIGHTAI"); // many mods get it wrong/corrupted. Opaque binding is one is a way to get around it
-  registerIfExists("C_SFX",          Def::SoundEffect::register_);
+  registerIfExists("C_SFX",          VmDef::SoundEffect::register_);
   registerIfExists("C_SNDSYS_CFG",   daedalus::ISoundSystem::register_);
   }
 

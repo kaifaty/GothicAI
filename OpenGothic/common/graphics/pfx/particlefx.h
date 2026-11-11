@@ -2,8 +2,7 @@
 
 #include <Tempest/RenderState>
 
-#include "daedalus/classes.h"
-#include "game/definitions/definitiontypes.h"
+#include "records/definitions.h"
 
 #include <Tempest/Texture2d>
 
