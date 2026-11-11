@@ -23,8 +23,8 @@
 // - places on a small world of its own with decisions: a routine's user holds its place (closed to a decider), lets it
 //   go when it leaves (it opens, or a routine's user waiting there takes it at once) and holds none while its next entry
 //   waits for a decision; a chosen activity there gives way to it, on the way and at the place, and its NPC is asked
-//   again at that second; holders within capacity; closed places do not hide an allowed one farther away; the travel
-//   limit holds for the whole walk; an activity that broke into an anchor entry ends as its need rises above low
+//   again at that second and does what it chooses then; holders within capacity; closed places do not hide an allowed one farther away; the travel
+//   limit holds for the whole walk (an option's travel is the rest of a walk under way and the walk from its end); an activity that broke into an anchor entry ends as its need rises above low
 //   (AboveLow), not at the setpoint; the routine-only run writes no place events.
 #include "society/journal.h"
 #include "society/society.h"
@@ -973,6 +973,7 @@ void checkPlaces() {
   int c1Pending = -1; // C1's holders while D1's entry waits for its decision at 10:30:20
   const uint32_t fp = uint32_t(std::find(w.points.name.begin(),w.points.name.end(),std::string("FP_SIT_1"))-w.points.name.begin());
   bool cp2Allowed = false;
+  Time cp2Travel = -1, d4RowAt = -1; // CP2's travel in D4's row on the way, and when that row was asked
   size_t closedChairs = 0;
   std::vector<uint8_t> asked(w.npcs.size(),0);
   const auto option = [&](size_t r, uint32_t obj) -> int {
@@ -1012,6 +1013,8 @@ void checkPlaces() {
         const int j = option(r,cq), k = option(r,cp2);
         cqRow = {true,j<0 ? -1 : batch.mask[r*K+size_t(j)],0};
         cp2Allowed = k>=0 && batch.mask[r*K+size_t(k)];
+        cp2Travel  = k>=0 ? batch.menu[r*K+size_t(k)].travel : -1;
+        d4RowAt    = sim.s.now;
         }
       if(i==d6 && first) {
         const int j = option(r,cf6);
@@ -1086,10 +1089,24 @@ void checkPlaces() {
          "place activity_finished Evicted (09:00:40), on the way action_failed Evicted (08:02:40)");
   if(wrongCount>0)
     fail("places: a place's holders must be its routine users and chosen activities, within its capacity");
-  if(!cqRow.row || cqRow.mask==1 || !cp2Allowed || overLimit>0)
-    fail("places: the travel limit holds for the whole walk, the rest of a walk under way included");
+  // D4 sets off from P1 at 08:30:20 (its entry's end and the start delay) and walks 480 m at 1 m a second: it is at P2,
+  // where CP2 is, at 08:38:20. Asked at 08:33:20, CP2 is the rest of that walk away: 300 s.
+  const Time d4Arrive = hm(8,30)+Society::StartDelay+480;
+  if(!cqRow.row || cqRow.mask==1 || !cp2Allowed || overLimit>0 || d4RowAt!=hm(8,33,20) || cp2Travel!=d4Arrive-d4RowAt)
+    fail("places: the travel limit holds for the whole walk, the rest of a walk under way included (CP2 "+
+         std::to_string(cp2Travel)+" s at "+clock(w,d4RowAt)+", expected 300 s at +00:33:20)");
   if(!cfRow.row || cfRow.mask!=1 || closedChairs>2)
     fail("places: closed places of a kind must not hide an allowed one farther away (and fill at most two slots)");
+  // The evicted gave their activities up and do what they chose next, the routine: at 14:00 both stand at their own
+  // points (A2, A3) in its ZS_STAND, not in the bed's sleep.
+  const auto doesRoutine = [&](uint32_t i, const char* point) {
+    const auto& st = sim.s;
+    return st.mode[i]==uint8_t(Society::Mode::Routine) && (st.flags[i] & Society::Moving)==0 && st.state[i]!=Society::NoState &&
+           w.stateNames[st.state[i]]=="ZS_STAND" && w.points.name[st.place[i]]==point;
+    };
+  if(!doesRoutine(d2,"A2") || !doesRoutine(d3,"A3"))
+    fail("places: an evicted NPC must give its activity up and do its next choice (D2 and D3 at 14:00: ZS_STAND at A2 "
+         "and A3)");
   if(aboveLowAt<0 || setpointAt>=0 || aboveLowCrossing<0 || std::abs(aboveLowAt-aboveLowCrossing)>1)
     fail("places: an activity in an anchor entry ends as its needs rise above low (AboveLow, ±1 s of the crossing), "
          "not at the setpoint");

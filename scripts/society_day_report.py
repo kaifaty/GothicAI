@@ -14,7 +14,7 @@ all day while posts do not release for needs):
 - choices out of the mask, checked anew from the export and the config: the owner (the mobsi's, otherwise the
   room's; outdoors and places are public, own rooms only own or the guild's), the guilds of the kind, the anchor
   entry without a critical need the option fills, a chooser that does not decide, the whole walk over the travel
-  limit — the rest of a walk under way and the walk to the place (threshold 0);
+  limit — the rest of a walk under way and the walk from its end to the place, from the export (threshold 0);
 - holders of a place over its kind's capacity: the routine's users (place_held, place_released) and the chosen
   activities with their reservations (threshold 0);
 - the protected NPCs' marks against the routine run (threshold 100%);
@@ -33,7 +33,9 @@ a threshold fails.
 from __future__ import annotations
 
 import argparse
+import heapq
 import json
+import math
 import re
 import statistics
 import struct
@@ -44,6 +46,8 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 JOURNAL_HEADER = struct.Struct("<8sIIQQqIII")
+FLOAT32 = struct.Struct("<f")
+NEAR_POINT_CM = 500  # Society::NearPointCm: a place this near is done where the NPC stands
 JOURNAL_RECORD = struct.Struct("<IIBBHIII")
 ROUTINE_ENTRY, TRAVEL_STARTED, ARRIVED, ACTIVITY_STARTED, TELEPORTED, NEED_THRESHOLD = 1, 2, 3, 4, 5, 6
 DECISION_REQUESTED, ACTION_CHOSEN, ACTION_FAILED, ACTIVITY_FINISHED = 7, 8, 9, 10
@@ -156,6 +160,65 @@ def run_tool(tool: Path, world: Path, config: Path, out: Path, days: int, seed: 
     }
 
 
+def llround(x: float) -> int:
+    """C's llround for x >= 0: halves away from zero (Python's round() goes to even)."""
+    q = math.floor(x)
+    return int(q) + (1 if x - q >= 0.5 else 0)
+
+
+class Walks:
+    """Game seconds of walking to an option as the core's menu counts them (Paths::length, travelSeconds), from the
+    export alone: the shortest waynet path in integer cm, a freepoint through its near_waypoint and the straight
+    segment to it (float positions, as the core reads them), length / own walk speed × clock rounded to the second;
+    none to the point it stands at or within NearPointCm. Dijkstra from each waynet point once, bounded by the
+    longest walk any NPC makes in the travel limit: what lies beyond is over the limit for everyone."""
+
+    def __init__(self, world: dict, limit: int):
+        pts = world["waypoints"]
+        self.pos = [tuple(FLOAT32.unpack(FLOAT32.pack(v))[0] for v in p["pos"]) for p in pts]
+        self.graph = [p["near_waypoint"] if p["freepoint"] else p["id"] for p in pts]
+        self.graph_cm = [llround(math.sqrt(self.dist2(i, self.graph[i]))) if p["freepoint"] else 0
+                         for i, p in enumerate(pts)]
+        self.edges: dict[int, list] = defaultdict(list)
+        for a, b, cm in world["edges"]:
+            self.edges[a].append((b, cm))
+        self.clock = world["clock"]["game_seconds_per_real_second"]
+        median = world["movement"]["walk_cm_per_s"]
+        self.walk = [n["walk_cm_per_s"] if n.get("walk_cm_per_s", 0) > 0 else median for n in world["npcs"]]
+        self.bound = (limit + 1) * max(self.walk) / self.clock + 1000
+        self.from_point: dict[int, dict] = {}
+
+    def dist2(self, a: int, b: int) -> float:
+        p, q = self.pos[a], self.pos[b]
+        dx, dy, dz = p[0] - q[0], p[1] - q[1], p[2] - q[2]
+        return (dx * dx + dy * dy) + dz * dz
+
+    def seconds(self, npc: int, origin: int, point: int) -> float:
+        if point == origin:
+            return 0
+        g = self.graph[origin]
+        if g not in self.from_point:
+            dist = {g: 0}
+            heap = [(0, g)]
+            while heap:
+                d, u = heapq.heappop(heap)
+                if d > dist[u]:
+                    continue
+                for v, cm in self.edges[u]:
+                    nd = d + cm
+                    if nd <= self.bound and nd < dist.get(v, nd + 1):
+                        dist[v] = nd
+                        heapq.heappush(heap, (nd, v))
+            self.from_point[g] = dist
+        d = self.from_point[g].get(self.graph[point])
+        if d is None:
+            return math.inf
+        cm = self.graph_cm[origin] + d + self.graph_cm[point]
+        if cm <= NEAR_POINT_CM and self.dist2(point, origin) <= NEAR_POINT_CM * NEAR_POINT_CM:
+            return 0
+        return llround(cm / self.walk[npc] * self.clock) if cm > 0 else 0
+
+
 class Rules:
     """What the export and the config say, read anew: who decides, owners, kinds, states."""
 
@@ -170,6 +233,7 @@ class Rules:
         dec = config["decisions"]
         self.dec = dec
         self.limit = round(dec["travel_limit_min"] * 60)
+        self.walks = Walks(world, self.limit)
         protected = []
         if dec.get("protected"):
             path = Path(dec["protected"])
@@ -311,6 +375,7 @@ def check_choices(journal: dict, rules: Rules) -> dict:
     held: dict[tuple, Counter] = defaultdict(Counter)  # place -> NPC -> ways it holds it (chosen, routine)
     chosen_of: dict[int, set] = defaultdict(set)  # NPC -> its chosen places (old and new while switching)
     walking: dict[int, tuple] = {}  # NPC -> (arrival, end) of its walk under way
+    standing: dict[int, int] = {}  # NPC -> the point it stands at (or its walk under way began at)
     peak: dict[tuple, int] = {}
     over = []
     bad = Counter()
@@ -320,11 +385,6 @@ def check_choices(journal: dict, rules: Rules) -> dict:
     finished = Counter()
     routine_holds = 0
     records = journal["records"]
-    per = defaultdict(list)
-    for idx, r in enumerate(records):
-        per[r[1]].append(idx)
-    pos = {idx: p for lst in per.values() for p, idx in enumerate(lst)}
-
     def target_of(b: int, c: int) -> tuple:
         return ("object", c) if c != NO_OBJECT else ("point", b)
 
@@ -339,19 +399,13 @@ def check_choices(journal: dict, rules: Rules) -> dict:
         if held[target][npc] > 0:
             held[target][npc] -= 1
 
-    def whole_walk(idx: int, npc: int, t: int, point: int) -> int:
-        """Game seconds from a choice at `t` until the NPC stands at the chosen place: a walk under way goes on to its
-        end, and the walk to the place starts then (its travel_started to the place's point at that second). Without
-        one the place is where the walk ends (or within 5 m of it), or the choice was dropped on the way: the rest of
-        the walk under way."""
-        begin = walking[npc][0] if npc in walking and walking[npc][0] > t else t
-        for j in per[npc][pos[idx] + 1 :]:
-            r = records[j]
-            if r[0] > begin:
-                break
-            if r[0] == begin and r[2] == TRAVEL_STARTED and r[6] == point:
-                return r[7] - t
-        return begin - t
+    def whole_walk(npc: int, t: int, point: int) -> float:
+        """Game seconds from a choice at `t` until the NPC stands at the chosen place, as the menu counts it: a walk
+        under way goes on to its end, then the walk from there to the place (from the export, Walks)."""
+        if npc in walking and walking[npc][0] > t:
+            arrive, end = walking[npc]
+            return arrive - t + rules.walks.seconds(npc, end, point)
+        return rules.walks.seconds(npc, standing[npc], point)
 
     for idx, (t, npc, kind, reason, _e, a, b, c) in enumerate(records):
         if kind == NEED_THRESHOLD:
@@ -360,8 +414,12 @@ def check_choices(journal: dict, rules: Rules) -> dict:
             entry_state[npc] = states[a]
         elif kind == TRAVEL_STARTED:
             walking[npc] = (c, b)
-        elif kind in (ARRIVED, TELEPORTED):
+        elif kind == ARRIVED:
             walking.pop(npc, None)
+            standing[npc] = a
+        elif kind == TELEPORTED:
+            walking.pop(npc, None)
+            standing[npc] = b
         elif kind == PLACE_HELD:
             routine_holds += 1
             add(npc, target_of(b, c), rules.kinds[a]["capacity"], t)
@@ -402,7 +460,7 @@ def check_choices(journal: dict, rules: Rules) -> dict:
                     problems.append("anchor entry without a critical need it fills")
             if c != NO_OBJECT and world["objects"][c]["waypoint"] != b:
                 problems.append("not at its object's point")
-            if not taken and target not in chosen_of[npc] and whole_walk(idx, npc, t, b) > rules.limit:
+            if not taken and target not in chosen_of[npc] and whole_walk(npc, t, b) > rules.limit:
                 problems.append("walk over the travel limit")
             if problems:
                 for p in problems:
