@@ -574,6 +574,79 @@ def test_shared_scenario_propagates_cv_and_preserves_historical_native_default(t
     assert 'navdemos physics native\n' in collector.scenario_file(args, 'optout', []).read_text()
 
 
+def test_shared_runner_forks_with_serial_physics_and_loads_navmesh_on_each_reset(tmp_path, monkeypatch):
+    shared = rl.module("navmesh_measure")
+    launch = {}
+
+    def popen(command, **kwargs):
+        launch.update(command=command, **kwargs)
+        return SimpleNamespace()
+
+    monkeypatch.setattr(shared.subprocess, "Popen", popen)
+    monkeypatch.setenv("OPENGOTHIC_PHYSICS_THREADS", "8")
+    initial = tmp_path / "prepare.bench"
+    mesh = f"navmesh build {tmp_path / 'cache'} {tmp_path / 'links.txt'}"
+    initial.write_text(mesh + "\nlabel done\n")
+    args = SimpleNamespace(output=tmp_path, ini=None, runner=Path("runner"),
+                           assets=Path("assets"), save=Path("save"))
+    runner = shared.Runner(args, initial)
+    try:
+        assert {"--stdio", "--fork-reset", "--serial-workers"} <= set(launch["command"])
+        assert "--fork-prefix" not in launch["command"]
+        assert launch["env"]["OPENGOTHIC_PHYSICS_THREADS"] == "0"
+        assert launch["start_new_session"] is True
+        requests = []
+        monkeypatch.setattr(runner, "request", lambda command, timeout: requests.append(command) or {"done": True})
+        scenario = tmp_path / "episode.bench"
+        scenario.write_text("seed 7\nnavdemos wait\nnavmesh finish\nlabel done\n")
+        for index, source in enumerate((initial, scenario, scenario)):
+            runner.scenario(source, tmp_path / str(index), 7)
+            bench = Path(requests[-1]["scenario"]).read_text()
+            assert bench.count(mesh) == 1
+            assert bench.index(mesh) < bench.index("label done")
+        assert scenario.read_text() == "seed 7\nnavdemos wait\nnavmesh finish\nlabel done\n"
+    finally:
+        runner.stderr.close()
+
+
+@pytest.mark.parametrize("poll_result,watchdog,term_timeout,expected_waits", [
+    (None, True, False, [10, 10]),
+    (None, True, True, [10, 10]),
+    (0, False, False, [10, 10]),
+    (None, False, False, [30, 10, 10]),
+])
+def test_shared_runner_close_signals_forks(tmp_path, monkeypatch, poll_result, watchdog, term_timeout, expected_waits):
+    shared = rl.module("navmesh_measure")
+    signals, waits, requests = [], [], []
+
+    def wait(timeout):
+        waits.append(timeout)
+        if term_timeout and len(waits) == 1:
+            raise shared.subprocess.TimeoutExpired("runner", timeout)
+        return 0
+
+    def request(command, timeout):
+        requests.append((command, timeout))
+        if watchdog:
+            raise RuntimeError(f"Runner wall watchdog expired on {command['cmd']}")
+        return {}
+
+    runner = shared.Runner.__new__(shared.Runner)
+    runner.process = SimpleNamespace(pid=12345, poll=lambda: poll_result, wait=wait, returncode=0)
+    runner.stderr = (tmp_path / "stderr.log").open("wb")
+    runner.request = request
+    monkeypatch.setattr(shared.os, "killpg", lambda pgid, sig: signals.append((pgid, sig)))
+    if watchdog:
+        with pytest.raises(RuntimeError, match="Runner wall watchdog expired on close"):
+            runner.close()
+    else:
+        runner.close()
+    assert requests == ([] if poll_result is not None else [({"cmd": "close"}, 30)])
+    assert signals == [(12345, shared.signal.SIGTERM), (12345, shared.signal.SIGKILL)]
+    assert waits == expected_waits
+    assert runner.stderr.closed
+
+
 def test_teacher_resume_rejects_mixed_physics_metadata(tmp_path, monkeypatch):
     pair = dict(region='market', start='A', goal='B')
     directory = tmp_path / 'teacher/00000'
