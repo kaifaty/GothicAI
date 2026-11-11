@@ -1,6 +1,6 @@
 #pragma once
 
-#include "asset/definitions.h"
+#include "records/definitions.h"
 
 #include <memory>
 #include <unordered_map>

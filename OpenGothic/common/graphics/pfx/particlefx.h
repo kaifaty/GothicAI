@@ -2,7 +2,7 @@
 
 #include <Tempest/RenderState>
 
-#include "asset/definitions.h"
+#include "records/definitions.h"
 
 #include <Tempest/Texture2d>
 

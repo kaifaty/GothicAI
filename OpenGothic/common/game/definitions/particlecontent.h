@@ -1,6 +1,6 @@
 #pragma once
 
-#include "asset/definitions.h"
+#include "records/definitions.h"
 
 #include "daedalus/vm.h"
 #include <filesystem>

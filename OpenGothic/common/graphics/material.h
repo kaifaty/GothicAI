@@ -4,7 +4,7 @@
 
 #include "asset/material.h"
 #include "asset/worldtypes.h"
-#include "asset/definitions.h"
+#include "records/definitions.h"
 
 class Material final {
   public:

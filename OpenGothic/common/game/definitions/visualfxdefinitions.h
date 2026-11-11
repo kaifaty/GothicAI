@@ -2,7 +2,7 @@
 
 #include "daedalus/vm.h"
 #include "daedalus/classes.h"
-#include "asset/definitions.h"
+#include "records/definitions.h"
 
 #include <unordered_map>
 #include <memory>

@@ -4,7 +4,7 @@
 #include <Tempest/Sound>
 #include <vector>
 
-#include "asset/definitions.h"
+#include "records/definitions.h"
 
 class GSoundEffect;
 

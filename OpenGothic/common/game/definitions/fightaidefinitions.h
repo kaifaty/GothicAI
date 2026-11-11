@@ -1,7 +1,7 @@
 #pragma once
 
 #include "daedalus/vm.h"
-#include "asset/definitions.h"
+#include "records/definitions.h"
 
 class FightAi final {
   public:

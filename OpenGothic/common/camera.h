@@ -4,7 +4,7 @@
 #include <Tempest/Matrix4x4>
 #include <Tempest/Point>
 
-#include "asset/definitions.h"
+#include "records/definitions.h"
 
 class World;
 class Npc;
