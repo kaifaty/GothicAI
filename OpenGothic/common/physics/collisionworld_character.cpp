@@ -6,6 +6,9 @@
 #include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Body/BodyFilter.h>
 #include <Jolt/Physics/Character/CharacterVirtual.h>
+#include <Jolt/Physics/Collision/CollideShape.h>
+#include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
+#include <Jolt/Physics/Collision/CollisionDispatch.h>
 #include <Jolt/Physics/Collision/ShapeFilter.h>
 
 #include <chrono>
@@ -19,8 +22,20 @@ namespace {
   // duplicate sensor geometry used by the legacy controller and aiming only.
   constexpr uint32_t characterMask = (1u<<DynamicWorld::C_Landscape)|(1u<<DynamicWorld::C_Object)|
                                      (1u<<DynamicWorld::C_Item)|(1u<<DynamicWorld::C_MovableVob)|
-                                     (1u<<DynamicWorld::C_Ragdoll);
+                                     (1u<<DynamicWorld::C_Ragdoll)|(1u<<DynamicWorld::C_Fragment);
 
+  // Debris blocks a character from the size that also stops a blade: smaller pieces are
+  // C_FragmentSmall, outside characterMask. A body that appeared around this character is
+  // passed until they separate.
+  class CharacterBodyFilter final : public JPH::BodyFilter {
+    public:
+      explicit CharacterBodyFilter(const std::vector<JPH::BodyID>& passed):passed(passed) {}
+      bool ShouldCollide(const JPH::BodyID& id) const override {
+        return std::find(passed.begin(),passed.end(),id)==passed.end();
+        }
+    private:
+      const std::vector<JPH::BodyID>& passed;
+    };
   }
 
 struct CollisionWorld::VirtualCharacter::Impl final : JPH::CharacterContactListener {
@@ -28,7 +43,72 @@ struct CollisionWorld::VirtualCharacter::Impl final : JPH::CharacterContactListe
 
   static bool isPushable(const JPH::Body& body) {
     const auto layer = body.GetObjectLayer();
-    return body.IsDynamic() && (layer==DynamicWorld::C_Item || layer==DynamicWorld::C_MovableVob);
+    return body.IsDynamic() && (layer==DynamicWorld::C_Item || layer==DynamicWorld::C_MovableVob ||
+                                layer==DynamicWorld::C_Fragment);
+    }
+
+  // The character's capsule against a body, within `margin` metres.
+  bool overlaps(const JPH::Body& body, float margin) const {
+    JPH::CollideShapeSettings settings;
+    settings.mMaxSeparationDistance=margin;
+    JPH::AnyHitCollisionCollector<JPH::CollideShapeCollector> hit;
+    JPH::CollisionDispatch::sCollideShapeVsShape(character->GetShape(),body.GetShape(),JPH::Vec3::sOne(),JPH::Vec3::sOne(),
+                                                 JPH::Mat44(character->GetCenterOfMassTransform()),
+                                                 JPH::Mat44(body.GetCenterOfMassTransform()),{},{},settings,hit);
+    return hit.HadHit();
+    }
+
+  // A controller created inside debris (the first move after a load, a teleport or a reset)
+  // passes it as one a new body of debris appeared around, until they separate. A sleeping piece
+  // inside or near it (within its predictive contact distance) may have slept against the character:
+  // it is woken once the character leaves (wakeLeaning).
+  void passDebrisInside() {
+    const QueryBroadPhaseFilter broad(1u<<DynamicWorld::C_Fragment);
+    const QueryLayerFilter layers(1u<<DynamicWorld::C_Fragment);
+    JPH::CollideShapeSettings settings;
+    settings.mMaxSeparationDistance=character->GetCharacterVirtualSettings().mPredictiveContactDistance;
+    JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> hits;
+    world.impl->system.GetNarrowPhaseQuery().CollideShape(character->GetShape(),JPH::Vec3::sOne(),character->GetCenterOfMassTransform(),
+                                                          settings,JPH::RVec3::sZero(),hits,broad,layers);
+    for(const auto& hit:hits.mHits) {
+      const auto id=hit.mBodyID2;
+      if(hit.mPenetrationDepth>0.f && std::find(passed.begin(),passed.end(),id)==passed.end())
+        passed.push_back(id);
+      JPH::BodyLockRead lock(world.impl->system.GetBodyLockInterface(),id);
+      if(lock.Succeeded() && !lock.GetBody().IsActive() && std::find(leaning.begin(),leaning.end(),id)==leaning.end())
+        leaning.push_back(id);
+      }
+    }
+
+  // The character stands on a sleeping piece of debris.
+  bool sleepingDebrisSupport() const {
+    const auto id = character->GetGroundBodyID();
+    if(id.IsInvalid())
+      return false;
+    JPH::BodyLockRead lock(world.impl->system.GetBodyLockInterface(),id);
+    return lock.Succeeded() && lock.GetBody().GetObjectLayer()==DynamicWorld::C_Fragment && !lock.GetBody().IsActive();
+    }
+
+  // A passed body is let go once it no longer touches the capsule within its padding.
+  void releasePassed() {
+    for(size_t i=0;i<passed.size();) {
+      JPH::BodyLockRead lock(world.impl->system.GetBodyLockInterface(),passed[i]);
+      if(lock.Succeeded() && overlaps(lock.GetBody(),character->GetCharacterPadding()))
+        ++i;
+      else
+        passed.erase(passed.begin()+ptrdiff_t(i));
+      }
+    }
+
+  // Debris that slept against this character while it stood loses that support when it walks
+  // off, is moved or removed: wake it so it can fall.
+  void wakeLeaning() {
+    for(const auto id:leaning) {
+      JPH::BodyLockWrite lock(world.impl->system.GetBodyLockInterface(),id);
+      if(lock.Succeeded() && lock.GetBody().IsInBroadPhase() && !lock.GetBody().IsActive())
+        world.impl->system.GetBodyInterfaceNoLock().ActivateBody(id);
+      }
+    leaning.clear();
     }
 
   static bool blocksAutomaticStairs(const JPH::Body& body) {
@@ -260,7 +340,8 @@ struct CollisionWorld::VirtualCharacter::Impl final : JPH::CharacterContactListe
       return;
     const auto& nativeBody = lock.GetBody();
     const auto layer = nativeBody.GetObjectLayer();
-    if((layer!=DynamicWorld::C_Item && layer!=DynamicWorld::C_MovableVob) || !nativeBody.IsDynamic() || contact.mIsSensorB)
+    if((layer!=DynamicWorld::C_Item && layer!=DynamicWorld::C_MovableVob && layer!=DynamicWorld::C_Fragment) ||
+       !nativeBody.IsDynamic() || contact.mIsSensorB)
       return;
     const float inverseMass = nativeBody.GetMotionProperties()->GetInverseMass();
     if(inverseMass<=0.f)
@@ -285,6 +366,22 @@ struct CollisionWorld::VirtualCharacter::Impl final : JPH::CharacterContactListe
       }
     if(!contact.mHadCollision || pushSeconds<=0.f || pushRemaining<=0.f)
       return;
+    // A sleeping piece of debris stays asleep unless the character walks into it: neither the
+    // weight of standing on it, an overlap left by a piece fallen into the capsule nor the root
+    // sway of a standing stance pushes it. A piece that rests against a standing character is
+    // woken once it leaves (wakeLeaning).
+    if(layer==DynamicWorld::C_Fragment && !nativeBody.IsActive()) {
+      if(standing) {
+        if(contact.mBodyB!=character->GetGroundBodyID() &&
+           std::find(leaning.begin(),leaning.end(),contact.mBodyB)==leaning.end())
+          leaning.push_back(contact.mBodyB);
+        return;
+        }
+      const auto up = character->GetUp();
+      const auto across = contact.mContactNormal-contact.mContactNormal.Dot(up)*up;
+      if(across.IsNearZero(1.e-4f) || !((relative-relative.Dot(up)*up).Dot(across.Normalized())<-0.01f))
+        return;
+      }
 
     // Use the native effective contact mass, including the torque caused by an
     // off-centre push. Penetration recovery has the same damping as Jolt.
@@ -310,7 +407,7 @@ struct CollisionWorld::VirtualCharacter::Impl final : JPH::CharacterContactListe
       }
     // Ordinary walking has less effective effort against a heavier load than
     // a braced push. Keep this continuous in both masses; no furniture classes.
-    const float force = character->GetMaxStrength()*character->GetMass()/(character->GetMass()+bodyMass);
+    const float force = character->GetMaxStrength()*pushMass/(pushMass+bodyMass);
     const float available = std::min(pushRemaining,std::max(0.f,force*pushSeconds-used->second));
     const float amount = std::min(magnitude,available);
     if(amount<=0.f)
@@ -343,7 +440,11 @@ struct CollisionWorld::VirtualCharacter::Impl final : JPH::CharacterContactListe
   Npc* culprit = nullptr;
   float pushSeconds = 0.f;
   float pushRemaining = 0.f;
+  float pushMass = 70.f; // the character's mass for pushes, kept while the weight is withheld
   std::vector<std::pair<JPH::BodyID,float>> pushBodies;
+  std::vector<JPH::BodyID> passed; // debris that appeared around this character
+  std::vector<JPH::BodyID> leaning; // sleeping debris it touched while standing
+  bool standing = false; // this move stands: no displacement, or only a stance's root sway
   struct LimitedSteepFace {
     JPH::BodyID body;
     JPH::SubShapeID subShape;
@@ -381,11 +482,24 @@ CollisionWorld::VirtualCharacter::VirtualCharacter(CollisionWorld& owner, float 
                                                           JPH::Quat::sIdentity(),&owner.impl->system);
   impl->character->SetListener(impl.get());
   owner.impl->virtualCharacters.push_back(this);
+  impl->passDebrisInside();
   }
 
 CollisionWorld::VirtualCharacter::~VirtualCharacter() {
+  impl->wakeLeaning();
   auto& characters = impl->world.impl->virtualCharacters;
   characters.erase(std::remove(characters.begin(),characters.end(),this),characters.end());
+  }
+
+void CollisionWorld::passCharacterOverlaps(const CollisionBody& body) {
+  if(impl->virtualCharacters.empty())
+    return;
+  JPH::BodyLockRead lock(impl->system.GetBodyLockInterface(),body.id);
+  if(!lock.Succeeded())
+    return;
+  for(auto* character:impl->virtualCharacters)
+    if(character->impl->overlaps(lock.GetBody(),0.f))
+      character->impl->passed.push_back(body.id);
   }
 
 std::unique_ptr<CollisionWorld::VirtualCharacter> CollisionWorld::createVirtualCharacter(
@@ -394,6 +508,7 @@ std::unique_ptr<CollisionWorld::VirtualCharacter> CollisionWorld::createVirtualC
   }
 
 void CollisionWorld::VirtualCharacter::setPosition(const Tempest::Vec3& feet) {
+  impl->wakeLeaning();
   impl->character->SetPosition(JPH::RVec3(toMeters(feet)));
   impl->contactsDirty = true;
   impl->needsInitialUpdate = true;
@@ -425,13 +540,19 @@ CollisionWorld::CharacterMoveResult CollisionWorld::VirtualCharacter::move(
   auto& world = *state.world.impl;
   const QueryBroadPhaseFilter broadFilter(characterMask);
   const QueryLayerFilter layerFilter(characterMask);
-  const JPH::BodyFilter bodyFilter;
+  const CharacterBodyFilter bodyFilter(state.passed);
   const JPH::ShapeFilter shapeFilter;
   state.culprit = culprit;
+  state.standing = displacement==Tempest::Vec3() || standing;
+  if(!state.standing && !state.leaning.empty())
+    state.wakeLeaning();
+  if(!state.passed.empty())
+    state.releasePassed();
   character.SetMass(std::max(mass,1.f));
   // Jolt uses metres, kilograms and seconds: this is a 450 N human push,
   // capped independently of the character's weight on a supporting body.
   character.SetMaxStrength(std::min(character.GetMass()*DynamicWorld::gravityMS,450.f));
+  state.pushMass = character.GetMass();
   const float seconds = float(dt)*0.001f;
   // Zero-dt contact refreshes do not end a physical contact's classification.
   if(dt>0) {
@@ -548,8 +669,15 @@ CollisionWorld::CharacterMoveResult CollisionWorld::VirtualCharacter::move(
     if(diagnostic!=nullptr)
       diagnostic->stairDesiredVelocity = toCentimeters(desiredVelocity);
     state.idleSupportMotionObserved = inferredGroundVelocity && onGround && idle;
+    // Jolt hands the character's weight to its support every update, and the impulse wakes a
+    // sleeping support: a character standing still on settled debris withholds it.
+    const bool restOnDebris = state.sleepingDebrisSupport();
+    if(restOnDebris)
+      character.SetMass(0.f);
     character.ExtendedUpdate(seconds,JPH::Vec3(0,-DynamicWorld::gravityMS,0),settings,
                              broadFilter,layerFilter,bodyFilter,shapeFilter,world.allocator);
+    if(restOnDebris)
+      character.SetMass(state.pushMass);
     state.idleSupportMotionObserved = false;
     // RefreshContacts only classifies the initial overlap. Let the first
     // physical solve after creation/teleport recover penetration with native
@@ -770,7 +898,7 @@ CollisionWorld::CharacterMoveResult CollisionWorld::VirtualCharacter::carry(uint
   const auto started = std::chrono::steady_clock::now();
   const QueryBroadPhaseFilter broadFilter(characterMask);
   const QueryLayerFilter layerFilter(characterMask);
-  const JPH::BodyFilter bodyFilter;
+  const CharacterBodyFilter bodyFilter(state.passed);
   const JPH::ShapeFilter shapeFilter;
   const float seconds = float(dt)*.001f;
   const auto velocity = character.GetLinearVelocity();

@@ -2,7 +2,7 @@
 
 #include <cstdint>
 #include <array>
-#include "game/definitions/definitiontypes.h"
+#include "records/definitions.h"
 #include <Tempest/Vec>
 
 class Npc;

@@ -71,6 +71,11 @@ layout(location = 3) out flat uint vsmMipIdOut[];
 uint shadowPageId = 0;
 #endif
 
+#if defined(VIRTUAL_SHADOW) && !defined(GL_VERTEX_SHADER)
+// the meshlet's vertices in clip space (x, y, w): the facing of its triangles (meshShader)
+shared vec3 vsmClip[MaxVert];
+#endif
+
 #if defined(VIRTUAL_SHADOW)
 vec4 mapViewportProj(const uint data, vec4 pos, out float clipDistance[4]) {
   const ivec2 page    = unpackVsmPageInfoProj(data);
@@ -273,11 +278,17 @@ void meshShader(const uvec4 task) {
 #endif
 
   Varyings var;
-  if(laneID<primCount)
-    gl_PrimitiveTriangleIndicesEXT[laneID] = processPrimitive(meshletId, bucketId, laneID);
+  uvec3 prim = uvec3(0);
+  if(laneID<primCount) {
+    prim = processPrimitive(meshletId, bucketId, laneID);
+    gl_PrimitiveTriangleIndicesEXT[laneID] = prim;
+    }
   if(laneID<vertCount) {
     vec4 pos = processVertex(var, instanceId, meshletId, bucketId, laneID);
     gl_MeshVerticesEXT[laneID].gl_Position = pos;
+#if defined(VIRTUAL_SHADOW)
+    vsmClip[laneID] = pos.xyw;
+#endif
 
     /*
         Workaround the AMD driver issue where assigning to a vec3 output results in a driver crash.
@@ -307,6 +318,29 @@ void meshShader(const uvec4 task) {
     shOut[laneID].prevDelta.xyz  = var.prevDelta;
 #endif
     }
+
+#if defined(VIRTUAL_SHADOW)
+  // The pipeline draws both sides here (Shaders::materialPipeline); the culling it did is done per primitive. A sun
+  // page keeps the side to the sun, as the rest of the frame does. A lamp's cube face is mirrored against the camera,
+  // so the pipeline's culling kept only the side away from the light, and a one-sided surface lit by the lamp (a floor
+  // without an underside, a wall of one layer) was missing from it: the light passed it. A lamp's face keeps both sides
+  // of the world mesh (scene.vsmLampSides 2) and of objects too (3, the default): a carpet lit by a hearth, a fireplace's
+  // hood, a net on a wall are one-sided as well (reports/render-features/2026-11-10-lamp-one-sided,
+  // reports/render-features/2026-11-11-lamp-objects-two-sided). One page per workgroup: the branch is uniform.
+  barrier();
+  if(laneID<primCount) {
+    const bool omni = vsmPageIsOmni(vsm.pageList[shadowPageId]);
+    // the sign of the homogeneous determinant is the facing as rasterized, also for a triangle cut by w=0; Tempest's
+    // front face is clockwise, CullMode::Front culled a positive one
+    const float det = dot(vsmClip[prim.x], cross(vsmClip[prim.y], vsmClip[prim.z]));
+#if defined(LVL_OBJECT)
+    const bool twoSided = scene.vsmLampSides>=3u;
+#else
+    const bool twoSided = scene.vsmLampSides>=2u;
+#endif
+    gl_MeshPrimitivesEXT[laneID].gl_CullPrimitiveEXT = det>0.0 && (!omni || !twoSided);
+    }
+#endif
   }
 #endif
 

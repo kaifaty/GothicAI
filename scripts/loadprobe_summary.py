@@ -15,6 +15,11 @@ HEADER.extend(f"malloc_{metric}_{stage}" for stage in ("end", "warm", "warm_5s")
 TEXTURE_FIELDS = ["tex_live_bytes", "tex_retired_bytes", "tex_peak_bytes", "tex_live_n", "tex_evicted", "tex_reloaded"]
 TEXTURE_FIELDS.extend(("tex_full_bytes", "tex_tail_bytes", "tex_promoted", "tex_demoted",
                        "tex_promotion_queue", "tex_near_tail_n", "tex_near_tail_seconds", "tex_full_ring2_bytes"))
+# live bytes by first resident level (the last: 5 and coarser) and the shortfall against the wanted level
+TEXTURE_FIELDS.extend(f"tex_level{level}_bytes" for level in range(6))
+TEXTURE_FIELDS.extend(("tex_shortfall_n", "tex_shortfall_seconds", "tex_loads"))
+# view jumps: count, those without a zero shortfall yet, the longest synchronous completion and time to zero shortfall
+TEXTURE_FIELDS.extend(("tex_jumps", "tex_jumps_open", "tex_jump_sync_max_ms", "tex_jump_zero_max_ms"))
 TEXTURE_FIELDS.extend(f"tex_source_{source}_{metric}" for source in ("base", "hd", "material", "other")
                       for metric in ("bytes", "full_bytes"))
 TEXTURE_FIELDS.extend(f"tex_{category}_{metric}" for category in ("landscape", "static", "dynamic", "other")
@@ -213,7 +218,7 @@ def summary_rows(out):
             for stage in (end["stage"], "stream_warm", "stream_warm_5s"):
                 marks = [row for row in segment if row["stage"] == stage]
                 mark = marks[-1] if marks else {}
-                values.extend((round(mark[key], 9) if key == "tex_near_tail_seconds" else int(mark[key]))
+                values.extend((round(mark[key], 9) if key.endswith(("_ms", "_seconds")) else int(mark[key]))
                               if key in mark else "" for key in TEXTURE_FIELDS)
             for stage in (end["stage"], "stream_warm", "stream_warm_5s"):
                 marks = [row for row in segment if row["stage"] == stage]

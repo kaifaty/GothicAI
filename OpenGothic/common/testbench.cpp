@@ -754,13 +754,13 @@ bool TestBench::destructionTracesDebug(World& world,Npc& player,std::string_view
   return testbench_detail::destructionTracesDebug(bench.destruction,destructionContext(),world,player,command,value,error);
   }
 
-void TestBench::destructionBreak(uintptr_t body,size_t pieces,float milliseconds) {
+void TestBench::destructionBreak(uintptr_t body,size_t pieces,float milliseconds,bool remnant) {
   if(scenarioPath==nullptr || !bench.destruction.destructionTrace || !destructionOwns(bench.destruction,body))return;
   auto* world=Gothic::inst().world();
   if(world)destructionFields(bench.destruction,destructionContext(),*world);
   bench.destruction.destructionLastBreak=world?world->tickCount():0;bench.destruction.destructionSleepSampled=false;
   event("destruction_break","\"case\":"+jsonStr(bench.destruction.destructionCase)+",\"body\":"+std::to_string(body)+
-    ",\"pieces\":"+std::to_string(pieces)+",\"break_ms\":"+ragdollNumber(milliseconds)+
+    ",\"pieces\":"+std::to_string(pieces)+",\"remnant\":"+(remnant?"true":"false")+",\"break_ms\":"+ragdollNumber(milliseconds)+
     ",\"wall_ns\":"+std::to_string(std::chrono::duration_cast<std::chrono::nanoseconds>(
       std::chrono::steady_clock::now().time_since_epoch()).count())+
     ",\"t_game_ms\":"+std::to_string(world?world->tickCount():0)+",\"arrows\":"+std::to_string(bench.destruction.destructionArrows));
@@ -1037,10 +1037,12 @@ void TestBench::note(const char* text) {
        std::string_view(text).ends_with(", by "+std::string(who(player)))) {
       const float yaw = player->rotationRad();
       const auto edge = player->aimEdge(Vec3(std::cos(yaw),0,std::sin(yaw)),2000.f);
-      char buf[256];
-      std::snprintf(buf,sizeof(buf),"shot pose %s: edge_facing_cm %.2f edge_found %d facing_yaw_deg %.2f a_lean_deg %.2f",
+      const auto position = player->position();
+      char buf[512];
+      std::snprintf(buf,sizeof(buf),"shot pose %s: edge_facing_cm %.2f edge_found %d facing_yaw_deg %.2f a_lean_deg %.2f hero %.2f %.2f %.2f animation %s",
                     bench.recName.c_str(),edge.found ? double(edge.distance) : -1.0,int(edge.found),
-                    double(player->rotation()),double(Aim::playerProbe.lean));
+                    double(player->rotation()),double(Aim::playerProbe.lean),position.x,position.y,position.z,
+                    player->animNames().c_str());
       say(buf);
       event("note","\"text\":"+jsonStr(buf));
       }

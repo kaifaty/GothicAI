@@ -20,7 +20,8 @@ FPS = 30
 SHOWN = 0.02      # a weight from which a gesture counts as begun
 BLINK = 0.5       # R_EYESBLINK above it: the eyes shut
 RU = dict(flash='вспышка бровей', doubt='сомнение', smirk='ухмылка', press='поджатые губы', disgust='брезгливость',
-          squint='прищур', frown='хмурится', chin='подбородок', wince='поморщился')
+          squint='прищур', frown='хмурится', chin='подбородок', wince='поморщился', glance='взгляд в сторону',
+          roll='закатил глаза')
 FELT = dict(friendly='радость', angry='злость', hostile='неприязнь', afraid='страх', pain='боль')
 HALF = dict(upper='верх лица', lower='низ лица')
 MOOD = dict(S_NEUTRAL='neutral', S_FRIENDLY='friendly', S_ANGRY='angry', S_HOSTILE='hostile',

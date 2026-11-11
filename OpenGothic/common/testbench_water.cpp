@@ -91,8 +91,8 @@ std::string waterRows(Water& state,World& world) {
     if(!waterOwns(state,body))continue;
     if(rows.size()>1)rows+=',';
     auto label=state.labels[body.id];
-    if(label.empty() && body.category!=DynamicWorld::C_Fragment)label=state.labels[body.parentId];
-    if(label.empty())label=body.category==DynamicWorld::C_Fragment?"crate_fragment":body.visual;
+    if(label.empty() && !DynamicWorld::isFragment(body.category))label=state.labels[body.parentId];
+    if(label.empty())label=DynamicWorld::isFragment(body.category)?"crate_fragment":body.visual;
     std::string actorFields;
     if(body.ragdoll) {
       for(const auto& actor:state.actors) {

@@ -4,6 +4,8 @@
 #include <Tempest/Vec>
 
 #include <cstdint>
+#include <string>
+#include <string_view>
 
 #include "facerig.h"
 
@@ -18,6 +20,9 @@
 // converge. A change of the point over Saccade degrees is a jump: it takes 21 ms + 2.2 ms per degree, its speed a
 // bell, no overshoot. A point moving up to Pursuit deg/s is followed smoothly, a faster one is caught up by jumps.
 // Within the limits of the profile: beyond them the eye waits at its limit for Gaze to turn the head.
+// A gesture of the eyes (a cue of zone "eyes": glance, roll) takes the point for its time: the eyes leave their own
+// jumps, go from the point on the other one by the gesture (by saccades or smoothly along an arc) and come back to it;
+// the head does not follow, and its jumps are no shift of the gaze for EyeBlink.
 // Only decides: FaceRig turns the balls and moves the lids.
 class Eyes final {
   public:
@@ -29,6 +34,7 @@ class Eyes final {
       Away,     // aside of the other one's face
       Aside,    // thinking (TalkGestures::eyesAside)
       Target,   // what Gaze looks at, not one it talks to
+      Gesture,  // a gesture of the eyes: aside of what Gaze looks at (or of forward) by the gesture
       };
 
     struct Input final {
@@ -57,6 +63,8 @@ class Eyes final {
       float    rise     = 0;     // cm the point looked at (without the eyes' own jumps) is above the middle of the eyes
       float    down     = 0;     // degrees it is below the level of the eyes (world)
       float    head     = 0;     // degrees the head's forward is above the level (world)
+      std::string cue;             // the gesture of the eyes going on ("" none)...
+      float    cueWeight = 0;      // ...how far it is shown, 0..1
       };
 
     static constexpr float Saccade     = 1.f;    // degrees: a farther change of the point is a jump
@@ -75,6 +83,11 @@ class Eyes final {
     // as shown now: 0 the left eye, 1 the right one
     FaceRig::EyeTurn turn(int side) const { return shown[side&1]; }
     uint32_t bigSaccades() const { return big; }
+    // a gesture of the eyes from `start` (it may lie a little in the past), in place of one going on: mirror - on the
+    // other side than written; false: not a gesture of the eyes, or no eyes
+    bool     startCue(const FaceProfile::Cue& cue, bool mirror, uint64_t start);
+    // how far the gesture of the eyes is shown now, 0..1 (its curve: on, hold, off)
+    float    cueWeight(std::string_view name, uint64_t now) const;
     void     probe(Probe& p) const;
 
     static Probe       subjectProbe;  // the npc the test bench watches
@@ -93,6 +106,9 @@ class Eyes final {
     Angles   limited(int side, Angles a) const;
     float    over(int side, const Angles& a) const;
     float    rand01();
+    void     beginLook(bool target, const Input& in);
+    void     endLook(Mode m, bool target, const Input& in);
+    Angles   lookOffset(uint64_t now) const;
     float    range(float a, float b) { return a + (b-a)*rand01(); }
 
     const FaceProfile::Eyes* eyes = nullptr;
@@ -127,4 +143,12 @@ class Eyes final {
     float              rise      = 0, down = 0, headUp = 0;  // the probe: the point from the eyes, the head (world)
     uint32_t           saccades  = 0;
     uint32_t           big       = 0;
+
+    // the gesture of the eyes
+    const FaceProfile::Cue* look = nullptr;
+    uint64_t           lookFrom   = 0;
+    float              lookSign   = 1;      // its side: +1 to +y (the character's left)
+    bool               lookBegun  = false;  // its first update was: the base point and where the eyes started are set
+    bool               lookTarget = false;  // the base point: what Gaze looks at (else `fixed`)
+    Angles             lookStart;           // an arc: where the eyes were from the base point as it started
   };

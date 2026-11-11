@@ -161,6 +161,8 @@ void censusCache() {
   struct Cleanup { fs::path path; ~Cleanup() { std::error_code e; fs::remove_all(path,e); } } cleanup{root};
   using Status = PlacedCensusCache::Status;
   const PlacedCensusCache::Key key{"0123abcd","CONTRACT","content",0,inputs};
+  require(PlacedCensusCache::builderFingerprint().size()==64 && key.builder==PlacedCensusCache::builderFingerprint(),
+          "the census key must include the build's nonempty SHA-256 builder fingerprint");
   PlacedCensusCache cache(root,key);
   std::vector<PlacedCensusCache::Entry> stored;
   require(cache.read(live.size(),stored)==Status::Absent,"cold census cache must miss as absent");
@@ -174,6 +176,11 @@ void censusCache() {
           PlacedCensusCache(root,lowerKey).read(live.size(),stored)==Status::Hit,
           "a save's lower-case world name must use the fresh start's census file");
   require(cache.read(live.size()+1,stored)==Status::Corrupt,"a different candidate count must not reuse the census");
+  auto builderKey = key;
+  builderKey.builder[0] = key.builder[0]=='0' ? '1' : '0';
+  require(PlacedCensusCache(root,builderKey).read(live.size(),stored)==Status::Builder && stored.empty(),
+          "a different builder fingerprint must miss as builder");
+  require(PlacedCensusCache::statusName(Status::Builder)=="builder","builder misses must have a distinct log reason");
 
   // Moving one item must change the digest and miss the stored census.
   auto movedKey = key;
@@ -197,7 +204,7 @@ void censusCache() {
 
   auto versionKey = key;
   ++versionKey.version;
-  require(PlacedCensusCache(root,versionKey).read(live.size(),stored)==Status::Version,"a census rules bump must miss");
+  require(PlacedCensusCache(root,versionKey).read(live.size(),stored)==Status::Version,"a census file format bump must miss");
 
   std::string bytes;
   {
@@ -219,7 +226,7 @@ void censusCache() {
   require(!fs::exists(cache.path()),"the disabled census cache must not write");
   unsetenv("OPENGOTHIC_PLACED_CENSUS_CACHE");
   require(furniture.mass()>0,"census cache fixture must retain its movable vob");
-  std::puts("Placed census cache: body-free key; hit equals live; world name case-insensitive; transform, instance, mesh, material, version, count and damage miss; disabled bypass");
+  std::puts("Placed census cache: body-free key with builder fingerprint; hit equals live; world name case-insensitive; builder, transform, instance, mesh, material, version, count and damage miss; disabled bypass");
   }
 
 void rootedAndStack() {

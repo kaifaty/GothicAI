@@ -1,4 +1,5 @@
 #include "dynamicworld_internal.h"
+#include "settings.h"
 
 #include "collisionworld.h"
 #include "collisioncache.h"
@@ -7,7 +8,6 @@
 #include "ragdoll.h"
 #include "cloth.h"
 #include "worldwind.h"
-#include "gothic.h"
 #include "frameprofile.h"
 #include "basestore.h"
 #include "sha256.h"
@@ -97,7 +97,7 @@ struct DynamicWorld::ItemTrace {
       result.bounds[0]=native.collisionBounds[0];
       result.bounds[1]=native.collisionBounds[1];
       constexpr uint32_t mask=(1u<<C_Landscape)|(1u<<C_Object)|(1u<<C_Item)|(1u<<C_Ragdoll)|
-                              (1u<<C_LivingBody)|(1u<<C_ActiveBody)|(1u<<C_MovableVob)|(1u<<C_Fragment);
+                              (1u<<C_LivingBody)|(1u<<C_ActiveBody)|(1u<<C_MovableVob)|fragmentMask;
       for(const auto& contact:world.overlaps(*native.body,2.f,mask,true)) {
         ItemTraceContact entry;
         entry.category=contact.category;
@@ -198,7 +198,7 @@ DynamicWorld::DynamicWorld(World* owner, const asset::WorldMesh& worldMesh, cons
   world.reset(new CollisionWorld());
   ownerWorld=owner;
   if(owner!=nullptr)
-    splitStaticTriangles=Gothic::settingsGetI("GAME","static_collision_split")!=0;
+    splitStaticTriangles=Settings::getI("GAME","static_collision_split")!=0;
   clothWorld=std::make_unique<Cloth>(*world);
   bodies.reset(new WorldBodies());
   movableVobs.reset(new MovableVobs());
@@ -275,7 +275,7 @@ DynamicWorld::DynamicWorld(World* owner, const asset::WorldMesh& worldMesh, cons
       // An unavailable derived cache must not prevent building the collision.
       }
     const auto inputs=Resources::wayHeightInputs(owner->name());
-    const auto& flags=Gothic::physicsFlags();
+    const auto& flags=Settings::physicsFlags();
     key={inputs.baseFingerprint,std::filesystem::path(owner->name()).stem().string(),inputs.contentFingerprint,
          uint32_t(flags.cloth)|(uint32_t(flags.movableVobs)<<1)|(uint32_t(splitStaticTriangles)<<2)};
     }
@@ -780,12 +780,12 @@ std::vector<DynamicWorld::RagdollSupport> DynamicWorld::ragdollSupports(const Ra
 
 void DynamicWorld::tick(uint64_t dt) {
   if(ownerWorld!=nullptr) {
-    world->setBodyImpactEnabled(Gothic::physicsFlags().bodyImpactDamage);
-    const float cycle=Gothic::settingsGetF("ENGINE","zWindCycleTime")+
-                      Gothic::settingsGetF("ENGINE","zWindCycleTimeVar");
+    world->setBodyImpactEnabled(Settings::physicsFlags().bodyImpactDamage);
+    const float cycle=Settings::getF("ENGINE","zWindCycleTime")+
+                      Settings::getF("ENGINE","zWindCycleTimeVar");
     const uint64_t period=std::isfinite(cycle) && cycle>0.f ? uint64_t(cycle*1000.f) : 0;
     clothWorld->setWind(WorldWind::sample(ownerWorld->tickCount(),period,
-                                        Gothic::settingsGetI("ENGINE","zWindEnabled")!=0));
+                                        Settings::getI("ENGINE","zWindEnabled")!=0));
     }
   npcList   ->tickAabbs();
   bulletList->tick(dt);
@@ -796,7 +796,7 @@ void DynamicWorld::tick(uint64_t dt) {
     FrameProfile::Scope timing(FrameProfile::Zone::Destruction);
     for(auto* obj:movableVobs->bodies)
       if(movableVobs->enabled || obj->className=="fence" || obj->pose->broken) {
-        if(obj->pendingBreak) breakMovableVob(*obj);
+        if(obj->pendingBreak) breakMovableVob(*obj); else if(obj->pose->broken) breakRemnants(*obj);
         syncMovableVob(*obj);
         cleanupFragments(*obj);
         syncFragments(*obj);

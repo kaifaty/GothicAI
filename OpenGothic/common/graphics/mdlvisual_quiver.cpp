@@ -1,4 +1,7 @@
 #include "mdlvisual.h"
+#include "settings.h"
+#include "gameservices.h"
+#include "camera.h"
 #include "mdlvisual_internal.h"
 
 #include "graphics/mesh/skeleton.h"
@@ -7,7 +10,6 @@
 #include "game/serialize.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
-#include "gothic.h"
 #include "worldchunksruntime.h"
 #include "utils/workers.h"
 
@@ -63,8 +65,7 @@ bool MdlVisual::stickArrow(MeshObjects::Mesh&& arrow, size_t bone, const Matrix4
   if(!validRenderFrame(pin.local))
     return false;
   arrow.setObjMatrix(renderedBone(bone)*pin.local);
-  if(textureOwnerKnown)
-    arrow.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
+  addTextureOwner(arrow);
   pin.view=std::move(arrow);
   if(stuckArrows.size()>=MaxStuckArrows)
     stuckArrows.erase(stuckArrows.begin());
@@ -92,7 +93,7 @@ bool MdlVisual::loadStuckArrows(Serialize& fin, World& world) {
   Resources::TextureLoadScope textureLoadScope(textureOwnerKnown && textureOwnerSpatial && residency &&
       residency->textureDistance(ChunkId::fromPosition(textureOwnerPosition.x,textureOwnerPosition.z))>2);
   clearStuckArrows();
-  if(!Gothic::physicsFlags().arrowSticking)
+  if(!Settings::physicsFlags().arrowSticking)
     return true;
   try {
     uint32_t magic=0,count=0;
@@ -123,8 +124,7 @@ bool MdlVisual::loadStuckArrows(Serialize& fin, World& world) {
           if(std::abs(pin.local.at(c,r))>100000000.f)
             return false;
       pin.view=world.addView(pin.visual);
-      if(textureOwnerKnown)
-        pin.view.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
+      addTextureOwner(pin.view);
       if(pin.view.isEmpty())
         return false;
       pin.view.setObjMatrix(renderedBone(pin.bone)*pin.local);
@@ -175,8 +175,7 @@ void MdlVisual::setQuiver(const Quiver::State& st, MeshObjects::Mesh&& body, std
   quiv.set(st,fit,std::move(body),std::move(arrows),std::move(arrowLocal));
   quiv.setNear(std::move(near),std::move(nearLeg));
   quiv.setWide(std::move(wide));
-  if(textureOwnerKnown)
-    quiv.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
+  addTextureOwner(quiv);
   syncAttaches();
   }
 
@@ -253,7 +252,7 @@ bool MdlVisual::updateQuiver(const Npc& npc, uint64_t dt) {
   if(!quiv.isShown() || skeleton==nullptr || quiv.bone()>=skInst->boneCount())
     return false;
   // far or not drawn: at rest, not computed
-  const auto* cam = Gothic::inst().camera();
+  const auto* cam = GameServices::inst().camera();
   const Vec3  at  = npc.position();
   if(view.isEmpty() || (cam!=nullptr && (cam->originLwc()-at).length()>Quiver::SimDistance)) {
     quiv.rest();

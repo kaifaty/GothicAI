@@ -1,6 +1,7 @@
 #define MINIZ_NO_ZLIB_COMPATIBLE_NAMES
 // Format 3 bonds of debris (reports/physics/2026-11-destruction-bonds): a blow breaks only
 // the bonds near it, joined pieces fall as one native body. Part of gothic-physics-contract.
+#include "physics/collisionworld.h"
 #include "physics/dynamicworld.h"
 #include "physics/fracture.h"
 #include "graphics/mesh/protomesh.h"
@@ -12,6 +13,13 @@
 #include <Tempest/Log>
 #include <Tempest/MemReader>
 #include <Tempest/MemWriter>
+
+#include <Jolt/Jolt.h>
+#include <Jolt/Physics/Collision/CollideShape.h>
+#include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
+#include <Jolt/Physics/Collision/CollisionDispatch.h>
+#include <Jolt/Physics/Collision/Shape/BoxShape.h>
+#include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 
 #include <algorithm>
 #include <chrono>
@@ -109,6 +117,416 @@ std::vector<uint32_t> groupsOf(const DynamicWorld& world) {
   std::vector<uint32_t> result;
   for(const auto& piece:world.fragmentSnapshot()) result.push_back(piece.bondGroup);
   return result;
+  }
+
+// Second step (repeat blows on remnants): helpers over the fixture of testFractureBonds.
+using WriteFixture=std::function<void(const std::vector<Box>&, const std::string&)>;
+using MakeFixture=std::function<DynamicWorld::Item(DynamicWorld&)>;
+
+Tempest::Vec3 project(const Tempest::Matrix4x4& matrix, Tempest::Vec3 point) {
+  matrix.project(point);
+  return point;
+  }
+
+// A blade stopped by the body of `piece`'s group at `local`, a point in the frame of the pieces.
+bool blowOn(DynamicWorld& world, size_t piece, const Tempest::Vec3& local, float weapon, float strength,
+            FractureRule::Melee kind, std::vector<uintptr_t>& struck) {
+  const auto target=world.fragmentSnapshot()[piece];
+  MeleeBladeContact contact {};
+  contact.world=contact.stopsSwing=true;
+  contact.fragment=target.body;
+  contact.point=project(target.transform,local);
+  contact.velocityCmS={250,0,0};
+  return world.meleeStoppedMovableVob(contact,weapon,strength,kind,nullptr,struck);
+  }
+
+bool blowOnProp(DynamicWorld& world, const Tempest::Vec3& point, FractureRule::Melee kind, std::vector<uintptr_t>& struck) {
+  MeleeBladeContact contact {};
+  contact.world=contact.stopsSwing=true;
+  contact.movableVob=world.movableVobSnapshot()[0].id;
+  contact.point=point;
+  contact.velocityCmS={250,0,0};
+  return world.meleeStoppedMovableVob(contact,40,1000,kind,nullptr,struck);
+  }
+
+void testFractureRemnants(const WriteFixture& write, const MakeFixture& make, uint32_t zenId) {
+  using Melee=FractureRule::Melee;
+  // The nailed row of eight boards; the one-handed side blow leaves boards 0..2 loose and the
+  // remnant 3..7 (x -10..40 cm). Its reserve: 100 health x 5/8 of the volume x remnant 0.5 = 31.25;
+  // a blade of weapon 0 and strength 40 deals (0 x 0.5 + 40 x 0.5) x 1 = 20.
+  std::vector<Box> row;
+  std::ostringstream nails;
+  nails<<"bonds 7\n";
+  for(int i=0;i<8;++i) {
+    row.push_back({{-35.f+10.f*float(i),0,0},{10,20,10},"WOOD"});
+    if(i<7) nails<<"bond "<<i<<' '<<i+1<<" NAIL "<<-30.f+10.f*float(i)<<" 0 0\n";
+    }
+  write(row,nails.str());
+  const auto firstBreak=[&](DynamicWorld& world, std::vector<uintptr_t>& swing) {
+    require(blowOnProp(world,{-50,1000,0},Melee::OneHand,swing),"the remnant fixture must take its first blow");
+    world.tick(0);
+    require(groupsOf(world)==std::vector<uint32_t>({0,1,2,3,3,3,3,3}),"the first blow leaves the remnant of boards 3..7");
+    };
+  // At x=-30 a one-handed blow (35 cm) reaches boards 3 and 4 (20 and 30 cm): bonds 3-4 and 4-5 go,
+  // 5..7 stay one body.
+  const Tempest::Vec3 nearEnd(-30,0,0);
+  const std::vector<uint32_t> second={0,1,2,3,4,5,5,5};
+  DynamicWorld world(nullptr,asset::WorldMesh{});
+  auto object=make(world);
+  std::vector<uintptr_t> swing;
+  firstBreak(world,swing);
+  require(!blowOn(world,3,nearEnd,40,1000,Melee::OneHand,swing),"the swing that broke the prop must not strike its remnant");
+  std::vector<uintptr_t> weak;
+  require(blowOn(world,3,nearEnd,0,40,Melee::OneHand,weak),"a stopped blade must strike the remnant");
+  world.tick(0);
+  require(bodiesOf(world,zenId).size()==4,"a blow below the remnant's reserve must not break it");
+  require(!blowOn(world,3,nearEnd,0,40,Melee::OneHand,weak),"one swing must strike a remnant once");
+  // Saved here, between the blows: 20 of 31.25 taken.
+  const auto saved=saveArchive([&](Serialize& output) { world.saveMovableVobs(output); });
+  std::vector<uintptr_t> again;
+  require(blowOn(world,3,nearEnd,0,40,Melee::OneHand,again),"the remnant must take the second weak blow");
+  world.tick(0);
+  require(groupsOf(world)==second && bodiesOf(world,zenId).size()==6,
+          "damage adds up: the second blow breaks the near bonds, the far boards stay one body");
+  for(const auto& body:bodiesOf(world,zenId))
+    if(body.piece<5)
+      require(body.category==DynamicWorld::C_FragmentSmall,"a 20 cm board must take the small debris layer characters pass");
+  require(!blowOn(world,5,nearEnd,0,40,Melee::OneHand,again),"one swing must not break a remnant twice");
+  std::vector<uintptr_t> single;
+  const auto before=world.fragmentSnapshot()[0].velocity;
+  require(!blowOn(world,0,{-45,0,0},40,1000,Melee::OneHand,single) && bodiesOf(world,zenId).size()==6,
+          "a single piece must not split");
+  require((world.fragmentSnapshot()[0].velocity-before).length()>1.f,"a single piece a blade stops at only takes its push");
+  // After loading, the same bonds, groups and damage: the same blow gives the same result.
+  DynamicWorld loaded(nullptr,asset::WorldMesh{});
+  auto loadedObject=make(loaded);
+  loadMovables(loaded,saved);
+  require(loadedObject.isBroken() && groupsOf(loaded)==std::vector<uint32_t>({0,1,2,3,3,3,3,3}),
+          "a save between blows must restore the remnant");
+  std::vector<uintptr_t> afterLoad;
+  require(blowOn(loaded,3,nearEnd,0,40,Melee::OneHand,afterLoad),"the loaded remnant must take the blow");
+  loaded.tick(0);
+  require(groupsOf(loaded)==second,"a save must keep the remnant's damage: the next blow breaks it as without saving");
+
+  // remnant=0: the first blow on a remnant breaks it.
+  setenv("OPENGOTHIC_FRACTURE_BONDS","remnant=0",1);
+  DynamicWorld loose(nullptr,asset::WorldMesh{});
+  unsetenv("OPENGOTHIC_FRACTURE_BONDS");
+  auto looseObject=make(loose);
+  std::vector<uintptr_t> looseSwing,looseBlow;
+  firstBreak(loose,looseSwing);
+  require(blowOn(loose,3,nearEnd,0,1,Melee::Fist,looseBlow),"remnant=0 fixture must take the blow");
+  loose.tick(0);
+  require(bodiesOf(loose,zenId).size()>4,"with remnant=0 every blow must break the remnant");
+
+  // An arrow (0.12 kg at 40 m/s: 4.8 Ns, 40 health) at board 3's face: 12 cm reach the bond 4-5.
+  struct Arrow final : DynamicWorld::BulletCallback {
+    void onCollide(asset::MaterialGroup) override { ++hits; }
+    bool stopsAtWorldHit() const override { return true; }
+    void onWorldHit(const DynamicWorld::BulletWorldHit&) override { ++pinned; }
+    int hits=0,pinned=0;
+    } arrowContact;
+  DynamicWorld archery(nullptr,asset::WorldMesh{});
+  auto archeryObject=make(archery);
+  std::vector<uintptr_t> archerySwing;
+  firstBreak(archery,archerySwing);
+  auto* arrow=archery.bulletObj(&arrowContact);
+  arrow->setPosition(project(archery.fragmentSnapshot()[3].transform,{-35,0,0}));
+  arrow->setDirection({4,0,0});
+  archery.tick(17);
+  archery.deleteObj(arrow);
+  require(arrowContact.hits==1 && groupsOf(archery)==second && bodiesOf(archery,zenId).size()==6,
+          "an arrow must stop at the remnant and break the bonds near it");
+  require(arrowContact.pinned==0,"an arrow stopped by debris must not be pinned to the static world");
+
+  // The force of a spell breaks every bond of the remnant; the loose boards stay as they are.
+  DynamicWorld blast(nullptr,asset::WorldMesh{});
+  auto blastObject=make(blast);
+  std::vector<uintptr_t> blastSwing;
+  firstBreak(blast,blastSwing);
+  const auto center=blast.fragmentSnapshot()[3].centerOfMass;
+  require(blast.applyMovableVobImpulse(center,100.f,[](const Tempest::Vec3&,float mass) {
+            return Tempest::Vec3(mass*1000.f,0,0);
+            },nullptr,&center)==1,"a spell must reach the remnant only");
+  blast.tick(0);
+  require(groupsOf(blast)==std::vector<uint32_t>({0,1,2,3,4,5,6,7}),"a spell's force must break every bond of the remnant");
+
+  // The ring counts the HOOP bonds broken by the first blow. Staves under one hoop, joined side by
+  // side by ACROSS (strength 2: a fist's 20 cm reach 10 cm). A fist at stave 0 frees it and cuts
+  // stave 1's HOOP bond, stave 1 stays by its ACROSS bond. A fist at the last stave then cuts the
+  // HOOP bonds of the last two. Of five staves that is 4 lost, more than three quarters: the hoop
+  // lets go of all, though the second blow alone cut only 2 of 5. Of six it is 4 lost, two thirds:
+  // the hoop holds; with ring=0.5 in OPENGOTHIC_FRACTURE_BONDS it lets go.
+  const auto ringFixture=[&](int staves) {
+    std::vector<Box> barrel;
+    std::ostringstream ring;
+    ring<<"bonds "<<2*staves-1<<'\n';
+    for(int i=0;i<staves;++i) {
+      barrel.push_back({{-25.f+10.f*float(i),0,0},{10,60,10},"WOOD"});
+      ring<<"bond "<<i<<' '<<staves<<" HOOP "<<-25.f+10.f*float(i)<<" 30 0\n";
+      if(i+1<staves) ring<<"bond "<<i<<' '<<i+1<<" ACROSS "<<-20.f+10.f*float(i)<<" 0 0\n";
+      }
+    barrel.push_back({{-30.f+5.f*float(staves),32.5f,0},{10.f*float(staves),5,10},"METAL"});
+    write(barrel,ring.str());
+    };
+  const auto ringBreak=[&](DynamicWorld& ringWorld, int staves) {
+    std::vector<uintptr_t> first;
+    require(blowOnProp(ringWorld,{-32,1000,0},Melee::Fist,first),"the ring fixture must take the fist");
+    ringWorld.tick(0);
+    std::vector<uint32_t> expected(size_t(staves+1),1);
+    expected[0]=0;
+    require(groupsOf(ringWorld)==expected,"a fist at stave 0 must free it alone");
+    };
+  const auto ringBlow=[&](DynamicWorld& ringWorld, int staves) {
+    std::vector<uintptr_t> blow;
+    require(blowOn(ringWorld,1,{-25.f+10.f*float(staves-1)+7.f,0,0},40,1000,Melee::Fist,blow),"the ring remnant must take the fist");
+    ringWorld.tick(0);
+    return groupsOf(ringWorld);
+    };
+  ringFixture(5);
+  setenv("OPENGOTHIC_FRACTURE_BONDS","across=2",1);
+  DynamicWorld ringWorld(nullptr,asset::WorldMesh{}),ringLoaded(nullptr,asset::WorldMesh{}),ringOld(nullptr,asset::WorldMesh{});
+  unsetenv("OPENGOTHIC_FRACTURE_BONDS");
+  auto ringObject=make(ringWorld);
+  auto ringLoadedObject=make(ringLoaded);
+  auto ringOldObject=make(ringOld);
+  ringBreak(ringWorld,5);
+  const auto ringSave=saveArchive([&](Serialize& output) { ringWorld.saveMovableVobs(output); });
+  loadMovables(ringLoaded,ringSave);
+  // Schema 3 has no bond fates: bonds inside a group are whole, so stave 1 holds the hoop again.
+  const auto state=ringWorld.movableVobSnapshot()[0];
+  const auto pieces=ringWorld.fragmentSnapshot();
+  const auto legacy=saveArchive([&](Serialize& output) {
+    output.setEntry("worlds/",output.worldName(),"/destruction-vobs");
+    output.write(uint32_t(0x31534544),uint16_t(3),output.worldName(),uint32_t(1));
+    output.write(zenId,state.visual,state.origin,state.transform,0.f,true,uint32_t(pieces.size()),uint64_t(1),std::string());
+    output.write(false);
+    for(const auto& piece:pieces) output.write(piece.bondGroup);
+    output.write(uint32_t(2));
+    for(const size_t piece:{size_t(0),size_t(1)})
+      output.write(true,true,uint64_t(0),pieces[piece].transform,pieces[piece].velocity,pieces[piece].angularVelocity,false);
+    });
+  loadMovables(ringOld,legacy);
+  require(ringOldObject.isBroken() && groupsOf(ringOld)==groupsOf(ringWorld),"a schema 3 save must load its groups");
+  const auto ringGroups=ringBlow(ringWorld,5);
+  require(ringGroups==std::vector<uint32_t>({0,1,1,1,2,3}),
+          "the ring must count the HOOP bonds broken by the first blow: 4 of 5 lost lets the staves go");
+  require(ringBlow(ringLoaded,5)==ringGroups,"a save must keep every bond's fate: the next blow gives the same result");
+  require(ringBlow(ringOld,5)==std::vector<uint32_t>({0,1,1,1,2,1}),
+          "a schema 3 save joins the pieces of one group by all their bonds");
+  ringFixture(6);
+  for(const char* bonds:{"across=2","across=2,ring=0.5"}) {
+    setenv("OPENGOTHIC_FRACTURE_BONDS",bonds,1);
+    DynamicWorld six(nullptr,asset::WorldMesh{});
+    unsetenv("OPENGOTHIC_FRACTURE_BONDS");
+    auto sixObject=make(six);
+    ringBreak(six,6);
+    const bool half=std::string_view(bonds).find("ring")!=std::string_view::npos;
+    require(ringBlow(six,6)==(half ? std::vector<uint32_t>({0,1,1,1,1,2,3}) : std::vector<uint32_t>({0,1,1,1,1,2,1})),
+            half ? "with ring=0.5 a hoop that lost 4 of 6 staves over two blows lets go"
+                 : "a hoop that lost 4 of 6 staves over two blows, two thirds, holds by default");
+    if(half)
+      for(const auto& body:bodiesOf(six,zenId))
+        require(body.category==DynamicWorld::C_Fragment,"a 60 cm stave or hoop must take the debris layer characters stop at");
+    }
+  std::printf("Fracture remnants: weak blows 20+20 of 31.25 break the row's remnant into %zu bodies, the far boards one; "
+              "arrow and spell break it; ring counts earlier HOOP losses; damage and bonds survive save; schema 3 loads\n",
+              bodiesOf(world,zenId).size());
+  }
+
+// Debris from 0.5 m on stops a walker, which pushes it; a smaller piece is passed. A remnant that
+// appears around a walker is passed until they separate, then blocks again.
+void testCharacterDebris() {
+  constexpr float slope=.785398163f,radius=25.f;
+  const auto gap=[&](const CollisionWorld::CollisionBody& body, float walkerX, bool front) {
+    JPH::Vec3 min,max;
+    body.getAabb(min,max);
+    return front ? min.GetX()*100.f-(walkerX+radius) : walkerX-radius-max.GetX()*100.f;
+    };
+  for(const float half:{30.f,10.f}) {
+    CollisionWorld world;
+    auto floor=world.addCollisionBody(new JPH::BoxShape(JPH::Vec3(20,.5f,20)),at(0,-50,0),.7f,DynamicWorld::C_Landscape);
+    // The layer the engine gives debris of this size (addFragmentBody).
+    auto debris=world.addDynamicBody(new JPH::BoxShape(JPH::Vec3(half*.01f,.15f,half*.01f)),at(150,15,0),.6f,20.f,
+                                     2.f*half>=CollisionWorld::fragmentBlockSize*100.f ? DynamicWorld::C_Fragment
+                                                                                       : DynamicWorld::C_FragmentSmall);
+    for(int i=0;i<30;++i) world.tick(17);
+    auto walker=world.createVirtualCharacter(radius,180,{0,0,0});
+    CollisionWorld::CharacterMoveResult state;
+    float deepest=1.e9f;
+    for(int frame=0;frame<100;++frame) {
+      state=walker->move({5,0,0},17,50,slope,80,nullptr);
+      world.tick(17);
+      deepest=std::min(deepest,gap(*debris,state.position.x,true));
+      }
+    std::printf("CharacterVirtual and debris %.0f cm: walker x %.1f cm, deepest into it %.2f cm, debris x %.1f cm\n",
+                double(2*half),double(state.position.x),double(-deepest),double(debris->position().x));
+    if(half*2.f>=CollisionWorld::fragmentBlockSize*100.f)
+      require(deepest>-2.f && debris->position().x>155.f,"a walker must stop at a remnant and push it, not enter it");
+    else
+      require(state.position.x>450.f,"a walker must pass a piece under 0.5 m");
+    }
+  CollisionWorld world;
+  auto floor=world.addCollisionBody(new JPH::BoxShape(JPH::Vec3(20,.5f,20)),at(0,-50,0),.7f,DynamicWorld::C_Landscape);
+  auto walker=world.createVirtualCharacter(radius,180,{0,0,0});
+  for(int i=0;i<10;++i) walker->move({},17,50,slope,80,nullptr);
+  auto debris=world.addDynamicBody(new JPH::BoxShape(JPH::Vec3(.3f,.15f,.3f)),at(0,15,0),.6f,20.f,DynamicWorld::C_Fragment);
+  world.passCharacterOverlaps(*debris);
+  const auto start=debris->position();
+  for(int frame=0;frame<20;++frame) {
+    walker->move({},17,50,slope,80,nullptr);
+    world.tick(17);
+    }
+  const float pushed=(debris->position()-start).length();
+  CollisionWorld::CharacterMoveResult state;
+  for(int frame=0;frame<40;++frame) {
+    state=walker->move({5,0,0},17,50,slope,80,nullptr);
+    world.tick(17);
+    }
+  float deepest=1.e9f;
+  for(int frame=0;frame<60;++frame) {
+    state=walker->move({-5,0,0},17,50,slope,80,nullptr);
+    world.tick(17);
+    deepest=std::min(deepest,gap(*debris,state.position.x,false));
+    }
+  std::printf("CharacterVirtual inside a new remnant: pushed %.2f cm while inside; back from x 200: deepest %.2f cm\n",
+              double(pushed),double(-deepest));
+  require(pushed<1.f,"a remnant that appeared around a walker must be passed, not pushed away");
+  {
+    // A controller made anew while it still overlaps the remnant (a load, a teleport, a reset)
+    // passes it the same way: neither the walker nor the remnant moves.
+    CollisionWorld again;
+    auto ground=again.addCollisionBody(new JPH::BoxShape(JPH::Vec3(20,.5f,20)),at(0,-50,0),.7f,DynamicWorld::C_Landscape);
+    auto first=again.createVirtualCharacter(radius,180,{0,0,0});
+    for(int i=0;i<10;++i) first->move({},17,50,slope,80,nullptr);
+    auto remnant=again.addDynamicBody(new JPH::BoxShape(JPH::Vec3(.3f,.15f,.3f)),at(51,15,0),.6f,20.f,DynamicWorld::C_Fragment);
+    again.passCharacterOverlaps(*remnant);
+    const auto feet=first->move({},17,50,slope,80,nullptr).position;
+    first.reset();
+    auto remade=again.createVirtualCharacter(radius,180,feet);
+    const auto from=remnant->position();
+    CollisionWorld::CharacterMoveResult still;
+    for(int frame=0;frame<20;++frame) {
+      still=remade->move({},17,50,slope,80,nullptr);
+      again.tick(17);
+      }
+    const float walkerShift=(still.position-feet).length(),remnantShift=(remnant->position()-from).length();
+    std::printf("CharacterVirtual made anew in a remnant: walker %.3f cm, remnant %.3f cm\n",double(walkerShift),double(remnantShift));
+    require(walkerShift<.5f && remnantShift<.5f,"a walker made anew inside a remnant must pass it, not push out of it");
+  }
+  require(deepest>-2.f,"after they separate the remnant must block the walker again");
+  // A walker standing still, or in a stance that sways, on a stave, against a board it walked into,
+  // with a stave toppled against it or beside a stave at its toe, all from 0.5 m, leaves the piece
+  // to fall asleep no later than 2 s after it would alone, never wakes it again and does not enter
+  // it. A stave that fell asleep leaning on the walker falls once the walker steps away.
+  struct Still { const char* what; float mass; JPH::Vec3 half; Tempest::Vec3 centre; float tilt; Tempest::Vec3 feet; float walk; Tempest::Vec3 sway; };
+  // A fighting stance passes its root sway while the character stands: 1.5 cm to and fro, once a second.
+  const Tempest::Vec3 sway(0,0,1.5f);
+  const Still cases[]={
+    // A stave 110 x 5 x 12 cm lies flat, the walker on it.
+    {"on a 15 kg stave",15.f,{.55f,.025f,.06f},{0,2.5f,0},0.f,{0,5,0},0.f,{}},
+    {"on a 3 kg stave",3.f,{.55f,.025f,.06f},{0,2.5f,0},0.f,{0,5,0},0.f,{}},
+    {"swaying on a 15 kg stave",15.f,{.55f,.025f,.06f},{0,2.5f,0},0.f,{0,5,0},0.f,sway},
+    // A board 110 x 30 x 5 cm stands on its long edge; the walker walks into it.
+    {"swaying against a 15 kg board",15.f,{.55f,.15f,.025f},{0,15,0},0.f,{0,0,-(2.5f+radius+20.f)},2.f,sway},
+    // A stave stands 45 cm from the walker and topples onto it.
+    {"swaying with a 15 kg stave toppled against it",15.f,{.06f,.55f,.025f},{0,55,45},-5.f,{0,0,0},0.f,sway},
+    {"swaying with a 3 kg stave toppled against it",3.f,{.06f,.55f,.025f},{0,55,45},-5.f,{0,0,0},0.f,sway},
+    // A stave lies under the edge of the capsule's rounded foot, 0.6 cm below it.
+    {"swaying beside a 3 kg stave at its toe",3.f,{.06f,.025f,.55f},{22,2.5f,0},0.f,{0,0,0},0.f,{1.5f,0,0}},
+    };
+  for(const Still& still:cases) {
+    Tempest::Vec3 rest;
+    float lean=0.f,top=0.f,depth=0.f;
+    // `loaded`: before stepping away the game is saved and loaded, the stave restored asleep where
+    // it leaned and the walker's controller made anew.
+    const auto run=[&](bool walker,int& first,int& wakes,bool loaded=false) {
+      CollisionWorld world;
+      auto ground=world.addCollisionBody(new JPH::BoxShape(JPH::Vec3(20,.5f,20)),at(0,-50,0),.7f,DynamicWorld::C_Landscape);
+      auto pose=at(still.centre.x,still.centre.y,still.centre.z);
+      if(still.tilt!=0.f) {
+        // Tilt about the stave's foot on the ground.
+        pose=at(still.centre.x,0,still.centre.z);
+        pose.rotateOX(still.tilt);
+        pose.translate(0,still.centre.y,0);
+        }
+      auto piece=world.addDynamicBody(new JPH::BoxShape(still.half),pose,.6f,still.mass,DynamicWorld::C_Fragment);
+      std::unique_ptr<CollisionWorld::VirtualCharacter> character;
+      if(walker)
+        character=world.createVirtualCharacter(radius,180,still.feet);
+      first=-1;wakes=0;depth=0.f;
+      bool was=false;
+      Tempest::Vec3 feet=still.feet;
+      for(int frame=0;frame<1800;++frame) {
+        CollisionWorld::CharacterMoveResult mv;
+        if(character!=nullptr) {
+          const bool walking=frame<15 && still.walk!=0.f;
+          const float phase=2.f*float(M_PI)/60.f;
+          const auto sway=still.sway*(std::sin(phase*float(frame+1))-std::sin(phase*float(frame)));
+          mv=character->move(walking ? Tempest::Vec3(0,0,still.walk) : sway,17,50,slope,80,nullptr,false,!walking);
+          feet=mv.position;
+          }
+        world.tick(17);
+        if(character!=nullptr && frame>=60) {
+          // How deep the walker's capsule stands in the piece, centimetres.
+          const JPH::ShapeRefC capsule=new JPH::CapsuleShape(.9f-radius*.01f,radius*.01f);
+          const JPH::ShapeRefC box=new JPH::BoxShape(still.half,0);
+          const auto m=piece->matrix();
+          const JPH::Mat44 pose(JPH::Vec4(m.at(0,0),m.at(0,1),m.at(0,2),0),JPH::Vec4(m.at(1,0),m.at(1,1),m.at(1,2),0),
+                                JPH::Vec4(m.at(2,0),m.at(2,1),m.at(2,2),0),JPH::Vec4(m.at(3,0)*.01f,m.at(3,1)*.01f,m.at(3,2)*.01f,1));
+          JPH::CollideShapeSettings settings;
+          JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> hits;
+          JPH::CollisionDispatch::sCollideShapeVsShape(capsule,box,JPH::Vec3::sOne(),JPH::Vec3::sOne(),
+                                                       JPH::Mat44::sTranslation(JPH::Vec3(mv.position.x,mv.position.y+90.f,mv.position.z)*.01f),
+                                                       pose,{},{},settings,hits);
+          for(const auto& hit:hits.mHits)
+            depth=std::max(depth,hit.mPenetrationDepth*100.f);
+          }
+        const bool now=piece->isSleeping();
+        if(now && first<0) first=frame;
+        wakes+=was && !now;
+        was=now;
+        }
+      rest=piece->position();
+      if(character!=nullptr && still.tilt!=0.f) {
+        JPH::Vec3 low,high;
+        piece->getAabb(low,high);
+        lean=high.GetY()*100.f;
+        if(loaded) {
+          const auto saved=piece->matrix();
+          character.reset();
+          piece->restoreTransform(saved,true);
+          character=world.createVirtualCharacter(radius,180,feet);
+          }
+        // The walker steps away: a stave asleep against it falls.
+        for(int frame=0;frame<660;++frame) {
+          character->move({0,0,frame<60 ? -2.f : 0.f},17,50,slope,80,nullptr,false,frame>=60);
+          world.tick(17);
+          }
+        piece->getAabb(low,high);
+        top=high.GetY()*100.f;
+        }
+      return was;
+      };
+    int alone=0,first=0,wakes=0,unused=0;
+    run(false,alone,unused);
+    const bool asleep=run(true,first,wakes);
+    std::printf("CharacterVirtual still %s: asleep after %d frames (alone %d), woken %d, asleep at the end %d, "
+                "piece at (%.1f, %.1f, %.1f) cm, capsule in it %.2f cm\n",still.what,first,alone,wakes,int(asleep),
+                double(rest.x),double(rest.y),double(rest.z),double(depth));
+    require(first>=0 && first<=alone+120 && wakes==0 && asleep,
+            "a walker standing still must let the debris under or beside it sleep and not wake it");
+    // A piece under 10 kg is no floor, as a movable: a walker put on it stands through it.
+    if(still.mass>=10.f || still.feet.y<=0.f)
+      require(depth<=2.f,"a standing walker must not stand deeper than 2 cm in debris from 0.5 m");
+    if(still.tilt!=0.f) {
+      std::printf("CharacterVirtual steps away from the stave toppled against it: its top at %.1f cm before, %.1f cm after\n",double(lean),double(top));
+      require(top<10.f,"a stave asleep against a standing walker must fall once the walker leaves");
+      run(true,unused,unused,true);
+      std::printf("CharacterVirtual steps away after a load: its top at %.1f cm before, %.1f cm after\n",double(lean),double(top));
+      require(top<10.f,"a stave asleep against a walker must fall once the walker leaves after a load too");
+      }
+    }
   }
 }
 
@@ -248,9 +666,20 @@ void testFractureBonds() {
 
     // The ring: tall staves side by side and a hoop across their tops, the blow on the hoop at
     // the -x end. The hoop is the nearest piece, yet the blade strikes the stave under it and the
-    // hoop counts only its staves: the blow reaches three of them; of six that is half and the
-    // hoop holds the other three; of five it is more than half and the hoop lets go of all.
-    for(const int staves:{6,5}) {
+    // hoop counts only its staves: the blow reaches three of them. By default (ring 0.75) a hoop
+    // holds while at most three quarters of its staves are lost: of five (60%) and of four (75%)
+    // it holds the rest. ring=0.5 in OPENGOTHIC_FRACTURE_BONDS: of six (50%) it holds, of five
+    // (60%) it lets go of all. More than three quarters, counted over two blows, is in
+    // testFractureRemnants.
+    struct RingCase { int staves; const char* bonds; std::vector<uint32_t> groups; const char* what; };
+    const RingCase ringCases[]={
+      {5,nullptr,{0,1,2,3,3,3},"a hoop that lost 3 of 5 staves holds the rest by default"},
+      {4,nullptr,{0,1,2,3,3},"a hoop that lost 3 of 4 staves, three quarters, holds the rest by default"},
+      {6,"ring=0.5",{0,1,2,3,3,3,3},"with ring=0.5 a hoop that lost half of its staves holds the rest"},
+      {5,"ring=0.5",{0,1,2,3,4,5},"with ring=0.5 a hoop that lost 3 of 5 staves lets go of all"},
+      };
+    for(const auto& ringCase:ringCases) {
+      const int staves=ringCase.staves;
       std::vector<Box> barrel;
       std::ostringstream hoops;
       hoops<<"bonds "<<staves<<'\n';
@@ -260,17 +689,17 @@ void testFractureBonds() {
         }
       barrel.push_back({{-30.f+5.f*float(staves),32.5f,0},{10.f*float(staves),5,10},"METAL"});
       write(barrel,hoops.str());
+      if(ringCase.bonds!=nullptr) setenv("OPENGOTHIC_FRACTURE_BONDS",ringCase.bonds,1);
       DynamicWorld ring(nullptr,asset::WorldMesh{});
+      unsetenv("OPENGOTHIC_FRACTURE_BONDS");
       auto ringObject=make(ring);
       require(strike(ring,{-44,1000+32,0}),"the ring fixture must take the blow");
       ring.tick(0);
-      const auto groups=groupsOf(ring);
-      require(ringObject.isBroken() && groups.size()==size_t(staves+1),"the ring fixture must keep every piece");
-      if(staves==6)
-        require(groups==std::vector<uint32_t>({0,1,2,3,3,3,3}),"a hoop that lost half of its staves holds the rest");
-      else
-        require(groups==std::vector<uint32_t>({0,1,2,3,4,5}),"a hoop that lost more than half of its staves lets go of all");
+      require(ringObject.isBroken() && groupsOf(ring)==ringCase.groups,ringCase.what);
       }
+
+    testFractureRemnants(write,make,zenId);
+    testCharacterDebris();
 
     // A wrong block does not load, with one line in the log that names the fault.
     const std::pair<const char*,const char*> invalid[]={
@@ -306,7 +735,7 @@ void testFractureBonds() {
     requireNear(fallback.radius[1],35.f,0.f,"an invalid bond override must keep every default");
     unsetenv("OPENGOTHIC_FRACTURE_BONDS");
     std::printf("Fracture bonds: one-handed side blow 4 bodies of 8 boards (joined mass %.4f = 5 x %.4f kg); "
-                "spell 8 bodies; ring 6/5 staves; groups survive save, pending save and schema 2; %zu invalid blocks rejected\n",
+                "spell 8 bodies; ring 5/4 staves, 6/5 with ring=0.5; groups survive save, pending save and schema 2; %zu invalid blocks rejected\n",
                 double(joined->mass),double(single->mass),std::size(invalid));
   }
   if(hadContent) setenv("OPENGOTHIC_CONTENT",oldContent.c_str(),1); else unsetenv("OPENGOTHIC_CONTENT");

@@ -11,11 +11,21 @@ Kinds:
         is at `to` in an arc `lift` cm high, instead of sliding along the ground; its turn goes over smoothly;
 - lift  {"limb": "R leg", "window": [...], "cm": 10}: the foot or hand rises, keeping its turn (a foot turning on
         the spot clears the ground);
+- move  {"limb": "R leg", "window": [...], "by": [0, -4, -6]}: the foot or hand moves by the vector, in model
+        axes (y up, z the way the model looks), keeping its turn. Kimodo's walker ends the swing with a straight leg
+        thrown further forward and higher than Gothic's and holds it there before the strike, the toes up: with a
+        `rot` of the foot it reads as a parade step (reports/content/2026-11-hero-locomotion, «Носок»);
 - tuck  {"limb": "L leg", "window": [...], "k": 0.7}: the knee or elbow bends more, the end comes towards the hip or
         shoulder to the share k;
 - soles {"window": [...], "clear": 3, "step": 12}: wherever a toe node is under `clear` cm over the floor, the foot
         pitches up just enough; the angle eases in and out by at most `step` degrees a frame, and the first and
         last frames keep the stance they were snapped to;
+- tread {"limb": "L leg", "window": [...], "height": 3}: the toe node lies `height` cm over the floor, whichever
+        way the foot has to pitch for it (3 by default: the floor is 3 cm under the stance's toes, so the toe lies
+        where the stance's does): a standing sole lies flat, a heel that rises rolls over the toes. Kimodo's
+        walker slaps the toes 2 cm into the floor after the strike and lets them rise 2-3 cm through the stance -
+        the sole rocks by 12 degrees where Gothic's lies still (`gait_defects.py`: toe under floor, toe off floor,
+        sole rocks). The window is the foot's time on the ground;
 - rot   {"bone": "BIP01 L THIGH", "window": [...], "axis": [x, y, z], "deg": 20, "space": "local" | "model"};
 - calm  {"bone": "BIP01 L THIGH", "window": [...], "sigma": 1.5}: the bone's own turn smoothed over frames, which
         spreads a whip over its neighbours;
@@ -237,12 +247,17 @@ def apply(skel: ga.Skeleton, anim: ga.Animation, fixes: list, floor: float, cycl
                 e = u * u * (3 - 2 * u)
                 target = (1 - e) * W0[ie][:3, 3] + e * W1[ie][:3, 3] + fx.get("lift", 8.0) * np.sin(np.pi * u) * UP
                 two_bone(clip, f, clip.world(f), fx["limb"], target, slerp_m(W0[ie][:3, :3], W1[ie][:3, :3], e), above)
-        elif kind in ("lift", "tuck"):
+        elif kind in ("lift", "tuck", "move"):
             iu, ie = (skel.index(LIMBS[fx["limb"]][j]) for j in (0, 2))
             for f in frames:
                 W, w = clip.world(f), wt(win, f)
                 H, A = W[iu][:3, 3], W[ie][:3, 3]
-                target = A + fx["cm"] * w * UP if kind == "lift" else H + (1 - (1 - fx["k"]) * w) * (A - H)
+                if kind == "lift":
+                    target = A + fx["cm"] * w * UP
+                elif kind == "move":
+                    target = A + w * np.array(fx["by"], float)
+                else:
+                    target = H + (1 - (1 - fx["k"]) * w) * (A - H)
                 two_bone(clip, f, W, fx["limb"], target, W[ie][:3, :3].copy(), above)
         elif kind == "soles":
             height = floor + fx.get("clear", 3.0)
@@ -269,6 +284,17 @@ def apply(skel: ga.Skeleton, anim: ga.Animation, fixes: list, floor: float, cycl
                     t = sign * ease[f] * wt(win, f)
                     clip.set_world_rot(f, W, foot, rot(k, t) @ W[ie][:3, :3])
                     log.append(f"soles {foot} f{f}: {np.degrees(t):+.0f}°")
+        elif kind == "tread":
+            foot = LIMBS[fx["limb"]][2]
+            ie, it = skel.index(foot), skel.index(foot.replace("FOOT", "TOE0"))
+            height = floor + fx.get("height", 3.0)
+            for f in frames:
+                W = clip.world(f)
+                t, k = toe_lift(W, ie, it, height)
+                v = W[it][:3, 3] - W[ie][:3, 3]
+                up = 1.0 if (rot(k, 0.01) @ v)[1] > v[1] else -1.0          # the way about k that lifts the toe
+                t = up * abs(t) * (1.0 if W[it][1, 3] < height else -1.0) * wt(win, f)
+                clip.set_world_rot(f, W, foot, rot(k, t) @ W[ie][:3, :3])
         elif kind == "rot":
             i = skel.index(fx["bone"])
             for f in frames:

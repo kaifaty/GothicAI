@@ -39,6 +39,9 @@ CommandLine::CommandLine(int argc, const char** argv) {
   // hashed alpha of our glTF MASK (BK_HASHED_ALPHA); OPENGOTHIC_HASHED_ALPHA=0 (test benches) as -hashalpha 0
   if(const char* ha = std::getenv("OPENGOTHIC_HASHED_ALPHA"))
     isHashAlpha = boolArg(ha);
+  // OPENGOTHIC_MS=0|1: the default of -ms (mesh shaders) for benches; -ms wins
+  if(const char* ms = std::getenv("OPENGOTHIC_MS"))
+    isMeshSh = boolArg(ms);
   // OPENGOTHIC_RT=0|1 and OPENGOTHIC_GI=0|1|2: the same for -rt and -gi (the GI clips of a bench); the flags win
   if(const char* rt = std::getenv("OPENGOTHIC_RT"))
     isRQuery = boolArg(rt);
