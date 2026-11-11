@@ -35,8 +35,8 @@ class BowDraw final {
     static constexpr float       OwnGrab    = 0.28f;  // K2
     static constexpr float       OwnTake    = 0.34f;  // K3: MUNITION_PLACE
     static constexpr float       OwnOut     = 0.58f;  // K4
-    static constexpr float       OwnShelf   = 0.66f;  // the arrow on the bow (K5 of the master; the others later)
-    static constexpr float       StringFrom = 0.80f;  // the hand led to the string as the aim has it...
+    static constexpr float       OwnShelf   = 0.76f;  // K5: the arrow on the bow
+    static constexpr float       StringFrom = 0.84f;  // the hand led to the string as the aim has it...
     static constexpr float       StringAt   = 0.94f;  // ...on it (K7); the clip draws on (seen without BowDraw)
     static constexpr float       GrabAt     = 0.12f; // of the reload: the animation has the arrow at the quiver
                                                      // over the shoulder (then it goes on down to the hip: not
@@ -282,6 +282,10 @@ class BowDraw final {
     float                           qFollow = 0;
     Probe                           rq;              // measureReload
     float                           drawn = -1;
+    // the own clip begins where the hand was shown last (handAt, in frameNow's frame), not where the follow through
+    // is computed: no jump at K0
+    Tempest::Vec3                   ownStart;
+    bool                            ownStarted = false;
     bool                            leadFrozen = false; // the arrow's tip out of the tube: the lead to the quiver
     Tempest::Matrix4x4              lead;               // the quiver as it was then (it comes back without the hand)
 

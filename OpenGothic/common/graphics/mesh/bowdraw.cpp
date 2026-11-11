@@ -867,13 +867,20 @@ void BowDraw::ownReload(Matrix4x4* tr, size_t numBones, const Vec3& nock, const 
   if(ownKnown && toQuiver<1.f) {
     const Matrix4x4 k0  = nk*turnFull*ownHand0;
     const Vec3      off = clearHead(tr,numBones,hA,releaseOffset(tr,numBones,axis));
-    const Vec3      start = hA + off + (nock-hA)*(shotAt/std::max(length(nock-hA),1.f));
+    if(!ownStarted) {
+      ownStart   = handAt;
+      ownStarted = true;
+      }
+    Vec3            start = ownStart;
+    frameNow.project(start);
     const float     k   = 1.f-toQuiver*toQuiver;
     at  += (start-position(k0))*k;
     turn = mul(toMat3(slerp(Quat(),toQuat(mul(rA,transpose(rotationOf(k0)))),k)),turn);
     relShown = length(off)*k;
     seen    += off*k;
     }
+  if(!ownKnown)
+    ownStarted = false;
   // the quiver as it hangs (the give, the gait's turn, the armour's push) against the one the clip reaches
   qFollow = p<OwnOut ? smooth((p-OwnLeave)/(OwnGrab-OwnLeave)) : 1.f-smooth((p-OwnOut)/(OwnShelf-OwnOut));
   // the arrow's tip out of the tube (past K3): the quiver goes back alone, the hand keeps the lead it had

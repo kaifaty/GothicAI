@@ -480,7 +480,8 @@ def main():
             g2 = next(a for a in json.loads((models / f"{level}.MSB.json").read_text())["data"]["animations"]
                       if a["name"] == "T_BOWRELOAD")
             n = int(lv["frames"])
-            take = round(lv["take"] * n)
+            # the engine places the arrow a frame after the event's: the event a frame before the grab (K3)
+            take = max(0, round(lv["take"] * n) - 1)
             ev = [{**e, "frame": take} for e in g2["events"]]
             sfx = [{**x, "frame": take} for x in g2["sfx"]]
             morph = [{**m, "frame": 0 if i == 0 else min(n - 1, round(lv["ready"] * n))} for i, m in enumerate(g2["morph"])]

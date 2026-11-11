@@ -128,6 +128,11 @@ constexpr int   LiftWays   = 8;
 constexpr float LiftNear   = 0.2f;
 constexpr float LiftHold   = 0.15f;
 constexpr float LiftStep   = 6.f;
+constexpr float LiftStepIn = 12.f;  // deg in 1/60 s, the first LiftEntry s of the aim
+constexpr float LiftEntry  = 0.3f;  // s
+constexpr float LiftLead   = 1.f;   // of the target's last step, ahead, coming into the aim
+constexpr float LiftFollowIn = 0.04f; // s: 90% of the way, coming into the aim
+constexpr float LiftRedo   = 2.f;   // cm the trunk moves: a target held at the limit is searched again
 constexpr float LiftBracket = 4.f;  // deg
 constexpr float LiftSlack   = 0.5f; // cm
 constexpr float LiftLess    = 3.f;  // deg
@@ -1079,6 +1084,7 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
   bool lifting = false;
   if(aimNow) {
     lifting = true;
+    liftRef[0].y += dt; // how long the aim has lasted, s (the entry: LiftEntry)
     // the last target against the trunk as posed now: deeper than FletchOk + LiftSlack, or clear LiftLess deg lower:
     // search again
     bool moved = !liftValid && !trunkPts.empty();
@@ -1088,8 +1094,15 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
       auto at = [&](float k) { return deepest(axisOfAngle(Vec3(std::cos(phi)*k,0,std::sin(phi)*k)),Fletching,FletchRadius); };
       // (lower: only when it has stayed clear LiftLower s; liftRef[0].x keeps how long, s)
       float& clearFor = liftRef[0].x;
+      // the trunk against the last search: its middle (liftRef[2]) and last point (liftRef[0].z, [1].y, [1].z)
+      const Vec3 lastEnd = {liftRef[0].z,liftRef[1].y,liftRef[1].z};
+      const bool trunkMoved = trunkRaw.empty() ||
+                              (trunkRaw[trunkRaw.size()/2]-liftRef[2]).length()>LiftRedo ||
+                              (trunkRaw.back()-lastEnd).length()>LiftRedo;
+      const bool atLimit = m>=liftMost-1e-3f;
       if(at(m)>FletchOk+LiftSlack) {
-        moved    = true;
+        // at the limit nothing better is found: held there till the trunk moves
+        moved    = !atLimit || trunkMoved;
         clearFor = 0;
         } else if(m>0.f && at(std::max(0.f,m-LiftLess*float(M_PI)/180.f))<=FletchOk-LiftSlack) {
         clearFor += dt;
@@ -1109,8 +1122,24 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
       static thread_local int side = 1;
       side = -side;
       const float last = first ? -1.f : std::hypot(liftTarget.x,liftTarget.z);
+      const Vec3  was  = liftTarget;
       liftTarget = searchWay(liftPhi,first,Fletching,FletchRadius,FletchOk,last,first ? 0 : side);
+      // coming into the aim the chest turns on: the target ahead by its last step (LiftLead of it), to the limit
+      if(!first && liftRef[0].y<LiftEntry) {
+        Vec3 ahead = liftTarget + (liftTarget-was)*LiftLead;
+        const float l = std::hypot(ahead.x,ahead.z);
+        if(l>liftMost)
+          ahead = ahead*(liftMost/l);
+        if(l>std::hypot(liftTarget.x,liftTarget.z))
+          liftTarget = ahead;
+        }
       liftValid = true;
+      if(!trunkRaw.empty()) {
+        liftRef[2] = trunkRaw[trunkRaw.size()/2];
+        liftRef[0].z = trunkRaw.back().x;
+        liftRef[1].y = trunkRaw.back().y;
+        liftRef[1].z = trunkRaw.back().z;
+        }
       }
     // the drawn arrow's line: clear of the trunk and the head by LineRadius - LineOk; once a draw, from the aim's way
     if(drawn && !lineValid && !trunkPts.empty()) {
@@ -1125,16 +1154,10 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
       }
     if(!drawn)
       lineValid = false;
-    if(measureGround) {
-      fletchNow = deepest(Vec3::normalize(axis),Fletching,FletchRadius);
-      if(drawn)
-        lineNow = deepest(Vec3::normalize(axis),ReloadLine,LineRadius);
-      }
     } else {
     liftValid = lineValid = false;
     liftRef[0].x = 0;
-    if(measureGround && trunkOn)
-      fletchNow = deepest(Vec3::normalize(axis),Fletching,FletchRadius);
+    liftRef[0].y = 0;
     }
   if(!lifting || !drawn)
     drawing = false;
@@ -1286,7 +1309,8 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
       } else {
       const Vec3 target = mode==3 ? liftTarget : gTarget;
       // back: critically damped, no overshoot, 90% in GroundReturn; after the chest in the aim, in LiftFollow
-      const float w = 3.89f/(mode==3 ? LiftFollow : GroundReturn);
+      const bool  entry = mode==3 && liftRef[0].y<LiftEntry;
+      const float w = 3.89f/(mode==3 ? (entry ? LiftFollowIn : LiftFollow) : GroundReturn);
       const int   n = std::max(1,int(std::ceil(dt*240.f)));
       const float h = dt/float(n);
       for(int i=0; i<n; ++i) {
@@ -1299,7 +1323,10 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
       }
     // no faster than GroundStep in 1/60 s, as the angle the axis turns
     const Vec3  moved = gw-from;
-    const float most  = (mode==1 ? GroundStep : std::min(GroundStep,LiftStep))*dt*60.f*float(M_PI)/180.f;
+    // the lift: LiftStep, coming into the aim LiftStepIn; the arrow drawn out sets the tube itself, no limit
+    const bool  liftIn = mode==3 && liftRef[0].y<LiftEntry;
+    const float stepAt = mode==1 ? GroundStep : (mode==3 && drawn ? 1e3f : std::min(GroundStep,liftIn ? LiftStepIn : LiftStep));
+    const float most  = stepAt*dt*60.f*float(M_PI)/180.f;
     const Vec3  a0    = axisOfAngle(from);
     auto turn = [&](float f) {
       return std::acos(std::clamp(Vec3::dotProduct(a0,axisOfAngle(from+moved*f)),-1.f,1.f));
@@ -1318,6 +1345,12 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
     axis = axisOfAngle(gw);
     }
   groundMode = mode;
+  // the bench's: the fletching and the drawn arrow's line as the tube hangs after this step (as it is drawn)
+  if(measureGround && trunkOn) {
+    fletchNow = deepest(Vec3::normalize(axis),Fletching,FletchRadius);
+    if(drawn)
+      lineNow = deepest(Vec3::normalize(axis),ReloadLine,LineRadius);
+    }
 
   if(measureGround) {
     measured.on    = ground.on;
