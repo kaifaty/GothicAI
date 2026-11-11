@@ -77,11 +77,15 @@ def test_session_and_world_change_csv(tmp_path):
                     f"tex_landscape_bytes={elapsed + 400} tex_landscape_n=1 tex_static_bytes=300 tex_static_n=1\n")
             log += (f"[loadprobe-textures] stage={stage} t_ms={elapsed} "
                     f"tex_dynamic_bytes=200 tex_dynamic_n=1 tex_other_bytes=100 tex_other_n=1\n")
+            log += (f"[loadprobe-textures] stage={stage} t_ms={elapsed} tex_level0_bytes=900 tex_level1_bytes=50 "
+                    "tex_level2_bytes=40 tex_level3_bytes=0 tex_level4_bytes=0 tex_level5_bytes=10\n")
+            log += (f"[loadprobe-textures] stage={stage} t_ms={elapsed} tex_shortfall_n=3 "
+                    "tex_shortfall_seconds=0.25 tex_loads=2\n")
     (run / "game.log").write_text(log)
     output = subprocess.check_output([sys.executable, str(SCRIPT), str(tmp_path)], text=True)
     reader = csv.DictReader(io.StringIO(output))
     rows = list(reader)
-    assert len(reader.fieldnames) == 540
+    assert len(reader.fieldnames) == 567
     assert len(rows) == 2
     assert rows[0]["load_1"] == "1.25"
     assert rows[0]["placed_items_placement_queries_ms"] == "800.25"
@@ -124,6 +128,9 @@ def test_session_and_world_change_csv(tmp_path):
         "1000", "10500", "5", "2", "1", "2", "0.125"]
     assert [rows[0][f"tex_{field}_warm_5s"] for field in (
         "full_ring2_bytes", "source_hd_bytes", "source_hd_full_bytes")] == ["700", "800", "600"]
+    assert [rows[0][f"tex_{field}_warm_5s"] for field in (
+        "level0_bytes", "level1_bytes", "level2_bytes", "level5_bytes", "shortfall_n", "shortfall_seconds", "loads")] == [
+        "900", "50", "40", "10", "3", "0.25", "2"]
     assert [rows[0][f"tex_{field}_warm_5s"] for field in (
         "retired_bytes", "peak_bytes", "live_n", "evicted", "reloaded", "landscape_bytes", "landscape_n",
         "static_bytes", "static_n", "dynamic_bytes", "dynamic_n", "other_bytes", "other_n")] == [

@@ -1005,10 +1005,15 @@ namespace PhysicsContract {
             require(walker.tryMove({x,0,0},collision)==DynamicWorld::MC_OK,
                     "legacy walking must complete each step through a destroyed obstacle");
           requireNear(walker.position().x,200,.001f,"legacy walking must reach the far side of the opened passage");
+          // The 50 cm pieces are debris a character stops at and pushes (from 0.5 m, the bonds
+          // note's second step): the world steps while the walker pushes them aside.
           walker.setPosition({0,0,0});
-          for(int i=0;i<50;++i) walker.moveVirtual({5,0,0},17,50,.785398163f,80);
+          for(int i=0;i<80;++i) {
+            walker.moveVirtual({5,0,0},17,50,.785398163f,80);
+            world.tick(17);
+            }
           require(walker.position().x>200,
-                  "native walking must cross the original hull after destruction, cleanup and fresh load");
+                  "native walking must cross the original hull, pushing its debris, after destruction, cleanup and fresh load");
           }
         };
       DynamicWorld world(nullptr,movableFloor());

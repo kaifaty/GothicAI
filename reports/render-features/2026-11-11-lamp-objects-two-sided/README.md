@@ -129,7 +129,7 @@ Ryzen, RTX 3080, 1280×720, свет заморожен (`OPENGOTHIC_LIGHT_FREEZ
 
 ## Цена кадра
 
-`BENCH_HOST=ryzen PERF_WINDOW=2560x1440 PERF_REPEAT=2 scripts/perf.sh harbour-night interior`, RTX 3080, `-rt 0`, VSM с мягкими тенями ламп. Одна сборка ветки (`aac565658`), прогоны подряд: по умолчанию (`3`), с `PERF_ENV='OPENGOTHIC_VSM_LAMP_SIDES=2'` (предметы с дальней стороной, как 10.11), снова по умолчанию.
+`BENCH_HOST=ryzen PERF_WINDOW=2560x1440 PERF_REPEAT=2 scripts/perf.sh harbour-night interior`, RTX 3080, `-rt 0`, VSM с мягкими тенями ламп. Одна сборка ветки (`aac565658`, до вливания `main` с #1186; код движка тот же), прогоны подряд: по умолчанию (`3`), с `PERF_ENV='OPENGOTHIC_VSM_LAMP_SIDES=2'` (предметы с дальней стороной, как 10.11), снова по умолчанию.
 
 | Место | GPU mean, мс: 3 → 2 → 3 | GPU p95, мс | FPS | p95 кадра, мс |
 |---|---|---|---|---|

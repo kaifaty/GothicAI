@@ -638,7 +638,7 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
       }
     }
   destructionFields(bench.destruction,destructionContext(),*world);
-  if(!bench.movables.movableMeasuring)fracturePiecesTick(bench.fracturePieces,*world);
+  if(!bench.movables.movableMeasuring)fracturePiecesTick(bench.fracturePieces,bench.destruction,destructionContext(),*world,*player,ctrl);
   if(bench.destruction.destructionSupportTrace && bench.destruction.destructionTrace &&
      world->tickCount()-bench.destruction.destructionStart>=bench.destruction.destructionSupportNext) {
     bench.destruction.destructionSupportNext=world->tickCount()-bench.destruction.destructionStart+1000;

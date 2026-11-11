@@ -109,6 +109,19 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/data/cloth-world.csv" CLOTH_WORLD_DATA)
 configure_file(common/physics/clothworlddata.h.in generated/clothworlddata.h @ONLY)
 target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
+# The census builder digest is generated at build time, without reconfiguring
+# after an implementation edit. Only placedcensuscache.cpp includes the header.
+include(cmake/PlacedCensusBuilder.cmake)
+set(PLACED_CENSUS_BUILDER_DEPENDS ${PLACED_CENSUS_BUILDER_INPUTS})
+list(TRANSFORM PLACED_CENSUS_BUILDER_DEPENDS PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
+set(PLACED_CENSUS_BUILDER_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/placedcensusbuilder.h")
+add_custom_command(OUTPUT "${PLACED_CENSUS_BUILDER_HEADER}"
+  COMMAND "${CMAKE_COMMAND}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}" "-DOUTPUT=${PLACED_CENSUS_BUILDER_HEADER}"
+          -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/PlacedCensusBuilder.cmake"
+  DEPENDS ${PLACED_CENSUS_BUILDER_DEPENDS}
+  VERBATIM)
+target_sources(${PROJECT_NAME} PRIVATE "${PLACED_CENSUS_BUILDER_HEADER}")
+
 # shaders
 add_subdirectory(shader)
 target_link_libraries(${PROJECT_NAME} GothicShaders)

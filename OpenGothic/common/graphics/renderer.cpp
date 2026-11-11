@@ -872,8 +872,13 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
 
   FrameProfile::Scope translucentTiming(FrameProfile::Zone::EncodeWater);
   // the TAA reactive mask is the second attachment: each translucent pipeline writes it under its own blend
-  // (main.frag, graphics plan 1v), the TAA resolve reads it
-  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}, {taa.reactive, Tempest::Vec4(), Tempest::Preserve}},
+  // (main.frag, graphics plan 1v), the TAA resolve reads it. An empty pass of its own clears it, and the translucent
+  // pass loads and stores it as the scene colour: cleared by the translucent pass itself, it made a tiled GPU (Apple)
+  // walk every tile of the screen instead of the tiles with translucent geometry, +0.2 ms of fragments on M1 Pro
+  // (reports/render-features/2026-11-10-taa-reactive/mac-cost.md)
+  cmd.setFramebuffer({{taa.reactive, Tempest::Vec4(), Tempest::Preserve}});
+  cmd.setDebugMarker("Reactive-clear");
+  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}, {taa.reactive, Tempest::Preserve, Tempest::Preserve}},
                      {zbuffer, Tempest::Preserve, Tempest::Preserve});
   cmd.setDebugMarker("Translucent");
   wview.drawTranslucent(cmd, fId);

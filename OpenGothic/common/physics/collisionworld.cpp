@@ -567,7 +567,7 @@ void CollisionWorld::addBody(CollisionBody& body, const Tempest::Matrix4x4& matr
       settings.mLinearDamping = 0.1f;
       settings.mAngularDamping = 0.2f;
       }
-    if(body.categoryId==DynamicWorld::C_Fragment) {
+    if(DynamicWorld::isFragment(body.categoryId)) {
       settings.mLinearDamping = 0.4f;
       settings.mAngularDamping = 0.6f;
       }
@@ -879,7 +879,7 @@ CollisionWorld::QueryResult CollisionWorld::rayCast(const Tempest::Vec3& from, c
       value.material = mesh->materialId(triangle);
       value.sector = mesh->sectorName(triangle);
       }
-    else if(value.body!=nullptr && value.body->category()==DynamicWorld::C_Item) {
+    else if(value.body!=nullptr && (value.body->category()==DynamicWorld::C_Item || DynamicWorld::isFragment(value.body->category()))) {
       value.material=value.body->noiseSurface;
       }
     if(body.GetObjectLayer()==DynamicWorld::C_Ragdoll)
@@ -1066,7 +1066,7 @@ std::vector<CollisionWorld::RagdollContact> CollisionWorld::ragdollContacts(cons
   constexpr uint32_t mask=(1u<<DynamicWorld::C_Landscape)|(1u<<DynamicWorld::C_Object)|
                           (1u<<DynamicWorld::C_Item)|(1u<<DynamicWorld::C_Ragdoll)|
                           (1u<<DynamicWorld::C_LivingBody)|(1u<<DynamicWorld::C_ActiveBody)|
-                          (1u<<DynamicWorld::C_MovableVob)|(1u<<DynamicWorld::C_Fragment);
+                          (1u<<DynamicWorld::C_MovableVob)|DynamicWorld::fragmentMask;
   QueryLayerFilter layerFilter(mask);
   QueryBroadPhaseFilter broadFilter(mask);
   JPH::CollideShapeSettings settings;
@@ -1492,7 +1492,7 @@ void CollisionWorld::tick(uint64_t dt) {
       auto& nativeBodies=impl->system.GetBodyInterface();
       const float contactDistance=impl->system.GetPhysicsSettings().mSpeculativeContactDistance;
       for(const auto* body:rigid) {
-        if(body->category()!=DynamicWorld::C_Fragment || body->isSleeping())
+        if(!DynamicWorld::isFragment(body->category()) || body->isSleeping())
           continue;
         activeFragments=true;
         const auto* shape=body->shape();

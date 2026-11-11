@@ -129,7 +129,7 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
   :wname(std::move(file)), game(game), wsound(game,*this), wobj(*this) {
   const auto loadStarted = std::chrono::steady_clock::now();
   Resources::configureTextures(Gothic::settingsGetS("GAME","texture_budget_mb"),Gothic::settingsGetS("GAME","texture_far_skip_mips"),
-                               Gothic::settingsGetS("GAME","texture_target_mb"));
+                               Gothic::settingsGetS("GAME","texture_target_mb"),Gothic::settingsGetS("GAME","texture_screen_mips"));
   if(LoadProbe::enabled())
     LoadProbe::mark("world_begin",-1,"world="+std::string(wname));
   try {
@@ -326,6 +326,7 @@ World::~World() {
   }
 
 void World::updateLandscape(const Camera& camera) {
+  Resources::setTextureView(float(camera.viewportHeight()),camera.fovY());
   if(!residency || !npcPlayer) {
     if(textureLoadingPending && npcPlayer) {
       Resources::finishTextureLoading();
@@ -340,6 +341,8 @@ void World::updateLandscape(const Camera& camera) {
   if(wview)
     wview->finishLandscapeUpdate();
   if(textureLoadingPending) {
+    if(wview)
+      wview->flushTextureDemand();
     Resources::finishTextureLoading();
     textureLoadingPending=false;
     }
