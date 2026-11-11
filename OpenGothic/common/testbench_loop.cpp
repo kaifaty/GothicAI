@@ -117,8 +117,11 @@ void tickVolley(PlayerControl& ctrl) {
           // where it aims, the middle of the zone: the log compares the arrow's flight with it
           Vec3 c = bench.archery.aimNpc->collosionCenter();
           aimPoint(*bench.archery.aimNpc,bench.archery.aimZone,bench.archery.aimLeg,c);
-          char buf[160];
-          std::snprintf(buf,sizeof(buf),"aim zone %.1f %.1f %.1f",c.x,c.y,c.z);
+          const auto hero = Gothic::inst().player()->position();
+          const auto target = bench.archery.aimNpc->position();
+          char buf[256];
+          std::snprintf(buf,sizeof(buf),"aim zone %.2f %.2f %.2f hero %.2f %.2f %.2f target %.2f %.2f %.2f",
+                        c.x,c.y,c.z,hero.x,hero.y,hero.z,target.x,target.y,target.z);
           TestBench::note(buf);
           }
         release(ctrl,KeyCodec::ActionGeneric);
