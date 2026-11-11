@@ -63,9 +63,9 @@ class Pose final {
     bool               processEvents(uint64_t& barrier, uint64_t now, Animation::EvCount &ev, NpcLogicalState* logic=nullptr) const;
 
     Tempest::Vec3      animMoveSpeed(uint64_t tickCount, uint64_t dt) const;
-    void               processSfx(Npc &npc, uint64_t tickCount);
-    void               processSfx(Interactive& mob, uint64_t tickCount);
-    void               processPfx(MdlVisual& visual, World& world, uint64_t tickCount);
+    void               processSfx(AnimationGroundSound &npc, uint64_t tickCount);
+    void               processSfx(AnimationSound& mob, uint64_t tickCount);
+    void               processPfx(MdlVisual& visual, AnimationPfx& world, uint64_t tickCount);
     bool               isDefParWindow(uint64_t tickCount) const;
     bool               isDefWindow(uint64_t tickCount) const;
     bool               isDefence(uint64_t tickCount) const;
@@ -138,7 +138,9 @@ class Pose final {
     void               saveRagdollRecovery(Serialize& fout) const;
     void               loadRagdollRecovery(Serialize& fin);
     void               setAnimRotate(const AnimationSolver &solver, const Npc &npc, WeaponState fightMode, AnimationSolver::TurnType turn, int dir);
+    void               setAnimRotate(const AnimationSolver &solver, WalkBit walkMode, uint64_t tickCount, WeaponState fightMode, AnimationSolver::TurnType turn, int dir);
     auto               setAnimItem(const AnimationSolver &solver, Npc &npc, std::string_view scheme, int state) -> const Animation::Sequence*;
+    auto               setAnimItem(const AnimationSolver &solver, uint64_t tickCount, std::string_view scheme, int state) -> const Animation::Sequence*;
     bool               stopItemStateAnim(const AnimationSolver &solver, uint64_t tickCount);
     void               interruptItemUse();
 

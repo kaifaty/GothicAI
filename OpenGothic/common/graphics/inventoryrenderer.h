@@ -19,6 +19,8 @@ class InventoryRenderer {
     void drawItem(int x, int y, int w, int h, const Item &item);
 
   private:
+    void drawItem(int x, int y, int w, int h, const ProtoMesh& mesh, int32_t material, const Tempest::Matrix4x4& mat);
+
     struct PerFrame {
       Tempest::Matrix4x4 mvp;
       };

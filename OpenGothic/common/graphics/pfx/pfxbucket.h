@@ -10,6 +10,7 @@
 #include "graphics/pfx/pfxmotion.h"
 #include "resources.h"
 
+class ParticleTarget;
 class ParticleFx;
 class VisualObjects;
 
@@ -37,7 +38,7 @@ class PfxBucket {
       Tempest::Vec3 direction[3] = {{1,0,0}, {0,1,0}, {0,0,1}};
       bool          isLoop       = false;
 
-      const Npc*    targetNpc    = nullptr;
+      const ParticleTarget* targetNpc    = nullptr;
 
       const PfxEmitterMesh* mesh = nullptr;
       const Pose*           pose = nullptr;

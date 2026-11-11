@@ -1,6 +1,8 @@
 #pragma once
 
 #include <functional>
+#include "animationsound.h"
+#include "particletarget.h"
 
 #include "graphics/mesh/pose.h"
 #include "graphics/mesh/animation.h"
@@ -43,7 +45,7 @@ struct PhysicsNoise;
 
 struct HeroDeed;
 
-class Npc final {
+class Npc final : public AnimationGroundSound, public ParticleTarget {
   public:
     using JumpStatus = MoveAlgo::JumpStatus;
 
@@ -123,7 +125,7 @@ class Npc final {
     void       setDirectionY(float rotation);
     void       setRunAngle  (float angle);
 
-    auto       transform()  const -> Tempest::Matrix4x4;
+    auto       transform()  const -> Tempest::Matrix4x4 override;
     auto       position()   const -> Tempest::Vec3;
     auto       cameraBone(bool isFirstPerson = false) const -> Tempest::Vec3;
     auto       cameraMatrix(bool isFirstPerson = false) const -> Tempest::Matrix4x4;
@@ -287,7 +289,7 @@ class Npc final {
     bool       isFalling() const;
     bool       isFallingDeep() const;
     bool       isSlide() const;
-    bool       isInAir() const;
+    bool       isInAir() const override;
     bool       isJump() const;
     bool       isJumpUp() const;
     bool       isStanding() const;
@@ -857,8 +859,8 @@ class Npc final {
     void      takeDamage(Npc& other, const Bullet* b, const VisualFx* vfx, int32_t splId);
     bool      isTargetableBySpell(TargetType t) const;
 
-    void      emitSoundEffect(std::string_view sound, float range, bool freeSlot);
-    void      emitSoundGround(std::string_view sound, float range, bool freeSlot);
+    void      emitSoundEffect(std::string_view sound, float range, bool freeSlot) override;
+    void      emitSoundGround(std::string_view sound, float range, bool freeSlot) override;
     void      emitSoundSVM   (std::string_view sound);
 
     void      startEffect(Npc& to, const VisualFx& vfx);

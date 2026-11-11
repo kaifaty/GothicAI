@@ -20,7 +20,8 @@
 #include "physics/physicmesh.h"
 #include "physics/worldwind.h"
 #include "utils/fileext.h"
-#include "world/world.h"
+#include "clothworld.h"
+#include "physics/dynamicworld.h"
 
 using namespace Tempest;
 
@@ -332,7 +333,7 @@ std::shared_ptr<Geometry> loadGeometry(std::string_view visual, const Definition
 
 struct ClothVisual::State {
   MeshObjects::Mesh* view = nullptr;
-  World* world = nullptr;
+  ClothWorld* world = nullptr;
   std::shared_ptr<Geometry> geometry;
   MeshObjects::Mesh clothView, rigidView, fallbackView;
   std::shared_ptr<Cloth::Instance> physics;
@@ -526,7 +527,7 @@ bool ClothVisual::supports(std::string_view visual) {
   return definition(visual)!=nullptr;
   }
 
-std::unique_ptr<ClothVisual> ClothVisual::create(MeshObjects::Mesh& view, World& world,
+std::unique_ptr<ClothVisual> ClothVisual::create(MeshObjects::Mesh& view, ClothWorld& world,
                                                const asset::VirtualObject& vob, bool enableCollision,
                                                Resources::TextureCategory textureCategory) {
   const auto* def = definition(vob.visual->name);
@@ -567,7 +568,7 @@ std::unique_ptr<ClothVisual> ClothVisual::create(MeshObjects::Mesh& view, World&
     }
   }
 
-std::unique_ptr<ClothVisual> ClothVisual::createSurface(World& world, const asset::WorldMesh& source,
+std::unique_ptr<ClothVisual> ClothVisual::createSurface(ClothWorld& world, const asset::WorldMesh& source,
                                                       const std::vector<uint32_t>& pinnedSourcePositionIds,
                                                       std::string visual, uint32_t id, float stiffness, float linearDamping) {
   try {

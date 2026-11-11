@@ -11,6 +11,7 @@
 class Skeleton;
 class Npc;
 class World;
+class DynamicWorld;
 
 // Foot IK: keeps the feet of humanoids and four-legged creatures on uneven ground.
 // Runs as a post-pass over the world-space bone matrices that Pose builds from animation:
@@ -111,6 +112,9 @@ class FootIk final {
     void           probe(Probe& p, const Input& in) const;
 
   private:
+    auto mkGroundInput(Input in, const DynamicWorld& physics, const Tempest::Matrix4x4& obj,
+                       bool alignedToGround, const class AimWalk* walk) const -> Input;
+
     struct Chain final {
       size_t              thigh = size_t(-1);
       size_t              calf  = size_t(-1);

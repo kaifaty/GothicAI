@@ -12,9 +12,10 @@
 #include <vector>
 
 #include "resources.h"
-#include "world/bloodstains.h"
+#include "bloodstain.h"
 
 class World;
+class BloodDecalSource;
 class SceneGlobals;
 
 // Blood on the world as projected decals on the GBuffer (physics stage 8, step 4c).
@@ -50,6 +51,8 @@ class BloodDecals final {
     static constexpr uint32_t PoolTiles   = 4;
 
   private:
+    bool prepare(uint8_t fId, const BloodDecalSource& world, const SceneGlobals& scene, const Tempest::Vec3& camera);
+
     struct Gpu {
       Tempest::Vec4 world, center, axisU, axisV, axisW, uvRect, look, tint;
       };

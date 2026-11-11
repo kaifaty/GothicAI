@@ -383,5 +383,5 @@ Aim::LeanResult Npc::aimLean(const Vec3& target, bool manual) const {
     }
   const auto look = aimLookAt(target);
   const float down = -std::atan2(look.y,std::sqrt(look.x*look.x+look.z*look.z));
-  return visual.pose().aimIk().leanNeeded(*this,look,look,down,aimEdge(look));
+  return visual.pose().aimIk().leanNeeded(*world().physic(),position(),rotationRad(),look,look,down,aimEdge(look));
   }

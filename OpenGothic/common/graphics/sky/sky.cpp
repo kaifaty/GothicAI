@@ -9,7 +9,6 @@
 #include <cctype>
 
 #include "utils/string_frm.h"
-#include "world/world.h"
 #include "resources.h"
 
 using namespace Tempest;

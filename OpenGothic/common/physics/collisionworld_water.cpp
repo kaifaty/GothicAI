@@ -1,6 +1,5 @@
 #include "collisionworld_internal.h"
 #include "frameprofile.h"
-#include "world/objects/npc.h"
 
 #include <Jolt/Geometry/Plane.h>
 #include <Jolt/Physics/Body/BodyLock.h>

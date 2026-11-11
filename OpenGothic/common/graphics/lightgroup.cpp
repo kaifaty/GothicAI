@@ -12,7 +12,6 @@
 #include "graphics/shaders.h"
 #include "graphics/sceneglobals.h"
 #include "utils/string_frm.h"
-#include "world/world.h"
 #include "utils/dbgpainter.h"
 #include "worlddata.h"
 

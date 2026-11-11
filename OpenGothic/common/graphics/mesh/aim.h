@@ -7,7 +7,7 @@
 #include <vector>
 
 class Skeleton;
-class Npc;
+class DynamicWorld;
 
 // Aim: an archer (a crossbowman, a mage) turns the upper body so the shot leaves toward the target,
 // above or below too; the animations aim straight ahead. Runs as a post-pass over the world-space
@@ -77,7 +77,7 @@ class Aim final {
       float edgeDistance = 0, edgeDrop = 0, edgeHeight = 0;
       LeanLine line = LeanLine::None;
       };
-    LeanResult     leanNeeded(const Npc& npc, const Tempest::Vec3& lookDirection,
+    LeanResult     leanNeeded(const DynamicWorld& physics, const Tempest::Vec3& origin, float rotation, const Tempest::Vec3& lookDirection,
                              const Tempest::Vec3& shotDirection, float down, const LeanEdge& edge) const;
     // Predicts the head from the last pose with its actual smoothed torso rotation frozen.
     // Only the candidate hip bend changes. origin is at the feet; angle is in radians.
