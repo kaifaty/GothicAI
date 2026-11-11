@@ -135,8 +135,8 @@ python3 scripts/engine_layers.py check --base origin/main # новые вклю�
 
 ## Пробелы
 
-- Перепись смотрит только на `#include`. Имена Готики, вшитые в код строками (`MENU_MAIN`, имена экземпляров героя и NPC), она не считает.
-- Метод класса платформы с телом в файле верхнего слоя прячет зависимость от переписи включений. Известный случай — `Resources::loadBaseProgram`, объявленный в `common/resources.h` и определённый в `common/game/definitions/baseprogram.cpp` (шаг 3: так решил агент-ведущий при ревью, ошибочно); его исправляют отдельно.
+- Перепись считает `#include` и чужие определения членов классов: полное имя разрешается от пространства имён определения наружу, среди классов самого файла и доступных по графу включений. Имена Готики, вшитые в код строками (`MENU_MAIN`, имена экземпляров героя и NPC), она не считает.
+- Проверка #1216 на `main` `a3de20db4`: `foreign_definitions` **4**, все из платформы; `per_layer.platform.vm_transitive` **19**, `violations` **270**. Помимо двух `Resources::loadBaseProgram` найдены `DynamicWorld::navigationRay` (`common/game/navigationeyeworld.cpp:51`) и `DynamicWorld::dumpNavigationCollision` (`common/game/navperceptionbench.cpp:310`), оба объявлены в `common/physics/dynamicworld.h`. Работа остановлена на решении об этих дополнительных случаях; перенос `loadBaseProgram` ещё не сделан.
 - Шейдеры (`OpenGothic/shader/`) не сканировались.
 - Сервер на Python и протокол в перепись не входят. Сервер знает имена NPC второй части и закон колонии; это отдельная перепись, если до него дойдёт дело.
 - Строки считаются вместе с комментариями.

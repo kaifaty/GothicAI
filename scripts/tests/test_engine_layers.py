@@ -82,3 +82,77 @@ def test_check_is_quiet_when_nothing_is_added(repo, monkeypatch, capsys):
     base = git(repo, "rev-parse", "HEAD").strip()
     assert layers.check(repo, base) == 0
     assert "::warning" not in capsys.readouterr().out
+
+
+def test_foreign_definitions_resolve_scopes_and_visible_headers(repo):
+    write(repo, "common/graphics/foo.h", """
+namespace X {
+class Foo {
+ public:
+  Foo(); ~Foo(); void m(); int operator()(int); operator bool() const;
+  struct Nested { void m(); };
+};
+}
+""")
+    write(repo, "common/game/foo.h", """
+#include "graphics/foo.h"
+namespace Other { class Foo { public: void m(); }; }
+inline void X::Foo::Nested::m() {}
+""")
+    write(repo, "common/game/foo.cpp", """
+#include "foo.h"
+void X::Foo::m() {}
+void Other::Foo::m() {}
+namespace X {
+Foo::Foo() {}
+Foo::~Foo() {}
+int Foo::operator()(int v) { return v; }
+Foo::operator bool() const { return true; }
+namespace Deep { void Foo::m() {} }
+}
+namespace Other { void Foo::m() {} }
+void declaration(X::Foo&);
+// void X::Foo::comment() {}
+const char* text = "void X::Foo::string() {}";
+const char* raw = R"code(void X::Foo::raw() {})code";
+void function() { X::Foo::m(); struct Local { void m() {} }; }
+struct Local { void m() { X::Foo::m(); } };
+""")
+    # The same short name without an include path must not bind to platform Foo.
+    write(repo, "common/world/unrelated.cpp", "void Foo::m() {}\nvoid X::Foo::m() {}\n")
+    c = layers.census(repo / "OpenGothic")
+    definitions = c["foreign_definition_list"]
+    assert [d["member"] for d in definitions] == [
+        "X::Foo::m", "X::Foo::Foo", "X::Foo::~Foo", "X::Foo::operator()", "X::Foo::operator bool",
+        "X::Foo::m", "X::Foo::Nested::m",
+    ]
+    assert all(d["header"] == "common/graphics/foo.h" for d in definitions)
+    assert definitions[0]["file"] == "common/game/foo.cpp"
+    assert definitions[0]["line"] == 3
+    assert c["foreign_definitions"] == 7
+    assert c["foreign_definitions_by_layer"] == dict.fromkeys(layers.LAYERS, 0) | {"platform": 7}
+    assert "`X::Foo::Nested::m`" in layers.markdown(c, 15)
+
+
+def test_check_counts_new_foreign_overloads_without_line_shift_warnings(repo, monkeypatch, capsys):
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    write(repo, "common/graphics/foo.h", "class Foo { public: void m(); void m(int); void n(); };\n")
+    original = '#include "graphics/foo.h"\nvoid Foo::m() {}\n'
+    write(repo, "common/game/foo.cpp", original)
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "existing foreign definition")
+    base = git(repo, "rev-parse", "HEAD").strip()
+    write(repo, "common/game/foo.cpp", "\n\n" + original)
+    git(repo, "commit", "-qam", "shift lines")
+    assert layers.check(repo, base) == 0
+    assert "::warning" not in capsys.readouterr().out
+
+    write(repo, "common/game/foo.cpp", "\n\n" + original + "void Foo::m(int) {}\nvoid Foo::n() {}\n")
+    git(repo, "commit", "-qam", "add foreign members")
+    assert layers.check(repo, base) == 0
+    warnings = [line for line in capsys.readouterr().out.splitlines() if line.startswith("::warning")]
+    assert len(warnings) == 2
+    assert all("file=OpenGothic/common/game/foo.cpp" in warning for warning in warnings)
+    assert all("common/graphics/foo.h" in warning for warning in warnings)
+    assert sum("Foo::m" in warning for warning in warnings) == 1
+    assert sum("Foo::n" in warning for warning in warnings) == 1

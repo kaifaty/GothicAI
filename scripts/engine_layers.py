@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Engine layers: which #include edges cross the proposed engine/Gothic boundary.
+"""Engine layers: includes and member definitions across the engine/Gothic boundary.
 
 Every source file of OpenGothic/common, OpenGothic/game and OpenGothic/ai_bridge gets a
 layer from LAYER_RULES (first matching rule wins). An include edge is a violation when the
@@ -10,7 +10,7 @@ included file's layer is not in ALLOWED[layer of the including file].
     python3 scripts/engine_layers.py check --base origin/main
 
 `check` compares the committed HEAD with its merge-base and warns about every forbidden
-include that HEAD adds. It only warns and always exits 0. The layer map is a proposal:
+include or foreign member definition that HEAD adds. It only warns and always exits 0. The layer map is a proposal:
 reports/engine/2026-11-10-engine-layers/README.md.
 """
 from __future__ import annotations
@@ -134,6 +134,95 @@ INCLUDE_RE = re.compile(r'^\s*#\s*include\s*([<"])([^>"]+)[>"]', re.M)
 SCRIPT_VM = "common/daedalus/"
 OWN_ANGLE = ("game/", "world/", "graphics/", "daedalus/")
 
+# Keep line numbers while hiding tokens that cannot introduce C++ scopes.
+HIDDEN_RE = re.compile(r'//[^\n]*|/\*[\s\S]*?\*/|R"([^ ()\\\t\r\n]{0,16})\([\s\S]*?\)\1"'
+                       r'|"(?:\\[\s\S]|[^"\\])*"|(?<!\w)\'(?:\\[\s\S]|[^\'\\])*\''
+                       r'|^[ \t]*\#(?:\\\n|[^\n])*', re.M)
+NAME = r"[A-Za-z_]\w*"
+QUALIFIED = rf"(?:::)?{NAME}(?:\s*::\s*{NAME})*"
+NAMESPACE_RE = re.compile(rf"^\s*(?:inline\s+)?namespace\s*({QUALIFIED})?\s*$")
+CLASS_RE = re.compile(rf"(?:^|:)\s*(?:class|struct|union)\s+({QUALIFIED})\b[^{{}};()]*$")
+MEMBER_RE = re.compile(rf"(?P<owner>{QUALIFIED})\s*::\s*"
+                       rf"(?P<member>operator\s*(?:\(\)|\[\]|[^\w\s(]+|(?:{QUALIFIED}[\s*&]*)+)"
+                       rf"|~?{NAME})\s*\(")
+
+
+def cpp_declarations(text: str) -> tuple[list[str], list[tuple[tuple[str, ...], str, str, int]]]:
+    """Class bodies and out-of-class member bodies; no preprocessing or template parsing."""
+    code = HIDDEN_RE.sub(lambda m: " " + "\n" * m.group().count("\n"), text)
+    classes = []
+    definitions = []
+    scope: tuple[str, ...] = ()
+    stack: list[tuple[str, tuple[str, ...]]] = []
+    skipped = 0
+    start = 0
+    for token in re.finditer(r"[{};]", code):
+        mark = token.group()
+        if skipped:
+            skipped += (mark == "{") - (mark == "}")
+            start = token.end()
+            continue
+        if mark == "{":
+            prefix = code[start:token.start()]
+            namespace = NAMESPACE_RE.fullmatch(prefix)
+            cls = CLASS_RE.search(prefix)
+            if namespace or cls:
+                stack.append(("namespace" if namespace else "class", scope))
+                name = (namespace or cls).group(1) or "(anonymous)"
+                parts = tuple(re.sub(r"\s", "", name).split("::"))
+                scope = parts[1:] if parts[0] == "" else scope + parts
+                if cls:
+                    classes.append("::".join(scope))
+            else:
+                if not any(kind == "class" for kind, _ in stack):
+                    member = MEMBER_RE.search(prefix) if "::" in prefix else None
+                    # Calls in namespace-scope initializers are not definitions.
+                    if member and not re.search(r"[=(]", prefix[:member.start()]):
+                        owner = re.sub(r"\s", "", member.group("owner"))
+                        name = re.sub(r"\s+", " ", member.group("member").strip())
+                        line = code.count("\n", 0, start + member.start()) + 1
+                        definitions.append((scope, owner, name, line))
+                skipped = 1
+        elif mark == "}" and stack:
+            _, scope = stack.pop()
+        start = token.end()
+    return classes, definitions
+
+
+def foreign_definitions(text: dict[str, str], edges: dict[str, set[str]], layer: dict[str, str]) -> list[dict]:
+    classes: dict[str, set[str]] = defaultdict(set)
+    definitions = {}
+    for file, source in text.items():
+        declared, definitions[file] = cpp_declarations(source)
+        # Forward declarations do not establish ownership of a class.
+        for name in declared:
+            classes[name].add(file)
+
+    result = []
+    for file, members in definitions.items():
+        if not members:
+            continue
+        visible = {file}
+        queue = [file]
+        while queue:
+            for target in edges.get(queue.pop(), ()):
+                if target not in visible:
+                    visible.add(target)
+                    queue.append(target)
+        for scope, owner, member, line in members:
+            parts = tuple(owner.lstrip(":").split("::"))
+            prefixes = [()] if owner.startswith("::") else [scope[:n] for n in range(len(scope), -1, -1)]
+            for prefix in prefixes:
+                full = "::".join(prefix + parts)
+                headers = classes.get(full, set()) & visible
+                if not headers:
+                    continue
+                for header in sorted(headers):
+                    if layer[file] != layer[header] and layer[file] not in ALLOWED[layer[header]]:
+                        result.append({"file": file, "line": line, "member": full + "::" + member, "header": header})
+                break
+    return sorted(result, key=lambda d: (d["file"], d["line"], d["member"], d["header"]))
+
 
 def repo_root() -> Path:
     try:
@@ -225,6 +314,7 @@ def census(engine: Path) -> dict:
             if layer[t] not in ALLOWED[layer[f]]:
                 violations.append((f, t))
     violations.sort()
+    foreign = foreign_definitions(text, edges, layer)
 
     hubs: dict[str, Counter] = defaultdict(Counter)
     offenders: dict[str, Counter] = defaultdict(Counter)
@@ -236,6 +326,9 @@ def census(engine: Path) -> dict:
         "per_layer": per_layer,
         "matrix": {f"{a}->{b}": n for (a, b), n in sorted(matrix.items())},
         "violations": len(violations),
+        "foreign_definitions": len(foreign),
+        "foreign_definitions_by_layer": {l: sum(layer[d["header"]] == l for d in foreign) for l in LAYERS},
+        "foreign_definition_list": foreign,
         "violations_by_layer": {l: sum(offenders[l].values()) for l in LAYERS},
         "violating_files_by_layer": {l: len(offenders[l]) for l in LAYERS},
         "hubs": {l: hubs[l].most_common() for l in LAYERS if hubs[l]},
@@ -262,6 +355,11 @@ def markdown(c: dict, top: int) -> str:
             row.append(f"**{n}**" if n and b not in ALLOWED[a] else str(n))
         out.append(f"| `{a}` | " + " | ".join(row) + " |")
     out += ["", f"Всего нарушений: **{c['violations']}**.", ""]
+    out += ["## Чужие определения членов классов", "", f"Всего: **{c['foreign_definitions']}**.", "",
+            "| Файл | Строка | Член | Заголовок класса |", "|---|---:|---|---|"]
+    for d in c["foreign_definition_list"]:
+        out.append(f"| `{d['file']}` | {d['line']} | `{d['member']}` | `{d['header']}` |")
+    out.append("")
     for l in LAYERS:
         if l not in c["hubs"]:
             continue
@@ -315,12 +413,31 @@ def check(root: Path, base: str) -> int:
                    "Правила слоёв — scripts/engine_layers.py, замысел — reports/engine/2026-11-10-engine-layers. "
                    "Пока это только предупреждение.")
         print(f"::warning file={escape('OpenGothic/' + f, prop=True)},title={escape(title, prop=True)}::{escape(message)}")
+    # Ignore line shifts, but count overloads of the same member in each file.
+    old_members = Counter((d["file"], d["member"]) for d in before["foreign_definition_list"])
+    new_members = Counter((d["file"], d["member"]) for d in after["foreign_definition_list"])
+    added_members = new_members - old_members
+    pending = added_members.copy()
+    for d in after["foreign_definition_list"]:
+        key = (d["file"], d["member"])
+        if not pending[key]:
+            continue
+        pending[key] -= 1
+        title = "Слои движка: новое чужое определение"
+        message = (f"`{d['member']}` объявлен в `{d['header']}` (`{lay[d['header']]}`), "
+                   f"но определён в слое `{lay[d['file']]}`. "
+                   "Правила слоёв — scripts/engine_layers.py, замысел — reports/engine/2026-11-10-engine-layers. "
+                   "Пока это только предупреждение.")
+        print(f"::warning file={escape('OpenGothic/' + d['file'], prop=True)},line={d['line']},"
+              f"title={escape(title, prop=True)}::{escape(message)}")
     totals = f"{before['violations']} → {after['violations']}"
     vm_before = before["per_layer"]["platform"]["vm_transitive"]
     vm_after = after["per_layer"]["platform"]["vm_transitive"]
     lines = ["### Слои движка", "",
              f"Включений против слоёв: {totals} (новых {len(added)}, убранных {len(removed)}). "
-             f"Файлов платформы, достающих до VM скриптов: {vm_before} → {vm_after}.", ""]
+             f"Файлов платформы, достающих до VM скриптов: {vm_before} → {vm_after}.", "",
+             f"Чужих определений: {before['foreign_definitions']} → {after['foreign_definitions']} "
+             f"(новых {sum(added_members.values())}, убранных {sum((old_members - new_members).values())}).", ""]
     if added:
         lines += ["| Файл | Включает | Слои |", "|---|---|---|"]
         lines += [f"| `{f}` | `{t}` | `{lay[f]}` → `{lay[t]}` |" for f, t in added]
@@ -339,7 +456,7 @@ def main(argv: list[str] | None = None) -> int:
     rep = sub.add_parser("report", help="markdown or JSON census of the working tree (default)")
     rep.add_argument("--json", action="store_true", help="print the numbers as JSON")
     rep.add_argument("--top", type=int, default=15, help="rows per hub/offender table")
-    chk = sub.add_parser("check", help="warn about forbidden includes HEAD adds over its merge-base")
+    chk = sub.add_parser("check", help="warn about forbidden includes and foreign definitions HEAD adds over its merge-base")
     chk.add_argument("--base", required=True, help="compare with the merge-base of this revision and HEAD")
     args = ap.parse_args(argv)
     root = repo_root()
