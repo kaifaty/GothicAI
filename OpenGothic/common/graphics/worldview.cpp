@@ -827,9 +827,7 @@ const DrawBuckets& WorldView::drawBuckets() const {
   }
 
 bool WorldView::updateLights(int64_t gameTime) {
-  gtime time;
-  time.addMilis(uint64_t(gameTime));
-  gSky.updateLight(time);
+  gSky.updateLight(gameTime);
   if(!gLights.updateLights())
     return false;
   sGlobal.lights = &gLights.lightsSsbo();
