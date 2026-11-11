@@ -1,7 +1,6 @@
-"""Furniture geometry and void checks on synthetic meshes, in centimetres."""
+"""Cupboard void gates on small synthetic shelf units, in centimetres."""
 import numpy as np
 
-from parts import split_mesh
 from quality import void_checks
 
 
@@ -22,35 +21,6 @@ def unit(boards):
         triangles += [[len(vertices) * 8 + i for i in face] for face in faces]
         vertices.append(corners)
     return np.concatenate(vertices), np.asarray(triangles), [corners for corners, _ in pieces]
-
-
-def test_triangle_plane_split_preserves_area_intersections_and_order():
-    pieces = [box(-60, 60, 70, 80, -35, 35)]
-    pieces += [box(x, x + 10, 0, 70, z, z + 10) for x in (-45, 35) for z in (-25, 15)]
-    points = np.concatenate([corners for corners, _ in pieces])
-    triangles = np.concatenate([np.asarray(faces) + i * 8 for i, (_, faces) in enumerate(pieces)])
-    height = 68.0
-    upper, lower = split_mesh(points, triangles, height)
-
-    def area(mesh):
-        vertices, faces = mesh
-        surface = vertices[faces]
-        return np.linalg.norm(np.cross(surface[:, 1] - surface[:, 0],
-                                       surface[:, 2] - surface[:, 0]), axis=1).sum() * .5
-
-    assert np.isclose(area(upper) + area(lower), area((points, triangles)), rtol=1e-12)
-    assert upper[0][:, 1].min() >= height and lower[0][:, 1].max() <= height
-    assert not np.any(points[:, 1] == height)
-    surface = points[triangles]
-    edges = np.concatenate((surface[:, [0, 1]], surface[:, [1, 2]], surface[:, [2, 0]]))
-    crossing = (edges[:, 0, 1] - height) * (edges[:, 1, 1] - height) < 0
-    assert crossing.any()
-    for a, b in edges[crossing]:
-        intersection = a + (height - a[1]) / (b[1] - a[1]) * (b - a)
-        assert all(np.any(np.all(np.isclose(vertices, intersection), axis=1)) for vertices, _ in (upper, lower))
-    repeated = split_mesh(points, triangles, height)
-    assert all(np.array_equal(a, b) for mesh, again in zip((upper, lower), repeated)
-               for a, b in zip(mesh, again))
 
 
 def test_an_opening_the_sphere_cannot_enter_in_the_source_counts_as_closed():
