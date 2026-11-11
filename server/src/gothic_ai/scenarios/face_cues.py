@@ -29,9 +29,11 @@ FACE_REPLY = (
     "[friendly] [felt:afraid] Я весь вечер был в амбаре, [smirk] спроси кого хочешь. "
     "[angry] [frown] Всё, некогда мне, [press] иди отсюда."
 )
-# the gestures of the eyes: glance (awkward, recalling), roll (irritated), doubt and frown to compare
+# the gestures of the eyes: glance (awkward, recalling), roll (irritated), doubt and frown to compare;
+# the first line has no comma: with a voice the first line of a reply ends at its first clause
+# (SentenceSplitter.first_clause)
 FACE_EYES_REPLY = (
-    "[neutral] Вечером я, [glance] ну, по хозяйству был, не помню уже. "
+    "[neutral] Я вечером [glance] вроде по хозяйству возился. "
     "[angry] [roll] Ну конечно, как овцы пропали, так сразу Вино. "
     "[neutral] Лобарт их, [doubt] небось, сам и проглядел. "
     "[angry] [frown] Всё, некогда мне, [roll] иди уже."
