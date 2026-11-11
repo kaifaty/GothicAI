@@ -235,6 +235,9 @@ class Pose final {
 
     // the layer's own clock at the time t: its animation plays `speed` times as fast from its start
     static uint64_t layerTime(const Layer& l, uint64_t t);
+    // the transition out of a moving loop from its right foot (stopfoot.h); null: the usual one
+    const Animation::Sequence* footTransition(const AnimationSolver& solver, const Layer& l,
+                                              const Animation::Sequence& to, uint64_t tickCount) const;
     // from `at` on the layer plays k times as fast, without a jump: the time it has played stays
     static bool     rebaseLayer(Layer& l, float k, uint64_t at);
     void            endHitStop();

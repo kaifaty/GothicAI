@@ -2,6 +2,7 @@
 
 #include "sha256.h"
 #include "worldchunks.h"
+#include "placedcensusbuilder.h"
 
 #include <Jolt/Jolt.h>
 #include <Tempest/Log>
@@ -22,7 +23,7 @@
 namespace {
 namespace fs = std::filesystem;
 constexpr std::string_view Magic = "GOTHIC-PLACED-CENSUS-1\n";
-constexpr size_t HeaderSize = Magic.size()+sizeof(uint32_t)+64+2*sizeof(uint32_t);
+constexpr size_t HeaderSize = Magic.size()+sizeof(uint32_t)+2*64+2*sizeof(uint32_t);
 constexpr size_t MaxFileSize = 64*1024*1024;
 constexpr size_t MaxEntries = 1000000;
 constexpr auto JoltVersion=[] { using namespace JPH; return JPH_VERSION_ID; }();
@@ -141,20 +142,28 @@ bool PlacedCensusCache::checkMode() {
   return envIs("OPENGOTHIC_PLACED_CENSUS_CHECK","1");
   }
 
+std::string_view PlacedCensusCache::builderFingerprint() {
+  return OPENGOTHIC_PLACED_CENSUS_BUILDER;
+  }
+
 std::string_view PlacedCensusCache::statusName(Status status) {
   switch(status) {
     case Status::Disabled: return "off";
     case Status::Hit:      return "cache";
     case Status::Absent:   return "absent";
     case Status::Version:  return "version";
+    case Status::Builder:  return "builder";
     case Status::Inputs:   return "inputs";
     case Status::Corrupt:  return "corrupt";
     }
   return "unknown";
   }
 
-PlacedCensusCache::PlacedCensusCache(const fs::path& cacheRoot, const Key& source):version(source.version) {
+PlacedCensusCache::PlacedCensusCache(const fs::path& cacheRoot, const Key& source)
+  :builder(source.builder), version(source.version) {
   if(!enabled() || cacheRoot.empty() || source.base.empty() || source.content.empty() || source.inputs.empty())
+    return;
+  if(builder.size()!=64 || builder.find_first_not_of("0123456789abcdef")!=std::string::npos)
     return;
   if(source.base.find_first_not_of("0123456789abcdef")!=std::string::npos ||
      source.world.empty() || source.world.find_first_of("/\\")!=std::string::npos || source.world=="..")
@@ -164,7 +173,7 @@ PlacedCensusCache::PlacedCensusCache(const fs::path& cacheRoot, const Key& sourc
   Key key=source;
   std::transform(key.world.begin(),key.world.end(),key.world.begin(),[](unsigned char c) { return char(std::toupper(c)); });
   // Jolt queries decide every float; keep differing Jolt builds apart as well.
-  const std::string bytes=key.base+"\n"+key.world+"\n"+key.content+"\n"+key.inputs+"\n"+
+  const std::string bytes=key.base+"\n"+key.world+"\n"+key.content+"\n"+key.inputs+"\n"+key.builder+"\n"+
       std::to_string(key.flags)+"\n"+std::to_string(key.version)+"\n"+std::to_string(JoltVersion)+"\n"+
       std::to_string(sizeof(size_t))+"\n"+std::string(Architecture)+"\n"+
       (std::endian::native==std::endian::little ? "le" : "be");
@@ -195,6 +204,9 @@ PlacedCensusCache::Status PlacedCensusCache::read(size_t count, std::vector<Entr
     if(header.u32()!=version)
       return Status::Version;
     view.remove_prefix(sizeof(uint32_t));
+    if(view.substr(0,64)!=builder)
+      return Status::Builder;
+    view.remove_prefix(64);
     if(view.substr(0,64)!=identity)
       return Status::Inputs;
     view.remove_prefix(64);
@@ -231,6 +243,7 @@ void PlacedCensusCache::save(const std::vector<Entry>& entries) const {
       putEntry(payload,entry);
     std::string bytes(Magic);
     put(bytes,version);
+    bytes+=builder;
     bytes+=identity;
     put(bytes,uint32_t(entries.size()));
     put(bytes,worldChunkCrc32(payload.data(),payload.size()));

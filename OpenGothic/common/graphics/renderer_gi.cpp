@@ -1,11 +1,13 @@
 #include "renderer.h"
+#include "settings.h"
 #include "renderer_internal.h"
 
 #include <Tempest/Log>
 #include <cmath>
+#include <cstdlib>
+#include <string_view>
 
 #include "frameprofile.h"
-#include "gothic.h"
 
 using namespace Tempest;
 using RendererInternal::nextPot;
@@ -21,8 +23,8 @@ void Renderer::toggleGi() {
   if(!Shaders::options().doRtScene)
     return;
 
-  if(settings.giMethod==GiMethod::None && Gothic::options().doGi!=GiMethod::None)
-    settings.giMethod = Gothic::options().doGi;
+  if(settings.giMethod==GiMethod::None && ::Settings::options().doGi!=GiMethod::None)
+    settings.giMethod = ::Settings::options().doGi;
   else if(settings.giMethod==GiMethod::None && Shaders::isGi1Supported())
     settings.giMethod = GiMethod::Probes; // default for now
   else
@@ -378,6 +380,18 @@ void Renderer::surfelsTrace(Tempest::Encoder<Tempest::CommandBuffer>& cmd, World
     }
   }
 
+// Probes of -gi 1 independent of the view (step 2b of the ray-tracing revisit, step-2b.md «2б-1: сделано»):
+// - giExpire: s, a probe nobody uses (no pixel, no sample of another probe) for longer is freed;
+// - giReserve: places kept free for a frame's allocations, the probes of the oldest use go first to keep them;
+// - giHitRadius: cm, a hit of a probe's ray this close to the camera without a probe requests one;
+// - giMaxRequests: requests a frame (the probes allocated at hits in the next frame);
+// - giOffPeriod: a probe no pixel takes is relit and integrated once in so many frames.
+static constexpr float    giExpire      = 5.f;
+static constexpr uint32_t giReserve     = 8192;
+static constexpr float    giHitRadius   = 1000.f;
+static constexpr uint32_t giMaxRequests = 512;
+static constexpr uint32_t giOffPeriod   = 2;
+
 void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wview) {
   if(settings.giMethod!=GiMethod::Probes || !settings.zCloudShadowScale) {
     return;
@@ -391,15 +405,18 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
   auto& probes             = usesSsbo(gi.probes,    gi.maxProbes*32 + 64);       // probes and header
   auto& freeList           = usesSsbo(gi.freeList,  gi.maxProbes*sizeof(uint32_t) + sizeof(int32_t));
   auto& newList            = usesSsbo(gi.newList,   gi.maxProbes*sizeof(uint32_t)); // allocated in the frame: traced
+  // probe_aux.comp, Rbo: the ages of the live probes (64 buckets) and the requests of probes at hits (16 bytes each)
+  auto& requests           = usesSsbo(gi.requests,  (64 + giMaxRequests*4)*sizeof(uint32_t));
   // a flag per 16x8 tile of the screen (the allocation's workgroup): a missing probe was voted for there
   auto& voteTiles          = usesSsbo(gi.voteTiles, ((uint32_t(zbuffer.w())+15)/16)*((uint32_t(zbuffer.h())+7)/8)*sizeof(uint32_t));
   auto& probesGBuffDiff    = usesImage2d(gi.probesGBuffDiff,    TextureFormat::RGBA8, gi.atlasDim*16, gi.atlasDim*16); // 16x16 tile
   auto& probesGBuffNorm    = usesImage2d(gi.probesGBuffNorm,    TextureFormat::RGBA8, gi.atlasDim*16, gi.atlasDim*16);
   auto& probesGBuffRayT    = usesImage2d(gi.probesGBuffRayT,    TextureFormat::R16,   gi.atlasDim*16, gi.atlasDim*16);
   auto& probesRadiance     = usesImage2d(gi.probesRadiance,     TextureFormat::R32U,  gi.atlasDim*16, gi.atlasDim*16);
-  // RGBA16F: R11G11B10 shifts the colour and has no pure white (step-2.md, «Формат»)
-  auto& probesLighting     = usesImage2d(gi.probesLighting,     TextureFormat::RGBA16F, gi.atlasDim*3, gi.atlasDim*2);
-  auto& probesLightingPrev = usesImage2d(gi.probesLightingPrev, TextureFormat::RGBA16F, uint32_t(gi.probesLighting.w()), uint32_t(gi.probesLighting.h()));
+  // the L2 harmonics of irradiance, 7 texels of 4x2 a probe (probe_common.glsl): 1024x512, 4 MB. RGBA16F: R11G11B10
+  // shifts the colour, has no pure white (step-2.md, «Формат») and no sign. Integrated in place: the relight reads the
+  // last frame's before the integration writes this frame's, so no copy of the last frame is kept
+  auto& probesLighting     = usesImage2d(gi.probesLighting,     TextureFormat::RGBA16F, gi.atlasDim*gi.irrTileW, gi.atlasDim*gi.irrTileH);
 
   const auto&  scene   = wview.sceneGlobals();
   const size_t maxHash = hashTable.byteSize()/sizeof(uint32_t);
@@ -415,6 +432,24 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
   const bool restart = fisrtFrame || gi.resetHistory;
   gi.resetHistory = false;
 
+  // The time of day jumped (sleep, a script, `set time`): the places and hits of the probes hold, their light is of
+  // another time. Each live probe is lit again as a new one: all its samples, no history, the bounce from nothing
+  // (probe_prune). Otherwise after noon to midnight the day's light, hundreds of times the night's, takes seconds to
+  // die out through the bounces of probes that light each other off the screen: a hut at 23:00 had cells 5 times
+  // the reference 3 s after the jump (step-2b.md, «2б-1: сделано»). The time of day going on by itself moves far
+  // less than giDayJump in a frame. OPENGOTHIC_GI_JUMP_RESET=0 turns this off: a measure of how the light dies out
+  // in the chains of probes without a jump (a fire put out), scripts/bench/gi-decay.bench.
+  static const bool giJumpReset = []() {
+    const char* v = std::getenv("OPENGOTHIC_GI_JUMP_RESET");
+    return v==nullptr || std::string_view(v)!="0";
+    }();
+  const int64_t giDayJump  = 10*60*1000; // ms of the game's time
+  const bool    lightReset = giJumpReset && !restart && gi.lastDayTime>=0 && gi.dayTime>=0 &&
+                             std::abs(gi.dayTime-gi.lastDayTime)>giDayJump;
+  gi.lastDayTime = gi.dayTime;
+  if(lightReset)
+    Log::i("render: gi probes lit anew (the time of day jumped)");
+
   cmd.setFramebuffer({});
   if(restart) {
     cmd.setDebugMarker("GI-Init");
@@ -424,9 +459,12 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
     cmd.setBinding(3, freeList);
     cmd.setBinding(5, newList);
     cmd.setBinding(6, voteTiles);
+    cmd.setBinding(7, requests);
     cmd.setPipeline(shaders.probeInit);
     cmd.dispatch(1);
     cmd.setPipeline(shaders.probeClearHash);
+    cmd.dispatchThreads(maxHash);
+    cmd.setPipeline(shaders.probeClearVotes);
     cmd.dispatchThreads(maxHash);
 
     cmd.setBinding(0, probesLighting);
@@ -435,6 +473,25 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
     cmd.dispatchThreads(probesLighting.size());
     gi.lastTick = scene.tickCount;
     }
+  // The world time of a frame (smoothed), s: the blend over time, the turns of the relight and the expiry of the probes
+  const uint64_t tick = scene.tickCount;
+  const float    dt   = tick>gi.lastTick ? std::min(float(tick-gi.lastTick)*0.001f, 0.25f) : 0.f;
+  gi.lastTick = tick;
+  if(dt>0)
+    gi.frameTime = gi.frameTime>0 ? gi.frameTime + (dt-gi.frameTime)*0.1f : dt;
+  const float frameTime = gi.frameTime>0 ? gi.frameTime : 1.f/60.f;
+
+  struct PushClear {
+    uint32_t frame;
+    uint32_t expireAge;
+    uint32_t reserve;
+    uint32_t lightReset;
+    } pushClear = {};
+  pushClear.frame      = gi.frame;
+  pushClear.expireAge  = uint32_t(std::clamp(giExpire/frameTime, 2.f, 65535.f));
+  pushClear.reserve    = giReserve;
+  pushClear.lightReset = lightReset ? 1 : 0;
+
   static bool alloc = true;
   cmd.setDebugMarker("GI-Alloc");
   cmd.setBinding(0, voteTable);
@@ -443,8 +500,10 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
   cmd.setBinding(3, freeList);
   cmd.setBinding(5, newList);
   cmd.setBinding(6, voteTiles);
+  cmd.setBinding(7, requests);
+  cmd.setPushData(pushClear);
   cmd.setPipeline(shaders.probeClear);
-  cmd.dispatchThreads(maxHash);
+  cmd.dispatchThreads(std::max<size_t>(voteTiles.byteSize()/sizeof(uint32_t), 64));
 
   if(alloc) {
     cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
@@ -466,6 +525,7 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
     cmd.setBinding(3, freeList);
     cmd.setBinding(5, newList);
     cmd.setBinding(6, voteTiles);
+    cmd.setBinding(7, requests);
     cmd.setPipeline(shaders.probePrune);
     cmd.dispatchThreads(gi.maxProbes);
 
@@ -481,6 +541,19 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
     cmd.setBinding(9, voteTiles);
     cmd.setPipeline(shaders.probeAlocation);
     cmd.dispatchThreads(sceneDepth.size());
+
+    // the requests of probes at hits of the last frame's lighting, then the vote table is clean for this frame's
+    cmd.setBinding(0, voteTable);
+    cmd.setBinding(1, hashTable);
+    cmd.setBinding(2, probes);
+    cmd.setBinding(3, freeList);
+    cmd.setBinding(5, newList);
+    cmd.setBinding(6, voteTiles);
+    cmd.setBinding(7, requests);
+    cmd.setPipeline(shaders.probeHitAlloc);
+    cmd.dispatchThreads(giMaxRequests);
+    cmd.setPipeline(shaders.probeClearVotes);
+    cmd.dispatchThreads(maxHash);
     }
 
   cmd.setDebugMarker("GI-Trace");
@@ -515,34 +588,32 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
   // the blend of the probes' cubes over time: 90 % of a change in 2.3*tau (step-2.md, «2а»), by the world's clock,
   // so a slow frame or a recording at 30 frames per second responds in the same time
   const float    giTau     = 0.1f;
-  // an old probe's samples are relit in turns, all of them in about this time: so many per frame, by the frame time
-  const float    giRefresh = 0.25f;
-  const uint64_t tick      = scene.tickCount;
-  const float    dt        = tick>gi.lastTick ? std::min(float(tick-gi.lastTick)*0.001f, 0.25f) : 0.f;
-  gi.lastTick = tick;
-  if(dt>0)
-    gi.frameTime = gi.frameTime>0 ? gi.frameTime + (dt-gi.frameTime)*0.1f : dt;
+  // an old probe's samples are relit in turns, all of them in about this time: so many per frame, by the frame time.
+  // A change of light goes through the chains of probes a relight at a time: noon to night without the reset of a jump
+  // left all cells of a hut within 10 % of the night in 1,9 s at 0,25 s, in 1,1 s at 0,125 s; twice the relights cost
+  // 0,07-0,10 ms on the stand at 1440p (step-2b.md, «2б-1: пересмотр»)
+  const float    giRefresh = 0.125f;
 
   struct Push {
     float    alpha;
     uint32_t frameId;
     uint32_t relitPeriod;
+    uint32_t offPeriod;
+    float    hitRadius;
+    uint32_t maxRequests;
     } push = {};
   push.alpha       = 1.f - std::exp(-dt/giTau);
   push.frameId     = gi.frame++;
   push.relitPeriod = 4;
   while(push.relitPeriod<32 && float(push.relitPeriod*2)*gi.frameTime<=giRefresh*1.5f)
-    push.relitPeriod *= 2;  // 30 fps: every 8th sample a frame, 60 fps: 16th, 120 fps: 32nd
+    push.relitPeriod *= 2;  // 30 fps: every 4th sample a frame, 60 fps: 8th, 120 fps: 16th, 250 fps: 32nd
+  push.offPeriod   = giOffPeriod;
+  push.hitRadius   = giHitRadius;
+  push.maxRequests = giMaxRequests;
 
   cmd.setDebugMarker("GI-Lighting");
-  cmd.setBinding(0, probesLightingPrev);
-  cmd.setBinding(1, probesLighting);
-  cmd.setPipeline(shaders.copyImg);
-  cmd.dispatchThreads(probesLighting.size());
-
   cmd.setPushData(push);
   cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(1, probesLighting);
   cmd.setBinding(2, probesGBuffDiff, Sampler::nearest());
   cmd.setBinding(3, probesGBuffNorm, Sampler::nearest());
   cmd.setBinding(4, probesGBuffRayT, Sampler::nearest());
@@ -553,26 +624,29 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
   cmd.setBinding(9, scene.rtScene.vbo);
   cmd.setBinding(10,scene.rtScene.ibo);
   cmd.setBinding(11,scene.rtScene.rtDesc);
-  cmd.setBinding(12,probesLightingPrev, Sampler::nearest());
+  cmd.setBinding(12,probesLighting, Sampler::nearest()); // the relight reads the last frame's
   cmd.setBinding(13,hashTable);
   cmd.setBinding(14,probes);
   cmd.setBinding(15,lightsTree.bvh);
   cmd.setBinding(16,probesRadiance);
   cmd.setBinding(17,newList);
+  cmd.setBinding(18,voteTable);
+  cmd.setBinding(19,requests);
   // a thread per relit sample of every slot: the rays keep all lanes busy
   cmd.setPipeline(shaders.probeRelight);
   cmd.dispatchThreads(gi.maxProbes*(256/push.relitPeriod));
   // the new probes: all samples, a thread each
   cmd.setPipeline(shaders.probeRelightNew);
   cmd.dispatch(256);
-  // a workgroup per probe: the integral of the samples
+  // a workgroup per probe: the samples projected on the harmonics, in place
+  cmd.setBinding(1, probesLighting);
   cmd.setPipeline(shaders.probeLighting);
   cmd.dispatch(1024);
 
   if(FrameProfile::enabled()) {
     auto& stats = gi.stats[fId];
     if(stats.isEmpty())
-      stats = Resources::device().ssbo(BufferHeap::Readback, Uninitialized, 4*sizeof(uint32_t));
+      stats = Resources::device().ssbo(BufferHeap::Readback, Uninitialized, RendererInternal::giStatsCount*sizeof(uint32_t));
     cmd.setDebugMarker("GI-Stats");
     cmd.setBinding(0, voteTable);
     cmd.setBinding(1, hashTable);
@@ -581,6 +655,7 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
     cmd.setBinding(4, stats);
     cmd.setBinding(5, newList);
     cmd.setBinding(6, voteTiles);
+    cmd.setBinding(7, requests);
     cmd.setPipeline(shaders.probeStats);
     cmd.dispatch(1);
     gi.statsWritten[fId] = true;
@@ -710,6 +785,8 @@ void Renderer::drawSurfelsDbg(Encoder<CommandBuffer>& cmd, const WorldView& wvie
   if(!enable)
     return;
 
+  // after the translucent pass, without its second attachment (the TAA reactive mask)
+  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}}, {zbuffer, Tempest::Preserve, Tempest::Preserve});
   cmd.setDebugMarker("GI-dbg");
   cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
   cmd.setBinding(1, surf.surfels);
@@ -727,9 +804,11 @@ void Renderer::drawProbesDbg(Encoder<CommandBuffer>& cmd, const WorldView& wview
   if(!enable)
     return;
 
+  // after the translucent pass, without its second attachment (the TAA reactive mask)
+  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}}, {zbuffer, Tempest::Preserve, Tempest::Preserve});
   cmd.setDebugMarker("GI-dbg");
   cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(1, gi.probesLighting);
+  cmd.setBinding(1, gi.probesLighting, Sampler::nearest());
   cmd.setBinding(2, gi.probes);
   cmd.setBinding(3, gi.hashTable);
   cmd.setPipeline(shaders.probeDbg);
@@ -744,6 +823,8 @@ void Renderer::drawProbesHitDbg(Encoder<CommandBuffer>& cmd) {
   if(!enable)
     return;
 
+  // after the translucent pass, without its second attachment (the TAA reactive mask)
+  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}}, {zbuffer, Tempest::Preserve, Tempest::Preserve});
   cmd.setDebugMarker("GI-dbg");
   cmd.setBinding(1, gi.probesLighting);
   cmd.setBinding(2, gi.probesGBuffDiff);
@@ -778,7 +859,7 @@ void Renderer::drawAmbient(Encoder<CommandBuffer>& cmd, const WorldView& view) {
     cmd.setBinding(4, zbuffer,       Sampler::nearest());
     cmd.setBinding(5, gi.hashTable);
     cmd.setBinding(6, gi.probes);
-    cmd.setBinding(7, gi.probesLighting);
+    cmd.setBinding(7, gi.probesLighting, Sampler::nearest());
     cmd.setPipeline(shaders.probeAmbient);
     }
   else if(settings.zCloudShadowScale) {

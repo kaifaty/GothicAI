@@ -976,7 +976,7 @@ void Npc::consumeMeleeContacts() {
         // The blade bites into an intact board instead of passing it, and the board
         // takes this blow: the hit frame that applies destruction never comes now.
         MeleeDestructionBlow blow;
-        if(hit.movableVob!=0 && owner.physic()->destructionEnabled() && meleeDestructionBlow(blow)) {
+        if((hit.movableVob!=0 || hit.fragment!=0) && owner.physic()->destructionEnabled() && meleeDestructionBlow(blow)) {
           const bool struck = owner.physic()->meleeStoppedMovableVob(hit,blow.weaponDamage,blow.strength,blow.kind,
                                                                      this,swing.struckVobs);
           if(TestBench::isActive())
@@ -1000,13 +1000,12 @@ void Npc::consumeMeleeContacts() {
         swing.outcome = "ally_skipped";
       continue;
       }
-    const auto& targetPose = target->visual.pose();
-    // A melee dodge is neither the jump back nor a parade: inside its window the blade passes (takeDamage logs
-    // it), outside the window it hits
-    const bool dodging = target->isMeleeDodging();
-    const bool dodge = (dodging && target->isMeleeDodgeInvulnerable()) ||
-                       (!dodging && !target->meleeKnockdown && !target->isMeleeStunned() && targetPose.isJumpBack(owner.tickCount()) && target->fghAlgo.isInJumpBackAngle(*target,*this));
-    const bool block = !dodging && !target->meleeKnockdown && !target->isMeleeStunned() && target->fghAlgo.isInFocusAngle(*target,*this) && targetPose.isDefence(owner.tickCount());
+    // The guard takeDamage meets (a body down was taken above, a blade never ignores defence): inside a dodge's
+    // window the blade passes (takeDamage logs it), a jump back evades, a parade blocks. Only a human swings with a
+    // shadow, so its blow is never the unblockable one of a monster without a weapon.
+    const auto guard = target->meleeGuard(*this);
+    const bool dodge = guard.evaded();
+    const bool block = guard.blocked;
     entry.result = block ? "blocked" : (dodge ? "evaded" : "hit");
     entry.chargeMult = meleeChargeMultiplier();
     if(!block && !dodge) {

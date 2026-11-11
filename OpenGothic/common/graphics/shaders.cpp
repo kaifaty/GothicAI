@@ -1,11 +1,11 @@
 #include "shaders.h"
+#include "utils/workers.h"
 
 #include <Tempest/Application>
 #include <Tempest/Device>
 #include <Tempest/Log>
 #include <cassert>
 
-#include "gothic.h"
 #include "commandline.h"
 #include "resources.h"
 #include "loadprobe.h"
@@ -92,6 +92,7 @@ void Shaders::compileShaders() noexcept {
   copy      = postEffect("copy");
 
   patch     = computeShader("patch.comp.sprv");
+  patchCopy = computeShader("patch_copy.comp.sprv");
 
   stash     = postEffect("stash");
 
@@ -196,6 +197,8 @@ void Shaders::compileShaders() noexcept {
   }
 
   tonemapping        = postEffect("triangle_uv", "tonemapping",    RenderState::ZTestMode::Always);
+  motionView         = postEffect("triangle_uv", "motion_view",    RenderState::ZTestMode::Always);
+  reactiveView       = postEffect("triangle_uv", "reactive_view",  RenderState::ZTestMode::Always);
   tonemappingUpscale = postEffect("triangle_uv", "tonemapping_up", RenderState::ZTestMode::Always);
   bloomDownKaris     = postEffect("triangle_uv", "bloom_down_karis", RenderState::ZTestMode::Always);
   bloomDown          = postEffect("triangle_uv", "bloom_down",       RenderState::ZTestMode::Always);
@@ -287,6 +290,8 @@ void Shaders::compileShaders() noexcept {
     probeVote      = computeShader("probe_vote.comp.sprv");
     probePrune     = computeShader("probe_prune.comp.sprv");
     probeAlocation = computeShader("probe_allocation.comp.sprv");
+    probeHitAlloc  = computeShader("probe_hit_alloc.comp.sprv");
+    probeClearVotes= computeShader("probe_clear_votes.comp.sprv");
     probeTrace     = computeShader("probe_trace.comp.sprv");
     probeRelight   = computeShader("probe_relight.comp.sprv");
     probeRelightNew= computeShader("probe_relight_new.comp.sprv");
@@ -462,6 +467,10 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
   if(pt==PipelineType::T_Vsm) {
     // state.setZTestMode(RenderState::ZTestMode::Always); //FIXME
     state.setZTestMode(RenderState::ZTestMode::Greater); //FIXME
+    // the mesh shader culls by itself (main.vert, meshShader): the sun's pages as before, a lamp's faces not at all
+    if(options().doMeshShading && t!=DrawCommands::Pfx &&
+       !(mat.isTesselated() && Resources::device().properties().tesselationShader && t==DrawCommands::Landscape))
+      state.setCullFaceMode(RenderState::CullMode::NoCull);
     }
 
   switch(alpha) {
@@ -531,9 +540,12 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
   const char* typeFsD = nullptr;
   const char* typeFsV = nullptr;
 
+  // the G-buffer pass of objects has vertex variants of its own: they also compute the previous vertex for motion
+  // vectors (main_obj_g, main_ani_g, main_mph_g); landscape and particles write no motion of their own
+  const char* gbufVs = (t==DrawCommands::Landscape || t==DrawCommands::Pfx) ? "" : "_g";
   switch(alpha) {
     case Material::Solid:
-      typeVsM = "";
+      typeVsM = gbufVs;
       typeFsM = "_g";
       typeVsD = "_d";
       typeFsD = "_d";
@@ -543,7 +555,7 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
         typeFsM = "_g_s";
       break;
     case Material::AlphaTest:
-      typeVsM = "";
+      typeVsM = gbufVs;
       typeFsM = "_g_at";
       typeVsD = "_d_at";
       typeFsD = "_d_at";

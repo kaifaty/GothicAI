@@ -327,7 +327,7 @@ def read_streaming(directory):
             if not math.isfinite(gpu_mb) or gpu_mb < 0:
                 raise ValueError(f"{directory}: invalid GPU allocation metric")
             grouped[parts[1]][-1]["gpu_mb"] = gpu_mb
-            for field in ("tex_promoted", "tex_demoted", "tex_near_tail_seconds"):
+            for field in ("tex_promoted", "tex_demoted", "tex_near_tail_seconds", "tex_shortfall_seconds"):
                 if field in event:
                     value = event[field]
                     if not math.isfinite(value) or value < 0:
@@ -397,6 +397,19 @@ def streaming_stats(rows):
                                       if "tex_near_tail_n" in row)) if any("tex_near_tail_n" in row for row in textures) else None,
             "near_tail_seconds": sum(row["tex_near_tail_seconds_route"] for row in textures
                                      if "tex_near_tail_seconds_route" in row) if any("tex_near_tail_seconds_route" in row for row in textures) else None,
+            "level_end_bytes": [int(textures[-1][f"tex_level{level}_bytes"]) for level in range(6)]
+                               if "tex_level0_bytes" in textures[-1] else None,
+            "shortfall_peak": int(max(row["tex_shortfall_n"] for row in textures
+                                      if "tex_shortfall_n" in row)) if any("tex_shortfall_n" in row for row in textures) else None,
+            "shortfall_seconds": sum(row["tex_shortfall_seconds_route"] for row in textures
+                                     if "tex_shortfall_seconds_route" in row) if any("tex_shortfall_seconds_route" in row for row in textures) else None,
+            # view jumps since the start of the run (cumulative): count, not yet at zero shortfall, worst times
+            "jumps": {
+                "count": int(textures[-1]["tex_jumps"]),
+                "open": int(textures[-1]["tex_jumps_open"]),
+                "sync_ms_max": textures[-1]["tex_jump_sync_max_ms"],
+                "zero_ms_max": textures[-1]["tex_jump_zero_max_ms"],
+            } if "tex_jumps" in textures[-1] else None,
             "categories": {category: {
                 "bytes": int(textures[-1][f"tex_{category}_bytes"]),
                 "count": int(textures[-1][f"tex_{category}_n"]),
@@ -545,6 +558,23 @@ def summary_table(report):
             lines.append(f"| {view} | {residency} | {number(textures['promoted'], 0)} / {number(textures['demoted'], 0)} | "
                          f"{number(textures['promotion_queue_peak'], 0)} | {number(textures['near_tail_peak'], 0)} | "
                          f"{number(textures['near_tail_seconds'], 9)} |")
+        lines.extend(["", "Texture levels: live bytes by first resident level, and the shortfall (resident coarser than "
+                      "wanted, or missing).", "",
+                      "| Pass | Level 0 / 1 / 2 / 3 / 4 / 5+ end MiB | Shortfall peak | Shortfall texture-seconds on route | "
+                      "Jumps so far (open) | Worst jump sync ms | Worst jump to zero shortfall ms |",
+                      "|---|---:|---:|---:|---:|---:|---:|"])
+        for view, stats in streaming["views"].items():
+            textures = stats["streaming"]["textures"]
+            if textures is None or textures.get("level_end_bytes") is None:
+                lines.append(f"| {view} | n/a | n/a | n/a | n/a | n/a | n/a |")
+                continue
+            levels = " / ".join(f"{value/1048576:.2f}" for value in textures["level_end_bytes"])
+            jumps = textures.get("jumps")
+            jump_cells = ("n/a | n/a | n/a" if jumps is None else
+                          f"{jumps['count']} ({jumps['open']}) | {number(jumps['sync_ms_max'], 1)} | "
+                          f"{number(jumps['zero_ms_max'], 1)}")
+            lines.append(f"| {view} | {levels} | {number(textures['shortfall_peak'], 0)} | "
+                         f"{number(textures['shortfall_seconds'], 9)} | {jump_cells} |")
     return "\n".join(lines)
 
 

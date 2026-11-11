@@ -39,9 +39,12 @@ class CollisionWorld final {
     ~CollisionWorld();
     CollisionWorld(const CollisionWorld&) = delete;
 
-    // Contact slop of broken pieces (C_Fragment), metres; everything else keeps Jolt's 2 cm.
+    // Contact slop of broken pieces (C_Fragment, C_FragmentSmall), metres; everything else keeps Jolt's 2 cm.
     // At 2 cm resting 1.9 cm cut boards sat their whole thickness deep and left through one-sided terrain.
     static constexpr float fragmentPenetrationSlop = .005f;
+    // Debris from this largest extent on (metres) stops a blade and blocks characters; smaller
+    // pieces are passed (reports/physics/2026-11-destruction-bonds, second step).
+    static constexpr float fragmentBlockSize = .5f;
 
     static float         toMeters(float v);
     static JPH::Vec3     toMeters(const Tempest::Vec3& v);
@@ -184,6 +187,8 @@ class CollisionWorld final {
       };
 
     std::unique_ptr<VirtualCharacter> createVirtualCharacter(float radius, float height, const Tempest::Vec3& feet);
+    // A character a new body of debris appeared around passes that body until they separate.
+    void passCharacterOverlaps(const CollisionBody& body);
 
     void tick(uint64_t dt);
     // Stage-0 cost probe. All entry points require OPENGOTHIC_MELEE_BENCH.

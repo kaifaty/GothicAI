@@ -109,6 +109,19 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/data/cloth-world.csv" CLOTH_WORLD_DATA)
 configure_file(common/physics/clothworlddata.h.in generated/clothworlddata.h @ONLY)
 target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
+# The census builder digest is generated at build time, without reconfiguring
+# after an implementation edit. Only placedcensuscache.cpp includes the header.
+include(cmake/PlacedCensusBuilder.cmake)
+set(PLACED_CENSUS_BUILDER_DEPENDS ${PLACED_CENSUS_BUILDER_INPUTS})
+list(TRANSFORM PLACED_CENSUS_BUILDER_DEPENDS PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
+set(PLACED_CENSUS_BUILDER_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/placedcensusbuilder.h")
+add_custom_command(OUTPUT "${PLACED_CENSUS_BUILDER_HEADER}"
+  COMMAND "${CMAKE_COMMAND}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}" "-DOUTPUT=${PLACED_CENSUS_BUILDER_HEADER}"
+          -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/PlacedCensusBuilder.cmake"
+  DEPENDS ${PLACED_CENSUS_BUILDER_DEPENDS}
+  VERBATIM)
+target_sources(${PROJECT_NAME} PRIVATE "${PLACED_CENSUS_BUILDER_HEADER}")
+
 # shaders
 add_subdirectory(shader)
 target_link_libraries(${PROJECT_NAME} GothicShaders)
@@ -303,6 +316,13 @@ if(UNIX)
   target_link_libraries(gothic-body-watch-test PRIVATE OpenGothic AiBridge)
   target_include_directories(gothic-body-watch-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   target_compile_options(gothic-body-watch-test PRIVATE -Wall -Wconversion -Werror)
+  if(OPENGOTHIC_ENABLE_FRAME_PROFILE)
+    # Standalone recorder capacity and late-callback checks; no engine or game data.
+    add_executable(gothic-frame-profile-test EXCLUDE_FROM_ALL tests/frame_profile_test.cpp common/frameprofile.cpp)
+    target_include_directories(gothic-frame-profile-test PRIVATE common)
+    target_compile_definitions(gothic-frame-profile-test PRIVATE OPENGOTHIC_ENABLE_FRAME_PROFILE=1)
+    target_compile_options(gothic-frame-profile-test PRIVATE -Wall -Wconversion -Werror)
+  endif()
   # Real Resources/material loading with temporary DDS files; no game assets or window.
   add_executable(gothic-material-texture-test EXCLUDE_FROM_ALL tests/material_texture_test.cpp)
   target_link_libraries(gothic-material-texture-test PRIVATE OpenGothic AiBridge)
@@ -316,9 +336,10 @@ if(UNIX)
   add_executable(gothic-taa-test EXCLUDE_FROM_ALL tests/taa_test.cpp)
   target_link_libraries(gothic-taa-test PRIVATE OpenGothic AiBridge)
   target_compile_options(gothic-taa-test PRIVATE -Wall -Wconversion -Werror)
-  # The own head's face (graphics/mesh/facerig): a synthetic head and profile; CPU only, no device or game data.
+  # The own head's face (graphics/mesh/facerig): a synthetic head and profile, the bridge's say cues; CPU only, no device or game data.
   add_executable(gothic-facerig-test EXCLUDE_FROM_ALL tests/facerig_test.cpp)
   target_link_libraries(gothic-facerig-test PRIVATE OpenGothic AiBridge)
+  target_include_directories(gothic-facerig-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   target_compile_options(gothic-facerig-test PRIVATE -Wall -Wconversion -Werror)
   # Our render skeleton under a Gothic one (graphics/mesh/renderrig): synthetic skeletons and rig table; CPU only.
   add_executable(gothic-render-rig-test EXCLUDE_FROM_ALL tests/render_rig_test.cpp)
@@ -599,6 +620,24 @@ endif()
   add_custom_target(check-meleedodge
     COMMAND $<TARGET_FILE:gothic-meleedodge-contract>
     DEPENDS gothic-meleedodge-contract USES_TERMINAL)
+  add_executable(gothic-stopfoot-contract EXCLUDE_FROM_ALL
+    tests/stopfoot_contract.cpp common/graphics/mesh/stopfoot.cpp)
+  target_include_directories(gothic-stopfoot-contract PRIVATE common)
+  if(NOT MSVC)
+    target_compile_options(gothic-stopfoot-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  add_custom_target(check-stopfoot
+    COMMAND $<TARGET_FILE:gothic-stopfoot-contract>
+    DEPENDS gothic-stopfoot-contract USES_TERMINAL)
+  add_executable(gothic-leanaccel-contract EXCLUDE_FROM_ALL
+    tests/leanaccel_contract.cpp common/graphics/mesh/leanaccel.cpp)
+  target_include_directories(gothic-leanaccel-contract PRIVATE common)
+  if(NOT MSVC)
+    target_compile_options(gothic-leanaccel-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  add_custom_target(check-leanaccel
+    COMMAND $<TARGET_FILE:gothic-leanaccel-contract>
+    DEPENDS gothic-leanaccel-contract USES_TERMINAL)
   add_executable(gothic-meleecharge-contract EXCLUDE_FROM_ALL
     tests/meleecharge_contract.cpp common/game/meleecharge.cpp common/game/meleestamina.cpp)
   target_include_directories(gothic-meleecharge-contract PRIVATE common)
@@ -640,6 +679,11 @@ endif()
   target_include_directories(gothic-worlddata-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   add_executable(gothic-wayheights-contract EXCLUDE_FROM_ALL tests/wayheights_contract.cpp)
   target_link_libraries(gothic-wayheights-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
+  add_executable(gothic-settings-test EXCLUDE_FROM_ALL tests/settings_test.cpp)
+  target_link_libraries(gothic-settings-test PRIVATE OpenGothic AiBridge)
+  if(NOT MSVC)
+    target_compile_options(gothic-settings-test PRIVATE -Wall -Wconversion -Werror)
+  endif()
   add_executable(gothic-vob-layer-test EXCLUDE_FROM_ALL tests/vob_layer_test.cpp)
   target_link_libraries(gothic-vob-layer-test PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
   target_include_directories(gothic-vob-layer-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)

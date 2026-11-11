@@ -496,3 +496,46 @@ bool aimSpotsCommand(bool& hasPrev,const std::string& line,const std::vector<std
   }
 
 }
+
+namespace testbench_detail {
+
+// waypoints of a kind, `count` of them spread from near to far, not closer than 5 m to each other
+std::vector<Spot> findSpots(World& w, const Npc& pl, SpotKind kind, float a0, float a1, std::string_view part, size_t count) {
+  std::vector<Spot> all;
+  const Vec3 at = pl.position();
+  w.findWayPoint(at,[&](const WayPoint& wp) {
+    if(kind==K_Name && wp.name.find(part)==std::string::npos)
+      return false;
+    Spot s;
+    Vec3 d;
+    s.name = wp.name;
+    s.pos  = wp.pos;
+    s.dist = (wp.pos-at).length();
+    if(!slopeAt(w,wp.pos,s.angle,d,s.rough))
+      return false;
+    if(kind==K_Slope  && !(s.angle>=a0 && s.angle<=a1 && s.rough<4))
+      return false;
+    if(kind==K_Stairs && !(s.angle>=18 && s.angle<=40 && s.rough>=6 && s.rough<=25))
+      return false;
+    all.push_back(s);
+    return false;
+    });
+  std::sort(all.begin(),all.end(),[](const Spot& a, const Spot& b){ return a.dist<b.dist; });
+
+  std::vector<Spot> far;
+  for(auto& s:all) {
+    bool close = false;
+    for(auto& f:far)
+      close |= (f.pos-s.pos).length()<500;
+    if(!close)
+      far.push_back(s);
+    }
+  if(far.size()<=count)
+    return far;
+  std::vector<Spot> ret;
+  for(size_t i=0; i<count; ++i)
+    ret.push_back(far[(i*far.size())/count]);
+  return ret;
+  }
+
+}

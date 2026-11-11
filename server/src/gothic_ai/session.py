@@ -313,6 +313,7 @@ async def run_session(env: SessionEnv, link: GameLink) -> None:
         quick=quick,
         svm_lines=not args.no_svm_lines,
     )
+    state.dialogue.debug_leak = getattr(args, "debug_leak", None)
     if not args.no_combat_barks or not args.no_mercy:
         state.combat_barks = CombatBarks(state.dialogue, hits=not args.no_combat_barks)
     # the bandits below Xardas's tower are freed of their scripted ambush: our models decide (story.py)

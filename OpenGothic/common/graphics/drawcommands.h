@@ -27,6 +27,7 @@ class DrawCommands {
       Morph,
       };
     static uint32_t hiddenTypes; // debug (test bench): a bit per Type that is not drawn
+    static bool     hidePfxObjects; // debug (test bench), `view hide pfx` only: the particles of PfxObjects too
 
     struct DrawCmd {
       const Tempest::RenderPipeline* pMain        = nullptr;
@@ -104,6 +105,7 @@ class DrawCommands {
       L_FogLutMs   = 18,
       L_VsmPageTbl = 19,
       L_VsmPageAtlas = 20,
+      L_InstancePrev = 21, // the instance buffer after the previous frame (motion vectors, G-buffer pass)
       L_VsmPages   = L_Shadow0,
       L_Lights     = L_Shadow1,
       };

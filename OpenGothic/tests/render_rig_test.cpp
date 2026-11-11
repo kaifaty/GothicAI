@@ -324,6 +324,12 @@ int main() {
       {"lower_r",  15, {-20, 121, -1}},
       {"hand_r",   16, {-20, 96, 0}},
       });
+    // (k) the same body with a short foot: the ankle 4 cm ahead of Gothic's, 8 cm to the ball against Gothic's 12
+    std::vector<Joint> shortFoot = body.joints;
+    for(auto& j:shortFoot)
+      if(j.name=="foot_l" || j.name=="foot_r")
+        j.at.z = 4;
+    const Skel body3(shortFoot);
     std::vector<Joint> many;
     for(int i=0; i<int(Resources::MAX_NUM_SKELETAL_NODES)+1; ++i)
       many.push_back({"node"+std::to_string(i),i-1,{0,float(i),0}});
@@ -338,6 +344,7 @@ int main() {
       {"ARM.MDH",  arm.hierarchy()},
       {"SRC2.MDH", source2.hierarchy()},
       {"BODY.MDH", body.hierarchy()},
+      {"BODY3.MDH", body3.hierarchy()},
       };
     std::vector<std::string> messages;
     RenderRigIndex index([&](std::string_view name, asset::ModelHierarchy& out) {
@@ -417,7 +424,11 @@ int main() {
                            {"name": "hand", "source": "BIP01 L HAND"}],
                  "root": {"bone": "chest", "source": "BIP01 SPINE"}},
         "KNEES":  {"skeleton": "BODY.MDH", "source": "SRC2.MDH", "bones": [)"+bodyBones+R"(],
+                   "root": {"bone": "pelvis", "source": "BIP01 PELVIS", "knees": true, "heel": false}, )"+bodyLegs+R"(},
+        "HEEL":   {"skeleton": "BODY3.MDH", "source": "SRC2.MDH", "bones": [)"+bodyBones+R"(],
                    "root": {"bone": "pelvis", "source": "BIP01 PELVIS", "knees": true}, )"+bodyLegs+R"(},
+        "PLAIN3": {"skeleton": "BODY3.MDH", "source": "SRC2.MDH", "bones": [)"+bodyBones+R"(],
+                   "root": {"bone": "pelvis", "source": "BIP01 PELVIS"}, )"+bodyLegs+R"(},
         "PLAIN2": {"skeleton": "BODY.MDH", "source": "SRC2.MDH", "bones": [)"+bodyBones+R"(],
                    "root": {"bone": "pelvis", "source": "BIP01 PELVIS"}, )"+bodyLegs+R"(},
         "ARMS2":  {"skeleton": "BODY.MDH", "source": "SRC2.MDH", "bones": [)"+bodyBones+R"(],
@@ -447,11 +458,15 @@ int main() {
                        "root": {"bone": "chest", "source": "BIP01 SPINE"},
                        "shoulders": [{"clavicle": "clav", "arm": "upper", "elbow": "fore", "chest": "chest", "share": 0.5}]}
         },
-      "meshes": {"HUM_BODY_TEST.MDM": "LEG"}
+      "meshes": {"HUM_BODY_TEST.MDM": "LEG"},
+      "bodies": {"hum_body_naked0": {"8": "HUM_BODY_TEST.MDM"}}
       })";
     index.parse(json);
     require(messages.empty(),"a good file is read without messages: "+(messages.empty() ? "" : messages[0]));
-    require(index.size()==17,"seventeen rigs are read");
+    require(index.size()==19,"nineteen rigs are read");
+    // a body drawn as another mesh for one texture variant: the hero's clothes of the shared naked body
+    require(index.bodyOf("Hum_Body_Naked0.ASC",8)=="HUM_BODY_TEST" && index.bodyOf("hum_body_naked0",0).empty() &&
+            index.bodyOf("HUM_BODY_BABE0",8).empty(),"a body's texture variant has its own mesh, the others keep the body");
 
     // (a) the same skeleton repeats the source
     const RenderRig* sameRig = index.rig("SAME");
@@ -486,7 +501,7 @@ int main() {
     // (b, c) the leg: IK onto the ankle, out of reach - straight
     const RenderRig* legRig = index.rig("LEG");
     require(legRig!=nullptr && index.rigOfMesh("models/hum_body_test.asc")==legRig,"the leg rig loads, by its mesh too");
-    require(index.meshTable().size()==1 && index.meshTable().count("HUM_BODY_TEST")==1 && index.rigNames().size()==17,
+    require(index.meshTable().size()==1 && index.meshTable().count("HUM_BODY_TEST")==1 && index.rigNames().size()==19,
             "the table lists its rigs and meshes");
     // a bone's Gothic node: its source, else its parent's, else the source's root
     require(legRig->sourceOf(leg.find("ball_l"))==source.find("BIP01 L TOE0") &&
@@ -777,6 +792,177 @@ int main() {
         }
     }
 
+    // (k) heel: a leg that stands is heel on heel with Gothic's, rolls over its own ball, leaves the ground with a
+    // high heel and is never straighter than Gothic's knee; the root's lift is kept between solves
+    {
+      const RenderRig* heelRig  = index.rig("HEEL");
+      const RenderRig* plainRig = index.rig("PLAIN3");
+      require(heelRig!=nullptr && plainRig!=nullptr,"the heel rigs load");
+      std::vector<Matrix4x4> o(Resources::MAX_NUM_SKELETAL_NODES), p(Resources::MAX_NUM_SKELETAL_NODES);
+      const Vec3 X(1,0,0);
+      struct LegIds { size_t th, ca, fo, ba, sTh, sCa, sFo; };
+      const LegIds legsIds[2] = {
+        {body3.find("thigh_l"),body3.find("calf_l"),body3.find("foot_l"),body3.find("ball_l"),
+         source2.find("BIP01 L THIGH"),source2.find("BIP01 L CALF"),source2.find("BIP01 L FOOT")},
+        {body3.find("thigh_r"),body3.find("calf_r"),body3.find("foot_r"),body3.find("ball_r"),
+         source2.find("BIP01 R THIGH"),source2.find("BIP01 R CALF"),source2.find("BIP01 R FOOT")}};
+      const size_t pelvis = body3.find("pelvis");
+      auto relRot = [&](const std::vector<Matrix4x4>& w, size_t s) {
+        return linearOnly(w[s])*inverse(linearOnly(source2.world[s]));
+        };
+      auto fkFlex = [&](const std::vector<Matrix4x4>& w, const LegIds& l) {
+        const Vec3 a1 = apply(relRot(w,l.sTh),position(body3.world[l.ca])-position(body3.world[l.th]));
+        const Vec3 a2 = apply(relRot(w,l.sCa),position(body3.world[l.fo])-position(body3.world[l.ca]));
+        return angle(a1,a2);
+        };
+      auto flex = [&](const LegIds& l) {
+        return angle(position(o[l.ca])-position(o[l.th]),position(o[l.fo])-position(o[l.ca]));
+        };
+      // a bind point of ours carried by Gothic's foot
+      auto carried = [&](const std::vector<Matrix4x4>& w, const LegIds& l, const Vec3& bindPoint) {
+        return apply(w[l.sFo],apply(inverse(source2.world[l.sFo]),bindPoint));
+        };
+      const float back = position(body3.world[legsIds[0].fo]).z - position(source2.world[legsIds[0].sFo]).z;
+      require(std::abs(back-4.f)<1e-4,"the short foot's ankle is 4 cm ahead of Gothic's");
+      // our ankle and ball heel on heel with Gothic's foot as it is turned
+      auto heelAnkle = [&](const std::vector<Matrix4x4>& w, const LegIds& l) {
+        return carried(w,l,position(body3.world[l.fo])-Vec3(0,0,back));
+        };
+      auto heelBall = [&](const std::vector<Matrix4x4>& w, const LegIds& l) {
+        return carried(w,l,position(body3.world[l.ba])-Vec3(0,0,back));
+        };
+      auto knees = [&](const std::vector<Matrix4x4>& w, const std::string& what) {
+        for(const auto& l:legsIds)
+          require(std::abs(flex(l)-fkFlex(w,l))<=0.2,what+": the knee bends as Gothic's: "+std::to_string(flex(l))+
+                  " not "+std::to_string(fkFlex(w,l)));
+        };
+      // the foot's turn about its side axis, the sign that lifts the heel about the ball
+      auto heelSign = [&](const std::vector<Matrix4x4>& w, const LegIds& l) {
+        auto t = w;
+        bendAbout(source2,t,l.sFo,carried(w,l,position(body3.world[l.ba])),X,5);
+        return position(t[l.sFo]).y>position(w[l.sFo]).y ? 1.f : -1.f;
+        };
+      const auto bindW = source2.pose(source2.bindTurns(),Matrix4x4::mkIdentity());
+
+      // standing: the ankle over Gothic's, the ball 4 cm short of where Gothic carries it
+      require(heelRig->solve(bindW.data(),bindW.size(),o.data()),"standing on the heel is solved");
+      knees(bindW,"standing on the heel");
+      for(const auto& l:legsIds) {
+        require(distance(position(o[l.fo]),heelAnkle(bindW,l))<=0.05,"standing: the ankle stands on Gothic's: "+
+                std::to_string(distance(position(o[l.fo]),heelAnkle(bindW,l))));
+        require(distance(position(o[l.ba]),heelBall(bindW,l))<=0.05,"standing: the ball is the foot's length from the heel");
+        }
+      const float standLift = position(o[pelvis]).y;
+
+      // the toes up by 30 degrees on both feet: the foot turns about Gothic's ankle and takes no heel lift of its own
+      {
+        auto w = bindW;
+        for(const auto& l:legsIds)
+          bend(source2,w,l.sFo,X,-heelSign(bindW,l)*30);
+        require(heelRig->solve(w.data(),w.size(),o.data()) && plainRig->solve(w.data(),w.size(),p.data()),"toes up is solved");
+        knees(w,"toes up");
+        for(const auto& l:legsIds) {
+          require(distance(position(o[l.fo]),heelAnkle(w,l))<=0.05,"toes up: the ankle stays on Gothic's: "+
+                  std::to_string(distance(position(o[l.fo]),heelAnkle(w,l))));
+          require(maxDiff(linearOnly(o[l.fo]),linearOnly(p[l.fo]))<=1e-4,"toes up: the foot keeps Gothic's turn");
+          }
+      }
+      // the heel up by 15 degrees about the ball on both feet: our ball stays where it stood, the foot turns further
+      {
+        auto w = bindW;
+        for(const auto& l:legsIds)
+          bendAbout(source2,w,l.sFo,carried(bindW,l,position(body3.world[l.ba])),X,heelSign(bindW,l)*15);
+        require(heelRig->solve(w.data(),w.size(),o.data()) && plainRig->solve(w.data(),w.size(),p.data()),"heel up is solved");
+        knees(w,"heel up");
+        for(const auto& l:legsIds) {
+          require(distance(position(o[l.ba]),heelBall(bindW,l))<=0.1,"heel up: the ball stays where it stood: "+
+                  std::to_string(distance(position(o[l.ba]),heelBall(bindW,l))));
+          const double lever = distance(position(w[l.sFo]),carried(w,l,position(body3.world[l.ba])))/
+                               distance(position(body3.world[l.fo]),position(body3.world[l.ba]));
+          const double want  = std::asin(lever*std::sin(15.0*Pi/180.0))*180.0/Pi - 15.0;
+          require(want>2.0 && std::abs(turnAngle(o[l.fo],p[l.fo])-want)<=0.3,
+                  "heel up: the shorter foot turns further for the same rise: "+std::to_string(turnAngle(o[l.fo],p[l.fo]))+
+                  " not "+std::to_string(want));
+          }
+      }
+      // the heel up by 60 degrees: the foot has left the ground, the leg takes Gothic's turns
+      std::vector<Matrix4x4> highHeels;
+      {
+        auto w = bindW;
+        for(const auto& l:legsIds)
+          bendAbout(source2,w,l.sFo,carried(bindW,l,position(body3.world[l.ba])),X,heelSign(bindW,l)*60);
+        highHeels = w;
+        require(heelRig->solve(w.data(),w.size(),o.data()) && plainRig->solve(w.data(),w.size(),p.data()),"a high heel is solved");
+        knees(w,"a high heel");
+        for(const auto& l:legsIds)
+          require(maxDiff(linearOnly(o[l.fo]),linearOnly(p[l.fo]))<=1e-4,"a high heel: the foot keeps Gothic's turn");
+        require(std::abs(position(o[pelvis]).y-position(p[pelvis]).y)<=1e-3,"a high heel alone: no leg lifts the pelvis");
+      }
+      // a seat: with the thighs level the pelvis is held by something else - ball on ball, as without heel
+      {
+        auto w = bindW;
+        for(const auto& l:legsIds) {
+          bend(source2,w,l.sTh,X,-80);
+          bend(source2,w,l.sCa,X,160);
+          bend(source2,w,l.sFo,X,-80);
+          }
+        require(heelRig->solve(w.data(),w.size(),o.data()),"a seat is solved");
+        knees(w,"a seat");
+        for(const auto& l:legsIds)
+          require(distance(position(o[l.ba]),carried(w,l,position(body3.world[l.ba])))<=0.05,
+                  "a seat: the ball stays on Gothic's: "+
+                  std::to_string(distance(position(o[l.ba]),carried(w,l,position(body3.world[l.ba])))));
+      }
+      // the memory: a solve without it and the first one with it are the same
+      {
+        RenderRig::Gait gait;
+        require(heelRig->solve(bindW.data(),bindW.size(),o.data()) &&
+                heelRig->solve(bindW.data(),bindW.size(),p.data(),RenderRig::Hands(),&gait,0.033f),"the first solve with a memory");
+        for(size_t i=0; i<body3.joints.size(); ++i)
+          require(maxDiff(o[i],p[i])<=1e-5,"the first solve with a memory is the solve without it");
+        require(gait.valid && std::abs(gait.lift-(standLift-93.f))<=1e-3 && gait.plant[0]==1.f && gait.plant[1]==1.f,
+                "the memory keeps the lift and the legs' shares: "+std::to_string(gait.lift));
+        const float stand = gait.lift;
+        // a lift above the legs' wish comes down over LiftTau; meanwhile the heels come up about the balls and the
+        // knees are no straighter than Gothic's
+        gait.lift = stand+6;
+        require(heelRig->solve(bindW.data(),bindW.size(),o.data(),RenderRig::Hands(),&gait,0.08f),"a lift too high is solved");
+        require(std::abs(gait.lift-(stand+6.f/std::exp(1.f)))<=0.05,"the lift follows over its time: "+std::to_string(gait.lift-stand));
+        for(const auto& l:legsIds) {
+          require(flex(l)>=fkFlex(bindW,l)-0.2,"a lift too high: the knee is no straighter than Gothic's: "+
+                  std::to_string(flex(l))+" under "+std::to_string(fkFlex(bindW,l)));
+          require(position(o[l.fo]).y-heelAnkle(bindW,l).y>1.0 && position(o[l.ba]).y-heelBall(bindW,l).y>-0.05,
+                  "a lift too high: the heel comes up, the ball does not go under the ground");
+          }
+        // a lift under the legs' wish does not wait: a pelvis too low would bend the knees
+        gait.lift = stand-6;
+        require(heelRig->solve(bindW.data(),bindW.size(),o.data(),RenderRig::Hands(),&gait,0.001f),"a lift too low is solved");
+        require(std::abs(gait.lift-stand)<=0.05,"a lift under what the standing legs need comes up at once: "+std::to_string(gait.lift-stand));
+        // in the air with the legs down the lift holds; lying it goes to none
+        gait.lift = stand+2;
+        require(heelRig->solve(highHeels.data(),highHeels.size(),o.data(),RenderRig::Hands(),&gait,0.5f),"a flight is solved");
+        require(std::abs(gait.lift-(stand+2))<=1e-3,"no foot on the ground, the legs down: the lift holds: "+std::to_string(gait.lift-stand));
+        const auto lying = source2.pose(source2.bindTurns(),turn(X,-90));
+        for(int n=0; n<30; ++n)
+          require(heelRig->solve(lying.data(),lying.size(),o.data(),RenderRig::Hands(),&gait,0.033f),"lying is solved");
+        require(std::abs(gait.lift)<=0.01,"lying, the lift goes to none: "+std::to_string(gait.lift));
+        // a leg in the air keeps its share of the heel, one on the ground lets it go as the pose does
+        require(gait.plant[0]<0.1f && gait.plant[1]<0.1f,"lying, the legs stop standing on their heels");
+        // any pose: finite, the legs keep their lengths
+        for(int n=0; n<300; ++n) {
+          const auto w = source2.randomPose(60,randomObject());
+          require(heelRig->solve(w.data(),w.size(),o.data(),RenderRig::Hands(),&gait,0.033f),"a random pose is solved");
+          require(std::isfinite(gait.lift) && std::abs(gait.lift)<=10.01f,"the lift stays within 10 cm, pose "+std::to_string(n));
+          for(size_t i=0; i<body3.joints.size(); ++i)
+            require(finite(o[i]),"no NaN with the heel, pose "+std::to_string(n));
+          for(const auto& l:legsIds)
+            require(std::abs(distance(position(o[l.ca]),position(o[l.th]))-distance(body3.joints[l.ca].at,body3.joints[l.th].at))<=1e-3 &&
+                    std::abs(distance(position(o[l.fo]),position(o[l.ca]))-distance(body3.joints[l.fo].at,body3.joints[l.ca].at))<=1e-3,
+                    "with the heel the legs keep their lengths, pose "+std::to_string(n));
+          }
+      }
+    }
+
     // (j) arms: without hands they are FK; `world` puts the wrists on Gothic's, `hold` the left one where Gothic holds
     // it against the right hand
     {
@@ -872,6 +1058,12 @@ int main() {
       {R"({"format": "gothic-render-rigs", "version": 1, "rigs": {"R": {"skeleton": "LEG.MDH", "source": "SRC.MDH",
            "bones": [{"name": "pelvis"}], "root": {"bone": "pelvis", "source": "BIP01 PELVIS", "knees": 1}}}})",
                                                                             "render rig R: root: knees must be true or false"},
+      {R"({"format": "gothic-render-rigs", "version": 1, "rigs": {"R": {"skeleton": "LEG.MDH", "source": "SRC.MDH",
+           "bones": [{"name": "pelvis"}], "root": {"bone": "pelvis", "source": "BIP01 PELVIS", "knees": true, "heel": 1}}}})",
+                                                                            "render rig R: root: heel must be true or false"},
+      {R"({"format": "gothic-render-rigs", "version": 1, "rigs": {"R": {"skeleton": "LEG.MDH", "source": "SRC.MDH",
+           "bones": [{"name": "pelvis"}], "root": {"bone": "pelvis", "source": "BIP01 PELVIS", "heel": true}}}})",
+                                                                            "render rig R: root: heel needs knees"},
       {R"({"format": "gothic-render-rigs", "version": 1, "rigs": {"R": {"skeleton": "LEG.MDH", "source": "SRC.MDH",
            "bones": [{"name": "pelvis"}], "root": {"bone": "pelvis", "source": "BIP01 PELVIS"},
            "arms": [{"upper": "thigh_l", "lower": "calf_l", "hand": "foot_l", "source_hand": "BIP01 L FOOT", "soft": 30}]}}})",

@@ -1,5 +1,5 @@
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import SimpleNamespace
 
 import pytest
@@ -15,6 +15,7 @@ from gothic_ai.crime_react import CrimeReact
 from gothic_ai.crimes import Crimes
 from gothic_ai.deals import Deals, LieRef
 from gothic_ai.dialogue import DialogueManager
+from gothic_ai.face_cues import choose_leak
 from gothic_ai.fear import knows_violence
 from gothic_ai.game import GameError
 from gothic_ai.group import ANSWER_CUE, GroupTalk
@@ -147,6 +148,32 @@ ASK_HILDA = FakeStep(
 CATCH = FakeStep(
     "Так ты врёшь!", [ToolCall("catch_lie", {"said": "всё утро был в городе", "seen": "C1"}, "c1")]
 )
+
+
+@pytest.mark.parametrize(("cover", "crime_saw", "vouch", "probability"), [
+    ("fear", ["C1"], "", 0.42),
+    ("cover-deal", [], "Он был со мной.", 0.28),
+])
+async def test_felt_leaks_only_for_known_cover_with_seeded_probability(
+    cover, crime_saw, vouch, probability,
+):
+    fake = FakeGame(branch="A")
+    async with connected(fake) as link:
+        w = World(link, fake, lobart())
+        assert all(choose_leak(w.dialogue, HILDA, str(i), "afraid", 2) is None for i in range(1000))
+        w.chronicle.record({
+            "fact": "testimony", "id": "cover", "npc": LOBART, "witness": HILDA,
+            "cover": cover, "crime_saw": crime_saw, "vouch": vouch,
+        })
+        leaks = [choose_leak(w.dialogue, HILDA, str(i), "afraid", 2) for i in range(1000)]
+        assert abs(sum(leak is not None for leak in leaks) / 1000 - probability) <= 0.05
+        assert leaks == [choose_leak(w.dialogue, HILDA, str(i), "afraid", 2) for i in range(1000)]
+        shown = [leak for leak in leaks if leak is not None]
+        assert all(leak.felt == "afraid" and leak.word == 2 for leak in shown)
+        assert abs(sum(leak.half == "upper" for leak in shown) / len(shown) - 0.5) <= 0.1
+        card = w.dialogue.personas.cards[HILDA]
+        w.dialogue.personas.cards = {HILDA: replace(card, lie_skill=1)}
+        assert all(choose_leak(w.dialogue, HILDA, str(i), "afraid", 2) is None for i in range(1000))
 
 
 async def test_ask_witness_reports_its_actual_crime_seen_and_catches_a_denial_by_that_testimony():

@@ -46,28 +46,7 @@ Gothic::Gothic() {
 
   systemPackIniFile.reset(new IniFile(nestedPath({u"system",u"SystemPack.ini"},Dir::FT_File)));
   showFpsCounter = systemPackIniFile->getI("DEBUG","Show_FPS_Counter");
-  opts.hideFocus = systemPackIniFile->getI("PARAMETERS","HideFocus");
-  opts.cameraFov = systemPackIniFile->getF("PARAMETERS","VerticalFOV");
-  opts.fpsLimit  = std::max(0, systemPackIniFile->getI("PARAMETERS", "FPS_Limit", 0));
-  if(opts.cameraFov<1.f) {
-    opts.cameraFov = 67.5;
-    }
-  opts.interfaceScale = systemPackIniFile->getF("INTERFACE","Scale",1);
-  if(opts.interfaceScale<=0) {
-    opts.interfaceScale = 1;
-    }
-  opts.inventoryCellSize = systemPackIniFile->getI("INTERFACE","InventoryCellSize",opts.inventoryCellSize);
-  opts.inventoryCellSize = std::max(opts.inventoryCellSize, 10);
-
-  opts.newChapterSize.w    = systemPackIniFile->getI("INTERFACE","NewChapterSizeX",opts.newChapterSize.w);
-  opts.newChapterSize.h    = systemPackIniFile->getI("INTERFACE","NewChapterSizeY",opts.newChapterSize.h);
-
-  opts.saveGameImageSize.w = systemPackIniFile->getI("INTERFACE","SaveGameImageSizeX",opts.saveGameImageSize.w);
-  opts.saveGameImageSize.h = systemPackIniFile->getI("INTERFACE","SaveGameImageSizeY",opts.saveGameImageSize.h);
-
-  opts.showHealthBar     = !(systemPackIniFile->getI("INTERFACE","HideHealthBar",0)!=0);
-  opts.showManaBar       = uint8_t(std::clamp(systemPackIniFile->getI("INTERFACE","ShowManaBar",1), 0, 2));
-  opts.showSwimBar       = uint8_t(std::clamp(systemPackIniFile->getI("INTERFACE","ShowSwimBar",1), 0, 2));
+  settings.loadSystemPackOptions(*systemPackIniFile);
 
 #ifndef NDEBUG
   setMarvinEnabled(true);
@@ -78,162 +57,11 @@ Gothic::Gothic() {
 #endif
   setBenchmarkMode(CommandLine::inst().isBenchmarkMode());
 
-  if(Resources::hasGraphicsDevice() && Resources::device().properties().raytracing.rayQuery) {
-    opts.doGi = CommandLine::inst().isRtGi();
-    // GI probes by default on a discrete GPU: ≈0.7 ms on an RTX 3080, an M1 is at 99 % with them
-    // (reports/render-features/2026-10-18); the renderer drops them without -rt
-    if(!CommandLine::inst().hasRtGiArg() && Resources::device().properties().type==Tempest::DeviceType::Discrete)
-      opts.doGi = GiMethod::Probes;
-    }
-
-  opts.aaPreset = CommandLine::inst().aaPreset();
-  opts.taa      = CommandLine::inst().doTaa();
+  settings.setupOptions();
 
   wrldDef = CommandLine::inst().wrldDef;
 
-  baseIniFile.reset(new IniFile(nestedPath({u"system",u"Gothic.ini"},Dir::FT_File)));
-  iniFile    .reset(new IniFile(u"Gothic.ini"));
-  // 75 % where MetalFX upscales it (as sharp as full resolution, +15-20 FPS on an M1 Pro), full resolution elsewhere
-  const int vidResDefault = (Resources::hasGraphicsDevice() && Resources::device().properties().spatialUpscale) ? 1 : 0;
-  if(!iniFile->has("INTERNAL", "vidResIndex")) {
-    iniFile->set("INTERNAL", "vidResIndex", vidResDefault);
-    }
-  {
-  defaults.reset(new IniFile());
-  defaults->set("GAME", "enableMouse",         1);
-  defaults->set("GAME", "mouseSensitivity",    0.5f);
-  defaults->set("GAME", "invCatOrder",         "COMBAT,POTION,FOOD,ARMOR,MAGIC,RUNE,DOCS,OTHER,NONE");
-  defaults->set("GAME", "invMaxColumns",       5);
-  defaults->set("GAME", "animatedWindows",     1);
-  defaults->set("GAME", "useGothic1Controls",  1);
-  defaults->set("GAME", "highlightMeleeFocus", 0);
-  defaults->set("GAME", "useQuickSaveKeys",    1);
-  defaults->set("GAME", "bowDrawByStrength",   1); // strength sets a bow's draw speed and limit
-  defaults->set("GAME", "npcManualAim",        1); // npc archers aim by hand too (game/archerai)
-  defaults->set("GAME", "ragdoll",             1); // physical death/KO bodies; GAME/ragdoll=0 keeps animation-only behavior
-  defaults->set("GAME", "ragdoll_quest_guard", 1);
-  defaults->set("GAME", "living_bodies",       1);
-  defaults->set("GAME", "arrow_physics",       1);
-  defaults->set("GAME", "arrow_sticking",      1);
-  defaults->set("GAME", "spell_physics",       1);
-  defaults->set("GAME", "body_impact_damage",  1);
-  defaults->set("GAME", "body_traces",         1); // dead people as physical traces; bodies leave after 3 game days unseen
-  defaults->set("GAME", "blood",               1); // blood stains in the world, aging on game time; evidence as `blood` traces
-  defaults->set("GAME", "movable_vobs",        1);
-  defaults->set("GAME", "item_hulls",          1);
-  defaults->set("GAME", "item_deepest_contact",1);
-  defaults->set("GAME", "ragdoll_birth_guard",1);
-  defaults->set("GAME", "furniture_parts",     1);
-  defaults->set("GAME", "physics_noise",       1);
-  defaults->set("GAME", "destruction",         1);
-  defaults->set("GAME", "buoyancy",            1);
-  defaults->set("GAME", "cloth",               1);
-  defaults->set("GAME", "item_wake",           1);
-  defaults->set("GAME", "placed_items",        1);
-  defaults->set("GAME", "static_collision_split",1);
-  defaults->set("GAME", "character_virtual",   1);
-  defaults->set("GAME", "npc_character_virtual",1);
-  defaults->set("GAME", "monster_character_virtual",1);
-  defaults->set("GAME", "melee_blade_shadow",    1);
-  defaults->set("GAME", "melee_physics_hits",    1);
-  defaults->set("GAME", "melee_reactions",       1);
-  defaults->set("GAME", "melee_posture",         1);
-  defaults->set("GAME", "melee_stagger",         1);
-  defaults->set("GAME", "melee_beast_poise",     1);
-  defaults->set("GAME", "melee_backstab",        1);
-  defaults->set("GAME", "melee_down_tactics",    1);
-  defaults->set("GAME", "melee_hitstop",         1);
-  defaults->set("GAME", "melee_stamina",         1);
-  defaults->set("GAME", "melee_parry",           1);
-  defaults->set("GAME", "melee_parry_ai",        1);
-  defaults->set("GAME", "melee_dodge",           1);
-  defaults->set("GAME", "melee_barge",           1);
-  defaults->set("GAME", "melee_charge",          1);
-  defaults->set("GAME", "melee_riposte",         1);
-  defaults->set("GAME", "melee_heal_interrupt",  1);
-  defaults->set("GAME", "melee_use_in_hand",     1);
-  defaults->set("GAME", "food_over_time",        1);
-  defaults->set("GAME", "melee_ai_dodge",        1);
-  defaults->set("GAME", "melee_ai_riposte",      1);
-  defaults->set("GAME", "melee_ai_charge",       1);
-  defaults->set("GAME", "melee_ai_barge",        1);
-
-  defaults->set("GAME", "animatedWindows",     1);
-  defaults->set("GAME", "subTitles",           1);
-  defaults->set("GAME", "subTitlesPlayer",     1);
-
-  // switch related language options
-  defaults->set("GAME", "language", -1);
-  defaults->set("GAME", "voice",    -1);
-  defaults->set("GAME", "scaleVideos", 1);
-
-  defaults->set("SKY_OUTDOOR", "zSunName",   "unsun5.tga");
-  defaults->set("SKY_OUTDOOR", "zSunSize",   200);
-  defaults->set("SKY_OUTDOOR", "zSunAlpha",  230);
-  defaults->set("SKY_OUTDOOR", "zMoonName",  "moon.tga");
-  defaults->set("SKY_OUTDOOR", "zMoonSize",  400);
-  defaults->set("SKY_OUTDOOR", "zMoonAlpha", 255);
-
-  defaults->set("RENDERER_D3D", "zFogRadial", 1); // sunshafts
-  defaults->set("ENGINE",       "zEnvMappingEnabled", 1); // reflections
-  defaults->set("ENGINE",       "zCloudShadowScale", Resources::hasGraphicsDevice() &&
-                Resources::device().properties().type==Tempest::DeviceType::Discrete); // ssao
-  defaults->set("INTERNAL",     "vidResIndex", vidResDefault);
-  defaults->set("INTERNAL",     "halfResAoFog", 1); // SSAO and fog shadows at half resolution
-  defaults->set("INTERNAL",     "spatialUpscale", 1); // MetalFX for reduced resolution, where supported
-  // temporal AA by the camera (Renderer::setupSettings: also -taa 0 and OPENGOTHIC_TAA) and its sharpening, 0..1
-  defaults->set("INTERNAL",     "taa", 1);
-  defaults->set("INTERNAL",     "taaSharpness", 0.75f);
-  // VSM lamp shadows: the soft PCSS, or 0 hard in one gather (Renderer::setupSettings); hard on Metal, where the PCSS
-  // costs ~11 ms GPU indoors on an M1 Pro
-#if defined(__APPLE__)
-  defaults->set("INTERNAL",     "vsmLampSoft", 0);
-#else
-  defaults->set("INTERNAL",     "vsmLampSoft", 1);
-#endif
-
-  defaults->set("VIDEO", "zVidBrightness", 0.5f);
-  defaults->set("VIDEO", "zVidContrast",   0.5f);
-  defaults->set("VIDEO", "zVidGamma",      0.5f);
-
-  defaults->set("SOUND", "musicEnabled",  1);
-  defaults->set("SOUND", "musicVolume",   0.5f);
-  defaults->set("SOUND", "soundEnabled",  1);
-  defaults->set("SOUND", "soundVolume",   0.5f);
-  // the world's own sound objects (zCVobSound: a place's loops and stingers); 0 for the shorts, which lay a bed
-  defaults->set("SOUND", "worldSounds",   1);
-
-  //defaults->set("ENGINE", "zEnvMappingEnabled", 0);
-  //defaults->set("ENGINE", "zCloudShadowScale",  0);
-  defaults->set("ENGINE", "zWindEnabled",       1);
-  defaults->set("ENGINE", "zWindCycleTime",     4);
-  defaults->set("ENGINE", "zWindCycleTimeVar",  6);
-
-  defaults->set("KEYS", "keyEnd",         "0100");
-  defaults->set("KEYS", "keyHeal",        "2300");
-  defaults->set("KEYS", "keyPotion",      "1900");
-  defaults->set("KEYS", "keyLockTarget",  "4f00");
-  defaults->set("KEYS", "keyParade",      "cf000d02");
-  defaults->set("KEYS", "keyActionRight", "d100");
-  defaults->set("KEYS", "keyActionLeft",  "d300");
-  defaults->set("KEYS", "keyUp",          "c8001100");
-  defaults->set("KEYS", "keyDown",        "d0001f00");
-  defaults->set("KEYS", "keyLeft",        "cb001000");
-  defaults->set("KEYS", "keyRight",       "cd001200");
-  defaults->set("KEYS", "keyStrafeLeft",  "d3001e00");
-  defaults->set("KEYS", "keyStrafeRight", "d1002000");
-  defaults->set("KEYS", "keyAction",      "1d000c02");
-  defaults->set("KEYS", "keySlow",        "2a003600");
-  defaults->set("KEYS", "keySMove",       "38009d00");
-  defaults->set("KEYS", "keyWeapon",      "39000e02");
-  defaults->set("KEYS", "keySneak",       "2d00");
-  defaults->set("KEYS", "keyLook",        "13005200");
-  defaults->set("KEYS", "keyLookFP",      "21005300");
-  defaults->set("KEYS", "keyInventory",   "0f000e00");
-  defaults->set("KEYS", "keyShowStatus",  "30002e00");
-  defaults->set("KEYS", "keyShowLog",     "31002600");
-  defaults->set("KEYS", "keyShowMap",     "3200");
-  }
+  settings.load(nestedPath({u"system",u"Gothic.ini"},Dir::FT_File),u"Gothic.ini");
 
   Resources::loadBase();
 
@@ -268,7 +96,7 @@ Gothic::Gothic() {
     ouDef = "OU";
     }
 
-  onSettingsChanged.bind(this,&Gothic::setupSettings);
+  Settings::inst().onSettingsChanged.bind(this,&Gothic::setupSettings);
   setupSettings();
   }
 
@@ -518,8 +346,8 @@ void Gothic::setMarvinEnabled(bool m) {
 
 float Gothic::interfaceScale(const Tempest::Widget* w) {
   float mul = 1;
-  if(instance->opts.interfaceScale>0.0)
-    mul = instance->opts.interfaceScale;
+  if(Settings::options().interfaceScale>0.0)
+    mul = Settings::options().interfaceScale;
 
   while(w->owner()!=nullptr) {
     w = w->owner();
@@ -539,11 +367,6 @@ bool Gothic::isBenchmarkModeCi() const {
 
 void Gothic::setBenchmarkMode(Benchmark b) {
   isBenchmark = b;
-  }
-
-const Gothic::Options& Gothic::options() {
-  assert(instance!=nullptr);
-  return instance->opts;
   }
 
 Gothic::LoadState Gothic::checkLoading() const {
@@ -679,7 +502,7 @@ void Gothic::tick(uint64_t dt) {
 
   // before world tick: queued external AI commands apply in the same frame
   onTick(dt);
-  refreshPhysicsFlags();
+  settings.refreshPhysicsFlags();
   if(game)
     game->tick(dt);
   }
@@ -823,161 +646,37 @@ void Gothic::setupCommonScriptClasses(daedalus::DaedalusScript& sc) {
   registerOpaque  ("C_SVM"); // structure is very customizable, so better to use type-less mapping
   registerIfExists("C_MENU",         daedalus::IMenu::register_);
   registerIfExists("C_MENU_ITEM",    daedalus::IMenuItem::register_);
-  registerIfExists("CCAMSYS",        Def::Camera::register_);
+  registerIfExists("CCAMSYS",        VmDef::Camera::register_);
   registerIfExists("C_MUSICSYS_CFG", daedalus::IMusicSystem::register_);
-  registerIfExists("C_MUSICTHEME",   Def::MusicTheme::register_);
+  registerIfExists("C_MUSICTHEME",   VmDef::MusicTheme::register_);
   registerIfExists("C_MUSICJINGLE",  daedalus::IMusicJingle::register_);
-  registerIfExists("C_PARTICLEFX",   Def::ParticleEffect::register_);
-  registerIfExists("CFX_BASE",       Def::EffectBase::register_);
-  registerIfExists("C_PARTICLEFXEMITKEY", Def::ParticleEffectEmitKey::register_);
+  registerIfExists("C_PARTICLEFX",   VmDef::ParticleEffect::register_);
+  registerIfExists("CFX_BASE",       VmDef::EffectBase::register_);
+  registerIfExists("C_PARTICLEFXEMITKEY", VmDef::ParticleEffectEmitKey::register_);
   registerOpaque  ("C_FIGHTAI"); // many mods get it wrong/corrupted. Opaque binding is one is a way to get around it
-  registerIfExists("C_SFX",          Def::SoundEffect::register_);
+  registerIfExists("C_SFX",          VmDef::SoundEffect::register_);
   registerIfExists("C_SNDSYS_CFG",   daedalus::ISoundSystem::register_);
-  }
-
-bool Gothic::settingsHasSection(std::string_view sec) {
-  if(instance->iniFile->has(sec))
-    return true;
-  if(instance->baseIniFile->has(sec))
-    return true;
-  // no defaults
-  return false;
-  }
-
-int Gothic::settingsGetI(std::string_view sec, std::string_view name) {
-  if(name.empty())
-    return 0;
-  if(sec=="GAME" && name=="language")
-    return Resources::baseLanguage();
-  if(instance->iniFile->has(sec,name))
-    return instance->iniFile->getI(sec,name);
-  if(instance->baseIniFile->has(sec,name))
-    return instance->baseIniFile->getI(sec,name);
-  if(instance->defaults->has(sec,name))
-    return instance->defaults->getI(sec,name);
-  return 0;
-  }
-
-void Gothic::settingsSetI(std::string_view sec, std::string_view name, int val) {
-  instance->iniFile->set(sec,name,val);
-  instance->onSettingsChanged();
-  }
-
-std::string_view Gothic::settingsGetS(std::string_view sec, std::string_view name) {
-  if(name.empty())
-    return "";
-  if(instance->iniFile->has(sec,name))
-    return instance->iniFile->getS(sec,name);
-  if(instance->baseIniFile->has(sec,name))
-    return instance->baseIniFile->getS(sec,name);
-  if(instance->defaults->has(sec,name))
-    return instance->defaults->getS(sec,name);
-  return "";
-  }
-
-void Gothic::settingsSetS(std::string_view sec, std::string_view name, std::string_view val) {
-  instance->iniFile->set(sec,name,val);
-  instance->onSettingsChanged();
-  }
-
-float Gothic::settingsGetF(std::string_view sec, std::string_view name) {
-  if(name.empty())
-    return 0;
-  if(instance->iniFile->has(sec,name))
-    return instance->iniFile->getF(sec,name);
-  if(instance->baseIniFile->has(sec,name))
-    return instance->baseIniFile->getF(sec,name);
-  if(instance->defaults->has(sec,name))
-    return instance->defaults->getF(sec,name);
-  return 0;
-  }
-
-void Gothic::settingsSetF(std::string_view sec, std::string_view name, float val) {
-  instance->iniFile->set(sec,name,val);
-  instance->onSettingsChanged();
-  }
-
-float Gothic::settingsSoundVolume() {
-  const bool  soundEnabled = settingsGetI("SOUND","soundEnabled")!=0;
-  const float soundVolume  = settingsGetF("SOUND","soundVolume");
-
-  return soundEnabled ? soundVolume : 0.f;
-  }
-
-void Gothic::flushSettings() {
-  instance->iniFile->flush();
-  }
-
-void Gothic::refreshPhysicsFlags() {
-  physicsFlagsCache = {
-    settingsGetI("GAME","ragdoll")!=0,
-    settingsGetI("GAME","ragdoll_quest_guard")!=0,
-    settingsGetI("GAME","living_bodies")!=0,
-    settingsGetI("GAME","arrow_physics")!=0,
-    settingsGetI("GAME","arrow_sticking")!=0,
-    settingsGetI("GAME","spell_physics")!=0,
-    settingsGetI("GAME","movable_vobs")!=0,
-    settingsGetI("GAME","physics_noise")!=0,
-    settingsGetI("GAME","destruction")!=0,
-    settingsGetI("GAME","buoyancy")!=0,
-    settingsGetI("GAME","cloth")!=0,
-    settingsGetI("GAME","item_wake")!=0,
-    settingsGetI("GAME","character_virtual")!=0,
-    settingsGetI("GAME","npc_character_virtual")!=0,
-    settingsGetI("GAME","monster_character_virtual")!=0,
-    settingsGetI("GAME","melee_blade_shadow")!=0,
-    settingsGetI("GAME","melee_physics_hits")!=0,
-    settingsGetI("GAME","melee_reactions")!=0,
-    settingsGetI("GAME","melee_posture")!=0,
-    settingsGetI("GAME","melee_posture")!=0 && settingsGetI("GAME","melee_stagger")!=0,
-    settingsGetI("GAME","melee_posture")!=0 && settingsGetI("GAME","melee_stagger")!=0 && settingsGetI("GAME","melee_beast_poise")!=0,
-    settingsGetI("GAME","melee_backstab")!=0,
-    settingsGetI("GAME","melee_down_tactics")!=0,
-    settingsGetI("GAME","item_hulls")!=0,
-    settingsGetI("GAME","item_deepest_contact")!=0,
-    settingsGetI("GAME","ragdoll_birth_guard")!=0,
-    settingsGetI("GAME","melee_hitstop")!=0,
-    settingsGetI("GAME","melee_stamina")!=0,
-    settingsGetI("GAME","melee_parry")!=0,
-    settingsGetI("GAME","melee_parry_ai")!=0,
-    settingsGetI("GAME","furniture_parts")!=0,
-    settingsGetI("GAME","placed_items")!=0,
-    settingsGetI("GAME","body_impact_damage")!=0,
-    settingsGetI("GAME","melee_dodge")!=0,
-    settingsGetI("GAME","melee_dodge")!=0 && settingsGetI("GAME","melee_barge")!=0,
-    settingsGetI("GAME","melee_charge")!=0,
-    settingsGetI("GAME","melee_riposte")!=0,
-    settingsGetI("GAME","melee_heal_interrupt")!=0,
-    settingsGetI("GAME","melee_use_in_hand")!=0,
-    settingsGetI("GAME","food_over_time")!=0,
-    settingsGetI("GAME","melee_ai_dodge")!=0,
-    settingsGetI("GAME","melee_ai_riposte")!=0,
-    settingsGetI("GAME","melee_ai_charge")!=0,
-    settingsGetI("GAME","melee_ai_barge")!=0,
-    settingsGetI("GAME","body_traces")!=0,
-    settingsGetI("GAME","blood")!=0
-    };
   }
 
 void Gothic::setupSettings() {
   Resources::configureTextures(settingsGetS("GAME","texture_budget_mb"),settingsGetS("GAME","texture_far_skip_mips"),
-                               settingsGetS("GAME","texture_target_mb"));
+                               settingsGetS("GAME","texture_target_mb"),settingsGetS("GAME","texture_screen_mips"));
   Resources::censusProfile(gameDatDef,ouDef,settingsGetI("GAME","language"));
   // settingsSetI/S/F emit onSettingsChanged synchronously. Publish before any
   // same-dispatch actor creation, prepare or input query can consume the change.
-  refreshPhysicsFlags();
+  settings.refreshPhysicsFlags();
   if(game!=nullptr)
     game->setupSettings();
   if(auto* activeWorld = world()) {
-    activeWorld->physic()->setFurniturePartsEnabled(physicsFlagsCache.furnitureParts);
-    activeWorld->physic()->setMovableVobsEnabled(physicsFlagsCache.movableVobs);
-    activeWorld->physic()->setPhysicsNoiseEnabled(physicsFlagsCache.physicsNoise);
-    activeWorld->physic()->setDestructionEnabled(physicsFlagsCache.destruction);
-    activeWorld->physic()->setBuoyancyEnabled(physicsFlagsCache.buoyancy);
-    activeWorld->physic()->setClothEnabled(physicsFlagsCache.cloth);
-    activeWorld->physic()->setItemWakeEnabled(physicsFlagsCache.itemWake);
-    activeWorld->physic()->setItemDeepestContactEnabled(physicsFlagsCache.itemDeepestContact);
-    activeWorld->physic()->setRagdollBirthGuardEnabled(physicsFlagsCache.ragdollBirthGuard);
+    activeWorld->physic()->setFurniturePartsEnabled(physicsFlags().furnitureParts);
+    activeWorld->physic()->setMovableVobsEnabled(physicsFlags().movableVobs);
+    activeWorld->physic()->setPhysicsNoiseEnabled(physicsFlags().physicsNoise);
+    activeWorld->physic()->setDestructionEnabled(physicsFlags().destruction);
+    activeWorld->physic()->setBuoyancyEnabled(physicsFlags().buoyancy);
+    activeWorld->physic()->setClothEnabled(physicsFlags().cloth);
+    activeWorld->physic()->setItemWakeEnabled(physicsFlags().itemWake);
+    activeWorld->physic()->setItemDeepestContactEnabled(physicsFlags().itemDeepestContact);
+    activeWorld->physic()->setRagdollBirthGuardEnabled(physicsFlags().ragdollBirthGuard);
     }
 
   const float soundVolume = settingsSoundVolume();
@@ -1296,4 +995,27 @@ void Gothic::printdebuginst(std::string_view msg) {
 
 void Gothic::printdebuginstch(int ch, std::string_view msg) {
   Log::d("[zspy,",ch,"]: ",msg);
+  }
+
+const CameraDefinitions& Gothic::cameraDefinitions() const {
+  return cameraDef();
+  }
+
+const Def::SoundEffect& Gothic::soundEffect(std::string_view name) const {
+  return sfx()[name];
+  }
+
+int64_t Gothic::worldTime() const {
+  const auto* w = world();
+  return (w!=nullptr ? w->time() : gtime(8,0)).toInt();
+  }
+
+uint64_t Gothic::worldTickCount() const {
+  const auto* w = world();
+  return w!=nullptr ? w->tickCount() : uint64_t();
+  }
+
+DynamicWorld* Gothic::physicsWorld() const {
+  const auto* w = world();
+  return w!=nullptr ? w->physic() : nullptr;
   }

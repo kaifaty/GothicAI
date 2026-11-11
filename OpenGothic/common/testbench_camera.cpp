@@ -15,6 +15,7 @@
 #include "game/playercontrol.h"
 #include "gothic.h"
 #include "graphics/drawcommands.h"
+#include "graphics/renderer.h"
 #include "graphics/mesh/footik.h"
 #include "graphics/mesh/skeleton.h"
 #include "world/objects/npc.h"
@@ -245,21 +246,25 @@ void updateCamera(const CameraContext& ctx,World& w, Npc& pl) {
     }
   }
 
-// the hero stands around the watched npc, facing it
-void placeHero(const CameraContext& ctx,World& w, Npc& pl) {
-  Npc& s = ctx.subjectOf(pl);
-  if(&s==&pl || ctx.camera.placeDist<=0)
-    return;
-  const float a   = (s.rotation()+ctx.camera.placeAngle)*float(M_PI)/180.f;
-  Vec3        pos = s.position() + Vec3(std::cos(a),0,std::sin(a))*ctx.camera.placeDist;
+void standAround(World& w, Npc& s, Npc& pl, float dist, float angle) {
+  const float a   = (s.rotation()+angle)*float(M_PI)/180.f;
+  Vec3        pos = s.position() + Vec3(std::cos(a),0,std::sin(a))*dist;
   const float g   = groundY(w,pos.x,pos.z,pos.y+100);
   if(std::isnan(g))
-    return; // inside a rock: the hero would fall through the world
+    return; // inside a rock: it would fall through the world
   pos.y = g;
   pl.setPosition(pos);
   const Vec3 d = s.position()-pos;
   pl.setDirection(Vec3(d.x,0,d.z));
   pl.updateTransform();
+  }
+
+// the hero stands around the watched npc, facing it
+void placeHero(const CameraContext& ctx,World& w, Npc& pl) {
+  Npc& s = ctx.subjectOf(pl);
+  if(&s==&pl || ctx.camera.placeDist<=0)
+    return;
+  standAround(w,s,pl,ctx.camera.placeDist,ctx.camera.placeAngle);
   }
 
 bool frameRagdollArena(const CameraContext& ctx,size_t expected) {
@@ -765,6 +770,12 @@ bool cameraCommand(const CameraContext& ctx,const std::string& line,const std::v
     else if(m=="hold") {
       ctx.camera.cam = C_Hold;  // a shot of a scene: the subject may fall out of it, the frame stays
       }
+    else if(m=="at" && a.size()>7) {
+      // cam at <x y z> <tx ty tz>: from a point of the world at another, then held; a cut
+      ctx.camera.cam        = C_Hold;
+      ctx.camera.cutPending = true;
+      lookFrom(ctx, Vec3(num(a,2,0),num(a,3,0),num(a,4,0)), Vec3(num(a,5,0),num(a,6,0),num(a,7,0)));
+      }
     else if(m=="shoulder" || m=="two" || (m=="face" && a.size()>2 && !isNumber(a[2]))) {
       // cam shoulder <npc> [dist 120] [height 15] [shoulder 1|-1]
       // cam face <npc> [dist 140] [height 0] [degrees from the hero 30]
@@ -820,7 +831,8 @@ bool cameraCommand(const CameraContext& ctx,const std::string& line,const std::v
     // Static and Movable objects share draw commands (same shaders), hiding them by type hides
     // parts of creatures too: what stands between the camera and the subject is clipped instead
     ctx.camera.clip = 0;
-    DrawCommands::hiddenTypes = 0;
+    DrawCommands::hiddenTypes    = 0;
+    DrawCommands::hidePfxObjects = false;
     if(m=="clean") {
       ctx.camera.clip = num(a,2,100);
       DrawCommands::hiddenTypes = (1u<<DrawCommands::Pfx);
@@ -836,12 +848,26 @@ bool cameraCommand(const CameraContext& ctx,const std::string& line,const std::v
         if(t=="movable")  DrawCommands::hiddenTypes |= (1u<<DrawCommands::Movable);
         if(t=="morph")    DrawCommands::hiddenTypes |= (1u<<DrawCommands::Morph);
         if(t=="pfx")      DrawCommands::hiddenTypes |= (1u<<DrawCommands::Pfx);
+        if(t=="pfx")      DrawCommands::hidePfxObjects = true; // the particles of PfxObjects too
         if(t=="animated") DrawCommands::hiddenTypes |= (1u<<DrawCommands::Animated);
         }
       }
     if(ctx.camera.clip<=0)
       if(auto cam = Gothic::inst().camera())
         cam->setNearClip(10);
+    }
+  else if(c=="vsm" && a.size()>2 && a[1]=="sides") {
+    // vsm sides 1|2|3|0: the lamps' cube faces keep the far side of a surface alone (1, before 2026-11-10), both sides
+    // of the world mesh alone (2, 2026-11-10), both sides of objects too (3, the default since 2026-11-11), or as the
+    // setting says (0); for A/B shots of the same frame (reports/render-features/2026-11-11-lamp-objects-two-sided)
+    Renderer::benchVsmLampSides = uint32_t(std::clamp(int(num(a,2,0)), 0, 3));
+    }
+  else if(c=="vsm" && a.size()>2 && a[1]=="study") {
+    // vsm study <bits>: the shadow test on a mesh's facets, for shots of one frame
+    // (reports/render-features/2026-11-11-facet-shards): 1 the sun takes the facet's plane over one pixel and 2 the
+    // lamps keep it on facets edge-on to them, both as before 2026-11-11; 4 the facets' classes and 8 the change of
+    // the sun's shadow as colours; 0 the game's
+    Renderer::benchVsmStudy = uint32_t(std::clamp(int(num(a,2,0)), 0, 15));
     }
   else if(c=="slowmo") {
     // slowmo <k>: the game runs k times slower than the video (1: normal); the game's sound is not recorded
@@ -1005,7 +1031,18 @@ bool cameraCommand(const CameraContext& ctx,const std::string& line,const std::v
       }
     }
   else if(c=="place") {
-    // place <dist> <angle>: the hero stands that far from the watched npc, at that angle from its facing
+    // place <dist> <angle>: the hero stands that far from the watched npc, at that angle from its facing;
+    // place <dist> <angle> <npc|nearest>: that npc stands so around the hero, facing him, the hero stays
+    if(a.size()>3) {
+      Npc* n = findNpc(w,pl,a[3]);
+      if(n==nullptr || n==&pl) {
+        say("place: no npc " + line);
+        return true;
+        }
+      standAround(w,pl,*n,num(a,1,150),num(a,2,0));
+      say("place " + symName(w,n) + " " + a[1] + " " + a[2]);
+      return true;
+      }
     ctx.camera.placeDist  = num(a,1,150);
     ctx.camera.placeAngle = num(a,2,0);
     placeHero(ctx,w,pl);

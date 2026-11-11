@@ -233,6 +233,17 @@ MeleeDodge::Refusal MeleeDodge::refusal(const Situation& s) {
   return Refusal::None;
   }
 
+MeleeDodge::Guard MeleeDodge::guard(const GuardSituation& s) {
+  // A dodge is neither the jump back nor a parade: inside its window the blow passes, outside it the blow hits.
+  // Stun and knockdown do not close the window.
+  if(s.dodging)
+    return {s.dodgeWindow,false,false};
+  // A stunned or knocked down body neither jumps back nor blocks
+  if(s.knockedDown || s.stunned)
+    return {};
+  return {false,s.jumpBack,s.parade && !s.unblockable};
+  }
+
 std::string_view MeleeDodge::name(Direction direction) {
   switch(direction) {
     case Direction::Back:    return "back";

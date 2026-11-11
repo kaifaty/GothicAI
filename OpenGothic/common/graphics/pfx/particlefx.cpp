@@ -1,9 +1,11 @@
 #include "particlefx.h"
+#include "gameservices.h"
 
 #include "utils/parser.h"
-#include "gothic.h"
 #include "resources.h"
 #include "utils/string_frm.h"
+
+#include <cctype>
 
 using namespace Tempest;
 
@@ -43,7 +45,7 @@ ParticleFx::ParticleFx(const Def::ParticleEffect& src, std::string_view name)
   ppsIsLooping        = src.pps_is_looping!=0;
   ppsIsSmooth         = src.pps_is_smooth!=0;
   ppsFPS              = src.pps_fps>0 ? src.pps_fps : 1.f;
-  ppsCreateEm         = Gothic::inst().loadParticleFx(src.pps_create_em_s);
+  ppsCreateEm         = GameServices::inst().loadParticleFx(src.pps_create_em_s);
   ppsCreateEmDelay    = uint64_t(src.pps_create_em_delay);
 
   shpType             = loadEmitType(src.shp_type_s);
@@ -146,6 +148,22 @@ ParticleFx::ParticleFx(const ParticleFx& proto, const VisualFx::Key& key)
 
 bool ParticleFx::isDecal() const {
   return ppsValue<0;
+  }
+
+float ParticleFx::taaReactive() const {
+  if(isDecal())
+    return visMaterial.taaReactive();
+  return isPrecipitation(dbgName) ? 0.f : 1.f;
+  }
+
+bool ParticleFx::isPrecipitation(std::string_view name) {
+  // G2's are MFX_THUNDERSTORM_RAIN and SNOW; MFX_FIRERAIN_* is falling fire, which stays reactive
+  std::string up(name);
+  for(auto& c:up)
+    c = char(std::toupper(static_cast<unsigned char>(c)));
+  if(up.find("SNOW")!=std::string::npos)
+    return true;
+  return up.find("RAIN")!=std::string::npos && up.find("FIRE")==std::string::npos;
   }
 
 bool ParticleFx::hasTrails() const {

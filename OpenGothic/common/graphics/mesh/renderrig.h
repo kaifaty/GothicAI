@@ -56,6 +56,18 @@ class Skeleton;
 //   turns about it (the heel up, or back down to Gothic's flat foot) for the rest; a foot in the air takes Gothic's
 //   turns as they are. Needs the root and each leg's thigh, calf and foot with a source, the thighs right under the
 //   root.
+//   heel (default: as knees; false brings the ball-on-ball feet back): our foot is not Gothic's length (the hero's
+//   ankle-to-ball is 14 cm, Gothic's 23), so with the balls together our ankle stood 9 cm ahead of Gothic's, the leg
+//   vaulted over another point and the pelvis that kept Gothic's knee rose through every step and dropped at the
+//   next one (reports/engine/2026-11-modern-skeleton, «Пятка»). A leg that stands on its foot - it points down, its
+//   thigh and shin do - stands heel on heel instead: the pivot is Gothic's ball moved back by the bind difference,
+//   along the ground while the heel is up (the foot rolls over its own ball and turns further than Gothic's for the
+//   same rise of the ankle, until it leaves the ground with a high heel), along the foot while the toes are up
+//   (the foot turns about Gothic's ankle). A foot is on the ground by the lower of its ball and the point under
+//   Gothic's ankle. A leg on the ground is never straighter than Gothic's knee: a foot that cannot reach stops
+//   short. The root's lift and each leg's share of the heel are kept between solves (Gait): the lift follows its
+//   goal over a moment, holds while no foot is on the ground and a leg points down (a jump, the flight of a run),
+//   and is never under what a carrying leg needs with its foot flat. Without a Gait every solve stands alone.
 // - legs: the chain thigh -> calf -> foot -> ball (each the parent of the next); ankle - the IK target, cm in the
 //   frame of source_foot. The knee bends towards the thigh's front: the model's front (+z) of the bind pose carried
 //   by the thigh's turn; source_knee only when that front lies along the leg. soft (cm, 0..20, default 0) - soft IK:
@@ -114,6 +126,7 @@ struct RenderRigSpec final {
   std::string          rootBone, rootSource;
   float                rootLift = 0;
   bool                 rootKnees = false;
+  bool                 rootHeel = false;
   std::vector<Leg>     legs;
   std::vector<Fingers> fingers;
   std::vector<Twist>   twists;
@@ -132,6 +145,15 @@ class RenderRig final {
       float world = 0;  // the hands on the world: a ladder, a workbench, a chest
       };
 
+    // what the legs keep between solves (render-rigs.json, root: heel): one per body, reset (valid = false) when the
+    // body is put somewhere else
+    struct Gait final {
+      static constexpr size_t MaxLegs = 4;
+      float lift = 0;             // the root's lift, cm
+      float plant[MaxLegs] = {};  // each leg's share of standing heel on heel
+      bool  valid = false;        // false: the next solve starts anew
+      };
+
     // Throws std::runtime_error("render rig <name>: ...") when a name is missing from its skeleton, the rig has more
     // than Resources::MAX_NUM_SKELETAL_NODES bones, or a part does not fit (a leg out of chain, a bone in two parts).
     static std::unique_ptr<RenderRig> build(const RenderRigSpec& spec, const asset::ModelHierarchy& rig,
@@ -147,8 +169,9 @@ class RenderRig final {
 
     // The rig's world matrices out[bones()] from the source's final world matrices source[sourceCount] (Pose::tr,
     // after IK and ragdoll). No allocation. False: too few source matrices, out is not written.
+    // gait, dt: the legs' memory and the seconds since the last solve of this body; nullptr - the solve stands alone
     bool             solve(const Tempest::Matrix4x4* source, size_t sourceCount, Tempest::Matrix4x4* out,
-                           const Hands& hands) const;
+                           const Hands& hands, Gait* gait = nullptr, float dt = 0) const;
     bool             solve(const Tempest::Matrix4x4* source, size_t sourceCount, Tempest::Matrix4x4* out) const {
       return solve(source,sourceCount,out,Hands());
       }
@@ -166,7 +189,7 @@ class RenderRig final {
 
     enum class Role : uint8_t { Plain, Thigh, Calf, Foot, Phalanx, Twist, ArmUpper, ArmLower, ArmHand };
     static constexpr size_t None    = size_t(-1);
-    static constexpr size_t MaxLegs = 4;   // knees: per-leg state on the stack
+    static constexpr size_t MaxLegs = Gait::MaxLegs;   // knees: per-leg state on the stack
 
     struct Bone final {
       size_t             parent = None;  // rig node; None - under the source's root node
@@ -188,6 +211,8 @@ class RenderRig final {
       float         length = 0;          // thigh + calf in the bind pose
       Tempest::Vec3 ballFoot;            // knees: our ball in the frame of sourceFoot, bind pose
       IkMath::Mat3  footBind = {};       // knees: R_sourceFoot_bind^T
+      float         heelBack = 0;        // heel: our ankle ahead of the source foot node in the bind pose, cm
+      float         under = 0;           // heel: our ball's height against the source foot node's, bind pose, cm
       };
     struct Fingers final {
       size_t        hand = None, finger = None;
@@ -221,14 +246,19 @@ class RenderRig final {
     struct Pivot final {
       Tempest::Vec3 ball, r, k;
       float         lo = 0, hi = 0, contact = 0;
+      float         match = 0;           // heel: the turn that lifts our ankle as high as Gothic's heel lifts its own
       };
 
     Tempest::Matrix4x4 place(size_t i, const Tempest::Matrix4x4* source, const Tempest::Matrix4x4* out,
                              float lift = 0) const;
     void               solveLeg(const Leg& leg, const Tempest::Matrix4x4* source, Tempest::Matrix4x4* out,
-                                float carry, float lowBall, float scale) const;
-    Pivot              pivot(const Leg& leg, const Tempest::Matrix4x4* source, float lowBall, float scale) const;
+                                float carry, float lowBall, float scale, float plant) const;
+    Pivot              pivot(const Leg& leg, const Tempest::Matrix4x4* source, float lowBall, float scale,
+                             float plant) const;
+    float              footLow(const Leg& leg, const Tempest::Matrix4x4* source, float scale) const;
     float              kneeLift(const Tempest::Matrix4x4* source, float* carry, float& lowBall, float& scale) const;
+    float              heelLift(const Tempest::Matrix4x4* source, float* carry, float* plant, float& lowFoot,
+                                float& scale, Gait* gait, float dt) const;
     void               solveArm(const Arm& arm, const Tempest::Matrix4x4* source, Tempest::Matrix4x4* out,
                                 const Hands& hands) const;
     IkMath::Mat3       rhythm(const Shoulder& s, const Tempest::Matrix4x4& clavicle, const Tempest::Matrix4x4* source,
@@ -246,6 +276,7 @@ class RenderRig final {
     Tempest::Vec3             rootLocal;   // the root bone's bind place in the source node's bind frame
     float                     lift = 0;    // share of the root's height over the lower leg target it is raised by
     bool                      knees = false;
+    bool                      heel = false;
     std::vector<Leg>          legs;
     std::vector<Fingers>      fingers;
     std::vector<Twist>        twists;
@@ -274,11 +305,16 @@ class RenderRigIndex final {
     // nullptr: no such rig or a broken one (reported once)
     const RenderRig* rig(std::string_view name);
     const RenderRig* rigOfMesh(std::string_view mesh);
+    // "bodies": {body: {"9": mesh}} - a body drawn as another mesh for one of its texture variants (the number
+    // Mdl_SetVisualBody gives: in Gothic 2 the hero's clothes are variant 9 of the naked body all men share).
+    // The mesh is one of the table's meshes; "" - the body itself (not listed, or the mesh's rig is broken)
+    std::string      bodyOf(std::string_view body, int32_t variant);
 
   private:
     Lookup                                                      lookup;
     Report                                                      report;
     std::map<std::string,RenderRigSpec,std::less<>>             specs;
     std::map<std::string,std::string,std::less<>>               meshes;
+    std::map<std::string,std::map<int32_t,std::string>,std::less<>> bodies;
     std::unordered_map<std::string,std::unique_ptr<RenderRig>>  built;  // nullptr: tried and broken
   };

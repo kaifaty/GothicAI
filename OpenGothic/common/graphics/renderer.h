@@ -24,7 +24,12 @@ class Renderer final {
 
     void onWorldChanged();
     // Bench `deterministic on`: the next frame starts the TAA history over at jitter phase 0
+    // and the SSAO history over at phase 0 of its sample cycle
     void resetTemporal();
+    // bench `vsm sides 1|2|3|0`: the sides a lamp's cube face keeps (settings.vsmLampSides) instead of the setting
+    static uint32_t benchVsmLampSides;
+    // bench `vsm study <bits>`: the shadow test on a mesh's facets (scene.vsmStudy, VSM_STUDY_* of scene.glsl)
+    static uint32_t benchVsmStudy;
 
     void draw(Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId,
               Tempest::VectorImage::Mesh& uiLayer, Tempest::VectorImage::Mesh& numOverlay,
@@ -113,6 +118,9 @@ class Renderer final {
     void stashSceneAux    (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
 
     void drawRayQueryDbg  (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
+    void drawMotionView   (Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd);
+    void drawReactiveView (Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd);
+    void prepareMotion    (WorldView& wview);
     void drawProbesDbg    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
     void drawSurfelsDbg   (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
     void drawProbesHitDbg (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
@@ -143,6 +151,7 @@ class Renderer final {
       bool           aaEnabled          = false;
       bool           taaEnabled         = false;
       float          taaSharpness       = 0.75f; // RCAS after the resolve, 0..1
+      bool           ssaoHistory        = true;  // SSAO: 8 samples a frame with a history; off: 32 a frame
       float          taaMipBias         = -0.5f; // material textures of the main view with TAA
       // a study of the temporal upscale (graphics plan 1g): MetalFX Temporal in place of the TAA resolve
       bool           temporalUpscale    = false; // OPENGOTHIC_UPSCALE=temporal, on Metal
@@ -150,6 +159,18 @@ class Renderer final {
       bool           upscaleMipBiasSet  = false; // OPENGOTHIC_UPSCALE_MIP_BIAS over log2(in/out) - 1
       float          upscaleMipBias     = 0;
       bool           bloomEnabled       = true;
+      // motion vectors of objects (graphics plan 1b), on by default: -mv 0, [INTERNAL] motionVectors=0,
+      // OPENGOTHIC_MOTION_VECTORS=0|1 over both
+      bool           motionVectors      = false;
+      bool           motionView         = false; // OPENGOTHIC_MOTION_VIEW=1: the frame shows gbufMotion (debug)
+      float          motionViewPx       = 2;     // OPENGOTHIC_MOTION_VIEW_PX: px/frame of its full brightness
+      // the TAA reactive mask of particles and animated translucent (graphics plan 1v), on by default
+      // (setupSettings): [INTERNAL] taaReactive=0 turns it off, OPENGOTHIC_TAA_REACTIVE=0|1 over it. The mask is
+      // written either way; off, the resolve does not use it
+      bool           taaReactive        = false;
+      bool           taaReactiveView    = false; // OPENGOTHIC_TAA_REACTIVE_VIEW=1: the frame shows taa.reactive
+      float          taaReactiveMax     = 0.9f;  // OPENGOTHIC_TAA_REACTIVE_MAX: the mask's ceiling in the resolve
+      float          taaReactiveLref    = 0.25f; // OPENGOTHIC_TAA_REACTIVE_LREF: added light of a full mask
 
       float          zVidBrightness     = 0.5;
       float          zVidContrast       = 0.5;
@@ -175,6 +196,9 @@ class Renderer final {
       // [INTERNAL] vsmLampSoft (0 on Metal, 1 elsewhere), OPENGOTHIC_VSM_LAMP_SOFT=0|1 wins: the lamps' PCSS;
       // false: one gather per lamp and pixel (light_vsm_hard)
       bool           vsmLampSoft        = true;
+      // [INTERNAL] vsmLampSides, OPENGOTHIC_VSM_LAMP_SIDES wins: the sides a lamp's cube face keeps (1 the far side,
+      // 2 both sides of the world mesh, 3 of objects too, the default; main.vert, meshShader)
+      uint32_t       vsmLampSides       = 3;
       } settings;
 
     Frustrum                  frustrum[SceneGlobals::V_Count];
@@ -228,6 +252,11 @@ class Renderer final {
       Tempest::StorageImage     ssaoBuf;
       Tempest::StorageImage     ssaoBlur;
       Tempest::StorageImage     depthHalf; // R32F depth at half size for the samples of ssao.comp, ssao_depth.comp
+      // the occlusion over frames (ssao.comp): two histories in turn, H and M per sample, linear depth, frames
+      Tempest::StorageImage     history[2];
+      uint8_t                   cur       = 0;     // history[cur] is written this frame, the other one read
+      uint32_t                  frame     = 0;     // the cycle of 4 frames picks the samples
+      bool                      valid     = false; // the history holds the last frame of this view
       } ssao;
 
     struct Cmaa2 {
@@ -245,16 +274,32 @@ class Renderer final {
     struct {
       Tempest::Attachment       history[2];
       Tempest::Attachment       output;
+      // the reactive mask (graphics plan 1v): R8, the second attachment of the translucent pass, cleared to 0 each
+      // frame; how much a pixel shows what changes by itself (particles, animated translucent). There with the TAA
+      // off too: the translucent pipelines always write it
+      Tempest::Attachment       reactive;
       uint8_t                   cur       = 0;     // history[cur] is written this frame, the other one read
       uint32_t                  frame     = 0;     // the jitter phase
-      uint32_t                  cuts      = 0;     // Camera::cuts() of the last frame
       bool                      active    = false; // this frame is jittered and resolved
       bool                      valid     = false; // the history holds a frame of this view
       bool                      shot      = false; // screenshoot(): an image of the internal size
-      Taa::View                 prev;
       Tempest::Matrix4x4        reproject;
       Tempest::Vec2             jitter;              // this frame's offset, pixels of the internal resolution
       } taa;
+
+    // The main camera of this frame and of the drawn frame before it, without jitter (updateCamera). TAA, the SSAO
+    // history and the motion vectors of objects all reproject by this one pair; a cut (Camera::cuts), a jump
+    // (Taa::isCameraJump), a new world or a reset of the temporal state break it
+    struct {
+      Taa::View                 cur, prev;
+      uint32_t                  cuts       = 0;     // Camera::cuts() of `cur`
+      bool                      hasCur     = false;
+      bool                      continuous = false; // `prev` is the frame before `cur`, of the same shot
+      } camHistory;
+
+    // motion vectors of objects (graphics plan 1b): the objects' own motion, RG16F at the internal resolution, the
+    // residual against the camera's in texture coordinates, current -> previous; 0 where nothing moves by itself
+    Tempest::Attachment       gbufMotion;
 
     // the temporal upscale (graphics plan 1g, OPENGOTHIC_UPSCALE=temporal): MetalFX Temporal takes the place of the
     // TAA resolve and keeps the history itself; bloom and tonemapping go on at the swapchain's resolution
@@ -280,17 +325,21 @@ class Renderer final {
       const uint32_t            maxProbes = atlasDim*atlasDim; // 65536
 
       Tempest::StorageBuffer    voteTable, hashTable, freeList, newList, voteTiles;
+      Tempest::StorageBuffer    requests;           // the age histogram and the requests of probes at hits
       Tempest::StorageBuffer    probes;
       Tempest::StorageImage     probesGBuffDiff;
       Tempest::StorageImage     probesGBuffNorm;
       Tempest::StorageImage     probesGBuffRayT;
-      Tempest::StorageImage     probesLighting;     // RGBA16F: the ambient cube of a probe, 3x2 texels
-      Tempest::StorageImage     probesLightingPrev;
+      const uint32_t            irrTileW  = 4;   // probeIrrTileW/H of probe_common.glsl
+      const uint32_t            irrTileH  = 2;
+      Tempest::StorageImage     probesLighting;     // RGBA16F: the L2 harmonics of irradiance of a probe, 7 texels of 4x2
       Tempest::StorageImage     probesRadiance;     // R32UI, RGB9E5: the radiance of each sample, relit in turns
       uint32_t                  frame    = 0;       // turns the samples relit in a frame
       uint64_t                  lastTick = 0;       // the world's tick of the last lighting, for the blend over time
       float                     frameTime = 0;      // smoothed world time of a frame, s: how many samples to relight
       bool                      resetHistory = false; // another world: the probes start over, as on the first frame
+      int64_t                   dayTime     = -1;  // the game's time of day (gtime, ms) of this frame, set by draw
+      int64_t                   lastDayTime = -1;  // of the last lighting: a jump lights the probes anew
       // the counters of probe_stats (live probes, traced in the frame), read back a frame slot later (FrameProfile)
       Tempest::StorageBuffer    stats[Resources::MaxFramesInFlight];
       bool                      statsWritten[Resources::MaxFramesInFlight] = {};

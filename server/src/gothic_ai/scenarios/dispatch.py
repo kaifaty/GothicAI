@@ -960,6 +960,13 @@ async def run_scenario(ctx: ScenarioContext, link: GameLink, bodypilot: BodyPilo
             bad = {k: v for k, v in results.items() if not v.startswith("done")}
             log.info("scenario deal_demo: %d checks, %d failed", len(results), len(bad))
             exit_code = 1 if bad else 0
+        elif args.scenario in ("face_cues_demo", "face_eyes_demo"):
+            assert state.dialogue is not None
+            demo = scenarios.face_cues_demo if args.scenario == "face_cues_demo" else scenarios.face_eyes_demo
+            results = await demo(link, state.dialogue)
+            bad = {k: v for k, v in results.items() if not v.startswith("done")}
+            log.info("scenario %s: %d checks, %d failed", args.scenario, len(results), len(bad))
+            exit_code = 1 if bad else 0
         elif args.scenario in ("gossip", "gossip_demo"):
             dialogue, talk, rumors = state.dialogue, state.talk, state.rumors
             gossip, bodies, perception = getattr(state, "gossip", None), state.bodies, state.perception

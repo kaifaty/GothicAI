@@ -77,6 +77,7 @@ struct MeshGltfTest {
   static MdlVisual& visual(Npc& npc) { return npc.visual; }
   static MeshObjects::Mesh& head(Npc& npc) { return npc.visual.head.view; }
   static size_t headBone(const Npc& npc) { return npc.visual.head.boneId; }
+  static const FaceRig& face(Npc& npc) { return npc.visual.face; }
   static void refreshBody(Npc& npc) {
     npc.setVisualBody(npc.vHead,npc.vTeeth,npc.vColor,npc.bdColor,npc.body,npc.head);
     npc.updateTransform();
@@ -596,8 +597,7 @@ void headManifestCases(const Fixture& fixture) {
     Resources resources;
     const auto* head=Resources::loadCharacterHead("pC_hErO");
     require((head!=nullptr)==valid,"characters.json must accept only valid head entries");
-    require(Resources::loadCharacterHead("PC_ROCKEFELLER")==nullptr,
-            "a different script instance must retain its original head even if listed in the manifest");
+    require(Resources::loadCharacterHead("PC_THIEF")==nullptr,"a script instance the manifest does not list must retain its original head");
     if(head==nullptr) return;
     require(head==Resources::loadCharacterHead("PC_HERO") && head->head!=nullptr,
             "head lookup must be case insensitive and retain the parsed target data");
@@ -614,6 +614,13 @@ void headManifestCases(const Fixture& fixture) {
             "the deformation map must cover vertices of every part");
     };
   test(R"({"pc_hero":{"head":"hero/head.glb"},"PC_ROCKEFELLER":{"head":"hero/head.glb"}})",true);
+  {
+    // an npc the manifest lists gets its own head too, a head of its own (not the hero's)
+    Resources resources;
+    const auto* npc=Resources::loadCharacterHead("pc_rockefeller");
+    require(npc!=nullptr && npc->head!=nullptr && npc!=Resources::loadCharacterHead("PC_HERO"),
+            "an npc listed in characters.json must get its own head");
+  }
   const auto invalidPath=[&](std::string_view path) {
     rapidjson::StringBuffer buffer;
     rapidjson::Writer<rapidjson::StringBuffer> json(buffer);
@@ -2603,7 +2610,13 @@ void heroHeadGameCases(const std::string& game, const std::string& base) {
   std::filesystem::create_directories(fixture.root/"characters/hero");
   std::filesystem::create_directories(fixture.root/"materials");
   headGlbFile(fixture.root/"characters/hero/head.glb",true);
-  textFile(fixture.root/"characters/characters.json",R"({"PC_HERO":{"head":"hero/head.glb"}})");
+  // the hero without a face profile, an npc with one (and a gesture), the control npc not listed
+  textFile(fixture.root/"characters/characters.json",
+           R"({"PC_HERO":{"head":"hero/head.glb"},"NONE_100_XARDAS":{"head":"hero/head.glb","face":"hero/head.face.json"}})");
+  textFile(fixture.root/"characters/hero/head.face.json",
+           R"({"version":1,"mouth":["smile"],"anims":{"S_FRIENDLY":{"layer":1,"blend_in_ms":1000,"blend_out_ms":1000,)"
+           R"("duration_ms":-1,"frame_ms":1000,"frames":[{"smile":0.5}]}},"cues":{"flash":{"zone":"upper","parts":)"
+           R"([{"weights":{"normalOnly":0.6},"delay_ms":0,"on_ms":100,"hold_ms":80,"off_ms":160}]}}})");
   alphaDdsFile(fixture.root/"materials/head.dds",false);
   textFile(fixture.root/"materials/materials.json",R"({"OWN_TEST_BARREL_WOOD.TGA":{"albedo":"head.dds"}})");
   setenv("OPENGOTHIC_BASE",base.c_str(),1);
@@ -2666,6 +2679,25 @@ void heroHeadGameCases(const std::string& game, const std::string& base) {
     require(original!=nullptr && MeshGltfTest::head(*npc).protoMesh()==original &&
             MeshGltfTest::visual(*npc).headMesh()==nullptr,"NPC Hum_Head_Pony must remain HUM_HEAD_PONY.MMB");
 
+    // an npc listed in characters.json: its own head and face profile, the same contract as the hero's
+    const auto* mageSymbol=world.script().findSymbol("NONE_100_XARDAS");
+    require(mageSymbol!=nullptr,"original game scripts must provide the listed NPC");
+    const auto mageId=mageSymbol->index();
+    auto* mage=world.addNpc(mageId,hero->position());
+    require(mage!=nullptr,"listed NPC must spawn");
+    mage->setVisualBody(0,0,0,0,"HUM_BODY_NAKED0","Hum_Head_Pony");
+    const auto* mageHead=Resources::loadCharacterHead("NONE_100_XARDAS");
+    const auto checkMage=[&](Npc& n) {
+      require(mageHead!=nullptr && MeshGltfTest::head(n).protoMesh()==mageHead && MeshGltfTest::visual(n).headMesh()==mageHead->head.get() &&
+              mageHead->face!=nullptr && MeshGltfTest::face(n).isActive(),"a listed NPC must get its own head and face profile");
+      require(MeshGltfTest::headBone(n)==n.visualSkeleton()->findNode("BIP01 HEAD"),"its head must bind to BIP01 HEAD");
+      };
+    checkMage(*mage);
+    MeshGltfTest::refreshBody(*mage);
+    checkMage(*mage);
+    require(mage->startCue("flash",0) && mage->cueWeight("flash")>=0 && !hero->startCue("flash",0),
+            "a gesture of the profile must start on the NPC's head, and not on a head without cues");
+
     const auto* armorSymbol=world.script().findSymbol("ITAR_MIL_L");
     require(armorSymbol!=nullptr,"original game scripts must provide the test armor");
     const auto armorId=armorSymbol->index();
@@ -2675,6 +2707,13 @@ void heroHeadGameCases(const std::string& game, const std::string& base) {
     require(hero->currentArmor()==armor,"the test must actually equip a different armor");
     MeshGltfTest::refreshBody(*hero);
     checkHead(*hero);
+    // the listed npc in the same armor: its own head and FaceRig stay
+    auto* mageArmor=mage->addItem(armorId,1);
+    require(mageArmor!=nullptr,"test armor must enter the listed NPC's inventory");
+    mage->useItem(armorId,Item::NSLOT,true);
+    require(mage->currentArmor()==mageArmor,"the test must actually equip the armor on the listed NPC");
+    MeshGltfTest::refreshBody(*mage);
+    checkMage(*mage);
 
     std::vector<uint8_t> bytes;
     {
@@ -2697,13 +2736,22 @@ void heroHeadGameCases(const std::string& game, const std::string& base) {
     npc=gothic.world()->findNpcByInstance(npcId);
     require(npc!=nullptr && MeshGltfTest::head(*npc).protoMesh()==original,
             "control NPC must retain the original head across save reload");
+    mage=gothic.world()->findNpcByInstance(mageId);
+    require(mage!=nullptr,"listed NPC must survive save reload");
+    checkMage(*mage);
 
     const char* offArgs[]={"gothic-mesh-gltf-test","-g",game.c_str(),"-nointro","--no-hero-head"};
     CommandLine off(5,offArgs);
     MeshGltfTest::refreshBody(*hero);
     require(MeshGltfTest::visual(*hero).headMesh()==nullptr && MeshGltfTest::head(*hero).protoMesh()==original,
             "--no-hero-head must restore the original hero head");
-    std::cout << "hero-head game: GLB, head bone, armor, setVisualBody, save reload, original NPC, flag OFF passed\n";
+    MeshGltfTest::refreshBody(*mage);
+    // (the reload may find the world's own Xardas: his original head, whichever it is)
+    const auto* mageOriginal=MeshGltfTest::head(*mage).protoMesh();
+    require(MeshGltfTest::visual(*mage).headMesh()==nullptr && mageOriginal!=nullptr && mageOriginal!=mageHead &&
+            mageOriginal->head==nullptr && !mageOriginal->morph.empty() && !MeshGltfTest::face(*mage).isActive(),
+            "--no-hero-head must restore the original head of a listed NPC too");
+    std::cout << "hero-head game: GLB, head bone, armor, setVisualBody, save reload, original and listed NPC, flag OFF passed\n";
     gothic.clearGame().reset();
   }
   device.waitIdle();

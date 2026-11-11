@@ -36,6 +36,9 @@ CommandLine::CommandLine(int argc, const char** argv) {
   // OPENGOTHIC_VSM=0|1: the default of -vsm for benches and scripts that cannot pass flags; -vsm wins
   if(const char* vsm = std::getenv("OPENGOTHIC_VSM"))
     isVsm = boolArg(vsm);
+  // OPENGOTHIC_MS=0|1: the default of -ms (mesh shaders) for benches; -ms wins
+  if(const char* ms = std::getenv("OPENGOTHIC_MS"))
+    isMeshSh = boolArg(ms);
   // OPENGOTHIC_RT=0|1 and OPENGOTHIC_GI=0|1|2: the same for -rt and -gi (the GI clips of a bench); the flags win
   if(const char* rt = std::getenv("OPENGOTHIC_RT"))
     isRQuery = boolArg(rt);
@@ -115,6 +118,11 @@ CommandLine::CommandLine(int argc, const char** argv) {
       ++i;
       if(i<argc)
         isTaa = boolArg(argv[i]);
+      }
+    else if(arg=="-mv") {
+      ++i;
+      if(i<argc)
+        isMv = boolArg(argv[i]) ? 1 : 0;
       }
     else if(arg=="-aa") {
       ++i;

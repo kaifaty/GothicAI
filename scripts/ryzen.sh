@@ -1417,6 +1417,7 @@ bench_window() {
   # class), or the streaming flythrough, which measures frames.
   [[ "${RYZEN_BENCH_WINDOW:-0}" != 1 && "${KEEP:-0}" != 1 ]] || return 0
   [[ "${OPENGOTHIC_BENCH_VISIBLE:-0}" != 1 && "${OPENGOTHIC_FPS_LOG:-0}" != 1 ]] || return 0
+  [[ "${TEMPEST_OFFSCREEN:-0}" != 1 ]] || return 1
   [[ "${BENCH_CLASS:-quick}" != quiet ]] || return 0
   [[ "$(basename "$BENCH_SCENARIO" .bench)" != streaming-flythrough ]] || return 0
   return 1

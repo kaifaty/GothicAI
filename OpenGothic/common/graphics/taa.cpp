@@ -136,6 +136,47 @@ Matrix4x4 Taa::reprojection(const View& cur, const View& prev, const Matrix4x4& 
   return toMatrix(mul(prvVp, mul(shift, inverse(curVp))));
   }
 
+Matrix4x4 Taa::viewProjectPrev(const View& prev, const Matrix4x4& jitter) {
+  return toMatrix(mul(toMat(jitter), mul(toMat(prev.proj), toMat(prev.viewLwc))));
+  }
+
+Taa::MotionCamera Taa::motionCamera(const View& cur, const View& prev, bool continuous, const Matrix4x4& jitter) {
+  MotionCamera ret;
+  ret.reprojectClip   = continuous ? reprojection(cur, prev, jitter) : Matrix4x4::mkIdentity();
+  ret.viewProjectPrev = viewProjectPrev(continuous ? prev : cur, jitter);
+  return ret;
+  }
+
+Vec2 Taa::motionResidual(const Matrix4x4& reprojectClip, const Matrix4x4& viewProjectPrev, const Vec4& clipCur,
+                         const Vec3& d) {
+  // as the shaders do it: prevStatic and prevDelta are the varyings, the division is per fragment
+  Vec4 prevStatic = clipCur;
+  reprojectClip.project(prevStatic);
+  Vec4 prevDelta = Vec4(d.x, d.y, d.z, 0);
+  viewProjectPrev.project(prevDelta);
+  const float w0 = prevStatic.w, w1 = prevStatic.w + prevDelta.w;
+  if(w0<=0 || w1<=0)
+    return Vec2();
+  // ((s+d)/w1 - s/w0)*0.5 over one denominator, as main.frag: exactly 0 for d=0
+  const float den = w0*w1;
+  return Vec2((prevDelta.x*w0 - prevStatic.x*prevDelta.w)/den*0.5f,
+              (prevDelta.y*w0 - prevStatic.y*prevDelta.w)/den*0.5f);
+  }
+
+Taa::ResolveWeights Taa::resolveWeights(float alpha, float lumCur, float lumHist, float mask, float maskPrev) {
+  // as taa_resolve.frag
+  const float k = std::max(mask, maskPrev);
+  const float a = alpha*(1.f-k) + 1.f*k;
+  ResolveWeights w;
+  w.cur  = a      /(1.f + (1.f-k)*lumCur);
+  w.hist = (1.f-a)/(1.f + (1.f-k)*lumHist);
+  return w;
+  }
+
+float Taa::resolveBlend(const ResolveWeights& w, float cur, float hist) {
+  return (cur*w.cur + hist*w.hist)/(w.cur + w.hist);
+  }
+
 float Taa::rotationAngle(const Matrix4x4& a, const Matrix4x4& b) {
   // trace(Ra^T Rb) = 1 + 2 cos(angle); a sign flip of both (the view's scale -1) cancels out
   double tr = 0, na = 0, nb = 0;

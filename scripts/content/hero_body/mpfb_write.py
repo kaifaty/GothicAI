@@ -3,9 +3,11 @@
     uv run --with numpy --with pillow python -I mpfb_write.py <run> <HUMANS.MDH.json> <HUM_BODY_NAKED0.MDM.json> \
         <skin diffuse png> <content root> <repo> [neck colour #rrggbb]
 
-Reads <run>/body.npz, braies.npz (mpfb_export.py) and landmarks.json (mpfb_body.py). The record keeps the
-original's name, so every unarmoured man wears this body in that root. The Gothic head stays: its neck covers
-the cut. The skin is MPFB's CC0 diffuse, scaled in linear light so its mean matches the neck of the hero's
+Reads <run>/body.npz, braies.npz (mpfb_export.py) and landmarks.json (mpfb_body.py). On the render rig the record
+is HUM_BODY_HERO.MDM and the rig table's "bodies" gives it to texture variant 9 of HUM_BODY_NAKED0 - the hero's
+clothes in Gothic 2 (BodyTex_Player), so only the hero wears it; BODY_VARIANT=all (and every run without the rig)
+keeps the original's name, and every unarmoured man wears this body in that root. The Gothic head stays: its neck
+covers the cut. The skin is MPFB's CC0 diffuse, scaled in linear light so its mean matches the neck of the hero's
 original face texture (the seam), as the content rules take brightness from the replaced original.
 """
 import sys, os, json, struct, importlib.util
@@ -19,8 +21,10 @@ import rig_parts
 run, mdh, orig, skin_png, root, repo = map(Path, sys.argv[1:7])
 NECK = sys.argv[7] if len(sys.argv) > 7 else '#8a604a'
 AO_STRENGTH = float(os.environ.get('AO_STRENGTH', 0.6))
-MESH = 'HUM_BODY_NAKED0.MDM'
 meta = json.load(open(run / 'landmarks.json'))
+BODY_VARIANT = os.environ.get('BODY_VARIANT', '9')   # the texture variant of HUM_BODY_NAKED0 that gets this body
+HERO_ONLY = meta.get('rig', False) and BODY_VARIANT != 'all'
+MESH = 'HUM_BODY_HERO.MDM' if HERO_ONLY else 'HUM_BODY_NAKED0.MDM'
 fit.S = meta['scale']
 LW = {k: np.array(v) * fit.S for k, v in meta['landmarks'].items()}
 skel = fit.load_skeleton(mdh)
@@ -115,8 +119,14 @@ def write_part(npz, matname, texname, size):
         'max_influences': max(len(w) for w in weights), 'rest_bbox': [model_pos.min(0).round(1).tolist(), model_pos.max(0).round(1).tolist()]}
 
 parts, report = [], []
-for npz, mat, tex, size in ((run / 'body.npz', 'OWN_HERO_BODY_MPFB', 'OWN_HERO_BODY_MPFB.TGA', 2048),
-                            (run / 'braies.npz', 'OWN_HERO_BRAIES', 'OWN_HERO_BRAIES.TGA', 64)):
+OUTFIT = json.load(open(run / 'export.json')).get('outfit') or []   # outfit_build.py pieces instead of the braies
+plan = [(run / 'body.npz', 'OWN_HERO_BODY_MPFB', 'OWN_HERO_BODY_MPFB.TGA', 2048)]
+if OUTFIT:
+    plan += [(run / f'{p["name"]}.npz', f'OWN_HERO_{p["name"].upper()}', f'OWN_HERO_{p["name"].upper()}.TGA', 64)
+             for p in OUTFIT]
+else:
+    plan += [(run / 'braies.npz', 'OWN_HERO_BRAIES', 'OWN_HERO_BRAIES.TGA', 64)]
+for npz, mat, tex, size in plan:
     p, r = write_part(npz, mat, tex, size); parts.append(p); report.append(r)
 record = {'format': 'gothic-model', 'version': 1, 'kind': 'mesh', 'buffer': MESH + '.bin', 'byte_length': len(bin_),
           'attachment_order': [], 'data': {'meshes': parts, 'attachments': []}}
@@ -228,6 +238,8 @@ if RIG:
         'sockets': {'BIP01 HEAD': socket('BIP01 HEAD', 'head', head_shift),
                     'ZS_RIGHTHAND': socket('ZS_RIGHTHAND', 'hand_r'), 'ZS_LEFTHAND': socket('ZS_LEFTHAND', 'hand_l')}}},
         'meshes': {MESH: RIGNAME}}
+    if HERO_ONLY:
+        table['bodies'] = {'HUM_BODY_NAKED0': {BODY_VARIANT: MESH}}
     (models / 'render-rigs.json').write_text(json.dumps(table, indent=1) + '\n')
 (models / 'models.json').write_text(json.dumps({'format': 'gothic-models', 'version': 1, 'files': files}, indent=1) + '\n')
 
@@ -273,13 +285,24 @@ if (run / 'normal.npy').exists():
     ao = 1 - AO_STRENGTH * (1 - ao)         # a soft AO: the engine has its own ambient occlusion on top
     ao, _ = pad_islands(np.repeat(ao[..., None], 3, 2), run / 'body.npz'); ao = ao[..., 0]
     body_n = nrm; body_orm = np.stack([ao, np.full_like(ao, 0.55), np.zeros_like(ao)], 2)
-for name, alb, nmap, orm in (('own-hero-body-mpfb', skin, body_n, body_orm),
-                             ('own-hero-braies', flat(to_srgb(to_lin(np.array([0x7d, 0x70, 0x5e]) / 255))), flat([0.0, 0.0, 1.0]), flat([1.0, 0.9, 0.0]))):
+maps = [('own-hero-body-mpfb', skin, body_n, body_orm)]
+if OUTFIT:                                  # each piece: its material's tile (outfit_tiles.py) in the piece's colour
+    import outfit_tiles
+    for p in OUTFIT:
+        kind = outfit_tiles.KIND.get(p['name'])
+        colour = to_srgb(np.array(p['colour_linear']))
+        maps.append((f'own-hero-{p["name"]}', *(outfit_tiles.tile(kind, colour) if kind else
+                                                 (flat(colour), flat([0.0, 0.0, 1.0]), flat([1.0, 0.85, 0.0])))))
+else:
+    maps += [('own-hero-braies', flat(to_srgb(to_lin(np.array([0x7d, 0x70, 0x5e]) / 255))), flat([0.0, 0.0, 1.0]), flat([1.0, 0.9, 0.0]))]
+for name, alb, nmap, orm in maps:
     d = root / 'materials' / name; d.mkdir(parents=True, exist_ok=True)
     mod.write_dds(d / 'albedo.dds', np.clip(alb, 0, 1))
     mod.write_dds(d / 'normal.dds', nmap, normal=True)
     mod.write_dds(d / 'orm.dds', np.clip(orm, 0, 1))
-mats['OWN_HERO_BODY_MPFB.TGA'] = 'own-hero-body-mpfb'; mats['OWN_HERO_BRAIES.TGA'] = 'own-hero-braies'
+mats['OWN_HERO_BODY_MPFB.TGA'] = 'own-hero-body-mpfb'
+for p in OUTFIT: mats[f'OWN_HERO_{p["name"].upper()}.TGA'] = f'own-hero-{p["name"]}'
+if not OUTFIT: mats['OWN_HERO_BRAIES.TGA'] = 'own-hero-braies'
 (root / 'materials' / 'materials.json').write_text(json.dumps({t: {
     'albedo': f'{d}/albedo.dds', 'normal': f'{d}/normal.dds', 'orm': f'{d}/orm.dds',
     'scale': 1.0, 'antitile': 'off', 'antitile_cell': 1.0} for t, d in mats.items()}, indent=2) + '\n')

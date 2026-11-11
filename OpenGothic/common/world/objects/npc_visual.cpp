@@ -158,11 +158,18 @@ void Npc::setVisualBody(int32_t headTexNr, int32_t teethTexNr, int32_t bodyTexNr
   bdColor = bodyTexColor;
 
   auto  vhead = head.empty() ? MeshObjects::Mesh() : owner.addView(FileExt::addExt(head,".MMB"),vHead,vTeeth,bdColor);
-  auto  vbody = body.empty() ? MeshObjects::Mesh() : owner.addView(FileExt::addExt(body,".ASC"),vColor,0,bdColor);
+  auto  vbody = body.empty() ? MeshObjects::Mesh() : owner.addView(bodyVisual(),vColor,0,bdColor);
   visual.setVisualBody(*this,std::move(vhead),std::move(vbody),bdColor);
   updateArmor();
 
   durtyTranform|=TR_Pos; // update obj matrix
+  }
+
+// The body without armour. Our content may draw one texture variant of a shared body as its own mesh
+// ("bodies" of models/render-rigs.json): the hero's clothes are a variant of the naked body all men have.
+std::string Npc::bodyVisual() const {
+  const std::string own = Resources::bodyOfVariant(body,vColor);
+  return FileExt::addExt(own.empty() ? body : own,".ASC");
   }
 
 void Npc::updateArmor() {
@@ -174,7 +181,7 @@ void Npc::updateArmor() {
   auto& w  = owner;
 
   if(ar==nullptr) {
-    auto  vbody = body.empty() ? MeshObjects::Mesh() : w.addView(FileExt::addExt(body,".ASC"),vColor,0,bdColor);
+    auto  vbody = body.empty() ? MeshObjects::Mesh() : w.addView(bodyVisual(),vColor,0,bdColor);
     visual.setBody(*this,std::move(vbody),bdColor);
     } else {
     auto& itData = ar->handle();
@@ -442,6 +449,26 @@ void Npc::startFaceAnim(std::string_view anim, float intensity, uint64_t duratio
 
 float Npc::faceWeight(std::string_view anim) {
   return visual.faceWeight(*this,anim);
+  }
+
+void Npc::startCues(std::shared_ptr<const SpeechCues::Plan> plan, bool voiced) {
+  visual.startCues(*this,std::move(plan),voiced);
+  }
+
+bool Npc::startCue(std::string_view name, char side) {
+  return visual.startCue(*this,name,side);
+  }
+
+float Npc::cueWeight(std::string_view name) {
+  return visual.cueWeight(*this,name);
+  }
+
+bool Npc::startLeak(std::string_view felt, bool lower) {
+  return visual.startLeak(*this,felt,lower);
+  }
+
+float Npc::leakWeight() {
+  return visual.leakWeight(*this);
   }
 
 void Npc::startSpeech(const Tempest::Sound& voice) {

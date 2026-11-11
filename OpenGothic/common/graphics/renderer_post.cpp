@@ -1,10 +1,10 @@
 #include "renderer.h"
+#include "settings.h"
 
 #include <Tempest/Log>
 #include <cstdio>
 
 #include "camera.h"
-#include "gothic.h"
 
 using namespace Tempest;
 
@@ -22,28 +22,63 @@ void Renderer::prepareTaa(WorldView& wview, const Camera& camera) {
     }
   wview.setMipBias(temporal.active ? temporal.mipBias : settings.taaMipBias);
 
-  // without jitter, as the camera gives it; the shadows (Camera::viewShadow*) are made from it too
-  Taa::View cur;
-  cur.proj    = proj;
-  cur.viewLwc = camera.viewLwc();
-  cur.origin  = camera.originLwc();
-  if(camera.cuts()!=taa.cuts || Taa::isCameraJump(cur, taa.prev))
+  // the camera pair without jitter (updateCamera); the shadows (Camera::viewShadow*) are made from it too
+  if(!camHistory.continuous)
     taa.valid = false;
-  taa.cuts = camera.cuts();
 
   wview.setTaaFrame(settings.vsmLampTaa, taa.frame);
   const Vec2 px = temporal.active ? Taa::jitterPx(taa.frame++, temporal.phases) : Taa::jitterPx(taa.frame++);
   const auto j  = Taa::jitterMatrix(px, uint32_t(zbuffer.w()), uint32_t(zbuffer.h()));
   taa.jitter    = px;
   if(taa.valid)
-    taa.reproject = Taa::reprojection(cur, taa.prev, j);
-  taa.prev = cur;
+    taa.reproject = Taa::reprojection(camHistory.cur, camHistory.prev, j);
 
   // the main view only: the frustum, SSAO and everything in SceneGlobals; not the shadows, UI or inventory
   auto m = j; m.mul(proj);        proj        = m;
   m      = j; m.mul(viewProj);    viewProj    = m;
   m      = j; m.mul(viewProjLwc); viewProjLwc = m;
   wview.setJitter(&j);
+  }
+
+void Renderer::prepareMotion(WorldView& wview) {
+  // Motion vectors of objects (graphics plan 1b): the camera's part of the residual, with this frame's jitter on both
+  // sides so that the difference has none. On a cut, a jump or the first frame no reprojection and the previous
+  // camera is this one: the residual of a moving object then comes from its own move only
+  const auto jitter = taa.active ? Taa::jitterMatrix(taa.jitter, uint32_t(zbuffer.w()), uint32_t(zbuffer.h()))
+                                 : Matrix4x4::mkIdentity();
+  const auto mc = Taa::motionCamera(camHistory.cur, camHistory.prev, camHistory.continuous, jitter);
+  wview.setMotionVectors(settings.motionVectors, mc.reprojectClip, mc.viewProjectPrev);
+  }
+
+void Renderer::drawMotionView(Attachment& result, Encoder<CommandBuffer>& cmd) {
+  if(!settings.motionView || gbufMotion.isEmpty())
+    return;
+  // debug: the frame is the residual, direction as hue, length as brightness (motion_view.frag)
+  struct Push {
+    float pxPerUnitX = 0; // pixels of the internal resolution per texture coordinate
+    float pxPerUnitY = 0;
+    float fullPx     = 2; // px/frame of full brightness
+    } push;
+  push.pxPerUnitX = float(gbufMotion.w());
+  push.pxPerUnitY = float(gbufMotion.h());
+  push.fullPx     = settings.motionViewPx;
+  cmd.setDebugMarker("Motion-view");
+  cmd.setFramebuffer({{result, Tempest::Discard, Tempest::Preserve}});
+  cmd.setBinding(0, gbufMotion, Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setPushData(push);
+  cmd.setPipeline(shaders.motionView);
+  cmd.draw(nullptr, 0, 3);
+  }
+
+void Renderer::drawReactiveView(Attachment& result, Encoder<CommandBuffer>& cmd) {
+  if(!settings.taaReactiveView || taa.reactive.isEmpty())
+    return;
+  // debug: the frame is the TAA reactive mask as it was written, before the ceiling (reactive_view.frag)
+  cmd.setDebugMarker("Reactive-view");
+  cmd.setFramebuffer({{result, Tempest::Discard, Tempest::Preserve}});
+  cmd.setBinding(0, taa.reactive, Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setPipeline(shaders.reactiveView);
+  cmd.draw(nullptr, 0, 3);
   }
 
 void Renderer::drawBloom(Encoder<CommandBuffer>& cmd, bool fused) {
@@ -115,7 +150,7 @@ void Renderer::drawTonemapping(Attachment& result, Encoder<CommandBuffer>& cmd, 
   }
 
 void Renderer::drawCMAA2(Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview) {
-  auto&          pso             = shaders.cmaa2EdgeColor2x2Presets[Gothic::options().aaPreset];
+  auto&          pso             = shaders.cmaa2EdgeColor2x2Presets[::Settings::options().aaPreset];
   const IVec3    inputGroupSize  = pso.workGroupSize();
   const IVec3    outputGroupSize = inputGroupSize - IVec3(2, 2, 0);
   const uint32_t groupCountX     = uint32_t((sceneLinear.w() + outputGroupSize.x * 2 - 1) / (outputGroupSize.x * 2));
@@ -183,9 +218,13 @@ void Renderer::drawTaa(Tempest::Encoder<Tempest::CommandBuffer>& cmd, bool fused
     Matrix4x4 reproject;
     float     alpha = 0.1f; // the share of the new frame
     uint32_t  reset = 0;    // no history: the frame as it is
+    float     reactiveMax = 0.9f; // the reactive mask (graphics plan 1v): its ceiling, and 0 when it is off
+    uint32_t  reactive    = 0;
     } push;
-  push.reproject = taa.reproject;
-  push.reset     = taa.valid ? 0 : 1;
+  push.reproject   = taa.reproject;
+  push.reset       = taa.valid ? 0 : 1;
+  push.reactiveMax = settings.taaReactiveMax;
+  push.reactive    = settings.taaReactive ? 1 : 0;
 
   auto& next = taa.history[taa.cur];
   auto& prev = taa.history[taa.cur^1];
@@ -194,6 +233,8 @@ void Renderer::drawTaa(Tempest::Encoder<Tempest::CommandBuffer>& cmd, bool fused
   cmd.setBinding(0, sceneLinear, Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setBinding(1, zbuffer,     Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setBinding(2, prev,        Sampler::bilinear(ClampMode::ClampToEdge));
+  cmd.setBinding(3, gbufMotion,  Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(4, taa.reactive,Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setPushData(push);
   cmd.setPipeline(shaders.taaResolve);
   cmd.draw(nullptr, 0, 3);
@@ -221,7 +262,8 @@ void Renderer::drawTemporalUpscale(Tempest::Encoder<Tempest::CommandBuffer>& cmd
   push.reproject = taa.valid ? taa.reproject : Matrix4x4::mkIdentity();
   cmd.setDebugMarker("Upscale-motion");
   cmd.setFramebuffer({{temporal.motion, Tempest::Discard, Tempest::Preserve}});
-  cmd.setBinding(0, zbuffer, Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(0, zbuffer,    Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(1, gbufMotion, Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setPushData(push);
   cmd.setPipeline(shaders.motionCamera);
   cmd.draw(nullptr, 0, 3);

@@ -414,6 +414,14 @@ preparation_needed() { [[ "$TEST_PREPARE" == 1 ]]; }
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assert_game_request(requests[0], 'bench')
 
+        result, requests = self.run_game('bench', prepare=False,
+            window={'RYZEN_BENCH_CLASS': 'quiet', 'TEMPEST_OFFSCREEN': '1'})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        options = self.queue_options(requests[0])
+        self.assert_option(options, '--class', 'quiet')
+        self.assertNotIn('--display', options)
+        self.assertIn('RYZEN_BENCH_OFFSCREEN=1', requests[0])
+
     def test_custom_window_does_not_overlap_shared_slot_layout(self):
         for window, shared in (({'TEMPEST_WINDOW_SIZE': '640x360'}, True),
                                ({'TEMPEST_WINDOW_SIZE': '320x180'}, False),

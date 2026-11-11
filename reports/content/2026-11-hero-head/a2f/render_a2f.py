@@ -1,5 +1,5 @@
 # Plays Audio2Face-3D ARKit weights (a2f-weights CSV) on the test head and renders 30 fps frames.
-#   blender -b --factory-startup -P render_a2f.py -- <test-head.glb> <weights.csv> <out dir> [<label>]
+#   blender -b --factory-startup -P render_a2f.py -- <test-head.glb> <weights.csv> <out dir> [<size px, 480>]
 # CSV: timestamp in 16 kHz samples, then 52 skin weights in A2F pose order, then 16 tongue weights (unused:
 # our tongue has no matching shapes). Weights are applied by name to every part that has the shape.
 import bpy, os, sys, math
@@ -8,6 +8,7 @@ from mathutils import Vector
 
 A = sys.argv[sys.argv.index('--')+1:]
 GLB, CSV, OUT = A[:3]
+RES = int(A[3]) if len(A) > 3 else 480
 os.makedirs(OUT, exist_ok=True)
 SKIN = ("eyeBlinkLeft eyeLookDownLeft eyeLookInLeft eyeLookOutLeft eyeLookUpLeft eyeSquintLeft eyeWideLeft "
         "eyeBlinkRight eyeLookDownRight eyeLookInRight eyeLookOutRight eyeLookUpRight eyeSquintRight eyeWideRight "
@@ -50,7 +51,7 @@ sc.render.fps = fps
 sc.render.engine = 'BLENDER_WORKBENCH'
 sc.display.shading.light = 'STUDIO'; sc.display.shading.color_type = 'OBJECT'
 sc.display.shading.show_cavity = True
-sc.render.resolution_x = sc.render.resolution_y = 480
+sc.render.resolution_x = sc.render.resolution_y = RES
 sc.world = bpy.data.worlds.new('w'); sc.world.color = (0.22, 0.22, 0.22)
 for o in parts:
     o.color = (0.85, 0.72, 0.62, 1) if o.name == 'face' else (0.95, 0.95, 0.95, 1)

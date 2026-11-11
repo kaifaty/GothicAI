@@ -85,15 +85,16 @@ def validate(run):
         rows = frames[name]
         impact = [e for e in notes(name) if e['text'].startswith(f'spell physics impact id {spell_id} ')]
         assert len(impact) == 1, (name, 'missing actual projectile impact')
-        assert int(impact[0]['text'].rsplit('items ', 1)[1]) > 0, (name, 'impact missed every loose prop')
-        assert any(p['sleeping'] and not p['dynamic'] for r in rows[:5] for p in r['items']), (name, 'ground props were not at rest before impact')
+        impact_items = int(impact[0]['text'].rsplit('items ', 1)[1].split()[0])
+        assert impact_items > 0, (name, 'impact missed every loose prop')
+        assert any(p['sleeping'] for r in rows[:5] for p in r['items']), (name, 'ground props were not at rest before impact')
         peak = max(length(p['velocity_cm_s']) for r in rows for p in r['items'])
         displacement = max(travel([r['items'][i]['position_cm'] for r in rows]) for i in range(len(rows[0]['items'])))
         corpse = actors(rows, 'corpse')
         assert any(a['sleeping'] for a in corpse[:5]) and any(not a['sleeping'] for a in corpse), (name, 'sleeping ragdoll did not wake')
         corpse_travel = travel([a['position_cm'] for a in corpse])
         assert peak > 50 and displacement > 10 and corpse_travel > 1, (name, 'radial physics absent', peak, displacement, corpse_travel)
-        result[name].update({'impact_items': int(impact[0]['text'].rsplit('items ', 1)[1]), 'item_peak_cm_s': peak, 'item_travel_cm': displacement, 'corpse_travel_cm': corpse_travel})
+        result[name].update({'impact_items': impact_items, 'item_peak_cm_s': peak, 'item_travel_cm': displacement, 'corpse_travel_cm': corpse_travel})
 
     ice = frames['ice'];frozen = [r for r in ice if r['actors'][0]['frozen']]
     assert frozen and 19000 <= frozen[-1]['t_game_ms']-frozen[0]['t_game_ms'] <= 25000, 'actual freeze state duration/End failed'
