@@ -202,6 +202,10 @@ void SceneGlobals::setVsmLampNear(float cm) {
   uboGlobalCpu.vsmLampNear = cm;
   }
 
+void SceneGlobals::setVsmLampSides(uint32_t sides) {
+  uboGlobalCpu.vsmLampSides = sides;
+  }
+
 void SceneGlobals::setUnderWater(bool w) {
   uboGlobalCpu.underWater = w ? 1 : 0;
   }
