@@ -65,5 +65,5 @@ whether NPCs should aim at heads, and a balance check with a real player's aim.
 Not playable yet: it runs from source on macOS and needs your own copy of Gothic II: Night of the Raven.
 The engine is [OpenGothic](https://github.com/Try/OpenGothic); the design and the numbers are in
 [`docs/manual-aim.md`](https://github.com/kaifaty/GothicAI/blob/main/docs/manual-aim.md), and the short was
-filmed with [`shorts/compare`](https://github.com/kaifaty/GothicAI/tree/main/shorts/compare) on the
+filmed with [`shorts/compare`](https://github.com/kaifaty/GothicAI/tree/0061fde837235378936b735d9669f20bfeef56f8/shorts/compare) on the
 [test bench](https://github.com/kaifaty/GothicAI/tree/main/scripts/bench).

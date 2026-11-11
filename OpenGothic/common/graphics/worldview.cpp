@@ -17,6 +17,7 @@
 #include "shaders.h"
 #include "world/chunkresidency.h"
 #include "loadprobe.h"
+#include "frameprofile.h"
 #include "utils/workers.h"
 
 using namespace Tempest;
@@ -169,6 +170,9 @@ struct WorldView::VobStreaming : std::enable_shared_from_this<VobStreaming> {
     }
 
   bool ready() const { return residency.stats().vobPending==0 && !workQueued; }
+  std::string waitState() const {
+    return "pending="+std::to_string(residency.stats().vobPending)+" queued="+std::to_string(int(workQueued));
+    }
   };
 
 struct WorldView::LandscapeStreaming {
@@ -355,6 +359,17 @@ struct WorldView::LandscapeStreaming {
       wake.notify_one();
       }
     return packed;
+    }
+
+  std::string waitState() {
+    std::lock_guard guard(mutex);
+    size_t missing=0;
+    for(size_t i=0;i<chunks.size();++i)
+      if(residency.desired(i)!=ChunkResidency::State::Outside && !chunks[i].gpu && !chunks[i].failed)
+        ++missing;
+    return "packing="+std::to_string(int(packing))+" ready_packs="+std::to_string(readyCount)+
+           " jobs="+std::to_string(jobs.size())+" residency_idle="+std::to_string(int(residency.idle()))+
+           " missing_chunks="+std::to_string(missing);
     }
 
   bool ready() {
@@ -567,6 +582,13 @@ bool WorldView::landscapeReady() const {
   return (!streaming || streaming->ready()) && (!vobStreaming || vobStreaming->ready()) && Resources::texturesReady();
   }
 
+std::string WorldView::landscapeWaitState() const {
+  std::string ret="landscape: "+(streaming ? streaming->waitState() : std::string("whole"));
+  if(vobStreaming)
+    ret+="; vobs: "+vobStreaming->waitState();
+  return ret+"; textures: "+Resources::texturesWaitState();
+  }
+
 const LightSource& WorldView::mainLight() const {
   return gSky.sunLight();
   }
@@ -606,8 +628,21 @@ void WorldView::preFrameUpdate(const Camera& camera, uint64_t tickCount, uint8_t
   sGlobal.setTime(tickCount);
   sGlobal.commitUbo(fId);
 
+  {
+  FrameProfile::Scope pfx(FrameProfile::Zone::PfxPrepare);
   pfxGroup.preFrameUpdate(fId);
+  }
   visuals .preFrameUpdate();
+  }
+
+void WorldView::setMotionVectors(bool enabled, const Tempest::Matrix4x4& reprojectClip,
+                                 const Tempest::Matrix4x4& viewProjectPrev) {
+  sGlobal.setMotion(enabled, reprojectClip, viewProjectPrev);
+  visuals.setInstanceHistory(enabled);
+  }
+
+void WorldView::setTaaReactiveLref(float lref) {
+  sGlobal.setTaaReactiveLref(lref);
   }
 
 void WorldView::prepareGlobals(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId) {
@@ -787,32 +822,26 @@ const DrawClusters& WorldView::clusters() const {
   return visuals.clusters();
   }
 
-const DrawCommands& WorldView::drawCommands() const {
-  return visuals.drawCommands();
-  }
-
 const DrawBuckets& WorldView::drawBuckets() const {
   return visuals.drawBuckets();
   }
 
-const Tempest::StorageBuffer& WorldView::instanceSsbo() const {
-  return visuals.instanceSsbo();
-  }
-
-bool WorldView::updateLights(const gtime gameTime) {
-  gSky.updateLight(gameTime);
+bool WorldView::updateLights(int64_t gameTime) {
+  gtime time;
+  time.addMilis(uint64_t(gameTime));
+  gSky.updateLight(time);
   if(!gLights.updateLights())
     return false;
   sGlobal.lights = &gLights.lightsSsbo();
   return true;
   }
 
-bool WorldView::updateRtScene() {
+void WorldView::updateRtScene(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId) {
   if(!Shaders::options().doRtScene)
-    return false;
-  if(visuals.updateRtScene(sGlobal.rtScene))
-    return true;
-  return sGlobal.rtScene.refreshTextures();
+    return;
+  FrameProfile::Scope profile(FrameProfile::Zone::RtScene);
+  visuals.updateRtScene(sGlobal.rtScene, cmd, fId);
+  sGlobal.rtScene.refreshTextures();
   }
 
 void WorldView::postFrameupdate() {

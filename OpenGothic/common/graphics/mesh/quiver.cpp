@@ -339,10 +339,11 @@ std::vector<Vec3> Quiver::surface(const Matrix4x4& pelvis, const Matrix4x4& spin
   return ret;
   }
 
-void Quiver::setTextureOwner(const Vec3& position, bool spatial) {
-  body.setTextureOwner(position,spatial);
+float Quiver::setTextureOwner(const Vec3& position, bool spatial) {
+  float reach=body.setTextureOwner(position,spatial);
   for(auto& a:arrows)
-    a.setTextureOwner(position,spatial);
+    reach=std::min(reach,a.setTextureOwner(position,spatial));
+  return reach;
   }
 
 Quiver::Probe Quiver::probe(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::vector<SkinPoint>& posed,

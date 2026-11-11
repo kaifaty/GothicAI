@@ -9,13 +9,19 @@
 // - repeat: two runs with one seed give the same journal bytes;
 // - a snapshot in the middle of the day and a restore give the same tail of the journal;
 // - speed: a day of the whole world on one thread, fails above 1 s (the document's target is 0.1 s);
-// - gothic-society-day plays 7 days and writes the journal and the marks.
+// - gothic-society-day plays 7 days and writes the journal and the marks;
+// - needs (data/society/config.json): the rules on the small world (decay, fill only standing, sleep only awake,
+//   traits, guild weights, noise from the seed, moments of crossings); on the game's data an empty config gives the
+//   routine-only journal and marks byte for byte, with needs the routine is the same event for event, every
+//   threshold in the journal is at the moment a recomputation from the journal gives and none is missing, the
+//   marks' levels are the recomputed ones and in 0..1, repeat and snapshot hold, a day takes under 0.5 s.
 #include "society/journal.h"
 #include "society/society.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cinttypes>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -41,6 +47,7 @@ constexpr int    WarmDays    = 20;
 constexpr int    PrintLimit  = 20;
 constexpr uint64_t Seed      = 1;
 constexpr unsigned long ToolDays = 7;
+constexpr double NeedsDayLimit = 0.5; // seconds: a day of the whole world with needs (the document's target)
 // People without a single routine entry, as in day_people.json; another number fails. Their own criterion is
 // checked: they stay at start_waypoint all day, not on the way, doing their start_aistate as the core resolves it
 // (22 bandits ZS_BANDIT, 23 orcs ZS_MM_ALLSCHEDULER with their mm_schedule); each must have one.
@@ -106,7 +113,7 @@ struct Counts {
 
 // Runs the runner once and reads its "society export:" line: the counts it wrote into the file.
 Counts exportWorld(const std::string& gothic, const fs::path& out, const fs::path& log) {
-  const auto cmd = shellQuote(SOCIETY_RUNNER)+" -g "+shellQuote(gothic)+" -g2 --world NEWWORLD.ZEN --society-export "+
+  const auto cmd = shellQuote(SOCIETY_RUNNER)+" -g "+shellQuote(gothic)+" --world NEWWORLD.ZEN --society-export "+
                    shellQuote(out.string())+" >"+shellQuote(log.string())+" 2>&1";
   const auto from = Clock::now();
   const int  rc   = std::system(cmd.c_str());
@@ -178,8 +185,8 @@ void checkLoad(const Society::World& w, const Counts& c, double seconds) {
     }
   std::printf("export v%d: %zu NPCs with start_aistate, %zu with mm_schedule (%zu windows); people walk %.1f..%.1f cm/s\n",
               w.version,aistates,schedules,w.schedules.size(),slow,fast);
-  if(w.version!=2 || aistates==0 || schedules==0 || !(slow<fast))
-    fail("the export must be v2 with start_aistate, mm_schedule and the people's own walk speeds");
+  if(w.version!=3 || aistates==0 || schedules==0 || !(slow<fast))
+    fail("the export must be v3 with start_aistate, mm_schedule and the people's own walk speeds");
   }
 
 // --- Travel time -----------------------------------------------------------------------------------------
@@ -405,8 +412,11 @@ void checkMark(const Society::World& w, const Society::Sim& sim, MarkStats& st) 
 
 struct Day {
   std::string         journal;
+  std::string         marks;          // society-marks.csv of the day
   std::vector<size_t> movingAtMark;   // all NPCs on the way at each mark
+  std::vector<size_t> eventsAtMark;   // events up to and including each mark
   std::vector<Society::Event> events;
+  std::vector<double> decay;          // the sim's State::needDecay after reset
   };
 
 Day dayWithMarks(const Society::World& w) {
@@ -416,11 +426,15 @@ Day dayWithMarks(const Society::World& w) {
   Society::DecisionBatch batch;
   Day day;
   day.journal = Society::Journal::header(w,Seed);
+  day.marks   = Society::Marks::header(w);
+  day.decay   = sim.s.needDecay;
   MarkStats st;
   const auto take = [&]() {
     const auto ev = Society::drainEvents(sim);
     Society::Journal::append(day.journal,ev);
     day.events.insert(day.events.end(),ev.begin(),ev.end());
+    day.eventsAtMark.push_back(day.events.size());
+    Society::Marks::append(day.marks,sim);
     checkMark(w,sim,st);
     size_t moving = 0;
     for(auto f:sim.s.flags)
@@ -574,7 +588,7 @@ void checkSnapshot(const Society::World& w, const Day& day) {
 
 // --- Speed -----------------------------------------------------------------------------------------------
 
-void checkSpeed(const Society::World& w) {
+void checkSpeed(const Society::World& w, double limit) {
   Society::SimConfig config;
   config.seed = Seed;
   auto sim = Society::makeSim(w,config);
@@ -595,21 +609,444 @@ void checkSpeed(const Society::World& w) {
     warm.push_back(oneDay().first);
   std::sort(warm.begin(),warm.end());
   const double median = warm[warm.size()/2];
-  std::printf("speed: a day of the whole world (%zu NPCs) on one thread: %.2f ms with an empty path cache (%zu Dijkstra "
+  const bool needs = Society::needCount(w)>0;
+  const double target = needs ? NeedsDayLimit : 0.1;
+  std::printf("speed%s: a day of the whole world (%zu NPCs) on one thread: %.2f ms with an empty path cache (%zu Dijkstra "
               "searches), %.2f ms median and %.2f ms min over %d more days; %zu events and %" PRIu64 " queue pops a day; "
-              "%.2f M events/s (median); limit %.1f s, target 0.1 s: %s\n",w.npcs.size(),cold*1000.0,searches,median*1000.0,
-              warm.front()*1000.0,WarmDays,events,sim.s.processed,median>0 ? double(events)/median/1e6 : 0.0,DayLimit,
-              std::max(cold,median)<=0.1 ? "met" : "not met");
-  if(cold>DayLimit || median>DayLimit)
-    fail("a day of the whole world must take under "+std::to_string(DayLimit)+" s");
+              "%.2f M events/s (median); limit %.1f s, target %.1f s: %s\n",needs ? " with needs" : "",w.npcs.size(),
+              cold*1000.0,searches,median*1000.0,warm.front()*1000.0,WarmDays,events,sim.s.processed,
+              median>0 ? double(events)/median/1e6 : 0.0,limit,target,std::max(cold,median)<=target ? "met" : "not met");
+  if(cold>limit || median>limit)
+    fail(std::string("a day of the whole world")+(needs ? " with needs" : "")+" must take under "+std::to_string(limit)+" s");
+  }
+
+// --- Needs on the small world ------------------------------------------------------------------------------
+
+// The rules world with five needs: food and work fall from 1 at 08:00; DAY (guild 1, a card with talk 5) works at
+// B 08:00-20:00, walks 2900 s to bed at A and sleeps; its faith has guild weight 0. CARDS and NOISE are filled in.
+constexpr const char* RulesConfig = R"({"format":"society-config","version":1,
+"needs":[
+ {"id":"food","name":"f","empty_hours":16,"low":0.4,"critical":0.15,"start":1.0,"awake_only":false},
+ {"id":"sleep","name":"s","empty_hours":18,"low":0.35,"critical":0.1,"start":1.0,"awake_only":true},
+ {"id":"social","name":"c","empty_hours":24,"low":0.3,"critical":0.1,"start":1.0,"awake_only":false},
+ {"id":"work","name":"w","empty_hours":12,"low":0.3,"critical":0.1,"start":1.0,"awake_only":false},
+ {"id":"faith","name":"v","empty_hours":48,"low":0.3,"critical":0.1,"start":1.0,"awake_only":false,
+  "guild_weight":{"default":1.0,"guilds":[{"guild":1,"name":"p","weight":0.0}]}}],
+"states":[
+ {"state":"ZS_WORK","kind":"anchor","asleep":false,"fill_hours":{"work":2}},
+ {"state":"ZS_GOTOBED","kind":"anchor","asleep":false,"fill_hours":{"social":1}},
+ {"state":"ZS_SLEEP","kind":"anchor","asleep":true,"fill_hours":{"sleep":8}},
+ {"state":"ZS_TALK","kind":"free","asleep":false,"fill_hours":{"social":1}}],
+"object_kinds":[{"kind":"bench","schemes":["BENCH"],"freepoints":["FP_SIT"],"state":"ZS_TALK","fill_hours":{"social":2},
+ "capacity":2,"minutes":30}],
+"traits":{"cards":CARDS,"scales":["talk"],"middle":3,"noise":NOISE,"decay":[{"scale":"talk","need":"social","per_point":0.15}]}})";
+
+constexpr const char* EmptyConfig = R"({"format":"society-config","version":1,"needs":[],"states":[],"object_kinds":[],
+"traits":{"cards":null,"scales":[],"middle":3,"noise":0,"decay":[]}})";
+
+std::string replaced(std::string s, const std::string& what, const std::string& with) {
+  const auto at = s.find(what);
+  need(at!=std::string::npos,"no "+what+" to replace");
+  return s.replace(at,what.size(),with);
+  }
+
+// A whole run's journal: events up to `end`.
+std::string runJournal(const Society::World& w, uint64_t seed, Time end, std::vector<Society::Event>* events = nullptr) {
+  Society::SimConfig config;
+  config.seed = seed;
+  auto sim = Society::makeSim(w,config);
+  Society::DecisionBatch batch;
+  std::string ret = Society::Journal::header(w,seed);
+  Society::advance(sim,batch,end);
+  const auto ev = Society::drainEvents(sim);
+  Society::Journal::append(ret,ev);
+  if(events!=nullptr)
+    events->assign(ev.begin(),ev.end());
+  return ret;
+  }
+
+void checkNeedRules(const fs::path& root) {
+  const auto cards = root/"cards.json";
+  {
+    std::ofstream out(cards,std::ios::binary);
+    out << R"({"version":1,"cards":{"DAY":{"talk":5},"NOBODY":{"talk":1}}})";
+  }
+  const auto config = [&](const char* noise) {
+    return replaced(replaced(RulesConfig,"CARDS","\""+cards.string()+"\""),"NOISE",noise);
+    };
+  const auto w = Society::parseWorld(RulesWorld,config("0"));
+  const auto hm = [](int day, int h, int m, int sec = 0) { return Time(day)*Society::DaySeconds+Time(h)*3600+Time(m)*60+sec; };
+  const auto clock = [](Time t) {
+    char buf[64];
+    std::snprintf(buf,sizeof(buf),"day %lld %02lld:%02lld:%02lld",(long long)(t/Society::DaySeconds),
+                  (long long)(t%Society::DaySeconds/3600),(long long)(t%3600/60),(long long)(t%60));
+    return std::string(buf);
+    };
+  const auto perHour = [](double perSecond) { return perSecond*3600.0; };
+  const auto close = [](double a, double b) { return std::abs(a-b)<=1e-12*std::max(1.0,std::abs(b)); };
+  const auto& c = w.config;
+  if(Society::needCount(w)!=5 || c.states.size()!=4 || c.objectKinds.size()!=1 || c.cards!=2 || !w.npcCard[0] || w.npcCard[1])
+    fail("needs rules: the config loads 5 needs, 4 states, 1 object kind, 2 cards (DAY's, not GAP's)");
+  // Traits and guilds: DAY talks 5, social falls 1 + 0.15 x 2 = 1.3 times faster; GAP has no card (3); faith of guild 1
+  // weighs 0, of the orc's guild 60 the default 1.
+  const size_t n = Society::needCount(w);
+  if(!close(perHour(w.npcDecay[0*n+2]),1.3/24) || !close(perHour(w.npcDecay[1*n+2]),1.0/24) ||
+     w.npcDecay[0*n+4]!=0 || !close(perHour(w.npcDecay[2*n+4]),1.0/48))
+    fail("needs rules: social decay by talk (DAY 1.3/24, GAP 1/24 an hour) or faith by guild (0 for guild 1, 1/48 for 60)");
+
+  Society::SimConfig sc;
+  auto sim = Society::makeSim(w,sc);
+  Society::DecisionBatch batch;
+  std::vector<Society::Event> events;
+  std::vector<std::pair<Time,std::string>> rates;
+  const auto advanceTo = [&](Time t) {
+    Society::advance(sim,batch,t);
+    const auto ev = Society::drainEvents(sim);
+    events.insert(events.end(),ev.begin(),ev.end());
+    };
+  // Moving: no fill (ZS_GOTOBED fills social here, standing only); standing at the bed it fills; asleep the awake-only
+  // sleep does not fall and its fill is all of the rate, food falls on.
+  advanceTo(hm(0,20,1));
+  const auto& st = sim.s;
+  if(!close(st.needRate[0*n+2],-w.npcDecay[0*n+2]))
+    fail("needs rules: on the way to bed DAY's social must only fall");
+  advanceTo(hm(0,20,48,45));
+  if(!close(st.needRate[0*n+2],1.0/3600-w.npcDecay[0*n+2]))
+    fail("needs rules: standing at the bed in ZS_GOTOBED DAY's social must rise by its fill minus its decay");
+  advanceTo(hm(0,21,0));
+  if(!close(st.needRate[0*n+1],1.0/8/3600) || !close(st.needRate[0*n+0],-w.npcDecay[0*n+0]))
+    fail("needs rules: asleep DAY's sleep must rise by its fill only and its food fall on");
+  advanceTo(hm(2,8,0));
+  bool inRange = true;
+  for(uint32_t i=0; i<w.npcs.size(); ++i)
+    for(size_t k=0; k<n; ++k) {
+      const double l = Society::needLevel(sim,i,k);
+      inRange = inRange && l>=0 && l<=1;
+      }
+  if(!inRange)
+    fail("needs rules: a level is out of 0..1");
+  if(Society::needLevel(sim,0,4)!=1.0)
+    fail("needs rules: DAY's faith (guild weight 0) must stay 1");
+
+  // The moments, known in advance (±1 s for rounding): food low 08:00 + 9.6 h; sleep low 08:00 + 11.7 h awake; work
+  // falls from 20:00:20 (the bed's state begins) to low in 8.4 h and critical in 10.8 h, is 0 on the walk back to B
+  // until 08:48:40 and rises by 1/2 - 1/12 an hour there: above critical in 0.24 h, above low in 0.72 h.
+  struct Want { const char* what; size_t need; uint32_t threshold; Society::NeedDirection dir; Time at; };
+  const Want wants[] = {
+    {"food low",          0,1,Society::NeedDirection::Down,hm(0,17,36)},
+    {"food critical",     0,2,Society::NeedDirection::Down,hm(0,21,36)},
+    {"sleep low",         1,1,Society::NeedDirection::Down,hm(0,19,42)},
+    {"work low",          3,1,Society::NeedDirection::Down,hm(1,4,24,20)},
+    {"work critical",     3,2,Society::NeedDirection::Down,hm(1,6,48,20)},
+    {"work above critical",3,2,Society::NeedDirection::Up, hm(1,9,3,4)},
+    {"work above low",    3,1,Society::NeedDirection::Up,  hm(1,9,31,52)},
+    };
+  for(const auto& want:wants) {
+    const Society::Event* got = nullptr;
+    for(const auto& e:events)
+      if(e.npc==0 && e.kind==Society::EventKind::NeedThreshold && e.a==want.need && e.b==want.threshold &&
+         e.reason==uint8_t(want.dir) && std::abs(e.time-want.at)<=3600) {
+        got = &e;
+        break;
+        }
+    if(got==nullptr || std::abs(got->time-want.at)>1)
+      fail(std::string("needs rules: DAY's ")+want.what+" at "+(got ? clock(got->time) : std::string("none"))+", expected "+
+           clock(want.at)+" (±1 s)");
+    }
+  // DAY's sleep rises above low again within its first half hour asleep (from 0.288 at 20:48:55 by 1/8 an hour).
+  bool slept = false;
+  for(const auto& e:events)
+    slept = slept || (e.npc==0 && e.kind==Society::EventKind::NeedThreshold && e.a==1 && e.b==1 &&
+                      e.reason==uint8_t(Society::NeedDirection::Up) && e.time>hm(0,20,48,55) && e.time<hm(0,21,20));
+  if(!slept)
+    fail("needs rules: asleep, DAY's sleep must rise above low before 21:20");
+
+  // Without needs: an empty config gives the routine-only journal byte for byte.
+  const auto plain = Society::parseWorld(RulesWorld);
+  const auto empty = Society::parseWorld(RulesWorld,EmptyConfig);
+  sameBytes("needs rules: the journal with \"needs\": [] differs from the one without a config",
+            runJournal(plain,Seed,hm(2,8,0)),runJournal(empty,Seed,hm(2,8,0)));
+
+  // Noise: each person's decay within ±15% of its traits' and guild's, drawn from the seed.
+  const auto noisy = Society::parseWorld(RulesWorld,config("0.15"));
+  auto a = Society::makeSim(noisy,Society::SimConfig{1});
+  auto b = Society::makeSim(noisy,Society::SimConfig{2});
+  bool within = true;
+  for(size_t i=0; i<noisy.npcDecay.size(); ++i) {
+    const double base = noisy.npcDecay[i];
+    within = within && a.s.needDecay[i]>=base*0.85 && a.s.needDecay[i]<=base*1.15;
+    }
+  if(!within || a.s.needDecay==b.s.needDecay)
+    fail("needs rules: the noise must stay within ±15% and differ between seeds 1 and 2");
+
+  // Bad configs are refused with the reason.
+  const std::pair<std::string,std::string> broken[] = {
+    {replaced(config("0"),"\"low\":0.4","\"low\":0.1"),"thresholds"},
+    {replaced(config("0"),"\"fill_hours\":{\"work\":2}","\"fill_hours\":{\"wrk\":2}"),"no need wrk"},
+    {replaced(config("0"),"\"capacity\":2","\"capacity\":2,\"capasity\":2"),"unknown field capasity"},
+    {replaced(config("0"),"\"state\":\"ZS_TALK\",\"fill_hours\":{\"social\":2}","\"state\":\"ZS_EAT\",\"fill_hours\":{\"social\":2}"),
+     "not in the states table"},
+    };
+  for(const auto& [text,reason]:broken) {
+    std::string got = "accepted";
+    try { Society::parseWorld(RulesWorld,text); } catch(const std::exception& e) { got = e.what(); }
+    if(got.find(reason)==std::string::npos || got.rfind("society-config: ",0)!=0)
+      fail("needs rules: a bad config must fail with \""+reason+"\", got: "+got);
+    }
+  std::printf("needs rules: decay by talk and guild weight, fill only standing, awake-only sleep, %zu crossings at their "
+              "moments, \"needs\": [] the routine's journal byte for byte, noise within ±15%% by seed, %zu bad configs "
+              "refused: checked on a world of 4 NPCs\n",sizeof(wants)/sizeof(wants[0]),sizeof(broken)/sizeof(broken[0]));
+  }
+
+// --- Needs on the game's data ------------------------------------------------------------------------------
+
+// What the config gives Khorinis; every state a person does must be in its table.
+void checkConfig(const Society::World& w) {
+  const auto& c = w.config;
+  size_t carded = 0;
+  for(uint32_t i=0; i<w.npcs.size(); ++i)
+    carded += w.npcs.person[i] && w.npcCard[i] ? 1 : 0;
+  std::set<std::string> missing;
+  const auto use = [&](uint16_t state) {
+    if(state!=Society::NoState && w.stateRow[state]==Society::NoState)
+      missing.insert(w.stateNames[state]);
+    };
+  for(uint32_t i=0; i<w.npcs.size(); ++i) {
+    if(!w.npcs.person[i])
+      continue;
+    for(uint32_t k=w.npcs.routineBegin[i]; k<w.npcs.routineBegin[i+1]; ++k) {
+      use(w.routines.state[k]);
+      use(w.followState[w.routines.state[k]]);
+      }
+    use(w.npcs.startState[i]);
+    for(uint32_t k=w.npcs.scheduleBegin[i]; k<w.npcs.scheduleBegin[i+1]; ++k)
+      use(w.schedules.state[k]);
+    }
+  std::map<std::string,size_t> objects, points;
+  for(auto k:w.objectKind)
+    if(k!=Society::NoKind)
+      ++objects[c.objectKinds.id[k]];
+  for(auto k:w.pointKind)
+    if(k!=Society::NoKind)
+      ++points[c.objectKinds.id[k]];
+  std::string kinds;
+  for(size_t k=0; k<c.objectKinds.size(); ++k) {
+    const auto& id = c.objectKinds.id[k];
+    kinds += (kinds.empty() ? "" : ", ")+id+" "+std::to_string(objects[id])+"+"+std::to_string(points[id]);
+    }
+  std::printf("config %s: %zu needs, %zu states, %zu object kinds (objects+freepoints: %s); cards %zu, people with one %zu "
+              "of %zu\n",SOCIETY_CONFIG,c.needs.size(),c.states.size(),c.objectKinds.size(),kinds.c_str(),c.cards,carded,
+              w.people);
+  if(c.needs.size()!=7)
+    fail("the config must have the 7 needs of v1, it has "+std::to_string(c.needs.size()));
+  if(!missing.empty()) {
+    std::string list;
+    for(const auto& m:missing)
+      list += (list.empty() ? "" : ", ")+m;
+    fail("states people do that the config's table lacks: "+list);
+    }
+  }
+
+// The marks without the need columns and the journal without need_threshold: with needs the routine is the same.
+void checkSameRoutine(const Society::World& w, const Day& plain, const Day& needs) {
+  std::vector<Society::Event> routine;
+  for(const auto& e:needs.events)
+    if(e.kind!=Society::EventKind::NeedThreshold)
+      routine.push_back(e);
+  bool same = routine.size()==plain.events.size();
+  for(size_t i=0; same && i<routine.size(); ++i) {
+    const auto& a = routine[i];
+    const auto& b = plain.events[i];
+    same = a.time==b.time && a.npc==b.npc && a.kind==b.kind && a.reason==b.reason && a.entry==b.entry && a.a==b.a &&
+           a.b==b.b && a.c==b.c;
+    }
+  if(!same)
+    fail("with needs the routine's events differ from the run without them");
+  // Drop the last `needs` columns of every row.
+  const size_t n = Society::needCount(w);
+  std::string cut;
+  cut.reserve(plain.marks.size());
+  for(size_t at=0; at<needs.marks.size();) {
+    const size_t end = needs.marks.find('\n',at);
+    size_t stop = end;
+    for(size_t k=0; k<n; ++k)
+      stop = needs.marks.rfind(',',stop-1);
+    cut.append(needs.marks,at,stop-at);
+    cut += '\n';
+    at = end+1;
+    }
+  sameBytes("with needs the marks without their need columns differ from the run without them",plain.marks,cut);
+  if(same && cut==plain.marks)
+    std::printf("needs change nothing in the routine: %zu events of %zu are need_threshold, the rest and the marks without "
+                "the %zu need columns are the routine-only run's\n",needs.events.size()-routine.size(),needs.events.size(),n);
+  }
+
+// The journal is the trajectory: every person's levels are recomputed from its own events, as the document defines
+// them. A segment runs from one rate event (activity_started, travel_started, arrived, teleported) to the next, at
+// needRate of what the person then does; each need_threshold must be at the first whole second its segment leaves the
+// zone, and at every rate event and mark the recomputed zone must be the journal's (none missing). The marks' levels
+// must be the recomputed ones (four decimals) and in 0..1.
+void checkNeeds(const Society::World& w, const Day& day) {
+  const size_t n = Society::needCount(w), npcs = w.npcs.size();
+  struct Seg { double level = 1, rate = 0; Time since = 0; };
+  std::vector<Seg>      seg(npcs*n);
+  std::vector<uint8_t>  zone(npcs*n,0);
+  std::vector<uint16_t> state(npcs,Society::NoState);
+  std::vector<uint8_t>  moving(npcs,0);
+  for(uint32_t i=0; i<npcs; ++i)
+    for(size_t k=0; k<n; ++k)
+      seg[i*n+k] = {w.config.needs.start[k],0,w.startTime()};
+  size_t wrong = 0, missing = 0, outside = 0, levels = 0, rateEvents = 0, thresholds = 0;
+  const auto report = [&](size_t& counter, const std::string& what) {
+    if(++counter<=size_t(PrintLimit))
+      std::printf("  %s\n",what.c_str());
+    };
+  const auto zoneAt = [&](size_t i, size_t k, Time t) {
+    const auto& g = seg[i];
+    return Society::needZone(w,k,Society::needLevelAt(g.level,g.rate,g.since,t));
+    };
+  // Per need: who went low and critical, and the events by threshold and direction.
+  std::vector<std::set<uint32_t>> wentLow(n), wentCritical(n);
+  std::map<std::string,size_t> byKind;
+  // Mark rows: the need columns of person rows, in the marks' order.
+  std::istringstream marks(day.marks);
+  std::string row;
+  std::getline(marks,row);
+  size_t from = 0;
+  for(size_t m=0; m<day.eventsAtMark.size(); ++m) {
+    for(size_t e=from; e<day.eventsAtMark[m]; ++e) {
+      const auto& ev = day.events[e];
+      const uint32_t i = ev.npc;
+      if(!w.npcs.person[i])
+        continue;
+      if(ev.kind==Society::EventKind::NeedThreshold) {
+        ++thresholds;
+        const size_t k = ev.a, x = i*n+k;
+        const bool down = ev.reason==uint8_t(Society::NeedDirection::Down);
+        const uint8_t before = zone[x], after = uint8_t(down ? before+1 : before-1);
+        ++byKind[w.config.needs.id[k]+(ev.b==1 ? " low" : " critical")+(down ? " down" : " up")];
+        if(down)
+          (ev.b==1 ? wentLow : wentCritical)[k].insert(i);
+        // Passed at this second, not before it (two thresholds can go in one second: the zone is then beyond `after`).
+        const auto now  = zoneAt(x,k,ev.time);
+        const bool order = down ? (before<2 && ev.b==after) : (before>0 && ev.b==before);
+        const bool at    = down ? now>=after : now<=after;
+        const bool first = ev.time==seg[x].since || (down ? zoneAt(x,k,ev.time-1)<=before : zoneAt(x,k,ev.time-1)>=before);
+        if(!order || !at || !first)
+          report(wrong,clock(w,ev.time)+" "+w.npcs.key[i]+" "+w.config.needs.id[k]+": the crossing is not where its "+
+                 "segment puts it (zone "+std::to_string(before)+" -> "+std::to_string(after)+")");
+        zone[x] = after;
+        continue;
+        }
+      if(ev.kind!=Society::EventKind::ActivityStarted && ev.kind!=Society::EventKind::TravelStarted &&
+         ev.kind!=Society::EventKind::Arrived && ev.kind!=Society::EventKind::Teleported)
+        continue;
+      ++rateEvents;
+      if(ev.kind==Society::EventKind::ActivityStarted)
+        state[i] = uint16_t(ev.a);
+      if(ev.kind==Society::EventKind::TravelStarted)
+        moving[i] = 1;
+      if(ev.kind==Society::EventKind::Arrived)
+        moving[i] = 0;
+      for(size_t k=0; k<n; ++k) {
+        const size_t x = i*n+k;
+        auto& g = seg[x];
+        if(zoneAt(x,k,ev.time)!=zone[x])
+          report(missing,clock(w,ev.time)+" "+w.npcs.key[i]+" "+w.config.needs.id[k]+": a crossing before this event is "+
+                 "not in the journal");
+        const double l = Society::needLevelAt(g.level,g.rate,g.since,ev.time);
+        if(!(l>=0 && l<=1))
+          report(outside,w.npcs.key[i]+" level "+std::to_string(l));
+        g = {l,Society::needRate(w,k,day.decay[x],state[i],moving[i]!=0),ev.time};
+        }
+      }
+    from = day.eventsAtMark[m];
+    // The mark: every NPC's row, people's need columns against the recomputation.
+    const Time t = w.startTime()+Time(m)*Society::Marks::Period;
+    for(uint32_t i=0; i<npcs; ++i) {
+      std::getline(marks,row);
+      if(!w.npcs.person[i])
+        continue;
+      size_t at = row.size();
+      std::vector<double> got(n);
+      for(size_t k=n; k-- > 0;) {
+        const size_t comma = row.rfind(',',at-1);
+        got[k] = std::strtod(row.c_str()+comma+1,nullptr);
+        at = comma;
+        }
+      for(size_t k=0; k<n; ++k) {
+        const size_t x = i*n+k;
+        const auto& g = seg[x];
+        const double l = Society::needLevelAt(g.level,g.rate,g.since,t);
+        ++levels;
+        if(!(got[k]>=0 && got[k]<=1) || !(l>=0 && l<=1))
+          report(outside,clock(w,t)+" "+w.npcs.key[i]+" "+w.config.needs.id[k]+" level "+std::to_string(got[k]));
+        if(std::abs(got[k]-l)>0.00005+1e-9)
+          report(wrong,clock(w,t)+" "+w.npcs.key[i]+" "+w.config.needs.id[k]+": the mark says "+std::to_string(got[k])+
+                 ", the journal gives "+std::to_string(l));
+        if(zoneAt(x,k,t)!=zone[x])
+          report(missing,clock(w,t)+" "+w.npcs.key[i]+" "+w.config.needs.id[k]+": a crossing before this mark is not in "+
+                 "the journal");
+        }
+      }
+    }
+  std::string kinds;
+  for(const auto& [k,c]:byKind)
+    kinds += (kinds.empty() ? "" : ", ")+k+" "+std::to_string(c);
+  std::string people;
+  for(size_t k=0; k<n; ++k)
+    people += (people.empty() ? "" : "; ")+w.config.needs.id[k]+" "+std::to_string(wentLow[k].size())+"/"+
+              std::to_string(wentCritical[k].size());
+  std::printf("needs recomputed from the journal: %zu need_threshold events (%s), %zu rate events, %zu mark levels; "
+              "people low/critical in the day of %zu: %s; misplaced %zu, missing %zu, out of 0..1 %zu\n",thresholds,
+              kinds.c_str(),rateEvents,levels,w.people,people.c_str(),wrong,missing,outside);
+  if(wrong>0 || missing>0 || outside>0)
+    fail("needs: "+std::to_string(wrong)+" misplaced crossings or levels, "+std::to_string(missing)+" missing crossings, "+
+         std::to_string(outside)+" levels out of 0..1");
+  if(thresholds==0)
+    fail("needs: a day by the routine must cross thresholds");
+  }
+
+// The config file with only its needs emptied ("needs": []) on the game's data: the journal and the marks of the
+// routine-only run byte for byte, though its states, object kinds and traits still name the needs.
+void checkEmptyNeeds(const fs::path& exportPath, const fs::path& root, const Day& plain) {
+  const auto config = root/"empty-config.json";
+  {
+    std::string text = read(SOCIETY_CONFIG);
+    const auto from = text.find("\"needs\":"), to = text.find("\"states\":");
+    need(from!=std::string::npos && to!=std::string::npos && from<to,"the config must list needs before states");
+    text.replace(from,to-from,"\"needs\": [],\n  ");
+    std::ofstream out(config,std::ios::binary);
+    out << text;
+  }
+  const auto w = Society::loadWorld(exportPath,config);
+  Society::SimConfig sc;
+  sc.seed = Seed;
+  auto sim = Society::makeSim(w,sc);
+  Society::DecisionBatch batch;
+  std::string journal = Society::Journal::header(w,Seed), marks = Society::Marks::header(w);
+  const Time start = w.startTime();
+  Society::Journal::append(journal,Society::drainEvents(sim));
+  Society::Marks::append(marks,sim);
+  for(Time t=start+Society::Marks::Period; t<=start+Society::DaySeconds; t+=Society::Marks::Period) {
+    Society::advance(sim,batch,t);
+    Society::Journal::append(journal,Society::drainEvents(sim));
+    Society::Marks::append(marks,sim);
+    }
+  sameBytes("an empty config: the journal differs from the run without a config",plain.journal,journal);
+  sameBytes("an empty config: the marks differ from the run without a config",plain.marks,marks);
+  if(journal==plain.journal && marks==plain.marks)
+    std::printf("\"needs\": [] on the game's data: the journal (%zu bytes) and the marks (%zu bytes) are the routine-only "
+                "run's byte for byte\n",journal.size(),marks.size());
   }
 
 // --- The tool --------------------------------------------------------------------------------------------
 
-void checkTool(const Society::World& w, const fs::path& exportPath, const fs::path& dir) {
+void checkTool(const Society::World& w, const fs::path& exportPath, const fs::path& dir, const fs::path& config = {}) {
   const auto log = dir/"day.log";
   const auto cmd = shellQuote(SOCIETY_DAY)+" --world "+shellQuote(exportPath.string())+" --out "+shellQuote(dir.string())+
-                   " --days "+std::to_string(ToolDays)+" --seed "+std::to_string(Seed)+" >"+shellQuote(log.string())+" 2>&1";
+                   " --days "+std::to_string(ToolDays)+" --seed "+std::to_string(Seed)+
+                   (config.empty() ? std::string() : " --config "+shellQuote(config.string()))+" >"+shellQuote(log.string())+" 2>&1";
   fs::create_directories(dir);
   const int rc = std::system(cmd.c_str());
   std::string text;
@@ -629,7 +1066,7 @@ void checkTool(const Society::World& w, const fs::path& exportPath, const fs::pa
     std::ifstream in(dir/"society-marks.csv",std::ios::binary);
     std::string line;
     std::getline(in,line);
-    if(line+"\n"!=Society::Marks::header())
+    if(line+"\n"!=Society::Marks::header(w))
       fail("gothic-society-day's marks have a wrong header: "+line);
     while(std::getline(in,line))
       ++rows;
@@ -638,9 +1075,9 @@ void checkTool(const Society::World& w, const fs::path& exportPath, const fs::pa
   if(rows!=expected)
     fail("gothic-society-day wrote "+std::to_string(rows)+" mark rows, expected "+std::to_string(expected));
   else
-    std::printf("gothic-society-day: %lu days, journal %zu bytes (%zu events), marks %zu rows (%zu NPCs x %zu marks)\n",
-                ToolDays,journal.size(),(journal.size()-header.size())/Society::Journal::RecordBytes,rows,w.npcs.size(),
-                rows/w.npcs.size());
+    std::printf("gothic-society-day%s: %lu days, journal %zu bytes (%zu events), marks %zu rows (%zu NPCs x %zu marks)\n",
+                config.empty() ? "" : " --config",ToolDays,journal.size(),
+                (journal.size()-header.size())/Society::Journal::RecordBytes,rows,w.npcs.size(),rows/w.npcs.size());
   }
 
 }
@@ -655,6 +1092,7 @@ int main() {
 
     checkTravelTime();
     checkRules();
+    checkNeedRules(root);
     const auto exportPath = root/"world.json";
     const auto counts = exportWorld(gothic,exportPath,root/"export.log");
     const auto from = Clock::now();
@@ -664,8 +1102,21 @@ int main() {
     const auto day = dayWithMarks(world);
     checkRepeat(world,day);
     checkSnapshot(world,day);
-    checkSpeed(world);
+    checkSpeed(world,DayLimit);
     checkTool(world,exportPath,root/"day");
+
+    // Needs: the same day with the config file.
+    checkEmptyNeeds(exportPath,root,day);
+    const auto needsWorld = Society::loadWorld(exportPath,SOCIETY_CONFIG);
+    checkConfig(needsWorld);
+    std::printf("with needs:\n");
+    const auto needsDay = dayWithMarks(needsWorld);
+    checkSameRoutine(needsWorld,day,needsDay);
+    checkNeeds(needsWorld,needsDay);
+    checkRepeat(needsWorld,needsDay);
+    checkSnapshot(needsWorld,needsDay);
+    checkSpeed(needsWorld,NeedsDayLimit);
+    checkTool(needsWorld,exportPath,root/"needs",SOCIETY_CONFIG);
     if(failures>0) {
       std::fprintf(stderr,"FAIL: society core contract: %d checks failed\n",failures);
       return EXIT_FAILURE;

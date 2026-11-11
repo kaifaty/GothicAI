@@ -4,9 +4,7 @@
 
 #include "asset/material.h"
 #include "asset/worldtypes.h"
-#include <zenkit/DaedalusScript.hh>
-#include <zenkit/addon/daedalus.hh>
-#include "game/definitions/definitiontypes.h"
+#include "records/definitions.h"
 
 class Material final {
   public:
@@ -59,6 +57,9 @@ class Material final {
     bool hasMaterialMaps()       const { return materialMaps; }
     bool hasFrameAnimation()     const { return !frames.empty() && texAniFPSInv!=0;    }
     bool hasUvAnimation()        const { return texAniMapDirPeriod!=Tempest::Point(0); }
+    // the weight of the TAA reactive mask of a translucent mesh (graphics plan 1v): 1 when its texture changes by
+    // itself (frames or scrolling UV: waterfalls, a barrier, a mesh flame), 0 for still glass and cobwebs
+    float taaReactive()          const { return hasFrameAnimation() || hasUvAnimation() ? 1.f : 0.f; }
     bool isTesselated()          const { return isTesselated(alpha);                   }
     bool isForwardShading()      const { return isForwardShading(alpha);               }
     bool isSceneInfoRequired()   const { return isSceneInfoRequired(alpha);            }

@@ -47,7 +47,7 @@ static constexpr uint64_t PipelineCacheSaveDelay = 20000;
 MainWindow::MainWindow(Device& device)
   : Window(TestBench::isActive() ?
       (std::getenv("OPENGOTHIC_BENCH_VISIBLE")!=nullptr && std::strcmp(std::getenv("OPENGOTHIC_BENCH_VISIBLE"),"1")==0 ? Normal : Minimized) : Maximized),
-    device(device),swapchain(device,hwnd()),
+    device(device),swapchain(SystemApi::isOffscreen() ? Swapchain() : Swapchain(device,hwnd())),
     atlas(device),rootMenu(keycodec),inventory(keycodec),
     dialogs(inventory),document(keycodec),
     console(*this),
@@ -55,12 +55,25 @@ MainWindow::MainWindow(Device& device)
     mobileUi(player),
 #endif
     player(dialogs,inventory) {
-  Gothic::inst().onSettingsChanged.bind(this,&MainWindow::onSettings);
+  Settings::inst().onSettingsChanged.bind(this,&MainWindow::onSettings);
   onSettings();
 
-  if(Gothic::inst().version().game==2)
-    setWindowTitle("Gothic II"); else
-    setWindowTitle("Gothic");
+  if(SystemApi::isOffscreen()) {
+    offscreen = device.attachment(TextureFormat::RGBA8,uint32_t(w()),uint32_t(h()));
+    // 200 by default: a window on Ryzen's 199.92 Hz screen with FIFO, one frame per game step
+    uint64_t fps = 200;
+    if(const char* v = std::getenv("TEMPEST_OFFSCREEN_FPS")) {
+      char* end = nullptr;
+      const auto n = std::strtoull(v,&end,10);
+      if(end!=v && *end=='\0')
+        fps = uint64_t(n); else
+        Log::e("TEMPEST_OFFSCREEN_FPS is not a number: ",v,", using ",fps);
+      }
+    offscreenFrameInv = fps>0 ? 1000u/fps : 0;
+    Log::i("[offscreen] frame ",w(),"x",h(),", limit ",fps," fps (",offscreenFrameInv," ms)");
+    }
+
+  setWindowTitle("Gothic II");
 
   if(!CommandLine::inst().isWindowMode()) {
     setFullscreen(true);
@@ -229,13 +242,7 @@ void MainWindow::paintEvent(PaintEvent& event) {
                    0,0,back->w(),back->h());
         }
       if(loadBox!=nullptr && !loadBox->isEmpty()) {
-        if(Gothic::inst().version().game==1) {
-          int lw = int(w()*0.5);
-          int lh = int(h()*0.05);
-          drawLoading(p,(w()-lw)/2, int(h()*0.75), lw, lh);
-          } else {
-          drawLoading(p,int(w()*0.92)-loadBox->w(), int(h()*0.12), loadBox->w(),loadBox->h());
-          }
+        drawLoading(p,int(w()*0.92)-loadBox->w(), int(h()*0.12), loadBox->w(),loadBox->h());
         }
       }
     } else {
@@ -363,6 +370,12 @@ void MainWindow::drawChunks(Painter& p, const World& world, const Camera& camera
     std::snprintf(text,sizeof(text),"Near (ring 1) on Tail: %llu textures  %.6f texture-seconds",
                   static_cast<unsigned long long>(textures.nearTailCount),textures.nearTailSeconds);
     fnt.drawText(p,x,top+5*line,text);
+    const auto& level=textures.levelBytes;
+    std::snprintf(text,sizeof(text),"Levels MiB %.1f/%.1f/%.1f/%.1f/%.1f/%.1f  shortfall %llu  %.3f texture-seconds",
+                  double(level[0])/1048576.0,double(level[1])/1048576.0,double(level[2])/1048576.0,
+                  double(level[3])/1048576.0,double(level[4])/1048576.0,double(level[5])/1048576.0,
+                  static_cast<unsigned long long>(textures.shortfallCount),textures.shortfallSeconds);
+    fnt.drawText(p,x,top+6*line,text);
     };
   auto drawNpcTiers = [&](int top) {
     const auto& tiers = world.npcSimTierStats();
@@ -378,7 +391,7 @@ void MainWindow::drawChunks(Painter& p, const World& world, const Camera& camera
   if(chunks==nullptr) {
     fnt.drawText(p,x,y,"Chunks: streaming manager disabled");
     drawTextures(y+line);
-    drawNpcTiers(y+7*line);
+    drawNpcTiers(y+8*line);
     return;
     }
   auto hero = world.player();
@@ -391,10 +404,10 @@ void MainWindow::drawChunks(Painter& p, const World& world, const Camera& camera
   const int64_t radius = std::max<int64_t>({8,std::abs(int64_t(cameraId.x)-center.x)+1,
                                             std::abs(int64_t(cameraId.z)-center.z)+1});
   const int mapSize = std::min(240,std::min(w(),h())/2);
-  const int mapY = y+15*line;
+  const int mapY = y+16*line;
   const float cell = float(mapSize)/float(radius*2+1);
   p.setBrush(Color(0.f,0.f,0.f,0.8f));
-  p.drawRect(x-5,y-5,std::max(660,mapSize+10),mapSize+17*line+10);
+  p.drawRect(x-5,y-5,std::max(660,mapSize+10),mapSize+18*line+10);
 
   const auto& stats = chunks->stats();
   char text[160];
@@ -420,7 +433,7 @@ void MainWindow::drawChunks(Painter& p, const World& world, const Camera& camera
   std::snprintf(text,sizeof(text),"Vobs Near missing: %zu  %.6f visual-seconds",stats.vobNearMissing,stats.vobNearMissingSeconds);
   fnt.drawText(p,x,y+6*line,text);
   drawTextures(y+7*line);
-  drawNpcTiers(y+13*line);
+  drawNpcTiers(y+14*line);
 
   const auto& entries = chunks->table().entries;
   for(size_t i=0;i<entries.size();++i) {
@@ -455,11 +468,13 @@ void MainWindow::drawChunks(Painter& p, const World& world, const Camera& camera
 void MainWindow::resizeEvent(SizeEvent&) {
   for(auto& i:fence)
     i.wait();
-  swapchain.reset();
+  if(SystemApi::isOffscreen())
+    offscreen = device.attachment(TextureFormat::RGBA8,uint32_t(w()),uint32_t(h())); else
+    swapchain.reset();
   if(TestBench::isActive())
-    Log::i("[bench] drawable ",swapchain.w(),"x",swapchain.h());
+    Log::i("[bench] drawable ",frameW(),"x",frameH());
   if(auto camera = Gothic::inst().camera())
-    camera->setViewport(swapchain.w(),swapchain.h());
+    camera->setViewport(frameW(),frameH());
 
   if(SystemApi::isFullscreen(hwnd())) {
     setCursorPosition(Point(w()/2,h()/2));
@@ -958,11 +973,6 @@ void MainWindow::drawProgress(Painter &p, int x, int y, int w, int h, float v) {
   int paddL = int((float(w)*75.f)/float(loadBox->w()));
   int paddT = int((float(h)*10.f)/float(loadBox->h()));
 
-  if(Gothic::inst().version().game==1) {
-    paddL = int((float(w)*30.f)/float(loadBox->w()));
-    paddT = int((float(h)* 5.f)/float(loadBox->h()));
-    }
-
   p.setBrush(*loadVal);
   p.drawRect(x+paddL,y+paddT,int(float(w-2*paddL)*v),h-2*paddT,
              0,0,loadVal->w(),loadVal->h());
@@ -1262,7 +1272,6 @@ Camera::Mode MainWindow::solveCameraMode() const {
       return Camera::Swim;
     if(pl->isFallingDeep())
       return Camera::Fall;
-    bool g2 = Gothic::inst().version().game==2;
     switch(pl->weaponState()){
       case WeaponState::Fist:
       case WeaponState::W1H:
@@ -1270,9 +1279,9 @@ Camera::Mode MainWindow::solveCameraMode() const {
         return Camera::Melee;
       case WeaponState::Bow:
       case WeaponState::CBow:
-        return g2 ? Camera::Ranged : Camera::Normal;
+        return Camera::Ranged;
       case WeaponState::Mage:
-        return g2 ? Camera::Ranged : Camera::Melee;
+        return Camera::Ranged;
       case WeaponState::NoWeapon:
         return Camera::Normal;
       }
@@ -1321,7 +1330,7 @@ Attachment MainWindow::screenshotWithUi() {
   device.waitIdle();
   dispatchPaintEvent(uiLayer,atlas);
   uiMesh[cmdId].update(device,uiLayer);
-  auto img = device.attachment(TextureFormat::RGBA8,swapchain.w(),swapchain.h());
+  auto img = device.attachment(TextureFormat::RGBA8,frameW(),frameH());
   CommandBuffer cmd;
   {
   auto enc = cmd.startEncoding(device);
@@ -1401,7 +1410,7 @@ void MainWindow::onStartLoading() {
 void MainWindow::onWorldLoaded() {
   dMouse = Point();
   if(TestBench::isActive())
-    Log::i("[bench] drawable ",swapchain.w(),"x",swapchain.h());
+    Log::i("[bench] drawable ",frameW(),"x",frameH());
   if(TestBench::isActive())
     if(auto* world = Gothic::inst().world())
       Log::i("[bench] world ready: ",world->name());
@@ -1481,6 +1490,20 @@ void MainWindow::setGameImpl(std::unique_ptr<GameSession> &&w) {
 void MainWindow::clearInput() {
   player.clearInput();
   std::memset(mouseP,0,sizeof(mouseP));
+  }
+
+Attachment& MainWindow::frameImage() {
+  if(SystemApi::isOffscreen())
+    return offscreen;
+  return swapchain[swapchain.currentImage()];
+  }
+
+uint32_t MainWindow::frameW() const {
+  return SystemApi::isOffscreen() ? uint32_t(offscreen.w()) : swapchain.w();
+  }
+
+uint32_t MainWindow::frameH() const {
+  return SystemApi::isOffscreen() ? uint32_t(offscreen.h()) : swapchain.h();
   }
 
 void MainWindow::setFullscreen(bool fs) {
@@ -1587,12 +1610,14 @@ void MainWindow::render(){
     {
     FrameProfile::Scope timing(FrameProfile::Zone::Encode);
     auto enc = cmd.startEncoding(device);
-    renderer.draw(swapchain[swapchain.currentImage()],enc,cmdId,uiMesh[cmdId],numMesh[cmdId],inventory,video);
+    renderer.draw(frameImage(),enc,cmdId,uiMesh[cmdId],numMesh[cmdId],inventory,video);
     }
     { FrameProfile::Scope timing(FrameProfile::Zone::Submit); sync = device.submit(cmd); }
     profile.flag(FrameProfile::Flag::SubmitCompleted);
-    { FrameProfile::Scope timing(FrameProfile::Zone::Present); device.present(swapchain); }
-    profile.flag(FrameProfile::Flag::PresentCompleted);
+    if(!SystemApi::isOffscreen()) {
+      { FrameProfile::Scope timing(FrameProfile::Zone::Present); device.present(swapchain); }
+      profile.flag(FrameProfile::Flag::PresentCompleted);
+      }
     if(LoadProbe::enabled() && Gothic::inst().isInGame() && Gothic::inst().checkLoading()==Gothic::LoadState::Idle)
       LoadProbe::presented();
     if(!pipelineCacheSaved && Gothic::inst().isInGame() && Gothic::inst().checkLoading()==Gothic::LoadState::Idle) {
@@ -1610,6 +1635,8 @@ void MainWindow::render(){
 
     auto t = Application::tickCount();
     auto frameTime = maxFpsInv;
+    if(SystemApi::isOffscreen())
+      frameTime = std::max(frameTime,offscreenFrameInv); // no present waits for the screen: keep a window's pace
     if(!Gothic::inst().isInGame() && !video.isActive())
       frameTime = std::max<uint64_t>(frameTime,16);
     if(t-time<frameTime) {
@@ -1630,7 +1657,8 @@ void MainWindow::render(){
     profile.outcome(FrameProfile::Outcome::Error);
     Log::e("swapchain is outdated - reset renderer");
     device.waitIdle();
-    swapchain.reset();
+    if(!SystemApi::isOffscreen())
+      swapchain.reset();
     }
   }
 

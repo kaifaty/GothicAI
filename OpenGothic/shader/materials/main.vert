@@ -28,18 +28,27 @@ layout(push_constant, std430) uniform Push {
   } push;
 #endif
 
+#if defined(VIRTUAL_SHADOW)
+// the four planes of the page's rect; objects have a fifth on a lamp's faces: the fixture plane (processVertexVsm)
+#if defined(LVL_OBJECT)
+#define VSM_CLIP_COUNT 5
+#else
+#define VSM_CLIP_COUNT 4
+#endif
+#endif
+
 #if defined(GL_VERTEX_SHADER)
 out gl_PerVertex {
   vec4  gl_Position;
 #if defined(VIRTUAL_SHADOW)
-  float gl_ClipDistance[4];
+  float gl_ClipDistance[VSM_CLIP_COUNT];
 #endif
   };
 #else
 out gl_MeshPerVertexEXT {
   vec4  gl_Position;
 #if defined(VIRTUAL_SHADOW)
-  float gl_ClipDistance[4];
+  float gl_ClipDistance[VSM_CLIP_COUNT];
 #endif
   } gl_MeshVerticesEXT[];
 #endif
@@ -60,6 +69,11 @@ layout(location = 3) out flat uint vsmMipIdOut[];
 
 #if defined(VIRTUAL_SHADOW)
 uint shadowPageId = 0;
+#endif
+
+#if defined(VIRTUAL_SHADOW) && !defined(GL_VERTEX_SHADER)
+// the meshlet's vertices in clip space (x, y, w): the facing of its triangles (meshShader)
+shared vec3 vsmClip[MaxVert];
 #endif
 
 #if defined(VIRTUAL_SHADOW)
@@ -117,21 +131,40 @@ vec4 processVertexVsm(out Varyings var, const Vertex vert, const uint bucketId, 
   const vec3 wpos = processVertexCommon(var, vert, bucketId, instanceId, vboOffset);
   const uint data = vsm.pageList[shadowPageId];
 
-  vec4 pos4;
+  vec4  pos4;
+  float fixture = 1.0;
   if(vsmPageIsOmni(data)) {
     const uvec2       page = unpackLightId(data);
     const LightSource lx   = lights[page.x];
     const vec3        pos  = vsmMapDirToFace((wpos - lx.pos)/lx.range, page.y);
 
     pos4 = vsmApplyProjective(pos);
+    // a lamp's own fixture (a brazier's basket, a lantern's frame, a candle holder) casts no shadow of its light:
+    // an object's part nearer than scene.vsmLampNear to the light along the face's axis is clipped away here, so the
+    // face keeps what stands behind it. Left out at the lookup instead, it took the wall behind it out of the map
+    // too, and the light passed the planks of a hut (reports/render-features/2026-11-10-lamp-wall-leak). The world
+    // mesh is never a fixture: it keeps the projection's near plane alone
+    fixture = pos.z - scene.vsmLampNear/lx.range;
     } else {
     pos4 = scene.viewProject*vec4(wpos,1.0);
     }
+
+  float clip[4];
+  pos4 = mapViewport(pos4, clip);
 #if defined(GL_VERTEX_SHADER)
-  return mapViewport(pos4, gl_ClipDistance);
-#else
-  return mapViewport(pos4, gl_MeshVerticesEXT[laneID].gl_ClipDistance);
+  [[unroll]] for(int i=0; i<4; ++i)
+    gl_ClipDistance[i] = clip[i];
+#if VSM_CLIP_COUNT>4
+  gl_ClipDistance[4] = fixture;
 #endif
+#else
+  [[unroll]] for(int i=0; i<4; ++i)
+    gl_MeshVerticesEXT[laneID].gl_ClipDistance[i] = clip[i];
+#if VSM_CLIP_COUNT>4
+  gl_MeshVerticesEXT[laneID].gl_ClipDistance[4] = fixture;
+#endif
+#endif
+  return pos4;
   }
 #endif
 
@@ -245,11 +278,17 @@ void meshShader(const uvec4 task) {
 #endif
 
   Varyings var;
-  if(laneID<primCount)
-    gl_PrimitiveTriangleIndicesEXT[laneID] = processPrimitive(meshletId, bucketId, laneID);
+  uvec3 prim = uvec3(0);
+  if(laneID<primCount) {
+    prim = processPrimitive(meshletId, bucketId, laneID);
+    gl_PrimitiveTriangleIndicesEXT[laneID] = prim;
+    }
   if(laneID<vertCount) {
     vec4 pos = processVertex(var, instanceId, meshletId, bucketId, laneID);
     gl_MeshVerticesEXT[laneID].gl_Position = pos;
+#if defined(VIRTUAL_SHADOW)
+    vsmClip[laneID] = pos.xyw;
+#endif
 
     /*
         Workaround the AMD driver issue where assigning to a vec3 output results in a driver crash.
@@ -274,7 +313,34 @@ void meshShader(const uvec4 task) {
 #if defined(MAT_NORMAL)
     shOut[laneID].normal.xyz = var.normal; // normal is vec3, applying the workaround
 #endif
+#if defined(MAT_MOTION)
+    shOut[laneID].prevStatic.xyz = var.prevStatic; // vec3, the same workaround
+    shOut[laneID].prevDelta.xyz  = var.prevDelta;
+#endif
     }
+
+#if defined(VIRTUAL_SHADOW)
+  // The pipeline draws both sides here (Shaders::materialPipeline); the culling it did is done per primitive. A sun
+  // page keeps the side to the sun, as the rest of the frame does. A lamp's cube face is mirrored against the camera,
+  // so the pipeline's culling kept only the side away from the light, and a one-sided surface lit by the lamp (a floor
+  // without an underside, a wall of one layer) was missing from it: the light passed it. A lamp's face keeps both sides
+  // of the world mesh (scene.vsmLampSides 2) and of objects too (3, the default): a carpet lit by a hearth, a fireplace's
+  // hood, a net on a wall are one-sided as well (reports/render-features/2026-11-10-lamp-one-sided,
+  // reports/render-features/2026-11-11-lamp-objects-two-sided). One page per workgroup: the branch is uniform.
+  barrier();
+  if(laneID<primCount) {
+    const bool omni = vsmPageIsOmni(vsm.pageList[shadowPageId]);
+    // the sign of the homogeneous determinant is the facing as rasterized, also for a triangle cut by w=0; Tempest's
+    // front face is clockwise, CullMode::Front culled a positive one
+    const float det = dot(vsmClip[prim.x], cross(vsmClip[prim.y], vsmClip[prim.z]));
+#if defined(LVL_OBJECT)
+    const bool twoSided = scene.vsmLampSides>=3u;
+#else
+    const bool twoSided = scene.vsmLampSides>=2u;
+#endif
+    gl_MeshPrimitivesEXT[laneID].gl_CullPrimitiveEXT = det>0.0 && (!omni || !twoSided);
+    }
+#endif
   }
 #endif
 

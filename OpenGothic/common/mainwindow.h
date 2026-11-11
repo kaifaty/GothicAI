@@ -104,6 +104,10 @@ class MainWindow : public Tempest::Window {
     void render() override;
     // the test bench: the frame as the player sees it, the interface on top
     Tempest::Attachment screenshotWithUi();
+    // the image render() draws the frame into: the swapchain's, or with TEMPEST_OFFSCREEN=1 our own
+    Tempest::Attachment& frameImage();
+    uint32_t             frameW() const;
+    uint32_t             frameH() const;
 
     uint64_t tick();
     void     tickCamera(uint64_t dt);
@@ -122,6 +126,8 @@ class MainWindow : public Tempest::Window {
 
     Tempest::Device&      device;
     Tempest::Swapchain    swapchain;
+    // TEMPEST_OFFSCREEN=1 (Linux): no swapchain, the frame goes into this image of the window's size
+    Tempest::Attachment   offscreen;
     Tempest::TextureAtlas atlas;
     Shaders               shaders;
     Renderer              renderer;
@@ -186,6 +192,8 @@ class MainWindow : public Tempest::Window {
     Fps           fps;
     BenchmarkData benchmark;
     uint64_t      maxFpsInv = 0;
+    // TEMPEST_OFFSCREEN_FPS: nothing presents offscreen, so the limiter holds a frame this long (ms, 0: no limit)
+    uint64_t      offscreenFrameInv = 0;
     // One early pipeline-cache write after the first seconds of play, so a crash still leaves a cache.
     uint64_t      pipelineCacheSaveAt = 0;
     bool          pipelineCacheSaved  = false;

@@ -17,7 +17,6 @@ class SoundFx;
 class ParticleFx;
 class VisualFx;
 class WorldStateStorage;
-class VersionInfo;
 class GthFont;
 
 class GameSession final {
@@ -36,8 +35,6 @@ class GameSession final {
 
     void         changeWorld(std::string_view world, std::string_view wayPoint);
     void         exitSession();
-
-    auto         version() const -> const VersionInfo&;
 
     const World* world() const { return wrld.get(); }
     World*       world()       { return wrld.get(); }

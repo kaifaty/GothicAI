@@ -60,5 +60,5 @@ above or below in melee.
 
 The project is not playable yet: it runs from source on macOS and needs your own copy of Gothic II: Night
 of the Raven. The engine is [OpenGothic](https://github.com/Try/OpenGothic); the tools that filmed this
-are in the repository: [`shorts/compare`](https://github.com/kaifaty/GothicAI/tree/main/shorts/compare)
+are in the repository: [`shorts/compare`](https://github.com/kaifaty/GothicAI/tree/0061fde837235378936b735d9669f20bfeef56f8/shorts/compare)
 and the [test bench](https://github.com/kaifaty/GothicAI/tree/main/scripts/bench).

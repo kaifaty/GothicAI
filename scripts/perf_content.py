@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import shutil
 import statistics
 import subprocess
 import sys
@@ -21,6 +22,7 @@ PLACES = ("harbour", "harbour-night", "market", "forest", "interior", "combat")
 ORDER = ("A", "B", "B", "A")
 NOISE_PCT = 2.0
 THRESHOLD_PCT = 5.0
+SHARED = Path("/mnt/shared/gothic-ai")
 
 
 def content_name(value):
@@ -246,35 +248,40 @@ def launch(args):
         if actual != digest or tree_sha(staging / name) != digest:
             raise ValueError(f"SHA-256 verification failed: {name}")
         print(f"perf-content: SHA-256 verified {name}: {digest}", flush=True)
-    # Copy the selected prepared base into this task. Never import/publish/prune shared bases.
-    # A caller's OPENGOTHIC_BASE_FINGERPRINT picks the base on Ryzen as it does for perf.sh and the captures
-    # (Ryzen's game-base.json may name a base of another importer format than this branch's engine).
     pinned = [f"OPENGOTHIC_BASE_FINGERPRINT={os.environ['OPENGOTHIC_BASE_FINGERPRINT']}"] \
         if os.environ.get("OPENGOTHIC_BASE_FINGERPRINT") else []
-    remote("env", *pinned, "python3", source + "/scripts/perf_content.py", "__base", task)
     commit = subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True).strip()
     dirty = len(subprocess.check_output(["git", "-C", str(ROOT), "status", "--porcelain"], text=True).splitlines())
-    metadata = {"a": args.a, "b": args.b, "places": args.places, "order": list(ORDER),
-                "git_commit": commit, "dirty_files": dirty, "content_sha256": sha, "archive": archive,
-                "settings": {key: os.environ.get(key, default) for key, default in
-                             (("PERF_WINDOW", "1728x1117"), ("PERF_VID_RES", "0"),
-                              ("PERF_ARGS", ""), ("PERF_ENV", ""), ("PERF_INI", ""))}}
-    (out / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
-    sync(out / "metadata.json", remote_out + "/")
+    settings = {key: os.environ.get(key, default) for key, default in
+                (("PERF_WINDOW", "1728x1117"), ("PERF_VID_RES", "0"),
+                 ("PERF_ARGS", ""), ("PERF_ENV", ""), ("PERF_INI", ""))}
     environment = ["PERF_REMOTE=1", "OPENGOTHIC_BASE=", f"OPENGOTHIC_BASE_CACHE={task}/base-cache",
                    f"OPENGOTHIC_BASE_STORE={task}/base-store", "OPENGOTHIC_VIDEOS_FINGERPRINT=",
-                   f"PERF_COMMIT={commit}", f"PERF_DIRTY={dirty}", *pinned]
-    environment += [f"{key}={value}" for key, value in metadata["settings"].items()]
+                   f"PERF_COMMIT={commit}", f"PERF_DIRTY={dirty}"]
+    environment += [f"{key}={value}" for key, value in settings.items()]
     queue = [str(ROOT / "scripts/gq"), "--host", host, "run"]
     jobs = os.environ.get("RYZEN_JOBS", "8")
     subprocess.run([*queue, "--class", "quick", "--threads", jobs, "--mem", "12G", "--max", "30m",
                     "--wait-max", os.environ.get("RYZEN_LOCK_WAIT", "3600"), "--name", "build content perf stand",
                     "--", "env", *environment, f"RYZEN_JOBS={jobs}", "bash", source + "/scripts/perf.sh",
                     "__build", task + "/build-logs"], check=True)
+    # Only now does the stand's content-convert exist to report this engine's importer format: Ryzen's
+    # game-base.json may name a base of another format. A caller's OPENGOTHIC_BASE_FINGERPRINT wins.
+    base = remote("env", *pinned, "python3", source + "/scripts/perf_content.py", "__base", task,
+                  stdout=subprocess.PIPE, text=True).stdout.strip()
+    if not re.fullmatch("[0-9a-f]{64}", base):
+        raise ValueError(f"invalid base fingerprint from Ryzen: {base!r}")
+    print(f"perf-content: base {base}", flush=True)
+    metadata = {"a": args.a, "b": args.b, "places": args.places, "order": list(ORDER),
+                "git_commit": commit, "dirty_files": dirty, "content_sha256": sha, "archive": archive,
+                "base": base, "settings": settings}
+    (out / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
+    sync(out / "metadata.json", remote_out + "/")
     result = subprocess.run([*queue, "--class", "quiet", "--threads", "4", "--mem", "5G", "--gpu-mem", "4G",
                              "--display", "--max", f"{5 + len(args.places) * 20}m", "--wait-max",
                              os.environ.get("RYZEN_LOCK_WAIT", "3600"), "--name", "content perf ABBA",
-                             "--archive", remote_out, "--", "env", *environment, "python3",
+                             "--archive", remote_out, "--", "env", *environment,
+                             f"OPENGOTHIC_BASE_FINGERPRINT={base}", "python3",
                              source + "/scripts/perf_content.py", "__run", remote_out, task + "/content",
                              args.a, args.b, *args.places, "--noise-pct", str(args.noise_pct),
                              "--threshold-pct", str(args.threshold_pct)])
@@ -287,18 +294,33 @@ def launch(args):
     return result.returncode
 
 
-def prepare_base(task):
+def prepare_base(task, converter=None):
+    """Copy the ready base of the built stand engine's importer format into this task's cache.
+
+    Reads the shared Ryzen cache and store, never imports, publishes or prunes them."""
     from ryzen_game import game_environment
-    environment = game_environment()
-    fingerprint = environment["OPENGOTHIC_BASE_FINGERPRINT"]
-    source = Path.home() / ".cache/gothic-ai/base" / fingerprint
-    if not (source / "base.json").is_file():
-        raise ValueError(f"prepared Ryzen base missing: {source}")
-    cache = Path(task) / "base-cache"
-    cache.mkdir(parents=True, exist_ok=True)
-    destination = cache / fingerprint
+    converter = Path(converter or ROOT / "OpenGothic/build-perf/opengothic/content-convert")
+    if not os.access(converter, os.X_OK):
+        raise ValueError(f"missing {converter}; build the stand first")
+    cache = Path.home() / ".cache/gothic-ai/base"
+    store = SHARED if SHARED.is_dir() else None
+    environ = {key: value for key, value in os.environ.items() if key != "OPENGOTHIC_BASE"}
+    # Look in the shared cache and store, not the task's; this stand runs without videos.
+    environ.update(OPENGOTHIC_BASE_CACHE=str(cache), OPENGOTHIC_BASE_STORE=str(store or ""),
+                   OPENGOTHIC_VIDEOS_FINGERPRINT="")
+    fingerprint = game_environment(environ=environ, converter=converter)["OPENGOTHIC_BASE_FINGERPRINT"]
+    roots = [cache] + ([store / "base"] if store else [])
+    source = next((root / fingerprint for root in roots if (root / fingerprint / "base.json").is_file()), None)
+    if source is None:
+        raise ValueError(f"prepared Ryzen base {fingerprint} missing in " + " or ".join(map(str, roots)))
+    destination = Path(task) / "base-cache" / fingerprint
     if not destination.exists():
-        subprocess.run(["cp", "-a", "--reflink=auto", str(source), str(destination)], check=True)
+        # The engine cleans up stale <fingerprint>.tmp-<digits> copies in this cache.
+        partial = destination.with_name(f"{fingerprint}.tmp-{os.getpid()}")
+        shutil.rmtree(partial, ignore_errors=True)
+        shutil.copytree(source, partial, symlinks=True)
+        partial.rename(destination)
+    return fingerprint
 
 
 def main(argv=None):
@@ -308,7 +330,7 @@ def main(argv=None):
             print(tree_sha(argv[1]))
             return 0
         if argv and argv[0] == "__base":
-            prepare_base(argv[1])
+            print(prepare_base(argv[1]))
             return 0
         if argv and argv[0] == "__run":
             run_attempts(argv[1], argv[2], parse_args(argv[3:]))

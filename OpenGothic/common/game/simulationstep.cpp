@@ -88,7 +88,7 @@ void SimulationStep::observerCamera(uint64_t dt) {
             case WeaponState::W2H: mode = Camera::Melee; break;
             case WeaponState::Bow:
             case WeaponState::CBow:
-              mode = Gothic::inst().version().game==2 ? Camera::Ranged : Camera::Normal;
+              mode = Camera::Ranged;
               break;
             case WeaponState::Mage: mode = Camera::Melee; break;
             case WeaponState::NoWeapon: break;

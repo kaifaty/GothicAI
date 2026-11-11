@@ -267,5 +267,37 @@ int main() {
     s = fight; s.activity = Activity::Other;
     require(refusal(s)==Refusal::Busy,"not from another state");
   }
+
+  // The guard against a melee blow (Npc::meleeGuard asks it for the damage and both views of the melee shadow).
+  {
+    struct Case final {
+      const char*    name;
+      GuardSituation situation;
+      Guard          expected;
+      };
+    const Case cases[] = {
+      {"open",                                 {},                                                 {}},
+      {"a jump back evades",                   {.jumpBack=true},                                   {.jumpedBack=true}},
+      {"a parade blocks",                      {.parade=true},                                     {.blocked=true}},
+      {"a parade's jump back pose does both",  {.jumpBack=true,.parade=true},                      {.jumpedBack=true,.blocked=true}},
+      {"no block against bare claws",          {.jumpBack=true,.parade=true,.unblockable=true},    {.jumpedBack=true}},
+      {"stunned: no parade",                   {.stunned=true,.parade=true},                       {}},
+      {"stunned: no jump back",                {.stunned=true,.jumpBack=true},                     {}},
+      {"knocked down: no parade",              {.knockedDown=true,.parade=true},                   {}},
+      {"knocked down: no jump back",           {.knockedDown=true,.jumpBack=true},                 {}},
+      {"a dodge's window passes",              {.dodging=true,.dodgeWindow=true,.jumpBack=true,.parade=true},
+                                                                                                   {.dodged=true}},
+      {"out of its window a dodge is open",    {.dodging=true,.jumpBack=true,.parade=true},        {}},
+      {"stun does not close a dodge's window", {.dodging=true,.dodgeWindow=true,.stunned=true},    {.dodged=true}},
+      };
+    for(const auto& c:cases) {
+      const auto g = guard(c.situation);
+      if(g.dodged!=c.expected.dodged || g.jumpedBack!=c.expected.jumpedBack || g.blocked!=c.expected.blocked) {
+        std::fprintf(stderr,"FAIL: guard, %s: dodged %d jumped back %d blocked %d\n",c.name,
+                     int(g.dodged),int(g.jumpedBack),int(g.blocked));
+        std::exit(EXIT_FAILURE);
+        }
+      }
+  }
   std::puts("melee dodge contract passed");
   }

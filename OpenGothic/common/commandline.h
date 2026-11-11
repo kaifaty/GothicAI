@@ -9,7 +9,6 @@
 
 #include "game/constants.h"
 
-class VersionInfo;
 class GothicNotFoundException : std::logic_error {
   using logic_error::logic_error;
   };
@@ -37,16 +36,14 @@ class CommandLine {
     bool                isMeshShading()    const { return isMeshSh;     }
     bool                isBindless()       const { return isBindlessSh; }
     bool                isVirtualShadow()  const { return isVsm;        }
-    bool                isSoftwareShadow() const { return isRtSm;       }
     bool                doStartMenu()      const { return !noMenu;      }
     bool                doIntro()          const { return !noIntro;     }
     bool                doHeroHead()       const { return !noHeroHead;  }
+    bool                doRenderRig()      const { return !noRenderRig; }
     Benchmark           isBenchmarkMode()  const { return isBenchmark;  }
-    bool                doForceG1()        const { return forceG1;      }
-    bool                doForceG2()        const { return forceG2;      }
-    bool                doForceG2NR()      const { return forceG2NR;    }
     uint32_t            aaPreset()         const { return aaPresetId;   }
     bool                doTaa()            const { return isTaa;        }
+    int                 motionVectors()    const { return isMv;         }
     std::string_view    defaultSave()      const { return saveDef;    }
 
     std::string         wrldDef;
@@ -59,15 +56,14 @@ class CommandLine {
     bool                noMenu       = false;
     bool                noIntro      = false;  // -nointro: no videos, the start's dialog counts as told
     bool                noHeroHead   = false;
+    bool                noRenderRig  = false;  // --no-render-rig: bodies on Gothic's skeleton (graphics/mesh/renderrig)
     Benchmark           isBenchmark  = Benchmark::None;
     bool                isWindow     = false;
     bool                isDebug      = false;
     // ray tracing is off everywhere, -rt 1 turns it on: the scene rebuilt the whole TLAS
     // whenever an object moved, 4-8 FPS indoors on an M1 (docs/performance.md, 2026-10-28)
     bool                isRQuery     = false;
-#if defined(__ANDROID__)
-    bool                isMeshSh     = false;
-#elif defined(__OSX__)
+#if defined(__OSX__)
     bool                isMeshSh     = false;  // slower on M1 (reports/render-features/2026-10-18)
 #else
     bool                isMeshSh     = true;
@@ -79,13 +75,10 @@ class CommandLine {
 #else
     bool                isVsm        = true;  // virtual shadow maps: sun and lamp shadows, where the GPU can (Shaders::isVsmSupported)
 #endif
-    bool                isRtSm       = false;
     GiMethod            isGi         = GiMethod::None;
     bool                isGiSet      = false;  // -gi given: else Gothic picks by the device
-    bool                forceG1      = false;
-    bool                forceG2      = false;
-    bool                forceG2NR    = false;
     uint32_t            aaPresetId = 1;        // CMAA2; -aa 0 turns it off
     bool                isTaa      = true;     // temporal AA (replaces CMAA2); -taa 0 turns it off
+    int                 isMv       = -1;       // motion vectors of objects: -mv 0|1; -1 unset, the ini decides
   };
 

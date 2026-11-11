@@ -2,6 +2,10 @@
 
 #include <Tempest/Log>
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/pose.h"
 #include "graphics/mesh/attachbinder.h"
@@ -89,6 +93,18 @@ void MeshObjects::Mesh::setVisible(bool visible) {
 void MeshObjects::Mesh::setDeformation(const std::vector<Tempest::Vec4>& vertices) {
   for(size_t i=0;i<subCount;++i)
     sub[i].setDeformation(vertices);
+  }
+
+void MeshObjects::Mesh::setPartDeformation(const std::vector<Tempest::Vec4>& vertices, uint32_t changedFirst,
+                                           uint32_t changedEnd) {
+  const auto count = uint32_t(vertices.size()/2);
+  for(size_t i=0;i<subCount;++i) {
+    auto [first,end] = sub[i].vertexRange();
+    end = std::min(end,count);
+    if(first>=end)
+      sub[i].setDeformation(nullptr,0,0,0,0); else
+      sub[i].setDeformation(vertices.data()+size_t(first)*2,end-first,first,changedFirst,changedEnd);
+    }
   }
 
 void MeshObjects::Mesh::startMMAnim(std::string_view anim, float intensity, uint64_t timeUntil, bool freeOnly) {
@@ -277,7 +293,8 @@ MeshObjects::Mesh &MeshObjects::Mesh::operator =(MeshObjects::Mesh &&other) {
   std::swap(cpuSub,   other.cpuSub);
   std::swap(textureOwnerKnown, other.textureOwnerKnown);
   std::swap(textureOwnerSpatial, other.textureOwnerSpatial);
-  std::swap(textureOwnerChunk, other.textureOwnerChunk);
+  std::swap(textureOwnerAnchor, other.textureOwnerAnchor);
+  std::swap(textureOwnerReach, other.textureOwnerReach);
   return *this;
   }
 
@@ -291,16 +308,23 @@ void MeshObjects::Mesh::setTextureCategory(Resources::TextureCategory category) 
     sub[i].setTextureCategory(category);
   }
 
-void MeshObjects::Mesh::setTextureOwner(const Tempest::Vec3& position, bool spatial) {
-  const auto chunk=ChunkId::fromPosition(position.x,position.z);
-  const std::pair key{chunk.x,chunk.z};
-  if(textureOwnerKnown && textureOwnerSpatial==spatial && (!spatial || textureOwnerChunk==key))
-    return;
+float MeshObjects::Mesh::setTextureOwner(const Tempest::Vec3& position, bool spatial) {
+  if(textureOwnerKnown && textureOwnerSpatial==spatial) {
+    if(!spatial)
+      return std::numeric_limits<float>::infinity();
+    const auto d=position-textureOwnerAnchor;
+    const float moved=d.x*d.x+d.y*d.y+d.z*d.z;
+    if(moved<=textureOwnerReach*textureOwnerReach)
+      return textureOwnerReach-std::sqrt(moved);
+    }
+  float reach=std::numeric_limits<float>::infinity();
+  for(size_t i=0;i<subCount;++i)
+    reach=std::min(reach,sub[i].setTextureOwner(position,spatial));
   textureOwnerKnown=true;
   textureOwnerSpatial=spatial;
-  textureOwnerChunk=key;
-  for(size_t i=0;i<subCount;++i)
-    sub[i].setTextureOwner(position,spatial);
+  textureOwnerAnchor=position;
+  textureOwnerReach=reach;
+  return reach;
   }
 
 void MeshObjects::Mesh::setTexturePosition(const Tempest::Vec3& position) {

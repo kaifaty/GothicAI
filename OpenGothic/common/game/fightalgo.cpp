@@ -297,9 +297,9 @@ float FightAlgo::prefferedGDistance(const Npc& npc, const Npc& tg, GameScript &o
 float FightAlgo::attackFinishDistance(GameScript &owner) const {
   float NPC_ATTACK_FINISH_DISTANCE = 180;
   if(auto var = owner.findSymbol("NPC_ATTACK_FINISH_DISTANCE")) {
-    if(var->type()==zenkit::DaedalusDataType::INT)
+    if(var->type()==daedalus::DaedalusDataType::INT)
       NPC_ATTACK_FINISH_DISTANCE = float(var->get_int());
-    else if(var->type()==zenkit::DaedalusDataType::FLOAT)
+    else if(var->type()==daedalus::DaedalusDataType::FLOAT)
       NPC_ATTACK_FINISH_DISTANCE = var->get_float();
     }
   return NPC_ATTACK_FINISH_DISTANCE;
@@ -379,7 +379,7 @@ float FightAlgo::weaponRange(GameScript &owner, const Npc &npc) {
   auto& gv  = owner.guildVal();
   auto  w   = npc.inventory().activeWeapon();
   int   add = w ? w->swordLength() : 0;
-  auto  bR  = Gothic::inst().version().game==2 ? ReferenceBowRangeG2 : ReferenceBowRangeG1;
+  auto  bR  = ReferenceBowRangeG2;
 
   switch(npc.weaponState()) {
     case WeaponState::W1H:

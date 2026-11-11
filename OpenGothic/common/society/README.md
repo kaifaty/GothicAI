@@ -1,7 +1,8 @@
 # `common/society/` — ядро стенда общества NPC
 
 Ядро `society-core` стенда общества ([`docs/society-sim.md`](../../../docs/society-sim.md)): мир событий по выгрузке
-`society-world` (v1 и v2), распорядок по правилам движка, журнал, снимки.
+`society-world` (v1, v2 и v3), распорядок по правилам движка, журнал, снимки; с файлом настройки
+([`data/society/config.json`](../../../data/society/config.json)) — нужды людей.
 
 **Правило папки: ничего из движка.** Здесь включают только стандартную библиотеку C++ и rapidjson — ни `Tempest`, ни
 `world/`, ни `game/`, ни другие файлы `common/`. Так стенд собирает ядро отдельной библиотекой, а движок потом
@@ -11,10 +12,13 @@
 - `society.h` — весь открытый интерфейс: мир, состояние, события, правила движка (`StartDelay`, `SettleDelay`,
   `StartStateSeconds`, `NearPointCm`, `FollowStates`), `loadWorld`, `makeSim`, `reset`, `advance`, `save`/`restore`,
   `drainEvents`, `stateEndAt`, `startStateAt`, перевод длины пути во время;
-- `world.cpp` — чтение выгрузки v1/v2, дневная лента распорядка каждого NPC, конец состояния по `Npc::endTime`,
-  расписание монстров;
-- `sim.cpp` — очередь событий, правила «только распорядок», путь по рёбрам и точки пути для позиций в отметках;
-- `journal.h`, `journal.cpp` — двоичный журнал v2 и пятиминутные отметки CSV с позициями.
+- `world.cpp` — чтение выгрузки v1/v2/v3, комнат и владельцев и файла настройки (нужды, таблица `ZS_*`, виды предметов,
+  характер по `characters.json`), дневная лента распорядка каждого NPC, конец состояния по `Npc::endTime`, расписание
+  монстров;
+- `sim.cpp` — очередь событий, правила «только распорядок», нужды (отрезки, пересечения порогов в очереди), путь по
+  рёбрам и точки пути для позиций в отметках;
+- `journal.h`, `journal.cpp` — двоичный журнал v2 (v3 с нуждами) и пятиминутные отметки CSV с позициями и уровнями нужд.
 
 Утилита — `game/societyday.cpp` (`gothic-society-day`), проверка — `tests/society_core_contract.cpp`
-(`gothic-society-core-contract`), сверка с родным днём движка — [`scripts/society_parity.py`](../../../scripts/society_parity.py).
+(`gothic-society-core-contract`), сверка с родным днём движка — [`scripts/society_parity.py`](../../../scripts/society_parity.py), карта нужд под распорядком —
+[`scripts/society_needs_report.py`](../../../scripts/society_needs_report.py).

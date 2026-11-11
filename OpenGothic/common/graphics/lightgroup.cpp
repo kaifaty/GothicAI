@@ -14,7 +14,6 @@
 #include "utils/string_frm.h"
 #include "world/world.h"
 #include "utils/dbgpainter.h"
-#include "gothic.h"
 #include "worlddata.h"
 
 using namespace Tempest;
@@ -186,6 +185,13 @@ LightGroup::Light LightGroup::add(const asset::VLight& vob) {
     std::lock_guard<std::mutex> guard(sync);
     lightSourceData[l.id].sourceSize = sourceCm;
     markAsDurtyNoSync(l.id);
+    }
+  float jitterCm = 0;
+  if(const auto* flicker = VobLayer::flicker(vob, &jitterCm)) {
+    // the brightness of a layer light follows its emitter's flame signal (vobs.d "flicker_from")
+    std::lock_guard<std::mutex> guard(sync);
+    lightSourceDesc[l.id].setFlicker(*flicker, jitterCm);
+    animatedLights.insert(l.id);
     }
   if(!vob.cookie.empty()) {
     std::lock_guard<std::mutex> guard(sync);
@@ -382,7 +388,7 @@ void LightGroup::tick(uint64_t time) {
 
     auto& dst = lightSourceData[i];
     LightSsbo ssbo;
-    ssbo.pos    = light.position();
+    ssbo.pos    = light.currentPosition();
     ssbo.color  = light.currentColor();
     ssbo.range  = light.isEnabled() ? clampRange(light.currentRange()) : 0;
     ssbo.cookie = dst.cookie;

@@ -11,8 +11,7 @@
 #   scripts/deploy-gpu.sh gemma                the same for the quick model of fights (server/deploy/gemma)
 #   scripts/deploy-gpu.sh aligner              copy asr-service/deploy/aligner and run its install.sh: the
 #                                              forced aligner, a command per job (no service, no restart)
-#   scripts/deploy-gpu.sh dub                  copy shorts/deploy/dub and run its install.sh: voice cloning
-#                                              for gothic-shorts dub through gothic-voxcpm
+# Dub deployment moved to scripts/deploy-dub.sh in the private kaifaty/gothic-shorts repository.
 #
 # Settings come from the nearest .env at or above the repository (real environment variables win):
 #   GOTHIC_GPU_SSH       ssh destination of the GPU server (required)
@@ -85,7 +84,7 @@ case "${1:-}" in
     render_env
     exit 0
     ;;
-  env | voxtral | voxcpm | decider | embed | laughter | gemma | aligner | dub) ;;
+  env | voxtral | voxcpm | decider | embed | laughter | gemma | aligner) ;;
   *)
     sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
     exit 2
@@ -155,12 +154,6 @@ case "${1:-}" in
     scp -q -r "$ROOT/asr-service/deploy/aligner" "$SSH_DEST:$REMOTE_DIR/"
     # its own audio.cpp build next to the scripts; nothing runs until gothic-shorts align calls align.sh
     remote "~/$REMOTE_DIR/aligner/install.sh"
-    ;;
-  dub)
-    remote "mkdir -p ~/$REMOTE_DIR/dub"
-    # the scripts only; the server's own .venv stays
-    rsync -a --exclude .venv --exclude __pycache__ "$ROOT/shorts/deploy/dub/" "$SSH_DEST:$REMOTE_DIR/dub/"
-    remote "~/$REMOTE_DIR/dub/install.sh"
     ;;
   decider)
     sync_env >/dev/null

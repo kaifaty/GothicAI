@@ -26,6 +26,10 @@ data/
 /data/npc/*
 !/data/npc/far-fight-pairs.json
 !/data/npc/far-fight-weapons.json
+!/data/society/
+/data/society/*
+!/data/society/config.json
+!/data/society/protected.json
 !/data/content/
 /data/content/*
 !/data/content/registry.jsonl
@@ -77,7 +81,7 @@ log.txt
 # Collected Ryzen test logs
 /.ryzen/
 
-# Shorts: takes and voiced lines (gothic-shorts)
+# Takes and voiced lines written by gothic-shorts
 /.shorts/
 
 # Site build (gothic-site)

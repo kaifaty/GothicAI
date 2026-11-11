@@ -1,3 +1,4 @@
+from importlib import import_module
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -36,6 +37,18 @@ async def test_scenario_stop_keeps_the_pilot_actors_and_rate(link):
     await link.body_watch(["BAU_950_LOBART"], rate_hz=10)
     await shared.watch([])
     assert sent(link)[-1] == (["BAU_950_LOBART"], 10)
+    await link.body_watch([])
+    assert sent(link)[-1] == ([], 20)
+
+
+async def test_scenario_replacement_keeps_the_pilot_actors(link):
+    shared = SharedBodyWatch(link, "test")
+    await shared.watch(["PLAYER"])
+    await link.body_watch(["BAU_950_LOBART"], rate_hz=10)
+    await shared.watch(["bau_951_hilda", "bau_950_lobart"], rate_hz=15)
+    assert sent(link)[-1] == (["BAU_951_HILDA", "BAU_950_LOBART"], 15)
+    await shared.watch(["PLAYER"])
+    assert sent(link)[-1] == (["PLAYER", "BAU_950_LOBART"], 20)
 
 
 async def test_same_list_is_sent_again_only_after_a_new_generation(link):
@@ -59,6 +72,20 @@ async def test_refused_pilot_list_is_not_kept(link):
     assert sent(link)[-1] == (["PLAYER", "BAU_951_HILDA"], 20)
 
 
+async def test_refused_scenario_list_keeps_previous_actors_rate_and_cache(link):
+    shared = SharedBodyWatch(link, "test")
+    await shared.watch(["PLAYER"], rate_hz=15)
+    stats = await link.body_watch(["BAU_950_LOBART"], rate_hz=10)
+    link.native.side_effect = GameError("refused")
+    with pytest.raises(GameError):
+        await shared.watch(["BAU_951_HILDA"], rate_hz=5)
+    link.native.side_effect = lambda npcs, **_: {"generation": link.body_generation}
+    assert await link.body_watch(["BAU_950_LOBART"], rate_hz=10) is stats
+    assert len(sent(link)) == 3  # Two accepted lists and one refusal; the old list stays cached.
+    await link.body_watch(["BAU_952_VINO"], rate_hz=10)
+    assert sent(link)[-1] == (["PLAYER", "BAU_952_VINO"], 15)
+
+
 async def test_more_than_four_actors_and_close(link):
     shared = SharedBodyWatch(link, "test")
     await shared.watch(["A", "B", "C"])
@@ -66,3 +93,10 @@ async def test_more_than_four_actors_and_close(link):
         await link.body_watch(["D", "E"])
     shared.close()
     assert link.body_watch is link.native
+
+
+@pytest.mark.parametrize("module", [
+    "gothic_ai.scenarios.npc_deeds", "gothic_ai.scenario_fight_reactions",
+])
+def test_consumers_import_the_shared_implementation(module):
+    assert import_module(module).SharedBodyWatch is SharedBodyWatch

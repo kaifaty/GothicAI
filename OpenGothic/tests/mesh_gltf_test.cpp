@@ -7,6 +7,7 @@
 #include "gltfmesh.h"
 #include "graphics/shaders.h"
 #include "graphics/mesh/protomesh.h"
+#include "graphics/mesh/facerig.h"
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/pose.h"
 #include "graphics/mesh/submesh/packedmesh.h"
@@ -41,8 +42,8 @@
 #include <zenkit/Font.hh>
 #include <zenkit/Model.hh>
 #include <zenkit/Vfs.hh>
-#include <zenkit/DaedalusVm.hh>
-#include <zenkit/addon/daedalus.hh>
+#include "daedalus/vm.h"
+#include "daedalus/classes.h"
 #include <miniz.h>
 #include <rapidjson/document.h>
 #include <rapidjson/stringbuffer.h>
@@ -76,6 +77,7 @@ struct MeshGltfTest {
   static MdlVisual& visual(Npc& npc) { return npc.visual; }
   static MeshObjects::Mesh& head(Npc& npc) { return npc.visual.head.view; }
   static size_t headBone(const Npc& npc) { return npc.visual.head.boneId; }
+  static const FaceRig& face(Npc& npc) { return npc.visual.face; }
   static void refreshBody(Npc& npc) {
     npc.setVisualBody(npc.vHead,npc.vTeeth,npc.vColor,npc.bdColor,npc.body,npc.head);
     npc.updateTransform();
@@ -595,8 +597,7 @@ void headManifestCases(const Fixture& fixture) {
     Resources resources;
     const auto* head=Resources::loadCharacterHead("pC_hErO");
     require((head!=nullptr)==valid,"characters.json must accept only valid head entries");
-    require(Resources::loadCharacterHead("PC_ROCKEFELLER")==nullptr,
-            "a different script instance must retain its original head even if listed in the manifest");
+    require(Resources::loadCharacterHead("PC_THIEF")==nullptr,"a script instance the manifest does not list must retain its original head");
     if(head==nullptr) return;
     require(head==Resources::loadCharacterHead("PC_HERO") && head->head!=nullptr,
             "head lookup must be case insensitive and retain the parsed target data");
@@ -613,6 +614,13 @@ void headManifestCases(const Fixture& fixture) {
             "the deformation map must cover vertices of every part");
     };
   test(R"({"pc_hero":{"head":"hero/head.glb"},"PC_ROCKEFELLER":{"head":"hero/head.glb"}})",true);
+  {
+    // an npc the manifest lists gets its own head too, a head of its own (not the hero's)
+    Resources resources;
+    const auto* npc=Resources::loadCharacterHead("pc_rockefeller");
+    require(npc!=nullptr && npc->head!=nullptr && npc!=Resources::loadCharacterHead("PC_HERO"),
+            "an npc listed in characters.json must get its own head");
+  }
   const auto invalidPath=[&](std::string_view path) {
     rapidjson::StringBuffer buffer;
     rapidjson::Writer<rapidjson::StringBuffer> json(buffer);
@@ -626,6 +634,33 @@ void headManifestCases(const Fixture& fixture) {
   invalidPath(std::string_view("hero/head.glb\0suffix",20));
   test(R"({"PC_HERO":{}})",false);
   test(R"({"PC_HERO":{"head":"hero/head.glb"}})",true);
+
+  // "face": the profile of the old face anim names; a bad one leaves the head without face anims
+  textFile(root/"hero/head.face.json",R"({"version":1,"mouth":["smile"],"anims":{"S_FRIENDLY":{"layer":1,"blend_in_ms":1000,)"
+                                      R"("blend_out_ms":1000,"duration_ms":-1,"frame_ms":1000,"frames":[{"smile":0.5}]}}})");
+  textFile(root/"hero/bad.face.json",R"({"version":1,"mouth":[],"anims":{"S_FRIENDLY":{"layer":1,"blend_in_ms":1000,)"
+                                     R"("blend_out_ms":1000,"duration_ms":-1,"frame_ms":1000,"frames":[{"frown":0.5}]}}})");
+  const auto face=[&](std::string_view value, bool loaded) {
+    textFile(root/"characters.json",std::string(R"({"PC_HERO":{"head":"hero/head.glb","face":)")+std::string(value)+"}}");
+    Resources resources;
+    const auto* head=Resources::loadCharacterHead("PC_HERO");
+    require(head!=nullptr && head->head!=nullptr,"a bad face profile must not cost the head: "+std::string(value));
+    require((head->face!=nullptr)==loaded,"characters.json face must load only a valid profile: "+std::string(value));
+    if(loaded)
+      require(head->face->anims.size()==1 && head->face->find("S_FRIENDLY")!=nullptr && head->face->mouth.size()==2 &&
+              head->face->mouth[0]==1 && head->face->mouth[1]==0,"the face profile must name the head's targets");
+    };
+  face(R"("hero/head.face.json")",true);
+  for(const auto* invalid:{R"("../characters/hero/head.face.json")",R"("hero/../hero/head.face.json")",R"("hero/head.glb")",
+                           R"("")",R"(1)",R"("hero/missing.face.json")",R"("hero/bad.face.json")"})
+    face(invalid,false);
+  {
+    rapidjson::StringBuffer buffer;
+    rapidjson::Writer<rapidjson::StringBuffer> json(buffer);
+    const auto absolute=(root/"hero/head.face.json").string();
+    json.String(absolute.data(),rapidjson::SizeType(absolute.size()));
+    face({buffer.GetString(),buffer.GetSize()},false);
+  }
   std::filesystem::remove(root/"characters.json");
   }
 
@@ -1399,20 +1434,34 @@ void indexCases(const Fixture& fixture) {
   resourcePaths(fixture,true);
   }
 
-void fractureFile(const std::filesystem::path& path, size_t version = 1, size_t sourceSize = 0, uint32_t sourceCrc32 = 0) {
+void fractureFile(const std::filesystem::path& path, size_t version = 1, size_t sourceSize = 0, uint32_t sourceCrc32 = 0,
+                  size_t pieceCount = 8) {
   // Eight independent solid tetrahedra exercise the real cache parser and
   // Jolt convex-hull construction, with no geometry from the original game.
   std::ofstream file(path);
   file << "GOTHIC_FRACTURE " << version << '\n';
-  if(version==2)
+  if(version>=2)
     file << "source " << sourceSize << ' ' << std::hex << sourceCrc32 << std::dec << '\n';
-  file << "pieces 8\n";
+  file << "pieces " << pieceCount << '\n';
   const std::array<std::array<float,3>,4> points = {{{0,0,0},{10,0,0},{0,10,0},{0,0,10}}};
   const std::array<std::array<size_t,3>,4> triangles = {{{0,2,1},{0,1,3},{0,3,2},{1,2,3}}};
-  for(size_t piece=0;piece<8;++piece) {
-    file << "piece 166.6666666667 " << float(piece)*20.f+2.5f << " 2.5 2.5 4\n";
-    for(const auto& triangle:triangles) {
-      file << "tri " << (version==2 ? "OWN_TEST_BARREL_WOOD.TGA" : "ORIGINAL.TGA") << '\n';
+  const std::array groups = {"WOOD","METAL","STONE","CLAY","EARTH","WATER","SNOW","UNDEF"};
+  for(size_t piece=0;piece<pieceCount;++piece) {
+    file << "piece 166.6666666667 " << float(piece)*20.f+2.5f << " 2.5 2.5 ";
+    if(version==3) {
+      const size_t hulls=1+piece%2;
+      file << groups[piece%groups.size()] << ' ' << hulls << " 1\n";
+      for(size_t hull=0;hull<hulls;++hull) {
+        file << "hull 4\n";
+        for(const auto& point:points)
+          file << point[0]+float(piece)*20.f+float(hull)*5.f << ' ' << point[1] << ' ' << point[2] << '\n';
+        }
+      }
+    else file << "4\n";
+    const size_t triangleCount=version==3 ? 1 : triangles.size();
+    for(size_t t=0;t<triangleCount;++t) {
+      file << "tri " << (version>=2 ? "OWN_TEST_BARREL_WOOD.TGA" : "ORIGINAL.TGA") << '\n';
+      const auto& triangle=triangles[t];
       for(const auto index:triangle) {
         const auto& point = points[index];
         file << point[0]+float(piece)*20.f << ' ' << point[1] << ' ' << point[2] << " 0 1 0 0 0\n";
@@ -1451,6 +1500,7 @@ void fractureCache(const Fixture& fixture) {
   const auto original = FractureMesh::load("own_mesh.3ds");
   require(original!=nullptr && original->pieces.size()==8 && original->volume>0,
           "synthetic original fracture cache must contain eight valid solid pieces");
+  require(original->version==1,"original sidecars must retain version 1");
   for(const auto& piece:original->pieces)
     require(piece.hull!=nullptr && piece.triangles.size()==4,"each original cache piece must have a real convex hull");
 
@@ -1477,6 +1527,7 @@ void fractureCache(const Fixture& fixture) {
       else {
         require(fracture!=nullptr && fracture->pieces.size()==8 && fracture->volume==original->volume,
                 "selected geometry must retain eight matched cached pieces for saved destruction");
+        require(fracture->version==(own ? 2u : 1u),"legacy sidecars must retain their version");
         for(const auto& piece:fracture->pieces) {
           require(piece.hull!=nullptr && piece.triangles.size()==4,
                   "selected fracture pieces must retain their solid hulls");
@@ -1525,6 +1576,52 @@ void fractureCache(const Fixture& fixture) {
   const uint32_t crc = uint32_t(mz_crc32(0,bytes.data(),bytes.size()));
   fractureFile(sidecar,2,bytes.size(),crc);
   expectFracture(true,true);
+  {
+    Resources resources;
+    fixture.mount();
+    Resources::loadVisualMesh("OWN_MESH.MRM");
+    fractureFile(sidecar,3,bytes.size(),crc);
+    const auto fracture=FractureMesh::load("OWN_MESH.MRM");
+    require(fracture!=nullptr && fracture->version==3 && fracture->pieces.size()==8,
+            "v3 sidecars must load matched GLB geometry");
+    const std::array groups = {asset::MaterialGroup::WOOD,asset::MaterialGroup::METAL,asset::MaterialGroup::STONE,
+                              asset::MaterialGroup::CLAY,asset::MaterialGroup::EARTH,asset::MaterialGroup::WATER,
+                              asset::MaterialGroup::SNOW,asset::MaterialGroup::UNDEFINED};
+    for(size_t i=0;i<groups.size();++i)
+      require(fracture->pieces[i].group==groups[i],"v3 pieces must retain their material group");
+    require(fracture->pieces[0].hull->GetSubType()==JPH::EShapeSubType::ConvexHull &&
+            fracture->pieces[1].hull->GetSubType()==JPH::EShapeSubType::StaticCompound &&
+            fracture->pieces[0].triangles.size()==1,
+            "v3 collision must use independent single or compound hulls, including an open render mesh");
+    fractureFile(sidecar,3,bytes.size(),crc,2);
+    const auto minimum=FractureMesh::load("OWN_MESH.MRM");
+    require(minimum!=nullptr && minimum->pieces.size()==2,"v3 must accept two pieces");
+    fractureFile(sidecar,3,bytes.size(),crc,64);
+    const auto maximum=FractureMesh::load("OWN_MESH.MRM");
+    require(maximum!=nullptr && maximum->pieces.size()==64,"v3 must accept 64 pieces");
+    fractureFile(sidecar,3,bytes.size(),crc,65);
+    require(!FractureMesh::load("OWN_MESH.MRM"),"v3 must reject 65 pieces");
+    fractureFile(sidecar,3,bytes.size(),crc^1u);
+    require(!FractureMesh::load("OWN_MESH.MRM"),"v3 must reject stale source identity");
+    fractureFile(sidecar,3,bytes.size(),crc);
+    std::ifstream validFile(sidecar);
+    const std::string valid{std::istreambuf_iterator<char>(validFile),std::istreambuf_iterator<char>()};
+    const auto reject=[&](std::string_view from,std::string_view to,std::string_view message) {
+      auto invalid=valid;
+      const auto at=invalid.find(from);
+      require(at!=std::string::npos,"v3 invalid fixture must replace an existing token");
+      invalid.replace(at,from.size(),to);
+      textFile(sidecar,invalid);
+      require(!FractureMesh::load("OWN_MESH.MRM"),message);
+      };
+    reject("WOOD 1 1","WOOD 0 1","v3 must reject zero hulls");
+    reject("hull 4","hull 3","v3 must reject three hull points");
+    reject("WOOD 1 1","UNKNOWN 1 1","v3 must reject unknown material groups");
+    textFile(sidecar,valid.substr(0,valid.size()-10));
+    require(!FractureMesh::load("OWN_MESH.MRM"),"v3 must reject truncated sidecars");
+    textFile(sidecar,valid+"unexpected\n");
+    require(!FractureMesh::load("OWN_MESH.MRM"),"v3 must reject trailing data");
+    }
   fractureFile(sidecar,2,bytes.size(),crc^1u);
   expectFracture(true);
   fractureFile(sidecar,2,bytes.size()+1,crc);
@@ -2348,14 +2445,14 @@ std::vector<std::pair<std::string,std::shared_ptr<T>>> originalRecords(Gothic& g
                                                                        std::string_view cls) {
   auto script = gothic.loadScript(dat,ScriptLang::NONE);
   T::register_(script);
-  zenkit::DaedalusVm vm(std::move(script),zenkit::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
+  daedalus::DaedalusVm vm(std::move(script),daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
   gothic.setupVmCommonApi(vm);
-  std::vector<zenkit::DaedalusSymbol*> symbols;
-  vm.enumerate_instances_by_class_name(cls,[&symbols](zenkit::DaedalusSymbol& sym) { symbols.push_back(&sym); });
+  std::vector<daedalus::DaedalusSymbol*> symbols;
+  vm.enumerate_instances_by_class_name(cls,[&symbols](daedalus::DaedalusSymbol& sym) { symbols.push_back(&sym); });
   std::vector<std::pair<std::string,std::shared_ptr<T>>> records;
   for(auto* sym:symbols) {
     try { records.emplace_back(sym->name(),vm.init_instance<T>(sym)); }
-    catch(const zenkit::DaedalusScriptError&) {}
+    catch(const daedalus::DaedalusScriptError&) {}
     }
   return records;
   }
@@ -2368,8 +2465,8 @@ void effectCases(const std::string& game, const std::string& base) {
   setenv("OPENGOTHIC_TEXTURES","",1);
   unsetenv("OPENGOTHIC_CENSUS");
   setenv("TEMPEST_AUDIO_LOOPBACK","48000",1);
-  const char* args[]={"gothic-mesh-gltf-test","-g",game.c_str(),"-g2"};
-  CommandLine commandLine(4,args);
+  const char* args[]={"gothic-mesh-gltf-test","-g",game.c_str()};
+  CommandLine commandLine(3,args);
   Tempest::VulkanApi api;
   Tempest::Device device(api);
   {
@@ -2456,7 +2553,7 @@ void effectCases(const std::string& game, const std::string& base) {
 
     // Cases: the first original record (symbol order) with each property.
     std::string looping, mesh, keyed, linked;
-    for(const auto& [name,pfx]:originalRecords<zenkit::IParticleEffect>(gothic,"ParticleFx.dat","C_PARTICLEFX")) {
+    for(const auto& [name,pfx]:originalRecords<daedalus::IParticleEffect>(gothic,"ParticleFx.dat","C_PARTICLEFX")) {
       if(looping.empty() && pfx->pps_is_looping!=0)
         looping = name;
       if(mesh.empty() && pfx->shp_type_s=="MESH" && !pfx->shp_mesh_s.empty())
@@ -2465,7 +2562,7 @@ void effectCases(const std::string& game, const std::string& base) {
     auto vfxScript = gothic.loadScript("VisualFx.dat",ScriptLang::NONE);
     const auto has = [&vfxScript](const std::string& sym) { return vfxScript.find_symbol_by_name(sym)!=nullptr; };
     std::string anyKey;
-    for(const auto& [name,fx]:originalRecords<zenkit::IEffectBase>(gothic,"VisualFx.dat","CFX_BASE")) {
+    for(const auto& [name,fx]:originalRecords<daedalus::IEffectBase>(gothic,"VisualFx.dat","CFX_BASE")) {
       const bool key = has(name+"_KEY_OPEN") || has(name+"_KEY_INIT") || has(name+"_KEY_CAST") ||
                        has(name+"_KEY_INVEST") || has(name+"_KEY_COLLIDE");
       if(anyKey.empty() && key)
@@ -2513,14 +2610,20 @@ void heroHeadGameCases(const std::string& game, const std::string& base) {
   std::filesystem::create_directories(fixture.root/"characters/hero");
   std::filesystem::create_directories(fixture.root/"materials");
   headGlbFile(fixture.root/"characters/hero/head.glb",true);
-  textFile(fixture.root/"characters/characters.json",R"({"PC_HERO":{"head":"hero/head.glb"}})");
+  // the hero without a face profile, an npc with one (and a gesture), the control npc not listed
+  textFile(fixture.root/"characters/characters.json",
+           R"({"PC_HERO":{"head":"hero/head.glb"},"NONE_100_XARDAS":{"head":"hero/head.glb","face":"hero/head.face.json"}})");
+  textFile(fixture.root/"characters/hero/head.face.json",
+           R"({"version":1,"mouth":["smile"],"anims":{"S_FRIENDLY":{"layer":1,"blend_in_ms":1000,"blend_out_ms":1000,)"
+           R"("duration_ms":-1,"frame_ms":1000,"frames":[{"smile":0.5}]}},"cues":{"flash":{"zone":"upper","parts":)"
+           R"([{"weights":{"normalOnly":0.6},"delay_ms":0,"on_ms":100,"hold_ms":80,"off_ms":160}]}}})");
   alphaDdsFile(fixture.root/"materials/head.dds",false);
   textFile(fixture.root/"materials/materials.json",R"({"OWN_TEST_BARREL_WOOD.TGA":{"albedo":"head.dds"}})");
   setenv("OPENGOTHIC_BASE",base.c_str(),1);
   unsetenv("OPENGOTHIC_CENSUS");
   setenv("TEMPEST_AUDIO_LOOPBACK","48000",1);
-  const char* args[]={"gothic-mesh-gltf-test","-g",game.c_str(),"-g2","-nointro"};
-  CommandLine commandLine(5,args);
+  const char* args[]={"gothic-mesh-gltf-test","-g",game.c_str(),"-nointro"};
+  CommandLine commandLine(4,args);
   Tempest::VulkanApi api;
   Tempest::Device device(api);
   {
@@ -2558,7 +2661,7 @@ void heroHeadGameCases(const std::string& game, const std::string& base) {
     for(const auto* name:{"R_EYESBLINK","S_ANGRY","VISEME","T_HURT"}) {
       visual.startFaceAnim(*hero,name,1,100);
       visual.startMMAnim(*hero,name,"BIP01 HEAD");
-      require(visual.faceWeight(name)==0,"original face names must silently leave the new head unchanged");
+      require(visual.faceWeight(*hero,name)==0,"without a face profile original face names must leave the new head unchanged");
       }
     MeshGltfTest::head(*hero).setMMShape("VISEME",0,1,.5f,1);
     visual.updateBlink(*hero,16);
@@ -2571,9 +2674,29 @@ void heroHeadGameCases(const std::string& game, const std::string& base) {
     auto* npc=world.addNpc(npcId,hero->position());
     require(npc!=nullptr,"control NPC must spawn");
     npc->setVisualBody(0,0,0,0,"HUM_BODY_NAKED0","Hum_Head_Pony");
-    const auto* original=Resources::loadMesh("HUM_HEAD_PONY.MMB");
+    // The mesh cache keys on the name as spelled, so ask with the spelling the NPC's head got.
+    const auto* original=Resources::loadMesh("Hum_Head_Pony.MMB");
     require(original!=nullptr && MeshGltfTest::head(*npc).protoMesh()==original &&
             MeshGltfTest::visual(*npc).headMesh()==nullptr,"NPC Hum_Head_Pony must remain HUM_HEAD_PONY.MMB");
+
+    // an npc listed in characters.json: its own head and face profile, the same contract as the hero's
+    const auto* mageSymbol=world.script().findSymbol("NONE_100_XARDAS");
+    require(mageSymbol!=nullptr,"original game scripts must provide the listed NPC");
+    const auto mageId=mageSymbol->index();
+    auto* mage=world.addNpc(mageId,hero->position());
+    require(mage!=nullptr,"listed NPC must spawn");
+    mage->setVisualBody(0,0,0,0,"HUM_BODY_NAKED0","Hum_Head_Pony");
+    const auto* mageHead=Resources::loadCharacterHead("NONE_100_XARDAS");
+    const auto checkMage=[&](Npc& n) {
+      require(mageHead!=nullptr && MeshGltfTest::head(n).protoMesh()==mageHead && MeshGltfTest::visual(n).headMesh()==mageHead->head.get() &&
+              mageHead->face!=nullptr && MeshGltfTest::face(n).isActive(),"a listed NPC must get its own head and face profile");
+      require(MeshGltfTest::headBone(n)==n.visualSkeleton()->findNode("BIP01 HEAD"),"its head must bind to BIP01 HEAD");
+      };
+    checkMage(*mage);
+    MeshGltfTest::refreshBody(*mage);
+    checkMage(*mage);
+    require(mage->startCue("flash",0) && mage->cueWeight("flash")>=0 && !hero->startCue("flash",0),
+            "a gesture of the profile must start on the NPC's head, and not on a head without cues");
 
     const auto* armorSymbol=world.script().findSymbol("ITAR_MIL_L");
     require(armorSymbol!=nullptr,"original game scripts must provide the test armor");
@@ -2584,6 +2707,13 @@ void heroHeadGameCases(const std::string& game, const std::string& base) {
     require(hero->currentArmor()==armor,"the test must actually equip a different armor");
     MeshGltfTest::refreshBody(*hero);
     checkHead(*hero);
+    // the listed npc in the same armor: its own head and FaceRig stay
+    auto* mageArmor=mage->addItem(armorId,1);
+    require(mageArmor!=nullptr,"test armor must enter the listed NPC's inventory");
+    mage->useItem(armorId,Item::NSLOT,true);
+    require(mage->currentArmor()==mageArmor,"the test must actually equip the armor on the listed NPC");
+    MeshGltfTest::refreshBody(*mage);
+    checkMage(*mage);
 
     std::vector<uint8_t> bytes;
     {
@@ -2606,13 +2736,22 @@ void heroHeadGameCases(const std::string& game, const std::string& base) {
     npc=gothic.world()->findNpcByInstance(npcId);
     require(npc!=nullptr && MeshGltfTest::head(*npc).protoMesh()==original,
             "control NPC must retain the original head across save reload");
+    mage=gothic.world()->findNpcByInstance(mageId);
+    require(mage!=nullptr,"listed NPC must survive save reload");
+    checkMage(*mage);
 
-    const char* offArgs[]={"gothic-mesh-gltf-test","-g",game.c_str(),"-g2","-nointro","--no-hero-head"};
-    CommandLine off(6,offArgs);
+    const char* offArgs[]={"gothic-mesh-gltf-test","-g",game.c_str(),"-nointro","--no-hero-head"};
+    CommandLine off(5,offArgs);
     MeshGltfTest::refreshBody(*hero);
     require(MeshGltfTest::visual(*hero).headMesh()==nullptr && MeshGltfTest::head(*hero).protoMesh()==original,
             "--no-hero-head must restore the original hero head");
-    std::cout << "hero-head game: GLB, head bone, armor, setVisualBody, save reload, original NPC, flag OFF passed\n";
+    MeshGltfTest::refreshBody(*mage);
+    // (the reload may find the world's own Xardas: his original head, whichever it is)
+    const auto* mageOriginal=MeshGltfTest::head(*mage).protoMesh();
+    require(MeshGltfTest::visual(*mage).headMesh()==nullptr && mageOriginal!=nullptr && mageOriginal!=mageHead &&
+            mageOriginal->head==nullptr && !mageOriginal->morph.empty() && !MeshGltfTest::face(*mage).isActive(),
+            "--no-hero-head must restore the original head of a listed NPC too");
+    std::cout << "hero-head game: GLB, head bone, armor, setVisualBody, save reload, original and listed NPC, flag OFF passed\n";
     gothic.clearGame().reset();
   }
   device.waitIdle();

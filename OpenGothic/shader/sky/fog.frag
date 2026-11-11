@@ -43,7 +43,7 @@ layout(binding = 4, r32ui) uniform writeonly restrict uimage2D occlusionLut;
 layout(binding = 4, r32ui) uniform readonly  restrict uimage2D occlusionLut;
 #endif
 
-#if defined(VOLUMETRIC) && !defined(VIRTUAL_SHADOW) && defined(GL_COMPUTE_SHADER)
+#if defined(VOLUMETRIC) && !defined(VIRTUAL_SHADOW) && !defined(SHADOW_EMPTY) && defined(GL_COMPUTE_SHADER)
 layout(binding = 5) uniform sampler2D textureSm1;
 #endif
 
@@ -71,7 +71,12 @@ float shadowSample(in sampler2D shadowMap, vec2 shPos) {
   }
 
 bool calcShadow(vec3 shPos) {
+#if defined(SHADOW_EMPTY)
+  // the frame cleared the map and drew nothing into it (sun below Camera::minShadowY): every texel is 0
+  const float sh = 0.0;
+#else
   float sh = shadowSample(textureSm1,shPos.xy);
+#endif
   return sh < shPos.z;
   }
 

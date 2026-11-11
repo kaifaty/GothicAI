@@ -70,6 +70,8 @@ class MtCommandBuffer : public AbstractGraphicsApi::CommandBuffer {
     void upscaleTemporal(AbstractGraphicsApi::Texture& color, AbstractGraphicsApi::Texture& depth,
                          AbstractGraphicsApi::Texture& motion, AbstractGraphicsApi::Texture& dst,
                          const TemporalUpscaleDesc& desc) override;
+    void buildTlas     (AbstractGraphicsApi::AccelerationStructure& tlas, const AbstractGraphicsApi::Buffer* instances,
+                        size_t count) override;
 
   private:
     enum EncType:uint8_t {
@@ -77,6 +79,7 @@ class MtCommandBuffer : public AbstractGraphicsApi::CommandBuffer {
       E_Draw,
       E_Comp,
       E_Blit,
+      E_As,
       };
 
     struct Push {
@@ -123,6 +126,7 @@ class MtCommandBuffer : public AbstractGraphicsApi::CommandBuffer {
     NsPtr<MTL::RenderCommandEncoder>  encDraw;
     NsPtr<MTL::ComputeCommandEncoder> encComp;
     NsPtr<MTL::BlitCommandEncoder>    encBlit;
+    NsPtr<MTL::AccelerationStructureCommandEncoder> encAs;
 
     std::vector<const void*>          usedResources;
 

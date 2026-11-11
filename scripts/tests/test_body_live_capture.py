@@ -200,7 +200,7 @@ def test_runtime_uses_settings_policy_native_sound_and_prepared_scene(capture, t
     async def launch(*argv, cwd, env, stdout, stderr):
         order.append("launch")
         assert order[-2:] == ["guard", "launch"]
-        assert argv == (str(args.game), "-g", str(args.assets), "-g2", "-window", "-devmode", "-save", "1")
+        assert argv == (str(args.game), "-g", str(args.assets), "-window", "-devmode", "-save", "1")
         assert cwd == args.output / "run"
         assert (cwd / "save_slot_1.sav").read_bytes() == b"fixture save"
         assert env["GOTHIC_AI"] == "1" and env["GOTHIC_AI_URL"] == "ws://127.0.0.1:49717"

@@ -1,6 +1,8 @@
 # Clay renders of the human in a .blend with the fit's cameras: front, profile (ortho, on the concept's pupils) and
 # three quarters; side light from the upper left so the brow, the orbits and the cheekbones read.
-#   blender -b X.blend -P render_views.py -- params.json <out dir> <prefix>
+#   blender -b X.blend -P render_views.py -- params.json <out dir> <prefix> [views.json]
+# With views.json the cameras stand on its eye point (the template's) and not on the eyes of this .blend, so a head
+# whose eyes were moved by the wrap is still compared with the concept in the concept's frame.
 import bpy, sys, os, json, math
 import numpy as np
 from mathutils import Vector
@@ -14,6 +16,7 @@ def grp(nm):
     gi=vg[nm]; return [me.vertices[i].co.copy() for i,v in enumerate(bm.data.vertices) if any(g.group==gi and g.weight>0.5 for g in v.groups)]
 e=grp('helper-l-eye')+grp('helper-r-eye'); eye=sum(e,Vector())/len(e)
 ev.to_mesh_clear()
+if len(a)>3: eye=Vector(json.load(open(a[3]))['eye'])
 for m,v in mods: m.show_viewport=v
 for o in bpy.data.objects:
     if o.type=='LIGHT': bpy.data.objects.remove(o)

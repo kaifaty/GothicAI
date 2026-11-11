@@ -1,5 +1,7 @@
 #pragma once
 
+#include <unordered_map>
+
 #include <Tempest/SoundDevice>
 #include <Tempest/SoundEffect>
 #include <Tempest/Point>

@@ -119,6 +119,8 @@ const char* materialTag(asset::MaterialGroup src) {
       return "WA";
     case asset::MaterialGroup::SNOW:
       return "SA"; // sand?
+    case asset::MaterialGroup::CLAY:
+      return "CL";
     }
   return "UD";
   }
@@ -127,7 +129,9 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
   :wname(std::move(file)), game(game), wsound(game,*this), wobj(*this) {
   const auto loadStarted = std::chrono::steady_clock::now();
   Resources::configureTextures(Gothic::settingsGetS("GAME","texture_budget_mb"),Gothic::settingsGetS("GAME","texture_far_skip_mips"),
-                               Gothic::settingsGetS("GAME","texture_target_mb"));
+                               Gothic::settingsGetS("GAME","texture_target_mb"),Gothic::settingsGetS("GAME","texture_screen_mips"));
+  // Until the first frame's completion: textures that can have a tail are read at their coarsest level.
+  textureStartup.begin();
   if(LoadProbe::enabled())
     LoadProbe::mark("world_begin",-1,"world="+std::string(wname));
   try {
@@ -141,12 +145,12 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     windRooms.reset(world.bsp.mode,std::move(world.rooms));
     auto worldCloth=WorldCloth::extract(worldMesh,&chunks);
     const bool streamLandscape=residency && !Resources::isHeadless() && !Gothic::inst().isBenchmarkMode() &&
-        !CommandLine::inst().isRayQuery() && !Shaders::options().doRtScene && !Shaders::options().doSoftwareRT;
+        !CommandLine::inst().isRayQuery() && !Shaders::options().doRtScene;
     if(residency && !Resources::isHeadless() && !streamLandscape) {
       if(Gothic::inst().isBenchmarkMode())
         Tempest::Log::i("Landscape streaming disabled: built-in benchmark requires the complete landscape");
       else
-        Tempest::Log::i("Landscape streaming disabled: RT, GI or SWRT requires a whole-world BVH");
+        Tempest::Log::i("Landscape streaming disabled: RT or GI requires a whole-world BVH");
       }
 
     const bool probeSerial = LoadProbe::serial();
@@ -179,9 +183,9 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
               }
             }
           }
-          const auto& bounds=worldMesh.bbox;
-          view=std::make_unique<WorldView>(std::pair{Tempest::Vec3(bounds.min.x,bounds.min.y,bounds.min.z),
-                                                    Tempest::Vec3(bounds.max.x,bounds.max.y,bounds.max.z)},wname);
+          // worldMesh.bbox is zero for compiled worlds; the sky and fog take the
+          // observer's height from the lowest landscape vertex (SceneGlobals::setWorld).
+          view=std::make_unique<WorldView>(PackedMesh::landscapeBbox(worldMesh),wname);
           }
         else {
           PackedMesh vmesh(worldMesh,PackedMesh::PK_VisualLnd);
@@ -216,6 +220,13 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     if(wviewFut.valid())
       wview = wviewFut.get();
     if(wview) {
+      const auto vb=wview->bbox(), bb=bspBounds();
+      char line[320];
+      std::snprintf(line,sizeof(line),"World bounds (streaming=%d): view min=(%.1f %.1f %.1f) max=(%.1f %.1f %.1f)"
+                    " bsp min=(%.1f %.1f %.1f) max=(%.1f %.1f %.1f)",int(streamLandscape),
+                    vb.first.x,vb.first.y,vb.first.z,vb.second.x,vb.second.y,vb.second.z,
+                    bb.first.x,bb.first.y,bb.first.z,bb.second.x,bb.second.y,bb.second.z);
+      Tempest::Log::i(line);
       wview->setTextureResidency(residency.get());
       if(residency && !Gothic::inst().isBenchmarkMode())
         wview->startVobStreaming(*residency);
@@ -317,10 +328,12 @@ World::~World() {
   }
 
 void World::updateLandscape(const Camera& camera) {
+  Resources::setTextureView(float(camera.viewportHeight()),camera.fovY());
   if(!residency || !npcPlayer) {
     if(textureLoadingPending && npcPlayer) {
       Resources::finishTextureLoading();
       textureLoadingPending=false;
+      textureStartup.end();
       }
     Resources::updateTextures(nullptr);
     return;
@@ -331,8 +344,17 @@ void World::updateLandscape(const Camera& camera) {
   if(wview)
     wview->finishLandscapeUpdate();
   if(textureLoadingPending) {
+    if(wview)
+      wview->flushTextureDemand();
+    textureStartup.end();
     Resources::finishTextureLoading();
     textureLoadingPending=false;
+    }
+  else if(residency->viewJumped() && Resources::textureScreenMips()) {
+    // A teleport: every owner due is evaluated now and the textures left far short complete before the frame.
+    if(wview)
+      wview->flushTextureDemand();
+    Resources::completeTextureJump();
     }
   Resources::updateTextures(residency.get());
   }
@@ -705,7 +727,7 @@ bool World::isStoryNpcType(int32_t type) const {
     std::array<std::optional<int32_t>,3> symbols;
     for(size_t i=0;i<symbols.size();++i) {
       auto* symbol = script().getVm().find_symbol_by_name(names[i]);
-      if(symbol!=nullptr && symbol->type()==zenkit::DaedalusDataType::INT)
+      if(symbol!=nullptr && symbol->type()==daedalus::DaedalusDataType::INT)
         symbols[i] = symbol->get_int(0);
       }
     storyNpcTypes = BodyTraces::storyTypes(symbols);
@@ -722,7 +744,7 @@ BodyTraces::Body World::bodyRule(const Npc& body, const Npc* hero) const {
   rule.now          = gameMinute();
   rule.heroDistance = hero!=nullptr ? (body.position()-hero->position()).length() : 0.f;
   rule.missionItems = body.inventory().hasMissionItems();
-  rule.dragon       = version().game==2 && body.guild()==GIL_DRAGON;
+  rule.dragon       = body.guild()==GIL_DRAGON;
   rule.immortal     = body.isImmortal();
   rule.storyType    = isStoryNpcType(int32_t(body.handlePtr()->type));
   return rule;
@@ -1031,7 +1053,7 @@ MeshObjects::Mesh World::addView(std::string_view visual, int32_t headTex, int32
   return view()->addView(visual,headTex,teetTex,bodyColor);
   }
 
-MeshObjects::Mesh World::addView(const zenkit::IItem& itm) {
+MeshObjects::Mesh World::addView(const daedalus::IItem& itm) {
   if(Resources::isHeadless())
     return addView(itm.visual,itm.material,0,itm.material);
   return view()->addView(itm.visual,itm.material,0,itm.material);
@@ -1155,6 +1177,13 @@ std::string_view World::roomAt(const asset::BspNode& node) {
 
 bool World::isIndoor(const Tempest::Vec3& point) const {
   return windRooms.isIndoor(point);
+  }
+
+auto World::bspBounds() const -> std::pair<Tempest::Vec3,Tempest::Vec3> {
+  if(bsp.nodes.empty())
+    return {};
+  const auto& b=bsp.nodes[0].bbox;
+  return {Tempest::Vec3(b.min.x,b.min.y,b.min.z),Tempest::Vec3(b.max.x,b.max.y,b.max.z)};
   }
 
 World::BspSector* World::portalAt(std::string_view tag) {
@@ -1854,7 +1883,7 @@ void World::invalidateVobIndex() {
   wobj.invalidateVobIndex();
   }
 
-const zenkit::IFocus& World::searchPolicy(const Npc& pl, TargetCollect& collAlgo, TargetType& collType, WorldObjects::SearchFlg& opt) const {
+const daedalus::IFocus& World::searchPolicy(const Npc& pl, TargetCollect& collAlgo, TargetType& collType, WorldObjects::SearchFlg& opt) const {
   opt      = WorldObjects::NoFlg;
   collAlgo = TARGET_COLLECT_FOCUS;
   collType = TARGET_TYPE_ALL;
@@ -2051,10 +2080,6 @@ WayPath World::wayTo(const Npc &npc, const WayPoint &end) const {
 
 GameScript& World::script() const {
   return *game.script();
-  }
-
-const VersionInfo& World::version() const {
-  return game.version();
   }
 
 void World::assignRoomToGuild(std::string_view r, int32_t guildId) {

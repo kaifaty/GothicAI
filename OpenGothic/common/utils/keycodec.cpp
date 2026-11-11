@@ -1,6 +1,6 @@
 #include "keycodec.h"
+#include "settings.h"
 
-#include "gothic.h"
 #include <cstring>
 
 std::initializer_list<KeyCodec::K_Key> KeyCodec::keys = {
@@ -107,7 +107,7 @@ KeyCodec::KeyCodec() {
     &keyShowLog,
     &keyShowMap
     };
-  Gothic::inst().onSettingsChanged.bind(this,&KeyCodec::setupSettings);
+  Settings::inst().onSettingsChanged.bind(this,&KeyCodec::setupSettings);
   setupSettings();
   }
 
@@ -159,90 +159,29 @@ void KeyCodec::set(std::string_view sec, std::string_view opt, int32_t code) {
       for(auto r:i->k)
         if(r!=0)
           s += toCode(r);
-      Gothic::settingsSetS("KEYS",i->key,s);
+      Settings::setS("KEYS",i->key,s);
       }
     }
 
-  auto val = std::string(Gothic::settingsGetS(sec, opt));
+  auto val = std::string(Settings::getS(sec, opt));
   if(val.size()>4)
     val = val.substr(val.size()-4,4);
   val += toCode(code);
-  Gothic::settingsSetS(sec, opt, val);
+  Settings::setS(sec, opt, val);
   }
 
 void KeyCodec::clear(std::string_view sec, std::string_view opt) {
-  Gothic::settingsSetS(sec, opt, "");
+  Settings::setS(sec, opt, "");
   }
 
 void KeyCodec::setDefaultKeys(std::string_view preset) {
-  if(!Gothic::settingsHasSection(preset)) {
-    if(Gothic::inst().version().game==1) {
-      if(preset=="KEYSDEFAULT0")
-        setDefaultKeysG1(); else
-        setDefaultKeysG1Alt();
-      }
+  if(!Settings::has(preset)) {
     return;
     }
 
   for(auto i:allKeys) {
-    auto s = Gothic::settingsGetS(preset,i->key);
-    Gothic::settingsSetS("KEYS",i->key,s);
-    *i = setup(i->key);
-    }
-  }
-
-void KeyCodec::setDefaultKeysG1() {
-  for(auto i:allKeys)
-    Gothic::settingsSetS("KEYS",i->key,"");
-
-  Gothic::settingsSetS("KEYS", "keyShowMap",     "3200");
-  Gothic::settingsSetS("KEYS", "keyEnd",         "0100");
-  Gothic::settingsSetS("KEYS", "keyUp",          "c800c700");
-  Gothic::settingsSetS("KEYS", "keyDown",        "d000cf00");
-  Gothic::settingsSetS("KEYS", "keyLeft",        "cb00d200");
-  Gothic::settingsSetS("KEYS", "keyRight",       "cd00c900");
-  Gothic::settingsSetS("KEYS", "keyStrafeLeft",  "d300");
-  Gothic::settingsSetS("KEYS", "keyStrafeRight", "d100");
-  Gothic::settingsSetS("KEYS", "keyAction",      "1d00");
-  Gothic::settingsSetS("KEYS", "keySlow",        "2a00");
-  Gothic::settingsSetS("KEYS", "keySMove",       "3800b800");
-  Gothic::settingsSetS("KEYS", "keyWeapon",      "3900");
-  Gothic::settingsSetS("KEYS", "keySneak",       "1e003700");
-  Gothic::settingsSetS("KEYS", "keyLook",        "52001300");
-  Gothic::settingsSetS("KEYS", "keyLookFP",      "53002100");
-  Gothic::settingsSetS("KEYS", "keyInventory",   "0f000e00");
-  Gothic::settingsSetS("KEYS", "keyShowStatus",  "1f003000");
-  Gothic::settingsSetS("KEYS", "keyShowLog",     "26003100");
-
-  for(auto i:allKeys) {
-    *i = setup(i->key);
-    }
-  }
-
-void KeyCodec::setDefaultKeysG1Alt() {
-  for(auto i:allKeys)
-    Gothic::settingsSetS("KEYS",i->key,"");
-
-  Gothic::settingsSetS("KEYS", "keyShowMap",     "3200");
-  Gothic::settingsSetS("KEYS", "keyEnd",         "0100");
-  Gothic::settingsSetS("KEYS", "keyUp",          "c8001100");
-  Gothic::settingsSetS("KEYS", "keyDown",        "d0001f00");
-  Gothic::settingsSetS("KEYS", "keyLeft",        "cb001000");
-  Gothic::settingsSetS("KEYS", "keyRight",       "cd001200");
-  Gothic::settingsSetS("KEYS", "keyStrafeLeft",  "d3001e00");
-  Gothic::settingsSetS("KEYS", "keyStrafeRight", "d1002000");
-  Gothic::settingsSetS("KEYS", "keyAction",      "1d00");
-  Gothic::settingsSetS("KEYS", "keySlow",        "2a00");
-  Gothic::settingsSetS("KEYS", "keySMove",       "3800b800");
-  Gothic::settingsSetS("KEYS", "keyWeapon",      "3900");
-  Gothic::settingsSetS("KEYS", "keySneak",       "2d003700");
-  Gothic::settingsSetS("KEYS", "keyLook",        "52001300");
-  Gothic::settingsSetS("KEYS", "keyLookFP",      "53002100");
-  Gothic::settingsSetS("KEYS", "keyInventory",   "0f000e00");
-  Gothic::settingsSetS("KEYS", "keyShowStatus",  "3000");
-  Gothic::settingsSetS("KEYS", "keyShowLog",     "3100");
-
-  for(auto i:allKeys) {
+    auto s = Settings::getS(preset,i->key);
+    Settings::setS("KEYS",i->key,s);
     *i = setup(i->key);
     }
   }
@@ -316,10 +255,10 @@ KeyCodec::ActionMapping KeyCodec::implTr(int32_t code) const {
   }
 
 bool KeyCodec::dodgeOnJump(Mapping mapping) {
-  const auto dodge = parse(Gothic::settingsGetS("KEYS","keyDodge"));
+  const auto dodge = parse(Settings::getS("KEYS","keyDodge"));
   if(dodge.k[0]==0 && dodge.k[1]==0)
     return true;
-  const auto    jump = parse(Gothic::settingsGetS("KEYS","keySMove"));
+  const auto    jump = parse(Settings::getS("KEYS","keySMove"));
   const int32_t key  = jump.k[mapping==Mapping::Primary ? 0 : 1];
   return key!=0 && dodge.is(key);
   }
@@ -500,7 +439,7 @@ void KeyCodec::setupSettings() {
   }
 
 KeyCodec::KeyPair KeyCodec::setup(const char* kp) {
-  auto k = parse(Gothic::settingsGetS("KEYS",kp));
+  auto k = parse(Settings::getS("KEYS",kp));
   k.key = kp;
   return k;
   }

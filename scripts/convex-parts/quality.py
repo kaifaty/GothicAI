@@ -142,6 +142,7 @@ def void_checks(vertices, triangles, parts, cls):
     result = []
     gaps = 0
     closed_candidates = 0
+    too_small = []
     gap_footprints = []
     for index, (shelf, above) in enumerate(zip(boards, boards[1:])):
         gaps += 1
@@ -201,15 +202,20 @@ def void_checks(vertices, triangles, parts, cls):
             # Choose from source geometry alone; output hulls never influence
             # the selected cavity or turn a closed opening into a better probe.
             source_clearance, point, directions = max(source_open, key=lambda candidate: candidate[0])
-            entry = check(point, f"open-shelf-{index + 1}", shelf_y_cm=float(shelf["top"]),
-                          gap_cm=float(above["bottom"] - shelf["top"]),
-                          source_clearance_cm=source_clearance, source_candidates_checked=supported,
-                          source_footprint_area_cm2=float(section_hull.volume), source_exterior_candidates=exterior,
-                          source_boundary_candidates=boundary,
-                          source_open_candidates=len(source_open),
-                          source_open_directions=[list(direction) for direction in directions])
-            entry["passed"] = entry["passed"] and source_clearance >= 10 - 1e-5
-            result.append(entry)
+            if source_clearance < 10 - 1e-5:
+                # The sphere does not fit even the source mesh: no decomposition
+                # could keep it free, so this opening counts as closed.
+                too_small.append({"shelf_y_cm": float(shelf["top"]), "gap_cm": float(above["bottom"] - shelf["top"]),
+                                  "center_cm": list(map(float, point)), "source_clearance_cm": source_clearance})
+                closed_candidates += supported
+                continue
+            result.append(check(point, f"open-shelf-{index + 1}", shelf_y_cm=float(shelf["top"]),
+                                gap_cm=float(above["bottom"] - shelf["top"]),
+                                source_clearance_cm=source_clearance, source_candidates_checked=supported,
+                                source_footprint_area_cm2=float(section_hull.volume), source_exterior_candidates=exterior,
+                                source_boundary_candidates=boundary,
+                                source_open_candidates=len(source_open),
+                                source_open_directions=[list(direction) for direction in directions]))
         elif supported:
             closed_candidates += supported
         else:
@@ -218,11 +224,14 @@ def void_checks(vertices, triangles, parts, cls):
     if not result:
         if gaps:
             # Every supported source candidate in every detected gap is blocked
-            # in all four horizontal directions: no open shelf was detected.
+            # in all four horizontal directions, or its opening is too small for
+            # the sphere in the source itself: no open shelf was detected.
             result.append({"label": "closed-cupboard", "applicable": False,
                            "source_gaps_checked": gaps, "source_candidates_checked": closed_candidates,
-                           "source_gap_footprints": gap_footprints,
+                           "source_gap_footprints": gap_footprints, "source_openings_below_radius": too_small,
                            "passed": True})
         else:
             result.append(check((lower + upper) * .5, "shelf-detector-no-gaps", detector_error=True, passed=False))
+    elif too_small:
+        result.append({"label": "openings-below-radius", "applicable": False, "openings": too_small, "passed": True})
     return result

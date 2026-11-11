@@ -32,6 +32,7 @@ AnimMesh::AnimMesh(const PackedMesh& mesh)
     sub[i].material  = Resources::loadMaterial(mesh.subMeshes[i].material,true);
     sub[i].iboOffset = mesh.subMeshes[i].iboOffset;
     sub[i].iboSize   = mesh.subMeshes[i].iboLength;
+    sub[i].texel     = mesh.subMeshes[i].texel;
     }
 
   // compact similar sub-meshes. not a big deal, but helps in graphics debugging
@@ -43,6 +44,7 @@ AnimMesh::AnimMesh(const PackedMesh& mesh)
        a.texName==b.texName &&
        a.material==b.material) {
       a.iboSize += b.iboSize;
+      a.texel    = a.texel.merged(b.texel);
       } else {
       sub[cnt] = b;
       ++cnt;

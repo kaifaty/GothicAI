@@ -468,8 +468,8 @@ int main(int argc, char* argv[]) {
     const auto* game=std::getenv("GOTHIC_DIR");
     if(game==nullptr || *game=='\0')
       throw std::runtime_error("GOTHIC_DIR must point to prepared Gothic II settings");
-    const char* args[]={"gothic-wayheights-contract","-g",game,"-g2"};
-    CommandLine commandLine(4,args);
+    const char* args[]={"gothic-wayheights-contract","-g",game};
+    CommandLine commandLine(3,args);
     std::optional<Environment> ownContent;
     if(!collision)ownContent.emplace("OPENGOTHIC_CONTENT","");
     Resources resources;

@@ -25,7 +25,6 @@ void Landscape::init(const PackedMesh& packed, bool wholeWorld, const Vec3* text
 
   if(wholeWorld) {
     meshletDesc = Resources::ssbo(packed.meshletBounds.data(), packed.meshletBounds.size()*sizeof(packed.meshletBounds[0]));
-    bvhNodes    = Resources::ssbo(packed.bvhNodes.data(),  packed.bvhNodes.size()*sizeof(packed.bvhNodes[0]));
     }
 
   blocks.reserve(packed.subMeshes.size());
@@ -43,7 +42,8 @@ void Landscape::init(const PackedMesh& packed, bool wholeWorld, const Vec3* text
       }
 
     Block b;
-    b.mesh = visual.get(mesh,material,sub.iboOffset,sub.iboLength,&packed.meshletBounds[id],DrawCommands::Landscape,texturePosition);
+    b.mesh = visual.get(mesh,material,sub.iboOffset,sub.iboLength,&packed.meshletBounds[id],DrawCommands::Landscape,texturePosition,
+                        &sub.texel);
     b.mesh.setObjMatrix(Matrix4x4::mkIdentity());
     blocks.emplace_back(std::move(b));
     }
@@ -57,7 +57,6 @@ Landscape::~Landscape() {
   Resources::recycle(std::move(mesh.ibo));
   Resources::recycle(std::move(mesh.ibo8));
   Resources::recycle(std::move(meshletDesc));
-  Resources::recycle(std::move(bvhNodes));
   for(auto& sub:mesh.sub)
     Resources::recycle(std::move(sub.blas));
   }

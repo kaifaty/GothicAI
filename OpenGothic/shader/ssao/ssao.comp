@@ -6,97 +6,47 @@
 #include "scene.glsl"
 #include "common.glsl"
 
+// SSAO accumulated over frames (reports/engine/2026-11-08-ssao-temporal): a frame traces 8 of the 32 samples, a
+// cycle of 4 frames passes the whole set. The estimate is a ratio of two sums over the samples, the hit weight H
+// and the miss count M; the sums are linear, so their history sums the frames exactly, and the ratio is taken after.
+// A hit weighs kHit times a miss: that keeps the look of the former 5x5 grid of directions (a cell with any hit
+// counted as occluded), which could not be accumulated over frames.
+
 layout(local_size_x = 8, local_size_y = 8) in;
 
 layout(push_constant, std140) uniform PushConstant {
-  mat4 proj;
-  mat4 projInv;
-  };
+  mat4 reproject; // this frame's NDC and depth -> the history's NDC (Taa::reprojection)
+  uint frame;     // the cycle of 4 frames picks the samples
+  uint reset;     // no history: this frame alone
+  uint fullSet;   // the whole set of 32 this frame (OPENGOTHIC_SSAO_HISTORY=0); reset is set with it
+  } push;
 
 layout(binding  = 0) uniform writeonly image2D result;
 layout(binding  = 1, std140) uniform UboScene {
   SceneDesc scene;
   };
 
-layout(binding  = 2) uniform sampler2D  gbufDiffuse;
-layout(binding  = 3) uniform usampler2D gbufNormal;
-layout(binding  = 4) uniform sampler2D  depthBuf;
+layout(binding  = 4) uniform sampler2D depthBuf;
+layout(binding  = 5) uniform sampler2D depthHalf; // ssao_depth.comp, the depth at this pass's size
+layout(binding  = 6) uniform sampler2D historyPrev;                  // H, M (per sample), linear depth, frames
+layout(binding  = 7, rgba16f) uniform writeonly image2D historyNext;
+layout(binding  = 8) uniform sampler2D motion; // the objects' own motion at the depth's size (graphics plan 1b)
 
 const uint  numSamples     = 32;
 const uint  numIter        = 8;
 const uint  samplesPerStep = numSamples/numIter;
+const uint  cycle          = 4;                 // frames to pass the whole set
+const uint  itersPerFrame  = numIter/cycle;
 const float sphereLen      = 100;
-const float unorm16        = 65025;
-
-const int   gridSize       = 5;
-const int   gridQSize      = 25;
+const float kHit           = 1.3;               // fitted to the grid's look on the AO-only shots (report, 2026-11-09)
+const float maxFrames      = 8;                 // the share of a new frame stays at least 1/8
+const float clampMargin    = 0.1;               // the history may leave the neighbours' range of this frame by this
+const float depthTolerance = 0.1;               // relative: a different surface under the reprojected texel
 
 ivec2 fragCoord;
-ivec2 screenSize;
 mat3  tangent;
 
-float occlusionAll = 0;
-
-vec2 pyramidUV(vec3 direction) {
-  // https://gamedev.stackexchange.com/questions/169508/octahedral-impostors-octahedral-mapping
-  vec3  octant     = sign(direction);
-  float sum        = dot(direction, octant);
-  vec3  octahedron = direction / sum;
-
-  return 0.5 * vec2(
-              1.0 + octahedron.x + octahedron.y,
-              1.0 + octahedron.y - octahedron.x
-           );
-  }
-
-uint pyramidId(vec3 direction) {
-  ivec2 uv = ivec2(pyramidUV(direction)*gridSize);
-  return uv.x + uv.y*gridSize;
-  }
-
-uint  hits   = 0;
-uint  anySmp = 0;
-// Per-thread cells in shared memory: a dynamically indexed private array spills to the stack on Apple GPUs.
-shared float hitV[gridQSize][gl_WorkGroupSize.x*gl_WorkGroupSize.y];
-
-void addHit(vec3 dir, float v) {
-  uint uv = pyramidId(dir);
-
-  hits   = hits   | (1u << uv);
-  anySmp = anySmp | (1u << uv);
-
-  float value   = hitV[uv][gl_LocalInvocationIndex];
-  occlusionAll -= value;
-  occlusionAll += max(value,v);
-
-  hitV[uv][gl_LocalInvocationIndex] = max(value, v);
-  }
-
-void addMis(vec3 dir) {
-  uint uv = pyramidId(dir);
-  anySmp = anySmp | (1u << uv);
-  }
-
-shared uint shMaxSteps;
-shared uint vDiff, vCnt;
-
-bool isSolved(float diff, int samples) {
-  vDiff = 0;
-  vCnt  = 0;
-  barrier();
-
-  uint v = floatBitsToUint(diff);
-  atomicMax(vDiff, v);
-  barrier();
-
-  float d = uintBitsToFloat(vDiff);
-  if(d>=0.1 + samples*0.005)
-    atomicAdd(vCnt, 1);
-  barrier();
-
-  return vCnt<4;
-  // return d < 0.1 + samples*0.005;
-  }
+float sumH = 0, sumM = 0, sumN = 0; // hit weight, misses, samples on the screen
 
 float wangHashNoise(uvec2 uv, uint s) {
   uint seed = (uv.x*1664525u + uv.y) + s;
@@ -105,36 +55,34 @@ float wangHashNoise(uvec2 uv, uint s) {
   return value;
   }
 
-int estimateMaxSteps(float z) {
-  if(z>=1.0)
-    return 0; // sky
-  if(z>=0.999)
-    return 1; // almost sky
-  return int(numIter);
-  }
-
-float resolveOcclusion() {
-  float weights = occlusionAll + bitCount(anySmp & (~hits));
-  return (occlusionAll/weights);
-  }
-
 vec3 unproject(vec3 pos) {
-  return projectiveUnproject(projInv, pos);
+  return projectiveUnproject(scene.projectInv, pos);
   }
 
 vec3 project(vec3 pos) {
-  return projectiveProject(proj, pos);
+  return projectiveProject(scene.project, pos);
   }
 
 float readZ(in vec2 posf) {
   return textureLod(depthBuf, posf.xy*0.5+vec2(0.5), 0).r;
   }
 
+// The depth under a sample. The samples scatter over the screen, and on the full depth buffer the trace waited on
+// cache misses; the copy at this pass's size is a quarter as large.
+float readSampleZ(in vec2 posf) {
+  return textureLod(depthHalf, posf.xy*0.5+vec2(0.5), 0).r;
+  }
+
 float sampleRadius(uint i, uint maxSmp) {
   return 0.5+float(i)/float(maxSmp);
   }
 
-void calcOcclussion(const vec3 at0, const vec3 pos0, const float f0, uint seed, uint step) {
+float occlusionOf(float h, float m) {
+  const float hw = kHit*h;
+  return hw+m>0.0 ? hw/(hw+m) : 0.0;
+  }
+
+void calcOcclussion(const vec3 pos0, const float f0, uint seed, uint step) {
   [[loop]]
   for(uint i0=0; i0<samplesPerStep; ++i0) {
     uint  i      = i0*step + seed;
@@ -147,36 +95,23 @@ void calcOcclussion(const vec3 at0, const vec3 pos0, const float f0, uint seed, 
       continue;
       }
 
-    float z      = readZ(at1.xy);
+    float z      = readSampleZ(at1.xy);
     bool  isHit  = floor(z*32768.0+0.5) < floor(at1.z*32768.0);
-    float distQ  = 1;
 
-    // distance attenuation
     if(isHit) {
-      vec3  at2  = vec3(at1.xy,z);
-      vec3  pos2 = unproject(at2);
-      vec3  dp   = (pos2.xyz-pos0);
-      float lenQ = dot(dp,dp);
-      distQ = (lenQ/(sphereLen*sphereLen));
+      // distance attenuation
+      vec3  pos2  = unproject(vec3(at1.xy,z));
+      vec3  dp    = (pos2.xyz-pos0);
+      float distQ = dot(dp,dp)/(sphereLen*sphereLen);
+      sumH += 2.0/(distQ+1);
       } else {
-      distQ = 1;
+      sumM += 1.0;
       }
-
-    // float u      = 0.5;
-    // const float distW = (u*r)/max(u*u, distQ);
-    // const float distW = 1.5/max(0.5, distQ);
-    const float distW = 2.0/(distQ+1);
-    if(isHit) {
-      addHit(h, distW);
-      } else {
-      addMis(h);
-      }
+    sumN += 1.0;
     }
   }
 
 vec3 reconstructNormal(const vec3 at0, in vec2 uv){
-  vec2 uv0 = uv; // center
-
   const vec2 depthSize = vec2(textureSize(depthBuf,0));
   vec2 uvL = uv - vec2(2, 0) / depthSize; // left
   vec2 uvR = uv + vec2(2, 0) / depthSize; // right
@@ -204,15 +139,12 @@ vec3 reconstructNormal(const vec3 at0, in vec2 uv){
   return normal;
   }
 
+// this frame's occlusion of the group's texels: the range of the neighbours bounds the history
+shared float curOcc[gl_WorkGroupSize.x][gl_WorkGroupSize.y];
+
 void main() {
-  for(int i=0; i<gridQSize; ++i)
-    hitV[i][gl_LocalInvocationIndex] = 0;
-
-  shMaxSteps = 0;
-  barrier();
-
-  screenSize = imageSize(result); // half of the depth buffer with halfResAoFog
-  fragCoord  = ivec2(gl_GlobalInvocationID.xy);
+  const ivec2 screenSize = imageSize(result); // half of the depth buffer with halfResAoFog
+  fragCoord = ivec2(gl_GlobalInvocationID.xy);
 
   // A half-res texel traces from the top-left depth pixel of its 2x2 block (ssao_blur.comp undoes the shift).
   // Its own centre lies on a border between two depth pixels: rounding of 1/640 then picked the left or
@@ -223,60 +155,97 @@ void main() {
 
   const bool valid = all(lessThan(fragCoord, screenSize));
   const vec2 inPos = vec2(2*depthPix+ivec2(1,1))/vec2(depthSize)-vec2(1,1);
-  vec3 norm = vec3(0);
+  const vec3 at0   = vec3(inPos.xy,readZ(inPos.xy));
+  const bool sky   = at0.z>=1.0;
+  const vec3 pos0  = unproject(at0);
 
-  const vec3 camPos = unproject(vec3(0,0,0));
-  const vec3 at0    = vec3(inPos.xy,readZ(inPos.xy));
-  const vec3 pos0   = unproject(at0);
-
-  if(valid) {
-    const vec3 view = (pos0 - camPos);
-    norm = reconstructNormal(at0, inPos.xy);
-
+  if(valid && !sky) {
+    const vec3 norm = reconstructNormal(at0, inPos.xy);
     // Compute a tangent frame and rotate the half vector to world space
     vec3 up   = abs(norm.z) < 0.999f ? vec3(0.0f, 0.0f, 1.0f) : vec3(1.0f, 0.0f, 0.0f);
     tangent[0] = normalize(cross(up, norm));
     tangent[1] = cross(norm, tangent[0]);
     tangent[2] = norm;
+
+    // a fixed rotation per texel: the cycle then passes the same 32 directions the single-frame trace did.
+    // The phase of the cycle turns over a 2x2 block: every block traces all four quarters of the set each frame,
+    // and the blur averages them. With one phase for the screen the whole frame pulsed with the cycle: the
+    // quarters differ, and the history (at least 1/8 of a new frame) does not even them out.
+    const float f0 = M_PI*2.0*wangHashNoise(uvec2(fragCoord), 0);
+    const uint  k     = (push.frame + uint(fragCoord.x&1) + 2u*uint(fragCoord.y&1)) % cycle;
+    const uint  iters = push.fullSet!=0u ? numIter : itersPerFrame;
+    const uint  first = push.fullSet!=0u ? 0u      : k*itersPerFrame;
+    for(uint it=0; it<iters; ++it)
+      calcOcclussion(pos0, f0, first+it, numIter);
     }
 
-  // const float f0 = M_PI*2.0*interleavedGradientNoise(fragCoord);
-  const float f0 = M_PI*2.0*wangHashNoise(uvec2(fragCoord), 0);
+  // per sample of the frame's set, the samples beyond the screen counting as nothing: then four frames sum to
+  // exactly the single-frame trace of 32. Divided by the samples on the screen instead, a frame that lost some
+  // to the screen's edge weighed as much as a full one, and the ground at the bottom of the forest shot came out
+  // lighter. No sample on the screen tells nothing.
+  const bool fresh = sumN>0.0;
+  const vec2 cur   = vec2(sumH, sumM)/float((push.fullSet!=0u ? numIter : itersPerFrame)*samplesPerStep);
 
-  int maxSteps = estimateMaxSteps(at0.z);
-  atomicMax(shMaxSteps, maxSteps);
+  curOcc[gl_LocalInvocationID.x][gl_LocalInvocationID.y] = fresh ? occlusionOf(cur.x, cur.y) : -1.0;
   barrier();
-
-  float occlusion = 0, prev = 0;
-  int  dbg  = 0;
-  int  smp  = int(samplesPerStep);
-  bool eval = valid;
-  for(int i=0; i<shMaxSteps; ++i) {
-    if(eval && i<maxSteps) {
-      dbg       = i+1;
-      smp      += int(samplesPerStep);
-      prev      = occlusion;
-
-      calcOcclussion(at0, pos0, f0, i, numIter);
-
-      occlusion = resolveOcclusion();
+  float lo = 1.0, hi = 0.0;
+  for(int dy=-1; dy<=1; ++dy)
+    for(int dx=-1; dx<=1; ++dx) {
+      const ivec2 q = clamp(ivec2(gl_LocalInvocationID.xy)+ivec2(dx,dy), ivec2(0), ivec2(gl_WorkGroupSize.xy)-1);
+      const float o = curOcc[q.x][q.y];
+      if(o>=0.0) {
+        lo = min(lo, o);
+        hi = max(hi, o);
+        }
       }
 
-    int samples = (i+1)*int(samplesPerStep);
-    if(isSolved(abs(occlusion-prev), samples))
-      eval = false;
+  if(!valid)
+    return;
+
+  const float linZ = linearDepth(at0.z, scene.clipInfo);
+  if(sky) {
+    imageStore(result,      fragCoord, vec4(0.0)); // as the former 0/0: the sky takes no AO
+    imageStore(historyNext, fragCoord, vec4(0.0, 0.0, linZ, 0.0));
+    return;
     }
 
-  if(valid) {
-#if 1
-    occlusion = resolveOcclusion();
-#endif
-
-    imageStore(result, ivec2(gl_GlobalInvocationID.xy), vec4(1.0 - occlusion));
-    // if(dbg>4)
-    //   imageStore(result, ivec2(gl_GlobalInvocationID.xy), vec4(0.0));
-    // imageStore(result, ivec2(gl_GlobalInvocationID.xy), vec4(float(dbg)/10.0));
-    // imageStore(result, ivec2(gl_GlobalInvocationID.xy), vec4(float(smp)/100.0));
-    // imageStore(result, ivec2(gl_GlobalInvocationID.xy), vec4(uintBitsToFloat(vDiff)));
+  // the history: where the point of this texel was a frame ago, if the same surface was there
+  vec4 hist = vec4(0);
+  if(push.reset==0u) {
+    const vec4 prev4   = push.reproject*vec4(at0, 1.0);
+    vec3       prevNdc = prev4.xyz/prev4.w;
+    // plus the point's own move, read at the depth pixel this texel traced from (texture coordinates -> NDC)
+    prevNdc.xy += 2.0*texelFetch(motion, depthPix, 0).xy;
+    // the inverse of inPos: the depth pixel, then the texel that traced from it
+    const vec2  dpix = ((prevNdc.xy+vec2(1.0))*vec2(depthSize) - vec2(1.0))*0.5;
+    const ivec2 t    = ivec2(floor(dpix/vec2(depthRatio) + vec2(0.5)));
+    if(all(lessThan(abs(prevNdc.xy), vec2(1.0))) && all(greaterThanEqual(t, ivec2(0))) && all(lessThan(t, screenSize))) {
+      const vec4  hp   = texelFetch(historyPrev, t, 0);
+      const float expZ = linearDepth(prevNdc.z, scene.clipInfo);
+      if(hp.w>0.0 && abs(hp.z-expZ)<=depthTolerance*expZ)
+        hist = hp;
+      }
     }
+  // a moving occluder leaves no depth change on the surface under it: the history must stay near this frame.
+  // Clamped, not dropped: a dropped history leaves a texel with this frame's 8 samples, and in the forest that
+  // lightened the AO by 0.02 (report). The clamp keeps the history's mass kHit*H + M and moves its ratio.
+  if(hist.w>0.0 && fresh) {
+    const float mass = kHit*hist.x + hist.y;
+    const float o    = occlusionOf(hist.x, hist.y);
+    const float oc   = clamp(o, lo-clampMargin, hi+clampMargin);
+    if(oc!=o && mass>0.0) {
+      hist.x = oc*mass/kHit;
+      hist.y = (1.0-oc)*mass;
+      }
+    }
+
+  vec2  acc    = hist.xy;
+  float frames = hist.w;
+  if(fresh) {
+    frames = min(frames+1.0, maxFrames);
+    acc    = mix(hist.xy, cur, 1.0/frames);
+    }
+
+  imageStore(result,      fragCoord, vec4(1.0 - occlusionOf(acc.x, acc.y)));
+  imageStore(historyNext, fragCoord, vec4(acc, linZ, frames));
   }

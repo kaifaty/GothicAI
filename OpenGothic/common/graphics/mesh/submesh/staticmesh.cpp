@@ -4,7 +4,6 @@
 #include <cassert>
 #include <algorithm>
 #include <atomic>
-#include "gothic.h"
 
 #include "graphics/mesh/submesh/packedmesh.h"
 #include "graphics/shaders.h"
@@ -206,6 +205,7 @@ void StaticMesh::initSubMeshes(const PackedMesh& mesh) {
                                              mesh.subMeshes[i].alphaTestRequired);
     sub[i].iboOffset = mesh.subMeshes[i].iboOffset;
     sub[i].iboLength = mesh.subMeshes[i].iboLength;
+    sub[i].texel     = mesh.subMeshes[i].texel;
     }
   bbox.assign(mesh.bbox());
   }
@@ -221,6 +221,7 @@ const Tempest::AccelerationStructure* StaticMesh::blas(size_t iboOffset, size_t 
 StaticMesh::StaticMesh(const Material& mat, std::vector<Resources::Vertex> cvbo, std::vector<uint32_t> cibo) {
   assert(cvbo.size()<=PackedMesh::MaxVert);
   assert(cibo.size()<=PackedMesh::MaxInd);
+  const auto texel = TexelDensity::measure(cvbo.data(),cvbo.size(),cibo.data(),0,cibo.size());
 
   {
     const size_t vert = cvbo.size();
@@ -256,8 +257,8 @@ StaticMesh::StaticMesh(const Material& mat, std::vector<Resources::Vertex> cvbo,
   for(size_t i=0;i<1;++i) {
     sub[i].texName   = "";
     sub[i].material  = mat;
-    //sub[i].iboLength = Gothic::options().doMeshShading ? PackedMesh::MaxInd : ibo.size();
     sub[i].iboLength = PackedMesh::MaxInd;
+    sub[i].texel     = texel;
     if(Resources::hasGraphicsDevice() && Shaders::options().doRtScene) {
       LoadProbe::Vobs::Scope probe("mesh_gpu");
       sub[i].blas = Resources::blas(vbo, ibo, 0, ibo.size());

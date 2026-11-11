@@ -2,17 +2,17 @@
 
 #include "vocab.h"
 
-#include <zenkit/DaedalusScript.hh>
+#include "daedalus/script.h"
 
 #include <algorithm>
 #include <cstdio>
 
 using namespace storygraph;
-using zenkit::DaedalusDataType;
-using zenkit::DaedalusOpcode;
+using daedalus::DaedalusDataType;
+using daedalus::DaedalusOpcode;
 
 // functions, instances and prototypes are constants; variables of these types only hold references
-static bool hasCode(const zenkit::DaedalusSymbol& s) {
+static bool hasCode(const daedalus::DaedalusSymbol& s) {
   if(s.is_external() || !s.is_const() || s.address()==0)
     return false;
   auto t = s.type();
@@ -37,7 +37,7 @@ static bool isStore(DaedalusOpcode op) {
     }
   }
 
-Bytecode::Bytecode(const zenkit::DaedalusScript& script)
+Bytecode::Bytecode(const daedalus::DaedalusScript& script)
   :script(script) {
   for(auto& s : script.symbols()) {
     if(hasCode(s)) {
@@ -53,11 +53,11 @@ Bytecode::Bytecode(const zenkit::DaedalusScript& script)
     infoClass = c->index();
   }
 
-bool Bytecode::hasCode(const zenkit::DaedalusSymbol& s) {
+bool Bytecode::hasCode(const daedalus::DaedalusSymbol& s) {
   return ::hasCode(s);
   }
 
-const zenkit::DaedalusSymbol* Bytecode::functionAt(uint32_t address) const {
+const daedalus::DaedalusSymbol* Bytecode::functionAt(uint32_t address) const {
   auto it = fnByAddress.find(address);
   return it==fnByAddress.end() ? nullptr : script.find_symbol_by_index(it->second);
   }
@@ -67,7 +67,7 @@ uint32_t Bytecode::codeEnd(uint32_t address) const {
   return it==starts.end() ? script.size() : *it;
   }
 
-bool Bytecode::isInfo(const zenkit::DaedalusSymbol& sym) const {
+bool Bytecode::isInfo(const daedalus::DaedalusSymbol& sym) const {
   // instance -> prototype -> class, or instance -> class
   auto* s = &sym;
   for(int depth=0; depth<3 && s!=nullptr; ++depth) {
@@ -126,7 +126,7 @@ FnSummary Bytecode::summarize(uint32_t fnSymbol) const {
       }
     return o;
     };
-  auto addInstance = [&](const zenkit::DaedalusSymbol* s) {
+  auto addInstance = [&](const daedalus::DaedalusSymbol* s) {
     if(s==nullptr)
       return;
     if(isInfo(*s))
@@ -135,7 +135,7 @@ FnSummary Bytecode::summarize(uint32_t fnSymbol) const {
       f.instances.insert(s->name());
     };
   // pops the arguments of a call; instances and functions are passed as PUSHI <symbol index>
-  auto call = [&](const zenkit::DaedalusSymbol& callee) {
+  auto call = [&](const daedalus::DaedalusSymbol& callee) {
     std::vector<Operand> args(callee.count());
     for(size_t i=args.size(); i>0; --i)
       args[i-1] = pop();

@@ -1,7 +1,8 @@
 #pragma once
 
-#include "game/definitions/definitiontypes.h"
+#include "records/definitions.h"
 
+#include <memory>
 #include <unordered_map>
 
 class SoundDefinitions final {

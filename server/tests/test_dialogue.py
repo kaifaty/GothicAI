@@ -22,6 +22,7 @@ from gothic_ai.scenarios import basics as scenarios
 from gothic_ai.talk import TalkDesk
 from gothic_ai.trace import TraceWriter
 from gothic_ai.tts import Speech, TtsClient, TtsError
+from gothic_ai.turn import REFUSAL_MAX, refusal_note
 from tests.fake_game import FakeGame, connected
 
 XARDAS = "NONE_100_XARDAS"
@@ -1107,6 +1108,84 @@ async def test_lines_without_a_tag_have_no_mood():
     assert all(m.get("mood") is None for m in fake.received if m["type"] == "say")
 
 
+@pytest.mark.parametrize(("voice", "reply", "text", "word"), [
+    ("none", "[neutral] Ну да, [doubt] конечно, [felt:afraid] ты его не видел.",
+     "Ну да, конечно, ты его не видел.", 2),
+    ("stream", "[neutral] Да, [doubt] конечно [felt:afraid] друг.", "Да, конечно друг.", 1),
+    ("failed", "[neutral] Да, [doubt] конечно [felt:afraid] друг.", "Да, конечно друг.", 1),
+])
+async def test_face_tags_anchor_to_words_without_reaching_chat_voice_or_memory(voice, reply, text, word):
+    fake = FakeGame()
+    tts = OneVoiceTts(0.01) if voice != "none" else None
+    if voice == "failed":
+        tts.failed.add(text)
+    llm = FakeBackend(reply, chunk=3, delay=0)
+    async with connected(fake) as link:
+        dialogue = DialogueManager(link, llm, PersonaProvider(None), tts=tts)
+        conv = dialogue.open(XARDAS, "Ксардас")
+        await dialogue.say_as_player(XARDAS, "Правда?")
+        await _until(lambda: fake.statuses[-1:] == ["idle"])
+        if conv.voice:
+            await asyncio.wait_for(conv.voice.join(), 2)
+        await _until(lambda: bool(fake.said))
+    says = [m for m in fake.received if m["type"] == "say"]
+    assert len(says) == 1
+    assert says[0]["text"] == text
+    assert says[0]["cues"] == [{"cue": "doubt", "word": word}]
+    assert "leak" not in says[0]  # no code-backed deception for this npc
+    assert [m["text"] for m in fake.received if m["type"] == "chat_text"][-1] == text
+    assert conv.history[-1].content == text
+    assert dialogue.memory.load("test-branch", XARDAS).entries[-1].content == text
+    if tts:
+        assert tts.requested == [text]
+
+
+@pytest.mark.parametrize(("reply", "expected"), [
+    (
+        "[neutral] Да, [smirk] конечно, [smirk] верю [doubt] каждому [press] слову.",
+        [("Да, конечно, верю каждому слову.", "neutral", [
+            {"cue": "smirk", "word": 1}, {"cue": "doubt", "word": 3},
+        ])],
+    ),
+    (
+        "[neutral] Ну, [glance] было дело, [roll] конечно, [eyeroll] герой.",
+        [("Ну, было дело, конечно, герой.", "neutral", [
+            {"cue": "glance", "word": 1}, {"cue": "roll", "word": 3},
+        ])],
+    ),
+    (
+        "[neutral] Я тебя прекрасно помню. [wince]",
+        [("Я тебя прекрасно помню.", "neutral", None)],
+    ),
+    (
+        "[neutral] Да. [doubt] [angry] Нет, даже не думай. [press]",
+        [
+            ("Да.", "neutral", None),
+            ("Нет, даже не думай.", "angry", [{"cue": "doubt", "word": 0}]),
+        ],
+    ),
+    (
+        "[neutral] Я тебя теперь прекрасно помню. [doubt] Ты ведь был здесь вчера.",
+        [
+            ("Я тебя теперь прекрасно помню.", "neutral", None),
+            ("Ты ведь был здесь вчера.", "neutral", [{"cue": "doubt", "word": 0}]),
+        ],
+    ),
+])
+async def test_face_cues_keep_line_boundaries_limits_and_discard_trailing_tags(reply, expected, caplog):
+    caplog.set_level("DEBUG", logger="gothic_ai.dialogue")
+    fake = FakeGame()
+    async with connected(fake) as link:
+        dialogue = DialogueManager(link, FakeBackend(reply, chunk=3, delay=0), PersonaProvider(None))
+        dialogue.open(XARDAS, "Ксардас")
+        await dialogue.say_as_player(XARDAS, "Что?")
+        await _until(lambda: fake.statuses[-1:] == ["idle"])
+    says = [(m["text"], m.get("mood"), m.get("cues")) for m in fake.received if m["type"] == "say"]
+    assert says == expected
+    if reply.endswith("]"):
+        assert "discarded face tags without following words" in caplog.text
+
+
 class OneVoiceGame(FakeGame):
     """Keeps selected ordinary lines queued in the game instead of starting them at once."""
 
@@ -1136,7 +1215,9 @@ class OneVoiceTts(TtsClient):
         self.finishing: dict[str, asyncio.Event] = {}
         self.failed: set[str] = set()
 
-    async def stream(self, text, voice_id, description, on_start, on_chunk, style="") -> Speech:
+    async def stream(
+        self, text, voice_id, description, on_start, on_chunk, style="", *, on_words=None,
+    ) -> Speech:
         self.requested.append(text)
         if text in self.held:
             await self.held[text].wait()
@@ -1579,7 +1660,7 @@ SCENE = [
 
 
 @asynccontextmanager
-async def scene_tts(per_char: float = 0.01, fail: bool = False):
+async def scene_tts(per_char: float = 0.01, fail: bool = False, *, words: bool = False):
     """TTS service stand-in: `per_char` seconds of audio per character in two chunks, or an error."""
     requests: list[dict] = []
 
@@ -1595,7 +1676,19 @@ async def scene_tts(per_char: float = 0.01, fail: bool = False):
             pcm = b"\0\1" * int(16000 * per_char * len(msg["text"]))
             half = len(pcm) // 4 * 2
             await ws.send(pcm[:half])
+            if words:
+                timings = [
+                    [word, i / 100, (i + 1) / 100] for i, word in enumerate(msg["text"].split())
+                ]
+                split = len(timings) // 2
+                await ws.send(json.dumps({
+                    "type": "audio", "id": msg["id"], "data": "", "words": timings[:split],
+                }))
             await ws.send(pcm[half:])
+            if words:
+                await ws.send(json.dumps({
+                    "type": "audio", "id": msg["id"], "data": "", "words": timings[split:],
+                }))
             await ws.send(json.dumps({"type": "done", "id": msg["id"]}))
 
     async with serve(handler, "127.0.0.1", 0) as server:
@@ -1610,7 +1703,7 @@ def _scene_dialogue(link, pace: float = 0.05, **kwargs) -> DialogueManager:
 
 async def test_a_scene_is_said_in_turn_each_line_whole_and_to_the_other():
     fake = FakeGame()
-    async with scene_tts() as (url, requests), connected(fake) as link:
+    async with scene_tts(words=True) as (url, requests), connected(fake) as link:
         dialogue = _scene_dialogue(link, tts=TtsClient(url))
         play = dialogue.play_scene(SCENE, quiet=True)
         await asyncio.wait_for(play.task, 10)
@@ -1620,7 +1713,14 @@ async def test_a_scene_is_said_in_turn_each_line_whole_and_to_the_other():
     assert all(m["stream"] and "audio" not in m and "reply" not in m for m in says)
     # each line goes out whole: the game knows its length when it starts (never a WAV: a hush can't stop it)
     flow = [m["type"] for m in fake.received if m["type"] in ("say", "say_audio", "say_end")]
-    assert flow == ["say", "say_audio", "say_audio", "say_end"] * 3
+    assert flow == ["say", "say_audio", "say_audio", "say_audio", "say_end"] * 3
+    for line in play.lines:
+        chunks = [m for m in fake.received if m["type"] == "say_audio" and m["line"] == line.line]
+        count = len(line.text.split())
+        assert "words" not in chunks[0]
+        assert chunks[1]["words"] == [[i, i / 100, (i + 1) / 100] for i in range(count // 2)]
+        assert chunks[2]["data"] == ""
+        assert chunks[2]["words"] == [[i, i / 100, (i + 1) / 100] for i in range(count // 2, count)]
     assert fake.say_ends == {line.line: round(line.audio_s, 3) for line in play.lines}
     # the next line only once the one before has been heard: started, its voice over, a breath
     for line, (_, sent_at) in zip(play.lines[:-1], fake.says[1:], strict=True):
@@ -2198,6 +2298,47 @@ async def test_a_rejection_remembers_the_first_words_and_the_main_reply(reply):
     assert result.output.count("Ишь ты!") == 1
 
 
+async def test_a_rejected_call_stays_in_the_history_for_the_next_turn():
+    """Only words used to be kept: Cavalorn proposed a deal the code had refused twice (2026-10-14)."""
+    fake = FakeGame()
+    scroll = ToolCall("give_item", {"item": "ITSC_FIREBALL", "count": 1})
+    llm = FakeBackend(
+        script=[
+            FakeStep("Держи свиток.", [scroll]),
+            FakeStep("", [scroll]),  # the same refusal again in the turn: one note
+            FakeStep(""),
+            FakeStep("Свитка у меня нет."),
+        ],
+        delay=0,
+    )
+    async with connected(fake) as link:
+        dialogue = DialogueManager(link, llm, PersonaProvider(None))
+        await link.attach(XARDAS)
+        dialogue.open(XARDAS, "Ксардас")
+        await dialogue.say_as_player(XARDAS, "Дай мне свиток.")
+        await _until(lambda: fake.statuses[-1:] == ["idle"])
+        history = dialogue.conversations[XARDAS].history
+        assert [m.role for m in history] == ["user", "assistant", "developer"]
+        assert history[1].content == "Держи свиток."
+        assert history[2].content.startswith("[give_item не прошёл: У тебя нет предмета ITSC_FIREBALL")
+        assert "Отклонено" not in history[2].content
+
+        await dialogue.say_as_player(XARDAS, "Ну так дай.")
+        await _until(lambda: len(llm.calls) == 4 and fake.statuses[-1:] == ["idle"])
+    request = llm.calls[3][1]
+    assert history[2] in request
+    assert request.index(history[2]) < request.index(Message("user", "Ну так дай."))
+
+
+def test_a_refusal_note_keeps_the_reason_and_cuts_a_long_one():
+    assert refusal_note("propose_deal", "Отклонено: нет таких предметов: ITWR_CAVALORNLETTER.") == (
+        "propose_deal не прошёл: нет таких предметов: ITWR_CAVALORNLETTER."
+    )
+    assert refusal_note("give_item", "У героя нет места.") == "give_item не прошёл: У героя нет места."
+    long = refusal_note("propose_deal", "Отклонено: " + "предмет, " * 100)
+    assert len(long) <= len("propose_deal не прошёл: ") + REFUSAL_MAX + 1 and long.endswith("…")
+
+
 async def test_first_words_do_not_end_a_turn_after_a_silent_accepted_call():
     fake = FakeGame()
     llm = FakeBackend(
@@ -2563,7 +2704,8 @@ async def test_a_rejection_after_the_quick_fight_line_keeps_the_next_step_silent
     assert "Ты уже сказал вслух" not in result.output
     assert "ничего не говори" not in result.output
     history = dialogue.conversations[XARDAS].history
-    assert history[-1].content == "Держись!"
+    assert history[-2].content == "Держись!"
+    assert history[-1].content.startswith("[give_item не прошёл: У тебя нет предмета ITSC_FIREBALL")
 
 
 async def test_surrender_probe_uses_a_separate_slot_and_leaves_the_npc_cache_intact():

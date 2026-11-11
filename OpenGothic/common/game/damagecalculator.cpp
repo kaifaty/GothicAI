@@ -7,15 +7,10 @@
 #include "world/world.h"
 #include "world/bullet.h"
 #include "game/archery.h"
-#include "gothic.h"
 #include "testbench.h"
 
 // https://forum.worldofplayers.de/forum/threads/127320-Damage-System?p=2198181#post2198181
 // https://strafkolonie-online.net/forum/board/thread/1895-info-erkl%C3%A4rung-der-berechnung-der-trefferchance-im-fernkampf/
-
-static float mix(float x, float y, float a) {
-  return x + (y-x)*a;
-  }
 
 DamageCalculator::Val DamageCalculator::damageValue(Npc& src, Npc& other, const Bullet* b, bool isSpell, const DamageCalculator::Damage& splDmg, const CollideMask bMsk, bool fist) {
   DamageCalculator::Val ret;
@@ -34,7 +29,7 @@ DamageCalculator::Val DamageCalculator::damageValue(Npc& src, Npc& other, const 
   ret.value = MinDamage;
 #endif
 
-  if(ret.hasHit && !ret.invincible && Gothic::inst().version().game==2)
+  if(ret.hasHit && !ret.invincible)
     ret.value = std::max<int32_t>(ret.value,MinDamage);
   return ret;
   }
@@ -95,7 +90,7 @@ DamageCalculator::Val DamageCalculator::rangeDamage(Npc& nsrc, Npc& nother, cons
     zone  = Archery::zoneDamage(b.hitZone());
     noHit = false;
     }
-  else if(!b.isSpell() && Gothic::inst().version().game==2) {
+  else if(!b.isSpell()) {
     // G2's dice: one throw, the chance by the distance between the two (not the arrow's way)
     auto&         script = nsrc.world().script();
     const float   d      = (nother.position()-nsrc.position()).length();
@@ -111,41 +106,6 @@ DamageCalculator::Val DamageCalculator::rangeDamage(Npc& nsrc, Npc& nother, cons
                     int(who.size()),who.data(),double(d),double(dist),int(talent),int(chance),int(roll),noHit ? "miss" : "hit",
                     int(by.size()),by.data());
       TestBench::note(buf);
-      }
-    }
-  else if(!b.isSpell()) {
-    auto& script    = nsrc.world().script();
-    float hitChance = float(script.rand(100,&nsrc))/100.f;
-    float hitCh     = 0;
-    bool  g2        = Gothic::inst().version().game==2;
-    float refRange  = g2 ? ReferenceBowRangeG2 : ReferenceBowRangeG1;
-    float maxRange  = float(MaxBowRange);
-    float chance    = b.hitChance();
-
-    if(dist<refRange)
-      hitCh = mix(1.f, chance, (dist / refRange));
-    else if(dist<maxRange)
-      hitCh = mix(chance, 0.f, (dist-refRange) / (maxRange-refRange));
-    else
-      hitCh = 0;
-
-    noHit = (dist>float(MaxBowRange) || hitCh<=hitChance);
-    if(TestBench::isActive()) {
-      const auto who = TestBench::who(&nother);
-      const auto by  = TestBench::who(&nsrc);
-      char buf[256];
-      std::snprintf(buf,sizeof(buf),"arrow dice %.*s: dist %.0f path %.0f talent %.0f chance %.1f roll %.0f, %s, by %.*s",
-                    int(who.size()),who.data(),double((nother.position()-nsrc.position()).length()),double(dist),
-                    double(chance*100.f),double(hitCh*100.f),double(hitChance*100.f),noHit ? "miss" : "hit",
-                    int(by.size()),by.data());
-      TestBench::note(buf);
-      }
-
-    if(!g2 && !noHit && !invincible) {
-      const int32_t mul        = script.criticalDamageMultiplyer();
-      const int     critChance = int(script.rand(100,&nsrc));
-      if(std::lround(100.f * b.critChance())>critChance)
-        dmg *= mul;
       }
     }
 
@@ -174,7 +134,7 @@ DamageCalculator::Val DamageCalculator::rangeDamage(Npc&, Npc& nother, Damage dm
 
   int  value = 0;
   bool invincible = true;
-  for(unsigned int i=0; i<zenkit::DamageType::NUM; ++i) {
+  for(unsigned int i=0; i<daedalus::DamageType::NUM; ++i) {
     if(dmg[size_t(i)]==0)
       continue;
     int vd = std::max(dmg[size_t(i)] - other.protection[i],0);
@@ -221,48 +181,27 @@ DamageCalculator::Val DamageCalculator::swordDamage(Npc& nsrc, Npc& nother, bool
     return value;
     };
 
-  if(Gothic::inst().version().game==2) {
-    if(nsrc.isMonster() && tal==TALENT_UNKNOWN) {
-      // regular monsters always do critical damage
-      critChance = -1;
-      }
-
-    bool invincible = true;
-    for(unsigned int i=0; i<zenkit::DamageType::NUM; ++i) {
-      if((dtype & (1<<i))==0)
-        continue;
-      int vd = std::max(str + damage(i) - other.protection[i],0);
-      if(src.hitchance[tal]<=critChance)
-        vd = (vd-1)/10;
-      if(other.protection[i]>=0) { // Filter immune
-        value += vd;
-        invincible = false;
-        }
-      }
-
-    Val ret(value,true,invincible);
-    ret.critical = src.hitchance[tal]>critChance;
-    return ret;
-    } else {
-    bool invincible = true;
-    const int32_t mul = script.criticalDamageMultiplyer();
-    for(unsigned int i=0; i<zenkit::DamageType::NUM; ++i) {
-      if((dtype & (1<<i))==0)
-        continue;
-      int vd = 0;
-      if(nsrc.talentValue(tal)<=critChance)
-        vd = std::max(str +     damage(i) - other.protection[i],0); else
-        vd = std::max(str + mul*damage(i) - other.protection[i],0);
-      if(other.protection[i]>=0) { // Filter immune
-        value += vd;
-        invincible = false;
-        }
-      }
-
-    Val ret(value,true,invincible);
-    ret.critical = nsrc.talentValue(tal)>critChance;
-    return ret;
+  if(nsrc.isMonster() && tal==TALENT_UNKNOWN) {
+    // regular monsters always do critical damage
+    critChance = -1;
     }
+
+  bool invincible = true;
+  for(unsigned int i=0; i<daedalus::DamageType::NUM; ++i) {
+    if((dtype & (1<<i))==0)
+      continue;
+    int vd = std::max(str + damage(i) - other.protection[i],0);
+    if(src.hitchance[tal]<=critChance)
+      vd = (vd-1)/10;
+    if(other.protection[i]>=0) { // Filter immune
+      value += vd;
+      invincible = false;
+      }
+    }
+
+  Val ret(value,true,invincible);
+  ret.critical = src.hitchance[tal]>critChance;
+  return ret;
   }
 
 int32_t DamageCalculator::damageTypeMask(Npc& npc) {
@@ -276,13 +215,13 @@ bool DamageCalculator::checkDamageMask(Npc& nsrc, Npc& nother, const Bullet* b) 
 
   if(b!=nullptr) {
     auto dmg = b->damage();
-    for(unsigned int i=0;i<zenkit::DamageType::NUM;++i) {
+    for(unsigned int i=0;i<daedalus::DamageType::NUM;++i) {
       if(dmg[size_t(i)]>0 && other.protection[i]>=0)
         return true;
       }
     } else {
     const int dtype = damageTypeMask(nsrc);
-    for(unsigned int i=0;i<zenkit::DamageType::NUM;++i){
+    for(unsigned int i=0;i<daedalus::DamageType::NUM;++i){
       if((dtype & (1<<i))==0)
         continue;
       return true;
@@ -294,9 +233,9 @@ bool DamageCalculator::checkDamageMask(Npc& nsrc, Npc& nother, const Bullet* b) 
 
 DamageCalculator::Damage DamageCalculator::rangeDamageValue(Npc& src) {
   const int dtype = damageTypeMask(src);
-  int d = Gothic::inst().version().game==2 ? src.attribute(Attribute::ATR_DEXTERITY) : 0;
+  int d = src.attribute(Attribute::ATR_DEXTERITY);
   Damage ret={};
-  for(unsigned int i=0;i<zenkit::DamageType::NUM;++i){
+  for(unsigned int i=0;i<daedalus::DamageType::NUM;++i){
     if((dtype & (1<<i))==0)
       continue;
     ret[size_t(i)] = d + src.handle().damage[i];

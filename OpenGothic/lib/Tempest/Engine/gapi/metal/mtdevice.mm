@@ -438,7 +438,6 @@ void MtDevice::deductProps(AbstractGraphicsApi::Props& prop, MTL::Device& dev) {
       break;
     }
 
-
   if(dev.supportsBCTextureCompression()) {
     static const TextureFormat bc[] = {TextureFormat::DXT1, TextureFormat::DXT3, TextureFormat::DXT5};
     for(auto& i:bc)
@@ -512,13 +511,8 @@ void MtDevice::deductProps(AbstractGraphicsApi::Props& prop, MTL::Device& dev) {
   // https://developer.apple.com/documentation/metal/mtlrendercommandencoder/1515829-setvertexbuffer?language=objc
   prop.vbo.maxAttribs = 31;
 
-#ifdef __IOS__
-  prop.ubo .offsetAlign = 16;
-  prop.ssbo.offsetAlign = 16;
-#else
   prop.ubo .offsetAlign = 256; //assuming device-local memory
   prop.ssbo.offsetAlign = 16;
-#endif
 
   // in fact there is no limit, just recomendation to submit less than 4kb of data
   prop.push.maxRange = 256;
@@ -539,18 +533,8 @@ void MtDevice::deductProps(AbstractGraphicsApi::Props& prop, MTL::Device& dev) {
   prop.spatialUpscale  = MTLFX::SpatialScalerDescriptor::supportsDevice(&dev);
   prop.temporalUpscale = MTLFX::TemporalScalerDescriptor::supportsDevice(&dev);
 
-#ifdef __IOS__
-  if(dev.supportsFeatureSet(MTL::FeatureSet_iOS_GPUFamily3_v2))
-    prop.tesselationShader = false;//true;
-#else
   if(dev.supportsFeatureSet(MTL::FeatureSet_macOS_GPUFamily1_v2))
     prop.tesselationShader = false;//true;
-#endif
-
-#ifdef __IOS__
-  prop.storeAndAtomicVs = false;
-  prop.storeAndAtomicFs = false;
-#else
 
   const uint32_t mslVersion = languageVersion();
   if(mslVersion>=MTL::LanguageVersion2_2) {
@@ -559,7 +543,6 @@ void MtDevice::deductProps(AbstractGraphicsApi::Props& prop, MTL::Device& dev) {
     prop.storeAndAtomicVs = true;
     prop.storeAndAtomicFs = true;
     }
-#endif
 
   if(dev.supportsFamily(MTL::GPUFamilyMetal3) && dev.argumentBuffersSupport()>=MTL::ArgumentBuffersTier2) {
     prop.descriptors.nonUniformIndexing = true;
@@ -578,14 +561,6 @@ void MtDevice::deductProps(AbstractGraphicsApi::Props& prop, MTL::Device& dev) {
     prop.raytracing.rayQuery = dev.supportsRaytracingFromRender() && dev.supportsRaytracing();
 #endif
 
-#ifdef __IOS__
-  if(dev.supportsFamily(MTL::GPUFamilyMetal3)) {
-    //prop.meshlets.taskShader = true;
-    //prop.meshlets.meshShader = true;
-    prop.meshlets.maxGroups = prop.compute.maxGroups;
-    prop.meshlets.maxGroupSize = prop.compute.maxGroupSize;
-    }
-#else
   if(dev.supportsFamily(MTL::GPUFamilyMetal3) &&
      dev.supportsFamily(MTL::GPUFamilyApple7)) {
     // NOTE: need to disallow MTL::GPUFamilyMac2 - low limits make it usless
@@ -594,7 +569,6 @@ void MtDevice::deductProps(AbstractGraphicsApi::Props& prop, MTL::Device& dev) {
     prop.meshlets.maxGroups    = prop.compute.maxGroups;
     prop.meshlets.maxGroupSize = prop.compute.maxGroupSize;
     }
-#endif
   }
 
 bool MtDevice::useNativeImageAtomic() const {

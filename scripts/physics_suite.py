@@ -69,7 +69,7 @@ def main():
                     line = command.rstrip() + " novideo" + (" #" + comment if marker else "")
                 lines.append(line)
             scenario.write_text("seed 73013\n" + "\n".join(lines) + "\n")
-        argv = [str(args.runner), "-g", str(args.assets), "-g2", "--save", str(args.save), "--scenario", str(scenario), "--output", str(out), "--mode", "lockstep"]
+        argv = [str(args.runner), "-g", str(args.assets), "--save", str(args.save), "--scenario", str(scenario), "--output", str(out), "--mode", "lockstep"]
         start = time.monotonic()
         scenario_env = dict(env, OPENGOTHIC_PHYSICS_TRACE=str(out / "physics-time.csv"))
         with (out / "launcher.log").open("w") as log:

@@ -5,7 +5,7 @@
 #include "textcodec.h"
 #include "vocab.h"
 
-#include <zenkit/DaedalusScript.hh>
+#include "daedalus/script.h"
 
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
@@ -14,8 +14,8 @@
 #include <unordered_map>
 
 using namespace storygraph;
-using zenkit::DaedalusDataType;
-using zenkit::DaedalusOpcode;
+using daedalus::DaedalusDataType;
+using daedalus::DaedalusOpcode;
 
 namespace {
 
@@ -63,7 +63,7 @@ bool storeOp(DaedalusOpcode op, const char*& compound) {
   }
 
 // script parameters declared `var int` that take an instance: B_GIVEINVITEMS.ITEMINSTANCE
-bool instanceParam(const zenkit::DaedalusSymbol& par) {
+bool instanceParam(const daedalus::DaedalusSymbol& par) {
   auto dot = par.name().find('.');
   return par.type()==DaedalusDataType::INT && dot!=std::string::npos &&
          par.name().find("INSTANCE", dot)!=std::string::npos;
@@ -93,7 +93,7 @@ struct Draft final {
 
 class Builder final {
   public:
-    Builder(const zenkit::DaedalusScript& script, const Bytecode& code, const zenkit::DaedalusSymbol& fn, uint32_t end)
+    Builder(const daedalus::DaedalusScript& script, const Bytecode& code, const daedalus::DaedalusSymbol& fn, uint32_t end)
       :script(script), code(code), fn(fn) {
       for(uint32_t pc=fn.address(); pc<end;) {
         auto i = script.instruction_at(pc);
@@ -183,7 +183,7 @@ class Builder final {
         }
       }
 
-    ExprP pushVar(const zenkit::DaedalusSymbol& sym, int32_t index, const ExprP& inst) {
+    ExprP pushVar(const daedalus::DaedalusSymbol& sym, int32_t index, const ExprP& inst) {
       const uint16_t i = uint16_t(std::max(index,0));
       if(sym.is_const()) {
         switch(sym.type()) {
@@ -304,7 +304,7 @@ class Builder final {
             break;
           case DaedalusOpcode::BE:
           case DaedalusOpcode::BL: {
-            const zenkit::DaedalusSymbol* callee = nullptr;
+            const daedalus::DaedalusSymbol* callee = nullptr;
             if(op.op==DaedalusOpcode::BE)
               callee = sym;
             else
@@ -422,10 +422,10 @@ class Builder final {
       return r;
       }
 
-    const zenkit::DaedalusScript&               script;
+    const daedalus::DaedalusScript&               script;
     const Bytecode&                             code;
-    const zenkit::DaedalusSymbol&               fn;
-    std::vector<zenkit::DaedalusInstruction>    ins;
+    const daedalus::DaedalusSymbol&               fn;
+    std::vector<daedalus::DaedalusInstruction>    ins;
     std::vector<uint32_t>                       pcs;
     std::unordered_map<uint32_t,size_t>         at;
     std::unordered_map<std::string,std::unordered_map<int32_t,std::string>> names;
@@ -532,7 +532,7 @@ void writeSteps(W& w, const std::vector<Step>& steps) {
 
 }
 
-Program storygraph::liftProgram(const zenkit::DaedalusScript& script, const Bytecode& code, uint32_t fnSymbol) {
+Program storygraph::liftProgram(const daedalus::DaedalusScript& script, const Bytecode& code, uint32_t fnSymbol) {
   auto* fn = script.find_symbol_by_index(fnSymbol);
   if(fn==nullptr || !Bytecode::hasCode(*fn)) {
     Program p;

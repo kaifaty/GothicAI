@@ -77,6 +77,24 @@ namespace MeleeDodge {
     MeleeImpact::BeastSize beastSize = MeleeImpact::BeastSize::Small;
     };
 
+  // The defender against one melee blow, as Npc::meleeGuard reads it.
+  struct GuardSituation final {
+    bool dodging     = false; // a dodge plays (any part of it)
+    bool dodgeWindow = false; // ... inside its invulnerability window (invulnerable)
+    bool knockedDown = false;
+    bool stunned     = false;
+    bool jumpBack    = false; // a jump back pose (Pose::isJumpBack) with the attacker inside its angle
+    bool parade      = false; // a defence window (Pose::isDefence) with the attacker in focus
+    bool unblockable = false; // the attacker is a monster without a weapon: its claws and teeth are not blocked
+    };
+
+  struct Guard final {
+    bool dodged     = false; // inside a dodge's window: nothing passes
+    bool jumpedBack = false;
+    bool blocked    = false; // a jump back pose with a defence window may block and jump back at once
+    bool evaded() const { return dodged || jumpedBack; }
+    };
+
   constexpr float DashCost      = 15.f;
   constexpr float RollCost      = 20.f;
   constexpr float HeavyRollCost = 30.f;
@@ -112,6 +130,11 @@ namespace MeleeDodge {
   float       charged(Kind kind, bool staminaEnabled);
 
   Refusal     refusal(const Situation& situation);
+  // The one rule of the dodge, the jump back and the parade against a melee blow: the damage (Npc::takeDamage)
+  // and both views of the melee shadow (the blade's contact and the native blow) take it from Npc::meleeGuard.
+  // What lies outside it the callers check themselves: a body down is no target, a blow that ignores defence
+  // meets no guard.
+  Guard       guard(const GuardSituation& situation);
 
   std::string_view name(Direction direction);
   std::string_view name(Kind kind);

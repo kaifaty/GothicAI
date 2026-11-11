@@ -145,13 +145,20 @@ def queue(gq, host, monkeypatch):
 
 def spec(kind="quick", *, owner="session-a", threads=4, mem=GIB,
          gpu_mem=0, display=False, display_shared=False, display_exclusive=False,
+         display_column=False, display_layout=None,
          interactive=False, maximum=60, name="test", command=None):
     return {"class": kind, "threads": threads, "mem": mem,
             "gpu_mem": gpu_mem, "display": display, "display_shared": display_shared,
             "display_exclusive": display_exclusive,
+            "display_column": display_column, "display_layout": display_layout,
             "interactive": interactive,
             "max": maximum,
             "name": name, "command": command or ["true"], "owner": owner}
+
+
+# A bench in a whole column and an e2e game in one slot, both with the new layout.
+COLUMN = {"display": True, "display_shared": True, "display_column": True, "display_layout": "2"}
+SLOT = {"display": True, "display_shared": True, "display_layout": "2"}
 
 
 def enqueue(q, kind="quick", **kwargs):
@@ -199,6 +206,7 @@ def test_dev_ubuntu_shares_six_threads_between_all_active_jobs(
     ({"display": True}, "окна на dev-ubuntu нет: иди на Ryzen"),
     ({"display_shared": True}, "окна на dev-ubuntu нет: иди на Ryzen"),
     ({"display_exclusive": True}, "окна на dev-ubuntu нет: иди на Ryzen"),
+    ({"display_layout": "2"}, "окна на dev-ubuntu нет: иди на Ryzen"),
     ({"interactive": True}, "окна на dev-ubuntu нет: иди на Ryzen"),
     ({"kind": "quiet"}, "quiet недоступен: иди на Ryzen"),
 ])
@@ -438,6 +446,217 @@ def test_persisted_legacy_display_reserves_all_slots(queue, has_slot):
     queue.tick()
     assert queue.get(waiting)["status"] == "running"
     assert queue.get(waiting)["display_slot"] == 0
+
+
+def test_two_column_games_take_both_columns_and_a_third_waits_for_a_whole_column(queue):
+    left, right, waiting = (enqueue(queue, **COLUMN) for _ in range(3))
+    queue.tick()
+    assert (queue.get(left)["display_slot"], queue.get(left)["display_slots"]) == (0, [0, 2])
+    assert (queue.get(right)["display_slot"], queue.get(right)["display_slots"]) == (1, [1])
+    assert queue.get(waiting)["status"] == "queued"
+    queue.finish(left, "success")
+    queue.tick()
+    assert (queue.get(waiting)["display_slot"], queue.get(waiting)["display_slots"]) == (0, [0, 2])
+
+
+def test_busy_left_column_leaves_slot_one_to_a_single_ordinary_game(queue):
+    start(queue, **COLUMN)
+    ordinary, waiting = enqueue(queue, **SLOT), enqueue(queue, **SLOT)
+    queue.tick()
+    assert queue.get(ordinary)["display_slot"] == 1
+    assert queue.get(waiting)["status"] == "queued"
+
+
+def test_ordinary_game_in_slot_two_leaves_only_the_right_column(queue):
+    first, second, third = (start(queue, **SLOT) for _ in range(3))
+    assert queue.get(third)["display_slot"] == 2
+    queue.finish(first, "success")
+    queue.finish(second, "success")
+    column = enqueue(queue, **COLUMN)
+    queue.tick()
+    assert (queue.get(column)["display_slot"], queue.get(column)["display_slots"]) == (1, [1])
+
+
+def test_column_game_waits_while_slots_zero_and_one_are_busy(queue):
+    games = [start(queue, **SLOT) for _ in range(3)]
+    queue.finish(games[2], "success")
+    column = enqueue(queue, **COLUMN)
+    queue.tick()
+    assert queue.get(column)["status"] == "queued"
+    queue.finish(games[1], "success")
+    queue.tick()
+    assert queue.get(column)["display_slots"] == [1]
+
+
+def test_column_slots_remain_reserved_until_cancelled_unit_stops(queue):
+    column = start(queue, **COLUMN)
+    start(queue, **SLOT)
+    waiting = enqueue(queue, **SLOT)
+    queue.cancel(column, "session-a")
+    queue.tick()
+    assert queue.get(waiting)["status"] == "queued"
+    queue.finish(column, "success")
+    queue.tick()
+    assert queue.get(column)["status"] == "cancelled"
+    assert queue.get(waiting)["display_slot"] == 0
+
+
+@pytest.mark.parametrize("first_layout,second_layout", [(None, "2"), ("2", None)])
+def test_shared_games_with_different_layouts_never_run_together(queue, first_layout, second_layout):
+    first = start(queue, display=True, display_shared=True, display_layout=first_layout)
+    second = enqueue(queue, display=True, display_shared=True, display_layout=second_layout)
+    queue.tick()
+    assert queue.get(second)["status"] == "queued"
+    queue.finish(first, "success")
+    queue.tick()
+    assert queue.get(second)["display_slot"] == 0
+
+
+@pytest.mark.parametrize("layout", [None, "2"])
+def test_shared_games_with_the_same_layout_share_slots(queue, layout):
+    games = [enqueue(queue, display=True, display_shared=True, display_layout=layout) for _ in range(3)]
+    queue.tick()
+    assert {queue.get(ident)["display_slot"] for ident in games} == {0, 1, 2}
+
+
+def test_game_waiting_for_another_layout_is_not_starved_by_later_games(queue):
+    old = start(queue, display=True, display_shared=True)
+    new = enqueue(queue, **SLOT)
+    later_old = enqueue(queue, display=True, display_shared=True)
+    queue.tick()
+    assert queue.get(new)["status"] == queue.get(later_old)["status"] == "queued"
+    queue.finish(old, "success")
+    queue.tick()
+    assert queue.get(new)["status"] == "running"
+    assert queue.get(later_old)["status"] == "queued"
+
+
+@pytest.mark.parametrize("blocker", ["exclusive", "interactive", "quiet"])
+def test_column_games_wait_behind_exclusive_interactive_and_quiet_like_other_games(queue, blocker):
+    running = start(queue, **COLUMN)
+    if blocker == "quiet":
+        blocking = enqueue(queue, "quiet")
+    else:
+        blocking = enqueue(queue, display_exclusive=True, interactive=blocker == "interactive")
+    later = enqueue(queue, **COLUMN)
+    queue.tick()
+    assert queue.get(blocking)["status"] == queue.get(later)["status"] == "queued"
+    queue.finish(running, "success")
+    queue.tick()
+    assert queue.get(blocking)["status"] == "running"
+    assert queue.get(later)["status"] == "queued"
+    queue.finish(blocking, "success")
+    queue.tick()
+    assert queue.get(later)["display_slots"] == [0, 2]
+
+
+@pytest.mark.parametrize("shared", [False, True])
+def test_jobs_saved_before_columns_hold_one_slot_or_all_slots(queue, shared):
+    first = start(queue, display=True, display_shared=shared)
+    with queue.transaction() as state:
+        saved = next(job for job in state["jobs"] if job["id"] == first)
+        for key in ("display_column", "display_layout", "display_slots"):
+            saved.pop(key, None)
+    ordinary = enqueue(queue, display=True, display_shared=True)
+    queue.tick()
+    assert queue.get(ordinary)["status"] == ("running" if shared else "queued")
+    if shared:
+        assert queue.get(ordinary)["display_slot"] == 1
+
+
+def test_deferred_column_game_releases_its_column_slots(queue):
+    column = start(queue, **COLUMN)
+    with queue.transaction() as state:
+        state["jobs"][0]["retry"] = True
+    queue.finish(column, "success")
+    job = queue.get(column)
+    assert job["status"] == "queued"
+    assert "display_slot" not in job and "display_slots" not in job
+
+
+# Verbatim from scripts/gq.py at 857f29589, the last gq before layout tags. Its live
+# pumps and run/wait clients keep this rule in memory after `gq install`.
+def exclusive_display_before_layouts(job):
+    # Sharing is opt-in: older clients cannot isolate their ports by slot.
+    return job.get("display", False) and (
+        job.get("display_exclusive", False) or not job.get("display_shared", False))
+
+
+def test_tagged_games_are_exclusive_for_gq_before_layouts(queue):
+    tagged = [enqueue(queue, **COLUMN), enqueue(queue, **SLOT)]
+    untagged = enqueue(queue, display=True, display_shared=True)
+    assert all(exclusive_display_before_layouts(queue.get(ident)) for ident in tagged)
+    queue.tick()
+    assert all(queue.get(ident)["status"] == "running" for ident in tagged)
+    assert all(exclusive_display_before_layouts(queue.get(ident)) for ident in tagged)
+    assert not exclusive_display_before_layouts(queue.get(untagged))
+
+
+def test_column_game_admitted_without_columns_holds_column_zero(queue):
+    column = start(queue, **COLUMN)
+    with queue.transaction() as state:
+        saved = next(job for job in state["jobs"] if job["id"] == column)
+        # What gq before columns records: one exclusive-looking slot 0.
+        saved.pop("display_slots")
+        saved["display_slot"] = 0
+    first, second, other_column = enqueue(queue, **SLOT), enqueue(queue, **SLOT), enqueue(queue, **COLUMN)
+    queue.tick()
+    assert queue.get(first)["display_slot"] == 1
+    assert queue.get(second)["status"] == queue.get(other_column)["status"] == "queued"
+
+
+def test_tagged_game_admitted_as_exclusive_lets_the_same_layout_share(queue):
+    tagged = start(queue, **SLOT)
+    with queue.transaction() as state:
+        saved = next(job for job in state["jobs"] if job["id"] == tagged)
+        # gq before layouts admitted it alone on an empty window, in slot 0.
+        assert (saved["display_slot"], saved["display_shared"]) == (0, False)
+    column, slot = enqueue(queue, **COLUMN), enqueue(queue, **SLOT)
+    queue.tick()
+    assert queue.get(column)["display_slots"] == [1]
+    assert queue.get(slot)["display_slot"] == 2
+
+
+def test_status_lists_every_slot_of_a_column_game(queue, gq, capsys):
+    ident = start(queue, **COLUMN)
+    gq.status(queue)
+    line = next(line for line in capsys.readouterr().out.splitlines() if ident in line)
+    assert "окно=1 слот=0,2" in line
+
+
+@pytest.mark.parametrize("overrides,message", [
+    ({"display_shared": False}, "--display-column требует --display --display-shared без --display-exclusive"),
+    ({"display": False}, "--display-column требует --display --display-shared без --display-exclusive"),
+    ({"display_exclusive": True}, "--display-column требует --display --display-shared без --display-exclusive"),
+    ({"display_layout": None}, "--display-column требует --display-layout"),
+    ({"display_layout": ""}, "--display-layout требует непустую метку"),
+])
+def test_column_request_requires_shared_display_and_layout(queue, gq, overrides, message):
+    with pytest.raises(gq.QueueError) as failure:
+        queue.submit(spec(**{**COLUMN, **overrides}))
+    assert str(failure.value) == message
+    assert queue.jobs() == []
+
+
+@pytest.mark.parametrize("overrides", [{"display_shared": False}, {"display": False},
+                                       {"display_exclusive": True}])
+def test_layout_tag_requires_a_shared_display(queue, gq, overrides):
+    with pytest.raises(gq.QueueError) as failure:
+        queue.submit(spec(**{**SLOT, **overrides}))
+    assert str(failure.value) == "--display-layout требует --display --display-shared без --display-exclusive"
+    assert queue.jobs() == []
+
+
+@pytest.mark.parametrize("profile", ["dev-ubuntu", "ryzen-without-columns"])
+def test_column_request_is_rejected_on_profiles_without_columns(gq, host, monkeypatch, profile):
+    monkeypatch.setenv("GQ_PROFILE", "dev-ubuntu" if profile == "dev-ubuntu" else "ryzen")
+    q = make_queue(gq, host, monkeypatch)
+    if profile != "dev-ubuntu":
+        q.profile = {key: value for key, value in q.profile.items() if key != "display_columns"}
+    with pytest.raises(gq.QueueError) as failure:
+        q.submit(spec(**COLUMN))
+    assert str(failure.value) == f"--display-column: у профиля {q.profile_name} нет столбцов окна"
+    assert q.jobs() == []
 
 
 @pytest.mark.parametrize("exclusive_request", [
@@ -1171,6 +1390,23 @@ def test_cli_display_shared_allows_two_games_together(gq, host, monkeypatch, act
     q.tick()
     assert all(job["status"] == "starting" and job["display_shared"] for job in q.jobs())
     assert {job["display_slot"] for job in q.jobs()} == {0, 1}
+
+
+@pytest.mark.parametrize("action", ["run", "submit"])
+def test_cli_display_column_games_receive_their_column_as_slot(gq, host, monkeypatch, action):
+    q = make_queue(gq, host, monkeypatch)
+    monkeypatch.setattr(gq, "Queue", lambda: q)
+    monkeypatch.setattr(gq, "spawn_pump", lambda *_: None)
+    monkeypatch.setattr(gq, "wait_job", lambda *_args, **_kwargs: 0)
+    for _ in range(2):
+        assert gq.main([action, "--class", "quick", "--threads", "4", "--mem", "5G", "--gpu-mem", "3G",
+                        "--display", "--display-shared", "--display-column", "--display-layout", "2",
+                        "--max", "1m", "--name", "bench", "--", "true"]) == 0
+    q.tick()
+    assert [job["display_slots"] for job in q.jobs()] == [[0, 2], [1]]
+    assert all(job["display_layout"] == "2" for job in q.jobs())
+    for column, args in enumerate(calls(host, "systemd-run")):
+        assert f"--setenv=GQ_DISPLAY_SLOT={column}" in args
 
 
 @pytest.mark.parametrize("action", ["run", "submit"])
@@ -2243,7 +2479,7 @@ def test_unit_lock_holder_detects_orphaned_children_in_its_own_cgroup(gq, tmp_pa
     assert gq.unit_has_children("abc", membership, tmp_path), "unreadable unit fails closed"
 
 
-def test_finish_journals_oom_kill_count_and_memory_peak_from_its_unit(
+def test_finish_journals_oom_kill_count_memory_and_swap_peaks_from_its_unit(
         queue, gq, tmp_path, monkeypatch):
     ident = start(queue, display=True, display_shared=True)
     group = f"/user.slice/gq-{ident}.service"
@@ -2251,6 +2487,7 @@ def test_finish_journals_oom_kill_count_and_memory_peak_from_its_unit(
     directory.mkdir(parents=True)
     (directory / "memory.events").write_text("low 0\nhigh 0\nmax 7\noom 2\noom_kill 1\n")
     (directory / "memory.peak").write_text("1832411136\n")
+    (directory / "memory.swap.peak").write_text("262144\n")
     membership = tmp_path / "membership"
     membership.write_text(f"0::{group}\n")
     assert gq.unit_cgroup(ident, membership) == group
@@ -2262,16 +2499,18 @@ def test_finish_journals_oom_kill_count_and_memory_peak_from_its_unit(
     queue.finish(ident, "signal", "killed", "9")
     finished = records(queue)[-1]
     assert finished["oom_kill"] == 1 and finished["memory_peak"] == 1832411136
+    assert finished["swap_peak"] == 262144
     assert finished["code"] == 137 and finished["display_slot"] == 0
 
 
 def test_missing_cgroup_counters_are_unknown_instead_of_zero(queue, gq, tmp_path):
     assert gq.cgroup_memory_stats("missing", "/missing", tmp_path) == {
-        "oom_kill": None, "memory_peak": None}
+        "oom_kill": None, "memory_peak": None, "swap_peak": None}
     ident = start(queue)
     queue.finish(ident, "success")
     finished = records(queue)[-1]
     assert finished["oom_kill"] is None and finished["memory_peak"] is None
+    assert finished["swap_peak"] is None
 
 
 def test_reconcile_prunes_a_thousand_old_jobs_but_wait_and_logs_use_the_archive(

@@ -1,9 +1,11 @@
-// The society stand's world (docs/society-sim.md, «Интерфейсы → 1. Выгрузка мира», format v2): runs
+// The society stand's world (docs/society-sim.md, «Интерфейсы → 1. Выгрузка мира», format v3): runs
 // `gothic-body-runner --world NEWWORLD.ZEN --society-export` twice on the game's data (GOTHIC_DIR, as the other
 // world contracts) and checks the file: every NPC of the world, the people and their routines entry by entry
 // against evals/npc-decisions/day_people.json, every routine and start point resolved, the point names against
 // server/src/gothic_ai/gamedata/places.json, symmetric edges, a scheme and a waynet point for every object, the v2
-// fields (start_aistate, own walk speed, mm_schedule) and the same bytes from both runs.
+// fields (start_aistate, own walk speed, mm_schedule), room ownership and the same bytes from both runs.
+#include "../common/game/constants.h"
+
 #include <rapidjson/document.h>
 
 #include <algorithm>
@@ -20,6 +22,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <unistd.h>
 
@@ -77,7 +80,7 @@ std::vector<std::string> lines(const std::string& text) {
   }
 
 double exportOnce(const std::string& gothic, const fs::path& out, const fs::path& log) {
-  const auto cmd = shellQuote(SOCIETY_RUNNER)+" -g "+shellQuote(gothic)+" -g2 --world NEWWORLD.ZEN --society-export "+
+  const auto cmd = shellQuote(SOCIETY_RUNNER)+" -g "+shellQuote(gothic)+" --world NEWWORLD.ZEN --society-export "+
                    shellQuote(out.string())+" >"+shellQuote(log.string())+" 2>&1";
   const auto from = std::chrono::steady_clock::now();
   const int  rc   = std::system(cmd.c_str());
@@ -151,7 +154,13 @@ std::string sizes(const std::vector<size_t>& v) {
   return ret;
   }
 
-struct Waypoint { std::string name; bool free = false; };
+std::string nullableText(const Value& v, const char* key) {
+  const auto& value = member(v,key);
+  need(value.IsNull() || (value.IsString() && value.GetStringLength()>0),std::string(key)+" is null or a nonempty name");
+  return value.IsString() ? std::string(value.GetString(),value.GetStringLength()) : std::string();
+  }
+
+struct Waypoint { std::string name; bool free = false; std::string room; };
 
 std::vector<Waypoint> checkWaypoints(const Value& doc) {
   const auto& list = array(doc,"waypoints");
@@ -161,7 +170,7 @@ std::vector<Waypoint> checkWaypoints(const Value& doc) {
     need(uint(w,"id")==i,"waypoint ids must be 0..n-1 in order");
     need(member(w,"freepoint").IsBool(),"freepoint must be a bool");
     need(array(w,"pos").Size()==3,"pos must have three numbers");
-    ret.push_back({str(w,"name"),member(w,"freepoint").GetBool()});
+    ret.push_back({str(w,"name"),member(w,"freepoint").GetBool(),nullableText(w,"room")});
     if(ret.back().name.empty())
       fail("waypoint "+std::to_string(i)+" has no name");
     }
@@ -179,6 +188,70 @@ std::vector<Waypoint> checkWaypoints(const Value& doc) {
     }
   std::printf("waypoints: %zu (waynet %zu, freepoints %zu)\n",ret.size(),ret.size()-free,free);
   return ret;
+  }
+
+struct Room { std::string owner; int32_t guild = -1; };
+using Rooms = std::map<std::string,Room>;
+
+Rooms checkRooms(const Value& doc, const std::vector<Waypoint>& points) {
+  Rooms ret;
+  std::string previous;
+  for(const auto& r:array(doc,"rooms").GetArray()) {
+    const auto name = str(r,"name");
+    need(!name.empty() && (ret.empty() || previous<name),"rooms must have nonempty names in sorted order without repeats");
+    previous = name;
+    Room room;
+    room.owner = nullableText(r,"owner_npc");
+    const auto& guild = member(r,"owner_guild");
+    need(guild.IsNull() || (guild.IsInt() && guild.GetInt()>0),"room owner_guild must be null or a positive guild id");
+    if(guild.IsInt()) {
+      need(guild.GetInt()!=int32_t(GIL_PUBLIC),"public rooms must have owner_guild null");
+      room.guild = guild.GetInt();
+      }
+    ret.emplace(name,room);
+    }
+  for(const auto& p:points)
+    if(!p.room.empty() && !ret.count(p.room))
+      fail("waypoint "+p.name+" names missing room "+p.room);
+  return ret;
+  }
+
+void checkRoomOwners(const fs::path& log, const Rooms& rooms) {
+  constexpr std::string_view mapping = "society room npc: ";
+  constexpr std::string_view missing = "society room npc missing: ";
+  constexpr std::string_view ambiguous = "society room npc ambiguous: ";
+  constexpr std::string_view guildError = "society room guild unresolved: ";
+  std::set<std::string> mappings;
+  std::vector<std::string> errors;
+  size_t absent = 0, conflicts = 0, guildErrors = 0;
+  for(const auto& line:lines(read(log))) {
+    if(!line.starts_with("society room "))
+      continue;
+    std::printf("%s\n",line.c_str());
+    if(line.starts_with(mapping))
+      mappings.insert(line.substr(mapping.size()));
+    else if(line.starts_with(missing))
+      ++absent;
+    else if(line.starts_with(ambiguous)) {
+      ++conflicts;
+      errors.push_back(line);
+      }
+    else if(line.starts_with(guildError)) {
+      ++guildErrors;
+      errors.push_back(line);
+      }
+    }
+  size_t owned = 0;
+  for(const auto& [name,room]:rooms) {
+    owned += !room.owner.empty() || room.guild>=0 ? 1 : 0;
+    if(!room.owner.empty() && !mappings.count(name+" -> "+room.owner))
+      fail("room "+name+" has no canonical NPC mapping in the export log");
+    }
+  std::printf("rooms: %zu, with an owner: %zu\n",rooms.size(),owned);
+  std::printf("room NPC mappings: %zu; missing: %zu; ambiguous: %zu; unresolved guilds: %zu\n",
+              mappings.size(),absent,conflicts,guildErrors);
+  for(const auto& error:errors)
+    fail(error);
   }
 
 void checkPlaces(const std::vector<Waypoint>& points, const fs::path& placesPath) {
@@ -274,10 +347,12 @@ void checkEdges(const Value& doc, const std::vector<Waypoint>& points) {
   std::printf("waynet components: %zu; points in each: %s\n",size.size(),sizes(size).c_str());
   }
 
-void checkObjects(const Value& doc, const std::vector<Waypoint>& points, const std::set<std::string>& npcIds) {
+void checkObjects(const Value& doc, const std::vector<Waypoint>& points, const std::set<std::string>& npcIds,
+                  const Rooms& rooms) {
   const auto& list = array(doc,"objects");
   std::map<std::string,size_t> schemes;
   size_t npcOwned = 0, guildOwned = 0, owned = 0, containers = 0, strangers = 0, noScheme = 0;
+  size_t beds = 0, ownedBeds = 0, mobOwnedBeds = 0, roomOwnedBeds = 0;
   std::set<std::string> unknownOwners;
   for(rapidjson::SizeType i=0; i<list.Size(); ++i) {
     const auto& o = list[i];
@@ -293,12 +368,24 @@ void checkObjects(const Value& doc, const std::vector<Waypoint>& points, const s
       fail("object "+std::to_string(i)+" has no nearest waynet point");
     const auto& npc   = member(o,"owner_npc");
     const auto& guild = member(o,"owner_guild");
+    const auto roomName = nullableText(o,"room");
+    const auto room = rooms.find(roomName);
+    if(!roomName.empty() && room==rooms.end())
+      fail("object "+std::to_string(i)+" names missing room "+roomName);
     need((npc.IsNull() || (npc.IsString() && npc.GetStringLength()>0)) &&
          (guild.IsNull() || (guild.IsString() && guild.GetStringLength()>0)),"owners are null or a name");
     need(member(o,"container").IsBool(),"container must be a bool");
     npcOwned   += npc.IsString() ? 1 : 0;
     guildOwned += guild.IsString() ? 1 : 0;
     owned      += npc.IsString() || guild.IsString() ? 1 : 0;
+    if(upper(scheme).starts_with("BED")) {
+      ++beds;
+      const bool mobOwned = npc.IsString() || guild.IsString();
+      const bool roomOwned = room!=rooms.end() && (!room->second.owner.empty() || room->second.guild>=0);
+      mobOwnedBeds += mobOwned ? 1 : 0;
+      roomOwnedBeds += roomOwned ? 1 : 0;
+      ownedBeds += mobOwned || roomOwned ? 1 : 0;
+      }
     containers += o["container"].GetBool() ? 1 : 0;
     if(npc.IsString() && !npcIds.count(npc.GetString())) {
       ++strangers;
@@ -316,12 +403,39 @@ void checkObjects(const Value& doc, const std::vector<Waypoint>& points, const s
     text += (text.empty() ? "" : ", ")+(s.empty() ? std::string("(none)") : s)+" "+std::to_string(n);
   std::printf("objects: %u, containers %zu; by scheme: %s\n",list.Size(),containers,text.c_str());
   std::printf("objects with an owner: %zu (an NPC %zu, a guild %zu)\n",owned,npcOwned,guildOwned);
+  std::printf("beds: %zu, with an owner from mobsi or room: %zu (mobsi %zu, room %zu)\n",
+              beds,ownedBeds,mobOwnedBeds,roomOwnedBeds);
   if(strangers>0) {
     std::string names;
     for(const auto& n:unknownOwners)
       names += (names.empty() ? "" : ", ")+n;
     std::printf("  %zu objects name an owner NPC that is not in the world at the start: %s\n",strangers,names.c_str());
     }
+  }
+
+void checkSleepRooms(const Value& doc, const std::vector<Waypoint>& points, const Rooms& rooms) {
+  size_t sleepers = 0, ownRooms = 0;
+  for(const auto& n:array(doc,"npcs").GetArray()) {
+    if(!member(n,"person").GetBool())
+      continue;
+    bool sleeps = false, own = false;
+    for(const auto& r:array(n,"routine").GetArray()) {
+      const auto state = str(r,"state");
+      if(!state.starts_with("ZS_GOTOBED") && !state.starts_with("ZS_SLEEP"))
+        continue;
+      sleeps = true;
+      const auto& wp = member(r,"waypoint");
+      if(!wp.IsUint() || wp.GetUint()>=points.size())
+        continue;
+      const auto room = rooms.find(points[wp.GetUint()].room);
+      if(room==rooms.end())
+        continue;
+      own |= room->second.owner==str(n,"id") || room->second.guild==int32_t(uint(n,"guild"));
+      }
+    sleepers += sleeps ? 1 : 0;
+    ownRooms += own ? 1 : 0;
+    }
+  std::printf("people with a sleep routine: %zu; sleep waypoint in own or guild room: %zu\n",sleepers,ownRooms);
   }
 
 // The record of a person as day_people.json has it: name, guild, routine entries (start, end, state, point name).
@@ -513,7 +627,7 @@ std::set<std::string> checkNpcs(const Value& doc, const std::vector<Waypoint>& p
   }
 
 void checkHeader(const Value& doc) {
-  need(str(doc,"format")=="society-world" && integer(doc,"version")==2,"format must be society-world version 2");
+  need(str(doc,"format")=="society-world" && integer(doc,"version")==3,"format must be society-world version 3");
   if(str(doc,"world")!="NEWWORLD.ZEN")
     fail("world must be NEWWORLD.ZEN");
   const auto fingerprint = str(doc,"data_fingerprint");
@@ -577,7 +691,11 @@ int main() {
     checkPlaces(points,repo/"server/src/gothic_ai/gamedata/places.json");
     checkEdges(doc,points);
     const auto ids = checkNpcs(doc,points,repo/"evals/npc-decisions/day_people.json");
-    checkObjects(doc,points,ids);
+    const auto rooms = checkRooms(doc,points);
+    checkRoomOwners(root/"a.log",rooms);
+    checkObjects(doc,points,ids,rooms);
+    checkSleepRooms(doc,points,rooms);
+    std::fflush(stdout);
     if(failures>0) {
       std::fprintf(stderr,"FAIL: society export contract: %d checks failed\n",failures);
       return EXIT_FAILURE;

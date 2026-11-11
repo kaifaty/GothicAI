@@ -474,8 +474,13 @@ class SharedBodyWatch:
 
     async def watch(self, npcs: list[str], rate_hz: int = 20, timeout: float = 5.0) -> dict[str, Any]:
         """Replace the scenario's own actors; [] stops them and leaves the pilot's."""
+        previous = self._passive, self._rate
         self._passive, self._rate = [npc.upper() for npc in npcs], rate_hz
-        return await self._send(timeout)
+        try:
+            return await self._send(timeout)
+        except GameError:
+            self._passive, self._rate = previous
+            raise
 
     def close(self) -> None:
         self.link.body_watch = self._native  # type: ignore[method-assign]

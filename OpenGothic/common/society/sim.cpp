@@ -1,6 +1,7 @@
 #include "society.h"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <stdexcept>
 
@@ -166,8 +167,68 @@ const char* eventName(EventKind kind) {
     case EventKind::Arrived:         return "arrived";
     case EventKind::ActivityStarted: return "activity_started";
     case EventKind::Teleported:      return "teleported";
+    case EventKind::NeedThreshold:   return "need_threshold";
     }
   return "?";
+  }
+
+// --- Needs -------------------------------------------------------------------------------------------------
+
+double needRate(const World& w, size_t k, double decay, uint16_t state, bool moving) {
+  const auto& c   = w.config;
+  const auto  row = state==NoState ? NoState : w.stateRow[state];
+  const bool  doing = !moving && row!=NoState;
+  double ret = doing && c.states.asleep[row] && c.needs.awakeOnly[k] ? 0.0 : -decay;
+  if(doing)
+    ret += c.states.fill[size_t(row)*c.needs.size()+k];
+  return ret;
+  }
+
+double needLevelAt(double level, double rate, Time since, Time t) {
+  const double change = rate*double(t-since);
+  const double v      = level+change;
+  return std::clamp(v,0.0,1.0);
+  }
+
+uint8_t needZone(const World& w, size_t k, double level) {
+  if(level<=w.config.needs.critical[k])
+    return 2;
+  return level<=w.config.needs.low[k] ? 1 : 0;
+  }
+
+Time needCrossing(const World& w, size_t k, double level, double rate, Time since, uint8_t zone, Time now) {
+  constexpr Time Never = std::numeric_limits<Time>::max();
+  const auto& n = w.config.needs;
+  double target = 0;
+  if(rate<0 && zone<2)
+    target = zone==0 ? n.low[k] : n.critical[k];
+  else if(rate>0 && zone>0)
+    target = zone==2 ? n.critical[k] : n.low[k];
+  else
+    return Never;
+  // Seconds from `since` to the threshold, then the exact whole second by the level itself (rounding moves it by one
+  // at most): the first second after `now` whose zone is not `zone`.
+  const double dt = (target-level)/rate;
+  if(!(dt<1e12))
+    return Never;
+  Time t = since+Time(std::ceil(std::max(dt,0.0)));
+  if(t<=now)
+    t = now+1;
+  const auto zoneAt = [&](Time x) { return needZone(w,k,needLevelAt(level,rate,since,x)); };
+  for(int i=0; zoneAt(t)==zone; ++i) {
+    if(i>1000)
+      throw std::logic_error("society core: a need's crossing is not where its rate puts it");
+    ++t;
+    }
+  while(t-1>now && zoneAt(t-1)!=zone)
+    --t;
+  return t;
+  }
+
+double needLevel(const Sim& sim, uint32_t npc, size_t k) {
+  const auto& s = sim.s;
+  const size_t i = size_t(npc)*needCount(*sim.world)+k;
+  return needLevelAt(s.needLevel[i],s.needRate[i],s.needSince[npc],s.now);
   }
 
 // --- Rules: routine only -----------------------------------------------------------------------------------
@@ -189,9 +250,90 @@ void pushBody(State& s, Time t, uint32_t npc, Pending::Kind kind) {
   s.bodySeq[npc] = push(s,t,npc,kind)+1;
   }
 
-void emit(State& s, EventKind kind, uint32_t npc, uint8_t reason, uint32_t a, uint32_t b, Time c = 0) {
+void record(State& s, EventKind kind, uint32_t npc, uint8_t reason, uint32_t a, uint32_t b, Time c = 0) {
   s.events.push_back({s.now,npc,kind,reason,s.entry[npc],a,b,c});
   ++s.emitted;
+  }
+
+bool hasNeeds(const Sim& sim, uint32_t npc) {
+  return !sim.s.needSince.empty() && sim.world->npcs.person[npc]!=0;
+  }
+
+// The zone of each need at `now` on the current segment; every threshold passed since the journal last said is
+// written now, in order (low before critical going down, critical before low going up), need by need.
+void crossings(Sim& sim, uint32_t npc) {
+  auto& s = sim.s;
+  const auto& w = *sim.world;
+  const size_t n = needCount(w);
+  for(size_t k=0; k<n; ++k) {
+    const size_t i = size_t(npc)*n+k;
+    const auto zone = needZone(w,k,needLevelAt(s.needLevel[i],s.needRate[i],s.needSince[npc],s.now));
+    const uint32_t state = s.state[npc]==NoState ? 0xFFFFu : s.state[npc];
+    while(s.needZone[i]<zone) {
+      ++s.needZone[i];
+      record(s,EventKind::NeedThreshold,npc,uint8_t(NeedDirection::Down),uint32_t(k),s.needZone[i],state);
+      }
+    while(s.needZone[i]>zone) {
+      record(s,EventKind::NeedThreshold,npc,uint8_t(NeedDirection::Up),uint32_t(k),s.needZone[i],state);
+      --s.needZone[i];
+      }
+    }
+  }
+
+// The NPC's need event: at the first crossing of any need, or earlier when one is queued already (it then finds
+// nothing, and the next one is queued). An earlier event is never replaced by a later one.
+void scheduleNeed(Sim& sim, uint32_t npc) {
+  auto& s = sim.s;
+  const auto& w = *sim.world;
+  const size_t n = needCount(w);
+  Time next = std::numeric_limits<Time>::max();
+  for(size_t k=0; k<n; ++k) {
+    const size_t i = size_t(npc)*n+k;
+    next = std::min(next,needCrossing(w,k,s.needLevel[i],s.needRate[i],s.needSince[npc],s.needZone[i],s.now));
+    }
+  if(next==std::numeric_limits<Time>::max() || (s.needSeq[npc]!=0 && s.needAt[npc]<=next))
+    return;
+  s.needSeq[npc] = push(s,next,npc,Pending::Need)+1;
+  s.needAt[npc]  = next;
+  }
+
+// A new segment from now: the levels so far, the rates of what the NPC does now.
+void segment(Sim& sim, uint32_t npc) {
+  auto& s = sim.s;
+  const auto& w = *sim.world;
+  const size_t n = needCount(w);
+  const bool moving = (s.flags[npc] & Moving)!=0;
+  for(size_t k=0; k<n; ++k) {
+    const size_t i = size_t(npc)*n+k;
+    s.needLevel[i] = needLevelAt(s.needLevel[i],s.needRate[i],s.needSince[npc],s.now);
+    s.needRate[i]  = needRate(w,k,s.needDecay[i],s.state[npc],moving);
+    }
+  s.needSince[npc] = s.now;
+  scheduleNeed(sim,npc);
+  }
+
+// The events that can change what a person does (its state, standing or on the way): the ends of its needs' segments.
+bool changesRate(EventKind kind) {
+  return kind==EventKind::ActivityStarted || kind==EventKind::TravelStarted || kind==EventKind::Arrived ||
+         kind==EventKind::Teleported;
+  }
+
+// An event of the journal. One that can change what a person does ends its needs' segment: thresholds passed until
+// now come first, a new segment starts after the event.
+void emit(Sim& sim, EventKind kind, uint32_t npc, uint8_t reason, uint32_t a, uint32_t b, Time c = 0) {
+  auto& s = sim.s;
+  const bool needs = changesRate(kind) && hasNeeds(sim,npc);
+  if(needs)
+    crossings(sim,npc);
+  record(s,kind,npc,reason,a,b,c);
+  if(needs)
+    segment(sim,npc);
+  }
+
+void onNeed(Sim& sim, uint32_t npc) {
+  sim.s.needSeq[npc] = 0;
+  crossings(sim,npc);
+  scheduleNeed(sim,npc);
   }
 
 uint32_t entryPoint(const Sim& sim, uint32_t npc, uint16_t e) {
@@ -207,7 +349,12 @@ void setState(Sim& sim, uint32_t npc, uint16_t state, ActivityReason reason, uin
   s.state[npc]      = state;
   s.stateStart[npc] = s.now;
   if(state!=NoState)
-    emit(s,EventKind::ActivityStarted,npc,uint8_t(reason),state,at);
+    emit(sim,EventKind::ActivityStarted,npc,uint8_t(reason),state,at);
+  else if(hasNeeds(sim,npc)) {
+    // No state and so no event: only a person without a routine and without a start_aistate (none in Khorinis).
+    crossings(sim,npc);
+    segment(sim,npc);
+    }
   }
 
 bool near(const World& w, uint32_t a, uint32_t b) {
@@ -240,7 +387,7 @@ void follow(Sim& sim, uint32_t npc) {
   s.flags[npc] = uint8_t(s.flags[npc] & ~AtStart);
   const int64_t cm = sim.paths.length(s.place[npc],target);
   if(cm<0) {
-    emit(s,EventKind::Teleported,npc,uint8_t(TeleportReason::OtherComponent),s.place[npc],target);
+    emit(sim,EventKind::Teleported,npc,uint8_t(TeleportReason::OtherComponent),s.place[npc],target);
     s.place[npc] = target;
     settle(sim,npc);
     return;
@@ -249,7 +396,7 @@ void follow(Sim& sim, uint32_t npc) {
   s.depart[npc] = s.now;
   s.arrive[npc] = s.now+travelSeconds(cm,w.npcs.walkCmPerS[npc],w.clockRate);
   s.flags[npc]  = uint8_t(s.flags[npc] | Moving);
-  emit(s,EventKind::TravelStarted,npc,0,s.place[npc],target,s.arrive[npc]);
+  emit(sim,EventKind::TravelStarted,npc,0,s.place[npc],target,s.arrive[npc]);
   pushBody(s,s.arrive[npc],npc,Pending::Arrival);
   }
 
@@ -301,7 +448,7 @@ void onRoutineChange(Sim& sim, uint32_t npc) {
   if(e==s.entry[npc] || e==NoEntry)
     return;
   s.entry[npc] = e;
-  emit(s,EventKind::RoutineEntry,npc,0,w.routines.state[w.entryIndex(npc,e)],entryPoint(sim,npc,e));
+  emit(sim,EventKind::RoutineEntry,npc,0,w.routines.state[w.entryIndex(npc,e)],entryPoint(sim,npc,e));
   }
 
 void onArrival(Sim& sim, uint32_t npc) {
@@ -313,8 +460,43 @@ void onArrival(Sim& sim, uint32_t npc) {
   s.arrive[npc]  = 0;
   s.flags[npc]   = uint8_t(s.flags[npc] & ~Moving);
   s.bodySeq[npc] = 0;
-  emit(s,EventKind::Arrived,npc,0,s.place[npc],from);
+  emit(sim,EventKind::Arrived,npc,0,s.place[npc],from);
   follow(sim,npc);
+  }
+
+// A uniform number in [0, 1) of the seed and a slot (splitmix64): a person's noise does not depend on the order of
+// anything else and draws nothing from the world's generator.
+double unit(uint64_t seed, uint64_t slot) {
+  uint64_t z = seed+0x9e3779b97f4a7c15ull*(slot+1);
+  z = (z^(z>>30))*0xbf58476d1ce4e5b9ull;
+  z = (z^(z>>27))*0x94d049bb133111ebull;
+  z = z^(z>>31);
+  return double(z>>11)*0x1.0p-53;
+  }
+
+// Every person at the start level of each need, in zone 0 (a start below a threshold crosses it at the start), with
+// its own decay: traits and guild (World::npcDecay) times 1 ± noise from the seed.
+void resetNeeds(Sim& sim, uint64_t seed) {
+  auto& s = sim.s;
+  if(s.needSince.empty())
+    return;
+  const auto& w = *sim.world;
+  const size_t n = needCount(w);
+  for(uint32_t npc=0; npc<w.npcs.size(); ++npc) {
+    s.needSince[npc] = s.now;
+    s.needSeq[npc]   = 0;
+    s.needAt[npc]    = 0;
+    for(size_t k=0; k<n; ++k) {
+      const size_t i = size_t(npc)*n+k;
+      const double u = unit(seed,i);
+      const double spread = 2.0*u-1.0;
+      const double noise  = w.config.noise*spread;
+      s.needDecay[i] = w.npcDecay[i]*(1.0+noise);
+      s.needLevel[i] = w.config.needs.start[k];
+      s.needRate[i]  = 0;
+      s.needZone[i]  = 0;
+      }
+    }
   }
 
 // Drops the journal already handed out by drainEvents.
@@ -344,7 +526,17 @@ Sim makeSim(const World& world, const SimConfig& config) {
   s.state.resize(n);
   s.stateStart.resize(n);
   s.flags.resize(n);
-  s.queue.reserve(3*n);
+  if(needCount(world)>0) {
+    const size_t m = n*needCount(world);
+    s.needLevel.resize(m);
+    s.needRate.resize(m);
+    s.needDecay.resize(m);
+    s.needZone.resize(m);
+    s.needSince.resize(n);
+    s.needSeq.resize(n);
+    s.needAt.resize(n);
+    }
+  s.queue.reserve((s.needSince.empty() ? 3 : 4)*n);
   s.events.reserve(8*n);
   reset(sim,config.seed);
   return sim;
@@ -362,6 +554,7 @@ void reset(Sim& sim, uint64_t seed) {
   s.rng.seed(seed);
   s.queue.clear();
   s.events.clear();
+  resetNeeds(sim,seed);
   for(uint32_t i=0; i<w.npcs.size(); ++i) {
     s.place[i]      = w.npcs.startPoint[i];
     s.dest[i]       = NoPoint;
@@ -374,7 +567,7 @@ void reset(Sim& sim, uint64_t seed) {
     s.state[i]      = NoState;
     s.stateStart[i] = s.now;
     s.flags[i]      = AtStart;
-    emit(s,EventKind::Teleported,i,uint8_t(TeleportReason::StartPlacement),NoPoint,s.place[i]);
+    emit(sim,EventKind::Teleported,i,uint8_t(TeleportReason::StartPlacement),NoPoint,s.place[i]);
     if(w.entryCount(i)==0) {
       // Without a routine: start_aistate (the monster dispatcher's pick), started again every four hours.
       setState(sim,i,startStateAt(w,i,s.now),ActivityReason::StartState,s.place[i]);
@@ -387,7 +580,7 @@ void reset(Sim& sim, uint64_t seed) {
     Time next = 0;
     const auto e = entryAt(w,i,s.now,&next);
     s.entry[i] = e;
-    emit(s,EventKind::RoutineEntry,i,0,w.routines.state[w.entryIndex(i,e)],entryPoint(sim,i,e));
+    emit(sim,EventKind::RoutineEntry,i,0,w.routines.state[w.entryIndex(i,e)],entryPoint(sim,i,e));
     // The start does the entry in force where the engine's placement put the NPC: its point, or a free one
     // nearby when that freepoint is taken, or the point of the last entry with a point. It does not walk.
     startEntry(sim,i,s.place[i]);
@@ -413,6 +606,11 @@ size_t advance(Sim& sim, DecisionBatch& out, Time horizon) {
       }
     if(p.kind==Pending::Begin) {
       onBegin(sim,p.npc);
+      continue;
+      }
+    if(p.kind==Pending::Need) {
+      if(s.needSeq[p.npc]==p.seq+1)
+        onNeed(sim,p.npc);
       continue;
       }
     // A body event replaced by a later one is skipped.
@@ -442,9 +640,11 @@ void restore(Sim& sim, const Snapshot& snapshot) {
   const size_t n = sim.world->npcs.size();
   if(snapshot.state.place.size()!=n)
     throw std::invalid_argument("society core: the snapshot is of another world");
+  if(snapshot.state.needSince.size()!=sim.s.needSince.size())
+    throw std::invalid_argument("society core: the snapshot is of a run with other needs");
   sim.s       = snapshot.state;
   sim.drained = 0;
-  sim.s.queue.reserve(3*n);
+  sim.s.queue.reserve((sim.s.needSince.empty() ? 3 : 4)*n);
   }
 
 std::span<const Event> drainEvents(Sim& sim) {

@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "resources.h"
+#include "graphics/mesh/texeldensity.h"
 
 class Bounds;
 
@@ -37,35 +38,13 @@ class PackedMesh {
       size_t           iboLength = 0;
       bool             alphaTest = true;
       bool             alphaTestRequired = false;
+      TexelDensity     texel;  // its triangles' lowest UV density and bounds, for the texture's mip level
       };
 
     struct Cluster final {
       Tempest::Vec3 pos;
       float         r = 0;
       };
-
-    enum BVH_NodeType : uint32_t {
-      BVH_NullNode = 0x00000000,
-      BVH_BoxNode  = 0x10000000,
-      BVH_Tri1Node = 0x20000000,
-      BVH_Tri2Node = 0x30000000,
-      };
-
-    struct BVHNode {
-      // Alternative 64-byte BVH node layout, which specifies the bounds of
-      // the children rather than the node itself. This layout is used by
-      // Aila and Laine in their seminal GPU ray tracing paper.
-      Tempest::Vec3 lmin; uint32_t left;
-      Tempest::Vec3 lmax; uint32_t right;
-      Tempest::Vec3 rmin; uint32_t padd0;
-      Tempest::Vec3 rmax; uint32_t padd1;
-      };
-
-    struct Leaf64 {
-      Tempest::Vec3 bbmin; uint32_t ptr;
-      Tempest::Vec3 bbmax; uint32_t padd0;
-      };
-    using UVec4 = Tempest::BasicPoint<uint32_t,4>;
 
     std::vector<Vertex>   vertices;
     std::vector<VertexA>  verticesA;
@@ -78,15 +57,10 @@ class PackedMesh {
     std::vector<uint32_t> verticesId; // only for morph meshes
     bool                  isUsingAlphaTest = true;
 
-    // sw-raytracing
-    std::vector<BVHNode>  bvhNodes;
-    std::vector<UVec4>    bvh8Nodes;
-
     PackedMesh(const asset::StaticMesh& mesh, PkgType type, bool explicitAlphaTest = false);
     PackedMesh(const asset::WorldMesh& mesh, PkgType type);
     // Triangle IDs address the unchanged source polygon arrays. Materials and
     // vertex/feature IDs remain global to mesh, including unused materials.
-    // Chunk landscapes never build the whole-world software ray tracing BVH.
     // Compact chunk sources may supply local-to-source vertex/feature IDs to
     // keep the heap's packing order identical to the unchanged source arrays.
     PackedMesh(const asset::WorldMesh& mesh, std::span<const uint32_t> triangles,
@@ -95,6 +69,9 @@ class PackedMesh {
     PackedMesh(const asset::SoftSkinMesh& mesh);
 
     static std::vector<uint32_t> landscapeMaterialMap(const asset::WorldMesh& mesh);
+    // Bounds of the vertices the landscape polygons use, as bbox() of PK_VisualLnd
+    // gives without packing; compiled world meshes store a zero bbox.
+    static std::pair<Tempest::Vec3,Tempest::Vec3> landscapeBbox(const asset::WorldMesh& mesh);
 
     void debug(std::ostream &out) const;
 
@@ -114,6 +91,13 @@ class PackedMesh {
       float         weights[4]        = {};
       };
 
+    // The rest rotation of a node a soft skin is bound to (node frame -> model), found from the skin itself
+    struct SkinRest {
+      float rot[3][3] = {};
+      bool  valid     = false;
+      };
+    static std::vector<SkinRest> fitSkinRest(const asset::SoftSkinMesh& skinned);
+
     using  Vert = std::pair<uint32_t,uint32_t>;
     struct PrimitiveHeap;
     struct Meshlet {
@@ -131,7 +115,8 @@ class PackedMesh {
                     std::vector<uint32_t>& indices, std::vector<uint8_t>& indices8,
                     std::vector<uint32_t>* verticesId, const std::vector<asset::Vec3>& vbo,
                     const std::vector<asset::MeshWedge>& wedgeList,
-                    const std::vector<SkeletalData>* skeletal);
+                    const std::vector<SkeletalData>* skeletal,
+                    const std::vector<SkinRest>* rest);
       bool    validate() const;
 
       bool    insert(const Vert& a, const Vert& b, const Vert& c);
@@ -145,75 +130,9 @@ class PackedMesh {
       void    merge(const Meshlet& other);
       };
 
-    struct HalfEdge {
-      float         sah  = 0;
-      uint32_t      iMax = 0;
-      uint32_t      iMin = 0;
-      uint32_t      prim = 0;
-      bool          wnd  = false;
-      };
-
-    struct Fragment {
-      Tempest::Vec3 centroid;
-      Tempest::Vec3 bbmin, bbmax;
-
-      uint32_t      ibo[4] = {};
-      uint32_t      prim0 = 0;
-      uint32_t      prim1 = 0xFFFFFFFF;
-      };
-
-    struct Block {
-      Tempest::Vec3 bbmin;
-      Tempest::Vec3 bbmax;
-      Fragment*     frag = nullptr;
-      size_t        size = 0;
-      };
-
-    struct CWBVH8 {
-      float    p[3];
-      uint8_t  e[3], imask;
-
-      uint32_t pNodes      = 0;
-      uint32_t pPrimitives = 0;
-      uint8_t  meta  [8]   = {};
-
-      uint8_t  qmin_x[8] = {};
-      uint8_t  qmax_x[8] = {};
-      uint8_t  qmin_y[8] = {};
-      uint8_t  qmax_y[8] = {};
-      uint8_t  qmin_z[8] = {};
-      uint8_t  qmax_z[8] = {};
-      };
-    static_assert(sizeof(CWBVH8)==80);
-
     bool   addTriangle(Meshlet& dest, const asset::WorldMesh* mesh, const asset::SubMesh* proto_mesh, size_t id);
 
     void   packPhysics(const asset::WorldMesh& mesh, PkgType type);
-
-    // bvh common
-    static void quadAddPrim(Fragment& f, const asset::WorldMesh& shp, uint32_t prim0, uint32_t prim1, uint32_t iMin, uint32_t iMax);
-    static auto packQuads(const asset::WorldMesh& mesh) -> std::vector<PackedMesh::Fragment>;
-
-    static auto findNodeSplit(const Fragment* frag, size_t size, const bool useSah) -> std::pair<uint32_t, float>;
-    static auto findNodeSplitSah(Fragment* frag, size_t size) -> std::pair<uint32_t, bool>;
-    static void packBlocks(Block* out, uint32_t& outSz, uint8_t destSz, Fragment* frag, size_t size);
-    static void computeBbox(Tempest::Vec3& bbmin, Tempest::Vec3& bbmax, const Fragment* frag, size_t size);
-    void        packBVH(const asset::WorldMesh& mesh);
-
-    // bvh2
-    void     packBVH2(const asset::WorldMesh& mesh);
-    uint32_t packBVH2(const asset::WorldMesh& mesh, std::vector<BVHNode>& nodes, Fragment* frag, size_t size, size_t parentSz);
-
-    // cwbvh8
-    void     packCWBVH8(const asset::WorldMesh& mesh);
-    CWBVH8   packCWBVH8(const asset::WorldMesh& mesh, std::vector<UVec4>& nodes, Fragment* frag, size_t size);
-
-    CWBVH8   packCWBVH8(const asset::WorldMesh& mesh, std::vector<UVec4>& nodes,
-                        const std::vector<uint32_t>& ibo, Fragment* frag, size_t size);
-    void     packCW8Blocks(Block* out, uint32_t& outSz, const asset::WorldMesh& mesh, std::vector<UVec4>& nodes,
-                           Fragment* frag, size_t size, uint8_t depth);
-    CWBVH8   nodeFromBlocks(Block* block);
-    void     orderBlocks(Block* block, const uint32_t numBlocks, const Tempest::Vec3 bbmin, const Tempest::Vec3 bbmax);
 
     //
     void   packMeshletsLnd(const asset::WorldMesh& mesh);
@@ -221,13 +140,16 @@ class PackedMesh {
                           std::span<const uint32_t> materialMap,
                           std::span<const uint32_t> vertexIds = {}, std::span<const uint32_t> featureIds = {});
     void   packMeshletsObj(const asset::StaticMesh& mesh, PkgType type,
-                           const std::vector<SkeletalData>* skeletal);
+                           const std::vector<SkeletalData>* skeletal,
+                           const std::vector<SkinRest>* rest = nullptr);
 
     std::vector<Meshlet> buildMeshlets(const asset::WorldMesh* mesh, const asset::SubMesh* proto_mesh,
                                        PrimitiveHeap& heap, std::vector<bool>& used,
                                        std::span<const uint32_t> vertexIds = {}, std::span<const uint32_t> featureIds = {});
 
     void   computeBbox();
+    void   measureTexels();
+    void   measureBindTexels(const asset::StaticMesh& mesh);
 
     void   dbgUtilization(const std::vector<Meshlet>& meshlets);
     void   dbgMeshlets(const asset::WorldMesh& mesh, const std::vector<Meshlet*>& meshlets);

@@ -117,6 +117,11 @@ class Encoder<Tempest::CommandBuffer> {
     void copy(const Attachment& src, uint32_t mip, StorageBuffer& dest, size_t offset);
     void copy(const Texture2d&  src, uint32_t mip, StorageBuffer& dest, size_t offset);
 
+    // Builds a top-level structure of Device::tlas(Uninitialized, capacity) from `count` instances that
+    // Device::packRtInstances wrote into `instances`; count must not exceed tlas.capacity(). Outside of a render pass.
+    // Ray queries recorded after it in this command buffer read the new structure: the backend waits for the build.
+    void buildTlas(AccelerationStructure& tlas, const StorageBuffer& instances, size_t count);
+
     void generateMipmaps(Attachment& tex);
     // Spatial upscale of a tonemapped image into dst; requires Device::properties().spatialUpscale.
     void upscale(const Attachment& src, StorageImage& dst);

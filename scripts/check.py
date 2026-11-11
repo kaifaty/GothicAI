@@ -5,12 +5,13 @@ from __future__ import annotations
 
 import argparse
 import ast
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
 from dataclasses import dataclass
 import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
+import re
 import shlex
 import subprocess
 import sys
@@ -32,12 +33,11 @@ class Group:
 
 LOCKED_PROJECTS = (
     "server", "asr-service", "tts-service", "launcher/core",
-    "libs/chatgpt-auth", "shorts", "decider-service", "embed-service", "laughter-service",
+    "libs/chatgpt-auth", "decider-service", "embed-service", "laughter-service",
 )
 PYTEST = ("pytest", "-q", "-rs", "--timeout=120", "--timeout-method=signal")
 # The pip interface scopes the CPU index to torch; uv run's --index affects all packages.
-GROUPS = tuple(Group(p, p, ("uv", "run", "--locked", "--with", "pytest-timeout", *PYTEST),
-                     platform="macos-15" if p == "shorts" else "ubuntu-24.04")
+GROUPS = tuple(Group(p, p, ("uv", "run", "--locked", "--with", "pytest-timeout", *PYTEST))
                for p in LOCKED_PROJECTS) + (
     Group("body-service", "body-service", (
         "bash", "-c", 'uv venv --allow-existing .venv && '
@@ -59,7 +59,7 @@ GROUPS = tuple(Group(p, p, ("uv", "run", "--locked", "--with", "pytest-timeout",
         'matplotlib websockets --editable ../body-service ../launcher/core && '
         'exec uv run --no-project --python .venv/bin/python --with pytest-timeout '
         'pytest -q -rs --timeout=120 --timeout-method=signal '
-        '--ignore=content --ignore=meshes --ignore=fracture "$@"', "pytest",
+        '--ignore=content --ignore=meshes --ignore=fracture --ignore=convex-parts "$@"', "pytest",
     ), dependencies=("scripts",)),
     Group("content", "scripts/content", (
         "uv", "run", "--no-project", "--with", "pytest-timeout", "--with", "pytest", "--with", "numpy",
@@ -70,6 +70,10 @@ GROUPS = tuple(Group(p, p, ("uv", "run", "--locked", "--with", "pytest-timeout",
         "uv", "run", "--no-project", "--with", "pytest-timeout", "--with", "pytest", *PYTEST,
     )),
     Group("fracture", "scripts/fracture", (
+        "uv", "run", "--no-project", "--with", "pytest-timeout", "--with", "pytest",
+        "--with", "numpy", "--with", "scipy", *PYTEST,
+    )),
+    Group("convex-parts", "scripts/convex-parts", (
         "uv", "run", "--no-project", "--with", "pytest-timeout", "--with", "pytest",
         "--with", "numpy", "--with", "scipy", *PYTEST,
     )),
@@ -349,6 +353,18 @@ def documentation(root: Path, path: str) -> bool:
     return False
 
 
+def names_file(path: str, test: str, text: str, shared_names: Counter[str]) -> bool:
+    """Does the test name this non-Python file? A name shared by several files needs more than the name itself."""
+    file = PurePosixPath(path)
+    # Whole names only: material.h must not match alpha_material.harden, nor results.json results.jsonl.
+    if not re.search(rf"(?<![\w.-]){re.escape(file.name)}(?![\w-]|\.\w)", text):
+        return False
+    # config.json or results.json in a test's text says nothing about one particular such file.
+    if shared_names[file.name] < 2:
+        return True
+    return file.parent.name in text or file.parent in PurePosixPath(test).parents
+
+
 def select_groups(root: Path, changed_files: Iterable[str], *, event: str = "pull_request",
                   groups: tuple[Group, ...] | None = None, level: str = "full") -> list[dict]:
     """Return runnable Python selections. Future E2E selection stays outside this function."""
@@ -357,6 +373,7 @@ def select_groups(root: Path, changed_files: Iterable[str], *, event: str = "pul
         raise ValueError(f"Unsupported selection level: {level}")
     changed = sorted(set(changed_files))
     files = git_files(root, untracked=True)
+    shared_names = Counter(PurePosixPath(path).name for path in {*files, *changed})
     deps = dependencies(root, groups)
     inventory = discover_tests(root, groups, graph={})
     all_tests = {p for paths in inventory.values() for p in paths}
@@ -370,7 +387,7 @@ def select_groups(root: Path, changed_files: Iterable[str], *, event: str = "pul
     # Text-only changes need no import graph unless a scripts test needs its runtime partition.
     if "scripts-torch" in inventory and (select_all or any(
         any(path in texts[p] or (not path.endswith(".py") and not documentation(root, path)
-                                and PurePosixPath(path).name in texts[p]) for path in changed)
+                                and names_file(path, p, texts[p], shared_names)) for path in changed)
         for p in inventory["scripts"]
     ) or any(PurePosixPath(path).name in {"pyproject.toml", "uv.lock", "conftest.py"}
              and (group := owner(path, groups)) is not None
@@ -424,7 +441,7 @@ def select_groups(root: Path, changed_files: Iterable[str], *, event: str = "pul
                        reason + f": {dependency} (rules 2/3/5)")
             elif not path.endswith(".py"):
                 candidates = [p for p in all_tests if owner(p, groups) == group] if group else all_tests
-                matches = [p for p in candidates if PurePosixPath(path).name in texts.get(p, "")]
+                matches = [p for p in candidates if names_file(path, p, texts.get(p, ""), shared_names)]
                 select(matches, reason + ": file reference (rules 6/7)")
                 if not matches and not references:
                     print(f"No tests reference {path}; no tests selected for this file.", file=sys.stderr)

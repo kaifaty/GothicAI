@@ -21,12 +21,14 @@
 #      BENCH_HEADLESS 1: runner in lockstep, 0: window; default: scenario's # @headless marker
 #      RUNNER_BIN    headless executable (default: gothic-body-runner beside GAME_BIN)
 #      TEMPEST_WINDOW_SIZE client frame size (default: 800x600)
+#      TEMPEST_OFFSCREEN=1 Linux: draw without a window or display (run mode offscreen; Ryzen's default)
+#      TEMPEST_OFFSCREEN_FPS offscreen frame limit (default: 200, the window's pace on Ryzen; 0: none)
 #      BENCH_VID_RES  [INTERNAL] vidResIndex of the run (default: 2 on macOS, 0 on Linux)
 #      SAVE          save to start from (default: save_slot_1.sav in the main checkout)
 #      WORLD         start a fresh game in this world instead (NEWWORLD.ZEN, OLDWORLD.ZEN, ADDONWORLD.ZEN, DRAGONISLAND.ZEN)
 #      GOTHIC_INTRO=1 play the new game's intro and the scripts' videos (default: -nointro, none)
 #      NO_BUILD=1    do not rebuild the engine first
-#      TIMEOUT=300   seconds before the game is killed
+#      TIMEOUT=300   seconds before the game is killed (a scenario's `# @timeout <s>` line sets its own default)
 #      BENCH_PROGRESS seconds between progress lines (default: 300; 0 disables)
 #      BENCH_STALL   seconds without output changes before killing a stalled game (default: 600; 0 disables)
 #      KEEP=1        the window stays open after the scenario (incompatible with headless)
@@ -100,6 +102,10 @@ SCEN="${1:?usage: scripts/bench.sh <scenario> [out dir]}"
 [[ -f "$SCEN" ]] || { echo "no scenario: $1" >&2; exit 2; }
 SCEN="$(cd "$(dirname "$SCEN")" && pwd)/$(basename "$SCEN")"
 NAME="$(basename "$SCEN" .bench)"
+if [[ -z "${TIMEOUT:-}" ]]; then
+  SCEN_TIMEOUT="$(awk '$1 == "#" && $2 == "@timeout" { print $3; exit }' "$SCEN")"
+  [[ -z "$SCEN_TIMEOUT" ]] || export TIMEOUT="$SCEN_TIMEOUT"
+fi
 if [[ -z "${BENCH_HEADLESS+x}" ]]; then
   BENCH_HEADLESS=0
   if grep -qx '# @headless' "$SCEN"; then BENCH_HEADLESS=1; fi
@@ -500,12 +506,13 @@ RUN_MODE=window
 if [[ "$BENCH_HEADLESS" == 1 ]]; then
   RUN_MODE='headless lockstep'
   GAME_ARGS=("${RUNNER_BIN:-$(dirname "$GAME_BIN")/gothic-body-runner}" -g "$GOTHIC_DIR" -devmode "${START_ARGS[@]}")
-  if [[ "${RYZEN_BENCH:-}" == 1 ]]; then GAME_ARGS+=(-g2); fi
   GAME_ARGS+=(--game-parity --scenario "$SCEN" --output "$OUT" --mode lockstep)
   WINDOW_ENV=()
 else
   GAME_ARGS=("$GAME_BIN" -g "$GOTHIC_DIR" -window -devmode "${START_ARGS[@]}")
   WINDOW_ENV=(TEMPEST_BACKGROUND="$BACKGROUND" TEMPEST_WINDOW_SIZE="${TEMPEST_WINDOW_SIZE:-800x600}")
+  # Linux: the engine draws into its own image, no window, display or present (macOS ignores it)
+  if [[ "${TEMPEST_OFFSCREEN:-}" == 1 && "$(uname -s)" == Linux ]]; then RUN_MODE=offscreen; fi
 fi
 env ${WINDOW_ENV[@]+"${WINDOW_ENV[@]}"} BENCH_RUN_MODE="$RUN_MODE" \
   OPENGOTHIC_BENCH="$SCEN" OPENGOTHIC_BENCH_OUT="$OUT" ${KEEP:+OPENGOTHIC_BENCH_KEEP=1} \

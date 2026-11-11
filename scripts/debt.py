@@ -12,6 +12,7 @@ import sys
 import tempfile
 import tomllib
 from collections import Counter
+from datetime import date, datetime, timezone
 from pathlib import Path, PurePosixPath
 
 KEY = re.compile(r"<!-- debt-key: (.*?) -->")
@@ -38,11 +39,11 @@ def git(root: Path, *args: str) -> bytes:
     return subprocess.run(["git", *args], cwd=root, check=True, capture_output=True).stdout
 
 
-def head_blobs(root: Path, paths: list[str]) -> dict[str, bytes]:
-    """Read selected HEAD blobs in one process, never from the working tree."""
+def revision_blobs(root: Path, paths: list[str], revision: str) -> dict[str, bytes]:
+    """Read selected committed blobs in one process, never from the working tree."""
     output = subprocess.run(
         ["git", "cat-file", "--batch"], cwd=root,
-        input=b"".join(f"HEAD:{path}\n".encode() for path in paths),
+        input=b"".join(f"{revision}:{path}\n".encode() for path in paths),
         check=True, capture_output=True,
     ).stdout
     blobs = {}
@@ -51,7 +52,7 @@ def head_blobs(root: Path, paths: list[str]) -> dict[str, bytes]:
         end = output.index(b"\n", offset)
         header = output[offset:end].split()
         if len(header) != 3 or header[1] != b"blob":
-            raise ValueError(f"Cannot read HEAD blob: {path}")
+            raise ValueError(f"Cannot read {revision} blob: {path}")
         size = int(header[2])
         offset = end + 1
         blobs[path] = output[offset:offset + size]
@@ -76,18 +77,18 @@ def finding(kind: str, path: str, score: int, metrics: dict, config: dict) -> di
     }
 
 
-def orphan_scripts(root: Path, paths: list[str]) -> list[str]:
+def orphan_scripts(root: Path, paths: list[str], revision: str = "HEAD") -> list[str]:
     scripts = {PurePosixPath(path).name: path for path in paths
                if PurePosixPath(path).parent == PurePosixPath("scripts")
                and PurePosixPath(path).suffix in {".py", ".sh"}}
     if not scripts:
         return []
-    # One grep over HEAD; a match's filename lets us exclude self-references.
+    # One grep over the revision; a match's filename lets us exclude self-references.
     with tempfile.NamedTemporaryFile() as patterns:
         patterns.write("\n".join(scripts).encode())
         patterns.flush()
         result = subprocess.run(
-            ["git", "grep", "-a", "-z", "-o", "-F", "-f", patterns.name, "HEAD", "--"],
+            ["git", "grep", "-a", "-z", "-o", "-F", "-f", patterns.name, revision, "--"],
             cwd=root, capture_output=True, check=False,
         )
     if result.returncode not in (0, 1):
@@ -95,7 +96,7 @@ def orphan_scripts(root: Path, paths: list[str]) -> list[str]:
     referenced = set()
     for line in result.stdout.splitlines():
         source, match = line.split(b"\0", 1)
-        source = source.decode().removeprefix("HEAD:")
+        source = source.decode().removeprefix(revision + ":")
         # grep chooses the longest overlapping match; shorter names count too.
         for name, path in scripts.items():
             if name.encode() in match and source != path:
@@ -125,20 +126,20 @@ def now_section_bytes(content: bytes) -> int | None:
     return len(content) - start if start is not None else None
 
 
-def scan(root: Path, config: dict) -> list[dict]:
-    paths = git(root, "ls-tree", "-r", "--name-only", "-z", "HEAD").decode().split("\0")
+def scan(root: Path, config: dict, revision: str = "HEAD", *, ratchet: bool = False) -> list[dict]:
+    paths = git(root, "ls-tree", "-r", "--name-only", "-z", revision).decode().split("\0")
     paths = sorted(path for path in paths if path)
     included = [path for path in paths if not any(
         path == prefix.rstrip("/") or path.startswith(prefix.rstrip("/") + "/")
         for prefix in config["exclude"])]
     code = [path for path in included if PurePosixPath(path).suffix in config["hotspot"]["extensions"]]
     documents = [path for path in included if path.endswith(".md")]
-    manifests = [path for path in included if PurePosixPath(path).name == "pyproject.toml"]
-    blobs = head_blobs(root, sorted(set(code + documents + manifests)))
-    timestamp = int(git(root, "show", "-s", "--format=%ct", "HEAD"))
+    manifests = [path for path in included if not ratchet and PurePosixPath(path).name == "pyproject.toml"]
+    blobs = revision_blobs(root, sorted(set(code + documents + manifests)), revision)
+    timestamp = int(git(root, "show", "-s", "--format=%ct", revision))
     since = timestamp - config["hotspot"]["window_days"] * 86400
     history = git(root, "log", "--no-merges", f"--since-as-filter=@{since}",
-                  f"--until=@{timestamp}", "--format=", "--name-only", "-z", "--no-renames", "HEAD")
+                  f"--until=@{timestamp}", "--format=", "--name-only", "-z", "--no-renames", revision)
     commits = Counter(path.decode() for path in history.split(b"\0") if path)
     result = []
 
@@ -155,8 +156,10 @@ def scan(root: Path, config: dict) -> list[dict]:
         size = now_section_bytes(content)
         if size is not None:
             add("doc-now", path, size, {"bytes": size})
-        if path in config["doc-file"]["paths"]:
+        if not ratchet and path in config["doc-file"]["paths"]:
             add("doc-file", path, len(content), {"bytes": len(content)})
+    if ratchet:
+        return sorted(result, key=lambda item: item["key"])
     projects = [str(PurePosixPath(path).parent) for path in manifests
                 if "ruff" in tomllib.loads(blobs[path].decode()).get("tool", {})]
     if projects:
@@ -164,7 +167,7 @@ def scan(root: Path, config: dict) -> list[dict]:
             snapshot = Path(temporary)
             archive_paths = projects + ([".gitignore"] if ".gitignore" in paths else [])
             subprocess.run(["tar", "-xf", "-", "-C", temporary], check=True, capture_output=True,
-                           input=git(root, "archive", "HEAD", "--", *archive_paths))
+                           input=git(root, "archive", revision, "--", *archive_paths))
             # Ruff honors .gitignore only inside a Git repository.
             git(snapshot, "init", "-q")
             for project in projects:
@@ -179,9 +182,66 @@ def scan(root: Path, config: dict) -> list[dict]:
                 if not isinstance(violations, list) or (lint.returncode == 1 and not violations):
                     raise ValueError(f"Incomplete ruff result in {project}")
                 add("ruff", project, len(violations), {"violations": len(violations)})
-    orphans = orphan_scripts(root, paths)
+    orphans = orphan_scripts(root, paths, revision)
     add("orphan-scripts", "scripts/", len(orphans), {"count": len(orphans), "files": orphans})
     return sorted(result, key=lambda item: item["key"])
+
+
+def workflow_escape(text: str, *, property_value: bool = False) -> str:
+    text = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+    return text.replace(":", "%3A").replace(",", "%2C") if property_value else text
+
+
+def check(root: Path, config: dict, base: str, *, today: date | None = None) -> int:
+    merge_base = git(root, "merge-base", base, "HEAD").decode().strip()
+    baseline = [item for item in scan(root, config, merge_base, ratchet=True)
+                if item["state"] == "open"]
+    paths = set(git(root, "ls-tree", "-r", "--name-only", "-z", "HEAD").decode().split("\0"))
+    blobs = revision_blobs(root, sorted({item["path"] for item in baseline} & paths), "HEAD")
+    enforce_from = config["ratchet"]["enforce_from"]
+    enforced = (today if today is not None else datetime.now(timezone.utc).date()) >= enforce_from
+    rows = []
+    for item in baseline:
+        path = item["path"]
+        if path not in blobs:
+            continue
+        if item["kind"] == "hotspot":
+            before = item["metrics"]["lines"]
+            after = len(blobs[path].splitlines())
+            measure = "строк"
+            title = "Техдолг: горячий файл растёт"
+            message = (f"Строк в горячем файле: {before} → {after} (+{after - before}). "
+                       "Новый код — в новые файлы; рост, уже влитый в main, не считается.")
+        else:
+            before = item["metrics"]["bytes"]
+            after = now_section_bytes(blobs[path]) or 0
+            measure = "байт раздела"
+            title = "Техдолг: раздел «Как работает сейчас» растёт"
+            message = (f"Байт в разделе «Как работает сейчас»: {before} → {after} (+{after - before}); "
+                       f"порог открытия — {config['doc-now']['open_score']}. "
+                       "Подробности — в отдельный документ или в «План и журнал».")
+        if after <= before:
+            continue
+        if not enforced:
+            message += f" Пока это предупреждение; с {enforce_from} такой рост не пройдёт проверку."
+        level = "error" if enforced else "warning"
+        print(f"::{level} file={workflow_escape(path, property_value=True)},"
+              f"title={workflow_escape(title, property_value=True)}::{workflow_escape(message)}")
+        cells = [path, measure, str(before), str(after), f"+{after - before}"]
+        rows.append("| " + " | ".join(cell.replace("|", "\\|").replace("\r", " ").replace("\n", " ")
+                                     for cell in cells) + " |")
+    if rows:
+        mode = ("Проверка не пройдена: горячие файлы и большие разделы «Как работает сейчас» не должны расти."
+                if enforced else f"Пока это предупреждение; с {enforce_from} — проверка.")
+        summary = "\n".join(["### Храповик техдолга", "", "| Файл | Мера | Было | Стало | Рост |",
+                             "|---|---|---|---|---|", *rows, "", mode])
+    else:
+        summary = "Храповик техдолга: горячие файлы и большие разделы «Как работает сейчас» не выросли."
+        print(summary)
+    if summary_path := os.environ.get("GITHUB_STEP_SUMMARY"):
+        with open(summary_path, "a", encoding="utf-8") as stream:
+            stream.write(summary + "\n")
+    return int(enforced and bool(rows))
 
 
 class GhClient:
@@ -622,6 +682,8 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("scan")
+    ratchet = commands.add_parser("check")
+    ratchet.add_argument("--base", required=True, help="Compare with the merge-base of this revision and HEAD")
     reconcile = commands.add_parser("sync")
     reconcile.add_argument("--apply", action="store_true", help="Write issues and labels")
     ingest_command = commands.add_parser("ingest")
@@ -632,6 +694,8 @@ def main(argv=None) -> int:
     try:
         root = Path(git(Path.cwd(), "rev-parse", "--show-toplevel").decode().strip())
         config = load_config(Path(__file__).with_suffix(".toml"))
+        if args.command == "check":
+            return check(root, config, args.base)
         findings = scan(root, config) if args.command != "ingest" else None
         if args.command == "scan":
             print(json.dumps(findings, ensure_ascii=False, indent=2))

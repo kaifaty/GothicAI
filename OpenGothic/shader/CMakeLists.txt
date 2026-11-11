@@ -153,12 +153,18 @@ add_geom_shader(main_mph_d_at  "-DMESH_TYPE=3" -DDEPTH_ONLY -DATEST)
 add_geom_shader(main_mph_v     "-DMESH_TYPE=3" -DDEPTH_ONLY -DVIRTUAL_SHADOW)
 add_geom_shader(main_mph_v_at  "-DMESH_TYPE=3" -DDEPTH_ONLY -DVIRTUAL_SHADOW -DATEST)
 
+# the G-buffer pass of objects: the previous vertex for motion vectors (graphics plan 1b). The same vertex work as
+# main_obj/ani/mph, which the emissive, multiply and ghost passes keep using
+add_geom_shader(main_obj_g     "-DMESH_TYPE=1" -DGBUFFER_MOTION)
+add_geom_shader(main_ani_g     "-DMESH_TYPE=2" -DGBUFFER_MOTION)
+add_geom_shader(main_mph_g     "-DMESH_TYPE=3" -DGBUFFER_MOTION)
+
 # The legacy variants remain in use when there is no material table. Position
 # varyings for the cotangent frame are needed only on the material-map path.
 add_geom_shader(main_lnd_orm      "-DMESH_TYPE=0" -DFLAT_NORMAL -DMATERIAL_MAPS)
-add_geom_shader(main_obj_orm      "-DMESH_TYPE=1" -DMATERIAL_MAPS)
-add_geom_shader(main_ani_orm      "-DMESH_TYPE=2" -DMATERIAL_MAPS)
-add_geom_shader(main_mph_orm      "-DMESH_TYPE=3" -DMATERIAL_MAPS)
+add_geom_shader(main_obj_g_orm    "-DMESH_TYPE=1" -DMATERIAL_MAPS -DGBUFFER_MOTION)
+add_geom_shader(main_ani_g_orm    "-DMESH_TYPE=2" -DMATERIAL_MAPS -DGBUFFER_MOTION)
+add_geom_shader(main_mph_g_orm    "-DMESH_TYPE=3" -DMATERIAL_MAPS -DGBUFFER_MOTION)
 add_geom_shader(main_lnd_d_at_orm "-DMESH_TYPE=0" -DFLAT_NORMAL -DDEPTH_ONLY -DATEST -DMATERIAL_MAPS)
 add_geom_shader(main_obj_d_at_orm "-DMESH_TYPE=1" -DDEPTH_ONLY -DATEST -DMATERIAL_MAPS)
 add_geom_shader(main_ani_d_at_orm "-DMESH_TYPE=2" -DDEPTH_ONLY -DATEST -DMATERIAL_MAPS)
@@ -186,8 +192,8 @@ add_frag_shader(main_lnd_v     -DFLAT_NORMAL -DDEPTH_ONLY -DVIRTUAL_SHADOW)
 add_frag_shader(main_lnd_v_at  -DFLAT_NORMAL -DDEPTH_ONLY -DVIRTUAL_SHADOW -DATEST)
 
 # materials objects
-add_frag_shader(main_obj_g     -DGBUFFER)
-add_frag_shader(main_obj_g_at  -DGBUFFER -DATEST)
+add_frag_shader(main_obj_g     -DGBUFFER -DGBUFFER_MOTION)
+add_frag_shader(main_obj_g_at  -DGBUFFER -DGBUFFER_MOTION -DATEST)
 add_frag_shader(main_obj_f     -DFORWARD)
 add_frag_shader(main_obj_e     -DEMISSIVE)
 add_frag_shader(main_obj_m     -DEMISSIVE -DMULTIPLY)
@@ -201,8 +207,8 @@ add_frag_shader(main_obj_v_at  -DDEPTH_ONLY -DVIRTUAL_SHADOW -DATEST)
 add_frag_shader(main_lnd_g_s_orm  -DFLAT_NORMAL -DGBUFFER -DSIMPLE_MAT -DMATERIAL_MAPS)
 add_frag_shader(main_lnd_g_orm    -DFLAT_NORMAL -DGBUFFER -DMATERIAL_MAPS)
 add_frag_shader(main_lnd_g_at_orm -DFLAT_NORMAL -DGBUFFER -DATEST -DMATERIAL_MAPS)
-add_frag_shader(main_obj_g_orm    -DGBUFFER -DMATERIAL_MAPS)
-add_frag_shader(main_obj_g_at_orm -DGBUFFER -DATEST -DMATERIAL_MAPS)
+add_frag_shader(main_obj_g_orm    -DGBUFFER -DGBUFFER_MOTION -DMATERIAL_MAPS)
+add_frag_shader(main_obj_g_at_orm -DGBUFFER -DGBUFFER_MOTION -DATEST -DMATERIAL_MAPS)
 add_frag_shader(main_lnd_d_at_orm -DFLAT_NORMAL -DDEPTH_ONLY -DATEST -DMATERIAL_MAPS)
 add_frag_shader(main_obj_d_at_orm -DDEPTH_ONLY -DATEST -DMATERIAL_MAPS)
 
@@ -282,6 +288,8 @@ add_shader(irradiance.comp           lighting/irradiance.comp)
 add_shader(sky_exposure.comp         lighting/sky_exposure.comp)
 
 add_shader(tonemapping.frag          lighting/tonemapping.frag)
+add_shader(motion_view.frag          antialiasing/motion_view.frag)
+add_shader(reactive_view.frag        antialiasing/reactive_view.frag)
 add_shader(bloom_down_karis.frag     bloom/bloom_down.frag -DKARIS)
 add_shader(bloom_down.frag           bloom/bloom_down.frag)
 add_shader(bloom_up.frag             bloom/bloom_up.frag)
@@ -290,6 +298,8 @@ add_shader(tonemapping_up.frag       lighting/tonemapping.frag -DUPSCALE)
 # temporal upscale (graphics plan 1г): camera motion vectors, tonemapping with the bloom at the output resolution
 add_shader(motion_camera.frag        upscale/motion_camera.frag)
 add_shader(tonemapping_bloom.frag    lighting/tonemapping.frag -DBLOOM)
+# the TAA frame at the internal resolution: the sharpening and the bloom in one pass with the tonemapping
+add_shader(tonemapping_taa.frag      lighting/tonemapping.frag -DBLOOM -DRCAS)
 
 add_shader(water_reflection.mesh     water/water_reflection.mesh)
 add_shader(water_reflection.frag     water/water_reflection.frag)
@@ -313,14 +323,13 @@ add_shader(fog_view_lut_sep.comp     sky/fog_view_lut.comp -DSUN_SCATTERING -DMU
 add_shader(sky.frag                  sky/sky.frag)
 add_shader(sky_sep.frag              sky/sky.frag -DSEPARABLE)
 add_shader(fog3d.comp                sky/fog.frag -S comp -DVOLUMETRIC)
+add_shader(fog3d_empty.comp          sky/fog.frag -S comp -DVOLUMETRIC -DSHADOW_EMPTY)
 add_shader(fog3d_hq.frag             sky/fog.frag -DVOLUMETRIC)
-add_shader(fog_epipolar.frag         sky/fog_epipolar.frag)
 add_shader(fog.frag                  sky/fog.frag)
 #
 add_shader(fog_epipolar_vsm.comp       epipolar/fog_epipolar.comp)
 add_shader(fog_epipolar_occlusion.comp epipolar/fog_epipolar_occlusion.comp)
 
-add_shader(sky_pathtrace.frag        sky/sky_pathtrace.frag)
 
 add_shader(sun.vert                  sky/sun.vert)
 add_shader(sun.frag                  sky/sun.frag)
@@ -332,9 +341,11 @@ add_shader(copy.frag                 copy.frag)
 add_shader(copy.comp                 copy.comp)
 add_shader(copy_img.comp             copy_img.comp)
 add_shader(patch.comp                patch.comp)
+add_shader(patch_copy.comp           patch_copy.comp)
 
 add_shader(ssao.comp                 ssao/ssao.comp)
 add_shader(ssao_blur.comp            ssao/ssao_blur.comp)
+add_shader(ssao_depth.comp           ssao/ssao_depth.comp)
 
 # GPU-driven: HiZ
 if(IOS)
@@ -357,18 +368,23 @@ add_shader(probe_hit_dbg.frag        lighting/rt/probe_hit_dbg.frag)
 
 add_shader(probe_init.comp           lighting/rt/probe_aux.comp        -DINIT)
 add_shader(probe_clear.comp          lighting/rt/probe_aux.comp        -DCLEAR)
+add_shader(probe_clear_votes.comp    lighting/rt/probe_aux.comp        -DCLEAR_VOTES)
+add_shader(probe_hit_alloc.comp      lighting/rt/probe_aux.comp        -DHIT_ALLOC)
 add_shader(probe_clear_hash.comp     lighting/rt/probe_aux.comp        -DCLEAR_HASH)
 add_shader(probe_make_hash.comp      lighting/rt/probe_aux.comp        -DMAKE_HASH)
 add_shader(probe_prune.comp          lighting/rt/probe_aux.comp        -DPRUNE)
+add_shader(probe_stats.comp          lighting/rt/probe_aux.comp        -DSTATS)
 add_shader(probe_vote.comp           lighting/rt/probe_allocation.comp -DVOTE)
 add_shader(probe_allocation.comp     lighting/rt/probe_allocation.comp -DALLOC)
 add_shader(probe_trace.comp          lighting/rt/probe_trace.comp      -DRAY_QUERY -DRAY_QUERY_AT)
+add_shader(probe_relight.comp        lighting/rt/probe_lighting.comp -DRELIGHT)
+add_shader(probe_relight_new.comp    lighting/rt/probe_lighting.comp -DRELIGHT_NEW)
 add_shader(probe_lighting.comp       lighting/rt/probe_lighting.comp)
 add_shader(probe_lighting_orm.comp   lighting/rt/probe_lighting.comp -DMATERIAL_MAPS)
 
 add_shader(probe_ambient.vert        triangle.vert)
-add_shader(probe_ambient.frag        lighting/rt/probe_ambient.frag)
-add_shader(probe_ambient_orm.frag     lighting/rt/probe_ambient.frag -DMATERIAL_MAPS)
+add_shader(probe_ambient.frag        lighting/rt/probe_ambient.frag --target-env vulkan1.1)
+add_shader(probe_ambient_orm.frag     lighting/rt/probe_ambient.frag -DMATERIAL_MAPS --target-env vulkan1.1)
 
 # Surfels
 add_shader(surf_dbg.vert             lighting/surfels/surf_dbg.vert)
@@ -396,6 +412,7 @@ add_shader(surf_lighting.comp        lighting/surfels/surf_lighting.comp)
 add_shader(pathtrace.frag        lighting/pt/pathtrace.frag -DRAY_QUERY -DRAY_QUERY_AT)
 
 add_shader(lights_morton.comp    lighting/lightstree/lights_morton.comp)
+add_shader(lights_morton_shared.comp lighting/lightstree/lights_morton.comp -DSHARED_SORT)
 add_shader(lights_topology.comp  lighting/lightstree/lights_topology.comp)
 add_shader(lights_tree.comp      lighting/lightstree/lights_tree.comp)
 add_shader(lights_bvh.comp       lighting/lightstree/lights_bvh.comp)
@@ -412,6 +429,7 @@ add_shader(cmaa2_deferred_color_apply_2x2.frag     antialiasing/cmaa2/deferred_c
 
 # temporal AA by the camera (docs/graphics-plan.md, step 1a)
 add_shader(taa_resolve.frag                        antialiasing/taa_resolve.frag)
+add_shader(taa_resolve_h.frag                      antialiasing/taa_resolve.frag -DFP16)
 add_shader(taa_sharpen.frag                        antialiasing/taa_sharpen.frag)
 
 # virtual shadows
@@ -436,53 +454,8 @@ add_shader(vsm_postprocess_omni.comp virtual_shadow/vsm_postprocess_omni.comp)
 # virtual shadows: fog
 add_shader(vsm_fog_shadow.comp       virtual_shadow/vsm_fog_shadow.comp)
 add_shader(vsm_fog_mark_pages.comp   virtual_shadow/vsm_fog_shadow.comp -DPAGES)
-add_shader(vsm_fog_trace.comp        virtual_shadow/vsm_fog_trace.comp)
 
 add_shader(vsm_rendering.comp        virtual_shadow/vsm_rendering.comp)
-
-# software meshlet rt
-add_shader(rtsm_clear.comp           rtsm/rtsm_clear.comp)
-add_shader(rtsm_mark_pages.comp      rtsm/rtsm_mark_pages.comp)
-add_shader(rtsm_mark_fog_pages.comp  rtsm/rtsm_mark_fog_pages.comp)
-add_shader(rtsm_hiz_pages.comp       rtsm/rtsm_hiz_pages.comp)
-add_shader(rtsm_culling.comp         rtsm/rtsm_culling.comp)
-add_shader(rtsm_position.comp        rtsm/rtsm_position.comp)
-
-add_shader(rtsm_meshlet_cull.comp    rtsm/rtsm_meshlet_cull.comp)
-add_shader(rtsm_primitive_cull.comp  rtsm/rtsm_primitive_cull.comp)
-
-add_shader(rtsm_raster.comp          rtsm/rtsm_raster.comp)
-add_shader(rtsm_direct_light.frag    rtsm/rtsm_direct_light.frag)
-
-add_shader(rtsm_rendering.comp       rtsm/rtsm_rendering.comp)
-add_shader(rtsm_omni_rendering.comp  rtsm/rtsm_omni_rendering.comp)
-add_shader(rtsm_dbg.frag             rtsm/rtsm_dbg.frag)
-
-add_shader(rtsm_omni_clear.comp      rtsm/rtsm_omni_clear.comp)
-add_shader(rtsm_cull_lights.comp     rtsm/rtsm_cull_lights.comp)
-add_shader(rtsm_compact_lights.comp  rtsm/rtsm_compact_lights.comp)
-add_shader(rtsm_omni_lights.comp     rtsm/rtsm_omni_lights.comp)
-add_shader(rtsm_omni_bboxes.comp     rtsm/rtsm_omni_bboxes.comp)
-add_shader(rtsm_omni_culling.comp    rtsm/rtsm_omni_culling.comp)
-add_shader(rtsm_omni_position.comp   rtsm/rtsm_position.comp -DOMNI)
-add_shader(rtsm_omni_meshlet.comp    rtsm/rtsm_omni_meshlet.comp)
-add_shader(rtsm_omni_backface.comp   rtsm/rtsm_omni_backface.comp)
-add_shader(rtsm_omni_compact.comp    rtsm/rtsm_omni_compact.comp)
-add_shader(rtsm_omni_task.comp       rtsm/rtsm_omni_task.comp)
-add_shader(rtsm_omni_primitive.comp  rtsm/rtsm_omni_primitive.comp)
-add_shader(rtsm_omni_raster.comp     rtsm/rtsm_omni_raster.comp)
-
-# software ray-tracing
-#add_shader(sw_raytracing.comp swrt/sw_raytracing.comp -DANY_HIT -DUNIFORM_TRAVERSE "--target-env" "spirv1.3")
-add_shader(sw_raytracing.comp   swrt/sw_raytracing.comp  -DANY_HIT)
-add_shader(sw_raytracing8.comp  swrt/sw_raytracing8.comp)
-add_shader(sw_raytracing64.comp swrt/sw_raytracing64.comp)
-
-# software rendering
-add_shader(sw_rendering_imm.comp  software_rendering/sw_rendering_imm.comp)
-add_shader(sw_rendering_tbr.comp  software_rendering/sw_rendering_tbr.comp)
-add_shader(sw_light.comp          software_rendering/sw_light.comp)
-add_shader(vbuffer_blit.frag      software_rendering/vbuffer_blit.frag)
 
 add_custom_command(
   OUTPUT     ${HEADER} ${CPP}

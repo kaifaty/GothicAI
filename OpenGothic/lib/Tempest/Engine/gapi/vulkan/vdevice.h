@@ -107,6 +107,8 @@ inline VkFormat nativeFormat(TextureFormat f) {
       return VK_FORMAT_B10G11R11_UFLOAT_PACK32;
     case TextureFormat::RGBA16F:
       return VK_FORMAT_R16G16B16A16_SFLOAT;
+    case TextureFormat::RG16F:
+      return VK_FORMAT_R16G16_SFLOAT;
     }
   return VK_FORMAT_UNDEFINED;
   }
@@ -441,6 +443,8 @@ class VDevice : public AbstractGraphicsApi::Device {
     VkProps                 props = {};
 #if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
     bool                    profilePipelineStatistics=false;
+    uint32_t                profileTimestampBits=0;   // timestampValidBits of the graphics queue family
+    double                  profileTimestampPeriod=0; // nanoseconds per timestamp tick
 #endif
 
     PFN_vkGetBufferMemoryRequirements2KHR vkGetBufferMemoryRequirements2 = nullptr;

@@ -5,7 +5,7 @@
 #include <cctype>
 #include <optional>
 
-#include <zenkit/DaedalusVm.hh>
+#include "daedalus/vm.h"
 
 #include "game/gamescript.h"
 #include "game/herodeed.h"
@@ -22,7 +22,7 @@
 #include "textcodec.h"
 
 using namespace Tempest;
-using zenkit::DaedalusDataType;
+using daedalus::DaedalusDataType;
 using storygraph::Value;
 
 static std::string upper(std::string_view s) {
@@ -64,14 +64,14 @@ const Teaching* teaching(std::string_view kind) {
   return nullptr;
   }
 
-int32_t intConst(zenkit::DaedalusVm& vm, std::string_view name) {
+int32_t intConst(daedalus::DaedalusVm& vm, std::string_view name) {
   auto* s = vm.find_symbol_by_name(name);
   return s!=nullptr && s->type()==DaedalusDataType::INT ? s->get_int(0) : 0;
   }
 
 }
 
-std::string StoryEffect::read(const rapidjson::Value& x, zenkit::DaedalusVm* vm, StoryEffect& e) {
+std::string StoryEffect::read(const rapidjson::Value& x, daedalus::DaedalusVm* vm, StoryEffect& e) {
   e.kind   = std::string(JsonRead::str(x,"do"));
   e.item   = upper(JsonRead::str(x,"item"));
   e.chest  = upper(JsonRead::str(x,"chest"));
@@ -150,7 +150,7 @@ std::string StoryEffect::read(const rapidjson::Value& x, zenkit::DaedalusVm* vm,
       for(auto name:{"AIV_NPCSAWPLAYERCOMMIT","AIV_NPCSAWPLAYERCOMMITDAY","AIV_CRIMEABSOLUTIONLEVEL"}) {
         auto* s = vm->find_symbol_by_name(name);
         if(s==nullptr || !s->is_const() || s->type()!=DaedalusDataType::INT ||
-           s->get_int(0)<0 || uint32_t(s->get_int(0))>=zenkit::INpc::aivar_count)
+           s->get_int(0)<0 || uint32_t(s->get_int(0))>=daedalus::INpc::aivar_count)
           return std::string("crime_memory: no AIV constant ")+name;
         }
       if(vm->find_symbol_by_name("B_GETCURRENTABSOLUTIONLEVEL")==nullptr)
@@ -192,7 +192,7 @@ std::string StoryEffect::read(const rapidjson::Value& x, zenkit::DaedalusVm* vm,
     }
   if(e.kind=="knows") {
     auto* i = vm ? vm->find_symbol_by_name(e.info) : nullptr;
-    if(vm && (i==nullptr || i->type()!=DaedalusDataType::INSTANCE || !i->is_instance_of<zenkit::IInfo>()))
+    if(vm && (i==nullptr || i->type()!=DaedalusDataType::INSTANCE || !i->is_instance_of<daedalus::IInfo>()))
       return "knows: no dialog " + e.info;
     return e.info.empty() ? "knows: needs a dialog" : "";
     }
@@ -206,7 +206,7 @@ std::string StoryEffect::read(const rapidjson::Value& x, zenkit::DaedalusVm* vm,
   return "unknown effect " + e.kind;
   }
 
-void StoryEffect::run(zenkit::DaedalusVm& vm, Npc& npc, Npc& player, std::string_view who) const {
+void StoryEffect::run(daedalus::DaedalusVm& vm, Npc& npc, Npc& player, std::string_view who) const {
   auto call = [&](const char* fn, std::vector<Value> args) {
     std::string err;
     auto* s = vm.find_symbol_by_name(fn);
@@ -326,7 +326,7 @@ void StoryEffect::run(zenkit::DaedalusVm& vm, Npc& npc, Npc& player, std::string
   else if(kind=="knows") {
     // the dialog counts as heard, as when it is played: the menu no longer offers it, conditions see it
     auto* s    = vm.find_symbol_by_name(info);
-    auto  dlg  = s!=nullptr ? std::dynamic_pointer_cast<zenkit::IInfo>(s->get_instance()) : nullptr;
+    auto  dlg  = s!=nullptr ? std::dynamic_pointer_cast<daedalus::IInfo>(s->get_instance()) : nullptr;
     auto* w    = Gothic::inst().world();
     if(dlg!=nullptr && w!=nullptr)
       w->script().setNpcInfoKnown(player.handle(),*dlg); else
@@ -336,7 +336,7 @@ void StoryEffect::run(zenkit::DaedalusVm& vm, Npc& npc, Npc& player, std::string
     // the npc goes with the hero (v30), as a companion's dialog marks it: whom it kills gives him the
     // experience (ZS_Dead), its blows at him are friendly fire
     const int32_t aiv = intConst(vm,"AIV_PARTYMEMBER");
-    if(aiv>=0 && uint32_t(aiv)<zenkit::INpc::aivar_count)
+    if(aiv>=0 && uint32_t(aiv)<daedalus::INpc::aivar_count)
       npc.handlePtr()->aivar[size_t(aiv)] = count!=0 ? 1 : 0;
     }
   else if(kind=="refuse_talk") {
@@ -355,7 +355,7 @@ void StoryEffect::run(zenkit::DaedalusVm& vm, Npc& npc, Npc& player, std::string
   other->set_instance(prevOther);
   }
 
-int32_t StoryEffect::learnCost(zenkit::DaedalusVm& vm, Npc& player, std::string& error) const {
+int32_t StoryEffect::learnCost(daedalus::DaedalusVm& vm, Npc& player, std::string& error) const {
   auto* t = teaching(teach);
   if(t==nullptr) {
     error = "teach: unknown teaching " + teach;

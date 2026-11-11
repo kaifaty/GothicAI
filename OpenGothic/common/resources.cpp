@@ -1,11 +1,11 @@
 #include "resources.h"
-#include "zenkitlog.h"
+#include "gameservices.h"
+#include "resources_internal.h"
 #include "loadprobe.h"
 #include "basestore.h"
 #include "commandline.h"
 #include "musicnative.h"
 #include "videodata.h"
-#include "frameprofile.h"
 
 #include <Tempest/MemReader>
 #include <Tempest/File>
@@ -32,23 +32,15 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
-#include <limits>
 #include <stdexcept>
 #include <thread>
 #include <type_traits>
 #include <cstdio>
 
-#if defined(__GNUC__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-#endif
-#include <rapidjson/document.h>
-#if defined(__GNUC__)
-#pragma GCC diagnostic pop
-#endif
-
 #include "graphics/mesh/submesh/pfxemittermesh.h"
 #include "graphics/mesh/submesh/packedmesh.h"
+#include "graphics/mesh/facerig.h"
+#include "graphics/mesh/renderrig.h"
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/protomesh.h"
 #include "graphics/mesh/animation.h"
@@ -58,16 +50,13 @@
 #include "dmusic/directmusic.h"
 #include "utils/fileext.h"
 #include "utils/gthfont.h"
-#include "utils/userhome.h"
 
-#include "gothic.h"
 #include "contentcensus.h"
 #include "gltfmesh.h"
 #include "basemesh.h"
 #include "modeldata.h"
 #include "fontdata.h"
 #include "worldbase.h"
-#include "world/chunkresidency.h"
 #include "world/voblayer.h"
 #include "utils/string_frm.h"
 
@@ -76,6 +65,9 @@
 #include <unordered_map>
 
 using namespace Tempest;
+using ResourcesInternal::modelKey;
+using ResourcesInternal::censusSourcePath;
+using ResourcesInternal::scriptDirectory;
 
 namespace ModelData { asset::ModelScript readScriptOverlay(const std::filesystem::path& file); }
 
@@ -89,42 +81,7 @@ struct Resources::VideoBase {
   bool ready=false;
   };
 
-namespace {
-thread_local bool loadingTextureTail = false;
-
-bool contentGlbPath(const std::string& path) {
-  const std::filesystem::path relative(path);
-  if(path.empty() || path.find('\0')!=std::string::npos || relative.is_absolute() ||
-     relative.has_root_name() || !FileExt::hasExt(path,"GLB"))
-    return false;
-  for(const auto& part:relative)
-    if(part=="..")
-      return false;
-  return true;
-  }
-
-std::string modelKey(std::string_view name) {
-  const auto separator = name.find_last_of("/\\");
-  std::string key(separator==std::string_view::npos ? name : name.substr(separator+1));
-  for(auto& c:key)
-    c = char(std::toupper(static_cast<unsigned char>(c)));
-  return key;
-  }
-
-std::string wayHeightFileStamp(const std::filesystem::path& file) {
-  try {
-    namespace fs = std::filesystem;
-    if(!fs::exists(file)) return "missing";
-    if(!fs::is_regular_file(file)) return "other";
-    return std::to_string(fs::file_size(file))+":"+
-           std::to_string(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                            fs::last_write_time(file).time_since_epoch()).count());
-    }
-  catch(const std::filesystem::filesystem_error&) {
-    return {};
-    }
-  }
-
+namespace ResourcesInternal {
 std::string censusSourcePath(const std::filesystem::path& source) {
   auto relative = source;
   if(relative.is_absolute())
@@ -138,15 +95,74 @@ std::string censusSourcePath(const std::filesystem::path& source) {
   return relative.generic_string();
   }
 
-std::filesystem::path worldContentDir(const std::filesystem::path& root, std::string_view world) {
-  const auto separator = world.find_last_of("/\\");
-  std::string name(separator==std::string_view::npos ? world : world.substr(separator+1));
-  name = std::filesystem::path(name).stem().string();
-  for(auto& c:name)
-    c = char(std::toupper(static_cast<unsigned char>(c)));
-  return root/"worlds"/name;
+const char* scriptDirectory(int language) {
+  static constexpr const char* directories[]={"Scripts_EN","Scripts_DE","Scripts_PL","Scripts_RU",
+                                               "Scripts_FR","Scripts_ES","Scripts_IT","Scripts_CZ"};
+  return language>=0 && language<8 ? directories[language] : "Scripts";
   }
 }
+
+bool Resources::loadBaseOutputUnits(std::string_view request, int language,
+                                    std::vector<std::shared_ptr<asset::CutsceneBlock>>& blocks) {
+  try {
+    std::string_view branch;
+    if(inst->baseOutputUnits.findVfs(request,&branch)!=nullptr)
+      return loadBaseOutputUnits(request,language,branch,blocks);
+    const std::string name(request.substr(0,255));
+    const OutputUnits::Source* source=inst->baseOutputUnits.findHost("_work/Data/Scripts/content/CUTSCENE/"+name);
+    branch="host_ordinary";
+    if(source==nullptr && language>=0) {
+      source=inst->baseOutputUnits.findHost("_work/Data/"+std::string(scriptDirectory(language))+"/"+name);
+      branch="host_localized";
+      }
+    if(source==nullptr) return false;
+    return loadBaseOutputUnits(request,language,branch,blocks,std::filesystem::path(source->path).u16string());
+    }
+  catch(const BaseStore::Error&) { throw; }
+  catch(const std::exception& error) { throw BaseStore::Error("output units "+std::string(request)+": "+error.what()); }
+  }
+
+bool Resources::loadBaseOutputUnits(std::string_view request, int language, std::string_view branch,
+                                   std::vector<std::shared_ptr<asset::CutsceneBlock>>& blocks,
+                                   std::u16string_view hostPath) {
+  try {
+    const auto& index = inst->baseOutputUnits;
+    const OutputUnits::Source* source = nullptr;
+    if(hostPath.empty()) {
+      std::string_view selectedBranch;
+      source = index.findVfs(request,&selectedBranch);
+      if(source==nullptr || selectedBranch!=branch)
+        throw std::runtime_error("selected VFS source missing from output units base index");
+      }
+    else {
+      source = index.findHost(censusSourcePath(std::filesystem::path(hostPath)));
+      if(source==nullptr)
+        throw std::runtime_error("selected host source missing from output units base index");
+      if(!source->skipped.empty())
+        return false;
+      }
+    if(!source->skipped.empty())
+      throw std::runtime_error("selected VFS output units source skipped: "+source->skipped);
+    const auto file = index.path(*source);
+    std::string actualSha256;
+    auto library = OutputUnits::readLibrary(file,&actualSha256);
+    if(actualSha256!=source->recordSha256)
+      throw std::runtime_error("output units record identity differs from base index");
+    auto loaded = OutputUnits::sortedBlocks(library);
+    blocks = std::move(loaded);
+    if(inst->census) {
+      const auto record = "base/outputunits/"+file.filename().generic_string();
+      inst->census->replaced(request,record);
+      inst->census->outputUnits("GameScript::loadDialogOU",request,language,branch,record,actualSha256,*source);
+      }
+    return true;
+    }
+  catch(const std::exception& error) {
+    if(inst->census) inst->census->missing(request,error.what());
+    throw BaseStore::Error("output units "+std::string(request)+": "+error.what());
+    }
+  }
+
 
 Resources::Resources() {
   inst=this;
@@ -247,72 +263,11 @@ Resources::Resources(Tempest::Device &device)
     throw std::runtime_error("unable to configure native music loader");
   }
 
-void Resources::loadBase() {
-  if(!inst->automaticBase.path.empty()) return;
-  try {
-    const auto gothic=std::filesystem::path(CommandLine::inst().rootPath());
-    BaseImport::Files archives;
-    const auto* explicitBase=std::getenv("OPENGOTHIC_BASE");
-    const auto* fingerprint=std::getenv("OPENGOTHIC_BASE_FINGERPRINT");
-    if((explicitBase && *explicitBase) || !fingerprint || !*fingerprint)
-      for(const auto& archive:BaseImport::runtimeArchives(gothic))
-        if(!archive.mod) archives.emplace_back(archive.name,archive.size);
-    inst->automaticBase=BaseStore::resolve(gothic,archives,
-                                         [](std::string_view message) {
-      Log::i(message);
-      });
-    inst->indexBaseContent();
-    BaseImport::Files identityLoose;
-    const auto identity=BaseImport::readIdentity(inst->automaticBase.path);
-    inst->baseFingerprint=identity.fingerprint;
-    rapidjson::Document metadata;
-    metadata.Parse(identity.json.data(),identity.json.size());
-    inst->baseArchives.clear();
-    for(const auto& archive:metadata["archives"].GetArray())
-      inst->baseArchives.emplace_back(archive["name"].GetString(),archive["size"].GetUint64());
-    std::sort(inst->baseArchives.begin(),inst->baseArchives.end());
-    for(const auto& file:metadata["loose_files"].GetArray())
-      identityLoose.emplace_back(file["path"].GetString(),file["size"].GetUint64());
-    std::sort(identityLoose.begin(),identityLoose.end());
-    const auto& validationArchives=inst->baseArchives;
-    const auto validateLoose=[&](const BaseImport::Files& files, std::string_view family) {
-      for(const auto& file:files) {
-        if(!std::binary_search(identityLoose.begin(),identityLoose.end(),file))
-          throw std::runtime_error("loose file differs from "+std::string(family)+" base index: "+file.first);
-        }
-      };
-    inst->baseTextures.validate(validationArchives);
-    inst->baseMeshes.validate(validationArchives);
-    inst->baseZen.validate(validationArchives);
-    validateLoose(inst->baseZen.looseFiles,"zen");
-    inst->baseModels.validate(validationArchives);
-    validateLoose(inst->baseModels.looseFiles,"models");
-    inst->baseFonts.validate(validationArchives);
-    validateLoose(inst->baseFonts.looseFiles,"fonts");
-    if(inst->basePrograms.archives!=validationArchives)
-      throw std::runtime_error("selected base archives differ from program base index: "+inst->basePrograms.dir.string());
-    validateLoose(inst->basePrograms.looseFiles,"program");
-    Log::i("base: ",inst->basePrograms.programs.size()," programs from \"",inst->basePrograms.dir.string(),"\"");
-    if(inst->baseOutputUnits.archives!=validationArchives)
-      throw std::runtime_error("selected base archives differ from output units base index: "+inst->baseOutputUnits.dir.string());
-    validateLoose(inst->baseOutputUnits.looseFiles,"output units");
-    Log::i("base: ",inst->baseOutputUnits.records.size()," output units records from \"",inst->baseOutputUnits.dir.string(),"\"");
-    if(inst->baseAudio.archives!=validationArchives)
-      throw std::runtime_error("selected base archives differ from audio base index: "+inst->baseAudio.dir.string());
-    validateLoose(inst->baseAudio.looseFiles,"audio");
-    Log::i("base: ",inst->baseAudio.sounds.size()," sounds from \"",inst->baseAudio.dir.string(),"\"");
-    if(inst->baseMusic.archives!=validationArchives)
-      throw std::runtime_error("selected base archives differ from music base index: "+inst->baseMusic.dir.string());
-    validateLoose(inst->baseMusic.looseFiles,"music");
-    Log::i("base: ",inst->baseMusic.records.size()," music records from \"",inst->baseMusic.dir.string(),"\"");
-    }
-  catch(const std::exception& e) { throw BaseStore::Error(e.what()); }
-  }
-
 Resources::~Resources() {
-  if(textureReload && textureReload->pending.valid())
-    textureReload->pending.wait();
-  textureReload.reset();
+  for(auto& reload:textureReloads)
+    if(reload->pending.valid())
+      reload->pending.wait();
+  textureReloads.clear();
   if(videoBase) videoBase->cancelled->store(true);
   if(videoWorker.joinable()) videoWorker.join();
   if(videoBase && videoBase->selection.publication.valid()) videoBase->selection.publication.wait();
@@ -331,7 +286,6 @@ void Resources::startVideoBase() {
   const auto gothic=std::filesystem::path(CommandLine::inst().rootPath());
   const auto mainBase=inst->automaticBase.path;
   inst->videoWorker=std::thread([state,gothic,mainBase] {
-    ZenKitLog::silenceForVideo();
     try {
       auto selection=BaseStore::resolveVideos(gothic,mainBase,[](std::string_view message) {
         // Background selection diagnostics do not use the application's log callback.
@@ -390,233 +344,10 @@ void Resources::videoFrameRead(std::string_view name) {
     inst->census->replaced(found->first,"base/videos/"+found->second.filename().string());
   }
 
-void Resources::initCensus() {
-  const char* path = std::getenv("OPENGOTHIC_CENSUS");
-  if(path==nullptr || path[0]=='\0')
-    return;
-  census = std::make_unique<ContentCensus>(path);
-  }
-
-void Resources::censusFile(std::u16string_view path) {
-  if(inst==nullptr || inst->census==nullptr)
-    return;
-  const auto source = TextCodec::toUtf8(path);
-  inst->census->opened(source,source);
-  }
-
-void Resources::censusProfile(std::string_view game, std::string_view outputUnits, int language) {
-  if(inst!=nullptr && inst->census!=nullptr)
-    inst->census->profile(game,outputUnits,language);
-  }
-
-void Resources::loadWorld(WorldData::Data& world, asset::WorldMesh& worldMesh, std::string_view name, ChunkTable* chunks) {
-  const auto dir = worldBaseDir(name);
-  std::map<std::string,std::filesystem::path> ownMeshes;
-  for(const auto& [key,mesh]:inst->meshOverrides)
-    ownMeshes.emplace(key,mesh.file);
-  const auto result = tryWorldData(world,worldMesh,name,dir,worldOverrideDir(name),inst->baseArchives,&ownMeshes,chunks);
-  if(result.replaced) {
-    if(inst->census)
-      inst->census->replaced(name,(worldContentDir("base",name)/"world.json").generic_string());
-    Log::i("world base: \"",dir.string(),"\", ",result.triangles," triangles, ",
-           result.chunks," chunks, ",result.readMs," ms");
-    return;
-    }
-  if(inst->census) inst->census->missing(name,result.error);
-  throw BaseStore::Error("world "+std::string(name)+": "+result.error);
-  }
-
-bool Resources::loadBaseZen(std::string_view name, std::string_view kind, WorldData::ZenFile& out) {
-  const auto& index = inst->baseZen;
-  const auto separator = name.find_last_of("/\\");
-  std::string key(separator==std::string_view::npos ? name : name.substr(separator+1));
-  for(auto& c:key)
-    c = char(std::toupper(static_cast<unsigned char>(c)));
-  const auto found = index.files.find(key);
-  try {
-    if(found==index.files.end()) throw std::runtime_error("missing from base index");
-    auto data = WorldData::readZen(index.dir/found->second);
-    if(data.kind!=kind || data.source.world!=key)
-      throw std::runtime_error("ZEN kind or source name differs from index");
-    if(kind=="cameras")
-      for(const auto& camera:data.vobs)
-        if(!std::dynamic_pointer_cast<asset::VCutsceneCamera>(camera))
-          throw std::runtime_error("invalid dialog camera class");
-    out = std::move(data);
-    if(inst->census)
-      inst->census->replaced(key,"base/zen/"+found->second);
-    return true;
-    }
-  catch(const std::exception& error) {
-    Log::e("base: ",key,": ",error.what());
-    if(inst->census) inst->census->missing(key,error.what());
-    return false;
-    }
-  }
-
-bool Resources::writeCensus() {
-  return inst==nullptr || inst->census==nullptr || inst->census->write();
-  }
-
 Tempest::Device& Resources::device() {
   if(!hasGraphicsDevice())
     throw std::logic_error("graphics device access in headless simulation");
   return *inst->dev;
-  }
-
-bool Resources::hasWorld(std::string_view name) {
-  const auto dir=worldContentDir({},name);
-  return inst->baseWorlds.contains(dir.filename().string());
-  }
-
-int Resources::baseLanguage() {
-  for(int language=-1;language<8;++language) {
-    const bool program=std::any_of(inst->basePrograms.selections.begin(),inst->basePrograms.selections.end(),
-                                  [&](const auto& row) {
-      return row.language==language && row.request=="GOTHIC.DAT" && row.source &&
-             inst->basePrograms.sources.at(*row.source).skipped.empty();
-      });
-    const bool outputUnits=std::any_of(inst->baseOutputUnits.selections.begin(),inst->baseOutputUnits.selections.end(),
-                                      [&](const auto& row) {
-      return row.language==language && row.source &&
-             inst->baseOutputUnits.sources.at(*row.source).skipped.empty();
-      });
-    if(program && outputUnits) return language;
-    }
-  return -1;
-  }
-
-namespace {
-const char* scriptDirectory(int language) {
-  static constexpr const char* directories[]={"Scripts_EN","Scripts_DE","Scripts_PL","Scripts_RU",
-                                               "Scripts_FR","Scripts_ES","Scripts_IT","Scripts_CZ"};
-  return language>=0 && language<8 ? directories[language] : "Scripts";
-  }
-}
-
-zenkit::DaedalusScript Resources::loadBaseProgram(std::string_view request, int language) {
-  try {
-    std::string_view branch;
-    if(inst->basePrograms.findVfs(request,&branch)!=nullptr)
-      return loadBaseProgram(request,language,branch);
-    const std::string name(request.substr(0,255));
-    std::string path="_work/Data/Scripts/_compiled/"+name;
-    const ProgramData::Source* source=inst->basePrograms.findHost(path);
-    branch="host_ordinary";
-    if(source==nullptr && language>=0) {
-      path="_work/Data/"+std::string(scriptDirectory(language))+"/_compiled/"+name;
-      source=inst->basePrograms.findHost(path);
-      branch="host_localized_full";
-      }
-    if(source==nullptr && language>=0) {
-      const auto separator=request.find_last_of("/\\");
-      const auto basename=separator==std::string_view::npos ? request : request.substr(separator+1);
-      path="_work/Data/"+std::string(scriptDirectory(language))+"/_compiled/"+std::string(basename.substr(0,255));
-      source=inst->basePrograms.findHost(path);
-      branch="host_localized_basename";
-      }
-    if(source==nullptr)
-      throw std::runtime_error("no source in program base index");
-    return loadBaseProgram(request,language,branch,std::filesystem::path(source->path).u16string());
-    }
-  catch(const BaseStore::Error&) { throw; }
-  catch(const std::exception& error) { throw BaseStore::Error("program "+std::string(request)+": "+error.what()); }
-  }
-
-bool Resources::loadBaseOutputUnits(std::string_view request, int language,
-                                    std::vector<std::shared_ptr<asset::CutsceneBlock>>& blocks) {
-  try {
-    std::string_view branch;
-    if(inst->baseOutputUnits.findVfs(request,&branch)!=nullptr)
-      return loadBaseOutputUnits(request,language,branch,blocks);
-    const std::string name(request.substr(0,255));
-    const OutputUnits::Source* source=inst->baseOutputUnits.findHost("_work/Data/Scripts/content/CUTSCENE/"+name);
-    branch="host_ordinary";
-    if(source==nullptr && language>=0) {
-      source=inst->baseOutputUnits.findHost("_work/Data/"+std::string(scriptDirectory(language))+"/"+name);
-      branch="host_localized";
-      }
-    if(source==nullptr) return false;
-    return loadBaseOutputUnits(request,language,branch,blocks,std::filesystem::path(source->path).u16string());
-    }
-  catch(const BaseStore::Error&) { throw; }
-  catch(const std::exception& error) { throw BaseStore::Error("output units "+std::string(request)+": "+error.what()); }
-  }
-
-zenkit::DaedalusScript Resources::loadBaseProgram(std::string_view request, int language,
-                                                std::string_view branch, std::u16string_view hostPath) {
-  try {
-    const auto& index = inst->basePrograms;
-    const ProgramData::Source* source = nullptr;
-    if(hostPath.empty()) {
-      std::string_view selectedBranch;
-      source = index.findVfs(request,&selectedBranch);
-      if(source==nullptr || selectedBranch!=branch)
-        throw std::runtime_error("selected VFS source missing from program base index");
-      }
-    else {
-      source = index.findHost(censusSourcePath(std::filesystem::path(hostPath)));
-      if(source==nullptr)
-        throw std::runtime_error("selected host source missing from program base index");
-      }
-    const auto file = index.path(*source);
-    std::string actualSha256;
-    auto program = ProgramData::readProgram(file,&actualSha256);
-    if(actualSha256!=source->recordSha256)
-      throw std::runtime_error("program record identity differs from base index");
-    auto script = zenkit::DaedalusScript::from_program(std::move(program));
-    if(inst->census) {
-      const auto record = "base/programs/"+file.filename().generic_string();
-      inst->census->replaced(request,record);
-      inst->census->program("Gothic::loadScript",request,language,branch,record,actualSha256,*source);
-      }
-    return script;
-    }
-  catch(const std::exception& error) {
-    if(inst->census) inst->census->missing(request,error.what());
-    throw BaseStore::Error("program "+std::string(request)+": "+error.what());
-    }
-  }
-
-bool Resources::loadBaseOutputUnits(std::string_view request, int language, std::string_view branch,
-                                   std::vector<std::shared_ptr<asset::CutsceneBlock>>& blocks,
-                                   std::u16string_view hostPath) {
-  try {
-    const auto& index = inst->baseOutputUnits;
-    const OutputUnits::Source* source = nullptr;
-    if(hostPath.empty()) {
-      std::string_view selectedBranch;
-      source = index.findVfs(request,&selectedBranch);
-      if(source==nullptr || selectedBranch!=branch)
-        throw std::runtime_error("selected VFS source missing from output units base index");
-      }
-    else {
-      source = index.findHost(censusSourcePath(std::filesystem::path(hostPath)));
-      if(source==nullptr)
-        throw std::runtime_error("selected host source missing from output units base index");
-      if(!source->skipped.empty())
-        return false;
-      }
-    if(!source->skipped.empty())
-      throw std::runtime_error("selected VFS output units source skipped: "+source->skipped);
-    const auto file = index.path(*source);
-    std::string actualSha256;
-    auto library = OutputUnits::readLibrary(file,&actualSha256);
-    if(actualSha256!=source->recordSha256)
-      throw std::runtime_error("output units record identity differs from base index");
-    auto loaded = OutputUnits::sortedBlocks(library);
-    blocks = std::move(loaded);
-    if(inst->census) {
-      const auto record = "base/outputunits/"+file.filename().generic_string();
-      inst->census->replaced(request,record);
-      inst->census->outputUnits("GameScript::loadDialogOU",request,language,branch,record,actualSha256,*source);
-      }
-    return true;
-    }
-  catch(const std::exception& error) {
-    if(inst->census) inst->census->missing(request,error.what());
-    throw BaseStore::Error("output units "+std::string(request)+": "+error.what());
-    }
   }
 
 const char* Resources::renderer() {
@@ -770,430 +501,13 @@ const Tempest::StorageImage& Resources::fallbackPageTable() {
 const Tempest::IndexBuffer<uint16_t>& Resources::cubeIbo() {
   return inst->cube;
   }
-Tempest::Texture2d* Resources::implLoadTexture(std::string_view cname, bool forceMips, bool pinned) {
-  if(isHeadless() || cname.empty())
-    return nullptr;
-
-  std::string name(cname);
-  if(auto it=texCache.find(name); it!=texCache.end()) {
-    if(auto entry=textureRecords.find(it->second.get()); entry!=textureRecords.end() && pinned && !entry->second.pinned) {
-      auto& record=entry->second;
-      unqueueTexture(record);
-      record.pinned=true;
-      if(record.tail) {
-        LoadProbe::Vobs::Scope probe("texture_load");
-        LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Texture);
-        auto full=decodeBaseTexture(record.source,record.mipmaps);
-        auto replacement=dev->texture(full.pixmap,full.useMipmap);
-        if(record.resident)
-          retireTexture(std::move(*record.texture));
-        *record.texture=std::move(replacement);
-        record.resident=true;
-        record.tail=false;
-        record.bytes=LoadProbe::textureBytes(*record.texture);
-        notifyTextureChanged(record);
-        ++texturesPromoted;
-        }
-      queueTexture(record);
-      }
-    return it->second.get();
-    }
-
-  LoadProbe::Vobs::Scope probe("texture_load");
-  LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Texture);
-  const auto probeT = LoadProbe::now();
-  TextureData data;
-  Texture2d tex;
-  try {
-    data=implDecodeTexture(cname,forceMips,!pinned && textureStreaming && loadingTextureTail ? textureSkipMips : 0);
-    if(!data.pixmap.isEmpty())
-      tex=device().texture(data.pixmap,data.useMipmap);
-    }
-  catch(const std::exception& error) {
-    Log::e("textures: unable to upload \"",cname,"\": ",error.what());
-    }
-  LoadProbe::countTexture(tex,probeT);
-  if(!tex.isEmpty()) {
-    auto t = std::make_unique<Texture2d>(std::move(tex));
-    auto* ret=t.get();
-    trackTexture(ret,data,TextureKind::Color,pinned);
-    texCache[std::move(name)] = std::move(t);
-    return ret;
-    }
-  texCache[std::move(name)] = nullptr;
-  return nullptr;
-  }
-
-void Resources::indexHdTextures() {
-  const char* dir = std::getenv("OPENGOTHIC_TEXTURES");
-  if(dir==nullptr || dir[0]=='\0')
-    return;
-  std::error_code ec;
-  for(auto& e:std::filesystem::directory_iterator(dir,ec)) {
-    auto ext = e.path().extension().string();
-    for(auto& c:ext)
-      c = char(std::toupper(uint8_t(c)));
-    if(ext!=".DDS" && ext!=".PNG")
-      continue;
-    auto key = e.path().stem().string();
-    for(auto& c:key)
-      c = char(std::toupper(uint8_t(c)));
-    // DXT with mipmaps (DDS) over RGBA (PNG): a fraction of the memory
-    auto& path = hdTextures[key];
-    if(path.empty() || ext==".DDS")
-      path = e.path().string();
-    }
-  if(ec)
-    Log::e("textures: unable to read \"",dir,"\"");
-  Log::i("textures: ",hdTextures.size()," of our own from \"",dir,"\"");
-  }
-
-std::filesystem::path Resources::baseDir() {
-  return inst->automaticBase.path;
-  }
-
-std::filesystem::path Resources::worldBaseDir(std::string_view world) {
-  const auto root = baseDir();
-  return root.empty() ? root : worldContentDir(root,world);
-  }
-
-void Resources::indexBaseContent() {
-  const auto root = baseDir();
-  baseTextures.load(root,"textures");
-  baseMeshes.load(root,"meshes");
-  baseZen.load(root,"zen");
-  baseModels.load(root,"models");
-  indexContentModels();
-  baseFonts.load(root,"fonts");
-  basePrograms = ProgramData::readIndex(root/"programs");
-  baseOutputUnits = OutputUnits::readIndex(root/"outputunits");
-  baseAudio = AudioData::readIndex(root/"audio");
-  baseMusic = MusicData::readIndex(root/"music");
-  baseWorlds.clear();
-  std::ifstream manifestFile(root/"base-files.json",std::ios::binary);
-  const std::string text{std::istreambuf_iterator<char>(manifestFile),std::istreambuf_iterator<char>()};
-  rapidjson::Document manifest;
-  manifest.Parse(text.data(),text.size());
-  if(manifest.HasParseError() || !manifest.IsObject() || !manifest.HasMember("files") || !manifest["files"].IsArray())
-    throw std::runtime_error("invalid base file manifest");
-  for(const auto& entry:manifest["files"].GetArray()) {
-    const std::filesystem::path file(entry["path"].GetString());
-    if(file.parent_path().parent_path()=="worlds" && file.filename()=="world.json")
-      baseWorlds.emplace(file.parent_path().filename().string());
-    }
-  }
-
-void Resources::indexContentModels() {
-  contentModels.clear();
-  const auto root = contentDir();
-  if(root.empty())
-    return;
-  const auto folder = root/"models";
-  const auto index = folder/"models.json";
-  std::ifstream file(index,std::ios::binary);
-  if(!file) {
-    std::error_code ec;
-    if(std::filesystem::exists(index,ec) || ec)
-      Log::e("content models: cannot read \"",index.string(),"\"");
-    return;
-    }
-  try {
-    const std::string text{std::istreambuf_iterator<char>(file),std::istreambuf_iterator<char>()};
-    rapidjson::Document table;
-    table.Parse<rapidjson::kParseValidateEncodingFlag>(text.data(),text.size());
-    if(table.HasParseError() || !table.IsObject() ||
-       !table.HasMember("format") || !table["format"].IsString() ||
-       std::string_view(table["format"].GetString(),table["format"].GetStringLength())!="gothic-models" ||
-       !table.HasMember("version") || !table["version"].IsUint() || table["version"].GetUint()!=1 ||
-       !table.HasMember("files") || !table["files"].IsObject())
-      throw std::runtime_error("expected gothic-models index version 1 with files object");
-    for(const auto& entry:table["files"].GetObject()) {
-      const std::string key(entry.name.GetString(),entry.name.GetStringLength());
-      if(key.empty() || key.find_first_of("/\\")!=std::string::npos || key.find('\0')!=std::string::npos ||
-         key!=modelKey(key) || !entry.value.IsString()) {
-        Log::e("content models: invalid entry \"",key,"\" in \"",index.string(),"\"");
-        continue;
-        }
-      const std::string path(entry.value.GetString(),entry.value.GetStringLength());
-      const std::filesystem::path relative(path);
-      if(path.empty() || path.find('\0')!=std::string::npos || path.find('\\')!=std::string::npos ||
-         relative.is_absolute() || relative.has_root_name() ||
-         std::any_of(relative.begin(),relative.end(),[](const auto& part) { return part==".."; })) {
-        Log::e("content models: invalid path for \"",key,"\" in \"",index.string(),"\"");
-        continue;
-        }
-      if((FileExt::hasExt(key,"MSB") || FileExt::hasExt(key,"MDS")) && baseModels.files.count(key)==0) {
-        Log::e("content models: warning: no base script for overlay \"",(folder/relative).string(),"\" (",key,")");
-        continue;
-        }
-      contentModels.emplace(key,folder/relative);
-      }
-    }
-  catch(const std::exception& error) {
-    Log::e("content models: \"",index.string(),"\": ",error.what());
-    }
-  }
-
-void Resources::BaseIndex::load(const std::filesystem::path& root, const char* kind) {
-  *this = {};
-  const auto folder = root/kind;
-  const auto resourceKind = std::string_view(kind);
-  const char* entries = resourceKind=="zen" || resourceKind=="models" ? "files" : kind;
-  std::ifstream file(folder/(std::string(kind)+".json"),std::ios::binary);
-  if(!file)
-    throw std::runtime_error("base index missing: "+(folder/(std::string(kind)+".json")).string());
-  try {
-    const std::string text{std::istreambuf_iterator<char>(file),std::istreambuf_iterator<char>()};
-    rapidjson::Document table;
-    table.Parse<rapidjson::kParseValidateEncodingFlag>(text.data(),text.size());
-    if(table.HasParseError() || !table.IsObject() ||
-       !table.HasMember("archives") || !table["archives"].IsArray() ||
-       !table.HasMember(entries) || !table[entries].IsObject())
-      throw std::runtime_error("invalid index");
-    if(resourceKind=="models" &&
-       (!table.HasMember("format") || !table["format"].IsString() ||
-        std::string_view(table["format"].GetString(),table["format"].GetStringLength())!="gothic-models" ||
-        !table.HasMember("version") || !table["version"].IsUint() || table["version"].GetUint()!=1))
-      throw std::runtime_error("unsupported model index format or version");
-    if(resourceKind=="fonts" &&
-       (!table.HasMember("format") || !table["format"].IsString() ||
-        std::string_view(table["format"].GetString(),table["format"].GetStringLength())!="gothic-fonts" ||
-        !table.HasMember("version") || !table["version"].IsUint() || table["version"].GetUint()!=1))
-      throw std::runtime_error("unsupported font index format or version");
-    for(const auto& archive:table["archives"].GetArray()) {
-      if(!archive.IsObject() || !archive.HasMember("name") || !archive["name"].IsString() ||
-         !archive.HasMember("size") || !archive["size"].IsUint64())
-        throw std::runtime_error("invalid archive identity");
-      archives.emplace_back(archive["name"].GetString(),archive["size"].GetUint64());
-      }
-    std::sort(archives.begin(),archives.end());
-    if((resourceKind=="zen" || resourceKind=="models" || resourceKind=="fonts") && table.HasMember("loose_files")) {
-      if(!table["loose_files"].IsArray())
-        throw std::runtime_error("invalid loose file list");
-      for(const auto& entry:table["loose_files"].GetArray()) {
-        if(!entry.IsObject() || !entry.HasMember("path") || !entry["path"].IsString() ||
-           !entry.HasMember("size") || !entry["size"].IsUint64())
-          throw std::runtime_error("invalid loose file identity");
-        const std::string name(entry["path"].GetString(),entry["path"].GetStringLength());
-        const std::filesystem::path path(name);
-        if(name.empty() || path.is_absolute() || name.find('\0')!=std::string::npos ||
-           std::any_of(path.begin(),path.end(),[](const auto& part) { return part==".."; }))
-          throw std::runtime_error("invalid loose file path");
-        looseFiles.emplace_back(name,entry["size"].GetUint64());
-        }
-      }
-    for(const auto& entry:table[entries].GetObject()) {
-      if(!entry.value.IsString())
-        throw std::runtime_error("invalid file entry");
-      const std::string key(entry.name.GetString(),entry.name.GetStringLength());
-      const std::string name(entry.value.GetString(),entry.value.GetStringLength());
-      if(key.empty() || name.empty() || key.find_first_of("/\\")!=std::string::npos ||
-         name.find_first_of("/\\")!=std::string::npos || key.find('\0')!=std::string::npos ||
-         name.find('\0')!=std::string::npos || name=="." || name=="..")
-        throw std::runtime_error("invalid file name");
-      files.emplace(key,name);
-      }
-    dir = folder;
-    }
-  catch(const std::exception& error) {
-    files.clear();
-    archives.clear();
-    looseFiles.clear();
-    throw std::runtime_error("base index "+folder.string()+": "+error.what());
-    }
-  }
-
-void Resources::BaseIndex::validate(const std::vector<std::pair<std::string,uintmax_t>>& mounted) {
-  if(dir.empty())
-    return;
-  enabled = archives==mounted;
-  if(enabled)
-    Log::i("base: ",files.size()," entries from \"",dir.string(),"\"");
-  else
-    throw std::runtime_error("selected base archives differ from base index: "+dir.string());
-  }
-
-std::filesystem::path Resources::contentDir() {
-  if(const char* dir = std::getenv("OPENGOTHIC_CONTENT")) {
-    if(dir[0]=='\0')
-      return {};
-    return dir;
-    }
-  if(const auto home=userHome(); !home.empty())
-    return home/".local/share/gothic-ai/content";
-  return {};
-  }
-
-std::filesystem::path Resources::worldOverrideDir(std::string_view world) {
-  const auto root=contentDir();
-  return root.empty() ? std::filesystem::path{} : worldContentDir(root,world);
-  }
-
-std::string Resources::selectedBaseFingerprint() {
-  return inst!=nullptr ? inst->baseFingerprint : std::string();
-  }
-
-Resources::WayHeightInputs Resources::wayHeightInputs(std::string_view world) {
-  if(inst==nullptr || inst->baseFingerprint.empty())
-    return {};
-  try {
-    namespace fs = std::filesystem;
-    std::string inputs;
-    const auto field=[&](std::string_view value) {
-      inputs+=std::to_string(value.size())+":";
-      inputs.append(value);
-      };
-    const auto metadata=[&](const fs::path& file) {
-      field(fs::absolute(file).lexically_normal().generic_string());
-      const auto stamp=wayHeightFileStamp(file);
-      if(stamp.empty()) throw std::runtime_error("cannot read way height input metadata");
-      field(stamp);
-      };
-    const auto contentWorld=worldOverrideDir(world);
-    field(contentWorld.empty() ? "" : fs::absolute(contentWorld).lexically_normal().generic_string());
-    const auto* layers=std::getenv("OPENGOTHIC_VOB_LAYERS");
-    field(layers!=nullptr && std::string_view(layers)=="0" ? "layers=0" : "layers=1");
-    field(isHeadless() ? "headless=1" : "headless=0");
-    std::vector<fs::path> files;
-    if(!contentWorld.empty()) {
-      if(fs::is_directory(contentWorld))
-        for(const auto& entry:fs::recursive_directory_iterator(contentWorld)) {
-          // The world loader follows directory links. Avoid an incomplete key
-          // rather than reusing heights when such a directory changes.
-          if(entry.is_symlink() && entry.is_directory()) return {};
-          if(entry.is_regular_file()) files.push_back(entry.path());
-          }
-      files.push_back(contentWorld.parent_path().parent_path()/"meshes/meshes.json");
-      // A layer file containing a collidable mesh is also rejected when one of its emitters
-      // loses its custom PFX. Include definitions even though emitters have no collision.
-      const auto particles=contentWorld.parent_path().parent_path()/"particles.d";
-      if(fs::is_directory(particles)) {
-        if(fs::is_symlink(particles)) return {};
-        for(const auto& entry:fs::directory_iterator(particles))
-          if(entry.is_regular_file() && entry.path().extension()==".json") files.push_back(entry.path());
-        }
-      }
-    // Indexed replacements may be shared by several worlds. The key must not
-    // depend on which of them this process has already loaded.
-    std::vector<std::string> meshKeys;
-    for(const auto& [key,mesh]:inst->meshOverrides) {
-      (void)mesh;
-      meshKeys.push_back(key);
-      }
-    std::sort(meshKeys.begin(),meshKeys.end());
-    for(const auto& key:meshKeys) {
-      const auto& mesh=inst->meshOverrides.at(key);
-      const auto stamp=wayHeightFileStamp(mesh.file);
-      // Cached successful or failed loads may predate an edit on disk. Use
-      // rays until a new Resources owner can load the current replacements.
-      if(stamp.empty() || stamp!=mesh.initialStamp) return {};
-      field(key);
-      field(fs::absolute(mesh.file).lexically_normal().generic_string());
-      field(stamp);
-      }
-    std::sort(files.begin(),files.end());
-    files.erase(std::unique(files.begin(),files.end()),files.end());
-    for(const auto& file:files) metadata(file);
-    return {inst->baseFingerprint,BaseImport::sha256(inputs)};
-    }
-  catch(const std::exception& error) {
-    Log::e("way heights: input fingerprint unavailable: ",error.what());
-    return {};
-    }
-  }
-
-void Resources::indexMeshOverrides() {
-  std::filesystem::path root;
-  if(const char* dir = std::getenv("OPENGOTHIC_CONTENT")) {
-    if(dir[0]=='\0')
-      return;
-    root = dir;
-    } else if(const auto home=userHome(); !home.empty()) {
-    root = home/".local/share/gothic-ai/content";
-    } else {
-    return;
-    }
-  root /= "meshes";
-  std::ifstream file(root/"meshes.json",std::ios::binary);
-  if(!file)
-    return;
-  const std::string text{std::istreambuf_iterator<char>(file),std::istreambuf_iterator<char>()};
-  rapidjson::Document table;
-  table.Parse<rapidjson::kParseValidateEncodingFlag>(text.data(),text.size());
-  if(table.HasParseError() || !table.IsObject()) {
-    Log::e("meshes: invalid meshes.json in \"",root.string(),"\"");
-    return;
-    }
-  for(const auto& entry:table.GetObject()) {
-    std::string key(entry.name.GetString(),entry.name.GetStringLength());
-    if(key.empty() || key.find('\0')!=std::string::npos || key.find_first_of("/\\")!=std::string::npos ||
-       std::filesystem::path(key).has_extension() || !entry.value.IsObject() ||
-       !entry.value.HasMember("glb") || !entry.value["glb"].IsString()) {
-      Log::e("meshes: invalid entry \"",key,"\"");
-      continue;
-      }
-    const auto& value = entry.value["glb"];
-    const std::string path(value.GetString(),value.GetStringLength());
-    const std::filesystem::path relative(path);
-    if(!contentGlbPath(path)) {
-      Log::e("meshes: invalid glb path for \"",key,"\"");
-      continue;
-      }
-    for(auto& c:key)
-      c = char(std::toupper(uint8_t(c)));
-    const auto meshFile=(root/relative).lexically_normal();
-    meshOverrides[std::move(key)] = {
-      meshFile,
-      (std::filesystem::path("meshes")/relative).lexically_normal().generic_string(),
-      wayHeightFileStamp(meshFile)
-      };
-    }
-  Log::i("meshes: ",meshOverrides.size()," entries from \"",root.string(),"\"");
-  }
-
-void Resources::indexCharacterHeads() {
-  const auto content=contentDir();
-  if(content.empty())
-    return;
-  const auto root=content/"characters";
-  std::ifstream file(root/"characters.json",std::ios::binary);
-  if(!file)
-    return;
-  const std::string text{std::istreambuf_iterator<char>(file),std::istreambuf_iterator<char>()};
-  rapidjson::Document table;
-  table.Parse<rapidjson::kParseValidateEncodingFlag>(text.data(),text.size());
-  if(table.HasParseError() || !table.IsObject()) {
-    Log::e("characters: invalid characters.json in \"",root.string(),"\"");
-    return;
-    }
-  for(const auto& entry:table.GetObject()) {
-    std::string key(entry.name.GetString(),entry.name.GetStringLength());
-    if(key.empty() || key.find('\0')!=std::string::npos || key.find_first_of("/\\")!=std::string::npos ||
-       !entry.value.IsObject() || !entry.value.HasMember("head") || !entry.value["head"].IsString()) {
-      Log::e("characters: invalid head entry for \"",key,"\": expected an instance name and a head string");
-      continue;
-      }
-    const auto& value=entry.value["head"];
-    const std::string path(value.GetString(),value.GetStringLength());
-    if(!contentGlbPath(path)) {
-      Log::e("characters: invalid head path for \"",key,"\": expected a relative .glb path without '..'");
-      continue;
-      }
-    for(auto& c:key)
-      c=char(std::toupper(uint8_t(c)));
-    characterHeads[std::move(key)]={(root/path).lexically_normal(),nullptr,false};
-    }
-  }
-
 const ProtoMesh* Resources::loadCharacterHead(std::string_view instance) {
   if(!CommandLine::inst().doHeroHead())
     return nullptr;
   std::string key(instance);
   for(auto& c:key)
     c=char(std::toupper(uint8_t(c)));
-  // The pilot replaces only this script instance, even if a package lists others.
-  if(key!="PC_HERO")
-    return nullptr;
+  // any script instance the table lists: the hero and the npcs with heads of their own
   std::lock_guard<std::recursive_mutex> guard(inst->sync);
   const auto it=inst->characterHeads.find(key);
   if(it==inst->characterHeads.end())
@@ -1209,6 +523,21 @@ const ProtoMesh* Resources::loadCharacterHead(std::string_view instance) {
       auto mesh=std::make_unique<ProtoMesh>(std::move(packed),entry.file.generic_string());
       Log::i("characters: loaded head for ",key,": ",head->parts.size()," parts, ",
              head->mesh.positions.size()," vertices, ",head->targets.size()," targets");
+      if(!entry.face.empty()) {
+        try {
+          std::ifstream file(entry.face,std::ios::binary);
+          if(!file)
+            throw std::runtime_error("unable to open the file");
+          const std::string text{std::istreambuf_iterator<char>(file),std::istreambuf_iterator<char>()};
+          mesh->face=FaceProfile::parse(text,*head);
+          Log::i("characters: face profile for ",key,": ",mesh->face->anims.size()," anims, ",mesh->face->cues.size()," cues, ",
+                  mesh->face->leaks.size()," leaks");
+          }
+        catch(const std::exception& error) {
+          Log::e("characters: invalid face profile for ",key," in \"",entry.face.string(),"\": ",error.what(),
+                 "; the head shows no face anims");
+          }
+        }
       mesh->head=std::move(head);
       entry.mesh=std::move(mesh);
       }
@@ -1286,746 +615,6 @@ asset::StaticMesh Resources::loadVisualMesh(std::string_view name, bool* replace
   Log::e("base: unable to load mesh \"",original,"\"");
   if(inst->census) inst->census->missing(original,"mesh unavailable");
   return {};
-  }
-
-void Resources::indexMaterialMaps() {
-  std::filesystem::path root;
-  if(const char* dir = std::getenv("OPENGOTHIC_CONTENT")) {
-    if(dir[0]=='\0')
-      return;
-    root = dir;
-    } else if(const auto home=userHome(); !home.empty()) {
-    root = home/".local/share/gothic-ai/content";
-    } else {
-    return;
-    }
-  root /= "materials";
-
-  std::ifstream file(root/"materials.json", std::ios::binary);
-  if(!file)
-    return;
-  const std::string text{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
-  rapidjson::Document table;
-  table.Parse<rapidjson::kParseValidateEncodingFlag>(text.data(), text.size());
-  if(table.HasParseError() || !table.IsObject()) {
-    Log::e("materials: invalid materials.json in \"",root.string(),"\"");
-    return;
-    }
-
-  for(auto& entry:table.GetObject()) {
-    if(!entry.value.IsObject()) {
-      Log::e("materials: invalid entry \"",entry.name.GetString(),"\"");
-      continue;
-      }
-    MaterialMapFiles maps;
-    auto path = [&](const char* field, std::string& out, std::string* replacement = nullptr) {
-      const auto it = entry.value.FindMember(field);
-      if(it==entry.value.MemberEnd())
-        return true;
-      if(!it->value.IsString())
-        return false;
-      const std::string name(it->value.GetString(), it->value.GetStringLength());
-      const auto relative = std::filesystem::path(name);
-      if(name.empty() || name.find('\0')!=std::string::npos || relative.is_absolute() || !FileExt::hasExt(name,"DDS"))
-        return false;
-      for(const auto& component:relative)
-        if(component=="..")
-          return false;
-      out = (root/relative).lexically_normal().string();
-      if(replacement!=nullptr)
-        *replacement = (std::filesystem::path("materials")/relative).lexically_normal().generic_string();
-      return true;
-      };
-    bool valid = path("albedo", maps.albedo, &maps.albedoReplacement) && path("normal", maps.normal) && path("orm", maps.orm);
-    if(const auto mode = entry.value.FindMember("antitile"); mode!=entry.value.MemberEnd()) {
-      if(!mode->value.IsString()) {
-        valid = false;
-        } else {
-        const std::string_view value(mode->value.GetString(), mode->value.GetStringLength());
-        if(value=="offset")
-          maps.antitile = Material::Antitile::Offset;
-        else if(value=="rotate")
-          maps.antitile = Material::Antitile::Rotate;
-        else if(value!="off")
-          valid = false;
-        }
-      }
-    if(const auto cell = entry.value.FindMember("antitile_cell"); cell!=entry.value.MemberEnd()) {
-      if(!cell->value.IsNumber()) {
-        valid = false;
-        } else {
-        const auto value = cell->value.GetDouble();
-        if(!std::isfinite(value) || value<=0 || value>std::numeric_limits<float>::max() ||
-           float(value)<=0 || !std::isfinite(1.f/float(value)))
-          valid = false;
-        else
-          maps.antitileCell = float(value);
-        }
-      }
-    // Water in a pot clouded with ash and fat: how much of the material's own lit colour covers the clear water.
-    if(const auto turbidity = entry.value.FindMember("turbidity"); turbidity!=entry.value.MemberEnd()) {
-      if(!turbidity->value.IsNumber() || !std::isfinite(turbidity->value.GetDouble()) ||
-         turbidity->value.GetDouble()<0 || turbidity->value.GetDouble()>1)
-        valid = false;
-      else
-        maps.turbidity = float(turbidity->value.GetDouble());
-      }
-    // A stew: the turbidity is reached over this many cm of liquid (Beer-Lambert), clearer where it is thin.
-    if(const auto depth = entry.value.FindMember("turbidity_depth"); depth!=entry.value.MemberEnd()) {
-      if(!depth->value.IsNumber() || !std::isfinite(depth->value.GetDouble()) ||
-         depth->value.GetDouble()<0 || depth->value.GetDouble()>1e6)
-        valid = false;
-      else
-        maps.turbidityDepth = float(depth->value.GetDouble());
-      }
-    // Embers and glowing wood: the material gives off its own albedo colour times this, where the ORM's alpha
-    // (DXT5) marks it; it slowly breathes (main.frag, mainGBuffer) and is added by the ambient pass.
-    if(const auto emissive = entry.value.FindMember("emissive"); emissive!=entry.value.MemberEnd()) {
-      if(!emissive->value.IsNumber() || !std::isfinite(emissive->value.GetDouble()) ||
-         emissive->value.GetDouble()<0 || emissive->value.GetDouble()>1)
-        valid = false;
-      else
-        maps.emissive = float(emissive->value.GetDouble());
-      }
-    if(const auto scale = entry.value.FindMember("scale"); scale!=entry.value.MemberEnd()) {
-      if(!scale->value.IsNumber()) {
-        valid = false;
-        } else {
-        const auto value = scale->value.GetDouble();
-        if(!std::isfinite(value) || std::abs(value)>std::numeric_limits<float>::max())
-          valid = false;
-        else
-          maps.scale = float(value);
-        }
-      }
-    if(!valid) {
-      Log::e("materials: invalid entry \"",entry.name.GetString(),"\"");
-      continue;
-      }
-    std::string key(entry.name.GetString(), entry.name.GetStringLength());
-    for(auto& c:key)
-      c = char(std::toupper(uint8_t(c)));
-    materialMaps[std::move(key)] = std::move(maps);
-    }
-  materialMapsPresent = !materialMaps.empty();
-  Log::i("materials: ",materialMaps.size()," entries from \"",root.string(),"\"");
-  }
-
-const Texture2d* Resources::implLoadMaterialTexture(const std::string& path, TextureKind kind) {
-  LoadProbe::Requests::add(2,path);
-  LoadProbe::Vobs::Scope probe("texture_request");
-  if(path.empty())
-    return nullptr;
-  const auto key = (kind==TextureKind::Normal ? "normal:" : kind==TextureKind::Orm ? "orm:" : "color:")+path;
-  if(auto it = materialTextureCache.find(key); it!=materialTextureCache.end())
-    return it->second.get();
-  std::unique_ptr<Texture2d> texture;
-  LoadProbe::Vobs::Scope loadProbe("texture_load");
-  LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Texture);
-  const auto probeT = LoadProbe::now();
-  try {
-    TextureData data=decodeBaseTexture(path,false,textureStreaming && loadingTextureTail ? textureSkipMips : 0);
-    if(data.pixmap.format()!=TextureFormat::DXT5 && (kind==TextureKind::Normal || data.pixmap.format()!=TextureFormat::DXT1)) {
-      Log::e("materials: unsupported DDS format in \"",path,"\"");
-      } else {
-      data.useMipmap=data.pixmap.mipCount()>1;
-      data.source=path;
-      texture=std::make_unique<Texture2d>(device().texture(data.pixmap,data.useMipmap));
-      trackTexture(texture.get(),data,kind,false);
-      textureRecords.at(texture.get()).sourceKind=TextureSource::Material;
-      }
-    }
-  catch(...) {
-    Log::e("materials: unable to load \"",path,"\"");
-    }
-  const auto ret = texture.get();
-  if(ret!=nullptr)
-    LoadProbe::countTexture(*ret,probeT);
-  materialTextureCache.emplace(key,std::move(texture));
-  return ret;
-  }
-
-Texture2d Resources::implLoadTextureUncached(std::string_view name, bool forceMips) {
-  LoadProbe::Vobs::Scope probe("texture_load");
-  LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Texture);
-  auto decoded=implDecodeTexture(name,forceMips);
-  try {
-    return decoded.pixmap.isEmpty() ? Texture2d() : device().texture(decoded.pixmap,decoded.useMipmap);
-    }
-  catch(const std::exception& error) {
-    Log::e("textures: unable to upload \"",name,"\": ",error.what());
-    return {};
-    }
-  }
-
-Resources::TextureData Resources::implDecodeTexture(std::string_view name, bool forceMips, uint32_t skipMips) {
-  if(isHeadless() || name.empty())
-    return {};
-
-  if(!hdTextures.empty() && FileExt::hasExt(name,"TGA")) {
-    std::string key(name.substr(0,name.size()-4));
-    for(auto& c:key)
-      c = char(std::toupper(uint8_t(c)));
-    if(auto it = hdTextures.find(key); it!=hdTextures.end()) {
-      try {
-        TextureData decoded=decodeBaseTexture(it->second,true,skipMips);
-        if(census)
-          census->replaced(name,it->second);
-        return decoded;
-        }
-      catch(...) {
-        Log::e("textures: unable to load \"",it->second,"\"");
-        }
-      }
-    }
-
-  if(baseTextures.enabled && FileExt::hasExt(name,"TGA")) {
-    std::string key(name.substr(0,name.size()-4));
-    for(auto& c:key)
-      c = char(std::toupper(static_cast<unsigned char>(c)));
-    if(const auto it = baseTextures.files.find(key); it!=baseTextures.files.end()) {
-      try {
-        auto decoded=decodeBaseTexture(baseTextures.dir/it->second,forceMips,skipMips);
-        if(!decoded.pixmap.isEmpty()) {
-          if(census)
-            census->replaced(name,"base/textures/"+it->second);
-          return decoded;
-          }
-        Log::e("base: unable to load texture \"",it->second,"\"");
-        }
-      catch(const std::exception& error) {
-        Log::e("base: unable to load texture \"",it->second,"\": ",error.what());
-        }
-      }
-    }
-
-  Log::e("base: unable to load texture \"",name,"\"");
-  if(census) census->missing(name,"texture unavailable");
-  return {};
-  }
-
-Resources::TextureData Resources::decodeBaseTexture(const std::filesystem::path& path, bool forceMips, uint32_t skipMips) {
-  if(skipMips!=0 && FileExt::hasExt(path.string(),"DDS")) {
-    Tempest::RFile input(path.string());
-    auto tail=Pixmap::loadDdsMipTail(input,skipMips);
-    if(!tail.isEmpty()) {
-      const auto mipmaps=forceMips || tail.mipCount()>1;
-      return {std::move(tail),mipmaps,path,true};
-      }
-    }
-  if(FileExt::hasExt(path.string(),"PNG"))
-    return {Tempest::Pixmap(path.string()),true,path}; // device.texture(pm) generates mips for non-DXT originals.
-  TextureData decoded{Tempest::Pixmap(path.string()),false,path};
-  decoded.useMipmap = forceMips || decoded.pixmap.mipCount()>1;
-  return decoded;
-  }
-
-bool Resources::TextureRecord::wanted() const {
-  return pinned || std::any_of(demand.begin(),demand.end(),[](uint32_t count) { return count!=0; });
-  }
-
-std::tuple<uint32_t,uint64_t,uintptr_t> Resources::TextureRecord::demotionPriority() const {
-  const auto distance=distances.empty() ? UINT32_MAX : distances.begin()->first;
-  return {UINT32_MAX-distance,lastNeededFull,reinterpret_cast<uintptr_t>(texture)};
-  }
-
-void Resources::trackTexture(Texture2d* texture, const TextureData& data, TextureKind kind, bool pinned) {
-  TextureRecord record;
-  record.texture=texture;
-  record.source=data.source;
-  if(data.source.parent_path()==baseTextures.dir)
-    record.sourceKind=TextureSource::Base;
-  else if(kind!=TextureKind::Color || data.source.parent_path().filename()=="materials")
-    record.sourceKind=TextureSource::Material;
-  else if(std::any_of(hdTextures.begin(),hdTextures.end(),[&](const auto& entry) { return entry.second==data.source.string(); }))
-    record.sourceKind=TextureSource::Hd;
-
-  record.format=texture->format();
-  record.kind=kind;
-  record.mipmaps=data.useMipmap;
-  record.pinned=pinned;
-  record.tail=data.tail;
-  record.hasTail=data.tail || (FileExt::hasExt(data.source.string(),"DDS") && data.pixmap.mipCount()>1 &&
-                               data.pixmap.w()>=128 && data.pixmap.h()>=128);
-  record.bytes=LoadProbe::textureBytes(*texture);
-  auto entry=textureRecords.emplace(texture,std::move(record)).first;
-  queueTexture(entry->second);
-  }
-
-Resources::TextureLoadScope::TextureLoadScope(bool tail):previous(loadingTextureTail) {
-  loadingTextureTail=tail;
-  }
-
-Resources::TextureLoadScope::~TextureLoadScope() {
-  loadingTextureTail=previous;
-  }
-
-void Resources::updateNearTailTime() {
-  const auto now=std::chrono::steady_clock::now();
-  nearTailSeconds+=std::chrono::duration<double>(now-nearTailUpdated).count()*double(nearTailTextures.size());
-  nearTailUpdated=now;
-  }
-
-bool Resources::wantsFull(const TextureRecord& record) const {
-  return !textureStreaming || textureSkipMips==0 || !record.hasTail || record.pinned ||
-         record.distances.count(TextureAlwaysFull)!=0 ||
-         (!record.distances.empty() && record.distances.begin()->first<=2);
-  }
-
-void Resources::unqueueTexture(TextureRecord& record) {
-  updateNearTailTime();
-  nearTailTextures.erase(&record);
-  textureIdle.erase({record.lastDemand,reinterpret_cast<uintptr_t>(record.texture)});
-  textureMissing.erase(&record);
-  texturePromotions.erase(&record);
-  textureDemotions.erase({record.demoteAt,reinterpret_cast<uintptr_t>(record.texture)});
-  textureDemotionLru.erase(record.demotionPriority());
-  }
-
-void Resources::queueTexture(TextureRecord& record) {
-  if(record.resident && record.tail && !record.distances.empty() && record.distances.begin()->first<=1)
-    nearTailTextures.insert(&record);
-  if(record.wanted()) {
-    if(!record.failed) {
-      if(!record.resident)
-        textureMissing.insert(&record);
-      else if(record.tail && wantsFull(record))
-        texturePromotions.insert(&record);
-      }
-    if(!wantsFull(record) && (record.distances.empty() || record.distances.begin()->first>3)) {
-      if(record.demoteAt==std::chrono::steady_clock::time_point{})
-        record.demoteAt=std::chrono::steady_clock::now()+std::chrono::seconds(5);
-      if(record.resident && !record.tail && !record.failed) {
-        if(record.demoteAt<=std::chrono::steady_clock::now())
-          textureDemotionLru.emplace(record.demotionPriority(),&record);
-        else
-          textureDemotions.emplace(std::make_pair(record.demoteAt,reinterpret_cast<uintptr_t>(record.texture)),&record);
-        }
-      } else {
-      record.demoteAt={};
-      }
-    } else if(record.resident) {
-    record.demoteAt={};
-    textureIdle.emplace(std::make_pair(record.lastDemand,reinterpret_cast<uintptr_t>(record.texture)),&record);
-    }
-  }
-
-void Resources::configureTextures(std::string_view budget, std::string_view skipMips, std::string_view target) {
-  if(inst==nullptr)
-    return;
-  const auto* enabled=std::getenv("OPENGOTHIC_TEXTURE_STREAMING");
-  const auto* budgetEnv=std::getenv("OPENGOTHIC_TEXTURE_BUDGET_MB");
-  const auto* targetEnv=std::getenv("OPENGOTHIC_TEXTURE_TARGET_MB");
-  const auto* mipsEnv=std::getenv("OPENGOTHIC_TEXTURE_MIPS");
-  const auto* skipEnv=std::getenv("OPENGOTHIC_TEXTURE_FAR_SKIP_MIPS");
-  const auto integer=[](std::string_view value, int64_t fallback, const char* field, int64_t maximum) -> int64_t {
-    if(value.empty())
-      return fallback;
-    std::string text(value);
-    char* end=nullptr;
-    const auto result=std::strtoll(text.c_str(),&end,10);
-    if(end==text.c_str() || *end!='\0' || result<0 || result>maximum)
-      throw std::runtime_error(std::string(field)+" must be a nonnegative integer");
-    return result;
-    };
-  const auto megabytes=integer(budgetEnv!=nullptr ? std::string_view(budgetEnv) : budget,256,"texture_budget_mb",
-                              std::numeric_limits<int64_t>::max()/1048576);
-  const auto skip=integer(skipEnv!=nullptr ? std::string_view(skipEnv) : skipMips,2,"texture_far_skip_mips",UINT32_MAX);
-  const auto targetMegabytes=integer(targetEnv!=nullptr ? std::string_view(targetEnv) : target,192,"texture_target_mb",
-                                    std::numeric_limits<int64_t>::max()/1048576);
-  std::lock_guard<std::recursive_mutex> guard(inst->sync);
-  inst->textureBudget=uint64_t(megabytes)*1048576;
-  inst->textureTarget=uint64_t(targetMegabytes)*1048576;
-  inst->textureStreaming=enabled==nullptr || std::strcmp(enabled,"0")!=0;
-  inst->textureSkipMips=inst->textureStreaming && (mipsEnv==nullptr || std::strcmp(mipsEnv,"0")!=0) ? uint32_t(skip) : 0;
-  inst->textureOverBudget=false;
-  for(auto& entry:inst->textureRecords) {
-    inst->unqueueTexture(entry.second);
-    inst->queueTexture(entry.second);
-    }
-  }
-
-void Resources::finishTextureLoading() {
-  if(inst==nullptr || inst->dev==nullptr)
-    return;
-  std::lock_guard<std::recursive_mutex> guard(inst->sync);
-  std::array<TextureRecord*,2> records{};
-  std::array<std::future<Texture2d>,2> uploads;
-  const auto publish=[&](size_t slot) {
-    if(!uploads[slot].valid())
-      return;
-    auto texture=uploads[slot].get();
-    auto& record=*records[slot];
-    inst->unqueueTexture(record);
-    if(record.resident)
-      inst->retireTexture(std::move(*record.texture));
-    *record.texture=std::move(texture);
-    record.resident=true;
-    if(record.tail)
-      ++inst->texturesPromoted;
-    record.tail=false;
-    record.bytes=LoadProbe::textureBytes(*record.texture);
-    inst->notifyTextureChanged(record);
-    inst->queueTexture(record);
-    };
-  size_t slot=0;
-  for(auto& entry:inst->textureRecords) {
-    auto& record=entry.second;
-    if(!record.wanted() || !inst->wantsFull(record) || (record.resident && !record.tail))
-      continue;
-    publish(slot);
-    records[slot]=&record;
-    uploads[slot]=std::async(std::launch::async,[path=record.source,mipmaps=record.mipmaps,device=inst->dev] {
-      auto data=decodeBaseTexture(path,mipmaps);
-      return device->texture(data.pixmap,data.useMipmap);
-      });
-    slot=(slot+1)%uploads.size();
-    }
-  publish(slot);
-  publish((slot+1)%uploads.size());
-  }
-
-Resources::TextureStats Resources::textureStats() {
-  if(inst==nullptr)
-    return {};
-  std::lock_guard<std::recursive_mutex> guard(inst->sync);
-  inst->updateNearTailTime();
-  TextureStats stats;
-  stats.promoted=inst->texturesPromoted;
-  stats.demoted=inst->texturesDemoted;
-  stats.promotionQueue=inst->texturePromotions.size();
-  stats.nearTailCount=inst->nearTailTextures.size();
-  stats.nearTailSeconds=inst->nearTailSeconds;
-  for(const auto& queue:inst->recycled)
-    stats.retiredBytes+=queue.textureBytes;
-  stats.liveBytes=Texture2d::liveBytes();
-  stats.count=Texture2d::liveCount();
-  stats.peakBytes=Texture2d::peakBytes();
-  stats.evicted=inst->texturesEvicted;
-  stats.reloaded=inst->texturesReloaded;
-  stats.categoryBytes[size_t(TextureCategory::Other)]=stats.liveBytes;
-  stats.categoryCount[size_t(TextureCategory::Other)]=stats.count;
-  for(const auto& entry:inst->textureRecords) {
-    const auto& record=entry.second;
-    if(!record.resident)
-      continue;
-    const auto bytes=record.bytes;
-    (record.tail ? stats.tailBytes : stats.fullBytes)+=bytes;
-    stats.sourceBytes[size_t(record.sourceKind)]+=bytes;
-    if(!record.tail) {
-      stats.sourceFullBytes[size_t(record.sourceKind)]+=bytes;
-      if(record.hasTail && inst->textureStreaming && inst->textureSkipMips!=0 &&
-         !record.pinned && record.distances.count(TextureAlwaysFull)==0 &&
-         !record.distances.empty() && record.distances.begin()->first<=2)
-        stats.fullRing2Bytes+=bytes;
-      }
-    if(record.category==TextureCategory::Other)
-      continue;
-    stats.categoryBytes[size_t(record.category)]+=bytes;
-    stats.categoryCount[size_t(record.category)]+=1;
-    stats.categoryBytes[size_t(TextureCategory::Other)]-=bytes;
-    stats.categoryCount[size_t(TextureCategory::Other)]-=1;
-    }
-  uint64_t tracked=0, trackedFull=0;
-  for(const auto bytes:stats.sourceBytes)
-    tracked+=bytes;
-  for(const auto bytes:stats.sourceFullBytes)
-    trackedFull+=bytes;
-  stats.fullBytes=stats.liveBytes-stats.tailBytes;
-  stats.sourceBytes[size_t(TextureSource::Other)]+=stats.liveBytes-tracked;
-  stats.sourceFullBytes[size_t(TextureSource::Other)]+=stats.fullBytes-trackedFull;
-  return stats;
-  }
-
-uint64_t Resources::textureGeneration() {
-  if(inst==nullptr)
-    return 0;
-  std::lock_guard<std::recursive_mutex> guard(inst->sync);
-  return inst->textureEpoch;
-  }
-
-std::vector<const Texture2d*> Resources::textureChanges(uint64_t since) {
-  if(inst==nullptr)
-    return {};
-  std::lock_guard<std::recursive_mutex> guard(inst->sync);
-  std::vector<const Texture2d*> changed;
-  const auto first=inst->changedTextures.upper_bound({since,std::numeric_limits<uintptr_t>::max()});
-  for(auto it=first;it!=inst->changedTextures.end();++it)
-    changed.push_back(it->second);
-  return changed;
-  }
-
-// Bench `deterministic on` (common/testbench.cpp, reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md).
-// The Full/Tail demotion runs on a wall-clock delay and on memory pressure: with `benchTexturesSettle` texturesReady()
-// also waits until no demotion is pending and no reload is in flight; while `benchTexturesFrozen` updateTextures()
-// changes nothing, so the levels of a shot depend on what is seen, not on how long the loading took.
-bool benchTexturesSettle = false;
-bool benchTexturesFrozen = false;
-
-bool Resources::texturesReady() {
-  if(inst==nullptr || inst->dev==nullptr)
-    return true;
-  std::lock_guard<std::recursive_mutex> guard(inst->sync);
-  // the LRU demotes only above textureTarget (updateTextures): below it a non-empty LRU stays as it is
-  const bool lruPending = !inst->textureDemotionLru.empty() && Texture2d::liveBytes()>inst->textureTarget;
-  if(benchTexturesSettle && (!inst->textureDemotions.empty() || lruPending || inst->textureReload))
-    return false;
-  return inst->textureMissing.empty() && inst->texturePromotions.empty();
-  }
-
-TextureFormat Resources::textureFormat(const Texture2d* texture) {
-  if(texture==nullptr)
-    return TextureFormat::Undefined;
-  if(inst==nullptr)
-    return texture->format();
-  std::lock_guard<std::recursive_mutex> guard(inst->sync);
-  if(auto record=inst->textureRecords.find(texture); record!=inst->textureRecords.end())
-    return record->second.format;
-  return texture->format();
-  }
-
-void Resources::textureDemand(const Material& material, TextureCategory category, bool add, uint32_t distance) {
-  LoadProbe::Vobs::Scope probe("texture_demand");
-  if(inst==nullptr || inst->dev==nullptr)
-    return;
-  std::lock_guard<std::recursive_mutex> guard(inst->sync);
-  std::vector<const Texture2d*> textures=material.frames;
-  textures.insert(textures.end(),{material.tex,material.normal,material.orm});
-  std::sort(textures.begin(),textures.end(),std::less<const Texture2d*>());
-  textures.erase(std::unique(textures.begin(),textures.end()),textures.end());
-  bool unmatched=false;
-  for(const auto* texture:textures) {
-    auto entry=inst->textureRecords.find(texture);
-    if(entry==inst->textureRecords.end())
-      continue;
-    auto& record=entry->second;
-    auto& count=record.demand[size_t(category)];
-    if(!add && count==0) {
-      if(!unmatched) {
-        Log::e("textures: demand released without an owner");
-        unmatched=true;
-        }
-      assert(count!=0 && "texture demand released without an owner");
-      continue;
-      }
-    const bool neededFull=record.wanted() && inst->wantsFull(record);
-    inst->unqueueTexture(record);
-    if(add) {
-      ++count;
-      ++record.distances[distance];
-      record.lastDemand=++inst->textureClock;
-      } else {
-      --count;
-      const auto found=record.distances.find(distance);
-      assert(found!=record.distances.end() && found->second!=0);
-      if(found!=record.distances.end() && --found->second==0)
-        record.distances.erase(found);
-      record.lastDemand=++inst->textureClock;
-      }
-    if(neededFull || (record.wanted() && inst->wantsFull(record)))
-      record.lastNeededFull=record.lastDemand;
-    for(size_t i=0;i<record.demand.size();++i)
-      if(record.demand[i]!=0) {
-        record.category=TextureCategory(i);
-        break;
-        }
-    inst->queueTexture(record);
-    }
-  }
-
-void Resources::retireTexture(Texture2d&& texture) {
-  if(texture.isEmpty())
-    return;
-  auto& queue=recycled[recycledId];
-  queue.textureBytes+=LoadProbe::textureBytes(texture);
-  texture.markRetired();
-  queue.textures.emplace_back(std::move(texture));
-  }
-
-void Resources::notifyTextureChanged(TextureRecord& record) {
-  const auto identity=reinterpret_cast<uintptr_t>(record.texture);
-  changedTextures.erase({record.changedGeneration,identity});
-  record.changedGeneration=textureEpoch+1;
-  changedTextures.emplace(std::make_pair(record.changedGeneration,identity),record.texture);
-  texturePayloadChanged=true;
-  }
-
-void Resources::publishTexture() {
-  const auto reload=textureReload;
-  if(!reload || reload->ready.isEmpty())
-    return;
-  auto& record=textureRecords.at(reload->identity);
-  unqueueTexture(record);
-  const bool full=wantsFull(record);
-  const bool hold=!record.distances.empty() && record.distances.begin()->first<=3;
-  const bool delayElapsed=record.demoteAt!=std::chrono::steady_clock::time_point{} &&
-                          record.demoteAt<=std::chrono::steady_clock::now();
-  // The unpublished replacement is already included in the live counter.
-  const auto liveWithoutReplacement=Texture2d::liveBytes()-LoadProbe::textureBytes(reload->ready);
-  const bool pressure=liveWithoutReplacement>textureTarget;
-  if(record.wanted() && (!reload->tail || (!full && (!record.resident || (!hold && delayElapsed && pressure))))) {
-    const bool wasResident=record.resident;
-    const bool wasTail=record.tail;
-    if(wasResident)
-      retireTexture(std::move(*record.texture));
-    *record.texture=std::move(reload->ready);
-    record.bytes=LoadProbe::textureBytes(*record.texture);
-    record.resident=true;
-    record.tail=reload->tail;
-    notifyTextureChanged(record);
-    FrameProfile::textureEvent(FrameProfile::TextureActivity::Publish);
-    if(!wasResident)
-      ++texturesReloaded;
-    else if(wasTail && !record.tail)
-      ++texturesPromoted;
-    else if(!wasTail && record.tail)
-      ++texturesDemoted;
-    }
-  queueTexture(record);
-  textureReload.reset();
-  }
-
-void Resources::updateTextures(ChunkResidency* residency) {
-  FrameProfile::Scope timing(FrameProfile::Zone::TextureUpdate);
-  if(inst==nullptr || inst->dev==nullptr || benchTexturesFrozen)
-    return;
-  std::lock_guard<std::recursive_mutex> guard(inst->sync);
-  auto& resources=*inst;
-  resources.updateNearTailTime();
-  auto liveBytes=Texture2d::liveBytes();
-  const auto finish=[&] {
-    if(resources.texturePayloadChanged) {
-      ++resources.textureEpoch;
-      resources.texturePayloadChanged=false;
-      }
-    if(liveBytes<=resources.textureBudget) {
-      resources.textureOverBudget=false;
-      } else if(resources.textureStreaming && resources.textureIdle.empty() && !resources.textureOverBudget) {
-      Log::i("textures: budget exceeded with no unrequested resident payloads (",liveBytes," > ",resources.textureBudget," bytes)");
-      resources.textureOverBudget=true;
-      }
-    };
-  const auto deadline=ChunkResidency::Clock::now()+ChunkResidency::WorkBudget;
-
-  if(resources.textureReload) {
-    const auto reload=resources.textureReload;
-    try {
-      if(reload->pending.valid() && reload->pending.wait_for(std::chrono::seconds(0))==std::future_status::ready) {
-        auto payload=reload->pending.get();
-        if(reload->tail && !payload.tail)
-          resources.textureRecords.at(reload->identity).hasTail=false;
-        reload->tail=payload.tail;
-        reload->ready=std::move(payload.texture);
-        }
-      if(!reload->ready.isEmpty() && reload->queued.expired() && reload->ready.uploadReady()) {
-        FrameProfile::textureEvent(FrameProfile::TextureActivity::Ready);
-        if(residency==nullptr) {
-          resources.publishTexture();
-          } else {
-          auto ticket=std::make_shared<int>(0);
-          reload->queued=ticket;
-          residency->enqueue([reload,ticket](ChunkResidency::Clock::time_point deadline) {
-            if(ChunkResidency::Clock::now()>=deadline)
-              return false;
-            if(Resources::inst!=nullptr) {
-              std::lock_guard<std::recursive_mutex> guard(Resources::inst->sync);
-              if(Resources::inst->textureReload==reload)
-                Resources::inst->publishTexture();
-              }
-            return true;
-            });
-          }
-        }
-      }
-    catch(const std::exception& error) {
-      auto& record=resources.textureRecords.at(reload->identity);
-      Log::e("textures: unable to reload \"",record.source.string(),"\": ",error.what());
-      resources.unqueueTexture(record);
-      record.failed=true;
-      resources.queueTexture(record);
-      resources.textureReload.reset();
-      }
-    }
-
-  if(!resources.textureReload) {
-    const auto now=ChunkResidency::Clock::now();
-    while(!resources.textureDemotions.empty() && resources.textureDemotions.begin()->first.first<=now) {
-      auto* record=resources.textureDemotions.begin()->second;
-      resources.textureDemotionLru.emplace(record->demotionPriority(),record);
-      resources.textureDemotions.erase(resources.textureDemotions.begin());
-      }
-    TextureRecord* selected=nullptr;
-    const auto consider=[&](TextureRecord* candidate) {
-      const auto priority=[](const TextureRecord& record) {
-        return record.pinned || record.distances.count(TextureAlwaysFull)!=0 ? uint32_t(0) :
-               record.distances.empty() ? UINT32_MAX : record.distances.begin()->first;
-        };
-      if(selected==nullptr || priority(*candidate)<priority(*selected))
-        selected=candidate;
-      };
-    for(auto* record:resources.textureMissing)
-      consider(record);
-    for(auto* record:resources.texturePromotions)
-      consider(record);
-    bool tail=false;
-    if(selected!=nullptr) {
-      tail=!resources.wantsFull(*selected);
-      } else if(Texture2d::liveBytes()>resources.textureTarget && !resources.textureDemotionLru.empty()) {
-      selected=resources.textureDemotionLru.begin()->second;
-      tail=true;
-      }
-    if(selected!=nullptr) {
-      auto reload=std::make_shared<TextureReload>();
-      reload->identity=selected->texture;
-      reload->tail=tail;
-      const auto path=selected->source;
-      const auto mipmaps=selected->mipmaps;
-      const auto skip=tail ? resources.textureSkipMips : 0;
-      auto* device=resources.dev;
-      reload->pending=std::async(std::launch::async,[path,mipmaps,skip,device] {
-        const auto started=LoadProbe::now();
-        FrameProfile::TextureWork reading(FrameProfile::TextureActivity::Read);
-        auto data=Resources::decodeBaseTexture(path,mipmaps,skip);
-        reading.finish();
-        FrameProfile::TextureWork uploading(FrameProfile::TextureActivity::Upload);
-        auto texture=device->textureAsync(data.pixmap,data.useMipmap);
-        uploading.finish();
-        if(texture.isEmpty())
-          throw std::runtime_error("texture reload returned an empty image");
-        LoadProbe::countTexture(texture,started);
-        FrameProfile::textureEvent(FrameProfile::TextureActivity::Complete);
-        return TextureReload::Payload{std::move(texture),data.tail};
-        });
-      resources.textureReload=std::move(reload);
-      }
-    }
-
-  liveBytes=Texture2d::liveBytes();
-  size_t evictions=0;
-  while(resources.textureStreaming && liveBytes>resources.textureBudget && !resources.textureIdle.empty() &&
-        evictions<16 && ChunkResidency::Clock::now()<deadline) {
-    auto* record=resources.textureIdle.begin()->second;
-    assert(record->resident && !record->wanted());
-    auto& neutral=resources.texturePlaceholders[size_t(record->kind)];
-    if(neutral.isEmpty()) {
-      Pixmap placeholder(1,1,TextureFormat::RGBA8);
-      const std::array<uint8_t,4> color=record->kind==TextureKind::Normal ? std::array<uint8_t,4>{128,128,255,128} :
-                                        record->kind==TextureKind::Orm ? std::array<uint8_t,4>{255,255,0,255} :
-                                                                       std::array<uint8_t,4>{255,255,255,255};
-      std::memcpy(placeholder.data(),color.data(),color.size());
-      neutral=resources.dev->texture(placeholder,false);
-      }
-    auto replacement=neutral.shared();
-    resources.unqueueTexture(*record);
-    resources.retireTexture(std::move(*record->texture));
-    *record->texture=std::move(replacement);
-    record->resident=false;
-    resources.notifyTextureChanged(*record);
-    ++resources.texturesEvicted;
-    ++evictions;
-    liveBytes=Texture2d::liveBytes();
-    }
-  finish();
   }
 
 ProtoMesh* Resources::implLoadMesh(std::string_view name) {
@@ -2381,8 +970,7 @@ std::unique_ptr<Animation> Resources::implLoadAnimation(std::string name) {
   if(name.size()<4)
     return nullptr;
 
-  if(Gothic::inst().version().game==2)
-    FileExt::exchangeExt(name,"MDS","MSB");
+  FileExt::exchangeExt(name,"MDS","MSB");
 
   if(FileExt::hasExt(name,"MSB") || FileExt::hasExt(name,"MDS")) {
     asset::ModelScript own {};
@@ -2471,7 +1059,7 @@ Tempest::Sound Resources::implLoadSoundBuffer(std::string_view name) {
   if(name.empty())
     return Tempest::Sound();
 
-  auto& external = Gothic::inst().externalSoundFn;
+  auto& external = GameServices::inst().externalSoundFn;
   if(!(external && external(name,fBuff))) {
     const auto* source = baseAudio.find(name);
     if(source==nullptr)
@@ -2579,171 +1167,8 @@ GthFont &Resources::implLoadFont(std::string_view name, FontType type, const flo
   return *f;
   }
 
-Texture2d Resources::loadTextureUncached(std::string_view name, bool forceMips) {
-  LoadProbe::Vobs::Scope probe("texture_request");
-  return inst->implLoadTextureUncached(name, forceMips);
-  }
-
-const Texture2d* Resources::loadTexture(std::string_view name, bool forceMips, bool pinned) {
-  LoadProbe::Requests::add(2,name);
-  LoadProbe::Vobs::Scope probe("texture_request");
-  std::lock_guard<std::recursive_mutex> g(inst->sync);
-  return inst->implLoadTexture(name,forceMips,pinned);
-  }
-
-const Texture2d* Resources::loadTexture(Tempest::Color color) {
-  LoadProbe::Vobs::Scope probe("texture_request");
-  if(isHeadless() || color==Color())
-    return nullptr;
-  std::lock_guard<std::recursive_mutex> g(inst->sync);
-  auto& cache = inst->pixCache;
-  auto it = cache.find(color);
-  if(it!=cache.end())
-    return it->second.get();
-
-  LoadProbe::Vobs::Scope loadProbe("texture_load");
-  LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Texture);
-  uint8_t iv[4] = { uint8_t(255.f*color.r()), uint8_t(255.f*color.g()), uint8_t(255.f*color.b()), uint8_t(255.f*color.a()) };
-  Pixmap p2(1,1,TextureFormat::RGBA8);
-  std::memcpy(p2.data(),iv,4);
-
-  auto t       = std::make_unique<Texture2d>(device().texture(p2));
-  auto ret     = t.get();
-  cache[color] = std::move(t);
-  return ret;
-  }
-
-bool Resources::hasTextureVariant(std::string_view name) {
-  return name.find("_V0")!=std::string_view::npos || name.find("_C0")!=std::string_view::npos;
-  }
-
-std::string Resources::textureVariantName(std::string_view name, int32_t iv, int32_t ic) {
-  std::string ret(name);
-  // Preserve the original long-name fallback and first-tag substitution.
-  if(name.size()>=128)
-    return ret;
-  if(const auto at = ret.find("_V0"); at!=std::string::npos)
-    ret.replace(at+1,2,"V"+std::to_string(iv));
-  if(const auto at = ret.find("_C0"); at!=std::string::npos)
-    ret.replace(at+1,2,"C"+std::to_string(ic));
-  return ret;
-  }
-
-const Texture2d *Resources::loadTexture(std::string_view name, int32_t iv, int32_t ic) {
-  return loadMaterialAlbedo(textureVariantName(name,iv,ic));
-  }
-
-bool Resources::hasTexture(std::string_view name) const {
-  if(!FileExt::hasExt(name,"TGA")) return false;
-  std::string key(name.substr(0,name.size()-4));
-  for(auto& c:key) c=char(std::toupper(static_cast<unsigned char>(c)));
-  return hdTextures.count(key)!=0 || baseTextures.files.count(key)!=0;
-  }
-
-std::vector<const Texture2d*> Resources::loadTextureAnim(std::string_view name, bool pinned) {
-  std::vector<const Texture2d*> ret;
-  if(name.find("_A0")==std::string::npos &&
-     name.find("_a0")==std::string::npos)
-    return ret;
-
-  for(int id=0; ; ++id) {
-    size_t at = 0;
-    char   buf[128]={};
-    for(size_t i=0;i<name.size();++i) {
-      if(i+2<name.size() && name[i]=='_' && (name[i+1]=='A' || name[i+1]=='a') && name[i+2]=='0'){
-        at += size_t(std::snprintf(buf+at,sizeof(buf)-at,"_A%d",id));
-        i+=2;
-        } else {
-        buf[at] = name[i];
-        if('a'<=buf[at] && buf[at]<='z')
-          buf[at] = char(buf[at]+'A'-'a');
-        at++;
-        }
-      if(at>sizeof(buf))
-        return ret;
-      }
-   auto t = inst->hasTexture(buf) ? loadTexture(buf,false,pinned) : nullptr;
-    if(t==nullptr) {
-      string_frm buf2(buf,".TGA");
-      t = inst->hasTexture(buf2) ? loadTexture(buf2,false,pinned) : nullptr;
-      if(t==nullptr)
-        return ret;
-      }
-    ret.push_back(t);
-    }
-  }
-
-Texture2d Resources::loadTexturePm(const Pixmap &pm) {
-  LoadProbe::Vobs::Scope probe("texture_request");
-  if(isHeadless())
-    return Texture2d();
-  LoadProbe::Vobs::Scope loadProbe("texture_load");
-  LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Texture);
-  if(pm.isEmpty()) {
-    Pixmap p2(1,1,TextureFormat::R8);
-    std::memset(p2.data(),0,1);
-    return device().texture(p2);
-    }
-  return device().texture(pm);
-  }
-
 Material Resources::loadMaterial(const asset::Material& src, bool enableAlphaTest, bool requireAlphaTest) {
   return Material(src,enableAlphaTest,requireAlphaTest);
-  }
-
-Resources::MaterialMaps Resources::loadMaterialMaps(std::string_view name) {
-  if(isHeadless() || name.empty())
-    return {};
-  std::lock_guard<std::recursive_mutex> g(inst->sync);
-  if(inst->materialMaps.empty())
-    return {};
-  std::string key(name);
-  for(auto& c:key)
-    c = char(std::toupper(uint8_t(c)));
-  const auto it = inst->materialMaps.find(key);
-  if(it==inst->materialMaps.end())
-    return {};
-  const auto& files = it->second;
-  MaterialMaps ret;
-  ret.albedo = inst->implLoadMaterialTexture(files.albedo,TextureKind::Color);
-  ret.normal = inst->implLoadMaterialTexture(files.normal,TextureKind::Normal);
-  ret.orm    = inst->implLoadMaterialTexture(files.orm,TextureKind::Orm);
-  ret.scale  = files.scale;
-  ret.antitileCell = files.antitileCell;
-  ret.turbidity = files.turbidity;
-  ret.turbidityDepth = files.turbidityDepth;
-  ret.emissive = files.emissive;
-  ret.antitile = files.antitile;
-  ret.present = true;
-  ret.hasAlbedo = !files.albedo.empty();
-  return ret;
-  }
-
-const Texture2d* Resources::loadMaterialAlbedo(std::string_view name) {
-  const auto maps = loadMaterialMaps(name);
-  if(!maps.hasAlbedo)
-    return loadTexture(name,false,false);
-  // A broken replacement must not silently open the original texture.
-  if(maps.albedo==nullptr)
-    return &fallbackTexture();
-  materialAlbedoReplaced(name);
-  return maps.albedo;
-  }
-
-void Resources::materialAlbedoReplaced(std::string_view name) {
-  std::lock_guard<std::recursive_mutex> g(inst->sync);
-  if(!inst->census)
-    return;
-  std::string key(name);
-  for(auto& c:key)
-    c = char(std::toupper(uint8_t(c)));
-  const auto it = inst->materialMaps.find(key);
-  if(it!=inst->materialMaps.end() && !it->second.albedoReplacement.empty())
-    inst->census->replaced(name,it->second.albedoReplacement);
-  }
-
-bool Resources::materialMapsEnabled() {
-  return inst!=nullptr && inst->materialMapsPresent;
   }
 
 const ProtoMesh* Resources::loadMesh(std::string_view name) {
@@ -2765,6 +1190,21 @@ const Skeleton* Resources::loadSkeleton(std::string_view name) {
   if(s==nullptr)
     return nullptr;
   return s->skeleton.get();
+  }
+
+const RenderRig* Resources::loadRenderRig(std::string_view name) {
+  std::lock_guard<std::recursive_mutex> g(inst->sync);
+  return inst->renderRigs ? inst->renderRigs->rig(name) : nullptr;
+  }
+
+const RenderRig* Resources::renderRigOfMesh(std::string_view mesh) {
+  std::lock_guard<std::recursive_mutex> g(inst->sync);
+  return inst->renderRigs ? inst->renderRigs->rigOfMesh(mesh) : nullptr;
+  }
+
+std::string Resources::bodyOfVariant(std::string_view body, int32_t variant) {
+  std::lock_guard<std::recursive_mutex> g(inst->sync);
+  return inst->renderRigs ? inst->renderRigs->bodyOf(body,variant) : std::string();
   }
 
 const Animation* Resources::loadAnimation(std::string_view name) {

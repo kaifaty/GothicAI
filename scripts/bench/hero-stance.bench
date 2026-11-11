@@ -1,0 +1,58 @@
+# The hero's stance S_RUN (reports/content/2026-11-hero-locomotion, «Пилот, шаг 2: стойка»): two cycles from the
+# front, then the side, three quarters from behind and the upper body close; a run that starts from the stance and
+# ends in it; a sword drawn and put away. Run it once per content root with the same build and judge the takes side
+# by side; `anim pop` at the switches tells how the base's clips meet the stance. A new game, noon, no armour.
+#   TIMEOUT=600 TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=local WORLD=NEWWORLD.ZEN OPENGOTHIC_CONTENT=<root> \
+#     scripts/bench.sh scripts/bench/hero-stance.bench <abs out>
+seed 73013
+cheat god
+set time 12 0
+goto NW_CITY_MERCHANT_TRADE_04
+wait 3000
+watch player
+overlay off
+walkmode run
+cam look 100
+cam follow 330 105 0
+wait 1500
+rec stance_front
+wait 13000
+stop
+cam follow 330 105 90
+wait 1000
+rec stance_side
+wait 7000
+stop
+cam follow 330 115 150
+wait 1000
+rec stance_back_quarter
+wait 7000
+stop
+cam look 140
+cam follow 170 140 20
+wait 1000
+rec stance_close
+wait 7000
+stop
+face wp NW_CITY_MERCHANT_PATH_09
+cam look 100
+cam follow 400 110 90
+wait 1000
+rec run_stop_side
+wait 1500
+hold forward 1300
+wait 5000
+stop
+goto NW_CITY_MERCHANT_TRADE_04
+wait 1500
+equip ItMw_1h_Common_01
+cam look 110
+cam follow 330 110 35
+wait 1000
+rec draw_sword
+wait 1000
+tap weapon
+wait 2500
+tap weapon
+wait 3500
+stop

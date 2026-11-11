@@ -2,8 +2,8 @@
 
 #include <Tempest/Widget>
 
-#include <zenkit/DaedalusVm.hh>
-#include <zenkit/addon/daedalus.hh>
+#include "daedalus/vm.h"
+#include "daedalus/classes.h"
 
 #include "utils/keycodec.h"
 
@@ -39,7 +39,7 @@ class MenuRoot : public Tempest::Widget {
   private:
     void initSettings();
 
-    std::unique_ptr<zenkit::DaedalusVm>    vm;
+    std::unique_ptr<daedalus::DaedalusVm>    vm;
     int32_t                                vmLang = -1;
 
     GameMenu*                              current=nullptr;

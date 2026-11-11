@@ -20,11 +20,12 @@
 | `scripts/make-dev-app.sh` | Обёртка отладочной сборки в `OpenGothic Dev.app` |
 | `scripts/build-engine.sh` | Сборка игры: `OpenGothic/build/opengothic/Gothic2Notr` |
 | `scripts/bench.sh` | Тестовый стенд механик: сценарий в игре → видео с отладочным наложением, метрики и отчёт с подозрительными кадрами, см. `scripts/bench/README.md` |
-| `shorts/` | Шортсы из игры без человека за клавиатурой: сценарий с репликами героя, голос героя через TTS и клавишу разговора, ответы настоящих ИИ-NPC, съёмка на тестовом стенде со звуком игры, вертикальный монтаж с субтитрами, см. `shorts/README.md` |
 | `site/` | Сайт проекта на GitHub Pages (https://kaifaty.github.io/GothicAI/): что уже работает и дневник разработки на английском и русском, RSS; публикуется из `main` (`.github/workflows/pages.yml`), см. `site/README.md` |
 | `reports/` | Итоговые исследования |
 | `research_notes/` | Заметки исследований с источниками |
 | `OpenGothic/` | Движок: OpenGothic (от upstream `Try/OpenGothic`) с ИИ-мостом `ai_bridge/` и IK стоп. Сторонние библиотеки лежат в `lib/` обычными файлами, без подмодулей (`lib/VENDORED.md`) |
+
+Инструмент роликов живёт в приватном репозитории `kaifaty/gothic-shorts`.
 
 ## Сборка и запуск на macOS
 
@@ -234,4 +235,27 @@ SCENARIO=m3 ASR=voxtral scripts/e2e.sh
 
 ## Windows
 
-Готовый архив для Windows 10/11 x64 собирает GitHub Actions ([`windows-release.yml`](../.github/workflows/windows-release.yml)): движок этого форка с ИИ-мостом и граф сюжета компилируются MSVC, тесты ядра и входа ChatGPT идут на Windows. Запускается только вручную, перед выпуском; на PR сборка Windows не идёт. Выпуск: `draft_release` создаёт черновик с архивом, `SHA256SUMS` и манифестом; после проверки он публикуется как предварительный выпуск. Игроку компилятор не нужен; инструкция — [`START_HERE.ru.md`](../START_HERE.ru.md). Сборка из исходников — `scripts/build-engine.ps1` (Visual Studio 2022 C++, Vulkan SDK, Git), затем `Setup-GothicAI.cmd`. Только при первой настройке `setup` выбирает профиль без своих серверов: ChatGPT — мозг NPC, Inworld — распознавание с запасным ChatGPT и оригинальные голоса; повторный запуск сохраняет выбор игрока. Игра, графика и микрофон на настоящем ПК ещё не проверены.
+Готовый архив для Windows 10/11 x64 собирает GitHub Actions ([`release.yml`](../.github/workflows/release.yml), job `windows`): движок этого форка с ИИ-мостом и граф сюжета компилируются MSVC, тесты ядра и входа ChatGPT идут на Windows. Запускается только вручную, перед выпуском; на PR сборка Windows не идёт. Выпуск описан в разделе [«Выпуск»](#выпуск). Игроку компилятор не нужен; инструкция — [`START_HERE.ru.md`](../START_HERE.ru.md). Сборка из исходников — `scripts/build-engine.ps1` (Visual Studio 2022 C++, Vulkan SDK, Git), затем `Setup-GothicAI.cmd`. Только при первой настройке `setup` выбирает профиль без своих серверов: ChatGPT — мозг NPC, Inworld — распознавание с запасным ChatGPT и оригинальные голоса; повторный запуск сохраняет выбор игрока. Игра, графика и микрофон на настоящем ПК ещё не проверены.
+
+## Linux: готовый архив
+
+Готовый архив для Linux x64 собирает тот же [`release.yml`](../.github/workflows/release.yml), job `linux` на `ubuntu-22.04`. Цель — glibc 2.35 и новее: Ubuntu 22.04+, Debian 12+, Fedora 36+, SteamOS 3. Игроку нужны только glibc, загрузчик Vulkan драйвера, X11 и звук системы; инструкция — [`START_HERE.linux.ru.md`](../START_HERE.linux.ru.md). Повседневная сборка на Ryzen и Mac (`scripts/build-engine.sh`) от этого не меняется.
+
+- **Компилятор — `g++-13` из PPA `ubuntu-toolchain-r/test` на Ubuntu 22.04** (`GCC_VERSION` в workflow; шаг подключает PPA, когда в архиве Ubuntu нужного GCC нет). Свой GCC 22.04 (12) не подошёл: при `-O2` он даёт ложное `-Werror=restrict` в `std::string` (`clothvisual.cpp`), libstdc++ 13 это исправила. Сборка идёт на самой 22.04, а libstdc++ и libgcc линкуются статически, поэтому планка glibc остаётся 2.35. Прогон с GCC 12 заодно нашёл в `testbench.cpp` копии в циклах по `range-loop-construct` и настоящее чтение освобождённой памяти: тернарный оператор над двумя `initializer_list`. Оба места поправлены.
+- **Статический libstdc++ и libgcc** задаёт [`scripts/linux/build.sh`](../scripts/linux/build.sh) флагами CMake, а не `CMakeLists.txt` движка: `-static-libstdc++ -static-libgcc` и `-Wl,--exclude-libs,libstdc++.a:libgcc.a:libgcc_eh.a`. Последний флаг нужен из-за `-rdynamic` движка (имена в трассах падений): без него копия libstdc++ попала бы в таблицу экспорта, и драйвер Vulkan, загруженный в процесс, мог бы связаться с ней вместо своей libstdc++.
+- **`Release` с `-O2`, а не `-O3` CMake:** `-O3` GCC даёт ложные `-Werror=stringop-overflow` в движке, так же как на Ryzen (`scripts/ryzen-build.sh`).
+- **Vulkan — Linux SDK LunarG той же версии 1.4.357.0, что Windows:** пакеты 22.04 (1.3.204) старше заголовков, которые нужны Tempest (`VK_EXT_descriptor_heap`, `VK_KHR_maintenance5`). Архив сверяется с SHA-256, закреплённым в workflow, и с опубликованным LunarG (`sdk.lunarg.com/sdk/sha/…`). Из SDK берутся только заголовки, `libvulkan.so` для линковки и `glslangValidator`; в архив игры Vulkan не кладётся.
+- **Звук:** OpenAL Soft собирается с бэкендами ALSA, PulseAudio и PipeWire, как на Ryzen (`libasound2-dev`, `libpulse-dev`, `libpipewire-0.3-dev`); библиотеки он открывает сам при запуске, поэтому в `NEEDED` их нет.
+- **Проверки job:** `bash -n` и `shellcheck` скриптов Linux, импорт сервисов, `content-convert --self-test`, отказ `content-convert resolve` на пустой папке, код 2 у `gothic-launcher setup --check` без «не собран» и «не найден uv», JSON с кодом 1 у `gothic-launcher check` пустой папки. Проверки идут с одноразовыми `HOME`, `XDG_*` и `OPENGOTHIC_BASE_CACHE` в `$RUNNER_TEMP`. Модульные тесты Python на Linux гоняет `tests.yml`.
+- **Упаковка — [`scripts/linux/package.sh`](../scripts/linux/package.sh)**, аналог `scripts/windows/package.ps1`. Белый список в раскладке репозитория: `Setup-GothicAI.sh`, `Start-GothicAI.sh`, `scripts/linux/common.sh`, инструкция, `LICENSE`; исходники и lock-файлы `launcher/core`, `server`, `asr-service`, `tts-service`, `libs/chatgpt-auth` без тестов; все файлы `OpenGothic/build/opengothic/` (сейчас `Gothic2Notr` и `content-convert`), `storygraph`; `tools/uv/uv` с лицензиями; `licenses/` с `SOURCE.txt` и заметкой о рантайме GCC. Итог — `GothicAI-linux-x64-r<run>-<sha7>.tar.gz` (tar сохраняет права на запуск), манифест с SHA-256 каждого файла и для каждого ELF — архитектура, `NEEDED` и наибольшая `GLIBC_`, и `SHA256SUMS`. Скрипт отказывает, если попал запрещённый файл (список `package.ps1` плюс `.o` и `.a`), ELF не x86-64, в `NEEDED` есть библиотека вне списка системных (части glibc, `ld-linux-x86-64.so.2`, `libvulkan.so.1`, `libX11.so.6`, `libXcursor.so.1`, `libasound.so.2`), нужна `GLIBC_` новее 2.35 или есть `GLIBCXX_`/`CXXABI_`. Официальной сборке `uv` дополнительно разрешён `libgcc_s.so.1`: Rust связывает его динамически, а ставит его каждая система с glibc (glibc сама загружает его для `pthread_cancel`). Тест на синтетическом дереве с подменённым `readelf` — `scripts/tests/test_linux_package.py`.
+- **Локально тот же архив** собирают на Ubuntu 22.04 с теми же пакетами: `CC=gcc-13 CXX=g++-13 VULKAN_SDK=<SDK>/x86_64 LIBRARY_PATH=<SDK>/x86_64/lib/VulkanLoader/lib PATH=<SDK>/x86_64/bin:$PATH scripts/linux/build.sh`, затем `scripts/linux/package.sh --uv-tar … --uv-licenses … --out-dir … --name …`. Сборку на более новой системе `package.sh`, скорее всего, отклонит по версии glibc.
+
+## Выпуск
+
+Выпуск делает один ручной workflow [`release.yml`](../.github/workflows/release.yml) (`name: Release`): `gh workflow run release.yml -f windows=true -f linux=true -f release=draft`. Входы `windows` и `linux` выбирают платформы, `release` — что сделать с архивами:
+
+- `none` (по умолчанию) — только сборка и проверки, архивы остаются на раннерах;
+- `draft` — черновик prerelease: мейнтейнер проверяет архивы и публикует его сам;
+- `prerelease` — сразу опубликованный prerelease.
+
+Job `windows` и `linux` идут параллельно с правами `contents: read` и при `release != none` передают архив, манифест и `SHA256SUMS` артефактом workflow на один день. Job `release` — единственный с `contents: write` — ждёт обе, идёт, если ни одна не упала и хотя бы одна прошла (невыбранная платформа не мешает), сверяет переданные файлы с их `SHA256SUMS`, делает общий `SHA256SUMS` по всем архивам и манифестам и создаёт один релиз: тег `r<run_number>.<run_attempt>-<sha7>`, заголовок `Gothic AI r<run_number>, preliminary (<платформы>)`.

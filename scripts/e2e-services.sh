@@ -3,7 +3,7 @@
 
 e2e_needs_tts() {
   case "$1" in
-    tts|svm_lines|combat_barks|mercy|hero_yield|humiliate|surrender_live|live_npc|live_director|gossip|day|group|interject|programs|errand*|fight_reactions_*) return 0 ;;
+    tts|svm_lines|combat_barks|mercy|hero_yield|humiliate|surrender_live|live_npc|live_director|gossip|day|group|interject|programs|errand*|fight_reactions_*|face_cues_demo|face_eyes_demo) return 0 ;;
     *) return 1 ;;
   esac
 }

@@ -116,13 +116,6 @@ sudo pacman -S git cmake gcc glslang vulkan-devel alsa-lib libx11 libxcursor vul
 sudo dnf install git cmake gcc-c++ glslang vulkan-loader-devel alsa-lib-devel libX11-devel libXcursor-devel vulkan-validation-layers-devel libglvnd-devel
 ```
 
-* NixOS
-```bash
-# use the dev flake
-cd linux/flake   
-nix develop
-```
-
 #### Compilation
 ```bash
 # 1st time build:
@@ -146,17 +139,6 @@ cmake -H. -Bbuild -DCMAKE_BUILD_TYPE:STRING=RelWithDebInfo
 cmake --build ./build --target Gothic2Notr
 ```
 Executables can be located at `OpenGothic/build/opengothic`.
-
-### Android
-Install dependencies: JDK 17, Gradle 8.9, CMake 3.22.1 or newer, Ninja and the Android SDK with SDK 35, build-tools 35.0.0, NDK 27.0.12077973 and SDK CMake 3.22.1.
-Set `JAVA_HOME`, `ANDROID_HOME` and `VULKAN_SDK`. Put Gradle, Ninja and the host Vulkan SDK's `glslangValidator` on `PATH`. 
-Vulkan headers come from the host SDK; Android links the NDK's Vulkan loader.
-```bash
-cmake -S . -B build/android -G Ninja -DCMAKE_TOOLCHAIN_FILE=/path/to/ndk/build/cmake/android.toolchain.cmake -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-24 -DCMAKE_BUILD_TYPE=Release
-cmake --build build/android --target OpenGothic-apk
-```
-Details on APK build and ADB game-file setup are documented in [android/README.md](android/README.md).
-
 
 ## Video
 [![Video](https://img.youtube.com/vi/TpayMkyZ58Y/0.jpg)](https://www.youtube.com/watch?v=TpayMkyZ58Y)
@@ -188,9 +170,6 @@ Rendering distance is not customizable.
 | `-save <number>`       | load a specified save-game slot on start                         |
 | `-v -validation`       | enable validation layers for graphics api                        |
 | `-dx12`                | force DirectX 12 renderer instead of Vulkan (Windows only)       |
-| `-g1`                  | assume a Gothic 1 installation                                   |
-| `-g2c`                 | assume a Gothic 2 classic installation                           |
-| `-g2`                  | assume a Gothic 2 night of the raven installation                |
 | `-rt <boolean>`        | explicitly enable or disable ray-query                           |
 | `-gi <boolean>`        | explicitly enable or disable ray-traced global illumination      |
 | `-ms <boolean>`        | explicitly enable or disable meshlets                            |

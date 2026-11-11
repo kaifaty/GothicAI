@@ -15,11 +15,11 @@
 // applied. One file per world therefore serves fresh starts and saves alike.
 class PlacedCensusCache final {
   public:
-    // Bump whenever placedItemCensus, its thresholds or its inputs change, and
-    // whenever an item census body is built differently from the same inputs:
-    // DynamicWorld::itemHullShape, addDynamicObj or CollisionWorld::addBody.
-    // The key hashes those inputs, not the bodies (2: body-free key).
-    static constexpr uint32_t RulesVersion = 2;
+    // Cache file format only (3: stored builder fingerprint). Census rules and
+    // body construction are covered by the build fingerprint; extend its source
+    // list in cmake/PlacedCensusBuilder.cmake when adding code outside that list.
+    static constexpr uint32_t RulesVersion = 3;
+    static std::string_view builderFingerprint();
     using Entry = DynamicWorld::PlacedItemCensusEntry;
 
     // OPENGOTHIC_PLACED_CENSUS_CACHE=0 disables the cache entirely.
@@ -33,8 +33,9 @@ class PlacedCensusCache final {
       uint32_t flags = 0;
       std::string inputs; // DynamicWorld::placedItemCensusInputs
       uint32_t version = RulesVersion;
+      std::string builder = std::string(builderFingerprint());
       };
-    enum class Status { Disabled, Hit, Absent, Version, Inputs, Corrupt };
+    enum class Status { Disabled, Hit, Absent, Version, Builder, Inputs, Corrupt };
     static std::string_view statusName(Status status);
 
     PlacedCensusCache(const std::filesystem::path& cacheRoot, const Key& key);
@@ -49,5 +50,6 @@ class PlacedCensusCache final {
   private:
     std::filesystem::path file;
     std::string identity;
+    std::string builder;
     uint32_t version = RulesVersion;
   };

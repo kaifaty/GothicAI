@@ -29,14 +29,7 @@ namespace Detail {
 void probeMetalUploadBuffer(MTL::Buffer* buffer);
 
 inline MTL::StorageMode hostVisibleStorageMode(MTL::Device& dev) {
-#ifdef __IOS__
-  // Managed storage is unavailable on iOS. The Simulator can still report
-  // hasUnifiedMemory()==false, so platform support is authoritative here.
-  (void)dev;
-  return MTL::StorageModeShared;
-#else
   return dev.hasUnifiedMemory() ? MTL::StorageModeShared : MTL::StorageModeManaged;
-#endif
   }
 
 inline MTL::ResourceOptions hostVisibleResourceOptions(MTL::Device& dev) {

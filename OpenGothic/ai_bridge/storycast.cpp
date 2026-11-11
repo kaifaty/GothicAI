@@ -8,7 +8,7 @@
 
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
-#include <zenkit/DaedalusVm.hh>
+#include "daedalus/vm.h"
 
 #include "game/gamescript.h"
 #include "world/objects/item.h"
@@ -21,7 +21,7 @@
 #include "textcodec.h"
 
 using namespace Tempest;
-using zenkit::DaedalusDataType;
+using daedalus::DaedalusDataType;
 using storygraph::Value;
 
 namespace {
@@ -51,7 +51,7 @@ struct Description final {
   std::vector<Entry> routine;
   };
 
-bool intConst(zenkit::DaedalusVm& vm, std::string_view name, int32_t& v) {
+bool intConst(daedalus::DaedalusVm& vm, std::string_view name, int32_t& v) {
   auto* s = name.empty() ? nullptr : vm.find_symbol_by_name(name);
   if(s==nullptr || !s->is_const() || s->type()!=DaedalusDataType::INT)
     return false;
@@ -60,7 +60,7 @@ bool intConst(zenkit::DaedalusVm& vm, std::string_view name, int32_t& v) {
   }
 
 // an instance of the scripts of this class (C_ITEM...)
-bool ofClass(zenkit::DaedalusVm& vm, const zenkit::DaedalusSymbol* s, std::string_view cls) {
+bool ofClass(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol* s, std::string_view cls) {
   if(s==nullptr || s->type()!=DaedalusDataType::INSTANCE)
     return false;
   auto* c = vm.find_symbol_by_index(s->parent());

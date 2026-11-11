@@ -308,7 +308,7 @@ void Serialize::implRead(Tempest::Pixmap& p) {
   readOffset += r.cursorPosition();
   }
 
-void Serialize::implWrite(const zenkit::INpc& h) {
+void Serialize::implWrite(const daedalus::INpc& h) {
   write(uint32_t(h.symbol_index()));
   write(h.id,h.name,h.slot,h.effect,int32_t(h.type));
   write(int32_t(h.flags));
@@ -322,7 +322,7 @@ void Serialize::implWrite(const zenkit::INpc& h) {
   write(h.wp,h.exp,h.exp_next,h.lp,h.bodystate_interruptable_override,h.no_focus);
   }
 
-void Serialize::readNpc(zenkit::DaedalusVm& vm, std::shared_ptr<zenkit::INpc>& h) {
+void Serialize::readNpc(daedalus::DaedalusVm& vm, std::shared_ptr<daedalus::INpc>& h) {
   uint32_t instanceSymbol=0;
   read(instanceSymbol);
 

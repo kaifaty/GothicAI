@@ -9,7 +9,6 @@
 #include "graphics/visualobjects.h"
 #include "shaders.h"
 
-#include "gothic.h"
 #include "testbench.h"
 
 using namespace Tempest;
@@ -99,6 +98,8 @@ void DrawCommands::setBindings(Tempest::Encoder<CommandBuffer>& cmd, const DrawC
   cmd.setBinding(L_Payload,  views[v].visClusters);
   cmd.setBinding(L_Instance, owner.instanceSsbo());
   cmd.setBinding(L_Bucket,   buckets.ssbo());
+  if(v==SceneGlobals::V_Main)
+    cmd.setBinding(L_InstancePrev, owner.instanceSsboPrev()); // read by the G-buffer variants of objects only
 
   if(cx.isBindless()) {
     cmd.setBinding(L_Ibo, buckets.ibo());
@@ -424,6 +425,7 @@ void DrawCommands::visibilityVsm(Encoder<CommandBuffer>& cmd) {
   }
 
 uint32_t DrawCommands::hiddenTypes = 0;
+bool     DrawCommands::hidePfxObjects = false;
 
 void DrawCommands::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   // return;
