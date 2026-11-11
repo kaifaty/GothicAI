@@ -39,6 +39,8 @@ namespace TextureLevels {
   // The level a texture with top level width x height needs for the demand `exponent` at the view scale log2K,
   // `reserve` whole levels sharper, clamped to [0, lowest]. NoExponent needs the whole chain.
   uint8_t  level(uint32_t width, uint32_t height, float log2K, int32_t exponent, uint32_t reserve, uint8_t lowest);
+  // The same from `top` = log2 of the geometric mean of the top level's sides, 0.5*log2(width*height).
+  uint8_t  levelAt(double top, float log2K, int32_t exponent, uint32_t reserve, uint8_t lowest);
 
   // log2 of the view scale K = height/(2*tan(fovY/2)); fovY in degrees
   float    viewScale(float height, float fovYDegrees);

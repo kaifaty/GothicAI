@@ -286,6 +286,7 @@ class MtDevice : public AbstractGraphicsApi::Device {
     void     onFinish();
     void     waitIdle() override;
     void     savePipelineCache() override;
+    AbstractGraphicsApi::MemoryBudget memoryBudget() override;
     void     uploadBuffer(MTL::Buffer& target, const void* data, size_t off, size_t size, bool wait);
     std::unique_lock<std::mutex> lockUpload(size_t bytes);
     void     submitUpload(MTL::CommandBuffer& cmd, size_t bytes);

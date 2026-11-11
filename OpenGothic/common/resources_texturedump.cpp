@@ -4,6 +4,7 @@
 
 #include <Tempest/Log>
 
+#include <algorithm>
 #include <cstdio>
 
 void Resources::dumpTextures(const std::filesystem::path& file) {
@@ -18,21 +19,26 @@ void Resources::dumpTextures(const std::filesystem::path& file) {
     }
   const auto now=std::chrono::steady_clock::now();
   std::fprintf(out,"# view_scale=%.4f reserve=%u screen=%d skip=%u target=%llu budget=%llu live=%llu loads=%zu missing=%zu "
-                   "promotions=%zu delay=%zu queued=%zu\n",
+                   "promotions=%zu delay=%zu queued=%zu stage=%u target_source=%d device_budget=%llu device_usage=%llu "
+                   "d0=%llu d_stage=%llu\n",
                double(r.textureViewScale.load()),r.textureReserve.load(),int(r.textureScreen.load()),r.textureSkipMips,
                (unsigned long long)r.textureTarget,(unsigned long long)r.textureBudget,
                (unsigned long long)Tempest::Texture2d::liveBytes(),r.textureReloads.size(),r.textureMissing.size(),
-               r.texturePromotions.size(),r.textureDemotions.size(),r.textureDemotionLru.size());
+               r.texturePromotions.size(),r.textureDemotions.size(),r.textureDemotionLru.size(),r.textureLadder.stage,
+               int(r.textureTargetSource),(unsigned long long)r.textureDevice.budget,(unsigned long long)r.textureDevice.usage,
+               (unsigned long long)(r.textureSums.empty() ? 0 : r.textureSums.front()),
+               (unsigned long long)(r.textureSums.empty() ? 0 : r.textureSums[std::min<size_t>(r.textureLadder.stage,r.textureSums.size()-1)]));
   std::fprintf(out,"id,name,kind,source_kind,format,width,height,mips,lowest,first_mip,resident,failed,loading,pinned,bytes,"
                    "wanted_bytes,category,demand_landscape,demand_static,demand_dynamic,demand_other,wanted,wanted_level,"
                    "ring_level,resolution_level,resolution_max,resolution_owners,whole_chain_owners,ring_need_min,"
-                   "ring_need_owners,ring_min,always_full,lowering,delay_ms,missing,promotion,evictions,evictions_unowned,reloads\n");
+                   "ring_need_owners,ring_min,always_full,lowering,delay_ms,missing,promotion,evictions,evictions_unowned,reloads,"
+                   "resolution_level0\n");
   for(const auto& entry:r.textureRecords) {
     const auto& t=entry.second;
     const auto id=reinterpret_cast<uintptr_t>(t.texture);
     const bool wanted=t.wanted();
     const int wantedLevel=wanted ? int(r.wantedLevel(t)) : -1;
-    int ringLevel=-1, resolutionLevel=-1;
+    int ringLevel=-1, resolutionLevel=-1, resolutionLevel0=-1;
     uint32_t resolutionOwners=0, wholeChain=0, ringOwners=0, alwaysFull=0;
     for(const auto& n:t.resolutions) {
       resolutionOwners+=n.second;
@@ -45,9 +51,11 @@ void Resources::dumpTextures(const std::filesystem::path& file) {
       alwaysFull=it->second;
     if(!t.ringNeeds.empty())
       ringLevel=t.ringNeeds.begin()->first<=2 ? 0 : int(r.tailLevel(t));
-    if(!t.resolutions.empty())
-      resolutionLevel=TextureLevels::level(t.width,t.height,r.textureViewScale,t.resolutions.rbegin()->first,
-                                           r.textureReserve,t.lowest);
+    // at the current stage, and at stage 0 (texturebudget.h)
+    if(!t.resolutions.empty()) {
+      resolutionLevel=r.resolutionLevel(t,r.textureLadder.stage);
+      resolutionLevel0=r.resolutionLevel(t,0);
+      }
     const char* lowering="none";
     double delayMs=0;
     if(r.textureDemotions.count({t.demoteAt,id})!=0) {
@@ -80,8 +88,9 @@ void Resources::dumpTextures(const std::filesystem::path& file) {
       std::fprintf(out,",");
     else
       std::fprintf(out,"%u,",t.distances.begin()->first);
-    std::fprintf(out,"%u,%s,%.1f,%d,%d,%u,%u,%u\n",alwaysFull,lowering,delayMs,int(r.textureMissing.count(const_cast<TextureRecord*>(&t))!=0),
-                 int(r.texturePromotions.count(const_cast<TextureRecord*>(&t))!=0),t.evictions,t.evictionsUnowned,t.reloads);
+    std::fprintf(out,"%u,%s,%.1f,%d,%d,%u,%u,%u,%d\n",alwaysFull,lowering,delayMs,int(r.textureMissing.count(const_cast<TextureRecord*>(&t))!=0),
+                 int(r.texturePromotions.count(const_cast<TextureRecord*>(&t))!=0),t.evictions,t.evictionsUnowned,t.reloads,
+                 resolutionLevel0);
     }
   std::fclose(out);
   }

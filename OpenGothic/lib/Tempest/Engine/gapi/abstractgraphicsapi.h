@@ -511,6 +511,16 @@ namespace Tempest {
           uint64_t atomFormat=0;
         };
 
+      // Device memory of this process (Device::memoryBudget); every number in bytes.
+      struct MemoryBudget {
+        uint64_t budget   = 0;     // how much this process may hold on the device before allocations fail or slow down
+        uint64_t usage    = 0;     // how much this process holds on the device now
+        uint64_t unused   = 0;     // of `usage`, what it holds but does not use: free space in its allocator's pages
+        bool     shared   = false; // the memory is shared with the CPU (an integrated GPU, Apple silicon)
+        bool     measured = false; // read from the driver; false: estimated from the heap size and own allocations
+        bool     known    = false; // false: nothing readable, the numbers are zero
+        };
+
       struct NoCopy {
         NoCopy()=default;
         virtual ~NoCopy() = default;
@@ -529,6 +539,8 @@ namespace Tempest {
         virtual void        waitIdle() = 0;
         // Writes the on-disk pipeline cache now (no-op when the backend has none or it is off).
         virtual void        savePipelineCache() {}
+        // Cheap enough for once a second on the thread that owns the device; the default: nothing readable.
+        virtual MemoryBudget memoryBudget() { return {}; }
         };
       struct Fence:NoCopy {
         virtual ~Fence()=default;

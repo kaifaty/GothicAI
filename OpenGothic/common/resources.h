@@ -29,6 +29,7 @@
 
 #include "graphics/material.h"
 #include "sound/soundfx.h"
+#include "texturebudget.h"
 
 class StaticMesh;
 class ProtoMesh;
@@ -184,6 +185,16 @@ class Resources final {
       // first, or still open), the longest synchronous completion and the longest time to a zero shortfall
       uint64_t jumps = 0, jumpsOpen = 0;
       double jumpSyncMsMax = 0, jumpZeroMsMax = 0;
+      // the memory budget (texturebudget.h), at the last evaluation: the device's budget and this process's usage,
+      // the working target and where it came from, the LRU budget of unrequested textures
+      TextureBudget::Device device;
+      uint64_t targetBytes = 0, budgetBytes = 0;
+      TextureBudget::Source targetSource = TextureBudget::Source::Default;
+      // the stage above the target, the deepest so far, the seconds on each stage, and the bytes the demanded
+      // textures would take at stage 0 and at the current stage, D(0) and D(stage)
+      uint32_t stage = 0, stageDeepest = 0;
+      std::array<double,TextureBudget::MaxStage+1> stageSeconds{};
+      uint64_t stageBytes0 = 0, stageBytes = 0;
       };
     static TextureStats              textureStats();
     static uint64_t                  textureGeneration();
@@ -239,6 +250,8 @@ class Resources final {
     // Landscape and static owners demand levels by their size on screen ([GAME] texture_screen_mips).
     static bool                      textureScreenMips();
     static uint32_t                  textureMipReserve();
+    // the stage above the memory target (texturebudget.h); owners' distance classes add a margin from stage 2 on
+    static uint32_t                  textureStage();
     // log2 of the view scale the levels use (texturelevels.h)
     static float                     textureViewScaleLog2();
     static void                      updateTextures(ChunkResidency* residency);
@@ -428,6 +441,18 @@ class Resources final {
     void                 unqueueTexture(TextureRecord& record);
     void                 updateNearTailTime();
     uint8_t              wantedLevel(const TextureRecord& record) const;
+    // Step 3 (resources_texturebudget.cpp): the level of the owners measured on screen at `stage`
+    uint8_t              resolutionLevel(const TextureRecord& record, uint32_t stage) const;
+    void                 setTextureBudget(const TextureBudget::Choice& budget, const TextureBudget::Choice& target,
+                                          const TextureBudget::Choice& vram);
+    // Once a TextureBudget::Period on the main thread, or now with `force`: the device's budget, the working target,
+    // the stage. A world load forces it before its first frame.
+    void                 updateTextureBudget(bool force);
+    void                 chooseTextureStage(bool force, std::chrono::steady_clock::time_point now);
+    std::vector<uint64_t> textureStageSums();
+    void                 accountTextureStage(std::chrono::steady_clock::time_point now);
+    void                 logTextureBudget(std::chrono::steady_clock::time_point now);
+    void                 textureBudgetStats(TextureStats& stats);
     uint8_t              tailLevel(const TextureRecord& record) const;
     bool                 wantsFull(const TextureRecord& record) const { return wantedLevel(record)==0; }
     // unqueues every record, applies `change` to the rules, queues them again
@@ -536,6 +561,9 @@ class Resources final {
       std::tuple<uint64_t,uint64_t,uintptr_t> demotionKey{};
       // for OPENGOTHIC_TEXTURE_DUMP: evictions (of them while it never had an owner) and reloads
       uint32_t evictions = 0, evictionsUnowned = 0, reloads = 0;
+      // step 3 (resources_texturebudget.cpp), filled once: 0.5*log2(width*height), the chain's bytes from each level
+      double stageTop = -1;
+      std::array<uint64_t,16> stageChain{};
       bool tail() const { return firstMip!=0; }
       bool hasTail() const { return lowest!=0; }
       bool wanted() const;
@@ -583,8 +611,23 @@ class Resources final {
     std::atomic<uint32_t> textureReserve{1};
     std::atomic<float> textureViewScale{11.f};  // log2 of the view scale the levels use (texturelevels.h)
     std::atomic<bool> textureScreen{true};
-    uint64_t textureBudget = 256*1048576;
-    uint64_t textureTarget = 192*1048576;
+    uint64_t textureBudget = TextureBudget::Floor;
+    uint64_t textureTarget = TextureBudget::Floor;
+    // Step 3: where the target and the LRU budget come from, OPENGOTHIC_TEXTURE_VRAM_MB, the last device query, the
+    // stage, and when the next evaluation and the next log line are due
+    TextureBudget::Choice textureTargetChoice, textureVram;
+    bool textureBudgetFollows = true, textureBudgetLogDue = true;
+    TextureBudget::Device textureDevice, textureDeviceRead;  // with OPENGOTHIC_TEXTURE_VRAM_MB, and as the device said
+    std::chrono::steady_clock::time_point textureDeviceAt{};  // the device is asked at most once a Period
+    TextureBudget::Source textureTargetSource = TextureBudget::Source::Default;
+    TextureBudget::Ladder textureLadder;
+    std::atomic<uint32_t> textureStageShared{0};  // textureLadder.stage, read without the lock
+    uint32_t textureStageDeepest = 0;
+    std::array<double,TextureBudget::MaxStage+1> textureStageSeconds{};
+    std::vector<uint64_t> textureSums;  // D(0)..D(deepest) at the last evaluation
+    uint64_t textureUntracked = 0;      // live bytes outside the records, measured with no load in flight
+    std::chrono::steady_clock::time_point textureBudgetAt{}, textureStageClock{}, textureTargetLoggedAt{};
+    uint64_t textureTargetLogged = 0;
     bool textureStreaming = true, textureOverBudget = false, texturePayloadChanged = false;
 
     TextureCache                                                      texCache;

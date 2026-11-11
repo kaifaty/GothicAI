@@ -49,9 +49,36 @@ VDevice* VAllocator::device() {
   return provider.device;
   }
 
+uint64_t VAllocator::heapUsage(uint32_t heap) const {
+  return heap<provider.heapBytes.size() ? provider.heapBytes[heap].load(std::memory_order_relaxed) : 0;
+  }
+
+std::array<uint64_t,VK_MAX_MEMORY_HEAPS> VAllocator::heapUnused() {
+  std::array<uint64_t,VK_MAX_MEMORY_HEAPS> ret{};
+  allocator.unused([&](uint32_t typeId, uint64_t bytes) {
+    const auto heap = provider.device->memoryHeapOf(typeId);
+    if(heap<ret.size())
+      ret[heap] += bytes;
+    });
+  return ret;
+  }
+
+void VAllocator::Provider::count(uint32_t typeId, size_t size, bool add) {
+  if(device==nullptr)
+    return;
+  const auto heap = device->memoryHeapOf(typeId);
+  if(heap>=heapBytes.size())
+    return;
+  if(add)
+    heapBytes[heap].fetch_add(uint64_t(size),std::memory_order_relaxed);
+  else
+    heapBytes[heap].fetch_sub(uint64_t(size),std::memory_order_relaxed);
+  }
+
 VAllocator::Provider::~Provider() {
   if(lastFree!=VK_NULL_HANDLE) {
     vkFreeMemory(device->device.impl,lastFree,nullptr);
+    count(lastType,lastSize,false);
     if(tempestLoadProbeEnabled())
       probeBytes.fetch_sub(lastSize,std::memory_order_relaxed);
     }
@@ -65,6 +92,7 @@ VAllocator::Provider::DeviceMemory VAllocator::Provider::alloc(size_t size, uint
       return memory;
       }
     vkFreeMemory(device->device.impl,lastFree,nullptr);
+    count(lastType,lastSize,false);
     if(tempestLoadProbeEnabled())
       probeBytes.fetch_sub(lastSize,std::memory_order_relaxed);
     lastFree=VK_NULL_HANDLE;
@@ -88,6 +116,7 @@ VAllocator::Provider::DeviceMemory VAllocator::Provider::alloc(size_t size, uint
   auto code = vkAllocateMemory(device->device.impl,&memoryAllocateInfo,nullptr,&memory);
   if(code!=VK_SUCCESS)
     return VK_NULL_HANDLE;
+  count(typeId,size,true);
   if(tempestLoadProbeEnabled())
     probeBytes.fetch_add(size,std::memory_order_relaxed);
   return memory;
@@ -96,6 +125,7 @@ VAllocator::Provider::DeviceMemory VAllocator::Provider::alloc(size_t size, uint
 void VAllocator::Provider::free(VAllocator::Provider::DeviceMemory m, size_t size, uint32_t typeId) {
   if(lastFree!=VK_NULL_HANDLE) {
     vkFreeMemory(device->device.impl,lastFree,nullptr);
+    count(lastType,lastSize,false);
     if(tempestLoadProbeEnabled())
       probeBytes.fetch_sub(lastSize,std::memory_order_relaxed);
     }
@@ -284,6 +314,8 @@ VTexture VAllocator::alloc(const Pixmap& pm, uint32_t mip, VkFormat format) {
     ret.alloc = nullptr;
     throw std::system_error(Tempest::GraphicsErrc::OutOfHostMemory);
     }
+  if(const auto heap=provider.device->memoryHeapOf(memId.typeId); heap<VK_MAX_MEMORY_HEAPS)
+    lastTextureHeap.store(int32_t(heap),std::memory_order_relaxed);
 
   ret.format       = imageInfo.format;
   ret.mipCnt       = mip;

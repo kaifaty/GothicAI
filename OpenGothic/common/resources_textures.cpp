@@ -467,8 +467,7 @@ uint8_t Resources::wantedLevel(const TextureRecord& record) const {
   if(!record.ringNeeds.empty())
     level=std::min<uint8_t>(level,record.ringNeeds.begin()->first<=2 ? 0 : tail);
   if(!record.resolutions.empty())
-    level=std::min(level,TextureLevels::level(record.width,record.height,textureViewScale,record.resolutions.rbegin()->first,
-                                              textureReserve,record.lowest));
+    level=std::min(level,resolutionLevel(record,textureLadder.stage));
   return level;
   }
 
@@ -560,25 +559,24 @@ void Resources::configureTextures(std::string_view budget, std::string_view skip
       throw std::runtime_error(std::string(field)+" must be a nonnegative integer");
     return result;
     };
-  const auto megabytes=integer(budgetEnv!=nullptr ? std::string_view(budgetEnv) : budget,256,"texture_budget_mb",
-                              std::numeric_limits<int64_t>::max()/1048576);
+  // absent, empty or auto: the budget follows the target, the target follows the device (texturebudget.h)
+  const auto budgetChoice=TextureBudget::choose(budgetEnv,budget,"texture_budget_mb");
   const auto skip=integer(skipEnv!=nullptr ? std::string_view(skipEnv) : skipMips,2,"texture_far_skip_mips",UINT32_MAX);
-  const auto targetMegabytes=integer(targetEnv!=nullptr ? std::string_view(targetEnv) : target,192,"texture_target_mb",
-                                    std::numeric_limits<int64_t>::max()/1048576);
+  const auto targetChoice=TextureBudget::choose(targetEnv,target,"texture_target_mb");
+  const auto vram=TextureBudget::choose(std::getenv("OPENGOTHIC_TEXTURE_VRAM_MB"),{},"OPENGOTHIC_TEXTURE_VRAM_MB");
   const auto screen=integer(screenEnv!=nullptr ? std::string_view(screenEnv) : screenMips,1,"texture_screen_mips",1);
   const auto reserve=integer(reserveEnv!=nullptr ? std::string_view(reserveEnv) : std::string_view(),1,
                              "OPENGOTHIC_TEXTURE_MIP_RESERVE",16);
   const auto jumpMs=integer(jumpEnv!=nullptr ? std::string_view(jumpEnv) : std::string_view(),300,"OPENGOTHIC_TEXTURE_JUMP_MS",60000);
   std::lock_guard<std::recursive_mutex> guard(inst->sync);
   inst->requeueTextures([&] {
-    inst->textureBudget=uint64_t(megabytes)*1048576;
-    inst->textureTarget=uint64_t(targetMegabytes)*1048576;
     inst->textureStreaming=enabled==nullptr || std::strcmp(enabled,"0")!=0;
     inst->textureSkipMips=inst->textureStreaming && (mipsEnv==nullptr || std::strcmp(mipsEnv,"0")!=0) ? uint32_t(skip) : 0;
     inst->textureScreen=screen!=0;
     inst->textureReserve=uint32_t(reserve);
     inst->textureJumpMs=uint32_t(jumpMs);
     inst->textureOverBudget=false;
+    inst->setTextureBudget(budgetChoice,targetChoice,vram);
     });
   }
 
@@ -655,8 +653,9 @@ Resources::TextureStats Resources::textureStats() {
     if(!record.tail()) {
       stats.sourceFullBytes[size_t(record.sourceKind)]+=bytes;
       if(record.hasTail() && inst->textureStreaming && inst->textureSkipMips!=0 &&
-         !record.pinned && record.distances.count(TextureAlwaysFull)==0 &&
-         !record.distances.empty() && record.distances.begin()->first<=2)
+         !record.pinned && record.distances.count(TextureAlwaysFull)==0 && // ring-rule owners: measured ones key by class
+         !(inst->textureScreen ? record.ringNeeds : record.distances).empty() &&
+         (inst->textureScreen ? record.ringNeeds : record.distances).begin()->first<=2)
         stats.fullRing2Bytes+=bytes;
       }
     if(record.category==TextureCategory::Other)
@@ -676,6 +675,7 @@ Resources::TextureStats Resources::textureStats() {
   stats.levelBytes[0]=stats.liveBytes>coarser ? stats.liveBytes-coarser : 0;
   stats.sourceBytes[size_t(TextureSource::Other)]+=stats.liveBytes-tracked;
   stats.sourceFullBytes[size_t(TextureSource::Other)]+=stats.fullBytes-trackedFull;
+  inst->textureBudgetStats(stats);
   return stats;
   }
 
@@ -918,6 +918,7 @@ void Resources::updateTextures(ChunkResidency* residency) {
     return;
   std::lock_guard<std::recursive_mutex> guard(inst->sync);
   auto& resources=*inst;
+  resources.updateTextureBudget(false);
   resources.updateNearTailTime();
   auto liveBytes=Texture2d::liveBytes();
   const auto finish=[&] {
@@ -927,7 +928,8 @@ void Resources::updateTextures(ChunkResidency* residency) {
       }
     if(liveBytes<=resources.textureBudget) {
       resources.textureOverBudget=false;
-      } else if(resources.textureStreaming && resources.textureIdle.empty() && !resources.textureOverBudget) {
+      } else if(resources.textureStreaming && resources.textureIdle.empty() && !resources.textureOverBudget &&
+              !resources.textureBudgetFollows) {
       Log::i("textures: budget exceeded with no unrequested resident payloads (",liveBytes," > ",resources.textureBudget," bytes)");
       resources.textureOverBudget=true;
       }
@@ -1023,7 +1025,9 @@ void Resources::updateTextures(ChunkResidency* residency) {
     for(auto* record:resources.texturePromotions)
       consider(record);
     bool lowering=false;
+    // Above the target, unrequested textures leave first: no lowering while the LRU budget can still evict.
     if(selected==nullptr && Texture2d::liveBytes()>resources.textureTarget &&
+       (resources.textureIdle.empty() || Texture2d::liveBytes()<=resources.textureBudget) &&
        std::none_of(resources.textureReloads.begin(),resources.textureReloads.end(),[](const auto& r) { return r->lowering; })) {
       // Lowering, one at a time and only under memory pressure: the ring rule's LRU or the most bytes to give back.
       for(const auto& entry:resources.textureDemotionLru)

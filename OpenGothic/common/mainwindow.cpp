@@ -346,7 +346,7 @@ void MainWindow::drawChunks(Painter& p, const World& world, const Camera& camera
   const int x = 10, y = 60, line = fnt.pixelSize()+3;
   const auto textures = Resources::textureStats();
   auto drawTextures = [&](int top) {
-    char text[192];
+    char text[256];
     std::snprintf(text,sizeof(text),"Textures %llu: %.2f MiB live  %.2f retired  %.2f peak",
                   static_cast<unsigned long long>(textures.count),double(textures.liveBytes)/1048576.0,
                   double(textures.retiredBytes)/1048576.0,double(textures.peakBytes)/1048576.0);
@@ -376,6 +376,18 @@ void MainWindow::drawChunks(Painter& p, const World& world, const Camera& camera
                   double(level[3])/1048576.0,double(level[4])/1048576.0,double(level[5])/1048576.0,
                   static_cast<unsigned long long>(textures.shortfallCount),textures.shortfallSeconds);
     fnt.drawText(p,x,top+6*line,text);
+    std::snprintf(text,sizeof(text),"Device %.0f/%.0f MiB%s%s  target %.0f MiB (%s)  stage %u (deepest %u)  D0 %.1f  D %.1f MiB",
+                  double(textures.device.usage)/1048576.0,double(textures.device.budget)/1048576.0,
+                  textures.device.shared ? " shared" : "",textures.device.measured ? "" : " estimated",
+                  double(textures.targetBytes)/1048576.0,TextureBudget::name(textures.targetSource),textures.stage,
+                  textures.stageDeepest,double(textures.stageBytes0)/1048576.0,double(textures.stageBytes)/1048576.0);
+    fnt.drawText(p,x,top+7*line,text);
+    // seconds on each stage reached
+    int at=std::snprintf(text,sizeof(text),"Seconds on stages:");
+    for(uint32_t stage=0;stage<=textures.stageDeepest && stage<textures.stageSeconds.size();++stage)
+      if(at>0 && size_t(at)<sizeof(text) && textures.stageSeconds[stage]>0)
+        at+=std::snprintf(text+at,sizeof(text)-size_t(at),"  %u: %.0f",stage,textures.stageSeconds[stage]);
+    fnt.drawText(p,x,top+8*line,text);
     };
   auto drawNpcTiers = [&](int top) {
     const auto& tiers = world.npcSimTierStats();
@@ -391,7 +403,7 @@ void MainWindow::drawChunks(Painter& p, const World& world, const Camera& camera
   if(chunks==nullptr) {
     fnt.drawText(p,x,y,"Chunks: streaming manager disabled");
     drawTextures(y+line);
-    drawNpcTiers(y+8*line);
+    drawNpcTiers(y+10*line);
     return;
     }
   auto hero = world.player();
@@ -404,10 +416,10 @@ void MainWindow::drawChunks(Painter& p, const World& world, const Camera& camera
   const int64_t radius = std::max<int64_t>({8,std::abs(int64_t(cameraId.x)-center.x)+1,
                                             std::abs(int64_t(cameraId.z)-center.z)+1});
   const int mapSize = std::min(240,std::min(w(),h())/2);
-  const int mapY = y+16*line;
+  const int mapY = y+18*line;
   const float cell = float(mapSize)/float(radius*2+1);
   p.setBrush(Color(0.f,0.f,0.f,0.8f));
-  p.drawRect(x-5,y-5,std::max(660,mapSize+10),mapSize+18*line+10);
+  p.drawRect(x-5,y-5,std::max(660,mapSize+10),mapSize+20*line+10);
 
   const auto& stats = chunks->stats();
   char text[160];
@@ -433,7 +445,7 @@ void MainWindow::drawChunks(Painter& p, const World& world, const Camera& camera
   std::snprintf(text,sizeof(text),"Vobs Near missing: %zu  %.6f visual-seconds",stats.vobNearMissing,stats.vobNearMissingSeconds);
   fnt.drawText(p,x,y+6*line,text);
   drawTextures(y+7*line);
-  drawNpcTiers(y+14*line);
+  drawNpcTiers(y+16*line);
 
   const auto& entries = chunks->table().entries;
   for(size_t i=0;i<entries.size();++i) {

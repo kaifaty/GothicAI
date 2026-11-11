@@ -11,6 +11,7 @@
 #include "graphics/mesh/texeldensity.h"
 #include "graphics/texturescreendemand.h"
 #include "resources.h"
+#include "texturebudget.h"
 #include "texturelevels.h"
 #include "world/chunkresidency.h"
 
@@ -1171,6 +1172,171 @@ void textureLevelMaths() {
           "an owner must be evaluated from the nearer of the camera and the hero, due after its margin");
   }
 
+// Step 3 (texturebudget.h): the target from the device's budget, the stage from the sums D(s), the way back.
+void textureBudgetMaths() {
+  using namespace TextureBudget;
+  Device discrete;
+  discrete.known=true;
+  discrete.measured=true;
+  discrete.budget=10240*MiB;
+  discrete.usage=1024*MiB;
+  // other 824, headroom max(512, 1280), room 10240-824-1280=8136, a quarter 2560
+  require(target(discrete,200*MiB)==2560*MiB,"a device with its own memory must give the textures a quarter of its budget");
+  auto shared=discrete;
+  shared.shared=true;
+  require(target(shared,200*MiB)==1280*MiB,"memory shared with the CPU must give the textures an eighth");
+  auto small=discrete;
+  small.budget=1024*MiB;
+  small.usage=300*MiB;
+  // a quarter 256; room 1024-200-512=312
+  require(target(small,100*MiB)==256*MiB,"a small device must still give a quarter while the headroom allows");
+  small.budget=512*MiB;
+  require(target(small,100*MiB)==192*MiB,"the target must never go below the floor of 192 MiB");
+  auto filled=discrete;
+  filled.usage=9216*MiB;
+  // other 8704, room 10240-8704-1280=256
+  require(target(filled,512*MiB)==256*MiB,"the rest of the game filling the device must limit the target by the headroom");
+  filled.usage=12000*MiB;
+  require(target(filled,512*MiB)==192*MiB,"a device with no room left must keep the floor");
+  require(target(discrete,4096*MiB)==2560*MiB,"live textures above the usage must leave nothing else on the device");
+  require(target(Device(),0)==192*MiB,"a device whose budget is not readable must keep today's 192 MiB");
+  // F9: a small device filled by the rest of the game: the headroom is the 512 MiB minimum, not budget/8 = 256
+  auto smallFilled=discrete;
+  smallFilled.budget=2048*MiB;
+  smallFilled.usage=1700*MiB;
+  // other 1188, room 2048-1188-512=348, a quarter 512
+  require(target(smallFilled,512*MiB)==348*MiB,"the headroom must be at least 512 MiB");
+  // Lowered textures leave their bytes in the allocator's pages: usage stays, live drops. Held free bytes are room for
+  // textures, not the rest of the game; otherwise each lowered byte would lower the target by as much.
+  auto held=discrete;
+  held.budget=1800*MiB;
+  held.usage=1332*MiB;
+  held.unused=300*MiB;
+  // other 1332-300-197=835, room 1800-835-512=453, a quarter 450
+  require(target(held,197*MiB)==450*MiB,"free bytes held in the allocator's pages must not count as the rest of the game");
+  held.unused=0;
+  require(target(held,197*MiB)==192*MiB,"without them the same usage leaves no room above the floor");
+  held.unused=2000*MiB;
+  require(target(held,197*MiB)==450*MiB,"held bytes above the usage must leave nothing else");
+  require(follow(1000*MiB,1040*MiB)==1000*MiB && follow(1000*MiB,960*MiB)==1000*MiB &&
+          follow(1000*MiB,1060*MiB)==1060*MiB && follow(1000*MiB,940*MiB)==940*MiB &&
+          follow(1000*MiB,1049*MiB)==1000*MiB && follow(1000*MiB,1050*MiB)==1000*MiB &&
+          follow(1000*MiB,1051*MiB)==1051*MiB && follow(1000*MiB,951*MiB)==1000*MiB && follow(1000*MiB,949*MiB)==949*MiB,
+          "the working target must change only when the rule moves by more than 5 %");
+  require(logWorthy(1000,1300) && logWorthy(1000,700) && !logWorthy(1000,1200),"the log line must follow changes over 25 %");
+
+  require(choose(nullptr,"","f").automatic && choose(nullptr,"auto","f").automatic && choose(nullptr,{},"f").source==Source::Rule,
+          "an absent, empty or auto setting must mean the rule");
+  const auto setting=choose(nullptr,"300","f"), environment=choose("256","300","f"), zero=choose("0","300","f");
+  require(!setting.automatic && setting.bytes==300*MiB && setting.source==Source::Setting &&
+          !environment.automatic && environment.bytes==256*MiB && environment.source==Source::Environment &&
+          !zero.automatic && zero.bytes==0 && choose("auto","300","f").automatic,
+          "a number must fix the target, the environment over the setting, 0 included");
+  bool threw=false;
+  try {
+    choose(nullptr,"big","f");
+    }
+  catch(const std::runtime_error&) {
+    threw=true;
+    }
+  require(threw,"anything but a number or auto must be refused");
+
+  // The distance class of an owner measured on screen: borders at 64 and 128 m, kept 1/8 farther moving away.
+  double margin=0;
+  const auto classOf=[&](double d, uint32_t previous) { return TextureScreenDemand::distanceClass(d,previous,margin); };
+  const auto none=TextureScreenDemand::NoClass;
+  require(classOf(30,none)==0 && std::abs(margin-42)<1e-9 && classOf(70,none)==1 && std::abs(margin-6)<1e-9 &&
+          classOf(130,none)==2 && std::abs(margin-2)<1e-9,
+          "the class must come from one and two chunk sizes, due again at its border");
+  require(classOf(70,0)==0 && std::abs(margin-2)<1e-9 && classOf(140,1)==1 && std::abs(margin-4)<1e-9 &&
+          classOf(140,0)==2 && classOf(60,2)==0 && classOf(100,4)==1,
+          "moving away an owner must keep its nearer class 1/8 of the border longer, moving closer switch at once");
+  // 70 m, 1/30 UV units per metre: exponent -1 holds 10 m nearer (60 m), class 1 holds 6 m nearer (64 m). The class
+  // adds its margin only from stage 2 on; before that the owner is due by its exponent alone, as without classes.
+  TexelDensity point;
+  point.uvPerMetre=1.f/30.f;
+  TextureScreenDemand::View viewOff;
+  viewOff.known=true;
+  viewOff.camera={-7000,0,0};
+  viewOff.hero={0,0,1000000};
+  auto viewOn=viewOff;
+  viewOn.classMargin=true;
+  const auto off=TextureScreenDemand::evaluate(viewOff,point), on=TextureScreenDemand::evaluate(viewOn,point);
+  require(off.exponent==-1 && off.distanceClass==1 && std::abs(off.margin-10)<1e-4 && std::abs(off.expiry-10)<1e-4 &&
+          on.exponent==-1 && on.distanceClass==1 && std::abs(on.margin-6)<1e-4,
+          "the class must be computed always, and add its margin only while the stages use it");
+
+  // stage:            0  1  2  3  4  5  6  7  8
+  const uint32_t ring2[]={0, 0, 1, 1, 1, 2, 2, 2, 3};
+  const uint32_t ring1[]={0, 0, 0, 1, 1, 1, 2, 2, 2};
+  const uint32_t ring0[]={0, 0, 0, 0, 1, 1, 1, 2, 2};
+  for(uint32_t stage=0;stage<9;++stage)
+    require(coarser(stage,2)==ring2[stage] && coarser(stage,7)==ring2[stage] && coarser(stage,1)==ring1[stage] &&
+            coarser(stage,0)==ring0[stage],"each stage must add one level, in turn for ring 2 and farther, ring 1 and farther, all");
+  require(reserve(0,1)==1 && reserve(0,2)==2 && reserve(1,1)==0 && reserve(5,2)==0,"stage 1 and deeper must drop the reserve");
+  require(coarsen(1,4,4,0,false)==2 && coarsen(3,4,7,2,false)==4 && coarsen(0,4,13,3,true)==0 && coarsen(4,4,9,0,false)==4,
+          "a stage must coarsen up to the lowest allowed level and never an owner that needs the whole chain");
+
+  // D(s) from the difference array against the sum level by level, for textures of every kind of ring and cap.
+  struct Texture { uint8_t level0, level1, cap, lowest; uint32_t ring; bool whole; uint32_t size; };
+  const std::vector<Texture> textures={{0,1,5,5,0,false,2048},{1,2,5,5,1,false,2048},{0,0,4,4,3,false,1024},
+                                       {0,1,2,5,4,false,2048},{2,3,3,3,0,false,512},{0,0,5,5,0,true,2048},
+                                       {0,1,0,5,2,false,2048},{1,1,6,6,9,false,4096}};
+  const auto bytes=[](uint32_t size, uint8_t level) {
+    return TextureLevels::chainBytes(Tempest::TextureFormat::DXT5,size,size,uint32_t(std::log2(double(size)))+1,level);
+    };
+  Sums sums;
+  sums.fixed(12345);
+  for(const auto& t:textures)
+    sums.measured(t.level0,t.level1,t.cap,t.lowest,t.ring,t.whole,[&](uint8_t level) { return bytes(t.size,level); });
+  const auto d=sums.finish();
+  // the 4096 one, far: level 1 to 6 at stages 2, 5, 8, 11, 14
+  require(d.size()==15,"the deepest stage must be the last that changes a level");
+  for(uint32_t stage=0;stage<24;++stage) {
+    uint64_t sum=12345;
+    for(const auto& t:textures) {
+      const uint8_t level=stage==0 ? std::min(t.level0,t.cap) :
+                          std::min(coarsen(t.level1,t.lowest,stage,t.ring,t.whole),std::min(t.cap,t.lowest));
+      sum+=bytes(t.size,level);
+      }
+    require(d[std::min<size_t>(stage,d.size()-1)]==sum,"each D(s) must be the exact sum of the levels the stage gives");
+    }
+
+  const auto t0=Clock::time_point{}+std::chrono::hours(1);
+  const auto at=[&](int seconds) { return t0+std::chrono::seconds(seconds); };
+  const std::vector<uint64_t> sumsByStage={1000,800,600,400,200};
+  Ladder ladder;
+  require(step(ladder,sumsByStage,700,at(0))==2,"the stage must be the shallowest whose sum fits the target");
+  require(step(ladder,sumsByStage,300,at(1))==4,"a smaller target must go deeper at once");
+  require(step(ladder,sumsByStage,100,at(2))==4,"when nothing fits the stage must be the deepest");
+  require(step(ladder,sumsByStage,900,at(3))==4 && step(ladder,sumsByStage,900,at(7))==4,
+          "going back must wait five seconds with the shallower sum within 90 % of the target");
+  require(step(ladder,sumsByStage,900,at(8))==1,"after five seconds the stage must go back to the shallowest within 90 %");
+  // D(0) sits at the target: one second above, one below, but never within 90 % of it.
+  Ladder border;
+  for(int i=0;i<20;++i)
+    step(border,{i%2==0 ? 1010u : 990u,500u},1000,at(i));
+  require(border.stage==1,"a sum at the border must not make the stage flip");
+  Ladder again;
+  again.stage=1;
+  step(again,{800,500},1000,at(0));
+  step(again,{950,500},1000,at(3));
+  step(again,{800,500},1000,at(4));
+  require(step(again,{800,500},1000,at(8))==1 && step(again,{800,500},1000,at(9))==0,
+          "the five seconds back must be in a row");
+  // the way back needs D(s-1) at or below 90 % of the target, not just near it
+  Ladder above, at90;
+  above.stage=at90.stage=1;
+  for(int i=0;i<=6;++i) {
+    step(above,{905,500},1000,at(i));
+    step(at90,{900,500},1000,at(i));
+    }
+  require(above.stage==1 && at90.stage==0,"going back must need D(s-1) at most 90 % of the target");
+  Ladder forced;
+  forced.stage=4;
+  require(step(forced,sumsByStage,900,at(0),true)==1,"a world load must take the shallowest stage that fits at once");
+  }
+
 void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
   const auto write=[&](const char* name, const std::vector<uint8_t>& bytes) {
     textFile(fixture.root/"materials"/name,{reinterpret_cast<const char*>(bytes.data()),bytes.size()});
@@ -1753,10 +1919,281 @@ void textureOwnerLevels(Tempest::Device& device, const Fixture& fixture) {
   }
 }
 
+// Step 3 with a device: the target from its budget, OPENGOTHIC_TEXTURE_VRAM_MB, the setting and the environment; above
+// the target unrequested textures leave first, then textures above their wanted level are lowered, then the stage
+// makes the wanted levels coarser, down to the deepest when nothing fits; what is never coarsened; measuring and the
+// ring rule stay on stage 0.
+void textureBudgetLevels(Tempest::Device& device, const Fixture& fixture) {
+  using namespace TextureBudget;
+  // six measured 2048x2048 DXT5 (5.33 MiB whole, lowest level 5), the rest 512x512 DXT5
+  const char* names[]={"bg-0","bg-1","bg-2","bg-3","bg-4","bg-5","bg-idle-0","bg-idle-1","bg-whole","bg-ring","bg-chain",
+                       "bg-class","bg-sweep"};
+  const auto big=mipDds(0x35545844,2048,2048,12), small=mipDds(0x35545844,512,512,10);
+  std::string json="{";
+  for(const auto* name:names) {
+    const auto& bytes=std::string_view(name).size()==4 || std::string_view(name)=="bg-class" ? big : small;
+    textFile(fixture.root/"materials"/(std::string(name)+".dds"),{reinterpret_cast<const char*>(bytes.data()),bytes.size()});
+    std::string key(name);
+    for(auto& c:key)
+      c=c=='-' ? '_' : char(std::toupper(uint8_t(c)));
+    json+=std::string(json.size()>1 ? "," : "")+"\""+key+".TGA\":{\"albedo\":\""+name+".dds\"}";
+    }
+  textFile(fixture.root/"materials/materials.json",json+"}");
+  textFile(fixture.root/"_work/BG_PINNED.dds",{reinterpret_cast<const char*>(small.data()),small.size()});
+  setenv("OPENGOTHIC_TEXTURE_STREAMING","1",1);
+  setenv("OPENGOTHIC_TEXTURE_MIPS","1",1);
+  setenv("OPENGOTHIC_TEXTURE_FAR_SKIP_MIPS","2",1);
+  setenv("OPENGOTHIC_TEXTURE_SCREEN_MIPS","1",1);
+  // no reserve: the measured textures want level 1 at stage 0 and stand at 0 after their load
+  setenv("OPENGOTHIC_TEXTURE_MIP_RESERVE","0",1);
+  unsetenv("OPENGOTHIC_TEXTURE_BUDGET_MB");
+  unsetenv("OPENGOTHIC_TEXTURE_TARGET_MB");
+  unsetenv("OPENGOTHIC_TEXTURE_VRAM_MB");
+  {
+  Resources resources(device);
+  Shaders shaders;
+  shaders.waitCompiler();
+  // a view for an owner measured on screen (VisualObjects): the hero far away, the camera along x
+  ChunkTable table;
+  table.entries.push_back({{0,0},"",{0,0,0},{1,1,0},1});
+  ChunkResidency residency(table);
+  SceneGlobals scene;
+  VisualObjects visuals(scene,{{0,0,0},{1,1,0}});
+  visuals.setTextureResidency(&residency);
+  const auto tick=[] { Resources::updateTextures(nullptr); };
+  const auto evaluate=[&] {
+    Resources::configureTextures();
+    tick();
+    return Resources::textureStats();
+    };
+  const auto waitFor=[&](auto done, const char* message) {
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+    while(!done() && std::chrono::steady_clock::now()<deadline) {
+      tick();
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+    require(done(),message);
+    };
+
+  auto stats=evaluate();
+  require(stats.device.known && stats.device.budget>0 && stats.targetSource==Source::Rule &&
+          stats.targetBytes==target(stats.device,Tempest::Texture2d::liveBytes()) && stats.budgetBytes==stats.targetBytes,
+          "by default the target must come from the device's budget, and the unrequested textures' budget follow it");
+  // the device is asked once a second: the next evaluation within it sees the same usage
+  const auto usage=stats.device.usage;
+  setenv("OPENGOTHIC_TEXTURE_VRAM_MB","2048",1);
+  stats=evaluate();
+  require(stats.device.budget==2048*MiB && usage>0 && stats.device.usage==usage && stats.device.unused<=usage &&
+          stats.targetBytes==target(stats.device,Tempest::Texture2d::liveBytes()) &&
+          stats.targetBytes>=192*MiB && stats.targetBytes<=512*MiB,
+          "OPENGOTHIC_TEXTURE_VRAM_MB must pretend the device's budget, its usage staying real");
+  unsetenv("OPENGOTHIC_TEXTURE_VRAM_MB");
+  Resources::configureTextures({},{},"300");
+  tick();
+  stats=Resources::textureStats();
+  require(stats.targetBytes==300*MiB && stats.targetSource==Source::Setting && stats.budgetBytes==300*MiB,
+          "a number in the setting must fix the target");
+  setenv("OPENGOTHIC_TEXTURE_TARGET_MB","256",1);
+  setenv("OPENGOTHIC_TEXTURE_BUDGET_MB","100",1);
+  Resources::configureTextures({},{},"300");
+  tick();
+  stats=Resources::textureStats();
+  require(stats.targetBytes==256*MiB && stats.targetSource==Source::Environment && stats.budgetBytes==100*MiB,
+          "the environment must be stronger than the setting, and a set budget keep its meaning");
+  unsetenv("OPENGOTHIC_TEXTURE_BUDGET_MB");
+
+  // levels: 90 degrees, log2 K 10.125; exponent -1 gives a 2048 texture level 1 without a reserve
+  Resources::setTextureView(2048,90);
+  setenv("OPENGOTHIC_TEXTURE_TARGET_MB","1024",1);
+  Resources::configureTextures();
+  std::array<Material,6> measured;
+  for(size_t i=0;i<measured.size();++i)
+    measured[i]=Material(source("BG_"+std::to_string(i)+".TGA"),true);
+  const Material idle0(source("BG_IDLE_0.TGA"),true), idle1(source("BG_IDLE_1.TGA"),true);
+  const Material whole(source("BG_WHOLE.TGA"),true), ringOnly(source("BG_RING.TGA"),true), chain(source("BG_CHAIN.TGA"),true);
+  const auto* pinned=Resources::loadTexture("BG_PINNED.TGA",false,true);
+  require(pinned!=nullptr && pinned->w()==512 && measured[0].tex->w()==2048 && idle0.tex->w()==512,
+          "the budget fixture must load whole");
+  using Need=Resources::TextureNeed;
+  const auto stat=Resources::TextureCategory::Static;
+  const std::array<uint32_t,6> rings={0,0,1,1,3,3};
+  for(size_t i=0;i<measured.size();++i)
+    Resources::textureDemand(measured[i],stat,true,Need{rings[i],-1});
+  Resources::textureDemand(whole,stat,true);
+  Resources::textureDemand(ringOnly,stat,true,Need{4,TextureLevels::NoExponent});
+  Resources::textureDemand(chain,stat,true,Need{0,TextureScreenDemand::WholeChain});
+  const auto chainOf=[](uint32_t level) { return TextureLevels::chainBytes(Tempest::TextureFormat::DXT5,2048,2048,12,level); };
+  const auto sides=[&](std::array<int,6> expected) {
+    for(size_t i=0;i<measured.size();++i)
+      if(measured[i].tex->w()!=expected[i])
+        return false;
+    return true;
+    };
+  stats=evaluate();
+  require(stats.stage==0 && stats.stageBytes0==stats.stageBytes,"within the target the stage must stay 0");
+  std::this_thread::sleep_for(std::chrono::milliseconds(5100));
+  tick();
+  require(Resources::textureStats().demoted==0 && sides({2048,2048,2048,2048,2048,2048}),
+          "below the target nothing may be lowered");
+
+  // Above the target, with D(0) within it: first the unrequested textures leave, then the lowering starts.
+  stats=Resources::textureStats();
+  const auto targetMb=std::to_string(stats.stageBytes0/MiB+2);
+  setenv("OPENGOTHIC_TEXTURE_TARGET_MB",targetMb.c_str(),1);
+  Resources::configureTextures();
+  tick();
+  const auto first=Resources::textureStats();
+  require(first.evicted==stats.evicted+2 && first.demoted==0 && first.loadsInFlight==0 && first.stage==0 &&
+          idle0.tex->w()==1 && idle1.tex->w()==1,
+          "above the target the unrequested textures must leave before any lowering starts");
+  tick();
+  require(Resources::textureStats().loadsInFlight==1,"with the unrequested gone, the lowering must start");
+  // An evaluation every frame while the lowering loads run: their payloads, live from the worker's upload on, are not
+  // in D(0); only the 1x1 placeholder of the evicted ones may come in.
+  const auto sum0=first.stageBytes0;
+  waitFor([&] {
+    Resources::configureTextures();
+    const auto now=Resources::textureStats();
+    require(now.stageBytes0>=sum0 && now.stageBytes0<=sum0+1024,"a payload of a load in flight must not count in D(s)");
+    return now.demoted==6;
+    },"textures above their wanted level must be lowered to it");
+  stats=evaluate();
+  require(sides({1024,1024,1024,1024,1024,1024}) && stats.stage==0 && stats.stageBytes0<=stats.targetBytes,
+          "when lowering is enough, the stage must stay 0");
+
+  // A real owner measured on screen: a 10 m triangle with a third of a UV unit, 1/30 UV units per metre. Its
+  // exponent -1 holds from 60 m on, and moving away up to 150 m; its distance class goes 0 -> 2 at 62 -> 146 m with
+  // that same exponent, so only its class can register it again.
+  const Material classMat(source("BG_CLASS.TGA"),true);
+  StaticMesh classMesh(classMat,{{{0,0,0},{0,0,1},{0,0},0xffffffffu},{{1000,0,0},{0,0,1},{1.f/3.f,0},0xffffffffu},
+                                 {{0,1000,0},{0,0,1},{0,1.f/3.f},0xffffffffu}},{0,1,2});
+  const Tempest::Vec3 hero{0,0,1000000};
+  const auto look=[&](float metres) {
+    residency.update(hero,{-metres*100.f,50,0},1000);
+    tick();
+    };
+  look(62);
+  auto classOwner=visuals.get(classMesh,classMat,0,classMesh.sub[0].iboLength,true);
+  classOwner.setObjMatrix(Tempest::Matrix4x4::mkIdentity());
+  look(146);
+  stats=evaluate();
+
+  // D(0) above the target: the stage, deeper at once, the shallowest whose exact sum fits. The two ring-3 textures
+  // and the owner of class 2 are one level coarser.
+  const auto d2=stats.stageBytes0-3*chainOf(1)+3*chainOf(2);
+  const auto stageMb=std::to_string((d2+MiB-1)/MiB);
+  setenv("OPENGOTHIC_TEXTURE_TARGET_MB",stageMb.c_str(),1);
+  stats=evaluate();
+  require(stats.stage==2 && stats.stageBytes==d2 && stats.stageBytes0>stats.targetBytes,
+          "the stage must be the shallowest whose exact sum fits the target: one level coarser from ring 2");
+  std::this_thread::sleep_for(std::chrono::milliseconds(5100));
+  waitFor([&] { return sides({1024,1024,1024,1024,512,512}) && classMat.tex->w()==512; },
+          "the stage's level must be the wanted level of the lowering");
+  // Back to 62 m with the same exponent: class 0, so the stage leaves it at level 1.
+  look(62);
+  waitFor([&] { return classMat.tex->w()==1024; },"a distance class change alone must change the stage's level");
+
+  // The registered class of a texture's nearest owner, from the texture dump.
+  const auto ringOf=[&](std::string_view file) {
+    const auto path=fixture.root/"budget-dump.csv";
+    Resources::dumpTextures(path);
+    std::ifstream in(path);
+    std::string line;
+    size_t ringColumn=0;
+    while(std::getline(in,line)) {
+      if(line.empty() || line[0]=='#')
+        continue;
+      std::vector<std::string> cells;
+      for(size_t at=0;;) {
+        const auto next=line.find(',',at);
+        cells.push_back(line.substr(at,next==std::string::npos ? std::string::npos : next-at));
+        if(next==std::string::npos)
+          break;
+        at=next+1;
+        }
+      if(ringColumn==0) {
+        ringColumn=size_t(std::find(cells.begin(),cells.end(),"ring_min")-cells.begin());
+        continue;
+        }
+      if(cells.size()>ringColumn && cells[1]==file && !cells[ringColumn].empty())
+        return std::stoi(cells[ringColumn]);
+      }
+    return -1;
+    };
+  // Measuring keeps stage 0: an owner placed 140 m away (class 2, exponent -2 from 120 m on) and then seen from 122 m
+  // is not due by its exponent, and its class is not brought up to date. Entering a deep stage, the sweep evaluates it
+  // within the view queue's budget: class 1.
+  setenv("OPENGOTHIC_TEXTURE_TARGET_MB","0",1);
+  require(evaluate().stage==0,"a target of 0 must keep stage 0");
+  look(140);
+  const Material sweepMat(source("BG_SWEEP.TGA"),true);
+  StaticMesh sweepMesh(sweepMat,{{{0,0,0},{0,0,1},{0,0},0xffffffffu},{{1000,0,0},{0,0,1},{1.f/3.f,0},0xffffffffu},
+                                 {{0,1000,0},{0,0,1},{0,1.f/3.f},0xffffffffu}},{0,1,2});
+  auto sweepOwner=visuals.get(sweepMesh,sweepMat,0,sweepMesh.sub[0].iboLength,true);
+  sweepOwner.setObjMatrix(Tempest::Matrix4x4::mkIdentity());
+  require(ringOf("bg-sweep.dds")==2,"an owner placed 140 m away must register class 2");
+  look(122);
+  look(122);
+  require(ringOf("bg-sweep.dds")==2,"below stage 2 a class border crossed within the exponent's margin must not re-evaluate it");
+  setenv("OPENGOTHIC_TEXTURE_TARGET_MB","1",1);
+  require(evaluate().stage>=2,"a target of 1 MiB must take a deep stage");
+  waitFor([&] { look(122); return ringOf("bg-sweep.dds")==1; },"entering stage 2 the sweep must bring its class up to date");
+
+  // Nothing fits: the deepest stage, every measured texture at its lowest level; the rest keep their levels.
+  setenv("OPENGOTHIC_TEXTURE_TARGET_MB","1",1);
+  stats=evaluate();
+  require(stats.stage==13 && stats.stageDeepest==13,"when nothing fits the stage must be the deepest: ring 0 at stage 13");
+  // with no reserve every measured texture stands at level 1 on stage 0: this is D(1) with the default reserve
+  const auto sum1=stats.stageBytes0;
+  std::this_thread::sleep_for(std::chrono::milliseconds(5100));
+  waitFor([&] { return sides({64,64,64,64,64,64}) && ringOnly.tex->w()==128; },
+          "the deepest stage must bring every measured texture to its lowest level");
+  require(whole.tex->w()==512 && chain.tex->w()==512 && pinned->w()==512 && ringOnly.tex->w()==128,
+          "always whole, pinned, whole-chain owners and the ring rule must never be coarsened");
+  require(Resources::textureStats().shortfallCount==0,"the stage's level must be the level the shortfall counts against");
+
+  // The default reserve of one level and a target between D(1) and D(0): the completion before a world's first frame
+  // picks stage 1 itself, and stage 1 drops the reserve, so it loads level 1, not the whole chain.
+  unsetenv("OPENGOTHIC_TEXTURE_MIP_RESERVE");
+  const auto reserveMb=std::to_string(sum1/MiB+1);
+  setenv("OPENGOTHIC_TEXTURE_TARGET_MB",reserveMb.c_str(),1);
+  Resources::configureTextures();
+  Resources::finishTextureLoading();
+  stats=Resources::textureStats();
+  require(stats.stage==1 && stats.stageBytes==sum1 && stats.stageBytes0>stats.targetBytes &&
+          sides({1024,1024,1024,1024,1024,1024}),
+          "the world-load completion must choose the stage first, and stage 1 must drop the reserve");
+
+  setenv("OPENGOTHIC_TEXTURE_TARGET_MB","0",1);
+  stats=evaluate();
+  require(stats.stage==0,"a target of 0 measures every texture at its wanted level, on stage 0");
+  setenv("OPENGOTHIC_TEXTURE_TARGET_MB","1",1);
+  require(evaluate().stage==13,"the stage must come back with a target");
+  setenv("OPENGOTHIC_TEXTURE_SCREEN_MIPS","0",1);
+  stats=evaluate();
+  require(stats.stage==0 && stats.stageSeconds[2]>0 && stats.stageSeconds[13]>0 && stats.stageSeconds[1]>0,
+          "the ring rule must stay on stage 0, and every stage keep its own seconds");
+  classOwner=VisualObjects::Item();
+  sweepOwner=VisualObjects::Item();
+  for(size_t i=0;i<measured.size();++i)
+    Resources::textureDemand(measured[i],stat,false,Need{rings[i],-1});
+  Resources::textureDemand(whole,stat,false);
+  Resources::textureDemand(ringOnly,stat,false,Need{4,TextureLevels::NoExponent});
+  Resources::textureDemand(chain,stat,false,Need{0,TextureScreenDemand::WholeChain});
+  device.waitIdle();
+  }
+  unsetenv("OPENGOTHIC_TEXTURE_MIPS");
+  unsetenv("OPENGOTHIC_TEXTURE_FAR_SKIP_MIPS");
+  unsetenv("OPENGOTHIC_TEXTURE_TARGET_MB");
+  unsetenv("OPENGOTHIC_TEXTURE_SCREEN_MIPS");
+  unsetenv("OPENGOTHIC_TEXTURE_MIP_RESERVE");
+  }
+
 int main(int argc, char** argv) {
   try {
     ddsMipTails();
     textureLevelMaths();
+    textureBudgetMaths();
     if(argc==2 && std::string_view(argv[1])=="--dds-mip-tail") {
       std::cout << "{\"test\":\"dds_mip_tail\",\"passed\":true,\"assertions\":" << assertions << "}\n";
       return 0;
@@ -1773,6 +2210,7 @@ int main(int argc, char** argv) {
     textureMipResidency(device,fixture);
     textureScreenLevels(device,fixture);
     textureOwnerLevels(device,fixture);
+    textureBudgetLevels(device,fixture);
     device.waitIdle();
     std::cout << "{\"test\":\"material_texture\",\"passed\":true,\"assertions\":" << assertions << "}\n";
     return 0;
