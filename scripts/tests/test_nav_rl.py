@@ -574,6 +574,40 @@ def test_shared_scenario_propagates_cv_and_preserves_historical_native_default(t
     assert 'navdemos physics native\n' in collector.scenario_file(args, 'optout', []).read_text()
 
 
+def test_shared_runner_forks_with_serial_physics_and_loads_navmesh_on_each_reset(tmp_path, monkeypatch):
+    shared = rl.module("navmesh_measure")
+    launch = {}
+
+    def popen(command, **kwargs):
+        launch.update(command=command, **kwargs)
+        return SimpleNamespace()
+
+    monkeypatch.setattr(shared.subprocess, "Popen", popen)
+    monkeypatch.setenv("OPENGOTHIC_PHYSICS_THREADS", "8")
+    initial = tmp_path / "prepare.bench"
+    mesh = f"navmesh build {tmp_path / 'cache'} {tmp_path / 'links.txt'}"
+    initial.write_text(mesh + "\nlabel done\n")
+    args = SimpleNamespace(output=tmp_path, ini=None, runner=Path("runner"),
+                           assets=Path("assets"), save=Path("save"))
+    runner = shared.Runner(args, initial)
+    try:
+        assert {"--stdio", "--fork-reset", "--serial-workers"} <= set(launch["command"])
+        assert "--fork-prefix" not in launch["command"]
+        assert launch["env"]["OPENGOTHIC_PHYSICS_THREADS"] == "0"
+        requests = []
+        monkeypatch.setattr(runner, "request", lambda command, timeout: requests.append(command) or {"done": True})
+        scenario = tmp_path / "episode.bench"
+        scenario.write_text("seed 7\nnavdemos wait\nlabel done\n")
+        for index, source in enumerate((initial, scenario, scenario)):
+            runner.scenario(source, tmp_path / str(index), 7)
+            bench = Path(requests[-1]["scenario"]).read_text()
+            assert bench.count(mesh) == 1
+            assert bench.index(mesh) < bench.index("label done")
+        assert scenario.read_text() == "seed 7\nnavdemos wait\nlabel done\n"
+    finally:
+        runner.stderr.close()
+
+
 def test_teacher_resume_rejects_mixed_physics_metadata(tmp_path, monkeypatch):
     pair = dict(region='market', start='A', goal='B')
     directory = tmp_path / 'teacher/00000'
