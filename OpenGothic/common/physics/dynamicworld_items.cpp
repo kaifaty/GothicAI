@@ -11,7 +11,8 @@
 #include <cctype>
 
 // The placed-item census key hashes this function's inputs, not its hull:
-// any change to the hull it builds bumps PlacedCensusCache::RulesVersion.
+// body construction and census rules are covered by the build fingerprint.
+// Add new builder code outside its files to cmake/PlacedCensusBuilder.cmake.
 const DynamicWorld::ItemHull& DynamicWorld::itemHullShape(const ProtoMesh& proto, std::string_view visual) {
   std::string key(visual);
   std::transform(key.begin(),key.end(),key.begin(),[](unsigned char c) { return char(std::toupper(c)); });
@@ -313,7 +314,8 @@ std::string DynamicWorld::placedItemCensusInputs(const std::vector<PlacedItemCan
     };
   // Candidates are hashed by what their body is built from, not by the body:
   // a cache hit must not create bodies or item hulls. Body construction is
-  // deterministic in these inputs; changes to it bump RulesVersion.
+  // deterministic in these inputs; the build fingerprint covers its code and
+  // census rules. Extend cmake/PlacedCensusBuilder.cmake for new builder files.
   out.text("candidates-v2");
   out.u64(candidates.size());
   std::unordered_map<std::string,uint32_t> hullSources;
