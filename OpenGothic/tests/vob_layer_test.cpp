@@ -339,16 +339,19 @@ void particleFields(daedalus::DaedalusVm& vm, const Def::ParticleEffect& actual,
   require(cls!=nullptr,"particle class exists in base program");
   const auto fields=vm.find_class_members(*cls);
   require(fields.size()==57,"every original C_PARTICLEFX field is compared");
+  size_t compared=0;
   for(const auto* field:fields) {
-    bool same=false;
-    switch(field->type()) {
-      case daedalus::DaedalusDataType::INT: same=field->get_int(0,&actual)==field->get_int(0,&expected); break;
-      case daedalus::DaedalusDataType::FLOAT: same=field->get_float(0,&actual)==field->get_float(0,&expected); break;
-      case daedalus::DaedalusDataType::STRING: same=field->get_string(0,&actual)==field->get_string(0,&expected); break;
-      default: throw std::runtime_error("unexpected particle field type");
+#define COMPARE_PARTICLE_FIELD(type, fieldName, extent, symbol) \
+    if(field->name()=="C_PARTICLEFX." symbol) { \
+      require(actual.fieldName==expected.fieldName,"inherited/set source particle field "+field->name()); \
+      ++compared; \
+      continue; \
       }
-    require(same,"inherited/set source particle field "+field->name());
+    DEF_PARTICLE_EFFECT_FIELDS(COMPARE_PARTICLE_FIELD)
+#undef COMPARE_PARTICLE_FIELD
+    throw std::runtime_error("unexpected particle field "+field->name());
     }
+  require(compared==57,"every original C_PARTICLEFX field was compared");
   }
 
 void particleSettings(const ParticleFx& actual, const ParticleFx& expected) {

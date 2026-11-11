@@ -918,3 +918,150 @@ def test_knee_floor_brings_a_chain_drawn_into_a_line_back_to_the_bind_knee_and_l
     rep = kf.lay(skel, anim, floor)
     cols = [clip.col[i] for i in (hip, knee, foot)]
     assert np.allclose(np.abs((anim.rotations[0, cols] * was[0, cols]).sum(-1)), 1, atol=1e-9)   # frame 0 is the bent one
+
+
+def _bvh_text(root_rows) -> str:
+    """A 100STYLE-like BVH in a T-pose, facing +Z: only the root moves (x, y, z, yaw)."""
+    def joint(name, off, kids=(), end=None, root=False):
+        ch = "CHANNELS 6 Xposition Yposition Zposition Yrotation Xrotation Zrotation" if root else "CHANNELS 3 Yrotation Xrotation Zrotation"
+        body = "".join(joint(*k) for k in kids)
+        if end is not None:
+            body += "End Site\n{\nOFFSET %g %g %g\n}\n" % end
+        return "%s %s\n{\nOFFSET %g %g %g\n%s\n%s}\n" % ("ROOT" if root else "JOINT", name, *off, ch, body)
+
+    def arm(s, x):
+        return (f"{s}Collar", (3 * x, 7, 0), [(f"{s}Shoulder", (16 * x, 0, 0), [(f"{s}Elbow", (31 * x, 0, 0), [
+            (f"{s}Wrist", (25 * x, 0, 0), (), (19 * x, 0, 0))])])])
+
+    def leg(s, x):
+        return (f"{s}Hip", (11 * x, 0, 0), [(f"{s}Knee", (0, -44, 0), [(f"{s}Ankle", (0, -43, 0), [
+            (f"{s}Toe", (0, -10, 19), (), (0, -1, 5))])])])
+
+    spine = ("Chest", (0, 13, 0), [("Chest2", (0, 10, 0), [("Chest3", (0, 9, 0), [("Chest4", (0, 9, 0), [
+        ("Neck", (0, 13, 0), [("Head", (0, 9, 0), (), (0, 17, 0))]), arm("Right", -1), arm("Left", 1)])])])])
+    text = "HIERARCHY\n" + joint("Hips", (0, 0, 0), [spine, leg("Right", -1), leg("Left", 1)], root=True)
+    rows = [" ".join(f"{v:.6f}" for v in (x, y, z, yaw, 0, 0) + (0,) * 66) for x, y, z, yaw in root_rows]
+    return text + f"MOTION\nFrames: {len(rows)}\nFrame Time: {1 / 60:.6f}\n" + "\n".join(rows) + "\n"
+
+
+def test_bvh_to_soma_reads_a_walk_along_any_way_as_a_walk_along_z_and_straightens_a_turn(tmp_path):
+    import bvh_to_soma as bs
+
+    # a straight walk along +X, the body turned that way: comes out along +Z with every joint at rest
+    rows = [(1.2 * f, 97.0, 0.0, 90.0) for f in range(120)]
+    (tmp_path / "a.bvh").write_text(_bvh_text(rows))
+    bvh = bs.read_bvh(tmp_path / "a.bvh")
+    assert len(bvh["names"]) == 23 and abs(1 / bvh["dt"] - 60) < 0.01
+    d = bs.convert(bvh)
+    hips = d["posed_joints"][:, rs.SOMA30.index("Hips")]
+    assert np.abs(hips[:, 0]).max() < 1e-6 and abs(hips[-1, 2] - 1.2 * 119) < 1e-6
+    assert np.abs(d["global_rot_mats"] - np.eye(3)).max() < 1e-9
+    left = d["posed_joints"][0, rs.SOMA30.index("LeftLeg")] - d["posed_joints"][0, rs.SOMA30.index("RightLeg")]
+    assert left[0] > 20 and abs(left[2]) < 1e-9                       # the left side at +X, as SOMA's
+    tip = d["posed_joints"][0, rs.SOMA30.index("LeftHandMiddleEnd")] - d["posed_joints"][0, rs.SOMA30.index("LeftHand")]
+    assert np.allclose(tip, [19, 0, 0])
+
+    # a walk round a circle of 2 m with the steps' sway on it: straightened, it goes along +Z by the arc, the
+    # body does not turn, and the sway stays
+    f = np.arange(600)
+    ang = np.radians(0.5 * f)                                         # 30 degrees a second
+    sway = 2.0 * np.sin(2 * np.pi * f / 75)                           # a stride of 1.25 s, 2 cm either way
+    rad = 200.0 + sway
+    rows = [(rad[i] * np.cos(ang[i]) - 200.0, 97.0, -rad[i] * np.sin(ang[i]), np.degrees(ang[i]) - 180.0) for i in f]
+    (tmp_path / "b.bvh").write_text(_bvh_text(rows))
+    bvh = bs.read_bvh(tmp_path / "b.bvh")
+    d = bs.convert(bvh, 150, 451, straighten=2.5)
+    hips = d["posed_joints"][:, rs.SOMA30.index("Hips")]
+    arc = 200.0 * (ang[450] - ang[150])
+    assert 0.96 * arc < hips[-1, 2] - hips[0, 2] <= arc             # the low-passed way cuts the bend: 3 % shorter here
+    assert 1.5 < np.abs(hips[:, 0]).max() < 2.6                       # the sway, not the circle
+    yaw = np.degrees(np.arctan2(d["global_rot_mats"][:, 0, 0, 2], d["global_rot_mats"][:, 0, 2, 2]))
+    assert np.abs(yaw - yaw.mean()).max() < 2.0                       # the heading's turn is gone
+    whole = bs.convert(bvh, 150, 451)
+    assert np.ptp(np.degrees(np.arctan2(whole["global_rot_mats"][:, 0, 0, 2], whole["global_rot_mats"][:, 0, 2, 2]))) > 100
+
+
+def test_loop_keys_tiles_a_loop_in_time_and_spreads_the_keys_evenly_under_kimodos_limit():
+    import loop_keys as lk
+
+    rng = np.random.default_rng(7)
+    n = 23                                                       # Gothic's walk: 24 frames at 25 fps
+    rot = random_quats(rng, (n + 1, 3))
+    rot[n] = rot[0]
+    pos = rng.normal(size=(n + 1, 3, 3))
+    pos[:, 0, 2] = np.linspace(0.0, 131.5, n + 1)
+    pos[n, 0, :2] = pos[0, 0, :2]
+    pos[n, 1:] = pos[0, 1:]
+    loop = ga.Animation(name="S_WALKL", next="S_WALKL", layer=1, fps=25.0, frame_count=n + 1,
+                        node_indices=[0, 3, 7], positions=pos, rotations=rot)
+    tiled = lk.tile(loop, 30.0, 170, "P_WALK30")
+    assert tiled.frame_count == 170 and tiled.fps == 30.0
+    # frame 6 of the record is 0.2 s: the loop's frame 5 exactly; frame 144 is 4.8 s: 5 cycles and frame 5 again
+    for t, cycles in ((6, 0), (144, 5)):
+        assert np.allclose(tiled.positions[t, 1:], pos[5, 1:])
+        assert np.allclose(tiled.positions[t, 0], pos[5, 0] + cycles * np.array([0.0, 0.0, 131.5]))
+        assert np.allclose(np.abs((tiled.rotations[t] * rot[5]).sum(-1)), 1.0)
+    assert np.all((tiled.rotations[1:] * tiled.rotations[:-1]).sum(-1) >= 0)      # no sign flips between frames
+    assert np.all(np.diff(tiled.positions[:, 0, 2]) > 0)                           # the root goes on over the seams
+
+    cycle = n / 25.0 * 30                                        # 27.6 Kimodo frames
+    assert lk.key_frames(cycle, 2) == [0, 14, 28, 41, 55, 69, 83, 97, 110, 124, 138, 152, 166]
+    assert lk.key_frames(cycle, 4)[:5] == [0, 7, 14, 21, 28] and lk.key_frames(cycle, 4)[-1] == 110
+    for per in (2, 4, 8):
+        assert len(lk.key_frames(cycle, per)) < 20
+
+
+def test_fix_layer_move_shifts_a_foot_by_a_vector_in_its_window_and_keeps_its_turn():
+    import fix_layer
+    skel, anim = leg_clip(10)
+    orig = ga.Animation(anim.name, "", 1, 25.0, 10, list(anim.node_indices), anim.positions.copy(), anim.rotations.copy())
+    j = skel.index("BIP01 L FOOT")
+    before = [ga.world_pose(skel, anim, f)[j] for f in range(10)]
+    fix_layer.apply(skel, anim, [{"kind": "move", "limb": "L leg", "window": [2, 4, 5, 7], "by": [0, 4, -6]}], floor=0.0)
+    after = [ga.world_pose(skel, anim, f)[j] for f in range(10)]
+    keep = [0, 1, 2, 7, 8, 9]
+    assert np.array_equal(anim.rotations[keep], orig.rotations[keep]) and np.array_equal(anim.positions, orig.positions)
+    for f in (4, 5):                                                # the whole vector where the window is full
+        assert np.allclose(after[f][:3, 3] - before[f][:3, 3], [0, 4, -6], atol=0.05)
+        assert np.allclose(after[f][:3, :3], before[f][:3, :3], atol=1e-6)   # the foot keeps its turn
+    for f in (3, 6):                                                # half of it on the way in and out
+        assert np.allclose(after[f][:3, 3] - before[f][:3, 3], [0, 2, -3], atol=0.05)
+
+
+def test_trans_clip_plant_root_brings_the_body_to_a_foot_that_stands_the_whole_clip():
+    import trans_clip
+    skel, anim = leg_clip(10)
+    anim.positions[:, 0, 2] = np.arange(10) * 3.0        # the body goes 27 cm, the rigid leg's foot with it: 3 cm a frame
+    orig = anim.positions.copy()
+    j = skel.index("BIP01 L FOOT")
+    shift = trans_clip.plant_root(anim, skel)
+    foot = np.array([ga.world_pose(skel, anim, f)[j][:3, 3] for f in (0, 9)])
+    assert np.allclose(shift, [0.0, -27.0])
+    assert np.allclose(foot[0], foot[1], atol=1e-6)                             # the foot ends where it began
+    assert np.allclose(anim.positions[0], orig[0]) and np.array_equal(anim.positions[:, 0, :2], orig[:, 0, :2])
+    step = np.diff(anim.positions[:, 0, 2])
+    assert abs(step[0] - 3.0) < 1.0 and abs(step[-1] - 3.0) < 1.0               # the ends keep most of their speed:
+    assert step[4] < -1.0                                                       # the shift is made in the middle
+    skel2, moving = leg_clip(10)
+    moving.positions[:, 0, 2] = np.arange(10) * 12.0     # 12 cm a frame: the foot does not stand, nothing moves
+    assert np.allclose(trans_clip.plant_root(moving, skel2), 0.0)
+
+
+def test_fix_layer_tread_lays_the_toe_on_the_floor_from_above_and_from_below():
+    import fix_layer
+    skel, anim = leg_clip(8)
+    foot, toe = skel.index("BIP01 L FOOT"), skel.index("BIP01 L TOE0")
+    tilt = lambda deg: np.array([np.cos(np.radians(deg) / 2), np.sin(np.radians(deg) / 2), 0, 0])
+    anim.rotations[2:4, 3] = tilt(12)                      # the foot pitched one way for two frames,
+    anim.rotations[4:6, 3] = tilt(-12)                     # the other way for two more
+    before = np.array([ga.world_pose(skel, anim, f)[toe][1, 3] for f in range(8)])
+    floor = float(before[0])                               # where the toe lies when the foot is as the leg carries it
+    assert before[2:4].max() - floor < -1 or before[2:4].min() - floor > 1
+    assert (before[2] - floor) * (before[4] - floor) < 0   # one pair under the floor, the other over it
+    orig = anim.rotations.copy()
+    fix_layer.apply(skel, anim, [{"kind": "tread", "limb": "L leg", "window": [1, 2, 5, 6]}], floor=floor - 3.0)
+    after = np.array([ga.world_pose(skel, anim, f)[toe][1, 3] for f in range(8)])
+    assert np.allclose(after[2:6], floor, atol=0.05)       # the toe lies on the floor in the whole window
+    assert np.array_equal(anim.rotations[[0, 1, 6, 7]], orig[[0, 1, 6, 7]])
+    ankle = [ga.world_pose(skel, anim, f)[foot][:3, 3] for f in range(8)]
+    assert np.allclose(ankle, ankle[0])                    # the ankle stays: only the foot turns

@@ -35,3 +35,15 @@ jobs:
           else
             echo "::warning title=Храповик техдолга::На базе PR в scripts/debt.py нет команды check; храповик пропущен."
           fi
+      - name: Check engine layers
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          # Only warns: forbidden includes the PR adds across the engine layers.
+          tool=$(mktemp -d)
+          if git show "$BASE_SHA:scripts/engine_layers.py" > "$tool/engine_layers.py" 2> /dev/null; then
+            python3 "$tool/engine_layers.py" check --base "$BASE_SHA" \
+              || echo "::warning title=Слои движка::Проверка слоёв упала; журнал шага выше."
+          else
+            echo "Слои движка: на базе PR ещё нет scripts/engine_layers.py; проверка пропущена."
+          fi

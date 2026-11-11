@@ -1,4 +1,6 @@
 #include "camera.h"
+#include "settings.h"
+#include "gameservices.h"
 
 #include <Tempest/Application>
 #include <Tempest/Log>
@@ -12,7 +14,6 @@
 #include "game/aimcamera.h"
 #include "utils/gthfont.h"
 #include "utils/dbgpainter.h"
-#include "gothic.h"
 
 #include "utils/string_frm.h"
 
@@ -82,7 +83,7 @@ Camera::Camera() {
   }
 
 void Camera::reset() {
-  reset(Gothic::inst().player());
+  reset(GameServices::inst().player());
   }
 
 void Camera::reset(const Npc* pl) {
@@ -130,7 +131,7 @@ void Camera::changeZoom(int delta) {
   }
 
 void Camera::setViewport(uint32_t w, uint32_t h) {
-  const float fov = Gothic::options().cameraFov;
+  const float fov = Settings::options().cameraFov;
   proj.perspective(fov*fovK, float(w)/float(h), zNear(), zFar());
 
   // NOTE: usually depth bouds are from 0.95 to 1.0, resilting into ~805675 discrete values
@@ -146,7 +147,7 @@ void Camera::setViewport(uint32_t w, uint32_t h) {
   }
 
 float Camera::fovY() const {
-  return Gothic::options().cameraFov*fovK;
+  return Settings::options().cameraFov*fovK;
   }
 
 float Camera::zNear() const {
@@ -162,7 +163,7 @@ void Camera::setNearClip(float zNear) {
 
 void Camera::updateProj() {
   if(vpWidth>0 && vpHeight>0)
-    proj.perspective(Gothic::options().cameraFov*fovK, float(vpWidth)/float(vpHeight), zNear(), zFar());
+    proj.perspective(Settings::options().cameraFov*fovK, float(vpWidth)/float(vpHeight), zNear(), zFar());
   }
 
 float Camera::zFar() const {
@@ -217,7 +218,7 @@ void Camera::setMode(const Camera::Mode m) {
     return;
 
   if(camMod==Camera::FirstPerson) {
-    if(auto pl = Gothic::inst().player()) {
+    if(auto pl = GameServices::inst().player()) {
       state.spin = Vec3(0, pl->rotation(), 0);
       }
     return;
@@ -233,7 +234,7 @@ void Camera::setMode(const Camera::Mode m) {
     state.spin = Vec3(0);
     }
 
-  if(auto pl = Gothic::inst().player()) {
+  if(auto pl = GameServices::inst().player()) {
     state.spin = Vec3(0, pl->rotation(), 0);
     }
 
@@ -248,7 +249,7 @@ void Camera::setMarvinMode(Camera::MarvinMode nextMod) {
     return;
 
   if(nextMod==M_Pinned) {
-    const auto pl = Gothic::inst().player();
+    const auto pl = GameServices::inst().player();
 
     auto      offset = origin;
     Matrix4x4 rotMat = pl!=nullptr ? pl->cameraMatrix(false) : Matrix4x4::mkIdentity();
@@ -434,7 +435,7 @@ void Camera::onRotateMouse(const PointF& dpos) {
 
 Matrix4x4 Camera::projective() const {
   auto ret = proj;
-  if(auto w = Gothic::inst().world())
+  if(auto w = GameServices::inst().world())
     w->globalFx()->morph(ret);
   return ret;
   }
@@ -637,7 +638,7 @@ Camera::ListenerPos Camera::listenerPosition() const {
   }
 
 const Def::Camera& Camera::cameraDef() const {
-  auto& camd = Gothic::cameraDef();
+  auto& camd = GameServices::inst().cameraDefinitions();
   if(camMod==Dialog)
     return camd.dialogCam();
   if(lbEnable)
@@ -663,7 +664,7 @@ const Def::Camera& Camera::cameraDef() const {
     return camd.fallCam();
   if(camMod==Mobsi) {
     std::string_view tag = "", pos = "";
-    if(auto pl = Gothic::inst().player())
+    if(auto pl = GameServices::inst().player())
       if(auto inter = pl->interactive()) {
         tag = inter->schemeName();
         pos = inter->posSchemeName();
@@ -800,7 +801,7 @@ void Camera::followAng(float& ang, float dest, float speed, float dtF) {
   }
 
 void Camera::tick(uint64_t dt) {
-  if(Gothic::inst().isPause() || (camMarvinMod==M_Freeze && camMod!=Dialog))
+  if(GameServices::inst().isPause() || (camMarvinMod==M_Freeze && camMod!=Dialog))
     return;
 
   if(isCutscene()) {
@@ -841,7 +842,7 @@ void Camera::tick(uint64_t dt) {
       break;
       }
     case M_Pinned: {
-      const auto pl     = Gothic::inst().player();
+      const auto pl     = GameServices::inst().player();
       const auto rotMat = pl!=nullptr ? pl->cameraMatrix(false) : Matrix4x4::mkIdentity();
 
       auto offset = pin.origin;
@@ -853,7 +854,7 @@ void Camera::tick(uint64_t dt) {
       }
     }
 
-  if(auto w = Gothic::inst().world()) {
+  if(auto w = GameServices::inst().world()) {
     Vec3 sh;
     w->globalFx()->shake(sh);
     shake = shake + (sh-shake)*std::min(1.f, dtF*1000.f);
@@ -872,7 +873,7 @@ void Camera::tick(uint64_t dt) {
     targetVelo = (origin - prev).length()/dtF;
   }
 
-  auto world = Gothic::inst().world();
+  auto world = GameServices::inst().world();
   if(world!=nullptr) {
     auto  pl     = isFree() ? nullptr : world->player();
     auto& physic = *world->physic();
@@ -892,7 +893,7 @@ void Camera::tick(uint64_t dt) {
   }
 
 void Camera::tickFirstPerson(float /*dtF*/) {
-  const auto pl     = Gothic::inst().player();
+  const auto pl     = GameServices::inst().player();
   const auto rotMat = pl!=nullptr ? pl->cameraMatrix(true) : Matrix4x4::mkIdentity();
 
   state.spin   = clampRotation(state.spin);
@@ -990,7 +991,7 @@ void Camera::tickThirdPerson(float dtF) {
     const float leanLen = lean.length();
     if(leanLen>1e-3f) {
       float room = 1;
-      if(auto world = Gothic::inst().world()) {
+      if(auto world = GameServices::inst().world()) {
         auto rc = world->physic()->ray(at, at + lean*((leanLen+leanClear)/leanLen));
         if(rc.hasCol)
           room = std::clamp(((rc.v-at).length()-leanClear)/leanLen, 0.f, 1.f);
@@ -1051,7 +1052,7 @@ float Camera::calcCameraColision(const Tempest::Vec3& target, const Tempest::Vec
   static float padding = 25;
   static int n = 1, nn=1;
 
-  auto world = Gothic::inst().world();
+  auto world = GameServices::inst().world();
   if(world==nullptr)
     return range;
 
@@ -1106,7 +1107,7 @@ Vec3 Camera::calcLookAtAngles(const Tempest::Vec3& origin, const Tempest::Vec3& 
 Vec3 Camera::calcCameraColision(const Tempest::Vec3& from, const Tempest::Vec3& dir) const {
   static float padding = 25;
 
-  auto world = Gothic::inst().world();
+  auto world = GameServices::inst().world();
   if(world==nullptr)
     return dir;
 
@@ -1130,7 +1131,7 @@ Vec3 Camera::clampRotation(Tempest::Vec3 spin) {
   float       maxAzim = +180;
   float       minAzim = -180;
 
-  const auto pl = Gothic::inst().player();
+  const auto pl = GameServices::inst().player();
   if(pl==nullptr)
     return spin;
 
@@ -1169,7 +1170,7 @@ void Camera::debugDraw(DbgPainter& p) {
   p.drawLine(state.target, inter.target);
   p.drawLine(inter.target, origin);
 
-  if(auto pl = Gothic::inst().player()) {
+  if(auto pl = GameServices::inst().player()) {
     float a  = pl->rotationRad()+float(M_PI*0.5);
     float c  = std::cos(a), s = std::sin(a);
     auto  ln = Vec3(c,0,s)*25.f;

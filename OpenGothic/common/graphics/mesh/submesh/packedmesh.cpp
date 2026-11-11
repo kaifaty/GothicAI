@@ -453,6 +453,8 @@ PackedMesh::PackedMesh(const asset::WorldMesh& mesh, std::span<const uint32_t> t
   const auto materials=materialMap.empty() ? landscapeMaterialMap(mesh) : std::vector<uint32_t>();
   packMeshletsLnd(mesh,triangles,materialMap.empty() ? std::span<const uint32_t>(materials) : materialMap,vertexIds,featureIds);
   computeBbox();
+  // A chunk package: one texture owner per material, measured here on the packing thread.
+  measureTexels();
   }
 
 PackedMesh::PackedMesh(const asset::StaticMesh& mesh, PkgType type, bool explicitAlphaTest) {
@@ -469,6 +471,7 @@ PackedMesh::PackedMesh(const asset::StaticMesh& mesh, PkgType type, bool explici
   }
 
   packMeshletsObj(mesh,type,nullptr);
+  measureTexels();
   // Native MRM keeps its historical alpha heuristics. GLB declares OPAQUE or
   // MASK explicitly, including when both occur in one mesh.
   if(explicitAlphaTest) {
@@ -514,6 +517,36 @@ PackedMesh::PackedMesh(const asset::SoftSkinMesh& skinned) {
 
   const auto rest = fitSkinRest(skinned);
   packMeshletsObj(mesh,PK_Visual,&vertices,&rest);
+  measureBindTexels(mesh);
+  }
+
+// The packed vertices of a soft skin hold positions in their bones' frames: the UV density comes from the bind pose
+// (the source positions in model space), measured per submesh as for a static mesh. Animation and morphs are ignored.
+void PackedMesh::measureBindTexels(const asset::StaticMesh& mesh) {
+  std::vector<Vertex>   bind;
+  std::vector<uint32_t> ibo;
+  for(size_t mId=0; mId<mesh.sub_meshes.size() && mId<subMeshes.size(); ++mId) {
+    auto& sm = mesh.sub_meshes[mId];
+    bind.clear();
+    ibo.clear();
+    bind.reserve(sm.wedges.size());
+    for(auto& w:sm.wedges) {
+      Vertex v = {};
+      if(w.index<mesh.positions.size()) {
+        v.pos[0] = mesh.positions[w.index].x;
+        v.pos[1] = mesh.positions[w.index].y;
+        v.pos[2] = mesh.positions[w.index].z;
+        }
+      v.uv[0] = w.texture.x;
+      v.uv[1] = w.texture.y;
+      bind.push_back(v);
+      }
+    ibo.reserve(sm.triangles.size()*3);
+    for(auto& t:sm.triangles)
+      for(int x=0; x<3; ++x)
+        ibo.push_back(t.wedges[x]);
+    subMeshes[mId].texel = TexelDensity::measure(bind.data(),bind.size(),ibo.data(),0,ibo.size());
+    }
   }
 
 // Symmetric 4x4 eigen-decomposition by Jacobi rotations: a ends diagonal, the columns of v are the eigenvectors.
@@ -989,6 +1022,13 @@ void PackedMesh::debug(std::ostream &out) const {
 
 std::pair<Vec3, Vec3> PackedMesh::bbox() const {
   return std::make_pair(mBbox[0],mBbox[1]);
+  }
+
+void PackedMesh::measureTexels() {
+  if(vertices.empty())
+    return;
+  for(auto& sub:subMeshes)
+    sub.texel = TexelDensity::measure(vertices.data(),vertices.size(),indices.data(),sub.iboOffset,sub.iboLength);
   }
 
 void PackedMesh::computeBbox() {

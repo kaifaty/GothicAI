@@ -194,7 +194,7 @@ frame per game step; `0` removes the limit. `bench.sh` records the run mode `off
 `ffmpeg`. Without presenting these are meaningless: the frame profile's `Present` zone,
 `LoadProbe::presented`, `[app-cadence]` (`OPENGOTHIC_FPS_LOG=1`), FPS and low-1 %; frame timing stays
 with windowed benches. `scripts/ryzen.sh` runs benches offscreen by default; `RYZEN_BENCH_WINDOW=1` and
-the other [window conditions](../../docs/ryzen.md#как-работает-сейчас) bring the window back.
+the other [window conditions](../../docs/ryzen.md#как-работает-сейчас) bring the window back. Explicit `TEMPEST_OFFSCREEN=1` keeps `quiet` offscreen unless a visible window or presentation timing is requested. `metrics.csv.wall_ms` records elapsed wall time per frame; heartbeat events retain wall time and total steps every 10 s, so offscreen frame throughput can be checked without presentation FPS.
 [Note](../../reports/compute/2026-11-09-offscreen-bench/README.md).
 
 For performance comparisons (before/after or FPS), run both takes on the same machine:
@@ -284,31 +284,37 @@ range, it captures the first frame back in the market without waiting for Far pu
 Use `OPENGOTHIC_VOB_STREAMING=0` and `=1` to compare static vob residency. Claude compares
 the resulting frames on Mac.
 
+`texture-owners-shots` is the same kind of still comparison for owners that get their texture level by
+distance (NPCs, items in the world, interactive vobs): `owner-npc-face`, `owner-npc-body`,
+`owner-npc-10m`, `owner-npc-15m`, `owner-chest`, `owner-sword`, `owner-bench`, and
+`owner-npc-teleport` — the first frame after a jump back to the NPC, shot without a streaming wait.
+The hero waits 20 m under the ground, so the camera alone sets the distance. Compare levels against
+the ring rule (`OPENGOTHIC_TEXTURE_SCREEN_MIPS=0`) with `shots_diff.py --shots <names>`; with
+`OPENGOTHIC_TEXTURE_TARGET_MB=0` every texture stands on its wanted level. Claude compares the frames.
+
 `streaming-shots` runs with `deterministic on`: the world stands still while `streaming wait`
-waits, then the TAA history and the SSAO history start over at phase 0 and 16 fixed steps run with
-visibility in cluster order before `shot`; texture levels settle and stand still until the shot.
-Two runs of one binary then give byte-identical `perf-market`, `perf-harbour`, `perf-forest` and
-`perf-island` PNGs at any load in most pairs on Mac, TAA on; a single point can still land in a
-second state (forest ≤ 68 px, island ≤ 0.8 %, max 3 levels; issue #946). `perf-market-teleport` is
-shot without a streaming wait by design and still depends on loading. Accept a render change
-off ↔ on as two consecutive runs on one host and binary, toggled by the feature's own variable:
+waits and four frames more once everything is loaded (also when it was loaded on arrival), then the
+TAA history and the SSAO history start over at phase 0 and 16 fixed steps run with visibility in
+cluster order before `shot`; texture levels settle and stand still until the shot.
+Two runs of one binary then give byte-identical `perf-market` and `perf-harbour` PNGs, and
+`perf-forest` and `perf-island` PNGs in most pairs: at 1920x1080 on Ryzen, virtual shadow maps on,
+five runs gave 0 changed pixels at the market and the harbour in all ten pairs, 0 or 1 pixel in the
+forest and 0, 3 or 35–38 pixels (max 2 levels) on the island, the same pixels every time (issue
+#946). `perf-market-teleport` is shot without a streaming wait by design and still depends on
+loading. Accept a render change off ↔ on as two consecutive runs on one host and binary, toggled by
+the feature's own variable:
 `uv run --no-project --with pillow --with numpy python
 reports/engine/2026-11-03-streaming-optimisation/shots_diff.py off=<dir> on=<dir>` must report 0
 changed pixels at the four waited points (`--all-pairs` compares every pair of several runs). If a
 point differs, run off and on once more: the change is accepted when every one of the four points
 gives 0 in at least one off ↔ on pair. [Report](../../reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md).
 
-On Ryzen the virtual shadow maps are on, and their GPU passes depend on the order of shader
-invocations (issue #946): at 1920x1080 two runs of one binary differ by 0–60 pixels by 1–2 levels
-at a point, and one run in five puts the island into a second state (about 1 % of pixels, max 3,
-noise in the clouds). So at 1920x1080 on Ryzen:
-- the exact comparison runs both sides with `OPENGOTHIC_VSM=0`: five runs of one binary are
-  byte-identical at the four waited points, and off ↔ on must report 0 changed pixels;
-- with VSM (a change that touches shadows or what reads them) a point is accepted within 100
-  changed pixels and max 2 levels; an island in its second state is shot again.
-
-[Report](../../reports/engine/2026-11-10-still-shots-repeat/README.md): the cause of the 2026-11-10
-regression (the SSAO cycle's phase was not reset), the proof and what is left in VSM.
+The virtual shadow maps stay on for the comparison on Ryzen: their GPU passes no longer depend on
+the order of shader invocations.
+[Report](../../reports/engine/2026-11-10-still-shots-repeat/README.md): the SSAO cycle's phase that
+was not reset, the two shader bugs behind the VSM noise (an uninitialised depth in
+`fog_epipolar.comp`, a page lost in `vsm_mark_pages.comp`), the second state of a still (whether the
+wait had to wait) and what is left.
 
 `motion-vectors` and `motion-vectors-clips` check the motion vectors of objects (graphics plan 1b,
 [report](../../reports/render-features/2026-11-10-motion-vectors/step-1b.md)). `motion-vectors` takes stills: a still
@@ -331,6 +337,9 @@ layer), `OPENGOTHIC_TAA_REACTIVE=0`, `=1`, `=1` with the view and `OPENGOTHIC_TA
 
 ## План и журнал
 
+- 2026-11-10: a deterministic `streaming wait` holds the loaded world four frames before the reset (a still
+  had a second state by whether the wait had to wait: clouds and exposure lag a frame or two); two
+  shader fixes took the thread-order noise out of VSM, so stills are compared with VSM on again.
 - 2026-11-10: `taa-reactive-stills`, `taa-reactive-clips` (graphics plan 1v); `stats mana <n> circle <n>` lets the
   hero cast a rune.
 - 2026-11-10: `deterministic on` also starts the SSAO history over at phase 0 of its sample cycle
@@ -548,8 +557,8 @@ the centre's travel, the angle of a flat piece's face and long axis from vertica
 ground (`bodies`, `bodies_sleeping`, `bodies_fell`: pieces of one group share one body; without
 bonds a group is a piece); at 15 s the native hull penetration into a floor plane, into the
 real ground (`native_floor_penetration_cm`, Jolt `CollideShape` against landscape and static objects)
-and into the other pieces (format 3 METAL–WOOD pairs of one break and pieces of one bond group are
-skipped: they never collide),
+and into the other pieces (pairs the break's hoop filter never collides — a group of METAL only against a
+group with WOOD — and pieces of one bond group are skipped),
 the visible (vertex) penetration below that plane and below the ground under each vertex
 (`visible_terrain_penetration_cm`), hoops on the ground (`metal_on_ground`) and the 13→15 s jitter. Every break also
 writes `destruction2_start` (each piece's centre over the ground and native hull depth at birth) and,
@@ -566,6 +575,32 @@ the ground, and the result line reports whether it sleeps at the final checkpoin
 `own-content-fracture` settings plus `TEMPEST_WINDOW_SIZE=1280x720`; `OPENGOTHIC_FRACTURE_MOTION`
 varies the version 3 piece motion, `OPENGOTHIC_FRACTURE_BONDS` the bond rule. Inside a `movable measure` window the pieces are not sampled: the
 timed frames stay free of bench work.
+
+`own-wood-remnant-clip` takes the [repeat blows on remnants](../../reports/physics/2026-11-destruction-bonds/README.md#клип-повторных-ударов)
+with the same place, seed, noon and cameras: per prop one take `<prop>-remnant.mp4` from the accepted
+one-handed blow through three more breaks to a walk over the pieces, and a close frame
+`<prop>-close-break1..4.png` after each break (`destruction2 stand` first). `destruction2 remnant <n>`
+strikes the largest bond group of the broken fixture prop with the native forward attack, at most `n`
+swings, until the prop has more bodies. Before each swing it places the hero by where that attack's
+blade comes down: 126 cm forward and 28 cm right of the feet (`melee-blade-shadow.jsonl`, top contacts).
+From the first blow's side by 30 degree steps, rays straight down along the line to the group's centre of
+mass find the first point of the group's own body no lower than 30 cm under its top (the floor of an open
+crate is out of the blade's reach); a side with a loose piece found first, or higher within 20 cm of that
+point (rays every 4 cm), is skipped. Events: `destruction2_remnant_attempt` per swing (side, landing),
+`destruction2_remnant_complete` with `broken`, `swings`, bodies and the largest group before and after,
+and every group's pieces. `destruction2 walk <cm>` then walks the hero, holding forward (4 s at most a
+pass), along a straight line through the centre of the loose pieces, clear of the largest group by its
+radius plus 40 cm, there and back. The line must pass within 10 cm of the hull of a loose piece from 0.5 m
+(one the hero pushes; smaller ones it walks through); failing that, lines through each such piece; with
+none the scenario aborts. `destruction2_walk` gives `pieces_on_path`, per pass the progress, the feet over
+and under the ground and the pieces moved, and over the walk `moved_pieces` and `counted` (true only if a
+piece moved). Every break, the first and each remnant's, writes `destruction_break` (with
+`remnant`) and `destruction2_start` / `destruction2_pieces` under its own case: `<case>-remnant-<n>` for
+the n-th remnant break, sampled from its own moment; `hero_debris_penetration_cm`,
+`hero_piece_penetration_cm` and `hero_light_piece_penetration_cm` give the depth of the hero's capsule (its
+controller's radius, `hero_radius_cm`) in remnants, in single pieces from 0.5 m and 10 kg, and in lighter ones,
+which are no floor: the feet pass into their tops by design.
+`reports/physics/2026-11-destruction-bonds/clip_groups.py` names the groups. The scenario declares `# @timeout 900`.
 
 Corpse water: `water-bodies` records a real harbour WindFist throw, a dead wolf and a
 sinking skeleton, then saves `session-water-bodies.sav` and tries normal corpse loot
@@ -854,6 +889,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `cam follow <dist> <height> <angle>` | follow, `angle` from the facing: 0 in front, 90 on the left |
 | `cam lift on\|off` | `follow` and `world` keep the camera above the ground under it (on, the default); off: where it is put, so a floor above it (a gallery, a hall's ceiling) does not lift it there |
 | `cam front <dist> <height>`, `cam world <dist> <height> <yaw>`, `cam fixed`, `cam hold`, `cam look <height>`, `cam game` | `fixed` stays where it is and turns after the player; `hold` keeps the frame as it is (a scene the player may fall out of); `game` is the game's camera as the player has it, without the clip of `view clean` |
+| `cam at <x y z> <tx ty tz>` | from a point of the world at another, then held like `cam hold` (a cut: TAA starts over); the hero can stand elsewhere, `goto` him near it first so the world around is loaded |
 | `cam arrow [dist 600] [height 40] [side 1\|-1] [ahead 80]` | from the side of the newest arrow's way (`overlay trail` records it), `ahead` cm in front of it, kept 1.2 m over the ground; from the hero until an arrow flies. The arrow's drop reads only from the side |
 | `slowmo <k>` | the game runs k times slower than the video (1: normal, up to 20): a smaller game step per recorded frame. The game's sound is recorded as silence while slowed, so it stays in step with the picture |
 | `track <npc[,npc...]\|off> [head\|body]` | each recorded frame, where each named npc is on the picture: `events.jsonl` kind `track` with `npc`, `x y` (the head, or the trunk with `body`), `hx hy`, `bx by`, `lx ly` (the head, the trunk, the legs: the limb capsules below the knees) in pixels of the frame, and `w h`. Comma-separated names share the recording; each keeps its own track. For labels that follow the npc in a cut |
@@ -861,12 +897,14 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `bodylive wait /absolute/file [timeout ms]` | pause scenario commands until the file exists while the normal bridge keeps running; default timeout 120000 ms. Used to finish NPC preparation before recording |
 | `view clean [margin]\|nopfx\|full` | `clean` clips away everything closer to the camera than the subject minus `margin` (default 100 cm): trees and bushes in between; particles are hidden. The ground right in front of the camera is clipped too (white) |
 | `view hide static movable morph pfx animated` | hide draw types (debugging only: static and movable objects share draw commands, hiding them hides parts of creatures too); `pfx` here hides the particles and sprites of `PfxObjects` too (fires, lamp flames; `view clean` and `nopfx` keep them). A `shot` is written with the next frame drawn: change the view a frame after it (`wait 200`), or the shot shows the change |
+| `vsm sides 1\|2\|3\|0` | the sides a lamp's cube face keeps from the next frame: `1` the side away from the light alone (before 2026-11-10), `2` both sides of the world mesh alone (2026-11-10), `3` both sides of objects too (the default since 2026-11-11, [report](../../reports/render-features/2026-11-11-lamp-objects-two-sided/README.md)), `0` as `[INTERNAL] vsmLampSides` says; A/B shots of one frame. Without mesh shaders (`-ms 0`, `OPENGOTHIC_MS=0`, Metal) always `1` ([report](../../reports/render-features/2026-11-10-lamp-one-sided/README.md)) |
+| `vsm study <bits>` | the shadow test on a mesh's facets from the next frame, for shots of one view ([report](../../reports/render-features/2026-11-11-facet-shards/README.md)); bits add up: `1` the sun reads the facet's plane over one pixel and `2` the lamps keep the facet's plane on facets edge-on to them — both as before 2026-11-11; `4` instead of the light, the facets by the cosine of their plane to the light (red turned away, yellow steeper than 84°, blue-grey the rest; dark where the shadow test answers shadowed); `8` instead of the sun's light, where the plane over a shadow texel's footprint changes the sun's shadow against the plane over a pixel (magenta darker, green lighter; bright by more than a tenth of the sun, dim by more than a fiftieth); `0` the game's |
 | `overlay on\|off`, `overlay zoom on\|off`, `overlay bright on\|off` | `bright` stretches dark images (forests, interiors) |
 | `overlay trail [off] [keep ms] [line]` | the arrows' ways in gold (with the zones of `showzones`), no legs, no text; turns the overlay on. A way stays `keep` ms (1500) after its arrow stops; `line`: also the straight line the arrow left along (where the bow pointed), dashed white, as far as the arrow has flown: the drop is the gap between them |
 | `rec <name> [novideo]`, `stop [shadow]` | record a segment (video and metrics, or metrics only); `stop shadow` also copies both rolling melee shadow journals into segment files (filter cumulative rows by fight game-time interval) |
 | `shot <name>` | one PNG |
 | `streaming wait [timeout_ms]` | Wait for all desired Near/Far chunks and the publication queue; timeout defaults to 60000 real ms. |
-| `deterministic on\|off` | Bench-only deterministic frame (off by default): every frame is a step (no skip under 5 ms); while `streaming wait` waits the world takes no step; when it is ready the renderer drops the TAA history and jitter phase, then 16 fixed steps run before the next command, and visibility appends clusters in order (one GPU invocation, `visibility_pass*_ordered`) until the next `shot`. Readiness also waits for empty texture demotion queues and no reload in flight; texture residency then stands still until the shot. `streaming-shots` uses it. |
+| `deterministic on\|off` | Bench-only deterministic frame (off by default): every frame is a step (no skip under 5 ms); while `streaming wait` waits the world takes no step; when it is ready the world stands four frames more, the renderer drops the TAA history and jitter phase, then 16 fixed steps run before the next command, and visibility appends clusters in order (one GPU invocation, `visibility_pass*_ordered`) until the next `shot`. Readiness also waits for empty texture demotion queues and no reload in flight; texture residency then stands still until the shot. `streaming-shots` uses it. |
 | `npctier <npc> full\|simplified\|auto` | Override one NPC tier until reset or reload. Hero, training and arena actors stay Full. |
 | `npctier-test <npc> <start waypoint> <end waypoint>` | Verify 20 switches in each direction during movement and turns, unchanged remaining path/destination and every arrival. `npc-tier-transitions` runs the fixture on a fresh NEWWORLD. |
 | `npcspeed <start waypoint>` | Compare Sequence speed with Full and Simplified movement on one authored edge for human/orc/wolf in walk/run/sneak; appended to `npc-tier-transitions`. Removes ambient NPCs for calibration. |
@@ -909,7 +947,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `dodge [<npc>] back\|left\|right\|forward\|none [before <attacker> <ms>]` | the melee dodge (`[GAME] melee_dodge`, `Npc::meleeDodge`) that way relative to its facing, now, or as the attacker's next blow comes within `<ms>` of its contact (`Pose::nextMeleeContact`, 8 s at most); `bench.log`: `melee dodge <npc>: <way>, armour <class>, <move> <animation> [(no <missing>)], cost <n>, window <a>-<b> ms` or why there is none, and `... hit by <npc> at <ms> ms of <move> <a>-<b> ms: did not pass` for a blow, arrow or spell inside the window. `melee-dodge.bench`: the four ways by the dodge key, then by the jump key (the default binding; with the strafe and the turn key), one under the bandit's blow, medium and heavy armour; the same file with `MELEE_DODGE=0` checks the flag off (`tap jump` jumps: `anims` logs `bs=8`) |
 | `aimat <npc\|nearest> [head\|body\|limb\|leg] [raw]`, `aimat <x> <y> <z>`, `aimat ahead [dist] [height]`, `aimat off` | the manual aim aims at the middle of that zone of the npc (every frame) or at a point, instead of the mouse; the hero faces it. Over it by the drop of the arrow at full draw, as an archer holds over (`raw`: right at it). `limb` is the middle of all the limbs, which lies inside the trunk; `leg`: the limb capsules below the knees. A last word `mouse`: as the player does, the game's camera turns so that the center of the screen falls on it, the hero turned with the camera, and the shot goes from the center of the screen (the game's own aim: what the camera sees, the lean by where the hero looks) |
 | `open [dist cm]` | how far it is open around the hero at head height and at the knees every 15 degrees from the facing: where to put a target |
-| `volley <shots> [hold ms] [draw 0..1] [jitter ms]` | shots by hand in a row: press `action`, draw that far (1: full), hold (up to `jitter` longer at random: the sway is a function of time), release, wait for the next arrow; every arrow is in the log (`arrow shot: ..., by <npc>`, `arrow hit <npc>: <zone>, hp a -> b, draw, flew, at, by <npc>` or `arrow missed: ..., by <npc>`) |
+| `volley <shots> [hold ms] [draw 0..1] [jitter ms]` | shots by hand in a row: press `action`, draw that far (1: full), hold (up to `jitter` longer at random: the sway is a function of time), release, wait for the next arrow; every arrow is in the log (`arrow shot: ..., by <npc>`, `arrow hit <npc>: <zone>, hp a -> b, draw, flew, at, by <npc>` or `arrow missed: ..., by <npc>`). With an NPC aim target, `aim zone ... hero ... target ...` records the aim point and both root positions in cm at each release. `volley phase` notes add press, draw-limit, release and reload-end positions and animation names; `shot pose` records the real projectile release. |
 | *(log)* | the dice of npc shots: `dice shot: by <npc> at <target>`, `arrow dice <victim>: dist <cm> path <cm> talent <%> chance <%> roll <0..99>, hit\|miss, by <npc>`; every blow: `damage <victim>: raw <n> zone <z> k <x> prot <n> net <n> hit 0\|1, hp <n>, precise\|dice\|melee\|spell, by <npc>`; every note also in `events.jsonl` (`kind: note`, with the time) |
 | `immortal <npc\|nearest> [off]` | arrows hit it, it does not die: counting hits |
 | `zones <npc\|nearest\|player>` | the hit zones of the npc now (`graphics/mesh/hitzones`): each capsule (radius, the guess by the bone's name) and how well they cover its body: of each zone, the points of the body in it / only in another zone / in none, and the body's mesh. The report sums them up (`Hit zones`) |
@@ -921,7 +959,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `archery-smoke.bench` | the stage 4 tools: who shot, the dice and the damage lines, `seed` twice the same, `volley` with jitter, an npc's `stats`/`talent`, `arc`, `fight` (by the dice), `waitdown` |
 | `npc-today.bench` | npc archers by the dice as the game had them (`npcaim off`): 4 bandits with bows, addon bandits with crossbows, paladins, at 11 / 13.5 / 16 m set out (the fight AI moves them), the hero immortal and still; the Dice table checks the throw against G2's formula |
 | `npc-mech.bench` | npc archers aiming by hand where they stand (`archer`): the bow's own spread (`npcaim sigma 0`), with G2's dice as aim, by the dice; a fight; one archer filmed close up |
-| `hero-balance.bench` | the hero by hand against G2's dice: four tiers as G2 has them (talent 10/30/60/100 with its bow, strength and dexterity, the trained animations), a farmer at 10, 20 and 30 m, body and head, 30 shots a cell with a random hold and a seed each; the Archery accuracy table gives the hits and shots a minute |
+| `hero-balance.bench` | the hero by hand against G2's dice: four tiers as G2 has them (talent 10/30/60/100 with its bow, strength and dexterity, the trained animations), a farmer at 10, 20 and 30 m, body and head, 30 shots a cell with a random hold and a seed each; the player root is pinned and NPCs within 200 m are cleared before inserting the target; the Archery accuracy table gives the hits and shots a minute |
 | `npc-lead.bench` | npc archers at a runner: the hero runs sideways to and fro 12 m in front of a bandit and a paladin, by hand with the lead, without it, by the dice |
 | `npc-fight.bench` | fights with 4 npc archers of a kind (bandit bow, addon crossbow, paladin): the dice, by hand per second, per arrow; damage a minute and the time to kill from the Damage table; bandits set out at 25 m running in; a real duel at the end |
 | `aim-walk.bench` | steps with the bow drawn (forward and back while aiming by hand): the legs sneak under the aim, the hero moves as they step; on open grass from the side (no overlay), in front, behind, the game's camera with shots on the way, crouched; the hits at 10 m standing and stepping. CSV `m_walk aw_w aw_speed aw_twist aw_chest aw_drop` |
@@ -929,12 +967,13 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `crossbow.bench` | the crossbow by hand: a weak and a strong shooter (`stats ... reload x`: the reload by strength), lowered loaded and raised, lowered right after a shot; the bolt lies in the left hand, the aim lines it up (`bowgeom` prints where it lies) |
 | `humiliate-look.bench` | the humiliation after a surrender staged without the AI server: the hero kneels, Lobart 100 cm in front plays `T_STAND_2_PEE` and the aimed stream `PFX_GAI_PEE` arcs to the hero's chest; stills round them and a 2 s video from the side. Judge it at `TEMPEST_WINDOW_SIZE=1600x1000`: at 800x600 the stream is a few pixels |
 | `gi-clips.bench` | reflected light (`-gi 0/1/2`): shots and clips of the places where it shows, for step 2 of the ray-tracing revisit — the harbour house by candle and torch at night, the plank hut of the poor quarter at noon and at night (and the clip `hut-response`, 22:00 → 12:00), Onar's stable and Lobart's house at noon, a harbour street at midnight, the forest at noon, the bandit cave at noon and at night, the market at noon. Every shot `X` is taken twice: as the player sees it and `X-bare` without the hero, the npc and the particles (`view hide animated morph pfx`; the ray scene and so the reference lack them). The views `leak-*` test light through thin plank walls (thinner than a probe cell of lod 0): `leak-lamp-night` (a lamp inside hut 1 behind its north wall, the camera outside), `leak-fire-night` (the fireplace of hut 3 behind its north wall, the camera in the alley), `leak-sun-day` (the west wall of hut 6 in the noon sun, the camera inside). `uv run scripts/gi_compare.py <root> --variants gi,bare <shots>` compares them with `gi-reference.bench` cell by cell ([step 2b](../../reports/render-features/2026-11-08-rt-revisit/step-2b.md#2б-2-сделано)) |
-| `gi-reference.bench` | the path-traced reference of the shots of `gi-clips.bench` (the same views, leaks included; 12 s to accumulate each; `OPENGOTHIC_RT=1 OPENGOTHIC_GI=0`): change both together |
+| `gi-reference.bench` | the path-traced reference of the shots of `gi-clips.bench` (the same views, leaks included; 12 s to accumulate each; `OPENGOTHIC_RT=1 OPENGOTHIC_GI=0`): change both together. Its shadow rays skip the back faces of triangles (`rayQueryProceedShadow`): a one-sided surface that faces a lamp lets the lamp's light through in the reference too ([report](../../reports/render-features/2026-11-10-lamp-one-sided/README.md)); alpha-tested triangles skip their back faces in `rayQueryProceedAlphaTest` besides, and the reflected light lights places a lamp does not reach: judge lamp shadows against direct light alone ([report](../../reports/render-features/2026-11-11-lamp-objects-two-sided/README.md)) |
 | `gi-turn.bench` | reflected light (`-gi 1`) through a turn of the camera: the plank hut of `gi-clips` at noon (view `hut-day-2`), clip `hut-turn` — the camera stands 1 s, turns 180° round the hero at once (`cam cut`, `cam world` at +180°), stands 3 s, turns back, stands 2 s. `uv run scripts/gi_compare.py --turn <out>/hut-turn.mp4` prints the largest and the median cell change between the frame before the turn and the first frame after the return (8×4 cells without the two middle columns). Run it with `OPENGOTHIC_RT=1 OPENGOTHIC_GI=1 TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen` ([step 2b](../../reports/render-features/2026-11-08-rt-revisit/step-2b.md)) |
 | `gi-decay.bench` | how the light of `-gi 1` dies out in the chains of probes: the plank hut and the bandit cave of `gi-clips` (views `hut-night-1`, `cave-night-1`), clips `hut-decay` and `cave-decay` — 1 s of noon, then `set time 22 0` and 14 s of night, the camera still. A jump of the time of day relights the probes from nothing; `OPENGOTHIC_GI_JUMP_RESET=0` turns that off, and the clip shows the day's light dying out as after a fire put out. `uv run scripts/gi_compare.py --decay <out>/hut-decay.mp4` prints how many times brighter than its end (night) the brightest and the median cell are 0.5, 1 and 2 s after the change, and when every cell is within 10% of it; cells that flicker at the end by more than 10% (flames) are left out, each cell is the median of 15 frames (sparks). Run it with `OPENGOTHIC_GI_JUMP_RESET=0 OPENGOTHIC_RT=1 OPENGOTHIC_GI=1 TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen` ([step 2b](../../reports/render-features/2026-11-08-rt-revisit/step-2b.md#2б-1-пересмотр)) |
+| `facet-shards.bench` | the shadow test on a dense mesh's facets ([report](../../reports/render-features/2026-11-11-facet-shards/README.md)): the hero's own head (`OPENGOTHIC_CONTENT` with it) close to the camera under the noon sun of the market and the candle of the harbour house, then the market and the harbour at a low sun and the lamps at night; every view as stills of one camera — `-old` (`vsm study 1` or `2`), `-new`, `-old2`, `-class`, for the sun `-diff`. Run with `OPENGOTHIC_LIGHT_FREEZE=1`; `reports/render-features/2026-11-11-facet-shards/tools/pairs.py <out>` counts the changed pixels against the noise of the two old shots |
 | `give <item> [count]`, `equip <item>` | into the hero's inventory; `equip` puts it on whatever the strength (`ItRw_Bow_L_01`, `ItRw_Arrow`, `ItRw_Crossbow_L_01`, `ItRw_Bolt`, `ItRu_FireBolt`) |
 | `put <npc\|nearest> <dist> <angle>` | the npc stands there on the ground from the hero (angle from the hero's facing), frozen |
-| `pin <npc\|nearest> <dist> <angle> <height>`, `pin off` | the npc hangs there from the hero, `height` above the hero's feet, every frame: a target above or below |
+| `pin <npc\|nearest\|player> <dist> <angle> <height>`, `pin off` | hold the root at the computed point every frame; NPCs face the hero, while `pin player 0 0 0` keeps normal player input, animation and aiming |
 | `anims` | what the watched one (or the hero) plays, its body state, weapon and target |
 | `cansee <npc>` | can the hero see it: from the head, leaning over an edge (the aim's lean); what the rays hit; the bow's focus range |
 | `sight <npc\|off> [fan cm]` | each recorded frame and `shot`, the hero's lines of sight to it on the picture: `events.jsonl` kind `sight` (`shot` names the still), points `[x, y]` in pixels of the frame (null behind the camera): `h0` the head when `sight` was given (upright) and `c0` where its ray to the npc's centre hits (null: nothing; `c0d` cm of `d0`); `e` the head leaned over an edge as the focus puts it (`room`), `ec` where its ray hits; `h` the head now, `c` where its ray hits (`cd` of `d`, `down` degrees); `t` the npc's centre; the bow's focus fan from `h0`: `f` level, `g` at `FOCUS_RANGED`'s `elevdo` down (`elev`), `fan` cm long; `seen`, `over`: the focus sees it from the head, over the edge. For lines drawn over a cut |
@@ -1027,6 +1066,8 @@ GOTHIC_AI_URL=ws://127.0.0.1:47921 OPENGOTHIC_CONTENT=<content root> TEMPEST_WIN
 uv run --with pillow python reports/content/2026-11-hero-head/cues/ingame_clip.py .bench/face-cues-clip-<time> <out>
 ```
 
+The gestures of the eyes (glance, roll) take the same bench with `--scenario face_eyes_demo` (four lines with
+`glance`, `roll`, `doubt`, `frown`, no lie, no `--debug-leak`) and a face profile with `eyes`.
 `--provider inworld` spends four paid Inworld requests a take; `--provider fake` (a tone with word times) checks
 the staging for free. `ingame_clip.py` writes into `<out>`:
 - `clip.mp4` — the recording with its sound and "Реплика N" over each line;

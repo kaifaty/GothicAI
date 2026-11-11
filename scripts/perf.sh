@@ -6,11 +6,6 @@ BUILD="$ROOT/OpenGothic/build-perf"
 
 fail() { echo "perf: $*" >&2; exit 2; }
 
-if [[ "${PERF_REMOTE:-0}" == 1 ]]; then
-  game_environment="$(python3 "$ROOT/scripts/ryzen_game.py")"
-  eval "$game_environment"
-fi
-
 build_game() {
   local out="$1"
   mkdir -p "$out"
@@ -121,6 +116,13 @@ done
 [[ "$REMOTE_RUN" == 1 || -d "$GOTHIC_DIR/Data" || -n "${OPENGOTHIC_BASE:-}${OPENGOTHIC_BASE_FINGERPRINT:-}" ]] || fail "missing game data: $GOTHIC_DIR/Data"
 
 if [[ "$REMOTE_RUN" == 1 ]]; then
+  # game-base.json names the base of whichever version last ran ryzen.sh setup. The stand's own
+  # content-convert reports this engine's importer format, so a ready base of that format is chosen.
+  CONTENT_CONVERT="$(dirname "$GAME_BIN")/content-convert"
+  [[ -x "$CONTENT_CONVERT" ]] || fail "missing $CONTENT_CONVERT; rerun without NO_BUILD=1"
+  game_environment="$(python3 "$ROOT/scripts/ryzen_game.py" --converter "$CONTENT_CONVERT")" || fail 'no game base for this engine'
+  eval "$game_environment"
+  echo "perf: base ${OPENGOTHIC_BASE_FINGERPRINT:-${OPENGOTHIC_BASE:-}}"
   export XDG_RUNTIME_DIR="/run/user/$(id -u)" ALSOFT_DRIVERS=null
   export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
   found=0

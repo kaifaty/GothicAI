@@ -1,4 +1,5 @@
 #include "effect.h"
+#include "gameservices.h"
 
 #include <Tempest/Log>
 
@@ -6,7 +7,6 @@
 #include "world/objects/npc.h"
 #include "world/world.h"
 #include "visualfx.h"
-#include "gothic.h"
 
 using namespace Tempest;
 
@@ -61,11 +61,11 @@ void Effect::setupPfx(World& owner) {
     return;
     }
 
-  const ParticleFx* pfxDecl = Gothic::inst().loadParticleFx(root->visName_S);
+  const ParticleFx* pfxDecl = GameServices::inst().loadParticleFx(root->visName_S);
   if(key!=nullptr && key->visName!=nullptr)
     pfxDecl = key->visName;
 
-  pfxDecl = Gothic::inst().loadParticleFx(pfxDecl,key);
+  pfxDecl = GameServices::inst().loadParticleFx(pfxDecl,key);
   if(pfxDecl==nullptr)
     return;
 

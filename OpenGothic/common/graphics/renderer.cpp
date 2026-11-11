@@ -1,4 +1,6 @@
 #include "renderer.h"
+#include "settings.h"
+#include "gameservices.h"
 #include "renderer_internal.h"
 #include "physics/cloth.h"
 
@@ -6,17 +8,18 @@
 #include <Tempest/Color>
 #include <Tempest/Fence>
 #include <Tempest/Log>
+#include <Tempest/Painter>
 #include <Tempest/StorageImage>
 #include <cassert>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 
 #include "ui/inventorymenu.h"
 #include "ui/videowidget.h"
 #include "graphics/drawcommands.h"
 #include "camera.h"
 #include "frameprofile.h"
-#include "gothic.h"
 #include "utils/string_frm.h"
 
 using namespace Tempest;
@@ -32,6 +35,9 @@ uint32_t RendererInternal::nextPot(uint32_t x) {
   x++;
   return x;
   }
+
+uint32_t Renderer::benchVsmLampSides = 0;
+uint32_t Renderer::benchVsmStudy     = 0;
 
 Renderer::Renderer() {
   auto& device = Resources::device();
@@ -70,13 +76,13 @@ Renderer::Renderer() {
   Log::i("GPU = ",device.properties().name);
   Log::i("Depth format = ", Tempest::formatName(zBufferFormat), " Shadow format = ", Tempest::formatName(shadowFormat));
 
-  Gothic::inst().onSettingsChanged.bind(this,&Renderer::setupSettings);
-  Gothic::inst().toggleGi  .bind(this, &Renderer::toggleGi);
-  Gothic::inst().toggleVsm .bind(this, &Renderer::toggleVsm);
+  ::Settings::inst().onSettingsChanged.bind(this,&Renderer::setupSettings);
+  GameServices::inst().toggleGi  .bind(this, &Renderer::toggleGi);
+  GameServices::inst().toggleVsm .bind(this, &Renderer::toggleVsm);
 
-  Gothic::inst().togglePathtrace.bind(this, &Renderer::togglePathtrace);
+  GameServices::inst().togglePathtrace.bind(this, &Renderer::togglePathtrace);
 
-  settings.giMethod         = Gothic::options().doGi;
+  settings.giMethod         = ::Settings::options().doGi;
   settings.vsmEnabled       = Shaders::options().doVirtualShadow;
   if(const char* stats = std::getenv("OPENGOTHIC_VSM_STATS"))
     settings.vsmStats = std::string_view(stats)=="1";
@@ -152,22 +158,22 @@ Renderer::Renderer() {
   }
 
 Renderer::~Renderer() {
-  Gothic::inst().onSettingsChanged.ubind(this,&Renderer::setupSettings);
+  ::Settings::inst().onSettingsChanged.ubind(this,&Renderer::setupSettings);
   }
 
 void Renderer::setupSettings() {
-  settings.zEnvMappingEnabled = Gothic::settingsGetI("ENGINE","zEnvMappingEnabled")!=0;
-  settings.zCloudShadowScale  = Gothic::settingsGetI("ENGINE","zCloudShadowScale") !=0;
+  settings.zEnvMappingEnabled = ::Settings::getI("ENGINE","zEnvMappingEnabled")!=0;
+  settings.zCloudShadowScale  = ::Settings::getI("ENGINE","zCloudShadowScale") !=0;
   // SSAO and the fog shadow mask cost ~15 ms a frame at 3456x1918 on an M1 Pro (docs/performance.md):
   // both are traced at half resolution, the depth-aware blur brings SSAO back to full size
-  settings.halfResAoFog       = Gothic::settingsGetI("INTERNAL","halfResAoFog")!=0;
-  settings.zFogRadial         = Gothic::settingsGetI("RENDERER_D3D","zFogRadial")!=0;
+  settings.halfResAoFog       = ::Settings::getI("INTERNAL","halfResAoFog")!=0;
+  settings.zFogRadial         = ::Settings::getI("RENDERER_D3D","zFogRadial")!=0;
   {
     // wind
-    settings.zWindEnabled = Gothic::settingsGetI("ENGINE","zWindEnabled")!=0;
+    settings.zWindEnabled = ::Settings::getI("ENGINE","zWindEnabled")!=0;
 
-    const float period  = Gothic::settingsGetF("ENGINE","zWindCycleTime");
-    const float periodV = Gothic::settingsGetF("ENGINE","zWindCycleTimeVar");
+    const float period  = ::Settings::getF("ENGINE","zWindCycleTime");
+    const float periodV = ::Settings::getF("ENGINE","zWindCycleTimeVar");
     settings.windPeriod = uint64_t((period+periodV)*1000.f);
     if(settings.windPeriod<=0) {
       settings.windPeriod   = 1;
@@ -175,19 +181,31 @@ void Renderer::setupSettings() {
       }
   }
 
-  // VSM lamps: blockers nearer than this to the light (its own basket, lantern frame or candle holder) cast no
-  // shadow; 0 or unset: 30 cm. With the light in its flame a brazier's basket is within it; a man by a torch or a
-  // candle on a table still casts a shadow (80 cm took that away)
-  settings.vsmLampNearCm      = Gothic::settingsGetF("INTERNAL","vsmLampNearCm");
+  // VSM lamps: objects nearer than this to the light along its cube face's axis (its own basket, lantern frame or
+  // candle holder) cast no shadow: they are clipped away from the lamp's faces (main.vert), so a wall behind them still
+  // shadows; the world mesh keeps the projection's near plane alone. 0 or unset: 30 cm. With the light in its flame a
+  // brazier's basket is within it; a man by a torch or a candle on a table still casts a shadow (80 cm took that away)
+  settings.vsmLampNearCm      = ::Settings::getF("INTERNAL","vsmLampNearCm");
   if(settings.vsmLampNearCm<=0)
     settings.vsmLampNearCm = 30;
+  // VSM lamps: which sides of a surface go into a lamp's cube faces (main.vert, meshShader): 1 the side away from the
+  // light alone (before 2026-11-10: a one-sided floor or wall lit by the lamp let its light through), 2 both sides of
+  // the world mesh alone (2026-11-10), 3 both sides of objects too (0 or unset; since 2026-11-11: a one-sided object
+  // lit by the lamp, a carpet, a fireplace's hood, a net, let its light through).
+  // OPENGOTHIC_VSM_LAMP_SIDES=1|2|3 (test benches) wins over the ini; without mesh shaders always 1
+  // (reports/render-features/2026-11-10-lamp-one-sided, reports/render-features/2026-11-11-lamp-objects-two-sided)
+  {
+    const char* env = std::getenv("OPENGOTHIC_VSM_LAMP_SIDES");
+    const int   v   = env!=nullptr ? std::atoi(env) : ::Settings::getI("INTERNAL","vsmLampSides");
+    settings.vsmLampSides = uint32_t(v>=1 && v<=3 ? v : 3);
+  }
   // VSM lamps: the soft PCSS, or hard shadows in one gather (light.frag, VSM_LAMP_HARD). On Metal hard by default:
   // the PCSS costs ~11 ms GPU indoors on an M1 Pro (reports/render-features/2026-11-05-vsm-mac-hard/README.md).
   // OPENGOTHIC_VSM_LAMP_SOFT=0|1 (test benches) wins over the ini; the study switches (OPENGOTHIC_VSM_LAMP*,
   // OPENGOTHIC_VSM_STATS, read in the constructor) take the study shader and its PCSS whatever this says
   {
     const char* env = std::getenv("OPENGOTHIC_VSM_LAMP_SOFT");
-    settings.vsmLampSoft = env!=nullptr ? std::string_view(env)!="0" : Gothic::settingsGetI("INTERNAL","vsmLampSoft")!=0;
+    settings.vsmLampSoft = env!=nullptr ? std::string_view(env)!="0" : ::Settings::getI("INTERNAL","vsmLampSoft")!=0;
     static int logged = -1;
     if(settings.vsmEnabled && logged!=int(settings.vsmLampSoft)) {
       logged = int(settings.vsmLampSoft);
@@ -195,32 +213,32 @@ void Renderer::setupSettings() {
              env!=nullptr ? " by OPENGOTHIC_VSM_LAMP_SOFT" : " by [INTERNAL] vsmLampSoft");
       }
   }
-  settings.zVidBrightness     = Gothic::settingsGetF("VIDEO","zVidBrightness");
-  settings.zVidContrast       = Gothic::settingsGetF("VIDEO","zVidContrast");
-  settings.zVidGamma          = Gothic::settingsGetF("VIDEO","zVidGamma");
+  settings.zVidBrightness     = ::Settings::getF("VIDEO","zVidBrightness");
+  settings.zVidContrast       = ::Settings::getF("VIDEO","zVidContrast");
+  settings.zVidGamma          = ::Settings::getF("VIDEO","zVidGamma");
 
-  settings.sunSize            = Gothic::settingsGetF("SKY_OUTDOOR","zSunSize");
-  settings.moonSize           = Gothic::settingsGetF("SKY_OUTDOOR","zMoonSize");
+  settings.sunSize            = ::Settings::getF("SKY_OUTDOOR","zSunSize");
+  settings.moonSize           = ::Settings::getF("SKY_OUTDOOR","zMoonSize");
   if(settings.sunSize<=1)
     settings.sunSize = 200;
   if(settings.moonSize<=1)
     settings.moonSize = 400;
 
-  settings.vidResIndex    = Gothic::settingsGetF("INTERNAL","vidResIndex");
+  settings.vidResIndex    = ::Settings::getF("INTERNAL","vidResIndex");
   // MetalFX spatial upscaling of reduced internal resolution; Lanczos in the tonemapping pass otherwise
-  settings.spatialUpscale = Gothic::settingsGetI("INTERNAL","spatialUpscale")!=0 &&
+  settings.spatialUpscale = ::Settings::getI("INTERNAL","spatialUpscale")!=0 &&
                             Resources::device().properties().spatialUpscale;
   // temporal AA by the camera (docs/graphics-plan.md, step 1a), on by default: -taa 0 or [INTERNAL] taa=0 turn it
   // off and bring back CMAA2; OPENGOTHIC_TAA=0|1 (test benches) overrides both
   {
-    bool taa = Gothic::options().taa && Gothic::settingsGetI("INTERNAL","taa")!=0;
+    bool taa = ::Settings::options().taa && ::Settings::getI("INTERNAL","taa")!=0;
     if(const char* e = std::getenv("OPENGOTHIC_TAA"))
       taa = std::string_view(e)!="0";
     settings.taaEnabled = taa && Resources::device().properties().hasAttachFormat(TextureFormat::RGBA16F);
     // the sharpening after the resolve (RCAS) and the mip bias of the main view's material textures:
     // the history averages the jittered samples, which softens; OPENGOTHIC_TAA_SHARPNESS, OPENGOTHIC_TAA_MIP_BIAS
     // (test benches) override
-    settings.taaSharpness = Gothic::settingsGetF("INTERNAL","taaSharpness");
+    settings.taaSharpness = ::Settings::getF("INTERNAL","taaSharpness");
     if(const char* e = std::getenv("OPENGOTHIC_TAA_SHARPNESS"))
       settings.taaSharpness = std::strtof(e, nullptr);
     settings.taaSharpness = std::clamp(settings.taaSharpness, 0.f, 1.f);
@@ -237,8 +255,8 @@ void Renderer::setupSettings() {
   // -mv 0 or [INTERNAL] motionVectors=0 turn them off, OPENGOTHIC_MOTION_VECTORS=0|1 (test benches) overrides
   // both. OPENGOTHIC_MOTION_VIEW=1 shows the vectors in place of the frame
   {
-    bool mv = Gothic::options().motionVectors>=0 ? Gothic::options().motionVectors!=0
-                                                 : Gothic::settingsGetI("INTERNAL","motionVectors")!=0;
+    bool mv = ::Settings::options().motionVectors>=0 ? ::Settings::options().motionVectors!=0
+                                                 : ::Settings::getI("INTERNAL","motionVectors")!=0;
     if(const char* e = std::getenv("OPENGOTHIC_MOTION_VECTORS"))
       mv = std::string_view(e)!="0";
     settings.motionVectors = mv;
@@ -258,7 +276,7 @@ void Renderer::setupSettings() {
   // [INTERNAL] taaReactive=0 turns it off, OPENGOTHIC_TAA_REACTIVE=0|1 (test benches) overrides it.
   // OPENGOTHIC_TAA_REACTIVE_VIEW=1 shows the mask in place of the frame; _MAX and _LREF tune it on a stand
   {
-    bool on = Gothic::settingsGetI("INTERNAL","taaReactive")!=0;
+    bool on = ::Settings::getI("INTERNAL","taaReactive")!=0;
     if(const char* e = std::getenv("OPENGOTHIC_TAA_REACTIVE"))
       on = std::string_view(e)!="0";
     settings.taaReactive     = on;
@@ -316,7 +334,7 @@ void Renderer::setupSettings() {
   }
   // CMAA2 runs at internal resolution, so it needs a same-size target: native or the upscaler input
   const bool nativeRes    = settings.vidResIndex==0 && (settings.renderScale==0 || settings.renderScale==1);
-  settings.aaEnabled      = !settings.taaEnabled && (Gothic::options().aaPreset>0) &&
+  settings.aaEnabled      = !settings.taaEnabled && (::Settings::options().aaPreset>0) &&
                             (nativeRes || settings.spatialUpscale);
   // bloom from the HDR scene before tonemapping; OPENGOTHIC_BLOOM=0 turns it off
   if(const char* bloom = std::getenv("OPENGOTHIC_BLOOM"))
@@ -356,7 +374,7 @@ void Renderer::setupSettings() {
     }
 
   Log::i("render: ray query = ", int(Shaders::options().doRayQuery), ", meshlets = ", int(Shaders::options().doMeshShading),
-         ", gi = ", int(settings.giMethod), ", aa = ", settings.aaEnabled ? int(Gothic::options().aaPreset) : 0,
+         ", gi = ", int(settings.giMethod), ", aa = ", settings.aaEnabled ? int(::Settings::options().aaPreset) : 0,
          ", bloom = ", int(settings.bloomEnabled));
   Log::i("render: vsm = ", int(settings.vsmEnabled));
 
@@ -533,8 +551,8 @@ void Renderer::prepareUniforms(WorldView& wview) {
   wview.setSceneImages(textureCast<const Texture2d&>(sceneOpaque), textureCast<const Texture2d&>(sceneDepth), zbuffer);
   wview.setFog(sky.fogLut3D, sky.fogLut3DMs);
   wview.setWindEnabled(settings.zWindEnabled, settings.windPeriod);
-  if(auto* world = Gothic::inst().world())
-    wview.setClothWind(world->physic()->clothEnabled(),world->physic()->cloth().windScale());
+  if(auto* physics = GameServices::inst().physicsWorld())
+    wview.setClothWind(physics->clothEnabled(),physics->cloth().windScale());
   }
 
 void Renderer::resetViewport(Tempest::Size res, Tempest::Size fullRes) {
@@ -657,8 +675,8 @@ void Renderer::resetShadowmap() {
 void Renderer::draw(Attachment& result, Encoder<CommandBuffer>& cmd, uint8_t fId,
                     VectorImage::Mesh& uiLayer, VectorImage::Mesh& numOverlay,
                     InventoryMenu& inventory, VideoWidget& video) {
-  auto wview  = Gothic::inst().worldView();
-  auto camera = Gothic::inst().camera();
+  auto wview  = GameServices::inst().worldView();
+  auto camera = GameServices::inst().camera();
 
   if(!video.isActive() && wview!=nullptr && camera!=nullptr) {
     draw(result, cmd, fId, *wview, *camera);
@@ -720,10 +738,8 @@ void Renderer::dbgDraw(Tempest::Painter& p) {
 
 void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wview, const Camera& camera) {
   FrameProfile::Scope mainTiming(FrameProfile::Zone::EncodeMain);
-  //FIXME: those also needed to be refactor away
-  const auto world     = Gothic::inst().world();
-  const auto gameTime  = world!=nullptr ? world->time() : gtime(8,0);
-  const auto tickCount = world!=nullptr ? world->tickCount() : uint64_t();
+  const auto gameTime  = GameServices::inst().worldTime();
+  const auto tickCount = GameServices::inst().worldTickCount();
 
   shaders.waitCompiler();
 
@@ -745,7 +761,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   if(requiresRtScene())
     wview.updateRtScene(cmd, fId);
   wview.updateLights(gameTime);
-  gi.dayTime = gameTime.toInt();
+  gi.dayTime = gameTime;
 
   if(requiresLightsTree())
     prepareLightsBvh(cmd, wview);
@@ -754,6 +770,11 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   prepareTaa(wview, camera);
   prepareMotion(wview);
   wview.setTaaReactiveLref(settings.taaReactiveLref);
+  wview.setVsmLampNear(settings.vsmLampNearCm);
+  // the faces are two-sided only where the mesh shader draws them (main.vert); the vertex path culls as before
+  wview.setVsmLampSides(!Shaders::options().doMeshShading ? 1u : (benchVsmLampSides!=0 ? benchVsmLampSides : settings.vsmLampSides));
+
+  wview.setVsmStudy(benchVsmStudy);
 
   static bool updFr = true;
   if(updFr){
@@ -770,10 +791,10 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     wview.updateFrustrum(frustrum);
     }
 
-  if(world!=nullptr) {
+  if(auto* physics = GameServices::inst().physicsWorld()) {
     // Keep a margin around the camera view so a turning camera resumes cloth
     // before it becomes visible. The physics tick owns a copy of these planes.
-    world->physic()->cloth().setVisibilityTest([view = frustrum[SceneGlobals::V_Main]](const Vec3& center, float radius) {
+    physics->cloth().setVisibilityTest([view = frustrum[SceneGlobals::V_Main]](const Vec3& center, float radius) {
       return view.testPoint(center,radius+200.f);
       });
     }
@@ -802,7 +823,8 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
 
   wview.visibilityPass(cmd, 1);
   drawGBuffer(cmd, fId, wview);
-  if(world!=nullptr && blood.prepare(fId, *world, wview.sceneGlobals(), camera.listenerPosition().pos))
+  const auto* world = GameServices::inst().world();
+  if(world!=nullptr && blood.prepare(fId, world, wview.sceneGlobals(), camera.listenerPosition().pos))
     blood.draw(cmd, fId, wview.sceneGlobals(), gbufDiffuse, Shaders::options().doMaterialMaps ? &gbufOrm : nullptr,
                gbufNormal, zbuffer);
   // SSAO needs only the depth: ahead of the shadow maps its compute runs under their vertex work on Metal
@@ -854,8 +876,13 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
 
   FrameProfile::Scope translucentTiming(FrameProfile::Zone::EncodeWater);
   // the TAA reactive mask is the second attachment: each translucent pipeline writes it under its own blend
-  // (main.frag, graphics plan 1v), the TAA resolve reads it
-  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}, {taa.reactive, Tempest::Vec4(), Tempest::Preserve}},
+  // (main.frag, graphics plan 1v), the TAA resolve reads it. An empty pass of its own clears it, and the translucent
+  // pass loads and stores it as the scene colour: cleared by the translucent pass itself, it made a tiled GPU (Apple)
+  // walk every tile of the screen instead of the tiles with translucent geometry, +0.2 ms of fragments on M1 Pro
+  // (reports/render-features/2026-11-10-taa-reactive/mac-cost.md)
+  cmd.setFramebuffer({{taa.reactive, Tempest::Vec4(), Tempest::Preserve}});
+  cmd.setDebugMarker("Reactive-clear");
+  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}, {taa.reactive, Tempest::Preserve, Tempest::Preserve}},
                      {zbuffer, Tempest::Preserve, Tempest::Preserve});
   cmd.setDebugMarker("Translucent");
   wview.drawTranslucent(cmd, fId);
@@ -1157,9 +1184,9 @@ void Renderer::drawLights(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
 
   auto& ibo  = Resources::cubeIbo();
   struct Push {
-    Vec3 originLwc; float vsmLampNear; uint32_t probeMode, probeStamp; float probeNarrow; uint32_t probeTaps[4], probeFlags;
+    Vec3 originLwc; uint32_t probeMode, probeStamp; float probeNarrow; uint32_t probeTaps[4], probeFlags;
     uint32_t probeExp;
-    } push = {scene.originLwc, settings.vsmLampNearCm, settings.vsmLampMode, 0, settings.vsmLampNarrow,
+    } push = {scene.originLwc, settings.vsmLampMode, 0, settings.vsmLampNarrow,
               {settings.vsmLampTaps[0], settings.vsmLampTaps[1], settings.vsmLampTaps[2], settings.vsmLampTaps[3]},
               settings.vsmLampFlags, settings.vsmLampExp};
   if(lights.directLightPso==&shaders.lightsVsmProbe) {
@@ -1173,9 +1200,7 @@ void Renderer::drawLights(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
       }
     }
   if(lights.directLightPso==&shaders.lightsVsmProbe)
-    cmd.setPushData(&push, sizeof(push));
-  else if(lights.directLightPso==&shaders.lightsVsm || lights.directLightPso==&shaders.lightsVsmHard)
-    cmd.setPushData(&push, offsetof(Push, probeMode)); else
+    cmd.setPushData(&push, sizeof(push)); else
     cmd.setPushData(&push.originLwc, sizeof(push.originLwc));
   cmd.setPipeline(*lights.directLightPso);
   cmd.draw(nullptr,ibo, 0,ibo.size(), 0,wview.lights().size());
@@ -1298,8 +1323,8 @@ Tempest::Attachment Renderer::screenshoot(uint8_t frameId) {
     }
   auto     img  = device.attachment(Tempest::TextureFormat::RGBA8,w,h);
 
-  auto wview  = Gothic::inst().worldView();
-  auto camera = Gothic::inst().camera();
+  auto wview  = GameServices::inst().worldView();
+  auto camera = GameServices::inst().camera();
   if(wview==nullptr || camera==nullptr)
     return Attachment();
 

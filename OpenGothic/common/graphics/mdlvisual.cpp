@@ -1,4 +1,5 @@
 #include "mdlvisual.h"
+#include "gameservices.h"
 #include "mdlvisual_internal.h"
 
 #include "graphics/mesh/skeleton.h"
@@ -11,7 +12,6 @@
 #include "world/world.h"
 #include "graphics/worldview.h"
 #include "objvisual.h"
-#include "gothic.h"
 
 #include <Tempest/Log>
 
@@ -25,6 +25,7 @@
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <limits>
 #include <mutex>
 #include <set>
 
@@ -362,15 +363,13 @@ void MdlVisual::setVisualBody(WorldView& owner, MeshObjects::Mesh&& body) {
         setSlotAttachment(owner.addAtachView(slot,0),slot.name);
   view=std::move(body);
   bodyDetached=false;
-  if(textureOwnerKnown)
-    view.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
+  addTextureOwner(view);
   bindBodyRig();
   pushBodyPose();
   for(auto& slot:item)
     if(slot.deferredProto!=nullptr) {
       slot.view=owner.addView(slot.deferredProto,slot.deferredMaterial);
-      if(textureOwnerKnown)
-        slot.view.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
+      addTextureOwner(slot.view);
       }
   syncAttaches();
   }
@@ -470,8 +469,7 @@ void MdlVisual::implSetBody(Npc* npc, World& world, MeshObjects::Mesh&& body, co
     syncAttaches();
     }
   view = std::move(body);
-  if(textureOwnerKnown)
-    view.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
+  addTextureOwner(view);
   view.setAsGhost(hnpcFlagGhost);
   view.setFatness(npc==nullptr ? 0 : npc->fatness());
   const bool rigChanged = bindBodyRig();
@@ -519,8 +517,7 @@ void MdlVisual::fitHitZones() {
   }
 
 void MdlVisual::setSlotAttachment(MeshObjects::Mesh&& itm, std::string_view bone) {
-  if(textureOwnerKnown)
-    itm.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
+  addTextureOwner(itm);
   if(bone.empty() || skeleton==nullptr)
     return;
 
@@ -580,8 +577,7 @@ void MdlVisual::setMagicWeaponKey(World& owner, SpellFxKey key, int32_t keyLvl) 
   }
 
 void MdlVisual::setSlotItem(MeshObjects::Mesh &&itm, std::string_view bone, int32_t material) {
-  if(textureOwnerKnown)
-    itm.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
+  addTextureOwner(itm);
   if(bone.empty() || skeleton==nullptr)
     return;
 
@@ -769,7 +765,7 @@ void MdlVisual::stopEffect(int32_t slot) {
 void MdlVisual::setNpcEffect(World& owner, Npc& npc, std::string_view s, daedalus::NpcFlag flags) {
   if(hnpcVisualName!=s) {
     hnpcVisualName = s;
-    auto vfx = Gothic::inst().loadVisualFx(s);
+    auto vfx = GameServices::inst().loadVisualFx(s);
     if(vfx==nullptr) {
       hnpcVisual.view = Effect();
       return;
@@ -834,26 +830,35 @@ void MdlVisual::setObjMatrix(const Tempest::Matrix4x4 &m, bool syncAttach) {
     syncAttaches();
   }
 
-void MdlVisual::setTextureOwner(const Vec3& position, bool spatial) {
-  if(textureOwnerKnown && textureOwnerSpatial==spatial &&
-     (!spatial || ChunkId::fromPosition(textureOwnerPosition.x,textureOwnerPosition.z)==ChunkId::fromPosition(position.x,position.z)))
-    return;
+float MdlVisual::setTextureOwner(const Vec3& position, bool spatial) {
+  if(textureOwnerKnown && textureOwnerSpatial==spatial) {
+    if(!spatial)
+      return std::numeric_limits<float>::infinity();
+    textureOwnerLast=position;
+    const auto d=position-textureOwnerPosition;
+    const float moved=d.x*d.x+d.y*d.y+d.z*d.z;
+    if(moved<=textureOwnerReach*textureOwnerReach)
+      return textureOwnerReach-std::sqrt(moved);
+    }
   textureOwnerKnown=true;
   textureOwnerSpatial=spatial;
   textureOwnerPosition=position;
-  view.setTextureOwner(position,spatial);
+  textureOwnerLast=position;
+  float reach=view.setTextureOwner(position,spatial);
   MeshAttach* slots[]={&head,&sword,&shield,&bow,&ammunition,&stateItm};
   for(auto* slot:slots)
-    slot->view.setTextureOwner(position,spatial);
+    reach=std::min(reach,slot->view.setTextureOwner(position,spatial));
   for(auto& slot:item)
-    slot.view.setTextureOwner(position,spatial);
+    reach=std::min(reach,slot.view.setTextureOwner(position,spatial));
   for(auto& slot:attach)
-    slot.view.setTextureOwner(position,spatial);
+    reach=std::min(reach,slot.view.setTextureOwner(position,spatial));
   for(auto& pin:stuckArrows)
-    pin.view.setTextureOwner(position,spatial);
-  quiv.setTextureOwner(position,spatial);
+    reach=std::min(reach,pin.view.setTextureOwner(position,spatial));
+  reach=std::min(reach,quiv.setTextureOwner(position,spatial));
   if(torch.view)
-    torch.view->setTextureOwner(position,spatial);
+    reach=std::min(reach,torch.view->setTextureOwner(position,spatial));
+  textureOwnerReach=reach;
+  return reach;
   }
 
 bool MdlVisual::minSkinnedVertex(float fatness,Vec3& point) const {
@@ -914,8 +919,7 @@ void MdlVisual::setTorch(bool t, World& owner) {
       residency->textureDistance(ChunkId::fromPosition(textureOwnerPosition.x,textureOwnerPosition.z))>2);
   torch.view.reset(new ObjVisual());
   torch.view->setVisual(*hitem,owner,false);
-  if(textureOwnerKnown)
-    torch.view->setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
+  addTextureOwner(*torch.view);
   torch.boneId = (skeleton==nullptr ? size_t(-1) : skeleton->findNode("ZS_LEFTHAND"));
 
   auto& pose = *skInst;
@@ -1395,8 +1399,7 @@ Bounds MdlVisual::bounds() const {
 void MdlVisual::bind(MeshAttach& slot, MeshObjects::Mesh&& itm, std::string_view bone) {
   slot.boneId = skeleton==nullptr ? size_t(-1) : skeleton->findNode(bone);
   slot.view   = std::move(itm);
-  if(textureOwnerKnown)
-    slot.view.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
+  addTextureOwner(slot.view);
   slot.bone   = bone;
   // sync?
   }
@@ -1645,11 +1648,20 @@ bool MdlVisual::startCue(Npc& npc, std::string_view name, char side) {
   if(side==0)
     side = SpeechCues::sideOf(SpeechCues::seedOf(name)^(uint32_t(npc.instanceSymbol())*2654435761u)^(cueCount++*40503u));
   const uint64_t now = npc.world().tickCount();
-  return face.startCue(name,cue->side!=0 && side!=cue->side,-1,now,now);
+  return playCue(name,cue->side!=0 && side!=cue->side,-1,now,now);
+  }
+
+bool MdlVisual::playCue(std::string_view name, bool mirror, float hold, uint64_t at, uint64_t now) {
+  if(!face.startCue(name,mirror,hold,at,now))
+    return false;
+  if(const auto* cue = face.faceProfile()->findCue(name); cue!=nullptr && cue->look.has_value())
+    eyes.startCue(*cue,mirror,std::min(at,now));
+  return true;
   }
 
 float MdlVisual::cueWeight(const Npc& npc, std::string_view name) const {
-  return face.cueWeight(name,npc.world().tickCount());
+  const uint64_t now = npc.world().tickCount();
+  return std::max(face.cueWeight(name,now),eyes.cueWeight(name,now));
   }
 
 bool MdlVisual::startLeak(Npc& npc, std::string_view felt, bool lower) {
@@ -1706,7 +1718,7 @@ void MdlVisual::updateFace(Npc& npc) {
   cueStarts.clear();
   cues.update(*face.faceProfile(),now,blink.lastBlink(),cueStarts);
   for(auto& s:cueStarts.cues)
-    face.startCue(s.name,s.mirror,s.hold,s.at,now);
+    playCue(s.name,s.mirror,s.hold,s.at,now);
   // a lie: the leak of the felt emotion, the liar's blinks (ordinary ones keep away from them), a smile put on
   if(cueStarts.leak)
     face.startLeak(cueStarts.leakFelt,cueStarts.leakLower,cueStarts.leakAt,now);

@@ -101,8 +101,11 @@ void markPage(ivec3 at, float z) {
   if((v&0xFFFF0000)==(cur&0xFFFF0000))
     return; // update same entry
 
+  // Two pages share the cell and atomicMin keeps the smaller packed value: the larger one, whichever thread
+  // brought it, goes to the table now. Storing `v` lost `cur` when cur was the larger one, so a page was marked
+  // or not by the order of the threads.
   // imageAtomicAdd(pageTbl, ivec3(0), 1u); //counter
-  storeHiZValue(v);
+  storeHiZValue(max(v, cur));
 #endif
   }
 

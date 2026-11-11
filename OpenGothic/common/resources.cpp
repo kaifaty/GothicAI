@@ -1,4 +1,5 @@
 #include "resources.h"
+#include "gameservices.h"
 #include "resources_internal.h"
 #include "loadprobe.h"
 #include "basestore.h"
@@ -50,7 +51,6 @@
 #include "utils/fileext.h"
 #include "utils/gthfont.h"
 
-#include "gothic.h"
 #include "contentcensus.h"
 #include "gltfmesh.h"
 #include "basemesh.h"
@@ -66,6 +66,8 @@
 
 using namespace Tempest;
 using ResourcesInternal::modelKey;
+using ResourcesInternal::censusSourcePath;
+using ResourcesInternal::scriptDirectory;
 
 namespace ModelData { asset::ModelScript readScriptOverlay(const std::filesystem::path& file); }
 
@@ -78,6 +80,89 @@ struct Resources::VideoBase {
   std::map<std::string,std::filesystem::path> files;
   bool ready=false;
   };
+
+namespace ResourcesInternal {
+std::string censusSourcePath(const std::filesystem::path& source) {
+  auto relative = source;
+  if(relative.is_absolute())
+    relative = relative.lexically_relative(std::filesystem::path(CommandLine::inst().rootPath()));
+  relative = relative.lexically_normal();
+  if(relative.empty() || relative.is_absolute())
+    return {};
+  for(const auto& part:relative)
+    if(part=="..")
+      return {};
+  return relative.generic_string();
+  }
+
+const char* scriptDirectory(int language) {
+  static constexpr const char* directories[]={"Scripts_EN","Scripts_DE","Scripts_PL","Scripts_RU",
+                                               "Scripts_FR","Scripts_ES","Scripts_IT","Scripts_CZ"};
+  return language>=0 && language<8 ? directories[language] : "Scripts";
+  }
+}
+
+bool Resources::loadBaseOutputUnits(std::string_view request, int language,
+                                    std::vector<std::shared_ptr<asset::CutsceneBlock>>& blocks) {
+  try {
+    std::string_view branch;
+    if(inst->baseOutputUnits.findVfs(request,&branch)!=nullptr)
+      return loadBaseOutputUnits(request,language,branch,blocks);
+    const std::string name(request.substr(0,255));
+    const OutputUnits::Source* source=inst->baseOutputUnits.findHost("_work/Data/Scripts/content/CUTSCENE/"+name);
+    branch="host_ordinary";
+    if(source==nullptr && language>=0) {
+      source=inst->baseOutputUnits.findHost("_work/Data/"+std::string(scriptDirectory(language))+"/"+name);
+      branch="host_localized";
+      }
+    if(source==nullptr) return false;
+    return loadBaseOutputUnits(request,language,branch,blocks,std::filesystem::path(source->path).u16string());
+    }
+  catch(const BaseStore::Error&) { throw; }
+  catch(const std::exception& error) { throw BaseStore::Error("output units "+std::string(request)+": "+error.what()); }
+  }
+
+bool Resources::loadBaseOutputUnits(std::string_view request, int language, std::string_view branch,
+                                   std::vector<std::shared_ptr<asset::CutsceneBlock>>& blocks,
+                                   std::u16string_view hostPath) {
+  try {
+    const auto& index = inst->baseOutputUnits;
+    const OutputUnits::Source* source = nullptr;
+    if(hostPath.empty()) {
+      std::string_view selectedBranch;
+      source = index.findVfs(request,&selectedBranch);
+      if(source==nullptr || selectedBranch!=branch)
+        throw std::runtime_error("selected VFS source missing from output units base index");
+      }
+    else {
+      source = index.findHost(censusSourcePath(std::filesystem::path(hostPath)));
+      if(source==nullptr)
+        throw std::runtime_error("selected host source missing from output units base index");
+      if(!source->skipped.empty())
+        return false;
+      }
+    if(!source->skipped.empty())
+      throw std::runtime_error("selected VFS output units source skipped: "+source->skipped);
+    const auto file = index.path(*source);
+    std::string actualSha256;
+    auto library = OutputUnits::readLibrary(file,&actualSha256);
+    if(actualSha256!=source->recordSha256)
+      throw std::runtime_error("output units record identity differs from base index");
+    auto loaded = OutputUnits::sortedBlocks(library);
+    blocks = std::move(loaded);
+    if(inst->census) {
+      const auto record = "base/outputunits/"+file.filename().generic_string();
+      inst->census->replaced(request,record);
+      inst->census->outputUnits("GameScript::loadDialogOU",request,language,branch,record,actualSha256,*source);
+      }
+    return true;
+    }
+  catch(const std::exception& error) {
+    if(inst->census) inst->census->missing(request,error.what());
+    throw BaseStore::Error("output units "+std::string(request)+": "+error.what());
+    }
+  }
+
 
 Resources::Resources() {
   inst=this;
@@ -179,9 +264,10 @@ Resources::Resources(Tempest::Device &device)
   }
 
 Resources::~Resources() {
-  if(textureReload && textureReload->pending.valid())
-    textureReload->pending.wait();
-  textureReload.reset();
+  for(auto& reload:textureReloads)
+    if(reload->pending.valid())
+      reload->pending.wait();
+  textureReloads.clear();
   if(videoBase) videoBase->cancelled->store(true);
   if(videoWorker.joinable()) videoWorker.join();
   if(videoBase && videoBase->selection.publication.valid()) videoBase->selection.publication.wait();
@@ -973,7 +1059,7 @@ Tempest::Sound Resources::implLoadSoundBuffer(std::string_view name) {
   if(name.empty())
     return Tempest::Sound();
 
-  auto& external = Gothic::inst().externalSoundFn;
+  auto& external = GameServices::inst().externalSoundFn;
   if(!(external && external(name,fBuff))) {
     const auto* source = baseAudio.find(name);
     if(source==nullptr)
@@ -1114,6 +1200,11 @@ const RenderRig* Resources::loadRenderRig(std::string_view name) {
 const RenderRig* Resources::renderRigOfMesh(std::string_view mesh) {
   std::lock_guard<std::recursive_mutex> g(inst->sync);
   return inst->renderRigs ? inst->renderRigs->rigOfMesh(mesh) : nullptr;
+  }
+
+std::string Resources::bodyOfVariant(std::string_view body, int32_t variant) {
+  std::lock_guard<std::recursive_mutex> g(inst->sync);
+  return inst->renderRigs ? inst->renderRigs->bodyOf(body,variant) : std::string();
   }
 
 const Animation* Resources::loadAnimation(std::string_view name) {

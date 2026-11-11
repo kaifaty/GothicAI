@@ -1,4 +1,5 @@
 #include "musicdefinitions.h"
+#include "definitiontypes.h"
 
 #include <Tempest/Log>
 
@@ -10,7 +11,7 @@ MusicDefinitions::MusicDefinitions() {
   vm = Gothic::inst().createPhoenixVm("Music.dat");
 
   vm->enumerate_instances_by_class_name("C_MusicTheme", [this](daedalus::DaedalusSymbol& s) {
-    themes.push_back(vm->init_instance<Def::MusicTheme>(&s));
+    themes.emplace_back(s.index(),vm->init_instance<VmDef::MusicTheme>(&s)->copy());
     });
   }
 
@@ -25,9 +26,8 @@ const Def::MusicTheme* MusicDefinitions::operator [](std::string_view name) cons
   if(id==nullptr)
     return nullptr;
   for(auto& i:themes) {
-    auto* sym = vm->find_symbol_by_instance(i);
-    if(sym->index() == id->index())
-      return i.get();
+    if(i.first == id->index())
+      return &i.second;
     }
   return nullptr;
   }

@@ -3,6 +3,8 @@
 #include <Tempest/Log>
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/pose.h"
@@ -291,7 +293,8 @@ MeshObjects::Mesh &MeshObjects::Mesh::operator =(MeshObjects::Mesh &&other) {
   std::swap(cpuSub,   other.cpuSub);
   std::swap(textureOwnerKnown, other.textureOwnerKnown);
   std::swap(textureOwnerSpatial, other.textureOwnerSpatial);
-  std::swap(textureOwnerChunk, other.textureOwnerChunk);
+  std::swap(textureOwnerAnchor, other.textureOwnerAnchor);
+  std::swap(textureOwnerReach, other.textureOwnerReach);
   return *this;
   }
 
@@ -305,16 +308,23 @@ void MeshObjects::Mesh::setTextureCategory(Resources::TextureCategory category) 
     sub[i].setTextureCategory(category);
   }
 
-void MeshObjects::Mesh::setTextureOwner(const Tempest::Vec3& position, bool spatial) {
-  const auto chunk=ChunkId::fromPosition(position.x,position.z);
-  const std::pair key{chunk.x,chunk.z};
-  if(textureOwnerKnown && textureOwnerSpatial==spatial && (!spatial || textureOwnerChunk==key))
-    return;
+float MeshObjects::Mesh::setTextureOwner(const Tempest::Vec3& position, bool spatial) {
+  if(textureOwnerKnown && textureOwnerSpatial==spatial) {
+    if(!spatial)
+      return std::numeric_limits<float>::infinity();
+    const auto d=position-textureOwnerAnchor;
+    const float moved=d.x*d.x+d.y*d.y+d.z*d.z;
+    if(moved<=textureOwnerReach*textureOwnerReach)
+      return textureOwnerReach-std::sqrt(moved);
+    }
+  float reach=std::numeric_limits<float>::infinity();
+  for(size_t i=0;i<subCount;++i)
+    reach=std::min(reach,sub[i].setTextureOwner(position,spatial));
   textureOwnerKnown=true;
   textureOwnerSpatial=spatial;
-  textureOwnerChunk=key;
-  for(size_t i=0;i<subCount;++i)
-    sub[i].setTextureOwner(position,spatial);
+  textureOwnerAnchor=position;
+  textureOwnerReach=reach;
+  return reach;
   }
 
 void MeshObjects::Mesh::setTexturePosition(const Tempest::Vec3& position) {

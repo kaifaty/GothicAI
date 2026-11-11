@@ -66,6 +66,8 @@ class ClothBulletBenchDriver final {
       }
   };
 
+struct FractureMesh;
+
 namespace testbench_detail {
 
 struct Hold {
@@ -1136,6 +1138,33 @@ struct FracturePieces {
     std::vector<Piece> pieces;
     };
   std::vector<Break> breaks;
+  // `destruction2 remnant <n>`: the fixture's actor strikes the largest group of its broken prop,
+  // re-aimed before each swing, until the prop has more bodies or n swings are spent.
+  struct RemnantAttack {
+    bool running=false;
+    unsigned limit=0,swings=0,ordinal=0;
+    size_t bodies=0,pieces=0;
+    double largest=0;
+    uint64_t next=0,deadline=0;
+    std::shared_ptr<const FractureMesh> mesh;
+    };
+  RemnantAttack remnant;
+  // `destruction2 walk <length>`: the hero walks a straight line through the loose pieces and back.
+  struct DebrisWalk {
+    bool running=false,noGround=false;
+    int pass=0;
+    float length=0,progress=0,maxAbove=-1e9f,minAbove=1e9f;
+    Tempest::Vec3 start,direction,passStart;
+    uint64_t passTime=0;
+    size_t onPath=0;
+    std::string passes;
+    std::vector<std::pair<size_t,Tempest::Vec3>> debris,debrisStart; // loose pieces: this pass, the walk
+    std::shared_ptr<const FractureMesh> mesh;
+    };
+  DebrisWalk walk;
+  // Remnant attacks of the current case, counted from its setup.
+  std::string remnantCase;
+  unsigned remnantAttacks=0;
   };
 
 struct Healing {
@@ -1535,7 +1564,7 @@ bool monsterCharacterCommand(MonsterCharacter& state,const MonsterCharacterConte
 bool characterCommand(Character& state,const CharacterContext& context,const std::vector<std::string>& a,World& w,Npc& pl,PlayerControl& ctrl);
 bool placedItemsCommand(PlacedItems& state,const std::vector<std::string>& a,World& w,Npc& pl,PlayerControl& ctrl);
 bool itemHullsCommand(ItemHulls& state,const std::vector<std::string>& a,World& w,Npc& pl);
-bool fracturePiecesCommand(const std::vector<uintptr_t>& ids,Npc* actor,const Tempest::Vec3& stand,const Tempest::Vec3& direction,CamMode& cam,bool& cutPending,const std::vector<std::string>& a,World& w);
+bool fracturePiecesCommand(FracturePieces& state,Destruction& destruction,const DestructionContext& context,bool& cutPending,const std::vector<std::string>& a,World& w,Npc& pl,PlayerControl& ctrl);
 bool waterCommand(Water& waterState,const WaterContext& context,const std::vector<std::string>& a,World& w,Npc& pl,PlayerControl& ctrl);
 bool furniturePartsCommand(FurnitureParts& state,const std::vector<std::string>& a,World& w,Npc& pl);
 bool npcSimCommand(NpcDuel& duelState,NpcTierTest& tierState,NpcSpeedTest& speedState,size_t& pc,const std::vector<std::string>& prog,const std::vector<std::string>& a,World& w,Npc& pl);
@@ -1747,7 +1776,7 @@ void itemHullSample(ItemHulls& state,World& world);
 void itemHullReport(ItemHulls& state,World& world);
 
 void fracturePiecesBreak(FracturePieces& state,World& world,uintptr_t parent,std::string_view label);
-void fracturePiecesTick(FracturePieces& state,World& world);
+void fracturePiecesTick(FracturePieces& state,Destruction& destruction,const DestructionContext& context,World& world,Npc& pl,PlayerControl& ctrl);
 std::optional<std::pair<Tempest::Vec3,Tempest::Vec3>> fracturePiecesView(World& world,const std::vector<uintptr_t>& ids,
                                                                          const Tempest::Vec3& camera,const Tempest::Vec3& target);
 // `destruction2 stand`: the actor back where it stood before the blow, facing the same way
@@ -1866,6 +1895,7 @@ struct Bench : OverlayBench, CameraBench {
   bool        frozen        = false; // the world stands still: `streaming wait` waits in deterministic mode
   bool        renderReset   = false; // the renderer drops its temporal state before this frame's picture
   uint32_t    settleSteps   = 0;     // fixed steps left between the end of `streaming wait` and the next command
+  uint32_t    holdFrames    = 0;     // frames the loaded world has stood still in a deterministic `streaming wait`
   bool        ordered       = false; // visibility appends clusters in order (slow): from the end of the wait to the shot
   struct StreamingSample {
     std::string segment;

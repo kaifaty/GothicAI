@@ -2,6 +2,7 @@
 #include "loadprobe.h"
 #include "frameprofile.h"
 #include "contentcensus.h"
+#include "texturelevels.h"
 #include "graphics/material.h"
 #include "utils/fileext.h"
 #include "utils/string_frm.h"
@@ -54,7 +55,7 @@ Tempest::Texture2d* Resources::implLoadTexture(std::string_view cname, bool forc
       auto& record=entry->second;
       unqueueTexture(record);
       record.pinned=true;
-      if(record.tail) {
+      if(record.tail()) {
         LoadProbe::Vobs::Scope probe("texture_load");
         LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Texture);
         auto full=decodeBaseTexture(record.source,record.mipmaps);
@@ -63,7 +64,7 @@ Tempest::Texture2d* Resources::implLoadTexture(std::string_view cname, bool forc
           retireTexture(std::move(*record.texture));
         *record.texture=std::move(replacement);
         record.resident=true;
-        record.tail=false;
+        record.firstMip=0;
         record.bytes=LoadProbe::textureBytes(*record.texture);
         notifyTextureChanged(record);
         ++texturesPromoted;
@@ -79,7 +80,7 @@ Tempest::Texture2d* Resources::implLoadTexture(std::string_view cname, bool forc
   TextureData data;
   Texture2d tex;
   try {
-    data=implDecodeTexture(cname,forceMips,!pinned && textureStreaming && loadingTextureTail ? textureSkipMips : 0);
+    data=implDecodeTexture(cname,forceMips,textureLoadSkip(pinned));
     if(!data.pixmap.isEmpty())
       tex=device().texture(data.pixmap,data.useMipmap);
     }
@@ -258,7 +259,7 @@ const Texture2d* Resources::implLoadMaterialTexture(const std::string& path, Tex
   LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Texture);
   const auto probeT = LoadProbe::now();
   try {
-    TextureData data=decodeBaseTexture(path,false,textureStreaming && loadingTextureTail ? textureSkipMips : 0);
+    TextureData data=decodeBaseTexture(path,false,textureLoadSkip(false));
     if(data.pixmap.format()!=TextureFormat::DXT5 && (kind==TextureKind::Normal || data.pixmap.format()!=TextureFormat::DXT1)) {
       Log::e("materials: unsupported DDS format in \"",path,"\"");
       } else {
@@ -341,26 +342,44 @@ Resources::TextureData Resources::implDecodeTexture(std::string_view name, bool 
 Resources::TextureData Resources::decodeBaseTexture(const std::filesystem::path& path, bool forceMips, uint32_t skipMips) {
   if(skipMips!=0 && FileExt::hasExt(path.string(),"DDS")) {
     Tempest::RFile input(path.string());
+    // The whole chain's size from the header, then the tail reader starts again at the header.
+    std::array<uint8_t,128> header{};
+    const auto got=input.read(header.data(),header.size());
+    if(input.unget(got)!=got)
+      throw std::runtime_error("unable to rewind \""+path.string()+"\"");
     auto tail=Pixmap::loadDdsMipTail(input,skipMips);
     if(!tail.isEmpty()) {
-      const auto mipmaps=forceMips || tail.mipCount()>1;
-      return {std::move(tail),mipmaps,path,true};
+      const auto word=[&](size_t at) {
+        return uint32_t(header[at])|uint32_t(header[at+1])<<8|uint32_t(header[at+2])<<16|uint32_t(header[at+3])<<24;
+        };
+      TextureData ret;
+      ret.useMipmap=forceMips || tail.mipCount()>1;
+      ret.source=path;
+      ret.height=got==header.size() ? word(12) : tail.h();
+      ret.width=got==header.size() ? word(16) : tail.w();
+      ret.mipCount=std::max(tail.mipCount(),got==header.size() ? std::max(1u,word(28)) : tail.mipCount());
+      ret.firstMip=uint8_t(std::min<uint32_t>(ret.mipCount-tail.mipCount(),255));
+      ret.pixmap=std::move(tail);
+      return ret;
       }
     }
-  if(FileExt::hasExt(path.string(),"PNG"))
-    return {Tempest::Pixmap(path.string()),true,path}; // device.texture(pm) generates mips for non-DXT originals.
-  TextureData decoded{Tempest::Pixmap(path.string()),false,path};
-  decoded.useMipmap = forceMips || decoded.pixmap.mipCount()>1;
+  TextureData decoded;
+  decoded.source=path;
+  if(FileExt::hasExt(path.string(),"PNG")) {
+    decoded.pixmap=Tempest::Pixmap(path.string());
+    decoded.useMipmap=true; // device.texture(pm) generates mips for non-DXT originals.
+    } else {
+    decoded.pixmap=Tempest::Pixmap(path.string());
+    decoded.useMipmap=forceMips || decoded.pixmap.mipCount()>1;
+    }
+  decoded.width=decoded.pixmap.w();
+  decoded.height=decoded.pixmap.h();
+  decoded.mipCount=std::max(1u,decoded.pixmap.mipCount());
   return decoded;
   }
 
 bool Resources::TextureRecord::wanted() const {
   return pinned || std::any_of(demand.begin(),demand.end(),[](uint32_t count) { return count!=0; });
-  }
-
-std::tuple<uint32_t,uint64_t,uintptr_t> Resources::TextureRecord::demotionPriority() const {
-  const auto distance=distances.empty() ? UINT32_MAX : distances.begin()->first;
-  return {UINT32_MAX-distance,lastNeededFull,reinterpret_cast<uintptr_t>(texture)};
   }
 
 void Resources::trackTexture(Texture2d* texture, const TextureData& data, TextureKind kind, bool pinned) {
@@ -378,12 +397,25 @@ void Resources::trackTexture(Texture2d* texture, const TextureData& data, Textur
   record.kind=kind;
   record.mipmaps=data.useMipmap;
   record.pinned=pinned;
-  record.tail=data.tail;
-  record.hasTail=data.tail || (FileExt::hasExt(data.source.string(),"DDS") && data.pixmap.mipCount()>1 &&
-                               data.pixmap.w()>=128 && data.pixmap.h()>=128);
+  record.firstMip=data.firstMip;
+  record.width=data.width;
+  record.height=data.height;
+  record.mipCount=data.mipCount;
+  // A readable tail: a DDS with more than one level and both sides at least 128.
+  if(FileExt::hasExt(data.source.string(),"DDS"))
+    record.lowest=std::max(data.firstMip,TextureLevels::lowest(data.width,data.height,data.mipCount));
   record.bytes=LoadProbe::textureBytes(*texture);
   auto entry=textureRecords.emplace(texture,std::move(record)).first;
   queueTexture(entry->second);
+  }
+
+uint32_t Resources::textureLoadSkip(bool pinned) const {
+  if(pinned || !textureStreaming || textureSkipMips==0)
+    return 0;
+  // World load with levels: the coarsest allowed level (the DDS reader stops there), whatever the scope.
+  if(textureScreen && textureStartup.load()!=0)
+    return TextureLevels::CoarsestRead;
+  return loadingTextureTail ? textureSkipMips : 0;
   }
 
 Resources::TextureLoadScope::TextureLoadScope(bool tail):previous(loadingTextureTail) {
@@ -396,14 +428,43 @@ Resources::TextureLoadScope::~TextureLoadScope() {
 
 void Resources::updateNearTailTime() {
   const auto now=std::chrono::steady_clock::now();
-  nearTailSeconds+=std::chrono::duration<double>(now-nearTailUpdated).count()*double(nearTailTextures.size());
+  const auto elapsed=std::chrono::duration<double>(now-nearTailUpdated).count();
+  nearTailSeconds+=elapsed*double(nearTailTextures.size());
+  // Missing and promotion queues hold exactly the wanted textures resident coarser than wanted.
+  shortfallSeconds+=elapsed*double(textureMissing.size()+texturePromotions.size());
   nearTailUpdated=now;
   }
 
-bool Resources::wantsFull(const TextureRecord& record) const {
-  return !textureStreaming || textureSkipMips==0 || !record.hasTail || record.pinned ||
-         record.distances.count(TextureAlwaysFull)!=0 ||
-         (!record.distances.empty() && record.distances.begin()->first<=2);
+uint8_t Resources::tailLevel(const TextureRecord& record) const {
+  return uint8_t(std::min<uint32_t>(textureSkipMips,record.lowest));
+  }
+
+uint8_t Resources::wantedLevel(const TextureRecord& record) const {
+  if(!textureStreaming || textureSkipMips==0 || record.lowest==0 || record.pinned ||
+     record.distances.count(TextureAlwaysFull)!=0)
+    return 0;
+  const auto tail=tailLevel(record);
+  // The ring rule: the whole chain within ring 2, the tail further away.
+  if(!textureScreen || (record.ringNeeds.empty() && record.resolutions.empty()))
+    return !record.distances.empty() && record.distances.begin()->first<=2 ? 0 : tail;
+  uint8_t level=record.lowest;
+  if(!record.ringNeeds.empty())
+    level=std::min<uint8_t>(level,record.ringNeeds.begin()->first<=2 ? 0 : tail);
+  if(!record.resolutions.empty())
+    level=std::min(level,TextureLevels::level(record.width,record.height,textureViewScale,record.resolutions.rbegin()->first,
+                                              textureReserve,record.lowest));
+  return level;
+  }
+
+std::tuple<uint64_t,uint64_t,uintptr_t> Resources::textureDemotionKey(const TextureRecord& record) const {
+  const auto identity=reinterpret_cast<uintptr_t>(record.texture);
+  if(!textureScreen) {
+    const auto distance=record.distances.empty() ? UINT32_MAX : record.distances.begin()->first;
+    return {uint64_t(UINT32_MAX-distance),record.lastNeededFull,identity};
+    }
+  const auto keep=TextureLevels::chainBytes(record.format,record.width,record.height,record.mipCount,wantedLevel(record));
+  const auto gain=record.bytes>keep ? record.bytes-keep : 0;
+  return {UINT64_MAX-gain,record.lastNeededFull,identity};
   }
 
 void Resources::unqueueTexture(TextureRecord& record) {
@@ -413,27 +474,35 @@ void Resources::unqueueTexture(TextureRecord& record) {
   textureMissing.erase(&record);
   texturePromotions.erase(&record);
   textureDemotions.erase({record.demoteAt,reinterpret_cast<uintptr_t>(record.texture)});
-  textureDemotionLru.erase(record.demotionPriority());
+  if(auto found=textureDemotionLru.find(record.demotionKey); found!=textureDemotionLru.end() && found->second==&record)
+    textureDemotionLru.erase(found);
   }
 
 void Resources::queueTexture(TextureRecord& record) {
-  if(record.resident && record.tail && !record.distances.empty() && record.distances.begin()->first<=1)
+  if(record.resident && record.tail() && !record.distances.empty() && record.distances.begin()->first<=1)
     nearTailTextures.insert(&record);
   if(record.wanted()) {
+    const auto wanted=wantedLevel(record);
     if(!record.failed) {
       if(!record.resident)
         textureMissing.insert(&record);
-      else if(record.tail && wantsFull(record))
+      else if(record.firstMip>wanted)
         texturePromotions.insert(&record);
       }
-    if(!wantsFull(record) && (record.distances.empty() || record.distances.begin()->first>3)) {
+    // Lowering waits five seconds of eligibility. An owner judged by the ring rule keeps it within ring 3.
+    const auto& rings=textureScreen ? record.ringNeeds : record.distances;
+    const bool hold=!rings.empty() && rings.begin()->first<=3;
+    const bool eligible=textureScreen ? wanted>record.firstMip && !hold : wanted!=0 && !hold;
+    if(eligible) {
       if(record.demoteAt==std::chrono::steady_clock::time_point{})
         record.demoteAt=std::chrono::steady_clock::now()+std::chrono::seconds(5);
-      if(record.resident && !record.tail && !record.failed) {
-        if(record.demoteAt<=std::chrono::steady_clock::now())
-          textureDemotionLru.emplace(record.demotionPriority(),&record);
-        else
+      if(record.resident && record.firstMip<wanted && !record.failed) {
+        if(record.demoteAt<=std::chrono::steady_clock::now()) {
+          record.demotionKey=textureDemotionKey(record);
+          textureDemotionLru.emplace(record.demotionKey,&record);
+          } else {
           textureDemotions.emplace(std::make_pair(record.demoteAt,reinterpret_cast<uintptr_t>(record.texture)),&record);
+          }
         }
       } else {
       record.demoteAt={};
@@ -444,7 +513,17 @@ void Resources::queueTexture(TextureRecord& record) {
     }
   }
 
-void Resources::configureTextures(std::string_view budget, std::string_view skipMips, std::string_view target) {
+void Resources::requeueTextures(const std::function<void()>& change) {
+  ++textureRequeues;
+  for(auto& entry:textureRecords)
+    unqueueTexture(entry.second);
+  change();
+  for(auto& entry:textureRecords)
+    queueTexture(entry.second);
+  }
+
+void Resources::configureTextures(std::string_view budget, std::string_view skipMips, std::string_view target,
+                                  std::string_view screenMips) {
   if(inst==nullptr)
     return;
   const auto* enabled=std::getenv("OPENGOTHIC_TEXTURE_STREAMING");
@@ -452,6 +531,9 @@ void Resources::configureTextures(std::string_view budget, std::string_view skip
   const auto* targetEnv=std::getenv("OPENGOTHIC_TEXTURE_TARGET_MB");
   const auto* mipsEnv=std::getenv("OPENGOTHIC_TEXTURE_MIPS");
   const auto* skipEnv=std::getenv("OPENGOTHIC_TEXTURE_FAR_SKIP_MIPS");
+  const auto* screenEnv=std::getenv("OPENGOTHIC_TEXTURE_SCREEN_MIPS");
+  const auto* reserveEnv=std::getenv("OPENGOTHIC_TEXTURE_MIP_RESERVE");
+  const auto* jumpEnv=std::getenv("OPENGOTHIC_TEXTURE_JUMP_MS");
   const auto integer=[](std::string_view value, int64_t fallback, const char* field, int64_t maximum) -> int64_t {
     if(value.empty())
       return fallback;
@@ -467,56 +549,49 @@ void Resources::configureTextures(std::string_view budget, std::string_view skip
   const auto skip=integer(skipEnv!=nullptr ? std::string_view(skipEnv) : skipMips,2,"texture_far_skip_mips",UINT32_MAX);
   const auto targetMegabytes=integer(targetEnv!=nullptr ? std::string_view(targetEnv) : target,192,"texture_target_mb",
                                     std::numeric_limits<int64_t>::max()/1048576);
+  const auto screen=integer(screenEnv!=nullptr ? std::string_view(screenEnv) : screenMips,1,"texture_screen_mips",1);
+  const auto reserve=integer(reserveEnv!=nullptr ? std::string_view(reserveEnv) : std::string_view(),1,
+                             "OPENGOTHIC_TEXTURE_MIP_RESERVE",16);
+  const auto jumpMs=integer(jumpEnv!=nullptr ? std::string_view(jumpEnv) : std::string_view(),300,"OPENGOTHIC_TEXTURE_JUMP_MS",60000);
   std::lock_guard<std::recursive_mutex> guard(inst->sync);
-  inst->textureBudget=uint64_t(megabytes)*1048576;
-  inst->textureTarget=uint64_t(targetMegabytes)*1048576;
-  inst->textureStreaming=enabled==nullptr || std::strcmp(enabled,"0")!=0;
-  inst->textureSkipMips=inst->textureStreaming && (mipsEnv==nullptr || std::strcmp(mipsEnv,"0")!=0) ? uint32_t(skip) : 0;
-  inst->textureOverBudget=false;
-  for(auto& entry:inst->textureRecords) {
-    inst->unqueueTexture(entry.second);
-    inst->queueTexture(entry.second);
-    }
+  inst->requeueTextures([&] {
+    inst->textureBudget=uint64_t(megabytes)*1048576;
+    inst->textureTarget=uint64_t(targetMegabytes)*1048576;
+    inst->textureStreaming=enabled==nullptr || std::strcmp(enabled,"0")!=0;
+    inst->textureSkipMips=inst->textureStreaming && (mipsEnv==nullptr || std::strcmp(mipsEnv,"0")!=0) ? uint32_t(skip) : 0;
+    inst->textureScreen=screen!=0;
+    inst->textureReserve=uint32_t(reserve);
+    inst->textureJumpMs=uint32_t(jumpMs);
+    inst->textureOverBudget=false;
+    });
   }
 
-void Resources::finishTextureLoading() {
+bool Resources::textureScreenMips() {
+  return inst!=nullptr && inst->textureScreen;
+  }
+
+uint32_t Resources::textureMipReserve() {
+  return inst!=nullptr ? inst->textureReserve.load() : 1;
+  }
+
+float Resources::textureViewScaleLog2() {
+  return inst!=nullptr ? inst->textureViewScale.load() : 11.f;
+  }
+
+void Resources::setTextureView(float height, float fovYDegrees) {
   if(inst==nullptr || inst->dev==nullptr)
     return;
+  const auto scale=TextureLevels::viewScale(height,fovYDegrees);
+  if(!(scale>0))
+    return;
   std::lock_guard<std::recursive_mutex> guard(inst->sync);
-  std::array<TextureRecord*,2> records{};
-  std::array<std::future<Texture2d>,2> uploads;
-  const auto publish=[&](size_t slot) {
-    if(!uploads[slot].valid())
-      return;
-    auto texture=uploads[slot].get();
-    auto& record=*records[slot];
-    inst->unqueueTexture(record);
-    if(record.resident)
-      inst->retireTexture(std::move(*record.texture));
-    *record.texture=std::move(texture);
-    record.resident=true;
-    if(record.tail)
-      ++inst->texturesPromoted;
-    record.tail=false;
-    record.bytes=LoadProbe::textureBytes(*record.texture);
-    inst->notifyTextureChanged(record);
-    inst->queueTexture(record);
-    };
-  size_t slot=0;
-  for(auto& entry:inst->textureRecords) {
-    auto& record=entry.second;
-    if(!record.wanted() || !inst->wantsFull(record) || (record.resident && !record.tail))
-      continue;
-    publish(slot);
-    records[slot]=&record;
-    uploads[slot]=std::async(std::launch::async,[path=record.source,mipmaps=record.mipmaps,device=inst->dev] {
-      auto data=decodeBaseTexture(path,mipmaps);
-      return device->texture(data.pixmap,data.useMipmap);
-      });
-    slot=(slot+1)%uploads.size();
-    }
-  publish(slot);
-  publish((slot+1)%uploads.size());
+  // A larger scale needs sharper levels at once; a smaller one waits for three eighths of a level, so an aim that
+  // narrows the view over several frames requeues the textures a few times, not every frame.
+  constexpr float Slack=0.125f;
+  const float current=inst->textureViewScale.load();
+  if(scale<=current && scale>=current-3*Slack)
+    return;
+  inst->requeueTextures([&] { inst->textureViewScale=scale+Slack; });
   }
 
 Resources::TextureStats Resources::textureStats() {
@@ -530,6 +605,16 @@ Resources::TextureStats Resources::textureStats() {
   stats.promotionQueue=inst->texturePromotions.size();
   stats.nearTailCount=inst->nearTailTextures.size();
   stats.nearTailSeconds=inst->nearTailSeconds;
+  stats.shortfallCount=inst->textureMissing.size()+inst->texturePromotions.size();
+  stats.shortfallSeconds=inst->shortfallSeconds;
+  stats.loadsInFlight=inst->textureReloads.size();
+  stats.demandCalls=inst->textureDemandCalls;
+  stats.requeues=inst->textureRequeues;
+  stats.loadsStarted=inst->textureLoadsStarted;
+  stats.jumps=inst->textureJumps;
+  stats.jumpsOpen=inst->textureJumpsUnresolved+(inst->textureJump.open ? 1 : 0);
+  stats.jumpSyncMsMax=inst->textureJumpSyncMsMax;
+  stats.jumpZeroMsMax=inst->textureJumpZeroMsMax;
   for(const auto& queue:inst->recycled)
     stats.retiredBytes+=queue.textureBytes;
   stats.liveBytes=Texture2d::liveBytes();
@@ -539,16 +624,21 @@ Resources::TextureStats Resources::textureStats() {
   stats.reloaded=inst->texturesReloaded;
   stats.categoryBytes[size_t(TextureCategory::Other)]=stats.liveBytes;
   stats.categoryCount[size_t(TextureCategory::Other)]=stats.count;
+  uint64_t coarser=0;
   for(const auto& entry:inst->textureRecords) {
     const auto& record=entry.second;
     if(!record.resident)
       continue;
     const auto bytes=record.bytes;
-    (record.tail ? stats.tailBytes : stats.fullBytes)+=bytes;
+    (record.tail() ? stats.tailBytes : stats.fullBytes)+=bytes;
+    if(record.firstMip!=0) {
+      stats.levelBytes[std::min<size_t>(record.firstMip,stats.levelBytes.size()-1)]+=bytes;
+      coarser+=bytes;
+      }
     stats.sourceBytes[size_t(record.sourceKind)]+=bytes;
-    if(!record.tail) {
+    if(!record.tail()) {
       stats.sourceFullBytes[size_t(record.sourceKind)]+=bytes;
-      if(record.hasTail && inst->textureStreaming && inst->textureSkipMips!=0 &&
+      if(record.hasTail() && inst->textureStreaming && inst->textureSkipMips!=0 &&
          !record.pinned && record.distances.count(TextureAlwaysFull)==0 &&
          !record.distances.empty() && record.distances.begin()->first<=2)
         stats.fullRing2Bytes+=bytes;
@@ -566,6 +656,8 @@ Resources::TextureStats Resources::textureStats() {
   for(const auto bytes:stats.sourceFullBytes)
     trackedFull+=bytes;
   stats.fullBytes=stats.liveBytes-stats.tailBytes;
+  // Untracked payloads (UI, colours, a replacement not yet published) count as whole chains.
+  stats.levelBytes[0]=stats.liveBytes>coarser ? stats.liveBytes-coarser : 0;
   stats.sourceBytes[size_t(TextureSource::Other)]+=stats.liveBytes-tracked;
   stats.sourceFullBytes[size_t(TextureSource::Other)]+=stats.fullBytes-trackedFull;
   return stats;
@@ -590,9 +682,9 @@ std::vector<const Texture2d*> Resources::textureChanges(uint64_t since) {
   }
 
 // Bench `deterministic on` (common/testbench.cpp, reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md).
-// The Full/Tail demotion runs on a wall-clock delay and on memory pressure: with `benchTexturesSettle` texturesReady()
-// also waits for the timed demotions, a reload in flight and, above the texture target, the demotion LRU (below it
-// the LRU never moves); while `benchTexturesFrozen` updateTextures() changes nothing, so levels depend on the view.
+// The level lowering runs on a wall-clock delay and on memory pressure: with `benchTexturesSettle` texturesReady()
+// also waits for the timed demotions, loads in flight and, above the texture target, the demotion queue (below it
+// the queue never moves); while `benchTexturesFrozen` updateTextures() changes nothing, so levels depend on the view.
 bool benchTexturesSettle = false;
 bool benchTexturesFrozen = false;
 
@@ -600,7 +692,7 @@ bool Resources::texturesReady() {
   if(inst==nullptr || inst->dev==nullptr)
     return true;
   std::lock_guard<std::recursive_mutex> guard(inst->sync);
-  if(benchTexturesSettle && (!inst->textureDemotions.empty() || inst->textureReload ||
+  if(benchTexturesSettle && (!inst->textureDemotions.empty() || !inst->textureReloads.empty() ||
                              (!inst->textureDemotionLru.empty() && Texture2d::liveBytes()>inst->textureTarget)))
     return false;
   return inst->textureMissing.empty() && inst->texturePromotions.empty();
@@ -612,7 +704,7 @@ std::string Resources::texturesWaitState() {
   std::lock_guard<std::recursive_mutex> guard(inst->sync);
   return "missing="+std::to_string(inst->textureMissing.size())+" promotions="+std::to_string(inst->texturePromotions.size())+
          " demotions="+std::to_string(inst->textureDemotions.size())+" demotion_lru="+std::to_string(inst->textureDemotionLru.size())+
-         " reload="+std::to_string(int(bool(inst->textureReload)))+" settle="+std::to_string(int(benchTexturesSettle));
+         " reload="+std::to_string(inst->textureReloads.size())+" settle="+std::to_string(int(benchTexturesSettle));
   }
 
 TextureFormat Resources::textureFormat(const Texture2d* texture) {
@@ -627,52 +719,92 @@ TextureFormat Resources::textureFormat(const Texture2d* texture) {
   }
 
 void Resources::textureDemand(const Material& material, TextureCategory category, bool add, uint32_t distance) {
+  textureDemand(material,category,add,TextureNeed{distance,TextureLevels::NoExponent});
+  }
+
+void Resources::textureDemand(const Material& material, TextureCategory category, bool add, const TextureNeed& need) {
   LoadProbe::Vobs::Scope probe("texture_demand");
   if(inst==nullptr || inst->dev==nullptr)
     return;
   std::lock_guard<std::recursive_mutex> guard(inst->sync);
-  std::vector<const Texture2d*> textures=material.frames;
-  textures.insert(textures.end(),{material.tex,material.normal,material.orm});
-  std::sort(textures.begin(),textures.end(),std::less<const Texture2d*>());
-  textures.erase(std::unique(textures.begin(),textures.end()),textures.end());
+  inst->implTextureDemand(material,category,add ? nullptr : &need,add ? &need : nullptr);
+  }
+
+void Resources::textureDemand(const Material& material, TextureCategory category, const TextureNeed& from, const TextureNeed& to) {
+  LoadProbe::Vobs::Scope probe("texture_demand");
+  if(inst==nullptr || inst->dev==nullptr)
+    return;
+  std::lock_guard<std::recursive_mutex> guard(inst->sync);
+  inst->implTextureDemand(material,category,&from,&to);
+  }
+
+void Resources::implTextureDemand(const Material& material, TextureCategory category, const TextureNeed* release,
+                                  const TextureNeed* add) {
+  ++textureDemandCalls;
+  std::array<const Texture2d*,3> maps={material.tex,material.normal,material.orm};
+  const auto unique=[&](const Texture2d* texture, size_t index) {
+    for(size_t i=0;i<index && i<maps.size();++i)
+      if(maps[i]==texture)
+        return false;
+    return texture!=nullptr;
+    };
+  const auto take=[](auto& owners, auto key) {
+    const auto found=owners.find(key);
+    assert(found!=owners.end() && found->second!=0);
+    if(found!=owners.end() && --found->second==0)
+      owners.erase(found);
+    };
   bool unmatched=false;
-  for(const auto* texture:textures) {
-    auto entry=inst->textureRecords.find(texture);
-    if(entry==inst->textureRecords.end())
-      continue;
+  const auto visit=[&](const Texture2d* texture) {
+    auto entry=textureRecords.find(texture);
+    if(entry==textureRecords.end())
+      return;
     auto& record=entry->second;
     auto& count=record.demand[size_t(category)];
-    if(!add && count==0) {
+    if(release!=nullptr && count==0) {
       if(!unmatched) {
         Log::e("textures: demand released without an owner");
         unmatched=true;
         }
       assert(count!=0 && "texture demand released without an owner");
-      continue;
+      return;
       }
-    const bool neededFull=record.wanted() && inst->wantsFull(record);
-    inst->unqueueTexture(record);
-    if(add) {
-      ++count;
-      ++record.distances[distance];
-      record.lastDemand=++inst->textureClock;
-      } else {
+    const bool neededFull=record.wanted() && wantsFull(record);
+    unqueueTexture(record);
+    if(release!=nullptr) {
       --count;
-      const auto found=record.distances.find(distance);
-      assert(found!=record.distances.end() && found->second!=0);
-      if(found!=record.distances.end() && --found->second==0)
-        record.distances.erase(found);
-      record.lastDemand=++inst->textureClock;
+      take(record.distances,release->ring);
+      if(release->resolution==TextureLevels::NoExponent)
+        take(record.ringNeeds,release->ring);
+      else
+        take(record.resolutions,release->resolution);
       }
-    if(neededFull || (record.wanted() && inst->wantsFull(record)))
+    if(add!=nullptr) {
+      ++count;
+      ++record.distances[add->ring];
+      if(add->resolution==TextureLevels::NoExponent)
+        ++record.ringNeeds[add->ring];
+      else
+        ++record.resolutions[add->resolution];
+      }
+    record.lastDemand=++textureClock;
+    if(neededFull || (record.wanted() && wantsFull(record)))
       record.lastNeededFull=record.lastDemand;
     for(size_t i=0;i<record.demand.size();++i)
       if(record.demand[i]!=0) {
         record.category=TextureCategory(i);
         break;
         }
-    inst->queueTexture(record);
-    }
+    queueTexture(record);
+    };
+  // Each identity once: animation frames, then the maps not among them.
+  for(size_t i=0;i<material.frames.size();++i)
+    if(std::find(material.frames.begin(),material.frames.begin()+ptrdiff_t(i),material.frames[i])==material.frames.begin()+ptrdiff_t(i) &&
+       material.frames[i]!=nullptr)
+      visit(material.frames[i]);
+  for(size_t i=0;i<maps.size();++i)
+    if(unique(maps[i],i) && std::find(material.frames.begin(),material.frames.end(),maps[i])==material.frames.end())
+      visit(maps[i]);
   }
 
 void Resources::retireTexture(Texture2d&& texture) {
@@ -692,39 +824,76 @@ void Resources::notifyTextureChanged(TextureRecord& record) {
   texturePayloadChanged=true;
   }
 
-void Resources::publishTexture() {
-  const auto reload=textureReload;
+void Resources::publishTexture(const std::shared_ptr<TextureReload>& reload) {
   if(!reload || reload->ready.isEmpty())
     return;
   auto& record=textureRecords.at(reload->identity);
   unqueueTexture(record);
-  const bool full=wantsFull(record);
-  const bool hold=!record.distances.empty() && record.distances.begin()->first<=3;
+  record.loading=false;
+  const auto wanted=wantedLevel(record);
+  const auto level=reload->level;
+  const auto& rings=textureScreen ? record.ringNeeds : record.distances;
+  const bool hold=!rings.empty() && rings.begin()->first<=3;
   const bool delayElapsed=record.demoteAt!=std::chrono::steady_clock::time_point{} &&
                           record.demoteAt<=std::chrono::steady_clock::now();
   // The unpublished replacement is already included in the live counter.
   const auto liveWithoutReplacement=Texture2d::liveBytes()-LoadProbe::textureBytes(reload->ready);
   const bool pressure=liveWithoutReplacement>textureTarget;
-  if(record.wanted() && (!reload->tail || (!full && (!record.resident || (!hold && delayElapsed && pressure))))) {
+  bool publish=false;
+  if(record.wanted()) {
+    if(!record.resident)
+      publish=textureScreen || level<=wanted; // the ring rule fills a placeholder with a tail only where it is wanted
+    else if(level<record.firstMip)
+      publish=true;
+    else if(level>record.firstMip)
+      publish=level<=wanted && !hold && delayElapsed && pressure;
+    }
+  if(publish) {
     const bool wasResident=record.resident;
-    const bool wasTail=record.tail;
+    const auto previous=record.firstMip;
     if(wasResident)
       retireTexture(std::move(*record.texture));
     *record.texture=std::move(reload->ready);
     record.bytes=LoadProbe::textureBytes(*record.texture);
     record.resident=true;
-    record.tail=reload->tail;
+    record.firstMip=level;
     notifyTextureChanged(record);
     FrameProfile::textureEvent(FrameProfile::TextureActivity::Publish);
-    if(!wasResident)
+    if(!wasResident) {
       ++texturesReloaded;
-    else if(wasTail && !record.tail)
+      ++record.reloads;
+      }
+    else if(level<previous)
       ++texturesPromoted;
-    else if(!wasTail && record.tail)
+    else if(level>previous)
       ++texturesDemoted;
     }
   queueTexture(record);
-  textureReload.reset();
+  textureReloads.erase(std::remove(textureReloads.begin(),textureReloads.end(),reload),textureReloads.end());
+  }
+
+void Resources::startTextureLoad(TextureRecord& record, uint8_t level, bool lowering) {
+  auto reload=std::make_shared<TextureReload>();
+  reload->identity=record.texture;
+  reload->level=level;
+  reload->lowering=lowering;
+  ++textureLoadsStarted;
+  record.loading=true;
+  reload->pending=std::async(std::launch::async,[path=record.source,mipmaps=record.mipmaps,level,device=dev] {
+    const auto started=LoadProbe::now();
+    FrameProfile::TextureWork reading(FrameProfile::TextureActivity::Read);
+    auto data=Resources::decodeBaseTexture(path,mipmaps,level);
+    reading.finish();
+    FrameProfile::TextureWork uploading(FrameProfile::TextureActivity::Upload);
+    auto texture=device->textureAsync(data.pixmap,data.useMipmap);
+    uploading.finish();
+    if(texture.isEmpty())
+      throw std::runtime_error("texture reload returned an empty image");
+    LoadProbe::countTexture(texture,started);
+    FrameProfile::textureEvent(FrameProfile::TextureActivity::Complete);
+    return TextureReload::Payload{std::move(texture),data.firstMip};
+    });
+  textureReloads.push_back(std::move(reload));
   }
 
 void Resources::updateTextures(ChunkResidency* residency) {
@@ -749,34 +918,44 @@ void Resources::updateTextures(ChunkResidency* residency) {
     };
   const auto deadline=ChunkResidency::Clock::now()+ChunkResidency::WorkBudget;
 
-  if(resources.textureReload) {
-    const auto reload=resources.textureReload;
+  // Loads in flight: at most one publication a frame, through the residency's frame queue.
+  bool publishing=std::any_of(resources.textureReloads.begin(),resources.textureReloads.end(),
+                              [](const auto& reload) { return !reload->queued.expired(); });
+  for(size_t i=0;i<resources.textureReloads.size();) {
+    const auto reload=resources.textureReloads[i];
     try {
       if(reload->pending.valid() && reload->pending.wait_for(std::chrono::seconds(0))==std::future_status::ready) {
         auto payload=reload->pending.get();
-        if(reload->tail && !payload.tail)
-          resources.textureRecords.at(reload->identity).hasTail=false;
-        reload->tail=payload.tail;
+        if(payload.level<reload->level) {
+          // No tail at the level asked for: the file has none above the minimum side.
+          auto& record=resources.textureRecords.at(reload->identity);
+          resources.unqueueTexture(record);
+          record.lowest=std::min(record.lowest,payload.level);
+          resources.queueTexture(record);
+          }
+        reload->level=payload.level;
         reload->ready=std::move(payload.texture);
         }
-      if(!reload->ready.isEmpty() && reload->queued.expired() && reload->ready.uploadReady()) {
+      if(!publishing && !reload->ready.isEmpty() && reload->queued.expired() && reload->ready.uploadReady()) {
         FrameProfile::textureEvent(FrameProfile::TextureActivity::Ready);
+        publishing=true;
         if(residency==nullptr) {
-          resources.publishTexture();
-          } else {
-          auto ticket=std::make_shared<int>(0);
-          reload->queued=ticket;
-          residency->enqueue([reload,ticket](ChunkResidency::Clock::time_point deadline) {
-            if(ChunkResidency::Clock::now()>=deadline)
-              return false;
-            if(Resources::inst!=nullptr) {
-              std::lock_guard<std::recursive_mutex> guard(Resources::inst->sync);
-              if(Resources::inst->textureReload==reload)
-                Resources::inst->publishTexture();
-              }
-            return true;
-            });
+          resources.publishTexture(reload);
+          continue;
           }
+        auto ticket=std::make_shared<int>(0);
+        reload->queued=ticket;
+        residency->enqueue([reload,ticket](ChunkResidency::Clock::time_point deadline) {
+          if(ChunkResidency::Clock::now()>=deadline)
+            return false;
+          if(Resources::inst!=nullptr) {
+            std::lock_guard<std::recursive_mutex> guard(Resources::inst->sync);
+            const auto& reloads=Resources::inst->textureReloads;
+            if(std::find(reloads.begin(),reloads.end(),reload)!=reloads.end())
+              Resources::inst->publishTexture(reload);
+            }
+          return true;
+          });
         }
       }
     catch(const std::exception& error) {
@@ -784,62 +963,63 @@ void Resources::updateTextures(ChunkResidency* residency) {
       Log::e("textures: unable to reload \"",record.source.string(),"\": ",error.what());
       resources.unqueueTexture(record);
       record.failed=true;
+      record.loading=false;
       resources.queueTexture(record);
-      resources.textureReload.reset();
+      resources.textureReloads.erase(resources.textureReloads.begin()+ptrdiff_t(i));
+      continue;
       }
+    ++i;
     }
 
-  if(!resources.textureReload) {
+  // Levels keep two loads in flight, the ring rule one.
+  const size_t inFlight=resources.textureScreen ? 2 : 1;
+  if(resources.textureReloads.size()<inFlight) {
     const auto now=ChunkResidency::Clock::now();
     while(!resources.textureDemotions.empty() && resources.textureDemotions.begin()->first.first<=now) {
       auto* record=resources.textureDemotions.begin()->second;
-      resources.textureDemotionLru.emplace(record->demotionPriority(),record);
+      record->demotionKey=resources.textureDemotionKey(*record);
+      resources.textureDemotionLru.emplace(record->demotionKey,record);
       resources.textureDemotions.erase(resources.textureDemotions.begin());
       }
+    }
+  while(resources.textureReloads.size()<inFlight) {
     TextureRecord* selected=nullptr;
+    // The ring rule: the nearest first. Levels: the largest shortfall in levels, then the nearest.
+    const auto ring=[](const TextureRecord& record) {
+      return record.pinned || record.distances.count(TextureAlwaysFull)!=0 ? uint32_t(0) :
+             record.distances.empty() ? UINT32_MAX : record.distances.begin()->first;
+      };
+    const auto shortfall=[&](const TextureRecord& record) {
+      const uint32_t resident=record.resident ? record.firstMip : std::max<uint32_t>(record.mipCount,1);
+      return int64_t(resident)-int64_t(resources.wantedLevel(record));
+      };
     const auto consider=[&](TextureRecord* candidate) {
-      const auto priority=[](const TextureRecord& record) {
-        return record.pinned || record.distances.count(TextureAlwaysFull)!=0 ? uint32_t(0) :
-               record.distances.empty() ? UINT32_MAX : record.distances.begin()->first;
-        };
-      if(selected==nullptr || priority(*candidate)<priority(*selected))
+      if(candidate->loading)
+        return;
+      if(selected==nullptr)
+        selected=candidate;
+      else if(!resources.textureScreen ? ring(*candidate)<ring(*selected) :
+              TextureLevels::loadsBefore(shortfall(*candidate),ring(*candidate),shortfall(*selected),ring(*selected)))
         selected=candidate;
       };
     for(auto* record:resources.textureMissing)
       consider(record);
     for(auto* record:resources.texturePromotions)
       consider(record);
-    bool tail=false;
-    if(selected!=nullptr) {
-      tail=!resources.wantsFull(*selected);
-      } else if(Texture2d::liveBytes()>resources.textureTarget && !resources.textureDemotionLru.empty()) {
-      selected=resources.textureDemotionLru.begin()->second;
-      tail=true;
+    bool lowering=false;
+    if(selected==nullptr && Texture2d::liveBytes()>resources.textureTarget &&
+       std::none_of(resources.textureReloads.begin(),resources.textureReloads.end(),[](const auto& r) { return r->lowering; })) {
+      // Lowering, one at a time and only under memory pressure: the ring rule's LRU or the most bytes to give back.
+      for(const auto& entry:resources.textureDemotionLru)
+        if(!entry.second->loading) {
+          selected=entry.second;
+          lowering=true;
+          break;
+          }
       }
-    if(selected!=nullptr) {
-      auto reload=std::make_shared<TextureReload>();
-      reload->identity=selected->texture;
-      reload->tail=tail;
-      const auto path=selected->source;
-      const auto mipmaps=selected->mipmaps;
-      const auto skip=tail ? resources.textureSkipMips : 0;
-      auto* device=resources.dev;
-      reload->pending=std::async(std::launch::async,[path,mipmaps,skip,device] {
-        const auto started=LoadProbe::now();
-        FrameProfile::TextureWork reading(FrameProfile::TextureActivity::Read);
-        auto data=Resources::decodeBaseTexture(path,mipmaps,skip);
-        reading.finish();
-        FrameProfile::TextureWork uploading(FrameProfile::TextureActivity::Upload);
-        auto texture=device->textureAsync(data.pixmap,data.useMipmap);
-        uploading.finish();
-        if(texture.isEmpty())
-          throw std::runtime_error("texture reload returned an empty image");
-        LoadProbe::countTexture(texture,started);
-        FrameProfile::textureEvent(FrameProfile::TextureActivity::Complete);
-        return TextureReload::Payload{std::move(texture),data.tail};
-        });
-      resources.textureReload=std::move(reload);
-      }
+    if(selected==nullptr)
+      break;
+    resources.startTextureLoad(*selected,resources.wantedLevel(*selected),lowering);
     }
 
   liveBytes=Texture2d::liveBytes();
@@ -862,11 +1042,14 @@ void Resources::updateTextures(ChunkResidency* residency) {
     resources.retireTexture(std::move(*record->texture));
     *record->texture=std::move(replacement);
     record->resident=false;
+    ++record->evictions;
+    record->evictionsUnowned+=record->lastDemand==0;
     resources.notifyTextureChanged(*record);
     ++resources.texturesEvicted;
     ++evictions;
     liveBytes=Texture2d::liveBytes();
     }
+  resources.updateTextureJump();
   finish();
   }
 
