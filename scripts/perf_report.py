@@ -666,8 +666,15 @@ def compare_reports(a, b):
         changes = [{"name": name, **compare(lambda stats, name=name: zone_value(stats, name))}
                    for name in zones]
         changes.sort(key=lambda item: item["delta"], reverse=True)
+        # Where the frame waits on the processor the change of a pass shows in the graphics card's own time alone.
+        def gpu_p50(stats):
+            return stats["gpu"]["p50_ms"] if stats["gpu"] else None
+        measured = [gpu_p50(data["summary"]) for data in (left, right)]
+        measured += [gpu_p50(repeat["summary"]) for data in (left, right) for repeat in data["repeats"]]
         places[place] = {"fps": compare(lambda stats: stats["fps"]),
-                         "p95_ms": compare(lambda stats: stats["frame_ms"]["p95"]), "zones": changes}
+                         "p95_ms": compare(lambda stats: stats["frame_ms"]["p95"]),
+                         "gpu_p50_ms": compare(gpu_p50) if all(v is not None for v in measured) else None,
+                         "zones": changes}
     if not places:
         raise ValueError("Runs have no places in common")
     return {"schema_version": 1, "a": a["directory"], "b": b["directory"],
@@ -695,6 +702,15 @@ def compare_markdown(report):
         fps, p95 = data["fps"], data["p95_ms"]
         lines.append(f"| {place} | {fps['a']:.2f} → {fps['b']:.2f} | {p95['a']:.3f} → {p95['b']:.3f} | "
                      f"{noise_label(fps)} / {noise_label(p95)} |")
+    if any(data["gpu_p50_ms"] for data in report["places"].values()):
+        lines.extend(["", "| Place | GPU p50 ms A → B | Δ ms | Δ % | Repeat spread ms | GPU noise |",
+                      "|---|---:|---:|---:|---:|---|"])
+        for place, data in report["places"].items():
+            gpu = data["gpu_p50_ms"]
+            if gpu is None:
+                continue
+            lines.append(f"| {place} | {gpu['a']:.3f} → {gpu['b']:.3f} | {gpu['delta']:+.3f} | "
+                         f"{number(gpu['delta_pct'], 2)} | {number(gpu['noise'])} | {noise_label(gpu)} |")
     if report["only_a"] or report["only_b"]:
         lines.extend(["", f"Only A: {', '.join(report['only_a']) or 'none'}; "
                       f"only B: {', '.join(report['only_b']) or 'none'}."])
