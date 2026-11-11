@@ -86,6 +86,7 @@ def test_check_is_quiet_when_nothing_is_added(repo, monkeypatch, capsys):
 
 def test_foreign_definitions_resolve_scopes_and_visible_headers(repo):
     write(repo, "common/graphics/foo.h", """
+class Foo { public: void m(); };
 namespace X {
 class Foo {
  public:
