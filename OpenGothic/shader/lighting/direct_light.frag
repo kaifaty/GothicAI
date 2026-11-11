@@ -300,7 +300,7 @@ void main(void) {
       // lighter, by more than a tenth of the sun bright, by more than a fiftieth dim
       const vec3 wide = geomNormal;
       geomNormal = facedNormal(pixelNormal, normal);
-      const float delta = (light - shadowFactor(d, normal, isFlat))/nl;
+      const float delta = (light - shadowFactor(d, normal, isFlat ? 0 : nl))/nl;
       geomNormal = wide;
       c  = delta<0 ? vec3(1,0,1) : vec3(0,1,0);
       c *= abs(delta)>0.1 ? 1.0 : (abs(delta)>0.02 ? 0.3 : 0.0);
