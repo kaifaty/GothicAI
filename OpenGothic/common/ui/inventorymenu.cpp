@@ -646,7 +646,7 @@ void InventoryMenu::drawSlot(Painter &p, DrawPass pass, const Inventory::Iterato
       }
 
     const int dsz = (id==sel.sel ? 5 : 0);
-    renderer.drawItem(x-dsz, y-dsz, slotSize().w+2*dsz, slotSize().h+2*dsz, *it);
+    it->drawInventory(renderer,x-dsz,y-dsz,slotSize().w+2*dsz,slotSize().h+2*dsz);
     } else {
     auto fnt = Resources::font(scale);
 
@@ -752,7 +752,7 @@ void InventoryMenu::drawInfo(Painter &p) {
     }
 
   const int sz = dh;
-  renderer.drawItem(x+dw-sz-sz/2,y,sz,sz,r);
+  r.drawInventory(renderer,x+dw-sz-sz/2,y,sz,sz);
   }
 
 void InventoryMenu::draw(Tempest::Encoder<CommandBuffer>& cmd) {

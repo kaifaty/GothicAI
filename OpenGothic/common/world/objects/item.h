@@ -10,6 +10,7 @@ class World;
 class Npc;
 class Serialize;
 class WorldObjects;
+class InventoryRenderer;
 
 class Item : public Vob {
   public:
@@ -27,6 +28,8 @@ class Item : public Vob {
     Item(Item&&);
     ~Item();
     Item& operator=(Item&&)=delete;
+
+    void    drawInventory(InventoryRenderer& renderer, int x, int y, int w, int h) const;
 
     void    drawVobBox(DbgPainter& p) const;
     void    drawVobRay(DbgPainter& p, const Npc& npc) const;

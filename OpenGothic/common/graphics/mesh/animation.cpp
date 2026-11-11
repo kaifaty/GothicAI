@@ -5,12 +5,11 @@
 #include <cctype>
 #include <cmath>
 
-#include "world/objects/npc.h"
 #include "world/objects/interactive.h"
-#include "world/world.h"
-
 #include "utils/string_frm.h"
 #include "resources.h"
+#include "animationsound.h"
+#include "animationpfx.h"
 #include "stopfoot.h"
 #include "transend.h"
 
@@ -357,7 +356,7 @@ bool Animation::Sequence::extractFrames(uint64_t& frameA,uint64_t& frameB,bool& 
   return true;
   }
 
-void Animation::Sequence::processSfx(uint64_t barrier, uint64_t sTime, uint64_t now, Npc* npc, Interactive* mob) const {
+void Animation::Sequence::processSfx(uint64_t barrier, uint64_t sTime, uint64_t now, AnimationGroundSound* npc, AnimationSound* mob) const {
   uint64_t frameA=0,frameB=0;
   bool     invert=false;
   if(!extractFrames(frameA,frameB,invert,barrier,sTime,now))
@@ -382,7 +381,7 @@ void Animation::Sequence::processSfx(uint64_t barrier, uint64_t sTime, uint64_t 
     }
   }
 
-void Animation::Sequence::processPfx(uint64_t barrier, uint64_t sTime, uint64_t now, MdlVisual& visual, World& world) const {
+void Animation::Sequence::processPfx(uint64_t barrier, uint64_t sTime, uint64_t now, MdlVisual& visual, AnimationPfx& world) const {
   if(data->pfx.empty())
     return;
 
@@ -414,17 +413,8 @@ void Animation::Sequence::processPfx(uint64_t barrier, uint64_t sTime, uint64_t 
     }
   }
 
-void Animation::Sequence::processPfx(const MdsParticleEffect& p, MdlVisual& visual, World& world) const {
-  if(p.pfxStop) {
-    visual.stopEffect(p.index);
-    }
-  else if(!p.name.empty()) {
-    if(p.name==visual.mutedPfx())
-      return;
-    Effect e(PfxEmitter(world,p.name),p.position);
-    e.setActive(true);
-    visual.startEffect(world,std::move(e),p.index,false);
-    }
+void Animation::Sequence::processPfx(const MdsParticleEffect& p, MdlVisual& visual, AnimationPfx& world) const {
+  world.animationPfx(p,visual);
   }
 
 Animation::LogicEvent Animation::Sequence::logicEvent(LogicEvent::Kind kind, size_t index, uint64_t frame) const {

@@ -9,7 +9,6 @@
 #include <cctype>
 
 #include "utils/string_frm.h"
-#include "world/world.h"
 #include "resources.h"
 
 using namespace Tempest;
@@ -79,14 +78,17 @@ float Sky::isNight() const {
   return 1.f - linearstep(-0.18f, 0.f, sun.dir().y);
   }
 
-void Sky::updateLight(const gtime gameTime) {
-  const int64_t now = gameTime.timeInDay().toInt();
+void Sky::updateLight(int64_t gameTime) {
+  const int64_t minuteMs = 60*1000;
+  const int64_t hourMs   = 60*minuteMs;
+  const int64_t dayMs    = 24*hourMs;
+  const int64_t now = gameTime%dayMs;
 
   // https://www.suncalc.org/#/52.4561,13.4033,5/2020.06.28/13:09/1/3
-  const int64_t rise         = gtime( 4,45).toInt();
-  const int64_t meridian     = gtime(13, 9).toInt();
-  const int64_t set          = gtime(21,33).toInt();
-  const int64_t midnight     = gtime(1,0,0).toInt();
+  const int64_t rise         = 4*hourMs+45*minuteMs;
+  const int64_t meridian     = 13*hourMs+9*minuteMs;
+  const int64_t set          = 21*hourMs+33*minuteMs;
+  const int64_t midnight     = dayMs;
   const float   shadowLength = 0.56f;
 
   float pulse = 0.f;

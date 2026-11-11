@@ -15,6 +15,7 @@ class Npc;
 class Camera;
 class CameraDefinitions;
 class DynamicWorld;
+class BloodDecalSource;
 
 class GameServices {
   public:
@@ -24,6 +25,7 @@ class GameServices {
 
     virtual World* world() = 0;
     virtual WorldView* worldView() const = 0;
+    virtual const BloodDecalSource* bloodDecalSource() const = 0;
     virtual Npc* player() = 0;
     virtual Camera* camera() = 0;
     virtual bool isPause() const = 0;

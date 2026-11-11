@@ -4,6 +4,20 @@
 
 Службы игры для платформы — `common/gameservices.*`: узкий виртуальный интерфейс мира, кадра, камеры, определений эффектов и звука; реализация — `Gothic`. Рендер получает время, тики и `DynamicWorld`, не разыменовывая `World`. [Шаг 3 разделения слоёв](../../reports/engine/2026-11-10-engine-layers/README.md#порядок-работы).
 
+Звуки анимации — `common/animationsound.h`: `AnimationSound` испускает звук для `Npc` и `Interactive`.
+
+Звуки шагов анимации — `common/animationsound.h`: `AnimationGroundSound` добавляет проверку воздуха и звук поверхности для `Npc`.
+
+Частицы анимации — `common/animationpfx.h`: `AnimationPfx` передаёт событие в `World`, который останавливает или создаёт эффект на визуале в прежнем порядке.
+
+Цель частиц — `common/particletarget.h`: `ParticleTarget` даёт текущую матрицу цели; реализован `Npc`.
+
+Мир ткани — `common/clothworld.h`: `ClothWorld` даёт тики, `DynamicWorld` и регистрацию статичного вида; реализован `World`.
+
+Источник декалей крови — `common/blooddecalsource.h`: `BloodDecalSource` даёт записи пятен и игровое время в миллисекундах; реализован `World`, простая запись и общие величины рендера — `common/bloodstain.h`.
+
+Подготовка входов анимации и физики в каркасе — `mkFootIkInput` (`world/objects/npc_visual.cpp`) и `noiseCulpritNpc` (`world/objects/npc_ragdoll.cpp`), объявления — в `npc.h`; `Item::drawInventory` готовит меш, материал и матрицу для платформенного рендера. Платформенные обработчики этих входов определены в платформе.
+
 VM-адаптер базовых программ — `common/game/definitions/baseprogram.cpp`: обе перегрузки `Resources::loadBaseProgram` с прежним API в `resources.h`; общие помощники путей — в `resources_internal.h`. Платформе не нужен заголовок VM; порядок поиска программ и перепись источников сохранены.
 
 Расставленные `Item`: перепись исходных форм после мебели, спящие тела рядом с героем и необязательная связь с ZEN в сейве — `common/world/worldobjects.*`, `objects/item.*`, `physics/dynamicworld.*`; `[GAME] placed_items`, Marvin `toggle placed_items`, `PLACED_ITEMS=0` в стендах. Нативный контракт `gothic-placed-items-contract`, численные стенды `placed-items` / `placed-items-census` / `placed-items-reload` / `placed-items-performance`; [перепись, пробуждение и замеры](../../reports/physics/2026-10-31-placed-items/README.md).

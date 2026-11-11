@@ -1021,7 +1021,7 @@ bool MdlVisual::updateFootIk(Npc& npc, World& world, uint64_t dt, bool alignedTo
     return false;
     }
 
-  auto       in      = ik.mkInput(npc,world,pos,alignedToGround,dt,&pose.aimWalk());
+  auto       in      = mkFootIkInput(ik,npc,world,pos,alignedToGround,dt,&pose.aimWalk());
   // crouched stepping with the bow drawn: the steps are low already (sneaking), as low as crouched standing
   in.crouch = std::max(0.f, in.crouch - pose.aimWalk().lowered());
   const bool changed = pose.updateFootIk(in);
@@ -1344,11 +1344,11 @@ bool MdlVisual::startAnim(Npc &npc, WeaponState st) {
   }
 
 void MdlVisual::setAnimRotate(Npc &npc, int dir) {
-  skInst->setAnimRotate(solver,npc,fgtMode,AnimationSolver::TurnType::Std,dir);
+  skInst->setAnimRotate(solver,npc.walkMode(),npc.world().tickCount(),fgtMode,AnimationSolver::TurnType::Std,dir);
   }
 
 void MdlVisual::setAnimWhirl(Npc &npc, int dir) {
-  skInst->setAnimRotate(solver,npc,fgtMode,AnimationSolver::TurnType::Whirl,dir);
+  skInst->setAnimRotate(solver,npc.walkMode(),npc.world().tickCount(),fgtMode,AnimationSolver::TurnType::Whirl,dir);
   }
 
 void MdlVisual::interrupt() {
@@ -1492,7 +1492,7 @@ void MdlVisual::syncAttaches(Attach<View>& att) {
   }
 
 const Animation::Sequence* MdlVisual::startAnimItem(Npc &npc, std::string_view scheme, int state) {
-  return skInst->setAnimItem(solver,npc,scheme,state);
+  return skInst->setAnimItem(solver,npc.world().tickCount(),scheme,state);
   }
 
 const Animation::Sequence* MdlVisual::startAnimSpell(Npc &npc, std::string_view scheme, bool invest) {
