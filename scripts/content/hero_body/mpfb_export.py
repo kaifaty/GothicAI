@@ -239,9 +239,8 @@ if PIECES:
         return P, W, np.array(tri_v), np.array(tri_l), uv, loop_v, col
 
     import re
-    def material_of(o):                                     # bracer_l, bracer_r -> bracer; kneepad and shin guard -> guards
-        n = re.sub(r'_[lr]\d?$', '', o['outfit_piece'])
-        return {'kneepad': 'guards', 'shinguard': 'guards'}.get(n, n)
+    def material_of(o):                                     # the builder's own name, else bracer_l, bracer_r -> bracer
+        return o.get('outfit_material') or re.sub(r'_[lr]\d?$', '', o['outfit_piece'])
     by_mat = {}
     for o in PIECES:
         by_mat.setdefault(material_of(o), []).append(o)

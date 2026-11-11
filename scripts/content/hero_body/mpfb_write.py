@@ -3,9 +3,11 @@
     uv run --with numpy --with pillow python -I mpfb_write.py <run> <HUMANS.MDH.json> <HUM_BODY_NAKED0.MDM.json> \
         <skin diffuse png> <content root> <repo> [neck colour #rrggbb]
 
-Reads <run>/body.npz, braies.npz (mpfb_export.py) and landmarks.json (mpfb_body.py). The record keeps the
-original's name, so every unarmoured man wears this body in that root. The Gothic head stays: its neck covers
-the cut. The skin is MPFB's CC0 diffuse, scaled in linear light so its mean matches the neck of the hero's
+Reads <run>/body.npz, braies.npz (mpfb_export.py) and landmarks.json (mpfb_body.py). On the render rig the record
+is HUM_BODY_HERO.MDM and the rig table's "bodies" gives it to texture variant 9 of HUM_BODY_NAKED0 - the hero's
+clothes in Gothic 2 (BodyTex_Player), so only the hero wears it; BODY_VARIANT=all (and every run without the rig)
+keeps the original's name, and every unarmoured man wears this body in that root. The Gothic head stays: its neck
+covers the cut. The skin is MPFB's CC0 diffuse, scaled in linear light so its mean matches the neck of the hero's
 original face texture (the seam), as the content rules take brightness from the replaced original.
 """
 import sys, os, json, struct, importlib.util
@@ -19,8 +21,10 @@ import rig_parts
 run, mdh, orig, skin_png, root, repo = map(Path, sys.argv[1:7])
 NECK = sys.argv[7] if len(sys.argv) > 7 else '#8a604a'
 AO_STRENGTH = float(os.environ.get('AO_STRENGTH', 0.6))
-MESH = 'HUM_BODY_NAKED0.MDM'
 meta = json.load(open(run / 'landmarks.json'))
+BODY_VARIANT = os.environ.get('BODY_VARIANT', '9')   # the texture variant of HUM_BODY_NAKED0 that gets this body
+HERO_ONLY = meta.get('rig', False) and BODY_VARIANT != 'all'
+MESH = 'HUM_BODY_HERO.MDM' if HERO_ONLY else 'HUM_BODY_NAKED0.MDM'
 fit.S = meta['scale']
 LW = {k: np.array(v) * fit.S for k, v in meta['landmarks'].items()}
 skel = fit.load_skeleton(mdh)
@@ -234,6 +238,8 @@ if RIG:
         'sockets': {'BIP01 HEAD': socket('BIP01 HEAD', 'head', head_shift),
                     'ZS_RIGHTHAND': socket('ZS_RIGHTHAND', 'hand_r'), 'ZS_LEFTHAND': socket('ZS_LEFTHAND', 'hand_l')}}},
         'meshes': {MESH: RIGNAME}}
+    if HERO_ONLY:
+        table['bodies'] = {'HUM_BODY_NAKED0': {BODY_VARIANT: MESH}}
     (models / 'render-rigs.json').write_text(json.dumps(table, indent=1) + '\n')
 (models / 'models.json').write_text(json.dumps({'format': 'gothic-models', 'version': 1, 'files': files}, indent=1) + '\n')
 
@@ -280,9 +286,13 @@ if (run / 'normal.npy').exists():
     ao, _ = pad_islands(np.repeat(ao[..., None], 3, 2), run / 'body.npz'); ao = ao[..., 0]
     body_n = nrm; body_orm = np.stack([ao, np.full_like(ao, 0.55), np.zeros_like(ao)], 2)
 maps = [('own-hero-body-mpfb', skin, body_n, body_orm)]
-if OUTFIT:                                  # flat colours until the pieces get their texture pass
-    maps += [(f'own-hero-{p["name"]}', flat(to_srgb(np.array(p['colour_linear']))), flat([0.0, 0.0, 1.0]),
-              flat([1.0, 0.85, 0.0])) for p in OUTFIT]
+if OUTFIT:                                  # each piece: its material's tile (outfit_tiles.py) in the piece's colour
+    import outfit_tiles
+    for p in OUTFIT:
+        kind = outfit_tiles.KIND.get(p['name'])
+        colour = to_srgb(np.array(p['colour_linear']))
+        maps.append((f'own-hero-{p["name"]}', *(outfit_tiles.tile(kind, colour) if kind else
+                                                 (flat(colour), flat([0.0, 0.0, 1.0]), flat([1.0, 0.85, 0.0])))))
 else:
     maps += [('own-hero-braies', flat(to_srgb(to_lin(np.array([0x7d, 0x70, 0x5e]) / 255))), flat([0.0, 0.0, 1.0]), flat([1.0, 0.9, 0.0]))]
 for name, alb, nmap, orm in maps:

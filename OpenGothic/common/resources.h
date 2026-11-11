@@ -263,6 +263,8 @@ class Resources final {
     // our render skeleton (models/render-rigs.json, graphics/mesh/renderrig.h): nullptr - none or broken
     static const RenderRig*          loadRenderRig  (std::string_view name);
     static const RenderRig*          renderRigOfMesh(std::string_view mesh);
+    // the mesh a body is drawn as for its texture variant ("bodies" of render-rigs.json); "" - the body itself
+    static std::string               bodyOfVariant  (std::string_view body, int32_t variant);
     static const Animation*          loadAnimation  (std::string_view name);
     static bool                      loadAnimationData(std::string_view name, asset::ModelAnimation& out);
     static asset::MorphMesh           loadMorphData(std::string_view name);

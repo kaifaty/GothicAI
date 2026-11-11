@@ -158,11 +158,18 @@ void Npc::setVisualBody(int32_t headTexNr, int32_t teethTexNr, int32_t bodyTexNr
   bdColor = bodyTexColor;
 
   auto  vhead = head.empty() ? MeshObjects::Mesh() : owner.addView(FileExt::addExt(head,".MMB"),vHead,vTeeth,bdColor);
-  auto  vbody = body.empty() ? MeshObjects::Mesh() : owner.addView(FileExt::addExt(body,".ASC"),vColor,0,bdColor);
+  auto  vbody = body.empty() ? MeshObjects::Mesh() : owner.addView(bodyVisual(),vColor,0,bdColor);
   visual.setVisualBody(*this,std::move(vhead),std::move(vbody),bdColor);
   updateArmor();
 
   durtyTranform|=TR_Pos; // update obj matrix
+  }
+
+// The body without armour. Our content may draw one texture variant of a shared body as its own mesh
+// ("bodies" of models/render-rigs.json): the hero's clothes are a variant of the naked body all men have.
+std::string Npc::bodyVisual() const {
+  const std::string own = Resources::bodyOfVariant(body,vColor);
+  return FileExt::addExt(own.empty() ? body : own,".ASC");
   }
 
 void Npc::updateArmor() {
@@ -174,7 +181,7 @@ void Npc::updateArmor() {
   auto& w  = owner;
 
   if(ar==nullptr) {
-    auto  vbody = body.empty() ? MeshObjects::Mesh() : w.addView(FileExt::addExt(body,".ASC"),vColor,0,bdColor);
+    auto  vbody = body.empty() ? MeshObjects::Mesh() : w.addView(bodyVisual(),vColor,0,bdColor);
     visual.setBody(*this,std::move(vbody),bdColor);
     } else {
     auto& itData = ar->handle();
