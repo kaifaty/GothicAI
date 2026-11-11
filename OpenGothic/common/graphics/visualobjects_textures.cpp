@@ -285,8 +285,9 @@ void VisualObjects::updateTextureDemand(size_t id) {
   Resources::TextureNeed need;
   need.ring=textureResidency ? std::min(4u,textureResidency->textureDistance(chunk)) : 0;
   need.resolution=TextureLevels::NoExponent;
-  // An owner placed by a position is evaluated again when it moves past its reach (setTextureOwner): the margin of its
-  // exponent, and the edge of its chunk, so its ring stays that of its chunk.
+  // An owner placed by a position is evaluated again when it moves past its reach (setTextureOwner). By the ring rule:
+  // the edge of its chunk. On screen: the margin of its exponent - its ring (metrics and load order only) may then
+  // lag a chunk - and none when its demand does not depend on the distance (the whole chain, nothing to draw).
   if(object.textureWorldOwner)
     object.textureReach=chunkEdge(object.texturePosition);
   // Measured on screen once placed; an unplaced static one keeps the ring rule until it is.
@@ -295,8 +296,10 @@ void VisualObjects::updateTextureDemand(size_t id) {
     need.resolution=demand.exponent;
     if(demand.scheduled)
       scheduleTexture(object,id,demand.expiry);
-    if(object.textureWorldOwner && demand.scheduled && demand.margin>0)
-      object.textureReach=std::min(object.textureReach,float(demand.margin*100.0));
+    if(object.textureWorldOwner && !demand.scheduled)
+      object.textureReach=Unbounded;
+    else if(object.textureWorldOwner && demand.margin>0)
+      object.textureReach=float(demand.margin*100.0);
     }
   // A landscape owner exists only while its package is published.
   const bool active=object.textureWorldOwner || object.textureChunkedLandscape || textureChunkActive(object.texturePosition);
