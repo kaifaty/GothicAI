@@ -1,4 +1,5 @@
 #include "collisionworld.h"
+#include "settings.h"
 #include "collisionworld_internal.h"
 #include "physicvbo.h"
 #include "dynamicworld.h"
@@ -6,7 +7,6 @@
 #include "cloth.h"
 #include "frameprofile.h"
 #include "loadprobe.h"
-#include "gothic.h"
 #include "testbench.h"
 #include "world/objects/item.h"
 #include "world/objects/npc.h"
@@ -1770,7 +1770,7 @@ void CollisionWorld::tick(uint64_t dt) {
       // A sleeping water item also retains its native body, independently of
       // characters, so save/load, pickup and a buoyancy toggle remain physical.
       disable = !native.IsActive() && !body->keepSleepingItem(toCentimeters(native.GetPosition())) &&
-                !(Gothic::physicsFlags().placedItems && item->isPlacedItem());
+                !(Settings::physicsFlags().placedItems && item->isPlacedItem());
       }
     item->setPhysicsMatrix(matrix);
     if(disable)

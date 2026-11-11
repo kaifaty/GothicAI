@@ -69,7 +69,7 @@ float springTo(float v, float goal, float& vel, float smooth, float dt) {
 }
 
 PlayerControl::PlayerControl() {
-  Gothic::inst().onSettingsChanged.bind(this,&PlayerControl::setupSettings);
+  Settings::inst().onSettingsChanged.bind(this,&PlayerControl::setupSettings);
   setupSettings();
   }
 
@@ -80,7 +80,7 @@ PlayerControl::PlayerControl(DialogMenu& dlg, InventoryMenu& inv)
   }
 
 PlayerControl::~PlayerControl() {
-  Gothic::inst().onSettingsChanged.ubind(this,&PlayerControl::setupSettings);
+  Settings::inst().onSettingsChanged.ubind(this,&PlayerControl::setupSettings);
   }
 
 void PlayerControl::setupSettings() {

@@ -342,14 +342,14 @@ GameMusic::GameMusic() {
   if(!Resources::isHeadless())
     device = std::make_unique<Tempest::SoundDevice>();
 
-  Gothic::inst().onSettingsChanged.bind(this, &GameMusic::setupSettings);
+  Settings::inst().onSettingsChanged.bind(this, &GameMusic::setupSettings);
   setupSettings();
   }
 
 GameMusic::~GameMusic() {
   sound = SoundEffect();
   instance = nullptr;
-  Gothic::inst().onSettingsChanged.ubind(this, &GameMusic::setupSettings);
+  Settings::inst().onSettingsChanged.ubind(this, &GameMusic::setupSettings);
   }
 
 GameMusic &GameMusic::inst() {

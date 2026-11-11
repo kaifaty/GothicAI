@@ -5,7 +5,7 @@
 #include <unordered_map>
 
 #include "dynamicworld.h"
-#include "gothic.h"
+#include "settings.h"
 #include "testbench.h"
 #include "world/bullet.h"
 #include "world/objects/npc.h"
@@ -63,8 +63,8 @@ inline void write(const DynamicWorld::BulletBody& body, DynamicWorld::BulletCall
     int(who.size()),who.data(),double(np.x),double(np.y),double(np.z),int(hasHit),double(fraction),
     double(hit.x),double(hit.y),double(hit.z),double(normal.x),double(normal.y),double(normal.z),material,category,
     double(body.speed()*fraction),int(body.hitCount()>3),int(body.pathLength()>10000),
-    Gothic::settingsGetI("GAME","living_bodies"),Gothic::settingsGetI("GAME","arrow_physics"),
-    Gothic::settingsGetI("GAME","arrow_sticking"));
+    Settings::getI("GAME","living_bodies"),Settings::getI("GAME","arrow_physics"),
+    Settings::getI("GAME","arrow_sticking"));
   std::fflush(out.file);
   }
 }

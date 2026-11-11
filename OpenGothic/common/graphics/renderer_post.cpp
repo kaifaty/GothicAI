@@ -1,10 +1,10 @@
 #include "renderer.h"
+#include "settings.h"
 
 #include <Tempest/Log>
 #include <cstdio>
 
 #include "camera.h"
-#include "gothic.h"
 
 using namespace Tempest;
 
@@ -150,7 +150,7 @@ void Renderer::drawTonemapping(Attachment& result, Encoder<CommandBuffer>& cmd, 
   }
 
 void Renderer::drawCMAA2(Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview) {
-  auto&          pso             = shaders.cmaa2EdgeColor2x2Presets[Gothic::options().aaPreset];
+  auto&          pso             = shaders.cmaa2EdgeColor2x2Presets[::Settings::options().aaPreset];
   const IVec3    inputGroupSize  = pso.workGroupSize();
   const IVec3    outputGroupSize = inputGroupSize - IVec3(2, 2, 0);
   const uint32_t groupCountX     = uint32_t((sceneLinear.w() + outputGroupSize.x * 2 - 1) / (outputGroupSize.x * 2));

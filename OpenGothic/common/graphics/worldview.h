@@ -19,7 +19,6 @@ class World;
 class Camera;
 class ParticleFx;
 class PackedMesh;
-class gtime;
 class ChunkResidency;
 class ObjVisual;
 struct ChunkId;
@@ -83,7 +82,7 @@ class WorldView {
 
     void dbgLights      (DbgPainter& p) const;
 
-    bool updateLights(const gtime gameTime);
+    bool updateLights(int64_t gameTime);
     void updateRtScene(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
 
     void updateFrustrum (const Frustrum fr[]);

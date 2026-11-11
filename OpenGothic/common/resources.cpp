@@ -1,4 +1,5 @@
 #include "resources.h"
+#include "gameservices.h"
 #include "resources_internal.h"
 #include "loadprobe.h"
 #include "basestore.h"
@@ -50,7 +51,6 @@
 #include "utils/fileext.h"
 #include "utils/gthfont.h"
 
-#include "gothic.h"
 #include "contentcensus.h"
 #include "gltfmesh.h"
 #include "basemesh.h"
@@ -66,6 +66,8 @@
 
 using namespace Tempest;
 using ResourcesInternal::modelKey;
+using ResourcesInternal::censusSourcePath;
+using ResourcesInternal::scriptDirectory;
 
 namespace ModelData { asset::ModelScript readScriptOverlay(const std::filesystem::path& file); }
 
@@ -79,7 +81,7 @@ struct Resources::VideoBase {
   bool ready=false;
   };
 
-namespace {
+namespace ResourcesInternal {
 std::string censusSourcePath(const std::filesystem::path& source) {
   auto relative = source;
   if(relative.is_absolute())
@@ -100,35 +102,6 @@ const char* scriptDirectory(int language) {
   }
 }
 
-daedalus::DaedalusScript Resources::loadBaseProgram(std::string_view request, int language) {
-  try {
-    std::string_view branch;
-    if(inst->basePrograms.findVfs(request,&branch)!=nullptr)
-      return loadBaseProgram(request,language,branch);
-    const std::string name(request.substr(0,255));
-    std::string path="_work/Data/Scripts/_compiled/"+name;
-    const ProgramData::Source* source=inst->basePrograms.findHost(path);
-    branch="host_ordinary";
-    if(source==nullptr && language>=0) {
-      path="_work/Data/"+std::string(scriptDirectory(language))+"/_compiled/"+name;
-      source=inst->basePrograms.findHost(path);
-      branch="host_localized_full";
-      }
-    if(source==nullptr && language>=0) {
-      const auto separator=request.find_last_of("/\\");
-      const auto basename=separator==std::string_view::npos ? request : request.substr(separator+1);
-      path="_work/Data/"+std::string(scriptDirectory(language))+"/_compiled/"+std::string(basename.substr(0,255));
-      source=inst->basePrograms.findHost(path);
-      branch="host_localized_basename";
-      }
-    if(source==nullptr)
-      throw std::runtime_error("no source in program base index");
-    return loadBaseProgram(request,language,branch,std::filesystem::path(source->path).u16string());
-    }
-  catch(const BaseStore::Error&) { throw; }
-  catch(const std::exception& error) { throw BaseStore::Error("program "+std::string(request)+": "+error.what()); }
-  }
-
 bool Resources::loadBaseOutputUnits(std::string_view request, int language,
                                     std::vector<std::shared_ptr<asset::CutsceneBlock>>& blocks) {
   try {
@@ -147,41 +120,6 @@ bool Resources::loadBaseOutputUnits(std::string_view request, int language,
     }
   catch(const BaseStore::Error&) { throw; }
   catch(const std::exception& error) { throw BaseStore::Error("output units "+std::string(request)+": "+error.what()); }
-  }
-
-daedalus::DaedalusScript Resources::loadBaseProgram(std::string_view request, int language,
-                                                std::string_view branch, std::u16string_view hostPath) {
-  try {
-    const auto& index = inst->basePrograms;
-    const ProgramData::Source* source = nullptr;
-    if(hostPath.empty()) {
-      std::string_view selectedBranch;
-      source = index.findVfs(request,&selectedBranch);
-      if(source==nullptr || selectedBranch!=branch)
-        throw std::runtime_error("selected VFS source missing from program base index");
-      }
-    else {
-      source = index.findHost(censusSourcePath(std::filesystem::path(hostPath)));
-      if(source==nullptr)
-        throw std::runtime_error("selected host source missing from program base index");
-      }
-    const auto file = index.path(*source);
-    std::string actualSha256;
-    auto program = ProgramData::readProgram(file,&actualSha256);
-    if(actualSha256!=source->recordSha256)
-      throw std::runtime_error("program record identity differs from base index");
-    auto script = daedalus::DaedalusScript::from_program(std::move(program));
-    if(inst->census) {
-      const auto record = "base/programs/"+file.filename().generic_string();
-      inst->census->replaced(request,record);
-      inst->census->program("Gothic::loadScript",request,language,branch,record,actualSha256,*source);
-      }
-    return script;
-    }
-  catch(const std::exception& error) {
-    if(inst->census) inst->census->missing(request,error.what());
-    throw BaseStore::Error("program "+std::string(request)+": "+error.what());
-    }
   }
 
 bool Resources::loadBaseOutputUnits(std::string_view request, int language, std::string_view branch,
@@ -1121,7 +1059,7 @@ Tempest::Sound Resources::implLoadSoundBuffer(std::string_view name) {
   if(name.empty())
     return Tempest::Sound();
 
-  auto& external = Gothic::inst().externalSoundFn;
+  auto& external = GameServices::inst().externalSoundFn;
   if(!(external && external(name,fBuff))) {
     const auto* source = baseAudio.find(name);
     if(source==nullptr)
