@@ -17,7 +17,8 @@
 namespace {
 constexpr size_t Zones=size_t(FrameProfile::Zone::Count), Amounts=size_t(FrameProfile::Amount::Count), MaxActors=20;
 constexpr size_t RecordsPerChunk=4096, MaxChunks=64, MaxAttempts=RecordsPerChunk*MaxChunks;
-constexpr size_t MaxTextureEvents=20000;
+// five events a load; a flythrough on textures four times larger makes about 4000 loads
+constexpr size_t MaxTextureEvents=100000;
 const char* textureNames[]={"read","upload","complete","ready","publish"};
 const char* names[Zones]={"tick","finish_step","camera","observations","bench","fence_poll","recycle","ui",
   "encode","submit","present","limiter","world_logic","prepare","physics","sync","world_misc",

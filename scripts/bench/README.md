@@ -284,6 +284,14 @@ range, it captures the first frame back in the market without waiting for Far pu
 Use `OPENGOTHIC_VOB_STREAMING=0` and `=1` to compare static vob residency. Claude compares
 the resulting frames on Mac.
 
+`texture-owners-shots` is the same kind of still comparison for owners that get their texture level by
+distance (NPCs, items in the world, interactive vobs): `owner-npc-face`, `owner-npc-body`,
+`owner-npc-10m`, `owner-npc-15m`, `owner-chest`, `owner-sword`, `owner-bench`, and
+`owner-npc-teleport` — the first frame after a jump back to the NPC, shot without a streaming wait.
+The hero waits 20 m under the ground, so the camera alone sets the distance. Compare levels against
+the ring rule (`OPENGOTHIC_TEXTURE_SCREEN_MIPS=0`) with `shots_diff.py --shots <names>`; with
+`OPENGOTHIC_TEXTURE_TARGET_MB=0` every texture stands on its wanted level. Claude compares the frames.
+
 `streaming-shots` runs with `deterministic on`: the world stands still while `streaming wait`
 waits and four frames more once everything is loaded (also when it was loaded on arrival), then the
 TAA history and the SSAO history start over at phase 0 and 16 fixed steps run with visibility in
