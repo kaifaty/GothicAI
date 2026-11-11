@@ -1,7 +1,7 @@
 # The hero's balance by hand against G2's dice (docs/manual-aim.md, stage 4): four tiers as G2 has them plus three strength/dexterity builds (the
 # talent, the bow, its strength and dexterity, the trained animations), at a farmer 10, 20 and 30 m off, aimed
 # at the body and at the head; 30 shots each, held 300-600 ms (the sway is a function of time), a seed each
-# Pin the player root for strength ON/OFF; see reports/archery/2026-11-03-strength-balance (#827).
+# Pin the player root and clear NPCs within 200 m for strength ON/OFF; see the strength-balance report (#827).
 cheat god
 set time 12 0
 view clean
@@ -11,6 +11,7 @@ wait 500
 pin player 0 0 0
 arrow feature off
 give ItRw_Arrow 2000
+clear 20000
 insert BAU_904_BAUER
 wait 300
 immortal BAU_904_BAUER on
