@@ -1423,10 +1423,13 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
 // far short.
 void textureOwnerLevels(Tempest::Device& device, const Fixture& fixture) {
   const char* names[]={"ow-npc","ow-item","ow-mobsi","ow-hero","ow-switch","ow-start","ow-lone","ow-whole","ow-rings",
-                       "ow-jump-a","ow-jump-b","ow-jump-c"};
+                       "ow-jump-a","ow-jump-b","ow-jump-c","ow-share","ow-between","ow-big-0","ow-big-1","ow-big-2",
+                       "ow-big-3"};
   std::string json="{";
   for(const auto* name:names) {
-    const auto bytes=mipDds(0x31545844,512,512,10);
+    // 4096 for the jump's time budget: each load takes milliseconds
+    const bool big=std::string_view(name).starts_with("ow-big");
+    const auto bytes=big ? mipDds(0x31545844,4096,4096,13) : mipDds(0x31545844,512,512,10);
     textFile(fixture.root/"materials"/(std::string(name)+".dds"),{reinterpret_cast<const char*>(bytes.data()),bytes.size()});
     std::string key(name);
     for(auto& c:key)
@@ -1448,7 +1451,8 @@ void textureOwnerLevels(Tempest::Device& device, const Fixture& fixture) {
   shaders.waitCompiler();
   using Need=Resources::TextureNeed;
   const auto stat=Resources::TextureCategory::Static;
-  Material npc, item, mobsi, hero, toggle, jumpA, jumpB, jumpC;
+  Material npc, item, mobsi, hero, toggle, jumpA, jumpB, jumpC, share, between;
+  std::array<Material,4> big;
   {
   Resources::TextureLoadScope far(true);
   npc=Material(source("OW_NPC.TGA"),true);
@@ -1459,6 +1463,10 @@ void textureOwnerLevels(Tempest::Device& device, const Fixture& fixture) {
   jumpA=Material(source("OW_JUMP_A.TGA"),true);
   jumpB=Material(source("OW_JUMP_B.TGA"),true);
   jumpC=Material(source("OW_JUMP_C.TGA"),true);
+  share=Material(source("OW_SHARE.TGA"),true);
+  between=Material(source("OW_BETWEEN.TGA"),true);
+  for(size_t i=0;i<big.size();++i)
+    big[i]=Material(source("OW_BIG_"+std::to_string(i)+".TGA"),true);
   }
   require(npc.tex->w()==128 && jumpC.tex->w()==128,"textures loaded in a Far scope outside a world load keep the tail");
 
@@ -1530,15 +1538,19 @@ void textureOwnerLevels(Tempest::Device& device, const Fixture& fixture) {
   const auto at=[&](float metres, float side=0) { return Tempest::Vec3{view.x+(metres+1.4142f)*100.f,0,view.z+side*100.f}; };
   auto bones=visuals.alloc(sizeof(Tempest::Matrix4x4));
   auto body=visuals.get(anim,anim.sub[0].material,anim.sub[0].iboOffset,anim.sub[0].iboSize,bones);
-  // 40 m in the band [32, 80) of 2^-5: its exponent holds for 8 m
-  const float reach=body.setTextureOwner(at(40),true);
+  // Placed 40 m away, in the band [32, 80) of 2^-5: evaluated exactly, with no reach until it moves.
+  require(body.setTextureOwner(at(40),true)==0.f,"a newly placed owner must get no reach");
   tick();
-  require(std::abs(reach-800.f)<1.f && npc.tex->w()==128 && Resources::textureStats().promotionQueue==0,
-          "an NPC's body 40 m away must keep the 512 texture's tail and may move 8 m before it is evaluated again");
-  // 5 m to the side: the distance hardly changes, and within its reach it is not evaluated (that would give 8.3 m).
-  require(std::abs(body.setTextureOwner(at(40,5),true)-300.f)<1.f,
+  require(npc.tex->w()==128 && Resources::textureStats().promotionQueue==0,
+          "an NPC's body 40 m away must keep the 512 texture's tail");
+  require(body.setTextureOwner(at(40),true)==0.f,"an owner called again where it is must only be compared");
+  // Moved: half the room to the nearer band edge (8 m), at most TextureScreenDemand::MaxReach.
+  const float reach=body.setTextureOwner(at(40.01f),true);
+  require(std::abs(reach-400.f)<1.f,"a moving owner 40 m away must get 4 m of reach, half of its 8 m margin");
+  // 3 m to the side: within its reach it is not evaluated.
+  require(std::abs(body.setTextureOwner(at(40.01f,3),true)-100.f)<1.f,
           "a move within the owner's reach must only be compared, not evaluated");
-  require(body.setTextureOwner(at(3,5),true)<800.f,"a move past the reach must evaluate the owner again");
+  require(body.setTextureOwner(at(3,5),true)<400.f,"a move past the reach must evaluate the owner again");
   waitFor([&] { return npc.tex->w()==512; },"an NPC's body 3 m away must raise its texture to the whole chain");
 
   // An item lying in the world: a static mesh drawn as dynamic, 20 m away - 2^-4, level 1; then 3 m - level 0.
@@ -1558,10 +1570,9 @@ void textureOwnerLevels(Tempest::Device& device, const Fixture& fixture) {
   bench.setTextureCategory(stat);
   const float benchReach=bench.setTextureOwner(at(40,10),true);
   tick();
-  require(benchReach>200.f && mobsi.tex->w()==128 && Resources::textureStats().promotionQueue==0,
-          "a mobsi 40 m away must keep its texture's tail");
-  require(std::abs(bench.setTextureOwner(at(40,12),true)-(benchReach-200.f))<1.f,
-          "a mobsi moving within its reach must only be compared");
+  require(benchReach==0.f && mobsi.tex->w()==128 && Resources::textureStats().promotionQueue==0,
+          "a mobsi 40 m away must keep its texture's tail and, never moved, be evaluated exactly");
+  require(bench.setTextureOwner(at(40,10),true)==0.f,"a mobsi that does not move must only be compared");
   bench.setTextureOwner(at(3,10),true);
   waitFor([&] { return mobsi.tex->w()==512; },"a mobsi 3 m away must load its whole chain");
 
@@ -1583,6 +1594,42 @@ void textureOwnerLevels(Tempest::Device& device, const Fixture& fixture) {
   setenv("OPENGOTHIC_TEXTURE_SCREEN_MIPS","1",1);
   Resources::configureTextures();
   visuals.updateTextureView();
+
+  // One margin is not spent twice. An owner 40 m away that moves gets 4 m of its 8 m margin, the view the margin of
+  // the sphere grown by those 4 m (36 m: 4 m). The view comes 7 m closer, then the owner 2 m: the true distance is
+  // 31 m, 2^-4, and that must be asked for although the owner stayed within its reach.
+  {
+  const Tempest::Vec3 start{view.x-4141.42f,0,view.z};
+  auto owner=visuals.get(itemMesh,share,0,itemMesh.sub[0].iboLength,false);
+  owner.setTextureOwner(start,true);
+  require(std::abs(owner.setTextureOwner({start.x-1,0,start.z},true)-400.f)<1.f,"the owner must get 4 m of reach");
+  tick();
+  require(share.tex->w()==128,"an owner 40 m away must keep the tail");
+  view.x-=700;
+  tick();
+  require(std::abs(owner.setTextureOwner({start.x+199,0,start.z},true)-200.f)<1.f,"a 2 m move must stay within the reach");
+  waitFor([&] { return share.tex->w()==256; },"the view and the owner sharing one margin must ask for 2^-4 at 31 m");
+  }
+  // A view-queue evaluation between two moves of the owner: the owner moves 3.5 m closer within its reach; the view
+  // moves 8.1 m to the side, past its own margin, and the queue evaluates the owner at its anchor; the owner moves
+  // 0.4 m more, still within the reach it got at its own evaluation; the view comes 6 m closer. The true distance is
+  // 31.1 m, 2^-4.
+  {
+  const Tempest::Vec3 start{view.x,0,view.z-4142.42f};
+  auto owner=visuals.get(itemMesh,between,0,itemMesh.sub[0].iboLength,false);
+  owner.setTextureOwner({start.x,0,start.z+1},true);
+  require(std::abs(owner.setTextureOwner(start,true)-400.f)<1.f,"the owner must get 4 m of reach");
+  tick();
+  require(std::abs(owner.setTextureOwner({start.x,0,start.z+350},true)-50.f)<1.f,"a 3.5 m move must stay within the reach");
+  view.x+=810;
+  tick();
+  require(between.tex->w()==128,"a view moving to the side must not change the owner's exponent");
+  require(std::abs(owner.setTextureOwner({start.x,0,start.z+390},true)-10.f)<1.f,
+          "the view queue's evaluation must leave the reach of the owner's own evaluation as it was");
+  view.z-=600;
+  tick();
+  waitFor([&] { return between.tex->w()==256; },"an evaluation by the view must count where the owner may have gone");
+  }
 
   // A view jump: owners 1000 m away hold tails; the view lands 3 m from one (short of its level by 2) and 20 m from
   // another (short by 1). The first completes before the next frame, the second loads as usual.
@@ -1620,7 +1667,21 @@ void textureOwnerLevels(Tempest::Device& device, const Fixture& fixture) {
   require(jumpC.tex->w()==128 && Resources::textureStats().jumps==jumpsBefore+2,
           "OPENGOTHIC_TEXTURE_JUMP_MS=0 must leave a jump's textures to the usual loading");
   waitFor([&] { return jumpC.tex->w()==512; },"without the synchronous part the jump's textures must still load");
+
+  // A small budget: four textures of 4096, short by two levels; the two first loads start at once, and waiting for
+  // the first passes the 1 ms budget, so no third one starts.
+  setenv("OPENGOTHIC_TEXTURE_JUMP_MS","1",1);
+  Resources::configureTextures();
+  require(big[0].tex->w()==1024,"the large textures must hold their tails");
+  for(auto& m:big)
+    Resources::textureDemand(m,stat,true,Need{3,20});
+  Resources::completeTextureJump();
+  const auto completed=size_t(std::count_if(big.begin(),big.end(),[](const Material& m) { return m.tex->w()==4096; }));
+  require(completed>=1 && completed<=2,"no load may start after the jump's budget has passed");
+  for(auto& m:big)
+    Resources::textureDemand(m,stat,false,Need{3,20});
   unsetenv("OPENGOTHIC_TEXTURE_JUMP_MS");
+  Resources::configureTextures();
 
   body=VisualObjects::Item();
   heroBody=VisualObjects::Item();

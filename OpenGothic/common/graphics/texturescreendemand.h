@@ -39,6 +39,9 @@ class TextureScreenDemand final {
       Tempest::Vec3 centre;
       float         radius = 0;
       };
+    // The largest reach an owner placed by a position gets (VisualObjects::textureAllowance), centimetres: its sphere
+    // is grown by it, so it errs sharper by at most this.
+    static constexpr float MaxReach = 400;
 
     // The demand of an owner with `texel` in world space (bounds in centimetres) and `previous` exponent: its exponent
     // from the nearer of the hero and the camera, due again when either may have come or gone by its margin. Without a

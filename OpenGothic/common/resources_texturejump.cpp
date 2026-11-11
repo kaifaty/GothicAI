@@ -68,11 +68,15 @@ size_t Resources::loadTexturesNow(const std::vector<TextureRecord*>& records, st
     ++published;
     };
   size_t slot=0;
+  const auto late=[&] { return limited && std::chrono::steady_clock::now()>=deadline; };
   for(auto* record:records) {
-    if(limited && std::chrono::steady_clock::now()>=deadline)
+    if(late())
+      break;
+    // Waiting for the slot's previous load can pass the deadline: nothing starts after it.
+    publish(slot);
+    if(late())
       break;
     const auto level=wantedLevel(*record);
-    publish(slot);
     slots[slot]=record;
     uploads[slot]=std::async(std::launch::async,[path=record->source,mipmaps=record->mipmaps,level,device=dev] {
       auto data=decodeBaseTexture(path,mipmaps,level);

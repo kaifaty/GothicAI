@@ -200,7 +200,8 @@ class VisualObjects final {
       // An owner placed by a position (textureWorldOwner): a sphere of this radius around texturePosition, centimetres;
       // -1 for bounds from textureTexel.
       float               textureRadius = -1;
-      // How far it may move from texturePosition before its demand may change (setTextureOwner), centimetres
+      // How far it may move from texturePosition without calling back (setTextureOwner), centimetres: set only by its
+      // own calls; its evaluations measure to the sphere grown by it.
       float               textureReach  = 0;
       Tempest::Vec3       textureAnchor;
       float               textureAxes[3][3] = {};  // the axes of pos it was placed with
@@ -221,7 +222,11 @@ class VisualObjects final {
     bool     textureScreenOwner(const Object& object) const;
     // Bounds and density in the world from where the owner is (texturePosition, pos)
     void     placeTexture(Object& object);
+    // An owner placed by a position: measured to its sphere grown by its reach
     TextureScreenDemand::Result evaluateTexture(const Object& object) const;
+    // The reach of an owner placed by a position at its own evaluation (setTextureOwner); `moved`: it was registered
+    // there already and moved past its previous reach
+    float    textureAllowance(const Object& object, bool moved) const;
     // Metres from the nearer of the hero and the camera to its bounds; -1 without a density or a view
     double   textureDistance(const Object& object) const;
     void     scheduleTexture(Object& object, size_t id, double expiry);

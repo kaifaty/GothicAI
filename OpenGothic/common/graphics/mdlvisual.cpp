@@ -841,7 +841,7 @@ float MdlVisual::setTextureOwner(const Vec3& position, bool spatial) {
       return std::numeric_limits<float>::infinity();
     const auto d=position-textureOwnerPosition;
     const float moved=d.x*d.x+d.y*d.y+d.z*d.z;
-    if(moved<textureOwnerReach*textureOwnerReach)
+    if(moved<=textureOwnerReach*textureOwnerReach)
       return textureOwnerReach-std::sqrt(moved);
     }
   textureOwnerKnown=true;

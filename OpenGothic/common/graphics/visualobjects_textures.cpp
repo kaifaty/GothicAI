@@ -63,11 +63,12 @@ float VisualObjects::Item::setTextureOwner(const Vec3& position, bool spatial) {
   const bool same=obj.textureCategory==Resources::TextureCategory::Dynamic && obj.textureWorldOwner==spatial;
   if(same && !spatial)
     return Unbounded;
-  // A spatial owner that has not moved past its reach since it was last evaluated: one comparison, no lock.
+  // A spatial owner still within its reach of where it was last evaluated: one comparison, no lock. Only this
+  // owner's own calls write the anchor and the reach (below), so the pair read here is one it set itself.
   if(same && obj.textureChunkRegistered) {
     const float dx=position.x-obj.texturePosition.x, dy=position.y-obj.texturePosition.y, dz=position.z-obj.texturePosition.z;
     const float moved=dx*dx+dy*dy+dz*dz;
-    if(moved<obj.textureReach*obj.textureReach)
+    if(moved<=obj.textureReach*obj.textureReach)
       return obj.textureReach-std::sqrt(moved);
     }
   FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand);
@@ -90,8 +91,12 @@ float VisualObjects::Item::setTextureOwner(const Vec3& position, bool spatial) {
     }
   obj.texturePosition=position;
   owner->placeTexture(obj);
+  // The allowance is fixed here, at the owner's own evaluation, and holds until the next one; every evaluation until
+  // then, the view queue's too, measures to its sphere grown by it (evaluateTexture).
+  const float reach=owner->textureAllowance(obj,same);
+  obj.textureReach=reach;
   owner->updateTextureDemand(id);
-  return obj.textureReach;
+  return reach;
   }
 
 void VisualObjects::Item::setTextureCategory(Resources::TextureCategory category) {
@@ -151,10 +156,34 @@ void VisualObjects::placeTexture(Object& object) {
   }
 
 TextureScreenDemand::Result VisualObjects::evaluateTexture(const Object& object) const {
-  if(object.textureRadius>=0)
-    return TextureScreenDemand::evaluate(textureView,object.textureTexel,{object.texturePosition,object.textureRadius},
+  if(object.textureRadius>=0) {
+    // The owner may be anywhere within its reach of the anchor: the sphere grows by it, the view gets the whole margin.
+    const float grown=object.textureRadius+(std::isfinite(object.textureReach) ? object.textureReach : 0.f);
+    return TextureScreenDemand::evaluate(textureView,object.textureTexel,{object.texturePosition,grown},
                                          object.textureNeed.resolution);
+    }
   return TextureScreenDemand::evaluate(textureView,object.textureTexel,object.textureNeed.resolution);
+  }
+
+float VisualObjects::textureAllowance(const Object& object, bool moved) const {
+  if(!object.textureWorldOwner)
+    return Unbounded;
+  // Within the edge of its chunk in both rules: its ring stays that of its chunk, also when the rule is switched.
+  const float edge=chunkEdge(object.texturePosition);
+  if(!textureScreenOwner(object) || !object.texturePlaced)
+    return edge;
+  // A newly placed owner gets none: one that never moves (an item lying, a mobsi) is evaluated exactly. One that
+  // moved gets half the room its exact distance has to the nearer edge of its exponent's band, so the view keeps at
+  // least the other half, and no more than MaxReach: the sphere errs sharper by at most that.
+  if(!moved)
+    return 0;
+  const auto exact=TextureScreenDemand::evaluate(textureView,object.textureTexel,{object.texturePosition,object.textureRadius},
+                                                 object.textureNeed.resolution);
+  if(!exact.scheduled)
+    return edge;  // the whole chain or nothing to draw: no distance
+  if(!(exact.margin>0))
+    return 0;     // no view yet
+  return std::min({float(exact.margin*50.0),TextureScreenDemand::MaxReach,edge});
   }
 
 double VisualObjects::textureDistance(const Object& object) const {
@@ -265,7 +294,6 @@ void VisualObjects::updateTextureDemand(size_t id) {
   if(object.isEmpty())
     return;
   unscheduleTexture(object);
-  object.textureReach=Unbounded;
   if(object.textureCategory!=Resources::TextureCategory::Static && !object.textureChunkedLandscape && !object.textureWorldOwner) {
     if(object.textureNeed!=Resources::TextureNeed()) {
       setTextureDemand(object,false);
@@ -290,21 +318,13 @@ void VisualObjects::updateTextureDemand(size_t id) {
   Resources::TextureNeed need;
   need.ring=textureResidency ? std::min(4u,textureResidency->textureDistance(chunk)) : 0;
   need.resolution=TextureLevels::NoExponent;
-  // An owner placed by a position is evaluated again when it moves past its reach (setTextureOwner). By the ring rule:
-  // the edge of its chunk. On screen: the margin of its exponent - its ring (metrics and load order only) may then
-  // lag a chunk - and none when its demand does not depend on the distance (the whole chain, nothing to draw).
-  if(object.textureWorldOwner)
-    object.textureReach=chunkEdge(object.texturePosition);
-  // Measured on screen once placed; an unplaced static one keeps the ring rule until it is.
+  // Measured on screen once placed; an unplaced static one keeps the ring rule until it is. An owner placed by a
+  // position is measured with its reach (textureAllowance), which only its own setTextureOwner changes.
   if(textureScreenOwner(object) && object.texturePlaced) {
     const auto demand=evaluateTexture(object);
     need.resolution=demand.exponent;
     if(demand.scheduled)
       scheduleTexture(object,id,demand.expiry);
-    if(object.textureWorldOwner && !demand.scheduled)
-      object.textureReach=Unbounded;
-    else if(object.textureWorldOwner && demand.margin>0)
-      object.textureReach=float(demand.margin*100.0);
     }
   // A landscape owner exists only while its package is published.
   const bool active=object.textureWorldOwner || object.textureChunkedLandscape || textureChunkActive(object.texturePosition);

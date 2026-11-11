@@ -314,7 +314,7 @@ float MeshObjects::Mesh::setTextureOwner(const Tempest::Vec3& position, bool spa
       return std::numeric_limits<float>::infinity();
     const auto d=position-textureOwnerAnchor;
     const float moved=d.x*d.x+d.y*d.y+d.z*d.z;
-    if(moved<textureOwnerReach*textureOwnerReach)
+    if(moved<=textureOwnerReach*textureOwnerReach)
       return textureOwnerReach-std::sqrt(moved);
     }
   float reach=std::numeric_limits<float>::infinity();
