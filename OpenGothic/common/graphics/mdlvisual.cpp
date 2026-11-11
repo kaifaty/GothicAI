@@ -1027,7 +1027,7 @@ bool MdlVisual::updateFootIk(Npc& npc, World& world, uint64_t dt, bool alignedTo
     return false;
     }
 
-  auto       in      = ik.mkInput(npc,world,pos,alignedToGround,dt,&pose.aimWalk());
+  auto       in      = mkFootIkInput(ik,npc,world,pos,alignedToGround,dt,&pose.aimWalk());
   // crouched stepping with the bow drawn: the steps are low already (sneaking), as low as crouched standing
   in.crouch = std::max(0.f, in.crouch - pose.aimWalk().lowered());
   const bool changed = pose.updateFootIk(in);
@@ -1350,11 +1350,11 @@ bool MdlVisual::startAnim(Npc &npc, WeaponState st) {
   }
 
 void MdlVisual::setAnimRotate(Npc &npc, int dir) {
-  skInst->setAnimRotate(solver,npc,fgtMode,AnimationSolver::TurnType::Std,dir);
+  skInst->setAnimRotate(solver,npc.walkMode(),npc.world().tickCount(),fgtMode,AnimationSolver::TurnType::Std,dir);
   }
 
 void MdlVisual::setAnimWhirl(Npc &npc, int dir) {
-  skInst->setAnimRotate(solver,npc,fgtMode,AnimationSolver::TurnType::Whirl,dir);
+  skInst->setAnimRotate(solver,npc.walkMode(),npc.world().tickCount(),fgtMode,AnimationSolver::TurnType::Whirl,dir);
   }
 
 void MdlVisual::interrupt() {
@@ -1498,7 +1498,7 @@ void MdlVisual::syncAttaches(Attach<View>& att) {
   }
 
 const Animation::Sequence* MdlVisual::startAnimItem(Npc &npc, std::string_view scheme, int state) {
-  return skInst->setAnimItem(solver,npc,scheme,state);
+  return skInst->setAnimItem(solver,npc.world().tickCount(),scheme,state);
   }
 
 const Animation::Sequence* MdlVisual::startAnimSpell(Npc &npc, std::string_view scheme, bool invest) {
@@ -1723,6 +1723,7 @@ void MdlVisual::updateFace(Npc& npc) {
   // the gestures of the line, far too: a face seen again shows them as they go
   cueStarts.clear();
   cues.update(*face.faceProfile(),now,blink.lastBlink(),cueStarts);
+  updateBrows(npc,now,probing);
   for(auto& s:cueStarts.cues)
     playCue(s.name,s.mirror,s.hold,s.at,now);
   // a lie: the leak of the felt emotion, the liar's blinks (ordinary ones keep away from them), a smile put on
@@ -1747,7 +1748,9 @@ void MdlVisual::updateFace(Npc& npc) {
     }
   if(probing) {
     face.probe(FaceRig::subjectProbe,now);
-    FaceRig::subjectProbe.uploadUs = faceUploadUs;
+    FaceRig::subjectProbe.uploadUs  = faceUploadUs;
+    FaceRig::subjectProbe.accents   = uint32_t(voiceBrows.accents().size());
+    FaceRig::subjectProbe.browMoves = voiceBrows.moves();
     }
   if(&npc==Eyes::probeNpc)
     eyes.probe(Eyes::subjectProbe);
@@ -1800,8 +1803,41 @@ void MdlVisual::startSpeech(Npc& npc, std::shared_ptr<LipSync::Track> voice) {
         break;
         }
   mouth.setShapes(std::move(shapes));
-  cues.voice(voice,npc.world().tickCount());
-  mouth.start(std::move(voice),npc.world().tickCount());
+  const uint64_t now = npc.world().tickCount();
+  cues.voice(voice,now);
+  // the brows on the accents: by the seed of the npc and the line (the mood goes by the line, setTalkMood)
+  if(SpeechBrows::isEnabled() && face.isActive() && face.faceProfile()->brows.has_value())
+    voiceBrows.start(voice,SpeechCues::seedOf(voice->name())^(uint32_t(npc.instanceSymbol())*2654435761u),now); else
+    voiceBrows.stop();
+  accentsLogged = 0;
+  if(&npc==FaceRig::probeNpc && face.isActive())
+    Log::i("[face] voice ",npc.displayName(),": ",voice->name()," ",voice->durationMs()," ms",
+           voice->isFinished() ? "" : " (streaming)",SpeechBrows::isEnabled() ? "" : ", brows off");
+  mouth.start(std::move(voice),now);
+  }
+
+void MdlVisual::setTalkMood(std::string_view mood, std::string_view line) {
+  gestures.setMood(TalkGestures::moodOf(mood));
+  voiceBrows.setMood(TalkGestures::moodOf(mood),line);
+  }
+
+void MdlVisual::updateBrows(Npc& npc, uint64_t now, bool probing) {
+  const auto* profile = face.faceProfile();
+  if(profile==nullptr || !profile->brows.has_value())
+    return;
+  // an angry or hostile line lowers the brows on its accents
+  voiceBrows.play(face,now);
+  if(!probing)
+    return;
+  // the accents of the watched one's line, as they are found
+  const auto& found = voiceBrows.accents();
+  for(; accentsLogged<found.size(); ++accentsLogged) {
+    const auto& a = found[accentsLogged];
+    char buf[96];
+    std::snprintf(buf,sizeof(buf),"%lld ms, rise %.1f st, loud %.2f: %s",(long long)a.ms,double(a.rise),double(a.loud),
+                  a.moves ? (voiceBrows.lowered() ? "down" : "up") : "skip");
+    Log::i("[face] accent ",npc.displayName(),": ",buf);
+    }
   }
 
 void MdlVisual::updateMouth(Npc& npc, uint64_t dt) {
@@ -1818,6 +1854,7 @@ void MdlVisual::updateMouth(Npc& npc, uint64_t dt) {
 void MdlVisual::stopDlgAnim(Npc& npc) {
   mouth.stop();
   cues.stop();
+  voiceBrows.stop();
   gestures.stop();
   gestureSeq = nullptr;
   const uint16_t count = 11;

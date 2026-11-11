@@ -199,6 +199,16 @@ void Renderer::setupSettings() {
     const int   v   = env!=nullptr ? std::atoi(env) : ::Settings::getI("INTERNAL","vsmLampSides");
     settings.vsmLampSides = uint32_t(v>=1 && v<=3 ? v : 3);
   }
+  // OPENGOTHIC_VSM_STUDY=<bits>: the bench command `vsm study` from the environment, so one binary measures what the
+  // shadow test on a mesh's facets costs (reports/render-features/2026-11-11-facet-shards): 1 the sun reads the
+  // facet's plane over one pixel and 2 the lamps keep it on facets edge-on to them, both as before 2026-11-11. The
+  // command wins over this while a scenario runs.
+  if(const char* env = std::getenv("OPENGOTHIC_VSM_STUDY")) {
+    const int v = std::atoi(env);
+    benchVsmStudy = uint32_t(v<0 ? 0 : (v>15 ? 15 : v));
+    Log::i("vsm: study bits = ", benchVsmStudy, " by OPENGOTHIC_VSM_STUDY");
+    }
+
   // VSM lamps: the soft PCSS, or hard shadows in one gather (light.frag, VSM_LAMP_HARD). On Metal hard by default:
   // the PCSS costs ~11 ms GPU indoors on an M1 Pro (reports/render-features/2026-11-05-vsm-mac-hard/README.md).
   // OPENGOTHIC_VSM_LAMP_SOFT=0|1 (test benches) wins over the ini; the study switches (OPENGOTHIC_VSM_LAMP*,
@@ -823,8 +833,8 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
 
   wview.visibilityPass(cmd, 1);
   drawGBuffer(cmd, fId, wview);
-  const auto* world = GameServices::inst().world();
-  if(world!=nullptr && blood.prepare(fId, world, wview.sceneGlobals(), camera.listenerPosition().pos))
+  const auto* world = GameServices::inst().bloodDecalSource();
+  if(world!=nullptr && blood.prepare(fId, *world, wview.sceneGlobals(), camera.listenerPosition().pos))
     blood.draw(cmd, fId, wview.sceneGlobals(), gbufDiffuse, Shaders::options().doMaterialMaps ? &gbufOrm : nullptr,
                gbufNormal, zbuffer);
   // SSAO needs only the depth: ahead of the shadow maps its compute runs under their vertex work on Metal
@@ -1310,7 +1320,7 @@ void Renderer::readGiStats(uint8_t fId) {
   gi.statsWritten[fId] = false;
   }
 
-Tempest::Attachment Renderer::screenshoot(uint8_t frameId) {
+Tempest::Attachment Renderer::screenshoot(uint8_t frameId, Tempest::Attachment&& reuse) {
   auto& device = Resources::device();
   device.waitIdle();
 
@@ -1321,7 +1331,9 @@ Tempest::Attachment Renderer::screenshoot(uint8_t frameId) {
     w = uint32_t(temporal.output.w());
     h = uint32_t(temporal.output.h());
     }
-  auto     img  = device.attachment(Tempest::TextureFormat::RGBA8,w,h);
+  auto     img  = std::move(reuse);
+  if(img.isEmpty() || uint32_t(img.w())!=w || uint32_t(img.h())!=h)
+    img = device.attachment(Tempest::TextureFormat::RGBA8,w,h);
 
   auto wview  = GameServices::inst().worldView();
   auto camera = GameServices::inst().camera();

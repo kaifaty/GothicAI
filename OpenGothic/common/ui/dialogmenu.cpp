@@ -239,7 +239,7 @@ bool DialogMenu::aiOutput(Npc &npc, std::string_view msg) {
   auto voice      = Resources::loadSoundBuffer(string_frm(msg,".wav"));
   currentSnd      = soundDevice.load(voice);
   curentIsPl      = (pl==&npc);
-  npc.startSpeech(voice);
+  npc.startSpeech(voice,string_frm(msg,".WAV"));  // named as WorldSound::addDlgSound names a line
 
   currentSnd.play();
   npc.setAiOutputBarrier(current.msgTime,false);

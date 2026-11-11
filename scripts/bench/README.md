@@ -337,6 +337,9 @@ layer), `OPENGOTHIC_TAA_REACTIVE=0`, `=1`, `=1` with the view and `OPENGOTHIC_TA
 
 ## План и журнал
 
+- 2026-11-11: a 1920x1080 clip records in real time on Ryzen (Vulkan): the readback of a captured frame
+  reads cached host memory (24–38 ms → 0.6 ms) through one kept staging buffer, and filming draws every
+  frame into one image instead of allocating one each step; 31–34 % → 99 % of real time.
 - 2026-11-10: a deterministic `streaming wait` holds the loaded world four frames before the reset (a still
   had a second state by whether the wait had to wait: clouds and exposure lag a frame or two); two
   shader fixes took the thread-order noise out of VSM, so stills are compared with VSM on again.
@@ -898,7 +901,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `view clean [margin]\|nopfx\|full` | `clean` clips away everything closer to the camera than the subject minus `margin` (default 100 cm): trees and bushes in between; particles are hidden. The ground right in front of the camera is clipped too (white) |
 | `view hide static movable morph pfx animated` | hide draw types (debugging only: static and movable objects share draw commands, hiding them hides parts of creatures too); `pfx` here hides the particles and sprites of `PfxObjects` too (fires, lamp flames; `view clean` and `nopfx` keep them). A `shot` is written with the next frame drawn: change the view a frame after it (`wait 200`), or the shot shows the change |
 | `vsm sides 1\|2\|3\|0` | the sides a lamp's cube face keeps from the next frame: `1` the side away from the light alone (before 2026-11-10), `2` both sides of the world mesh alone (2026-11-10), `3` both sides of objects too (the default since 2026-11-11, [report](../../reports/render-features/2026-11-11-lamp-objects-two-sided/README.md)), `0` as `[INTERNAL] vsmLampSides` says; A/B shots of one frame. Without mesh shaders (`-ms 0`, `OPENGOTHIC_MS=0`, Metal) always `1` ([report](../../reports/render-features/2026-11-10-lamp-one-sided/README.md)) |
-| `vsm study <bits>` | the shadow test on a mesh's facets from the next frame, for shots of one view ([report](../../reports/render-features/2026-11-11-facet-shards/README.md)); bits add up: `1` the sun reads the facet's plane over one pixel and `2` the lamps keep the facet's plane on facets edge-on to them — both as before 2026-11-11; `4` instead of the light, the facets by the cosine of their plane to the light (red turned away, yellow steeper than 84°, blue-grey the rest; dark where the shadow test answers shadowed); `8` instead of the sun's light, where the plane over a shadow texel's footprint changes the sun's shadow against the plane over a pixel (magenta darker, green lighter; bright by more than a tenth of the sun, dim by more than a fiftieth); `0` the game's |
+| `vsm study <bits>` | the shadow test on a mesh's facets from the next frame, for shots of one view ([report](../../reports/render-features/2026-11-11-facet-shards/README.md)); bits add up: `1` the sun reads the facet's plane over one pixel and `2` the lamps keep the facet's plane on facets edge-on to them — both as before 2026-11-11; `4` instead of the light, the facets by the cosine of their plane to the light (red turned away, yellow steeper than 84°, blue-grey the rest; dark where the shadow test answers shadowed); `8` instead of the sun's light, where the plane over a shadow texel's footprint changes the sun's shadow against the plane over a pixel (magenta darker, green lighter; bright by more than a tenth of the sun, dim by more than a fiftieth); `0` the game's. The same bits from the environment — `OPENGOTHIC_VSM_STUDY=<bits>`, read once at startup — hold for a whole run, so `scripts/perf.sh` measures the cost of the test with one binary ([numbers](../../reports/render-features/2026-11-11-facet-shards/README.md#цена-в-кадре)) |
 | `overlay on\|off`, `overlay zoom on\|off`, `overlay bright on\|off` | `bright` stretches dark images (forests, interiors) |
 | `overlay trail [off] [keep ms] [line]` | the arrows' ways in gold (with the zones of `showzones`), no legs, no text; turns the overlay on. A way stays `keep` ms (1500) after its arrow stops; `line`: also the straight line the arrow left along (where the bow pointed), dashed white, as far as the arrow has flown: the drop is the gap between them |
 | `rec <name> [novideo]`, `stop [shadow]` | record a segment (video and metrics, or metrics only); `stop shadow` also copies both rolling melee shadow journals into segment files (filter cumulative rows by fight game-time interval) |
@@ -1076,6 +1079,24 @@ the staging for free. `ingame_clip.py` writes into `<out>`:
   `R_EYESBLINK` while `bk_n`, the ordinary blinks, stays);
 - `sheet.jpg` — the frame before and the apex of each gesture and of the leak.
 The gestures of each line come from its `[ai] cues` line in `game.log`, the times from `metrics.csv`.
+
+## Face brows clip
+
+The acceptance clip of the brows on the accents of the voice
+([eyes.md](../../reports/content/2026-11-hero-head/eyes.md), "План: брови по тону"): Vino with an own head says three
+lines of the AI server through the real voice path (`face_brows_demo` in
+`server/src/gothic_ai/scenarios/face_cues.py`: the Russian yes-no question «Ты его видел вчера?», a long statement, an
+angry line; no gesture tags), then `face-brows-clip.bench` has him say two long lines of his original voice
+(`DIA_Vino_HALLO_05_02`, `DIA_Vino_PERM_05_04`); the scenario holds him 30 s after his answer for them. Staging as in
+[Face cues clip](#face-cues-clip); the face profile needs `speech_brows` (e.g. the hero head of `hero-head-2` with the
+sections of [`test-head.face.json`](../../reports/content/2026-11-hero-head/mpfb/test-head.face.json)). The same
+commands with `--scenario face_brows_demo`, without `--debug-leak`, and the bench `face-brows-clip`;
+`OPENGOTHIC_SPEECH_BROWS=0` films the same without the layer. `--provider inworld` spends three paid requests a take.
+`reports/content/2026-11-hero-head/cues/brows_clip.py <bench out> <out>` writes `clip.mp4`, `key.txt` (each line's
+text and voice, each accent with its time, the word it falls on — an estimate by characters — the rise of the tone and
+up, down or no move, the start and apex of `br_w`) and `sheet.jpg` (before and apex of the strongest moves); with
+`--off` only `clip-off.mp4`. The accents come from the `[face] accent` lines of `game.log`, the times from `lip_t` and
+`br_w` of `metrics.csv`.
 
 ## Native NPC calibration duels
 
@@ -1567,6 +1588,15 @@ Film mode (what `gothic-shorts film` sets): `OPENGOTHIC_BENCH_REALTIME=1` keeps 
 clock and draws only the captured frame; `TEMPEST_AUDIO_LOOPBACK=48000` records the game's sound into
 `<segment>.wav` instead of playing it; `TEMPEST_WINDOW_SIZE=<w>x<h>` (points) sets the frame;
 `OPENGOTHIC_BENCH_ENCODER` replaces the x264 options (e.g. `-c:v h264_videotoolbox -b:v 24M`).
+
+Recording in real time on Ryzen (clips that judge loading and streaming at the player's pace):
+`OPENGOTHIC_BENCH_REALTIME=1 TEMPEST_WINDOW_SIZE=1920x1080 "OPENGOTHIC_BENCH_ENCODER=-c:v h264_nvenc -preset p4 -b:v 24M"
+BENCH_HOST=ryzen scripts/bench.sh <scenario> <out>`. Read `[bench] rec stop … speed=` and `[bench] realtime:`
+in `game.log`: a take that kept pace says `speed=` 95 % or more and `kept to the wall clock` (or a lag under
+1000 ms). A 127 s city run on the x4 texture set gave 99 % and a 0.6–0.7 s lag three times in a row with
+NVENC, 96 % and 4 s with the default x264. A frame of the capture costs about 8 ms (the picture 4.5 ms,
+reading it back 1.7 ms, the bench 1 ms) out of the step's 33 ms; filming draws every frame into one image
+and reads it through one cached staging buffer. [Measurements](../../reports/engine/2026-11-11-realtime-capture/README.md).
 
 Good spots near the default save (Xardas' tower): `NW_XARDAS_TOWER_VALLEY_05` (27 degree slope in a
 forest), `NW_XARDAS_TOWER_IN1_*` (ramp inside the tower), `NW_XARDAS_STAIRS_01`..`_04`.

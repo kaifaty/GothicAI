@@ -16,6 +16,7 @@ from pathlib import Path
 import re
 import select
 import shutil
+import signal
 import statistics
 import struct
 import subprocess
@@ -51,6 +52,8 @@ def write_rows(path, values):
 
 class Runner:
     def __init__(self, args, initial):
+        self.navmesh_command = next((line for line in initial.read_text(encoding="utf-8").splitlines()
+                                     if line.startswith("navmesh build ")), None)
         workdir = args.output / "run"
         workdir.mkdir(parents=True, exist_ok=True)
         if args.ini:
@@ -67,6 +70,7 @@ class Runner:
         ini.write_text(settings, encoding="utf-8")
         self.stderr = (args.output / "runner-stderr.log").open("ab")
         env = dict(os.environ, GOTHIC_AI="0", OPENGOTHIC_BODY_ANIMATION_RNG="isolated",
+                   OPENGOTHIC_PHYSICS_THREADS="0",
                    OPENGOTHIC_STUCK_LOG=str(args.output / "stuck.jsonl"),
                    VK_DRIVER_FILES="/nonexistent", VK_ICD_FILENAMES="/nonexistent")
         env.pop("DISPLAY", None)
@@ -74,8 +78,10 @@ class Runner:
         self.process = subprocess.Popen(
             [str(args.runner), "-g", str(args.assets), "-devmode",
              "--save", str(args.save), "--scenario", str(initial),
-             "--output", str(args.output / "initial"), "--mode", "lockstep", "--stdio"],
-            cwd=workdir, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.stderr)
+             "--output", str(args.output / "initial"), "--mode", "lockstep", "--stdio",
+             "--fork-reset", "--serial-workers"],
+            cwd=workdir, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.stderr,
+            start_new_session=True)
         self.sequence = 0
         self.buffer = b""
 
@@ -110,6 +116,12 @@ class Runner:
 
     def scenario(self, scenario, output, seed, timeout=180):
         output.mkdir(parents=True, exist_ok=True)
+        # A fork inherits the pristine world, not the previous episode's navmesh.
+        # Repeat the initial cache load before every scenario that does not build its own.
+        commands = scenario.read_text(encoding="utf-8")
+        if self.navmesh_command and not any(line.startswith("navmesh build ") for line in commands.splitlines()):
+            scenario = output / "scenario.bench"
+            scenario.write_text(self.navmesh_command + "\n" + commands, encoding="utf-8")
         response = self.request({"cmd": "reset", "scenario": str(scenario),
                                  "output_dir": str(output), "mode": "lockstep", "seed": seed}, timeout)
         for _ in range(240):
@@ -134,14 +146,20 @@ class Runner:
                 if self.process.returncode:
                     raise RuntimeError(f"Runner failed on close: {self.process.returncode}")
         finally:
-            if self.process.poll() is None:
-                self.process.terminate()
-                try:
-                    self.process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    self.process.kill()
-                    self.process.wait(timeout=10)
-            self.stderr.close()
+            try:
+                # The template can exit before a busy fork; always signal the whole group.
+                for sig in (signal.SIGTERM, signal.SIGKILL):
+                    try:
+                        os.killpg(self.process.pid, sig)
+                    except ProcessLookupError:
+                        pass
+                    try:
+                        self.process.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        if sig == signal.SIGKILL:
+                            raise
+            finally:
+                self.stderr.close()
 
 
 def scenario_file(args, name, commands):
@@ -167,7 +185,7 @@ def run(args):
     runner = Runner(args, prepare)
     try:
         if not args.measure_only:
-            # One world build/cache read; all later resets can reuse the immutable navmesh.
+            # Populate the file cache; each episode's fork loads it independently.
             runner.scenario(prepare, args.output / "prepare", args.seed, timeout=720)
             required = ("navmesh-stats.json", "navmesh-polygons.jsonl", "coverage.jsonl", "points.jsonl", "pairs.jsonl")
             for name in required:
@@ -177,7 +195,7 @@ def run(args):
             cached = scenario_file(args, "cache-load", [f"navmesh build {args.cache}"])
             runner.scenario(cached, args.output / "cache-load", args.seed, timeout=720)
         else:
-            # --measure-only starts a new process, so install its immutable cached mesh once.
+            # Check that the file cache loads before starting the measurements.
             cached = scenario_file(args, "cache-load", [f"navmesh build {args.cache}"])
             runner.scenario(cached, args.output / "cache-load", args.seed, timeout=720)
         if args.prepare_only:

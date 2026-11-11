@@ -103,7 +103,7 @@ class MainWindow : public Tempest::Window {
 
     void render() override;
     // the test bench: the frame as the player sees it, the interface on top
-    Tempest::Attachment screenshotWithUi();
+    Tempest::Attachment screenshotWithUi(Tempest::Attachment&& reuse);
     // the image render() draws the frame into: the swapchain's, or with TEMPEST_OFFSCREEN=1 our own
     Tempest::Attachment& frameImage();
     uint32_t             frameW() const;
@@ -128,6 +128,7 @@ class MainWindow : public Tempest::Window {
     Tempest::Swapchain    swapchain;
     // TEMPEST_OFFSCREEN=1 (Linux): no swapchain, the frame goes into this image of the window's size
     Tempest::Attachment   offscreen;
+    Tempest::Attachment   captureImage; // filming: the image of the last video frame, drawn into again
     Tempest::TextureAtlas atlas;
     Shaders               shaders;
     Renderer              renderer;
