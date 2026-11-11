@@ -6,6 +6,7 @@
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
+#include <unistd.h>
 
 namespace {
 size_t assertions = 0;
