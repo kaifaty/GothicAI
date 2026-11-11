@@ -329,7 +329,6 @@ def build_studs():
         faces += [[b + 16 + k, b + 16 + (k + 1) % 8, b + 24] for k in range(8)]
     if not verts: return None
     ob = new_object('studs', verts, faces, srgb('#6a6862')); ob['outfit_material'] = 'studs'
-    c = np.mean([v for v in verts], 0)
     v0, v1, v2 = (np.array(verts[k]) for k in faces[0][:3])
     if np.cross(v1 - v0, v2 - v0) @ STUDS[0][1] < 0:
         ob.data.flip_normals()
