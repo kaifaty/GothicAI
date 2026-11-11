@@ -3,7 +3,7 @@
 | Проверка | Значение | Итог |
 |---|---|---|
 | teacher-1: critical food, median h | 0.0 | да |
-| teacher-1: critical food, max h | 8.048 | **нет** |
+| teacher-1: critical food, max h | 8.061 | **нет** |
 | teacher-1: critical sleep, median h | 0.0 | да |
 | teacher-1: critical sleep, max h | 8.188 | **нет** |
 | teacher-1: critical toilet, median h | 0.0 | да |
@@ -11,48 +11,48 @@
 | teacher-1: critical social, median h | 0.0 | да |
 | teacher-1: critical social, max h | 3.148 | да |
 | teacher-1: critical work, median h | 0.0 | да |
-| teacher-1: critical work, max h | 0.244 | да |
+| teacher-1: critical work, max h | 0.215 | да |
 | teacher-1: critical faith, median h | 0.0 | да |
 | teacher-1: critical faith, max h | 0.0 | да |
 | teacher-1: critical leisure, median h | 0.0 | да |
-| teacher-1: critical leisure, max h | 2.792 | да |
+| teacher-1: critical leisure, max h | 2.786 | да |
 | teacher-1: out of mask | 0 | да |
 | teacher-1: over capacity | 0 | да |
 | teacher-1: protected marks same | 1.0 | да |
-| teacher-1: anchor time by routine | 0.95142 | да |
+| teacher-1: anchor time by routine | 0.9527 | да |
 | teacher-1: changes an hour, p95 | 2 | да |
-| teacher-1: a day, s | 0.0938 | да |
+| teacher-1: a day, s | 0.1295 | да |
 | teacher-7: critical food, median h | 0.0 | да |
-| teacher-7: critical food, max h | 22.441 | **нет** |
+| teacher-7: critical food, max h | 24.0 | **нет** |
 | teacher-7: critical sleep, median h | 0.0 | да |
 | teacher-7: critical sleep, max h | 24.0 | **нет** |
 | teacher-7: critical toilet, median h | 0.001 | да |
 | teacher-7: critical toilet, max h | 16.355 | **нет** |
 | teacher-7: critical social, median h | 0.0 | да |
-| teacher-7: critical social, max h | 21.075 | **нет** |
+| teacher-7: critical social, max h | 21.668 | **нет** |
 | teacher-7: critical work, median h | 0.0 | да |
-| teacher-7: critical work, max h | 9.044 | **нет** |
+| teacher-7: critical work, max h | 7.82 | **нет** |
 | teacher-7: critical faith, median h | 0.0 | да |
 | teacher-7: critical faith, max h | 24.0 | **нет** |
 | teacher-7: critical leisure, median h | 0.0 | да |
-| teacher-7: critical leisure, max h | 20.035 | **нет** |
+| teacher-7: critical leisure, max h | 20.427 | **нет** |
 | teacher-7: out of mask | 0 | да |
 | teacher-7: over capacity | 0 | да |
 | teacher-7: protected marks same | 1.0 | да |
-| teacher-7: anchor time by routine | 0.8257 | **нет** |
+| teacher-7: anchor time by routine | 0.82411 | **нет** |
 | teacher-7: changes an hour, p95 | 3 | да |
-| teacher-7: a day, s | 0.1142 | да |
+| teacher-7: a day, s | 0.1859 | да |
 | random-7: out of mask | 0 | да |
 | random-7: over capacity | 0 | да |
-| sensitivity: food grows | 0.243 | да |
-| sensitivity: sleep grows | 0.83 | да |
-| sensitivity: toilet grows | 0.142 | да |
-| sensitivity: social grows | 0.201 | да |
-| sensitivity: work grows | 0.165 | да |
-| sensitivity: faith grows | 3.287 | да |
-| sensitivity: leisure grows | 0.559 | да |
-| traits: talk moves chosen social time its way | 0.886 | да |
-| traits: same-guild pairs differ the same way | 0.895 | да |
+| sensitivity: food grows | 0.263 | да |
+| sensitivity: sleep grows | 0.809 | да |
+| sensitivity: toilet grows | 0.163 | да |
+| sensitivity: social grows | 0.215 | да |
+| sensitivity: work grows | 0.163 | да |
+| sensitivity: faith grows | 3.433 | да |
+| sensitivity: leisure grows | 0.567 | да |
+| traits: talk moves chosen social time its way | 0.917 | да |
+| traits: same-guild pairs differ the same way | 0.939 | да |
 
 ## Места и концы занятий
 
@@ -60,9 +60,9 @@
 
 | Прогон | взято распорядком | больше всего держателей | сверх вместимости | выселено в пути / на месте | конец: уставка / выше «низко» / наибольшее время / другой выбор / якорь | не удалось: занято / якорь |
 |---|---|---|---|---|---|---|
-| teacher-1 | 1306 | 4 | 0 | 9 / 50 | 1500 / 343 / 323 / 158 / 51 | 24 / 2 |
-| teacher-7 | 8759 | 4 | 0 | 81 / 428 | 11399 / 3983 / 3457 / 3269 / 914 | 134 / 41 |
-| random-7 | 4332 | 4 | 0 | 468 / 454 | 19128 / 4129 / 5800 / 11292 / 429 | 119 / 152 |
+| teacher-1 | 1324 | 4 | 0 | 9 / 48 | 1520 / 342 / 319 / 153 / 54 | 23 / 3 |
+| teacher-7 | 8844 | 4 | 0 | 94 / 390 | 12142 / 3985 / 3439 / 3149 / 922 | 135 / 45 |
+| random-7 | 4398 | 4 | 0 | 472 / 446 | 19317 / 4064 / 5659 / 11360 / 420 | 111 / 148 |
 
 ## Часы в «критично» в сутки у решающих людей (человеко-сутки: медиана, p90, максимум)
 
@@ -70,20 +70,20 @@
 |---|---|---|---|---|---|---|---|
 | routine-1 | 9.81 / 11.806 / 12.167 | 4.021 / 7.724 / 8.322 | 16.788 / 17.552 / 17.724 | 0.0 / 4.834 / 9.359 | 11.416 / 14.113 / 14.598 | 0.0 / 0.0 / 0.0 | 0.0 / 3.376 / 5.173 |
 | routine-7 | 24.0 / 24.0 / 24.0 | 24.0 / 24.0 / 24.0 | 24.0 / 24.0 / 24.0 | 0.0 / 24.0 / 24.0 | 12.396 / 24.0 / 24.0 | 0.0 / 24.0 / 24.0 | 4.699 / 24.0 / 24.0 |
-| teacher-1 | 0.0 / 0.52 / 8.048 | 0.0 / 0.34 / 8.188 | 0.0 / 0.318 / 8.707 | 0.0 / 0.0 / 3.148 | 0.0 / 0.0 / 0.244 | 0.0 / 0.0 / 0.0 | 0.0 / 0.0 / 2.792 |
-| teacher-7 | 0.0 / 1.438 / 22.441 | 0.0 / 4.135 / 24.0 | 0.001 / 0.659 / 16.355 | 0.0 / 1.115 / 21.075 | 0.0 / 0.0 / 9.044 | 0.0 / 0.045 / 24.0 | 0.0 / 0.741 / 20.035 |
-| random-7 | 2.114 / 13.464 / 24.0 | 5.033 / 19.626 / 24.0 | 11.562 / 24.0 / 24.0 | 0.0 / 10.518 / 24.0 | 0.0 / 1.991 / 23.881 | 0.0 / 3.08 / 24.0 | 0.0 / 7.225 / 24.0 |
-| стражи, посты держат (7 суток, 64 чел.) | 24.0 / 24.0 / 24.0 | 24.0 / 24.0 / 24.0 | 24.0 / 24.0 / 24.0 | 24.0 / 24.0 / 24.0 | 0.0 / 0.0 / 0.072 | 1.233 / 24.0 / 24.0 | 24.0 / 24.0 / 24.0 |
-| стражи, посты отпускают (7 суток, 64 чел.) | 1.161 / 5.234 / 12.974 | 1.437 / 9.222 / 21.324 | 0.224 / 0.76 / 4.538 | 0.659 / 5.104 / 12.205 | 0.0 / 0.0 / 6.139 | 0.0 / 14.831 / 24.0 | 0.466 / 3.919 / 11.661 |
+| teacher-1 | 0.0 / 0.588 / 8.061 | 0.0 / 0.307 / 8.188 | 0.0 / 0.324 / 8.707 | 0.0 / 0.0 / 3.148 | 0.0 / 0.0 / 0.215 | 0.0 / 0.0 / 0.0 | 0.0 / 0.0 / 2.786 |
+| teacher-7 | 0.0 / 1.717 / 24.0 | 0.0 / 3.74 / 24.0 | 0.001 / 0.621 / 16.355 | 0.0 / 1.037 / 21.668 | 0.0 / 0.0 / 7.82 | 0.0 / 0.0 / 24.0 | 0.0 / 0.743 / 20.427 |
+| random-7 | 2.274 / 13.519 / 24.0 | 4.443 / 18.857 / 24.0 | 11.69 / 24.0 / 24.0 | 0.0 / 9.783 / 24.0 | 0.0 / 2.236 / 20.485 | 0.0 / 5.107 / 24.0 | 0.0 / 6.749 / 24.0 |
+| стражи, посты держат (7 суток, 64 чел.) | 24.0 / 24.0 / 24.0 | 24.0 / 24.0 / 24.0 | 24.0 / 24.0 / 24.0 | 24.0 / 24.0 / 24.0 | 0.0 / 0.0 / 0.072 | 1.71 / 24.0 / 24.0 | 24.0 / 24.0 / 24.0 |
+| стражи, посты отпускают (7 суток, 64 чел.) | 1.197 / 4.456 / 11.308 | 1.5 / 9.688 / 19.686 | 0.209 / 0.878 / 4.04 | 0.65 / 4.979 / 14.003 | 0.0 / 0.0 / 12.191 | 0.0 / 10.928 / 24.0 | 0.479 / 4.153 / 9.267 |
 
 ## Якорное время по распорядку (порог ≥ 95% по всем решающим)
 
 | Прогон | все | < 2 свободных ч | ≥ 2 свободных ч |
 |---|---|---|---|
-| teacher-1 | 95.1% | 91.0% (44 чел.) | 98.1% |
-| teacher-7 | 82.6% | 70.3% (44 чел.) | 91.5% |
-| random-7 | 61.0% | 49.4% (44 чел.) | 69.4% |
-| teacher-7, посты отпускают (для решения пользователя) | 69.3% | 55.9% (88 чел.) | 88.7% |
+| teacher-1 | 95.3% | 91.1% (44 чел.) | 98.3% |
+| teacher-7 | 82.4% | 70.4% (44 чел.) | 91.1% |
+| random-7 | 61.6% | 49.7% (44 чел.) | 70.2% |
+| teacher-7, посты отпускают (для решения пользователя) | 69.3% | 55.8% (88 чел.) | 88.9% |
 
 ## Нечем утолить: 49 нужд без способа в пределах пути от точек распорядка
 

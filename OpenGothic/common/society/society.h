@@ -564,6 +564,8 @@ struct State {
   std::vector<uint16_t> pointUse;   // by point: the same
   std::vector<uint32_t> routineTarget; // the place the routine uses now (World::targets' encoding), NoObject for none
   std::vector<uint16_t> routineKind;   // that place's kind
+  std::vector<uint8_t>  routineWait;   // 1: doing a kind's state at its entry's point, every place full of the routine's
+                                       // users; it takes one as it goes free
   std::vector<Time>     forecastFor; // the start of the anchor entry a forecast decision was asked for, -1 none
   std::vector<uint32_t> asked;      // NPCs with `want`, in the order asked
   DecisionBatch         batch;      // the rows handed out and not answered yet

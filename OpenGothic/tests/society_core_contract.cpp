@@ -20,10 +20,12 @@
 //   run (events by NPC and marks); with the teacher the NPCs that never decide (the protected, those without a
 //   routine, monsters) do their routine-only day event for event and mark for mark; a day with the teacher takes
 //   under 0.5 s; gothic-society-day --policy teacher plays 7 days;
-// - places on a small world of its own with decisions: a routine's user holds its place (closed to a decider) and a
-//   chosen activity there gives way to it, on the way and at the place, holders within capacity; closed places do not
-//   hide an allowed one farther away; the travel limit holds for the whole walk; an activity that broke into an anchor
-//   entry ends above low (AboveLow), not at the setpoint; the routine-only run writes no place events.
+// - places on a small world of its own with decisions: a routine's user holds its place (closed to a decider), lets it
+//   go when it leaves (it opens, or a routine's user waiting there takes it at once) and holds none while its next entry
+//   waits for a decision; a chosen activity there gives way to it, on the way and at the place, and its NPC is asked
+//   again at that second; holders within capacity; closed places do not hide an allowed one farther away; the travel
+//   limit holds for the whole walk; an activity that broke into an anchor entry ends as its need rises above low
+//   (AboveLow), not at the setpoint; the routine-only run writes no place events.
 #include "society/journal.h"
 #include "society/society.h"
 
@@ -812,8 +814,11 @@ void checkNeedRules(const fs::path& root) {
 
 // Six waynet components, one rule each; clock 1 and walk 1 m per game second, travel limit 10 min (600 m). Everyone's
 // sleep starts critical (0.05), so each decider is asked at 08:00. Guild 59 has no needs: R1-R3 only do their routine.
-// 1. R1 sleeps at H1 (bed B1, capacity 1) all day, S1 sits at S1 on FP_SIT_1 3 m off: D1 at A1 sees both closed, their
-//    routine users hold them (a freepoint within FreePointCm of the entry's point, as the engine's AI takes it).
+// 1. R1 sleeps at H1 (bed B1, capacity 1) until 10:00, S1 sits at S1 on FP_SIT_1 3 m off until 10:00: D1 at A1 sees both
+//    closed at 08:00, their routine users hold them (a freepoint within FreePointCm of the entry's point, as the engine's
+//    AI takes it). W1 goes to bed at H1 all day and waits for B1: R1's leaving at 10:00:20 gives it to W1 at once, S1's
+//    frees FP_SIT_1. D1 sits on its chair C1 by its routine; its next entry at 10:30:20 waits for its decision without
+//    holding C1, and D1 sees B1 closed (W1) and FP_SIT_1 open.
 // 2. D2 takes bed B2 at 08:00 and sleeps; R2 goes to bed there at 09:00:20: D2's activity gives way (Evicted).
 // 3. D3 walks 8 min to bed B3; R3 reaches it at 08:02:40: D3 fails on the way (Evicted).
 // 4. D4 walks P1 -> P2 (8 min) from 08:30:20; at 08:33:20 its next free entry asks while 5 min of the walk are left:
@@ -863,11 +868,14 @@ constexpr const char* PlacesWorld = R"({"format":"society-world","version":2,"wo
 {"id":11,"vob":"CF6","scheme":"CHAIR","focus":"","pos":[730000,0,0],"waypoint":18,"owner_npc":null,"owner_guild":null,"container":false}],
 "npcs":[
 {"id":"R1","key":"R1#0","name":"r","guild":59,"person":true,"start_waypoint":0,"start_aistate":null,"walk_cm_per_s":0.0,"mm_schedule":null,
+ "routine":[{"start":480,"end":600,"state":"ZS_GOTOBED","waypoint":0,"waypoint_name":"H1"},{"start":600,"end":480,"state":"ZS_STAND","waypoint":0,"waypoint_name":"H1"}]},
+{"id":"W1","key":"W1#0","name":"r","guild":59,"person":true,"start_waypoint":0,"start_aistate":null,"walk_cm_per_s":0.0,"mm_schedule":null,
  "routine":[{"start":480,"end":1200,"state":"ZS_GOTOBED","waypoint":0,"waypoint_name":"H1"},{"start":1200,"end":480,"state":"ZS_GOTOBED","waypoint":0,"waypoint_name":"H1"}]},
 {"id":"S1","key":"S1#0","name":"s","guild":59,"person":true,"start_waypoint":19,"start_aistate":null,"walk_cm_per_s":0.0,"mm_schedule":null,
- "routine":[{"start":480,"end":1200,"state":"ZS_SIT_GROUND","waypoint":19,"waypoint_name":"S1"},{"start":1200,"end":480,"state":"ZS_SIT_GROUND","waypoint":19,"waypoint_name":"S1"}]},
+ "routine":[{"start":480,"end":600,"state":"ZS_SIT_GROUND","waypoint":19,"waypoint_name":"S1"},{"start":600,"end":480,"state":"ZS_STAND","waypoint":19,"waypoint_name":"S1"}]},
 {"id":"D1","key":"D1#0","name":"d","guild":1,"person":true,"start_waypoint":1,"start_aistate":null,"walk_cm_per_s":0.0,"mm_schedule":null,
- "routine":[{"start":480,"end":1200,"state":"ZS_STAND","waypoint":1,"waypoint_name":"A1"},{"start":1200,"end":480,"state":"ZS_STAND","waypoint":1,"waypoint_name":"A1"}]},
+ "routine":[{"start":480,"end":630,"state":"ZS_SIT_CHAIR","waypoint":1,"waypoint_name":"A1"},{"start":630,"end":1200,"state":"ZS_STAND","waypoint":1,"waypoint_name":"A1"},
+  {"start":1200,"end":480,"state":"ZS_STAND","waypoint":1,"waypoint_name":"A1"}]},
 {"id":"R2","key":"R2#0","name":"r","guild":59,"person":true,"start_waypoint":4,"start_aistate":null,"walk_cm_per_s":0.0,"mm_schedule":null,
  "routine":[{"start":480,"end":540,"state":"ZS_STAND","waypoint":4,"waypoint_name":"X2"},{"start":540,"end":480,"state":"ZS_GOTOBED","waypoint":2,"waypoint_name":"H2"}]},
 {"id":"D2","key":"D2#0","name":"d","guild":1,"person":true,"start_waypoint":3,"start_aistate":null,"walk_cm_per_s":0.0,"mm_schedule":null,
@@ -960,7 +968,9 @@ void checkPlaces() {
         ++wrongCount;
     };
   struct Seen { bool row = false; int mask = -1; uint32_t use = 0; };
-  Seen b1Row, fpRow, cqRow, cfRow;
+  Seen b1Row, fpRow, b1Late, fpLate, cqRow, cfRow;
+  const uint32_t c1 = object("C1");
+  int c1Pending = -1; // C1's holders while D1's entry waits for its decision at 10:30:20
   const uint32_t fp = uint32_t(std::find(w.points.name.begin(),w.points.name.end(),std::string("FP_SIT_1"))-w.points.name.begin());
   bool cp2Allowed = false;
   size_t closedChairs = 0;
@@ -989,6 +999,14 @@ void checkPlaces() {
         for(size_t k=0; k<batch.count[r]; ++k)
           if(batch.menu[r*K+k].type==Society::OptionType::Point && batch.menu[r*K+k].point==fp)
             fpRow = {true,batch.mask[r*K+k],batch.menu[r*K+k].use};
+        }
+      if(i==d1 && sim.s.now==hm(10,30,20)) {
+        const int j = option(r,b1);
+        b1Late = {true,j<0 ? -1 : batch.mask[r*K+size_t(j)],j<0 ? 0 : batch.menu[r*K+size_t(j)].use};
+        for(size_t k=0; k<batch.count[r]; ++k)
+          if(batch.menu[r*K+k].type==Society::OptionType::Point && batch.menu[r*K+k].point==fp)
+            fpLate = {true,batch.mask[r*K+k],batch.menu[r*K+k].use};
+        c1Pending = (sim.s.flags[i] & Society::PendingStart)!=0 ? int(sim.s.objectUse[c1]) : -1;
         }
       if(i==d4 && (sim.s.flags[i] & Society::Moving)!=0) {
         const int j = option(r,cq), k = option(r,cp2);
@@ -1026,28 +1044,55 @@ void checkPlaces() {
   const Time failedAt    = ended(d3,Society::EventKind::ActionFailed,b3,uint8_t(Society::FailReason::Evicted));
   const Time aboveLowAt  = ended(d5,Society::EventKind::ActivityFinished,b5,uint8_t(FR::AboveLow));
   const Time setpointAt  = ended(d5,Society::EventKind::ActivityFinished,b5,uint8_t(FR::Setpoint));
-  std::printf("places: B1 and FP_SIT_1 held by their routine users: D1's options %s (use %u) and %s (use %u); D2 evicted at its bed %s, D3 on the way %s; "
+  // An evicted NPC is asked again at that second and its decision is taken (here the core's: only the routine is open).
+  const auto askedAgain = [&](uint32_t i, Time t) {
+    bool asked = false;
+    for(const auto& e:events)
+      if(e.npc==i && e.time==t) {
+        asked = asked || (e.kind==Society::EventKind::DecisionRequested && (e.reason & Society::CauseFinished)!=0);
+        if(asked && e.kind==Society::EventKind::ActionChosen)
+          return true;
+        }
+    return false;
+    };
+  // The anchor's sleep ends in the second its sleep rises above low (need_threshold up), not later.
+  Time aboveLowCrossing = -1;
+  for(const auto& e:events)
+    if(e.npc==d5 && e.kind==Society::EventKind::NeedThreshold && e.a==0 && e.b==1 &&
+       e.reason==uint8_t(Society::NeedDirection::Up) && aboveLowCrossing<0)
+      aboveLowCrossing = e.time;
+  std::printf("places: B1 and FP_SIT_1 held by their routine users: D1's options %s (use %u) and %s (use %u); at 10:30:20 "
+              "B1 %s (use %u, W1 took it), FP_SIT_1 %s (use %u), D1's own chair %d holders while its entry waits; D2 evicted at its bed %s, D3 on the way %s; "
               "D4 on the way: CQ (11 min in all) %s, CP2 %s; D6: the public chair behind four closed %s (%zu closed in the "
               "menu); D5's anchor sleep ends %s; holders checked %zu times, %zu wrong, %zu allowed options over the "
               "limit\n",b1Row.mask<0 ? "absent" : b1Row.mask ? "open" : "closed",b1Row.use,
               fpRow.mask<0 ? "absent" : fpRow.mask ? "open" : "closed",fpRow.use,
+              b1Late.mask<0 ? "absent" : b1Late.mask ? "open" : "closed",b1Late.use,
+              fpLate.mask<0 ? "absent" : fpLate.mask ? "open" : "closed",fpLate.use,c1Pending,
               evictedAt<0 ? "never" : clock(w,evictedAt).c_str(),failedAt<0 ? "never" : clock(w,failedAt).c_str(),
               cqRow.mask<0 ? "absent" : cqRow.mask ? "open" : "closed",cp2Allowed ? "open" : "not open",
               cfRow.mask<0 ? "absent" : cfRow.mask ? "open" : "closed",closedChairs,
               aboveLowAt>=0 ? "above low" : setpointAt>=0 ? "at the setpoint" : "never",checks,wrongCount,overLimit);
   if(!b1Row.row || b1Row.mask!=0 || b1Row.use!=1 || fpRow.mask!=0 || fpRow.use!=1)
     fail("places: a bed or a freepoint its routine user is at must be closed to a decider, held once");
-  if(evictedAt!=hm(9,0,40) || failedAt!=hm(8,2,40))
-    fail("places: a chosen activity must give way to the place's routine user: at the place activity_finished Evicted "
-         "(09:00:40), on the way action_failed Evicted (08:02:40)");
+  if(!b1Late.row || b1Late.mask!=0 || b1Late.use!=1)
+    fail("places: a routine's user waiting at a full place must take it as its holder leaves (W1 after R1)");
+  if(!fpLate.row || fpLate.mask!=1 || fpLate.use!=0)
+    fail("places: a place its routine user left must go free and open");
+  if(c1Pending!=0)
+    fail("places: a routine's user waiting for the decision of its next entry must not hold its old place");
+  if(evictedAt!=hm(9,0,40) || failedAt!=hm(8,2,40) || !askedAgain(d2,evictedAt) || !askedAgain(d3,failedAt))
+    fail("places: a chosen activity must give way to the place's routine user, its NPC asked again at once: at the "
+         "place activity_finished Evicted (09:00:40), on the way action_failed Evicted (08:02:40)");
   if(wrongCount>0)
     fail("places: a place's holders must be its routine users and chosen activities, within its capacity");
   if(!cqRow.row || cqRow.mask==1 || !cp2Allowed || overLimit>0)
     fail("places: the travel limit holds for the whole walk, the rest of a walk under way included");
   if(!cfRow.row || cfRow.mask!=1 || closedChairs>2)
     fail("places: closed places of a kind must not hide an allowed one farther away (and fill at most two slots)");
-  if(aboveLowAt<0 || setpointAt>=0)
-    fail("places: an activity in an anchor entry ends with its needs above low (AboveLow), not at the setpoint");
+  if(aboveLowAt<0 || setpointAt>=0 || aboveLowCrossing<0 || std::abs(aboveLowAt-aboveLowCrossing)>1)
+    fail("places: an activity in an anchor entry ends as its needs rise above low (AboveLow, ±1 s of the crossing), "
+         "not at the setpoint");
 
   // The routine-only run of the same world writes no place events.
   std::vector<Society::Event> plain;

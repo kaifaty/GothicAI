@@ -282,12 +282,12 @@ void routine(Sim& sim, uint32_t npc) {
     }
   }
 
-// The routine's place of the NPC goes free.
-void releaseRoutine(Sim& sim, uint32_t npc) {
+// The routine's place of the NPC goes free; returns it (NoObject for none).
+uint32_t releaseRoutine(Sim& sim, uint32_t npc) {
   auto& s = sim.s;
   const uint32_t t = s.routineTarget[npc];
   if(t==NoObject)
-    return;
+    return NoObject;
   const uint32_t id = targetId(t);
   auto& h = targetIsPoint(t) ? s.pointUse[id] : s.objectUse[id];
   if(h==0)
@@ -298,6 +298,18 @@ void releaseRoutine(Sim& sim, uint32_t npc) {
   s.routineKind[npc]   = NoKind;
   emit(sim,EventKind::PlaceReleased,npc,0,kind,targetIsPoint(t) ? id : sim.world->objects.waypoint[id],
        targetIsPoint(t) ? NoObject : id);
+  return t;
+  }
+
+// A place of the routine went free (`freed`, once its releaser holds what it takes instead): the routine's users that
+// wait at their full places look again, so no chosen activity takes it from under them. While one waits, every place
+// of its own is held by the routine's users only (a chosen one there it evicts), so only these releases free them.
+void refill(Sim& sim, uint32_t freed, uint32_t except) {
+  if(freed==NoObject)
+    return;
+  for(uint32_t j=0; j<sim.world->npcs.size(); ++j)
+    if(sim.s.routineWait[j] && j!=except)
+      routinePlace(sim,j);
   }
 
 // The place an option is: its target (TargetPoint for a point).
@@ -319,8 +331,9 @@ void startChosen(Sim& sim, uint32_t npc, const Option& o) {
   s.actFinish[npc] = uint8_t(FinishReason::MaxTime);
   s.actSeq[npc]    = 0;
   s.deferred[npc]  = 0;
-  releaseRoutine(sim,npc);
+  const uint32_t freed = releaseRoutine(sim,npc);
   ++holders(s,o.type,o.object,o.point);
+  refill(sim,freed,npc);
   const bool walking = moving(s,npc);
   if(!walking)
     s.bodySeq[npc] = 0; // a follow-on of the routine (into bed) no longer comes
@@ -543,6 +556,7 @@ void sizeDecisions(Sim& sim) {
   s.forecastFor.resize(n);
   s.routineTarget.resize(n);
   s.routineKind.resize(n);
+  s.routineWait.resize(n);
   s.objectUse.resize(w.objects.size());
   s.pointUse.resize(w.points.size());
   s.asked.reserve(n);
@@ -566,6 +580,7 @@ void resetDecisions(Sim& sim) {
   std::fill(s.forecastFor.begin(),s.forecastFor.end(),-1);
   std::fill(s.routineTarget.begin(),s.routineTarget.end(),NoObject);
   std::fill(s.routineKind.begin(),s.routineKind.end(),NoKind);
+  std::fill(s.routineWait.begin(),s.routineWait.end(),0);
   std::fill(s.objectUse.begin(),s.objectUse.end(),0);
   std::fill(s.pointUse.begin(),s.pointUse.end(),0);
   s.asked.clear();
@@ -631,6 +646,7 @@ void beginEntry(Sim& sim, uint32_t npc) {
   // Standing: the entry's state and its walk wait for the decision of this second.
   s.flags[npc]   = uint8_t(s.flags[npc] | PendingStart);
   s.bodySeq[npc] = 0;
+  routinePlace(sim,npc); // waiting for the decision it holds no place: the batch's menus must not see the old one
   ask(sim,npc,cause);
   }
 
@@ -687,6 +703,7 @@ void routinePlace(Sim& sim, uint32_t npc) {
   uint32_t want = NoObject;
   uint16_t wantKind = NoKind;
   const uint16_t state = s.state[npc];
+  s.routineWait[npc] = 0;
   // Only at the point its routine entry wants it at (within NearPointCm it does the entry where it stands): an NPC
   // passing a place on its way does not take it.
   const uint32_t entry = entryPoint(sim,npc,s.stateEntry[npc]);
@@ -734,18 +751,21 @@ void routinePlace(Sim& sim, uint32_t npc) {
         want     = full[i].first;
         wantKind = full[i].second;
         }
+    // Every place full of the routine's users: it waits for one to go free (refill).
+    s.routineWait[npc] = want==NoObject && !full.empty() ? 1 : 0;
     }
   if(want==s.routineTarget[npc] && wantKind==s.routineKind[npc])
     return;
-  releaseRoutine(sim,npc);
-  if(want==NoObject)
-    return;
-  const uint32_t id = targetId(want);
-  ++(targetIsPoint(want) ? s.pointUse[id] : s.objectUse[id]);
-  s.routineTarget[npc] = want;
-  s.routineKind[npc]   = wantKind;
-  emit(sim,EventKind::PlaceHeld,npc,0,wantKind,targetIsPoint(want) ? id : w.objects.waypoint[id],
-       targetIsPoint(want) ? NoObject : id);
+  const uint32_t freed = releaseRoutine(sim,npc);
+  if(want!=NoObject) {
+    const uint32_t id = targetId(want);
+    ++(targetIsPoint(want) ? s.pointUse[id] : s.objectUse[id]);
+    s.routineTarget[npc] = want;
+    s.routineKind[npc]   = wantKind;
+    emit(sim,EventKind::PlaceHeld,npc,0,wantKind,targetIsPoint(want) ? id : w.objects.waypoint[id],
+         targetIsPoint(want) ? NoObject : id);
+    }
+  refill(sim,freed,npc);
   }
 
 void arrivedChosen(Sim& sim, uint32_t npc) {

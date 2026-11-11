@@ -45,7 +45,8 @@ void   onDown(Sim& sim, uint32_t npc, uint8_t zone);
 // The place the NPC's routine uses, now (after its state, walk or standing changes): standing at its entry's point in
 // Routine mode doing a kind's state (or the one its into-bed passes to), it holds the nearest place of that kind with
 // room among World::spots — a mobsi of the point, a freepoint within FreePointCm; otherwise it lets the one it held go.
-// When every such place is full, a chosen activity at the nearest one gives way (Evicted). Only with decisions.
+// When every such place is full, a chosen activity at the nearest one gives way (Evicted); with none, it waits and
+// takes the first such place another routine's user lets go. Only with decisions.
 void   routinePlace(Sim& sim, uint32_t npc);
 // A decider stands at its chosen activity's place: the activity begins.
 void   arrivedChosen(Sim& sim, uint32_t npc);
