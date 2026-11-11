@@ -324,6 +324,8 @@ _CUE_ALIASES: dict[str, Cue] = {
     "frown": "frown", "хмурится": "frown",
     "chin": "chin", "подбородок": "chin",
     "wince": "wince", "поморщился": "wince",
+    "glance": "glance", "взгляд в сторону": "glance", "отвёл взгляд": "glance",
+    "roll": "roll", "закатил глаза": "roll",
 }
 
 

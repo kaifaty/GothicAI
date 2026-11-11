@@ -1580,7 +1580,10 @@ class PingCmd(_Command):
 # v9: how the npc looks while it says a line (and a moment after): a face of the game's heads
 Mood = Literal["neutral", "friendly", "angry", "hostile", "afraid", "pain"]
 MOODS: tuple[Mood, ...] = ("neutral", "friendly", "angry", "hostile", "afraid", "pain")
-Cue = Literal["flash", "doubt", "smirk", "press", "disgust", "squint", "frown", "chin", "wince"]
+Cue = Literal[
+    "flash", "doubt", "smirk", "press", "disgust", "squint", "frown", "chin", "wince",
+    "glance", "roll",  # v61, a compatible addition: the eyes of the own head
+]
 
 
 class SayCue(_Command):
