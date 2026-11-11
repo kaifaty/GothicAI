@@ -140,6 +140,7 @@ class Camera final {
 
     float              zNear() const;
     float              fovY() const; // degrees, the vertical field of view (the aim narrows it)
+    uint32_t           viewportHeight() const { return vpHeight; }
     void               setNearClip(float zNear); // debug (test bench): clips away what is closer to the camera
     float              zFar()  const;
 

@@ -44,7 +44,7 @@ void waterFilmCheckpoint(WaterFilmContext ctx,World& world) {
       waterFilmPosition(world,ctx.water.items[i]->midPosition())+"}";
     }
   for(const auto& body:world.physic()->waterBodySnapshot()) {
-    if(body.category!=DynamicWorld::C_Fragment || !ctx.water.ids.contains(body.parentId))continue;
+    if(!DynamicWorld::isFragment(body.category) || !ctx.water.ids.contains(body.parentId))continue;
     if(fragments.size()>1)fragments+=',';
     fragments+="{\"parent\":"+jsonStr(ctx.water.labels[body.parentId])+",\"piece\":"+std::to_string(body.piece)+
       ",\"submerged_fraction\":"+ragdollNumber(body.submergedFraction)+","+

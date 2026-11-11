@@ -13,6 +13,11 @@ resident mip, for the textures as they are and enlarged x2, x4, x8 per side:
            density (its most stretched triangle decides, as it shows the largest texels);
   oracle   every triangle on its own: distance to the triangle, its own texel density.
 
+The density of a triangle is that of its sparser texture axis (`--density axis`, the default): with
+anisotropic filtering the GPU picks the mip by the shorter axis of the pixel's footprint in the texture.
+`--density area` is the square root of the area ratio, which is too coarse on a stretched UV map.
+`--quantise` rounds the cell demands as the engine registers them (a power of two, towards the sharper side).
+
 The needed mip of a surface with D texels per metre at distance d is floor(log2(D / ppm(d))), where
 ppm(d) = height / (2 d tan(fov/2)) is pixels per metre for a surface facing the camera; `--bias` adds
 whole mips of reserve. Nothing lower than a 64-pixel side is dropped, as in today's tail.
@@ -51,6 +56,7 @@ def read_glb(path: Path):
         idx_type = {5123: np.uint16, 5125: np.uint32}[idx_acc["componentType"]]
         idx = accessor(prim["indices"], idx_type, 1).reshape(-1, 3).astype(np.int64)
         pos = accessor(prim["attributes"]["POSITION"], np.float32, 3).astype(np.float64) * 0.01
+        pos[:, 0] *= -1.0   # the chunk files store x mirrored against the game's frame (waypoints, the camera)
         uv = accessor(prim["attributes"]["TEXCOORD_0"], np.float32, 2).astype(np.float64)
         yield material.get("texture", ""), pos[idx], uv[idx]
 
@@ -109,6 +115,30 @@ def point_triangle_distance(p, tri):
     return np.where(inside, np.minimum(best, np.abs(height)), best)
 
 
+def uv_density(tri, uv, axis):
+    """World area of every triangle and its UV units per metre: sqrt(UV area / area), or with `axis` the
+    smaller singular value of the UV-per-metre map (the sparser of the two texture axes)."""
+    e1, e2 = tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]
+    area = 0.5 * np.linalg.norm(np.cross(e1, e2), axis=1)
+    u1, u2 = uv[:, 1] - uv[:, 0], uv[:, 2] - uv[:, 0]
+    det_u = u1[:, 0] * u2[:, 1] - u1[:, 1] * u2[:, 0]
+    good = (area > 1e-4) & (np.abs(det_u) > 0)
+    mean = np.sqrt(0.5 * np.abs(det_u) / np.maximum(area, 1e-12))
+    if not axis:
+        return area, mean, good
+    # the triangle's plane: P maps plane coordinates to the two edges, J = U P^-1 is UV per metre
+    l1 = np.maximum(np.linalg.norm(e1, axis=1), 1e-12)
+    t1 = e1 / l1[:, None]
+    a = (e2 * t1).sum(1)
+    b = np.maximum(np.linalg.norm(e2 - t1 * a[:, None], axis=1), 1e-12)
+    j11, j12 = u1[:, 0] / l1, (u2[:, 0] - u1[:, 0] * a / l1) / b
+    j21, j22 = u1[:, 1] / l1, (u2[:, 1] - u1[:, 1] * a / l1) / b
+    trace = j11 * j11 + j12 * j12 + j21 * j21 + j22 * j22
+    det = np.abs(j11 * j22 - j12 * j21)
+    low = np.sqrt(np.maximum(0.5 * (trace - np.sqrt(np.maximum(trace * trace - 4 * det * det, 0))), 0))
+    return area, low, good & (low > 0)
+
+
 def box_distance(p, lo, hi):
     return np.linalg.norm(np.maximum(np.maximum(lo - p, p - hi), 0), axis=1)
 
@@ -120,6 +150,10 @@ def main():
     parser.add_argument("--height", type=float, default=1440)
     parser.add_argument("--fov", type=float, default=67.5)
     parser.add_argument("--bias", type=int, default=0, help="whole mips of reserve (sharper than needed)")
+    parser.add_argument("--density", choices=("area", "axis"), default="axis",
+                        help="UV density of a triangle: sqrt of the area ratio, or its sparser texture axis (default)")
+    parser.add_argument("--quantise", action="store_true",
+                        help="cell demands as the engine registers them: a power of two, rounded to the sharper side")
     args = parser.parse_args()
 
     sizes = texture_sizes(args.base)
@@ -143,24 +177,29 @@ def main():
         chunks[(cx, cz)] = [(tex.rsplit(".", 1)[0].upper(), tri, uv) for tex, tri, uv in read_glb(path)]
 
     # Texel density of the world mesh, weighted by area.
-    density, weight = [], []
+    density, weight, stretch = [], [], []
     for prims in chunks.values():
         for tex, tri, uv in prims:
             if tex not in sizes:
                 continue
             width, height = sizes[tex][:2]
-            area = 0.5 * np.linalg.norm(np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]), axis=1)
-            e1, e2 = uv[:, 1] - uv[:, 0], uv[:, 2] - uv[:, 0]
-            uv_area = 0.5 * np.abs(e1[:, 0] * e2[:, 1] - e1[:, 1] * e2[:, 0])
-            good = area > 1e-4
-            density.append(np.sqrt(uv_area[good] * width * height / area[good]))
+            area, mean, good = uv_density(tri, uv, False)
+            _, low, good_low = uv_density(tri, uv, True)
+            good &= good_low
+            density.append(mean[good] * math.sqrt(width * height))
+            stretch.append(mean[good] / low[good])
             weight.append(area[good])
-    density, weight = np.concatenate(density), np.concatenate(weight)
+    density, weight, stretch = np.concatenate(density), np.concatenate(weight), np.concatenate(stretch)
     order = np.argsort(density)
     cumulative = np.cumsum(weight[order]) / weight.sum()
     print("Texel density of the world mesh, texels per metre, by area:")
     print("  " + ", ".join(f"p{q}: {density[order][np.searchsorted(cumulative, q / 100)]:.0f}" for q in (5, 25, 50, 75, 95, 99)))
     print(f"  triangles: {len(density)}, area: {weight.sum() / 1e6:.2f} km2, textures in the index: {len(sizes)}")
+    order = np.argsort(stretch)
+    cumulative = np.cumsum(weight[order]) / weight.sum()
+    print("Stretch of the UV map (mean density / density of the sparser axis), by area:")
+    print("  " + ", ".join(f"p{q}: {stretch[order][min(np.searchsorted(cumulative, q / 100), len(order) - 1)]:.2f}"
+                           for q in (50, 75, 90, 95, 99)))
 
     focal = args.height / (2 * math.tan(math.radians(args.fov) / 2))    # pixels per metre at 1 m
     scales = (1, 2, 4, 8)
@@ -177,13 +216,10 @@ def main():
                     continue
                 ring_of[tex] = min(ring_of.get(tex, 99), ring)
                 width, height = sizes[tex][:2]
-                area = 0.5 * np.linalg.norm(np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]), axis=1)
-                e1, e2 = uv[:, 1] - uv[:, 0], uv[:, 2] - uv[:, 0]
-                uv_area = 0.5 * np.abs(e1[:, 0] * e2[:, 1] - e1[:, 1] * e2[:, 0])
-                good = (area > 1e-4) & (uv_area > 0)
+                area, per_metre, good = uv_density(tri, uv, args.density == "axis")
                 if not good.any():
                     continue
-                tri, d_tex = tri[good], np.sqrt(uv_area[good] * width * height / area[good])
+                tri, d_tex = tri[good], per_metre[good] * math.sqrt(width * height)
                 dist = np.maximum(point_triangle_distance(eye, tri), 0.25)
                 lam["oracle"][tex] = min(lam["oracle"][tex], float(np.min(np.log2(d_tex * dist / focal))))
                 centre = tri.mean(axis=1)
@@ -199,7 +235,12 @@ def main():
                     sparse = np.full(count, np.inf)
                     np.minimum.at(sparse, inverse, d_tex)
                     reach = np.maximum(box_distance(eye, lo, hi), 0.25)
-                    lam[f"cell {cell}"][tex] = min(lam[f"cell {cell}"][tex], float(np.min(np.log2(sparse * reach / focal))))
+                    need = np.log2(sparse * reach / focal)
+                    if args.quantise:
+                        # the engine: exponent = ceil(log2(1 / (d u))), level = floor(log2(side) - log2(K) - exponent)
+                        side = math.log2(math.sqrt(width * height))
+                        need = side - math.log2(focal) - np.ceil(-np.log2(sparse * reach) + side)
+                    lam[f"cell {cell}"][tex] = min(lam[f"cell {cell}"][tex], float(np.min(need)))
 
         print(f"\n{place}: {len(ring_of)} world textures within {FAR_RING} chunks, MiB (x1 / x2 / x4 / x8 per side)")
         rows = defaultdict(list)

@@ -1009,3 +1009,59 @@ def test_loop_keys_tiles_a_loop_in_time_and_spreads_the_keys_evenly_under_kimodo
     assert lk.key_frames(cycle, 4)[:5] == [0, 7, 14, 21, 28] and lk.key_frames(cycle, 4)[-1] == 110
     for per in (2, 4, 8):
         assert len(lk.key_frames(cycle, per)) < 20
+
+
+def test_fix_layer_move_shifts_a_foot_by_a_vector_in_its_window_and_keeps_its_turn():
+    import fix_layer
+    skel, anim = leg_clip(10)
+    orig = ga.Animation(anim.name, "", 1, 25.0, 10, list(anim.node_indices), anim.positions.copy(), anim.rotations.copy())
+    j = skel.index("BIP01 L FOOT")
+    before = [ga.world_pose(skel, anim, f)[j] for f in range(10)]
+    fix_layer.apply(skel, anim, [{"kind": "move", "limb": "L leg", "window": [2, 4, 5, 7], "by": [0, 4, -6]}], floor=0.0)
+    after = [ga.world_pose(skel, anim, f)[j] for f in range(10)]
+    keep = [0, 1, 2, 7, 8, 9]
+    assert np.array_equal(anim.rotations[keep], orig.rotations[keep]) and np.array_equal(anim.positions, orig.positions)
+    for f in (4, 5):                                                # the whole vector where the window is full
+        assert np.allclose(after[f][:3, 3] - before[f][:3, 3], [0, 4, -6], atol=0.05)
+        assert np.allclose(after[f][:3, :3], before[f][:3, :3], atol=1e-6)   # the foot keeps its turn
+    for f in (3, 6):                                                # half of it on the way in and out
+        assert np.allclose(after[f][:3, 3] - before[f][:3, 3], [0, 2, -3], atol=0.05)
+
+
+def test_trans_clip_plant_root_brings_the_body_to_a_foot_that_stands_the_whole_clip():
+    import trans_clip
+    skel, anim = leg_clip(10)
+    anim.positions[:, 0, 2] = np.arange(10) * 3.0        # the body goes 27 cm, the rigid leg's foot with it: 3 cm a frame
+    orig = anim.positions.copy()
+    j = skel.index("BIP01 L FOOT")
+    shift = trans_clip.plant_root(anim, skel)
+    foot = np.array([ga.world_pose(skel, anim, f)[j][:3, 3] for f in (0, 9)])
+    assert np.allclose(shift, [0.0, -27.0])
+    assert np.allclose(foot[0], foot[1], atol=1e-6)                             # the foot ends where it began
+    assert np.allclose(anim.positions[0], orig[0]) and np.array_equal(anim.positions[:, 0, :2], orig[:, 0, :2])
+    step = np.diff(anim.positions[:, 0, 2])
+    assert abs(step[0] - 3.0) < 1.0 and abs(step[-1] - 3.0) < 1.0               # the ends keep most of their speed:
+    assert step[4] < -1.0                                                       # the shift is made in the middle
+    skel2, moving = leg_clip(10)
+    moving.positions[:, 0, 2] = np.arange(10) * 12.0     # 12 cm a frame: the foot does not stand, nothing moves
+    assert np.allclose(trans_clip.plant_root(moving, skel2), 0.0)
+
+
+def test_fix_layer_tread_lays_the_toe_on_the_floor_from_above_and_from_below():
+    import fix_layer
+    skel, anim = leg_clip(8)
+    foot, toe = skel.index("BIP01 L FOOT"), skel.index("BIP01 L TOE0")
+    tilt = lambda deg: np.array([np.cos(np.radians(deg) / 2), np.sin(np.radians(deg) / 2), 0, 0])
+    anim.rotations[2:4, 3] = tilt(12)                      # the foot pitched one way for two frames,
+    anim.rotations[4:6, 3] = tilt(-12)                     # the other way for two more
+    before = np.array([ga.world_pose(skel, anim, f)[toe][1, 3] for f in range(8)])
+    floor = float(before[0])                               # where the toe lies when the foot is as the leg carries it
+    assert before[2:4].max() - floor < -1 or before[2:4].min() - floor > 1
+    assert (before[2] - floor) * (before[4] - floor) < 0   # one pair under the floor, the other over it
+    orig = anim.rotations.copy()
+    fix_layer.apply(skel, anim, [{"kind": "tread", "limb": "L leg", "window": [1, 2, 5, 6]}], floor=floor - 3.0)
+    after = np.array([ga.world_pose(skel, anim, f)[toe][1, 3] for f in range(8)])
+    assert np.allclose(after[2:6], floor, atol=0.05)       # the toe lies on the floor in the whole window
+    assert np.array_equal(anim.rotations[[0, 1, 6, 7]], orig[[0, 1, 6, 7]])
+    ankle = [ga.world_pose(skel, anim, f)[foot][:3, 3] for f in range(8)]
+    assert np.allclose(ankle, ankle[0])                    # the ankle stays: only the foot turns

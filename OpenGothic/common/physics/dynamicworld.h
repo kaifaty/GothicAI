@@ -72,6 +72,7 @@ struct MeleeBladeContact final {
   bool stopsSwing = false;
   bool windup = false;     // a wall met by a blade going back or up (wind-up, follow-through): passed
   uintptr_t movableVob = 0; // world contact with a movable vob body: its snapshot id, else zero
+  uintptr_t fragment = 0;   // world contact with a body of debris: that native body, else zero
   uint64_t step = 0;
   };
 
@@ -112,16 +113,20 @@ class DynamicWorld final {
       C_MovableVob = 10,
       C_MovableQuery = 11,
       C_SmallVobQuery = 12,
-      C_Fragment = 13,
+      C_Fragment = 13, // debris a character stops at: largest extent from CollisionWorld::fragmentBlockSize
       C_Cloth = 14,
+      C_FragmentSmall = 15, // smaller debris: characters pass it, it never enters their queries
       };
+    static constexpr uint32_t fragmentMask = (1u<<C_Fragment)|(1u<<C_FragmentSmall);
+    static constexpr bool isFragment(int category) { return category==C_Fragment || category==C_FragmentSmall; }
 
     enum PtrType {
       P_Null,
       P_Item,
       P_Interactive,
       P_Editor,
-      P_MovableVob
+      P_MovableVob,
+      P_Fragment // a body of debris; the payload is its prop's BodyData
       };
 
     enum MoveCode : uint8_t {
@@ -556,11 +561,16 @@ class DynamicWorld final {
       // Bond group of the piece: pieces of one group share one native body (its pose, motion,
       // sleep, permanence and centre of mass). Without bonds it equals the piece.
       uint32_t bondGroup = 0;
+      // The group's native body: MeleeBladeContact::fragment of a blow on it.
+      uintptr_t body = 0;
       };
     // One entry per surviving piece, in piece order.
     std::vector<FragmentSnapshot> fragmentSnapshot() const;
     // Bench-only: the deepest native contact of one piece with landscape and static objects, centimetres.
     float fragmentGroundPenetration(uintptr_t parentId, size_t piece) const;
+    // Bench-only: the first body of debris on a segment (FragmentSnapshot::body), zero without one;
+    // `distance` gets the centimetres to it.
+    uintptr_t fragmentRay(const Tempest::Vec3& from, const Tempest::Vec3& to, float* distance = nullptr) const;
     struct WaterBodySnapshot {
       uintptr_t id = 0, parentId = 0;
       const Ragdoll* ragdoll = nullptr;
@@ -765,6 +775,24 @@ class DynamicWorld final {
                                     FractureHit hit = FractureHit::Impact,
                                     std::string_view impactCulprit = {}, const Tempest::Vec3& direction = {});
     void           breakMovableVob(BodyData& body);
+    // Remnants (dynamicworld_remnants.cpp): a blow on a group of several pieces, its break on the
+    // next tick, and the blows of a stopped blade, an arrow and a spell's force.
+    void           damageRemnant(BodyData& body, uint32_t group, float damage, float impulse, const Tempest::Vec3& point,
+                                 FractureHit hit, const Tempest::Vec3& direction);
+    void           breakRemnants(BodyData& body);
+    void           breakRemnant(BodyData& body, uint32_t group);
+    bool           meleeStoppedRemnant(const MeleeBladeContact& contact, float weaponDamage, float strength,
+                                       FractureRule::Melee kind, Npc* attacker, std::vector<uintptr_t>& struck);
+    // `fragment` is the native body (CollisionWorld::CollisionBody*): the prop and group of that live body
+    // of debris and its piece count; remnantOf only for a remnant (several pieces).
+    BodyData*      fragmentOf(uintptr_t fragment, uint32_t& group, size_t& pieces) const;
+    BodyData*      remnantOf(uintptr_t fragment, uint32_t& group) const;
+    void           arrowRemnant(uintptr_t fragment, const Tempest::Vec3& point, const Tempest::Vec3& direction, Npc* culprit);
+    size_t         spellRemnants(BodyData& body, const Tempest::Vec3& center, float radius,
+                                 const std::function<Tempest::Vec3(const Tempest::Vec3&,float)>& impulse,
+                                 Npc* culprit, const Tempest::Vec3* pointCm);
+    void           chooseLastingGroups(BodyData& body);
+    void           emitBreakNoise(const BodyData& body, const Tempest::Vec3& center);
     void           syncFragments(BodyData& body);
     void           cleanupFragments(BodyData& body);
     void           saveDestructionVobs(Serialize& fout) const;

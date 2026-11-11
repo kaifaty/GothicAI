@@ -11,7 +11,7 @@
 
 namespace CollisionWorldInternal {
   bool waterThing(int category) {
-    return category==DynamicWorld::C_Item || category==DynamicWorld::C_MovableVob || category==DynamicWorld::C_Fragment;
+    return category==DynamicWorld::C_Item || category==DynamicWorld::C_MovableVob || DynamicWorld::isFragment(category);
     }
 
   }
