@@ -15,6 +15,8 @@
 # skin/beard_shell.py; metres, the frame of the registered head). The hair is rigid; the beard is bound to the skin
 # and follows every face shape; its map is cut by alpha. A hair part with normals in its npz is hair cards
 # (scripts/content/npc/hair/hair_cards.py): the normals are kept and its map is cut by alpha too.
+# --hair-map <png> is the hair map of strand_atlas.py: it goes into the material's `orm` slot and the material gets
+# `hair: true`, so the engine lights the cards with its hair BRDF.
 import bpy, bmesh, os, sys, json, struct, subprocess, shutil
 import numpy as np
 from mathutils import Matrix
@@ -323,11 +325,16 @@ png = os.path.join(ROOT, 'materials', NAME+'-png'); dds = os.path.join(ROOT, 'ma
 os.makedirs(png, exist_ok=True); os.makedirs(dds, exist_ok=True)
 for key, src in TEX.items():
     shutil.copyfile(os.path.join(DATA, src), os.path.join(png, key.lower()+'.png'))
+HAIR_MAP = os.path.abspath(os.path.expanduser(ARGS[ARGS.index('--hair-map')+1])) if '--hair-map' in ARGS else None
+if HAIR_MAP:
+    shutil.copyfile(HAIR_MAP, os.path.join(png, 'hair_map.png'))
 subprocess.run([TEXPACK, png, dds], check=True)
 shutil.rmtree(png)
 mj = os.path.join(ROOT, 'materials', 'materials.json')
 table = json.load(open(mj)) if os.path.exists(mj) else {}
 for key in TEX:
     table['OWN_%s_%s.TGA' % (MATS, key)] = {'albedo': '%s/%s.dds' % (NAME, key.lower())}
+if HAIR_MAP and 'HAIR' in TEX:
+    table['OWN_%s_HAIR.TGA' % MATS].update({'orm': '%s/hair_map.dds' % NAME, 'hair': True})
 json.dump(table, open(mj, 'w'), indent=2)
 print('DONE')

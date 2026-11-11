@@ -10,6 +10,9 @@
 #if defined(MATERIAL_MAPS) && !defined(SURFEL_GI)
 #include "lighting/material_brdf.glsl"
 #endif
+#if defined(MATERIAL_MAPS)
+#include "lighting/hair_brdf.glsl"
+#endif
 
 layout(binding  = 0, std140) uniform UboScene {
   SceneDesc scene;
@@ -85,7 +88,8 @@ vec3 luminance(vec3 norm) {
 void main() {
   const ivec2 fragCoord = ivec2(gl_FragCoord.xy);
 
-  const vec3  diff = texelFetch(gbufDiffuse, fragCoord, 0).rgb;
+  const vec4  diff4 = texelFetch(gbufDiffuse, fragCoord, 0);
+  const vec3  diff = diff4.rgb;
   const vec3  norm = normalFetch(gbufNormal, fragCoord);
 
   // const vec3  linear = vec3(1);
@@ -95,6 +99,11 @@ void main() {
   vec3 color;
 #if defined(MATERIAL_MAPS) && !defined(SURFEL_GI)
   const vec4 orm = texelFetch(gbufOrm, fragCoord, 0);
+  if(orm.a>0.5 && isGBufHair(diff4.a)) {
+    // Hair cards: the ORM channels are the hair's own (no metal, no map AO); the sky and the ambient light it as a
+    // matte surface of the hair's colour, the highlights belong to the sun and the lamps
+    color = linear * (scene.ambient + skyIrradiance(norm)*0.8 + (norm.y*0.25+0.75) * NightAmbient * Fd_Lambert);
+    } else
   if(orm.a>0.5) {
     // Map AO occludes only diffuse sky light. Screen-space visibility below
     // remains shared with the old ambient path, including inside buildings.
@@ -121,7 +130,7 @@ void main() {
     color *= luminance(norm);
 #if defined(MATERIAL_MAPS) && defined(SURFEL_GI)
     const vec4 orm = texelFetch(gbufOrm, fragCoord, 0);
-    if(orm.a>0.5)
+    if(orm.a>0.5 && !isGBufHair(diff4.a))
       color *= orm.r * (1.0 - orm.b);
 #endif
     }
@@ -154,6 +163,13 @@ void main() {
     }
 #endif
 
+#if defined(MATERIAL_MAPS)
+  if((scene.viewFlags & VF_HAIR_DEBUG)!=0u && isGBufHair(diff4.a)) {
+    const vec4 ormH = texelFetch(gbufOrm, fragCoord, 0);
+    if(ormH.a>0.5)
+      color = hairDebugColor(decodeHairDir(norm, ormH.b)) * 0.5; // the direction of the strand, root to tip
+    }
+#endif
   outColor = vec4(color, 1);
   // outColor = vec4(vec3(ao), 0);
   // outColor = vec4(linear, 0);

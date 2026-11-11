@@ -285,6 +285,9 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
     // alpha test (foliage) keeps the fixed threshold
     if(i.mat.alpha==Material::AlphaTest && i.mat.isAlphaTestRequired() && CommandLine::inst().doHashedAlpha())
       bx.flags |= BK_HASHED_ALPHA;
+    // Hair cards: the G-buffer takes the strand's direction and the hair bit, the light passes the hair BRDF
+    if(i.mat.hair && (bx.flags & BK_MATERIAL_MAPS)!=0)
+      bx.flags |= BK_HAIR;
     if(i.mat.alpha==Material::Water)
       bx.flags |= BK_WATER;
     bucket.push_back(bx);

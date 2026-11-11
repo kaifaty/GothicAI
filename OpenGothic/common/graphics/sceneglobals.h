@@ -29,6 +29,7 @@ class SceneGlobals final {
     enum ViewFlag : uint32_t {
       VF_HIZ = 0x1,
       VF_TAA = 0x2,
+      VF_HAIR_DEBUG = 0x4,
       };
 
     static bool isShadowView(VisCamera v);

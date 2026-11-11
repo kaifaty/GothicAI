@@ -151,6 +151,7 @@ class Resources final {
       float                    turbidityDepth = 0.f;
       float                    emissive = 0.f;
       Material::Antitile       antitile = Material::Antitile::Off;
+      bool                     hair = false; // hair cards: the ORM slot is the hair map, lit by the hair BRDF
       bool                     present = false;
       bool                     hasAlbedo = false;
       };
@@ -596,6 +597,7 @@ class Resources final {
       float       turbidityDepth = 0.f;
       float       emissive = 0.f;
       Material::Antitile antitile = Material::Antitile::Off;
+      bool        hair = false;
       };
     std::unordered_map<std::string,MaterialMapFiles>                  materialMaps;
     TextureCache                                                     materialTextureCache;

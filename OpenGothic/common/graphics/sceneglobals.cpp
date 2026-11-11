@@ -2,6 +2,7 @@
 #include "settings.h"
 
 #include <cstddef>
+#include <cstdlib>
 
 #include "graphics/shaders.h"
 #include "graphics/sky/sky.h"
@@ -184,7 +185,9 @@ void SceneGlobals::setMipBias(float bias) {
 void SceneGlobals::setTaaFrame(bool taa, bool lampTaa, uint32_t frame) {
   uboGlobalCpu.taaActive = (taa && lampTaa) ? 1 : 0;
   uboGlobalCpu.taaFrame  = taa ? frame : 0;
-  uboGlobalCpu.viewFlags = taa ? VF_TAA : 0;
+  // OPENGOTHIC_HAIR_DEBUG=1: hair shows the direction of its strands as a colour (the acceptance of the direction)
+  static const bool hairDebug = []{ const char* e = std::getenv("OPENGOTHIC_HAIR_DEBUG"); return e!=nullptr && e[0]=='1'; }();
+  uboGlobalCpu.viewFlags = (taa ? VF_TAA : 0) | (hairDebug ? VF_HAIR_DEBUG : 0);
   }
 
 void SceneGlobals::setMotion(bool enabled, const Tempest::Matrix4x4& reprojectClip,
