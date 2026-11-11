@@ -1522,6 +1522,7 @@ void AiBridge::Impl::startVoice(const LineLibrary::Line& line) {
     if(TestBench::voiceStems())
       line.voice->record(TestBench::aiVoiceStem(line.npc,line.id,line.voice->rate()));
     v.effect.play();
+    line.voice->lipTrack()->setName(line.id);  // the seed of the brows on its accents
     npc->startSpeech(line.voice->lipTrack());  // the mouth follows what the audio thread plays
     }
   Log::i("[ai] voice ",line.id," starts with ",line.voice->durationMs()," ms of audio",

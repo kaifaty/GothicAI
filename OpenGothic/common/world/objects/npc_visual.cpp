@@ -473,7 +473,7 @@ void Npc::startSpeech(std::shared_ptr<LipSync::Track> voice) {
   }
 
 void Npc::setTalkMood(std::string_view mood) {
-  visual.setTalkMood(mood);
+  visual.setTalkMood(*this,mood);
   }
 
 void Npc::listenTo(uint64_t ms) {

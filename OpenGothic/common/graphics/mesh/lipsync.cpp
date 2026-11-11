@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 
@@ -11,6 +12,18 @@ namespace {
 
 constexpr uint64_t StepMs  = 10;
 constexpr float    MinPeak = -45.f;  // dB: a line quieter than this is not stretched to a wide open mouth
+
+// the tone (YIN): the sound at 8 kHz, a window of 30 ms compared with itself shifted by one period of 60..400 Hz
+constexpr uint32_t ToneRate  = 8000;
+constexpr size_t   ToneStep  = ToneRate*StepMs/1000;  // samples a step
+constexpr size_t   ToneWin   = 240;                   // 30 ms
+constexpr size_t   TauMin    = ToneRate/400;          // the shortest period: 400 Hz
+constexpr size_t   TauMax    = ToneRate/60+1;         // the longest: 59.7 Hz
+constexpr size_t   ToneSpan  = ToneWin+TauMax+1;      // samples a step looks at, centred on the step's middle
+constexpr size_t   TonePad   = ToneSpan/2;            // silence before the sound: the first steps have their span
+constexpr float    ToneThr   = 0.15f;  // of the normalized difference: a period below it is clear, else no tone
+constexpr float    ToneQuiet = 1e-8f;  // mean power of the window below which it is silence (-80 dB)
+constexpr float    ToneCut   = 1000.f; // Hz: the harmonics above do not help to find the period
 
 // the parameters can be changed at runtime (LipSync::setParam, bench `lips param <name> <value>`)
 float Range   = 24.f;   // dB below the loudest moment of the line where the mouth starts to open
@@ -62,6 +75,11 @@ void LipSync::setEnabled(bool e) {
   enabled = e;
   }
 
+void LipSync::syllableRule(float& dip, float& rise) {
+  dip  = Dip;
+  rise = Rise;
+  }
+
 bool LipSync::setParam(std::string_view name, float value) {
   for(auto& p:params)
     if(p.name==name) {
@@ -107,9 +125,13 @@ LipSync::Track::Track(uint32_t r)
     };
   mk(hp, 120.f,  true);
   mk(lp, 2500.f, false);
+  for(auto& f:toneLp)
+    mk(f, ToneCut, false);
+  decStep = double(rate)/double(ToneRate);
+  dec.assign(TonePad,0.f);
   }
 
-std::shared_ptr<LipSync::Track> LipSync::Track::fromSound(const Tempest::Sound& snd) {
+std::shared_ptr<LipSync::Track> LipSync::Track::fromSound(const Tempest::Sound& snd, std::string_view name) {
   size_t   count = 0;
   uint16_t ch    = 1;
   uint32_t freq  = 0;
@@ -117,6 +139,7 @@ std::shared_ptr<LipSync::Track> LipSync::Track::fromSound(const Tempest::Sound& 
   if(pcm==nullptr || count==0 || freq==0)
     return nullptr;
   auto t = std::make_shared<Track>(freq);
+  t->lineName = std::string(name);
   t->append(pcm,count,ch);
   t->finish();
   return t;
@@ -130,7 +153,9 @@ void LipSync::Track::append(const int16_t* pcm, size_t count, uint16_t channels)
     float x = 0;
     for(uint16_t c=0; c<channels; ++c)
       x += float(pcm[i+c]);
-    x = lp.run(hp.run(x/(32768.f*float(channels))));
+    x = x/(32768.f*float(channels));
+    pushTone(x);
+    x = lp.run(hp.run(x));
     acc += double(x*x);
     if(++accN<perStep)
       continue;
@@ -143,6 +168,77 @@ void LipSync::Track::append(const int16_t* pcm, size_t count, uint16_t channels)
       peakDb = std::max(peakDb, (db[n-1]+db[n-2]+db[n-3])/3.f);
       }
     }
+  findTones(false);
+  }
+
+void LipSync::Track::pushTone(float x) {
+  x = toneLp[1].run(toneLp[0].run(x));
+  // the samples at 8 kHz between the last one and this, by a straight line
+  while(decAt<=1.0) {
+    dec.push_back(decLast + (x-decLast)*float(decAt));
+    decAt += decStep;
+    }
+  decAt  -= 1.0;
+  decLast = x;
+  }
+
+void LipSync::Track::findTones(bool flush) {
+  // step i looks at [i*ToneStep + ToneStep/2 - ToneSpan/2, +ToneSpan) of the sound, TonePad of silence before it
+  while(hz.size()<db.size()) {
+    const size_t at = hz.size()*ToneStep + ToneStep/2 + TonePad - ToneSpan/2;
+    if(at+ToneSpan>decBase+dec.size()) {
+      if(!flush)
+        break;
+      dec.resize(at+ToneSpan-decBase,0.f);  // the end of the sound: silence after it
+      }
+    const float f = yin(at);
+    hz.push_back(f);
+    if(f>0)
+      ++toned;
+    }
+  // the samples no step looks at any more
+  const size_t next = hz.size()*ToneStep + ToneStep/2 + TonePad - ToneSpan/2;
+  if(next>decBase+4096) {
+    const size_t drop = std::min(next-decBase,dec.size());
+    dec.erase(dec.begin(),dec.begin()+ptrdiff_t(drop));
+    decBase += drop;
+    }
+  }
+
+float LipSync::Track::yin(size_t at) const {
+  const float* x = dec.data()+(at-decBase);
+  float power = 0;
+  for(size_t j=0; j<ToneWin; ++j)
+    power += x[j]*x[j];
+  if(power<ToneQuiet*float(ToneWin))
+    return 0;
+  // the difference of the window and the window a lag on, normalized by its mean over the shorter lags
+  float d[TauMax+2] = {};
+  d[0] = 1;
+  float sum = 0;
+  for(size_t tau=1; tau<=TauMax+1; ++tau) {
+    const float* y = x+tau;
+    float        s = 0;
+    for(size_t j=0; j<ToneWin; ++j) {
+      const float e = x[j]-y[j];
+      s += e*e;
+      }
+    sum   += s;
+    d[tau] = sum>0 ? s*float(tau)/sum : 1.f;
+    }
+  // the first lag clearly periodic, down to the bottom of its dip; else none
+  size_t tau = TauMin;
+  while(tau<=TauMax && d[tau]>=ToneThr)
+    ++tau;
+  if(tau>TauMax)
+    return 0;
+  while(tau<TauMax && d[tau+1]<d[tau])
+    ++tau;
+  // between the lags: the bottom of the parabola through the three around it
+  const float a = d[tau-1], b = d[tau], c = d[tau+1];
+  const float k = a - 2.f*b + c;
+  const float shift = k>0 ? std::clamp(0.5f*(a-c)/k, -1.f, 1.f) : 0.f;
+  return float(ToneRate)/(float(tau)+shift);
   }
 
 void LipSync::Track::finish() {
@@ -152,6 +248,54 @@ void LipSync::Track::finish() {
   acc      = 0;
   accN     = 0;
   finished = true;
+  findTones(true);
+  }
+
+float LipSync::Track::toneHz(uint64_t ms) const {
+  std::lock_guard<std::mutex> guard(sync);
+  const size_t i = size_t(ms/StepMs);
+  return i<hz.size() ? hz[i] : 0.f;
+  }
+
+float LipSync::Track::implMedian() const {
+  if(medianOf!=toned) {
+    std::vector<float> st;
+    st.reserve(toned);
+    for(auto f:hz)
+      if(f>0)
+        st.push_back(f);
+    if(!st.empty()) {
+      auto mid = st.begin()+ptrdiff_t(st.size()/2);
+      std::nth_element(st.begin(),mid,st.end());
+      medianSt = 12.f*std::log2(*mid);
+      }
+    medianOf = toned;
+    }
+  return medianSt;
+  }
+
+bool LipSync::Track::tone(uint64_t ms, float& semitones) const {
+  std::lock_guard<std::mutex> guard(sync);
+  const size_t i = size_t(ms/StepMs);
+  if(i>=hz.size() || hz[i]<=0)
+    return false;
+  semitones = 12.f*std::log2(hz[i]) - implMedian();
+  return true;
+  }
+
+uint64_t LipSync::Track::toneKnownMs() const {
+  std::lock_guard<std::mutex> guard(sync);
+  return hz.size()*StepMs;
+  }
+
+void LipSync::Track::setName(std::string_view n) {
+  std::lock_guard<std::mutex> guard(sync);
+  lineName = std::string(n);
+  }
+
+std::string LipSync::Track::name() const {
+  std::lock_guard<std::mutex> guard(sync);
+  return lineName;
   }
 
 float LipSync::Track::implLevel(size_t step) const {
@@ -376,6 +520,9 @@ void LipSync::probe(Probe& p) const {
   p.valid  = !open.empty();
   p.active = active;
   p.level  = lvl;
+  p.tone   = std::nanf("");
+  if(track!=nullptr && !track->tone(time,p.tone))
+    p.tone = std::nanf("");
   p.mouth  = mouth;
   p.open   = shownOpen;
   p.shape  = shown;
