@@ -206,9 +206,8 @@ void SceneGlobals::setVsmLampSides(uint32_t sides) {
   uboGlobalCpu.vsmLampSides = sides;
   }
 
-void SceneGlobals::setVsmStudy(uint32_t bits, float k) {
-  uboGlobalCpu.vsmStudy  = bits;
-  uboGlobalCpu.vsmStudyK = k;
+void SceneGlobals::setVsmStudy(uint32_t bits) {
+  uboGlobalCpu.vsmStudy = bits;
   }
 
 void SceneGlobals::setUnderWater(bool w) {
