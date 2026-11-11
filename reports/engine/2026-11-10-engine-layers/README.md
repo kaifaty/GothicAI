@@ -7,7 +7,7 @@
 ```bash
 python3 scripts/engine_layers.py                          # таблицы
 python3 scripts/engine_layers.py report --json            # числа
-python3 scripts/engine_layers.py check --base origin/main # новые включения через границу
+python3 scripts/engine_layers.py check --base origin/main # новые включения и чужие определения
 ```
 
 ## Коротко
@@ -107,7 +107,7 @@ python3 scripts/engine_layers.py check --base origin/main # новые вклю�
 
 ## Порядок работы
 
-1. **Храповик.** Сделан 2026-11-11: шаг «Check engine layers» в `debt-ratchet.yml` запускает `engine_layers.py check` и предупреждает о каждом новом включении через границу. За первые сутки после переписи в `main` их пришло 5 (320 → 325): разнесённый код физики (`dynamicworld_fragments.cpp`, `dynamicworld_remnants.cpp`) и `texturedump.cpp`.
+1. **Храповик.** Сделан 2026-11-11: шаг «Check engine layers» в `debt-ratchet.yml` запускает `engine_layers.py check` и предупреждает о каждом новом включении через границу. За первые сутки после переписи в `main` их пришло 5 (320 → 325): разнесённый код физики (`dynamicworld_fragments.cpp`, `dynamicworld_remnants.cpp`) и `texturedump.cpp`. В #1216 перепись дополнена чужими определениями членов классов: полные имена, поиск от пространства имён определения наружу, доступность класса по графу включений; `check` сравнивает файл и имя, сохраняя число перегрузок и игнорируя сдвиги строк.
 2. **Записи определений без VM — сделано 2026-11-11.** Простые структуры `Def::*` находятся в `common/records/definitions.h`, VM-типы и копирование — в `common/game/definitions/`; ключи эффектов передаёт `VisualFxDefinitions`. Итог `engine_layers.py report --json` относительно `main` `4b1218941`: `per_layer.platform.vm_transitive` 122 → **45**, `violations` 325 → **315**.
 3. **Интерфейс настроек и служб — сделано 2026-11-11.** `common/settings.*` хранит INI, умолчания, `Options`, `PhysicsFlags` и сигнал изменения; `Gothic` владеет объектом и обновляет его в прежние моменты. `common/gameservices.*` задаёт узкий виртуальный интерфейс, реализованный `Gothic`: мир, камера, пауза, определения PFX/VFX и звука, сигналы переключения рендера и внешний звук. Время кадра передаётся в миллисекундах, тики и `DynamicWorld` — напрямую; рендер не обращается к членам `World`. Убраны все 23 включения `gothic.h` из платформы и включение `sounddefinitions.h` из звука. Итог `engine_layers.py report --json`: `per_layer.platform.vm_transitive` **33**, `violations` **290**. Тонкие встроенные пересылки `Gothic::settings*`, `options()`, `physicsFlags()` и псевдонимы типов остаются для каркаса RPG, Готики, моста и тестов; их вызовы вне платформы не переписаны. В `gamescript.cpp` заменены только две подписки на перенесённый сигнал. Обе перегрузки `Resources::loadBaseProgram` дословно перенесены в `common/game/definitions/baseprogram.cpp` (слой Готики), API и метка `"Gothic::loadScript"` сохранены. Общие помощники путей доступны через `resources_internal.h`; `contentcensus` перенесён из импорта в платформу, потому что учитывает контент, открываемый `Resources` во время игры, и не зависит от импорта установки.
 4. **Вид на мир для рендера и физики** — по частям:
@@ -136,7 +136,7 @@ python3 scripts/engine_layers.py check --base origin/main # новые вклю�
 ## Пробелы
 
 - Перепись считает `#include` и чужие определения членов классов: полное имя разрешается от пространства имён определения наружу, среди классов самого файла и доступных по графу включений. Имена Готики, вшитые в код строками (`MENU_MAIN`, имена экземпляров героя и NPC), она не считает.
-- Проверка #1216 на `main` `a3de20db4`: `foreign_definitions` **4**, все из платформы; `per_layer.platform.vm_transitive` **19**, `violations` **270**. Помимо двух `Resources::loadBaseProgram` найдены `DynamicWorld::navigationRay` (`common/game/navigationeyeworld.cpp:51`) и `DynamicWorld::dumpNavigationCollision` (`common/game/navperceptionbench.cpp:310`), оба объявлены в `common/physics/dynamicworld.h`. Работа остановлена на решении об этих дополнительных случаях; перенос `loadBaseProgram` ещё не сделан.
+- Чужие определения теперь учитываются: обе перегрузки `loadBaseProgram` перенесены из `Resources` в свободные функции слоя Готики, луч `DynamicWorld::navigationRay` — в платформу с адаптером NPC в RPG, дамп коллизии — в свободную функцию стенда. Итог `report --json`: `foreign_definitions` **4 → 0**, `per_layer.platform.vm_transitive` **19**, `violations` **270** относительно `main` `a3de20db4`.
 - Шейдеры (`OpenGothic/shader/`) не сканировались.
 - Сервер на Python и протокол в перепись не входят. Сервер знает имена NPC второй части и закон колонии; это отдельная перепись, если до него дойдёт дело.
 - Строки считаются вместе с комментариями.

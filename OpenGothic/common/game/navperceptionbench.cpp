@@ -305,26 +305,26 @@ void distribution(std::ostream& out,std::vector<double> values) {
      <<",\"p90_us\":"<<(values.empty()?0:values[size_t(std::ceil(double(values.size())*.90))-1])
      <<",\"p95_us\":"<<(values.empty()?0:values[size_t(std::ceil(double(values.size())*.95))-1])<<'}';
 }
-}
 
-void DynamicWorld::dumpNavigationCollision(const std::string& outputDirectory) const {
+void dumpNavigationCollision(const DynamicWorld& physics, std::string_view worldName,
+                             const std::string& outputDirectory) {
   std::ofstream out(std::filesystem::path(outputDirectory)/"static.bin",std::ios::binary);
   if(!out)throw std::runtime_error("perception-replay cannot open collision dump");
   out.write("NAVSTAT1",8);unsignedLE(out,0,4);unsignedLE(out,0,4);
   std::array<uint64_t,4> triangles = {};
   std::vector<uint8_t> categories;
-  const auto bodyCounts=world->staticTriangles([&](const CollisionWorld::StaticTriangle& triangle) {
+  const auto bodyCounts=physics.navigationCollisionTriangles([&](const CollisionWorld::StaticTriangle& triangle) {
     if(categories.size()==std::numeric_limits<uint32_t>::max())
       throw std::runtime_error("perception-replay collision dump exceeds uint32 triangles");
     for(const auto& vertex:triangle.vertices)vectorLE(out,vertex*100.f);
     categories.push_back(triangle.category);++triangles[triangle.category-1];
-  },true);
+  });
   out.write(reinterpret_cast<const char*>(categories.data()),std::streamsize(categories.size()));
   out.seekp(8);unsignedLE(out,categories.size(),4);
   out.close();
   if(!out)throw std::runtime_error("perception-replay collision dump write failed");
   std::ofstream stats(std::filesystem::path(outputDirectory)/"static-stats.json");
-  stats<<"{\"world\":"<<std::quoted(std::string(ownerWorld->name()))<<",\"triangles_by_category\":[";
+  stats<<"{\"world\":"<<std::quoted(std::string(worldName))<<",\"triangles_by_category\":[";
   for(size_t i=0;i<4;++i) {if(i)stats<<',';stats<<triangles[i];}
   stats<<"],\"bodies_by_category\":[";
   for(size_t i=0;i<4;++i) {if(i)stats<<',';stats<<bodyCounts[i];}
@@ -333,11 +333,13 @@ void DynamicWorld::dumpNavigationCollision(const std::string& outputDirectory) c
   if(!stats)throw std::runtime_error("perception-replay collision stats write failed");
 }
 
+}
+
 void NavPerceptionBench::command(const std::vector<std::string>& args,World& world,Npc& player,
                                   const std::string& outputDirectory) {
   if(!std::filesystem::path(outputDirectory).is_absolute())throw std::runtime_error("perception-replay output must be absolute");
   if(args.size()==3 && args[2]=="dump-static") {
-    world.physic()->dumpNavigationCollision(outputDirectory);
+    dumpNavigationCollision(*world.physic(),world.name(),outputDirectory);
     return;
   }
   if((args.size()!=4 && args.size()!=5) || (args[3]!="baseline" && args[3]!="gaze" && args[3]!="rows"))

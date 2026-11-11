@@ -1,9 +1,8 @@
 // Engine side of NavigationEye: the game's physics as its RayCaster. The eye core
 // itself (navigationeye.cpp) has no engine headers, so the nav-sim stand can build it.
 #include "navigationeye.h"
+#include "navigationeyeworld.h"
 
-#include "physics/collisionworld.h"
-#include "physics/dynamicworld.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
 
@@ -32,7 +31,7 @@ class WorldRays final : public NavigationEye::RayCaster {
     explicit WorldRays(const DynamicWorld& physics):physics(physics) {}
 
     NavigationEye::RayHit cast(const Vec3& from, const Vec3& to, const Npc* except) const override {
-      const auto hit = physics.navigationRay(from,to,except);
+      const auto hit = navigationRay(physics,from,to,except);
       NavigationEye::RayHit result;
       result.hit = hit.hasCol;
       result.point = hit.point;
@@ -47,36 +46,12 @@ class WorldRays final : public NavigationEye::RayCaster {
   };
 }
 
-// Kept beside the sensor so the navigation experiment has no edits in walking code.
-DynamicWorld::NavigationRayResult DynamicWorld::navigationRay(const Vec3& from, const Vec3& to,
-                                                              const Npc* except) const {
-  constexpr uint32_t mask = (1u<<C_Landscape)|(1u<<C_Object)|(1u<<C_Item)|(1u<<C_MovableVob)|
-                            (1u<<C_Ragdoll)|(1u<<C_LivingBody)|(1u<<C_ActiveBody)|(1u<<C_Water);
+DynamicWorld::NavigationRayResult navigationRay(const DynamicWorld& physics, const Vec3& from,
+                                                const Vec3& to, const Npc* except) {
   const Ragdoll* ownRig = except!=nullptr ? except->livingBody() : nullptr;
   if(ownRig==nullptr && except!=nullptr)
     ownRig = except->ragdollBody();
-  const auto hit = world->rayCast(from,to,mask,false,nullptr,nullptr,ownRig);
-  NavigationRayResult result;
-  result.hasCol = hit.hasHit;
-  result.point = hit.hasHit ? hit.point : to;
-  result.normal = hit.normal;
-  if(!hit.hasHit)
-    return result;
-  const int category = hit.body!=nullptr ? hit.body->category() : world->navigationBodyCategory(hit.nativeBodyId);
-  switch(category) {
-    case C_Ragdoll:
-    case C_LivingBody:
-    case C_ActiveBody: result.kind = NavigationHit::Npc; break;
-    case C_Landscape: result.kind = NavigationHit::World; break;
-    case C_Water: result.kind = NavigationHit::Water; break;
-    case C_Object:
-      result.kind = hit.body->isMovable() ? NavigationHit::MovableVob : NavigationHit::StaticVob;
-      break;
-    case C_Item:
-    case C_MovableVob: result.kind = NavigationHit::MovableVob; break;
-    default: result.kind = NavigationHit::StaticVob; break;
-    }
-  return result;
+  return physics.navigationRay(from,to,ownRig);
   }
 
 NavigationEye::Update NavigationEye::update(const Npc& npc, uint64_t gameMs) {

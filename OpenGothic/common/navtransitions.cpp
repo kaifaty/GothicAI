@@ -1,4 +1,5 @@
 #include "navtransitions.h"
+#include "game/navigationeyeworld.h"
 #include "navdemos.h"
 
 #include "physics/navmesh.h"
@@ -153,7 +154,7 @@ void record(World& w,const std::string& reason,bool accepted) {
   const auto position=npc.position();
   const bool finitePosition=std::isfinite(position.x) && std::isfinite(position.y) && std::isfinite(position.z);
   const auto rayStart=!finitePosition || (session.candidatePreparation && !session.candidateGround.teleported)?session.takeoff:position;
-  const auto obstruction=w.physic()->navigationRay(rayStart+Vec3(0,50,0),centimeters(a.end)+Vec3(0,50,0),&npc);
+  const auto obstruction=navigationRay(*w.physic(),rayStart+Vec3(0,50,0),centimeters(a.end)+Vec3(0,50,0),&npc);
   auto out=outputFile("transitions.jsonl",true);
   out<<"{\"from\":"<<std::quoted(session.from)<<",\"to\":"<<std::quoted(session.to)
      <<",\"link_id\":"<<linkId(a)<<",\"source_start_m\":["<<a.start[0]<<','<<a.start[1]<<','<<a.start[2]
@@ -271,7 +272,7 @@ void prepareCandidate(World& w) {
     }
   // A local ray only reconciles voxel height with the physical floor. It may
   // not pick a distant lower storey or move through an intervening wall.
-  const auto across=w.physic()->navigationRay(centimeters(g.site.snapped)+Vec3(0,CandidateFloorUpCm,0),
+  const auto across=navigationRay(*w.physic(),centimeters(g.site.snapped)+Vec3(0,CandidateFloorUpCm,0),
                                               ground.v+Vec3(0,CandidateFloorUpCm,0),&npc);
   if(across.hasCol) {record(w,"takeoff_inset_obstructed",false);return;}
   const auto water=w.physic()->waterRay(ground.v+Vec3(0,1,0),0);

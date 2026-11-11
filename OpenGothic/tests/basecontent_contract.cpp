@@ -7,6 +7,7 @@
 #include "contentcensus.h"
 #include "fontdata.h"
 #include "game/definitions/definitiontypes.h"
+#include "game/definitions/baseprogram.h"
 #include "gothic.h"
 #include "gltfmesh.h"
 #include "gothicglb.h"
@@ -1282,7 +1283,7 @@ struct BaseContentContract {
       if(row.language!=-1 || !row.source) continue;
       const auto& source=index.sources.at(*row.source);
       const auto host=row.step.starts_with("host_") ? (gothic/source.path).u16string() : std::u16string{};
-      const auto script=Resources::loadBaseProgram(row.request,row.language,row.step,host);
+      const auto script=loadBaseProgram(row.request,row.language,row.step,host);
       equal(script.symbols().size(),ProgramData::readProgram(index.path(source)).symbols.size(),row.request+" selected symbol count");
       ++selected;
       }
@@ -3205,7 +3206,7 @@ struct BaseContentContract {
       (fs::path(CommandLine::inst().rootPath())/source.path).u16string() : std::u16string{};
     const auto fails=[&](const std::string& description, const std::string& reason=std::string{}) {
       bool failed=false;
-      try { (void)Resources::loadBaseProgram(selected->request,selected->language,selected->step,host); }
+      try { (void)loadBaseProgram(selected->request,selected->language,selected->step,host); }
       catch(const BaseStore::Error& error) {
         const std::string message=error.what();
         failed=message.find("program "+selected->request+":")!=std::string::npos &&

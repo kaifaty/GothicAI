@@ -1,4 +1,5 @@
 #include "navdemos.h"
+#include "game/navigationeyeworld.h"
 #include "navdemos_internal.h"
 #include "gothic.h"
 #include "testbench.h"
@@ -358,7 +359,7 @@ bool livePlayerStart(Episode& ep,World& world,Npc& player,Vec3& position,NavMesh
     const auto floor=world.physic()->landRay(rayFrom,500.f);
     auto normal=floor.n;
     if(floor.hasCol && normal.length()<.5f) {
-      const auto surface=world.physic()->navigationRay(floor.v+Vec3(0,2,0),floor.v-Vec3(0,2,0),&player);
+      const auto surface=navigationRay(*world.physic(),floor.v+Vec3(0,2,0),floor.v-Vec3(0,2,0),&player);
       if(surface.hasCol && (surface.point-floor.v).length()<3.f)normal=surface.normal;
     }
     const float normalLength=normal.length();
@@ -1336,7 +1337,7 @@ bool followVisible(const Episode& ep,World& w) {
   if(physics==nullptr || ep.target==nullptr)return false;
   const auto eye=ep.npc->navigationEyePose().origin;
   const auto body=ep.goal+Vec3(0,100,0);
-  const auto hit=physics->navigationRay(eye,body,ep.npc);
+  const auto hit=navigationRay(*physics,eye,body,ep.npc);
   return !hit.hasCol || (hit.kind==DynamicWorld::NavigationHit::Npc && (hit.point-body).length()<=80.f);
 }
 void traceRoadsClosed(Episode& ep,uint64_t elapsed,const std::vector<RoadsPassageCall>& calls) {

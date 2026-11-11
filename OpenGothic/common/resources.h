@@ -44,7 +44,6 @@ struct ChunkTable;
 class ChunkResidency;
 
 namespace asset { struct WorldMesh; }
-namespace daedalus { class DaedalusScript; }
 
 namespace WorldData { struct Data; struct ZenFile; }
 namespace VideoData { class Reader; }
@@ -313,11 +312,9 @@ class Resources final {
 
     static bool                      hasWorld(std::string_view name);
     static int                       baseLanguage();
-    static daedalus::DaedalusScript     loadBaseProgram(std::string_view request, int language);
+    static const ProgramData::Index&  baseProgramIndex();
     static bool                      loadBaseOutputUnits(std::string_view request, int language,
                                                         std::vector<std::shared_ptr<asset::CutsceneBlock>>& blocks);
-    static daedalus::DaedalusScript     loadBaseProgram(std::string_view request, int language,
-                                                     std::string_view branch, std::u16string_view hostPath = {});
     static bool                      loadBaseOutputUnits(std::string_view request, int language,
                                                         std::string_view branch,
                                                         std::vector<std::shared_ptr<asset::CutsceneBlock>>& blocks,
@@ -332,6 +329,7 @@ class Resources final {
       };
     static WayHeightInputs           wayHeightInputs(std::string_view world);
     static void                      censusFile(std::u16string_view path);
+    static ContentCensus*            contentCensus();
     static void                      censusProfile(std::string_view game, std::string_view outputUnits, int language);
     static void                      loadWorld(WorldData::Data& world, asset::WorldMesh& worldMesh, std::string_view name,
                                                ChunkTable* chunks = nullptr);

@@ -3,6 +3,7 @@
 #include "asset/worldmesh.h"
 #include "game/meleeimpact.h"
 #include "physics/physicsnoise.h"
+#include "physics/collisionworld.h"
 #include "physics/charactervirtualdiagnostics.h"
 #include "physics/navmesh.h"
 #include "physics/fracture.h"
@@ -31,7 +32,6 @@ class Interactive;
 class DbgPainter;
 class Serialize;
 
-class CollisionWorld;
 class Cloth;
 
 // Query-only melee geometry. Positions and radii are world centimetres.
@@ -424,7 +424,7 @@ class DynamicWorld final {
     RayLandResult  sweep        (const Tempest::Vec3& from, const Tempest::Vec3& to, float R) const;
     RayQueryResult rayNpc       (const Tempest::Vec3& from, const Tempest::Vec3& to, const Npc* except) const;
     // Physical Jolt hulls used by bodies, plus water and NPC rigs; no duplicate visual meshes.
-    NavigationRayResult navigationRay(const Tempest::Vec3& from, const Tempest::Vec3& to, const Npc* except) const;
+    NavigationRayResult navigationRay(const Tempest::Vec3& from, const Tempest::Vec3& to, const Ragdoll* ownRig) const;
     // where an arrow aimed by hand would stop flying straight from-to: the first npc 'hit' takes (it says
     // how far along, t), else the ground; v: the point
     RayQueryResult rayArrow     (const Tempest::Vec3& from, const Tempest::Vec3& to,
@@ -741,8 +741,9 @@ class DynamicWorld final {
 
     // Called explicitly by the runner; ordinary worlds never build a navmesh.
     NavMesh::Geometry navigationGeometry() const;
-    // Runner-only collision snapshot; implemented with the perception bench.
-    void dumpNavigationCollision(const std::string& outputDirectory) const;
+    // Static and kinematic collision snapshot, in native category order.
+    std::array<size_t,4> navigationCollisionTriangles(
+        const std::function<void(const CollisionWorld::StaticTriangle&)>& output) const;
 
     void           deleteObj(BulletBody* obj);
 

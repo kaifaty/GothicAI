@@ -1,4 +1,5 @@
 #include "testbench_internal.h"
+#include "game/navigationeyeworld.h"
 #include "testbench.h"
 
 #include <Tempest/MemWriter>
@@ -164,7 +165,7 @@ void ownMeshClearance(World& world,Npc& player) {
         if(line==1 && y!=axis.y)continue;
         auto from=axis+direction*(edge+2.f);from.y=y;
         const auto to=from+direction*200.f;
-        const auto hit=world.physic()->navigationRay(from,to,&player);
+        const auto hit=navigationRay(*world.physic(),from,to,&player);
         const auto visual=world.physic()->ray(from,to);
         event("own_mesh_line","\"zen_id\":"+std::to_string(body.zenId)+",\"line\":"+
           jsonStr(line==0?"hero_approach":line==1?"arrow":"push")+",\"from_cm\":"+ragdollVector(from)+
