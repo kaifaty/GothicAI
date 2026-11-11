@@ -1,27 +1,33 @@
 #!/usr/bin/env python3
-"""Census of the engine's layers: which #include edges cross the proposed boundary.
+"""Engine layers: which #include edges cross the proposed engine/Gothic boundary.
 
 Every source file of OpenGothic/common, OpenGothic/game and OpenGothic/ai_bridge gets a
 layer from LAYER_RULES (first matching rule wins). An include edge is a violation when the
 included file's layer is not in ALLOWED[layer of the including file].
 
-    python3 reports/engine/2026-11-10-engine-layers/census.py            # markdown
-    python3 reports/engine/2026-11-10-engine-layers/census.py --json     # numbers
+    python3 scripts/engine_layers.py                       # markdown report of the working tree
+    python3 scripts/engine_layers.py report --json         # the same numbers as JSON
+    python3 scripts/engine_layers.py check --base origin/main
 
-The layer map is a proposal (README.md next to this file), not a decision.
+`check` compares the committed HEAD with its merge-base and warns about every forbidden
+include that HEAD adds. It only warns and always exits 0. The layer map is a proposal:
+reports/engine/2026-11-10-engine-layers/README.md.
 """
 from __future__ import annotations
 
 import argparse
 import fnmatch
+import io
 import json
+import os
 import re
+import subprocess
 import sys
+import tarfile
+import tempfile
 from collections import Counter, defaultdict
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[3]
-ENGINE = ROOT / "OpenGothic"
 SCAN_DIRS = ("common", "game", "ai_bridge")
 EXTS = {".h", ".cpp", ".c", ".mm"}
 INCLUDE_ROOTS = ("common", ".", "ai_bridge")
@@ -113,7 +119,7 @@ LAYER_RULES: list[tuple[str, str]] = [
     ("common/game/*", "rpg"),
     ("common/world/*", "rpg"),
     ("common/nav*", "rpg"),
-    # The platform: window-free core, resources of our formats, render, physics, sound, nets.
+    # The platform: resources of our formats, render, animation, physics, sound, nets.
     ("common/asset/*", "platform"),
     ("common/graphics/*", "platform"),
     ("common/physics/*", "platform"),
@@ -121,14 +127,21 @@ LAYER_RULES: list[tuple[str, str]] = [
     ("common/nets/*", "platform"),
     ("common/utils/*", "platform"),
     ("common/*", "platform"),
+    # A new side executable is a tool until it gets its own rule.
+    ("game/*", "tools"),
 ]
 
 INCLUDE_RE = re.compile(r'^\s*#\s*include\s*([<"])([^>"]+)[>"]', re.M)
 SCRIPT_VM = "common/daedalus/"
+OWN_ANGLE = ("game/", "world/", "graphics/", "daedalus/")
 
 
-def rel(path: Path) -> str:
-    return path.relative_to(ENGINE).as_posix()
+def repo_root() -> Path:
+    try:
+        out = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True)
+        return Path(out.stdout.strip())
+    except (OSError, subprocess.CalledProcessError):
+        return Path(__file__).resolve().parents[1]
 
 
 def layer_of(path: str) -> str:
@@ -139,40 +152,47 @@ def layer_of(path: str) -> str:
     raise SystemExit(f"no layer rule for {path}")
 
 
-def sources() -> list[Path]:
+def sources(engine: Path) -> list[Path]:
     out = []
     for d in SCAN_DIRS:
-        out += [p for p in (ENGINE / d).rglob("*") if p.suffix in EXTS and p.is_file()]
+        if (engine / d).is_dir():
+            out += [p for p in (engine / d).rglob("*") if p.suffix in EXTS and p.is_file()]
     return sorted(out)
 
 
-def resolve(src: Path, name: str, known: set[str]) -> str | None:
-    candidates = [src.parent / name] + [ENGINE / r / name for r in INCLUDE_ROOTS]
-    for c in candidates:
-        try:
-            r = rel(c.resolve())
-        except ValueError:
-            continue
-        if r in known:
-            return r
-    return None
+def census(engine: Path) -> dict:
+    """Layers, include edges and violations of the engine tree at `engine` (an OpenGothic dir)."""
+    engine = engine.resolve()
 
+    def rel(path: Path) -> str:
+        return path.relative_to(engine).as_posix()
 
-def census() -> dict:
-    files = sources()
+    files = sources(engine)
     known = {rel(p) for p in files}
     layer = {f: layer_of(f) for f in known}
-    lines = {rel(p): p.read_text(errors="replace").count("\n") for p in files}
+    text = {rel(p): p.read_text(errors="replace") for p in files}
+    lines = {f: t.count("\n") for f, t in text.items()}
+
+    def resolve(src: str, name: str) -> str | None:
+        candidates = ((engine / src).parent / name, *(engine / r / name for r in INCLUDE_ROOTS))
+        for c in candidates:
+            try:
+                r = rel(c.resolve())
+            except ValueError:
+                continue
+            if r in known:
+                return r
+        return None
+
     edges: dict[str, set[str]] = defaultdict(set)
     zenkit: set[str] = set()
-    for p in files:
-        f = rel(p)
-        for kind, name in INCLUDE_RE.findall(p.read_text(errors="replace")):
-            if name.startswith("zenkit/") or name.startswith("phoenix/"):
+    for f, t in text.items():
+        for kind, name in INCLUDE_RE.findall(t):
+            if name.startswith(("zenkit/", "phoenix/")):
                 zenkit.add(f)
-            if kind != '"' and not name.startswith(("game/", "world/", "graphics/", "daedalus/")):
+            if kind != '"' and not name.startswith(OWN_ANGLE):
                 continue
-            target = resolve(p, name, known)
+            target = resolve(f, name)
             if target and target != f:
                 edges[f].add(target)
 
@@ -189,19 +209,14 @@ def census() -> dict:
                 reach_vm.add(f)
                 queue.append(f)
 
-    per_layer = {
-        l: {"files": 0, "lines": 0, "vm_direct": 0, "vm_transitive": 0, "zenkit": 0} for l in LAYERS
-    }
+    per_layer = {l: {"files": 0, "lines": 0, "vm_direct": 0, "vm_transitive": 0, "zenkit": 0} for l in LAYERS}
     for f in known:
         s = per_layer[layer[f]]
         s["files"] += 1
         s["lines"] += lines[f]
-        if any(t.startswith(SCRIPT_VM) for t in edges.get(f, ())):
-            s["vm_direct"] += 1
-        if f in reach_vm:
-            s["vm_transitive"] += 1
-        if f in zenkit:
-            s["zenkit"] += 1
+        s["vm_direct"] += any(t.startswith(SCRIPT_VM) for t in edges.get(f, ()))
+        s["vm_transitive"] += f in reach_vm
+        s["zenkit"] += f in zenkit
 
     matrix: Counter = Counter()
     violations: list[tuple[str, str]] = []
@@ -210,6 +225,7 @@ def census() -> dict:
             matrix[(layer[f], layer[t])] += 1
             if layer[t] not in ALLOWED[layer[f]]:
                 violations.append((f, t))
+    violations.sort()
 
     hubs: dict[str, Counter] = defaultdict(Counter)
     offenders: dict[str, Counter] = defaultdict(Counter)
@@ -226,12 +242,13 @@ def census() -> dict:
         "hubs": {l: hubs[l].most_common() for l in LAYERS if hubs[l]},
         "offenders": {l: offenders[l].most_common() for l in LAYERS if offenders[l]},
         "zenkit_outside_import": sorted(f for f in zenkit if layer[f] not in ("import", "tools")),
+        "violation_edges": [list(v) for v in violations],
         "layer_of": layer,
     }
 
 
 def markdown(c: dict, top: int) -> str:
-    out = ["# Перепись слоёв движка", "", "Создано `census.py`; правила слоёв — в нём же.", ""]
+    out = ["# Перепись слоёв движка", "", "Создано `scripts/engine_layers.py`; правила слоёв — в нём же.", ""]
     out += ["## Слои", "", "| Слой | Файлов | Строк | Включают VM скриптов прямо | Достают до VM через включения | ZenKit |",
             "|---|---:|---:|---:|---:|---:|"]
     for l in LAYERS:
@@ -264,18 +281,78 @@ def markdown(c: dict, top: int) -> str:
     return "\n".join(out)
 
 
-def main() -> int:
+def tree_at(root: Path, revision: str, dest: Path) -> Path:
+    """Extract the scanned engine dirs of `revision` into `dest`; return its OpenGothic dir."""
+    paths = [f"OpenGothic/{d}" for d in SCAN_DIRS]
+    present = subprocess.run(["git", "-C", str(root), "ls-tree", "--name-only", revision, *paths],
+                             capture_output=True, text=True, check=True).stdout.split()
+    if present:
+        blob = subprocess.run(["git", "-C", str(root), "archive", "--format=tar", revision, *present],
+                              capture_output=True, check=True).stdout
+        with tarfile.open(fileobj=io.BytesIO(blob)) as tar:
+            tar.extractall(dest, filter="data")
+    (dest / "OpenGothic").mkdir(exist_ok=True)
+    return dest / "OpenGothic"
+
+
+def escape(text: str, *, prop: bool = False) -> str:
+    text = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+    return text.replace(":", "%3A").replace(",", "%2C") if prop else text
+
+
+def check(root: Path, base: str) -> int:
+    merge_base = subprocess.run(["git", "-C", str(root), "merge-base", base, "HEAD"],
+                                capture_output=True, text=True, check=True).stdout.strip()
+    with tempfile.TemporaryDirectory() as tmp:
+        before = census(tree_at(root, merge_base, Path(tmp) / "base"))
+        after = census(tree_at(root, "HEAD", Path(tmp) / "head"))
+    old = {tuple(e) for e in before["violation_edges"]}
+    new = {tuple(e) for e in after["violation_edges"]}
+    added, removed = sorted(new - old), sorted(old - new)
+    lay = after["layer_of"]
+    title = "Слои движка: новое включение через границу"
+    for f, t in added:
+        message = (f"{TITLES[lay[f]]} (`{lay[f]}`) включает `{t}` из слоя {TITLES[lay[t]]} (`{lay[t]}`). "
+                   "Правила слоёв — scripts/engine_layers.py, замысел — reports/engine/2026-11-10-engine-layers. "
+                   "Пока это только предупреждение.")
+        print(f"::warning file={escape('OpenGothic/' + f, prop=True)},title={escape(title, prop=True)}::{escape(message)}")
+    totals = f"{before['violations']} → {after['violations']}"
+    vm_before = before["per_layer"]["platform"]["vm_transitive"]
+    vm_after = after["per_layer"]["platform"]["vm_transitive"]
+    lines = ["### Слои движка", "",
+             f"Включений против слоёв: {totals} (новых {len(added)}, убранных {len(removed)}). "
+             f"Файлов платформы, достающих до VM скриптов: {vm_before} → {vm_after}.", ""]
+    if added:
+        lines += ["| Файл | Включает | Слои |", "|---|---|---|"]
+        lines += [f"| `{f}` | `{t}` | `{lay[f]}` → `{lay[t]}` |" for f, t in added]
+        lines += ["", "Пока это только предупреждение."]
+    summary = "\n".join(lines)
+    print(summary)
+    if path := os.environ.get("GITHUB_STEP_SUMMARY"):
+        with open(path, "a", encoding="utf-8") as stream:
+            stream.write(summary + "\n")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--json", action="store_true", help="print the numbers as JSON")
-    ap.add_argument("--top", type=int, default=15, help="rows per hub/offender table")
-    args = ap.parse_args()
-    c = census()
-    if args.json:
-        c = {k: v for k, v in c.items() if k != "layer_of"}
-        json.dump(c, sys.stdout, ensure_ascii=False, indent=1)
+    sub = ap.add_subparsers(dest="command")
+    rep = sub.add_parser("report", help="markdown or JSON census of the working tree (default)")
+    rep.add_argument("--json", action="store_true", help="print the numbers as JSON")
+    rep.add_argument("--top", type=int, default=15, help="rows per hub/offender table")
+    chk = sub.add_parser("check", help="warn about forbidden includes HEAD adds over its merge-base")
+    chk.add_argument("--base", required=True, help="compare with the merge-base of this revision and HEAD")
+    args = ap.parse_args(argv)
+    root = repo_root()
+    if args.command == "check":
+        return check(root, args.base)
+    c = census(root / "OpenGothic")
+    if getattr(args, "json", False):
+        json.dump({k: v for k, v in c.items() if k not in ("layer_of", "violation_edges")},
+                  sys.stdout, ensure_ascii=False, indent=1)
         print()
     else:
-        print(markdown(c, args.top))
+        print(markdown(c, getattr(args, "top", 15)))
     return 0
 
 
