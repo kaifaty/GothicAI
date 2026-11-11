@@ -199,6 +199,16 @@ void Renderer::setupSettings() {
     const int   v   = env!=nullptr ? std::atoi(env) : ::Settings::getI("INTERNAL","vsmLampSides");
     settings.vsmLampSides = uint32_t(v>=1 && v<=3 ? v : 3);
   }
+  // OPENGOTHIC_VSM_STUDY=<bits>: the bench command `vsm study` from the environment, so one binary measures what the
+  // shadow test on a mesh's facets costs (reports/render-features/2026-11-11-facet-shards): 1 the sun reads the
+  // facet's plane over one pixel and 2 the lamps keep it on facets edge-on to them, both as before 2026-11-11. The
+  // command wins over this while a scenario runs.
+  if(const char* env = std::getenv("OPENGOTHIC_VSM_STUDY")) {
+    const int v = std::atoi(env);
+    benchVsmStudy = uint32_t(v<0 ? 0 : (v>15 ? 15 : v));
+    Log::i("vsm: study bits = ", benchVsmStudy, " by OPENGOTHIC_VSM_STUDY");
+    }
+
   // VSM lamps: the soft PCSS, or hard shadows in one gather (light.frag, VSM_LAMP_HARD). On Metal hard by default:
   // the PCSS costs ~11 ms GPU indoors on an M1 Pro (reports/render-features/2026-11-05-vsm-mac-hard/README.md).
   // OPENGOTHIC_VSM_LAMP_SOFT=0|1 (test benches) wins over the ini; the study switches (OPENGOTHIC_VSM_LAMP*,
