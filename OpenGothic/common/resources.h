@@ -609,7 +609,8 @@ class Resources final {
     // stage, and when the next evaluation and the next log line are due
     TextureBudget::Choice textureTargetChoice, textureVram;
     bool textureBudgetFollows = true, textureBudgetLogDue = true;
-    TextureBudget::Device textureDevice;
+    TextureBudget::Device textureDevice, textureDeviceRead;  // with OPENGOTHIC_TEXTURE_VRAM_MB, and as the device said
+    std::chrono::steady_clock::time_point textureDeviceAt{};  // the device is asked at most once a Period
     TextureBudget::Source textureTargetSource = TextureBudget::Source::Default;
     TextureBudget::Ladder textureLadder;
     uint32_t textureStageDeepest = 0;

@@ -61,7 +61,13 @@ void Resources::updateTextureBudget(bool force) {
     return;
   textureBudgetAt=now+TextureBudget::Period;
   accountTextureStage(now);
-  textureDevice=dev!=nullptr ? dev->memoryBudget() : TextureBudget::Device();
+  // A forced evaluation (a world load, a new configuration) may come sooner; the device is still asked at most once
+  // a Period.
+  if(now>=textureDeviceAt) {
+    textureDeviceRead=dev!=nullptr ? dev->memoryBudget() : TextureBudget::Device();
+    textureDeviceAt=now+TextureBudget::Period;
+    }
+  textureDevice=textureDeviceRead;
   if(!textureVram.automatic) {
     // OPENGOTHIC_TEXTURE_VRAM_MB: the budget is pretended, the usage stays real
     textureDevice.budget=textureVram.bytes;
