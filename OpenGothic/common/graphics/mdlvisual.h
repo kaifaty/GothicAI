@@ -14,6 +14,7 @@
 #include "graphics/mesh/facerig.h"
 #include "graphics/mesh/eyes.h"
 #include "graphics/mesh/gaze.h"
+#include "graphics/mesh/listenface.h"
 #include "graphics/mesh/speechbrows.h"
 #include "graphics/mesh/speechcues.h"
 #include "graphics/mesh/quiver.h"
@@ -236,21 +237,26 @@ class MdlVisual final {
     void                           stopDlgAnim    (Npc& npc);
     // a voiced line: the mouth follows the voice instead of the talk loop
     void                           startSpeech    (Npc& npc, std::shared_ptr<LipSync::Track> voice);
-    void                           stopSpeech     () { mouth.stop(); voiceBrows.stop(); }
+    void                           stopSpeech     () { mouth.stop(); voiceBrows.stop(); voiceNow = nullptr; }
     void                           updateMouth    (Npc& npc, uint64_t dt);
     // the hands and the head while it speaks (TalkGestures)
-    // the mood of a line it starts to say (line: its id of the AI, empty: a line of the game)
-    void                           setTalkMood    (std::string_view mood, std::string_view line);
+    // the mood of a line it starts to say (line: its id of the AI, empty: a line of the game), held until then
+    void                           setTalkMood    (std::string_view mood, std::string_view line, uint64_t holdUntil);
     void                           updateGestures (Npc& npc, uint64_t dt);
     void                           updateBlink    (Npc& npc, uint64_t dt);
     // the own head's face (FaceRig): its eyes and weights to the deformation of the head, near only; after the pose
     // of the frame (the eyes aim from the head as drawn), on the main thread (the upload)
     void                           updateFace     (Npc& npc);
     // the other one speaks to it, it thinks of an answer (TalkGestures)
-    void                           listen         (uint64_t until) { gestures.listen(until); }
+    // toward: the mood its attitude to the one speaking gives (the face it listens with, ListenFace)
+    void                           listen         (uint64_t until, TalkGestures::Mood toward) { gestures.listen(until); heardMood = toward; }
     void                           stopListening  (uint64_t now)   { gestures.stopListening(now); }
     void                           heard          (uint64_t now)   { gestures.heard(now); }
     void                           think          (uint64_t now, uint64_t until) { gestures.think(now,until); }
+    // the accents of its voice the line `line` (an id of the AI) has reached by now, for the one it says it to: found
+    // by its own speech_brows, else by the listener's (its profile); -1: not that line, or no rule to find them by
+    int32_t                        voiceAccents   (std::string_view line, const FaceProfile* listener, uint64_t now);
+    const FaceProfile*             faceProfile() const { return face.faceProfile(); }
     void                           stopAnim       (Npc& npc, std::string_view anim);
     bool                           stopItemStateAnim(Npc &npc);
     void                           stopWalkAnim   (Npc &npc);
@@ -351,6 +357,8 @@ class MdlVisual final {
     void updateEyes(Npc& npc, uint64_t now);
     // the brows on the accents of its voice (SpeechBrows): the moves found by now to the face; probing - the log
     void updateBrows(Npc& npc, uint64_t now, bool probing);
+    // a nod of it listening started (TalkGestures): maybe a face with it (ListenFace)
+    void listenNod(Npc& npc, uint64_t now, bool speaking);
     // a gesture of the profile from `at`: its shapes (FaceRig) and, of zone "eyes", what the eyes do (Eyes)
     bool playCue(std::string_view name, bool mirror, float hold, uint64_t at, uint64_t now);
     // the middle of the own head's eyes in the frame of the head bone (false: no eyes of its own, Gaze aims from the bone)
@@ -392,6 +400,16 @@ class MdlVisual final {
     SpeechCues::Out                cueStarts;
     SpeechBrows                    voiceBrows;            // the brows on the accents of its voice (speech_brows)
     size_t                         accentsLogged = 0;     // of voiceBrows, in the log (the watched npc)
+    std::shared_ptr<LipSync::Track> voiceNow;             // its voice now (voiceAccents)...
+    uint64_t                       voiceAt   = 0;         // ...started then
+    bool                           voiceOwnBrows = false; // ...its accents found by voiceBrows
+    SpeechBrows                    heardBrows;            // ...else here, by the listener's rule
+    std::optional<FaceProfile::Brows> heardRule;
+    ListenFace                     listenFace;            // the face it listens with (listen_face)
+    uint32_t                       listenNodsSeen = 0;    // of gestures.listenNodCount()
+    TalkGestures::Mood             lineMood  = TalkGestures::Mood::Neutral;  // of its last line...
+    uint64_t                       lineMoodUntil = 0;     // ...held until then
+    TalkGestures::Mood             heardMood = TalkGestures::Mood::Neutral;  // its attitude to the one it listens to
     static constexpr uint64_t      ManualLeakMs = 2000;   // a leak started by hand: the line it makes, ms
     uint32_t                       cueCount = 0;          // gestures started by hand: the seed of their side
     float                          faceUploadUs = 0;      // the last setDeformation of the face, µs (test bench)

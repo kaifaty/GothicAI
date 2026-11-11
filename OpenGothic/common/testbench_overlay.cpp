@@ -611,9 +611,9 @@ void drawOverlay(const OverlayContext& ctx,Pixmap& pm) {
     }
   const auto& fr = FaceRig::subjectProbe;
   if(fr.valid && FaceRig::probeNpc!=nullptr) {
-    // A: accents of the voice found / moves of the brows on them (SpeechBrows)
-    std::snprintf(buf,sizeof(buf),"FACE T%u %.0fus A%u/%u %s",fr.targets,double(fr.blendUs),fr.accents,fr.browMoves,
-                  fr.shown.empty() ? "-" : fr.shown.c_str());
+    // A: accents of the voice found / moves of the brows on them (SpeechBrows); L: faces / nods of it listening
+    std::snprintf(buf,sizeof(buf),"FACE T%u %.0fus A%u/%u L%u/%u %s",fr.targets,double(fr.blendUs),fr.accents,fr.browMoves,
+                  fr.listenFaces,fr.listenNods,fr.shown.empty() ? "-" : fr.shown.c_str());
     cv.text(x,y,buf,2,{255,170,200,255});
     y += 16;
     }

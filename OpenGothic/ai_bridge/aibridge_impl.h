@@ -171,6 +171,8 @@ struct AiBridge::Impl final {
   // the server's model answers for thinks until its answer starts
   Npc* pickListener(World& world);
   void tickListener(World& world);
+  // an npc says a line to another one: it hears the accents of the voice (Npc::voiceAccents), a nod may come on each
+  void tickAddressed(World& world);
 
   void send(std::string&& text);
   void sendResult(std::string_view req, bool ok, std::string_view err, std::string_view value = {});
@@ -232,6 +234,12 @@ struct AiBridge::Impl final {
   std::string                  listener;       // the npc listening to the hero's voice
   std::string                  lastAddressee;  // whom the server said the hero spoke to last
   std::string                  thinker;        // the npc thinking of an answer
+  struct Addressed final {
+    std::string to, line;    // the npc it is said to, the line
+    uint64_t    until = 0;   // tick: no longer
+    int32_t     heard = 0;   // accents it heard
+    };
+  std::unordered_map<std::string,Addressed> addressed;  // speaker -> its line said to an npc now
   bool                         pttHeld     = false;
   uint64_t                     listenUntil = 0;  // after the key: until the final transcript, at most
   uint64_t                     thinkUntil  = 0;  // no answer by then: it stops thinking

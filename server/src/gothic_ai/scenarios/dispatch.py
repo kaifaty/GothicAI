@@ -960,12 +960,13 @@ async def run_scenario(ctx: ScenarioContext, link: GameLink, bodypilot: BodyPilo
             bad = {k: v for k, v in results.items() if not v.startswith("done")}
             log.info("scenario deal_demo: %d checks, %d failed", len(results), len(bad))
             exit_code = 1 if bad else 0
-        elif args.scenario in ("face_cues_demo", "face_eyes_demo", "face_brows_demo"):
+        elif args.scenario in ("face_cues_demo", "face_eyes_demo", "face_brows_demo", "face_listen_demo"):
             assert state.dialogue is not None
             demo = {
                 "face_cues_demo": scenarios.face_cues_demo,
                 "face_eyes_demo": scenarios.face_eyes_demo,
                 "face_brows_demo": scenarios.face_brows_demo,
+                "face_listen_demo": scenarios.face_listen_demo,
             }[args.scenario]
             results = await demo(link, state.dialogue)
             bad = {k: v for k, v in results.items() if not v.startswith("done")}

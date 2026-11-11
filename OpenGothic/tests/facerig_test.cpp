@@ -13,10 +13,14 @@
 // eyes leaving them out, rejections of "look". The tone of a voice (LipSync::Track, YIN) on harmonics and pulses, noise
 // and silence without one, the same tone from a stream in pieces; the brows on its accents (SpeechBrows, speech_brows):
 // one accent on a glide, the brows from 0.1 s before its syllable, down in an angry line, silent under a brow gesture,
-// the same moves for the same seed, none without the section, rejections of it. CPU only: no device, no game data.
+// the same moves for the same seed, none without the section, rejections of it. The face of the one listening
+// (ListenFace, listen_face): on its nods, by chance and gap the same for the same seed, a smaller shorter flash, a
+// friendly half smile within its part of S_FRIENDLY, an angry or hostile frown and never a smile or a flash, silent
+// while the face is taken, none without the section, rejections of it. CPU only: no device, no game data.
 #include "graphics/mesh/eyeblink.h"
 #include "graphics/mesh/facerig.h"
 #include "graphics/mesh/eyes.h"
+#include "graphics/mesh/listenface.h"
 #include "graphics/mesh/speechbrows.h"
 #include "graphics/mesh/speechcues.h"
 #include "gltfmesh.h"
@@ -1396,6 +1400,209 @@ void browCases(const GltfHeadMesh& head, const FaceProfile& plain) {
   rejected(with(sec,"\"on_ms\": 120","\"on_ms\": 0"),"on_ms and off_ms must be above 0");
   }
 
+const char* ListenSection = R"(, "listen_face": {
+  "about": "synthetic", "chance": 0.3, "gap_ms": 3000,
+  "flash": {"cue": "flash", "weight": 0.5, "time": 0.5},
+  "frown": {"cue": "frown", "weight": 0.6, "time": 0.4},
+  "smile": {"weight": 0.5, "on_ms": 300, "hold_ms": 600, "off_ms": 400, "chance": 0.7, "flash": 0.4}})";
+
+std::string withListen(const std::string& section) {
+  std::string json = Profile;
+  const std::string chin = "\"chin\":";
+  json.insert(json.find(chin),R"("frown": {"zone": "upper", "parts": [{"weights": {"browDown": 0.75},
+                                          "delay_ms": 0, "on_ms": 300, "hold_ms": 900, "off_ms": 400}]},
+    )");
+  json.insert(json.rfind('}'),section);
+  return json;
+  }
+
+void listenCases(const GltfHeadMesh& head, const FaceProfile& plain) {
+  const auto p = FaceProfile::parse(withListen(ListenSection),head);
+  require(p->listen.has_value() && !plain.listen.has_value() && p->cues[p->listen->flash.cue].name=="flash" &&
+          p->cues[p->listen->frown.cue].name=="frown","listen_face must be read; a profile without it has none");
+  const auto& l = *p->listen;
+
+  // the flash: the cue's weights times weight, its times times time (flash: 0.7 over 100/80/160 ms -> 0.35 over 50/40/80)
+  FaceRig rig;
+  rig.setup(&head,p.get());
+  const auto& w = rig.weights();
+  rig.startListen(FaceRig::ListenKind::Flash,1000,1000);
+  rig.update(1070);
+  require(close(w[BrowUpLeft],0.35f) && close(w[BrowUpRight],0.35f) && close(rig.listenWeight(1070),1.f),
+          "the flash of the one listening must be the flash's weights times weight: "+std::to_string(w[BrowUpLeft]));
+  rig.update(1100);
+  require(w[BrowUpLeft]<0.35f-0.01f,"the flash of the one listening must be shorter than the flash: falling at 100 ms");
+  require(rig.update(1180)==FaceRig::Result::Rest && rig.listenWeight(1180)==0,"the flash of the one listening must be over by 170 ms");
+
+  // the half smile: S_FRIENDLY (browDown 0.4, eyeSquint 0.2, cheekSquint 0.3) times 0.5, rising over on_ms
+  float most[3] = {};
+  rig.startListen(FaceRig::ListenKind::Smile,2000,2000);
+  for(uint64_t now=2000; now<3400; now+=20) {
+    rig.update(now);
+    most[0] = std::max(most[0],w[BrowDown]);
+    most[1] = std::max(most[1],w[EyeSquint]);
+    most[2] = std::max(most[2],w[CheekSquint]);
+    if(now==2600)
+      require(close(w[BrowDown],0.2f) && close(w[EyeSquint],0.1f) && close(w[CheekSquint],0.15f),
+              "the half smile must hold S_FRIENDLY times its weight: "+std::to_string(w[BrowDown]));
+    }
+  require(most[0]<=0.2f+1e-4f && most[1]<=0.1f+1e-4f && most[2]<=0.15f+1e-4f,
+          "the half smile must never be stronger than its part of S_FRIENDLY");
+  rig.update(3400);
+  require(rig.listenWeight(3400)==0 && w[BrowDown]==0 && w[CheekSquint]==0,"the half smile must be over after on, hold and off");
+
+  // the probe shows it
+  FaceRig::Probe pr;
+  rig.startListen(FaceRig::ListenKind::Frown,5000,5000);
+  rig.update(5200);
+  rig.probe(pr,5200);
+  require(pr.shown=="listen:frown 1.00" && close(pr.listen,1.f) && close(w[BrowDown],0.45f),
+          "the probe must show the frown of the one listening, the frown's weights times weight: "+pr.shown);
+  rig.update(6000);
+
+  // the face is taken: a gesture, a leak, its own voice, an expression stronger than the smile; a weaker one is not
+  require(!rig.listenBusy(7000),"a quiet face must not be taken");
+  rig.startCue("doubt",false,-1,7000,7000);
+  require(rig.listenBusy(7000),"a gesture of its own must take the face");
+  rig.update(9000);
+  rig.startLeak("afraid",false,9000,9000);
+  require(rig.listenBusy(9000),"a leak must take the face");
+  rig.update(10000);
+  rig.setShape("VISEME",1,2,0.5f,1,10000);
+  require(rig.listenBusy(10000),"its own voice must take the face");
+  rig.update(11000);
+  require(!rig.listenBusy(11000),"the face must be free again");
+  rig.startAnim("S_FRIENDLY",0.3f,uint64_t(-1),11000);
+  rig.update(13000);
+  require(!rig.listenBusy(13000),"an expression weaker than the smile must leave the face");
+  rig.startAnim("S_ANGRY",1,uint64_t(-1),13000);
+  rig.update(15000);
+  require(rig.listenBusy(15000),"an expression stronger than the smile must take the face");
+  // and one coming while it shows silences it
+  FaceRig q;
+  q.setup(&head,p.get());
+  q.startListen(FaceRig::ListenKind::Flash,0,0);
+  q.startCue("flash",false,-1,0,0);
+  q.update(120);
+  require(q.listenWeight(120)==0 && close(q.weights()[BrowUpLeft],0.7f),"a gesture must silence the face of the one listening");
+  q.update(1000);
+  q.startListen(FaceRig::ListenKind::Smile,1000,1000);
+  q.setShape("VISEME",1,2,0.5f,1,1000);
+  q.setShape("VISEME",1,2,0.5f,1,1450);
+  q.update(1500);
+  require(q.listenWeight(1500)==0 && q.weights()[CheekSquint]==0,"its own voice must silence the face of the one listening");
+
+  // the decision: a nod every 1.2 s for two minutes
+  using R = ListenFace::React;
+  using M = TalkGestures::Mood;
+  const auto run = [&](M mood, uint32_t seed, const FaceProfile::Listen& rule) {
+    ListenFace lf;
+    lf.seed(seed);
+    std::vector<std::pair<uint64_t,R>> ret;
+    for(uint64_t now=0; now<120000; now+=1200)
+      if(const R r = lf.nod(rule,mood,false,now); r!=R::None)
+        ret.emplace_back(now,r);
+    require(lf.nods()==100 && lf.faces()==ret.size(),"the nods and faces must be counted");
+    return ret;
+    };
+  const auto friendly = run(M::Friendly,5,l), again = run(M::Friendly,5,l), other = run(M::Friendly,6,l);
+  require(friendly==again,"one seed must give the same faces");
+  require(friendly!=other,"another seed must give other faces");
+  require(friendly.size()>=10 && friendly.size()<=34,"about one nod in two or three must get a face: "+std::to_string(friendly.size()));
+  for(size_t i=1; i<friendly.size(); ++i)
+    require(friendly[i].first-friendly[i-1].first>=3000,"the faces must keep the gap");
+  const auto count = [](const std::vector<std::pair<uint64_t,R>>& v, R r) {
+    return std::count_if(v.begin(),v.end(),[r](auto& x) { return x.second==r; });
+    };
+  // without the gap a nod gets a face by the chance alone (0.3 of 100 nods)
+  {
+    auto nogap  = l;
+    nogap.gapMs = 0;
+    const auto v = run(M::Neutral,5,nogap);
+    require(v.size()>=20 && v.size()<=40,"without the gap about 0.3 of the nods must get a face: "+std::to_string(v.size()));
+    // a face on every nod: a friendly one smiles with smile.chance 0.7, flashes as well with smile.flash 0.4 of those:
+    // smile alone 0.42, smile and flash 0.28, flash alone 0.3
+    nogap.chance = 1;
+    const auto f = run(M::Friendly,5,nogap);
+    const auto smile = count(f,R::Smile), both = count(f,R::SmileFlash), flash = count(f,R::Flash);
+    require(f.size()==100 && smile>=30 && smile<=55 && both>=16 && both<=40 && flash>=18 && flash<=42,
+            "a friendly one must smile, smile and flash, or flash by smile.chance and smile.flash: "+std::to_string(smile)+
+            " / "+std::to_string(both)+" / "+std::to_string(flash));
+  }
+  require(count(friendly,R::Smile)>0 && count(friendly,R::SmileFlash)>0 && count(friendly,R::Flash)>0 &&
+          count(friendly,R::Frown)==0,"a friendly one must smile, smile and flash, or flash, never frown");
+  for(auto mood:{M::Neutral,M::Afraid}) {
+    const auto v = run(mood,5,l);
+    require(!v.empty() && size_t(count(v,R::Flash))==v.size(),"one neither friendly nor angry must only flash");
+    }
+  for(auto mood:{M::Angry,M::Hostile})
+    for(uint32_t seed=1; seed<=20; ++seed) {
+      const auto v = run(mood,seed,l);
+      require(!v.empty() && size_t(count(v,R::Frown))==v.size(),"an angry or hostile one must only frown, never smile or flash");
+      }
+  // the face taken: no face, none drawn by chance
+  {
+    ListenFace lf;
+    lf.seed(5);
+    for(uint64_t now=0; now<60000; now+=1200)
+      require(lf.nod(l,M::Friendly,true,now)==R::None,"no face while the face is taken");
+    require(lf.faces()==0,"no face while the face is taken");
+  }
+  // into the face
+  {
+    FaceRig f;
+    f.setup(&head,p.get());
+    ListenFace::play(f,R::SmileFlash,0);
+    f.update(150);
+    require(f.listenWeight(FaceRig::ListenKind::Smile,150)>0 && f.listenWeight(FaceRig::ListenKind::Flash,150)>0 &&
+            f.listenWeight(FaceRig::ListenKind::Frown,150)==0,"a smile with a flash must show both");
+    // an angry one's frown shows only the frown
+    ListenFace::play(f,R::Frown,2000);
+    f.update(2200);
+    require(f.listenWeight(FaceRig::ListenKind::Frown,2200)>0 && f.listenWeight(FaceRig::ListenKind::Flash,2200)==0 &&
+            f.listenWeight(FaceRig::ListenKind::Smile,2200)==0,"a frown must show the frown alone, no flash, no smile");
+    // a leak coming while the smile shows silences it
+    f.update(4000);
+    f.startListen(FaceRig::ListenKind::Smile,4000,4000);
+    f.update(4500);
+    require(f.listenWeight(FaceRig::ListenKind::Smile,4500)>0.9f,"the smile must show before the leak");
+    f.startLeak("afraid",false,4500,4500);
+    f.update(4700);
+    require(f.listenWeight(4700)==0 && f.weights()[CheekSquint]==0,"a leak must silence the face of the one listening");
+  }
+
+  // without the section: no layer
+  FaceRig none;
+  none.setup(&head,&plain);
+  none.startListen(FaceRig::ListenKind::Smile,0,0);
+  require(none.update(600)==FaceRig::Result::Rest && none.listenWeight(600)==0,"a profile without listen_face must have no face of listening");
+
+  // rejections
+  const auto rejected = [&](const std::string& section, std::string_view reason) {
+    try {
+      (void)FaceProfile::parse(withListen(section),head);
+      }
+    catch(const std::exception& e) {
+      require(std::string_view(e.what()).find(reason)!=std::string_view::npos,
+              "the rejection must say why: want '"+std::string(reason)+"', got '"+e.what()+"'");
+      return;
+      }
+    require(false,"the profile must be rejected: "+std::string(reason));
+    };
+  auto with = [](std::string from, const std::string& what, const std::string& to) {
+    from.replace(from.find(what),what.size(),to);
+    return from;
+    };
+  const std::string sec = ListenSection;
+  rejected(with(sec,"\"about\"","\"x\": 1, \"about\""),"listen_face: unknown field \"x\"");
+  rejected(with(sec,"\"cue\": \"frown\"","\"cue\": \"wink\""),"listen_face: frown: no cue \"wink\"");
+  rejected(with(sec,"\"weight\": 0.5, \"time\"","\"weight\": 0, \"time\""),"listen_face: flash: weight and time must be above 0");
+  rejected(with(sec,"\"chance\": 0.3, \"gap","\"chance\": 2, \"gap"),"listen_face: chance must be a number 0..1");
+  rejected(with(sec,"\"gap_ms\": 3000,",""),"listen_face: no gap_ms");
+  rejected(with(sec,"\"off_ms\": 400","\"off_ms\": 0"),"listen_face: smile: on_ms and off_ms must be above 0");
+  rejected(with(sec,"\"flash\": 0.4}","\"flash\": 0.4, \"y\": 1}"),"listen_face: smile: unknown field \"y\"");
+  }
+
 int main() {
   try {
     const auto head    = makeHead();
@@ -1407,6 +1614,7 @@ int main() {
     leakCases(head,*profile);
     toneCases();
     browCases(head,*profile);
+    listenCases(head,*profile);
     const auto eyeHead    = makeEyeHead();
     const auto eyeProfile = FaceProfile::parse(EyeProfile,eyeHead);
     eyeProfileCases(eyeHead,*eyeProfile);

@@ -383,6 +383,71 @@ FaceProfile::Brows parseBrows(const rapidjson::Value& v, const GltfHeadMesh& hea
   return ret;
   }
 
+// {"chance": 0.45, "gap_ms": 4000, "flash": {"cue": "flash", "weight": 0.55, "time": 0.8},
+//  "frown": {"cue": "frown", "weight": 0.6, "time": 0.4},
+//  "smile": {"weight": 0.5, "on_ms": 400, "hold_ms": 700, "off_ms": 500, "chance": 0.5, "flash": 0.3}}
+// after the cues and the anims: they are found by name
+FaceProfile::Listen parseListen(const rapidjson::Value& v, const FaceProfile& p) {
+  const std::string where = "listen_face";
+  if(!v.IsObject())
+    fail(where+" must be an object");
+  onlyFields(v,{"about","chance","gap_ms","flash","frown","smile"},where);
+  if(v.HasMember("about") && !v["about"].IsString())
+    fail(where+": about must be a string");
+  FaceProfile::Listen ret;
+  ret.chance = float(number(v,"chance",where));
+  ret.gapMs  = float(number(v,"gap_ms",where));
+  if(ret.chance<0 || ret.chance>1)
+    fail(where+": chance must be a number 0..1");
+  if(ret.gapMs<0)
+    fail(where+": gap_ms must not be negative");
+  const auto gesture = [&](const char* key, FaceProfile::Listen::Gesture& g) {
+    const std::string at = where+": "+key;
+    if(!v.HasMember(key) || !v[key].IsObject())
+      fail(at+" must be an object");
+    const auto& o = v[key];
+    onlyFields(o,{"cue","weight","time"},at);
+    if(!o.HasMember("cue") || !o["cue"].IsString())
+      fail(at+": cue must be the name of a cue");
+    const auto  name = str(o["cue"]);
+    const auto* c    = p.findCue(name);
+    if(c==nullptr)
+      fail(at+": no cue "+quoted(name));
+    if(c->parts.empty())
+      fail(at+": cue "+quoted(name)+" has no shapes");
+    g.cue    = size_t(c-p.cues.data());
+    g.weight = float(number(o,"weight",at));
+    g.time   = float(number(o,"time",at));
+    if(g.weight<=0 || g.weight>1 || g.time<=0 || g.time>1)
+      fail(at+": weight and time must be above 0 and up to 1 (of the cue's)");
+    };
+  gesture("flash",ret.flash);
+  gesture("frown",ret.frown);
+  const std::string at = where+": smile";
+  if(!v.HasMember("smile") || !v["smile"].IsObject())
+    fail(at+" must be an object");
+  const auto& sm = v["smile"];
+  onlyFields(sm,{"weight","on_ms","hold_ms","off_ms","chance","flash"},at);
+  ret.smileWeight = float(number(sm,"weight",at));
+  ret.smileOnMs   = float(number(sm,"on_ms",at));
+  ret.smileHoldMs = float(number(sm,"hold_ms",at));
+  ret.smileOffMs  = float(number(sm,"off_ms",at));
+  ret.smileChance = float(number(sm,"chance",at));
+  ret.smileFlash  = float(number(sm,"flash",at));
+  if(ret.smileWeight<=0 || ret.smileWeight>1)
+    fail(at+": weight must be above 0 and up to 1 (of S_FRIENDLY's)");
+  if(ret.smileOnMs<=0 || ret.smileOffMs<=0 || ret.smileHoldMs<0)
+    fail(at+": on_ms and off_ms must be above 0, hold_ms not negative");
+  if(ret.smileChance<0 || ret.smileChance>1 || ret.smileFlash<0 || ret.smileFlash>1)
+    fail(at+": chance and flash must be numbers 0..1");
+  const auto* friendly = p.find("S_FRIENDLY");
+  if(friendly==nullptr)
+    fail(at+": the profile has no S_FRIENDLY to smile by");
+  for(auto& [t,w]:friendly->frames[0])
+    ret.smile.emplace_back(t,w*ret.smileWeight);
+  return ret;
+  }
+
 FaceProfile::Eyes parseEyes(const rapidjson::Value& v, const GltfHeadMesh& head) {
   using Eyes = FaceProfile::Eyes;
   if(!v.IsObject())
@@ -530,7 +595,7 @@ std::unique_ptr<FaceProfile> FaceProfile::parse(std::string_view json, const Glt
   for(const auto& m:doc.GetObject()) {
     const auto key = str(m.name);
     if(key!="version" && key!="about" && key!="mouth" && key!="anims" && key!="cues" && key!="leaks" &&
-       key!="eyes" && key!="speech_brows")
+       key!="eyes" && key!="speech_brows" && key!="listen_face")
       fail("unknown field "+quoted(key));
     }
   if(!doc.HasMember("version") || !doc["version"].IsInt() || doc["version"].GetInt()!=1)
@@ -663,6 +728,8 @@ std::unique_ptr<FaceProfile> FaceProfile::parse(std::string_view json, const Glt
       ret->brows->quiet.push_back(size_t(c-ret->cues.data()));
       }
     }
+  if(doc.HasMember("listen_face"))
+    ret->listen = parseListen(doc["listen_face"],*ret);
   return ret;
   }
 
@@ -677,6 +744,7 @@ void FaceRig::setup(const GltfHeadMesh* h, const FaceProfile* p) {
   slots.clear();
   runs.clear();
   browRuns.clear();
+  listenRuns.clear();
   leakRun  = LeakRun();
   posed    = false;
   posedEnd = 0;
@@ -922,6 +990,89 @@ float FaceRig::browWeight(uint64_t now) const {
   return ret;
   }
 
+void FaceRig::startListen(ListenKind kind, uint64_t start, uint64_t now) {
+  if(!isActive() || !profile->listen.has_value())
+    return;
+  ListenRun r;
+  r.kind  = kind;
+  r.start = std::min(start,now);
+  listenRuns.push_back(r);
+  }
+
+float FaceRig::listenEnvelope(const ListenRun& r, size_t part, uint64_t now) const {
+  // as a cue's part (cues.py env): the flash and the frown on the times of their cue made shorter
+  if(now<=r.start)
+    return 0;
+  const auto& l = *profile->listen;
+  const float t = float(now-r.start);
+  if(r.kind==ListenKind::Smile)
+    return ease(t/l.smileOnMs)*(1.f-ease((t-l.smileOnMs-l.smileHoldMs)/l.smileOffMs));
+  const auto& g = r.kind==ListenKind::Flash ? l.flash : l.frown;
+  const auto& p = profile->cues[g.cue].parts[part];
+  const float x = t - p.delayMs*g.time;
+  if(x<=0)
+    return 0;
+  return ease(x/(p.onMs*g.time))*(1.f-ease((x-(p.onMs+p.holdMs)*g.time)/(p.offMs*g.time)));
+  }
+
+float FaceRig::listenSpan(const ListenRun& r) const {
+  const auto& l = *profile->listen;
+  if(r.kind==ListenKind::Smile)
+    return l.smileSpan();
+  const auto& g = r.kind==ListenKind::Flash ? l.flash : l.frown;
+  return profile->cues[g.cue].span()*g.time;
+  }
+
+float FaceRig::speechWeight(uint64_t now) const {
+  float ret = 0;
+  if(speechLayer>=0)
+    for(auto& s:slots)
+      if(isOn(s,now) && profile->anims[s.anim].layer==speechLayer)
+        ret = std::max(ret, s.intensity*fade(s,now));
+  return std::clamp(ret,0.f,1.f);
+  }
+
+float FaceRig::listenQuiet(uint64_t now) const {
+  // a gesture, a leak or a voice of its own take the face: silent from half of their rise on
+  float other = speechWeight(now);
+  for(auto& r:runs)
+    other = std::max(other,cueStrength(r,now));
+  if(leakRun.on)
+    other = std::max(other,leakEnvelope(now));
+  return 1.f - std::min(1.f,2.f*other);
+  }
+
+float FaceRig::listenWeight(uint64_t now) const {
+  return std::max({listenWeight(ListenKind::Flash,now),listenWeight(ListenKind::Smile,now),listenWeight(ListenKind::Frown,now)});
+  }
+
+float FaceRig::listenWeight(ListenKind kind, uint64_t now) const {
+  if(!isActive() || !profile->listen.has_value() || listenRuns.empty())
+    return 0;
+  float ret = 0;
+  for(auto& r:listenRuns) {
+    if(r.kind!=kind)
+      continue;
+    const size_t parts = kind==ListenKind::Smile ? 1 : profile->cues[(kind==ListenKind::Flash ? profile->listen->flash : profile->listen->frown).cue].parts.size();
+    for(size_t i=0; i<parts; ++i)
+      ret = std::max(ret,listenEnvelope(r,i,now));
+    }
+  return ret*listenQuiet(now);
+  }
+
+bool FaceRig::listenBusy(uint64_t now) const {
+  if(!isActive())
+    return true;
+  if(!runs.empty() || leakRun.on || speechWeight(now)>0)
+    return true;
+  // an expression of a mood (the bridge's say.mood faces) stronger than the smile of the one listening
+  const float smile = profile->listen.has_value() ? profile->listen->smileWeight : 0.f;
+  for(auto name:{"S_FRIENDLY","S_ANGRY","S_HOSTILE","S_FRIGHTENED","T_HURT"})
+    if(weight(name,now)>smile)
+      return true;
+  return false;
+  }
+
 void FaceRig::setPosed(bool on, uint64_t now) {
   if(on==posed)
     return;
@@ -1044,6 +1195,29 @@ void FaceRig::mix(uint64_t now, std::vector<float>& out) const {
         out[t] += w*e;
       }
     }
+  // the face of the one listening, the same way, unless a gesture, a leak or its own voice has the face
+  if(profile->listen && !listenRuns.empty()) {
+    const auto& l     = *profile->listen;
+    const float quiet = listenQuiet(now);
+    for(auto& r:listenRuns) {
+      if(r.kind==ListenKind::Smile) {
+        const float e = listenEnvelope(r,0,now)*quiet;
+        if(e>0)
+          for(auto& [t,w]:l.smile)
+            out[t] += w*e;
+        continue;
+        }
+      const auto& g = r.kind==ListenKind::Flash ? l.flash : l.frown;
+      const auto& c = profile->cues[g.cue];
+      for(size_t i=0; i<c.parts.size(); ++i) {
+        const float e = listenEnvelope(r,i,now)*quiet*g.weight;
+        if(e<=0)
+          continue;
+        for(auto& [t,w]:c.parts[i].weights)
+          out[t] += w*e;
+        }
+      }
+    }
   // the lids follow the eyes: per direction of each eye the shapes of the profile's table
   if(profile->eyes) {
     using Eyes = FaceProfile::Eyes;
@@ -1078,6 +1252,10 @@ FaceRig::Result FaceRig::update(uint64_t now) {
     browRuns.erase(std::remove_if(browRuns.begin(),browRuns.end(),[&](const BrowRun& r) {
       return now>r.start && float(now-r.start)>profile->brows->span();
       }),browRuns.end());
+  if(profile->listen)
+    listenRuns.erase(std::remove_if(listenRuns.begin(),listenRuns.end(),[&](const ListenRun& r) {
+      return now>r.start && float(now-r.start)>listenSpan(r);
+      }),listenRuns.end());
   mix(now,want);
 
   // the eyes turned since the head was deformed
@@ -1324,6 +1502,13 @@ void FaceRig::probe(Probe& p, uint64_t now) const {
     std::snprintf(buf,sizeof(buf),"%sbrows:%s %.2f",p.shown.empty() ? "" : " ",p.brows>0 ? "up" : "down",double(std::abs(p.brows)));
     p.shown += buf;
     }
+  p.listen = listenWeight(now);
+  for(auto [kind,name]:{std::pair{ListenKind::Flash,"flash"},std::pair{ListenKind::Smile,"smile"},std::pair{ListenKind::Frown,"frown"}})
+    if(const float k = listenWeight(kind,now); k>0) {
+      char buf[64];
+      std::snprintf(buf,sizeof(buf),"%slisten:%s %.2f",p.shown.empty() ? "" : " ",name,double(k));
+      p.shown += buf;
+      }
   for(auto w:applied)
     if(w>0)
       ++p.targets;

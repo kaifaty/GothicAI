@@ -173,13 +173,23 @@ bool dialogCommand(const DialogContext& ctx,const std::string& line,const std::v
     Gothic::inst().dialogExec(chs[i-1],pl,n);
     }
   else if(c=="hear") {
-    // hear <npc|nearest|player> <ms> [every ms]: the hero speaks to it that long, his words come every so often
-    // (as the bridge does with his voice: it listens, nods now and then); player: the hero listens to the nearest
+    // hear <npc|nearest|player> <ms> [every ms] [friendly|neutral|angry|hostile]: the hero speaks to it that long,
+    // his words come every so often (as the bridge does with his voice: it listens, nods now and then); player: the
+    // hero listens to the nearest. The last one sets its attitude to the hero (the face it listens with)
     Npc* n    = findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
     Npc* from = n==&pl ? findNpc(w,pl,"nearest") : &pl;
     if(n==nullptr || from==nullptr || from==n) {
       say("hear: no npc " + line);
       return true;
+      }
+    if(a.size()>4) {
+      const Attitude att = a[4]=="friendly" ? ATT_FRIENDLY : a[4]=="angry" ? ATT_ANGRY : a[4]=="hostile" ? ATT_HOSTILE :
+                           a[4]=="neutral" ? ATT_NEUTRAL : ATT_NULL;
+      if(att==ATT_NULL) {
+        say("hear: attitude must be friendly, neutral, angry or hostile: " + line);
+        return true;
+        }
+      n->setAttitude(att);
       }
     ctx.hearNpc   = n;
     ctx.hearWith  = from;

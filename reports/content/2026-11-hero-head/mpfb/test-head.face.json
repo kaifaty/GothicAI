@@ -134,5 +134,12 @@
     "up": {"browInnerUp": 0.5, "browOuterUpLeft": 0.35, "browOuterUpRight": 0.35},
     "down": {"browDownLeft": 0.35, "browDownRight": 0.35, "eyeSquintLeft": 0.2, "eyeSquintRight": 0.2, "noseSneerLeft": 0.12, "noseSneerRight": 0.12},
     "quiet_cues": ["flash", "doubt", "frown", "squint", "disgust", "wince"]
+  },
+  "listen_face": {
+    "about": "The face of the one listening on its nods (eyes.md, 'План: брови по тону и лицо слушающего', item 3): now and then a nod as the other one speaks comes with a flash of the brows smaller and shorter than the flash cue (its weights times weight, its times times time); a friendly listener smiles a little instead (S_FRIENDLY times smile.weight, smile.chance) or smiles and flashes (smile.flash); an angry or hostile one frowns a moment instead (the frown cue made smaller and shorter), never smiles or flashes. A face on about one nod in two or three (chance) and at most once in gap_ms. Limits picked by the clip, the look is the user's.",
+    "chance": 0.45, "gap_ms": 4000,
+    "flash": {"cue": "flash", "weight": 0.6, "time": 0.8},
+    "frown": {"cue": "frown", "weight": 0.6, "time": 0.45},
+    "smile": {"weight": 0.5, "on_ms": 400, "hold_ms": 700, "off_ms": 600, "chance": 0.6, "flash": 0.3}
   }
 }

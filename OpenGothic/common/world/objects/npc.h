@@ -270,14 +270,18 @@ class Npc final : public AnimationGroundSound, public ParticleTarget {
     // a voiced line starts: the mouth follows the voice (LipSync)
     void       startSpeech(const Tempest::Sound& voice, std::string_view name = {});  // name: of the line (the seed of the face)
     void       startSpeech(std::shared_ptr<LipSync::Track> voice);
-    // of the line it starts to say: its gestures follow it; line: its id of the AI (its brows follow the mood too)
-    void       setTalkMood(std::string_view mood, std::string_view line = {});
-    // the hero speaks to it (his voice) for the next `ms`; words of him came; it thinks of an answer for
-    // the next `ms` (0: it answers now)
-    void       listenTo(uint64_t ms);
+    // of the line it starts to say: its gestures follow it; line: its id of the AI (its brows follow the mood too);
+    // holdMs: the mood stays its own that long (the face of the line held, the face it listens with)
+    void       setTalkMood(std::string_view mood, std::string_view line = {}, uint64_t holdMs = 0);
+    // the hero (or an npc: speaker) speaks to it for the next `ms` - its attitude to the speaker is the face it
+    // listens with; words of him came; it thinks of an answer for the next `ms` (0: it answers now)
+    void       listenTo(uint64_t ms, const Npc* speaker = nullptr);
     void       stopListening();
     void       heardWords();
     void       thinkOfAnswer(uint64_t ms);
+    // the accents of its voice of the line `line` (an id of the AI) said so far, for `listener` it says it to (its
+    // nods on them): -1 - not that line, or neither of them has speech_brows to find them by
+    int32_t    voiceAccents(std::string_view line, const Npc& listener);
     void       stopSpeech();
     bool       stopItemStateAnim();
     bool       hasAnim(std::string_view scheme) const;

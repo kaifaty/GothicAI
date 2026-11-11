@@ -3,7 +3,9 @@ and one lie, for the test bench (scripts/bench/face-cues-clip.bench; the clip of
 reports/content/2026-11-hero-head/face-cues.md). face_eyes_demo: the same with the gestures of the eyes
 (glance, roll) and two others to compare, without a lie. face_brows_demo: three lines without gestures
 for the brows on the accents of the voice (scripts/bench/face-brows-clip.bench; eyes.md, "План: брови
-по тону"), the npc held for the bench's lines of the original voice after them."""
+по тону"), the npc held for the bench's lines of the original voice after them. face_listen_demo: Lobart
+says two lines to Vino, who listens (scripts/bench/face-listen-clip.bench; eyes.md, "лицо слушающего"),
+Vino held for the bench's parts where the hero speaks to him."""
 
 from __future__ import annotations
 
@@ -13,12 +15,13 @@ import logging
 from ..dialogue import DialogueManager
 from ..game import GameLink
 from ..protocol import LineStarted
-from .common import _logged, _until, attach_when_free, model_off
+from .common import LOBART, _logged, _until, attach_when_free, model_off
 
 SCENARIOS = {
     "face_cues_demo": ("GIVEN", {"save": False, "timeout": 240}),
     "face_eyes_demo": ("GIVEN", {"save": False, "timeout": 240}),
     "face_brows_demo": ("GIVEN", {"save": False, "timeout": 240}),
+    "face_listen_demo": ("GIVEN", {"save": False, "timeout": 240}),
 }
 
 log = logging.getLogger("gothic_ai.scenarios")
@@ -51,6 +54,15 @@ FACE_BROWS_REPLY = (
     "[angry] Всё, хватит меня допрашивать, иди отсюда и не мешай мне работать!"
 )
 FACE_BROWS_HOLD_S = 30.0  # after the reply: the bench has the npc say two lines of the original voice
+# the face of the one listening: Lobart says two lines to Vino (the first short: with a voice the first
+# line of a reply ends at its first clause); Vino listens with his attitude to Lobart
+FACE_LISTEN_CUE = "[Событие: Вино стоит рядом без дела]"
+FACE_LISTEN_LINE = (
+    "[neutral] Вино, послушай меня. "
+    "[neutral] Завтра с самого утра ты пойдёшь к амбару и перетаскаешь все мешки с зерном под навес, "
+    "пока не начался дождь."
+)
+FACE_LISTEN_HOLD_S = 45.0  # after the lines: the bench has the hero speak to Vino, friendly and then angry
 FACE_SPOT = "NW_FARM1_PATH_01"  # open ground in Lobart's yard: nothing between the camera and his face
 STAGE_S = 8.0  # after the hero is put in front of the npc: the bench sets its camera and starts recording
 
@@ -107,3 +119,52 @@ async def face_brows_demo(link: GameLink, dialogue: DialogueManager, npc: str = 
     return await face_cues_demo(
         link, dialogue, npc, FACE_BROWS_REPLY, FACE_BROWS_QUESTION, lines_wanted=3, hold_s=FACE_BROWS_HOLD_S
     )
+
+
+async def face_listen_demo(
+    link: GameLink, dialogue: DialogueManager, npc: str = FACE_NPC, speaker: str = LOBART
+) -> dict[str, str]:
+    """Vino on open ground, the hero 2 m in front of him, Lobart 1.5 m in front of him (the camera between
+    them and Vino films Vino's face); Lobart says the given lines to Vino through the off backend and the
+    voice (his nods on the accents, the face he listens with); Vino stays FACE_LISTEN_HOLD_S after them for
+    the bench."""
+    results: dict[str, str] = {}
+    off = model_off(dialogue)
+    dialogue.quick = None
+    off.given(
+        "дано: реплики Лобарта Вино для лица слушающего",
+        who=speaker,
+        when=FACE_LISTEN_CUE,
+        line=FACE_LISTEN_LINE,
+    )
+    # Lobart's lines ask Vino to answer him: he listens and keeps quiet
+    off.silent("дано: Вино молча слушает Лобарта", who=npc, when="обращается к тебе")
+    started: list[str] = []
+    link.listeners.append(lambda msg: started.append(msg.line) if isinstance(msg, LineStarted) else None)
+
+    await link.wait_world()
+    await link.debug("time", hour=12, minute=0)
+    for who in (npc, speaker):
+        await link.debug("skip_important", near=who)
+    await link.debug("npc_goto", npc=npc, waypoint=FACE_SPOT)
+    await attach_when_free(link, npc)
+    await link.debug("teleport", near=npc, distance=200)
+    await link.debug("npc_goto", npc=speaker, to=npc, distance=150, face=npc)
+    await attach_when_free(link, speaker)
+    for who in (npc, speaker):
+        snap = await link.snapshot(who, fresh=True)
+        conv = dialogue.open(who, snap.npc.name)
+    log.info("face_listen_demo: %s in front of %s and the hero", speaker, npc)
+    await asyncio.sleep(STAGE_S)
+
+    turn = dialogue.event_turn(speaker, FACE_LISTEN_CUE, to=npc)
+    if turn is not None:
+        await turn
+    lines = list(conv.last_lines)
+    said = await _until(lambda: bool(lines) and all(line in started for line in lines), 60)
+    await _until(lambda: not dialogue.speaking(speaker), 30)
+    results["lines"] = f"{'done' if said and len(lines) == 2 else 'failed'} ({len(lines)} line(s))"
+    await asyncio.sleep(FACE_LISTEN_HOLD_S)
+    for who in (speaker, npc):
+        await link.act(who, "return_to_routine")
+    return _logged(results)

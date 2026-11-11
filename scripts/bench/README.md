@@ -1102,6 +1102,25 @@ up, down or no move, the start and apex of `br_w`) and `sheet.jpg` (before and a
 `--off` only `clip-off.mp4`. The accents come from the `[face] accent` lines of `game.log`, the times from `lip_t` and
 `br_w` of `metrics.csv`.
 
+## Face listen clip
+
+The acceptance clip of the face of the one listening
+([eyes.md](../../reports/content/2026-11-hero-head/eyes.md), "План: брови по тону и лицо слушающего", item 3): Vino with
+an own head listens. First Lobart says two lines to him through the real voice path (`face_listen_demo` in
+`server/src/gothic_ai/scenarios/face_cues.py`: Vino on open ground, the hero 2 m and Lobart 1.5 m in front of him;
+Vino nods on the accents of Lobart's voice, his face goes by his attitude to Lobart), then `face-listen-clip.bench`
+has the hero speak to him as the bridge does with his voice (`hear BAU_952_VINO 16000 600 friendly`, then `angry`:
+the last word sets his attitude to the hero); the scenario holds him 45 s after Lobart's lines. Staging as in
+[Face cues clip](#face-cues-clip); the face profile needs `speech_brows` and `listen_face` (the sections of
+[`test-head.face.json`](../../reports/content/2026-11-hero-head/mpfb/test-head.face.json)). The same commands with
+`--scenario face_listen_demo`, without `--debug-leak`, and the bench `face-listen-clip`; `OPENGOTHIC_LISTEN_FACE=0`
+films the same without the layer (the nods stay). `--provider inworld` spends two paid requests a take.
+`reports/content/2026-11-hero-head/cues/listen_clip.py <bench out> <out>` writes `clip.mp4`, `key.txt` (the parts,
+Lobart's lines and the accents Vino heard, each nod with its time and the face that came with it or none, the apex of
+`ls_w`) and `sheet.jpg` (before and apex of the faces); with `--off` only `clip-off.mp4`. The faces come from the
+`[face] listen` lines of `game.log`, the nods from `ge_lnods` of `metrics.csv`, the accents heard from
+`[ai] ... hears accent`.
+
 ## Native NPC calibration duels
 
 ### Как работает сейчас

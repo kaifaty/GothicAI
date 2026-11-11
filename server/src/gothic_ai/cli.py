@@ -1044,6 +1044,7 @@ def main() -> None:
             "face_cues_demo",
             "face_eyes_demo",
             "face_brows_demo",
+            "face_listen_demo",
             "day",
             "noise",
             "amends_deal",

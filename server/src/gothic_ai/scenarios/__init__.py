@@ -50,6 +50,7 @@ from .deals import xardas_money as xardas_money
 from .face_cues import face_brows_demo as face_brows_demo
 from .face_cues import face_cues_demo as face_cues_demo
 from .face_cues import face_eyes_demo as face_eyes_demo
+from .face_cues import face_listen_demo as face_listen_demo
 from .feats import feat_fame as feat_fame
 from .feats import feats as feats
 from .frame import frame as frame
