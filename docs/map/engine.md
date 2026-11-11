@@ -4,7 +4,7 @@
 
 Службы игры для платформы — `common/gameservices.*`: узкий виртуальный интерфейс мира, кадра, камеры, определений эффектов и звука; реализация — `Gothic`. Рендер получает время, тики и `DynamicWorld`, не разыменовывая `World`. [Шаг 3 разделения слоёв](../../reports/engine/2026-11-10-engine-layers/README.md#порядок-работы).
 
-VM-адаптер базовых программ — `common/game/definitions/baseprogram.cpp`: обе перегрузки `Resources::loadBaseProgram` с прежним API в `resources.h`; общие помощники путей и объявление переписи `ContentCensus` — в `resources_internal.h`. Платформе не нужен заголовок VM; порядок поиска программ и перепись источников сохранены.
+VM-адаптер базовых программ — `common/game/definitions/baseprogram.cpp`: обе перегрузки `Resources::loadBaseProgram` с прежним API в `resources.h`; общие помощники путей — в `resources_internal.h`. Платформе не нужен заголовок VM; порядок поиска программ и перепись источников сохранены.
 
 Расставленные `Item`: перепись исходных форм после мебели, спящие тела рядом с героем и необязательная связь с ZEN в сейве — `common/world/worldobjects.*`, `objects/item.*`, `physics/dynamicworld.*`; `[GAME] placed_items`, Marvin `toggle placed_items`, `PLACED_ITEMS=0` в стендах. Нативный контракт `gothic-placed-items-contract`, численные стенды `placed-items` / `placed-items-census` / `placed-items-reload` / `placed-items-performance`; [перепись, пробуждение и замеры](../../reports/physics/2026-10-31-placed-items/README.md).
 

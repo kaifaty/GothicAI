@@ -109,7 +109,7 @@ python3 scripts/engine_layers.py check --base origin/main # новые вклю�
 
 1. **Храповик.** Сделан 2026-11-11: шаг «Check engine layers» в `debt-ratchet.yml` запускает `engine_layers.py check` и предупреждает о каждом новом включении через границу. За первые сутки после переписи в `main` их пришло 5 (320 → 325): разнесённый код физики (`dynamicworld_fragments.cpp`, `dynamicworld_remnants.cpp`) и `texturedump.cpp`.
 2. **Записи определений без VM — сделано 2026-11-11.** Простые структуры `Def::*` находятся в `common/records/definitions.h`, VM-типы и копирование — в `common/game/definitions/`; ключи эффектов передаёт `VisualFxDefinitions`. Итог `engine_layers.py report --json` относительно `main` `4b1218941`: `per_layer.platform.vm_transitive` 122 → **45**, `violations` 325 → **315**.
-3. **Интерфейс настроек и служб — сделано 2026-11-11.** `common/settings.*` хранит INI, умолчания, `Options`, `PhysicsFlags` и сигнал изменения; `Gothic` владеет объектом и обновляет его в прежние моменты. `common/gameservices.*` задаёт узкий виртуальный интерфейс, реализованный `Gothic`: мир, камера, пауза, определения PFX/VFX и звука, сигналы переключения рендера и внешний звук. Время кадра передаётся в миллисекундах, тики и `DynamicWorld` — напрямую; рендер не обращается к членам `World`. Убраны все 23 включения `gothic.h` из платформы и включение `sounddefinitions.h` из звука. Итог относительно `main` `f1c4bce93`: `per_layer.platform.vm_transitive` **45 → 33**, `violations` **315 → 291**. Тонкие встроенные пересылки `Gothic::settings*`, `options()`, `physicsFlags()` и псевдонимы типов остаются для каркаса RPG, Готики, моста и тестов; их вызовы вне платформы не переписаны. В `gamescript.cpp` заменены только две подписки на перенесённый сигнал. Обе перегрузки `Resources::loadBaseProgram` дословно перенесены в `common/game/definitions/baseprogram.cpp` (слой Готики), API и метка `"Gothic::loadScript"` сохранены. Общие помощники путей и неизменённое объявление `ContentCensus` доступны через `resources_internal.h`; реализация переписи не менялась.
+3. **Интерфейс настроек и служб — сделано 2026-11-11.** `common/settings.*` хранит INI, умолчания, `Options`, `PhysicsFlags` и сигнал изменения; `Gothic` владеет объектом и обновляет его в прежние моменты. `common/gameservices.*` задаёт узкий виртуальный интерфейс, реализованный `Gothic`: мир, камера, пауза, определения PFX/VFX и звука, сигналы переключения рендера и внешний звук. Время кадра передаётся в миллисекундах, тики и `DynamicWorld` — напрямую; рендер не обращается к членам `World`. Убраны все 23 включения `gothic.h` из платформы и включение `sounddefinitions.h` из звука. Итог `engine_layers.py report --json`: `per_layer.platform.vm_transitive` **33**, `violations` **290**. Тонкие встроенные пересылки `Gothic::settings*`, `options()`, `physicsFlags()` и псевдонимы типов остаются для каркаса RPG, Готики, моста и тестов; их вызовы вне платформы не переписаны. В `gamescript.cpp` заменены только две подписки на перенесённый сигнал. Обе перегрузки `Resources::loadBaseProgram` дословно перенесены в `common/game/definitions/baseprogram.cpp` (слой Готики), API и метка `"Gothic::loadScript"` сохранены. Общие помощники путей доступны через `resources_internal.h`; `contentcensus` перенесён из импорта в платформу, потому что учитывает контент, открываемый `Resources` во время игры, и не зависит от импорта установки.
 4. **Вид на мир для рендера и физики** вместо `world.h` и `npc.h`: 36 → 25, дальше `sound.h`, `serialize.h`, `bullet.h`, `item.h` — до 3.
 5. **Страж.** Когда в платформе не останется включений VM, к ней подключается страж в CMake по образцу `ZenKitGuard`: цели платформы не включают `daedalus/` и `game/gamescript.h`.
 6. **Крючки стенда** через интерфейс.
@@ -121,36 +121,7 @@ python3 scripts/engine_layers.py check --base origin/main # новые вклю�
 
 ## Проверка шага 3 — 2026-11-11
 
-Сохранённая команда выполнена целиком, выход **0**:
-
-```bash
-RUN_TARGETS=0 ~/.codex/checks/gothic/engine-targets.sh . Gothic2Notr content-convert && MAC_BUILD=0 ~/.codex/checks/gothic/engine-targets.sh . gothic-settings-test gothic-basecontent-contract gothic-vob-layer-test gothic-body-watch-test && python3 scripts/engine_layers.py check --base origin/main
-```
-
-| Проверка | Результат |
-|---|---|
-| `Gothic2Notr`, `content-convert` | Обе цели собраны на Ryzen и Mac |
-| `gothic-settings-test` | 23 проверки прошли на Ryzen: временные INI, приоритеты, `has`, сигнал, составные флаги и `flush` |
-| `gothic-basecontent-contract` | Прошёл; 8 программ, 91 289 символов и 2 556 294 байта кода совпали с независимым чтением DAT, 8 загрузок добавили 0 открытий DAT |
-| `gothic-vob-layer-test` | 3119 проверок прошли |
-| `gothic-body-watch-test` | 47 случаев, 5360 проверок прошли, включая переключение флагов через `Gothic::settingsSetI` |
-| `scripts/check.py run` | Выбран 1 файл Python-тестов, 4/4 прошли |
-| Перепись и храповик слоёв | VM платформы 33, нарушений 291; новых запрещённых включений и `::warning` — 0, убрано 24; включений `gothic.h` и вызовов `Gothic::` в платформе — 0 |
-
-Первый запуск `basecontent` остановился при выборе базы: `OPENGOTHIC_BASE must point to a content-convert base with textures and meshes`. Проверочный скрипт сам выполнил `content-convert resolve-base` в своём кэше, выбрал базу `06b70f7d5a43…` и один раз повторил контракт: выход 0 без изменений кода. Повтор прошёл после исправления начальных параметров базы, с тем же кодом. Обе перегрузки загрузчика и объявление переписи отдельно сверены с исходником дословно. Целей, собирающих `resources.cpp` вне общего glob `common/*.cpp`, нет; `content-convert` в текущем CMake его не собирает.
-
-`archery-smoke` выполнен **один раз** на Ryzen, offscreen 800×600: выход **0**, игровой запуск 36 с (в отчёте 35 с игрового времени), в `game.log` одна строка `[bench] done`. Камера, колчан, физика и рендер использовали новые источники данных. [Автоотчёт](../../../.bench/platform-services-archery-smoke-20261111/report.md), [лист из 16 кадров](../../../.bench/platform-services-archery-smoke-20261111/sheets/down.png) и [видео](../../../.bench/platform-services-archery-smoke-20261111/down.mp4) сохранены локально; полная копия через `gq --archive` — `/mnt/shared/gothic-ai/e2e/claude-platform-services/archery-smoke-archive-20261111` (15 769 211 байт).
-
-| Сегмент | Кадров в метриках | `arrow shot` | `dice shot` |
-|---|---:|---:|---:|
-| `seed7a` | 312 | 5 | 0 |
-| `seed7b` | 283 | 5 | 0 |
-| `seed8` | 295 | 5 | 0 |
-| `fight` | 600 | 0 | 17 |
-| `down` | 75 | 0 | 2 |
-| Всего | **1565** | **15** | **19** |
-
-Автоотчёт содержит 15 отметок `anim_pop` и 1 `toe_sink`; оценку вида в этой задаче не проводили.
+Сохранённая команда сборок и четырёх контрактов на Ryzen и Mac, выбранные Python-тесты и проверка слоёв прошли с кодом 0. Перепись: VM платформы **33**, нарушений **290**, новых `::warning` — **0**. Ранее выполненный `archery-smoke` на Ryzen завершился с кодом **0**; архив — `/mnt/shared/gothic-ai/e2e/claude-platform-services/archery-smoke-archive-20261111`.
 
 ## Приёмка
 

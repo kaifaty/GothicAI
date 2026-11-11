@@ -1,5 +1,6 @@
 #include "resources.h"
 #include "resources_internal.h"
+#include "contentcensus.h"
 #include "daedalus/script.h"
 
 #include <filesystem>
