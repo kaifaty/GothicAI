@@ -115,7 +115,7 @@
 ## Как получено
 
 ```sh
-gothic-body-runner -g "$GOTHIC_DIR" -g2 --world NEWWORLD.ZEN --society-export "$PWD/world.json"
+gothic-body-runner -g "$GOTHIC_DIR" --world NEWWORLD.ZEN --society-export "$PWD/world.json"
 python3 scripts/society_day_report.py --world world.json --config data/society/config.json \
   --tool OpenGothic/build/opengothic/gothic-society-day --out reports/society/2026-11-05-teacher-day
 ```
