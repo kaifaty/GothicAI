@@ -3,14 +3,18 @@
     BLENDER_USER_RESOURCES=~/.local/share/gothic-ai/mpfb/blender \
       Blender -b <run>/body.blend -P outfit_build.py -- <run> [pieces]
 
-<run> is a RIG=1 run of mpfb_body.py (work/body/rig1). Writes <run>/outfit.blend with the pieces as mesh objects
-(custom property outfit_piece = name, material per piece) next to the body, and <run>/outfit/<view>.png renders.
-Pieces: trousers, boots (more follow: vest, belt, bracers, guards). Plan and acceptance:
-reports/content/2026-11-clothing/outfit-pilot.md.
+<run> is a RIG=1 run of mpfb_body.py with its body.blend. Writes <run>/outfit.blend with the pieces as mesh objects
+(custom property outfit_piece = name; outfit_material = the material several objects share) next to the body, and
+<run>/outfit/<view>.png renders. Pieces, in this order (a later one is built over the earlier):
+trousers,boots,vest,belt,flap,bracers,guards. What was built and how it is judged:
+reports/content/2026-11-clothing/outfit-pilot.md. mpfb_export.py run on outfit.blend exports the pieces.
 
-- Cloth pieces start from MPFB's helper-tights shell, eased off the body and draped by Blender's cloth simulation
-  with the body as a collider: the folds come from the simulation, not from a brush.
-- Leather pieces are built over the body's surface with an offset, a thickness and a rounded shape.
+- Cloth (trousers, vest) starts from MPFB's helper-tights shell, eased off the body and draped by Blender's cloth
+  simulation with the body as a collider: the folds come from the simulation, not from a brush. Where a stiff piece
+  straps the cloth down it is pinned close to the leg before the simulation.
+- Leather (belt, bracers, straps, guards, cuffs) is a Tube: a clean grid on rays from the limb's axis out to the
+  surface under it, plus a gap. Outlines are carved along a curve (carve), not along whole faces.
+- Laces, buckles and studs are small geometry; the boots are MPFB's helper sock with a flat welted sole.
 Units: Blender metres of the MPFB basemesh (body height 1.742 m before the export's scale).
 """
 import bpy, bmesh, os, sys, json, math
