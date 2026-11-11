@@ -54,8 +54,8 @@ FACE_BROWS_REPLY = (
     "[angry] Всё, хватит меня допрашивать, иди отсюда и не мешай мне работать!"
 )
 FACE_BROWS_HOLD_S = 30.0  # after the reply: the bench has the npc say two lines of the original voice
-# the face of the one listening: Lobart says two lines to Vino (the first short: with a voice the first line of a
-# reply ends at its first clause); Vino listens with his attitude to Lobart
+# the face of the one listening: Lobart says two lines to Vino (the first short: with a voice the first
+# line of a reply ends at its first clause); Vino listens with his attitude to Lobart
 FACE_LISTEN_CUE = "[Событие: Вино стоит рядом без дела]"
 FACE_LISTEN_LINE = (
     "[neutral] Вино, послушай меня. "
@@ -124,13 +124,19 @@ async def face_brows_demo(link: GameLink, dialogue: DialogueManager, npc: str = 
 async def face_listen_demo(
     link: GameLink, dialogue: DialogueManager, npc: str = FACE_NPC, speaker: str = LOBART
 ) -> dict[str, str]:
-    """Vino on open ground, the hero 2 m in front of him, Lobart 1.5 m in front of him (the camera between them
-    and Vino films Vino's face); Lobart says the given lines to Vino through the off backend and the voice (his
-    nods on the accents, the face he listens with); Vino stays FACE_LISTEN_HOLD_S after them for the bench."""
+    """Vino on open ground, the hero 2 m in front of him, Lobart 1.5 m in front of him (the camera between
+    them and Vino films Vino's face); Lobart says the given lines to Vino through the off backend and the
+    voice (his nods on the accents, the face he listens with); Vino stays FACE_LISTEN_HOLD_S after them for
+    the bench."""
     results: dict[str, str] = {}
     off = model_off(dialogue)
     dialogue.quick = None
-    off.given("дано: реплики Лобарта Вино для лица слушающего", who=speaker, when=FACE_LISTEN_CUE, line=FACE_LISTEN_LINE)
+    off.given(
+        "дано: реплики Лобарта Вино для лица слушающего",
+        who=speaker,
+        when=FACE_LISTEN_CUE,
+        line=FACE_LISTEN_LINE,
+    )
     started: list[str] = []
     link.listeners.append(lambda msg: started.append(msg.line) if isinstance(msg, LineStarted) else None)
 
