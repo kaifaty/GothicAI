@@ -35,6 +35,8 @@ uint32_t RendererInternal::nextPot(uint32_t x) {
   }
 
 uint32_t Renderer::benchVsmLampSides = 0;
+uint32_t Renderer::benchVsmStudy     = 0;
+float    Renderer::benchVsmStudyK    = 1;
 
 Renderer::Renderer() {
   auto& device = Resources::device();
@@ -772,6 +774,8 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   wview.setVsmLampNear(settings.vsmLampNearCm);
   // the faces are two-sided only where the mesh shader draws them (main.vert); the vertex path culls as before
   wview.setVsmLampSides(!Shaders::options().doMeshShading ? 1u : (benchVsmLampSides!=0 ? benchVsmLampSides : settings.vsmLampSides));
+
+  wview.setVsmStudy(benchVsmStudy, benchVsmStudyK);
 
   static bool updFr = true;
   if(updFr){

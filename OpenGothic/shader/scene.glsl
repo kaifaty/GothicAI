@@ -49,7 +49,8 @@ struct SceneDesc {
   mat4  viewProjectPrev; // the previous camera with this frame's jitter: only on vec4(d,0)
   float vsmLampNear;     // cm: a lamp's fixture this close to its light casts no shadow ([INTERNAL] vsmLampNearCm)
   uint  vsmLampSides;    // VSM lamps: a cube face keeps the far side (1), both of the world mesh (2), of objects too (3)
-  float vsmPad1, vsmPad2;
+  uint  vsmStudy;        // bench `vsm study <bits>`: the study of facets at a glancing light (0 in the game)
+  float vsmStudyK;       // bench `vsm study <bits> <k>`: the study's scale (1 by default)
   };
 
 struct LightSource {

@@ -545,10 +545,25 @@ void main() {
     // the plane for the shadow's depth test: the geometric one, unless it disagrees much (a silhouette, a normal map)
     geomNormal = dot(geomNormal,geomNormal)>1e-12 ? normalize(geomNormal) : vec3(0);
     geomNormal *= sign(dot(geomNormal, normal));
-    const vec3 planeN = dot(geomNormal, normal)>=0.3 ? geomNormal : normal;
+    vec3 planeN = dot(geomNormal, normal)>=0.3 ? geomNormal : normal;
+    // bench `vsm study <bits> [k]` (reports/render-features/2026-11-11-facet-shards): 256 the shading normal's plane
+    // everywhere; 512 for a facet that stands edge-on or with the back to the lamp; 4096 classes as colours
+    const uint  study  = scene.vsmStudy;
+    const float facetL = -dot(normalize(ldir), planeN);
+    if((study & 256u)!=0u || ((study & 512u)!=0u && facetL<0.03*scene.vsmStudyK))
+      planeN = normal;
     // too faint to show a soft edge: under ~1/500 of white before the tonemapper
     const bool faint  = max(color.r, max(color.g, color.b))*light*max(1.0, scene.exposure)*0.25 < 0.002;
-    light *= omniShadow(pos.xyz - cenPosition.xyz, planeN, cenPosition.w, lights[lightId].sourceSize, faint);
+    const float shadow = omniShadow(pos.xyz - cenPosition.xyz, planeN, cenPosition.w, lights[lightId].sourceSize, faint);
+    if((study & 4096u)!=0u) {
+      // by the facet's own cosine to the lamp (red turned away, yellow under 0.03, blue-grey the rest) and by the
+      // shadow's answer (dark shadowed, bright lit)
+      vec3 c = facetL<=0 ? vec3(1,0,0) : (facetL<0.03 ? vec3(1,1,0) : vec3(0.35,0.45,0.7));
+      c *= shadow>0.5 ? 1.0 : 0.25;
+      outColor = vec4(c*min(light, 1.0)*0.5*max(1.0, scene.exposure), 0.0);
+      return;
+      }
+    light *= shadow;
 #if defined(VSM_LAMP_PROBE)
     if(push.probeStamp!=0) {
       // 0 lamp-pixel pairs at the filter, 1 pixels lit by any lamp, 2 pairs past 'faint', 3 out after the first

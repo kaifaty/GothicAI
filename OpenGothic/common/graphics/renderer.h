@@ -28,6 +28,9 @@ class Renderer final {
     void resetTemporal();
     // bench `vsm sides 1|2|3|0`: the sides a lamp's cube face keeps (settings.vsmLampSides) instead of the setting
     static uint32_t benchVsmLampSides;
+    // bench `vsm study <bits>`: the shadow test on facets at a glancing light (scene.vsmStudy)
+    static uint32_t benchVsmStudy;
+    static float    benchVsmStudyK;
 
     void draw(Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId,
               Tempest::VectorImage::Mesh& uiLayer, Tempest::VectorImage::Mesh& numOverlay,

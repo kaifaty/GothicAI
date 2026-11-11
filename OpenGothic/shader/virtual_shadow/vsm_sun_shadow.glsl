@@ -37,8 +37,20 @@ vec2 vsmSunTexelPos(vec2 shPos, int mip) {
 
 // shPos0: the receiver in the shadow space of shadowMat; shPosDx, shPosDy: its neighbours one pixel aside;
 // planeN: the receiver plane's normal in shadowMat's world space. 1 lit, 0 in shadow.
+// depth change per texel of 'mip' along the plane with the normal planeN (shadowMat's world space)
+vec2 vsmSunPlaneSlope(const mat4 shadowMat, const vec3 planeN, const float minCos, const int mip) {
+  const vec3  r0 = vec3(shadowMat[0][0], shadowMat[1][0], shadowMat[2][0]);
+  const vec3  r1 = vec3(shadowMat[0][1], shadowMat[1][1], shadowMat[2][1]);
+  const vec3  r2 = vec3(shadowMat[0][2], shadowMat[1][2], shadowMat[2][2]);
+  const vec3  pm = vec3(dot(r0,planeN)/dot(r0,r0), dot(r1,planeN)/dot(r1,r1), dot(r2,planeN)/dot(r2,r2));
+  const float mz = max(pm.z, minCos*length(pm)); // steeper than that counts as that
+  return -(pm.xy/mz) * (2.0*float(1 << mip)/float(VSM_CLIPMAP_SIZE));
+  }
+
+// minCos: the receiver plane counts as no steeper to the light than this cosine; planeN2: a second plane through the
+// receiver, a texel is lit when it clears either (planeN again: one plane)
 float vsmSunShadow(const vec3 shPos0, const vec2 shPosDx, const vec2 shPosDy, const mat4 shadowMat, const vec3 planeN,
-                   const float mipBias, in utexture3D pageTbl, in texture2D pageData) {
+                   const vec3 planeN2, const float mipBias, const float minCos, in utexture3D pageTbl, in texture2D pageData) {
   int mip = vsmSunLod((shPosDx - shPos0.xy)*VSM_CLIPMAP_SIZE, (shPosDy - shPos0.xy)*VSM_CLIPMAP_SIZE, mipBias);
   mip = vsmCalcMipIndex(shPos0.xy, mip);
 
@@ -56,12 +68,8 @@ float vsmSunShadow(const vec3 shPos0, const vec2 shPosDx, const vec2 shPosDy, co
     return 1.0;
 
   // receiver plane in shadow space: depth change per texel of this mip
-  const vec3  r0 = vec3(shadowMat[0][0], shadowMat[1][0], shadowMat[2][0]);
-  const vec3  r1 = vec3(shadowMat[0][1], shadowMat[1][1], shadowMat[2][1]);
-  const vec3  r2 = vec3(shadowMat[0][2], shadowMat[1][2], shadowMat[2][2]);
-  const vec3  pm = vec3(dot(r0,planeN)/dot(r0,r0), dot(r1,planeN)/dot(r1,r1), dot(r2,planeN)/dot(r2,r2));
-  const float mz = max(pm.z, 0.1*length(pm)); // steeper than ~84 degrees counts as 84
-  const vec2  dz = -(pm.xy/mz) * (2.0*float(1 << mip)/float(VSM_CLIPMAP_SIZE));
+  const vec2  dz  = vsmSunPlaneSlope(shadowMat, planeN,  minCos, mip);
+  const vec2  dz2 = vsmSunPlaneSlope(shadowMat, planeN2, minCos, mip);
   const float bias = 2.0/65535.0;
 
   const vec2  t    = vsmSunTexelPos(shPos0.xy, mip);
@@ -71,7 +79,8 @@ float vsmSunShadow(const vec3 shPos0, const vec2 shPosDx, const vec2 shPosDy, co
 
   // centre texel: the answer for the taps without a page
   const ivec2 near = ivec2(floor(t + 0.5));
-  const float lc   = (zc==0 || zc < refZ + dot(dz, vec2(near) - t)) ? 1.0 : 0.0;
+  const vec2  dn   = vec2(near) - t;
+  const float lc   = (zc==0 || zc < refZ + max(dot(dz, dn), dot(dz2, dn))) ? 1.0 : 0.0;
 
   const vec4 wx = vec4(1.0-f.x, 1.0, 1.0, f.x);
   const vec4 wy = vec4(1.0-f.y, 1.0, 1.0, f.y);
@@ -84,12 +93,20 @@ float vsmSunShadow(const vec3 shPos0, const vec2 shPosDx, const vec2 shPosDy, co
       const ivec2 tx = base + ivec2(x-1, y-1);
       const float z  = vsmSunTexel(tx, mip, pageTbl, pageData);
       float lit = lc;
-      if(z>=0)
-        lit = (z==0 || z < refZ + dot(dz, vec2(tx) - t)) ? 1.0 : 0.0;
+      if(z>=0) {
+        const vec2 dt = vec2(tx) - t;
+        lit = (z==0 || z < refZ + max(dot(dz, dt), dot(dz2, dt))) ? 1.0 : 0.0;
+        }
       sum += lit*wx[x]*wy[y];
       }
     }
   return sum/9.0;
+  }
+
+// the plane steeper than ~84 degrees to the light counts as 84
+float vsmSunShadow(const vec3 shPos0, const vec2 shPosDx, const vec2 shPosDy, const mat4 shadowMat, const vec3 planeN,
+                   const float mipBias, in utexture3D pageTbl, in texture2D pageData) {
+  return vsmSunShadow(shPos0, shPosDx, shPosDy, shadowMat, planeN, planeN, mipBias, 0.1, pageTbl, pageData);
   }
 
 #endif
