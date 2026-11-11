@@ -4,8 +4,6 @@
 #include <Tempest/Log>
 
 #include "utils/string_frm.h"
-#include "world/objects/npc.h"
-#include "world/world.h"
 #include "game/serialize.h"
 #include "skeleton.h"
 #include "animmath.h"
@@ -1046,17 +1044,17 @@ bool Pose::hasLayerEvents(const Pose::Layer& l) {
       l.seq->data->gfx.size()>0;
   }
 
-void Pose::processSfx(Npc &npc, uint64_t tickCount) {
+void Pose::processSfx(AnimationGroundSound &npc, uint64_t tickCount) {
   for(auto& i:lay)
     i.seq->processSfx(layerTime(i,lastUpdate),i.sAnim,layerTime(i,tickCount),&npc,nullptr);
   }
 
-void Pose::processSfx(Interactive& mob, uint64_t tickCount) {
+void Pose::processSfx(AnimationSound& mob, uint64_t tickCount) {
   for(auto& i:lay)
     i.seq->processSfx(layerTime(i,lastUpdate),i.sAnim,layerTime(i,tickCount),nullptr,&mob);
   }
 
-void Pose::processPfx(MdlVisual& visual, World& world, uint64_t tickCount) {
+void Pose::processPfx(MdlVisual& visual, AnimationPfx& world, uint64_t tickCount) {
   for(auto& i:lay)
     i.seq->processPfx(layerTime(i,lastUpdate),i.sAnim,layerTime(i,tickCount),visual,world);
   }
@@ -1648,7 +1646,7 @@ bool Pose::updateFootIk(const FootIk::Input& in) {
   return true;
   }
 
-void Pose::setAnimRotate(const AnimationSolver &solver, const Npc &npc, WeaponState fightMode, AnimationSolver::TurnType turn, int dir) {
+void Pose::setAnimRotate(const AnimationSolver &solver, WalkBit walkMode, uint64_t tickCount, WeaponState fightMode, AnimationSolver::TurnType turn, int dir) {
   const Animation::Sequence *sq = nullptr;
   if(dir==0) {
     if(rotation!=nullptr) {
@@ -1667,7 +1665,7 @@ void Pose::setAnimRotate(const AnimationSolver &solver, const Npc &npc, WeaponSt
     ani = (dir<0)?AnimationSolver::Anim::RotL:AnimationSolver::Anim::RotR;
     }
 
-  sq = solver.solveAnim(ani,fightMode,npc.walkMode(),*this);
+  sq = solver.solveAnim(ani,fightMode,walkMode,*this);
   if(rotation!=nullptr) {
     if(sq!=nullptr && rotation->name==sq->name)
       return;
@@ -1676,16 +1674,16 @@ void Pose::setAnimRotate(const AnimationSolver &solver, const Npc &npc, WeaponSt
     }
   if(sq==nullptr)
     return;
-  if(startAnim(solver,sq,0,BS_FLAG_FREEHANDS,Pose::NoHint,npc.world().tickCount())) {
+  if(startAnim(solver,sq,0,BS_FLAG_FREEHANDS,Pose::NoHint,tickCount)) {
     rotation = sq;
     return;
     }
   }
 
-const Animation::Sequence* Pose::setAnimItem(const AnimationSolver &solver, Npc &npc, std::string_view scheme, int state) {
+const Animation::Sequence* Pose::setAnimItem(const AnimationSolver &solver, uint64_t tickCount, std::string_view scheme, int state) {
   string_frm T_ID_STAND_2_S0("T_",scheme,"_STAND_2_S0");
   const Animation::Sequence *sq = solver.solveFrm(T_ID_STAND_2_S0);
-  if(startAnim(solver,sq,0,BS_ITEMINTERACT,Pose::NoHint,npc.world().tickCount())) {
+  if(startAnim(solver,sq,0,BS_ITEMINTERACT,Pose::NoHint,tickCount)) {
     itemUseSt     = 0;
     itemUseDestSt = state;
     return sq;

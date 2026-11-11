@@ -11,8 +11,6 @@
 
 #include "game/constants.h"
 #include "physics/dynamicworld.h"
-#include "world/objects/npc.h"
-#include "world/world.h"
 #include "skeleton.h"
 #include "ikmath.h"
 
@@ -277,50 +275,9 @@ void FootIk::setSkeleton(const Skeleton* sk) {
     }
   }
 
-FootIk::Input FootIk::mkInput(const Npc& npc, World& world, const Matrix4x4& obj,
-                              bool alignedToGround, uint64_t dt, const AimWalk* walk) const {
-  Input in;
-  in.dt     = dt;
-  in.floorY = obj.at(3,1);
-  in.crouch = npc.aimCrouch()*AimCrouch*scale;
-  // the test bench measures the ground with IK off too, and under a body tilted to the ground as
-  // a whole (surface_align): that is the baseline
-  if(!valid || (!enabled && !probing) || (alignedToGround && !probing))
-    return in;
-  if(npc.isDead() || npc.isUnconscious() || npc.interactive()!=nullptr)
-    return in;
-  if(npc.isInAir() || npc.isFalling() || npc.isSlide() || npc.isSwim()) {
-    in.hardOff = true;
-    return in;
-    }
-
-  const uint32_t bs = npc.bodyStateMasked() & BS_MAX;
-  if(bs==(BS_JUMP & BS_MAX) || bs==(BS_FALL & BS_MAX) || bs==(BS_SWIM & BS_MAX) ||
-     bs==(BS_DIVE & BS_MAX) || bs==(BS_CLIMB & BS_MAX)) {
-    in.hardOff = true;
-    return in;
-    }
-  // A melee roll goes over the ground on the body, off as in a jump; a dash fades out as the jump back does
-  if(bs==(BS_PARADE & BS_MAX) && npc.isMeleeDodgeRoll()) {
-    in.hardOff = true;
-    return in;
-    }
-  // Two legs: standing, locomotion, aiming a bow (a shot is a frame of BS_HIT) and casting a spell, the
-  // feet stand still there; other animations (attacks, items, ...) fade out.
-  // Four legs keep it: a beast attacks standing on the ground, and is not tilted to it otherwise
-  const auto ws    = npc.weaponState();
-  const bool bow   = ws==WeaponState::Bow || ws==WeaponState::CBow;
-  const bool stand = bs==BS_NONE || bs==BS_AIMNEAR || bs==BS_AIMFAR || bs==BS_CASTING || (bow && bs==(BS_HIT & BS_MAX));
-  if(!quadruped && !stand && bs!=(BS_WALK & BS_MAX) && bs!=(BS_SNEAK & BS_MAX) && bs!=BS_RUN && bs!=BS_SPRINT)
-    return in;
-
+FootIk::Input FootIk::mkGroundInput(Input in, const DynamicWorld& physics, const Matrix4x4& obj,
+                                    bool alignedToGround, const AimWalk* walk) const {
   const Vec3 pos = position(obj);
-  if(!world.isInPfxRange(pos))
-    return in;
-  auto physic = world.physic();
-  if(physic==nullptr)
-    return in;
-
   for(size_t i=0; i<numLegs; ++i) {
     const Vec3 ankle = legs[i].animAnkle;
     if(std::abs(ankle.x-pos.x)>spread || std::abs(ankle.z-pos.z)>spread)
@@ -334,13 +291,13 @@ FootIk::Input FootIk::mkInput(const Npc& npc, World& world, const Matrix4x4& obj
     // Walls are not ground: running against a rock, the rays hit its side
     const float top    = in.floorY + MaxRaise + RayMargin + legs[i].reach;
     const float bottom = in.floorY - MaxDrop - legs[i].reach;
-    auto r = physic->ray({ankle.x, top, ankle.z}, {ankle.x, bottom, ankle.z});
+    auto r = physics.ray({ankle.x, top, ankle.z}, {ankle.x, bottom, ankle.z});
     in.ground[i].hasCol = r.hasCol && !isWall(r.n);
     in.ground[i].y      = r.v.y;
     in.ground[i].n      = r.n;
     if(legs[i].toe!=size_t(-1)) {
       const Vec3 toe = legs[i].animToe;
-      auto t = physic->ray({toe.x, top, toe.z}, {toe.x, bottom, toe.z});
+      auto t = physics.ray({toe.x, top, toe.z}, {toe.x, bottom, toe.z});
       in.ground[i].toeCol = t.hasCol && !isWall(t.n);
       in.ground[i].toeY   = t.v.y;
       }
@@ -354,7 +311,7 @@ FootIk::Input FootIk::mkInput(const Npc& npc, World& world, const Matrix4x4& obj
         supported = false;
         break;
         }
-      auto ray = physic->ray({foot.x,in.floorY+MaxRaise+RayMargin,foot.z},
+      auto ray = physics.ray({foot.x,in.floorY+MaxRaise+RayMargin,foot.z},
                              {foot.x,in.floorY-MaxDrop,foot.z});
       supported &= ray.hasCol && !isWall(ray.n);
       ground[i] = ray.v.y;

@@ -14,6 +14,7 @@
 #include "graphics/mesh/facerig.h"
 #include "graphics/mesh/eyes.h"
 #include "graphics/mesh/gaze.h"
+#include "graphics/mesh/speechbrows.h"
 #include "graphics/mesh/speechcues.h"
 #include "graphics/mesh/quiver.h"
 #include "graphics/mesh/renderrig.h"
@@ -235,10 +236,11 @@ class MdlVisual final {
     void                           stopDlgAnim    (Npc& npc);
     // a voiced line: the mouth follows the voice instead of the talk loop
     void                           startSpeech    (Npc& npc, std::shared_ptr<LipSync::Track> voice);
-    void                           stopSpeech     () { mouth.stop(); }
+    void                           stopSpeech     () { mouth.stop(); voiceBrows.stop(); }
     void                           updateMouth    (Npc& npc, uint64_t dt);
     // the hands and the head while it speaks (TalkGestures)
-    void                           setTalkMood    (std::string_view mood) { gestures.setMood(TalkGestures::moodOf(mood)); }
+    // the mood of a line it starts to say (line: its id of the AI, empty: a line of the game)
+    void                           setTalkMood    (std::string_view mood, std::string_view line);
     void                           updateGestures (Npc& npc, uint64_t dt);
     void                           updateBlink    (Npc& npc, uint64_t dt);
     // the own head's face (FaceRig): its eyes and weights to the deformation of the head, near only; after the pose
@@ -347,6 +349,8 @@ class MdlVisual final {
                                              const Tempest::Vec3& bottom);
     void setupGestures();
     void updateEyes(Npc& npc, uint64_t now);
+    // the brows on the accents of its voice (SpeechBrows): the moves found by now to the face; probing - the log
+    void updateBrows(Npc& npc, uint64_t now, bool probing);
     // a gesture of the profile from `at`: its shapes (FaceRig) and, of zone "eyes", what the eyes do (Eyes)
     bool playCue(std::string_view name, bool mirror, float hold, uint64_t at, uint64_t now);
     // the middle of the own head's eyes in the frame of the head bone (false: no eyes of its own, Gaze aims from the bone)
@@ -385,6 +389,8 @@ class MdlVisual final {
     Tempest::Vec3                  lookAt;                // ...where: the eyes go there too
     SpeechCues                     cues;                  // when the gestures of the line said now start
     SpeechCues::Out                cueStarts;
+    SpeechBrows                    voiceBrows;            // the brows on the accents of its voice (speech_brows)
+    size_t                         accentsLogged = 0;     // of voiceBrows, in the log (the watched npc)
     static constexpr uint64_t      ManualLeakMs = 2000;   // a leak started by hand: the line it makes, ms
     uint32_t                       cueCount = 0;          // gestures started by hand: the seed of their side
     float                          faceUploadUs = 0;      // the last setDeformation of the face, µs (test bench)

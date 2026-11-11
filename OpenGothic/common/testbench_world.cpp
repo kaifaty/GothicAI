@@ -412,7 +412,7 @@ bool worldCommand(const WorldContext& context,const std::string& line,const std:
       }
     else if(a.size()==2 && a[1]=="stop") {
       if(!state.perfSegment.empty())
-        TextureDump::write(state.perfSegment,w);
+        TextureDump::write(state.perfSegment,w.view());
       if(state.perfSegment.starts_with("streaming-flythrough/")) {
         const auto textures=Resources::textureStats();
         char textureSeconds[48], shortfallSeconds[48];

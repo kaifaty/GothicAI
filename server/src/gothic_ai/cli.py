@@ -1043,6 +1043,7 @@ def main() -> None:
             "gossip_demo",
             "face_cues_demo",
             "face_eyes_demo",
+            "face_brows_demo",
             "day",
             "noise",
             "amends_deal",

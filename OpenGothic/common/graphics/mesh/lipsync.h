@@ -17,15 +17,19 @@ class Sound;
 // wide open one (the original game loops through them while a line lasts). Here every syllable of the
 // voice picks a shape that opens about as wide as the syllable is loud, and the shape follows the
 // loudness from moment to moment: the mouth closes in pauses and opens wide on loud vowels.
+// The track also knows the tone of the voice per 10 ms (the brows of the speaker follow it, SpeechBrows).
 class LipSync final {
   public:
     // Loudness of a voice line, a value per 10 ms. Filled at once from a sound file, or bit by bit
-    // from a voice that is still arriving (the bridge's streamed TTS)
+    // from a voice that is still arriving (the bridge's streamed TTS).
+    // And its tone (fundamental frequency) per 10 ms, found as the sound arrives: YIN (de Cheveigne, Kawahara 2002)
+    // on 30 ms of the sound brought down to 8 kHz, 60..400 Hz, a step without a clear period has none. A step's tone
+    // is known once 25 ms of the sound after it is here (or the sound is finished).
     class Track final {
       public:
         explicit Track(uint32_t rate);
-        // nullptr if the sound has no 16-bit samples
-        static std::shared_ptr<Track> fromSound(const Tempest::Sound& snd);
+        // nullptr if the sound has no 16-bit samples; name: of the line (the seed of what the face does with it)
+        static std::shared_ptr<Track> fromSound(const Tempest::Sound& snd, std::string_view name = {});
 
         void     append(const int16_t* pcm, size_t count, uint16_t channels = 1);
         void     finish();
@@ -42,6 +46,16 @@ class LipSync final {
         // not one (the gestures want a pause after their word, not the one before it)
         bool     quietRun(uint64_t from, float below, uint64_t minMs, uint64_t& start, uint64_t& end) const;
 
+        // the tone at `ms`: Hz, 0 - none there or not known yet
+        float    toneHz(uint64_t ms) const;
+        // the tone at `ms` in semitones from the median of the line's toned steps so far; false: none
+        bool     tone(uint64_t ms, float& semitones) const;
+        // ms of the line whose tone is known (the steps before it)
+        uint64_t toneKnownMs() const;
+        // the name of the line, if its maker gave one (a sound file, a line id of the bridge)
+        void     setName(std::string_view n);
+        auto     name() const -> std::string;
+
       private:
         struct Biquad final {
           float b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0;
@@ -49,6 +63,10 @@ class LipSync final {
           float run(float x);
           };
         float    implLevel(size_t step) const;
+        void     pushTone(float x);
+        void     findTones(bool flush);
+        float    yin(size_t at) const;
+        float    implMedian() const;
 
         mutable std::mutex   sync;
         uint32_t             rate     = 0;
@@ -60,6 +78,19 @@ class LipSync final {
         float                peakDb   = -100;
         bool                 finished = false;
         std::atomic<int64_t> played{-1};
+
+        // the tone: the sound without what lies above 1 kHz, brought down to 8 kHz
+        Biquad               toneLp[2];
+        double               decStep  = 1;  // input samples per sample at 8 kHz
+        double               decAt    = 1;  // where the next one lies, in input samples from the last one
+        float                decLast  = 0;
+        std::vector<float>   dec;           // at 8 kHz, from sample decBase on (the older ones are dropped)
+        size_t               decBase  = 0;
+        std::vector<float>   hz;            // per step, 0: none
+        mutable float        medianSt = 0;  // log2 of the median tone of the toned steps, in semitones
+        mutable size_t       medianOf = 0;  // ...of so many toned steps
+        size_t               toned    = 0;
+        std::string          lineName;
       };
 
     // what to show: two VISEME frames mixed, then scaled
@@ -75,6 +106,7 @@ class LipSync final {
       bool     valid     = false;  // the head has mouth shapes
       bool     active    = false;
       float    level     = 0;      // of the voice at this moment
+    float    tone      = 0;      // semitones from the median of the line, NaN: none here
       float    mouth     = 0;      // smoothed: how wide the voice wants the mouth open
       float    open      = 0;      // how wide it is shown, relative to the widest shape of the head
       Shape    shape;
@@ -95,6 +127,9 @@ class LipSync final {
     void           stop();                          // the line is cut off: the mouth closes
     bool           isSpeaking(uint64_t now) const;  // a voice line moves the mouth
     uint64_t       voiceLeft(uint64_t now) const;   // ms of the voice left, 0: none or not known yet (streaming)
+    // the rule a syllable starts by (as update finds them): the voice rises `rise` above the quietest moment after the
+    // last one, which ended when the voice fell below `dip` of its loudest moment
+    static void    syllableRule(float& dip, float& rise);
     uint32_t       syllableCount() const { return syllables; }  // syllables of voices started so far
     float          syllablePeak()  const { return sylLoud; }    // how loud the latest one gets, 0..1
     float          voiceLevel()    const { return lvl; }        // how loud the voice is now, 0..1

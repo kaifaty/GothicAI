@@ -5,10 +5,10 @@
 #include <Tempest/Vec>
 #include <memory>
 
-class Npc;
+class AnimationGroundSound;
+class AnimationSound;
 class MdlVisual;
-class Interactive;
-class World;
+class AnimationPfx;
 
 class Animation final {
   public:
@@ -127,9 +127,9 @@ class Animation final {
                                                            const LogicEventObserver* observer = nullptr) const;
       void                                   logicEvents(std::vector<LogicEvent>& out) const;
       LogicEvent                             logicTag(size_t index) const;
-      void                                   processSfx   (uint64_t barrier, uint64_t sTime, uint64_t now, Npc* npc, Interactive* mob) const;
-      void                                   processPfx   (uint64_t barrier, uint64_t sTime, uint64_t now, MdlVisual& visual, World& world) const;
-      void                                   processPfx   (const MdsParticleEffect& p, MdlVisual& visual, World& world) const;
+      void                                   processSfx   (uint64_t barrier, uint64_t sTime, uint64_t now, AnimationGroundSound* npc, AnimationSound* mob) const;
+      void                                   processPfx   (uint64_t barrier, uint64_t sTime, uint64_t now, MdlVisual& visual, AnimationPfx& world) const;
+      void                                   processPfx   (const MdsParticleEffect& p, MdlVisual& visual, AnimationPfx& world) const;
 
       Tempest::Vec3                          speed(uint64_t at, uint64_t dt) const;
       Tempest::Vec3                          translateXZ(uint64_t at) const;

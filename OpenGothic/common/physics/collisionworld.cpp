@@ -527,6 +527,7 @@ bool CollisionWorld::CollisionBody::addImpulse(const Tempest::Vec3& impulseNs, N
     interface.AddImpulse(id,JPH::Vec3(impulseNs.x,impulseNs.y,impulseNs.z));
   noiseCulprit=culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<daedalus::INpc>();
   noiseCulpritUntilStep=owner->impl->simulationStep+300;
+  noiseCulpritResolver=&noiseCulpritNpc;
   setTraceCulprit(culprit);
   return true;
   }
@@ -1627,6 +1628,7 @@ void CollisionWorld::tick(uint64_t dt) {
       if(!knownCulprit && current!=nullptr && current->user_ptr!=nullptr) continue;
       body->noiseCulprit=culprit->handlePtr();
       body->noiseCulpritUntilStep=impact.step+300;
+      body->noiseCulpritResolver=&noiseCulpritNpc;
       body->setTraceCulprit(culprit);
       }
     }

@@ -12,7 +12,7 @@
 #include "graphics/worldview.h"
 #include "pfxobjects.h"
 #include "particlefx.h"
-#include "world/objects/npc.h"
+#include "particletarget.h"
 #include "world/chunkresidency.h"
 
 #include <Tempest/Log>
