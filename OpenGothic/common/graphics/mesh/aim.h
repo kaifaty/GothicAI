@@ -77,7 +77,7 @@ class Aim final {
       float edgeDistance = 0, edgeDrop = 0, edgeHeight = 0;
       LeanLine line = LeanLine::None;
       };
-    LeanResult     leanNeeded(const DynamicWorld& physics, const Tempest::Vec3& origin, float rotation, const Tempest::Vec3& lookDirection,
+    LeanResult     leanNeeded(const DynamicWorld* physics, const Tempest::Vec3& origin, float rotation, const Tempest::Vec3& lookDirection,
                              const Tempest::Vec3& shotDirection, float down, const LeanEdge& edge) const;
     // Predicts the head from the last pose with its actual smoothed torso rotation frozen.
     // Only the candidate hip bend changes. origin is at the feet; angle is in radians.

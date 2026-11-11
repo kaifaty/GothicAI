@@ -478,13 +478,13 @@ void Item::moveEvent() {
     world.invalidateVobIndex();
   }
 
-void InventoryRenderer::drawItem(int x, int y, int w, int h, const ::Item& item) {
-  auto& itData = item.handle();
+void Item::drawInventory(InventoryRenderer& renderer, int x, int y, int w, int h) const {
+  auto& itData = handle();
   if(auto mesh = Resources::loadMesh(itData.visual)) {
     auto     bbox = mesh->bbox();
     float    sz   = (bbox[1]-bbox[0]).length();
     auto     mv   = (bbox[1]+bbox[0])*0.5f;
-    ItmFlags flg  = ItmFlags(item.mainFlag());
+    ItmFlags flg  = ItmFlags(mainFlag());
 
     mv = Vec3(mv.x,mv.y,mv.z);
 
@@ -581,6 +581,6 @@ void InventoryRenderer::drawItem(int x, int y, int w, int h, const ::Item& item)
     mat.scale(sz);
     mat.translate(-mv);
 
-    drawItem(x,y,w,h,*mesh,itData.material,mat);
+    renderer.drawItem(x,y,w,h,*mesh,itData.material,mat);
     }
   }

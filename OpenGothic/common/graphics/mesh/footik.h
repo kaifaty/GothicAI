@@ -9,8 +9,6 @@
 #include <vector>
 
 class Skeleton;
-class Npc;
-class World;
 class DynamicWorld;
 
 // Foot IK: keeps the feet of humanoids and four-legged creatures on uneven ground.
@@ -99,9 +97,9 @@ class FootIk final {
     bool           isValid() const { return valid; }
     bool           isQuadruped() const { return valid && quadruped; }
 
-    // Ground under the animated feet of an npc; disabled input if the npc state does not allow IK
-    auto           mkInput(const Npc& npc, World& world, const Tempest::Matrix4x4& obj,
-                           bool alignedToGround, uint64_t dt, const class AimWalk* walk = nullptr) const -> Input;
+    float          legScale() const { return scale; }
+    auto           mkGroundInput(Input in, const DynamicWorld& physics, const Tempest::Matrix4x4& obj,
+                                  bool alignedToGround, const class AimWalk* walk) const -> Input;
     // Moves the smoothed state toward the input; true if the pose has to be rebuilt
     bool           update(const Input& in);
     // Applies IK to world-space bone matrices and records the animated ankle positions
@@ -112,9 +110,6 @@ class FootIk final {
     void           probe(Probe& p, const Input& in) const;
 
   private:
-    auto mkGroundInput(Input in, const DynamicWorld& physics, const Tempest::Matrix4x4& obj,
-                       bool alignedToGround, const class AimWalk* walk) const -> Input;
-
     struct Chain final {
       size_t              thigh = size_t(-1);
       size_t              calf  = size_t(-1);

@@ -946,23 +946,15 @@ bool Npc::updateLyingVisualHeight() {
   return true;
   }
 
-void Pose::setAnimRotate(const AnimationSolver &solver, const Npc &npc, WeaponState fightMode, AnimationSolver::TurnType turn, int dir) {
-  setAnimRotate(solver,npc.walkMode(),npc.world().tickCount(),fightMode,turn,dir);
-  }
-
-const Animation::Sequence* Pose::setAnimItem(const AnimationSolver &solver, Npc &npc, std::string_view scheme, int state) {
-  return setAnimItem(solver,npc.world().tickCount(),scheme,state);
-  }
-
-FootIk::Input FootIk::mkInput(const Npc& npc, World& world, const Matrix4x4& obj,
-                              bool alignedToGround, uint64_t dt, const AimWalk* walk) const {
-  Input in;
+FootIk::Input mkFootIkInput(const FootIk& ik, const Npc& npc, World& world, const Matrix4x4& obj,
+                              bool alignedToGround, uint64_t dt, const AimWalk* walk) {
+  FootIk::Input in;
   in.dt     = dt;
   in.floorY = obj.at(3,1);
-  in.crouch = npc.aimCrouch()*aimCrouchDepth()*scale;
+  in.crouch = npc.aimCrouch()*FootIk::aimCrouchDepth()*ik.legScale();
   // the test bench measures the ground with IK off too, and under a body tilted to the ground as
   // a whole (surface_align): that is the baseline
-  if(!valid || (!isEnabled() && !isProbing()) || (alignedToGround && !isProbing()))
+  if(!ik.isValid() || (!FootIk::isEnabled() && !FootIk::isProbing()) || (alignedToGround && !FootIk::isProbing()))
     return in;
   if(npc.isDead() || npc.isUnconscious() || npc.interactive()!=nullptr)
     return in;
@@ -988,7 +980,7 @@ FootIk::Input FootIk::mkInput(const Npc& npc, World& world, const Matrix4x4& obj
   const auto ws    = npc.weaponState();
   const bool bow   = ws==WeaponState::Bow || ws==WeaponState::CBow;
   const bool stand = bs==BS_NONE || bs==BS_AIMNEAR || bs==BS_AIMFAR || bs==BS_CASTING || (bow && bs==(BS_HIT & BS_MAX));
-  if(!quadruped && !stand && bs!=(BS_WALK & BS_MAX) && bs!=(BS_SNEAK & BS_MAX) && bs!=BS_RUN && bs!=BS_SPRINT)
+  if(!ik.isQuadruped() && !stand && bs!=(BS_WALK & BS_MAX) && bs!=(BS_SNEAK & BS_MAX) && bs!=BS_RUN && bs!=BS_SPRINT)
     return in;
 
   const Vec3 pos(obj.at(3,0),obj.at(3,1),obj.at(3,2));
@@ -998,5 +990,5 @@ FootIk::Input FootIk::mkInput(const Npc& npc, World& world, const Matrix4x4& obj
   if(physic==nullptr)
     return in;
 
-  return mkGroundInput(in,*physic,obj,alignedToGround,walk);
+  return ik.mkGroundInput(in,*physic,obj,alignedToGround,walk);
   }

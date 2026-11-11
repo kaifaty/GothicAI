@@ -820,8 +820,8 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
 
   wview.visibilityPass(cmd, 1);
   drawGBuffer(cmd, fId, wview);
-  const auto* world = GameServices::inst().world();
-  if(world!=nullptr && blood.prepare(fId, world, wview.sceneGlobals(), camera.listenerPosition().pos))
+  const auto* world = GameServices::inst().bloodDecalSource();
+  if(world!=nullptr && blood.prepare(fId, *world, wview.sceneGlobals(), camera.listenerPosition().pos))
     blood.draw(cmd, fId, wview.sceneGlobals(), gbufDiffuse, Shaders::options().doMaterialMaps ? &gbufOrm : nullptr,
                gbufNormal, zbuffer);
   // SSAO needs only the depth: ahead of the shadow maps its compute runs under their vertex work on Metal

@@ -70,6 +70,7 @@ class Gothic final : public GameServices {
     const World* world() const;
     World*       world() override;
     WorldView*   worldView() const override;
+    const BloodDecalSource* bloodDecalSource() const override;
     Npc*         player() override;
     Camera*      camera() override;
     auto         questLog() const -> const QuestLog*;

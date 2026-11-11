@@ -209,7 +209,7 @@ Vec3 Aim::appliedDirection() const {
   return poseLeanDirection;
   }
 
-Aim::LeanResult Aim::leanNeeded(const DynamicWorld& physics, const Tempest::Vec3& origin, float rotation, const Vec3& lookDirection,
+Aim::LeanResult Aim::leanNeeded(const DynamicWorld* physics, const Tempest::Vec3& origin, float rotation, const Vec3& lookDirection,
                                 const Vec3& shotDirection, float down, const LeanEdge& edge) const {
   LeanResult out;
   out.edgeDistance = edge.distance;
@@ -221,7 +221,7 @@ Aim::LeanResult Aim::leanNeeded(const DynamicWorld& physics, const Tempest::Vec3
   const Vec3 facing(std::cos(a),0,std::sin(a));
   const Vec3 look = length(lookDirection)>0.5f ? normalize(lookDirection) : facing;
   const Vec3 shot = length(shotDirection)>0.5f ? normalize(shotDirection) : look;
-  const auto* world = &physics;
+  const auto* world = physics;
   out.edge = edge.found && edge.distance<=100.f && edge.drop>100.f && down>LeanStart*Deg;
 
   struct Clearance final {

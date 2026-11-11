@@ -22,6 +22,7 @@
 #include "game/healing.h"
 #include "game/meleefighter.h"
 #include "physics/dynamicworld.h"
+#include "physics/collisionworld.h"
 #include "physics/ragdoll.h"
 #include "world/aiqueue.h"
 #include "world/npclogicalstate.h"
@@ -1448,3 +1449,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget {
   friend class NpcKeys;
   friend bool TestBench::ragdollBodyDrawable(const Npc& npc);
   };
+
+FootIk::Input mkFootIkInput(const FootIk& ik, const Npc& npc, World& world, const Tempest::Matrix4x4& obj,
+                           bool alignedToGround, uint64_t dt, const AimWalk* walk);
+Npc* noiseCulpritNpc(const CollisionWorld::CollisionBody& body, uint64_t step);

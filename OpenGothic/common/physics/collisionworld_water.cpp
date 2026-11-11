@@ -205,7 +205,8 @@ void CollisionWorld::prepareBuoyancy(std::vector<PhysicsNoise>& splashes) {
             noise.material=target.wrapper->noiseMaterial;
             noise.what=target.wrapper->noiseWhat+" splash";
             noise.body=target.wrapper->nativeId();
-            noise.culprit=target.wrapper->noiseCulpritNpc(impl->simulationStep);
+            if(target.wrapper->noiseCulpritResolver!=nullptr)
+              noise.culprit=target.wrapper->noiseCulpritResolver(*target.wrapper,impl->simulationStep);
             }
           else {
             // One splash per connected body, using its total native mass.

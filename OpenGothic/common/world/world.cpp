@@ -20,7 +20,6 @@
 #include "graphics/visualfx.h"
 #include "graphics/pfx/pfxobjects.h"
 #include "graphics/clothvisual.h"
-#include "graphics/blooddecals.h"
 #include "world/objects/globalfx.h"
 #include "world/objects/npc.h"
 #include "world/objects/item.h"
@@ -2148,8 +2147,4 @@ void World::animationPfx(const Animation::MdsParticleEffect& p, MdlVisual& visua
     e.setActive(true);
     visual.startEffect(*this,std::move(e),p.index,false);
     }
-  }
-
-bool BloodDecals::prepare(uint8_t fId, const World* world, const SceneGlobals& scene, const Tempest::Vec3& camera) {
-  return prepare(fId,static_cast<const BloodDecalSource&>(*world),scene,camera);
   }

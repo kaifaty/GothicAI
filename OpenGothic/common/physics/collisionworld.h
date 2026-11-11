@@ -123,7 +123,7 @@ class CollisionWorld final {
         ItemMaterial       noiseMaterial = MAT_WOOD;
         asset::MaterialGroup noiseSurface = asset::MaterialGroup::STONE;
         std::string         noiseWhat = "item";
-        Npc*                noiseCulpritNpc(uint64_t step) const;
+        Npc*                (*noiseCulpritResolver)(const CollisionBody&,uint64_t) = nullptr;
         std::weak_ptr<daedalus::INpc> noiseCulprit;
         uint64_t            noiseCulpritUntilStep = 0;
         uint64_t            nextNoiseStep = 0;
@@ -135,6 +135,7 @@ class CollisionWorld final {
 
       friend class CollisionWorld;
       friend class DynamicBody;
+      friend Npc* noiseCulpritNpc(const CollisionBody& body, uint64_t step);
       };
 
     class DynamicBody final : public CollisionBody {
