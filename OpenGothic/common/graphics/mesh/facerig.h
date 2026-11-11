@@ -112,6 +112,29 @@ struct FaceProfile final {
     float span() const { return onMs+holdMs+offMs; }
     };
 
+  // The face of the one listening on its nods ("listen_face", reports/content/2026-11-hero-head/eyes.md, "План: брови
+  // по тону и лицо слушающего", item 3): now and then a nod as the other one speaks (TalkGestures::heard) comes with a
+  // flash of the brows smaller and shorter than the flash gesture; a friendly listener smiles a little instead or as
+  // well (the S_FRIENDLY expression at a part of its strength); an angry or hostile one frowns a moment instead. Not
+  // on every nod: a chance and a gap (ListenFace).
+  struct Listen final {
+    // a cue of the profile, smaller and shorter
+    struct Gesture final {
+      size_t cue    = 0;
+      float  weight = 0;  // of its weights
+      float  time   = 0;  // of its times
+      };
+    float   chance = 0;  // a nod past the gap gets a face with this probability (the seed of the npc)
+    float   gapMs  = 0;  // at least this from the start of one face to the next
+    Gesture flash, frown;
+    float   smileWeight = 0;  // of the S_FRIENDLY weights
+    float   smileOnMs = 0, smileHoldMs = 0, smileOffMs = 0;
+    float   smileChance = 0;  // a friendly listener smiles instead of the flash with this probability...
+    float   smileFlash  = 0;  // ...and flashes as well with this one
+    std::vector<std::pair<uint32_t,float>> smile;  // head target -> weight at the apex: S_FRIENDLY times smileWeight
+    float smileSpan() const { return smileOnMs+smileHoldMs+smileOffMs; }
+    };
+
   std::vector<Anim>    anims;
   std::vector<Cue>     cues;
   std::vector<Leak>    leaks;     // none: the profile has no "leaks"
@@ -119,6 +142,7 @@ struct FaceProfile final {
   std::vector<uint8_t> mouth;  // per head target: a mouth shape (its name starts with a "mouth" prefix)
   std::optional<Eyes>  eyes;   // none: the eyes stay as modelled, the gestures of the eyes are left out of cues
   std::optional<Brows> brows;  // none: the brows do not follow the voice
+  std::optional<Listen> listen; // none: the face does not answer the nods of the one listening
 
   const Anim* find(std::string_view name) const;
   size_t      index(std::string_view name) const;  // size_t(-1): none
@@ -156,7 +180,13 @@ class FaceRig final {
       float       brows    = 0;      // the brows on the accents of the voice as shown: + up, - down (speech_brows)
       uint32_t    accents  = 0;      // accents of the voice found in its line (SpeechBrows, filled by its owner)
       uint32_t    browMoves = 0;     // of them, the ones that moved the brows
+      float       listen   = 0;      // the face of the one listening as shown, 0..1 of its apex (listen_face)
+      uint32_t    listenNods  = 0;   // nods of it listening seen by the face (ListenFace, filled by its owner)...
+      uint32_t    listenFaces = 0;   // ...the faces it answered them with
       };
+
+    // a face of the one listening (listen_face)
+    enum class ListenKind : uint8_t { Flash, Smile, Frown };
 
     static constexpr float    Changed     = 1e-4f; // a weight change that deforms the head again
     static constexpr float    SpeechMouth = 0.7f;  // a voice takes that much of the mouth from the other layers
@@ -200,6 +230,15 @@ class FaceRig final {
     void   startBrows(bool down, float strength, uint64_t start, uint64_t now);
     // how far the brows of the voice are shown now: + up, - down, 0..1 of their weights
     float  browWeight(uint64_t now) const;
+    // a face of the one listening (listen_face) from `start` (it may lie a little in the past); it gives way to a
+    // gesture, a leak and a voice of its own that come while it shows
+    void   startListen(ListenKind kind, uint64_t start, uint64_t now);
+    // the face of the one listening as shown now, 0..1 of its apex (the strongest of its runs)
+    float  listenWeight(uint64_t now) const;
+    float  listenWeight(ListenKind kind, uint64_t now) const;
+    // the face is taken now for the one listening: a gesture or a leak shows, the mouth speaks, or an expression of a
+    // mood (S_FRIENDLY, S_ANGRY, S_HOSTILE, S_FRIGHTENED, T_HURT) shows stronger than its smile
+    bool   listenBusy(uint64_t now) const;
     // as shown now: intensity and fade
     float  weight   (std::string_view name, uint64_t now) const;
     // how far the gesture is shown now, 0..1 (the strongest of its parts and of its runs)
@@ -252,10 +291,19 @@ class FaceRig final {
       float    strength = 0;
       };
 
+    struct ListenRun final {
+      ListenKind kind  = ListenKind::Flash;
+      uint64_t   start = 0;
+      };
+
     bool   isOn(const Slot& s, uint64_t now) const { return s.on && s.timeUntil>=now; }
     float  leakEnvelope(uint64_t now) const;
     float  browEnvelope(const BrowRun& r, uint64_t now) const;
     float  browQuiet(uint64_t now) const;
+    float  listenEnvelope(const ListenRun& r, size_t part, uint64_t now) const;
+    float  listenSpan(const ListenRun& r) const;
+    float  listenQuiet(uint64_t now) const;
+    float  speechWeight(uint64_t now) const;
     float  posedCut(uint64_t now) const;
     float  cueEnvelope(const CueRun& r, size_t part, uint64_t now) const;
     float  cueStrength(const CueRun& r, uint64_t now) const;
@@ -277,6 +325,7 @@ class FaceRig final {
     std::vector<CueRun>        runs;      // the gestures shown now
     LeakRun                    leakRun;   // the leak shown now
     std::vector<BrowRun>       browRuns;  // the brows of the voice shown now
+    std::vector<ListenRun>     listenRuns; // the faces of the one listening shown now
     bool                       posed    = false;
     uint64_t                   posedEnd = 0;      // when the posed smile ended (0: never)
     std::vector<uint8_t>       squint;            // per head target: eyeSquint*, cheekSquint* (a posed smile cuts them)

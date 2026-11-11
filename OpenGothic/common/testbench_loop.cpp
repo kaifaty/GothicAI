@@ -932,7 +932,7 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
   // the hero speaks to an npc (as the bridge does with his voice), it thinks of an answer
   if(bench.hearNpc!=nullptr) {
     if(bench.time<bench.hearUntil) {
-      bench.hearNpc->listenTo(300);
+      bench.hearNpc->listenTo(300,bench.hearWith);
       bench.hearNpc->setTalkPartner(bench.hearWith,1000);
       bench.hearWith->setTalkPartner(bench.hearNpc,1000);
       if(bench.time>=bench.hearNext) {

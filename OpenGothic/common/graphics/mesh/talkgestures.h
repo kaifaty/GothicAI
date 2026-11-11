@@ -102,6 +102,7 @@ class TalkGestures final {
     // it thinks of an answer until then; 0: no more (its answer starts)
     void           think(uint64_t now, uint64_t until);
     bool           isListening(uint64_t now) const { return now<listenUntil; }
+    uint32_t       listenNodCount() const { return listenNods; }  // nods as the other one speaks, so far
     bool           isThinking (uint64_t now) const { return now<thinkUntil; }
 
     const Aside&   eyesAside() const { return aside; }

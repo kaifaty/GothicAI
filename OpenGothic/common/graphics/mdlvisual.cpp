@@ -1571,6 +1571,10 @@ void MdlVisual::updateGestures(Npc& npc, uint64_t dt) {
 
   // the head: Gaze turns it (updateGaze)
   gestures.updateHead(now,dt,voiced || left>0,beat,mouth.syllablePeak());
+  if(gestures.listenNodCount()!=listenNodsSeen) {
+    listenNodsSeen = gestures.listenNodCount();
+    listenNod(npc,now,voiced || left>0);
+    }
 
   TalkGestures::Input in;
   in.now      = now;
@@ -1745,6 +1749,8 @@ void MdlVisual::updateFace(Npc& npc) {
     FaceRig::subjectProbe.uploadUs  = faceUploadUs;
     FaceRig::subjectProbe.accents   = uint32_t(voiceBrows.accents().size());
     FaceRig::subjectProbe.browMoves = voiceBrows.moves();
+    FaceRig::subjectProbe.listenNods  = listenFace.nods();
+    FaceRig::subjectProbe.listenFaces = listenFace.faces();
     }
   if(&npc==Eyes::probeNpc)
     eyes.probe(Eyes::subjectProbe);
@@ -1800,9 +1806,14 @@ void MdlVisual::startSpeech(Npc& npc, std::shared_ptr<LipSync::Track> voice) {
   const uint64_t now = npc.world().tickCount();
   cues.voice(voice,now);
   // the brows on the accents: by the seed of the npc and the line (the mood goes by the line, setTalkMood)
-  if(SpeechBrows::isEnabled() && face.isActive() && face.faceProfile()->brows.has_value())
+  voiceOwnBrows = SpeechBrows::isEnabled() && face.isActive() && face.faceProfile()->brows.has_value();
+  if(voiceOwnBrows)
     voiceBrows.start(voice,SpeechCues::seedOf(voice->name())^(uint32_t(npc.instanceSymbol())*2654435761u),now); else
     voiceBrows.stop();
+  voiceNow = voice;  // its accents for the one it says it to (voiceAccents)
+  voiceAt  = now;
+  heardBrows.stop();
+  heardRule.reset();
   accentsLogged = 0;
   if(&npc==FaceRig::probeNpc && face.isActive())
     Log::i("[face] voice ",npc.displayName(),": ",voice->name()," ",voice->durationMs()," ms",
@@ -1810,7 +1821,9 @@ void MdlVisual::startSpeech(Npc& npc, std::shared_ptr<LipSync::Track> voice) {
   mouth.start(std::move(voice),now);
   }
 
-void MdlVisual::setTalkMood(std::string_view mood, std::string_view line) {
+void MdlVisual::setTalkMood(std::string_view mood, std::string_view line, uint64_t holdUntil) {
+  lineMood      = TalkGestures::moodOf(mood);
+  lineMoodUntil = holdUntil;
   gestures.setMood(TalkGestures::moodOf(mood));
   voiceBrows.setMood(TalkGestures::moodOf(mood),line);
   }
@@ -1849,6 +1862,7 @@ void MdlVisual::stopDlgAnim(Npc& npc) {
   mouth.stop();
   cues.stop();
   voiceBrows.stop();
+  voiceNow = nullptr;
   gestures.stop();
   gestureSeq = nullptr;
   const uint16_t count = 11;

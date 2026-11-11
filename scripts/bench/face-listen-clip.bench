@@ -1,0 +1,25 @@
+# The face of the one listening in the game, close up and with sound (reports/content/2026-11-hero-head/eyes.md,
+# "План: брови по тону и лицо слушающего", item 3): Vino with an own head listens. First Lobart says two lines to
+# him through the real voice path (face_listen_demo: his nods on the accents of Lobart's voice, the face of his
+# attitude to Lobart), then the hero speaks to him as the bridge does with his voice (hear): friendly, then angry.
+# Needs an AI server with the scenario face_listen_demo and a TTS service, and an own head for BAU_952_VINO whose face
+# profile has speech_brows and listen_face; OPENGOTHIC_LISTEN_FACE=0 films the same without the layer. How to run it
+# and make the clip - scripts/bench/README.md, "Face listen clip".
+# @timeout 420
+seed 73013
+cheat god
+view clean 15
+overlay off
+# the server sets the hour, puts Vino in Lobart's yard and takes him over, the hero 2 m and Lobart 1.5 m in front of
+# him; 8 s later Lobart speaks to him; the server holds Vino 45 s after the lines
+wait 4000
+watch BAU_952_VINO
+wait 1500
+cam face 40 0 10
+rec clip
+waitreply 120000 2000
+hear BAU_952_VINO 16000 600 friendly
+wait 17000
+hear BAU_952_VINO 16000 600 angry
+wait 17000
+stop

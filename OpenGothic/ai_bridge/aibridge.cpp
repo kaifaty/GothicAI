@@ -50,6 +50,7 @@ constexpr const char* SaveEntry       = "ai_bridge/session";  // own entry in sa
 constexpr const char* DefaultUrl      = "ws://127.0.0.1:47817";
 constexpr float       IntroCm         = 3000;  // -nointro: those this near the hero at the start
 
+constexpr uint32_t    AddressedTail   = 3000;  // a voice may last this much longer than its subtitle time
 constexpr uint32_t    MoodHoldMs      = 2000;  // the face of a line stays this long after it, then fades (a second)
 
 // the face of the game's heads for a mood of a line (v9)
@@ -352,6 +353,7 @@ void AiBridge::Impl::onTick(uint64_t /*dt*/) {
     tickVoices(*world);
     tickDeal(*world);
     tickListener(*world);
+    tickAddressed(*world);
     necro.tick(*world);
     fate.tick(*world,necro.active());
     }
@@ -1811,7 +1813,7 @@ void AiBridge::Impl::tickListener(World& world) {
   if(!listener.empty()) {
     Npc* npc = npcBySymbol(world,listener);
     if(npc!=nullptr && pl!=nullptr && (pttHeld || (now<listenUntil && listenUntil<=now+ListenAfter))) {
-      npc->listenTo(500);
+      npc->listenTo(500,pl);
       // the two look at each other while he speaks
       npc->setTalkPartner(pl,1000);
       pl->setTalkPartner(npc,1000);
@@ -1831,6 +1833,25 @@ void AiBridge::Impl::tickListener(World& world) {
         npc->thinkOfAnswer(0);
       thinker.clear();
       }
+    }
+  }
+
+void AiBridge::Impl::tickAddressed(World& world) {
+  const uint64_t now = world.tickCount();
+  for(auto it=addressed.begin(); it!=addressed.end();) {
+    auto& a   = it->second;
+    Npc*  npc = npcBySymbol(world,it->first);
+    Npc*  to  = npcBySymbol(world,a.to);
+    if(npc==nullptr || to==nullptr || to->isDown() || now>=a.until) {
+      it = addressed.erase(it);
+      continue;
+      }
+    // the accents its voice has reached so far: a word of it came for each
+    for(const int32_t n = npc->voiceAccents(a.line,*to); a.heard<n; ++a.heard) {
+      to->heardWords();
+      Log::i("[ai] ",a.to," hears accent ",a.heard+1," of ",a.line," (",it->first,")");
+      }
+    ++it;
     }
   }
 
@@ -1881,7 +1902,7 @@ void AiBridge::Impl::onLineStarted(const LineLibrary::Line& line) {
   TestBench::aiLine(line.npc,TextCodec::toUtf8(name),TextCodec::toUtf8(line.text),line.time,line.to,line.filler);
   // the face while the line is said, and a moment after (v8); the hands go with the mood too
   if(npc!=nullptr) {
-    npc->setTalkMood(line.mood,line.id);
+    npc->setTalkMood(line.mood,line.id,line.time+MoodHoldMs);
     if(auto face = moodFace(line.mood); !face.empty()) {
       npc->startFaceAnim(face,1,line.time+MoodHoldMs);
       Log::i("[ai] face ",line.npc," ",face," for ",line.time+MoodHoldMs," ms");
@@ -1901,8 +1922,12 @@ void AiBridge::Impl::onLineStarted(const LineLibrary::Line& line) {
   if(to!=nullptr) {
     // said to an npc (v15): it listens, as the hero's addressee does (not one that fell since the say: its
     // head would nod on the ground)
-    if(!to->isDown())
-      to->listenTo(line.time);
+    if(!to->isDown()) {
+      to->listenTo(line.time,npc);
+      // and nods on the accents of its voice (tickAddressed)
+      if(npc!=nullptr && voiced)
+        addressed[line.npc] = Addressed{line.to,line.id,world->tickCount()+line.time+AddressedTail,0};
+      }
     // two free ones standing in ZS_SMALLTALK would chatter into the line: their loop waits anew
     const ScriptFn smalltalk = AiNpc::scriptState(*world,"ZS_SMALLTALK");
     for(Npc* n:{npc,to})

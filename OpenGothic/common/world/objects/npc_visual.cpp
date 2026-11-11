@@ -479,12 +479,24 @@ void Npc::startSpeech(std::shared_ptr<LipSync::Track> voice) {
   visual.startSpeech(*this,std::move(voice));
   }
 
-void Npc::setTalkMood(std::string_view mood, std::string_view line) {
-  visual.setTalkMood(mood,line);
+void Npc::setTalkMood(std::string_view mood, std::string_view line, uint64_t holdMs) {
+  visual.setTalkMood(mood,line,owner.tickCount()+holdMs);
   }
 
-void Npc::listenTo(uint64_t ms) {
-  visual.listen(owner.tickCount()+ms);
+void Npc::listenTo(uint64_t ms, const Npc* speaker) {
+  auto toward = TalkGestures::Mood::Neutral;
+  if(speaker!=nullptr)
+    switch(owner.script().personAttitude(*this,*speaker)) {  // as Npc_GetAttitude
+      case ATT_FRIENDLY: toward = TalkGestures::Mood::Friendly; break;
+      case ATT_ANGRY:    toward = TalkGestures::Mood::Angry;    break;
+      case ATT_HOSTILE:  toward = TalkGestures::Mood::Hostile;  break;
+      default: break;
+      }
+  visual.listen(owner.tickCount()+ms,toward);
+  }
+
+int32_t Npc::voiceAccents(std::string_view line, const Npc& listener) {
+  return visual.voiceAccents(line,listener.visual.faceProfile(),owner.tickCount());
   }
 
 void Npc::stopListening() {
