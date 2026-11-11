@@ -20,6 +20,8 @@ the generator draws the motion between them.
 - Fewer keys leave more to the generator. Measured on S_WALKL (8 samples each): at 2 keys a cycle the pelvis
   sways 56-75 mm instead of Gothic's 15 and the mean joint is 5-6 cm off Gothic's pose; at 4 keys 16-23 mm and
   5 cm; at 8 keys the walk is Gothic's within 3.7 cm.
+  A run needs more: on S_RUNL (cycle 0.76 s) 4 keys leave the pelvis' low and high to the generator and it bounces
+  15-21 cm against Gothic's 9, wherever in the cycle the keys stand; 6 keys (`--keys 6`) hold 8-9 cm.
 
 The generated samples go the usual way: `retarget_soma.py`, `loop_cycle.py --period <the loop's seconds>` (the
 period is known, and a walk that hardly lifts its feet gives the autocorrelation nothing to hold on to),
