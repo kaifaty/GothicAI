@@ -5,6 +5,7 @@
 config.json:
     {"npz": "/abs/gen/run_k6/out/out_04.npz",          # a sample of kimodo_gen
      "skin": "/abs/skin_standard.npz",                 # kimodo/assets/skeletons/somaskel77/skin_standard.npz
+     "seq": "/abs/chain.npz", "color": [0.62, 0.47, 0.38],   # instead of npz + skin: a body already skinned, see below
      "render": {"dir": "/abs/out/frames", "views": ["side", "quarter", "back"], "size": [640, 720], "ortho": 2.8}}
 
 Why: a flaw seen in the game is either the generator's or ours (retarget, loop cut, fix layers, the engine). This
@@ -15,6 +16,10 @@ record with `gothic_rig.py` (same views, size and `ortho`) and put the two side 
 SOMA is right-handed, Y up, metres, x = the character's left, z = forward. Blender gets (-x, z, y), a rotation:
 the character faces +Y and its right hand is at +X, as in `gothic_rig.py`. The camera follows the root over a
 floor with a line every metre. One PNG per frame of the sample (30 a second) in `<dir>/<view>/f0001.png`.
+
+`"seq"`: the same scene for a body skinned elsewhere (`hero_body/rig_direct.py`: the new body on its own skeleton) -
+an npz with `verts` [frames, vertices, 3] and `root` [frames, 3] in Gothic's frame (cm, left-handed, Y up, +Z
+ahead) and `faces`. Blender gets (x, z, y) in metres, a reflection, so the triangles are turned over.
 """
 import json
 import sys
@@ -55,20 +60,27 @@ def place_camera(cam, view: str):
 
 def main():
     cfg = json.loads(Path(sys.argv[sys.argv.index("--") + 1]).read_text())
-    sample, skin = np.load(cfg["npz"]), np.load(cfg["skin"])
-    verts = skin_frames(sample, skin) @ TURN.T
-    root = sample["root_positions"].astype(np.float64) @ TURN.T
+    if cfg.get("seq"):
+        seq = np.load(cfg["seq"])
+        verts = seq["verts"].astype(np.float64)[..., [0, 2, 1]] * 0.01
+        root = seq["root"].astype(np.float64)[..., [0, 2, 1]] * 0.01
+        faces = seq["faces"][:, ::-1].tolist()
+    else:
+        sample, skin = np.load(cfg["npz"]), np.load(cfg["skin"])
+        verts = skin_frames(sample, skin) @ TURN.T
+        root = sample["root_positions"].astype(np.float64) @ TURN.T
+        faces = skin["faces"].tolist()
     frames = len(verts)
 
     bpy.ops.wm.read_factory_settings(use_empty=True)
     scene = bpy.context.scene
     scene.render.fps = 30
     me = bpy.data.meshes.new("SOMA")
-    me.from_pydata(verts[0].tolist(), [], skin["faces"].tolist())
+    me.from_pydata(verts[0].tolist(), [], faces)
     me.update()
     body = bpy.data.objects.new("SOMA", me)
     scene.collection.objects.link(body)
-    body.color = (0.55, 0.62, 0.72, 1)
+    body.color = (*cfg.get("color", [0.55, 0.62, 0.72]), 1)
     for p in me.polygons:
         p.use_smooth = True
 
