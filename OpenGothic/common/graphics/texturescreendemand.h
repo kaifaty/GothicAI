@@ -29,16 +29,31 @@ class TextureScreenDemand final {
     struct Result {
       int32_t exponent = TextureLevels::NoExponent;
       double  expiry   = 0;         // the odometer reading to evaluate again at
+      double  margin   = 0;         // metres the distance may change before the exponent does
       bool    scheduled = false;    // false: the demand does not change with distance
       };
+
+    // The bounds of an owner placed in the world by a position only (an NPC, an item): a sphere around it,
+    // centimetres. It holds the mesh in any rotation and, for a skinned mesh, in its bind pose.
+    struct Sphere {
+      Tempest::Vec3 centre;
+      float         radius = 0;
+      };
+    // The largest reach an owner placed by a position gets (VisualObjects::textureAllowance), centimetres: its sphere
+    // is grown by it, so it errs sharper by at most this.
+    static constexpr float MaxReach = 400;
 
     // The demand of an owner with `texel` in world space (bounds in centimetres) and `previous` exponent: its exponent
     // from the nearer of the hero and the camera, due again when either may have come or gone by its margin. Without a
     // view: the ring rule, due as soon as there is one. Without a density: the whole chain; with nothing to draw: the
     // coarsest allowed level.
     static Result evaluate(const View& view, const TexelDensity& texel, int32_t previous = TextureLevels::NoExponent);
-    // Distance in metres from `point` (centimetres) to the bounds of `texel`.
+    // The same with the bounds a sphere; only the density and flatness of `texel` count.
+    static Result evaluate(const View& view, const TexelDensity& texel, const Sphere& bounds,
+                           int32_t previous = TextureLevels::NoExponent);
+    // Distance in metres from `point` (centimetres) to the bounds of `texel`, or to a sphere.
     static double distance(const Tempest::Vec3& point, const TexelDensity& texel);
+    static double distance(const Tempest::Vec3& point, const Sphere& sphere);
 
     // A min-heap without removal: an entry carries the owner's stamp of its scheduling, and one whose owner was
     // scheduled again or released since is dropped when it comes up.

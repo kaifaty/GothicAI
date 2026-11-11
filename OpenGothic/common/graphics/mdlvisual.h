@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <Tempest/Matrix4x4>
 
 #include "asset/modeltypes.h"
@@ -46,7 +47,9 @@ class MdlVisual final {
     void                           setVisual(const Skeleton *visual);
 
     void                           setObjMatrix(const Tempest::Matrix4x4 &m, bool syncAttach = false);
-    void                           setTextureOwner(const Tempest::Vec3& position, bool spatial);
+    // The owner of every part's textures (VisualObjects::Item::setTextureOwner): an NPC calls it each frame it moves,
+    // from animation threads; within the smallest reach of its parts that is one comparison without a lock.
+    float                          setTextureOwner(const Tempest::Vec3& position, bool spatial);
     bool                           minSkinnedVertex(float fatness, Tempest::Vec3& point) const;
 
     void                           setHeadRotation(float dx, float dz);
@@ -351,6 +354,20 @@ class MdlVisual final {
 
     Tempest::Matrix4x4             pos;
     Tempest::Vec3                 textureOwnerPosition;
+    Tempest::Vec3                 textureOwnerLast;       // where the owner was at its latest call
+    float                         textureOwnerReach = 0;  // centimetres from textureOwnerPosition
+    // A part added later is placed where the owner is now: every part is placed there again first, then the part
+    template<class View>
+    void                          addTextureOwner(View& part) {
+      if(!textureOwnerKnown)
+        return;
+      if(textureOwnerSpatial && (textureOwnerLast.x!=textureOwnerPosition.x || textureOwnerLast.y!=textureOwnerPosition.y ||
+                                 textureOwnerLast.z!=textureOwnerPosition.z)) {
+        textureOwnerKnown=false;
+        setTextureOwner(textureOwnerLast,true);
+        }
+      textureOwnerReach=std::min(textureOwnerReach,part.setTextureOwner(textureOwnerPosition,textureOwnerSpatial));
+      }
     bool                          textureOwnerKnown = false, textureOwnerSpatial = false;
     MeshObjects::Mesh              view;
     bool                           bodyDetached = false;

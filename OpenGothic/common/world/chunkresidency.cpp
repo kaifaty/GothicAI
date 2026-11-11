@@ -49,7 +49,8 @@ void ChunkResidency::update(const Tempest::Vec3& hero, const Tempest::Vec3& came
       const double x=double(a.x)-b.x, y=double(a.y)-b.y, z=double(a.z)-b.z;
       return std::sqrt(x*x+y*y+z*z);
       };
-    odometer+=std::max(moved(hero,heroPosition),moved(camera,cameraPosition))*0.01;
+    lastMove=std::max(moved(hero,heroPosition),moved(camera,cameraPosition))*0.01;
+    odometer+=lastMove;
     }
   heroCell=nextHeroCell;
   cameraCell=nextCameraCell;

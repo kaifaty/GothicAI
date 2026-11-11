@@ -24,6 +24,8 @@ namespace TextureLevels {
   constexpr float    MinDistance = 0.25f;
   // both sides of a resident top level stay at least this
   constexpr uint32_t MinSide     = 64;
+  // as the first level to read (Pixmap::loadDdsMipTail): the coarsest allowed one
+  constexpr uint32_t CoarsestRead = 255;
   // the smallest distance change, metres, an owner waits for before it is evaluated again
   constexpr double   MinMargin   = 0.05;
   // An owner moving away keeps its sharper exponent until its distance passes the band by this fraction: it errs only

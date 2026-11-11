@@ -28,7 +28,8 @@ class ObjVisual {
     void setWorldItem(const daedalus::IItem& item, World& world, const Tempest::Matrix4x4& matrix);
     void setVisual(const asset::VirtualObject& visual, World& world, bool staticDraw, bool enablePhysics = true);
     void setObjMatrix(const Tempest::Matrix4x4& obj);
-    void setTextureOwner(const Tempest::Vec3& position, bool spatial);
+    // MeshObjects::Mesh::setTextureOwner of its view: how far it may move before a call can change its demand
+    float setTextureOwner(const Tempest::Vec3& position, bool spatial);
     // Preload the cached cut surfaces and their draw instances before impacts.
     void setupFracture(World& world, DynamicWorld::Item& body);
     bool renderPosition(Tempest::Vec3& out) const;
