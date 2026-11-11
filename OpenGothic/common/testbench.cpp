@@ -1037,10 +1037,12 @@ void TestBench::note(const char* text) {
        std::string_view(text).ends_with(", by "+std::string(who(player)))) {
       const float yaw = player->rotationRad();
       const auto edge = player->aimEdge(Vec3(std::cos(yaw),0,std::sin(yaw)),2000.f);
-      char buf[256];
-      std::snprintf(buf,sizeof(buf),"shot pose %s: edge_facing_cm %.2f edge_found %d facing_yaw_deg %.2f a_lean_deg %.2f",
+      const auto position = player->position();
+      char buf[512];
+      std::snprintf(buf,sizeof(buf),"shot pose %s: edge_facing_cm %.2f edge_found %d facing_yaw_deg %.2f a_lean_deg %.2f hero %.2f %.2f %.2f animation %s",
                     bench.recName.c_str(),edge.found ? double(edge.distance) : -1.0,int(edge.found),
-                    double(player->rotation()),double(Aim::playerProbe.lean));
+                    double(player->rotation()),double(Aim::playerProbe.lean),position.x,position.y,position.z,
+                    player->animNames().c_str());
       say(buf);
       event("note","\"text\":"+jsonStr(buf));
       }

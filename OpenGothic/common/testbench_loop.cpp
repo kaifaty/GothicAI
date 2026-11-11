@@ -75,6 +75,15 @@ void tickRoute(Npc& player, uint64_t dt) {
   player.setPosition(bench.routePosition);face(player,direction);player.updateTransform();
   }
 
+void volleyPhase(const char* phase) {
+  const auto& hero = *Gothic::inst().player();
+  const auto p = hero.position();
+  char buf[320];
+  std::snprintf(buf,sizeof(buf),"volley phase %s hero %.2f %.2f %.2f animation %s disturb %.3f walk %.3f",
+                phase,p.x,p.y,p.z,hero.animNames().c_str(),Archer::playerProbe.disturb,hero.aimWalk());
+  TestBench::note(buf);
+  }
+
 void tickVolley(PlayerControl& ctrl) {
   const auto& mp = Archer::playerProbe;
   const auto  t  = bench.time - bench.npcCommands.volleyT;
@@ -85,6 +94,7 @@ void tickVolley(PlayerControl& ctrl) {
     };
   switch(bench.npcCommands.volleyPhase) {
     case 0:
+      volleyPhase("press");
       press(ctrl,KeyCodec::ActionGeneric);
       bench.npcCommands.volleyPhase = 1;
       bench.npcCommands.volleyT     = bench.time;
@@ -97,6 +107,7 @@ void tickVolley(PlayerControl& ctrl) {
       // Held means the archer reached its own limit, which can be below the requested draw.
       const bool drawn = mp.valid && (mp.stage==Archer::Held || (mp.stage==Archer::Drawing && mp.draw>=bench.npcCommands.volleyDraw));
       if(drawn) {
+        volleyPhase("draw_limit");
         bench.npcCommands.volleyPhase   = 2;
         bench.npcCommands.volleyT       = bench.time;
         // held at its limit it waits; drawn as far as asked short of it, it goes at once: the button held
@@ -113,6 +124,7 @@ void tickVolley(PlayerControl& ctrl) {
       }
     case 2:
       if(t>=bench.npcCommands.volleyHoldNow) {
+        volleyPhase("release");
         if(bench.archery.aimNpc!=nullptr) {
           // where it aims, the middle of the zone: the log compares the arrow's flight with it
           Vec3 c = bench.archery.aimNpc->collosionCenter();
@@ -131,6 +143,7 @@ void tickVolley(PlayerControl& ctrl) {
       break;
     case 3:
       if(mp.valid && mp.stage==Archer::Nocked && t>200) {
+        volleyPhase("reload_end");
         --bench.npcCommands.volleyLeft;
         bench.npcCommands.volleyPhase = 0;
         }
@@ -735,7 +748,8 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
     const auto animation = player->animNames();
     if(animation!=bench.inputAnimation) {
       bench.inputAnimation = animation;
-      say("input animation PC_HERO at " + std::to_string(world->tickCount()) + " ms: " + animation);
+      say("input animation PC_HERO at " + std::to_string(world->tickCount()) + " ms: " + animation+
+          " hero "+ragdollVector(player->position()));
       }
     }
   bench.time += dt;
@@ -859,7 +873,8 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
   if(bench.pinned!=nullptr) {
     const Vec3 d = player->position()-bench.pinAt;
     bench.pinned->setPosition(bench.pinAt);
-    bench.pinned->setDirection(Vec3(d.x,0,d.z));
+    if(bench.pinned!=player)
+      bench.pinned->setDirection(Vec3(d.x,0,d.z));
     bench.pinned->updateTransform();
     }
   if(bench.archery.aimNpc!=nullptr || (bench.archery.aimMouse && bench.archery.aimFixed)) {
