@@ -36,6 +36,9 @@ CommandLine::CommandLine(int argc, const char** argv) {
   // OPENGOTHIC_VSM=0|1: the default of -vsm for benches and scripts that cannot pass flags; -vsm wins
   if(const char* vsm = std::getenv("OPENGOTHIC_VSM"))
     isVsm = boolArg(vsm);
+  // hashed alpha of our glTF MASK (BK_HASHED_ALPHA); OPENGOTHIC_HASHED_ALPHA=0 (test benches) as -hashalpha 0
+  if(const char* ha = std::getenv("OPENGOTHIC_HASHED_ALPHA"))
+    isHashAlpha = boolArg(ha);
   // OPENGOTHIC_MS=0|1: the default of -ms (mesh shaders) for benches; -ms wins
   if(const char* ms = std::getenv("OPENGOTHIC_MS"))
     isMeshSh = boolArg(ms);
@@ -118,6 +121,11 @@ CommandLine::CommandLine(int argc, const char** argv) {
       ++i;
       if(i<argc)
         isTaa = boolArg(argv[i]);
+      }
+    else if(arg=="-hashalpha") {
+      ++i;
+      if(i<argc)
+        isHashAlpha = boolArg(argv[i]);
       }
     else if(arg=="-mv") {
       ++i;

@@ -65,6 +65,7 @@ class Material final {
     bool isSceneInfoRequired()   const { return isSceneInfoRequired(alpha);            }
     bool isShadowmapRequired()   const { return isShadowmapRequired(alpha);            }
     bool isTextureInShadowPass() const { return isTextureInShadowPass(alpha);          }
+    bool isAlphaTestRequired()   const { return alphaTestRequired;                     } // explicit GLB MASK
     bool isFogRequired()         const { return isFogRequired(alpha);                  }
 
     static bool isTesselated(AlphaFunc alpha);

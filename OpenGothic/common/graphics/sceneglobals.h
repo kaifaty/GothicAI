@@ -25,6 +25,12 @@ class SceneGlobals final {
       V_Count
       };
 
+    // UboGlobal::viewFlags, as VF_* in scene.glsl
+    enum ViewFlag : uint32_t {
+      VF_HIZ = 0x1,
+      VF_TAA = 0x2,
+      };
+
     static bool isShadowView(VisCamera v);
 
     void setViewProject(const Tempest::Matrix4x4& view, const Tempest::Matrix4x4& proj,
@@ -40,7 +46,7 @@ class SceneGlobals final {
     void setUnderWater(bool w);
     // TAA: the bias of the material textures' mip level in the main view; shadows keep 0
     void setMipBias(float bias);
-    void setTaaFrame(bool active, uint32_t frame);
+    void setTaaFrame(bool taa, bool lampTaa, uint32_t frame);
     // motion vectors of objects: on/off and the camera's part (identity and this frame's camera on a cut)
     void setMotion(bool enabled, const Tempest::Matrix4x4& reprojectClip, const Tempest::Matrix4x4& viewProjectPrev);
     // the TAA reactive mask (graphics plan 1v): the added light on screen that makes an additive pixel fully reactive
@@ -144,7 +150,7 @@ class SceneGlobals final {
       float                           mipBias      = 0; // TAA: the main view only (commitUbo), 0 in shadows
       float                           mipGradScale = 1; // exp2(mipBias)
       uint32_t                        taaFrame     = 0; // TAA: the frame number (Renderer::prepareTaa), 0 without TAA
-      uint32_t                        taaActive    = 0;
+      uint32_t                        taaActive    = 0; // the lamp taps turn by taaFrame (light.frag)
       // motion vectors of objects (graphics plan 1b): the main view only (commitUbo), 0 in the other views.
       // Both matrices carry this frame's jitter, so the residual has none (Taa::motionResidual)
       uint32_t                        motionVectors = 0;
@@ -154,7 +160,7 @@ class SceneGlobals final {
       float                           vsmLampNear     = 30.f; // cm: VSM lamps, the fixture plane (main.vert)
       uint32_t                        vsmLampSides    = 3;    // VSM lamps: the sides a cube face keeps (main.vert)
       uint32_t                        vsmStudy        = 0;    // bench `vsm study`: VSM_STUDY_* of scene.glsl
-      float                           vsmPad          = 0;
+      uint32_t                        viewFlags       = 0; // VF_* of scene.glsl: VF_HIZ in V_HiZ only (commitUbo), VF_TAA
       };
 
     Tempest::UniformBuffer<UboGlobal> uboGlobalPf[Resources::MaxFramesInFlight][V_Count];

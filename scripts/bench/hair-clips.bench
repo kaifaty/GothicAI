@@ -1,0 +1,93 @@
+# Hair on cards, step 1 (reports/content/2026-11-npc-hair): the hero's own head close up under the three lights of
+# its intent (reports/content/2026-11-hero-head/intent.md, «Место») - noon in the Khorinis market, midnight in the
+# harbour street (moon and sky only: the braziers stand too far), the hearth- and candle-lit harbour house of
+# perf-interior. Under each: the face from three angles of `cam face`, still clips (the eyes blink) and one still each
+# (a shot takes the next frame: the wait after it keeps the next teleport out). The torch behind the hero is step
+# 5's. Brows and lashes are glTF MASK cards: run it with OPENGOTHIC_HASHED_ALPHA=0 (threshold 0.5) and =1 (hashed
+# alpha under TAA), and judge the two side by side as clips.
+#   OPENGOTHIC_HASHED_ALPHA=0 TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=ryzen \
+#     OPENGOTHIC_CONTENT=~/.local/share/gothic-ai/content-tests/hero-head-1 scripts/bench.sh scripts/bench/hair-clips.bench <out>
+# @timeout 600
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+cam lift off
+# 1. Noon in the market: the sun high and to the side
+set time 12 0
+goto NW_CITY_MERCHANT_TRADE_04
+watch player
+cam face 38 0 1
+wait 10000
+rec day-front
+wait 4000
+stop
+shot day-front
+wait 300
+cam face 38 40 1
+wait 1500
+rec day-quarter
+wait 4000
+stop
+shot day-quarter
+wait 300
+cam face 38 90 1
+wait 1500
+rec day-profile
+wait 3000
+stop
+shot day-profile
+wait 300
+# 2. Midnight in the harbour street: the moon and the night sky
+cam cut
+set time 0 0
+goto pos 5391 320 -5822
+watch player
+cam face 38 0 1
+wait 10000
+rec night-front
+wait 4000
+stop
+shot night-front
+wait 300
+cam face 38 40 1
+wait 1500
+rec night-quarter
+wait 4000
+stop
+shot night-quarter
+wait 300
+cam face 38 90 1
+wait 1500
+rec night-profile
+wait 3000
+stop
+shot night-profile
+wait 300
+# 3. The hearth- and candle-lit harbour house of perf-interior at 22:00: warm light low and to the side
+cam cut
+set time 22 0
+goto pos 3924 -73 -6663
+watch player
+cam face 38 0 1
+wait 10000
+rec candle-front
+wait 4000
+stop
+shot candle-front
+wait 300
+cam face 38 40 1
+wait 1500
+rec candle-quarter
+wait 4000
+stop
+shot candle-quarter
+wait 300
+cam face 38 90 1
+wait 1500
+rec candle-profile
+wait 3000
+stop
+shot candle-profile
+wait 300
