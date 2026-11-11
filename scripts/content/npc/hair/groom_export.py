@@ -34,7 +34,8 @@ def opt(name, default=None):
 HAIR, BEARD = opt('--hair'), opt('--beard'); KEEP = int(opt('--strands', 40000)); SEED = int(opt('--seed', 1))
 MATERIAL = opt('--material', 'OWN_HERO_HEAD_STRANDS.TGA')
 FRAME, UV, GR, OUT = a[:4]; rng = np.random.default_rng(SEED)
-M = np.array(json.load(open(FRAME))['matrix']); A, b = M[:, :3], M[:, 3]; SCALE = abs(np.linalg.det(A))**(1/3)   # cm in a metre of the head
+FR = json.load(open(FRAME)); M = np.array(FR['matrix']); A, b = M[:, :3], M[:, 3]; SCALE = abs(np.linalg.det(A))**(1/3)   # cm in a metre of the head
+CUT = np.array(FR.get('cut', [0, 0, 1, -1e9]))                               # the head ends at this plane: no skin under it, so no hair
 VOX, EXT = 0.0025, 0.4                    # the grid; how much of a hair's width stops light (a hair lets a part through)
 
 
@@ -49,7 +50,9 @@ def resample(p, k):
 
 # ---- the strands of the game: groups of (points, strands)
 groups = []; dense = []                   # dense: every hair as it is, for the density
+rooted = lambda p: (p[:, 0] @ CUT[:3]-CUT[3])/np.linalg.norm(CUT[:3]) > 0.002   # the root stands on skin the head keeps
 G = np.load(HAIR); pts, rad, tint, kind = G['pts'].astype(np.float64), G['rad'], G['tint'], G['kind']
+ok = rooted(pts); pts, rad, tint, kind = pts[ok], rad[ok], tint[ok], kind[ok]; cut_off = int((~ok).sum())
 dense.append((pts, rad))
 long_ = np.nonzero(kind < 2)[0]; rng.shuffle(long_); keep = long_[:KEEP]; wide = min(len(long_)/max(len(keep), 1), 3.0)
 short = np.nonzero(kind == 2)[0]; rng.shuffle(short); short = short[:max(int(len(short)*len(keep)/len(long_)), 1)]
@@ -57,6 +60,7 @@ groups.append((resample(pts[keep], 16), rad[keep]*wide, tint[keep]))
 groups.append((resample(pts[short], 6), rad[short]*wide, tint[short]))
 if BEARD:
     Bd = np.load(BEARD); bp, br, bt, bk = Bd['pts'].astype(np.float64), Bd['rad'], Bd['tint'], Bd['kind']
+    ok = rooted(bp); bp, br, bt, bk = bp[ok], br[ok], bt[ok], bk[ok]; cut_off += int((~ok).sum())
     dense.append((bp, br))
     for sel, k in ((bk != 5, 8), (bk == 5, 3)):
         i = np.nonzero(sel)[0]; rng.shuffle(i); groups.append((resample(bp[i], k), br[i], bt[i]))
@@ -145,3 +149,4 @@ Image.fromarray(np.repeat(ramp[None], 8, 0).round().astype(np.uint8)).save(os.pa
 print('GROOM %d strands, %d points, %d triangles; long hairs kept %d of %d, %.2f times wider; %.1f MB' % (
     sum(len(p) for p, _, _ in groups), total, sum(2*len(p)*(p.shape[1]-1) for p, _, _ in groups), len(keep), len(long_), wide,
     os.path.getsize(os.path.join(OUT, 'head.groom'))/1e6))
+print('strands rooted under the cut of the head, dropped: %d' % cut_off)
