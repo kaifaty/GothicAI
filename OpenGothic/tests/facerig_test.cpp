@@ -1511,6 +1511,13 @@ void listenCases(const GltfHeadMesh& head, const FaceProfile& plain) {
   require(friendly.size()>=10 && friendly.size()<=34,"about one nod in two or three must get a face: "+std::to_string(friendly.size()));
   for(size_t i=1; i<friendly.size(); ++i)
     require(friendly[i].first-friendly[i-1].first>=3000,"the faces must keep the gap");
+  // without the gap a nod gets a face by the chance alone (0.5 of 100 nods)
+  {
+    auto nogap  = l;
+    nogap.gapMs = 0;
+    const auto v = run(M::Neutral,5,nogap);
+    require(v.size()>=35 && v.size()<=65,"without the gap about half of the nods must get a face: "+std::to_string(v.size()));
+  }
   const auto count = [](const std::vector<std::pair<uint64_t,R>>& v, R r) {
     return std::count_if(v.begin(),v.end(),[r](auto& x) { return x.second==r; });
     };
