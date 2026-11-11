@@ -355,8 +355,8 @@
 #       Group 2, LLM=off via auto; SAVE=save_slot_1.sav; TTS=fake.
 #   face_eyes_demo: the same with the gestures of the eyes: Vino's four lines with glance, roll, doubt and frown,
 #       no lie. Group 2, LLM=off via auto; SAVE=save_slot_1.sav; TTS=fake.
-#   face_brows_demo: the brows on the accents of the voice: Vino's three lines without gestures (a statement, a
-#       question, an angry line), held 30 s after them for the bench's original lines
+#   face_brows_demo: the brows on the accents of the voice: Vino's three lines without gestures (a question, a
+#       statement, an angry line), held 30 s after them for the bench's original lines
 #       (scripts/bench/face-brows-clip.bench). Group 2, LLM=off via auto; SAVE=save_slot_1.sav; TTS=fake.
 #   day: given: Lobart exposes the turnip lie; Vino chooses to tell Malet; the scene's lines are given.
 #       Checks daily menus, walks, alternating voices and recipients, near/far facts and save/load.

@@ -1,6 +1,6 @@
 # The brows of the speaker on the accents of its voice in the game, close up and with sound
 # (reports/content/2026-11-hero-head/eyes.md, "План: брови по тону"): Vino with an own head says three lines of the
-# AI server through the real voice path (a statement, a Russian yes-no question, an angry line: face_brows_demo), then
+# AI server through the real voice path (a Russian yes-no question, a statement, an angry line: face_brows_demo), then
 # two long lines of his original voice. Needs an AI server with the scenario face_brows_demo and a TTS service, and an
 # own head for BAU_952_VINO whose face profile has speech_brows; OPENGOTHIC_SPEECH_BROWS=0 films the same without the
 # layer. How to run it and make the clip - scripts/bench/README.md, "Face brows clip".

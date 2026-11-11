@@ -1080,7 +1080,7 @@ The gestures of each line come from its `[ai] cues` line in `game.log`, the time
 The acceptance clip of the brows on the accents of the voice
 ([eyes.md](../../reports/content/2026-11-hero-head/eyes.md), "План: брови по тону"): Vino with an own head says three
 lines of the AI server through the real voice path (`face_brows_demo` in
-`server/src/gothic_ai/scenarios/face_cues.py`: a long statement, the Russian yes-no question «Ты его видел вчера?», an
+`server/src/gothic_ai/scenarios/face_cues.py`: the Russian yes-no question «Ты его видел вчера?», a long statement, an
 angry line; no gesture tags), then `face-brows-clip.bench` has him say two long lines of his original voice
 (`DIA_Vino_HALLO_05_02`, `DIA_Vino_PERM_05_04`); the scenario holds him 30 s after his answer for them. Staging as in
 [Face cues clip](#face-cues-clip); the face profile needs `speech_brows` (e.g. the hero head of `hero-head-2` with the

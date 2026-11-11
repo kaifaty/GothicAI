@@ -41,13 +41,13 @@ FACE_EYES_REPLY = (
     "[neutral] Лобарт их, [doubt] небось, сам и проглядел. "
     "[angry] [frown] Всё, некогда мне, [roll] иди уже."
 )
-# the brows on the accents of the voice: a long statement (the first line has no comma, as above), a Russian
-# yes-no question (its tone rises on the stressed syllable of the main word), an angry line (its accents lower
-# the brows)
-FACE_BROWS_QUESTION = "Вино, у Лобарта вчера увели овец. Ты видел вора?"
+# the brows on the accents of the voice: a Russian yes-no question (its tone rises on the stressed syllable of
+# the main word), a long statement, an angry line (its accents lower the brows); the question goes first: with a
+# voice the first line ends after ten words (SentenceSplitter.first_clause), the statement would be cut in two
+FACE_BROWS_QUESTION = "Вино, вчера у Лобарта увели овец. Вор шёл мимо тебя."
 FACE_BROWS_REPLY = (
-    "[neutral] Я весь вечер чинил старый забор за амбаром и до самой ночи таскал воду для скотины. "
     "[neutral] Ты его видел вчера? "
+    "[neutral] Я весь вечер чинил старый забор за амбаром и до самой ночи таскал воду для скотины. "
     "[angry] Всё, хватит меня допрашивать, иди отсюда и не мешай мне работать!"
 )
 FACE_BROWS_HOLD_S = 30.0  # after the reply: the bench has the npc say two lines of the original voice
@@ -102,7 +102,7 @@ async def face_eyes_demo(link: GameLink, dialogue: DialogueManager, npc: str = F
 
 
 async def face_brows_demo(link: GameLink, dialogue: DialogueManager, npc: str = FACE_NPC) -> dict[str, str]:
-    """face_cues_demo with three lines without gestures (a statement, a question, an angry line); the npc
+    """face_cues_demo with three lines without gestures (a question, a statement, an angry line); the npc
     stays in front of the hero FACE_BROWS_HOLD_S after them for the bench's lines of the original voice."""
     return await face_cues_demo(
         link, dialogue, npc, FACE_BROWS_REPLY, FACE_BROWS_QUESTION, lines_wanted=3, hold_s=FACE_BROWS_HOLD_S
