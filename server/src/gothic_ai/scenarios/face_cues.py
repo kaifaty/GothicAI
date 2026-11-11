@@ -42,8 +42,8 @@ FACE_EYES_REPLY = (
     "[angry] [frown] Всё, некогда мне, [roll] иди уже."
 )
 # the brows on the accents of the voice: a Russian yes-no question (its tone rises on the stressed syllable of
-# the main word), a long statement, an angry line (its accents lower the brows); the question goes first: with a
-# voice the first line ends after ten words (SentenceSplitter.first_clause), the statement would be cut in two
+# the main word), a long statement, an angry line (its accents lower the brows); the question goes first: with
+# a voice the first line ends after ten words (SentenceSplitter.first_clause): the statement would be split
 FACE_BROWS_QUESTION = "Вино, вчера у Лобарта увели овец. Вор шёл мимо тебя."
 FACE_BROWS_REPLY = (
     "[neutral] Ты его видел вчера? "
