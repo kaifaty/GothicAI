@@ -149,6 +149,7 @@ class PackedMesh {
 
     void   computeBbox();
     void   measureTexels();
+    void   measureBindTexels(const asset::StaticMesh& mesh);
 
     void   dbgUtilization(const std::vector<Meshlet>& meshlets);
     void   dbgMeshlets(const asset::WorldMesh& mesh, const std::vector<Meshlet*>& meshlets);

@@ -80,7 +80,7 @@ Tempest::Texture2d* Resources::implLoadTexture(std::string_view cname, bool forc
   TextureData data;
   Texture2d tex;
   try {
-    data=implDecodeTexture(cname,forceMips,!pinned && textureStreaming && loadingTextureTail ? textureSkipMips : 0);
+    data=implDecodeTexture(cname,forceMips,textureLoadSkip(pinned));
     if(!data.pixmap.isEmpty())
       tex=device().texture(data.pixmap,data.useMipmap);
     }
@@ -259,7 +259,7 @@ const Texture2d* Resources::implLoadMaterialTexture(const std::string& path, Tex
   LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Texture);
   const auto probeT = LoadProbe::now();
   try {
-    TextureData data=decodeBaseTexture(path,false,textureStreaming && loadingTextureTail ? textureSkipMips : 0);
+    TextureData data=decodeBaseTexture(path,false,textureLoadSkip(false));
     if(data.pixmap.format()!=TextureFormat::DXT5 && (kind==TextureKind::Normal || data.pixmap.format()!=TextureFormat::DXT1)) {
       Log::e("materials: unsupported DDS format in \"",path,"\"");
       } else {
@@ -409,6 +409,15 @@ void Resources::trackTexture(Texture2d* texture, const TextureData& data, Textur
   queueTexture(entry->second);
   }
 
+uint32_t Resources::textureLoadSkip(bool pinned) const {
+  if(pinned || !textureStreaming || textureSkipMips==0)
+    return 0;
+  // World load with levels: the coarsest allowed level (the DDS reader stops there), whatever the scope.
+  if(textureScreen && textureStartup.load()!=0)
+    return TextureLevels::CoarsestRead;
+  return loadingTextureTail ? textureSkipMips : 0;
+  }
+
 Resources::TextureLoadScope::TextureLoadScope(bool tail):previous(loadingTextureTail) {
   loadingTextureTail=tail;
   }
@@ -524,6 +533,7 @@ void Resources::configureTextures(std::string_view budget, std::string_view skip
   const auto* skipEnv=std::getenv("OPENGOTHIC_TEXTURE_FAR_SKIP_MIPS");
   const auto* screenEnv=std::getenv("OPENGOTHIC_TEXTURE_SCREEN_MIPS");
   const auto* reserveEnv=std::getenv("OPENGOTHIC_TEXTURE_MIP_RESERVE");
+  const auto* jumpEnv=std::getenv("OPENGOTHIC_TEXTURE_JUMP_MS");
   const auto integer=[](std::string_view value, int64_t fallback, const char* field, int64_t maximum) -> int64_t {
     if(value.empty())
       return fallback;
@@ -542,6 +552,7 @@ void Resources::configureTextures(std::string_view budget, std::string_view skip
   const auto screen=integer(screenEnv!=nullptr ? std::string_view(screenEnv) : screenMips,1,"texture_screen_mips",1);
   const auto reserve=integer(reserveEnv!=nullptr ? std::string_view(reserveEnv) : std::string_view(),1,
                              "OPENGOTHIC_TEXTURE_MIP_RESERVE",16);
+  const auto jumpMs=integer(jumpEnv!=nullptr ? std::string_view(jumpEnv) : std::string_view(),300,"OPENGOTHIC_TEXTURE_JUMP_MS",60000);
   std::lock_guard<std::recursive_mutex> guard(inst->sync);
   inst->requeueTextures([&] {
     inst->textureBudget=uint64_t(megabytes)*1048576;
@@ -550,6 +561,7 @@ void Resources::configureTextures(std::string_view budget, std::string_view skip
     inst->textureSkipMips=inst->textureStreaming && (mipsEnv==nullptr || std::strcmp(mipsEnv,"0")!=0) ? uint32_t(skip) : 0;
     inst->textureScreen=screen!=0;
     inst->textureReserve=uint32_t(reserve);
+    inst->textureJumpMs=uint32_t(jumpMs);
     inst->textureOverBudget=false;
     });
   }
@@ -582,54 +594,6 @@ void Resources::setTextureView(float height, float fovYDegrees) {
   inst->requeueTextures([&] { inst->textureViewScale=scale+Slack; });
   }
 
-void Resources::finishTextureLoading() {
-  if(inst==nullptr || inst->dev==nullptr)
-    return;
-  std::lock_guard<std::recursive_mutex> guard(inst->sync);
-  struct Upload {
-    Texture2d texture;
-    uint8_t   level = 0;
-    };
-  std::array<TextureRecord*,2> records{};
-  std::array<std::future<Upload>,2> uploads;
-  const auto publish=[&](size_t slot) {
-    if(!uploads[slot].valid())
-      return;
-    auto upload=uploads[slot].get();
-    auto& record=*records[slot];
-    inst->unqueueTexture(record);
-    if(record.resident)
-      inst->retireTexture(std::move(*record.texture));
-    *record.texture=std::move(upload.texture);
-    record.resident=true;
-    if(upload.level<record.firstMip)
-      ++inst->texturesPromoted;
-    record.firstMip=upload.level;
-    record.bytes=LoadProbe::textureBytes(*record.texture);
-    inst->notifyTextureChanged(record);
-    inst->queueTexture(record);
-    };
-  size_t slot=0;
-  for(auto& entry:inst->textureRecords) {
-    auto& record=entry.second;
-    if(!record.wanted())
-      continue;
-    const auto level=inst->wantedLevel(record);
-    // The ring rule completes only the whole chains; levels complete every shortfall.
-    if((!inst->textureScreen && level!=0) || (record.resident && record.firstMip<=level))
-      continue;
-    publish(slot);
-    records[slot]=&record;
-    uploads[slot]=std::async(std::launch::async,[path=record.source,mipmaps=record.mipmaps,level,device=inst->dev] {
-      auto data=decodeBaseTexture(path,mipmaps,level);
-      return Upload{device->texture(data.pixmap,data.useMipmap),data.firstMip};
-      });
-    slot=(slot+1)%uploads.size();
-    }
-  publish(slot);
-  publish((slot+1)%uploads.size());
-  }
-
 Resources::TextureStats Resources::textureStats() {
   if(inst==nullptr)
     return {};
@@ -647,6 +611,10 @@ Resources::TextureStats Resources::textureStats() {
   stats.demandCalls=inst->textureDemandCalls;
   stats.requeues=inst->textureRequeues;
   stats.loadsStarted=inst->textureLoadsStarted;
+  stats.jumps=inst->textureJumps;
+  stats.jumpsOpen=inst->textureJumpsUnresolved+(inst->textureJump.open ? 1 : 0);
+  stats.jumpSyncMsMax=inst->textureJumpSyncMsMax;
+  stats.jumpZeroMsMax=inst->textureJumpZeroMsMax;
   for(const auto& queue:inst->recycled)
     stats.retiredBytes+=queue.textureBytes;
   stats.liveBytes=Texture2d::liveBytes();
@@ -1081,6 +1049,7 @@ void Resources::updateTextures(ChunkResidency* residency) {
     ++evictions;
     liveBytes=Texture2d::liveBytes();
     }
+  resources.updateTextureJump();
   finish();
   }
 

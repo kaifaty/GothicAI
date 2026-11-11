@@ -24,4 +24,12 @@ struct TexelDensity {
 
   // The same owner placed by `transform`: bounds through it, the density divided by its largest axis scale.
   TexelDensity placed(const Tempest::Matrix4x4& transform) const;
+  // Two parts as one owner: the lower density, the union of the bounds; without a usable triangle, flat only if both
+  // are (otherwise the whole chain: it errs sharper).
+  TexelDensity merged(const TexelDensity& other) const;
+  // The distance from the origin of the vertices' space to the farthest corner of the bounds, in their units;
+  // 0 without a usable triangle.
+  float        radius() const;
+  // The largest axis scale of `transform` (1 when it has none)
+  static float scaleOf(const Tempest::Matrix4x4& transform);
   };

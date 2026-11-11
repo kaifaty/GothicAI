@@ -58,6 +58,8 @@ class ChunkResidency {
     static constexpr int32_t NearExitRadius = 3;
     static constexpr float FarExitMargin = float(ChunkId::Size);
     static constexpr auto WorkBudget = std::chrono::milliseconds(2);
+    // A larger move of the hero or the camera in one update is a jump (a teleport): metres
+    static constexpr double JumpDistance = 50;
 
     explicit ChunkResidency(const ChunkTable& table);
     static std::unique_ptr<ChunkResidency> create(const ChunkTable& table);
@@ -81,6 +83,9 @@ class ChunkResidency {
     const Tempest::Vec3& viewHero() const { return heroPosition; }
     const Tempest::Vec3& viewCamera() const { return cameraPosition; }
     double viewOdometer() const { return odometer; }
+    // The larger of the hero's and the camera's moves in the last update, metres; a jump past JumpDistance
+    double viewMove() const { return lastMove; }
+    bool   viewJumped() const { return lastMove>JumpDistance; }
 
     uint64_t subscribe(Listener listener);
     uint64_t subscribeFocus(FocusListener listener);
@@ -113,6 +118,7 @@ class ChunkResidency {
     Tempest::Vec3 heroPosition;
     Tempest::Vec3 cameraPosition;
     double odometer = 0;
+    double lastMove = 0;
     float farDistance = 0;
     std::deque<Work> work;
     std::deque<std::pair<Clock::time_point,size_t>> recentTransitions;

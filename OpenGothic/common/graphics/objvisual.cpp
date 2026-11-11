@@ -554,11 +554,12 @@ void ObjVisual::setupFracture(World& world, DynamicWorld::Item& body) {
     });
   }
 
-void ObjVisual::setTextureOwner(const Tempest::Vec3& position, bool spatial) {
+float ObjVisual::setTextureOwner(const Tempest::Vec3& position, bool spatial) {
   if(type==M_Mesh)
-    mesh.view.setTextureOwner(position,spatial);
-  else if(type==M_Mdl)
-    mdl.view.setTextureOwner(position,spatial);
+    return mesh.view.setTextureOwner(position,spatial);
+  if(type==M_Mdl)
+    return mdl.view.setTextureOwner(position,spatial);
+  return std::numeric_limits<float>::infinity();
   }
 
 bool ObjVisual::renderPosition(Tempest::Vec3& out) const {
