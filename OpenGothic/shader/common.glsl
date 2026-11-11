@@ -165,6 +165,13 @@ bool isGBufHair(float v) {
   return (x & GBufHairBit)!=0;
   }
 
+// How much light a hair gets by the share that reaches it straight through the hair over it (gbufOrm.r of hair:
+// baked per point of a strand by groom_export.py, a card's hair map). The rest is scattered on the way, and a part
+// of it arrives still
+float hairShade(float reach) {
+  return 0.22 + 0.78*reach;
+  }
+
 float packHiZ(float z) {
   // return z;
   return (z-0.95)*20.0;

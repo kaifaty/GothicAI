@@ -1,11 +1,12 @@
 # Hair on cards, steps 3-4 (reports/content/2026-11-npc-hair): the hero's own head with the card hairstyle under the
 # three lights of the hair note - a torch (Xardas' tower, the default save), the sun at noon in the Khorinis market,
 # the hearth and candle of the harbour house at 22:00. Under each: three quarters from the front and from behind
-# (a still each) and a walk of the camera round the head in steps of 45 degrees; in the market also a run from
+# (a still each, and one close to the face) and a walk of the camera round the head in steps of 45 degrees; in the market also a run from
 # behind. The highlights must slide along the strands as the camera goes round, not jump.
 #   TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=ryzen OPENGOTHIC_CONTENT=<content with the head> \
 #     scripts/bench.sh scripts/bench/hair-light.bench <out>
 # OPENGOTHIC_HAIR_DEBUG=1 shows the direction of the strands as a colour instead of light (step 3).
+# The same scenario films the hair as strands (reports/content/2026-11-npc-hair/strands.md): the content decides.
 # @timeout 900
 seed 73013
 cheat god
@@ -24,6 +25,10 @@ watch player
 cam face 70 40 1
 wait 6000
 shot torch-quarter
+wait 300
+cam face 40 20 1
+wait 2500
+shot torch-close
 wait 300
 cam face 70 140 1
 wait 2500
@@ -57,6 +62,10 @@ watch player
 cam face 70 40 1
 wait 10000
 shot sun-quarter
+wait 300
+cam face 40 20 1
+wait 2500
+shot sun-close
 wait 300
 cam face 70 140 1
 wait 2500
@@ -98,6 +107,10 @@ watch player
 cam face 70 40 1
 wait 10000
 shot candle-quarter
+wait 300
+cam face 40 20 1
+wait 2500
+shot candle-close
 wait 300
 cam face 70 140 1
 wait 2500

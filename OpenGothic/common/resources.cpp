@@ -415,6 +415,35 @@ const Tempest::StorageImage& Resources::fallbackPageTable() {
 const Tempest::IndexBuffer<uint16_t>& Resources::cubeIbo() {
   return inst->cube;
   }
+const ProtoMesh* Resources::loadCharacterGroom(std::string_view instance) {
+  if(!CommandLine::inst().doHeroHead())
+    return nullptr;
+  std::string key(instance);
+  for(auto& c:key)
+    c=char(std::toupper(uint8_t(c)));
+  std::lock_guard<std::recursive_mutex> guard(inst->sync);
+  const auto it=inst->characterHeads.find(key);
+  if(it==inst->characterHeads.end() || it->second.groom.empty())
+    return nullptr;
+  auto& entry=it->second;
+  if(!entry.groomAttempted) {
+    entry.groomAttempted=true;
+    try {
+      // OPENGOTHIC_GROOM_SHARE=0.25: a quarter of the strands, four times wider (the cost of strands, a far head)
+      const char* env=std::getenv("OPENGOTHIC_GROOM_SHARE");
+      const float share=env!=nullptr ? float(std::atof(env)) : 1.f;
+      PackedMesh packed(entry.groom,share>0.f ? share : 1.f);
+      const size_t meshlets=packed.indices.size()/PackedMesh::MaxInd;
+      entry.groomMesh=std::make_unique<ProtoMesh>(std::move(packed),entry.groom.generic_string(),false);
+      Log::i("characters: loaded strands for ",key,": ",meshlets," meshlets");
+      }
+    catch(const std::exception& error) {
+      Log::e("characters: unable to load strands for ",key," from \"",entry.groom.string(),"\": ",error.what());
+      }
+    }
+  return entry.groomMesh.get();
+  }
+
 const ProtoMesh* Resources::loadCharacterHead(std::string_view instance) {
   if(!CommandLine::inst().doHeroHead())
     return nullptr;

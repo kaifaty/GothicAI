@@ -148,6 +148,8 @@ StaticMesh::StaticMesh(const PackedMesh& mesh) {
   if(Resources::hasGraphicsDevice() && Shaders::options().doRtScene) {
     LoadProbe::Vobs::Scope probe("mesh_gpu");
     for(size_t i=0;i<mesh.subMeshes.size();++i) {
+      if(sub[i].material.strand)
+        continue; // ribbons have no width until the vertex shader: nothing for a ray to hit
       sub[i].blas = Resources::blas(vbo, ibo, sub[i].iboOffset, sub[i].iboLength);
       }
     }

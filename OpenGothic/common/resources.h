@@ -148,6 +148,7 @@ class Resources final {
       float                    emissive = 0.f;
       Material::Antitile       antitile = Material::Antitile::Off;
       bool                     hair = false; // hair cards: the ORM slot is the hair map, lit by the hair BRDF
+      bool                     strand = false; // strands as ribbons: the albedo is the hair's colour ramp
       bool                     present = false;
       bool                     hasAlbedo = false;
       };
@@ -192,6 +193,8 @@ class Resources final {
     static const AttachBinder*       bindMesh       (const ProtoMesh& anim, const Skeleton& s);
     static const ProtoMesh*          loadMesh       (std::string_view name);
     static const ProtoMesh*          loadCharacterHead(std::string_view instance);
+    // the strands of that head (characters.json "groom"), nullptr without them
+    static const ProtoMesh*          loadCharacterGroom(std::string_view instance);
     // All static visual readers share the selected base and content overrides.
     static asset::StaticMesh loadVisualMesh(std::string_view name, bool* replaced = nullptr);
     struct MeshReplacementSource {
@@ -496,6 +499,7 @@ class Resources final {
       float       emissive = 0.f;
       Material::Antitile antitile = Material::Antitile::Off;
       bool        hair = false;
+      bool        strand = false;
       };
     std::unordered_map<std::string,MaterialMapFiles>                  materialMaps;
     TextureCache                                                     materialTextureCache;
@@ -514,6 +518,9 @@ class Resources final {
       std::filesystem::path face;  // empty: no face profile
       std::unique_ptr<ProtoMesh> mesh;
       bool attempted = false;
+      std::filesystem::path groom; // empty: no strands
+      std::unique_ptr<ProtoMesh> groomMesh;
+      bool groomAttempted = false;
       };
     std::unordered_map<std::string,CharacterHead>                    characterHeads;
     std::map<Tempest::Color,std::unique_ptr<Tempest::Texture2d>,Less> pixCache;

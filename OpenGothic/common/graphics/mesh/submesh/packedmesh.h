@@ -5,6 +5,7 @@
 #include "asset/material.h"
 
 #include <Tempest/Vec>
+#include <filesystem>
 #include <span>
 #include <utility>
 
@@ -65,6 +66,9 @@ class PackedMesh {
                std::span<const uint32_t> materialMap = {},
                std::span<const uint32_t> vertexIds = {}, std::span<const uint32_t> featureIds = {});
     PackedMesh(const asset::SoftSkinMesh& mesh);
+    // Strands of a head as ribbons (graphics/mesh/groommesh.cpp): the file of groom_export.py; share<1 keeps that
+    // share of the strands, wider. Throws std::runtime_error on a broken file.
+    PackedMesh(const std::filesystem::path& groom, float share);
 
     static std::vector<uint32_t> landscapeMaterialMap(const asset::WorldMesh& mesh);
     // Bounds of the vertices the landscape polygons use, as bbox() of PK_VisualLnd

@@ -404,6 +404,10 @@ void MdlVisual::setVisualBody(Npc& npc, MeshObjects::Mesh &&h, MeshObjects::Mesh
     if(const auto* own=Resources::loadCharacterHead(instance->name()))
       h=npc.world().addView(own);
   bind(head,std::move(h),"BIP01 HEAD");
+  // the strands of an own head: hair and beard as ribbons, rigid on the head's bone
+  const ProtoMesh* strands=instance!=nullptr ? Resources::loadCharacterGroom(instance->name()) : nullptr;
+  bind(groom,strands!=nullptr ? npc.world().addView(strands) : MeshObjects::Mesh(),"BIP01 HEAD");
+  groom.view.setAsGhost(hnpcFlagGhost);
   // a new view of the head: the face goes to it again (the anims go on)
   const auto* proto=head.view.protoMesh();
   face.setup(headMesh(),proto!=nullptr ? proto->face.get() : nullptr);
@@ -787,6 +791,7 @@ void MdlVisual::setNpcEffect(World& owner, Npc& npc, std::string_view s, daedalu
     hnpcFlagGhost=nextGhost;
     view.setAsGhost(hnpcFlagGhost);
     head.view.setAsGhost(hnpcFlagGhost);
+    groom.view.setAsGhost(hnpcFlagGhost);
     for(auto& i:attach)
       i.view.setAsGhost(hnpcFlagGhost);
     }
@@ -842,7 +847,7 @@ void MdlVisual::setTextureOwner(const Vec3& position, bool spatial) {
   textureOwnerSpatial=spatial;
   textureOwnerPosition=position;
   view.setTextureOwner(position,spatial);
-  MeshAttach* slots[]={&head,&sword,&shield,&bow,&ammunition,&stateItm};
+  MeshAttach* slots[]={&head,&groom,&sword,&shield,&bow,&ammunition,&stateItm};
   for(auto* slot:slots)
     slot->view.setTextureOwner(position,spatial);
   for(auto& slot:item)
@@ -868,6 +873,7 @@ bool MdlVisual::minSkinnedVertex(float fatness,Vec3& point) const {
 void MdlVisual::setHeadRotation(float dx, float dz) {
   skInst->setHeadRotation(dx,dz);
   syncAttaches(head);
+  syncAttaches(groom);
   }
 
 Vec2 MdlVisual::headRotation() const {
@@ -1416,7 +1422,7 @@ void MdlVisual::bind(Attach<View>& slot, std::string_view bone) {
   }
 
 void MdlVisual::rebindAttaches(const Skeleton& to) {
-  auto  mesh = {&head,&sword,&bow,&ammunition,&stateItm};
+  auto  mesh = {&head,&groom,&sword,&bow,&ammunition,&stateItm};
   for(auto i:mesh)
     rebindAttaches(*i,to);
   for(auto& i:item)
@@ -1438,7 +1444,7 @@ void MdlVisual::rebindAttaches(Attach<View>& mesh, const Skeleton& to) {
   }
 
 void MdlVisual::syncAttaches() {
-  MdlVisual::MeshAttach* mesh[] = {&head, &sword,&shield,&bow,&ammunition,&stateItm};
+  MdlVisual::MeshAttach* mesh[] = {&head,&groom,&sword,&shield,&bow,&ammunition,&stateItm};
   for(auto i:mesh)
     syncAttaches(*i);
   for(auto& i:item)

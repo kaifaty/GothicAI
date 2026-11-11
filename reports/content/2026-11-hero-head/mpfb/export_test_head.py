@@ -3,7 +3,7 @@
 # carried over to brows, lashes, teeth and tongue. Not the hero: the probe's average face, MPFB skin.
 #   BLENDER_USER_RESOURCES=~/.local/share/gothic-ai/mpfb/blender \
 #     blender -b ~/.local/share/gothic-ai/mpfb/work/probe.blend -P export_test_head.py -- <content root>
-# Writes <root>/characters/hero/test-head.glb, <root>/characters/characters.json (PC_HERO) and the albedo
+# Writes <root>/characters/hero/test-head.glb, test-head.frame.json, <root>/characters/characters.json (PC_HERO) and the albedo
 # materials (<root>/materials/materials.json, test-head/*.dds packed by scripts/hd/texpack.cpp).
 # With --hero the same probe becomes the hero's head (README, "Моргание и глаза"): the registered shape of
 # fit/reg (reg.npz over mpfb.npz), the rebuilt blink (blink.npz, closed frame) as eyeBlinkLeft/Right, the eyeballs
@@ -319,6 +319,12 @@ shutil.copyfile(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'test-h
                 os.path.join(ROOT, 'characters', 'hero', NAME+'.face.json'))
 json.dump({'PC_HERO': {'head': 'hero/%s.glb' % NAME, 'face': 'hero/%s.face.json' % NAME}},
           open(os.path.join(ROOT, 'characters', 'characters.json'), 'w'), indent=2)
+# the map of to_export as a matrix, for parts that are not meshes (strands, scripts/content/npc/hair/groom_export.py):
+# the human's frame (metres) -> the head's frame in the engine (cm: up, across, forward), engine = M[:, :3] @ p + M[:, 3]
+_m = np.array(human.matrix_world); _p = np.vstack([np.zeros(3), np.eye(3)])
+_e = to_export(_p @ _m[:3, :3].T + _m[:3, 3]); _g = np.stack([-100*_e[:, 0], 100*_e[:, 2], -100*_e[:, 1]], 1)
+json.dump({'matrix': np.column_stack([(_g[1:]-_g[0]).T, _g[0]]).tolist()},
+          open(os.path.join(ROOT, 'characters', 'hero', NAME+'.frame.json'), 'w'))
 
 # albedo maps: MPFB PNGs packed as the game's own (DXT1/DXT5 with mips)
 png = os.path.join(ROOT, 'materials', NAME+'-png'); dds = os.path.join(ROOT, 'materials', NAME)
