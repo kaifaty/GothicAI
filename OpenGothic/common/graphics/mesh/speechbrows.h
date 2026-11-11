@@ -31,7 +31,9 @@ class SpeechBrows final {
       };
 
     static constexpr uint64_t LateMs   = 50;  // a move found later than this starts now, not in the past
-    static constexpr float    OctaveSt = 9;   // a jump of the tone this large is a mistake of an octave, not a rise
+    // a jump of the tone this large is a mistake of an octave, not a rise: on 42 voice samples YIN's jumps between
+    // neighbouring steps are 11..13 semitones (and 18..20), none of 8..11; a Russian question rises up to 9..10
+    static constexpr float    OctaveSt = 10.5f;
 
     // OPENGOTHIC_SPEECH_BROWS=0 switches them off (a profile without speech_brows has none anyway)
     static bool isEnabled();
