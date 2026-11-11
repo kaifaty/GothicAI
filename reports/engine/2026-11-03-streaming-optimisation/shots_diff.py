@@ -37,15 +37,18 @@ def main() -> int:
     p.add_argument("--masks", type=Path, help="directory for difference masks")
     p.add_argument("--host", default="mac")
     p.add_argument("--all-pairs", action="store_true", help="compare every pair among the runs")
+    p.add_argument("--shots", help="comma-separated shot names instead of the streaming-shots ones "
+                                   "(scripts/bench/texture-owners-shots.bench: see its header)")
     p.add_argument("runs", nargs="+", help="LABEL=DIR, in pairs")
     args = p.parse_args()
     if not args.all_pairs and len(args.runs) % 2:
         p.error("runs come in pairs")
     runs = [r.split("=", 1) for r in args.runs]
+    shots = [name for name in args.shots.split(",") if name] if args.shots else SHOTS
     pairs = itertools.combinations(runs, 2) if args.all_pairs else zip(runs[0::2], runs[1::2])
     rows = []
     for (la, da), (lb, db) in pairs:
-        for shot in SHOTS:
+        for shot in shots:
             fa, fb = Path(da) / f"{shot}.png", Path(db) / f"{shot}.png"
             if not fa.exists() or not fb.exists():
                 missing = [str(f) for f in (fa, fb) if not f.exists()]
