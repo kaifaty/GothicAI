@@ -458,11 +458,15 @@ int main() {
                        "root": {"bone": "chest", "source": "BIP01 SPINE"},
                        "shoulders": [{"clavicle": "clav", "arm": "upper", "elbow": "fore", "chest": "chest", "share": 0.5}]}
         },
-      "meshes": {"HUM_BODY_TEST.MDM": "LEG"}
+      "meshes": {"HUM_BODY_TEST.MDM": "LEG"},
+      "bodies": {"hum_body_naked0": {"8": "HUM_BODY_TEST.MDM"}}
       })";
     index.parse(json);
     require(messages.empty(),"a good file is read without messages: "+(messages.empty() ? "" : messages[0]));
     require(index.size()==19,"nineteen rigs are read");
+    // a body drawn as another mesh for one texture variant: the hero's clothes of the shared naked body
+    require(index.bodyOf("Hum_Body_Naked0.ASC",8)=="HUM_BODY_TEST" && index.bodyOf("hum_body_naked0",0).empty() &&
+            index.bodyOf("HUM_BODY_BABE0",8).empty(),"a body's texture variant has its own mesh, the others keep the body");
 
     // (a) the same skeleton repeats the source
     const RenderRig* sameRig = index.rig("SAME");

@@ -1202,6 +1202,11 @@ const RenderRig* Resources::renderRigOfMesh(std::string_view mesh) {
   return inst->renderRigs ? inst->renderRigs->rigOfMesh(mesh) : nullptr;
   }
 
+std::string Resources::bodyOfVariant(std::string_view body, int32_t variant) {
+  std::lock_guard<std::recursive_mutex> g(inst->sync);
+  return inst->renderRigs ? inst->renderRigs->bodyOf(body,variant) : std::string();
+  }
+
 const Animation* Resources::loadAnimation(std::string_view name) {
   LoadProbe::Requests::add(1,name);
   auto cname = std::string(name);
