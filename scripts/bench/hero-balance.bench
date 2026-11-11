@@ -1,7 +1,7 @@
 # The hero's balance by hand against G2's dice (docs/manual-aim.md, stage 4): four tiers as G2 has them plus three strength/dexterity builds (the
 # talent, the bow, its strength and dexterity, the trained animations), at a farmer 10, 20 and 30 m off, aimed
 # at the body and at the head; 30 shots each, held 300-600 ms (the sway is a function of time), a seed each
-# Hit ratios on/off wait for the hero to hold its place between reloads (#827); the tempo is reliable.
+# Quiet repeat after #844 still drifts >5 cm with still player on; ON/OFF remains blocked (#827, see report).
 cheat god
 set time 12 0
 view clean
