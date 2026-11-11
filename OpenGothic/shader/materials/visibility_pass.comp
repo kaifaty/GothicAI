@@ -18,6 +18,9 @@ layout(binding = 3, std140) readonly buffer Bbo { Bucket      bucket[];      };
 layout(binding = 4, std430) buffer IndirectBuf  { IndirectCmd cmd[];         };
 layout(binding = 5, std430) readonly buffer Cbo { Cluster     clusters[];    };
 layout(binding = 7)         uniform sampler2D hiZ;
+#if defined(ORDERED)
+layout(binding = 6, std430) readonly buffer Ord { uint order[]; }; // canonical order of the live clusters
+#endif
 
 layout(push_constant, std430) uniform UboPush {
   uint      firstMeshlet;
@@ -240,8 +243,8 @@ void main() {
   // bench `deterministic on`: one invocation appends the clusters in their order
   if(gl_GlobalInvocationID.x!=0)
     return;
-  for(uint clusterId=0; clusterId<push.meshletCount; ++clusterId)
-    runCluster(clusterId);
+  for(uint i=0; i<push.meshletCount; ++i)
+    runCluster(order[i]);
 #else
   const uint clusterId = gl_GlobalInvocationID.x;
   if(clusterId<push.meshletCount)

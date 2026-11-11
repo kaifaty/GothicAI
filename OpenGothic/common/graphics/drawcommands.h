@@ -80,6 +80,7 @@ class DrawCommands {
       T_HiZ        = 7,
       T_VsmPages   = 8,
       T_CmdOffsets = 9,
+      T_Order      = T_Lights, // visibility_pass*_ordered.comp: the clusters in their canonical order
       };
 
     enum UboLinkpackage : uint8_t {
@@ -125,6 +126,7 @@ class DrawCommands {
       };
 
     bool                     isViewEnabled(SceneGlobals::VisCamera v) const;
+    const Tempest::StorageBuffer& orderedClusters();
 
     void                     setBindings(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const DrawCmd& cx, SceneGlobals::VisCamera viewId);
 
@@ -140,5 +142,9 @@ class DrawCommands {
     View                     views[SceneGlobals::V_Count];
 
     const bool               vsmSupported;
+
+    // bench `deterministic on`: cluster ids sorted by what they draw, not by the order they were allocated in
+    std::vector<uint32_t>    orderIds, orderNext;
+    Tempest::StorageBuffer   orderSsbo;
     Tempest::StorageBuffer   vsmIndirectCmd;
   };

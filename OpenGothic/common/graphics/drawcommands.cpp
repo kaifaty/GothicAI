@@ -1,6 +1,7 @@
 #include "drawcommands.h"
 
 #include <Tempest/Log>
+#include <algorithm>
 
 #include "graphics/mesh/submesh/animmesh.h"
 #include "graphics/mesh/submesh/staticmesh.h"
@@ -323,9 +324,15 @@ void DrawCommands::visibilityPass(Encoder<CommandBuffer>& cmd, int pass) {
     push.meshletCount = uint32_t(clusters.size());
     push.znear        = scene.znear;
 
-    // bench `deterministic on`: one invocation appends the visible clusters in their order, so the instance order of
-    // a draw (who wins equal depth, the order of blending) does not depend on how GPU threads race for atomicAdd
+    // bench `deterministic on`: one invocation appends the visible clusters in their canonical order (orderedClusters),
+    // so the instance order of a draw (who wins equal depth, the order of blending) depends neither on how GPU threads
+    // race for atomicAdd nor on the order the streaming threads published chunks and vobs in
     const bool ordered = TestBench::orderedVisibility();
+    const Tempest::StorageBuffer* order = nullptr;
+    if(ordered) {
+      order = &orderedClusters();
+      push.meshletCount = uint32_t(orderIds.size());
+      }
     auto* pso = ordered ? &Shaders::inst().visibilityPassShOrd : &Shaders::inst().visibilityPassSh;
     if(viewport==SceneGlobals::V_Main)
       pso = ordered ? &Shaders::inst().visibilityPassHiZOrd : &Shaders::inst().visibilityPassHiZ;
@@ -339,10 +346,39 @@ void DrawCommands::visibilityPass(Encoder<CommandBuffer>& cmd, int pass) {
     cmd.setBinding(T_Indirect, view.indirectCmd);
     cmd.setBinding(T_Clusters, clusters.ssbo());
     cmd.setBinding(T_HiZ,      *scene.hiZ);
+    if(order!=nullptr)
+      cmd.setBinding(T_Order,  *order);
     cmd.setPushData(push);
     cmd.setPipeline(*pso);
     cmd.dispatchThreads(ordered ? 1 : push.meshletCount);
     }
+  }
+
+const Tempest::StorageBuffer& DrawCommands::orderedClusters() {
+  orderNext.clear();
+  for(size_t i=0; i<clusters.size(); ++i)
+    if(clusters[i].r>0)
+      orderNext.push_back(uint32_t(i));
+  // a cluster is named by what it draws: its sphere, then the meshlets of its mesh; ids, buckets and commands are
+  // handed out in the order of publication and differ between runs
+  std::stable_sort(orderNext.begin(), orderNext.end(), [this](uint32_t a, uint32_t b) {
+    const auto& l = clusters[a];
+    const auto& r = clusters[b];
+    if(l.pos.x!=r.pos.x) return l.pos.x<r.pos.x;
+    if(l.pos.y!=r.pos.y) return l.pos.y<r.pos.y;
+    if(l.pos.z!=r.pos.z) return l.pos.z<r.pos.z;
+    if(l.r!=r.r)         return l.r<r.r;
+    if(l.meshletCount!=r.meshletCount) return l.meshletCount<r.meshletCount;
+    return l.firstMeshlet<r.firstMeshlet;
+    });
+  if(orderNext!=orderIds || orderSsbo.isEmpty()) {
+    std::swap(orderIds, orderNext);
+    Resources::recycle(std::move(orderSsbo));
+    if(orderIds.empty())
+      orderSsbo = Resources::device().ssbo(Tempest::BufferHeap::Upload, Tempest::Uninitialized, sizeof(uint32_t)); else
+      orderSsbo = Resources::device().ssbo(Tempest::BufferHeap::Upload, orderIds);
+    }
+  return orderSsbo;
   }
 
 void DrawCommands::visibilityVsm(Encoder<CommandBuffer>& cmd) {

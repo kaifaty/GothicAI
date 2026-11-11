@@ -295,7 +295,8 @@ the ring rule (`OPENGOTHIC_TEXTURE_SCREEN_MIPS=0`) with `shots_diff.py --shots <
 `streaming-shots` runs with `deterministic on`: the world stands still while `streaming wait`
 waits and four frames more once everything is loaded (also when it was loaded on arrival), then the
 TAA history and the SSAO history start over at phase 0 and 16 fixed steps run with visibility in
-cluster order before `shot`; texture levels settle and stand still until the shot.
+a canonical cluster order (sorted by sphere and meshlets, not by the ids streaming handed out)
+before `shot`; texture levels settle and stand still until the shot.
 Two runs of one binary then give byte-identical `perf-market` and `perf-harbour` PNGs, and
 `perf-forest` and `perf-island` PNGs in most pairs: at 1920x1080 on Ryzen, virtual shadow maps on,
 five runs gave 0 changed pixels at the market and the harbour in all ten pairs, 0 or 1 pixel in the
@@ -337,6 +338,9 @@ layer), `OPENGOTHIC_TAA_REACTIVE=0`, `=1`, `=1` with the view and `OPENGOTHIC_TA
 
 ## План и журнал
 
+- 2026-11-11: `deterministic on` walks visibility clusters in a canonical order (sorted by sphere and meshlets,
+  not by the ids streaming handed out). On the Mac it removed the dependence on the id order; on Ryzen four
+  runs still give the discrete states of issue #946 (0–32 px), so the acceptance rule stays as it is.
 - 2026-11-11: a 1920x1080 clip records in real time on Ryzen (Vulkan): the readback of a captured frame
   reads cached host memory (24–38 ms → 0.6 ms) through one kept staging buffer, and filming draws every
   frame into one image instead of allocating one each step; 31–34 % → 99 % of real time.
@@ -352,7 +356,7 @@ layer), `OPENGOTHIC_TAA_REACTIVE=0`, `=1`, `=1` with the view and `OPENGOTHIC_TA
   own image without a window or display; Ryzen benches use it by default.
 - 2026-11-05: `deterministic on` for `streaming-shots`: frozen world during `streaming wait`, TAA reset,
   16 fixed steps, ordered visibility and settled texture levels before `shot`; byte-identical pairs
-  at four points on Mac in most pairs, rare single-point residue in #946.
+  at four points on Mac in most pairs, rare single-point residue (fixed by the entry above).
 - 2026-11-02: route headless `auto` benches through dev-ubuntu → Ryzen → Mac; keep windowed
   routing unchanged. Reuse `ryzen.sh` with dev-ubuntu build limits and setup/cleanup without NAS.
 - 2026-11-02: remove stale runners from window-only rebuilds before caching; keep `RUNNER_BIN` local.
@@ -907,7 +911,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `rec <name> [novideo]`, `stop [shadow]` | record a segment (video and metrics, or metrics only); `stop shadow` also copies both rolling melee shadow journals into segment files (filter cumulative rows by fight game-time interval) |
 | `shot <name>` | one PNG |
 | `streaming wait [timeout_ms]` | Wait for all desired Near/Far chunks and the publication queue; timeout defaults to 60000 real ms. |
-| `deterministic on\|off` | Bench-only deterministic frame (off by default): every frame is a step (no skip under 5 ms); while `streaming wait` waits the world takes no step; when it is ready the world stands four frames more, the renderer drops the TAA history and jitter phase, then 16 fixed steps run before the next command, and visibility appends clusters in order (one GPU invocation, `visibility_pass*_ordered`) until the next `shot`. Readiness also waits for empty texture demotion queues and no reload in flight; texture residency then stands still until the shot. `streaming-shots` uses it. |
+| `deterministic on\|off` | Bench-only deterministic frame (off by default): every frame is a step (no skip under 5 ms); while `streaming wait` waits the world takes no step; when it is ready the world stands four frames more, the renderer drops the TAA history and jitter phase, then 16 fixed steps run before the next command, and visibility appends clusters in a canonical order (sorted on the CPU by sphere and meshlets; one GPU invocation, `visibility_pass*_ordered`) until the next `shot`. Readiness also waits for empty texture demotion queues and no reload in flight; texture residency then stands still until the shot. `streaming-shots` uses it. |
 | `npctier <npc> full\|simplified\|auto` | Override one NPC tier until reset or reload. Hero, training and arena actors stay Full. |
 | `npctier-test <npc> <start waypoint> <end waypoint>` | Verify 20 switches in each direction during movement and turns, unchanged remaining path/destination and every arrival. `npc-tier-transitions` runs the fixture on a fresh NEWWORLD. |
 | `npcspeed <start waypoint>` | Compare Sequence speed with Full and Simplified movement on one authored edge for human/orc/wolf in walk/run/sneak; appended to `npc-tier-transitions`. Removes ambient NPCs for calibration. |
