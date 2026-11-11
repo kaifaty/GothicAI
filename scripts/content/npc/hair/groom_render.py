@@ -1,9 +1,9 @@
 # The head with a groom of strands, rendered in Cycles: the reference the game's hair is judged against.
 #   blender -b <round>/reg_sub.blend -P groom_render.py -- views.json skin.png groom.npz <out dir> <prefix>
-#       [--part part.npz part.png]... [--eye eye.png] [--size 1200] [--spp 256] [--views front,quarter,profile,back,hairline,knot]
+#       [--groom more.npz]... [--part part.npz part.png]... [--eye eye.png] [--size 1200] [--spp 256] [--views front,quarter,profile,back,hairline,knot]
 # The cameras stand on the eye point of views.json, as render_skin.py's do. Hair is Cycles' hair curves with the
 # principled hair BSDF; a strand's colour is the hair colour moved by its lock's tint. The cord of the tail is a
-# band of leather.
+# band of leather. --groom adds more strands of the same hair: the beard, the moustache and the stubble of beard.py.
 import bpy, sys, os, json, math
 import numpy as np
 from mathutils import Vector
@@ -18,7 +18,10 @@ def opt(name, default=None, n=1):
     return out if n > 1 else (out[-1][0] if out else default)
 
 
-parts = opt('--part', n=2); EYE = opt('--eye'); SIZE = int(opt('--size', 1200)); SPP = int(opt('--spp', 256))
+parts = opt('--part', n=2); MORE = []
+while '--groom' in a:
+    i = a.index('--groom'); MORE.append(a[i+1]); del a[i:i+2]
+EYE = opt('--eye'); SIZE = int(opt('--size', 1200)); SPP = int(opt('--spp', 256))
 VIEWS = opt('--views', 'front,quarter,profile,back,hairline,knot').split(',')
 V = json.load(open(a[0])); G = np.load(a[2]); OUT, pre = a[3], a[4]
 sc = bpy.context.scene; hm = bpy.data.objects['Human']; cam = sc.camera
@@ -51,14 +54,6 @@ if EYE:
             for sl in o.material_slots: sl.material = em
 
 # ---- the strands
-pts = G['pts'].astype('f'); n, K = pts.shape[:2]
-cu = bpy.data.hair_curves.new('groom'); cu.add_curves([K]*n)
-cu.attributes['position'].data.foreach_set('vector', pts.reshape(-1))
-taper = np.clip((1-np.linspace(0, 1, K))/0.3, 0.25, 1.0)                 # thinner over the last third
-rad = cu.attributes.get('radius') or cu.attributes.new('radius', 'FLOAT', 'POINT')
-rad.data.foreach_set('value', (G['rad'][:, None]*taper[None]).reshape(-1).astype('f'))
-cu.attributes.new('tint', 'FLOAT', 'CURVE').data.foreach_set('value', G['tint'].astype('f'))
-go = bpy.data.objects.new('groom', cu); sc.collection.objects.link(go)
 hmat = bpy.data.materials.new('hair'); hmat.use_nodes = True; hn = hmat.node_tree; hn.nodes.clear()
 out = hn.nodes.new('ShaderNodeOutputMaterial'); hb = hn.nodes.new('ShaderNodeBsdfHairPrincipled'); hb.parametrization = 'COLOR'
 at = hn.nodes.new('ShaderNodeAttribute'); at.attribute_name = 'tint'
@@ -70,7 +65,16 @@ hn.links.new(at.outputs['Fac'], mp.inputs['Value']); hn.links.new(mp.outputs['Re
 hn.links.new(ramp.outputs['Color'], hb.inputs['Color']); hn.links.new(hb.outputs['BSDF'], out.inputs['Surface'])
 for k, v in (('Roughness', 0.33), ('Radial Roughness', 0.45), ('Random Roughness', 0.15), ('Random Color', 0.06), ('IOR', 1.55)):
     if k in hb.inputs: hb.inputs[k].default_value = v
-cu.materials.append(hmat)
+n = 0
+for gi, S in enumerate([G]+[np.load(m) for m in MORE]):
+    pts = S['pts'].astype('f'); ns, K = pts.shape[:2]; n += ns
+    cu = bpy.data.hair_curves.new('groom%d' % gi); cu.add_curves([K]*ns)
+    cu.attributes['position'].data.foreach_set('vector', pts.reshape(-1))
+    taper = np.clip((1-np.linspace(0, 1, K))/0.3, 0.25, 1.0)             # thinner over the last third
+    rad = cu.attributes.get('radius') or cu.attributes.new('radius', 'FLOAT', 'POINT')
+    rad.data.foreach_set('value', (S['rad'][:, None]*taper[None]).reshape(-1).astype('f'))
+    cu.attributes.new('tint', 'FLOAT', 'CURVE').data.foreach_set('value', S['tint'].astype('f'))
+    sc.collection.objects.link(bpy.data.objects.new(cu.name, cu)); cu.materials.append(hmat)
 
 # ---- the cord: a band of leather round the tail's root
 cd = G['cord']; cc, cax, cr, ca, cb = Vector(cd[0:3]), Vector(cd[3:6]).normalized(), float(cd[6])*0.70, float(cd[7]), float(cd[8])
@@ -100,13 +104,15 @@ except Exception as e: print('CPU render:', e)
 sc.cycles_curves.shape = 'RIBBONS'; sc.view_settings.view_transform = 'Standard'
 ex_, ey, ez = V['eye']; sc.render.resolution_x = sc.render.resolution_y = SIZE; cam.data.type = 'ORTHO'
 SHOTS = {'front': (0, 0.36, 0, -0.03), 'quarter': (35, 0.36, 0, -0.03), 'profile': (90, 0.36, 0.06, -0.03), 'back': (150, 0.36, 0, -0.03),
-         'behind': (180, 0.36, 0, -0.03), 'hairline': (20, 0.17, 0, 0.065), 'knot': (165, 0.20, 0, -0.045), 'top': (0, 0.30, 0, 0)}
+         'behind': (180, 0.36, 0, -0.03), 'hairline': (20, 0.17, 0, 0.065), 'knot': (165, 0.20, 0, -0.045), 'top': (0, 0.30, 0, 0),
+         'beard': (0, 0.17, 0, -0.085, -0.02), 'beard_q': (40, 0.17, 0, -0.085, -0.02), 'jaw': (90, 0.17, 0, -0.085, 0.02)}   # the last: aimed at a point this far behind the eyes
 for name in VIEWS:
-    ang, scale, shift, dz = SHOTS[name]; r = math.radians(ang); cam.data.ortho_scale = scale
+    ang, scale, shift, dz = SHOTS[name][:4]; r = math.radians(ang); cam.data.ortho_scale = scale
     if name == 'top':
         cam.location = Vector((0, ey+0.10, ez+3)); cam.rotation_euler = (0, 0, 0)
     else:
         cam.location = Vector((math.sin(r)*3, -math.cos(r)*3, ez+dz)); cam.rotation_euler = (math.radians(90), 0, r)
         if ang == 90: cam.location.y = ey+shift
+        if len(SHOTS[name]) > 4: cam.location.y = -math.cos(r)*3+ey+SHOTS[name][4]
     sc.render.filepath = os.path.join(OUT, f'{pre}_{name}.png'); bpy.ops.render.render(write_still=True)
 print('GROOM RENDER', n, 'strands;', ', '.join(VIEWS))
