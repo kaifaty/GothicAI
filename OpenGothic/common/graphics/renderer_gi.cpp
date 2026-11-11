@@ -1,4 +1,5 @@
 #include "renderer.h"
+#include "settings.h"
 #include "renderer_internal.h"
 
 #include <Tempest/Log>
@@ -7,7 +8,6 @@
 #include <string_view>
 
 #include "frameprofile.h"
-#include "gothic.h"
 
 using namespace Tempest;
 using RendererInternal::nextPot;
@@ -23,8 +23,8 @@ void Renderer::toggleGi() {
   if(!Shaders::options().doRtScene)
     return;
 
-  if(settings.giMethod==GiMethod::None && Gothic::options().doGi!=GiMethod::None)
-    settings.giMethod = Gothic::options().doGi;
+  if(settings.giMethod==GiMethod::None && ::Settings::options().doGi!=GiMethod::None)
+    settings.giMethod = ::Settings::options().doGi;
   else if(settings.giMethod==GiMethod::None && Shaders::isGi1Supported())
     settings.giMethod = GiMethod::Probes; // default for now
   else

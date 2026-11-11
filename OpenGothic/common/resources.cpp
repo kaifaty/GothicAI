@@ -1,4 +1,5 @@
 #include "resources.h"
+#include "gameservices.h"
 #include "resources_internal.h"
 #include "loadprobe.h"
 #include "basestore.h"
@@ -1121,7 +1122,7 @@ Tempest::Sound Resources::implLoadSoundBuffer(std::string_view name) {
   if(name.empty())
     return Tempest::Sound();
 
-  auto& external = Gothic::inst().externalSoundFn;
+  auto& external = GameServices::inst().externalSoundFn;
   if(!(external && external(name,fBuff))) {
     const auto* source = baseAudio.find(name);
     if(source==nullptr)

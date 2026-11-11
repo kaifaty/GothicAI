@@ -55,7 +55,7 @@ MainWindow::MainWindow(Device& device)
     mobileUi(player),
 #endif
     player(dialogs,inventory) {
-  Gothic::inst().onSettingsChanged.bind(this,&MainWindow::onSettings);
+  Settings::inst().onSettingsChanged.bind(this,&MainWindow::onSettings);
   onSettings();
 
   if(SystemApi::isOffscreen()) {

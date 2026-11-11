@@ -1,11 +1,9 @@
 #include <cstdlib>
 #include "soundfx.h"
+#include "gameservices.h"
 
 #include <Tempest/Log>
 #include <cctype>
-
-#include "game/definitions/sounddefinitions.h"
-#include "gothic.h"
 
 #include "resources.h"
 #include "utils/string_frm.h"
@@ -68,7 +66,7 @@ Tempest::SoundEffect SoundFx::load(Tempest::SoundDevice &dev, bool& loop) const 
   }
 
 void SoundFx::implLoad(std::string_view s) {
-  auto& sfx = Gothic::sfx()[s];
+  auto& sfx = GameServices::inst().soundEffect(s);
   auto  snd = Resources::loadSoundBuffer(sfx.file);
 
   if(!snd.isEmpty())
@@ -79,7 +77,7 @@ void SoundFx::implLoad(std::string_view s) {
 void SoundFx::loadVariants(std::string_view s) {
   for(int i=1;i<100;++i) {
     string_frm name(s,"_A",i);
-    auto& sfx = Gothic::sfx()[name];
+    auto& sfx = GameServices::inst().soundEffect(name);
     auto  snd = Resources::loadSoundBuffer(sfx.file);
     if(snd.isEmpty())
       break;

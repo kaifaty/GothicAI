@@ -1,11 +1,11 @@
 #include "shaders.h"
+#include "utils/workers.h"
 
 #include <Tempest/Application>
 #include <Tempest/Device>
 #include <Tempest/Log>
 #include <cassert>
 
-#include "gothic.h"
 #include "commandline.h"
 #include "resources.h"
 #include "loadprobe.h"

@@ -1,4 +1,5 @@
 #include "sky.h"
+#include "settings.h"
 
 #include <Tempest/Application>
 #include <Tempest/CommandBuffer>
@@ -9,7 +10,6 @@
 
 #include "utils/string_frm.h"
 #include "world/world.h"
-#include "gothic.h"
 #include "resources.h"
 
 using namespace Tempest;
@@ -64,8 +64,8 @@ Sky::Sky(std::string_view wname) {
     zMoonSize=400
     zMoonAlpha=255
     */
-  sunImg  = Resources::loadTexture(Gothic::settingsGetS("SKY_OUTDOOR","zSunName"));
-  moonImg = Resources::loadTexture(Gothic::settingsGetS("SKY_OUTDOOR","zMoonName"));
+  sunImg  = Resources::loadTexture(Settings::getS("SKY_OUTDOOR","zSunName"));
+  moonImg = Resources::loadTexture(Settings::getS("SKY_OUTDOOR","zMoonName"));
   if(sunImg==nullptr)
     sunImg = &Resources::fallbackBlack();
   if(moonImg==nullptr)

@@ -106,11 +106,11 @@ GameScript::GameScript(GameSession &owner)
   aiDefaultPipe.reset(new GlobalOutput(*this));
   initCommon();
   initSettings();
-  Gothic::inst().onSettingsChanged.bind(this,&GameScript::initSettings);
+  Settings::inst().onSettingsChanged.bind(this,&GameScript::initSettings);
   }
 
 GameScript::~GameScript() {
-  Gothic::inst().onSettingsChanged.ubind(this,&GameScript::initSettings);
+  Settings::inst().onSettingsChanged.ubind(this,&GameScript::initSettings);
   }
 
 void GameScript::initCommon() {

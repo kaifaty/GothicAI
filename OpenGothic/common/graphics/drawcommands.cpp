@@ -8,7 +8,6 @@
 #include "graphics/visualobjects.h"
 #include "shaders.h"
 
-#include "gothic.h"
 #include "testbench.h"
 
 using namespace Tempest;

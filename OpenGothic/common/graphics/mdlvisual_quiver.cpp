@@ -1,4 +1,7 @@
 #include "mdlvisual.h"
+#include "settings.h"
+#include "gameservices.h"
+#include "camera.h"
 #include "mdlvisual_internal.h"
 
 #include "graphics/mesh/skeleton.h"
@@ -7,7 +10,6 @@
 #include "game/serialize.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
-#include "gothic.h"
 #include "worldchunksruntime.h"
 #include "utils/workers.h"
 
@@ -92,7 +94,7 @@ bool MdlVisual::loadStuckArrows(Serialize& fin, World& world) {
   Resources::TextureLoadScope textureLoadScope(textureOwnerKnown && textureOwnerSpatial && residency &&
       residency->textureDistance(ChunkId::fromPosition(textureOwnerPosition.x,textureOwnerPosition.z))>2);
   clearStuckArrows();
-  if(!Gothic::physicsFlags().arrowSticking)
+  if(!Settings::physicsFlags().arrowSticking)
     return true;
   try {
     uint32_t magic=0,count=0;
@@ -253,7 +255,7 @@ bool MdlVisual::updateQuiver(const Npc& npc, uint64_t dt) {
   if(!quiv.isShown() || skeleton==nullptr || quiv.bone()>=skInst->boneCount())
     return false;
   // far or not drawn: at rest, not computed
-  const auto* cam = Gothic::inst().camera();
+  const auto* cam = GameServices::inst().camera();
   const Vec3  at  = npc.position();
   if(view.isEmpty() || (cam!=nullptr && (cam->originLwc()-at).length()>Quiver::SimDistance)) {
     quiv.rest();

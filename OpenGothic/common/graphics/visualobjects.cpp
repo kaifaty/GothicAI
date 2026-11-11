@@ -1,6 +1,9 @@
 #include "visualobjects.h"
+#include "gameservices.h"
+#include "camera.h"
 
 #include <Tempest/Log>
+#include <Tempest/Painter>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -8,7 +11,6 @@
 #include <cstdlib>
 
 #include "graphics/mesh/submesh/animmesh.h"
-#include "gothic.h"
 #include "frameprofile.h"
 #include "loadprobe.h"
 #include "physics/worldwind.h"
@@ -1291,7 +1293,7 @@ void VisualObjects::updateRtScene(RtScene& out, Tempest::Encoder<Tempest::Comman
   }
 
 void VisualObjects::dbgClusters(Tempest::Painter& p, Vec2 wsz) {
-  auto cam = Gothic::inst().camera();
+  auto cam = GameServices::inst().camera();
   if(cam==nullptr)
     return;
   /*
@@ -1301,7 +1303,7 @@ void VisualObjects::dbgClusters(Tempest::Painter& p, Vec2 wsz) {
   */
 
   /*
-  if(auto pl = Gothic::inst().player()) {
+  if(auto pl = GameServices::inst().player()) {
     Cluster cx;
     cx.pos = pl->position();
     cx.r   = 100;

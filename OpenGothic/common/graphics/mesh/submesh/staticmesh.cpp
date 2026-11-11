@@ -4,7 +4,6 @@
 #include <cassert>
 #include <algorithm>
 #include <atomic>
-#include "gothic.h"
 
 #include "graphics/mesh/submesh/packedmesh.h"
 #include "graphics/shaders.h"
@@ -258,7 +257,6 @@ StaticMesh::StaticMesh(const Material& mat, std::vector<Resources::Vertex> cvbo,
   for(size_t i=0;i<1;++i) {
     sub[i].texName   = "";
     sub[i].material  = mat;
-    //sub[i].iboLength = Gothic::options().doMeshShading ? PackedMesh::MaxInd : ibo.size();
     sub[i].iboLength = PackedMesh::MaxInd;
     sub[i].texel     = texel;
     if(Resources::hasGraphicsDevice() && Shaders::options().doRtScene) {
