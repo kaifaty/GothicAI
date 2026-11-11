@@ -1803,10 +1803,13 @@ void MdlVisual::startSpeech(Npc& npc, std::shared_ptr<LipSync::Track> voice) {
   // sets it just before or after its voice), else none
   if(moodTick!=now)
     speechMood = TalkGestures::Mood::Neutral;
-  if(face.isActive() && face.faceProfile()->brows.has_value())
+  if(SpeechBrows::isEnabled() && face.isActive() && face.faceProfile()->brows.has_value())
     voiceBrows.start(voice,SpeechCues::seedOf(voice->name())^(uint32_t(npc.instanceSymbol())*2654435761u),now); else
     voiceBrows.stop();
   accentsLogged = 0;
+  if(&npc==FaceRig::probeNpc && face.isActive())
+    Log::i("[face] voice ",npc.displayName(),": ",voice->name()," ",voice->durationMs()," ms",
+           voice->isFinished() ? "" : " (streaming)",SpeechBrows::isEnabled() ? "" : ", brows off");
   mouth.start(std::move(voice),now);
   }
 

@@ -126,5 +126,13 @@
         "lower": {"cheekSquintRight": 0.45, "cheekSquintLeft": 0.448, "mouthFrownLeft": 0.393, "mouthFrownRight": 0.39, "noseSneerRight": 0.176, "noseSneerLeft": 0.168, "mouthSmileLeft": 0.153, "mouthSmileRight": 0.135, "mouthStretchLeft": 0.134, "mouthDimpleLeft": 0.124, "mouthStretchRight": 0.118, "mouthUpperUpRight": 0.116, "mouthUpperUpLeft": 0.115, "mouthDimpleRight": 0.114, "mouthShrugLower": 0.079}
       }
     }
+  },
+  "speech_brows": {
+    "about": "The brows of the speaker on the accents of its voice (eyes.md, 'План: брови по тону'): a syllable where the tone rises rise_st semitones within rise_ms and the voice reaches loud raises them (up) from lead_ms before it; an angry or hostile line lowers them (down: S_ANGRY already holds the brows near 1, so the squint and the sneer carry the stress there). A gap and a chance by the seed keep them off most accents (about one move in 2.5 s on 42 voice samples). Limits picked by the clip, the look is the user's.",
+    "rise_st": 3, "rise_ms": 200, "syllable_ms": 150, "loud": 0.5, "lead_ms": 100,
+    "on_ms": 120, "hold_ms": 150, "off_ms": 300, "gap_ms": 1000, "chance": 0.7,
+    "up": {"browInnerUp": 0.4, "browOuterUpLeft": 0.3, "browOuterUpRight": 0.3},
+    "down": {"browDownLeft": 0.35, "browDownRight": 0.35, "eyeSquintLeft": 0.2, "eyeSquintRight": 0.2, "noseSneerLeft": 0.12, "noseSneerRight": 0.12},
+    "quiet_cues": ["flash", "doubt", "frown", "squint", "disgust", "wince"]
   }
 }

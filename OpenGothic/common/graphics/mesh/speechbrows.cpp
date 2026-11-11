@@ -2,10 +2,24 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 
 namespace {
 constexpr int64_t StepMs = 10;  // of LipSync::Track
+
+bool enabled = []() {
+  const char* v = std::getenv("OPENGOTHIC_SPEECH_BROWS");
+  return v==nullptr || v[0]!='0';
+  }();
 }
+
+bool SpeechBrows::isEnabled() {
+  return enabled;
+  }
+
+void SpeechBrows::setEnabled(bool e) {
+  enabled = e;
+  }
 
 void SpeechBrows::start(std::shared_ptr<LipSync::Track> t, uint32_t seed, uint64_t now) {
   *this     = SpeechBrows();
