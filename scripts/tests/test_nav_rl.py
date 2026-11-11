@@ -594,18 +594,45 @@ def test_shared_runner_forks_with_serial_physics_and_loads_navmesh_on_each_reset
         assert {"--stdio", "--fork-reset", "--serial-workers"} <= set(launch["command"])
         assert "--fork-prefix" not in launch["command"]
         assert launch["env"]["OPENGOTHIC_PHYSICS_THREADS"] == "0"
+        assert launch["start_new_session"] is True
         requests = []
         monkeypatch.setattr(runner, "request", lambda command, timeout: requests.append(command) or {"done": True})
         scenario = tmp_path / "episode.bench"
-        scenario.write_text("seed 7\nnavdemos wait\nlabel done\n")
+        scenario.write_text("seed 7\nnavdemos wait\nnavmesh finish\nlabel done\n")
         for index, source in enumerate((initial, scenario, scenario)):
             runner.scenario(source, tmp_path / str(index), 7)
             bench = Path(requests[-1]["scenario"]).read_text()
             assert bench.count(mesh) == 1
             assert bench.index(mesh) < bench.index("label done")
-        assert scenario.read_text() == "seed 7\nnavdemos wait\nlabel done\n"
+        assert scenario.read_text() == "seed 7\nnavdemos wait\nnavmesh finish\nlabel done\n"
     finally:
         runner.stderr.close()
+
+
+@pytest.mark.parametrize("term_timeout", [False, True])
+def test_shared_runner_close_signals_forks_after_watchdog(tmp_path, monkeypatch, term_timeout):
+    shared = rl.module("navmesh_measure")
+    signals, waits = [], []
+
+    def wait(timeout):
+        waits.append(timeout)
+        if term_timeout and len(waits) == 1:
+            raise shared.subprocess.TimeoutExpired("runner", timeout)
+        return 0
+
+    def expired(command, timeout):
+        raise RuntimeError(f"Runner wall watchdog expired on {command['cmd']}")
+
+    runner = shared.Runner.__new__(shared.Runner)
+    runner.process = SimpleNamespace(pid=12345, poll=lambda: None, wait=wait)
+    runner.stderr = (tmp_path / "stderr.log").open("wb")
+    runner.request = expired
+    monkeypatch.setattr(shared.os, "killpg", lambda pgid, sig: signals.append((pgid, sig)))
+    with pytest.raises(RuntimeError, match="Runner wall watchdog expired on close"):
+        runner.close()
+    assert signals == [(12345, shared.signal.SIGTERM), (12345, shared.signal.SIGKILL)]
+    assert waits == [10, 10]
+    assert runner.stderr.closed
 
 
 def test_teacher_resume_rejects_mixed_physics_metadata(tmp_path, monkeypatch):

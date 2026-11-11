@@ -16,6 +16,7 @@ from pathlib import Path
 import re
 import select
 import shutil
+import signal
 import statistics
 import struct
 import subprocess
@@ -79,7 +80,8 @@ class Runner:
              "--save", str(args.save), "--scenario", str(initial),
              "--output", str(args.output / "initial"), "--mode", "lockstep", "--stdio",
              "--fork-reset", "--serial-workers"],
-            cwd=workdir, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.stderr)
+            cwd=workdir, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.stderr,
+            start_new_session=True)
         self.sequence = 0
         self.buffer = b""
 
@@ -144,14 +146,20 @@ class Runner:
                 if self.process.returncode:
                     raise RuntimeError(f"Runner failed on close: {self.process.returncode}")
         finally:
-            if self.process.poll() is None:
-                self.process.terminate()
-                try:
-                    self.process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    self.process.kill()
-                    self.process.wait(timeout=10)
-            self.stderr.close()
+            try:
+                # The template can exit before a busy fork; always signal the whole group.
+                for sig in (signal.SIGTERM, signal.SIGKILL):
+                    try:
+                        os.killpg(self.process.pid, sig)
+                    except ProcessLookupError:
+                        pass
+                    try:
+                        self.process.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        if sig == signal.SIGKILL:
+                            raise
+            finally:
+                self.stderr.close()
 
 
 def scenario_file(args, name, commands):
