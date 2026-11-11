@@ -37,7 +37,8 @@ class Renderer final {
 
     void dbgDraw(Tempest::Painter& painter);
 
-    Tempest::Attachment screenshoot(uint8_t frameId);
+    // reuse: an image of an earlier call to draw into again, if its size still fits (a video frame every step)
+    Tempest::Attachment screenshoot(uint8_t frameId, Tempest::Attachment&& reuse = Tempest::Attachment());
 
   private:
     enum Quality : uint8_t {
