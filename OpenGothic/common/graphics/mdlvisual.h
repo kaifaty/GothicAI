@@ -239,7 +239,8 @@ class MdlVisual final {
     void                           stopSpeech     () { mouth.stop(); voiceBrows.stop(); }
     void                           updateMouth    (Npc& npc, uint64_t dt);
     // the hands and the head while it speaks (TalkGestures)
-    void                           setTalkMood    (Npc& npc, std::string_view mood);
+    // the mood of a line it starts to say (line: its id of the AI, empty: a line of the game)
+    void                           setTalkMood    (std::string_view mood, std::string_view line);
     void                           updateGestures (Npc& npc, uint64_t dt);
     void                           updateBlink    (Npc& npc, uint64_t dt);
     // the own head's face (FaceRig): its eyes and weights to the deformation of the head, near only; after the pose
@@ -389,8 +390,6 @@ class MdlVisual final {
     SpeechCues                     cues;                  // when the gestures of the line said now start
     SpeechCues::Out                cueStarts;
     SpeechBrows                    voiceBrows;            // the brows on the accents of its voice (speech_brows)
-    TalkGestures::Mood             speechMood = TalkGestures::Mood::Neutral;  // of the line said now...
-    uint64_t                       moodTick   = 0;        // ...set then (a voice that starts later has none)
     size_t                         accentsLogged = 0;     // of voiceBrows, in the log (the watched npc)
     static constexpr uint64_t      ManualLeakMs = 2000;   // a leak started by hand: the line it makes, ms
     uint32_t                       cueCount = 0;          // gestures started by hand: the seed of their side

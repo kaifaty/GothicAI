@@ -1,6 +1,7 @@
 #include "speechbrows.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 
@@ -22,7 +23,12 @@ void SpeechBrows::setEnabled(bool e) {
   }
 
 void SpeechBrows::start(std::shared_ptr<LipSync::Track> t, uint32_t seed, uint64_t now) {
+  // a new line: what was found of the last one goes, the mood of a line stays (its voice may be this one)
+  std::string        line = std::move(moodLine);
+  TalkGestures::Mood mood = lineMood;
   *this     = SpeechBrows();
+  moodLine  = std::move(line);
+  lineMood  = mood;
   track     = std::move(t);
   startTick = now;
   rnd       = seed*2654435761u | 1u;
@@ -30,6 +36,40 @@ void SpeechBrows::start(std::shared_ptr<LipSync::Track> t, uint32_t seed, uint64
 
 void SpeechBrows::stop() {
   track = nullptr;
+  }
+
+void SpeechBrows::setMood(TalkGestures::Mood m, std::string_view line) {
+  moodLine = std::string(line);
+  lineMood = m;
+  }
+
+bool SpeechBrows::lowered() const {
+  if(track==nullptr || moodLine.empty() || !lowers(lineMood))
+    return false;
+  // the track of the line: its id, or the id with ".WAV" (case aside, as the game names sounds)
+  const std::string name = track->name();
+  const auto same = [](std::string_view a, std::string_view b) {
+    return a.size()==b.size() && std::equal(a.begin(),a.end(),b.begin(),[](char x, char y) {
+      return std::tolower(uint8_t(x))==std::tolower(uint8_t(y));
+      });
+    };
+  const std::string_view n = name;
+  if(same(n,moodLine))
+    return true;
+  return n.size()==moodLine.size()+4 && same(n.substr(0,moodLine.size()),moodLine) && same(n.substr(moodLine.size()),".WAV");
+  }
+
+uint32_t SpeechBrows::play(FaceRig& face, uint64_t now) {
+  const auto* profile = face.faceProfile();
+  if(profile==nullptr || !profile->brows.has_value())
+    return 0;
+  uint32_t ret = 0;
+  Start    s;
+  while(update(*profile->brows,now,s)) {
+    face.startBrows(s.down,s.strength,s.at,now);
+    ++ret;
+    }
+  return ret;
   }
 
 uint64_t SpeechBrows::lineTime(uint64_t now) const {
@@ -144,6 +184,7 @@ bool SpeechBrows::update(const FaceProfile::Brows& b, uint64_t now, Start& out) 
       continue;      // its syllable has gone by
     // a larger rise moves the brows more: from half of the weights at rise_st to all of them at twice that
     out.strength = std::clamp(a.rise/(2.f*b.riseSt),0.5f,1.f);
+    out.down     = lowered();  // the mood as known now: a line's mood may come after its voice
     a.shown      = true;
     ++moved;
     ++next;

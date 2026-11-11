@@ -1799,10 +1799,7 @@ void MdlVisual::startSpeech(Npc& npc, std::shared_ptr<LipSync::Track> voice) {
   mouth.setShapes(std::move(shapes));
   const uint64_t now = npc.world().tickCount();
   cues.voice(voice,now);
-  // the brows on the accents: by the seed of the npc and the line; the mood of a line set in this tick (the bridge
-  // sets it just before or after its voice), else none
-  if(moodTick!=now)
-    speechMood = TalkGestures::Mood::Neutral;
+  // the brows on the accents: by the seed of the npc and the line (the mood goes by the line, setTalkMood)
   if(SpeechBrows::isEnabled() && face.isActive() && face.faceProfile()->brows.has_value())
     voiceBrows.start(voice,SpeechCues::seedOf(voice->name())^(uint32_t(npc.instanceSymbol())*2654435761u),now); else
     voiceBrows.stop();
@@ -1813,10 +1810,9 @@ void MdlVisual::startSpeech(Npc& npc, std::shared_ptr<LipSync::Track> voice) {
   mouth.start(std::move(voice),now);
   }
 
-void MdlVisual::setTalkMood(Npc& npc, std::string_view mood) {
+void MdlVisual::setTalkMood(std::string_view mood, std::string_view line) {
   gestures.setMood(TalkGestures::moodOf(mood));
-  speechMood = TalkGestures::moodOf(mood);
-  moodTick   = npc.world().tickCount();
+  voiceBrows.setMood(TalkGestures::moodOf(mood),line);
   }
 
 void MdlVisual::updateBrows(Npc& npc, uint64_t now, bool probing) {
@@ -1824,10 +1820,7 @@ void MdlVisual::updateBrows(Npc& npc, uint64_t now, bool probing) {
   if(profile==nullptr || !profile->brows.has_value())
     return;
   // an angry or hostile line lowers the brows on its accents
-  const bool down = SpeechBrows::lowers(speechMood);
-  SpeechBrows::Start s;
-  while(voiceBrows.update(*profile->brows,now,s))
-    face.startBrows(down,s.strength,s.at,now);
+  voiceBrows.play(face,now);
   if(!probing)
     return;
   // the accents of the watched one's line, as they are found
@@ -1836,7 +1829,7 @@ void MdlVisual::updateBrows(Npc& npc, uint64_t now, bool probing) {
     const auto& a = found[accentsLogged];
     char buf[96];
     std::snprintf(buf,sizeof(buf),"%lld ms, rise %.1f st, loud %.2f: %s",(long long)a.ms,double(a.rise),double(a.loud),
-                  a.moves ? (down ? "down" : "up") : "skip");
+                  a.moves ? (voiceBrows.lowered() ? "down" : "up") : "skip");
     Log::i("[face] accent ",npc.displayName(),": ",buf);
     }
   }

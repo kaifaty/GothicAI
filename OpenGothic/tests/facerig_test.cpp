@@ -1285,6 +1285,48 @@ void browCases(const GltfHeadMesh& head, const FaceProfile& plain) {
               "an accent of an angry line must lower the brows by the weights of down");
     rig.update(base+syl+1000);
     }
+  // found late: a move up to 50 ms late starts in the past, at its time; later, before its syllable - now
+  {
+    const int64_t at = int64_t(syl)-100;
+    SpeechBrows::Start s;
+    SpeechBrows late;
+    late.start(trackOf(16000,glide),7,0);
+    require(late.update(*p->brows,uint64_t(at+30),s) && s.at==uint64_t(at),
+            "a move found 30 ms late must start back at its time: "+std::to_string(s.at)+" for "+std::to_string(at));
+    late.start(trackOf(16000,glide),7,0);
+    require(late.update(*p->brows,uint64_t(at+80),s) && s.at==uint64_t(at+80),"a move found 80 ms late must start now");
+    late.start(trackOf(16000,glide),7,0);
+    require(!late.update(*p->brows,syl+20,s),"a move whose syllable has gone by must not start");
+  }
+
+  // the mood of the line into the face (SpeechBrows::play, as MdlVisual plays it): an angry line of the AI whose voice
+  // comes after its subtitle lowers the brows; its sound file (<id>.WAV) too, the mood after the voice; a line of the
+  // game after it raises them
+  const auto played = [&](std::string_view name, bool moodFirst) {
+    FaceRig face;
+    face.setup(&head,p.get());
+    SpeechBrows sb;
+    auto t = trackOf(16000,glide);
+    t->setName(name);
+    if(moodFirst)
+      sb.setMood(TalkGestures::moodOf("angry"),"AIB_7");
+    sb.start(t,7,0);
+    if(!moodFirst)
+      sb.setMood(TalkGestures::moodOf("angry"),"AIB_7");
+    uint32_t moves = 0;
+    for(uint64_t now=0; now<=syl+40; now+=10) {
+      moves += sb.play(face,now);
+      face.update(now);
+      }
+    return std::make_pair(moves,std::make_pair(face.weights()[BrowDown],face.weights()[BrowUpLeft]));
+    };
+  const auto stream = played("AIB_7",true), file = played("aib_7.wav",false), game = played("DIA_X.WAV",true);
+  require(stream.first==1 && stream.second.first>0.3f && stream.second.second==0,
+          "an angry line whose voice comes after its mood must lower the brows");
+  require(file.first==1 && file.second.first>0.3f && file.second.second==0,
+          "an angry line's sound file, its mood set after the voice, must lower the brows");
+  require(game.first==1 && game.second.first==0 && game.second.second>0.2f,"a line of the game after an angry one must raise them");
+
   require(SpeechBrows::lowers(TalkGestures::moodOf("hostile")) && !SpeechBrows::lowers(TalkGestures::moodOf("friendly")) &&
           !SpeechBrows::lowers(TalkGestures::moodOf("neutral")),"only angry and hostile lines must lower the brows");
   FaceRig::Probe pr;

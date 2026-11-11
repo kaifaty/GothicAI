@@ -6,6 +6,8 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
+#include <string_view>
 #include <vector>
 
 // The brows of the speaker follow the tone of its voice (speech_brows of the face profile; reports/content/
@@ -26,8 +28,9 @@ class SpeechBrows final {
       };
 
     struct Start final {
-      uint64_t at       = 0;  // tick it starts at (at most now)
-      float    strength = 0;  // 0..1 of the profile's weights
+      uint64_t at       = 0;      // tick it starts at (at most now)
+      float    strength = 0;      // 0..1 of the profile's weights
+      bool     down     = false;  // the mood of its line lowers the brows
       };
 
     static constexpr uint64_t LateMs   = 50;  // a move found later than this starts now, not in the past
@@ -45,8 +48,16 @@ class SpeechBrows final {
     // the line's voice starts (LipSync::start); seed: of the npc and the line
     void     start(std::shared_ptr<LipSync::Track> track, uint32_t seed, uint64_t now);
     void     stop();
+    // the mood of a line of the AI (say.mood) by its id: a voice whose track is that line's (Track::name: the id of a
+    // streamed voice, "<id>.WAV" of a sound file) has it, whenever it comes - the line may start as a subtitle and get
+    // its voice later, or its voice may start just before its mood; any other voice (the game's own lines) has none
+    void     setMood(TalkGestures::Mood m, std::string_view line);
+    // the mood of the voice said now lowers the brows
+    bool     lowered() const;
     // finds the accents of what has arrived; true: a move to start now in `out` (called until false)
     bool     update(const FaceProfile::Brows& brows, uint64_t now, Start& out);
+    // update() into the face: each move found now goes to FaceRig::startBrows; the moves started
+    uint32_t play(FaceRig& face, uint64_t now);
 
     const std::vector<Accent>& accents() const { return found; }
     uint32_t moves() const { return moved; }
@@ -59,6 +70,8 @@ class SpeechBrows final {
     float    random();
 
     std::shared_ptr<LipSync::Track> track;
+    std::string          moodLine;          // the line setMood was given for, and its mood
+    TalkGestures::Mood   lineMood  = TalkGestures::Mood::Neutral;
     uint64_t             startTick = 0;
     uint32_t             rnd       = 1;
     size_t               scanned   = 0;     // steps looked at for syllables

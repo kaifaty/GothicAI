@@ -1881,7 +1881,7 @@ void AiBridge::Impl::onLineStarted(const LineLibrary::Line& line) {
   TestBench::aiLine(line.npc,TextCodec::toUtf8(name),TextCodec::toUtf8(line.text),line.time,line.to,line.filler);
   // the face while the line is said, and a moment after (v8); the hands go with the mood too
   if(npc!=nullptr) {
-    npc->setTalkMood(line.mood);
+    npc->setTalkMood(line.mood,line.id);
     if(auto face = moodFace(line.mood); !face.empty()) {
       npc->startFaceAnim(face,1,line.time+MoodHoldMs);
       Log::i("[ai] face ",line.npc," ",face," for ",line.time+MoodHoldMs," ms");

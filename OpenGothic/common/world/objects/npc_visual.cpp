@@ -464,16 +464,16 @@ float Npc::leakWeight() {
   return visual.leakWeight(*this);
   }
 
-void Npc::startSpeech(const Tempest::Sound& voice) {
-  visual.startSpeech(*this,LipSync::Track::fromSound(voice));
+void Npc::startSpeech(const Tempest::Sound& voice, std::string_view name) {
+  visual.startSpeech(*this,LipSync::Track::fromSound(voice,name));
   }
 
 void Npc::startSpeech(std::shared_ptr<LipSync::Track> voice) {
   visual.startSpeech(*this,std::move(voice));
   }
 
-void Npc::setTalkMood(std::string_view mood) {
-  visual.setTalkMood(*this,mood);
+void Npc::setTalkMood(std::string_view mood, std::string_view line) {
+  visual.setTalkMood(mood,line);
   }
 
 void Npc::listenTo(uint64_t ms) {
