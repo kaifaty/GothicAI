@@ -2,6 +2,7 @@
 #include "settings.h"
 
 #include <cstddef>
+#include <cstdlib>
 
 #include "graphics/shaders.h"
 #include "graphics/sky/sky.h"
@@ -181,9 +182,12 @@ void SceneGlobals::setMipBias(float bias) {
   uboGlobalCpu.mipGradScale = std::exp2(bias);
   }
 
-void SceneGlobals::setTaaFrame(bool active, uint32_t frame) {
-  uboGlobalCpu.taaActive = active ? 1 : 0;
-  uboGlobalCpu.taaFrame  = active ? frame : 0;
+void SceneGlobals::setTaaFrame(bool taa, bool lampTaa, uint32_t frame) {
+  uboGlobalCpu.taaActive = (taa && lampTaa) ? 1 : 0;
+  uboGlobalCpu.taaFrame  = taa ? frame : 0;
+  // OPENGOTHIC_HAIR_DEBUG=1: hair shows the direction of its strands as a colour (the acceptance of the direction)
+  static const bool hairDebug = []{ const char* e = std::getenv("OPENGOTHIC_HAIR_DEBUG"); return e!=nullptr && e[0]=='1'; }();
+  uboGlobalCpu.viewFlags = (taa ? VF_TAA : 0) | (hairDebug ? VF_HAIR_DEBUG : 0);
   }
 
 void SceneGlobals::setMotion(bool enabled, const Tempest::Matrix4x4& reprojectClip,
@@ -238,6 +242,7 @@ void SceneGlobals::commitUbo(uint8_t fId) {
       }
     if(i!=V_Main)
       ubo.motionVectors = 0;
+    ubo.viewFlags = (uboGlobalCpu.viewFlags & ~VF_HIZ) | (i==V_HiZ ? VF_HIZ : 0);
     std::memcpy(ubo.frustrum, frustrum[i].f, sizeof(ubo.frustrum));
     }
 

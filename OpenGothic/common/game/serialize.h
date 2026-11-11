@@ -14,13 +14,18 @@
 
 #include <miniz.h>
 
-#include "daedalus/vm.h"
-#include "daedalus/classes.h"
+#include <memory>
 #include "asset/modeltypes.h"
 
 #include "gametime.h"
 #include "constants.h"
 #include "utils/string_frm.h"
+
+namespace daedalus {
+  enum class DaedalusDataType : std::uint32_t;
+  class DaedalusVm;
+  struct INpc;
+  }
 
 class WayPoint;
 class Npc;

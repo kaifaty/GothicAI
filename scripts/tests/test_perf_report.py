@@ -519,11 +519,31 @@ def test_compare_repeat_noise_sorted_regressions_and_leaf_inputs(tmp_path):
     assert market["zones"][1]["delta"] == 1
     assert market["zones"][1]["within_noise"] is True
     assert "в пределах шума" in report.compare_markdown(comparison)
+    assert market["gpu_p50_ms"] is None  # no graphics-card times in these frames
     left, right = a / "market/repeat-1", a / "market/repeat-2"
     assert report.main(["compare", str(left), str(right)]) == 0
     leaf = json.loads((right / "compare.json").read_text())
     assert leaf["places"]["market"]["zones"][0]["within_noise"] is None
     assert (right / "compare.md").exists()
+
+
+def test_compare_graphics_card_time_where_the_frame_waits_on_the_processor(tmp_path):
+    # The same frame cadence on both sides: only the graphics card's own time moves.
+    a, b = tmp_path / "a", tmp_path / "b"
+    for root, gpu_ms in ((a, (2.0, 2.2)), (b, (2.6, 2.8))):
+        for repeat, cost in enumerate(gpu_ms, 1):
+            profile(root / "market" / f"repeat-{repeat}", [
+                {"begin_ns": index * 10_000_000, "gpu_ns": int(cost * 1_000_000), "gpu_done": 1, "gpu_buffers": 1}
+                for index in range(5)], gpu=True)
+    market = report.compare_reports(report.build_report(a), report.build_report(b))["places"]["market"]
+    gpu = market["gpu_p50_ms"]
+    assert (gpu["a"], gpu["b"]) == (2.1, 2.7)
+    assert gpu["delta"] == pytest.approx(0.6)
+    assert gpu["noise"] == pytest.approx(0.2)
+    assert gpu["within_noise"] is False
+    assert market["fps"]["delta"] == 0
+    assert "| market | 2.100 → 2.700 | +0.600 |" in report.compare_markdown(
+        report.compare_reports(report.build_report(a), report.build_report(b)))
 
 
 @pytest.mark.parametrize("spread,failed_pass", [(2.0, None), (.3, "run"), (.3, "fly")])

@@ -222,6 +222,14 @@ void Resources::indexMaterialMaps() {
       else
         maps.emissive = float(emissive->value.GetDouble());
       }
+    // Hair cards (reports/content/2026-11-npc-hair): strands run along v, the root at v=0; `orm` is the hair map
+    // (R shade, G the strand's number, B its depth in the clump), the surface is lit by the hair BRDF.
+    if(const auto hair = entry.value.FindMember("hair"); hair!=entry.value.MemberEnd()) {
+      if(!hair->value.IsBool())
+        valid = false;
+      else
+        maps.hair = hair->value.GetBool();
+      }
     if(const auto scale = entry.value.FindMember("scale"); scale!=entry.value.MemberEnd()) {
       if(!scale->value.IsNumber()) {
         valid = false;
@@ -1184,6 +1192,7 @@ Resources::MaterialMaps Resources::loadMaterialMaps(std::string_view name) {
   ret.turbidityDepth = files.turbidityDepth;
   ret.emissive = files.emissive;
   ret.antitile = files.antitile;
+  ret.hair = files.hair;
   ret.present = true;
   ret.hasAlbedo = !files.albedo.empty();
   return ret;

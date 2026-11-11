@@ -17,7 +17,7 @@ void Renderer::prepareTaa(WorldView& wview, const Camera& camera) {
     taa.valid = false;
     wview.setJitter(nullptr);
     wview.setMipBias(0);
-    wview.setTaaFrame(false, 0);
+    wview.setTaaFrame(false, false, 0);
     return;
     }
   wview.setMipBias(temporal.active ? temporal.mipBias : settings.taaMipBias);
@@ -26,7 +26,7 @@ void Renderer::prepareTaa(WorldView& wview, const Camera& camera) {
   if(!camHistory.continuous)
     taa.valid = false;
 
-  wview.setTaaFrame(settings.vsmLampTaa, taa.frame);
+  wview.setTaaFrame(true, settings.vsmLampTaa, taa.frame);
   const Vec2 px = temporal.active ? Taa::jitterPx(taa.frame++, temporal.phases) : Taa::jitterPx(taa.frame++);
   const auto j  = Taa::jitterMatrix(px, uint32_t(zbuffer.w()), uint32_t(zbuffer.h()));
   taa.jitter    = px;

@@ -71,6 +71,7 @@ void writeHeader() {
   for(auto* c:CueColumns)
     std::fprintf(bench.csv,",cue_%s",c);
   std::fprintf(bench.csv,",cue_leak");
+  std::fprintf(bench.csv,",lip_tone,br_w,br_acc,br_moves");
   std::fprintf(bench.csv,",f_on,f_bend,f_yaw,f_twist,f_head,f_hits,f_str,f_ht");
   std::fprintf(bench.csv,",hp_player,hp_subject");
   std::fprintf(bench.csv,",stamina_player,stamina_subject");
@@ -559,6 +560,9 @@ void writeRow(Npc& pl) {
     std::fprintf(bench.csv,",%.3f",s.cueWeight(c));
   // and a leak: its strongest weight as shown
   std::fprintf(bench.csv,",%.3f",s.leakWeight());
+  // the tone of its voice now (semitones from the line's median, nan: none) and its brows on the accents: as shown
+  // (+ up, - down), accents of the line found, moves of the brows
+  std::fprintf(bench.csv,",%.2f,%.3f,%u,%u",double(lp.tone),double(fr.brows),fr.accents,fr.browMoves);
   // flinch of the watched one (or the hero)
   const auto& fl = bench.subject!=nullptr ? Flinch::subjectProbe : Flinch::playerProbe;
   std::fprintf(bench.csv,",%d,%.2f,%.1f,%.2f,%.2f,%u,%.2f,%.2f",int(fl.active),fl.bend,fl.bendYaw,fl.twist,fl.head,

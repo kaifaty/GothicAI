@@ -486,6 +486,29 @@ void mainGBuffer(vec4 t) {
     if((bucket[bucketId].flags & BK_ORM)!=0)
       outOrm.rgb = textureGrad(sampler2D(textureOrm[tId], samplerMain), uv, duvdx*scene.mipGradScale, duvdy*scene.mipGradScale).rgb;
     }
+  if((bucket[bucketId].flags & BK_HAIR)!=0) {
+    // Hair cards. The strands run along v, the root at v=0, so the strand's direction on the surface is where v
+    // grows: the cotangent frame's b, as in mappedNormal(). It goes into the G-buffer as an angle around the
+    // normal, in the channel of metal, which hair has none of; the normal there is the one the light passes will
+    // decode. r and g stay the hair map's shade and strand number
+    const vec3 n  = normalize(shInp.normal);
+    const vec3 py = cross(dpdy, n);
+    const vec3 px = cross(n, dpdx);
+    const vec3 nq = decodeNormal(outNormal);
+    vec3 dir = py*duvdx.y + px*duvdy.y;
+    // the cotangent frame turns over where the vertex normal looks away from the face the eye sees: a card that
+    // stands off the hair's surface near its horizon
+    if(dot(n, cross(dpdx, dpdy))<0.0)
+      dir = -dir;
+    dir -= nq*dot(nq, dir);
+    if(dot(dir,dir)>1e-20) {
+      outOrm.b     = encodeHairAngle(nq, dir);
+      outOrm.a     = 1.0;
+      outDiffuse.a = float(int(outDiffuse.a*255.0 + 0.5) | GBufHairBit)/255.0;
+      } else {
+      outOrm.b = 0.0; // a degenerate UV: plain Lambert, not a strand of unknown direction
+      }
+    }
   const float glow = bucket[bucketId].emissive;
   if(glow>0.0 && !maps.antitile && (bucket[bucketId].flags & BK_ORM)!=0) {
     // the ORM alpha marks the glowing texels (cracks of a burning log, the ember bed); they breathe slowly. Glowing
@@ -764,6 +787,34 @@ vec2 motionResidual() {
   }
 #endif
 
+// The alpha test's threshold. Our glTF MASK (BK_HASHED_ALPHA: brows, lashes, hair cards) under TAA takes a threshold
+// of its own per pixel and frame (reports/content/2026-11-npc-hair): from the pixel's interleaved gradient noise it
+// steps by the golden ratio each TAA frame, so a texel of alpha 0.3 stays in 30% of the frames, and the history
+// averages the edge to the texel's coverage without sorting. Neighbours differ, so the resolve's 3x3 box takes the
+// spread as legit. A hash of the texture cell under the pixel shifts the start: two cards over one pixel take
+// different thresholds and their coverages add up, where one threshold would let the front card hide the back.
+// The occluders drawn into the main depth ahead of the G-buffer (Renderer::drawHiZ) keep only what no threshold
+// drops, else the G-buffer would find the card's depth in front of the skin it lets through. Shadows and frames
+// without TAA keep 0.5
+float alphaThreshold() {
+#if defined(ATEST) && defined(MAT_UV) && (MESH_TYPE!=T_PFX)
+  if((scene.viewFlags & VF_TAA)==0u || (bucket[bucketId].flags & BK_HASHED_ALPHA)==0u)
+    return 0.5;
+#if defined(GBUFFER)
+  const uvec2 cell  = uvec2(ivec2(floor(shInp.uv*256.0)) & 0xFFFF);
+  const float layer = float(pcgHash(cell.x | (cell.y << 16)) >> 8) * (1.0/16777216.0);
+  const float step  = float(scene.taaFrame % 64u) * 0.61803399;
+  return max(fract(interleavedGradientNoise(gl_FragCoord.xy) + layer + step), 0.5/255.0);
+#elif defined(DEPTH_ONLY) && !defined(VIRTUAL_SHADOW)
+  return (scene.viewFlags & VF_HIZ)!=0u ? 1.0 - 0.5/255.0 : 0.5;
+#else
+  return 0.5;
+#endif
+#else
+  return 0.5;
+#endif
+  }
+
 void main() {
 #if defined(MAT_UV)
 #if defined(ANTITILE_MATERIAL)
@@ -773,7 +824,7 @@ void main() {
   vec4 t = diffuseTex();
 #endif
 #  if defined(ATEST) && !(defined(GBUFFER) && defined(MATERIAL_MAPS))
-  if(t.a<0.5)
+  if(t.a<alphaThreshold())
     discard;
 #  endif
 #endif
@@ -793,7 +844,7 @@ void main() {
 #endif
   outMotion = motionResidual();
 #if defined(ATEST) && defined(MATERIAL_MAPS)
-  if(alphaTest<0.5)
+  if(alphaTest<alphaThreshold())
     discard;
 #endif
 #elif defined(WATER)

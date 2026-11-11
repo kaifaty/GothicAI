@@ -319,6 +319,70 @@ void checkLooks(FaceProfile& p) {
     }
   }
 
+std::vector<std::pair<uint32_t,float>> parseWeights(const rapidjson::Value& v, const GltfHeadMesh& head, const std::string& where) {
+  if(!v.IsObject() || v.MemberCount()==0)
+    fail(where+" must be a non-empty object of target weights");
+  std::vector<std::pair<uint32_t,float>> ret;
+  for(const auto& w:v.GetObject()) {
+    const auto target = str(w.name);
+    const auto id     = targetOf(head,target);
+    if(id==size_t(-1))
+      fail(where+": unknown target "+quoted(target));
+    if(!w.value.IsNumber() || !std::isfinite(w.value.GetDouble()) || w.value.GetDouble()<0 || w.value.GetDouble()>1)
+      fail(where+": the weight of "+quoted(target)+" must be a number 0..1");
+    ret.emplace_back(uint32_t(id),float(w.value.GetDouble()));
+    }
+  return ret;
+  }
+
+// {"rise_st": 2.5, "rise_ms": 200, "syllable_ms": 150, "loud": 0.4, "lead_ms": 100, "on_ms": 120, "hold_ms": 120,
+//  "off_ms": 300, "gap_ms": 700, "chance": 0.7, "up": {...}, "down": {...}, "quiet_cues": ["flash", ...]}
+FaceProfile::Brows parseBrows(const rapidjson::Value& v, const GltfHeadMesh& head, std::vector<std::string>& quiet) {
+  const std::string where = "speech_brows";
+  if(!v.IsObject())
+    fail(where+" must be an object");
+  onlyFields(v,{"about","rise_st","rise_ms","syllable_ms","loud","lead_ms","on_ms","hold_ms","off_ms","gap_ms","chance",
+                "up","down","quiet_cues"},where);
+  if(v.HasMember("about") && !v["about"].IsString())
+    fail(where+": about must be a string");
+  FaceProfile::Brows ret;
+  ret.riseSt     = float(number(v,"rise_st",where));
+  ret.riseMs     = float(number(v,"rise_ms",where));
+  ret.syllableMs = float(number(v,"syllable_ms",where));
+  ret.loud       = float(number(v,"loud",where));
+  ret.leadMs     = float(number(v,"lead_ms",where));
+  ret.onMs       = float(number(v,"on_ms",where));
+  ret.holdMs     = float(number(v,"hold_ms",where));
+  ret.offMs      = float(number(v,"off_ms",where));
+  ret.gapMs      = float(number(v,"gap_ms",where));
+  ret.chance     = float(number(v,"chance",where));
+  if(ret.riseSt<=0 || ret.riseSt>24)
+    fail(where+": rise_st must be above 0 and up to 24 semitones");
+  if(ret.riseMs<10 || ret.syllableMs<10)
+    fail(where+": rise_ms and syllable_ms must be 10 ms or more");
+  if(ret.loud<0 || ret.loud>1 || ret.chance<0 || ret.chance>1)
+    fail(where+": loud and chance must be numbers 0..1");
+  if(ret.leadMs<0 || ret.holdMs<0 || ret.gapMs<0)
+    fail(where+": lead_ms, hold_ms and gap_ms must not be negative");
+  if(ret.onMs<=0 || ret.offMs<=0)
+    fail(where+": on_ms and off_ms must be above 0");
+  if(!v.HasMember("up") || !v.HasMember("down"))
+    fail(where+": up and down must be objects of target weights");
+  ret.up   = parseWeights(v["up"],head,where+": up");
+  ret.down = parseWeights(v["down"],head,where+": down");
+  if(v.HasMember("quiet_cues")) {
+    const auto& q = v["quiet_cues"];
+    if(!q.IsArray())
+      fail(where+": quiet_cues must be a list of cue names");
+    for(const auto& n:q.GetArray()) {
+      if(!n.IsString())
+        fail(where+": quiet_cues must be a list of cue names");
+      quiet.emplace_back(str(n));
+      }
+    }
+  return ret;
+  }
+
 FaceProfile::Eyes parseEyes(const rapidjson::Value& v, const GltfHeadMesh& head) {
   using Eyes = FaceProfile::Eyes;
   if(!v.IsObject())
@@ -466,7 +530,7 @@ std::unique_ptr<FaceProfile> FaceProfile::parse(std::string_view json, const Glt
   for(const auto& m:doc.GetObject()) {
     const auto key = str(m.name);
     if(key!="version" && key!="about" && key!="mouth" && key!="anims" && key!="cues" && key!="leaks" &&
-       key!="eyes")
+       key!="eyes" && key!="speech_brows")
       fail("unknown field "+quoted(key));
     }
   if(!doc.HasMember("version") || !doc["version"].IsInt() || doc["version"].GetInt()!=1)
@@ -589,6 +653,16 @@ std::unique_ptr<FaceProfile> FaceProfile::parse(std::string_view json, const Glt
   if(doc.HasMember("eyes"))
     ret->eyes = parseEyes(doc["eyes"],head);
   checkLooks(*ret);
+  if(doc.HasMember("speech_brows")) {
+    std::vector<std::string> quiet;
+    ret->brows = parseBrows(doc["speech_brows"],head,quiet);
+    for(auto& n:quiet) {
+      const auto* c = ret->findCue(n);
+      if(c==nullptr)
+        fail("speech_brows: quiet_cues: no cue "+quoted(std::string_view(n)));
+      ret->brows->quiet.push_back(size_t(c-ret->cues.data()));
+      }
+    }
   return ret;
   }
 
@@ -602,6 +676,7 @@ void FaceRig::setup(const GltfHeadMesh* h, const FaceProfile* p) {
   profile  = p;
   slots.clear();
   runs.clear();
+  browRuns.clear();
   leakRun  = LeakRun();
   posed    = false;
   posedEnd = 0;
@@ -803,6 +878,50 @@ float FaceRig::leakWeight(uint64_t now) const {
   return leakEnvelope(now)*profile->leaks[leakRun.leak].peak;
   }
 
+void FaceRig::startBrows(bool down, float strength, uint64_t start, uint64_t now) {
+  if(!isActive() || !profile->brows.has_value())
+    return;
+  BrowRun r;
+  r.start    = std::min(start,now);
+  r.down     = down;
+  r.strength = std::clamp(strength,0.f,1.f);
+  browRuns.push_back(r);
+  }
+
+float FaceRig::browEnvelope(const BrowRun& r, uint64_t now) const {
+  // as a cue's part (cues.py env)
+  if(now<=r.start)
+    return 0;
+  const auto& b = *profile->brows;
+  const float t = float(now-r.start);
+  return ease(t/b.onMs)*(1.f-ease((t-b.onMs-b.holdMs)/b.offMs));
+  }
+
+float FaceRig::browQuiet(uint64_t now) const {
+  // a brow gesture or a leak of the upper face has the brows: silent from half of its rise on
+  float other = 0;
+  for(auto& r:runs)
+    for(auto q:profile->brows->quiet)
+      if(r.cue==q)
+        other = std::max(other,cueStrength(r,now));
+  if(leakRun.on && !profile->leaks[leakRun.leak].lower)
+    other = std::max(other,leakEnvelope(now));
+  return 1.f - std::min(1.f,2.f*other);
+  }
+
+float FaceRig::browWeight(uint64_t now) const {
+  if(!isActive() || !profile->brows.has_value() || browRuns.empty())
+    return 0;
+  const float quiet = browQuiet(now);
+  float       ret   = 0;
+  for(auto& r:browRuns) {
+    const float e = browEnvelope(r,now)*r.strength*quiet;
+    if(e>std::abs(ret))
+      ret = r.down ? -e : e;
+    }
+  return ret;
+  }
+
 void FaceRig::setPosed(bool on, uint64_t now) {
   if(on==posed)
     return;
@@ -914,6 +1033,17 @@ void FaceRig::mix(uint64_t now, std::vector<float>& out) const {
   if(const float e = leakEnvelope(now); e>0)
     for(auto& [t,w]:profile->leaks[leakRun.leak].weights)
       out[t] += w*e;
+  // the brows of the voice, the same way, unless a brow gesture or a leak of the upper face has them
+  if(profile->brows && !browRuns.empty()) {
+    const float quiet = browQuiet(now);
+    for(auto& r:browRuns) {
+      const float e = browEnvelope(r,now)*r.strength*quiet;
+      if(e<=0)
+        continue;
+      for(auto& [t,w]:(r.down ? profile->brows->down : profile->brows->up))
+        out[t] += w*e;
+      }
+    }
   // the lids follow the eyes: per direction of each eye the shapes of the profile's table
   if(profile->eyes) {
     using Eyes = FaceProfile::Eyes;
@@ -944,6 +1074,10 @@ FaceRig::Result FaceRig::update(uint64_t now) {
     }),runs.end());
   if(leakRun.on && now>leakRun.start && float(now-leakRun.start)>profile->leakTime.span())
     leakRun.on = false;
+  if(profile->brows)
+    browRuns.erase(std::remove_if(browRuns.begin(),browRuns.end(),[&](const BrowRun& r) {
+      return now>r.start && float(now-r.start)>profile->brows->span();
+      }),browRuns.end());
   mix(now,want);
 
   // the eyes turned since the head was deformed
@@ -1182,6 +1316,12 @@ void FaceRig::probe(Probe& p, uint64_t now) const {
     const auto& l = profile->leaks[leakRun.leak];
     char buf[64];
     std::snprintf(buf,sizeof(buf),"%sleak:%s:%s %.2f",p.shown.empty() ? "" : " ",l.felt.c_str(),l.lower ? "lower" : "upper",double(k));
+    p.shown += buf;
+    }
+  p.brows = browWeight(now);
+  if(p.brows!=0) {
+    char buf[64];
+    std::snprintf(buf,sizeof(buf),"%sbrows:%s %.2f",p.shown.empty() ? "" : " ",p.brows>0 ? "up" : "down",double(std::abs(p.brows)));
     p.shown += buf;
     }
   for(auto w:applied)

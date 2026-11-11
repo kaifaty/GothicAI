@@ -1325,12 +1325,14 @@ void MainWindow::loadGame(std::string_view slot) {
   update();
   }
 
-Attachment MainWindow::screenshotWithUi() {
+Attachment MainWindow::screenshotWithUi(Attachment&& reuse) {
   // the frame of the swapchain's size, drawn as render() draws it, into an image of our own
   device.waitIdle();
   dispatchPaintEvent(uiLayer,atlas);
   uiMesh[cmdId].update(device,uiLayer);
-  auto img = device.attachment(TextureFormat::RGBA8,frameW(),frameH());
+  auto img = std::move(reuse);
+  if(img.isEmpty() || uint32_t(img.w())!=frameW() || uint32_t(img.h())!=frameH())
+    img = device.attachment(TextureFormat::RGBA8,frameW(),frameH());
   CommandBuffer cmd;
   {
   auto enc = cmd.startEncoding(device);
@@ -1569,7 +1571,9 @@ void MainWindow::render(){
       }
     if(capture) {
       profile.flag(FrameProfile::Flag::CaptureRequested);
-      auto   tex = TestBench::withUi() ? screenshotWithUi() : renderer.screenshoot(cmdId);
+      // filming draws every frame of the video into one image: a new one each step costs an allocation
+      auto   tex = TestBench::withUi() ? screenshotWithUi(std::move(captureImage))
+                                       : renderer.screenshoot(cmdId,std::move(captureImage));
       Pixmap pm;
       if(!tex.isEmpty()) {
         pm = device.readPixels(textureCast<const Texture2d&>(tex));
@@ -1581,6 +1585,7 @@ void MainWindow::render(){
         Resources::resetRecycled(cmdId);
         cmdId = (cmdId+1u)%Resources::MaxFramesInFlight;
         profile.outcome(FrameProfile::Outcome::Capture);
+        captureImage = std::move(tex);
         return;
         }
       }

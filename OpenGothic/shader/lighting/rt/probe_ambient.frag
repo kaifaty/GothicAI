@@ -169,11 +169,14 @@ void main() {
   const float minW    = uintBitsToFloat(0x00000008);
   const float z       = texelFetch(depth,ivec2(gl_FragCoord.xy),0).x;
 
-  const vec3  diff    = texelFetch(gbufDiffuse, ivec2(gl_FragCoord.xy), 0).rgb;
+  const vec4  diff4   = texelFetch(gbufDiffuse, ivec2(gl_FragCoord.xy), 0);
+  const vec3  diff    = diff4.rgb;
   const vec3  norm    = normalFetch(gbufNormal, ivec2(gl_FragCoord.xy));
 #if defined(MATERIAL_MAPS)
   const vec4 orm = texelFetch(gbufOrm, ivec2(gl_FragCoord.xy), 0);
-  ownMaterial = orm.a>0.5;
+  // hair cards keep their own values in the ORM channels (common.glsl, GBufHairBit): the probes light them as a
+  // matte surface of the hair's colour, like the pixels of the original
+  ownMaterial = orm.a>0.5 && !isGBufHair(diff4.a);
 #endif
 
   const vec3  basePos = unprojectDepth(z);

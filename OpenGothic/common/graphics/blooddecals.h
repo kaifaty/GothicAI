@@ -12,9 +12,9 @@
 #include <vector>
 
 #include "resources.h"
-#include "world/bloodstains.h"
+#include "bloodstain.h"
 
-class World;
+class BloodDecalSource;
 class SceneGlobals;
 
 // Blood on the world as projected decals on the GBuffer (physics stage 8, step 4c).
@@ -26,7 +26,7 @@ class BloodDecals final {
     BloodDecals();
 
     // Per-frame instance data of the stains near the camera; false: nothing to draw.
-    bool prepare(uint8_t fId, const World* world, const SceneGlobals& scene, const Tempest::Vec3& camera);
+    bool prepare(uint8_t fId, const BloodDecalSource& world, const SceneGlobals& scene, const Tempest::Vec3& camera);
     void draw   (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, const SceneGlobals& scene,
                  Tempest::Attachment& gbufDiffuse, Tempest::Attachment* gbufOrm,
                  const Tempest::Attachment& gbufNormal, const Tempest::ZBuffer& zbuffer);

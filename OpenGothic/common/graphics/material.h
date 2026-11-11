@@ -47,6 +47,7 @@ class Material final {
     float                     turbidity        = 0;
     float                     turbidityDepth   = 0;
     float                     emissive         = 0;  // own glow, 0..1 of EmissiveMeshPeak (materials.json)
+    bool                      hair             = false; // hair cards (materials.json): BK_HAIR
     float                     envMapping       = 0;
 
     bool operator == (const Material& other) const;
@@ -65,6 +66,7 @@ class Material final {
     bool isSceneInfoRequired()   const { return isSceneInfoRequired(alpha);            }
     bool isShadowmapRequired()   const { return isShadowmapRequired(alpha);            }
     bool isTextureInShadowPass() const { return isTextureInShadowPass(alpha);          }
+    bool isAlphaTestRequired()   const { return alphaTestRequired;                     } // explicit GLB MASK
     bool isFogRequired()         const { return isFogRequired(alpha);                  }
 
     static bool isTesselated(AlphaFunc alpha);

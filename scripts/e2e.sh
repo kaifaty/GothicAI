@@ -355,6 +355,9 @@
 #       Group 2, LLM=off via auto; SAVE=save_slot_1.sav; TTS=fake.
 #   face_eyes_demo: the same with the gestures of the eyes: Vino's four lines with glance, roll, doubt and frown,
 #       no lie. Group 2, LLM=off via auto; SAVE=save_slot_1.sav; TTS=fake.
+#   face_brows_demo: the brows on the accents of the voice: Vino's three lines without gestures (a question, a
+#       statement, an angry line), held 30 s after them for the bench's original lines
+#       (scripts/bench/face-brows-clip.bench). Group 2, LLM=off via auto; SAVE=save_slot_1.sav; TTS=fake.
 #   day: given: Lobart exposes the turnip lie; Vino chooses to tell Malet; the scene's lines are given.
 #       Checks daily menus, walks, alternating voices and recipients, near/far facts and save/load.
 #       Group 2, LLM=off via auto; TTS=fake; SAVE=save_slot_1.sav; TIMEOUT=480
@@ -574,7 +577,7 @@ if [ -n "${QUICK_URL:-}" ]; then
   QUICK_ARGS=(--quick-url "$QUICK_URL")
 fi
 case "$SCENARIO" in
-  m1|m2|m3|m5|m5c|m5e|tts|combat_barks|mercy|hero_yield|humiliate|face_cues_demo|face_eyes_demo)
+  m1|m2|m3|m5|m5c|m5e|tts|combat_barks|mercy|hero_yield|humiliate|face_cues_demo|face_eyes_demo|face_brows_demo)
     BRAIN_ARGS=(--no-brain)
     QUICK_ARGS=(--no-quick)
     ;;

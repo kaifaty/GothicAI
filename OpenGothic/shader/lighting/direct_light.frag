@@ -15,6 +15,7 @@
 #include "common.glsl"
 #if defined(MATERIAL_MAPS)
 #include "lighting/material_brdf.glsl"
+#include "lighting/hair_brdf.glsl"
 #endif
 #if defined(VIRTUAL_SHADOW)
 #include "virtual_shadow/vsm_sun_shadow.glsl"
@@ -207,8 +208,9 @@ float calcRayShadow(vec3 pos, vec3 normal, float depth) {
   }
 #endif
 
-float shadowFactor(const float depth, const vec3 normal, bool isFlat) {
-  float light  = (isFlat ? 0 : dot(scene.sunDir,normal));
+// `light` is the share of the sun that would reach the pixel unshadowed: the cosine of a surface, the shell term
+// of hair (hair_brdf.glsl)
+float shadowFactor(const float depth, const vec3 normal, float light) {
   if(light<=0)
     return 0;
 
@@ -254,7 +256,13 @@ void main(void) {
 #endif
 
   const bool  isFlat = isGBufFlat(diff.a);
-  const float light  = shadowFactor(d, normal, isFlat);
+#if defined(MATERIAL_MAPS)
+  const vec4  orm    = texelFetch(gbufOrm, fragCoord, 0);
+  const bool  isHair = orm.a>0.5 && isGBufHair(diff.a);
+  const float light  = shadowFactor(d, normal, isHair ? hairShell(dot(scene.sunDir,normal)) : (isFlat ? 0 : dot(scene.sunDir,normal)));
+#else
+  const float light  = shadowFactor(d, normal, isFlat ? 0 : dot(scene.sunDir,normal));
+#endif
 
 #if defined(SHADOW_MAP)
   /*
@@ -292,7 +300,7 @@ void main(void) {
       // lighter, by more than a tenth of the sun bright, by more than a fiftieth dim
       const vec3 wide = geomNormal;
       geomNormal = facedNormal(pixelNormal, normal);
-      const float delta = (light - shadowFactor(d, normal, isFlat))/nl;
+      const float delta = (light - shadowFactor(d, normal, isFlat ? 0 : nl))/nl;
       geomNormal = wide;
       c  = delta<0 ? vec3(1,0,1) : vec3(0,1,0);
       c *= abs(delta)>0.1 ? 1.0 : (abs(delta)>0.02 ? 0.3 : 0.0);
@@ -303,12 +311,15 @@ void main(void) {
     }
 #endif
 #if defined(MATERIAL_MAPS)
-  const vec4 orm = texelFetch(gbufOrm, fragCoord, 0);
   if(orm.a>0.5 && light>0.0) {
     const vec4 pos = worldPos(d);
     const vec3 view = normalize(scene.camPos - pos.xyz/pos.w);
-    luminance = materialBrdf(linear, normal, view, scene.sunDir, orm.rgb) * illuminance;
+    if(isHair)
+      luminance = hairBrdf(linear, decodeHairDir(normal, orm.b), view, scene.sunDir, orm.g, hairBacklit(dot(scene.sunDir,normal))) * illuminance; else
+      luminance = materialBrdf(linear, normal, view, scene.sunDir, orm.rgb) * illuminance;
     }
+  if(isHair && (scene.viewFlags & VF_HAIR_DEBUG)!=0u)
+    luminance = vec3(0);
 #endif
 
   outColor = vec4(luminance * scene.exposure, 0.0);

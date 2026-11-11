@@ -169,6 +169,10 @@ WorldView *Gothic::worldView() const {
   return nullptr;
   }
 
+const BloodDecalSource* Gothic::bloodDecalSource() const {
+  return world();
+  }
+
 Npc *Gothic::player() {
   if(game)
     return game->player();

@@ -1,6 +1,5 @@
 #include "collisionworld_internal.h"
 #include "frameprofile.h"
-#include "world/objects/npc.h"
 
 #include <Jolt/Geometry/Plane.h>
 #include <Jolt/Physics/Body/BodyLock.h>
@@ -206,8 +205,8 @@ void CollisionWorld::prepareBuoyancy(std::vector<PhysicsNoise>& splashes) {
             noise.material=target.wrapper->noiseMaterial;
             noise.what=target.wrapper->noiseWhat+" splash";
             noise.body=target.wrapper->nativeId();
-            const auto culprit=impl->simulationStep<=target.wrapper->noiseCulpritUntilStep ? target.wrapper->noiseCulprit.lock() : nullptr;
-            noise.culprit=culprit!=nullptr ? static_cast<Npc*>(culprit->user_ptr) : nullptr;
+            if(target.wrapper->noiseCulpritResolver!=nullptr)
+              noise.culprit=target.wrapper->noiseCulpritResolver(*target.wrapper,impl->simulationStep);
             }
           else {
             // One splash per connected body, using its total native mass.

@@ -155,6 +155,16 @@ bool isGBufWater(float v) {
   return (x & (1 << 3))!=0;
   }
 
+// Hair cards (reports/content/2026-11-npc-hair): bit 4 of the hint bits. Such a pixel keeps the normal of the
+// hair's surface in gbufNormal and, in gbufOrm, r the strand's shade, g its number, b the direction of the strand
+// as an angle around that normal (hair has no metal), a = 1
+const int GBufHairBit = 1 << 4;
+
+bool isGBufHair(float v) {
+  int x = int(v*255+0.5);
+  return (x & GBufHairBit)!=0;
+  }
+
 float packHiZ(float z) {
   // return z;
   return (z-0.95)*20.0;
@@ -411,6 +421,31 @@ vec3 normalFetch(in usampler2D gbufNormal, ivec2 p) {
 vec3 normalFetch(in utexture2D gbufNormal, ivec2 p) {
   const uint n = texelFetch(gbufNormal, p, 0).r;
   return decodeNormal(n);
+  }
+
+// A frame around a normal that the G-buffer and the light passes build alike (Duff et al. 2017, branchless): the
+// angle of a hair strand is counted in it. It flips where n.z changes sign, so the writer takes the normal as the
+// reader will decode it, not the one it encoded
+void hairFrame(vec3 n, out vec3 t, out vec3 b) {
+  const float sg = n.z>=0.0 ? 1.0 : -1.0;
+  const float a  = -1.0/(sg + n.z);
+  const float c  = n.x*n.y*a;
+  t = vec3(1.0 + sg*n.x*n.x*a, sg*c, -sg*n.x);
+  b = vec3(c, sg + n.y*n.y*a, -n.y);
+  }
+
+float encodeHairAngle(vec3 n, vec3 dir) {
+  vec3 t, b;
+  hairFrame(n, t, b);
+  return atan(dot(dir,b), dot(dir,t))*(0.5/M_PI) + 0.5;
+  }
+
+// the strand's direction, root to tip, in the plane of the hair's surface
+vec3 decodeHairDir(vec3 n, float angle) {
+  vec3 t, b;
+  hairFrame(n, t, b);
+  const float a = (angle - 0.5)*(2.0*M_PI);
+  return t*cos(a) + b*sin(a);
   }
 
 uint wangHash(inout uint seed) {

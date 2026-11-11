@@ -8,6 +8,7 @@
 #include "graphics/pfx/particlefx.h"
 
 #include "world/world.h"
+#include "world/objects/npc.h"
 #include "world/voblayer.h"
 #include "utils/fileext.h"
 #include "gothic.h"

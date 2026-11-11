@@ -466,7 +466,11 @@ void VulkanApi::readPixels(AbstractGraphicsApi::Device *d, Pixmap& out, const PT
   Size            bsz    = Pixmap::blockCount(frm,w,h);
 
   const size_t    size   = bsz.w*bsz.h*bpb;
-  Detail::VBuffer stage  = dx.allocator.alloc(nullptr, size, MemUsage::Transfer, BufferHeap::Readback);
+  // the staging buffer stays with the device: a video capture reads a frame every step
+  std::lock_guard<std::mutex> guard(dx.syncReadback);
+  Detail::VBuffer& stage = dx.readbackStage;
+  if(stage.size()<size)
+    stage = dx.allocator.alloc(nullptr, size, MemUsage::Transfer, BufferHeap::Readback);
 
   auto cmd = dx.dataMgr().get();
   // cmd->begin(SyncHint::NoPendingReads);

@@ -10,7 +10,8 @@
 #   7    single hairs             the edge of the hairstyle, hairs that got loose; at its bottom a swatch of leather
 # Colours are sRGB 0..255: the shade between hairs, the hair, the lit hair; one strand in seven is lighter still.
 # Writes hair_albedo.png (RGBA: colour, coverage) and hair_map.png (R shade: the root and the deep strands darker,
-# G a random number of the strand, B the depth of the strand in the clump, A coverage).
+# G a random number of the strand, B the depth of the strand in the clump, A coverage). In both the colour is
+# spread into the empty texels around the strands.
 import bpy, sys, os
 import numpy as np
 
@@ -81,4 +82,23 @@ os.makedirs(OUT, exist_ok=True)
 for layer, view, name in (('alb', 'Standard', 'hair_albedo.png'), ('map', 'Raw', 'hair_map.png')):
     attr.layer_name = layer; sc.view_settings.view_transform = view; sc.view_settings.look = 'None'
     sc.render.filepath = os.path.join(OUT, name); bpy.ops.render.render(write_still=True)
+
+def pad(path):
+    """Colour spreads from the strands into the empty texels around them, alpha stays: a filtered sample at the edge
+    of a strand, or a small mip, mixes in the strand's colour and not black."""
+    im = bpy.data.images.load(path); im.colorspace_settings.name = 'Non-Color'
+    w, h = im.size; px = np.empty(w*h*4, np.float32); im.pixels.foreach_get(px); px = px.reshape(h, w, 4)
+    rgb = px[..., :3]*(px[..., 3:] > 0); have = (px[..., 3] > 0).astype(np.float32)
+    rgb = np.where(have[..., None] > 0, px[..., :3], 0)
+    for _ in range(48):                                    # each pass fills one more ring of texels from its neighbours
+        s3 = np.zeros_like(rgb); n = np.zeros_like(have)
+        for dy, dx in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+            s3 += np.roll(rgb*have[..., None], (dy, dx), (0, 1)); n += np.roll(have, (dy, dx), (0, 1))
+        new = (have == 0) & (n > 0)
+        rgb[new] = s3[new]/n[new][:, None]; have[new] = 1
+    px[..., :3] = np.where(have[..., None] > 0, rgb, px[..., :3])
+    im.pixels.foreach_set(px.ravel()); im.filepath_raw = path; im.file_format = 'PNG'; im.save()
+
+for name in ('hair_albedo.png', 'hair_map.png'):
+    pad(os.path.join(OUT, name))
 print('ATLAS strands %d, verts %d' % ((len(faces)-1)//(K-1), len(verts)))

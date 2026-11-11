@@ -486,6 +486,13 @@ class VDevice : public AbstractGraphicsApi::Device {
     std::mutex              syncSsbo;
     VBuffer                 dummySsboVal;
 
+  public:
+    // Staging memory of readPixels, kept between calls: a video capture reads a frame every step.
+    std::mutex              syncReadback;
+    VBuffer                 readbackStage;
+
+  private:
+
     void                    createLogicalDevice(VkPhysicalDevice pdev);
 
     void                    waitIdleSync(Queue* q, size_t n);

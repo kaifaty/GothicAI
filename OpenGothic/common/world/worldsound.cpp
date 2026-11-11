@@ -173,7 +173,7 @@ Sound WorldSound::addDlgSound(std::string_view s, const Tempest::Vec3& pos, floa
   if(snd.isEmpty())
     return Sound();
   if(voice!=nullptr)
-    *voice = LipSync::Track::fromSound(snd);
+    *voice = LipSync::Track::fromSound(snd,s);
 
   auto ret = usesSimulationAudioClock() ? implAddSimulationSound(snd, 1.f, pos, range) :
                                          implAddSound(game.loadSound(snd), pos, range);
