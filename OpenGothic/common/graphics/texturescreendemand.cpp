@@ -49,11 +49,11 @@ TextureScreenDemand::Result evaluateAt(const TextureScreenDemand::View& view, co
     ret.exponent = TextureScreenDemand::WholeChain;
     return ret;
     }
-  // due again when either the exponent or the distance class may change
+  // due again when the exponent, or while the stages use it the distance class, may change
   double classMargin = 0;
   ret.distanceClass = TextureScreenDemand::distanceClass(d,previousClass,classMargin);
   ret.exponent  = demand.exponent;
-  ret.margin    = std::max(std::min(demand.margin,classMargin),TextureLevels::MinMargin);
+  ret.margin    = view.classMargin ? std::max(std::min(demand.margin,classMargin),TextureLevels::MinMargin) : demand.margin;
   ret.expiry    = view.odometer+ret.margin;
   ret.scheduled = true;
   return ret;

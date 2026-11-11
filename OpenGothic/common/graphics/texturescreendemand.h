@@ -25,6 +25,9 @@ class TextureScreenDemand final {
       double        odometer = 0;  // metres
       bool          known    = false;
       int32_t       coarsest = std::numeric_limits<int32_t>::min(); // TextureLevels::coarsest of the reserve
+      // The class adds its margin only while the stages use it (stage 2 and deeper); otherwise an owner is due by its
+      // exponent's margin alone, and its class is brought up to date only when it is evaluated anyway.
+      bool          classMargin = false;
       };
     // The distance class an owner with an exponent registers in place of its chunk ring (TextureNeed::ring), for the
     // stages above the memory target (texturebudget.h): 0 nearer than one chunk, 1 nearer than two, 2 farther, from

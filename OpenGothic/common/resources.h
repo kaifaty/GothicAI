@@ -248,6 +248,8 @@ class Resources final {
     // Landscape and static owners demand levels by their size on screen ([GAME] texture_screen_mips).
     static bool                      textureScreenMips();
     static uint32_t                  textureMipReserve();
+    // the stage above the memory target (texturebudget.h); owners' distance classes add a margin from stage 2 on
+    static uint32_t                  textureStage();
     // log2 of the view scale the levels use (texturelevels.h)
     static float                     textureViewScaleLog2();
     static void                      updateTextures(ChunkResidency* residency);
@@ -613,6 +615,7 @@ class Resources final {
     std::chrono::steady_clock::time_point textureDeviceAt{};  // the device is asked at most once a Period
     TextureBudget::Source textureTargetSource = TextureBudget::Source::Default;
     TextureBudget::Ladder textureLadder;
+    std::atomic<uint32_t> textureStageShared{0};  // textureLadder.stage, read without the lock
     uint32_t textureStageDeepest = 0;
     std::array<double,TextureBudget::MaxStage+1> textureStageSeconds{};
     std::vector<uint64_t> textureSums;  // D(0)..D(deepest) at the last evaluation

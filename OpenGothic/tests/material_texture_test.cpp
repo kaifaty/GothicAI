@@ -1251,6 +1251,20 @@ void textureBudgetMaths() {
   require(classOf(70,0)==0 && std::abs(margin-2)<1e-9 && classOf(140,1)==1 && std::abs(margin-4)<1e-9 &&
           classOf(140,0)==2 && classOf(60,2)==0 && classOf(100,4)==1,
           "moving away an owner must keep its nearer class 1/8 of the border longer, moving closer switch at once");
+  // 70 m, 1/30 UV units per metre: exponent -1 holds 10 m nearer (60 m), class 1 holds 6 m nearer (64 m). The class
+  // adds its margin only from stage 2 on; before that the owner is due by its exponent alone, as without classes.
+  TexelDensity point;
+  point.uvPerMetre=1.f/30.f;
+  TextureScreenDemand::View viewOff;
+  viewOff.known=true;
+  viewOff.camera={-7000,0,0};
+  viewOff.hero={0,0,1000000};
+  auto viewOn=viewOff;
+  viewOn.classMargin=true;
+  const auto off=TextureScreenDemand::evaluate(viewOff,point), on=TextureScreenDemand::evaluate(viewOn,point);
+  require(off.exponent==-1 && off.distanceClass==1 && std::abs(off.margin-10)<1e-4 && std::abs(off.expiry-10)<1e-4 &&
+          on.exponent==-1 && on.distanceClass==1 && std::abs(on.margin-6)<1e-4,
+          "the class must be computed always, and add its margin only while the stages use it");
 
   // stage:            0  1  2  3  4  5  6  7  8
   const uint32_t ring2[]={0, 0, 1, 1, 1, 2, 2, 2, 3};
@@ -1913,7 +1927,7 @@ void textureBudgetLevels(Tempest::Device& device, const Fixture& fixture) {
   using namespace TextureBudget;
   // six measured 2048x2048 DXT5 (5.33 MiB whole, lowest level 5), the rest 512x512 DXT5
   const char* names[]={"bg-0","bg-1","bg-2","bg-3","bg-4","bg-5","bg-idle-0","bg-idle-1","bg-whole","bg-ring","bg-chain",
-                       "bg-class"};
+                       "bg-class","bg-sweep"};
   const auto big=mipDds(0x35545844,2048,2048,12), small=mipDds(0x35545844,512,512,10);
   std::string json="{";
   for(const auto* name:names) {
@@ -2079,6 +2093,52 @@ void textureBudgetLevels(Tempest::Device& device, const Fixture& fixture) {
   look(62);
   waitFor([&] { return classMat.tex->w()==1024; },"a distance class change alone must change the stage's level");
 
+  // The registered class of a texture's nearest owner, from the texture dump.
+  const auto ringOf=[&](std::string_view file) {
+    const auto path=fixture.root/"budget-dump.csv";
+    Resources::dumpTextures(path);
+    std::ifstream in(path);
+    std::string line;
+    size_t ringColumn=0;
+    while(std::getline(in,line)) {
+      if(line.empty() || line[0]=='#')
+        continue;
+      std::vector<std::string> cells;
+      for(size_t at=0;;) {
+        const auto next=line.find(',',at);
+        cells.push_back(line.substr(at,next==std::string::npos ? std::string::npos : next-at));
+        if(next==std::string::npos)
+          break;
+        at=next+1;
+        }
+      if(ringColumn==0) {
+        ringColumn=size_t(std::find(cells.begin(),cells.end(),"ring_min")-cells.begin());
+        continue;
+        }
+      if(cells.size()>ringColumn && cells[1]==file && !cells[ringColumn].empty())
+        return std::stoi(cells[ringColumn]);
+      }
+    return -1;
+    };
+  // Measuring keeps stage 0: an owner placed 140 m away (class 2, exponent -2 from 120 m on) and then seen from 122 m
+  // is not due by its exponent, and its class is not brought up to date. Entering a deep stage, the sweep evaluates it
+  // within the view queue's budget: class 1.
+  setenv("OPENGOTHIC_TEXTURE_TARGET_MB","0",1);
+  require(evaluate().stage==0,"a target of 0 must keep stage 0");
+  look(140);
+  const Material sweepMat(source("BG_SWEEP.TGA"),true);
+  StaticMesh sweepMesh(sweepMat,{{{0,0,0},{0,0,1},{0,0},0xffffffffu},{{1000,0,0},{0,0,1},{1.f/3.f,0},0xffffffffu},
+                                 {{0,1000,0},{0,0,1},{0,1.f/3.f},0xffffffffu}},{0,1,2});
+  auto sweepOwner=visuals.get(sweepMesh,sweepMat,0,sweepMesh.sub[0].iboLength,true);
+  sweepOwner.setObjMatrix(Tempest::Matrix4x4::mkIdentity());
+  require(ringOf("bg-sweep.dds")==2,"an owner placed 140 m away must register class 2");
+  look(122);
+  look(122);
+  require(ringOf("bg-sweep.dds")==2,"below stage 2 a class border crossed within the exponent's margin must not re-evaluate it");
+  setenv("OPENGOTHIC_TEXTURE_TARGET_MB","1",1);
+  require(evaluate().stage>=2,"a target of 1 MiB must take a deep stage");
+  waitFor([&] { look(122); return ringOf("bg-sweep.dds")==1; },"entering stage 2 the sweep must bring its class up to date");
+
   // Nothing fits: the deepest stage, every measured texture at its lowest level; the rest keep their levels.
   setenv("OPENGOTHIC_TEXTURE_TARGET_MB","1",1);
   stats=evaluate();
@@ -2114,6 +2174,7 @@ void textureBudgetLevels(Tempest::Device& device, const Fixture& fixture) {
   require(stats.stage==0 && stats.stageSeconds[2]>0 && stats.stageSeconds[13]>0 && stats.stageSeconds[1]>0,
           "the ring rule must stay on stage 0, and every stage keep its own seconds");
   classOwner=VisualObjects::Item();
+  sweepOwner=VisualObjects::Item();
   for(size_t i=0;i<measured.size();++i)
     Resources::textureDemand(measured[i],stat,false,Need{rings[i],-1});
   Resources::textureDemand(whole,stat,false);

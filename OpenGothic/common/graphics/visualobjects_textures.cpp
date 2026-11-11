@@ -409,6 +409,12 @@ void VisualObjects::updateTextureView(bool flush) {
   textureView.odometer = textureResidency->viewOdometer();
   textureView.known    = textureResidency->viewKnown();
   textureView.coarsest = TextureLevels::coarsest(Resources::textureMipReserve(),Resources::textureViewScaleLog2());
+  // The distance class adds its margin from stage 2 on, where the stages use it. Entering such a stage, every owner
+  // is evaluated once after the due ones, within the same budget: its class may have gone stale meanwhile.
+  const bool classMargin=Resources::textureStage()>=2;
+  if(classMargin!=textureView.classMargin)
+    textureClassSweep=classMargin ? 0 : size_t(-1);
+  textureView.classMargin=classMargin;
   if(textureCensus.enabled)
     reportTextureCensus();
   const auto started=textureCensus.enabled ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
@@ -427,12 +433,34 @@ void VisualObjects::updateTextureView(bool flush) {
     return;
     }
   TextureScreenDemand::Entry entry;
-  if(!textureView.known || !textureScreen.due(textureView.odometer,entry))
+  const bool sweeping=textureView.known && textureClassSweep<objects.size();
+  if(!textureView.known || (!textureScreen.due(textureView.odometer,entry) && !sweeping))
     return;
   // Owners due: a quarter of a millisecond a frame; a teleport catches up over a few frames (the focus change has
   // already evaluated the owners within ring 4). An unchanged exponent is only scheduled again.
   FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand);
   const auto deadline=std::chrono::steady_clock::now()+std::chrono::microseconds(250);
+  const auto evaluate=[&](size_t id, Object& object) {
+    ++textureCensus.evaluations;
+    const auto demand=evaluateTexture(object);
+    if(!demand.scheduled) {
+      updateTextureDemand(id);
+      return;
+      }
+    // Only the exponent and the distance class can have changed here; a measured owner's ring is its class.
+    if(demand.exponent!=object.textureNeed.resolution || demand.distanceClass!=object.textureNeed.ring) {
+      if(demand.exponent==object.textureNeed.resolution)
+        ++textureCensus.classes;
+      auto need=object.textureNeed;
+      need.resolution=demand.exponent;
+      need.ring=demand.distanceClass;
+      if(object.textureDemand)
+        Resources::textureDemand(object.bucketId->mat,object.textureCategory,object.textureNeed,need);
+      object.textureNeed=need;
+      }
+    scheduleTexture(object,id,demand.expiry);
+    };
+  bool late=false;
   for(size_t count=1;textureScreen.due(textureView.odometer,entry);++count) {
     textureScreen.pop();
     // free() pops the empty tail of `objects`: an entry of a released owner can be past its end
@@ -445,25 +473,21 @@ void VisualObjects::updateTextureView(bool flush) {
       ++textureCensus.stale;
       continue;
       }
-    ++textureCensus.evaluations;
-    const auto demand=evaluateTexture(object);
-    if(!demand.scheduled) {
-      updateTextureDemand(entry.owner);
-      } else {
-      // Only the exponent and the distance class can have changed here; a measured owner's ring is its class.
-      if(demand.exponent!=object.textureNeed.resolution || demand.distanceClass!=object.textureNeed.ring) {
-        if(demand.exponent==object.textureNeed.resolution)
-          ++textureCensus.classes;
-        auto need=object.textureNeed;
-        need.resolution=demand.exponent;
-        need.ring=demand.distanceClass;
-        if(object.textureDemand)
-          Resources::textureDemand(object.bucketId->mat,object.textureCategory,object.textureNeed,need);
-        object.textureNeed=need;
-        }
-      scheduleTexture(object,entry.owner,demand.expiry);
+    evaluate(entry.owner,object);
+    if(!flush && count%16==0 && std::chrono::steady_clock::now()>=deadline) {
+      late=true;
+      break;
       }
-    if(!flush && count%16==0 && std::chrono::steady_clock::now()>=deadline)
+    }
+  // The sweep after a switch to a stage that uses the class: what the due owners left of the budget, also on a flush.
+  for(size_t count=1;!late && textureClassSweep<objects.size();++count) {
+    const size_t id=textureClassSweep++;
+    auto& object=objects[id];
+    if(!object.isEmpty() && object.textureScheduled) {
+      ++textureCensus.sweep;
+      evaluate(id,object);
+      }
+    if(count%16==0 && std::chrono::steady_clock::now()>=deadline)
       break;
     }
   if(textureCensus.enabled) {

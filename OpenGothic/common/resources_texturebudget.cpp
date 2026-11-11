@@ -28,6 +28,10 @@ uint8_t Resources::resolutionLevel(const TextureRecord& record, uint32_t stage) 
   return TextureBudget::coarsen(level,record.lowest,stage,ring,exponent==TextureBudget::WholeChain);
   }
 
+uint32_t Resources::textureStage() {
+  return inst!=nullptr ? inst->textureStageShared.load() : 0;
+  }
+
 void Resources::setTextureBudget(const TextureBudget::Choice& budget, const TextureBudget::Choice& target,
                                  const TextureBudget::Choice& vram) {
   const bool wasRule=textureTargetChoice.automatic;
@@ -48,6 +52,7 @@ void Resources::setTextureBudget(const TextureBudget::Choice& budget, const Text
   if(measuring || !textureScreen || !textureStreaming || textureSkipMips==0) {
     accountTextureStage(std::chrono::steady_clock::now());
     textureLadder=TextureBudget::Ladder();
+    textureStageShared=0;
     textureSums.clear();
     }
   // the device is read on the main thread, in the next updateTextures
@@ -87,6 +92,7 @@ void Resources::chooseTextureStage(bool force, std::chrono::steady_clock::time_p
   if(measuring || !textureScreen || !textureStreaming || textureSkipMips==0) {
     if(textureLadder.stage!=0)
       requeueTextures([&] { textureLadder=TextureBudget::Ladder(); });
+    textureStageShared=0;
     textureSums.clear();
     return;
     }
@@ -98,6 +104,7 @@ void Resources::chooseTextureStage(bool force, std::chrono::steady_clock::time_p
     requeueTextures([&] { textureLadder=ladder; });
   else
     textureLadder=ladder;
+  textureStageShared=stage;
   textureStageDeepest=std::max(textureStageDeepest,stage);
   const char* dump=std::getenv("OPENGOTHIC_TEXTURE_DUMP");
   if(dump==nullptr || dump[0]=='\0')
