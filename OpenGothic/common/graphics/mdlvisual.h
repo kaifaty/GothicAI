@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <Tempest/Matrix4x4>
 
 #include "asset/modeltypes.h"
@@ -350,7 +351,20 @@ class MdlVisual final {
 
     Tempest::Matrix4x4             pos;
     Tempest::Vec3                 textureOwnerPosition;
+    Tempest::Vec3                 textureOwnerLast;       // where the owner was at its latest call
     float                         textureOwnerReach = 0;  // centimetres from textureOwnerPosition
+    // A part added later is placed where the owner is now: every part is placed there again first, then the part
+    template<class View>
+    void                          addTextureOwner(View& part) {
+      if(!textureOwnerKnown)
+        return;
+      if(textureOwnerSpatial && (textureOwnerLast.x!=textureOwnerPosition.x || textureOwnerLast.y!=textureOwnerPosition.y ||
+                                 textureOwnerLast.z!=textureOwnerPosition.z)) {
+        textureOwnerKnown=false;
+        setTextureOwner(textureOwnerLast,true);
+        }
+      textureOwnerReach=std::min(textureOwnerReach,part.setTextureOwner(textureOwnerPosition,textureOwnerSpatial));
+      }
     bool                          textureOwnerKnown = false, textureOwnerSpatial = false;
     MeshObjects::Mesh              view;
     bool                           bodyDetached = false;

@@ -3,6 +3,7 @@
 #include "graphics/mesh/submesh/animmesh.h"
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/submesh/packedmesh.h"
+#include "graphics/mdlvisual.h"
 #include "graphics/meshobjects.h"
 #include "graphics/rtscene.h"
 #include "graphics/sceneglobals.h"
@@ -1423,7 +1424,7 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
 // far short.
 void textureOwnerLevels(Tempest::Device& device, const Fixture& fixture) {
   const char* names[]={"ow-npc","ow-item","ow-mobsi","ow-hero","ow-switch","ow-start","ow-lone","ow-whole","ow-rings",
-                       "ow-jump-a","ow-jump-b","ow-jump-c","ow-share","ow-between","ow-scaled","ow-big-0","ow-big-1","ow-big-2",
+                       "ow-jump-a","ow-jump-b","ow-jump-c","ow-share","ow-between","ow-scaled","ow-shield","ow-armour","ow-big-0","ow-big-1","ow-big-2",
                        "ow-big-3"};
   std::string json="{";
   for(const auto* name:names) {
@@ -1451,7 +1452,7 @@ void textureOwnerLevels(Tempest::Device& device, const Fixture& fixture) {
   shaders.waitCompiler();
   using Need=Resources::TextureNeed;
   const auto stat=Resources::TextureCategory::Static;
-  Material npc, item, mobsi, hero, toggle, jumpA, jumpB, jumpC, share, between, scaled;
+  Material npc, item, mobsi, hero, toggle, jumpA, jumpB, jumpC, share, between, scaled, shield, armour;
   std::array<Material,4> big;
   {
   Resources::TextureLoadScope far(true);
@@ -1466,6 +1467,8 @@ void textureOwnerLevels(Tempest::Device& device, const Fixture& fixture) {
   share=Material(source("OW_SHARE.TGA"),true);
   between=Material(source("OW_BETWEEN.TGA"),true);
   scaled=Material(source("OW_SCALED.TGA"),true);
+  shield=Material(source("OW_SHIELD.TGA"),true);
+  armour=Material(source("OW_ARMOUR.TGA"),true);
   for(size_t i=0;i<big.size();++i)
     big[i]=Material(source("OW_BIG_"+std::to_string(i)+".TGA"),true);
   }
@@ -1647,6 +1650,27 @@ void textureOwnerLevels(Tempest::Device& device, const Fixture& fixture) {
   view.z-=600;
   tick();
   waitFor([&] { return between.tex->w()==256; },"an evaluation by the view must count where the owner may have gone");
+  }
+
+  // A part added to an NPC (MdlVisual::bind, implSetBody) is placed where the NPC is now, not where it was last
+  // evaluated: the NPC's shield gets 4 m of reach 40 m away, the view comes 7 m closer, the NPC 2 m within its reach,
+  // then it draws a sword - 31 m away, 2^-4, level 1 (33 m from the old anchor: 2^-5).
+  {
+  const Tempest::Vec3 start{view.x-4142.42f,0,view.z};
+  StaticMesh shieldMesh(shield,{{{0,0,0},{0,0,1},{0,0},0xffffffffu},{{100,0,0},{0,0,1},{1,0},0xffffffffu},
+                                {{0,100,0},{0,0,1},{0,1},0xffffffffu}},{0,1,2});
+  StaticMesh swordMesh(armour,{{{0,0,0},{0,0,1},{0,0},0xffffffffu},{{100,0,0},{0,0,1},{1,0},0xffffffffu},
+                               {{0,100,0},{0,0,1},{0,1},0xffffffffu}},{0,1,2});
+  MdlVisual npcVisual;
+  npcVisual.setTextureOwner({start.x+1,0,start.z},true);
+  npcVisual.setShield(MeshObjects::Mesh(meshes,shieldMesh,0,false));
+  require(std::abs(npcVisual.setTextureOwner(start,true)-400.f)<1.f,"the NPC must get 4 m of reach 40 m away");
+  view.x-=700;
+  tick();
+  require(std::abs(npcVisual.setTextureOwner({start.x+200,0,start.z},true)-200.f)<1.f,"a 2 m move must stay within the reach");
+  npcVisual.setSword(MeshObjects::Mesh(meshes,swordMesh,0,false));
+  Resources::finishTextureLoading();
+  require(armour.tex->w()==256,"a part added after the NPC moved within its reach must be placed where the NPC is");
   }
 
   // A view jump: owners 1000 m away hold tails; the view lands 3 m from one (short of its level by 2) and 20 m from
