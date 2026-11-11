@@ -111,6 +111,11 @@ void VisualObjects::Item::setTextureCategory(Resources::TextureCategory category
       }
     obj.textureChunkRegistered=false;
     }
+  if(obj.textureWorldOwner) {
+    // Its sphere was placed by a position: a static owner is placed again by setTexturePosition.
+    obj.texturePlaced=false;
+    obj.textureRadius=-1;
+    }
   obj.textureCategory=category;
   obj.textureWorldOwner=false;
   if(category!=Resources::TextureCategory::Landscape)
