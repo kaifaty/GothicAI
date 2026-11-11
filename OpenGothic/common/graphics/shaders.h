@@ -30,18 +30,13 @@ class Shaders {
       bool     doRayQuery        = false;
       bool     doMeshShading     = false;
       bool     doVirtualShadow   = false;
-      bool     doSoftwareShadow  = false;
       bool     doMaterialMaps    = false;
-
-      bool     doSoftwareRT      = false;
-      uint32_t swRenderingPreset = 0;
       };
 
     static Shaders& inst(bool waitCompiler = true);
     static const Options& options();
 
     static bool isVsmSupported();
-    static bool isRtsmSupported();
     static bool isLightsTreeSupported();
     static bool isGi1Supported();
     static bool isGi2Supported();
@@ -55,11 +50,12 @@ class Shaders {
     Tempest::ComputePipeline copyBuf;
     Tempest::ComputePipeline copyImg;
     Tempest::ComputePipeline patch;
+    Tempest::ComputePipeline patchCopy; // InstanceStorage history: cur -> prev by a list in the patch buffer
     Tempest::RenderPipeline  copy, downscale;
     Tempest::RenderPipeline  stash;
     Tempest::RenderPipeline  bink;
 
-    Tempest::ComputePipeline ssao, ssaoBlur;
+    Tempest::ComputePipeline ssao, ssaoBlur, ssaoDepth;
 
     Tempest::ComputePipeline irradiance;
 
@@ -72,16 +68,16 @@ class Shaders {
     // Blood on the GBuffer (physics stage 8, step 4c): albedo RGB, and roughness with material maps
     Tempest::RenderPipeline  bloodDecal, bloodDecalAlbedo; // with and without the ORM target
     Tempest::RenderPipeline  sun;
-    Tempest::ComputePipeline cloudsLut, fogOcclusion;
+    Tempest::ComputePipeline cloudsLut, fogOcclusion, fogOcclusionEmpty;
     Tempest::ComputePipeline fogViewLut3d, fogViewLutSep;
     Tempest::ComputePipeline skyExposure;
-
-    Tempest::RenderPipeline  skyPathTrace;
 
     Tempest::RenderPipeline  underwaterT, underwaterS;
     Tempest::RenderPipeline  waterReflection, waterReflectionSSR;
 
     Tempest::RenderPipeline  tonemapping, tonemappingUpscale;
+    Tempest::RenderPipeline  motionView; // debug: gbufMotion as the frame (OPENGOTHIC_MOTION_VIEW=1)
+    Tempest::RenderPipeline  reactiveView; // debug: the TAA reactive mask as the frame (OPENGOTHIC_TAA_REACTIVE_VIEW=1)
     Tempest::RenderPipeline  bloomDownKaris, bloomDown, bloomUp, bloomMix;
 
     // AA
@@ -90,7 +86,7 @@ class Shaders {
     Tempest::RenderPipeline  cmaa2DeferredColorApply2x2;
     Tempest::RenderPipeline  taaResolve, taaSharpen;
     // temporal upscale (MetalFX Temporal): camera motion vectors, tonemapping with the bloom in it
-    Tempest::RenderPipeline  motionCamera, tonemappingBloom;
+    Tempest::RenderPipeline  motionCamera, tonemappingBloom, tonemappingTaa;
 
     // HUD
 
@@ -110,8 +106,8 @@ class Shaders {
     // GI
     Tempest::RenderPipeline  probeDbg, probeHitDbg;
     Tempest::ComputePipeline probeInit, probeClear, probeClearHash, probeMakeHash;
-    Tempest::ComputePipeline probeVote, probePrune, probeAlocation;
-    Tempest::ComputePipeline probeTrace, probeLighting;
+    Tempest::ComputePipeline probeVote, probePrune, probeAlocation, probeHitAlloc, probeClearVotes;
+    Tempest::ComputePipeline probeTrace, probeRelight, probeRelightNew, probeLighting, probeStats;
     Tempest::RenderPipeline  probeAmbient;
 
     // GI-Surf
@@ -136,37 +132,11 @@ class Shaders {
     Tempest::ComputePipeline vsmClear, vsmClearOmni, vsmCullLights, vsmMarkPages, vsmMarkOmniPages, vsmPostprocessOmni;
     Tempest::ComputePipeline vsmTrimPages, vsmSortPages, vsmListPages, vsmClumpPages, vsmAllocPages, vsmAlloc2Pages, vsmMergePages;
     Tempest::ComputePipeline vsmPackDraw0, vsmPackDraw1;
-    Tempest::ComputePipeline vsmFogPages, vsmFogShadow, vsmFogTrace;
-    Tempest::RenderPipeline  vsmFog;
+    Tempest::ComputePipeline vsmFogPages, vsmFogShadow;
     Tempest::RenderPipeline  vsmDirectLight;
     Tempest::RenderPipeline  vsmDbg;
 
     Tempest::ComputePipeline vsmRendering;
-
-    // RTSM (Experimental)
-    Tempest::RenderPipeline  rtsmDirectLight;
-
-    Tempest::ComputePipeline rtsmClear, rtsmPages, rtsmFogPages, rtsmHiZ;
-    Tempest::ComputePipeline rtsmCulling, rtsmPosition;
-    Tempest::ComputePipeline rtsmMeshletCull, rtsmPrimCull;
-    Tempest::ComputePipeline rtsmRaster;
-
-    Tempest::ComputePipeline rtsmClearOmni;
-    Tempest::ComputePipeline rtsmCullLights, rtsmCompactLights, rtsmCullingOmni;
-    Tempest::ComputePipeline rtsmPositionOmni;
-    Tempest::ComputePipeline rtsmMeshletOmni, rtsmBackfaceOmni;
-    Tempest::ComputePipeline rtsmLightsOmni, rtsmBboxesOmni, rtsmCompactOmni, rtsmTaskOmni;
-    Tempest::ComputePipeline rtsmPrimOmni, rtsmRasterOmni;
-
-    Tempest::ComputePipeline rtsmRendering, rtsmRenderingOmni; //reference
-    Tempest::RenderPipeline  rtsmDbg;
-
-    Tempest::ComputePipeline swRaytracing, swRaytracing64;
-    Tempest::ComputePipeline swRaytracing8;
-
-    // Software rendering
-    Tempest::ComputePipeline swRendering;
-    Tempest::RenderPipeline  swRenderingDbg;
 
     // Inventory
     Tempest::RenderPipeline  inventory;

@@ -847,10 +847,10 @@ void syntheticSources(const fs::path& game) {
           "server physical GOTHIC.DAT must remain separate from the engine archive winner");
   std::string digest;
   const auto record=ProgramData::readProgram(index.path(*engine),&digest);
-  auto script=zenkit::DaedalusScript::from_program(record);
+  auto script=daedalus::DaedalusScript::from_program(record);
   require(record.version==0x33 && record.symbols.empty() && record.bytecode.size()==1 &&
           uint8_t(record.bytecode[0])==0x3c && script.symbols().empty() && script.size()==1 &&
-          script.instruction_at(0).op==zenkit::DaedalusOpcode::RSR && digest==engine->recordSha256,
+          script.instruction_at(0).op==daedalus::DaedalusOpcode::RSR && digest==engine->recordSha256,
           "native program must preserve the independent synthetic header and return opcode");
   bool rejected=false;
   try { (void)index.findVfs("BAD.DAT"); }

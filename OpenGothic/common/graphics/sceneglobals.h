@@ -41,6 +41,16 @@ class SceneGlobals final {
     // TAA: the bias of the material textures' mip level in the main view; shadows keep 0
     void setMipBias(float bias);
     void setTaaFrame(bool active, uint32_t frame);
+    // motion vectors of objects: on/off and the camera's part (identity and this frame's camera on a cut)
+    void setMotion(bool enabled, const Tempest::Matrix4x4& reprojectClip, const Tempest::Matrix4x4& viewProjectPrev);
+    // the TAA reactive mask (graphics plan 1v): the added light on screen that makes an additive pixel fully reactive
+    void setTaaReactiveLref(float lref);
+    // VSM lamps: an object nearer than this to a light (cm, along its cube face's axis) is no blocker of it
+    void setVsmLampNear(float cm);
+    // VSM lamps: the sides of a surface a cube face keeps: 1 the far one, 2 both for the world mesh, 3 for objects too
+    void setVsmLampSides(uint32_t sides);
+    // bench `vsm study <bits>`: the shadow test on a mesh's facets, VSM_STUDY_* of scene.glsl (0: the game's)
+    void setVsmStudy(uint32_t bits);
 
     void setTime(uint64_t time);
     void commitUbo(uint8_t fId);
@@ -129,12 +139,22 @@ class SceneGlobals final {
       Tempest::Point                  screenRes = {};
       Tempest::Vec2                   cloudsDir[2] = {};
 
-      float                           probeGridBias = 3;
+      float                           probeLodScale = 0.002f; // 1/cm: probeGridLod in probe_common.glsl
       uint32_t                        fogQuality = 0;
       float                           mipBias      = 0; // TAA: the main view only (commitUbo), 0 in shadows
       float                           mipGradScale = 1; // exp2(mipBias)
       uint32_t                        taaFrame     = 0; // TAA: the frame number (Renderer::prepareTaa), 0 without TAA
       uint32_t                        taaActive    = 0;
+      // motion vectors of objects (graphics plan 1b): the main view only (commitUbo), 0 in the other views.
+      // Both matrices carry this frame's jitter, so the residual has none (Taa::motionResidual)
+      uint32_t                        motionVectors = 0;
+      float                           reactiveLrefInv = 4.f; // TAA reactive mask: 1/Lref of added light (main.frag)
+      Tempest::Matrix4x4              reprojectClip   = Tempest::Matrix4x4::mkIdentity(); // Taa::reprojection
+      Tempest::Matrix4x4              viewProjectPrev = Tempest::Matrix4x4::mkIdentity(); // Taa::viewProjectPrev
+      float                           vsmLampNear     = 30.f; // cm: VSM lamps, the fixture plane (main.vert)
+      uint32_t                        vsmLampSides    = 3;    // VSM lamps: the sides a cube face keeps (main.vert)
+      uint32_t                        vsmStudy        = 0;    // bench `vsm study`: VSM_STUDY_* of scene.glsl
+      float                           vsmPad          = 0;
       };
 
     Tempest::UniformBuffer<UboGlobal> uboGlobalPf[Resources::MaxFramesInFlight][V_Count];

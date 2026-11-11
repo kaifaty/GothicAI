@@ -251,7 +251,7 @@
 **Запуск.** Новая игра в мире, сразу после стартовых скриптов (день 0, 08:00), без единого шага мира:
 
 ```sh
-gothic-body-runner -g "$GOTHIC_DIR" -g2 --world NEWWORLD.ZEN --society-export /abs/out/society-world.json
+gothic-body-runner -g "$GOTHIC_DIR" --world NEWWORLD.ZEN --society-export /abs/out/society-world.json
 ```
 
 Раннер пишет файл, печатает в журнал строку `society export:` с числами и временем и выходит с кодом 0. База выбирается как у игры (`OPENGOTHIC_BASE_FINGERPRINT` и прочие). Код — [`game/societyexport.cpp`](../OpenGothic/game/societyexport.cpp). Проверка — цель `gothic-society-export-contract` (`EXCLUDE_FROM_ALL`). Она дважды запускает раннер на данных игры (`GOTHIC_DIR`) и сверяет файл, как описано ниже в «Проверке». На Ryzen: `~/.codex/checks/gothic/engine-targets.sh . gothic-society-export-contract`.
@@ -287,9 +287,9 @@ gothic-body-runner -g "$GOTHIC_DIR" -g2 --world NEWWORLD.ZEN --society-export /a
 Имена гильдий в порталах (`GIL_MIL` или `MIL`) переводятся через целочисленные константы `GIL_*` в числовой id, как `npcs[].guild`; `GIL_NONE` и `GIL_PUBLIC` дают `null`: общественный доступ не считается владением гильдии. Непереводимое имя `GIL_*` попадает в список и приводит к провалу контракта. Если имени гильдии нет, сохраняется числовое назначение `World::guildOfRoom` с тем же исключением для общественных комнат. Личное владение NPC не открывает комнату всей его гильдии. `HeroDeed` не менялся.
 
 **Точка распорядка без id.** `"waypoint": null` допустим только там, где движок сам не находит точку: `Npc::addRoutine` ищет её через `World::findPoint(имя, false)`, то есть по точному имени, и получает null. `waypoint_name` тогда остаётся исходным именем из скрипта. Точку, которую движок нашёл, но которой нет среди `waypoints` (стартовую `START_*`), выгрузка не поддерживает и падает с ошибкой. Что движок делает с такой записью — это нужно ядру стенда, чтобы повторить его поведение:
-- **Расстановка** при загрузке и прыжке часов ([`Npc::resetPositionToTA`](../OpenGothic/common/world/objects/npc.cpp) → `currentTaPoint` → `currentRoutine(true)`) пропускает записи без точки. NPC встаёт на точку той записи с точкой, что кончилась последней (поиск против часовой стрелки).
-- **Состояние** записи в силе: `Npc::tickRoutine` берёт `currentRoutine()` без фильтра по точке. В начале записи он запускает её `ZS_*` через `startState(callback, wayPointName())`, и `self.wp` становится исходным именем.
-- **Место.** Если состояние зовёт `AI_GotoWP(self, self.wp)`, [`GameScript::ai_gotowp`](../OpenGothic/common/game/gamescript.cpp) не находит точку ни через `World::findWayPoint(pos, имя)`, ни через `findPoint(имя, false)` и хода не ставит. NPC исполняет состояние там, где его оставила прошлая запись.
+- **Расстановка** при загрузке и прыжке часов ([`Npc::resetPositionToTA`](../OpenGothic/common/world/objects/npc_motion.cpp) → [`currentTaPoint` → `currentRoutine(true)`](../OpenGothic/common/world/objects/npc_routine.cpp)) пропускает записи без точки. NPC встаёт на точку той записи с точкой, что кончилась последней (поиск против часовой стрелки).
+- **Состояние** записи в силе: [`Npc::tickRoutine`](../OpenGothic/common/world/objects/npc_routine.cpp) берёт `currentRoutine()` без фильтра по точке. В начале записи он запускает её `ZS_*` через `startState(callback, wayPointName())`, и `self.wp` становится исходным именем.
+- **Место.** Если состояние зовёт `AI_GotoWP(self, self.wp)`, [`GameScript::ai_gotowp`](../OpenGothic/common/game/gamescript_externals.cpp) не находит точку ни через `World::findWayPoint(pos, имя)`, ни через `findPoint(имя, false)` и хода не ставит. NPC исполняет состояние там, где его оставила прошлая запись.
 
 В Хоринисе такая запись одна: ночь Гарвига (`NOV_608_GARWIG`), `23:00–08:00 ZS_GUARD_HAMMER NW_MONASTERY_SNACTUM_02` — опечатка `SANCTUM` в скриптах. По журналу `npc-day-parity` (Ryzen, `day-headless-full`) в 23:00 `ZS_GUARD_HAMMER` перезапускается, и до 08:00 Гарвиг стоит в метре от дневной точки `NW_MONASTERY_SANCTUM_02`.
 

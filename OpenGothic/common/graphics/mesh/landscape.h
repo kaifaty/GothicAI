@@ -17,8 +17,6 @@ class Landscape final {
 
     void setVisible(bool visible);
 
-    const Tempest::StorageBuffer& bvh()   const { return bvhNodes; }
-
   private:
     void init(const PackedMesh& packed, bool wholeWorld, const Tempest::Vec3* texturePosition = nullptr);
     using Item = VisualObjects::Item;
@@ -30,7 +28,5 @@ class Landscape final {
     VisualObjects&         visual;
     StaticMesh             mesh;
     Tempest::StorageBuffer meshletDesc;
-
-    Tempest::StorageBuffer bvhNodes;
     std::vector<Block>     blocks;
   };

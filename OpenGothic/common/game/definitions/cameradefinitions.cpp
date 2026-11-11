@@ -1,4 +1,5 @@
 #include "cameradefinitions.h"
+#include "definitiontypes.h"
 
 #include <Tempest/Log>
 #include "asset/worldtypes.h"
@@ -12,12 +13,12 @@ using namespace Tempest;
 CameraDefinitions::CameraDefinitions() {
   auto vm = Gothic::inst().createPhoenixVm("Camera.dat");
 
-  vm->enumerate_instances_by_class_name("CCAMSYS", [this, &vm](zenkit::DaedalusSymbol& s) {
+  vm->enumerate_instances_by_class_name("CCAMSYS", [this, &vm](daedalus::DaedalusSymbol& s) {
     try {
-      auto cam = vm->init_instance<Def::Camera>(&s);
-      cameras.emplace_back(s.name(), *cam);
+      auto cam = vm->init_instance<VmDef::Camera>(&s);
+      cameras.emplace_back(s.name(), cam->copy());
       }
-    catch(const zenkit::DaedalusScriptError&) {
+    catch(const daedalus::DaedalusScriptError&) {
       // There was an error initializing the Def::Camera. Ignore it.
       }
     });

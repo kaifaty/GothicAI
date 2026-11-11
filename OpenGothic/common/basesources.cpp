@@ -1025,7 +1025,8 @@ void ProgramImport::convert(Entry& e, const std::vector<uint8_t>& bytes) {
     e.skipped = "not a daedalus program";
     return;
     }
-  zenkit::DaedalusProgramRecord program;
+  zenkit::DaedalusProgramRecord sourceProgram;
+  asset::ProgramRecord program;
   size_t end = 0;
   try {
     auto read = zenkit::Read::from(reinterpret_cast<const std::byte*>(bytes.data()),bytes.size());
@@ -1033,7 +1034,8 @@ void ProgramImport::convert(Entry& e, const std::vector<uint8_t>& bytes) {
     script.load(read.get());
     end = read->tell();
     // Exported right after parsing: no class registration, no VM, no runtime symbol.
-    program = script.export_program();
+    sourceProgram = script.export_program();
+    program = asset::fromZenKit(sourceProgram);
     }
   catch(const std::exception& ex) {
     e.skipped = std::string("parse failed: ")+ex.what();
@@ -1064,7 +1066,7 @@ void ProgramImport::convert(Entry& e, const std::vector<uint8_t>& bytes) {
     require(sha==enc.sha256,"program record identity differs after reading: "+file.string());
     auto diff = ProgramData::compare(program,back);
     require(diff.empty(),"program record differs after reading: "+diff);
-    diff = ProgramData::compare(program,zenkit::DaedalusScript::from_program(back).export_program());
+    diff = ProgramData::compare(program,asset::fromZenKit(zenkit::DaedalusScript::from_program(std::move(sourceProgram)).export_program()));
     require(diff.empty(),"program differs after the native factory: "+diff);
     programs[enc.name] = enc.sha256;
     }

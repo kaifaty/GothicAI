@@ -9,6 +9,7 @@
 
 #include <Tempest/Application>
 #include <Tempest/Log>
+#include <Tempest/SystemApi>
 #include <cstring>
 #include <array>
 #if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
@@ -141,7 +142,9 @@ void VDevice::createLogicalDevice(VkPhysicalDevice pdev) {
     queueCnt++;
     }
 
-  std::vector<const char*> rqExt = requiredExtensions;
+  std::vector<const char*> rqExt;
+  if(!SystemApi::isOffscreen())
+    rqExt = requiredExtensions; // VK_KHR_swapchain: an offscreen device never presents
   if(props.hasMemRq2) {
     rqExt.push_back(VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME);
     }
@@ -206,6 +209,17 @@ void VDevice::createLogicalDevice(VkPhysicalDevice pdev) {
 #if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
   deviceFeatures.pipelineStatisticsQuery = supportedFeatures.pipelineStatisticsQuery;
   profilePipelineStatistics = supportedFeatures.pipelineStatisticsQuery;
+  {
+    VkPhysicalDeviceProperties devProps={};
+    vkGetPhysicalDeviceProperties(pdev,&devProps);
+    uint32_t familyCount=0;
+    vkGetPhysicalDeviceQueueFamilyProperties(pdev,&familyCount,nullptr);
+    std::vector<VkQueueFamilyProperties> families(familyCount);
+    vkGetPhysicalDeviceQueueFamilyProperties(pdev,&familyCount,families.data());
+    if(props.graphicsFamily<familyCount && devProps.limits.timestampPeriod>0)
+      profileTimestampBits=families[props.graphicsFamily].timestampValidBits;
+    profileTimestampPeriod=devProps.limits.timestampPeriod;
+    }
 #endif
 
   deviceFeatures.vertexPipelineStoresAndAtomics = supportedFeatures.vertexPipelineStoresAndAtomics;
@@ -832,7 +846,8 @@ void VDevice::deviceQueueProps(VkPhysicalDevice device, VkProps& props) {
     static const VkQueueFlags rqFlag = (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT);
 
     const bool graphicsSupport = ((queueFamily.queueFlags & rqFlag)==rqFlag);
-    const bool presentSupport  = VSwapchain::checkPresentationSupport(device, i);
+    // offscreen: no display to ask and no present queue
+    const bool presentSupport  = !SystemApi::isOffscreen() && VSwapchain::checkPresentationSupport(device, i);
 
     if(graphicsSupport)
       graphics = i;
@@ -1167,7 +1182,12 @@ std::shared_ptr<VFence> VDevice::submit(VCommandBuffer& cmd) {
   VkFence fence = pfence->fence;
 #if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
   if(cmd.profileQueries!=nullptr) {
-    cmd.profileQueries->record=FrameProfile::geometrySubmitted();
+    auto& query=*cmd.profileQueries;
+    if(query.pool!=VK_NULL_HANDLE)
+      query.record=FrameProfile::geometrySubmitted();
+    query.gpuRecord=FrameProfile::gpuSubmitted();
+    if(query.passes)
+      query.passRecord=FrameProfile::gpuPassesSubmitted();
     pfence->profileQueries=cmd.profileQueries;
     }
 #endif

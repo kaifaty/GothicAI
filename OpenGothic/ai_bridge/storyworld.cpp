@@ -8,8 +8,8 @@
 #include <limits>
 #include <map>
 
-#include <zenkit/DaedalusVm.hh>
-#include <zenkit/addon/daedalus.hh>
+#include "daedalus/vm.h"
+#include "daedalus/classes.h"
 
 #include "game/bodycontroller.h"
 #include "game/inventory.h"
@@ -38,10 +38,10 @@ namespace {
 // the npc goes with the hero: a companion's dialog, or the server's `party` effect (v30), marked it
 bool partyMember(World& world, const Npc& npc) {
   auto* s = world.script().getVm().find_symbol_by_name("AIV_PARTYMEMBER");
-  if(s==nullptr || s->type()!=zenkit::DaedalusDataType::INT)
+  if(s==nullptr || s->type()!=daedalus::DaedalusDataType::INT)
     return false;
   const int32_t aiv = s->get_int(0);
-  return aiv>=0 && uint32_t(aiv)<zenkit::INpc::aivar_count && npc.handlePtr()->aivar[size_t(aiv)]!=0;
+  return aiv>=0 && uint32_t(aiv)<daedalus::INpc::aivar_count && npc.handlePtr()->aivar[size_t(aiv)]!=0;
   }
 
 constexpr uint64_t ScanMs   = 500;   // how often deaths are looked for
@@ -71,15 +71,15 @@ float distance(const Npc& a, const Npc& b) {
   }
 
 // the class an instance (or prototype) is of: C_NPC, C_ITEM, C_INFO...
-std::string classOf(zenkit::DaedalusVm& vm, const zenkit::DaedalusSymbol& sym) {
+std::string classOf(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& sym) {
   auto* s = &sym;
-  for(int i=0; i<8 && s!=nullptr && s->type()!=zenkit::DaedalusDataType::CLASS; ++i)
+  for(int i=0; i<8 && s!=nullptr && s->type()!=daedalus::DaedalusDataType::CLASS; ++i)
     s = vm.find_symbol_by_index(s->parent());
-  return s!=nullptr && s->type()==zenkit::DaedalusDataType::CLASS ? std::string(s->name()) : std::string();
+  return s!=nullptr && s->type()==daedalus::DaedalusDataType::CLASS ? std::string(s->name()) : std::string();
   }
 
-std::string kindOf(zenkit::DaedalusVm& vm, const zenkit::DaedalusSymbol& sym) {
-  using zenkit::DaedalusDataType;
+std::string kindOf(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& sym) {
+  using daedalus::DaedalusDataType;
   if(sym.is_member())
     return "other";
   switch(sym.type()) {
@@ -413,7 +413,7 @@ std::string StoryWorld::nearby(World& world, const rapidjson::Value& msg) {
   }
 
 std::string StoryWorld::state(World& world, const rapidjson::Value& msg) {
-  using zenkit::DaedalusDataType;
+  using daedalus::DaedalusDataType;
   auto&  vm = world.script().getVm();
   Npc*   pl = world.player();
   rapidjson::StringBuffer                    buf;
@@ -498,7 +498,7 @@ std::string StoryWorld::state(World& world, const rapidjson::Value& msg) {
     // the engine reads names the same way (the gold's); the symbol keeps the instance it had
     auto prev = s->get_instance();
     try {
-      auto item = vm.init_instance<zenkit::IItem>(s);
+      auto item = vm.init_instance<daedalus::IItem>(s);
       auto text = TextCodec::toUtf8(item->name);
       key(name);
       w.String(text.data(),rapidjson::SizeType(text.size()));

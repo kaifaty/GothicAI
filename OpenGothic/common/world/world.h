@@ -30,7 +30,6 @@ class VisualFx;
 class GlobalEffects;
 class ParticleFx;
 class Interactive;
-class VersionInfo;
 class GlobalFx;
 class ClothVisual;
 struct PhysicsNoise;
@@ -153,7 +152,6 @@ class World final {
 
     GameScript&          script()   const;
     GameSession&         gameSession() const { return game; }
-    auto                 version()  const -> const VersionInfo&;
 
     void                 assignRoomToGuild(std::string_view room, int32_t guildId);
     int32_t              guildOfRoom(const Tempest::Vec3& pos);
@@ -165,7 +163,7 @@ class World final {
     GlobalFx             addGlobalEffect(std::string_view what, uint64_t len, const std::string* argv, size_t argc);
     MeshObjects::Mesh    addView(std::string_view visual) const;
     MeshObjects::Mesh    addView(std::string_view visual, int32_t headTex, int32_t teetTex, int32_t bodyColor) const;
-    MeshObjects::Mesh    addView(const zenkit::IItem& itm);
+    MeshObjects::Mesh    addView(const daedalus::IItem& itm);
     MeshObjects::Mesh    addView(const ProtoMesh* visual);
     MeshObjects::Mesh    addAtachView (const ProtoMesh::Attach& visual, const int32_t version);
     MeshObjects::Mesh    addStaticView(const ProtoMesh* visual, bool staticDraw);
@@ -184,6 +182,8 @@ class World final {
     Item*                findItemByInstance(size_t instance, size_t n = 0);
     std::string_view     roomAt(const Tempest::Vec3& arr);
     bool                 isIndoor(const Tempest::Vec3& point) const;
+    // BSP root bounds: the whole level, independent of landscape streaming.
+    auto                 bspBounds() const -> std::pair<Tempest::Vec3,Tempest::Vec3>;
 
     void                 scaleTime(uint64_t& dt);
     void                 tick(uint64_t dt);
@@ -284,7 +284,8 @@ class World final {
     friend struct WayHeightsContract;
     double               worldLoadMs = 0;
     bool                 textureLoadingPending = true;
-    const zenkit::IFocus& searchPolicy(const Npc& pl, TargetCollect& collAlgo, TargetType& collType, WorldObjects::SearchFlg& opt) const;
+    Resources::TextureStartup textureStartup;
+    const daedalus::IFocus& searchPolicy(const Npc& pl, TargetCollect& collAlgo, TargetType& collType, WorldObjects::SearchFlg& opt) const;
     std::string                           wname;
     GameSession&                          game;
 

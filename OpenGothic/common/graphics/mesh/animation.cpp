@@ -11,6 +11,10 @@
 
 #include "utils/string_frm.h"
 #include "resources.h"
+#include "stopfoot.h"
+#include "transend.h"
+
+#include <array>
 
 using namespace Tempest;
 
@@ -263,6 +267,11 @@ bool Animation::Sequence::canInterrupt(uint64_t now, uint64_t sTime, uint16_t co
     if(size_t(cId+1)<data->defWindow.size() && data->defWindow.size()>0 && !data->defHitEnd.empty()) {
       return !((now-sTime)<=data->defWindow[cId+0]);
       }
+    if(isSettle() && StopFoot::enabled()) {
+      // a stop of our own: the body has come to rest, the rest of the clip only straightens it up
+      const uint64_t frame = uint64_t(float(now-sTime)*data->fpsRate/1000.f);
+      return frame>=data->restFrame;
+      }
     return false;
     }
 
@@ -327,17 +336,18 @@ bool Animation::Sequence::extractFrames(uint64_t& frameA,uint64_t& frameB,bool& 
   if(frameA==frameB)
     return false;
 
+  const uint64_t count = animCls==Animation::Loop ? d.loopFrames() : numFrames;
   if(animCls==Animation::Loop){
-    frameA%=numFrames;
-    frameB%=numFrames;
+    frameA%=count;
+    frameB%=count;
     } else {
     frameA = std::min<uint64_t>(frameA,numFrames);
     frameB = std::min<uint64_t>(frameB,numFrames);
     }
 
   if(reverse) {
-    frameA = numFrames-frameA;
-    frameB = numFrames-frameB;
+    frameA = count-frameA;
+    frameB = count-frameB;
     std::swap(frameA,frameB);
     }
 
@@ -635,11 +645,21 @@ Tempest::Vec3 Animation::Sequence::translateXZ(uint64_t at) const {
 
   if(animCls==Transition && !isFly()){
     uint64_t all=uint64_t(totalTime());
+    if(TransEnd::enabled())
+      all += uint64_t(1000.f/d.fpsRate); // the game frame that crosses the clip's end goes on at the end's speed
     if(at>all)
       at = all;
     }
 
   float    fr     = float(data->fpsRate*float(at))/1000.f;
+  float    over   = 0;
+  if(animCls==Transition && !isFly() && TransEnd::enabled() && TransEnd::past(fr,d.tr.size(),over)) {
+    // past the last sample the root has no step of its own: the body keeps the speed it ended with
+    const Tempest::Vec3 prev = d.tr.size()>1 ? d.tr.back() : Tempest::Vec3();
+    return Tempest::Vec3(TransEnd::extend(d.moveTr.x,prev.x,over),
+                         TransEnd::extend(d.moveTr.y,prev.y,over),
+                         TransEnd::extend(d.moveTr.z,prev.z,over));
+    }
   float    a      = std::fmod(fr,1.f);
   uint64_t frameA = uint64_t(fr);
   uint64_t frameB = frameA+1;
@@ -696,6 +716,10 @@ void Animation::AnimData::setupMoveTr() {
       p.y = bi.y-a.y;
       p.z = bi.z-a.z;
       }
+    std::vector<std::array<float,2>> way(tr.size());
+    for(size_t i=0; i<tr.size(); ++i)
+      way[i] = {tr[i].x,tr[i].z};
+    restFrame = StopFoot::restFrame(way,moveTr.x,moveTr.z,fpsRate);
     static const float eps = 0.4f;
     for(auto& i:tr) {
       if(std::fabs(i.x)<eps && std::fabs(i.y)<eps && std::fabs(i.z)<eps)
@@ -710,6 +734,15 @@ void Animation::AnimData::setupMoveTr() {
     translate.y = samples[0].position.y;
     translate.z = samples[0].position.z;
     }
+  }
+
+uint32_t Animation::AnimData::loopFrames() const {
+  static const float minTravel = 1.f; // cm over a cycle, along the ground
+  if(numFrames<2 || tr.empty())
+    return numFrames;
+  if(moveTr.x*moveTr.x+moveTr.z*moveTr.z<minTravel*minTravel)
+    return numFrames;
+  return numFrames-1;
   }
 
 uint32_t Animation::AnimData::optimalFrame(int32_t frame) const {

@@ -1,11 +1,11 @@
 #pragma once
 
-#include <zenkit/DaedalusVm.hh>
-#include <zenkit/addon/daedalus.hh>
-#include "game/definitions/definitiontypes.h"
+#include "records/definitions.h"
 
 #include <Tempest/Point>
+#include <array>
 #include <optional>
+#include <vector>
 
 #include "game/constants.h"
 #include "graphics/pfx/pfxobjects.h"
@@ -14,7 +14,9 @@ class World;
 
 class VisualFx final {
   public:
-    VisualFx(const Def::EffectBase& src, zenkit::DaedalusVm& tmpVm, std::string_view name);
+    VisualFx(const Def::EffectBase& src,
+             const std::array<std::optional<Def::ParticleEffectEmitKey>,int(SpellFxKey::Count)>& keyDefs,
+             const std::vector<Def::ParticleEffectEmitKey>& investDefs);
 
     enum Collision : uint8_t {
       NoCollision = 0,

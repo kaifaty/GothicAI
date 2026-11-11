@@ -69,6 +69,31 @@ c++ -std=c++20 -O2 -DZKNO_REM=1 -D_ZK_WITH_MMAP=1 -IOpenGothic/lib/ZenKit/includ
 
 `barrel.py` снимает профиль с альфы вида спереди (`front` — путь внутри `content-sources`), остальные части берёт из `barrel.json`: число клёпок, положение и высоту обручей, стык, венец, доски крышки. Пишет `model.glb` и `metrics.json`. `compare.py` рендерит GLB с одним светом и камерой по списку видов, материалы `ours` берёт из `maps_dir/<ключ>/`. `iron_material.py` делает бесшовное кованое железо со средним цветом замера.
 
+### Обломки бочки
+
+С ключом `debris` в `barrel.json` тот же запуск `barrel.py` пишет рядом с `model.glb` ещё `model.debris.glb`: детали, на которые бочка разваливается. Это 20 клёпок толщиной 2,5 см, десять из них подрезаны поперёк с рваным краем (половины связаны `ACROSS` и ломаются только у удара, [связи](../../../../reports/physics/2026-11-destruction-bonds/README.md)), 8 досок днищ и 4 обруча. Каждая деталь — узел glTF в позе целой бочки. Детали строит `barrel_debris.py` по тем же углам, уровням и профилю, что целую; целая `model.glb` от ключа не меняется. В `metrics.json` раздел `debris` даёт открытые рёбра, вывернутые оболочки, проникновение кусков друг в друга и отход их наружной поверхности от целой. Атлас обломков печёт `barrel-debris-atlas.json`: те же плитки, цели и износ, что у целой, плюс зоны внутренней стороны, излома и изнанки обручей. Подробно — [заметка](../../../../reports/content/2026-11-wood-fracture/README.md#обломки-бочки).
+
+```sh
+ST=~/.local/share/gothic-ai/content-staging
+$B -b --factory-startup -P scripts/content/mesh3d/blender/barrel.py -- \
+  scripts/content/mesh3d/blender/barrel.json $ST/mesh3d-barrel-concept/debris
+$B -b --factory-startup -P scripts/content/mesh3d/blender/bake_atlas.py -- \
+  scripts/content/mesh3d/blender/barrel-debris-atlas.json $ST/mesh3d-barrel-concept/debris-atlas
+uv run --no-project --with numpy --with pillow python scripts/content/mesh3d/pack_prop.py --debris \
+  --bake $ST/mesh3d-barrel-concept/debris-atlas --visual NW_HARBOUR_BARREL_01 --name mesh3d-barrel-atlas \
+  --output $ST/barrel-wear-metal0
+$B -b --factory-startup -P scripts/content/mesh3d/blender/debris_views.py -- \
+  WHOLE.glb $ST/mesh3d-barrel-concept/debris-atlas/model.glb /absolute/views WHOLE_MAPS $ST/mesh3d-barrel-concept/debris-atlas/maps
+```
+
+Ключи `bake_atlas.py` для обломков:
+- `"nodes": "*"` — запечь все узлы GLB одним атласом и снова выдать их узлами;
+- `tiles` — плитка зоны из другой папки;
+- `ao_floor` — не дать AO зоны опуститься ниже значения. Грани, которые в позе целой касаются другого куска, иначе запекаются чёрными, а после поломки их видно;
+- отрицательный `_part` оставляет грани тон по сектору, как у обручей целой.
+
+`pack_prop.py --debris` кладёт атлас в `materials/<name>-debris/` и дописывает ключи в имеющийся `materials.json`. GLB он кладёт как `meshes/<name>/model.debris.glb`, файлы целой и `meshes.json` не трогает. `debris_views.py` рендерит три вида: целую рядом с собранными обломками, обломки вразлёт и крупно сломанную клёпку изнутри.
+
 Колчан лучника `ITRW_QUIVER` — `quiver.py` + `quiver.json`, атлас `quiver-atlas.json`, плитки `quiver-tiles.json`. Его рамка — рамка `Quiver` движка: устье в начале координат, ось вдоль −Y, +X к телу. Ремни идут к поясу по горизонтали мира, наклон считается как в `Quiver::fit`. `quiver_place.py` вешает запечённый колчан на макет бедра и пояса при заданных сдвигах под броню. [Отчёт](../../../../reports/content/2026-11-quiver/README.md#модель).
 
 ### Вывернутые грани
@@ -124,6 +149,21 @@ $B -b --factory-startup -P scripts/content/mesh3d/blender/coplanar.py -- \
   - `look` — всё остальное. Видно ли это игроку, решаешь по координатам `lo`/`hi` и нормали. Так бывает с гранью внутри закрытого сундука, с задником у стены или с верхом бруса под столешницей прилавка, который виден только в щель 5 мм.
 
 Скрипт печатает пары `look`, а с `--all` ещё скрытые и касания. Перед правкой стоит снять крупный план места в Cycles: перекрытие выходит чёрным. Сдвиг 0,5 мм по замыслу (бока досок крышки сундука и торцы сегментов обода) скрипт уже не считает совпадением. Проверка 2026-10-21 прошла по всем 19 предметам рынка и пяти предметам пилота; разбор — в журнале [`docs/own-content.md`](../../../../docs/own-content.md).
+
+### Обломки по деталям
+
+Своя деревянная вещь ломается на свои детали, а не на глыбы ([заметка](../../../../reports/content/2026-11-wood-fracture/README.md)). Рядом с моделью лежит `model.debris.glb`: тот же мир (метры, +Y вверх), поза целой вещи, один узел glTF — один кусок с именем детали. Кусок — одна или несколько замкнутых деталей, плюс открытые мелочи (шляпки гвоздей), которые только рисуются. Материалы и `extras.group` — как у модели. Не больше 64 кусков; внутри пусто.
+
+Обломки ящика порта строит `../crate_debris.py` из запечённой модели и её атласа. Он отбрасывает тёмный короб, сажает гвозди на их доски и по seed колет 3–4 доски вдоль и ломает 1–2 поперёк. UV новых граней берутся с островов той же доски, тёмные острова заменяются противоположной или лицевой гранью:
+
+```bash
+uv run --no-project --with numpy --with pillow --with scipy python scripts/content/mesh3d/rigging_set.py debris   # atlas/model.debris.glb
+uv run --no-project --with numpy --with pillow --with scipy python scripts/content/mesh3d/rigging_set.py pack --set <набор>
+scripts/fracture.sh content ~/.local/share/gothic-ai/content-staging/<набор>   # .fracture версии 3
+$B -b --factory-startup -P scripts/content/mesh3d/blender/debris_view.py -- <model.debris.glb> <albedo.png> <папка>
+```
+
+Излом, который делится на мало оболочек: впадины на одной прямой, вершины на другой, одинаковый наклон через толщину. Тогда тело и каждый зуб выпуклы. Вторая щепа в другую половину поднимает число оболочек до 18 при пределе 16.
 
 ## Установка и запуск
 

@@ -66,5 +66,5 @@ Gothic2.exe. Формула OpenGothic была щедрее после 15 м: �
 Поиграть пока нельзя: проект запускается из исходников на macOS и требует своей копии Gothic II: Ночь
 Ворона. Движок — [OpenGothic](https://github.com/Try/OpenGothic); устройство и цифры — в
 [`docs/manual-aim.md`](https://github.com/kaifaty/GothicAI/blob/main/docs/manual-aim.md), шортс снят
-инструментом [`shorts/compare`](https://github.com/kaifaty/GothicAI/tree/main/shorts/compare) на
+инструментом [`shorts/compare`](https://github.com/kaifaty/GothicAI/tree/0061fde837235378936b735d9669f20bfeef56f8/shorts/compare) на
 [тестовом стенде](https://github.com/kaifaty/GothicAI/tree/main/scripts/bench).

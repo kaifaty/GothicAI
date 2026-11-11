@@ -1,0 +1,20 @@
+--- a/OpenGothic/shader/ssao/ssao.comp
++++ b/OpenGothic/shader/ssao/ssao.comp
+@@ -100,7 +100,7 @@
+     atomicAdd(vCnt, 1);
+   barrier();
+ 
+-  return vCnt<4;
++  return false; // probe: every group runs all iterations
+   // return d < 0.1 + samples*0.005;
+   }
+ 
+@@ -247,7 +247,7 @@
+     }
+ 
+   // const float f0 = M_PI*2.0*interleavedGradientNoise(fragCoord);
+-  const float f0 = M_PI*2.0*wangHashNoise(uvec2(fragCoord), 0);
++  const float f0 = M_PI*2.0*wangHashNoise(gl_WorkGroupID.xy, 0); // probe: one rotation per group
+ 
+   int maxSteps = estimateMaxSteps(at0.z);
+   atomicMax(shMaxSteps, maxSteps);

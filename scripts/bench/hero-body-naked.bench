@@ -1,0 +1,103 @@
+# The hero's naked body (reports/content/2026-11-hero-body/naked-body.md): the original HUM_BODY_NAKED0 he starts
+# in and a test content root that replaces it, judged side by side from the same cameras. A new game, no armour.
+# Noon at the market: still shots around the hero, the neck seam close up, a walk from the side, a run from behind, cheering with raised fists from the front,
+# a one-handed attack from the side and from behind (raised arms, a twisted torso). The legs close from behind -
+# standing, walking and running - judge the knees (reports/engine/2026-11-modern-skeleton, «Ноги»).
+#   TIMEOUT=600 TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=ryzen WORLD=NEWWORLD.ZEN OPENGOTHIC_CONTENT=<root or empty> \
+#     scripts/bench.sh scripts/bench/hero-body-naked.bench <out>
+seed 73013
+cheat god
+set time 12 0
+goto NW_CITY_MERCHANT_TRADE_04
+wait 3000
+watch player
+overlay off
+cam follow 330 95 0
+wait 1500
+shot front
+cam follow 330 95 35
+wait 1200
+shot quarter
+cam follow 330 95 90
+wait 1200
+shot side
+cam follow 330 95 180
+wait 1200
+shot back
+cam follow 170 150 20
+wait 1200
+shot upper
+cam follow 110 165 0
+wait 3000
+shot neck_front
+cam follow 110 165 180
+wait 3000
+shot neck_back
+walkmode walk
+cam follow 380 95 90
+wait 500
+rec walk_side
+walkto NW_CITY_MERCHANT_PATH_09
+wait 5000
+stop
+goto NW_CITY_MERCHANT_TRADE_04
+wait 2000
+cam look 80
+cam follow 210 90 180
+wait 1200
+shot legs_back
+walkmode run
+cam look 150
+cam follow 340 170 180
+wait 1500
+rec run_behind
+walkto NW_CITY_MERCHANT_PATH_09
+wait 6000
+stop
+goto NW_CITY_MERCHANT_TRADE_04
+wait 2000
+cam look 90
+cam follow 230 110 180
+wait 1500
+rec run_behind_close
+walkto NW_CITY_MERCHANT_PATH_09
+wait 4000
+stop
+goto NW_CITY_MERCHANT_TRADE_04
+wait 2000
+walkmode walk
+cam look 90
+cam follow 230 110 180
+wait 1500
+rec walk_behind_close
+walkto NW_CITY_MERCHANT_PATH_09
+wait 4000
+stop
+walkmode run
+
+goto NW_CITY_MERCHANT_TRADE_04
+cam look 140
+cam follow 300 140 20
+wait 2500
+rec cheer_front
+ani player T_STAND_2_WATCHFIGHT force
+wait 700
+ani player T_WATCHFIGHT_YEAH force
+wait 2600
+stop
+goto NW_CITY_MERCHANT_TRADE_04
+melee-shadow weapon 1h
+cam follow 380 140 90
+wait 2500
+rec attack_side
+ani player S_1HATTACK force
+wait 2400
+stop
+goto NW_CITY_MERCHANT_TRADE_04
+melee-shadow weapon 1h
+cam follow 380 150 180
+wait 2500
+rec attack_back
+ani player S_1HATTACK force
+wait 2400
+stop

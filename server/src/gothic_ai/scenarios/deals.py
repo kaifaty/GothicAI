@@ -577,6 +577,10 @@ async def xardas_money(
         and len(deals.chronicle.facts("deal")) == facts,
         rejected_calls(),
     )
+    note = "[propose_deal не прошёл: даром ты даёшь герою не больше 50 золотых"
+    conv = dialogue.conversations[npc]  # history is built anew on each read
+    remembered = await _until(lambda: any(m.content.startswith(note) for m in conv.history), 30)
+    check("remembered", remembered, [m.content for m in conv.history if m.role == "developer"][-3:])
     return _logged(results)
 
 

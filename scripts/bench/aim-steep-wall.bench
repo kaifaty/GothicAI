@@ -4,7 +4,6 @@ cheat god
 set time 12 0
 view full
 overlay off
-manual on
 equip ItRw_Bow_L_01
 give ItRw_Arrow 100
 stats str 120 dex 120 bow 100 talent 0

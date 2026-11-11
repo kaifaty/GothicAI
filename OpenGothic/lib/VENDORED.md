@@ -7,9 +7,8 @@ automatically; to update one, copy the needed parts of a newer upstream version 
 | Directory | Upstream | Commit | License | Left out |
 |---|---|---|---|---|
 | `Tempest/` | https://github.com/Try/Tempest | a4ac4029b848ef9f4e5636049dd657663c499a45 | MIT | `Examples/`, `Tests/` |
-| `ZenKit/` | https://github.com/GothicKit/ZenKit | 083cc5f5592726aed435f8e863a6e09e92748a4d (v1.3.0-63) | MIT | `tests/`, `docs/`, `examples/`, `assets/` |
+| `ZenKit/` | https://github.com/GothicKit/ZenKit | 083cc5f5592726aed435f8e863a6e09e92748a4d (v1.3.0-63) | MIT | `tests/`, `docs/`, `examples/`, `assets/`; ZenKit tests are not built |
 | `ZenKit/vendor/libsquish/` | https://github.com/lmichaelis/phoenix-libsquish | 53167b39beee3c7ff441c4ee6ba522c2db27dad4 | MIT | — |
-| `ZenKit/vendor/doctest/` | https://github.com/doctest/doctest | 1da23a3e8119ec5cce4f9388e91b065e20bf06f5 (v2.4.12) | MIT | `scripts/data/` (kept because ZenKit's CMake would download it otherwise) |
 | `recastnavigation/` | https://github.com/recastnavigation/recastnavigation | 6dc1667f580357e8a2154c28b7867bea7e8ad3a7 (v1.6.0) | zlib | everything but `Recast/{Include,Source}`, `Detour/{Include,Source}` and `License.txt`; local minimal CMake builds these two libraries only |
 | `JoltPhysics/` | https://github.com/jrouwe/JoltPhysics | e77f175595e64cb44218cc9d9d56fc365ad0e36a (v5.6.0) | MIT | everything but `Jolt/`, `Build/CMakeLists.txt` and `LICENSE` (examples, test framework, unit/performance tests, viewer, documentation, assets and build helper scripts omitted) |
 | `dmusic/` | https://github.com/GothicKit/dmusic | b73b270b94714b8ec8d9d0b2a9f3a5c445da52d1 | MIT | `docs/`, `examples/` |
@@ -56,7 +55,7 @@ Keep these when updating a library from upstream.
 - `Tempest/Engine/system/api/macosapi.mm`: `TEMPEST_BACKGROUND=1` starts the app without taking the
   focus and without a Dock icon (used by the test bench, `scripts/bench.sh`).
 - `Tempest/Engine/system/api/macosapi.mm`: `TEMPEST_WINDOW_SIZE=<w>x<h>` sets the size of a window created
-  by show mode (points; shorts are filmed in a 9:16 window, `shorts/`).
+  by show mode (points; shorts are filmed in a 9:16 window, `gothic-shorts`).
 - `Tempest/Engine/system/api/x11api.{h,cpp}`: the same `TEMPEST_WINDOW_SIZE` on X11, in pixels, with the size
   fixed by WM hints; with it a minimized window gets that size instead of the whole screen (the test bench
   on Ryzen).
@@ -65,6 +64,8 @@ Keep these when updating a library from upstream.
   (the test bench records the game's sound in step with the frames).
 - `Tempest/Engine/sound/sound.{h,cpp}`: `Sound::samples16` gives the decoded samples of a sound (lip sync
   measures the loudness of a voice line, `common/graphics/mesh/lipsync.cpp`).
+- `Tempest/Engine/gapi/vulkan/vdevice.h`, `gapi/directx12/dxdevice.h`: `TextureFormat::RG16F` (added for Metal with
+  MetalFX Temporal) maps to `VK_FORMAT_R16G16_SFLOAT` and `DXGI_FORMAT_R16G16_FLOAT`: the G-buffer's motion vectors.
 - `Tempest/Engine/gapi/metal/mtshader.cpp`: shader compile errors (SPIRV-Cross and MSL) go to `Log::e` in
   every build, not only without `NDEBUG`; the MSL source is still dumped only in debug builds. The
   unconditional `Log::d(msl)` of every mesh shader is removed (with `-ms 1` it put about 24 000 lines
@@ -82,8 +83,8 @@ Keep these when updating a library from upstream.
 - `rapidjson/include/rapidjson/document.h`: `GenericStringRef::operator=` deleted (GCC 15 diagnoses the
   old one), and `memcpy` into `GenericValue`/`Member` storage goes through `void*`, as upstream does now
   (clang's `-Wnontrivial-memcall`; the engine builds with `-Werror`).
-- `ZenKit/` `DaedalusVm::unsafe_call_external` (`DaedalusVm.hh`, `DaedalusVm.cc`): calls an engine
-  function the way the `BE` instruction does. The story graph (`ai_bridge/storygraph`) computes the AI
+- `common/daedalus/` (our VM, a copy of ZenKit's; not in `lib/`) `DaedalusVm::unsafe_call_external`
+  (`vm.h`, `vm.cpp`): calls an engine function the way the `BE` instruction does. The story graph (`ai_bridge/storygraph`) computes the AI
   director's conditions with the engine's own functions through it.
 - `JoltPhysics/Jolt/Geometry/RayTriangle.h`, `Physics/Collision/RayCast.h` and
   `Physics/Collision/Shape/MeshShape.cpp`: optional `RayCastSettings::mTriangleEdgeTolerance` adds a
@@ -112,19 +113,21 @@ Keep these when updating a library from upstream.
   and removes all 14 proven false winners. Full query dispatch is checked separately because a
   corrected early-out cutoff can expose additional BVH candidates. Evidence is in
   [the accepted physics summary](../../reports/physics/2026-10-14-jolt-stage1/validation-notes.md).
-- `ZenKit/` `DaedalusVm::unsafe_call_bl` (`DaedalusVm.hh`, `DaedalusVm.cc`): calls a script function the way
+- `common/daedalus/` `DaedalusVm::unsafe_call_bl` (`vm.h`, `vm.cpp`): calls a script function the way
   the `BL` instruction does, so an override (`override_function`) runs instead of its code. The story
   graph's Interpreter calls script functions from a dialog's program through it.
-- `ZenKit/` `DaedalusScript::add_int_symbol` (`DaedalusScript.hh`, `DaedalusScript.cc`): adds a global integer
-  variable that is not in the compiled scripts; `load` keeps room for `MAX_ADDED_SYMBOLS` of them, so no
+- `common/daedalus/` `DaedalusScript::add_int_symbol` (`script.h`, `script.cpp`): adds a global integer
+  variable that is not in the compiled scripts; `from_program` keeps room for `MAX_ADDED_SYMBOLS` of them, so no
   symbol moves. The AI director's story state (`DIR_*`, graph_patch `vars`) lives in such variables and is
   saved with the scripts' own (`GameScript::loadVar` makes them again from a save).
-- `ZenKit/` `DaedalusScript::add_instance_symbol` (`DaedalusScript.hh`, `DaedalusScript.cc`): adds an instance
+- `common/daedalus/` `DaedalusScript::add_instance_symbol` (`script.h`, `script.cpp`): adds an instance
   that is not in the compiled scripts, of the class and with the init code of a script's instance, in the same
   room. The AI director's npc's (`DIR_NPC_*`) are such instances; the engine's `OwnSymbols` makes them again
   in the same order before a save's world loads, so the npc's of the save find their symbols by index. The
   code names its own instance (`self` in an instance's body), so `GameScript::initializeInstanceNpc` binds
-  that instance to the new npc while the code runs.
+  that instance to the new npc while the code runs. `lib/ZenKit` `DaedalusScript` still has `add_int_symbol`,
+  `add_instance_symbol` and the room for them from before the VM moved. The game no longer uses them, so they
+  need not survive a ZenKit update.
 - `ZenKit/` archive writers (`ArchiveAscii.cc`, `ArchiveBinary.cc`, `ArchiveBinsafe.cc`): on `_WIN32` the
   header date is written with `%#d.%#m` instead of glibc's `%-d.%-m`. The Microsoft CRT has no `-` flag, and
   its `strftime` sends an invalid format to the invalid-parameter handler, which by default ends the process

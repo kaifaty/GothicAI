@@ -739,4 +739,32 @@ void placedItemsPickupReport(PlacedItems& state,World& world,Npc& player) {
     "],\"pass\":"+(pass?"true":"false"));
 }
 
+bool placedItemsCommand(PlacedItems& state,const std::vector<std::string>& a,World& w,Npc& pl,PlayerControl& ctrl) {
+  const std::string& c = a[0];
+  if(c=="placed-items" && a.size()==2 && a[1]=="floor")placedItemsFloor(state,w,pl);
+  else if(c=="placed-items" && a.size()==2 && a[1]=="walk")placedItemsWalk(state,w,pl);
+  else if(c=="placed-items" && a.size()==2 && a[1]=="walk-report")placedItemsWalkReport(state,w,pl);
+  else if(c=="placed-items" && a.size()==2 && a[1]=="arrow-ready")placedItemsArrowReady(state,w,pl);
+  else if(c=="placed-items" && a.size()==2 && a[1]=="arrow")placedItemsArrow(state,w,pl);
+  else if(c=="placed-items" && a.size()==2 && a[1]=="arrow-report")placedItemsArrowReport(state,w);
+  else if(c=="placed-items" && a.size()==2 && a[1]=="table")placedItemsTable(state,w,pl);
+  else if(c=="placed-items" && a.size()==2 && a[1]=="owned-table")placedItemsTable(state,w,pl,true);
+  else if(c=="placed-items" && a.size()==2 && a[1]=="table-push")placedItemsTablePush(state,w,pl);
+  else if(c=="placed-items" && a.size()==2 && a[1]=="table-report")placedItemsTableReport(state,w);
+  else if(c=="placed-items" && a.size()==2 && a[1]=="save")placedItemsSave(w);
+  else if(c=="placed-items" && a.size()==2 && a[1]=="snapshot")placedItemsSnapshot(w,"before");
+  else if(c=="placed-items" && a.size()==2 && a[1]=="initial")placedItemsSnapshot(w,"initial",w.tickCount());
+  else if(c=="placed-items" && a.size()==2 && a[1]=="pickup-ready")placedItemsPickupReady(state,w,pl);
+  else if(c=="placed-items" && a.size()==2 && a[1]=="pickup")placedItemsPickup(state,w,pl,ctrl);
+  else if(c=="placed-items" && a.size()==2 && a[1]=="pickup-report")placedItemsPickupReport(state,w,pl);
+  else if(c=="placed-items" && a.size()==2 && a[1]=="census")placedItemsCensus(w);
+  else if(c=="placed-items" && a.size()==2 && a[1]=="probe")placedItemsProbe(state,w,pl);
+  else if(c=="placed-items" && (a.size()==3 || (a.size()==4 && a[3]=="control")) && a[1]=="diagnose")
+    placedItemsDiagnose(state,w,pl,uint32_t(std::stoul(a[2])),a.size()==4);
+  else if(c=="placed-items" && a.size()==2 && a[1]=="performance")placedItemsPerformance(state,w,pl);
+  else if(c=="placed-items" && a.size()==2 && a[1]=="performance-report")placedItemsPerformanceReport(state,w);
+  else return false;
+  return true;
+  }
+
 }

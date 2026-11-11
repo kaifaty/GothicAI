@@ -161,7 +161,7 @@ void BodyArena::setup(World& world, Npc& player) {
     if(ids[i]==size_t(-1)) throw std::runtime_error(std::string("arena missing symbol ")+names[i]);
     }
   const auto attackReason=world.script().findSymbol(names[6])->get_int();
-  if(attackReason<0 || size_t(attackReason)>=zenkit::INpc::aivar_count)
+  if(attackReason<0 || size_t(attackReason)>=daedalus::INpc::aivar_count)
     throw std::runtime_error("arena invalid attack reason");
   world.script().setSeed(s.config.seed);
   world.script().clearIsolatedRandom();
@@ -197,7 +197,7 @@ void BodyArena::setup(World& world, Npc& player) {
     npc->addItem(ids[2],1); npc->useItem(ids[2],Item::NSLOT,true);
     npc->addItem(ids[3],1); npc->useItem(ids[3],Item::NSLOT,true);
     auto& handle=npc->handle();
-    handle.flags=zenkit::NpcFlag(uint32_t(handle.flags)&~uint32_t(zenkit::NpcFlag::IMMORTAL));
+    handle.flags=daedalus::NpcFlag(uint32_t(handle.flags)&~uint32_t(daedalus::NpcFlag::IMMORTAL));
     handle.attribute[ATR_HITPOINTS]=handle.attribute[ATR_HITPOINTSMAX]=s.config.loadFixture ? 3000 : 300;
     handle.attribute[ATR_STRENGTH]=handle.attribute[ATR_DEXTERITY]=60;
     const auto talent=twoHanded ? TALENT_2H : TALENT_1H;

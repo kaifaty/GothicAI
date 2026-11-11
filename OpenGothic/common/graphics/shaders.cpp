@@ -1,11 +1,11 @@
 #include "shaders.h"
+#include "utils/workers.h"
 
 #include <Tempest/Application>
 #include <Tempest/Device>
 #include <Tempest/Log>
 #include <cassert>
 
-#include "gothic.h"
 #include "commandline.h"
 #include "resources.h"
 #include "loadprobe.h"
@@ -74,9 +74,7 @@ void Shaders::setupOptions() {
   opts.doRtScene        = gpu.raytracing.rayQuery && CommandLine::inst().isRayQuery();
   opts.doRayQuery       = opts.doRtScene && opts.doBindless;
   opts.doMeshShading    = gpu.meshlets.meshShader && CommandLine::inst().isMeshShading();
-  opts.doSoftwareShadow = Shaders::isRtsmSupported() && CommandLine::inst().isSoftwareShadow();
   opts.doVirtualShadow  = Shaders::isVsmSupported()  && CommandLine::inst().isVirtualShadow();
-  opts.doSoftwareRT     = false;
   opts.doMaterialMaps   = Resources::materialMapsEnabled();
   }
 
@@ -94,6 +92,7 @@ void Shaders::compileShaders() noexcept {
   copy      = postEffect("copy");
 
   patch     = computeShader("patch.comp.sprv");
+  patchCopy = computeShader("patch_copy.comp.sprv");
 
   stash     = postEffect("stash");
 
@@ -108,6 +107,7 @@ void Shaders::compileShaders() noexcept {
 
   ssao                = computeShader("ssao.comp.sprv");
   ssaoBlur            = computeShader("ssao_blur.comp.sprv");
+  ssaoDepth           = computeShader("ssao_depth.comp.sprv");
 
   bloodDecal       = bloodDecalShader(opts.doMaterialMaps);
   bloodDecalAlbedo = bloodDecalShader(false);
@@ -131,27 +131,13 @@ void Shaders::compileShaders() noexcept {
   fogViewLut3d       = computeShader("fog_view_lut.comp.sprv");
   fogViewLutSep      = computeShader("fog_view_lut_sep.comp.sprv");
   fogOcclusion       = computeShader("fog3d.comp.sprv");
+  fogOcclusionEmpty  = computeShader("fog3d_empty.comp.sprv");
 
   skyExposure        = computeShader("sky_exposure.comp.sprv");
   sky                = postEffect("sky");
   skySep             = postEffect("sky_sep");
   fog                = fogShader ("fog");
   fog3dHQ            = fogShader ("fog3d_hq");
-
-  {
-    RenderState state;
-    state.setCullFaceMode (RenderState::CullMode::Front);
-    state.setBlendSource  (RenderState::BlendMode::One);
-    state.setBlendDest    (RenderState::BlendMode::SrcAlpha);
-    state.setZTestMode    (RenderState::ZTestMode::Always);
-    state.setZWriteEnabled(false);
-
-    auto sh      = GothicShader::get("triangle.vert.sprv");
-    auto vsLight = device.shader(sh.data,sh.len);
-    sh           = GothicShader::get("sky_pathtrace.frag.sprv");
-    auto fsLight = device.shader(sh.data,sh.len);
-    skyPathTrace = device.pipeline(Triangles, state, vsLight, fsLight);
-  }
 
   underwaterT        = inWaterShader("underwater_t", false);
   underwaterS        = inWaterShader("underwater_s", true);
@@ -211,6 +197,8 @@ void Shaders::compileShaders() noexcept {
   }
 
   tonemapping        = postEffect("triangle_uv", "tonemapping",    RenderState::ZTestMode::Always);
+  motionView         = postEffect("triangle_uv", "motion_view",    RenderState::ZTestMode::Always);
+  reactiveView       = postEffect("triangle_uv", "reactive_view",  RenderState::ZTestMode::Always);
   tonemappingUpscale = postEffect("triangle_uv", "tonemapping_up", RenderState::ZTestMode::Always);
   bloomDownKaris     = postEffect("triangle_uv", "bloom_down_karis", RenderState::ZTestMode::Always);
   bloomDown          = postEffect("triangle_uv", "bloom_down",       RenderState::ZTestMode::Always);
@@ -237,10 +225,16 @@ void Shaders::compileShaders() noexcept {
   cmaa2EdgeColor2x2Presets[uint32_t(AaPreset::ULTRA)]  = computeShader("cmaa2_edges_color2x2_quality_1.comp.sprv");
 
   cmaa2ProcessCandidates = computeShader("cmaa2_process_candidates.comp.sprv");
+#if defined(__APPLE__)
+  // the Mac is always Metal: half colours, -14% of the pass; Vulkan would need shaderFloat16
+  taaResolve             = postEffect("triangle", "taa_resolve_h", RenderState::ZTestMode::Always);
+#else
   taaResolve             = postEffect("triangle", "taa_resolve", RenderState::ZTestMode::Always);
+#endif
   taaSharpen             = postEffect("triangle", "taa_sharpen", RenderState::ZTestMode::Always);
   motionCamera           = postEffect("triangle",    "motion_camera",     RenderState::ZTestMode::Always);
   tonemappingBloom       = postEffect("triangle_uv", "tonemapping_bloom", RenderState::ZTestMode::Always);
+  tonemappingTaa         = postEffect("triangle_uv", "tonemapping_taa",   RenderState::ZTestMode::Always);
   {
     auto sh = GothicShader::get("cmaa2_deferred_color_apply_2x2.vert.sprv");
     auto vs = device.shader(sh.data,sh.len);
@@ -296,8 +290,13 @@ void Shaders::compileShaders() noexcept {
     probeVote      = computeShader("probe_vote.comp.sprv");
     probePrune     = computeShader("probe_prune.comp.sprv");
     probeAlocation = computeShader("probe_allocation.comp.sprv");
+    probeHitAlloc  = computeShader("probe_hit_alloc.comp.sprv");
+    probeClearVotes= computeShader("probe_clear_votes.comp.sprv");
     probeTrace     = computeShader("probe_trace.comp.sprv");
+    probeRelight   = computeShader("probe_relight.comp.sprv");
+    probeRelightNew= computeShader("probe_relight_new.comp.sprv");
     probeLighting  = computeShader(string_frm("probe_lighting", materialMaps, ".comp.sprv"));
+    probeStats     = computeShader("probe_stats.comp.sprv");
 
     state.setBlendSource  (RenderState::BlendMode::One);
     state.setBlendDest    (RenderState::BlendMode::SrcAlpha);  // for debugging
@@ -342,7 +341,9 @@ void Shaders::compileShaders() noexcept {
     }
 
   if(Shaders::isLightsTreeSupported()) {
-    lightsMorton   = computeShader("lights_morton.comp.sprv");
+    // the sort in 32 KB of shared memory where a workgroup has more (Metal gives 32 KB in all)
+    const bool sharedSort = Resources::device().properties().compute.maxSharedMemory>=33*1024;
+    lightsMorton   = computeShader(sharedSort ? "lights_morton_shared.comp.sprv" : "lights_morton.comp.sprv");
     lightsTopology = computeShader("lights_topology.comp.sprv");
     lightsTree     = computeShader("lights_tree.comp.sprv");
     lightsBvh      = computeShader("lights_bvh.comp.sprv");
@@ -374,65 +375,10 @@ void Shaders::compileShaders() noexcept {
     vsmPackDraw1       = computeShader("vsm_pack_draws1.comp.sprv");
     vsmFogPages        = computeShader("vsm_fog_mark_pages.comp.sprv");
     vsmFogShadow       = computeShader("vsm_fog_shadow.comp.sprv");
-    vsmFogTrace        = computeShader("vsm_fog_trace.comp.sprv");
-    vsmFog             = fogShader("fog_epipolar");
 
     vsmDirectLight     = postEffect(string_frm("direct_light_vsm", materialMaps), RenderState::ZTestMode::NoEqual);
     vsmDbg             = postEffect("vsm_dbg", RenderState::ZTestMode::Always);
     vsmRendering       = computeShader("vsm_rendering.comp.sprv");
-    }
-
-  if(Shaders::isRtsmSupported()) {
-    rtsmDirectLight = postEffect("rtsm_direct_light", RenderState::ZTestMode::NoEqual);
-
-    rtsmClear       = computeShader("rtsm_clear.comp.sprv");
-    rtsmPages       = computeShader("rtsm_mark_pages.comp.sprv");
-    rtsmFogPages    = computeShader("rtsm_mark_fog_pages.comp.sprv");
-    rtsmHiZ         = computeShader("rtsm_hiz_pages.comp.sprv");
-
-    rtsmCulling     = computeShader("rtsm_culling.comp.sprv");
-    rtsmPosition    = computeShader("rtsm_position.comp.sprv");
-    rtsmMeshletCull = computeShader("rtsm_meshlet_cull.comp.sprv");
-    rtsmPrimCull    = computeShader("rtsm_primitive_cull.comp.sprv");
-    rtsmRaster      = computeShader("rtsm_raster.comp.sprv");
-
-    rtsmClearOmni    = computeShader("rtsm_omni_clear.comp.sprv");
-    rtsmCullLights   = computeShader("rtsm_cull_lights.comp.sprv");
-    rtsmCompactLights = computeShader("rtsm_compact_lights.comp.sprv");
-    rtsmLightsOmni   = computeShader("rtsm_omni_lights.comp.sprv");
-    rtsmBboxesOmni   = computeShader("rtsm_omni_bboxes.comp.sprv");
-    rtsmCullingOmni  = computeShader("rtsm_omni_culling.comp.sprv");
-    rtsmPositionOmni = computeShader("rtsm_omni_position.comp.sprv");
-
-    rtsmMeshletOmni  = computeShader("rtsm_omni_meshlet.comp.sprv");
-    rtsmBackfaceOmni = computeShader("rtsm_omni_backface.comp.sprv");
-    rtsmCompactOmni  = computeShader("rtsm_omni_compact.comp.sprv");
-    rtsmTaskOmni     = computeShader("rtsm_omni_task.comp.sprv");
-    rtsmPrimOmni     = computeShader("rtsm_omni_primitive.comp.sprv");
-    rtsmRasterOmni   = computeShader("rtsm_omni_raster.comp.sprv");
-
-    rtsmRendering    = computeShader("rtsm_rendering.comp.sprv");
-    rtsmRenderingOmni= computeShader("rtsm_omni_rendering.comp.sprv");
-    rtsmDbg          = postEffect("rtsm_dbg", RenderState::ZTestMode::Always);
-    }
-
-  swRaytracing    = computeShader("sw_raytracing.comp.sprv");
-  swRaytracing8   = computeShader("sw_raytracing8.comp.sprv");
-  swRaytracing64  = computeShader("sw_raytracing64.comp.sprv");
-
-  if(options().swRenderingPreset>0) {
-    switch(options().swRenderingPreset) {
-      case 1:
-        swRendering = computeShader("sw_rendering_imm.comp.sprv");
-        break;
-      case 2:
-        swRendering = computeShader("sw_rendering_tbr.comp.sprv");
-        break;
-      case 3:
-        swRendering = computeShader("sw_light.comp.sprv");
-        break;
-      }
-    swRenderingDbg = postEffect("vbuffer_blit", RenderState::ZTestMode::Always);
     }
 
   {
@@ -457,19 +403,6 @@ bool Shaders::isVsmSupported() {
   return false;
   }
 
-bool Shaders::isRtsmSupported() {
-  if(!Shaders::options().doBindless) {
-    return false;
-    }
-  auto& gpu = Resources::device().properties();
-  if(!gpu.hasStorageFormat(TextureFormat::RG32U) || !gpu.hasStorageFormat(TextureFormat::R11G11B10UF))
-    return false;
-  if(gpu.compute.maxInvocations<512 || gpu.compute.maxSharedMemory<32*1024 || !gpu.descriptors.nonUniformIndexing) {
-    return false;
-    }
-  return true;
-  }
-
 bool Shaders::isLightsTreeSupported() {
   auto& gpu = Resources::device().properties();
   if(gpu.compute.maxInvocations<512 || gpu.compute.maxSharedMemory<16*1024)
@@ -478,10 +411,13 @@ bool Shaders::isLightsTreeSupported() {
   }
 
 bool Shaders::isGi1Supported() {
+  // Not checked: the subgroup operations of probe_ambient.frag (subgroupAllEqual, subgroupBallot, subgroupShuffle in
+  // the fragment stage, SPIR-V 1.3): Tempest does not report the supported stages and operations of subgroups. Run on
+  // an RTX 3080 (Vulkan) and an M1 Pro (Metal); a GPU with ray query but without them is not covered (step-2.md, «2а»).
   auto& gpu = Resources::device().properties();
-  if(!gpu.raytracing.rayQuery)
+  if(!gpu.raytracing.rayQuery || !isLightsTreeSupported())
     return false;
-  if(!gpu.hasStorageFormat(R11G11B10UF) || !gpu.hasStorageFormat(R16))
+  if(!gpu.hasStorageFormat(RGBA16F) || !gpu.hasStorageFormat(R32U) || !gpu.hasStorageFormat(R16))
     return false;
   if(gpu.tex2d.maxSize<4096 || gpu.compute.maxInvocations<256 || !gpu.descriptors.nonUniformIndexing)
     return false;
@@ -531,6 +467,10 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
   if(pt==PipelineType::T_Vsm) {
     // state.setZTestMode(RenderState::ZTestMode::Always); //FIXME
     state.setZTestMode(RenderState::ZTestMode::Greater); //FIXME
+    // the mesh shader culls by itself (main.vert, meshShader): the sun's pages as before, a lamp's faces not at all
+    if(options().doMeshShading && t!=DrawCommands::Pfx &&
+       !(mat.isTesselated() && Resources::device().properties().tesselationShader && t==DrawCommands::Landscape))
+      state.setCullFaceMode(RenderState::CullMode::NoCull);
     }
 
   switch(alpha) {
@@ -600,9 +540,12 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
   const char* typeFsD = nullptr;
   const char* typeFsV = nullptr;
 
+  // the G-buffer pass of objects has vertex variants of its own: they also compute the previous vertex for motion
+  // vectors (main_obj_g, main_ani_g, main_mph_g); landscape and particles write no motion of their own
+  const char* gbufVs = (t==DrawCommands::Landscape || t==DrawCommands::Pfx) ? "" : "_g";
   switch(alpha) {
     case Material::Solid:
-      typeVsM = "";
+      typeVsM = gbufVs;
       typeFsM = "_g";
       typeVsD = "_d";
       typeFsD = "_d";
@@ -612,7 +555,7 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
         typeFsM = "_g_s";
       break;
     case Material::AlphaTest:
-      typeVsM = "";
+      typeVsM = gbufVs;
       typeFsM = "_g_at";
       typeVsD = "_d_at";
       typeFsD = "_d_at";

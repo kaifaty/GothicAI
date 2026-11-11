@@ -1,5 +1,6 @@
 import copy
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -215,11 +216,13 @@ async def test_cards_from_the_models_answer(graph):
 
 
 def test_a_card_in_the_persona(tmp_path):
-    card = Card(TRADER, "Маттео", **{k: v for k, v in _card().items() if k != "npc"})
+    card = Card(TRADER, "Маттео", lie_skill=0.7, **{k: v for k, v in _card().items() if k != "npc"})
     path = tmp_path / "characters.json"
     characters.save({TRADER: card}, path)
     assert characters.load(path) == {TRADER: card}
     assert characters.load(tmp_path / "none.json") == {}
+    with pytest.raises(ValueError, match="lie_skill must be in 0..1"):
+        replace(card, lie_skill=1.1)
 
     assert card.traits_ru() == (
         "Твой характер: жадность — очень высокая; честность — средняя; смелость — низкая; "

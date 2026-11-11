@@ -11,6 +11,7 @@
 #include "mtswapchain.h"
 #include "mtaccelerationstructure.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 
@@ -18,10 +19,15 @@
 #include "frameprofile.h"
 
 // OPENGOTHIC_GPU_SKIP="SSAO,Fog-LUTs": draws and dispatches under these debug markers are dropped,
-// so the GPU time a pass costs shows up in the frame profile (docs/performance.md); the picture breaks
+// so the GPU time a pass costs shows up in the frame profile (docs/performance.md); the picture breaks.
+// Spaces do not count: "ShadowMap#1" names the marker "ShadowMap #1".
+static std::string noSpaces(std::string s) {
+  s.erase(std::remove(s.begin(),s.end(),' '),s.end());
+  return s;
+  }
 static bool skipPass(const std::string& label) {
-  static const std::string skip = [] { auto v = std::getenv("OPENGOTHIC_GPU_SKIP"); return v!=nullptr ? ","+std::string(v)+"," : std::string(); }();
-  return !skip.empty() && !label.empty() && skip.find(","+label+",")!=std::string::npos;
+  static const std::string skip = [] { auto v = std::getenv("OPENGOTHIC_GPU_SKIP"); return v!=nullptr ? ","+noSpaces(v)+"," : std::string(); }();
+  return !skip.empty() && !label.empty() && skip.find(","+noSpaces(label)+",")!=std::string::npos;
   }
 #define T_SKIP_PASS() if(skipPass(activeLabel)) return
 #define T_PROFILE_DRAW() profileCommand(false)
@@ -215,7 +221,7 @@ MtCommandBuffer::~MtCommandBuffer() {
 
 bool MtCommandBuffer::isRecording() const {
   // FIXME
-  return encDraw!=nullptr || encComp!=nullptr || encBlit!=nullptr;
+  return encDraw!=nullptr || encComp!=nullptr || encBlit!=nullptr || encAs!=nullptr;
   }
 
 void MtCommandBuffer::begin() {
@@ -334,6 +340,17 @@ void MtCommandBuffer::setEncoder(MtCommandBuffer::EncType e, MTL::RenderPassDesc
     pushData.durty = true;
     clearUseResource();
     }
+  if(encAs!=nullptr && e!=E_As) {
+    if(isDbgRegion) {
+      encAs->popDebugGroup();
+      isDbgRegion = false;
+      }
+    encAs->endEncoding();
+    encAs = NsPtr<MTL::AccelerationStructureCommandEncoder>();
+    bindings.durty = true;
+    pushData.durty = true;
+    clearUseResource();
+    }
 
   switch(e) {
     case E_None: {
@@ -411,6 +428,28 @@ void MtCommandBuffer::setEncoder(MtCommandBuffer::EncType e, MTL::RenderPassDesc
 #endif
         encBlit = NsPtr<MTL::BlitCommandEncoder>(impl->blitCommandEncoder());
       encBlit->retain();
+      break;
+      }
+    case E_As: {
+      if(encAs!=nullptr)
+        return;
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+      if(gpuProfile) {
+        profilePass=gpuProfile->begin("compute",2);
+        const auto& pass=gpuProfile->passes[profilePass];
+        auto asDesc=NsPtr<MTL::AccelerationStructurePassDescriptor>::init();
+        if(pass.samples!=0) {
+          auto attachment=asDesc->sampleBufferAttachments()->object(0);
+          attachment->setSampleBuffer(gpuProfile->buffer.get());
+          attachment->setStartOfEncoderSampleIndex(pass.first);
+          attachment->setEndOfEncoderSampleIndex(pass.first+1);
+          }
+        encAs=NsPtr<MTL::AccelerationStructureCommandEncoder>(impl->accelerationStructureCommandEncoder(asDesc.get()));
+        }
+      else
+#endif
+        encAs = NsPtr<MTL::AccelerationStructureCommandEncoder>(impl->accelerationStructureCommandEncoder());
+      encAs->retain();
       break;
       }
     }
@@ -682,6 +721,8 @@ void MtCommandBuffer::setDebugMarker(std::string_view tag) {
     enc = encComp.get();
   if(encBlit!=nullptr)
     enc = encBlit.get();
+  if(encAs!=nullptr)
+    enc = encAs.get();
 
   if(enc==nullptr) {
     return;
@@ -715,6 +756,8 @@ void MtCommandBuffer::implSetDebugLabel() {
     enc = encComp.get();
   if(encBlit!=nullptr)
     enc = encBlit.get();
+  if(encAs!=nullptr)
+    enc = encAs.get();
 
   if(enc==nullptr) {
     return;
@@ -1023,6 +1066,22 @@ void MtCommandBuffer::setPipeline(AbstractGraphicsApi::Pipeline &p) {
 
   bindings.durty  = true;
   pushData.durty  = true;
+  }
+
+void MtCommandBuffer::buildTlas(AbstractGraphicsApi::AccelerationStructure& as, const AbstractGraphicsApi::Buffer* instances,
+                                size_t count) {
+  // An encoder of its own; Metal orders it before the encoders that bind the structure later in this command buffer
+  // (tracked resources), and they make its BLAS resident by the list its instances index (useResource).
+  auto& tlas = reinterpret_cast<MtTopAccelerationStructure&>(as);
+  auto  pool = NsPtr<NS::AutoreleasePool>::init();
+  auto* ibo  = instances!=nullptr ? reinterpret_cast<const MtBuffer*>(instances)->impl.get() : nullptr;
+  auto  desc = tlas.buildDesc(ibo, ibo!=nullptr ? count : 0);
+  setEncoder(E_As, nullptr);
+  encAs->buildAccelerationStructure(tlas.impl.get(), desc.get(), tlas.scratch.get(), 0);
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  if(gpuProfile)
+    gpuProfile->label(profilePass, activeLabel);
+#endif
   }
 
 void MtCommandBuffer::upscale(AbstractGraphicsApi::Texture& src, AbstractGraphicsApi::Texture& dst) {

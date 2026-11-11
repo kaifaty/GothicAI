@@ -5,7 +5,7 @@
 
 #include "baseimport.h"
 
-#include <zenkit/DaedalusScript.hh>
+#include "asset/program.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -74,14 +74,14 @@ struct Encoded {
   std::vector<uint8_t> bin;
   std::string          sha256;  // record identity: json bytes then bin bytes
   };
-Encoded encodeProgram(const zenkit::DaedalusProgramRecord& program);
+Encoded encodeProgram(const asset::ProgramRecord& program);
 // Writes dir/<name>.json and dir/<name>.bin; returns the record identity, sets *name.
-std::string writeProgram(const zenkit::DaedalusProgramRecord& program, const std::filesystem::path& dir,
+std::string writeProgram(const asset::ProgramRecord& program, const std::filesystem::path& dir,
                          std::string* name = nullptr);
 // `file` is <name>.json. With actualSha256, the identity of the bytes that were decoded.
-zenkit::DaedalusProgramRecord readProgram(const std::filesystem::path& file, std::string* actualSha256 = nullptr);
+asset::ProgramRecord readProgram(const std::filesystem::path& file, std::string* actualSha256 = nullptr);
 std::string recordSha256(const std::filesystem::path& file);
 // Empty when equal: version, symbol count and order, every field, value arrays (float bits), bytecode.
-std::string compare(const zenkit::DaedalusProgramRecord& expected, const zenkit::DaedalusProgramRecord& actual);
+std::string compare(const asset::ProgramRecord& expected, const asset::ProgramRecord& actual);
 
 }

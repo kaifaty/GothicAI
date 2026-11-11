@@ -7,6 +7,7 @@
 #include "gothic.h"
 #include "gamemusic.h"
 #include "resources.h"
+#include "game/bodyclock.h"
 #include "game/bodycontroller.h"
 #include "game/bodyobservations.h"
 #include "game/bodyenginepolicy.h"
@@ -50,12 +51,49 @@ namespace {
 using Json = rapidjson::Document;
 size_t assertions=0, cases=0;
 
+struct ManualBodyClock final {
+  ManualBodyClock() {
+    BodyClock::useManualTime();
+    active=true;
+    }
+  ~ManualBodyClock() {
+    active=false;
+    BodyClock::useRealTime();
+    }
+  static void stallBeforeStep() {
+    if(!active) return;
+    static const auto delay=[] {
+      const auto value=std::getenv("BODY_WATCH_TEST_STALL_MS");
+      return std::chrono::milliseconds(value ? std::stoll(value) : 0);
+      }();
+    if(delay.count()>0) std::this_thread::sleep_for(delay);
+    }
+  void pumpWatchdogs() const {
+    stallBeforeStep();
+    BodyController::pumpWatchdogs();
+    }
+  inline static bool active=false;
+  };
+
 void expect(bool condition,std::string_view message) {
   ++assertions;
   if(!condition) {
     std::cerr << "body-watch-test failure: " << message << '\n';
     throw std::runtime_error(std::string(message));
     }
+  }
+
+void clockSwitching() {
+  ++cases;
+  const auto before=BodyClock::now();
+  BodyClock::useManualTime();
+  const auto frozen=BodyClock::now();
+  expect(frozen>=before,"freezing the body clock preserves its monotonic epoch");
+  BodyClock::advance(std::chrono::milliseconds(20));
+  const auto advanced=BodyClock::now();
+  expect(advanced-frozen==std::chrono::milliseconds(20),"manual body time advances by exactly the requested interval");
+  BodyClock::useRealTime();
+  expect(BodyClock::now()>=advanced,"resuming the real body clock never goes behind its last manual value");
   }
 
 Json parse(const std::string& encoded) {
@@ -125,6 +163,7 @@ Identity identity(const rapidjson::Value& row) {
 
 void step(PlayerControl& player,unsigned count=1) {
   for(unsigned i=0;i<count;++i) {
+    ManualBodyClock::stallBeforeStep();
     SimulationStep::worldPlayerStep(33,player);
     SimulationStep::finishStep(33,player);
     }
@@ -156,6 +195,7 @@ void missingEngineNetwork(Npc& actor) {
   }
 
 void enginePolicy(Npc& actor,Npc& target,PlayerControl& player) {
+  const ManualBodyClock clock;
   ++cases;
   BodyController::fixturePrepare(actor,target,150,0);
   actor.setExternalControl(false);
@@ -250,12 +290,13 @@ void enginePolicy(Npc& actor,Npc& target,PlayerControl& player) {
   for(const auto& event:ownership["events"].GetArray())
     if(std::string_view(event["reason"].GetString())=="acquired") ownerHeartbeat=event["last_heartbeat_wall_ms"].GetUint64();
   expect(ownerHeartbeat>0,"watchdog fixture records the owner's acquisition heartbeat");
-  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  BodyClock::advance(std::chrono::milliseconds(20));
   uint64_t accepted=0;
   bool providerLost=false;
+  bool checkedBeforeDeadline=false;
   restored=false;
   for(unsigned i=0;i<100 && BodyController::owns(actor);++i) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    BodyClock::advance(std::chrono::milliseconds(10));
     step(player);
     const auto events=parse(BodyController::drainJson());
     for(const auto& event:events["events"].GetArray()) {
@@ -268,7 +309,13 @@ void enginePolicy(Npc& actor,Npc& target,PlayerControl& player) {
       if(reason=="provider_lost" && std::string_view(event["release_reason"].GetString())=="watchdog_timeout") providerLost=true;
       if(reason=="native_restored" && std::string_view(event["release_reason"].GetString())=="watchdog_timeout") restored=true;
       }
+    if(20+10*(i+1)==490) {
+      expect(accepted>0 && BodyController::owns(actor) && !providerLost,
+             "engine decisions run while the owner watchdog is still 10 ms before its deadline");
+      checkedBeforeDeadline=true;
+      }
     }
+  expect(checkedBeforeDeadline,"engine lease reaches the 490 ms watchdog check");
   expect(accepted,"engine accepts a decision before the owner watchdog expires");
   expect(providerLost && restored && !BodyController::owns(actor),"engine decisions cannot prevent watchdog_timeout and native restoration");
   uint64_t reported=0,resets=0,finals=0;
@@ -362,6 +409,7 @@ void liveLease(Npc& a,Npc& b,PlayerControl& player) {
   }
 
 void realtimeSentObservation(Npc& actor,Npc& target,PlayerControl& player) {
+  const ManualBodyClock clock;
   ++cases;
   BodyController::fixturePrepare(actor,target,300,0);
   actor.setExternalControl(false);
@@ -387,11 +435,12 @@ void realtimeSentObservation(Npc& actor,Npc& target,PlayerControl& player) {
     expect(!response["accepted"].GetBool() && std::string_view(response["reason"].GetString())==reason,message);
     };
 
+  BodyClock::advance(std::chrono::milliseconds(250-20));
   step(player,2);
   const auto nextSequence=BodyObservations::latestSequence(actor);
   expect(nextSequence>sequence,"next frame samples a newer observation");
   rejected(call(command(1)),"stale_observation","runner still rejects an older sampled observation");
-  expect(call(command(2),true)["accepted"].GetBool(),"realtime accepts the sent observation while a newer row is only sampled");
+  expect(call(command(2,250),true)["accepted"].GetBool(),"realtime accepts the sent observation while a newer row is only sampled");
   BodyObservations::drainJson();
   expect(call(command(3),true)["accepted"].GetBool(),"draining without a successful send does not stale the observation");
   auto mismatched=command(4);
@@ -401,7 +450,7 @@ void realtimeSentObservation(Npc& actor,Npc& target,PlayerControl& player) {
   expect(gameAge>0 && gameAge<250,"fixture advances less game time than its wall TTL");
   rejected(call(command(5,gameAge),true),"expired","a newer unsent sample does not refresh the original game TTL");
 
-  std::this_thread::sleep_for(std::chrono::milliseconds(270));
+  BodyClock::advance(std::chrono::milliseconds(40)); // 250 + 20 ms since the sent observation.
   step(player);
   BodyObservations::sampleAll(true);
   expect(BodyObservations::latestSequence(actor)>nextSequence,"wall TTL fixture has a fresh unsent sample");
@@ -416,6 +465,7 @@ void realtimeSentObservation(Npc& actor,Npc& target,PlayerControl& player) {
   }
 
 void pendingAcquire(Npc& a,Npc& b,PlayerControl& player) {
+  const ManualBodyClock clock;
   ++cases;
   // Start the real script state once, then clean its initial work with the same fixture used
   // by the body API suite. fixtureLock installs an actual FAI game-time wait.
@@ -534,6 +584,7 @@ void movementRelease(Npc& actor,Npc& target,PlayerControl& player) {
   }
 
 void farRelease(Npc& actor,Npc& target,Npc& hero,PlayerControl& player,std::vector<std::string>& failures) {
+  const ManualBodyClock clock;
   using Clock=std::chrono::steady_clock;
   const auto heroStart=hero.position();
   const auto check=[&](bool condition,std::string_view message) {
@@ -602,8 +653,11 @@ void farRelease(Npc& actor,Npc& target,Npc& hero,PlayerControl& player,std::vect
       const auto startWall=Clock::now();
       if(watchdog) {
         expect(call(request("body_heartbeat",actor))["accepted"].GetBool(),"far watchdog fixture starts a fresh heartbeat deadline");
-        std::this_thread::sleep_for(std::chrono::milliseconds(520));
-        BodyController::pumpWatchdogs();
+        BodyClock::advance(std::chrono::milliseconds(500-20));
+        clock.pumpWatchdogs();
+        expect(BodyController::owns(actor),"far watchdog fixture retains ownership before the deadline");
+        BodyClock::advance(std::chrono::milliseconds(40)); // 500 + 20 ms since heartbeat.
+        clock.pumpWatchdogs();
         } else {
         expect(call(request("body_release",actor))["accepted"].GetBool(),"far explicit release accepted");
         }
@@ -647,6 +701,7 @@ void farRelease(Npc& actor,Npc& target,Npc& hero,PlayerControl& player,std::vect
   }
 
 void heroTargetRelease(Npc& actor,Npc& hero,PlayerControl& player,std::vector<std::string>& failures) {
+  const ManualBodyClock clock;
   using Clock=std::chrono::steady_clock;
   const auto heroStart=hero.position();
   const auto heroDirection=hero.rotation();
@@ -708,8 +763,11 @@ void heroTargetRelease(Npc& actor,Npc& hero,PlayerControl& player,std::vector<st
     printState("far_before_request",cause,fixture.action);
     if(fixture.watchdog) {
       expect(call(request("body_heartbeat",actor))["accepted"].GetBool(),"hero target watchdog fixture starts a fresh deadline");
-      std::this_thread::sleep_for(std::chrono::milliseconds(520));
-      BodyController::pumpWatchdogs();
+      BodyClock::advance(std::chrono::milliseconds(500-20));
+      clock.pumpWatchdogs();
+      expect(BodyController::owns(actor),"hero target watchdog fixture retains ownership before the deadline");
+      BodyClock::advance(std::chrono::milliseconds(40)); // 500 + 20 ms since heartbeat.
+      clock.pumpWatchdogs();
       } else {
       expect(call(request("body_release",actor))["accepted"].GetBool(),"hero target release accepted");
       }
@@ -744,6 +802,7 @@ void heroTargetRelease(Npc& actor,Npc& hero,PlayerControl& player,std::vector<st
   }
 
 void staleFarRelease(Npc& actor,Npc& target,Npc& hero,PlayerControl& player) {
+  const ManualBodyClock clock;
   ++cases;
   const auto heroStart=hero.position();
   actor.setExternalControl(true);
@@ -754,9 +813,20 @@ void staleFarRelease(Npc& actor,Npc& target,Npc& hero,PlayerControl& player) {
   initialWatch(actor,500);
   expect(acquire(actor,0,"realtime")["accepted"].GetBool(),"stale far fixture acquired");
   step(player,2);
-  expect(action(actor,FightAlgo::PolicyAction::AttackFront)["accepted"].GetBool(),"stale far fixture attack accepted");
+  BodyController::drainJson();
+  const auto attack=action(actor,FightAlgo::PolicyAction::AttackFront);
   step(player);
+  const auto attackEvents=parse(BodyController::drainJson());
+  bool segmentStarted=false;
+  for(const auto& event:attackEvents["events"].GetArray()) {
+    std::cerr << "stale-far-release-fixture command=" << event["command_id"].GetUint64()
+              << " phase=" << event["phase"].GetString() << " reason=" << event["reason"].GetString() << '\n';
+    if(std::string_view(event["phase"].GetString())=="started" &&
+       std::string_view(event["reason"].GetString())=="segment_started") segmentStarted=true;
+    }
+  expect(attack["accepted"].GetBool(),"stale far fixture attack accepted");
   expect(actor.bodyObservationState().segmentRemainingMs>33,"stale far fixture starts a protected attack");
+  expect(segmentStarted,"stale far fixture command starts an actual combat segment");
   const auto nearHero=hero.position();
   hero.setPosition(actor.position()+Tempest::Vec3(9000,0,0)); hero.updateTransform();
   step(player);
@@ -854,6 +924,107 @@ void meleeRemoval(Npc& victim) {
   }
 }
 
+namespace {
+// The melee shadow body of npc posed now, the way the shadow loop always posed it in place.
+MeleeShadowBody posedShadowBody(const Npc& npc) {
+  std::vector<HitZones::Posed> zones;
+  npc.hitZonesPosed(zones);
+  MeleeShadowBody body;
+  for(const auto& capsule:zones)
+    body.capsules.push_back({capsule.a,capsule.b,capsule.r,capsule.bone,uint8_t(capsule.zone)});
+  DynamicWorld::boundShadowBody(body);
+  return body;
+  }
+
+bool sameShadowBody(const MeleeShadowBody& a, const MeleeShadowBody& b) {
+  const auto bits=[](const Tempest::Vec3& v) { return std::array<float,3>{v.x,v.y,v.z}; };
+  if(a.capsules.size()!=b.capsules.size() ||
+     std::memcmp(bits(a.boundsMin).data(),bits(b.boundsMin).data(),sizeof(float)*3)!=0 ||
+     std::memcmp(bits(a.boundsMax).data(),bits(b.boundsMax).data(),sizeof(float)*3)!=0)
+    return false;
+  for(size_t i=0;i<a.capsules.size();++i) {
+    const auto& x=a.capsules[i]; const auto& y=b.capsules[i];
+    if(std::memcmp(bits(x.from).data(),bits(y.from).data(),sizeof(float)*3)!=0 ||
+       std::memcmp(bits(x.to).data(),bits(y.to).data(),sizeof(float)*3)!=0 ||
+       std::memcmp(&x.radiusCm,&y.radiusCm,sizeof(float))!=0 || x.bone!=y.bone || x.zone!=y.zone)
+      return false;
+    }
+  return true;
+  }
+
+// A damage script inside the melee shadow loop of WorldObjects::updateAnimation spawns
+// an NPC, removes the attacker (published this frame) and an NPC behind it (not yet
+// published) and moves another one. Bodies are posed in the parallel pass; the loop must
+// publish what posing in place gives, and removed owners must leave the published set.
+void meleeShadowLoopChanges(Npc& victim) {
+  ++cases;
+  auto& gothic=Gothic::inst();
+  auto& world=victim.world();
+  const auto bandit=world.script().findSymbolIndex("BDT_1003_BANDIT_M");
+  const auto sword=world.script().findSymbolIndex("ItMw_1h_Common_01");
+  const auto perception=world.script().findSymbolIndex("ZS_ATTACK");
+  expect(bandit!=size_t(-1) && sword!=size_t(-1) && perception!=size_t(-1),"melee loop stock symbols exist");
+  victim.clearAiQueue(); victim.clearState(true); victim.clearGoTo(); victim.stopWalking();
+  victim.closeWeapon(true); victim.setExternalControl(false);
+  victim.handle().attribute[ATR_HITPOINTS]=victim.handle().attribute[ATR_HITPOINTSMAX]=5000;
+  victim.setPerceptionEnable(PERC_ASSESSDAMAGE,perception);
+  // Fighters with a target are animated every frame, outside the animation LOD.
+  auto fighter=[&](const Tempest::Vec3& offset) {
+    auto* npc=world.addNpc(bandit,victim.position()+offset);
+    expect(npc!=nullptr,"melee loop creates a real NPC");
+    npc->clearAiQueue(); npc->clearState(true); npc->clearGoTo(); npc->stopWalking();
+    npc->setExternalControl(true); npc->setToFightMode(sword); npc->setTarget(&victim);
+    return npc;
+    };
+  auto* attacker=fighter({150,0,0});
+  expect(attacker->playAnimByName("S_1HATTACK",BS_HIT)!=nullptr,"melee loop starts a stock attack");
+  attacker->updateAnimation(0,true); attacker->updateMeleeShadow();
+  BodyController::fixturePrepare(*attacker,victim,150,0);
+  victim.setExternalControl(false);
+  expect(attacker->playAnimByName("T_1HATTACKL",BS_HIT)!=nullptr,"melee loop starts the next stock attack");
+  auto* bystander=fighter({-150,0,0});
+  auto* mover=fighter({0,0,150});
+  for(auto* npc:{bystander,mover}) {
+    npc->updateAnimation(0,true); npc->updateMeleeShadow();
+    }
+  expect(world.npcId(attacker)<world.npcId(bystander) && world.npcId(bystander)<world.npcId(mover),
+         "the removed and the moved NPC come after the attacker in the shadow loop");
+  // The pending contact the attacker's next shadow update retires, as in meleeRemoval.
+  const uint64_t now=world.tickCount();
+  world.physic()->updateShadowBody(&victim,{{{10,100000,0},{10,100020,0},1.f,0,1}});
+  world.physic()->updateShadowBlade(attacker,1,{{{0,100000,0},{0,100020,0},{0,0,1},1.f}},now,0,double(now+34));
+  world.physic()->updateShadowBlade(attacker,1,{{{20,100000,0},{20,100020,0},{0,0,1},1.f}},now+33,0,double(now+34));
+  world.physic()->flushShadowBlades();
+  Npc* newcomer=nullptr;
+  MeleeShadowBody beforeMove;
+  unsigned callbacks=0;
+  gothic.interceptPerception=[&](Npc& self,Npc& other,Npc*,PercType type,const HeroDeed*) {
+    if(&self==&victim && &other==attacker && type==PERC_ASSESSDAMAGE && callbacks++==0) {
+      beforeMove=posedShadowBody(*mover);
+      mover->setPosition(mover->position()+Tempest::Vec3(40,0,0));
+      mover->updateTransform();
+      world.removeNpc(*bystander);
+      world.removeNpc(*attacker);
+      newcomer=world.addNpc(bandit,victim.position()+Tempest::Vec3(0,0,-150));
+      }
+    return true;
+    };
+  Gothic::inst().gameSession()->updateAnimation(33);
+  gothic.interceptPerception={};
+  expect(callbacks==1 && newcomer!=nullptr,"the damage script ran once inside the shadow loop");
+  MeleeShadowBody published;
+  expect(!world.physic()->shadowBody(attacker,published) && !world.physic()->shadowBody(bystander,published),
+         "NPCs removed inside the shadow loop leave the published bodies");
+  expect(world.physic()->shadowBody(newcomer,published) && sameShadowBody(published,posedShadowBody(*newcomer)),
+         "an NPC spawned inside the shadow loop publishes its body posed in place");
+  expect(world.physic()->shadowBody(mover,published) && sameShadowBody(published,posedShadowBody(*mover)) &&
+         !sameShadowBody(published,beforeMove),
+         "an NPC moved inside the shadow loop publishes its moved body, not the parallel pass's");
+  world.removeNpc(*newcomer);
+  world.removeNpc(*mover);
+  }
+}
+
 // Uses a fresh full session, so unsaved Pose speed overrides cannot survive in
 // the object being tested. The restored native body is the canonical reference.
 class NpcLogicalStateContract final {
@@ -895,6 +1066,10 @@ class NpcLogicalStateContract final {
     }
 
   public:
+    static void restoreStamina(Npc& actor) {
+      MeleeStamina::reset(actor.meleeStamina,actor.staminaMax(),actor.world().tickCount());
+      }
+
     static void meleeAi(Npc& actor,Npc& target) {
       if(!actor.hasAnim("T_1HDASHB") || !actor.hasAnim("T_1HRIPOSTE") || !target.hasAnim("T_RIPOSTEVICTIM")) {
         std::cerr << "melee AI fixture skipped: needs OPENGOTHIC_CONTENT with anim-strikes\n";
@@ -1667,6 +1842,7 @@ int main(int argc,const char** argv) {
         }
       }
     if(scenario.empty()) throw std::runtime_error("--scenario scripts/bench/body-api.bench is required");
+    clockSwitching();
     bool missingNetwork=false;
 #ifdef GOTHIC_BODY_ENGINE_NET
     // A fresh process exercises the one-time startup load with absent weights.
@@ -1735,7 +1911,9 @@ int main(int argc,const char** argv) {
     pendingAcquire(a,b,player);
     std::vector<std::string> farFailures;
     farRelease(a,b,*gothic.player(),player,farFailures);
+    NpcLogicalStateContract::restoreStamina(a);
     heroTargetRelease(a,*gothic.player(),player,farFailures);
+    NpcLogicalStateContract::restoreStamina(a);
     staleFarRelease(a,b,*gothic.player(),player);
     for(const auto& failure:farFailures) std::cerr << "body-watch-test failure: " << failure << '\n';
     expect(farFailures.empty(),"far release/watchdog fixtures restore native ownership by the next engine tick");
@@ -1743,6 +1921,7 @@ int main(int argc,const char** argv) {
     BodyController::reset();
     BodyObservations::disable();
     meleeRemoval(b);
+    meleeShadowLoopChanges(b);
     NpcLogicalStateContract::run(gothic.world()->npcId(&b),scenario,output);
     {
       const auto statsScenario=output/"melee-stats.bench";

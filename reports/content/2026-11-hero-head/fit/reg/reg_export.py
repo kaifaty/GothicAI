@@ -56,4 +56,4 @@ for who in ('mpfb','ref'):
     for name,vw in views.items():
         cam.location=vw['loc']; cam.rotation_euler=vw['rot']
         sc.render.filepath=os.path.join(OUT,f'lm_{who}_{name}.png'); bpy.ops.render.render(write_still=True)
-json.dump({'N':N,'s':s,'views':views},open(os.path.join(OUT,'views.json'),'w'),indent=1)
+json.dump({'N':N,'s':s,'views':views,'eye':eye},open(os.path.join(OUT,'views.json'),'w'),indent=1)

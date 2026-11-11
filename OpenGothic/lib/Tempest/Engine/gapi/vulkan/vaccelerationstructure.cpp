@@ -5,6 +5,8 @@
 #include "vdevice.h"
 #include "vbuffer.h"
 
+#include <algorithm>
+
 using namespace Tempest;
 using namespace Tempest::Detail;
 
@@ -114,6 +116,7 @@ void VAccelerationStructure::build(const AbstractGraphicsApi::RtGeometry* geom, 
   createInfo.type          = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
   createInfo.deviceAddress = VK_NULL_HANDLE;
   vkCreateAccelerationStructure(device, &createInfo, nullptr, &impl);
+  address = toDeviceAddress(owner);
 
   DSharedPtr<AbstractGraphicsApi::AccelerationStructure*> pThis(this);
 
@@ -135,6 +138,8 @@ void VAccelerationStructure::build(const AbstractGraphicsApi::RtGeometry* geom, 
   }
 
 VkDeviceAddress VAccelerationStructure::toDeviceAddress(VDevice& dx) const {
+  if(address!=0)
+    return address;
   auto vkGetAccelerationStructureDeviceAddress = dx.vkGetAccelerationStructureDeviceAddress;
 
   VkAccelerationStructureDeviceAddressInfoKHR accelerationStructureDeviceAddressInfo = {};
@@ -209,15 +214,7 @@ void VTopAccelerationStructure::build(const RtInstance* inst, AccelerationStruct
     auto blas = reinterpret_cast<VAccelerationStructure*>(as[i]);
 
     VkAccelerationStructureInstanceKHR objInstance = {};
-    for(int x=0; x<3; ++x)
-      for(int y=0; y<4; ++y)
-        objInstance.transform.matrix[x][y] = inst[i].mat.at(y,x);
-    objInstance.instanceCustomIndex                    = inst[i].id;
-    objInstance.mask                                   = inst[i].mask;
-    objInstance.instanceShaderBindingTableRecordOffset = 0;
-    objInstance.flags                                  = nativeFormat(inst[i].flags);
-    objInstance.accelerationStructureReference         = blas->toDeviceAddress(owner);
-
+    pack(objInstance, inst[i], *blas);
     pBuf.handler->update(&objInstance, i*sizeof(objInstance), sizeof(objInstance));
     }
 
@@ -242,10 +239,68 @@ void VTopAccelerationStructure::build(const RtInstance* inst, AccelerationStruct
   cmd->hold(pScratch);
   cmd->hold(pBuf);
   cmd->hold(pThis);
-  cmd->buildTlas(impl,data,*pBuf.handler,uint32_t(asSize),*pScratch.handler);
+  cmd->buildTlas(impl,data,pBuf.handler,uint32_t(asSize),*pScratch.handler);
   cmd->end();
 
   owner.dataMgr().submit(std::move(cmd));
+  }
+
+void VTopAccelerationStructure::pack(VkAccelerationStructureInstanceKHR& dst, const RtInstance& inst, const VAccelerationStructure& blas) {
+  for(int x=0; x<3; ++x)
+    for(int y=0; y<4; ++y)
+      dst.transform.matrix[x][y] = inst.mat.at(y,x);
+  dst.instanceCustomIndex                    = inst.id;
+  dst.mask                                   = inst.mask;
+  dst.instanceShaderBindingTableRecordOffset = 0;
+  dst.flags                                  = nativeFormat(inst.flags);
+  dst.accelerationStructureReference         = blas.toDeviceAddress(blas.owner);
+  }
+
+void VTopAccelerationStructure::alloc(size_t cap) {
+  auto device = owner.device.impl;
+
+  VkAccelerationStructureGeometryKHR geometry = {};
+  geometry.sType                             = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+  geometry.geometryType                      = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+  geometry.geometry.instances.sType          = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+  geometry.geometry.instances.arrayOfPointers = VK_FALSE;
+
+  // the flags of VCommandBuffer::buildTlas: sizes depend on them
+  VkAccelerationStructureBuildGeometryInfoKHR buildGeometryInfo = {};
+  buildGeometryInfo.sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+  buildGeometryInfo.type          = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+  buildGeometryInfo.flags         = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
+  buildGeometryInfo.mode          = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+  buildGeometryInfo.geometryCount = 1;
+  buildGeometryInfo.pGeometries   = &geometry;
+
+  VkAccelerationStructureBuildSizesInfoKHR buildSizesInfo = {};
+  buildSizesInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+
+  const uint32_t maxInstances = uint32_t(cap);
+  owner.vkGetAccelerationStructureBuildSizes(device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
+                                             &buildGeometryInfo, &maxInstances, &buildSizesInfo);
+  if(buildSizesInfo.accelerationStructureSize<=0)
+    throw std::system_error(GraphicsErrc::UnsupportedExtension);
+
+  data    = owner.allocator.alloc(nullptr, buildSizesInfo.accelerationStructureSize, MemUsage::AsStorage, BufferHeap::Device);
+  scratch = owner.allocator.alloc(nullptr, std::max<VkDeviceSize>(buildSizesInfo.buildScratchSize, 1), MemUsage::ScratchBuffer, BufferHeap::Device);
+
+  VkAccelerationStructureCreateInfoKHR createInfo = {};
+  createInfo.sType  = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+  createInfo.buffer = data.impl;
+  createInfo.offset = 0;
+  createInfo.size   = buildSizesInfo.accelerationStructureSize;
+  createInfo.type   = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+  vkAssert(owner.vkCreateAccelerationStructure(device, &createInfo, nullptr, &impl));
+  capacity = cap;
+  }
+
+VkDeviceAddress VTopAccelerationStructure::toDeviceAddress(VDevice& dx) const {
+  VkAccelerationStructureDeviceAddressInfoKHR info = {};
+  info.sType                 = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+  info.accelerationStructure = impl;
+  return dx.vkGetAccelerationStructureDeviceAddress(dx.device.impl, &info);
   }
 
 #endif

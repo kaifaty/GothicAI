@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(OpenGothic LANGUAGES C CXX)
+include(cmake/CompilerCache.cmake)
 set(CMAKE_CXX_STANDARD 20)
 set(BUILD_SHARED_LIBS OFF)
 
@@ -21,11 +22,7 @@ endif()
 if(OPENGOTHIC_ENABLE_APP_CADENCE)
   target_compile_definitions(${PROJECT_NAME} PUBLIC OPENGOTHIC_ENABLE_APP_CADENCE=1)
 endif()
-if(ANDROID)
-  add_library(Gothic2Notr SHARED)
-else()
-  add_executable(Gothic2Notr)
-endif()
+add_executable(Gothic2Notr)
 
 if(MSVC)
   add_definitions(-D_USE_MATH_DEFINES)
@@ -65,16 +62,11 @@ if(WIN32)
   else()
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -mwindows -lstdc++fs")
   endif()
-elseif(IOS)
-  enable_language(OBJCXX)
-  set(CMAKE_OSX_DEPLOYMENT_TARGET 15.0)
 elseif(APPLE)
   enable_language(OBJCXX)
 endif()
 
-if(IOS)
-  file(GLOB_RECURSE ObjCSOURCES "common/*.mm")
-elseif(APPLE)
+if(APPLE)
   target_link_libraries(${PROJECT_NAME} "-framework AppKit")
   file(GLOB_RECURSE ObjCSOURCES "common/*.mm")
 endif()
@@ -83,7 +75,7 @@ endif()
 
 # sources
 file(GLOB_RECURSE OPENGOTHIC_SOURCES "common/*.h" "common/*.cpp")
-foreach(source baseidentity basestoreimport sha256 baseimport basesources worldchunks worldchunksruntime worlddata modeldata fontdata programdata outputunits audiodata basemesh gothicglb gltfmesh asset/fromzenkit asset/worldfromzenkit asset/modelfromzenkit
+foreach(source zenkitlog daedalus/vm daedalus/script daedalus/classes baseidentity basestoreimport sha256 baseimport basesources worldchunks worldchunksruntime worlddata modeldata fontdata programdata outputunits audiodata basemesh gothicglb gltfmesh asset/fromzenkit asset/worldfromzenkit asset/modelfromzenkit asset/programfromzenkit
                utils/fileutil dmusic/sourcefile dmusic/riff dmusic/segment dmusic/track dmusic/style dmusic/band
                dmusic/reference dmusic/info dmusic/pattern musicdata dmusic/dlscollection dmusic/wave dmusic/soundfont
                dmusic/hydra dmusic/directmusicimport dmusic/dlsruntime dmusic/styleruntime dmusic/waveruntime
@@ -117,6 +109,19 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/data/cloth-world.csv" CLOTH_WORLD_DATA)
 configure_file(common/physics/clothworlddata.h.in generated/clothworlddata.h @ONLY)
 target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
+# The census builder digest is generated at build time, without reconfiguring
+# after an implementation edit. Only placedcensuscache.cpp includes the header.
+include(cmake/PlacedCensusBuilder.cmake)
+set(PLACED_CENSUS_BUILDER_DEPENDS ${PLACED_CENSUS_BUILDER_INPUTS})
+list(TRANSFORM PLACED_CENSUS_BUILDER_DEPENDS PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
+set(PLACED_CENSUS_BUILDER_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/placedcensusbuilder.h")
+add_custom_command(OUTPUT "${PLACED_CENSUS_BUILDER_HEADER}"
+  COMMAND "${CMAKE_COMMAND}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}" "-DOUTPUT=${PLACED_CENSUS_BUILDER_HEADER}"
+          -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/PlacedCensusBuilder.cmake"
+  DEPENDS ${PLACED_CENSUS_BUILDER_DEPENDS}
+  VERBATIM)
+target_sources(${PROJECT_NAME} PRIVATE "${PLACED_CENSUS_BUILDER_HEADER}")
+
 # shaders
 add_subdirectory(shader)
 target_link_libraries(${PROJECT_NAME} GothicShaders)
@@ -134,8 +139,6 @@ endif()
 
 if(WIN32)
   target_link_libraries(${PROJECT_NAME} shlwapi DbgHelp)
-elseif(ANDROID)
-  target_link_libraries(${PROJECT_NAME} dl)
 elseif(UNIX)
   target_link_libraries(${PROJECT_NAME} -lpthread -ldl)
 endif()
@@ -146,7 +149,6 @@ set(ZK_ENABLE_ASAN             OFF CACHE INTERNAL "")
 set(ZK_ENABLE_DEPRECATION      OFF CACHE INTERNAL "")
 
 add_subdirectory(lib/ZenKit)
-target_link_libraries(${PROJECT_NAME} zenkit)
 
 # dmusic
 set(DM_BUILD_STATIC            ON  CACHE INTERNAL "")
@@ -191,6 +193,8 @@ if(MSVC)
   target_compile_options(gothic-base-import PRIVATE $<$<COMPILE_LANGUAGE:C>:/experimental:c11atomics>)
 endif()
 include(cmake/VideoImport.cmake)
+add_subdirectory(common/daedalus)
+target_link_libraries(${PROJECT_NAME} gothic-daedalus)
 target_link_libraries(${PROJECT_NAME} gothic-base-runtime gothic-video-runtime)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/convert/CMakeLists.txt")
   add_subdirectory(../scripts/convert content-convert)
@@ -273,7 +277,7 @@ if(WIN32)
 endif()
 
 # in debug mode, enable sanitizers
-if(${CMAKE_BUILD_TYPE} MATCHES "Debug" AND NOT ANDROID)
+if(${CMAKE_BUILD_TYPE} MATCHES "Debug")
   add_compile_options(-fsanitize=address)
   add_compile_options(-fsanitize=leak)
   add_link_options   (-fsanitize=address)
@@ -281,17 +285,6 @@ if(${CMAKE_BUILD_TYPE} MATCHES "Debug" AND NOT ANDROID)
 endif()
 
 # the game
-if(IOS)
-  set_directory_properties("${CMAKE_SOURCE_DIR}" PROPERTIES
-    PROPERTY XCODE_STARTUP_PROJECT "Gothic2Notr")
-  set_target_properties(Gothic2Notr PROPERTIES
-    MACOSX_BUNDLE_INFO_PLIST "Info.plist.in"
-    MACOSX_BUNDLE_GUI_IDENTIFIER "opengothic.gothic2"
-    MACOSX_BUNDLE_BUNDLE_VERSION 1
-    MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0"
-    XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "iPhone Developer")
-endif()
-
 target_sources(Gothic2Notr PRIVATE game/main.cpp)
 if(WIN32)
   target_sources(Gothic2Notr PRIVATE icon.rc)
@@ -303,7 +296,7 @@ add_subdirectory(ai_bridge)
 target_link_libraries(Gothic2Notr PRIVATE AiBridge)
 
 # Uses the shared engine/CPU simulation without constructing a window or graphics/audio device.
-if(UNIX AND NOT IOS AND NOT ANDROID)
+if(UNIX)
   add_executable(gothic-body-runner game/bodyrunner.cpp game/societyexport.cpp)
   target_link_libraries(gothic-body-runner PRIVATE OpenGothic AiBridge)
   # --society-export names the engine's commit: refreshed on every build of the runner, the header is
@@ -323,19 +316,35 @@ if(UNIX AND NOT IOS AND NOT ANDROID)
   target_link_libraries(gothic-body-watch-test PRIVATE OpenGothic AiBridge)
   target_include_directories(gothic-body-watch-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   target_compile_options(gothic-body-watch-test PRIVATE -Wall -Wconversion -Werror)
+  if(OPENGOTHIC_ENABLE_FRAME_PROFILE)
+    # Standalone recorder capacity and late-callback checks; no engine or game data.
+    add_executable(gothic-frame-profile-test EXCLUDE_FROM_ALL tests/frame_profile_test.cpp common/frameprofile.cpp)
+    target_include_directories(gothic-frame-profile-test PRIVATE common)
+    target_compile_definitions(gothic-frame-profile-test PRIVATE OPENGOTHIC_ENABLE_FRAME_PROFILE=1)
+    target_compile_options(gothic-frame-profile-test PRIVATE -Wall -Wconversion -Werror)
+  endif()
   # Real Resources/material loading with temporary DDS files; no game assets or window.
   add_executable(gothic-material-texture-test EXCLUDE_FROM_ALL tests/material_texture_test.cpp)
   target_link_libraries(gothic-material-texture-test PRIVATE OpenGothic AiBridge)
   target_include_directories(gothic-material-texture-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   target_compile_options(gothic-material-texture-test PRIVATE -Wall -Wconversion -Werror)
+  # Skinned normals that follow the bones (graphics/mesh/submesh/packedmesh): rest frames fitted from a synthetic skin.
+  add_executable(gothic-skin-normal-test EXCLUDE_FROM_ALL tests/skin_normal_test.cpp)
+  target_link_libraries(gothic-skin-normal-test PRIVATE OpenGothic AiBridge)
+  target_compile_options(gothic-skin-normal-test PRIVATE -Wall -Wconversion -Werror)
   # TAA by the camera (graphics/taa): jitter, reprojection of the history, the camera jump rule; CPU only.
   add_executable(gothic-taa-test EXCLUDE_FROM_ALL tests/taa_test.cpp)
   target_link_libraries(gothic-taa-test PRIVATE OpenGothic AiBridge)
   target_compile_options(gothic-taa-test PRIVATE -Wall -Wconversion -Werror)
-  # The own head's face (graphics/mesh/facerig): a synthetic head and profile; CPU only, no device or game data.
+  # The own head's face (graphics/mesh/facerig): a synthetic head and profile, the bridge's say cues; CPU only, no device or game data.
   add_executable(gothic-facerig-test EXCLUDE_FROM_ALL tests/facerig_test.cpp)
   target_link_libraries(gothic-facerig-test PRIVATE OpenGothic AiBridge)
+  target_include_directories(gothic-facerig-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   target_compile_options(gothic-facerig-test PRIVATE -Wall -Wconversion -Werror)
+  # Our render skeleton under a Gothic one (graphics/mesh/renderrig): synthetic skeletons and rig table; CPU only.
+  add_executable(gothic-render-rig-test EXCLUDE_FROM_ALL tests/render_rig_test.cpp)
+  target_link_libraries(gothic-render-rig-test PRIVATE OpenGothic AiBridge)
+  target_compile_options(gothic-render-rig-test PRIVATE -Wall -Wconversion -Werror)
   # Indexed GLB replacement and fallback, generated assets only; no game or window.
   add_executable(gothic-mesh-gltf-test EXCLUDE_FROM_ALL tests/mesh_gltf_test.cpp)
   target_link_libraries(gothic-mesh-gltf-test PRIVATE OpenGothic AiBridge gothic-base-import)
@@ -347,7 +356,6 @@ endif()
 
 # The society stand's core (common/society/README.md): the standard library and rapidjson only. Its include path
 # is set alone, without the engine's directories, so an engine header does not compile there.
-if(NOT ANDROID AND NOT IOS)
   file(GLOB SOCIETY_CORE_SOURCES common/society/*.cpp)
   add_library(society-core STATIC ${SOCIETY_CORE_SOURCES})
   set_property(TARGET society-core PROPERTY INCLUDE_DIRECTORIES "")
@@ -362,10 +370,8 @@ if(NOT ANDROID AND NOT IOS)
   if(NOT MSVC)
     target_compile_options(gothic-society-day PRIVATE -Wall -Wconversion -Werror)
   endif()
-endif()
 
 # Asset-free contracts; run explicitly with their check-* targets.
-if(NOT ANDROID AND NOT IOS)
   add_executable(gothic-navpolicy-contract EXCLUDE_FROM_ALL
     tests/navpolicy_contract.cpp common/navpolicy.cpp common/game/navigationmemory.cpp)
   target_include_directories(gothic-navpolicy-contract PRIVATE
@@ -520,7 +526,15 @@ if(NOT ANDROID AND NOT IOS)
   add_custom_target(check-aimwalk
     COMMAND $<TARGET_FILE:gothic-aimwalk-contract>
     DEPENDS gothic-aimwalk-contract USES_TERMINAL)
-  add_executable(gothic-physics-contract EXCLUDE_FROM_ALL tests/physics_contract.cpp)
+  add_executable(gothic-physics-contract EXCLUDE_FROM_ALL
+    tests/physics_contract.cpp
+    tests/physics_contract_common.cpp
+    tests/physics_contract_rays.cpp
+    tests/physics_contract_npc.cpp
+    tests/physics_contract_items.cpp
+    tests/physics_contract_movables.cpp
+    tests/physics_contract_noise.cpp
+    tests/physics_bonds_contract.cpp)
   target_link_libraries(gothic-physics-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_executable(gothic-placed-items-contract EXCLUDE_FROM_ALL tests/placed_items_contract.cpp)
   target_link_libraries(gothic-placed-items-contract PRIVATE OpenGothic AiBridge gothic-base-import)
@@ -606,6 +620,24 @@ if(NOT ANDROID AND NOT IOS)
   add_custom_target(check-meleedodge
     COMMAND $<TARGET_FILE:gothic-meleedodge-contract>
     DEPENDS gothic-meleedodge-contract USES_TERMINAL)
+  add_executable(gothic-stopfoot-contract EXCLUDE_FROM_ALL
+    tests/stopfoot_contract.cpp common/graphics/mesh/stopfoot.cpp)
+  target_include_directories(gothic-stopfoot-contract PRIVATE common)
+  if(NOT MSVC)
+    target_compile_options(gothic-stopfoot-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  add_custom_target(check-stopfoot
+    COMMAND $<TARGET_FILE:gothic-stopfoot-contract>
+    DEPENDS gothic-stopfoot-contract USES_TERMINAL)
+  add_executable(gothic-leanaccel-contract EXCLUDE_FROM_ALL
+    tests/leanaccel_contract.cpp common/graphics/mesh/leanaccel.cpp)
+  target_include_directories(gothic-leanaccel-contract PRIVATE common)
+  if(NOT MSVC)
+    target_compile_options(gothic-leanaccel-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  add_custom_target(check-leanaccel
+    COMMAND $<TARGET_FILE:gothic-leanaccel-contract>
+    DEPENDS gothic-leanaccel-contract USES_TERMINAL)
   add_executable(gothic-meleecharge-contract EXCLUDE_FROM_ALL
     tests/meleecharge_contract.cpp common/game/meleecharge.cpp common/game/meleestamina.cpp)
   target_include_directories(gothic-meleecharge-contract PRIVATE common)
@@ -647,6 +679,11 @@ if(NOT ANDROID AND NOT IOS)
   target_include_directories(gothic-worlddata-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   add_executable(gothic-wayheights-contract EXCLUDE_FROM_ALL tests/wayheights_contract.cpp)
   target_link_libraries(gothic-wayheights-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
+  add_executable(gothic-settings-test EXCLUDE_FROM_ALL tests/settings_test.cpp)
+  target_link_libraries(gothic-settings-test PRIVATE OpenGothic AiBridge)
+  if(NOT MSVC)
+    target_compile_options(gothic-settings-test PRIVATE -Wall -Wconversion -Werror)
+  endif()
   add_executable(gothic-vob-layer-test EXCLUDE_FROM_ALL tests/vob_layer_test.cpp)
   target_link_libraries(gothic-vob-layer-test PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
   target_include_directories(gothic-vob-layer-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
@@ -665,7 +702,7 @@ if(NOT ANDROID AND NOT IOS)
     add_executable(gothic-video-contract EXCLUDE_FROM_ALL tests/video_contract.cpp)
     target_link_libraries(gothic-video-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
     target_compile_options(gothic-video-contract PRIVATE -Wall -Wconversion -Werror)
-    add_executable(gothic-base-store-contract EXCLUDE_FROM_ALL tests/basestore_contract.cpp)
+    add_executable(gothic-base-store-contract EXCLUDE_FROM_ALL tests/basestore_contract.cpp common/zenkitlog.cpp)
     target_link_libraries(gothic-base-store-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
     target_include_directories(gothic-base-store-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
     target_compile_options(gothic-base-store-contract PRIVATE -Wall -Wconversion -Werror)
@@ -684,7 +721,7 @@ if(NOT ANDROID AND NOT IOS)
   add_executable(gothic-ragdoll-contract EXCLUDE_FROM_ALL tests/physics_ragdoll_contract.cpp)
   target_link_libraries(gothic-ragdoll-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_executable(gothic-ragdoll-save-contract EXCLUDE_FROM_ALL tests/ragdoll_save_contract.cpp)
-  target_link_libraries(gothic-ragdoll-save-contract PRIVATE OpenGothic AiBridge)
+  target_link_libraries(gothic-ragdoll-save-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_custom_target(check-ragdoll-save
     COMMAND $<TARGET_FILE:gothic-ragdoll-save-contract>
     DEPENDS gothic-ragdoll-save-contract USES_TERMINAL)
@@ -697,20 +734,16 @@ if(NOT ANDROID AND NOT IOS)
   add_custom_target(check-instance-storage
     COMMAND $<TARGET_FILE:gothic-instance-storage-contract>
     DEPENDS gothic-instance-storage-contract USES_TERMINAL)
-endif()
 
 # editor
 
-if(NOT ANDROID AND NOT IOS)
   add_executable(gothic-npc-deeds-contract EXCLUDE_FROM_ALL tests/npc_deeds_contract.cpp)
   target_include_directories(gothic-npc-deeds-contract PRIVATE common)
   add_custom_target(check-npc-deeds
     COMMAND $<TARGET_FILE:gothic-npc-deeds-contract>
     DEPENDS gothic-npc-deeds-contract USES_TERMINAL)
-endif()
 
 # Navigation eye has an independent contract block to keep parallel navigation work isolated.
-if(NOT ANDROID AND NOT IOS)
   add_executable(gothic-navigation-eye-contract EXCLUDE_FROM_ALL tests/navigation_eye_contract.cpp)
   target_link_libraries(gothic-navigation-eye-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_custom_target(check-navigation-eye
@@ -738,14 +771,6 @@ if(NOT ANDROID AND NOT IOS)
   add_custom_target(check-followtrail
     COMMAND $<TARGET_FILE:gothic-followtrail-contract>
     DEPENDS gothic-followtrail-contract USES_TERMINAL)
-endif()
-
-if(ANDROID)
-  add_android_apk(OpenGothic-apk
-    PACKAGE_NAME org.opengothic.app
-    CODE Gothic2Notr
-    MANIFEST android/AndroidManifest.xml)
-endif()
 
 # installation
 install(TARGETS Gothic2Notr DESTINATION bin)

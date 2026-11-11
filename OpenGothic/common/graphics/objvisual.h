@@ -10,6 +10,7 @@ class Npc;
 class World;
 class ClothVisual;
 class WorldView;
+namespace daedalus { struct IItem; }
 
 class ObjVisual {
   public:
@@ -23,11 +24,12 @@ class ObjVisual {
     void save(Serialize& fout, const Interactive& mob) const;
     void load(Serialize& fin,  Interactive &mob);
 
-    void setVisual(const zenkit::IItem& visual, World& world, bool staticDraw);
-    void setWorldItem(const zenkit::IItem& item, World& world, const Tempest::Matrix4x4& matrix);
+    void setVisual(const daedalus::IItem& visual, World& world, bool staticDraw);
+    void setWorldItem(const daedalus::IItem& item, World& world, const Tempest::Matrix4x4& matrix);
     void setVisual(const asset::VirtualObject& visual, World& world, bool staticDraw, bool enablePhysics = true);
     void setObjMatrix(const Tempest::Matrix4x4& obj);
-    void setTextureOwner(const Tempest::Vec3& position, bool spatial);
+    // MeshObjects::Mesh::setTextureOwner of its view: how far it may move before a call can change its demand
+    float setTextureOwner(const Tempest::Vec3& position, bool spatial);
     // Preload the cached cut surfaces and their draw instances before impacts.
     void setupFracture(World& world, DynamicWorld::Item& body);
     bool renderPosition(Tempest::Vec3& out) const;

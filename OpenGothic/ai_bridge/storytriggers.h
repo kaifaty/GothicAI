@@ -16,7 +16,7 @@ class Npc;
 class StoryRuntime;
 class World;
 
-namespace zenkit {
+namespace daedalus {
   class DaedalusVm;
   }
 
@@ -66,13 +66,13 @@ class StoryTriggers final {
       storygraph::Program program;
       bool                repeat = false;
       std::optional<bool> was;      // repeat: the condition as last computed, none yet
-      zenkit::DaedalusVm* checkedFor = nullptr;
+      daedalus::DaedalusVm* checkedFor = nullptr;
       std::string         broken;   // why it can't run in checkedFor
       };
 
     // its names exist in this VM; logged once if not
-    bool        ready(Trigger& t, zenkit::DaedalusVm& v);
-    std::string check(const Trigger& t, zenkit::DaedalusVm& v) const;
+    bool        ready(Trigger& t, daedalus::DaedalusVm& v);
+    std::string check(const Trigger& t, daedalus::DaedalusVm& v) const;
     bool        inWorld(const Trigger& t, World& world) const;
     // a trigger that fires once and fired: it does not any more
     bool        spent(const Trigger& t);

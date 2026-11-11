@@ -145,9 +145,9 @@ def staged_prop(root, name, prefix='OWN'):
     (folder / 'meshes/meshes.json').write_text(json.dumps({'NW_HARBOUR_BARREL_01': {'glb': f'{name}/model.glb'}}))
 
 
-def fracture(glb):
-    """The head of a version 2 `.fracture` cut from these GLB bytes (scripts/fracture.sh content)."""
-    return f'GOTHIC_FRACTURE 2\nsource {len(glb)} {zlib.crc32(glb):08x}\npieces 12\n'
+def fracture(glb, version=2):
+    """The head of a source-bound `.fracture` cut from these GLB bytes (scripts/fracture.sh content)."""
+    return f'GOTHIC_FRACTURE {version}\nsource {len(glb)} {zlib.crc32(glb):08x}\npieces 12\n'
 
 
 def test_compose_brings_a_props_meshes_and_shared_atlas(tmp_path, monkeypatch):
@@ -161,6 +161,13 @@ def test_compose_brings_a_props_meshes_and_shared_atlas(tmp_path, monkeypatch):
     assert (out / 'meshes/barrel-1/model.glb').read_bytes() == b'glb barrel-1'
     composition = json.loads((out / 'composition.json').read_text())
     assert list(composition['glb_sha256']) == ['barrel-1/model.glb', 'barrel-1/model.fracture']
+    debris = tmp_path / 'content-staging/barrel-1/meshes/barrel-1/model.debris.glb'
+    debris.write_bytes(b'debris barrel-1')       # its pieces as parts travel with the GLB
+    building_set.compose('city-3', ['roofs-1', 'barrel-1'])
+    composed = tmp_path / 'content-staging/city-3'
+    assert (composed / 'meshes/barrel-1/model.debris.glb').read_bytes() == b'debris barrel-1'
+    assert list(json.loads((composed / 'composition.json').read_text())['glb_sha256']) == [
+        'barrel-1/model.glb', 'barrel-1/model.fracture', 'barrel-1/model.debris.glb']
     assert (out / 'meshes/barrel-1/model.fracture').read_text() == fracture(b'glb barrel-1')
     assert composition['parts']['barrel-1'] == ['OWN_IRON.TGA', 'OWN_WOOD.TGA', 'NW_HARBOUR_BARREL_01']
     staged_prop(tmp_path, 'barrel-2', prefix='OTHER')
@@ -230,7 +237,8 @@ def test_enable_needs_fresh_convex_parts_for_tables_and_cupboards(tmp_path, monk
         building_set.enable('city-2')
 
 
-def test_enable_needs_fresh_fracture_for_destructibles(tmp_path, monkeypatch):
+@pytest.mark.parametrize('version', [2, 3])
+def test_enable_needs_fresh_fracture_for_destructibles(tmp_path, monkeypatch, version):
     monkeypatch.setenv('GOTHIC_AI_DATA', str(tmp_path))
     staged(tmp_path, 'roofs-1', {'ROOF_01.TGA': 'roofs-1-roof-01'})
     staged_prop(tmp_path, 'crate-1')
@@ -244,15 +252,22 @@ def test_enable_needs_fresh_fracture_for_destructibles(tmp_path, monkeypatch):
         building_set.enable('city-1')
     assert not (tmp_path / 'content').exists()
     out = tmp_path / 'content-staging/city-1/meshes/crate-1'
-    (out / 'model.fracture').write_text(fracture(b'glb crate-2'))       # cut from other bytes of the same size
+    (out / 'model.fracture').write_text(fracture(b'glb crate-2', version))  # cut from other bytes of the same size
     with pytest.raises(ValueError, match='no fresh .fracture for NW_HARBOUR_CRATE_01'):
         building_set.enable('city-1')
-    (out / 'model.fracture').write_text(fracture(b'glb crate-1').replace('FRACTURE 2', 'FRACTURE 1'))  # the originals' version
+    (out / 'model.fracture').write_text(fracture(b'glb crate-1', 1))  # the originals' version
     with pytest.raises(ValueError, match='no fresh .fracture for NW_HARBOUR_CRATE_01'):
         building_set.enable('city-1')
-    (out / 'model.fracture').write_text(fracture(b'glb crate-1'))
+    (out / 'model.fracture').write_text(fracture(b'glb crate-1', version))
     building_set.enable('city-1')
-    assert (tmp_path / 'content/meshes/crate-1/model.fracture').read_text() == fracture(b'glb crate-1')
+    assert (tmp_path / 'content/meshes/crate-1/model.fracture').read_text() == fracture(b'glb crate-1', version)
+    (out / 'model.debris.glb').write_bytes(b'debris')          # with debris beside it, only version 3 is fresh
+    (out / 'model.fracture').write_text(fracture(b'glb crate-1', 2))
+    with pytest.raises(ValueError, match='no fresh .fracture for NW_HARBOUR_CRATE_01'):
+        building_set.enable('city-1')
+    (out / 'model.fracture').write_text(fracture(b'glb crate-1', 3))
+    building_set.enable('city-1')
+    assert (tmp_path / 'content/meshes/crate-1/model.debris.glb').read_bytes() == b'debris'
 
 
 def test_enable_names_every_missing_cache(tmp_path, monkeypatch):

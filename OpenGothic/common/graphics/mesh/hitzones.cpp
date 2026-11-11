@@ -136,6 +136,7 @@ void HitZones::setFitEnabled(bool e) {
   }
 
 void HitZones::setSkeleton(const Skeleton* sk) {
+  ++rev;
   caps.clear();
   shape.clear();
   skeleton = sk;
@@ -245,6 +246,7 @@ void HitZones::setSkeleton(const Skeleton* sk) {
   }
 
 void HitZones::fit(const std::vector<Shape>& sh) {
+  ++rev;
   shape.clear();
   for(auto& c:caps) {
     c.r      = c.guess;

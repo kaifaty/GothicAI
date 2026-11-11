@@ -1,0 +1,60 @@
+# Hair on cards, step 2 (reports/content/2026-11-npc-hair/cards.md): the hero's own head with the card hairstyle at
+# noon in the Khorinis market, the whole head in the frame - front, three quarters, profile, from behind over the
+# shoulder and straight from behind (still clips and one still each), then a close run from behind: the outline of
+# the hair and the tail, strands in the far mips, boiling on the run.
+#   TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=ryzen OPENGOTHIC_CONTENT=<content with the head> \
+#     scripts/bench.sh scripts/bench/hair-cards.bench <out>
+# With the engine of step 1 run it with OPENGOTHIC_HASHED_ALPHA=0 and =1 and judge the two side by side.
+# @timeout 600
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+cam lift off
+set time 12 0
+goto NW_CITY_MERCHANT_TRADE_04
+watch player
+cam face 70 0 1
+wait 10000
+rec front
+wait 3000
+stop
+shot front
+wait 300
+cam face 70 40 1
+wait 1500
+rec quarter
+wait 3000
+stop
+shot quarter
+wait 300
+cam face 70 90 1
+wait 1500
+rec profile
+wait 3000
+stop
+shot profile
+wait 300
+cam face 70 140 1
+wait 1500
+rec back-quarter
+wait 3000
+stop
+shot back-quarter
+wait 300
+cam face 70 180 1
+wait 1500
+rec back
+wait 3000
+stop
+shot back
+wait 300
+walkmode run
+cam look 150
+cam follow 150 165 180
+wait 3000
+rec run
+walkto NW_CITY_MERCHANT_PATH_09
+wait 6000
+stop

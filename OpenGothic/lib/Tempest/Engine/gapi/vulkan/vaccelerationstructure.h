@@ -35,6 +35,7 @@ class VAccelerationStructure : public AbstractGraphicsApi::AccelerationStructure
     VDevice&                   owner;
     VkAccelerationStructureKHR impl = VK_NULL_HANDLE;
     VBuffer                    data;
+    VkDeviceAddress            address = 0; // of impl, which keeps it for its lifetime
   };
 
 class VTopAccelerationStructure : public AbstractGraphicsApi::AccelerationStructure {
@@ -42,11 +43,18 @@ class VTopAccelerationStructure : public AbstractGraphicsApi::AccelerationStruct
     VTopAccelerationStructure(VDevice& owner);
     ~VTopAccelerationStructure();
 
-    void build(const RtInstance* inst, AccelerationStructure* const * as, size_t size);
+    void            build(const RtInstance* inst, AccelerationStructure* const * as, size_t size);
+    // Memory for `capacity` instances, the structure and the scratch of its builds (VCommandBuffer::buildTlas)
+    void            alloc(size_t capacity);
+    VkDeviceAddress toDeviceAddress(VDevice& owner) const;
+
+    static void     pack(VkAccelerationStructureInstanceKHR& dst, const RtInstance& inst, const VAccelerationStructure& blas);
 
     VDevice&                   owner;
     VkAccelerationStructureKHR impl = VK_NULL_HANDLE;
     VBuffer                    data;
+    VBuffer                    scratch;      // alloc(): kept between builds
+    size_t                     capacity = 0; // alloc(): instances the memory holds
   };
 
 }

@@ -29,7 +29,14 @@ enum class Zone : size_t {
   // Npc::tick inside WorldLogic, split by simulation tier (world/npcsimtier.h);
   // calls count runs of consecutive same-tier NPCs, not NPCs.
   NpcFullTick, NpcSimplifiedTick, NpcLogicShadow,
-  EncodeShadows, EncodeMain, EncodeWater, EncodePost, EncodeUi, Count
+  EncodeShadows, EncodeMain, EncodeWater, EncodePost, EncodeUi,
+  // Parts of ParallelAnimation: the NPC worker pass and the serial passes after it.
+  AnimationNpcPass, MeleeShadow, MeleeContacts, InteractiveAnimation, LogicalBodySync,
+  // PfxObjects::preFrameUpdate, and the CPU wait of a synchronous buffer upload (Metal).
+  PfxPrepare, UploadWait,
+  // WorldView::updateRtScene: the changed objects into their slots of the ray scene, and in a frame with changes their
+  // upload and the TLAS build recorded into it (pass RT-TLAS); a landscape BLAS build and new descriptor arrays included.
+  RtScene, Count
   };
 enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, IdenticalBytes,
   PatchCalls, PatchBytes, PatchBlocks, GrowBytes, UploadBytes, DrawCalls, DispatchCalls,
@@ -38,7 +45,12 @@ enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, Identic
   NpcLogicSamples, NpcLogicBodyMismatch, NpcLogicWeaponMismatch,
   NpcLogicEarly, NpcLogicLate, NpcLogicEvents, NpcLogicEventMismatch,
   NpcLogicWaitEarly, NpcLogicWaitLate, NpcLogicReanchored, NpcLogicBodySamples, NpcLogicWeaponSamples,
-  NpcAnimDeferred, NpcAnimCatchUp, NpcAnimSyncOnRead, Count };
+  NpcAnimDeferred, NpcAnimCatchUp, NpcAnimSyncOnRead,
+  // RtScene::commit: builds of the TLAS in the frame, slots of the ray scene written into it
+  RtTlasBuilds, RtDirtySlots,
+  // -gi 1 (Renderer::readGiStats): live probes, probes traced in a frame (new), of them allocated at the hits of other
+  // probes' rays, and probes freed in the frame; of a frame slot one or two frames back
+  GiProbesLive, GiProbesTraced, GiProbesFromHits, GiProbesFreed, Count };
 enum class Outcome : uint8_t { Unfinished, Submitted, FenceBusy, Capture, Error };
 enum class Flag : uint32_t { SubmitCompleted=1, PresentCompleted=2,
   CaptureRequested=4, CaptureReadCompleted=8, FenceBusy=16, Error=32 };
@@ -68,6 +80,8 @@ class TextureWork final {
 // Capture the attempt at submission, never look up a reused cmdId on completion.
 void* gpuSubmitted();
 void gpuCompleted(void* record, double startSeconds, double endSeconds);
+// Vulkan: the buffer's span from its timestamp queries; invalid leaves the attempt without gpu_ns.
+void gpuCompletedNs(void* record, uint64_t gpuNs, bool valid);
 void* geometrySubmitted();
 void geometryCompleted(void* record, uint64_t triangles, bool valid);
 

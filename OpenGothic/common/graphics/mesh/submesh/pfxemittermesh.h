@@ -4,6 +4,7 @@
 
 #include "asset/staticmesh.h"
 
+#include <Tempest/Matrix4x4>
 #include <Tempest/Point>
 
 class PackedMesh;
@@ -14,7 +15,9 @@ class PfxEmitterMesh {
     PfxEmitterMesh(const PackedMesh& src);
     PfxEmitterMesh(const asset::ModelMesh& src);
 
-    Tempest::Vec3 randCoord(float rnd, const Pose* pose) const;
+    // a point on the mesh; a skinned one is posed by skin[skinCount] when given (the body's render rig palette,
+    // graphics/mesh/renderrig: its bone indices are the rig's), else by the pose
+    Tempest::Vec3 randCoord(float rnd, const Pose* pose, const Tempest::Matrix4x4* skin = nullptr, size_t skinCount = 0) const;
 
   private:
     struct Triangle {
@@ -29,8 +32,9 @@ class PfxEmitterMesh {
       float         weights[4] = {};
       };
 
-    Tempest::Vec3 randCoord(const Triangle& t, float rnd, const Pose* pose) const;
+    Tempest::Vec3 randCoord(const Triangle& t, float rnd, const Pose* pose, const Tempest::Matrix4x4* skin, size_t skinCount) const;
     Tempest::Vec3 animCoord(const Pose& pose, uint32_t index) const;
+    Tempest::Vec3 animCoord(const Tempest::Matrix4x4* skin, size_t skinCount, uint32_t index) const;
     void          mkIndex();
 
     static float area(float x1, float y1, float z1, float x2, float y2, float z2, float x3, float y3, float z3);

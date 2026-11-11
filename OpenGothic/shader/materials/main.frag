@@ -34,6 +34,9 @@ layout(location = 0) out vec4 outDiffuse;
 layout(location = 1) out uint outNormal;
 #if defined(MATERIAL_MAPS)
 layout(location = 2) out vec4 outOrm;
+layout(location = 3) out vec2 outMotion; // Renderer::gbufMotion: after the material maps
+#else
+layout(location = 2) out vec2 outMotion;
 #endif
 #elif defined(WATER)
 layout(location = 0) out vec4 outColor;
@@ -41,6 +44,19 @@ layout(location = 1) out vec4 outDiffuse;
 layout(location = 2) out uint outNormal;
 #elif !defined(DEPTH_ONLY)
 layout(location = 0) out vec4 outColor;
+#endif
+
+// The TAA reactive mask (graphics plan 1v, Renderer::taa.reactive): the second attachment of the translucent pass,
+// R8. The pass blends it as the colour: the alpha of this output weighs it (Shaders::materialPipeline)
+#if (defined(FORWARD) || (defined(EMISSIVE) && !defined(MULTIPLY)) || defined(GHOST)) && !defined(DEPTH_ONLY) && \
+    !defined(GBUFFER) && !defined(WATER)
+#define TAA_REACTIVE
+layout(location = 1) out vec4 outReactive;
+#if (MESH_TYPE==T_PFX) && !defined(GHOST)
+layout(push_constant, std430) uniform PushPfx {
+  float reactive; // ParticleFx::taaReactive: 1 for particles, 0 for rain and snow
+  } pushPfx;
+#endif
 #endif
 
 #if defined(VIRTUAL_SHADOW)
@@ -524,6 +540,17 @@ float softParticle() {
   }
 #endif
 
+#if defined(TAA_REACTIVE) && !defined(GHOST)
+// the material's weight: particles by their effect, meshes by a texture animation (Material::taaReactive)
+float reactiveWeight() {
+#if (MESH_TYPE==T_PFX)
+  return pushPfx.reactive;
+#else
+  return bucket[bucketId].reactive;
+#endif
+  }
+#endif
+
 #if defined(FORWARD)
 void mainForward(vec4 t) {
   vec3  color = t.rgb;
@@ -547,6 +574,10 @@ void mainForward(vec4 t) {
   alpha *= softParticle();
 #endif
   outColor = vec4(color,alpha);
+#if defined(TAA_REACTIVE)
+  // SrcAlpha, 1-SrcAlpha: mask = w*a + mask*(1-a), the opacity of the reactive; a still surface in front hides it
+  outReactive = vec4(reactiveWeight(), 0, 0, alpha);
+#endif
   }
 #endif
 
@@ -568,6 +599,11 @@ void mainEmissive(vec4 t) {
   alpha *= softParticle();  // additive with SrcAlpha: the alpha weighs the added light
 #endif
   outColor = vec4(color,alpha);
+#if defined(TAA_REACTIVE)
+  // SrcAlpha, One: mask += w*e*a, the added light in shares of Lref (on screen, after the exposure)
+  const float e = clamp(dot(color, vec3(0.25, 0.5, 0.25))*scene.reactiveLrefInv, 0.0, 1.0);
+  outReactive = vec4(reactiveWeight()*e, 0, 0, alpha);
+#endif
   }
 #endif
 
@@ -586,6 +622,9 @@ void mainGhost(vec4 t) {
   // sceneColor is stashed before the fog pass
   const vec4 fog = fogOwnDepth();
   outColor = vec4(mix(back.rgb * color, back.rgb, vec3(0.6))*fog.a + fog.rgb, t.a);
+#if defined(TAA_REACTIVE)
+  outReactive = vec4(0); // no blending: the refracted scene behind is not reactive
+#endif
   }
 #endif
 
@@ -703,6 +742,28 @@ void mainWater(vec4 t) {
   }
 #endif
 
+#if defined(GBUFFER)
+// Motion vectors of objects (graphics plan 1b): where the point was a frame ago minus where it would be had it stood
+// still, texture coordinates, current -> previous (Taa::motionResidual). Landscape and particles: 0
+vec2 motionResidual() {
+#if defined(MAT_MOTION)
+  if(scene.motionVectors==0u)
+    return vec2(0);
+  const vec3  s  = shInp.prevStatic;
+  const vec3  d  = shInp.prevDelta;
+  const float w0 = s.z;
+  const float w1 = s.z + d.z;
+  if(w0<=0.0 || w1<=0.0)
+    return vec2(0); // behind the previous camera: no history to point at
+  // ((s.xy + d.xy)/w1 - s.xy/w0)*0.5 over one denominator: exactly 0 for d=0, also by the near plane, where the two
+  // divisions of the plain form round apart by up to pixels
+  return (d.xy*w0 - s.xy*d.z)/(w0*w1)*0.5;
+#else
+  return vec2(0);
+#endif
+  }
+#endif
+
 void main() {
 #if defined(MAT_UV)
 #if defined(ANTITILE_MATERIAL)
@@ -730,6 +791,7 @@ void main() {
 #else
   mainGBuffer(t);
 #endif
+  outMotion = motionResidual();
 #if defined(ATEST) && defined(MATERIAL_MAPS)
   if(alphaTest<0.5)
     discard;

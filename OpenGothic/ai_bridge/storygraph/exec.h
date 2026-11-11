@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-namespace zenkit {
+namespace daedalus {
   class DaedalusVm;
   }
 
@@ -25,7 +25,7 @@ namespace storygraph {
 // local twice after both calls (B_GetLearnCostTalent: the original game prices "all thief talents" so).
 class Interpreter final {
   public:
-    Interpreter(zenkit::DaedalusVm& vm, Externals& ext) : vm(vm), ext(ext) {}
+    Interpreter(daedalus::DaedalusVm& vm, Externals& ext) : vm(vm), ext(ext) {}
 
     struct Result final {
       bool        ok = true;
@@ -46,9 +46,9 @@ class Interpreter final {
     // A value on the VM's stack: a computed value, or a variable or member it reads when the value is popped.
     struct Item final {
       Value                                      value;
-      zenkit::DaedalusSymbol*                    ref = nullptr;
+      daedalus::DaedalusSymbol*                    ref = nullptr;
       uint16_t                                   index = 0;
-      std::shared_ptr<zenkit::DaedalusInstance>  context;  // a member's instance, taken when it was pushed
+      std::shared_ptr<daedalus::DaedalusInstance>  context;  // a member's instance, taken when it was pushed
       const Expr*                                field = nullptr;  // a member of no instance: read as 0 or ""
       };
 
@@ -63,7 +63,7 @@ class Interpreter final {
     std::optional<Value> fail(std::string why);
     std::nullopt_t       failed(std::string why) { fail(std::move(why)); return std::nullopt; }
 
-    zenkit::DaedalusVm&       vm;
+    daedalus::DaedalusVm&       vm;
     Externals&                ext;
     const std::vector<Value>* params = nullptr;
     Value                     returned;

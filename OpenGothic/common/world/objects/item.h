@@ -1,6 +1,6 @@
 #pragma once
 
-#include <zenkit/addon/daedalus.hh>
+#include "daedalus/classes.h"
 
 #include "graphics/objvisual.h"
 #include "physics/dynamicworld.h"
@@ -99,9 +99,9 @@ class Item : public Vob {
     bool                checkCondUse (const Npc& other,int32_t& atr,int32_t& nv) const;
     bool                checkCondRune(const Npc& other,int32_t& cPl,int32_t& cIt) const;
 
-    const zenkit::IItem&                   handle() const { return *hitem; }
-    zenkit::IItem&                         handle() { return *hitem; }
-    const std::shared_ptr<zenkit::IItem>&  handlePtr()    { return hitem; }
+    const daedalus::IItem&                   handle() const { return *hitem; }
+    daedalus::IItem&                         handle() { return *hitem; }
+    const std::shared_ptr<daedalus::IItem>&  handlePtr()    { return hitem; }
     size_t                                 clsId() const;
 
   protected:
@@ -115,7 +115,7 @@ class Item : public Vob {
                                        const Tempest::Vec3& angular, bool sleeping);
     void                updateMatrix();
 
-    std::shared_ptr<zenkit::IItem> hitem={};
+    std::shared_ptr<daedalus::IItem> hitem={};
     Tempest::Vec3                  pos={};
 
     uint32_t                       amount   = 0;

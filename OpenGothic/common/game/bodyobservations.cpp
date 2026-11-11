@@ -1,4 +1,5 @@
 #include "bodyobservations.h"
+#include "bodyclock.h"
 #include "bodycontroller.h"
 #include "bodytrajectory.h"
 
@@ -472,7 +473,7 @@ void BodyObservations::sample(Npc& npc, uint64_t now, bool force) {
     Json j;
     j.s = "{\"kind\":\"body_observation\",";
     common(j,s,capture ? CapturePhase : Phase);
-    actor->lastWallMs = uint64_t(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count());
+    actor->lastWallMs = uint64_t(std::chrono::duration_cast<std::chrono::milliseconds>(BodyClock::now().time_since_epoch()).count());
     actor->lastSequence = capture ? ++s.captureSequence : ++s.sequence;
     control=BodyController::snapshot(npc);
     j.u("observation_seq",actor->lastSequence);

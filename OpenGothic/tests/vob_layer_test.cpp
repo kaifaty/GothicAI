@@ -10,6 +10,8 @@
 #include "game/serialize.h"
 #include "game/definitions/particlecontent.h"
 #include "graphics/pfx/particlefx.h"
+#include "graphics/pfx/pfxmotion.h"
+#include "graphics/lightsource.h"
 #include "world/world.h"
 #include "world/movablevobs.h"
 #include "world/objects/vobbundle.h"
@@ -19,6 +21,7 @@
 #include <Tempest/MemReader>
 #include <Tempest/MemWriter>
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -196,6 +199,9 @@ void rejectedLayers(const Fixture& f) {
     {"light-cookie",R"({"format":1,"add":[{"key":"bad-cookie","kind":"light","position":[0,0,0],"yaw_deg":0,"range":100,"color":[1,2,3],"cookie":"masks/LAMP.TGA"}]})"},
     {"light-source",R"({"format":1,"add":[{"key":"bad-source","kind":"light","position":[0,0,0],"yaw_deg":0,"range":100,"color":[1,2,3],"source_cm":0}]})"},
     {"light-ani-alone",R"({"format":1,"add":[{"key":"bad-flicker","kind":"light","position":[0,0,0],"yaw_deg":0,"range":100,"color":[1,2,3],"ani_fps":10}]})"},
+    {"light-flicker-from",R"({"format":1,"add":[{"key":"bad-flicker","kind":"light","position":[0,0,0],"yaw_deg":0,"range":100,"color":[1,2,3],"flicker_from":"no-such-flame"}]})"},
+    {"light-jitter-alone",R"({"format":1,"add":[{"key":"bad-flicker","kind":"light","position":[0,0,0],"yaw_deg":0,"range":100,"color":[1,2,3],"jitter_cm":1}]})"},
+    {"light-flicker-ani",R"({"format":1,"add":[{"key":"bad-flicker","kind":"light","position":[0,0,0],"yaw_deg":0,"range":100,"color":[1,2,3],"flicker_from":"x","color_ani":[[1,2,3],[4,5,6]],"ani_fps":10}]})"},
     {"format",R"({"format":2})"}
     };
   for(const auto& [name,text]:bad) {
@@ -327,22 +333,25 @@ void saveBoundPolicy(const Fixture& f) {
   require(cases==180,"all 44 class tags, unknown and both operations/subtree guards are checked");
   }
 
-void particleFields(zenkit::DaedalusVm& vm, const Def::ParticleEffect& actual,
+void particleFields(daedalus::DaedalusVm& vm, const Def::ParticleEffect& actual,
                     const Def::ParticleEffect& expected) {
   const auto* cls=vm.find_symbol_by_name("C_PARTICLEFX");
   require(cls!=nullptr,"particle class exists in base program");
   const auto fields=vm.find_class_members(*cls);
   require(fields.size()==57,"every original C_PARTICLEFX field is compared");
+  size_t compared=0;
   for(const auto* field:fields) {
-    bool same=false;
-    switch(field->type()) {
-      case zenkit::DaedalusDataType::INT: same=field->get_int(0,&actual)==field->get_int(0,&expected); break;
-      case zenkit::DaedalusDataType::FLOAT: same=field->get_float(0,&actual)==field->get_float(0,&expected); break;
-      case zenkit::DaedalusDataType::STRING: same=field->get_string(0,&actual)==field->get_string(0,&expected); break;
-      default: throw std::runtime_error("unexpected particle field type");
+#define COMPARE_PARTICLE_FIELD(type, fieldName, extent, symbol) \
+    if(field->name()=="C_PARTICLEFX." symbol) { \
+      require(actual.fieldName==expected.fieldName,"inherited/set source particle field "+field->name()); \
+      ++compared; \
+      continue; \
       }
-    require(same,"inherited/set source particle field "+field->name());
+    DEF_PARTICLE_EFFECT_FIELDS(COMPARE_PARTICLE_FIELD)
+#undef COMPARE_PARTICLE_FIELD
+    throw std::runtime_error("unexpected particle field "+field->name());
     }
+  require(compared==57,"every original C_PARTICLEFX field was compared");
   }
 
 void particleSettings(const ParticleFx& actual, const ParticleFx& expected) {
@@ -382,11 +391,19 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
   textFile(directory/"30-flip.json",R"({"format":1,"effects":[
     {"name":"OWN_TEST_FLIP","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":8,"rows":4,"frames":30,"fps":24,"yaw":true,"steady":true}},
     {"name":"OWN_TEST_FLIP_CHILD","base":"OWN_TEST_FLIP","set":{"velAvg":0.1}}]})");
+  textFile(directory/"40-motion.json",R"({"format":1,"effects":[
+    {"name":"OWN_TEST_SPARKS","base":"FIRE_SPARKS","set":{"visOrientation_S":"VELO"},"curl":{"strength":1.5,"frequency":4,"speed":0.3},"drag":2,"stretch":0.025,"minPixels":1.5},
+    {"name":"OWN_TEST_SPARKS_CHILD","base":"OWN_TEST_SPARKS","set":{},"drag":3}]})");
   auto vm=ParticleContent::openProgram(baseRoot);
   const auto original=ParticleContent::base(*vm,"FIRE_SMOKE");
   require(original!=nullptr,"base FIRE_SMOKE definition");
   const auto loaded=ParticleContent::load(*vm,f.content);
-  require(loaded.errors.empty() && loaded.effects.size()==6,"own definitions load in filename and declaration order");
+  require(loaded.errors.empty() && loaded.effects.size()==8,"own definitions load in filename and declaration order");
+  const auto& sparks=loaded.motions.at("OWN_TEST_SPARKS_CHILD");
+  require(sparks.curlStrength==1.5f && sparks.curlFrequency==4.f && sparks.curlSpeed==0.3f && sparks.drag==3.f &&
+          sparks.stretch==0.025f && sparks.minPixels==1.5f && loaded.motions.at("OWN_TEST_SPARKS").drag==2.f,
+          "curl, drag, stretch and minPixels are read and inherited field by field from an own base");
+  require(loaded.motions.count("OWN_TEST_SMOKE")==0 && loaded.motions.count("OWN_TEST_FLIP")==0,"effects without them have no motion");
   const auto flip=loaded.flipbooks.find("OWN_TEST_FLIP");
   require(flip!=loaded.flipbooks.end() && flip->second.cols==8 && flip->second.rows==4 && flip->second.frames==30 &&
           flip->second.fps==24.f && flip->second.yaw && flip->second.steady,"flipbook fields are read");
@@ -417,7 +434,12 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
     {"flip-grid",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":9,"rows":1,"frames":4,"fps":24}})"},
     {"flip-field",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24,"loop":1}})"},
     {"flip-yaw",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24,"yaw":1}})"},
-    {"flip-steady",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24,"steady":1}})"}
+    {"flip-steady",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24,"steady":1}})"},
+    {"curl-frequency",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"curl":{"strength":1,"frequency":0}})"},
+    {"curl-field",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"curl":{"strength":1,"frequency":2,"octaves":3}})"},
+    {"drag-range",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"drag":60})"},
+    {"stretch-orientation",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{"visOrientation_S":"NONE"},"stretch":0.02})"},
+    {"min-pixels-flipbook",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"minPixels":1.5,"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24}})"}
     };
   const auto errorsRoot=f.root/"particle-errors";
   for(const auto& [kind,entry]:invalid) {
@@ -460,6 +482,133 @@ void runtimeParticles(Gothic& gothic, const Fixture& f, const fs::path& baseRoot
   require(flip && flip->flipCols==8 && flip->flipRows==4 && flip->flipFrames==30 && flip->flipFps==24.f &&
           flip->visYawAlign && flip->flipSteady && flip->velAvg==0.1f,"an inherited flipbook reaches the native effect, upright cards");
   require(custom->flipFrames==0 && !custom->visYawAlign && !custom->flipSteady,"effects without a flipbook keep the sprite");
+  const auto* sparks=gothic.loadParticleFx("OWN_TEST_SPARKS_CHILD");
+  require(sparks && std::abs(sparks->motion.curlStrength-1.5e-4f)<1e-9f && std::abs(sparks->motion.curlWave-0.04f*6.2831853f)<1e-6f &&
+          std::abs(sparks->motion.curlDrift-0.03f)<1e-7f && std::abs(sparks->motion.drag-3e-3f)<1e-8f &&
+          std::abs(sparks->stretchMs-25.f)<1e-4f && sparks->minPixels==1.5f &&
+          sparks->visOrientation==ParticleFx::Orientation::Velocity,"own motion reaches the native effect in cm and ms");
+  require(!custom->motion.active() && custom->stretchMs==0 && custom->minPixels==0 &&
+          !original->motion.active(),"base effects and effects without own motion keep the native path");
+  }
+
+
+// Own curl and drag (pfxmotion.h): the mean path of a cloud of sparks does not depend on the frame rate from 15 to
+// 144 fps by more than 5 % of its length; the cost of 2000 particles a frame at 60 fps goes to the log
+void particleMotion() {
+  PfxMotion::Params p;
+  p.curlStrength=1.5e-4f;                  // 1.5 m/s^2
+  p.curlWave=4.f*6.2831853f/100.f;         // 4 periods a metre
+  p.curlDrift=0.03f;                       // 0.3 m/s
+  p.drag=2e-3f;                            // 2 /s
+  const Tempest::Vec3 gravity(0,-1e-4f,0); // 1 m/s^2
+  const Tempest::Vec3 origin(420,94,-3086);
+  struct Particle { Tempest::Vec3 pos, vel; };
+  auto start=[](size_t n) {
+    std::vector<Particle> ps(n);
+    uint32_t r=1;
+    auto rnd=[&] { r=r*1664525u+1013904223u; return float(r>>8)/float(1u<<24)*2.f-1.f; };
+    for(auto& q:ps) {
+      q.pos=Tempest::Vec3(rnd()*5,rnd()*5,rnd()*5);
+      q.vel=Tempest::Vec3(rnd()*0.05f,0.15f+rnd()*0.05f,rnd()*0.05f); // 1.5 m/s up
+      }
+    return ps;
+    };
+  auto run=[&](double fps, uint64_t until, size_t n) {
+    auto ps=start(n);
+    uint64_t last=0;
+    for(int frame=1; last<until; ++frame) {
+      const uint64_t now=std::min(until,uint64_t(double(frame)*1000.0/fps));
+      for(auto& q:ps) PfxMotion::step(p,gravity,q.pos,q.vel,origin,float(last),float(now-last));
+      last=now;
+      }
+    return ps;
+    };
+  auto mean=[](const std::vector<Particle>& ps) {
+    Tempest::Vec3 m;
+    for(auto& q:ps) m+=q.pos;
+    return m/float(ps.size());
+    };
+  const auto m0=mean(start(500));
+  for(uint64_t until:{300u,600u,1000u}) {
+    const auto reference=mean(run(1000,until,500));
+    for(double fps:{15.0,30.0,60.0,144.0}) {
+      const auto m=mean(run(fps,until,500));
+      const float error=(m-reference).length()/(reference-m0).length();
+      require(error<0.05f,"curl and drag: the mean path at "+std::to_string(int(fps))+" fps, "+std::to_string(until)+
+              " ms differs from 1 ms steps by "+std::to_string(error*100.f)+" %");
+      }
+    }
+  p.drag=0;
+  require((run(15,1000,1)[0].pos-run(1000,1000,1)[0].pos).length()<
+          0.05f*(run(1000,1000,1)[0].pos-start(1)[0].pos).length(),"curl without drag keeps the path at 15 fps");
+  // a divergence-free field: the flux through a small cube is zero
+  const float h=0.5f;
+  const Tempest::Vec3 c(37,-12,105);
+  const float flux=(PfxMotion::curl(p,c+Tempest::Vec3(h,0,0),0).x-PfxMotion::curl(p,c-Tempest::Vec3(h,0,0),0).x)+
+                   (PfxMotion::curl(p,c+Tempest::Vec3(0,h,0),0).y-PfxMotion::curl(p,c-Tempest::Vec3(0,h,0),0).y)+
+                   (PfxMotion::curl(p,c+Tempest::Vec3(0,0,h),0).z-PfxMotion::curl(p,c-Tempest::Vec3(0,0,h),0).z);
+  require(std::abs(flux)<1e-3f*p.curlStrength,"the curl field is divergence-free");
+
+  p.drag=2e-3f;
+  auto ps=start(2000);
+  double best=1e9;
+  for(int round=0;round<20;++round) {
+    const auto t0=std::chrono::steady_clock::now();
+    for(auto& q:ps) PfxMotion::step(p,gravity,q.pos,q.vel,origin,float(round*17),17.f);
+    best=std::min(best,std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-t0).count());
+    }
+  std::cout << "{\"test\":\"pfx_motion\",\"particles\":2000,\"frame_ms\":17,\"cpu_ms\":" << best << "}\n";
+
+  // the flame's signal drives a lamp: its brightness is the emitter's signal at the same world tick, without the
+  // light's own time offset, and its position trembles within jitter_cm
+  PfxMotion::Flicker flicker{6.f,12.f,0.2f,7u};
+  LightSource light;
+  light.setColor(Tempest::Vec3(1.f,0.5f,0.2f));
+  light.setPosition(Tempest::Vec3(10,20,30));
+  light.setTimeOffset(1234);
+  light.setFlicker(flicker,2.f);
+  require(light.isDynamic(),"a flickering light animates");
+  float lo=2, hi=0;
+  for(uint64_t t=0;t<5000;t+=7) {
+    light.update(t);
+    const float s=PfxMotion::flicker(flicker,t);
+    lo=std::min(lo,s); hi=std::max(hi,s);
+    require(light.currentColor()==Tempest::Vec3(1.f,0.5f,0.2f)*s,"the light's brightness is the flame's signal");
+    const auto d=light.currentPosition()-Tempest::Vec3(10,20,30);
+    require(std::abs(d.x)<=2.f && std::abs(d.y)<=2.f && std::abs(d.z)<=2.f,"the light trembles within jitter_cm");
+    }
+  require(lo>=0.8f && hi<=1.2f && hi-lo>0.2f,"the signal swings within 1 +- amount");
+  }
+
+// A layer emitter's flame signal ("flicker") and the light that takes it ("flicker_from", "jitter_cm")
+void flameLayer(const Fixture& f, const fs::path& baseRoot) {
+  const auto file=f.root/"flame/00-flame.json";
+  const std::string flame=R"({"key":"flame","kind":"emitter","pfx":"own_test_sparks","position":[420,94,-3086],"yaw_deg":0,)"
+                          R"("flicker":{"pulse_hz":6,"jitter_hz":12,"amount":0.2,"seed":7}})";
+  textFile(file,"{\"format\":1,\"add\":["+flame+R"(,{"key":"flame-light","kind":"light","position":[420,110,-3070],"yaw_deg":0,)"
+                R"("range":400,"color":[255,150,60],"flicker_from":"flame","jitter_cm":2}]})");
+  Resources::VobTree tree;
+  const auto checked=VobLayer::readTree(tree,baseRoot,file,f.content);
+  require(checked.errors.empty() && tree.size()==2,"an emitter with flicker and a light with flicker_from are accepted");
+  float jitter=-1;
+  const auto* emitterSignal=VobLayer::flicker(*tree[0]);
+  const auto* lightSignal=VobLayer::flicker(*tree[1],&jitter);
+  require(emitterSignal && lightSignal && emitterSignal->pulseHz==6.f && emitterSignal->jitterHz==12.f &&
+          emitterSignal->amount==0.2f && emitterSignal->seed==7 && lightSignal->seed==7 && lightSignal->amount==0.2f &&
+          jitter==2.f,"the light takes its emitter's signal and its own trembling");
+  const std::vector<std::pair<std::string,std::string>> bad={
+    {"amount",R"({"key":"flame","kind":"emitter","pfx":"FIRE_SMOKE","position":[0,0,0],"yaw_deg":0,"flicker":{"pulse_hz":6,"jitter_hz":12,"amount":0,"seed":7}})"},
+    {"field",R"({"key":"flame","kind":"emitter","pfx":"FIRE_SMOKE","position":[0,0,0],"yaw_deg":0,"flicker":{"pulse_hz":6,"jitter_hz":12,"amount":0.2,"seed":7,"phase":1}})"},
+    {"quiet",R"({"key":"flame","kind":"emitter","pfx":"FIRE_SMOKE","position":[0,0,0],"yaw_deg":0})"}
+    };
+  for(const auto& [reason,entry]:bad) {
+    textFile(file,"{\"format\":1,\"add\":["+entry+R"(,{"key":"flame-light","kind":"light","position":[0,0,0],"yaw_deg":0,)"
+                  R"("range":400,"color":[255,150,60],"flicker_from":"flame"}]})");
+    Resources::VobTree rejected;
+    const auto result=VobLayer::readTree(rejected,baseRoot,file,f.content);
+    require(!result.errors.empty() && rejected.empty(),"flicker "+reason+": the file is rejected");
+    }
+  fs::remove_all(file.parent_path());
   }
 
 void runtimeMesh(const Fixture& f) {
@@ -677,8 +826,8 @@ struct WorldDataContract {
   static void saves(const Fixture& fixture) {
     const auto* gameDir=std::getenv("GOTHIC_DIR");
     require(gameDir && *gameDir,"save interchange needs prepared GOTHIC_DIR");
-    const char* args[]={"gothic-vob-layer-test","-g",gameDir,"-g2"};
-    CommandLine commandLine(4,args);
+    const char* args[]={"gothic-vob-layer-test","-g",gameDir};
+    CommandLine commandLine(3,args);
     setenv("OPENGOTHIC_FRACTURE","",1);
     setenv("OPENGOTHIC_TEXTURES","",1);
     setenv("OPENGOTHIC_PHYSICS_THREADS","0",1);
@@ -698,6 +847,7 @@ struct WorldDataContract {
       Resources resources;
       Gothic gothic;
       if(phase==0) particleDefinitions(fixture,Resources::baseDir());
+      if(phase==0) flameLayer(fixture,Resources::baseDir());
       gothic.isNpcInDialogFn=[](const Npc*) { return false; };
       gothic.setupGlobalScripts();
       if(phase==0) runtimeParticles(gothic,fixture,Resources::baseDir());
@@ -816,6 +966,7 @@ int main() {
     removedReferences(fixture);
     unreadableLayers(fixture);
     saveBoundPolicy(fixture);
+    particleMotion();
     WorldDataContract::meshRegistry(fixture);
     WorldDataContract::saves(fixture);
     runtimeMesh(fixture);

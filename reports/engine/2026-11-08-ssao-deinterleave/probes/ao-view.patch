@@ -1,0 +1,17 @@
+diff --git a/OpenGothic/common/graphics/renderer.cpp b/OpenGothic/common/graphics/renderer.cpp
+index 01cef111..ca57b500 100644
+--- a/OpenGothic/common/graphics/renderer.cpp
++++ b/OpenGothic/common/graphics/renderer.cpp
+@@ -1030,6 +1030,12 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
+     }
+   if(!upscale.input.isEmpty() && !shotNative)
+     drawUpscale(result, cmd);
++  if(!ssao.ssaoBlur.isEmpty() && result.size()==ssao.ssaoBlur.size()) { // probe: the frame is the blurred AO (red)
++    cmd.setFramebuffer({{result, Tempest::Discard, Tempest::Preserve}});
++    cmd.setBinding(0, ssao.ssaoBlur, Sampler::nearest());
++    cmd.setPipeline(shaders.copy);
++    cmd.draw(nullptr, 0, 3);
++    }
+   postTiming.finish();
+ 
+   //drawRayQueryDbg(cmd, wview);

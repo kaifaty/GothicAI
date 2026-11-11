@@ -75,7 +75,9 @@ namespace TestBench {
   void     physicsNoise(const PhysicsNoise& noise, std::string_view sound, bool played);
   void     physicsNoiseHeard(const Npc& npc, const PhysicsNoise& noise, bool callbackDispatched = false);
   // Native destruction telemetry: includes body creation and the render callback.
-  void     destructionBreak(uintptr_t body, size_t pieces, float milliseconds);
+  void     destructionBreak(uintptr_t body, size_t pieces, float milliseconds, bool remnant = false);
+  // A sleeping piece removed by DynamicWorld::cleanupFragments: expired, or farther than 30 m from the hero.
+  void     destructionRetire(uintptr_t body, size_t piece, bool expired, float observerDistanceCm);
   void     destructionMeleeHit(const Npc& actor, size_t affected, float damage);
   void     movementImpulseHandoff(const Npc& actor, std::string_view backend, uint32_t fromState,
                                   uint32_t toState, const Tempest::Vec3& velocity);
@@ -122,7 +124,7 @@ namespace TestBench {
   // First 300 ms of native simulation; inert outside an active bench.
   void     ragdollBirthPeak(const Npc& npc, const Npc* culprit, const std::string& fields);
 
-  // What the AI bridge does, for scenarios that talk (`ptt`, `waitreply`; shorts/): texts in UTF-8.
+  // What the AI bridge does, for scenarios that talk (`ptt`, `waitreply`; gothic-shorts): texts in UTF-8.
   // An npc line starts (`ms`: its length as known now; `to`: the npc it is said to, empty for the hero;
   // `filler`: a sound said at once while the model thinks, "Хм..."), an npc voice has played out, the hero's
   // phrase was recognized (`to`: whom the server says it was said to)

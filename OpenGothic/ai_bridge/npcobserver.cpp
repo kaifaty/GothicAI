@@ -790,9 +790,9 @@ void NpcObserver::act(World& world, const rapidjson::Value& msg) {
         const auto last = HeroDeed::constant(*npc,"AIV_LASTPLAYERAR");
         const auto fight = HeroDeed::constant(*npc,"AIV_LASTFIGHTAGAINSTPLAYER");
         const auto comment = HeroDeed::constant(*npc,"AIV_LASTFIGHTCOMMENT");
-        const auto valid = [](int32_t index) { return index>=0 && uint32_t(index)<zenkit::INpc::aivar_count; };
+        const auto valid = [](int32_t index) { return index>=0 && uint32_t(index)<daedalus::INpc::aivar_count; };
         if(!reasonName.starts_with("AR_") || reason==nullptr || !reason->is_const() ||
-           reason->type()!=zenkit::DaedalusDataType::INT || !valid(attack) ||
+           reason->type()!=daedalus::DaedalusDataType::INT || !valid(attack) ||
            (target->isPlayer() && !valid(last)) || !valid(fight) || !valid(comment)) {
           result("rejected","fight needs a vanilla AR_* reason and its attack variables");
           return;

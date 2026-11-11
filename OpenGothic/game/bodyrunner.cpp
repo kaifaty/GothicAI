@@ -1,6 +1,5 @@
 #include <Tempest/File>
 #include <Tempest/Log>
-#include "zenkitlog.h"
 #include <rapidjson/document.h>
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
@@ -1492,7 +1491,7 @@ int main(int argc, const char** argv) {
     if(opts.societyExport.empty())
       std::filesystem::create_directories(opts.output);
     CommandLine commandLine(argc,argv);
-    ZenKitLog::install(ZenKitLog::Level::Warning);
+    daedalus::set_log_level(daedalus::LogLevel::WARNING);
     Resources resources;
     Gothic gothic;
     auto stuckLogger = StuckLogger::fromEnvironment();

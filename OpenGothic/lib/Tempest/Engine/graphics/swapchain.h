@@ -10,6 +10,7 @@ class Attachment;
 
 class Swapchain final {
   public:
+    Swapchain()=default; // none: an offscreen window (SystemApi::isOffscreen) does not present
     Swapchain(Device& dev, SystemApi::Window* w);
     Swapchain(Swapchain&&)=default;
     ~Swapchain();

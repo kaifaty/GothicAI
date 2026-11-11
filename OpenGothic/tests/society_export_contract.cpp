@@ -80,7 +80,7 @@ std::vector<std::string> lines(const std::string& text) {
   }
 
 double exportOnce(const std::string& gothic, const fs::path& out, const fs::path& log) {
-  const auto cmd = shellQuote(SOCIETY_RUNNER)+" -g "+shellQuote(gothic)+" -g2 --world NEWWORLD.ZEN --society-export "+
+  const auto cmd = shellQuote(SOCIETY_RUNNER)+" -g "+shellQuote(gothic)+" --world NEWWORLD.ZEN --society-export "+
                    shellQuote(out.string())+" >"+shellQuote(log.string())+" 2>&1";
   const auto from = std::chrono::steady_clock::now();
   const int  rc   = std::system(cmd.c_str());

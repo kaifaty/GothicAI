@@ -38,7 +38,7 @@ target_include_directories(gothic-base-runtime PRIVATE "${CMAKE_CURRENT_BINARY_D
 target_include_directories(gothic-base-runtime SYSTEM PRIVATE "${BASE_ROOT}/lib/rapidjson/include" "${BASE_ROOT}/lib/miniz"
   "${BASE_ROOT}/lib/dmusic/src" "${BASE_ROOT}/lib/dmusic/vendor/TinySoundFont")
 set_target_properties(gothic-base-runtime PROPERTIES C_STANDARD 11)
-target_link_libraries(gothic-base-runtime PUBLIC zenkit miniz dmusic)
+target_link_libraries(gothic-base-runtime PUBLIC miniz dmusic)
 target_link_libraries(gothic-base-import PUBLIC gothic-base-runtime)
 target_include_directories(gothic-base-import PUBLIC "${BASE_ROOT}/common" "${BASE_ROOT}/lib/Tempest/Engine/include")
 target_include_directories(gothic-base-import PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/baseimport-generated")

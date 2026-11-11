@@ -7,8 +7,6 @@
 #include <string_view>
 #include <vector>
 
-namespace zenkit { class Mesh; }
-
 class World;
 class Cloth;
 class MeshObjects;

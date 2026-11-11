@@ -9,6 +9,7 @@
 #include <Tempest/Except>
 #include <Tempest/Log>
 
+#include <algorithm>
 #include <string>
 #include <cassert>
 #include <cstdlib>
@@ -376,16 +377,38 @@ AccelerationStructure Device::tlas(const std::vector<RtInstance>& geom) {
   }
 
 AccelerationStructure Device::tlas(const RtInstance* geom, size_t geomSize) {
-  std::vector<AbstractGraphicsApi::AccelerationStructure*> as(geomSize);
-  size_t nonEmptyGeomSize = 0;
+  // Instances and their BLAS are dropped together: an empty BLAS must not shift the instances after it onto other BLAS
+  std::vector<RtInstance>                                  inst;
+  std::vector<AbstractGraphicsApi::AccelerationStructure*> as;
+  inst.reserve(geomSize);
+  as  .reserve(geomSize);
   for(size_t i=0; i<geomSize; ++i) {
-    if(geom[i].blas->impl.handler==nullptr)
+    if(geom[i].blas==nullptr || geom[i].blas->impl.handler==nullptr)
       continue;
-    as[nonEmptyGeomSize] = geom[i].blas->impl.handler;
-    ++nonEmptyGeomSize;
+    inst.push_back(geom[i]);
+    as  .push_back(geom[i].blas->impl.handler);
     }
-  auto tlas = api.createTopAccelerationStruct(dev,geom,as.data(),nonEmptyGeomSize);
+  auto tlas = api.createTopAccelerationStruct(dev,inst.data(),as.data(),as.size());
   return AccelerationStructure(*this, std::move(tlas));
+  }
+
+AccelerationStructure Device::tlas(Uninitialized_t, size_t capacity) {
+  if(!properties().raytracing.rayQuery)
+    throw std::system_error(Tempest::GraphicsErrc::UnsupportedExtension, "rayQuery");
+  capacity  = std::max<size_t>(capacity, 1);
+  auto tlas = api.createTopAccelerationStruct(dev,capacity);
+  return AccelerationStructure(*this, std::move(tlas), capacity);
+  }
+
+size_t Device::rtInstanceSize() const {
+  return api.rtInstanceSize();
+  }
+
+void Device::packRtInstance(AccelerationStructure& tlas, const RtInstance& inst, void* slot) {
+  if(tlas.impl.handler==nullptr || tlas.capacity()==0)
+    throw std::system_error(Tempest::GraphicsErrc::InvalidAccelerationStructure);
+  auto* blas = inst.blas!=nullptr ? inst.blas->impl.handler : nullptr;
+  api.packRtInstance(dev, *tlas.impl.handler, inst, blas, slot);
   }
 
 Pixmap Device::readPixels(const Texture2d &t, uint32_t mip) {

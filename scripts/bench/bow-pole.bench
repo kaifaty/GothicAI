@@ -23,7 +23,6 @@ wait 300
 pin WOLF 160 0 -733
 wait 300
 cam lift off
-manual on
 draw bow
 wait 1500
 goto pos 14591 2349 -14597

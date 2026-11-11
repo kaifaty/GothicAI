@@ -184,6 +184,26 @@ uint64_t LipSync::Track::durationMs() const {
   return db.size()*StepMs;
   }
 
+bool LipSync::Track::quietRun(uint64_t from, float below, uint64_t minMs, uint64_t& start, uint64_t& end) const {
+  std::lock_guard<std::mutex> guard(sync);
+  size_t i = size_t(from/StepMs);
+  while(i<db.size() && implLevel(i)<below)
+    ++i;
+  while(i<db.size()) {
+    while(i<db.size() && implLevel(i)>=below)
+      ++i;
+    const size_t q = i;
+    while(i<db.size() && implLevel(i)<below)
+      ++i;
+    if(i>q && uint64_t(i-q)*StepMs>=minMs) {
+      start = q*StepMs;
+      end   = i*StepMs;
+      return true;
+      }
+    }
+  return false;
+  }
+
 bool LipSync::Track::isFinished() const {
   std::lock_guard<std::mutex> guard(sync);
   return finished;

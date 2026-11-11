@@ -10,9 +10,10 @@
 #include "common.glsl"
 
 layout(primitive_culling);
-layout(local_size_x = 64) in;
+// a thread per ray: a probe's 256 rays at once, not four in a row (the latency of a frame with few new probes)
+layout(local_size_x = 256) in;
 
-const  uint samplesCount = 4;
+const  uint samplesCount = 1;
 const  uint samplesTotal = gl_WorkGroupSize.x*samplesCount;
 
 shared uint shProbeId;
@@ -27,6 +28,7 @@ layout(binding = 3) uniform writeonly image2D gbufferRayT;
 
 layout(binding = 4, std430) buffer Hbo { uint hashTable[]; };
 layout(binding = 5, std430) buffer Pbo { ProbesHeader probeHeader; Probe probe[]; };
+layout(binding = 12, std430) readonly buffer Nbo { uint newList[]; }; // probe_allocation.comp, probe_aux.comp
 
 void storeGbuffer(const uint probeId, uint sampleId, vec3 diff, vec3 norm, float rayT,
                   bool opaque, bool badbit, bool sky, bool semiSky) {
@@ -136,10 +138,8 @@ void trace(const uint probeId) {
 void processProbe(const uint probeId) {
   const uint laneId = gl_LocalInvocationIndex;
 
-  if((probe[probeId].bits & TRACED_BIT)!=0) {
-    probe[probeId].bits &= ~NEW_BIT;
+  if((probe[probeId].bits & TRACED_BIT)!=0)
     return;
-    }
 
   badHits = 0;
   barrier();
@@ -160,11 +160,15 @@ void processProbe(const uint probeId) {
 void main() {
   //const uint probeId = gl_WorkGroupID.x;
   while(true) {
+    // only the probes allocated this frame (newList): the others keep their hits
     if(gl_LocalInvocationIndex==0)
       shProbeId = atomicAdd(probeHeader.iterator, 1);
     barrier();
-    const uint probeId = shProbeId;
-    if(probeId>=probeHeader.count)
+    const uint i = shProbeId;
+    if(i>=probeHeader.newCount)
+      return;
+    const uint probeId = newList[i];
+    if(probeId>=probe.length())
       return;
     processProbe(probeId);
     barrier();

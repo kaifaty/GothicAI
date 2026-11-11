@@ -83,11 +83,11 @@ std::string symbolName(World& world, size_t symbol) {
   return sym!=nullptr ? std::string(sym->name()) : std::to_string(symbol);
   }
 
-bool npcSymbol(World& world, zenkit::DaedalusSymbol* s) {
+bool npcSymbol(World& world, daedalus::DaedalusSymbol* s) {
   if(s==nullptr)
     return false;
   auto* cls = s;
-  for(size_t i=0; i<16 && cls!=nullptr && cls->type()!=zenkit::DaedalusDataType::CLASS; ++i)
+  for(size_t i=0; i<16 && cls!=nullptr && cls->type()!=daedalus::DaedalusDataType::CLASS; ++i)
     cls = world.script().findSymbol(size_t(cls->parent()));
   return cls!=nullptr && cls->name()=="C_NPC";
   }
@@ -95,7 +95,7 @@ bool npcSymbol(World& world, zenkit::DaedalusSymbol* s) {
 std::vector<std::string> npcInstances(World& world) {
   std::vector<std::string> ret;
   for(const auto& s:world.script().getVm().symbols())
-    if(s.type()==zenkit::DaedalusDataType::INSTANCE && s.is_const() &&
+    if(s.type()==daedalus::DaedalusDataType::INSTANCE && s.is_const() &&
        npcSymbol(world,world.script().findSymbol(s.index())))
       ret.push_back(s.name());
   std::sort(ret.begin(),ret.end());
@@ -108,9 +108,9 @@ struct RoomOwner {
 
 RoomOwner resolveOwner(World& world, std::string_view name, const std::vector<std::string>& instances) {
   auto* s = world.script().findSymbol(name);
-  if(s!=nullptr && s->type()==zenkit::DaedalusDataType::INSTANCE && npcSymbol(world,s)) {
+  if(s!=nullptr && s->type()==daedalus::DaedalusDataType::INSTANCE && npcSymbol(world,s)) {
     // The alias's handle carries the actual C_NPC instance, rather than the variable's symbol index.
-    if(s->is_instance_of<zenkit::INpc>()) {
+    if(s->is_instance_of<daedalus::INpc>()) {
       const auto id = symbolName(world,s->get_instance()->symbol_index());
       if(std::binary_search(instances.begin(),instances.end(),id))
         return {id,std::string(name),{}};
@@ -179,7 +179,7 @@ RoomGuild resolveRoomGuild(World& world, std::string_view room, bool npcOwner) {
     const auto part = name.substr(0,end);
     const auto key = part.starts_with("GIL_") ? std::string(part) : "GIL_"+std::string(part);
     auto* sym = world.script().findSymbol(key);
-    if(sym!=nullptr && sym->type()==zenkit::DaedalusDataType::INT && sym->is_const() &&
+    if(sym!=nullptr && sym->type()==daedalus::DaedalusDataType::INT && sym->is_const() &&
        sym->get_int()>=0 && max!=nullptr && sym->get_int()<max->get_int())
       return {sym->get_int(),key,{}};
     if(end==0)
@@ -230,7 +230,7 @@ constexpr const char* MmScheduler = "ZS_MM_ALLSCHEDULER";
 // The aivar index a script constant names; the export fails when the scripts have no such constant.
 size_t aivarIndex(World& world, const char* name) {
   auto* sym = world.script().findSymbol(name);
-  if(sym==nullptr || sym->get_int()<0 || size_t(sym->get_int())>=zenkit::INpc::aivar_count)
+  if(sym==nullptr || sym->get_int()<0 || size_t(sym->get_int())>=daedalus::INpc::aivar_count)
     throw std::runtime_error(std::string("society export: the scripts have no aivar constant ")+name);
   return size_t(sym->get_int());
   }
@@ -407,7 +407,7 @@ Result build(World& world) {
     w.Key("guild");          w.Uint(npc.guild());
     w.Key("person");         w.Bool(person);
     w.Key("start_waypoint"); w.Uint(*start);
-    // The state Npc::tickRoutine starts when the NPC has no routine entry (zenkit::INpc::start_aistate), or null.
+    // The state Npc::tickRoutine starts when the NPC has no routine entry (daedalus::INpc::start_aistate), or null.
     const auto aistate = npc.handle().start_aistate;
     w.Key("start_aistate");
     if(aistate!=0)

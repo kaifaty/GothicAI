@@ -1,4 +1,5 @@
 #include "effect.h"
+#include "gameservices.h"
 
 #include <Tempest/Log>
 
@@ -6,7 +7,6 @@
 #include "world/objects/npc.h"
 #include "world/world.h"
 #include "visualfx.h"
-#include "gothic.h"
 
 using namespace Tempest;
 
@@ -61,17 +61,17 @@ void Effect::setupPfx(World& owner) {
     return;
     }
 
-  const ParticleFx* pfxDecl = Gothic::inst().loadParticleFx(root->visName_S);
+  const ParticleFx* pfxDecl = GameServices::inst().loadParticleFx(root->visName_S);
   if(key!=nullptr && key->visName!=nullptr)
     pfxDecl = key->visName;
 
-  pfxDecl = Gothic::inst().loadParticleFx(pfxDecl,key);
+  pfxDecl = GameServices::inst().loadParticleFx(pfxDecl,key);
   if(pfxDecl==nullptr)
     return;
 
   pfx = PfxEmitter(owner,pfxDecl);
   if(root->isMeshEmmiter())
-    pfx.setMesh(meshEmitter,pose);
+    pfx.setMesh(meshEmitter,pose,meshSkin);
   pfx.setActive(active);
   pfx.setLooped(looped);
   }
@@ -239,12 +239,13 @@ void Effect::setKey(World& owner, SpellFxKey k, int32_t keyLvl) {
   syncAttachesSingle(pos);
   }
 
-void Effect::setMesh(const MeshObjects::Mesh* mesh) {
+void Effect::setMesh(const MeshObjects::Mesh* mesh, const std::vector<Tempest::Matrix4x4>* skin) {
   if(next!=nullptr)
-    next->setMesh(mesh);
+    next->setMesh(mesh,skin);
   meshEmitter = mesh;
+  meshSkin    = skin;
   if(root!=nullptr && root->isMeshEmmiter())
-    pfx.setMesh(meshEmitter,pose);
+    pfx.setMesh(meshEmitter,pose,meshSkin);
   }
 
 void Effect::setBullet(Bullet* b, World& owner) {
@@ -295,7 +296,7 @@ void Effect::bindAttaches(const Pose& p, const Skeleton& to) {
     boneId = to.findRootNode();
     }
   if(root!=nullptr && root->isMeshEmmiter())
-    pfx.setMesh(meshEmitter,pose);
+    pfx.setMesh(meshEmitter,pose,meshSkin);
   }
 
 void Effect::onCollide(World& world, const VisualFx* root, const Vec3& pos, Npc* npc, Npc* other, int32_t splId) {
@@ -308,8 +309,7 @@ void Effect::onCollide(World& world, const VisualFx* root, const Vec3& pos, Npc*
 
    // Gothic 1 uses emFXCollDyn->sendAssessMagic as check for PERC_ASSESSMAGIC
    // Gothic 2 instead introduced new vfx emFXCollDynPerc specific for this purpose
-  const bool g2     = world.version().game==2;
-  const auto sender = g2 ? root->emFXCollDynPerc : vfx;
+  const auto sender = root->emFXCollDynPerc;
   if(sender!=nullptr && sender->sendAssessMagic && npc!=nullptr) {
     auto oth = other==nullptr ? npc : other;
     npc->perceptionProcess(*oth,npc,0,PERC_ASSESSMAGIC);

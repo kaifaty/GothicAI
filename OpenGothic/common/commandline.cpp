@@ -36,6 +36,16 @@ CommandLine::CommandLine(int argc, const char** argv) {
   // OPENGOTHIC_VSM=0|1: the default of -vsm for benches and scripts that cannot pass flags; -vsm wins
   if(const char* vsm = std::getenv("OPENGOTHIC_VSM"))
     isVsm = boolArg(vsm);
+  // OPENGOTHIC_MS=0|1: the default of -ms (mesh shaders) for benches; -ms wins
+  if(const char* ms = std::getenv("OPENGOTHIC_MS"))
+    isMeshSh = boolArg(ms);
+  // OPENGOTHIC_RT=0|1 and OPENGOTHIC_GI=0|1|2: the same for -rt and -gi (the GI clips of a bench); the flags win
+  if(const char* rt = std::getenv("OPENGOTHIC_RT"))
+    isRQuery = boolArg(rt);
+  if(const char* gi = std::getenv("OPENGOTHIC_GI"); gi!=nullptr && *gi!='\0') {
+    isGi    = GiMethod(std::clamp(std::max(0, intArg(gi)), 0, GiMethod::Count-1));
+    isGiSet = true;
+    }
   if(argc<1)
     return;
 
@@ -83,21 +93,15 @@ CommandLine::CommandLine(int argc, const char** argv) {
     else if(arg=="--no-hero-head") {
       noHeroHead = true;
       }
+    else if(arg=="--no-render-rig") {
+      noRenderRig = true;
+      }
     else if(arg=="-benchmark") {
       isBenchmark = Benchmark::Normal;
       if(i+1<argc && argv[i+1][0]!='-') {
         ++i;
         isBenchmark = std::string_view(argv[i])=="ci" ? Benchmark::CiTooling : isBenchmark;
         }
-      }
-    else if(arg=="-g1") {
-      forceG1 = true;
-      }
-    else if(arg=="-g2c") {
-      forceG2 = true;
-      }
-    else if(arg=="-g2") {
-      forceG2NR = true;
       }
     else if(arg=="-dx12") {
       graphics = GraphicBackend::DirectX12;
@@ -114,6 +118,11 @@ CommandLine::CommandLine(int argc, const char** argv) {
       ++i;
       if(i<argc)
         isTaa = boolArg(argv[i]);
+      }
+    else if(arg=="-mv") {
+      ++i;
+      if(i<argc)
+        isMv = boolArg(argv[i]) ? 1 : 0;
       }
     else if(arg=="-aa") {
       ++i;
@@ -151,12 +160,6 @@ CommandLine::CommandLine(int argc, const char** argv) {
       ++i;
       if(i<argc)
         isVsm = boolArg(argv[i]);
-      }
-    else if(arg=="-rtsm") {
-      // not to document - debug only
-      ++i;
-      if(i<argc)
-        isRtSm = boolArg(argv[i]);
       }
     else {
       Log::i("unrecognized commandline option: \"", arg, "\"");

@@ -34,9 +34,9 @@
 #include "programdata.h"
 #include "vocab.h"
 
-#include <zenkit/DaedalusVm.hh>
+#include "daedalus/vm.h"
 #include <zenkit/Logger.hh>
-#include <zenkit/addon/daedalus.hh>
+#include "daedalus/classes.h"
 
 #include <rapidjson/document.h>
 #include <rapidjson/stringbuffer.h>
@@ -57,7 +57,7 @@ using namespace storygraph;
 namespace fs = std::filesystem;
 
 namespace storygraph {
-  int scanDialogs(zenkit::DaedalusVm& vm, const Bytecode& code, const char* tsvPath, size_t top);
+  int scanDialogs(daedalus::DaedalusVm& vm, const Bytecode& code, const char* tsvPath, size_t top);
   }
 
 static std::string upper(std::string s) {
@@ -311,11 +311,11 @@ static int run(int argc, char** argv) {
   auto programData = ProgramData::readProgram(record,&programSha);
   if(programSha!=source->recordSha256)
     throw std::runtime_error("selected program record identity differs from its index");
-  auto script = zenkit::DaedalusScript::from_program(std::move(programData));
-  zenkit::register_all_script_classes(script);
-  zenkit::DaedalusVm vm(std::move(script), zenkit::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
-  vm.register_default_external([](const zenkit::DaedalusSymbol&){});
-  const zenkit::DaedalusScript& dat = vm;
+  auto script = daedalus::DaedalusScript::from_program(std::move(programData));
+  daedalus::register_all_script_classes(script);
+  daedalus::DaedalusVm vm(std::move(script), daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
+  vm.register_default_external([](const daedalus::DaedalusSymbol&){});
+  const daedalus::DaedalusScript& dat = vm;
   Bytecode code(dat);
 
   if(disasm!=nullptr)
@@ -329,7 +329,7 @@ static int run(int argc, char** argv) {
       }
     std::vector<uint32_t> fns = {sym->index()};
     if(code.isInfo(*sym)) {
-      auto info = vm.init_instance<zenkit::IInfo>(sym);
+      auto info = vm.init_instance<daedalus::IInfo>(sym);
       fns.clear();
       for(auto f : {info->condition, info->information})
         if(f!=0)

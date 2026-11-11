@@ -5,7 +5,7 @@ if(NOT DEFINED BASE_ROOT)
 endif()
 set(BASE_SOURCES
   common/baseidentity.cpp common/sha256.cpp common/baseimport.cpp common/basesources.cpp common/basemusic.c common/worldchunks.cpp common/worlddata.cpp common/modeldata.cpp common/fontdata.cpp
-  common/programdata.cpp common/outputunits.cpp common/audiodata.cpp common/basemesh.cpp common/gothicglb.cpp common/gltfmesh.cpp common/asset/fromzenkit.cpp common/asset/worldfromzenkit.cpp common/asset/modelfromzenkit.cpp
+  common/programdata.cpp common/outputunits.cpp common/audiodata.cpp common/basemesh.cpp common/gothicglb.cpp common/gltfmesh.cpp common/asset/fromzenkit.cpp common/asset/worldfromzenkit.cpp common/asset/modelfromzenkit.cpp common/asset/programfromzenkit.cpp
   # The game's own path helpers, Dx8 file search and Dx8 parsers, owned here once.
   common/utils/fileutil.cpp common/dmusic/sourcefile.cpp common/dmusic/riff.cpp common/dmusic/segment.cpp common/dmusic/track.cpp
   common/dmusic/style.cpp common/dmusic/band.cpp common/dmusic/reference.cpp common/dmusic/info.cpp common/dmusic/pattern.cpp

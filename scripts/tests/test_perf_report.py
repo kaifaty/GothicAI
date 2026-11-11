@@ -2,7 +2,10 @@
 import csv
 import importlib.util
 import json
+import os
 from pathlib import Path
+import shlex
+import shutil
 import subprocess
 import sys
 
@@ -34,6 +37,45 @@ TASK=/remote/task
     result = subprocess.run(["bash", "-c", harness], check=True, capture_output=True)
     environment = dict(value.decode().split("=", 1) for value in result.stdout.split(b"\0") if value)
     assert environment.get("OPENGOTHIC_BASE_CACHE") == cache
+
+
+@pytest.mark.parametrize("converter", (True, False))
+def test_remote_perf_picks_base_of_stand_engine_format(tmp_path, converter):
+    # game-base.json names a base of another importer format; the stand's converter decides.
+    scripts = Path(__file__).parents[1]
+    source = (scripts / "perf.sh").read_text()
+    select = "  CONTENT_CONVERT=" + source.split("  CONTENT_CONVERT=", 1)[1].split("  export XDG_RUNTIME_DIR", 1)[0]
+    pointed, compatible, old, new = "a" * 64, "b" * 64, "1" * 64, "2" * 64
+    for name in ("Gothic.ini", "SystemPack.ini"):
+        (tmp_path / "gothic-ai/game-settings/system").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "gothic-ai/game-settings/system" / name).write_text("")
+    (tmp_path / "gothic-ai/game-base.json").write_text(json.dumps({"base": pointed, "videos": ""}))
+    # The foreign installation's base sorts first: only the installation check skips it.
+    foreign = "0" * 64
+    for fingerprint, format_sha256 in ((pointed, old), (compatible, new), (foreign, new)):
+        directory = tmp_path / ".cache/gothic-ai/base" / fingerprint
+        directory.mkdir(parents=True)
+        archives = ["other"] if fingerprint == foreign else ["Data/Worlds.vdf"]
+        (directory / "base.json").write_text(json.dumps(
+            {"format_sha256": format_sha256, "archives": archives, "loose_files": []}))
+    game = tmp_path / "build/opengothic/Gothic2Notr"
+    game.parent.mkdir(parents=True)
+    if converter:
+        tool = game.parent / "content-convert"
+        tool.write_text(f"#!/bin/sh\necho '{json.dumps({'base': new, 'videos': '0' * 64})}'\n")
+        tool.chmod(0o755)
+    harness = ('set -euo pipefail\nfail() { echo "perf: $*" >&2; exit 2; }\n'
+               f'ROOT={shlex.quote(str(scripts.parent))}\nGAME_BIN={shlex.quote(str(game))}\n' + select + 'echo "selected=$OPENGOTHIC_BASE_FINGERPRINT"\n')
+    environment = {key: value for key, value in os.environ.items()
+                   if not key.startswith(("OPENGOTHIC_", "GOTHIC_"))}
+    environment.update(HOME=str(tmp_path), OPENGOTHIC_BASE_STORE="")
+    result = subprocess.run(["bash", "-c", harness], env=environment, capture_output=True, text=True)
+    if converter:
+        assert result.returncode == 0, result.stderr
+        assert f"selected={compatible}" in result.stdout
+    else:
+        assert result.returncode == 2
+        assert "missing" in result.stderr and "content-convert" in result.stderr
 
 
 def profile(directory, rows, gpu=False, extra_zone=False, geometry=False):
@@ -90,6 +132,75 @@ def test_perf_content_arguments_and_abba(monkeypatch, tmp_path):
     assert all(env["PERF_REPEAT"] == "1" and env["NO_BUILD"] == "1" and "/wrong" not in env["PERF_ENV"]
                for _, env in calls)
     assert reports == [(tmp_path, 1, 3)]
+
+
+def test_perf_content_base_follows_stand_engine_format(monkeypatch, tmp_path):
+    # game-base.json names a base of another importer format; the built stand's converter decides.
+    pointed, compatible, old, new = "a" * 64, "b" * 64, "1" * 64, "2" * 64
+    home, shared = tmp_path / "home", tmp_path / "shared"
+    for name in ("Gothic.ini", "SystemPack.ini"):
+        (home / "gothic-ai/game-settings/system").mkdir(parents=True, exist_ok=True)
+        (home / "gothic-ai/game-settings/system" / name).write_text("")
+    (home / "gothic-ai/game-base.json").write_text(json.dumps({"base": pointed, "videos": ""}))
+    # The base of the engine's format is only in the shared store.
+    for root, fingerprint, format_sha256 in ((home / ".cache/gothic-ai/base", pointed, old),
+                                             (shared / "base", compatible, new)):
+        (root / fingerprint).mkdir(parents=True)
+        (root / fingerprint / "base.json").write_text(json.dumps(
+            {"format_sha256": format_sha256, "archives": ["Data/Worlds.vdf"], "loose_files": []}))
+        (root / fingerprint / "world.bin").write_text(fingerprint)
+    tool = tmp_path / "content-convert"
+    tool.write_text(f"#!/bin/sh\necho '{json.dumps({'base': new, 'videos': '0' * 64})}'\n")
+    tool.chmod(0o755)
+    for key in [key for key in os.environ if key.startswith(("OPENGOTHIC_", "GOTHIC_"))]:
+        monkeypatch.delenv(key)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(content, "SHARED", shared)
+
+    def tree(root):
+        return sorted((path.relative_to(root).as_posix(), path.stat().st_mtime_ns) for path in root.rglob("*"))
+    before = tree(home / ".cache"), tree(shared)
+    task = tmp_path / "task"
+    assert content.prepare_base(task, tool) == compatible
+    assert (task / "base-cache" / compatible / "world.bin").read_text() == compatible
+    assert [path.name for path in (task / "base-cache").iterdir()] == [compatible]
+    assert (tree(home / ".cache"), tree(shared)) == before
+    # A caller's fingerprint wins over the pick.
+    monkeypatch.setenv("OPENGOTHIC_BASE_FINGERPRINT", pointed)
+    assert content.prepare_base(task, tool) == pointed
+    assert (task / "base-cache" / pointed / "world.bin").read_text() == pointed
+    monkeypatch.delenv("OPENGOTHIC_BASE_FINGERPRINT")
+    with pytest.raises(ValueError, match="content-convert"):
+        content.prepare_base(task, tmp_path / "missing/content-convert")
+    shutil.rmtree(shared / "base" / compatible)
+    with pytest.raises(ValueError, match="no ready base"):
+        content.prepare_base(tmp_path / "other-task", tool)
+
+
+def test_perf_content_runs_on_base_picked_after_build(monkeypatch, tmp_path):
+    base = "c" * 64
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        script = command[-1] if command[0] == "ssh" else ""
+        stdout = "/remote" if "$HOME" in script else base + "\n" if "__base" in script else ""
+        return subprocess.CompletedProcess(command, 0, stdout=stdout)
+    monkeypatch.setattr(content.subprocess, "run", run)
+    monkeypatch.setattr(content.subprocess, "check_output", lambda command, **kwargs: "")
+    monkeypatch.setattr(content, "ROOT", tmp_path / "repo")
+    for key in ("BENCH_HOST", "OPENGOTHIC_BASE_FINGERPRINT"):
+        monkeypatch.delenv(key, raising=False)
+    assert content.launch(content.parse_args(["none", "none", "harbour"])) == 0
+    build, pick, measure = (next(index for index, command in enumerate(calls) if marker(command))
+                            for marker in (lambda command: "__build" in command,
+                                           lambda command: command[0] == "ssh" and "__base" in command[-1],
+                                           lambda command: "__run" in command))
+    assert build < pick < measure
+    assert f"OPENGOTHIC_BASE_FINGERPRINT={base}" in calls[measure]
+    assert not any(value.startswith("OPENGOTHIC_BASE_FINGERPRINT=") for value in calls[build])
+    metadata, = (tmp_path / "repo/.bench").glob("*/metadata.json")
+    assert json.loads(metadata.read_text())["base"] == base
 
 
 @pytest.mark.parametrize("b_ms,verdict", [(10.1, "в шуме"), (10.5, "в пороге"),
@@ -184,6 +295,8 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
                                          "tex_dynamic_bytes", "tex_dynamic_n", "tex_other_bytes", "tex_other_n",
                                          "tex_full_bytes", "tex_tail_bytes", "tex_promoted", "tex_demoted",
                                          "tex_promotion_queue", "tex_near_tail_n", "tex_near_tail_seconds",
+                                         *(f"tex_level{level}_bytes" for level in range(6)),
+                                         "tex_shortfall_n", "tex_shortfall_seconds",
                                          "vob_near", "vob_far", "vob_outside", "vob_created", "vob_released", "vob_pending",
                                          "vob_publication_ms", "vob_near_missing", "vob_near_missing_seconds"])
         writer.writeheader()
@@ -206,6 +319,8 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
                           "tex_promoted": 10+frame, "tex_demoted": 5+frame,
                           "tex_promotion_queue": 2-frame, "tex_near_tail_n": frame,
                           "tex_near_tail_seconds": 40+frame*.125,
+                          **{f"tex_level{level}_bytes": (level+1)*1048576 for level in range(6)},
+                          "tex_shortfall_n": 3-frame, "tex_shortfall_seconds": 7+frame,
                           "vob_near": 100+frame, "vob_far": 700-frame, "vob_outside": 200,
                           "vob_created": frame, "vob_released": int(frame==2), "vob_pending": 2-frame,
                           "vob_publication_ms": frame*.25, "vob_near_missing": frame,
@@ -218,7 +333,7 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
             {"kind": "perf_segment", "segment": "streaming-flythrough/run", "residency_manager": True},
             {"kind": "route_end", "speed_cm_s": 500, "pass": True},
             {"kind": "streaming_end", "segment": "streaming-flythrough/run", "gpu_mb": 320.5,
-             "tex_promoted": 3, "tex_demoted": 2, "tex_near_tail_seconds": .25},
+             "tex_promoted": 3, "tex_demoted": 2, "tex_near_tail_seconds": .25, "tex_shortfall_seconds": .5},
             {"kind": "streaming_ready", "far_publication_ms": [], "far_max_per_frame": 0, "queue_max_ms": .001},
             {"kind": "perf_segment", "segment": "streaming-flythrough/fly", "residency_manager": True},
             {"kind": "route_end", "speed_cm_s": 2000, "pass": True},
@@ -253,6 +368,9 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
     assert textures["tail_end_bytes"] == 6*1048576
     assert (textures["promoted"], textures["demoted"], textures["promotion_queue_peak"],
             textures["near_tail_peak"], textures["near_tail_seconds"]) == (3, 2, 2, 2, .25)
+    assert (textures["level_end_bytes"], textures["shortfall_peak"], textures["shortfall_seconds"]) == (
+        [(level+1)*1048576 for level in range(6)], 3, .5)
+    assert "| run | 1.00 / 2.00 / 3.00 / 4.00 / 5.00 / 6.00 | 3 | 0.500000000 |" in report.report_markdown(report.build_report(streaming))
     combined = report.build_report(streaming)["places"]["streaming-flythrough"]["summary"]["streaming"]["textures"]
     assert (combined["promoted"], combined["demoted"], combined["near_tail_seconds"]) == (8, 6, 1)
     vobs = data["run"]["streaming"]["vobs"]
@@ -356,6 +474,31 @@ def test_gpu_completion_and_matching_cpu_duration(tmp_path):
     assert gpu["p95_ms"] == pytest.approx(3.85)
     assert gpu["longer_than_cpu_fraction"] == .5
     assert gpu["buffers_per_completed_frame"] == 1.5
+    summary = report.build_report(tmp_path)["places"]["market"]["summary"]
+    assert "gpu_passes" not in summary
+    assert "GPU pass" not in report.report_markdown(report.build_report(tmp_path))
+    # Without OPENGOTHIC_GPU_PASSES the profiler still writes the sidecar header.
+    (tmp_path / "frameprofile.csv.gpu.csv").write_text(
+        "attempt,cmd_id,segment,frame,encoder,type,labels,gpu_ns,vertex_ns,fragment_ns,draw_calls,dispatch_calls,valid\n")
+    result = report.build_report(tmp_path)
+    assert "gpu_passes" not in result["places"]["market"]["summary"]
+    assert "| GPU pass |" not in report.report_markdown(result)
+
+    # One row per marker region; a frame sums its label's valid rows, invalid rows are skipped.
+    with (tmp_path / "frameprofile.csv.gpu.csv").open("w", newline="") as stream:
+        writer = csv.writer(stream)
+        writer.writerow(["attempt", "cmd_id", "segment", "frame", "encoder", "type", "labels", "gpu_ns",
+                         "vertex_ns", "fragment_ns", "draw_calls", "dispatch_calls", "valid"])
+        for attempt, label, gpu_ns, valid in ((0, "GI-Trace", 2_000_000, 1), (0, "Sky", 250_000, 1),
+                                              (0, "Sky", 250_000, 1), (1, "GI-Trace", 4_000_000, 1),
+                                              (1, "Sky", 9_000_000, 0), (2, "GI-Trace", 6_000_000, 1)):
+            writer.writerow([attempt, 0, "perf-market/view-1", 0, 0, "compute", label, gpu_ns, 0, 0, 0, 1, valid])
+    result = report.build_report(tmp_path)
+    passes = result["places"]["market"]["summary"]["gpu_passes"]
+    assert list(passes) == ["GI-Trace", "Sky"]
+    assert passes["GI-Trace"] == {"frames": 3, "mean_ms": 4, "p95_ms": pytest.approx(5.8)}
+    assert passes["Sky"] == {"frames": 1, "mean_ms": .5, "p95_ms": .5}
+    assert "| GI-Trace | 3 | 4.000 | 5.800 |" in report.report_markdown(result)
 
 
 def test_compare_repeat_noise_sorted_regressions_and_leaf_inputs(tmp_path):

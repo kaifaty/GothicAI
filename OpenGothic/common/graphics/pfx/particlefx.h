@@ -2,13 +2,13 @@
 
 #include <Tempest/RenderState>
 
-#include <zenkit/addon/daedalus.hh>
-#include "game/definitions/definitiontypes.h"
+#include "records/definitions.h"
 
 #include <Tempest/Texture2d>
 
 #include "graphics/visualfx.h"
 #include "graphics/material.h"
+#include "graphics/pfx/pfxmotion.h"
 
 class PfxEmitterMesh;
 
@@ -115,6 +115,10 @@ class ParticleFx final {
     uint8_t       flipFrames = 0;
     float         flipFps    = 0.f;
     bool          flipSteady = false;  // ParticleContent::Flipbook::steady
+    // own motion and look (particles.d "curl", "drag", "stretch", "minPixels"; ParticleContent::Motion)
+    PfxMotion::Params motion;
+    float         stretchMs = 0.f;  // a velocity-oriented sprite grows by |v|*stretchMs along its path
+    float         minPixels = 0.f;  // a smaller sprite is drawn this size on screen, its alpha down by the area
 
     const Tempest::Texture2d* trlTexture = nullptr;
     float         trlFadeSpeed         = 0.f;
@@ -136,6 +140,10 @@ class ParticleFx final {
 
     bool          isDecal() const;
     bool          hasTrails() const;
+    // the weight of the TAA reactive mask (graphics plan 1v): 1 for particles; 0 for rain and snow, thousands of
+    // thin particles over the whole frame; a sprite or decal vob as a mesh of its material (Material::taaReactive)
+    float         taaReactive() const;
+    static bool   isPrecipitation(std::string_view name);
 
     uint64_t      maxLifetime() const;
     uint64_t      effectPrefferedTime() const;

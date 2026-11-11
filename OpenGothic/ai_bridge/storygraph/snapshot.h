@@ -1,6 +1,6 @@
 #pragma once
 
-#include <zenkit/DaedalusVm.hh>
+#include "daedalus/vm.h"
 
 #include <cstdint>
 #include <cstring>
@@ -10,13 +10,13 @@
 
 namespace storygraph {
 
-using zenkit::DaedalusDataType;
+using daedalus::DaedalusDataType;
 
 // Values of all script variables, to undo what checking a condition wrote (C_Beklauen stores the theft
 // values, conditions keep static locals): every dialog is checked against the state of the save.
 class Snapshot final {
   public:
-    explicit Snapshot(zenkit::DaedalusVm& vm) {
+    explicit Snapshot(daedalus::DaedalusVm& vm) {
       for(uint32_t i=0; i<vm.symbols().size(); ++i) {
         auto* s = vm.find_symbol_by_index(i);
         // the VM's own scratch for pushed strings is not a script variable, and it grows during a call:
@@ -90,15 +90,15 @@ class Snapshot final {
       }
 
   private:
-    static uint16_t count(const zenkit::DaedalusSymbol& s) {
+    static uint16_t count(const daedalus::DaedalusSymbol& s) {
       return s.type()==DaedalusDataType::INSTANCE ? 1 : uint16_t(s.count());
       }
 
-    std::vector<zenkit::DaedalusSymbol*>                    syms;
+    std::vector<daedalus::DaedalusSymbol*>                    syms;
     std::vector<int32_t>                                    ints;
     std::vector<float>                                      floats;
     std::vector<std::string>                                strs;
-    std::vector<std::shared_ptr<zenkit::DaedalusInstance>>  insts;
+    std::vector<std::shared_ptr<daedalus::DaedalusInstance>>  insts;
   };
 
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "bodypolicy.h"
+#include "bodyclock.h"
 
 #include <chrono>
 #include <functional>
@@ -41,5 +42,5 @@ class BodyEnginePolicy final {
     uint64_t hiddenResets=0;
     std::map<std::string,uint64_t> fallbacks;
     std::vector<double> stepTimes;
-    Clock::time_point reportAt=Clock::now();
+    BodyClock::time_point reportAt=BodyClock::now();
   };

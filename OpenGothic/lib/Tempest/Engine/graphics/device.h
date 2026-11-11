@@ -156,6 +156,21 @@ class Device {
     AccelerationStructure tlas(const std::vector<RtInstance>& geom);
     AccelerationStructure tlas(const RtInstance* geom, size_t geomSize);
 
+    // Top-level structure with its own memory for `capacity` instances (structure and scratch), built inside a frame
+    // by Encoder::buildTlas from instances packed by packRtInstances. Every build reuses that memory: a scene that
+    // outgrows it needs a new structure, while frames in flight still read the old one.
+    AccelerationStructure tlas(Uninitialized_t, size_t capacity);
+    // Bytes of one instance in the backend's layout (VkAccelerationStructureInstanceKHR on Vulkan,
+    // MTLAccelerationStructureUserIDInstanceDescriptor on Metal).
+    size_t                rtInstanceSize() const;
+    // An instance of `tlas` kept in a slot between its builds: writes `inst` into `slot`, rtInstanceSize() bytes in the
+    // backend's layout. `slot` holds zeros (an inactive instance) or what this call wrote there for `tlas` before.
+    // An instance without a BLAS or with an empty one is written inactive: the build keeps it, rays never meet it.
+    // On Metal an instance indexes its BLAS in the list of `tlas`, which its builds and the ray queries reading it use:
+    // a BLAS keeps one index while any slot holds it, so a change of one slot rewrites no other. On Vulkan an instance
+    // addresses its BLAS directly.
+    void                  packRtInstance(AccelerationStructure& tlas, const RtInstance& inst, void* slot);
+
     Pixmap                readPixels(const Texture2d&    t, uint32_t mip=0);
     Pixmap                readPixels(const Attachment&   t, uint32_t mip=0);
     Pixmap                readPixels(const StorageImage& t, uint32_t mip=0);

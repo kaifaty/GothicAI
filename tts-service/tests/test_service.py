@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
@@ -13,6 +14,7 @@ from websockets.asyncio.server import serve
 from websockets.exceptions import InvalidStatus
 
 from gothic_tts import service as service_module
+from gothic_tts.loudness import Leveler
 from gothic_tts.providers import TtsError, Voice, make_provider, parse_spec
 from gothic_tts.providers.fake import FakeProvider
 from gothic_tts.providers.inworld import InworldTTS
@@ -133,10 +135,23 @@ async def test_websocket_speak(service) -> None:
         start = json.loads(await ws.recv())
         assert start == {"type": "start", "id": "1", "sample_rate": 16000, "provider": "fake"}
         size = 0
-        while isinstance(msg := await ws.recv(), bytes):
-            size += len(msg)
-        done = json.loads(msg)
+        words = []
+        while True:
+            msg = await ws.recv()
+            if isinstance(msg, bytes):
+                size += len(msg)
+                continue
+            event = json.loads(msg)
+            if event["type"] == "audio":
+                assert all(word[1] >= size / 2 / 16000 for word in event["words"])
+                words.extend(event["words"])
+                size += len(base64.b64decode(event["data"]))
+                continue
+            done = event
+            break
         assert done["type"] == "done" and done["audio_s"] == pytest.approx(size / 2 / 16000)
+        assert [word[0] for word in words] == ["Драконы", "уже", "здесь."]
+        assert words[0][1] == 0 and words[-1][2] <= size / 2 / 16000
         assert fake.calls[0][1] == Voice("x", "", None)
 
         await ws.send(json.dumps({"type": "speak", "id": "2", "text": "  "}))
@@ -150,6 +165,52 @@ async def test_websocket_speak(service) -> None:
         while not isinstance(msg := await ws.recv(), str) or json.loads(msg)["type"] != "done":
             pass
         assert fake.calls[1][1] == Voice("x", "", None, "say angrily")
+
+
+@pytest.mark.parametrize("leveler", [False, True])
+async def test_async_words_arrive_before_done_even_after_the_last_audio(monkeypatch, leveler) -> None:
+    monkeypatch.setenv("INWORLD_API_KEY", "test-key")
+    recording = json.loads((Path(__file__).parent / "fixtures/inworld-word-timestamps.json").read_text())
+
+    def transport(_request):
+        return httpx.Response(200, content="\n".join(json.dumps(msg) for msg in recording))
+
+    provider = InworldTTS(voice="test-voice", transport=httpx.MockTransport(transport), keep_warm=0)
+    synth = Synthesizer(provider, leveler=Leveler() if leveler else None)
+    svc = TtsService(synth, port=0, original_voices_dir=None)
+    started = asyncio.Event()
+    task = asyncio.create_task(svc.serve_forever(started))
+    await started.wait()
+    events, words = [], []
+    size = 0
+    try:
+        async with connect(f"ws://127.0.0.1:{svc.port}") as ws:
+            await ws.send(json.dumps({
+                "type": "speak", "id": "1", "text": "Слушай внимательно, у нас мало времени.",
+            }))
+            assert json.loads(await ws.recv())["type"] == "start"
+            while True:
+                message = await ws.recv()
+                if isinstance(message, bytes):
+                    events.append("audio")
+                    size += len(message)
+                    continue
+                event = json.loads(message)
+                if event["type"] == "done":
+                    break
+                assert event["type"] == "audio" and event["data"] == ""
+                events.append("words")
+                words.extend(event["words"])
+        assert events[0] == "audio"
+        assert events.index("words") < max(i for i, kind in enumerate(events) if kind == "audio")
+        if not leveler:
+            assert events[-1] == "words"
+        assert [word[0] for word in words] == ["Слушай", "внимательно", "у", "нас", "мало", "времени"]
+        assert size / 2 / provider.rate == pytest.approx(2.49)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        await synth.aclose()
 
 
 async def test_original_voices_preserve_other_requests(service, tmp_path, caplog) -> None:

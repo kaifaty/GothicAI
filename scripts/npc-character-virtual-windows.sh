@@ -85,7 +85,7 @@ EOF
         mkdir -p "$run/run"
         printf '[GAME]\nnpc_character_virtual=%s\n' "$value" >"$run/run/Gothic.ini"
         if ! (cd "$run/run" && GOTHIC_AI=0 OPENGOTHIC_STUCK_LOG="$run/stuck.jsonl" \
-          python3 - "$limit" "$RUNNER" -g "$GOTHIC_DIR" -g2 -devmode --save "$SAVE" \
+          python3 - "$limit" "$RUNNER" -g "$GOTHIC_DIR" -devmode --save "$SAVE" \
           --scenario "$scenario" --output "$run" --mode lockstep <<'PY'
 import subprocess
 import sys

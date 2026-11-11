@@ -64,7 +64,7 @@ void itemHullCensus(World& world) {
   std::map<std::string,size_t> reasons;
   std::vector<float> ratios,pointsBefore,pointsAfter;
   std::string outliers="[",extraPadding="[";
-  world.script().getVm().enumerate_instances_by_class_name("C_ITEM",[&](zenkit::DaedalusSymbol& symbol) {
+  world.script().getVm().enumerate_instances_by_class_name("C_ITEM",[&](daedalus::DaedalusSymbol& symbol) {
     Item item(world,symbol.index(),Item::T_Inventory);++instances;
     std::string visual=item.handle().visual;
     for(auto& c:visual)c=char(std::toupper(static_cast<unsigned char>(c)));
@@ -433,6 +433,18 @@ void itemHullReport(ItemHulls& state,World& world) {
     ",\"unslept\":"+std::to_string(unslept)+",\"unslept_supported\":"+std::to_string(unsleptSupported)+
     ",\"hull_criteria_pass\":"+(pass?"true":"false")+",\"report_only\":"+(reportOnly?"true":"false")+
     ",\"pass\":"+(!enabled || reportOnly || pass?"true":"false"));
+  }
+
+bool itemHullsCommand(ItemHulls& state,const std::vector<std::string>& a,World& w,Npc& pl) {
+  const std::string& c = a[0];
+  if(c=="item-hulls" && a.size()==2 && a[1]=="census")itemHullCensus(w);
+  else if(c=="item-hulls" && a.size()==3 && a[1]=="setup")itemHullSetup(state,w,pl,a[2]);
+  else if(c=="item-hulls" && a.size()==2 && a[1]=="report")itemHullReport(state,w);
+  else if(c=="item-hulls" && a.size()==2 && a[1]=="clear") {
+    itemHullClear(state,w);pl.setPosition(state.itemHullHero);pl.updateTransform();
+    }
+  else return false;
+  return true;
   }
 
 }

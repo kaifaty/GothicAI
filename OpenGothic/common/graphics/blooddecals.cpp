@@ -223,14 +223,14 @@ BloodDecals::Look BloodDecals::look(const BloodStains::Stain& s, int64_t now) {
   return l;
   }
 
-bool BloodDecals::prepare(uint8_t /*fId*/, const World& world, const SceneGlobals& scene, const Vec3& camera) {
+bool BloodDecals::prepare(uint8_t /*fId*/, const World* world, const SceneGlobals& scene, const Vec3& camera) {
   data.clear();
   count = 0;
-  const auto& stains = world.bloodStains();
+  const auto& stains = world->bloodStains();
   if(stains.empty())
     return false;
 
-  const int64_t now   = world.time().toInt();
+  const int64_t now   = world->time().toInt();
   const float   range = BloodStains::DrawRangeCm;
   const float   inset = 0.5f/float(256*AtlasTiles);
 
