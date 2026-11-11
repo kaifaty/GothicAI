@@ -1,6 +1,6 @@
 """Put the hero's body (a root written by mpfb_write.py) into a content root that holds other content.
 
-    python3 scripts/content/hero_body/body_install.py <staged root> <content root> [--dry]
+    python3 scripts/content/hero_body/body_install.py <staged root> <content root> [--dry] [--models-only]
 
 mpfb_write.py writes a root of its own: models.json, materials.json and render-rigs.json list the body alone. A
 root the game runs has other models, animations and materials, so the three indexes are merged, the staged entry
@@ -11,6 +11,11 @@ winning, and the files they name are copied:
 - materials/: every folder the staged materials.json names, its entries into the target's.
 
 Nothing else of the target is touched. The lines printed are what changed; --dry prints them and writes nothing.
+
+The working content (`~/.local/share/gothic-ai/content`) takes --models-only: `building_set.py enable` replaces its
+materials/ with the working set's, so the body's materials go in as a part of that set (the staged root copied to
+content-staging/<part>, then compose and enable), and only models/ comes from here. A piece whose texture is
+missing is not drawn, so a set composed without that part undresses the hero.
 """
 from __future__ import annotations
 
@@ -25,9 +30,14 @@ def load(path: Path, empty: dict) -> dict:
 
 
 def main():
-    args = [a for a in sys.argv[1:] if a != "--dry"]
-    dry = "--dry" in sys.argv[1:]
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    dry, models_only = "--dry" in sys.argv[1:], "--models-only" in sys.argv[1:]
     staged, target = Path(args[0]), Path(args[1])
+    if models_only:                       # before anything is written: a body without its materials is not drawn
+        have = load(target / "materials" / "materials.json", {})
+        missing = sorted(set(load(staged / "materials" / "materials.json", {})) - set(have))
+        if missing:
+            sys.exit(f"the target lacks the body's materials ({', '.join(missing[:3])}...): enable a set with them first")
 
     def copy(src: Path, dst: Path):
         if not dry:
@@ -70,8 +80,9 @@ def main():
         write(target / "models" / "render-rigs.json", t, 1)
 
     # materials
-    s_mats = load(staged / "materials" / "materials.json", {})
+    s_mats = {} if models_only else load(staged / "materials" / "materials.json", {})
     t_mats = load(target / "materials" / "materials.json", {})
+
     folders = set()
     for tex, spec in s_mats.items():
         folders |= {str(Path(spec[k]).parent) for k in ("albedo", "normal", "orm") if spec.get(k)}
