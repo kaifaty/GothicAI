@@ -248,7 +248,7 @@ struct Population {
   std::chrono::steady_clock::time_point wallStart;
   double startupSeconds=0;
 } population;
-struct Settings {
+struct DemoSettings {
   bool cv=false,heroNear=true,killArmed=false,killFired=false;
   bool oracle=false,recordDemos=true;
   bool perceptionMonitor=false;
@@ -2101,7 +2101,7 @@ bool NavDemos::fullSimulation(const Npc& npc) {
   return TestBench::npcDuelActor(npc) || (legacy.active && legacy.target==&npc) ||
          (population.active && population.members.contains(&npc)) || forceCharacterVirtual(npc);
 }
-void NavDemos::reset() {legacy=Episode{};population=Population{};settings=Settings{};preparingLegacy=nullptr;}
+void NavDemos::reset() {legacy=Episode{};population=Population{};settings=DemoSettings{};preparingLegacy=nullptr;}
 void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player,const std::string& output) {
   if(args.size()>=2 && args[1]=="dump-package") {
     if(running() || NavBench::running())throw std::runtime_error("navsim package requires an idle stand");

@@ -1,4 +1,5 @@
 #include "clothvisual.h"
+#include "settings.h"
 #include "asset/modeltypes.h"
 
 #include <Tempest/Log>
@@ -13,7 +14,6 @@
 #include <unordered_map>
 
 #include "clothdata.h"
-#include "gothic.h"
 #include "graphics/mesh/submesh/packedmesh.h"
 #include "physics/cloth.h"
 #include "physics/clothgeometry.h"
@@ -374,11 +374,11 @@ struct ClothVisual::State {
             source[i] += (Vec3(p0.x,p0.y,p0.z)*(1.f-sample.alpha)+Vec3(p1.x,p1.y,p1.z)*sample.alpha)*sample.intensity;
             }
           }
-      const float cycle = Gothic::settingsGetF("ENGINE","zWindCycleTime")+
-                          Gothic::settingsGetF("ENGINE","zWindCycleTimeVar");
+      const float cycle = Settings::getF("ENGINE","zWindCycleTime")+
+                          Settings::getF("ENGINE","zWindCycleTimeVar");
       const auto period = std::isfinite(cycle) && cycle>0.f ? uint64_t(cycle*1000.f) : uint64_t(0);
       const auto wind = WorldWind::shaderMatrix(matrix,tick,period,
-                                                Gothic::settingsGetI("ENGINE","zWindEnabled")!=0,
+                                                Settings::getI("ENGINE","zWindEnabled")!=0,
                                                 mode,strength,world->physic()->cloth().windScale());
       auto inverse = matrix;
       inverse.inverse();

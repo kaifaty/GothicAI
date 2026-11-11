@@ -1,4 +1,5 @@
 #include "mdlvisual.h"
+#include "gameservices.h"
 #include "mdlvisual_internal.h"
 
 #include "graphics/mesh/skeleton.h"
@@ -11,7 +12,6 @@
 #include "world/world.h"
 #include "graphics/worldview.h"
 #include "objvisual.h"
-#include "gothic.h"
 
 #include <Tempest/Log>
 
@@ -765,7 +765,7 @@ void MdlVisual::stopEffect(int32_t slot) {
 void MdlVisual::setNpcEffect(World& owner, Npc& npc, std::string_view s, daedalus::NpcFlag flags) {
   if(hnpcVisualName!=s) {
     hnpcVisualName = s;
-    auto vfx = Gothic::inst().loadVisualFx(s);
+    auto vfx = GameServices::inst().loadVisualFx(s);
     if(vfx==nullptr) {
       hnpcVisual.view = Effect();
       return;

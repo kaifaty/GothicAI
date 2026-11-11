@@ -109,7 +109,7 @@ python3 scripts/engine_layers.py check --base origin/main # новые вклю�
 
 1. **Храповик.** Сделан 2026-11-11: шаг «Check engine layers» в `debt-ratchet.yml` запускает `engine_layers.py check` и предупреждает о каждом новом включении через границу. За первые сутки после переписи в `main` их пришло 5 (320 → 325): разнесённый код физики (`dynamicworld_fragments.cpp`, `dynamicworld_remnants.cpp`) и `texturedump.cpp`.
 2. **Записи определений без VM — сделано 2026-11-11.** Простые структуры `Def::*` находятся в `common/records/definitions.h`, VM-типы и копирование — в `common/game/definitions/`; ключи эффектов передаёт `VisualFxDefinitions`. Итог `engine_layers.py report --json` относительно `main` `4b1218941`: `per_layer.platform.vm_transitive` 122 → **45**, `violations` 325 → **315**.
-3. **Интерфейс настроек и служб** вместо `Gothic::inst()` в платформе: 47 → 36.
+3. **Интерфейс настроек и служб — сделано 2026-11-11.** `common/settings.*` хранит INI, умолчания, `Options`, `PhysicsFlags` и сигнал изменения; `Gothic` владеет объектом и обновляет его в прежние моменты. `common/gameservices.*` задаёт узкий виртуальный интерфейс, реализованный `Gothic`: мир, камера, пауза, определения PFX/VFX и звука, сигналы переключения рендера и внешний звук. Время кадра передаётся в миллисекундах, тики и `DynamicWorld` — напрямую; рендер не обращается к членам `World`. Убраны все 23 включения `gothic.h` из платформы и включение `sounddefinitions.h` из звука. Итог `engine_layers.py report --json`: `per_layer.platform.vm_transitive` **33**, `violations` **290**. Тонкие встроенные пересылки `Gothic::settings*`, `options()`, `physicsFlags()` и псевдонимы типов остаются для каркаса RPG, Готики, моста и тестов; их вызовы вне платформы не переписаны. В `gamescript.cpp` заменены только две подписки на перенесённый сигнал. Обе перегрузки `Resources::loadBaseProgram` дословно перенесены в `common/game/definitions/baseprogram.cpp` (слой Готики), API и метка `"Gothic::loadScript"` сохранены. Общие помощники путей доступны через `resources_internal.h`; `contentcensus` перенесён из импорта в платформу, потому что учитывает контент, открываемый `Resources` во время игры, и не зависит от импорта установки.
 4. **Вид на мир для рендера и физики** вместо `world.h` и `npc.h`: 36 → 25, дальше `sound.h`, `serialize.h`, `bullet.h`, `item.h` — до 3.
 5. **Страж.** Когда в платформе не останется включений VM, к ней подключается страж в CMake по образцу `ZenKitGuard`: цели платформы не включают `daedalus/` и `game/gamescript.h`.
 6. **Крючки стенда** через интерфейс.
@@ -118,6 +118,10 @@ python3 scripts/engine_layers.py check --base origin/main # новые вклю�
 9. **Репозитории.** Делить, когда пункт 8 проходит. Первым кандидатом становится импорт: он уже собирается отдельными библиотеками (`gothic-base-import`, `gothic-video-import`). Потом платформа уходит в библиотеку со своей версией формата.
 
 Пункты 2–4 и 6 — работа над движком, а не над видом, поэтому по правилам проекта их можно отдать исполнителю.
+
+## Проверка шага 3 — 2026-11-11
+
+Сохранённая команда сборок и четырёх контрактов на Ryzen и Mac, выбранные Python-тесты и проверка слоёв прошли с кодом 0. Перепись: VM платформы **33**, нарушений **290**, новых `::warning` — **0**. Ранее выполненный `archery-smoke` на Ryzen завершился с кодом **0**; архив — `/mnt/shared/gothic-ai/e2e/claude-platform-services/archery-smoke-archive-20261111`.
 
 ## Приёмка
 
