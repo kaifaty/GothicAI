@@ -315,7 +315,7 @@ void main(void) {
     const vec4 pos = worldPos(d);
     const vec3 view = normalize(scene.camPos - pos.xyz/pos.w);
     if(isHair)
-      luminance = hairBrdf(linear, decodeHairDir(normal, orm.b), view, scene.sunDir, orm.g, hairBacklit(dot(scene.sunDir,normal))) * illuminance; else
+      luminance = hairBrdf(linear, decodeHairDir(normal, orm.b), view, scene.sunDir, orm.g, hairBacklit(dot(scene.sunDir,normal))) * illuminance * hairShade(orm.r); else
       luminance = materialBrdf(linear, normal, view, scene.sunDir, orm.rgb) * illuminance;
     }
   if(isHair && (scene.viewFlags & VF_HAIR_DEBUG)!=0u)

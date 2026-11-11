@@ -147,6 +147,8 @@ StaticMesh::StaticMesh(const PackedMesh& mesh) {
   if(Resources::hasGraphicsDevice() && Shaders::options().doRtScene) {
     LoadProbe::Vobs::Scope probe("mesh_gpu");
     for(size_t i=0;i<mesh.subMeshes.size();++i) {
+      if(sub[i].material.strand)
+        continue; // ribbons have no width until the vertex shader: nothing for a ray to hit
       sub[i].blas = Resources::blas(vbo, ibo, sub[i].iboOffset, sub[i].iboLength);
       }
     }
@@ -208,6 +210,7 @@ void StaticMesh::initSubMeshes(const PackedMesh& mesh) {
     sub[i].texel     = mesh.subMeshes[i].texel;
     }
   bbox.assign(mesh.bbox());
+  strandWidth = mesh.strandWidth;
   }
 
 const Tempest::AccelerationStructure* StaticMesh::blas(size_t iboOffset, size_t iboLen) const {

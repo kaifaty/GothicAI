@@ -605,8 +605,20 @@ void Resources::indexCharacterHeads() {
         Log::e("characters: invalid face path for \"",key,"\": expected a relative .json path without '..'"); else
         face=(root/facePath).lexically_normal();
       }
+    // the strands of the head (scripts/content/npc/hair/groom_export.py): hair and beard drawn as ribbons
+    std::filesystem::path groom;
+    if(entry.value.HasMember("groom")) {
+      const auto& g=entry.value["groom"];
+      const std::string groomPath=g.IsString() ? std::string(g.GetString(),g.GetStringLength()) : std::string();
+      if(!g.IsString() || !contentPath(groomPath,"GROOM"))
+        Log::e("characters: invalid groom path for \"",key,"\": expected a relative .groom path without '..'"); else
+        groom=(root/groomPath).lexically_normal();
+      }
     for(auto& c:key)
       c=char(std::toupper(uint8_t(c)));
-    characterHeads[std::move(key)]={(root/path).lexically_normal(),std::move(face),nullptr,false};
+    auto& head=characterHeads[std::move(key)];
+    head.file=(root/path).lexically_normal();
+    head.face=std::move(face);
+    head.groom=std::move(groom);
     }
   }

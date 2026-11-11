@@ -120,15 +120,22 @@ bool projectCluster(const Cluster cluster, out vec4 aabb, out float depthMax) {
   // return projectInstance(cluster, aabb, depthMax);
   }
 
-bool emitCluster(const Cluster cluster, uint page) {
-  const uint at = atomicAdd(vsm.header.meshletCount, cluster.meshletCount);
-  if(at+cluster.meshletCount > VSM_MAX_MESHLETS)
+// the meshlets of a cluster that cast a shadow: of strands, the first part of the list
+int shadowMeshlets(const Cluster cluster) {
+  if(cluster.instanceId!=0xFFFFFFFF && (bucket[cluster.bucketId_commandId >> 16].flags & BK_STRAND)!=0u)
+    return strandShadowMeshlets(cluster.meshletCount, pullInstance(cluster.instanceId).fatness);
+  return cluster.meshletCount;
+  }
+
+bool emitCluster(const Cluster cluster, int meshletCount, uint page) {
+  const uint at = atomicAdd(vsm.header.meshletCount, meshletCount);
+  if(at+meshletCount > VSM_MAX_MESHLETS)
     return false;
-  for(int i=0; i<cluster.meshletCount; ++i)
+  for(int i=0; i<meshletCount; ++i)
     payload[at+i] = uvec4(cluster.instanceId, cluster.firstMeshlet+i, cluster.bucketId_commandId, page);
 
   const uint commandId = cluster.bucketId_commandId & 0xFFFF;
-  atomicAdd(cmd[commandId].instanceCount, cluster.meshletCount);
+  atomicAdd(cmd[commandId].instanceCount, meshletCount);
   return true;
   }
 
@@ -262,6 +269,8 @@ void runCluster(const uint clusterId, const uint mip) {
   aabb = aabb*0.5+0.5; // [0..1]
   aabb = aabb*VSM_PAGE_TBL_SIZE;
 
+  const int meshletCount = shadowMeshlets(cluster);
+
   ivec4 iaabb = ivec4(ivec2(aabb.xy), ivec2(aabb.zw)+1);
   iaabb.xy = max(iaabb.xy, ivec2(0));
   iaabb.zw = min(iaabb.zw, ivec2(VSM_PAGE_TBL_SIZE));
@@ -293,7 +302,7 @@ void runCluster(const uint clusterId, const uint mip) {
       continue;
 #endif
 
-    if(!emitCluster(cluster, i))
+    if(!emitCluster(cluster, meshletCount, i))
       break;
     }
   }
@@ -316,6 +325,7 @@ void runClusterOmni(const uint clusterId) {
   if(cluster.sphere.w<=0.f)
     return; // disabled or deleted
 
+  const int meshletCount = shadowMeshlets(cluster);
   for(uint ix=0; ix<pageListSize; ++ix) {
     const uint  i    = pageList[ix];
     const uint  data = vsm.pageList[i];
@@ -337,7 +347,7 @@ void runClusterOmni(const uint clusterId) {
 
     // imageAtomicAdd(dbg, ivec2(0,1), cluster.meshletCount);
     // imageAtomicAdd(dbg, ivec2(page.x%64,1+page.x/64), cluster.meshletCount);
-    if(!emitCluster(cluster, i))
+    if(!emitCluster(cluster, meshletCount, i))
       break;
     }
   }

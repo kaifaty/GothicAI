@@ -128,6 +128,65 @@ vec3 morphOffsetPrev(uint bucketId, uint animPtr, uint vertexIndex) {
   }
 #endif
 
+#if (MESH_TYPE==T_OBJ)
+// Strands as ribbons (graphics/mesh/groommesh.cpp, reports/content/2026-11-npc-hair/strands.md). A point of a strand
+// comes as two vertices at one place; here they are moved apart across the strand, at a right angle to the way to
+// the eye of this view, so the ribbon always faces it. A hair is thinner than a pixel: the ribbon is drawn a pixel
+// wide and takes the hair's share of it as its cover, which the hashed alpha test of main.frag cuts and TAA
+// averages. The varyings of such a vertex are its own:
+//   uv.x    -1 and 1 at the edges of the ribbon: the strand's direction on the screen is where it does not change
+//   uv.y    the strand's tint, 0..255, plus 0.98 of the cover
+//   normal  the normal of the hair's surface, as long as 0.5 + half of the light that reaches the point
+struct StrandVertex {
+  float halfWidth; // cm, as it is drawn at this level of detail; 0: not a strand
+  float wider;     // how much wider than the hair of the file that is: the level draws 1/wider of the list
+  float side;
+  float id;        // the strand's random number, 0..1
+  float tint;
+  vec3  tangent;
+  };
+StrandVertex strandVx;
+
+const float StrandShadowShare = 0.10; // cm: a strand of this width always casts a shadow, a thinner one as often as it is thinner
+const float StrandShadowWidth = 0.20; // cm: the ribbon it casts the shadow with. Twice the share: the holes between the few close
+
+vec3 strandOctNormal(vec2 e) {
+  e = e*2.0 - 1.0;
+  vec3 n = vec3(e, 1.0 - abs(e.x) - abs(e.y));
+  if(n.z<0.0)
+    n.xy = (1.0 - abs(n.yx)) * vec2(n.x>=0.0 ? 1.0 : -1.0, n.y>=0.0 ? 1.0 : -1.0);
+  return normalize(n);
+  }
+
+// toEye: from the point to the eye of the view, a unit vector. width: what is drawn, cover: the hair's share of it
+void strandRibbon(inout Varyings shOut, inout vec3 pos, vec3 toEye, float width, float cover) {
+  vec3  s = cross(strandVx.tangent, toEye);
+  float l = length(s);
+  if(l>1e-4)
+    pos += s*(strandVx.side*0.5*width/l);
+#if defined(MAT_UV)
+  shOut.uv  = vec2(strandVx.side, strandVx.tint + 0.98*cover);
+#endif
+#if defined(MAT_POSITION)
+  shOut.pos = pos;
+#endif
+  }
+
+// A shadow view draws the first part of the list of strands (strandShadowMeshlets, scene.glsl): a strand of it
+// stands for the hairs that part leaves out and is as wide as all of them. A hair is far thinner than a texel, so
+// a strand of StrandShadowShare casts a ribbon of StrandShadowWidth; a thinner one does it as often as it is
+// thinner (by its random number), a wider one with a ribbon that much wider: the cover of the shadow does not
+// depend on how much of the list is drawn. false: this vertex takes no part
+bool strandShadowRibbon(inout Varyings shOut, inout vec3 pos, vec3 toEye) {
+  const float part  = min(1.0/strandVx.wider, StrandShadowList);
+  const float width = 2.0*strandVx.halfWidth/(strandVx.wider*part);
+  if(strandVx.id*StrandShadowShare>width)
+    return false;
+  strandRibbon(shOut, pos, toEye, StrandShadowWidth*max(1.0, width/StrandShadowShare), 1.0);
+  return true;
+  }
+#endif
+
 #if (MESH_TYPE==T_PFX)
 void rotate(out vec3 rx, out vec3 ry, float a, in vec3 x, in vec3 y){
   const float c = cos(a);
@@ -219,6 +278,11 @@ vec3 processVertexCommon(out Varyings shOut, in Vertex v, uint bucketId, uint in
   }
 #elif (MESH_TYPE==T_OBJ || MESH_TYPE==T_MORPH)
   vec3 dpos = normal*obj.fatness;
+#if (MESH_TYPE==T_OBJ)
+  // strands have no fatness: their slot says how much wider a strand is drawn (the levels of detail, below)
+  if((bucket[bucketId].flags & BK_STRAND)!=0u)
+    dpos = vec3(0);
+#endif
   vec3 pos  = obj.mat*vec4(v.pos,1.0) + dpos;
 #else
   vec3 pos  = v.pos;
@@ -238,6 +302,27 @@ vec3 processVertexCommon(out Varyings shOut, in Vertex v, uint bucketId, uint in
 
 #if defined(MAT_COLOR)
   shOut.color = unpackUnorm4x8(v.color);
+#endif
+
+#if (MESH_TYPE==T_OBJ)
+  strandVx.halfWidth = 0.0;
+  strandVx.wider     = 1.0;
+  if((bucket[bucketId].flags & BK_STRAND)!=0u) {
+    // the vertex's normal is the strand's direction; its colour holds the surface normal, the light and the tint
+    const vec4  c     = unpackUnorm4x8(v.color);
+    const float scale = length(normal);
+    // a level of detail draws the first part of the list of strands, each wider for the ones left out
+    // (VisualObjects::preFrameUpdateStrands): the instance's fatness slot holds how much
+    strandVx.wider     = max(obj.fatness, 1.0);
+    strandVx.halfWidth = abs(v.uv.x)*scale*strandVx.wider;
+    strandVx.side      = v.uv.x<0.0 ? -1.0 : 1.0;
+    strandVx.id        = v.uv.y;
+    strandVx.tint      = floor(c.w*255.0 + 0.5);
+    strandVx.tangent   = normal/max(scale,1e-6);
+#if defined(MAT_NORMAL)
+    shOut.normal = normalize(obj.mat*vec4(strandOctNormal(c.xy),0.0))*(0.5 + 0.5*c.z);
+#endif
+    }
 #endif
 
 #if defined(MAT_MOTION) && defined(LVL_OBJECT)
@@ -286,6 +371,24 @@ vec3 processVertexCommon(out Varyings shOut, in Vertex v, uint bucketId, uint in
 
 vec4 processVertex(out Varyings shOut, in Vertex v, uint bucketId, uint instanceId, uint vboOffset) {
   vec3 pos  = processVertexCommon(shOut, v, bucketId, instanceId, vboOffset);
+#if (MESH_TYPE==T_OBJ)
+  if(strandVx.halfWidth>0.0) {
+    if((scene.viewFlags & VF_SHADOW)!=0u) {
+      if(!strandShadowRibbon(shOut, pos, scene.sunDir))
+        return vec4(uintBitsToFloat(0x7fc00000));
+      }
+    else if((scene.viewFlags & VF_HIZ)!=0u) {
+      return vec4(uintBitsToFloat(0x7fc00000)); // a hair hides nothing: never an occluder
+      }
+    else {
+      // a pixel at the point's depth, in the world's units
+      const float depth = (scene.viewProject*vec4(pos,1.0)).w;
+      const float pixel = 2.0*depth/(abs(scene.project[1][1])*float(scene.screenRes.y));
+      const float width = 2.0*strandVx.halfWidth;
+      strandRibbon(shOut, pos, normalize(scene.camPos-pos), max(width,pixel), clamp(width/max(pixel,1e-6),0.0,1.0));
+      }
+    }
+#endif
   vec4 clip = scene.viewProject*vec4(pos,1.0);
 #if defined(MAT_MOTION)
   // the residual is divided per fragment (main.frag): both are linear in the world position

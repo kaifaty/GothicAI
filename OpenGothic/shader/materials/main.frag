@@ -275,6 +275,25 @@ vec4 antitileDiffuse(inout MaterialSampling maps, uint tId) {
   }
 #endif
 
+#if defined(MAT_UV) && (MESH_TYPE!=T_PFX)
+// A strand's ribbon (strandRibbon, vertex_process.glsl): its colour is looked up in the hair's ramp by the strand's
+// tint, its alpha is the hair's share of the ribbon's width
+vec4 strandTexel() {
+  const float tint  = floor(shInp.uv.y);
+  const float cover = clamp((shInp.uv.y - tint)/0.98, 0.0, 1.0);
+#if defined(DEPTH_ONLY)
+  return vec4(0,0,0,cover);
+#else
+#if defined(BINDLESS)
+  nonuniformEXT uint tId = bucketId;
+#else
+  const         uint tId = 0;
+#endif
+  return vec4(textureLod(sampler2D(textureMain[tId], samplerMain), vec2((tint+0.5)/256.0, 0.5), 0.0).rgb, cover);
+#endif
+  }
+#endif
+
 #if defined(MAT_UV)
 #if defined(ANTITILE_MATERIAL)
 vec4 diffuseTex(out MaterialSampling maps) {
@@ -494,12 +513,21 @@ void mainGBuffer(vec4 t) {
     const vec3 n  = normalize(shInp.normal);
     const vec3 py = cross(dpdy, n);
     const vec3 px = cross(n, dpdx);
-    const vec3 nq = decodeNormal(outNormal);
     vec3 dir = py*duvdx.y + px*duvdy.y;
     // the cotangent frame turns over where the vertex normal looks away from the face the eye sees: a card that
     // stands off the hair's surface near its horizon
     if(dot(n, cross(dpdx, dpdy))<0.0)
       dir = -dir;
+    if((bucket[bucketId].flags & BK_STRAND)!=0) {
+      // A strand's ribbon. Its direction is the one along which uv.x, -1..1 across the ribbon, stays the same;
+      // the ribbon turns the same way to every eye, so the sign holds. The normal carries the baked light in
+      // its length (strandRibbon); the strand's number for the highlight comes from its tint
+      dir          = dpdy*duvdx.x - dpdx*duvdy.x;
+      outNormal    = encodeNormal(n);
+      outOrm.r     = clamp(length(shInp.normal)*2.0 - 1.0, 0.0, 1.0);
+      outOrm.g     = fract(floor(shInp.uv.y)*0.61803399);
+      }
+    const vec3 nq = decodeNormal(outNormal);
     dir -= nq*dot(nq, dir);
     if(dot(dir,dir)>1e-20) {
       outOrm.b     = encodeHairAngle(nq, dir);
@@ -823,6 +851,10 @@ void main() {
 #else
   vec4 t = diffuseTex();
 #endif
+#  if (MESH_TYPE!=T_PFX)
+  if((bucket[bucketId].flags & BK_STRAND)!=0u)
+    t = strandTexel();
+#  endif
 #  if defined(ATEST) && !(defined(GBUFFER) && defined(MATERIAL_MAPS))
   if(t.a<alphaThreshold())
     discard;

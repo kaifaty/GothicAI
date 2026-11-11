@@ -60,15 +60,17 @@ static std::vector<Tempest::Vec3> hullVerticesOf(const PackedMesh& pm) {
   return vertices;
   }
 
-ProtoMesh::ProtoMesh(PackedMesh&& pm, std::string_view fname)
+ProtoMesh::ProtoMesh(PackedMesh&& pm, std::string_view fname, bool collision)
   :fname(fname) {
   LoadProbe::Vobs::Scope probe("mesh_proto_cpu");
   attach.emplace_back(pm);
   submeshId.resize(attach[0].sub.size());
-  points = pointsOf(pm);
   auto&  att   = attach[0];
-  att.hullVertices = hullVerticesOf(pm);
-  att.shape.reset(PhysicMeshShape::load(std::move(pm)));
+  if(collision) {
+    points = pointsOf(pm);
+    att.hullVertices = hullVerticesOf(pm);
+    att.shape.reset(PhysicMeshShape::load(std::move(pm)));
+    }
 
   size_t count = 0;
   for(size_t r=0;r<att.sub.size();++r) {

@@ -128,8 +128,16 @@ vec4 mapViewport(vec4 pos, out float clipDistance[4]) {
   }
 
 vec4 processVertexVsm(out Varyings var, const Vertex vert, const uint bucketId, uint instanceId, const uint vboOffset, const uint laneID) {
-  const vec3 wpos = processVertexCommon(var, vert, bucketId, instanceId, vboOffset);
+  vec3       wpos = processVertexCommon(var, vert, bucketId, instanceId, vboOffset);
   const uint data = vsm.pageList[shadowPageId];
+#if (MESH_TYPE==T_OBJ)
+  if(strandVx.halfWidth>0.0) {
+    // a ribbon faces the light of its page
+    const vec3 toLight = vsmPageIsOmni(data) ? normalize(lights[unpackLightId(data).x].pos - wpos) : scene.sunDir;
+    if(!strandShadowRibbon(var, wpos, toLight))
+      wpos = vec3(uintBitsToFloat(0x7fc00000));
+    }
+#endif
 
   vec4  pos4;
   float fixture = 1.0;

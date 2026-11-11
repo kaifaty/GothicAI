@@ -5,6 +5,7 @@
 #include "asset/material.h"
 
 #include <Tempest/Vec>
+#include <filesystem>
 #include <span>
 #include <utility>
 
@@ -56,6 +57,7 @@ class PackedMesh {
 
     std::vector<uint32_t> verticesId; // only for morph meshes
     bool                  isUsingAlphaTest = true;
+    float                 strandWidth      = 0;    // strands (groommesh.cpp): the mean width of a hair, cm; 0: not strands
 
     PackedMesh(const asset::StaticMesh& mesh, PkgType type, bool explicitAlphaTest = false);
     PackedMesh(const asset::WorldMesh& mesh, PkgType type);
@@ -67,6 +69,9 @@ class PackedMesh {
                std::span<const uint32_t> materialMap = {},
                std::span<const uint32_t> vertexIds = {}, std::span<const uint32_t> featureIds = {});
     PackedMesh(const asset::SoftSkinMesh& mesh);
+    // Strands of a head as ribbons (graphics/mesh/groommesh.cpp): the file of groom_export.py; share<1 keeps that
+    // share of the strands, wider. Throws std::runtime_error on a broken file.
+    PackedMesh(const std::filesystem::path& groom, float share);
 
     static std::vector<uint32_t> landscapeMaterialMap(const asset::WorldMesh& mesh);
     // Bounds of the vertices the landscape polygons use, as bbox() of PK_VisualLnd

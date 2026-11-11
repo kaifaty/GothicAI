@@ -230,6 +230,14 @@ void Resources::indexMaterialMaps() {
       else
         maps.hair = hair->value.GetBool();
       }
+    // Strands as ribbons (graphics/mesh/groommesh.cpp): `albedo` is the colour ramp of the hair, looked up by a
+    // strand's tint; lit by the hair BRDF as cards are.
+    if(const auto strand = entry.value.FindMember("strand"); strand!=entry.value.MemberEnd()) {
+      if(!strand->value.IsBool())
+        valid = false;
+      else
+        maps.strand = strand->value.GetBool();
+      }
     if(const auto scale = entry.value.FindMember("scale"); scale!=entry.value.MemberEnd()) {
       if(!scale->value.IsNumber()) {
         valid = false;
@@ -1193,6 +1201,7 @@ Resources::MaterialMaps Resources::loadMaterialMaps(std::string_view name) {
   ret.emissive = files.emissive;
   ret.antitile = files.antitile;
   ret.hair = files.hair;
+  ret.strand = files.strand;
   ret.present = true;
   ret.hasAlbedo = !files.albedo.empty();
   return ret;

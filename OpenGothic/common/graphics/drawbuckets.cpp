@@ -288,6 +288,9 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
     // Hair cards: the G-buffer takes the strand's direction and the hair bit, the light passes the hair BRDF
     if(i.mat.hair && (bx.flags & BK_MATERIAL_MAPS)!=0)
       bx.flags |= BK_HAIR;
+    // Strands: the vertex shader makes ribbons of them (graphics/mesh/groommesh.cpp)
+    if(i.mat.strand)
+      bx.flags |= BK_STRAND;
     if(i.mat.alpha==Material::Water)
       bx.flags |= BK_WATER;
     bucket.push_back(bx);

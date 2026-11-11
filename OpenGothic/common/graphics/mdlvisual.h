@@ -377,6 +377,7 @@ class MdlVisual final {
     bool                           bodyDetached = false;
 
     MeshAttach                     head, sword, bow, shield;
+    MeshAttach                     groom;                 // strands of an own head (characters.json "groom"), on the head's bone
     LipSync                        mouth;
     TalkGestures                   gestures;
     const Animation::Sequence*     gestureSeq = nullptr;  // the gesture started last

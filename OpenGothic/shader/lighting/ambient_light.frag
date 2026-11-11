@@ -102,7 +102,7 @@ void main() {
   if(orm.a>0.5 && isGBufHair(diff4.a)) {
     // Hair cards: the ORM channels are the hair's own (no metal, no map AO); the sky and the ambient light it as a
     // matte surface of the hair's colour, the highlights belong to the sun and the lamps
-    color = linear * (scene.ambient + skyIrradiance(norm)*0.8 + (norm.y*0.25+0.75) * NightAmbient * Fd_Lambert);
+    color = linear * (scene.ambient + skyIrradiance(norm)*0.8 + (norm.y*0.25+0.75) * NightAmbient * Fd_Lambert) * hairShade(orm.r);
     } else
   if(orm.a>0.5) {
     // Map AO occludes only diffuse sky light. Screen-space visibility below

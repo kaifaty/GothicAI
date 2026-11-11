@@ -3,7 +3,7 @@
 # carried over to brows, lashes, teeth and tongue. Not the hero: the probe's average face, MPFB skin.
 #   BLENDER_USER_RESOURCES=~/.local/share/gothic-ai/mpfb/blender \
 #     blender -b ~/.local/share/gothic-ai/mpfb/work/probe.blend -P export_test_head.py -- <content root>
-# Writes <root>/characters/hero/test-head.glb, <root>/characters/characters.json (PC_HERO) and the albedo
+# Writes <root>/characters/hero/test-head.glb, test-head.frame.json, <root>/characters/characters.json (PC_HERO) and the albedo
 # materials (<root>/materials/materials.json, test-head/*.dds packed by scripts/hd/texpack.cpp).
 # With --hero the same probe becomes the hero's head (README, "Моргание и глаза"): the registered shape of
 # fit/reg (reg.npz over mpfb.npz), the rebuilt blink (blink.npz, closed frame) as eyeBlinkLeft/Right, the eyeballs
@@ -11,6 +11,8 @@
 #     ... -P export_test_head.py -- <content root> --hero <round dir> <reg work dir> <eye texture png>
 # --skin <png> and --brows <png> replace MPFB's skin and brow maps (skin/project.py; a transparent brow map hides
 # the brow cards when the brows are painted on the skin).
+# --skin-normal <png> and --skin-orm <png> are the skin's normal and roughness maps (scripts/content/npc/
+# skin_material.py): they go into the skin material's `normal` and `orm` slots.
 # --hair <npz> <png> and --beard <npz> <png> add the parts cut from the generator's model (skin/hair_cut.py,
 # skin/beard_shell.py; metres, the frame of the registered head). The hair is rigid; the beard is bound to the skin
 # and follows every face shape; its map is cut by alpha. A hair part with normals in its npz is hair cards
@@ -19,7 +21,7 @@
 # `hair: true`, so the engine lights the cards with its hair BRDF.
 import bpy, bmesh, os, sys, json, struct, subprocess, shutil
 import numpy as np
-from mathutils import Matrix
+from mathutils import Matrix, Vector
 from bl_ext.user_default.mpfb.services import FaceService
 
 ARGS = sys.argv[sys.argv.index('--')+1:]
@@ -168,13 +170,31 @@ def to_export(c):
     fwd = (nose-c[:, 1])*100*S + g_max[2]
     across = c[:, 0]*100*S + (g_min[1]+g_max[1])/2
     return np.stack([-up, -fwd, across], 1)/100
-cut_z = top + (g_min[0]-(g_max[0]-1.0))/(100*S)  # the neck seam of the original
+# Where the head ends. The original head has no neck: its underside rises from the chin to the nape, and the body's
+# neck goes up into it. Ours is cut by the plane of that underside, up = CUT_A + CUT_B*forward (cm): a line through
+# the low corners of the original's side view (its lower convex hull, within 5 cm of the lowest point). What hangs
+# behind our skull (a tail of the original) is not its underside. A level cut at the chin leaves a collar of our
+# neck round the body's.
+_e = to_export(nw[head]); _lo = -100*_e[:, 1].max()+1.5                     # forward of the back of our skull, cm
+_q = G[G[:, 2] > _lo][:, [2, 0]]; _q = _q[np.lexsort((_q[:, 1], _q[:, 0]))]; _h = []
+for _p in _q:                                                               # the lower hull, left to right
+    while len(_h) > 1 and (_h[-1][0]-_h[-2][0])*(_p[1]-_h[-2][1]) - (_h[-1][1]-_h[-2][1])*(_p[0]-_h[-2][0]) <= 0:
+        _h.pop()
+    _h.append(_p)
+_pt = np.array(_h); _pt = _pt[_pt[:, 1] < g_min[0]+5.0]
+CUT_B, CUT_A = np.polyfit(_pt[:, 0], _pt[:, 1], 1)
+print('CUT up = %.2f %+.3f*forward cm (%d points of the original)' % (CUT_A, CUT_B, len(_pt)))
+_ex = to_export(nw); over_cut = -100*_ex[:, 0]-(CUT_A+CUT_B*(-100*_ex[:, 1]))  # cm over the cut, every vertex of the human
+# the same plane in the human's frame: z + CUT_B*y >= CUT_C
+CUT_C = top + CUT_B*nose + (CUT_A + CUT_B*g_max[2] - (g_max[0]-1.0))/(100*S)
 
 bpy.ops.object.select_all(action='DESELECT')
 parts = []
 
-def make_part(src, name, keep, shapes):
-    """Copy of src with only the vertices in `keep`, Basis = neutral and one key per face shape, export axes."""
+def make_part(src, name, keep, shapes, cut=False):
+    """Copy of src with only the vertices in `keep`, Basis = neutral and one key per face shape, export axes.
+    cut: the part is cut by the plane of the head's underside (CUT_A, CUT_B) and ends there in a straight rim;
+    `keep` then leaves a margin under the plane. Dropping whole triangles instead leaves a saw-toothed rim."""
     ob = src.copy(); ob.data = src.data.copy(); ob.name = ob.data.name = name
     bpy.context.scene.collection.objects.link(ob)
     ob.parent = None
@@ -199,6 +219,9 @@ def make_part(src, name, keep, shapes):
     bm = bmesh.new(); bm.from_mesh(ob.data); bm.verts.ensure_lookup_table()
     drop = [v for v in bm.verts if not keep(v.index)]
     bmesh.ops.delete(bm, geom=drop, context='VERTS')
+    if cut:                                                            # export axes: x = -up/100, y = -forward/100; the face shapes are cut with the mesh
+        bmesh.ops.bisect_plane(bm, geom=bm.verts[:]+bm.edges[:]+bm.faces[:], dist=1e-6, plane_co=(-CUT_A/100, 0, 0),
+                               plane_no=Vector((1, -CUT_B, 0)).normalized(), clear_outer=True)
     bm.to_mesh(ob.data); bm.free()
     for p in ob.data.polygons:
         p.use_smooth = True
@@ -241,7 +264,7 @@ for part in ('hair', 'beard'):
 if 'beard' in EXTRA:
     rebind_to_skin(EXTRA['beard'][0], world(human, neutral), world(human, neutral))
 nzc = nw[:, 2]
-make_part(human, 'face', lambda i: body[i] and nzc[i] >= cut_z, FACE)
+make_part(human, 'face', lambda i: body[i] and over_cut[i] >= -3.0, FACE, cut=True)
 proxy = {o.name.split('.', 1)[1]: o for o in bpy.data.objects if o.parent == human and o.type == 'MESH'}
 make_part(proxy['eyebrow006'], 'brows', lambda i: True, FACE)
 make_part(proxy['eyelashes01'], 'lashes', lambda i: True, FACE)
@@ -319,6 +342,12 @@ shutil.copyfile(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'test-h
                 os.path.join(ROOT, 'characters', 'hero', NAME+'.face.json'))
 json.dump({'PC_HERO': {'head': 'hero/%s.glb' % NAME, 'face': 'hero/%s.face.json' % NAME}},
           open(os.path.join(ROOT, 'characters', 'characters.json'), 'w'), indent=2)
+# the map of to_export as a matrix, for parts that are not meshes (strands, scripts/content/npc/hair/groom_export.py):
+# the human's frame (metres) -> the head's frame in the engine (cm: up, across, forward), engine = M[:, :3] @ p + M[:, 3]
+_m = np.array(human.matrix_world); _p = np.vstack([np.zeros(3), np.eye(3)])
+_e = to_export(_p @ _m[:3, :3].T + _m[:3, 3]); _g = np.stack([-100*_e[:, 0], 100*_e[:, 2], -100*_e[:, 1]], 1)
+json.dump({'matrix': np.column_stack([(_g[1:]-_g[0]).T, _g[0]]).tolist(), 'cut': [0.0, float(CUT_B), 1.0, float(CUT_C)]},   # the head is the human where x*c0 + y*c1 + z*c2 >= c3
+          open(os.path.join(ROOT, 'characters', 'hero', NAME+'.frame.json'), 'w'))
 
 # albedo maps: MPFB PNGs packed as the game's own (DXT1/DXT5 with mips)
 png = os.path.join(ROOT, 'materials', NAME+'-png'); dds = os.path.join(ROOT, 'materials', NAME)
@@ -328,12 +357,18 @@ for key, src in TEX.items():
 HAIR_MAP = os.path.abspath(os.path.expanduser(ARGS[ARGS.index('--hair-map')+1])) if '--hair-map' in ARGS else None
 if HAIR_MAP:
     shutil.copyfile(HAIR_MAP, os.path.join(png, 'hair_map.png'))
+SKIN_MAPS = {slot: os.path.abspath(os.path.expanduser(ARGS[ARGS.index(flag)+1]))
+             for slot, flag in (('normal', '--skin-normal'), ('orm', '--skin-orm')) if flag in ARGS}
+for slot, src in SKIN_MAPS.items():
+    shutil.copyfile(src, os.path.join(png, 'skin_%s.png' % slot))
 subprocess.run([TEXPACK, png, dds], check=True)
 shutil.rmtree(png)
 mj = os.path.join(ROOT, 'materials', 'materials.json')
 table = json.load(open(mj)) if os.path.exists(mj) else {}
 for key in TEX:
     table['OWN_%s_%s.TGA' % (MATS, key)] = {'albedo': '%s/%s.dds' % (NAME, key.lower())}
+for slot in SKIN_MAPS:
+    table['OWN_%s_SKIN.TGA' % MATS][slot] = '%s/skin_%s.dds' % (NAME, slot)
 if HAIR_MAP and 'HAIR' in TEX:
     table['OWN_%s_HAIR.TGA' % MATS].update({'orm': '%s/hair_map.dds' % NAME, 'hair': True})
 json.dump(table, open(mj, 'w'), indent=2)

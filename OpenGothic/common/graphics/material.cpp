@@ -75,7 +75,8 @@ Material::Material(const asset::Material& m, bool enableAlphaTest, bool requireA
     antitileCell = maps.antitileCell;
     antitile = maps.antitile;
     emissive = maps.orm!=nullptr ? maps.emissive : 0.f;
-    hair = maps.hair;
+    hair = maps.hair || maps.strand;
+    strand = maps.strand;
     materialMaps = maps.present;
     }
   }
@@ -126,6 +127,7 @@ bool Material::operator ==(const Material& other) const {
          turbidityDepth==other.turbidityDepth &&
          emissive==other.emissive &&
          hair==other.hair &&
+         strand==other.strand &&
          envMapping==other.envMapping;
   }
 

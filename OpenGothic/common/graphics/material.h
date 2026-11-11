@@ -48,6 +48,7 @@ class Material final {
     float                     turbidityDepth   = 0;
     float                     emissive         = 0;  // own glow, 0..1 of EmissiveMeshPeak (materials.json)
     bool                      hair             = false; // hair cards (materials.json): BK_HAIR
+    bool                      strand           = false; // strands as ribbons (materials.json): BK_STRAND
     float                     envMapping       = 0;
 
     bool operator == (const Material& other) const;

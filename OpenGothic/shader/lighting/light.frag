@@ -629,7 +629,7 @@ void main() {
     const vec3 view = normalize(scene.camPos - surfacePos);
     const vec3 brdf = isHair ? hairBrdf(linear, decodeHairDir(normal, orm.b), view, -normalize(ldir), orm.g, hairBacklit(-dot(normalize(ldir),normal)))
                              : materialBrdf(linear, normal, view, -normalize(ldir), orm.rgb);
-    ret = brdf * (color * light) * max(1.0, scene.exposure) * 0.25;
+    ret = brdf * (color * light) * max(1.0, scene.exposure) * 0.25 * (isHair ? hairShade(orm.r) : 1.0);
     if(isHair && (scene.viewFlags & VF_HAIR_DEBUG)!=0u)
       ret = vec3(0);
     }

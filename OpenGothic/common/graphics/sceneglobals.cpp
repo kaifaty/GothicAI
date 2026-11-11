@@ -242,7 +242,7 @@ void SceneGlobals::commitUbo(uint8_t fId) {
       }
     if(i!=V_Main)
       ubo.motionVectors = 0;
-    ubo.viewFlags = (uboGlobalCpu.viewFlags & ~VF_HIZ) | (i==V_HiZ ? VF_HIZ : 0);
+    ubo.viewFlags = (uboGlobalCpu.viewFlags & ~VF_HIZ) | (i==V_HiZ ? VF_HIZ : 0) | (isShadowView(VisCamera(i)) ? VF_SHADOW : 0);
     std::memcpy(ubo.frustrum, frustrum[i].f, sizeof(ubo.frustrum));
     }
 

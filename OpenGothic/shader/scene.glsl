@@ -50,7 +50,7 @@ struct SceneDesc {
   float vsmLampNear;     // cm: a lamp's fixture this close to its light casts no shadow ([INTERNAL] vsmLampNearCm)
   uint  vsmLampSides;    // VSM lamps: a cube face keeps the far side (1), both of the world mesh (2), of objects too (3)
   uint  vsmStudy;        // bench `vsm study <bits>`: VSM_STUDY_* below (0 in the game)
-  uint  viewFlags;       // VF_* below: the occluder pass, TAA
+  uint  viewFlags;       // VF_* below: the occluder pass, TAA, shadow views
   };
 
 // bench `vsm study <bits>`: the shadow test on a mesh's facets (reports/render-features/2026-11-11-facet-shards)
@@ -103,6 +103,7 @@ struct Cluster {
 
 const uint VF_HIZ = 0x1; // the occluder pass (V_HiZ): it draws into the main view's depth ahead of the G-buffer
 const uint VF_TAA = 0x2; // TAA resolves the frame (also with MetalFX temporal)
+const uint VF_SHADOW = 0x8; // a shadow view: the sun's cascades and the virtual shadow map
 const uint VF_HAIR_DEBUG = 0x4; // hair pixels show the strand's direction as a colour instead of light (OPENGOTHIC_HAIR_DEBUG=1)
 
 const uint BK_SOLID = 0x1;
@@ -116,6 +117,16 @@ const uint BK_ANTITILE = 0x80;
 const uint BK_ANTITILE_ROTATE = 0x100;
 const uint BK_HASHED_ALPHA = 0x200; // our glTF MASK: the alpha test takes a threshold per pixel and TAA frame (main.frag)
 const uint BK_HAIR = 0x400; // hair cards: the strand's direction and the hair bit go into the G-buffer (main.frag)
+const uint BK_STRAND = 0x800; // strands: the vertex shader makes ribbons of them (strandRibbon, vertex_process.glsl)
+
+// Strands in a shadow view: the first part of the list casts the shadow for all of it (the meshlets are dealt out
+// evenly, groommesh.cpp), each strand as wide as that part is small (strandShadowRibbon, vertex_process.glsl).
+// count: the meshlets the main view draws now; wider: how much of the list that leaves out (Instance::fatness of
+// a strand object: the whole list is count*wider).
+const float StrandShadowList = 0.125;
+int strandShadowMeshlets(int count, float wider) {
+  return min(count, max(1, int(ceil(float(count)*max(wider,1.0)*StrandShadowList))));
+  }
 
 struct Bucket {
   vec4  bbox[2];
