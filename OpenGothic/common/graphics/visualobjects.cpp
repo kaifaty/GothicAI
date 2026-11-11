@@ -13,7 +13,6 @@
 #include "loadprobe.h"
 #include "physics/worldwind.h"
 #include "shaders.h"
-#include "world/chunkresidency.h"
 
 using namespace Tempest;
 
@@ -287,18 +286,6 @@ VisualObjects::VisualObjects(const SceneGlobals& scene, const std::pair<Vec3, Ve
     : scene(scene), drawCmd(*this, bucketsMem, clustersMem, scene) {
   objectsMorph.reserve(1024);
   textureCensus.enabled=std::getenv("OPENGOTHIC_TEXTURE_DUMP")!=nullptr;
-  }
-
-VisualObjects::~VisualObjects() {
-  std::lock_guard<std::recursive_mutex> guard(textureSync);
-  if(textureResidency) {
-    textureResidency->unsubscribe(textureSubscription);
-    textureResidency->unsubscribe(textureFocusSubscription);
-    textureResidency->unsubscribe(textureViewSubscription);
-    }
-  for(auto& object:objects)
-    if(!object.isEmpty())
-      setTextureDemand(object,false);
   }
 
 void VisualObjects::invalidate(const StaticMesh& mesh) {

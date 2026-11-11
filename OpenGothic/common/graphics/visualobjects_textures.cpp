@@ -163,6 +163,19 @@ double VisualObjects::textureDistance(const Object& object) const {
   return std::min(TextureScreenDemand::distance(textureView.hero,t),TextureScreenDemand::distance(textureView.camera,t));
   }
 
+// The draw instances' demand goes with them; the rest of the object is plain data.
+VisualObjects::~VisualObjects() {
+  std::lock_guard<std::recursive_mutex> guard(textureSync);
+  if(textureResidency) {
+    textureResidency->unsubscribe(textureSubscription);
+    textureResidency->unsubscribe(textureFocusSubscription);
+    textureResidency->unsubscribe(textureViewSubscription);
+    }
+  for(auto& object:objects)
+    if(!object.isEmpty())
+      setTextureDemand(object,false);
+  }
+
 void VisualObjects::setTextureResidency(ChunkResidency* residency) {
   FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand);
   std::lock_guard<std::recursive_mutex> guard(textureSync);
