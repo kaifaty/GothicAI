@@ -137,6 +137,8 @@ async def face_listen_demo(
         when=FACE_LISTEN_CUE,
         line=FACE_LISTEN_LINE,
     )
+    # Lobart's lines ask Vino to answer him: he listens and keeps quiet
+    off.silent("дано: Вино молча слушает Лобарта", who=npc, when="обращается к тебе")
     started: list[str] = []
     link.listeners.append(lambda msg: started.append(msg.line) if isinstance(msg, LineStarted) else None)
 
