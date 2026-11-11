@@ -997,8 +997,6 @@ void BodyController::fixturePrepare(Npc& actor,Npc& target,float distanceCm,floa
     throw std::invalid_argument("invalid or owned body fixture");
   actor.fghAlgo.onClearTarget(); actor.aiQueue.clear(); actor.aiQueueOverlay.clear();
   actor.waitTime=0; actor.aniWaitTime=0; actor.faiWaitTime=0; actor.outWaitTime=0;
-  // Fixture primitives must not inherit exhaustion from earlier fights.
-  MeleeStamina::reset(actor.meleeStamina,actor.staminaMax(),actor.world().tickCount());
   actor.clearGoTo(); actor.clearSpeed(); actor.setAnimRotate(0);
   target.setExternalControl(true);
   target.aiQueue.clear(); target.aiQueueOverlay.clear(); target.fghAlgo.onClearTarget();

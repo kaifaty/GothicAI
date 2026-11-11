@@ -293,6 +293,7 @@ void enginePolicy(Npc& actor,Npc& target,PlayerControl& player) {
   BodyClock::advance(std::chrono::milliseconds(20));
   uint64_t accepted=0;
   bool providerLost=false;
+  bool checkedBeforeDeadline=false;
   restored=false;
   for(unsigned i=0;i<100 && BodyController::owns(actor);++i) {
     BodyClock::advance(std::chrono::milliseconds(10));
@@ -308,10 +309,13 @@ void enginePolicy(Npc& actor,Npc& target,PlayerControl& player) {
       if(reason=="provider_lost" && std::string_view(event["release_reason"].GetString())=="watchdog_timeout") providerLost=true;
       if(reason=="native_restored" && std::string_view(event["release_reason"].GetString())=="watchdog_timeout") restored=true;
       }
-    if(20+10*(i+1)==490)
+    if(20+10*(i+1)==490) {
       expect(accepted>0 && BodyController::owns(actor) && !providerLost,
              "engine decisions run while the owner watchdog is still 10 ms before its deadline");
+      checkedBeforeDeadline=true;
+      }
     }
+  expect(checkedBeforeDeadline,"engine lease reaches the 490 ms watchdog check");
   expect(accepted,"engine accepts a decision before the owner watchdog expires");
   expect(providerLost && restored && !BodyController::owns(actor),"engine decisions cannot prevent watchdog_timeout and native restoration");
   uint64_t reported=0,resets=0,finals=0;
@@ -436,7 +440,7 @@ void realtimeSentObservation(Npc& actor,Npc& target,PlayerControl& player) {
   const auto nextSequence=BodyObservations::latestSequence(actor);
   expect(nextSequence>sequence,"next frame samples a newer observation");
   rejected(call(command(1)),"stale_observation","runner still rejects an older sampled observation");
-  expect(call(command(2),true)["accepted"].GetBool(),"realtime accepts the sent observation while a newer row is only sampled");
+  expect(call(command(2,250),true)["accepted"].GetBool(),"realtime accepts the sent observation while a newer row is only sampled");
   BodyObservations::drainJson();
   expect(call(command(3),true)["accepted"].GetBool(),"draining without a successful send does not stale the observation");
   auto mismatched=command(4);
@@ -1062,6 +1066,10 @@ class NpcLogicalStateContract final {
     }
 
   public:
+    static void restoreStamina(Npc& actor) {
+      MeleeStamina::reset(actor.meleeStamina,actor.staminaMax(),actor.world().tickCount());
+      }
+
     static void meleeAi(Npc& actor,Npc& target) {
       if(!actor.hasAnim("T_1HDASHB") || !actor.hasAnim("T_1HRIPOSTE") || !target.hasAnim("T_RIPOSTEVICTIM")) {
         std::cerr << "melee AI fixture skipped: needs OPENGOTHIC_CONTENT with anim-strikes\n";
@@ -1903,7 +1911,9 @@ int main(int argc,const char** argv) {
     pendingAcquire(a,b,player);
     std::vector<std::string> farFailures;
     farRelease(a,b,*gothic.player(),player,farFailures);
+    NpcLogicalStateContract::restoreStamina(a);
     heroTargetRelease(a,*gothic.player(),player,farFailures);
+    NpcLogicalStateContract::restoreStamina(a);
     staleFarRelease(a,b,*gothic.player(),player);
     for(const auto& failure:farFailures) std::cerr << "body-watch-test failure: " << failure << '\n';
     expect(farFailures.empty(),"far release/watchdog fixtures restore native ownership by the next engine tick");
