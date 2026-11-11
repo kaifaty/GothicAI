@@ -10,7 +10,8 @@ with the sample) shows what the later steps changed. The eye's half of the check
 `blender/gothic_rig.py`.
 
 Columns: each signal's range in the sample and on BIP01, the mean and largest difference between them with the
-constant offset of the two skeletons taken out (their hips and feet nodes sit at different places of the body), and
+constant offset of the two skeletons taken out (their hips, neck and feet nodes sit at different places of the body;
+knee and elbow angles are compared as they are), and
 how the two follow each other (1.000 - the same motion). Angles are 0 for a straight limb; heights and places in cm.
 
 What it has shown (run keyed to Gothic's poses, 2026-11-11): angles come over within 0.6° on average, places within 1.3 cm; the
@@ -85,7 +86,7 @@ def main():
     print(f"{'':24}{'sample':>16}{'on BIP01':>16}  transfer: mean  max  follows" + ("          later   mean  max" if L else ""))
     for k in S:
         a, b = S[k][:n], B[k][:n]
-        m, x = differ(a, b, not k.endswith("°"))
+        m, x = differ(a, b, not k.endswith("°") or k.startswith("lean"))
         row = f"{k:24}{rng(a)}{rng(b)}{m:14.1f}{x:6.1f}{np.corrcoef(a, b)[0, 1]:8.3f}"
         if L:
             m2, x2 = differ(b, L[k][:n], False)
