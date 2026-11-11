@@ -7,6 +7,7 @@
 #include "gothic.h"
 #include "gamemusic.h"
 #include "resources.h"
+#include "game/bodyclock.h"
 #include "game/bodycontroller.h"
 #include "game/bodyobservations.h"
 #include "game/bodyenginepolicy.h"
@@ -49,6 +50,30 @@
 namespace {
 using Json = rapidjson::Document;
 size_t assertions=0, cases=0;
+
+struct ManualBodyClock final {
+  ManualBodyClock() {
+    BodyClock::setManual(BodyClock::time_point(std::chrono::seconds(1)));
+    active=true;
+    }
+  ~ManualBodyClock() {
+    active=false;
+    BodyClock::useRealTime();
+    }
+  static void stallBeforeStep() {
+    if(!active) return;
+    static const auto delay=[] {
+      const auto value=std::getenv("BODY_WATCH_TEST_STALL_MS");
+      return std::chrono::milliseconds(value ? std::stoll(value) : 0);
+      }();
+    if(delay.count()>0) std::this_thread::sleep_for(delay);
+    }
+  void pumpWatchdogs() const {
+    stallBeforeStep();
+    BodyController::pumpWatchdogs();
+    }
+  inline static bool active=false;
+  };
 
 void expect(bool condition,std::string_view message) {
   ++assertions;
@@ -125,6 +150,7 @@ Identity identity(const rapidjson::Value& row) {
 
 void step(PlayerControl& player,unsigned count=1) {
   for(unsigned i=0;i<count;++i) {
+    ManualBodyClock::stallBeforeStep();
     SimulationStep::worldPlayerStep(33,player);
     SimulationStep::finishStep(33,player);
     }
@@ -156,6 +182,7 @@ void missingEngineNetwork(Npc& actor) {
   }
 
 void enginePolicy(Npc& actor,Npc& target,PlayerControl& player) {
+  const ManualBodyClock clock;
   ++cases;
   BodyController::fixturePrepare(actor,target,150,0);
   actor.setExternalControl(false);
@@ -250,12 +277,16 @@ void enginePolicy(Npc& actor,Npc& target,PlayerControl& player) {
   for(const auto& event:ownership["events"].GetArray())
     if(std::string_view(event["reason"].GetString())=="acquired") ownerHeartbeat=event["last_heartbeat_wall_ms"].GetUint64();
   expect(ownerHeartbeat>0,"watchdog fixture records the owner's acquisition heartbeat");
-  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  BodyClock::advance(std::chrono::milliseconds(500-20));
   uint64_t accepted=0;
   bool providerLost=false;
+  bool watchdogExpired=false;
   restored=false;
   for(unsigned i=0;i<100 && BodyController::owns(actor);++i) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    if(accepted && !watchdogExpired) {
+      BodyClock::advance(std::chrono::milliseconds(40)); // 500 + 20 ms since acquire.
+      watchdogExpired=true;
+      }
     step(player);
     const auto events=parse(BodyController::drainJson());
     for(const auto& event:events["events"].GetArray()) {
@@ -362,6 +393,7 @@ void liveLease(Npc& a,Npc& b,PlayerControl& player) {
   }
 
 void realtimeSentObservation(Npc& actor,Npc& target,PlayerControl& player) {
+  const ManualBodyClock clock;
   ++cases;
   BodyController::fixturePrepare(actor,target,300,0);
   actor.setExternalControl(false);
@@ -387,6 +419,7 @@ void realtimeSentObservation(Npc& actor,Npc& target,PlayerControl& player) {
     expect(!response["accepted"].GetBool() && std::string_view(response["reason"].GetString())==reason,message);
     };
 
+  BodyClock::advance(std::chrono::milliseconds(250-20));
   step(player,2);
   const auto nextSequence=BodyObservations::latestSequence(actor);
   expect(nextSequence>sequence,"next frame samples a newer observation");
@@ -401,7 +434,7 @@ void realtimeSentObservation(Npc& actor,Npc& target,PlayerControl& player) {
   expect(gameAge>0 && gameAge<250,"fixture advances less game time than its wall TTL");
   rejected(call(command(5,gameAge),true),"expired","a newer unsent sample does not refresh the original game TTL");
 
-  std::this_thread::sleep_for(std::chrono::milliseconds(270));
+  BodyClock::advance(std::chrono::milliseconds(40)); // 250 + 20 ms since the sent observation.
   step(player);
   BodyObservations::sampleAll(true);
   expect(BodyObservations::latestSequence(actor)>nextSequence,"wall TTL fixture has a fresh unsent sample");
@@ -416,6 +449,7 @@ void realtimeSentObservation(Npc& actor,Npc& target,PlayerControl& player) {
   }
 
 void pendingAcquire(Npc& a,Npc& b,PlayerControl& player) {
+  const ManualBodyClock clock;
   ++cases;
   // Start the real script state once, then clean its initial work with the same fixture used
   // by the body API suite. fixtureLock installs an actual FAI game-time wait.
@@ -441,6 +475,7 @@ void pendingAcquire(Npc& a,Npc& b,PlayerControl& player) {
   auto current=status(a);
   expect(current["acquire_pending"].GetBool() && current["acquire_request_id"].GetUint64()==requestId,"pending request survives with same ID");
   expect(identity(current)==stable && BodyObservations::latestSequence(a)==sequence,"pending identity and sequence preserved");
+  BodyClock::advance(std::chrono::milliseconds(2000-20));
   for(unsigned i=0;i<20 && !BodyController::owns(a);++i) step(player);
   expect(BodyController::owns(a),"pending A grants at natural boundary");
   current=status(a);
@@ -534,6 +569,7 @@ void movementRelease(Npc& actor,Npc& target,PlayerControl& player) {
   }
 
 void farRelease(Npc& actor,Npc& target,Npc& hero,PlayerControl& player,std::vector<std::string>& failures) {
+  const ManualBodyClock clock;
   using Clock=std::chrono::steady_clock;
   const auto heroStart=hero.position();
   const auto check=[&](bool condition,std::string_view message) {
@@ -602,8 +638,11 @@ void farRelease(Npc& actor,Npc& target,Npc& hero,PlayerControl& player,std::vect
       const auto startWall=Clock::now();
       if(watchdog) {
         expect(call(request("body_heartbeat",actor))["accepted"].GetBool(),"far watchdog fixture starts a fresh heartbeat deadline");
-        std::this_thread::sleep_for(std::chrono::milliseconds(520));
-        BodyController::pumpWatchdogs();
+        BodyClock::advance(std::chrono::milliseconds(500-20));
+        clock.pumpWatchdogs();
+        expect(BodyController::owns(actor),"far watchdog fixture retains ownership before the deadline");
+        BodyClock::advance(std::chrono::milliseconds(40)); // 500 + 20 ms since heartbeat.
+        clock.pumpWatchdogs();
         } else {
         expect(call(request("body_release",actor))["accepted"].GetBool(),"far explicit release accepted");
         }
@@ -647,6 +686,7 @@ void farRelease(Npc& actor,Npc& target,Npc& hero,PlayerControl& player,std::vect
   }
 
 void heroTargetRelease(Npc& actor,Npc& hero,PlayerControl& player,std::vector<std::string>& failures) {
+  const ManualBodyClock clock;
   using Clock=std::chrono::steady_clock;
   const auto heroStart=hero.position();
   const auto heroDirection=hero.rotation();
@@ -708,8 +748,11 @@ void heroTargetRelease(Npc& actor,Npc& hero,PlayerControl& player,std::vector<st
     printState("far_before_request",cause,fixture.action);
     if(fixture.watchdog) {
       expect(call(request("body_heartbeat",actor))["accepted"].GetBool(),"hero target watchdog fixture starts a fresh deadline");
-      std::this_thread::sleep_for(std::chrono::milliseconds(520));
-      BodyController::pumpWatchdogs();
+      BodyClock::advance(std::chrono::milliseconds(500-20));
+      clock.pumpWatchdogs();
+      expect(BodyController::owns(actor),"hero target watchdog fixture retains ownership before the deadline");
+      BodyClock::advance(std::chrono::milliseconds(40)); // 500 + 20 ms since heartbeat.
+      clock.pumpWatchdogs();
       } else {
       expect(call(request("body_release",actor))["accepted"].GetBool(),"hero target release accepted");
       }
@@ -744,6 +787,7 @@ void heroTargetRelease(Npc& actor,Npc& hero,PlayerControl& player,std::vector<st
   }
 
 void staleFarRelease(Npc& actor,Npc& target,Npc& hero,PlayerControl& player) {
+  const ManualBodyClock clock;
   ++cases;
   const auto heroStart=hero.position();
   actor.setExternalControl(true);
