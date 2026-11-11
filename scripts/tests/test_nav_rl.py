@@ -609,10 +609,15 @@ def test_shared_runner_forks_with_serial_physics_and_loads_navmesh_on_each_reset
         runner.stderr.close()
 
 
-@pytest.mark.parametrize("term_timeout", [False, True])
-def test_shared_runner_close_signals_forks_after_watchdog(tmp_path, monkeypatch, term_timeout):
+@pytest.mark.parametrize("poll_result,watchdog,term_timeout,expected_waits", [
+    (None, True, False, [10, 10]),
+    (None, True, True, [10, 10]),
+    (0, False, False, [10, 10]),
+    (None, False, False, [30, 10, 10]),
+])
+def test_shared_runner_close_signals_forks(tmp_path, monkeypatch, poll_result, watchdog, term_timeout, expected_waits):
     shared = rl.module("navmesh_measure")
-    signals, waits = [], []
+    signals, waits, requests = [], [], []
 
     def wait(timeout):
         waits.append(timeout)
@@ -620,18 +625,25 @@ def test_shared_runner_close_signals_forks_after_watchdog(tmp_path, monkeypatch,
             raise shared.subprocess.TimeoutExpired("runner", timeout)
         return 0
 
-    def expired(command, timeout):
-        raise RuntimeError(f"Runner wall watchdog expired on {command['cmd']}")
+    def request(command, timeout):
+        requests.append((command, timeout))
+        if watchdog:
+            raise RuntimeError(f"Runner wall watchdog expired on {command['cmd']}")
+        return {}
 
     runner = shared.Runner.__new__(shared.Runner)
-    runner.process = SimpleNamespace(pid=12345, poll=lambda: None, wait=wait)
+    runner.process = SimpleNamespace(pid=12345, poll=lambda: poll_result, wait=wait, returncode=0)
     runner.stderr = (tmp_path / "stderr.log").open("wb")
-    runner.request = expired
+    runner.request = request
     monkeypatch.setattr(shared.os, "killpg", lambda pgid, sig: signals.append((pgid, sig)))
-    with pytest.raises(RuntimeError, match="Runner wall watchdog expired on close"):
+    if watchdog:
+        with pytest.raises(RuntimeError, match="Runner wall watchdog expired on close"):
+            runner.close()
+    else:
         runner.close()
+    assert requests == ([] if poll_result is not None else [({"cmd": "close"}, 30)])
     assert signals == [(12345, shared.signal.SIGTERM), (12345, shared.signal.SIGKILL)]
-    assert waits == [10, 10]
+    assert waits == expected_waits
     assert runner.stderr.closed
 
 
