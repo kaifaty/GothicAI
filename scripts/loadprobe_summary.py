@@ -19,7 +19,7 @@ TEXTURE_FIELDS.extend(("tex_full_bytes", "tex_tail_bytes", "tex_promoted", "tex_
 TEXTURE_FIELDS.extend(f"tex_level{level}_bytes" for level in range(6))
 TEXTURE_FIELDS.extend(("tex_shortfall_n", "tex_shortfall_seconds", "tex_loads"))
 # view jumps: count, those without a zero shortfall yet, the longest synchronous completion and time to zero shortfall
-TEXTURE_FIELDS.extend(("tex_jumps", "tex_jumps_open", "tex_jump_sync_ms_max", "tex_jump_zero_ms_max"))
+TEXTURE_FIELDS.extend(("tex_jumps", "tex_jumps_open", "tex_jump_sync_max_ms", "tex_jump_zero_max_ms"))
 TEXTURE_FIELDS.extend(f"tex_source_{source}_{metric}" for source in ("base", "hd", "material", "other")
                       for metric in ("bytes", "full_bytes"))
 TEXTURE_FIELDS.extend(f"tex_{category}_{metric}" for category in ("landscape", "static", "dynamic", "other")
@@ -218,7 +218,7 @@ def summary_rows(out):
             for stage in (end["stage"], "stream_warm", "stream_warm_5s"):
                 marks = [row for row in segment if row["stage"] == stage]
                 mark = marks[-1] if marks else {}
-                values.extend((round(mark[key], 9) if key.endswith("_seconds") else int(mark[key]))
+                values.extend((round(mark[key], 9) if key.endswith(("_ms", "_seconds")) else int(mark[key]))
                               if key in mark else "" for key in TEXTURE_FIELDS)
             for stage in (end["stage"], "stream_warm", "stream_warm_5s"):
                 marks = [row for row in segment if row["stage"] == stage]

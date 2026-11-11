@@ -407,8 +407,8 @@ def streaming_stats(rows):
             "jumps": {
                 "count": int(textures[-1]["tex_jumps"]),
                 "open": int(textures[-1]["tex_jumps_open"]),
-                "sync_ms_max": textures[-1]["tex_jump_sync_ms_max"],
-                "zero_ms_max": textures[-1]["tex_jump_zero_ms_max"],
+                "sync_ms_max": textures[-1]["tex_jump_sync_max_ms"],
+                "zero_ms_max": textures[-1]["tex_jump_zero_max_ms"],
             } if "tex_jumps" in textures[-1] else None,
             "categories": {category: {
                 "bytes": int(textures[-1][f"tex_{category}_bytes"]),
