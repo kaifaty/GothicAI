@@ -1,11 +1,11 @@
 #include "sceneglobals.h"
+#include "settings.h"
 
 #include <cstddef>
 
 #include "graphics/shaders.h"
 #include "graphics/sky/sky.h"
 #include "worldview.h"
-#include "gothic.h"
 
 static uint32_t nextPot(uint32_t x) {
   x--;
@@ -206,6 +206,10 @@ void SceneGlobals::setVsmLampSides(uint32_t sides) {
   uboGlobalCpu.vsmLampSides = sides;
   }
 
+void SceneGlobals::setVsmStudy(uint32_t bits) {
+  uboGlobalCpu.vsmStudy = bits;
+  }
+
 void SceneGlobals::setUnderWater(bool w) {
   uboGlobalCpu.underWater = w ? 1 : 0;
   }
@@ -275,7 +279,7 @@ void SceneGlobals::setResolution(uint32_t w, uint32_t h) {
   // 2^bias times the width of two pixels per cm of depth in probe cells, bias 4 + log2 of the pixels over 1080p, the
   // base field of view (aiming zooms it, the probes stay). 1440p: lod 0 up to 9,5 m, 1080p: 12,6 m.
   const float bias    = 4 + std::max(std::log2(float(w*h)/float(1920*1080)), 0.f);
-  const float tanHalf = std::tan(Gothic::options().cameraFov*0.5f*float(M_PI)/180.f);
+  const float tanHalf = std::tan(Settings::options().cameraFov*0.5f*float(M_PI)/180.f);
   uboGlobalCpu.probeLodScale = std::exp2(bias) * (4.f*tanHalf/float(h)) / 25.f;
   }
 

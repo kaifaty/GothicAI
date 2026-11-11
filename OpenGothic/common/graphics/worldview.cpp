@@ -826,7 +826,7 @@ const DrawBuckets& WorldView::drawBuckets() const {
   return visuals.drawBuckets();
   }
 
-bool WorldView::updateLights(const gtime gameTime) {
+bool WorldView::updateLights(int64_t gameTime) {
   gSky.updateLight(gameTime);
   if(!gLights.updateLights())
     return false;

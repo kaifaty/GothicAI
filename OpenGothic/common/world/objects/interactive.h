@@ -9,13 +9,14 @@
 #include "game/inventory.h"
 #include "utils/keycodec.h"
 #include "vob.h"
+#include "animationsound.h"
 
 class Npc;
 class World;
 class Trigger;
 struct HeroDeed;
 
-class Interactive : public Vob {
+class Interactive : public Vob, public AnimationSound {
   public:
     enum Anim : int8_t {
       In        =  1,
@@ -61,7 +62,7 @@ class Interactive : public Vob {
     int32_t             stateCount() const { return stateNum; }
     bool                setMobState(std::string_view scheme,int32_t st) override;
     void                emitTriggerEvent(TriggerEvent::Type type) const;
-    void                emitSoundEffect(std::string_view sound, float range, bool freeSlot);
+    void                emitSoundEffect(std::string_view sound, float range, bool freeSlot) override;
     std::string_view    schemeName() const;
     std::string_view    posSchemeName() const;
 

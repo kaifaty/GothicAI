@@ -63,7 +63,6 @@ LAYER_RULES: list[tuple[str, str]] = [
     ("common/baseidentity", "import"),
     ("common/musicnativeimport", "import"),
     ("common/videoimport", "import"),
-    ("common/contentcensus", "import"),
     ("common/dmusic/directmusicimport", "import"),
     ("common/bink/*", "import"),
     ("ai_bridge/storygraph/*", "tools"),

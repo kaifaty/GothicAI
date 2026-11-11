@@ -43,10 +43,12 @@ void minutes(std::string& out, Time seconds) {
 
 namespace Journal {
 
-std::string header(const World& w, uint64_t seed) {
+std::string header(const World& w, uint64_t seed, std::string_view policy) {
   const size_t needs = needCount(w);
+  if(!policy.empty() && needs==0)
+    throw std::invalid_argument("society journal: decisions need needs");
   std::string out(Magic,sizeof(Magic));
-  put(out,needs>0 ? NeedsVersion : Version);
+  put(out,!policy.empty() ? DecisionsVersion : needs>0 ? NeedsVersion : Version);
   put(out,RecordBytes);
   put(out,w.exportHash);
   put(out,seed);
@@ -66,6 +68,11 @@ std::string header(const World& w, uint64_t seed) {
     put(out,uint16_t(id.size()));
     out += id;
     }
+  if(policy.empty())
+    return out;
+  put(out,uint16_t(policy.size()));
+  out += policy;
+  put(out,uint32_t(w.config.decisions.menu));
   return out;
   }
 
@@ -87,10 +94,12 @@ void append(std::string& out, std::span<const Event> events) {
 
 namespace Marks {
 
-std::string header(const World& w) {
+std::string header(const World& w, bool decisions) {
   std::string out = "t_min,key,routine,state,moving,point,to,arrive_min,x,y,z";
   for(const auto& id:w.config.needs.id)
     out += ",need_"+id;
+  if(decisions)
+    out += ",source,target";
   return out+"\n";
   }
 
@@ -140,13 +149,30 @@ void append(std::string& out, Sim& sim) {
     const int pn = std::snprintf(pos,sizeof(pos),",%.1f,%.1f,%.1f",double(at[0]),double(at[1]),double(at[2]));
     out.append(pos,size_t(pn));
     for(size_t k=0; k<needs; ++k) {
-      if(!w.npcs.person[i]) {
+      if(!w.npcNeeds[i] || (!w.needActive.empty() && !w.needActive[size_t(i)*needs+k])) {
         out += ",-";
         continue;
         }
       char level[32];
       const int ln = std::snprintf(level,sizeof(level),",%.4f",needLevel(sim,i,k));
       out.append(level,size_t(ln));
+      }
+    if(!s.mode.empty()) {
+      if(s.mode[i]!=uint8_t(Mode::Chosen)) {
+        out += ",routine,-";
+        } else {
+        out += ",need,";
+        out += w.config.objectKinds.id[s.actKind[i]];
+        out += ':';
+        if(OptionType(s.actType[i])==OptionType::Object) {
+          const auto& vob = w.objects.vob[s.actObject[i]];
+          if(vob.empty())
+            out += "#"+std::to_string(s.actObject[i]); else
+            clean(out,vob);
+          } else {
+          clean(out,w.points.name[s.actPoint[i]]);
+          }
+        }
       }
     out += '\n';
     }

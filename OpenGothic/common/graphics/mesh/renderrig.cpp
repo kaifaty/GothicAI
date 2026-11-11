@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <cmath>
 #include <fstream>
 #include <initializer_list>
@@ -1226,6 +1227,7 @@ RenderRigIndex::~RenderRigIndex() = default;
 void RenderRigIndex::read(const std::filesystem::path& file) {
   specs.clear();
   meshes.clear();
+  bodies.clear();
   built.clear();
   std::error_code ec;
   if(!std::filesystem::exists(file,ec)) {
@@ -1245,6 +1247,7 @@ void RenderRigIndex::read(const std::filesystem::path& file) {
 void RenderRigIndex::parse(std::string_view json) {
   specs.clear();
   meshes.clear();
+  bodies.clear();
   built.clear();
   rapidjson::Document doc;
   doc.Parse<rapidjson::kParseValidateEncodingFlag>(json.data(),json.size());
@@ -1254,7 +1257,7 @@ void RenderRigIndex::parse(std::string_view json) {
            rapidjson::GetParseError_En(doc.GetParseError()));
     if(!doc.IsObject())
       fail("the file must be a JSON object");
-    onlyFields(doc,{"format","version","about","rigs","meshes"},"");
+    onlyFields(doc,{"format","version","about","rigs","meshes","bodies"},"");
     if(!doc.HasMember("format") || !doc["format"].IsString() || str(doc["format"])!="gothic-render-rigs")
       fail("format must be \"gothic-render-rigs\"");
     if(!doc.HasMember("version") || !doc["version"].IsUint() || doc["version"].GetUint()!=1)
@@ -1263,6 +1266,8 @@ void RenderRigIndex::parse(std::string_view json) {
       fail("rigs must be an object");
     if(doc.HasMember("meshes") && !doc["meshes"].IsObject())
       fail("meshes must be an object: mesh -> rig");
+    if(doc.HasMember("bodies") && !doc["bodies"].IsObject())
+      fail("bodies must be an object: body -> {texture variant -> mesh}");
     }
   catch(const std::exception& e) {
     report(std::string("render rigs: ")+e.what());
@@ -1295,6 +1300,31 @@ void RenderRigIndex::parse(std::string_view json) {
       continue;
       }
     meshes[key] = std::string(str(m.value));
+    }
+  if(!doc.HasMember("bodies"))
+    return;
+  for(const auto& b:doc["bodies"].GetObject()) {
+    const std::string body = meshKey(str(b.name));
+    if(body.empty() || !b.value.IsObject()) {
+      report("render rigs: body "+quote(str(b.name))+": expected a body name and its {texture variant -> mesh}");
+      continue;
+      }
+    for(const auto& v:b.value.GetObject()) {
+      const std::string_view num = str(v.name);
+      int32_t variant = 0;
+      const auto parsed = std::from_chars(num.data(),num.data()+num.size(),variant);
+      const std::string mesh = v.value.IsString() ? meshKey(str(v.value)) : std::string();
+      if(num.empty() || parsed.ec!=std::errc() || parsed.ptr!=num.data()+num.size() || variant<0) {
+        report("render rigs: body "+quote(str(b.name))+": "+quote(num)+" is not a texture variant number");
+        continue;
+        }
+      if(meshes.find(mesh)==meshes.end()) {
+        report("render rigs: body "+quote(str(b.name))+", variant "+std::string(num)+
+               ": the mesh must be one of \"meshes\"");
+        continue;
+        }
+      bodies[body][variant] = mesh;
+      }
     }
   }
 
@@ -1343,4 +1373,14 @@ const RenderRig* RenderRigIndex::rig(std::string_view rigName) {
 const RenderRig* RenderRigIndex::rigOfMesh(std::string_view mesh) {
   const auto it = meshes.find(meshKey(mesh));
   return it==meshes.end() ? nullptr : rig(it->second);
+  }
+
+std::string RenderRigIndex::bodyOf(std::string_view body, int32_t variant) {
+  const auto b = bodies.find(meshKey(body));
+  if(b==bodies.end())
+    return {};
+  const auto v = b->second.find(variant);
+  if(v==b->second.end() || rigOfMesh(v->second)==nullptr)
+    return {};
+  return v->second;
   }

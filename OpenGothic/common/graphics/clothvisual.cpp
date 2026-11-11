@@ -1,4 +1,5 @@
 #include "clothvisual.h"
+#include "settings.h"
 #include "asset/modeltypes.h"
 
 #include <Tempest/Log>
@@ -13,14 +14,14 @@
 #include <unordered_map>
 
 #include "clothdata.h"
-#include "gothic.h"
 #include "graphics/mesh/submesh/packedmesh.h"
 #include "physics/cloth.h"
 #include "physics/clothgeometry.h"
 #include "physics/physicmesh.h"
 #include "physics/worldwind.h"
 #include "utils/fileext.h"
-#include "world/world.h"
+#include "clothworld.h"
+#include "physics/dynamicworld.h"
 
 using namespace Tempest;
 
@@ -332,7 +333,7 @@ std::shared_ptr<Geometry> loadGeometry(std::string_view visual, const Definition
 
 struct ClothVisual::State {
   MeshObjects::Mesh* view = nullptr;
-  World* world = nullptr;
+  ClothWorld* world = nullptr;
   std::shared_ptr<Geometry> geometry;
   MeshObjects::Mesh clothView, rigidView, fallbackView;
   std::shared_ptr<Cloth::Instance> physics;
@@ -374,11 +375,11 @@ struct ClothVisual::State {
             source[i] += (Vec3(p0.x,p0.y,p0.z)*(1.f-sample.alpha)+Vec3(p1.x,p1.y,p1.z)*sample.alpha)*sample.intensity;
             }
           }
-      const float cycle = Gothic::settingsGetF("ENGINE","zWindCycleTime")+
-                          Gothic::settingsGetF("ENGINE","zWindCycleTimeVar");
+      const float cycle = Settings::getF("ENGINE","zWindCycleTime")+
+                          Settings::getF("ENGINE","zWindCycleTimeVar");
       const auto period = std::isfinite(cycle) && cycle>0.f ? uint64_t(cycle*1000.f) : uint64_t(0);
       const auto wind = WorldWind::shaderMatrix(matrix,tick,period,
-                                                Gothic::settingsGetI("ENGINE","zWindEnabled")!=0,
+                                                Settings::getI("ENGINE","zWindEnabled")!=0,
                                                 mode,strength,world->physic()->cloth().windScale());
       auto inverse = matrix;
       inverse.inverse();
@@ -526,7 +527,7 @@ bool ClothVisual::supports(std::string_view visual) {
   return definition(visual)!=nullptr;
   }
 
-std::unique_ptr<ClothVisual> ClothVisual::create(MeshObjects::Mesh& view, World& world,
+std::unique_ptr<ClothVisual> ClothVisual::create(MeshObjects::Mesh& view, ClothWorld& world,
                                                const asset::VirtualObject& vob, bool enableCollision,
                                                Resources::TextureCategory textureCategory) {
   const auto* def = definition(vob.visual->name);
@@ -567,7 +568,7 @@ std::unique_ptr<ClothVisual> ClothVisual::create(MeshObjects::Mesh& view, World&
     }
   }
 
-std::unique_ptr<ClothVisual> ClothVisual::createSurface(World& world, const asset::WorldMesh& source,
+std::unique_ptr<ClothVisual> ClothVisual::createSurface(ClothWorld& world, const asset::WorldMesh& source,
                                                       const std::vector<uint32_t>& pinnedSourcePositionIds,
                                                       std::string visual, uint32_t id, float stiffness, float linearDamping) {
   try {

@@ -2135,3 +2135,16 @@ void World::probeMemory(std::string_view stage) const {
   Tempest::Log::i("[loadprobe-owner] stage=",stage," name=script_vm_cpu bytes=",
                  sizeof(vm)+vm.symbols().capacity()*sizeof(vm.symbols()[0])+vm.size());
   }
+
+void World::animationPfx(const Animation::MdsParticleEffect& p, MdlVisual& visual) {
+  if(p.pfxStop) {
+    visual.stopEffect(p.index);
+    }
+  else if(!p.name.empty()) {
+    if(p.name==visual.mutedPfx())
+      return;
+    Effect e(PfxEmitter(*this,p.name),p.position);
+    e.setActive(true);
+    visual.startEffect(*this,std::move(e),p.index,false);
+    }
+  }

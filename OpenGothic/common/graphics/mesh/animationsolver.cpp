@@ -1,7 +1,6 @@
 #include "animationsolver.h"
 
 #include "world/objects/interactive.h"
-#include "world/world.h"
 #include "game/serialize.h"
 #include "utils/fileext.h"
 #include "skeleton.h"

@@ -47,7 +47,7 @@ const FaceColumn FaceColumns[] = {
 const char* const CueColumns[] = {"flash","doubt","smirk","press","disgust","squint","frown","chin","wince","glance","roll"};
 
 void writeHeader() {
-  std::fprintf(bench.csv,"seg,frame,t,x,y,z,rot,speed,bs,walk,occl,ik_valid,ik_on,ik_hardoff,ik_w,nlegs,bad,pelvis,chest,pelvis_target,pelvis_limit,floor");
+  std::fprintf(bench.csv,"seg,frame,t,wall_ms,x,y,z,rot,speed,bs,walk,occl,ik_valid,ik_on,ik_hardoff,ik_w,nlegs,bad,pelvis,chest,pelvis_target,pelvis_limit,floor");
   for(const char* s:{"l","r","fl","fr"}) {
     std::fprintf(bench.csv,",%s_plant,%s_has,%s_gy,%s_nx,%s_ny,%s_nz,%s_toehas,%s_toey,%s_smooth,%s_err,%s_knee,%s_tilt,%s_roll,%s_yaw,%s_out,%s_slack",
                  s,s,s,s,s,s,s,s,s,s,s,s,s,s,s,s);
@@ -131,6 +131,8 @@ void writeHeartbeat(const World& world) {
     return;
   bench.heartbeatNext = now+std::chrono::seconds(10);
   const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now-bench.heartbeatStart).count();
+  event("heartbeat","\"wall_ms\":"+std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(now-bench.heartbeatStart).count())+
+        ",\"step\":"+std::to_string(bench.step));
   const auto command = std::min(std::max(bench.pc,size_t(1)),bench.prog.size());
   char gameTime[80];
   std::snprintf(gameTime,sizeof(gameTime),"day %lld %02lld:%02lld",(long long)world.time().day(),
@@ -153,8 +155,11 @@ void writeHeartbeat(const World& world) {
   }
 
 void finish() {
-  if(auto* world=Gothic::inst().world())
+  if(auto* world=Gothic::inst().world()) {
+    bench.heartbeatNext = {};
+    writeHeartbeat(*world);
     NpcDayJournal::stop(*world,"bench_end");
+    }
   stopBodyLive();
   npcCharacterStopMotionTrace(bench.character,Gothic::inst().world());
   endAnimationControl();
@@ -448,8 +453,10 @@ void writeRow(Npc& pl) {
     }
   auto&      p   = FootIk::playerProbe;
   const Vec3 pos = pl.position();
-  std::fprintf(bench.csv,"%s,%llu,%llu,%.2f,%.2f,%.2f,%.1f,%.1f,%u,%u,%u,%d,%d,%d,%.3f,%u,%u,%.2f,%.2f,%.2f,%.2f,%.2f",
+  const auto wallMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-bench.heartbeatStart).count();
+  std::fprintf(bench.csv,"%s,%llu,%llu,%lld,%.2f,%.2f,%.2f,%.1f,%.1f,%u,%u,%u,%d,%d,%d,%.3f,%u,%u,%.2f,%.2f,%.2f,%.2f,%.2f",
                bench.recName.c_str(),(unsigned long long)bench.recFrame,(unsigned long long)(bench.time-bench.recStart),
+               (long long)wallMs,
                pos.x,pos.y,pos.z,pl.rotation(),bench.speed,unsigned(pl.bodyStateMasked()),unsigned(pl.walkMode()),unsigned(bench.occl),
                int(p.valid),int(p.enable),int(p.hardOff),p.weight,unsigned(p.numLegs),unsigned(p.badBones),p.pelvis,p.chest,p.target,p.limit,p.floorY);
   for(auto& l:p.leg) {

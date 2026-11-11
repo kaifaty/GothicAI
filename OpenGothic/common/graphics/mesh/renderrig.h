@@ -305,11 +305,16 @@ class RenderRigIndex final {
     // nullptr: no such rig or a broken one (reported once)
     const RenderRig* rig(std::string_view name);
     const RenderRig* rigOfMesh(std::string_view mesh);
+    // "bodies": {body: {"9": mesh}} - a body drawn as another mesh for one of its texture variants (the number
+    // Mdl_SetVisualBody gives: in Gothic 2 the hero's clothes are variant 9 of the naked body all men share).
+    // The mesh is one of the table's meshes; "" - the body itself (not listed, or the mesh's rig is broken)
+    std::string      bodyOf(std::string_view body, int32_t variant);
 
   private:
     Lookup                                                      lookup;
     Report                                                      report;
     std::map<std::string,RenderRigSpec,std::less<>>             specs;
     std::map<std::string,std::string,std::less<>>               meshes;
+    std::map<std::string,std::map<int32_t,std::string>,std::less<>> bodies;
     std::unordered_map<std::string,std::unique_ptr<RenderRig>>  built;  // nullptr: tried and broken
   };

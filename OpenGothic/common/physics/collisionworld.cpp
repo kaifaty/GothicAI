@@ -1,4 +1,5 @@
 #include "collisionworld.h"
+#include "settings.h"
 #include "collisionworld_internal.h"
 #include "physicvbo.h"
 #include "dynamicworld.h"
@@ -6,7 +7,6 @@
 #include "cloth.h"
 #include "frameprofile.h"
 #include "loadprobe.h"
-#include "gothic.h"
 #include "testbench.h"
 #include "world/objects/item.h"
 #include "world/objects/npc.h"
@@ -527,6 +527,7 @@ bool CollisionWorld::CollisionBody::addImpulse(const Tempest::Vec3& impulseNs, N
     interface.AddImpulse(id,JPH::Vec3(impulseNs.x,impulseNs.y,impulseNs.z));
   noiseCulprit=culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<daedalus::INpc>();
   noiseCulpritUntilStep=owner->impl->simulationStep+300;
+  noiseCulpritResolver=&noiseCulpritNpc;
   setTraceCulprit(culprit);
   return true;
   }
@@ -1627,6 +1628,7 @@ void CollisionWorld::tick(uint64_t dt) {
       if(!knownCulprit && current!=nullptr && current->user_ptr!=nullptr) continue;
       body->noiseCulprit=culprit->handlePtr();
       body->noiseCulpritUntilStep=impact.step+300;
+      body->noiseCulpritResolver=&noiseCulpritNpc;
       body->setTraceCulprit(culprit);
       }
     }
@@ -1770,7 +1772,7 @@ void CollisionWorld::tick(uint64_t dt) {
       // A sleeping water item also retains its native body, independently of
       // characters, so save/load, pickup and a buoyancy toggle remain physical.
       disable = !native.IsActive() && !body->keepSleepingItem(toCentimeters(native.GetPosition())) &&
-                !(Gothic::physicsFlags().placedItems && item->isPlacedItem());
+                !(Settings::physicsFlags().placedItems && item->isPlacedItem());
       }
     item->setPhysicsMatrix(matrix);
     if(disable)

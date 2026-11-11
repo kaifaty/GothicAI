@@ -862,6 +862,13 @@ bool cameraCommand(const CameraContext& ctx,const std::string& line,const std::v
     // setting says (0); for A/B shots of the same frame (reports/render-features/2026-11-11-lamp-objects-two-sided)
     Renderer::benchVsmLampSides = uint32_t(std::clamp(int(num(a,2,0)), 0, 3));
     }
+  else if(c=="vsm" && a.size()>2 && a[1]=="study") {
+    // vsm study <bits>: the shadow test on a mesh's facets, for shots of one frame
+    // (reports/render-features/2026-11-11-facet-shards): 1 the sun takes the facet's plane over one pixel and 2 the
+    // lamps keep it on facets edge-on to them, both as before 2026-11-11; 4 the facets' classes and 8 the change of
+    // the sun's shadow as colours; 0 the game's
+    Renderer::benchVsmStudy = uint32_t(std::clamp(int(num(a,2,0)), 0, 15));
+    }
   else if(c=="slowmo") {
     // slowmo <k>: the game runs k times slower than the video (1: normal); the game's sound is not recorded
     // while slowed (silence keeps the sound in step with the picture)

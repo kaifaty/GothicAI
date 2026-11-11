@@ -46,12 +46,12 @@ DialogMenu::DialogMenu(InventoryMenu &trade)
   setCursorShape(CursorShape::Hidden);
   setFocusPolicy(NoFocus);
 
-  Gothic::inst().onSettingsChanged.bind(this,&DialogMenu::setupSettings);
+  Settings::inst().onSettingsChanged.bind(this,&DialogMenu::setupSettings);
   setupSettings();
   }
 
 DialogMenu::~DialogMenu() {
-  Gothic::inst().onSettingsChanged.ubind(this,&DialogMenu::setupSettings);
+  Settings::inst().onSettingsChanged.ubind(this,&DialogMenu::setupSettings);
   }
 
 void DialogMenu::setupSettings() {

@@ -8,6 +8,9 @@
 #include <array>
 
 #include "worlddata.h"
+#include "animationpfx.h"
+#include "clothworld.h"
+#include "blooddecalsource.h"
 
 #include "graphics/worldview.h"
 #include "graphics/lightgroup.h"
@@ -35,8 +38,10 @@ class ClothVisual;
 struct PhysicsNoise;
 struct HeroDeed;
 
-class World final {
+class World final : public AnimationPfx, public ClothWorld, public BloodDecalSource {
   public:
+    void animationPfx(const Animation::MdsParticleEffect& event, MdlVisual& visual) override;
+
     void probeMemory(std::string_view stage) const;
 
     World()=delete;
@@ -104,7 +109,8 @@ class World final {
     // Blood (physics stage 8, step 4c; world/bloodstains.h holds the rules). [GAME] blood=0:
     // addBloodStain adds nothing, bloodStains() is empty and there are no `blood` traces.
     uint32_t             addBloodStain(BloodStains::Stain stain); // its id; 0: blood is off
-    const std::vector<BloodStains::Stain>& bloodStains() const;
+    const std::vector<BloodStains::Stain>& bloodStains() const override;
+    int64_t bloodTime() const override { return time().toInt(); }
     bool                 bodyInWorld(uint32_t bodyTraceId) const;  // a dead NPC with this body trace id
     bool                 bodyTraceInWorld(uint32_t bodyTraceId) const; // ... and it is reported as a body trace
     std::string          bloodTraceId(uint32_t stainId) const;     // "<world>:blood:<n>"
@@ -147,7 +153,7 @@ class World final {
 
     WorldView*           view()     const { return wview.get();    }
     WorldSound*          sound()          { return &wsound;        }
-    DynamicWorld*        physic()   const { return wdynamic.get(); }
+    DynamicWorld*        physic()   const override { return wdynamic.get(); }
     GlobalEffects*       globalFx() const { return globFx.get();   }
 
     GameScript&          script()   const;
@@ -166,7 +172,7 @@ class World final {
     MeshObjects::Mesh    addView(const daedalus::IItem& itm);
     MeshObjects::Mesh    addView(const ProtoMesh* visual);
     MeshObjects::Mesh    addAtachView (const ProtoMesh::Attach& visual, const int32_t version);
-    MeshObjects::Mesh    addStaticView(const ProtoMesh* visual, bool staticDraw);
+    MeshObjects::Mesh    addStaticView(const ProtoMesh* visual, bool staticDraw) override;
     MeshObjects::Mesh    addStaticView(std::string_view visual);
     MeshObjects::Mesh    addDecalView (const asset::VisualDecal& decal);
     LightGroup::Light    addLight(const asset::VLight& vob);
@@ -187,7 +193,7 @@ class World final {
 
     void                 scaleTime(uint64_t& dt);
     void                 tick(uint64_t dt);
-    uint64_t             tickCount() const;
+    uint64_t             tickCount() const override;
     void                 setDayTime(int32_t h,int32_t min);
     gtime                time() const;
 

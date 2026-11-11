@@ -1,16 +1,16 @@
 #include "visualfx.h"
+#include "gameservices.h"
 
 #include <Tempest/Log>
 #include <cctype>
 
 #include "world/world.h"
 #include "utils/parser.h"
-#include "gothic.h"
 
 using namespace Tempest;
 
 VisualFx::Key::Key(const Def::ParticleEffectEmitKey& k) {
-  visName                 = Gothic::inst().loadParticleFx(k.vis_name_s);
+  visName                 = GameServices::inst().loadParticleFx(k.vis_name_s);
   visSizeScale            = k.vis_size_scale;
   scaleDuration           = k.scale_duration; // time to reach full scale at this key for relevant vars (size, alpha, etc.)
 
@@ -41,7 +41,7 @@ VisualFx::Key::Key(const Def::ParticleEffectEmitKey& k) {
   lightRange              = k.light_range;
   sfxID                   = k.sfx_id;
   sfxIsAmbient            = k.sfx_is_ambient;
-  emCreateFXID            = Gothic::inst().loadVisualFx(k.em_create_fx_id);
+  emCreateFXID            = GameServices::inst().loadVisualFx(k.em_create_fx_id);
 
   emFlyGravity            = k.em_fly_gravity;
   if(!k.em_self_rot_vel_s.empty())
@@ -80,16 +80,16 @@ VisualFx::VisualFx(const Def::EffectBase& fx,
   emTrjDynUpdateDelay      = fx.em_trj_dyn_update_delay;
   emTrjDynUpdateTargetOnly = fx.em_trj_dyn_update_target_only!=0;
 
-  emFXCreate               = Gothic::inst().loadVisualFx(fx.em_fx_create_s);
+  emFXCreate               = GameServices::inst().loadVisualFx(fx.em_fx_create_s);
   emFXInvestOrigin         = fx.em_fx_invest_origin_s;
   emFXInvestTarget         = fx.em_fx_invest_target_s;
   emFXTriggerDelay         = fx.em_fx_trigger_delay<0 ? 0 : uint64_t(fx.em_fx_trigger_delay*1000.f);
   emFXCreatedOwnTrj        = fx.em_fx_create_down_trj!=0;
   emActionCollDyn          = strToColision(fx.em_action_coll_dyn_s);		// CREATE, BOUNCE, CREATEONCE, NORESP, COLLIDE
   emActionCollStat         = strToColision(fx.em_action_coll_stat_s);			// CREATE, BOUNCE, CREATEONCE, NORESP, COLLIDE, CREATEQUAD
-  emFXCollStat             = Gothic::inst().loadVisualFx(fx.em_fx_coll_stat_s);
-  emFXCollDyn              = Gothic::inst().loadVisualFx(fx.em_fx_coll_dyn_s);
-  emFXCollDynPerc          = Gothic::inst().loadVisualFx(fx.em_fx_coll_dyn_perc_s);
+  emFXCollStat             = GameServices::inst().loadVisualFx(fx.em_fx_coll_stat_s);
+  emFXCollDyn              = GameServices::inst().loadVisualFx(fx.em_fx_coll_dyn_s);
+  emFXCollDynPerc          = GameServices::inst().loadVisualFx(fx.em_fx_coll_dyn_perc_s);
   emFXCollStatAlign        = loadCollisionAlign(fx.em_fx_coll_stat_align_s);
   emFXCollDynAlign         = loadCollisionAlign(fx.em_fx_coll_dyn_align_s);
   emFXLifeSpan             = fx.em_fx_lifespan<0 ? 0 : uint64_t(fx.em_fx_lifespan*1000.f);

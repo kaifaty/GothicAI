@@ -158,11 +158,18 @@ void Npc::setVisualBody(int32_t headTexNr, int32_t teethTexNr, int32_t bodyTexNr
   bdColor = bodyTexColor;
 
   auto  vhead = head.empty() ? MeshObjects::Mesh() : owner.addView(FileExt::addExt(head,".MMB"),vHead,vTeeth,bdColor);
-  auto  vbody = body.empty() ? MeshObjects::Mesh() : owner.addView(FileExt::addExt(body,".ASC"),vColor,0,bdColor);
+  auto  vbody = body.empty() ? MeshObjects::Mesh() : owner.addView(bodyVisual(),vColor,0,bdColor);
   visual.setVisualBody(*this,std::move(vhead),std::move(vbody),bdColor);
   updateArmor();
 
   durtyTranform|=TR_Pos; // update obj matrix
+  }
+
+// The body without armour. Our content may draw one texture variant of a shared body as its own mesh
+// ("bodies" of models/render-rigs.json): the hero's clothes are a variant of the naked body all men have.
+std::string Npc::bodyVisual() const {
+  const std::string own = Resources::bodyOfVariant(body,vColor);
+  return FileExt::addExt(own.empty() ? body : own,".ASC");
   }
 
 void Npc::updateArmor() {
@@ -174,7 +181,7 @@ void Npc::updateArmor() {
   auto& w  = owner;
 
   if(ar==nullptr) {
-    auto  vbody = body.empty() ? MeshObjects::Mesh() : w.addView(FileExt::addExt(body,".ASC"),vColor,0,bdColor);
+    auto  vbody = body.empty() ? MeshObjects::Mesh() : w.addView(bodyVisual(),vColor,0,bdColor);
     visual.setBody(*this,std::move(vbody),bdColor);
     } else {
     auto& itData = ar->handle();
@@ -944,4 +951,51 @@ bool Npc::updateLyingVisualHeight() {
   lieVisualYOffset=offset;
   visual.setObjMatrix(matrix,true);
   return true;
+  }
+
+FootIk::Input mkFootIkInput(const FootIk& ik, const Npc& npc, World& world, const Matrix4x4& obj,
+                              bool alignedToGround, uint64_t dt, const AimWalk* walk) {
+  FootIk::Input in;
+  in.dt     = dt;
+  in.floorY = obj.at(3,1);
+  in.crouch = npc.aimCrouch()*FootIk::aimCrouchDepth()*ik.legScale();
+  // the test bench measures the ground with IK off too, and under a body tilted to the ground as
+  // a whole (surface_align): that is the baseline
+  if(!ik.isValid() || (!FootIk::isEnabled() && !FootIk::isProbing()) || (alignedToGround && !FootIk::isProbing()))
+    return in;
+  if(npc.isDead() || npc.isUnconscious() || npc.interactive()!=nullptr)
+    return in;
+  if(npc.isInAir() || npc.isFalling() || npc.isSlide() || npc.isSwim()) {
+    in.hardOff = true;
+    return in;
+    }
+
+  const uint32_t bs = npc.bodyStateMasked() & BS_MAX;
+  if(bs==(BS_JUMP & BS_MAX) || bs==(BS_FALL & BS_MAX) || bs==(BS_SWIM & BS_MAX) ||
+     bs==(BS_DIVE & BS_MAX) || bs==(BS_CLIMB & BS_MAX)) {
+    in.hardOff = true;
+    return in;
+    }
+  // A melee roll goes over the ground on the body, off as in a jump; a dash fades out as the jump back does
+  if(bs==(BS_PARADE & BS_MAX) && npc.isMeleeDodgeRoll()) {
+    in.hardOff = true;
+    return in;
+    }
+  // Two legs: standing, locomotion, aiming a bow (a shot is a frame of BS_HIT) and casting a spell, the
+  // feet stand still there; other animations (attacks, items, ...) fade out.
+  // Four legs keep it: a beast attacks standing on the ground, and is not tilted to it otherwise
+  const auto ws    = npc.weaponState();
+  const bool bow   = ws==WeaponState::Bow || ws==WeaponState::CBow;
+  const bool stand = bs==BS_NONE || bs==BS_AIMNEAR || bs==BS_AIMFAR || bs==BS_CASTING || (bow && bs==(BS_HIT & BS_MAX));
+  if(!ik.isQuadruped() && !stand && bs!=(BS_WALK & BS_MAX) && bs!=(BS_SNEAK & BS_MAX) && bs!=BS_RUN && bs!=BS_SPRINT)
+    return in;
+
+  const Vec3 pos(obj.at(3,0),obj.at(3,1),obj.at(3,2));
+  if(!world.isInPfxRange(pos))
+    return in;
+  auto physic = world.physic();
+  if(physic==nullptr)
+    return in;
+
+  return ik.mkGroundInput(in,*physic,obj,alignedToGround,walk);
   }

@@ -12,9 +12,7 @@
 #include "graphics/shaders.h"
 #include "graphics/sceneglobals.h"
 #include "utils/string_frm.h"
-#include "world/world.h"
 #include "utils/dbgpainter.h"
-#include "gothic.h"
 #include "worlddata.h"
 
 using namespace Tempest;
