@@ -69,7 +69,7 @@ class Quiver final {
     // of the draw, holds it while the tip is in the tube and comes back as from the ground (GroundReturn). Farther
     // than the give (GiveAngle) only while that lasts
     static constexpr float LiftAngle    = 45.f;  // deg at most
-    static constexpr float LiftRamp     = 9.f;   // cm of the draw
+    static constexpr float LiftRamp     = 40.f;  // cm of the draw: the tube turns with the arrow, not at the grab
     static constexpr float ReloadLine   = 95.f;  // cm of the drawn arrow's line over the mouth (the arrow, 94 cm)
     static constexpr float FletchRadius = 5.f;   // cm: the arrows' nocks spread over the mouth (and their shafts)
     static constexpr float LineRadius   = 2.f;   // cm: the drawn arrow's shaft and the room it keeps from the trunk

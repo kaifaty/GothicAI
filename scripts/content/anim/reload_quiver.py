@@ -293,31 +293,48 @@ def build(st: Stance, lv: dict, spec: dict, name: str) -> tuple[ga.Animation, di
             tang[i] = ax * np.dot(cr, ax) * k["along"]
         else:
             tang[i] = cr * k.get("tension", 1.0)
-    # the hand's roll round the arrow at each key: the least twist of the wrist, near the key before's turn
+    # the hand's roll round the arrow at each key: over the whole chain, the least wrist twist plus the hand's turn
+    # from key to key (a roll chosen key by key flips the wrist by 90-180 degrees between them); `roll` fixes one
     hold0 = st.slot_aim.copy()
-    rolls = []
-    prev = None
+    cands = list(range(-180, 180, 10))
+
+    def key_cost(i, roll):
+        k = keys[i]
+        fr = grip_frame(st, pts[i], dirs[i], float(roll), ref_y)
+        hold = hold0.copy()
+        g = k.get("grip", 3.0)
+        hold[:3, 3] = hold[:3, 3] + (hold[:3, :3] @ np.array([-1.0, 0, 0])) * (3.0 - g)
+        slot = fr.copy()
+        slot[:3, 3] = pts[i] + dirs[i] * (st.nock_back - g)
+        _, r, _ = arm.solve(st.chest @ (slot @ np.linalg.inv(hold)), st.chest[:3, :3] @ unit(k["elbow"]))
+        return r["twist"] + 20.0 * max(r["miss"], 0.0), fr[:3, :3]
+
+    options = []
     for i, k in enumerate(keys):
-        if "roll" in k:
-            rolls.append(float(k["roll"]))
-            prev = grip_frame(st, pts[i], dirs[i], rolls[-1], ref_y)[:3, :3]
-            continue
-        best = None
-        for roll in range(-180, 180, 10):
-            fr = grip_frame(st, pts[i], dirs[i], float(roll), ref_y)
-            hold = hold0.copy()
-            g = k.get("grip", 3.0)
-            hold[:3, 3] = hold[:3, 3] + (hold[:3, :3] @ np.array([-1.0, 0, 0])) * (3.0 - g)
-            slot = fr.copy()
-            slot[:3, 3] = pts[i] + dirs[i] * (st.nock_back - g)
-            _, r, _ = arm.solve(st.chest @ (slot @ np.linalg.inv(hold)), st.chest[:3, :3] @ unit(k["elbow"]))
-            turn = 0.0 if prev is None else float(np.degrees(np.linalg.norm(rs.axis_angle(fr[:3, :3] @ prev.T))))
-            cost = r["twist"] + 0.3 * turn + 20.0 * max(r["miss"], 0.0)
-            if best is None or cost < best[0]:
-                best = (cost, float(roll), fr[:3, :3])
-        rolls.append(best[1])
-        prev = best[2]
-        k["roll"] = best[1]
+        rolls_i = [float(k["roll"])] if "roll" in k else [float(r) for r in cands]
+        options.append([(r, *key_cost(i, r)) for r in rolls_i])
+
+    def turn(a, b):
+        return float(np.degrees(np.linalg.norm(rs.axis_angle(a @ b.T))))
+    cost = [c for _, c, _ in options[0]]
+    back = []
+    for i in range(1, len(keys)):
+        nc, bk = [], []
+        for _, c, m in options[i]:
+            j = min(range(len(options[i - 1])), key=lambda q: cost[q] + turn(m, options[i - 1][q][2]))
+            nc.append(cost[j] + turn(m, options[i - 1][j][2]) + c)
+            bk.append(j)
+        cost, back = nc, back + [bk]
+    j = int(np.argmin(cost))
+    pick = [j]
+    for bk in reversed(back):
+        j = bk[j]
+        pick.append(j)
+    pick.reverse()
+    rolls = []
+    for i, k in enumerate(keys):
+        k["roll"] = options[i][pick[i]][0]
+        rolls.append(k["roll"])
     t = np.arange(frames) / fps
     p_of = t / total
     hk = np.array(lv["head"], float)
@@ -468,10 +485,12 @@ def main():
     spec = json.loads(spec_path.read_text())
     for lv in spec["levels"]:
         level = lv["level"]
-        st = Stance(models, level, spec)
-        anim, report, _ = build(st, lv, spec, NAME)
+        # a step's own quiver (its turn round the ring as the aim lifts it, measured in the game)
+        spec_lv = {**spec, "quiver": {**spec["quiver"], **lv.get("quiver", {})}}
+        st = Stance(models, level, spec_lv)
+        anim, report, _ = build(st, lv, spec_lv, NAME)
         full = composite(st, anim)
-        report.update(checks(st, full, lv, spec))
+        report.update(checks(st, full, lv, spec_lv))
         dst = out / level / f"{level}-{NAME}.MAN.json"
         dst.parent.mkdir(parents=True, exist_ok=True)
         ga.write_animation(dst, full, source=f"reload_quiver over {level}-C_BOW_5")

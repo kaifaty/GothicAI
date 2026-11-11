@@ -641,6 +641,9 @@ void BowDraw::implApply(Matrix4x4* tr, size_t numBones) {
   bowMiss  = 0;
   overGrip = atMiddle = nockGap = square = cant = 0;
   slid     = Vec3();
+  // the own clip's start is taken anew each reload: from the hand shown as it begins
+  if(!holding)
+    ownStarted = false;
   if(!valid || upperTree.back()>=numBones || foreTree.back()>=numBones || handTree.back()>=numBones ||
      slot>=numBones || bowHand>=numBones)
     return;
@@ -735,9 +738,12 @@ void BowDraw::implApply(Matrix4x4* tr, size_t numBones) {
   if(holding) {
     // the reload: the string rests till the nock is at it, then shows drawn as far as it is (a little)
     shown = (1.f - full/span)*smooth((toString-0.8f)/0.2f);
-    if(own && ownHeld)
-      ownReload(tr,numBones,h0+way*full,axis); else
+    if(own && ownHeld) {
+      ownReload(tr,numBones,h0+way*full,axis);
+      } else {
+      ownStarted = false;
       reload(tr,numBones,h0+way*full,axis);
+      }
     if(bowHeld)
       turnBow(tr,up,axis);
     if(hasString)
@@ -883,8 +889,9 @@ void BowDraw::ownReload(Matrix4x4* tr, size_t numBones, const Vec3& nock, const 
     ownStarted = false;
   // the quiver as it hangs (the give, the gait's turn, the armour's push) against the one the clip reaches
   qFollow = p<OwnOut ? smooth((p-OwnLeave)/(OwnGrab-OwnLeave)) : 1.f-smooth((p-OwnOut)/(OwnShelf-OwnOut));
-  // the arrow's tip out of the tube (past K3): the quiver goes back alone, the hand keeps the lead it had
-  if(p<OwnTake || (rq.own && rq.tipIn>0.f))
+  // the arrow's tip out of the tube (past K3): the quiver goes back alone, the hand keeps the lead it had till the
+  // reload is over (the arrow turned toward the bow may dip under the mouth's plane again, beside the tube)
+  if(p<OwnTake)
     leadFrozen = false;
   else if(p>=OwnOut-0.1f && rq.own && rq.tipIn<=0.f && !leadFrozen && quiverKnown) {
     leadFrozen = true;

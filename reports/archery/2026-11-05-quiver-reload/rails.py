@@ -7,7 +7,7 @@ Per segment (the hero's, or the watched npc's quiver columns) and per reload in 
   capsule rq_h..rq_c, r 10 cm): deepest, cm (< 0 in it), on the hand's way (ANCHOR: at the string's anchor, the
   aim's own, apart as head_anchor);
 - out of the trunk (the armour's points, qv_thand, qv_tfore, qv_tarrow) and the quiver's tube (rq_tube_*): deepest;
-- the arrow on the quiver's axis while its tip is in it (rq_offaxis): most;
+- the arrow on the quiver's axis while its tip is in it, till it first leaves (rq_offaxis): most;
 - the frame of the grab (p crosses K3 = 0.34), of the arrow in the hand, of one arrow less in the quiver;
 - at the end (the first frames nocked at draw 0): bd_nockgap, bd_overgrip, bd_atmiddle, bd_bowmiss;
 - the jump |Δx(i) − Δx(i−1)| of the hand (rh_*) at the joints K0, K2–K3, K7 and into S_BOWAIM, and the most anywhere;
@@ -108,7 +108,14 @@ def one(rows, a, b):
     # the trunk by the armour's points (the quiver's lift: qv_thand, qv_tfore, qv_tarrow)
     for k, c in (("trunk_hand", "qv_thand"), ("trunk_fore", "qv_tfore"), ("trunk_arrow", "qv_tarrow")):
         rep[k] = min(num(r, c, 99) for r in away)
-    rep["off_axis"] = max([num(r, "rq_offaxis", -1) for r in hd if num(r, "rq_tipin", -99) > 0] or [0.0])
+    # till the tip first leaves the tube (turned toward the bow it may dip under the mouth's plane again, beside it)
+    drawing = []
+    for r in hd:
+        if num(r, "rq_tipin", -99) > 0:
+            drawing.append(num(r, "rq_offaxis", -1))
+        elif drawing:
+            break
+    rep["off_axis"] = max(drawing or [0.0])
     # the grab, the arrow in the hand, one less in the quiver
     fr = lambda pred: next((i for i, r in enumerate(run) if pred(r)), None)  # noqa: E731
     f_grab = fr(lambda r: num(r, "rq_p", -1) >= K3)
