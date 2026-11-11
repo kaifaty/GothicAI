@@ -180,6 +180,14 @@ if RIG:
                      f'thigh_{sd}': (G(f'BIP01 {S} CALF')[:3, 3] - G(f'BIP01 {S} THIGH')[:3, 3]),
                      f'calf_{sd}': (ankle_world(S) - G(f'BIP01 {S} CALF')[:3, 3]),
                      f'foot_{sd}': (G(f'BIP01 {S} TOE0')[:3, 3] - ankle_world(S))})
+    # the clavicles at ease (CLAVICLES=at-ease, the default): at Gothic's bind ours lies as the mesh was modelled
+    # (align = identity), the turn away from it is Gothic's. Gothic holds the shoulder joint 10° ahead of the
+    # clavicle's root and MPFB 2° behind, so copying the direction (CLAVICLES=gothic, bodies written before
+    # 2026-11-12) rolled our shoulders 12° into the chest in every pose (reports/content/2026-11-hero-locomotion,
+    # «Плечи из покоя в покой»)
+    if os.environ.get('CLAVICLES', 'at-ease') == 'at-ease':
+        for sd in ('l', 'r'):
+            DIRS.pop(f'clavicle_{sd}')
     # the spine and the neck as Gothic's bind holds them: MPFB's own curve (the upper back 17 degrees and the neck 8.5
     # further forward than Gothic's) bent our hero over in every pose Gothic leans in (reports/engine/
     # 2026-11-modern-skeleton, «Аудит»); the head keeps its own turn (where the face looks is Gothic's)

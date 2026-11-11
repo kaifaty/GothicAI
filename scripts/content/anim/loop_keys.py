@@ -22,6 +22,12 @@ the generator draws the motion between them.
   5 cm; at 8 keys the walk is Gothic's within 3.7 cm.
   A run needs more: on S_RUNL (cycle 0.76 s) 4 keys leave the pelvis' low and high to the generator and it bounces
   15-21 cm against Gothic's 9, wherever in the cycle the keys stand; 6 keys (`--keys 6`) hold 8-9 cm.
+- `--symmetric`: the loop averaged with its own mirror image half a cycle on, so the right step is the left one
+  mirrored. Gothic's run needs it: its trunk leans back and forward once a cycle (10.3°, so once a step each way),
+  its chest is turned (the left shoulder 20.6° ahead, the right 4.6° behind) and its hips sink deeper on the left
+  step; keyed as they are, 6 keys copy all of it. Averaged: 0.9°, both shoulders 8°, the hips' lows 0.6 cm apart.
+- The shoulders reach Kimodo through `retarget_soma.gothic_to_soma`, from Gothic's at ease to SOMA's: copied as
+  they are, Gothic's poses put them 24° ahead of where Kimodo keeps them, and it drew a hunched man.
 
 The generated samples go the usual way: `retarget_soma.py`, `loop_cycle.py --period <the loop's seconds>` (the
 period is known, and a walk that hardly lifts its feet gives the autocorrelation nothing to hold on to),
@@ -45,14 +51,15 @@ import retarget_soma as rs
 MAX_KEYS, MAX_CYCLES = 19, 6
 
 
-def tile(loop: ga.Animation, fps: float, count: int, name: str) -> ga.Animation:
-    """`count` frames of the loop played over and over, sampled at `fps`; the root goes on by the travel."""
+def tile(loop: ga.Animation, fps: float, count: int, name: str, start: float = 0.0) -> ga.Animation:
+    """`count` frames of the loop played over and over, sampled at `fps` from `start` cycles in; the root goes on by
+    the travel."""
     n = loop.frame_count - 1
     travel = loop.positions[n, 0] - loop.positions[0, 0]
     pos = np.zeros((count,) + loop.positions.shape[1:])
     rot = np.zeros((count,) + loop.rotations.shape[1:])
     for t in range(count):
-        cycle, g = divmod(t / fps * loop.fps, n)
+        cycle, g = divmod(t / fps * loop.fps + start * n, n)
         a = min(int(np.floor(g)), n - 1)
         u = g - a
         for k in range(loop.rotations.shape[1]):
@@ -62,7 +69,28 @@ def tile(loop: ga.Animation, fps: float, count: int, name: str) -> ga.Animation:
         if t:
             flip = (rot[t] * rot[t - 1]).sum(-1) < 0
             rot[t][flip] *= -1
+    if start:
+        pos[:, 0] -= start * travel                    # the way starts where an unshifted tiling starts
     return dataclasses.replace(loop, name=name, next="", fps=float(fps), frame_count=count, positions=pos, rotations=rot)
+
+
+def blend(a: np.ndarray, b: np.ndarray, u: float) -> np.ndarray:
+    """Quaternions [..., 4] from a towards b by u (normalised lerp on the near side; poses here differ by a few
+    tens of degrees at most)."""
+    b = np.where(((a * b).sum(-1) < 0)[..., None], -b, b)
+    q = a * (1 - u) + b * u
+    return q / np.linalg.norm(q, axis=-1, keepdims=True)
+
+
+def symmetric(skel: ga.Skeleton, loop: ga.Animation, tiled: ga.Animation) -> ga.Animation:
+    """The tiled loop averaged with its mirror image half a cycle on: the left step and the right one become one
+    another's mirror. Gothic's run is not: its trunk leans back to -8° and forward to +2° once a cycle, so once a
+    step it is thrown back and once forward, and the hips sink 2.3 cm deeper on the left step (2026-11-11, «на шаг
+    левой ноги он сильно заваливается»). The mean of the two halves keeps everything that comes once a step."""
+    from trans_clip import mirror
+    other = tile(mirror(skel, loop), tiled.fps, tiled.frame_count, tiled.name, start=0.5)
+    pos = 0.5 * (tiled.positions + other.positions)
+    return dataclasses.replace(tiled, positions=pos, rotations=blend(tiled.rotations, other.rotations, 0.5))
 
 
 def key_frames(cycle: float, per: int) -> list[int]:
@@ -83,6 +111,7 @@ def main():
     ap.add_argument("--stance", default="HUMANS-S_RUN.MAN")
     ap.add_argument("--samples", type=int, default=8)
     ap.add_argument("--seed", type=int, default=9401)
+    ap.add_argument("--symmetric", action="store_true", help="average the loop with its mirror half a cycle on")
     a = ap.parse_args()
 
     path = Path(a.clip) if a.clip.endswith(".json") else a.models / (a.clip + ".json")
@@ -92,10 +121,14 @@ def main():
     cycle = (loop.frame_count - 1) / loop.fps * km.KIMODO_FPS
     record = f"HUMANS-P_{a.id.upper()}30.MAN.json"
     tiled = tile(loop, km.KIMODO_FPS, int(np.ceil(cycle * MAX_CYCLES)) + 2, f"P_{a.id.upper()}30")
+    skel = ga.read_skeleton(a.models / "HUMANS.MDH.json")
+    if a.symmetric:
+        tiled = symmetric(skel, loop, tiled)
     (a.out / "poses").mkdir(parents=True, exist_ok=True)
     ga.write_animation(a.out / "poses" / record, tiled, f"{path.name} tiled at {km.KIMODO_FPS} fps")
 
-    spec = {"note": f"A loop keyed to the poses of {path.name} (tiled at {km.KIMODO_FPS} fps), {a.keys} keys a cycle.",
+    spec = {"note": f"A loop keyed to the poses of {path.name} (tiled at {km.KIMODO_FPS} fps"
+                    f"{', averaged with its mirror' if a.symmetric else ''}), {a.keys} keys a cycle.",
             "stance": a.stance, "samples": a.samples, "seed": a.seed, "steps": 100, "poses": {}, "moves": []}
     poses = km.Poses(a.models, {"stance": a.stance}, a.soma_ref, a.out / "poses")
     hips = lambda t: rs.gothic_to_soma(poses.skel, tiled, t, poses.rig, poses.names)[1]

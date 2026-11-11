@@ -64,6 +64,25 @@ for side, s in (("L", "Left"), ("R", "Right")):
 
 F = np.diag([-1.0, 1.0, 1.0])
 
+# Where each skeleton holds its shoulders standing at ease: the clavicle (its root to the shoulder joint) in SOMA's
+# Chest frame, as degrees forward and up off straight sideways. Gothic: the stance S_RUN through the plain map, the
+# joint 9.3° ahead of the clavicle's root; Kimodo: 32 free standing samples, 14.6° behind (left 16.6, right 12.5,
+# taken as one). Copying the bone's direction as it is put Gothic's shoulders 24° ahead of where Kimodo keeps them:
+# keyed to Gothic's poses Kimodo drew a man with his shoulders rolled into his chest, and its free motion came onto
+# BIP01 with the shoulders pulled back (reports/content/2026-11-hero-locomotion, «Плечи из покоя в покой»). The
+# clavicle turns by that difference in the chest's frame, one way into SOMA and back the other; the arm keeps its
+# world direction, so only the shoulder joint moves.
+CLAVICLE_AT_EASE = {"gothic": (9.3, -11.7), "soma": (-14.6, -8.5)}
+
+
+def clavicle_turns() -> dict[str, np.ndarray]:
+    """SOMA side → the turn in its Chest frame that takes Gothic's clavicle at ease onto SOMA's."""
+    def at_ease(forward: float, up: float, side: float) -> np.ndarray:
+        v = np.array([side, np.tan(np.radians(up)), np.tan(np.radians(forward))])
+        return v / np.linalg.norm(v)
+    return {s: shortest_arc(at_ease(*CLAVICLE_AT_EASE["gothic"], x), at_ease(*CLAVICLE_AT_EASE["soma"], x))
+            for s, x in (("Left", 1.0), ("Right", -1.0))}
+
 
 def soma77_names() -> list[str]:
     fingers = []
@@ -203,13 +222,19 @@ def soma_rig(skel: ga.Skeleton, pos0: np.ndarray, rot0: np.ndarray, names: list[
 
 
 def gothic_to_soma(skel: ga.Skeleton, anim: ga.Animation, frame: int, rig: dict, names: list[str],
-                   origin_xz: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
-    """A Gothic pose as SOMA local axis-angle rotations [J, 3] and hips position [3] in metres."""
+                   origin_xz: np.ndarray | None = None, clavicles: bool = True) -> tuple[np.ndarray, np.ndarray]:
+    """A Gothic pose as SOMA local axis-angle rotations [J, 3] and hips position [3] in metres.
+
+    `clavicles`: the shoulders from Gothic's at ease to SOMA's (CLAVICLE_AT_EASE); False copies their direction."""
     world = ga.world_pose(skel, anim, frame)
     gi = {n.name: i for i, n in enumerate(skel.nodes)}
     soma_global = {}
     for g, (s, _) in MAP.items():
         soma_global[s] = F @ world[gi[g]][:3, :3] @ rig["aligned"][g].T @ F
+    if clavicles:
+        chest = soma_global["Chest"]
+        for s, turn in clavicle_turns().items():
+            soma_global[f"{s}Shoulder"] = chest @ turn @ chest.T @ soma_global[f"{s}Shoulder"]
     out = np.zeros((len(names), 3))
     for j, n in enumerate(names):
         parent = SOMA30_PARENT[n]
@@ -284,8 +309,10 @@ def toe_contacts(contacts: np.ndarray | None, side: str, frames: int) -> tuple[n
 
 def retarget(npz: Path, skel: ga.Skeleton, name: str, next_ani: str, fps: float, src_fps: float,
              root_offset_y: float | None = None, ref: ga.Animation | None = None,
-             foot_ik: bool = True) -> ga.Animation:
+             foot_ik: bool = True, clavicles: bool = True) -> ga.Animation:
     """`ref`: the stance clip the move starts from; gives bone offsets and the floor height.
+
+    `clavicles`: the shoulders from SOMA's at ease to Gothic's (CLAVICLE_AT_EASE); False copies their direction.
 
     `foot_ik`: put each ankle where SOMA's ankle is, carried over by the root's scale. Copied
     rotations alone let a planted foot slide, because the Gothic thigh and shin keep other
@@ -301,6 +328,11 @@ def retarget(npz: Path, skel: ga.Skeleton, name: str, next_ani: str, fps: float,
     thigh_off = 0.5 * (skel.nodes[gi["BIP01 L THIGH"]].rest[:3, 3] + skel.nodes[gi["BIP01 R THIGH"]].rest[:3, 3])
     world_rot = np.zeros((frames_src, len(skel.nodes), 3, 3))
     root_pos = np.zeros((frames_src, 3))
+    if clavicles:  # rest offsets and lengths above came from the motion as it is; only the mapped turns change
+        rot = rot.copy()
+        for s, turn in clavicle_turns().items():
+            chest = rot[:, si["Chest"]]
+            rot[:, si[f"{s}Shoulder"]] = chest @ turn.T @ np.transpose(chest, (0, 2, 1)) @ rot[:, si[f"{s}Shoulder"]]
     for t in range(frames_src):
         pelvis = gi["BIP01 PELVIS"]
         world_rot[t, pelvis] = F @ rot[t, si["Hips"]] @ F @ aligned["BIP01 PELVIS"]
@@ -426,10 +458,14 @@ def main():
     ap.add_argument("--ref", type=Path, help="stance clip (MAN record) for bone offsets and floor height")
     ap.add_argument("--root-offset-y", type=float, default=None,
                     help="cm added to the root height; default grounds the feet at the stance's ankle height")
+    ap.add_argument("--clavicles", choices=("at-ease", "copy"), default="at-ease",
+                    help="at-ease: SOMA's shoulders at ease become Gothic's (CLAVICLE_AT_EASE); copy: the old way, "
+                         "the bone's direction as it is (clips made before 2026-11-12)")
     a = ap.parse_args()
     skel = ga.read_skeleton(a.skeleton)
     ref = ga.read_animation(a.ref) if a.ref else None
-    anim = retarget(a.npz, skel, a.name, a.next, a.fps, a.src_fps, a.root_offset_y, ref)
+    anim = retarget(a.npz, skel, a.name, a.next, a.fps, a.src_fps, a.root_offset_y, ref,
+                    clavicles=a.clavicles == "at-ease")
     a.out.parent.mkdir(parents=True, exist_ok=True)
     ga.write_animation(a.out, anim, source=f"kimodo:{a.npz.name}")
     tr = ga.root_travel(anim)

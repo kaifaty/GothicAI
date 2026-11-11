@@ -142,6 +142,35 @@ def test_stance_survives_soma_and_back(tmp_path, foot_ik):
         assert np.linalg.norm(w0[i][:3, 3] - w1[i][:3, 3]) < 1.0, n  # cm
 
 
+@pytest.mark.skipif(base_models() is None, reason="needs a converted base with the human model")
+def test_stance_shoulders_go_to_somas_at_ease():
+    """Gothic's stance → SOMA puts each clavicle where Kimodo holds it standing; copying keeps Gothic's 24° ahead."""
+    models = base_models()
+    stance = ga.read_animation(models / "HUMANS-S_RUN.MAN.json")
+    skel = rs.with_offsets(ga.read_skeleton(models / "HUMANS.MDH.json"), stance)
+    pos, rot = synthetic_soma(np.random.default_rng(3), 1)
+    rig = rs.soma_rig(skel, pos[0], rot[0], rs.SOMA30, stance)
+    off = {n: (rot[0, rs.SOMA30.index(p)].T @ (pos[0, j] - pos[0, rs.SOMA30.index(p)]) if p else np.zeros(3))
+           for j, (n, p) in enumerate(rs.SOMA30_PARENT.items())}
+
+    def forward(clavicles):
+        local, _ = rs.gothic_to_soma(skel, stance, 0, rig, rs.SOMA30, clavicles=clavicles)
+        g = {}
+        for j, n in enumerate(rs.SOMA30):
+            ang = np.linalg.norm(local[j])
+            q = np.array([1.0, 0, 0, 0]) if ang < 1e-12 else np.concatenate([[np.cos(ang / 2)], local[j] / ang * np.sin(ang / 2)])
+            par = rs.SOMA30_PARENT[n]
+            g[n] = ga.quat_matrix(q) if par is None else g[par] @ ga.quat_matrix(q)
+        out = []
+        for s in ("Left", "Right"):
+            d = g["Chest"].T @ g[f"{s}Shoulder"] @ off[f"{s}Arm"]
+            out.append(np.degrees(np.arctan2(d[2], abs(d[0]))))
+        return np.array(out)
+
+    assert np.abs(forward(True) - rs.CLAVICLE_AT_EASE["soma"][0]).max() < 1.5
+    assert np.abs(forward(False) - rs.CLAVICLE_AT_EASE["gothic"][0]).max() < 1.5
+
+
 def test_retime_keeps_ends_and_squeezes_phases():
     import finish
     rng = np.random.default_rng(5)
@@ -1009,6 +1038,35 @@ def test_loop_keys_tiles_a_loop_in_time_and_spreads_the_keys_evenly_under_kimodo
     assert lk.key_frames(cycle, 4)[:5] == [0, 7, 14, 21, 28] and lk.key_frames(cycle, 4)[-1] == 110
     for per in (2, 4, 8):
         assert len(lk.key_frames(cycle, per)) < 20
+
+
+@pytest.mark.skipif(base_models() is None, reason="needs a converted base with the human model")
+def test_loop_keys_symmetric_makes_the_steps_mirror_images_and_stills_gothics_run():
+    """Gothic's run leans back and forward once a cycle and turns its chest; the mean with the mirror keeps neither."""
+    import loop_keys as lk
+    import trans_clip
+    models = base_models()
+    skel = ga.read_skeleton(models / "HUMANS.MDH.json")
+    loop = ga.read_animation(models / "HUMANS-S_RUNL.MAN.json")
+    fps = 2 * loop.fps                                            # a cycle of 38 frames: half of it is a whole frame count
+    cycle = (loop.frame_count - 1) * 2
+    tiled = lk.tile(loop, fps, 2 * cycle, "P")
+    sym = lk.symmetric(skel, loop, tiled)
+    gi = {n.name: i for i, n in enumerate(skel.nodes)}
+
+    def trunk_pitch(anim):
+        w = [ga.world_pose(skel, anim, f) for f in range(cycle)]
+        up = np.array([x[gi["BIP01 NECK"]][:3, 3] - x[gi["BIP01 PELVIS"]][:3, 3] for x in w])
+        return np.ptp(np.degrees(np.arctan2(up[:, 2], up[:, 1])))
+
+    assert trunk_pitch(tiled) > 8 and trunk_pitch(sym) < 2
+    # half a cycle on, the pose is the mirror image of this one: the right step is the left one
+    mirrored = trans_clip.mirror(skel, sym)
+    for t in (3, 9, 15):
+        a, b = ga.world_pose(skel, sym, t + cycle // 2), ga.world_pose(skel, mirrored, t)
+        for name in ("BIP01 L HAND", "BIP01 R FOOT", "BIP01 HEAD"):
+            d = (a[gi[name]][:3, 3] - a[0][:3, 3]) - (b[gi[name]][:3, 3] - b[0][:3, 3])
+            assert np.linalg.norm(d) < 0.1, (t, name)                 # cm
 
 
 def test_fix_layer_move_shifts_a_foot_by_a_vector_in_its_window_and_keeps_its_turn():
