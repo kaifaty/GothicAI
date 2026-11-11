@@ -72,14 +72,76 @@ def write_parts(path, source, parts):
     temporary.replace(path)
 
 
-def decompose(points, mesh_file, output, executable):
-    subprocess.run([str(executable), str(mesh_file), str(output)], check=True)
+def split_mesh(points, triangles, height):
+    """Clip source triangles into upper/lower meshes without adding cut caps."""
+    meshes = []
+    for above in (True, False):
+        vertices, faces = [], []
+        for triangle in points[triangles]:
+            # Coplanar source faces belong to the upper mesh only.
+            if not above and np.all(triangle[:, 1] == height):
+                continue
+            polygon = []
+            for a, b in zip(triangle, np.roll(triangle, -1, axis=0)):
+                inside_a = a[1] >= height if above else a[1] <= height
+                inside_b = b[1] >= height if above else b[1] <= height
+                if inside_a:
+                    polygon.append(a)
+                if inside_a != inside_b:
+                    # Shared edges must produce identical intersection vertices,
+                    # including when neighbouring triangles traverse them backwards.
+                    low, high = (a, b) if a[1] < b[1] else (b, a)
+                    point = low + (height - low[1]) / (high[1] - low[1]) * (high - low)
+                    point[1] = height
+                    polygon.append(point)
+            for i in range(1, len(polygon) - 1):
+                face = np.asarray((polygon[0], polygon[i], polygon[i + 1]))
+                if np.linalg.norm(np.cross(face[1] - face[0], face[2] - face[0])) <= 1e-10:
+                    continue
+                faces.append((len(vertices), len(vertices) + 1, len(vertices) + 2))
+                vertices.extend(face)
+        welded, inverse = np.unique(np.asarray(vertices).reshape(-1, 3), axis=0, return_inverse=True)
+        meshes.append((welded, inverse[np.asarray(faces, dtype=int).reshape(-1, 3)]))
+    return tuple(meshes)
+
+
+def tabletop_cut(points, triangles):
+    """Find the underside of a broad upper board, with the experiment's 2 cm margin."""
+    surface = points[triangles]
+    normals = np.cross(surface[:, 1] - surface[:, 0], surface[:, 2] - surface[:, 0])
+    area2 = np.linalg.norm(normals, axis=1)
+    horizontal = (np.abs(normals[:, 1]) >= .98 * area2) & (area2 > 1e-8)
+    groups = []
+    for i in sorted(np.flatnonzero(horizontal), key=lambda i: float(surface[i, :, 1].mean())):
+        height = float(surface[i, :, 1].mean())
+        if not groups or height - groups[-1]["y"] > 1:
+            groups.append(dict(y=height, bottom=float(surface[i, :, 1].min()), area=0., normal_y=0.))
+        group = groups[-1]
+        group["area"] += float(area2[i])
+        group["normal_y"] += float(normals[i, 1])
+        group["bottom"] = min(group["bottom"], float(surface[i, :, 1].min()))
+    if not groups:
+        return None
+    broad = max(group["area"] for group in groups) * .25
+    top = max((group for group in groups if group["area"] >= broad), key=lambda group: group["y"])
+    middle = float(points[:, 1].min() + points[:, 1].max()) * .5
+    undersides = [group for group in groups if group["area"] >= broad
+                  and middle < group["y"] < top["y"] and group["normal_y"] * top["normal_y"] < 0]
+    if not undersides:
+        return None
+    cut = max(undersides, key=lambda group: group["y"])["bottom"] - 2
+    return cut if cut > points[:, 1].min() else None
+
+
+def decompose(points, mesh_file, output, executable, *, table_base=False):
+    command = [str(executable)] + (["table-base"] if table_base else [])
+    subprocess.run(command + [str(mesh_file), str(output)], check=True)
     lines = iter(output.read_text().splitlines())
     json.loads(next(lines))  # Actual V-HACD flood-fill reference, also read separately for fallback.
     parts = []
     for _ in range(int(next(lines))):
         parts.append(np.asarray([list(map(float, next(lines).split())) for _ in range(int(next(lines)))]))
-    if not 1 <= len(parts) <= 16:
+    if not 1 <= len(parts) <= (15 if table_base else 16):
         raise ValueError("V-HACD returned an invalid part count")
     # Shrink wrapping may round a source corner. Assign uncovered source vertices
     # to the closest output hull before rebuilding its convex envelope. This is
@@ -149,6 +211,7 @@ def main():
                 raise ValueError(f"{visual}: source mesh has no occupied reference voxels")
             split = cls in ("table", "cupboard")
             fallback_reason, attempted_quality = None, None
+            table_split = None
             if args.verify:
                 parts = read_parts(cache, glb)
                 if not split and len(parts) != 1:
@@ -159,7 +222,23 @@ def main():
                 parts = [points[hull.vertices]]
             else:
                 try:
-                    parts = decompose(points, mesh, Path(temporary) / "parts.mesh", args.decomposer)
+                    cut = tabletop_cut(points, triangles) if args.content and cls == "table" else None
+                    if args.content and cls == "table":
+                        table_split = dict(applied=cut is not None, cut_y_cm=cut,
+                                           reason=None if cut is not None else "no_wide_upper_board")
+                    if cut is None:
+                        parts = decompose(points, mesh, Path(temporary) / "parts.mesh", args.decomposer)
+                    else:
+                        (upper, _), (lower, faces) = split_mesh(points, triangles, cut)
+                        base_mesh = Path(temporary) / "table-base.mesh"
+                        base_mesh.write_text(f"{len(lower)} {len(faces)}\n" +
+                                             "".join(" ".join(map(str, point)) + "\n" for point in lower) +
+                                             "".join(" ".join(map(str, face)) + "\n" for face in faces))
+                        parts = decompose(lower, base_mesh, Path(temporary) / "parts.mesh",
+                                          args.decomposer, table_base=True)
+                        for part in parts:
+                            part[:, 1] = np.minimum(part[:, 1], cut)
+                        parts.append(upper[ConvexHull(upper).vertices])
                 except (ValueError, subprocess.CalledProcessError, QhullError) as error:
                     parts = [points[hull.vertices]]
                     fallback_reason = f"decomposition_failed: {error}"
@@ -204,6 +283,8 @@ def main():
                        passed=True,
                        source_size=len(glb), source_crc32=f"{zlib.crc32(glb):08x}", cache=str(cache.resolve()),
                        cache_sha256=hashlib.sha256(candidate.read_bytes()).hexdigest(), elapsed_s=time.monotonic() - start)
+            if table_split is not None:
+                row["table_split"] = table_split
             rows.append(row)
             print(json.dumps(row, sort_keys=True), flush=True)
     if not rows:
