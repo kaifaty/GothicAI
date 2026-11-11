@@ -1,27 +1,31 @@
 #include "renderer.h"
+#include "settings.h"
+#include "gameservices.h"
+#include "renderer_internal.h"
 #include "physics/cloth.h"
 
 #include <Tempest/Application>
 #include <Tempest/Color>
 #include <Tempest/Fence>
 #include <Tempest/Log>
+#include <Tempest/Painter>
 #include <Tempest/StorageImage>
 #include <cassert>
+#include <cmath>
 #include <cstdio>
+#include <cstdlib>
 
 #include "ui/inventorymenu.h"
 #include "ui/videowidget.h"
 #include "graphics/drawcommands.h"
 #include "camera.h"
 #include "frameprofile.h"
-#include "gothic.h"
 #include "utils/string_frm.h"
 
 using namespace Tempest;
+using RendererInternal::nextPot;
 
-static const bool skyPathTrace = false;
-
-static uint32_t nextPot(uint32_t x) {
+uint32_t RendererInternal::nextPot(uint32_t x) {
   x--;
   x |= x >> 1;
   x |= x >> 2;
@@ -32,21 +36,8 @@ static uint32_t nextPot(uint32_t x) {
   return x;
   }
 
-static float smoothstep(float edge0, float edge1, float x) {
-  float t = std::min(std::max((x - edge0) / (edge1 - edge0), 0.f), 1.f);
-  return t * t * (3.f - 2.f * t);
-  };
-
-static float linearstep(float edge0, float edge1, float x) {
-  float t = std::min(std::max((x - edge0) / (edge1 - edge0), 0.f), 1.f);
-  return t;
-  };
-
-static Size tileCount(Size sz, int s) {
-  sz.w = (sz.w+s-1)/s;
-  sz.h = (sz.h+s-1)/s;
-  return sz;
-  }
+uint32_t Renderer::benchVsmLampSides = 0;
+uint32_t Renderer::benchVsmStudy     = 0;
 
 Renderer::Renderer() {
   auto& device = Resources::device();
@@ -85,23 +76,19 @@ Renderer::Renderer() {
   Log::i("GPU = ",device.properties().name);
   Log::i("Depth format = ", Tempest::formatName(zBufferFormat), " Shadow format = ", Tempest::formatName(shadowFormat));
 
-  Gothic::inst().onSettingsChanged.bind(this,&Renderer::setupSettings);
-  Gothic::inst().toggleGi  .bind(this, &Renderer::toggleGi);
-  Gothic::inst().toggleVsm .bind(this, &Renderer::toggleVsm);
-  Gothic::inst().toggleRtsm.bind(this, &Renderer::toggleRtsm);
+  ::Settings::inst().onSettingsChanged.bind(this,&Renderer::setupSettings);
+  GameServices::inst().toggleGi  .bind(this, &Renderer::toggleGi);
+  GameServices::inst().toggleVsm .bind(this, &Renderer::toggleVsm);
 
-  Gothic::inst().togglePathtrace.bind(this, &Renderer::togglePathtrace);
+  GameServices::inst().togglePathtrace.bind(this, &Renderer::togglePathtrace);
 
-  settings.giMethod         = Gothic::options().doGi;
+  settings.giMethod         = ::Settings::options().doGi;
   settings.vsmEnabled       = Shaders::options().doVirtualShadow;
-  settings.rtsmEnabled      = Shaders::options().doSoftwareShadow;
-  settings.swrEnabled       = Shaders::options().swRenderingPreset>0;
-  settings.swrtEnabled      = Shaders::options().doSoftwareRT;
   if(const char* stats = std::getenv("OPENGOTHIC_VSM_STATS"))
     settings.vsmStats = std::string_view(stats)=="1";
   // OPENGOTHIC_VSM_LAMP=hard|flat: the lamp shadow filter for a study of its cost
   // (reports/render-features/2026-11-04-lamp-pcss/step-2c.md): one gather at the centre, or the same taps against
-  // the receiver's depth without its plane; unset or pcss: the game's filter
+  // the receiver's depth without its plane; unset or pcss: the PCSS ([INTERNAL] vsmLampSoft does not change the study)
   if(const char* mode = std::getenv("OPENGOTHIC_VSM_LAMP")) {
     const std::string_view m = mode;
     settings.vsmLampMode = m=="hard" ? 1 : (m=="flat" ? 2 : (m=="truth" ? 3 : 0));
@@ -171,22 +158,22 @@ Renderer::Renderer() {
   }
 
 Renderer::~Renderer() {
-  Gothic::inst().onSettingsChanged.ubind(this,&Renderer::setupSettings);
+  ::Settings::inst().onSettingsChanged.ubind(this,&Renderer::setupSettings);
   }
 
 void Renderer::setupSettings() {
-  settings.zEnvMappingEnabled = Gothic::settingsGetI("ENGINE","zEnvMappingEnabled")!=0;
-  settings.zCloudShadowScale  = Gothic::settingsGetI("ENGINE","zCloudShadowScale") !=0;
+  settings.zEnvMappingEnabled = ::Settings::getI("ENGINE","zEnvMappingEnabled")!=0;
+  settings.zCloudShadowScale  = ::Settings::getI("ENGINE","zCloudShadowScale") !=0;
   // SSAO and the fog shadow mask cost ~15 ms a frame at 3456x1918 on an M1 Pro (docs/performance.md):
   // both are traced at half resolution, the depth-aware blur brings SSAO back to full size
-  settings.halfResAoFog       = Gothic::settingsGetI("INTERNAL","halfResAoFog")!=0;
-  settings.zFogRadial         = Gothic::settingsGetI("RENDERER_D3D","zFogRadial")!=0;
+  settings.halfResAoFog       = ::Settings::getI("INTERNAL","halfResAoFog")!=0;
+  settings.zFogRadial         = ::Settings::getI("RENDERER_D3D","zFogRadial")!=0;
   {
     // wind
-    settings.zWindEnabled = Gothic::settingsGetI("ENGINE","zWindEnabled")!=0;
+    settings.zWindEnabled = ::Settings::getI("ENGINE","zWindEnabled")!=0;
 
-    const float period  = Gothic::settingsGetF("ENGINE","zWindCycleTime");
-    const float periodV = Gothic::settingsGetF("ENGINE","zWindCycleTimeVar");
+    const float period  = ::Settings::getF("ENGINE","zWindCycleTime");
+    const float periodV = ::Settings::getF("ENGINE","zWindCycleTimeVar");
     settings.windPeriod = uint64_t((period+periodV)*1000.f);
     if(settings.windPeriod<=0) {
       settings.windPeriod   = 1;
@@ -194,38 +181,64 @@ void Renderer::setupSettings() {
       }
   }
 
-  // VSM lamps: blockers nearer than this to the light (its own basket, lantern frame or candle holder) cast no
-  // shadow; 0 or unset: 30 cm. With the light in its flame a brazier's basket is within it; a man by a torch or a
-  // candle on a table still casts a shadow (80 cm took that away)
-  settings.vsmLampNearCm      = Gothic::settingsGetF("INTERNAL","vsmLampNearCm");
+  // VSM lamps: objects nearer than this to the light along its cube face's axis (its own basket, lantern frame or
+  // candle holder) cast no shadow: they are clipped away from the lamp's faces (main.vert), so a wall behind them still
+  // shadows; the world mesh keeps the projection's near plane alone. 0 or unset: 30 cm. With the light in its flame a
+  // brazier's basket is within it; a man by a torch or a candle on a table still casts a shadow (80 cm took that away)
+  settings.vsmLampNearCm      = ::Settings::getF("INTERNAL","vsmLampNearCm");
   if(settings.vsmLampNearCm<=0)
     settings.vsmLampNearCm = 30;
-  settings.zVidBrightness     = Gothic::settingsGetF("VIDEO","zVidBrightness");
-  settings.zVidContrast       = Gothic::settingsGetF("VIDEO","zVidContrast");
-  settings.zVidGamma          = Gothic::settingsGetF("VIDEO","zVidGamma");
+  // VSM lamps: which sides of a surface go into a lamp's cube faces (main.vert, meshShader): 1 the side away from the
+  // light alone (before 2026-11-10: a one-sided floor or wall lit by the lamp let its light through), 2 both sides of
+  // the world mesh alone (2026-11-10), 3 both sides of objects too (0 or unset; since 2026-11-11: a one-sided object
+  // lit by the lamp, a carpet, a fireplace's hood, a net, let its light through).
+  // OPENGOTHIC_VSM_LAMP_SIDES=1|2|3 (test benches) wins over the ini; without mesh shaders always 1
+  // (reports/render-features/2026-11-10-lamp-one-sided, reports/render-features/2026-11-11-lamp-objects-two-sided)
+  {
+    const char* env = std::getenv("OPENGOTHIC_VSM_LAMP_SIDES");
+    const int   v   = env!=nullptr ? std::atoi(env) : ::Settings::getI("INTERNAL","vsmLampSides");
+    settings.vsmLampSides = uint32_t(v>=1 && v<=3 ? v : 3);
+  }
+  // VSM lamps: the soft PCSS, or hard shadows in one gather (light.frag, VSM_LAMP_HARD). On Metal hard by default:
+  // the PCSS costs ~11 ms GPU indoors on an M1 Pro (reports/render-features/2026-11-05-vsm-mac-hard/README.md).
+  // OPENGOTHIC_VSM_LAMP_SOFT=0|1 (test benches) wins over the ini; the study switches (OPENGOTHIC_VSM_LAMP*,
+  // OPENGOTHIC_VSM_STATS, read in the constructor) take the study shader and its PCSS whatever this says
+  {
+    const char* env = std::getenv("OPENGOTHIC_VSM_LAMP_SOFT");
+    settings.vsmLampSoft = env!=nullptr ? std::string_view(env)!="0" : ::Settings::getI("INTERNAL","vsmLampSoft")!=0;
+    static int logged = -1;
+    if(settings.vsmEnabled && logged!=int(settings.vsmLampSoft)) {
+      logged = int(settings.vsmLampSoft);
+      Log::i("vsm: lamp shadows = ", settings.vsmLampSoft ? "soft (pcss)" : "hard (one gather)",
+             env!=nullptr ? " by OPENGOTHIC_VSM_LAMP_SOFT" : " by [INTERNAL] vsmLampSoft");
+      }
+  }
+  settings.zVidBrightness     = ::Settings::getF("VIDEO","zVidBrightness");
+  settings.zVidContrast       = ::Settings::getF("VIDEO","zVidContrast");
+  settings.zVidGamma          = ::Settings::getF("VIDEO","zVidGamma");
 
-  settings.sunSize            = Gothic::settingsGetF("SKY_OUTDOOR","zSunSize");
-  settings.moonSize           = Gothic::settingsGetF("SKY_OUTDOOR","zMoonSize");
+  settings.sunSize            = ::Settings::getF("SKY_OUTDOOR","zSunSize");
+  settings.moonSize           = ::Settings::getF("SKY_OUTDOOR","zMoonSize");
   if(settings.sunSize<=1)
     settings.sunSize = 200;
   if(settings.moonSize<=1)
     settings.moonSize = 400;
 
-  settings.vidResIndex    = Gothic::settingsGetF("INTERNAL","vidResIndex");
+  settings.vidResIndex    = ::Settings::getF("INTERNAL","vidResIndex");
   // MetalFX spatial upscaling of reduced internal resolution; Lanczos in the tonemapping pass otherwise
-  settings.spatialUpscale = Gothic::settingsGetI("INTERNAL","spatialUpscale")!=0 &&
+  settings.spatialUpscale = ::Settings::getI("INTERNAL","spatialUpscale")!=0 &&
                             Resources::device().properties().spatialUpscale;
   // temporal AA by the camera (docs/graphics-plan.md, step 1a), on by default: -taa 0 or [INTERNAL] taa=0 turn it
   // off and bring back CMAA2; OPENGOTHIC_TAA=0|1 (test benches) overrides both
   {
-    bool taa = Gothic::options().taa && Gothic::settingsGetI("INTERNAL","taa")!=0;
+    bool taa = ::Settings::options().taa && ::Settings::getI("INTERNAL","taa")!=0;
     if(const char* e = std::getenv("OPENGOTHIC_TAA"))
       taa = std::string_view(e)!="0";
     settings.taaEnabled = taa && Resources::device().properties().hasAttachFormat(TextureFormat::RGBA16F);
     // the sharpening after the resolve (RCAS) and the mip bias of the main view's material textures:
     // the history averages the jittered samples, which softens; OPENGOTHIC_TAA_SHARPNESS, OPENGOTHIC_TAA_MIP_BIAS
     // (test benches) override
-    settings.taaSharpness = Gothic::settingsGetF("INTERNAL","taaSharpness");
+    settings.taaSharpness = ::Settings::getF("INTERNAL","taaSharpness");
     if(const char* e = std::getenv("OPENGOTHIC_TAA_SHARPNESS"))
       settings.taaSharpness = std::strtof(e, nullptr);
     settings.taaSharpness = std::clamp(settings.taaSharpness, 0.f, 1.f);
@@ -236,6 +249,63 @@ void Renderer::setupSettings() {
     if(logged!=int(settings.taaEnabled)) {
       logged = int(settings.taaEnabled);
       Log::i("render: taa = ", logged, ", sharpness = ", settings.taaSharpness, ", mip bias = ", settings.taaMipBias);
+      }
+  }
+  // motion vectors of objects (graphics plan 1b, reports/render-features/2026-11-10-motion-vectors), on by default:
+  // -mv 0 or [INTERNAL] motionVectors=0 turn them off, OPENGOTHIC_MOTION_VECTORS=0|1 (test benches) overrides
+  // both. OPENGOTHIC_MOTION_VIEW=1 shows the vectors in place of the frame
+  {
+    bool mv = ::Settings::options().motionVectors>=0 ? ::Settings::options().motionVectors!=0
+                                                 : ::Settings::getI("INTERNAL","motionVectors")!=0;
+    if(const char* e = std::getenv("OPENGOTHIC_MOTION_VECTORS"))
+      mv = std::string_view(e)!="0";
+    settings.motionVectors = mv;
+    settings.motionView    = false;
+    if(const char* e = std::getenv("OPENGOTHIC_MOTION_VIEW"))
+      settings.motionView = std::string_view(e)!="0";
+    settings.motionViewPx = 2;
+    if(const char* e = std::getenv("OPENGOTHIC_MOTION_VIEW_PX"))
+      settings.motionViewPx = std::max(std::strtof(e, nullptr), 1e-6f);
+    static int logged = -1;
+    if(logged!=int(settings.motionVectors)) {
+      logged = int(settings.motionVectors);
+      Log::i("render: motion vectors = ", logged, settings.motionView ? ", view = 1" : "");
+      }
+  }
+  // the TAA reactive mask (graphics plan 1v, reports/render-features/2026-11-10-taa-reactive), on by default:
+  // [INTERNAL] taaReactive=0 turns it off, OPENGOTHIC_TAA_REACTIVE=0|1 (test benches) overrides it.
+  // OPENGOTHIC_TAA_REACTIVE_VIEW=1 shows the mask in place of the frame; _MAX and _LREF tune it on a stand
+  {
+    bool on = ::Settings::getI("INTERNAL","taaReactive")!=0;
+    if(const char* e = std::getenv("OPENGOTHIC_TAA_REACTIVE"))
+      on = std::string_view(e)!="0";
+    settings.taaReactive     = on;
+    settings.taaReactiveView = false;
+    if(const char* e = std::getenv("OPENGOTHIC_TAA_REACTIVE_VIEW"))
+      settings.taaReactiveView = std::string_view(e)!="0";
+    settings.taaReactiveMax = 0.9f;
+    if(const char* e = std::getenv("OPENGOTHIC_TAA_REACTIVE_MAX"))
+      settings.taaReactiveMax = std::clamp(std::strtof(e, nullptr), 0.f, 1.f);
+    settings.taaReactiveLref = 0.25f;
+    if(const char* e = std::getenv("OPENGOTHIC_TAA_REACTIVE_LREF"))
+      settings.taaReactiveLref = std::max(std::strtof(e, nullptr), 1e-4f);
+    static int logged = -1;
+    if(logged!=int(settings.taaReactive)) {
+      logged = int(settings.taaReactive);
+      Log::i("render: taa reactive = ", logged, ", max = ", settings.taaReactiveMax, ", lref = ",
+             settings.taaReactiveLref, settings.taaReactiveView ? ", view = 1" : "");
+      }
+  }
+  // SSAO over frames (reports/engine/2026-11-08-ssao-temporal), on by default: OPENGOTHIC_SSAO_HISTORY=0 traces the
+  // whole set of 32 every frame and keeps no history (the same look, at the former cost)
+  {
+    settings.ssaoHistory = true;
+    if(const char* e = std::getenv("OPENGOTHIC_SSAO_HISTORY"))
+      settings.ssaoHistory = std::string_view(e)!="0";
+    static int logged = -1;
+    if(logged!=int(settings.ssaoHistory)) {
+      logged = int(settings.ssaoHistory);
+      Log::i("render: ssao history = ", logged);
       }
   }
   // A study of the temporal upscale (graphics plan 1g, reports/render-features/2026-11-05-upscale), test benches only:
@@ -264,16 +334,14 @@ void Renderer::setupSettings() {
   }
   // CMAA2 runs at internal resolution, so it needs a same-size target: native or the upscaler input
   const bool nativeRes    = settings.vidResIndex==0 && (settings.renderScale==0 || settings.renderScale==1);
-  settings.aaEnabled      = !settings.taaEnabled && (Gothic::options().aaPreset>0) &&
+  settings.aaEnabled      = !settings.taaEnabled && (::Settings::options().aaPreset>0) &&
                             (nativeRes || settings.spatialUpscale);
   // bloom from the HDR scene before tonemapping; OPENGOTHIC_BLOOM=0 turns it off
   if(const char* bloom = std::getenv("OPENGOTHIC_BLOOM"))
     settings.bloomEnabled = std::string_view(bloom)!="0";
 
   // direct lighting
-  if(settings.rtsmEnabled)
-    shadow.directLightPso = &shaders.rtsmDirectLight;
-  else if(settings.vsmEnabled)
+  if(settings.vsmEnabled)
     shadow.directLightPso = &shaders.vsmDirectLight;
   else if(Shaders::options().doRayQuery && settings.shadowResolution>0)
     shadow.directLightPso = &shaders.directLightRq;
@@ -285,6 +353,8 @@ void Renderer::setupSettings() {
   // point-lights
   if(settings.vsmEnabled && settings.vsmLampStudy)
     lights.directLightPso = &shaders.lightsVsmProbe;
+  else if(settings.vsmEnabled && !settings.vsmLampSoft)
+    lights.directLightPso = &shaders.lightsVsmHard;
   else if(settings.vsmEnabled)
     lights.directLightPso = &shaders.lightsVsm;
   else if(Shaders::options().doRayQuery)
@@ -304,9 +374,9 @@ void Renderer::setupSettings() {
     }
 
   Log::i("render: ray query = ", int(Shaders::options().doRayQuery), ", meshlets = ", int(Shaders::options().doMeshShading),
-         ", gi = ", int(settings.giMethod), ", aa = ", settings.aaEnabled ? int(Gothic::options().aaPreset) : 0,
+         ", gi = ", int(settings.giMethod), ", aa = ", settings.aaEnabled ? int(::Settings::options().aaPreset) : 0,
          ", bloom = ", int(settings.bloomEnabled));
-  Log::i("render: vsm = ", int(settings.vsmEnabled), ", rtsm = ", int(settings.rtsmEnabled));
+  Log::i("render: vsm = ", int(settings.vsmEnabled));
 
   if(settings.giMethod!=GiMethod::None) {
     // need a projective shadow, for gi
@@ -315,22 +385,6 @@ void Renderer::setupSettings() {
 
   resetSkyFog();
   resetShadowmap();
-  }
-
-void Renderer::toggleGi() {
-  auto& device = Resources::device();
-  if(!Shaders::options().doRtScene)
-    return;
-
-  if(settings.giMethod==GiMethod::None && Gothic::options().doGi!=GiMethod::None)
-    settings.giMethod = Gothic::options().doGi;
-  else if(settings.giMethod==GiMethod::None && Shaders::isGi1Supported())
-    settings.giMethod = GiMethod::Probes; // default for now
-  else
-    settings.giMethod = GiMethod::None;
-
-  device.waitIdle();
-  setupSettings();
   }
 
 void Renderer::toggleVsm() {
@@ -345,14 +399,6 @@ void Renderer::toggleVsm() {
   setupSettings();
   }
 
-void Renderer::toggleRtsm() {
-  if(!Shaders::isRtsmSupported())
-    return;
-
-  settings.rtsmEnabled = !settings.rtsmEnabled;
-  setupSettings();
-  }
-
 void Renderer::togglePathtrace() {
   settings.pathTraceEnabled = !settings.pathTraceEnabled;
   pt.numFrames = 0;
@@ -362,13 +408,40 @@ void Renderer::togglePathtrace() {
 void Renderer::onWorldChanged() {
   sky.lutIsInitialized = false;
   taa.valid            = false;
+  ssao.valid           = false;
+  camHistory.hasCur    = false;
+  gi.resetHistory      = true;
   resetSkyFog();
+  }
+
+void Renderer::resetTemporal() {
+  taa.valid  = false;
+  ssao.valid = false;
+  camHistory.hasCur = false;
+  taa.frame = 0;
+  taa.cur   = 0;
+  // the phase of the SSAO cycle picks each texel's quarter of the sample set: a history that starts at another
+  // phase accumulates another picture, and the count of frames before the reset depends on the loading's wall time
+  ssao.frame = 0;
+  ssao.cur   = 0;
   }
 
 void Renderer::updateCamera(const WorldView& wview, const Camera& camera) {
   proj        = camera.projective();
   viewProj    = camera.viewProj();
   viewProjLwc = camera.viewProjLwc();
+
+  // without jitter: TAA, the SSAO history (also with the TAA off) and the motion vectors reproject by this pair
+  Taa::View view;
+  view.proj    = proj;
+  view.viewLwc = camera.viewLwc();
+  view.origin  = camera.originLwc();
+  camHistory.continuous = camHistory.hasCur && camera.cuts()==camHistory.cuts &&
+                          !Taa::isCameraJump(view, camHistory.cur);
+  camHistory.prev   = camHistory.cur;
+  camHistory.cur    = view;
+  camHistory.cuts   = camera.cuts();
+  camHistory.hasCur = true;
 
   for(size_t i=0; i<Resources::ShadowLayers; ++i)
     shadowMatrix[i] = camera.viewShadow(wview.mainLight().dir(),i);
@@ -381,51 +454,13 @@ void Renderer::updateCamera(const WorldView& wview, const Camera& camera) {
   clipInfo.z = zFar;
   }
 
-void Renderer::prepareTaa(WorldView& wview, const Camera& camera) {
-  // the path tracer accumulates its own frames, with a camera that stands still
-  // the temporal upscale (graphics plan 1g) takes the jitter and the history of the TAA in its own way
-  temporal.active = settings.taaEnabled && !settings.pathTraceEnabled && !temporal.output.isEmpty();
-  taa.active      = settings.taaEnabled && !settings.pathTraceEnabled && (!taa.output.isEmpty() || temporal.active);
-  if(!taa.active) {
-    taa.valid = false;
-    wview.setJitter(nullptr);
-    wview.setMipBias(0);
-    wview.setTaaFrame(false, 0);
-    return;
-    }
-  wview.setMipBias(temporal.active ? temporal.mipBias : settings.taaMipBias);
-
-  // without jitter, as the camera gives it; the shadows (Camera::viewShadow*) are made from it too
-  Taa::View cur;
-  cur.proj    = proj;
-  cur.viewLwc = camera.viewLwc();
-  cur.origin  = camera.originLwc();
-  if(camera.cuts()!=taa.cuts || Taa::isCameraJump(cur, taa.prev))
-    taa.valid = false;
-  taa.cuts = camera.cuts();
-
-  wview.setTaaFrame(settings.vsmLampTaa, taa.frame);
-  const Vec2 px = temporal.active ? Taa::jitterPx(taa.frame++, temporal.phases) : Taa::jitterPx(taa.frame++);
-  const auto j  = Taa::jitterMatrix(px, uint32_t(zbuffer.w()), uint32_t(zbuffer.h()));
-  taa.jitter    = px;
-  if(taa.valid)
-    taa.reproject = Taa::reprojection(cur, taa.prev, j);
-  taa.prev = cur;
-
-  // the main view only: the frustum, SSAO and everything in SceneGlobals; not the shadows, UI or inventory
-  auto m = j; m.mul(proj);        proj        = m;
-  m      = j; m.mul(viewProj);    viewProj    = m;
-  m      = j; m.mul(viewProjLwc); viewProjLwc = m;
-  wview.setJitter(&j);
-  }
-
 bool Renderer::requiresRtScene() const {
   if(!Shaders::options().doRtScene)
     return false;
 
   if(settings.giMethod!=GiMethod::None || settings.pathTraceEnabled)
     return true;
-  if(!(settings.rtsmEnabled || settings.vsmEnabled))
+  if(!settings.vsmEnabled)
     return true;
   return false;
   }
@@ -433,7 +468,7 @@ bool Renderer::requiresRtScene() const {
 bool Renderer::requiresLightsTree() const {
   if(!Shaders::isLightsTreeSupported())
     return false;
-  if(settings.giMethod==GiMethod::IrrC || settings.pathTraceEnabled)
+  if(settings.giMethod==GiMethod::IrrC || settings.giMethod==GiMethod::Probes || settings.pathTraceEnabled)
     return true;
   return false;
   }
@@ -502,14 +537,6 @@ StorageBuffer& Renderer::usesSsboInit(Tempest::StorageBuffer& ret, size_t size) 
   return ret;
   }
 
-StorageBuffer& Renderer::usesScratch(Tempest::StorageBuffer& ret, size_t size) {
-  if(ret.byteSize()>=size)
-    return ret;
-  Resources::recycle(std::move(ret));
-  ret = Resources::device().ssbo(Uninitialized, size);
-  return ret;
-  }
-
 void Renderer::prepareUniforms(WorldView& wview) {
   const Texture2d* sh[Resources::ShadowLayers] = {};
   for(size_t i=0; i<Resources::ShadowLayers; ++i)
@@ -524,8 +551,8 @@ void Renderer::prepareUniforms(WorldView& wview) {
   wview.setSceneImages(textureCast<const Texture2d&>(sceneOpaque), textureCast<const Texture2d&>(sceneDepth), zbuffer);
   wview.setFog(sky.fogLut3D, sky.fogLut3DMs);
   wview.setWindEnabled(settings.zWindEnabled, settings.windPeriod);
-  if(auto* world = Gothic::inst().world())
-    wview.setClothWind(world->physic()->clothEnabled(),world->physic()->cloth().windScale());
+  if(auto* physics = GameServices::inst().physicsWorld())
+    wview.setClothWind(physics->clothEnabled(),physics->cloth().windScale());
   }
 
 void Renderer::resetViewport(Tempest::Size res, Tempest::Size fullRes) {
@@ -612,20 +639,18 @@ void Renderer::resetViewport(Tempest::Size res, Tempest::Size fullRes) {
   gbufNormal    = device.attachment(TextureFormat::R32U, w,h);
   if(Shaders::options().doMaterialMaps)
     gbufOrm = device.attachment(TextureFormat::RGBA8, w,h);
+  // RG16F is a required colour attachment format in Vulkan and Metal; the wider one only where a device lacks it
+  const bool rg16f = device.properties().hasAttachFormat(TextureFormat::RG16F);
+  gbufMotion    = device.attachment(rg16f ? TextureFormat::RG16F : TextureFormat::RGBA16F, w,h);
+  // the TAA reactive mask: the translucent pipelines write it also without TAA (graphics plan 1v)
+  taa.reactive  = device.attachment(TextureFormat::R8, w,h);
 
   ssao     = decltype(ssao)();
   epipolar = decltype(epipolar)();
   vsm      = decltype(vsm)();
-  rtsm     = decltype(rtsm)();
 
   // volumetric sky
   sky.occlusionLut = StorageImage();
-
-  // software renderer
-  swr.outputImage = StorageImage();
-
-  // swrt
-  swrt.outputImage = StorageImage();
 
   resetSkyFog();
   }
@@ -636,127 +661,22 @@ void Renderer::resetShadowmap() {
   for(int i=0; i<Resources::ShadowLayers; ++i)
     Resources::recycle(std::move(shadowMap[i]));
 
-  const bool forceSm1 = (settings.giMethod==GiMethod::Probes || settings.giMethod==GiMethod::IrrC ||
-                         settings.pathTraceEnabled || sky.quality==PathTrace);
+  // the probes of -gi 1 light their hits with a shadow ray (probe_lighting.comp): no cascade for them under VSM
+  const bool forceSm1 = (settings.giMethod==GiMethod::IrrC || settings.pathTraceEnabled);
   for(int i=0; i<Resources::ShadowLayers; ++i) {
     if(!(i==1 && forceSm1)) {
-      if(settings.vsmEnabled && !(settings.rtsmEnabled && i==1))
-        continue; //TODO: support vsm in gi code
-      if(settings.rtsmEnabled && !(sky.quality!=None && i==1))
+      if(settings.vsmEnabled)
         continue; //TODO: support vsm in gi code
       }
     shadowMap[i] = device.zbuffer(shadowFormat, settings.shadowResolution, settings.shadowResolution);
     }
   }
 
-void Renderer::resetSkyFog() {
-  auto& device = Resources::device();
-
-  {
-    auto q = Quality::VolumetricLQ;
-    if(!settings.zFogRadial) {
-      q = Quality::VolumetricLQ;
-      } else {
-      q = Quality::VolumetricHQ;
-      // q = Quality::Epipolar;
-      }
-
-    if(skyPathTrace)
-      q = PathTrace;
-
-    if(sky.quality==q) {
-      return;
-      }
-
-    sky.quality = q;
-  }
-
-  Resources::recycle(std::move(sky.fogLut3D));
-  Resources::recycle(std::move(sky.fogLut3DMs));
-
-  sky.lutIsInitialized = false;
-
-  switch(sky.quality) {
-    case None:
-    case VolumetricLQ:
-      sky.fogLut3D   = device.image3d(sky.lutRGBAFormat, 160, 90, 64);
-      break;
-    case VolumetricHQ:
-      // fogLut and oclussion are decupled
-      sky.fogLut3D   = device.image3d(sky.lutRGBFormat,  128,64,32);
-      sky.fogLut3DMs = device.image3d(sky.lutRGBAFormat, 128,64,32);
-      break;
-    case Epipolar:
-      sky.fogLut3D   = device.image3d(sky.lutRGBFormat,  128,64,32);
-      sky.fogLut3DMs = device.image3d(sky.lutRGBAFormat, 128,64,32);
-      break;
-    case PathTrace:
-      break;
-    }
-  }
-
-void Renderer::prepareSky(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview) {
-  auto& scene   = wview.sceneGlobals();
-
-  cmd.setDebugMarker("Sky LUT");
-  if(!sky.lutIsInitialized) {
-    sky.lutIsInitialized = true;
-
-    cmd.setFramebuffer({});
-    cmd.setBinding(0, sky.cloudsLut);
-    cmd.setBinding(5, *wview.sky().cloudsDay()  .lay[0], Sampler::trillinear());
-    cmd.setBinding(6, *wview.sky().cloudsDay()  .lay[1], Sampler::trillinear());
-    cmd.setBinding(7, *wview.sky().cloudsNight().lay[0], Sampler::trillinear());
-    cmd.setBinding(8, *wview.sky().cloudsNight().lay[1], Sampler::trillinear());
-    cmd.setPipeline(shaders.cloudsLut);
-    cmd.dispatchThreads(size_t(sky.cloudsLut.w()), size_t(sky.cloudsLut.h()));
-
-    auto sz = Vec2(float(sky.transLut.w()), float(sky.transLut.h()));
-    cmd.setFramebuffer({{sky.transLut, Tempest::Discard, Tempest::Preserve}});
-    cmd.setBinding(5, *wview.sky().cloudsDay()  .lay[0], Sampler::trillinear());
-    cmd.setBinding(6, *wview.sky().cloudsDay()  .lay[1], Sampler::trillinear());
-    cmd.setBinding(7, *wview.sky().cloudsNight().lay[0], Sampler::trillinear());
-    cmd.setBinding(8, *wview.sky().cloudsNight().lay[1], Sampler::trillinear());
-    cmd.setPushData(&sz, sizeof(sz));
-    cmd.setPipeline(shaders.skyTransmittance);
-    cmd.draw(nullptr, 0, 3);
-
-    sz = Vec2(float(sky.multiScatLut.w()), float(sky.multiScatLut.h()));
-    cmd.setFramebuffer({{sky.multiScatLut, Tempest::Discard, Tempest::Preserve}});
-    cmd.setBinding(0, sky.transLut, sky.sampler);
-    cmd.setPushData(&sz, sizeof(sz));
-    cmd.setPipeline(shaders.skyMultiScattering);
-    cmd.draw(nullptr, 0, 3);
-    }
-
-  auto sz = Vec2(float(sky.viewLut.w()), float(sky.viewLut.h()));
-  cmd.setFramebuffer({{sky.viewLut, Tempest::Discard, Tempest::Preserve}});
-  cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(1, sky.transLut,     sky.sampler);
-  cmd.setBinding(2, sky.multiScatLut, sky.sampler);
-  cmd.setBinding(3, sky.cloudsLut,    Sampler::bilinear(ClampMode::ClampToEdge));
-  cmd.setPushData(&sz, sizeof(sz));
-  cmd.setPipeline(shaders.skyViewLut);
-  cmd.draw(nullptr, 0, 3);
-
-  sz = Vec2(float(sky.viewCldLut.w()), float(sky.viewCldLut.h()));
-  cmd.setFramebuffer({{sky.viewCldLut, Tempest::Discard, Tempest::Preserve}});
-  cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(1, sky.viewLut, sky.sampler);
-  cmd.setBinding(2, *wview.sky().cloudsDay()  .lay[0], Sampler::trillinear());
-  cmd.setBinding(3, *wview.sky().cloudsDay()  .lay[1], Sampler::trillinear());
-  cmd.setBinding(4, *wview.sky().cloudsNight().lay[0], Sampler::trillinear());
-  cmd.setBinding(5, *wview.sky().cloudsNight().lay[1], Sampler::trillinear());
-  cmd.setPushData(&sz, sizeof(sz));
-  cmd.setPipeline(shaders.skyViewCldLut);
-  cmd.draw(nullptr, 0, 3);
-  }
-
 void Renderer::draw(Attachment& result, Encoder<CommandBuffer>& cmd, uint8_t fId,
                     VectorImage::Mesh& uiLayer, VectorImage::Mesh& numOverlay,
                     InventoryMenu& inventory, VideoWidget& video) {
-  auto wview  = Gothic::inst().worldView();
-  auto camera = Gothic::inst().camera();
+  auto wview  = GameServices::inst().worldView();
+  auto camera = GameServices::inst().camera();
 
   if(!video.isActive() && wview!=nullptr && camera!=nullptr) {
     draw(result, cmd, fId, *wview, *camera);
@@ -787,14 +707,12 @@ void Renderer::dbgDraw(Tempest::Painter& p) {
     return;
 
   std::vector<const Texture2d*> tex;
-  //tex.push_back(&textureCast(swr.outputImage));
   //tex.push_back(&textureCast(hiz.hiZ));
   //tex.push_back(&textureCast(hiz.smProj));
   //tex.push_back(&textureCast(hiz.hiZSm1));
   //tex.push_back(&textureCast(shadowMap[1]));
   //tex.push_back(&textureCast<const Texture2d&>(shadowMap[0]));
   //tex.push_back(&textureCast<const Texture2d&>(vsm.pageData));
-  //tex.push_back(&textureCast<const Texture2d&>(swrt.outputImage));
   tex.push_back(&textureCast<const Texture2d&>(surf.irrImage));
 
   static int size = 400;
@@ -820,10 +738,8 @@ void Renderer::dbgDraw(Tempest::Painter& p) {
 
 void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wview, const Camera& camera) {
   FrameProfile::Scope mainTiming(FrameProfile::Zone::EncodeMain);
-  //FIXME: those also needed to be refactor away
-  const auto world     = Gothic::inst().world();
-  const auto gameTime  = world!=nullptr ? world->time() : gtime(8,0);
-  const auto tickCount = world!=nullptr ? world->tickCount() : uint64_t();
+  const auto gameTime  = GameServices::inst().worldTime();
+  const auto tickCount = GameServices::inst().worldTickCount();
 
   shaders.waitCompiler();
 
@@ -843,14 +759,22 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     }
 
   if(requiresRtScene())
-    wview.updateRtScene();
+    wview.updateRtScene(cmd, fId);
   wview.updateLights(gameTime);
+  gi.dayTime = gameTime;
 
   if(requiresLightsTree())
     prepareLightsBvh(cmd, wview);
 
   updateCamera(wview, camera);
   prepareTaa(wview, camera);
+  prepareMotion(wview);
+  wview.setTaaReactiveLref(settings.taaReactiveLref);
+  wview.setVsmLampNear(settings.vsmLampNearCm);
+  // the faces are two-sided only where the mesh shader draws them (main.vert); the vertex path culls as before
+  wview.setVsmLampSides(!Shaders::options().doMeshShading ? 1u : (benchVsmLampSides!=0 ? benchVsmLampSides : settings.vsmLampSides));
+
+  wview.setVsmStudy(benchVsmStudy);
 
   static bool updFr = true;
   if(updFr){
@@ -867,10 +791,10 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     wview.updateFrustrum(frustrum);
     }
 
-  if(world!=nullptr) {
+  if(auto* physics = GameServices::inst().physicsWorld()) {
     // Keep a margin around the camera view so a turning camera resumes cloth
     // before it becomes visible. The physics tick owns a copy of these planes.
-    world->physic()->cloth().setVisibilityTest([view = frustrum[SceneGlobals::V_Main]](const Vec3& center, float radius) {
+    physics->cloth().setVisibilityTest([view = frustrum[SceneGlobals::V_Main]](const Vec3& center, float radius) {
       return view.testPoint(center,radius+200.f);
       });
     }
@@ -880,6 +804,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   wview.prepareGlobals(cmd,fId);
 
   if(settings.pathTraceEnabled) {
+    ssao.valid = false; // no SSAO in this frame: its history is not the frame before the next one
     drawPathtrace(cmd, wview, fId);
     mainTiming.finish();
     FrameProfile::Scope postTiming(FrameProfile::Zone::EncodePost);
@@ -898,27 +823,24 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
 
   wview.visibilityPass(cmd, 1);
   drawGBuffer(cmd, fId, wview);
-  if(world!=nullptr && blood.prepare(fId, *world, wview.sceneGlobals(), camera.listenerPosition().pos))
+  const auto* world = GameServices::inst().world();
+  if(world!=nullptr && blood.prepare(fId, world, wview.sceneGlobals(), camera.listenerPosition().pos))
     blood.draw(cmd, fId, wview.sceneGlobals(), gbufDiffuse, Shaders::options().doMaterialMaps ? &gbufOrm : nullptr,
                gbufNormal, zbuffer);
+  // SSAO needs only the depth: ahead of the shadow maps its compute runs under their vertex work on Metal
+  prepareSSAO(cmd, wview);
   mainTiming.finish();
 
   drawShadowMap(cmd, fId, wview);
   prepareEpipolar(cmd, wview);
 
   drawVsm(cmd, wview);
-  drawSwr(cmd, wview);
-  drawRtsm(cmd, wview);
-  drawRtsmOmni(cmd, wview);
-
-  drawSwRT(cmd, wview);
 
   { FrameProfile::Scope timing(FrameProfile::Zone::EncodeMain); prepareIrradiance(cmd, wview); }
   prepareExposure(cmd, wview);
   FrameProfile::Scope lightingTiming(FrameProfile::Zone::EncodeMain);
-  prepareSSAO(cmd, wview);
   prepareFog (cmd, wview);
-  prepareGi  (cmd, wview);
+  prepareGi  (cmd, fId, wview);
   prepareSurfels(cmd, wview);
 
   cmd.setFramebuffer({{sceneLinear, Tempest::Discard, Tempest::Preserve}}, {zbuffer, Tempest::Readonly});
@@ -953,7 +875,15 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     }
 
   FrameProfile::Scope translucentTiming(FrameProfile::Zone::EncodeWater);
-  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}}, {zbuffer, Tempest::Preserve, Tempest::Preserve});
+  // the TAA reactive mask is the second attachment: each translucent pipeline writes it under its own blend
+  // (main.frag, graphics plan 1v), the TAA resolve reads it. An empty pass of its own clears it, and the translucent
+  // pass loads and stores it as the scene colour: cleared by the translucent pass itself, it made a tiled GPU (Apple)
+  // walk every tile of the screen instead of the tiles with translucent geometry, +0.2 ms of fragments on M1 Pro
+  // (reports/render-features/2026-11-10-taa-reactive/mac-cost.md)
+  cmd.setFramebuffer({{taa.reactive, Tempest::Vec4(), Tempest::Preserve}});
+  cmd.setDebugMarker("Reactive-clear");
+  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}, {taa.reactive, Tempest::Preserve, Tempest::Preserve}},
+                     {zbuffer, Tempest::Preserve, Tempest::Preserve});
   cmd.setDebugMarker("Translucent");
   wview.drawTranslucent(cmd, fId);
   translucentTiming.finish();
@@ -963,14 +893,12 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   drawProbesHitDbg(cmd);
   drawSurfelsDbg(cmd, wview);
   drawVsmDbg(cmd, wview);
-  drawSwrDbg(cmd, wview);
-  drawRtsmDbg(cmd, wview);
   drawRayQueryDbg(cmd, wview);
   //
 
-  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}});
   FrameProfile::Scope postTiming(FrameProfile::Zone::EncodePost);
   if(camera.isInWater()) {
+    cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}});
     cmd.setDebugMarker("Underwater");
     drawUnderwater(cmd, wview);
     }
@@ -981,17 +909,26 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     drawBloom(cmd);
     cmd.setDebugMarker("Tonemapping");
     drawTonemappingTemporal(result, cmd, wview);
+    drawMotionView(result, cmd);
+    drawReactiveView(result, cmd);
     postTiming.finish();
     wview.postFrameupdate();
     return;
     }
 
-  if(taa.active)
-    drawTaa(cmd);
-  drawBloom(cmd);
-
   auto& tonemapTarget = (upscale.input.isEmpty() || shotNative) ? result : upscale.input;
-  if(settings.aaEnabled) {
+  // sharpening, bloom and tonemapping of the TAA frame are one pass; Lanczos at a smaller size still goes the long way
+  const bool fused = taa.active && settings.bloomEnabled && !bloomChain[0].isEmpty() &&
+                     tonemapTarget.size()==sceneLinear.size();
+  if(taa.active)
+    drawTaa(cmd, fused);
+  drawBloom(cmd, fused);
+
+  if(fused) {
+    cmd.setDebugMarker("Tonemapping");
+    drawTonemappingTaa(tonemapTarget, cmd, wview);
+    }
+  else if(settings.aaEnabled) {
     cmd.setDebugMarker("CMAA2 & Tonemapping");
     drawCMAA2(tonemapTarget, cmd, wview);
     } else {
@@ -1000,170 +937,14 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     }
   if(!upscale.input.isEmpty() && !shotNative)
     drawUpscale(result, cmd);
+  drawMotionView(result, cmd);
+  drawReactiveView(result, cmd);
   postTiming.finish();
 
   //drawRayQueryDbg(cmd, wview);
   //drawHashDbg(result, cmd, wview);
 
   wview.postFrameupdate();
-  }
-
-void Renderer::drawBloom(Encoder<CommandBuffer>& cmd) {
-  if(!settings.bloomEnabled || bloomChain[0].isEmpty())
-    return;
-  cmd.setDebugMarker("Bloom");
-  // down: the scene to half resolution (Karis-weighted), then each level to the next
-  for(size_t i=0; i<bloomChain.size(); ++i) {
-    cmd.setFramebuffer({{bloomChain[i], Tempest::Discard, Tempest::Preserve}});
-    if(i==0 && temporal.active)
-      cmd.setBinding(0, temporal.output, Sampler::bilinear(ClampMode::ClampToEdge)); else
-      cmd.setBinding(0, i==0 ? sceneLinear : bloomChain[i-1], Sampler::bilinear(ClampMode::ClampToEdge));
-    cmd.setPipeline(i==0 ? shaders.bloomDownKaris : shaders.bloomDown);
-    cmd.draw(nullptr, 0, 3);
-    }
-  // up: each level adds its tent-filtered smaller one, so the half level ends up with all of them
-  for(size_t i=bloomChain.size()-1; i>0; --i) {
-    cmd.setFramebuffer({{bloomChain[i-1], Tempest::Preserve, Tempest::Preserve}});
-    cmd.setBinding(0, bloomChain[i], Sampler::bilinear(ClampMode::ClampToEdge));
-    cmd.setPipeline(shaders.bloomUp);
-    cmd.draw(nullptr, 0, 3);
-    }
-  if(temporal.active)
-    return; // the tonemapping mixes it in (drawTonemappingTemporal)
-  struct Push {
-    float strength = 0.05f;  // the share of the scene's light a lens scatters into the glow
-    float levels   = 0;
-    } push;
-  push.levels = float(bloomChain.size());
-  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}});
-  cmd.setBinding(0, bloomChain[0], Sampler::bilinear(ClampMode::ClampToEdge));
-  cmd.setPushData(push);
-  cmd.setPipeline(shaders.bloomMix);
-  cmd.draw(nullptr, 0, 3);
-  }
-
-void Renderer::drawTonemapping(Attachment& result, Encoder<CommandBuffer>& cmd, const WorldView& wview) {
-  struct Push {
-    float brightness = 0;
-    float contrast   = 1;
-    float gamma      = 1.f/2.2f;
-    float mul        = 1;
-    };
-
-  Push p;
-  p.brightness = (settings.zVidBrightness - 0.5f)*0.1f;
-  p.contrast   = std::max(1.5f - settings.zVidContrast, 0.01f);
-  p.gamma      = p.gamma/std::max(2.0f*settings.zVidGamma,  0.01f);
-
-  static float mul = 0.f;
-  if(mul>0)
-    p.mul = mul;
-
-  const bool native = (result.size()==sceneLinear.size());
-  auto& pso = native ? shaders.tonemapping : shaders.tonemappingUpscale;
-  cmd.setFramebuffer({ {result, Tempest::Discard, Tempest::Preserve} });
-  cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
-  // This Lanczos implementation pairs adjacent weights using bilinear sampling.
-  // Keep nearest sampling at native resolution.
-  const auto sampler = native ? Sampler::nearest(ClampMode::ClampToEdge) :
-                                Sampler::bilinear(ClampMode::ClampToEdge);
-  cmd.setBinding(1, sceneLinear, sampler);
-  cmd.setPushData(p);
-  cmd.setPipeline(pso);
-  cmd.draw(nullptr, 0, 3);
-  }
-
-void Renderer::drawCMAA2(Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview) {
-  auto&          pso             = shaders.cmaa2EdgeColor2x2Presets[Gothic::options().aaPreset];
-  const IVec3    inputGroupSize  = pso.workGroupSize();
-  const IVec3    outputGroupSize = inputGroupSize - IVec3(2, 2, 0);
-  const uint32_t groupCountX     = uint32_t((sceneLinear.w() + outputGroupSize.x * 2 - 1) / (outputGroupSize.x * 2));
-  const uint32_t groupCountY     = uint32_t((sceneLinear.h() + outputGroupSize.y * 2 - 1) / (outputGroupSize.y * 2));
-
-  cmd.setFramebuffer({});
-  cmd.setBinding(0, sceneLinear, Sampler::bilinear(ClampMode::ClampToEdge));
-  cmd.setBinding(1, cmaa2.workingEdges);
-  cmd.setBinding(2, cmaa2.shapeCandidates);
-  cmd.setBinding(3, cmaa2.deferredBlendLocationList);
-  cmd.setBinding(4, cmaa2.deferredBlendItemList);
-  cmd.setBinding(5, cmaa2.deferredBlendItemListHeads);
-  cmd.setBinding(6, cmaa2.controlBuffer);
-  cmd.setBinding(7, cmaa2.indirectBuffer);
-
-  // detect edges
-  cmd.setPipeline(pso);
-  cmd.dispatch(groupCountX, groupCountY, 1);
-
-  // process candidates pass
-  cmd.setPipeline(shaders.cmaa2ProcessCandidates);
-  cmd.dispatchIndirect(cmaa2.indirectBuffer, 0);
-
-  // deferred color apply
-  struct Push {
-    float brightness = 0;
-    float contrast   = 1;
-    float gamma      = 1.f/2.2f;
-    float mul        = 1;
-    };
-
-  Push p;
-  p.brightness = (settings.zVidBrightness - 0.5f)*0.1f;
-  p.contrast   = std::max(1.5f - settings.zVidContrast, 0.01f);
-  p.gamma      = p.gamma/std::max(2.0f*settings.zVidGamma,  0.01f);
-
-  static float mul = 0.f;
-  if(mul>0)
-    p.mul = mul;
-
-  // CMAA2 writes pixels in sceneLinear coordinates: result must have the same size
-  auto& psoTone = shaders.tonemapping;
-  cmd.setFramebuffer({{result, Tempest::Discard, Tempest::Preserve}});
-  cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(1, sceneLinear, Sampler::nearest());
-  cmd.setPushData(&p, sizeof(p));
-  cmd.setPipeline(psoTone);
-  cmd.draw(nullptr, 0, 3);
-
-  cmd.setBinding(0, sceneLinear);
-  cmd.setBinding(1, cmaa2.workingEdges);
-  cmd.setBinding(2, cmaa2.shapeCandidates);
-  cmd.setBinding(3, cmaa2.deferredBlendLocationList);
-  cmd.setBinding(4, cmaa2.deferredBlendItemList);
-  cmd.setBinding(5, cmaa2.deferredBlendItemListHeads);
-  cmd.setBinding(6, cmaa2.controlBuffer);
-  cmd.setPushData(&p, sizeof(p));
-  cmd.setPipeline(shaders.cmaa2DeferredColorApply2x2);
-  cmd.drawIndirect(cmaa2.indirectBuffer, 3*sizeof(uint32_t));
-  }
-
-void Renderer::drawTaa(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
-  // In linear HDR after the translucent and underwater passes, before bloom (shader/antialiasing/taa_resolve.frag)
-  struct Push {
-    Matrix4x4 reproject;
-    float     alpha = 0.1f; // the share of the new frame
-    uint32_t  reset = 0;    // no history: the frame as it is
-    } push;
-  push.reproject = taa.reproject;
-  push.reset     = taa.valid ? 0 : 1;
-
-  auto& next = taa.history[taa.cur];
-  auto& prev = taa.history[taa.cur^1];
-  cmd.setDebugMarker("TAA");
-  cmd.setFramebuffer({{next, Tempest::Discard, Tempest::Preserve}});
-  cmd.setBinding(0, sceneLinear, Sampler::nearest(ClampMode::ClampToEdge));
-  cmd.setBinding(1, zbuffer,     Sampler::nearest(ClampMode::ClampToEdge));
-  cmd.setBinding(2, prev,        Sampler::bilinear(ClampMode::ClampToEdge));
-  cmd.setPushData(push);
-  cmd.setPipeline(shaders.taaResolve);
-  cmd.draw(nullptr, 0, 3);
-  taa.valid = true;
-
-  // the history stays unsharpened: sharpening fed back would build up from frame to frame
-  drawTaaSharpen(cmd);
-
-  // bloom and tonemapping go on from the resolved frame
-  std::swap(sceneLinear, taa.output);
-  taa.cur ^= 1;
   }
 
 void Renderer::drawTaaSharpen(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
@@ -1184,76 +965,6 @@ bool Renderer::useTemporalUpscale(Tempest::Size res, Tempest::Size fullRes) cons
   return settings.temporalUpscale && settings.taaEnabled && res.w<fullRes.w && res.h<fullRes.h;
   }
 
-void Renderer::drawTemporalUpscale(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
-  // In linear HDR after the translucent and underwater passes, where the TAA resolve would be (graphics plan 1g).
-  // The camera's motion of each pixel first: from its depth to where it was a frame ago (motion_camera.frag)
-  struct Push {
-    Matrix4x4 reproject;
-    } push;
-  push.reproject = taa.valid ? taa.reproject : Matrix4x4::mkIdentity();
-  cmd.setDebugMarker("Upscale-motion");
-  cmd.setFramebuffer({{temporal.motion, Tempest::Discard, Tempest::Preserve}});
-  cmd.setBinding(0, zbuffer, Sampler::nearest(ClampMode::ClampToEdge));
-  cmd.setPushData(push);
-  cmd.setPipeline(shaders.motionCamera);
-  cmd.draw(nullptr, 0, 3);
-
-  // Apple's conventions: the jitter is the pixel's centre minus where it was sampled, in input pixels: the picture
-  // moved by +jitter (Taa::jitterMatrix), so the centre shows the point at centre - jitter. The vectors are in the
-  // input's texture coordinates, the scale makes pixels of them. The depth is not reversed: the sky is 1.
-  // OPENGOTHIC_UPSCALE_JITTER_SIGN=<x>,<y> (a study of the convention): multipliers of the jitter given to MetalFX
-  static const Vec2 sign = [] {
-    Vec2 s(1, 1);
-    if(const char* e = std::getenv("OPENGOTHIC_UPSCALE_JITTER_SIGN"))
-      if(std::sscanf(e, "%f,%f", &s.x, &s.y)==2)
-        Log::i("render: temporal upscale jitter sign = ", s.x, ",", s.y);
-    return s;
-    }();
-  TemporalUpscaleDesc desc;
-  desc.jitterX       = taa.jitter.x*sign.x;
-  desc.jitterY       = taa.jitter.y*sign.y;
-  desc.motionScaleX  = float(temporal.motion.w());
-  desc.motionScaleY  = float(temporal.motion.h());
-  desc.inputW        = uint32_t(sceneLinear.w());
-  desc.inputH        = uint32_t(sceneLinear.h());
-  desc.reset         = !taa.valid;
-  desc.depthReversed = false;
-  cmd.setFramebuffer({});
-  cmd.setDebugMarker("Upscale-temporal");
-  cmd.upscaleTemporal(sceneLinear, zbuffer, temporal.motion, temporal.output, desc);
-  taa.valid = true;
-  }
-
-void Renderer::drawTonemappingTemporal(Attachment& result, Encoder<CommandBuffer>& cmd, const WorldView& wview) {
-  // drawTonemapping at the output resolution, from the upscaled frame; the bloom goes in here (tonemapping.frag BLOOM)
-  struct Push {
-    float brightness    = 0;
-    float contrast      = 1;
-    float gamma         = 1.f/2.2f;
-    float mul           = 1;
-    float bloomStrength = 0.05f; // as drawBloom's mix
-    float bloomLevels   = 1;
-    } p;
-  p.brightness = (settings.zVidBrightness - 0.5f)*0.1f;
-  p.contrast   = std::max(1.5f - settings.zVidContrast, 0.01f);
-  p.gamma      = p.gamma/std::max(2.0f*settings.zVidGamma,  0.01f);
-
-  const bool bloom = settings.bloomEnabled && !bloomChain[0].isEmpty();
-  cmd.setFramebuffer({ {result, Tempest::Discard, Tempest::Preserve} });
-  cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(1, temporal.output, Sampler::nearest(ClampMode::ClampToEdge));
-  if(bloom) {
-    p.bloomLevels = float(bloomChain.size());
-    cmd.setBinding(2, bloomChain[0], Sampler::bilinear(ClampMode::ClampToEdge));
-    cmd.setPushData(p);
-    cmd.setPipeline(shaders.tonemappingBloom);
-    } else {
-    cmd.setPushData(&p, 4*sizeof(float));
-    cmd.setPipeline(shaders.tonemapping);
-    }
-  cmd.draw(nullptr, 0, 3);
-  }
-
 void Renderer::drawUpscale(Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   cmd.setFramebuffer({});
   cmd.setDebugMarker("Upscale");
@@ -1265,142 +976,6 @@ void Renderer::drawUpscale(Tempest::Attachment& result, Tempest::Encoder<Tempest
   cmd.draw(nullptr, 0, 3);
   }
 
-void Renderer::drawFog(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview) {
-  auto& scene = wview.sceneGlobals();
-
-  switch(sky.quality) {
-    case None:
-    case VolumetricLQ: {
-      cmd.setBinding(0, sky.fogLut3D, Sampler::bilinear(ClampMode::ClampToEdge));
-      cmd.setBinding(1, sky.fogLut3D, Sampler::bilinear(ClampMode::ClampToEdge));
-      cmd.setBinding(2, zbuffer, Sampler::nearest()); // NOTE: wanna here depthFetch from gles2
-      cmd.setBinding(3, scene.uboGlobal[SceneGlobals::V_Main]);
-      cmd.setPipeline(shaders.fog);
-      break;
-      }
-    case VolumetricHQ: {
-      cmd.setBinding(0, sky.fogLut3D,   Sampler::bilinear(ClampMode::ClampToEdge));
-      cmd.setBinding(1, sky.fogLut3DMs, Sampler::bilinear(ClampMode::ClampToEdge));
-      cmd.setBinding(2, zbuffer,        Sampler::nearest());
-      cmd.setBinding(3, scene.uboGlobal[SceneGlobals::V_Main]);
-      cmd.setBinding(4, sky.occlusionLut);
-      cmd.setPipeline(shaders.fog3dHQ);
-      break;
-      }
-    case Epipolar: {
-      //cmd.setBinding(0, sky.fogLut3D,   Sampler::bilinear(ClampMode::ClampToEdge));
-      cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
-      cmd.setBinding(1, zbuffer,        Sampler::nearest());
-      cmd.setBinding(2, vsm.fogDbg,     Sampler::bilinear(ClampMode::ClampToEdge));
-      cmd.setBinding(3, epipolar.epipoles);
-      cmd.setBinding(4, sky.fogLut3DMs, Sampler::bilinear(ClampMode::ClampToEdge));
-      cmd.setPipeline(shaders.vsmFog);
-      break;
-      }
-    case PathTrace:
-      return;
-    }
-  cmd.draw(nullptr, 0, 3);
-  }
-
-void Renderer::drawSunMoon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview) {
-  drawSunMoon(cmd, wview, false);
-  drawSunMoon(cmd, wview, true);
-  }
-
-void Renderer::drawSunMoon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview, bool isSun) {
-  auto& scene = wview.sceneGlobals();
-  auto& sun   = wview.sky().sunLight();
-  auto  m     = scene.viewProject();
-  auto  d     = sun.dir();
-
-  if(!isSun) {
-    // fixed pos for now
-    d = Vec3::normalize({-1,1,0});
-    }
-
-  auto  dx = d;
-  float w  = 0;
-  m.project(dx.x, dx.y, dx.z, w);
-
-  if(dx.z<=0)
-    return;
-
-  struct Push {
-    Tempest::Vec2      pos;
-    Tempest::Vec2      size;
-    Tempest::Vec3      sunDir;
-    float              GSunIntensity = 0;
-    Tempest::Matrix4x4 viewProjectInv;
-    uint32_t           isSun = 0;
-    } push;
-  push.pos     = Vec2(dx.x,dx.y)/dx.z;
-  push.size.x  = 2.f/float(zbuffer.w());
-  push.size.y  = 2.f/float(zbuffer.h());
-
-  const float GSunIntensity  = wview.sky().sunIntensity();
-  const float GMoonIntensity = wview.sky().moonIntensity();
-
-  const float scale          = internalResolutionScale();
-  const float sunSize        = settings.sunSize  * scale;
-  const float moonSize       = settings.moonSize * scale;
-  const float intencity      = isSun ? 0.07f : 0.4f;
-
-  push.size          *= isSun ? sunSize : (moonSize*0.25f);
-  push.GSunIntensity  = isSun ? (GSunIntensity*intencity) : (GMoonIntensity*intencity);
-  push.isSun          = isSun ? 1 : 0;
-  push.sunDir         = d;
-  push.viewProjectInv = scene.viewProjectLwcInv();
-
-  // HACK
-  if(isSun) {
-    float day = sun.dir().y;
-    float stp = linearstep(-0.07f, 0.03f, day);
-    push.GSunIntensity *= stp*stp*4.f;
-    } else {
-    push.GSunIntensity *= wview.sky().isNight();
-    }
-  // push.GSunIntensity *= exposure;
-
-  cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(1, isSun ? wview.sky().sunImage() : wview.sky().moonImage());
-  cmd.setBinding(2, sky.transLut, sky.sampler);
-  cmd.setPushData(push);
-  cmd.setPipeline(shaders.sun);
-  cmd.draw(nullptr, 0, 6);
-  }
-
-void Renderer::drawSwRT(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview) {
-  if(!settings.swrtEnabled)
-    return;
-  FrameProfile::Scope timing(FrameProfile::Zone::EncodeMain);
-
-  const auto& scene     = wview.sceneGlobals();
-  const auto& bvh       = wview.landscape().bvh();
-  const auto  originLwc = scene.originLwc;
-
-  if(swrt.outputImage.size()!=zbuffer.size()) {
-    Resources::recycle(std::move(swrt.outputImage));
-    auto& device = Resources::device();
-    // swrt.outputImage = device.image2d(TextureFormat::R32U, zbuffer.size());
-    swrt.outputImage = device.image2d(TextureFormat::RGBA8, zbuffer.size());
-    }
-
-  cmd.setFramebuffer({});
-  cmd.setDebugMarker("Raytracing");
-  //cmd.setPipeline(shaders.swRaytracing8);
-  cmd.setPipeline(shaders.swRaytracing);
-  cmd.setPushData(&originLwc, sizeof(originLwc));
-  cmd.setBinding(0, swrt.outputImage);
-  cmd.setBinding(1, scene.uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(2, gbufDiffuse);
-  cmd.setBinding(3, gbufNormal);
-  cmd.setBinding(4, zbuffer);
-  cmd.setBinding(5, bvh);
-
-  cmd.dispatchThreads(swrt.outputImage.size());
-  }
-
 void Renderer::stashSceneAux(Encoder<CommandBuffer>& cmd) {
   auto& device = Resources::device();
   if(!device.properties().hasSamplerFormat(zBufferFormat))
@@ -1410,107 +985,6 @@ void Renderer::stashSceneAux(Encoder<CommandBuffer>& cmd) {
   cmd.setBinding(0, sceneLinear,Sampler::nearest());
   cmd.setBinding(1, zbuffer,    Sampler::nearest());
   cmd.setPipeline(shaders.stash);
-  cmd.draw(nullptr, 0, 3);
-  }
-
-void Renderer::drawVsmDbg(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview) {
-  static bool enable = false;
-  if(!enable || !settings.vsmEnabled)
-    return;
-
-  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}});
-  cmd.setDebugMarker("VSM-dbg");
-  cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(1, gbufDiffuse, Sampler::nearest());
-  cmd.setBinding(2, gbufNormal,  Sampler::nearest());
-  cmd.setBinding(3, zbuffer,     Sampler::nearest());
-  cmd.setBinding(4, vsm.pageTbl);
-  cmd.setBinding(5, vsm.pageList);
-  cmd.setBinding(6, vsm.pageData);
-  cmd.setBinding(8, wview.sceneGlobals().vsmDbg);
-  cmd.setPushData(&settings.vsmMipBias, sizeof(settings.vsmMipBias));
-  cmd.setPipeline(shaders.vsmDbg);
-  cmd.draw(nullptr, 0, 3);
-  }
-
-void Renderer::drawSwrDbg(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview) {
-  static bool enable = true;
-  if(!enable || !settings.swrEnabled)
-    return;
-
-  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}});
-  cmd.setDebugMarker("SWR-dbg");
-  cmd.setBinding(0, swr.outputImage);
-  cmd.setBinding(1, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(2, gbufDiffuse, Sampler::nearest());
-  cmd.setBinding(3, gbufNormal,  Sampler::nearest());
-  cmd.setBinding(4, zbuffer,     Sampler::nearest());
-  cmd.setPipeline(shaders.swRenderingDbg);
-  cmd.draw(nullptr, 0, 3);
-  }
-
-void Renderer::drawRtsmDbg(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview) {
-  static bool enable = false;
-  if(!enable || !settings.rtsmEnabled)
-    return;
-
-  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}});
-  cmd.setDebugMarker("RTSM-dbg");
-#if 1
-  cmd.setBinding(0, rtsm.dbg32);
-#else
-  cmd.setBinding(0, rtsm.primBins);
-  cmd.setBinding(1, rtsm.posList);
-  cmd.setBinding(2, rtsm.pages);
-#endif
-  cmd.setPipeline(shaders.rtsmDbg);
-  cmd.draw(nullptr, 0, 3);
-  }
-
-void Renderer::drawHashDbg(Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview) {
-  static bool enable = true;
-  if(!enable)
-    return;
-
-  auto& scene = wview.sceneGlobals();
-
-  struct Push {
-    Vec3 originLwc;
-    } push;
-  push.originLwc = scene.originLwc;
-
-  cmd.setDebugMarker("Hash-dbg");
-  cmd.setPushData(push);
-  cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(2, gbufNormal);
-  cmd.setBinding(3, zbuffer);
-
-  cmd.setFramebuffer({{result, Tempest::Preserve, Tempest::Preserve}});
-  cmd.setPipeline(shaders.hashDbg);
-  cmd.draw(nullptr, 0, 3);
-  }
-
-void Renderer::drawLightTreeDbg(Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview) {
-  static bool enable = false;
-  if(!enable)
-    return;
-
-  auto& scene = wview.sceneGlobals();
-
-  struct Push {
-    Vec3 originLwc;
-    } push;
-  push.originLwc = scene.originLwc;
-
-  cmd.setDebugMarker("LightTree-dbg");
-  cmd.setPushData(push);
-  cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(1, gbufNormal);
-  cmd.setBinding(2, zbuffer);
-  cmd.setBinding(3, lightsTree.bvh);
-
-  cmd.setFramebuffer({{result, Tempest::Preserve, Tempest::Preserve}});
-  cmd.setPipeline(shaders.lightsTreeDbg);
   cmd.draw(nullptr, 0, 3);
   }
 
@@ -1556,639 +1030,18 @@ void Renderer::buildHiZ(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
     }
   }
 
-void Renderer::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview) {
-  if(!settings.vsmEnabled)
-    return;
-  FrameProfile::Scope timing(FrameProfile::Zone::EncodeShadows);
-
-  static bool omniLights = true;
-  const bool directLight  = !settings.rtsmEnabled;
-  const bool doVirtualFog = directLight && sky.quality!=VolumetricLQ && sky.quality!=PathTrace;
-
-  auto& scene      = wview.sceneGlobals();
-  auto& sceneUbo   = scene.uboGlobal[SceneGlobals::V_Main];
-  auto& lightsSsbo = wview.lights().lightsSsbo();
-
-  logVsmStats(wview);
-
-  auto& vsmDbg   = usesImage2d(vsm.vsmDbg,   TextureFormat::R32U, 1, 1); // vsm_mark_omni_pages: debug writes are off
-  auto& pageTbl  = usesImage3d(vsm.pageTbl,  TextureFormat::R32U, 32, 32, 16);
-  auto& pageHiZ  = usesImage3d(vsm.pageHiZ,  TextureFormat::R32U, 32, 32, 16);
-  auto& pageData = usesZBuffer(vsm.pageData, shadowFormat,        8192, 8192);
-
-  auto  pageCount   = uint32_t(vsm.pageData.w()/VSM_PAGE_SIZE) * uint32_t(vsm.pageData.h()/VSM_PAGE_SIZE);
-  auto& pageList    = usesSsbo(vsm.pageList,    shaders.vsmClear.sizeofBuffer(0, pageCount));
-  auto& pageListTmp = usesSsbo(vsm.pageListTmp, shaders.vsmAllocPages.sizeofBuffer(3, pageCount));
-
-  const uint32_t lightsTotal  = omniLights ? uint32_t(wview.lights().size()) : 0;
-  const size_t   numOmniPages = lightsTotal*6;
-  auto& pageTblOmni   = usesSsbo(vsm.pageTblOmni,   shaders.vsmClearOmni.sizeofBuffer(0, numOmniPages));
-  auto& visibleLights = usesSsbo(vsm.visibleLights, shaders.vsmClearOmni.sizeofBuffer(1, lightsTotal ));
-
-  wview.setVirtualShadowMap(true, pageData, pageTbl, pageHiZ, pageList);
-
-  cmd.setFramebuffer({});
-  cmd.setDebugMarker("VSM-pages");
-  cmd.setBinding(0, pageList);
-  cmd.setBinding(1, pageTbl);
-  cmd.setBinding(2, pageHiZ);
-  cmd.setPipeline(shaders.vsmClear);
-  cmd.dispatchThreads(size_t(pageTbl.w()), size_t(pageTbl.h()), size_t(pageTbl.d()));
-
-  if(omniLights) {
-    cmd.setBinding(0, pageTblOmni);
-    cmd.setBinding(1, visibleLights);
-    cmd.setPipeline(shaders.vsmClearOmni);
-    cmd.dispatchThreads(numOmniPages);
-
-    struct Push { float znear; uint32_t lightsTotal; } push = {};
-    push.znear       = scene.znear;
-    push.lightsTotal = lightsTotal;
-    cmd.setBinding(0, sceneUbo);
-    cmd.setBinding(1, lightsSsbo);
-    cmd.setBinding(2, visibleLights);
-    cmd.setBinding(3, *scene.hiZ);
-    cmd.setPushData(push);
-    cmd.setPipeline(shaders.vsmCullLights);
-    cmd.dispatchThreads(wview.lights().size());
-    }
-
-  if(directLight) {
-    cmd.setBinding(0, sceneUbo);
-    cmd.setBinding(1, gbufDiffuse, Sampler::nearest());
-    cmd.setBinding(2, gbufNormal,  Sampler::nearest());
-    cmd.setBinding(3, zbuffer,     Sampler::nearest());
-    cmd.setBinding(4, pageTbl);
-    cmd.setBinding(5, pageHiZ);
-    cmd.setPushData(settings.vsmMipBias);
-    cmd.setPipeline(shaders.vsmMarkPages);
-    cmd.dispatchThreads(zbuffer.size());
-    }
-
-  if(omniLights) {
-    struct Push { Vec3 originLwc; float znear; float vsmMipBias; } push = {};
-    push.originLwc  = scene.originLwc;
-    push.znear      = scene.znear;
-    push.vsmMipBias = settings.vsmMipBias;
-    cmd.setBinding(0, sceneUbo);
-    cmd.setBinding(1, gbufDiffuse, Sampler::nearest());
-    cmd.setBinding(2, gbufNormal,  Sampler::nearest());
-    cmd.setBinding(3, zbuffer,     Sampler::nearest());
-    cmd.setBinding(4, lightsSsbo);
-    cmd.setBinding(5, visibleLights);
-    cmd.setBinding(6, pageTblOmni);
-    cmd.setBinding(7, vsmDbg);
-    cmd.setBinding(8, pageList);
-    cmd.setPushData(&push, sizeof(push));
-    cmd.setPipeline(shaders.vsmMarkOmniPages);
-    cmd.dispatchThreads(zbuffer.size());
-
-    cmd.setBinding(0, pageTblOmni);
-    cmd.setPushData(&lightsTotal, sizeof(lightsTotal));
-    cmd.setPipeline(shaders.vsmPostprocessOmni);
-    cmd.dispatchThreads(wview.lights().size());
-    }
-
-  // sky&fog
-  if(doVirtualFog) {
-    cmd.setDebugMarker("VSM-pages-epipolar");
-    cmd.setBinding(0, epipolar.epTrace);
-    cmd.setBinding(1, sceneUbo);
-    cmd.setBinding(2, epipolar.epipoles);
-    cmd.setBinding(3, pageTbl);
-    cmd.setBinding(4, pageHiZ);
-    cmd.setPipeline(shaders.vsmFogPages);
-    cmd.dispatchThreads(epipolar.epTrace.size());
-    }
-
-  cmd.setDebugMarker("VSM-pages-alloc");
-  if(true) {
-    // clump
-    cmd.setBinding(0, pageList);
-    cmd.setBinding(1, pageTbl);
-    cmd.setPipeline(shaders.vsmClumpPages);
-    cmd.dispatchThreads(size_t(pageTbl.w()), size_t(pageTbl.h()), size_t(pageTbl.d()));
-    }
-
-  cmd.setBinding(0, pageList);
-  cmd.setBinding(1, pageTbl);
-  cmd.setBinding(2, pageTblOmni);
-  cmd.setBinding(3, pageListTmp);
-  cmd.setBinding(4, scene.vsmDbg);
-  // list
-  cmd.setPipeline(shaders.vsmListPages);
-  if(omniLights)
-    cmd.dispatch(size_t(pageTbl.d() + 1)); else
-    cmd.dispatch(size_t(pageTbl.d()));
-
-  cmd.setPipeline(shaders.vsmAllocPages);
-  cmd.dispatch(1);
-
-  // hor-merge
-  cmd.setPipeline(shaders.vsmMergePages);
-  cmd.dispatch(1);
-
-  cmd.setDebugMarker("VSM-visibility");
-  wview.visibilityVsm(cmd);
-
-  cmd.setDebugMarker("VSM-rendering");
-  cmd.setFramebuffer({}, {pageData, 0.f, Tempest::Preserve});
-  wview.drawVsm(cmd);
-  }
-
-void Renderer::logVsmStats(const WorldView& wview) {
-  // OPENGOTHIC_VSM_STATS=1: the previous frames' counters (VsmHeader, vsm_common.glsl) once in 5 s; a read waits
-  // for the GPU, so without the variable nothing is read back
-  if(!settings.vsmStats || vsm.pageList.isEmpty() || vsm.visibleLights.isEmpty())
-    return;
-  const uint64_t now = Application::tickCount();
-  if(vsm.statsTime!=0 && now<vsm.statsTime+5000)
-    return;
-  vsm.statsTime = now;
-
-  struct Header {
-    uint32_t pageCount, meshletCount, counterM, counterV;
-    uint32_t pagePerMip[16];
-    int32_t  pageBbox[16][4];
-    uint32_t pageOmniCount, pageListCount, pagePlaced, omniTileOverflow, omniTileLightsMax;
-    } h = {};
-  uint32_t visibleLights = 0;
-  auto& device = Resources::device();
-  device.waitIdle();
-  device.readBytes(vsm.pageList,      &h,             sizeof(h));
-  device.readBytes(vsm.visibleLights, &visibleLights, sizeof(visibleLights));
-
-  const uint32_t poolPages = uint32_t(vsm.pageData.w()/VSM_PAGE_SIZE) * uint32_t(vsm.pageData.h()/VSM_PAGE_SIZE);
-  const uint32_t dropped   = h.pageListCount>h.pagePlaced ? h.pageListCount-h.pagePlaced : 0;
-  Log::i("vsm stats: pageCount = ", h.pageCount, "/", poolPages,
-         ", entries = ", h.pageListCount, " (sun ", h.pageListCount-h.pageOmniCount, ", pageOmniCount ", h.pageOmniCount, ")",
-         ", placed = ", h.pagePlaced, ", dropped = ", dropped,
-         ", meshletCount = ", h.meshletCount, "/", DrawCommands::VsmMaxMeshlets,
-         (h.meshletCount>DrawCommands::VsmMaxMeshlets ? " OVERFLOW" : ""),
-         ", lights = ", visibleLights, "/", uint32_t(wview.lights().size()),
-         ", tile lights max = ", h.omniTileLightsMax, ", tiles over limit = ", h.omniTileOverflow);
-
-  // the lamp filter's counters of one frame (light_vsm_probe), then the next frame is counted
-  if(lights.directLightPso!=&Shaders::inst().lightsVsmProbe || vsm.lampProbe.isEmpty())
-    return;
-  uint32_t p[16] = {};
-  if(vsm.lampCounted) {
-    device.readBytes(vsm.lampProbe, p, sizeof(p));
-    const auto share = [](uint32_t a, uint32_t b) { return b==0 ? 0.0 : double(a)/double(b); };
-    const uint32_t filtered = p[8]+p[9]+p[10]+p[11]+p[12]+p[13];
-    Log::i("vsm lamp stats: pairs = ", p[0], ", pixels = ", p[1], ", lamps per pixel = ", share(p[0], p[1]),
-           ", past faint = ", p[2], ", out after 4 taps = ", share(p[3]+p[4], p[2]),
-           " (lit ", share(p[3], p[2]), ", blocked ", share(p[4], p[2]), ")",
-           ", taps per pixel = ", share(p[5], p[2]),
-           ", neighbour checks = ", share(p[6], p[5]), ", neighbour taps = ", share(p[7], p[5]));
-    Log::i("vsm lamp filter: filtered = ", filtered, ", penumbra texels <=1 ", share(p[8], filtered),
-           " <=1.5 ", share(p[9], filtered), " <=2 ", share(p[10], filtered), " <=3 ", share(p[11], filtered),
-           " <=6 ", share(p[12], filtered), " >6 ", share(p[13], filtered),
-           ", search at floor = ", share(p[14], p[3]+p[4]+filtered), ", four-tap filter = ", share(p[15], filtered));
-    }
-  std::memset(p, 0, sizeof(p));
-  vsm.lampProbe.update(p, 0, sizeof(p));
-  vsm.lampArmed = true;
-  }
-
-void Renderer::drawRtsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview) {
-  if(!settings.rtsmEnabled)
-    return;
-  FrameProfile::Scope timing(FrameProfile::Zone::EncodeShadows);
-
-  const int RTSM_BIN_SIZE   = 32;
-  const int RTSM_SMALL_TILE = 32;
-  const int RTSM_LARGE_TILE = 128;
-
-  const auto& shaders      = Shaders::inst();
-  const auto& scene        = wview.sceneGlobals();
-  const auto& clusters     = wview.clusters();
-  const auto& drawCmd      = wview.drawCommands();
-  const auto& buckets      = wview.drawBuckets();
-  const auto& instanceSsbo = wview.instanceSsbo();
-  const auto& sceneUbo     = scene.uboGlobal[SceneGlobals::V_Vsm];
-
-  const auto largeTiles  = tileCount(scene.zbuffer->size(), RTSM_LARGE_TILE);
-  const auto smallTiles  = tileCount(scene.zbuffer->size(), RTSM_SMALL_TILE);
-  const auto binTiles    = tileCount(scene.zbuffer->size(), RTSM_BIN_SIZE);
-  const auto maxMeshlets = drawCmd.maxMeshlets();
-
-  // alloc resources
-  auto& posList     = usesScratch(rtsm.posList,     64*1024*1024); // arbitrary
-  auto& outputImage = usesImage2d(rtsm.outputImage, TextureFormat::R8, zbuffer.size());
-  auto& pages       = usesImage3d(rtsm.pages,       TextureFormat::R32U, 32, 32, 16);
-  auto& meshTiles   = usesImage2d(rtsm.meshTiles,   TextureFormat::RG32U, smallTiles);
-  auto& primTiles   = usesImage2d(rtsm.primTiles,   TextureFormat::RG32U, binTiles);
-  auto& visList     = usesSsbo   (rtsm.visList,     shaders.rtsmClear.sizeofBuffer(1, maxMeshlets));
-
-  auto& dbg32       = usesImage2d(rtsm.dbg32, TextureFormat::R32U, tileCount(zbuffer.size(), 32));
-  auto& dbg16       = usesImage2d(rtsm.dbg16, TextureFormat::R32U, tileCount(zbuffer.size(), 16));
-
-  cmd.setDebugMarker("RTSM-rendering");
-  cmd.setFramebuffer({});
-
-  // clear
-  {
-    cmd.setBinding(0, pages);
-    cmd.setBinding(1, visList);
-    cmd.setBinding(2, posList);
-
-    cmd.setPipeline(shaders.rtsmClear);
-    cmd.dispatchThreads(size_t(pages.w()), size_t(pages.h()), size_t(pages.d()));
-  }
-
-  // global cull
-  {
-    struct Push { uint32_t meshletCount; } push = {};
-    push.meshletCount = uint32_t(clusters.size());
-    cmd.setPushData(push);
-
-    if(sky.quality==VolumetricHQ) {
-      cmd.setBinding(0, epipolar.epTrace);
-      cmd.setBinding(1, sceneUbo);
-      cmd.setBinding(2, epipolar.epipoles);
-      cmd.setBinding(3, pages);
-      cmd.setPipeline(shaders.rtsmFogPages);
-      cmd.dispatchThreads(epipolar.epTrace.size());
-      }
-
-    cmd.setBinding(0, outputImage);
-    cmd.setBinding(1, sceneUbo);
-    cmd.setBinding(2, gbufDiffuse);
-    cmd.setBinding(3, gbufNormal);
-    cmd.setBinding(4, zbuffer);
-    cmd.setBinding(5, clusters.ssbo());
-    cmd.setBinding(6, visList);
-    cmd.setBinding(7, pages);
-
-    cmd.setPipeline(shaders.rtsmPages);
-    cmd.dispatchThreads(scene.zbuffer->size());
-
-    cmd.setBinding(0, pages);
-    cmd.setPipeline(shaders.rtsmHiZ);
-    cmd.dispatch(1);
-
-    cmd.setBinding(7, posList);
-    cmd.setPipeline(shaders.rtsmCulling);
-    cmd.dispatchThreads(push.meshletCount);
-  }
-
-  // position
-  {
-    struct Push { Vec3 originLwc; } push = {};
-    push.originLwc = scene.originLwc;
-
-    cmd.setPushData(push);
-    cmd.setBinding(0, posList);
-    cmd.setBinding(1, sceneUbo);
-    cmd.setBinding(2, visList);
-
-    cmd.setBinding(5,  clusters.ssbo());
-    cmd.setBinding(6,  instanceSsbo);
-    cmd.setBinding(7,  buckets.ssbo());
-    cmd.setBinding(8,  buckets.ibo());
-    cmd.setBinding(9,  buckets.vbo());
-    cmd.setBinding(10, buckets.morphId());
-    cmd.setBinding(11, buckets.morph());
-
-    cmd.setPipeline(shaders.rtsmPosition);
-    cmd.dispatchIndirect(visList,0);
-  }
-
-  // binning
-  {
-    cmd.setBinding(0, outputImage);
-    cmd.setBinding(1, sceneUbo);
-    cmd.setBinding(2, gbufNormal);
-    cmd.setBinding(3, zbuffer);
-    cmd.setBinding(4, posList);
-    cmd.setBinding(5, meshTiles);
-    cmd.setBinding(6, primTiles);
-    cmd.setBinding(9, dbg32);
-
-    // meshlets
-    cmd.setPipeline(shaders.rtsmMeshletCull);
-    cmd.dispatch(largeTiles);
-
-    // primitives
-    cmd.setPipeline(shaders.rtsmPrimCull);
-    cmd.dispatch(smallTiles);
-  }
-
-  // raster
-  {
-    cmd.setBinding(0, outputImage);
-    cmd.setBinding(1, sceneUbo);
-    cmd.setBinding(2, gbufNormal);
-    cmd.setBinding(3, zbuffer);
-    cmd.setBinding(4, posList);
-    cmd.setBinding(5, meshTiles);
-    cmd.setBinding(6, primTiles);
-    cmd.setBinding(7, buckets.textures());
-    cmd.setBinding(8, Sampler::trillinear());
-    cmd.setBinding(9, dbg16);
-
-    cmd.setPipeline(shaders.rtsmRaster);
-    cmd.dispatchThreads(outputImage.size());
-  }
-  }
-
-void Renderer::drawRtsmOmni(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview) {
-  if(!settings.rtsmEnabled)
-    return;
-
-  static bool omniLights = true;
-  if(!omniLights)
-    return;
-
-  FrameProfile::Scope timing(FrameProfile::Zone::EncodeShadows);
-
-  //const uint32_t RTSM_SMALL_TILE = 32;
-  const uint32_t RTSM_LIGHT_TILE = 64;
-
-  const auto& shaders      = Shaders::inst();
-  const auto& scene        = wview.sceneGlobals();
-  const auto& sceneUbo     = scene.uboGlobal[SceneGlobals::V_Main];
-  const auto& clusters     = wview.clusters();
-  const auto& drawCmd      = wview.drawCommands();
-  const auto& buckets      = wview.drawBuckets();
-  const auto& instanceSsbo = wview.instanceSsbo();
-  const auto& lightsSsbo   = wview.lights().lightsSsbo();
-  const auto  maxMeshlets  = drawCmd.maxMeshlets();
-  const auto  lightsTotal  = uint32_t(wview.lights().size());
-
-  // alloc resources, for omni-lights
-  auto& posList        = usesScratch(rtsm.posList,        64*1024*1024); // arbitrary
-  auto& outputImageClr = usesImage2d(rtsm.outputImageClr, TextureFormat::R11G11B10UF, zbuffer.size());
-  auto& lightTiles     = usesImage2d(rtsm.lightTiles,     TextureFormat::RG32U, tileCount(scene.zbuffer->size(), RTSM_LIGHT_TILE));
-  auto& lightBins      = usesImage2d(rtsm.lightBins,      TextureFormat::RG32U, lightsTotal, 1u);
-  auto& primTilesOmni  = usesImage2d(rtsm.primTilesOmni,  TextureFormat::R32U, tileCount(zbuffer.size(), RTSM_LIGHT_TILE));
-  auto& drawTasks      = usesSsbo   (rtsm.drawTasks,      4*sizeof(uint32_t));
-  auto& visList        = usesSsbo   (rtsm.visList,        shaders.rtsmClearOmni.sizeofBuffer(1, maxMeshlets));
-  auto& visibleLights  = usesSsbo   (rtsm.visibleLights,  shaders.rtsmClearOmni.sizeofBuffer(2, lightsTotal));
-
-  auto& dbg64          = usesImage2d(rtsm.dbg64, TextureFormat::R32U, tileCount(zbuffer.size(), 64));
-  auto& dbg16          = usesImage2d(rtsm.dbg16, TextureFormat::R32U, tileCount(zbuffer.size(), 16));
-
-  cmd.setDebugMarker("RTSM-rendering-omni");
-  cmd.setFramebuffer({});
-  // clear
-  {
-    struct Push { uint32_t meshletCount; } push = {};
-    push.meshletCount = uint32_t(clusters.size());
-
-    cmd.setPushData(push);
-    cmd.setBinding(0, posList);
-    cmd.setBinding(1, visList);
-    cmd.setBinding(2, visibleLights);
-    cmd.setPipeline(shaders.rtsmClearOmni);
-    cmd.dispatchThreads(1);
-  }
-
-  // cull lights
-  {
-    struct Push { float znear; uint32_t lightsTotal; } push = {};
-    push.znear       = scene.znear;
-    push.lightsTotal = lightsTotal;
-
-    cmd.setPushData(push);
-    cmd.setBinding(0, sceneUbo);
-    cmd.setBinding(1, lightsSsbo);
-    cmd.setBinding(2, visibleLights);
-    cmd.setBinding(3, visList);
-    cmd.setBinding(4, hiz.hiZ);
-    cmd.setBinding(5, clusters.ssbo());
-    cmd.setBinding(6, posList);
-
-    cmd.setPipeline(shaders.rtsmCullLights);
-    cmd.dispatchThreads(lightsTotal);
-  }
-
-  // lights
-  {
-    struct Push { Vec3 originLwc; float znear; } push = {};
-    push.originLwc = scene.originLwc;
-    push.znear     = scene.znear;
-
-    cmd.setPushData(push);
-    cmd.setBinding(0, lightTiles);
-    cmd.setBinding(1, sceneUbo);
-    cmd.setBinding(2, gbufNormal);
-    cmd.setBinding(3, zbuffer);
-    cmd.setBinding(4, posList);
-    cmd.setBinding(5, lightsSsbo);
-    cmd.setBinding(6, visibleLights);
-    //
-    cmd.setBinding(9, rtsm.dbg64);
-
-    cmd.setPipeline(shaders.rtsmLightsOmni);
-    cmd.dispatch(lightTiles.size());
-
-    cmd.setPipeline(shaders.rtsmBboxesOmni);
-    cmd.dispatchThreads(zbuffer.size());
-
-    cmd.setPipeline(shaders.rtsmCompactOmni);
-    cmd.dispatch(lightTiles.size());
-
-    cmd.setPipeline(shaders.rtsmCompactLights);
-    cmd.dispatchThreads(lightsTotal);
-  }
-
-  // meshlet culling
-  {
-    struct Push { float znear; uint32_t meshletCount; } push = {};
-    push.znear        = scene.znear;
-    push.meshletCount = uint32_t(clusters.size());
-
-    cmd.setPushData(push);
-    cmd.setBinding(0, posList);
-    cmd.setBinding(1, sceneUbo);
-    cmd.setBinding(2, rtsm.visList);
-    cmd.setBinding(3, lightsSsbo);
-    cmd.setBinding(4, visibleLights);
-    cmd.setBinding(5, clusters.ssbo());
-
-    cmd.setPipeline(shaders.rtsmCullingOmni);
-    cmd.dispatchThreads(push.meshletCount);
-  }
-
-  // position
-  {
-    struct Push { Vec3 originLwc; } push = {};
-    push.originLwc = scene.originLwc;
-
-    cmd.setPushData(push);
-    cmd.setBinding(0, posList);
-    cmd.setBinding(1, sceneUbo);
-    cmd.setBinding(2, visList);
-    //
-    cmd.setBinding(5,  clusters.ssbo());
-    cmd.setBinding(6,  instanceSsbo);
-    cmd.setBinding(7,  buckets.ssbo());
-    cmd.setBinding(8,  buckets.ibo());
-    cmd.setBinding(9,  buckets.vbo());
-    cmd.setBinding(10, buckets.morphId());
-    cmd.setBinding(11, buckets.morph());
-
-    cmd.setPipeline(shaders.rtsmPositionOmni);
-    cmd.dispatchIndirect(visList, 0);
-  }
-
-  // per-light meshlets, primitives
-  {
-    struct Push { Vec3 originLwc; float znear; } push = {};
-    push.originLwc = scene.originLwc;
-    push.znear     = scene.znear;
-
-    cmd.setBinding(0, sceneUbo);
-    cmd.setBinding(1, lightsSsbo);
-    cmd.setBinding(2, visibleLights);
-    cmd.setBinding(3, lightBins);
-    cmd.setBinding(4, clusters.ssbo());
-    cmd.setBinding(5, posList);
-
-    cmd.setPipeline(shaders.rtsmMeshletOmni);
-    cmd.dispatchIndirect(visibleLights, 0);
-
-    cmd.setPipeline(shaders.rtsmBackfaceOmni);
-    cmd.dispatchIndirect(visibleLights, 0);
-  }
-
-  // in tile primitives
-  {
-    struct Push { Vec3 originLwc; float znear; } push = {};
-    push.originLwc = scene.originLwc;
-    push.znear     = scene.znear;
-    cmd.setPushData(push);
-    cmd.setBinding(0, lightTiles);
-    cmd.setBinding(1, sceneUbo);
-    cmd.setBinding(2, gbufNormal);
-    cmd.setBinding(3, zbuffer);
-    cmd.setBinding(4, posList);
-    cmd.setBinding(5, lightsSsbo);
-    cmd.setBinding(6, lightBins);
-    cmd.setBinding(7, primTilesOmni);
-    cmd.setBinding(8, drawTasks);
-    cmd.setBinding(9, dbg64);
-
-    cmd.setPipeline(shaders.rtsmTaskOmni);
-    cmd.dispatch(1);
-
-    cmd.setPipeline(shaders.rtsmPrimOmni);
-    cmd.dispatchIndirect(drawTasks, 0);
-  }
-
-  // raster
-  {
-    struct Push { Vec3 originLwc; } push = {};
-    push.originLwc = scene.originLwc;
-
-    cmd.setPushData(push);
-    cmd.setBinding(0, outputImageClr);
-    cmd.setBinding(1, sceneUbo);
-    cmd.setBinding(2, gbufNormal);
-    cmd.setBinding(3, zbuffer);
-    cmd.setBinding(4, posList);
-    cmd.setBinding(5, lightsSsbo);
-    cmd.setBinding(6, primTilesOmni);
-    cmd.setBinding(7, buckets.textures());
-    cmd.setBinding(8, Sampler::trillinear());
-    cmd.setBinding(9, dbg16);
-
-    cmd.setPipeline(shaders.rtsmRasterOmni);
-    cmd.dispatchThreads(outputImageClr.size());
-  }
-
-  //TODO: swrt ?
-  if(0) {
-    // raster (ref)
-    struct Push { Vec3 originLwc; } push = {};
-    push.originLwc  = scene.originLwc;
-    cmd.setPushData(push);
-    cmd.setBinding(0, outputImageClr);
-    cmd.setBinding(1, sceneUbo);
-    cmd.setBinding(2, gbufNormal);
-    cmd.setBinding(3, zbuffer);
-    cmd.setBinding(4, posList);
-    cmd.setBinding(5, lightsSsbo);
-    cmd.setBinding(6, visibleLights);
-    cmd.setBinding(7, lightBins);
-    cmd.setBinding(9, dbg16);
-
-    cmd.setPipeline(shaders.rtsmRenderingOmni);
-    cmd.dispatchThreads(outputImageClr.size());
-    }
-  }
-
-void Renderer::drawSwr(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview) {
-  if(!settings.swrEnabled)
-    return;
-  FrameProfile::Scope timing(FrameProfile::Zone::EncodeMain);
-
-  const auto& scene        = wview.sceneGlobals();
-  const auto& clusters     = wview.clusters();
-  const auto& buckets      = wview.drawBuckets();
-  const auto& instanceSsbo = wview.instanceSsbo();
-
-  auto& outputImage = usesImage2d(swr.outputImage, TextureFormat::R32U, zbuffer.size());
-
-  cmd.setFramebuffer({});
-  cmd.setDebugMarker("SW-rendering");
-
-  struct Push { uint32_t firstMeshlet; uint32_t meshletCount; float znear; } push = {};
-  push.firstMeshlet = 0;
-  push.meshletCount = uint32_t(clusters.size());
-  push.znear        = scene.znear;
-
-  cmd.setBinding(0, outputImage);
-  cmd.setBinding(1, scene.uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(2, *scene.gbufNormals);
-  cmd.setBinding(3, *scene.zbuffer);
-  cmd.setBinding(4, clusters.ssbo());
-  cmd.setBinding(5, buckets.ibo());
-  cmd.setBinding(6, buckets.vbo());
-  cmd.setBinding(7, buckets.textures());
-  cmd.setBinding(8, Sampler::bilinear());
-
-  auto* pso = &Shaders::inst().swRendering;
-  switch(Shaders::options().swRenderingPreset) {
-    case 1: {
-      cmd.setPushData(&push, sizeof(push));
-      cmd.setPipeline(*pso);
-      //cmd.dispatch(10);
-      cmd.dispatch(clusters.size());
-      break;
-      }
-    case 2: {
-      IVec2  tileSize = IVec2(128);
-      int    tileX    = (outputImage.w()+tileSize.x-1)/tileSize.x;
-      int    tileY    = (outputImage.h()+tileSize.y-1)/tileSize.y;
-      cmd.setPushData(&push, sizeof(push));
-      cmd.setPipeline(*pso);
-      cmd.dispatch(size_t(tileX), size_t(tileY)); //outputImage.size());
-      break;
-      }
-    case 3: {
-      cmd.setBinding(9,  *scene.lights);
-      cmd.setBinding(10, instanceSsbo);
-      cmd.setPushData(&push, sizeof(push));
-      cmd.setPipeline(*pso);
-      cmd.dispatchThreads(outputImage.size());
-      break;
-      }
-    }
-  }
-
 void Renderer::drawGBuffer(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& view) {
   cmd.setDebugMarker("GBuffer");
   if(Shaders::options().doMaterialMaps) {
     cmd.setFramebuffer({{gbufDiffuse, Tempest::Vec4(), Tempest::Preserve},
                         {gbufNormal, Tempest::Vec4(), Tempest::Preserve},
-                        {gbufOrm, Tempest::Vec4(1,1,0,0), Tempest::Preserve}},
+                        {gbufOrm, Tempest::Vec4(1,1,0,0), Tempest::Preserve},
+                        {gbufMotion, Tempest::Vec4(), Tempest::Preserve}},
                        {zbuffer, Tempest::Preserve, Tempest::Preserve});
     } else {
     cmd.setFramebuffer({{gbufDiffuse, Tempest::Vec4(), Tempest::Preserve},
-                        {gbufNormal, Tempest::Vec4(), Tempest::Preserve}},
+                        {gbufNormal, Tempest::Vec4(), Tempest::Preserve},
+                        {gbufMotion, Tempest::Vec4(), Tempest::Preserve}},
                        {zbuffer, Tempest::Preserve, Tempest::Preserve});
     }
   view.drawGBuffer(cmd,fId);
@@ -2286,10 +1139,6 @@ void Renderer::drawShadowResolve(Encoder<CommandBuffer>& cmd, const WorldView& w
     cmd.setBinding(10,scene.rtScene.ibo);
     cmd.setBinding(11,scene.rtScene.rtDesc);
     }
-  else if(shadow.directLightPso==&shaders.rtsmDirectLight) {
-    cmd.setBinding(4, rtsm.outputImage);
-    cmd.setBinding(5, rtsm.outputImageClr.isEmpty() ? Resources::fallbackBlack() : textureCast<Texture2d&>(rtsm.outputImageClr));
-    }
   else {
     for(size_t r=0; r<Resources::ShadowLayers; ++r) {
       if(shadowMap[r].isEmpty())
@@ -2307,9 +1156,6 @@ void Renderer::drawLights(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
   if(!light)
     return;
 
-  if(settings.rtsmEnabled && !rtsm.outputImageClr.isEmpty())
-    return;
-
   auto& scene   = wview.sceneGlobals();
   cmd.setDebugMarker("Point lights");
 
@@ -2322,7 +1168,8 @@ void Renderer::drawLights(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
     cmd.setBinding(12, gbufOrm, Sampler::nearest());
   for(size_t i=0; i<LightGroup::MaxCookies; ++i)
     cmd.setBinding(13+i, wview.lights().cookie(i), Sampler::bilinear()); // u is the azimuth: it wraps
-  if(lights.directLightPso==&shaders.lightsVsm || lights.directLightPso==&shaders.lightsVsmProbe) {
+  if(lights.directLightPso==&shaders.lightsVsm || lights.directLightPso==&shaders.lightsVsmHard ||
+     lights.directLightPso==&shaders.lightsVsmProbe) {
     cmd.setBinding(5, vsm.pageTblOmni);
     cmd.setBinding(6, vsm.pageData, Sampler::nearest(ClampMode::ClampToEdge)); // textureGather inside a face block
     }
@@ -2337,9 +1184,9 @@ void Renderer::drawLights(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
 
   auto& ibo  = Resources::cubeIbo();
   struct Push {
-    Vec3 originLwc; float vsmLampNear; uint32_t probeMode, probeStamp; float probeNarrow; uint32_t probeTaps[4], probeFlags;
+    Vec3 originLwc; uint32_t probeMode, probeStamp; float probeNarrow; uint32_t probeTaps[4], probeFlags;
     uint32_t probeExp;
-    } push = {scene.originLwc, settings.vsmLampNearCm, settings.vsmLampMode, 0, settings.vsmLampNarrow,
+    } push = {scene.originLwc, settings.vsmLampMode, 0, settings.vsmLampNarrow,
               {settings.vsmLampTaps[0], settings.vsmLampTaps[1], settings.vsmLampTaps[2], settings.vsmLampTaps[3]},
               settings.vsmLampFlags, settings.vsmLampExp};
   if(lights.directLightPso==&shaders.lightsVsmProbe) {
@@ -2353,488 +1200,88 @@ void Renderer::drawLights(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
       }
     }
   if(lights.directLightPso==&shaders.lightsVsmProbe)
-    cmd.setPushData(&push, sizeof(push));
-  else if(lights.directLightPso==&shaders.lightsVsm)
-    cmd.setPushData(&push, offsetof(Push, probeMode)); else
+    cmd.setPushData(&push, sizeof(push)); else
     cmd.setPushData(&push.originLwc, sizeof(push.originLwc));
   cmd.setPipeline(*lights.directLightPso);
   cmd.draw(nullptr,ibo, 0,ibo.size(), 0,wview.lights().size());
   }
 
-void Renderer::drawSky(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
-  auto& scene = wview.sceneGlobals();
-
-  cmd.setDebugMarker("Sky");
-  if(sky.quality==PathTrace) {
-    cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
-    cmd.setBinding(1, sky.transLut,     sky.sampler);
-    cmd.setBinding(2, sky.multiScatLut, sky.sampler);
-    cmd.setBinding(3, sky.cloudsLut,    Sampler::bilinear(ClampMode::ClampToEdge));
-    cmd.setBinding(4, zbuffer, Sampler::nearest());
-    cmd.setBinding(5, shadowMap[1], Resources::shadowSampler());
-    cmd.setPipeline(shaders.skyPathTrace);
-    cmd.draw(nullptr, 0, 3);
+void Renderer::prepareSSAO(Encoder<CommandBuffer>& cmd, WorldView& wview) {
+  // a frame without SSAO breaks the history
+  if(!settings.zCloudShadowScale) {
+    ssao.valid = false;
     return;
     }
-
-  auto& skyShader = sky.quality==VolumetricLQ ? shaders.sky : shaders.skySep;
-  cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(1, sky.transLut,     sky.sampler);
-  cmd.setBinding(2, sky.multiScatLut, sky.sampler);
-  cmd.setBinding(3, sky.viewLut,      sky.sampler);
-  cmd.setBinding(4, sky.fogLut3D,     Sampler::bilinear(ClampMode::ClampToEdge));
-  if(sky.quality!=VolumetricLQ)
-    cmd.setBinding(5, sky.fogLut3DMs, Sampler::bilinear(ClampMode::ClampToEdge));
-  cmd.setBinding(6, *wview.sky().cloudsDay()  .lay[0], Sampler::trillinear());
-  cmd.setBinding(7, *wview.sky().cloudsDay()  .lay[1], Sampler::trillinear());
-  cmd.setBinding(8, *wview.sky().cloudsNight().lay[0], Sampler::trillinear());
-  cmd.setBinding(9, *wview.sky().cloudsNight().lay[1], Sampler::trillinear());
-  cmd.setPipeline(skyShader);
-  cmd.draw(nullptr, 0, 3);
-  }
-
-void Renderer::prepareSSAO(Encoder<CommandBuffer>& cmd, WorldView& wview) {
-  if(!settings.zCloudShadowScale)
+  // the probes of -gi 1 trace the occlusion of their light themselves: their ambient takes no SSAO (probe_ambient.frag)
+  if(settings.giMethod==GiMethod::Probes) {
+    ssao.valid = false;
     return;
-  // ssao
+    }
+  // ssao: the projection comes from the scene (jittered, as the depth); the push carries the history's reprojection
   struct PushSsao {
-    Matrix4x4 proj;
-    Matrix4x4 projInv;
+    Matrix4x4 reproject;
+    uint32_t  frame   = 0;
+    uint32_t  reset   = 0;
+    uint32_t  fullSet = 0; // the whole set this frame, no history
     } push;
-  push.proj    = proj;
-  push.projInv = proj;
-  push.projInv.inverse();
+  if(!camHistory.continuous)
+    ssao.valid = false;
+  // both ends with this frame's jitter, as the TAA does: a camera that stands still reads the same texel
+  const auto jitter = taa.active ? Taa::jitterMatrix(taa.jitter, uint32_t(zbuffer.w()), uint32_t(zbuffer.h()))
+                                 : Matrix4x4::mkIdentity();
+  push.reproject = ssao.valid ? Taa::reprojection(camHistory.cur, camHistory.prev, jitter) : Matrix4x4::mkIdentity();
+  push.frame     = ssao.frame;
+  push.reset     = ssao.valid && settings.ssaoHistory ? 0 : 1;
+  push.fullSet   = settings.ssaoHistory ? 0 : 1;
 
   auto& device = Resources::device();
   const auto aoSize = effectResolution();
-  if(ssao.ssaoBuf.size()!=aoSize || ssao.ssaoBlur.size()!=zbuffer.size()) {
+  if(ssao.ssaoBuf.size()!=aoSize || ssao.ssaoBlur.size()!=zbuffer.size() || ssao.depthHalf.size()!=aoSize) {
     Resources::recycle(std::move(ssao.ssaoBuf));
     Resources::recycle(std::move(ssao.ssaoBlur));
-    ssao.ssaoBuf  = device.image2d(ssao.aoFormat, aoSize);
-    ssao.ssaoBlur = device.image2d(ssao.aoFormat, zbuffer.size());
+    Resources::recycle(std::move(ssao.depthHalf));
+    Resources::recycle(std::move(ssao.history[0]));
+    Resources::recycle(std::move(ssao.history[1]));
+    ssao.ssaoBuf    = device.image2d(ssao.aoFormat, aoSize);
+    ssao.ssaoBlur   = device.image2d(ssao.aoFormat, zbuffer.size());
+    ssao.depthHalf  = device.image2d(TextureFormat::R32F, aoSize);
+    ssao.history[0] = device.image2d(TextureFormat::RGBA16F, aoSize);
+    ssao.history[1] = device.image2d(TextureFormat::RGBA16F, aoSize);
+    ssao.valid      = false;
+    push.reset      = 1;
     }
 
   cmd.setFramebuffer({});
+  // depth at the SSAO size for the samples of ssao.comp: the full buffer misses the cache under their scatter
+  cmd.setDebugMarker("SSAO-depth");
+  cmd.setBinding(0, zbuffer, Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(1, ssao.depthHalf);
+  cmd.setPipeline(shaders.ssaoDepth);
+  cmd.dispatchThreads(ssao.depthHalf.size());
+
   cmd.setDebugMarker("SSAO");
 
   cmd.setBinding(0, ssao.ssaoBuf);
   cmd.setBinding(1, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(2, gbufDiffuse, Sampler::nearest(ClampMode::ClampToEdge));
-  cmd.setBinding(3, gbufNormal,  Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setBinding(4, zbuffer,     Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(5, ssao.depthHalf, Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(6, ssao.history[ssao.cur^1], Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(7, ssao.history[ssao.cur]);
+  cmd.setBinding(8, gbufMotion, Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setPushData(&push, sizeof(push));
   cmd.setPipeline(shaders.ssao);
   cmd.dispatchThreads(ssao.ssaoBuf.size());
+  ssao.valid = true;
+  ssao.cur  ^= 1;
+  ssao.frame++;
 
+  cmd.setDebugMarker("SSAO-blur");
   cmd.setBinding(0, ssao.ssaoBlur);
   cmd.setBinding(1, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
   cmd.setBinding(2, ssao.ssaoBuf, Sampler::bilinear(ClampMode::ClampToEdge));
   cmd.setBinding(3, zbuffer, Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setPipeline(shaders.ssaoBlur);
   cmd.dispatchThreads(ssao.ssaoBlur.size());
-  }
-
-void Renderer::prepareFog(Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview) {
-  auto& scene  = wview.sceneGlobals();
-  auto& device = Resources::device();
-
-  cmd.setDebugMarker("Fog-LUTs");
-  if(sky.quality!=PathTrace) {
-    auto& shader = sky.quality==VolumetricLQ ? shaders.fogViewLut3d : shaders.fogViewLutSep;
-    cmd.setFramebuffer({});
-    cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
-    cmd.setBinding(1, sky.transLut,     sky.sampler);
-    cmd.setBinding(2, sky.multiScatLut, sky.sampler);
-    cmd.setBinding(3, sky.cloudsLut,    Sampler::bilinear(ClampMode::ClampToEdge));
-    cmd.setBinding(4, sky.fogLut3D,     Sampler::bilinear(ClampMode::ClampToEdge));
-    if(sky.quality==VolumetricHQ || sky.quality==Epipolar)
-      cmd.setBinding(5, sky.fogLut3DMs);
-    cmd.setPipeline(shader);
-    cmd.dispatchThreads(uint32_t(sky.fogLut3D.w()), uint32_t(sky.fogLut3D.h()));
-    }
-
-  if(settings.vsmEnabled && !settings.pathTraceEnabled && (sky.quality==VolumetricHQ || sky.quality==Epipolar)) {
-    cmd.setFramebuffer({});
-    cmd.setDebugMarker("VSM-epipolar-fog");
-    cmd.setBinding(0, epipolar.epTrace);
-    cmd.setBinding(1, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
-    cmd.setBinding(2, epipolar.epipoles);
-    cmd.setBinding(3, vsm.pageTbl);
-    cmd.setBinding(4, vsm.pageData);
-    cmd.setPipeline(shaders.vsmFogShadow);
-    cmd.dispatchThreads(epipolar.epTrace.size());
-    }
-
-  switch(sky.quality) {
-    case None:
-    case VolumetricLQ:
-      break;
-    case VolumetricHQ: {
-      auto& occlusionLut = usesImage2d(sky.occlusionLut, TextureFormat::R32U, effectResolution());
-      if(settings.vsmEnabled && !settings.rtsmEnabled && !settings.pathTraceEnabled) {
-        cmd.setFramebuffer({});
-        cmd.setBinding(0, occlusionLut);
-        cmd.setBinding(1, epipolar.epTrace);
-        cmd.setBinding(2, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
-        cmd.setBinding(3, epipolar.epipoles);
-        cmd.setBinding(4, zbuffer);
-        cmd.setPipeline(shaders.fogEpipolarOcclusion);
-        cmd.dispatchThreads(occlusionLut.size());
-        } else {
-        cmd.setFramebuffer({});
-        cmd.setBinding(2, zbuffer, Sampler::nearest());
-        cmd.setBinding(3, scene.uboGlobal[SceneGlobals::V_Main]);
-        cmd.setBinding(4, occlusionLut);
-        cmd.setBinding(5, shadowMap[1], Resources::shadowSampler());
-        cmd.setPipeline(shaders.fogOcclusion);
-        cmd.dispatchThreads(occlusionLut.size());
-        }
-      break;
-      }
-    case Epipolar:{
-      // experimental
-      if(vsm.fogDbg.isEmpty())
-        vsm.fogDbg = device.image2d(sky.lutRGBFormat, 1024, 2*1024);
-      cmd.setFramebuffer({});
-      cmd.setDebugMarker("VSM-trace");
-      cmd.setBinding(0, vsm.fogDbg);
-      cmd.setBinding(1, epipolar.epTrace);
-      cmd.setBinding(2, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
-      cmd.setBinding(3, epipolar.epipoles);
-      cmd.setBinding(4, zbuffer);
-      cmd.setBinding(5, sky.transLut,   sky.sampler);
-      cmd.setBinding(6, sky.cloudsLut,  Sampler::bilinear(ClampMode::ClampToEdge));
-      cmd.setBinding(7, sky.fogLut3DMs, Sampler::bilinear(ClampMode::ClampToEdge));
-      cmd.setPipeline(shaders.vsmFogTrace);
-      cmd.dispatchThreads(epipolar.epTrace.size());
-      break;
-      }
-    case PathTrace: {
-      break;
-      }
-    }
-  }
-
-void Renderer::prepareEpipolar(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview) {
-  const bool doVolumetricFog = sky.quality!=VolumetricLQ && sky.quality!=PathTrace;
-  if(!doVolumetricFog || (!settings.vsmEnabled && !settings.rtsmEnabled))
-    return;
-
-  auto& scene  = wview.sceneGlobals();
-
-  auto& epTrace      = usesImage2d(epipolar.epTrace,  TextureFormat::R16,  1024, 2*1024);
-  auto& epipoles     = usesSsbo   (epipolar.epipoles, shaders.fogEpipolarVsm.sizeofBuffer(3, size_t(epipolar.epTrace.h())));
-  auto& occlusionLut = usesImage2d(sky.occlusionLut, TextureFormat::R32U, effectResolution());
-
-  cmd.setDebugMarker("Fog-epipolar");
-  cmd.setFramebuffer({});
-  cmd.setBinding(0, occlusionLut);
-  cmd.setBinding(1, epTrace);
-  cmd.setBinding(2, scene.uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(3, epipoles);
-  cmd.setBinding(4, zbuffer);
-  if(settings.vsmEnabled)
-    cmd.setPipeline(shaders.fogEpipolarVsm);
-  else if(settings.rtsmEnabled)
-    cmd.setPipeline(shaders.fogEpipolarVsm);
-  cmd.dispatch(uint32_t(epTrace.h()));
-  }
-
-void Renderer::prepareLightsBvh(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview) {
-  if(!Shaders::isLightsTreeSupported())
-    return;
-
-  struct Push {
-    uint32_t numLightsPot;
-    uint32_t numLights;
-    } push = {};
-  const uint32_t numLights = uint32_t(wview.lights().size());
-  push.numLightsPot = nextPot(numLights);
-  push.numLights    = numLights;
-
-  auto& lightsSsbo = wview.lights().lightsSsbo();
-  auto& bvhMorton  = usesSsbo(lightsTree.bvhMorton,   shaders.lightsBvh.sizeofBuffer(1, push.numLightsPot));
-  auto& bvhAlux    = usesSsbo(lightsTree.bvhAlux,     shaders.lightsBvh.sizeofBuffer(2, numLights * 2));
-  auto& ctrl       = usesSsboInit(lightsTree.bvhCtrl, shaders.lightsBvh.sizeofBuffer(3, (numLights + 31 )/32));
-
-  const bool ltree = settings.pathTraceEnabled;
-  const bool lbvh  = (settings.giMethod==GiMethod::IrrC);
-
-  cmd.setDebugMarker("LightsTree");
-  cmd.setFramebuffer({});
-  cmd.setPushData(push);
-  cmd.setBinding(0, lightsSsbo);
-  cmd.setBinding(1, bvhMorton);
-  cmd.setBinding(2, bvhAlux);
-  cmd.setBinding(3, ctrl);
-
-  cmd.setPipeline(shaders.lightsMorton);
-  cmd.dispatch(1); // single pass, for simplicity
-
-  if(ltree) {
-    auto& tree = usesSsbo(lightsTree.tree, shaders.lightsTree.sizeofBuffer(4, numLights * 2));
-    cmd.setBinding(4, tree);
-    cmd.setPipeline(shaders.lightsTopology);
-    cmd.dispatchThreads(numLights);
-
-    cmd.setPipeline(shaders.lightsTree);
-    cmd.dispatchThreads(numLights);
-    }
-
-  if(lbvh) {
-    auto& bvh = usesSsbo(lightsTree.bvh, shaders.lightsBvh.sizeofBuffer(4, numLights * 2));
-    cmd.setBinding(4, bvh);
-    cmd.setPipeline(shaders.lightsTopology);
-    cmd.dispatchThreads(numLights);
-
-    cmd.setPipeline(shaders.lightsBvh);
-    cmd.dispatchThreads(numLights);
-    }
-  }
-
-void Renderer::prepareSurfels(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview) {
-  static bool enable = true;
-  if(!enable)
-    return;
-
-  if(settings.giMethod!=GiMethod::IrrC || !settings.zCloudShadowScale)
-    return;
-
-  const uint32_t maxSurfels = surf.maxSurfels;
-  const int32_t  TileSize   = 96;
-  const int32_t  LargeTile  = 128;
-  const auto     binCount   = tileCount(zbuffer.size(), TileSize);
-
-  auto& scene    = wview.sceneGlobals();
-  auto& irrImage = usesImage2d (surf.irrImage, TextureFormat::RGBA16F, zbuffer.size());
-  auto& surfels  = usesSsboInit(surf.surfels,  shaders.surfAlloc.sizeofBuffer(4, maxSurfels));
-
-  auto& surfCnts = usesImage2d(surf.surfCnts, TextureFormat::R32U, binCount);
-  auto& surfBins = usesImage2d(surf.surfBins, TextureFormat::R32U, binCount);
-  auto& surfList = usesSsbo   (surf.surfList, 16*maxSurfels*sizeof(uint32_t));
-
-  struct Push {
-    Vec3     originLwc;
-    uint32_t tileSize;
-    uint32_t pass;
-    } push = {};
-  push.originLwc = scene.originLwc;
-  push.tileSize  = uint32_t(TileSize);
-  push.pass      = 0;
-
-  cmd.setDebugMarker("Surfels");
-
-  if(surf.gbuffFree.isEmpty()) {
-    auto& gbuffFree = usesSsbo(surf.gbuffFree, shaders.surfFList.sizeofBuffer(0, maxSurfels));
-    cmd.setPushData(surf.gbufTilesX);
-    cmd.setBinding(0, gbuffFree);
-    cmd.setPipeline(shaders.surfFList);
-    cmd.dispatchThreads(maxSurfels);
-    }
-
-  // prev-frame
-  {
-    cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
-    cmd.setBinding(1, zbuffer);
-    cmd.setBinding(2, surfels);
-
-    cmd.setPipeline(shaders.surfUpdate);
-    cmd.dispatchThreads(maxSurfels);
-
-    cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
-    cmd.setBinding(1, hiz.hiZ);
-    cmd.setBinding(2, zbuffer);
-    cmd.setBinding(3, surfels);
-    cmd.setBinding(4, surf.gbuffFree);
-    cmd.setPushData(scene.znear);
-
-    cmd.setPipeline(shaders.surfCulling);
-    cmd.dispatchThreads(maxSurfels);
-
-    cmd.setPipeline(shaders.surfCompact);
-    cmd.dispatch(1);
-  }
-
-  static bool rays = true;
-  if(rays) {
-    surfelsTrace(cmd, wview, surfels, false);
-    }
-
-  static bool apply = true;
-  if(apply) {
-    surfelsBinning(cmd, wview, TileSize, false);
-    surfelsApply(cmd, wview, TileSize, false);
-    }
-
-  // current-frame
-  static bool alloc = true;
-  if(alloc) {
-    cmd.setPushData(push);
-    cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
-    cmd.setBinding(1, irrImage);
-    cmd.setBinding(2, gbufNormal);
-    cmd.setBinding(3, zbuffer);
-    cmd.setBinding(4, surfels);
-    cmd.setBinding(5, surf.gbuffFree);
-
-    const auto tc = tileCount(zbuffer.size(), LargeTile);
-    cmd.setPipeline(shaders.surfAlloc);
-    cmd.dispatch(tc);
-    }
-
-  static bool gc = true;
-  if(gc) {
-    surfelsBinning(cmd, wview, TileSize, false);
-
-    cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
-    cmd.setBinding(3, surfels);
-    //
-    cmd.setBinding(6, surfCnts);
-    cmd.setBinding(7, surfBins);
-    cmd.setBinding(8, surfList);
-
-    //cmd.setPushData(push);
-    //cmd.setPipeline(shaders.surfBinSort); // assist with stable GC
-    //cmd.dispatch(surfBins.size());
-
-    cmd.setPushData(push);
-    cmd.setPipeline(shaders.surfDecimate);
-    cmd.dispatchThreads(maxSurfels);
-    }
-
-  if(rays) {
-    surfelsTrace(cmd, wview, surfels, true);
-    }
-
-  if(apply) {
-    surfelsBinning(cmd, wview, TileSize, true);
-    surfelsApply(cmd, wview, TileSize, true);
-    }
-  }
-
-void Renderer::surfelsApply(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview, int32_t tileSize, bool postPass) {
-  auto& scene = wview.sceneGlobals();
-
-  auto& irrImage  = surf.irrImage;
-  auto& surfels   = surf.surfels;
-  auto& surfCnts  = surf.surfCnts;
-  auto& surfBins  = surf.surfBins;
-  auto& surfList  = surf.surfList;
-
-  // auto& irrImage2 = usesAttachment(surf.irrImage2, TextureFormat::RGBA16F, zbuffer.size());
-  // (void)irrImage2;
-
-  struct Push {
-    Vec3     originLwc;
-    uint32_t tileSize;
-    uint32_t pass;
-    } push = {};
-  push.originLwc = scene.originLwc;
-  push.tileSize  = uint32_t(tileSize);
-  push.pass      = postPass ? 1 : 0;
-
-  cmd.setPushData(push);
-  cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(1, irrImage);
-  cmd.setBinding(2, gbufNormal);
-  cmd.setBinding(3, zbuffer);
-  cmd.setBinding(4, surfels);
-  //
-  cmd.setBinding(6, surfCnts);
-  cmd.setBinding(7, surfBins);
-  cmd.setBinding(8, surfList);
-
-  cmd.setPipeline(shaders.surfApply);
-  cmd.dispatchThreads(zbuffer.size());
-  }
-
-void Renderer::surfelsBinning(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview, int32_t tileSize, bool postPass) {
-  const  uint32_t maxSurfels = surf.maxSurfels;
-
-  auto& scene       = wview.sceneGlobals();
-  auto& surfels     = surf.surfels;
-  auto& binCtrl     = usesSsboInit(surf.surfBinsCtrl, sizeof(uint32_t));
-  auto& surfCnts    = surf.surfCnts;
-  auto& surfBins    = surf.surfBins;
-  auto& surfList    = surf.surfList;
-
-  struct Push {
-    int32_t tileSize;
-    int32_t allocPass;
-    int32_t postPass;
-    } push = {};
-  push.tileSize = tileSize;
-  push.postPass = postPass ? 1 : 0;
-
-  cmd.setPushData(push);
-  cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(1, binCtrl);
-  cmd.setBinding(2, surfels);
-  cmd.setBinding(3, surfCnts);
-  cmd.setBinding(4, surfBins);
-  cmd.setBinding(5, surfList);
-
-  cmd.setPipeline(shaders.surfBinClear);
-  cmd.dispatchThreads(surfBins.size());
-
-  push.allocPass = 0;
-  cmd.setPushData(push);
-  cmd.setPipeline(shaders.surfBinPass);
-  cmd.dispatchThreads(maxSurfels); //TODO: indirect
-
-  cmd.setPipeline(shaders.surfBinAlloc);
-  cmd.dispatchThreads(surfBins.size());
-
-  push.allocPass = 1;
-  cmd.setPushData(push);
-  cmd.setPipeline(shaders.surfBinPass);
-  cmd.dispatchThreads(maxSurfels);
-  }
-
-void Renderer::surfelsTrace(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview, StorageBuffer& surfels, bool postPass) {
-  static int giMethod = 0;
-
-  auto& scene = wview.sceneGlobals();
-
-  const Tempest::ComputePipeline* pso = &shaders.surfRaycast;
-  if(giMethod==1)
-    pso = &shaders.surfPathtrace;
-
-  const uint32_t gbufX = surf.gbufTilesX * uint32_t(surf.gbufTile.x);
-  const uint32_t gbufY = surf.gbufTilesY * uint32_t(surf.gbufTile.y);
-
-  auto& gbuffDiff = usesImage2d(surf.gbuffDiff, TextureFormat::RGBA8, gbufX, gbufY);
-  auto& gbuffNorm = usesImage2d(surf.gbuffNorm, TextureFormat::RGBA8, gbufX, gbufY);
-  auto& gbuffHitT = usesImage2d(surf.gbuffHitT, TextureFormat::R16,   gbufX, gbufY);
-
-  const uint32_t pass = postPass ? 1 : 0;
-  cmd.setPushData(pass);
-  cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(1, surfels);
-  cmd.setBinding(2, sky.viewCldLut, sky.sampler);
-  cmd.setBinding(3, gbuffDiff);
-  cmd.setBinding(4, gbuffNorm);
-  cmd.setBinding(5, gbuffHitT);
-  cmd.setBinding(6, scene.rtScene.tlas);
-  cmd.setBinding(7, Sampler::trillinear());
-  cmd.setBinding(8, scene.rtScene.tex);
-  cmd.setBinding(9, scene.rtScene.vbo);
-  cmd.setBinding(10,scene.rtScene.ibo);
-  cmd.setBinding(11,scene.rtScene.rtDesc);
-  cmd.setBinding(12,shadowMap[1]);
-  cmd.setBinding(13,lightsTree.bvh);
-
-  cmd.setPipeline(*pso);
-  const uint32_t offset = postPass ? sizeof(uint32_t) : 0;
-  if(!(giMethod==0 && postPass==false)) {
-    cmd.dispatchIndirect(surfels, offset);
-    // cmd.dispatchThreads(maxSurfels);
-    }
-
-  if(giMethod==0) {
-    cmd.setPipeline(shaders.surLighting);
-    cmd.dispatchIndirect(surfels, offset);
-    }
   }
 
 void Renderer::prepareIrradiance(Encoder<CommandBuffer>& cmd, WorldView& wview) {
@@ -2849,365 +1296,18 @@ void Renderer::prepareIrradiance(Encoder<CommandBuffer>& cmd, WorldView& wview) 
   cmd.dispatch(1);
   }
 
-void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, WorldView& wview) {
-  if(settings.giMethod!=GiMethod::Probes || !settings.zCloudShadowScale) {
+
+void Renderer::readGiStats(uint8_t fId) {
+  // the counters this frame slot wrote last time: its fence has been waited for, the buffer is host-visible
+  if(!FrameProfile::enabled() || !gi.statsWritten[fId] || gi.stats[fId].isEmpty())
     return;
-    }
-
-  const bool fisrtFrame = gi.voteTable.isEmpty();
-
-  auto& hashTable          = usesSsbo(gi.hashTable, 2'097'152*sizeof(uint32_t)); // 8MB
-  auto& voteTable          = usesSsbo(gi.voteTable, gi.hashTable.byteSize());
-  auto& probes             = usesSsbo(gi.probes,    gi.maxProbes*32 + 64);       // probes and header
-  auto& freeList           = usesSsbo(gi.freeList,  gi.maxProbes*sizeof(uint32_t) + sizeof(int32_t));
-  auto& probesGBuffDiff    = usesImage2d(gi.probesGBuffDiff,    TextureFormat::RGBA8, gi.atlasDim*16, gi.atlasDim*16); // 16x16 tile
-  auto& probesGBuffNorm    = usesImage2d(gi.probesGBuffNorm,    TextureFormat::RGBA8, gi.atlasDim*16, gi.atlasDim*16);
-  auto& probesGBuffRayT    = usesImage2d(gi.probesGBuffRayT,    TextureFormat::R16,   gi.atlasDim*16, gi.atlasDim*16);
-  auto& probesLighting     = usesImage2d(gi.probesLighting,     TextureFormat::R11G11B10UF, gi.atlasDim*3, gi.atlasDim*2);
-  auto& probesLightingPrev = usesImage2d(gi.probesLightingPrev, TextureFormat::R11G11B10UF, uint32_t(gi.probesLighting.w()), uint32_t(gi.probesLighting.h()));
-
-  const auto&  scene   = wview.sceneGlobals();
-  const size_t maxHash = hashTable.byteSize()/sizeof(uint32_t);
-
-  cmd.setFramebuffer({});
-  if(fisrtFrame) {
-    cmd.setDebugMarker("GI-Init");
-    cmd.setBinding(0, voteTable);
-    cmd.setBinding(1, hashTable);
-    cmd.setBinding(2, probes);
-    cmd.setBinding(3, freeList);
-    cmd.setPipeline(shaders.probeInit);
-    cmd.dispatch(1);
-    cmd.setPipeline(shaders.probeClearHash);
-    cmd.dispatchThreads(maxHash);
-
-    cmd.setBinding(0, probesLighting);
-    cmd.setBinding(1, Resources::fallbackBlack());
-    cmd.setPipeline(shaders.copyImg);
-    cmd.dispatchThreads(probesLighting.size());
-    }
-
-  static bool alloc = true;
-  cmd.setDebugMarker("GI-Alloc");
-  cmd.setBinding(0, voteTable);
-  cmd.setBinding(1, hashTable);
-  cmd.setBinding(2, probes);
-  cmd.setBinding(3, freeList);
-  cmd.setPipeline(shaders.probeClear);
-  cmd.dispatchThreads(maxHash);
-
-  if(alloc) {
-    cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
-    cmd.setBinding(1, gbufDiffuse, Sampler::nearest());
-    cmd.setBinding(2, gbufNormal,  Sampler::nearest());
-    cmd.setBinding(3, zbuffer,     Sampler::nearest());
-    cmd.setBinding(4, voteTable);
-    cmd.setBinding(5, hashTable);
-    cmd.setBinding(6, probes);
-    cmd.setBinding(7, freeList);
-    cmd.setPipeline(shaders.probeVote);
-    cmd.dispatchThreads(sceneDepth.size());
-
-    cmd.setBinding(0, voteTable);
-    cmd.setBinding(1, hashTable);
-    cmd.setBinding(2, probes);
-    cmd.setBinding(3, freeList);
-    cmd.setPipeline(shaders.probePrune);
-    cmd.dispatchThreads(gi.maxProbes);
-
-    cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
-    cmd.setBinding(1, gbufDiffuse, Sampler::nearest());
-    cmd.setBinding(2, gbufNormal,  Sampler::nearest());
-    cmd.setBinding(3, zbuffer,     Sampler::nearest());
-    cmd.setBinding(4, voteTable);
-    cmd.setBinding(5, hashTable);
-    cmd.setBinding(6, probes);
-    cmd.setBinding(7, freeList);
-    cmd.setPipeline(shaders.probeAlocation);
-    cmd.dispatchThreads(sceneDepth.size());
-    }
-
-  cmd.setDebugMarker("GI-Trace");
-  cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(1, probesGBuffDiff);
-  cmd.setBinding(2, probesGBuffNorm);
-  cmd.setBinding(3, probesGBuffRayT);
-  cmd.setBinding(4, hashTable);
-  cmd.setBinding(5, probes);
-  cmd.setBinding(6, scene.rtScene.tlas);
-  cmd.setBinding(7, Sampler::bilinear());
-  cmd.setBinding(8, scene.rtScene.tex);
-  cmd.setBinding(9, scene.rtScene.vbo);
-  cmd.setBinding(10,scene.rtScene.ibo);
-  cmd.setBinding(11,scene.rtScene.rtDesc);
-  cmd.setPipeline(shaders.probeTrace);
-  cmd.dispatch(1024); // TODO: dispath indirect?
-
-  cmd.setDebugMarker("GI-HashMap");
-  cmd.setBinding(0, voteTable);
-  cmd.setBinding(1, hashTable);
-  cmd.setBinding(2, probes);
-  cmd.setBinding(3, freeList);
-  cmd.setPipeline(shaders.probeClearHash);
-  cmd.dispatchThreads(maxHash);
-  cmd.setPipeline(shaders.probeMakeHash);
-  cmd.dispatchThreads(gi.maxProbes);
-
-  cmd.setDebugMarker("GI-Lighting");
-  cmd.setBinding(0, probesLightingPrev);
-  cmd.setBinding(1, probesLighting);
-  cmd.setPipeline(shaders.copyImg);
-  cmd.dispatchThreads(probesLighting.size());
-
-  cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(1, probesLighting);
-  cmd.setBinding(2, probesGBuffDiff, Sampler::nearest());
-  cmd.setBinding(3, probesGBuffNorm, Sampler::nearest());
-  cmd.setBinding(4, probesGBuffRayT, Sampler::nearest());
-  cmd.setBinding(5, sky.viewCldLut,  sky.sampler);
-  cmd.setBinding(6, shadowMap[1],    Sampler::bilinear());
-  cmd.setBinding(7, probesLightingPrev, Sampler::nearest());
-  cmd.setBinding(8, hashTable);
-  cmd.setBinding(9, probes);
-  cmd.setPipeline(shaders.probeLighting);
-  cmd.dispatch(1024);
-  }
-
-void Renderer::prepareExposure(Encoder<CommandBuffer>& cmd, WorldView& wview) {
-  FrameProfile::Scope timing(FrameProfile::Zone::EncodePost);
-  auto& scene = wview.sceneGlobals();
-
-  auto sunDir = wview.sky().sunLight().dir();
-  struct Push {
-    float baseL        = 0.0;
-    float sunOcclusion = 1.0;
-    };
-  Push push;
-  push.sunOcclusion = smoothstep(0.0f, 0.01f, sunDir.y);
-
-  static float override = 0;
-  static float add      = 1.5f;
-  if(override>0)
-    push.baseL = override;
-  push.baseL += add;
-
-  cmd.setDebugMarker("Exposure");
-  cmd.setFramebuffer({});
-  cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(1, sky.viewCldLut, sky.sampler);
-  cmd.setBinding(2, sky.transLut,   Sampler::bilinear(ClampMode::ClampToEdge));
-  cmd.setBinding(3, sky.cloudsLut,  Sampler::bilinear(ClampMode::ClampToEdge));
-  cmd.setBinding(4, sky.irradianceLut);
-  cmd.setPushData(&push, sizeof(push));
-  cmd.setPipeline(shaders.skyExposure);
-  cmd.dispatch(1);
-  }
-
-void Renderer::drawPathtrace(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview, uint8_t fId) {
-  if(wview.sceneGlobals().rtScene.tlas.isEmpty())
-    return;
-
-  if(!Resources::device().properties().hasAttachFormat(Tempest::RGBA16F))
-    return;
-
-  static bool enable = true;
-  if(!enable)
-    return;
-
-  if(!settings.pathTraceEnabled)
-    return;
-
-  if(pt.frame.size()!=sceneLinear.size()) {
-    Resources::recycle(std::move(pt.frame));
-    pt.frame = Resources::device().attachment(Tempest::RGBA16F, sceneLinear.size());
-    }
-
-  wview.visibilityPass(cmd, 0);
-  wview.visibilityPass(cmd, 1);
-
-  cmd.setFramebuffer({});
-  prepareSky(cmd, wview);
-  prepareIrradiance(cmd,wview);
-  prepareExposure(cmd,wview);
-
-  drawShadowMap(cmd,fId,wview);
-
-  static float eps = 2.f;
-  for(int i=0; i<16; ++i) {
-    float a = viewProj.data()[i];
-    float b = pt.mvpLast.data()[i];
-    if(std::abs(a-b)>eps) {
-      pt.numFrames = 0;
-      break;
-      }
-    }
-
-  if(pt.numFrames==0)
-    pt.mvpLast = viewProj;
-
-  struct Push {
-    uint32_t numFrames;
-    };
-  Push push;
-  push.numFrames = pt.numFrames; ++pt.numFrames;
-
-  if(push.numFrames==0)
-    cmd.setFramebuffer({{pt.frame, Vec4(0), Tempest::Preserve}}, {zbuffer, 1, Tempest::Preserve}); else
-    cmd.setFramebuffer({{pt.frame, Tempest::Preserve, Tempest::Preserve}}, {zbuffer, 1, Tempest::Preserve});
-  auto& scene = wview.sceneGlobals();
-  cmd.setDebugMarker("Pathtrace");
-  cmd.setPushData(push);
-  cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
-  //cmd.setBinding(1, zbuffer);
-  cmd.setBinding(2, sky.irradianceLut);
-  cmd.setBinding(3, sky.viewCldLut, sky.sampler);
-  //cmd.setBinding(4, shadowMap[1], Sampler::bilinear());
-  cmd.setBinding(4, Resources::fallbackBlack(), Sampler::bilinear());
-  cmd.setBinding(5, lightsTree.tree);
-  cmd.setBinding(6, scene.rtScene.tlas);
-  cmd.setBinding(7, Sampler::trillinear());
-  cmd.setBinding(8, scene.rtScene.tex);
-  cmd.setBinding(9, scene.rtScene.vbo);
-  cmd.setBinding(10,scene.rtScene.ibo);
-  cmd.setBinding(11,scene.rtScene.rtDesc);
-
-  cmd.setPipeline(shaders.rtPathtrace);
-  cmd.draw(nullptr, 0, 3);
-
-  cmd.setFramebuffer({{sceneLinear, Tempest::Discard, Tempest::Preserve}});
-  cmd.setDebugMarker("Blit");
-  cmd.setBinding(0, pt.frame, Sampler::nearest());
-  cmd.setPipeline(shaders.copy);
-  cmd.draw(nullptr, 0, 3);
-
-  prepareFog(cmd,wview);
-
-  cmd.setFramebuffer({{sceneLinear, Tempest::Discard, Tempest::Preserve}}, {zbuffer, Tempest::Readonly});
-  cmd.setDebugMarker("Sky");
-  drawSky(cmd,wview);
-  drawSunMoon(cmd,wview);
-
-  cmd.setDebugMarker("Fog");
-  drawFog(cmd, wview);
-  }
-
-void Renderer::drawRayQueryDbg(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview) {
-  if(wview.sceneGlobals().rtScene.tlas.isEmpty() || shadowMap[1].isEmpty())
-    return;
-
-  static bool enable = false;
-  if(!enable)
-    return;
-
-  auto& scene = wview.sceneGlobals();
-  cmd.setDebugMarker("RQ-dbg");
-  cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(1, zbuffer);
-  cmd.setBinding(2, sky.irradianceLut);
-  cmd.setBinding(3, shadowMap[1], Sampler::bilinear());
-  //
-  cmd.setBinding(6, scene.rtScene.tlas);
-  cmd.setBinding(7, Sampler::trillinear());
-  cmd.setBinding(8, scene.rtScene.tex);
-  cmd.setBinding(9, scene.rtScene.vbo);
-  cmd.setBinding(10,scene.rtScene.ibo);
-  cmd.setBinding(11,scene.rtScene.rtDesc);
-
-  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}}, {zbuffer, Tempest::Readonly});
-  cmd.setPipeline(shaders.rtDbg);
-  cmd.draw(nullptr, 0, 3);
-  }
-
-void Renderer::drawSurfelsDbg(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
-  if(settings.giMethod!=GiMethod::IrrC)
-    return;
-
-  static bool enable = false;
-  if(!enable)
-    return;
-
-  cmd.setDebugMarker("GI-dbg");
-  cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(1, surf.surfels);
-  cmd.setBinding(2, gbufNormal,  Sampler::nearest());
-  cmd.setBinding(3, sceneDepth,  Sampler::nearest());
-  cmd.setPipeline(shaders.surfDbg);
-  cmd.draw(nullptr, 0, 36, 0, surf.maxSurfels);
-  }
-
-void Renderer::drawProbesDbg(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
-  if(settings.giMethod!=GiMethod::Probes)
-    return;
-
-  static bool enable = false;
-  if(!enable)
-    return;
-
-  cmd.setDebugMarker("GI-dbg");
-  cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(1, gi.probesLighting);
-  cmd.setBinding(2, gi.probes);
-  cmd.setBinding(3, gi.hashTable);
-  cmd.setPipeline(shaders.probeDbg);
-  cmd.draw(nullptr, 0, 36, 0, gi.maxProbes);
-  }
-
-void Renderer::drawProbesHitDbg(Encoder<CommandBuffer>& cmd) {
-  if(settings.giMethod!=GiMethod::Probes)
-    return;
-
-  static bool enable = false;
-  if(!enable)
-    return;
-
-  cmd.setDebugMarker("GI-dbg");
-  cmd.setBinding(1, gi.probesLighting);
-  cmd.setBinding(2, gi.probesGBuffDiff);
-  cmd.setBinding(3, gi.probesGBuffRayT);
-  cmd.setBinding(4, gi.probes);
-  cmd.setPipeline(shaders.probeHitDbg);
-  cmd.draw(nullptr, 0, 36, 0, gi.maxProbes*256);
-  //cmd.draw(nullptr, 0, 36, 0, 1024);
-  }
-
-void Renderer::drawAmbient(Encoder<CommandBuffer>& cmd, const WorldView& view) {
-  static bool enable = true;
-  if(!enable)
-    return;
-
-  cmd.setDebugMarker("AmbientLight");
-  cmd.setBinding(0, view.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(1, gbufDiffuse, Sampler::nearest());
-  cmd.setBinding(2, gbufNormal,  Sampler::nearest());
-  if(Shaders::options().doMaterialMaps) {
-    cmd.setBinding(12, gbufOrm, Sampler::nearest());
-    cmd.setBinding(13, sky.viewLut, sky.sampler);
-    cmd.setBinding(14, zbuffer, Sampler::nearest());
-    }
-  if(settings.giMethod==GiMethod::IrrC && settings.zCloudShadowScale) {
-    cmd.setBinding(3, surf.irrImage, Sampler::nearest(ClampMode::ClampToEdge));
-    cmd.setBinding(4, ssao.ssaoBlur, Sampler::nearest(ClampMode::ClampToEdge)); //TODO: remove once splatting is working
-    cmd.setBinding(5, surf.surfels);
-    cmd.setPipeline(shaders.ambientLightSurf);
-    }
-  else if(settings.giMethod==GiMethod::Probes && settings.zCloudShadowScale) {
-    cmd.setBinding(3, ssao.ssaoBlur, Sampler::nearest());
-    cmd.setBinding(4, zbuffer,       Sampler::nearest());
-    cmd.setBinding(5, gi.hashTable);
-    cmd.setBinding(6, gi.probes);
-    cmd.setBinding(7, gi.probesLighting);
-    cmd.setPipeline(shaders.probeAmbient);
-    }
-  else if(settings.zCloudShadowScale) {
-    cmd.setBinding(3, sky.irradianceLut);
-    cmd.setBinding(4, ssao.ssaoBlur, Sampler::nearest(ClampMode::ClampToEdge));
-    cmd.setPipeline(shaders.ambientLightSsao);
-    }
-  else {
-    cmd.setBinding(3, sky.irradianceLut);
-    cmd.setPipeline(shaders.ambientLight);
-    }
-  cmd.draw(nullptr, 0, 3);
+  uint32_t v[RendererInternal::giStatsCount] = {};
+  Resources::device().readBytes(gi.stats[fId], v, sizeof(v));
+  FrameProfile::add(FrameProfile::Amount::GiProbesLive,     v[0]);
+  FrameProfile::add(FrameProfile::Amount::GiProbesTraced,   v[1]);
+  FrameProfile::add(FrameProfile::Amount::GiProbesFromHits, v[4]);
+  FrameProfile::add(FrameProfile::Amount::GiProbesFreed,    v[5]);
+  gi.statsWritten[fId] = false;
   }
 
 Tempest::Attachment Renderer::screenshoot(uint8_t frameId) {
@@ -3223,8 +1323,8 @@ Tempest::Attachment Renderer::screenshoot(uint8_t frameId) {
     }
   auto     img  = device.attachment(Tempest::TextureFormat::RGBA8,w,h);
 
-  auto wview  = Gothic::inst().worldView();
-  auto camera = Gothic::inst().camera();
+  auto wview  = GameServices::inst().worldView();
+  auto camera = GameServices::inst().camera();
   if(wview==nullptr || camera==nullptr)
     return Attachment();
 

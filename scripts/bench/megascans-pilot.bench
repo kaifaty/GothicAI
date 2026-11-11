@@ -1,0 +1,123 @@
+# Megascans pilot: the boulder NW_NATURE_STONE_BIGHIGH_01 by Lobart's farm and the forest floor around it.
+# Run with OPENGOTHIC_CONTENT= for the original and with the pilot's staging set for the scans.
+# Boulder at 16635 1765 -16057. In the wide shots the hero stands clear of it; in the others he is parked
+# below the world, so the camera does not depend on the boulder's collision and pairs line up.
+seed 73013
+cheat god
+overlay off
+ui off
+view nopfx
+set time 12 0
+goto pos 16635 2165 -15407
+clear 3000
+wait 2500
+streaming wait 30000
+wait 1500
+cam look 120
+cam cut
+cam world 900 260 180
+wait 60
+cam hold
+wait 900
+shot wide_noon
+wait 200
+cam look 0
+cam cut
+cam world 240 190 180
+wait 60
+cam hold
+wait 900
+shot ground_noon
+wait 200
+cam look 0
+cam cut
+cam world 150 130 120
+wait 60
+cam hold
+wait 900
+shot ground_macro_noon
+wait 200
+cam lift off
+goto pos 16635 -235 -16057
+clear 3000
+wait 1500
+cam look 2100
+cam cut
+cam world 850 2190 45
+wait 60
+cam hold
+wait 900
+shot boulder_45_noon
+wait 200
+cam cut
+cam world 1000 2190 150
+wait 60
+cam hold
+wait 900
+shot boulder_150_noon
+wait 200
+cam cut
+cam world 850 2190 135
+wait 60
+cam hold
+wait 900
+shot boulder_135_noon
+wait 200
+cam cut
+cam world 850 2190 225
+wait 60
+cam hold
+wait 900
+shot boulder_225_noon
+wait 200
+cam cut
+cam world 850 2190 315
+wait 60
+cam hold
+wait 900
+shot boulder_315_noon
+wait 200
+cam cut
+cam world 520 2170 135
+wait 60
+cam hold
+wait 900
+shot close_135_noon
+wait 200
+cam cut
+cam world 520 2170 225
+wait 60
+cam hold
+wait 900
+shot close_225_noon
+wait 200
+set time 18 30
+wait 1500
+cam cut
+cam world 850 2190 135
+wait 60
+cam hold
+wait 900
+shot boulder_135_low
+wait 200
+cam cut
+cam world 520 2170 225
+wait 60
+cam hold
+wait 900
+shot close_225_low
+wait 200
+census
+# Completed application frames, normal game clock, no video capture: the boulder fills the view.
+set time 12 0
+wait 1000
+cam cut
+cam world 850 2190 135
+wait 60
+cam hold
+cadence normal
+wait 34
+character measure off
+cadence wait
+character report
+quit

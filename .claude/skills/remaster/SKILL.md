@@ -146,9 +146,11 @@ description: Remaster pipeline for Gothic content — rebuild a building, a set 
 5. Отчёт ассета — `reports/content/remaster/<ассет>/README.md`.
 6. Включение в рабочий контент — только по слову пользователя (`--gate enable`). Порядок:
    - `B compose working-<n> <наборы ассетов и предметов>` — номер новый, прежний набор не трогается;
+   - `scripts/convex-parts.sh content ~/.local/share/gothic-ai/content-staging/working-<n>` — составная коллизия своих столов и шкафов (`.convex-parts` рядом с GLB, ворота `furniture_parts`). Без неё `enable` отказывает;
+   - `scripts/fracture.sh content ~/.local/share/gothic-ai/content-staging/working-<n>` — осколки своих бочек, ящиков и оград из `destructible-vobs.csv` (`.fracture` рядом с GLB). Без них предмет не разбивается, и `enable` отказывает;
    - `B enable working-<n>` — копия в `~/.local/share/gothic-ai/content`, состав пишется в `enabled.json`.
 
-   Перед `enable` проверь `pgrep -fl Gothic2Notr`: игра не должна идти. На Ryzen каталог по умолчанию не заполняй: без `OPENGOTHIC_CONTENT` его возьмут бенчи и e2e других сессий.
+   Перед `enable` проверь `pgrep -x Gothic2Notr` (без `-x` находятся и чужие команды с этим словом): игра не должна идти. На Ryzen каталог по умолчанию не заполняй: без `OPENGOTHIC_CONTENT` его возьмут бенчи и e2e других сессий.
 
 ## Рецензент
 

@@ -1,0 +1,18 @@
+Character concept turnaround sheet for a dark medieval fantasy game: the head, neck and top of the shoulders of one man, shown four times side by side on a plain mid-grey background (#7a7c80): front view, three-quarter view (facing left), left profile, and back of the head. Same man, same expression, same scale and eye height in all four views. Soft even studio light from the upper front-left, no rim light. Rendered like a high-end realistic 3D game character sculpt (real skin, real hair strands), not a painting and not a photo of a real person.
+
+The attached image is the face texture of the original 2002 game character: an unwrapped face, so it looks wider than it is and the hair on both sides wraps around to the back of the head. Keep this man's identity from it: the same face, made with modern detail. Do not copy its flatness, its painted shadows or its width.
+
+Who he is: a former prisoner of a penal mining colony, mid thirties, who survived a magic barrier and came back half-dead. Cynical, laconic, practical, distrustful. Not a noble, not a pretty hero, not a grizzled veteran.
+
+Keep from the original:
+- dark brown hair with dull olive-golden strands, slicked straight back with no parting, greasy and unwashed so it lies in strands along the skull; tied at the nape into a short ponytail (about 10 cm) with a thin leather thong. Hair colour as the eye sees it: crown #5c4b2d, temples #463825.
+- a short goatee joined with the moustache around the mouth, roughly cut with a knife, not trimmed (#7e5c4a, moustache #5e4535); only a light stubble shadow along the jaw, no full beard.
+- heavy brow ridge and thick dark eyebrows, a slight distrustful squint, a look from under the brows.
+- grey-blue eyes, muted, not bright.
+- a broad straight nose, broad cheekbones, a strong jaw.
+- two or three horizontal forehead wrinkles, fine creases at the eye corners.
+- narrow lips pressed together, the corners slightly down (lips #724e44).
+- tanned, wind-beaten skin (forehead #c09679, cheek #b28767), reddish on the cheeks and nose, darker around the eyes, with grime in the creases and at the hairline, a little sweat sheen only on the forehead and nose.
+- clothing only as a hint: the collar of a coarse undyed linen shirt, dull grey-brown.
+
+Avoid: a handsome fantasy hero, smooth model skin, salon hairstyle, barbershop stubble, grey hair, scars across the eye, tattoos, earrings, a modern haircut (shaved sides, undercut, parting), long hair below the shoulders or a long ponytail, bright blue eyes, white even teeth, glossy wet skin, waxy skin, a clean face, perfect symmetry, an average generic face, warm orange or golden colour cast, painterly brush strokes.

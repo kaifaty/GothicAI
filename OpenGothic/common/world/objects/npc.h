@@ -35,7 +35,7 @@
 #include <string>
 #include <vector>
 
-#include <zenkit/addon/daedalus.hh>
+#include "daedalus/classes.h"
 
 class Interactive;
 class WayPoint;
@@ -108,6 +108,9 @@ class Npc final {
     // Debug overlay of the shadow melee blade: its pose during a swing and the latest contacts.
     void       drawMeleeShadow(DbgPainter& p, uint64_t now) const;
     void       updateMeleeShadow();
+    // Poses the melee shadow body that updateMeleeShadow will publish. Reads and
+    // writes this NPC only: the parallel animation pass calls it after the pose.
+    void       prepareMeleeShadowBody();
     void       resolveMeleeContacts();
     static bool skipMeleeAlly(bool player, bool selectedTarget, bool sameGuild, bool sameParty, bool enemy) {
       return !player && !selectedTarget && (sameGuild || sameParty || !enemy);
@@ -185,6 +188,8 @@ class Npc final {
     auto       fightDistanceTo(const Npc& npc) const -> Tempest::Vec3;
 
     void       updateAnimation(uint64_t dt, bool force = false);
+    // the own head's face and eyes, after the pose of the frame (main thread: it uploads the deformation)
+    void       updateFace() { visual.updateFace(*this); }
     void       updateTransform();
     // Animation LOD (world/animationlod.h): an NPC outside the frustum keeps the
     // skipped frames' dt here; the next updateAnimation of any caller applies it.
@@ -196,6 +201,7 @@ class Npc final {
     // Whose pose the world logic reads every frame: never deferred.
     bool       animationLodPinned() const;
     void       setAnimationLodTargeted(bool t) { animLodTargeted = t; }
+    uint32_t   animationLodSeed() const { return animLodSeed; }
 
     std::string_view displayName() const;
     auto       displayPosition() const -> Tempest::Vec3;
@@ -216,6 +222,7 @@ class Npc final {
                               int32_t bodyVer, int32_t bodyColor,
                               std::string_view body, std::string_view head);
     void       updateArmor   ();
+    std::string bodyVisual   () const;
     void       setSword      (MeshObjects::Mesh&& sword);
     void       setRangedWeapon(MeshObjects::Mesh&& bow);
     void       setShield     (MeshObjects::Mesh&& shield);
@@ -250,6 +257,13 @@ class Npc final {
     void       stopAnim(std::string_view ani);
     void       startFaceAnim(std::string_view anim, float intensity, uint64_t duration);
     float      faceWeight(std::string_view anim);  // how much of the face anim shows now, 0..1 (test bench)
+    // the facial gestures of the line it starts to say (say.cues); a gesture by hand: side 'L'/'R', 0 - by the seed
+    void       startCues(std::shared_ptr<const SpeechCues::Plan> plan, bool voiced);
+    bool       startCue(std::string_view name, char side);
+    float      cueWeight(std::string_view name);   // how much of the gesture shows now, 0..1 (test bench)
+    // a leak of a felt emotion (say.leak) by hand, with the liar's blinks; its strongest weight as shown now
+    bool       startLeak(std::string_view felt, bool lower);
+    float      leakWeight();
     // a voiced line starts: the mouth follows the voice (LipSync)
     void       startSpeech(const Tempest::Sound& voice);
     void       startSpeech(std::shared_ptr<LipSync::Track> voice);
@@ -518,8 +532,11 @@ class Npc final {
     // whom this npc talks or listens to, for a while: it looks at them (gaze)
     void      setTalkPartner(Npc* other, uint64_t ms);
     Npc*      talkPartner() const;
-    // where the gaze looks: the partner, where a script says, the hero's focus, what caught the eye
-    auto      gazeTarget(Tempest::Vec3& at) const -> Gaze::Source;
+    // it looks at a point until then, before anything else (the test bench)
+    void      lookAtPoint(const Tempest::Vec3& at, uint64_t until) { lookPoint = at; lookPointUntil = until; }
+    // where the gaze looks: the partner, where a script says, the hero's focus, what caught the eye; whom: the npc
+    // whose head it is, if it is one
+    auto      gazeTarget(Tempest::Vec3& at, const Npc** whom = nullptr) const -> Gaze::Source;
     Npc*      attentionTarget() const { return attention.target(); }
 
     bool      isAttackAnim() const;
@@ -687,8 +704,8 @@ class Npc final {
 
     auto      dialogChoices(Npc &player, const std::vector<uint32_t> &except, bool includeImp) -> std::vector<GameScript::DlgChoice>;
 
-    zenkit::INpc&                        handle() { return *hnpc; }
-    const std::shared_ptr<zenkit::INpc>& handlePtr() const { return hnpc; }
+    daedalus::INpc&                        handle() { return *hnpc; }
+    const std::shared_ptr<daedalus::INpc>& handlePtr() const { return hnpc; }
 
     auto      inventory() const -> const Inventory& { return invent; }
     size_t    itemCount  (size_t id) const;
@@ -720,6 +737,8 @@ class Npc final {
     Item*     currentShield();
     auto      mapWeaponBone() const -> Tempest::Vec3;
     auto      mapHeadBone() const -> Tempest::Vec3;
+    // where its eyes are (world): the centres of its own head's eyes, else above the head bone along its up
+    auto      mapEyes() const -> Tempest::Vec3;
     struct EyePose {
       Tempest::Vec3 origin = {}, forward = {1,0,0}, right = {0,0,1}, up = {0,1,0};
       bool animatedHead = false;
@@ -943,6 +962,7 @@ class Npc final {
     void      traceCombatSnapshot();
     struct BodyMovementTrace;
     friend struct NpcLogicalState;
+    friend struct MeshGltfTest;
     friend class NpcLogicalStateContract;
     void      traceCombatGate(std::string_view reason);
     void      traceCombatAttempt(Anim requested, bool accepted, const std::string& before, std::string_view hook);
@@ -1021,7 +1041,7 @@ class Npc final {
     std::array<uint64_t,2>          visibilityDiagnosticTime={};
     std::array<std::string,2>       visibilityDiagnosticKey;
     // main props
-    std::shared_ptr<zenkit::INpc>  hnpc={};
+    std::shared_ptr<daedalus::INpc>  hnpc={};
     float                          x=0.f;
     float                          y=0.f;
     float                          z=0.f;
@@ -1049,6 +1069,7 @@ class Npc final {
     float                          lieVisualYOffset = 0;
     uint64_t                       animLodPendingDt = 0;
     bool                           animLodTargeted = false;
+    uint32_t                       animLodSeed = 0;
     Tempest::Vec3                  characterVisualSamplePosition;
     Tempest::Vec3                  characterVisualSampleNormal;
     uint64_t                       characterVisualSampleTick = 0;
@@ -1071,6 +1092,20 @@ class Npc final {
     mutable std::unique_ptr<MeleeShadow> meleeShadow;
     bool                          meleeShadowBody = false;
     bool                          meleeShadowSuspended = false;
+    // The shadow body posed last and what it was posed from. Equal inputs pose
+    // bit-identical capsules, so a body posed in the parallel pass is published
+    // as is unless something moved the bones since (a script, a sync on read).
+    struct MeleeShadowPose final {
+      std::vector<HitZones::Posed> zones;
+      MeleeShadowBody              body;
+      const Pose*                  pose  = nullptr;
+      uint64_t                     bones = 0, shape = 0;
+      uint32_t                     scale = 0; // the bits of the visual's scale
+      size_t                       slot  = size_t(-1); // in the published bodies, a hint
+      };
+    MeleeShadowPose               meleeShadowPose;
+    bool          wantsMeleeShadowBody() const;
+    void          poseMeleeShadowBody();
     struct MeleeShadowMark final {
       Tempest::Vec3 point;
       uint64_t      time  = 0;
@@ -1096,15 +1131,15 @@ class Npc final {
       size_t bone;
       Tempest::Vec3 point, impulseNs;
       float strength;
-      std::weak_ptr<zenkit::INpc> culprit;
+      std::weak_ptr<daedalus::INpc> culprit;
       bool melee = false;
       float stiffness = 1.f;
       };
     std::vector<ArrowImpact>       arrowImpacts;
     Tempest::Vec3                  pendingSpellImpulse = {};
-    std::weak_ptr<zenkit::INpc>     spellImpulseCulprit;
+    std::weak_ptr<daedalus::INpc>     spellImpulseCulprit;
     BodyImpactWindow              bodyImpactWindow;
-    std::weak_ptr<zenkit::INpc>     bodyImpactLaunchCulprit,bodyImpactPendingCulprit;
+    std::weak_ptr<daedalus::INpc>     bodyImpactLaunchCulprit,bodyImpactPendingCulprit;
     const char*                   bodyImpactSource = "ragdoll";
     bool                          bodyImpactSpellFlight = false;
     void                          applyBodyImpact();
@@ -1140,7 +1175,7 @@ class Npc final {
     void                          interruptItemUse(std::string_view cause);
     void                          tickFoodPool();
     struct Riposte final {
-      std::weak_ptr<zenkit::INpc> victim;
+      std::weak_ptr<daedalus::INpc> victim;
       Tempest::Vec3 heroStart, from, pair;
       uint64_t start = 0, bladeAt = 0, hitEnd = 0;
       bool blade = false, handover = false, applying = false, blocked = false;
@@ -1185,8 +1220,10 @@ class Npc final {
       uint64_t         elapsed = 0; // played clip time, including speed and hit stop (barge contact/super armor)
       };
     std::optional<MeleeDodgeLayer> meleeDodgeLayer() const;
-    // An incoming blow, arrow or spell inside the dodge's window: true, it does not pass (logged)
+    // An incoming blow, arrow or spell inside the dodge's window (meleeGuard): true, it does not pass (logged)
     bool                          meleeDodgeEvades(Npc& other, std::string_view kind);
+    // Its dodge, jump back and parade against this attacker's melee blow, by MeleeDodge::guard
+    MeleeDodge::Guard             meleeGuard(const Npc& attacker) const;
     void                          meleeDodgeNote(const std::string& text, std::string_view phase, const std::string& fields);
     void                          tickMeleeBarge();
     void                          meleeBargeNote(const Npc* target, uint64_t elapsed, std::string_view outcome, std::string_view predicted = {});
@@ -1199,7 +1236,7 @@ class Npc final {
     uint64_t                      meleeStunUntil = 0;
     uint64_t                      meleeStunSerial = 0;
     struct MeleeAiRiposteRoll final {
-      std::weak_ptr<zenkit::INpc> victim;
+      std::weak_ptr<daedalus::INpc> victim;
       uint64_t stun = 0;
       };
     std::vector<MeleeAiRiposteRoll> meleeAiRiposteRolls;
@@ -1213,13 +1250,13 @@ class Npc final {
     std::optional<MeleeAiDodgeTiming> meleeAiDodgeTiming;
     MeleeAi::DodgeStreak            meleeAiDodgeStreak;
     MeleeAi::SpecialSlot           meleeAiSpecialSlot; // held by an attacker of this NPC
-    std::weak_ptr<zenkit::INpc>    meleeAiSpecialTarget;
+    std::weak_ptr<daedalus::INpc>    meleeAiSpecialTarget;
     MeleeAi::Special               meleeAiSpecial = MeleeAi::Special::None;
     std::optional<uint64_t>        meleeAiSpecialEnded;
     uint64_t                      meleeAiChargeHold = 0;
     float                         meleeAiChargeYaw = 0.f, meleeAiChargeTurn = 0.f;
     struct MeleeAiBargeMemory final {
-      std::weak_ptr<zenkit::INpc> target;
+      std::weak_ptr<daedalus::INpc> target;
       std::optional<uint64_t> guarded, guardedRoll, paradeRoll;
       const Animation::Sequence* paradeSequence = nullptr;
       };
@@ -1344,6 +1381,8 @@ class Npc final {
     uint64_t                       talkUntil       =0;
     Attention                      attention;
     std::optional<Tempest::Vec2>    headInput; // transient yaw/pitch for this tick, no AI ownership
+    Tempest::Vec3                  lookPoint;
+    uint64_t                       lookPointUntil  =0;
     Archer                         arch;
     ArcherAi                       archAi;
     Tempest::Vec3                  aimDirPrev  = {};  // the manual aim's last direction (a turn shakes it)

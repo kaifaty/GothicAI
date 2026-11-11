@@ -72,7 +72,7 @@ class Runner:
         env.pop("DISPLAY", None)
         env.pop("WAYLAND_DISPLAY", None)
         self.process = subprocess.Popen(
-            [str(args.runner), "-g", str(args.assets), "-g2", "-devmode",
+            [str(args.runner), "-g", str(args.assets), "-devmode",
              "--save", str(args.save), "--scenario", str(initial),
              "--output", str(args.output / "initial"), "--mode", "lockstep", "--stdio"],
             cwd=workdir, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.stderr)

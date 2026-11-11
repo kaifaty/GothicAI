@@ -13,10 +13,11 @@ batch=0
 images_dir="$HOME/.local/share/gothic-ai/content-sources/mesh3d-pilot"
 max_downtime=
 authorization=
+min_free=16000
 while (( $# > 0 )); do
   case "$1" in
     --batch) batch=1; shift ;;
-    --image|--views|--fov|--seed|--model|--images-dir|--max-downtime|--authorization)
+    --image|--views|--fov|--seed|--model|--images-dir|--max-downtime|--authorization|--min-free-mib)
       (( $# >= 2 )) || exit 2
       case "$1" in
         --image) image="$2" ;;
@@ -27,10 +28,11 @@ while (( $# > 0 )); do
         --images-dir) images_dir="$2" ;;
         --max-downtime) max_downtime="$2" ;;
         --authorization) authorization="$2" ;;
+        --min-free-mib) min_free="$2" ;;
       esac
       shift 2 ;;
     --help|-h)
-      echo 'Usage: run-mesh3d.sh (--batch [--images-dir DIR] | --image RGBA.png --seed N | --views DIR --seed N) [--model both|trellis2|trellis|pixal3d] [--fov RAD] --max-downtime SECONDS --authorization LABEL'
+      echo 'Usage: run-mesh3d.sh (--batch [--images-dir DIR] | --image RGBA.png --seed N | --views DIR --seed N) [--model both|trellis2|trellis|pixal3d] [--fov RAD] [--min-free-mib N] --max-downtime SECONDS --authorization LABEL'
       exit 0 ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -57,6 +59,9 @@ else
 fi
 case "$model" in both|trellis2|trellis|pixal3d) ;; *) exit 2 ;; esac
 [[ "$fov" =~ ^[0-9]*\.?[0-9]+$ ]] || exit 2
+# GPU memory the window must free before it runs (Gemma first, then the Decider); Pixal3D's NAF stage peaks
+# above 16 GB next to the always-on services (the hero head, 2026-11-05)
+[[ "$min_free" =~ ^[0-9]+$ ]] && (( min_free >= 16000 && min_free <= 23000 )) || exit 2
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 run_id="$(date -u +%Y%m%dT%H%M%SZ)-${authorization}-$$"
 
@@ -81,7 +86,7 @@ check_mac_game
 input_kind=image
 [[ -z "$views" ]] || input_kind=views
 ssh -T dev-ubuntu bash -s -- "$run_id" "${seed:-1}" "$model" "$batch" "$max_downtime" "$authorization" \
-  "$input_kind" "$fov" <<'REMOTE'
+  "$input_kind" "$fov" "$min_free" <<'REMOTE'
 set -euo pipefail
 run_id="$1"
 seed="$2"
@@ -92,6 +97,7 @@ authorization="$6"
 views=
 [[ "${7:-image}" != views ]] || views=1
 fov="${8:-0.3490658503988659}"
+min_free_mib="${9:-16000}"
 cd "$HOME/gothic-ai/mesh3d"
 export HF_HOME="$PWD/hf" HF_HUB_DISABLE_IMPLICIT_TOKEN=1
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
@@ -276,8 +282,7 @@ systemd-run "${scope_properties[@]}" --unit="mesh3d-preflight-$run_id" \
 log_event window-start "$model batch=$batch authorization=$authorization max_downtime=$max_downtime"
 timeout 5 nvidia-smi > "runs/$run_id/nvidia-before.txt"
 free_mib=$(free_memory)
-# Require the memory available after Gemma/Decider; actual TRELLIS.2 fit is a pilot result.
-min_free_mib=16000
+# Require the memory available after Gemma/Decider (--min-free-mib, 16000 by default).
 # These are the only services this window may stop. Voxtral/VoxCPM stay running.
 for unit in gothic-gemma gothic-decider; do
   (( free_mib >= min_free_mib )) && break

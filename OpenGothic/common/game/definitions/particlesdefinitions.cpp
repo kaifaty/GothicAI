@@ -1,5 +1,6 @@
 #include "particlesdefinitions.h"
 #include "loadprobe.h"
+#include "definitiontypes.h"
 
 #include <Tempest/Log>
 
@@ -53,6 +54,16 @@ const ParticleFx* ParticlesDefinitions::implGet(std::string_view name, bool rela
       p->visYawAlign = true;
     p->flipSteady = book->second.steady;
     }
+  if(const auto m=content.motions.find(cname); m!=content.motions.end()) {
+    // particles.d units to the engine's cm and ms
+    const auto& own = m->second;
+    p->motion.curlStrength = own.curlStrength*1e-4f;
+    p->motion.curlWave     = own.curlFrequency*6.2831853f/100.f;
+    p->motion.curlDrift    = own.curlSpeed*0.1f;
+    p->motion.drag         = own.drag*1e-3f;
+    p->stretchMs           = own.stretch*1000.f;
+    p->minPixels           = own.minPixels;
+    }
   auto elt = pfx.insert(std::make_pair(std::move(cname),std::move(p)));
 
   return elt.first->second.get();
@@ -97,12 +108,13 @@ std::shared_ptr<Def::ParticleEffect> ParticlesDefinitions::peeStream() {
   auto id = vm->find_symbol_by_name("PEE");
   if(id==nullptr)
     return nullptr;
-  auto ret = std::make_shared<Def::ParticleEffect>();
-  ret->vis_tex_is_quadpoly = 1;
+  auto instance = std::make_shared<VmDef::ParticleEffect>();
+  instance->vis_tex_is_quadpoly = 1;
   {
     LoadProbe::Vobs::Scope probe("script_vm");
-    vm->init_instance(ret, id);
+    vm->init_instance(instance, id);
   }
+  auto ret = std::make_shared<Def::ParticleEffect>(instance->copy());
   // one key a hundred seconds long: the model keeps an effect only for its preferred time (MdlVisual::tick);
   // Npc::tickPeeStream stops it when the pose ends
   ret->pps_value          = PeeStream::pps;

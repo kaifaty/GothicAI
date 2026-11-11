@@ -47,6 +47,8 @@ from .deals import deal_demo as deal_demo
 from .deals import deal_window as deal_window
 from .deals import haggle as haggle
 from .deals import xardas_money as xardas_money
+from .face_cues import face_cues_demo as face_cues_demo
+from .face_cues import face_eyes_demo as face_eyes_demo
 from .feats import feat_fame as feat_fame
 from .feats import feats as feats
 from .frame import frame as frame

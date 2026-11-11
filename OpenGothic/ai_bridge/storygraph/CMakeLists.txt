@@ -30,6 +30,7 @@ if(PROJECT_IS_TOP_LEVEL)
   endif()
   # basestore.cpp, linked into the tool below, also resolves the video part
   include(../../cmake/VideoImport.cmake)
+  add_subdirectory(../../common/daedalus daedalus)
   if(MSVC)
     # M_PI in the Bink decoder; the game's root CMakeLists.txt defines this for every target
     target_compile_definitions(gothic-video-import PRIVATE _USE_MATH_DEFINES)
@@ -50,14 +51,10 @@ set(STORYGRAPH_SOURCES
   ../textcodec.cpp ../textcodec.h)
 if(PROJECT_IS_TOP_LEVEL)
   add_library(StoryGraph STATIC ${STORYGRAPH_SOURCES})
-  target_link_libraries(StoryGraph PUBLIC zenkit)
 else()
-  # inside the game the objects go into ai_bridge, which gets ZenKit through the engine: linking ZenKit
-  # here again reorders the static libraries and pulls in a second copy of squish
   add_library(StoryGraph OBJECT ${STORYGRAPH_SOURCES})
-  target_include_directories(StoryGraph PRIVATE $<TARGET_PROPERTY:zenkit,INTERFACE_INCLUDE_DIRECTORIES>)
-  target_compile_definitions(StoryGraph PRIVATE $<TARGET_PROPERTY:zenkit,INTERFACE_COMPILE_DEFINITIONS>)
 endif()
+target_link_libraries(StoryGraph PUBLIC gothic-daedalus)
 target_include_directories(StoryGraph PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/..)
 # rapidjson 1.1 trips modern clang warnings; treat it as a system header
 target_include_directories(StoryGraph SYSTEM PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/rapidjson/include)
@@ -66,14 +63,15 @@ if(NOT MSVC)
   target_compile_options(StoryGraph PRIVATE -Wall -Wconversion -Werror)
 endif()
 
-# the command line tool; inside the game build (ai_bridge) only the library is needed
+# The game build exposes the tool as an explicit target, without building it by default.
 option(STORYGRAPH_TOOL "build the storygraph command line tool" ${PROJECT_IS_TOP_LEVEL})
-if(STORYGRAPH_TOOL)
-  add_executable(storygraph main.cpp scan.cpp check.cpp check.h fuzz.cpp saveworld.cpp saveworld.h
+add_executable(storygraph main.cpp scan.cpp check.cpp check.h fuzz.cpp saveworld.cpp saveworld.h
                             effects.cpp effects.h execcheck.cpp execcheck.h snapshot.h
                             ../../common/basestore.cpp)
-  target_link_libraries(storygraph PRIVATE StoryGraph gothic-base-import gothic-video-import)
-  if(NOT MSVC)
-    target_compile_options(storygraph PRIVATE -Wall -Wconversion -Werror)
-  endif()
+target_link_libraries(storygraph PRIVATE StoryGraph gothic-base-import gothic-video-import)
+if(NOT STORYGRAPH_TOOL)
+  set_target_properties(storygraph PROPERTIES EXCLUDE_FROM_ALL TRUE)
+endif()
+if(NOT MSVC)
+  target_compile_options(storygraph PRIVATE -Wall -Wconversion -Werror)
 endif()

@@ -1,0 +1,20 @@
+--- a/OpenGothic/shader/ssao/ssao.comp
++++ b/OpenGothic/shader/ssao/ssao.comp
+@@ -100,7 +100,7 @@
+     atomicAdd(vCnt, 1);
+   barrier();
+ 
+-  return vCnt<4;
++  return false; // probe: every group runs all iterations
+   // return d < 0.1 + samples*0.005;
+   }
+ 
+@@ -153,7 +153,7 @@
+       continue;
+       }
+ 
+-    float z      = readZ(at1.xy);
++    float z      = readZ(at0.xy); // probe: no scattered reads
+     bool  isHit  = floor(z*32768.0+0.5) < floor(at1.z*32768.0);
+     float distQ  = 1;
+ 

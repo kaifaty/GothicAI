@@ -10,7 +10,6 @@
 #include "game/gamescript.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
-#include "utils/versioninfo.h"
 #include "utils/fileext.h"
 #include "utils/dbgpainter.h"
 
@@ -38,7 +37,7 @@ Item::Item(World &owner, size_t itemInstance, Type type, const Tempest::Matrix4x
   LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Item);
   LoadProbe::Startup::Scope::bytes(LoadProbe::Startup::Item,sizeof(Item));
   assert(itemInstance!=size_t(-1));
-  hitem = std::make_shared<zenkit::IItem>();
+  hitem = std::make_shared<daedalus::IItem>();
   hitem->user_ptr=this;
   owner.script().initializeInstanceItem(hitem, itemInstance);
   setCount(1);
@@ -62,7 +61,7 @@ Item::Item(World &owner, size_t itemInstance, Type type, const Tempest::Matrix4x
 Item::Item(World &owner, Serialize &fin, Type type)
   :Vob(owner) {
   auto& h = hitem;
-  h = std::make_shared<zenkit::IItem>();
+  h = std::make_shared<daedalus::IItem>();
   h->user_ptr = this;
 
   Tempest::Matrix4x4 mat;
@@ -360,15 +359,8 @@ bool Item::isMulti() const {
   }
 
 bool Item::isSpellShoot() const {
-  // Whether a spell is a projectile is hardcoded in vanilla, see
-  // https://forum.worldofplayers.de/forum/threads/1460092-Stuck-in-a-charge-spell/page2?p=24786462&viewfull=1#post24786462
-  // Only hardcode Stormfist for now since other spells work with the heuristic based on target_collect_algo
   if(!isSpellOrRune())
     return false;
-  bool          g1            = world.version().game==1;
-  const int32_t SPL_STORMFIST = 47;
-  if(g1 && spellId()==SPL_STORMFIST)
-    return true;
   auto& spl = world.script().spellDesc(spellId());
   return spl.target_collect_algo!=TargetCollect::TARGET_COLLECT_NONE &&
          spl.target_collect_algo!=TargetCollect::TARGET_COLLECT_CASTER &&
@@ -448,7 +440,7 @@ bool Item::checkCond(const Npc &other) const {
   }
 
 bool Item::checkCondUse(const Npc &other, int32_t &a, int32_t &nv) const {
-  for(size_t i=0;i<zenkit::IItem::condition_count;++i){
+  for(size_t i=0;i<daedalus::IItem::condition_count;++i){
     auto atr = Attribute(hitem->cond_atr[i]);
     if(other.attribute(atr)<hitem->cond_value[i] && hitem->cond_value[i]!=0) {
       a  = atr;

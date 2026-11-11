@@ -217,7 +217,7 @@ class Quiver final {
     const Fit&   fit() const { return fitted; }
     void         rebind(const Skeleton& sk);
     void         sync(const Tempest::Matrix4x4& pelvis, const Tempest::Matrix4x4& spine);
-    void         setTextureOwner(const Tempest::Vec3& position, bool spatial);
+    float        setTextureOwner(const Tempest::Vec3& position, bool spatial);
 
     // the arrows the reload has taken out and holds (shown one less each): the next task's hook
     int          taken() const { return takenOut; }

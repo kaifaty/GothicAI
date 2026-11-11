@@ -7,6 +7,7 @@
 #include <unordered_set>
 
 #include "graphics/pfx/pfxobjects.h"
+#include "graphics/pfx/pfxmotion.h"
 #include "resources.h"
 
 class ParticleFx;
@@ -40,9 +41,13 @@ class PfxBucket {
 
       const PfxEmitterMesh* mesh = nullptr;
       const Pose*           pose = nullptr;
+      // the mesh's own bone matrices (a render rig's palette), read at each emission; nullptr - the pose's
+      const std::vector<Tempest::Matrix4x4>* skin = nullptr;
 
       uint64_t      waitforNext = 0;
       std::unique_ptr<PfxEmitter> next;
+
+      PfxMotion::Flicker flicker;  // a layer emitter's flame signal (vobs.d "flicker"): the particles' brightness
       };
 
     struct PfxState {
@@ -56,6 +61,7 @@ class PfxBucket {
 
     const ParticleFx&           decl;
     PfxObjects&                 parent;
+    const float                 reactive; // ParticleFx::taaReactive: the push data of main_pfx_f/_e (graphics plan 1v)
 
     bool                        isEmpty() const;
     void                        invalidateDecal();
@@ -104,6 +110,7 @@ class PfxBucket {
       size_t        count     = 0;
 
       Tempest::Vec3 pos       = {};
+      float         flicker   = 1.f;  // the emitter's brightness this frame (ImplEmitter::flicker)
       };
 
     struct Trail final {

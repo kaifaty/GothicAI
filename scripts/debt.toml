@@ -1,5 +1,9 @@
 exclude = ["OpenGothic/lib", "reports", "research_notes"]
 
+[ratchet]
+# Warn before this UTC date; fail on growth from this date onward.
+enforce_from = 2026-11-19
+
 [hotspot]
 priority = 1
 extensions = [".py", ".cpp", ".h", ".hpp", ".c", ".cc", ".cxx"]
@@ -18,7 +22,30 @@ heavy_score = 122880
 
 [doc-file]
 priority = 1
-paths = ["docs/README.md", "docs/features.md"]
+paths = [
+    "docs/README.md",
+    "docs/features.md",
+    "docs/map/documents.md",
+    "docs/map/engine.md",
+    "docs/map/machines.md",
+    "docs/map/server.md",
+    "docs/map/tests.md",
+    "docs/features/server-talk.md",
+    "docs/features/server-body.md",
+    "docs/features/server-knowledge.md",
+    "docs/features/server-truth.md",
+    "docs/features/server-deals.md",
+    "docs/features/server-story.md",
+    "docs/features/engine-bridge.md",
+    "docs/features/engine-memory.md",
+    "docs/features/engine-physics.md",
+    "docs/features/engine-animation.md",
+    "docs/features/engine-render.md",
+    "docs/features/engine-archery.md",
+    "docs/features/off-by-default.md",
+    "docs/features/coverage-gaps.md",
+    "docs/features/dev-tools.md",
+]
 open_score = 153600
 close_score = 61440
 heavy_score = 307200
@@ -41,5 +68,5 @@ reopen_factor = 1.5
 
 [codex]
 kinds = ["duplicate-logic", "workaround", "stale-flag", "dead-code", "layer-breach", "untested-logic", "fragile-test", "doc-drift"]
-exclude = ["OpenGothic/shader", "OpenGothic/common/graphics", "OpenGothic/common/ui", "scripts/content", "scripts/meshes", "scripts/hd", "shorts", "site", "launcher/app"]
+exclude = ["OpenGothic/shader", "OpenGothic/common/graphics", "OpenGothic/common/ui", "scripts/content", "scripts/meshes", "scripts/hd", "site", "launcher/app"]
 max_new = 3

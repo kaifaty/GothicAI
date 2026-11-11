@@ -8,7 +8,7 @@
 #include "graphics/visualobjects.h"
 #include "shaders.h"
 
-#include "gothic.h"
+#include "testbench.h"
 
 using namespace Tempest;
 
@@ -97,6 +97,8 @@ void DrawCommands::setBindings(Tempest::Encoder<CommandBuffer>& cmd, const DrawC
   cmd.setBinding(L_Payload,  views[v].visClusters);
   cmd.setBinding(L_Instance, owner.instanceSsbo());
   cmd.setBinding(L_Bucket,   buckets.ssbo());
+  if(v==SceneGlobals::V_Main)
+    cmd.setBinding(L_InstancePrev, owner.instanceSsboPrev()); // read by the G-buffer variants of objects only
 
   if(cx.isBindless()) {
     cmd.setBinding(L_Ibo, buckets.ibo());
@@ -321,11 +323,14 @@ void DrawCommands::visibilityPass(Encoder<CommandBuffer>& cmd, int pass) {
     push.meshletCount = uint32_t(clusters.size());
     push.znear        = scene.znear;
 
-    auto* pso = &Shaders::inst().visibilityPassSh;
+    // bench `deterministic on`: one invocation appends the visible clusters in their order, so the instance order of
+    // a draw (who wins equal depth, the order of blending) does not depend on how GPU threads race for atomicAdd
+    const bool ordered = TestBench::orderedVisibility();
+    auto* pso = ordered ? &Shaders::inst().visibilityPassShOrd : &Shaders::inst().visibilityPassSh;
     if(viewport==SceneGlobals::V_Main)
-      pso = &Shaders::inst().visibilityPassHiZ;
+      pso = ordered ? &Shaders::inst().visibilityPassHiZOrd : &Shaders::inst().visibilityPassHiZ;
     else if(viewport==SceneGlobals::V_HiZ)
-      pso = &Shaders::inst().visibilityPassHiZCr;
+      pso = ordered ? &Shaders::inst().visibilityPassHiZCrOrd : &Shaders::inst().visibilityPassHiZCr;
 
     cmd.setBinding(T_Scene,    scene.uboGlobal[viewport]);
     cmd.setBinding(T_Payload,  view.visClusters);
@@ -336,7 +341,7 @@ void DrawCommands::visibilityPass(Encoder<CommandBuffer>& cmd, int pass) {
     cmd.setBinding(T_HiZ,      *scene.hiZ);
     cmd.setPushData(push);
     cmd.setPipeline(*pso);
-    cmd.dispatchThreads(push.meshletCount);
+    cmd.dispatchThreads(ordered ? 1 : push.meshletCount);
     }
   }
 
@@ -384,6 +389,7 @@ void DrawCommands::visibilityVsm(Encoder<CommandBuffer>& cmd) {
   }
 
 uint32_t DrawCommands::hiddenTypes = 0;
+bool     DrawCommands::hidePfxObjects = false;
 
 void DrawCommands::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   // return;

@@ -30,13 +30,19 @@ struct Added {
   std::string key;
   };
 struct LayerVob final : asset::VirtualObject, Added {};
+struct Emitter final : asset::VirtualObject, Added {
+  PfxMotion::Flicker flicker; // the flame's signal ("flicker"), off by default
+  };
 struct Light final : asset::VLight, Added {
   float sourceCm = VobLayer::DefaultLightSourceCm; // the flame's size ("source_cm")
+  std::string        flickerFrom; // the emitter's key whose signal drives the light ("flicker_from")
+  PfxMotion::Flicker flicker;
+  float              jitterCm = 0; // the light's trembling ("jitter_cm")
   };
 struct Context {
   std::vector<Vob> removed;
   const std::map<std::string,fs::path>* ownMeshes = nullptr;
-  std::unique_ptr<zenkit::DaedalusVm> particles;
+  std::unique_ptr<daedalus::DaedalusVm> particles;
   ParticleContent::Result ownParticles;
   };
 
@@ -365,16 +371,32 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
             v->visual=visuals.at(name);
             v->visual_name=v->visual->name; v->associated_visual_type=v->visual->type;
             } else if(kind=="emitter") {
-            layerFields(entry,{"key","kind","position","rotation","yaw_deg","pfx"});
+            layerFields(entry,{"key","kind","position","rotation","yaw_deg","pfx","flicker"});
             auto visual=std::make_shared<VisualParticleEffect>();
             visual->type=VisualType::PARTICLE_EFFECT;
             visual->name=particleName(layerString(member(entry,"pfx")),context,baseRoot,contentRoot);
-            v=std::make_shared<LayerVob>();
+            auto emitter=std::make_shared<Emitter>();
+            // the flame's signal: smooth noise at pulse_hz plus trembling at jitter_hz, 1 +- amount (pfxmotion.h)
+            if(entry.HasMember("flicker")) {
+              const auto& f=entry["flicker"];
+              layerFields(f,{"pulse_hz","jitter_hz","amount","seed"});
+              auto& fl=emitter->flicker;
+              fl.pulseHz=layerFloat(member(f,"pulse_hz"));
+              require(fl.pulseHz>0 && fl.pulseHz<=30,"flicker.pulse_hz must be in 0..30");
+              fl.jitterHz=layerFloat(member(f,"jitter_hz"));
+              require(fl.jitterHz>=0 && fl.jitterHz<=60,"flicker.jitter_hz must be in 0..60");
+              fl.amount=layerFloat(member(f,"amount"));
+              require(fl.amount>0 && fl.amount<=1,"flicker.amount must be in 0..1");
+              const auto& seed=member(f,"seed");
+              require(seed.IsUint(),"flicker.seed must be an unsigned integer");
+              fl.seed=seed.GetUint();
+              }
+            v=std::move(emitter);
             v->type=VirtualObjectType::zCVob; v->show_visual=true; v->cd_static=false;
             v->visual=std::move(visual);
             v->visual_name=v->visual->name; v->associated_visual_type=v->visual->type;
             } else if(kind=="light") {
-            layerFields(entry,{"key","kind","position","rotation","yaw_deg","range","color","color_ani","range_ani","ani_fps","cookie","source_cm"});
+            layerFields(entry,{"key","kind","position","rotation","yaw_deg","range","color","color_ani","range_ani","ani_fps","cookie","source_cm","flicker_from","jitter_cm"});
             auto light=std::make_shared<Light>();
             light->type=VirtualObjectType::zCVobLight; light->light_type=LightType::POINT;
             light->range=layerFloat(member(entry,"range")); require(light->range>0,"range must be positive");
@@ -424,6 +446,15 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
               light->sourceCm=layerFloat(entry["source_cm"]);
               require(light->sourceCm>0 && light->sourceCm<=500,"source_cm must be in 0..500");
               }
+            // the brightness follows an emitter's flame signal, the position trembles by jitter_cm
+            if(entry.HasMember("flicker_from")) {
+              require(!entry.HasMember("color_ani") && !entry.HasMember("range_ani"),"flicker_from replaces color_ani and range_ani");
+              light->flickerFrom=layerString(entry["flicker_from"]);
+              if(entry.HasMember("jitter_cm")) {
+                light->jitterCm=layerFloat(entry["jitter_cm"]);
+                require(light->jitterCm>=0 && light->jitterCm<=10,"jitter_cm must be in 0..10");
+                }
+              } else require(!entry.HasMember("jitter_cm"),"jitter_cm without flicker_from");
             light->is_static=true; light->on=true; light->can_move=false; light->cd_static=false;
             v=std::move(light);
             } else fail("expected kind mesh, light or emitter");
@@ -437,6 +468,22 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
           }
         catch(const std::exception& e) { error(entryContext,e); }
         }
+      }
+    // a light's flicker_from names an emitter with "flicker" added by this or an earlier file
+    for(auto& v:additions) {
+      auto* light=dynamic_cast<Light*>(v.get());
+      if(light==nullptr || light->flickerFrom.empty()) continue;
+      const Emitter* source=nullptr;
+      auto look=[&](const Vob& o) {
+        if(auto* e=dynamic_cast<const Emitter*>(o.get()); e!=nullptr && e->key==light->flickerFrom) source=e;
+        };
+      for(const auto& o:additions) look(o);
+      if(source==nullptr) visitVobs(data.vobs,look);
+      if(source==nullptr || !source->flicker.active())
+        result.errors.push_back(file.string()+": key "+jsonString(light->key)+": flicker_from: no emitter "+
+                                jsonString(light->flickerFrom)+" with flicker");
+      else
+        light->flicker=source->flicker;
       }
     for(const char* operation:{"remove","move"}) if(doc.HasMember(operation)) {
       array(doc[operation]);
@@ -489,6 +536,18 @@ bool isAdded(const asset::VirtualObject& vob) {
 float lightSourceCm(const asset::VirtualObject& vob) {
   if(const auto* light=dynamic_cast<const Light*>(&vob)) return light->sourceCm;
   return DefaultLightSourceCm;
+  }
+
+const PfxMotion::Flicker* flicker(const asset::VirtualObject& vob, float* jitterCm) {
+  if(const auto* e=dynamic_cast<const Emitter*>(&vob); e!=nullptr && e->flicker.active()) {
+    if(jitterCm!=nullptr) *jitterCm=0;
+    return &e->flicker;
+    }
+  if(const auto* l=dynamic_cast<const Light*>(&vob); l!=nullptr && l->flicker.active()) {
+    if(jitterCm!=nullptr) *jitterCm=l->jitterCm;
+    return &l->flicker;
+    }
+  return nullptr;
   }
 
 const std::string& key(const asset::VirtualObject& vob) {

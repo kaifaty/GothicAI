@@ -1,11 +1,14 @@
 #include "navdemos.h"
+#include "navdemos_internal.h"
 #include "gothic.h"
 #include "testbench.h"
 #include "navbench.h"
 #include "navkeyteacher.h"
+#include "navreward.h"
 #include "navmemoryteacher.h"
 #include "navmemorycosttrace.h"
 #include "navdemowriter.h"
+#include "navsimpackage.h"
 #include "navpolicy.h"
 #include "navlivetrace.h"
 #include "navliveprobes.h"
@@ -39,7 +42,7 @@
 
 namespace {
 using Tempest::Vec3;
-constexpr float Pi=3.14159265358979323846f;
+using namespace NavDemosInternal;
 constexpr uint64_t PolicyWarmupDecisions=30;
 struct RecordedKeys { uint64_t time=0; NpcKeys::KeyState keys; };
 struct MotionSample { uint64_t time=0; Vec3 position; bool commanded=false; };
@@ -75,6 +78,13 @@ struct Episode {
   // Follow carrot: the leader's trail (default) or the straight line ("line").
   FollowTrail followTrail;
   bool followLine=false,followRun=true;
+  // Teacher comparison switches and forced pace (0 own, 1 walk, 2 run; follow keeps followRun).
+  bool teacherBodyExit=true,followLostAside=true;
+  uint8_t teacherPace=0;
+  // Where the driving teacher stands (no forward/strafe key) far from its goal, by rule.
+  std::array<uint64_t,size_t(NavMemoryTeacher::Branch::Count)> teacherBranches={},teacherFarIdle={};
+  uint64_t teacherFarDecisions=0,teacherStallTraceAt=0;
+  bool teacherStallPrevious=false;
   std::array<uint64_t,size_t(FollowTrail::Source::Count)> followSources={};
   FollowTrail::Source followSource=FollowTrail::Source::Count;
   bool followVisibleNow=false;
@@ -114,6 +124,7 @@ struct Episode {
   bool oracle=false;
   bool perceptionMonitor=false;
   bool population=false,record=true,sampled=false,pending=false,fell=false;
+  std::optional<bool> populationWalk;
   bool trainingValid=true,accounted=false;
   std::string nonfiniteStage;
   std::unique_ptr<NonfiniteObservation> nonfinite;
@@ -147,6 +158,8 @@ struct Episode {
   // Point goals: road progress per decision, and how often memory let progress
   // take a later stretch or moved the start of a rebuilt route (roads-guidance.txt).
   std::ofstream roadsGuidance;
+  // Complete ordered PassageCheck requests, one row per road decision.
+  std::ofstream roadsPassages;
   uint64_t roadsCatchUps=0,roadsRebuilds=0,roadsStartsMoved=0,roadsStartFallbacks=0,roadsStartDepartures=0;
   uint64_t roadsProjectionsRejected=0;
   // Diagnosis only (OPENGOTHIC_NAV_ROADS_CLOSED_TRACE=N): at each rebuild every
@@ -167,9 +180,7 @@ struct Episode {
   std::vector<NavPolicy::State> policyStates;
   std::vector<double> policyUs,encodeUs,populationUs;
   std::array<uint64_t,6> disagreements={};
-  std::deque<MotionSample> motion;
-  uint64_t blockedSpans=0,blockedMs=0,maxBlockedMs=0,blockedSince=0,blockedUntil=0;
-  bool blocked=false;
+  NavReward::Blocked blockage;
   std::chrono::steady_clock::time_point wallStart;
   NpcKeys::KeyState previous;
   NavMesh::Path path;
@@ -200,9 +211,10 @@ uint32_t demoVersion(const Episode& ep) {
   }
   return ep.teacherVersion>=2 ? (ep.memory.representationVersion()==4 ? 3 : 2) : ep.teacherVersion;
 }
-// Stand pace from OPENGOTHIC_NAV_FORCE_PACE=walk|run (true = walk). A companion
-// (follow) always runs. Unset or empty leaves the pace to a policy walk head.
+// Population v5 carries an explicit episode pace. Other drives use
+// OPENGOTHIC_NAV_FORCE_PACE=walk|run (true = walk); companions always run.
 std::optional<bool> forcedWalk(const Episode& ep) {
+  if(ep.populationWalk)return ep.populationWalk;
   const auto* pace=std::getenv("OPENGOTHIC_NAV_FORCE_PACE");
   if(!pace || !*pace)return std::nullopt;
   const std::string_view value=pace;
@@ -217,9 +229,10 @@ void requirePace(const NavPolicy& policy) {
                              "(nav_rl.py drive --force-pace); the stand never picks a pace by default");
 }
 
-struct Pair {std::string from,to;};
+struct Pair {std::string from,to;std::optional<bool> walk;};
 struct Population {
   bool active=false,record=true,sampled=false,near=false;
+  std::optional<bool> walk;
   size_t instance=0,targetEpisodes=0,started=0,completed=0,initialDecisions=0;
   size_t invalidObservationEpisodes=0;
   uint64_t seed=0,limit=0,began=0,runMs=0,decisions=0;
@@ -235,12 +248,14 @@ struct Population {
   std::chrono::steady_clock::time_point wallStart;
   double startupSeconds=0;
 } population;
-struct Settings {
+struct DemoSettings {
   bool cv=false,heroNear=true,killArmed=false,killFired=false;
   bool oracle=false,recordDemos=true;
   bool perceptionMonitor=false;
   bool dagger=false;
   bool followLine=false,followRun=true;
+  bool teacherBodyExit=true,followLostAside=true;
+  uint8_t teacherPace=0;
   uint32_t driveTeacher=0;
   bool live=false,liveTargetPlayer=false,liveGuidePlayer=false,liveTargetWalkOnly=false;
   NavigationEye::FloorSampling floorSampling=NavigationEye::FloorSampling::WalkingGazeDown;
@@ -263,13 +278,7 @@ const char* perceptionMode(NavigationEye::FloorSampling mode) {
   return "invalid";
 }
 
-NavMesh::Point meters(const Vec3& p) {return {p.x*.01f,p.y*.01f,p.z*.01f};}
-Vec3 cm(const NavMesh::Point& p) {return {p[0]*100,p[1]*100,p[2]*100};}
 std::array<float,3> array(const Vec3& p) {return {p.x,p.y,p.z};}
-void jsonNumber(std::ostream& out,double value) {if(std::isfinite(value))out<<value;else out<<"null";}
-void vector(std::ostream& out,const Vec3& p) {
-  out<<'[';jsonNumber(out,p.x);out<<',';jsonNumber(out,p.y);out<<',';jsonNumber(out,p.z);out<<']';
-}
 double hiddenL2(const Episode& ep) {
   double square=0;
   for(const auto& state:ep.policyStates)for(float value:state.hidden)square+=double(value)*double(value);
@@ -290,10 +299,6 @@ std::string initialState(const Episode& ep) {
      <<','<<int(held.walk)<<','<<int(held.jump)<<','<<int(held.climb)<<"],\"position_cm\":";
   vector(out,NpcKeys::physicalPosition(npc));out<<",\"body_yaw_deg\":"<<npc.rotation()<<'}';
   return out.str();
-}
-std::array<float,3> local(const Vec3& p,float yaw) {
-  const float c=std::cos(yaw),s=std::sin(yaw);
-  return {-p.x*s+p.z*c,p.y,p.x*c+p.z*s};
 }
 std::array<float,3> direction(Vec3 delta,float yaw) {
   const float len=delta.length();if(len>0)delta*=1.f/len;return local(delta,yaw);
@@ -397,27 +402,11 @@ double percentile(std::vector<double> values,double quantile) {
   return values[lower]+(values[upper]-values[lower])*(index-double(lower));
 }
 void closeBlocked(Episode& ep,uint64_t elapsed) {
-  if(!ep.blocked)return;
-  const auto duration=elapsed-ep.blockedSince;
-  ep.blockedMs+=duration;ep.maxBlockedMs=std::max(ep.maxBlockedMs,duration);
-  ep.blockedUntil=elapsed;ep.blocked=false;
+  ep.blockage.close(elapsed);
 }
 void measureBlocked(Episode& ep,uint64_t elapsed) {
   const auto& k=ep.previous;
-  ep.motion.push_back({elapsed,NpcKeys::physicalPosition(*ep.npc),
-                       k.forward!=0 || k.strafe!=0 || k.jump || k.climb});
-  const auto cutoff=elapsed>3000?elapsed-3000:0;
-  while(ep.motion.size()>1 && ep.motion[1].time<=cutoff)ep.motion.pop_front();
-  uint64_t commanded=0;
-  for(size_t i=1;i<ep.motion.size();++i)
-    if(ep.motion[i].commanded)commanded+=ep.motion[i].time-ep.motion[i-1].time;
-  const auto displacement=ep.motion.back().position-ep.motion.front().position;
-  const bool stalled=elapsed-ep.motion.front().time>=3000 && commanded>=1500 &&
-                     std::hypot(displacement.x,displacement.z)<50.f;
-  if(stalled && !ep.blocked) {
-    ep.blocked=true;ep.blockedSince=std::max(ep.motion.front().time,ep.blockedUntil);++ep.blockedSpans;
-  }
-  else if(!stalled)closeBlocked(ep,elapsed);
+  ep.blockage.measure(elapsed,NpcKeys::physicalPosition(*ep.npc),{k.forward,k.strafe,k.jump,k.climb});
 }
 double rewardPath(Episode& ep,World& world) {
   const auto position=NpcKeys::physicalPosition(*ep.npc);
@@ -425,9 +414,9 @@ double rewardPath(Episode& ep,World& world) {
   ep.rewardPathValid=route.complete;
   // Training-only state shares the reward query to the final goal. The actor's
   // observation and the teacher's local carrot route remain unchanged.
-  ep.critic={ep.lastPathCm,{},ep.blocked,ep.npc->isInAir(),route.complete};
-  if(!route.complete) {++ep.invalidRewardPaths;return ep.lastPathCm;}
-  ep.critic.pathCm=double(route.length)*100.;
+  ep.critic={NavReward::pathLength(ep.lastPathCm,{double(route.length)*100.,route.complete}),
+             {},ep.blockage.active,ep.npc->isInAir(),route.complete};
+  if(!route.complete) {++ep.invalidRewardPaths;return ep.critic.pathCm;}
   if(!route.corners.empty()) {
     // The first corner is the projected start; the next is the first target.
     const size_t first=route.corners.size()>1?1:0;
@@ -445,10 +434,14 @@ void reward(Episode& ep,World& world,bool terminated=false,bool truncated=false)
   const auto start=Clock::now();
   const bool beforeValid=ep.rewardPathValid;
   const auto beforeCritic=ep.critic;
-  const double after=rewardPath(ep,world),progress=ep.lastPathCm-after;
-  ep.progressCm+=progress;
+  const double after=rewardPath(ep,world);
   const auto now=world.tickCount();
   const auto health=ep.npc->attribute(ATR_HITPOINTS);
+  const auto& held=ep.previous;
+  const auto components=NavReward::transition({ep.lastPathCm,{after,ep.rewardPathValid},ep.actionAt,now,
+      {held.forward,held.strafe,held.jump,held.climb},ep.health,health,
+      ep.fell,ep.success,ep.blockage.active,ep.npc->isDead()});
+  ep.progressCm+=components.progressCm;
   ep.phaseUs[5]+=micros(start);
   if(ep.record) {
     const auto recordStart=Clock::now();
@@ -464,10 +457,10 @@ void reward(Episode& ep,World& world,bool terminated=false,bool truncated=false)
        <<",\"path_valid\":"<<(beforeValid && ep.rewardPathValid)<<",\"critic_before\":";
     criticState(out,beforeCritic);out<<",\"critic_after\":";criticState(out,ep.critic);
     out<<",\"terminated\":"<<terminated<<",\"truncated\":"<<truncated
-       <<",\"rewards\":{\"progress_cm\":"<<progress<<",\"arrived\":"<<int(ep.success)
-       <<",\"blocked\":"<<int(ep.blocked)<<",\"fall_damage\":"<<(ep.fell?std::max(0,ep.health-health):0)
-       <<",\"death\":"<<int(ep.npc->isDead())<<",\"jump\":"<<int(ep.previous.jump)
-       <<",\"climb\":"<<int(ep.previous.climb)<<",\"time_ms\":"<<now-ep.actionAt<<"}}\n";
+       <<",\"rewards\":{\"progress_cm\":"<<components.progressCm<<",\"arrived\":"<<int(components.arrived)
+       <<",\"blocked\":"<<int(components.blocked)<<",\"fall_damage\":"<<components.fallDamage
+       <<",\"death\":"<<int(components.death)<<",\"jump\":"<<int(components.jump)
+       <<",\"climb\":"<<int(components.climb)<<",\"time_ms\":"<<components.timeMs<<"}}\n";
     if(!out)throw std::runtime_error("navdemos rewards write failed");
     ep.phaseUs[6]+=micros(recordStart);
   }
@@ -484,7 +477,7 @@ void finish(Episode& ep,World& world) {
   }
   if(!ep.replay) {NpcKeys::KeyState end;end.walk=true;action(ep,elapsed,end);if(ep.writer)ep.writer->finish();}
   ep.trajectory.close();ep.actions.close();ep.knownPaths.close();ep.teacherPaths.close();ep.transitionFrames.close();ep.samples.close();ep.targetTrajectory.close();ep.perceptionSafetyFrames.close();ep.perceptionWaterObservations.close();
-  ep.roadsGuidance.close();ep.roadsClosed.close();
+  ep.roadsGuidance.close();ep.roadsClosed.close();ep.roadsPassages.close();
   if(ep.live) ep.live->finish();
   if(ep.live || (ep.goalKind=="follow" && ep.target))ep.npc->setCharacterVirtualDiagnosticsEnabled(false);
   auto out=file(ep,"episode.json");
@@ -527,6 +520,20 @@ void finish(Episode& ep,World& world) {
   else {
     out<<"null";
   }
+  if(ep.teacherVersion==3 && !ep.drive) {
+    // The driving teacher's rules over all its decisions, and those standing far from the goal.
+    const auto counts=[&](const char* key,const auto& values) {
+      out<<",\""<<key<<"\":{";
+      for(size_t i=0;i<values.size();++i)
+        out<<(i?",":"")<<std::quoted(NavMemoryTeacher::name(NavMemoryTeacher::Branch(i)))<<':'<<values[i];
+      out<<'}';
+    };
+    out<<",\"teacher_body_exit\":"<<std::quoted(ep.teacherBodyExit?"on":"off")
+       <<",\"teacher_pace\":"<<std::quoted(ep.teacherPace==0?"own":ep.teacherPace==1?"walk":"run")
+       <<",\"teacher_far_decisions\":"<<ep.teacherFarDecisions;
+    counts("teacher_branches",ep.teacherBranches);
+    counts("teacher_far_idle",ep.teacherFarIdle);
+  }
   out<<",\"decisions\":"<<ep.decisions<<",\"record_us_mean\":"<<(ep.decisions?ep.writeUs/double(ep.decisions):0)
      <<",\"record_us_max\":"<<ep.maxWriteUs<<",\"wall_seconds\":"<<seconds
      <<",\"decisions_per_second\":"<<double(ep.decisions)/seconds<<",\"frames\":"<<ep.frames
@@ -537,13 +544,14 @@ void finish(Episode& ep,World& world) {
     out<<",\"goal_kind\":"<<std::quoted(ep.goalKind)<<",\"seed\":"<<ep.scenarioSeed
        <<",\"detour_length_cm\":"<<ep.detourLengthCm<<",\"travel_cm\":"<<ep.travelCm
        <<",\"backward_decisions\":"<<ep.backwardDecisions<<",\"strafe_decisions\":"<<ep.strafeDecisions
-       <<",\"blocked_spans\":"<<ep.blockedSpans<<",\"blocked_ms\":"<<ep.blockedMs
-       <<",\"max_blocked_ms\":"<<ep.maxBlockedMs<<",\"first_contact_ms\":"<<(ep.contacted?int64_t(ep.firstContactMs):-1)
+       <<",\"blocked_spans\":"<<ep.blockage.spans<<",\"blocked_ms\":"<<ep.blockage.totalMs
+       <<",\"max_blocked_ms\":"<<ep.blockage.maxMs<<",\"first_contact_ms\":"<<(ep.contacted?int64_t(ep.firstContactMs):-1)
        <<",\"follow_ms\":"<<ep.followMs<<",\"in_band_ms\":"<<ep.inBandMs
        <<",\"follow_fraction\":"<<(ep.followMs?double(ep.inBandMs)/double(ep.followMs):0)
        <<",\"follow_far_ms\":"<<ep.followFarMs<<",\"follow_near_ms\":"<<ep.followNearMs;
   if(ep.teacherVersion>=2 && ep.goalKind=="follow" && ep.target) {
     out<<",\"follow_guidance\":"<<std::quoted(ep.followLine?"line":"trail")<<",\"follow_run\":"<<std::quoted(ep.followRun?"on":"off")
+       <<",\"follow_lost\":"<<std::quoted(ep.followLostAside?"aside":"last_seen")
        <<",\"follow_visible_decisions\":"<<ep.followVisibleDecisions
        <<",\"follow_contact_entries\":"<<ep.followContactEntries
        <<",\"follow_contact_decisions\":"<<ep.followContactDecisions
@@ -588,8 +596,8 @@ void finish(Episode& ep,World& world) {
        <<",\"encode_us_p95\":"<<percentile(ep.encodeUs,.95)
        <<",\"population_us_median\":"<<percentile(ep.populationUs,.5)
        <<",\"population_us_p95\":"<<percentile(ep.populationUs,.95)
-       <<",\"blocked_spans\":"<<ep.blockedSpans<<",\"blocked_ms\":"<<ep.blockedMs
-       <<",\"max_blocked_ms\":"<<ep.maxBlockedMs<<",\"disagreement_counts\":{";
+       <<",\"blocked_spans\":"<<ep.blockage.spans<<",\"blocked_ms\":"<<ep.blockage.totalMs
+       <<",\"max_blocked_ms\":"<<ep.blockage.maxMs<<",\"disagreement_counts\":{";
     constexpr const char* heads[]={"forward","strafe","turn","walk","jump","climb"};
     for(size_t i=0;i<ep.disagreements.size();++i) {
       if(i)out<<',';
@@ -694,353 +702,6 @@ NavMesh::Path plan(Episode& ep,World& world,bool blocked) {
   for(auto link:tail.transitions) {link.cornerIndex+=offset;fallback.transitions.push_back(link);}
   for(size_t i=1;i<fallback.corners.size();++i)fallback.length+=(cm(fallback.corners[i])-cm(fallback.corners[i-1])).length()*.01f;
   return fallback;
-}
-// Stand-only point syntax shared by route qualification and v2 recording. Coordinates
-// are centimetres, like the saved world and NAVDEMO poses; mesh queries use metres.
-Vec3 demoPoint(World& world,const std::string& name) {
-  if(name.rfind("cm:",0)!=0) {
-    const auto* point=world.findPoint(name,false);
-    if(!point)throw std::runtime_error("navdemos missing waypoint "+name);
-    return point->groundPos;
-  }
-  std::string values=name.substr(3);std::replace(values.begin(),values.end(),',',' ');
-  std::istringstream in(values);Vec3 point;std::string extra;
-  if(!(in>>point.x>>point.y>>point.z) || (in>>extra) ||
-     !std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z))
-    throw std::runtime_error("navdemos invalid cm:x,y,z point "+name);
-  return point;
-}
-const char* transitionName(NavMesh::LinkType type) {
-  switch(type) {
-    case NavMesh::LinkType::Jump:return "jump";
-    case NavMesh::LinkType::Climb:return "climb";
-    case NavMesh::LinkType::Drop:return "drop";
-  }
-  return "unknown";
-}
-void writeV2Plan(std::ostream& out,const Vec3& position,const Vec3& goal,
-                 const KnownRoads::Guidance& guidance,const NavMesh::Path& path,bool direct) {
-  out<<",\"position_cm\":";vector(out,position);out<<",\"goal_cm\":";vector(out,goal);
-  out<<",\"carrot_cm\":";vector(out,guidance.carrot);
-  out<<",\"beyond_known\":"<<guidance.beyondKnown<<",\"remaining_known_cm\":"<<guidance.remainingKnownCm
-     <<",\"direct_walkable\":"<<direct<<",\"complete\":"<<(direct || path.complete)
-     <<",\"reason\":"<<std::quoted(direct?"direct_walkable":path.reason)
-     <<",\"length_m\":"<<(direct?(guidance.carrot-position).length()*.01f:path.length)
-     <<",\"start_snap_m\":"<<path.startSnapDistance<<",\"end_snap_m\":"<<path.endSnapDistance
-     <<",\"corners_cm\":[";
-  if(direct) {vector(out,position);out<<',';vector(out,guidance.carrot);}
-  else for(size_t i=0;i<path.corners.size();++i) {if(i)out<<',';vector(out,cm(path.corners[i]));}
-  out<<"],\"transitions\":[";
-  if(!direct)for(size_t i=0;i<path.transitions.size();++i) {
-    if(i)out<<',';
-    const auto& link=path.transitions[i];
-    out<<"{\"id\":"<<link.id<<",\"type\":"<<std::quoted(transitionName(link.type))
-       <<",\"corner_index\":"<<link.cornerIndex<<",\"start_cm\":";
-    vector(out,cm(link.start));out<<",\"end_cm\":";vector(out,cm(link.end));out<<'}';
-  }
-  out<<']';
-}
-void planV2(World& world,Npc& npc,std::ostream& out,const std::string& label,
-            const std::string& from,const std::string& to) {
-  const auto position=demoPoint(world,from),goal=demoPoint(world,to);
-  KnownRoads::Guidance guidance;
-  KnownRoadsBench::readGuidance(world,npc,position,goal,guidance);
-  const auto& mesh=NavBench::navigationMesh(world);
-  const auto path=mesh.findPath(meters(position),meters(guidance.carrot));
-  const bool direct=!guidance.beyondKnown && mesh.straightWalkable(meters(position),meters(guidance.carrot));
-  out<<"{\"label\":"<<std::quoted(label)<<",\"start\":"<<std::quoted(from)<<",\"goal\":"<<std::quoted(to);
-  writeV2Plan(out,position,goal,guidance,path,direct);
-  // A generated coordinate start must have actual support at its own elevation;
-  // Detour snapping to a nearby rooftop or a floor beneath it is insufficient.
-  const auto floor=world.physic()->landRay(position+Vec3(0,20,0),40.f);
-  out<<",\"start_supported\":"<<(floor.hasCol && floor.n.y>=.65f && std::abs(floor.v.y-position.y)<=20.f)<<"}\n";
-  if(!out)throw std::runtime_error("navdemos plan-v2 write failed");
-}
-void detourPlanV3(World& world,std::ostream& out,const std::string& label,
-                  const std::string& from,const std::string& to) {
-  // Evaluation only: this path goes to the actual final goal and never enters
-  // NavMemoryTeacher or its learner-input boundary.
-  const auto start=demoPoint(world,from),goal=demoPoint(world,to);
-  const auto& mesh=NavBench::navigationMesh(world);
-  const auto path=mesh.findPath(meters(start),meters(goal));
-  out<<"{\"label\":"<<std::quoted(label)<<",\"start\":"<<std::quoted(from)<<",\"goal\":"<<std::quoted(to)
-     <<",\"start_cm\":";vector(out,start);out<<",\"goal_cm\":";vector(out,goal);
-  out<<",\"complete\":"<<path.complete<<",\"reason\":"<<std::quoted(path.reason)
-     <<",\"length_cm\":";jsonNumber(out,path.length*100.f);
-  out<<",\"start_snap_cm\":";jsonNumber(out,path.startSnapDistance*100.f);
-  out<<",\"end_snap_cm\":";jsonNumber(out,path.endSnapDistance*100.f);
-  out<<",\"straight_walkable\":"<<mesh.straightWalkable(meters(start),meters(goal))
-     <<",\"corners_cm\":[";
-  for(size_t i=0;i<path.corners.size();++i) {
-    if(i!=0) {
-      out<<',';
-    }
-    vector(out,cm(path.corners[i]));
-  }
-  out<<"],\"transitions\":[";
-  for(size_t i=0;i<path.transitions.size();++i) {
-    if(i!=0) {
-      out<<',';
-    }
-    const auto& link=path.transitions[i];
-    out<<"{\"id\":"<<link.id<<",\"type\":"<<std::quoted(transitionName(link.type))<<",\"start_cm\":";
-    vector(out,cm(link.start));out<<",\"end_cm\":";vector(out,cm(link.end));out<<'}';
-  }
-  out<<"]}\n";
-  if(!out) {
-    throw std::runtime_error("navdemos detour-plans-v3 write failed");
-  }
-}
-float pointSegmentXZSquared(const Vec3& point,const Vec3& start,const Vec3& end) {
-  const float dx=end.x-start.x,dz=end.z-start.z;
-  const float square=dx*dx+dz*dz;
-  const float t=square>0?std::clamp(((point.x-start.x)*dx+(point.z-start.z)*dz)/square,0.f,1.f):0.f;
-  const float x=point.x-start.x-t*dx,z=point.z-start.z-t*dz;
-  return x*x+z*z;
-}
-float segmentSquareXZSquared(const Vec3& start,const Vec3& end,float x0,float z0,float x1,float z1) {
-  const std::array<float,2> a={start.x,start.z},delta={end.x-start.x,end.z-start.z};
-  const std::array<float,2> low={x0,z0},high={x1,z1};
-  float enter=0,leave=1;
-  bool intersects=true;
-  for(size_t axis=0;axis<2;++axis) {
-    if(std::abs(delta[axis])<.000001f) {
-      if(a[axis]<low[axis] || a[axis]>high[axis]) {
-        intersects=false;break;
-      }
-      continue;
-    }
-    float first=(low[axis]-a[axis])/delta[axis],last=(high[axis]-a[axis])/delta[axis];
-    if(first>last) {
-      std::swap(first,last);
-    }
-    enter=std::max(enter,first);leave=std::min(leave,last);
-    if(enter>leave) {
-      intersects=false;break;
-    }
-  }
-  if(intersects) {
-    return 0;
-  }
-  const auto pointSquare=[&](const Vec3& point) {
-    const float dx=std::max({0.f,x0-point.x,point.x-x1});
-    const float dz=std::max({0.f,z0-point.z,point.z-z1});
-    return dx*dx+dz*dz;
-  };
-  float square=std::min(pointSquare(start),pointSquare(end));
-  for(float x:{x0,x1}) {
-    for(float z:{z0,z1}) {
-      square=std::min(square,pointSegmentXZSquared(Vec3(x,0,z),start,end));
-    }
-  }
-  return square;
-}
-void oracleCorridor(World& world,std::ostream& out,const std::string& label,
-                    const std::string& from,float yaw,const std::string& to) {
-  constexpr float Begin=500,End=1500,Radius=15;
-  const auto start=demoPoint(world,from),goal=demoPoint(world,to);
-  const auto& mesh=NavBench::navigationMesh(world);
-  const auto path=mesh.findPath(meters(start),meters(goal));
-  const float pathCm=path.length*100.f;
-  const char* status=!path.complete?"incomplete_path":!path.transitions.empty()?"offmesh_transition":
-                     pathCm<=Begin?"short_path":"ok";
-  NavMesh::LocalRaster raster;
-  const bool evaluated=std::string_view(status)=="ok";
-  if(evaluated) {
-    raster=mesh.rasterLocal(meters(start),yaw);
-    if(!raster.supportValid) {
-      status="unsupported_pose";
-    }
-  }
-  const bool available=std::string_view(status)=="ok";
-  std::vector<std::pair<Vec3,Vec3>> corridor;
-  if(available) {
-    float offset=0;
-    const float radians=yaw*Pi/180.f;
-    for(size_t i=1;i<path.corners.size();++i) {
-      const auto a=cm(path.corners[i-1]),b=cm(path.corners[i]);
-      const float extent=(b-a).length();
-      if(extent>0 && offset+extent>Begin && offset<End) {
-        const float first=std::clamp((Begin-offset)/extent,0.f,1.f);
-        const float last=std::clamp((End-offset)/extent,0.f,1.f);
-        const auto near=local(a+(b-a)*first-start,radians),far=local(a+(b-a)*last-start,radians);
-        corridor.emplace_back(Vec3(near[0],0,near[2]),Vec3(far[0],0,far[2]));
-      }
-      offset+=extent;
-      if(offset>=End) {
-        break;
-      }
-    }
-  }
-  out<<"{\"label\":"<<std::quoted(label)<<",\"start\":"<<std::quoted(from)<<",\"goal\":"<<std::quoted(to)
-     <<",\"start_cm\":";vector(out,start);out<<",\"goal_cm\":";vector(out,goal);
-  out<<",\"yaw_deg\":"<<yaw<<",\"complete\":"<<path.complete<<",\"reason\":"<<std::quoted(path.reason)
-     <<",\"length_cm\":";jsonNumber(out,pathCm);
-  out<<",\"transition_count\":"<<path.transitions.size()<<",\"corridor_begin_cm\":"<<Begin
-     <<",\"corridor_end_cm\":"<<End<<",\"radius_cm\":"<<Radius
-     <<",\"corridor_arclength\":\"detour_3d\",\"corridor_available\":"<<available
-     <<",\"corridor_status\":"<<std::quoted(status)<<",\"raster_evaluated\":"<<evaluated<<",\"raster_support_valid\":";
-  if(evaluated) {
-    out<<raster.supportValid;
-  }
-  else {
-    out<<"null";
-  }
-  out<<",\"raster_support_exact\":";
-  if(evaluated) {
-    out<<raster.supportExact;
-  }
-  else {
-    out<<"null";
-  }
-  out<<",\"raster_support_snap_cm\":";
-  if(evaluated && raster.supportValid) {
-    jsonNumber(out,raster.supportSnapDistance*100.f);
-  }
-  else {
-    out<<"null";
-  }
-  out<<",\"raster_support_horizontal_cm\":";
-  if(evaluated && raster.supportValid) {
-    jsonNumber(out,raster.supportHorizontalDistance*100.f);
-  }
-  else {
-    out<<"null";
-  }
-  out<<",\"raster_support_vertical_offset_cm\":";
-  if(evaluated && raster.supportValid) {
-    jsonNumber(out,raster.supportVerticalOffset*100.f);
-  }
-  else {
-    out<<"null";
-  }
-  out<<",\"corners_cm\":[";
-  for(size_t i=0;i<path.corners.size();++i) {
-    if(i!=0) {
-      out<<',';
-    }
-    vector(out,cm(path.corners[i]));
-  }
-  out<<"],\"native_cells\":[";
-  size_t count=0;
-  if(available) {
-    const auto layer=[&](const NavMesh::RasterLayer& value,bool near) {
-      if(value.size==0 || value.cells.size()!=value.size*value.size) {
-        throw std::runtime_error("navdemos oracle corridor raster shape mismatch");
-      }
-      const float step=value.cellSize*100.f,half=float(value.size)*.5f;
-      for(size_t row=0;row<value.size;++row) {
-        for(size_t column=0;column<value.size;++column) {
-          const float x0=(float(column)-half)*step,z0=(float(row)-half)*step;
-          if(!near && std::abs(x0+step*.5f)<800 && std::abs(z0+step*.5f)<800) {
-            continue;
-          }
-          const bool touched=std::any_of(corridor.begin(),corridor.end(),[&](const auto& segment) {
-            return segmentSquareXZSquared(segment.first,segment.second,x0,z0,x0+step,z0+step)<=Radius*Radius;
-          });
-          if(!touched) {
-            continue;
-          }
-          if(count!=0) {
-            out<<',';
-          }
-          const auto& cell=value.cells[row*value.size+column];
-          if(cell.heightBoundary && cell.traversable) {
-            throw std::runtime_error("navdemos oracle corridor has a traversable height boundary");
-          }
-          if(cell.traversable && !cell.heightValid) {
-            throw std::runtime_error("navdemos oracle corridor has traversable ground without height");
-          }
-          out<<"{\"layer\":"<<std::quoted(near?"near":"far")<<",\"row\":"<<row<<",\"column\":"<<column
-             <<",\"truth_passable\":"<<cell.traversable<<",\"height_valid\":"<<cell.heightValid
-             <<",\"ground_height_cm\":";jsonNumber(out,cell.heightValid?cell.groundHeight*100.f:0.f);
-          out<<",\"height_boundary\":"<<cell.heightBoundary<<'}';
-          ++count;
-        }
-      }
-    };
-    layer(raster.near,true);layer(raster.far,false);
-  }
-  out<<"],\"native_cell_count\":"<<count<<"}\n";
-  if(!out) {
-    throw std::runtime_error("navdemos oracle-corridors write failed");
-  }
-}
-void probeObject(World& world,Npc& npc,std::ostream& out,const std::string& label,
-                 const std::string& from,const std::string& to,
-                 const std::string& openingIn={},const std::string& openingOut={}) {
-  const auto start=demoPoint(world,from),goal=demoPoint(world,to);
-  Vec3 openingNormal=start-goal;
-  if(!openingIn.empty() || !openingOut.empty()) {
-    const auto* inside=world.findPoint(openingIn,false);
-    const auto* outside=world.findPoint(openingOut,false);
-    if(!inside || !outside) {
-      throw std::runtime_error("navdemos object probe missing exact opening IN/OUT alias");
-    }
-    openingNormal=outside->groundPos-inside->groundPos;
-  }
-  openingNormal.y=0;
-  const float normalLength=openingNormal.length();
-  if(normalLength<.001f) {
-    throw std::runtime_error("navdemos object probe opening normal has no horizontal direction");
-  }
-  openingNormal*=1.f/normalLength;
-  const Vec3 tangent(-openingNormal.z,0,openingNormal.x);
-  const auto old=npc.position();const float yaw=npc.rotation();
-  npc.setPosition(start);npc.updateTransform();npc.setDirection(goal-start);
-  const auto eyes=npc.navigationEyePose().origin;
-  // Keep the original centre ray exactly. Extra samples stay within a
-  // 130-cm-wide vertical opening at the unchanged authored floor goal.
-  const auto look=goal+Vec3(0,100,0);
-  const auto hit=world.physic()->navigationRay(eyes,look,&npc);
-  const bool visibleCentre=!hit.hasCol || (hit.point-look).length()<5.f;
-  bool visibleEdge=false;
-  size_t visibleSamples=visibleCentre?1u:0u;
-  std::ostringstream samples;
-  samples<<std::setprecision(9)<<std::boolalpha;
-  const auto sample=[&](const Vec3& point,bool hasCollision,const Vec3& hitPoint,bool visible) {
-    samples<<"{\"look_cm\":";vector(samples,point);
-    samples<<",\"visible\":"<<visible<<",\"has_collision\":"<<hasCollision;
-    if(hasCollision) {
-      samples<<",\"hit_cm\":";vector(samples,hitPoint);
-    }
-    samples<<'}';
-  };
-  sample(look,hit.hasCol,hit.point,visibleCentre);
-  for(float height:{40.f,100.f,180.f}) {
-    for(float width:{-65.f,0.f,65.f}) {
-      if(width==0 && height==100.f) {
-        continue;
-      }
-      const auto edgeLook=goal+tangent*width+Vec3(0,height,0);
-      const auto edgeHit=world.physic()->navigationRay(eyes,edgeLook,&npc);
-      const bool visible=!edgeHit.hasCol || (edgeHit.point-edgeLook).length()<5.f;
-      visibleEdge=visibleEdge || visible;
-      visibleSamples+=visible?1u:0u;
-      samples<<',';
-      sample(edgeLook,edgeHit.hasCol,edgeHit.point,visible);
-    }
-  }
-  const auto& mesh=NavBench::navigationMesh(world);
-  const auto path=mesh.findPath(meters(start),meters(goal));
-  const bool blocked=!mesh.straightWalkable(meters(start),meters(goal));
-  const auto floor=world.physic()->landRay(start+Vec3(0,20,0),40.f);
-  out<<"{\"label\":"<<std::quoted(label)<<",\"start\":"<<std::quoted(from)<<",\"goal\":"<<std::quoted(to)
-     <<",\"visible_centre\":"<<visibleCentre<<",\"visible_edge\":"<<visibleEdge
-     <<",\"visible\":"<<(visibleCentre || visibleEdge)
-     <<",\"visibility_criterion\":\"centre_or_opening_edge_v1\",\"visible_samples\":"<<visibleSamples
-     <<",\"opening_in\":"<<std::quoted(openingIn)<<",\"opening_out\":"<<std::quoted(openingOut)
-     <<",\"opening_normal\":";vector(out,openingNormal);
-  out<<",\"look_samples\":["<<samples.str()<<"],\"detour_complete\":"<<path.complete
-     <<",\"detour_length_cm\":"<<path.length*100.f<<",\"direct_cm\":"<<(goal-start).length()
-     <<",\"straight_blocked\":"<<blocked<<",\"start_supported\":"
-     <<(floor.hasCol && floor.n.y>=.65f && std::abs(floor.v.y-start.y)<=20.f)
-     <<",\"eyes_cm\":";vector(out,eyes);out<<",\"look_cm\":";vector(out,look);
-  out<<",\"detour_cm\":[";
-  for(size_t i=0;i<path.corners.size();++i) {if(i)out<<',';vector(out,cm(path.corners[i]));}
-  out<<"]}\n";
-  npc.setPosition(old);npc.updateTransform();npc.setDirection(yaw);
-  if(!out)throw std::runtime_error("navdemos object probe write failed");
 }
 void traceV2Plan(Episode& ep,const Vec3& position,const NavKeyTeacher::Decision& decision,
                  bool direct,uint64_t elapsed) {
@@ -1304,7 +965,7 @@ void liveDecision(Episode& ep,World& w,const NavDemoWriter::Snapshot& sample,con
   out<<"},\"entropy\":{";
   for(size_t i=0;i<heads;++i) {if(i)out<<',';out<<std::quoted(ep.policy->headName(i))<<':'<<entropies[i];}
   const auto& n=*ep.npc;
-  out<<"},\"stuck\":"<<ep.blocked<<",\"body_blocked\":"<<ep.blocked<<",\"contact\":"<<ep.liveContact
+  out<<"},\"stuck\":"<<ep.blockage.active<<",\"body_blocked\":"<<ep.blockage.active<<",\"contact\":"<<ep.liveContact
      <<",\"safety_intervention\":"<<ep.liveSafety<<",\"peer_request_clipped\":"<<ep.liveRequestClipped
      <<",\"peer_resolved_clipped\":"<<ep.liveResolvedClipped<<",\"in_air\":"<<n.isInAir()
      <<",\"falling\":"<<n.isFalling()<<",\"swimming\":"<<n.isSwim()<<",\"climbing\":"<<n.navigationClimbing()
@@ -1705,6 +1366,21 @@ void traceRoadsClosed(Episode& ep,uint64_t elapsed,const std::vector<RoadsPassag
   }
   if(!out)throw std::runtime_error("navdemos roads closed trace write failed");
 }
+void traceRoadsPassages(Episode& ep,uint64_t elapsed,const std::vector<RoadsPassageCall>& calls) {
+  if(!ep.roadsPassages.is_open())return;
+  auto& out=ep.roadsPassages;
+  out<<"{\"decision_index\":"<<ep.decisions<<",\"elapsed_ms\":"<<elapsed<<",\"calls\":[";
+  for(size_t i=0;i<calls.size();++i) {
+    if(i)out<<',';
+    const auto& call=calls[i];
+    out<<"{\"from_cm\":";vector(out,call.from);
+    out<<",\"to_cm\":";vector(out,call.to);
+    out<<",\"verdict\":"<<std::quoted(call.verdict==KnownRoads::Passage::Free?"Free":
+                                       call.verdict==KnownRoads::Passage::Closed?"Closed":"Unknown")<<'}';
+  }
+  out<<"]}\n";
+  if(!out)throw std::runtime_error("navdemos roads passage trace write failed");
+}
 void traceRoads(Episode& ep,uint64_t elapsed) {
   const auto& g=ep.guidance;
   ep.roadsRebuilds+=g.rebuilt;ep.roadsCatchUps+=g.caughtUp;ep.roadsProjectionsRejected+=g.projectionRejected;
@@ -1725,17 +1401,19 @@ void traceRoads(Episode& ep,uint64_t elapsed) {
 void guidanceFor(Episode& ep,World& w,const Vec3& position) {
   if(ep.goalKind=="point") {
     ep.memory.view(ep.view);
-    if(ep.roadsClosed.is_open() && ep.roadsClosedLines<ep.roadsClosedLimit) {
+    const bool traceClosed=ep.roadsClosed.is_open() && ep.roadsClosedLines<ep.roadsClosedLimit;
+    if(ep.roadsPassages.is_open() || traceClosed) {
       std::vector<RoadsPassageCall> calls;
       KnownRoads::PassageCheck check=[&](const Vec3& from,const Vec3& to) {
         RoadsPassageCall call;call.from=from;call.to=to;
         call.verdict=roadsPassage(NavigationPassage::scan(ep.view,from,to,FollowTrail::corridorCm,
-                                                          FollowTrail::footprintCm,&call.closing));
+                                                          FollowTrail::footprintCm,traceClosed?&call.closing:nullptr));
         calls.push_back(call);
         return call.verdict;
       };
       KnownRoadsBench::readGuidance(w,*ep.npc,position,ep.goal,ep.guidance,check);
       traceRoadsClosed(ep,w.tickCount()-ep.began,calls);
+      traceRoadsPassages(ep,w.tickCount()-ep.began,calls);
     }
     else
       KnownRoadsBench::readGuidance(w,*ep.npc,position,ep.goal,ep.guidance,memoryPassage(ep.view));
@@ -1819,6 +1497,18 @@ void decideMemory(Episode& ep,World& w,uint64_t elapsed) {
   sample.keys=ep.memoryTeacher.decide(input);++ep.replans;
   // The game sets the pace: a companion always runs after its object.
   if(ep.goalKind=="follow" && ep.followRun)sample.keys.walk=false;
+  // A stand comparison may force the teacher's pace off follow, as --force-pace does for a policy.
+  if(!ep.drive && ep.goalKind!="follow" && ep.teacherPace!=0)sample.keys.walk=ep.teacherPace==1;
+  const auto branch=ep.memoryTeacher.lastBranch();
+  if(!ep.drive) {
+    // Far from the goal: outside the follow band, otherwise beyond 2 m.
+    const float far=ep.goalKind=="follow"?500.f:200.f;
+    ++ep.teacherBranches[size_t(branch)];
+    if((position-ep.goal).length()>far) {
+      ++ep.teacherFarDecisions;
+      if(sample.keys.forward==0 && sample.keys.strafe==0)++ep.teacherFarIdle[size_t(branch)];
+    }
+  }
   ep.maneuverMasked=false;
   if(ep.dagger) {
     sample.keys.jump=false;sample.keys.climb=false;
@@ -1855,6 +1545,35 @@ void decideMemory(Episode& ep,World& w,uint64_t elapsed) {
     for(size_t k=0;k<8;++k)out<<(k?",":"")<<bytes[k];
     out<<']';
   }
+  {
+    const auto& status=ep.memoryTeacher.lastPlanStatus();
+    out<<",\"teacher_branch\":"<<std::quoted(NavMemoryTeacher::name(branch))<<",\"body_exit_cm\":"<<status.bodyExitCm;
+    // Diagnosis only (OPENGOTHIC_NAV_STALL_TRACE=1): at the first decision of every
+    // stretch without a start cell, then every 5 s of it, the near memory around the
+    // feet (+-10 cells) next to the navmesh truth in the same body frame.
+    const auto* traced=std::getenv("OPENGOTHIC_NAV_STALL_TRACE");
+    const bool stalled=!status.startFound;
+    if(traced && std::string_view(traced)=="1" && stalled && (!ep.teacherStallPrevious || elapsed>=ep.teacherStallTraceAt+5000)) {
+      ep.teacherStallTraceAt=elapsed;
+      const auto raster=NavBench::navigationMesh(w).rasterLocal(meters(position),ep.npc->rotation());
+      const auto& near=sample.memory->near;
+      out<<",\"stall_patch\":{\"feet_y_cm\":"<<position.y<<",\"support\":"<<raster.supportValid<<",\"cells\":[";
+      bool first=true;
+      for(int z=int(near.size/2)-10;z<int(near.size/2)+10;++z)for(int x=int(near.size/2)-10;x<int(near.size/2)+10;++x) {
+        const auto& c=near.cells[size_t(z)*near.size+size_t(x)];
+        const auto& t=raster.near.cells[size_t(z)*raster.near.size+size_t(x)];
+        const auto byte=[](float v) {return unsigned(std::lround(v*255.f));};
+        out<<(first?"":",")<<'['<<x-int(near.size/2)<<','<<z-int(near.size/2)<<','<<byte(c.confidence)<<','<<byte(c.free)<<','
+           <<byte(c.wall)<<','<<byte(c.ledge)<<','<<byte(c.drop)<<','<<byte(c.water)<<','<<byte(c.movable)<<','<<byte(c.familiar)<<',';
+        if(std::isfinite(c.groundHeightCm))out<<std::lround(c.groundHeightCm-position.y);else out<<"null";
+        out<<','<<t.traversable<<','<<t.heightBoundary<<',';
+        if(t.heightValid)out<<std::lround(t.groundHeight*100.f-position.y);else out<<"null";
+        out<<']';first=false;
+      }
+      out<<"]}";
+    }
+    ep.teacherStallPrevious=stalled;
+  }
   out<<",\"local_plan_cm\":[";
   for(size_t i=0;i<points.size();++i) {if(i)out<<',';out<<'['<<points[i].rightCm<<','<<points[i].forwardCm<<']';}
   out<<"]}\n";
@@ -1873,7 +1592,7 @@ void decideMemory(Episode& ep,World& w,uint64_t elapsed) {
   }
   ep.backwardDecisions+=executed.forward<0;ep.strafeDecisions+=executed.strafe!=0;
   action(ep,elapsed,executed);NpcKeys::set(*ep.npc,executed,1000);ep.previous=executed;++ep.decisions;
-  ep.failure=ep.blocked?"body_blocked":"";
+  ep.failure=ep.blockage.active?"body_blocked":"";
 }
 void decide(Episode& ep,World& w) {
   auto& n=*ep.npc;const auto elapsed=w.tickCount()-ep.began;
@@ -2003,7 +1722,7 @@ void decide(Episode& ep,World& w) {
   if(ep.population) {ep.phaseUs[6]+=micros(recordStart);ep.pending=true;ep.actionAt=w.tickCount();}
   if(d.hint.remainingLength*100+20<ep.best) {ep.best=d.hint.remainingLength*100;ep.progressAt=w.tickCount();}
   if(!d.pathValid)ep.failure="no_path:"+ep.path.reason;
-  else if((ep.drive || ep.teacherVersion==2)?ep.blocked:w.tickCount()-ep.progressAt>=3000)ep.failure="body_blocked";
+  else if((ep.drive || ep.teacherVersion==2)?ep.blockage.active:w.tickCount()-ep.progressAt>=3000)ep.failure="body_blocked";
   else ep.failure.clear();
 }
 std::vector<Pair> readPairs(const std::string& path) {
@@ -2012,8 +1731,13 @@ std::vector<Pair> readPairs(const std::string& path) {
   std::vector<Pair> result;std::string line;
   while(std::getline(in,line)) {
     if(line.empty() || line[0]=='#')continue;
-    std::istringstream row(line);Pair pair;std::string extra;
-    if(!(row>>pair.from>>pair.to) || row>>extra)throw std::runtime_error("navdemos pairs require FROM TO per line");
+    std::istringstream row(line);Pair pair;std::string pace,extra;
+    if(!(row>>pair.from>>pair.to))throw std::runtime_error("navdemos pairs require FROM TO [walk|run] per line");
+    if(row>>pace) {
+      if((pace!="walk" && pace!="run") || row>>extra)
+        throw std::runtime_error("navdemos pairs require FROM TO [walk|run] per line");
+      pair.walk=pace=="walk";
+    }
     result.push_back(std::move(pair));
   }
   if(result.empty())throw std::runtime_error("navdemos empty pairs");
@@ -2053,6 +1777,7 @@ void startPopulationEpisode(World& w,Npc& player,size_t slot,Npc* original=nullp
   ep.output=(std::filesystem::path(pop.output)/"episodes"/std::to_string(ep.sequence)).string();
   std::filesystem::create_directories(ep.output);
   ep.policy=pop.policy;ep.policyStates.resize(1);ep.teacherVersion=2;ep.limit=pop.limit;
+  if(ep.policy->paceInput())ep.populationWalk=pop.walk.value_or(pair.walk.value_or(false));
   const auto* from=w.findPoint(ep.from,false);const auto* to=w.findPoint(ep.to,false);
   if(!from || !to)throw std::runtime_error("navdemos population missing waypoint");
   ep.goal=to->groundPos;
@@ -2080,6 +1805,10 @@ void startPopulationEpisode(World& w,Npc& player,size_t slot,Npc* original=nullp
     ep.trajectory=file(ep,"trajectory.txt");ep.actions=file(ep,"actions.txt");
     ep.knownPaths=file(ep,"known-paths.jsonl");ep.samples=file(ep,"samples.jsonl");
     ep.writer=std::make_unique<NavDemoWriter>((std::filesystem::path(ep.output)/"samples.bin.gz").string(),demoVersion(ep));
+  }
+  if(const char* trace=std::getenv("OPENGOTHIC_NAV_PASSAGE_TRACE");trace && *trace) {
+    ep.roadsGuidance=file(ep,"roads-guidance.txt");
+    ep.roadsPassages=file(ep,"roads-passages.jsonl");
   }
   ep.initialState=initialState(ep);
   observe(ep,w);
@@ -2114,8 +1843,10 @@ void populationSummary(World& w) {
   pop.episodes.close();pop.active=false;pop.members.clear();
 }
 void beginPopulation(const std::vector<std::string>& a,World& w,Npc& player,const std::string& output) {
-  if(a.size()<11 || a.size()>13)
-    throw std::runtime_error("navdemos population NPC PAIRS LIMIT_MS WEIGHTS N SEED sample|argmax EPISODES RECORD [near|far [RUN_MS]]");
+  const bool hasPace=a.size()>11 && (a.back()=="walk" || a.back()=="run");
+  const auto arguments=a.size()-size_t(hasPace);
+  if(arguments<11 || arguments>13)
+    throw std::runtime_error("navdemos population NPC PAIRS LIMIT_MS WEIGHTS N SEED sample|argmax EPISODES RECORD [near|far [RUN_MS]] [walk|run]");
   if(legacy.active || population.active)throw std::runtime_error("navdemos already active");
   population=Population{};auto& pop=population;pop.output=output;
   pop.instance=w.script().findSymbolIndex(a[2]);auto* original=w.findNpcByInstance(pop.instance);
@@ -2123,14 +1854,14 @@ void beginPopulation(const std::vector<std::string>& a,World& w,Npc& player,cons
   pop.home=original->position();pop.pairs=readPairs(a[3]);pop.limit=std::stoull(a[4]);
   pop.policy=std::make_shared<NavPolicy>(a[5]);
   if(pop.policy->navDemoVersion()!=2)throw std::runtime_error("navdemos population requires a NAVDEMO v2 policy");
-  if(pop.policy->paceInput())throw std::runtime_error("navdemos population does not support pace-input weights (.navbc v5)");
+  if(hasPace)pop.walk=a.back()=="walk";
   const auto count=std::stoull(a[6]);pop.seed=std::stoull(a[7]);
   if(a[8]!="sample" && a[8]!="argmax")throw std::runtime_error("navdemos population action mode must be sample or argmax");
   pop.sampled=a[8]=="sample";pop.targetEpisodes=std::stoull(a[9]);
   if(a[10]!="0" && a[10]!="1")throw std::runtime_error("navdemos population RECORD must be 0 or 1");
   pop.record=a[10]=="1";
-  if(a.size()>11 && a[11]!="near" && a[11]!="far")throw std::runtime_error("navdemos population hero mode must be near or far");
-  pop.near=a.size()>11 && a[11]=="near";pop.runMs=a.size()>12?std::stoull(a[12]):0;
+  if(arguments>11 && a[11]!="near" && a[11]!="far")throw std::runtime_error("navdemos population hero mode must be near or far");
+  pop.near=arguments>11 && a[11]=="near";pop.runMs=arguments>12?std::stoull(a[12]):0;
   if(!count || count>1000 || pop.targetEpisodes<count || !pop.limit || (pop.near && count!=1))
     throw std::runtime_error("navdemos invalid population/episode count, limit, or near mode");
   if(settings.killArmed && settings.killSlot>=count)throw std::runtime_error("navdemos kill slot outside population");
@@ -2370,8 +2101,12 @@ bool NavDemos::fullSimulation(const Npc& npc) {
   return TestBench::npcDuelActor(npc) || (legacy.active && legacy.target==&npc) ||
          (population.active && population.members.contains(&npc)) || forceCharacterVirtual(npc);
 }
-void NavDemos::reset() {legacy=Episode{};population=Population{};settings=Settings{};preparingLegacy=nullptr;}
+void NavDemos::reset() {legacy=Episode{};population=Population{};settings=DemoSettings{};preparingLegacy=nullptr;}
 void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player,const std::string& output) {
+  if(args.size()>=2 && args[1]=="dump-package") {
+    if(running() || NavBench::running())throw std::runtime_error("navsim package requires an idle stand");
+    NavSimPackage::write(args,w,output);return;
+  }
   if(args.size()>=2 && (args[1]=="perception-hazards" || args[1]=="perception-shores" || args[1]=="water-probes")) {
     if(running() || NavBench::running())throw std::runtime_error("navdemos cannot probe hazards during an episode");
     NavPerceptionSafety::command(args,w,output);
@@ -2432,175 +2167,24 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
     }
     return;
   }
-  if(a.size()>=2 && a[1]=="oracle-corridors") {
-    if(running() || NavBench::running()) {
-      throw std::runtime_error("navdemos cannot query oracle corridors during episode");
-    }
-    if(a.size()!=3) {
-      throw std::runtime_error("navdemos oracle-corridors FILE (rows LABEL START YAW_DEG GOAL)");
-    }
-    std::ifstream input(a[2]);
-    if(!input) {
-      throw std::runtime_error("navdemos cannot read oracle-corridors file");
-    }
-    std::ofstream out(std::filesystem::path(output)/"oracle-corridors.jsonl");
-    if(!out) {
-      throw std::runtime_error("navdemos cannot write oracle-corridors.jsonl");
-    }
-    out<<std::setprecision(9)<<std::boolalpha;
-    std::string line;
-    while(std::getline(input,line)) {
-      std::istringstream row(line);
-      std::string label,from,to,extra;
-      float yaw=0;
-      if(!(row>>label) || label[0]=='#') {
-        continue;
-      }
-      if(!(row>>from>>yaw>>to) || (row>>extra) || !std::isfinite(yaw)) {
-        throw std::runtime_error("navdemos oracle-corridors rows LABEL START YAW_DEG GOAL");
-      }
-      oracleCorridor(w,out,label,from,yaw,to);
-    }
-    if(!input.eof()) {
-      throw std::runtime_error("navdemos oracle-corridors read failed");
-    }
-    out.close();
-    if(!out) {
-      throw std::runtime_error("navdemos oracle-corridors write failed");
-    }
-    return;
-  }
-  if(a.size()>=2 && a[1]=="detour-plans-v3") {
-    if(running() || NavBench::running()) {
-      throw std::runtime_error("navdemos cannot query Detour plans during episode");
-    }
-    if(a.size()!=3) {
-      throw std::runtime_error("navdemos detour-plans-v3 FILE (rows LABEL START GOAL)");
-    }
-    std::ifstream input(a[2]);
-    if(!input) {
-      throw std::runtime_error("navdemos cannot read detour-plans-v3 file");
-    }
-    std::ofstream out(std::filesystem::path(output)/"detour-plans-v3.jsonl");
-    if(!out) {
-      throw std::runtime_error("navdemos cannot write detour-plans-v3.jsonl");
-    }
-    out<<std::setprecision(9)<<std::boolalpha;
-    std::string line;
-    while(std::getline(input,line)) {
-      std::istringstream row(line);
-      std::string label,from,to,extra;
-      if(!(row>>label) || label[0]=='#') {
-        continue;
-      }
-      if(!(row>>from>>to) || (row>>extra)) {
-        throw std::runtime_error("navdemos detour-plans-v3 rows LABEL START GOAL");
-      }
-      detourPlanV3(w,out,label,from,to);
-    }
-    if(!input.eof()) {
-      throw std::runtime_error("navdemos detour-plans-v3 read failed");
-    }
-    out.close();
-    if(!out) {
-      throw std::runtime_error("navdemos detour-plans-v3 write failed");
-    }
-    return;
-  }
-  if(a.size()>=2 && a[1]=="points-v3") {
-    if(running()) {
-      throw std::runtime_error("navdemos cannot export points during episode");
-    }
-    if(a.size()!=2) {
-      throw std::runtime_error("navdemos points-v3");
-    }
-    std::ofstream out(std::filesystem::path(output)/"points-v3.jsonl");
-    if(!out) {
-      throw std::runtime_error("navdemos cannot write points-v3.jsonl");
-    }
-    out<<std::setprecision(9)<<std::boolalpha;
-    w.forEachWayPoint([&](const WayPoint& point) {
-      out<<"{\"name\":"<<std::quoted(point.name)<<",\"position_cm\":";vector(out,point.groundPos);
-      out<<",\"connected\":"<<point.isConnected()<<",\"freepoint\":"<<point.isFreePoint()<<"}\n";
-    });
-    if(!out) {
-      throw std::runtime_error("navdemos points-v3 write failed");
-    }
-    return;
-  }
-  if(a.size()>=2 && (a[1]=="probe-v3" || a[1]=="probes-v3")) {
-    if(running()) {
-      throw std::runtime_error("navdemos cannot probe during episode");
-    }
-    const bool batch=a[1]=="probes-v3";
-    if((batch && a.size()!=4) || (!batch && a.size()!=5 && a.size()!=6 && a.size()!=8)) {
-      throw std::runtime_error("navdemos probe-v3 NPC START GOAL [LABEL [IN_ALIAS OUT_ALIAS]] | probes-v3 NPC FILE");
-    }
-    auto* npc=w.findNpcByInstance(w.script().findSymbolIndex(a[2]));
-    if(!npc) {
-      throw std::runtime_error("navdemos probe-v3 missing NPC");
-    }
-    std::ofstream out(std::filesystem::path(output)/"object-candidates.jsonl",std::ios::app);
-    if(!out) {
-      throw std::runtime_error("navdemos cannot write object-candidates.jsonl");
-    }
-    out<<std::setprecision(9)<<std::boolalpha;
-    if(!batch) {
-      probeObject(w,*npc,out,a.size()>=6?a[5]:"0",a[3],a[4],a.size()==8?a[6]:"",a.size()==8?a[7]:"");
-    }
-    else {
-      std::ifstream in(a[3]);
-      if(!in) {
-        throw std::runtime_error("navdemos cannot read probes-v3 file");
-      }
-      std::string line;
-      while(std::getline(in,line)) {
-        if(line.empty() || line[0]=='#') {
-          continue;
-        }
-        std::istringstream row(line);std::string label,from,to,openingIn,openingOut,extra;
-        if(!(row>>label>>from>>to)) {
-          throw std::runtime_error("navdemos probes-v3 rows LABEL START GOAL [IN_ALIAS OUT_ALIAS]");
-        }
-        if(row>>openingIn) {
-          if(!(row>>openingOut) || (row>>extra)) {
-            throw std::runtime_error("navdemos probes-v3 rows LABEL START GOAL [IN_ALIAS OUT_ALIAS]");
-          }
-        }
-        probeObject(w,*npc,out,label,from,to,openingIn,openingOut);
-      }
-    }
-    return;
-  }
-  if(a.size()>=2 && (a[1]=="plan-v2" || a[1]=="plans-v2")) {
-    if(running())throw std::runtime_error("navdemos cannot query a new route during an episode");
-    const bool batch=a[1]=="plans-v2";
-    if((batch && a.size()!=4) || (!batch && a.size()!=5 && a.size()!=6))
-      throw std::runtime_error("navdemos plan-v2 NPC FROM TO [LABEL] | plans-v2 NPC PAIRS_FILE (LABEL FROM TO)");
-    auto* npc=w.findNpcByInstance(w.script().findSymbolIndex(a[2]));
-    if(!npc)throw std::runtime_error("navdemos plan-v2 missing NPC");
-    std::ofstream out(std::filesystem::path(output)/"plans-v2.jsonl",std::ios::app);
-    if(!out)throw std::runtime_error("navdemos cannot write plans-v2.jsonl");
-    out<<std::setprecision(9)<<std::boolalpha;
-    if(!batch)planV2(w,*npc,out,a.size()==6?a[5]:"0",a[3],a[4]);
-    else {
-      std::ifstream input(a[3]);
-      if(!input)throw std::runtime_error("navdemos cannot read plans-v2 pairs");
-      std::string line;
-      while(std::getline(input,line)) {
-        if(line.empty() || line[0]=='#')continue;
-        std::istringstream row(line);std::string label,from,to,extra;
-        if(!(row>>label>>from>>to) || (row>>extra))
-          throw std::runtime_error("navdemos plans-v2 pairs require LABEL FROM TO per line");
-        planV2(w,*npc,out,label,from,to);
-      }
-    }
-    return;
-  }
+  bool probesHandled=false;
+  commandProbes(a,w,output,probesHandled);
+  if(probesHandled)return;
   if(a.size()>=2 && a[1]=="follow-guidance") {
     if(running())throw std::runtime_error("navdemos cannot change follow guidance during an episode");
     if(a.size()!=3 || (a[2]!="trail" && a[2]!="line"))throw std::runtime_error("navdemos follow-guidance trail|line");
     settings.followLine=a[2]=="line";
+    return;
+  }
+  if(a.size()>=2 && (a[1]=="teacher-exit" || a[1]=="teacher-pace" || a[1]=="follow-lost")) {
+    // Comparison switches of the memory teacher's body exit and of the lost follow
+    // carrot, and the teacher's forced pace off follow (follow keeps follow-run).
+    if(running())throw std::runtime_error("navdemos cannot change teacher settings during an episode");
+    if(a[1]=="teacher-exit" && a.size()==3 && (a[2]=="on" || a[2]=="off"))settings.teacherBodyExit=a[2]=="on";
+    else if(a[1]=="follow-lost" && a.size()==3 && (a[2]=="aside" || a[2]=="last-seen"))settings.followLostAside=a[2]=="aside";
+    else if(a[1]=="teacher-pace" && a.size()==3 && (a[2]=="own" || a[2]=="walk" || a[2]=="run"))
+      settings.teacherPace=a[2]=="own"?0:a[2]=="walk"?1:2;
+    else throw std::runtime_error("navdemos teacher-exit on|off | teacher-pace own|walk|run | follow-lost aside|last-seen");
     return;
   }
   if(a.size()>=2 && a[1]=="follow-run") {
@@ -2711,6 +2295,8 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
     throw std::runtime_error("navdemos evaluation output already contains demonstration samples");
   }
   ep.goalKind=goalKind;ep.scenarioSeed=scenarioSeed;ep.followLine=settings.followLine;ep.followRun=settings.followRun;
+  ep.teacherBodyExit=settings.teacherBodyExit;ep.followLostAside=settings.followLostAside;ep.teacherPace=settings.teacherPace;
+  ep.memoryTeacher.setBodyExit(ep.teacherBodyExit);ep.followTrail.setLostAside(ep.followLostAside);
   ep.liveTargetPlayer=moving && settings.liveTargetPlayer;
   ep.liveTargetWalkOnly=ep.liveTargetPlayer && settings.liveTargetWalkOnly;
   ep.goal=goalPosition;ep.replay=replay;ep.drive=learner;
@@ -2781,7 +2367,7 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
       // This is a navigation target, not a combat encounter. The cloned stand
       // NPC still follows the ordinary seeded wandering route below.
       auto& handle=target.handle();
-      handle.flags=zenkit::NpcFlag(uint32_t(handle.flags)|uint32_t(zenkit::NpcFlag::IMMORTAL));
+      handle.flags=daedalus::NpcFlag(uint32_t(handle.flags)|uint32_t(daedalus::NpcFlag::IMMORTAL));
       target.setAttitude(ATT_FRIENDLY);target.setTempAttitude(ATT_FRIENDLY);
     }
     target.clearGoTo();target.attachToPoint(nullptr);
@@ -2875,6 +2461,8 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
   ep.trajectory=file(ep,"trajectory.txt");
   if(!replay && ep.goalKind=="point" && ep.teacherVersion>=2) {
     ep.roadsGuidance=file(ep,"roads-guidance.txt");
+    if(const char* trace=std::getenv("OPENGOTHIC_NAV_PASSAGE_TRACE");trace && *trace)
+      ep.roadsPassages=file(ep,"roads-passages.jsonl");
     if(const char* trace=std::getenv("OPENGOTHIC_NAV_ROADS_CLOSED_TRACE");trace && *trace) {
       ep.roadsClosedLimit=std::stoull(trace);
       if(ep.roadsClosedLimit>0)ep.roadsClosed=file(ep,"roads-closed.jsonl");

@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-namespace zenkit {
+namespace daedalus {
   class DaedalusScript;
   class DaedalusSymbol;
   }
@@ -51,7 +51,7 @@ struct Event final {
   enum Kind : uint8_t { Call, Store };
   Kind                          kind   = Call;
   uint32_t                      pc     = 0;
-  const zenkit::DaedalusSymbol* callee = nullptr;  // Call
+  const daedalus::DaedalusSymbol* callee = nullptr;  // Call
   std::vector<ExprP>            args;              // Call: arguments, instances and functions as Sym
   ExprP                         target;            // Store: Var, Field, Inst (instance variable) or Local
   ExprP                         value;             // Store
@@ -68,7 +68,7 @@ struct Lifted final {
 // instructions are visited in address order and states are merged where branches meet.
 class Lifter final {
   public:
-    Lifter(const zenkit::DaedalusScript& script, const Bytecode& code);
+    Lifter(const daedalus::DaedalusScript& script, const Bytecode& code);
 
     Lifted       lift(uint32_t fnSymbol) const;
 
@@ -76,7 +76,7 @@ class Lifter final {
     // returns nothing, moves a quest (writes a MIS_* variable) and lifts on its own (B_Addon_Cavalorn_VatrasBrief
     // ends Cavalorn's quest for two dialogs). Its calls and stores are the caller's, under the caller's guard and
     // with its state: what the dialog stored before is what the helper reads.
-    bool         inlines(const zenkit::DaedalusSymbol& fn, uint32_t depth) const;
+    bool         inlines(const daedalus::DaedalusSymbol& fn, uint32_t depth) const;
     static constexpr uint32_t MaxInline = 3;
 
     // a function that returns TRUE/FALSE as one boolean expression
@@ -90,9 +90,9 @@ class Lifter final {
     struct State;
     // runs `fn` from `entry`, its events into out.events. Lifted itself (depth 0), its returns go to
     // out.returns; put in place of a call, the states at its returns, merged, go to `exit`. False: out.error
-    bool   run(const zenkit::DaedalusSymbol& fn, State entry, Lifted& out, uint32_t depth, State* exit) const;
+    bool   run(const daedalus::DaedalusSymbol& fn, State entry, Lifted& out, uint32_t depth, State* exit) const;
     ExprP  resolve(const State& s, const ExprP& e) const;
-    ExprP  pushVar(const State& s, const zenkit::DaedalusSymbol& sym, int32_t index) const;
+    ExprP  pushVar(const State& s, const daedalus::DaedalusSymbol& sym, int32_t index) const;
     void   merge(State& into, State&& from) const;
     ExprP  mergeValues(const Dnf& ga, const ExprP& va, const Dnf& gb, const ExprP& vb, const std::string& name) const;
 
@@ -100,9 +100,9 @@ class Lifter final {
     struct Clobbers final {
       std::set<std::string> vars, members;
       };
-    const Clobbers& clobbers(const zenkit::DaedalusSymbol& fn) const;
+    const Clobbers& clobbers(const daedalus::DaedalusSymbol& fn) const;
 
-    const zenkit::DaedalusScript&                script;
+    const daedalus::DaedalusScript&                script;
     const Bytecode&                              code;
     mutable std::unordered_map<uint32_t, Clobbers> clobberCache;
     mutable std::set<uint32_t>                   clobberBusy;

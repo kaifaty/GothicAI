@@ -15,6 +15,8 @@
 #include "vaccelerationstructure.h"
 #if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
 #include "frameprofile.h"
+#include <cstdlib>
+#include <cstring>
 #endif
 
 using namespace Tempest;
@@ -23,24 +25,155 @@ using namespace Tempest::Detail;
 #if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
 VFrameProfileQueries::~VFrameProfileQueries() {
   vkDestroyQueryPool(device,pool,nullptr);
+  vkDestroyQueryPool(device,timestamps,nullptr);
+  }
+
+bool VFrameProfileQueries::span(const uint64_t* ticks, uint32_t first, uint64_t& ns) const {
+  const uint64_t begin=ticks[first]&timestampMask, end=ticks[first+1]&timestampMask;
+  // A narrower counter may wrap once between the two samples; a full 64-bit one must not go back.
+  if(timestampMask==~uint64_t(0) && end<begin)
+    return false;
+  ns=uint64_t(double((end-begin)&timestampMask)*timestampPeriod+0.5);
+  return true;
   }
 
 void VFrameProfileQueries::complete(bool success) {
-  uint64_t triangles=0;
-  if(success && valid && count>0) {
-    uint64_t values[MaxQueries]={};
-    success=vkGetQueryPoolResults(device,pool,0,count,sizeof(uint64_t)*count,values,sizeof(uint64_t),
-                                 VK_QUERY_RESULT_64_BIT)==VK_SUCCESS;
-    for(uint32_t i=0;i<count;++i) triangles+=values[i];
+  if(record!=nullptr) {
+    uint64_t triangles=0;
+    bool ok=success && valid;
+    if(ok && count>0) {
+      uint64_t values[MaxQueries]={};
+      ok=vkGetQueryPoolResults(device,pool,0,count,sizeof(uint64_t)*count,values,sizeof(uint64_t),
+                               VK_QUERY_RESULT_64_BIT)==VK_SUCCESS;
+      for(uint32_t i=0;i<count;++i) triangles+=values[i];
+      }
+    FrameProfile::geometryCompleted(record,triangles,ok);
+    record=nullptr;
     }
-  FrameProfile::geometryCompleted(record,triangles,success && valid);
-  record=nullptr;
+
+  // The fence has signalled: the results are read without waiting, like the statistics above.
+  uint64_t ticks[MaxTimestamps]={};
+  const bool timed=success && timestamps!=VK_NULL_HANDLE && timestampCount>=2 &&
+                   vkGetQueryPoolResults(device,timestamps,0,timestampCount,sizeof(uint64_t)*timestampCount,ticks,
+                                         sizeof(uint64_t),VK_QUERY_RESULT_64_BIT)==VK_SUCCESS;
+  if(gpuRecord!=nullptr) {
+    uint64_t ns=0;
+    const bool ok=timed && span(ticks,0,ns);
+    FrameProfile::gpuCompletedNs(gpuRecord,ns,ok);
+    gpuRecord=nullptr;
+    }
+  if(passRecord!=nullptr) {
+    std::vector<FrameProfile::GpuPass> out;
+    out.reserve(regions.size());
+    for(const auto& r:regions) {
+      FrameProfile::GpuPass pass;
+      pass.type          = r.drawCalls>0 ? "render" : "compute";
+      pass.labels        = r.label.empty() ? "unlabelled" : r.label;
+      pass.drawCalls     = r.drawCalls;
+      pass.dispatchCalls = r.dispatchCalls;
+      pass.valid         = timed && r.timed && span(ticks,r.first,pass.gpuNs);
+      if(!pass.valid)
+        pass.gpuNs=0;
+      out.emplace_back(std::move(pass));
+      }
+    FrameProfile::gpuPassesCompleted(passRecord,std::move(out));
+    passRecord=nullptr;
+    }
+  }
+
+void VCommandBuffer::profileBegin() {
+  static const bool passTiming=[] {
+    const auto* value=std::getenv("OPENGOTHIC_GPU_PASSES");
+    return value!=nullptr && std::strcmp(value,"1")==0;
+    }();
+  if(!FrameProfile::enabled()) {
+    profileQueries.reset();
+    return;
+    }
+  // A fence still owning the previous object reads it on completion: never record into it.
+  if(profileQueries==nullptr || profileQueries.use_count()!=1) {
+    auto query=std::make_shared<VFrameProfileQueries>();
+    query->device=device.device.impl;
+    if(device.profilePipelineStatistics) {
+      VkQueryPoolCreateInfo info={};
+      info.sType=VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+      info.queryType=VK_QUERY_TYPE_PIPELINE_STATISTICS;
+      info.queryCount=VFrameProfileQueries::MaxQueries;
+      // Counts GPU-generated indirect/mesh/tessellated triangles as they reach clipping.
+      info.pipelineStatistics=VK_QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS_BIT;
+      vkAssert(vkCreateQueryPool(device.device.impl,&info,nullptr,&query->pool));
+      }
+    if(device.profileTimestampBits>0) {
+      VkQueryPoolCreateInfo info={};
+      info.sType=VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+      info.queryType=VK_QUERY_TYPE_TIMESTAMP;
+      info.queryCount=VFrameProfileQueries::MaxTimestamps;
+      vkAssert(vkCreateQueryPool(device.device.impl,&info,nullptr,&query->timestamps));
+      query->timestampMask  =device.profileTimestampBits>=64 ? ~uint64_t(0) : ((uint64_t(1)<<device.profileTimestampBits)-1);
+      query->timestampPeriod=device.profileTimestampPeriod;
+      }
+    profileQueries=std::move(query);
+    }
+  auto& query=*profileQueries;
+  query.count=0;
+  query.active=false;
+  query.valid=true;
+  query.passes=passTiming;
+  query.regions.clear();
+  query.region=size_t(-1);
+  query.record=query.gpuRecord=query.passRecord=nullptr;
+  query.timestampCount=0;
+  if(query.pool!=VK_NULL_HANDLE)
+    vkCmdResetQueryPool(impl,query.pool,0,VFrameProfileQueries::MaxQueries);
+  if(query.timestamps!=VK_NULL_HANDLE) {
+    vkCmdResetQueryPool(impl,query.timestamps,0,VFrameProfileQueries::MaxTimestamps);
+    query.timestampCount=2;
+    profileTimestamp(0);
+    }
+  }
+
+void VCommandBuffer::profileTimestamp(uint32_t id) {
+  // Bottom of pipe: written once all earlier work of the queue is done, so a region reads
+  // from the end of the previous work to the end of its own.
+  vkCmdWriteTimestamp(impl,VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,profileQueries->timestamps,id);
+  }
+
+void VCommandBuffer::profileRegion(std::string_view tag) {
+  if(profileQueries==nullptr || !profileQueries->passes)
+    return;
+  auto& query=*profileQueries;
+  if(query.region!=size_t(-1)) {
+    const auto& r=query.regions[query.region];
+    if(r.timed)
+      profileTimestamp(r.first+1);
+    query.region=size_t(-1);
+    }
+  if(tag.empty())
+    return;
+  VFrameProfileQueries::Region r;
+  r.label=std::string(tag);
+  r.first=query.timestampCount;
+  r.timed=query.timestamps!=VK_NULL_HANDLE && query.timestampCount+2<=VFrameProfileQueries::MaxTimestamps;
+  if(r.timed) {
+    query.timestampCount+=2;
+    profileTimestamp(r.first);
+    }
+  query.region=query.regions.size();
+  query.regions.emplace_back(std::move(r));
+  }
+
+void VCommandBuffer::profileDispatch() {
+  if(profileQueries!=nullptr && profileQueries->region!=size_t(-1))
+    ++profileQueries->regions[profileQueries->region].dispatchCalls;
   }
 
 void VCommandBuffer::profileDraw() {
   FrameProfile::add(FrameProfile::Amount::DrawCalls,1);
   if(profileQueries==nullptr) return;
   auto& query=*profileQueries;
+  if(query.region!=size_t(-1))
+    ++query.regions[query.region].drawCalls;
+  if(query.pool==VK_NULL_HANDLE) return;
   const bool triangles=curDrawPipeline!=nullptr && curDrawPipeline->tp==Topology::Triangles;
   if(query.active && !triangles) {
     vkCmdEndQuery(impl,query.pool,query.count-1);
@@ -136,11 +269,17 @@ static void toStage(VDevice& dev, VkPipelineStageFlags& stage, VkAccessFlags& ac
     }
 
   if(dev.props.raytracing.rayQuery) {
+    // ray queries of compute and graphics shaders read the TLAS a build wrote in this command buffer
+    if((rs&SyncStage::ComputeRead)==SyncStage::ComputeRead)
+      acc |= VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+    if((rs&SyncStage::GraphicsRead)==SyncStage::GraphicsRead)
+      acc |= VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
     if((rs&SyncStage::RtAsRead)==SyncStage::RtAsRead) {
       ret |= VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
       ret |= VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT;
       ret |= VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
       acc |= VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+      acc |= VK_ACCESS_SHADER_READ_BIT; // instances and other inputs of a build
       }
     if((rs&SyncStage::RtAsWrite)==SyncStage::RtAsWrite) {
       ret |= VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
@@ -263,24 +402,7 @@ void VCommandBuffer::begin(SyncHint hint) {
     vkAssert(vkBeginCommandBuffer(impl,&beginInfo));
     }
 #if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
-  if(FrameProfile::enabled() && device.profilePipelineStatistics) {
-    if(profileQueries==nullptr) {
-      auto query=std::make_shared<VFrameProfileQueries>();
-      query->device=device.device.impl;
-      VkQueryPoolCreateInfo info={};
-      info.sType=VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
-      info.queryType=VK_QUERY_TYPE_PIPELINE_STATISTICS;
-      info.queryCount=VFrameProfileQueries::MaxQueries;
-      // Counts GPU-generated indirect/mesh/tessellated triangles as they reach clipping.
-      info.pipelineStatistics=VK_QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS_BIT;
-      vkAssert(vkCreateQueryPool(device.device.impl,&info,nullptr,&query->pool));
-      profileQueries=std::move(query);
-      }
-    profileQueries->count=0;
-    profileQueries->active=false;
-    profileQueries->valid=true;
-    vkCmdResetQueryPool(impl,profileQueries->pool,0,VFrameProfileQueries::MaxQueries);
-    }
+  profileBegin();
 #endif
   }
 
@@ -293,8 +415,15 @@ void VCommandBuffer::end() {
     device.vkCmdDebugMarkerEnd(impl);
     isDbgRegion = false;
     }
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  profileRegion("");
+#endif
   swapchainSync.reserve(swapchainSync.size());
   resState.finalize(*this);
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  if(profileQueries!=nullptr && profileQueries->timestamps!=VK_NULL_HANDLE)
+    profileTimestamp(1);
+#endif
   state = NoRecording;
 
   pushChunk();
@@ -474,6 +603,9 @@ void VCommandBuffer::dispatch(size_t x, size_t y, size_t z) {
   implSetPushData(PipelineStage::S_Compute);
   resState.onUavUsage(bindings.read, bindings.write, PipelineStage::S_Compute, bindings.host);
   resState.flush(*this);
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  profileDispatch();
+#endif
   vkCmdDispatch(impl,uint32_t(x),uint32_t(y),uint32_t(z));
   }
 
@@ -487,6 +619,9 @@ void VCommandBuffer::dispatchIndirect(const AbstractGraphicsApi::Buffer& indirec
   resState.onUavUsage(ind.nonUniqId, NonUniqResId::I_None, PipelineStage::S_Indirect);
   resState.flush(*this);
 
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  profileDispatch();
+#endif
   vkCmdDispatchIndirect(impl, ind.impl, VkDeviceSize(offset));
   }
 
@@ -537,7 +672,7 @@ void VCommandBuffer::handleSync(const ShaderReflection::LayoutDesc& lay, const S
       case ShaderReflection::Tlas: {
         //NOTE: Tlas tracking is not really implemented
         assert((bindings.array & (1u << i))==0);
-        nonUniqId = reinterpret_cast<VAccelerationStructure*>(data)->data.nonUniqId;
+        nonUniqId = reinterpret_cast<VTopAccelerationStructure*>(data)->data.nonUniqId;
         break;
         }
       case ShaderReflection::Sampler:
@@ -811,6 +946,9 @@ void VCommandBuffer::setDebugMarker(std::string_view tag) {
     device.vkCmdDebugMarkerEnd(impl);
     isDbgRegion = false;
     }
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  profileRegion(tag);
+#endif
 
   if(!tag.empty()) {
     char buf[128] = {};
@@ -1011,16 +1149,25 @@ void VCommandBuffer::buildBlas(VkAccelerationStructureKHR dest, AbstractGraphics
   device.vkCmdBuildAccelerationStructures(impl, 1, &buildGeometryInfo, &pbuildRangeInfo);
   }
 
+void VCommandBuffer::buildTlas(AbstractGraphicsApi::AccelerationStructure& as, const AbstractGraphicsApi::Buffer* instances, size_t count) {
+  auto& tlas = reinterpret_cast<VTopAccelerationStructure&>(as);
+  assert(count<=tlas.capacity);
+  buildTlas(tlas.impl, tlas.data, instances, uint32_t(count), tlas.scratch);
+  // Work is recorded: a render pass begins a chunk of its own, and its barriers go ahead of it, after the build
+  if(state==Idle)
+    state = Compute;
+  }
+
 void VCommandBuffer::buildTlas(VkAccelerationStructureKHR dest,
                                AbstractGraphicsApi::Buffer& tbo,
-                               const AbstractGraphicsApi::Buffer& instances, uint32_t numInstances,
+                               const AbstractGraphicsApi::Buffer* instances, uint32_t numInstances,
                                AbstractGraphicsApi::Buffer& scratch) {
   VkAccelerationStructureGeometryInstancesDataKHR geometryInstancesData = {};
   geometryInstancesData.sType                 = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
   geometryInstancesData.pNext                 = NULL;
   geometryInstancesData.arrayOfPointers       = VK_FALSE;
-  if(numInstances>0)
-    geometryInstancesData.data.deviceAddress  = reinterpret_cast<const VBuffer&>(instances).toDeviceAddress(device);
+  if(numInstances>0 && instances!=nullptr)
+    geometryInstancesData.data.deviceAddress  = reinterpret_cast<const VBuffer*>(instances)->toDeviceAddress(device);
 
   VkAccelerationStructureGeometryKHR geometry = {};
   geometry.sType                              = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
@@ -1048,8 +1195,10 @@ void VCommandBuffer::buildTlas(VkAccelerationStructureKHR dest,
   buildRangeInfo.firstVertex                  = 0;
   buildRangeInfo.transformOffset              = 0;
 
-  // make sure TLAS is ready
-  resState.onUavUsage(NonUniqResId::I_None, reinterpret_cast<const VBuffer&>(tbo).nonUniqId, PipelineStage::S_RtAs);
+  // Wait for the writers of the instances and for the readers of the structure and its scratch: one id covers both,
+  // the scratch belongs to this structure alone. A ray query that binds the structure later waits for this build.
+  const NonUniqResId read = instances!=nullptr ? reinterpret_cast<const VBuffer*>(instances)->nonUniqId : NonUniqResId::I_None;
+  resState.onUavUsage(read, reinterpret_cast<const VBuffer&>(tbo).nonUniqId, PipelineStage::S_RtAs);
   resState.flush(*this);
 
   VkAccelerationStructureBuildRangeInfoKHR* pbuildRangeInfo = &buildRangeInfo;

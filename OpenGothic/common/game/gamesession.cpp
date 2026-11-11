@@ -242,7 +242,7 @@ void GameSession::save(Serialize &fout, std::string_view name, const Pixmap& scr
   }
   hdr.wrldTime  = wrldTime;
   hdr.playTime  = ticks;
-  hdr.isGothic2 = Gothic::inst().version().game;
+  hdr.isGothic2 = 2;
 
   fout.setEntry("header");
   fout.write(hdr);
@@ -320,10 +320,6 @@ void GameSession::changeWorld(std::string_view world, std::string_view wayPoint)
 
 void GameSession::exitSession() {
   exitSessionFlg=true;
-  }
-
-const VersionInfo& GameSession::version() const {
-  return Gothic::inst().version();
   }
 
 WorldView *GameSession::view() const {

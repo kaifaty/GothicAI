@@ -29,7 +29,7 @@
 using namespace Tempest;
 using storygraph::ExprP;
 using storygraph::Expr;
-using zenkit::DaedalusDataType;
+using daedalus::DaedalusDataType;
 
 namespace {
 
@@ -62,9 +62,9 @@ DialogGraph::DialogGraph(std::function<void(std::string&&)> send,
   running  = exec==nullptr || std::string_view(exec)!="0";
 
   auto& g = Gothic::inst();
-  g.dialogFilterFn       = [this](const zenkit::IInfo& info, bool& visible) { onFilter(info,visible); };
-  g.dialogChoiceFilterFn = [this](const zenkit::IInfo& info, int32_t fn) { return onChoiceFilter(info,fn); };
-  g.dialogExtraFn        = [this](const zenkit::INpc& npc, bool important, std::vector<GameScript::DlgChoice>& out) {
+  g.dialogFilterFn       = [this](const daedalus::IInfo& info, bool& visible) { onFilter(info,visible); };
+  g.dialogChoiceFilterFn = [this](const daedalus::IInfo& info, int32_t fn) { return onChoiceFilter(info,fn); };
+  g.dialogExtraFn        = [this](const daedalus::INpc& npc, bool important, std::vector<GameScript::DlgChoice>& out) {
     onExtra(npc,important,out);
     };
   g.dialogExtraExecFn    = [this](const GameScript::DlgChoice& dlg, Npc& player, Npc& npc) { onExec(dlg,player,npc); };
@@ -72,7 +72,7 @@ DialogGraph::DialogGraph(std::function<void(std::string&&)> send,
     onChoices(dlg,out);
     };
   g.onDialogChosen.bind(this,&DialogGraph::onChosen);
-  g.dialogScriptFn       = [this](zenkit::DaedalusSymbol& fn, int32_t& result) { return onScript(fn,result); };
+  g.dialogScriptFn       = [this](daedalus::DaedalusSymbol& fn, int32_t& result) { return onScript(fn,result); };
   // a choice step of a program: the dialog of the director that runs offers it
   rt.choices = [this](const storygraph::Step& s) {
     if(runningOwn.empty())
@@ -312,11 +312,11 @@ std::string DialogGraph::readNode(const rapidjson::Value& v, Node& n) {
   return {};
   }
 
-zenkit::DaedalusSymbol* DialogGraph::functionOf(zenkit::DaedalusVm& v, const std::string& node, bool condition,
+daedalus::DaedalusSymbol* DialogGraph::functionOf(daedalus::DaedalusVm& v, const std::string& node, bool condition,
                                                 std::string& error) const {
   auto* s = v.find_symbol_by_name(node);
-  if(s!=nullptr && s->type()==DaedalusDataType::INSTANCE && s->is_instance_of<zenkit::IInfo>()) {
-    auto* info = reinterpret_cast<zenkit::IInfo*>(s->get_instance().get());
+  if(s!=nullptr && s->type()==DaedalusDataType::INSTANCE && s->is_instance_of<daedalus::IInfo>()) {
+    auto* info = reinterpret_cast<daedalus::IInfo*>(s->get_instance().get());
     auto* fn   = info!=nullptr ? v.find_symbol_by_index(uint32_t(condition ? info->condition : info->information))
                                : nullptr;
     if(fn==nullptr || fn->type()!=DaedalusDataType::FUNCTION || fn->is_external()) {
@@ -331,7 +331,7 @@ zenkit::DaedalusSymbol* DialogGraph::functionOf(zenkit::DaedalusVm& v, const std
   return nullptr;
   }
 
-const storygraph::Program* DialogGraph::replacedProgram(zenkit::DaedalusVm& v, uint32_t fn) {
+const storygraph::Program* DialogGraph::replacedProgram(daedalus::DaedalusVm& v, uint32_t fn) {
   if(replacedFor!=&v) {
     replacedFns.clear();
     for(auto& [key,r] : replaced) {
@@ -353,7 +353,7 @@ const storygraph::Program* DialogGraph::replacedProgram(zenkit::DaedalusVm& v, u
   return it!=replacedFns.end() ? it->second : nullptr;
   }
 
-void DialogGraph::check(const zenkit::IInfo& info, bool visible) {
+void DialogGraph::check(const daedalus::IInfo& info, bool visible) {
   auto* v = vm();
   if(v==nullptr || info.condition==0)
     return;
@@ -381,7 +381,7 @@ void DialogGraph::check(const zenkit::IInfo& info, bool visible) {
     }
   }
 
-void DialogGraph::onFilter(const zenkit::IInfo& info, bool& visible) {
+void DialogGraph::onFilter(const daedalus::IInfo& info, bool& visible) {
   if(checking)
     check(info,visible);
   if(disabled.empty() && conditions.empty())
@@ -409,7 +409,7 @@ void DialogGraph::onFilter(const zenkit::IInfo& info, bool& visible) {
     }
   }
 
-bool DialogGraph::onChoiceFilter(const zenkit::IInfo&, int32_t fn) {
+bool DialogGraph::onChoiceFilter(const daedalus::IInfo&, int32_t fn) {
   if(disabled.empty())
     return true;
   auto* v   = vm();
@@ -417,7 +417,7 @@ bool DialogGraph::onChoiceFilter(const zenkit::IInfo&, int32_t fn) {
   return sym==nullptr || disabled.count(sym->name())==0;
   }
 
-void DialogGraph::onExtra(const zenkit::INpc& npc, bool important, std::vector<GameScript::DlgChoice>& out) {
+void DialogGraph::onExtra(const daedalus::INpc& npc, bool important, std::vector<GameScript::DlgChoice>& out) {
   if(nodes.empty())
     return;
   auto* v   = vm();
@@ -518,7 +518,7 @@ void DialogGraph::onChoices(const GameScript::DlgChoice& dlg, std::vector<GameSc
     }
   }
 
-storygraph::Interpreter& DialogGraph::interpreter(zenkit::DaedalusVm& v) {
+storygraph::Interpreter& DialogGraph::interpreter(daedalus::DaedalusVm& v) {
   auto& interp = rt.interpreter(v);
   if(programsFor==&v)
     return interp;
@@ -527,7 +527,7 @@ storygraph::Interpreter& DialogGraph::interpreter(zenkit::DaedalusVm& v) {
   return interp;
   }
 
-bool DialogGraph::onScript(zenkit::DaedalusSymbol& fn, int32_t& result) {
+bool DialogGraph::onScript(daedalus::DaedalusSymbol& fn, int32_t& result) {
   auto* v = vm();
   if(v==nullptr || (!running && replaced.empty()))
     return false;

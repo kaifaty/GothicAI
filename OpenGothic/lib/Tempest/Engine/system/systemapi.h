@@ -69,6 +69,10 @@ class SystemApi {
     static void     addOverlay (UiOverlay* ui);
     static void     takeOverlay(UiOverlay* ui);
 
+    // TEMPEST_OFFSCREEN=1 on Linux (Vulkan): windows have no X window, their client area is TEMPEST_WINDOW_SIZE;
+    // nothing opens the display, the graphics device presents nothing and the application draws into its own image
+    static bool     isOffscreen();
+
   protected:
     struct AppCallBack {
       virtual ~AppCallBack()=default;

@@ -158,9 +158,9 @@ struct Totals final {
     }
   };
 
-void replay(const std::string& path,uint64_t limit,Totals& totals) {
+void replay(const std::string& path,uint64_t limit,bool bodyExit,Totals& totals) {
   Episode episode(path);
-  NavMemoryTeacher teacher;teacher.reset();
+  NavMemoryTeacher teacher;teacher.reset();teacher.setBodyExit(bodyExit);
   Observation observation;
   std::vector<uint8_t> bytes;
   NpcKeys::KeyState last;
@@ -392,6 +392,58 @@ void selfTest() {
           "raw-start escape tunneled through danger outside the initial body footprint");
   noNativeAction(keys);++tests;
 
+  // The body testifies: it walked 1 m forward over remembered free ground, then
+  // stale walls appeared over its footprint and the last metre of its track.
+  // Without the body exit no start exists within 1 m and the teacher stands
+  // for good; with it, the teacher steps back along its own track (no turn).
+  for(const bool bodyExit:{false,true}) {
+    teacher.reset();teacher.setBodyExit(bodyExit);
+    input=target(0,1);
+    for(auto& cell:input.near) { cell.channels[0]=255;cell.channels[1]=255; }
+    input.body.velocityCmS={0,0,120};input.previous.forward=1;
+    for(unsigned tick=0;tick<9;++tick) keys=teacher.decide(input);
+    for(int z=29;z<40;++z)for(int x=24;x<40;++x) hazard(input,x,z);
+    input.body.velocityCmS={0,0,0};
+    keys=teacher.decide(input);
+    const auto status=teacher.lastPlanStatus();
+    require(!status.startFound && status.escapeRequired,"a walled-in start must have no start cell");
+    if(bodyExit)
+      require(teacher.lastBranch()==NavMemoryTeacher::Branch::BodyExit && keys.forward<0 && keys.strafe==0 &&
+              keys.turn==0 && status.bodyExitCm>75.f,"a walled-in start did not step back along its own track");
+    else
+      require(teacher.lastBranch()==NavMemoryTeacher::Branch::StartNotFound && keys.forward==0 &&
+              keys.strafe==0 && keys.turn==0,"without the body exit a walled-in start must stand");
+    noNativeAction(keys);++tests;
+    }
+  // A ring of walls one cell from the feet, open by a single cell to the right:
+  // the 15-cm margin closes that 25-cm gap, the 8.2-cm body passes it.
+  for(const bool bodyExit:{false,true}) {
+    input=target(0,1);
+    for(int z=30;z<=33;++z)for(int x=30;x<=33;++x)
+      if((x==30 || x==33 || z==30 || z==33) && !(x==33 && z==32)) hazard(input,x,z);
+    teacher.reset();teacher.setBodyExit(bodyExit);keys=teacher.decide(input);
+    const auto status=teacher.lastPlanStatus();
+    require(!status.startFound && !status.escapeRequired,"the ring must leave no start for the 15-cm margin");
+    require(bodyExit ? keys.strafe>0 && keys.forward==0 && keys.turn==0 : keys.forward==0 && keys.strafe==0,
+            "the body exit did not take the one-cell gap, or the old teacher moved");
+    noNativeAction(keys);++tests;
+    if(!bodyExit) continue;
+    // The gap is shut by something memory does not hold: the step pushes without
+    // moving the body. After three such decisions the body testifies that way
+    // closed, and with no other exit the teacher stands rather than push on.
+    input.previous=keys;
+    for(unsigned tick=0;tick<2;++tick) {
+      keys=teacher.decide(input);
+      require(keys.strafe>0,"the body exit gave up the gap before three pushes");
+      input.previous=keys;
+      }
+    keys=teacher.decide(input);
+    require(teacher.lastBranch()==NavMemoryTeacher::Branch::StartNotFound && keys.forward==0 && keys.strafe==0,
+            "a refused exit step was pushed again");
+    noNativeAction(keys);++tests;
+    }
+  teacher.setBodyExit(true);
+
   // Staggered 75-cm openings retain a 35-cm diagonal throat: the 15-cm
   // margin passes it, while 30-cm inflation legitimately closes that throat.
   input=target(0,1);
@@ -586,10 +638,16 @@ int main(int argc,char** argv) {
       selfTest();return 0;
       }
     uint64_t limit=std::numeric_limits<uint64_t>::max();
+    // Recordings made before the body exit (2026-11-04) replay with --body-exit off.
+    bool bodyExit=true;
     std::vector<std::string> paths;
     for(int i=1;i<argc;++i) {
       const std::string argument=argv[i];
-      if(argument=="--limit") {
+      if(argument=="--body-exit") {
+        require(i+1<argc && (std::string(argv[i+1])=="on" || std::string(argv[i+1])=="off"),"--body-exit on|off");
+        bodyExit=std::string(argv[++i])=="on";
+        }
+      else if(argument=="--limit") {
         require(i+1<argc,"missing --limit value");
         const std::string value=argv[++i];
         size_t consumed=0;
@@ -604,13 +662,13 @@ int main(int argc,char** argv) {
       }
     if(paths.empty()) {
       std::cerr<<"usage: gothic-navmemoryteacher-contract --self-test\n"
-               <<"       gothic-navmemoryteacher-contract [--limit N] samples.bin.gz [other files...]\n";
+               <<"       gothic-navmemoryteacher-contract [--limit N] [--body-exit on|off] samples.bin.gz [other files...]\n";
       return 2;
       }
     Totals totals;
     for(const auto& path:paths) {
       if(totals.records>=limit) break;
-      replay(path,limit,totals);
+      replay(path,limit,bodyExit,totals);
       }
     require(totals.records>0,"no recorded teacher decisions");
     totals.json();

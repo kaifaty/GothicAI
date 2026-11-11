@@ -4,6 +4,7 @@
 #include "resources.h"
 #include "game/gamescript.h"
 #include "game/gamesession.h"
+#include "physics/dynamicworld.h"
 #include "world/objects/interactive.h"
 #include "world/objects/npc.h"
 #include "world/waypoint.h"
@@ -18,6 +19,7 @@
 #include <cstdio>
 #include <cstring>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <tuple>
 #include <unordered_map>
@@ -81,6 +83,125 @@ std::string symbolName(World& world, size_t symbol) {
   return sym!=nullptr ? std::string(sym->name()) : std::to_string(symbol);
   }
 
+bool npcSymbol(World& world, daedalus::DaedalusSymbol* s) {
+  if(s==nullptr)
+    return false;
+  auto* cls = s;
+  for(size_t i=0; i<16 && cls!=nullptr && cls->type()!=daedalus::DaedalusDataType::CLASS; ++i)
+    cls = world.script().findSymbol(size_t(cls->parent()));
+  return cls!=nullptr && cls->name()=="C_NPC";
+  }
+
+std::vector<std::string> npcInstances(World& world) {
+  std::vector<std::string> ret;
+  for(const auto& s:world.script().getVm().symbols())
+    if(s.type()==daedalus::DaedalusDataType::INSTANCE && s.is_const() &&
+       npcSymbol(world,world.script().findSymbol(s.index())))
+      ret.push_back(s.name());
+  std::sort(ret.begin(),ret.end());
+  return ret;
+  }
+
+struct RoomOwner {
+  std::string npc, name, ambiguous;
+  };
+
+RoomOwner resolveOwner(World& world, std::string_view name, const std::vector<std::string>& instances) {
+  auto* s = world.script().findSymbol(name);
+  if(s!=nullptr && s->type()==daedalus::DaedalusDataType::INSTANCE && npcSymbol(world,s)) {
+    // The alias's handle carries the actual C_NPC instance, rather than the variable's symbol index.
+    if(s->is_instance_of<daedalus::INpc>()) {
+      const auto id = symbolName(world,s->get_instance()->symbol_index());
+      if(std::binary_search(instances.begin(),instances.end(),id))
+        return {id,std::string(name),{}};
+      }
+    if(s->is_const())
+      return {s->name(),std::string(name),{}};
+    }
+  RoomOwner ret;
+  for(const auto& id:instances) {
+    // A short name omits the prefix and numeric character id (VLK_409_ZURIS).
+    // An archetype such as GIANT_BUG does not have the short name BUG.
+    const std::string_view full = id;
+    const auto first = full.find('_');
+    const auto second = first==std::string_view::npos ? first : full.find('_',first+1);
+    if(first==0 || second==std::string_view::npos || second==first+1)
+      continue;
+    const auto serial = full.substr(first+1,second-first-1);
+    if(!std::all_of(serial.begin(),serial.end(),[](char c) { return '0'<=c && c<='9'; }) || full.substr(second+1)!=name)
+      continue;
+    if(ret.npc.empty())
+      ret.npc = id;
+    else {
+      if(ret.ambiguous.empty())
+        ret.ambiguous = ret.npc;
+      ret.ambiguous += ", "+id;
+      }
+    }
+  if(!ret.npc.empty())
+    ret.name = name;
+  if(!ret.ambiguous.empty())
+    ret.npc.clear();
+  return ret;
+  }
+
+// As HeroDeed, prefer the longest owner name after ':'; canonicalize aliases and unique short names for the stand.
+RoomOwner resolveRoomOwner(World& world, std::string_view room, const std::vector<std::string>& instances) {
+  const auto colon = room.find(':');
+  const auto name = colon==std::string_view::npos ? room : room.substr(colon+1);
+  for(size_t end=name.size(); end!=std::string_view::npos;) {
+    auto owner = resolveOwner(world,name.substr(0,end),instances);
+    if(!owner.npc.empty() || !owner.ambiguous.empty())
+      return owner;
+    if(end==0)
+      break;
+    end = name.rfind('_',end-1);
+    }
+  return {{},std::string(name.substr(0,name.find('_'))),{}};
+  }
+
+struct RoomGuild {
+  int32_t id = -1;
+  std::string name, unresolved;
+  };
+
+RoomGuild resolveRoomGuild(World& world, std::string_view room, bool npcOwner) {
+  const auto colon = room.find(':');
+  // guildOfRoom expects portal syntax even when roomAt returned a bare BSP sector name.
+  const auto native = colon==std::string_view::npos ? "S:"+std::string(room)+"_" : std::string(room);
+  const auto assigned = world.guildOfRoom(native);
+  // PAL_200_HAGEN names a private NPC, not the guild GIL_PAL.
+  if(npcOwner)
+    return {assigned,{},{}};
+  const auto name = colon==std::string_view::npos ? room : room.substr(colon+1);
+  auto* max = world.script().findSymbol("GIL_MAX");
+  for(size_t end=name.size(); end!=std::string_view::npos;) {
+    const auto part = name.substr(0,end);
+    const auto key = part.starts_with("GIL_") ? std::string(part) : "GIL_"+std::string(part);
+    auto* sym = world.script().findSymbol(key);
+    if(sym!=nullptr && sym->type()==daedalus::DaedalusDataType::INT && sym->is_const() &&
+       sym->get_int()>=0 && max!=nullptr && sym->get_int()<max->get_int())
+      return {sym->get_int(),key,{}};
+    if(end==0)
+      break;
+    end = name.rfind('_',end-1);
+    }
+  if(name.starts_with("GIL_"))
+    return {-1,{},std::string(name)};
+  // Otherwise this is a native room assignment (Wld_AssignRoomToGuild), already a numeric script guild.
+  return {assigned,{},{}};
+  }
+
+std::string roomAt(World& world, const Tempest::Vec3& pos) {
+  // HeroDeed's ownership-position query: native ground first, BSP sector as fallback. Only S:/P:
+  // materials name rooms; an ordinary outdoor ground material must not become a room in the export.
+  const auto ground = world.physic()->landRay(pos+Tempest::Vec3(0,50,0),500);
+  const std::string_view sector = ground.hasCol && ground.sector!=nullptr ? ground.sector : "";
+  if(sector.starts_with("S:") || sector.starts_with("P:"))
+    return std::string(sector);
+  return std::string(world.roomAt(pos));
+  }
+
 int minuteOfDay(const gtime& t) {
   return int(t.hour()*60+t.minute());
   }
@@ -90,6 +211,28 @@ double median(std::vector<double> v) {
     return 0;
   std::sort(v.begin(),v.end());
   return v[v.size()/2];
+  }
+
+// The monster schedule (G2 scripts): ZS_MM_AllScheduler starts the first of these states whose aivar hours hold the
+// time of day (Wld_IsTime(start,0,end,0)) or whose start is OnlyRoutine (-1). The export names the state and carries
+// the two aivar values; the order is the order of the scheduler's checks.
+struct MmWindow { const char* state; const char* start; const char* end; };
+constexpr MmWindow MmSchedule[] = {
+  {"ZS_MM_RTN_SLEEP",     "AIV_MM_SLEEPSTART",     "AIV_MM_SLEEPEND"},
+  {"ZS_MM_RTN_REST",      "AIV_MM_RESTSTART",      "AIV_MM_RESTEND"},
+  {"ZS_MM_RTN_ROAM",      "AIV_MM_ROAMSTART",      "AIV_MM_ROAMEND"},
+  {"ZS_MM_RTN_EATGROUND", "AIV_MM_EATGROUNDSTART", "AIV_MM_EATGROUNDEND"},
+  {"ZS_MM_RTN_WUSEL",     "AIV_MM_WUSELSTART",     "AIV_MM_WUSELEND"},
+  {"ZS_MM_RTN_ORCSIT",    "AIV_MM_ORCSITSTART",    "AIV_MM_ORCSITEND"},
+  };
+constexpr const char* MmScheduler = "ZS_MM_ALLSCHEDULER";
+
+// The aivar index a script constant names; the export fails when the scripts have no such constant.
+size_t aivarIndex(World& world, const char* name) {
+  auto* sym = world.script().findSymbol(name);
+  if(sym==nullptr || sym->get_int()<0 || size_t(sym->get_int())>=daedalus::INpc::aivar_count)
+    throw std::runtime_error(std::string("society export: the scripts have no aivar constant ")+name);
+  return size_t(sym->get_int());
   }
 
 struct Records {
@@ -127,7 +270,14 @@ Result build(World& world) {
     return *id;
     };
 
-  Records waypoints, edges, objects, npcs;
+  Records waypoints, edges, objects, npcs, rooms;
+  std::set<std::string> roomNames;
+  const auto writeRoom = [&](Writer& w, const Tempest::Vec3& at) {
+    const auto room = roomAt(world,at);
+    optionalText(w,room);
+    if(!room.empty())
+      roomNames.insert(room);
+    };
   size_t freepoints = 0;
   for(size_t i=0; i<points.size(); ++i) {
     const auto& p  = *points[i];
@@ -137,6 +287,7 @@ Result build(World& world) {
     w.Key("id");            w.Uint(uint32_t(i));
     w.Key("name");          text(w,p.name);
     w.Key("pos");           position(w,p.position());
+    w.Key("room");          writeRoom(w,p.position());
     w.Key("freepoint");     w.Bool(fp);
     w.Key("near_waypoint"); optionalId(w,fp ? std::optional<uint32_t>(nearestGraph(p.position())) : std::nullopt);
     w.EndObject();
@@ -179,6 +330,7 @@ Result build(World& world) {
     w.Key("scheme");      text(w,m.schemeName());
     w.Key("focus");       text(w,m.focusName());
     w.Key("pos");         position(w,mobs[i].pos);
+    w.Key("room");        writeRoom(w,mobs[i].pos);
     w.Key("waypoint");    w.Uint(nearestGraph(mobs[i].pos));
     w.Key("owner_npc");   optionalText(w,ownerNpc);
     w.Key("owner_guild"); optionalText(w,ownerGuild);
@@ -187,6 +339,33 @@ Result build(World& world) {
     objects.add(b);
     containers += m.isContainer() ? 1 : 0;
     owned      += !ownerNpc.empty() || !ownerGuild.empty() ? 1 : 0;
+    }
+
+  const auto instances = npcInstances(world);
+  for(const auto& room:roomNames) {
+    const auto owner = resolveRoomOwner(world,room,instances);
+    const auto guild = resolveRoomGuild(world,room,!owner.npc.empty() || !owner.ambiguous.empty());
+    if(!owner.npc.empty())
+      std::fprintf(stderr,"society room npc: %s -> %s\n",room.c_str(),owner.npc.c_str());
+    else if(!owner.ambiguous.empty())
+      std::fprintf(stderr,"society room npc ambiguous: %s -> %s -> %s\n",room.c_str(),owner.name.c_str(),owner.ambiguous.c_str());
+    else if(guild.name.empty())
+      std::fprintf(stderr,"society room npc missing: %s -> %s\n",room.c_str(),owner.name.c_str());
+    if(!guild.name.empty())
+      std::fprintf(stderr,"society room guild: %s -> %s -> %d\n",room.c_str(),guild.name.c_str(),int(guild.id));
+    if(!guild.unresolved.empty())
+      std::fprintf(stderr,"society room guild unresolved: %s -> %s\n",room.c_str(),guild.unresolved.c_str());
+    Buffer b; Writer w(b);
+    w.StartObject();
+    w.Key("name");        text(w,room);
+    w.Key("owner_npc");   optionalText(w,owner.npc);
+    // A room assigned to a guild, not the guild of its private NPC owner; GIL_PUBLIC grants public access.
+    w.Key("owner_guild");
+    if(guild.id>GIL_NONE && guild.id!=GIL_PUBLIC)
+      w.Int(guild.id); else
+      w.Null();
+    w.EndObject();
+    rooms.add(b);
     }
 
   // NPCs ordered and keyed as the npc-day journal keys them (NpcDayJournal::start): the instance symbol,
@@ -202,7 +381,9 @@ Result build(World& world) {
     return std::tie(a.symbol,a.x,a.z,a.y,a.index)<std::tie(b.symbol,b.x,b.z,b.y,b.index);
     });
   std::vector<double> walk, run;
-  size_t people = 0, entries = 0, unresolved = 0;
+  size_t people = 0, entries = 0, unresolved = 0, aistates = 0, schedules = 0;
+  std::vector<std::pair<size_t,size_t>> mmAivars;
+  const auto scheduler = world.script().findSymbolIndex(MmScheduler);
   std::vector<std::string> startNearest;
   uint32_t ordinal = 0;
   for(size_t i=0; i<all.size(); ++i) {
@@ -226,6 +407,37 @@ Result build(World& world) {
     w.Key("guild");          w.Uint(npc.guild());
     w.Key("person");         w.Bool(person);
     w.Key("start_waypoint"); w.Uint(*start);
+    // The state Npc::tickRoutine starts when the NPC has no routine entry (daedalus::INpc::start_aistate), or null.
+    const auto aistate = npc.handle().start_aistate;
+    w.Key("start_aistate");
+    if(aistate!=0)
+      ascii(w,symbolName(world,size_t(aistate))); else
+      w.Null();
+    // This NPC's own walk speed, as movement.walk_cm_per_s is the median of; 0 without a walk animation.
+    const float walkSpeed = npc.simplifiedMoveSpeed(WalkBit::WM_Walk);
+    w.Key("walk_cm_per_s");  number(w,walkSpeed>0.f ? double(walkSpeed)*1000.0 : 0.0);
+    aistates += aistate!=0 ? 1 : 0;
+    // The hours of ZS_MM_AllScheduler for an NPC that starts with it: [state, start aivar, end aivar] in the order
+    // of its checks (MmSchedule); null for any other NPC.
+    w.Key("mm_schedule");
+    if(aistate!=0 && size_t(aistate)==scheduler) {
+      if(mmAivars.empty())
+        for(const auto& m:MmSchedule)
+          mmAivars.emplace_back(aivarIndex(world,m.start),aivarIndex(world,m.end));
+      const auto& aiv = npc.handle().aivar;
+      w.StartArray();
+      for(size_t k=0; k<mmAivars.size(); ++k) {
+        w.StartArray();
+        ascii(w,MmSchedule[k].state);
+        w.Int(aiv[mmAivars[k].first]);
+        w.Int(aiv[mmAivars[k].second]);
+        w.EndArray();
+        }
+      w.EndArray();
+      ++schedules;
+      } else {
+      w.Null();
+      }
     w.Key("routine");
     w.StartArray();
     npc.forEachRoutine([&](const Npc::RoutineInfo& r) {
@@ -273,7 +485,7 @@ Result build(World& world) {
   Buffer head; Writer w(head);
   w.StartObject();
   w.Key("format");           ascii(w,"society-world");
-  w.Key("version");          w.Int(1);
+  w.Key("version");          w.Int(3);
   w.Key("world");            text(w,world.name());
   w.Key("data_fingerprint"); ascii(w,fingerprint);
   w.Key("engine_commit");    ascii(w,OPENGOTHIC_ENGINE_COMMIT);
@@ -304,6 +516,7 @@ Result build(World& world) {
   list("waypoints",waypoints,false);
   list("edges",edges,false);
   list("objects",objects,false);
+  list("rooms",rooms,false);
   list("npcs",npcs,true);
 
   std::string nearest;
@@ -312,10 +525,11 @@ Result build(World& world) {
   char summary[512];
   std::snprintf(summary,sizeof(summary),
                 "waypoints=%zu (freepoints %zu) edges=%zu objects=%zu (containers %zu, owned %zu) npcs=%zu "
-                "(people %zu, routine entries %zu, unresolved points %zu, start by nearest point %zu) "
+                "(people %zu, routine entries %zu, unresolved points %zu, start by nearest point %zu, start_aistate %zu, "
+                "mm_schedule %zu) "
                 "walk=%.1f run=%.1f cm/s",
                 waypoints.count,freepoints,edges.count,objects.count,containers,owned,npcs.count,people,entries,
-                unresolved,startNearest.size(),median(walk),median(run));
+                unresolved,startNearest.size(),aistates,schedules,median(walk),median(run));
   ret.summary = std::string(summary)+(nearest.empty() ? "" : "; start by nearest point: "+nearest);
   return ret;
   }

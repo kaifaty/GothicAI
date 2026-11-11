@@ -193,7 +193,7 @@ std::string BodyEnginePolicy::process(const rapidjson::Value& row,uint64_t nowGa
   }
 
 std::string BodyEnginePolicy::report(bool force) {
-  const auto now=Clock::now();
+  const auto now=BodyClock::now();
   if(!force && now-reportAt<std::chrono::seconds(1)) return {};
   Json result(rapidjson::kObjectType);
   auto& a=result.GetAllocator();

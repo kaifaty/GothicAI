@@ -1,0 +1,16 @@
+Character concept turnaround sheet for a dark medieval fantasy game: the head, neck and top of the shoulders of one man, shown four times side by side on a plain mid-grey background (#7a7c80): front view, three-quarter view (facing left), left profile, and back of the head. Same man, same expression, same scale and eye height in all four views. Soft even studio light from the upper front-left, no rim light. Rendered like a high-end realistic 3D game character sculpt (real skin, real hair strands), not a painting and not a photo of a real person.
+
+Three reference images:
+- man.png — THIS is the man. Keep his lean, worn, lived-in look, his tired skin under the eyes, his sharp distrustful look from under the brows, his slightly messy greasy slicked-back hair with olive-golden strands and the short ponytail tied with a leather thong, his goatee joined with the moustache around the mouth with only stubble on the jaw, and the realism of his skin.
+- likeness.png — the same character drawn closer to the original game. Bring more of its features into the man so he looks more like the original: the broader face, wider cheekbones and a wider, stronger jaw (but keep the lean cheeks of man.png), the heavier brow ridge and denser dark eyebrows, the broader straight nose, muted grey-blue eyes.
+- original.png — the face texture of the original 2002 game character (an unwrapped face: it looks wider than it is). Use it only to check the likeness: brow, eyes, nose, goatee, forehead wrinkles.
+
+The face must not be symmetrical: a real, slightly uneven face. The left eyebrow sits a little higher than the right, the nose bridge is very slightly off the centre line, one corner of the mouth is a little lower, the goatee is cut unevenly, the hair strands fall differently on each side.
+
+The scratches on the cheekbone: keep only one or two small faint healing scratches, not three slashes.
+
+Who he is: a former prisoner of a penal mining colony, mid thirties, a few weeks after being pulled half-dead out of ruins. Cynical, laconic, practical, distrustful. Not a noble, not a pretty hero, not a grizzled veteran.
+
+Colours as the eye sees them: hair crown #5c4b2d, temples #463825; goatee #7e5c4a, moustache #5e4535; skin forehead #c09679, cheek #b28767; lips #724e44. Clothing only as a hint: the collar of a coarse undyed linen shirt, dull grey-brown.
+
+Avoid: perfect symmetry, a handsome fantasy hero, smooth model skin, salon hairstyle, barbershop stubble, grey hair, big scars, scars across the eye, tattoos, earrings, a modern haircut (shaved sides, undercut, parting), long hair below the shoulders or a long ponytail, bright blue eyes, white even teeth, glossy wet skin, waxy skin, a full beard along the jaw, orange or golden colour cast, painterly brush strokes.

@@ -1,5 +1,7 @@
 #include "protomesh.h"
 #include "loadprobe.h"
+#include "gltfmesh.h"
+#include "facerig.h"
 
 #include <Tempest/Log>
 

@@ -39,7 +39,8 @@ class FollowTrail final {
                 // the object (the companion hears it); never seen and closed by a seen
                 // static hazard: turned aside up to 90 degrees, else stopped before it
       Heading,  // lost, the straight carrot is closed: where the object was last seen heading
-      LastSeen, // lost, both closed: the last seen point
+      Aside,    // lost, both closed: the direction toward the object turned aside up to 90 degrees
+      LastSeen, // lost, all closed: the last seen point
       Count
       };
     static const char* name(Source source);
@@ -61,6 +62,10 @@ class FollowTrail final {
       };
 
     void reset();
+    // Lost with the straight and heading carrots closed: turn aside toward the
+    // object (default), or stand at the last seen point (before 2026-11-04).
+    // A stand comparison switch, never changed during an episode.
+    void setLostAside(bool enabled) { lostAside = enabled; }
     // Once per decision, before guide(): the object's position and the result
     // of the follower's single eye-to-body ray. Unseen positions never enter the trail.
     void observe(const Tempest::Vec3& object, bool visible);
@@ -100,5 +105,5 @@ class FollowTrail final {
 
     std::deque<Point> trail;
     double progress = 0;
-    bool visibleNow = false, lostAtEnd = false;
+    bool visibleNow = false, lostAtEnd = false, lostAside = true;
   };

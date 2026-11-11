@@ -24,7 +24,6 @@ waitquiet 1500 120000
 
 mark positive_ready
 waitreply 120000 100
-manual on
 release all
 cam follow 260 30 55
 cam look 105

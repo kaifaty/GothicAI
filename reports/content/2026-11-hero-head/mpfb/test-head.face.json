@@ -1,0 +1,130 @@
+{
+  "version": 1,
+  "about": "Face profile of the MPFB test head: the old face animation names of Gothic heads as weights of the head's shapes (ARKit units, Meta visemes). Timing as the original HUM_HEAD_PONY.MMB: layer, fade in/out, frame time, duration (-1: until stopped). The two sides differ a little on purpose: no face is symmetric.",
+  "mouth": ["mouth", "jaw", "viseme_", "tongue", "cheekPuff"],
+  "eyes": {
+    "about": "The eyeballs turn as rigid parts around their centres (eye_L is the character's own left eye, its lid shapes end in Left, eye_R in Right). Limits of the eye in its socket, degrees. Lids: per gaze direction the shapes that follow the eye, weight = max * clamp((angle - from) / (to - from), 0, 1), {side} is Left or Right. The upper lid follows a look down almost one to one: eyeLookDown covers ~14 deg of the ball, a part of eyeBlink takes it further.",
+    "parts": {"left": "eye_L", "right": "eye_R"},
+    "limits_deg": {"out": 35, "in": 35, "up": 25, "down": 30},
+    "lids": {
+      "down": [{"target": "eyeLookDown{side}", "from": 0, "to": 20, "max": 1.0},
+               {"target": "eyeBlink{side}", "from": 15, "to": 30, "max": 0.3}],
+      "up":   [{"target": "eyeLookUp{side}", "from": 0, "to": 22, "max": 1.0}],
+      "in":   [{"target": "eyeLookIn{side}", "from": 0, "to": 30, "max": 1.0}],
+      "out":  [{"target": "eyeLookOut{side}", "from": 0, "to": 30, "max": 1.0}]
+    }
+  },
+  "anims": {
+    "S_NEUTRAL": {"layer": 1, "blend_in_ms": 1000, "blend_out_ms": 1000, "duration_ms": -1, "frame_ms": 1000,
+      "frames": [{}]},
+    "S_FRIENDLY": {"layer": 1, "blend_in_ms": 1000, "blend_out_ms": 1000, "duration_ms": -1, "frame_ms": 1000,
+      "frames": [{"mouthSmileLeft": 0.45, "mouthSmileRight": 0.36, "cheekSquintLeft": 0.25, "cheekSquintRight": 0.18,
+                  "eyeSquintLeft": 0.15, "eyeSquintRight": 0.12, "browInnerUp": 0.08}]},
+    "S_ANGRY": {"layer": 1, "blend_in_ms": 1000, "blend_out_ms": 1000, "duration_ms": -1, "frame_ms": 1000,
+      "frames": [{"browDownLeft": 0.95, "browDownRight": 0.85, "noseSneerLeft": 0.4, "noseSneerRight": 0.32,
+                  "eyeSquintLeft": 0.35, "eyeSquintRight": 0.3, "mouthPressLeft": 0.45, "mouthPressRight": 0.4,
+                  "mouthFrownLeft": 0.3, "mouthFrownRight": 0.24, "jawForward": 0.1}]},
+    "S_HOSTILE": {"layer": 1, "blend_in_ms": 1000, "blend_out_ms": 1000, "duration_ms": -1, "frame_ms": 1000,
+      "frames": [{"browDownLeft": 0.55, "browDownRight": 0.48, "eyeSquintLeft": 0.5, "eyeSquintRight": 0.42,
+                  "mouthPressLeft": 0.55, "mouthPressRight": 0.5, "noseSneerLeft": 0.15}]},
+    "S_FRIGHTENED": {"layer": 1, "blend_in_ms": 1000, "blend_out_ms": 1000, "duration_ms": -1, "frame_ms": 100,
+      "frames": [{"browInnerUp": 0.8, "browOuterUpLeft": 0.4, "browOuterUpRight": 0.46, "eyeWideLeft": 0.6, "eyeWideRight": 0.6,
+                  "jawOpen": 0.15, "mouthStretchLeft": 0.35, "mouthStretchRight": 0.35,
+                  "mouthLowerDownLeft": 0.2, "mouthLowerDownRight": 0.2},
+                 {"browInnerUp": 0.76, "browOuterUpLeft": 0.38, "browOuterUpRight": 0.43, "eyeWideLeft": 0.56, "eyeWideRight": 0.57,
+                  "jawOpen": 0.19, "mouthStretchLeft": 0.31, "mouthStretchRight": 0.33,
+                  "mouthLowerDownLeft": 0.23, "mouthLowerDownRight": 0.21}]},
+    "S_EYESCLOSED": {"layer": 1, "blend_in_ms": 100, "blend_out_ms": 100, "duration_ms": -1, "frame_ms": 1000,
+      "frames": [{"eyeBlinkLeft": 1.0, "eyeBlinkRight": 1.0}]},
+    "R_EYESBLINK": {"layer": 4, "blend_in_ms": 40, "blend_out_ms": 40, "duration_ms": 0, "frame_ms": 1000,
+      "frames": [{"eyeBlinkLeft": 1.0, "eyeBlinkRight": 1.0}]},
+    "T_HURT": {"layer": 1, "blend_in_ms": 100, "blend_out_ms": 100, "duration_ms": -1, "frame_ms": 1000,
+      "frames": [{"eyeSquintLeft": 0.8, "eyeSquintRight": 0.7, "eyeBlinkLeft": 0.45, "eyeBlinkRight": 0.55,
+                  "browDownLeft": 0.6, "browDownRight": 0.5, "browInnerUp": 0.4, "noseSneerLeft": 0.5, "noseSneerRight": 0.44,
+                  "mouthStretchLeft": 0.5, "mouthStretchRight": 0.44, "jawOpen": 0.15,
+                  "mouthUpperUpLeft": 0.3, "mouthUpperUpRight": 0.28}]},
+    "T_EAT": {"layer": 1, "blend_in_ms": 100, "blend_out_ms": 100, "duration_ms": 2000, "frame_ms": 333,
+      "frames": [{"jawOpen": 0.0, "mouthClose": 0.0},
+                 {"jawOpen": 0.18, "mouthClose": 0.15, "jawLeft": 0.08},
+                 {"jawOpen": 0.28, "mouthClose": 0.2, "jawLeft": 0.04, "cheekPuff": 0.08},
+                 {"jawOpen": 0.1, "mouthClose": 0.1, "jawRight": 0.06},
+                 {"jawOpen": 0.24, "mouthClose": 0.18, "jawRight": 0.1, "cheekPuff": 0.06},
+                 {"jawOpen": 0.05, "mouthClose": 0.05}]},
+    "VISEME": {"layer": 2, "blend_in_ms": 100, "blend_out_ms": 100, "duration_ms": -1, "frame_ms": 200,
+      "frames": [{"viseme_sil": 1.0},
+                 {"viseme_sil": 0.6, "viseme_PP": 0.3},
+                 {"viseme_I": 0.4},
+                 {"viseme_E": 0.4},
+                 {"viseme_E": 0.55, "viseme_I": 0.2},
+                 {"viseme_E": 0.6, "viseme_aa": 0.15},
+                 {"viseme_O": 0.4, "viseme_E": 0.3},
+                 {"viseme_O": 0.55, "viseme_aa": 0.2},
+                 {"viseme_aa": 0.4, "viseme_E": 0.3},
+                 {"viseme_aa": 0.5, "viseme_O": 0.2},
+                 {"viseme_aa": 0.6, "viseme_E": 0.2},
+                 {"viseme_aa": 0.7, "viseme_O": 0.15},
+                 {"viseme_aa": 0.8},
+                 {"viseme_aa": 0.85, "viseme_E": 0.15},
+                 {"viseme_aa": 0.9, "viseme_O": 0.1},
+                 {"viseme_aa": 1.0}]}
+  },
+  "cues": {
+    "flash": {"zone": "upper", "parts": [
+      {"weights": {"browInnerUp": 0.55, "browOuterUpLeft": 0.7, "browOuterUpRight": 0.7, "eyeWideLeft": 0.25, "eyeWideRight": 0.25},
+        "delay_ms": 0, "on_ms": 100, "hold_ms": 80, "off_ms": 160}]},
+    "doubt": {"zone": "upper", "side": "L", "parts": [
+      {"weights": {"browOuterUpLeft": 0.8, "browInnerUp": 0.15, "browDownRight": 0.65, "eyeSquintRight": 0.25},
+        "delay_ms": 0, "on_ms": 250, "hold_ms": 550, "off_ms": 300}]},
+    "smirk": {"zone": "mouth", "side": "L", "parts": [
+      {"weights": {"mouthSmileLeft": 0.75, "mouthDimpleLeft": 0.55, "cheekSquintLeft": 0.2, "mouthPressRight": 0.15},
+        "delay_ms": 0, "on_ms": 200, "hold_ms": 400, "off_ms": 300}]},
+    "press": {"zone": "mouth", "parts": [
+      {"weights": {"mouthPressLeft": 0.7, "mouthPressRight": 0.7, "mouthRollLower": 0.2, "mouthRollUpper": 0.15, "mouthShrugLower": 0.12},
+        "delay_ms": 0, "on_ms": 150, "hold_ms": 400, "off_ms": 200}]},
+    "disgust": {"zone": "upper", "parts": [
+      {"weights": {"noseSneerLeft": 0.6, "noseSneerRight": 0.6, "mouthUpperUpLeft": 0.06, "mouthUpperUpRight": 0.06, "cheekSquintLeft": 0.25, "cheekSquintRight": 0.25, "browDownLeft": 0.2, "browDownRight": 0.2},
+        "delay_ms": 0, "on_ms": 150, "hold_ms": 300, "off_ms": 200}]},
+    "squint": {"zone": "upper", "parts": [
+      {"weights": {"eyeSquintLeft": 0.75, "eyeSquintRight": 0.75, "eyeBlinkLeft": 0.12, "eyeBlinkRight": 0.12, "browDownLeft": 0.2, "browDownRight": 0.2},
+        "delay_ms": 0, "on_ms": 250, "hold_ms": 800, "off_ms": 350}]},
+    "frown": {"zone": "upper", "parts": [
+      {"weights": {"browDownLeft": 0.75, "browDownRight": 0.75, "eyeSquintLeft": 0.15, "eyeSquintRight": 0.15},
+        "delay_ms": 0, "on_ms": 300, "hold_ms": 900, "off_ms": 400}]},
+    "chin": {"zone": "mouth", "parts": [
+      {"weights": {"mouthShrugLower": 0.7, "mouthShrugUpper": 0.15, "mouthPressLeft": 0.15, "mouthPressRight": 0.15, "mouthFrownLeft": 0.25, "mouthFrownRight": 0.25},
+        "delay_ms": 0, "on_ms": 150, "hold_ms": 400, "off_ms": 250}]},
+    "wince": {"zone": "upper", "parts": [
+      {"weights": {"cheekSquintLeft": 0.65, "cheekSquintRight": 0.65, "eyeSquintLeft": 0.65, "eyeSquintRight": 0.65, "noseSneerLeft": 0.45, "noseSneerRight": 0.45, "browDownLeft": 0.3, "browDownRight": 0.3, "eyeBlinkLeft": 0.25, "eyeBlinkRight": 0.25},
+        "delay_ms": 0, "on_ms": 80, "hold_ms": 100, "off_ms": 200}]},
+    "glance": {"zone": "eyes", "side": "R",
+      "look": {"move": "jump", "side_deg": 22, "up_deg": -4, "on_ms": 80, "hold_ms": 600, "off_ms": 120}},
+    "roll": {"zone": "eyes", "side": "R",
+      "look": {"move": "arc", "side_deg": 10, "up_deg": 22, "on_ms": 250, "hold_ms": 300, "off_ms": 300},
+      "parts": [{"weights": {"eyeBlinkLeft": 0.2, "eyeBlinkRight": 0.2}, "delay_ms": 0, "on_ms": 250, "hold_ms": 300, "off_ms": 300}]}
+  },
+  "leaks": {
+    "on_ms": 120, "hold_ms": 120, "off_ms": 160,
+    "felt": {
+      "angry": {
+        "upper": {"browDownLeft": 0.45, "browDownRight": 0.449, "eyeBlinkLeft": 0.089, "eyeBlinkRight": 0.088, "eyeSquintRight": 0.031},
+        "lower": {"noseSneerRight": 0.45, "noseSneerLeft": 0.433, "mouthShrugUpper": 0.138, "mouthStretchLeft": 0.137, "mouthStretchRight": 0.137, "mouthUpperUpRight": 0.081, "mouthUpperUpLeft": 0.075}
+      },
+      "afraid": {
+        "upper": {"browInnerUp": 0.45, "browOuterUpRight": 0.43, "browOuterUpLeft": 0.416, "browDownLeft": 0.364, "browDownRight": 0.352, "eyeWideRight": 0.279, "eyeWideLeft": 0.279},
+        "lower": {"mouthFrownLeft": 0.45, "mouthFrownRight": 0.446}
+      },
+      "hostile": {
+        "upper": {"browDownLeft": 0.45, "browDownRight": 0.448, "eyeSquintRight": 0.264, "eyeSquintLeft": 0.216, "eyeBlinkLeft": 0.174, "eyeBlinkRight": 0.172},
+        "lower": {"noseSneerRight": 0.45, "noseSneerLeft": 0.444, "cheekSquintRight": 0.301, "cheekSquintLeft": 0.301, "mouthStretchLeft": 0.239, "mouthStretchRight": 0.235, "mouthDimpleLeft": 0.108, "mouthDimpleRight": 0.108, "mouthShrugLower": 0.084, "mouthFrownLeft": 0.036, "mouthFrownRight": 0.035}
+      },
+      "friendly": {
+        "upper": {"eyeSquintRight": 0.45, "eyeSquintLeft": 0.41, "browInnerUp": 0.282, "browOuterUpRight": 0.258, "browOuterUpLeft": 0.258},
+        "lower": {"mouthSmileRight": 0.45, "mouthSmileLeft": 0.446, "mouthUpperUpLeft": 0.191, "mouthUpperUpRight": 0.191, "mouthStretchLeft": 0.12, "mouthStretchRight": 0.116, "cheekSquintRight": 0.05, "cheekSquintLeft": 0.049, "mouthDimpleRight": 0.031, "mouthDimpleLeft": 0.03}
+      },
+      "pain": {
+        "upper": {"browDownLeft": 0.45, "browDownRight": 0.447, "eyeSquintRight": 0.428, "eyeSquintLeft": 0.418, "browOuterUpRight": 0.172, "browOuterUpLeft": 0.169, "eyeBlinkLeft": 0.067, "eyeBlinkRight": 0.066},
+        "lower": {"cheekSquintRight": 0.45, "cheekSquintLeft": 0.448, "mouthFrownLeft": 0.393, "mouthFrownRight": 0.39, "noseSneerRight": 0.176, "noseSneerLeft": 0.168, "mouthSmileLeft": 0.153, "mouthSmileRight": 0.135, "mouthStretchLeft": 0.134, "mouthDimpleLeft": 0.124, "mouthStretchRight": 0.118, "mouthUpperUpRight": 0.116, "mouthUpperUpLeft": 0.115, "mouthDimpleRight": 0.114, "mouthShrugLower": 0.079}
+      }
+    }
+  }
+}

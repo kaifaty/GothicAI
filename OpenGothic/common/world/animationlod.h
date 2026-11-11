@@ -54,6 +54,10 @@ class View final {
 
 // Stable stagger of the deferred NPCs over the `rate` frames.
 uint32_t phase(const Npc& npc);
+// The seed of that stagger, one per NPC in creation order. The stagger decides
+// which frames apply the deferred dt and so changes the world: it must replay
+// exactly. Creation order is the same in every run, a heap address is not (ASLR).
+uint32_t nextSeed();
 
 // The parallel animation pass is running: pose readers must not catch up an NPC
 // from inside it (another worker may be updating that NPC).

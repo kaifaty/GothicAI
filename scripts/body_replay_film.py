@@ -140,7 +140,7 @@ def render(args) -> int:
                "OPENGOTHIC_BENCH": str(out/"scene.bench"), "OPENGOTHIC_BENCH_OUT": str(out)}
         for key in ("DISPLAY", "WAYLAND_DISPLAY"):
             env.pop(key, None)
-        argv = [str(args.game.resolve()), "-g", str(args.assets.resolve()), "-g2", "-window", "-devmode", "-save", "1"]
+        argv = [str(args.game.resolve()), "-g", str(args.assets.resolve()), "-window", "-devmode", "-save", "1"]
         if macos:
             # The macOS engine selects Metal itself. Do not inherit Linux's software renderer
             # or null audio device. Full resolution prevents each realtime screenshot from

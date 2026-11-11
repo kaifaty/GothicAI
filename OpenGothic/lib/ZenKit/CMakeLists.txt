@@ -33,7 +33,6 @@ list(APPEND _ZK_SOURCES
         src/vobs/VirtualObject.cc
         src/vobs/Zone.cc
 
-        src/addon/daedalus.cc
         src/addon/texcvt.cc
 
         src/archive/ArchiveAscii.cc
@@ -45,7 +44,6 @@ list(APPEND _ZK_SOURCES
         src/CutsceneLibrary.cc
         src/DaedalusScript.cc
         src/Date.cc
-        src/DaedalusVm.cc
         src/Error.cc
         src/Font.cc
         src/Logger.cc
@@ -67,28 +65,6 @@ list(APPEND _ZK_SOURCES
         src/Texture.cc
         src/Vfs.cc
         src/World.cc
-)
-
-list(APPEND _ZK_TESTS
-        tests/TestArchive.cc
-        tests/TestCutsceneLibrary.cc
-        tests/TestDaedalusScript.cc
-        tests/TestFont.cc
-        tests/TestMaterial.cc
-        tests/TestModel.cc
-        tests/TestModelAnimation.cc
-        tests/TestModelHierarchy.cc
-        tests/TestModelMesh.cc
-        tests/TestModelScript.cc
-        tests/TestMorphMesh.cc
-        tests/TestMultiResolutionMesh.cc
-        tests/TestSaveGame.cc
-        tests/TestStream.cc
-        tests/TestTexture.cc
-        tests/TestVfs.cc
-        tests/TestVobsG1.cc
-        tests/TestVobsG2.cc
-        tests/TestWorld.cc
 )
 
 if (BUILD_SHARED_LIBS AND ZK_BUILD_SHARED)
@@ -152,19 +128,6 @@ if (ZK_ENABLE_INSTALL)
     install(TARGETS zenkit ARCHIVE LIBRARY RUNTIME)
     install(DIRECTORY "include/phoenix" TYPE INCLUDE)
     install(DIRECTORY "include/zenkit" TYPE INCLUDE)
-endif ()
-
-# when building tests, create a test executable and load it into CTest
-if (ZK_BUILD_TESTS AND CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
-    enable_testing()
-    include(${doctest_SOURCE_DIR}/scripts/cmake/doctest.cmake)
-
-    add_executable(test-zenkit ${_ZK_TESTS})
-    target_link_libraries(test-zenkit PRIVATE zenkit doctest_with_main)
-    target_compile_options(test-zenkit PRIVATE ${_ZK_COMPILE_FLAGS})
-    target_link_options(test-zenkit PUBLIC ${_ZK_LINK_FLAGS})
-
-    doctest_discover_tests(test-zenkit EXTRA_ARGS -tse=CutsceneLibrary,DaedalusScript,World WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/tests)
 endif ()
 
 # when building examples, include the subdirectory

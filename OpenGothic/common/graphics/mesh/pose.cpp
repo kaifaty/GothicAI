@@ -10,8 +10,10 @@
 #include "skeleton.h"
 #include "animmath.h"
 #include "ikmath.h"
+#include "stopfoot.h"
 
 #include <cmath>
+#include <cstdlib>
 #include <stdexcept>
 
 using namespace Tempest;
@@ -263,6 +265,7 @@ void Pose::load(Serialize &fin, const AnimationSolver& solver) {
     fin.read(i);
   for(auto& i:tr)
     fin.read(i);
+  ++trRevision;
   blend.reset(numBones);
   }
 
@@ -300,6 +303,7 @@ void Pose::setSkeleton(const Skeleton* sk) {
   skeleton = sk;
   for(auto& i:tr)
     i.identity();
+  ++trRevision;
   if(skeleton!=nullptr) {
     numBones = skeleton->tr.size();
     } else {
@@ -359,8 +363,11 @@ bool Pose::startAnim(const AnimationSolver& solver, const Animation::Sequence *s
       const bool swimFix = (i.sAnim==tickCount && i.bs==BS_SWIM && bs==BS_SWIM);
       const Animation::Sequence* tr=nullptr;
       if(i.seq->shortName!=nullptr && sq->shortName!=nullptr && !swimFix) {
-        string_frm tansition("T_",i.seq->shortName,"_2_",sq->shortName);
-        tr = solver.solveFrm(tansition);
+        tr = footTransition(solver,i,*sq,tickCount);
+        if(tr==nullptr) {
+          string_frm tansition("T_",i.seq->shortName,"_2_",sq->shortName);
+          tr = solver.solveFrm(tansition);
+          }
         }
       if(tr==nullptr && sq->shortName!=nullptr && i.bs==BS_STAND) {
         string_frm tansition("T_STAND_2_",sq->shortName);
@@ -382,6 +389,31 @@ bool Pose::startAnim(const AnimationSolver& solver, const Animation::Sequence *s
       }
   addLayer(sq,bs,comb,tickCount);
   return true;
+  }
+
+const Animation::Sequence* Pose::footTransition(const AnimationSolver& solver, const Layer& l,
+                                                const Animation::Sequence& to, uint64_t tickCount) const {
+  // out of a moving loop that is nearer to its half than to its start: the transition from the right foot, if any
+  auto& from = *l.seq;
+  if(!StopFoot::enabled() || from.animCls!=Animation::Loop || from.data==nullptr || from.reverse)
+    return nullptr;
+  const uint32_t frames = from.data->loopFrames();
+  if(frames==from.data->numFrames)
+    return nullptr; // stands in place
+  const uint64_t now = layerTime(l,tickCount);
+  if(now<l.sAnim || !StopFoot::isRight(StopFoot::phase(now-l.sAnim,from.data->fpsRate,frames)))
+    return nullptr;
+  const std::string right = StopFoot::rightName(from.shortName);
+  if(right.empty())
+    return nullptr;
+  string_frm tansition("T_",right,"_2_",to.shortName);
+  auto ret = solver.solveFrm(tansition);
+  if(ret!=nullptr && !ret->isSettle())
+    ret = nullptr; // the base's only right clip, T_WALKR_2_WALK, was cut for an older walk loop: see stopfoot.h
+  static const bool log = std::getenv("OPENGOTHIC_STOPFOOT_LOG")!=nullptr;
+  if(log)
+    Log::i("stopfoot: ",from.name," -> ",to.name,": ",ret ? ret->name.c_str() : "no right transition");
+  return ret;
   }
 
 bool Pose::stopAnim(std::string_view name) {
@@ -553,16 +585,19 @@ bool Pose::updateFrame(const Animation::Sequence &s, BodyState bs, uint64_t sTim
   float    a       = float(frame%1000)/1000.f;
 
   if(s.animCls==Animation::Loop) {
-    frameA%=d.numFrames;
-    frameB%=d.numFrames;
+    // a loop that carries the body ends on its next cycle's first frame: that frame is not played twice
+    const uint64_t count = d.loopFrames();
+    frameA%=count;
+    frameB%=count;
     } else {
     frameA = std::min<uint64_t>(frameA,d.numFrames-1);
     frameB = std::min<uint64_t>(frameB,d.numFrames-1);
     }
 
   if(s.reverse) {
-    frameA = d.numFrames-1-frameA;
-    frameB = d.numFrames-1-frameB;
+    const uint64_t last = (s.animCls==Animation::Loop ? d.loopFrames() : d.numFrames)-1;
+    frameA = last-frameA;
+    frameB = last-frameB;
     }
 
   auto* sampleA = &d.samples[size_t(frameA*idSize)];
@@ -596,6 +631,7 @@ void Pose::mkSkeleton(const Tempest::Matrix4x4& mt) {
 void Pose::mkSkeleton(const Tempest::Matrix4x4& mt, float ikFloorY) {
   if(skeleton==nullptr)
     return;
+  ++trRevision;
   Matrix4x4 m = mt;
   m.translate(mkBaseTranslation());
   if(skeleton->ordered)

@@ -59,23 +59,34 @@ class RtGeometry {
   size_t               iboSize   = 0;
   };
 
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+// Frame-profile diagnostics: bytes of the structure's storage, 0 when empty, -1 when the backend cannot tell.
+int64_t profileByteSize(const AccelerationStructure& as);
+#endif
+
 class AccelerationStructure final {
   public:
     AccelerationStructure() = default;
-    AccelerationStructure(AccelerationStructure&&)=default;
+    AccelerationStructure(AccelerationStructure&& other);
     ~AccelerationStructure()=default;
-    AccelerationStructure& operator=(AccelerationStructure&&)=default;
+    AccelerationStructure& operator=(AccelerationStructure&& other);
 
-    bool isEmpty() const;
+    bool   isEmpty() const;
+    // Instances a top-level structure of Device::tlas(Uninitialized, capacity) holds without new memory; 0 otherwise.
+    size_t capacity() const { return cap; }
 
   private:
-    AccelerationStructure(Tempest::Device& dev, AbstractGraphicsApi::PRtAs&& impl);
+    AccelerationStructure(Tempest::Device& dev, AbstractGraphicsApi::PRtAs&& impl, size_t capacity = 0);
 
     Detail::DSharedPtr<AbstractGraphicsApi::AccelerationStructure*> impl;
+    size_t                                                          cap = 0;
 
   friend class Tempest::Device;
   friend class Tempest::DescriptorSet;
   friend class Encoder<Tempest::CommandBuffer>;
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  friend int64_t profileByteSize(const AccelerationStructure& as);
+#endif
   };
 
 }

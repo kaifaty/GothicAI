@@ -34,7 +34,9 @@ class PfxEmitter {
     void     setActive(bool act);
     bool     isActive() const;
     void     setLooped(bool loop);
-    void     setMesh(const MeshObjects::Mesh* mesh, const Pose* pose);
+    // skin: the mesh's own bone matrices (a render rig's palette, graphics/mesh/renderrig), else the pose's
+    void     setMesh(const MeshObjects::Mesh* mesh, const Pose* pose,
+                     const std::vector<Tempest::Matrix4x4>* skin = nullptr);
 
     void     setTarget(const Npc* tg);
 

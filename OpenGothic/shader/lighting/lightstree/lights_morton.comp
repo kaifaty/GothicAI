@@ -109,6 +109,46 @@ void computeMorton() {
   memoryBarrierBuffer();
   }
 
+#if defined(SHARED_SORT)
+// lights_morton_shared.comp, where a workgroup has more than 32 KB (not Metal): up to this many lights the sort
+// runs in shared memory. The same compare-exchange network gives the same order and the same tree, without a
+// pass through global memory for each of its 78 steps (the world has about 3 400 lights).
+const uint SharedSortSize = 4096;
+shared uvec2 sorted[SharedSortSize]; // key, id: 32 KB
+
+void bitonicSortShared() {
+  const uint laneID = gl_LocalInvocationIndex;
+
+  for(uint i = laneID; i < numLightsPot; i += NumThreads)
+    sorted[i] = uvec2(morton[i].key, morton[i].id);
+  barrier();
+
+  for(uint k = 2; k <= numLightsPot; k <<= 1) {
+    for(uint j = k >> 1; j > 0; j >>= 1) {
+      for(uint i = laneID; i < numLightsPot; i += NumThreads) {
+        uint ixj = i ^ j;
+        if(ixj > i) {
+          const bool  ascending = ((i & k) == 0);
+          const uvec2 A = sorted[i];
+          const uvec2 B = sorted[ixj];
+          if(ascending ? (A.x > B.x) : (A.x < B.x)) {
+            sorted[i]   = B;
+            sorted[ixj] = A;
+            }
+          }
+        }
+      barrier();
+      }
+    }
+
+  for(uint i = laneID; i < numLightsPot; i += NumThreads) {
+    morton[i].key = sorted[i].x;
+    morton[i].id  = sorted[i].y;
+    }
+  }
+
+#endif
+
 void bitonicSort() {
   const uint laneID = gl_LocalInvocationIndex;
 
@@ -139,5 +179,11 @@ void main() {
     return;
     }
 
+#if defined(SHARED_SORT)
+  if(numLightsPot<=SharedSortSize) {
+    bitonicSortShared();
+    return;
+    }
+#endif
   bitonicSort();
   }

@@ -5,22 +5,22 @@
 #include "model.h"
 #include "snapshot.h"
 
-#include <zenkit/DaedalusVm.hh>
-#include <zenkit/addon/daedalus.hh>
+#include "daedalus/vm.h"
+#include "daedalus/classes.h"
 
 #include <algorithm>
 #include <cstring>
 #include <optional>
 
 using namespace storygraph;
-using zenkit::DaedalusDataType;
+using daedalus::DaedalusDataType;
 
 // Engine calls of the dialog's function itself go into `observed`; the rest goes on to the world.
 class EffectCheck::Recorder final : public Externals {
   public:
     Recorder(EffectCheck& owner, Externals& world) : owner(owner), world(world) {}
 
-    Value call(const zenkit::DaedalusSymbol& fn, const std::vector<Value>& args) override {
+    Value call(const daedalus::DaedalusSymbol& fn, const std::vector<Value>& args) override {
       if(owner.recording && owner.level==0)
         owner.observed.push_back({fn.name(), args});
       return world.call(fn, args);
@@ -32,8 +32,8 @@ class EffectCheck::Recorder final : public Externals {
   };
 
 struct EffectCheck::Store final {
-  zenkit::DaedalusSymbol*                    sym = nullptr;
-  std::shared_ptr<zenkit::DaedalusInstance>  of;     // a member store: the instance
+  daedalus::DaedalusSymbol*                    sym = nullptr;
+  std::shared_ptr<daedalus::DaedalusInstance>  of;     // a member store: the instance
   uint16_t                                   index = 0;
   Value                                      value;
   };
@@ -79,7 +79,7 @@ std::optional<bool> fires(const Dnf& guard, Evaluator& ev) {
 
 }
 
-EffectCheck::EffectCheck(zenkit::DaedalusVm& vm, Externals& world)
+EffectCheck::EffectCheck(daedalus::DaedalusVm& vm, Externals& world)
   :vm(vm), recorder(std::make_unique<Recorder>(*this, world)),
    code(std::make_unique<Bytecode>(vm)), lifter(std::make_unique<Lifter>(vm, *code)),
    snap(std::make_unique<Snapshot>(vm)) {
@@ -90,7 +90,7 @@ EffectCheck::EffectCheck(zenkit::DaedalusVm& vm, Externals& world)
     if(s->type()==DaedalusDataType::FUNCTION && s->is_const() && !s->is_external() && Bytecode::hasCode(*s)) {
       functions[s->name()] = s;
       // the body still runs; only the depth is tracked and the call recorded at the dialog's own level
-      vm.override_function(s->name(), [this, s](zenkit::DaedalusVm& v) -> zenkit::DaedalusNakedCall {
+      vm.override_function(s->name(), [this, s](daedalus::DaedalusVm& v) -> daedalus::DaedalusNakedCall {
         enter(v, *s);
         return {};
         });
@@ -111,7 +111,7 @@ Externals& EffectCheck::engine() {
   return *recorder;
   }
 
-void EffectCheck::enter(zenkit::DaedalusVm& v, zenkit::DaedalusSymbol& fn) {
+void EffectCheck::enter(daedalus::DaedalusVm& v, daedalus::DaedalusSymbol& fn) {
   struct Depth final {
     uint32_t& level;
     explicit Depth(uint32_t& l) : level(l) { ++level; }
@@ -148,7 +148,7 @@ void EffectCheck::enter(zenkit::DaedalusVm& v, zenkit::DaedalusSymbol& fn) {
   v.unsafe_call(&fn);
   }
 
-zenkit::DaedalusSymbol* EffectCheck::function(const Node& n) {
+daedalus::DaedalusSymbol* EffectCheck::function(const Node& n) {
   auto* sym = vm.find_symbol_by_name(n.id);
   if(sym==nullptr)
     return nullptr;
@@ -156,7 +156,7 @@ zenkit::DaedalusSymbol* EffectCheck::function(const Node& n) {
     return sym->type()==DaedalusDataType::FUNCTION ? sym : nullptr;
   if(sym->type()!=DaedalusDataType::INSTANCE)
     return nullptr;
-  auto info = vm.init_instance<zenkit::IInfo>(sym);
+  auto info = vm.init_instance<daedalus::IInfo>(sym);
   return info->information==0 ? nullptr : vm.find_symbol_by_index(uint32_t(info->information));
   }
 
@@ -197,8 +197,8 @@ std::string EffectCheck::text(const Call& c) const {
   return r + ")";
   }
 
-EffectCheck::Result EffectCheck::run(const Node& n, const std::shared_ptr<zenkit::INpc>& self,
-                                     const std::shared_ptr<zenkit::INpc>& hero, Evaluator& ev) {
+EffectCheck::Result EffectCheck::run(const Node& n, const std::shared_ptr<daedalus::INpc>& self,
+                                     const std::shared_ptr<daedalus::INpc>& hero, Evaluator& ev) {
   Result r;
   auto*  fn = function(n);
   if(fn==nullptr) {
@@ -279,7 +279,7 @@ EffectCheck::Result EffectCheck::run(const Node& n, const std::shared_ptr<zenkit
   for(auto* g : globals)
     for(uint16_t i=0; i<g->count(); ++i)
       before.push_back(g->get_int(i));
-  std::vector<std::pair<std::shared_ptr<zenkit::INpc>,std::vector<int32_t>>> npcs;
+  std::vector<std::pair<std::shared_ptr<daedalus::INpc>,std::vector<int32_t>>> npcs;
   for(auto& who : {self, hero}) {
     if(who==nullptr)
       continue;

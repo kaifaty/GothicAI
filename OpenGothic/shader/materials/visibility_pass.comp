@@ -227,7 +227,15 @@ void runCluster(const uint clusterId) {
   }
 
 void main() {
+#if defined(ORDERED)
+  // bench `deterministic on`: one invocation appends the clusters in their order
+  if(gl_GlobalInvocationID.x!=0)
+    return;
+  for(uint clusterId=0; clusterId<push.meshletCount; ++clusterId)
+    runCluster(clusterId);
+#else
   const uint clusterId = gl_GlobalInvocationID.x;
   if(clusterId<push.meshletCount)
     runCluster(clusterId);
+#endif
   }

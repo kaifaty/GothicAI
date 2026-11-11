@@ -5,7 +5,6 @@
 # lean until it is back). On the roof of Lobart's farm and from the gallery in Xardas' tower
 cheat god
 set time 12 0
-manual on
 equip ItRw_Bow_L_01
 give ItRw_Arrow 100
 stats str 60 dex 60 bow 60

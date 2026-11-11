@@ -21,7 +21,7 @@ Daedalus AI_Attack
   → takeDamage: блок/отскок либо расчёт урона
 ```
 
-Источники: [`AI_Attack` в `Npc::nextAiAction`](../OpenGothic/common/world/objects/npc.cpp), [`FightAlgo`](../OpenGothic/common/game/fightalgo.cpp), [`Npc::implAttack` и `commitDamage`](../OpenGothic/common/world/objects/npc.cpp), [`Pose`](../OpenGothic/common/graphics/mesh/pose.cpp).
+Источники: [`AI_Attack` в `Npc::nextAiAction`](../OpenGothic/common/world/objects/npc_aiqueue.cpp), [`FightAlgo`](../OpenGothic/common/game/fightalgo.cpp), [`Npc::implAttack`](../OpenGothic/common/world/objects/npc_attack.cpp) и [`commitDamage`](../OpenGothic/common/world/objects/npc_damage.cpp), [`Pose`](../OpenGothic/common/graphics/mesh/pose.cpp).
 
 Здесь две очереди: script `aiQueue` и внутренняя боевая `FightAlgo::tr`. Перед исполнением `implAttack` уступает непустой `aiQueue`. Повторный внешний запрос через [`NpcController::action`](../OpenGothic/ai_bridge/npccontroller.cpp) способен отменить длинное действие и очистить script queue. Поэтому этот endpoint не подходит для потока решений 20 Гц. Будущий provider должен заменять источник следующего боевого решения в движке, сохраняя один общий исполнитель.
 
@@ -91,7 +91,7 @@ Daedalus AI_Attack
 | Turn-to-hit | Поворачивается к цели | Когда `implTurnTo=false` | Достигнута ориентация либо отмена |
 | Wait | `MV_WAIT` без promotion: 200 мс; long: 300 мс; остановка ходьбы | Сразу после назначения wait | Когда снят wait gate; consume происходит раньше |
 
-Источник всей таблицы: [`Npc::implAttack`](../OpenGothic/common/world/objects/npc.cpp). Точная длительность сегментов определяется MDS/MAN assets, overlays, combo и speed, а не константой «длительность удара».
+Источник всей таблицы: [`Npc::implAttack`](../OpenGothic/common/world/objects/npc_attack.cpp). Точная длительность сегментов определяется MDS/MAN assets, overlays, combo и speed, а не константой «длительность удара».
 
 В текущем native пути отсутствуют RPC стадии `accepted/started/completed`. При инструментировании их нельзя выдумывать по `consumeAction`. Будущий внешний API должен различать:
 
@@ -120,7 +120,7 @@ Daedalus AI_Attack
 
 Обычный `Pose::startAnim` не заменяет слой, если текущая sequence не finished и `canInterrupt=false`. Transition с соответствующими `defWindow/defHitEnd` допускает interrupt после начала окна; без этих данных — только completion или force. Для других sequence interrupt запрещён внутри combo window. Специальный `continueCombo` разрешает hit→block через `Force`, а hit→hit — по combo window. Это animation capability, а не полное правило выбора native action.
 
-У native NPC раньше срабатывают gates в [`Npc::tick` и `implAttack`](../OpenGothic/common/world/objects/npc.cpp):
+У native NPC раньше срабатывают gates в [`Npc::tick`](../OpenGothic/common/world/objects/npc.cpp) и [`implAttack`](../OpenGothic/common/world/objects/npc_attack.cpp):
 
 - `waitTime >= t`, `aniWaitTime >= t`, `outWaitTime > t` удерживают tick в `WaitMove`.
 - Нет цели, player actor, разговор, down цель или непустая script queue не дают обычной попытки боевого примитива.

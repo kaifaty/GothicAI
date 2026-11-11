@@ -69,7 +69,7 @@ float springTo(float v, float goal, float& vel, float smooth, float dt) {
 }
 
 PlayerControl::PlayerControl() {
-  Gothic::inst().onSettingsChanged.bind(this,&PlayerControl::setupSettings);
+  Settings::inst().onSettingsChanged.bind(this,&PlayerControl::setupSettings);
   setupSettings();
   }
 
@@ -80,15 +80,11 @@ PlayerControl::PlayerControl(DialogMenu& dlg, InventoryMenu& inv)
   }
 
 PlayerControl::~PlayerControl() {
-  Gothic::inst().onSettingsChanged.ubind(this,&PlayerControl::setupSettings);
+  Settings::inst().onSettingsChanged.ubind(this,&PlayerControl::setupSettings);
   }
 
 void PlayerControl::setupSettings() {
-  if(Gothic::inst().version().game==2) {
-    g2Ctrl = Gothic::inst().settingsGetI("GAME","USEGOTHIC1CONTROLS")==0;
-    } else {
-    g2Ctrl = false;
-    }
+  g2Ctrl = Gothic::inst().settingsGetI("GAME","USEGOTHIC1CONTROLS")==0;
   }
 
 void PlayerControl::setTarget(Npc *other) {
@@ -358,8 +354,8 @@ void PlayerControl::onKeyReleased(KeyCodec::Action a, KeyCodec::Mapping mapping)
       }
     chargePress.reset();
     }
-  if(ws==WeaponState::Bow || ws==WeaponState::CBow || ws==WeaponState::Mage) {
-    if(a==KeyCodec::ActionGeneric || (!g2Ctrl && ws==WeaponState::Mage && a==KeyCodec::Forward))
+  if(ws==WeaponState::Mage) {
+    if(a==KeyCodec::ActionGeneric || (!g2Ctrl && a==KeyCodec::Forward))
       std::memset(actrl,0,sizeof(actrl));
     } else {
     std::memset(actrl,0,sizeof(actrl));
@@ -991,7 +987,7 @@ void PlayerControl::implMove(uint64_t dt) {
     }
 
   if(casting) {
-    if(!actrl[ActForward] || (Gothic::inst().version().game==1 && pl.attribute(ATR_MANA)==0)) {
+    if(!actrl[ActForward]) {
       casting = false;
       pl.endCastSpell(true);
       }
@@ -1001,35 +997,6 @@ void PlayerControl::implMove(uint64_t dt) {
   if(ctrl[Action::K_ENTER]) {
     pl.transformBack();
     ctrl[Action::K_ENTER] = false;
-    }
-
-  if((ws==WeaponState::Bow || ws==WeaponState::CBow) && pl.hasAmmunition()) {
-    if(actrl[ActGeneric] || actrl[ActForward]) {
-      if(auto other = pl.target()) {
-        auto dp = other->position()-pl.position();
-        pl.turnTo(dp.x,dp.z,true,dt);
-        pl.aimBow();
-        }
-      else if(currentFocus.interactive!=nullptr) {
-        auto dp = currentFocus.interactive->position()-pl.position();
-        pl.turnTo(dp.x,dp.z,false,dt);
-        pl.aimBow();
-        }
-      else {
-        pl.aimBow();
-        }
-
-      if(actrl[ActLeft]) {
-        moveFocus(ActLeft);
-        actrl[ActLeft]  = false;
-        }
-      if(actrl[ActRight]) {
-        moveFocus(ActRight);
-        actrl[ActRight]  = false;
-        }
-      if(!actrl[ActForward])
-        return;
-      }
     }
 
   if(ws==WeaponState::Mage) {
@@ -1065,13 +1032,15 @@ void PlayerControl::implMove(uint64_t dt) {
   if(actrl[ActForward] || actrl[ActMove]) {
     ctrl [Action::Forward] = actrl[ActMove];
     actrl[ActMove]         = false;
-    if(ws!=WeaponState::Mage && !(g2Ctrl && (ws==WeaponState::Bow || ws==WeaponState::CBow))) {
+    if(ws!=WeaponState::Mage) {
       actrl[ActForward] = false;
       if(!ctrl[Action::Forward])
         movement.reset();
       }
     switch(ws) {
       case WeaponState::NoWeapon:
+      case WeaponState::Bow:
+      case WeaponState::CBow:
         break;
       case WeaponState::Fist:
         pl.fistShoot();
@@ -1079,11 +1048,6 @@ void PlayerControl::implMove(uint64_t dt) {
       case WeaponState::W1H:
       case WeaponState::W2H: {
         pl.swingSword();
-        return;
-        }
-      case WeaponState::Bow:
-      case WeaponState::CBow: {
-        pl.shootBow(currentFocus.interactive);
         return;
         }
       case WeaponState::Mage: {
@@ -1279,10 +1243,10 @@ bool PlayerControl::implManualAim(Npc& pl, uint64_t dt) {
   // back step with the bow drawn (slowly, sneaking); the sneak key crouches, the side steps lean out round
   // a corner, the wheel cants the bow (onMouseWheel)
   const auto ws = pl.weaponState();
-  if(!Archery::isEnabled() || (ws!=WeaponState::Bow && ws!=WeaponState::CBow) || pl.isDown() ||
+  if((ws!=WeaponState::Bow && ws!=WeaponState::CBow) || pl.isDown() ||
      pl.isInAir() || pl.isSwim() || pl.isDive() || pl.interactive()!=nullptr)
     return false;
-  // the auto aim does not run: no shots on 'forward'
+  // Manual aim consumes attack actions; forward only moves.
   std::memset(actrl,0,sizeof(actrl));
 
   auto&      ar     = pl.archer();
@@ -1514,7 +1478,7 @@ void PlayerControl::processPickLock(Npc& pl, Interactive& inter, KeyCodec::Actio
 
   if(pickLockProgress<cmp.size() && std::toupper(cmp[pickLockProgress])!=ch) {
     pickLockProgress = 0;
-    const int32_t dex = Gothic::inst().version().game==2 ? pl.attribute(ATR_DEXTERITY) : (100 - pl.talentValue(TALENT_PICKLOCK));
+    const int32_t dex = pl.attribute(ATR_DEXTERITY);
     if(dex<=int32_t(script.rand(100)))  {
       script.invokePickLock(pl,0,1);
       pl.delItem(ItKE_lockpick,1);

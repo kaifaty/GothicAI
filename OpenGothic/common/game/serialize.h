@@ -14,8 +14,8 @@
 
 #include <miniz.h>
 
-#include <zenkit/DaedalusVm.hh>
-#include <zenkit/addon/daedalus.hh>
+#include "daedalus/vm.h"
+#include "daedalus/classes.h"
 #include "asset/modeltypes.h"
 
 #include "gametime.h"
@@ -82,7 +82,7 @@ class Serialize {
       (implRead(a),... );
       }
 
-    void readNpc(zenkit::DaedalusVm& vm, std::shared_ptr<zenkit::INpc>& npc);
+    void readNpc(daedalus::DaedalusVm& vm, std::shared_ptr<daedalus::INpc>& npc);
 
   private:
     Serialize();
@@ -112,8 +112,8 @@ class Serialize {
     void implWrite(float  i)    { writeBytes(&i,sizeof(i)); }
     void implRead (float& i)    { readBytes (&i,sizeof(i)); }
 
-    void implWrite(zenkit::DaedalusDataType  i)    { write((uint32_t) i); }
-    void implRead (zenkit::DaedalusDataType& i)    { read((uint32_t&) i); }
+    void implWrite(daedalus::DaedalusDataType  i)    { write((uint32_t) i); }
+    void implRead (daedalus::DaedalusDataType& i)    { read((uint32_t&) i); }
 
     template<class T, std::enable_if_t<!std::is_same<T,uint32_t>::value && !std::is_same<T,uint64_t>::value && std::is_same<T,size_t>::value,bool> = true>
     void implWrite(T ) = delete;
@@ -255,7 +255,7 @@ class Serialize {
     void implWrite(std::tuple<const Tempest::Pixmap&, Ext> p) { implWrite(std::get<0>(p), std::get<1>(p)); }
     void implRead (Tempest::Pixmap&       p);
 
-    void implWrite(const zenkit::INpc& h);
+    void implWrite(const daedalus::INpc& h);
 
     void implWrite(const FpLock& fp);
     void implRead (FpLock& fp);

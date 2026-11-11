@@ -628,6 +628,24 @@ inline void mark(std::string_view stage, double stageMs = -1, std::string_view e
   std::snprintf(textureBuf,sizeof(textureBuf),"[loadprobe-textures] stage=%.*s t_ms=%.1f tex_full_ring2_bytes=%llu",
                 int(stage.size()),stage.data(),elapsed,(unsigned long long)textures.fullRing2Bytes);
   Tempest::Log::i(textureBuf);
+  const auto& level = textures.levelBytes;
+  std::snprintf(textureBuf,sizeof(textureBuf),
+                "[loadprobe-textures] stage=%.*s t_ms=%.1f tex_level0_bytes=%llu tex_level1_bytes=%llu tex_level2_bytes=%llu "
+                "tex_level3_bytes=%llu tex_level4_bytes=%llu tex_level5_bytes=%llu",
+                int(stage.size()),stage.data(),elapsed,(unsigned long long)level[0],(unsigned long long)level[1],
+                (unsigned long long)level[2],(unsigned long long)level[3],(unsigned long long)level[4],(unsigned long long)level[5]);
+  Tempest::Log::i(textureBuf);
+  std::snprintf(textureBuf,sizeof(textureBuf),
+                "[loadprobe-textures] stage=%.*s t_ms=%.1f tex_shortfall_n=%llu tex_shortfall_seconds=%.9g tex_loads=%llu",
+                int(stage.size()),stage.data(),elapsed,(unsigned long long)textures.shortfallCount,textures.shortfallSeconds,
+                (unsigned long long)textures.loadsInFlight);
+  Tempest::Log::i(textureBuf);
+  std::snprintf(textureBuf,sizeof(textureBuf),
+                "[loadprobe-textures] stage=%.*s t_ms=%.1f tex_jumps=%llu tex_jumps_open=%llu tex_jump_sync_max_ms=%.9g "
+                "tex_jump_zero_max_ms=%.9g",
+                int(stage.size()),stage.data(),elapsed,(unsigned long long)textures.jumps,(unsigned long long)textures.jumpsOpen,
+                textures.jumpSyncMsMax,textures.jumpZeroMsMax);
+  Tempest::Log::i(textureBuf);
   std::snprintf(textureBuf,sizeof(textureBuf),
                 "[loadprobe-textures] stage=%.*s t_ms=%.1f "
                 "tex_landscape_bytes=%llu tex_landscape_n=%llu tex_static_bytes=%llu tex_static_n=%llu",

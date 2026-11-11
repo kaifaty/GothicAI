@@ -1,0 +1,20 @@
+--- a/OpenGothic/shader/ssao/ssao.comp
++++ b/OpenGothic/shader/ssao/ssao.comp
+@@ -116,7 +116,7 @@
+     return 0; // sky
+   if(z>=0.999)
+     return 1; // almost sky
+-  return int(numIter);
++  return 0; // probe: no samples
+   }
+ 
+ float resolveOcclusion() {
+@@ -278,7 +278,7 @@
+     occlusion = resolveOcclusion();
+ #endif
+ 
+-    imageStore(result, ivec2(gl_GlobalInvocationID.xy), vec4(1.0 - occlusion));
++    imageStore(result, ivec2(gl_GlobalInvocationID.xy), vec4(0.5));
+     // if(dbg>4)
+     //   imageStore(result, ivec2(gl_GlobalInvocationID.xy), vec4(0.0));
+     // imageStore(result, ivec2(gl_GlobalInvocationID.xy), vec4(float(dbg)/10.0));

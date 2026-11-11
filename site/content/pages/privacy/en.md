@@ -11,7 +11,7 @@ loads from youtube-nocookie.com only when you click it; from then on
 ## GothicAI Shorts, the YouTube uploader
 
 GothicAI Shorts is the project's command-line tool that uploads the project's own shorts to its YouTube
-channel ([source](https://github.com/kaifaty/GothicAI/tree/main/shorts)). Only the project's author uses
+channel. The tool lives in the private `kaifaty/gothic-shorts` repository. Only the project's author uses
 it, on the author's own computer; it is not offered as a service to anyone.
 
 - It uses YouTube API Services. Using it means agreeing to the

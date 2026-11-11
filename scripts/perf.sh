@@ -6,11 +6,6 @@ BUILD="$ROOT/OpenGothic/build-perf"
 
 fail() { echo "perf: $*" >&2; exit 2; }
 
-if [[ "${PERF_REMOTE:-0}" == 1 ]]; then
-  game_environment="$(python3 "$ROOT/scripts/ryzen_game.py")"
-  eval "$game_environment"
-fi
-
 build_game() {
   local out="$1"
   mkdir -p "$out"
@@ -75,7 +70,9 @@ if [[ "$REMOTE_RUN" == 0 ]]; then
     NAS_OUT="/mnt/shared/gothic-ai/perf-stand/runs/${OUT##*/}"
     remote mkdir -p "$SOURCE/OpenGothic" "$SOURCE/scripts/bench" "$REMOTE_OUT"
     remote df -h "$REMOTE_HOME"
-    rsync -a --delete --exclude='/build*/' --exclude='.git' "$ROOT/OpenGothic/" "$RYZEN_HOST:$SOURCE/OpenGothic/"
+    # The stand's build tree is shared by every checkout that runs here. Copy by content and stamp the
+    # copied files now: kept source times older than the last build's objects would skip their rebuild.
+    rsync -a --checksum --no-times --delete --exclude='/build*/' --exclude='.git' "$ROOT/OpenGothic/" "$RYZEN_HOST:$SOURCE/OpenGothic/"
     rsync -a "$ROOT/scripts/ryzen-build.sh" "$ROOT/scripts/perf.sh" "$ROOT/scripts/perf_report.py" "$ROOT/scripts/base-ensure.sh" "$ROOT/scripts/ryzen_game.py" "$RYZEN_HOST:$SOURCE/scripts/"
     rsync -a --delete --exclude='/build*/' "$ROOT/scripts/convert/" "$RYZEN_HOST:$SOURCE/scripts/convert/"
     rsync -a "$ROOT"/scripts/bench/perf-*.bench "$RYZEN_HOST:$SOURCE/scripts/bench/"
@@ -119,6 +116,13 @@ done
 [[ "$REMOTE_RUN" == 1 || -d "$GOTHIC_DIR/Data" || -n "${OPENGOTHIC_BASE:-}${OPENGOTHIC_BASE_FINGERPRINT:-}" ]] || fail "missing game data: $GOTHIC_DIR/Data"
 
 if [[ "$REMOTE_RUN" == 1 ]]; then
+  # game-base.json names the base of whichever version last ran ryzen.sh setup. The stand's own
+  # content-convert reports this engine's importer format, so a ready base of that format is chosen.
+  CONTENT_CONVERT="$(dirname "$GAME_BIN")/content-convert"
+  [[ -x "$CONTENT_CONVERT" ]] || fail "missing $CONTENT_CONVERT; rerun without NO_BUILD=1"
+  game_environment="$(python3 "$ROOT/scripts/ryzen_game.py" --converter "$CONTENT_CONVERT")" || fail 'no game base for this engine'
+  eval "$game_environment"
+  echo "perf: base ${OPENGOTHIC_BASE_FINGERPRINT:-${OPENGOTHIC_BASE:-}}"
   export XDG_RUNTIME_DIR="/run/user/$(id -u)" ALSOFT_DRIVERS=null
   export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
   found=0
@@ -229,7 +233,7 @@ for section, values in ini.items():
 (leaf / 'run/Gothic.ini').write_text('\n'.join(lines) + '\n')
 subprocess.run(['bash', str(Path(scenario).parents[1] / 'base-ensure.sh'), env['GOTHIC_DIR']],
                env=env, check=True)
-command = [env['GAME_BIN'], '-g', env['GOTHIC_DIR'], '-g2', '-window', '-devmode',
+command = [env['GAME_BIN'], '-g', env['GOTHIC_DIR'], '-window', '-devmode',
            '-nomenu', '-nointro', '-w', 'NEWWORLD.ZEN', *meta['game_args']]
 meta.update(place=place, repeat=int(repeat), command=command)
 with (leaf / 'game.log').open('w') as log:

@@ -1,4 +1,5 @@
 #include "particlecontent.h"
+#include "definitiontypes.h"
 
 #include "gothicglb.h"
 #include "programdata.h"
@@ -44,7 +45,22 @@ void fields(const Json& value, std::initializer_list<const char*> allowed) {
             "unknown field "+name);
     }
   }
-void overrideFields(zenkit::DaedalusVm& vm, Def::ParticleEffect& effect, const Json& values) {
+void overrideField(int32_t& field, const Json& value, const std::string& name) {
+  require(value.IsInt(),name+": expected int");
+  field=value.GetInt();
+  }
+void overrideField(float& field, const Json& value, const std::string& name) {
+  require(value.IsNumber(),name+": expected float");
+  const auto number=value.GetDouble();
+  require(std::isfinite(number) && std::abs(number)<=std::numeric_limits<float>::max(),
+          name+": float out of range");
+  field=float(number);
+  }
+void overrideField(std::string& field, const Json& value, const std::string& name) {
+  require(value.IsString(),name+": expected string");
+  field=text(value);
+  }
+void overrideFields(daedalus::DaedalusVm& vm, Def::ParticleEffect& effect, const Json& values) {
   require(values.IsObject(),"set: expected object");
   const auto* cls=vm.find_symbol_by_name("C_PARTICLEFX");
   std::set<std::string> seen;
@@ -55,27 +71,34 @@ void overrideFields(zenkit::DaedalusVm& vm, Def::ParticleEffect& effect, const J
     auto* symbol=vm.find_symbol_by_name("C_PARTICLEFX."+key);
     require(symbol!=nullptr && symbol->is_member() && cls!=nullptr && symbol->parent()==cls->index(),
             "unknown field "+name);
-    const auto& value=field.value;
-    switch(symbol->type()) {
-      case zenkit::DaedalusDataType::INT:
-        require(value.IsInt(),name+": expected int");
-        symbol->set_int(value.GetInt(),0,&effect);
-        break;
-      case zenkit::DaedalusDataType::FLOAT: {
-        require(value.IsNumber(),name+": expected float");
-        const auto number=value.GetDouble();
-        require(std::isfinite(number) && std::abs(number)<=std::numeric_limits<float>::max(),
-                name+": float out of range");
-        symbol->set_float(float(number),0,&effect);
-        break;
-        }
-      case zenkit::DaedalusDataType::STRING:
-        require(value.IsString(),name+": expected string");
-        symbol->set_string(text(value),0,&effect);
-        break;
-      default: throw std::runtime_error("unsupported field "+name);
+#define DEF_OVERRIDE_FIELD(type, fieldName, extent, symbolName) \
+    if(key==symbolName) { \
+      overrideField(effect.fieldName,field.value,name); \
+      continue; \
       }
+    DEF_PARTICLE_EFFECT_FIELDS(DEF_OVERRIDE_FIELD)
+#undef DEF_OVERRIDE_FIELD
+    throw std::runtime_error("unsupported field "+name);
     }
+  }
+float number(const Json& value, const char* name, double lo, double hi, const char* range) {
+  require(value.IsNumber(),std::string(name)+": expected number");
+  const auto v=value.GetDouble();
+  require(std::isfinite(v) && v>=lo && v<=hi,std::string(name)+": expected "+range);
+  return float(v);
+  }
+void readMotion(const Json& entry, Motion& motion) {
+  if(entry.HasMember("curl")) {
+    const auto& curl=entry["curl"];
+    fields(curl,{"strength","frequency","speed"});
+    motion.curlStrength =number(member(curl,"strength"),"curl.strength",0,20,"0..20");
+    motion.curlFrequency=number(member(curl,"frequency"),"curl.frequency",0,50,"0..50");
+    require(motion.curlFrequency>0,"curl.frequency: must be positive");
+    motion.curlSpeed    =curl.HasMember("speed") ? number(curl["speed"],"curl.speed",0,10,"0..10") : 0.f;
+    }
+  if(entry.HasMember("drag"))      motion.drag     =number(entry["drag"],"drag",0,50,"0..50");
+  if(entry.HasMember("stretch"))   motion.stretch  =number(entry["stretch"],"stretch",0,0.5,"0..0.5");
+  if(entry.HasMember("minPixels")) motion.minPixels=number(entry["minPixels"],"minPixels",0,15,"0..15");
   }
 } // namespace
 
@@ -86,25 +109,25 @@ std::string canonicalName(std::string_view name) {
   return result;
   }
 
-bool hasBase(const zenkit::DaedalusScript& script, std::string_view name) {
+bool hasBase(const daedalus::DaedalusScript& script, std::string_view name) {
   const auto* symbol=script.find_symbol_by_name(canonicalName(name));
   const auto* cls=script.find_symbol_by_name("C_PARTICLEFX");
-  if(symbol==nullptr || cls==nullptr || symbol->type()!=zenkit::DaedalusDataType::INSTANCE)
+  if(symbol==nullptr || cls==nullptr || symbol->type()!=daedalus::DaedalusDataType::INSTANCE)
     return false;
   auto* parent=symbol;
   while(parent!=nullptr && parent!=cls) parent=script.find_symbol_by_index(parent->parent());
   return parent==cls;
   }
 
-std::shared_ptr<Def::ParticleEffect> base(zenkit::DaedalusVm& vm, std::string_view name) {
+std::shared_ptr<Def::ParticleEffect> base(daedalus::DaedalusVm& vm, std::string_view name) {
   if(!hasBase(vm,name)) return nullptr;
-  auto result=std::make_shared<Def::ParticleEffect>();
+  auto result=std::make_shared<VmDef::ParticleEffect>();
   result->vis_tex_is_quadpoly=1;
   vm.init_instance(result,canonicalName(name));
-  return result;
+  return std::make_shared<Def::ParticleEffect>(result->copy());
   }
 
-std::unique_ptr<zenkit::DaedalusVm> openProgram(const fs::path& baseRoot) {
+std::unique_ptr<daedalus::DaedalusVm> openProgram(const fs::path& baseRoot) {
   const auto index=ProgramData::readIndex(baseRoot/"programs");
   const auto* source=index.findVfs("ParticleFx.dat");
   if(source==nullptr) source=index.findHost("_work/Data/Scripts/_compiled/ParticleFx.dat");
@@ -112,13 +135,13 @@ std::unique_ptr<zenkit::DaedalusVm> openProgram(const fs::path& baseRoot) {
   std::string sha256;
   auto program=ProgramData::readProgram(index.path(*source),&sha256);
   require(sha256==source->recordSha256,"particle program identity differs from base index");
-  auto script=zenkit::DaedalusScript::from_program(std::move(program));
-  Def::ParticleEffect::register_(script);
-  return std::make_unique<zenkit::DaedalusVm>(std::move(script),
-      zenkit::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
+  auto script=daedalus::DaedalusScript::from_program(std::move(program));
+  VmDef::ParticleEffect::register_(script);
+  return std::make_unique<daedalus::DaedalusVm>(std::move(script),
+      daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
   }
 
-Result load(zenkit::DaedalusVm& vm, const fs::path& contentRoot) {
+Result load(daedalus::DaedalusVm& vm, const fs::path& contentRoot) {
   Result result;
   if(contentRoot.empty()) return result;
   const auto directory=contentRoot/"particles.d";
@@ -148,8 +171,9 @@ Result load(zenkit::DaedalusVm& vm, const fs::path& contentRoot) {
       require(effects.IsArray(),"effects: expected array");
       decltype(result.effects) pending;
       decltype(result.flipbooks) pendingFlipbooks;
+      decltype(result.motions) pendingMotions;
       for(const auto& entry:effects.GetArray()) {
-        fields(entry,{"name","base","set","flipbook"});
+        fields(entry,{"name","base","set","flipbook","curl","drag","stretch","minPixels"});
         const auto name=text(member(entry,"name"));
         require(!name.empty() && std::all_of(name.begin(),name.end(),[](char c) {
           return (c>='A' && c<='Z') || (c>='0' && c<='9') || c=='_';
@@ -195,10 +219,22 @@ Result load(zenkit::DaedalusVm& vm, const fs::path& contentRoot) {
           pendingFlipbooks.emplace(name,f->second);
         else if(const auto f=result.flipbooks.find(baseName); f!=result.flipbooks.end())
           pendingFlipbooks.emplace(name,f->second);
+        // own motion and look: inherited field by field from an own base, then the entry's own
+        Motion motion;
+        if(const auto m=pendingMotions.find(baseName); m!=pendingMotions.end()) motion=m->second;
+        else if(const auto m=result.motions.find(baseName); m!=result.motions.end()) motion=m->second;
+        readMotion(entry,motion);
+        if(motion.stretch>0) {
+          const auto orientation=uppercase(definition->vis_orientation_s);
+          require(orientation=="VELO" || orientation=="VELO3D","stretch: needs visOrientation_S VELO or VELO3D");
+          }
+        require(motion.minPixels==0 || pendingFlipbooks.count(name)==0,"minPixels: not with a flipbook");
+        if(!motion.empty()) pendingMotions.emplace(name,motion);
         pending.emplace(name,std::move(definition));
         }
       result.effects.insert(pending.begin(),pending.end());
       result.flipbooks.insert(pendingFlipbooks.begin(),pendingFlipbooks.end());
+      result.motions.insert(pendingMotions.begin(),pendingMotions.end());
       }
     catch(const std::exception& error) { result.errors.push_back(file.string()+": "+error.what()); }
     }

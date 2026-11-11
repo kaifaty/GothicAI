@@ -1,9 +1,9 @@
 #include "saveworld.h"
 
-#include <zenkit/DaedalusVm.hh>
+#include "daedalus/vm.h"
 #include <zenkit/SaveGame.hh>
 #include <zenkit/World.hh>
-#include <zenkit/addon/daedalus.hh>
+#include "daedalus/classes.h"
 #include <zenkit/vobs/Misc.hh>
 #include <zenkit/world/WayNet.hh>
 
@@ -14,7 +14,7 @@
 
 using namespace storygraph;
 namespace fs = std::filesystem;
-using zenkit::DaedalusDataType;
+using daedalus::DaedalusDataType;
 
 static constexpr uint32_t ItemActive = 1u << 30;  // ITEM_ACTIVE: equipped
 static constexpr int32_t  Far        = std::numeric_limits<int32_t>::max();
@@ -25,7 +25,7 @@ static std::string upper(std::string s) {
   return s;
   }
 
-SaveWorld::SaveWorld(zenkit::DaedalusVm& vm)
+SaveWorld::SaveWorld(daedalus::DaedalusVm& vm)
   :vm(vm) {
   if(auto* s = vm.find_symbol_by_name("ZS_TALK"))
     zsTalk = int32_t(s->index());
@@ -42,7 +42,7 @@ const SaveWorld::Npc* SaveWorld::npc(uint32_t instanceSymbol) const {
   return it==bySymbol.end() ? nullptr : &npcs[it->second];
   }
 
-const SaveWorld::Npc* SaveWorld::npc(const zenkit::DaedalusInstance* script) const {
+const SaveWorld::Npc* SaveWorld::npc(const daedalus::DaedalusInstance* script) const {
   auto it = byScript.find(script);
   return it==byScript.end() ? nullptr : &npcs[it->second];
   }
@@ -60,15 +60,15 @@ int32_t SaveWorld::state(const Npc& n) const {
   return s ? int32_t(s->index()) : -1;
   }
 
-std::shared_ptr<zenkit::IItem> SaveWorld::item(uint32_t symbol) {
+std::shared_ptr<daedalus::IItem> SaveWorld::item(uint32_t symbol) {
   auto it = items.find(symbol);
   if(it!=items.end())
     return it->second;
-  std::shared_ptr<zenkit::IItem> r;
+  std::shared_ptr<daedalus::IItem> r;
   auto* sym = vm.find_symbol_by_index(symbol);
   if(sym!=nullptr && sym->type()==DaedalusDataType::INSTANCE) {
     try {
-      r = vm.init_instance<zenkit::IItem>(sym);
+      r = vm.init_instance<daedalus::IItem>(sym);
       }
     catch(const std::exception&) {
       r = nullptr;
@@ -78,7 +78,7 @@ std::shared_ptr<zenkit::IItem> SaveWorld::item(uint32_t symbol) {
   }
 
 // an equipped item of the category (ITEM_KAT_ARMOR, ITEM_KAT_NF...)
-std::shared_ptr<zenkit::IItem> SaveWorld::equipped(const Npc* n, uint32_t category) {
+std::shared_ptr<daedalus::IItem> SaveWorld::equipped(const Npc* n, uint32_t category) {
   if(n==nullptr)
     return nullptr;
   for(auto& i : n->save->items) {
@@ -251,7 +251,7 @@ void SaveWorld::addHandlers() {
   h["FLOATTOINT"]        = [=](auto& a) { return integer(int32_t(a[0].f)); };
   }
 
-Value SaveWorld::call(const zenkit::DaedalusSymbol& fn, const std::vector<Value>& args) {
+Value SaveWorld::call(const daedalus::DaedalusSymbol& fn, const std::vector<Value>& args) {
   auto  it = handlers.find(fn.name());
   Value r;
   if(it!=handlers.end()) {
@@ -302,9 +302,9 @@ void SaveWorld::addNpc(const std::shared_ptr<zenkit::VNpc>& v, const std::string
     return;  // an npc of the current world wins; of a kind of monster, one is enough
 
   // the instance function sets what the save does not keep (name, voice, routine); its engine calls go nowhere
-  std::shared_ptr<zenkit::INpc> s;
+  std::shared_ptr<daedalus::INpc> s;
   try {
-    s = vm.init_instance<zenkit::INpc>(sym);
+    s = vm.init_instance<daedalus::INpc>(sym);
     }
   catch(const std::exception&) {
     npcsSkipped++;
@@ -325,7 +325,7 @@ void SaveWorld::addNpc(const std::shared_ptr<zenkit::VNpc>& v, const std::string
   s->exp_next     = v->xp_next_level;
   s->lp           = v->lp;
   s->fight_tactic = v->fight_tactic;
-  s->flags        = zenkit::NpcFlag(uint32_t(v->flags));
+  s->flags        = daedalus::NpcFlag(uint32_t(v->flags));
   if(!v->script_waypoint.empty())
     s->wp = v->script_waypoint;
 

@@ -52,7 +52,7 @@ void count(std::vector<uint8_t>& bin, size_t n) {
   u32(bin,uint32_t(n));
   }
 
-std::vector<uint8_t> encodeSymbols(const zenkit::DaedalusProgramRecord& program) {
+std::vector<uint8_t> encodeSymbols(const asset::ProgramRecord& program) {
   std::vector<uint8_t> bin;
   for(const auto& s:program.symbols) {
     bytes(bin,s.name);
@@ -314,7 +314,7 @@ Index readIndex(const fs::path& dir) {
     }
   }
 
-Encoded encodeProgram(const zenkit::DaedalusProgramRecord& program) {
+Encoded encodeProgram(const asset::ProgramRecord& program) {
   Encoded e;
   e.bin = encodeSymbols(program);
   const auto symbols = e.bin.size();
@@ -333,7 +333,7 @@ Encoded encodeProgram(const zenkit::DaedalusProgramRecord& program) {
   return e;
   }
 
-std::string writeProgram(const zenkit::DaedalusProgramRecord& program, const fs::path& dir, std::string* name) {
+std::string writeProgram(const asset::ProgramRecord& program, const fs::path& dir, std::string* name) {
   const auto e = encodeProgram(program);
   gothicglb::writeFile(dir/(e.name+".bin"),e.bin.data(),e.bin.size());
   gothicglb::writeFile(dir/(e.name+".json"),e.json.data(),e.json.size());
@@ -342,7 +342,7 @@ std::string writeProgram(const zenkit::DaedalusProgramRecord& program, const fs:
   return e.sha256;
   }
 
-zenkit::DaedalusProgramRecord readProgram(const fs::path& file, std::string* actualSha256) {
+asset::ProgramRecord readProgram(const fs::path& file, std::string* actualSha256) {
   try {
     require(file!=binaryPath(file),"JSON and binary paths must differ");
     const auto json = gothicglb::readFile(file);
@@ -370,7 +370,7 @@ zenkit::DaedalusProgramRecord readProgram(const fs::path& file, std::string* act
     require(unsignedValue(code["offset"],"offset")==symbolLength,"bytecode must follow the symbols");
     require(symbolLength<=bin.size() && bin.size()-symbolLength==codeLength,"section lengths do not match the binary");
 
-    zenkit::DaedalusProgramRecord program;
+    asset::ProgramRecord program;
     program.version = uint8_t(version);
     Cursor in(bin,size_t(symbolLength));
     // Each symbol takes at least 73 bytes, so a corrupt count cannot allocate past the file.
@@ -381,7 +381,7 @@ zenkit::DaedalusProgramRecord readProgram(const fs::path& file, std::string* act
       const auto generated = in.u8();
       require(generated<=1,"invalid generated flag");
       s.generated     = generated==1;
-      s.type          = zenkit::DaedalusDataType(in.u32());
+      s.type          = in.u32();
       s.count         = in.u32();
       s.flags         = in.u32();
       s.address       = int32_t(in.u32());
@@ -389,7 +389,7 @@ zenkit::DaedalusProgramRecord readProgram(const fs::path& file, std::string* act
       s.class_offset  = int32_t(in.u32());
       s.member_offset = in.u32();
       s.class_size    = in.u32();
-      s.return_type   = zenkit::DaedalusDataType(in.u32());
+      s.return_type   = in.u32();
       s.file_index    = in.u32();
       s.line_start    = in.u32();
       s.line_count    = in.u32();
@@ -424,7 +424,7 @@ std::string recordSha256(const fs::path& file) {
   return identity(json.data(),json.size(),bin.data(),bin.size());
   }
 
-std::string compare(const zenkit::DaedalusProgramRecord& expected, const zenkit::DaedalusProgramRecord& actual) {
+std::string compare(const asset::ProgramRecord& expected, const asset::ProgramRecord& actual) {
   if(expected.version!=actual.version)
     return "program version differs";
   if(expected.symbols.size()!=actual.symbols.size())

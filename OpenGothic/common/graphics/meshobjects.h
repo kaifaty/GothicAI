@@ -67,7 +67,9 @@ class MeshObjects final {
         void   setObjMatrix(const Tempest::Matrix4x4& mt);
         void   setTexturePosition(const Tempest::Vec3& position);
         void   setTextureCategory(Resources::TextureCategory category);
-        void   setTextureOwner(const Tempest::Vec3& position, bool spatial);
+        // As VisualObjects::Item::setTextureOwner for every part: returns how far the mesh may move from `position`
+        // before a call can change any part's demand. Within that, a call is one comparison without a lock.
+        float  setTextureOwner(const Tempest::Vec3& position, bool spatial);
         void   setSkeleton (const Skeleton* sk);
         void   setPose     (const Tempest::Matrix4x4& obj, const Pose& p);
         void   setPose     (const Tempest::Matrix4x4& obj, const Tempest::Matrix4x4* bones);
@@ -76,6 +78,10 @@ class MeshObjects final {
         void   setWind     (asset::AnimationType m, float intensity);
         void   setVisible  (bool visible);
         void   setDeformation(const std::vector<Tempest::Vec4>& vertices);
+        // as setDeformation, each part takes only the packed vertices it draws (a head of several materials);
+        // only the vertices [changedFirst, changedEnd) differ from the deformation set last
+        void   setPartDeformation(const std::vector<Tempest::Vec4>& vertices, uint32_t changedFirst = 0,
+                                  uint32_t changedEnd = uint32_t(-1));
         // freeOnly: not in place of another anim of the head (a blink gives way to the faces)
         void   startMMAnim (std::string_view anim, float intensity, uint64_t timeUntil, bool freeOnly = false);
         void   setMMShape  (std::string_view anim, uint32_t frame0, uint32_t frame1, float alpha, float intensity);
@@ -105,7 +111,8 @@ class MeshObjects final {
 
         bool                    cpuOnly = false;
         bool                    textureOwnerKnown = false, textureOwnerSpatial = false;
-        std::pair<int32_t,int32_t> textureOwnerChunk;
+        Tempest::Vec3           textureOwnerAnchor;
+        float                   textureOwnerReach = 0;
         std::vector<CpuNode>     cpuSub;
         friend bool TestBench::ragdollBodyDrawable(const Npc& npc);
       };

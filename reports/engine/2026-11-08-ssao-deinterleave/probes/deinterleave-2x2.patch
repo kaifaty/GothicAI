@@ -1,0 +1,76 @@
+diff --git a/OpenGothic/common/graphics/renderer.cpp b/OpenGothic/common/graphics/renderer.cpp
+index 01cef111..7ca38df7 100644
+--- a/OpenGothic/common/graphics/renderer.cpp
++++ b/OpenGothic/common/graphics/renderer.cpp
+@@ -2489,7 +2489,8 @@ void Renderer::prepareSSAO(Encoder<CommandBuffer>& cmd, WorldView& wview) {
+   cmd.setBinding(4, zbuffer,     Sampler::nearest(ClampMode::ClampToEdge));
+   cmd.setPushData(&push, sizeof(push));
+   cmd.setPipeline(shaders.ssao);
+-  cmd.dispatchThreads(ssao.ssaoBuf.size());
++  // ssao.comp gives the four 2x2 phases of a 16x16 tile to four groups: whole tiles only
++  cmd.dispatchThreads(size_t(aoSize.w+15)/16*16, size_t(aoSize.h+15)/16*16);
+ 
+   cmd.setDebugMarker("SSAO-blur");
+   cmd.setBinding(0, ssao.ssaoBlur);
+diff --git a/OpenGothic/shader/ssao/ssao.comp b/OpenGothic/shader/ssao/ssao.comp
+index 834b235c..5858aaff 100644
+--- a/OpenGothic/shader/ssao/ssao.comp
++++ b/OpenGothic/shader/ssao/ssao.comp
+@@ -111,6 +111,29 @@ float wangHashNoise(uvec2 uv, uint s) {
+   return value;
+   }
+ 
++// Deinterleaved sampling (reports/engine/2026-11-08-ssao-deinterleave): a texel's sample rotation depends on its
++// phase in a 2x2 block, and the four phases of a 16x16 tile run in four separate groups. All threads of a SIMD
++// group then share one rotation: their sample offsets are alike and their depth reads hit neighbouring texels.
++// A white rotation per texel made neighbours read far apart lines of the cache and diverge on every branch.
++const int interleave = 2;
++
++ivec2 deinterleavedTexel() {
++  const ivec2 group = ivec2(gl_WorkGroupID.xy);
++  const ivec2 tile  = group/interleave;
++  const ivec2 phase = group%interleave;
++  return (tile*ivec2(gl_WorkGroupSize.xy) + ivec2(gl_LocalInvocationID.xy))*interleave + phase;
++  }
++
++float sampleRotation(ivec2 texel) {
++  // 2x2 Bayer order of the phases. A phase turns the 32 azimuths of the set by a quarter turn and a quarter of
++  // their step: the blur mixes the four into 128 azimuths, each elevation at four of them about 90 deg apart.
++  const ivec2 p   = texel & 1;
++  const uint  idx = uint(((p.x ^ p.y) << 1) | p.y);
++  // one more turn per 16x8 region, the footprint of a SIMD group: no single kernel over the whole screen
++  const float region = wangHashNoise(uvec2(texel.x >> 4, texel.y >> 3), 0);
++  return M_PI*2.0*(region + float(idx)*(0.25 + 1.0/128.0));
++  }
++
+ int estimateMaxSteps(float z) {
+   if(z>=1.0)
+     return 0; // sky
+@@ -218,7 +241,7 @@ void main() {
+   barrier();
+ 
+   screenSize = imageSize(result); // half of the depth buffer with halfResAoFog
+-  fragCoord  = ivec2(gl_GlobalInvocationID.xy);
++  fragCoord  = deinterleavedTexel();
+ 
+   // A half-res texel traces from the top-left depth pixel of its 2x2 block (ssao_blur.comp undoes the shift).
+   // Its own centre lies on a border between two depth pixels: rounding of 1/640 then picked the left or
+@@ -246,8 +269,7 @@ void main() {
+     tangent[2] = norm;
+     }
+ 
+-  // const float f0 = M_PI*2.0*interleavedGradientNoise(fragCoord);
+-  const float f0 = M_PI*2.0*wangHashNoise(uvec2(fragCoord), 0);
++  const float f0 = sampleRotation(fragCoord);
+ 
+   int maxSteps = estimateMaxSteps(at0.z);
+   atomicMax(shMaxSteps, maxSteps);
+@@ -278,7 +300,7 @@ void main() {
+     occlusion = resolveOcclusion();
+ #endif
+ 
+-    imageStore(result, ivec2(gl_GlobalInvocationID.xy), vec4(1.0 - occlusion));
++    imageStore(result, fragCoord, vec4(1.0 - occlusion));
+     // if(dbg>4)
+     //   imageStore(result, ivec2(gl_GlobalInvocationID.xy), vec4(0.0));
+     // imageStore(result, ivec2(gl_GlobalInvocationID.xy), vec4(float(dbg)/10.0));

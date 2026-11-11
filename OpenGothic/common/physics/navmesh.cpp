@@ -589,6 +589,20 @@ void NavMesh::buildOrLoad(const Geometry& geometry, const Params& parameters,
   if(impl->stats.complete) impl->save(hash);
   }
 
+void NavMesh::loadCache(const std::filesystem::path& file,const Params& params) {
+  std::ifstream input(file,std::ios::binary);
+  std::array<char,16> header{};
+  uint64_t key=0;
+  if(!input.read(header.data(),std::streamsize(header.size())) || !readValue(input,key))
+    throw std::runtime_error("navmesh cannot read cache "+file.string());
+  impl=std::make_unique<Impl>();
+  impl->params=params;
+  impl->stats.cacheFile=file;
+  std::ostringstream hex;hex<<std::hex<<std::setfill('0')<<std::setw(16)<<key;
+  impl->stats.key=hex.str();
+  if(!impl->load(key))throw std::runtime_error("navmesh invalid cache "+file.string());
+  }
+
 NavMesh::Path NavMesh::findPath(const Point& start, const Point& end, bool allowTransitions) const {
   Path result;
   if(!impl->query) { result.reason="mesh_not_built"; return result; }

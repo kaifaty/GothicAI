@@ -6,7 +6,9 @@ import os
 import re
 import subprocess
 import sys
+import textwrap
 from copy import deepcopy
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -127,7 +129,7 @@ def test_create_limit_orders_heavy_priority_ratio_and_key(config):
                finding("heavy", kind="ruff", score=100, level="heavy"),
                finding("normal-z.py", score=800_000),
                finding("large.md", kind="doc-now", score=102_400),
-               finding("shorts", kind="ruff", score=96),
+               finding("server", kind="ruff", score=96),
                finding(kind="orphan-scripts", score=10)]
     client = FakeClient()
     plan = debt.sync(values, config, client, apply=True)
@@ -135,8 +137,8 @@ def test_create_limit_orders_heavy_priority_ratio_and_key(config):
     assert created == ["doc-file:manual.md", "hotspot:heavy.py", "ruff:heavy",
                        "hotspot:normal-5.py", "hotspot:normal-z.py"]
     ordered = [item["key"] for item in plan]
-    assert ordered.index("doc-now:large.md") < ordered.index("ruff:shorts")
-    assert ordered.index("ruff:shorts") < ordered.index("orphan-scripts")
+    assert ordered.index("doc-now:large.md") < ordered.index("ruff:server")
+    assert ordered.index("ruff:server") < ordered.index("orphan-scripts")
     assert actions(plan).count("defer") == 8
     assert len([call for call in client.writes if call[0] == "create"]) == 5
     client.writes.clear()
@@ -441,6 +443,245 @@ def test_workflow_serializes_each_ref_without_cancelling_running_jobs():
     assert settings["cancel-in-progress"] == "false"
 
 
+@pytest.fixture
+def ratchet_repository(repository, config, monkeypatch):
+    config["hotspot"].update(open_lines=15, close_lines=10, open_score=20, close_score=10)
+    config["doc-now"].update(open_score=150, close_score=100)
+    target = repository / "OpenGothic/common/testbench.cpp"
+    target.parent.mkdir(parents=True)
+    (repository / "src/hot.py").rename(target)
+    commit(repository, "Move hot fixture", "2026-03-02T12:00:00+00:00")
+    git(repository, "switch", "-qc", "branch")
+    monkeypatch.chdir(repository)
+    monkeypatch.setattr(debt, "load_config", lambda _: config)
+    monkeypatch.setenv("FAIL_RUFF", "1")
+    monkeypatch.setattr(debt, "orphan_scripts", lambda *args: pytest.fail("check searched for orphans"))
+    return repository
+
+
+@pytest.mark.parametrize("today, level, exit_code", [
+    (date(2026, 11, 18), "warning", 0),
+    (date(2026, 11, 19), "error", 1),
+    (date(2026, 11, 20), "error", 1),
+])
+def test_check_hotspot_annotation_exit_and_summary(ratchet_repository, config, monkeypatch, capsys,
+                                                 today, level, exit_code):
+    repository = ratchet_repository
+    path = "OpenGothic/common/testbench.cpp"
+    (repository / path).write_text("pass\n" * 22)
+    # HEAD is outside the baseline's activity window; baseline findings must still apply.
+    commit(repository, "Grow hot file", "2026-05-01T12:00:00+00:00")
+    summary = repository / "summary.md"
+    summary.write_text("Earlier step.\n")
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    check = debt.check
+    monkeypatch.setattr(debt, "check", lambda root, cfg, base: check(root, cfg, base, today=today))
+    assert debt.main(["check", "--base", "main"]) == exit_code
+    message = ("Строк в горячем файле: 20 → 22 (+2). Новый код — в новые файлы; "
+               "рост, уже влитый в main, не считается.")
+    if level == "warning":
+        message += " Пока это предупреждение; с 2026-11-19 такой рост не пройдёт проверку."
+    assert capsys.readouterr().out == (
+        f"::{level} file={path},title=Техдолг%3A горячий файл растёт::{message}\n")
+    mode = ("Пока это предупреждение; с 2026-11-19 — проверка." if level == "warning" else
+            "Проверка не пройдена: горячие файлы и большие разделы «Как работает сейчас» не должны расти.")
+    assert summary.read_text() == (
+        "Earlier step.\n### Храповик техдолга\n\n| Файл | Мера | Было | Стало | Рост |\n"
+        "|---|---|---|---|---|\n| OpenGothic/common/testbench.cpp | строк | 20 | 22 | +2 |\n\n"
+        + mode + "\n")
+
+
+@pytest.mark.parametrize("change", ["unrelated", "decrease", "delete", "hold", "cold", "new", "dirty"])
+def test_check_ignores_non_growth_and_files_not_open_on_base(ratchet_repository, config, monkeypatch,
+                                                          capsys, change):
+    repository = ratchet_repository
+    hot = repository / "OpenGothic/common/testbench.cpp"
+    if change == "delete":
+        hot.unlink()
+    else:
+        target, text = {
+            "unrelated": (repository / "README.md", "Different file.\n"),
+            "decrease": (hot, "pass\n" * 19),
+            "hold": (repository / "src/hold.py", "pass\n" * 30),
+            "cold": (repository / "src/cold.py", "pass\n" * 30),
+            "new": (repository / "src/new.py", "pass\n" * 30),
+            "dirty": (hot, "pass\n" * 30),
+        }[change]
+        target.write_text(text)
+    if change != "dirty":
+        commit(repository, "Change fixture", "2026-05-01T12:00:00+00:00")
+    summary = repository / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    assert debt.check(repository, config, "main", today=date(2026, 11, 19)) == 0
+    expected = "Храповик техдолга: горячие файлы и большие разделы «Как работает сейчас» не выросли.\n"
+    assert capsys.readouterr().out == expected
+    assert summary.read_text() == expected
+
+
+@pytest.mark.parametrize("merge", [False, True])
+def test_check_excludes_growth_on_base_after_branching(ratchet_repository, config, capsys, merge):
+    repository = ratchet_repository
+    git(repository, "switch", "-q", "main")
+    (repository / "OpenGothic/common/testbench.cpp").write_text("pass\n" * 25)
+    commit(repository, "Growth on main", "2026-03-03T12:00:00+00:00")
+    git(repository, "switch", "-q", "branch")
+    (repository / "README.md").write_text("Branch change.\n")
+    commit(repository, "Unrelated branch change", "2026-03-04T12:00:00+00:00")
+    if merge:
+        git(repository, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+            "merge", "--no-ff", "-qm", "Merge main", "main", date="2026-03-05T12:00:00+00:00")
+    assert debt.check(repository, config, "main", today=date(2026, 11, 19)) == 0
+    assert "не выросли" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("change", ["large", "at_threshold", "small", "outside", "removed"])
+def test_check_document_section_growth(ratchet_repository, config, monkeypatch, capsys, change):
+    repository = ratchet_repository
+    path = "docs/hold.md" if change == "small" else "docs/live.md"
+    document = repository / path
+    before = debt.now_section_bytes(document.read_bytes())
+    if change == "at_threshold":
+        config["doc-now"]["open_score"] = before
+    if change == "removed":
+        document.write_text("# History\nNo current section.\n")
+    elif change == "outside":
+        document.write_text(document.read_text() + "\nOutside the section.\n")
+    else:
+        document.write_text(document.read_text().replace("## Как работает сейчас\n",
+                                                       "## Как работает сейчас\nещё\n"))
+    commit(repository, "Edit document", "2026-05-01T12:00:00+00:00")
+    summary = repository / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    assert debt.check(repository, config, "main", today=date(2026, 11, 18)) == 0
+    output = capsys.readouterr().out
+    if change in {"large", "at_threshold"}:
+        after = before + len("ещё\n".encode())
+        assert output == (
+            f"::warning file={path},title=Техдолг%3A раздел «Как работает сейчас» растёт::"
+            f"Байт в разделе «Как работает сейчас»: {before} → {after} (+{after - before}); "
+            f"порог открытия — {config['doc-now']['open_score']}. "
+            "Подробности — в отдельный документ или в «План и журнал». "
+            "Пока это предупреждение; с 2026-11-19 такой рост не пройдёт проверку.\n")
+        assert f"| {path} | байт раздела | {before} | {after} | +{after - before} |" in summary.read_text()
+    else:
+        assert "не выросли" in output and "::warning" not in output and "::error" not in output
+
+
+def test_check_escapes_workflow_command_properties(ratchet_repository, config, capsys):
+    repository = ratchet_repository
+    target = repository / "OpenGothic/common/test,bench:100%.cpp"
+    (repository / "OpenGothic/common/testbench.cpp").rename(target)
+    commit(repository, "Rename hot file", "2026-03-03T12:00:00+00:00")
+    base = git(repository, "rev-parse", "HEAD")
+    target.write_text(target.read_text() + "pass\n")
+    commit(repository, "Grow renamed file", "2026-05-01T12:00:00+00:00")
+    assert debt.check(repository, config, base, today=date(2026, 11, 18)) == 0
+    assert capsys.readouterr().out.startswith(
+        "::warning file=OpenGothic/common/test%2Cbench%3A100%25.cpp,")
+    assert debt.workflow_escape("%\r\n:,", property_value=True) == "%25%0D%0A%3A%2C"
+    assert debt.workflow_escape("%\r\n:,") == "%25%0D%0A:,"
+
+
+def test_check_requires_base_and_reports_git_failure(ratchet_repository, capsys):
+    with pytest.raises(SystemExit) as error:
+        debt.main(["check"])
+    assert error.value.code == 2
+    capsys.readouterr()
+    assert debt.main(["check", "--base", "missing-revision"]) == 1
+    output = capsys.readouterr()
+    assert output.out == "" and output.err.startswith("debt: ")
+
+
+def test_ratchet_workflow_checks_every_pr_against_base_sha():
+    workflow = (ROOT / ".github/workflows/debt-ratchet.yml").read_text(encoding="utf-8")
+    assert "name: Technical debt ratchet\n" in workflow
+    assert "on: pull_request\n" in workflow and not re.search(r"\bpaths(?:-ignore)?:", workflow)
+    assert 'git show "$BASE_SHA:scripts/debt.py"' in workflow
+    assert 'python3 "$tool/debt.py" check --base "$BASE_SHA"' in workflow
+    assert "BASE_SHA: ${{ github.event.pull_request.base.sha }}" in workflow
+    assert "ref: ${{ github.event.pull_request.head.sha }}" in workflow
+    assert "persist-credentials: false" in workflow and "fetch-depth: 0" in workflow
+    assert 'python-version: "3.12"' in workflow
+    assert "contents: read" in workflow and "timeout-minutes: 5" in workflow
+    assert "group: debt-ratchet-${{ github.event.pull_request.number }}" in workflow
+    assert "cancel-in-progress: true" in workflow
+    tests = (ROOT / ".github/workflows/tests.yml").read_text(encoding="utf-8")
+    for action in ("checkout", "setup-python"):
+        pinned = re.search(rf"actions/{action}@[a-f0-9]{{40}}", tests)[0]
+        assert pinned in workflow
+
+
+OLD_DEBT = (
+    "import argparse\n"
+    "parser = argparse.ArgumentParser()\n"
+    "parser.add_subparsers(dest='command', required=True).add_parser('scan')\n"
+    "parser.parse_args()\n"
+)
+RATCHET_CONFIG = """\
+exclude = ["OpenGothic/lib", "reports", "research_notes"]
+
+[ratchet]
+enforce_from = 2099-01-01
+
+[hotspot]
+extensions = [".py", ".cpp"]
+window_days = 30
+open_lines = 15
+close_lines = 10
+open_score = 20
+close_score = 10
+
+[doc-now]
+open_score = 150
+close_score = 100
+"""
+
+
+def run_ratchet_step(repository, base):
+    workflow = (ROOT / ".github/workflows/debt-ratchet.yml").read_text(encoding="utf-8")
+    step = re.search(r"^ +- name: Check debt growth\n(?: +.*\n)*? +run: \|\n((?:(?: {10}.*)?\n)+)",
+                     workflow, re.MULTILINE)
+    env = {**os.environ, "BASE_SHA": base}
+    env.pop("GITHUB_STEP_SUMMARY", None)
+    # GitHub's default shell for `run`.
+    return subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", textwrap.dedent(step[1])],
+                          cwd=repository, env=env, capture_output=True, text=True)
+
+
+@pytest.mark.parametrize("base_tool", ["ratchet", "before-ratchet", "missing"])
+def test_ratchet_step_measures_old_branch_with_base_tool(repository, base_tool):
+    hot = repository / "OpenGothic/common/testbench.cpp"
+    hot.parent.mkdir(parents=True)
+    (repository / "src/hot.py").rename(hot)
+    (repository / "scripts/debt.py").write_text(OLD_DEBT)
+    (repository / "scripts/debt.toml").write_text(RATCHET_CONFIG)
+    commit(repository, "Debt tool before the ratchet", "2026-03-02T12:00:00+00:00")
+    # The branch forks before the ratchet lands: its own debt.py has no `check`.
+    git(repository, "switch", "-qc", "branch")
+    hot.write_text("pass\n" * 22)
+    commit(repository, "Grow hot file", "2026-03-04T12:00:00+00:00")
+    git(repository, "switch", "-q", "main")
+    if base_tool == "ratchet":
+        (repository / "scripts/debt.py").write_text((ROOT / "scripts/debt.py").read_text(encoding="utf-8"))
+        commit(repository, "Ratchet lands", "2026-03-03T12:00:00+00:00")
+    elif base_tool == "missing":
+        (repository / "scripts/debt.py").unlink()
+        commit(repository, "Remove debt tool", "2026-03-03T12:00:00+00:00")
+    base = git(repository, "rev-parse", "main")
+    git(repository, "switch", "-q", "branch")
+    result = run_ratchet_step(repository, base)
+    assert result.returncode == 0, result.stderr
+    assert "invalid choice" not in result.stderr
+    if base_tool == "ratchet":
+        assert result.stdout == (
+            "::warning file=OpenGothic/common/testbench.cpp,title=Техдолг%3A горячий файл растёт::"
+            "Строк в горячем файле: 20 → 22 (+2). Новый код — в новые файлы; рост, уже влитый в main, "
+            "не считается. Пока это предупреждение; с 2099-01-01 такой рост не пройдёт проверку.\n")
+    else:
+        assert result.stdout == ("::warning title=Храповик техдолга::На базе PR в scripts/debt.py "
+                                 "нет команды check; храповик пропущен.\n")
+
+
 def audit_finding(*, symbol="handle_request", severity="high", **fields):
     return {
         "match": "new", "kind": "workaround", "path": "src/hot.py", "symbol": symbol,
@@ -466,7 +707,7 @@ def test_ingest_config_has_audit_kinds_visual_exclusions_and_limit(config):
     }
     assert set(config["codex"]["exclude"]) == {
         "OpenGothic/shader", "OpenGothic/common/graphics", "OpenGothic/common/ui",
-        "scripts/content", "scripts/meshes", "scripts/hd", "shorts", "site", "launcher/app",
+        "scripts/content", "scripts/meshes", "scripts/hd", "site", "launcher/app",
     }
     assert config["codex"]["max_new"] == 3
 

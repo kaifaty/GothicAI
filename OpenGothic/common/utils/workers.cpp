@@ -20,6 +20,10 @@ std::atomic_bool poolCreated{false};
 #include <pthread.h>
 #endif
 
+#if !defined(__WINDOWS__)
+#include <ctime>
+#endif
+
 #if defined(_MSC_VER)
 void Workers::setThreadName(const char* threadName) {
   const DWORD MS_VC_EXCEPTION = 0x406D1388;
@@ -129,6 +133,21 @@ uint8_t Workers::maxThreads() {
   if(th>MAX_THREADS)
     return MAX_THREADS;
   return uint8_t(th);
+  }
+
+double Workers::threadCpuUs() {
+#if defined(__WINDOWS__)
+  // kernel + user time in 100 ns units; Windows counts it per scheduler tick, so short spans read coarse
+  FILETIME creation = {}, exit = {}, kernel = {}, user = {};
+  if(!GetThreadTimes(GetCurrentThread(),&creation,&exit,&kernel,&user))
+    return 0;
+  const auto ticks = [](const FILETIME& t) { return (uint64_t(t.dwHighDateTime)<<32) | uint64_t(t.dwLowDateTime); };
+  return double(ticks(kernel)+ticks(user))*0.1;
+#else
+  timespec ts = {};
+  clock_gettime(CLOCK_THREAD_CPUTIME_ID,&ts);
+  return double(ts.tv_sec)*1e6 + double(ts.tv_nsec)*1e-3;
+#endif
   }
 
 void Workers::threadFunc(size_t id) {

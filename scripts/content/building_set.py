@@ -29,22 +29,26 @@ with a staging set as base, it is that set with only these entries replaced.
 
 `compose SET PART...` joins the sets of several assets into one staging set for the game:
 each texture belongs to exactly one part, so a shared texture lives in its own asset. Meshes of a
-part (a prop's GLB), particle descriptions (`particles.d/*.json`) and vob trees
-(`vobtrees.d/*.json`) come along.
+part (a prop's GLB with its `.convex-parts` and `.fracture` caches and its `.debris.glb`), particle descriptions
+(`particles.d/*.json`) and vob trees (`vobtrees.d/*.json`) come along.
 
 `enable SET` copies a staging set into the working content `~/.local/share/gothic-ai/content`, which
-the game reads by default; only on the user's word (gate `enable`).
+the game reads by default; only on the user's word (gate `enable`). A movable table or cupboard GLB
+(`movable-vobs.csv`) needs its fresh `.convex-parts` first (`scripts/convex-parts.sh content <set>`),
+a destructible one (`destructible-vobs.csv`) its fresh `.fracture` (`scripts/fracture.sh content <set>`).
 """
 from __future__ import annotations
 
 import argparse
 from copy import deepcopy
 from datetime import datetime, timezone
+import fnmatch
 from io import BytesIO
 import json
 from pathlib import Path
 import shutil
 import sys
+import zlib
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -61,6 +65,19 @@ import remaster
 from seam_fix import seamless
 
 LUMINANCE = np.array([.2126, .7152, .0722])
+# Caches the engine reads beside an own GLB, checked by the GLB's size and CRC32 (docs/physics.md):
+# suffix → accepted headers, the table of OpenGothic/data and its classes that need the cache, the command that cuts it.
+# DynamicWorld loads offline convex parts only for tables and cupboards; FractureMesh breaks a destructible
+# only with its pieces, and scripts/fracture.sh content cuts these four classes.
+CACHES = {
+    '.convex-parts': (('GOTHIC_CONVEX_PARTS 1',), 'movable-vobs.csv', ('table', 'cupboard'), 'scripts/convex-parts.sh content'),
+    '.fracture': (('GOTHIC_FRACTURE 2', 'GOTHIC_FRACTURE 3'), 'destructible-vobs.csv', ('crate', 'barrel', 'pot', 'fence'),
+                  'scripts/fracture.sh content'),
+}
+# A destructible's debris (its pieces as parts, reports/content/2026-11-wood-fracture) travels with its GLB;
+# beside it the `.fracture` must be version 3, cut from that debris.
+DEBRIS, DEBRIS_TAG = '.debris.glb', 'GOTHIC_FRACTURE 3'
+SIDECARS = (*CACHES, DEBRIS)
 MODES = ('target', 'group', 'match')
 
 
@@ -414,6 +431,10 @@ def compose(name: str, parts: list[str]) -> dict:
             index[texture] = entry
         for visual, entry in meshes[part].items():
             take(part, 'meshes', Path(entry['glb']))
+            for suffix in SIDECARS:
+                sidecar = Path(entry['glb']).with_suffix(suffix)
+                if (staging / part / 'meshes' / sidecar).is_file():
+                    take(part, 'meshes', sidecar)
             mesh_index[visual] = entry
         for chunk in chunks[part]:
             take(part, 'worlds', chunk)
@@ -460,13 +481,47 @@ def compose(name: str, parts: list[str]) -> dict:
     return result
 
 
+def stale_caches(content: Path) -> dict[str, list[str]]:
+    """Visuals of a content folder by cache suffix whose GLB lacks a fresh adjacent cache it needs: without
+    `.convex-parts` a table or cupboard gets one hull instead of the compound, without `.fracture` a
+    destructible never breaks."""
+    index = content / 'meshes/meshes.json'
+    if not index.is_file():
+        return {}
+    entries = sorted(json.loads(index.read_text()).items())
+    stale = {}
+    for suffix, (tags, table, classes, _) in CACHES.items():
+        rules = [line.split(',')[:2] for line in (remaster.ROOT / 'OpenGothic/data' / table).read_text().splitlines()
+                 if line and not line.startswith('#')]
+        for visual, entry in entries:
+            key = Path(visual).stem.upper()
+            if next((cls for pattern, cls in rules if fnmatch.fnmatchcase(key, pattern.upper())), None) not in classes:
+                continue
+            glb = content / 'meshes' / entry['glb']
+            source, cache = glb.read_bytes(), glb.with_suffix(suffix)
+            header = []
+            if cache.is_file():
+                with cache.open('rb') as stream:  # a .fracture runs to megabytes; only its first two lines matter
+                    header = [stream.readline().decode('ascii', 'replace').rstrip('\n') for _ in range(2)]
+            # beside its debris a GLB's pieces are cut only into version 3
+            wanted = (DEBRIS_TAG,) if suffix == '.fracture' and glb.with_suffix(DEBRIS).is_file() else tags
+            if len(header) != 2 or header[0] not in wanted or header[1] != f'source {len(source)} {zlib.crc32(source):08x}':
+                stale.setdefault(suffix, []).append(key)
+    return stale
+
+
 def enable(name: str) -> dict:
     """Make the staging set `name` the game's working content: `<data>/content`, which the engine reads
     when OPENGOTHIC_CONTENT is unset. Its `materials/`, `meshes/`, `worlds/`, `particles.d/` and `vobtrees.d/` are replaced; other folders
-    there stay; `enabled.json` records the set. Enabling is the user's decision (gate `enable`)."""
+    there stay; `enabled.json` records the set. Enabling is the user's decision (gate `enable`). A set whose
+    tables or cupboards lack a fresh `.convex-parts`, or whose destructibles lack a fresh `.fracture`, is
+    refused: the collision and fracture steps cannot be skipped."""
     staging = remaster.data_root() / 'content-staging' / name
     if not (staging / 'materials/materials.json').is_file():
         raise ValueError(f'{staging}: no materials/materials.json')
+    if stale := stale_caches(staging):
+        raise ValueError(f'{name}: ' + '; '.join(f'no fresh {suffix} for {", ".join(keys)}; run {CACHES[suffix][3]} {staging}'
+                                                 for suffix, keys in stale.items()))
     live = remaster.data_root() / 'content'
     incoming = live / '.enable'
     shutil.rmtree(incoming, ignore_errors=True)

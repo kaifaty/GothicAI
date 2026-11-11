@@ -104,7 +104,8 @@ while True:
         for executable in binaries.iterdir():
             executable.chmod(0o755)
         harness = '\n'.join([
-            'set -euo pipefail', function('e2e_window_position'), function('game_settings'), function('remote_run'),
+            'set -euo pipefail', function('window_position'), function('e2e_window_position'),
+            function('game_settings'), function('remote_run'),
             'ROOT="$TEST_ROOT/source"',
             'toolchain() { :; }',
             'desktop() { RYZEN_SCREEN_SIZE=1920x1080; }',
@@ -213,8 +214,8 @@ preparation_needed() { [[ "$TEST_PREPARE" == 1 ]]; }
         routing = SCRIPT.read_text().split('ACTION="${1:-}"\n', 1)[1].split('\nremote() {', 1)[0]
         harness += '\nset -- "$ACTION"; if [[ "$ACTION" == bench ]]; then set -- "$ACTION" "$BENCH_SCENARIO" "$SESSION/result"; fi\n'
         harness += routing + '\n'
-        harness += '\n'.join([function('run_quick'), function('e2e_display_exclusive'),
-                              function('game_queue_args'), function('run_game')])
+        harness += '\n'.join([function('run_quick'), function('e2e_display_exclusive'), function('bench_window'),
+                              function('bench_display_exclusive'), function('game_queue_args'), function('run_game')])
         harness += '\nrun_game env "${ENV_ARGS[@]}" bash "$STATE/source/scripts/ryzen.sh" __remote "$ACTION" "$STATE" "$RUN" "$SCENARIO"\n'
         env = {name: value for name, value in os.environ.items() if not name.startswith(('RYZEN_', 'BENCH_'))}
         if jobs is not None:
@@ -238,15 +239,24 @@ preparation_needed() { [[ "$TEST_PREPARE" == 1 ]]; }
 
     def assert_game_request(self, request, action):
         options = self.queue_options(request)
+        command = request[request.index('--') + 1:]
+        self.assertIn('RYZEN_RUN_ID=run-game', command)
+        self.assertNotIn('RYZEN_BENCH_COLUMN=1', command)
+        if action == 'bench':
+            # A bench draws offscreen by default: no window slot and no window flags.
+            self.assertEqual(options[3:], ['--class', 'quick', '--threads', '4', '--mem', '4G', '--max', '9m',
+                                           '--wait-max', '23', '--gpu-mem', '2G', '--name', 'bench smoke'])
+            self.assertIn('RYZEN_BENCH_OFFSCREEN=1', command)
+            return
         for name, value in [('--class', 'quick'),
-                            ('--threads', '4'), ('--mem', '5G'), ('--max', '9m'),
-                            ('--gpu-mem', '4G' if action == 'bench' else '2G'),
-                            ('--wait-max', '23'),
-                            ('--name', 'bench smoke' if action == 'bench' else 'e2e stages')]:
+                            ('--threads', '4'), ('--mem', '5G'), ('--max', '9m'), ('--gpu-mem', '2G'),
+                            ('--wait-max', '23'), ('--display-layout', '2'), ('--name', 'e2e stages')]:
             self.assert_option(options, name, value)
-        self.assertIn('--display', options)
-        self.assertEqual('--display-shared' in options, action == 'e2e')
-        self.assertIn('RYZEN_RUN_ID=run-game', request[request.index('--') + 1:])
+        for option in ('--display', '--display-shared'):
+            self.assertIn(option, options)
+        for option in ('--display-exclusive', '--display-column'):
+            self.assertNotIn(option, options)
+        self.assertNotIn('RYZEN_BENCH_OFFSCREEN=1', command)
 
     def test_preparation_and_game_have_separate_resources_and_names(self):
         for action in ('e2e', 'bench'):
@@ -255,7 +265,7 @@ preparation_needed() { [[ "$TEST_PREPARE" == 1 ]]; }
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(len(requests), 2, requests)
                 build = self.queue_options(requests[0])
-                for name, value in [('--class', 'quick'), ('--threads', '7'), ('--mem', '12G'),
+                for name, value in [('--class', 'quick'), ('--threads', '7'), ('--mem', '10G'),
                                     ('--max', '9m'),
                                     ('--name', 'build bench smoke' if action == 'bench' else 'build e2e stages')]:
                     self.assert_option(build, name, value)
@@ -291,18 +301,21 @@ preparation_needed() { [[ "$TEST_PREPARE" == 1 ]]; }
                 for name, value in (('--class', expected_class), ('--threads', '4'), ('--mem', '6G'),
                                     ('--max', '9m'), ('--name', 'bench smoke')):
                     self.assert_option(options, name, value)
-                for option in ('--display', '--display-shared', '--display-exclusive', '--gpu-mem'):
+                for option in ('--display', '--display-shared', '--display-exclusive', '--display-column',
+                               '--display-layout', '--gpu-mem'):
                     self.assertNotIn(option, options)
+                self.assertNotIn('RYZEN_BENCH_COLUMN=1', requests[-1])
                 self.assert_option(self.queue_options(requests[0]), '--class', 'quick')
 
-    def test_headless_zero_keeps_npc_day_window_queue_request(self):
+    def test_headless_zero_runs_npc_day_in_the_game_offscreen(self):
         result, requests = self.run_game('bench', prepare=False, headless=True, bench_name='npc-day-parity',
                                          window={'BENCH_HEADLESS': '0'})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         options = self.queue_options(requests[0])
         self.assertEqual(options, ['--host', 'fake', 'run', '--class', 'quick', '--threads', '4',
-                                  '--mem', '5G', '--display', '--max', '9m', '--wait-max', '23',
-                                  '--gpu-mem', '4G', '--name', 'bench npc-day-parity'])
+                                  '--mem', '4G', '--max', '9m', '--wait-max', '23',
+                                  '--gpu-mem', '2G', '--name', 'bench npc-day-parity'])
+        self.assertIn('RYZEN_BENCH_OFFSCREEN=1', requests[0])
 
     def test_dev_ubuntu_headless_build_and_game_use_host_resources(self):
         result, requests = self.run_game('bench', headless=True, host='dev-ubuntu', jobs=None)
@@ -343,6 +356,8 @@ preparation_needed() { [[ "$TEST_PREPARE" == 1 ]]; }
                 self.assertIn('--display', game)
                 self.assertEqual('--display-exclusive' in game, exclusive)
                 self.assertEqual('--display-shared' in game, not exclusive)
+                self.assertEqual('--display-layout' in game, not exclusive)
+                self.assertNotIn('--display-column', game)
                 self.assert_option(game, '--name', f'e2e {scenario}')
 
     def test_forced_exclusive_overrides_shared_scenario(self):
@@ -361,10 +376,51 @@ preparation_needed() { [[ "$TEST_PREPARE" == 1 ]]; }
         self.assertNotIn('--display-exclusive', options)
 
     def test_bench_does_not_use_e2e_exclusive_scenarios(self):
-        result, requests = self.run_game(action='bench', scenario='calm')
+        result, requests = self.run_game(action='bench', scenario='calm', window={'RYZEN_BENCH_WINDOW': '1'})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertNotIn('--display-exclusive', self.queue_options(requests[-1]))
-        self.assertNotIn('--display-shared', self.queue_options(requests[-1]))
+        self.assertIn('--display-column', self.queue_options(requests[-1]))
+
+    def test_bench_window_conditions_keep_the_window_request(self):
+        # Each condition brings back the window of PR #1067: a column, or the whole screen.
+        window = {'RYZEN_BENCH_WINDOW': '1'}
+        cases = [(window, 'smoke', False), (dict(window, TEMPEST_WINDOW_SIZE='800x600'), 'smoke', False),
+                 (dict(window, RYZEN_DISPLAY_EXCLUSIVE='1'), 'smoke', True),
+                 (dict(window, TEMPEST_WINDOW_SIZE='960x540'), 'smoke', True),
+                 (dict(window, TEMPEST_WINDOW_POS='20,40'), 'smoke', True),
+                 (dict(window, TEMPEST_WINDOW_POS=''), 'smoke', True),
+                 ({'KEEP': '1'}, 'smoke', True), ({'OPENGOTHIC_BENCH_VISIBLE': '1'}, 'smoke', True),
+                 ({'OPENGOTHIC_FPS_LOG': '1'}, 'smoke', False), ({'RYZEN_BENCH_CLASS': 'quiet'}, 'smoke', False),
+                 ({}, 'streaming-flythrough', True)]
+        for window, bench_name, exclusive in cases:
+            with self.subTest(window=window, bench=bench_name):
+                result, requests = self.run_game('bench', prepare=False, window=window, bench_name=bench_name)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                options = self.queue_options(requests[0])
+                self.assert_option(options, '--class', window.get('RYZEN_BENCH_CLASS', 'quick'))
+                self.assert_option(options, '--gpu-mem', '3G')
+                self.assertIn('--display', options)
+                self.assertEqual('--display-exclusive' in options, exclusive)
+                for option in ('--display-shared', '--display-column', '--display-layout'):
+                    self.assertEqual(option in options, not exclusive)
+                self.assertEqual('RYZEN_BENCH_COLUMN=1' in requests[0], not exclusive)
+                self.assertNotIn('RYZEN_BENCH_OFFSCREEN=1', requests[0])
+
+    def test_bench_offscreen_ignores_window_layout_settings(self):
+        for window in ({'TEMPEST_WINDOW_SIZE': '960x540'}, {'TEMPEST_WINDOW_POS': '20,40'},
+                       {'RYZEN_DISPLAY_EXCLUSIVE': '1'}, {'RYZEN_BENCH_WINDOW': '0', 'KEEP': '0'}):
+            with self.subTest(window=window):
+                result, requests = self.run_game('bench', prepare=False, window=window)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assert_game_request(requests[0], 'bench')
+
+        result, requests = self.run_game('bench', prepare=False,
+            window={'RYZEN_BENCH_CLASS': 'quiet', 'TEMPEST_OFFSCREEN': '1'})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        options = self.queue_options(requests[0])
+        self.assert_option(options, '--class', 'quiet')
+        self.assertNotIn('--display', options)
+        self.assertIn('RYZEN_BENCH_OFFSCREEN=1', requests[0])
 
     def test_custom_window_does_not_overlap_shared_slot_layout(self):
         for window, shared in (({'TEMPEST_WINDOW_SIZE': '640x360'}, True),
@@ -1253,7 +1309,8 @@ guard_ack() { :; }
 preparation_needed() { return 1; }
 ''' + '\n' + env_args + '\n'
             harness += '\n'.join(function(name) for name in (
-                'run_quick', 'e2e_display_exclusive', 'game_queue_args', 'run_game'))
+                'run_quick', 'e2e_display_exclusive', 'bench_window', 'bench_display_exclusive', 'game_queue_args',
+                'run_game'))
             harness += '\n' + ('run_quick' if action == 'pytest' else 'run_game')
             harness += ' env "${ENV_ARGS[@]}" bash "$STATE/source/scripts/ryzen.sh" __remote "$ACTION" "$STATE" "$RUN"\n'
         environment = {name: value for name, value in self.env.items()
@@ -1554,7 +1611,7 @@ remote_run e2e "$TEST_ROOT/worktree" run
                 expected = dict(zip(names, (str(47827 + slot * 100),
                                            str(47829 + slot * 100),
                                            str(47840 + slot * 100), '640x360',
-                                           ('100,100', '800,100', '100,560')[slot])))
+                                           ('100,100', '1010,100', '100,560')[slot])))
                 if explicit.get('TEMPEST_WINDOW_SIZE', '640x360') != '640x360':
                     expected['TEMPEST_WINDOW_POS'] = '0,0'
                 expected.update(explicit)
@@ -1563,7 +1620,7 @@ remote_run e2e "$TEST_ROOT/worktree" run
     def test_bench_keeps_its_window_size_and_ports(self):
         self.entry(self.engine_digest)
         self.entry(self.story_digest, 'storygraph')
-        for name in ('PORT', 'ASR_PORT', 'TTS_PORT'):
+        for name in ('PORT', 'ASR_PORT', 'TTS_PORT', 'TEMPEST_WINDOW_POS', 'RYZEN_BENCH_COLUMN'):
             self.env.pop(name, None)
         self.env.update(GQ_DISPLAY_SLOT='2', TEMPEST_WINDOW_SIZE='960x540',
                         RYZEN_BENCH_ARCHIVE=str(self.root/'archive'))
@@ -1576,7 +1633,7 @@ import os
 import sys
 from pathlib import Path
 Path(sys.argv[1]).write_text(json.dumps({key: os.environ.get(key) for key in
-    ('PORT', 'ASR_PORT', 'TTS_PORT', 'TEMPEST_WINDOW_SIZE')}))
+    ('PORT', 'ASR_PORT', 'TTS_PORT', 'TEMPEST_WINDOW_SIZE', 'TEMPEST_WINDOW_POS')}))
 PY
 ''')
         self.shell(r'''
@@ -1585,8 +1642,115 @@ remote_bench "$TEST_ROOT/worktree" run smoke
 ''')
         self.assertEqual(json.loads((self.root / 'bench-env.json').read_text()),
                          {'PORT': None, 'ASR_PORT': None, 'TTS_PORT': None,
-                          'TEMPEST_WINDOW_SIZE': '960x540'})
+                          'TEMPEST_WINDOW_SIZE': '960x540', 'TEMPEST_WINDOW_POS': None})
         self.assertTrue((self.root/'archive/game.sh').is_file())
+
+    def test_offscreen_bench_runs_without_desktop_or_display(self):
+        self.entry(self.engine_digest)
+        self.entry(self.story_digest, 'storygraph')
+        self.env.pop('TEMPEST_WINDOW_SIZE', None)
+        self.env.update(RYZEN_BENCH_OFFSCREEN='1', DISPLAY=':0', WAYLAND_DISPLAY='wayland-0',
+                        XAUTHORITY='/run/user/1000/.mutter-Xwaylandauth.TEST')
+        (self.bin / 'ffmpeg').write_text('#!/bin/sh\nexit 0\n')
+        (self.bin / 'ffmpeg').chmod(0o755)
+        names = ('DISPLAY', 'WAYLAND_DISPLAY', 'XAUTHORITY', 'TEMPEST_OFFSCREEN', 'TEMPEST_WINDOW_SIZE',
+                 'TEMPEST_WINDOW_POS', 'TEST_NVIDIA_VULKAN')
+        (self.source / 'scripts/bench.sh').write_text('''
+python3 - "$TEST_ROOT/bench-env.json" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+Path(sys.argv[1]).write_text(json.dumps({key: os.environ.get(key) for key in %r}))
+PY
+''' % (names,))
+        result = self.shell(r'''
+desktop() { echo 'offscreen looked for a desktop' >&2; return 91; }
+nvidia_vulkan() { export TEST_NVIDIA_VULKAN=1; }
+remote_probe bench "$TEST_ROOT/worktree" run smoke
+remote_bench "$TEST_ROOT/worktree" run smoke
+''')
+        self.assertIn('Ryzen: bench offscreen 800x600, no display', result.stdout)
+        self.assertEqual(json.loads((self.root / 'bench-env.json').read_text()),
+                         dict.fromkeys(names[:3]) | {'TEMPEST_OFFSCREEN': '1', 'TEMPEST_WINDOW_SIZE': '800x600',
+                                                     'TEMPEST_WINDOW_POS': None, 'TEST_NVIDIA_VULKAN': '1'})
+
+    def bench_in_column(self, column, screen='1920x1080'):
+        for name in ('TEMPEST_WINDOW_SIZE', 'TEMPEST_WINDOW_POS'):
+            self.env.pop(name, None)
+        self.env.update(GQ_DISPLAY_SLOT=str(column), RYZEN_BENCH_COLUMN='1', TEST_SCREEN_SIZE=screen)
+        (self.bin / 'ffmpeg').write_text('#!/bin/sh\nexit 0\n')
+        (self.bin / 'ffmpeg').chmod(0o755)
+        (self.source / 'scripts/bench.sh').write_text('''
+python3 - "$TEST_ROOT/bench-env.json" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+Path(sys.argv[1]).write_text(json.dumps({key: os.environ.get(key) for key in
+    ('TEMPEST_WINDOW_SIZE', 'TEMPEST_WINDOW_POS')}))
+PY
+''')
+        return self.shell(r'''
+remote_probe bench "$TEST_ROOT/worktree" run smoke
+remote_bench "$TEST_ROOT/worktree" run smoke && rc=0 || rc=$?
+echo "bench rc=$rc"
+''')
+
+    def test_shared_bench_takes_the_window_position_of_its_column(self):
+        self.entry(self.engine_digest)
+        self.entry(self.story_digest, 'storygraph')
+        for column, position in ((0, '100,100'), (1, '1010,100')):
+            with self.subTest(column=column):
+                result = self.bench_in_column(column)
+                self.assertIn('bench rc=0', result.stdout)
+                self.assertIn(f'Ryzen: bench column {column}; window 800x600 at {position}; screen 1920x1080',
+                              result.stdout)
+                self.assertEqual(json.loads((self.root / 'bench-env.json').read_text()),
+                                 {'TEMPEST_WINDOW_SIZE': '800x600', 'TEMPEST_WINDOW_POS': position})
+
+    def test_shared_bench_column_that_does_not_fit_the_screen_exits_2(self):
+        self.entry(self.engine_digest)
+        self.entry(self.story_digest, 'storygraph')
+        result = self.bench_in_column(1, screen='1600x900')
+        self.assertIn('bench rc=2', result.stdout)
+        self.assertIn('Bench window 800x600 in column 1 does not fit screen 1600x900', result.stderr)
+
+    def test_windows_of_every_admitted_combination_fit_without_overlap(self):
+        # Ask the scripts for every slot and column, then combine them as gq admits:
+        # each column holds one bench or e2e windows in all of its slots.
+        result = self.shell(r'''
+RYZEN_SCREEN_SIZE=1920x1080
+for slot in 0 1 2; do
+  (TEMPEST_WINDOW_SIZE=640x360; unset TEMPEST_WINDOW_POS; e2e_window_position "$slot"; echo "slot $slot $TEMPEST_WINDOW_SIZE $TEMPEST_WINDOW_POS")
+done
+for column in 0 1; do
+  (unset TEMPEST_WINDOW_SIZE TEMPEST_WINDOW_POS; GQ_DISPLAY_SLOT=$column bench_window_position >/dev/null
+   echo "column $column $TEMPEST_WINDOW_SIZE $TEMPEST_WINDOW_POS")
+done
+''')
+        windows = {}
+        for line in result.stdout.splitlines():
+            kind, number, size, position = line.split()
+            (width, height), (x, y) = (map(int, size.split('x')), map(int, position.split(',')))
+            # Mutter's frame and shadow: 640x360 -> 690x447, 800x600 -> 850x687 (measured).
+            windows[kind, int(number)] = (x, y, x + width + 50, y + height + 87)
+        columns = [[0, 2], [1]]  # gq PROFILES["ryzen"]["display_columns"]
+        combinations = []
+        for benches in ((), (0,), (1,), (0, 1)):
+            frames = [windows['column', column] for column in benches]
+            frames += [windows['slot', slot] for column, slots in enumerate(columns)
+                       if column not in benches for slot in slots]
+            combinations.append(frames)
+        self.assertEqual(sorted(map(len, combinations)), [2, 2, 3, 3])
+        for frames in combinations:
+            for left, top, right, bottom in frames:
+                self.assertTrue(0 <= left and 0 <= top and right <= 1920 and bottom <= 1080, frames)
+            for index, first in enumerate(frames):
+                for second in frames[index + 1:]:
+                    overlap = (first[0] < second[2] and second[0] < first[2]
+                               and first[1] < second[3] and second[1] < first[3])
+                    self.assertFalse(overlap, (first, second))
 
     def test_e2e_retains_rebuilt_graph_in_worktree_cache(self):
         self.entry(self.engine_digest)
@@ -2451,7 +2615,7 @@ os.execvp('bash', ['bash', '-c', sys.argv[-1]])
         self.assertEqual(invocation['binary'], 'custom-runner')
         self.assertEqual(invocation['save'], 'saved game')
         self.assertEqual(invocation['args'], ['-g', str(self.root / 'data'), '-devmode',
-                                             '--save', str(out / 'run/save_slot_1.sav'), '-nointro', '-g2',
+                                             '--save', str(out / 'run/save_slot_1.sav'), '-nointro',
                                              '--game-parity', '--scenario', str(self.root / 'smoke.bench'),
                                              '--output', str(out), '--mode', 'lockstep'])
         self.assertEqual((out / 'host.txt').read_text(), 'dev-ubuntu\n')

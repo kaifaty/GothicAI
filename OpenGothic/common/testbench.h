@@ -48,6 +48,15 @@ namespace TestBench {
   std::vector<Npc*> bodyObservationActors();
   // Fixed time step while a scenario runs: the video and the metrics do not depend on the frame rate
   uint64_t frameDt(uint64_t dt);
+  // `deterministic on` (streaming-shots): every frame is a step, wall time does not skip one (MainWindow::tick)
+  bool     deterministic();
+  // ... and while `streaming wait` waits, the world takes no step at all
+  bool     simulationFrozen();
+  // The renderer drops its temporal state (TAA history, jitter phase) before this frame's picture; once per request
+  bool     takeRenderReset();
+  // The visibility pass appends clusters in their order (one GPU invocation): from the end of a deterministic
+  // `streaming wait` to the next shot
+  bool     orderedVisibility();
   // Move synthetic support fixtures before both NPC and player world steps.
   void     beforeWorldTick(uint64_t dt);
   // Exact healing strikes run at the advanced clock before the player consumes animation events.
@@ -66,7 +75,9 @@ namespace TestBench {
   void     physicsNoise(const PhysicsNoise& noise, std::string_view sound, bool played);
   void     physicsNoiseHeard(const Npc& npc, const PhysicsNoise& noise, bool callbackDispatched = false);
   // Native destruction telemetry: includes body creation and the render callback.
-  void     destructionBreak(uintptr_t body, size_t pieces, float milliseconds);
+  void     destructionBreak(uintptr_t body, size_t pieces, float milliseconds, bool remnant = false);
+  // A sleeping piece removed by DynamicWorld::cleanupFragments: expired, or farther than 30 m from the hero.
+  void     destructionRetire(uintptr_t body, size_t piece, bool expired, float observerDistanceCm);
   void     destructionMeleeHit(const Npc& actor, size_t affected, float damage);
   void     movementImpulseHandoff(const Npc& actor, std::string_view backend, uint32_t fromState,
                                   uint32_t toState, const Tempest::Vec3& velocity);
@@ -113,7 +124,7 @@ namespace TestBench {
   // First 300 ms of native simulation; inert outside an active bench.
   void     ragdollBirthPeak(const Npc& npc, const Npc* culprit, const std::string& fields);
 
-  // What the AI bridge does, for scenarios that talk (`ptt`, `waitreply`; shorts/): texts in UTF-8.
+  // What the AI bridge does, for scenarios that talk (`ptt`, `waitreply`; gothic-shorts): texts in UTF-8.
   // An npc line starts (`ms`: its length as known now; `to`: the npc it is said to, empty for the hero;
   // `filler`: a sound said at once while the model thinks, "Хм..."), an npc voice has played out, the hero's
   // phrase was recognized (`to`: whom the server says it was said to)

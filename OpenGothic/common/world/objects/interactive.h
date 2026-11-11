@@ -86,6 +86,7 @@ class Interactive : public Vob {
 
     bool                canSeeNpc(const Npc &npc, bool freeLos) const;
     Tempest::Vec3       nearestPoint(const Npc& to) const;
+    std::string_view    useItem() const { return useWithItem; }  // the item one needs in hand to use it, or none
 
     bool                isAvailable() const;
     bool                isStaticState() const;

@@ -10,17 +10,17 @@
 #include <Tempest/Signal>
 #include <Tempest/Dir>
 
-#include <zenkit/DaedalusVm.hh>
+#include "daedalus/vm.h"
+#include "settings.h"
+#include "gameservices.h"
 
 #include "game/chronicle.h"
 #include "game/gamesession.h"
 #include "world/world.h"
 #include "ui/documentmenu.h"
 #include "ui/chapterscreen.h"
-#include "utils/versioninfo.h"
 #include "sound/soundfx.h"
 
-class VersionInfo;
 class CameraDefinitions;
 class SoundDefinitions;
 class VisualFxDefinitions;
@@ -32,7 +32,7 @@ class Serialize;
 struct PhysicsNoise;
 struct HeroDeed;
 
-class Gothic final {
+class Gothic final : public GameServices {
   public:
     Gothic();
     ~Gothic();
@@ -48,80 +48,8 @@ class Gothic final {
       FailedSave = 5
       };
 
-    struct PhysicsFlags {
-      bool ragdoll       = false;
-      bool questGuard    = false;
-      bool livingBodies  = false;
-      bool arrowPhysics  = false;
-      bool arrowSticking = false;
-      bool spellPhysics  = false;
-      bool movableVobs   = false;
-      bool physicsNoise  = false;
-      bool destruction   = false;
-      bool buoyancy      = true;
-      bool cloth         = true;
-      bool itemWake      = true;
-      bool characterVirtual = false;
-      bool npcCharacterVirtual = false;
-      bool monsterCharacterVirtual = false;
-      bool meleeBladeShadow = true;
-      bool meleePhysicsHits = true;
-      bool meleeReactions = true;
-      bool meleePosture = true;
-      bool meleeStagger = true;
-      bool meleeBeastPoise = true;
-      bool meleeBackstab = true;
-      bool meleeDownTactics = true;
-      bool itemHulls = true;
-      bool itemDeepestContact = true;
-      bool ragdollBirthGuard = true;
-      bool meleeHitStop = true;
-      bool meleeStamina = true;
-      bool meleeParry = true;
-      bool meleeParryAi = true;
-      bool furnitureParts = true;
-      bool placedItems = true;
-      bool bodyImpactDamage = true;
-      bool meleeDodge = true;
-      bool meleeBarge = true;
-      bool meleeCharge = true;
-      bool meleeRiposte = true;
-      bool meleeHealInterrupt = true;
-      bool meleeUseInHand = true;
-      bool foodOverTime = true;
-      bool meleeAiDodge = true;
-      bool meleeAiRiposte = true;
-      bool meleeAiCharge = true;
-      bool meleeAiBarge = true;
-      bool bodyTraces = true;
-      bool blood = true;
-
-      bool allowsMonsterCharacterVirtual(bool down, bool flying) const {
-        return monsterCharacterVirtual && !down && !flying;
-        }
-      };
-
-    struct Options {
-      GiMethod doGi              = GiMethod::None;
-      uint32_t aaPreset          = 0;
-      bool     taa               = true;
-
-      bool     hideFocus         = false;
-      float    cameraFov         = 67.5f;
-      int      fpsLimit          = 0;
-      float    interfaceScale    = 1;
-      int      inventoryCellSize = 70;
-
-      Tempest::Size newChapterSize = {800, 600};
-
-      Tempest::Size saveGameImageSize = {0, 0};
-
-      bool     showHealthBar     = true;
-      uint8_t  showManaBar       = 2;
-      uint8_t  showSwimBar       = 1;
-      };
-
-    auto         version() const -> const VersionInfo&;
+    using PhysicsFlags = Settings::PhysicsFlags;
+    using Options = Settings::Options;
 
     bool         isInGame() const;
     bool         isInGameAndAlive() const;
@@ -140,10 +68,10 @@ class Gothic final {
     auto         gameSession() const -> const GameSession*;
     auto         gameSession() -> GameSession*;
     const World* world() const;
-    World*       world();
-    WorldView*   worldView() const;
-    Npc*         player();
-    Camera*      camera();
+    World*       world() override;
+    WorldView*   worldView() const override;
+    Npc*         player() override;
+    Camera*      camera() override;
     auto         questLog() const -> const QuestLog*;
     // the hero's chronicle for the diary (ai_bridge keeps it fresh; empty without the server)
     auto         chronicle() const -> const ChronicleData& { return chronicleBook; }
@@ -158,9 +86,9 @@ class Gothic final {
     SoundFx*     loadSoundFx   (std::string_view name);
     SoundFx*     loadSoundWavFx(std::string_view name);
 
-    auto         loadParticleFx(std::string_view name, bool relaxed=false) -> const ParticleFx*;
-    auto         loadParticleFx(const ParticleFx* base, const VisualFx::Key* key) -> const ParticleFx*;
-    auto         loadVisualFx  (std::string_view name) -> const VisualFx*;
+    auto         loadParticleFx(std::string_view name, bool relaxed=false) -> const ParticleFx* override;
+    auto         loadParticleFx(const ParticleFx* base, const VisualFx::Key* key) -> const ParticleFx* override;
+    auto         loadVisualFx  (std::string_view name) -> const VisualFx* override;
 
     void         emitGlobalSound(std::string_view   sfx);
     void         emitGlobalSound(const SoundFx*     sfx);
@@ -172,12 +100,12 @@ class Gothic final {
 
     void         pushPause();
     void         popPause();
-    bool         isPause() const;
+    bool         isPause() const override;
 
     bool         isMarvinEnabled() const;
     void         setMarvinEnabled(bool m);
 
-    static auto  options() -> const Options&;
+    static auto  options() -> const Options& { return Settings::options(); }
     static float interfaceScale(const Tempest::Widget* w);
 
     bool         isGodMode() const { return godMode; }
@@ -212,8 +140,6 @@ class Gothic final {
     bool         isBenchmarkMode() const;
     bool         isBenchmarkModeCi() const;
     void         setBenchmarkMode(Benchmark b);
-
-    Tempest::Signal<void()> toggleGi, toggleVsm, toggleRtsm, togglePathtrace;
 
     LoadState    checkLoading() const;
     bool         finishLoading();
@@ -256,7 +182,6 @@ class Gothic final {
     Tempest::Signal<void()>                                             onStartLoading;
     Tempest::Signal<void()>                                             onSessionExit;
     Tempest::Signal<void()>                                             onSessionUnload;  // the session and its sound device are about to go
-    Tempest::Signal<void()>                                             onSettingsChanged;
 
     Tempest::Signal<void()>                                             onBenchmarkFinished;
 
@@ -278,8 +203,6 @@ class Gothic final {
     std::function<bool(std::string_view,std::string&)>                  consoleCommandFn;
     // runtime dialog lines: id -> subtitle text and duration (ms); false if the id is not external
     std::function<bool(std::string_view,std::string_view&,uint32_t&)>   externalMessageFn;
-    // runtime dialog voice: sound file name -> WAV bytes; false if the name is not external
-    std::function<bool(std::string_view,std::vector<uint8_t>&)>         externalSoundFn;
     // custom save-game data, called on the loading thread: write own entries into a save;
     // a GameSession was created from a save (or nullptr for a new game)
     std::function<void(Serialize&)>                                     saveExtFn;
@@ -287,11 +210,11 @@ class Gothic final {
     // story graph: which dialogs an npc offers. Called while the dialog menu is built and by Npc_CheckInfo,
     // with self and other set as for the conditions.
     // a script dialog whose condition was checked: `visible` comes in as the script's answer
-    std::function<void(const zenkit::IInfo&,bool&)>                     dialogFilterFn;
+    std::function<void(const daedalus::IInfo&,bool&)>                     dialogFilterFn;
     // a choice of a script dialog (Info_AddChoice) about to be shown: false hides it
-    std::function<bool(const zenkit::IInfo&,int32_t)>                   dialogChoiceFilterFn;
+    std::function<bool(const daedalus::IInfo&,int32_t)>                   dialogChoiceFilterFn;
     // dialogs made at runtime that the npc offers now; `important` ones start on their own
-    std::function<void(const zenkit::INpc&,bool,std::vector<GameScript::DlgChoice>&)> dialogExtraFn;
+    std::function<void(const daedalus::INpc&,bool,std::vector<GameScript::DlgChoice>&)> dialogExtraFn;
     // one of those was chosen: play it
     std::function<void(const GameScript::DlgChoice&,Npc&,Npc&)>         dialogExtraExecFn;
     // the choices one of those offers now, after its lines (as Info_AddChoice's after a script dialog)
@@ -300,40 +223,42 @@ class Gothic final {
     Tempest::Signal<void(const GameScript::DlgChoice&,Npc&,Npc&)>       onDialogChosen;
     // a dialog's script function (its condition, its information or a choice) is about to run, self and other
     // set: true if the story graph ran it in place of the VM, a condition's answer in `result`
-    std::function<bool(zenkit::DaedalusSymbol&,int32_t&)>               dialogScriptFn;
+    std::function<bool(daedalus::DaedalusSymbol&,int32_t&)>               dialogScriptFn;
 
     std::string_view                      messageFromSvm(std::string_view id, int voice) const;
     std::string_view                      messageByName (std::string_view id) const;
     uint32_t                              messageTime   (std::string_view id) const;
 
     static std::u16string                 nestedPath(const std::initializer_list<const char16_t*> &name, Tempest::Dir::FileType type);
-    std::unique_ptr<zenkit::DaedalusVm>   createPhoenixVm(std::string_view datFile, const ScriptLang lang = ScriptLang::NONE);
-    zenkit::DaedalusScript                loadScript(std::string_view datFile, const ScriptLang lang);
-    void                                  setupCommonScriptClasses(zenkit::DaedalusScript &sc);
-    void                                  setupVmCommonApi(zenkit::DaedalusVm &vm);
+    std::unique_ptr<daedalus::DaedalusVm>   createPhoenixVm(std::string_view datFile, const ScriptLang lang = ScriptLang::NONE);
+    daedalus::DaedalusScript                loadScript(std::string_view datFile, const ScriptLang lang);
+    void                                  setupCommonScriptClasses(daedalus::DaedalusScript &sc);
+    void                                  setupVmCommonApi(daedalus::DaedalusVm &vm);
 
     static const FightAi&                 fai();
     static const SoundDefinitions&        sfx();
     static const MusicDefinitions&        musicDef();
     static const CameraDefinitions&       cameraDef();
 
-    // Shared read-only snapshot for actor/physics hot paths, refreshed on settings changes
-    // and once before each world tick. It is also ready before loading the first actor.
-    static const PhysicsFlags&            physicsFlags() { return instance->physicsFlagsCache; }
-    static bool                           settingsHasSection(std::string_view sec);
-    static int                            settingsGetI(std::string_view sec, std::string_view name);
-    static void                           settingsSetI(std::string_view sec, std::string_view name, int val);
-    static std::string_view               settingsGetS(std::string_view sec, std::string_view name);
-    static void                           settingsSetS(std::string_view sec, std::string_view name, std::string_view val);
-    static float                          settingsGetF(std::string_view sec, std::string_view name);
-    static void                           settingsSetF(std::string_view sec, std::string_view name, float val);
-    static float                          settingsSoundVolume();
-    static void                           flushSettings();
+    static const PhysicsFlags& physicsFlags() { return Settings::physicsFlags(); }
+    static bool settingsHasSection(std::string_view sec) { return Settings::has(sec); }
+    static int settingsGetI(std::string_view sec, std::string_view name) { return Settings::getI(sec,name); }
+    static void settingsSetI(std::string_view sec, std::string_view name, int val) { Settings::setI(sec,name,val); }
+    static std::string_view settingsGetS(std::string_view sec, std::string_view name) { return Settings::getS(sec,name); }
+    static void settingsSetS(std::string_view sec, std::string_view name, std::string_view val) { Settings::setS(sec,name,val); }
+    static float settingsGetF(std::string_view sec, std::string_view name) { return Settings::getF(sec,name); }
+    static void settingsSetF(std::string_view sec, std::string_view name, float val) { Settings::setF(sec,name,val); }
+    static float settingsSoundVolume() { return Settings::soundVolume(); }
+    static void flushSettings() { Settings::flush(); }
+
+    const CameraDefinitions& cameraDefinitions() const override;
+    const Def::SoundEffect& soundEffect(std::string_view name) const override;
+    int64_t worldTime() const override;
+    uint64_t worldTickCount() const override;
+    DynamicWorld* physicsWorld() const override;
 
   private:
-    VersionInfo                             vinfo;
-    Options                                 opts;
-    PhysicsFlags                            physicsFlagsCache;
+    Settings                                settings;
     std::mt19937                            randGen;
     uint16_t                                pauseSum=0;
     bool                                    isMarvin       = false;
@@ -350,9 +275,6 @@ class Gothic final {
 
     std::string                             wrldDef, plDef, gameDatDef, ouDef;
 
-    std::unique_ptr<IniFile>                defaults;
-    std::unique_ptr<IniFile>                baseIniFile;
-    std::unique_ptr<IniFile>                iniFile;
     std::unique_ptr<IniFile>                modFile;
     std::unique_ptr<IniFile>                systemPackIniFile;
 
@@ -393,9 +315,7 @@ class Gothic final {
                                                               bool load,
                                                               const std::function<std::unique_ptr<GameSession>(std::unique_ptr<GameSession>&&)> f);
 
-    void                                    detectGothicVersion();
     void                                    setupSettings();
-    void                                    refreshPhysicsFlags();
 
     auto                                    getDocument(int id) -> std::unique_ptr<DocumentMenu::Show>&;
 

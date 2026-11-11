@@ -110,6 +110,23 @@ AbstractGraphicsApi::PRtAs AbstractGraphicsApi::createTopAccelerationStruct(Devi
   throw std::system_error(Tempest::GraphicsErrc::UnsupportedExtension);
   }
 
+AbstractGraphicsApi::PRtAs AbstractGraphicsApi::createTopAccelerationStruct(Device* d, size_t capacity) {
+  throw std::system_error(Tempest::GraphicsErrc::UnsupportedExtension);
+  }
+
+size_t AbstractGraphicsApi::rtInstanceSize() const {
+  throw std::system_error(Tempest::GraphicsErrc::UnsupportedExtension);
+  }
+
+void AbstractGraphicsApi::packRtInstance(Device* d, AccelerationStructure& tlas, const RtInstance& inst,
+                                         AccelerationStructure* as, void* slot) {
+  throw std::system_error(Tempest::GraphicsErrc::UnsupportedExtension);
+  }
+
+void AbstractGraphicsApi::CommandBuffer::buildTlas(AccelerationStructure& /*tlas*/, const Buffer* /*instances*/, size_t /*count*/) {
+  throw std::system_error(Tempest::GraphicsErrc::UnsupportedExtension);
+  }
+
 bool Detail::Bindings::operator ==(const Bindings &other) const {
   for(size_t i=0; i<MaxBindings; ++i) {
     if(data[i]!=other.data[i])

@@ -37,13 +37,27 @@ struct SceneDesc {
   ivec2 hiZTileSize;
   ivec2 screenRes;
   vec4  cloudsDir;
-  float probeGridBias;
+  float probeLodScale; // the lod of the GI probes by the distance to the camera: probeGridLod (probe_common.glsl)
   uint  fogQuality; // 0 - none, 1 - fog LUT, 2 - separate single and multi-scattering LUTs
   float mipBias;     // TAA: material textures of the main view a little sharper (0 without TAA and in shadows)
   float mipGradScale; // exp2(mipBias), for textureGrad
   uint  taaFrame;  // TAA: the frame number, turns the lamp shadows' tap pattern (light.frag); 0 without TAA
   uint  taaActive; // 1 under TAA, 0 without it
+  uint  motionVectors; // motion vectors of objects into the G-buffer (main view only), 0 elsewhere
+  float reactiveLrefInv; // TAA reactive mask: 1/Lref, the added light on screen of a fully reactive additive pixel
+  mat4  reprojectClip;   // this frame's clip -> the previous camera's, for a point that stood still (Taa::reprojection)
+  mat4  viewProjectPrev; // the previous camera with this frame's jitter: only on vec4(d,0)
+  float vsmLampNear;     // cm: a lamp's fixture this close to its light casts no shadow ([INTERNAL] vsmLampNearCm)
+  uint  vsmLampSides;    // VSM lamps: a cube face keeps the far side (1), both of the world mesh (2), of objects too (3)
+  uint  vsmStudy;        // bench `vsm study <bits>`: VSM_STUDY_* below (0 in the game)
+  float vsmPad2;
   };
+
+// bench `vsm study <bits>`: the shadow test on a mesh's facets (reports/render-features/2026-11-11-facet-shards)
+const uint VSM_STUDY_SUN_PIXEL  = 1u; // the sun: the facet's plane over one pixel, as before 2026-11-11 (direct_light.frag)
+const uint VSM_STUDY_LAMP_FACET = 2u; // lamps: the facet's plane also where it stands edge-on to the lamp (light.frag)
+const uint VSM_STUDY_CLASS      = 4u; // facets by their cosine to the light and the shadow's answer, as colours
+const uint VSM_STUDY_SUN_DIFF   = 8u; // the sun: where the plane over a texel's footprint changes the shadow, as colours
 
 struct LightSource {
   vec3  pos;
@@ -113,7 +127,7 @@ struct Bucket {
   float turbidity;
   float turbidityDepth;
   float emissive;
-  uint  padding2; // scalars, as in BucketGpu: an array member faulted the GPU on Metal
+  float reactive; // the TAA reactive weight of the material: 1 with a texture animation, else 0 (graphics plan 1v)
   };
 
 #endif

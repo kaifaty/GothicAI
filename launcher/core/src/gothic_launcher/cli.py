@@ -46,6 +46,7 @@ from .commands import (
     load_config,
     new_log_dir,
     preparation,
+    repo_dir,
     services,
     storygraph_tool,
     tools,
@@ -267,7 +268,7 @@ def setup(args: argparse.Namespace) -> int:
     if not CHATGPT_TOKENS.is_file():
         print("Сейчас откроется браузер: войдите в ChatGPT и вернитесь в это окно.")
         if login(args) != 0 or not CHATGPT_TOKENS.is_file():
-            print(f"Вход в ChatGPT не завершён. Запустите {_setup_hint()} ещё раз.")
+            print(f"Вход в ChatGPT не завершён. Запустите {_setup_hint(config)} ещё раз.")
     return _preflight(config)
 
 
@@ -330,7 +331,7 @@ def _ask_inworld_key(config: Config) -> None:
 
 def _preflight(config: Config) -> int:
     """What is still missing before `up`: one plain line each, with what to run; 0 when nothing is."""
-    s, hint, missing = config.settings, _setup_hint(), []
+    s, hint, missing = config.settings, _setup_hint(config), []
     if s.game.dir is None or not all(c.ok for c in checks.game_folder(s.game.dir)):
         missing.append(f"Папка игры не выбрана или не подходит. Запустите {hint}.")
     try:
@@ -359,8 +360,14 @@ def _preflight(config: Config) -> int:
     return 2 if missing else 0
 
 
-def _setup_hint() -> str:
-    return "Setup-GothicAI.cmd" if sys.platform == "win32" else "gothic-launcher setup"
+def _setup_hint(config: Config | None = None) -> str:
+    if sys.platform == "win32":
+        return "Setup-GothicAI.cmd"
+    # the Linux release archive (scripts/linux/package.sh): its entry point, and no sources
+    repo = repo_dir(config) if sys.platform == "linux" and config is not None else None
+    if repo and (repo / "Setup-GothicAI.sh").is_file() and not (repo / "OpenGothic/CMakeLists.txt").is_file():
+        return "./Setup-GothicAI.sh"
+    return "gothic-launcher setup"
 
 
 def config_cmd(args: argparse.Namespace) -> int:
