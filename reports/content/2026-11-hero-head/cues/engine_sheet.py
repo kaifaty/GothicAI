@@ -8,9 +8,10 @@ from PIL import Image, ImageDraw, ImageFont
 FELT = dict(friendly='радость', angry='злость', hostile='неприязнь', afraid='страх', pain='боль')
 HALF = dict(upper='верх', lower='низ')
 LEAKS = [f'leak-{f}-{h}' for f in FELT for h in HALF]
-ORDER = 'flash doubt smirk press disgust squint frown chin wince npc-smirk'.split() + LEAKS
+ORDER = 'flash doubt smirk press disgust squint frown chin wince glance roll npc-smirk'.split() + LEAKS
 RU = dict(flash='вспышка бровей', doubt='сомнение L', smirk='ухмылка L', press='поджатые губы', disgust='брезгливость',
-          squint='прищур', frown='хмурится', chin='подбородок', wince='поморщился', **{'npc-smirk': 'NPC: ухмылка R'},
+          squint='прищур', frown='хмурится', chin='подбородок', wince='поморщился',
+          glance='взгляд в сторону R', roll='закатил глаза R', **{'npc-smirk': 'NPC: ухмылка R'},
           **{f'leak-{f}-{h}': f'прорыв: {FELT[f]}, {HALF[h]}' for f in FELT for h in HALF})
 FONTS = ['/System/Library/Fonts/Supplemental/Arial.ttf', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf']
 YELLOW, BG = (255, 214, 120), (22, 22, 22)

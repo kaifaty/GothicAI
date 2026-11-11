@@ -1,6 +1,7 @@
 # The facial gestures of an own head close up (reports/content/2026-11-hero-head/face-cues.md, step 3 of its order):
-# for each of the nine gestures of the face profile's cues a frame without it and a frame at its apex (the middle of
-# its hold), <gesture>-rest.png and <gesture>-apex.png; then one on an npc's own head (Xardas, if
+# for each of the eleven gestures of the face profile's cues a frame without it and a frame at its apex (the middle of
+# its hold), <gesture>-rest.png and <gesture>-apex.png - the last two, glance and roll, are the eyes' and need an own
+# head with "eyes" in its profile; then one on an npc's own head (Xardas, if
 # characters.json lists NONE_100_XARDAS). Blinks are off, so no frame catches the lids. Needs an own head with cues:
 #   TEMPEST_WINDOW_SIZE=1280x720 OPENGOTHIC_CONTENT=<content root> BENCH_HOST=ryzen scripts/bench.sh scripts/bench/face-cues.bench
 # The sheet of the frames: reports/content/2026-11-hero-head/cues/engine_sheet.py <bench out dir> <sheet.jpg>
@@ -71,6 +72,18 @@ facecue player wince
 wait 130
 shot wince-apex
 wait 750
+shot glance-rest
+wait 300
+facecue player glance R
+wait 400
+shot glance-apex
+wait 900
+shot roll-rest
+wait 300
+facecue player roll R
+wait 400
+shot roll-apex
+wait 1000
 watch nearest
 cam face 38 0 1
 wait 1500

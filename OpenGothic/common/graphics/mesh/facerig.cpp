@@ -315,7 +315,7 @@ void checkLooks(FaceProfile& p) {
       continue;
     const auto& l = *c.look;
     if(l.sideDeg>side || l.upDeg>lim[E::Up]/Deg || -l.upDeg>lim[E::Down]/Deg)
-      fail("cue "+quoted(c.name)+": look: the turn must be within limits_deg of eyes");
+      fail("cue "+quoted(std::string_view(c.name))+": look: the turn must be within limits_deg of eyes");
     }
   }
 

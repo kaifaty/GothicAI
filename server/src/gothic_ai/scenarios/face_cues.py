@@ -1,6 +1,7 @@
 """The facial gestures and the leak of a lie on screen: four given lines of one npc with gesture tags
 and one lie, for the test bench (scripts/bench/face-cues-clip.bench; the clip of
-reports/content/2026-11-hero-head/face-cues.md)."""
+reports/content/2026-11-hero-head/face-cues.md). face_eyes_demo: the same with the gestures of the eyes
+(glance, roll) and two others to compare, without a lie."""
 
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ from .common import _logged, _until, attach_when_free, model_off
 
 SCENARIOS = {
     "face_cues_demo": ("GIVEN", {"save": False, "timeout": 240}),
+    "face_eyes_demo": ("GIVEN", {"save": False, "timeout": 240}),
 }
 
 log = logging.getLogger("gothic_ai.scenarios")
@@ -27,11 +29,20 @@ FACE_REPLY = (
     "[friendly] [felt:afraid] Я весь вечер был в амбаре, [smirk] спроси кого хочешь. "
     "[angry] [frown] Всё, некогда мне, [press] иди отсюда."
 )
+# the gestures of the eyes: glance (awkward, recalling), roll (irritated), doubt and frown to compare
+FACE_EYES_REPLY = (
+    "[neutral] Вечером я, [glance] ну, по хозяйству был, не помню уже. "
+    "[angry] [roll] Ну конечно, как овцы пропали, так сразу Вино. "
+    "[neutral] Лобарт их, [doubt] небось, сам и проглядел. "
+    "[angry] [frown] Всё, некогда мне, [roll] иди уже."
+)
 FACE_SPOT = "NW_FARM1_PATH_01"  # open ground in Lobart's yard: nothing between the camera and his face
 STAGE_S = 8.0  # after the hero is put in front of the npc: the bench sets its camera and starts recording
 
 
-async def face_cues_demo(link: GameLink, dialogue: DialogueManager, npc: str = FACE_NPC) -> dict[str, str]:
+async def face_cues_demo(
+    link: GameLink, dialogue: DialogueManager, npc: str = FACE_NPC, reply: str = FACE_REPLY
+) -> dict[str, str]:
     """The npc (Vino) is put on open ground, the hero in front of him, who asks him where he was; the npc
     answers with the given tagged lines through the common off backend: the server's own parsing (`say.cues`,
     `say.leak`) and voice. The leak of the lie is the server's trial; for a sure one start the server with
@@ -40,7 +51,7 @@ async def face_cues_demo(link: GameLink, dialogue: DialogueManager, npc: str = F
     off = model_off(dialogue)
     dialogue.quick = None  # no first words: only the four lines
     off.given(
-        "дано: реплики Вино с жестами лица и ложью для стенда", who=npc, when=FACE_QUESTION, line=FACE_REPLY
+        "дано: реплики Вино с жестами лица и ложью для стенда", who=npc, when=FACE_QUESTION, line=reply
     )
     started: list[str] = []
     link.listeners.append(lambda msg: started.append(msg.line) if isinstance(msg, LineStarted) else None)
@@ -64,3 +75,8 @@ async def face_cues_demo(link: GameLink, dialogue: DialogueManager, npc: str = F
     await asyncio.sleep(2)
     await link.act(npc, "return_to_routine")
     return _logged(results)
+
+
+async def face_eyes_demo(link: GameLink, dialogue: DialogueManager, npc: str = FACE_NPC) -> dict[str, str]:
+    """face_cues_demo with the gestures of the eyes: four lines with glance, roll, doubt and frown."""
+    return await face_cues_demo(link, dialogue, npc, FACE_EYES_REPLY)

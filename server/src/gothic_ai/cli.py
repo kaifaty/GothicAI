@@ -1042,6 +1042,7 @@ def main() -> None:
             "gossip",
             "gossip_demo",
             "face_cues_demo",
+            "face_eyes_demo",
             "day",
             "noise",
             "amends_deal",
