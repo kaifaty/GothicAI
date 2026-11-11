@@ -8,6 +8,7 @@
 
 #include "game/bodyarena.h"
 #include "graphics/mesh/skeleton.h"
+#include "physics/collisionworld.h"
 #include "world/bullet.h"
 #include "world/world.h"
 #include "frameprofile.h"
@@ -573,4 +574,9 @@ void Npc::syncRagdoll() {
   visual.pose().setRagdollPose(visual.visualSkeleton(),ragdollPose,ragdoll->poseIndices());
   durtyTranform = TR_Pos|TR_Rot|TR_Scale;
   { FrameProfile::Scope timing(FrameProfile::Zone::ForcedSyncAnimation,FrameProfile::watchedActor(this)); updateAnimation(0,true); }
+  }
+
+Npc* CollisionWorld::CollisionBody::noiseCulpritNpc(uint64_t step) const {
+  const auto culprit=step<=noiseCulpritUntilStep ? noiseCulprit.lock() : nullptr;
+  return culprit!=nullptr ? static_cast<Npc*>(culprit->user_ptr) : nullptr;
   }
