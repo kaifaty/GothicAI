@@ -144,6 +144,7 @@ void VisualObjects::placeTexture(Object& object) {
       object.textureTexel.max=object.texturePosition;
       }
     object.textureRadius=object.textureLocal.radius()*s;
+    object.textureScale=s;
     } else {
     object.textureTexel=object.textureLocal.placed(object.pos);
     object.textureRadius=-1;
@@ -153,6 +154,27 @@ void VisualObjects::placeTexture(Object& object) {
     }
   object.textureAnchor=object.texturePosition;
   object.texturePlaced=true;
+  }
+
+void VisualObjects::updateTextureScale(size_t id) {
+  auto& object=objects[id];
+  if(!object.textureWorldOwner || !object.texturePlaced || !object.textureMeasured || !textureScreenMode)
+    return;
+  float axis=0;
+  for(int i=0;i<3;++i) {
+    const float x=object.pos.at(i,0), y=object.pos.at(i,1), z=object.pos.at(i,2);
+    axis=std::max(axis,x*x+y*y+z*z);
+    }
+  // as placeTexture: no scale counts as 1
+  const float now=axis>0 && std::isfinite(axis) ? axis : 1.f;
+  const float was=object.textureScale*object.textureScale;
+  if(now>0.9025f*was && now<1.1025f*was)
+    return;
+  FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand);
+  std::lock_guard<std::recursive_mutex> guard(textureSync);
+  ++textureCensus.placements;
+  placeTexture(object);
+  updateTextureDemand(id);
   }
 
 TextureScreenDemand::Result VisualObjects::evaluateTexture(const Object& object) const {

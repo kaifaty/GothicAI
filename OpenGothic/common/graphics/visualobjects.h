@@ -200,6 +200,7 @@ class VisualObjects final {
       // An owner placed by a position (textureWorldOwner): a sphere of this radius around texturePosition, centimetres;
       // -1 for bounds from textureTexel.
       float               textureRadius = -1;
+      float               textureScale  = 1;   // the scale of pos it was placed with
       // How far it may move from texturePosition without calling back (setTextureOwner), centimetres: set only by its
       // own calls; its evaluations measure to the sphere grown by it.
       float               textureReach  = 0;
@@ -222,6 +223,9 @@ class VisualObjects final {
     bool     textureScreenOwner(const Object& object) const;
     // Bounds and density in the world from where the owner is (texturePosition, pos)
     void     placeTexture(Object& object);
+    // An owner placed by a position whose matrix now scales by more than 5% otherwise than when it was placed (a body
+    // registered before its pose is set): placed and evaluated again, its anchor and reach unchanged
+    void     updateTextureScale(size_t id);
     // An owner placed by a position: measured to its sphere grown by its reach
     TextureScreenDemand::Result evaluateTexture(const Object& object) const;
     // The reach of an owner placed by a position at its own evaluation (setTextureOwner); `moved`: it was registered

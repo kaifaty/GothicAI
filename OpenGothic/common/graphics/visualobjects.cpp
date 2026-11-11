@@ -67,6 +67,8 @@ void VisualObjects::Item::setObjMatrix(const Tempest::Matrix4x4& pos, const Vec3
     obj.pos = pos;
     if(obj.textureCategory==Resources::TextureCategory::Static)
       setTexturePosition(texturePosition);
+    else if(obj.textureWorldOwner)
+      owner->updateTextureScale(id);
     owner->updateInstance(id);
     }
   }

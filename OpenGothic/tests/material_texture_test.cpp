@@ -1423,7 +1423,7 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
 // far short.
 void textureOwnerLevels(Tempest::Device& device, const Fixture& fixture) {
   const char* names[]={"ow-npc","ow-item","ow-mobsi","ow-hero","ow-switch","ow-start","ow-lone","ow-whole","ow-rings",
-                       "ow-jump-a","ow-jump-b","ow-jump-c","ow-share","ow-between","ow-big-0","ow-big-1","ow-big-2",
+                       "ow-jump-a","ow-jump-b","ow-jump-c","ow-share","ow-between","ow-scaled","ow-big-0","ow-big-1","ow-big-2",
                        "ow-big-3"};
   std::string json="{";
   for(const auto* name:names) {
@@ -1451,7 +1451,7 @@ void textureOwnerLevels(Tempest::Device& device, const Fixture& fixture) {
   shaders.waitCompiler();
   using Need=Resources::TextureNeed;
   const auto stat=Resources::TextureCategory::Static;
-  Material npc, item, mobsi, hero, toggle, jumpA, jumpB, jumpC, share, between;
+  Material npc, item, mobsi, hero, toggle, jumpA, jumpB, jumpC, share, between, scaled;
   std::array<Material,4> big;
   {
   Resources::TextureLoadScope far(true);
@@ -1465,6 +1465,7 @@ void textureOwnerLevels(Tempest::Device& device, const Fixture& fixture) {
   jumpC=Material(source("OW_JUMP_C.TGA"),true);
   share=Material(source("OW_SHARE.TGA"),true);
   between=Material(source("OW_BETWEEN.TGA"),true);
+  scaled=Material(source("OW_SCALED.TGA"),true);
   for(size_t i=0;i<big.size();++i)
     big[i]=Material(source("OW_BIG_"+std::to_string(i)+".TGA"),true);
   }
@@ -1552,6 +1553,23 @@ void textureOwnerLevels(Tempest::Device& device, const Fixture& fixture) {
           "a move within the owner's reach must only be compared, not evaluated");
   require(body.setTextureOwner(at(3,5),true)<400.f,"a move past the reach must evaluate the owner again");
   waitFor([&] { return npc.tex->w()==512; },"an NPC's body 3 m away must raise its texture to the whole chain");
+
+  // A body is registered before its pose sets the NPC's matrix (MdlVisual::implSetBody): scaled by 2 there, it has
+  // half the density and a 2.828 m radius, 38.6 m away - 2^-4, level 1 - although it does not move.
+  {
+  auto scaledBones=visuals.alloc(sizeof(Tempest::Matrix4x4));
+  auto tall=visuals.get(anim,scaled,anim.sub[0].iboOffset,anim.sub[0].iboSize,scaledBones);
+  tall.setTextureOwner(at(40),true);
+  tick();
+  require(scaled.tex->w()==128,"an unscaled body 40 m away must keep the tail");
+  auto matrix=Tempest::Matrix4x4::mkIdentity();
+  matrix.translate(at(40));
+  matrix.scale(2);
+  tall.setObjMatrix(matrix);
+  tall.setTextureOwner(at(40),true);
+  Resources::finishTextureLoading();
+  require(scaled.tex->w()==256,"a body's scale set after it was registered must count");
+  }
 
   // An item lying in the world: a static mesh drawn as dynamic, 20 m away - 2^-4, level 1; then 3 m - level 0.
   StaticMesh itemMesh(item,{{{0,0,0},{0,0,1},{0,0},0xffffffffu},{{100,0,0},{0,0,1},{1,0},0xffffffffu},
