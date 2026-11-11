@@ -822,9 +822,11 @@ void checkNeedRules(const fs::path& root) {
 // 2. D2 takes bed B2 at 08:00 and sleeps; R2 goes to bed there at 09:00:20: D2's activity gives way (Evicted).
 // 3. D3 walks 8 min to bed B3; R3 reaches it at 08:02:40: D3 fails on the way (Evicted).
 // 4. D4 walks P1 -> P2 (8 min) from 08:30:20; at 08:33:20 its next free entry asks while 5 min of the walk are left:
-//    chair CQ 6 min past P2 is 11 min away in all, over the limit; chair CP2 at P2 is not.
+//    chair CQ 6 min past P2 is 11 min away in all, over the limit; chair CP2 at P2 is 5 min, chair CR 100 m off P2
+//    6 min 40 s.
 // 5. D5 works (an anchor entry) with sleep critical, takes bed B5 and sleeps until sleep is above low: AboveLow.
-// 6. D6 has four chairs of a stranger within 40 m and a public one at 300 m: the closed ones do not hide it.
+// 6. D6 has four chairs of a stranger within 40 m and five public ones at 300 m: the closed ones do not hide them, and
+//    the menu offers four of them.
 constexpr const char* PlacesWorld = R"({"format":"society-world","version":2,"world":"PLACES.ZEN","data_fingerprint":"x",
 "engine_commit":"x","start":{"day":0,"minute":480},"clock":{"game_seconds_per_real_second":1.0},
 "movement":{"walk_cm_per_s":100.0,"run_cm_per_s":300.0,"source":"test"},
@@ -849,10 +851,11 @@ constexpr const char* PlacesWorld = R"({"format":"society-world","version":2,"wo
 {"id":17,"name":"K4","pos":[704000,0,0],"freepoint":false,"near_waypoint":null},
 {"id":18,"name":"F6","pos":[730000,0,0],"freepoint":false,"near_waypoint":null},
 {"id":19,"name":"S1","pos":[2000,3000,0],"freepoint":false,"near_waypoint":null},
-{"id":20,"name":"FP_SIT_1","pos":[2300,3000,0],"freepoint":true,"near_waypoint":19}],
+{"id":20,"name":"FP_SIT_1","pos":[2300,3000,0],"freepoint":true,"near_waypoint":19},
+{"id":21,"name":"R","pos":[348000,10000,0],"freepoint":false,"near_waypoint":null}],
 "edges":[[0,1,2000],[1,0,2000],[1,19,3000],[2,3,2000],[2,4,2000],[3,2,2000],[4,2,2000],[5,6,48000],[5,7,2000],[6,5,48000],[7,5,2000],
-[8,9,48000],[9,8,48000],[9,10,36000],[10,9,36000],[11,12,2000],[12,11,2000],[13,14,1000],[14,13,1000],[14,15,1000],
-[15,14,1000],[15,16,1000],[16,15,1000],[16,17,1000],[17,16,1000],[17,18,26000],[18,17,26000],[19,1,3000]],
+[8,9,48000],[9,8,48000],[9,10,36000],[9,21,10000],[10,9,36000],[11,12,2000],[12,11,2000],[13,14,1000],[14,13,1000],[14,15,1000],
+[15,14,1000],[15,16,1000],[16,15,1000],[16,17,1000],[17,16,1000],[17,18,26000],[18,17,26000],[19,1,3000],[21,9,10000]],
 "objects":[
 {"id":0,"vob":"B1","scheme":"BEDHIGH","focus":"","pos":[0,0,0],"waypoint":0,"owner_npc":null,"owner_guild":null,"container":false},
 {"id":1,"vob":"C1","scheme":"CHAIR","focus":"","pos":[2000,0,0],"waypoint":1,"owner_npc":null,"owner_guild":null,"container":false},
@@ -865,7 +868,12 @@ constexpr const char* PlacesWorld = R"({"format":"society-world","version":2,"wo
 {"id":8,"vob":"CK2","scheme":"CHAIR","focus":"","pos":[702000,0,0],"waypoint":15,"owner_npc":"STRANGER","owner_guild":null,"container":false},
 {"id":9,"vob":"CK3","scheme":"CHAIR","focus":"","pos":[703000,0,0],"waypoint":16,"owner_npc":"STRANGER","owner_guild":null,"container":false},
 {"id":10,"vob":"CK4","scheme":"CHAIR","focus":"","pos":[704000,0,0],"waypoint":17,"owner_npc":"STRANGER","owner_guild":null,"container":false},
-{"id":11,"vob":"CF6","scheme":"CHAIR","focus":"","pos":[730000,0,0],"waypoint":18,"owner_npc":null,"owner_guild":null,"container":false}],
+{"id":11,"vob":"CF6","scheme":"CHAIR","focus":"","pos":[730000,0,0],"waypoint":18,"owner_npc":null,"owner_guild":null,"container":false},
+{"id":12,"vob":"CR","scheme":"CHAIR","focus":"","pos":[348000,10000,0],"waypoint":21,"owner_npc":null,"owner_guild":null,"container":false},
+{"id":13,"vob":"CF6B","scheme":"CHAIR","focus":"","pos":[730000,100,0],"waypoint":18,"owner_npc":null,"owner_guild":null,"container":false},
+{"id":14,"vob":"CF6C","scheme":"CHAIR","focus":"","pos":[730000,200,0],"waypoint":18,"owner_npc":null,"owner_guild":null,"container":false},
+{"id":15,"vob":"CF6D","scheme":"CHAIR","focus":"","pos":[730000,300,0],"waypoint":18,"owner_npc":null,"owner_guild":null,"container":false},
+{"id":16,"vob":"CF6E","scheme":"CHAIR","focus":"","pos":[730000,400,0],"waypoint":18,"owner_npc":null,"owner_guild":null,"container":false}],
 "npcs":[
 {"id":"R1","key":"R1#0","name":"r","guild":59,"person":true,"start_waypoint":0,"start_aistate":null,"walk_cm_per_s":0.0,"mm_schedule":null,
  "routine":[{"start":480,"end":600,"state":"ZS_GOTOBED","waypoint":0,"waypoint_name":"H1"},{"start":600,"end":480,"state":"ZS_STAND","waypoint":0,"waypoint_name":"H1"}]},
@@ -923,7 +931,7 @@ void checkPlaces() {
   const Time limit = w.config.decisions.travelLimit;
   const uint32_t d1 = npc("D1"), d2 = npc("D2"), d3 = npc("D3"), d4 = npc("D4"), d5 = npc("D5"), d6 = npc("D6");
   const uint32_t b1 = object("B1"), b2 = object("B2"), b3 = object("B3"), b5 = object("B5"), cq = object("CQ"),
-                 cp2 = object("CP2"), cf6 = object("CF6");
+                 cp2 = object("CP2"), cf6 = object("CF6"), cr = object("CR");
 
   Society::SimConfig config;
   config.seed      = Seed;
@@ -973,8 +981,8 @@ void checkPlaces() {
   int c1Pending = -1; // C1's holders while D1's entry waits for its decision at 10:30:20
   const uint32_t fp = uint32_t(std::find(w.points.name.begin(),w.points.name.end(),std::string("FP_SIT_1"))-w.points.name.begin());
   bool cp2Allowed = false;
-  Time cp2Travel = -1, d4RowAt = -1; // CP2's travel in D4's row on the way, and when that row was asked
-  size_t closedChairs = 0;
+  Time cp2Travel = -1, crTravel = -1, d4RowAt = -1; // CP2's and CR's travel in D4's row on the way, and its time
+  size_t closedChairs = 0, openChairs = 0;
   std::vector<uint8_t> asked(w.npcs.size(),0);
   const auto option = [&](size_t r, uint32_t obj) -> int {
     for(size_t j=0; j<batch.count[r]; ++j)
@@ -1014,6 +1022,8 @@ void checkPlaces() {
         cqRow = {true,j<0 ? -1 : batch.mask[r*K+size_t(j)],0};
         cp2Allowed = k>=0 && batch.mask[r*K+size_t(k)];
         cp2Travel  = k>=0 ? batch.menu[r*K+size_t(k)].travel : -1;
+        const int m = option(r,cr);
+        crTravel   = m>=0 && batch.mask[r*K+size_t(m)] ? batch.menu[r*K+size_t(m)].travel : -1;
         d4RowAt    = sim.s.now;
         }
       if(i==d6 && first) {
@@ -1021,6 +1031,8 @@ void checkPlaces() {
         cfRow = {true,j<0 ? -1 : batch.mask[r*K+size_t(j)],0};
         for(size_t k=0; k<batch.count[r]; ++k)
           closedChairs += !batch.mask[r*K+k] && batch.menu[r*K+k].kind!=Society::NoKind ? 1 : 0;
+        for(size_t k=0; k<batch.count[r]; ++k)
+          openChairs += batch.mask[r*K+k] && batch.menu[r*K+k].kind!=Society::NoKind ? 1 : 0;
         }
       const uint32_t bed = i==d2 ? b2 : i==d3 ? b3 : i==d5 ? b5 : Society::NoObject;
       if(bed!=Society::NoObject && first) {
@@ -1067,14 +1079,14 @@ void checkPlaces() {
   std::printf("places: B1 and FP_SIT_1 held by their routine users: D1's options %s (use %u) and %s (use %u); at 10:30:20 "
               "B1 %s (use %u, W1 took it), FP_SIT_1 %s (use %u), D1's own chair %d holders while its entry waits; D2 evicted at its bed %s, D3 on the way %s; "
               "D4 on the way: CQ (11 min in all) %s, CP2 %s; D6: the public chair behind four closed %s (%zu closed in the "
-              "menu); D5's anchor sleep ends %s; holders checked %zu times, %zu wrong, %zu allowed options over the "
+              "menu, %zu allowed of 5); D5's anchor sleep ends %s; holders checked %zu times, %zu wrong, %zu allowed options over the "
               "limit\n",b1Row.mask<0 ? "absent" : b1Row.mask ? "open" : "closed",b1Row.use,
               fpRow.mask<0 ? "absent" : fpRow.mask ? "open" : "closed",fpRow.use,
               b1Late.mask<0 ? "absent" : b1Late.mask ? "open" : "closed",b1Late.use,
               fpLate.mask<0 ? "absent" : fpLate.mask ? "open" : "closed",fpLate.use,c1Pending,
               evictedAt<0 ? "never" : clock(w,evictedAt).c_str(),failedAt<0 ? "never" : clock(w,failedAt).c_str(),
               cqRow.mask<0 ? "absent" : cqRow.mask ? "open" : "closed",cp2Allowed ? "open" : "not open",
-              cfRow.mask<0 ? "absent" : cfRow.mask ? "open" : "closed",closedChairs,
+              cfRow.mask<0 ? "absent" : cfRow.mask ? "open" : "closed",closedChairs,openChairs,
               aboveLowAt>=0 ? "above low" : setpointAt>=0 ? "at the setpoint" : "never",checks,wrongCount,overLimit);
   if(!b1Row.row || b1Row.mask!=0 || b1Row.use!=1 || fpRow.mask!=0 || fpRow.use!=1)
     fail("places: a bed or a freepoint its routine user is at must be closed to a decider, held once");
@@ -1090,13 +1102,16 @@ void checkPlaces() {
   if(wrongCount>0)
     fail("places: a place's holders must be its routine users and chosen activities, within its capacity");
   // D4 sets off from P1 at 08:30:20 (its entry's end and the start delay) and walks 480 m at 1 m a second: it is at P2,
-  // where CP2 is, at 08:38:20. Asked at 08:33:20, CP2 is the rest of that walk away: 300 s.
+  // where CP2 is, at 08:38:20. Asked at 08:33:20, CP2 is the rest of that walk away (300 s), CR 100 m more (400 s).
   const Time d4Arrive = hm(8,30)+Society::StartDelay+480;
-  if(!cqRow.row || cqRow.mask==1 || !cp2Allowed || overLimit>0 || d4RowAt!=hm(8,33,20) || cp2Travel!=d4Arrive-d4RowAt)
+  if(!cqRow.row || cqRow.mask==1 || !cp2Allowed || overLimit>0 || d4RowAt!=hm(8,33,20) || cp2Travel!=d4Arrive-d4RowAt ||
+     crTravel!=d4Arrive-d4RowAt+100)
     fail("places: the travel limit holds for the whole walk, the rest of a walk under way included (CP2 "+
-         std::to_string(cp2Travel)+" s at "+clock(w,d4RowAt)+", expected 300 s at +00:33:20)");
-  if(!cfRow.row || cfRow.mask!=1 || closedChairs>2)
-    fail("places: closed places of a kind must not hide an allowed one farther away (and fill at most two slots)");
+         std::to_string(cp2Travel)+" s and CR "+std::to_string(crTravel)+" s at "+clock(w,d4RowAt)+
+         ", expected 300 and 400 s at +00:33:20)");
+  if(!cfRow.row || cfRow.mask!=1 || closedChairs>2 || openChairs!=4)
+    fail("places: closed places of a kind must not hide an allowed one farther away; the menu offers four allowed and at "
+         "most two closed places of a kind ("+std::to_string(openChairs)+" allowed, "+std::to_string(closedChairs)+" closed)");
   // The evicted gave their activities up and do what they chose next, the routine: at 14:00 both stand at their own
   // points (A2, A3) in its ZS_STAND, not in the bed's sleep.
   const auto doesRoutine = [&](uint32_t i, const char* point) {
