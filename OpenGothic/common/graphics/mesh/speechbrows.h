@@ -2,6 +2,7 @@
 
 #include "facerig.h"
 #include "lipsync.h"
+#include "talkgestures.h"
 
 #include <cstdint>
 #include <memory>
@@ -31,6 +32,9 @@ class SpeechBrows final {
 
     static constexpr uint64_t LateMs   = 50;  // a move found later than this starts now, not in the past
     static constexpr float    OctaveSt = 9;   // a jump of the tone this large is a mistake of an octave, not a rise
+
+    // the accents of a line in this mood lower the brows instead of raising them: angry, hostile
+    static bool lowers(TalkGestures::Mood m) { return m==TalkGestures::Mood::Angry || m==TalkGestures::Mood::Hostile; }
 
     // the line's voice starts (LipSync::start); seed: of the npc and the line
     void     start(std::shared_ptr<LipSync::Track> track, uint32_t seed, uint64_t now);

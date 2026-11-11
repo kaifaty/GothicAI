@@ -1821,7 +1821,7 @@ void MdlVisual::updateBrows(Npc& npc, uint64_t now, bool probing) {
   if(profile==nullptr || !profile->brows.has_value())
     return;
   // an angry or hostile line lowers the brows on its accents
-  const bool down = speechMood==TalkGestures::Mood::Angry || speechMood==TalkGestures::Mood::Hostile;
+  const bool down = SpeechBrows::lowers(speechMood);
   SpeechBrows::Start s;
   while(voiceBrows.update(*profile->brows,now,s))
     face.startBrows(down,s.strength,s.at,now);

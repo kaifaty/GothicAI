@@ -10,15 +10,20 @@
 // summed with the other weights, the same jumps for the same seed, rejections of the "eyes" section. The gestures of
 // the eyes (cues of zone "eyes": glance by saccades, roll along an arc): how far and when, back on the point, no
 // shift of the gaze for EyeBlink, the point Gaze turns the head to stays, when a line plays them, a profile without
-// eyes leaving them out, rejections of "look". CPU only: no device, no game data.
+// eyes leaving them out, rejections of "look". The tone of a voice (LipSync::Track, YIN) on harmonics and pulses, noise
+// and silence without one, the same tone from a stream in pieces; the brows on its accents (SpeechBrows, speech_brows):
+// one accent on a glide, the brows from 0.1 s before its syllable, down in an angry line, silent under a brow gesture,
+// the same moves for the same seed, none without the section, rejections of it. CPU only: no device, no game data.
 #include "graphics/mesh/eyeblink.h"
 #include "graphics/mesh/facerig.h"
 #include "graphics/mesh/eyes.h"
+#include "graphics/mesh/speechbrows.h"
 #include "graphics/mesh/speechcues.h"
 #include "gltfmesh.h"
 #include "linecues.h"
 
 #include <algorithm>
+#include <chrono>
 #include <vector>
 
 #include <cmath>
@@ -1114,6 +1119,241 @@ void eyeCueCases(const GltfHeadMesh& head) {
   require(none.empty(),"a head without eyes must leave the gestures of the eyes out");
   }
 
+// a voice: pieces of [ms, Hz at the start, Hz at the end, amplitude], the phase going on through them; harmonics 1..8
+// at 1/k, or pulses (one sample a period)
+struct Piece final {
+  uint64_t ms = 0;
+  float    from = 0, to = 0, amp = 0;
+  };
+
+std::vector<int16_t> sing(uint32_t rate, const std::vector<Piece>& pieces, bool pulses = false) {
+  std::vector<int16_t> pcm;
+  double phase = 0;
+  for(auto& p:pieces) {
+    const size_t n = size_t(p.ms*rate/1000);
+    for(size_t i=0; i<n; ++i) {
+      const double f = p.from + (p.to-p.from)*double(i)/double(n);
+      const double before = phase;
+      phase += f/rate;
+      double x = 0;
+      if(pulses)
+        x = std::floor(phase)!=std::floor(before) ? 1.0 : 0.0;
+      else
+        for(int k=1; k<=8; ++k)
+          x += std::sin(2.0*M_PI*k*phase)/k;
+      pcm.push_back(int16_t(std::lround(std::clamp(x*0.4*p.amp,-1.0,1.0)*32000.0)));
+      }
+    }
+  return pcm;
+  }
+
+std::shared_ptr<LipSync::Track> trackOf(uint32_t rate, const std::vector<int16_t>& pcm, size_t piece = 0) {
+  auto t = std::make_shared<LipSync::Track>(rate);
+  for(size_t at=0; at<pcm.size();) {
+    // in pieces of uneven length, as a stream arrives; 0: at once
+    const size_t n = piece==0 ? pcm.size() : std::min(pcm.size()-at, piece + (at/piece)%7*113);
+    t->append(pcm.data()+at,n);
+    at += n;
+    }
+  t->finish();
+  return t;
+  }
+
+void toneCases() {
+  // the tone of harmonics and of pulses at 90, 150, 250 Hz within 2 %, at the rates of the game and of the voice service
+  for(uint32_t rate:{22050u,24000u,44100u})
+    for(bool pulses:{false,true})
+      for(float hz:{90.f,150.f,250.f}) {
+        const auto t = trackOf(rate,sing(rate,{{1000,hz,hz,1}},pulses));
+        size_t toned = 0;
+        float  worst = 0;
+        for(uint64_t ms=50; ms<950; ms+=10) {
+          const float f = t->toneHz(ms);
+          if(f<=0)
+            continue;
+          ++toned;
+          worst = std::max(worst,std::abs(f-hz)/hz);
+          }
+        const auto what = std::to_string(int(hz))+" Hz "+(pulses ? "pulses" : "harmonics")+" at "+std::to_string(rate);
+        require(toned==90 && worst<0.02f,"the tone of "+what+": "+std::to_string(toned)+" of 90 steps, worst error "+
+                std::to_string(worst*100)+" %");
+        float st = 1;
+        require(t->tone(500,st) && std::abs(st)<0.2f,"a steady voice must be at its median: "+what);
+        }
+
+  // noise and silence: no tone
+  std::vector<int16_t> noise(24000);
+  uint32_t r = 12345;
+  for(auto& x:noise) {
+    r = r*1664525u + 1013904223u;
+    x = int16_t(int32_t(r>>16)-32768)/3;
+    }
+  const auto n = trackOf(24000,noise);
+  const auto q = trackOf(24000,std::vector<int16_t>(24000,0));
+  size_t noisy = 0, quiet = 0;
+  for(uint64_t ms=0; ms<1000; ms+=10) {
+    noisy += n->toneHz(ms)>0;
+    quiet += q->toneHz(ms)>0;
+    }
+  require(noisy==0 && quiet==0,"noise and silence must have no tone: "+std::to_string(noisy)+" and "+std::to_string(quiet)+" steps");
+  float st = 0;
+  require(!q->tone(500,st) && n->durationMs()==1000 && n->toneKnownMs()==1000,"a finished track must know the tone of every step");
+
+  // a stream in pieces: the same tone as the sound at once
+  const auto glide = sing(24000,{{300,110,110,1},{100,0,0,0},{150,110,160,1},{200,160,120,1},{150,0,0,0}});
+  const auto whole = trackOf(24000,glide), parts = trackOf(24000,glide,480);
+  bool same = whole->durationMs()==parts->durationMs();
+  for(uint64_t ms=0; ms<whole->durationMs() && same; ms+=10)
+    same = whole->toneHz(ms)==parts->toneHz(ms);
+  require(same,"a stream in pieces must give the same tone as the sound at once");
+  auto stream = std::make_shared<LipSync::Track>(24000);
+  stream->append(glide.data(),4800);
+  require(stream->toneKnownMs()<=200 && stream->toneKnownMs()>=170,"a stream must know the tone up to 25 ms before what has come: "+
+          std::to_string(stream->toneKnownMs()));
+
+  // the cost: ms of counting a second of sound (the tone with the loudness)
+  const auto speech = sing(44100,{{10000,100,180,1}});
+  for(uint32_t rate:{24000u,44100u}) {
+    const auto pcm = rate==44100 ? speech : sing(rate,{{10000,100,180,1}});
+    const auto t0  = std::chrono::steady_clock::now();
+    const auto t   = trackOf(rate,pcm);
+    const auto ms  = std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-t0).count();
+    std::printf("tone and loudness at %u Hz: %.2f ms of counting a second of sound\n",rate,ms/10.0);
+    }
+  }
+
+const char* BrowsSection = R"(, "speech_brows": {
+  "about": "synthetic", "rise_st": 2.5, "rise_ms": 200, "syllable_ms": 150, "loud": 0.4, "lead_ms": 100,
+  "on_ms": 120, "hold_ms": 120, "off_ms": 300, "gap_ms": 700, "chance": 1,
+  "up": {"browUpLeft": 0.5, "browUpRight": 0.5}, "down": {"browDown": 0.6}, "quiet_cues": ["flash", "doubt"]})";
+
+std::string withBrows(const std::string& section) {
+  std::string json = Profile;
+  json.insert(json.rfind('}'),section);
+  return json;
+  }
+
+// plays the track from tick 0 in 10 ms steps: the ticks the brows start at
+std::vector<uint64_t> playBrows(const FaceProfile::Brows& b, std::shared_ptr<LipSync::Track> t, uint32_t seed,
+                                SpeechBrows& sb) {
+  sb.start(t,seed,0);
+  std::vector<uint64_t> ret;
+  SpeechBrows::Start s;
+  for(uint64_t now=0; now<=t->durationMs()+500; now+=10)
+    while(sb.update(b,now,s))
+      ret.push_back(s.at);
+  return ret;
+  }
+
+void browCases(const GltfHeadMesh& head, const FaceProfile& plain) {
+  const auto p = FaceProfile::parse(withBrows(BrowsSection),head);
+  require(p->brows.has_value() && p->brows->quiet.size()==2 && p->brows->up.size()==2 && !plain.brows.has_value(),
+          "speech_brows must be read; a profile without it has none");
+
+  // a glide of 5.8 semitones over 150 ms in a loud syllable: one accent, the syllables around it level
+  const auto glide = sing(16000,{{200,100,100,1},{120,0,0,0},{150,100,140,1},{100,140,140,1},{120,0,0,0},
+                                 {220,140,135,1},{200,0,0,0}});
+  SpeechBrows sb;
+  const auto starts = playBrows(*p->brows,trackOf(16000,glide),7,sb);
+  require(sb.accents().size()==1 && near(uint64_t(sb.accents()[0].ms),320,20) && sb.accents()[0].rise>4.f,
+          "a glide 100 -> 140 Hz over 150 ms must be one accent at its syllable: "+std::to_string(sb.accents().size())+
+          (sb.accents().empty() ? "" : " at "+std::to_string(sb.accents()[0].ms)+" ms, rise "+std::to_string(sb.accents()[0].rise)));
+  require(starts.size()==1 && starts[0]==uint64_t(sb.accents()[0].ms)-100 && sb.moves()==1,
+          "the brows must start 0.1 s before the syllable of the accent");
+
+  // the face: up from 0.1 s before the syllable (within a frame), the weights of up; an angry line - down
+  FaceRig rig;
+  rig.setup(&head,p.get());
+  const auto& w = rig.weights();
+  const uint64_t syl = uint64_t(sb.accents()[0].ms);
+  for(bool down:{false,true}) {
+    const uint64_t base = down ? 5000 : 0;
+    rig.startBrows(down && SpeechBrows::lowers(TalkGestures::moodOf("angry")),1,base+syl-100,base+syl-100);
+    uint64_t first = 0;
+    for(uint64_t now=base+syl-200; now<base+syl+100 && first==0; now+=33) {
+      rig.update(now);
+      if(rig.browWeight(now)!=0)
+        first = now;
+      }
+    require(first>=base+syl-100 && first<=base+syl-100+34,"the brows must start rising 0.1 s before the syllable, within a frame");
+    rig.update(base+syl+100);
+    if(!down)
+      require(close(w[BrowUpLeft],0.5f) && close(w[BrowUpRight],0.5f) && w[BrowDown]==0 && rig.browWeight(base+syl+100)>0.99f,
+              "an accent must raise the brows by the weights of up");
+    else
+      require(close(w[BrowDown],0.6f) && w[BrowUpLeft]==0 && rig.browWeight(base+syl+100)<-0.99f,
+              "an accent of an angry line must lower the brows by the weights of down");
+    rig.update(base+syl+1000);
+    }
+  require(SpeechBrows::lowers(TalkGestures::moodOf("hostile")) && !SpeechBrows::lowers(TalkGestures::moodOf("friendly")) &&
+          !SpeechBrows::lowers(TalkGestures::moodOf("neutral")),"only angry and hostile lines must lower the brows");
+  FaceRig::Probe pr;
+  rig.startBrows(false,0.5f,8000,8000);
+  rig.update(8200);
+  rig.probe(pr,8200);
+  require(pr.shown=="brows:up 0.50" && close(pr.brows,0.5f),"the probe must show the brows of the voice: "+pr.shown);
+
+  // a brow gesture has the brows: the layer is silent, the sum is the gesture's alone
+  rig.startCue("flash",false,-1,10000,10000);
+  rig.startBrows(false,1,10000,10000);
+  rig.update(10150);
+  require(rig.browWeight(10150)==0 && close(w[BrowUpLeft],0.7f) && close(w[BrowUpRight],0.7f),
+          "the brows of the voice must be silent while a brow gesture shows");
+  rig.startLeak("afraid",false,12000,12000);
+  rig.startBrows(false,1,12000,12000);
+  rig.update(12200);
+  require(rig.browWeight(12200)==0,"the brows of the voice must be silent while a leak of the upper face shows");
+
+  // without the section: no layer
+  FaceRig none;
+  none.setup(&head,&plain);
+  none.startBrows(false,1,0,0);
+  require(none.update(200)==FaceRig::Result::Rest && none.browWeight(200)==0,"a profile without speech_brows must have no brows of the voice");
+
+  // many accents: by chance and the gap, the same moves for the same seed
+  std::vector<Piece> many;
+  for(int i=0; i<12; ++i) {
+    many.push_back({150,110,160,1});
+    many.push_back({100,160,150,1});
+    many.push_back({150,0,0,0});
+    }
+  auto chancy = withBrows(BrowsSection);
+  chancy.replace(chancy.find("\"chance\": 1"),11,"\"chance\": 0.5");
+  const auto half = FaceProfile::parse(chancy,head);
+  const auto voiceOf = trackOf(16000,sing(16000,many));
+  SpeechBrows a, b, c;
+  const auto ma = playBrows(*half->brows,voiceOf,11,a), mb = playBrows(*half->brows,voiceOf,11,b), mc = playBrows(*half->brows,voiceOf,12,c);
+  require(a.accents().size()==12 && ma==mb && !ma.empty() && ma.size()<12,"one seed must give the same moves, not on every accent: "+
+          std::to_string(ma.size())+" of "+std::to_string(a.accents().size()));
+  for(size_t i=1; i<ma.size(); ++i)
+    require(ma[i]-ma[i-1]>=700,"the moves must keep the gap");
+  require(mc!=ma || c.accents().size()!=12,"another seed must give other moves");
+
+  // rejections
+  const auto rejected = [&](const std::string& section, std::string_view reason) {
+    try {
+      (void)FaceProfile::parse(withBrows(section),head);
+      }
+    catch(const std::exception& e) {
+      require(std::string_view(e.what()).find(reason)!=std::string_view::npos,
+              "the rejection must say why: want '"+std::string(reason)+"', got '"+e.what()+"'");
+      return;
+      }
+    require(false,"the profile must be rejected: "+std::string(reason));
+    };
+  auto with = [](std::string from, const std::string& what, const std::string& to) {
+    from.replace(from.find(what),what.size(),to);
+    return from;
+    };
+  const std::string sec = BrowsSection;
+  rejected(with(sec,"\"about\"","\"x\": 1, \"about\""),"speech_brows: unknown field \"x\"");
+  rejected(with(sec,"\"browDown\"","\"nose\""),"speech_brows: down: unknown target \"nose\"");
+  rejected(with(sec,"\"doubt\"]","\"wink\"]"),"speech_brows: quiet_cues: no cue \"wink\"");
+  rejected(with(sec,"\"chance\": 1","\"chance\": 2"),"loud and chance must be numbers 0..1");
+  rejected(with(sec,"\"rise_st\": 2.5, ",""),"speech_brows: no rise_st");
+  rejected(with(sec,"\"on_ms\": 120","\"on_ms\": 0"),"on_ms and off_ms must be above 0");
+  }
+
 int main() {
   try {
     const auto head    = makeHead();
@@ -1123,6 +1363,8 @@ int main() {
     cueCases(head,*profile);
     timingCases(*profile);
     leakCases(head,*profile);
+    toneCases();
+    browCases(head,*profile);
     const auto eyeHead    = makeEyeHead();
     const auto eyeProfile = FaceProfile::parse(EyeProfile,eyeHead);
     eyeProfileCases(eyeHead,*eyeProfile);

@@ -212,19 +212,22 @@ float LipSync::Track::yin(size_t at) const {
     power += x[j]*x[j];
   if(power<ToneQuiet*float(ToneWin))
     return 0;
-  // the difference of the window and the window a lag on, normalized by its mean over the shorter lags
+  // the difference of the window and the window a lag on (summed over the window in the outer loop: the lags are
+  // independent sums and go in vectors), normalized by its mean over the shorter lags
   float d[TauMax+2] = {};
+  for(size_t j=0; j<ToneWin; ++j) {
+    const float  xj = x[j];
+    const float* y  = x+j;
+    for(size_t tau=1; tau<=TauMax+1; ++tau) {
+      const float e = xj-y[tau];
+      d[tau] += e*e;
+      }
+    }
   d[0] = 1;
   float sum = 0;
   for(size_t tau=1; tau<=TauMax+1; ++tau) {
-    const float* y = x+tau;
-    float        s = 0;
-    for(size_t j=0; j<ToneWin; ++j) {
-      const float e = x[j]-y[j];
-      s += e*e;
-      }
-    sum   += s;
-    d[tau] = sum>0 ? s*float(tau)/sum : 1.f;
+    sum   += d[tau];
+    d[tau] = sum>0 ? d[tau]*float(tau)/sum : 1.f;
     }
   // the first lag clearly periodic, down to the bottom of its dip; else none
   size_t tau = TauMin;
