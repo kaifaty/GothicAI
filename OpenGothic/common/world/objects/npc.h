@@ -268,9 +268,10 @@ class Npc final : public AnimationGroundSound, public ParticleTarget {
     bool       startLeak(std::string_view felt, bool lower);
     float      leakWeight();
     // a voiced line starts: the mouth follows the voice (LipSync)
-    void       startSpeech(const Tempest::Sound& voice);
+    void       startSpeech(const Tempest::Sound& voice, std::string_view name = {});  // name: of the line (the seed of the face)
     void       startSpeech(std::shared_ptr<LipSync::Track> voice);
-    void       setTalkMood(std::string_view mood);  // of the line it starts to say: its gestures follow it
+    // of the line it starts to say: its gestures follow it; line: its id of the AI (its brows follow the mood too)
+    void       setTalkMood(std::string_view mood, std::string_view line = {});
     // the hero speaks to it (his voice) for the next `ms`; words of him came; it thinks of an answer for
     // the next `ms` (0: it answers now)
     void       listenTo(uint64_t ms);

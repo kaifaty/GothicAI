@@ -95,12 +95,30 @@ struct FaceProfile final {
     };
 
 
+  // The brows of the speaker on the accents of its voice ("speech_brows", reports/content/2026-11-hero-head/eyes.md,
+  // "План: брови по тону"): a syllable where the tone rises rise_st semitones within rise_ms and the voice is loud
+  // raises the brows (an angry or hostile line lowers them), from lead_ms before it; not every one (SpeechBrows).
+  struct Brows final {
+    float riseSt     = 0;  // semitones the tone rises...
+    float riseMs     = 0;  // ...within this
+    float syllableMs = 0;  // ms of a syllable from its start where its rise and its loudness are looked for
+    float loud       = 0;  // LipSync level 0..1 the syllable reaches at least
+    float leadMs     = 0;  // the brows start this much before the syllable
+    float onMs = 0, holdMs = 0, offMs = 0;
+    float gapMs      = 0;  // at least this from the start of one move to the next
+    float chance     = 0;  // an accent past the gap moves the brows with this probability (the seed of the npc and line)
+    std::vector<std::pair<uint32_t,float>> up, down;  // head target -> weight at the apex
+    std::vector<size_t> quiet;  // the cues (brow gestures) the layer is silent for, as for a leak of the upper face
+    float span() const { return onMs+holdMs+offMs; }
+    };
+
   std::vector<Anim>    anims;
   std::vector<Cue>     cues;
   std::vector<Leak>    leaks;     // none: the profile has no "leaks"
   LeakTime             leakTime;
   std::vector<uint8_t> mouth;  // per head target: a mouth shape (its name starts with a "mouth" prefix)
   std::optional<Eyes>  eyes;   // none: the eyes stay as modelled, the gestures of the eyes are left out of cues
+  std::optional<Brows> brows;  // none: the brows do not follow the voice
 
   const Anim* find(std::string_view name) const;
   size_t      index(std::string_view name) const;  // size_t(-1): none
@@ -133,8 +151,11 @@ class FaceRig final {
       float       uploadUs = 0;     // the last setDeformation of the head, µs (filled by its owner)
       uint32_t    cues    = 0;      // active gestures
       // the active anims and gestures, their strength, and a leak with its strongest weight as shown:
-      // "S_ANGRY 0.82 doubt:R 0.64 leak:afraid:upper 0.45"
+      // "S_ANGRY 0.82 doubt:R 0.64 leak:afraid:upper 0.45 brows:up 0.40"
       std::string shown;
+      float       brows    = 0;      // the brows on the accents of the voice as shown: + up, - down (speech_brows)
+      uint32_t    accents  = 0;      // accents of the voice found in its line (SpeechBrows, filled by its owner)
+      uint32_t    browMoves = 0;     // of them, the ones that moved the brows
       };
 
     static constexpr float    Changed     = 1e-4f; // a weight change that deforms the head again
@@ -174,6 +195,11 @@ class FaceRig final {
     // a smile put on (a friendly line that hides a lie): while on, the expression's squint - its eyeSquint* and
     // cheekSquint* - is cut; after it, the squint comes back over PosedFadeMs. The gestures and a leak keep theirs
     void   setPosed (bool on, uint64_t now);
+    // the brows on an accent of the voice (speech_brows): its up or down weights times strength, from `start` (it may
+    // lie a little in the past); silent while a brow gesture of its quiet list or a leak of the upper face shows
+    void   startBrows(bool down, float strength, uint64_t start, uint64_t now);
+    // how far the brows of the voice are shown now: + up, - down, 0..1 of their weights
+    float  browWeight(uint64_t now) const;
     // as shown now: intensity and fade
     float  weight   (std::string_view name, uint64_t now) const;
     // how far the gesture is shown now, 0..1 (the strongest of its parts and of its runs)
@@ -220,8 +246,16 @@ class FaceRig final {
       bool     on    = false;
       };
 
+    struct BrowRun final {
+      uint64_t start    = 0;
+      bool     down     = false;
+      float    strength = 0;
+      };
+
     bool   isOn(const Slot& s, uint64_t now) const { return s.on && s.timeUntil>=now; }
     float  leakEnvelope(uint64_t now) const;
+    float  browEnvelope(const BrowRun& r, uint64_t now) const;
+    float  browQuiet(uint64_t now) const;
     float  posedCut(uint64_t now) const;
     float  cueEnvelope(const CueRun& r, size_t part, uint64_t now) const;
     float  cueStrength(const CueRun& r, uint64_t now) const;
@@ -242,6 +276,7 @@ class FaceRig final {
     std::vector<Slot>          slots;
     std::vector<CueRun>        runs;      // the gestures shown now
     LeakRun                    leakRun;   // the leak shown now
+    std::vector<BrowRun>       browRuns;  // the brows of the voice shown now
     bool                       posed    = false;
     uint64_t                   posedEnd = 0;      // when the posed smile ended (0: never)
     std::vector<uint8_t>       squint;            // per head target: eyeSquint*, cheekSquint* (a posed smile cuts them)

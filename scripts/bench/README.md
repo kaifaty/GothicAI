@@ -1077,6 +1077,24 @@ the staging for free. `ingame_clip.py` writes into `<out>`:
 - `sheet.jpg` — the frame before and the apex of each gesture and of the leak.
 The gestures of each line come from its `[ai] cues` line in `game.log`, the times from `metrics.csv`.
 
+## Face brows clip
+
+The acceptance clip of the brows on the accents of the voice
+([eyes.md](../../reports/content/2026-11-hero-head/eyes.md), "План: брови по тону"): Vino with an own head says three
+lines of the AI server through the real voice path (`face_brows_demo` in
+`server/src/gothic_ai/scenarios/face_cues.py`: the Russian yes-no question «Ты его видел вчера?», a long statement, an
+angry line; no gesture tags), then `face-brows-clip.bench` has him say two long lines of his original voice
+(`DIA_Vino_HALLO_05_02`, `DIA_Vino_PERM_05_04`); the scenario holds him 30 s after his answer for them. Staging as in
+[Face cues clip](#face-cues-clip); the face profile needs `speech_brows` (e.g. the hero head of `hero-head-2` with the
+sections of [`test-head.face.json`](../../reports/content/2026-11-hero-head/mpfb/test-head.face.json)). The same
+commands with `--scenario face_brows_demo`, without `--debug-leak`, and the bench `face-brows-clip`;
+`OPENGOTHIC_SPEECH_BROWS=0` films the same without the layer. `--provider inworld` spends three paid requests a take.
+`reports/content/2026-11-hero-head/cues/brows_clip.py <bench out> <out>` writes `clip.mp4`, `key.txt` (each line's
+text and voice, each accent with its time, the word it falls on — an estimate by characters — the rise of the tone and
+up, down or no move, the start and apex of `br_w`) and `sheet.jpg` (before and apex of the strongest moves); with
+`--off` only `clip-off.mp4`. The accents come from the `[face] accent` lines of `game.log`, the times from `lip_t` and
+`br_w` of `metrics.csv`.
+
 ## Native NPC calibration duels
 
 ### Как работает сейчас
