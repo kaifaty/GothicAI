@@ -337,6 +337,9 @@ layer), `OPENGOTHIC_TAA_REACTIVE=0`, `=1`, `=1` with the view and `OPENGOTHIC_TA
 
 ## План и журнал
 
+- 2026-11-11: a 1920x1080 clip records in real time on Ryzen (Vulkan): the readback of a captured frame
+  reads cached host memory (24–38 ms → 0.6 ms) through one kept staging buffer, and filming draws every
+  frame into one image instead of allocating one each step; 31–34 % → 99 % of real time.
 - 2026-11-10: a deterministic `streaming wait` holds the loaded world four frames before the reset (a still
   had a second state by whether the wait had to wait: clouds and exposure lag a frame or two); two
   shader fixes took the thread-order noise out of VSM, so stills are compared with VSM on again.
@@ -1585,6 +1588,15 @@ Film mode (what `gothic-shorts film` sets): `OPENGOTHIC_BENCH_REALTIME=1` keeps 
 clock and draws only the captured frame; `TEMPEST_AUDIO_LOOPBACK=48000` records the game's sound into
 `<segment>.wav` instead of playing it; `TEMPEST_WINDOW_SIZE=<w>x<h>` (points) sets the frame;
 `OPENGOTHIC_BENCH_ENCODER` replaces the x264 options (e.g. `-c:v h264_videotoolbox -b:v 24M`).
+
+Recording in real time on Ryzen (clips that judge loading and streaming at the player's pace):
+`OPENGOTHIC_BENCH_REALTIME=1 TEMPEST_WINDOW_SIZE=1920x1080 "OPENGOTHIC_BENCH_ENCODER=-c:v h264_nvenc -preset p4 -b:v 24M"
+BENCH_HOST=ryzen scripts/bench.sh <scenario> <out>`. Read `[bench] rec stop … speed=` and `[bench] realtime:`
+in `game.log`: a take that kept pace says `speed=` 95 % or more and `kept to the wall clock` (or a lag under
+1000 ms). A 127 s city run on the x4 texture set gave 99 % and a 0.6–0.7 s lag three times in a row with
+NVENC, 96 % and 4 s with the default x264. A frame of the capture costs about 8 ms (the picture 4.5 ms,
+reading it back 1.7 ms, the bench 1 ms) out of the step's 33 ms; filming draws every frame into one image
+and reads it through one cached staging buffer. [Measurements](../../reports/engine/2026-11-11-realtime-capture/README.md).
 
 Good spots near the default save (Xardas' tower): `NW_XARDAS_TOWER_VALLEY_05` (27 degree slope in a
 forest), `NW_XARDAS_TOWER_IN1_*` (ramp inside the tower), `NW_XARDAS_STAIRS_01`..`_04`.

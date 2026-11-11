@@ -1320,7 +1320,7 @@ void Renderer::readGiStats(uint8_t fId) {
   gi.statsWritten[fId] = false;
   }
 
-Tempest::Attachment Renderer::screenshoot(uint8_t frameId) {
+Tempest::Attachment Renderer::screenshoot(uint8_t frameId, Tempest::Attachment&& reuse) {
   auto& device = Resources::device();
   device.waitIdle();
 
@@ -1331,7 +1331,9 @@ Tempest::Attachment Renderer::screenshoot(uint8_t frameId) {
     w = uint32_t(temporal.output.w());
     h = uint32_t(temporal.output.h());
     }
-  auto     img  = device.attachment(Tempest::TextureFormat::RGBA8,w,h);
+  auto     img  = std::move(reuse);
+  if(img.isEmpty() || uint32_t(img.w())!=w || uint32_t(img.h())!=h)
+    img = device.attachment(Tempest::TextureFormat::RGBA8,w,h);
 
   auto wview  = GameServices::inst().worldView();
   auto camera = GameServices::inst().camera();
