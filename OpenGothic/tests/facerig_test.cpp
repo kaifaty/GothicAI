@@ -1401,10 +1401,10 @@ void browCases(const GltfHeadMesh& head, const FaceProfile& plain) {
   }
 
 const char* ListenSection = R"(, "listen_face": {
-  "about": "synthetic", "chance": 0.5, "gap_ms": 3000,
+  "about": "synthetic", "chance": 0.3, "gap_ms": 3000,
   "flash": {"cue": "flash", "weight": 0.5, "time": 0.5},
   "frown": {"cue": "frown", "weight": 0.6, "time": 0.4},
-  "smile": {"weight": 0.5, "on_ms": 300, "hold_ms": 600, "off_ms": 400, "chance": 0.5, "flash": 0.5}})";
+  "smile": {"weight": 0.5, "on_ms": 300, "hold_ms": 600, "off_ms": 400, "chance": 0.7, "flash": 0.4}})";
 
 std::string withListen(const std::string& section) {
   std::string json = Profile;
@@ -1511,16 +1511,24 @@ void listenCases(const GltfHeadMesh& head, const FaceProfile& plain) {
   require(friendly.size()>=10 && friendly.size()<=34,"about one nod in two or three must get a face: "+std::to_string(friendly.size()));
   for(size_t i=1; i<friendly.size(); ++i)
     require(friendly[i].first-friendly[i-1].first>=3000,"the faces must keep the gap");
-  // without the gap a nod gets a face by the chance alone (0.5 of 100 nods)
+  const auto count = [](const std::vector<std::pair<uint64_t,R>>& v, R r) {
+    return std::count_if(v.begin(),v.end(),[r](auto& x) { return x.second==r; });
+    };
+  // without the gap a nod gets a face by the chance alone (0.3 of 100 nods)
   {
     auto nogap  = l;
     nogap.gapMs = 0;
     const auto v = run(M::Neutral,5,nogap);
-    require(v.size()>=35 && v.size()<=65,"without the gap about half of the nods must get a face: "+std::to_string(v.size()));
+    require(v.size()>=20 && v.size()<=40,"without the gap about 0.3 of the nods must get a face: "+std::to_string(v.size()));
+    // a face on every nod: a friendly one smiles with smile.chance 0.7, flashes as well with smile.flash 0.4 of those:
+    // smile alone 0.42, smile and flash 0.28, flash alone 0.3
+    nogap.chance = 1;
+    const auto f = run(M::Friendly,5,nogap);
+    const auto smile = count(f,R::Smile), both = count(f,R::SmileFlash), flash = count(f,R::Flash);
+    require(f.size()==100 && smile>=30 && smile<=55 && both>=16 && both<=40 && flash>=18 && flash<=42,
+            "a friendly one must smile, smile and flash, or flash by smile.chance and smile.flash: "+std::to_string(smile)+
+            " / "+std::to_string(both)+" / "+std::to_string(flash));
   }
-  const auto count = [](const std::vector<std::pair<uint64_t,R>>& v, R r) {
-    return std::count_if(v.begin(),v.end(),[r](auto& x) { return x.second==r; });
-    };
   require(count(friendly,R::Smile)>0 && count(friendly,R::SmileFlash)>0 && count(friendly,R::Flash)>0 &&
           count(friendly,R::Frown)==0,"a friendly one must smile, smile and flash, or flash, never frown");
   for(auto mood:{M::Neutral,M::Afraid}) {
@@ -1548,6 +1556,19 @@ void listenCases(const GltfHeadMesh& head, const FaceProfile& plain) {
     f.update(150);
     require(f.listenWeight(FaceRig::ListenKind::Smile,150)>0 && f.listenWeight(FaceRig::ListenKind::Flash,150)>0 &&
             f.listenWeight(FaceRig::ListenKind::Frown,150)==0,"a smile with a flash must show both");
+    // an angry one's frown shows only the frown
+    ListenFace::play(f,R::Frown,2000);
+    f.update(2200);
+    require(f.listenWeight(FaceRig::ListenKind::Frown,2200)>0 && f.listenWeight(FaceRig::ListenKind::Flash,2200)==0 &&
+            f.listenWeight(FaceRig::ListenKind::Smile,2200)==0,"a frown must show the frown alone, no flash, no smile");
+    // a leak coming while the smile shows silences it
+    f.update(4000);
+    f.startListen(FaceRig::ListenKind::Smile,4000,4000);
+    f.update(4500);
+    require(f.listenWeight(FaceRig::ListenKind::Smile,4500)>0.9f,"the smile must show before the leak");
+    f.startLeak("afraid",false,4500,4500);
+    f.update(4700);
+    require(f.listenWeight(4700)==0 && f.weights()[CheekSquint]==0,"a leak must silence the face of the one listening");
   }
 
   // without the section: no layer
@@ -1576,10 +1597,10 @@ void listenCases(const GltfHeadMesh& head, const FaceProfile& plain) {
   rejected(with(sec,"\"about\"","\"x\": 1, \"about\""),"listen_face: unknown field \"x\"");
   rejected(with(sec,"\"cue\": \"frown\"","\"cue\": \"wink\""),"listen_face: frown: no cue \"wink\"");
   rejected(with(sec,"\"weight\": 0.5, \"time\"","\"weight\": 0, \"time\""),"listen_face: flash: weight and time must be above 0");
-  rejected(with(sec,"\"chance\": 0.5, \"gap","\"chance\": 2, \"gap"),"listen_face: chance must be a number 0..1");
+  rejected(with(sec,"\"chance\": 0.3, \"gap","\"chance\": 2, \"gap"),"listen_face: chance must be a number 0..1");
   rejected(with(sec,"\"gap_ms\": 3000,",""),"listen_face: no gap_ms");
   rejected(with(sec,"\"off_ms\": 400","\"off_ms\": 0"),"listen_face: smile: on_ms and off_ms must be above 0");
-  rejected(with(sec,"\"flash\": 0.5}","\"flash\": 0.5, \"y\": 1}"),"listen_face: smile: unknown field \"y\"");
+  rejected(with(sec,"\"flash\": 0.4}","\"flash\": 0.4, \"y\": 1}"),"listen_face: smile: unknown field \"y\"");
   }
 
 int main() {
