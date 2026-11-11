@@ -3325,6 +3325,10 @@ int main() {
     BaseContentContract::require(dir && *dir,"OPENGOTHIC_BASE must point to a content-convert base with textures and meshes");
     const auto base=fs::absolute(dir);
     fs::create_directories(temporary);
+    // Fixtures point OPENGOTHIC_BASE at bases inside `temporary`, and an explicit base is saved as the
+    // installation's current base in the cache. Keep that pointer in the contract's own cache: in the shared
+    // ~/.cache it would send the game and every later check to a fixture, and a killed run leaves it there.
+    setenv("OPENGOTHIC_BASE_CACHE",(temporary/"base-cache").c_str(),1);
     const char* args[]={"gothic-basecontent-contract","-g",gothic};
     CommandLine commandLine(3,args);
     BaseContentContract::run(base,temporary);

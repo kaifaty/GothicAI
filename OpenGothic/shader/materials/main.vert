@@ -323,10 +323,10 @@ void meshShader(const uvec4 task) {
   // The pipeline draws both sides here (Shaders::materialPipeline); the culling it did is done per primitive. A sun
   // page keeps the side to the sun, as the rest of the frame does. A lamp's cube face is mirrored against the camera,
   // so the pipeline's culling kept only the side away from the light, and a one-sided surface lit by the lamp (a floor
-  // without an underside, a wall of one layer) was missing from it: the light passed it. The world mesh now keeps both
-  // sides on a lamp's face (scene.vsmLampSides 2); objects keep the far side, unless 3: drawn with both sides they
-  // shadowed lit shelves and nets by fireplaces and candles, which the reference with two-sided rays leaves lit
-  // (reports/render-features/2026-11-10-lamp-one-sided). One page per workgroup: the branch is uniform.
+  // without an underside, a wall of one layer) was missing from it: the light passed it. A lamp's face keeps both sides
+  // of the world mesh (scene.vsmLampSides 2) and of objects too (3, the default): a carpet lit by a hearth, a fireplace's
+  // hood, a net on a wall are one-sided as well (reports/render-features/2026-11-10-lamp-one-sided,
+  // reports/render-features/2026-11-11-lamp-objects-two-sided). One page per workgroup: the branch is uniform.
   barrier();
   if(laneID<primCount) {
     const bool omni = vsmPageIsOmni(vsm.pageList[shadowPageId]);

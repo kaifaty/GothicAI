@@ -479,8 +479,9 @@ class DynamicWorld final {
     // Digest of everything placedItemCensus reads besides the static world:
     // candidate identity, the inputs its body is built from (pose, material,
     // mesh bounds and hull source vertices), and every movable vob body. It
-    // reads no candidate body: the hull and body construction code is covered
-    // by PlacedCensusCache::RulesVersion instead.
+    // reads no candidate body: hull/body construction and census rules are
+    // covered by the build fingerprint. New builder files must be added to
+    // cmake/PlacedCensusBuilder.cmake.
     std::string placedItemCensusInputs(const std::vector<PlacedItemCandidate>& candidates) const;
     Item           addMovableVob(const ProtoMesh& mesh, std::string_view visual, const Tempest::Matrix4x4& matrix,
                                  float massMultiplier, bool blocksWalking, std::string_view className = {},

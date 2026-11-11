@@ -195,8 +195,8 @@ class Renderer final {
       // false: one gather per lamp and pixel (light_vsm_hard)
       bool           vsmLampSoft        = true;
       // [INTERNAL] vsmLampSides, OPENGOTHIC_VSM_LAMP_SIDES wins: the sides a lamp's cube face keeps (1 the far side,
-      // 2 both sides of the world mesh, 3 of objects too; main.vert, meshShader)
-      uint32_t       vsmLampSides       = 2;
+      // 2 both sides of the world mesh, 3 of objects too, the default; main.vert, meshShader)
+      uint32_t       vsmLampSides       = 3;
       } settings;
 
     Frustrum                  frustrum[SceneGlobals::V_Count];

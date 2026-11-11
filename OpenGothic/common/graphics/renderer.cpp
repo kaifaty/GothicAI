@@ -187,13 +187,14 @@ void Renderer::setupSettings() {
     settings.vsmLampNearCm = 30;
   // VSM lamps: which sides of a surface go into a lamp's cube faces (main.vert, meshShader): 1 the side away from the
   // light alone (before 2026-11-10: a one-sided floor or wall lit by the lamp let its light through), 2 both sides of
-  // the world mesh (0 or unset), 3 both sides of objects too (the study's: false shadows by fireplaces and candles).
+  // the world mesh alone (2026-11-10), 3 both sides of objects too (0 or unset; since 2026-11-11: a one-sided object
+  // lit by the lamp, a carpet, a fireplace's hood, a net, let its light through).
   // OPENGOTHIC_VSM_LAMP_SIDES=1|2|3 (test benches) wins over the ini; without mesh shaders always 1
-  // (reports/render-features/2026-11-10-lamp-one-sided)
+  // (reports/render-features/2026-11-10-lamp-one-sided, reports/render-features/2026-11-11-lamp-objects-two-sided)
   {
     const char* env = std::getenv("OPENGOTHIC_VSM_LAMP_SIDES");
     const int   v   = env!=nullptr ? std::atoi(env) : Gothic::settingsGetI("INTERNAL","vsmLampSides");
-    settings.vsmLampSides = uint32_t(v>=1 && v<=3 ? v : 2);
+    settings.vsmLampSides = uint32_t(v>=1 && v<=3 ? v : 3);
   }
   // VSM lamps: the soft PCSS, or hard shadows in one gather (light.frag, VSM_LAMP_HARD). On Metal hard by default:
   // the PCSS costs ~11 ms GPU indoors on an M1 Pro (reports/render-features/2026-11-05-vsm-mac-hard/README.md).

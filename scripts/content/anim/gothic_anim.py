@@ -88,10 +88,10 @@ class SkinMesh:
     weights: list[list[tuple[int, float]]]  # per vertex: (node index, weight)
 
 
-def read_skin_mesh(path: Path, skel: Skeleton) -> SkinMesh:
-    """First soft-skin mesh of an MDM record, posed in the skeleton's bind pose."""
+def read_skin_mesh(path: Path, skel: Skeleton, index: int = 0) -> SkinMesh:
+    """A soft-skin mesh of an MDM record (the first one, or `index`), posed in the skeleton's bind pose."""
     meta, buf = _read(Path(path))
-    m = meta["data"]["meshes"][0]
+    m = meta["data"]["meshes"][index]
     mesh = m["mesh"]
     bind = world_pose(skel, None, 0)
     w = m["weights"]
