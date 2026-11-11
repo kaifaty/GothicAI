@@ -25,7 +25,8 @@ TEXTURE_FIELDS.extend(("tex_jumps", "tex_jumps_open", "tex_jump_sync_max_ms", "t
 TEXTURE_FIELDS.extend(("tex_device_budget_bytes", "tex_device_usage_bytes", "tex_device_shared", "tex_device_measured",
                        "tex_target_bytes", "tex_target_source", "tex_budget_bytes", "tex_stage", "tex_stage_deepest",
                        "tex_stage_bytes0", "tex_stage_bytes"))
-TEXTURE_FIELDS.extend(f"tex_stage{stage}_seconds" for stage in range(6))
+# every stage up to TextureBudget::MaxStage (common/texturebudget.h); the probe writes those reached so far
+TEXTURE_FIELDS.extend(f"tex_stage{stage}_seconds" for stage in range(26))
 TEXTURE_FIELDS.extend(f"tex_source_{source}_{metric}" for source in ("base", "hd", "material", "other")
                       for metric in ("bytes", "full_bytes"))
 TEXTURE_FIELDS.extend(f"tex_{category}_{metric}" for category in ("landscape", "static", "dynamic", "other")

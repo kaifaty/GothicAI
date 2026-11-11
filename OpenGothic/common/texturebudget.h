@@ -35,6 +35,10 @@ namespace TextureBudget {
   constexpr double   LogStep         = 0.25;
   // ...at most once in this time.
   constexpr auto     LogInterval     = std::chrono::seconds(10);
+  // The deepest stage kept: at it every texture up to 16384 per side (lowest allowed level 8 with MinSide 64) stands
+  // at its lowest level, 1 + 3*8. A larger texture would need deeper stages; the ladder stops here (logged once).
+  constexpr uint32_t MaxStage        = 25;
+  constexpr uint8_t  MaxLowest       = 8;
   // Going back to a shallower stage s-1 needs D(s-1) at most this part of the target...
   constexpr double   BackFraction    = 0.9;
   // ...for this long in a row.
@@ -102,7 +106,7 @@ namespace TextureBudget {
       template<class Bytes>
       void measured(uint8_t level0, uint8_t level1, uint8_t cap, uint8_t lowest, uint32_t ring, bool whole, Bytes bytes);
       // D(0) ... D(deepest): `deepest` is the last stage that changes anything, where every texture measured on
-      // screen stands at its coarsest allowed level.
+      // screen stands at its coarsest allowed level; not deeper than MaxStage.
       std::vector<uint64_t> finish() const;
 
     private:

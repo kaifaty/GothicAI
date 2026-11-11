@@ -2,7 +2,6 @@
 // device's budget, and the stage that makes the wanted levels coarser when everything at its wanted level is still
 // above it.
 #include "resources.h"
-#include "loadprobe.h"
 #include "texturelevels.h"
 #include "graphics/texturescreendemand.h"
 
@@ -115,10 +114,6 @@ void Resources::chooseTextureStage(bool force, std::chrono::steady_clock::time_p
 std::vector<uint64_t> Resources::textureStageSums() {
   TextureBudget::Sums sums;
   uint64_t tracked=0;
-  // ready replacements not yet published are live but belong to no record's bytes
-  for(const auto& reload:textureReloads)
-    if(!reload->ready.isEmpty())
-      tracked+=LoadProbe::textureBytes(reload->ready);
   const float    log2K=textureViewScale;
   const uint32_t reserve=textureReserve;
   for(auto& entry:textureRecords) {
@@ -130,6 +125,13 @@ std::vector<uint64_t> Resources::textureStageSums() {
     if(r.failed) {
       sums.fixed(r.resident ? r.bytes : 0);
       continue;
+      }
+    if(r.lowest>TextureBudget::MaxLowest) {
+      static bool logged=false;
+      if(!logged)
+        Log::e("textures: \"",r.source.string(),"\" is larger than 16384 per side; the stages stop at ",
+               TextureBudget::MaxStage," and leave it above its lowest level");
+      logged=true;
       }
     if(r.stageTop<0) {
       r.stageTop=0.5*std::log2(double(r.width)*double(r.height));
@@ -152,9 +154,13 @@ std::vector<uint64_t> Resources::textureStageSums() {
     const uint8_t cap=r.ringNeeds.empty() ? r.lowest : r.ringNeeds.begin()->first<=2 ? 0 : tailLevel(r);
     sums.measured(level0,level1,cap,r.lowest,r.distances.begin()->first,exponent==TextureBudget::WholeChain,bytes);
     }
-  // everything live outside the records: UI, fonts, colours, placeholders
-  const auto live=Texture2d::liveBytes();
-  sums.fixed(live>tracked ? live-tracked : 0);
+  // Everything live outside the records: UI, fonts, colours, placeholders. Measured only with no load in flight: a
+  // worker's payload is live from its creation, before a reload or a record holds it.
+  if(textureReloads.empty()) {
+    const auto live=Texture2d::liveBytes();
+    textureUntracked=live>tracked ? live-tracked : 0;
+    }
+  sums.fixed(textureUntracked);
   return sums.finish();
   }
 

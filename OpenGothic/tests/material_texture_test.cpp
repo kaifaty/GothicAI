@@ -1191,17 +1191,25 @@ void textureBudgetMaths() {
   // a quarter 256; room 1024-200-512=312
   require(target(small,100*MiB)==256*MiB,"a small device must still give a quarter while the headroom allows");
   small.budget=512*MiB;
-  require(target(small,100*MiB)==Floor,"the target must never go below the floor");
+  require(target(small,100*MiB)==192*MiB,"the target must never go below the floor of 192 MiB");
   auto filled=discrete;
   filled.usage=9216*MiB;
   // other 8704, room 10240-8704-1280=256
   require(target(filled,512*MiB)==256*MiB,"the rest of the game filling the device must limit the target by the headroom");
   filled.usage=12000*MiB;
-  require(target(filled,512*MiB)==Floor,"a device with no room left must keep the floor");
+  require(target(filled,512*MiB)==192*MiB,"a device with no room left must keep the floor");
   require(target(discrete,4096*MiB)==2560*MiB,"live textures above the usage must leave nothing else on the device");
-  require(target(Device(),0)==Floor,"a device whose budget is not readable must keep today's 192 MiB");
+  require(target(Device(),0)==192*MiB,"a device whose budget is not readable must keep today's 192 MiB");
+  // F9: a small device filled by the rest of the game: the headroom is the 512 MiB minimum, not budget/8 = 256
+  auto smallFilled=discrete;
+  smallFilled.budget=2048*MiB;
+  smallFilled.usage=1700*MiB;
+  // other 1188, room 2048-1188-512=348, a quarter 512
+  require(target(smallFilled,512*MiB)==348*MiB,"the headroom must be at least 512 MiB");
   require(follow(1000*MiB,1040*MiB)==1000*MiB && follow(1000*MiB,960*MiB)==1000*MiB &&
-          follow(1000*MiB,1060*MiB)==1060*MiB && follow(1000*MiB,940*MiB)==940*MiB,
+          follow(1000*MiB,1060*MiB)==1060*MiB && follow(1000*MiB,940*MiB)==940*MiB &&
+          follow(1000*MiB,1049*MiB)==1000*MiB && follow(1000*MiB,1050*MiB)==1000*MiB &&
+          follow(1000*MiB,1051*MiB)==1051*MiB && follow(1000*MiB,951*MiB)==1000*MiB && follow(1000*MiB,949*MiB)==949*MiB,
           "the working target must change only when the rule moves by more than 5 %");
   require(logWorthy(1000,1300) && logWorthy(1000,700) && !logWorthy(1000,1200),"the log line must follow changes over 25 %");
 
@@ -1279,6 +1287,14 @@ void textureBudgetMaths() {
   step(again,{800,500},1000,at(4));
   require(step(again,{800,500},1000,at(8))==1 && step(again,{800,500},1000,at(9))==0,
           "the five seconds back must be in a row");
+  // the way back needs D(s-1) at or below 90 % of the target, not just near it
+  Ladder above, at90;
+  above.stage=at90.stage=1;
+  for(int i=0;i<=6;++i) {
+    step(above,{905,500},1000,at(i));
+    step(at90,{900,500},1000,at(i));
+    }
+  require(above.stage==1 && at90.stage==0,"going back must need D(s-1) at most 90 % of the target");
   Ladder forced;
   forced.stage=4;
   require(step(forced,sumsByStage,900,at(0),true)==1,"a world load must take the shallowest stage that fits at once");
@@ -1918,10 +1934,13 @@ void textureBudgetLevels(Tempest::Device& device, const Fixture& fixture) {
   require(stats.device.known && stats.device.budget>0 && stats.targetSource==Source::Rule &&
           stats.targetBytes==target(stats.device,Tempest::Texture2d::liveBytes()) && stats.budgetBytes==stats.targetBytes,
           "by default the target must come from the device's budget, and the unrequested textures' budget follow it");
+  // the device is asked once a second: the next evaluation within it sees the same usage
+  const auto usage=stats.device.usage;
   setenv("OPENGOTHIC_TEXTURE_VRAM_MB","2048",1);
   stats=evaluate();
-  require(stats.device.budget==2048*MiB && stats.targetBytes==target(stats.device,Tempest::Texture2d::liveBytes()) &&
-          stats.targetBytes>=Floor && stats.targetBytes<=512*MiB,
+  require(stats.device.budget==2048*MiB && usage>0 && stats.device.usage==usage &&
+          stats.targetBytes==target(stats.device,Tempest::Texture2d::liveBytes()) &&
+          stats.targetBytes>=192*MiB && stats.targetBytes<=512*MiB,
           "OPENGOTHIC_TEXTURE_VRAM_MB must pretend the device's budget, its usage staying real");
   unsetenv("OPENGOTHIC_TEXTURE_VRAM_MB");
   Resources::configureTextures({},{},"300");
@@ -1984,7 +2003,15 @@ void textureBudgetLevels(Tempest::Device& device, const Fixture& fixture) {
           "above the target the unrequested textures must leave before any lowering starts");
   tick();
   require(Resources::textureStats().loadsInFlight==1,"with the unrequested gone, the lowering must start");
-  waitFor([&] { return Resources::textureStats().demoted==6; },"textures above their wanted level must be lowered to it");
+  // An evaluation every frame while the lowering loads run: their payloads, live from the worker's upload on, are not
+  // in D(0); only the 1x1 placeholder of the evicted ones may come in.
+  const auto sum0=first.stageBytes0;
+  waitFor([&] {
+    Resources::configureTextures();
+    const auto now=Resources::textureStats();
+    require(now.stageBytes0>=sum0 && now.stageBytes0<=sum0+1024,"a payload of a load in flight must not count in D(s)");
+    return now.demoted==6;
+    },"textures above their wanted level must be lowered to it");
   stats=evaluate();
   require(sides({1024,1024,1024,1024,1024,1024}) && stats.stage==0 && stats.stageBytes0<=stats.targetBytes,
           "when lowering is enough, the stage must stay 0");
@@ -2003,12 +2030,26 @@ void textureBudgetLevels(Tempest::Device& device, const Fixture& fixture) {
   setenv("OPENGOTHIC_TEXTURE_TARGET_MB","1",1);
   stats=evaluate();
   require(stats.stage==13 && stats.stageDeepest==13,"when nothing fits the stage must be the deepest: ring 0 at stage 13");
+  // with no reserve every measured texture stands at level 1 on stage 0: this is D(1) with the default reserve
+  const auto sum1=stats.stageBytes0;
   std::this_thread::sleep_for(std::chrono::milliseconds(5100));
   waitFor([&] { return sides({64,64,64,64,64,64}) && ringOnly.tex->w()==128; },
           "the deepest stage must bring every measured texture to its lowest level");
   require(whole.tex->w()==512 && chain.tex->w()==512 && pinned->w()==512 && ringOnly.tex->w()==128,
           "always whole, pinned, whole-chain owners and the ring rule must never be coarsened");
   require(Resources::textureStats().shortfallCount==0,"the stage's level must be the level the shortfall counts against");
+
+  // The default reserve of one level and a target between D(1) and D(0): the completion before a world's first frame
+  // picks stage 1 itself, and stage 1 drops the reserve, so it loads level 1, not the whole chain.
+  unsetenv("OPENGOTHIC_TEXTURE_MIP_RESERVE");
+  const auto reserveMb=std::to_string(sum1/MiB+1);
+  setenv("OPENGOTHIC_TEXTURE_TARGET_MB",reserveMb.c_str(),1);
+  Resources::configureTextures();
+  Resources::finishTextureLoading();
+  stats=Resources::textureStats();
+  require(stats.stage==1 && stats.stageBytes==sum1 && stats.stageBytes0>stats.targetBytes &&
+          sides({1024,1024,1024,1024,1024,1024}),
+          "the world-load completion must choose the stage first, and stage 1 must drop the reserve");
 
   setenv("OPENGOTHIC_TEXTURE_TARGET_MB","0",1);
   stats=evaluate();
@@ -2017,7 +2058,8 @@ void textureBudgetLevels(Tempest::Device& device, const Fixture& fixture) {
   require(evaluate().stage==13,"the stage must come back with a target");
   setenv("OPENGOTHIC_TEXTURE_SCREEN_MIPS","0",1);
   stats=evaluate();
-  require(stats.stage==0 && stats.stageSeconds[5]>0,"the ring rule must stay on stage 0");
+  require(stats.stage==0 && stats.stageSeconds[2]>0 && stats.stageSeconds[13]>0 && stats.stageSeconds[1]>0,
+          "the ring rule must stay on stage 0, and every stage keep its own seconds");
   for(size_t i=0;i<measured.size();++i)
     Resources::textureDemand(measured[i],stat,false,Need{rings[i],-1});
   Resources::textureDemand(whole,stat,false);

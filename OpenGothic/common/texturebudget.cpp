@@ -84,6 +84,8 @@ std::vector<uint64_t> TextureBudget::Sums::finish() const {
     sum += delta;
     d.push_back(uint64_t(std::max<int64_t>(sum,0)));
     }
+  if(d.size()>MaxStage+1)
+    d.resize(MaxStage+1);
   // the last stage that changes anything
   while(d.size()>1 && d.back()==d[d.size()-2])
     d.pop_back();

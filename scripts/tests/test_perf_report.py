@@ -300,7 +300,7 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
                                          "tex_device_budget_bytes", "tex_device_usage_bytes", "tex_device_shared",
                                          "tex_device_measured", "tex_target_bytes", "tex_target_source", "tex_budget_bytes",
                                          "tex_stage", "tex_stage_deepest", "tex_stage_bytes0", "tex_stage_bytes",
-                                         *(f"tex_stage{stage}_seconds" for stage in range(6)),
+                                         *(f"tex_stage{stage}_seconds" for stage in range(26)),
                                          "vob_near", "vob_far", "vob_outside", "vob_created", "vob_released", "vob_pending",
                                          "vob_publication_ms", "vob_near_missing", "vob_near_missing_seconds"])
         writer.writeheader()
@@ -330,7 +330,7 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
                           "tex_target_source": 1, "tex_budget_bytes": 2250*1048576,
                           "tex_stage": (0, 2, 1)[frame], "tex_stage_deepest": 2, "tex_stage_bytes0": 300*1048576,
                           "tex_stage_bytes": 200*1048576,
-                          **{f"tex_stage{stage}_seconds": 10+frame*(stage == 1) for stage in range(6)},
+                          **{f"tex_stage{stage}_seconds": 10+frame*(stage == 1)+2*frame*(stage == 13) for stage in range(26)},
                           "vob_near": 100+frame, "vob_far": 700-frame, "vob_outside": 200,
                           "vob_created": frame, "vob_released": int(frame==2), "vob_pending": 2-frame,
                           "vob_publication_ms": frame*.25, "vob_near_missing": frame,
@@ -383,11 +383,12 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
     assert "| run | 1.00 / 2.00 / 3.00 / 4.00 / 5.00 / 6.00 | 3 | 0.500000000 |" in report.report_markdown(report.build_report(streaming))
     budget = textures["budget"]
     assert (budget["target_end_bytes"], budget["target_source"], budget["stage_end"], budget["stage_deepest"],
-            budget["stage_seconds"], budget["d0_end_bytes"]) == (2250*1048576, "rule", 1, 2, [0, 2, 0, 0, 0, 0], 300*1048576)
-    assert ("| run | 9000 / 900 | 2250 (rule) | 1 / 2 | 0.0 / 2.0 / 0.0 / 0.0 / 0.0 / 0.0 | 300.0 / 200.0 |"
+            budget["stage_seconds"][:2], budget["stage_seconds"][13], sum(budget["stage_seconds"]),
+            budget["d0_end_bytes"]) == (2250*1048576, "rule", 1, 2, [0, 2], 4, 6, 300*1048576)
+    assert ("| run | 9000 / 900 | 2250 (rule) | 1 / 2 | 1: 2.0, 13: 4.0 | 300.0 / 200.0 |"
             in report.report_markdown(report.build_report(streaming)))
     combined_budget = report.build_report(streaming)["places"]["streaming-flythrough"]["summary"]["streaming"]["textures"]["budget"]
-    assert combined_budget["stage_seconds"] == [0, 4, 0, 0, 0, 0]
+    assert (combined_budget["stage_seconds"][1], combined_budget["stage_seconds"][13]) == (4, 8)
     combined = report.build_report(streaming)["places"]["streaming-flythrough"]["summary"]["streaming"]["textures"]
     assert (combined["promoted"], combined["demoted"], combined["near_tail_seconds"]) == (8, 6, 1)
     vobs = data["run"]["streaming"]["vobs"]

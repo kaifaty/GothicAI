@@ -338,6 +338,8 @@ def read_streaming(directory):
 
 # Resources' TextureBudget::Source (common/texturebudget.h), as tex_target_source carries it
 TARGET_SOURCES = ("default", "rule", "setting", "environment")
+# TextureBudget::MaxStage: the streaming CSV has tex_stage<N>_seconds for every stage 0..MAX_STAGE
+MAX_STAGE = 25
 
 
 def texture_budget(textures):
@@ -348,10 +350,11 @@ def texture_budget(textures):
     source = int(end["tex_target_source"])
     # The seconds counters are cumulative per process: sum them frame to frame within a pass, so passes and repeats
     # joined in one list do not count the time between them.
-    seconds = [0.0] * 6
+    stages = [stage for stage in range(MAX_STAGE + 1) if f"tex_stage{stage}_seconds" in end]
+    seconds = [0.0] * len(stages)
     for previous, row in zip(textures, textures[1:]):
         if row["frame"] == previous["frame"] + 1:
-            for stage in range(6):
+            for stage in stages:
                 seconds[stage] += max(0.0, row[f"tex_stage{stage}_seconds"] - previous[f"tex_stage{stage}_seconds"])
     return {
         "device_budget_end_bytes": int(end["tex_device_budget_bytes"]),
@@ -363,7 +366,7 @@ def texture_budget(textures):
         "budget_end_bytes": int(end["tex_budget_bytes"]),
         "stage_end": int(end["tex_stage"]),
         "stage_deepest": int(max(row["tex_stage"] for row in textures)),
-        # seconds on stages 0..4 and 5 and deeper over the pass
+        # seconds on each stage over the pass, index = stage
         "stage_seconds": seconds,
         "d0_end_bytes": int(end["tex_stage_bytes0"]),
         "d_end_bytes": int(end["tex_stage_bytes"]),
@@ -613,7 +616,7 @@ def summary_table(report):
         lines.extend(["", "Texture budget: the device's budget and this process's usage, the working target, the stage "
                       "above it, and D(s), the bytes the demanded textures take at stage s.", "",
                       "| Pass | Device budget / usage end MiB | Target end MiB (source) | Stage end / deepest | "
-                      "Seconds on stage 0 / 1 / 2 / 3 / 4 / 5+ | D(0) / D(stage) end MiB |",
+                      "Seconds by stage | D(0) / D(stage) end MiB |",
                       "|---|---:|---:|---:|---:|---:|"])
         for view, stats in streaming["views"].items():
             textures = stats["streaming"]["textures"]
@@ -623,7 +626,7 @@ def summary_table(report):
                 continue
             device = (f"{budget['device_budget_end_bytes']/1048576:.0f} / {budget['device_usage_end_bytes']/1048576:.0f}"
                       + (" shared" if budget["device_shared"] else "") + ("" if budget["device_measured"] else " estimated"))
-            seconds = " / ".join(f"{value:.1f}" for value in budget["stage_seconds"])
+            seconds = ", ".join(f"{stage}: {value:.1f}" for stage, value in enumerate(budget["stage_seconds"]) if value > 0) or "0"
             lines.append(f"| {view} | {device} | {budget['target_end_bytes']/1048576:.0f} ({budget['target_source']}) | "
                          f"{budget['stage_end']} / {budget['stage_deepest']} | {seconds} | "
                          f"{budget['d0_end_bytes']/1048576:.1f} / {budget['d_end_bytes']/1048576:.1f} |")

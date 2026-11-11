@@ -188,10 +188,10 @@ class Resources final {
       TextureBudget::Device device;
       uint64_t targetBytes = 0, budgetBytes = 0;
       TextureBudget::Source targetSource = TextureBudget::Source::Default;
-      // the stage above the target, the deepest so far, the seconds on stages 0..4 (the last one 5 and deeper), and
-      // the bytes the demanded textures would take at stage 0 and at the current stage, D(0) and D(stage)
+      // the stage above the target, the deepest so far, the seconds on each stage, and the bytes the demanded
+      // textures would take at stage 0 and at the current stage, D(0) and D(stage)
       uint32_t stage = 0, stageDeepest = 0;
-      std::array<double,6> stageSeconds{};
+      std::array<double,TextureBudget::MaxStage+1> stageSeconds{};
       uint64_t stageBytes0 = 0, stageBytes = 0;
       };
     static TextureStats              textureStats();
@@ -614,8 +614,9 @@ class Resources final {
     TextureBudget::Source textureTargetSource = TextureBudget::Source::Default;
     TextureBudget::Ladder textureLadder;
     uint32_t textureStageDeepest = 0;
-    std::array<double,6> textureStageSeconds{};
+    std::array<double,TextureBudget::MaxStage+1> textureStageSeconds{};
     std::vector<uint64_t> textureSums;  // D(0)..D(deepest) at the last evaluation
+    uint64_t textureUntracked = 0;      // live bytes outside the records, measured with no load in flight
     std::chrono::steady_clock::time_point textureBudgetAt{}, textureStageClock{}, textureTargetLoggedAt{};
     uint64_t textureTargetLogged = 0;
     bool textureStreaming = true, textureOverBudget = false, texturePayloadChanged = false;
