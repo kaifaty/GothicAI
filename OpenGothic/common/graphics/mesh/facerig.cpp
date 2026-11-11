@@ -1,5 +1,6 @@
 #include "facerig.h"
 
+#include "eyes.h"
 #include "gltfmesh.h"
 
 #include <rapidjson/document.h>
@@ -73,6 +74,8 @@ float ease(float x) {
   return x*x*(3.f-2.f*x);
   }
 
+FaceProfile::Cue::Look parseLook(const rapidjson::Value& v, const std::string& where);
+
 void parseCues(const rapidjson::Value& list, const GltfHeadMesh& head, FaceProfile& ret) {
   if(!list.IsObject())
     fail("cues must be an object");
@@ -88,20 +91,32 @@ void parseCues(const rapidjson::Value& list, const GltfHeadMesh& head, FaceProfi
       fail(where+": must be an object");
     for(const auto& m:v.GetObject()) {
       const auto key = str(m.name);
-      if(key!="zone" && key!="side" && key!="parts")
+      if(key!="zone" && key!="side" && key!="parts" && key!="look")
         fail(where+": unknown field "+quoted(key));
       }
     FaceProfile::Cue c;
     c.name = std::string(name);
     const auto zone = v.HasMember("zone") && v["zone"].IsString() ? str(v["zone"]) : std::string_view();
-    if(zone!="upper" && zone!="mouth")
-      fail(where+": zone must be \"upper\" or \"mouth\"");
+    if(zone!="upper" && zone!="mouth" && zone!="eyes")
+      fail(where+": zone must be \"upper\", \"mouth\" or \"eyes\"");
     c.mouth = zone=="mouth";
+    if(zone=="eyes") {
+      if(!v.HasMember("look"))
+        fail(where+": a gesture of the eyes must have look");
+      c.look = parseLook(v["look"],where+": look");
+      }
+    else if(v.HasMember("look")) {
+      fail(where+": only a gesture of the eyes (zone \"eyes\") has look");
+      }
     if(v.HasMember("side")) {
       const auto side = v["side"].IsString() ? str(v["side"]) : std::string_view();
       if(side!="L" && side!="R")
         fail(where+": side must be \"L\" or \"R\"");
       c.side = side[0];
+      }
+    if(c.look.has_value() && !v.HasMember("parts")) {
+      ret.cues.push_back(std::move(c));
+      continue;  // the eyes alone
       }
     if(!v.HasMember("parts") || !v["parts"].IsArray() || v["parts"].Empty())
       fail(where+": parts must be a non-empty list");
@@ -253,6 +268,57 @@ bool fitSphere(const std::vector<asset::Vec3>& pos, uint32_t first, uint32_t end
   return true;
   }
 
+FaceProfile::Cue::Look parseLook(const rapidjson::Value& v, const std::string& where) {
+  // {"move": "jump"|"arc", "side_deg": 22, "up_deg": -4, "on_ms": 80, "hold_ms": 600, "off_ms": 120}
+  using Look = FaceProfile::Cue::Look;
+  if(!v.IsObject())
+    fail(where+" must be an object");
+  onlyFields(v,{"move","side_deg","up_deg","on_ms","hold_ms","off_ms"},where);
+  Look ret;
+  const auto move = v.HasMember("move") && v["move"].IsString() ? str(v["move"]) : std::string_view();
+  if(move!="jump" && move!="arc")
+    fail(where+": move must be \"jump\" or \"arc\"");
+  ret.move    = move=="jump" ? Look::Move::Jump : Look::Move::Arc;
+  ret.sideDeg = float(number(v,"side_deg",where));
+  ret.upDeg   = float(number(v,"up_deg",where));
+  ret.onMs    = float(number(v,"on_ms",where));
+  ret.holdMs  = float(number(v,"hold_ms",where));
+  ret.offMs   = float(number(v,"off_ms",where));
+  if(ret.sideDeg<0 || ret.sideDeg>90 || std::abs(ret.upDeg)>90)
+    fail(where+": side_deg must be 0..90 and up_deg -90..90");
+  if(std::sqrt(ret.sideDeg*ret.sideDeg + ret.upDeg*ret.upDeg)<Eyes::Saccade)
+    fail(where+": the eyes must turn at least "+std::to_string(int(Eyes::Saccade))+" degree");
+  if(ret.onMs<=0 || ret.offMs<=0 || ret.holdMs<0)
+    fail(where+": on_ms and off_ms must be above 0, hold_ms not negative");
+  if(ret.move==Look::Move::Jump) {
+    // the saccades of the main sequence must fit their time
+    const float ms = Eyes::duration(std::sqrt(ret.sideDeg*ret.sideDeg + ret.upDeg*ret.upDeg));
+    if(ms>ret.onMs || ms>ret.offMs)
+      fail(where+": a jump that far takes "+std::to_string(int(std::ceil(ms)))+" ms, longer than on_ms or off_ms");
+    }
+  return ret;
+  }
+
+// the gestures of the eyes within the limits of the eyeballs; without them such gestures are left out
+void checkLooks(FaceProfile& p) {
+  using E = FaceProfile::Eyes;
+  if(!p.eyes.has_value()) {
+    p.cues.erase(std::remove_if(p.cues.begin(),p.cues.end(),[](const FaceProfile::Cue& c) { return c.look.has_value(); }),
+                 p.cues.end());
+    return;
+    }
+  constexpr float Deg = float(M_PI)/180.f;
+  const auto& lim  = p.eyes->limit;
+  const float side = std::min(lim[E::In],lim[E::Out])/Deg;  // one eye goes out, the other one in
+  for(auto& c:p.cues) {
+    if(!c.look.has_value())
+      continue;
+    const auto& l = *c.look;
+    if(l.sideDeg>side || l.upDeg>lim[E::Up]/Deg || -l.upDeg>lim[E::Down]/Deg)
+      fail("cue "+quoted(c.name)+": look: the turn must be within limits_deg of eyes");
+    }
+  }
+
 FaceProfile::Eyes parseEyes(const rapidjson::Value& v, const GltfHeadMesh& head) {
   using Eyes = FaceProfile::Eyes;
   if(!v.IsObject())
@@ -363,7 +429,7 @@ const FaceProfile::Leak* FaceProfile::findLeak(std::string_view felt, bool lower
   }
 
 float FaceProfile::Cue::span(float hold) const {
-  float ret = 0;
+  float ret = look.has_value() ? look->span() : 0.f;
   for(size_t i=0; i<parts.size(); ++i) {
     const auto& p = parts[i];
     ret = std::max(ret, p.delayMs+p.onMs+(i==0 && hold>=0 ? hold : p.holdMs)+p.offMs);
@@ -522,6 +588,7 @@ std::unique_ptr<FaceProfile> FaceProfile::parse(std::string_view json, const Glt
     parseLeaks(doc["leaks"],head,*ret);
   if(doc.HasMember("eyes"))
     ret->eyes = parseEyes(doc["eyes"],head);
+  checkLooks(*ret);
   return ret;
   }
 

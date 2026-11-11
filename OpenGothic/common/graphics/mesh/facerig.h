@@ -34,10 +34,25 @@ struct FaceProfile final {
       std::vector<std::pair<uint32_t,float>> mirrored;  // the same on the other side (Left <-> Right)
       float delayMs = 0, onMs = 0, holdMs = 0, offMs = 0;
       };
+    // A gesture of the eyes (zone "eyes": glance, roll): the eyeballs leave the point they look at on the other one
+    // and come back to it (Eyes); the head does not follow. Degrees from that point as seen from the middle of the
+    // eyes: side_deg to the gesture's side, up_deg up (below 0: down).
+    struct Look final {
+      enum class Move : uint8_t {
+        Jump,  // a saccade there over on_ms at most, the hold, a saccade back over off_ms at most
+        Arc,   // smooth, no saccades: a little to the side and up over on_ms, over the top to the other side in the
+               // hold, down back over off_ms (side_deg: how far the arc swings to each side)
+        };
+      Move  move    = Move::Jump;
+      float sideDeg = 0, upDeg = 0;
+      float onMs = 0, holdMs = 0, offMs = 0;
+      float span() const { return onMs+holdMs+offMs; }
+      };
     std::string       name;
-    bool              mouth = false;  // zone "mouth": into the pauses of the voice; else "upper": at its word
+    bool              mouth = false;  // zone "mouth": into the pauses of the voice; else "upper" or "eyes": at its word
     char              side  = 0;      // 'L'/'R' of a one-sided gesture as written, 0: both sides
-    std::vector<Part> parts;
+    std::vector<Part> parts;          // its shapes (of a gesture of the eyes, if any: those over the lids' own)
+    std::optional<Look> look;         // zone "eyes": what the eyes do
 
     // ms from its start to its end; hold: the first part's hold instead of its own (below 0: its own)
     float span(float hold = -1) const;
@@ -85,7 +100,7 @@ struct FaceProfile final {
   std::vector<Leak>    leaks;     // none: the profile has no "leaks"
   LeakTime             leakTime;
   std::vector<uint8_t> mouth;  // per head target: a mouth shape (its name starts with a "mouth" prefix)
-  std::optional<Eyes>  eyes;   // none: the eyes stay as modelled
+  std::optional<Eyes>  eyes;   // none: the eyes stay as modelled, the gestures of the eyes are left out of cues
 
   const Anim* find(std::string_view name) const;
   size_t      index(std::string_view name) const;  // size_t(-1): none

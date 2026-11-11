@@ -44,7 +44,7 @@ const FaceColumn FaceColumns[] = {
   {"face_hostile","S_HOSTILE"}, {"face_afraid","S_FRIGHTENED"}, {"face_pain","T_HURT"},
   };
 // the facial gestures of the dictionary (say.cues, the own head's profile): cue_<name>
-const char* const CueColumns[] = {"flash","doubt","smirk","press","disgust","squint","frown","chin","wince"};
+const char* const CueColumns[] = {"flash","doubt","smirk","press","disgust","squint","frown","chin","wince","glance","roll"};
 
 void writeHeader() {
   std::fprintf(bench.csv,"seg,frame,t,x,y,z,rot,speed,bs,walk,occl,ik_valid,ik_on,ik_hardoff,ik_w,nlegs,bad,pelvis,chest,pelvis_target,pelvis_limit,floor");

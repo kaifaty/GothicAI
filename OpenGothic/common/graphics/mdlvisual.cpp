@@ -1645,11 +1645,20 @@ bool MdlVisual::startCue(Npc& npc, std::string_view name, char side) {
   if(side==0)
     side = SpeechCues::sideOf(SpeechCues::seedOf(name)^(uint32_t(npc.instanceSymbol())*2654435761u)^(cueCount++*40503u));
   const uint64_t now = npc.world().tickCount();
-  return face.startCue(name,cue->side!=0 && side!=cue->side,-1,now,now);
+  return playCue(name,cue->side!=0 && side!=cue->side,-1,now,now);
+  }
+
+bool MdlVisual::playCue(std::string_view name, bool mirror, float hold, uint64_t at, uint64_t now) {
+  if(!face.startCue(name,mirror,hold,at,now))
+    return false;
+  if(const auto* cue = face.faceProfile()->findCue(name); cue!=nullptr && cue->look.has_value())
+    eyes.startCue(*cue,mirror,std::min(at,now));
+  return true;
   }
 
 float MdlVisual::cueWeight(const Npc& npc, std::string_view name) const {
-  return face.cueWeight(name,npc.world().tickCount());
+  const uint64_t now = npc.world().tickCount();
+  return std::max(face.cueWeight(name,now),eyes.cueWeight(name,now));
   }
 
 bool MdlVisual::startLeak(Npc& npc, std::string_view felt, bool lower) {
@@ -1706,7 +1715,7 @@ void MdlVisual::updateFace(Npc& npc) {
   cueStarts.clear();
   cues.update(*face.faceProfile(),now,blink.lastBlink(),cueStarts);
   for(auto& s:cueStarts.cues)
-    face.startCue(s.name,s.mirror,s.hold,s.at,now);
+    playCue(s.name,s.mirror,s.hold,s.at,now);
   // a lie: the leak of the felt emotion, the liar's blinks (ordinary ones keep away from them), a smile put on
   if(cueStarts.leak)
     face.startLeak(cueStarts.leakFelt,cueStarts.leakLower,cueStarts.leakAt,now);
