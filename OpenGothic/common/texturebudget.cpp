@@ -8,7 +8,8 @@
 uint64_t TextureBudget::target(const Device& device, uint64_t liveTextures) {
   if(!device.known || device.budget==0)
     return Floor;
-  const uint64_t other    = device.usage>liveTextures ? device.usage-liveTextures : 0;
+  const uint64_t held     = device.unused+liveTextures;
+  const uint64_t other    = device.usage>held ? device.usage-held : 0;
   const uint64_t headroom = std::max(MinHeadroom,device.budget/HeadroomDivisor);
   const uint64_t share    = device.budget/(device.shared ? ShareShared : ShareDiscrete);
   const uint64_t taken    = other+headroom;

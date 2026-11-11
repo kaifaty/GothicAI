@@ -637,8 +637,9 @@ Resources::TextureStats Resources::textureStats() {
     if(!record.tail()) {
       stats.sourceFullBytes[size_t(record.sourceKind)]+=bytes;
       if(record.hasTail() && inst->textureStreaming && inst->textureSkipMips!=0 &&
-         !record.pinned && record.distances.count(TextureAlwaysFull)==0 &&
-         !record.distances.empty() && record.distances.begin()->first<=2)
+         !record.pinned && record.distances.count(TextureAlwaysFull)==0 && // ring-rule owners: measured ones key by class
+         !(inst->textureScreen ? record.ringNeeds : record.distances).empty() &&
+         (inst->textureScreen ? record.ringNeeds : record.distances).begin()->first<=2)
         stats.fullRing2Bytes+=bytes;
       }
     if(record.category==TextureCategory::Other)

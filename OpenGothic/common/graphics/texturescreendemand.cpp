@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 double TextureScreenDemand::distance(const Tempest::Vec3& p, const TexelDensity& texel) {
   const double x = std::max({double(texel.min.x)-p.x,0.0,double(p.x)-texel.max.x});
@@ -15,10 +16,21 @@ double TextureScreenDemand::distance(const Tempest::Vec3& p, const Sphere& spher
   return std::max(std::sqrt(x*x+y*y+z*z)-double(sphere.radius),0.0)*0.01;
   }
 
+uint32_t TextureScreenDemand::distanceClass(double d, uint32_t previous, double& margin) {
+  uint32_t c = d<ClassBorder[0] ? 0 : d<ClassBorder[1] ? 1 : 2;
+  if(previous<c && d<ClassBorder[previous]*(1.0+ClassHysteresis))
+    c = previous;
+  const double inf  = std::numeric_limits<double>::infinity();
+  const double nearer  = c==0 ? inf : d-ClassBorder[c-1];
+  const double farther = c==2 ? inf : ClassBorder[c]*(1.0+ClassHysteresis)-d;
+  margin = std::min(nearer,farther);
+  return c;
+  }
+
 namespace {
 template<class Distance>
 TextureScreenDemand::Result evaluateAt(const TextureScreenDemand::View& view, const TexelDensity& texel, int32_t previous,
-                                       Distance distance) {
+                                       uint32_t previousClass, Distance distance) {
   TextureScreenDemand::Result ret;
   if(!texel.valid()) {
     ret.exponent = texel.flat ? TextureScreenDemand::Coarsest : TextureScreenDemand::WholeChain;
@@ -37,21 +49,25 @@ TextureScreenDemand::Result evaluateAt(const TextureScreenDemand::View& view, co
     ret.exponent = TextureScreenDemand::WholeChain;
     return ret;
     }
+  // due again when either the exponent or the distance class may change
+  double classMargin = 0;
+  ret.distanceClass = TextureScreenDemand::distanceClass(d,previousClass,classMargin);
   ret.exponent  = demand.exponent;
-  ret.expiry    = view.odometer+demand.margin;
-  ret.margin    = demand.margin;
+  ret.margin    = std::max(std::min(demand.margin,classMargin),TextureLevels::MinMargin);
+  ret.expiry    = view.odometer+ret.margin;
   ret.scheduled = true;
   return ret;
   }
 }
 
-TextureScreenDemand::Result TextureScreenDemand::evaluate(const View& view, const TexelDensity& texel, int32_t previous) {
-  return evaluateAt(view,texel,previous,[&](const Tempest::Vec3& p) { return distance(p,texel); });
+TextureScreenDemand::Result TextureScreenDemand::evaluate(const View& view, const TexelDensity& texel, int32_t previous,
+                                                          uint32_t previousClass) {
+  return evaluateAt(view,texel,previous,previousClass,[&](const Tempest::Vec3& p) { return distance(p,texel); });
   }
 
 TextureScreenDemand::Result TextureScreenDemand::evaluate(const View& view, const TexelDensity& texel, const Sphere& bounds,
-                                                          int32_t previous) {
-  return evaluateAt(view,texel,previous,[&](const Tempest::Vec3& p) { return distance(p,bounds); });
+                                                          int32_t previous, uint32_t previousClass) {
+  return evaluateAt(view,texel,previous,previousClass,[&](const Tempest::Vec3& p) { return distance(p,bounds); });
   }
 
 namespace {

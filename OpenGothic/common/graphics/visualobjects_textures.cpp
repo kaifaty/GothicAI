@@ -182,9 +182,14 @@ TextureScreenDemand::Result VisualObjects::evaluateTexture(const Object& object)
     // The owner may be anywhere within its reach of the anchor: the sphere grows by it, the view gets the whole margin.
     const float grown=object.textureRadius+(std::isfinite(object.textureReach) ? object.textureReach : 0.f);
     return TextureScreenDemand::evaluate(textureView,object.textureTexel,{object.texturePosition,grown},
-                                         object.textureNeed.resolution);
+                                         object.textureNeed.resolution,textureClass(object));
     }
-  return TextureScreenDemand::evaluate(textureView,object.textureTexel,object.textureNeed.resolution);
+  return TextureScreenDemand::evaluate(textureView,object.textureTexel,object.textureNeed.resolution,textureClass(object));
+  }
+
+uint32_t VisualObjects::textureClass(const Object& object) {
+  // An owner registered with an exponent holds its distance class in the ring; before that, the ring is its chunk's.
+  return object.textureNeed.resolution!=TextureLevels::NoExponent ? object.textureNeed.ring : TextureScreenDemand::NoClass;
   }
 
 float VisualObjects::textureAllowance(const Object& object, bool moved) const {
@@ -200,7 +205,7 @@ float VisualObjects::textureAllowance(const Object& object, bool moved) const {
   if(!moved)
     return 0;
   const auto exact=TextureScreenDemand::evaluate(textureView,object.textureTexel,{object.texturePosition,object.textureRadius},
-                                                 object.textureNeed.resolution);
+                                                 object.textureNeed.resolution,textureClass(object));
   if(!exact.scheduled)
     return edge;  // the whole chain or nothing to draw: no distance
   if(!(exact.margin>0))
@@ -345,6 +350,9 @@ void VisualObjects::updateTextureDemand(size_t id) {
   if(textureScreenOwner(object) && object.texturePlaced) {
     const auto demand=evaluateTexture(object);
     need.resolution=demand.exponent;
+    // measured from a distance: the stages coarsen by its distance class, not by the ring of its chunk
+    if(demand.distanceClass!=TextureScreenDemand::NoClass)
+      need.ring=demand.distanceClass;
     if(demand.scheduled)
       scheduleTexture(object,id,demand.expiry);
     }
@@ -442,12 +450,13 @@ void VisualObjects::updateTextureView(bool flush) {
     if(!demand.scheduled) {
       updateTextureDemand(entry.owner);
       } else {
-      // Only the exponent can have changed here: the ring follows the focus and chunk events.
-      if(demand.exponent!=object.textureNeed.resolution) {
-        // The ring of a measured owner is brought up to date with its exponent (metrics and load order only).
+      // Only the exponent and the distance class can have changed here; a measured owner's ring is its class.
+      if(demand.exponent!=object.textureNeed.resolution || demand.distanceClass!=object.textureNeed.ring) {
+        if(demand.exponent==object.textureNeed.resolution)
+          ++textureCensus.classes;
         auto need=object.textureNeed;
         need.resolution=demand.exponent;
-        need.ring=std::min(4u,textureResidency->textureDistance(ChunkId{object.textureChunk.first,object.textureChunk.second}));
+        need.ring=demand.distanceClass;
         if(object.textureDemand)
           Resources::textureDemand(object.bucketId->mat,object.textureCategory,object.textureNeed,need);
         object.textureNeed=need;

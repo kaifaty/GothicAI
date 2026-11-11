@@ -59,6 +59,16 @@ class DeviceAllocator {
       return rawAlloc(size,align,heapId,typeId,hostVisible,true);
       }
 
+    // Bytes held but not allocated, as add(typeId, bytes): the free space in each page, then what the provider keeps
+    // outside the pages (provider.held(add): a freed page it holds for reuse). Under the allocator's lock.
+    template<class F>
+    void unused(F add) {
+      std::lock_guard<std::mutex> guard(sync);
+      for(auto& i:pages)
+        add(i.typeId,uint64_t(i.allSize-i.allocated));
+      device.held(add);
+      }
+
     void setDefaultPageSize(uint32_t sz) {
       defPageSize = sz;
       }

@@ -44,7 +44,10 @@ namespace TextureBudget {
   // ...for this long in a row.
   constexpr auto     BackDelay       = std::chrono::seconds(5);
 
-  // other    = max(0, usage - liveTextures)        everything else the game holds on the device
+  // other    = max(0, usage - unused - liveTextures)  everything else the game holds on the device; `unused`, what
+  //                                                    the process holds but does not use (free space in its
+  //                                                    allocator's pages), is room for textures, not other: a lowered
+  //                                                    texture's bytes stay in usage until its whole page is freed
   // headroom = max(MinHeadroom, budget/HeadroomDivisor)
   // target   = max(Floor, min(budget/share, budget - other - headroom))
   // Floor when the device is not known.

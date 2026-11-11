@@ -228,6 +228,8 @@ class VisualObjects final {
     void     updateTextureScale(size_t id);
     // An owner placed by a position: measured to its sphere grown by its reach
     TextureScreenDemand::Result evaluateTexture(const Object& object) const;
+    // the distance class it registered with its exponent, NoClass before it had one
+    static uint32_t textureClass(const Object& object);
     // The reach of an owner placed by a position at its own evaluation (setTextureOwner); `moved`: it was registered
     // there already and moved past its previous reach
     float    textureAllowance(const Object& object, bool moved) const;
@@ -275,6 +277,7 @@ class VisualObjects final {
     struct TextureCensus {
       bool     enabled = false;
       uint64_t demandCalls = 0, placements = 0, moves = 0, evaluations = 0, stale = 0, compactions = 0, focusOwners = 0;
+      uint64_t classes = 0;  // registrations from a distance class change with the same exponent
       double   viewMs = 0, focusMs = 0, viewMaxMs = 0, focusMaxMs = 0;
       uint64_t resourceCalls = 0, requeues = 0, loads = 0;  // Resources totals at the last line
       std::chrono::steady_clock::time_point since{};

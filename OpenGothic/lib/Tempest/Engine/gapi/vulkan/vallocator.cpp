@@ -50,6 +50,16 @@ uint64_t VAllocator::heapUsage(uint32_t heap) const {
   return heap<provider.heapBytes.size() ? provider.heapBytes[heap].load(std::memory_order_relaxed) : 0;
   }
 
+std::array<uint64_t,VK_MAX_MEMORY_HEAPS> VAllocator::heapUnused() {
+  std::array<uint64_t,VK_MAX_MEMORY_HEAPS> ret{};
+  allocator.unused([&](uint32_t typeId, uint64_t bytes) {
+    const auto heap = provider.device->memoryHeapOf(typeId);
+    if(heap<ret.size())
+      ret[heap] += bytes;
+    });
+  return ret;
+  }
+
 void VAllocator::Provider::count(uint32_t typeId, size_t size, bool add) {
   if(device==nullptr)
     return;

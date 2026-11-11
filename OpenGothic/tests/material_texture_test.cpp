@@ -1206,6 +1206,18 @@ void textureBudgetMaths() {
   smallFilled.usage=1700*MiB;
   // other 1188, room 2048-1188-512=348, a quarter 512
   require(target(smallFilled,512*MiB)==348*MiB,"the headroom must be at least 512 MiB");
+  // Lowered textures leave their bytes in the allocator's pages: usage stays, live drops. Held free bytes are room for
+  // textures, not the rest of the game; otherwise each lowered byte would lower the target by as much.
+  auto held=discrete;
+  held.budget=1800*MiB;
+  held.usage=1332*MiB;
+  held.unused=300*MiB;
+  // other 1332-300-197=835, room 1800-835-512=453, a quarter 450
+  require(target(held,197*MiB)==450*MiB,"free bytes held in the allocator's pages must not count as the rest of the game");
+  held.unused=0;
+  require(target(held,197*MiB)==192*MiB,"without them the same usage leaves no room above the floor");
+  held.unused=2000*MiB;
+  require(target(held,197*MiB)==450*MiB,"held bytes above the usage must leave nothing else");
   require(follow(1000*MiB,1040*MiB)==1000*MiB && follow(1000*MiB,960*MiB)==1000*MiB &&
           follow(1000*MiB,1060*MiB)==1060*MiB && follow(1000*MiB,940*MiB)==940*MiB &&
           follow(1000*MiB,1049*MiB)==1000*MiB && follow(1000*MiB,1050*MiB)==1000*MiB &&
@@ -1228,6 +1240,17 @@ void textureBudgetMaths() {
     threw=true;
     }
   require(threw,"anything but a number or auto must be refused");
+
+  // The distance class of an owner measured on screen: borders at 64 and 128 m, kept 1/8 farther moving away.
+  double margin=0;
+  const auto classOf=[&](double d, uint32_t previous) { return TextureScreenDemand::distanceClass(d,previous,margin); };
+  const auto none=TextureScreenDemand::NoClass;
+  require(classOf(30,none)==0 && std::abs(margin-42)<1e-9 && classOf(70,none)==1 && std::abs(margin-6)<1e-9 &&
+          classOf(130,none)==2 && std::abs(margin-2)<1e-9,
+          "the class must come from one and two chunk sizes, due again at its border");
+  require(classOf(70,0)==0 && std::abs(margin-2)<1e-9 && classOf(140,1)==1 && std::abs(margin-4)<1e-9 &&
+          classOf(140,0)==2 && classOf(60,2)==0 && classOf(100,4)==1,
+          "moving away an owner must keep its nearer class 1/8 of the border longer, moving closer switch at once");
 
   // stage:            0  1  2  3  4  5  6  7  8
   const uint32_t ring2[]={0, 0, 1, 1, 1, 2, 2, 2, 3};
@@ -1889,11 +1912,12 @@ void textureOwnerLevels(Tempest::Device& device, const Fixture& fixture) {
 void textureBudgetLevels(Tempest::Device& device, const Fixture& fixture) {
   using namespace TextureBudget;
   // six measured 2048x2048 DXT5 (5.33 MiB whole, lowest level 5), the rest 512x512 DXT5
-  const char* names[]={"bg-0","bg-1","bg-2","bg-3","bg-4","bg-5","bg-idle-0","bg-idle-1","bg-whole","bg-ring","bg-chain"};
+  const char* names[]={"bg-0","bg-1","bg-2","bg-3","bg-4","bg-5","bg-idle-0","bg-idle-1","bg-whole","bg-ring","bg-chain",
+                       "bg-class"};
   const auto big=mipDds(0x35545844,2048,2048,12), small=mipDds(0x35545844,512,512,10);
   std::string json="{";
   for(const auto* name:names) {
-    const auto& bytes=std::string_view(name).size()==4 ? big : small;
+    const auto& bytes=std::string_view(name).size()==4 || std::string_view(name)=="bg-class" ? big : small;
     textFile(fixture.root/"materials"/(std::string(name)+".dds"),{reinterpret_cast<const char*>(bytes.data()),bytes.size()});
     std::string key(name);
     for(auto& c:key)
@@ -1915,6 +1939,13 @@ void textureBudgetLevels(Tempest::Device& device, const Fixture& fixture) {
   Resources resources(device);
   Shaders shaders;
   shaders.waitCompiler();
+  // a view for an owner measured on screen (VisualObjects): the hero far away, the camera along x
+  ChunkTable table;
+  table.entries.push_back({{0,0},"",{0,0,0},{1,1,0},1});
+  ChunkResidency residency(table);
+  SceneGlobals scene;
+  VisualObjects visuals(scene,{{0,0,0},{1,1,0}});
+  visuals.setTextureResidency(&residency);
   const auto tick=[] { Resources::updateTextures(nullptr); };
   const auto evaluate=[&] {
     Resources::configureTextures();
@@ -1938,7 +1969,7 @@ void textureBudgetLevels(Tempest::Device& device, const Fixture& fixture) {
   const auto usage=stats.device.usage;
   setenv("OPENGOTHIC_TEXTURE_VRAM_MB","2048",1);
   stats=evaluate();
-  require(stats.device.budget==2048*MiB && usage>0 && stats.device.usage==usage &&
+  require(stats.device.budget==2048*MiB && usage>0 && stats.device.usage==usage && stats.device.unused<=usage &&
           stats.targetBytes==target(stats.device,Tempest::Texture2d::liveBytes()) &&
           stats.targetBytes>=192*MiB && stats.targetBytes<=512*MiB,
           "OPENGOTHIC_TEXTURE_VRAM_MB must pretend the device's budget, its usage staying real");
@@ -2016,15 +2047,37 @@ void textureBudgetLevels(Tempest::Device& device, const Fixture& fixture) {
   require(sides({1024,1024,1024,1024,1024,1024}) && stats.stage==0 && stats.stageBytes0<=stats.targetBytes,
           "when lowering is enough, the stage must stay 0");
 
-  // D(0) above the target: the stage, deeper at once, the shallowest whose exact sum fits.
-  const auto d2=stats.stageBytes0-2*chainOf(1)+2*chainOf(2);
+  // A real owner measured on screen: a 10 m triangle with a third of a UV unit, 1/30 UV units per metre. Its
+  // exponent -1 holds from 60 m on, and moving away up to 150 m; its distance class goes 0 -> 2 at 62 -> 146 m with
+  // that same exponent, so only its class can register it again.
+  const Material classMat(source("BG_CLASS.TGA"),true);
+  StaticMesh classMesh(classMat,{{{0,0,0},{0,0,1},{0,0},0xffffffffu},{{1000,0,0},{0,0,1},{1.f/3.f,0},0xffffffffu},
+                                 {{0,1000,0},{0,0,1},{0,1.f/3.f},0xffffffffu}},{0,1,2});
+  const Tempest::Vec3 hero{0,0,1000000};
+  const auto look=[&](float metres) {
+    residency.update(hero,{-metres*100.f,50,0},1000);
+    tick();
+    };
+  look(62);
+  auto classOwner=visuals.get(classMesh,classMat,0,classMesh.sub[0].iboLength,true);
+  classOwner.setObjMatrix(Tempest::Matrix4x4::mkIdentity());
+  look(146);
+  stats=evaluate();
+
+  // D(0) above the target: the stage, deeper at once, the shallowest whose exact sum fits. The two ring-3 textures
+  // and the owner of class 2 are one level coarser.
+  const auto d2=stats.stageBytes0-3*chainOf(1)+3*chainOf(2);
   const auto stageMb=std::to_string((d2+MiB-1)/MiB);
   setenv("OPENGOTHIC_TEXTURE_TARGET_MB",stageMb.c_str(),1);
   stats=evaluate();
   require(stats.stage==2 && stats.stageBytes==d2 && stats.stageBytes0>stats.targetBytes,
           "the stage must be the shallowest whose exact sum fits the target: one level coarser from ring 2");
   std::this_thread::sleep_for(std::chrono::milliseconds(5100));
-  waitFor([&] { return sides({1024,1024,1024,1024,512,512}); },"the stage's level must be the wanted level of the lowering");
+  waitFor([&] { return sides({1024,1024,1024,1024,512,512}) && classMat.tex->w()==512; },
+          "the stage's level must be the wanted level of the lowering");
+  // Back to 62 m with the same exponent: class 0, so the stage leaves it at level 1.
+  look(62);
+  waitFor([&] { return classMat.tex->w()==1024; },"a distance class change alone must change the stage's level");
 
   // Nothing fits: the deepest stage, every measured texture at its lowest level; the rest keep their levels.
   setenv("OPENGOTHIC_TEXTURE_TARGET_MB","1",1);
@@ -2060,6 +2113,7 @@ void textureBudgetLevels(Tempest::Device& device, const Fixture& fixture) {
   stats=evaluate();
   require(stats.stage==0 && stats.stageSeconds[2]>0 && stats.stageSeconds[13]>0 && stats.stageSeconds[1]>0,
           "the ring rule must stay on stage 0, and every stage keep its own seconds");
+  classOwner=VisualObjects::Item();
   for(size_t i=0;i<measured.size();++i)
     Resources::textureDemand(measured[i],stat,false,Need{rings[i],-1});
   Resources::textureDemand(whole,stat,false);

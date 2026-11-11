@@ -104,11 +104,11 @@ void Resources::chooseTextureStage(bool force, std::chrono::steady_clock::time_p
     return;
   char line[240];
   std::snprintf(line,sizeof(line),"[texture-budget] stage=%u deepest=%zu target=%llu d0=%llu d=%llu live=%llu "
-                "device_budget=%llu usage=%llu records=%zu pass_ms=%.3f",
+                "device_budget=%llu usage=%llu unused=%llu records=%zu pass_ms=%.3f",
                 stage,textureSums.size()-1,(unsigned long long)textureTarget,(unsigned long long)textureSums.front(),
                 (unsigned long long)textureSums[std::min<size_t>(stage,textureSums.size()-1)],
                 (unsigned long long)Texture2d::liveBytes(),(unsigned long long)textureDevice.budget,
-                (unsigned long long)textureDevice.usage,textureRecords.size(),
+                (unsigned long long)textureDevice.usage,(unsigned long long)textureDevice.unused,textureRecords.size(),
                 std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count());
   Log::i(line);
   }
@@ -181,10 +181,10 @@ void Resources::logTextureBudget(std::chrono::steady_clock::time_point now) {
   const auto& d=textureDevice;
   char line[512];
   if(d.known)
-    std::snprintf(line,sizeof(line),"textures: device \"%s\" budget %llu MiB%s, usage %llu MiB, %s, %s; target %llu MiB (%s), "
-                  "unrequested up to %llu MiB",
+    std::snprintf(line,sizeof(line),"textures: device \"%s\" budget %llu MiB%s, usage %llu MiB (unused %llu), %s, %s; target %llu MiB "
+                  "(%s), unrequested up to %llu MiB",
                   dev!=nullptr ? dev->properties().name : "none",mib(d.budget),
-                  textureVram.automatic ? "" : " (OPENGOTHIC_TEXTURE_VRAM_MB)",mib(d.usage),
+                  textureVram.automatic ? "" : " (OPENGOTHIC_TEXTURE_VRAM_MB)",mib(d.usage),mib(d.unused),
                   d.shared ? "shared memory" : "own memory",d.measured ? "measured" : "fallback from the heap size",
                   mib(textureTarget),TextureBudget::name(textureTargetSource),mib(textureBudget));
   else

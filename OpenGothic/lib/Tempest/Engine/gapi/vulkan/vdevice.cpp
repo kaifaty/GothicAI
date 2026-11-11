@@ -1155,6 +1155,11 @@ AbstractGraphicsApi::MemoryBudget VDevice::memoryBudget() {
     }
   if(heaps==0)
     return ret;
+  // what this process holds but does not use: free space in the allocator's pages and its kept freed page
+  const auto unused = allocator.heapUnused();
+  for(uint32_t i=0; i<memoryProperties.memoryHeapCount; ++i)
+    if((heaps & (1u << i))!=0)
+      ret.unused += unused[i];
 
   if(vkGetPhysicalDeviceMemoryProperties2!=nullptr) {
     // Per process and changing while the game runs; a heap's budget includes what the process already holds.
