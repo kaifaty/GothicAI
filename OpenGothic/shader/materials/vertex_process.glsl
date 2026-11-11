@@ -138,7 +138,8 @@ vec3 morphOffsetPrev(uint bucketId, uint animPtr, uint vertexIndex) {
 //   uv.y    the strand's tint, 0..255, plus 0.98 of the cover
 //   normal  the normal of the hair's surface, as long as 0.5 + half of the light that reaches the point
 struct StrandVertex {
-  float halfWidth; // cm, 0: not a strand
+  float halfWidth; // cm, as it is drawn at this level of detail; 0: not a strand
+  float wider;     // how much wider than the hair of the file that is: the level draws 1/wider of the list
   float side;
   float id;        // the strand's random number, 0..1
   float tint;
@@ -171,13 +172,17 @@ void strandRibbon(inout Varyings shOut, inout vec3 pos, vec3 toEye, float width,
 #endif
   }
 
-// A shadow view: a hair is far thinner than a texel, so a share of the strands, picked by their random numbers,
-// stands for all of them, each as wide as that share is small. false: this vertex takes no part
+// A shadow view draws the first part of the list of strands (strandShadowMeshlets, scene.glsl): a strand of it
+// stands for the hairs that part leaves out and is as wide as all of them. A hair is far thinner than a texel, so
+// a strand of StrandShadowShare casts a ribbon of StrandShadowWidth; a thinner one does it as often as it is
+// thinner (by its random number), a wider one with a ribbon that much wider: the cover of the shadow does not
+// depend on how much of the list is drawn. false: this vertex takes no part
 bool strandShadowRibbon(inout Varyings shOut, inout vec3 pos, vec3 toEye) {
-  const float width = 2.0*strandVx.halfWidth;
+  const float part  = min(1.0/strandVx.wider, StrandShadowList);
+  const float width = 2.0*strandVx.halfWidth/(strandVx.wider*part);
   if(strandVx.id*StrandShadowShare>width)
     return false;
-  strandRibbon(shOut, pos, toEye, max(width,StrandShadowWidth), 1.0);
+  strandRibbon(shOut, pos, toEye, StrandShadowWidth*max(1.0, width/StrandShadowShare), 1.0);
   return true;
   }
 #endif
@@ -273,6 +278,11 @@ vec3 processVertexCommon(out Varyings shOut, in Vertex v, uint bucketId, uint in
   }
 #elif (MESH_TYPE==T_OBJ || MESH_TYPE==T_MORPH)
   vec3 dpos = normal*obj.fatness;
+#if (MESH_TYPE==T_OBJ)
+  // strands have no fatness: their slot says how much wider a strand is drawn (the levels of detail, below)
+  if((bucket[bucketId].flags & BK_STRAND)!=0u)
+    dpos = vec3(0);
+#endif
   vec3 pos  = obj.mat*vec4(v.pos,1.0) + dpos;
 #else
   vec3 pos  = v.pos;
@@ -296,11 +306,15 @@ vec3 processVertexCommon(out Varyings shOut, in Vertex v, uint bucketId, uint in
 
 #if (MESH_TYPE==T_OBJ)
   strandVx.halfWidth = 0.0;
+  strandVx.wider     = 1.0;
   if((bucket[bucketId].flags & BK_STRAND)!=0u) {
     // the vertex's normal is the strand's direction; its colour holds the surface normal, the light and the tint
     const vec4  c     = unpackUnorm4x8(v.color);
     const float scale = length(normal);
-    strandVx.halfWidth = abs(v.uv.x)*scale;
+    // a level of detail draws the first part of the list of strands, each wider for the ones left out
+    // (VisualObjects::preFrameUpdateStrands): the instance's fatness slot holds how much
+    strandVx.wider     = max(obj.fatness, 1.0);
+    strandVx.halfWidth = abs(v.uv.x)*scale*strandVx.wider;
     strandVx.side      = v.uv.x<0.0 ? -1.0 : 1.0;
     strandVx.id        = v.uv.y;
     strandVx.tint      = floor(c.w*255.0 + 0.5);

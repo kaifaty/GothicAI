@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cassert>
+#include <cstdlib>
 
 #include "graphics/mesh/submesh/animmesh.h"
 #include "gothic.h"
@@ -185,7 +186,7 @@ void VisualObjects::Item::setVisible(bool visible) {
   const auto meshlets = obj.iboLen/PackedMesh::MaxInd;
   const auto count = obj.type==DrawCommands::Landscape ? meshlets : 1u;
   for(uint32_t i=0;i<count;++i)
-    owner->clustersMem[obj.clusterId+i].meshletCount = visible ? (obj.type==DrawCommands::Landscape ? 1u : meshlets) : 0u;
+    owner->clustersMem[obj.clusterId+i].meshletCount = visible ? (obj.type==DrawCommands::Landscape ? 1u : (obj.strandMeshlets>0 ? obj.strandMeshlets : meshlets)) : 0u;
   owner->clustersMem.markClusters(obj.clusterId,count);
   owner->updateRtAs(id);
   }
@@ -472,7 +473,8 @@ void VisualObjects::updateInstance(size_t id, Matrix4x4* pos) {
   InstanceDesc d;
   d.setPosition(pos==nullptr ? obj.pos : *pos);
   d.animPtr = obj.animPtr;
-  d.fatness = obj.fatness*0.5f;
+  // strands have no fatness: the slot holds how much wider a strand is drawn (vertex_process.glsl, BK_STRAND)
+  d.fatness = obj.strandMeshlets>0 ? obj.strandWider : obj.fatness*0.5f;
   // The shader reads deformPtr + vboOffset*8 for vboOffset < deformCount: an object deformed from a later packed
   // vertex (its own range) starts that much before its storage (uint arithmetic wraps on both sides).
   d.deformPtr = obj.objDeform.offsetId<uint32_t>() - obj.deformFirst*8u;
@@ -566,6 +568,11 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
   { FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand); updateTextureDemand(id); }
   obj.objInstance = instanceMem.alloc(sizeof(InstanceDesc));
   clustersMem[obj.clusterId].instanceId = obj.objInstance.offsetId<InstanceDesc>();
+  if(mat.strand) {
+    obj.strandMeshlets = uint32_t(iboLen/PackedMesh::MaxInd);
+    obj.strandWider    = 1;
+    objectsStrand.insert(id);
+    }
 
   if(type==DrawCommands::Morph) {
     obj.objMorphAnim = instanceMem.alloc(sizeof(MorphDesc)*Resources::MAX_MORPH_LAYERS);
@@ -696,6 +703,8 @@ void VisualObjects::free(size_t id) {
     objectsWind.erase(id);
   if(obj.type==DrawCommands::Morph)
     objectsMorph.erase(id);
+  if(obj.strandMeshlets>0)
+    objectsStrand.erase(id);
 
   obj = Object();
   while(objects.size()>0) {
@@ -949,6 +958,7 @@ void VisualObjects::prepareGlobals(Encoder<CommandBuffer>& enc, uint8_t fId) {
 void VisualObjects::preFrameUpdate() {
   preFrameUpdateWind();
   preFrameUpdateMorph();
+  preFrameUpdateStrands();
   }
 
 void VisualObjects::preFrameUpdateWind() {
@@ -958,6 +968,59 @@ void VisualObjects::preFrameUpdateWind() {
                                             scene.zWindEnabled, object.wind, object.windIntensity,
                                             scene.windScale, scene.legacyWind);
     updateInstance(id, &position);
+    }
+  }
+
+// Levels of detail of strands (reports/content/2026-11-npc-hair/lod.md). A hair is thinner than a pixel, so the
+// ribbon is drawn a pixel wide with the hair's share of it as its cover (strandRibbon, vertex_process.glsl). As
+// long as it stays under a pixel, a few hairs can be drawn as one that is as wide as all of them: the cover of the
+// hair on screen is the same, and the work of culling, vertices and pixels falls with the count. The meshlets of
+// strands are dealt out evenly (groommesh.cpp), so a level is the start of the list: the cluster draws that many
+// meshlets and the instance tells the vertex shader how much wider a strand is.
+//   OPENGOTHIC_GROOM_LOD=<pixels>  hairs are merged until one is this wide on screen (0.5 by default); 0: no levels
+void VisualObjects::preFrameUpdateStrands() {
+  if(objectsStrand.empty())
+    return;
+  static const float merged = []{
+    const char* e = std::getenv("OPENGOTHIC_GROOM_LOD");
+    return e!=nullptr ? std::max(0.f,float(std::atof(e))) : 0.5f;
+    }();
+  static const int   Steps    = 8;                 // levels per halving of the count
+  static const float ShareMin = 0.02f;             // a far head keeps this much: a few hundred hairs
+  const float py   = std::abs(scene.proj.at(1,1));
+  const float resY = float(scene.screenRes().y);
+  if(py<=0 || resY<=0)
+    return;
+
+  for(auto id:objectsStrand) {
+    auto&          obj      = objects[id];
+    const uint32_t meshlets = obj.iboLen/PackedMesh::MaxInd;
+    const auto*    mesh     = obj.bucketId->staticMesh;
+    float          share    = 1;
+    if(merged>0 && mesh!=nullptr && mesh->strandWidth>0) {
+      const Vec3  at    = Vec3(obj.pos.at(3,0), obj.pos.at(3,1), obj.pos.at(3,2));
+      const float scale = Vec3(obj.pos.at(0,0), obj.pos.at(0,1), obj.pos.at(0,2)).length();
+      const float depth = std::max((at-scene.camPos()).length(), 1.f);
+      const float pixel = 2.f*depth/(py*resY);     // a pixel at the head, in the world's units
+      share = std::clamp(mesh->strandWidth*scale/(merged*pixel), ShareMin, 1.f);
+      }
+    // the level moves only when the wanted one is a whole step away: no flicker between two counts
+    const float want  = -float(Steps)*std::log2(share);
+    int         level = obj.strandLevel;
+    if(std::abs(want-float(level))>=1.f)
+      level = int(std::lround(want));
+    level = std::clamp(level, 0, 255);
+    const uint32_t count = std::clamp(uint32_t(std::ceil(float(meshlets)*std::exp2(-float(level)/float(Steps)))), 1u, meshlets);
+    obj.strandLevel = uint8_t(level);
+    if(count==obj.strandMeshlets)
+      continue;
+    obj.strandMeshlets = count;
+    obj.strandWider    = float(meshlets)/float(count);
+    if(obj.visible) {
+      clustersMem[obj.clusterId].meshletCount = count;
+      clustersMem.markClusters(obj.clusterId);
+      }
+    updateInstance(id);
     }
   }
 

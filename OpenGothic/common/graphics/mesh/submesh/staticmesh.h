@@ -99,6 +99,7 @@ class StaticMesh {
 
     std::vector<SubMesh>            sub;
     Bounds                          bbox;
+    float                           strandWidth = 0; // PackedMesh::strandWidth
 
   private:
     void initSubMeshes(const PackedMesh& mesh);

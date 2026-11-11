@@ -75,6 +75,9 @@ class SceneGlobals final {
     const Tempest::Matrix4x4& viewProjectInv() const;
     const Tempest::Matrix4x4& viewShadow(uint8_t view) const;
     const Tempest::Vec3       clipInfo() const;
+    // the eye of the main view and the size of the frame it is drawn into (the levels of strands, VisualObjects)
+    Tempest::Vec3             camPos()    const { return uboGlobalCpu.camPos;    }
+    Tempest::Point            screenRes() const { return uboGlobalCpu.screenRes; }
 
     const Tempest::Matrix4x4  viewProjectLwc() const;
     const Tempest::Matrix4x4  viewProjectLwcInv() const;

@@ -113,6 +113,15 @@ const uint BK_HASHED_ALPHA = 0x200; // our glTF MASK: the alpha test takes a thr
 const uint BK_HAIR = 0x400; // hair cards: the strand's direction and the hair bit go into the G-buffer (main.frag)
 const uint BK_STRAND = 0x800; // strands: the vertex shader makes ribbons of them (strandRibbon, vertex_process.glsl)
 
+// Strands in a shadow view: the first part of the list casts the shadow for all of it (the meshlets are dealt out
+// evenly, groommesh.cpp), each strand as wide as that part is small (strandShadowRibbon, vertex_process.glsl).
+// count: the meshlets the main view draws now; wider: how much of the list that leaves out (Instance::fatness of
+// a strand object: the whole list is count*wider).
+const float StrandShadowList = 0.125;
+int strandShadowMeshlets(int count, float wider) {
+  return min(count, max(1, int(ceil(float(count)*max(wider,1.0)*StrandShadowList))));
+  }
+
 struct Bucket {
   vec4  bbox[2];
   ivec2 texAniMapDirPeriod;

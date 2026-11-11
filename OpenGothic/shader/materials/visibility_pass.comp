@@ -220,9 +220,18 @@ void runCluster(const uint clusterId) {
   const uint instanceId = cluster.instanceId;
   const uint meshletId  = cluster.firstMeshlet;
 
+  int meshletCount = cluster.meshletCount;
+  if(instanceId!=0xFFFFFFFF && (bucket[bucketId].flags & BK_STRAND)!=0u) {
+    // strands: never an occluder; a shadow view takes the first part of the list
+    if((scene.viewFlags & VF_HIZ)!=0u)
+      return;
+    if((scene.viewFlags & VF_SHADOW)!=0u)
+      meshletCount = strandShadowMeshlets(meshletCount, pullInstance(instanceId).fatness);
+    }
+
   uint writeOffset = cmd[commandId].writeOffset;
-  writeOffset      += atomicAdd(cmd[commandId].instanceCount, cluster.meshletCount);
-  for(int i=0; i<cluster.meshletCount; ++i)
+  writeOffset      += atomicAdd(cmd[commandId].instanceCount, meshletCount);
+  for(int i=0; i<meshletCount; ++i)
     payload[writeOffset+i] = uvec4(instanceId, meshletId+i, bucketId, 0);
   }
 

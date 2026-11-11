@@ -210,6 +210,7 @@ void StaticMesh::initSubMeshes(const PackedMesh& mesh) {
     sub[i].iboLength = mesh.subMeshes[i].iboLength;
     }
   bbox.assign(mesh.bbox());
+  strandWidth = mesh.strandWidth;
   }
 
 const Tempest::AccelerationStructure* StaticMesh::blas(size_t iboOffset, size_t iboLen) const {

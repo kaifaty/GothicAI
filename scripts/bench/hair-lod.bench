@@ -1,0 +1,134 @@
+# Levels of detail of strands (reports/content/2026-11-npc-hair/lod.md): the hero's head with strands in the sun of
+# the Khorinis market, the face to the sun. Stills at 40, 70, 120, 300 and 700 cm and a clip of the camera going
+# away from 40 cm to 5 m and back: the hair must look the same at every distance and must not jump as the level
+# changes. Film it with OPENGOTHIC_GROOM_LOD=0 (all strands always), 0.5 (default) and 1 and compare.
+#   TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=ryzen OPENGOTHIC_CONTENT=<content with the head and its strands> \
+#     OPENGOTHIC_GROOM_LOD=0.5 scripts/bench.sh scripts/bench/hair-lod.bench <out>
+# @timeout 300
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+cam lift off
+set time 12 0
+goto pos 7900 270 -4350
+watch player
+turn 180
+cam face 40 30 1
+wait 10000
+shot lod-040
+wait 300
+cam face 70 30 1
+wait 2500
+shot lod-070
+wait 300
+cam face 120 30 1
+wait 2500
+shot lod-120
+wait 300
+cam face 300 30 1
+wait 2500
+shot lod-300
+wait 300
+cam face 700 30 1
+wait 2500
+shot lod-700
+wait 300
+cam face 40 30 1
+wait 3000
+rec lod-dolly
+cam face 45 30 1
+wait 300
+cam face 50 30 1
+wait 300
+cam face 56 30 1
+wait 300
+cam face 63 30 1
+wait 300
+cam face 70 30 1
+wait 300
+cam face 79 30 1
+wait 300
+cam face 88 30 1
+wait 300
+cam face 99 30 1
+wait 300
+cam face 111 30 1
+wait 300
+cam face 124 30 1
+wait 300
+cam face 139 30 1
+wait 300
+cam face 156 30 1
+wait 300
+cam face 175 30 1
+wait 300
+cam face 195 30 1
+wait 300
+cam face 219 30 1
+wait 300
+cam face 245 30 1
+wait 300
+cam face 275 30 1
+wait 300
+cam face 308 30 1
+wait 300
+cam face 345 30 1
+wait 300
+cam face 386 30 1
+wait 300
+cam face 432 30 1
+wait 300
+cam face 484 30 1
+wait 300
+cam face 542 30 1
+wait 300
+cam face 484 30 1
+wait 300
+cam face 432 30 1
+wait 300
+cam face 386 30 1
+wait 300
+cam face 345 30 1
+wait 300
+cam face 308 30 1
+wait 300
+cam face 275 30 1
+wait 300
+cam face 245 30 1
+wait 300
+cam face 219 30 1
+wait 300
+cam face 195 30 1
+wait 300
+cam face 175 30 1
+wait 300
+cam face 156 30 1
+wait 300
+cam face 139 30 1
+wait 300
+cam face 124 30 1
+wait 300
+cam face 111 30 1
+wait 300
+cam face 99 30 1
+wait 300
+cam face 88 30 1
+wait 300
+cam face 79 30 1
+wait 300
+cam face 70 30 1
+wait 300
+cam face 63 30 1
+wait 300
+cam face 56 30 1
+wait 300
+cam face 50 30 1
+wait 300
+cam face 45 30 1
+wait 300
+cam face 40 30 1
+wait 300
+wait 1000
+stop

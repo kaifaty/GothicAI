@@ -165,6 +165,9 @@ class VisualObjects final {
       asset::AnimationType wind        = asset::AnimationType::NONE;
       float               windIntensity = 0;
       float               fatness       = 0;
+      uint32_t            strandMeshlets = 0;    // strands: the first meshlets of the list that are drawn now; 0: not strands
+      float               strandWider    = 1;    // ...and how much wider each strand is for the ones left out
+      uint8_t             strandLevel    = 0;    // ...the level: 2^(-level/8) of the list
       bool                isGhost       = false;
       bool                visible       = true;
       Resources::TextureCategory textureCategory = Resources::TextureCategory::Dynamic;
@@ -181,6 +184,7 @@ class VisualObjects final {
 
     void     preFrameUpdateWind();
     void     preFrameUpdateMorph();
+    void     preFrameUpdateStrands();
 
     size_t   implAlloc();
     void     free(size_t id);
@@ -216,6 +220,7 @@ class VisualObjects final {
     std::vector<Object>        objects;
     std::unordered_set<size_t> objectsWind;
     std::unordered_set<size_t> objectsMorph;
+    std::unordered_set<size_t> objectsStrand;
     std::unordered_set<size_t> objectsFree;
     mutable std::recursive_mutex textureSync;
     ChunkResidency*            textureResidency = nullptr;

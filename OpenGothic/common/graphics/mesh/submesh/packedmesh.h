@@ -55,6 +55,7 @@ class PackedMesh {
 
     std::vector<uint32_t> verticesId; // only for morph meshes
     bool                  isUsingAlphaTest = true;
+    float                 strandWidth      = 0;    // strands (groommesh.cpp): the mean width of a hair, cm; 0: not strands
 
     PackedMesh(const asset::StaticMesh& mesh, PkgType type, bool explicitAlphaTest = false);
     PackedMesh(const asset::WorldMesh& mesh, PkgType type);
