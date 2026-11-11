@@ -79,6 +79,153 @@ struct Resources::VideoBase {
   bool ready=false;
   };
 
+namespace {
+std::string censusSourcePath(const std::filesystem::path& source) {
+  auto relative = source;
+  if(relative.is_absolute())
+    relative = relative.lexically_relative(std::filesystem::path(CommandLine::inst().rootPath()));
+  relative = relative.lexically_normal();
+  if(relative.empty() || relative.is_absolute())
+    return {};
+  for(const auto& part:relative)
+    if(part=="..")
+      return {};
+  return relative.generic_string();
+  }
+
+const char* scriptDirectory(int language) {
+  static constexpr const char* directories[]={"Scripts_EN","Scripts_DE","Scripts_PL","Scripts_RU",
+                                               "Scripts_FR","Scripts_ES","Scripts_IT","Scripts_CZ"};
+  return language>=0 && language<8 ? directories[language] : "Scripts";
+  }
+}
+
+daedalus::DaedalusScript Resources::loadBaseProgram(std::string_view request, int language) {
+  try {
+    std::string_view branch;
+    if(inst->basePrograms.findVfs(request,&branch)!=nullptr)
+      return loadBaseProgram(request,language,branch);
+    const std::string name(request.substr(0,255));
+    std::string path="_work/Data/Scripts/_compiled/"+name;
+    const ProgramData::Source* source=inst->basePrograms.findHost(path);
+    branch="host_ordinary";
+    if(source==nullptr && language>=0) {
+      path="_work/Data/"+std::string(scriptDirectory(language))+"/_compiled/"+name;
+      source=inst->basePrograms.findHost(path);
+      branch="host_localized_full";
+      }
+    if(source==nullptr && language>=0) {
+      const auto separator=request.find_last_of("/\\");
+      const auto basename=separator==std::string_view::npos ? request : request.substr(separator+1);
+      path="_work/Data/"+std::string(scriptDirectory(language))+"/_compiled/"+std::string(basename.substr(0,255));
+      source=inst->basePrograms.findHost(path);
+      branch="host_localized_basename";
+      }
+    if(source==nullptr)
+      throw std::runtime_error("no source in program base index");
+    return loadBaseProgram(request,language,branch,std::filesystem::path(source->path).u16string());
+    }
+  catch(const BaseStore::Error&) { throw; }
+  catch(const std::exception& error) { throw BaseStore::Error("program "+std::string(request)+": "+error.what()); }
+  }
+
+bool Resources::loadBaseOutputUnits(std::string_view request, int language,
+                                    std::vector<std::shared_ptr<asset::CutsceneBlock>>& blocks) {
+  try {
+    std::string_view branch;
+    if(inst->baseOutputUnits.findVfs(request,&branch)!=nullptr)
+      return loadBaseOutputUnits(request,language,branch,blocks);
+    const std::string name(request.substr(0,255));
+    const OutputUnits::Source* source=inst->baseOutputUnits.findHost("_work/Data/Scripts/content/CUTSCENE/"+name);
+    branch="host_ordinary";
+    if(source==nullptr && language>=0) {
+      source=inst->baseOutputUnits.findHost("_work/Data/"+std::string(scriptDirectory(language))+"/"+name);
+      branch="host_localized";
+      }
+    if(source==nullptr) return false;
+    return loadBaseOutputUnits(request,language,branch,blocks,std::filesystem::path(source->path).u16string());
+    }
+  catch(const BaseStore::Error&) { throw; }
+  catch(const std::exception& error) { throw BaseStore::Error("output units "+std::string(request)+": "+error.what()); }
+  }
+
+daedalus::DaedalusScript Resources::loadBaseProgram(std::string_view request, int language,
+                                                std::string_view branch, std::u16string_view hostPath) {
+  try {
+    const auto& index = inst->basePrograms;
+    const ProgramData::Source* source = nullptr;
+    if(hostPath.empty()) {
+      std::string_view selectedBranch;
+      source = index.findVfs(request,&selectedBranch);
+      if(source==nullptr || selectedBranch!=branch)
+        throw std::runtime_error("selected VFS source missing from program base index");
+      }
+    else {
+      source = index.findHost(censusSourcePath(std::filesystem::path(hostPath)));
+      if(source==nullptr)
+        throw std::runtime_error("selected host source missing from program base index");
+      }
+    const auto file = index.path(*source);
+    std::string actualSha256;
+    auto program = ProgramData::readProgram(file,&actualSha256);
+    if(actualSha256!=source->recordSha256)
+      throw std::runtime_error("program record identity differs from base index");
+    auto script = daedalus::DaedalusScript::from_program(std::move(program));
+    if(inst->census) {
+      const auto record = "base/programs/"+file.filename().generic_string();
+      inst->census->replaced(request,record);
+      inst->census->program("Gothic::loadScript",request,language,branch,record,actualSha256,*source);
+      }
+    return script;
+    }
+  catch(const std::exception& error) {
+    if(inst->census) inst->census->missing(request,error.what());
+    throw BaseStore::Error("program "+std::string(request)+": "+error.what());
+    }
+  }
+
+bool Resources::loadBaseOutputUnits(std::string_view request, int language, std::string_view branch,
+                                   std::vector<std::shared_ptr<asset::CutsceneBlock>>& blocks,
+                                   std::u16string_view hostPath) {
+  try {
+    const auto& index = inst->baseOutputUnits;
+    const OutputUnits::Source* source = nullptr;
+    if(hostPath.empty()) {
+      std::string_view selectedBranch;
+      source = index.findVfs(request,&selectedBranch);
+      if(source==nullptr || selectedBranch!=branch)
+        throw std::runtime_error("selected VFS source missing from output units base index");
+      }
+    else {
+      source = index.findHost(censusSourcePath(std::filesystem::path(hostPath)));
+      if(source==nullptr)
+        throw std::runtime_error("selected host source missing from output units base index");
+      if(!source->skipped.empty())
+        return false;
+      }
+    if(!source->skipped.empty())
+      throw std::runtime_error("selected VFS output units source skipped: "+source->skipped);
+    const auto file = index.path(*source);
+    std::string actualSha256;
+    auto library = OutputUnits::readLibrary(file,&actualSha256);
+    if(actualSha256!=source->recordSha256)
+      throw std::runtime_error("output units record identity differs from base index");
+    auto loaded = OutputUnits::sortedBlocks(library);
+    blocks = std::move(loaded);
+    if(inst->census) {
+      const auto record = "base/outputunits/"+file.filename().generic_string();
+      inst->census->replaced(request,record);
+      inst->census->outputUnits("GameScript::loadDialogOU",request,language,branch,record,actualSha256,*source);
+      }
+    return true;
+    }
+  catch(const std::exception& error) {
+    if(inst->census) inst->census->missing(request,error.what());
+    throw BaseStore::Error("output units "+std::string(request)+": "+error.what());
+    }
+  }
+
+
 Resources::Resources() {
   inst=this;
   configureTextures();

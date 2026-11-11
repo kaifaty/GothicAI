@@ -1,6 +1,8 @@
 #pragma once
 
-#include "game/definitions/definitiontypes.h"
+#include "asset/definitions.h"
+
+#include <vector>
 
 class CameraDefinitions final {
   public:

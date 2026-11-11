@@ -1,6 +1,6 @@
 #pragma once
 
-#include "definitiontypes.h"
+#include "asset/definitions.h"
 
 #include "daedalus/vm.h"
 #include <filesystem>
@@ -47,8 +47,8 @@ bool hasBase(const daedalus::DaedalusScript& script, std::string_view name);
 std::shared_ptr<Def::ParticleEffect> base(daedalus::DaedalusVm& vm, std::string_view name);
 std::unique_ptr<daedalus::DaedalusVm> openProgram(const std::filesystem::path& baseRoot);
 
-// Sorted files commit individually. The VM's existing member bindings apply overrides directly
-// to the copied definition; ParticleFx builds derived settings through its ordinary constructor.
+// Sorted files commit individually. Overrides apply to the copied definition's fields;
+// ParticleFx builds derived settings through its ordinary constructor.
 Result load(daedalus::DaedalusVm& vm, const std::filesystem::path& contentRoot);
 Result check(const std::filesystem::path& baseRoot, const std::filesystem::path& contentRoot);
 

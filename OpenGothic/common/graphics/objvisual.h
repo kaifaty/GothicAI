@@ -10,6 +10,7 @@ class Npc;
 class World;
 class ClothVisual;
 class WorldView;
+namespace daedalus { struct IItem; }
 
 class ObjVisual {
   public:

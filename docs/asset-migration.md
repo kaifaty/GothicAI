@@ -209,9 +209,9 @@
 
 ### Собственные определения (П13)
 
-Завершено и проверено. `common/game/definitions/definitiontypes.h` и `.cpp` содержат семь собственных типов: `Def::Camera`, `FightAi`, `SoundEffect`, `MusicTheme`, `ParticleEffect`, `EffectBase`, `ParticleEffectEmitKey`. Шесть `register_` привязывают поля к исходным именам классов CCAMSYS, C_SFX, C_MUSICTHEME, C_PARTICLEFX, CFX_BASE и C_PARTICLEFXEMITKEY в прежних местах `Gothic::setupCommonScriptClasses`. Имена, типы и порядок полей следуют прежним записям; сохраняются проверки наличия необязательных полей Gothic II и массив из пяти USERSTRING.
+Завершено и проверено. `common/asset/definitions.h` содержит семь простых структур `Def::Camera`, `FightAi`, `SoundEffect`, `MusicTheme`, `ParticleEffect`, `EffectBase`, `ParticleEffectEmitKey` и три перечисления, без зависимости от VM. Шесть связанных с VM типов `VmDef::*` в `common/game/definitions/definitiontypes.*` наследуют `daedalus::DaedalusInstance`. Их `register_` привязывают поля к прежним символам CCAMSYS, C_SFX, C_MUSICTHEME, C_PARTICLEFX, CFX_BASE и C_PARTICLEFXEMITKEY в `Gothic::setupCommonScriptClasses`. Общие списки полей строят структуры, привязки и копирование; имена, типы и порядок полей, необязательные поля Gothic II и пять USERSTRING сохраняются.
 
-Каждый инициализатор по-прежнему выполняет программу П12 в существующей VM в прежний момент. Значения не запекаются в статические таблицы. Связанные типы используют общий `zenkit::DaedalusInstance` как базовый класс VM и прежние `register_member` / `init_instance`; это не удаление VM и всех типов ZenKit. Регистрации C_MUSICSYS_CFG, C_MUSICJINGLE и C_SNDSYS_CFG остаются прежними: потребителей этих конфигурационных записей среди шести переносимых семейств нет, а удаление регистрации могло бы изменить обработку ошибок. Классы GOTHIC/MENU также не входят в П13.
+Инициализатор по-прежнему выполняет программу П12 в VM в прежний момент. После `init_instance` слой Готики копирует значения в простую запись; потребители хранят её. `VisualFxDefinitions` также ищет и копирует ключи C_PARTICLEFXEMITKEY, передавая их в `VisualFx` без VM. Свои `particles.d` копируют базовую запись и переопределяют её поля. Регистрации C_MUSICSYS_CFG, C_MUSICJINGLE и C_SNDSYS_CFG, классы GOTHIC/MENU не меняются.
 
 C_FIGHTAI остаётся opaque-классом VM: собственный `Def::FightAi` хранит скопированный результат, до `min(6, MOVE.count)` движений. Прежние нулевые значения отсутствующих записей, идентификатор 0 и 17 семейств FA_* сохраняются. Собственные `FightMove`, `MusicTransitionEffect` и `MusicTransitionType` имеют прежние числовые значения и 32-битный размер; `FightAlgo` по-прежнему читает/пишет очередь как `int32_t`. Алгоритм боя и P30 не меняются; боевые прогоны не входят в проверку этого переноса.
 
@@ -567,6 +567,8 @@ BIN хранит определённые поля memberwise в little-endian, 
 - **Размер.** Меш Хориниса — сотни тысяч треугольников. Куски по 64 м держат каждый `.glb` небольшим для Blender.
 
 ## План и журнал
+
+**2026-11-11 — записи П13 без VM (шаг 2 слоёв движка).** Простые `Def::*` перенесены в `common/asset/definitions.h`, привязки и копирование оставлены в `common/game/definitions/`. Контракт полей сверяет оригинальные VM-классы с результатом этого копирования, включая ключи эффектов. `engine_layers.py`: платформа с транзитивной VM 122 → 45, нарушения 325 → 315.
 
 2026-11-09: мобильные цели (Android, iOS), тестовая сборка ZenKit с doctest и доставка апстрима (.github, Debian, Nix, appdata) удалены из OpenGothic/; входы отпечатка базы не менялись, сумма прежняя (#1114)
 

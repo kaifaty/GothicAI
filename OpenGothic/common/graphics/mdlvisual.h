@@ -27,6 +27,7 @@ struct NpcLogicalState;
 class Item;
 class WorldView;
 struct GltfHeadMesh;
+namespace daedalus { enum class NpcFlag : uint32_t; }
 namespace TestBench { bool ragdollBodyDrawable(const Npc& npc); }
 
 class MdlVisual final {

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "daedalus/vm.h"
-#include "game/definitions/definitiontypes.h"
+#include "asset/definitions.h"
 
 #include <memory>
 
@@ -14,5 +14,5 @@ class MusicDefinitions final {
 
   private:
     std::unique_ptr<daedalus::DaedalusVm>  vm;
-    std::vector<std::shared_ptr<Def::MusicTheme>> themes;
+    std::vector<std::pair<uint32_t,Def::MusicTheme>> themes;
   };

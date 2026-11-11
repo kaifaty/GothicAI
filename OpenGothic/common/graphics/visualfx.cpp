@@ -3,7 +3,6 @@
 #include <Tempest/Log>
 #include <cctype>
 
-#include "utils/string_frm.h"
 #include "world/world.h"
 #include "utils/parser.h"
 #include "gothic.h"
@@ -54,7 +53,9 @@ VisualFx::Key::Key(const Def::ParticleEffectEmitKey& k) {
   emFXLifeSpan            = k.em_fx_lifespan<0 ? 0 : uint64_t(k.em_fx_lifespan*1000.f);
   }
 
-VisualFx::VisualFx(const Def::EffectBase& fx, daedalus::DaedalusVm& vm, std::string_view name) {
+VisualFx::VisualFx(const Def::EffectBase& fx,
+                   const std::array<std::optional<Def::ParticleEffectEmitKey>,int(SpellFxKey::Count)>& keyDefs,
+                   const std::vector<Def::ParticleEffectEmitKey>& investDefs) {
   visName_S                = fx.vis_name_s;
   visSize                  = Parser::loadVec2(fx.vis_size_s);
   visAlpha                 = fx.vis_alpha;
@@ -109,33 +110,15 @@ VisualFx::VisualFx(const Def::EffectBase& fx, daedalus::DaedalusVm& vm, std::str
   for(auto& c:emTrjOriginNode)
     c = char(std::toupper(c));
 
-  static std::string_view keyName[int(SpellFxKey::Count)] = {
-    "OPEN",
-    "INIT",
-    "CAST",
-    "INVEST",
-    "COLLIDE"
-    };
-
   for(int i=0; i<int(SpellFxKey::Count); ++i) {
-    string_frm kname(name,"_KEY_",keyName[i]);
-    auto id = vm.find_symbol_by_name(kname);
-    if(id==nullptr)
+    if(!keyDefs[i])
       continue;
-    auto key = vm.init_instance<Def::ParticleEffectEmitKey>(id);
-    keys  [i] = Key(*key);
+    keys  [i] = Key(*keyDefs[i]);
     hasKey[i] = true;
     }
 
-  for(int i=1; ; ++i) {
-    string_frm kname(name,"_KEY_INVEST_",i);
-    auto id = vm.find_symbol_by_name(kname);
-    if(id==nullptr)
-      break;
-    auto key = vm.init_instance<Def::ParticleEffectEmitKey>(id);
-    // keys[int(SpellFxKey::Invest)] = key;
-    investKeys.emplace_back(*key);
-    }
+  for(const auto& key:investDefs)
+    investKeys.emplace_back(key);
   }
 
 uint64_t VisualFx::effectPrefferedTime() const {
