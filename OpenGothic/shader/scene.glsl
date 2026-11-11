@@ -49,8 +49,15 @@ struct SceneDesc {
   mat4  viewProjectPrev; // the previous camera with this frame's jitter: only on vec4(d,0)
   float vsmLampNear;     // cm: a lamp's fixture this close to its light casts no shadow ([INTERNAL] vsmLampNearCm)
   uint  vsmLampSides;    // VSM lamps: a cube face keeps the far side (1), both of the world mesh (2), of objects too (3)
-  float vsmPad1, vsmPad2;
+  uint  vsmStudy;        // bench `vsm study <bits>`: VSM_STUDY_* below (0 in the game)
+  float vsmPad2;
   };
+
+// bench `vsm study <bits>`: the shadow test on a mesh's facets (reports/render-features/2026-11-11-facet-shards)
+const uint VSM_STUDY_SUN_PIXEL  = 1u; // the sun: the facet's plane over one pixel, as before 2026-11-11 (direct_light.frag)
+const uint VSM_STUDY_LAMP_FACET = 2u; // lamps: the facet's plane also where it stands edge-on to the lamp (light.frag)
+const uint VSM_STUDY_CLASS      = 4u; // facets by their cosine to the light and the shadow's answer, as colours
+const uint VSM_STUDY_SUN_DIFF   = 8u; // the sun: where the plane over a texel's footprint changes the shadow, as colours
 
 struct LightSource {
   vec3  pos;

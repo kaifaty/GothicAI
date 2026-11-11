@@ -74,6 +74,7 @@ class WorldView {
     void setTaaReactiveLref(float lref);
     void setVsmLampNear(float cm) { sGlobal.setVsmLampNear(cm); }
     void setVsmLampSides(uint32_t sides) { sGlobal.setVsmLampSides(sides); }
+    void setVsmStudy(uint32_t bits) { sGlobal.setVsmStudy(bits); }
     void setWindEnabled(bool enabled, uint64_t period);
     void setFog(const Tempest::StorageImage& lut, const Tempest::StorageImage& lutMs);
     void setClothWind(bool enabled, float scale);
