@@ -37,6 +37,7 @@ class Color;
 class Device {
   public:
     using Props=AbstractGraphicsApi::Props;
+    using MemoryBudget=AbstractGraphicsApi::MemoryBudget;
 
     Device(AbstractGraphicsApi& api);
     Device(AbstractGraphicsApi& api, std::string_view name);
@@ -54,6 +55,10 @@ class Device {
     // verify translates every cached shader again and stops the process on any difference.
     static void           setShaderCacheDirectory(const std::filesystem::path& dir, bool verify = false);
     void                  savePipelineCache();
+    // How much device memory this process may hold and holds now: VK_EXT_memory_budget (without it 80 % of the
+    // device-local heaps and the allocator's own bytes), Metal's recommendedMaxWorkingSetSize and currentAllocatedSize;
+    // `known` is false when nothing is readable. Call it from the thread that owns the device, not every frame.
+    MemoryBudget          memoryBudget();
 
     [[nodiscard]]
     Fence                 submit(const CommandBuffer& cmd);

@@ -660,6 +660,23 @@ inline void mark(std::string_view stage, double stageMs = -1, std::string_view e
                 (unsigned long long)textures.categoryBytes[2],(unsigned long long)textures.categoryCount[2],
                 (unsigned long long)textures.categoryBytes[3],(unsigned long long)textures.categoryCount[3]);
   Tempest::Log::i(textureBuf);
+  // the memory budget and the stage above the target (texturebudget.h); tex_target_source: Resources' TextureBudget::Source
+  std::snprintf(textureBuf,sizeof(textureBuf),
+                "[loadprobe-textures] stage=%.*s t_ms=%.1f tex_device_budget_bytes=%llu tex_device_usage_bytes=%llu "
+                "tex_device_shared=%d tex_device_measured=%d tex_target_bytes=%llu tex_target_source=%d tex_budget_bytes=%llu",
+                int(stage.size()),stage.data(),elapsed,(unsigned long long)textures.device.budget,
+                (unsigned long long)textures.device.usage,int(textures.device.shared),int(textures.device.measured),
+                (unsigned long long)textures.targetBytes,int(textures.targetSource),(unsigned long long)textures.budgetBytes);
+  Tempest::Log::i(textureBuf);
+  std::snprintf(textureBuf,sizeof(textureBuf),
+                "[loadprobe-textures] stage=%.*s t_ms=%.1f tex_stage=%u tex_stage_deepest=%u tex_stage_bytes0=%llu "
+                "tex_stage_bytes=%llu tex_stage0_seconds=%.9g tex_stage1_seconds=%.9g tex_stage2_seconds=%.9g "
+                "tex_stage3_seconds=%.9g tex_stage4_seconds=%.9g tex_stage5_seconds=%.9g",
+                int(stage.size()),stage.data(),elapsed,textures.stage,textures.stageDeepest,
+                (unsigned long long)textures.stageBytes0,(unsigned long long)textures.stageBytes,
+                textures.stageSeconds[0],textures.stageSeconds[1],textures.stageSeconds[2],textures.stageSeconds[3],
+                textures.stageSeconds[4],textures.stageSeconds[5]);
+  Tempest::Log::i(textureBuf);
   std::snprintf(buf,sizeof(buf),
                 "[loadprobe-metal] stage=%.*s t_ms=%.1f staging_n=%zu staging_bytes=%zu",
                 int(stage.size()),stage.data(),elapsed,stagingCount,stagingBytes);

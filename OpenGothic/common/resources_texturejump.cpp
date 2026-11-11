@@ -20,6 +20,10 @@ void Resources::TextureStartup::begin() {
     return;
   active=true;
   ++inst->textureStartup;
+  // A world loads: the budget line is written again, and the stage is chosen afresh before its first frame.
+  std::lock_guard<std::recursive_mutex> guard(inst->sync);
+  inst->textureBudgetLogDue=true;
+  inst->textureBudgetAt={};
   }
 
 void Resources::TextureStartup::end() {
@@ -93,6 +97,9 @@ void Resources::finishTextureLoading() {
   if(inst==nullptr || inst->dev==nullptr)
     return;
   std::lock_guard<std::recursive_mutex> guard(inst->sync);
+  // On the main thread before the first frame, with the owners evaluated: the device's budget and the stage first,
+  // so the textures load straight to the stage's levels.
+  inst->updateTextureBudget(true);
   std::vector<TextureRecord*> records;
   for(auto& entry:inst->textureRecords) {
     auto& record=entry.second;

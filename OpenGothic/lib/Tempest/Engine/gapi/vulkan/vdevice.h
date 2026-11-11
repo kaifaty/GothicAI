@@ -366,6 +366,7 @@ class VDevice : public AbstractGraphicsApi::Device {
       bool     hasMaintenance1    = false;
       bool     hasMaintenance5    = false;
       bool     hasDescriptorHeap  = false;
+      bool     hasMemoryBudget    = false; // VK_EXT_memory_budget
       };
 
     struct Queue final {
@@ -393,6 +394,7 @@ class VDevice : public AbstractGraphicsApi::Device {
 
     void                    waitIdle() override;
     void                    savePipelineCache() override;
+    AbstractGraphicsApi::MemoryBudget memoryBudget() override;
     std::shared_ptr<VFence> submit(VCommandBuffer& cmd);
 
     static std::vector<VkExtensionProperties> extensionsList(VkPhysicalDevice dev);
@@ -403,6 +405,10 @@ class VDevice : public AbstractGraphicsApi::Device {
 
     SwapChainSupport        querySwapChainSupport(VkSurfaceKHR surface) const { return querySwapChainSupport(physicalDevice,surface); }
     MemIndex                memoryTypeIndex(uint32_t typeBits, VkMemoryPropertyFlags props, VkImageTiling tiling) const;
+    // the heap of memory type `typeId`, uint32_t(-1) for none
+    uint32_t                memoryHeapOf(uint32_t typeId) const {
+      return typeId<memoryProperties.memoryTypeCount ? memoryProperties.memoryTypes[typeId].heapIndex : uint32_t(-1);
+      }
 
     using DataMgr = UploadEngine<VDevice,VCommandBuffer,VBuffer>;
     DataMgr&                dataMgr() const { return *data; }
@@ -446,6 +452,8 @@ class VDevice : public AbstractGraphicsApi::Device {
     uint32_t                profileTimestampBits=0;   // timestampValidBits of the graphics queue family
     double                  profileTimestampPeriod=0; // nanoseconds per timestamp tick
 #endif
+
+    PFN_vkGetPhysicalDeviceMemoryProperties2KHR vkGetPhysicalDeviceMemoryProperties2 = nullptr;
 
     PFN_vkGetBufferMemoryRequirements2KHR vkGetBufferMemoryRequirements2 = nullptr;
     PFN_vkGetImageMemoryRequirements2KHR  vkGetImageMemoryRequirements2  = nullptr;

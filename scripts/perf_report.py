@@ -336,6 +336,40 @@ def read_streaming(directory):
     return grouped
 
 
+# Resources' TextureBudget::Source (common/texturebudget.h), as tex_target_source carries it
+TARGET_SOURCES = ("default", "rule", "setting", "environment")
+
+
+def texture_budget(textures):
+    """The memory budget and the stage above the target (texturebudget.h): end of the pass and over the pass."""
+    if "tex_stage" not in textures[-1]:
+        return None
+    end = textures[-1]
+    source = int(end["tex_target_source"])
+    # The seconds counters are cumulative per process: sum them frame to frame within a pass, so passes and repeats
+    # joined in one list do not count the time between them.
+    seconds = [0.0] * 6
+    for previous, row in zip(textures, textures[1:]):
+        if row["frame"] == previous["frame"] + 1:
+            for stage in range(6):
+                seconds[stage] += max(0.0, row[f"tex_stage{stage}_seconds"] - previous[f"tex_stage{stage}_seconds"])
+    return {
+        "device_budget_end_bytes": int(end["tex_device_budget_bytes"]),
+        "device_usage_end_bytes": int(end["tex_device_usage_bytes"]),
+        "device_shared": bool(end["tex_device_shared"]),
+        "device_measured": bool(end["tex_device_measured"]),
+        "target_end_bytes": int(end["tex_target_bytes"]),
+        "target_source": TARGET_SOURCES[source] if 0 <= source < len(TARGET_SOURCES) else str(source),
+        "budget_end_bytes": int(end["tex_budget_bytes"]),
+        "stage_end": int(end["tex_stage"]),
+        "stage_deepest": int(max(row["tex_stage"] for row in textures)),
+        # seconds on stages 0..4 and 5 and deeper over the pass
+        "stage_seconds": seconds,
+        "d0_end_bytes": int(end["tex_stage_bytes0"]),
+        "d_end_bytes": int(end["tex_stage_bytes"]),
+    }
+
+
 def streaming_stats(rows):
     publications = [value for row in rows for value in row["publication_ms"]]
     warmup = [value for row in rows for value in row.get("warmup_far_publication_ms", [])]
@@ -410,6 +444,7 @@ def streaming_stats(rows):
                 "sync_ms_max": textures[-1]["tex_jump_sync_max_ms"],
                 "zero_ms_max": textures[-1]["tex_jump_zero_max_ms"],
             } if "tex_jumps" in textures[-1] else None,
+            "budget": texture_budget(textures),
             "categories": {category: {
                 "bytes": int(textures[-1][f"tex_{category}_bytes"]),
                 "count": int(textures[-1][f"tex_{category}_n"]),
@@ -575,6 +610,23 @@ def summary_table(report):
                           f"{number(jumps['zero_ms_max'], 1)}")
             lines.append(f"| {view} | {levels} | {number(textures['shortfall_peak'], 0)} | "
                          f"{number(textures['shortfall_seconds'], 9)} | {jump_cells} |")
+        lines.extend(["", "Texture budget: the device's budget and this process's usage, the working target, the stage "
+                      "above it, and D(s), the bytes the demanded textures take at stage s.", "",
+                      "| Pass | Device budget / usage end MiB | Target end MiB (source) | Stage end / deepest | "
+                      "Seconds on stage 0 / 1 / 2 / 3 / 4 / 5+ | D(0) / D(stage) end MiB |",
+                      "|---|---:|---:|---:|---:|---:|"])
+        for view, stats in streaming["views"].items():
+            textures = stats["streaming"]["textures"]
+            budget = textures.get("budget") if textures is not None else None
+            if budget is None:
+                lines.append(f"| {view} | n/a | n/a | n/a | n/a | n/a |")
+                continue
+            device = (f"{budget['device_budget_end_bytes']/1048576:.0f} / {budget['device_usage_end_bytes']/1048576:.0f}"
+                      + (" shared" if budget["device_shared"] else "") + ("" if budget["device_measured"] else " estimated"))
+            seconds = " / ".join(f"{value:.1f}" for value in budget["stage_seconds"])
+            lines.append(f"| {view} | {device} | {budget['target_end_bytes']/1048576:.0f} ({budget['target_source']}) | "
+                         f"{budget['stage_end']} / {budget['stage_deepest']} | {seconds} | "
+                         f"{budget['d0_end_bytes']/1048576:.1f} / {budget['d_end_bytes']/1048576:.1f} |")
     return "\n".join(lines)
 
 

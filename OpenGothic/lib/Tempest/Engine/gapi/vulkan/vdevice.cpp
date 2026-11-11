@@ -92,6 +92,9 @@ VDevice::VDevice(VkInstance instance, const bool hasDeviceFeatures2, VkPhysicalD
 
   createLogicalDevice(pdev);
   vkGetPhysicalDeviceMemoryProperties(pdev, &memoryProperties);
+  if(props.hasMemoryBudget)
+    vkGetPhysicalDeviceMemoryProperties2 = PFN_vkGetPhysicalDeviceMemoryProperties2KHR(
+        vkGetInstanceProcAddr(instance,"vkGetPhysicalDeviceMemoryProperties2KHR"));
   pipelineCache.init(device.impl, pdev);
 
   physicalDevice = pdev;
@@ -195,6 +198,9 @@ void VDevice::createLogicalDevice(VkPhysicalDevice pdev) {
     }
   if(props.hasDescriptorHeap) {
     rqExt.push_back(VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME);
+    }
+  if(props.hasMemoryBudget) {
+    rqExt.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
     }
 
   VkPhysicalDeviceFeatures supportedFeatures={};
@@ -455,6 +461,10 @@ void VDevice::deviceProps(VkInstance instance, const bool hasDeviceFeatures2, Vk
     }
   if(extensionSupport(ext,VK_KHR_VULKAN_MEMORY_MODEL_EXTENSION_NAME)) {
     props.memoryModel = true;
+    }
+  // read through vkGetPhysicalDeviceMemoryProperties2, which needs VK_KHR_get_physical_device_properties2
+  if(hasDeviceFeatures2 && extensionSupport(ext,VK_EXT_MEMORY_BUDGET_EXTENSION_NAME)) {
+    props.hasMemoryBudget = true;
     }
   if(extensionSupport(ext,VK_KHR_MAINTENANCE_5_EXTENSION_NAME) &&
      extensionSupport(ext,VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME) &&
@@ -1122,6 +1132,54 @@ VkResult VDevice::waitFence(VFence& t, uint64_t timeout) {
       return VK_NOT_READY;
     timeout -= (now-start);
     }
+  }
+
+AbstractGraphicsApi::MemoryBudget VDevice::memoryBudget() {
+  AbstractGraphicsApi::MemoryBudget ret;
+  ret.shared = props.type==DeviceType::Integrated;
+  // The heaps that count: every device-local heap of a discrete device. On memory shared with the CPU, the heap
+  // textures are allocated from (before the first texture: the heap of the first device-local memory type), so the
+  // budget is not the sum of system memory seen through several heaps.
+  uint32_t heaps = 0;
+  if(ret.shared) {
+    int32_t heap = allocator.textureHeap();
+    for(uint32_t i=0; heap<0 && i<memoryProperties.memoryTypeCount; ++i)
+      if((memoryProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)!=0)
+        heap = int32_t(memoryProperties.memoryTypes[i].heapIndex);
+    if(heap>=0 && uint32_t(heap)<memoryProperties.memoryHeapCount)
+      heaps = 1u << uint32_t(heap);
+    } else {
+    for(uint32_t i=0; i<memoryProperties.memoryHeapCount; ++i)
+      if((memoryProperties.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)!=0)
+        heaps |= 1u << i;
+    }
+  if(heaps==0)
+    return ret;
+
+  if(vkGetPhysicalDeviceMemoryProperties2!=nullptr) {
+    // Per process and changing while the game runs; a heap's budget includes what the process already holds.
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT budget = {};
+    budget.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
+    VkPhysicalDeviceMemoryProperties2KHR memory = {};
+    memory.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2_KHR;
+    memory.pNext = &budget;
+    vkGetPhysicalDeviceMemoryProperties2(physicalDevice,&memory);
+    for(uint32_t i=0; i<memoryProperties.memoryHeapCount; ++i)
+      if((heaps & (1u << i))!=0) {
+        ret.budget += uint64_t(budget.heapBudget[i]);
+        ret.usage  += uint64_t(budget.heapUsage[i]);
+        }
+    ret.measured = true;
+    } else {
+    // Without the extension: 80 % of the heaps, and what this device's allocator holds in them.
+    for(uint32_t i=0; i<memoryProperties.memoryHeapCount; ++i)
+      if((heaps & (1u << i))!=0) {
+        ret.budget += uint64_t(memoryProperties.memoryHeaps[i].size)/5*4;
+        ret.usage  += allocator.heapUsage(i);
+        }
+    }
+  ret.known = ret.budget>0;
+  return ret;
   }
 
 void VDevice::savePipelineCache() {

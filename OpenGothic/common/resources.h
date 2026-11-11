@@ -29,6 +29,7 @@
 
 #include "graphics/material.h"
 #include "sound/soundfx.h"
+#include "texturebudget.h"
 
 class StaticMesh;
 class ProtoMesh;
@@ -182,6 +183,16 @@ class Resources final {
       // first, or still open), the longest synchronous completion and the longest time to a zero shortfall
       uint64_t jumps = 0, jumpsOpen = 0;
       double jumpSyncMsMax = 0, jumpZeroMsMax = 0;
+      // the memory budget (texturebudget.h), at the last evaluation: the device's budget and this process's usage,
+      // the working target and where it came from, the LRU budget of unrequested textures
+      TextureBudget::Device device;
+      uint64_t targetBytes = 0, budgetBytes = 0;
+      TextureBudget::Source targetSource = TextureBudget::Source::Default;
+      // the stage above the target, the deepest so far, the seconds on stages 0..4 (the last one 5 and deeper), and
+      // the bytes the demanded textures would take at stage 0 and at the current stage, D(0) and D(stage)
+      uint32_t stage = 0, stageDeepest = 0;
+      std::array<double,6> stageSeconds{};
+      uint64_t stageBytes0 = 0, stageBytes = 0;
       };
     static TextureStats              textureStats();
     static uint64_t                  textureGeneration();
@@ -422,6 +433,18 @@ class Resources final {
     void                 unqueueTexture(TextureRecord& record);
     void                 updateNearTailTime();
     uint8_t              wantedLevel(const TextureRecord& record) const;
+    // Step 3 (resources_texturebudget.cpp): the level of the owners measured on screen at `stage`
+    uint8_t              resolutionLevel(const TextureRecord& record, uint32_t stage) const;
+    void                 setTextureBudget(const TextureBudget::Choice& budget, const TextureBudget::Choice& target,
+                                          const TextureBudget::Choice& vram);
+    // Once a TextureBudget::Period on the main thread, or now with `force`: the device's budget, the working target,
+    // the stage. A world load forces it before its first frame.
+    void                 updateTextureBudget(bool force);
+    void                 chooseTextureStage(bool force, std::chrono::steady_clock::time_point now);
+    std::vector<uint64_t> textureStageSums() const;
+    void                 accountTextureStage(std::chrono::steady_clock::time_point now);
+    void                 logTextureBudget(std::chrono::steady_clock::time_point now);
+    void                 textureBudgetStats(TextureStats& stats);
     uint8_t              tailLevel(const TextureRecord& record) const;
     bool                 wantsFull(const TextureRecord& record) const { return wantedLevel(record)==0; }
     // unqueues every record, applies `change` to the rules, queues them again
@@ -577,8 +600,20 @@ class Resources final {
     std::atomic<uint32_t> textureReserve{1};
     std::atomic<float> textureViewScale{11.f};  // log2 of the view scale the levels use (texturelevels.h)
     std::atomic<bool> textureScreen{true};
-    uint64_t textureBudget = 256*1048576;
-    uint64_t textureTarget = 192*1048576;
+    uint64_t textureBudget = TextureBudget::Floor;
+    uint64_t textureTarget = TextureBudget::Floor;
+    // Step 3: where the target and the LRU budget come from, OPENGOTHIC_TEXTURE_VRAM_MB, the last device query, the
+    // stage, and when the next evaluation and the next log line are due
+    TextureBudget::Choice textureTargetChoice, textureVram;
+    bool textureBudgetFollows = true, textureBudgetLogDue = true;
+    TextureBudget::Device textureDevice;
+    TextureBudget::Source textureTargetSource = TextureBudget::Source::Default;
+    TextureBudget::Ladder textureLadder;
+    uint32_t textureStageDeepest = 0;
+    std::array<double,6> textureStageSeconds{};
+    std::vector<uint64_t> textureSums;  // D(0)..D(deepest) at the last evaluation
+    std::chrono::steady_clock::time_point textureBudgetAt{}, textureStageClock{}, textureTargetLoggedAt{};
+    uint64_t textureTargetLogged = 0;
     bool textureStreaming = true, textureOverBudget = false, texturePayloadChanged = false;
 
     TextureCache                                                      texCache;

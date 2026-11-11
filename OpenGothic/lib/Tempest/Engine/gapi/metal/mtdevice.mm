@@ -145,6 +145,18 @@ MtDevice::~MtDevice() {
     probeDevice = nullptr;
   }
 
+AbstractGraphicsApi::MemoryBudget MtDevice::memoryBudget() {
+  // The working set Metal recommends for this device (with unified memory: a share of the system memory) and what
+  // this process has allocated on it.
+  AbstractGraphicsApi::MemoryBudget ret;
+  ret.budget   = uint64_t(impl->recommendedMaxWorkingSetSize());
+  ret.usage    = uint64_t(impl->currentAllocatedSize());
+  ret.shared   = impl->hasUnifiedMemory();
+  ret.measured = true;
+  ret.known    = ret.budget>0;
+  return ret;
+  }
+
 void MtDevice::savePipelineCache() {
   psoCache.saveAsync();
   mslCache.saveAsync();

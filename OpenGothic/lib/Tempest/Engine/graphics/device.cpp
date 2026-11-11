@@ -131,6 +131,10 @@ void Device::waitIdle() {
   impl.dev->waitIdle();
   }
 
+Device::MemoryBudget Device::memoryBudget() {
+  return impl.dev->memoryBudget();
+  }
+
 Fence Device::submit(const CommandBuffer &cmd) {
   auto fn = api.submit(dev,cmd.impl.handler);
   return Fence(fn);
