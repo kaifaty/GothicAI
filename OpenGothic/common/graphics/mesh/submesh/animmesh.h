@@ -19,6 +19,7 @@ class AnimMesh {
       std::string                    texName;
       size_t                         iboOffset = 0;
       size_t                         iboSize   = 0;
+      TexelDensity                   texel;  // lowest UV density and bounds in the bind pose, model space
       };
 
     Tempest::VertexBuffer<VertexA> vbo;

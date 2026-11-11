@@ -166,7 +166,7 @@ void finish() {
   stopRecording();
   if(!bench.streamingSamples.empty()) {
     if(auto* file=std::fopen((outDir+"/streaming.csv").c_str(),"w")) {
-      std::fprintf(file,"segment,frame,update_ms,work_ms,near,far,outside,near_transitions,far_transitions,publication_ms,published,released,page_used_bytes,page_free_bytes,page_retired_bytes,page_count,tex_live_bytes,tex_retired_bytes,tex_peak_bytes,tex_live_n,tex_evicted,tex_reloaded,tex_landscape_bytes,tex_landscape_n,tex_static_bytes,tex_static_n,tex_dynamic_bytes,tex_dynamic_n,tex_other_bytes,tex_other_n,tex_full_bytes,tex_tail_bytes,tex_promoted,tex_demoted,tex_promotion_queue,tex_near_tail_n,tex_near_tail_seconds,tex_level0_bytes,tex_level1_bytes,tex_level2_bytes,tex_level3_bytes,tex_level4_bytes,tex_level5_bytes,tex_shortfall_n,tex_shortfall_seconds,vob_near,vob_far,vob_outside,vob_created,vob_released,vob_pending,vob_publication_ms,vob_near_missing,vob_near_missing_seconds,npc_full,npc_simplified,npc_tier_transitions,npc_full_tick_ms,npc_simplified_tick_ms\n");
+      std::fprintf(file,"segment,frame,update_ms,work_ms,near,far,outside,near_transitions,far_transitions,publication_ms,published,released,page_used_bytes,page_free_bytes,page_retired_bytes,page_count,tex_live_bytes,tex_retired_bytes,tex_peak_bytes,tex_live_n,tex_evicted,tex_reloaded,tex_landscape_bytes,tex_landscape_n,tex_static_bytes,tex_static_n,tex_dynamic_bytes,tex_dynamic_n,tex_other_bytes,tex_other_n,tex_full_bytes,tex_tail_bytes,tex_promoted,tex_demoted,tex_promotion_queue,tex_near_tail_n,tex_near_tail_seconds,tex_level0_bytes,tex_level1_bytes,tex_level2_bytes,tex_level3_bytes,tex_level4_bytes,tex_level5_bytes,tex_shortfall_n,tex_shortfall_seconds,tex_jumps,tex_jumps_open,tex_jump_sync_ms_max,tex_jump_zero_ms_max,vob_near,vob_far,vob_outside,vob_created,vob_released,vob_pending,vob_publication_ms,vob_near_missing,vob_near_missing_seconds,npc_full,npc_simplified,npc_tier_transitions,npc_full_tick_ms,npc_simplified_tick_ms\n");
       for(const auto& row:bench.streamingSamples) {
         std::fprintf(file,"%s,%llu,%.9g,%.9g,%zu,%zu,%zu,%llu,%llu,",row.segment.c_str(),
           (unsigned long long)row.frame,row.updateMs,row.workMs,row.near,row.far,row.outside,
@@ -190,6 +190,8 @@ void finish() {
         for(const auto bytes:textures.levelBytes)
           std::fprintf(file,",%llu",(unsigned long long)bytes);
         std::fprintf(file,",%llu,%.9g",(unsigned long long)textures.shortfallCount,textures.shortfallSeconds);
+        std::fprintf(file,",%llu,%llu,%.9g,%.9g",(unsigned long long)textures.jumps,(unsigned long long)textures.jumpsOpen,
+          textures.jumpSyncMsMax,textures.jumpZeroMsMax);
         std::fprintf(file,",%zu,%zu,%zu,%llu,%llu,%zu,%.9g,%zu,%.9g",
           row.vobNear,row.vobFar,row.vobOutside,(unsigned long long)row.vobCreated,
           (unsigned long long)row.vobReleased,row.vobPending,row.vobPublicationMs,

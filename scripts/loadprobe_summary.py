@@ -18,6 +18,8 @@ TEXTURE_FIELDS.extend(("tex_full_bytes", "tex_tail_bytes", "tex_promoted", "tex_
 # live bytes by first resident level (the last: 5 and coarser) and the shortfall against the wanted level
 TEXTURE_FIELDS.extend(f"tex_level{level}_bytes" for level in range(6))
 TEXTURE_FIELDS.extend(("tex_shortfall_n", "tex_shortfall_seconds", "tex_loads"))
+# view jumps: count, those without a zero shortfall yet, the longest synchronous completion and time to zero shortfall
+TEXTURE_FIELDS.extend(("tex_jumps", "tex_jumps_open", "tex_jump_sync_ms_max", "tex_jump_zero_ms_max"))
 TEXTURE_FIELDS.extend(f"tex_source_{source}_{metric}" for source in ("base", "hd", "material", "other")
                       for metric in ("bytes", "full_bytes"))
 TEXTURE_FIELDS.extend(f"tex_{category}_{metric}" for category in ("landscape", "static", "dynamic", "other")

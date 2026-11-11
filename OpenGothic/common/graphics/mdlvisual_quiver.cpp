@@ -64,7 +64,7 @@ bool MdlVisual::stickArrow(MeshObjects::Mesh&& arrow, size_t bone, const Matrix4
     return false;
   arrow.setObjMatrix(renderedBone(bone)*pin.local);
   if(textureOwnerKnown)
-    arrow.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
+    textureOwnerReach=std::min(textureOwnerReach,arrow.setTextureOwner(textureOwnerPosition,textureOwnerSpatial));
   pin.view=std::move(arrow);
   if(stuckArrows.size()>=MaxStuckArrows)
     stuckArrows.erase(stuckArrows.begin());
@@ -124,7 +124,7 @@ bool MdlVisual::loadStuckArrows(Serialize& fin, World& world) {
             return false;
       pin.view=world.addView(pin.visual);
       if(textureOwnerKnown)
-        pin.view.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
+        textureOwnerReach=std::min(textureOwnerReach,pin.view.setTextureOwner(textureOwnerPosition,textureOwnerSpatial));
       if(pin.view.isEmpty())
         return false;
       pin.view.setObjMatrix(renderedBone(pin.bone)*pin.local);
@@ -176,7 +176,7 @@ void MdlVisual::setQuiver(const Quiver::State& st, MeshObjects::Mesh&& body, std
   quiv.setNear(std::move(near),std::move(nearLeg));
   quiv.setWide(std::move(wide));
   if(textureOwnerKnown)
-    quiv.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
+    textureOwnerReach=std::min(textureOwnerReach,quiv.setTextureOwner(textureOwnerPosition,textureOwnerSpatial));
   syncAttaches();
   }
 

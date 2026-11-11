@@ -67,7 +67,9 @@ class MeshObjects final {
         void   setObjMatrix(const Tempest::Matrix4x4& mt);
         void   setTexturePosition(const Tempest::Vec3& position);
         void   setTextureCategory(Resources::TextureCategory category);
-        void   setTextureOwner(const Tempest::Vec3& position, bool spatial);
+        // As VisualObjects::Item::setTextureOwner for every part: returns how far the mesh may move from `position`
+        // before a call can change any part's demand. Within that, a call is one comparison without a lock.
+        float  setTextureOwner(const Tempest::Vec3& position, bool spatial);
         void   setSkeleton (const Skeleton* sk);
         void   setPose     (const Tempest::Matrix4x4& obj, const Pose& p);
         void   setPose     (const Tempest::Matrix4x4& obj, const Tempest::Matrix4x4* bones);
@@ -109,7 +111,8 @@ class MeshObjects final {
 
         bool                    cpuOnly = false;
         bool                    textureOwnerKnown = false, textureOwnerSpatial = false;
-        std::pair<int32_t,int32_t> textureOwnerChunk;
+        Tempest::Vec3           textureOwnerAnchor;
+        float                   textureOwnerReach = 0;
         std::vector<CpuNode>     cpuSub;
         friend bool TestBench::ragdollBodyDrawable(const Npc& npc);
       };

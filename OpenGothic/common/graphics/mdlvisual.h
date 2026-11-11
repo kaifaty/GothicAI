@@ -45,7 +45,9 @@ class MdlVisual final {
     void                           setVisual(const Skeleton *visual);
 
     void                           setObjMatrix(const Tempest::Matrix4x4 &m, bool syncAttach = false);
-    void                           setTextureOwner(const Tempest::Vec3& position, bool spatial);
+    // The owner of every part's textures (VisualObjects::Item::setTextureOwner): an NPC calls it each frame it moves,
+    // from animation threads; within the smallest reach of its parts that is one comparison without a lock.
+    float                          setTextureOwner(const Tempest::Vec3& position, bool spatial);
     bool                           minSkinnedVertex(float fatness, Tempest::Vec3& point) const;
 
     void                           setHeadRotation(float dx, float dz);
@@ -348,6 +350,7 @@ class MdlVisual final {
 
     Tempest::Matrix4x4             pos;
     Tempest::Vec3                 textureOwnerPosition;
+    float                         textureOwnerReach = 0;  // centimetres from textureOwnerPosition
     bool                          textureOwnerKnown = false, textureOwnerSpatial = false;
     MeshObjects::Mesh              view;
     bool                           bodyDetached = false;

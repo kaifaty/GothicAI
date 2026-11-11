@@ -50,7 +50,10 @@ class VisualObjects final {
       void     setObjMatrix(const Tempest::Matrix4x4& mt);
       void     setObjMatrix(const Tempest::Matrix4x4& mt, const Tempest::Vec3& texturePosition);
       void     setTexturePosition(const Tempest::Vec3& position);
-      void     setTextureOwner(const Tempest::Vec3& position, bool spatial);
+      // An owner placed by a position (spatial: an NPC, an item, a mobsi; not spatial: the hero's, always whole).
+      // Returns how far, in centimetres, it may move from `position` before a call can change its demand: the margin
+      // of its exponent, or the edge of its chunk; infinity when not spatial.
+      float    setTextureOwner(const Tempest::Vec3& position, bool spatial);
       void     setTextureCategory(Resources::TextureCategory category);
       void     setAsGhost  (bool g);
       void     setFatness  (float f);
@@ -194,6 +197,11 @@ class VisualObjects final {
       uint64_t            textureStamp = 0;     // of its entry in textureScreen
       TexelDensity        textureLocal;
       TexelDensity        textureTexel;
+      // An owner placed by a position (textureWorldOwner): a sphere of this radius around texturePosition, centimetres;
+      // -1 for bounds from textureTexel.
+      float               textureRadius = -1;
+      // How far it may move from texturePosition before its demand may change (setTextureOwner), centimetres
+      float               textureReach  = 0;
       Tempest::Vec3       textureAnchor;
       float               textureAxes[3][3] = {};  // the axes of pos it was placed with
       Tempest::Vec3       texturePosition;
@@ -211,6 +219,11 @@ class VisualObjects final {
     void     setTextureDemand(Object& object, bool active);
     void     updateTextureFocus();
     bool     textureScreenOwner(const Object& object) const;
+    // Bounds and density in the world from where the owner is (texturePosition, pos)
+    void     placeTexture(Object& object);
+    TextureScreenDemand::Result evaluateTexture(const Object& object) const;
+    // Metres from the nearer of the hero and the camera to its bounds; -1 without a density or a view
+    double   textureDistance(const Object& object) const;
     void     scheduleTexture(Object& object, size_t id, double expiry);
     void     unscheduleTexture(Object& object);
 
@@ -252,7 +265,7 @@ class VisualObjects final {
     uint64_t                   textureStampNext = 0;
     struct TextureCensus {
       bool     enabled = false;
-      uint64_t demandCalls = 0, placements = 0, evaluations = 0, stale = 0, compactions = 0, focusOwners = 0;
+      uint64_t demandCalls = 0, placements = 0, moves = 0, evaluations = 0, stale = 0, compactions = 0, focusOwners = 0;
       double   viewMs = 0, focusMs = 0, viewMaxMs = 0, focusMaxMs = 0;
       uint64_t resourceCalls = 0, requeues = 0, loads = 0;  // Resources totals at the last line
       std::chrono::steady_clock::time_point since{};

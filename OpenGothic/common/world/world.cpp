@@ -130,6 +130,8 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
   const auto loadStarted = std::chrono::steady_clock::now();
   Resources::configureTextures(Gothic::settingsGetS("GAME","texture_budget_mb"),Gothic::settingsGetS("GAME","texture_far_skip_mips"),
                                Gothic::settingsGetS("GAME","texture_target_mb"),Gothic::settingsGetS("GAME","texture_screen_mips"));
+  // Until the first frame's completion: textures that can have a tail are read at their coarsest level.
+  textureStartup.begin();
   if(LoadProbe::enabled())
     LoadProbe::mark("world_begin",-1,"world="+std::string(wname));
   try {
@@ -331,6 +333,7 @@ void World::updateLandscape(const Camera& camera) {
     if(textureLoadingPending && npcPlayer) {
       Resources::finishTextureLoading();
       textureLoadingPending=false;
+      textureStartup.end();
       }
     Resources::updateTextures(nullptr);
     return;
@@ -343,8 +346,15 @@ void World::updateLandscape(const Camera& camera) {
   if(textureLoadingPending) {
     if(wview)
       wview->flushTextureDemand();
+    textureStartup.end();
     Resources::finishTextureLoading();
     textureLoadingPending=false;
+    }
+  else if(residency->viewJumped() && Resources::textureScreenMips()) {
+    // A teleport: every owner due is evaluated now and the textures left far short complete before the frame.
+    if(wview)
+      wview->flushTextureDemand();
+    Resources::completeTextureJump();
     }
   Resources::updateTextures(residency.get());
   }

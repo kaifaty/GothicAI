@@ -3,6 +3,7 @@
 
 #include <Tempest/Log>
 
+#include <cmath>
 #include <cstdio>
 
 void VisualObjects::dumpTextureOwners(const std::filesystem::path& file) const {
@@ -17,14 +18,15 @@ void VisualObjects::dumpTextureOwners(const std::filesystem::path& file) const {
                double(v.hero.x),double(v.hero.y),double(v.hero.z),double(v.camera.x),double(v.camera.y),double(v.camera.z),
                v.odometer,int(v.known),v.coarsest,int(textureScreenMode),textureScreen.size(),textureScheduledCount);
   std::fprintf(out,"id,type,category,world_owner,chunked_landscape,measured,placed,screen_owner,demand,scheduled,ring,resolution,"
-                   "local_uv,uv,min_x,min_y,min_z,max_x,max_y,max_z,pos_x,pos_y,pos_z,distance,tex,normal,orm,frames,ibo_len\n");
+                   "local_uv,uv,min_x,min_y,min_z,max_x,max_y,max_z,pos_x,pos_y,pos_z,radius,reach,distance,tex,normal,orm,frames,"
+                   "ibo_len\n");
   for(size_t id=0;id<objects.size();++id) {
     const auto& o=objects[id];
     if(o.isEmpty())
       continue;
     const auto& t=o.textureTexel;
     const auto& mat=const_cast<Object&>(o).bucketId->mat;
-    const double distance=t.valid() && v.known ? std::min(TextureScreenDemand::distance(v.hero,t),TextureScreenDemand::distance(v.camera,t)) : -1;
+    const double distance=textureDistance(o);
     std::fprintf(out,"%zu,%d,%d,%d,%d,%d,%d,%d,%d,%d,%u,",id,int(o.type),int(o.textureCategory),int(o.textureWorldOwner),
                  int(o.textureChunkedLandscape),int(o.textureMeasured),int(o.texturePlaced),int(textureScreenOwner(o)),
                  int(o.textureDemand),int(o.textureScheduled),o.textureNeed.ring);
@@ -32,10 +34,20 @@ void VisualObjects::dumpTextureOwners(const std::filesystem::path& file) const {
       std::fprintf(out,",");
     else
       std::fprintf(out,"%d,",o.textureNeed.resolution);
-    std::fprintf(out,"%.6g,%.6g,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.2f,%llx,%llx,%llx,%zu,%u\n",
+    std::fprintf(out,"%.6g,%.6g,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,",
                  double(o.textureLocal.uvPerMetre),double(t.uvPerMetre),double(t.min.x),double(t.min.y),double(t.min.z),
                  double(t.max.x),double(t.max.y),double(t.max.z),double(o.texturePosition.x),double(o.texturePosition.y),
-                 double(o.texturePosition.z),distance,
+                 double(o.texturePosition.z));
+    // radius: the sphere of an owner placed by a position, cm; reach: how far it may move before it is evaluated again
+    if(o.textureRadius>=0)
+      std::fprintf(out,"%.1f,",double(o.textureRadius));
+    else
+      std::fprintf(out,",");
+    if(o.textureWorldOwner && std::isfinite(o.textureReach))
+      std::fprintf(out,"%.1f,",double(o.textureReach));
+    else
+      std::fprintf(out,",");
+    std::fprintf(out,"%.2f,%llx,%llx,%llx,%zu,%u\n",distance,
                  (unsigned long long)reinterpret_cast<uintptr_t>(mat.tex),(unsigned long long)reinterpret_cast<uintptr_t>(mat.normal),
                  (unsigned long long)reinterpret_cast<uintptr_t>(mat.orm),mat.frames.size(),o.iboLen);
     }
@@ -53,10 +65,11 @@ void VisualObjects::reportTextureCensus() {
     return;
   const auto r=Resources::textureStats();
   char line[256];
-  std::snprintf(line,sizeof(line),"[texture-demand] s=%.2f calls=%llu placements=%llu evaluations=%llu stale=%llu compactions=%llu "
-                "focus_owners=%llu heap=%zu scheduled=%zu",
+  std::snprintf(line,sizeof(line),"[texture-demand] s=%.2f calls=%llu placements=%llu moves=%llu evaluations=%llu stale=%llu "
+                "compactions=%llu focus_owners=%llu heap=%zu scheduled=%zu",
                 std::chrono::duration<double>(now-c.since).count(),(unsigned long long)c.demandCalls,
-                (unsigned long long)c.placements,(unsigned long long)c.evaluations,(unsigned long long)c.stale,
+                (unsigned long long)c.placements,(unsigned long long)c.moves,(unsigned long long)c.evaluations,
+                (unsigned long long)c.stale,
                 (unsigned long long)c.compactions,(unsigned long long)c.focusOwners,textureScreen.size(),textureScheduledCount);
   Tempest::Log::i(line);
   std::snprintf(line,sizeof(line),"[texture-demand] view_ms=%.3f view_max_ms=%.3f focus_ms=%.3f focus_max_ms=%.3f "

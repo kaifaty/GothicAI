@@ -177,6 +177,10 @@ class Resources final {
       uint64_t demandCalls = 0, requeues = 0, loadsStarted = 0;
       std::array<uint64_t,4> sourceBytes{}, sourceFullBytes{};
       std::array<uint64_t,4> categoryBytes{}, categoryCount{};
+      // view jumps (completeTextureJump): how many, how many have not reached a zero shortfall (the next jump came
+      // first, or still open), the longest synchronous completion and the longest time to a zero shortfall
+      uint64_t jumps = 0, jumpsOpen = 0;
+      double jumpSyncMsMax = 0, jumpZeroMsMax = 0;
       };
     static TextureStats              textureStats();
     static uint64_t                  textureGeneration();
@@ -194,6 +198,24 @@ class Resources final {
         bool previous;
       };
     static void                      finishTextureLoading();
+    // World load with levels by screen size: while a world holds this, a texture that can have a tail is read at its
+    // coarsest allowed level whatever its TextureLoadScope; finishTextureLoading before the first frame then loads the
+    // wanted levels. With texture_screen_mips=0 the scopes decide, as before.
+    class TextureStartup {
+      public:
+        TextureStartup()=default;
+        ~TextureStartup() { end(); }
+        TextureStartup(const TextureStartup&) = delete;
+        TextureStartup& operator=(const TextureStartup&) = delete;
+        void begin();
+        void end();
+      private:
+        bool active = false;
+      };
+    // The view jumped (ChunkResidency::viewJumped), its owners evaluated: completes now the textures short of their
+    // wanted level by two levels or more, the largest shortfall first, then the nearest, within OPENGOTHIC_TEXTURE_JUMP_MS
+    // (300 by default, 0: none); the rest loads as usual. Levels only.
+    static void                      completeTextureJump();
     static constexpr uint32_t TextureAlwaysFull = uint32_t(-1);
     // What one owner asks of the textures of its material: the ring of its chunk to the hero's or camera's chunk
     // (TextureAlwaysFull: an owner with no place, the whole chain) and, for an owner measured on screen, its resolution
@@ -407,6 +429,14 @@ class Resources final {
                                            const TextureNeed* add);
     std::tuple<uint64_t,uint64_t,uintptr_t> textureDemotionKey(const TextureRecord& record) const;
     void                 startTextureLoad(TextureRecord& record, uint8_t level, bool lowering);
+    // The first level to read a texture at when it is loaded: 0 for the whole chain
+    uint32_t             textureLoadSkip(bool pinned) const;
+    // Loads `records` at their wanted levels now, two at a time in order; with `limited` none starts after `deadline`.
+    // Returns how many were published.
+    size_t               loadTexturesNow(const std::vector<TextureRecord*>& records,
+                                         std::chrono::steady_clock::time_point deadline, bool limited);
+    void                 updateTextureJump();
+    void                 closeTextureJump(bool reached);
     bool                 hasTexture(std::string_view name) const;
     ProtoMesh*            implLoadMesh(std::string_view name);
     std::unique_ptr<ProtoMesh> implLoadMeshMain(std::string name);
@@ -526,6 +556,17 @@ class Resources final {
     std::set<TextureRecord*> nearTailTextures;
     std::chrono::steady_clock::time_point nearTailUpdated = std::chrono::steady_clock::now();
     double nearTailSeconds = 0, shortfallSeconds = 0;
+    std::atomic<uint32_t> textureStartup{0};  // worlds loading (TextureStartup)
+    uint32_t textureJumpMs = 300;
+    struct TextureJump {
+      bool open = false;
+      std::chrono::steady_clock::time_point at{};
+      size_t shortAt = 0, candidates = 0, completed = 0;
+      double syncMs = 0;
+      };
+    TextureJump textureJump;
+    uint64_t textureJumps = 0, textureJumpsUnresolved = 0;
+    double textureJumpSyncMsMax = 0, textureJumpZeroMsMax = 0;
     std::vector<std::shared_ptr<TextureReload>> textureReloads;
     Tempest::Texture2d texturePlaceholders[3];
     uint64_t textureEpoch = 0, textureClock = 0;

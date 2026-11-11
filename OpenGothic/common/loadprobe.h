@@ -641,6 +641,12 @@ inline void mark(std::string_view stage, double stageMs = -1, std::string_view e
                 (unsigned long long)textures.loadsInFlight);
   Tempest::Log::i(textureBuf);
   std::snprintf(textureBuf,sizeof(textureBuf),
+                "[loadprobe-textures] stage=%.*s t_ms=%.1f tex_jumps=%llu tex_jumps_open=%llu tex_jump_sync_ms_max=%.9g "
+                "tex_jump_zero_ms_max=%.9g",
+                int(stage.size()),stage.data(),elapsed,(unsigned long long)textures.jumps,(unsigned long long)textures.jumpsOpen,
+                textures.jumpSyncMsMax,textures.jumpZeroMsMax);
+  Tempest::Log::i(textureBuf);
+  std::snprintf(textureBuf,sizeof(textureBuf),
                 "[loadprobe-textures] stage=%.*s t_ms=%.1f "
                 "tex_landscape_bytes=%llu tex_landscape_n=%llu tex_static_bytes=%llu tex_static_n=%llu",
                 int(stage.size()),stage.data(),elapsed,

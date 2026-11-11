@@ -59,17 +59,46 @@ TexelDensity TexelDensity::measure(const Resources::Vertex* vertices, size_t ver
   return ret;
   }
 
-TexelDensity TexelDensity::placed(const Matrix4x4& m) const {
-  TexelDensity ret;
-  ret.flat = flat;
-  if(!valid())
-    return ret;
+float TexelDensity::scaleOf(const Matrix4x4& m) {
   float axis = 0;
   for(int i=0; i<3; ++i) {
     const float x = m.at(i,0), y = m.at(i,1), z = m.at(i,2);
     axis = std::max(axis,std::sqrt(x*x+y*y+z*z));
     }
-  if(!(axis>0) || !std::isfinite(axis))
+  return axis>0 && std::isfinite(axis) ? axis : 0.f;
+  }
+
+TexelDensity TexelDensity::merged(const TexelDensity& other) const {
+  if(!valid()) {
+    TexelDensity ret = other;
+    ret.flat = !other.valid() && flat && other.flat;
+    return ret;
+    }
+  if(!other.valid())
+    return *this;
+  TexelDensity ret;
+  ret.uvPerMetre = std::min(uvPerMetre,other.uvPerMetre);
+  ret.min = Vec3(std::min(min.x,other.min.x),std::min(min.y,other.min.y),std::min(min.z,other.min.z));
+  ret.max = Vec3(std::max(max.x,other.max.x),std::max(max.y,other.max.y),std::max(max.z,other.max.z));
+  return ret;
+  }
+
+float TexelDensity::radius() const {
+  if(!valid())
+    return 0;
+  const float x = std::max(std::abs(min.x),std::abs(max.x));
+  const float y = std::max(std::abs(min.y),std::abs(max.y));
+  const float z = std::max(std::abs(min.z),std::abs(max.z));
+  return std::sqrt(x*x+y*y+z*z);
+  }
+
+TexelDensity TexelDensity::placed(const Matrix4x4& m) const {
+  TexelDensity ret;
+  ret.flat = flat;
+  if(!valid())
+    return ret;
+  const float axis = scaleOf(m);
+  if(!(axis>0))
     return ret;
   Vec3 lo( std::numeric_limits<float>::max());
   Vec3 hi(-std::numeric_limits<float>::max());

@@ -25,6 +25,7 @@
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <limits>
 #include <mutex>
 #include <set>
 
@@ -363,14 +364,14 @@ void MdlVisual::setVisualBody(WorldView& owner, MeshObjects::Mesh&& body) {
   view=std::move(body);
   bodyDetached=false;
   if(textureOwnerKnown)
-    view.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
+    textureOwnerReach=std::min(textureOwnerReach,view.setTextureOwner(textureOwnerPosition,textureOwnerSpatial));
   bindBodyRig();
   pushBodyPose();
   for(auto& slot:item)
     if(slot.deferredProto!=nullptr) {
       slot.view=owner.addView(slot.deferredProto,slot.deferredMaterial);
       if(textureOwnerKnown)
-        slot.view.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
+        textureOwnerReach=std::min(textureOwnerReach,slot.view.setTextureOwner(textureOwnerPosition,textureOwnerSpatial));
       }
   syncAttaches();
   }
@@ -471,7 +472,7 @@ void MdlVisual::implSetBody(Npc* npc, World& world, MeshObjects::Mesh&& body, co
     }
   view = std::move(body);
   if(textureOwnerKnown)
-    view.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
+    textureOwnerReach=std::min(textureOwnerReach,view.setTextureOwner(textureOwnerPosition,textureOwnerSpatial));
   view.setAsGhost(hnpcFlagGhost);
   view.setFatness(npc==nullptr ? 0 : npc->fatness());
   const bool rigChanged = bindBodyRig();
@@ -520,7 +521,7 @@ void MdlVisual::fitHitZones() {
 
 void MdlVisual::setSlotAttachment(MeshObjects::Mesh&& itm, std::string_view bone) {
   if(textureOwnerKnown)
-    itm.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
+    textureOwnerReach=std::min(textureOwnerReach,itm.setTextureOwner(textureOwnerPosition,textureOwnerSpatial));
   if(bone.empty() || skeleton==nullptr)
     return;
 
@@ -581,7 +582,7 @@ void MdlVisual::setMagicWeaponKey(World& owner, SpellFxKey key, int32_t keyLvl) 
 
 void MdlVisual::setSlotItem(MeshObjects::Mesh &&itm, std::string_view bone, int32_t material) {
   if(textureOwnerKnown)
-    itm.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
+    textureOwnerReach=std::min(textureOwnerReach,itm.setTextureOwner(textureOwnerPosition,textureOwnerSpatial));
   if(bone.empty() || skeleton==nullptr)
     return;
 
@@ -834,26 +835,33 @@ void MdlVisual::setObjMatrix(const Tempest::Matrix4x4 &m, bool syncAttach) {
     syncAttaches();
   }
 
-void MdlVisual::setTextureOwner(const Vec3& position, bool spatial) {
-  if(textureOwnerKnown && textureOwnerSpatial==spatial &&
-     (!spatial || ChunkId::fromPosition(textureOwnerPosition.x,textureOwnerPosition.z)==ChunkId::fromPosition(position.x,position.z)))
-    return;
+float MdlVisual::setTextureOwner(const Vec3& position, bool spatial) {
+  if(textureOwnerKnown && textureOwnerSpatial==spatial) {
+    if(!spatial)
+      return std::numeric_limits<float>::infinity();
+    const auto d=position-textureOwnerPosition;
+    const float moved=d.x*d.x+d.y*d.y+d.z*d.z;
+    if(moved<textureOwnerReach*textureOwnerReach)
+      return textureOwnerReach-std::sqrt(moved);
+    }
   textureOwnerKnown=true;
   textureOwnerSpatial=spatial;
   textureOwnerPosition=position;
-  view.setTextureOwner(position,spatial);
+  float reach=view.setTextureOwner(position,spatial);
   MeshAttach* slots[]={&head,&sword,&shield,&bow,&ammunition,&stateItm};
   for(auto* slot:slots)
-    slot->view.setTextureOwner(position,spatial);
+    reach=std::min(reach,slot->view.setTextureOwner(position,spatial));
   for(auto& slot:item)
-    slot.view.setTextureOwner(position,spatial);
+    reach=std::min(reach,slot.view.setTextureOwner(position,spatial));
   for(auto& slot:attach)
-    slot.view.setTextureOwner(position,spatial);
+    reach=std::min(reach,slot.view.setTextureOwner(position,spatial));
   for(auto& pin:stuckArrows)
-    pin.view.setTextureOwner(position,spatial);
-  quiv.setTextureOwner(position,spatial);
+    reach=std::min(reach,pin.view.setTextureOwner(position,spatial));
+  reach=std::min(reach,quiv.setTextureOwner(position,spatial));
   if(torch.view)
-    torch.view->setTextureOwner(position,spatial);
+    reach=std::min(reach,torch.view->setTextureOwner(position,spatial));
+  textureOwnerReach=reach;
+  return reach;
   }
 
 bool MdlVisual::minSkinnedVertex(float fatness,Vec3& point) const {
@@ -915,7 +923,7 @@ void MdlVisual::setTorch(bool t, World& owner) {
   torch.view.reset(new ObjVisual());
   torch.view->setVisual(*hitem,owner,false);
   if(textureOwnerKnown)
-    torch.view->setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
+    textureOwnerReach=std::min(textureOwnerReach,torch.view->setTextureOwner(textureOwnerPosition,textureOwnerSpatial));
   torch.boneId = (skeleton==nullptr ? size_t(-1) : skeleton->findNode("ZS_LEFTHAND"));
 
   auto& pose = *skInst;
@@ -1396,7 +1404,7 @@ void MdlVisual::bind(MeshAttach& slot, MeshObjects::Mesh&& itm, std::string_view
   slot.boneId = skeleton==nullptr ? size_t(-1) : skeleton->findNode(bone);
   slot.view   = std::move(itm);
   if(textureOwnerKnown)
-    slot.view.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
+    textureOwnerReach=std::min(textureOwnerReach,slot.view.setTextureOwner(textureOwnerPosition,textureOwnerSpatial));
   slot.bone   = bone;
   // sync?
   }
