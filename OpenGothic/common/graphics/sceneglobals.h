@@ -150,7 +150,7 @@ class SceneGlobals final {
       Tempest::Matrix4x4              reprojectClip   = Tempest::Matrix4x4::mkIdentity(); // Taa::reprojection
       Tempest::Matrix4x4              viewProjectPrev = Tempest::Matrix4x4::mkIdentity(); // Taa::viewProjectPrev
       float                           vsmLampNear     = 30.f; // cm: VSM lamps, the fixture plane (main.vert)
-      uint32_t                        vsmLampSides    = 2;    // VSM lamps: the sides a cube face keeps (main.vert)
+      uint32_t                        vsmLampSides    = 3;    // VSM lamps: the sides a cube face keeps (main.vert)
       float                           vsmPad[2]       = {};
       };
 
