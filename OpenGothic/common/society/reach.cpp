@@ -1,7 +1,8 @@
 // What the decisions section gives a world at load (docs/society-sim.md, «Решения»): the places of options by waynet
-// point with their kinds, who may use them, and which needs of each person are in use — a need is, only when a way to
-// fill it is within the travel limit of a point of the person's routine. The needs without a way are listed with the
-// nearest way beyond the limit: content gaps, not a lower threshold.
+// point with their kinds, the places a routine's user holds where it stands, who may use them, and which needs of
+// each person are in use — a need is, only when a way to fill it is within the travel limit of a point of the
+// person's routine. The needs without a way are listed with the nearest way beyond the limit: content gaps, not a
+// lower threshold.
 #include "core.h"
 
 #include <algorithm>
@@ -50,6 +51,22 @@ void walkFrom(const World& w, uint32_t from, int64_t reach, std::vector<int64_t>
     }
   }
 
+// The kinds of freepoint i: every kind whose prefix matches with the longest match of all, sorted.
+std::vector<uint16_t> freepointKinds(const World& w, uint32_t i) {
+  const auto& o = w.config.objectKinds;
+  size_t best = 0;
+  for(const auto& p:o.prefix)
+    if(p.size()>best && w.points.name[i].rfind(p,0)==0)
+      best = p.size();
+  std::vector<uint16_t> kinds;
+  for(size_t j=0; j<o.prefix.size() && best>0; ++j)
+    if(o.prefix[j].size()==best && w.points.name[i].rfind(o.prefix[j],0)==0 &&
+       std::find(kinds.begin(),kinds.end(),o.prefixKind[j])==kinds.end())
+      kinds.push_back(o.prefixKind[j]);
+  std::sort(kinds.begin(),kinds.end());
+  return kinds;
+  }
+
 void buildTargets(World& w, const std::unordered_map<std::string,std::string>& placeOf) {
   const auto& o = w.config.objectKinds;
   const size_t points = w.points.size();
@@ -69,21 +86,9 @@ void buildTargets(World& w, const std::unordered_map<std::string,std::string>& p
   for(uint32_t i=0; i<points; ++i) {
     const uint32_t t = i | TargetPoint;
     const uint32_t g = w.points.graph[i];
-    if(w.points.free[i]) {
-      // Every kind whose prefix matches with the longest match of all.
-      size_t best = 0;
-      for(const auto& p:o.prefix)
-        if(p.size()>best && w.points.name[i].rfind(p,0)==0)
-          best = p.size();
-      std::vector<uint16_t> kinds;
-      for(size_t j=0; j<o.prefix.size() && best>0; ++j)
-        if(o.prefix[j].size()==best && w.points.name[i].rfind(o.prefix[j],0)==0 &&
-           std::find(kinds.begin(),kinds.end(),o.prefixKind[j])==kinds.end())
-          kinds.push_back(o.prefixKind[j]);
-      std::sort(kinds.begin(),kinds.end());
-      for(auto k:kinds)
+    if(w.points.free[i])
+      for(auto k:freepointKinds(w,i))
         at[g].emplace_back(t,k);
-      }
     if(w.pointOutdoors[i])
       for(auto k:outdoors)
         at[i].emplace_back(t,k);
@@ -105,6 +110,67 @@ void buildTargets(World& w, const std::unordered_map<std::string,std::string>& p
       w.targetKind.push_back(k);
       }
     w.targetBegin.push_back(uint32_t(w.targets.size()));
+    }
+  }
+
+// The places a routine's user may hold where it stands (World::spots): a freepoint is its own; a waynet point has the
+// kinded mobsi of it and the kinded freepoints within FreePointCm, as the engine's AI takes the nearest free one. Only
+// listed kinds: outdoors, own rooms and places are not things one stands at. Nearest first.
+void buildSpots(World& w) {
+  const auto& o = w.config.objectKinds;
+  const size_t points = w.points.size();
+  const auto listed = [&](uint16_t k) { return KindAt(o.at[k])==KindAt::Listed; };
+  std::vector<std::vector<uint16_t>> fpKinds(points);
+  std::vector<uint32_t> kinded;
+  for(uint32_t i=0; i<points; ++i) {
+    if(!w.points.free[i])
+      continue;
+    for(auto k:freepointKinds(w,i))
+      if(listed(k))
+        fpKinds[i].push_back(k);
+    if(!fpKinds[i].empty())
+      kinded.push_back(i);
+    }
+  std::vector<std::vector<uint32_t>> mobsi(points);
+  for(uint32_t i=0; i<w.objects.size(); ++i)
+    if(w.objectKind[i]!=NoKind && listed(w.objectKind[i]))
+      mobsi[w.objects.waypoint[i]].push_back(i);
+  // Squared distances, one operation per statement as near() in sim.cpp: the same on every machine.
+  const auto dist2 = [](const std::array<float,3>& p, const std::array<float,3>& q) {
+    const double dx = double(p[0])-q[0], dy = double(p[1])-q[1], dz = double(p[2])-q[2];
+    const double xx = dx*dx, yy = dy*dy, zz = dz*dz;
+    const double sum = xx+yy;
+    return sum+zz;
+    };
+  const double radius2 = double(FreePointCm)*double(FreePointCm);
+  struct Spot { double d2; uint32_t target; uint16_t kind; };
+  std::vector<Spot> list;
+  w.spotBegin.assign(1,0);
+  w.spots.clear();
+  w.spotKind.clear();
+  for(uint32_t p=0; p<points; ++p) {
+    list.clear();
+    if(w.points.free[p]) {
+      for(auto k:fpKinds[p])
+        list.push_back({0.0,p | TargetPoint,k});
+      } else {
+      for(auto i:mobsi[p])
+        list.push_back({dist2(w.objects.pos[i],w.points.pos[p]),i,w.objectKind[i]});
+      for(auto f:kinded) {
+        const double d2 = dist2(w.points.pos[f],w.points.pos[p]);
+        if(d2<=radius2)
+          for(auto k:fpKinds[f])
+            list.push_back({d2,f | TargetPoint,k});
+        }
+      }
+    std::sort(list.begin(),list.end(),[](const Spot& a, const Spot& b) {
+      return a.d2!=b.d2 ? a.d2<b.d2 : a.target!=b.target ? a.target<b.target : a.kind<b.kind;
+      });
+    for(const auto& x:list) {
+      w.spots.push_back(x.target);
+      w.spotKind.push_back(x.kind);
+      }
+    w.spotBegin.push_back(uint32_t(w.spots.size()));
     }
   }
 
@@ -255,6 +321,7 @@ Access targetAccess(const World& w, uint32_t npc, uint32_t target, uint16_t kind
 
 void applyReach(World& w, const std::unordered_map<std::string,std::string>& placeOf) {
   buildTargets(w,placeOf);
+  buildSpots(w);
   const size_t n = needCount(w), npcs = w.npcs.size();
   w.needActive.assign(npcs*n,0);
   w.unmet.clear();

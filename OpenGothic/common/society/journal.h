@@ -27,6 +27,10 @@
 // b = allowed), action_chosen (reason = Chooser), action_failed (reason = FailReason), activity_finished
 // (reason = FinishReason), each with a = the option's kind (0xFFFF for the routine), b = its point, c = its object
 // (0xFFFFFFFF for none). activity_started gains reasons 3 (a chosen option's state) and 4 (back to the routine).
+// Version 5 (decisions, written instead of 4; the header is v4's): places count the routine's users. The records add
+// kinds 11 place_held and 12 place_released (a = kind, b = point, c = object or 0xFFFFFFFF for a freepoint), the
+// reasons action_failed 3 and activity_finished 4 (evicted: the place's routine user came) and activity_finished 5
+// (above low: in an anchor entry the needs it fills are out of danger; v4 wrote 0, the setpoint, for that end).
 //
 // Marks: CSV, one row per NPC every 5 game minutes from the start, NPCs in the export's order:
 //   t_min,key,routine,state,moving,point,to,arrive_min,x,y,z
@@ -36,7 +40,7 @@
 // x, y, z — the position in cm: the point's, or on the way the place along the walk's points by the time gone.
 // With needs (journal v3) every row goes on with a column per need, `need_<id>`: a person's level at the mark with
 // four decimals, "-" for an NPC without needs (not a person, or of decisions.no_needs_guilds) and for a need not in
-// use (World::needActive). With decisions (journal v4) two columns more, `source,target`:
+// use (World::needActive). With decisions (journal v4 and v5) two columns more, `source,target`:
 // `routine` or `need` (a chosen activity), and the chosen activity's `kind:place` (the mobsi's vob or #id, the
 // point's name), "-" for the routine.
 
@@ -49,7 +53,7 @@ namespace Journal {
 
 constexpr uint32_t Version     = 2;
 constexpr uint32_t NeedsVersion = 3; // with needs
-constexpr uint32_t DecisionsVersion = 4; // with decisions
+constexpr uint32_t DecisionsVersion = 5; // with decisions (v4 before the places' routine users)
 constexpr uint32_t RecordBytes = 24;
 constexpr char     Magic[8]    = {'G','S','O','C','J','R','N','L'};
 

@@ -53,6 +53,10 @@ constexpr Time StartStateSeconds = 4*60*60;
 // - the routine states walk to the entry's point only when it is farther than TA_DIST_SELFWP_MAX (5 m, the scripts'
 //   `if (Npc_GetDistToWP(self,self.wp) > TA_DIST_SELFWP_MAX) AI_GotoWP`): a nearer point is done where it stands.
 constexpr int64_t NearPointCm = 500;
+// - a state done at a freepoint takes the nearest free one of its name within this distance of where the NPC stands
+//   (World::findFreePoint, WayMatrix::distanceThreshold): with decisions a routine's user holds that place (Sim's
+//   routine places, docs/society-sim.md «Решения»), as it holds a mobsi of its point.
+constexpr int64_t FreePointCm = 800;
 
 // A state the engine passes to by itself once the NPC is at its point (the scripts start it with AI_StartState).
 struct FollowState { const char* from; const char* to; };
@@ -261,6 +265,11 @@ struct World {
   // whose waynet point it is. Encoded by TargetPoint.
   std::vector<uint32_t>    targetBegin, targets;
   std::vector<uint16_t>    targetKind;
+  // The places a routine's user may hold where it stands, by point, CSR, nearest first, each with its kind (listed
+  // kinds only, encoded by TargetPoint): a freepoint is its own place; a waynet point has its kinded mobsi
+  // (objects[].waypoint) and the kinded freepoints within FreePointCm of it.
+  std::vector<uint32_t>    spotBegin, spots;
+  std::vector<uint16_t>    spotKind;
   // Needs in use: [npc × needs] 1 when a way to fill the need (its routine's own states, or an option it may use) is
   // within the travel limit of a point of its routine (start_waypoint without one); a need without a way neither
   // falls nor counts. A need of zero decay (faith of guild weight 0) is in use and never falls. Empty without
@@ -361,6 +370,11 @@ enum class EventKind : uint8_t {
   ActionChosen      = 8, // a = kind, b = point, c = object; reason = who chose (Chooser)
   ActionFailed      = 9, // a = kind, b = point, c = object; reason = FailReason
   ActivityFinished  = 10,// a = kind, b = point, c = object; reason = FinishReason
+  // A place the routine uses (journal v5, only with decisions): the NPC stands at it doing its kind's state, or lets it
+  // go; a = kind, b = point, c = object (NoObject for a freepoint). Places count the routine's users as they count the
+  // chosen activities.
+  PlaceHeld         = 11,
+  PlaceReleased     = 12,
   };
 
 enum class ActivityReason : uint8_t {
@@ -404,6 +418,7 @@ enum class Chooser : uint8_t {
 enum class FailReason : uint8_t {
   Taken       = 1, // full: an earlier choice of the same batch took the last place
   Interrupted = 2, // an anchor entry began on the way to it
+  Evicted     = 3, // the place's routine user came to it while the NPC was on the way (journal v5)
   };
 
 enum class FinishReason : uint8_t {
@@ -411,6 +426,8 @@ enum class FinishReason : uint8_t {
   MaxTime  = 1, // its kind's longest time
   Switched = 2, // a decision chose something else
   Anchor   = 3, // an anchor entry (or a guard's post) began without a critical need
+  Evicted  = 4, // the place's routine user came to it (journal v5)
+  AboveLow = 5, // in an anchor entry: its needs that were low or critical are above low (journal v5; v4 wrote 0)
   };
 
 const char* eventName(EventKind kind);
@@ -541,10 +558,14 @@ struct State {
   std::vector<Time>     actBegin;   // when it began at its place, -1 on the way
   std::vector<Time>     actMin;     // its least time is over
   std::vector<Time>     actEnd;     // its end: needs at the setpoint or its kind's longest time
-  std::vector<uint8_t>  actFull;    // the end is the setpoint (FinishReason::Setpoint), not the longest time
+  std::vector<uint8_t>  actFinish;  // the FinishReason at actEnd: Setpoint, AboveLow (an anchor entry) or MaxTime
   std::vector<uint64_t> actSeq;     // the sequence number + 1 of its activity event in force, 0 for none
-  std::vector<uint16_t> objectUse;  // by object: holders, reservations included
+  std::vector<uint16_t> objectUse;  // by object: holders — the routine's users, chosen activities, reservations
   std::vector<uint16_t> pointUse;   // by point: the same
+  std::vector<uint32_t> routineTarget; // the place the routine uses now (World::targets' encoding), NoObject for none
+  std::vector<uint16_t> routineKind;   // that place's kind
+  std::vector<uint8_t>  routineWait;   // 1: doing a kind's state at its entry's point, every place full of the routine's
+                                       // users; it takes one as it goes free
   std::vector<Time>     forecastFor; // the start of the anchor entry a forecast decision was asked for, -1 none
   std::vector<uint32_t> asked;      // NPCs with `want`, in the order asked
   DecisionBatch         batch;      // the rows handed out and not answered yet

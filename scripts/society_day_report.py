@@ -6,15 +6,17 @@
 
 Runs `gothic-society-day --config` on the export WORLD: the routine policy and the teacher for a day and for
 7 days, the random policy for 7 days, the teacher's day once more for each need with that need at 0 for everyone at
-the start, and the teacher's 7 days without the characters' cards. Reads the journals v3/v4 and the marks and
+the start, and the teacher's 7 days without the characters' cards. Reads the journals v3/v5 and the marks and
 measures, for the people who decide (a person with a routine, not protected, of a guild that decides, not on a post
 all day while posts do not release for needs):
 
 - hours in critical a day by need: median and most over person-days (thresholds ≤ 1 h and ≤ 4 h);
 - choices out of the mask, checked anew from the export and the config: the owner (the mobsi's, otherwise the
-  room's), the guilds of the kind, the anchor entry without a critical need the option fills, a chooser that does
-  not decide, the walk over the travel limit (threshold 0);
-- holders of a place over its kind's capacity, reservations included (threshold 0);
+  room's; outdoors and places are public, own rooms only own or the guild's), the guilds of the kind, the anchor
+  entry without a critical need the option fills, a chooser that does not decide, the whole walk over the travel
+  limit — the rest of a walk under way and the walk from its end to the place, from the export (threshold 0);
+- holders of a place over its kind's capacity: the routine's users (place_held, place_released) and the chosen
+  activities with their reservations (threshold 0);
 - the protected NPCs' marks against the routine run (threshold 100%);
 - the share of anchor time spent by the routine (threshold ≥ 95%);
 - changes of activity per NPC in a game hour, p95 over NPC-hours (threshold ≤ 3);
@@ -31,7 +33,9 @@ a threshold fails.
 from __future__ import annotations
 
 import argparse
+import heapq
 import json
+import math
 import re
 import statistics
 import struct
@@ -42,13 +46,17 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 JOURNAL_HEADER = struct.Struct("<8sIIQQqIII")
+FLOAT32 = struct.Struct("<f")
+NEAR_POINT_CM = 500  # Society::NearPointCm: a place this near is done where the NPC stands
 JOURNAL_RECORD = struct.Struct("<IIBBHIII")
 ROUTINE_ENTRY, TRAVEL_STARTED, ARRIVED, ACTIVITY_STARTED, TELEPORTED, NEED_THRESHOLD = 1, 2, 3, 4, 5, 6
 DECISION_REQUESTED, ACTION_CHOSEN, ACTION_FAILED, ACTIVITY_FINISHED = 7, 8, 9, 10
+PLACE_HELD, PLACE_RELEASED = 11, 12
 DOWN = 0
 LOW, CRITICAL = 1, 2
 CHOSEN, FOLLOW_ON, START_STATE = 3, 2, 1
-TAKEN, INTERRUPTED = 1, 2
+TAKEN, INTERRUPTED, EVICTED = 1, 2, 3
+FINISHED = ["setpoint", "max time", "switched", "anchor", "evicted", "above low"]
 NO_KIND = 0xFFFF
 NO_OBJECT = 0xFFFFFFFF
 DAY = 24 * 3600
@@ -73,8 +81,9 @@ THRESHOLDS = {
 def read_journal(path: Path) -> dict:
     data = path.read_bytes()
     magic, version, size, world_hash, seed, start, npcs, _points, states = JOURNAL_HEADER.unpack_from(data)
-    if magic != b"GSOCJRNL" or version not in (3, 4) or size != JOURNAL_RECORD.size:
-        raise SystemExit(f"{path}: not a society journal v3 or v4: version {version}")
+    # v4 (decisions before the places counted the routine's users) is not read: its holders are not all there.
+    if magic != b"GSOCJRNL" or version not in (3, 5) or size != JOURNAL_RECORD.size:
+        raise SystemExit(f"{path}: not a society journal v3 or v5: version {version}")
     at = JOURNAL_HEADER.size
 
     def names(count: int) -> list[str]:
@@ -91,7 +100,7 @@ def read_journal(path: Path) -> dict:
     at += 12
     need_ids = names(needs)
     policy, menu = "routine", 0
-    if version == 4:
+    if version == 5:
         (n,) = struct.unpack_from("<H", data, at)
         policy = data[at + 2 : at + 2 + n].decode()
         at += 2 + n
@@ -151,6 +160,65 @@ def run_tool(tool: Path, world: Path, config: Path, out: Path, days: int, seed: 
     }
 
 
+def llround(x: float) -> int:
+    """C's llround for x >= 0: halves away from zero (Python's round() goes to even)."""
+    q = math.floor(x)
+    return int(q) + (1 if x - q >= 0.5 else 0)
+
+
+class Walks:
+    """Game seconds of walking to an option as the core's menu counts them (Paths::length, travelSeconds), from the
+    export alone: the shortest waynet path in integer cm, a freepoint through its near_waypoint and the straight
+    segment to it (float positions, as the core reads them), length / own walk speed × clock rounded to the second;
+    none to the point it stands at or within NearPointCm. Dijkstra from each waynet point once, bounded by the
+    longest walk any NPC makes in the travel limit: what lies beyond is over the limit for everyone."""
+
+    def __init__(self, world: dict, limit: int):
+        pts = world["waypoints"]
+        self.pos = [tuple(FLOAT32.unpack(FLOAT32.pack(v))[0] for v in p["pos"]) for p in pts]
+        self.graph = [p["near_waypoint"] if p["freepoint"] else p["id"] for p in pts]
+        self.graph_cm = [llround(math.sqrt(self.dist2(i, self.graph[i]))) if p["freepoint"] else 0
+                         for i, p in enumerate(pts)]
+        self.edges: dict[int, list] = defaultdict(list)
+        for a, b, cm in world["edges"]:
+            self.edges[a].append((b, cm))
+        self.clock = world["clock"]["game_seconds_per_real_second"]
+        median = world["movement"]["walk_cm_per_s"]
+        self.walk = [n["walk_cm_per_s"] if n.get("walk_cm_per_s", 0) > 0 else median for n in world["npcs"]]
+        self.bound = (limit + 1) * max(self.walk) / self.clock + 1000
+        self.from_point: dict[int, dict] = {}
+
+    def dist2(self, a: int, b: int) -> float:
+        p, q = self.pos[a], self.pos[b]
+        dx, dy, dz = p[0] - q[0], p[1] - q[1], p[2] - q[2]
+        return (dx * dx + dy * dy) + dz * dz
+
+    def seconds(self, npc: int, origin: int, point: int) -> float:
+        if point == origin:
+            return 0
+        g = self.graph[origin]
+        if g not in self.from_point:
+            dist = {g: 0}
+            heap = [(0, g)]
+            while heap:
+                d, u = heapq.heappop(heap)
+                if d > dist[u]:
+                    continue
+                for v, cm in self.edges[u]:
+                    nd = d + cm
+                    if nd <= self.bound and nd < dist.get(v, nd + 1):
+                        dist[v] = nd
+                        heapq.heappush(heap, (nd, v))
+            self.from_point[g] = dist
+        d = self.from_point[g].get(self.graph[point])
+        if d is None:
+            return math.inf
+        cm = self.graph_cm[origin] + d + self.graph_cm[point]
+        if cm <= NEAR_POINT_CM and self.dist2(point, origin) <= NEAR_POINT_CM * NEAR_POINT_CM:
+            return 0
+        return llround(cm / self.walk[npc] * self.clock) if cm > 0 else 0
+
+
 class Rules:
     """What the export and the config say, read anew: who decides, owners, kinds, states."""
 
@@ -165,6 +233,7 @@ class Rules:
         dec = config["decisions"]
         self.dec = dec
         self.limit = round(dec["travel_limit_min"] * 60)
+        self.walks = Walks(world, self.limit)
         protected = []
         if dec.get("protected"):
             path = Path(dec["protected"])
@@ -295,14 +364,18 @@ def critical_hours(journal: dict, people: set[int], days: int, unused: set | Non
 
 
 def check_choices(journal: dict, rules: Rules) -> dict:
-    """Every choice of a policy against the masks' rules read anew; holders against capacity."""
+    """Every choice of a policy against the masks' rules read anew; the holders of each place — the routine's users
+    (place_held, place_released) and chosen activities with their reservations — against its capacity; the whole walk
+    to a chosen place (the rest of a walk under way included) against the travel limit."""
     states = journal["states"]
     needs = journal["needs"]
     world = rules.world
     zone = defaultdict(lambda: [0] * len(needs))
     entry_state: dict[int, str] = {}
-    holds: dict[int, set] = defaultdict(set)
-    holders: Counter = Counter()
+    held: dict[tuple, Counter] = defaultdict(Counter)  # place -> NPC -> ways it holds it (chosen, routine)
+    chosen_of: dict[int, set] = defaultdict(set)  # NPC -> its chosen places (old and new while switching)
+    walking: dict[int, tuple] = {}  # NPC -> (arrival, end) of its walk under way
+    standing: dict[int, int] = {}  # NPC -> the point it stands at (or its walk under way began at)
     peak: dict[tuple, int] = {}
     over = []
     bad = Counter()
@@ -310,21 +383,48 @@ def check_choices(journal: dict, rules: Rules) -> dict:
     chosen = Counter()
     failed = Counter()
     finished = Counter()
+    routine_holds = 0
     records = journal["records"]
-
     def target_of(b: int, c: int) -> tuple:
         return ("object", c) if c != NO_OBJECT else ("point", b)
 
-    def release(npc: int, target: tuple) -> None:
-        if target in holds[npc]:
-            holds[npc].discard(target)
-            holders[target] -= 1
+    def add(npc: int, target: tuple, cap: int, t: int) -> None:
+        held[target][npc] += 1
+        n = sum(1 for v in held[target].values() if v > 0)
+        peak[target] = max(peak.get(target, 0), n)
+        if n > cap:
+            over.append({"t": t, "target": target, "holders": n, "capacity": cap, "npc": rules.npcs[npc]["key"]})
+
+    def remove(npc: int, target: tuple) -> None:
+        if held[target][npc] > 0:
+            held[target][npc] -= 1
+
+    def whole_walk(npc: int, t: int, point: int) -> float:
+        """Game seconds from a choice at `t` until the NPC stands at the chosen place, as the menu counts it: a walk
+        under way goes on to its end, then the walk from there to the place (from the export, Walks)."""
+        if npc in walking and walking[npc][0] > t:
+            arrive, end = walking[npc]
+            return arrive - t + rules.walks.seconds(npc, end, point)
+        return rules.walks.seconds(npc, standing[npc], point)
 
     for idx, (t, npc, kind, reason, _e, a, b, c) in enumerate(records):
         if kind == NEED_THRESHOLD:
             zone[npc][a] += 1 if reason == DOWN else -1
         elif kind == ROUTINE_ENTRY:
             entry_state[npc] = states[a]
+        elif kind == TRAVEL_STARTED:
+            walking[npc] = (c, b)
+        elif kind == ARRIVED:
+            walking.pop(npc, None)
+            standing[npc] = a
+        elif kind == TELEPORTED:
+            walking.pop(npc, None)
+            standing[npc] = b
+        elif kind == PLACE_HELD:
+            routine_holds += 1
+            add(npc, target_of(b, c), rules.kinds[a]["capacity"], t)
+        elif kind == PLACE_RELEASED:
+            remove(npc, target_of(b, c))
         elif kind == ACTION_CHOSEN:
             if a == NO_KIND:
                 chosen["routine"] += 1
@@ -341,7 +441,13 @@ def check_choices(journal: dict, rules: Rules) -> dict:
             if reason == 0:
                 problems.append("the core chose a non-routine option itself")
             owner = rules.object_owner[c] if c != NO_OBJECT else rules.point_owner[b]
-            if not rules.access_ok(npc, owner):
+            at = k.get("at")
+            if at in ("outdoors", "places"):
+                pass
+            elif at == "own_rooms":
+                if owner == (None, None) or not rules.access_ok(npc, owner):
+                    problems.append("not its own or its guild's room")
+            elif not rules.access_ok(npc, owner):
                 problems.append("someone else's")
             if k.get("guilds") and rules.npcs[npc]["guild"] not in k["guilds"]:
                 problems.append("guild may not")
@@ -354,40 +460,38 @@ def check_choices(journal: dict, rules: Rules) -> dict:
                     problems.append("anchor entry without a critical need it fills")
             if c != NO_OBJECT and world["objects"][c]["waypoint"] != b:
                 problems.append("not at its object's point")
-            if not taken:
-                walk = next((r for r in after if r[2] == TRAVEL_STARTED), None)
-                if walk is not None and walk[7] - t > rules.limit:
-                    problems.append("walk over the travel limit")
+            if not taken and target not in chosen_of[npc] and whole_walk(npc, t, b) > rules.limit:
+                problems.append("walk over the travel limit")
             if problems:
                 for p in problems:
                     bad[p] += 1
                 if len(examples) < 20:
                     examples.append({"t": t, "npc": rules.npcs[npc]["key"], "kind": k["kind"], "problems": problems})
-            if taken or target in holds[npc]:
+            if taken or target in chosen_of[npc]:
                 continue
-            holds[npc].add(target)
-            holders[target] += 1
-            cap = k["capacity"]
-            peak[target] = max(peak.get(target, 0), holders[target])
-            if holders[target] > cap:
-                over.append({"t": t, "target": target, "holders": holders[target], "capacity": cap})
+            chosen_of[npc].add(target)
+            add(npc, target, k["capacity"], t)
         elif kind == ACTION_FAILED:
             failed[reason] += 1
-            if reason == INTERRUPTED:
-                release(npc, target_of(b, c))
+            if reason in (INTERRUPTED, EVICTED) and target_of(b, c) in chosen_of[npc]:
+                chosen_of[npc].discard(target_of(b, c))
+                remove(npc, target_of(b, c))
         elif kind == ACTIVITY_FINISHED:
             finished[reason] += 1
-            release(npc, target_of(b, c))
+            if target_of(b, c) in chosen_of[npc]:
+                chosen_of[npc].discard(target_of(b, c))
+                remove(npc, target_of(b, c))
     return {
         "choices": dict(chosen),
+        "routine_holds": routine_holds,
         "out_of_mask": sum(bad.values()),
         "out_of_mask_by_rule": dict(bad),
         "out_of_mask_examples": examples,
         "over_capacity": len(over),
         "over_capacity_examples": over[:20],
         "most_holders": max(peak.values()) if peak else 0,
-        "failed": {("taken" if r == TAKEN else "interrupted"): n for r, n in failed.items()},
-        "finished": {["setpoint", "max time", "switched", "anchor"][r]: n for r, n in finished.items()},
+        "failed": {{TAKEN: "taken", INTERRUPTED: "interrupted", EVICTED: "evicted"}[r]: n for r, n in failed.items()},
+        "finished": {FINISHED[r]: n for r, n in finished.items()},
     }
 
 
@@ -664,7 +768,7 @@ def main() -> int:
             "anchor": anchor_time(j, rules, people, days),
             "changes": changes(j, people, days),
         }
-        if j["version"] == 4:
+        if j["version"] == 5:
             entry["choices"] = check_choices(j, rules)
         report["runs"][name] = entry
         print(name, "done", file=sys.stderr)
@@ -747,6 +851,21 @@ def main() -> int:
     (args.out / "day-report.json").write_text(json.dumps(report, ensure_ascii=False, indent=1, default=str) + "\n")
     md = ["# Отчёт суток: ограды", "", "| Проверка | Значение | Итог |", "|---|---|---|"]
     md += [f"| {c['what']} | {c['value']} | {'да' if c['ok'] else '**нет**'} |" for c in checks]
+    md += ["", "## Места и концы занятий", "",
+           "Держатели места — пользователи распорядка (`place_held`) и выбранные занятия с бронью. Выселен — "
+           "выбранное занятие уступило место пришедшему пользователю распорядка.", "",
+           "| Прогон | взято распорядком | больше всего держателей | сверх вместимости | выселено в пути / на месте "
+           "| конец: уставка / выше «низко» / наибольшее время / другой выбор / якорь | не удалось: занято / якорь |",
+           "|---|---|---|---|---|---|---|"]
+    for name, r in report["runs"].items():
+        if "choices" not in r:
+            continue
+        ch = r["choices"]
+        f, fl = ch["finished"], ch["failed"]
+        md.append(f"| {name} | {ch['routine_holds']} | {ch['most_holders']} | {ch['over_capacity']} | "
+                  f"{fl.get('evicted', 0)} / {f.get('evicted', 0)} | {f.get('setpoint', 0)} / {f.get('above low', 0)} / "
+                  f"{f.get('max time', 0)} / {f.get('switched', 0)} / {f.get('anchor', 0)} | "
+                  f"{fl.get('taken', 0)} / {fl.get('interrupted', 0)} |")
     md += ["", "## Часы в «критично» в сутки у решающих людей (человеко-сутки: медиана, p90, максимум)", ""]
     md += ["| Прогон | " + " | ".join(needs) + " |", "|---" * (len(needs) + 1) + "|"]
     for name, r in report["runs"].items():

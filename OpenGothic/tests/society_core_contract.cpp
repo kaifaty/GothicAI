@@ -19,7 +19,13 @@
 //   the same tail; a choice out of its mask throws; a policy that always takes the routine gives the routine-only
 //   run (events by NPC and marks); with the teacher the NPCs that never decide (the protected, those without a
 //   routine, monsters) do their routine-only day event for event and mark for mark; a day with the teacher takes
-//   under 0.5 s; gothic-society-day --policy teacher plays 7 days.
+//   under 0.5 s; gothic-society-day --policy teacher plays 7 days;
+// - places on a small world of its own with decisions: a routine's user holds its place (closed to a decider), lets it
+//   go when it leaves (it opens, or a routine's user waiting there takes it at once) and holds none while its next entry
+//   waits for a decision; a chosen activity there gives way to it, on the way and at the place, and its NPC is asked
+//   again at that second and does what it chooses then; holders within capacity; closed places do not hide an allowed one farther away; the travel
+//   limit holds for the whole walk (an option's travel is the rest of a walk under way and the walk from its end); an activity that broke into an anchor entry ends as its need rises above low
+//   (AboveLow), not at the setpoint; the routine-only run writes no place events.
 #include "society/journal.h"
 #include "society/society.h"
 
@@ -804,6 +810,332 @@ void checkNeedRules(const fs::path& root) {
               "refused: checked on a world of 4 NPCs\n",sizeof(wants)/sizeof(wants[0]),sizeof(broken)/sizeof(broken[0]));
   }
 
+// --- Places on a small world with decisions ------------------------------------------------------------------
+
+// Six waynet components, one rule each; clock 1 and walk 1 m per game second, travel limit 10 min (600 m). Everyone's
+// sleep starts critical (0.05), so each decider is asked at 08:00. Guild 59 has no needs: R1-R3 only do their routine.
+// 1. R1 sleeps at H1 (bed B1, capacity 1) until 10:00, S1 sits at S1 on FP_SIT_1 3 m off until 10:00: D1 at A1 sees both
+//    closed at 08:00, their routine users hold them (a freepoint within FreePointCm of the entry's point, as the engine's
+//    AI takes it). W1 goes to bed at H1 all day and waits for B1: R1's leaving at 10:00:20 gives it to W1 at once, S1's
+//    frees FP_SIT_1. D1 sits on its chair C1 by its routine; its next entry at 10:30:20 waits for its decision without
+//    holding C1, and D1 sees B1 closed (W1) and FP_SIT_1 open.
+// 2. D2 takes bed B2 at 08:00 and sleeps; R2 goes to bed there at 09:00:20: D2's activity gives way (Evicted).
+// 3. D3 walks 8 min to bed B3; R3 reaches it at 08:02:40: D3 fails on the way (Evicted).
+// 4. D4 walks P1 -> P2 (8 min) from 08:30:20; at 08:33:20 its next free entry asks while 5 min of the walk are left:
+//    chair CQ 6 min past P2 is 11 min away in all, over the limit; chair CP2 at P2 is 5 min, chair CR 100 m off P2
+//    6 min 40 s.
+// 5. D5 works (an anchor entry) with sleep critical, takes bed B5 and sleeps until sleep is above low: AboveLow.
+// 6. D6 has four chairs of a stranger within 40 m and five public ones at 300 m: the closed ones do not hide them, and
+//    the menu offers four of them.
+constexpr const char* PlacesWorld = R"({"format":"society-world","version":2,"world":"PLACES.ZEN","data_fingerprint":"x",
+"engine_commit":"x","start":{"day":0,"minute":480},"clock":{"game_seconds_per_real_second":1.0},
+"movement":{"walk_cm_per_s":100.0,"run_cm_per_s":300.0,"source":"test"},
+"waypoints":[
+{"id":0,"name":"H1","pos":[0,0,0],"freepoint":false,"near_waypoint":null},
+{"id":1,"name":"A1","pos":[2000,0,0],"freepoint":false,"near_waypoint":null},
+{"id":2,"name":"H2","pos":[100000,0,0],"freepoint":false,"near_waypoint":null},
+{"id":3,"name":"A2","pos":[102000,0,0],"freepoint":false,"near_waypoint":null},
+{"id":4,"name":"X2","pos":[98000,0,0],"freepoint":false,"near_waypoint":null},
+{"id":5,"name":"H3","pos":[200000,0,0],"freepoint":false,"near_waypoint":null},
+{"id":6,"name":"A3","pos":[248000,0,0],"freepoint":false,"near_waypoint":null},
+{"id":7,"name":"X3","pos":[198000,0,0],"freepoint":false,"near_waypoint":null},
+{"id":8,"name":"P1","pos":[300000,0,0],"freepoint":false,"near_waypoint":null},
+{"id":9,"name":"P2","pos":[348000,0,0],"freepoint":false,"near_waypoint":null},
+{"id":10,"name":"Q","pos":[384000,0,0],"freepoint":false,"near_waypoint":null},
+{"id":11,"name":"P5","pos":[500000,0,0],"freepoint":false,"near_waypoint":null},
+{"id":12,"name":"H5","pos":[502000,0,0],"freepoint":false,"near_waypoint":null},
+{"id":13,"name":"P6","pos":[700000,0,0],"freepoint":false,"near_waypoint":null},
+{"id":14,"name":"K1","pos":[701000,0,0],"freepoint":false,"near_waypoint":null},
+{"id":15,"name":"K2","pos":[702000,0,0],"freepoint":false,"near_waypoint":null},
+{"id":16,"name":"K3","pos":[703000,0,0],"freepoint":false,"near_waypoint":null},
+{"id":17,"name":"K4","pos":[704000,0,0],"freepoint":false,"near_waypoint":null},
+{"id":18,"name":"F6","pos":[730000,0,0],"freepoint":false,"near_waypoint":null},
+{"id":19,"name":"S1","pos":[2000,3000,0],"freepoint":false,"near_waypoint":null},
+{"id":20,"name":"FP_SIT_1","pos":[2300,3000,0],"freepoint":true,"near_waypoint":19},
+{"id":21,"name":"R","pos":[348000,10000,0],"freepoint":false,"near_waypoint":null}],
+"edges":[[0,1,2000],[1,0,2000],[1,19,3000],[2,3,2000],[2,4,2000],[3,2,2000],[4,2,2000],[5,6,48000],[5,7,2000],[6,5,48000],[7,5,2000],
+[8,9,48000],[9,8,48000],[9,10,36000],[9,21,10000],[10,9,36000],[11,12,2000],[12,11,2000],[13,14,1000],[14,13,1000],[14,15,1000],
+[15,14,1000],[15,16,1000],[16,15,1000],[16,17,1000],[17,16,1000],[17,18,26000],[18,17,26000],[19,1,3000],[21,9,10000]],
+"objects":[
+{"id":0,"vob":"B1","scheme":"BEDHIGH","focus":"","pos":[0,0,0],"waypoint":0,"owner_npc":null,"owner_guild":null,"container":false},
+{"id":1,"vob":"C1","scheme":"CHAIR","focus":"","pos":[2000,0,0],"waypoint":1,"owner_npc":null,"owner_guild":null,"container":false},
+{"id":2,"vob":"B2","scheme":"BEDHIGH","focus":"","pos":[100000,0,0],"waypoint":2,"owner_npc":null,"owner_guild":null,"container":false},
+{"id":3,"vob":"B3","scheme":"BEDHIGH","focus":"","pos":[200000,0,0],"waypoint":5,"owner_npc":null,"owner_guild":null,"container":false},
+{"id":4,"vob":"CP2","scheme":"CHAIR","focus":"","pos":[348000,0,0],"waypoint":9,"owner_npc":null,"owner_guild":null,"container":false},
+{"id":5,"vob":"CQ","scheme":"CHAIR","focus":"","pos":[384000,0,0],"waypoint":10,"owner_npc":null,"owner_guild":null,"container":false},
+{"id":6,"vob":"B5","scheme":"BEDHIGH","focus":"","pos":[502000,0,0],"waypoint":12,"owner_npc":null,"owner_guild":null,"container":false},
+{"id":7,"vob":"CK1","scheme":"CHAIR","focus":"","pos":[701000,0,0],"waypoint":14,"owner_npc":"STRANGER","owner_guild":null,"container":false},
+{"id":8,"vob":"CK2","scheme":"CHAIR","focus":"","pos":[702000,0,0],"waypoint":15,"owner_npc":"STRANGER","owner_guild":null,"container":false},
+{"id":9,"vob":"CK3","scheme":"CHAIR","focus":"","pos":[703000,0,0],"waypoint":16,"owner_npc":"STRANGER","owner_guild":null,"container":false},
+{"id":10,"vob":"CK4","scheme":"CHAIR","focus":"","pos":[704000,0,0],"waypoint":17,"owner_npc":"STRANGER","owner_guild":null,"container":false},
+{"id":11,"vob":"CF6","scheme":"CHAIR","focus":"","pos":[730000,0,0],"waypoint":18,"owner_npc":null,"owner_guild":null,"container":false},
+{"id":12,"vob":"CR","scheme":"CHAIR","focus":"","pos":[348000,10000,0],"waypoint":21,"owner_npc":null,"owner_guild":null,"container":false},
+{"id":13,"vob":"CF6B","scheme":"CHAIR","focus":"","pos":[730000,100,0],"waypoint":18,"owner_npc":null,"owner_guild":null,"container":false},
+{"id":14,"vob":"CF6C","scheme":"CHAIR","focus":"","pos":[730000,200,0],"waypoint":18,"owner_npc":null,"owner_guild":null,"container":false},
+{"id":15,"vob":"CF6D","scheme":"CHAIR","focus":"","pos":[730000,300,0],"waypoint":18,"owner_npc":null,"owner_guild":null,"container":false},
+{"id":16,"vob":"CF6E","scheme":"CHAIR","focus":"","pos":[730000,400,0],"waypoint":18,"owner_npc":null,"owner_guild":null,"container":false}],
+"npcs":[
+{"id":"R1","key":"R1#0","name":"r","guild":59,"person":true,"start_waypoint":0,"start_aistate":null,"walk_cm_per_s":0.0,"mm_schedule":null,
+ "routine":[{"start":480,"end":600,"state":"ZS_GOTOBED","waypoint":0,"waypoint_name":"H1"},{"start":600,"end":480,"state":"ZS_STAND","waypoint":0,"waypoint_name":"H1"}]},
+{"id":"W1","key":"W1#0","name":"r","guild":59,"person":true,"start_waypoint":0,"start_aistate":null,"walk_cm_per_s":0.0,"mm_schedule":null,
+ "routine":[{"start":480,"end":1200,"state":"ZS_GOTOBED","waypoint":0,"waypoint_name":"H1"},{"start":1200,"end":480,"state":"ZS_GOTOBED","waypoint":0,"waypoint_name":"H1"}]},
+{"id":"S1","key":"S1#0","name":"s","guild":59,"person":true,"start_waypoint":19,"start_aistate":null,"walk_cm_per_s":0.0,"mm_schedule":null,
+ "routine":[{"start":480,"end":600,"state":"ZS_SIT_GROUND","waypoint":19,"waypoint_name":"S1"},{"start":600,"end":480,"state":"ZS_STAND","waypoint":19,"waypoint_name":"S1"}]},
+{"id":"D1","key":"D1#0","name":"d","guild":1,"person":true,"start_waypoint":1,"start_aistate":null,"walk_cm_per_s":0.0,"mm_schedule":null,
+ "routine":[{"start":480,"end":630,"state":"ZS_SIT_CHAIR","waypoint":1,"waypoint_name":"A1"},{"start":630,"end":1200,"state":"ZS_STAND","waypoint":1,"waypoint_name":"A1"},
+  {"start":1200,"end":480,"state":"ZS_STAND","waypoint":1,"waypoint_name":"A1"}]},
+{"id":"R2","key":"R2#0","name":"r","guild":59,"person":true,"start_waypoint":4,"start_aistate":null,"walk_cm_per_s":0.0,"mm_schedule":null,
+ "routine":[{"start":480,"end":540,"state":"ZS_STAND","waypoint":4,"waypoint_name":"X2"},{"start":540,"end":480,"state":"ZS_GOTOBED","waypoint":2,"waypoint_name":"H2"}]},
+{"id":"D2","key":"D2#0","name":"d","guild":1,"person":true,"start_waypoint":3,"start_aistate":null,"walk_cm_per_s":0.0,"mm_schedule":null,
+ "routine":[{"start":480,"end":1200,"state":"ZS_STAND","waypoint":3,"waypoint_name":"A2"},{"start":1200,"end":480,"state":"ZS_STAND","waypoint":3,"waypoint_name":"A2"}]},
+{"id":"R3","key":"R3#0","name":"r","guild":59,"person":true,"start_waypoint":7,"start_aistate":null,"walk_cm_per_s":0.0,"mm_schedule":null,
+ "routine":[{"start":480,"end":482,"state":"ZS_STAND","waypoint":7,"waypoint_name":"X3"},{"start":482,"end":480,"state":"ZS_GOTOBED","waypoint":5,"waypoint_name":"H3"}]},
+{"id":"D3","key":"D3#0","name":"d","guild":1,"person":true,"start_waypoint":6,"start_aistate":null,"walk_cm_per_s":0.0,"mm_schedule":null,
+ "routine":[{"start":480,"end":1200,"state":"ZS_STAND","waypoint":6,"waypoint_name":"A3"},{"start":1200,"end":480,"state":"ZS_STAND","waypoint":6,"waypoint_name":"A3"}]},
+{"id":"D4","key":"D4#0","name":"d","guild":1,"person":true,"start_waypoint":8,"start_aistate":null,"walk_cm_per_s":0.0,"mm_schedule":null,
+ "routine":[{"start":480,"end":510,"state":"ZS_STAND","waypoint":8,"waypoint_name":"P1"},{"start":510,"end":513,"state":"ZS_STAND","waypoint":9,"waypoint_name":"P2"},
+  {"start":513,"end":480,"state":"ZS_STAND","waypoint":9,"waypoint_name":"P2"}]},
+{"id":"D5","key":"D5#0","name":"d","guild":1,"person":true,"start_waypoint":11,"start_aistate":null,"walk_cm_per_s":0.0,"mm_schedule":null,
+ "routine":[{"start":480,"end":1200,"state":"ZS_WORK","waypoint":11,"waypoint_name":"P5"},{"start":1200,"end":480,"state":"ZS_WORK","waypoint":11,"waypoint_name":"P5"}]},
+{"id":"D6","key":"D6#0","name":"d","guild":1,"person":true,"start_waypoint":13,"start_aistate":null,"walk_cm_per_s":0.0,"mm_schedule":null,
+ "routine":[{"start":480,"end":1200,"state":"ZS_STAND","waypoint":13,"waypoint_name":"P6"},{"start":1200,"end":480,"state":"ZS_STAND","waypoint":13,"waypoint_name":"P6"}]}
+]})";
+
+constexpr const char* PlacesConfig = R"({"format":"society-config","version":1,
+"needs":[{"id":"sleep","name":"s","empty_hours":20,"low":0.35,"critical":0.1,"start":0.05,"awake_only":true}],
+"states":[
+ {"state":"ZS_GOTOBED","kind":"anchor","asleep":false,"fill_hours":{}},
+ {"state":"ZS_SIT_CHAIR","kind":"free","asleep":false,"fill_hours":{}},
+ {"state":"ZS_SIT_GROUND","kind":"free","asleep":false,"fill_hours":{}},
+ {"state":"ZS_SLEEP","kind":"anchor","asleep":true,"fill_hours":{"sleep":8}},
+ {"state":"ZS_STAND","kind":"free","asleep":false,"fill_hours":{}},
+ {"state":"ZS_WORK","kind":"anchor","asleep":false,"fill_hours":{}}],
+"object_kinds":[
+ {"kind":"bed","schemes":["BEDHIGH"],"freepoints":[],"state":"ZS_SLEEP","fill_hours":{"sleep":8},"capacity":1,"minutes":480},
+ {"kind":"chair","schemes":["CHAIR"],"freepoints":[],"state":"ZS_SIT_CHAIR","fill_hours":{},"capacity":1,"minutes":60},
+ {"kind":"seat","schemes":[],"freepoints":["FP_SIT"],"state":"ZS_SIT_GROUND","fill_hours":{},"capacity":1,"minutes":60}],
+"traits":{"cards":null,"scales":[],"middle":3,"noise":0,"decay":[]},
+"decisions":{"menu":32,"travel_limit_min":10,"min_dwell_min":10,"posts_release_for_needs":false,"post_states":[],
+ "no_needs_guilds":[59],"protected":null,"guild_names":{},
+ "teacher":{"n":4,"m":2,"weights":{},"horizon_min":60,"travel_cost_per_min":0.005,"inertia":0.05,"temperature":0,"top":1}}})";
+
+void checkPlaces() {
+  const auto w = Society::parseWorld(PlacesWorld,PlacesConfig);
+  const auto npc = [&](const char* id) {
+    return uint32_t(std::find(w.npcs.id.begin(),w.npcs.id.end(),std::string(id))-w.npcs.id.begin());
+    };
+  const auto object = [&](const char* vob) {
+    return uint32_t(std::find(w.objects.vob.begin(),w.objects.vob.end(),std::string(vob))-w.objects.vob.begin());
+    };
+  const auto hm = [](int h, int m, int sec = 0) { return Time(h)*3600+Time(m)*60+sec; };
+  const Time limit = w.config.decisions.travelLimit;
+  const uint32_t d1 = npc("D1"), d2 = npc("D2"), d3 = npc("D3"), d4 = npc("D4"), d5 = npc("D5"), d6 = npc("D6");
+  const uint32_t b1 = object("B1"), b2 = object("B2"), b3 = object("B3"), b5 = object("B5"), cq = object("CQ"),
+                 cp2 = object("CP2"), cf6 = object("CF6"), cr = object("CR");
+
+  Society::SimConfig config;
+  config.seed      = Seed;
+  config.decisions = true;
+  auto sim = Society::makeSim(w,config);
+  Society::DecisionBatch batch;
+  std::vector<Society::Choice> choices;
+  std::vector<Society::Event> events;
+  // The place of the routine's user by NPC (place_held, place_released: the mobsi, or the point | TargetPoint): with the
+  // chosen activities they are all the holders.
+  std::vector<uint32_t> held(w.npcs.size(),Society::NoObject);
+  size_t checks = 0, wrongCount = 0, overLimit = 0;
+  const auto drain = [&]() {
+    for(const auto& e:Society::drainEvents(sim)) {
+      events.push_back(e);
+      if(e.kind==Society::EventKind::PlaceHeld)
+        held[e.npc] = e.c!=Society::NoObject ? uint32_t(e.c) : (e.b | Society::TargetPoint);
+      if(e.kind==Society::EventKind::PlaceReleased)
+        held[e.npc] = Society::NoObject;
+      }
+    };
+  // Every place's holders (the mobsi and the freepoint of this world have one kind each): never more than its capacity
+  // (nor under zero, a wrapped count), always the routine's users plus the chosen activities at it.
+  const auto holders = [&]() {
+    ++checks;
+    const auto count = [&](uint32_t target, Society::OptionType type, uint32_t id) {
+      size_t n = 0;
+      for(uint32_t i=0; i<w.npcs.size(); ++i) {
+        n += held[i]==target ? 1 : 0;
+        n += sim.s.mode[i]==uint8_t(Society::Mode::Chosen) && Society::OptionType(sim.s.actType[i])==type &&
+             (type==Society::OptionType::Object ? sim.s.actObject[i] : sim.s.actPoint[i])==id ? 1 : 0;
+        }
+      return n;
+      };
+    for(uint32_t o=0; o<w.objects.size(); ++o)
+      if(sim.s.objectUse[o]>w.config.objectKinds.capacity[w.objectKind[o]] ||
+         sim.s.objectUse[o]!=count(o,Society::OptionType::Object,o))
+        ++wrongCount;
+    for(uint32_t p=0; p<w.points.size(); ++p)
+      if((w.pointKind[p]==Society::NoKind ? sim.s.pointUse[p]>0 : sim.s.pointUse[p]>w.config.objectKinds.capacity[w.pointKind[p]]) ||
+         sim.s.pointUse[p]!=count(p | Society::TargetPoint,Society::OptionType::Point,p))
+        ++wrongCount;
+    };
+  struct Seen { bool row = false; int mask = -1; uint32_t use = 0; };
+  Seen b1Row, fpRow, b1Late, fpLate, cqRow, cfRow;
+  const uint32_t c1 = object("C1");
+  int c1Pending = -1; // C1's holders while D1's entry waits for its decision at 10:30:20
+  const uint32_t fp = uint32_t(std::find(w.points.name.begin(),w.points.name.end(),std::string("FP_SIT_1"))-w.points.name.begin());
+  bool cp2Allowed = false;
+  Time cp2Travel = -1, crTravel = -1, d4RowAt = -1; // CP2's and CR's travel in D4's row on the way, and its time
+  size_t closedChairs = 0, openChairs = 0;
+  std::vector<uint8_t> asked(w.npcs.size(),0);
+  const auto option = [&](size_t r, uint32_t obj) -> int {
+    for(size_t j=0; j<batch.count[r]; ++j)
+      if(batch.menu[r*batch.stride+j].object==obj)
+        return int(j);
+    return -1;
+    };
+  while(Society::advance(sim,batch,hm(14,0))>0) {
+    drain();
+    holders();
+    choices.clear();
+    for(size_t r=0; r<batch.size(); ++r) {
+      const uint32_t i = batch.npc[r];
+      const size_t K = batch.stride;
+      for(size_t j=0; j<batch.count[r]; ++j)
+        overLimit += batch.mask[r*K+j] && batch.menu[r*K+j].kind!=Society::NoKind && batch.menu[r*K+j].travel>limit ? 1 : 0;
+      uint16_t pick = 0;
+      const bool first = !asked[i];
+      asked[i] = 1;
+      if(i==d1 && first) {
+        const int j = option(r,b1);
+        b1Row = {true,j<0 ? -1 : batch.mask[r*K+size_t(j)],j<0 ? 0 : batch.menu[r*K+size_t(j)].use};
+        for(size_t k=0; k<batch.count[r]; ++k)
+          if(batch.menu[r*K+k].type==Society::OptionType::Point && batch.menu[r*K+k].point==fp)
+            fpRow = {true,batch.mask[r*K+k],batch.menu[r*K+k].use};
+        }
+      if(i==d1 && sim.s.now==hm(10,30,20)) {
+        const int j = option(r,b1);
+        b1Late = {true,j<0 ? -1 : batch.mask[r*K+size_t(j)],j<0 ? 0 : batch.menu[r*K+size_t(j)].use};
+        for(size_t k=0; k<batch.count[r]; ++k)
+          if(batch.menu[r*K+k].type==Society::OptionType::Point && batch.menu[r*K+k].point==fp)
+            fpLate = {true,batch.mask[r*K+k],batch.menu[r*K+k].use};
+        c1Pending = (sim.s.flags[i] & Society::PendingStart)!=0 ? int(sim.s.objectUse[c1]) : -1;
+        }
+      if(i==d4 && (sim.s.flags[i] & Society::Moving)!=0) {
+        const int j = option(r,cq), k = option(r,cp2);
+        cqRow = {true,j<0 ? -1 : batch.mask[r*K+size_t(j)],0};
+        cp2Allowed = k>=0 && batch.mask[r*K+size_t(k)];
+        cp2Travel  = k>=0 ? batch.menu[r*K+size_t(k)].travel : -1;
+        const int m = option(r,cr);
+        crTravel   = m>=0 && batch.mask[r*K+size_t(m)] ? batch.menu[r*K+size_t(m)].travel : -1;
+        d4RowAt    = sim.s.now;
+        }
+      if(i==d6 && first) {
+        const int j = option(r,cf6);
+        cfRow = {true,j<0 ? -1 : batch.mask[r*K+size_t(j)],0};
+        for(size_t k=0; k<batch.count[r]; ++k)
+          closedChairs += !batch.mask[r*K+k] && batch.menu[r*K+k].kind!=Society::NoKind ? 1 : 0;
+        for(size_t k=0; k<batch.count[r]; ++k)
+          openChairs += batch.mask[r*K+k] && batch.menu[r*K+k].kind!=Society::NoKind ? 1 : 0;
+        }
+      const uint32_t bed = i==d2 ? b2 : i==d3 ? b3 : i==d5 ? b5 : Society::NoObject;
+      if(bed!=Society::NoObject && first) {
+        const int j = option(r,bed);
+        if(j>=0 && batch.mask[r*K+size_t(j)])
+          pick = uint16_t(j);
+        }
+      choices.push_back({i,pick,Society::Chooser::External});
+      }
+    Society::act(sim,choices);
+    drain();
+    holders();
+    }
+  drain();
+  holders();
+  const auto ended = [&](uint32_t i, Society::EventKind kind, uint32_t obj, uint8_t reason) {
+    for(const auto& e:events)
+      if(e.npc==i && e.kind==kind && e.c==obj && e.reason==reason)
+        return e.time;
+    return Time(-1);
+    };
+  using FR = Society::FinishReason;
+  const Time evictedAt   = ended(d2,Society::EventKind::ActivityFinished,b2,uint8_t(FR::Evicted));
+  const Time failedAt    = ended(d3,Society::EventKind::ActionFailed,b3,uint8_t(Society::FailReason::Evicted));
+  const Time aboveLowAt  = ended(d5,Society::EventKind::ActivityFinished,b5,uint8_t(FR::AboveLow));
+  const Time setpointAt  = ended(d5,Society::EventKind::ActivityFinished,b5,uint8_t(FR::Setpoint));
+  // An evicted NPC is asked again at that second and its decision is taken (here the core's: only the routine is open).
+  const auto askedAgain = [&](uint32_t i, Time t) {
+    bool asked = false;
+    for(const auto& e:events)
+      if(e.npc==i && e.time==t) {
+        asked = asked || (e.kind==Society::EventKind::DecisionRequested && (e.reason & Society::CauseFinished)!=0);
+        if(asked && e.kind==Society::EventKind::ActionChosen)
+          return true;
+        }
+    return false;
+    };
+  // The anchor's sleep ends in the second its sleep rises above low (need_threshold up), not later.
+  Time aboveLowCrossing = -1;
+  for(const auto& e:events)
+    if(e.npc==d5 && e.kind==Society::EventKind::NeedThreshold && e.a==0 && e.b==1 &&
+       e.reason==uint8_t(Society::NeedDirection::Up) && aboveLowCrossing<0)
+      aboveLowCrossing = e.time;
+  std::printf("places: B1 and FP_SIT_1 held by their routine users: D1's options %s (use %u) and %s (use %u); at 10:30:20 "
+              "B1 %s (use %u, W1 took it), FP_SIT_1 %s (use %u), D1's own chair %d holders while its entry waits; D2 evicted at its bed %s, D3 on the way %s; "
+              "D4 on the way: CQ (11 min in all) %s, CP2 %s; D6: the public chair behind four closed %s (%zu closed in the "
+              "menu, %zu allowed of 5); D5's anchor sleep ends %s; holders checked %zu times, %zu wrong, %zu allowed options over the "
+              "limit\n",b1Row.mask<0 ? "absent" : b1Row.mask ? "open" : "closed",b1Row.use,
+              fpRow.mask<0 ? "absent" : fpRow.mask ? "open" : "closed",fpRow.use,
+              b1Late.mask<0 ? "absent" : b1Late.mask ? "open" : "closed",b1Late.use,
+              fpLate.mask<0 ? "absent" : fpLate.mask ? "open" : "closed",fpLate.use,c1Pending,
+              evictedAt<0 ? "never" : clock(w,evictedAt).c_str(),failedAt<0 ? "never" : clock(w,failedAt).c_str(),
+              cqRow.mask<0 ? "absent" : cqRow.mask ? "open" : "closed",cp2Allowed ? "open" : "not open",
+              cfRow.mask<0 ? "absent" : cfRow.mask ? "open" : "closed",closedChairs,openChairs,
+              aboveLowAt>=0 ? "above low" : setpointAt>=0 ? "at the setpoint" : "never",checks,wrongCount,overLimit);
+  if(!b1Row.row || b1Row.mask!=0 || b1Row.use!=1 || fpRow.mask!=0 || fpRow.use!=1)
+    fail("places: a bed or a freepoint its routine user is at must be closed to a decider, held once");
+  if(!b1Late.row || b1Late.mask!=0 || b1Late.use!=1)
+    fail("places: a routine's user waiting at a full place must take it as its holder leaves (W1 after R1)");
+  if(!fpLate.row || fpLate.mask!=1 || fpLate.use!=0)
+    fail("places: a place its routine user left must go free and open");
+  if(c1Pending!=0)
+    fail("places: a routine's user waiting for the decision of its next entry must not hold its old place");
+  if(evictedAt!=hm(9,0,40) || failedAt!=hm(8,2,40) || !askedAgain(d2,evictedAt) || !askedAgain(d3,failedAt))
+    fail("places: a chosen activity must give way to the place's routine user, its NPC asked again at once: at the "
+         "place activity_finished Evicted (09:00:40), on the way action_failed Evicted (08:02:40)");
+  if(wrongCount>0)
+    fail("places: a place's holders must be its routine users and chosen activities, within its capacity");
+  // D4 sets off from P1 at 08:30:20 (its entry's end and the start delay) and walks 480 m at 1 m a second: it is at P2,
+  // where CP2 is, at 08:38:20. Asked at 08:33:20, CP2 is the rest of that walk away (300 s), CR 100 m more (400 s).
+  const Time d4Arrive = hm(8,30)+Society::StartDelay+480;
+  if(!cqRow.row || cqRow.mask==1 || !cp2Allowed || overLimit>0 || d4RowAt!=hm(8,33,20) || cp2Travel!=d4Arrive-d4RowAt ||
+     crTravel!=d4Arrive-d4RowAt+100)
+    fail("places: the travel limit holds for the whole walk, the rest of a walk under way included (CP2 "+
+         std::to_string(cp2Travel)+" s and CR "+std::to_string(crTravel)+" s at "+clock(w,d4RowAt)+
+         ", expected 300 and 400 s at +00:33:20)");
+  if(!cfRow.row || cfRow.mask!=1 || closedChairs>2 || openChairs!=4)
+    fail("places: closed places of a kind must not hide an allowed one farther away; the menu offers four allowed and at "
+         "most two closed places of a kind ("+std::to_string(openChairs)+" allowed, "+std::to_string(closedChairs)+" closed)");
+  // The evicted gave their activities up and do what they chose next, the routine: at 14:00 both stand at their own
+  // points (A2, A3) in its ZS_STAND, not in the bed's sleep.
+  const auto doesRoutine = [&](uint32_t i, const char* point) {
+    const auto& st = sim.s;
+    return st.mode[i]==uint8_t(Society::Mode::Routine) && (st.flags[i] & Society::Moving)==0 && st.state[i]!=Society::NoState &&
+           w.stateNames[st.state[i]]=="ZS_STAND" && w.points.name[st.place[i]]==point;
+    };
+  if(!doesRoutine(d2,"A2") || !doesRoutine(d3,"A3"))
+    fail("places: an evicted NPC must give its activity up and do its next choice (D2 and D3 at 14:00: ZS_STAND at A2 "
+         "and A3)");
+  if(aboveLowAt<0 || setpointAt>=0 || aboveLowCrossing<0 || std::abs(aboveLowAt-aboveLowCrossing)>1)
+    fail("places: an activity in an anchor entry ends as its needs rise above low (AboveLow, ±1 s of the crossing), "
+         "not at the setpoint");
+
+  // The routine-only run of the same world writes no place events.
+  std::vector<Society::Event> plain;
+  runJournal(w,Seed,hm(14,0),&plain);
+  for(const auto& e:plain)
+    if(e.kind==Society::EventKind::PlaceHeld || e.kind==Society::EventKind::PlaceReleased) {
+      fail("places: the routine-only run must write no place_held or place_released");
+      break;
+      }
+  }
+
 // --- Needs on the game's data ------------------------------------------------------------------------------
 
 // What the config gives Khorinis; every state a person does must be in its table.
@@ -1164,7 +1496,8 @@ DecidedDay decidedDay(const Society::World& w, Policy p, Time until = -1) {
 
 bool decisionEvent(Society::EventKind k) {
   return k==Society::EventKind::DecisionRequested || k==Society::EventKind::ActionChosen ||
-         k==Society::EventKind::ActionFailed || k==Society::EventKind::ActivityFinished;
+         k==Society::EventKind::ActionFailed || k==Society::EventKind::ActivityFinished ||
+         k==Society::EventKind::PlaceHeld || k==Society::EventKind::PlaceReleased;
   }
 
 // Each NPC's events without the decisions' own, in order (sorted within a second when `loose`: a routine taken
@@ -1456,6 +1789,7 @@ int main() {
     checkTravelTime();
     checkRules();
     checkNeedRules(root);
+    checkPlaces();
     const auto exportPath = root/"world.json";
     const auto counts = exportWorld(gothic,exportPath,root/"export.log");
     const auto from = Clock::now();

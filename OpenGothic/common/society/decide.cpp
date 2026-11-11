@@ -282,6 +282,41 @@ void routine(Sim& sim, uint32_t npc) {
     }
   }
 
+// The routine's place of the NPC goes free; returns it (NoObject for none).
+uint32_t releaseRoutine(Sim& sim, uint32_t npc) {
+  auto& s = sim.s;
+  const uint32_t t = s.routineTarget[npc];
+  if(t==NoObject)
+    return NoObject;
+  const uint32_t id = targetId(t);
+  auto& h = targetIsPoint(t) ? s.pointUse[id] : s.objectUse[id];
+  if(h==0)
+    throw std::logic_error("society core: a routine's place is released twice");
+  --h;
+  const uint16_t kind = s.routineKind[npc];
+  s.routineTarget[npc] = NoObject;
+  s.routineKind[npc]   = NoKind;
+  emit(sim,EventKind::PlaceReleased,npc,0,kind,targetIsPoint(t) ? id : sim.world->objects.waypoint[id],
+       targetIsPoint(t) ? NoObject : id);
+  return t;
+  }
+
+// A place of the routine went free (`freed`, once its releaser holds what it takes instead): the routine's users that
+// wait at their full places look again, so no chosen activity takes it from under them. While one waits, every place
+// of its own is held by the routine's users only (a chosen one there it evicts), so only these releases free them.
+void refill(Sim& sim, uint32_t freed, uint32_t except) {
+  if(freed==NoObject)
+    return;
+  for(uint32_t j=0; j<sim.world->npcs.size(); ++j)
+    if(sim.s.routineWait[j] && j!=except)
+      routinePlace(sim,j);
+  }
+
+// The place an option is: its target (TargetPoint for a point).
+uint32_t targetOf(OptionType type, uint32_t object, uint32_t point) {
+  return type==OptionType::Object ? object : (point | TargetPoint);
+  }
+
 void startChosen(Sim& sim, uint32_t npc, const Option& o) {
   auto& s = sim.s;
   s.mode[npc]      = uint8_t(Mode::Chosen);
@@ -293,10 +328,12 @@ void startChosen(Sim& sim, uint32_t npc, const Option& o) {
   s.actBegin[npc]  = -1;
   s.actMin[npc]    = Never;
   s.actEnd[npc]    = Never;
-  s.actFull[npc]   = 0;
+  s.actFinish[npc] = uint8_t(FinishReason::MaxTime);
   s.actSeq[npc]    = 0;
   s.deferred[npc]  = 0;
+  const uint32_t freed = releaseRoutine(sim,npc);
   ++holders(s,o.type,o.object,o.point);
+  refill(sim,freed,npc);
   const bool walking = moving(s,npc);
   if(!walking)
     s.bodySeq[npc] = 0; // a follow-on of the routine (into bed) no longer comes
@@ -397,22 +434,26 @@ void buildRow(Sim& sim, uint32_t npc, DecisionBatch& b) {
     o.point  = point;
     o.object = object;
     o.travel = ahead+travel;
-    const bool mine = actPoint && OptionType(s.actType[npc])==type && s.actKind[npc]==kind && s.actPoint[npc]==point &&
-                      s.actObject[npc]==object;
+    const bool mine = (actPoint && OptionType(s.actType[npc])==type && s.actKind[npc]==kind && s.actPoint[npc]==point &&
+                       s.actObject[npc]==object) || s.routineTarget[npc]==targetOf(type,object,point);
     o.use = uint32_t(holders(s,type,object,point))-(mine ? 1u : 0u);
     const bool ok = acc!=Access::Other && guildMay(w,npc,kind) && o.use<w.config.objectKinds.capacity[kind] &&
-                    (h==Hold::Free || fillsCritical(sim,npc,o.state));
+                    o.travel<=d.travelLimit && (h==Hold::Free || fillsCritical(sim,npc,o.state));
     cands.push_back({o,ok});
+    return ok;
     };
-  // The longest walk within the limit in cm (travelSeconds rounds to the second), so the scan compares integers.
-  int64_t reach = int64_t(std::floor((double(d.travelLimit)+0.5)*speed/w.clockRate))+2;
-  while(reach>0 && travelSeconds(reach,speed,w.clockRate)>d.travelLimit)
+  // The limit holds for the whole walk from where the NPC is: the rest of a walk under way, then from its end. The
+  // longest walk within what is left, in cm (travelSeconds rounds to the second), so the scan compares integers.
+  const Time budget = d.travelLimit-ahead;
+  int64_t reach = budget<0 ? -1 : int64_t(std::floor((double(budget)+0.5)*speed/w.clockRate))+2;
+  while(reach>=0 && travelSeconds(reach,speed,w.clockRate)>budget)
     --reach;
-  // A few of each kind are enough: the nearest allowed leads, the rest only fill the menu.
-  constexpr uint8_t PerKind = 4;
-  thread_local std::vector<uint8_t> perKind;
-  perKind.assign(w.config.objectKinds.size(),0);
-  const auto room = [&](uint16_t kind) { return perKind[kind]<PerKind; };
+  // A few of each kind are enough: the nearest allowed leads, the rest only fill the menu. The closed ones do not use
+  // up a kind's allowed places (a full bed nearby must not hide a free one farther away), and fill at most two slots.
+  constexpr uint8_t PerKind = 4, ClosedPerKind = 2;
+  thread_local std::vector<uint8_t> allowedOf, closedOf;
+  allowedOf.assign(w.config.objectKinds.size(),0);
+  closedOf.assign(w.config.objectKinds.size(),0);
   for(const auto& it:list) {
     const uint32_t id = targetId(it.target);
     const uint32_t point = targetIsPoint(it.target) ? id : w.objects.waypoint[id];
@@ -426,10 +467,14 @@ void buildRow(Sim& sim, uint32_t npc, DecisionBatch& b) {
     const auto type = targetIsPoint(it.target) ? OptionType::Point : OptionType::Object;
     const auto object = targetIsPoint(it.target) ? NoObject : id;
     if(KindAt(w.config.objectKinds.at[kind])==KindAt::Listed) {
-      if(room(kind)) {
-        consider(type,kind,object,point,targetAccess(w,npc,it.target,kind),travel());
-        ++perKind[kind];
-        }
+      if(allowedOf[kind]>=PerKind)
+        continue;
+      if(consider(type,kind,object,point,targetAccess(w,npc,it.target,kind),travel()))
+        ++allowedOf[kind];
+      else if(closedOf[kind]<ClosedPerKind)
+        ++closedOf[kind];
+      else
+        cands.pop_back();
       continue;
       }
     // Outdoors, own rooms, places: the nearest allowed one of each such kind this NPC may use.
@@ -506,9 +551,12 @@ void sizeDecisions(Sim& sim) {
   s.actBegin.resize(n);
   s.actMin.resize(n);
   s.actEnd.resize(n);
-  s.actFull.resize(n);
+  s.actFinish.resize(n);
   s.actSeq.resize(n);
   s.forecastFor.resize(n);
+  s.routineTarget.resize(n);
+  s.routineKind.resize(n);
+  s.routineWait.resize(n);
   s.objectUse.resize(w.objects.size());
   s.pointUse.resize(w.points.size());
   s.asked.reserve(n);
@@ -527,9 +575,12 @@ void resetDecisions(Sim& sim) {
   std::fill(s.actBegin.begin(),s.actBegin.end(),-1);
   std::fill(s.actMin.begin(),s.actMin.end(),Never);
   std::fill(s.actEnd.begin(),s.actEnd.end(),Never);
-  std::fill(s.actFull.begin(),s.actFull.end(),0);
+  std::fill(s.actFinish.begin(),s.actFinish.end(),uint8_t(FinishReason::MaxTime));
   std::fill(s.actSeq.begin(),s.actSeq.end(),0);
   std::fill(s.forecastFor.begin(),s.forecastFor.end(),-1);
+  std::fill(s.routineTarget.begin(),s.routineTarget.end(),NoObject);
+  std::fill(s.routineKind.begin(),s.routineKind.end(),NoKind);
+  std::fill(s.routineWait.begin(),s.routineWait.end(),0);
   std::fill(s.objectUse.begin(),s.objectUse.end(),0);
   std::fill(s.pointUse.begin(),s.pointUse.end(),0);
   s.asked.clear();
@@ -595,6 +646,7 @@ void beginEntry(Sim& sim, uint32_t npc) {
   // Standing: the entry's state and its walk wait for the decision of this second.
   s.flags[npc]   = uint8_t(s.flags[npc] | PendingStart);
   s.bodySeq[npc] = 0;
+  routinePlace(sim,npc); // waiting for the decision it holds no place: the batch's menus must not see the old one
   ask(sim,npc,cause);
   }
 
@@ -625,6 +677,97 @@ void onSegment(Sim& sim, uint32_t npc) {
   ask(sim,npc,CauseForecast);
   }
 
+// A chosen activity at `target` gives way to the place's routine user: on the way to it it failed, at it it finished
+// (Evicted); its NPC is asked again at this second, with the causes it held. False when no chosen activity holds the
+// place. The first such NPC by index: evictions are rare, a scan of the NPCs is cheaper than an index kept up.
+bool evict(Sim& sim, uint32_t target) {
+  auto& s = sim.s;
+  for(uint32_t j=0; j<sim.world->npcs.size(); ++j) {
+    if(modeOf(s,j)!=Mode::Chosen || targetOf(OptionType(s.actType[j]),s.actObject[j],s.actPoint[j])!=target)
+      continue;
+    const uint8_t held = s.deferred[j];
+    if(s.actBegin[j]<0)
+      emitOption(sim,EventKind::ActionFailed,j,uint8_t(FailReason::Evicted)); else
+      emitOption(sim,EventKind::ActivityFinished,j,uint8_t(FinishReason::Evicted));
+    release(sim,j);
+    s.mode[j] = uint8_t(Mode::Finished);
+    ask(sim,j,uint8_t(CauseFinished | held));
+    return true;
+    }
+  return false;
+  }
+
+void routinePlace(Sim& sim, uint32_t npc) {
+  auto& s = sim.s;
+  const auto& w = *sim.world;
+  uint32_t want = NoObject;
+  uint16_t wantKind = NoKind;
+  const uint16_t state = s.state[npc];
+  s.routineWait[npc] = 0;
+  // Only at the point its routine entry wants it at (within NearPointCm it does the entry where it stands): an NPC
+  // passing a place on its way does not take it.
+  const uint32_t entry = entryPoint(sim,npc,s.stateEntry[npc]);
+  const bool atEntry = entry==NoPoint || entry==s.place[npc] || near(w,entry,s.place[npc]);
+  if(modeOf(s,npc)==Mode::Routine && !moving(s,npc) && state!=NoState && atEntry && !(s.flags[npc] & PendingStart)) {
+    const uint16_t next = w.followState[state];
+    const auto fits = [&](uint16_t kind) { return w.kindState[kind]==state || w.kindState[kind]==next; };
+    // The places of the entry's point, then of where it stands (World::spots, nearest first).
+    const uint32_t refs[2] = {entry, entry==s.place[npc] ? NoPoint : s.place[npc]};
+    const auto spotOf = [&](uint32_t r, uint32_t t, uint16_t kind) {
+      for(uint32_t k=r==NoPoint ? 0 : w.spotBegin[r]; r!=NoPoint && k<w.spotBegin[r+1]; ++k)
+        if(w.spots[k]==t && w.spotKind[k]==kind)
+          return true;
+      return false;
+      };
+    // The place it holds stays its own while it does that kind's state there.
+    const uint32_t mine = s.routineTarget[npc];
+    if(mine!=NoObject && fits(s.routineKind[npc]) &&
+       (spotOf(refs[0],mine,s.routineKind[npc]) || spotOf(refs[1],mine,s.routineKind[npc])))
+      return;
+    // The nearest place of a kind whose state it does (or passes to) with room.
+    thread_local std::vector<std::pair<uint32_t,uint16_t>> full;
+    full.clear();
+    for(const uint32_t r:refs) {
+      if(r==NoPoint || want!=NoObject)
+        continue;
+      for(uint32_t k=w.spotBegin[r]; k<w.spotBegin[r+1] && want==NoObject; ++k) {
+        const uint16_t kind = w.spotKind[k];
+        if(!fits(kind))
+          continue;
+        const uint32_t t  = w.spots[k];
+        const uint32_t id = targetId(t);
+        const uint16_t used = targetIsPoint(t) ? s.pointUse[id] : s.objectUse[id];
+        if(used<w.config.objectKinds.capacity[kind]) {
+          want     = t;
+          wantKind = kind;
+          } else {
+          full.emplace_back(t,kind);
+          }
+        }
+      }
+    // None: the routine's user comes first, a chosen activity at the nearest full place that has one gives way.
+    for(size_t i=0; want==NoObject && i<full.size(); ++i)
+      if(evict(sim,full[i].first)) {
+        want     = full[i].first;
+        wantKind = full[i].second;
+        }
+    // Every place full of the routine's users: it waits for one to go free (refill).
+    s.routineWait[npc] = want==NoObject && !full.empty() ? 1 : 0;
+    }
+  if(want==s.routineTarget[npc] && wantKind==s.routineKind[npc])
+    return;
+  const uint32_t freed = releaseRoutine(sim,npc);
+  if(want!=NoObject) {
+    const uint32_t id = targetId(want);
+    ++(targetIsPoint(want) ? s.pointUse[id] : s.objectUse[id]);
+    s.routineTarget[npc] = want;
+    s.routineKind[npc]   = wantKind;
+    emit(sim,EventKind::PlaceHeld,npc,0,wantKind,targetIsPoint(want) ? id : w.objects.waypoint[id],
+         targetIsPoint(want) ? NoObject : id);
+    }
+  refill(sim,freed,npc);
+  }
+
 void arrivedChosen(Sim& sim, uint32_t npc) {
   auto& s = sim.s;
   s.bodySeq[npc]  = 0;
@@ -632,10 +775,12 @@ void arrivedChosen(Sim& sim, uint32_t npc) {
   thread_local std::vector<double> levels;
   levelsNow(sim,npc,levels);
   bool full = false;
-  const Time dur = duration(sim,npc,s.actKind[npc],s.state[npc],levels,hold(sim,npc)==Hold::Anchor,full);
+  // In an anchor entry the goal is out of danger, not the setpoint: its end says so (FinishReason::AboveLow).
+  const bool anchored = hold(sim,npc)==Hold::Anchor;
+  const Time dur = duration(sim,npc,s.actKind[npc],s.state[npc],levels,anchored,full);
   const Time longest = Time(sim.world->config.objectKinds.minutes[s.actKind[npc]])*60;
-  s.actEnd[npc]  = s.now+dur;
-  s.actFull[npc] = full ? 1 : 0;
+  s.actEnd[npc]    = s.now+dur;
+  s.actFinish[npc] = uint8_t(!full ? FinishReason::MaxTime : anchored ? FinishReason::AboveLow : FinishReason::Setpoint);
   s.actMin[npc]  = s.now+std::min(dec(sim).minDwell,longest);
   scheduleActivity(sim,npc);
   }
@@ -647,7 +792,7 @@ void onActivity(Sim& sim, uint32_t npc) {
     return;
   if(s.now>=s.actEnd[npc]) {
     const uint8_t held = s.deferred[npc];
-    emitOption(sim,EventKind::ActivityFinished,npc,uint8_t(s.actFull[npc] ? FinishReason::Setpoint : FinishReason::MaxTime));
+    emitOption(sim,EventKind::ActivityFinished,npc,s.actFinish[npc]);
     release(sim,npc);
     s.mode[npc] = uint8_t(Mode::Finished);
     ask(sim,npc,uint8_t(CauseFinished | held));
@@ -746,7 +891,8 @@ void applyChoices(Sim& sim, std::span<const Choice> choices) {
       continue;
     // A place taken since the menu was made (by an earlier row of this batch): a chosen activity goes on; otherwise
     // the NPC is asked again at this second, with the menu as it is now.
-    if(holders(s,o.type,o.object,o.point)>=sim.world->config.objectKinds.capacity[o.kind]) {
+    const uint32_t own = s.routineTarget[npc]==targetOf(o.type,o.object,o.point) ? 1u : 0u;
+    if(uint32_t(holders(s,o.type,o.object,o.point))-own>=sim.world->config.objectKinds.capacity[o.kind]) {
       emit(sim,EventKind::ActionFailed,npc,uint8_t(FailReason::Taken),o.kind,o.point,o.object);
       if(mode!=Mode::Chosen)
         ask(sim,npc,rows.cause[r]);
