@@ -53,7 +53,7 @@ size_t assertions=0, cases=0;
 
 struct ManualBodyClock final {
   ManualBodyClock() {
-    BodyClock::setManual(BodyClock::time_point(std::chrono::seconds(1)));
+    BodyClock::useManualTime();
     active=true;
     }
   ~ManualBodyClock() {
@@ -81,6 +81,19 @@ void expect(bool condition,std::string_view message) {
     std::cerr << "body-watch-test failure: " << message << '\n';
     throw std::runtime_error(std::string(message));
     }
+  }
+
+void clockSwitching() {
+  ++cases;
+  const auto before=BodyClock::now();
+  BodyClock::useManualTime();
+  const auto frozen=BodyClock::now();
+  expect(frozen>=before,"freezing the body clock preserves its monotonic epoch");
+  BodyClock::advance(std::chrono::milliseconds(20));
+  const auto advanced=BodyClock::now();
+  expect(advanced-frozen==std::chrono::milliseconds(20),"manual body time advances by exactly the requested interval");
+  BodyClock::useRealTime();
+  expect(BodyClock::now()>=advanced,"resuming the real body clock never goes behind its last manual value");
   }
 
 Json parse(const std::string& encoded) {
@@ -277,16 +290,12 @@ void enginePolicy(Npc& actor,Npc& target,PlayerControl& player) {
   for(const auto& event:ownership["events"].GetArray())
     if(std::string_view(event["reason"].GetString())=="acquired") ownerHeartbeat=event["last_heartbeat_wall_ms"].GetUint64();
   expect(ownerHeartbeat>0,"watchdog fixture records the owner's acquisition heartbeat");
-  BodyClock::advance(std::chrono::milliseconds(500-20));
+  BodyClock::advance(std::chrono::milliseconds(20));
   uint64_t accepted=0;
   bool providerLost=false;
-  bool watchdogExpired=false;
   restored=false;
   for(unsigned i=0;i<100 && BodyController::owns(actor);++i) {
-    if(accepted && !watchdogExpired) {
-      BodyClock::advance(std::chrono::milliseconds(40)); // 500 + 20 ms since acquire.
-      watchdogExpired=true;
-      }
+    BodyClock::advance(std::chrono::milliseconds(10));
     step(player);
     const auto events=parse(BodyController::drainJson());
     for(const auto& event:events["events"].GetArray()) {
@@ -299,6 +308,9 @@ void enginePolicy(Npc& actor,Npc& target,PlayerControl& player) {
       if(reason=="provider_lost" && std::string_view(event["release_reason"].GetString())=="watchdog_timeout") providerLost=true;
       if(reason=="native_restored" && std::string_view(event["release_reason"].GetString())=="watchdog_timeout") restored=true;
       }
+    if(20+10*(i+1)==490)
+      expect(accepted>0 && BodyController::owns(actor) && !providerLost,
+             "engine decisions run while the owner watchdog is still 10 ms before its deadline");
     }
   expect(accepted,"engine accepts a decision before the owner watchdog expires");
   expect(providerLost && restored && !BodyController::owns(actor),"engine decisions cannot prevent watchdog_timeout and native restoration");
@@ -475,7 +487,6 @@ void pendingAcquire(Npc& a,Npc& b,PlayerControl& player) {
   auto current=status(a);
   expect(current["acquire_pending"].GetBool() && current["acquire_request_id"].GetUint64()==requestId,"pending request survives with same ID");
   expect(identity(current)==stable && BodyObservations::latestSequence(a)==sequence,"pending identity and sequence preserved");
-  BodyClock::advance(std::chrono::milliseconds(2000-20));
   for(unsigned i=0;i<20 && !BodyController::owns(a);++i) step(player);
   expect(BodyController::owns(a),"pending A grants at natural boundary");
   current=status(a);
@@ -798,9 +809,20 @@ void staleFarRelease(Npc& actor,Npc& target,Npc& hero,PlayerControl& player) {
   initialWatch(actor,500);
   expect(acquire(actor,0,"realtime")["accepted"].GetBool(),"stale far fixture acquired");
   step(player,2);
-  expect(action(actor,FightAlgo::PolicyAction::AttackFront)["accepted"].GetBool(),"stale far fixture attack accepted");
+  BodyController::drainJson();
+  const auto attack=action(actor,FightAlgo::PolicyAction::AttackFront);
   step(player);
+  const auto attackEvents=parse(BodyController::drainJson());
+  bool segmentStarted=false;
+  for(const auto& event:attackEvents["events"].GetArray()) {
+    std::cerr << "stale-far-release-fixture command=" << event["command_id"].GetUint64()
+              << " phase=" << event["phase"].GetString() << " reason=" << event["reason"].GetString() << '\n';
+    if(std::string_view(event["phase"].GetString())=="started" &&
+       std::string_view(event["reason"].GetString())=="segment_started") segmentStarted=true;
+    }
+  expect(attack["accepted"].GetBool(),"stale far fixture attack accepted");
   expect(actor.bodyObservationState().segmentRemainingMs>33,"stale far fixture starts a protected attack");
+  expect(segmentStarted,"stale far fixture command starts an actual combat segment");
   const auto nearHero=hero.position();
   hero.setPosition(actor.position()+Tempest::Vec3(9000,0,0)); hero.updateTransform();
   step(player);
@@ -1812,6 +1834,7 @@ int main(int argc,const char** argv) {
         }
       }
     if(scenario.empty()) throw std::runtime_error("--scenario scripts/bench/body-api.bench is required");
+    clockSwitching();
     bool missingNetwork=false;
 #ifdef GOTHIC_BODY_ENGINE_NET
     // A fresh process exercises the one-time startup load with absent weights.
