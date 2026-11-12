@@ -335,13 +335,15 @@ class Vob:
     visual: str
     position: tuple         # Gothic cm
     source: str = 'base'    # 'base', 'content vobs.json' or the layer file name
+    kind: str = ''          # vobs.json class (zCVob, oCMobFire, zCVobSpot, ...) or the layer addition's kind
+    key: str | None = None  # the layer addition's key
 
 
 def walk_vobs(vobs: list, out: list[Vob], source: str) -> None:
     for o in vobs:
         pos = o.get('position')
         out.append(Vob(o.get('id'), (o.get('visual_name') or '').upper(),
-                       tuple(pos) if isinstance(pos, list) else (0, 0, 0), source))
+                       tuple(pos) if isinstance(pos, list) else (0, 0, 0), source, o.get('class') or ''))
         walk_vobs(o.get('children') or [], out, source)
 
 
@@ -377,7 +379,8 @@ def load_vobs(base: Path, world: str, content: Path | None = None) -> tuple[list
             continue
         for a in doc.get('add', []):
             if a.get('kind') == 'mesh':
-                vobs.append(Vob(None, str(a.get('visual', '')).upper(), tuple(a.get('position', (0, 0, 0))), f.name))
+                vobs.append(Vob(None, str(a.get('visual', '')).upper(), tuple(a.get('position', (0, 0, 0))), f.name,
+                                'mesh', a.get('key')))
                 row['meshes'] += 1
             else:
                 row['other_added'] += 1
