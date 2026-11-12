@@ -276,9 +276,10 @@ def tear_line(F, tris, deltas, c, r):
             a, b, cc, dd = idx[k, m], idx[k+1, m], idx[k+1, m+1], idx[k, m+1]
             T += [(a, b, cc), (a, cc, dd)]
     T = np.array(T)
-    # the triangles face the eye that looks at the ball from outside
+    # the winding of the head's own parts: counter-clockwise from outside in glTF, so clockwise in this mirrored frame
+    # (the engine culls the back)
     fn = np.cross(V.reshape(-1, 3)[T[:, 1]]-V.reshape(-1, 3)[T[:, 0]], V.reshape(-1, 3)[T[:, 2]]-V.reshape(-1, 3)[T[:, 0]])
-    if ((fn*(V.reshape(-1, 3)[T[:, 0]]-c)).sum(1) < 0).mean() > 0.5:
+    if ((fn*(V.reshape(-1, 3)[T[:, 0]]-c)).sum(1) > 0).mean() > 0.5:
         T = T[:, [0, 2, 1]]
     D = {}
     for name, dl in deltas.items():
