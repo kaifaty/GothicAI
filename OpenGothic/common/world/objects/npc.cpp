@@ -10,8 +10,11 @@
 
 #include <Tempest/Matrix4x4>
 #include <Tempest/Log>
+#include <atomic>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 #include "graphics/mesh/skeleton.h"
 #include "graphics/visualfx.h"
@@ -264,6 +267,8 @@ void Npc::TransformBack::save(Serialize& fout) {
 
 Npc::Npc(World &owner, size_t instance, std::string_view waypoint, NpcProcessPolicy aiPolicy)
   :owner(owner),aiPolicy(aiPolicy),mvAlgo(*this) {
+  static std::atomic<uint32_t> creationCounter{0};
+  creationSeqValue = ++creationCounter;
   animLodSeed    = AnimationLod::nextSeed();
   outputPipe     = owner.script().openAiOuput();
 
@@ -287,6 +292,8 @@ Npc::Npc(World &owner, size_t instance, std::string_view waypoint, NpcProcessPol
   }
 
 Npc::~Npc(){
+  if(startupFloorPendingValue)
+    owner.script().startupFloor().forget(*this);
   endMeleeAiSpecial();
   clearMeleeShadow();
   if(std::getenv("OPENGOTHIC_MELEE_BENCH")!=nullptr && owner.physic()!=nullptr)
@@ -298,6 +305,36 @@ Npc::~Npc(){
     currentInteract->detach(*this,true);
   if(hnpc && hnpc->user_ptr==this)
     hnpc->user_ptr=nullptr;
+  }
+
+std::string Npc::startupFloorDigest() const {
+  // Exact bits, so off/on runs compare byte for byte.
+  std::string ret;
+  auto bits = [&ret](float v) {
+    uint32_t u = 0;
+    std::memcpy(&u,&v,sizeof(u));
+    char buf[12];
+    std::snprintf(buf,sizeof(buf),"%08x",unsigned(u));
+    ret += buf;
+    ret += ' ';
+    };
+  bits(x); bits(y); bits(z);
+  bits(angle); bits(angleY);
+  ret += "wp=";
+  ret += currentFp!=nullptr ? currentFp->name : std::string("-");
+  ret += " ta=";
+  ret += hnpc->wp;
+  ret += " body=";
+  if(physic.hasBody()) {
+    const auto p = physic.position();
+    bits(p.x); bits(p.y); bits(p.z);
+    }
+  ret += "mat=";
+  const auto m = visual.transform();
+  for(int i=0;i<4;++i)
+    for(int j=0;j<4;++j)
+      bits(m.at(i,j));
+  return ret;
   }
 
 void Npc::syncLogicalBodyState(bool rebuild) {

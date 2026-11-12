@@ -396,7 +396,11 @@ void GameScript::wld_insertnpc(int npcInstance, std::string_view spawnpoint) {
     return;
 
   auto npc = world().addNpc(size_t(npcInstance),spawnpoint);
-  if(npc!=nullptr)
+  if(npc==nullptr)
+    return;
+  if(floorDefer.active())
+    floorDefer.inserted(*npc); // fresh world start: the final placement fixes it (game/gamescript_startupfloor.h)
+  else
     fixNpcPosition(*npc,0,150);
   }
 

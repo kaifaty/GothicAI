@@ -525,6 +525,8 @@ struct DynamicWorld::NpcBodyList final {
     bool ret=false;
     for(;l!=r;++l){
       auto& v = (*l);
+      if(replaySeq!=0 && v.body!=nullptr && hiddenByReplay(*v.body))
+        continue;
       if(v.body!=nullptr && v.body->enable && hasCollision(n,*v.body,normal,colDepth)) {
         npc = v.body->toNpc();
         ret = true;
@@ -534,6 +536,7 @@ struct DynamicWorld::NpcBodyList final {
     }
 
   bool hasCollision(const NpcBody& a, const NpcBody& b, Tempest::Vec3& normal, float& colDepth) const;
+  bool hiddenByReplay(const NpcBody& b) const;
 
   void adjustSort() {
     std::sort(frozen.begin(),frozen.end(),[](Record& a,Record& b){
@@ -582,6 +585,7 @@ struct DynamicWorld::NpcBodyList final {
 
   uint64_t              tick   = 0;
   float                 maxRXZ = 0;
+  uint32_t              replaySeq = 0;
   float                 maxRY  = 0;
   };
 

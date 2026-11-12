@@ -35,6 +35,7 @@ std::string World::npcTraceName(const Npc& npc) const {
 Tempest::Vec3 World::npcPosition(const Npc& npc) const { return npc.position(); }
 uint64_t World::npcTickCount(const Npc& npc) const { return npc.world().tickCount(); }
 bool World::npcUsesSimplifiedMovement(const Npc& npc) const { return npc.usesSimplifiedMovement(); }
+uint32_t World::npcCreationSeq(const Npc& npc) const { return npc.creationSeq(); }
 void World::finishNpcSupport(Npc& npc, uint64_t dt) { npc.finishCharacterVirtualSupport(dt); }
 
 HitZones::Zone World::npcRayHitZone(const Npc& npc, const Tempest::Vec3& from,

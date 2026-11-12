@@ -30,6 +30,7 @@ class PhysicsHost {
     virtual Tempest::Vec3 npcPosition(const Npc& npc) const = 0;
     virtual uint64_t npcTickCount(const Npc& npc) const = 0;
     virtual bool npcUsesSimplifiedMovement(const Npc& npc) const = 0;
+    virtual uint32_t npcCreationSeq(const Npc& npc) const = 0;
     virtual void finishNpcSupport(Npc& npc, uint64_t dt) = 0;
     virtual HitZones::Zone npcRayHitZone(const Npc& npc, const Tempest::Vec3& from,
                                        const Tempest::Vec3& to, float& distance) const = 0;
