@@ -431,8 +431,9 @@ void manifestContract(const fs::path& root, const fs::path& directory, const Wor
           "string entries must give one cell and one table entry each");
   for(size_t i=0;i<strings.cells.size();++i) {
     const auto& cell=strings.cells[i];
+    const std::vector<ChunkMeshRef> single={{written.chunks[i],ChunkMeshRole::Draw,0}};
     require(fs::path(written.chunks[i]).stem().string()==std::to_string(cell.id.x)+"_"+std::to_string(cell.id.z) &&
-            cell.meshes==std::vector<ChunkMeshRef>{{written.chunks[i],ChunkMeshRole::Draw,0}} &&
+            cell.meshes==single &&
             table.entries[i].id==cell.id && table.entries[i].meshes==cell.meshes,
             "a string entry must be one draw level 0 mesh in the cell of its file stem");
     }
