@@ -4,8 +4,11 @@
 # - uv.npz, groups.npz: the registered head (co, no, tri, tuv; body);
 # - skin.png: the colour baked from the generator's model (bake_ref.py). Where a texel is hair-coloured, hair grows:
 #   the share of such texels around a point is the cover of facial hair there;
-# - beard.npz: `disp` of beard_shell.py, how far the beard of the model stands over every skin vertex. Under 3 mm
-#   it is stubble (and the slack of the registration), over 5.5 mm a beard whose hairs reach that surface;
+# - beard.npz: `disp` of beard_layer.py, how far the full model stands over every skin vertex of the lower face.
+#   Under 1 mm it is stubble (and the slack between two generations of one person), over 2.5 mm a beard. Where the
+#   map is hair all over, it is a beard however thin the layer: a bald sheet is drawn with the chin as big as the
+#   beard was, so in front of the chin the layer is next to nothing (1.3 mm on the second face, 3.4 mm on its
+#   cheeks). A beard's hair ends at the measured surface: the thinner the layer, the flatter the hair lies;
 # - template_points.json: MediaPipe index -> vertex of the MPFB mesh, the same for every head: lips and nose.
 # Output:
 # - beard_groom.npz: pts (hairs, 12, 3) metres, root first; rad; tint -1..1; kind 3 beard, 4 moustache, 5 stubble;
@@ -49,7 +52,7 @@ def in_lips(p, grow=0.0):
 # ---- where facial hair may grow: under the nose tip, in front of the ears, down to the top of the neck
 r = co-eye
 zone_v = step(nose_tip[2]+0.004-co[:, 2], 0, 0.008)*(1-step(r[:, 1], 0.058, 0.068))*step(co[:, 2]-(lip_bot[2]-0.120), 0, 0.020)*g['body']
-beard_v = step(th_v, 0.003, 0.0055)
+beard_v = step(th_v, 0.001, 0.0025)
 zc = co[tri].mean(1)[:, 2]; uc = tuv.mean(1)
 head = g['body'][tri].all(1) & (zc > eye[2]-0.20) & (uc[:, 0] > 0.62) & (uc[:, 1] > 0.12) & (uc[:, 1] < 0.84)
 ft = np.nonzero(head & (zone_v[tri] > 0).any(1))[0]
@@ -120,7 +123,7 @@ k, w, p0, n0, q = scatter(int(ar.sum()*DMAX*1e4)); n0 /= np.linalg.norm(n0, axis
 tx = lambda F: F[np.clip(((1-q[:, 1])*N).astype(int), 0, N-1), np.clip((q[:, 0]*N).astype(int), 0, N-1)]
 cv = tx(cover); bd = (beard_v[ht[k]]*w).sum(1); th = (th_v[ht[k]]*w).sum(1)
 mous = step(p0[:, 2]-mouth_z, -0.002, 0.004)*step(nose_base[2]+0.004-p0[:, 2], 0, 0.004)*(1-step(np.abs(p0[:, 0]), half+0.002, half+0.010))*(p0[:, 1] < lip_c[1]+0.03)
-bd = np.maximum(bd, mous*step(cv, 0.45, 0.75))                                   # the moustache is a beard whatever the offsets say
+bd = np.maximum(bd, np.maximum(mous*step(cv, 0.45, 0.75), step(cv, 0.60, 0.85)))    # the moustache and a full cover are a beard whatever the offsets say
 dens = step(cv, 0.15, 0.40)*(28+55*cv+(45+30*mous)*bd)
 way = stree.query(p0+n0*0.004)[0]                                              # skin right in front of the root: a nostril, the mouth
 ok = (rng.random(len(p0)) < dens/DMAX) & ~in_lips(p0, 0.0005) & (way > 0.0026)
@@ -133,12 +136,16 @@ mdir = np.c_[0.95*side, -0.10*np.ones(M), -0.45-0.5*(1-np.abs(side))]
 grow = grow+(mdir-grow)*mous[:, None]
 grow += rng.normal(0, 0.22, (M, 3)); grow /= np.linalg.norm(grow, axis=1, keepdims=True)
 gt = grow-n0*(grow*n0).sum(1, keepdims=True)                                   # along the skin; short where the skin faces the way of growth
-elev = np.radians(rng.uniform(35, 65, M)*(1-bd)+rng.uniform(22, 42, M)*bd)
-d0 = np.sin(elev)[:, None]*n0+np.cos(elev)[:, None]*gt; d0 /= np.linalg.norm(d0, axis=1, keepdims=True)
 L_st = 0.0019*rng.uniform(0.55, 1.35, M)*(0.6+0.4*cv)
 L_bd = np.clip(1.8*th, 0.006, 0.024)*rng.uniform(0.65, 1.12, M)
 L_bd = np.where(mous > 0.5, 0.0085*rng.uniform(0.7, 1.15, M), L_bd)
 L = L_st+(L_bd-L_st)*bd
+# a beard's hair rises to the measured surface and no further: 22..42 degrees where the layer is as thick as the
+# hair is long, down to 12 where the layer is thin
+reach = np.degrees(np.arcsin(np.clip(np.maximum(th, 0.0015)/np.maximum(L_bd, 1e-6), 0, 1)))
+elev_bd = np.clip(reach*rng.uniform(0.8, 1.25, M), 12, 42)
+elev = np.radians(rng.uniform(35, 65, M)*(1-bd)+elev_bd*bd)
+d0 = np.sin(elev)[:, None]*n0+np.cos(elev)[:, None]*gt; d0 /= np.linalg.norm(d0, axis=1, keepdims=True)
 hang = DOWN+0.15*FWD+np.zeros((M, 3)); hang = hang+(mdir*[1, 1, 0.8]-hang)*mous[:, None]; hang /= np.linalg.norm(hang, axis=1, keepdims=True)
 bend = 0.16*bd*np.clip(L/0.012, 0.3, 1.5)
 
