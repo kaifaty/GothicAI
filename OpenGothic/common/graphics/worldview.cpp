@@ -11,7 +11,7 @@
 #include <thread>
 
 #include "graphics/mesh/submesh/packedmesh.h"
-#include "graphics/objvisual.h"
+#include "graphics/streamedvisual.h"
 #include "game/gametime.h"
 #include "camera.h"
 #include "shaders.h"
@@ -24,7 +24,7 @@ using namespace Tempest;
 
 struct WorldView::VobStreaming : std::enable_shared_from_this<VobStreaming> {
   struct Chunk {
-    std::vector<ObjVisual*> visuals;
+    std::vector<StreamedVisual*> visuals;
     ChunkResidency::State state = ChunkResidency::State::Outside;
     size_t cursor = 0;
     size_t unpublished = 0, missing = 0;
@@ -55,7 +55,7 @@ struct WorldView::VobStreaming : std::enable_shared_from_this<VobStreaming> {
         visual->streamView=nullptr;
     }
 
-  void publish(Chunk& chunk, ObjVisual& visual) {
+  void publish(Chunk& chunk, StreamedVisual& visual) {
     if(visual.isViewPublished())
       return;
     const bool wasMissing=visual.isViewMissing();
@@ -71,7 +71,7 @@ struct WorldView::VobStreaming : std::enable_shared_from_this<VobStreaming> {
     stats.vobCreateMs+=ms;
     }
 
-  void release(Chunk& chunk, ObjVisual& visual) {
+  void release(Chunk& chunk, StreamedVisual& visual) {
     if(!visual.isViewPublished())
       return;
     const bool wasMissing=visual.isViewMissing();
@@ -517,7 +517,7 @@ void WorldView::startVobStreaming(ChunkResidency& residency) {
   vobStreaming=std::make_shared<VobStreaming>(residency);
   }
 
-void WorldView::addVob(ObjVisual& visual, ChunkId id) {
+void WorldView::addVob(StreamedVisual& visual, ChunkId id) {
   if(!vobStreaming)
     return;
   visual.streamView=this;
@@ -535,7 +535,7 @@ void WorldView::addVob(ObjVisual& visual, ChunkId id) {
     streaming.queue({id.x,id.z},chunk);
   }
 
-void WorldView::removeVob(ObjVisual& visual, bool release) {
+void WorldView::removeVob(StreamedVisual& visual, bool release) {
   auto& streaming=*vobStreaming;
   auto& chunk=streaming.chunks.at({visual.streamCell.x,visual.streamCell.z});
   if(release)
@@ -549,14 +549,14 @@ void WorldView::removeVob(ObjVisual& visual, bool release) {
   visual.streamView=nullptr;
   }
 
-void WorldView::moveVob(ObjVisual& visual, ChunkId id) {
+void WorldView::moveVob(StreamedVisual& visual, ChunkId id) {
   removeVob(visual,false);
   addVob(visual,id);
   if(vobStreaming->enabled && vobStreaming->chunks.at({id.x,id.z}).state==ChunkResidency::State::Outside)
     vobStreaming->release(vobStreaming->chunks.at({id.x,id.z}),visual);
   }
 
-void WorldView::replaceVob(ObjVisual& previous, ObjVisual& next) {
+void WorldView::replaceVob(StreamedVisual& previous, StreamedVisual& next) {
   auto& chunk=vobStreaming->chunks.at({previous.streamCell.x,previous.streamCell.z});
   *std::find(chunk.visuals.begin(),chunk.visuals.end(),&previous)=&next;
   next.streamView=this;

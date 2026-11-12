@@ -4,7 +4,6 @@
 #include <Tempest/Log>
 #include <cctype>
 
-#include "world/world.h"
 #include "utils/parser.h"
 
 using namespace Tempest;
@@ -123,10 +122,6 @@ VisualFx::VisualFx(const Def::EffectBase& fx,
 
 uint64_t VisualFx::effectPrefferedTime() const {
   return emFXLifeSpan;
-  }
-
-PfxEmitter VisualFx::visual(World& owner) const {
-  return PfxEmitter(owner,visName_S);
   }
 
 const VisualFx::Key* VisualFx::key(SpellFxKey type, int32_t keyLvl) const {

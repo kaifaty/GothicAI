@@ -1054,9 +1054,9 @@ void Pose::processSfx(AnimationSound& mob, uint64_t tickCount) {
     i.seq->processSfx(layerTime(i,lastUpdate),i.sAnim,layerTime(i,tickCount),nullptr,&mob);
   }
 
-void Pose::processPfx(MdlVisual& visual, AnimationPfx& world, uint64_t tickCount) {
+void Pose::processPfx(AnimationPfx& world, uint64_t tickCount) {
   for(auto& i:lay)
-    i.seq->processPfx(layerTime(i,lastUpdate),i.sAnim,layerTime(i,tickCount),visual,world);
+    i.seq->processPfx(layerTime(i,lastUpdate),i.sAnim,layerTime(i,tickCount),world);
   }
 
 bool Pose::processEvents(uint64_t &barrier, uint64_t now, Animation::EvCount &ev, NpcLogicalState* logic) const {

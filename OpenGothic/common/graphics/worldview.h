@@ -20,7 +20,7 @@ class Camera;
 class ParticleFx;
 class PackedMesh;
 class ChunkResidency;
-class ObjVisual;
+class StreamedVisual;
 struct ChunkId;
 namespace asset { struct WorldMesh; }
 
@@ -34,6 +34,10 @@ class WorldView {
 
     void startLandscapeStreaming(asset::WorldMesh&& mesh, ChunkResidency& residency, double preloadMs);
     void startVobStreaming(ChunkResidency& residency);
+    void addVob(StreamedVisual& visual, ChunkId id);
+    void removeVob(StreamedVisual& visual, bool release = true);
+    void moveVob(StreamedVisual& visual, ChunkId id);
+    void replaceVob(StreamedVisual& previous, StreamedVisual& next);
     void setTextureResidency(ChunkResidency* residency) { visuals.setTextureResidency(residency); }
     // every owner's distance demand due now, before the first frame's synchronous texture loading
     void flushTextureDemand() { visuals.updateTextureView(true); }
@@ -131,10 +135,6 @@ class WorldView {
     std::unique_ptr<LandscapeStreaming> streaming;
     struct VobStreaming;
     std::shared_ptr<VobStreaming> vobStreaming;
-    void addVob(ObjVisual& visual, ChunkId id);
-    void removeVob(ObjVisual& visual, bool release = true);
-    void moveVob(ObjVisual& visual, ChunkId id);
-    void replaceVob(ObjVisual& previous, ObjVisual& next);
 
     bool needToUpdateCmd(uint8_t frameId) const;
     void invalidateCmd();
@@ -142,6 +142,5 @@ class WorldView {
   friend class LightGroup::Light;
   friend class PfxEmitter;
   friend class TrlObjects;
-  friend class ObjVisual;
   friend struct MeshGltfTest;
   };

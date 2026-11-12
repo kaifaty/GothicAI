@@ -64,7 +64,7 @@ class Pose final {
     Tempest::Vec3      animMoveSpeed(uint64_t tickCount, uint64_t dt) const;
     void               processSfx(AnimationGroundSound &npc, uint64_t tickCount);
     void               processSfx(AnimationSound& mob, uint64_t tickCount);
-    void               processPfx(MdlVisual& visual, AnimationPfx& world, uint64_t tickCount);
+    void               processPfx(AnimationPfx& world, uint64_t tickCount);
     bool               isDefParWindow(uint64_t tickCount) const;
     bool               isDefWindow(uint64_t tickCount) const;
     bool               isDefence(uint64_t tickCount) const;

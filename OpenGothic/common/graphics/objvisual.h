@@ -4,7 +4,7 @@
 #include "world/objects/vobbundle.h"
 #include "physics/physicmesh.h"
 #include "graphics/mdlvisual.h"
-#include "worldchunksruntime.h"
+#include "graphics/streamedvisual.h"
 
 class Npc;
 class World;
@@ -12,14 +12,14 @@ class ClothVisual;
 class WorldView;
 namespace daedalus { struct IItem; }
 
-class ObjVisual {
+class ObjVisual : public StreamedVisual {
   public:
-    size_t probePhysicsBytes() const;
+    size_t probePhysicsBytes() const override;
 
     ObjVisual();
     ObjVisual(ObjVisual&& other);
     ObjVisual& operator = (ObjVisual&& other);
-    ~ObjVisual();
+    ~ObjVisual() override;
 
     void save(Serialize& fout, const Interactive& mob) const;
     void load(Serialize& fin,  Interactive &mob);
@@ -89,17 +89,14 @@ class ObjVisual {
     std::shared_ptr<FractureView> fracture;
     std::unique_ptr<ClothVisual> cloth;
     Tempest::Matrix4x4 renderMatrix = Tempest::Matrix4x4::mkIdentity();
-    WorldView* streamView = nullptr;
-    ChunkId streamCell;
 
     void cleanup();
     void setType(Type t);
-    void createView();
-    void releaseView();
-    bool isViewPublished() const;
-    bool isViewMissing() const;
-    size_t viewNodesCount() const;
-    friend class WorldView;
+    void createView() override;
+    void releaseView() override;
+    bool isViewPublished() const override;
+    bool isViewMissing() const override;
+    size_t viewNodesCount() const override;
     friend struct MeshGltfTest;
   };
 
