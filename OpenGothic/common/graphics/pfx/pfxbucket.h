@@ -6,6 +6,7 @@
 #include <map>
 #include <unordered_set>
 
+#include "world/objects/pfxemitter.h"
 #include "graphics/pfx/pfxobjects.h"
 #include "graphics/pfx/pfxmotion.h"
 #include "resources.h"
