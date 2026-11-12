@@ -5,8 +5,9 @@
 # reg.npz is the fit the head was exported from (fit/reg: <work>/round/reg.npz of a build). Every ARKit shape but the
 # blink, the gaze and tongueOut is replaced on the face, brows, lashes, teeth and tongue; the visemes stay. --json
 # writes what was measured: the landmarks before and after the registration, the lids against the balls.
-# --face writes the face profile of Mark's shapes (mark.face.json next to the MPFB template) with the lids' shade of
-# the given profile, if it has one. Mark's data are NVIDIA's (NVIDIA Open Model License): the head is not for git.
+# --face writes the face profile for Mark's shapes: the head's own (MPFB) profile with its weights re-scaled by
+# mark_profile.py for this head (mpfb/mark.face.json is that of the hero 3a), and reach.md next to the --json (or the
+# profile): MPFB's and Mark's reach per weight set and zone. Mark's data are NVIDIA's (NVIDIA Open Model License): the head is not for git.
 import json
 import os
 import sys
@@ -18,8 +19,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import head_glb  # noqa: E402
 import transfer as X  # noqa: E402
+import mark_profile  # noqa: E402
 
-PROFILE = os.path.join(HERE, '..', 'mpfb', 'mark.face.json')
+PROFILE = os.path.join(HERE, '..', 'mpfb', 'test-head.face.json')
 
 
 def rot(axis, deg):
@@ -102,18 +104,16 @@ def main(argv):
     res, new, extra = X.carry(hero, rg)
     n = head_glb.write(glb, res, out)
     print('shapes set: %d -> %s' % (n, out))
-    prof = json.load(open(PROFILE))
+    prof = json.load(open(face[0] if face else PROFILE))
     lim = prof['eyes']['limits_deg']
     lids = lids_check(hero, rg['fh'], new, lim, prof['eyes']['lids'])
     before = lids_check(hero, rg['fh'], hero['S'], lim, prof['eyes']['lids'])
     bad = {k: round(v, 2) for k, v in lids.items() if v > 0.05}
     print('lids into the balls (mm, over 0.05): %s' % (bad or 'none'))
     if face:
-        p = json.load(open(face[0]))
-        q = json.loads(json.dumps(prof))
-        if 'lid_shade' in p.get('eyes', {}):
-            q['eyes']['lid_shade'] = p['eyes']['lid_shade']
+        q, rows = mark_profile.profile(hero, new, face[0])
         json.dump(q, open(face[1], 'w'), indent=2, ensure_ascii=False)
+        mark_profile.write_table(rows, os.path.join(os.path.dirname(js or face[1]), 'reach.md'))
         print('face profile ->', face[1])
     if js:
         json.dump(dict(head=glb, src='mark', **X.info(rg, extra), lids_into_balls_mm=lids,
