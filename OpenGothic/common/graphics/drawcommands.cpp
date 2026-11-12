@@ -165,6 +165,7 @@ void DrawCommands::setBindings(Tempest::Encoder<CommandBuffer>& cmd, const DrawC
   if(v==SceneGlobals::V_Main && Material::isFogRequired(cx.alpha)) {
     cmd.setBinding(L_FogLut,   *scene.fogLut,   Sampler::bilinear(ClampMode::ClampToEdge));
     cmd.setBinding(L_FogLutMs, *scene.fogLutMs, Sampler::bilinear(ClampMode::ClampToEdge));
+    cmd.setBinding(L_FogOcc,   *scene.fogOcclusion);
     }
 
   if(v==SceneGlobals::V_Vsm) {

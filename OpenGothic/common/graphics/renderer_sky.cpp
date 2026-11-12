@@ -253,6 +253,9 @@ void Renderer::prepareFog(Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview
     cmd.dispatchThreads(epipolar.epTrace.size());
     }
 
+  // the fog of translucent surfaces under GI reads the same bits (main.frag, fogOwnDepth)
+  wview.setFogOcclusion(sky.quality==VolumetricHQ ? &usesImage2d(sky.occlusionLut, TextureFormat::R32U, effectResolution()) : nullptr);
+
   switch(sky.quality) {
     case None:
     case VolumetricLQ:

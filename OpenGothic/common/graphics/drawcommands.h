@@ -107,6 +107,7 @@ class DrawCommands {
       L_VsmPageTbl = 19,
       L_VsmPageAtlas = 20,
       L_InstancePrev = 21, // the instance buffer after the previous frame (motion vectors, G-buffer pass)
+      L_FogOcc     = 22, // the sun's bits along the ray of the fog (fog3d.comp), for the fog of translucent under GI
       L_VsmPages   = L_Shadow0,
       L_Lights     = L_Shadow1,
       };

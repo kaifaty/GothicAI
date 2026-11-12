@@ -68,6 +68,7 @@ class SceneGlobals final {
     void setHiZ(const Tempest::Texture2d& hiZ);
     void setShadowMap(const Tempest::Texture2d* tex[]);
     void setFog(const Tempest::StorageImage* lut, const Tempest::StorageImage* lutMs);
+    void setFogOcclusion(const Tempest::StorageImage* occlusion);
 
     void setVirtualShadowMap(bool enabled,
                              const Tempest::ZBuffer&       vsmPageData,
@@ -105,6 +106,8 @@ class SceneGlobals final {
 
     const Tempest::StorageImage*      fogLut       = &Resources::fallbackImage3d();
     const Tempest::StorageImage*      fogLutMs     = &Resources::fallbackImage3d();
+    // the sun's bits along the ray of the volumetric fog (R32UI, fog3d.comp), read by the fog of translucent under GI
+    const Tempest::StorageImage*      fogOcclusion = &Resources::fallbackImage();
 
     const Tempest::StorageBuffer*     lights        = nullptr;
 

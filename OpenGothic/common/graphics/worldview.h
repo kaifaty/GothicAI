@@ -81,6 +81,7 @@ class WorldView {
     void setVsmStudy(uint32_t bits) { sGlobal.setVsmStudy(bits); }
     void setWindEnabled(bool enabled, uint64_t period);
     void setFog(const Tempest::StorageImage& lut, const Tempest::StorageImage& lutMs);
+    void setFogOcclusion(const Tempest::StorageImage* occlusion) { sGlobal.setFogOcclusion(occlusion); }
     void setClothWind(bool enabled, float scale);
     void setOriginalClothMesh(const PackedMesh& mesh);
     void setOriginalClothVisible(bool visible);
