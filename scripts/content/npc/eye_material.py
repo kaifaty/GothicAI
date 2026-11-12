@@ -11,7 +11,8 @@
 #   shade of the eye shader the white then stays under the lit cheek, the acceptance of the eye shader).
 # Output:
 # - eye_game.png: the colour map: the sclera recoloured to a warm white of that luminance, its veins and shading kept
-#   as they were relative to it, pinkish at the corners; the limbus darkened over 12 % of the iris' diameter;
+#   as they were relative to it, pinkish at the corners; the iris by the sclera's gain; the limbus darkened over 12 % of
+#   the iris' diameter;
 # - eye_orm.png: R = 1, G = roughness (the cornea over the iris EYE_ROUGH_CORNEA, the sclera EYE_ROUGH_SCLERA), B = 0;
 # - eye_material.json: what was measured (cheek skin, sclera before and after, the iris of each eye in the map).
 import sys, os, json, struct
@@ -113,11 +114,14 @@ for b in balls:
     corner = np.maximum(corner, step(np.abs(across), *CORNER)*(d0 < half*1.05))
 
 # ---- the sclera: its median colour goes to the warm white of the cheek's luminance times the share; every texel keeps
-# its ratio to the median (veins, shading)
+# its ratio to the median (veins, shading). The iris takes the sclera's gain of luminance: its contrast to the white
+# stays as painted (a light iris on a darkened white would be the brightest thing in the eye)
 sclera = ball_mask & ~iris_mask & (limbus < 0.05)
 src = lin(eye[..., :3]); med = np.median(src[sclera], 0)
 target = WARM/(WARM @ LUM)*cheek_lum*SHARE
+gain = float((target @ LUM)/(med @ LUM))
 out = src.copy()
+out[iris_mask] *= gain
 wsc = (ball_mask & ~iris_mask).astype(np.float64)[..., None]
 recol = src/med*target
 recol = recol*(1+(PINK-1)*corner[..., None])
@@ -129,7 +133,7 @@ orm = np.stack([np.ones((H, W)), rough, np.zeros((H, W))], 2)
 Image.fromarray((orm*255+0.5).astype(np.uint8), 'RGB').save(os.path.join(OUT, 'eye_orm.png'))
 info = {'cheek_lin': cheek_lin.tolist(), 'cheek_lum': cheek_lum, 'share': SHARE,
         'sclera_before_lin': med.tolist(), 'sclera_before_lum': float(med @ LUM), 'sclera_after_lin': target.tolist(),
-        'sclera_after_srgb': (srgb(target)*255).round().tolist(), 'irises': irises}
+        'sclera_after_srgb': (srgb(target)*255).round().tolist(), 'iris_gain': gain, 'irises': irises}
 json.dump(info, open(os.path.join(OUT, 'eye_material.json'), 'w'), indent=1)
-print('EYE cheek lum %.3f, sclera %.3f -> %.3f (sRGB %s), irises r %s' % (cheek_lum, med @ LUM, target @ LUM,
-      info['sclera_after_srgb'], [round(i['iris_radius_uv'], 3) for i in irises]))
+print('EYE cheek lum %.3f, sclera %.3f -> %.3f (sRGB %s), iris gain %.2f, irises r %s' % (cheek_lum, med @ LUM, target @ LUM,
+      info['sclera_after_srgb'], gain, [round(i['iris_radius_uv'], 3) for i in irises]))
