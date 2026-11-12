@@ -5,6 +5,7 @@
 | Что | Как |
 |---|---|
 | Тесты изменённых файлов | `python3 scripts/check.py plan` — выбор по диффу от `origin/main` и правило для каждого файла; `run` — прямой уровень на этой машине, `run --all` — полный. CI `.github/workflows/tests.yml` гоняет полный уровень на каждом PR, итог — проверка `tests` |
+| Адреса в коммитах PR | `python3 scripts/commit_identity.py check [--base origin/main]`; CI `.github/workflows/commit-identity.yml` — проверка `commit-identity`: аккаунт проекта подписывает только своим noreply с id, noreply без id запрещён всем; коммиты, сделанные GitHub, лишь предупреждают; тесты `scripts/tests/test_commit_identity.py` |
 | pytest одного модуля | `cd server && uv run pytest tests/test_<модуль>.py -q`; на Ryzen — `scripts/ryzen.sh pytest tests/test_<модуль>.py` |
 | Строгие схемы всех инструментов сервера | `cd server && uv run pytest tests/test_tool_schemas.py -q`; обход модулей `gothic_ai`, проверка всех вложенных объектов |
 | Живой набор вручную | `SUITE=haggle RUNS=3 LLM=chatgpt scripts/e2e-live.sh`; [случаи и зачёт](../e2e.md#живая-группа); вне автоматической регрессии, тратит квоту подписки |
