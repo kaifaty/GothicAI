@@ -16,7 +16,8 @@ overlay off
 goto NW_FARM1_PATH_01
 wait 3000
 freeze BAU_952_VINO
-put BAU_952_VINO 200 0
+# to the hero's left: the sun on his face (straight ahead it is behind him)
+put BAU_952_VINO 200 90
 watch BAU_952_VINO
 wait 1500
 # a little below the mouth: Vino bends his head about 9 degrees down to the hero, from above the face reads badly
