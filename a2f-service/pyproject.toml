@@ -1,0 +1,38 @@
+[project]
+name = "gothic-a2f"
+version = "0.1.0"
+description = "Face track from speech: Audio2Face-3D v3.0 weights of the ARKit shapes"
+requires-python = ">=3.12"
+dependencies = [
+    "aiohttp>=3.13.3",
+    "numpy>=2.4.2",
+    "scipy>=1.16",
+]
+
+[project.scripts]
+gothic-a2f = "gothic_a2f.cli:main"
+
+[tool.uv.build-backend]
+module-name = "gothic_a2f"
+
+[build-system]
+requires = ["uv_build>=0.10.4,<0.11.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.17.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
