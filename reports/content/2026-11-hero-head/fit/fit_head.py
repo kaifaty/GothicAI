@@ -71,4 +71,6 @@ if P.get('quarter'):
     co.location=Vector((math.sin(a)*r,-math.cos(a)*r,eyez-0.03)); co.rotation_euler=(math.radians(90),0,a)
     cam.ortho_scale=0.42
     sc.render.filepath=os.path.join(OUT,'fit_quarter.png'); bpy.ops.render.render(write_still=True)
+# the eye point and the pupils' distance of the fit, for a frame computed without hand picks (scripts/content/npc/auto_params.py)
+json.dump({'eye':[0.0,eyey,eyez],'ipd_m':ipd},open(os.path.join(OUT,'fit.json'),'w'))
 bpy.ops.wm.save_as_mainfile(filepath=os.path.join(OUT,'fit.blend'))

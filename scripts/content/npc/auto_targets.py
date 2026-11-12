@@ -18,14 +18,18 @@ millimetres off and tears the mesh. It comes from the template itself:
 - mouth: the four hand-picked vertices of base_lm_fixed.json (corners, seam centre, bottom of the lower lip) take the
   concept's points; depth from the dense model.
 Ears and the profile midline stay as base_lm_fixed.json has them (lm_pick.py); its other front points are dropped.
+With --no-hand they are dropped too: base_lm_fixed.json only names the mouth vertices, and the ears follow the
+dense model as plain surface (a concept without hand picks, build_head.py).
 The nose, brows and jaw get no landmarks: the dense model has them as plain surface.
 """
 import json, os, sys
 import numpy as np
 from scipy.spatial import cKDTree
 
-D, CH, CP, TP, BASE, OUT = sys.argv[1:7]
-LID = float(sys.argv[7]) / 1000 if len(sys.argv) > 7 else 0.0
+NO_HAND = '--no-hand' in sys.argv
+ARGV = [a for a in sys.argv if a != '--no-hand']
+D, CH, CP, TP, BASE, OUT = ARGV[1:7]
+LID = float(ARGV[7]) / 1000 if len(ARGV) > 7 else 0.0
 V = json.load(open(os.path.join(D, 'views.json'))); N, s = V['N'], V['s']; fc = V['views']['front']['loc']
 m0 = np.load(os.path.join(D, 'mpfb.npz'))['co']; r = np.load(os.path.join(D, 'ref.npz'))['v'].astype(np.float64)
 P = json.load(open(CP)); pts = np.array(P['points']); G = P['groups']; chains = json.load(open(CH))
@@ -47,7 +51,7 @@ def share(p):
     d = np.r_[0, np.cumsum(np.linalg.norm(np.diff(p, axis=0), axis=1))]; return d / d[-1]
 
 
-base = json.load(open(BASE))['landmarks']; out = [l for l in base if l['name'].startswith(KEEP)]
+base = json.load(open(BASE))['landmarks']; out = [] if NO_HAND else [l for l in base if l['name'].startswith(KEEP)]
 for l in base:
     if l['name'] in MOUTH:
         x, z = world(MOUTH[l['name']])
@@ -69,7 +73,7 @@ for side in ('r', 'l'):
             d = [np.interp(ti, tc, c[:, a]) - np.interp(ti, tt, t0[:, a]) for a in (0, 1)]
             out.append({'name': '%s_%s%02d' % (side, key, n), 'mpfb_vertex': int(vid),
                         'target': [round(float(v), 5) for v in (m0[vid][0] + d[0], m0[vid][1] + LID, m0[vid][2] + d[1])]})
-json.dump({'note': 'automatic: lids by the template lid chains and the concept lid contours, mouth by four points; ears and profile midline by hand picks',
+json.dump({'note': 'automatic: lids by the template lid chains and the concept lid contours, mouth by four points; ' + ('no ears or profile midline' if NO_HAND else 'ears and profile midline by hand picks'),
            'landmarks': out}, open(OUT, 'w'), indent=1)
 mv = np.array([np.array(o['target']) - m0[o['mpfb_vertex']] for o in out]) * 1000
 for grp in ('r_', 'l_', 'mouth', 'lip'):
