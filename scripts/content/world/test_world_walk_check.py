@@ -33,8 +33,8 @@ def world(tmp_path, height=None, upper=(UPPER,)):
         {'format': 1, 'waynet': {'points': points, 'edges': [[0, 1]]}}))
     content = tmp_path / 'content'
     content.mkdir()
-    if height is not None:
-        chunk(content / 'worlds' / 'TEST' / 'chunks' / '0_0.glb', *tiles(height), *upper)
+    if height is not None or tuple(upper) != (UPPER,):
+        chunk(content / 'worlds' / 'TEST' / 'chunks' / '0_0.glb', *(tiles(height) if height else tiles()), *upper)
     return base, content
 
 
@@ -51,31 +51,43 @@ def test_an_empty_content_folder_changes_nothing(tmp_path):
     assert R['passed'] and R['chunks_with_differences'] == []
     assert R['waypoints']['change_m']['n'] == 3 and R['waypoints']['change_m']['abs_max'] == 0
     assert R['edges']['samples'] == 49 and R['edges']['changed'] == 0
+    assert R['edges']['height_change_m'] == {**R['edges']['height_change_m'], 'n': 1, 'nonzero': 0, 'abs_max': 0}
     assert R['ground']['layers_a'] == 256 + 16 and R['ground']['change_m']['nonzero'] == 0
     assert R['objects']['change_m'] == {**R['objects']['change_m'], 'n': 1, 'nonzero': 0}
 
 
 def test_a_bump_under_a_waypoint_is_flagged_with_its_size(tmp_path):
-    R = check(*world(tmp_path, raised({(5, 3)}, 0.15)))
+    R = check(*world(tmp_path, raised({(5, 3)}, 0.06)))
     over = R['waypoints']['over_tolerance']
-    assert [(w['name'], w['change_m']) for w in over] == [('P2', 0.15)]
+    assert [(w['name'], w['change_m']) for w in over] == [('P2', 0.06)]
+    assert [(w['name'], w['ground_a_m'], w['ground_b_m']) for w in R['waypoints']['rows']] == \
+        [('P0', 0.0, 0.0), ('P1', 0.0, 0.0), ('P2', 0.0, 0.06)]
+    assert [(e['from'], e['height_change_m'], e['fails']) for e in R['edges']['rows']] == [('P0', 0.0, [])]
     assert R['waypoints']['below_surface'] == [] and not R['passed']
     assert R['ground']['over_tolerance_m2'] == 0 and R['ground']['change_m']['nonzero'] == 1
 
 
-def test_ground_raised_over_the_stored_position_starts_the_ray_below_the_surface(tmp_path):
-    R = check(*world(tmp_path, raised({(5, 3)}, 0.8)))
+@pytest.mark.parametrize('lower, ground_b', [((), None), ((square(5, 3, 1, y=-1),), -1.0)])
+def test_ground_raised_over_the_stored_position_starts_the_ray_below_the_surface(tmp_path, lower, ground_b):
+    R = check(*world(tmp_path, raised({(5, 3)}, 0.8), upper=(UPPER, *lower)))
     [w] = R['waypoints']['below_surface']
-    assert (w['name'], w['depth_m'], w['ground_b_m']) == ('P2', 0.3, None)
+    assert (w['name'], w['depth_m'], w['ground_b_m']) == ('P2', 0.3, ground_b)
     assert R['failures']['waypoints_below_surface'] == 1
 
 
-def test_a_step_on_an_edge_fails_it_by_step_height(tmp_path):
-    R = check(*world(tmp_path, raised({(i, 8) for i in range(8, 12)}, 0.7)))
+@pytest.mark.parametrize('step, fails', [(0.62, True), (0.58, False)])
+def test_a_step_on_an_edge_fails_it_by_step_height(tmp_path, step, fails):
+    R = check(*world(tmp_path, raised({(i, 8) for i in range(8, 12)}, step)))
     [e] = R['edges']['failed']
-    assert (e['from'], e['to'], e['step_a_m'], e['step_b_m'], e['slope_b_deg']) == ('P0', 'P1', 0.0, 0.7, 0.0)
-    assert 'step 0.70 m' in e['fails']
+    assert (e['from'], e['to'], e['step_a_m'], e['step_b_m'], e['slope_b_deg']) == ('P0', 'P1', 0.0, step, 0.0)
+    assert (f'step {step:.2f} m' in e['fails']) == fails
     assert R['ground']['over_tolerance_m2'] == 4
+
+
+def test_a_new_platform_within_the_step_band_is_the_new_path(tmp_path):
+    base, content = world(tmp_path, upper=(UPPER, square(8, 8, 4, y=0.2)))
+    R = check(base, content)
+    assert R['edges']['failed'][0]['fails'] == ['height 0.20 m']
 
 
 def test_ground_moved_0_2_m_is_inside_the_ground_tolerance_but_fails_the_edge(tmp_path, capsys):
@@ -89,14 +101,18 @@ def test_ground_moved_0_2_m_is_inside_the_ground_tolerance_but_fails_the_edge(tm
     assert len(R['waypoints']['over_tolerance']) == 3
     assert (out / 'TEST_walk.md').read_text() + '\n' == capsys.readouterr().out
     assert walk.main(['TEST', '--base', str(base), '--content', str(content), '--path-tolerance', '0.25']) == 0
+    R = check(*world(tmp_path / 'higher', lambda i, j: 0.32))
+    assert R['ground']['over_tolerance_m2'] == 256
 
 
-def test_ground_lowered_under_an_object_lists_it_in_its_own_file(tmp_path):
-    base, content = world(tmp_path, raised({(10, 3)}, -0.25))
+@pytest.mark.parametrize('dy', [-0.06, 0.2])
+def test_ground_moved_under_an_object_lists_it_in_its_own_file(tmp_path, dy):
+    base, content = world(tmp_path, upper=(UPPER, square(10, 3, 1, y=dy)) if dy > 0 else (UPPER,),
+                          height=raised({(10, 3)}, dy if dy < 0 else 0.0))
     out = tmp_path / 'out'
     assert walk.main(['TEST', '--base', str(base), '--content', str(content), '--out', str(out)]) == 0
     [o] = json.loads((out / 'TEST_walk_objects.json').read_text())['objects']
-    assert (o['id'], o['visual'], o['position_cm'], o['change_m']) == (7, TREE[1], list(TREE[2]), -0.25)
+    assert (o['id'], o['visual'], o['position_cm'], o['change_m']) == (7, TREE[1], list(TREE[2]), dy)
 
 
 def test_a_removed_layer_and_an_added_layer(tmp_path):
@@ -105,6 +121,8 @@ def test_a_removed_layer_and_an_added_layer(tmp_path):
     assert (g['vanished_layers'], g['appeared_layers'], g['change_m']['nonzero']) == (16, 16, 0)
     assert [(c['chunk'], c['vanished'], c['appeared']) for c in g['chunks']] == [('0_0', 16, 16)]
     assert not R['passed']
+    g = check(*world(tmp_path / 'shifted', lambda i, j: 0.0, upper=[square(0, 12, 4, y=6.5)]))['ground']
+    assert (g['vanished_layers'], g['appeared_layers'], g['change_m']['max']) == (0, 0, 1.5)
 
 
 def test_newworld_against_an_empty_content_folder_is_all_zero(tmp_path):
@@ -118,4 +136,6 @@ def test_newworld_against_an_empty_content_folder_is_all_zero(tmp_path):
     assert R['passed'] and R['chunks_with_differences'] == []
     for part in (R['waypoints'], R['ground'], R['objects']):
         assert part['change_m']['n'] > 0 and part['change_m']['nonzero'] == 0
-    assert R['edges']['edges'] > 0 and R['edges']['changed'] == 0
+    e = R['edges']
+    assert e['edges'] > 0 and e['changed'] == 0 and e['height_change_m']['nonzero'] == 0
+    assert e['height_change_m']['abs_max'] == 0 and len(e['rows']) == e['edges']

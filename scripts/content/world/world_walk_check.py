@@ -22,14 +22,15 @@ What is measured, and how it follows the engine:
   starts inside the ground and finds a lower floor or nothing.
 - Edge: the ground profile of the segment sampled every 0.25 m (WayHeights::Profile spacing,
   min(25 cm, stepHeight / 2)), starting at the ground of the first waypoint and following the surface: at each sample
-  the up-facing hit nearest to the previous height within 2 m (a sample with none is "no support"; the engine then
-  throws "no continuous ground support"). Per edge: largest |B - A| height, steepest face (angle of the hit's normal
+  the highest up-facing hit within the step band (previous height ± stepHeight + 1 cm, as WayHeights::profile
+  searches), else the hit nearest to the previous height within 2 m, so a step over the limit is still measured (a
+  sample with none is "no support"; the engine then throws "no continuous ground support"). Per edge: largest |B - A| height, steepest face (angle of the hit's normal
   from up, the test hit.n.y >= slopeCos) and highest step between neighbouring samples, in A and in B.
 - Walkable ground: up-facing ground and rock triangles (census classes) above sea level not steeper than the slide
   angle, as census layers on a 1 m grid; per cell each layer's top in A is matched to the nearest layer top of B
   within 2 m. A layer with no partner within 2 m vanished (A) or appeared (B).
 - Objects: every vob of B with its children (and the mesh additions of vobs.d layers). Ground in A: the highest
-  up-facing hit at or below the object's height + 1 m; in B: the hit nearest to A's ground within 2 m.
+  up-facing hit at or below the object's height + 1 m, in A and in B.
 """
 from __future__ import annotations
 
@@ -53,6 +54,7 @@ import world_classes as wc  # noqa: E402
 # 60 cm and 50 degrees (reports/navigation/2026-11-04-nav-sim-research/data/rays/engine.json).
 STEP_HEIGHT_M = 0.60        # MoveAlgo::stepHeight(), guild step_height; 50 cm when the guild has none
 SLIDE_ANGLE_DEG = 50.0      # MoveAlgo::slideAngle() = cos(slide_angle): the steepest face a body stands on
+STEP_BAND_M = STEP_HEIGHT_M + 0.01   # WayHeights::profile searches stepHeight + 1 cm around the previous floor
 PROFILE_SPACING_M = 0.25    # WayHeights::Profile spacing = min(MaxProfileSpacing 25 cm, stepHeight / 2)
 LAND_RAY_M = 200.0          # DynamicWorld::worldHeight, the reach of landRay
 LAYER_GAP_M = census.LAYER_GAP_M
@@ -158,33 +160,25 @@ class Column:
                     break
         return out
 
-    def nearest(self, y: np.ndarray, reach: float = LAYER_GAP_M) -> tuple[np.ndarray, np.ndarray]:
-        """The hit nearest to y within reach (the higher on a tie), per query; nan where y is nan."""
-        out, nout = np.full(len(y), np.nan), np.full(len(y), np.nan)
-        H, N, S = self.heights.tolist(), self.ny.tolist(), self.start.tolist()
-        for i, at in enumerate(y.tolist()):
-            if math.isnan(at):
-                continue
-            best = reach + 1e-9
-            for k in range(S[i], S[i + 1]):
-                d = abs(H[k] - at)
-                if d <= best:
-                    best, out[i], nout[i] = d, H[k], N[k]
-        return out, nout
-
     def track(self, segments: np.ndarray, first: np.ndarray, reach: float = LAYER_GAP_M):
         """Follow the surface along each run of queries segments[s]:segments[s + 1] from the height first[s]: at each
-        query the hit nearest to the previous height within reach (the higher on a tie). Height nan = no support."""
+        query the highest hit within the step band around the previous height (WayHeights::profile), else the hit
+        nearest to it within reach (the higher on a tie). Height nan = no support."""
         out, nout = np.full(len(self.start) - 1, np.nan), np.full(len(self.start) - 1, np.nan)
         H, N, S = self.heights.tolist(), self.ny.tolist(), self.start.tolist()
         seg = segments.tolist()
         for s, prev in enumerate(first.tolist()):
             for i in range(seg[s], seg[s + 1]):
                 best, kb = reach + 1e-9, -1
-                for k in range(S[i], S[i + 1]):
-                    d = abs(H[k] - prev)
-                    if d <= best:
-                        best, kb = d, k
+                for k in range(S[i + 1] - 1, S[i] - 1, -1):
+                    if abs(H[k] - prev) < STEP_BAND_M:
+                        kb = k
+                        break
+                else:
+                    for k in range(S[i], S[i + 1]):
+                        d = abs(H[k] - prev)
+                        if d <= best:
+                            best, kb = d, k
                 if kb >= 0:
                     prev = H[kb]
                     out[i], nout[i] = H[kb], N[kb]
@@ -282,11 +276,11 @@ def check_waypoints(base: Path, world: str, A: State, B: State, region, tol: flo
     chunks = chunk_of(pos[:, 0], pos[:, 2])
     inside = in_region(chunks, region)
     diff = gb - ga
-    over, buried, lost = [], [], []
+    rows, over, buried, lost = [], [], [], []
     for i in np.nonzero(inside)[0]:
-        row = {'name': points[i]['name'], 'chunk': chunk_name(chunks[i]),
+        rows.append(row := {'name': points[i]['name'], 'chunk': chunk_name(chunks[i]),
                'position_cm': [round(v, 1) for v in points[i]['position']], 'ground_a_m': r(ga[i]),
-               'ground_b_m': r(gb[i]), 'change_m': r(diff[i])}
+               'ground_b_m': r(gb[i]), 'change_m': r(diff[i])})
         if np.isfinite(diff[i]) and abs(diff[i]) > tol:
             over.append(row)
         elif np.isfinite(ga[i]) != np.isfinite(gb[i]):
@@ -297,7 +291,7 @@ def check_waypoints(base: Path, world: str, A: State, B: State, region, tol: flo
     buried.sort(key=lambda w: -w['depth_m'])
     report = {'points': int(inside.sum()), 'with_ground_a': int(np.isfinite(ga[inside]).sum()),
               'with_ground_b': int(np.isfinite(gb[inside]).sum()), 'change_m': stats(diff[inside]),
-              'over_tolerance': over, 'below_surface': buried, 'ground_lost_or_found': lost,
+              'over_tolerance': over, 'below_surface': buried, 'ground_lost_or_found': lost, 'rows': rows,
               'chunks_changed': sorted({w['chunk'] for w in over + buried + lost}
                                        | {chunk_name(chunks[i]) for i in np.nonzero(inside & (diff != 0)
                                                                                     & np.isfinite(diff))[0]})}
@@ -321,7 +315,8 @@ def check_edges(points, pos, grounds, edges, A: State, B: State, region, tol: fl
         Z.append(pa[2] + (pb[2] - pa[2]) * t)
         seg.append(seg[-1] + len(t))
     if not E:
-        return {'edges': 0, 'samples': 0, 'failed': [], 'height_change_m': stats(np.zeros(0)), 'chunks_changed': []}
+        return {'edges': 0, 'samples': 0, 'height_change_m': stats(np.zeros(0)), 'changed': 0, 'failed': [],
+                'rows': [], 'chunks_changed': []}
     X, Z, seg = np.concatenate(X), np.concatenate(Z), np.array(seg)
     start = np.array([a for a, _ in E])
     first_a = np.where(np.isfinite(ga[start]), ga[start], pos[start, 1])
@@ -353,15 +348,17 @@ def check_edges(points, pos, grounds, edges, A: State, B: State, region, tol: fl
             why.append(f'step {step_b:.2f} m')
         if gap_b > gap_a:
             why.append(f'no support at {gap_b - gap_a} samples')
-        if why or dmax > 0 or slope_a != slope_b or step_a != step_b or gap_a != gap_b:
-            rows.append({'from': names[a], 'to': names[b], 'chunk': chunk_name(chunks[a]),
-                           'length_m': r(math.hypot(*(pos[b][[0, 2]] - pos[a][[0, 2]])), 2),
-                           'height_change_m': r(dmax), 'slope_a_deg': r(slope_a, 1), 'slope_b_deg': r(slope_b, 1),
-                           'step_a_m': r(step_a), 'step_b_m': r(step_b), 'no_support_a': gap_a,
-                           'no_support_b': gap_b, 'fails': why})
+        differs = bool(why) or dmax > 0 or slope_a != slope_b or step_a != step_b or gap_a != gap_b
+        rows.append({'from': names[a], 'to': names[b], 'chunk': chunk_name(chunks[a]),
+                     'length_m': r(math.hypot(*(pos[b][[0, 2]] - pos[a][[0, 2]])), 2),
+                     'height_change_m': r(dmax), 'slope_a_deg': r(slope_a, 1), 'slope_b_deg': r(slope_b, 1),
+                     'step_a_m': r(step_a), 'step_b_m': r(step_b), 'no_support_a': gap_a,
+                     'no_support_b': gap_b, 'differs': differs, 'fails': why})
     failed = sorted((f for f in rows if f['fails']), key=lambda f: -(f['height_change_m'] or 0))
+    changed = [f for f in rows if f['differs']]
     return {'edges': len(E), 'samples': len(X), 'height_change_m': stats(np.array(worst)),
-            'changed': len(rows), 'failed': failed, 'chunks_changed': sorted({f['chunk'] for f in rows})}
+            'changed': len(changed), 'failed': failed, 'rows': rows,
+            'chunks_changed': sorted({f['chunk'] for f in changed})}
 
 
 def layer_tops(L: census.Layers, gap: float = LAYER_GAP_M) -> tuple[np.ndarray, np.ndarray]:
@@ -449,10 +446,7 @@ def check_objects(base: Path, world: str, content: Path | None, A: State, B: Sta
     gx, gz = -pos[:, 0], pos[:, 2]
     colA, colB = A.columns.column(gx, gz), B.columns.column(gx, gz)
     ga, _ = colA.below(pos[:, 1] + OBJECT_REACH_M)
-    gb, _ = colB.nearest(ga)
-    alone = ~np.isfinite(ga)          # no ground in A: B's is searched the way A's was
-    if alone.any():
-        gb[alone] = colB.below(pos[:, 1] + OBJECT_REACH_M)[0][alone]
+    gb, _ = colB.below(pos[:, 1] + OBJECT_REACH_M)
     d = gb - ga
     moved = []
     for i in np.nonzero((np.abs(d) > OBJECT_TOLERANCE_M) | (np.isfinite(ga) != np.isfinite(gb)))[0]:
@@ -550,7 +544,8 @@ def markdown(R: dict) -> str:
     w = R['waypoints']
     out.append('## Waypoints\n')
     out.append(f'{w["points"]:,} waypoints; ground found by a ray straight down (`WayHeights::adjust` → `landRay`) '
-               f'in A {w["with_ground_a"]:,}, in B {w["with_ground_b"]:,}.\n')
+               f'in A {w["with_ground_a"]:,}, in B {w["with_ground_b"]:,}. Ground A, ground B and the change of every '
+               f'waypoint: `waypoints.rows` of the JSON.\n')
     out.append(table(STAT_HEAD, [stat_row('ground B − A', w['change_m'])]))
     for title, rows, extra in (('Over the path tolerance', w['over_tolerance'], []),
                                ('Stored position below the surface of B (the ray starts inside the ground)',
@@ -568,7 +563,8 @@ def markdown(R: dict) -> str:
     out.append(f'{e["edges"]:,} edges, {e["samples"]:,} profile samples; {e["changed"]} edges differ, '
                f'{len(e["failed"])} fail. An edge fails on a height change over the path tolerance, on a face '
                f'steeper than the slide angle or a step over the step height in B where A had none, or on more '
-               f'samples without support.\n')
+               f'samples without support. Height change, slope, step and gaps of every edge in A and B: `edges.rows` of '
+               f'the JSON; below, the failing ones.\n')
     out.append(table(STAT_HEAD, [stat_row('largest |B − A| per edge', e['height_change_m'])]))
     if e['failed']:
         shown, more = cut(e['failed'])
