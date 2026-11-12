@@ -6,7 +6,6 @@
 #include "graphics/mesh/protomesh.h"
 #include "savearchive.h"
 #include "game/physicssave.h"
-#include "testbench.h"
 
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/OffsetCenterOfMassShape.h>
