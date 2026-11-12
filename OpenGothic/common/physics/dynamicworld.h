@@ -29,6 +29,7 @@ class Npc;
 class Item;
 class Interactive;
 class DbgPainter;
+class Serialize;
 class SaveArchive;
 
 class Cloth;
