@@ -25,12 +25,17 @@ def tiles(height=lambda i, j: 0.0):
     return [square(i, j, 1, y=height(i, j)) for i in range(16) for j in range(16)]
 
 
+def waynet(base, points=POINTS):
+    """A waynet of the points (name: Gothic cm) with one edge from the first to the second."""
+    rows = [{'name': n, 'position': list(p), 'free_point': False} for n, p in points.items()]
+    (base / 'worlds' / 'TEST' / 'waynet.json').write_text(json.dumps(
+        {'format': 1, 'waynet': {'points': rows, 'edges': [[0, 1]]}}))
+
+
 def world(tmp_path, height=None, upper=(UPPER,)):
     """Base and content: the content chunk has tiles at height(i, j) and the upper squares given."""
     base = make_world(tmp_path / 'base', {'0_0': tiles() + [UPPER]}, vobs=[TREE])
-    points = [{'name': n, 'position': list(p), 'free_point': False} for n, p in POINTS.items()]
-    (base / 'worlds' / 'TEST' / 'waynet.json').write_text(json.dumps(
-        {'format': 1, 'waynet': {'points': points, 'edges': [[0, 1]]}}))
+    waynet(base)
     content = tmp_path / 'content'
     content.mkdir()
     if height is not None or tuple(upper) != (UPPER,):
@@ -46,20 +51,31 @@ def raised(cells, dy):
     return lambda i, j: dy if (i, j) in cells else 0.0
 
 
+def zero(n):
+    return {'n': n, 'nonzero': 0, 'min': 0, 'max': 0, 'abs_p50': 0, 'abs_p90': 0, 'abs_p99': 0, 'abs_max': 0}
+
+
+def only(R, failure):
+    """The check failed on this failure alone."""
+    assert not R['passed'] and [k for k, v in R['failures'].items() if v] == [failure]
+
+
 def test_an_empty_content_folder_changes_nothing(tmp_path):
     R = check(*world(tmp_path))
     assert R['passed'] and R['chunks_with_differences'] == []
-    assert R['waypoints']['change_m']['n'] == 3 and R['waypoints']['change_m']['abs_max'] == 0
+    assert R['waypoints']['change_m'] == zero(3)
     assert R['edges']['samples'] == 49 and R['edges']['changed'] == 0
-    assert R['edges']['height_change_m'] == {**R['edges']['height_change_m'], 'n': 1, 'nonzero': 0, 'abs_max': 0}
-    assert R['ground']['layers_a'] == 256 + 16 and R['ground']['change_m']['nonzero'] == 0
-    assert R['objects']['change_m'] == {**R['objects']['change_m'], 'n': 1, 'nonzero': 0}
+    assert R['edges']['height_change_m'] == zero(1)
+    assert R['ground']['layers_a'] == 256 + 16 and R['ground']['change_m'] == zero(256 + 16)
+    assert R['objects']['change_m'] == zero(1)
 
 
 def test_a_bump_under_a_waypoint_is_flagged_with_its_size(tmp_path):
     R = check(*world(tmp_path, raised({(5, 3)}, 0.06)))
     over = R['waypoints']['over_tolerance']
     assert [(w['name'], w['change_m']) for w in over] == [('P2', 0.06)]
+    assert R['waypoints']['change_m'] == {'n': 3, 'nonzero': 1, 'min': 0, 'max': 0.06, 'abs_p50': 0,
+                                          'abs_p90': 0.048, 'abs_p99': 0.059, 'abs_max': 0.06}
     assert [(w['name'], w['ground_a_m'], w['ground_b_m']) for w in R['waypoints']['rows']] == \
         [('P0', 0.0, 0.0), ('P1', 0.0, 0.0), ('P2', 0.0, 0.06)]
     assert [(e['from'], e['height_change_m'], e['fails']) for e in R['edges']['rows']] == [('P0', 0.0, [])]
@@ -75,12 +91,20 @@ def test_ground_raised_over_the_stored_position_starts_the_ray_below_the_surface
     assert R['failures']['waypoints_below_surface'] == 1
 
 
-@pytest.mark.parametrize('step, fails', [(0.62, True), (0.58, False)])
+def test_a_buried_waypoint_whose_ground_stays_fails_the_check_alone(tmp_path):
+    # a slab steeper than the slide angle over P2: its ground and the walkable layers stay, the ray starts inside
+    R = check(*world(tmp_path, upper=(UPPER, square(5, 3, 1, y=0.6, slope=1.5))))
+    [w] = R['waypoints']['below_surface']
+    assert (w['name'], w['change_m'], w['depth_m']) == ('P2', 0, 0.85)
+    only(R, 'waypoints_below_surface')
+
+
+@pytest.mark.parametrize('step, fails', [(0.62, True), (0.605, True), (0.58, False)])
 def test_a_step_on_an_edge_fails_it_by_step_height(tmp_path, step, fails):
     R = check(*world(tmp_path, raised({(i, 8) for i in range(8, 12)}, step)))
     [e] = R['edges']['failed']
     assert (e['from'], e['to'], e['step_a_m'], e['step_b_m'], e['slope_b_deg']) == ('P0', 'P1', 0.0, step, 0.0)
-    assert (f'step {step:.2f} m' in e['fails']) == fails
+    assert (f'step {step:g} m' in e['fails']) == fails
     assert R['ground']['over_tolerance_m2'] == 4
 
 
@@ -88,9 +112,42 @@ def test_a_new_platform_within_the_step_band_is_the_new_path(tmp_path):
     base, content = world(tmp_path, upper=(UPPER, square(8, 8, 4, y=0.2)))
     R = check(base, content)
     assert R['edges']['failed'][0]['fails'] == ['height 0.20 m']
+    only(R, 'edges')
 
 
-def test_ground_moved_0_2_m_is_inside_the_ground_tolerance_but_fails_the_edge(tmp_path, capsys):
+def test_a_face_steeper_than_the_slide_angle_is_not_support(tmp_path):
+    # a 63 degree ramp over the unchanged floor: the engine stands on the floor
+    R = check(*world(tmp_path, upper=(UPPER, square(8, 8, 4, y=0.1, slope=2))))
+    [e] = R['edges']['rows']
+    assert (e['height_change_m'], e['step_b_m'], e['too_steep_b'], e['no_support_b']) == (0, 0, 0, 0)
+    assert R['passed']
+    # the same kind of ramp with the floor under it 1 m down: the step band holds only the ramp
+    R = check(*world(tmp_path / 'steep', raised({(8, 8)}, -1.0), upper=(UPPER, square(8, 8, 1, slope=1.5))))
+    [e] = R['edges']['failed']
+    assert (e['too_steep_a'], e['too_steep_b']) == (0, 4) and 'too steep at 4 samples' in e['fails']
+
+
+def test_an_edge_crossing_the_region_with_both_ends_outside_is_checked_whole(tmp_path):
+    base = make_world(tmp_path / 'base', {f'{x}_0': [square(64 * x, 0, 64)] for x in range(-1, 4)})
+    waynet(base, {'W': (-3000, 50, 1000), 'E': (22000, 50, 1000)})
+    content = tmp_path / 'content'
+    chunk(content / 'worlds' / 'TEST' / 'chunks' / '1_0.glb', square(64, 0, 64, y=0.2))
+    R = walk.walk_check(base, 'TEST', content, {(1, 0)})
+    [e] = R['edges']['failed']
+    assert (e['from'], e['to'], e['fails'], e['no_support_a'], e['no_support_b']) == ('W', 'E', ['height 0.20 m'], 0, 0)
+
+
+def test_layers_in_no_common_cell_vanish_and_appear(tmp_path):
+    base = make_world(tmp_path / 'base', {'0_0': [square(0, 0, 4)]})
+    waynet(base)
+    content = tmp_path / 'content'
+    chunk(content / 'worlds' / 'TEST' / 'chunks' / '0_0.glb', square(8, 8, 4))
+    g = walk.walk_check(base, 'TEST', content)['ground']
+    assert (g['vanished_layers'], g['appeared_layers']) == (16, 16)
+
+
+def test_ground_moved_0_2_m_is_inside_the_ground_tolerance_but_fails_the_edge(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(walk, 'LIST_ROWS', 1)
     base, content = world(tmp_path, lambda i, j: 0.2)
     out = tmp_path / 'out'
     assert walk.main(['TEST', '--base', str(base), '--content', str(content), '--out', str(out)]) == 1
@@ -99,13 +156,18 @@ def test_ground_moved_0_2_m_is_inside_the_ground_tolerance_but_fails_the_edge(tm
     assert (g['over_tolerance_m2'], g['change_m']['nonzero'], g['change_m']['max']) == (0, 256, 0.2)
     assert R['edges']['failed'][0]['fails'] == ['height 0.20 m']
     assert len(R['waypoints']['over_tolerance']) == 3
-    assert (out / 'TEST_walk.md').read_text() + '\n' == capsys.readouterr().out
+    text = capsys.readouterr().out
+    assert (out / 'TEST_walk.md').read_text() + '\n' == text and '2 more in the JSON' in text
+    assert walk.main(['TEST', '--base', str(base), '--content', str(content)]) == 1
+    text = capsys.readouterr().out    # without the JSON every row is printed
+    assert 'more in the JSON' not in text and all(f'| {n} |' in text for n in POINTS)
     assert walk.main(['TEST', '--base', str(base), '--content', str(content), '--path-tolerance', '0.25']) == 0
-    R = check(*world(tmp_path / 'higher', lambda i, j: 0.32))
-    assert R['ground']['over_tolerance_m2'] == 256
+    R = check(*world(tmp_path / 'higher', raised({(12, 3)}, 0.32)))     # one cell away from paths and objects
+    assert R['ground']['over_tolerance_m2'] == 1
+    only(R, 'ground_over_tolerance_m2')
 
 
-@pytest.mark.parametrize('dy', [-0.06, 0.2])
+@pytest.mark.parametrize('dy', [-0.052, 0.2])
 def test_ground_moved_under_an_object_lists_it_in_its_own_file(tmp_path, dy):
     base, content = world(tmp_path, upper=(UPPER, square(10, 3, 1, y=dy)) if dy > 0 else (UPPER,),
                           height=raised({(10, 3)}, dy if dy < 0 else 0.0))
@@ -121,8 +183,8 @@ def test_a_removed_layer_and_an_added_layer(tmp_path):
     assert (g['vanished_layers'], g['appeared_layers'], g['change_m']['nonzero']) == (16, 16, 0)
     assert [(c['chunk'], c['vanished'], c['appeared']) for c in g['chunks']] == [('0_0', 16, 16)]
     assert not R['passed']
-    g = check(*world(tmp_path / 'shifted', lambda i, j: 0.0, upper=[square(0, 12, 4, y=6.5)]))['ground']
-    assert (g['vanished_layers'], g['appeared_layers'], g['change_m']['max']) == (0, 0, 1.5)
+    g = check(*world(tmp_path / 'shifted', lambda i, j: 0.0, upper=[square(0, 12, 4, y=6.9)]))['ground']
+    assert (g['vanished_layers'], g['appeared_layers'], g['change_m']['max']) == (0, 0, 1.9)
 
 
 def test_newworld_against_an_empty_content_folder_is_all_zero(tmp_path):
@@ -134,8 +196,7 @@ def test_newworld_against_an_empty_content_folder_is_all_zero(tmp_path):
         pytest.skip('no NEWWORLD in the base')
     R = walk.walk_check(base, 'NEWWORLD', tmp_path, walk.census.parse_rect('0,-2,1,0'))
     assert R['passed'] and R['chunks_with_differences'] == []
-    for part in (R['waypoints'], R['ground'], R['objects']):
-        assert part['change_m']['n'] > 0 and part['change_m']['nonzero'] == 0
     e = R['edges']
-    assert e['edges'] > 0 and e['changed'] == 0 and e['height_change_m']['nonzero'] == 0
-    assert e['height_change_m']['abs_max'] == 0 and len(e['rows']) == e['edges']
+    for s in (R['waypoints']['change_m'], R['ground']['change_m'], R['objects']['change_m'], e['height_change_m']):
+        assert s['n'] > 0 and s == zero(s['n'])
+    assert e['edges'] > 0 and e['changed'] == 0 and len(e['rows']) == e['edges']

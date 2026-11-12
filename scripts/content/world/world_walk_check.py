@@ -21,11 +21,14 @@ What is measured, and how it follows the engine:
   B has an up-facing surface less than 2 m above the stored position, closer than any in A — the engine's ray then
   starts inside the ground and finds a lower floor or nothing.
 - Edge: the ground profile of the segment sampled every 0.25 m (WayHeights::Profile spacing,
-  min(25 cm, stepHeight / 2)), starting at the ground of the first waypoint and following the surface: at each sample
-  the highest up-facing hit within the step band (previous height ± stepHeight + 1 cm, as WayHeights::profile
-  searches), else the hit nearest to the previous height within 2 m, so a step over the limit is still measured (a
-  sample with none is "no support"; the engine then throws "no continuous ground support"). Per edge: largest |B - A| height, steepest face (angle of the hit's normal
-  from up, the test hit.n.y >= slopeCos) and highest step between neighbouring samples, in A and in B.
+  min(25 cm, stepHeight / 2)), starting at the ground of the first waypoint and following the surface. The support of
+  a sample is, as in WayHeights::profile, the highest up-facing hit within the step band (previous height
+  ± stepHeight + 1 cm) whose normal passes the slide-angle test (n.y >= slopeCos). A band with hits but none walkable
+  is "too steep"; a band with no hits at all takes the hit nearest to the previous height within 2 m, so a step over
+  the limit is still measured; in both cases the profile goes on along that nearest surface. A sample with no hit
+  within 2 m is "no support" (the engine throws "no continuous ground support"). Per edge, in A and in B: largest
+  |B - A| height, steepest support face, highest step between neighbouring samples, too-steep and unsupported
+  samples. An edge is taken when any of its samples lies in the region; the chunks around all its samples are read.
 - Walkable ground: up-facing ground and rock triangles (census classes) above sea level not steeper than the slide
   angle, as census layers on a 1 m grid; per cell each layer's top in A is matched to the nearest layer top of B
   within 2 m. A layer with no partner within 2 m vanished (A) or appeared (B).
@@ -160,21 +163,26 @@ class Column:
                     break
         return out
 
-    def track(self, segments: np.ndarray, first: np.ndarray, reach: float = LAYER_GAP_M):
+    def track(self, segments: np.ndarray, first: np.ndarray, slope_cos: float, reach: float = LAYER_GAP_M):
         """Follow the surface along each run of queries segments[s]:segments[s + 1] from the height first[s]: at each
-        query the highest hit within the step band around the previous height (WayHeights::profile), else the hit
-        nearest to it within reach (the higher on a tie). Height nan = no support."""
+        query the highest hit within the step band around the previous height whose normal y is at least slope_cos
+        (WayHeights::profile), else the hit nearest to it within reach (the higher on a tie). Height nan = no support;
+        steep marks a band with hits of which none is walkable."""
         out, nout = np.full(len(self.start) - 1, np.nan), np.full(len(self.start) - 1, np.nan)
+        steep = np.zeros(len(self.start) - 1, bool)
         H, N, S = self.heights.tolist(), self.ny.tolist(), self.start.tolist()
         seg = segments.tolist()
         for s, prev in enumerate(first.tolist()):
             for i in range(seg[s], seg[s + 1]):
-                best, kb = reach + 1e-9, -1
+                best, kb, banded = reach + 1e-9, -1, False
                 for k in range(S[i + 1] - 1, S[i] - 1, -1):
                     if abs(H[k] - prev) < STEP_BAND_M:
-                        kb = k
-                        break
+                        banded = True
+                        if N[k] >= slope_cos:
+                            kb = k
+                            break
                 else:
+                    steep[i] = banded
                     for k in range(S[i], S[i + 1]):
                         d = abs(H[k] - prev)
                         if d <= best:
@@ -182,7 +190,7 @@ class Column:
                 if kb >= 0:
                     prev = H[kb]
                     out[i], nout[i] = H[kb], N[kb]
-        return out, nout
+        return out, nout, steep
 
 
 # --- the two states
@@ -264,10 +272,44 @@ def slope_deg(ny) -> np.ndarray:
 
 # --- parts of the check
 
-def check_waypoints(base: Path, world: str, A: State, B: State, region, tol: float):
+@dataclass
+class Waynet:
+    points: list
+    pos: np.ndarray           # (n, 3) Gothic metres
+    edges: list               # (a, b) point indices
+    X: np.ndarray             # profile samples of every edge, glTF metres
+    Z: np.ndarray
+    seg: np.ndarray           # samples of edge e: seg[e]:seg[e + 1]
+
+    def sample_chunks(self) -> np.ndarray:
+        return chunk_of(-self.X, self.Z)
+
+    def edges_in(self, region) -> np.ndarray:
+        """Which edges have a profile sample in the region (all for None)."""
+        if region is None or not len(self.edges):
+            return np.ones(len(self.edges), bool)
+        return np.add.reduceat(in_chunks(self.sample_chunks(), region).astype(np.int64), self.seg[:-1]) > 0
+
+
+def read_waynet(base: Path, world: str) -> Waynet:
     net = json.loads((base / 'worlds' / world / 'waynet.json').read_text())['waynet']
     points = net['points']
     pos = np.array([p['position'] for p in points], np.float64).reshape(-1, 3) / 100.0
+    edges = [(a, b) for a, b in net['edges']]
+    seg, X, Z = [0], [np.zeros(0)], [np.zeros(0)]
+    for a, b in edges:
+        pa, pb = pos[a], pos[b]
+        length = math.hypot(*(pb[[0, 2]] - pa[[0, 2]]))
+        n = max(1, math.ceil(length / PROFILE_SPACING_M - 1e-9))
+        t = np.minimum(np.arange(n + 1) * PROFILE_SPACING_M, length) / length if length > 0 else np.zeros(1)
+        X.append(-(pa[0] + (pb[0] - pa[0]) * t))
+        Z.append(pa[2] + (pb[2] - pa[2]) * t)
+        seg.append(seg[-1] + len(t))
+    return Waynet(points, pos, edges, np.concatenate(X), np.concatenate(Z), np.array(seg))
+
+
+def check_waypoints(net: Waynet, A: State, B: State, region, tol: float):
+    points, pos = net.points, net.pos
     gx, gy, gz = -pos[:, 0], pos[:, 1], pos[:, 2]
     colA, colB = A.columns.column(gx, gz), B.columns.column(gx, gz)
     ga, _ = colA.below(gy)
@@ -295,34 +337,29 @@ def check_waypoints(base: Path, world: str, A: State, B: State, region, tol: flo
               'chunks_changed': sorted({w['chunk'] for w in over + buried + lost}
                                        | {chunk_name(chunks[i]) for i in np.nonzero(inside & (diff != 0)
                                                                                     & np.isfinite(diff))[0]})}
-    return report, points, pos, (ga, gb), net['edges']
+    return report, (ga, gb)
 
 
-def check_edges(points, pos, grounds, edges, A: State, B: State, region, tol: float):
+def check_edges(net: Waynet, grounds, A: State, B: State, region, tol: float):
     ga, gb = grounds
-    names = [p['name'] for p in points]
+    pos = net.pos
+    names = [p['name'] for p in net.points]
     chunks = chunk_of(pos[:, 0], pos[:, 2])
-    inside = in_region(chunks, region)
-    E = [(a, b) for a, b in edges if inside[a] or inside[b]]
-    seg = [0]
-    X, Z = [], []
-    for a, b in E:
-        pa, pb = pos[a], pos[b]
-        length = math.hypot(*(pb[[0, 2]] - pa[[0, 2]]))
-        n = max(1, math.ceil(length / PROFILE_SPACING_M - 1e-9))
-        t = np.minimum(np.arange(n + 1) * PROFILE_SPACING_M, length) / length if length > 0 else np.zeros(1)
-        X.append(-(pa[0] + (pb[0] - pa[0]) * t))
-        Z.append(pa[2] + (pb[2] - pa[2]) * t)
-        seg.append(seg[-1] + len(t))
-    if not E:
+    picked = np.nonzero(net.edges_in(region))[0]
+    if not len(picked):
         return {'edges': 0, 'samples': 0, 'height_change_m': stats(np.zeros(0)), 'changed': 0, 'failed': [],
                 'rows': [], 'chunks_changed': []}
-    X, Z, seg = np.concatenate(X), np.concatenate(Z), np.array(seg)
+    E = [net.edges[e] for e in picked]
+    runs = [np.arange(net.seg[e], net.seg[e + 1]) for e in picked]
+    idx = np.concatenate(runs)
+    X, Z = net.X[idx], net.Z[idx]
+    seg = np.r_[0, np.cumsum([len(q) for q in runs])]
     start = np.array([a for a, _ in E])
     first_a = np.where(np.isfinite(ga[start]), ga[start], pos[start, 1])
     first_b = np.where(np.isfinite(gb[start]), gb[start], pos[start, 1])
-    ha, na = A.columns.column(X, Z).track(seg, first_a)
-    hb, nb = B.columns.column(X, Z).track(seg, first_b)
+    slope_cos = math.cos(math.radians(SLIDE_ANGLE_DEG))
+    ha, na, ta = A.columns.column(X, Z).track(seg, first_a, slope_cos)
+    hb, nb, tb = B.columns.column(X, Z).track(seg, first_b, slope_cos)
     sa, sb = slope_deg(na), slope_deg(nb)
     rows, worst = [], []
     for e, (a, b) in enumerate(E):
@@ -339,20 +376,23 @@ def check_edges(points, pos, grounds, edges, A: State, B: State, region, tol: fl
                     float(step.max()) if len(step) else 0.0, int((~np.isfinite(h)).sum()))
         slope_a, step_a, gap_a = profile(ha[s0:s1], sa[s0:s1])
         slope_b, step_b, gap_b = profile(hb[s0:s1], sb[s0:s1])
+        steep_a, steep_b = int(ta[s0:s1].sum()), int(tb[s0:s1].sum())
         why = []
         if dmax > tol:
             why.append(f'height {dmax:.2f} m')
-        if slope_b > SLIDE_ANGLE_DEG and not slope_a > SLIDE_ANGLE_DEG:
-            why.append(f'slope {slope_b:.0f}°')
+        if steep_b > steep_a:
+            why.append(f'too steep at {steep_b - steep_a} samples')
         if step_b > STEP_HEIGHT_M and not step_a > STEP_HEIGHT_M:
-            why.append(f'step {step_b:.2f} m')
+            why.append(f'step {r(step_b):g} m')
         if gap_b > gap_a:
             why.append(f'no support at {gap_b - gap_a} samples')
-        differs = bool(why) or dmax > 0 or slope_a != slope_b or step_a != step_b or gap_a != gap_b
+        differs = (bool(why) or dmax > 0 or slope_a != slope_b or step_a != step_b or gap_a != gap_b
+                   or steep_a != steep_b)
         rows.append({'from': names[a], 'to': names[b], 'chunk': chunk_name(chunks[a]),
                      'length_m': r(math.hypot(*(pos[b][[0, 2]] - pos[a][[0, 2]])), 2),
                      'height_change_m': r(dmax), 'slope_a_deg': r(slope_a, 1), 'slope_b_deg': r(slope_b, 1),
-                     'step_a_m': r(step_a), 'step_b_m': r(step_b), 'no_support_a': gap_a,
+                     'step_a_m': r(step_a), 'step_b_m': r(step_b), 'too_steep_a': steep_a, 'too_steep_b': steep_b,
+                     'no_support_a': gap_a,
                      'no_support_b': gap_b, 'differs': differs, 'fails': why})
     failed = sorted((f for f in rows if f['fails']), key=lambda f: -(f['height_change_m'] or 0))
     changed = [f for f in rows if f['differs']]
@@ -384,6 +424,8 @@ def nearest_layer(ka, ha, kb, hb) -> np.ndarray:
     lo = np.searchsorted(kb, ka, 'left')
     n = np.searchsorted(kb, ka, 'right') - lo
     ia = np.repeat(np.arange(len(ka)), n)
+    if not len(ia):
+        return out
     ib = np.repeat(lo, n) + np.arange(n.sum()) - np.repeat(np.cumsum(n) - n, n)
     d = np.abs(hb[ib] - ha[ia])
     o = np.lexsort((-hb[ib], d, ia))
@@ -478,7 +520,12 @@ def slope_histogram(A: State, B: State, changed: set[tuple[int, int]]):
 def walk_check(base: Path, world: str, content: Path | None, region=None, path_tol: float = 0.05,
                ground_tol: float = 0.30) -> dict:
     t0, c0 = time.time(), time.process_time()
-    load = ring(region) if region is not None else None
+    net = read_waynet(base, world)
+    load = None
+    if region is not None:      # the region, and every chunk an edge taken by the region passes, with a ring
+        sc = net.sample_chunks()
+        taken = np.repeat(net.edges_in(region), np.diff(net.seg))
+        load = ring(set(region) | {(int(x), int(z)) for x, z in np.unique(sc[taken], axis=0)})
     sea = census.sea_level(base, world)
     A = load_state(base, world, None, load, sea)
     B = load_state(base, world, content, load, sea)
@@ -490,8 +537,8 @@ def walk_check(base: Path, world: str, content: Path | None, region=None, path_t
                     'object_tolerance_m': OBJECT_TOLERANCE_M, 'step_height_m': STEP_HEIGHT_M,
                     'slide_angle_deg': SLIDE_ANGLE_DEG, 'profile_spacing_m': PROFILE_SPACING_M,
                     'layer_gap_m': LAYER_GAP_M}}
-    R['waypoints'], points, pos, grounds, edges = check_waypoints(base, world, A, B, region, path_tol)
-    R['edges'] = check_edges(points, pos, grounds, edges, A, B, region, path_tol)
+    R['waypoints'], grounds = check_waypoints(net, A, B, region, path_tol)
+    R['edges'] = check_edges(net, grounds, A, B, region, path_tol)
     R['ground'] = check_ground(A, B, region, ground_tol)
     R['objects'] = check_objects(base, world, content, A, B, region)
     R['slope_histogram'] = slope_histogram(A, B, changed)
@@ -514,8 +561,12 @@ def walk_check(base: Path, world: str, content: Path | None, region=None, path_t
 table, num = census.table, census.num
 
 
-def cut(rows: list, n: int = LIST_ROWS) -> tuple[list, str]:
-    return rows[:n], (f'{len(rows) - n} more in the JSON.\n' if len(rows) > n else '')
+def cut(rows: list, short: bool) -> tuple[list, str]:
+    """The first LIST_ROWS rows when the JSON is written (short), all of them otherwise."""
+    n = LIST_ROWS
+    if not short or len(rows) <= n:
+        return rows, ''
+    return rows[:n], f'{len(rows) - n} more in the JSON.\n'
 
 
 def stat_row(label, s) -> list:
@@ -525,7 +576,8 @@ def stat_row(label, s) -> list:
 STAT_HEAD = ['quantity', 'n', 'non-zero', 'min', 'max', '|p50|', '|p90|', '|p99|', '|max|']
 
 
-def markdown(R: dict) -> str:
+def markdown(R: dict, short: bool = False) -> str:
+    """The report; short cuts the lists of violations at LIST_ROWS rows (for a report written next to its JSON)."""
     L = R['limits']
     out = [f'# Walkability check of {R["world"]}: base (A) against base + content (B)\n']
     region = 'whole world' if R['region'] is None else f'{len(R["region"])} chunks: {", ".join(R["region"])}'
@@ -552,7 +604,7 @@ def markdown(R: dict) -> str:
                                 w['below_surface'], ['surface_b_m', 'depth_m']),
                                ('Ground found in one state only', w['ground_lost_or_found'], [])):
         if rows:
-            shown, more = cut(rows)
+            shown, more = cut(rows, short)
             out.append(f'{title}: {len(rows)}.\n')
             out.append(table(['waypoint', 'chunk', 'position cm', 'ground A', 'ground B', 'change'] + extra,
                              [[x['name'], x['chunk'], x['position_cm'], x['ground_a_m'], x['ground_b_m'],
@@ -561,17 +613,19 @@ def markdown(R: dict) -> str:
     e = R['edges']
     out.append('## Waynet edges\n')
     out.append(f'{e["edges"]:,} edges, {e["samples"]:,} profile samples; {e["changed"]} edges differ, '
-               f'{len(e["failed"])} fail. An edge fails on a height change over the path tolerance, on a face '
-               f'steeper than the slide angle or a step over the step height in B where A had none, or on more '
-               f'samples without support. Height change, slope, step and gaps of every edge in A and B: `edges.rows` of '
-               f'the JSON; below, the failing ones.\n')
+               f'{len(e["failed"])} fail. An edge fails on a height change over the path tolerance, on a step over '
+               f'the step height in B where A had none, or on more samples in B than in A that are too steep (the '
+               f'step band has hits, none within the slide angle) or without support. Edges are those with a profile '
+               f'sample in the region. Height change, slope, step and gaps of every edge in A and B: `edges.rows` '
+               f'of the JSON; below, the failing ones.\n')
     out.append(table(STAT_HEAD, [stat_row('largest |B − A| per edge', e['height_change_m'])]))
     if e['failed']:
-        shown, more = cut(e['failed'])
+        shown, more = cut(e['failed'], short)
         out.append(table(['from', 'to', 'chunk', 'length', 'height change', 'slope A°', 'slope B°', 'step A',
-                          'step B', 'no support A/B', 'fails on'],
+                          'step B', 'too steep A/B', 'no support A/B', 'fails on'],
                          [[f['from'], f['to'], f['chunk'], f['length_m'], f['height_change_m'], f['slope_a_deg'],
-                           f['slope_b_deg'], f['step_a_m'], f['step_b_m'], f'{f["no_support_a"]}/{f["no_support_b"]}',
+                           f['slope_b_deg'], f['step_a_m'], f['step_b_m'], f'{f["too_steep_a"]}/{f["too_steep_b"]}',
+                           f'{f["no_support_a"]}/{f["no_support_b"]}',
                            '; '.join(f['fails'])] for f in shown]) + more)
 
     g = R['ground']
@@ -594,7 +648,7 @@ def markdown(R: dict) -> str:
                f'only): the input of the re-seat tool (`{R["world"]}_walk_objects.json`).\n')
     out.append(table(STAT_HEAD, [stat_row('ground B − A', o['change_m'])]))
     if o['moved']:
-        shown, more = cut(o['moved'])
+        shown, more = cut(o['moved'], short)
         out.append(table(['id / key', 'source', 'visual', 'chunk', 'position cm', 'ground A', 'ground B', 'change'],
                          [[x['id'] if x['id'] is not None else x['key'], x['source'], x['visual'], x['chunk'],
                            x['position_cm'], x['ground_a_m'], x['ground_b_m'], x['change_m']] for x in shown]) + more)
@@ -640,7 +694,7 @@ def main(argv=None) -> int:
         raise SystemExit(f'no content folder {a.content}')
     region = census.parse_chunks(a.chunks) if a.chunks else census.parse_rect(a.rect) if a.rect else None
     R = walk_check(base, a.world, a.content, region, a.path_tolerance, a.ground_tolerance)
-    text = markdown(R)
+    text = markdown(R, short=a.out is not None)
     print(text)
     if a.out:
         a.out.mkdir(parents=True, exist_ok=True)
