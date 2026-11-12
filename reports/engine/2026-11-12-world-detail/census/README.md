@@ -9,3 +9,5 @@ python3 <repo>/reports/engine/2026-11-12-world-detail/census/vobs.py NEWWORLD   
 ```
 
 `classify.py` — правила классов материалов по именам; это приближение, сверяйте по таблице 40 крупнейших материалов в отчёте. На Mac весь прогон `NEWWORLD` занимает меньше минуты на одном ядре.
+
+Эти скрипты заменил инструмент [`scripts/content/world/world_census.py`](../../../../scripts/content/world/world_census.py) (шаг Д1 [плана ландшафта](../../../../docs/landscape-plan.md)): те же определения одной командой, по области и с контентом; скрипты остаются записью исследования.
