@@ -20,6 +20,8 @@ namespace TextureFlow {
     Publishing,  // loaded and ready, waiting for its publication (one a frame, through the residency's work queue)
     Stale,       // loading a level coarser than it now wants: its demand rose again after the load started
     States,
+    // in the load queue for the look-ahead only: not short of the level of its present demand
+    Ahead    = 0xfe,
     NotShort = 0xff,
     };
   const char* name(State state);
@@ -98,19 +100,24 @@ namespace TextureFlow {
 
   // The counters Resources keeps: short textures by state now, the texture-seconds in each state, the visible
   // shortfall (against the level with reserve 0, what the screen needs), the loads' latencies and bursts, and the
-  // bytes of the loads in flight.
+  // bytes of the loads in flight. Short is against the level of the owners' present demand; a texture queued for the
+  // look-ahead alone counts as `ahead`. The latency, the wait and the bursts are of the load queue: from the moment a
+  // texture enters it (its demand, the look-ahead's included, rose above its resident level).
   struct Tracker {
     std::array<uint64_t,States> count{};
     std::array<double,States>   seconds{};
     uint64_t  visible = 0;
     double    visibleSeconds = 0;
-    uint64_t  entries = 0;        // textures that became short, since the start
-    Histogram latency;            // demand rose -> the publication that met it, async loads
-    Histogram wait;               // demand rose -> its first load started
+    uint64_t  ahead = 0;          // queued for the look-ahead alone, now and texture-seconds
+    double    aheadSeconds = 0;
+    uint64_t  entries = 0;        // textures that entered the load queue, since the start
+    Histogram latency;            // entered the queue -> the publication that met it, async loads
+    Histogram wait;               // entered the queue -> its first load started
     Bursts    bursts;
     uint64_t  bytesInFlight = 0;  // the payloads the loads in flight will make
     uint64_t  publications = 0;   // asynchronous publications and their cost on the main thread, ms
     double    publishMs = 0, publishMaxMs = 0;
+    double    horizon = 0;        // the look-ahead's horizon now, seconds (texturelookahead.h); 0: off
 
     void integrate(double elapsed);
     uint64_t shortfall() const;

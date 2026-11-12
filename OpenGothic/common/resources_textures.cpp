@@ -448,7 +448,8 @@ void Resources::updateNearTailTime() {
   const auto elapsed=std::chrono::duration<double>(now-nearTailUpdated).count();
   nearTailSeconds+=elapsed*double(nearTailTextures.size());
   // Missing and promotion queues hold exactly the wanted textures resident coarser than wanted.
-  shortfallSeconds+=elapsed*double(textureMissing.size()+texturePromotions.size());
+  // the shortfall: wanted textures short of the level of their present demand (textureflow.h)
+  shortfallSeconds+=elapsed*double(textureFlow.shortfall());
   textureFlow.integrate(elapsed);
   textureFlow.bursts.tick(now);
   nearTailUpdated=now;
@@ -458,7 +459,7 @@ uint8_t Resources::tailLevel(const TextureRecord& record) const {
   return uint8_t(std::min<uint32_t>(textureSkipMips,record.lowest));
   }
 
-uint8_t Resources::wantedLevel(const TextureRecord& record, uint32_t stage) const {
+uint8_t Resources::wantedLevel(const TextureRecord& record, uint32_t stage, bool present) const {
   if(!textureStreaming || textureSkipMips==0 || record.lowest==0 || record.pinned ||
      record.distances.count(TextureAlwaysFull)!=0)
     return 0;
@@ -470,7 +471,7 @@ uint8_t Resources::wantedLevel(const TextureRecord& record, uint32_t stage) cons
   if(!record.ringNeeds.empty())
     level=std::min<uint8_t>(level,record.ringNeeds.begin()->first<=2 ? 0 : tail);
   if(!record.resolutions.empty())
-    level=std::min(level,resolutionLevel(record,stage));
+    level=std::min(level,resolutionLevel(record,stage,present));
   return level;
   }
 
@@ -628,7 +629,7 @@ Resources::TextureStats Resources::textureStats() {
   stats.promotionQueue=inst->texturePromotions.size();
   stats.nearTailCount=inst->nearTailTextures.size();
   stats.nearTailSeconds=inst->nearTailSeconds;
-  stats.shortfallCount=inst->textureMissing.size()+inst->texturePromotions.size();
+  stats.shortfallCount=inst->textureFlow.shortfall();
   stats.shortfallSeconds=inst->shortfallSeconds;
   stats.loadsInFlight=inst->textureReloads.size();
   stats.demandCalls=inst->textureDemandCalls;
@@ -802,16 +803,20 @@ void Resources::implTextureDemand(const Material& material, TextureCategory cate
       take(record.distances,release->ring);
       if(release->resolution==TextureLevels::NoExponent)
         take(record.ringNeeds,release->ring);
-      else
+      else {
         take(record.resolutions,release->resolution);
+        take(record.presents,presentOf(*release));
+        }
       }
     if(add!=nullptr) {
       ++count;
       ++record.distances[add->ring];
       if(add->resolution==TextureLevels::NoExponent)
         ++record.ringNeeds[add->ring];
-      else
+      else {
         ++record.resolutions[add->resolution];
+        ++record.presents[presentOf(*add)];
+        }
       }
     record.lastDemand=++textureClock;
     if(neededFull || (record.wanted() && wantsFull(record)))

@@ -341,6 +341,7 @@ void World::updateLandscape(const Camera& camera) {
     }
   if(wview)
     wview->prepareLandscapeWork();
+  residency->setLookAhead(Resources::textureLookAhead());
   residency->update(npcPlayer->position(),camera.originLwc(),camera.zFar());
   if(wview)
     wview->finishLandscapeUpdate();

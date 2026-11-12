@@ -712,6 +712,12 @@ inline void mark(std::string_view stage, double stageMs = -1, std::string_view e
                 int(stage.size()),stage.data(),elapsed,flow.wait.quantile(0.5),flow.wait.quantile(0.9),flow.wait.max(),
                 (unsigned long long)flow.bursts.count(),flow.bursts.quantile(0.9),flow.bursts.max());
   Tempest::Log::i(textureBuf);
+  std::snprintf(textureBuf,sizeof(textureBuf),
+                "[loadprobe-textures] stage=%.*s t_ms=%.1f tex_ahead_n=%llu tex_ahead_seconds=%.9g tex_lookahead_ms=%.1f "
+                "tex_publications=%llu tex_publish_ms=%.9g",
+                int(stage.size()),stage.data(),elapsed,(unsigned long long)flow.ahead,flow.aheadSeconds,1000*flow.horizon,
+                (unsigned long long)flow.publications,flow.publishMs);
+  Tempest::Log::i(textureBuf);
   // seconds on each stage reached so far, four a line
   for(uint32_t first=0; first<=textures.stageDeepest && first<textures.stageSeconds.size(); first+=4) {
     int at=std::snprintf(textureBuf,sizeof(textureBuf),"[loadprobe-textures] stage=%.*s t_ms=%.1f",

@@ -352,7 +352,8 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
              "tex_loads_started": 40, "tex_short_entries": 30, "tex_latency_n": 28, "tex_latency_p50_ms": 90.5,
              "tex_latency_p90_ms": 304.4, "tex_latency_max_ms": 812.0, "tex_wait_n": 29, "tex_wait_p50_ms": 11.3,
              "tex_wait_p90_ms": 107.6, "tex_wait_max_ms": 300.0, "tex_bursts": 6, "tex_burst_p50": 3, "tex_burst_p90": 9,
-             "tex_burst_max": 12, "tex_publications": 25, "tex_publish_ms": .1, "tex_publish_max_ms": .02},
+             "tex_burst_max": 12, "tex_publications": 25, "tex_publish_ms": .1, "tex_publish_max_ms": .02,
+             "tex_ahead_seconds": .5, "tex_lookahead_ms": 22.0},
             {"kind": "streaming_ready", "far_publication_ms": [], "far_max_per_frame": 0, "queue_max_ms": .001},
             {"kind": "perf_segment", "segment": "streaming-flythrough/fly", "residency_manager": True},
             {"kind": "route_end", "speed_cm_s": 2000, "pass": True},
@@ -407,7 +408,7 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
     assert fly_flow["latency"] == {"n": 0, "p50_ms": None, "p90_ms": None, "max_ms": None}
     assert flow["publish"] == {"n": 25, "mean_us": pytest.approx(4.0), "max_us": pytest.approx(20.0)}
     assert ("| run | 0.25 / 0.12 / 0.06 / 0.06 / 0.00 | 0.12 | 40 | 6 / 3.0 | 4 | 90 / 304 / 812 | 11 / 108 | 3 / 9 / 12 | "
-            "4.0 / 20.0 |"
+            "4.0 / 20.0 | 0.50 / 22 |"
             in report.report_markdown(report.build_report(streaming)))
     combined_budget = report.build_report(streaming)["places"]["streaming-flythrough"]["summary"]["streaming"]["textures"]["budget"]
     assert (combined_budget["stage_seconds"][1], combined_budget["stage_seconds"][13]) == (4, 8)

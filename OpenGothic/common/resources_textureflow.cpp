@@ -4,6 +4,7 @@
 #include "resources.h"
 #include "frameprofile.h"
 #include "texturelevels.h"
+#include "graphics/texturelookahead.h"
 
 #include <algorithm>
 #include <chrono>
@@ -25,12 +26,18 @@ uint8_t Resources::visibleLevel(const TextureRecord& record) const {
 void Resources::flowEnter(TextureRecord& record, uint8_t wanted) {
   // `nearTailUpdated` is now: the queues change only right after updateNearTailTime (unqueueTexture, trackTexture).
   const auto now=nearTailUpdated;
-  record.flowState=TextureFlow::state(record.loading,record.loading && record.loadLevel>wanted,record.loadPhase);
-  ++textureFlow.count[record.flowState];
   const uint32_t resident=record.resident ? record.firstMip : std::max<uint32_t>(record.mipCount,1);
-  record.flowVisible=resident>visibleLevel(record);
-  if(record.flowVisible)
-    ++textureFlow.visible;
+  // Queued for the look-ahead alone: not short of the level its present demand needs.
+  if(resident>presentLevel(record)) {
+    record.flowState=TextureFlow::state(record.loading,record.loading && record.loadLevel>wanted,record.loadPhase);
+    ++textureFlow.count[record.flowState];
+    record.flowVisible=resident>visibleLevel(record);
+    if(record.flowVisible)
+      ++textureFlow.visible;
+    } else {
+    record.flowState=TextureFlow::Ahead;
+    ++textureFlow.ahead;
+    }
   // A publication that left it short does not end the shortfall: only the one after which it is not short.
   record.flowPublished=false;
   if(record.shortSince!=std::chrono::steady_clock::time_point{})
@@ -44,7 +51,10 @@ void Resources::flowEnter(TextureRecord& record, uint8_t wanted) {
 void Resources::flowLeave(TextureRecord& record) {
   if(record.flowState==TextureFlow::NotShort)
     return;
-  --textureFlow.count[record.flowState];
+  if(record.flowState==TextureFlow::Ahead)
+    --textureFlow.ahead;
+  else
+    --textureFlow.count[record.flowState];
   if(record.flowVisible)
     --textureFlow.visible;
   record.flowState=TextureFlow::NotShort;
@@ -54,16 +64,19 @@ void Resources::flowLeave(TextureRecord& record) {
 void Resources::flowSettle(TextureRecord& record) {
   if(record.flowState!=TextureFlow::NotShort || record.shortSince==std::chrono::steady_clock::time_point{})
     return;
-  // Met by an asynchronous publication: its latency. Its demand fell, or a synchronous load met it: none.
-  if(record.flowPublished)
+  // Met by an asynchronous publication: its latency, and the look-ahead's horizon from it. Its demand fell, or a
+  // synchronous load met it: none.
+  if(record.flowPublished) {
     textureFlow.latency.add(milliseconds(nearTailUpdated-record.shortSince));
+    textureHorizon=TextureLookAhead::horizon(textureFlow.latency.quantile(0.9),textureFlow.latency.count());
+    }
   record.shortSince={};
   record.flowPublished=false;
   record.flowLoaded=false;
   }
 
 void Resources::flowRestate(TextureRecord& record) {
-  if(record.flowState==TextureFlow::NotShort)
+  if(record.flowState==TextureFlow::NotShort || record.flowState==TextureFlow::Ahead)
     return;
   const auto wanted=wantedLevel(record);
   const auto next=TextureFlow::state(record.loading,record.loading && record.loadLevel>wanted,record.loadPhase);
@@ -102,8 +115,15 @@ void Resources::flowObserve(TextureReload& reload) {
   flowRestate(record);
   }
 
+double Resources::textureLookAhead() {
+  if(inst==nullptr || !inst->textureScreen || !inst->textureLookAheadOn)
+    return 0;
+  return inst->textureHorizon.load();
+  }
+
 void Resources::textureFlowStats(TextureStats& stats) {
   stats.flow=textureFlow;
+  stats.flow.horizon=textureLookAhead();
   stats.flow.bytesInFlight=0;
   for(const auto& reload:textureReloads)
     stats.flow.bytesInFlight+=reload->bytes;

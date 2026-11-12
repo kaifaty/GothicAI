@@ -137,6 +137,7 @@ void TextureFlow::Tracker::integrate(double elapsed) {
   for(size_t i=0;i<States;++i)
     seconds[i] += elapsed*double(count[i]);
   visibleSeconds += elapsed*double(visible);
+  aheadSeconds   += elapsed*double(ahead);
   }
 
 uint64_t TextureFlow::Tracker::shortfall() const {

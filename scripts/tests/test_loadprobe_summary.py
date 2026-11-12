@@ -100,7 +100,7 @@ def test_session_and_world_change_csv(tmp_path):
     output = subprocess.check_output([sys.executable, str(SCRIPT), str(tmp_path)], text=True)
     reader = csv.DictReader(io.StringIO(output))
     rows = list(reader)
-    assert len(reader.fieldnames) == 750
+    assert len(reader.fieldnames) == 765
     assert len(rows) == 2
     assert rows[0]["load_1"] == "1.25"
     assert rows[0]["placed_items_placement_queries_ms"] == "800.25"

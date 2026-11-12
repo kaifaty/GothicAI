@@ -352,9 +352,10 @@ def read_streaming(directory):
 FLOW_STATES = ("wait", "read", "upload", "publish", "stale")
 FLOW_SUM_FIELDS = (*(f"tex_shortfall_{state}_seconds" for state in FLOW_STATES), "tex_visible_shortfall_seconds",
                    "tex_loads_started", "tex_short_entries", "tex_latency_n", "tex_wait_n", "tex_bursts", "tex_publications",
-                   "tex_publish_ms")
+                   "tex_publish_ms", "tex_ahead_seconds")
 FLOW_WORST_FIELDS = ("tex_latency_p50_ms", "tex_latency_p90_ms", "tex_latency_max_ms", "tex_wait_p50_ms", "tex_wait_p90_ms",
-                     "tex_wait_max_ms", "tex_burst_p50", "tex_burst_p90", "tex_burst_max", "tex_publish_max_ms")
+                     "tex_wait_max_ms", "tex_burst_p50", "tex_burst_p90", "tex_burst_max", "tex_publish_max_ms",
+                     "tex_lookahead_ms")
 
 
 def texture_flow(textures):
@@ -375,6 +376,9 @@ def texture_flow(textures):
     return {
         "state_seconds": {state: route(f"tex_shortfall_{state}_seconds") for state in FLOW_STATES},
         "visible_seconds": route("tex_visible_shortfall_seconds"),
+        # part C: texture-seconds queued for the look-ahead alone; its horizon at the end of the pass (the longest)
+        "ahead_seconds": route("tex_ahead_seconds"),
+        "horizon_ms": worst("tex_lookahead_ms"),
         "loads_started": int(route("tex_loads_started")),
         "short_entries": int(route("tex_short_entries")),
         "latency": {"n": int(route("tex_latency_n")), **{key: worst(f"tex_latency_{key}") for key in ("p50_ms", "p90_ms", "max_ms")}},
@@ -675,13 +679,13 @@ def summary_table(report):
                       "bursts, textures that became short within a second.", "",
                       "| Pass | Wait / read / upload / publish / stale | Visible | Loads started | Loads / MiB in flight peak | "
                       "Waiting peak | Latency p50 / p90 / max ms | Wait p50 / p90 ms | Bursts p50 / p90 / max | "
-                      "Publication µs mean / max |",
-                      "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"])
+                      "Publication µs mean / max | Ahead s / horizon ms |",
+                      "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"])
         for view, stats in streaming["views"].items():
             textures = stats["streaming"]["textures"]
             flow = textures.get("flow") if textures is not None else None
             if flow is None:
-                lines.append(f"| {view} | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |")
+                lines.append(f"| {view} | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |")
                 continue
             split = " / ".join(f"{flow['state_seconds'][state]:.2f}" for state in FLOW_STATES)
             in_flight = (f"{number(flow['loads_peak'], 0)} / "
@@ -691,7 +695,8 @@ def summary_table(report):
             bursts = " / ".join(number(flow["bursts"][key], 0) for key in ("p50", "p90", "max"))
             lines.append(f"| {view} | {split} | {flow['visible_seconds']:.2f} | {flow['loads_started']} | {in_flight} | "
                          f"{number(flow['waiting_peak'], 0)} | {latency} | {wait} | {bursts} | "
-                         f"{number(flow['publish']['mean_us'], 1)} / {number(flow['publish']['max_us'], 1)} |")
+                         f"{number(flow['publish']['mean_us'], 1)} / {number(flow['publish']['max_us'], 1)} | "
+                         f"{flow['ahead_seconds']:.2f} / {number(flow['horizon_ms'], 0)} |")
         lines.extend(["", "Texture budget: the device's budget and this process's usage, the working target, the stage "
                       "above it, and D(s), the bytes the demanded textures take at stage s.", "",
                       "| Pass | Device budget / usage end MiB | Target end MiB (source) | Stage end / deepest | "

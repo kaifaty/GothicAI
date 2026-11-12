@@ -236,11 +236,15 @@ class Resources final {
     static constexpr uint32_t TextureAlwaysFull = uint32_t(-1);
     // What one owner asks of the textures of its material: the ring of its chunk to the hero's or camera's chunk
     // (TextureAlwaysFull: an owner with no place, the whole chain) and, for an owner measured on screen, its resolution
-    // exponent (texturelevels.h; NoExponent: the ring decides).
+    // exponent (texturelevels.h; NoExponent: the ring decides). With the look-ahead (step 4) `resolution` is from the
+    // closest point of the view's path and `present` from the view as it is, for the shortfall; NoExponent: the same.
     struct TextureNeed {
       uint32_t ring       = TextureAlwaysFull;
       int32_t  resolution = std::numeric_limits<int32_t>::min();
-      bool operator==(const TextureNeed& other) const { return ring==other.ring && resolution==other.resolution; }
+      int32_t  present    = std::numeric_limits<int32_t>::min();
+      bool operator==(const TextureNeed& other) const {
+        return ring==other.ring && resolution==other.resolution && present==other.present;
+        }
       bool operator!=(const TextureNeed& other) const { return !(*this==other); }
       };
     static void                      textureDemand(const Material& material, TextureCategory category, bool add, uint32_t distance = TextureAlwaysFull);
@@ -447,9 +451,16 @@ class Resources final {
     void                 unqueueTexture(TextureRecord& record);
     void                 updateNearTailTime();
     uint8_t              wantedLevel(const TextureRecord& record) const { return wantedLevel(record,textureLadder.stage); }
-    uint8_t              wantedLevel(const TextureRecord& record, uint32_t stage) const;
+    // `present`: from the owners' present exponents, without the look-ahead (step 4)
+    uint8_t              wantedLevel(const TextureRecord& record, uint32_t stage, bool present = false) const;
     // Step 4 (resources_textureflow.cpp): the shortfall's states. The level the screen needs: reserve 0.
     uint8_t              visibleLevel(const TextureRecord& record) const;
+    // the level of the owners' present exponents, which the shortfall is measured against
+    uint8_t              presentLevel(const TextureRecord& record) const { return wantedLevel(record,textureLadder.stage,true); }
+    // an owner's present exponent: its resolution exponent unless the look-ahead set one apart
+    static int32_t       presentOf(const TextureNeed& need) {
+      return need.present==std::numeric_limits<int32_t>::min() ? need.resolution : std::min(need.present,need.resolution);
+      }
     // a record put into the missing or promotion queue `wanted`, or out of it; then whether its shortfall ended
     void                 flowEnter(TextureRecord& record, uint8_t wanted);
     void                 flowLeave(TextureRecord& record);
@@ -466,8 +477,9 @@ class Resources final {
     // OPENGOTHIC_TEXTURE_LOOKAHEAD: read with the other texture settings, applied by `apply` within their requeue
     std::function<void()> configureTextureFlow(std::string_view lookAhead);
     void                 publishReadyTextures(const std::vector<std::shared_ptr<TextureReload>>& ready);
-    // Step 3 (resources_texturebudget.cpp): the level of the owners measured on screen at `stage`
-    uint8_t              resolutionLevel(const TextureRecord& record, uint32_t stage) const;
+    // Step 3 (resources_texturebudget.cpp): the level of the owners measured on screen at `stage`; `present`: of their
+    // present exponents (step 4)
+    uint8_t              resolutionLevel(const TextureRecord& record, uint32_t stage, bool present = false) const;
     void                 setTextureBudget(const TextureBudget::Choice& budget, const TextureBudget::Choice& target,
                                           const TextureBudget::Choice& vram);
     // Once a TextureBudget::Period on the main thread, or now with `force`: the device's budget, the working target,
@@ -579,6 +591,7 @@ class Resources final {
       std::map<uint32_t,uint32_t> distances;   // ring -> owners, of every owner
       std::map<uint32_t,uint32_t> ringNeeds;   // ring -> owners without a resolution demand
       std::map<int32_t,uint32_t>  resolutions; // resolution exponent -> owners
+      std::map<int32_t,uint32_t>  presents;    // present exponent -> owners, beside `resolutions` (step 4)
       std::chrono::steady_clock::time_point demoteAt{};
       TextureCategory category = TextureCategory::Other;
       TextureSource sourceKind = TextureSource::Other;
@@ -628,6 +641,7 @@ class Resources final {
     TextureFlow::Tracker textureFlow;
     TextureFlow::Limits textureLimits;
     std::atomic<bool> textureLookAheadOn{true};
+    std::atomic<double> textureHorizon{0.05};  // TextureLookAhead::horizon of the latencies so far, seconds
     std::atomic<uint32_t> textureStartup{0};  // worlds loading (TextureStartup)
     uint32_t textureJumpMs = 300;
     struct TextureJump {

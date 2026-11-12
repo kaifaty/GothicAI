@@ -39,6 +39,10 @@ std::string TextureDump::flowFields(const Resources::TextureStats& after, const 
     }
   std::snprintf(field,sizeof(field),",\"tex_visible_shortfall_seconds\":%.9g",a.visibleSeconds-b.visibleSeconds);
   out+=field;
+  // part C: texture-seconds queued for the look-ahead alone, and its horizon at the end of the pass
+  std::snprintf(field,sizeof(field),",\"tex_ahead_seconds\":%.9g,\"tex_lookahead_ms\":%.9g",a.aheadSeconds-b.aheadSeconds,
+                1000*a.horizon);
+  out+=field;
   std::snprintf(field,sizeof(field),",\"tex_loads_started\":%llu,\"tex_short_entries\":%llu",
                 (unsigned long long)(after.loadsStarted-before.loadsStarted),(unsigned long long)(a.entries-b.entries));
   out+=field;
