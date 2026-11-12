@@ -3,6 +3,7 @@
 #include <Tempest/Sound>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
@@ -299,6 +300,21 @@ void LipSync::Track::setName(std::string_view n) {
 std::string LipSync::Track::name() const {
   std::lock_guard<std::mutex> guard(sync);
   return lineName;
+  }
+
+bool LipSync::Track::isOf(std::string_view line) const {
+  if(line.empty())
+    return false;
+  const std::string n = name();
+  const auto same = [](std::string_view a, std::string_view b) {
+    return a.size()==b.size() && std::equal(a.begin(),a.end(),b.begin(),[](char x, char y) {
+      return std::tolower(uint8_t(x))==std::tolower(uint8_t(y));
+      });
+    };
+  const std::string_view v = n;
+  if(same(v,line))
+    return true;
+  return v.size()==line.size()+4 && same(v.substr(0,line.size()),line) && same(v.substr(line.size()),".WAV");
   }
 
 float LipSync::Track::implLevel(size_t step) const {

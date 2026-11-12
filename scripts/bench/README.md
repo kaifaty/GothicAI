@@ -1122,6 +1122,37 @@ Lobart's lines and the accents Vino heard, each nod with its time and the face t
 `[face] listen` lines of `game.log`, the nods from `ge_lnods` of `metrics.csv`, the accents heard from
 `[ai] ... hears accent`.
 
+## Speech face clip
+
+The acceptance clip of the face from the voice ([engine-plan.md](../../reports/content/2026-11-hero-head/engine-plan.md),
+step 10, "FaceRig"): Vino with an own head says four lines of his original voice, each with a face track of Audio2Face
+v3.0 lying next to the head as `<sound>.face.json` - first `DIA_Vino_SEEKWORK_05_04` and `DIA_Vino_PERM45UND6_05_03`
+(the lip sounds м, п, б and у), then the two long lines of [Face brows clip](#face-brows-clip) over `S_ANGRY` (the
+bench's `faceanim`). No AI server: the bench puts the hero on `NW_FARM1_PATH_01` at noon and Vino 2 m in front of him,
+frozen, and films his face close up. The face profile needs `speech_face` (the section of
+[`test-head.face.json`](../../reports/content/2026-11-hero-head/mpfb/test-head.face.json); the hero head of
+`hero-head-2` at `BAU_952_VINO` as for the other face clips). The tracks:
+[`a2f/face_track.py`](../../reports/content/2026-11-hero-head/a2f/face_track.py) `wav` takes the lines out of the
+game's speech VDFs at 16 kHz, `a2f-weights` (`audio2face.md`) solves them on `dev-ubuntu` (`diffusion
+gen/v3/model.json 2`, Mark; the last argument `anger=0.8` for the angry take), `face_track.py json` writes the tracks.
+Three takes on three content copies: neutral tracks for all four lines; the same with the tracks of `anger:0.8` for the
+two lines over `S_ANGRY` (the expression must give way to the track then; with the neutral ones it shows over it); and
+the neutral content with `OPENGOTHIC_SPEECH_FACE=0` ("было": the mouth by loudness, the brows on the accents):
+
+```bash
+OPENGOTHIC_CONTENT=<content with neutral tracks> TEMPEST_WINDOW_SIZE=1280x720 OPENGOTHIC_BENCH_REALTIME=1 \
+  TEMPEST_AUDIO_LOOPBACK=48000 SOUND=1 MUSIC=0 BENCH_HOST=ryzen scripts/bench.sh scripts/bench/speech-face-clip.bench <out>
+uv run --with pillow --with numpy python reports/content/2026-11-hero-head/a2f/speech_clip.py \
+  <neutral out> <anger out> <off out> <tracks dir with neutral/ and anger/> <head.glb> <clip dir>
+```
+
+`speech_clip.py` writes `clip.mp4` (the neutral take, then lines 3-4 of the angry one), `clip-off.mp4`, `sheet.jpg`
+(moments picked on the tracks - the lips shut, the most rounded lips, the apex of the brows - "стало | было" at the same
+time of the voice) and `key.txt` (the lines, their tracks and emotions, the moments, the blinks, `vf_w`, `face_angry`,
+and the lip gap of each take by [`a2f/lip_gap_game.py`](../../reports/content/2026-11-hero-head/a2f/lip_gap_game.py) on
+its `face.csv`). The bench writes `face.csv` for any watched own head: per frame the weights its deformation shows; the
+columns `vf_w` (how far the face from the voice shows) and `vf_emo` (its track has an emotion) are in `metrics.csv`.
+
 ## Native NPC calibration duels
 
 ### Как работает сейчас

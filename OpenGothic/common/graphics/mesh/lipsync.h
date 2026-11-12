@@ -55,6 +55,9 @@ class LipSync final {
         // the name of the line, if its maker gave one (a sound file, a line id of the bridge)
         void     setName(std::string_view n);
         auto     name() const -> std::string;
+        // it is the voice of that line: its name is the line's id or the id with ".WAV" (case aside, as the game names
+        // sounds; the bridge's streamed voice has the id, a sound file of it "<id>.WAV")
+        bool     isOf(std::string_view line) const;
 
       private:
         struct Biquad final {

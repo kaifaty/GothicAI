@@ -26,6 +26,7 @@
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
 #include <limits>
 #include <mutex>
 #include <set>
@@ -1759,6 +1760,7 @@ void MdlVisual::updateFace(Npc& npc) {
   // a far face stays as it was last shown, as a far one does not blink; its eyes stop
   if(!head.view.isEmpty() && (npc.processPolicy()<=NpcProcessPolicy::AiNormal || probing)) {
     updateEyes(npc,now);
+    voiceFace.play(face,now);
     const auto r = face.update(now);
     if(r!=FaceRig::Result::Same) {
       const auto start = std::chrono::steady_clock::now();
@@ -1839,10 +1841,29 @@ void MdlVisual::startSpeech(Npc& npc, std::shared_ptr<LipSync::Track> voice) {
   heardBrows.stop();
   heardRule.reset();
   accentsLogged = 0;
+  // the face from the voice: the track of its line (say_face), or of a file next to the head for a voice of the game
+  std::string tracks;
+  if(face.isActive() && face.faceProfile()->speech.has_value())
+    if(const auto* proto = head.view.protoMesh())
+      tracks = std::filesystem::path(proto->fname).parent_path().string();
+  voiceFace.start(voice,tracks,now);
   if(&npc==FaceRig::probeNpc && face.isActive())
     Log::i("[face] voice ",npc.displayName(),": ",voice->name()," ",voice->durationMs()," ms",
-           voice->isFinished() ? "" : " (streaming)",SpeechBrows::isEnabled() ? "" : ", brows off");
+           voice->isFinished() ? "" : " (streaming)",SpeechBrows::isEnabled() ? "" : ", brows off",
+           voiceFace.current()!=nullptr ? ", face track "+std::to_string(voiceFace.current()->frames)+" frames"+
+             (voiceFace.current()->emotion.empty() ? std::string() : " "+voiceFace.current()->emotion) : std::string());
   mouth.start(std::move(voice),now);
+  }
+
+void MdlVisual::stopSpeech(uint64_t now) {
+  mouth.stop();
+  voiceBrows.stop();
+  voiceFace.stop(now);
+  voiceNow = nullptr;
+  }
+
+void MdlVisual::setFaceTrack(std::shared_ptr<const SpeechFace::Track> track, std::string_view line) {
+  voiceFace.setTrack(std::move(track),line);
   }
 
 void MdlVisual::setTalkMood(std::string_view mood, std::string_view line, uint64_t holdUntil) {
@@ -1886,6 +1907,7 @@ void MdlVisual::stopDlgAnim(Npc& npc) {
   mouth.stop();
   cues.stop();
   voiceBrows.stop();
+  voiceFace.stop(npc.world().tickCount());
   voiceNow = nullptr;
   gestures.stop();
   gestureSeq = nullptr;

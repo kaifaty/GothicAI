@@ -17,6 +17,7 @@
 #include "graphics/mesh/listenface.h"
 #include "graphics/mesh/speechbrows.h"
 #include "graphics/mesh/speechcues.h"
+#include "graphics/mesh/speechface.h"
 #include "graphics/mesh/quiver.h"
 #include "graphics/mesh/renderrig.h"
 #include "game/constants.h"
@@ -237,7 +238,9 @@ class MdlVisual final {
     void                           stopDlgAnim    (Npc& npc);
     // a voiced line: the mouth follows the voice instead of the talk loop
     void                           startSpeech    (Npc& npc, std::shared_ptr<LipSync::Track> voice);
-    void                           stopSpeech     () { mouth.stop(); voiceBrows.stop(); voiceNow = nullptr; }
+    void                           stopSpeech     (uint64_t now);
+    // the face track of a line (say_face): the voice of that line plays it, whichever comes first (SpeechFace)
+    void                           setFaceTrack   (std::shared_ptr<const SpeechFace::Track> track, std::string_view line);
     void                           updateMouth    (Npc& npc, uint64_t dt);
     // the hands and the head while it speaks (TalkGestures)
     // the mood of a line it starts to say (line: its id of the AI, empty: a line of the game), held until then
@@ -399,6 +402,7 @@ class MdlVisual final {
     SpeechCues                     cues;                  // when the gestures of the line said now start
     SpeechCues::Out                cueStarts;
     SpeechBrows                    voiceBrows;            // the brows on the accents of its voice (speech_brows)
+    SpeechFace                     voiceFace;             // the face from its voice (speech_face)
     size_t                         accentsLogged = 0;     // of voiceBrows, in the log (the watched npc)
     std::shared_ptr<LipSync::Track> voiceNow;             // its voice now (voiceAccents)...
     uint64_t                       voiceAt   = 0;         // ...started then
