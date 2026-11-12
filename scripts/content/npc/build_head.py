@@ -234,8 +234,14 @@ def steps(cdir, cfg, work, content, gpu=None):
         [MPY, os.path.join(S, 'face_points.py'), j('reg', 'points'), 'concept_front=' + j('reg', 'concept_front.png'),
          'tmpl_front=' + j('reg', 'lm_mpfb_front.png')]] + (
         [[PY, os.path.join(FR, 'lm_pick.py'), R, picks, T['lm_fixed'], LID_BACK],
-         targets + [j('reg', 'lm_fixed.json'), j('reg', 'lm_fixed.json'), LID_BACK]] if picks else
-        [targets + [T['lm_fixed'], j('reg', 'lm_fixed.json'), LID_BACK, '--no-hand']]),
+         targets + [j('reg', 'lm_fixed.json'), j('reg', 'lm_fixed.json'), LID_BACK],
+         # ears picked by hand stay; the hairstyle still needs to know which skin is an ear
+         [PY, os.path.join(S, 'ear_points.py'), R, j('reg', 'lm_fixed.json'), j('reg', 'lm_fixed.json'), j('reg', 'ears.jpg'),
+          '--mask', j('reg', 'ears.npz'), '--keep-hand']] if picks else
+        [targets + [T['lm_fixed'], j('reg', 'lm_fixed.json'), LID_BACK, '--no-hand'],
+         # no hand picks: the rims of the ears are found on the model and the template (ears.jpg shows them)
+         [PY, os.path.join(S, 'ear_points.py'), R, j('reg', 'lm_fixed.json'), j('reg', 'lm_fixed.json'), j('reg', 'ears.jpg'),
+          '--mask', j('reg', 'ears.npz')]]),
         [j('reg', 'ref.npz'), j('reg', 'concept_front.png'), j('reg', 'lm_mpfb_front.png'), T['lm_fixed']] + ([picks] if picks else []),
         [j('reg', 'lm_fixed.json')], 'face points, landmark targets'))
     out.append(Step('solve', [[PY, os.path.join(FR, 'reg_solve.py'), R, T['sched']]],
@@ -281,8 +287,8 @@ def steps(cdir, cfg, work, content, gpu=None):
         ['mkdir', '-p', j('hair', 'cap')],
         [PY, os.path.join(SK, 'hair_cut.py'), V, params, raw['full'], j('hair', 'cap'), '1024', *place],
         [PY, os.path.join(S, 'hair', 'groom.py'), j('hair', 'cap', 'cap.npz'), U, GR, j('hair'), '90000', '1',
-         '--skin', j('skin', 'skin_brows.png')]],
-        [V, params, raw['full'], j('full', 'place.json'), j('full', 'tone.json'), U, GR, j('skin', 'skin_brows.png')],
+         '--skin', j('skin', 'skin_brows.png'), '--ears', j('reg', 'ears.npz')]],
+        [V, params, raw['full'], j('full', 'place.json'), j('full', 'tone.json'), U, GR, j('skin', 'skin_brows.png'), j('reg', 'ears.npz')],
         [j('hair', 'groom.npz')], 'the hairstyle'))
     out.append(Step('beard', [
         [PY, os.path.join(S, 'hair', 'beard.py'), U, GR, V, j('skin', 'skin_brows.png'), j('skin', 'beard.npz'),

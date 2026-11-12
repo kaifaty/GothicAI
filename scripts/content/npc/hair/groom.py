@@ -1,5 +1,5 @@
 # A hairstyle as strands: slicked back into a ponytail, the source for everything the game draws of it.
-#   python groom.py cap.npz uv.npz groups.npz <out dir> [strands, 60000] [seed, 1] [--skin skin.png]
+#   python groom.py cap.npz uv.npz groups.npz <out dir> [strands, 60000] [seed, 1] [--skin skin.png] [--ears ears.npz]
 # cap.npz is the hair's outer surface and the tail of the generator's model (hair_cut.py); uv.npz and groups.npz are
 # the head's mesh and its vertex groups (dump_uv.py): the scalp under the hair.
 # - roots are spread evenly over the scalp inside the hairline; the hairline is the mask's edge with a slow noise.
@@ -26,6 +26,9 @@ from scipy.spatial import cKDTree
 SKIN = None
 if '--skin' in sys.argv:
     i = sys.argv.index('--skin'); SKIN = sys.argv[i+1]; del sys.argv[i:i+2]
+EARS = None                                       # which vertices of the head are an ear (ear_points.py --mask)
+if '--ears' in sys.argv:
+    i = sys.argv.index('--ears'); EARS = np.load(sys.argv[i+1])['ear'].astype(bool); del sys.argv[i:i+2]
 cap = np.load(sys.argv[1]); uvd = np.load(sys.argv[2]); grp = np.load(sys.argv[3]); OUT = sys.argv[4]
 N = int(sys.argv[5]) if len(sys.argv) > 5 else 60000; rng = np.random.default_rng(int(sys.argv[6]) if len(sys.argv) > 6 else 1)
 K, H, STOP = 48, 0.0025, 0.022                    # points of a strand, the step over the head, where the way to the knot ends
@@ -60,21 +63,31 @@ co = uvd['co'].astype(np.float64); keep = grp['body'][uvd['tri']].all(1); keep &
 tri = uvd['tri'][keep]; tuv = uvd['tuv'][keep]
 near = ndimage.binary_dilation(mask, iterations=8); rs = np.zeros(mask.shape)
 t0 = co[tri[:, 0]]; ea = co[tri[:, 1]]-t0; eb = co[tri[:, 2]]-t0; tv = C-t0; qv = np.cross(tv, ea)
-rays = dirs[near]; hit = np.zeros(len(rays)); huv = np.zeros((len(rays), 2))
+rays = dirs[near]; hit = np.zeros(len(rays)); huv = np.zeros((len(rays), 2)); hear = np.zeros(len(rays), bool)
+tear = EARS[tri].any(1) if EARS is not None and EARS.any() else None
 for s in range(0, len(rays), 96):                 # the first skin a ray meets: the farthest would be a shoulder behind the neck
     dr = rays[s:s+96]; pv = np.cross(dr[:, None], eb[None]); det = (ea[None]*pv).sum(2); det = np.where(np.abs(det) < 1e-12, 1e-12, det)
     u = (tv[None]*pv).sum(2)/det; w = (dr[:, None]*qv[None]).sum(2)/det; t = (eb[None]*qv[None]).sum(2)/det
     t = np.where((u >= 0) & (w >= 0) & (u+w <= 1) & (t > 0.02), t, np.inf); k = t.argmin(1); r_ = np.arange(len(dr))
     hit[s:s+96] = t[r_, k]; uu, ww = u[r_, k][:, None], w[r_, k][:, None]
     huv[s:s+96] = tuv[k, 0]*(1-uu-ww)+tuv[k, 1]*uu+tuv[k, 2]*ww
+    if tear is not None: hear[s:s+96] = tear[k] & np.isfinite(t[r_, k])
 rs[near] = np.where(np.isfinite(hit), hit, 0); known = near & (rs > 0)
-ix = ndimage.distance_transform_edt(~known, return_distances=False, return_indices=True); rs = rs[ix[0], ix[1]]
 grown = np.zeros_like(mask); ear = np.zeros_like(mask)
+if tear is not None:                              # the skin a ray meets first is an ear's
+    ear[near] = hear; ear = ndimage.binary_dilation(ear, iterations=1)
+    # Hair next to an ear lies on the head, not on the ear: there the scalp is the head's side round the ear, and so
+    # it is in the cells no ray was sent to (far from the hair), which take the nearest known cell. The hair's outer
+    # surface is not measured on an ear either: the cap of hair_cut.py takes the dark top of the model's ear for hair.
+    # With the ear's distance in these cells the short hairs of the temples rose over its top, 2 cm out of the head.
+    known &= ~ear; mask = mask & ~ndimage.binary_dilation(ear, iterations=2)
+ix = ndimage.distance_transform_edt(~known, return_distances=False, return_indices=True); rs = rs[ix[0], ix[1]]
 if SKIN:                                          # scalp painted as hair next to the mask, not an ear's hollow
     im = np.asarray(Image.open(SKIN).convert('RGB')).astype(int); hh, ww_ = im.shape[:2]
     c = im[np.clip(((1-huv[:, 1])*hh).astype(int), 0, hh-1), np.clip((huv[:, 0]*ww_).astype(int), 0, ww_-1)]
     hairy = np.zeros_like(mask); hairy[near] = (c[:, 0]-c[:, 2] < 50) & (c[:, 1] > 0.70*c[:, 0]) & (c.max(1) < 150) & np.isfinite(hit)
-    sp = C+dirs*rs[..., None]; ear = (np.abs(sp[..., 0]) > 0.084) & (sp[..., 2] < C[2]-0.005)
+    sp = C+dirs*rs[..., None]
+    if tear is None: ear = (np.abs(sp[..., 0]) > 0.084) & (sp[..., 2] < C[2]-0.005)   # no mask of the ears: skin that far out
     grown = ndimage.binary_opening(hairy & ~ear & ~mask & ndimage.binary_dilation(mask, iterations=7), iterations=1)
     grown = ndimage.binary_propagation(ndimage.binary_dilation(mask) & grown, mask=grown)   # only what touches the hair
 bare = mask & (rs > cap_r+0.004)                # the measured hair hangs clear of the skin there: nothing to root in

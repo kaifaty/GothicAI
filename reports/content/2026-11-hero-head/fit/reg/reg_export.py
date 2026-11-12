@@ -1,7 +1,7 @@
 # Export the MPFB fit and the generator's reference for registration, and render both for landmark picking.
 #   blender -b <fit>/fit.blend -P reg_export.py -- raw.npz params.json <out dir>
 # Writes mpfb.npz (skin of the human with the fit applied, masks, eyes), ref.npz (the reference cropped to the head,
-# with vertex normals), views.json (ortho cameras: pixel -> world) and lm_{mpfb,ref}_{front,profile}.png.
+# with vertex normals and colours), views.json (ortho cameras: pixel -> world) and lm_{mpfb,ref}_{front,profile}.png.
 import bpy, sys, os, json, math
 import numpy as np
 from mathutils import Vector
@@ -36,7 +36,8 @@ used=np.unique(rf); remap=-np.ones(len(rv),np.int64); remap[used]=np.arange(len(
 fn=np.cross(rv[rf[:,1]]-rv[rf[:,0]],rv[rf[:,2]]-rv[rf[:,0]]); vn=np.zeros_like(rv)
 for k in range(3): np.add.at(vn,rf[:,k],fn)
 vn/=np.linalg.norm(vn,axis=1,keepdims=True)+1e-12
-np.savez(os.path.join(OUT,'ref.npz'),v=rv.astype(np.float32),f=rf.astype(np.int32),n=vn.astype(np.float32))
+rc=(np.clip(raw['color'][used],0,1)**(1/2.2)*255).astype(np.uint8)   # its colours: reg_solve.py tells cloth from skin by them
+np.savez(os.path.join(OUT,'ref.npz'),v=rv.astype(np.float32),f=rf.astype(np.int32),n=vn.astype(np.float32),c=rc)
 print('EXPORT mpfb verts',len(co),'ref verts',len(rv),'faces',len(rf))
 mesh=bpy.data.meshes.new('ref'); mesh.from_pydata(rv.tolist(),[],rf.tolist()); mesh.update()
 for p in mesh.polygons: p.use_smooth=True
