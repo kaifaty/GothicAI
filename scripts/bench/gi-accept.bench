@@ -6,8 +6,9 @@
 # a clip (`cloth camera-turn <deg> 1`) sets the first view; 10 s after it light the probes before `rec`.
 # Run it once per variant, the same window, and put the halves side by side:
 #   OPENGOTHIC_RT=0                  TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh gi-accept
-#   OPENGOTHIC_RT=1 OPENGOTHIC_GI=1  TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh gi-accept
-# @timeout 1500
+#   OPENGOTHIC_RT=1 OPENGOTHIC_GI=1 OPENGOTHIC_EYE=0  TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh gi-accept
+#   OPENGOTHIC_RT=1 OPENGOTHIC_GI=1  (GI + the eye's adaptation, on by default)  ... the same
+# @timeout 2400
 seed 73013
 cheat god
 overlay off
@@ -131,5 +132,90 @@ wait 10000
 rec cave-night
 wait 1000
 cloth camera-turn -100 9000
+wait 1000
+stop
+
+# The eye's adaptation under GI (step-2-shade.md, «Привыкание глаза»): run this file three times — OPENGOTHIC_RT=0,
+# OPENGOTHIC_RT=1 OPENGOTHIC_GI=1 OPENGOTHIC_EYE=0, OPENGOTHIC_RT=1 OPENGOTHIC_GI=1 — and put the thirds side by side.
+# The clips below show the adaptation over time; the hero walks (`walkto`, real steps), the camera follows him.
+
+# 8. From the open slope at NW_FOREST_PATH_67 into the forest under the crowns at PATH_66 and back, at noon: the frame
+#    brightens going in (1 stop/s), darkens coming out (3 stops/s).
+set time 12 0
+goto NW_FOREST_PATH_67
+clear 3000
+watch player
+walkmode run
+cam follow 400 160 180
+wait 10000
+rec forest-walk
+wait 2000
+walkto NW_FOREST_PATH_66
+waitarrive 8000
+wait 4000
+walkto NW_FOREST_PATH_67
+waitarrive 8000
+wait 2500
+stop
+
+# 9. Into the bandit cave by Lobart's farm from the path outside (NW_FARM1_PATH_BANDITS_11) to the fire
+#    (NW_FARM1_BANDITS_CAVE_03) and out again, at noon.
+goto NW_FARM1_PATH_BANDITS_11
+clear 3000
+watch player
+cam follow 400 160 180
+wait 10000
+rec cave-walk
+wait 2000
+walkto NW_FARM1_BANDITS_CAVE_03
+waitarrive 9000
+wait 3500
+walkto NW_FARM1_PATH_BANDITS_11
+waitarrive 9000
+wait 2500
+stop
+walkmode walk
+
+# 10. A turn of 360 degrees in 12 s at the cave's mouth (the view of cave-day): inside, out of the mouth, inside.
+goto NW_FARM1_BANDITS_CAVE_02
+clear 3000
+watch player
+cam look 120
+cam world 350 180 0
+wait 10000
+cam hold
+rec cave-mouth-turn
+wait 1000
+cloth camera-turn 360 12000
+wait 1000
+stop
+
+# 11. A turn of 360 degrees in 12 s in the forest under the crowns (the view of forest-1).
+goto NW_FOREST_PATH_66
+clear 3000
+watch player
+cam look 130
+cam world 400 140 90
+wait 10000
+cam hold
+rec forest-turn
+wait 1000
+cloth camera-turn 360 12000
+wait 1000
+stop
+
+# 12. The market at noon (perf-market, view of market-day): the control, the open sun; GI and GI + the eye alike.
+goto NW_CITY_MERCHANT_TRADE_04
+clear 3000
+watch player
+cam look 120
+cam world 700 280 90
+wait 10000
+cam hold
+cloth camera-turn 30 1
+wait 3000
+rec market-day
+wait 1000
+cloth camera-turn -90 9000
 wait 1000
 stop
