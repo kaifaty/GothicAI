@@ -1142,7 +1142,7 @@ void checkPlaces() {
 
 // --- The recheck on a small world ------------------------------------------------------------------------------
 
-// Three components, one decider each; clock 1, walk 1 m per game second, recheck after 30 min (not the default 60, so
+// Four components, one decider each; clock 1, walk 1 m per game second, recheck after 30 min (not the default 60, so
 // the config's value is the one read). Toilet and work start critical (0.05), faith low (0.25: critical 1.8 h later).
 // A need without a way in the travel limit is not in use, so each NPC has only the needs named here.
 // - F does its free entry ZS_PEE at PF all day, which fills its toilet in 2 min, not its work (a workbench WB 10 m off
@@ -1150,6 +1150,8 @@ void checkPlaces() {
 // - A works (ZS_SMITH, an anchor entry that fills nothing) with faith low: masked, no decision while it is only low; it
 //   is critical at 09:48, takes the routine and is asked again 30 min later.
 // - G guards (a post) with faith low, then critical: never asked.
+// - L stands (ZS_STAND, a free entry that fills nothing) with faith low and no other need: asked again at 08:30, while
+//   faith is only low (critical at 09:48).
 constexpr const char* RecheckWorld = R"({"format":"society-world","version":2,"world":"RECHECK.ZEN","data_fingerprint":"x",
 "engine_commit":"x","start":{"day":0,"minute":480},"clock":{"game_seconds_per_real_second":1.0},
 "movement":{"walk_cm_per_s":100.0,"run_cm_per_s":300.0,"source":"test"},
@@ -1159,19 +1161,24 @@ constexpr const char* RecheckWorld = R"({"format":"society-world","version":2,"w
 {"id":2,"name":"PA","pos":[100000,0,0],"freepoint":false,"near_waypoint":null},
 {"id":3,"name":"PA2","pos":[101000,0,0],"freepoint":false,"near_waypoint":null},
 {"id":4,"name":"PG","pos":[200000,0,0],"freepoint":false,"near_waypoint":null},
-{"id":5,"name":"PG2","pos":[201000,0,0],"freepoint":false,"near_waypoint":null}],
-"edges":[[0,1,1000],[1,0,1000],[2,3,1000],[3,2,1000],[4,5,1000],[5,4,1000]],
+{"id":5,"name":"PG2","pos":[201000,0,0],"freepoint":false,"near_waypoint":null},
+{"id":6,"name":"PL","pos":[300000,0,0],"freepoint":false,"near_waypoint":null},
+{"id":7,"name":"PL2","pos":[301000,0,0],"freepoint":false,"near_waypoint":null}],
+"edges":[[0,1,1000],[1,0,1000],[2,3,1000],[3,2,1000],[4,5,1000],[5,4,1000],[6,7,1000],[7,6,1000]],
 "objects":[
 {"id":0,"vob":"WB","scheme":"WORKBENCH","focus":"","pos":[1000,0,0],"waypoint":1,"owner_npc":null,"owner_guild":null,"container":false},
 {"id":1,"vob":"ALA","scheme":"ALTAR","focus":"","pos":[101000,0,0],"waypoint":3,"owner_npc":null,"owner_guild":null,"container":false},
-{"id":2,"vob":"ALG","scheme":"ALTAR","focus":"","pos":[201000,0,0],"waypoint":5,"owner_npc":null,"owner_guild":null,"container":false}],
+{"id":2,"vob":"ALG","scheme":"ALTAR","focus":"","pos":[201000,0,0],"waypoint":5,"owner_npc":null,"owner_guild":null,"container":false},
+{"id":3,"vob":"ALL","scheme":"ALTAR","focus":"","pos":[301000,0,0],"waypoint":7,"owner_npc":null,"owner_guild":null,"container":false}],
 "npcs":[
 {"id":"F","key":"F#0","name":"f","guild":1,"person":true,"start_waypoint":0,"start_aistate":null,"walk_cm_per_s":0.0,"mm_schedule":null,
  "routine":[{"start":480,"end":1200,"state":"ZS_PEE","waypoint":0,"waypoint_name":"PF"},{"start":1200,"end":480,"state":"ZS_PEE","waypoint":0,"waypoint_name":"PF"}]},
 {"id":"A","key":"A#0","name":"a","guild":1,"person":true,"start_waypoint":2,"start_aistate":null,"walk_cm_per_s":0.0,"mm_schedule":null,
  "routine":[{"start":480,"end":1200,"state":"ZS_SMITH","waypoint":2,"waypoint_name":"PA"},{"start":1200,"end":480,"state":"ZS_SMITH","waypoint":2,"waypoint_name":"PA"}]},
 {"id":"G","key":"G#0","name":"g","guild":1,"person":true,"start_waypoint":4,"start_aistate":null,"walk_cm_per_s":0.0,"mm_schedule":null,
- "routine":[{"start":480,"end":1200,"state":"ZS_STAND_GUARDING","waypoint":4,"waypoint_name":"PG"},{"start":1200,"end":480,"state":"ZS_STAND_GUARDING","waypoint":4,"waypoint_name":"PG"}]}
+ "routine":[{"start":480,"end":1200,"state":"ZS_STAND_GUARDING","waypoint":4,"waypoint_name":"PG"},{"start":1200,"end":480,"state":"ZS_STAND_GUARDING","waypoint":4,"waypoint_name":"PG"}]},
+{"id":"L","key":"L#0","name":"l","guild":1,"person":true,"start_waypoint":6,"start_aistate":null,"walk_cm_per_s":0.0,"mm_schedule":null,
+ "routine":[{"start":480,"end":1200,"state":"ZS_STAND","waypoint":6,"waypoint_name":"PL"},{"start":1200,"end":480,"state":"ZS_STAND","waypoint":6,"waypoint_name":"PL"}]}
 ]})";
 
 constexpr const char* RecheckConfig = R"({"format":"society-config","version":1,
@@ -1183,6 +1190,7 @@ constexpr const char* RecheckConfig = R"({"format":"society-config","version":1,
  {"state":"ZS_PEE","kind":"free","asleep":false,"fill_hours":{"toilet":0.0333}},
  {"state":"ZS_PRAY","kind":"free","asleep":false,"fill_hours":{"faith":1}},
  {"state":"ZS_SMITH","kind":"anchor","asleep":false,"fill_hours":{}},
+ {"state":"ZS_STAND","kind":"free","asleep":false,"fill_hours":{}},
  {"state":"ZS_STAND_GUARDING","kind":"anchor","asleep":false,"fill_hours":{}},
  {"state":"ZS_WORKBENCH","kind":"free","asleep":false,"fill_hours":{"work":2}}],
 "object_kinds":[
@@ -1231,8 +1239,8 @@ void checkRecheck() {
     return s.empty() ? std::string("none") : s;
     };
   std::printf("recheck: F (routine ZS_PEE fills toilet, work critical) asked %s; A (anchor) faith critical at %s, asked %s; "
-              "G (post) asked %s\n",list(0).c_str(),faithCritical<0 ? "never" : clock(w,faithCritical).c_str(),
-              list(1).c_str(),list(2).c_str());
+              "G (post) asked %s; L (free, faith low) asked %s\n",list(0).c_str(),
+              faithCritical<0 ? "never" : clock(w,faithCritical).c_str(),list(1).c_str(),list(2).c_str(),list(3).c_str());
   const uint8_t recheck = Society::CauseRecheck;
   // F: every 30 min from its decision at 08:00, the recheck alone, 8 by noon.
   bool everyHalfHour = asked[0].size()==8;
@@ -1252,6 +1260,9 @@ void checkRecheck() {
          "recheck 30 min after its decision at the critical crossing)");
   if(!asked[2].empty())
     fail("recheck: a guard on its post is never asked (G)");
+  // L: in a free entry a need that is only low asks again too, 30 min after its decision at 08:00.
+  if(asked[3].empty() || asked[3][0].first!=hm(8,30) || asked[3][0].second!=recheck)
+    fail("recheck: in a free entry a low need not filled asks again (L at 08:30, cause recheck, faith still low)");
   }
 
 // --- The teacher's walk back on a small world ------------------------------------------------------------------
@@ -1259,9 +1270,11 @@ void checkRecheck() {
 // P eats by its routine at R (free entry ZS_EAT, fills food) and starts starving (food 0). Clock 1, walk 1 m per game
 // second, travel limit and window 60 min. At 08:00 it is sent to a chair CH at T, 40 min away (2400 m), and stands
 // there. Its next decision at T offers the routine (40 min back to R, 20 min of eating in the window), the toilet PEE
-// at S, 1 min off T (2460 m from R), 2 min long, and a chair V 1300 m past T (3700 m from R, beyond the menu's waynet
-// search from R). Without the walk back, the 57 min the window has after the toilet would be eating where it stands,
-// and the toilet would win; with it they are 41 min of walking back and 16 of eating, and the routine wins.
+// at S, 1 min off T (2460 m from R), 2 min long, and a second toilet V 1300 m past T (3700 m from R, beyond the menu's
+// waynet search from R: its walk back is longer than the 36 min the window has left after it, so all of them are walk).
+// Without the walk back, the 57 min the window has after the toilet at S would be eating where it stands, and the toilet
+// would win; with it they are 41 min of walking back and 16 of eating, and the routine wins. Both toilets' scores are
+// checked against the rule computed segment by segment: the walk back only lets the needs fall.
 constexpr const char* BackWorld = R"({"format":"society-world","version":2,"world":"BACK.ZEN","data_fingerprint":"x",
 "engine_commit":"x","start":{"day":0,"minute":480},"clock":{"game_seconds_per_real_second":1.0},
 "movement":{"walk_cm_per_s":100.0,"run_cm_per_s":300.0,"source":"test"},
@@ -1274,7 +1287,7 @@ constexpr const char* BackWorld = R"({"format":"society-world","version":2,"worl
 "objects":[
 {"id":0,"vob":"CH","scheme":"CHAIR","focus":"","pos":[240000,0,0],"waypoint":1,"owner_npc":null,"owner_guild":null,"container":false},
 {"id":1,"vob":"PEE","scheme":"PEEHOLE","focus":"","pos":[246000,0,0],"waypoint":2,"owner_npc":null,"owner_guild":null,"container":false},
-{"id":2,"vob":"V","scheme":"CHAIR","focus":"","pos":[370000,0,0],"waypoint":3,"owner_npc":null,"owner_guild":null,"container":false}],
+{"id":2,"vob":"V","scheme":"PEEHOLE","focus":"","pos":[370000,0,0],"waypoint":3,"owner_npc":null,"owner_guild":null,"container":false}],
 "npcs":[
 {"id":"P","key":"P#0","name":"p","guild":1,"person":true,"start_waypoint":0,"start_aistate":null,"walk_cm_per_s":0.0,"mm_schedule":null,
  "routine":[{"start":480,"end":1200,"state":"ZS_EAT","waypoint":0,"waypoint_name":"R"},{"start":1200,"end":480,"state":"ZS_EAT","waypoint":0,"waypoint_name":"R"}]}
@@ -1314,9 +1327,38 @@ void checkWayBack() {
         return int(j);
     return -1;
     };
+  // A toilet's score by the rule from the levels now: its walk, 2 min of ZS_PEE (the kind's longest), the walk back (the
+  // rest of the 60 min window when longer: only decay), eating at R — against the routine's 40 min walk and 20 min of
+  // eating — minus 0.005 a minute of its walk.
+  const auto stateOf = [&](const char* name) {
+    return uint16_t(std::find(w.stateNames.begin(),w.stateNames.end(),std::string(name))-w.stateNames.begin());
+    };
+  const uint16_t eat = stateOf("ZS_EAT"), peeState = stateOf("ZS_PEE");
+  const auto rule = [&](Time travel, Time back) {
+    const size_t n = Society::needCount(w);
+    std::vector<double> now(n), h(n);
+    for(size_t k=0; k<n; ++k)
+      now[k] = Society::needLevel(sim,0,k);
+    const auto go = [&](std::vector<double>& x, uint16_t state, bool walking, Time dt) {
+      for(size_t k=0; k<n; ++k)
+        x[k] = Society::needLevelAt(x[k],Society::needRate(w,k,sim.s.needDecay[k],state,walking),0,dt);
+      };
+    h = now;
+    go(h,Society::NoState,true,2400);
+    go(h,eat,false,1200);
+    const double base = Society::drive(w,h);
+    h = now;
+    go(h,Society::NoState,true,travel);
+    go(h,peeState,false,120);
+    const Time rest = 3600-travel-120, walkBack = std::min(back,rest);
+    go(h,Society::NoState,true,walkBack);
+    go(h,eat,false,rest-walkBack);
+    return base-Society::drive(w,h)-0.005/60.0*double(travel);
+    };
   bool sent = false, seen = false;
   Time at = -1, back[3] = {-1,-1,-1};
-  float routine = 0, toilet = 0, flatRoutine = 0, flatToilet = 0;
+  float routine = 0, toilet = 0, flatRoutine = 0, flatToilet = 0, far = 0;
+  double toiletRule = 0, farRule = 0;
   int best = -1, flatBest = -1;
   while(!seen && Society::advance(sim,batch,Time(12)*3600)>0) {
     Society::drainEvents(sim);
@@ -1355,14 +1397,18 @@ void checkWayBack() {
       flatRoutine = flat[0];
       toilet = jp<0 ? NAN : sc[size_t(jp)];
       flatToilet = jp<0 ? NAN : flat[size_t(jp)];
+      far = jv<0 ? NAN : sc[size_t(jv)];
+      toiletRule = rule(jp<0 ? 0 : batch.menu[size_t(jp)].travel,2460);
+      farRule = rule(jv<0 ? 0 : batch.menu[size_t(jv)].travel,Society::FarBack);
       }
     choices.assign(1,{batch.npc[0],pick,Society::Chooser::External});
     Society::act(sim,choices);
     }
-  std::printf("walk back: P at T (%s): back from CH %lld s, PEE %lld s, V %s; teacher: routine %.3f, toilet %.3f (best "
-              "option %d); without the walk back: routine %.3f, toilet %.3f (best %d)\n",at<0 ? "never" : clock(w,at).c_str(),
-              (long long)back[0],(long long)back[1],back[2]==Society::FarBack ? "far" : std::to_string(back[2]).c_str(),
-              double(routine),double(toilet),best,double(flatRoutine),double(flatToilet),flatBest);
+  std::printf("walk back: P at T (%s): back from CH %lld s, PEE %lld s, V %s; teacher: routine %.3f, toilet %.5f (by the "
+              "rule %.5f), far toilet %.5f (%.5f) (best option %d); without the walk back: routine %.3f, toilet %.3f (best "
+              "%d)\n",at<0 ? "never" : clock(w,at).c_str(),(long long)back[0],(long long)back[1],
+              back[2]==Society::FarBack ? "far" : std::to_string(back[2]).c_str(),double(routine),double(toilet),toiletRule,
+              double(far),farRule,best,double(flatRoutine),double(flatToilet),flatBest);
   if(at<0 || back[0]!=2400 || back[1]!=2460 || back[2]!=Society::FarBack)
     fail("walk back: an option's walk back to the routine's point comes from the menu's waynet search (CH 2400 s, PEE "
          "2460 s), farther than its reach FarBack (V)");
@@ -1370,6 +1416,9 @@ void checkWayBack() {
     fail("walk back: the case must be one where the toilet nearby wins without the walk back");
   if(best!=0 || !(routine>toilet))
     fail("walk back: with the walk back in the window, going back to the routine must win over the toilet nearby");
+  if(!(std::abs(double(toilet)-toiletRule)<=1e-5) || !(std::abs(double(far)-farRule)<=1e-5))
+    fail("walk back: the toilets' scores must be the rule's: the walk back only lets the needs fall, and when longer than "
+         "the rest of the window (V) it is all of it");
   }
 
 // --- Needs on the game's data ------------------------------------------------------------------------------
