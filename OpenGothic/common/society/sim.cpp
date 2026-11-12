@@ -457,7 +457,7 @@ void compact(Sim& sim) {
 
 size_t queueCapacity(const Sim& sim) {
   const size_t n = sim.world->npcs.size();
-  return (sim.s.needSince.empty() ? 3 : deciding(sim) ? 5 : 4)*n;
+  return (sim.s.needSince.empty() ? 3 : deciding(sim) ? 6 : 4)*n;
   }
 
 }
@@ -688,6 +688,11 @@ size_t advance(Sim& sim, DecisionBatch& out, Time horizon) {
     if(p.kind==Pending::Activity) {
       if(s.actSeq[p.npc]==p.seq+1)
         onActivity(sim,p.npc);
+      continue;
+      }
+    if(p.kind==Pending::Recheck) {
+      if(s.recheckSeq[p.npc]==p.seq+1)
+        onRecheck(sim,p.npc);
       continue;
       }
     // A body event replaced by a later one is skipped.

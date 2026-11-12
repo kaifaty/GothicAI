@@ -42,6 +42,9 @@ void   beginEntry(Sim& sim, uint32_t npc);
 void   onSegment(Sim& sim, uint32_t npc);
 // A need of a decider fell to `zone` (1 low, 2 critical).
 void   onDown(Sim& sim, uint32_t npc, uint8_t zone);
+// A decider's recheck (decisions.recheck after its last decision, or after a need came into want): a need in want
+// that what it does does not fill asks (CauseRecheck); the masks hold (critical in an anchor entry, none on a post).
+void   onRecheck(Sim& sim, uint32_t npc);
 // The place the NPC's routine uses, now (after its state, walk or standing changes): standing at its entry's point in
 // Routine mode doing a kind's state (or the one its into-bed passes to), it holds the nearest place of that kind with
 // room among World::spots — a mobsi of the point, a freepoint within FreePointCm; otherwise it lets the one it held go.

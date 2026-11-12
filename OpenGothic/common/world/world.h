@@ -8,7 +8,7 @@
 #include <array>
 
 #include "worlddata.h"
-#include "animationpfx.h"
+#include "graphics/mesh/animation.h"
 #include "clothworld.h"
 #include "blooddecalsource.h"
 
@@ -35,12 +35,13 @@ class ParticleFx;
 class Interactive;
 class GlobalFx;
 class ClothVisual;
+class MdlVisual;
 struct PhysicsNoise;
 struct HeroDeed;
 
-class World final : public AnimationPfx, public ClothWorld, public BloodDecalSource {
+class World final : public ClothWorld, public BloodDecalSource {
   public:
-    void animationPfx(const Animation::MdsParticleEffect& event, MdlVisual& visual) override;
+    void animationPfx(const Animation::MdsParticleEffect& event, MdlVisual& visual);
 
     void probeMemory(std::string_view stage) const;
 

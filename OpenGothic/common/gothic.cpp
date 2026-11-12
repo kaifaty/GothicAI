@@ -17,6 +17,7 @@
 #include "daedalus/classes.h"
 
 #include "game/definitions/definitiontypes.h"
+#include "game/definitions/baseprogram.h"
 #include "game/bodyenginepolicy.h"
 #include "game/definitions/visualfxdefinitions.h"
 #include "game/definitions/sounddefinitions.h"
@@ -179,10 +180,27 @@ Npc *Gothic::player() {
   return nullptr;
   }
 
+const CameraTarget* Gothic::cameraTarget() {
+  return player();
+  }
+
 Camera* Gothic::camera() {
   if(game)
     return &game->camera();
   return nullptr;
+  }
+
+void Gothic::cameraProjection(Tempest::Matrix4x4& proj) {
+  if(auto w = world())
+    w->globalFx()->morph(proj);
+  }
+
+bool Gothic::cameraShake(Tempest::Vec3& shake) {
+  if(auto w = world()) {
+    w->globalFx()->shake(shake);
+    return true;
+    }
+  return false;
   }
 
 const QuestLog* Gothic::questLog() const {
@@ -622,7 +640,7 @@ std::unique_ptr<daedalus::DaedalusVm> Gothic::createPhoenixVm(std::string_view d
   }
 
 daedalus::DaedalusScript Gothic::loadScript(std::string_view datFile, const ScriptLang lang) {
-  return Resources::loadBaseProgram(datFile,int(lang));
+  return loadBaseProgram(datFile,int(lang));
   }
 
 void Gothic::setupCommonScriptClasses(daedalus::DaedalusScript& sc) {
@@ -1002,7 +1020,7 @@ void Gothic::printdebuginstch(int ch, std::string_view msg) {
   Log::d("[zspy,",ch,"]: ",msg);
   }
 
-const CameraDefinitions& Gothic::cameraDefinitions() const {
+const CameraPresets& Gothic::cameraDefinitions() const {
   return cameraDef();
   }
 

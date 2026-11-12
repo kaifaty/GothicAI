@@ -1,4 +1,5 @@
 #include "navdemos_internal.h"
+#include "game/navigationeyeworld.h"
 #include "navdemos.h"
 #include "navbench.h"
 #include "game/knownroadsbench.h"
@@ -322,7 +323,7 @@ void probeObject(World& world,Npc& npc,std::ostream& out,const std::string& labe
   // Keep the original centre ray exactly. Extra samples stay within a
   // 130-cm-wide vertical opening at the unchanged authored floor goal.
   const auto look=goal+Vec3(0,100,0);
-  const auto hit=world.physic()->navigationRay(eyes,look,&npc);
+  const auto hit=navigationRay(*world.physic(),eyes,look,&npc);
   const bool visibleCentre=!hit.hasCol || (hit.point-look).length()<5.f;
   bool visibleEdge=false;
   size_t visibleSamples=visibleCentre?1u:0u;
@@ -343,7 +344,7 @@ void probeObject(World& world,Npc& npc,std::ostream& out,const std::string& labe
         continue;
       }
       const auto edgeLook=goal+tangent*width+Vec3(0,height,0);
-      const auto edgeHit=world.physic()->navigationRay(eyes,edgeLook,&npc);
+      const auto edgeHit=navigationRay(*world.physic(),eyes,edgeLook,&npc);
       const bool visible=!edgeHit.hasCol || (edgeHit.point-edgeLook).length()<5.f;
       visibleEdge=visibleEdge || visible;
       visibleSamples+=visible?1u:0u;

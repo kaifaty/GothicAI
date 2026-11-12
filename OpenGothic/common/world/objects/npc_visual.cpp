@@ -28,6 +28,16 @@ using namespace Tempest;
 
 static std::string_view humansTorchOverlay = "_TORCH.MDS";
 
+std::string_view Npc::cameraTargetScheme() const {
+  auto inter = interactive();
+  return inter!=nullptr ? inter->schemeName() : std::string_view();
+  }
+
+std::string_view Npc::cameraTargetPosScheme() const {
+  auto inter = interactive();
+  return inter!=nullptr ? inter->posSchemeName() : std::string_view();
+  }
+
 void Npc::stopDlgAnim() {
   visual.stopDlgAnim(*this);
   }

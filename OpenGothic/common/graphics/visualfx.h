@@ -7,10 +7,7 @@
 #include <optional>
 #include <vector>
 
-#include "game/constants.h"
 #include "graphics/pfx/pfxobjects.h"
-
-class World;
 
 class VisualFx final {
   public:
@@ -157,7 +154,6 @@ class VisualFx final {
     uint64_t              effectPrefferedTime() const;
     bool                  isMeshEmmiter() const { return emTrjOriginNode=="="; }
 
-    PfxEmitter            visual(World& owner) const;
     const Key*            key(SpellFxKey type, int32_t keyLvl=0) const;
 
   private:

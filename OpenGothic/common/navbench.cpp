@@ -1,4 +1,5 @@
 #include "navbench.h"
+#include "game/navigationeyeworld.h"
 #include "navtransitions.h"
 #include "physics/navmesh.h"
 #include "world/world.h"
@@ -156,7 +157,7 @@ void finish(World& w) {
      <<",\"initial_path_length_cm\":"<<trial.initialLength<<",\"native_estimate_cm\":"<<trial.nativeEstimate
      <<",\"start_snap_m\":"<<trial.path.startSnapDistance<<",\"end_snap_m\":"<<trial.path.endSnapDistance
      <<",\"frames\":"<<trial.frames<<",\"cv_frames\":"<<trial.cvFrames<<",\"normal_ai_frames\":"<<trial.normalFrames;
-  const auto hit=w.physic()->navigationRay(n.centerPosition(),destination()+Vec3(0,100,0),&n);
+  const auto hit=navigationRay(*w.physic(),n.centerPosition(),destination()+Vec3(0,100,0),&n);
   out<<",\"blocker_category\":"<<int(hit.kind)<<",\"blocker_position\":";vec(out,hit.point);
   // Sweep a sphere along the standing capsule's axis at the requested goal,
   // independently of the route from the actor. This is diagnostic only.
@@ -170,7 +171,7 @@ void finish(World& w) {
   const float span=std::max(0.f,capsule.y*.5f-capsule.x);
   for(float y:{bodyCenter-span,bodyCenter,bodyCenter+span}) {
     const auto from=n.position()+Vec3(0,y,0);
-    const auto probe=w.physic()->navigationRay(from,from+forward,&n);
+    const auto probe=navigationRay(*w.physic(),from,from+forward,&n);
     const float distance=(probe.point-from).length();
     if(probe.hasCol && distance<nearest) {nearHit=probe;nearest=distance;}
   }

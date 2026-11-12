@@ -9,7 +9,7 @@
 // With --config (data/society/config.json) people have needs: journal v3 with need_threshold, marks with a level
 // column per need. Without it, or with `"needs": []`, the run is the routine-only one byte for byte.
 // --policy: routine (the default) asks for no decisions, as before; teacher and random decide at the decision points
-// (the config's `decisions` section): journal v5, marks with source and target.
+// (the config's `decisions` section): journal v6, marks with source and target.
 // Prints the load, each day's events and simulation time (advance, the policy and act, without writing) and the
 // totals.
 #include "society/journal.h"

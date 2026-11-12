@@ -7,7 +7,7 @@
 ```bash
 python3 scripts/engine_layers.py                          # таблицы
 python3 scripts/engine_layers.py report --json            # числа
-python3 scripts/engine_layers.py check --base origin/main # новые включения через границу
+python3 scripts/engine_layers.py check --base origin/main # новые включения и чужие определения
 ```
 
 ## Коротко
@@ -31,8 +31,8 @@ python3 scripts/engine_layers.py check --base origin/main # новые вклю�
 
 | Слой | Что внутри | Может включать |
 |---|---|---|
-| Платформа (`platform`) | ресурсы своих форматов (`common/asset` без `*fromzenkit`, `resources*`, `basestore`), рендер и анимация (`graphics/`), физика, звук, маленькие сети, `utils/`, камера | только себя |
-| Каркас RPG (`rpg`) | мир и его объекты (`world/`, `world/objects/`), NPC и предметы, ближний бой и лук, навигация, сохранение, управление героем (`game/` без правил Готики) | платформу |
+| Платформа (`platform`) | ресурсы своих форматов (`common/asset` без `*fromzenkit`, `resources*`, `basestore`), рендер и анимация (`graphics/` без визуала игровых объектов), физика, звук, маленькие сети, `utils/`, камера с интерфейсами `CameraTarget` / `CameraPresets` и математикой `game/aimcamera.h` | только себя |
+| Каркас RPG (`rpg`) | мир и его объекты (`world/`, `world/objects/`), NPC и предметы, их визуал (`graphics/mdlvisual*`, `graphics/objvisual*`, `graphics/effect.*`), ближний бой и лук, навигация, сохранение (включая `Camera::SaveState` в `gamesession.cpp`), управление героем (`game/` без правил Готики и `aimcamera.h`) | платформу |
 | Готика (`gothic`) | VM Daedalus и привязка скриптов (`daedalus/`, `gamescript*`, `definitions/`), правила G2 (`fightalgo`, `damagecalculator`, гильдии в `constants.h`, `aistate`, `questlog`), триггеры, меню `ui/`, `Gothic` и `MainWindow`, музыка DirectMusic | платформу и каркас |
 | Импорт Готики (`import`) | адаптеры ZenKit, импорт базы, Bink, импорт DirectMusic | платформу и Готику (программы скриптов) |
 | Мост ИИ (`bridge`) | `ai_bridge/`, ядро общества `society/` | всё, кроме импорта и стендов |
@@ -112,14 +112,16 @@ python3 scripts/engine_layers.py check --base origin/main # новые вклю�
 3. **Интерфейс настроек и служб — сделано 2026-11-11.** `common/settings.*` хранит INI, умолчания, `Options`, `PhysicsFlags` и сигнал изменения; `Gothic` владеет объектом и обновляет его в прежние моменты. `common/gameservices.*` задаёт узкий виртуальный интерфейс, реализованный `Gothic`: мир, камера, пауза, определения PFX/VFX и звука, сигналы переключения рендера и внешний звук. Время кадра передаётся в миллисекундах, тики и `DynamicWorld` — напрямую; рендер не обращается к членам `World`. Убраны все 23 включения `gothic.h` из платформы и включение `sounddefinitions.h` из звука. Итог `engine_layers.py report --json`: `per_layer.platform.vm_transitive` **33**, `violations` **290**. Тонкие встроенные пересылки `Gothic::settings*`, `options()`, `physicsFlags()` и псевдонимы типов остаются для каркаса RPG, Готики, моста и тестов; их вызовы вне платформы не переписаны. В `gamescript.cpp` заменены только две подписки на перенесённый сигнал. Обе перегрузки `Resources::loadBaseProgram` дословно перенесены в `common/game/definitions/baseprogram.cpp` (слой Готики), API и метка `"Gothic::loadScript"` сохранены. Общие помощники путей доступны через `resources_internal.h`; `contentcensus` перенесён из импорта в платформу, потому что учитывает контент, открываемый `Resources` во время игры, и не зависит от импорта установки.
 4. **Вид на мир для рендера и физики** — по частям:
    - **4а — сделано 2026-11-11.** Шестнадцать файлов анимации, рендера и физики больше не включают `world.h`, `npc.h`, `item.h`, `bullet.h` и `gamescript.h`; `serialize.h` объявляет типы Daedalus вперёд, без заголовков VM. Позиция, поворот, тики, время в миллисекундах, матрица предмета и физический мир передаются значениями и типами платформы; входы от NPC и предмета готовятся методами и свободными функциями каркаса, игровые перегрузки `Pose`, `FootIk`, `InventoryRenderer` и `BloodDecals` удалены, а оставшиеся методы этих классов определены в платформе. В `mdlvisual.cpp` изменены только вызовы этих входов; виновник всплеска разрешается обработчиком каркаса в прежний момент шага. `AnimationSound` / `AnimationGroundSound`, `AnimationPfx`, `ParticleTarget`, `ClothWorld` и `BloodDecalSource` реализованы верхними объектами; запись пятна находится в платформе. Формулы, порядок эффектов и байты сохранений прежние. Итог `engine_layers.py report --json` относительно `main` `8e59d13aa`: `per_layer.platform.vm_transitive` **33 → 19**, `violations` **290 → 270**.
-   - **4б — визуал персонажа:** `graphics/mdlvisual*`, `graphics/objvisual.cpp`, `graphics/effect.cpp`, `graphics/visualfx.cpp`.
-   - **4в — камера:** `camera.cpp`.
+   - **4б — визуал персонажа, сделано 2026-11-12.** `graphics/mdlvisual*`, `graphics/objvisual*` и `graphics/effect.*` отнесены правилами к RPG без переноса файлов: они работают с NPC, интерактивными объектами и уроном. `WorldView` хранит и регистрирует `StreamedVisual` из платформы; `ObjVisual` реализует его, прежние вызовы `replaceVob` при перемещении и `removeVob` при очистке сохранены. `Pose` и `Animation` передают только событие `AnimationPfx`; локальный адаптер `MdlVisual` связывает мир и визуал, `World::animationPfx` и обход событий прежние. `VisualFx` остаётся в платформе: неиспользуемый `visual(World&)` удалён, `SpellFxKey` перенесён в `records/definitions.h` с включением из `constants.h`. Формат сохранений не меняется. Итог `engine_layers.py report --json` относительно `main` `aaeb9fb1d`: `per_layer.platform.vm_transitive` **20 → 13**, `violations` **271 → 249**, `foreign_definitions` **0 → 0**.
+   - **4в — камера, сделано 2026-11-12.** `camera.h` и `camera.cpp` включают только платформу и не называют игровые типы. `CameraTarget` даёт кость, повороты, матрицу, состояния и имена схем мобси; его пересылки в `Npc` оставляют прежние горячие методы невиртуальными (уже виртуальный `isInAir` не меняется). `CameraPresets` реализован `CameraDefinitions`: поиск по имени остаётся в игре, выбор режима — в `Camera`. Проекцию и тряску передаёт `GameServices` через мир; без мира проекция и накопленная тряска не меняются. Физика берётся через прежний `physicsWorld()`; `World` создаёт `DynamicWorld` до использования камеры, поэтому условие блока воды прежнее. `cameraTarget()` возвращает `player()`, тот — `GameSession::player()` → `World::player()`; без сессии или мира оба пути возвращают `nullptr`. `reset` принимает интерфейс, прежние вызовы с `Npc*` не менялись. Свободные `saveCamera` / `loadCamera` в RPG (`gamesession.cpp`) работают с открытой `Camera::SaveState`: те же поля и порядок, `reset(pl)` перед чтением и ранний выход при версии <55; байты сохранения прежние. Единственная новая строка раскладки относит чистую математику `game/aimcamera.h` к платформе, файл и тесты не переносились. Итог `engine_layers.py report --json` относительно `main` `729b04ecb`: `per_layer.platform.vm_transitive` **13 → 12**, `violations` **249 → 243**, `foreign_definitions` **0 → 0**.
    - **4г — тела в физике:** `physics/dynamicworld.cpp`, `physics/dynamicworld_bullets.cpp`, `physics/ragdoll.cpp`, `physics/collisionworld.cpp`, `physics/collisionworld_character.cpp`, `physics/arrowtrace.h`.
 5. **Страж.** Когда в платформе не останется включений VM, к ней подключается страж в CMake по образцу `ZenKitGuard`: цели платформы не включают `daedalus/` и `game/gamescript.h`.
 6. **Крючки стенда** через интерфейс.
 7. **Свои записи NPC и предметов в каркасе RPG** — только когда вторая игра станет реальной. По правилу проекта перед этим нужно отдельное исследование.
 8. **«Пустой остров».** Цель сборки без слоя Готики: окно, сцена glTF своих форматов, капсула героя ходит, работают физика, свет и стриминг. Запуск идёт на машине без установки и без базы Готики.
 9. **Репозитории.** Делить, когда пункт 8 проходит. Первым кандидатом становится импорт: он уже собирается отдельными библиотеками (`gothic-base-import`, `gothic-video-import`). Потом платформа уходит в библиотеку со своей версией формата.
+
+10. **Чужие определения членов классов — #1216, сделано 2026-11-11.** Перепись учитывает полные имена, поиск от пространства имён определения наружу и доступность класса по графу включений; `check` сравнивает файл и имя, сохраняя число перегрузок и игнорируя сдвиги строк. Обе перегрузки `loadBaseProgram` перенесены из `Resources` в свободные функции слоя Готики, луч `DynamicWorld::navigationRay` — в платформу с адаптером NPC в RPG, дамп коллизии — в свободную функцию стенда. Итог `report --json`: `foreign_definitions` **4 → 0**, `per_layer.platform.vm_transitive` **19**, `violations` **270** относительно `main` `a3de20db4`.
 
 Пункты 2–4 и 6 — работа над движком, а не над видом, поэтому по правилам проекта их можно отдать исполнителю.
 
@@ -135,8 +137,8 @@ python3 scripts/engine_layers.py check --base origin/main # новые вклю�
 
 ## Пробелы
 
-- Перепись смотрит только на `#include`. Имена Готики, вшитые в код строками (`MENU_MAIN`, имена экземпляров героя и NPC), она не считает.
-- Метод класса платформы с телом в файле верхнего слоя прячет зависимость от переписи включений. Известный случай — `Resources::loadBaseProgram`, объявленный в `common/resources.h` и определённый в `common/game/definitions/baseprogram.cpp` (шаг 3: так решил агент-ведущий при ревью, ошибочно); его исправляют отдельно.
+- Перепись смотрит на `#include` и определения членов классов. Имена Готики, вшитые в код строками (`MENU_MAIN`, имена экземпляров героя и NPC), она не считает.
+- Детектор не разбирает шаблоны с аргументами в имени класса, макросы и `using namespace`.
 - Шейдеры (`OpenGothic/shader/`) не сканировались.
 - Сервер на Python и протокол в перепись не входят. Сервер знает имена NPC второй части и закон колонии; это отдельная перепись, если до него дойдёт дело.
 - Строки считаются вместе с комментариями.

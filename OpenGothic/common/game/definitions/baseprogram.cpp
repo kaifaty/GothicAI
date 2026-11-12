@@ -1,3 +1,5 @@
+#include "baseprogram.h"
+
 #include "resources.h"
 #include "resources_internal.h"
 #include "contentcensus.h"
@@ -11,25 +13,25 @@
 using ResourcesInternal::censusSourcePath;
 using ResourcesInternal::scriptDirectory;
 
-daedalus::DaedalusScript Resources::loadBaseProgram(std::string_view request, int language) {
+daedalus::DaedalusScript loadBaseProgram(std::string_view request, int language) {
   try {
     std::string_view branch;
-    if(inst->basePrograms.findVfs(request,&branch)!=nullptr)
+    if(Resources::baseProgramIndex().findVfs(request,&branch)!=nullptr)
       return loadBaseProgram(request,language,branch);
     const std::string name(request.substr(0,255));
     std::string path="_work/Data/Scripts/_compiled/"+name;
-    const ProgramData::Source* source=inst->basePrograms.findHost(path);
+    const ProgramData::Source* source=Resources::baseProgramIndex().findHost(path);
     branch="host_ordinary";
     if(source==nullptr && language>=0) {
       path="_work/Data/"+std::string(scriptDirectory(language))+"/_compiled/"+name;
-      source=inst->basePrograms.findHost(path);
+      source=Resources::baseProgramIndex().findHost(path);
       branch="host_localized_full";
       }
     if(source==nullptr && language>=0) {
       const auto separator=request.find_last_of("/\\");
       const auto basename=separator==std::string_view::npos ? request : request.substr(separator+1);
       path="_work/Data/"+std::string(scriptDirectory(language))+"/_compiled/"+std::string(basename.substr(0,255));
-      source=inst->basePrograms.findHost(path);
+      source=Resources::baseProgramIndex().findHost(path);
       branch="host_localized_basename";
       }
     if(source==nullptr)
@@ -40,10 +42,10 @@ daedalus::DaedalusScript Resources::loadBaseProgram(std::string_view request, in
   catch(const std::exception& error) { throw BaseStore::Error("program "+std::string(request)+": "+error.what()); }
   }
 
-daedalus::DaedalusScript Resources::loadBaseProgram(std::string_view request, int language,
-                                                std::string_view branch, std::u16string_view hostPath) {
+daedalus::DaedalusScript loadBaseProgram(std::string_view request, int language,
+                                       std::string_view branch, std::u16string_view hostPath) {
   try {
-    const auto& index = inst->basePrograms;
+    const auto& index = Resources::baseProgramIndex();
     const ProgramData::Source* source = nullptr;
     if(hostPath.empty()) {
       std::string_view selectedBranch;
@@ -62,15 +64,15 @@ daedalus::DaedalusScript Resources::loadBaseProgram(std::string_view request, in
     if(actualSha256!=source->recordSha256)
       throw std::runtime_error("program record identity differs from base index");
     auto script = daedalus::DaedalusScript::from_program(std::move(program));
-    if(inst->census) {
+    if(Resources::contentCensus()) {
       const auto record = "base/programs/"+file.filename().generic_string();
-      inst->census->replaced(request,record);
-      inst->census->program("Gothic::loadScript",request,language,branch,record,actualSha256,*source);
+      Resources::contentCensus()->replaced(request,record);
+      Resources::contentCensus()->program("Gothic::loadScript",request,language,branch,record,actualSha256,*source);
       }
     return script;
     }
   catch(const std::exception& error) {
-    if(inst->census) inst->census->missing(request,error.what());
+    if(Resources::contentCensus()) Resources::contentCensus()->missing(request,error.what());
     throw BaseStore::Error("program "+std::string(request)+": "+error.what());
     }
   }
