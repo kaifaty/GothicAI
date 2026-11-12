@@ -7,7 +7,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "game/constants.h"
+#include "engineconstants.h"
 
 class GothicNotFoundException : std::logic_error {
   using logic_error::logic_error;

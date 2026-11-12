@@ -3,7 +3,7 @@
 #include <Tempest/Matrix4x4>
 #include <vector>
 
-#include "game/constants.h"
+#include "engineconstants.h"
 #include "animation.h"
 
 class Skeleton;

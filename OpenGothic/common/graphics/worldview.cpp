@@ -12,7 +12,6 @@
 
 #include "graphics/mesh/submesh/packedmesh.h"
 #include "graphics/streamedvisual.h"
-#include "game/gametime.h"
 #include "camera.h"
 #include "shaders.h"
 #include "world/chunkresidency.h"

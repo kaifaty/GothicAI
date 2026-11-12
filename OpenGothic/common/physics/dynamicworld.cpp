@@ -1004,6 +1004,20 @@ std::string_view DynamicWorld::validateSectorName(std::string_view name) const {
   return landMesh->validateSectorName(name);
   }
 
+void DynamicWorld::setNpcReplaySeq(uint32_t seq) {
+  npcList->replaySeq = seq;
+  }
+
+float DynamicWorld::npcMaxRadiusXZ() const {
+  return npcList->maxRXZ;
+  }
+
+// Startup floor replay: NPC created after the replayed one did not exist yet at its insertion.
+bool DynamicWorld::NpcBodyList::hiddenByReplay(const NpcBody& b) const {
+  auto* npc = b.toNpc();
+  return npc!=nullptr && wrld.host->npcCreationSeq(*npc)>replaySeq;
+  }
+
 bool DynamicWorld::NpcBodyList::hasCollision(const NpcBody& a, const NpcBody& b, Tempest::Vec3& normal, float& colDepth) const {
     if((a.toNpc()!=nullptr && wrld.host->npcUsesSimplifiedMovement(*a.toNpc())) ||
        (b.toNpc()!=nullptr && wrld.host->npcUsesSimplifiedMovement(*b.toNpc())))

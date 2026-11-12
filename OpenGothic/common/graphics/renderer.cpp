@@ -3,6 +3,7 @@
 #include "gameservices.h"
 #include "renderer_internal.h"
 #include "physics/cloth.h"
+#include "physics/dynamicworld.h"
 
 #include <Tempest/Application>
 #include <Tempest/Color>
