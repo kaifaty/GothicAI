@@ -6,7 +6,6 @@
 #include <memory>
 #include <list>
 
-#include "world/objects/pfxemitter.h"
 #include "graphics/visualobjects.h"
 
 class SceneGlobals;

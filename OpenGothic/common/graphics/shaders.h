@@ -7,7 +7,7 @@
 #include <list>
 
 #include "graphics/drawcommands.h"
-#include "game/constants.h"
+#include "engineconstants.h"
 #include "material.h"
 
 class Shaders {
