@@ -165,6 +165,20 @@ bool isGBufHair(float v) {
   return (x & GBufHairBit)!=0;
   }
 
+// Eyeballs (reports/content/2026-11-hero-head/eye-shader.md): bit 5 of the hint bits. Such a pixel keeps in gbufOrm
+// r the map's AO, g the roughness of the tear film, b how much the lids leave of the light (0 under the lid's edge,
+// 1 open; an eye has no metal), a = 1. The albedo is already darkened by the lid's shade (main.frag)
+const int GBufEyeBit = 1 << 5;
+
+bool isGBufEye(float v) {
+  int x = int(v*255+0.5);
+  return (x & GBufEyeBit)!=0;
+  }
+
+// The lid's shade of an eyeball whose rig has none (no face rig, a head without eyes.lid_shade): the mean over the
+// open part of the test heads' eyes (0.65..0.73), not 0 and not 1
+const float EyeLidFar = 0.7;
+
 // How much light a hair gets by the share that reaches it straight through the hair over it (gbufOrm.r of hair:
 // baked per point of a strand by groom_export.py, a card's hair map). The rest is scattered on the way, and a part
 // of it arrives still

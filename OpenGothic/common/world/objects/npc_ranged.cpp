@@ -316,6 +316,7 @@ bool Npc::shootBow(Interactive* focOverride) {
     }
 
   invent.delItem(size_t(munition),1,*this);
+  setQuiverTaken(0);
   b.setOrigin(this);
   b.setDamage(DamageCalculator::rangeDamageValue(*this));
 
@@ -436,6 +437,8 @@ bool Npc::releaseArrow(float draw, const Archery::Stats& st) {
     TestBench::note(buf);
     }
   invent.delItem(size_t(munition),1,*this);
+  // the inventory shows as it is again (the arrow taken from the quiver is gone)
+  setQuiverTaken(0);
   b.setOrigin(this);
   b.setDamage(DamageCalculator::rangeDamageValue(*this));
   b.setPrecise(draw);

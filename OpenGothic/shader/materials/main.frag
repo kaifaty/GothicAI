@@ -537,6 +537,26 @@ void mainGBuffer(vec4 t) {
       outOrm.b = 0.0; // a degenerate UV: plain Lambert, not a strand of unknown direction
       }
     }
+  if((bucket[bucketId].flags & BK_EYE)!=0u) {
+    // An eyeball (eye_brdf.glsl): the lids' shade comes in the length of the normal (vertex_process.glsl). It darkens
+    // the albedo down to EyeLidAlbedo, as The Heretic's eyes do, and goes to the light passes in the channel of metal
+    // (an eye has none). Without an ORM map the tear film's roughness is EyeRoughness. The roughness grows by how
+    // fast the normal turns over the pixel (Kaplanyan and Tokuyoshi's specular antialiasing): a highlight of a pixel
+    // or two on the cornea flickers under TAA as the head turns otherwise
+    const float EyeLidAlbedo  = 0.65;
+    const float EyeRoughness  = 0.08;
+    const float lid = clamp(length(shInp.normal)*2.0 - 1.0, 0.0, 1.0);
+    const vec3  n   = normalize(shInp.normal);
+    const vec3  dn  = dFdx(n), dm = dFdy(n);
+    const float kernel = min(0.5*(dot(dn,dn) + dot(dm,dm)), 0.18);
+    const float r0  = (bucket[bucketId].flags & BK_ORM)!=0 ? outOrm.g : EyeRoughness;
+    const float a2  = clamp(r0*r0*r0*r0 + kernel, 0.0, 1.0);
+    outOrm.g        = sqrt(sqrt(a2));
+    outOrm.b        = lid;
+    outOrm.a        = 1.0;
+    outDiffuse.rgb *= mix(EyeLidAlbedo, 1.0, lid);
+    outDiffuse.a    = float(int(outDiffuse.a*255.0 + 0.5) | GBufEyeBit)/255.0;
+    }
   const float glow = bucket[bucketId].emissive;
   if(glow>0.0 && !maps.antitile && (bucket[bucketId].flags & BK_ORM)!=0) {
     // the ORM alpha marks the glowing texels (cracks of a burning log, the ember bed); they breathe slowly. Glowing

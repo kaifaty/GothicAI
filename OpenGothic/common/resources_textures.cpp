@@ -238,6 +238,14 @@ void Resources::indexMaterialMaps() {
       else
         maps.strand = strand->value.GetBool();
       }
+    // An eyeball (reports/content/2026-11-hero-head/eye-shader.md): the wet highlight of the tear film (F0 0.021) by
+    // the roughness of `orm`, lit in the shade of the lids the face rig computes per vertex (FaceRig, lid_shade).
+    if(const auto eye = entry.value.FindMember("eye"); eye!=entry.value.MemberEnd()) {
+      if(!eye->value.IsBool())
+        valid = false;
+      else
+        maps.eye = eye->value.GetBool();
+      }
     if(const auto scale = entry.value.FindMember("scale"); scale!=entry.value.MemberEnd()) {
       if(!scale->value.IsNumber()) {
         valid = false;
@@ -1206,6 +1214,7 @@ Resources::MaterialMaps Resources::loadMaterialMaps(std::string_view name) {
   ret.antitile = files.antitile;
   ret.hair = files.hair;
   ret.strand = files.strand;
+  ret.eye = files.eye;
   ret.present = true;
   ret.hasAlbedo = !files.albedo.empty();
   return ret;

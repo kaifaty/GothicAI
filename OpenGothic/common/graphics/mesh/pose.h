@@ -14,11 +14,12 @@
 #include "aim.h"
 #include "aimwalk.h"
 #include "bowdraw.h"
+#include "quiverhand.h"
 #include "flinch.h"
 #include "resources.h"
 
 class Skeleton;
-class Serialize;
+class SaveArchive;
 class AnimationSolver;
 struct NpcLogicalState;
 
@@ -39,8 +40,8 @@ class Pose final {
     static uint8_t     calcAniComb(const Tempest::Vec3& dpos, float rotation);
     static uint8_t     calcAniCombVert(const Tempest::Vec3& dpos);
 
-    void               save(Serialize& fout);
-    void               load(Serialize& fin, const AnimationSolver &solver);
+    void               save(SaveArchive& fout);
+    void               load(SaveArchive& fin, const AnimationSolver &solver);
 
     void               setFlags(Flags f);
     BodyState          bodyState() const;
@@ -112,6 +113,8 @@ class Pose final {
     // The animation of that name as it is at `at` (0..1 of it): bone `to` relative to its ancestor `from`;
     // false: it does not play
     bool               animRelative(std::string_view name, float at, size_t from, size_t to, Tempest::Matrix4x4& out) const;
+    // the reload from the quiver plays (its own clip as T_BOWRELOAD, BowDraw::QuiverReloadAnim)
+    bool               isOwnReload() const;
     // The animation of that name plays k times as fast, from its next start on (1: as it is)
     void               setAnimSpeed(std::string_view name, float k);
     // the playing layer of seq goes on k times as fast from now, without a jump
@@ -124,6 +127,8 @@ class Pose final {
     AimWalk&           aimWalk() { return walk; }
     bool               updateAimWalk(const AimWalk::Input& in);
     bool               updateBowDraw(const BowDraw::Input& in);
+    const QuiverHand&  quiverHandIk() const { return qhand; }
+    bool               updateQuiverHand(const QuiverHand::Input& in);
     Flinch&            flinchIk() { return flinch; }
     bool               updateFlinch(const Flinch::Input& in);
     bool               updateLean(const Lean::Input& in);
@@ -134,8 +139,8 @@ class Pose final {
     void               clearRagdollPose(bool blendFromPhysical=false, uint64_t tickCount=0);
     bool               hasRagdollPose() const { return !physical.empty(); }
     bool               isRagdollBlending() const { return physicalReturning; }
-    void               saveRagdollRecovery(Serialize& fout) const;
-    void               loadRagdollRecovery(Serialize& fin);
+    void               saveRagdollRecovery(SaveArchive& fout) const;
+    void               loadRagdollRecovery(SaveArchive& fin);
     void               setAnimRotate(const AnimationSolver &solver, WalkBit walkMode, uint64_t tickCount, WeaponState fightMode, AnimationSolver::TurnType turn, int dir);
     auto               setAnimItem(const AnimationSolver &solver, uint64_t tickCount, std::string_view scheme, int state) -> const Animation::Sequence*;
     bool               stopItemStateAnim(const AnimationSolver &solver, uint64_t tickCount);
@@ -301,6 +306,7 @@ class Pose final {
     Aim                             aim;
     AimWalk                         walk;
     BowDraw                         bowDraw;
+    QuiverHand                      qhand;
     Flinch                          flinch;
 
     std::vector<Tempest::Matrix4x4> physical;

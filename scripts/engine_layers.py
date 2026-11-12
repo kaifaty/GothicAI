@@ -121,6 +121,9 @@ LAYER_RULES: list[tuple[str, str]] = [
     ("common/graphics/effect", "rpg"),
     # Pure camera math, independent of game objects despite living in game/.
     ("common/game/aimcamera", "platform"),
+    # Pure impact math and transform validation, independent of game objects.
+    ("common/game/meleeimpact", "platform"),
+    ("common/game/physicssave", "platform"),
     ("common/game/*", "rpg"),
     ("common/world/*", "rpg"),
     ("common/nav*", "rpg"),

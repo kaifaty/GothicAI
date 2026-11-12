@@ -17,6 +17,7 @@
 #include "common.glsl"
 #if defined(MATERIAL_MAPS)
 #include "lighting/material_brdf.glsl"
+#include "lighting/eye_brdf.glsl"
 #endif
 
 // No SSAO on the light of the probes: they trace what hides the sky and the lit surfaces from them, SSAO (1 m
@@ -212,6 +213,17 @@ void main() {
   vec3 color = linear;
   color *= luminance;
 #if defined(MATERIAL_MAPS)
+  if(ownMaterial && isGBufEye(diff4.a)) {
+    // an eyeball (eye_brdf.glsl): the lids' shade takes the light of the probes and the sky's reflection in full
+    const float lid = orm.b;
+    color *= orm.r * lid;
+    const vec3 view = normalize(scene.camPos - basePos);
+    const float noV = max(dot(norm, view), 0.0);
+    const vec3 sharpSky = textureSkyLUT(skyViewLut, vec3(0,RPlanet,0), reflect(-view, norm), scene.sunDir) * scene.GSunIntensity;
+    const vec3 sky = probeReadIrradiance(probesLighting, 0, norm);
+    color += mix(sharpSky, sky, orm.g*orm.g) * materialEnvBrdf(vec3(EyeF0), orm.g, noV) * lid *
+             clamp(skyVisibilitySum, 0.0, 1.0);
+    } else
   if(ownMaterial) {
     color *= orm.r * (1.0 - orm.b);
     const vec3 view = normalize(scene.camPos - basePos);

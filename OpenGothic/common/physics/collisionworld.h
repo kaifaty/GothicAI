@@ -30,12 +30,13 @@ struct MeleeBladeSegment;
 struct MeleeBodyCapsule;
 struct MeleeShadowBody;
 struct MeleeBladeContact;
-namespace daedalus { struct INpc; }
+class PhysicsHost;
 namespace JPH { class PhysicsSystem; class GroupFilter; }
 
 class CollisionWorld final {
   public:
-    CollisionWorld();
+    explicit CollisionWorld(PhysicsHost* host = nullptr);
+    PhysicsHost* physicsHost() const { return host; }
     ~CollisionWorld();
     CollisionWorld(const CollisionWorld&) = delete;
 
@@ -124,7 +125,7 @@ class CollisionWorld final {
         asset::MaterialGroup noiseSurface = asset::MaterialGroup::STONE;
         std::string         noiseWhat = "item";
         Npc*                (*noiseCulpritResolver)(const CollisionBody&,uint64_t) = nullptr;
-        std::weak_ptr<daedalus::INpc> noiseCulprit;
+        std::weak_ptr<void> noiseCulprit;
         uint64_t            noiseCulpritUntilStep = 0;
         uint64_t            nextNoiseStep = 0;
         std::string         traceCause;
@@ -397,6 +398,7 @@ class CollisionWorld final {
 
     void unregisterRagdoll(Ragdoll& body);
     std::vector<uint32_t> ragdollBirthGuardGroups(const Ragdoll& body) const;
+    PhysicsHost* host = nullptr;
     std::unique_ptr<Impl> impl;
     std::vector<CollisionBody*> bodies;
     std::vector<DynamicBody*> rigid;

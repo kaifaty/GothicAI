@@ -361,6 +361,12 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       say(std::string("quiver still ") + (Quiver::still ? "on" : "off"));
       return;
       }
+    if(m=="lift") {
+      // quiver lift on|off: the trunk and the head push the fletching, the reload's arrow takes the tube with it
+      Quiver::liftOn = a.size()<3 || a[2]!="off";
+      say(std::string("quiver lift ") + (Quiver::liftOn ? "on" : "off"));
+      return;
+      }
     if(m!="place") {
       say("quiver: place|still " + line);
       return;

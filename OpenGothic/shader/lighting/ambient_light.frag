@@ -9,6 +9,7 @@
 #include "common.glsl"
 #if defined(MATERIAL_MAPS) && !defined(SURFEL_GI)
 #include "lighting/material_brdf.glsl"
+#include "lighting/eye_brdf.glsl"
 #endif
 #if defined(MATERIAL_MAPS)
 #include "lighting/hair_brdf.glsl"
@@ -97,12 +98,30 @@ void main() {
   float ao = textureSsao();
 
   vec3 color;
+  vec3 eyeReflection = vec3(0); // the tear film's reflection of the sky, over the screen-space visibility below
 #if defined(MATERIAL_MAPS) && !defined(SURFEL_GI)
   const vec4 orm = texelFetch(gbufOrm, fragCoord, 0);
   if(orm.a>0.5 && isGBufHair(diff4.a)) {
     // Hair cards: the ORM channels are the hair's own (no metal, no map AO); the sky and the ambient light it as a
     // matte surface of the hair's colour, the highlights belong to the sun and the lamps
     color = linear * (scene.ambient + skyIrradiance(norm)*0.8 + (norm.y*0.25+0.75) * NightAmbient * Fd_Lambert) * hairShade(orm.r);
+    } else
+  if(orm.a>0.5 && isGBufEye(diff4.a)) {
+    // An eyeball (eye_brdf.glsl): the lids' shade takes all of the ambient light and of the sky's reflection - a
+    // white of the eye lit by the ambient alone is what made it glow in the dark. The tear film reflects the sky
+    // sharply, by its own F0 and with no fade by roughness. That reflection does not take SSAO: its spheres of
+    // 50-150 cm make the whole socket one dark hollow and put out the catchlight; the lids' shade is the eye's own
+    // occlusion
+    const float lid = orm.b;
+    const vec3  sky = skyIrradiance(norm);
+    color = linear * (scene.ambient + sky*0.8*orm.r + (norm.y*0.25+0.75) * NightAmbient * Fd_Lambert) * lid;
+
+    const float z = texelFetch(gbufferDepth, fragCoord, 0).r;
+    const vec4 pos = scene.viewProjectInv * vec4(uv*2.0 - 1.0, z, 1.0);
+    const vec3 view = normalize(scene.camPos - pos.xyz/pos.w);
+    const float noV = max(dot(norm, view), 0.0);
+    const vec3 sharpSky = textureSkyLUT(skyViewLut, vec3(0,RPlanet,0), reflect(-view, norm), scene.sunDir) * scene.GSunIntensity;
+    eyeReflection = mix(sharpSky, sky, orm.g*orm.g) * materialEnvBrdf(vec3(EyeF0), orm.g, noV) * lid;
     } else
   if(orm.a>0.5) {
     // Map AO occludes only diffuse sky light. Screen-space visibility below
@@ -130,7 +149,9 @@ void main() {
     color *= luminance(norm);
 #if defined(MATERIAL_MAPS) && defined(SURFEL_GI)
     const vec4 orm = texelFetch(gbufOrm, fragCoord, 0);
-    if(orm.a>0.5 && !isGBufHair(diff4.a))
+    if(orm.a>0.5 && isGBufEye(diff4.a))
+      color *= orm.r * orm.b; // the lid's shade of an eye (common.glsl, GBufEyeBit)
+    else if(orm.a>0.5 && !isGBufHair(diff4.a))
       color *= orm.r * (1.0 - orm.b);
 #endif
     }
@@ -139,6 +160,7 @@ void main() {
   color *= ao;
 #else
   color *= ao;
+  color += eyeReflection;
   color *= scene.exposure;
 #endif
 #if defined(MATERIAL_MAPS)

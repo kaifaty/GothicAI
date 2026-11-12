@@ -9,7 +9,7 @@
 
 #include "animation.h"
 
-class Serialize;
+class SaveArchive;
 
 // Transitions between animations by inertialization (D. Bollo, "Inertialization: High-Performance
 // Animation Transitions in Gears of War", GDC 2018). When a bone switches to another animation, the
@@ -101,8 +101,8 @@ class AnimBlend final {
     // The common driverless transition curve, also used for an affine bone's stretch/shear.
     float          externalWeight(uint64_t now) const;
     // Only the driverless external transition; written in the optional ragdoll save entry.
-    void           saveExternal(Serialize& fout) const;
-    void           loadExternal(Serialize& fin, size_t expectedBones, bool hasVelocityState=true);
+    void           saveExternal(SaveArchive& fout) const;
+    void           loadExternal(SaveArchive& fin, size_t expectedBones, bool hasVelocityState=true);
     void           probe(Probe& p);
 
   private:

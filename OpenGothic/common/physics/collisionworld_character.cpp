@@ -1,6 +1,5 @@
 #include "collisionworld_internal.h"
-#include "world/objects/npc.h"
-#include "world/world.h"
+#include "physicshost.h"
 
 #include <Jolt/Geometry/Plane.h>
 #include <Jolt/Physics/Body/BodyLock.h>
@@ -152,7 +151,7 @@ struct CollisionWorld::VirtualCharacter::Impl final : JPH::CharacterContactListe
       std::fprintf(stderr,"CV_GROUND_NORMAL_FALLBACK phase=%s count=%llu tick_ms=%llu body=%u subshape=%u state=%u "
                           "position_cm=(%.9g,%.9g,%.9g) raw=(%.9g,%.9g,%.9g) fallback=(%.9g,%.9g,%.9g) contacts=%zu\n",
                    phase,static_cast<unsigned long long>(groundNormalFallbacks),
-                   static_cast<unsigned long long>(culprit!=nullptr?culprit->world().tickCount():0),
+                   static_cast<unsigned long long>(culprit!=nullptr?world.physicsHost()->npcTickCount(*culprit):0),
                    character->GetGroundBodyID().GetIndexAndSequenceNumber(),character->GetGroundSubShapeID().GetValue(),
                    unsigned(character->GetGroundState()),double(position.x),double(position.y),double(position.z),
                    double(x),double(y),double(z),double(lastGroundNormal.GetX()),double(lastGroundNormal.GetY()),

@@ -42,6 +42,7 @@
 #include "daedalus/classes.h"
 
 class Interactive;
+class Bullet;
 class WayPoint;
 struct PhysicsNoise;
 
@@ -1469,4 +1470,3 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
 
 FootIk::Input mkFootIkInput(const FootIk& ik, const Npc& npc, World& world, const Tempest::Matrix4x4& obj,
                            bool alignedToGround, uint64_t dt, const AimWalk* walk);
-Npc* noiseCulpritNpc(const CollisionWorld::CollisionBody& body, uint64_t step);
