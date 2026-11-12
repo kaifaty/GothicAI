@@ -18,14 +18,15 @@
 //    (sky_exposure.comp: 1/(lum*1.25 + 1.5), the 1.5 holds the night);
 //  - only up: 2^(key - measure), at least 1 and at most 2^MaxEv; up (into the dark) at UpEvPerS, down (into the
 //    light) at DownEvPerS of the world's time;
-//  - no way, a jump to the target: the first frames, another world, the clock going back, a jump of the time of day
-//    over 10 game minutes, the camera jumping more than 3 m in a frame (a teleport, a cut).
+//  - no way, a jump to the target: the first frames, the clock going back, a jump of the time of day
+//    over 10 game minutes, the camera jumping more than 3 m in a frame (a teleport, a cut that moves the camera; a
+//    cut that only turns it goes the usual way; another world shows as a jump of the camera or of the clock).
 // -eye 0|1, OPENGOTHIC_EYE=0|1 (the flag wins); on by default. Without GI the multiplier is exactly 1.
 // OPENGOTHIC_EYE_LOG=<file> (a relative name: in the bench's out dir) writes a row a frame (experiments).
 class EyeAdaptation final {
   public:
     static constexpr uint32_t Bins        = 64;
-    static constexpr uint32_t ResultWords = 4*Bins + 2;
+    static constexpr uint32_t ResultWords = 4*Bins + 3;
 
     // EV: market-day at noon under GI after the fog's veil went (-2.98; -2.9 with the veil, step-2-shade.md З1)
     static constexpr float KeyDay     = -3.0f;
@@ -68,6 +69,7 @@ class EyeAdaptation final {
       float skyShare  = 0;
       float exposure  = 0;
       float lumMed    = 0;
+      float skyVis    = 1; // scene.fogSkyVis: the sky seen from the camera for the fog (renderer_fogsky.cpp)
       };
     Measure read(uint8_t fId);
     void    log(uint64_t tick, int64_t dayTime, const Tempest::Vec3& cam, const Measure& m, float dayW, float key,

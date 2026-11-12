@@ -64,6 +64,8 @@ class Shaders {
     Tempest::RenderPipeline  skyViewLut, skyViewCldLut, sky, skySep;
     Tempest::RenderPipeline  fog;
     Tempest::RenderPipeline  fog3dHQ;
+    Tempest::RenderPipeline  fog3dHQSky;     // fog3dHQ with the sky seen from the camera (FOG_SKY_VIS), under GI
+    Tempest::ComputePipeline fogSkyVis;      // fog_sky_vis.comp: the sky seen from the camera, with ray query
 
     // Blood on the GBuffer (physics stage 8, step 4c): albedo RGB, and roughness with material maps
     Tempest::RenderPipeline  bloodDecal, bloodDecalAlbedo; // with and without the ORM target

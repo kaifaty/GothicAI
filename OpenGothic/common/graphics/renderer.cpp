@@ -778,6 +778,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
 
   updateCamera(wview, camera);
   updateEye(fId, camera);
+  updateFogSky(camera);
   prepareTaa(wview, camera);
   prepareMotion(wview);
   wview.setTaaReactiveLref(settings.taaReactiveLref);
@@ -850,6 +851,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   { FrameProfile::Scope timing(FrameProfile::Zone::EncodeMain); prepareIrradiance(cmd, wview); }
   prepareExposure(cmd, wview);
   FrameProfile::Scope lightingTiming(FrameProfile::Zone::EncodeMain);
+  prepareFogSkyVis(cmd, wview);
   prepareFog (cmd, wview);
   prepareGi  (cmd, fId, wview);
   prepareSurfels(cmd, wview);

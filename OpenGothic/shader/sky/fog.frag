@@ -132,6 +132,10 @@ vec4 fog(vec2 uv, float z) {
 #else
   vec3  scatteredLight = vec3(0.0);
   vec4  prevVal        = vec4(0.0); //textureLod(fogLut, vec3(uv,0), 0);
+#if defined(FOG_SKY_VIS)
+  vec3  msShadowed     = vec3(0.0);
+  vec4  prevMs         = vec4(0.0);
+#endif
 #endif
 
 #if defined(GL_COMPUTE_SHADER)
@@ -164,6 +168,13 @@ vec4 fog(vec2 uv, float z) {
     const vec4  val = textureLod(fogLut, vec3(uv,dd), 0) * min(dd*steps*2.0, 1.0);
     scatteredLight += (val.rgb-prevVal.rgb)*shadow;
     prevVal = val;
+#if defined(FOG_SKY_VIS)
+    // the multiple scattering of the step, lit as the single one: in the sun's shadow the air is taken as closed to
+    // the sky too (Д1); how far that holds, the sky seen from the camera says (below)
+    const vec4  msv = textureLod(fogLutMs, vec3(uv,dd), 0) * min(dd*steps*2.0, 1.0);
+    msShadowed += (msv.rgb-prevMs.rgb)*shadow;
+    prevMs = msv;
+#endif
     }
   // A slice of the LUT holds the light scattered up to its far end: the first one, read at any depth nearer than
   // its middle, puts the scattering of the whole slice (some 780 m of air at 50x) on a pixel a metre away, a veil of
@@ -173,7 +184,15 @@ vec4 fog(vec2 uv, float z) {
   const float near          = min(d*float(textureSize(fogLutMs,0).z)*2.0, 1.0);
   const vec4  ms            = textureLod(fogLutMs, vec3(uv,d), 0);
   const float transmittance = mix(1.0, ms.a, near);
+#if defined(FOG_SKY_VIS)
+  // Д4 (step-2-shade.md, «Дымка в тени»): each step's multiple scattering by mix(its sun bit, 1, the sky seen from the
+  // camera): under the crowns and in a cave the air in the sun's shadow is closed to the sky as well, in the open it
+  // is not; 1 gives the fog as it is without this
+  const float vis = scene.fogSkyVis;
+  return vec4(scatteredLight + ms.rgb*near*vis + msShadowed*(1.0-vis), transmittance);
+#else
   return vec4(scatteredLight+ms.rgb*near, transmittance);
+#endif
 #endif
   }
 #else

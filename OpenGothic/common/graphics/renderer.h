@@ -82,6 +82,9 @@ class Renderer final {
     bool eyeActive() const;
     void updateEye        (uint8_t fId, const Camera& camera);
     void drawEyeMeter     (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, const WorldView& wview);
+    bool fogSkyActive() const;
+    void updateFogSky     (const Camera& camera);
+    void prepareFogSkyVis (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview);
     void prepareEpipolar  (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview);
 
     void prepareLightsBvh (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview);
@@ -351,6 +354,16 @@ class Renderer final {
       } gi;
 
     EyeAdaptation             eye; // the eye's adaptation under GI (renderer_eye.cpp)
+    // the sky seen from the camera for the fog under GI (renderer_fogsky.cpp, fog_sky_vis.comp)
+    struct {
+      Tempest::StorageBuffer    state;            // the smoothed share and this frame's
+      bool                      hasLast  = false;
+      uint64_t                  lastTick = 0;
+      Tempest::Vec3             lastCam;
+      float                     alpha    = 0;     // 1 - exp(-dt/tau) of this frame
+      uint32_t                  reset    = 1;
+      uint32_t                  frame    = 0;
+      } fogSky;
 
     struct {
       const Tempest::IVec2      gbufTile   = {8};

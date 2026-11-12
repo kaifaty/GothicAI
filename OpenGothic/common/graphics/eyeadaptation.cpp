@@ -74,6 +74,7 @@ EyeAdaptation::Measure EyeAdaptation::read(uint8_t fId) {
   m.skyShare = (scene+sky)>0 ? float(sky/(scene+sky)) : 0.f;
   m.exposure = *reinterpret_cast<const float*>(v+4*Bins+0);
   m.lumMed   = *reinterpret_cast<const float*>(v+4*Bins+1);
+  m.skyVis   = *reinterpret_cast<const float*>(v+4*Bins+2);
   // a frame of sky alone (or nearly) says nothing of the place
   if(scene < 0.05*(scene+sky))
     return m;
@@ -85,6 +86,7 @@ EyeAdaptation::Measure EyeAdaptation::read(uint8_t fId) {
 void EyeAdaptation::off() {
   mulV    = 1;
   ev      = 0;
+  target  = 0;
   snap    = SnapFrames;
   hasLast = false;
   for(auto& w:written)
@@ -137,7 +139,7 @@ void EyeAdaptation::log(uint64_t tick, int64_t dayTime, const Vec3& cam, const M
       logFile = std::fopen(path.c_str(), "w");
       if(logFile!=nullptr) {
         std::fprintf(logFile, "tick,day_min,cam_x,cam_y,cam_z,exposure,lum_med,day_w,key,scene,scene_trim,all,all_trim,"
-                              "sky_share,target,ev\n");
+                              "sky_share,target,ev,fog_sky_vis\n");
         Log::i("eye: log ", path);
         }
       }
@@ -145,10 +147,10 @@ void EyeAdaptation::log(uint64_t tick, int64_t dayTime, const Vec3& cam, const M
   if(logFile==nullptr)
     return;
   // ev of the frame before: this one moves after the row
-  std::fprintf(logFile, "%llu,%.3f,%.0f,%.0f,%.0f,%.6g,%.6g,%.4f,%.3f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f\n",
+  std::fprintf(logFile, "%llu,%.3f,%.0f,%.0f,%.0f,%.6g,%.6g,%.4f,%.3f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f\n",
                static_cast<unsigned long long>(tick), double(dayTime%(24*60*60*1000))/60000.0, double(cam.x), double(cam.y),
                double(cam.z), double(m.exposure), double(m.lumMed), double(dayW), double(key), double(m.scene),
-               double(m.sceneTrim), double(m.all), double(m.allTrim), double(m.skyShare), double(tgt), double(ev));
+               double(m.sceneTrim), double(m.all), double(m.allTrim), double(m.skyShare), double(tgt), double(ev), double(m.skyVis));
   if(tick>=logFlush+1000) {
     std::fflush(logFile);
     logFlush = tick;

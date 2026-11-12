@@ -1,0 +1,64 @@
+#version 460
+
+#extension GL_EXT_control_flow_attributes : enable
+#extension GL_GOOGLE_include_directive    : enable
+
+#include "lighting/rt/rt_common.glsl"
+#include "scene.glsl"
+#include "common.glsl"
+
+// The sky seen from the camera's point for the fog under GI (step-2-shade.md, «Дымка в тени», Д4): rays over the
+// upper hemisphere, uniform in solid angle (the multiple scattering of the air is isotropic), alpha-tested as the
+// rays of the probes (probe_trace.comp: crowns let the sky through their gaps), a miss within 200 m is sky. 64 rays a
+// frame, 1024 directions over 16 frames, an exponential mean over time (push.alpha = 1 - exp(-dt/tau)); push.reset
+// jumps to this frame's share (the first frame, a teleport, a cut). The share goes into scene.fogSkyVis of this frame:
+// fog.frag (FOG_SKY_VIS) and main.frag (fogOwnDepth) read it; 1 where this pass does not run.
+layout(local_size_x = 64) in;
+
+layout(push_constant, std430) uniform Push {
+  float alpha;
+  uint  reset;
+  uint  frame;
+  } push;
+
+layout(binding = 0, std140) buffer UboScene {
+  SceneDesc scene;
+  };
+layout(binding = 1, std430) buffer State {
+  float vis;
+  float frameVis;
+  } state;
+
+const float rayDistance = 200*100; // as probeRayDistance (probe_common.glsl)
+const uint  Turns       = 16;
+
+shared uint misses;
+
+bool skyRay(vec3 origin, vec3 dir) {
+  // as sampleScene of probe_trace.comp
+  const uint flags = gl_RayFlagsSkipAABBEXT | gl_RayFlagsCullBackFacingTrianglesEXT;
+  rayQueryEXT rayQuery;
+  rayQueryInitializeEXT(rayQuery, topLevelAS, flags, 0xFF, origin, 0.0, dir, rayDistance);
+  rayQueryProceedShadow(rayQuery);
+  return rayQueryGetIntersectionTypeEXT(rayQuery, true)==gl_RayQueryCommittedIntersectionNoneEXT;
+  }
+
+void main() {
+  const uint i = gl_LocalInvocationIndex;
+  if(i==0)
+    misses = 0;
+  barrier();
+
+  const uint n   = gl_WorkGroupSize.x;
+  const vec3 dir = sampleHemisphere(i + (push.frame%Turns)*n, n*Turns, 0.0);
+  if(skyRay(scene.camPos, dir))
+    atomicAdd(misses, 1u);
+  barrier();
+
+  if(i==0) {
+    const float v = float(misses)/float(n);
+    state.frameVis = v;
+    state.vis      = (push.reset!=0) ? v : mix(state.vis, v, push.alpha);
+    scene.fogSkyVis = state.vis;
+    }
+  }

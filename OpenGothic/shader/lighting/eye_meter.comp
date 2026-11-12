@@ -21,7 +21,7 @@ layout(binding = 2, std140) uniform UboScene {
   };
 layout(binding = 3, std430) writeonly buffer Result {
   // [0..63] counts of the scene, [64..127] of the sky, [128..191] and [192..255] their sums of log2 in 1/256;
-  // [256] scene.exposure, [257] scene.luminanceMed, as float bits
+  // [256] scene.exposure, [257] scene.luminanceMed, [258] scene.fogSkyVis, as float bits
   uint data[];
   } result;
 
@@ -63,5 +63,6 @@ void main() {
   if(tid==0) {
     result.data[4*Bins+0] = floatBitsToUint(scene.exposure);
     result.data[4*Bins+1] = floatBitsToUint(scene.luminanceMed);
+    result.data[4*Bins+2] = floatBitsToUint(scene.fogSkyVis);
     }
   }

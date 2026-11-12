@@ -139,6 +139,7 @@ void Shaders::compileShaders() noexcept {
   skySep             = postEffect("sky_sep");
   fog                = fogShader ("fog");
   fog3dHQ            = fogShader ("fog3d_hq");
+  fog3dHQSky         = fogShader ("fog3d_hq_sky");
 
   underwaterT        = inWaterShader("underwater_t", false);
   underwaterS        = inWaterShader("underwater_s", true);
@@ -294,6 +295,7 @@ void Shaders::compileShaders() noexcept {
     probeHitAlloc  = computeShader("probe_hit_alloc.comp.sprv");
     probeClearVotes= computeShader("probe_clear_votes.comp.sprv");
     probeTrace     = computeShader("probe_trace.comp.sprv");
+    fogSkyVis      = computeShader("fog_sky_vis.comp.sprv");
     probeRelight   = computeShader("probe_relight.comp.sprv");
     probeRelightNew= computeShader("probe_relight_new.comp.sprv");
     probeLighting  = computeShader(string_frm("probe_lighting", materialMaps, ".comp.sprv"));

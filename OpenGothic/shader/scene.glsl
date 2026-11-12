@@ -51,6 +51,7 @@ struct SceneDesc {
   uint  vsmLampSides;    // VSM lamps: a cube face keeps the far side (1), both of the world mesh (2), of objects too (3)
   uint  vsmStudy;        // bench `vsm study <bits>`: VSM_STUDY_* below (0 in the game)
   uint  viewFlags;       // VF_* below: the occluder pass, TAA, shadow views
+  float fogSkyVis;       // the sky seen from the camera under GI, 0..1 (fog_sky_vis.comp); 1 without it
   };
 
 // bench `vsm study <bits>`: the shadow test on a mesh's facets (reports/render-features/2026-11-11-facet-shards)

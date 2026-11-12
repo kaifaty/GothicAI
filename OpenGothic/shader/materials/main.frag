@@ -574,8 +574,10 @@ vec4 fogOwnDepth() {
   vec4 val = textureLod(fogLut, vec3(uv,d), 0);
   if(scene.fogQuality==2) {
     // as fog.frag (VOLUMETRIC), without the shadow occlusion of single scattering
+    // under GI the multiple scattering as the sky seen from the camera lets it (fog.frag FOG_SKY_VIS; here without the
+    // sun's bits along the ray: as in the sun's shadow); exactly 1 without GI
     const vec4 ms = textureLod(fogLutMs, vec3(uv,d), 0);
-    val = vec4(val.rgb + ms.rgb, ms.a);
+    val = vec4(val.rgb + ms.rgb*scene.fogSkyVis, ms.a);
     }
   return vec4(val.rgb*near*scene.GSunIntensity*scene.exposure, mix(1.0, val.a, near));
   }
