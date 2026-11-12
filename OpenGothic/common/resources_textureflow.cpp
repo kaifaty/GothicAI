@@ -19,8 +19,9 @@ double milliseconds(std::chrono::steady_clock::duration d) {
 }
 
 uint8_t Resources::visibleLevel(const TextureRecord& record) const {
-  // Stage 1 drops only the reserve; deeper stages have none already.
-  return wantedLevel(record,std::max<uint32_t>(textureLadder.stage,1));
+  // What the screen needs now: the present demand without the look-ahead; stage 1 drops only the reserve, deeper
+  // stages have none already.
+  return wantedLevel(record,std::max<uint32_t>(textureLadder.stage,1),true);
   }
 
 void Resources::flowEnter(TextureRecord& record, uint8_t wanted) {
@@ -28,6 +29,7 @@ void Resources::flowEnter(TextureRecord& record, uint8_t wanted) {
   const auto now=nearTailUpdated;
   const uint32_t resident=record.resident ? record.firstMip : std::max<uint32_t>(record.mipCount,1);
   // Queued for the look-ahead alone: not short of the level its present demand needs.
+  record.flowAt=now;
   if(resident>presentLevel(record)) {
     record.flowState=TextureFlow::state(record.loading,record.loading && record.loadLevel>wanted,record.loadPhase);
     ++textureFlow.count[record.flowState];
@@ -91,12 +93,13 @@ void Resources::flowRestate(TextureRecord& record) {
   --textureFlow.count[record.flowState];
   ++textureFlow.count[next];
   record.flowState=next;
+  record.flowAt=nearTailUpdated;
   }
 
 void Resources::flowStarted(TextureRecord& record, TextureReload& reload, uint8_t level) {
   record.loadLevel=level;
   record.loadPhase=TextureFlow::Phase::Queued;
-  reload.bytes=TextureLevels::chainBytes(record.format,record.width,record.height,record.mipCount,level);
+  reload.bytes=textureLoadBytes(record,level);
   if(record.flowState!=TextureFlow::NotShort && !record.flowLoaded) {
     record.flowLoaded=true;
     textureFlow.wait.add(milliseconds(std::chrono::steady_clock::now()-record.shortSince));
@@ -105,19 +108,48 @@ void Resources::flowStarted(TextureRecord& record, TextureReload& reload, uint8_
   }
 
 void Resources::flowObserve(TextureReload& reload) {
+  using TextureFlow::Phase;
   const auto found=textureRecords.find(reload.identity);
   if(found==textureRecords.end())
     return;
   auto& record=found->second;
-  auto phase=TextureFlow::Phase(reload.phase->load(std::memory_order_acquire));
-  if(!reload.ready.isEmpty())
-    phase=record.loadPhase==TextureFlow::Phase::Ready || reload.ready.uploadReady() ? TextureFlow::Phase::Ready
-                                                                                   : TextureFlow::Phase::Done;
+  const auto& progress=*reload.progress;
+  const auto worker=Phase(progress.phase.load(std::memory_order_acquire));
+  auto phase=worker;
+  // an upload not ready when its worker finished (Metal) is ready once its fence has passed, seen from here
+  if(phase==Phase::Done && !reload.ready.isEmpty() && (record.loadPhase==Phase::Ready || reload.ready.uploadReady()))
+    phase=Phase::Ready;
   if(phase==record.loadPhase && reload.level==record.loadLevel)
     return;
+  const auto before=record.loadPhase;
   record.loadPhase=phase;
   record.loadLevel=reload.level;  // the file may have no tail at the level asked for: then a sharper one
-  flowRestate(record);
+  if(record.flowState==TextureFlow::NotShort || record.flowState==TextureFlow::Ahead)
+    return;
+  // Until now the interval since the last frame went to the state seen then. The worker moved on in between, at the
+  // times it wrote: from each of them on, the time goes to the state it entered.
+  updateNearTailTime();
+  const bool stale=record.loading && record.loadLevel>wantedLevel(record);
+  const auto shift=[&](Phase from, Phase to, TextureFlow::Clock::rep at) {
+    const auto a=TextureFlow::state(record.loading,stale,from), b=TextureFlow::state(record.loading,stale,to);
+    const auto since=std::max(TextureFlow::Clock::time_point(TextureFlow::Clock::duration(at)),record.flowAt);
+    const double seconds=std::chrono::duration<double>(nearTailUpdated-since).count();
+    if(a!=b && seconds>0) {
+      textureFlow.seconds[a]-=seconds;
+      textureFlow.seconds[b]+=seconds;
+      }
+    };
+  if(record.flowState==TextureFlow::state(record.loading,stale,before)) {
+    if(before<Phase::Uploading && worker>=Phase::Uploading)
+      shift(before,Phase::Uploading,progress.uploading.load(std::memory_order_relaxed));
+    if(before<Phase::Done && worker>=Phase::Done)
+      shift(std::max(before,Phase::Uploading),worker,progress.done.load(std::memory_order_relaxed));
+    }
+  const auto next=TextureFlow::state(record.loading,stale,phase);
+  --textureFlow.count[record.flowState];
+  ++textureFlow.count[next];
+  record.flowState=next;
+  record.flowAt=nearTailUpdated;
   }
 
 double Resources::textureLookAhead() {
@@ -141,14 +173,21 @@ TextureFlow::Distributions Resources::textureFlowDistributions() {
   return {inst->textureFlow.latency,inst->textureFlow.wait,inst->textureFlow.bursts};
   }
 
+uint64_t Resources::textureLoadBytes(const TextureRecord& record, uint8_t level) const {
+  // Without a readable tail a load makes the payload it had: the device may have built its chain (a PNG, or a single
+  // level read with mipmaps), which the file's own levels do not tell.
+  if(record.lowest==0)
+    return record.bytes;
+  return TextureLevels::chainBytes(record.format,record.width,record.height,record.mipCount,level);
+  }
+
 bool Resources::admitsTextureLoad(const TextureRecord& record, uint8_t level) const {
   if(!textureScreen)
     return true;
   uint64_t inFlight=0;
   for(const auto& reload:textureReloads)
     inFlight+=reload->bytes;
-  const auto bytes=TextureLevels::chainBytes(record.format,record.width,record.height,record.mipCount,level);
-  return TextureFlow::admits(textureReloads.size(),inFlight,bytes,textureLimits);
+  return TextureFlow::admits(textureReloads.size(),inFlight,textureLoadBytes(record,level),textureLimits);
   }
 
 void Resources::publishReadyTextures(const std::vector<std::shared_ptr<TextureReload>>& ready) {
@@ -156,46 +195,25 @@ void Resources::publishReadyTextures(const std::vector<std::shared_ptr<TextureRe
     return;
   // In the frame the main thread sees them ready, not a frame later through the residency's work queue; as many as
   // fit the budget, the oldest load first.
-  const auto started=std::chrono::steady_clock::now();
-  size_t published=0;
-  for(const auto& reload:ready) {
+  TextureFlow::publishWithin(ready.size(),textureLimits,[&](size_t i) {
     const auto at=std::chrono::steady_clock::now();
-    if(!TextureFlow::publishes(published,milliseconds(at-started),textureLimits))
-      break;
     FrameProfile::textureEvent(FrameProfile::TextureActivity::Ready);
-    publishTexture(reload);
+    publishTexture(ready[i]);
     const double cost=milliseconds(std::chrono::steady_clock::now()-at);
     ++textureFlow.publications;
     textureFlow.publishMs+=cost;
     textureFlow.publishMaxMs=std::max(textureFlow.publishMaxMs,cost);
-    ++published;
-    }
+    });
   }
 
 std::function<void()> Resources::configureTextureFlow(std::string_view lookAhead) {
-  const auto integer=[](const char* name, int64_t fallback, int64_t minimum, int64_t maximum) -> int64_t {
-    const char* value=std::getenv(name);
-    if(value==nullptr || value[0]=='\0')
-      return fallback;
-    char* end=nullptr;
-    const auto result=std::strtoll(value,&end,10);
-    if(end==value || *end!='\0' || result<minimum || result>maximum)
-      throw std::runtime_error(std::string(name)+" must be an integer from "+std::to_string(minimum)+" to "+
-                               std::to_string(maximum));
-    return result;
-    };
-  const TextureFlow::Limits defaults;
-  TextureFlow::Limits limits;
-  limits.loads=size_t(integer("OPENGOTHIC_TEXTURE_LOADS",int64_t(defaults.loads),1,16));
-  limits.bytes=uint64_t(integer("OPENGOTHIC_TEXTURE_LOAD_MB",int64_t(defaults.bytes/1048576),1,65536))*1048576;
   // on by default; 0 in the setting or the environment (which wins) turns it off
   const char* env=std::getenv("OPENGOTHIC_TEXTURE_LOOKAHEAD");
   const std::string_view choice=env!=nullptr ? std::string_view(env) : lookAhead;
   if(!choice.empty() && choice!="0" && choice!="1")
     throw std::runtime_error("texture_lookahead must be 0 or 1");
   const bool on=choice!="0";
-  return [this,limits,on] {
-    textureLimits=limits;
+  return [this,on] {
     textureLookAheadOn=on;
     };
   }

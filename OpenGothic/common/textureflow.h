@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -17,7 +18,7 @@ namespace TextureFlow {
     Waiting,     // not loading: waiting for a load slot
     Reading,     // its load reads and decodes the file on the worker
     Uploading,   // its load uploads on the worker, or waits for the upload to be ready (Texture2d::uploadReady)
-    Publishing,  // loaded and ready, waiting for its publication (one a frame, through the residency's work queue)
+    Publishing,  // loaded and ready, waiting for the main thread to see it and publish it
     Stale,       // loading a level coarser than it now wants: its demand rose again after the load started
     States,
     // in the load queue for the look-ahead only: not short of the level of its present demand
@@ -26,9 +27,16 @@ namespace TextureFlow {
     };
   const char* name(State state);
 
-  // A load as the main thread last saw it; the worker moves Queued -> Reading -> Uploading -> Done, and the main
-  // thread marks Ready when the uploaded payload's uploadReady() turns true.
+  // A load as the main thread last saw it; the worker moves Queued -> Reading -> Uploading -> Done, or Ready when its
+  // upload is ready at once (Vulkan); otherwise the main thread marks Ready when uploadReady() turns true (Metal).
   enum class Phase : uint8_t { Queued, Reading, Uploading, Done, Ready };
+  // What the worker writes as it goes: the phase, and when it started uploading and finished (Clock ticks, 0: not
+  // yet). The main thread sees the phase once a frame; the times give each state its own part of the frame between.
+  struct Progress {
+    std::atomic<uint8_t>    phase{0};
+    std::atomic<Clock::rep> uploading{0}, done{0};
+    void reach(Phase next);
+    };
 
   // The state of a short texture: `loading` whether a load of it is in flight, `stale` whether that load reads a level
   // coarser than now wanted, `phase` how far it is.
@@ -87,16 +95,29 @@ namespace TextureFlow {
   // The worker's own work is short (read p50 0.06 ms, p90 0.3 ms; upload p50 0.12 ms on Ryzen, t4), so a load takes the
   // frame until the main thread sees it done and, before step 4, another frame through the residency's work queue to
   // its publication: two slots made at most one load a frame.
+  // Four: on t4 and base, 2 / 4 / 6 slots gave a shortfall of 6.0 / 5.7 / 5.7 and 2.6 / 2.5 / 2.5 texture-seconds.
+  // 64 MiB: three whole 4096 DXT5 chains (21 MiB each); the routes peak at 5-19 MiB in flight.
   struct Limits {
-    size_t   loads     = 4;               // loads in flight at most (OPENGOTHIC_TEXTURE_LOADS)
+    size_t   loads     = 4;               // loads in flight at most
     uint64_t bytes     = 64ull*1048576;   // bytes their payloads will take at most; one load may always start
-                                          // (OPENGOTHIC_TEXTURE_LOAD_MB)
     double   publishMs = 0.1;             // publications of a frame stop after this many milliseconds, one at least
     };
   // Whether a load of `bytes` may start beside `inFlight` loads making `bytesInFlight`.
   bool admits(size_t inFlight, uint64_t bytesInFlight, uint64_t bytes, const Limits& limits);
   // Whether a frame that published `published` ready loads in `elapsedMs` publishes one more.
   bool publishes(size_t published, double elapsedMs, const Limits& limits);
+  // Publishes `count` ready loads in order through `publish(index)` while `publishes` lets it; returns how many.
+  template<class Publish>
+  size_t publishWithin(size_t count, const Limits& limits, Publish publish) {
+    const auto started = Clock::now();
+    size_t published = 0;
+    while(published<count &&
+          publishes(published,std::chrono::duration<double,std::milli>(Clock::now()-started).count(),limits)) {
+      publish(published);
+      ++published;
+      }
+    return published;
+    }
 
   // The counters Resources keeps: short textures by state now, the texture-seconds in each state, the visible
   // shortfall (against the level with reserve 0, what the screen needs), the loads' latencies and bursts, and the

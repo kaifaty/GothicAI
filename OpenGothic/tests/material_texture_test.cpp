@@ -649,6 +649,11 @@ void textureResidency(Tempest::Device& device, const Fixture& fixture) {
 
   Resources::textureDemand(material,Resources::TextureCategory::Landscape,true);
   require(!Resources::texturesReady(),"new demand must immediately register missing resident payloads");
+  // Textures without a readable tail reload the payload they had, the device's own mipmaps included.
+  residency.update({0,0,0},{0,0,0},1000);
+  Resources::updateTextures(&residency);
+  require(Resources::textureStats().loadsInFlight==4 && Resources::textureStats().flow.bytesInFlight==fullBytes,
+          "the reloads' bytes in flight must be the payloads they replace");
   const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
   while(Resources::textureStats().reloaded<4 && std::chrono::steady_clock::now()<deadline) {
     residency.update({0,0,0},{0,0,0},1000);
@@ -1188,6 +1193,15 @@ void textureFlowMaths() {
           "more loads must start only within the slots and within the bytes in flight");
   require(publishes(0,5.0,limits) && publishes(1,0.05,limits) && !publishes(1,0.1,limits),
           "a frame must publish one ready load at least, more only within its budget");
+  // the loop Resources publishes ready loads with: one with no budget left, all with room for them
+  size_t calls=0;
+  Limits none=limits;
+  none.publishMs=0;
+  Limits room=limits;
+  room.publishMs=1e9;
+  require(publishWithin(3,none,[&](size_t) { ++calls; })==1 && calls==1 &&
+          publishWithin(3,room,[&](size_t) { ++calls; })==3 && calls==4,
+          "a frame's publications must stop at the budget, after the first");
   require(state(false,true,Phase::Ready)==Waiting && state(true,true,Phase::Reading)==Stale &&
           state(true,false,Phase::Queued)==Reading && state(true,false,Phase::Done)==Uploading &&
           state(true,false,Phase::Ready)==Publishing,"a short texture's state must follow its load");
@@ -1198,8 +1212,10 @@ void textureFlowMaths() {
   const Histogram before=times;
   times.add(1000);
   // the 5th of 10 is 50 ms, in the bucket up to 2^(46/8) = 53.8 ms
+  // the 9th of 10 is 90 ms, in the bucket up to 2^(52/8) = 90.5 ms
   require(times.quantile(0.5,before)==1000 && times.max(before)==1000 && times.count(before)==1 &&
-          before.quantile(0.5)>=50 && before.quantile(0.5)<=54 && before.max()==100 && Histogram().quantile(0.5)<0,
+          before.quantile(0.5)>=50 && before.quantile(0.5)<=54 && before.quantile(0.9)>=90 && before.quantile(0.9)<=98.2 &&
+          before.max()==100 && Histogram().quantile(0.5)<0,
           "a distribution must give quantiles within an eighth of an octave and the exact largest time since a copy");
   Bursts bursts;
   const auto t0=Clock::time_point()+std::chrono::seconds(100);
@@ -1237,6 +1253,12 @@ void textureFlowMaths() {
   for(int frame=0;frame<=30;++frame)
     standing.add({700,0,0},0.01*frame);
   require(standing.velocity().x==0,"standing still must have no velocity");
+  // Still until 0.24 s, then 5 cm in the last frame: 20 cm/s over the window, not 500 over the last frame.
+  Velocity starting;
+  for(int frame=0;frame<=24;++frame)
+    starting.add({0,0,0},0.01*frame);
+  starting.add({5,0,0},0.25);
+  require(std::abs(starting.velocity().x-20)<0.01f,"the velocity must be smoothed over its window");
 
   // The residency: the paths from the hero's and the camera's velocities times the horizon; a jump is no velocity.
   ChunkTable table;
@@ -1253,18 +1275,24 @@ void textureFlowMaths() {
   const auto odometer=residency.viewOdometer();
   require(std::abs(residency.viewHeroAhead().x-50)<0.1f && std::abs(residency.viewCameraAhead().x-50)<0.1f,
           "running at 5 m/s with a horizon of 0.1 s must look 0.5 m ahead");
-  hero.x+=100000;
+  // just past ChunkResidency::JumpDistance (50 m)
+  hero.x+=5100;
   residency.update(hero,hero,1000,at(frame++));
-  require(residency.viewJumped() && residency.viewHeroAhead().x==0 && residency.viewOdometer()>=odometer+1000,
-          "a jump must not count as velocity");
+  require(residency.viewJumped() && residency.viewHeroAhead().x==0 && residency.viewCameraAhead().x==0 &&
+          residency.viewOdometer()>=odometer+51,"a jump must not count as velocity");
   hero.x+=5;
   residency.update(hero,hero,1000,at(frame++));
   require(std::abs(residency.viewHeroAhead().x-50)<0.1f,"after a jump the velocity must come from the moves after it");
+  // just short of it: a move, and velocity
+  hero.x+=4900;
+  residency.update(hero,hero,1000,at(frame++));
+  const float sprint=residency.viewHeroAhead().x;
+  require(!residency.viewJumped() && sprint>100,"a move of 49 m must count as velocity");
   residency.setLookAhead(0);
   const auto before0=residency.viewOdometer();
   hero.x+=5;
   residency.update(hero,hero,1000,at(frame++));
-  require(residency.viewHeroAhead().x==0 && std::abs(residency.viewOdometer()-before0-0.05-0.5)<1e-6,
+  require(residency.viewHeroAhead().x==0 && std::abs(residency.viewOdometer()-before0-0.05-0.01*sprint)<1e-4,
           "without a horizon there must be no path; its end coming back counts on the odometer");
   hero.x+=5;
   const auto before1=residency.viewOdometer();
@@ -1293,6 +1321,11 @@ void textureFlowMaths() {
   view.heroAhead={};
   view.cameraAhead={500,0,0};
   require(TextureScreenDemand::evaluate(view,texel).exponent==-2,"the camera's path must count as the hero's does");
+  view.camera={0,0,1000000};
+  view.cameraAhead={};
+  view.heroAhead={500,0,0};
+  const auto heroOnly=TextureScreenDemand::evaluate(view,texel);
+  require(heroOnly.exponent==-2 && heroOnly.present==-3,"the hero's path must count with the camera far away");
   }
 
 // Step 3 (texturebudget.h): the target from the device's budget, the stage from the sums D(s), the way back.
@@ -1474,7 +1507,13 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
   write("lv-hold.dds",mipDds(0x31545844,256,256,9));
   write("lv-noarea.dds",mipDds(0x31545844,256,256,9));
   write("lv-turn.dds",mipDds(0x31545844,512,512,10));
+  for(const char* name:{"lv-order-0.dds","lv-order-1.dds","lv-order-2.dds","lv-visible.dds"})
+    write(name,mipDds(0x31545844,512,512,10));
   textFile(fixture.root/"materials/materials.json",R"({
+    "LV_ORDER_0.TGA":{"albedo":"lv-order-0.dds"},
+    "LV_ORDER_1.TGA":{"albedo":"lv-order-1.dds"},
+    "LV_ORDER_2.TGA":{"albedo":"lv-order-2.dds"},
+    "LV_VISIBLE.TGA":{"albedo":"lv-visible.dds"},
     "LV_STREAM.TGA":{"albedo":"lv-albedo.dds","normal":"lv-maps.dds","orm":"lv-maps.dds"},
     "LV_FLAT.TGA":{"albedo":"lv-flat.dds"},
     "LV_NEAR.TGA":{"albedo":"lv-near.dds"},
@@ -1496,9 +1535,13 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
   Resources resources(device);
   Shaders shaders;
   shaders.waitCompiler();
-  Material material, flat, near, ring, scaled, stale, turn;
+  Material material, flat, near, ring, scaled, stale, turn, visible;
+  std::array<Material,3> order;
   {
   Resources::TextureLoadScope far(true);
+  for(size_t i=0;i<order.size();++i)
+    order[i]=Material(source("LV_ORDER_"+std::to_string(i)+".TGA"),true);
+  visible=Material(source("LV_VISIBLE.TGA"),true);
   material=Material(source("LV_STREAM.TGA"),true);
   flat=Material(source("LV_FLAT.TGA"),true);
   near=Material(source("LV_NEAR.TGA"),true);
@@ -1563,28 +1606,45 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
   require(Resources::textureLookAhead()==0,"[GAME] texture_lookahead=0 must turn the look-ahead off");
   Resources::configureTextures();
 
-  // 2^-4 at log2 K 10.125: the 512 albedo needs level 1, the 256 maps level 0, one reserve level included.
+  // 2^-4 at log2 K 10.125: the 512 albedo needs level 1, the 256 maps level 0, one reserve level included. With three
+  // more 512 textures six are short: the two maps by two levels, the rest by one; two of those in ring 4. The four
+  // slots take the maps, the albedo and the ring-3 one: its bytes in flight tell which.
   Resources::textureDemand(material,stat,true,Need{3,-4});
+  Resources::textureDemand(order[0],stat,true,Need{3,-4});
+  Resources::textureDemand(order[1],stat,true,Need{4,-4});
+  Resources::textureDemand(order[2],stat,true,Need{4,-4});
   Resources::updateTextures(&residency);
-  require(Resources::textureStats().loadsInFlight==3 && Resources::textureStats().shortfallCount==3,
-          "levels must keep up to four loads in flight and count every texture short of its level");
-  // The workers are done long before the next frame: it publishes all three, within its budget, in one generation.
+  {
+  const auto stats=Resources::textureStats();
+  const auto maps=TextureLevels::chainBytes(Tempest::TextureFormat::DXT5,256,256,9,0);
+  const auto albedo=TextureLevels::chainBytes(Tempest::TextureFormat::DXT1,512,512,10,1);
+  require(stats.loadsInFlight==4 && stats.shortfallCount==6 && stats.flow.bytesInFlight==2*maps+2*albedo,
+          "four loads must start, the largest shortfall first, then the nearest ring");
+  }
+  // The workers are done long before the next frame: it publishes them in the frame it sees them, in one generation,
+  // and the time they waited for that frame is publication, not reading.
   std::this_thread::sleep_for(std::chrono::milliseconds(200));
   {
   const auto generation=Resources::textureGeneration();
   Resources::updateTextures(&residency);
   const auto flow=Resources::textureStats().flow;
-  require(sides(256,256) && Resources::textureGeneration()==generation+1 && flow.publications==3,
-          "ready loads must be published in the frame the main thread sees them, more than one within the budget");
+  require(Resources::textureGeneration()==generation+1 && flow.publications>=1 && flow.latencyN==flow.publications,
+          "ready loads must be published in the frame the main thread sees them");
+  require(flow.seconds[TextureFlow::Publishing]>0.5 &&
+          flow.seconds[TextureFlow::Reading]+flow.seconds[TextureFlow::Uploading]<0.1,
+          "a load done between frames must count the wait for the next frame as publication");
   double split=0;
   for(const auto seconds:flow.seconds)
     split+=seconds;
-  require(flow.latencyN==3 && flow.waitN==3 && flow.entries==3 &&
-          std::abs(split-Resources::textureStats().shortfallSeconds)<1e-9 && flow.visibleSeconds<=split,
+  require(flow.waitN>=4 && flow.entries==6 && std::abs(split-Resources::textureStats().shortfallSeconds)<1e-9 &&
+          flow.visibleSeconds<=split,
           "the shortfall's split by state must add up to it, and each load must report its latency and wait");
   }
-  waitFor([&] { return sides(256,256); },"each texture of a material must load straight to its own wanted level");
-  require(Resources::textureStats().promoted==3 && Resources::textureStats().shortfallCount==0 &&
+  waitFor([&] { return sides(256,256) && order[2].tex->w()==256; },
+          "each texture of a material must load straight to its own wanted level");
+  for(size_t i=0;i<order.size();++i)
+    Resources::textureDemand(order[i],stat,false,Need{i==0 ? 3u : 4u,-4});
+  require(Resources::textureStats().promoted==6 && Resources::textureStats().shortfallCount==0 &&
           Resources::textureStats().shortfallSeconds>0 && Resources::textureStats().levelBytes[1]>0,
           "raising must clear the shortfall it counted in texture-seconds and report bytes by level");
 
@@ -1611,6 +1671,16 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
           "loading ahead must add no shortfall, only time ahead");
   Resources::textureDemand(flat,stat,false,Need{3,-4,-5});
   }
+  // The visible shortfall is of the present demand without the reserve. The 512 texture at level 2: the look-ahead's
+  // 2^-3 wants level 0, the present 2^-4 level 1 (short by one), and without the reserve level 2 - what it has.
+  Resources::textureDemand(visible,stat,true,Need{3,-3,-4});
+  require(Resources::textureStats().shortfallCount==1 && Resources::textureStats().flow.visible==0,
+          "a texture short only of the reserve of its present demand must not be visibly short");
+  Resources::textureDemand(visible,stat,false,Need{3,-3,-4});
+  Resources::textureDemand(visible,stat,true,Need{3,-3,-3});
+  require(Resources::textureStats().shortfallCount==1 && Resources::textureStats().flow.visible==1,
+          "a texture short of its present demand without the reserve must be visibly short");
+  Resources::textureDemand(visible,stat,false,Need{3,-3,-3});
 
   Resources::textureDemand(material,stat,true,Need{4,-3});
   waitFor([&] { return sides(512,256); },"the sharpest demand over the owners must decide");
@@ -1759,15 +1829,86 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
 // Step 2 of the levels (reports/engine/2026-11-10-texture-mips/README.md): owners placed by a position (NPCs, items,
 // mobsi) demand levels by their distance, the world loads at the coarsest level, a view jump completes what it left
 // far short.
+// Step 4: the look-ahead's horizon from the loads measured - twice the p90 of each window of 32, at most the cap.
+void textureHorizonLevels(Tempest::Device& device, const Fixture& fixture) {
+  using TextureLookAhead::WindowSamples;
+  std::string json="{";
+  for(size_t i=0;i<2*WindowSamples;++i) {
+    const auto name="hz-"+std::to_string(i);
+    const auto bytes=mipDds(0x31545844,256,256,9);
+    textFile(fixture.root/"materials"/(name+".dds"),{reinterpret_cast<const char*>(bytes.data()),bytes.size()});
+    json+=std::string(i==0 ? "" : ",")+"\"HZ_"+std::to_string(i)+".TGA\":{\"albedo\":\""+name+".dds\"}";
+    }
+  textFile(fixture.root/"materials/materials.json",json+"}");
+  setenv("OPENGOTHIC_TEXTURE_STREAMING","1",1);
+  setenv("OPENGOTHIC_TEXTURE_MIPS","1",1);
+  setenv("OPENGOTHIC_TEXTURE_FAR_SKIP_MIPS","2",1);
+  setenv("OPENGOTHIC_TEXTURE_BUDGET_MB","256",1);
+  setenv("OPENGOTHIC_TEXTURE_TARGET_MB","192",1);
+  setenv("OPENGOTHIC_TEXTURE_SCREEN_MIPS","1",1);
+  unsetenv("OPENGOTHIC_TEXTURE_LOOKAHEAD");
+  {
+  Resources resources(device);
+  Shaders shaders;
+  shaders.waitCompiler();
+  std::vector<Material> textures(2*WindowSamples);
+  {
+  Resources::TextureLoadScope far(true);
+  for(size_t i=0;i<textures.size();++i)
+    textures[i]=Material(source("HZ_"+std::to_string(i)+".TGA"),true);
+  }
+  require(textures[0].tex->w()==64 && Resources::textureLookAhead()==TextureLookAhead::DefaultHorizon,
+          "before a window of loads the horizon must be the default");
+  const auto stat=Resources::TextureCategory::Static;
+  // A window of loads asked for at once and published as they come; `delay` before the first frame lengthens each.
+  const auto load=[&](size_t first, std::chrono::milliseconds delay) {
+    for(size_t i=first;i<first+WindowSamples;++i)
+      Resources::textureDemand(textures[i],stat,true,0u);
+    std::this_thread::sleep_for(delay);
+    const auto loaded=[&] {
+      return std::all_of(textures.begin()+ptrdiff_t(first),textures.begin()+ptrdiff_t(first+WindowSamples),
+                         [](const Material& m) { return m.tex->w()==256; });
+      };
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+    while(!loaded() && std::chrono::steady_clock::now()<deadline) {
+      Resources::updateTextures(nullptr);
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+    require(loaded(),"a window of loads must complete");
+    for(size_t i=first;i<first+WindowSamples;++i)
+      Resources::textureDemand(textures[i],stat,false,0u);
+    };
+  load(0,std::chrono::milliseconds(0));
+  const auto first=Resources::textureFlowDistributions();
+  require(first.latency.count()==WindowSamples &&
+          Resources::textureLookAhead()==TextureLookAhead::horizon(first.latency.quantile(0.9),WindowSamples) &&
+          Resources::textureLookAhead()<TextureLookAhead::MaxHorizon,
+          "the horizon must come from the p90 of the first window of loads");
+  load(WindowSamples,std::chrono::milliseconds(300));
+  const auto second=Resources::textureFlowDistributions();
+  require(second.latency.count()==2*WindowSamples && second.latency.quantile(0.9,first.latency)>=300 &&
+          Resources::textureLookAhead()==TextureLookAhead::MaxHorizon,
+          "a window of slow loads must take the horizon to its cap");
+  }
+  unsetenv("OPENGOTHIC_TEXTURE_MIPS");
+  unsetenv("OPENGOTHIC_TEXTURE_FAR_SKIP_MIPS");
+  unsetenv("OPENGOTHIC_TEXTURE_BUDGET_MB");
+  unsetenv("OPENGOTHIC_TEXTURE_TARGET_MB");
+  unsetenv("OPENGOTHIC_TEXTURE_SCREEN_MIPS");
+  }
+
 void textureOwnerLevels(Tempest::Device& device, const Fixture& fixture) {
   const char* names[]={"ow-npc","ow-item","ow-mobsi","ow-hero","ow-switch","ow-start","ow-lone","ow-whole","ow-rings",
                        "ow-jump-a","ow-jump-b","ow-jump-c","ow-share","ow-between","ow-scaled","ow-shield","ow-armour","ow-big-0","ow-big-1","ow-big-2",
-                       "ow-big-3"};
+                       "ow-big-3","ow-huge-0","ow-huge-1"};
   std::string json="{";
   for(const auto* name:names) {
     // 4096 for the jump's time budget: each load takes milliseconds
     const bool big=std::string_view(name).starts_with("ow-big");
-    const auto bytes=big ? mipDds(0x31545844,4096,4096,13) : mipDds(0x31545844,512,512,10);
+    // 8192 for the bytes in flight: a whole chain takes 42.7 MiB, two more than TextureFlow::Limits::bytes
+    const bool huge=std::string_view(name).starts_with("ow-huge");
+    const auto bytes=huge ? mipDds(0x31545844,8192,8192,14) : big ? mipDds(0x31545844,4096,4096,13) :
+                                                                    mipDds(0x31545844,512,512,10);
     textFile(fixture.root/"materials"/(std::string(name)+".dds"),{reinterpret_cast<const char*>(bytes.data()),bytes.size()});
     std::string key(name);
     for(auto& c:key)
@@ -1791,6 +1932,7 @@ void textureOwnerLevels(Tempest::Device& device, const Fixture& fixture) {
   const auto stat=Resources::TextureCategory::Static;
   Material npc, item, mobsi, hero, toggle, jumpA, jumpB, jumpC, share, between, scaled, shield, armour;
   std::array<Material,4> big;
+  std::array<Material,2> huge;
   {
   Resources::TextureLoadScope far(true);
   npc=Material(source("OW_NPC.TGA"),true);
@@ -1808,6 +1950,8 @@ void textureOwnerLevels(Tempest::Device& device, const Fixture& fixture) {
   armour=Material(source("OW_ARMOUR.TGA"),true);
   for(size_t i=0;i<big.size();++i)
     big[i]=Material(source("OW_BIG_"+std::to_string(i)+".TGA"),true);
+  for(size_t i=0;i<huge.size();++i)
+    huge[i]=Material(source("OW_HUGE_"+std::to_string(i)+".TGA"),true);
   }
   require(npc.tex->w()==128 && jumpC.tex->w()==128,"textures loaded in a Far scope outside a world load keep the tail");
 
@@ -2062,20 +2206,16 @@ void textureOwnerLevels(Tempest::Device& device, const Fixture& fixture) {
   unsetenv("OPENGOTHIC_TEXTURE_JUMP_MS");
   Resources::configureTextures();
 
-  // The bytes in flight: the whole chain of a 4096 DXT1 takes 10.7 MiB. Within 16 MiB one load runs at a time, though
-  // four slots are free; without the cap the rest start together.
-  setenv("OPENGOTHIC_TEXTURE_LOAD_MB","16",1);
-  Resources::configureTextures();
-  for(auto& m:big)
+  // The bytes in flight: the whole chain of an 8192 DXT1 takes 42.7 MiB, two of them more than the 64 MiB cap. One load
+  // runs, though four slots are free; the other starts when it is published.
+  for(auto& m:huge)
     Resources::textureDemand(m,stat,true,Need{3,20});
-  const auto shortBig=Resources::textureStats().shortfallCount;
   tick();
-  require(shortBig>=2 && Resources::textureStats().loadsInFlight==1,"loads must start only within the bytes in flight");
-  unsetenv("OPENGOTHIC_TEXTURE_LOAD_MB");
-  Resources::configureTextures();
-  waitFor([&] { return std::all_of(big.begin(),big.end(),[](const Material& m) { return m.tex->w()==4096; }); },
+  require(Resources::textureStats().shortfallCount==2 && Resources::textureStats().loadsInFlight==1,
+          "loads must start only within the bytes in flight");
+  waitFor([&] { return std::all_of(huge.begin(),huge.end(),[](const Material& m) { return m.tex->w()==8192; }); },
           "the capped loads must complete");
-  for(auto& m:big)
+  for(auto& m:huge)
     Resources::textureDemand(m,stat,false,Need{3,20});
 
   body=VisualObjects::Item();
@@ -2397,6 +2537,7 @@ int main(int argc, char** argv) {
     textureResidency(device,fixture);
     textureMipResidency(device,fixture);
     textureScreenLevels(device,fixture);
+    textureHorizonLevels(device,fixture);
     textureOwnerLevels(device,fixture);
     textureBudgetLevels(device,fixture);
     device.waitIdle();

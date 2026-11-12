@@ -912,13 +912,14 @@ void Resources::startTextureLoad(TextureRecord& record, uint8_t level, bool lowe
   ++textureLoadsStarted;
   record.loading=true;
   flowStarted(record,*reload,level);
-  reload->pending=std::async(std::launch::async,[path=record.source,mipmaps=record.mipmaps,level,device=dev,phase=reload->phase] {
+  reload->pending=std::async(std::launch::async,[path=record.source,mipmaps=record.mipmaps,level,device=dev,
+                                                 progress=reload->progress] {
     const auto started=LoadProbe::now();
-    phase->store(uint8_t(TextureFlow::Phase::Reading));
+    progress->reach(TextureFlow::Phase::Reading);
     FrameProfile::TextureWork reading(FrameProfile::TextureActivity::Read);
     auto data=Resources::decodeBaseTexture(path,mipmaps,level);
     reading.finish();
-    phase->store(uint8_t(TextureFlow::Phase::Uploading));
+    progress->reach(TextureFlow::Phase::Uploading);
     FrameProfile::TextureWork uploading(FrameProfile::TextureActivity::Upload);
     auto texture=device->textureAsync(data.pixmap,data.useMipmap);
     uploading.finish();
@@ -926,7 +927,7 @@ void Resources::startTextureLoad(TextureRecord& record, uint8_t level, bool lowe
       throw std::runtime_error("texture reload returned an empty image");
     LoadProbe::countTexture(texture,started);
     FrameProfile::textureEvent(FrameProfile::TextureActivity::Complete);
-    phase->store(uint8_t(TextureFlow::Phase::Done));
+    progress->reach(texture.uploadReady() ? TextureFlow::Phase::Ready : TextureFlow::Phase::Done);
     return TextureReload::Payload{std::move(texture),data.firstMip};
     });
   textureReloads.push_back(std::move(reload));

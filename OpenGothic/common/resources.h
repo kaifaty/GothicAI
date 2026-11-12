@@ -470,11 +470,12 @@ class Resources final {
     void                 flowStarted(TextureRecord& record, TextureReload& reload, uint8_t level);
     void                 flowObserve(TextureReload& reload);
     void                 textureFlowStats(TextureStats& stats);
-    // Part B: whether a load of `record` at `level` fits beside the loads in flight; the ready loads published within
-    // the frame's budget
+    // Part B: the bytes a load of `record` at `level` makes, whether it fits beside the loads in flight; the ready
+    // loads published within the frame's budget
+    uint64_t             textureLoadBytes(const TextureRecord& record, uint8_t level) const;
     bool                 admitsTextureLoad(const TextureRecord& record, uint8_t level) const;
-    // OPENGOTHIC_TEXTURE_LOADS, OPENGOTHIC_TEXTURE_LOAD_MB, and the look-ahead switch from `lookAhead` and
-    // OPENGOTHIC_TEXTURE_LOOKAHEAD: read with the other texture settings, applied by `apply` within their requeue
+    // The look-ahead switch from `lookAhead` and OPENGOTHIC_TEXTURE_LOOKAHEAD: read with the other texture settings,
+    // applied by the returned function within their requeue
     std::function<void()> configureTextureFlow(std::string_view lookAhead);
     void                 publishReadyTextures(const std::vector<std::shared_ptr<TextureReload>>& ready);
     // Step 3 (resources_texturebudget.cpp): the level of the owners measured on screen at `stage`; `present`: of their
@@ -607,7 +608,7 @@ class Resources final {
       uint8_t flowState = TextureFlow::NotShort, loadLevel = 0;
       bool flowVisible = false, flowPublished = false, flowLoaded = false;
       TextureFlow::Phase loadPhase = TextureFlow::Phase::Queued;
-      std::chrono::steady_clock::time_point shortSince{};
+      std::chrono::steady_clock::time_point shortSince{}, flowAt{};  // flowAt: since when it is counted in flowState
       bool tail() const { return firstMip!=0; }
       bool hasTail() const { return lowest!=0; }
       bool wanted() const;
@@ -623,8 +624,8 @@ class Resources final {
       uint8_t level = 0;  // asked for, then read
       bool lowering = false;
       std::weak_ptr<int> queued;
-      // step 4: how far the worker is (TextureFlow::Phase), and the bytes its payload will take
-      std::shared_ptr<std::atomic<uint8_t>> phase = std::make_shared<std::atomic<uint8_t>>(uint8_t(0));
+      // step 4: how far the worker is, and the bytes its payload will take
+      std::shared_ptr<TextureFlow::Progress> progress = std::make_shared<TextureFlow::Progress>();
       uint64_t bytes = 0;
       };
     std::unordered_map<const Tempest::Texture2d*,TextureRecord> textureRecords;

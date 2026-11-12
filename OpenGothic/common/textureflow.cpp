@@ -14,6 +14,15 @@ const char* TextureFlow::name(State state) {
     }
   }
 
+void TextureFlow::Progress::reach(Phase next) {
+  const auto now = Clock::now().time_since_epoch().count();
+  if(next==Phase::Uploading)
+    uploading.store(now,std::memory_order_relaxed);
+  else if(next>=Phase::Done)
+    done.store(now,std::memory_order_relaxed);
+  phase.store(uint8_t(next),std::memory_order_release);
+  }
+
 TextureFlow::State TextureFlow::state(bool loading, bool stale, Phase phase) {
   if(!loading)
     return Waiting;
