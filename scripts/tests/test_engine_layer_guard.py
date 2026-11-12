@@ -46,17 +46,22 @@ def test_clean_tree_and_rpg_reaching_the_vm_pass(tmp_path):
     result = guard(tmp_path, TREE)
     assert result.returncode == 0, result.stderr
     assert "2 platform files of 6 files checked, none reach the script VM" in result.stdout
+    stamp = tmp_path / "with space/guard.stamp"
+    assert stamp.is_file()
     depfile = (tmp_path / "with space/guard.stamp.d").read_text()
+    assert depfile.split(": ", 1)[0] == str(stamp).replace(" ", "\\ ")
     assert "with\\ space/OpenGothic/common/world/world.cpp" in depfile
 
 
 def test_platform_reaching_the_vm_through_rpg_fails_with_the_chain(tmp_path):
     tree = dict(TREE)
     tree["common/graphics/mesh.cpp"] = '#include "mesh.h"\n// draws the world\n#include "world/world.h"\n'
+    tree["common/graphics/light.cpp"] = '#include "game/gamescript.h"\n'
     result = guard(tmp_path, tree)
     assert result.returncode != 0
     message = " ".join(result.stderr.split())
-    assert "1 of 2 platform files reach the script VM" in message
+    assert "2 of 3 platform files reach the script VM" in message
+    assert ("common/graphics/light.cpp:1 -> common/game/gamescript.h:2 -> common/daedalus/vm.h") in message
     assert ("common/graphics/mesh.cpp:3 -> common/world/world.h:1 -> common/game/gamescript.h:2"
             " -> common/daedalus/vm.h") in message
     assert "scripts/engine_layers.py" in message
@@ -75,10 +80,34 @@ def test_rules_read_by_the_guard_are_layer_rules(tmp_path):
     assert rules == layers.LAYER_RULES
 
 
-def test_unsupported_glob_fails(tmp_path):
+def test_guard_layers_match_layer_of_on_the_real_tree(tmp_path):
+    engine = ROOT / "OpenGothic"
+    paths = sorted(p.relative_to(engine).as_posix() for d in layers.SCAN_DIRS
+                   for p in (engine / d).rglob("*") if p.suffix in layers.EXTS and p.is_file())
+    listing = tmp_path / "paths.txt"
+    listing.write_text("\n".join(paths) + "\n")
+    script = tmp_path / "layers.cmake"
+    script.write_text(f'include("{GUARD.as_posix()}")\n'
+                      f'engine_layer_guard_read_rules("{RULES.as_posix()}" patterns layers regexes)\n'
+                      f'file(STRINGS "{listing.as_posix()}" paths)\n'
+                      'set(out "")\n'
+                      'foreach(path IN LISTS paths)\n'
+                      '  engine_layer_guard_layer_of("${path}" "${regexes}" "${layers}" layer)\n'
+                      '  string(APPEND out "${path} ${layer}\\n")\n'
+                      'endforeach()\n'
+                      f'file(WRITE "{(tmp_path / "layers.txt").as_posix()}" "${{out}}")\n')
+    result = subprocess.run(["cmake", "-P", str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    guard_layers = dict(line.split(" ") for line in (tmp_path / "layers.txt").read_text().splitlines())
+    assert len(paths) > 500
+    assert guard_layers == {path: layers.layer_of(path) for path in paths}
+
+
+@pytest.mark.parametrize("glob", ["common/game/?ench", "common/game/[bn]ench"])
+def test_unsupported_glob_fails(tmp_path, glob):
     rules = tmp_path / "engine_layers.py"
-    rules.write_text('LAYER_RULES: list[tuple[str, str]] = [\n    ("common/game/?ench", "tools"),\n'
+    rules.write_text(f'LAYER_RULES: list[tuple[str, str]] = [\n    ("{glob}", "tools"),\n'
                      '    ("common/*", "platform"),\n]\n')
     result = guard(tmp_path, TREE, rules)
     assert result.returncode != 0
-    assert 'unsupported glob "common/game/?ench"' in " ".join(result.stderr.split())
+    assert f'unsupported glob "{glob}"' in " ".join(result.stderr.split())
