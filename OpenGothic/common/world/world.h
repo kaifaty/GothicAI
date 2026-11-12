@@ -50,6 +50,7 @@ class World final : public ClothWorld, public BloodDecalSource, public PhysicsHo
     Tempest::Vec3 npcPosition(const Npc& npc) const override;
     uint64_t npcTickCount(const Npc& npc) const override;
     bool npcUsesSimplifiedMovement(const Npc& npc) const override;
+    uint32_t npcCreationSeq(const Npc& npc) const override;
     void finishNpcSupport(Npc& npc, uint64_t dt) override;
     HitZones::Zone npcRayHitZone(const Npc& npc, const Tempest::Vec3& from,
                                const Tempest::Vec3& to, float& distance) const override;
@@ -99,6 +100,8 @@ class World final : public ClothWorld, public BloodDecalSource, public PhysicsHo
     uint32_t             npcId(const Npc* ptr) const;
     Npc*                 npcById(uint32_t id);
     uint32_t             npcCount() const;
+    // Load probe: one line per NPC after a fresh start's placement (game/gamescript_startupfloor.h).
+    void                 logStartupFloorDigest();
     Npc*                 npcForRagdoll(const Ragdoll* body);
     bool                 stickArrow(MeshObjects::Mesh&& arrow, const Tempest::Matrix4x4& worldMatrix,
                                     std::string_view visual = {},

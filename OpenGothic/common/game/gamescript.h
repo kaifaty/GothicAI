@@ -18,6 +18,7 @@
 #include "game/aistate.h"
 #include "game/questlog.h"
 #include "game/ownsymbols.h"
+#include "game/gamescript_startupfloor.h"
 #include "asset/worldtypes.h"
 
 class GameSession;
@@ -192,6 +193,7 @@ class GameScript final {
 
     void      onWldItemRemoved(const Item& itm);
     void      fixNpcPosition(Npc& npc, float angle0, float distBias);
+    StartupFloor& startupFloor() { return floorDefer; }
 
   private:
     bool startHotkeyPotion(Npc& pl, bool mana);
@@ -222,9 +224,27 @@ class GameScript final {
 
     template <class F>
     void bindExternal(const std::string& name, F function) {
+      const size_t floorId = floorDefer.registerExternal(name,StartupFloor::classify(name));
       vm.register_external(name, std::function<typename DetermineSignature<F>::signature> (
-                                   [this, function](auto ... v) { return (this->*function)(v...); }));
+                                   [this, function, floorId](auto ... v) {
+                                     if(floorDefer.active())
+                                       floorBarrier(floorId,v...);
+                                     return (this->*function)(v...);
+                                     }));
       }
+
+    // StartupFloor: the NPC arguments of an external about to run.
+    template <class ... A>
+    void floorBarrier(size_t id, const A& ... v) {
+      Npc*   args[sizeof...(A)+1] = {};
+      size_t count = 0;
+      (floorArg(args,count,v), ...);
+      floorDefer.external(id,args,count);
+      }
+    template <class T>
+    void floorArg(Npc**, size_t&, const T&) {}
+    void floorArg(Npc** args, size_t& count, const std::shared_ptr<daedalus::INpc>& v);
+    void floorArg(Npc** args, size_t& count, const std::shared_ptr<daedalus::DaedalusInstance>& v);
 
     void  initCommon();
     void  initSettings();
@@ -478,6 +498,7 @@ class GameScript final {
 
     GameSession&                                                owner;
     daedalus::DaedalusVm                                          vm;
+    StartupFloor                                                floorDefer{*this};
     OwnSymbols                                                  own{vm};
     int32_t                                                     vmLang = -1;
     std::mt19937                                                randGen;

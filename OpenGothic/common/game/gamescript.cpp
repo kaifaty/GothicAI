@@ -774,6 +774,18 @@ void GameScript::fixNpcPosition(Npc& npc, float angle0, float distBias) {
   // npc.setPosition(pos0);
   }
 
+// Not findNpc: a script may pass a stale instance, which the external itself rejects.
+void GameScript::floorArg(Npc** args, size_t& count, const std::shared_ptr<daedalus::INpc>& v) {
+  if(v!=nullptr && v->user_ptr!=nullptr)
+    args[count++] = reinterpret_cast<Npc*>(v->user_ptr);
+  }
+
+void GameScript::floorArg(Npc** args, size_t& count, const std::shared_ptr<daedalus::DaedalusInstance>& v) {
+  auto h = dynamic_cast<daedalus::INpc*>(v.get());
+  if(h!=nullptr && h->user_ptr!=nullptr)
+    args[count++] = reinterpret_cast<Npc*>(h->user_ptr);
+  }
+
 const World &GameScript::world() const {
   return *owner.world();
   }

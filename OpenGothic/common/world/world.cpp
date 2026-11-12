@@ -476,6 +476,18 @@ uint32_t World::npcCount() const {
   return uint32_t(wobj.npcCount());
   }
 
+void World::logStartupFloorDigest() {
+  const uint32_t n = npcCount();
+  for(uint32_t i=0; i<n; ++i) {
+    auto* npc = npcById(i);
+    if(npc==nullptr)
+      continue;
+    const auto* sym = script().findSymbol(npc->instanceSymbol());
+    Tempest::Log::i("[loadprobe-floor-digest] i=",i," npc=",sym!=nullptr ? sym->name() : std::to_string(npc->instanceSymbol()),
+                    " ",npc->startupFloorDigest());
+    }
+  }
+
 Npc* World::npcForRagdoll(const Ragdoll* body) {
   if(body==nullptr)
     return nullptr;

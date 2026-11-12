@@ -617,6 +617,8 @@ void GameSession::initScripts(bool firstTime) {
   auto name  = (dot==std::string::npos ? wname : wname.substr(0,dot));
 
   if(firstTime) {
+    // Fresh start: Wld_InsertNpc leaves the floor fix to the final placement below (game/gamescript_startupfloor.h).
+    vm->startupFloor().begin();
     if(vm->hasSymbolName("startup_global")) {
       LoadProbe::Startup::Detail::Scope call("script_function",[]{return std::string("STARTUP_GLOBAL");});
       vm->getVm().call_function("startup_global");
@@ -644,4 +646,8 @@ void GameSession::initScripts(bool firstTime) {
   LoadProbe::Startup::Scope placementProbe(LoadProbe::Startup::NpcPlacement);
   LoadProbe::Startup::Detail::Scope placement("placement_phase");
   wrld->resetPositionToTA();
+  placement.stop();
+  vm->startupFloor().end();
+  if(firstTime && LoadProbe::enabled())
+    wrld->logStartupFloorDigest();
   }

@@ -172,6 +172,7 @@ bool Npc::resetPositionToTA() {
     if(p!=nullptr)
       at = p;
     }
+  owner.script().startupFloor().beforeResetMove(*this,at->position());
   setPosition (at->position() );
   setDirection(at->direction());
   owner.script().fixNpcPosition(*this,0,100);

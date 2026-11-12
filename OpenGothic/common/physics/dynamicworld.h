@@ -165,6 +165,7 @@ class DynamicWorld final {
 
         void  setPosition(const Tempest::Vec3& pos);
         const Tempest::Vec3& position() const;
+        bool  hasBody() const { return obj!=nullptr; }
 
         void  setRotation(float a);
 
@@ -444,6 +445,10 @@ class DynamicWorld final {
     float          soundOclusion(const Tempest::Vec3& from, const Tempest::Vec3& to) const;
 
     NpcItem        addGhostObj  (const Skeleton* src);
+    // Fresh-start floor replay (game/gamescript_startupfloor.h): NPC bodies created after this sequence number do not collide.
+    // 0: all bodies collide.
+    void           setNpcReplaySeq(uint32_t seq);
+    float          npcMaxRadiusXZ() const;
     Item           addStaticObj (const PhysicMeshShape *src, const Tempest::Matrix4x4& m, std::string_view label = {});
     Item           addMovableObj(const PhysicMeshShape *src, const Tempest::Matrix4x4& m, std::string_view label = {});
     Item           addDynamicObj(const Tempest::Matrix4x4& pos, const Bounds& bbox, asset::MaterialGroup mat);
