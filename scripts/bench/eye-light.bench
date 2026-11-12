@@ -2,7 +2,9 @@
 # "Приёмка"): a torch (Xardas' tower, the default save), the sun at noon in the Khorinis market (the face turned to it),
 # the hearth and candle of the harbour house at 22:00. Under each: two stills of the eyes close up (from the front and
 # three quarters), a walk of the camera round the face from one side to the other (the highlight on the cornea must
-# slide, not flicker or drop out), and the eyes at work: a blink, a glance aside and a roll up, the camera still.
+# slide, not flicker or drop out) with stills of its ends and middle (<light>-left, -mid, -right: -50, 0, +50 degrees,
+# where the iris must shift against the limbus by its depth under the cornea), and the eyes at work: a blink, a glance
+# aside and a roll up, the camera still.
 # Run it with the eye shader and with OPENGOTHIC_EYE_SHADER=0 on the same content for the pair "before | after":
 #   TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=ryzen OPENGOTHIC_CONTENT=<content with the head> \
 #     scripts/bench.sh scripts/bench/eye-light.bench <out>
@@ -37,6 +39,7 @@ wait 300
 cam face 34 -50 1
 cam look 11
 wait 2500
+shot torch-left
 rec torch-round
 cam face 34 -25 1
 cam look 11
@@ -51,6 +54,11 @@ cam face 34 50 1
 cam look 11
 wait 1200
 stop
+shot torch-right
+cam face 34 0 1
+cam look 11
+wait 1500
+shot torch-mid
 cam face 30 15 1
 cam look 11
 wait 2000
@@ -82,6 +90,7 @@ wait 300
 cam face 34 -50 1
 cam look 11
 wait 2500
+shot sun-left
 rec sun-round
 cam face 34 -25 1
 cam look 11
@@ -96,6 +105,11 @@ cam face 34 50 1
 cam look 11
 wait 1200
 stop
+shot sun-right
+cam face 34 0 1
+cam look 11
+wait 1500
+shot sun-mid
 cam face 30 15 1
 cam look 11
 wait 2000
@@ -126,6 +140,7 @@ wait 300
 cam face 34 -50 1
 cam look 11
 wait 2500
+shot candle-left
 rec candle-round
 cam face 34 -25 1
 cam look 11
@@ -140,6 +155,11 @@ cam face 34 50 1
 cam look 11
 wait 1200
 stop
+shot candle-right
+cam face 34 0 1
+cam look 11
+wait 1500
+shot candle-mid
 cam face 30 15 1
 cam look 11
 wait 2000
