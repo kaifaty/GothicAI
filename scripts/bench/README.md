@@ -1365,7 +1365,7 @@ physics timing comparison belong in the [body impact report](../../reports/physi
 (`common/game/bodytracesbench.cpp`) spawns and kills, by the hero's hand, a person,
 a wolf and three people the lifetime rule keeps (an `ITM_MISSION` key, `IMMORTAL`,
 `NPCTYPE_MAIN`), and parks a living observer with perceptions off. `view` reads the
-production `npc_view` through the bridge's writer (`TestBench::npcView`): the person
+production `npc_view` through the bridge's writer (`Bench::npcView`): the person
 is a `body` trace with `npc`, `age` and a stable id, the wolf is none; OFF there are
 no body rows. `advance <minutes>` moves the clock alone; `sleep <hours>` sleeps like
 a bed (`World::setDayTime`); `hero near|far-visible|far-hidden` places the hero
