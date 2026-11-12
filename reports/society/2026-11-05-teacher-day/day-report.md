@@ -3,66 +3,66 @@
 | Проверка | Значение | Итог |
 |---|---|---|
 | teacher-1: critical food, median h | 0.0 | да |
-| teacher-1: critical food, max h | 8.061 | **нет** |
+| teacher-1: critical food, max h | 4.818 | **нет** |
 | teacher-1: critical sleep, median h | 0.0 | да |
-| teacher-1: critical sleep, max h | 8.188 | **нет** |
+| teacher-1: critical sleep, max h | 8.148 | **нет** |
 | teacher-1: critical toilet, median h | 0.0 | да |
 | teacher-1: critical toilet, max h | 8.707 | **нет** |
 | teacher-1: critical social, median h | 0.0 | да |
-| teacher-1: critical social, max h | 3.148 | да |
+| teacher-1: critical social, max h | 2.822 | да |
 | teacher-1: critical work, median h | 0.0 | да |
-| teacher-1: critical work, max h | 0.215 | да |
+| teacher-1: critical work, max h | 0.0 | да |
 | teacher-1: critical faith, median h | 0.0 | да |
 | teacher-1: critical faith, max h | 0.0 | да |
 | teacher-1: critical leisure, median h | 0.0 | да |
-| teacher-1: critical leisure, max h | 2.786 | да |
+| teacher-1: critical leisure, max h | 1.508 | да |
 | teacher-1: out of mask | 0 | да |
 | teacher-1: over capacity | 0 | да |
 | teacher-1: protected marks same | 1.0 | да |
-| teacher-1: anchor time by routine | 0.9527 | да |
+| teacher-1: anchor time by routine | 0.9523 | да |
 | teacher-1: changes an hour, p95 | 2 | да |
-| teacher-1: a day, s | 0.1295 | да |
+| teacher-1: a day, s | 0.1303 | да |
 | teacher-7: critical food, median h | 0.0 | да |
-| teacher-7: critical food, max h | 24.0 | **нет** |
+| teacher-7: critical food, max h | 22.23 | **нет** |
 | teacher-7: critical sleep, median h | 0.0 | да |
 | teacher-7: critical sleep, max h | 24.0 | **нет** |
 | teacher-7: critical toilet, median h | 0.001 | да |
 | teacher-7: critical toilet, max h | 16.355 | **нет** |
 | teacher-7: critical social, median h | 0.0 | да |
-| teacher-7: critical social, max h | 21.668 | **нет** |
+| teacher-7: critical social, max h | 20.067 | **нет** |
 | teacher-7: critical work, median h | 0.0 | да |
-| teacher-7: critical work, max h | 7.82 | **нет** |
+| teacher-7: critical work, max h | 0.49 | да |
 | teacher-7: critical faith, median h | 0.0 | да |
 | teacher-7: critical faith, max h | 24.0 | **нет** |
 | teacher-7: critical leisure, median h | 0.0 | да |
-| teacher-7: critical leisure, max h | 20.427 | **нет** |
+| teacher-7: critical leisure, max h | 17.712 | **нет** |
 | teacher-7: out of mask | 0 | да |
 | teacher-7: over capacity | 0 | да |
 | teacher-7: protected marks same | 1.0 | да |
-| teacher-7: anchor time by routine | 0.82411 | **нет** |
+| teacher-7: anchor time by routine | 0.82813 | **нет** |
 | teacher-7: changes an hour, p95 | 3 | да |
-| teacher-7: a day, s | 0.1859 | да |
+| teacher-7: a day, s | 0.1976 | да |
 | random-7: out of mask | 0 | да |
 | random-7: over capacity | 0 | да |
-| sensitivity: food grows | 0.263 | да |
-| sensitivity: sleep grows | 0.809 | да |
-| sensitivity: toilet grows | 0.163 | да |
-| sensitivity: social grows | 0.215 | да |
-| sensitivity: work grows | 0.163 | да |
-| sensitivity: faith grows | 3.433 | да |
-| sensitivity: leisure grows | 0.567 | да |
-| traits: talk moves chosen social time its way | 0.917 | да |
-| traits: same-guild pairs differ the same way | 0.939 | да |
+| sensitivity: food grows | 0.264 | да |
+| sensitivity: sleep grows | 0.872 | да |
+| sensitivity: toilet grows | 0.181 | да |
+| sensitivity: social grows | 0.231 | да |
+| sensitivity: work grows | 0.164 | да |
+| sensitivity: faith grows | 3.523 | да |
+| sensitivity: leisure grows | 0.566 | да |
+| traits: talk moves chosen social time its way | 0.862 | да |
+| traits: same-guild pairs differ the same way | 0.908 | да |
 
 ## Места и концы занятий
 
-Держатели места — пользователи распорядка (`place_held`) и выбранные занятия с бронью. Выселен — выбранное занятие уступило место пришедшему пользователю распорядка.
+Держатели места — пользователи распорядка (`place_held`) и выбранные занятия с бронью. Выселен — выбранное занятие уступило место пришедшему пользователю распорядка. Повторное решение — нужда в «низко» или «критично» не наполняется тем, что NPC делает, `recheck_min` после прошлого решения.
 
-| Прогон | взято распорядком | больше всего держателей | сверх вместимости | выселено в пути / на месте | конец: уставка / выше «низко» / наибольшее время / другой выбор / якорь | не удалось: занято / якорь |
-|---|---|---|---|---|---|---|
-| teacher-1 | 1324 | 4 | 0 | 9 / 48 | 1520 / 342 / 319 / 153 / 54 | 23 / 3 |
-| teacher-7 | 8844 | 4 | 0 | 94 / 390 | 12142 / 3985 / 3439 / 3149 / 922 | 135 / 45 |
-| random-7 | 4398 | 4 | 0 | 472 / 446 | 19317 / 4064 / 5659 / 11360 / 420 | 111 / 148 |
+| Прогон | взято распорядком | больше всего держателей | сверх вместимости | выселено в пути / на месте | конец: уставка / выше «низко» / наибольшее время / другой выбор / якорь | не удалось: занято / якорь | повторных решений |
+|---|---|---|---|---|---|---|---|
+| teacher-1 | 1329 | 4 | 0 | 5 / 58 | 1355 / 327 / 298 / 202 / 64 | 25 / 5 | 119 |
+| teacher-7 | 8985 | 4 | 0 | 95 / 433 | 10715 / 3857 / 3252 / 3826 / 1014 | 122 / 51 | 1923 |
+| random-7 | 4592 | 4 | 0 | 535 / 507 | 18922 / 4112 / 5097 / 21762 / 456 | 79 / 167 | 11957 |
 
 ## Часы в «критично» в сутки у решающих людей (человеко-сутки: медиана, p90, максимум)
 
@@ -70,20 +70,20 @@
 |---|---|---|---|---|---|---|---|
 | routine-1 | 9.81 / 11.806 / 12.167 | 4.021 / 7.724 / 8.322 | 16.788 / 17.552 / 17.724 | 0.0 / 4.834 / 9.359 | 11.416 / 14.113 / 14.598 | 0.0 / 0.0 / 0.0 | 0.0 / 3.376 / 5.173 |
 | routine-7 | 24.0 / 24.0 / 24.0 | 24.0 / 24.0 / 24.0 | 24.0 / 24.0 / 24.0 | 0.0 / 24.0 / 24.0 | 12.396 / 24.0 / 24.0 | 0.0 / 24.0 / 24.0 | 4.699 / 24.0 / 24.0 |
-| teacher-1 | 0.0 / 0.588 / 8.061 | 0.0 / 0.307 / 8.188 | 0.0 / 0.324 / 8.707 | 0.0 / 0.0 / 3.148 | 0.0 / 0.0 / 0.215 | 0.0 / 0.0 / 0.0 | 0.0 / 0.0 / 2.786 |
-| teacher-7 | 0.0 / 1.717 / 24.0 | 0.0 / 3.74 / 24.0 | 0.001 / 0.621 / 16.355 | 0.0 / 1.037 / 21.668 | 0.0 / 0.0 / 7.82 | 0.0 / 0.0 / 24.0 | 0.0 / 0.743 / 20.427 |
-| random-7 | 2.274 / 13.519 / 24.0 | 4.443 / 18.857 / 24.0 | 11.69 / 24.0 / 24.0 | 0.0 / 9.783 / 24.0 | 0.0 / 2.236 / 20.485 | 0.0 / 5.107 / 24.0 | 0.0 / 6.749 / 24.0 |
-| стражи, посты держат (7 суток, 64 чел.) | 24.0 / 24.0 / 24.0 | 24.0 / 24.0 / 24.0 | 24.0 / 24.0 / 24.0 | 24.0 / 24.0 / 24.0 | 0.0 / 0.0 / 0.072 | 1.71 / 24.0 / 24.0 | 24.0 / 24.0 / 24.0 |
-| стражи, посты отпускают (7 суток, 64 чел.) | 1.197 / 4.456 / 11.308 | 1.5 / 9.688 / 19.686 | 0.209 / 0.878 / 4.04 | 0.65 / 4.979 / 14.003 | 0.0 / 0.0 / 12.191 | 0.0 / 10.928 / 24.0 | 0.479 / 4.153 / 9.267 |
+| teacher-1 | 0.0 / 0.588 / 4.818 | 0.0 / 0.104 / 8.148 | 0.0 / 0.355 / 8.707 | 0.0 / 0.0 / 2.822 | 0.0 / 0.0 / 0.0 | 0.0 / 0.0 / 0.0 | 0.0 / 0.0 / 1.508 |
+| teacher-7 | 0.0 / 1.491 / 22.23 | 0.0 / 3.394 / 24.0 | 0.001 / 0.711 / 16.355 | 0.0 / 1.152 / 20.067 | 0.0 / 0.0 / 0.49 | 0.0 / 0.0 / 24.0 | 0.0 / 0.898 / 17.712 |
+| random-7 | 1.647 / 12.693 / 24.0 | 12.069 / 23.582 / 24.0 | 9.231 / 18.679 / 24.0 | 0.0 / 9.865 / 24.0 | 0.0 / 7.205 / 24.0 | 0.0 / 3.304 / 24.0 | 0.0 / 9.0 / 24.0 |
+| стражи, посты держат (7 суток, 64 чел.) | 24.0 / 24.0 / 24.0 | 24.0 / 24.0 / 24.0 | 24.0 / 24.0 / 24.0 | 24.0 / 24.0 / 24.0 | 0.0 / 0.0 / 0.072 | 1.27 / 24.0 / 24.0 | 24.0 / 24.0 / 24.0 |
+| стражи, посты отпускают (7 суток, 64 чел.) | 1.105 / 3.934 / 9.638 | 1.72 / 9.279 / 22.675 | 0.255 / 0.893 / 5.5 | 0.797 / 5.177 / 13.991 | 0.0 / 0.0 / 10.037 | 0.0 / 15.038 / 24.0 | 0.518 / 3.761 / 10.825 |
 
 ## Якорное время по распорядку (порог ≥ 95% по всем решающим)
 
 | Прогон | все | < 2 свободных ч | ≥ 2 свободных ч |
 |---|---|---|---|
-| teacher-1 | 95.3% | 91.1% (44 чел.) | 98.3% |
-| teacher-7 | 82.4% | 70.4% (44 чел.) | 91.1% |
-| random-7 | 61.6% | 49.7% (44 чел.) | 70.2% |
-| teacher-7, посты отпускают (для решения пользователя) | 69.3% | 55.8% (88 чел.) | 88.9% |
+| teacher-1 | 95.2% | 91.2% (44 чел.) | 98.2% |
+| teacher-7 | 82.8% | 69.8% (44 чел.) | 92.2% |
+| random-7 | 53.4% | 42.0% (44 чел.) | 61.6% |
+| teacher-7, посты отпускают (для решения пользователя) | 69.6% | 55.5% (88 чел.) | 90.0% |
 
 ## Нечем утолить: 49 нужд без способа в пределах пути от точек распорядка
 
