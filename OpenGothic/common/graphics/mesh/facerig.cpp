@@ -2,6 +2,7 @@
 
 #include "eyes.h"
 #include "gltfmesh.h"
+#include "graphics/eyeshader.h"
 
 #include <rapidjson/document.h>
 #include <rapidjson/error/en.h>
@@ -448,11 +449,76 @@ FaceProfile::Listen parseListen(const rapidjson::Value& v, const FaceProfile& p)
   return ret;
   }
 
+FaceProfile::Eyes::Shade parseLidShade(const rapidjson::Value& v, const GltfHeadMesh& head, const FaceProfile::Eyes& eyes) {
+  const std::string at = "eyes: lid_shade";
+  if(!v.IsObject())
+    fail(at+" must be an object");
+  onlyFields(v,{"about","part","upper_cm","lower_cm","upper_edge","lower_edge"},at);
+  if(v.HasMember("about") && !v["about"].IsString())
+    fail(at+": about must be a string");
+  if(!v.HasMember("part") || !v["part"].IsString())
+    fail(at+": part must be the name of the head part of the lids");
+  FaceProfile::Eyes::Shade ret;
+  const auto name = str(v["part"]);
+  ret.part = head.parts.size();
+  for(size_t i=0; i<head.parts.size(); ++i)
+    if(head.parts[i].name==name)
+      ret.part = i;
+  if(ret.part==head.parts.size())
+    fail(at+": no head part "+quoted(name));
+  if(ret.part==eyes.eye[0].part || ret.part==eyes.eye[1].part)
+    fail(at+": part must be the lids', not an eye");
+  const auto cm = [&](const char* key, float& out) {
+    const double x = number(v,key,at);
+    if(x<=0 || x>double(eyes.eye[0].radius))
+      fail(at+": "+key+" must be above 0 and up to the ball's radius");
+    out = float(x);
+    };
+  const auto share = [&](const char* key, float& out) {
+    const double x = number(v,key,at);
+    if(x<0 || x>1)
+      fail(at+": "+key+" must be a number 0..1");
+    out = float(x);
+    };
+  cm   ("upper_cm",  ret.params.upperCm);
+  cm   ("lower_cm",  ret.params.lowerCm);
+  share("upper_edge",ret.params.upperEdge);
+  share("lower_edge",ret.params.lowerEdge);
+
+  // the part's triangles once, from the neutral head: those around each ball are its lids
+  const auto& p     = head.parts[ret.part];
+  const auto& mesh  = head.mesh;
+  const size_t first = p.firstVertex, end = std::min(p.firstVertex+p.vertexCount,mesh.positions.size());
+  std::vector<std::array<uint32_t,3>> tris;
+  for(auto& s:mesh.sub_meshes)
+    for(auto& t:s.triangles) {
+      std::array<uint32_t,3> id;
+      bool inside = true;
+      for(size_t k=0; k<3; ++k) {
+        const size_t w = t.wedges[k];
+        id[k] = w<s.wedges.size() ? s.wedges[w].index : uint32_t(-1);
+        inside = inside && id[k]>=first && id[k]<end;
+        }
+      if(inside)
+        tris.push_back(id);
+      }
+  std::vector<Vec3> pos(mesh.positions.size());
+  for(size_t i=0; i<pos.size(); ++i)
+    pos[i] = Vec3(mesh.positions[i].x,mesh.positions[i].y,mesh.positions[i].z);
+  const char* side[2] = {"left","right"};
+  for(int s=0; s<2; ++s) {
+    ret.tris[s] = LidShade::lidTriangles(tris,pos,eyes.eye[s].center,eyes.eye[s].radius);
+    if(ret.tris[s].empty())
+      fail(at+": part "+quoted(name)+" has no lids around the "+side[s]+" eye");
+    }
+  return ret;
+  }
+
 FaceProfile::Eyes parseEyes(const rapidjson::Value& v, const GltfHeadMesh& head) {
   using Eyes = FaceProfile::Eyes;
   if(!v.IsObject())
     fail("eyes must be an object");
-  onlyFields(v,{"about","parts","limits_deg","lids"},"eyes");
+  onlyFields(v,{"about","parts","limits_deg","lids","lid_shade"},"eyes");
   if(v.HasMember("about") && !v["about"].IsString())
     fail("eyes: about must be a string");
   Eyes ret;
@@ -538,6 +604,8 @@ FaceProfile::Eyes parseEyes(const rapidjson::Value& v, const GltfHeadMesh& head)
         }
       }
     }
+  if(v.HasMember("lid_shade"))
+    ret.shade = parseLidShade(v["lid_shade"],head,ret);
   return ret;
   }
 
@@ -764,8 +832,11 @@ void FaceRig::setup(const GltfHeadMesh* h, const FaceProfile* p) {
   deformed = false;
   dirty    = true;
   speechLayer = -1;
-  for(int i=0; i<2; ++i)
+  for(int i=0; i<2; ++i) {
     eyeWant[i] = eyeShown[i] = EyeTurn();
+    lidEdges[i] = LidShade();
+    }
+  lidShadeOn = eyeShaderEnabled();
   if(!isActive())
     return;
   if(auto v = profile->find("VISEME"))
@@ -1273,7 +1344,8 @@ FaceRig::Result FaceRig::update(uint64_t now) {
       zero = false;
       break;
       }
-  if(zero) {
+  // with the lids' shade the neutral face keeps its deformation: the shade is in it
+  if(zero && !hasLidShade()) {
     if(!deformed && !dirty)
       return Result::Same;
     applied  = want;
@@ -1374,8 +1446,9 @@ void FaceRig::prepare() {
   }
 
 void FaceRig::write(uint32_t v) {
-  Vec3 p = pos[v];
-  Vec3 n = nrm[v];
+  Vec3  p = pos[v];
+  Vec3  n = nrm[v];
+  float w = 0;  // the free w of the normal: 1 + the lids' shade of a ball's vertex (vertex_process.glsl), 0 the rest
   if(const auto* ey = eyes())
     for(int i=0; i<2; ++i) {
       const auto& e = ey->eye[i];
@@ -1390,6 +1463,8 @@ void FaceRig::write(uint32_t v) {
       n = Vec3(r[0][0]*n.x + r[0][1]*n.y + r[0][2]*n.z,
                r[1][0]*n.x + r[1][1]*n.y + r[1][2]*n.z,
                r[2][0]*n.x + r[2][1]*n.y + r[2][2]*n.z);
+      if(hasLidShade())
+        w = 1.f + lidEdges[i].light(p-e.center,e.radius,ey->shade->params);
       break;
       }
   for(uint32_t i=drawnFirst[v]; i<drawnFirst[v+1]; ++i) {
@@ -1397,7 +1472,7 @@ void FaceRig::write(uint32_t v) {
     changedFirst = std::min(changedFirst,r);
     changedEnd   = std::max(changedEnd,r+1);
     deform[size_t(r)*2+0] = Vec4(p.x,p.y,p.z,1.f);
-    deform[size_t(r)*2+1] = Vec4(n.x,n.y,n.z,0.f);
+    deform[size_t(r)*2+1] = Vec4(n.x,n.y,n.z,w);
     }
   }
 
@@ -1429,6 +1504,8 @@ void FaceRig::blend() {
       nrm[v] += d.normal*w;
       }
     }
+  // the lids are where the shapes put them now: their edges over the balls, before any vertex is written
+  lidMargins();
   size_t keep = 0;
   for(size_t i=0; i<moved.size(); ++i) {
     const uint32_t v = moved[i];
@@ -1455,10 +1532,26 @@ void FaceRig::writeEyes() {
         write(v);
   }
 
+void FaceRig::lidMargins() {
+  if(!hasLidShade())
+    return;
+  const auto& ey = *profile->eyes;
+  for(int i=0; i<2; ++i)
+    lidEdges[i].margins(pos,ey.shade->tris[i],ey.eye[i].center);
+  }
+
+float FaceRig::lidLight(uint32_t drawnVertex) const {
+  if(size_t(drawnVertex)*2+1>=deform.size() || deform[size_t(drawnVertex)*2+1].w<0.5f)
+    return -1;
+  return deform[size_t(drawnVertex)*2+1].w-1.f;
+  }
+
 void FaceRig::turnEyes() {
   // only the balls turned: their vertices, the rest of the head as it is
-  if(basePos.size()!=head->mesh.positions.size() || deform.size()!=head->renderVertexIds.size()*2)
+  if(basePos.size()!=head->mesh.positions.size() || deform.size()!=head->renderVertexIds.size()*2) {
     prepare();
+    lidMargins();
+    }
   changedFirst = uint32_t(-1);
   changedEnd   = 0;
   writeEyes();

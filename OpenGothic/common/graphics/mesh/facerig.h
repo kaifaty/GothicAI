@@ -2,6 +2,8 @@
 
 #include <Tempest/Vec>
 
+#include "lidshade.h"
+
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -90,8 +92,16 @@ struct FaceProfile final {
       float            outSign = 1;           // +1: a turn to +y is outwards (away from the nose)
       std::vector<Lid> lids[4];               // per Dir
       };
+    // The lids' shade over the balls ("lid_shade", reports/content/2026-11-hero-head/eye-shader.md): per vertex of a
+    // ball the share of the light the lids leave, by its distance from their edges (LidShade), into the deformation
+    struct Shade final {
+      size_t                part = 0;  // the head part of the lids (the skin)
+      LidShade::Params      params;
+      std::vector<uint32_t> tris[2];   // per eye: the lids' triangles around it, logical vertex triplets
+      };
     Eye   eye[2];            // the character's own left eye, the right one
     float limit[4] = {};     // in the socket per Dir, radians
+    std::optional<Shade> shade;  // none: no shade is written, the shader takes its mean (EyeLidFar)
     };
 
 
@@ -206,6 +216,11 @@ class FaceRig final {
     void   setup(const GltfHeadMesh* head, const FaceProfile* profile);
     bool   isActive() const { return head!=nullptr && profile!=nullptr; }
     bool   hasEyes() const { return isActive() && profile->eyes.has_value(); }
+    // the lids' shade is written into the deformation (eyes.lid_shade, not OPENGOTHIC_EYE_SHADER=0): the head never
+    // rests without a deformation, the shade of a neutral face is in it too
+    bool   hasLidShade() const { return hasEyes() && profile->eyes->shade.has_value() && lidShadeOn; }
+    // the share of the light the lids leave to a vertex of a ball as written, 0..1; -1: none written
+    float  lidLight(uint32_t drawnVertex) const;
     const FaceProfile::Eyes* eyes() const { return hasEyes() ? &*profile->eyes : nullptr; }
     // the view of the head was made again: the deformation goes to it on the next update
     void   invalidate() { dirty = true; }
@@ -314,6 +329,7 @@ class FaceRig final {
     void   blend();
     void   turnEyes();
     void   writeEyes();
+    void   lidMargins();
     void   prepare();
     void   write(uint32_t v);
 
@@ -347,6 +363,8 @@ class FaceRig final {
     std::vector<Tempest::Vec4> deform;
     EyeTurn                    eyeWant[2], eyeShown[2];
     float                      eyeTurn[2][3][3] = {};  // the rotation of each ball as shown, row-major
+    LidShade                   lidEdges[2];             // the lids' edges over each ball as the face shows them
+    bool                       lidShadeOn = false;
     uint32_t                   changedFirst = 0, changedEnd = 0;
     float                      blendUs = 0;
     uint32_t                   blends  = 0;

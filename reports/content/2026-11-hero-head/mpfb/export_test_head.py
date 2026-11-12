@@ -13,6 +13,9 @@
 # the brow cards when the brows are painted on the skin).
 # --skin-normal <png> and --skin-orm <png> are the skin's normal and roughness maps (scripts/content/npc/
 # skin_material.py): they go into the skin material's `normal` and `orm` slots.
+# --eye-orm <png> is the eyes' roughness map (scripts/content/npc/eye_material.py, with its eye_game.png as the eye
+# texture): it goes into the eye material's `orm` slot and the material gets `eye: true`, so the engine lights the
+# eyes with its eye shader (reports/content/2026-11-hero-head/eye-shader.md). Without it the eye is as before.
 # --hair <npz> <png> and --beard <npz> <png> add the parts cut from the generator's model (skin/hair_cut.py,
 # skin/beard_shell.py; metres, the frame of the registered head). The hair is rigid; the beard is bound to the skin
 # and follows every face shape; its map is cut by alpha. A hair part with normals in its npz is hair cards
@@ -361,6 +364,9 @@ SKIN_MAPS = {slot: os.path.abspath(os.path.expanduser(ARGS[ARGS.index(flag)+1]))
              for slot, flag in (('normal', '--skin-normal'), ('orm', '--skin-orm')) if flag in ARGS}
 for slot, src in SKIN_MAPS.items():
     shutil.copyfile(src, os.path.join(png, 'skin_%s.png' % slot))
+EYE_ORM = os.path.abspath(os.path.expanduser(ARGS[ARGS.index('--eye-orm')+1])) if '--eye-orm' in ARGS else None
+if EYE_ORM:
+    shutil.copyfile(EYE_ORM, os.path.join(png, 'eye_orm.png'))
 subprocess.run([TEXPACK, png, dds], check=True)
 shutil.rmtree(png)
 mj = os.path.join(ROOT, 'materials', 'materials.json')
@@ -369,6 +375,8 @@ for key in TEX:
     table['OWN_%s_%s.TGA' % (MATS, key)] = {'albedo': '%s/%s.dds' % (NAME, key.lower())}
 for slot in SKIN_MAPS:
     table['OWN_%s_SKIN.TGA' % MATS][slot] = '%s/skin_%s.dds' % (NAME, slot)
+if EYE_ORM:
+    table['OWN_%s_EYE.TGA' % MATS].update({'orm': '%s/eye_orm.dds' % NAME, 'eye': True})
 if HAIR_MAP and 'HAIR' in TEX:
     table['OWN_%s_HAIR.TGA' % MATS].update({'orm': '%s/hair_map.dds' % NAME, 'hair': True})
 json.dump(table, open(mj, 'w'), indent=2)

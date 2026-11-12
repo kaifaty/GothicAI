@@ -77,6 +77,7 @@ Material::Material(const asset::Material& m, bool enableAlphaTest, bool requireA
     emissive = maps.orm!=nullptr ? maps.emissive : 0.f;
     hair = maps.hair || maps.strand;
     strand = maps.strand;
+    eye = maps.eye;
     materialMaps = maps.present;
     }
   }
@@ -128,6 +129,7 @@ bool Material::operator ==(const Material& other) const {
          emissive==other.emissive &&
          hair==other.hair &&
          strand==other.strand &&
+         eye==other.eye &&
          envMapping==other.envMapping;
   }
 
