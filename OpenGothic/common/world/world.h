@@ -54,6 +54,8 @@ class World final : public ClothWorld, public BloodDecalSource, public PhysicsHo
     HitZones::Zone npcRayHitZone(const Npc& npc, const Tempest::Vec3& from,
                                const Tempest::Vec3& to, float& distance) const override;
     bool npcBodySinks(const Npc& npc) const override;
+    ItemMaterial itemMaterial(const Item& item) const override;
+    std::string_view itemVisual(const Item& item) const override;
     bool isPlacedItem(const Item& item) const override;
     uint32_t placedItemZenId(const Item& item) const override;
     void setPhysicsMatrix(Item& item, const Tempest::Matrix4x4& matrix) override;

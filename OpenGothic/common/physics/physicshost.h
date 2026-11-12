@@ -2,6 +2,7 @@
 
 #include "asset/material.h"
 #include "graphics/mesh/hitzones.h"
+#include "records/definitions.h"
 
 #include <Tempest/Matrix4x4>
 #include <cstdint>
@@ -34,6 +35,8 @@ class PhysicsHost {
                                        const Tempest::Vec3& to, float& distance) const = 0;
     virtual bool npcBodySinks(const Npc& npc) const = 0;
 
+    virtual ItemMaterial itemMaterial(const Item& item) const = 0;
+    virtual std::string_view itemVisual(const Item& item) const = 0;
     virtual bool isPlacedItem(const Item& item) const = 0;
     virtual uint32_t placedItemZenId(const Item& item) const = 0;
     virtual void setPhysicsMatrix(Item& item, const Tempest::Matrix4x4& matrix) = 0;

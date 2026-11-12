@@ -13,6 +13,7 @@
 #include "sha256.h"
 #include <Tempest/Log>
 #include "graphics/mesh/skeleton.h"
+#include "graphics/bounds.h"
 
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
@@ -1110,11 +1111,11 @@ void DynamicWorld::Item::setItem(::Item* it) {
   assert(obj->body->category()==DynamicWorld::C_Item);
   obj->body->setPayload(it,P_Item);
   if(it!=nullptr) {
-    const auto material=ItemMaterial(it->handle().material);
+    const auto material=owner->host->itemMaterial(*it);
     const auto surface=material==MAT_WOOD ? asset::MaterialGroup::WOOD :
                        material==MAT_METAL ? asset::MaterialGroup::METAL : asset::MaterialGroup::STONE;
-    obj->body->setNoiseProfile(material,surface,it->handle().visual);
-    obj->body->setLabel(it->handle().visual);
+    obj->body->setNoiseProfile(material,surface,owner->host->itemVisual(*it));
+    obj->body->setLabel(owner->host->itemVisual(*it));
     }
   }
 

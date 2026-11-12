@@ -50,6 +50,9 @@ bool World::npcBodySinks(const Npc& npc) const {
          guild==GIL_Stoneguardian || guild==GIL_SummonedGuardian;
   }
 
+ItemMaterial World::itemMaterial(const Item& item) const { return ItemMaterial(item.handle().material); }
+std::string_view World::itemVisual(const Item& item) const { return item.handle().visual; }
+
 bool World::isPlacedItem(const Item& item) const { return item.isPlacedItem(); }
 uint32_t World::placedItemZenId(const Item& item) const { return item.placedItemZenId(); }
 void World::setPhysicsMatrix(Item& item, const Tempest::Matrix4x4& matrix) { item.setPhysicsMatrix(matrix); }
