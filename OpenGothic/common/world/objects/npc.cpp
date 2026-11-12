@@ -833,6 +833,10 @@ void Npc::tickTimedEvt(Animation::EvCount& ev) {
         if(active!=nullptr) {
           const int32_t munition = active->handle().munition;
           invent.putAmmunition(*this,uint32_t(munition),i.slot[0]);
+          // the reload from the quiver took it out of there: one less shows till the shot takes it from the
+          // inventory
+          if(visual.pose().isOwnReload() && visual.hasAmmoShown())
+            setQuiverTaken(1);
           }
         break;
         }

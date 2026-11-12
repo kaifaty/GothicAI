@@ -23,6 +23,21 @@ class Skeleton;
 class BowDraw final {
   public:
     static constexpr const char* ReloadAnim = "T_BOWRELOAD";
+    // the reload from the quiver (reports/archery/2026-11-05-quiver-reload): own clips of that name (content, three
+    // talent steps) play as ReloadAnim (Animation, OPENGOTHIC_QUIVERRELOAD; off: G2's). Their right arm and head
+    // move over the aim: the hand to the quiver behind the right hip, the arrow out along its axis, onto the bow
+    // and the string; the upper body and the bow arm hold the aim (hold), the rest below plays the clip
+    static constexpr const char* QuiverReloadAnim = "T_BOWRELOADQ";
+    // of the own clip (its keys K0..K7): the drawing arm leaves the aim's turn as it goes for the quiver and takes
+    // it again on the way to the bow; the hand is led to the quiver as it hangs from K1 to the grab (K2), and from
+    // the arrow's tip out of it (K4) let go of again; the arrow is in the hand at K3; the string from StringFrom
+    static constexpr float       OwnLeave   = 0.10f;  // K1
+    static constexpr float       OwnGrab    = 0.28f;  // K2
+    static constexpr float       OwnTake    = 0.34f;  // K3: MUNITION_PLACE
+    static constexpr float       OwnOut     = 0.58f;  // K4
+    static constexpr float       OwnShelf   = 0.76f;  // K5: the arrow on the bow
+    static constexpr float       StringFrom = 0.84f;  // the hand led to the string as the aim has it...
+    static constexpr float       StringAt   = 0.94f;  // ...on it (K7); the clip draws on (seen without BowDraw)
     static constexpr float       GrabAt     = 0.12f; // of the reload: the animation has the arrow at the quiver
                                                      // over the shoulder (then it goes on down to the hip: not
                                                      // followed)...
@@ -59,6 +74,13 @@ class BowDraw final {
       bool               grabKnown = false; // the hand and the elbow as they take the arrow (the reload at
       Tempest::Matrix4x4 grabHand;          // GrabAt), relative to the chest: Pose fills them in
       Tempest::Matrix4x4 grabElbow;
+      // the own reload from the quiver (QuiverReloadAnim): the clip's hand and head at its first frame relative to
+      // the neck; the quiver as it hangs now and as the clip takes the arrow out of it, relative to the pelvis
+      bool               own = false;
+      bool               ownKnown = false;
+      Tempest::Matrix4x4 ownHand0, ownHead0;
+      bool               quiverKnown = false;
+      Tempest::Matrix4x4 quiverNow, quiverClip;
       float    kick   = 0;     // the last shot: how hard the bow kicked, 0..1 (Archery::releaseKick)...
       float    settle = 1;     // ...and how slowly its shake dies out (Archery::releaseSettle)
       uint64_t dt     = 0;
@@ -95,9 +117,26 @@ class BowDraw final {
       bool  holding = false; // the reload: the upper body holds the aim
       float nock    = 0;     // the hand to the quiver (0..1), then to the string (1..2)
       Tempest::Vec3 handAt = {}; // the drawing hand as shown, relative to the body (the frame it is held in)
+      // the reload from the quiver (bench, reports/archery/2026-11-05-quiver-reload), in the chest's frame
+      // (BIP01 SPINE2: x up the spine, y left, z forward), cm
+      bool          own = false;     // the own clip plays
+      float         reload = -1;     // how far, 0..1
+      bool          quiver = false;  // the quiver is known
+      Tempest::Vec3 qMouth, qAxis;   // its mouth's centre, the way to its bottom
+      Tempest::Vec3 headAt, crownAt, shoulderAt, gripAt, nockAt, slotAt, arrowNock, arrowTip, foreAt;
+      float         torsoHand = 99, torsoFore = 99, torsoArrow = 99; // cm out of the trunk (< 0 in it)
+      float         tubeHand  = 99, tubeFore  = 99;  // cm out of the quiver's tube (< 0 in it)
+      float         bowHandGap = 99, bowArrowGap = 99; // cm from the bow (the limbs' line) to the hand, the arrow (< 0 in it)
+      float         tipIn  = -99;    // cm the arrow's tip is under the quiver's mouth along its axis (> 0 in it)
+      float         offAxis = -1;    // cm from the quiver's axis to the arrow's line at the mouth (the tip in it)
+      float         led     = 0;     // 0..1 the hand led to the quiver as it hangs
+      float         wrist   = -1;    // degrees the wrist bends: the forearm's line against the hand's (to the fingers)
+      float         elbow   = -1;    // degrees the elbow bends: the forearm off the upper arm's line (0 straight)
       };
 
     static bool    isEnabled();
+    // OPENGOTHIC_QUIVERRELOAD (on by default): the own reload from the quiver where its clips are in the content
+    static bool    isQuiverReload();
     static void    setEnabled(bool e);
     // the release as an archer's (OPENGOTHIC_BOWRELEASE, on by default): the hand flies back to the ear, the
     // bow kicks and turns in the hand, shakes, the string as hard as the shot; off: the hand 4 cm back and
@@ -121,6 +160,11 @@ class BowDraw final {
     // back and to the face again) would have it: moved only to be seen. The aim takes the arrow from where
     // it would be without it, so the release changes the look, not the shots (world, cm)
     Tempest::Vec3  seenOnly() const { return seen; }
+    // the reload's arrow drawn out of the quiver: cm from where it stood (its tip TipDepth under the mouth), while its tip
+    // is in the tube; -1: none (the quiver's lift follows it)
+    float          drawOut() const { return drawn; }
+    bool           arrowInHand() const { return inHand; }
+    static constexpr float TipDepth = 66.f;
 
     // Moves the smoothed state toward the input; true if the pose has to be rebuilt
     bool           update(const Input& in);
@@ -140,6 +184,11 @@ class BowDraw final {
     void                implApply(Tempest::Matrix4x4* tr, size_t numBones);
     void                reload(Tempest::Matrix4x4* tr, size_t numBones, const Tempest::Vec3& nock,
                                const Tempest::Vec3& axis);
+    // the own clip: the drawing arm and the head as it has them, from the aim, to the quiver as it hangs, to the
+    // string
+    void                ownReload(Tempest::Matrix4x4* tr, size_t numBones, const Tempest::Vec3& nock,
+                                  const Tempest::Vec3& axis);
+    void                measureReload(const Tempest::Matrix4x4* tr, size_t numBones);
     void                measureHead(const Tempest::Matrix4x4* tr, size_t numBones);
     // moves the drawing hand to target, the elbow bent toward `bend` (as it is if none), the hand keeping
     // its turn
@@ -169,6 +218,9 @@ class BowDraw final {
 
     size_t              upper = size_t(-1), fore = size_t(-1), hand = size_t(-1), slot = size_t(-1), bowHand = size_t(-1);
     size_t              head = size_t(-1), crown = size_t(-1), chest = size_t(-1);
+    size_t              neck = size_t(-1), clav = size_t(-1), pelvis = size_t(-1), spine0 = size_t(-1);
+    size_t              finger = size_t(-1); // the drawing hand's fingers (the wrist's bend, measured)
+    std::vector<size_t> armTree, headTree; // the drawing arm from its clavicle, the head: the own clip's
     size_t              lUpper = size_t(-1), lFore = size_t(-1), lHand = size_t(-1); // the bow arm
     std::vector<size_t> upperTree, foreTree, handTree;
     std::vector<size_t> lUpperTree, lForeTree, lHandTree;
@@ -220,6 +272,25 @@ class BowDraw final {
     Tempest::Matrix4x4              grabHand, grabElbow;
     Tempest::Matrix4x4              frameNow;
     Tempest::Vec3                   handAt;
+    // the own reload: the clip's arm and head relative to its neck (before hold), the drawing arm's clavicle held,
+    // the quiver the clip takes the arrow from relative to its neck
+    bool                            own = false, ownKnown = false;
+    float                           reloadP = -1;
+    Tempest::Matrix4x4              ownHand0, ownHead0;
+    bool                            quiverKnown = false;
+    Tempest::Matrix4x4              quiverNow, quiverClip;
+    std::vector<Tempest::Matrix4x4> ownRel;
+    Tempest::Matrix4x4              clavHeld, quiverOfNeck;
+    bool                            ownHeld = false; // ownRel taken this frame
+    float                           qFollow = 0;
+    Probe                           rq;              // measureReload
+    float                           drawn = -1;
+    // the own clip begins where the hand was shown last (handAt, in frameNow's frame), not where the follow through
+    // is computed: no jump at K0
+    Tempest::Vec3                   ownStart;
+    bool                            ownStarted = false;
+    bool                            leadFrozen = false; // the arrow's tip out of the tube: the lead to the quiver
+    Tempest::Matrix4x4              lead;               // the quiver as it was then (it comes back without the hand)
 
     // from the last pose
     float               span   = 0;

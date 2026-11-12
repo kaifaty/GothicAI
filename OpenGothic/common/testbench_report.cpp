@@ -60,6 +60,10 @@ void writeHeader() {
   std::fprintf(bench.csv,",a_on,a_w,a_yaw,a_pitch,a_animyaw,a_animpitch,a_turn,a_bend,a_err,a_steady,a_lean,a_side,ik_crouch,m_crouch,m_peek,m_cant,m_walk,aw_w,aw_speed,aw_twist,aw_chest,aw_drop");
   std::fprintf(bench.csv,",m_stage,m_draw,m_hold,m_fatigue,m_breath,m_holding,m_short,m_disturb,m_amp,m_sway_yaw,m_sway_pitch,m_off,m_spread,m_cross");
   std::fprintf(bench.csv,",bd_w,bd_draw,bd_span,bd_travel,bd_miss,bd_follow,bd_fit,bd_offset,bd_angle,hd_hand,hd_fore,hd_arrow,bd_hold,bd_nock,rh_x,rh_y,rh_z,bd_held,bd_overgrip,bd_atmiddle,bd_nockgap,bd_square,bd_cant,bd_bowmove,bd_bowmiss,bd_back,bd_kick,bd_turn");
+  // the reload from the quiver (graphics/mesh/bowdraw, reports/archery/2026-11-05-quiver-reload): the points in the
+  // chest's frame (BIP01 SPINE2: x up the spine, y left, z forward), cm; the hand, the forearm, the arrow out of the
+  // trunk and the quiver's tube (< 0 in it); the arrow's tip under the mouth and how far off the axis it is there
+  std::fprintf(bench.csv,",rq_own,rq_p,rq_q,rq_follow,rq_mx,rq_my,rq_mz,rq_ax,rq_ay,rq_az,rq_hx,rq_hy,rq_hz,rq_cx,rq_cy,rq_cz,rq_sx,rq_sy,rq_sz,rq_gx,rq_gy,rq_gz,rq_nx,rq_ny,rq_nz,rq_rx,rq_ry,rq_rz,rq_anx,rq_any,rq_anz,rq_atx,rq_aty,rq_atz,rq_fx,rq_fy,rq_fz,rq_torso_hand,rq_torso_fore,rq_torso_arrow,rq_tube_hand,rq_tube_fore,rq_tipin,rq_offaxis,rq_wrist,rq_elbow");
   std::fprintf(bench.csv,",lip_valid,lip_on,lip_t,lip_level,lip_mouth,lip_open,lip_f0,lip_f1,lip_alpha,lip_int,lip_picks");
   std::fprintf(bench.csv,",ge_on,ge_talk,ge_id,ge_mood,ge_starts,ge_cuts,ge_stops,ge_nods,ge_pitch,ge_yaw,ge_roll");
   std::fprintf(bench.csv,",ge_listen,ge_think,ge_lnods,ge_aside");
@@ -79,7 +83,7 @@ void writeHeader() {
   std::fprintf(bench.csv,",mr_w,mr_dev,mr_hits,physics_ms");
   // the watched one's quiver (graphics/mesh/quiver): cm the armour and the legs go into it, the arrows shown,
   // the mouth in the pelvis bone's frame, how far out it was pushed, the arrows over the mouth and the bottom
-  std::fprintf(bench.csv,",qv_on,qv_arrows,qv_armor,qv_leg,qv_arm,qv_mx,qv_my,qv_mz,qv_out,qv_top,qv_bottom,qv_swing,qv_back,qv_outward,qv_us,qv_twist,qv_bow,qv_2h,qv_blade,qv_yield,qv_legt,qv_legl,qv_gnd,qv_gndm,qv_gmode,qv_gon,qv_botup,qv_gndt,qv_need,qv_needb,qv_needo,qv_needbody,qv_trunk,qv_clear,qv_rays,qv_rayus,qv_cpu,qv_ax,qv_ay,qv_az");
+  std::fprintf(bench.csv,",qv_on,qv_arrows,qv_armor,qv_leg,qv_arm,qv_mx,qv_my,qv_mz,qv_out,qv_top,qv_bottom,qv_swing,qv_back,qv_outward,qv_us,qv_twist,qv_bow,qv_2h,qv_blade,qv_yield,qv_legt,qv_legl,qv_gnd,qv_gndm,qv_gmode,qv_gon,qv_botup,qv_gndt,qv_need,qv_needb,qv_needo,qv_needbody,qv_trunk,qv_clear,qv_rays,qv_rayus,qv_cpu,qv_ax,qv_ay,qv_az,qv_fletch,qv_line,qv_drawout,qv_lift,qv_thand,qv_tfore,qv_tarrow,qv_slide,qv_hand,qv_handmiss");
   if(ragdollTrace)
     std::fprintf(bench.csv,",ph_ms,ph_bodies,ph_rays,rd_mode,rd_weight,rd_sleep");
   if(bench.routine.questTrace)
@@ -534,6 +538,7 @@ void writeRow(Npc& pl) {
   std::fprintf(bench.csv,",%.2f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f",bd.aligned,bd.overGrip,bd.atMiddle,bd.nockGap,bd.square,bd.cant,bd.bowMove,bd.bowMiss);
   // the release: the drawing hand off where it let go, the bow hand thrown back, the bow turned in it
   std::fprintf(bench.csv,",%.2f,%.2f,%.2f",bd.back,bd.kick,bd.turn);
+  std::fprintf(bench.csv,",%d,%.3f,%d,%.2f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.1f,%.1f",int(bd.own),bd.reload,int(bd.quiver),bd.led,bd.qMouth.x,bd.qMouth.y,bd.qMouth.z,bd.qAxis.x*100.f,bd.qAxis.y*100.f,bd.qAxis.z*100.f,bd.headAt.x,bd.headAt.y,bd.headAt.z,bd.crownAt.x,bd.crownAt.y,bd.crownAt.z,bd.shoulderAt.x,bd.shoulderAt.y,bd.shoulderAt.z,bd.gripAt.x,bd.gripAt.y,bd.gripAt.z,bd.nockAt.x,bd.nockAt.y,bd.nockAt.z,bd.slotAt.x,bd.slotAt.y,bd.slotAt.z,bd.arrowNock.x,bd.arrowNock.y,bd.arrowNock.z,bd.arrowTip.x,bd.arrowTip.y,bd.arrowTip.z,bd.foreAt.x,bd.foreAt.y,bd.foreAt.z,bd.torsoHand,bd.torsoFore,bd.torsoArrow,bd.tubeHand,bd.tubeFore,bd.tipIn,bd.offAxis,bd.wrist,bd.elbow);
   // lips of the watched one
   const auto& lp = LipSync::subjectProbe;
   std::fprintf(bench.csv,",%d,%d,%llu,%.3f,%.3f,%.3f,%u,%u,%.2f,%.3f,%u",
@@ -649,6 +654,8 @@ void writeRow(Npc& pl) {
     std::fprintf(bench.csv,",%.2f,%.1f,%d,%.1f,%.1f",q.trunk,double(qs.quiverClearance()),qs.quiverRays(),
                  double(qs.quiverRayUs()),double(qs.quiverCpuUs()));
     std::fprintf(bench.csv,",%.5f,%.5f,%.5f",q.axis.x,q.axis.y,q.axis.z);
+    std::fprintf(bench.csv,",%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.3f,%.3f,%.2f",q.fletch,q.line,q.drawOut,q.lift,q.trunkHand,
+                 q.trunkFore,q.trunkArrow,q.slide,q.hand,q.handMiss);
   }
   if(ragdollTrace)
     writeRagdoll(pl);

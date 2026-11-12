@@ -422,6 +422,7 @@ class MdlVisual final {
     float                          quiverCpuUs = 0, quiverRayUs = 0, quiverClear = 0;
     int                            quiverRays = 0;
     bool                           quiverNear = false;
+    float                          quiverHand = 0; // the right hand on the quiver as it slides (QuiverHand), 0..1
 
     std::vector<PfxSlot>           effects;
     std::string_view               muted;

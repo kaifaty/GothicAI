@@ -1,5 +1,6 @@
 #include <unordered_set>
 #include "animation.h"
+#include "bowdraw.h"
 
 #include <Tempest/Log>
 #include <cctype>
@@ -170,6 +171,20 @@ void Animation::setupIndex() {
       i = char(std::toupper(i));
     for(auto& i:sq.next)
       i = char(std::toupper(i));
+    }
+
+  // the reload from the quiver (own content, OPENGOTHIC_QUIVERRELOAD): its clip plays as T_BOWRELOAD, so the tempo,
+  // the solver and every check of the reload stay as they are; off, G2's
+  if(BowDraw::isQuiverReload()) {
+    auto own = std::find_if(sequences.begin(),sequences.end(),[](const Sequence& s){ return s.name==BowDraw::QuiverReloadAnim; });
+    if(own!=sequences.end()) {
+      sequences.erase(std::remove_if(sequences.begin(),sequences.end(),[](const Sequence& s){
+        return s.name==BowDraw::ReloadAnim;
+        }),sequences.end());
+      own = std::find_if(sequences.begin(),sequences.end(),[](const Sequence& s){ return s.name==BowDraw::QuiverReloadAnim; });
+      own->name      = BowDraw::ReloadAnim;
+      own->ownReload = true;
+      }
     }
 
   std::sort(sequences.begin(),sequences.end(),[](const Sequence& a,const Sequence& b){

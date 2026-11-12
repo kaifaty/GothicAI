@@ -253,6 +253,8 @@ void Npc::refitQuiver() {
   }
 
 void Npc::setQuiverTaken(int n) {
+  if(visual.quiver().taken()==n)
+    return;
   visual.setQuiverTaken(n);
   updateQuiver();
   }
@@ -287,6 +289,9 @@ void Npc::setStateItem(MeshObjects::Mesh&& itm, std::string_view slot) {
   }
 
 void Npc::setAmmoItem(MeshObjects::Mesh&& itm, std::string_view slot) {
+  // the arrow put away (the bow lowered): back in the quiver
+  if(itm.isEmpty())
+    setQuiverTaken(0);
   visual.setAmmoItem(std::move(itm),slot);
   }
 
