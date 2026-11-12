@@ -1,0 +1,340 @@
+"""The head of an NPC from its concept folder in one command (docs/npc-pipeline.md, stage 5;
+reports/content/2026-11-npc-pipeline/build.md).
+
+  ~/.local/share/gothic-ai/mpfb/venv/bin/python scripts/content/npc/build_head.py <concept dir> \
+      [--content <content root>] [--work <dir>] [--from <step>] [--only <step>] [--list]
+
+<concept dir>/npc.json:
+  {"name": "hero-3a",                   the work folder's name
+   "instance": "PC_HERO",               the script instance whose head this is (only the hero for now)
+   "sheet": "sheet.png",                front | left profile side by side, square halves (image_gen)
+   "bald": "bald.png",                  the same sheet bald, shaven, neutral (image_gen)
+   "params": "params.json",             optional: the MPFB start and the concept's frame by hand (fit/params-*.json);
+                                        without it auto_params.py finds the frame, and "macro", "race", "targets"
+                                        (fit_head.py) may be given here
+   "picks": "picks.json",               optional: ears and the profile midline by hand (fit/reg/picks-*.json);
+                                        without it the ears follow the dense model as plain surface
+   "mesh": {"full": "raw.npz", "bald": "raw.npz"}}   the generator's dense models (run-mesh3d.sh); paths
+Relative paths are relative to the concept dir.
+
+Every step writes into its own folder of the work dir (default ~/.local/share/gothic-ai/mpfb/work/build/<name>) and
+leaves there a stamp: the hash of its commands, of the scripts they run and of its input files (size and time for
+files over 4 MB). A step whose stamp matches and whose outputs exist is skipped, so a second run only redoes what
+changed. A failing step stops the build with its name, the command and the tail of its log (<step>/log.txt).
+
+Writes into <content root> (default <work>/content): characters/<folder>/head.glb, head.face.json, head.frame.json,
+head.groom, materials/ and characters/characters.json (the instance's entry is replaced, others are kept). The sheet
+of likeness is <work>/sheet/likeness.jpg, the measures <work>/measures.json.
+"""
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+
+REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+H = os.path.join(REPO, 'reports/content/2026-11-hero-head')
+F, FR, SK = os.path.join(H, 'fit'), os.path.join(H, 'fit/reg'), os.path.join(H, 'skin')
+S = os.path.join(REPO, 'scripts/content/npc')
+DATA = os.path.expanduser('~/.local/share/gothic-ai/mpfb')
+PY, MPY = os.path.join(DATA, 'venv/bin/python'), os.path.join(DATA, 'venv-mp/bin/python')
+BL = os.environ.get('BLENDER', '/Applications/Blender.app/Contents/MacOS/Blender')
+TEXPACK = os.path.expanduser('~/.local/share/gothic-ai/hd-textures/bin/texpack')
+MPFB_DATA = os.path.join(DATA, 'blender/extensions/.user/user_default/mpfb/data')
+# template assets that are the same for every head
+T = {'probe': os.path.join(DATA, 'work/probe.blend'),
+     'eye': os.path.join(DATA, 'work/skin3a/eye_dark.png'),
+     'base_skin': os.path.join(MPFB_DATA, 'skins/middleage_caucasian_male/middleage_lightskinned_male_diffuse.png'),
+     'sched': os.path.join(FR, 'sched9.json'), 'lm': os.path.join(FR, 'lm.json'),
+     'lid_chains': os.path.join(FR, 'lid_chains.json'), 'lm_fixed': os.path.join(FR, 'lm_fixed.json'),
+     'points': os.path.join(S, 'template_points.json'),
+     'transforms': os.path.join(F, 'pixal3d-views-transforms.json')}
+LID_BACK = '5.8'          # mm: lid depth from the template lid moved back (lm_pick.py, auto_targets.py)
+BIG = 4 << 20
+
+
+def base_cache():
+    root = os.path.expanduser(os.environ.get('OPENGOTHIC_BASE_CACHE', '~/.cache/gothic-ai/base'))
+    dirs = [os.path.join(root, d) for d in os.listdir(root) if os.path.isdir(os.path.join(root, d, 'models'))]
+    if not dirs: raise SystemExit('build_head: no imported game base in ' + root)
+    return max(dirs, key=os.path.getmtime)                            # the same pick as export_test_head.py
+
+
+class Step:
+    def __init__(self, name, cmds, inputs, outputs, note=''):
+        self.name, self.cmds, self.inputs, self.outputs, self.note = name, cmds, inputs, outputs, note
+
+
+def file_key(p, h):
+    if os.path.isdir(p):
+        for root, _, files in sorted(os.walk(p)):
+            for f in sorted(files): file_key(os.path.join(root, f), h)
+        return
+    st = os.stat(p)
+    h.update(p.encode())
+    if st.st_size > BIG: h.update(b'%d %d' % (st.st_size, st.st_mtime_ns))
+    else: h.update(open(p, 'rb').read())
+
+
+def stamp(step):
+    h = hashlib.sha256()
+    for c in step.cmds:
+        h.update(json.dumps(c if isinstance(c, list) else c.__name__).encode())
+        if isinstance(c, list):
+            for a in c:
+                if isinstance(a, str) and a.endswith('.py') and os.path.isfile(a): file_key(a, h)
+    for p in step.inputs:
+        if not os.path.exists(p): raise SystemExit(f'build_head: step {step.name}: input missing: {p}')
+        file_key(p, h)
+    return h.hexdigest()
+
+
+def run(step, work):
+    d = os.path.join(work, step.name); os.makedirs(d, exist_ok=True)
+    key = stamp(step); sp = os.path.join(d, '.stamp')
+    if os.path.exists(sp) and open(sp).read() == key and all(os.path.exists(o) for o in step.outputs):
+        print(f'= {step.name}: up to date'); return False
+    if os.path.exists(sp): os.remove(sp)
+    print(f'> {step.name} {step.note}', flush=True); t0 = time.time()
+    env = dict(os.environ, BLENDER_USER_RESOURCES=os.path.join(DATA, 'blender'))
+    with open(os.path.join(d, 'log.txt'), 'w') as log:
+        for c in step.cmds:
+            if callable(c):
+                log.write(f'$ <{c.__name__}>\n'); log.flush()
+                try: c()
+                except Exception as e: fail(step, c.__name__, d, repr(e))
+                continue
+            log.write('$ ' + ' '.join(c) + '\n'); log.flush()
+            r = subprocess.run(c, cwd=d, env=env, stdout=log, stderr=subprocess.STDOUT)
+            if r.returncode != 0: fail(step, ' '.join(c), d, f'exit {r.returncode}')
+    missing = [o for o in step.outputs if not os.path.exists(o)]
+    if missing: fail(step, 'outputs', d, 'not written: ' + ', '.join(missing))
+    open(sp, 'w').write(key)
+    print(f'  {step.name}: {time.time()-t0:.0f} s', flush=True); return True
+
+
+def fail(step, what, d, why):
+    tail = open(os.path.join(d, 'log.txt'), errors='replace').read().splitlines()[-25:]
+    print(f'\nbuild_head: step "{step.name}" failed ({why})\n  {what}\n  log: {d}/log.txt\n' + '\n'.join(tail),
+          file=sys.stderr)
+    raise SystemExit(1)
+
+
+def steps(cdir, cfg, work, content):
+    j = lambda *p: os.path.join(work, *p)
+    src = lambda k: os.path.join(cdir, cfg[k])
+    blend = lambda f, script, *a: [BL, '-b', f, '-P', script, '--', *a]
+    blank = lambda script, *a: [BL, '-b', '-P', script, '--', *a]
+    npc = os.path.join(cdir, 'npc.json')
+    params = src('params') if 'params' in cfg else j('params.json')     # by hand, or auto_params.py
+    picks = src('picks') if 'picks' in cfg else None                   # ears by hand, or none
+    raw = {k: os.path.join(cdir, v) for k, v in cfg['mesh'].items()}
+    place = ['--place', j('full', 'place.json'), '--tone', j('full', 'tone.json')]
+    folder = 'hero'                                                    # export_test_head.py writes the hero only
+    head = os.path.join(content, 'characters', folder)
+    out = []
+
+    # 1. the sheets cut into square views: crops for the frames, cut-outs for the generator
+    def cut():
+        from PIL import Image
+        for kind in ('full', 'bald'):
+            im = Image.open(src('sheet' if kind == 'full' else 'bald')).convert('RGB'); w, h = im.size
+            if abs(w - 2 * h) > 2: raise ValueError(f'{kind} sheet is {w}x{h}, expected two square views side by side')
+            for i, view in enumerate(('front', 'profile')):
+                im.crop((i * h, 0, i * h + h, h)).save(j('views', f'{kind}_{view}.png'))
+    from PIL import Image
+    side = Image.open(src('sheet')).size[1]
+    out.append(Step('views', [cut] + [
+        [PY, os.path.join(F, 'cutout.py'), src('sheet' if k == 'full' else 'bald'),
+         j('views', k, f'view0{i}_azim0{a}.png'), str(i * side), '0', str(side)] for k in ('full', 'bald')
+        for i, a in ((0, '00'), (1, '90'))] + [
+        ['cp', T['transforms'], j('views', k, 'transforms.json')] for k in ('full', 'bald')] + [
+        [MPY, os.path.join(S, 'skull_check.py'), src('sheet'), src('bald')],
+        [MPY, os.path.join(S, 'face_points.py'), j('views', 'points')] + [
+            f'{k}_front=' + j('views', f'{k}_front.png') for k in ('full', 'bald')]],
+        [src('sheet'), src('bald'), T['transforms']],
+        [j('views', f'{k}_{v}.png') for k in ('full', 'bald') for v in ('front', 'profile')]
+        + [j('views', 'points', f'{k}_front.json') for k in ('full', 'bald')]))
+
+    # 2. the dense models (for now given; run-mesh3d.sh needs a GPU window the user allows)
+    # 3. the MPFB start
+    if 'params' in cfg:
+        out.append(Step('base', [blank(os.path.join(F, 'fit_head.py'), params, j('base'))], [params], [j('base', 'fit.blend')]))
+    else:
+        auto = [PY, os.path.join(S, 'auto_params.py'), j('views'), j('views', 'points'), npc]
+        out.append(Step('base', [auto + [j('base', 'params.json')], blank(os.path.join(F, 'fit_head.py'), j('base', 'params.json'), j('base')),
+                                 auto + [params, j('base')]],
+                        [npc, j('views', 'points'), j('views', 'bald_front.png'), j('views', 'bald_profile.png')],
+                        [j('base', 'fit.blend'), params], 'the MPFB start and the frame of the concept'))
+    fit = j('base', 'fit.blend')
+
+    # 4. registration onto the bald model
+    R = j('reg')
+    out.append(Step('reg', [
+        blend(fit, os.path.join(FR, 'reg_export.py'), raw['bald'], params, R),
+        blend(fit, os.path.join(FR, 'groups.py'), j('reg', 'groups.npz')),
+        blend(fit, os.path.join(FR, 'eye_deltas.py'), j('reg', 'eye_deltas.npz')),
+        blend(fit, os.path.join(FR, 'fu_deltas.py'), j('reg', 'eye_deltas.npz')),
+        ['cp', T['lm'], T['lid_chains'], R],
+        [PY, os.path.join(FR, 'concept_frame.py'), R, params, j('views', 'bald_front.png'), j('views', 'bald_profile.png')],
+        [PY, os.path.join(S, 'place_ref.py'), R]],
+        [fit, raw['bald'], params, j('views', 'bald_front.png'), j('views', 'bald_profile.png'), T['lm'], T['lid_chains']],
+        [j('reg', n) for n in ('mpfb.npz', 'ref.npz', 'views.json', 'groups.npz', 'eye_deltas.npz', 'place.json')],
+        'export, frames, placing the bald model'))
+    targets = [PY, os.path.join(S, 'auto_targets.py'), R, j('reg', 'lid_chains.json'), j('reg', 'points', 'concept_front.json'),
+               j('reg', 'points', 'tmpl_front.json')]
+    out.append(Step('targets', [
+        [MPY, os.path.join(S, 'face_points.py'), j('reg', 'points'), 'concept_front=' + j('reg', 'concept_front.png'),
+         'tmpl_front=' + j('reg', 'lm_mpfb_front.png')]] + (
+        [[PY, os.path.join(FR, 'lm_pick.py'), R, picks, T['lm_fixed'], LID_BACK],
+         targets + [j('reg', 'lm_fixed.json'), j('reg', 'lm_fixed.json'), LID_BACK]] if picks else
+        [targets + [T['lm_fixed'], j('reg', 'lm_fixed.json'), LID_BACK, '--no-hand']]),
+        [j('reg', 'ref.npz'), j('reg', 'concept_front.png'), j('reg', 'lm_mpfb_front.png'), T['lm_fixed']] + ([picks] if picks else []),
+        [j('reg', 'lm_fixed.json')], 'face points, landmark targets'))
+    out.append(Step('solve', [[PY, os.path.join(FR, 'reg_solve.py'), R, T['sched']]],
+                    [j('reg', 'lm_fixed.json'), j('reg', 'ref.npz'), j('reg', 'mpfb.npz'), T['sched']],
+                    [j('reg', 'reg.npz')], 'non-rigid registration'))
+    C1 = j('round')
+    out.append(Step('round', [
+        ['cp', j('reg', 'reg.npz'), j('reg', 'reg_log.json'), j('reg', 'lm_fixed.json'), C1],
+        blend(fit, os.path.join(FR, 'reg_apply.py'), j('reg', 'reg.npz'), j('reg', 'mpfb.npz'), j('round', 'reg.blend')),
+        blend(j('round', 'reg.blend'), os.path.join(FR, 'subsurf.py')),
+        [PY, os.path.join(FR, 'blink_build.py'), R, C1, j('round', 'blink.npz')]],
+        [j('reg', 'reg.npz'), fit], [j('round', n) for n in ('reg.blend', 'reg_sub.blend', 'blink.npz')],
+        'the head, its subdivided copy, the blink'))
+
+    # 5. the full model on the concept, brought to its tone
+    out.append(Step('full', [
+        blend(fit, os.path.join(FR, 'reg_export.py'), raw['full'], params, j('full')),
+        [PY, os.path.join(FR, 'concept_frame.py'), j('full'), params, j('views', 'full_front.png'), j('views', 'full_profile.png')],
+        [PY, os.path.join(S, 'place_ref.py'), j('full')],
+        [PY, os.path.join(SK, 'tone_ref.py'), j('full', 'views.json'), params, raw['full'], j('views', 'full_front.png'),
+         j('full', 'tone.json'), '--place', j('full', 'place.json')],
+        [MPY, os.path.join(S, 'face_points.py'), j('full', 'points'), 'concept_front=' + j('full', 'concept_front.png')]],
+        [fit, raw['full'], params, j('views', 'full_front.png'), j('views', 'full_profile.png')],
+        [j('full', n) for n in ('place.json', 'tone.json', 'concept_front.png', 'points/concept_front.json')],
+        'placing the full model, its tone'))
+
+    # 6. skin: colour from the full model, brows from the concept
+    U, GR, V = j('skin', 'uv.npz'), j('reg', 'groups.npz'), j('reg', 'views.json')
+    out.append(Step('skin', [
+        blend(j('round', 'reg.blend'), os.path.join(SK, 'dump_uv.py'), U),
+        [PY, os.path.join(SK, 'beard_shell.py'), U, GR, V, params, raw['full'], j('skin'), '1024', *place],
+        [PY, os.path.join(SK, 'bake_ref.py'), U, GR, V, params, raw['full'], T['base_skin'], j('skin'), '4096', *place,
+         '--offsets', j('skin', 'beard.npz'), '--front', j('views', 'full_front.png'), j('reg', 'lid_chains.json')],
+        [PY, os.path.join(SK, 'brow_paint.py'), U, GR, V, j('full', 'concept_front.png'),
+         j('full', 'points', 'concept_front.json'), j('skin', 'skin.png'), j('skin', 'skin_brows.png')]],
+        [j('round', 'reg.blend'), GR, V, params, raw['full'], j('full', 'place.json'), j('full', 'tone.json'),
+         j('full', 'concept_front.png'), j('full', 'points', 'concept_front.json'), T['base_skin']],
+        [U, j('skin', 'beard.npz'), j('skin', 'skin.png'), j('skin', 'skin_brows.png')], 'bake, beard offsets, brows'))
+
+    # 7. hair and facial hair as strands
+    out.append(Step('hair', [
+        ['mkdir', '-p', j('hair', 'cap')],
+        [PY, os.path.join(SK, 'hair_cut.py'), V, params, raw['full'], j('hair', 'cap'), '1024', *place],
+        [PY, os.path.join(S, 'hair', 'groom.py'), j('hair', 'cap', 'cap.npz'), U, GR, j('hair'), '90000', '1',
+         '--skin', j('skin', 'skin_brows.png')]],
+        [V, params, raw['full'], j('full', 'place.json'), j('full', 'tone.json'), U, GR, j('skin', 'skin_brows.png')],
+        [j('hair', 'groom.npz')], 'the hairstyle'))
+    out.append(Step('beard', [
+        [PY, os.path.join(S, 'hair', 'beard.py'), U, GR, V, j('skin', 'skin_brows.png'), j('skin', 'beard.npz'),
+         T['points'], j('beard')]],
+        [U, GR, V, j('skin', 'skin_brows.png'), j('skin', 'beard.npz'), T['points']],
+        [j('beard', 'beard_groom.npz'), j('beard', 'skin_shaved.png')], 'beard, moustache, stubble'))
+
+    # 8. into the game: the head (twice: the skin material needs the neck cut the export finds), strands
+    brows_none = j('views', 'brows_none.png')
+
+    def no_brows():
+        from PIL import Image
+        Image.new('RGBA', (64, 64), (0, 0, 0, 0)).save(brows_none)
+    export = lambda skin, *more: blend(T['probe'], os.path.join(H, 'mpfb', 'export_test_head.py'), content, '--hero', C1, R,
+                                       T['eye'], '--skin', skin, '--brows', brows_none, *more)
+    out.append(Step('cut', [no_brows, export(j('beard', 'skin_shaved.png'))],
+                    [j('round', 'reg.npz'), j('round', 'blink.npz'), j('reg', 'mpfb.npz'), j('beard', 'skin_shaved.png'),
+                     T['probe'], T['eye']], [os.path.join(head, 'head.frame.json')], 'the neck cut'))
+    body = os.path.join(base_cache(), 'textures', 'HUM_BODY_NAKED_V8_C0.dds')
+    out.append(Step('material', [
+        [PY, os.path.join(S, 'skin_material.py'), U, GR, V, j('beard', 'skin_shaved.png'), T['points'], body,
+         os.path.join(head, 'head.frame.json'), j('material'), '--groom', j('hair', 'groom.npz')]],
+        [U, GR, V, j('beard', 'skin_shaved.png'), T['points'], body, os.path.join(head, 'head.frame.json'), j('hair', 'groom.npz')],
+        [j('material', n) for n in ('skin_game.png', 'skin_normal.png', 'skin_orm.png')], 'skin for the game'))
+    out.append(Step('export', [export(j('material', 'skin_game.png'), '--skin-normal', j('material', 'skin_normal.png'),
+                                      '--skin-orm', j('material', 'skin_orm.png'))],
+                    [j('round', 'reg.npz'), j('round', 'blink.npz'), j('reg', 'mpfb.npz'), T['probe'], T['eye']]
+                    + [j('material', n) for n in ('skin_game.png', 'skin_normal.png', 'skin_orm.png')],
+                    [os.path.join(head, 'head.glb')], 'the head'))
+
+    def install_strands():
+        ramp = os.path.join(j('strands'), 'png'); dds = os.path.join(content, 'materials', 'head')
+        shutil.rmtree(ramp, ignore_errors=True); os.makedirs(ramp)
+        shutil.move(os.path.join(head, 'hair_ramp.png'), os.path.join(ramp, 'hair_ramp.png'))
+        subprocess.run([TEXPACK, ramp, dds], check=True, stdout=subprocess.DEVNULL)
+        mj = os.path.join(content, 'materials', 'materials.json'); table = json.load(open(mj))
+        table['OWN_HERO_HEAD_STRANDS.TGA'] = {'albedo': 'head/hair_ramp.dds', 'hair': True, 'strand': True}
+        json.dump(table, open(mj, 'w'), indent=2)
+        cj = os.path.join(content, 'characters', 'characters.json'); chars = json.load(open(cj))
+        chars[cfg.get('instance', 'PC_HERO')]['groom'] = f'{folder}/head.groom'
+        json.dump(chars, open(cj, 'w'), indent=2)
+    out.append(Step('strands', [
+        [PY, os.path.join(S, 'hair', 'groom_export.py'), os.path.join(head, 'head.frame.json'), U, GR, head,
+         '--hair', j('hair', 'groom.npz'), '--beard', j('beard', 'beard_groom.npz')], install_strands],
+        [os.path.join(head, 'head.glb'), os.path.join(head, 'head.frame.json'), U, GR, j('hair', 'groom.npz'),
+         j('beard', 'beard_groom.npz')], [os.path.join(head, 'head.groom')], 'strands for the game'))
+
+    # 9. the check: the head with its strands at the concept's cameras next to the concept and the model
+    out.append(Step('sheet', [
+        # the map before the game material: its rim fades into the body's skin, which Blender's neck does not have
+        blend(j('round', 'reg_sub.blend'), os.path.join(S, 'hair', 'groom_render.py'), V, j('beard', 'skin_shaved.png'),
+              j('hair', 'groom.npz'), j('sheet'), 's', '--groom', j('beard', 'beard_groom.npz'), '--eye', T['eye'],
+              '--views', 'front,quarter,profile', '--size', '900', '--spp', '128'),
+        [PY, os.path.join(SK, 'likeness.py'), V, params, raw['full'], j('views', 'full_front.png'),
+         j('views', 'full_profile.png'), j('sheet'), j('sheet', 'likeness.jpg'), *place]],
+        [j('round', 'reg_sub.blend'), V, j('beard', 'skin_shaved.png'), j('hair', 'groom.npz'), j('beard', 'beard_groom.npz'),
+         params, raw['full'], j('full', 'place.json'), j('full', 'tone.json')],
+        [j('sheet', 'likeness.jpg')], 'Cycles renders and the likeness sheet'))
+    lk = j('sheet', 'likeness.jpg')                                   # tiles of 600 px: concept, model, ours
+    out.append(Step('measures', [[MPY, os.path.join(S, 'face_points.py'), j('sheet', 'points'),
+                                  f'concept={lk}:0,0,600,600', f'ours={lk}:1200,0,1800,600'],
+                                 [PY, os.path.join(S, 'head_measures.py'), work]],
+                    [j('reg', 'reg_log.json'), j('reg', 'reg.npz'), j('sheet', 'likeness.jpg')],
+                    [j('measures.json')], 'measures of defects'))
+    return out
+
+
+def main():
+    a = sys.argv[1:]
+
+    def opt(name, default=None):
+        if name not in a: return default
+        i = a.index(name); v = a[i + 1]; del a[i:i + 2]; return v
+    lst = '--list' in a
+    if lst: a.remove('--list')
+    work, content, frm, only = opt('--work'), opt('--content'), opt('--from'), opt('--only')
+    if len(a) != 1: raise SystemExit(__doc__)
+    cdir = os.path.abspath(a[0]); cfg = json.load(open(os.path.join(cdir, 'npc.json')))
+    if cfg.get('instance', 'PC_HERO') != 'PC_HERO': raise SystemExit('build_head: only PC_HERO can be exported for now')
+    work = os.path.abspath(os.path.expanduser(work or os.path.join(DATA, 'work', 'build', cfg['name'])))
+    content = os.path.abspath(os.path.expanduser(content or os.path.join(work, 'content')))
+    for d in ('views/full', 'views/bald'): os.makedirs(os.path.join(work, d), exist_ok=True)
+    os.makedirs(os.path.join(content, 'characters'), exist_ok=True)
+    plan = steps(cdir, cfg, work, content); names = [s.name for s in plan]
+    if lst: print(' '.join(names)); return
+    for n in (frm, only):
+        if n and n not in names: raise SystemExit(f'build_head: no step {n}; steps: {" ".join(names)}')
+    t0 = time.time()
+    for i, s in enumerate(plan):
+        if only and s.name != only: continue
+        if frm and i < names.index(frm): continue
+        if frm and s.name == frm or only:
+            sp = os.path.join(work, s.name, '.stamp')
+            if os.path.exists(sp): os.remove(sp)
+        run(s, work)
+    print(f'build_head: done in {time.time()-t0:.0f} s\n  content {content}\n  sheet {work}/sheet/likeness.jpg\n'
+          f'  measures {work}/measures.json')
+
+
+if __name__ == '__main__':
+    main()
