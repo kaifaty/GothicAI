@@ -3,6 +3,7 @@ reports/content/2026-11-npc-pipeline/build.md).
 
   ~/.local/share/gothic-ai/mpfb/venv/bin/python scripts/content/npc/build_head.py <concept dir> \
       [--content <content root>] [--work <dir>] [--from <step>] [--only <step>] [--list]
+      [--gpu-authorization <label>]
 
 <concept dir>/npc.json:
   {"name": "hero-3a",                   the work folder's name
@@ -14,7 +15,9 @@ reports/content/2026-11-npc-pipeline/build.md).
                                         (fit_head.py) may be given here
    "picks": "picks.json",               optional: ears and the profile midline by hand (fit/reg/picks-*.json);
                                         without it the ears follow the dense model as plain surface
-   "mesh": {"full": "raw.npz", "bald": "raw.npz"}}   the generator's dense models (run-mesh3d.sh); paths
+   "mesh": {"full": "raw.npz", "bald": "raw.npz"}}   optional: the generator's dense models (run-mesh3d.sh);
+                                        without it they come from the cache in work/build/_mesh by the hash of the
+                                        views, or Pixal3D makes them with --gpu-authorization <label>
 Relative paths are relative to the concept dir.
 
 Every step writes into its own folder of the work dir (default ~/.local/share/gothic-ai/mpfb/work/build/<name>) and
@@ -122,7 +125,7 @@ def fail(step, what, d, why):
     raise SystemExit(1)
 
 
-def steps(cdir, cfg, work, content):
+def steps(cdir, cfg, work, content, gpu=None):
     j = lambda *p: os.path.join(work, *p)
     src = lambda k: os.path.join(cdir, cfg[k])
     blend = lambda f, script, *a: [BL, '-b', f, '-P', script, '--', *a]
@@ -130,35 +133,74 @@ def steps(cdir, cfg, work, content):
     npc = os.path.join(cdir, 'npc.json')
     params = src('params') if 'params' in cfg else j('params.json')     # by hand, or auto_params.py
     picks = src('picks') if 'picks' in cfg else None                   # ears by hand, or none
-    raw = {k: os.path.join(cdir, v) for k, v in cfg['mesh'].items()}
+    raw = {k: j('mesh', k, 'raw.npz') for k in ('full', 'bald')}
     place = ['--place', j('full', 'place.json'), '--tone', j('full', 'tone.json')]
     folder = 'hero'                                                    # export_test_head.py writes the hero only
     head = os.path.join(content, 'characters', folder)
     out = []
 
-    # 1. the sheets cut into square views: crops for the frames, cut-outs for the generator
-    def cut():
-        from PIL import Image
-        for kind in ('full', 'bald'):
-            im = Image.open(src('sheet' if kind == 'full' else 'bald')).convert('RGB'); w, h = im.size
-            if abs(w - 2 * h) > 2: raise ValueError(f'{kind} sheet is {w}x{h}, expected two square views side by side')
-            for i, view in enumerate(('front', 'profile')):
-                im.crop((i * h, 0, i * h + h, h)).save(j('views', f'{kind}_{view}.png'))
+    # 1. the sheets as two square views side by side (a half narrower than the sheet is high is padded with the
+    #    background), crops for the frames, cut-outs for the generator
     from PIL import Image
-    side = Image.open(src('sheet')).size[1]
+    sizes = {Image.open(src(k)).size for k in ('sheet', 'bald')}
+    if len(sizes) != 1: raise SystemExit(f'build_head: the full and the bald sheet differ in size: {sizes}')
+    w, h = sizes.pop(); side = max(w // 2, h)
+
+    def cut():
+        import numpy as np
+        for kind in ('full', 'bald'):
+            im = Image.open(src('sheet' if kind == 'full' else 'bald')).convert('RGB')
+            a = np.asarray(im); bg = tuple(int(c) for c in np.median(np.concatenate([a[0], a[-1], a[:, 0], a[:, -1]]), axis=0))
+            sheet = Image.new('RGB', (2 * side, side), bg)
+            for i, view in enumerate(('front', 'profile')):
+                half = im.crop((i * (w // 2), 0, (i + 1) * (w // 2), h))
+                sheet.paste(half, (i * side + (side - half.width) // 2, (side - h) // 2))
+            sheet.save(j('views', f'{kind}_sheet.png'))
+            for i, view in enumerate(('front', 'profile')):
+                sheet.crop((i * side, 0, (i + 1) * side, side)).save(j('views', f'{kind}_{view}.png'))
+    sheets = {k: j('views', f'{k}_sheet.png') for k in ('full', 'bald')}
     out.append(Step('views', [cut] + [
-        [PY, os.path.join(F, 'cutout.py'), src('sheet' if k == 'full' else 'bald'),
-         j('views', k, f'view0{i}_azim0{a}.png'), str(i * side), '0', str(side)] for k in ('full', 'bald')
-        for i, a in ((0, '00'), (1, '90'))] + [
+        [PY, os.path.join(F, 'cutout.py'), sheets[k], j('views', k, f'view0{i}_azim0{a}.png'), str(i * side), '0', str(side)]
+        for k in ('full', 'bald') for i, a in ((0, '00'), (1, '90'))] + [
         ['cp', T['transforms'], j('views', k, 'transforms.json')] for k in ('full', 'bald')] + [
-        [MPY, os.path.join(S, 'skull_check.py'), src('sheet'), src('bald')],
+        [MPY, os.path.join(S, 'skull_check.py'), sheets['full'], sheets['bald']],
         [MPY, os.path.join(S, 'face_points.py'), j('views', 'points')] + [
             f'{k}_front=' + j('views', f'{k}_front.png') for k in ('full', 'bald')]],
         [src('sheet'), src('bald'), T['transforms']],
         [j('views', f'{k}_{v}.png') for k in ('full', 'bald') for v in ('front', 'profile')]
         + [j('views', 'points', f'{k}_front.json') for k in ('full', 'bald')]))
 
-    # 2. the dense models (for now given; run-mesh3d.sh needs a GPU window the user allows)
+    # 2. the dense models: given in npc.json, or from the cache by the hash of the views, or generated by Pixal3D on
+    #    dev-ubuntu (run-mesh3d.sh: it stops the game's models for a few minutes, so only with --gpu-authorization)
+    def meshes():
+        for kind in ('full', 'bald'):
+            dst = raw[kind]; os.makedirs(os.path.dirname(dst), exist_ok=True)
+            if os.path.lexists(dst): os.remove(dst)
+            if kind in cfg.get('mesh', {}):
+                os.symlink(os.path.join(cdir, cfg['mesh'][kind]), dst); continue
+            h = hashlib.sha256()
+            for f in sorted(os.listdir(j('views', kind))): h.update(open(j('views', kind, f), 'rb').read())
+            cache = os.path.join(DATA, 'work', 'build', '_mesh', 'pixal3d-seed1-' + h.hexdigest()[:16])
+            if not os.path.exists(os.path.join(cache, 'raw.npz')):
+                if not gpu:
+                    raise RuntimeError(f'no dense model for the {kind} views; generating one stops the game models on '
+                                       f'dev-ubuntu for a few minutes: run again with --gpu-authorization <label>')
+                label = f'{gpu}-{kind}'
+                r = subprocess.run([os.path.join(REPO, 'scripts/content/mesh3d/run-mesh3d.sh'), '--model', 'pixal3d',
+                                    '--views', j('views', kind), '--seed', '1', '--min-free-mib', '21000',
+                                    '--max-downtime', '1500', '--authorization', label],
+                                   cwd=REPO, capture_output=True, text=True)
+                open(j('mesh', f'{kind}-run.log'), 'w').write(r.stdout + r.stderr)
+                runs = [l.split('Results:', 1)[1].strip() for l in r.stdout.splitlines() if l.startswith('Results:')]
+                if r.returncode != 0 or not runs:
+                    raise RuntimeError(f'run-mesh3d.sh exit {r.returncode}, see mesh/{kind}-run.log')
+                os.makedirs(cache, exist_ok=True)
+                for f in ('raw.npz', 'meta.json'):
+                    subprocess.run(['scp', '-q', f'dev-ubuntu:{runs[0]}/pixal3d-1024/{f}', os.path.join(cache, f)], check=True)
+            os.symlink(os.path.join(cache, 'raw.npz'), dst)
+    out.append(Step('mesh', [meshes], [j('views', 'full'), j('views', 'bald')] +
+                    [os.path.join(cdir, v) for v in cfg.get('mesh', {}).values()], list(raw.values()), 'the dense models'))
+
     # 3. the MPFB start
     if 'params' in cfg:
         out.append(Step('base', [blank(os.path.join(F, 'fit_head.py'), params, j('base'))], [params], [j('base', 'fit.blend')]))
@@ -313,14 +355,15 @@ def main():
     lst = '--list' in a
     if lst: a.remove('--list')
     work, content, frm, only = opt('--work'), opt('--content'), opt('--from'), opt('--only')
+    gpu = opt('--gpu-authorization')
     if len(a) != 1: raise SystemExit(__doc__)
     cdir = os.path.abspath(a[0]); cfg = json.load(open(os.path.join(cdir, 'npc.json')))
     if cfg.get('instance', 'PC_HERO') != 'PC_HERO': raise SystemExit('build_head: only PC_HERO can be exported for now')
     work = os.path.abspath(os.path.expanduser(work or os.path.join(DATA, 'work', 'build', cfg['name'])))
     content = os.path.abspath(os.path.expanduser(content or os.path.join(work, 'content')))
-    for d in ('views/full', 'views/bald'): os.makedirs(os.path.join(work, d), exist_ok=True)
+    for d in ('views/full', 'views/bald', 'mesh'): os.makedirs(os.path.join(work, d), exist_ok=True)
     os.makedirs(os.path.join(content, 'characters'), exist_ok=True)
-    plan = steps(cdir, cfg, work, content); names = [s.name for s in plan]
+    plan = steps(cdir, cfg, work, content, gpu); names = [s.name for s in plan]
     if lst: print(' '.join(names)); return
     for n in (frm, only):
         if n and n not in names: raise SystemExit(f'build_head: no step {n}; steps: {" ".join(names)}')

@@ -10,7 +10,9 @@ Without <fit dir> (first pass):
 - ipd_px, front_eye: the pupils of the detector (iris centres 468 and 473), the mean of the full and the bald front.
   The scale of the whole pipeline is 61.5 mm between the pupils;
 - profile_eye: at the front eye's height (the views of a sheet are drawn on one line); its depth is only a guess;
-- macro, race, targets: from npc.json, or an average man and no targets (the registration makes the shape);
+- macro and race: the probe's (work/probe.blend, hero 3a), because export_test_head.py puts the head on the probe's
+  body and checks that the fit is that body below the neck; variants of the template (women, old, heavy) are a
+  later step. targets: from npc.json, or none (the registration makes the shape);
 - ref_origin: where the dense models' centre goes. A generator scales its model to its bounds, so the centre is the
   middle of the bounds of the two cut-outs it saw, put into the world by the eye of the fit (needs <fit dir>; the
   first pass leaves the hand value of hero 3a, which only fit_head.py reads, and it does not read it).
@@ -57,10 +59,11 @@ def face_line(m, rows):
 
 
 band = range(int(fy - 0.010 / mpp), int(fy + 0.005 / mpp))
-P = {'macro': {'gender': 1.0, 'age': 0.5, 'muscle': 0.5, 'weight': 0.5, 'proportions': 0.5},
-     'race': {'caucasian': 1.0, 'asian': 0.0, 'african': 0.0}, 'targets': {}, 'eyes': True, 'quarter': True}
-for k in ('macro', 'race', 'targets'):
-    if k in cfg: P[k] = dict(P[k], **cfg[k]) if k == 'macro' else cfg[k]
+PROBE = {'gender': 1.0, 'age': 0.577, 'muscle': 0.6, 'weight': 0.45, 'proportions': 0.6}   # work/probe.blend
+P = {'macro': dict(PROBE), 'race': {'caucasian': 1.0, 'asian': 0.0, 'african': 0.0},
+     'targets': cfg.get('targets', {}), 'eyes': True, 'quarter': True}
+if any(abs(cfg.get('macro', {}).get(k, v) - v) > 1e-6 for k, v in PROBE.items()):
+    raise SystemExit(f'auto_params: the head goes on the probe\'s body, its macro is {PROBE}; npc.json asks for {cfg["macro"]}')
 bald_p = concept_mask('bald_profile')
 px = float(np.nanmedian(face_line(bald_p, band))) + 0.024 / mpp      # first guess: the eye ~24 mm behind the brow
 P.update({'res': list(res), 'ipd_px': round(ipd, 2), 'front_eye': [round(fx, 2), round(fy, 2)],
