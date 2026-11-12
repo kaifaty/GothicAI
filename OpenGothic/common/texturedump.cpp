@@ -31,7 +31,7 @@ std::string TextureDump::flowFields(const Resources::TextureStats& after, const 
   const auto& a=after.flow;
   const auto& b=before.flow;
   std::string out;
-  char field[96];
+  char field[256];
   for(size_t i=0;i<TextureFlow::States;++i) {
     std::snprintf(field,sizeof(field),",\"tex_shortfall_%s_seconds\":%.9g",TextureFlow::name(TextureFlow::State(i)),
                   a.seconds[i]-b.seconds[i]);
