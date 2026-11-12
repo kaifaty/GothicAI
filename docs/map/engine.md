@@ -12,6 +12,8 @@
 
 Цель частиц — `common/particletarget.h`: `ParticleTarget` даёт текущую матрицу цели; реализован `Npc`.
 
+Камера платформы — `common/camera.*`: `CameraTarget` (`common/cameratarget.h`, реализован `Npc`) даёт позу, состояния и имена схем мобси; `CameraPresets` (`common/camerapresets.h`, реализован `CameraDefinitions`) даёт записи режимов. `GameServices` передаёт того же героя, физический мир, изменение проекции и тряску; выбор режима остаётся в камере. Сохранение `Camera::SaveState` читает и пишет каркас RPG свободными функциями в `common/game/gamesession.cpp`, порядок полей и версия 55 прежние. Чистая математика `common/game/aimcamera.h` относится к платформе без переноса файла. [Шаг 4в разделения слоёв](../../reports/engine/2026-11-10-engine-layers/README.md#порядок-работы).
+
 Мир ткани — `common/clothworld.h`: `ClothWorld` даёт тики, `DynamicWorld` и регистрацию статичного вида; реализован `World`.
 
 Источник декалей крови — `common/blooddecalsource.h`: `BloodDecalSource` даёт записи пятен и игровое время в миллисекундах; реализован `World`, простая запись и общие величины рендера — `common/bloodstain.h`.

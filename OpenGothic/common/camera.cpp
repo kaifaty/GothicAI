@@ -1,16 +1,15 @@
 #include "camera.h"
 #include "settings.h"
 #include "gameservices.h"
+#include "cameratarget.h"
+#include "camerapresets.h"
+#include "physics/dynamicworld.h"
+#include "resources.h"
 
 #include <Tempest/Application>
 #include <Tempest/Log>
 
-#include "world/objects/npc.h"
-#include "world/objects/interactive.h"
-#include "world/world.h"
-#include "game/definitions/cameradefinitions.h"
 #include "graphics/mesh/animmath.h"
-#include "game/serialize.h"
 #include "game/aimcamera.h"
 #include "utils/gthfont.h"
 #include "utils/dbgpainter.h"
@@ -83,19 +82,19 @@ Camera::Camera() {
   }
 
 void Camera::reset() {
-  reset(GameServices::inst().player());
+  reset(GameServices::inst().cameraTarget());
   }
 
-void Camera::reset(const Npc* pl) {
+void Camera::reset(const CameraTarget* pl) {
   const auto& def = cameraDef();
   markCut();
 
   userRange    = (def.best_range - def.min_range)/(def.max_range - def.min_range);
   state.range  = userRange*(def.max_range-def.min_range)+def.min_range;
-  state.target = pl ? pl->cameraBone() : Vec3();
+  state.target = pl ? pl->cameraTargetBone() : Vec3();
 
   state.spin.x  = 0;
-  state.spin.y  = pl ? pl->rotation() : 0;
+  state.spin.y  = pl ? pl->cameraTargetRotation() : 0;
   aimPitchBack  = 0;
   state.spin   += Vec3(def.best_elevation,
                        def.best_azimuth,
@@ -104,21 +103,21 @@ void Camera::reset(const Npc* pl) {
   tickThirdPerson(-1.f);
   }
 
-void Camera::save(Serialize &s) {
-  s.write(state.range, state.spin, state.target);
-  s.write(inter.target, inter.rotOffset);
-  s.write(origin,angles,veloTrans);
-  s.write(userRange);
+Camera::SaveState Camera::saveState() const {
+  return {state.range, state.spin, state.target, inter.target, inter.rotOffset,
+          origin, angles, veloTrans, userRange};
   }
 
-void Camera::load(Serialize &s, Npc* pl) {
-  reset(pl);
-  if(s.version()<55)
-    return;
-  s.read(state.range, state.spin, state.target);
-  s.read(inter.target, inter.rotOffset);
-  s.read(origin,angles,veloTrans);
-  s.read(userRange);
+void Camera::setSaveState(SaveState saved) {
+  state.range     = saved.range;
+  state.spin      = saved.spin;
+  state.target    = saved.target;
+  inter.target    = saved.interTarget;
+  inter.rotOffset = saved.rotOffset;
+  origin          = saved.origin;
+  angles          = saved.angles;
+  veloTrans       = saved.veloTrans;
+  userRange       = saved.userRange;
   }
 
 void Camera::changeZoom(int delta) {
@@ -218,8 +217,8 @@ void Camera::setMode(const Camera::Mode m) {
     return;
 
   if(camMod==Camera::FirstPerson) {
-    if(auto pl = GameServices::inst().player()) {
-      state.spin = Vec3(0, pl->rotation(), 0);
+    if(auto pl = GameServices::inst().cameraTarget()) {
+      state.spin = Vec3(0, pl->cameraTargetRotation(), 0);
       }
     return;
     }
@@ -234,8 +233,8 @@ void Camera::setMode(const Camera::Mode m) {
     state.spin = Vec3(0);
     }
 
-  if(auto pl = GameServices::inst().player()) {
-    state.spin = Vec3(0, pl->rotation(), 0);
+  if(auto pl = GameServices::inst().cameraTarget()) {
+    state.spin = Vec3(0, pl->cameraTargetRotation(), 0);
     }
 
   auto rotBest = Vec3(def.best_elevation,
@@ -249,10 +248,10 @@ void Camera::setMarvinMode(Camera::MarvinMode nextMod) {
     return;
 
   if(nextMod==M_Pinned) {
-    const auto pl = GameServices::inst().player();
+    const auto pl = GameServices::inst().cameraTarget();
 
     auto      offset = origin;
-    Matrix4x4 rotMat = pl!=nullptr ? pl->cameraMatrix(false) : Matrix4x4::mkIdentity();
+    Matrix4x4 rotMat = pl!=nullptr ? pl->cameraTargetMatrix(false) : Matrix4x4::mkIdentity();
     rotMat.inverse();
     rotMat.project(offset);
 
@@ -435,8 +434,7 @@ void Camera::onRotateMouse(const PointF& dpos) {
 
 Matrix4x4 Camera::projective() const {
   auto ret = proj;
-  if(auto w = GameServices::inst().world())
-    w->globalFx()->morph(ret);
+  GameServices::inst().cameraProjection(ret);
   return ret;
   }
 
@@ -664,11 +662,10 @@ const Def::Camera& Camera::cameraDef() const {
     return camd.fallCam();
   if(camMod==Mobsi) {
     std::string_view tag = "", pos = "";
-    if(auto pl = GameServices::inst().player())
-      if(auto inter = pl->interactive()) {
-        tag = inter->schemeName();
-        pos = inter->posSchemeName();
-        }
+    if(auto pl = GameServices::inst().cameraTarget()) {
+      tag = pl->cameraTargetScheme();
+      pos = pl->cameraTargetPosScheme();
+      }
     return camd.mobsiCam(tag,pos);
     }
   if(camMod==Death)
@@ -842,8 +839,8 @@ void Camera::tick(uint64_t dt) {
       break;
       }
     case M_Pinned: {
-      const auto pl     = GameServices::inst().player();
-      const auto rotMat = pl!=nullptr ? pl->cameraMatrix(false) : Matrix4x4::mkIdentity();
+      const auto pl     = GameServices::inst().cameraTarget();
+      const auto rotMat = pl!=nullptr ? pl->cameraTargetMatrix(false) : Matrix4x4::mkIdentity();
 
       auto offset = pin.origin;
       rotMat.project(offset);
@@ -854,10 +851,10 @@ void Camera::tick(uint64_t dt) {
       }
     }
 
-  if(auto w = GameServices::inst().world()) {
+  {
     Vec3 sh;
-    w->globalFx()->shake(sh);
-    shake = shake + (sh-shake)*std::min(1.f, dtF*1000.f);
+    if(GameServices::inst().cameraShake(sh))
+      shake = shake + (sh-shake)*std::min(1.f, dtF*1000.f);
     }
 
   if(kickT<0.4f) {
@@ -873,15 +870,15 @@ void Camera::tick(uint64_t dt) {
     targetVelo = (origin - prev).length()/dtF;
   }
 
-  auto world = GameServices::inst().world();
-  if(world!=nullptr) {
-    auto  pl     = isFree() ? nullptr : world->player();
-    auto& physic = *world->physic();
+  auto physics = GameServices::inst().physicsWorld();
+  if(physics!=nullptr) {
+    auto  pl     = isFree() ? nullptr : GameServices::inst().cameraTarget();
+    auto& physic = *physics;
 
-    if(pl!=nullptr && pl->isSwim()) {
+    if(pl!=nullptr && pl->cameraTargetSwim()) {
       inWater = (angles.x < -8.f);
       }
-    else if(pl!=nullptr && (pl->isInAir() || pl->isJump()) && !pl->isDead()) {
+    else if(pl!=nullptr && (pl->cameraTargetInAir() || pl->cameraTargetJump()) && !pl->cameraTargetDead()) {
       // NOTE: not quite correct
       inWater = physic.cameraRay(inter.target, origin).waterCol % 2;
       }
@@ -893,8 +890,8 @@ void Camera::tick(uint64_t dt) {
   }
 
 void Camera::tickFirstPerson(float /*dtF*/) {
-  const auto pl     = GameServices::inst().player();
-  const auto rotMat = pl!=nullptr ? pl->cameraMatrix(true) : Matrix4x4::mkIdentity();
+  const auto pl     = GameServices::inst().cameraTarget();
+  const auto rotMat = pl!=nullptr ? pl->cameraTargetMatrix(true) : Matrix4x4::mkIdentity();
 
   state.spin   = clampRotation(state.spin);
   inter.target = state.target;
@@ -991,8 +988,8 @@ void Camera::tickThirdPerson(float dtF) {
     const float leanLen = lean.length();
     if(leanLen>1e-3f) {
       float room = 1;
-      if(auto world = GameServices::inst().world()) {
-        auto rc = world->physic()->ray(at, at + lean*((leanLen+leanClear)/leanLen));
+      if(auto physics = GameServices::inst().physicsWorld()) {
+        auto rc = physics->ray(at, at + lean*((leanLen+leanClear)/leanLen));
         if(rc.hasCol)
           room = std::clamp(((rc.v-at).length()-leanClear)/leanLen, 0.f, 1.f);
         }
@@ -1052,8 +1049,8 @@ float Camera::calcCameraColision(const Tempest::Vec3& target, const Tempest::Vec
   static float padding = 25;
   static int n = 1, nn=1;
 
-  auto world = GameServices::inst().world();
-  if(world==nullptr)
+  auto physics = GameServices::inst().physicsWorld();
+  if(physics==nullptr)
     return range;
 
   const auto origin = target + dir*range;
@@ -1062,7 +1059,7 @@ float Camera::calcCameraColision(const Tempest::Vec3& target, const Tempest::Vec
   vinv.mul(mkView(origin,angles));
   vinv.inverse();
 
-  auto& physic = *world->physic();
+  auto& physic = *physics;
   auto  dview  = (origin - target);
 
   raysCasted = 0;
@@ -1107,11 +1104,11 @@ Vec3 Camera::calcLookAtAngles(const Tempest::Vec3& origin, const Tempest::Vec3& 
 Vec3 Camera::calcCameraColision(const Tempest::Vec3& from, const Tempest::Vec3& dir) const {
   static float padding = 25;
 
-  auto world = GameServices::inst().world();
-  if(world==nullptr)
+  auto physics = GameServices::inst().physicsWorld();
+  if(physics==nullptr)
     return dir;
 
-  const auto& physic = *world->physic();
+  const auto& physic = *physics;
   const auto  len    = dir.length() + padding;
   const auto  nrm    = Vec3::normalize(dir);
 
@@ -1131,11 +1128,11 @@ Vec3 Camera::clampRotation(Tempest::Vec3 spin) {
   float       maxAzim = +180;
   float       minAzim = -180;
 
-  const auto pl = GameServices::inst().player();
+  const auto pl = GameServices::inst().cameraTarget();
   if(pl==nullptr)
     return spin;
 
-  const auto plSpin = (Vec3{0,  pl->rotation(), 0});
+  const auto plSpin = (Vec3{0,  pl->cameraTargetRotation(), 0});
   spin = spin - plSpin;
 
   spin.x = std::clamp(spin.x, minElev, maxElev);
@@ -1170,8 +1167,8 @@ void Camera::debugDraw(DbgPainter& p) {
   p.drawLine(state.target, inter.target);
   p.drawLine(inter.target, origin);
 
-  if(auto pl = GameServices::inst().player()) {
-    float a  = pl->rotationRad()+float(M_PI*0.5);
+  if(auto pl = GameServices::inst().cameraTarget()) {
+    float a  = pl->cameraTargetRotationRad()+float(M_PI*0.5);
     float c  = std::cos(a), s = std::sin(a);
     auto  ln = Vec3(c,0,s)*25.f;
     p.drawLine(inter.target-ln, inter.target+ln);
