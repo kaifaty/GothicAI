@@ -11,6 +11,7 @@
 #include "graphics/mesh/animation.h"
 #include "clothworld.h"
 #include "blooddecalsource.h"
+#include "physics/physicshost.h"
 
 #include "graphics/worldview.h"
 #include "graphics/lightgroup.h"
@@ -39,8 +40,27 @@ class MdlVisual;
 struct PhysicsNoise;
 struct HeroDeed;
 
-class World final : public ClothWorld, public BloodDecalSource {
+class World final : public ClothWorld, public BloodDecalSource, public PhysicsHost {
   public:
+    void setOriginalClothVisible(bool visible) override;
+    PhysicsHost::PhysicalSpell physicalSpell(int32_t spellId) const override;
+    std::weak_ptr<void> npcHandle(const Npc& npc) const override;
+    Npc* resolveNpc(const std::shared_ptr<void>& handle) const override;
+    std::string npcTraceName(const Npc& npc) const override;
+    Tempest::Vec3 npcPosition(const Npc& npc) const override;
+    uint64_t npcTickCount(const Npc& npc) const override;
+    bool npcUsesSimplifiedMovement(const Npc& npc) const override;
+    void finishNpcSupport(Npc& npc, uint64_t dt) override;
+    HitZones::Zone npcRayHitZone(const Npc& npc, const Tempest::Vec3& from,
+                               const Tempest::Vec3& to, float& distance) const override;
+    bool npcBodySinks(const Npc& npc) const override;
+    bool isPlacedItem(const Item& item) const override;
+    uint32_t placedItemZenId(const Item& item) const override;
+    void setPhysicsMatrix(Item& item, const Tempest::Matrix4x4& matrix) override;
+    void setPhysicsDisable(Item& item) override;
+    size_t wakeItems(const Tempest::Vec3& min, const Tempest::Vec3& max, size_t budget) override;
+    void itemHit(Item& item, asset::MaterialGroup material, float impulse, float mass) override;
+
     void animationPfx(const Animation::MdsParticleEffect& event, MdlVisual& visual);
 
     void probeMemory(std::string_view stage) const;
@@ -54,7 +74,7 @@ class World final : public ClothWorld, public BloodDecalSource {
     void                 insertPlayer(std::unique_ptr<Npc>&& npc, std::string_view waypoint);
     void                 setPlayer(Npc* npc);
     void                 postInit();
-    std::string_view     name() const { return wname; }
+    std::string_view     name() const override { return wname; }
     double               loadMilliseconds() const { return worldLoadMs; }
     const std::vector<WorldObjects::PlacedItem>& placedItemCensus() const { return wobj.placedItemCensus(); }
     WorldObjects::PhysicsDigest physicsDigest() const { return wobj.physicsDigest(); }

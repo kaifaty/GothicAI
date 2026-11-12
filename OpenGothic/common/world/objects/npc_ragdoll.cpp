@@ -575,8 +575,3 @@ void Npc::syncRagdoll() {
   durtyTranform = TR_Pos|TR_Rot|TR_Scale;
   { FrameProfile::Scope timing(FrameProfile::Zone::ForcedSyncAnimation,FrameProfile::watchedActor(this)); updateAnimation(0,true); }
   }
-
-Npc* noiseCulpritNpc(const CollisionWorld::CollisionBody& body, uint64_t step) {
-  const auto culprit=step<=body.noiseCulpritUntilStep ? body.noiseCulprit.lock() : nullptr;
-  return culprit!=nullptr ? static_cast<Npc*>(culprit->user_ptr) : nullptr;
-  }

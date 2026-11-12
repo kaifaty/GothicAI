@@ -1,9 +1,7 @@
 #include "dynamicworld_internal.h"
 
 #include "cloth.h"
-#include "game/gamescript.h"
-#include "world/world.h"
-#include "world/objects/npc.h"
+#include "physicshost.h"
 
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 
@@ -69,10 +67,10 @@ void DynamicWorld::moveBullet(BulletBody &b, const Tempest::Vec3& dir, uint64_t 
     if(!isSpell) {
       clothWorld->projectile(pos,end,Tempest::Vec3::normalize(incoming)*.35f,true);
       }
-    else if(ownerWorld!=nullptr) {
-      const auto kind=ownerWorld->script().physicalSpell(b.spellId());
-      if(kind==GameScript::PhysicalSpell::Fireball || kind==GameScript::PhysicalSpell::WindFist)
-        clothWorld->projectile(pos,end,Tempest::Vec3::normalize(incoming)*(kind==GameScript::PhysicalSpell::WindFist ? 8.f : 5.f),false);
+    else if(host!=nullptr) {
+      const auto kind=host->physicalSpell(b.spellId());
+      if(kind==PhysicsHost::PhysicalSpell::Fireball || kind==PhysicsHost::PhysicalSpell::WindFist)
+        clothWorld->projectile(pos,end,Tempest::Vec3::normalize(incoming)*(kind==PhysicsHost::PhysicalSpell::WindFist ? 8.f : 5.f),false);
       }
     };
 
@@ -85,7 +83,7 @@ void DynamicWorld::moveBullet(BulletBody &b, const Tempest::Vec3& dir, uint64_t 
     if(npcList->rayTestAll(pos,end,b.targetRange(),[&](Npc& npc) {
       // Capture the same bone intersection before damage can alter its pose.
       float distance=0;
-      const bool boneHit=hasCloth && npc.rayHitZone(pos,end,distance)!=HitZones::None;
+      const bool boneHit=hasCloth && host->npcRayHitZone(npc,pos,end,distance)!=HitZones::None;
       if(!b.cb->onCollidePrecise(npc,pos,end))
         return false;
       const auto impact=boneHit ? pos+Tempest::Vec3::normalize(end-pos)*distance : end;
