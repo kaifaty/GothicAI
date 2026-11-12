@@ -1,15 +1,16 @@
 # A hairstyle as strands: slicked back into a ponytail, the source for everything the game draws of it.
 #   python groom.py cap.npz uv.npz groups.npz <out dir> [strands, 60000] [seed, 1] [--skin skin.png] [--ears ears.npz]
-# cap.npz is the hair's outer surface and the tail of the generator's model (hair_cut.py); uv.npz and groups.npz are
-# the head's mesh and its vertex groups (dump_uv.py): the scalp under the hair.
+# cap.npz is the hair's outer surface and the tail of the generator's model (hair_layer.py; hair_cut.py before it);
+# uv.npz and groups.npz are the head's mesh and its vertex groups (dump_uv.py): the scalp under the hair.
 # - roots are spread evenly over the scalp inside the hairline; the hairline is the mask's edge with a slow noise.
-#   The mask of hair_cut.py leaves out the hair in front of the ears (the ears' hollows are dark like hair), so with
+#   The mask leaves out the thin hair at the line and in front of the ears (under 3 mm over the skin), so with
 #   --skin the scalp next to the mask that the skin map paints in the hair's colour grows hair too;
 # - a hair is combed back over the head and, from some centimetres off, straight to the knot; where that way
 #   leaves the hair (an ear), it follows the field of distance to the knot round it. Neither the shortest way nor
 #   the straight way to the knot is combing: the first goes from the forehead round the side of the head, the
 #   second fans out from the point opposite the knot, which is the middle of the hairline;
-# - a hair lies between the scalp and the outer surface: it leaves the skin and rises to its own level;
+# - a hair lies between the scalp and the outer surface: it leaves the skin and rises to its own level within a
+#   centimetre or two, so the strands fill the measured layer up to its surface;
 # - hairs stick into locks, and locks into bigger locks: a hair is pulled to the hair that leads its lock;
 # - at the knot the hairs pass the cord and fill the tail's measured shape; they end at different lengths;
 # - a few hairs leave their lock and lift off, short hairs soften the hairline, every hair wavers a little.
@@ -32,6 +33,8 @@ if '--ears' in sys.argv:
 cap = np.load(sys.argv[1]); uvd = np.load(sys.argv[2]); grp = np.load(sys.argv[3]); OUT = sys.argv[4]
 N = int(sys.argv[5]) if len(sys.argv) > 5 else 60000; rng = np.random.default_rng(int(sys.argv[6]) if len(sys.argv) > 6 else 1)
 K, H, STOP = 48, 0.0025, 0.022                    # points of a strand, the step over the head, where the way to the knot ends
+RISE = 0.008                                      # a hair reaches its level of the layer over this way from the root (63 %)
+SHELL = 0.012                                     # the hairs lie within this depth under the outer surface
 C, D = cap['C'], float(cap['D']); DR = np.radians(D)
 # The cap's grid leaves a hole of 10 degrees round its poles, and the poles are just over the ears: the grid grows
 # 8 degrees there, with no measured hair; the skin map says whether hair grows in it.
@@ -78,7 +81,7 @@ if tear is not None:                              # the skin a ray meets first i
     ear[near] = hear; ear = ndimage.binary_dilation(ear, iterations=1)
     # Hair next to an ear lies on the head, not on the ear: there the scalp is the head's side round the ear, and so
     # it is in the cells no ray was sent to (far from the hair), which take the nearest known cell. The hair's outer
-    # surface is not measured on an ear either: the cap of hair_cut.py takes the dark top of the model's ear for hair.
+    # surface is not measured on an ear either: the model's ear is not the head's to the millimetre.
     # With the ear's distance in these cells the short hairs of the temples rose over its top, 2 cm out of the head.
     known &= ~ear; mask = mask & ~ndimage.binary_dilation(ear, iterations=2)
 ix = ndimage.distance_transform_edt(~known, return_distances=False, return_indices=True); rs = rs[ix[0], ix[1]]
@@ -94,10 +97,17 @@ bare = mask & (rs > cap_r+0.004)                # the measured hair hangs clear 
 rh = np.where(mask, cap_r, rs+0.004); mask = mask | grown      # off the measured hair the layer lies on the skin
 rh = ndimage.gaussian_filter(rh, (1.0, 1.0), mode=('nearest', 'wrap'))
 r_in = ndimage.gaussian_filter(rs, 0.7, mode=('nearest', 'wrap'))+0.0003
-# The layer grows from the hairline inwards: at the line hair lies on the skin, whatever the measured surface says
-# there (the head is fitted to the bald model, and its forehead is not the full model's to the millimetre).
-grow = 0.0015+0.45*ndimage.distance_transform_edt(mask)*float(np.median(rs[mask]))*DR
-r_out = r_in+np.clip(rh-r_in, 0.0015, grow)
+# The layer is what was measured, up to its edge. (It used to grow from the mask's edge inwards, 0.45 mm a
+# millimetre: right for a hairline measured by colour on a model that stood 3 mm off the head, wrong for every other
+# edge. Round the ears, on the nape and at the knot hair does not start, it passes, and there the strands were held
+# 10-25 mm under the measured surface.) How fast a hair leaves the skin is the hair's own matter, below.
+r_out = r_in+np.maximum(rh-r_in, 0.0015)
+if tear is not None and ear.any():
+    # Next to an ear the hair is tucked: it lies on the side of the head and gains its height further off, 0.6 mm a
+    # millimetre. The hairs go round an ear, so behind it they leave a wake; at the full height of the layer the wake
+    # was a slit one looked through into the dark under the hair, from the ear to the knot.
+    p_in = C+dirs*r_in[..., None]; d_ear = cKDTree(p_in[ear]).query(p_in.reshape(-1, 3))[0].reshape(mask.shape)
+    r_out = np.minimum(r_out, r_in+0.0015+0.6*d_ear)
 thick = (rh-rs)[mask & ~bare]
 
 # ---- the hairline: the mask's edge, moved in and out by a slow noise
@@ -196,8 +206,15 @@ lift_tip = np.where(loose, rng.uniform(0.0015, 0.006, n_all), np.where(short, rn
 
 # ---- into space: between the scalp and the outer surface
 kk = np.arange(S+1)[None]; g = pos.astype(float); ri = at(r_in, g); ro = at(r_out, g)
-depth = lane[:, None]*(1-np.exp(-kk*H/0.030)); fr = np.clip(kk/np.maximum(steps[:, None], 1), 0, 1)
-rad3 = ri+depth*(ro-ri)+lift_tip[:, None]*fr**1.5; rad3[:, 0] = ri[:, 0]-0.0012
+fr = np.clip(kk/np.maximum(steps[:, None], 1), 0, 1)
+# A hair's level is counted down from the outer surface, within SHELL of it: hair is a shell a centimetre thick, and
+# where the measured layer is thicker (4 cm over the nape, where the hair leaves the head for the knot) there is air
+# under it. Spread over the whole layer, the hairs there were a veil one could see through.
+room = np.minimum(ro-ri, SHELL); lev = (1-np.exp(-kk*H/RISE))*((ro-ri)-(1-lane[:, None])*room)
+# a short hair (the hairline, the hairs that end at an ear) stays by the skin: at its lock's level of a thick layer it
+# stood up, a fringe of frizz round the head and tufts over the ears
+lev = np.where(short[:, None], np.minimum(lev, 0.0025), lev)
+rad3 = ri+lev+lift_tip[:, None]*fr**1.5; rad3[:, 0] = ri[:, 0]-0.0012
 surf = (C+direction(g)*rad3[..., None]).astype(np.float32)
 
 # ---- the tail: a hair keeps the side it came from and fills the measured shape
