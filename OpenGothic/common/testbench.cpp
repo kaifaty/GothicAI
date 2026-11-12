@@ -1182,14 +1182,6 @@ void TestBench::beforeWorldTick(uint64_t dt) {
   bench.character.characterPlatformMatrix=matrix;
   bench.character.characterPlatform->setObjMatrix(matrix);bench.character.characterPlatformVisual->setObjMatrix(matrix);
   }
-
-
-std::function<bool()> TestBench::aiBusy;
-std::function<void(std::string_view)> TestBench::openMenu;
-std::function<bool(std::string_view,std::string_view)> TestBench::aiReached;
-std::function<bool(World&,std::string_view,float)> TestBench::stuckBegin;
-std::function<std::string(World&,std::string_view)> TestBench::npcView;
-
 namespace {
 bool benchBodySweep = false;
 }
@@ -1201,7 +1193,6 @@ void TestBench::allowBodySweep(bool allow) {
 bool TestBench::bodySweepAllowed() {
   return benchBodySweep;
   }
-std::function<bool(World&)> TestBench::stuckEnd;
 
 bool TestBench::voiceStems() {
   static const bool enabled = envStr("OPENGOTHIC_BENCH_VOICE_STEM")!=nullptr &&

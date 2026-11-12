@@ -301,6 +301,10 @@ void SceneGlobals::setFog(const Tempest::StorageImage* lut, const Tempest::Stora
   uboGlobalCpu.fogQuality = none ? 0 : (sep ? 2 : 1);
   }
 
+void SceneGlobals::setFogOcclusion(const Tempest::StorageImage* occlusion) {
+  fogOcclusion = (occlusion==nullptr || occlusion->isEmpty()) ? &Resources::fallbackImage() : occlusion;
+  }
+
 void SceneGlobals::setShadowMap(const Tempest::Texture2d* tex[]) {
   for(size_t i=0; i<Resources::ShadowLayers; ++i)
     shadowMap[i] = tex[i];

@@ -101,6 +101,7 @@ class PfxBucket {
       L_VsmPageAtlas = 20,
       L_FogLut   = 17,
       L_FogLutMs = 18,
+      L_FogOcc   = 22, // materials_common.glsl: the sun's bits along the fog's ray
       };
 
     struct Block final {

@@ -11,7 +11,7 @@
 #include "game/meleeriposte.h"
 #include "world/objects/item.h"
 #include "world/world.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 #include "gothic.h"
 #include "resources.h"
 
@@ -171,9 +171,9 @@ bool Npc::isMeleeStunned() const {
 bool Npc::allowMeleeStunAction(std::string_view action) {
   if(!isMeleeStunned())
     return true;
-  if(TestBench::bodyTracing())
-    TestBench::bodyEvent(*this,currentTarget,"stun_refused",owner.tickCount(),
-                        "\"action\":"+TestBench::bodyJson(action));
+  if(Bench::bodyTracing())
+    Bench::bodyEvent(*this,currentTarget,"stun_refused",owner.tickCount(),
+                        "\"action\":"+Bench::bodyJson(action));
   return false;
   }
 
@@ -193,9 +193,9 @@ void Npc::startMeleeStun(Npc& by, std::string_view reason) {
   clearGoTo();
   mvAlgo.clearSpeed();
   meleeStunLook(by);
-  if(TestBench::bodyTracing())
-    TestBench::bodyEvent(*this,&by,"stun_start",owner.tickCount(),
-                        "\"reason\":"+TestBench::bodyJson(reason)+
+  if(Bench::bodyTracing())
+    Bench::bodyEvent(*this,&by,"stun_start",owner.tickCount(),
+                        "\"reason\":"+Bench::bodyJson(reason)+
                         (beast ? meleeBeastFields(physicsMass()) : std::string())+
                         ",\"duration_ms\":"+std::to_string(MeleeImpact::stunDuration(reason)));
   }
@@ -278,9 +278,9 @@ void Npc::endMeleeStun(std::string_view reason) {
     meleePosture.recover(owner.tickCount());
   meleeStunReason.clear();
   meleeStunUntil = 0;
-  if(TestBench::bodyTracing())
-    TestBench::bodyEvent(*this,currentTarget,"stun_end",owner.tickCount(),
-                        "\"reason\":"+TestBench::bodyJson(reason));
+  if(Bench::bodyTracing())
+    Bench::bodyEvent(*this,currentTarget,"stun_end",owner.tickCount(),
+                        "\"reason\":"+Bench::bodyJson(reason));
   }
 
 void Npc::tickMeleeParry() {
@@ -304,8 +304,8 @@ void Npc::tickMeleeParry() {
       tickMeleeStamina();
       const float cost = hasStamina() ? MeleeParry::WhiffCost : 0.f;
       spendStamina("parade_whiff",cost);
-      if(TestBench::bodyTracing())
-        TestBench::bodyEvent(*this,currentTarget,"parade_whiff",now,"\"cost\":"+std::to_string(cost));
+      if(Bench::bodyTracing())
+        Bench::bodyEvent(*this,currentTarget,"parade_whiff",now,"\"cost\":"+std::to_string(cost));
       }
     meleeParadeOrigin.reset();
     }
@@ -337,15 +337,15 @@ void Npc::applyMeleeParry(Npc& attacker, const MeleeBladeContact* contact) {
   const float before = stamina();
   const bool broken = !parry && MeleeParry::guardBroken(before,cost,hasStamina());
   spendStamina(parry ? "parry" : "guard",cost);
-  if(TestBench::bodyTracing()) {
+  if(Bench::bodyTracing()) {
     auto fields = "\"parade_ms\":"+std::to_string(elapsed)+
                   ",\"window_ms\":"+std::to_string(MeleeParry::windowMs(talent))+
                   ",\"cost\":"+std::to_string(cost);
     if(!parry)
       fields += ",\"before\":"+std::to_string(before)+",\"after\":"+std::to_string(stamina());
-    TestBench::bodyEvent(*this,&attacker,parry ? "parry" : "guard",now,fields);
+    Bench::bodyEvent(*this,&attacker,parry ? "parry" : "guard",now,fields);
     if(broken)
-      TestBench::bodyEvent(*this,&attacker,"guard_break",now,
+      Bench::bodyEvent(*this,&attacker,"guard_break",now,
                           "\"cost\":"+std::to_string(cost)+",\"before\":"+std::to_string(before));
     }
   if(parry && attacker.isHuman())
@@ -364,8 +364,8 @@ void Npc::tickMeleeStamina() {
     }
   const bool exhausted = meleeStamina.exhausted;
   MeleeStamina::recover(meleeStamina,staminaMax(),owner.tickCount(),hasState(BS_PARADE) || isMeleeCharging());
-  if(exhausted && !meleeStamina.exhausted && TestBench::bodyTracing())
-    TestBench::bodyEvent(*this,currentTarget,"stamina_recovered",owner.tickCount(),
+  if(exhausted && !meleeStamina.exhausted && Bench::bodyTracing())
+    Bench::bodyEvent(*this,currentTarget,"stamina_recovered",owner.tickCount(),
                         "\"after\":" + std::to_string(stamina()));
   }
 
@@ -387,9 +387,9 @@ bool Npc::allowStaminaAction(std::string_view action, float cost, bool fullCost)
   tickMeleeStamina();
   const bool allowed = fullCost ? MeleeStamina::canAfford(meleeStamina,cost,hasStamina()) :
                                   MeleeStamina::canAct(meleeStamina,hasStamina());
-  if(!allowed && TestBench::bodyTracing())
-    TestBench::bodyEvent(*this,currentTarget,"stamina_refused",owner.tickCount(),
-                        "\"action\":" + TestBench::bodyJson(action) + ",\"after\":" + std::to_string(stamina()));
+  if(!allowed && Bench::bodyTracing())
+    Bench::bodyEvent(*this,currentTarget,"stamina_refused",owner.tickCount(),
+                        "\"action\":" + Bench::bodyJson(action) + ",\"after\":" + std::to_string(stamina()));
   return allowed;
   }
 
@@ -399,13 +399,13 @@ void Npc::spendStamina(std::string_view action, float cost) {
   const float before = stamina();
   const bool exhausted = meleeStamina.exhausted;
   MeleeStamina::drain(meleeStamina,cost,owner.tickCount());
-  if(!TestBench::bodyTracing())
+  if(!Bench::bodyTracing())
     return;
-  const auto fields = "\"action\":" + TestBench::bodyJson(action) + ",\"cost\":" + std::to_string(cost) +
+  const auto fields = "\"action\":" + Bench::bodyJson(action) + ",\"cost\":" + std::to_string(cost) +
                       ",\"before\":" + std::to_string(before) + ",\"after\":" + std::to_string(stamina());
-  TestBench::bodyEvent(*this,currentTarget,"stamina_spend",owner.tickCount(),fields);
+  Bench::bodyEvent(*this,currentTarget,"stamina_spend",owner.tickCount(),fields);
   if(!exhausted && meleeStamina.exhausted)
-    TestBench::bodyEvent(*this,currentTarget,"stamina_exhausted",owner.tickCount(),fields);
+    Bench::bodyEvent(*this,currentTarget,"stamina_exhausted",owner.tickCount(),fields);
   }
 
 void Npc::waitForMeleeStamina(uint64_t dt) {
@@ -483,12 +483,12 @@ std::optional<uint64_t> Npc::nextMeleeContactMs() const {
   }
 
 void Npc::meleeDodgeNote(const std::string& text, std::string_view phase, const std::string& fields) {
-  if(TestBench::isActive()) {
-    const auto self = TestBench::who(this);
-    TestBench::note(("melee dodge "+std::string(self)+": "+text).c_str());
+  if(Bench::isActive()) {
+    const auto self = Bench::who(this);
+    Bench::note(("melee dodge "+std::string(self)+": "+text).c_str());
     }
-  if(TestBench::bodyTracing())
-    TestBench::bodyEvent(*this,currentTarget,phase,owner.tickCount(),fields,visual.pose().animNames());
+  if(Bench::bodyTracing())
+    Bench::bodyEvent(*this,currentTarget,phase,owner.tickCount(),fields,visual.pose().animNames());
   }
 
 bool Npc::meleeDodgeEvades(Npc& other, std::string_view kind) {
@@ -500,15 +500,15 @@ bool Npc::meleeDodgeEvades(Npc& other, std::string_view kind) {
   const auto window = MeleeDodge::invulnerability(layer->move.kind);
   if(kind=="melee")
     BodyObservations::noteEvent(*this,&other,"evaded",now);
-  const auto by = TestBench::who(&other);
+  const auto by = Bench::who(&other);
   meleeDodgeNote(std::string(kind)+" hit by "+std::string(by)+" at "+std::to_string(elapsed)+" ms of "+
                  std::string(MeleeDodge::name(layer->move.kind))+" "+std::to_string(window.beginMs)+"-"+
                  std::to_string(window.endMs)+" ms: did not pass (no damage, balance or reaction), hp "+
                  std::to_string(attribute(ATR_HITPOINTS)),
                  "dodge_invulnerable",
-                 "\"damage_kind\":"+TestBench::bodyJson(kind)+",\"by\":"+TestBench::bodyJson(by)+
-                 ",\"kind\":"+TestBench::bodyJson(MeleeDodge::name(layer->move.kind))+
-                 ",\"direction\":"+TestBench::bodyJson(MeleeDodge::name(layer->move.direction))+
+                 "\"damage_kind\":"+Bench::bodyJson(kind)+",\"by\":"+Bench::bodyJson(by)+
+                 ",\"kind\":"+Bench::bodyJson(MeleeDodge::name(layer->move.kind))+
+                 ",\"direction\":"+Bench::bodyJson(MeleeDodge::name(layer->move.direction))+
                  ",\"elapsed_ms\":"+std::to_string(elapsed)+
                  ",\"window_ms\":["+std::to_string(window.beginMs)+","+std::to_string(window.endMs)+"]"+
                  ",\"hp\":"+std::to_string(attribute(ATR_HITPOINTS)));
@@ -517,14 +517,14 @@ bool Npc::meleeDodgeEvades(Npc& other, std::string_view kind) {
 
 void Npc::meleeBargeNote(const Npc* target, uint64_t elapsed, std::string_view outcome, std::string_view predicted) {
   const bool differs = !predicted.empty() && predicted!=outcome;
-  if(TestBench::isActive())
-    TestBench::note(("melee barge "+std::string(TestBench::who(this))+": contact "+
-                    (target ? std::string(TestBench::who(target)) : "-")+" at "+std::to_string(elapsed)+
+  if(Bench::isActive())
+    Bench::note(("melee barge "+std::string(Bench::who(this))+": contact "+
+                    (target ? std::string(Bench::who(target)) : "-")+" at "+std::to_string(elapsed)+
                     " ms, "+std::string(outcome)+(differs ? " (predicted "+std::string(predicted)+")" : "")).c_str());
-  if(TestBench::bodyTracing())
-    TestBench::bodyEvent(*this,target,"barge_contact",owner.tickCount(),
-                        "\"elapsed_ms\":"+std::to_string(elapsed)+",\"outcome\":"+TestBench::bodyJson(outcome)+
-                        (predicted.empty() ? "" : ",\"predicted\":"+TestBench::bodyJson(predicted)),
+  if(Bench::bodyTracing())
+    Bench::bodyEvent(*this,target,"barge_contact",owner.tickCount(),
+                        "\"elapsed_ms\":"+std::to_string(elapsed)+",\"outcome\":"+Bench::bodyJson(outcome)+
+                        (predicted.empty() ? "" : ",\"predicted\":"+Bench::bodyJson(predicted)),
                         visual.pose().animNames());
   }
 
@@ -601,12 +601,12 @@ bool Npc::isMeleeRiposteHeld() const {
 bool Npc::meleeAiSpecialBusy(std::string_view move) {
   if(currentTarget==nullptr || !currentTarget->meleeAiSpecialSlot.busy())
     return false;
-  if(TestBench::isActive())
-    TestBench::note(("melee ai "+std::string(move)+" "+std::string(TestBench::who(this))+": "+
-                    std::string(TestBench::who(currentTarget))+" skipped busy").c_str());
-  if(TestBench::bodyTracing())
-    TestBench::bodyEvent(*this,currentTarget,"ai_special_busy",owner.tickCount(),
-                        "\"special\":"+TestBench::bodyJson(move));
+  if(Bench::isActive())
+    Bench::note(("melee ai "+std::string(move)+" "+std::string(Bench::who(this))+": "+
+                    std::string(Bench::who(currentTarget))+" skipped busy").c_str());
+  if(Bench::bodyTracing())
+    Bench::bodyEvent(*this,currentTarget,"ai_special_busy",owner.tickCount(),
+                        "\"special\":"+Bench::bodyJson(move));
   return true;
   }
 
@@ -616,9 +616,9 @@ void Npc::beginMeleeAiSpecial(MeleeAi::Special move) {
     throw std::runtime_error("Melee AI special target is already occupied");
   meleeAiSpecialTarget = currentTarget->handlePtr();
   meleeAiSpecial = move;
-  if(TestBench::bodyTracing())
-    TestBench::bodyEvent(*this,currentTarget,"ai_special_start",owner.tickCount(),
-                        "\"special\":"+TestBench::bodyJson(move==MeleeAi::Special::Charge ? "charge" :
+  if(Bench::bodyTracing())
+    Bench::bodyEvent(*this,currentTarget,"ai_special_start",owner.tickCount(),
+                        "\"special\":"+Bench::bodyJson(move==MeleeAi::Special::Charge ? "charge" :
                                                           move==MeleeAi::Special::Barge ? "barge" : "riposte"));
   }
 
@@ -632,15 +632,15 @@ void Npc::endMeleeAiSpecial() {
   const auto move = meleeAiSpecial;
   if(move!=MeleeAi::Special::Riposte)
     meleeAiSpecialEnded = owner.tickCount();
-  if(move==MeleeAi::Special::Charge && TestBench::isActive())
-    TestBench::note(("melee ai charge "+std::string(TestBench::who(this))+": release turn "+
+  if(move==MeleeAi::Special::Charge && Bench::isActive())
+    Bench::note(("melee ai charge "+std::string(Bench::who(this))+": release turn "+
                     std::to_string(meleeAiChargeTurn)+" deg").c_str());
-  if(TestBench::bodyTracing()) {
+  if(Bench::bodyTracing()) {
     if(move==MeleeAi::Special::Charge)
-      TestBench::bodyEvent(*this,target,"ai_charge_end",owner.tickCount(),
+      Bench::bodyEvent(*this,target,"ai_charge_end",owner.tickCount(),
                           "\"turn_deg\":"+std::to_string(meleeAiChargeTurn));
-    TestBench::bodyEvent(*this,target,"ai_special_end",owner.tickCount(),
-                        "\"special\":"+TestBench::bodyJson(move==MeleeAi::Special::Charge ? "charge" :
+    Bench::bodyEvent(*this,target,"ai_special_end",owner.tickCount(),
+                        "\"special\":"+Bench::bodyJson(move==MeleeAi::Special::Charge ? "charge" :
                                                           move==MeleeAi::Special::Barge ? "barge" : "riposte"));
     }
   meleeAiSpecialTarget.reset();
@@ -681,8 +681,8 @@ bool Npc::tryMeleeAiCharge() {
      currentTarget==nullptr || !visual.pose().isStanding())
     return false;
   const auto skip = [&](std::string_view reason) {
-    if(TestBench::isActive())
-      TestBench::note(("melee ai charge "+std::string(TestBench::who(this))+": "+std::string(TestBench::who(currentTarget))+
+    if(Bench::isActive())
+      Bench::note(("melee ai charge "+std::string(Bench::who(this))+": "+std::string(Bench::who(currentTarget))+
                       " skipped "+std::string(reason)).c_str());
     };
   if(!fghAlgo.isInWRange(*this,*currentTarget,owner.script()) || !fghAlgo.isInFocusAngle(*this,*currentTarget,5.f)) {
@@ -716,14 +716,14 @@ bool Npc::tryMeleeAiCharge() {
     meleeAiChargeTurn = 0.f;
     meleeAiDodgeStreak.reset();
     }
-  if(TestBench::isActive())
-    TestBench::note(("melee ai charge "+std::string(TestBench::who(this))+": "+std::string(TestBench::who(currentTarget))+
+  if(Bench::isActive())
+    Bench::note(("melee ai charge "+std::string(Bench::who(this))+": "+std::string(Bench::who(currentTarget))+
                     " chance "+std::to_string(chance)+" → "+(charge ? "charge" : "attack")).c_str());
-  if(TestBench::bodyTracing())
-    TestBench::bodyEvent(*this,currentTarget,"ai_charge_roll",owner.tickCount(),
+  if(Bench::bodyTracing())
+    Bench::bodyEvent(*this,currentTarget,"ai_charge_roll",owner.tickCount(),
                         "\"chance\":"+std::to_string(chance)+",\"roll\":"+std::to_string(uniform)+
                         ",\"hold_ms\":"+std::to_string(charge ? meleeAiChargeHold : 0)+
-                        ",\"outcome\":"+TestBench::bodyJson(charge ? "charge" : "attack"));
+                        ",\"outcome\":"+Bench::bodyJson(charge ? "charge" : "attack"));
   return charge;
   }
 
@@ -793,14 +793,14 @@ bool Npc::tryMeleeAiBarge() {
   const bool barge = MeleeAi::bargeRoll(talent,uniform) && meleeDodge(MeleeDodge::Direction::Forward);
   if(barge)
     meleeAiDodgeStreak.reset();
-  if(TestBench::isActive())
-    TestBench::note(("melee ai barge "+std::string(TestBench::who(this))+": "+std::string(TestBench::who(currentTarget))+" "+
+  if(Bench::isActive())
+    Bench::note(("melee ai barge "+std::string(Bench::who(this))+": "+std::string(Bench::who(currentTarget))+" "+
                     std::string(MeleeAi::name(trigger))+" chance "+std::to_string(chance)+" → "+(barge ? "barge" : "none")).c_str());
-  if(TestBench::bodyTracing())
-    TestBench::bodyEvent(*this,currentTarget,"ai_barge_roll",now,
-                        "\"trigger\":"+TestBench::bodyJson(MeleeAi::name(trigger))+
+  if(Bench::bodyTracing())
+    Bench::bodyEvent(*this,currentTarget,"ai_barge_roll",now,
+                        "\"trigger\":"+Bench::bodyJson(MeleeAi::name(trigger))+
                         ",\"chance\":"+std::to_string(chance)+",\"roll\":"+std::to_string(uniform)+
-                        ",\"outcome\":"+TestBench::bodyJson(barge ? "barge" : "none"));
+                        ",\"outcome\":"+Bench::bodyJson(barge ? "barge" : "none"));
   return barge;
   }
 
@@ -828,14 +828,14 @@ bool Npc::tryMeleeAiRiposte() {
   const float chance = MeleeAi::riposteChance(talent);
   const float uniform = float(owner.script().rand(1u<<24,this))/float(1u<<24);
   const bool riposte = MeleeAi::riposteRoll(talent,uniform) && beginMeleeRiposte();
-  if(TestBench::isActive())
-    TestBench::note(("melee ai riposte "+std::string(TestBench::who(this))+": "+std::string(TestBench::who(&victim))+
+  if(Bench::isActive())
+    Bench::note(("melee ai riposte "+std::string(Bench::who(this))+": "+std::string(Bench::who(&victim))+
                     " chance "+std::to_string(chance)+" → "+(riposte ? "riposte" : "attack")).c_str());
-  if(TestBench::bodyTracing())
-    TestBench::bodyEvent(*this,&victim,"ai_riposte_roll",owner.tickCount(),
+  if(Bench::bodyTracing())
+    Bench::bodyEvent(*this,&victim,"ai_riposte_roll",owner.tickCount(),
                         "\"chance\":"+std::to_string(chance)+",\"roll\":"+std::to_string(uniform)+
                         ",\"stun\":"+std::to_string(victim.meleeStunSerial)+
-                        ",\"outcome\":"+TestBench::bodyJson(riposte ? "riposte" : "attack"));
+                        ",\"outcome\":"+Bench::bodyJson(riposte ? "riposte" : "attack"));
   return riposte;
   }
 
@@ -845,10 +845,10 @@ float Npc::meleeRiposteMultiplier(const Npc& target) const {
   }
 
 void Npc::meleeRiposteNote(const Npc* victim, const std::string& text, std::string_view phase, const std::string& fields) {
-  if(TestBench::isActive())
-    TestBench::note(("melee riposte "+std::string(TestBench::who(this))+": "+text).c_str());
-  if(TestBench::bodyTracing())
-    TestBench::bodyEvent(*this,victim,phase,owner.tickCount(),fields,visual.pose().animNames());
+  if(Bench::isActive())
+    Bench::note(("melee riposte "+std::string(Bench::who(this))+": "+text).c_str());
+  if(Bench::bodyTracing())
+    Bench::bodyEvent(*this,victim,phase,owner.tickCount(),fields,visual.pose().animNames());
   }
 
 bool Npc::beginMeleeRiposte() {
@@ -915,7 +915,7 @@ bool Npc::beginMeleeRiposte() {
   clearGoTo();
   mvAlgo.clearSpeed();
   finishMeleeShadowSwing(true,true);
-  meleeRiposteNote(&victim,"start "+std::string(TestBench::who(&victim))+" at "+std::to_string(s.distanceCm)+" cm",
+  meleeRiposteNote(&victim,"start "+std::string(Bench::who(&victim))+" at "+std::to_string(s.distanceCm)+" cm",
                    "riposte_start","\"distance_cm\":"+std::to_string(s.distanceCm)+",\"cost\":"+std::to_string(cost)+
                    ",\"hero_y_cm\":"+std::to_string(y)+",\"victim_y_cm\":"+std::to_string(victim.y));
   return true;
@@ -953,7 +953,7 @@ void Npc::meleeRiposteBlade() {
     meleeRiposteNote(nullptr,"no handover victim removed","riposte_no_handover","\"reason\":\"victim removed\"");
     return;
     }
-  meleeRiposteNote(victim,"blade "+std::string(TestBench::who(victim))+" at "+std::to_string(elapsed)+
+  meleeRiposteNote(victim,"blade "+std::string(Bench::who(victim))+" at "+std::to_string(elapsed)+
                    " ms d="+std::to_string(distance)+" start_d="+std::to_string(startDistance)+" mult="+std::to_string(MeleeRiposte::multiplier()),
                    "riposte_blade","\"elapsed_ms\":"+std::to_string(elapsed)+",\"distance_cm\":"+std::to_string(distance)+
                    ",\"start_distance_cm\":"+std::to_string(startDistance)+",\"riposte_mult\":"+std::to_string(MeleeRiposte::multiplier())+
@@ -992,8 +992,8 @@ void Npc::tickMeleeRiposte() {
       const auto remaining = Vec3(p.x-victim->x,0,p.z-victim->z);
       r.blocked = remaining.quadLength()>1.f;
       }
-    if(TestBench::bodyTracing())
-      TestBench::bodyEvent(*this,victim,"riposte_alignment",owner.tickCount(),
+    if(Bench::bodyTracing())
+      Bench::bodyEvent(*this,victim,"riposte_alignment",owner.tickCount(),
                           "\"elapsed_ms\":"+std::to_string(elapsed)+",\"victim_y_cm\":"+std::to_string(victim->y)+
                           ",\"pair_distance_cm\":"+std::to_string(std::hypot(r.pair.x-victim->x,r.pair.z-victim->z))+
                           ",\"blocked\":"+(r.blocked ? "true" : "false"));
@@ -1014,7 +1014,7 @@ void Npc::tickMeleeRiposte() {
         away = Vec3::normalize(away)*20.f;
       if(victim->knockDownMelee(*this,away,false,"riposte")) {
         victim->meleeRiposteHoldUntil = 0;
-        meleeRiposteNote(victim,"handover "+std::string(TestBench::who(victim))+" at "+std::to_string(elapsed)+" ms",
+        meleeRiposteNote(victim,"handover "+std::string(Bench::who(victim))+" at "+std::to_string(elapsed)+" ms",
                          "riposte_handover","\"elapsed_ms\":"+std::to_string(elapsed)+",\"reason\":\"riposte\"");
         } else {
         meleeRiposteNote(victim,"no handover ragdoll unavailable","riposte_no_handover",
@@ -1062,12 +1062,12 @@ float Npc::meleeChargeMultiplier() const {
   }
 
 void Npc::meleeChargeNote(const std::string& text, std::string_view phase, const std::string& fields) {
-  if(TestBench::isActive()) {
-    const auto self = TestBench::who(this);
-    TestBench::note(("melee charge "+std::string(self)+": "+text).c_str());
+  if(Bench::isActive()) {
+    const auto self = Bench::who(this);
+    Bench::note(("melee charge "+std::string(self)+": "+text).c_str());
     }
-  if(TestBench::bodyTracing())
-    TestBench::bodyEvent(*this,currentTarget,phase,owner.tickCount(),fields,visual.pose().animNames());
+  if(Bench::bodyTracing())
+    Bench::bodyEvent(*this,currentTarget,phase,owner.tickCount(),fields,visual.pose().animNames());
   }
 
 void Npc::meleeChargeTap(uint64_t heldMs) {
@@ -1115,7 +1115,7 @@ void Npc::cancelMeleeCharge(std::string_view reason) {
     visual.interrupt();
     setAnim(Anim::Idle);
     }
-  meleeChargeNote("cancelled by "+std::string(reason),"charge_cancelled","\"reason\":"+TestBench::bodyJson(reason));
+  meleeChargeNote("cancelled by "+std::string(reason),"charge_cancelled","\"reason\":"+Bench::bodyJson(reason));
   }
 
 void Npc::tickMeleeCharge() {
@@ -1155,11 +1155,11 @@ void Npc::tickMeleeCharge() {
     if(meleeAiSpecial==MeleeAi::Special::Charge) {
       meleeAiChargeYaw = angle;
       meleeAiChargeTurn = 0.f;
-      if(TestBench::isActive())
-        TestBench::note(("melee ai charge "+std::string(TestBench::who(this))+": "+std::string(TestBench::who(currentTarget))+
+      if(Bench::isActive())
+        Bench::note(("melee ai charge "+std::string(Bench::who(this))+": "+std::string(Bench::who(currentTarget))+
                         " hold "+std::to_string(meleeAiChargeHold)+" ms, release at "+std::to_string(elapsed)+" ms").c_str());
-      if(TestBench::bodyTracing())
-        TestBench::bodyEvent(*this,currentTarget,"ai_charge_release",owner.tickCount(),
+      if(Bench::bodyTracing())
+        Bench::bodyEvent(*this,currentTarget,"ai_charge_release",owner.tickCount(),
                             "\"hold_ms\":"+std::to_string(meleeAiChargeHold)+",\"elapsed_ms\":"+std::to_string(elapsed));
       }
     if(MeleeCharge::autoRelease(elapsed) && !meleeChargeReleased)
@@ -1194,8 +1194,8 @@ bool Npc::meleeDodge(MeleeDodge::Direction direction) {
     return false;
   const std::string dir    = std::string(MeleeDodge::name(direction));
   const std::string armour = std::string(MeleeDodge::name(armorClass));
-  const std::string head   = "\"direction\":"+TestBench::bodyJson(dir)+",\"armour\":"+TestBench::bodyJson(armour)+
-                             ",\"kind_wanted\":"+TestBench::bodyJson(MeleeDodge::name(wanted));
+  const std::string head   = "\"direction\":"+Bench::bodyJson(dir)+",\"armour\":"+Bench::bodyJson(armour)+
+                             ",\"kind_wanted\":"+Bench::bodyJson(MeleeDodge::name(wanted));
 
   MeleeDodge::Situation s;
   s.enabled     = Gothic::physicsFlags().meleeDodge;
@@ -1218,7 +1218,7 @@ bool Npc::meleeDodge(MeleeDodge::Direction direction) {
     if(refusal==MeleeDodge::Refusal::Stunned)
       allowMeleeStunAction("dodge"); // the stun_refused event, as a parade's and a jump back's
     meleeDodgeNote(dir+", armour "+armour+": refused, "+std::string(MeleeDodge::name(refusal)),"dodge_refused",
-                   head+",\"reason\":"+TestBench::bodyJson(MeleeDodge::name(refusal)));
+                   head+",\"reason\":"+Bench::bodyJson(MeleeDodge::name(refusal)));
     return false;
     }
 
@@ -1239,7 +1239,7 @@ bool Npc::meleeDodge(MeleeDodge::Direction direction) {
   if(chosen==nullptr) {
     if(!plan.jumpBack) {
       meleeDodgeNote(dir+", armour "+armour+", "+std::string(MeleeDodge::name(wanted))+": no dodge this way (no "+missing+")",
-                     "dodge_none",head+",\"missing\":"+TestBench::bodyJson(missing));
+                     "dodge_none",head+",\"missing\":"+Bench::bodyJson(missing));
       return false;
       }
     // Backwards the original jump back stays: its own cost and its old evasion, no dodge window
@@ -1274,7 +1274,7 @@ bool Npc::meleeDodge(MeleeDodge::Direction direction) {
     meleeDodgeNote(dir+", armour "+armour+", "+std::string(MeleeDodge::name(wanted))+": the original jump back "+
                    visual.pose().animNames()+" (no "+missing+"), "+(ok ? "started" : "refused")+", cost "+
                    std::to_string(int(std::lround(cost)))+", window none",
-                   "dodge_jumpback",head+",\"missing\":"+TestBench::bodyJson(missing)+",\"started\":"+(ok ? "true" : "false")+
+                   "dodge_jumpback",head+",\"missing\":"+Bench::bodyJson(missing)+",\"started\":"+(ok ? "true" : "false")+
                    ",\"cost\":"+std::to_string(cost));
     return ok;
     }
@@ -1287,8 +1287,8 @@ bool Npc::meleeDodge(MeleeDodge::Direction direction) {
                          chosen->name+(fallback ? " (no "+missing+")" : "");
   tickMeleeStamina();
   if(!MeleeDodge::staminaAllows(meleeStamina,kind,fullCost,hasStamina())) {
-    if(TestBench::bodyTracing())
-      TestBench::bodyEvent(*this,currentTarget,"stamina_refused",owner.tickCount(),
+    if(Bench::bodyTracing())
+      Bench::bodyEvent(*this,currentTarget,"stamina_refused",owner.tickCount(),
                           "\"action\":\"dodge\",\"after\":"+std::to_string(stamina()));
     meleeDodgeNote(dir+", armour "+armour+", "+moveText+": refused, stamina "+std::to_string(int(std::lround(stamina())))+
                    (isStaminaExhausted() ? " (spent)" : "")+" for "+std::to_string(int(MeleeDodge::cost(kind))),
@@ -1319,9 +1319,9 @@ bool Npc::meleeDodge(MeleeDodge::Direction direction) {
       beginMeleeAiSpecial(MeleeAi::Special::Barge);
     meleeBargeOrigin = now;
     meleeBargeContact = false;
-    if(TestBench::bodyTracing())
-      TestBench::bodyEvent(*this,currentTarget,"barge_start",now,
-                          "\"animation_name\":"+TestBench::bodyJson(chosen->name));
+    if(Bench::bodyTracing())
+      Bench::bodyEvent(*this,currentTarget,"barge_start",now,
+                          "\"animation_name\":"+Bench::bodyJson(chosen->name));
     }
   const float staminaBefore = stamina();
   const float cost          = MeleeDodge::charged(kind,hasStamina());
@@ -1330,9 +1330,9 @@ bool Npc::meleeDodge(MeleeDodge::Direction direction) {
                  (hasStamina() ? "" : " (melee_stamina off)")+", window "+
                  (kind==MeleeDodge::Kind::Barge ? "none, contact 440-600 ms, super armor 0-600 ms" :
                   std::to_string(window.beginMs)+"-"+std::to_string(window.endMs)+" ms"),
-                 "dodge",head+",\"kind\":"+TestBench::bodyJson(MeleeDodge::name(kind))+
-                 ",\"animation_name\":"+TestBench::bodyJson(chosen->name)+",\"fallback\":"+(fallback ? "true" : "false")+
-                 ",\"missing\":"+TestBench::bodyJson(missing)+",\"cost\":"+std::to_string(cost)+
+                 "dodge",head+",\"kind\":"+Bench::bodyJson(MeleeDodge::name(kind))+
+                 ",\"animation_name\":"+Bench::bodyJson(chosen->name)+",\"fallback\":"+(fallback ? "true" : "false")+
+                 ",\"missing\":"+Bench::bodyJson(missing)+",\"cost\":"+std::to_string(cost)+
                  ",\"stamina_before\":"+std::to_string(staminaBefore)+",\"stamina_after\":"+std::to_string(stamina())+
                  ",\"window_ms\":["+std::to_string(window.beginMs)+","+std::to_string(window.endMs)+"]");
   return true;

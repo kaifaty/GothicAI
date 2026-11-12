@@ -13,7 +13,7 @@
 #include "npcchests.h"
 #include "npcfind.h"
 #include "physics/dynamicworld.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 #include "textcodec.h"
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"
@@ -163,19 +163,19 @@ void AiBridge::Impl::runWorldDebug(const rapidjson::Value& msg) {
     }
   if(cmd=="physics_noise") {
     std::string value, error;
-    const bool ok = TestBench::physicsNoiseDebug(*world,*pl,JsonRead::str(msg,"text"),value,error);
+    const bool ok = Bench::physicsNoiseDebug(*world,*pl,JsonRead::str(msg,"text"),value,error);
     sendResult(req,ok,error,value);
     return;
     }
   if(cmd=="physics_traces") {
     std::string value, error;
-    const bool ok = TestBench::physicsTracesDebug(*world,*pl,JsonRead::str(msg,"text"),value,error);
+    const bool ok = Bench::physicsTracesDebug(*world,*pl,JsonRead::str(msg,"text"),value,error);
     sendResult(req,ok,error,value);
     return;
     }
   if(cmd=="destruction_traces") {
     std::string value, error;
-    const bool ok = TestBench::destructionTracesDebug(*world,*pl,JsonRead::str(msg,"text"),value,error);
+    const bool ok = Bench::destructionTracesDebug(*world,*pl,JsonRead::str(msg,"text"),value,error);
     sendResult(req,ok,error,value);
     return;
     }

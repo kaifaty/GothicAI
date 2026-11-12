@@ -11,7 +11,7 @@
 #include "world/world.h"
 #include "utils/dbgpainter.h"
 #include "camera.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 #include "gothic.h"
 #include "resources.h"
 
@@ -57,7 +57,7 @@ std::string meleeShadowWho(const Npc* npc) {
   const auto* symbol = npc->world().script().findSymbol(npc->instanceSymbol());
   return "{\"id\":" + std::to_string(npc->world().npcId(npc)) +
          ",\"instance\":" + std::to_string(npc->instanceSymbol()) + ",\"name\":" +
-         TestBench::bodyJson(symbol!=nullptr ? std::string_view(symbol->name()) : std::string_view("npc")) +
+         Bench::bodyJson(symbol!=nullptr ? std::string_view(symbol->name()) : std::string_view("npc")) +
          ",\"position_cm\":" + meleeShadowPoint(npc->position()) + "}";
   }
 
@@ -525,10 +525,10 @@ void Npc::syncMeleeShadowSwing() {
   shadow.attacker = meleeShadowWho(this);
   shadow.animation = seq->name;
   const auto* weaponSymbol = item!=nullptr ? owner.script().findSymbol(item->clsId()) : nullptr;
-  shadow.weapon = "{\"mode\":" + TestBench::bodyJson(mode==WeaponState::Fist ? "fist" :
+  shadow.weapon = "{\"mode\":" + Bench::bodyJson(mode==WeaponState::Fist ? "fist" :
                                                    (mode==WeaponState::W1H ? "1h" : "2h")) +
-                  ",\"name\":" + TestBench::bodyJson(weaponSymbol!=nullptr ? std::string_view(weaponSymbol->name()) : std::string_view("unarmed")) +
-                  ",\"visual\":" + TestBench::bodyJson(item==nullptr ? "" : item->handle().visual) +
+                  ",\"name\":" + Bench::bodyJson(weaponSymbol!=nullptr ? std::string_view(weaponSymbol->name()) : std::string_view("unarmed")) +
+                  ",\"visual\":" + Bench::bodyJson(item==nullptr ? "" : item->handle().visual) +
                   ",\"length_cm\":" + std::to_string(length) + "}";
   shadow.legacyTarget = "null";
   shadow.legacyNpc = nullptr;
@@ -545,12 +545,12 @@ void Npc::syncMeleeShadowSwing() {
   const auto* hero = owner.player();
   shadow.heroDistanceCm = hero!=nullptr ? std::sqrt(qDistTo(*hero)) : 0.f;
   shadow.outcome = "miss";
-  TestBench::npcDuelSwingStart(*this);
+  Bench::npcDuelSwingStart(*this);
   shadow.magnet = {};
   shadow.reachCpuMs = shadow.reachCpuMaxMs = 0;
   shadow.reachQueries = 0;
   shadow.diagnostic = {};
-  if(TestBench::bodyTracing() && currentTarget!=nullptr) {
+  if(Bench::bodyTracing() && currentTarget!=nullptr) {
     shadow.diagnostic.target = currentTarget;
     shadow.diagnostic.who = meleeShadowWho(currentTarget);
     shadow.diagnostic.startDistanceCm = fightDistanceTo(*currentTarget).length();
@@ -674,7 +674,7 @@ void Npc::updateMeleeShadow() {
   owner.physic()->updateShadowBody(this,meleeShadowPose.body,&meleeShadowPose.slot);
   meleeShadowBody = true;
   checkMeleeShadowBody(*this,owner);
-  if(TestBench::bodyTracing() && isHuman() && currentTarget!=nullptr && owner.npcId(currentTarget)!=uint32_t(-1)) {
+  if(Bench::bodyTracing() && isHuman() && currentTarget!=nullptr && owner.npcId(currentTarget)!=uint32_t(-1)) {
     std::vector<HitZones::Posed> targetZones;
     currentTarget->visual.hitZonesPosed(targetZones);
     const float gap = HitZones::horizontalBodyGap(zones,targetZones);
@@ -684,7 +684,7 @@ void Npc::updateMeleeShadow() {
         if(capsule.zone==HitZones::Body) largest = std::max(largest,capsule.r);
       return largest;
       };
-    TestBench::bodyEvent(*this,currentTarget,"melee_torso_gap",owner.tickCount(),
+    Bench::bodyEvent(*this,currentTarget,"melee_torso_gap",owner.tickCount(),
                         "\"gap_cm\":"+(std::isfinite(gap) ? std::to_string(gap) : "null")+
                         ",\"overlap\":"+(gap<0.f ? "true" : "false")+
                         ",\"attacker_down\":"+(isDown() ? "true" : "false")+
@@ -728,7 +728,7 @@ void Npc::updateMeleeShadow() {
   // including frames whose endpoint is already past the end of that window.
   const double activeBegin = double(shadow.start)+double(window.beginMs)/shadow.speed;
   const double activeEnd   = double(shadow.start)+double(window.endMs)/shadow.speed;
-  if(TestBench::bodyTracing() && double(owner.tickCount())>=activeBegin && double(owner.tickCount())<activeEnd) {
+  if(Bench::bodyTracing() && double(owner.tickCount())>=activeBegin && double(owner.tickCount())<activeEnd) {
     auto& diagnostic = shadow.diagnostic;
     if(const auto* target = diagnostic.target; target!=nullptr && owner.npcId(target)!=uint32_t(-1)) {
       std::vector<HitZones::Posed> targetZones;
@@ -894,8 +894,8 @@ auto Npc::meleeStep(uint64_t dt) -> Vec3 {
     magnet.safetyBackoffCm += -distance;
   if(distance>0.f) magnet.forwardCm += distance;
   else magnet.backwardCm -= distance;
-  if(TestBench::bodyTracing())
-    TestBench::bodyEvent(*this,magnet.target,"melee_magnet_step",owner.tickCount(),
+  if(Bench::bodyTracing())
+    Bench::bodyEvent(*this,magnet.target,"melee_magnet_step",owner.tickCount(),
                         "\"swing\":"+std::to_string(swing.id)+",\"dt_ms\":"+std::to_string(dt)+
                         ",\"planned_ms\":"+std::to_string(plannedMs)+",\"yaw_step_deg\":"+std::to_string(yawStep)+
                         ",\"gap_cm\":"+(std::isfinite(gap) ? std::to_string(gap) : "null")+
@@ -979,8 +979,8 @@ void Npc::consumeMeleeContacts() {
         if((hit.movableVob!=0 || hit.fragment!=0) && owner.physic()->destructionEnabled() && meleeDestructionBlow(blow)) {
           const bool struck = owner.physic()->meleeStoppedMovableVob(hit,blow.weaponDamage,blow.strength,blow.kind,
                                                                      this,swing.struckVobs);
-          if(TestBench::isActive())
-            TestBench::destructionMeleeHit(*this,struck ? 1 : 0,blow.weaponDamage+blow.strength);
+          if(Bench::isActive())
+            Bench::destructionMeleeHit(*this,struck ? 1 : 0,blow.weaponDamage+blow.strength);
           }
         stopMeleeSwing();
         }
@@ -1020,9 +1020,9 @@ void Npc::consumeMeleeContacts() {
       }
     if(swing.physicsHits) {
       BodyObservations::noteEvent(*this,target,"applied",owner.tickCount());
-      if(TestBench::bodyTracing())
-        TestBench::bodyEvent(*this,target,"hit_attempt",owner.tickCount(),
-                            "\"result\":"+TestBench::bodyJson(entry.result),visual.pose().animNames());
+      if(Bench::bodyTracing())
+        Bench::bodyEvent(*this,target,"hit_attempt",owner.tickCount(),
+                            "\"result\":"+Bench::bodyJson(entry.result),visual.pose().animNames());
       const auto before = target->attribute(ATR_HITPOINTS);
       target->takeDamage(*this,nullptr,false,entry.multiplier,&hit);
       // Damage scripts may remove the attacker, retiring and clearing this window.
@@ -1061,8 +1061,8 @@ void Npc::meleeHitStop(Npc& target, const MeleeBladeContact& hit, float multipli
       camera->impact(hit.velocityCmS,deg*(blocked ? 1.f : std::clamp(multiplier,.8f,1.3f)));
       }
     }
-  if(TestBench::bodyTracing())
-    TestBench::bodyEvent(*this,&target,"hit_stop",owner.tickCount(),
+  if(Bench::bodyTracing())
+    Bench::bodyEvent(*this,&target,"hit_stop",owner.tickCount(),
                         "\"ms\":"+std::to_string(int(ms))+",\"blocked\":"+(blocked ? "true" : "false"),visual.pose().animNames());
   }
 
@@ -1145,7 +1145,7 @@ void Npc::finishMeleeShadowSwing(bool remove, bool discard) {
       world = "{\"point_cm\":" + point + ",\"normal\":" + meleeShadowPoint(contact.normal) +
               ",\"velocity_cm_s\":" + meleeShadowPoint(contact.velocityCmS) +
               ",\"material\":" + std::to_string(int(contact.material)) +
-              ",\"result\":" + TestBench::bodyJson(entry.result) + ",\"step\":" + std::to_string(contact.step) + "}";
+              ",\"result\":" + Bench::bodyJson(entry.result) + ",\"step\":" + std::to_string(contact.step) + "}";
       if(worldContacts.size()>1)
         worldContacts += ',';
       worldContacts += world;
@@ -1158,7 +1158,7 @@ void Npc::finishMeleeShadowSwing(bool remove, bool discard) {
     extraTarget |= !same && entry.result=="hit";
     if(physical.size()>1)
       physical += ',';
-    physical += "{\"result\":" + TestBench::bodyJson(entry.result) +
+    physical += "{\"result\":" + Bench::bodyJson(entry.result) +
                 ",\"multiplier\":" + std::to_string(entry.multiplier) + ",\"damage\":" + std::to_string(entry.damage) +
                 ",\"stun_bonus\":" + std::to_string(entry.stunBonus) +
                 ",\"backstab_mult\":" + std::to_string(entry.backstabMult) +
@@ -1166,8 +1166,8 @@ void Npc::finishMeleeShadowSwing(bool remove, bool discard) {
                 ",\"riposte_mult\":1" +
                 ",\"super_armor\":" + (entry.superArmor ? "true" : "false") +
                 ",\"target\":" + entry.target +
-                ",\"part\":" + TestBench::bodyJson(HitZones::name(HitZones::Zone(contact.zone))) +
-                ",\"bone\":" + std::to_string(contact.bone) + ",\"bone_name\":" + TestBench::bodyJson(entry.bone) +
+                ",\"part\":" + Bench::bodyJson(HitZones::name(HitZones::Zone(contact.zone))) +
+                ",\"bone\":" + std::to_string(contact.bone) + ",\"bone_name\":" + Bench::bodyJson(entry.bone) +
                 ",\"point_cm\":" + point +
                 ",\"blade_fraction\":" + std::to_string(contact.bladeFraction) +
                 ",\"speed_cm_s\":" + std::to_string(contact.speedCmS) +
@@ -1189,7 +1189,7 @@ void Npc::finishMeleeShadowSwing(bool remove, bool discard) {
     comparison = "\"legacy_only\"";
   const auto number = [](auto value) { return std::to_string(value); };
   std::string diagnostic = "null";
-  if(TestBench::bodyTracing()) {
+  if(Bench::bodyTracing()) {
     const auto& value = shadow.diagnostic;
     const double activeBegin = double(shadow.start)+double(window.beginMs)/shadow.speed;
     const double activeEnd = double(shadow.start)+double(window.endMs)/shadow.speed;
@@ -1225,10 +1225,10 @@ void Npc::finishMeleeShadowSwing(bool remove, bool discard) {
     else
       magnetStop = double(owner.tickCount())>=deadline ? "predicted" : "swing_end";
     }
-  writeMeleeShadow("{\"swing\":" + number(shadow.id) + ",\"world\":" + TestBench::bodyJson(owner.name()) +
+  writeMeleeShadow("{\"swing\":" + number(shadow.id) + ",\"world\":" + Bench::bodyJson(owner.name()) +
                   ",\"game_time_ms\":" + number(shadow.tick) + ",\"end_time_ms\":" + number(owner.tickCount()) +
                   ",\"attacker\":" + shadow.attacker + ",\"weapon\":" + shadow.weapon +
-                  ",\"animation\":" + TestBench::bodyJson(shadow.animation) +
+                  ",\"animation\":" + Bench::bodyJson(shadow.animation) +
                   ",\"window\":{\"combo_index\":" + number(window.index) +
                   ",\"first_frame\":" + number(window.first) + ",\"optimal_frame\":" + number(window.optimal) +
                   ",\"last_frame\":" + number(window.last) + ",\"begin_ms\":" + number(window.beginMs) +
@@ -1240,11 +1240,11 @@ void Npc::finishMeleeShadowSwing(bool remove, bool discard) {
                   shadow.legacyTarget + ",\"hit\":" + (shadow.legacyHit ? "true" : "false") +
                   ",\"damage\":" + number(shadow.damage) + ",\"blocked\":" + (shadow.legacyBlock ? "true" : "false") +
                   ",\"dodged\":" + (shadow.legacyDodge ? "true" : "false") +
-                  ",\"result\":" + TestBench::bodyJson(shadow.legacyResult) +
+                  ",\"result\":" + Bench::bodyJson(shadow.legacyResult) +
                   "},\"physical\":{\"targets\":" + physical + ",\"world\":" + world + ",\"world_contacts\":" + worldContacts +
                   "},\"decision\":{\"physics_hits\":" + (shadow.physicsHits ? "true" : "false") +
                   ",\"hero_distance_cm\":" + number(shadow.heroDistanceCm) +
-                  ",\"outcome\":" + TestBench::bodyJson(shadow.outcome) +
+                  ",\"outcome\":" + Bench::bodyJson(shadow.outcome) +
                   ",\"magnet\":{\"eligible\":" + (shadow.magnet.eligible ? "true" : "false") +
                   ",\"preview_contact\":" + (std::isfinite(shadow.magnet.rawCm) ? "true" : "false") +
                   ",\"raw_cm\":" + (std::isfinite(shadow.magnet.rawCm) ? number(shadow.magnet.rawCm) : "null") +
@@ -1267,7 +1267,7 @@ void Npc::finishMeleeShadowSwing(bool remove, bool discard) {
                   ",\"predicted_contact_time_ms\":" + (std::isfinite(shadow.magnet.rawCm) ? number(double(shadow.tick)+shadow.magnet.durationMs) : "null") +
                   ",\"contact_observed_time_ms\":" + (shadow.magnet.contactStopped ? number(shadow.magnet.contactObservedMs) : "null") +
                   ",\"last_assist_time_ms\":" + (shadow.magnet.lastFeedMs>0 ? number(shadow.magnet.lastFeedMs) : "null") +
-                  ",\"stop_reason\":" + TestBench::bodyJson(magnetStop) +
+                  ",\"stop_reason\":" + Bench::bodyJson(magnetStop) +
                   ",\"preview_feasible\":" + (shadow.magnet.feasible ? "true" : "false") +
                   ",\"time_limited\":" + (std::isfinite(shadow.magnet.rawCm) && std::abs(shadow.magnet.rawCm)>.6f*shadow.magnet.durationMs ? "true" : "false") +
                   ",\"yaw_requested_deg\":" + number(shadow.magnet.yawRequested) +
@@ -1276,7 +1276,7 @@ void Npc::finishMeleeShadowSwing(bool remove, bool discard) {
                   ",\"cap_forward\":" + (shadow.magnet.rawCm>=120.f && std::isfinite(shadow.magnet.rawCm) ? "true" : "false") +
                   ",\"cap_backward\":" + (shadow.magnet.rawCm<=-40.f ? "true" : "false") + "}" +
                   "},\"diagnostic\":" + diagnostic + ",\"comparison\":" + comparison + "}");
-  TestBench::npcDuelSwingEnd(*this,shadow.physicsHits ? shadow.outcome : shadow.legacyResult);
+  Bench::npcDuelSwingEnd(*this,shadow.physicsHits ? shadow.outcome : shadow.legacyResult);
   shadow.contacts.clear();
   shadow.window.reset();
   }

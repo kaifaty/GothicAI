@@ -41,7 +41,7 @@
 #include "utils/dbgpainter.h"
 #include "camera.h"
 #include "commandline.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 #include "gothic.h"
 #include "resources.h"
 #include "frameprofile.h"
@@ -67,7 +67,7 @@ using namespace Tempest;
 struct Npc::BodyMovementTrace final {
   BodyMovementTrace(Npc& npc, uint64_t dt)
     :npc(npc),dt(dt),serial(npc.mvAlgo.traceTickSerial()),previous(npc.bodyTraceMovementActive) {
-    active = TestBench::bodyTracing() && npc.currentTarget!=nullptr;
+    active = Bench::bodyTracing() && npc.currentTarget!=nullptr;
     if(active)
       start = npc.position();
     npc.bodyTraceMovementActive = previous || active;
@@ -94,7 +94,7 @@ struct Npc::BodyMovementTrace final {
                   (unsigned long long)dt,double(moved.x),double(moved.y),double(moved.z),
                   double(end.x),double(end.y),double(end.z),double(npc.rotation()),
                   state==MoveAlgo::Run ? "true" : "false",unsigned(state));
-    TestBench::bodyEvent(npc,npc.currentTarget,"physics_step",npc.owner.tickCount(),fields);
+    Bench::bodyEvent(npc,npc.currentTarget,"physics_step",npc.owner.tickCount(),fields);
     }
 
   Npc& npc;
@@ -293,7 +293,7 @@ Npc::~Npc(){
     owner.physic()->removeMeleeBlade(this);
   NpcKeys::forget(this);
   BodyObservations::forget(this);
-  TestBench::bodyForget(this);
+  Bench::bodyForget(this);
   if(currentInteract)
     currentInteract->detach(*this,true);
   if(hnpc && hnpc->user_ptr==this)
@@ -535,9 +535,9 @@ void Npc::onNoHealth(bool death, HitSound sndMask) {
     setAnim(lastHitType=='A' ? Anim::DeadA        : Anim::DeadB); else
     setAnim(lastHitType=='A' ? Anim::UnconsciousA : Anim::UnconsciousB);
   BodyObservations::noteEvent(*this,lastHit,death ? "dead" : "unconscious",owner.tickCount());
-  if(TestBench::bodyTracing())
-    TestBench::bodyEvent(*this,lastHit,"termination",owner.tickCount(),
-                        "\"reason\":" + TestBench::bodyJson(death ? "dead" : "unconscious") +
+  if(Bench::bodyTracing())
+    Bench::bodyEvent(*this,lastHit,"termination",owner.tickCount(),
+                        "\"reason\":" + Bench::bodyJson(death ? "dead" : "unconscious") +
                         ",\"hp\":" + std::to_string(attribute(ATR_HITPOINTS)) +
                         ",\"down\":" + (isDown() ? "true" : "false") + ",\"dead\":" + (isDead() ? "true" : "false"));
   }
@@ -917,19 +917,19 @@ void Npc::tickAnimationTags() {
   if(!hasEvents)
     return;
 
-  if(isPlayer() && TestBench::isActive()) {
+  if(isPlayer() && Bench::isActive()) {
     // what the hero's animations do, for the test bench (the reload at another tempo: each event once)
     const char* reloadAnim = weaponState()==WeaponState::CBow ? Archery::CBowReload : Archery::BowReload;
     char        buf[256];
     for(auto& i:ev.timed) {
       std::snprintf(buf,sizeof(buf),"anim event %d %.*s %.*s %.*s (reload %.2f)",int(i.def),int(i.item.size()),i.item.data(),
                     int(i.slot[0].size()),i.slot[0].data(),int(i.slot[1].size()),i.slot[1].data(),double(animProgress(reloadAnim)));
-      TestBench::note(buf);
+      Bench::note(buf);
       }
     for(auto& i:ev.morph) {
       std::snprintf(buf,sizeof(buf),"anim morph %.*s %.*s (reload %.2f)",int(i.anim.size()),i.anim.data(),int(i.node.size()),i.node.data(),
                     double(animProgress(reloadAnim)));
-      TestBench::note(buf);
+      Bench::note(buf);
       }
     }
   for(auto& i:ev.morph)
@@ -943,7 +943,7 @@ void Npc::tickAnimationTags() {
   }
 
 void Npc::tick(uint64_t dt) {
-  TestBench::beforeNpcTick(*this);
+  Bench::beforeNpcTick(*this);
   updateQuiver();
   updateSimpleMovement();
   NpcLogicalState::Tick logicalTick(*this,dt);
@@ -1241,10 +1241,10 @@ void Npc::setAiOutputBarrier(uint64_t dt, bool overlay) {
   }
 
 void Npc::emitSoundEffect(std::string_view sound, float range, bool freeSlot) {
-  if(isPlayer() && TestBench::isActive()) {
+  if(isPlayer() && Bench::isActive()) {
     char buf[128];
     std::snprintf(buf,sizeof(buf),"sound %.*s",int(sound.size()),sound.data());
-    TestBench::note(buf);
+    Bench::note(buf);
     }
   auto sfx = ::Sound(owner,::Sound::T_Regular,sound,centerPosition(),range,freeSlot);
   sfx.play();

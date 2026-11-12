@@ -43,6 +43,7 @@ class CommandLine {
     Benchmark           isBenchmarkMode()  const { return isBenchmark;  }
     uint32_t            aaPreset()         const { return aaPresetId;   }
     bool                doTaa()            const { return isTaa;        }
+    bool                doEye()            const { return isEye;        }
     int                 motionVectors()    const { return isMv;         }
     bool                doHashedAlpha()    const { return isHashAlpha;  }
     std::string_view    defaultSave()      const { return saveDef;    }
@@ -80,6 +81,7 @@ class CommandLine {
     bool                isGiSet      = false;  // -gi given: else Gothic picks by the device
     uint32_t            aaPresetId = 1;        // CMAA2; -aa 0 turns it off
     bool                isTaa      = true;     // temporal AA (replaces CMAA2); -taa 0 turns it off
+    bool                isEye      = true;     // the eye's adaptation under -gi 1 (graphics/eyeadaptation.h); -eye 0 turns it off
     int                 isMv       = -1;       // motion vectors of objects: -mv 0|1; -1 unset, the ini decides
     bool                isHashAlpha = true;    // hashed alpha of our glTF MASK under TAA (BK_HASHED_ALPHA); -hashalpha 0: threshold 0.5
   };

@@ -14,7 +14,7 @@
 #include "world/world.h"
 #include "gothic.h"
 #include "resources.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 #include "textcodec.h"
 
 using namespace Tempest;
@@ -273,7 +273,7 @@ void FateEnd::request(World& world, std::string k, std::string killer, std::stri
   if(screen==nullptr) {
     screen = std::make_unique<Screen>();
     screen->onKey = [this]() {
-      if(stage!=Stage::Card || TestBench::isActive())
+      if(stage!=Stage::Card || Bench::isActive())
         return;
       auto* w = Gothic::inst().world();
       if(w==nullptr || w->tickCount()-since < CardMs+KeyAfterMs)

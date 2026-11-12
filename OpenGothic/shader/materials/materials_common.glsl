@@ -54,6 +54,7 @@ const uint L_FogLutMs   = 18;
 const uint L_VsmPageTbl = 19; // the sun's virtual shadow map in the forward pass (vsm_sun_shadow.glsl)
 const uint L_VsmPageAtlas = 20;
 const uint L_InstancePrev = 21; // instanceMem after the previous frame (InstanceStorage::ssboPrev), motion vectors
+const uint L_FogOcc     = 22; // the sun's bits along the ray of the volumetric fog (fog3d.comp), for the fog under GI
 const uint L_VsmPages   = L_Shadow0;
 const uint L_VsmLights  = L_Shadow1;
 
@@ -181,6 +182,7 @@ layout(binding = L_VsmPageAtlas)     uniform texture2D  vsmPageAtlas;
 #define MAT_FOG 1
 layout(binding = L_FogLut)           uniform sampler3D fogLut;
 layout(binding = L_FogLutMs)         uniform sampler3D fogLutMs;
+layout(binding = L_FogOcc, r32ui)    uniform readonly uimage2D fogOcclusion;
 #endif
 
 #if defined(GL_FRAGMENT_SHADER) && (MESH_TYPE==T_PFX) && (defined(FORWARD) || (defined(EMISSIVE) && !defined(MULTIPLY))) && !defined(DEPTH_ONLY)

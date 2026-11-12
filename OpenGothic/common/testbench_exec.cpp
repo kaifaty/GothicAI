@@ -1,5 +1,6 @@
 #include "testbench_internal.h"
 #include "testbench.h"
+#include "world/benchhooks.h"
 
 #include <cmath>
 
@@ -260,8 +261,8 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     GameMenu::benchDiary.chronicle = a.size()>1 && a[1]=="chronicle";
     GameMenu::benchDiary.feat      = int32_t(num(a,2,-1));
     GameMenu::benchDiary.open      = a.size()>3 && a[3]=="open";
-    if(TestBench::openMenu)
-      TestBench::openMenu("MENU_LOG"); else
+    if(::Bench::openMenu)
+      ::Bench::openMenu("MENU_LOG"); else
       say("diary: no menu hook");
     }
   else if(c=="ui") {

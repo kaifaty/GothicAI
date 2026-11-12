@@ -11,7 +11,7 @@
 #include "world/objects/npc.h"
 #include "world/objects/interactive.h"
 #include "world.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 #include "gothic.h"
 #include "settings.h"
 
@@ -127,10 +127,10 @@ void Bullet::onStop() {
   if(precise && zone==HitZones::None && !landed && !isFinished()) {
     const auto p = obj->position();
     char buf[160];
-    const auto by = TestBench::who(origin());
+    const auto by = Bench::who(origin());
     std::snprintf(buf,sizeof(buf),"arrow missed: flew out at %.0f %.0f %.0f, flew %.0f cm, by %.*s",p.x,p.y,p.z,double(pathLength()),
                   int(by.size()),by.data());
-    TestBench::note(buf);
+    Bench::note(buf);
     }
   flg = Flg(flg|Stopped);
   updateMatrix();
@@ -146,9 +146,9 @@ Tempest::Vec3 Bullet::direction() const {
 
 void Bullet::onMove() {
   updateMatrix();
-  if(!isSpell() && TestBench::isActive()) {
+  if(!isSpell() && Bench::isActive()) {
     const auto p = position();
-    TestBench::arrowAt(this,p.x,p.y,p.z);
+    Bench::arrowAt(this,p.x,p.y,p.z);
     }
   }
 
@@ -164,7 +164,7 @@ void Bullet::onSpellWorldHit(const DynamicWorld::BulletWorldHit& hit) {
   }
 
 void Bullet::onWorldHit(const DynamicWorld::BulletWorldHit& hit) {
-  TestBench::ownMeshArrowHit(hit.movable!=nullptr ? hit.movable->zenId : uint32_t(-1),hit.point,hit.normal);
+  Bench::ownMeshArrowHit(hit.movable!=nullptr ? hit.movable->zenId : uint32_t(-1),hit.point,hit.normal);
   impactAt = hit.point;
   impactOwner = hit.bone;
   impactKnown = true;
@@ -173,9 +173,9 @@ void Bullet::onWorldHit(const DynamicWorld::BulletWorldHit& hit) {
     npc->addCorpseArrowImpulse(*this);
     if(npc->stickArrow(std::move(view),hit.bone,matrix,visualName)) {
       char buf[160];
-      const auto who = TestBench::who(npc);
+      const auto who = Bench::who(npc);
       std::snprintf(buf,sizeof(buf),"arrow stuck corpse %.*s bone %zu",int(who.size()),who.data(),hit.bone);
-      TestBench::note(buf);
+      Bench::note(buf);
       return;
       }
     }
@@ -190,7 +190,7 @@ void Bullet::onWorldHit(const DynamicWorld::BulletWorldHit& hit) {
     std::snprintf(buf,sizeof(buf),"arrow stuck world: at %.9g %.9g %.9g normal %.9g %.9g %.9g material %u",
                   double(hit.point.x),double(hit.point.y),double(hit.point.z),
                   double(hit.normal.x),double(hit.normal.y),double(hit.normal.z),unsigned(hit.material));
-    TestBench::note(buf);
+    Bench::note(buf);
     }
   }
 
@@ -203,10 +203,10 @@ void Bullet::onCollide(asset::MaterialGroup matId) {
     landed = true;
     const auto p = obj->position();
     char buf[160];
-    const auto by = TestBench::who(origin());
+    const auto by = Bench::who(origin());
     std::snprintf(buf,sizeof(buf),"arrow missed: came down at %.0f %.0f %.0f, flew %.0f cm, by %.*s",p.x,p.y,p.z,double(pathLength()),
                   int(by.size()),by.data());
-    TestBench::note(buf);
+    Bench::note(buf);
     }
   if(matId != asset::MaterialGroup::NONE) {
     if(material < ItemMaterial::MAT_COUNT) {
@@ -236,26 +236,26 @@ bool Bullet::onCollidePrecise(Npc& npc, const Vec3& from, const Vec3& to) {
   const int32_t hp = npc.attribute(ATR_HITPOINTS);
   const bool    ret = onCollide(npc);
   if(!ret && &npc==passedDodger) {
-    if(TestBench::isActive()) {
-      const auto who = TestBench::who(&npc);
-      const auto by  = TestBench::who(origin());
+    if(Bench::isActive()) {
+      const auto who = Bench::who(&npc);
+      const auto by  = Bench::who(origin());
       char buf[256];
       std::snprintf(buf,sizeof(buf),"arrow passed %.*s: inside its dodge window, flies on, by %.*s",
                     int(who.size()),who.data(),int(by.size()),by.data());
-      TestBench::note(buf);
+      Bench::note(buf);
       }
     return false;
     }
-  if(TestBench::isActive()) {
+  if(Bench::isActive()) {
     const auto p   = from + Vec3::normalize(to-from)*t;
-    const auto who = TestBench::who(&npc);
-    const auto by  = TestBench::who(origin());
+    const auto who = Bench::who(&npc);
+    const auto by  = Bench::who(origin());
     char buf[256];
     std::snprintf(buf,sizeof(buf),"arrow hit %.*s: %.*s, hp %d -> %d, draw %.2f, flew %.0f cm, at %.0f %.0f %.0f, by %.*s",
                   int(who.size()),who.data(),int(HitZones::name(z).size()),HitZones::name(z).data(),
                   int(hp),int(npc.attribute(ATR_HITPOINTS)),double(drawK),double(pathLength()+t),p.x,p.y,p.z,
                   int(by.size()),by.data());
-    TestBench::note(buf);
+    Bench::note(buf);
     }
   return ret;
   }
@@ -317,9 +317,9 @@ bool Bullet::onCollide(Npc& npc) {
       Npc::ArrowPinProbe pin;
       npc.stuckArrowProbe(npc.stuckArrowCount()-1,pin);
       char buf[160];
-      const auto who = TestBench::who(&npc);
+      const auto who = Bench::who(&npc);
       std::snprintf(buf,sizeof(buf),"arrow stuck npc %.*s bone %zu",int(who.size()),who.data(),pin.bone);
-      TestBench::note(buf);
+      Bench::note(buf);
       }
     }
   return true;
@@ -390,9 +390,9 @@ void write(const DynamicWorld::BulletBody& body, DynamicWorld::BulletCallback* c
   const auto p=body.position(), d=body.direction();
   const auto tp=target!=nullptr ? target->collosionCenter() : Tempest::Vec3{};
   const auto np=npc!=nullptr ? npc->collosionCenter() : Tempest::Vec3{};
-  const auto by=TestBench::who(origin), at=TestBench::who(target), who=TestBench::who(npc);
+  const auto by=Bench::who(origin), at=Bench::who(target), who=Bench::who(npc);
   std::fprintf(out.file,"%llu,%llu,%llu,%s,%llu,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%d,%.9g,%d,%d,%d,%.*s,%.*s,%.9g,%.9g,%.9g,%.*s,%.9g,%.9g,%.9g,%d,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%u,%u,%.9g,%d,%d,%d,%d,%d\n",
-    static_cast<unsigned long long>(entry->second),static_cast<unsigned long long>(TestBench::stepCount()),
+    static_cast<unsigned long long>(entry->second),static_cast<unsigned long long>(Bench::stepCount()),
     static_cast<unsigned long long>(origin!=nullptr ? origin->world().tickCount() : 0),phase,
     static_cast<unsigned long long>(dt),double(p.x),double(p.y),double(p.z),
     double(d.x),double(d.y),double(d.z),double(body.pathLength()),body.hitCount(),double(body.targetRange()),

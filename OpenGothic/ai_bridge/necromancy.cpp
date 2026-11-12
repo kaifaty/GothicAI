@@ -18,7 +18,7 @@
 #include "world/world.h"
 #include "gothic.h"
 #include "resources.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 
 using namespace Tempest;
 
@@ -309,7 +309,7 @@ void Necromancy::tick(World& world) {
         if(screen==nullptr) {
           screen = std::make_unique<Screen>();
           screen->onKey = [this]() {
-            if(stage!=Stage::Card || TestBench::isActive())
+            if(stage!=Stage::Card || Bench::isActive())
               return;
             auto* w = Gothic::inst().world();
             if(w==nullptr || w->tickCount()-since < FadeMs+PictureMs+KeyAfterMs)

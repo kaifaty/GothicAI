@@ -983,6 +983,7 @@ void PfxBucket::drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const 
   if(view==SceneGlobals::V_Main && mat.isFogRequired()) {
     cmd.setBinding(L_FogLut,   *scene.fogLut,   Sampler::bilinear(ClampMode::ClampToEdge));
     cmd.setBinding(L_FogLutMs, *scene.fogLutMs, Sampler::bilinear(ClampMode::ClampToEdge));
+    cmd.setBinding(L_FogOcc,   *scene.fogOcclusion);
     }
 
   cmd.setBinding(L_Scene, scene.uboGlobal[view]);

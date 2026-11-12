@@ -9,7 +9,7 @@
 #include "graphics/mesh/skeleton.h"
 #include "gothic.h"
 #include "physics/physicsnoise.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 #include "world/objects/item.h"
 #include "world/world.h"
 
@@ -57,10 +57,10 @@ bool Npc::perceptionProcess(Npc &pl) {
   bool ret=false;
   SensesBit sensedPlayer = SensesBit::SENSE_NONE;
   const auto trace = [&](std::string_view gate) {
-    if(!TestBench::bodyTracing() || currentTarget==nullptr)
+    if(!Bench::bodyTracing() || currentTarget==nullptr)
       return;
-    TestBench::bodyEvent(*this,&pl,"native_perception",owner.tickCount(),
-                         "\"perception_kind\":\"periodic\",\"gate\":"+TestBench::bodyJson(gate)+
+    Bench::bodyEvent(*this,&pl,"native_perception",owner.tickCount(),
+                         "\"perception_kind\":\"periodic\",\"gate\":"+Bench::bodyJson(gate)+
                          ",\"process_policy\":"+std::to_string(int(processPolicy()))+
                          ",\"external_control\":"+(externalCtrl ? "true" : "false")+
                          ",\"sensed_player\":"+std::to_string(int(sensedPlayer))+
@@ -116,10 +116,10 @@ bool Npc::passPerception(Npc& other, Npc* victim, PercType perc) {
 
 bool Npc::perceptionProcess(Npc &pl, Npc* victim, float quadDist, PercType perc, const std::shared_ptr<HeroDeed>& deed) {
   const auto trace = [&](std::string_view gate, bool result, bool dispatched) {
-    if(!TestBench::bodyTracing() || currentTarget==nullptr)
+    if(!Bench::bodyTracing() || currentTarget==nullptr)
       return;
-    TestBench::bodyEvent(*this,&pl,"native_perception",owner.tickCount(),
-                         "\"perception_kind\":\"dispatch\",\"gate\":"+TestBench::bodyJson(gate)+
+    Bench::bodyEvent(*this,&pl,"native_perception",owner.tickCount(),
+                         "\"perception_kind\":\"dispatch\",\"gate\":"+Bench::bodyJson(gate)+
                          ",\"process_policy\":"+std::to_string(int(processPolicy()))+
                          ",\"perception\":"+std::to_string(int(perc))+
                          ",\"quad_distance_cm\":"+std::to_string(quadDist)+
@@ -331,7 +331,7 @@ bool Npc::hearPhysicsNoise(const PhysicsNoise& noise) {
     if(state.act==AI_StartState && startQueuedState(state) && !aiState.started)
       tickRoutine();
     }
-  TestBench::physicsNoiseHeard(*this,noise,callbackDispatched);
+  Bench::physicsNoiseHeard(*this,noise,callbackDispatched);
   return true;
   }
 

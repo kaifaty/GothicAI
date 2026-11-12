@@ -1,0 +1,77 @@
+#version 450
+
+#extension GL_EXT_control_flow_attributes : enable
+#extension GL_GOOGLE_include_directive    : enable
+
+#include "scene.glsl"
+#include "common.glsl"
+#include "lighting/tonemapping.glsl"
+
+// The eye's adaptation under GI (common/graphics/eyeadaptation.h): the level of the frame's illuminance, as the industry
+// meters (step-2-shade.md, «Замер по правилам индустрии»): taken after the opaque surfaces and the fog, before the
+// translucent ones, particles and water (no feedback from fires and effects); each sample's luminance divided by the
+// luminance of its albedo from the G-buffer (textureAlbedo, the albedo the light was multiplied by), at least 0.01, and
+// scaled by 0.18, so every surface counts as an 18 % grey diffuse one — as UE's r.AutoExposure.IgnoreMaterials
+// (MinBaseColorLuminance 0.01, LuminanceScale 0.18). One group samples a grid of the linear frame (a bilinear tap at a
+// cell's centre averages 2x2 pixels) and puts the log2 of each sample into a histogram of 64 bins, the sky (depth 1)
+// apart from the rest; with the count of every bin goes the sum of its logs in 1/256, so the CPU takes the exact mean
+// of the bins it keeps. The CPU reads the buffer a frame slot later. The values are pre-exposed: the frame as the tone
+// mapper gets it, before its multiplier.
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0) uniform sampler2D frame;
+layout(binding = 1) uniform sampler2D depth;
+layout(binding = 2, std140) uniform UboScene {
+  SceneDesc scene;
+  };
+layout(binding = 4) uniform sampler2D gbufDiffuse;
+layout(binding = 3, std430) writeonly buffer Result {
+  // [0..63] counts of the scene, [64..127] of the sky, [128..191] and [192..255] their sums of log2 in 1/256;
+  // [256] scene.exposure, [257] scene.luminanceMed, [258] scene.fogSkyVis, as float bits
+  uint data[];
+  } result;
+
+const uint  GridW   = 128;
+const uint  GridH   = 72;
+const uint  Bins    = 64;
+const float LogMin  = -16.0;
+const float LogSpan = 24.0;    // log2 of -16 .. +8 over the bins
+
+shared uint cnt[2*Bins];
+shared int  sum[2*Bins];
+
+void main() {
+  const uint tid = gl_LocalInvocationIndex;
+  const uint n   = gl_WorkGroupSize.x*gl_WorkGroupSize.y;
+  for(uint i=tid; i<2*Bins; i+=n) {
+    cnt[i] = 0;
+    sum[i] = 0;
+    }
+  barrier();
+
+  for(uint i=tid; i<GridW*GridH; i+=n) {
+    const vec2  uv  = (vec2(i%GridW, i/GridW) + vec2(0.5))/vec2(GridW, GridH);
+    const vec3  c   = textureLod(frame, uv, 0).rgb;
+    const float z   = textureLod(depth, uv, 0).r;
+    const vec3  alb = textureAlbedo(textureLod(gbufDiffuse, uv, 0).rgb);
+    const float aLum = max(dot(alb, vec3(0.2125, 0.7154, 0.0721)), 0.01);
+    // the sky has no albedo: its luminance as it is (it is kept apart anyway)
+    const float lum = dot(c, vec3(0.2125, 0.7154, 0.0721)) * (z>=1.0 ? 1.0 : 0.18/aLum);
+    const float l   = clamp(log2(max(lum, 1e-30)), LogMin, LogMin+LogSpan);
+    const uint  bin = min(uint((l-LogMin)*(float(Bins)/LogSpan)), Bins-1);
+    const uint  at  = (z>=1.0 ? Bins : 0) + bin;
+    atomicAdd(cnt[at], 1u);
+    atomicAdd(sum[at], int(round(l*256.0)));
+    }
+  barrier();
+
+  for(uint i=tid; i<2*Bins; i+=n) {
+    result.data[i]        = cnt[i];
+    result.data[2*Bins+i] = uint(sum[i]);
+    }
+  if(tid==0) {
+    result.data[4*Bins+0] = floatBitsToUint(scene.exposure);
+    result.data[4*Bins+1] = floatBitsToUint(scene.luminanceMed);
+    result.data[4*Bins+2] = floatBitsToUint(scene.fogSkyVis);
+    }
+  }

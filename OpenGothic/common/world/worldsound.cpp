@@ -16,7 +16,7 @@
 #include "world.h"
 #include "gamemusic.h"
 #include "resources.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 #include "frameprofile.h"
 
 namespace {
@@ -31,7 +31,7 @@ bool lazyVobSounds() {
 bool usesSimulationAudioClock() {
   // isActive covers load-finalize animation updates, before body tracing starts. Normal play keeps
   // the existing OpenAL lifecycle; a benchmark must not change gameplay when rendering is slower.
-  return Resources::isHeadless() || TestBench::isActive();
+  return Resources::isHeadless() || Bench::isActive();
   }
 }
 

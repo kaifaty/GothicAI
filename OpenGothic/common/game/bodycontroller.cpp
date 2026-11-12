@@ -6,7 +6,7 @@
 #include "world/objects/item.h"
 #include "world/world.h"
 #include "graphics/mesh/pose.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 #include "frameprofile.h"
 
 #if defined(__GNUC__)
@@ -585,7 +585,7 @@ std::string BodyController::statusJson(const Npc* actor,bool boundaryDiagnostics
     rapidjson::Value mask(rapidjson::kArrayType);
     for(bool value:s.mask) mask.PushBack(value,row.GetAllocator());
     row.AddMember("action_mask",mask,row.GetAllocator());
-    if(TestBench::isActive()) {
+    if(Bench::isActive()) {
     Json pure=object();
     str(pure,"pose_identity",npc.combatPoseIdentity());
     u(pure,"loop_next_time",npc.aiState.loopNextTime);
@@ -697,7 +697,7 @@ std::string BodyController::handleJson(const rapidjson::Value& req,bool sentObse
   const auto type=textField(req,"type");
   if(type=="body_visibility_watch") {
     if(!req.HasMember("enabled") || !req["enabled"].IsBool()) throw std::invalid_argument("visibility enabled must be boolean");
-    if(req["enabled"].GetBool() && (!BodyObservations::enabled() || !TestBench::bodyTracing()))
+    if(req["enabled"].GetBool() && (!BodyObservations::enabled() || !Bench::bodyTracing()))
       throw std::invalid_argument("visibility diagnostics require watched actors and an active body trace");
     state().visibilityDiagnostics=req["enabled"].GetBool(); state().visibilityCaptureFailed=false;
     ++state().visibilityGeneration; state().visibilityRecords=state().visibilityDropped=0;

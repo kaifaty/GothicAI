@@ -36,7 +36,7 @@
 #include "npcfind.h"
 #include "textcodec.h"
 #include "voicebuffer.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 
 #include "aibridge_impl.h"
 
@@ -208,19 +208,19 @@ AiBridge::Impl::Impl() {
     fate.finish(*w,kind,false);
     return true;
     };
-  if(TestBench::isActive())
-    TestBench::aiReached = [this](std::string_view key, std::string_view stage) {
+  if(Bench::isActive())
+    Bench::aiReached = [this](std::string_view key, std::string_view stage) {
       return (key=="necro" && necro.reached(stage)) || (key=="fate" && fate.reached(stage));
       };
-  if(TestBench::isActive())
-    TestBench::npcView = [](World& world, std::string_view npc) {
+  if(Bench::isActive())
+    Bench::npcView = [](World& world, std::string_view npc) {
       // The production npc_view writer, for native stands without a server (body-traces).
       rapidjson::Document names(rapidjson::kArrayType);
       names.PushBack(rapidjson::Value(npc.data(),rapidjson::SizeType(npc.size()),names.GetAllocator()),names.GetAllocator());
       return NpcView([](std::string&&) {}).views(world,names);
       };
-  if(TestBench::isActive())
-    TestBench::aiBusy = [this]() {
+  if(Bench::isActive())
+    Bench::aiBusy = [this]() {
       for(auto& v:voices)
         if(v.drainedAt==0)
           return true;
@@ -295,9 +295,9 @@ AiBridge::Impl::~Impl() {
   gothic.externalSoundFn   = nullptr;
   gothic.saveExtFn         = nullptr;
   gothic.sessionStartFn    = nullptr;
-  TestBench::aiBusy        = nullptr;
-  TestBench::aiReached     = nullptr;
-  TestBench::npcView       = nullptr;
+  Bench::aiBusy        = nullptr;
+  Bench::aiReached     = nullptr;
+  Bench::npcView       = nullptr;
   BodyObservations::disable();
   voices.clear();  // before the game's sound device goes
   chat.reset();
@@ -1520,9 +1520,9 @@ void AiBridge::Impl::startVoice(const LineLibrary::Line& line) {
   if(!v.effect.isEmpty()) {
     v.effect.setPosition(npc->mapHeadBone());
     v.effect.setMaxDistance(WorldSound::talkRange);
-    v.effect.setVolume(TestBench::voiceStems() ? 0.f : 2.f);  // as WorldSound does for dialog speech
-    if(TestBench::voiceStems())
-      line.voice->record(TestBench::aiVoiceStem(line.npc,line.id,line.voice->rate()));
+    v.effect.setVolume(Bench::voiceStems() ? 0.f : 2.f);  // as WorldSound does for dialog speech
+    if(Bench::voiceStems())
+      line.voice->record(Bench::aiVoiceStem(line.npc,line.id,line.voice->rate()));
     v.effect.play();
     line.voice->lipTrack()->setName(line.id);  // the seed of the brows on its accents
     npc->startSpeech(line.voice->lipTrack());  // the mouth follows what the audio thread plays
@@ -1555,7 +1555,7 @@ void AiBridge::Impl::tickVoices(World& world) {
     if(v.drainedAt==0 && v.buf->isDrained()) {
       v.drainedAt = now;
       Log::i("[ai] voice ",v.line," played, ",v.buf->durationMs()," ms");
-      TestBench::aiVoiceEnd(v.npc,v.buf->durationMs());
+      Bench::aiVoiceEnd(v.npc,v.buf->durationMs());
       }
     }
   // keep the source a little after the last sample: OpenAL still holds a buffer of it
@@ -1620,7 +1620,7 @@ void AiBridge::Impl::onTranscript(const rapidjson::Value& msg) {
     return;
   std::string who = TextCodec::fromUtf8("Ты");
   const auto  to  = JsonRead::str(msg,"to_name");
-  TestBench::aiHeard(JsonRead::str(msg,"text"),to);
+  Bench::aiHeard(JsonRead::str(msg,"text"),to);
   if(!to.empty())
     who += " -> " + TextCodec::fromUtf8(to);
   const auto time = LineLibrary::durationFor(text);
@@ -1899,7 +1899,7 @@ void AiBridge::Impl::onLineStarted(const LineLibrary::Line& line) {
   Npc*        npc   = world!=nullptr ? npcBySymbol(*world,line.npc) : nullptr;
   Npc*        to    = world!=nullptr && !line.to.empty() ? npcBySymbol(*world,line.to) : nullptr;
   std::string name  = npc!=nullptr ? std::string(npc->displayName()) : line.npc;
-  TestBench::aiLine(line.npc,TextCodec::toUtf8(name),TextCodec::toUtf8(line.text),line.time,line.to,line.filler);
+  Bench::aiLine(line.npc,TextCodec::toUtf8(name),TextCodec::toUtf8(line.text),line.time,line.to,line.filler);
   // the face while the line is said, and a moment after (v8); the hands go with the mood too
   if(npc!=nullptr) {
     npc->setTalkMood(line.mood,line.id,line.time+MoodHoldMs);
