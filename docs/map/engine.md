@@ -6,6 +6,8 @@
 
 Крючки стенда для платформы — `common/benchprobe.h`: `BenchProbe` передаёт запросы рендера и анимации, события разрушения и рождения рэгдолла; `Npc` непрозрачен. Адаптер `common/testbench_probe.cpp` устанавливается через `TestBench::install()` из `main` и `configure`; без него указатель пуст и стенд не действует. `game/main.cpp` относится к инструментам: точка входа собирает все слои, включая стенд и мост. [Шаг 6 разделения слоёв](../../reports/engine/2026-11-10-engine-layers/README.md#порядок-работы).
 
+Крючки стенда для RPG, Готики и моста — `common/world/benchhooks.*`: `BenchHooks` наследует `BenchProbe`, обёртки `Bench::` пересылают вызовы единственному адаптеру, а шесть обратных вызовов моста и окна хранятся в RPG. Без установки запросы не включают стенд; ранняя установка в `main` и `configure` сохраняет строки диагностики вне трассировки. Проверка — `gothic-body-watch-test`, `npc-day-parity`, `body-headless-senses` и e2e `m5b`.
+
 Звуки анимации — `common/animationsound.h`: `AnimationSound` испускает звук для `Npc` и `Interactive`.
 
 Звуки шагов анимации — `common/animationsound.h`: `AnimationGroundSound` добавляет проверку воздуха и звук поверхности для `Npc`.
