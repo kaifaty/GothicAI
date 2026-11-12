@@ -196,9 +196,11 @@ class Resources final {
       std::array<double,TextureBudget::MaxStage+1> stageSeconds{};
       uint64_t stageBytes0 = 0, stageBytes = 0;
       // step 4 (textureflow.h): the shortfall by state, the visible shortfall, latencies, bursts, bytes in flight
-      TextureFlow::Tracker flow;
+      TextureFlow::Summary flow;
       };
     static TextureStats              textureStats();
+    // Step 4: the distributions of the loads' latency, their wait for a slot and the bursts, since the start
+    static TextureFlow::Distributions textureFlowDistributions();
     static uint64_t                  textureGeneration();
     static std::vector<const Tempest::Texture2d*> textureChanges(uint64_t since);
     static bool                      texturesReady();

@@ -216,8 +216,8 @@ void finish() {
           std::fprintf(file,",%.9g",seconds);
         std::fprintf(file,",%llu,%llu,%.9g,%llu,%llu,%llu,%llu,%.9g,%.9g,%.9g",(unsigned long long)flow.count[TextureFlow::Waiting],
           (unsigned long long)flow.visible,flow.visibleSeconds,(unsigned long long)textures.loadsInFlight,
-          (unsigned long long)flow.bytesInFlight,(unsigned long long)flow.entries,(unsigned long long)flow.latency.count(),
-          std::max(0.0,flow.latency.quantile(0.5)),std::max(0.0,flow.latency.quantile(0.9)),std::max(0.0,flow.latency.max()));
+          (unsigned long long)flow.bytesInFlight,(unsigned long long)flow.entries,(unsigned long long)flow.latencyN,
+          std::max(0.0,flow.latencyP50),std::max(0.0,flow.latencyP90),std::max(0.0,flow.latencyMax));
         std::fprintf(file,",%llu,%.9g,%.9g",(unsigned long long)flow.ahead,flow.aheadSeconds,1000*flow.horizon);
         for(const auto seconds:textures.stageSeconds)
           std::fprintf(file,",%.9g",seconds);

@@ -1579,7 +1579,7 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
   double split=0;
   for(const auto seconds:flow.seconds)
     split+=seconds;
-  require(flow.latency.count()==3 && flow.wait.count()==3 && flow.entries==3 &&
+  require(flow.latencyN==3 && flow.waitN==3 && flow.entries==3 &&
           std::abs(split-Resources::textureStats().shortfallSeconds)<1e-9 && flow.visibleSeconds<=split,
           "the shortfall's split by state must add up to it, and each load must report its latency and wait");
   }

@@ -16,5 +16,6 @@ namespace TextureDump {
   // shortfall's texture-seconds by state and the visible shortfall, loads started and textures that became short, the
   // latency demand -> publication and the wait for a load slot (p50, p90, max ms), bursts (p50, p90, max textures),
   // the publications' cost.
-  std::string flowFields(const Resources::TextureStats& after, const Resources::TextureStats& before);
+  std::string flowFields(const Resources::TextureStats& after, const Resources::TextureStats& before,
+                         const TextureFlow::Distributions& now, const TextureFlow::Distributions& was);
   }

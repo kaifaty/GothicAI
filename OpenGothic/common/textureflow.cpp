@@ -140,6 +140,15 @@ void TextureFlow::Tracker::integrate(double elapsed) {
   aheadSeconds   += elapsed*double(ahead);
   }
 
+TextureFlow::Summary::Summary(const Tracker& t)
+  :count(t.count), seconds(t.seconds), visible(t.visible), ahead(t.ahead), entries(t.entries), bytesInFlight(t.bytesInFlight),
+   publications(t.publications), visibleSeconds(t.visibleSeconds), aheadSeconds(t.aheadSeconds), publishMs(t.publishMs),
+   publishMaxMs(t.publishMaxMs), horizon(t.horizon), latencyN(t.latency.count()), waitN(t.wait.count()),
+   bursts(t.bursts.count()), latencyP50(t.latency.quantile(0.5)), latencyP90(t.latency.quantile(0.9)),
+   latencyMax(t.latency.max()), waitP50(t.wait.quantile(0.5)), waitP90(t.wait.quantile(0.9)), waitMax(t.wait.max()),
+   burstP90(t.bursts.quantile(0.9)), burstMax(t.bursts.max()) {
+  }
+
 uint64_t TextureFlow::Tracker::shortfall() const {
   uint64_t n = 0;
   for(const auto c:count)

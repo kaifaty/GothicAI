@@ -703,14 +703,14 @@ inline void mark(std::string_view stage, double stageMs = -1, std::string_view e
   std::snprintf(textureBuf,sizeof(textureBuf),
                 "[loadprobe-textures] stage=%.*s t_ms=%.1f tex_latency_n=%llu tex_latency_p50_ms=%.1f tex_latency_p90_ms=%.1f "
                 "tex_latency_max_ms=%.1f",
-                int(stage.size()),stage.data(),elapsed,(unsigned long long)flow.latency.count(),flow.latency.quantile(0.5),
-                flow.latency.quantile(0.9),flow.latency.max());
+                int(stage.size()),stage.data(),elapsed,(unsigned long long)flow.latencyN,flow.latencyP50,flow.latencyP90,
+                flow.latencyMax);
   Tempest::Log::i(textureBuf);
   std::snprintf(textureBuf,sizeof(textureBuf),
                 "[loadprobe-textures] stage=%.*s t_ms=%.1f tex_wait_p50_ms=%.1f tex_wait_p90_ms=%.1f tex_wait_max_ms=%.1f "
                 "tex_bursts=%llu tex_burst_p90=%.0f tex_burst_max=%u",
-                int(stage.size()),stage.data(),elapsed,flow.wait.quantile(0.5),flow.wait.quantile(0.9),flow.wait.max(),
-                (unsigned long long)flow.bursts.count(),flow.bursts.quantile(0.9),flow.bursts.max());
+                int(stage.size()),stage.data(),elapsed,flow.waitP50,flow.waitP90,flow.waitMax,
+                (unsigned long long)flow.bursts,flow.burstP90,flow.burstMax);
   Tempest::Log::i(textureBuf);
   std::snprintf(textureBuf,sizeof(textureBuf),
                 "[loadprobe-textures] stage=%.*s t_ms=%.1f tex_ahead_n=%llu tex_ahead_seconds=%.9g tex_lookahead_ms=%.1f "

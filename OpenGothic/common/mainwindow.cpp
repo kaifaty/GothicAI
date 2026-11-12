@@ -395,7 +395,7 @@ void MainWindow::drawChunks(Painter& p, const World& world, const Camera& camera
                   flow.seconds[TextureFlow::Waiting],flow.seconds[TextureFlow::Reading],flow.seconds[TextureFlow::Uploading],
                   flow.seconds[TextureFlow::Publishing],flow.seconds[TextureFlow::Stale],flow.visibleSeconds,
                   static_cast<unsigned long long>(textures.loadsInFlight),double(flow.bytesInFlight)/1048576.0,
-                  flow.latency.quantile(0.5),flow.latency.quantile(0.9));
+                  flow.latencyP50,flow.latencyP90);
     fnt.drawText(p,x,top+9*line,text);
     };
   auto drawNpcTiers = [&](int top) {

@@ -122,4 +122,24 @@ namespace TextureFlow {
     void integrate(double elapsed);
     uint64_t shortfall() const;
     };
+
+  // What Resources::textureStats reports: numbers only. A bench keeps the stats of every frame, so the distributions
+  // (a few kilobytes) come apart, from Resources::textureFlowDistributions, at the start and the end of a pass.
+  struct Summary {
+    std::array<uint64_t,States> count{};
+    std::array<double,States>   seconds{};
+    uint64_t visible = 0, ahead = 0, entries = 0, bytesInFlight = 0, publications = 0;
+    double   visibleSeconds = 0, aheadSeconds = 0, publishMs = 0, publishMaxMs = 0, horizon = 0;
+    // since the start; -1: none yet
+    uint64_t latencyN = 0, waitN = 0, bursts = 0;
+    double   latencyP50 = -1, latencyP90 = -1, latencyMax = -1, waitP50 = -1, waitP90 = -1, waitMax = -1, burstP90 = -1;
+    uint32_t burstMax = 0;
+
+    Summary() = default;
+    explicit Summary(const Tracker& tracker);
+    };
+  struct Distributions {
+    Histogram latency, wait;
+    Bursts    bursts;
+    };
   }

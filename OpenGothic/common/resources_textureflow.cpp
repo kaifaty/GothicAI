@@ -127,11 +127,18 @@ double Resources::textureLookAhead() {
   }
 
 void Resources::textureFlowStats(TextureStats& stats) {
-  stats.flow=textureFlow;
+  stats.flow=TextureFlow::Summary(textureFlow);
   stats.flow.horizon=textureLookAhead();
   stats.flow.bytesInFlight=0;
   for(const auto& reload:textureReloads)
     stats.flow.bytesInFlight+=reload->bytes;
+  }
+
+TextureFlow::Distributions Resources::textureFlowDistributions() {
+  if(inst==nullptr)
+    return {};
+  std::lock_guard<std::recursive_mutex> guard(inst->sync);
+  return {inst->textureFlow.latency,inst->textureFlow.wait,inst->textureFlow.bursts};
   }
 
 bool Resources::admitsTextureLoad(const TextureRecord& record, uint8_t level) const {

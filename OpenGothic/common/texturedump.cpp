@@ -27,7 +27,8 @@ void TextureDump::write(std::string_view stage, WorldView* view) {
   Tempest::Log::i("texture dump: ",name," in \"",dir,"\"");
   }
 
-std::string TextureDump::flowFields(const Resources::TextureStats& after, const Resources::TextureStats& before) {
+std::string TextureDump::flowFields(const Resources::TextureStats& after, const Resources::TextureStats& before,
+                                    const TextureFlow::Distributions& now, const TextureFlow::Distributions& was) {
   const auto& a=after.flow;
   const auto& b=before.flow;
   std::string out;
@@ -56,11 +57,11 @@ std::string TextureDump::flowFields(const Resources::TextureStats& after, const 
   std::snprintf(field,sizeof(field),",\"tex_publications\":%llu,\"tex_publish_ms\":%.9g,\"tex_publish_max_ms\":%.9g",
                 (unsigned long long)(a.publications-b.publications),a.publishMs-b.publishMs,a.publishMaxMs);
   out+=field;
-  times("latency",a.latency,b.latency);
-  times("wait",a.wait,b.wait);
+  times("latency",now.latency,was.latency);
+  times("wait",now.wait,was.wait);
   std::snprintf(field,sizeof(field),",\"tex_bursts\":%llu,\"tex_burst_p50\":%.0f,\"tex_burst_p90\":%.0f,\"tex_burst_max\":%u",
-                (unsigned long long)a.bursts.count(b.bursts),a.bursts.quantile(0.5,b.bursts),a.bursts.quantile(0.9,b.bursts),
-                a.bursts.max(b.bursts));
+                (unsigned long long)now.bursts.count(was.bursts),now.bursts.quantile(0.5,was.bursts),
+                now.bursts.quantile(0.9,was.bursts),now.bursts.max(was.bursts));
   out+=field;
   return out;
   }
