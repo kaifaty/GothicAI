@@ -47,7 +47,10 @@ double TextureLookAhead::distance(const Tempest::Vec3& from, const Tempest::Vec3
         if(t>0 && t<1)
           cuts[n++] = t;
         }
-  std::sort(cuts.begin(),cuts.begin()+ptrdiff_t(n));
+  // at most eight: insertion
+  for(size_t i=1;i<n;++i)
+    for(size_t k=i;k>0 && cuts[k-1]>cuts[k];--k)
+      std::swap(cuts[k-1],cuts[k]);
   const auto at = [&](double t) {
     double sum = 0;
     for(int i=0;i<3;++i) {
