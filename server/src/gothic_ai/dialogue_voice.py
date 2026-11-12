@@ -10,6 +10,7 @@ import time
 from .dialogue_constants import QUIET_STYLE, TTS_PAUSE
 from .dialogue_state import Conversation, SceneLine, ScenePlay, Voice
 from .dialogue_text import to_game_text
+from .face_track import HeldVoice
 from .game import GameError
 from .persona import MOOD_DELIVERY
 from .protocol import HushCmd, LineVoice, Mood, SayAudioCmd, SayCmd, SayEndCmd
@@ -94,6 +95,10 @@ class DialogueVoiceMixin:
         except TtsError as err:
             self._tts_off(line.npc, line.name, err)
             return None
+        say_face = None
+        if self.face is not None and self.face.wants(line.line) and rate:
+            pcm = b"".join(data for data, _ in chunks)
+            say_face = await self.face.say_face(line.npc, line.line, pcm, rate, line.mood)
         log.info(
             "%s voice %s: %.2fs of audio in %.2fs (%s)",
             line.npc,
@@ -102,7 +107,7 @@ class DialogueVoiceMixin:
             speech.latency_s,
             speech.provider,
         )
-        return rate, chunks, speech.audio_s
+        return rate, chunks, speech.audio_s, say_face
 
     def _spawn_story_voice(self, msg: LineVoice) -> None:
         task = asyncio.create_task(self.voice_story_line(msg.npc, msg.name or msg.npc, msg.line, msg.text))
@@ -119,6 +124,8 @@ class DialogueVoiceMixin:
             self._story_tts = TtsClient(self.tts.url, self.tts.timeout)
         matcher = WordMatcher(text)
         pending_words: list[tuple[int, float, float]] = []
+        # v63: the line waits for all of its voice and its face track (face_track.py)
+        held = HeldVoice() if self.face is not None and self.face.wants(line) else None
 
         async def words(timings: list[WordTiming]) -> None:
             pending_words.extend(matcher.match(timings))
@@ -126,19 +133,34 @@ class DialogueVoiceMixin:
         async def start(rate: int, _provider: str) -> None:
             await self.link.send(SayCmd(npc=npc, line=line, text=text, stream=True, rate=rate))
 
+        async def send(pcm: bytes, timings: list[tuple[int, float, float]] | None) -> None:
+            data = base64.b64encode(pcm).decode()
+            await self.link.send(SayAudioCmd(npc=npc, line=line, data=data, words=timings))
+
         async def chunk(pcm: bytes) -> None:
-            await self.link.send(SayAudioCmd(
-                npc=npc, line=line, data=base64.b64encode(pcm).decode(), words=pending_words.copy() or None,
-            ))
+            timings = pending_words.copy() or None
             pending_words.clear()
+            if held is None:
+                await send(pcm, timings)
+            else:
+                held.chunks.append((pcm, timings))
 
         persona = self.personas.get(npc, name)
         try:
-            speech = await self._story_tts.stream(
-                text, persona.voice_id, persona.voice, start, chunk, on_words=words,
-            )
-            if pending_words:
-                await chunk(b"")
+            async with self._story_order:
+                speech = await self._story_tts.stream(
+                    text, persona.voice_id, persona.voice, start if held is None else held.start, chunk,
+                    on_words=words,
+                )
+                if pending_words:
+                    await chunk(b"")
+                if self.face is not None and held is not None and held.rate:
+                    say_face = await self.face.say_face(npc, line, held.pcm(), held.rate, None)
+                    await start(held.rate, held.provider)
+                    if say_face is not None:
+                        await self.link.send(say_face)
+                    for pcm, timings in held.chunks:
+                        await send(pcm, timings)
         except TtsError as err:
             self._tts_off(npc, name, err)
             return None
@@ -168,7 +190,7 @@ class DialogueVoiceMixin:
                 SayCmd(npc=line.npc, line=line.line, text=line.text, mood=line.mood, to=line.to)
             )
             return
-        rate, chunks, audio_s = voice
+        rate, chunks, audio_s, say_face = voice
         line.audio_s = audio_s
         await self.link.send(
             SayCmd(
@@ -181,6 +203,8 @@ class DialogueVoiceMixin:
                 to=line.to,
             )
         )
+        if say_face is not None:
+            await self.link.send(say_face)
         for pcm, words in chunks:
             await self.link.send(
                 SayAudioCmd(npc=line.npc, line=line.line, data=base64.b64encode(pcm).decode(), words=words)

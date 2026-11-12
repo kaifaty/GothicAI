@@ -41,6 +41,7 @@ ENV_KEYS = {
     "GOTHIC_TTS_PROVIDER": "tts.provider",
     "GOTHIC_TTS_FALLBACK": "tts.fallback",
     "GOTHIC_VOXCPM_URL": "tts.voxcpm_url",
+    "GOTHIC_A2F_URL": "tts.a2f_url",
     "OPENAI_API_KEY": "secrets.openai_api_key",
     "INWORLD_API_KEY": "secrets.inworld_api_key",
 }
@@ -140,6 +141,26 @@ class TtsSettings(_Section):
         None,
         title="Громкость реплик, LUFS",
         description="Пусто: как озвучка игры; none: как отдал провайдер",
+    )
+    a2f: Literal["service", "fake", "off"] = Field(
+        "service",
+        title="Лицо по звуку",
+        description="service: Audio2Face на GPU-сервере; fake: по громкости, без сети; off: выключено",
+    )
+    a2f_url: str | None = Field(
+        None, title="Адрес Audio2Face", description="gothic-a2f (http://…). Пусто: сервер decider, порт 47839"
+    )
+    a2f_timeout: float = Field(
+        1.5, gt=0, title="Ожидание лица, с", description="Дольше реплика уходит без дорожки лица"
+    )
+    a2f_emotions: dict[str, str] = Field(
+        default_factory=dict,
+        title="Эмоции лица по настроению",
+        description=(
+            "Настроение реплики → метка Audio2Face, например friendly = \"joy:0.6\"; "
+            "пустая метка — нейтрально. Пусто: friendly → joy:0.6, angry → anger:0.8, "
+            "hostile → anger:0.8,disgust:0.4, afraid → fear:0.8, pain → pain:0.8"
+        ),
     )
 
 

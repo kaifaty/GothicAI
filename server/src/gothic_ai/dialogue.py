@@ -125,6 +125,7 @@ from .dialogue_turns import DialogueTurnsMixin
 from .dialogue_voice import DialogueVoiceMixin
 from .executor import Intent
 from .face_cues import choose_leak
+from .face_track import FaceVoice, HeldVoice
 from .game import GameError, GameLink
 from .journal import Journal
 from .llm import (
@@ -193,8 +194,10 @@ class DialogueManager(
         budget: Budget | None = None,
         quick: LLMBackend | None = None,
         svm_lines: bool = True,
+        face: FaceVoice | None = None,
     ) -> None:
         self.link = link
+        self.face = face  # v63: face tracks of voiced lines (face_track.py), None: none
         # debug `--debug-leak`: every [felt:...] leaks, on this half or "any" (face_cues.py); None: by chance
         self.debug_leak: str | None = None
         self.journal = journal or Journal()  # lines and actions for the launcher (see journal.py)
@@ -296,6 +299,7 @@ class DialogueManager(
         self._starts: dict[str, asyncio.Event] = {}
         self._scene_tts: TtsClient | None = None
         self._story_tts: TtsClient | None = None  # the director's lines (v26): not behind talk or scenes
+        self._story_order = asyncio.Lock()  # a director's line waits for its face track before the next one
         self._story_voices: set[asyncio.Task[float | None]] = set()
         self._background: set[asyncio.Task[Any]] = set()
         link.listeners.append(self._on_message)
@@ -1010,6 +1014,9 @@ class DialogueManager(
                 if time.monotonic() >= self._tts_paused_until:
                     matcher = WordMatcher(text)
                     pending_words: list[tuple[int, float, float]] = []
+                    # v63: the line waits for all of its voice and its face track (face_track.py)
+                    face = self.face if self.face and self.face.wants(line, filler=filler) else None
+                    held = HeldVoice() if face is not None else None
 
                     async def words(
                         timings: list[WordTiming], matcher: WordMatcher = matcher,
@@ -1059,32 +1066,46 @@ class DialogueManager(
                         self._svm_started(conv, line)
                         self._bark_started(conv, line)
 
-                    async def chunk(
-                        pcm: bytes, line: str = line,
-                        pending_words: list[tuple[int, float, float]] = pending_words,
-                    ) -> None:
+                    async def chunk(pcm: bytes, timings: list[tuple[int, float, float]] | None,
+                                    line: str = line) -> None:
                         if line in conv.hushed:
                             return
-                        await self.link.send(
-                            SayAudioCmd(
-                                npc=conv.npc, line=line, data=base64.b64encode(pcm).decode(),
-                                words=pending_words.copy() or None,
-                            )
-                        )
-                        pending_words.clear()
+                        await self.link.send(SayAudioCmd(
+                            npc=conv.npc, line=line, data=base64.b64encode(pcm).decode(), words=timings,
+                        ))
 
+                    async def voiced(
+                        pcm: bytes, chunk: Callable[..., Awaitable[None]] = chunk,
+                        held: HeldVoice | None = held,
+                        pending_words: list[tuple[int, float, float]] = pending_words,
+                    ) -> None:
+                        timings = pending_words.copy() or None
+                        pending_words.clear()
+                        if held is None:
+                            await chunk(pcm, timings)
+                        else:
+                            held.chunks.append((pcm, timings))
+
+                    voice_at = time.monotonic()
                     try:
                         speech = await self.tts.stream(
                             text,
                             conv.persona.voice_id,
                             conv.persona.voice,
-                            start,
-                            chunk,
+                            start if held is None else held.start,
+                            voiced,
                             MOOD_DELIVERY[mood] if mood else "",
                             on_words=words,
                         )
                         if pending_words:
-                            await chunk(b"")
+                            await voiced(b"")
+                        if face is not None and held is not None and held.rate:
+                            say_face = await face.say_face(conv.npc, line, held.pcm(), held.rate, mood)
+                            await start(held.rate, held.provider)
+                            if started and say_face is not None:
+                                await self.link.send(say_face)
+                            for pcm, timings in held.chunks if started else ():
+                                await chunk(pcm, timings)
                         self._audio[line] = speech.audio_s
                         await self.link.send(
                             SayEndCmd(npc=conv.npc, line=line, audio_s=round(speech.audio_s, 3))
@@ -1093,13 +1114,15 @@ class DialogueManager(
                         if overlay and conv.overlay_free_at <= spoken_at:
                             conv.overlay_free_at = spoken_at + speech.audio_s + 0.25
                         log.info(
-                            "%s voice %s: first audio after %.2fs, %.2fs of audio in %.2fs (%s)",
+                            "%s voice %s: first audio after %.2fs, %.2fs of audio in %.2fs (%s)%s",
                             conv.npc,
                             line,
                             speech.first_chunk_s,
                             speech.audio_s,
                             speech.latency_s,
                             speech.provider,
+                            f"; said with its face {spoken_at - voice_at - speech.first_chunk_s:.3f}s "
+                            "after its first audio" if held is not None and started else "",
                         )
                     except TtsError as err:
                         self._tts_off(conv.npc, conv.persona.name, err)

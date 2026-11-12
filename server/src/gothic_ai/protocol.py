@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 # story_program), v24: choices in the director's dialogs (steps choice, clear_choices; debug choices, talk,
 # menu, menu_pick), v25: story_program.own (the scripts' program under the director's), v26: the director's
 # lines in the npc's voice (line_voice).
-PROTOCOL_VERSION = 62
+PROTOCOL_VERSION = 63
 NOISE_PROTOCOL = 36  # npc_event noise and npc_act investigate
 TRACE_PROTOCOL = 37  # visible physical traces and game time on noise events
 PACE_PROTOCOL = 38  # go_to_waypoint.pace: a guide keeps the hero's pace; start_activity.place
@@ -1645,6 +1645,20 @@ class SayAudioCmd(_Command):
     line: str
     data: str
     words: list[tuple[int, float, float]] | None = None  # v62: times from the line's first audio
+
+
+class SayFaceCmd(_Command):
+    """v63: the face track of a line, from its voice (Audio2Face): frame i is at i/fps seconds from its
+    first sample; `data` is base64 of one byte per shape (`shapes` order) per frame, weight = byte/255. It
+    comes after the line's `say`, before its first `say_audio`. `emotion`: the label it was made with."""
+
+    type: Literal["say_face"] = "say_face"
+    npc: str
+    line: str
+    fps: int
+    shapes: list[str]
+    data: str
+    emotion: str | None = None
 
 
 class SayEndCmd(_Command):

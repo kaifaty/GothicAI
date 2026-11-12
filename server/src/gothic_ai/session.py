@@ -47,6 +47,7 @@ from .dialogue import DialogueManager
 from .director import Director
 from .errands import Errands
 from .executor import Intent
+from .face_track import FaceSource, FaceVoice, emotion_table
 from .fatecard import FateCards
 from .fates import Fates
 from .feat_art import DEFAULT_ROOT, Artist
@@ -185,6 +186,7 @@ class SessionEnv:
     memory: MemoryStore
     asr: AsrClient | None
     tts: TtsClient | None
+    face: FaceSource | None
     decider: DeciderClient | None
     quick: LLMBackend | None
     graph: storygraph.StoryGraph | None
@@ -312,6 +314,7 @@ async def run_session(env: SessionEnv, link: GameLink) -> None:
         budget=budget,
         quick=quick,
         svm_lines=not args.no_svm_lines,
+        face=None if env.face is None else FaceVoice(env.face, emotion_table(args.a2f_emotion)),
     )
     state.dialogue.debug_leak = getattr(args, "debug_leak", None)
     if not args.no_combat_barks or not args.no_mercy:

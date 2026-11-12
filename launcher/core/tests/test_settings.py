@@ -71,6 +71,7 @@ def test_import_from_env(tmp_path):
         "GOTHIC_VOXTRAL_URL=http://gpu:47830\n"
         "GOTHIC_EMBED_URL=http://gpu:47837\n"
         "GOTHIC_LAUGHTER_URL=http://gpu:47838\n"
+        "GOTHIC_A2F_URL=http://gpu:47839\n"
         "GOTHIC_BODY_POLICY=service\n"
         "OPENGOTHIC_BODY_NET=/nets/p30.bodynet\n"
         "export GOTHIC_TTS_PROVIDER='voxcpm'\n"
@@ -81,13 +82,14 @@ def test_import_from_env(tmp_path):
     config = Config.load(tmp_path)
     imported, skipped = config.import_env(env)
     assert imported == [
-        "voice.voxtral_url", "llm.embed_url", "voice.laughter_url", "llm.body_policy", "llm.body_net",
-        "tts.provider", "secrets.inworld_api_key"
+        "voice.voxtral_url", "llm.embed_url", "voice.laughter_url", "tts.a2f_url", "llm.body_policy",
+        "llm.body_net", "tts.provider", "secrets.inworld_api_key"
     ]
     assert skipped == ["GOTHIC_GPU_SSH"]
     assert config.settings.voice.voxtral_url == "http://gpu:47830"
     assert config.settings.llm.embed_url == "http://gpu:47837"
     assert config.settings.voice.laughter_url == "http://gpu:47838"
+    assert config.settings.tts.a2f_url == "http://gpu:47839"
     assert config.settings.llm.body_policy == "service"
     assert config.settings.llm.body_net == Path("/nets/p30.bodynet")
     assert config.settings.tts.provider == "voxcpm" and config.secrets.inworld_api_key == "iw"
