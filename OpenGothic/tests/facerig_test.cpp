@@ -39,6 +39,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstdio>
 #include <iostream>
 #include <stdexcept>
@@ -2011,6 +2012,60 @@ void speechFaceCases(const GltfHeadMesh& plainHead) {
     require(s2.play(r2,500)==1.f,"a voice of the game must play the track of its file");
     std::filesystem::remove_all(dir);
   }
+  // a streamed voice: the frame goes by what the audio thread has played, not by the time since it started
+  {
+    FaceRig r2; SpeechFace s2;
+    r2.setup(&head,p.get());
+    auto v = voiceOf("AIB_7",1500);
+    s2.setTrack(track,"AIB_7");
+    s2.start(v,"",0);
+    v->setPlayed(500);
+    s2.play(r2,1000);
+    r2.update(1000);
+    require(close(r2.weights()[JawOpen],128.f/255.f),"a streamed voice must show the frame of the time it has played: "+
+            std::to_string(r2.weights()[JawOpen]));
+  }
+  // a stream still arriving: shorter than the track so far, the face goes on and does not fade
+  {
+    FaceRig r2; SpeechFace s2;
+    r2.setup(&head,p.get());
+    auto v = voice(600,{{0,600}},false);
+    v->setName("AIB_7");
+    s2.setTrack(track,"AIB_7");
+    s2.start(v,"",0);
+    s2.play(r2,700);
+    const float k = s2.play(r2,900);
+    r2.update(900);
+    require(close(k,1.f) && close(r2.weights()[JawOpen],230.f/255.f),"a voice still arriving must not end the track at "
+            "what has come: "+std::to_string(k)+" "+std::to_string(r2.weights()[JawOpen]));
+  }
+  // a label with no strength is no emotion: the mood faces stay
+  {
+    const auto none = SpeechFace::Track::parse(trackJson(31,"anger:0"));
+    FaceRig r2; SpeechFace s2;
+    r2.setup(&head,p.get());
+    r2.startAnim("S_ANGRY",1,uint64_t(-1),0);
+    s2.start(voiceOf("AIB_7",1500),"",1000);
+    s2.setTrack(none,"AIB_7");
+    s2.play(r2,1500);
+    r2.update(1500);
+    require(!none->emotional && close(r2.weight("S_ANGRY",1500),1.f),"anger:0 must be no emotion, S_ANGRY must stay");
+  }
+  // a track from the directory of OPENGOTHIC_FACE_TRACKS, the head's directory aside
+  {
+    const auto dir = std::filesystem::temp_directory_path()/"facerig-test-env-tracks";
+    std::filesystem::create_directories(dir);
+    std::ofstream(dir/"DIA_TEST_04.face.json") << trackJson(31);
+    const char*       was = std::getenv("OPENGOTHIC_FACE_TRACKS");
+    const std::string old = was!=nullptr ? was : "";
+    setenv("OPENGOTHIC_FACE_TRACKS",dir.string().c_str(),1);
+    const auto found = SpeechFace::fromFile("DIA_TEST_04.WAV","");
+    if(was!=nullptr)
+      setenv("OPENGOTHIC_FACE_TRACKS",old.c_str(),1); else
+      unsetenv("OPENGOTHIC_FACE_TRACKS");
+    std::filesystem::remove_all(dir);
+    require(found!=nullptr,"a track in OPENGOTHIC_FACE_TRACKS must be found");
+  }
   // rejections: the track, its rules, the bridge's say_face
   const auto rejected = [&](const std::string& j, std::string_view reason) {
     try {
@@ -2048,6 +2103,8 @@ void speechFaceCases(const GltfHeadMesh& plainHead) {
   rapidjson::Document doc;
   doc.Parse(trackJson(31,"","AAA!").c_str());
   require(LineCues::readFace(doc)==nullptr,"a broken say_face must leave the line without a track");
+  doc.Parse(R"({"type":"say_face","npc":"BAU_952_VINO","fps":30,"shapes":["jawOpen"],"data":"AA=="})");
+  require(LineCues::readFace(doc)==nullptr,"a say_face without its line must leave no track");
   doc.Parse(trackJson(31,"anger:0.8").c_str());
   const auto read = LineCues::readFace(doc);
   require(read!=nullptr && read->frames==31 && read->emotional,"say_face must be read by the bridge");
