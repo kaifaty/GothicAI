@@ -31,6 +31,9 @@
 // kinds 11 place_held and 12 place_released (a = kind, b = point, c = object or 0xFFFFFFFF for a freepoint), the
 // reasons action_failed 3 and activity_finished 4 (evicted: the place's routine user came) and activity_finished 5
 // (above low: in an anchor entry the needs it fills are out of danger; v4 wrote 0, the setpoint, for that end).
+// Version 6 (decisions, written instead of 5; the header and the kinds are v5's): decision_requested gains the cause
+// 128, the recheck — a need in want (critical in an anchor entry) that what the NPC does does not fill, the config's
+// decisions.recheck_min after its last decision.
 //
 // Marks: CSV, one row per NPC every 5 game minutes from the start, NPCs in the export's order:
 //   t_min,key,routine,state,moving,point,to,arrive_min,x,y,z
@@ -40,7 +43,7 @@
 // x, y, z — the position in cm: the point's, or on the way the place along the walk's points by the time gone.
 // With needs (journal v3) every row goes on with a column per need, `need_<id>`: a person's level at the mark with
 // four decimals, "-" for an NPC without needs (not a person, or of decisions.no_needs_guilds) and for a need not in
-// use (World::needActive). With decisions (journal v4 and v5) two columns more, `source,target`:
+// use (World::needActive). With decisions (journal v4 to v6) two columns more, `source,target`:
 // `routine` or `need` (a chosen activity), and the chosen activity's `kind:place` (the mobsi's vob or #id, the
 // point's name), "-" for the routine.
 
@@ -53,7 +56,7 @@ namespace Journal {
 
 constexpr uint32_t Version     = 2;
 constexpr uint32_t NeedsVersion = 3; // with needs
-constexpr uint32_t DecisionsVersion = 5; // with decisions (v4 before the places' routine users)
+constexpr uint32_t DecisionsVersion = 6; // with decisions (v4 before the places' routine users, v5 before the recheck)
 constexpr uint32_t RecordBytes = 24;
 constexpr char     Magic[8]    = {'G','S','O','C','J','R','N','L'};
 

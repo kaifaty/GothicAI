@@ -590,8 +590,8 @@ void readDecisions(Config& c, const Value& doc, const std::filesystem::path& dir
     return;
   const auto& v = doc["decisions"];
   const std::string where = "decisions";
-  onlyKeys(v,{"note","menu","travel_limit_min","min_dwell_min","posts_release_for_needs","post_states","no_needs_guilds",
-              "protected","places","guild_names","teacher"},where);
+  onlyKeys(v,{"note","menu","travel_limit_min","min_dwell_min","recheck_min","posts_release_for_needs","post_states",
+              "no_needs_guilds","protected","places","guild_names","teacher"},where);
   auto& d = c.decisions;
   d.loaded = true;
   d.menu   = uint(v,"menu");
@@ -599,6 +599,10 @@ void readDecisions(Config& c, const Value& doc, const std::filesystem::path& dir
   d.travelLimit = int64_t(std::llround(hours(v,"travel_limit_min",where)*60.0));
   d.minDwell    = int64_t(std::llround(hours(v,"min_dwell_min",where)*60.0));
   need(d.minDwell>=60,where+": min_dwell_min must be a minute or more");
+  if(v.HasMember("recheck_min")) {
+    d.recheck = int64_t(std::llround(hours(v,"recheck_min",where)*60.0));
+    need(d.recheck>=60,where+": recheck_min must be a minute or more");
+    }
   d.postsRelease = flag(v,"posts_release_for_needs");
   const auto& posts = array(v,"post_states");
   for(rapidjson::SizeType i=0; i<posts.Size(); ++i) {

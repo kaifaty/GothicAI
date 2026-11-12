@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <limits>
 #include <span>
 #include <string>
 #include <string_view>
@@ -122,6 +123,9 @@ struct Config {
     uint32_t    menu = 32;                   // K: options per decision, the routine included
     int64_t     travelLimit = 15*60;         // game seconds of walking to an option
     int64_t     minDwell = 10*60;            // game seconds a chosen activity lasts at least
+    // Game seconds after a decision: a need in want that what the NPC does does not fill asks again (recheck_min,
+    // optional, 60 by default: the teacher's window, over which the last decision was judged).
+    int64_t     recheck = 60*60;
     bool        postsRelease = false;        // a critical need takes a guard off its post
     std::vector<std::string> postStates;     // ZS_* names; a trailing * is a prefix
     std::vector<uint32_t>    noNeedsGuilds;  // guilds without needs (and so without decisions)
@@ -405,6 +409,8 @@ enum Cause : uint8_t {
   CauseAnchorCritical = 16, // a need is critical in an anchor entry (it fell there, or the entry begins so)
   CauseFinished       = 32, // the chosen activity is over
   CauseForecast       = 64, // in a free entry a need would be critical during the next anchor entry
+  CauseRecheck        = 128,// a need in want (critical in an anchor entry) that what the NPC does does not fill,
+                            // decisions.recheck after its last decision (journal v6)
   };
 
 enum class Chooser : uint8_t {
@@ -461,7 +467,13 @@ struct Option {
   uint32_t   object = NoObject;
   uint32_t   use    = 0;        // holders now, reservations included, without the deciding NPC
   Time       travel = 0;        // game seconds until it stands there (a walk under way included)
+  // Game seconds of the walk from the place back to the routine's point, as the routine's own walk is counted (0 for
+  // the routine, for a point within NearPointCm, without a point or across components); FarBack beyond the reach of
+  // the menu's waynet search from that point, which is longer than the travel limit and the teacher's window.
+  Time       back   = 0;
   };
+
+constexpr Time FarBack = std::numeric_limits<Time>::max();
 
 // Flat arrays, `stride` = K slots per row: menu and mask [n, K], `count` options per row. The feature arrays `own`
 // and `options` are for the encoder of С4 and stay empty.
@@ -505,8 +517,9 @@ struct Rng {
 struct Pending {
   // RoutineChange: the entry in force changes (the timeline); Begin: the state's end has passed and the next state
   // starts (StartDelay after stateEnd); Arrival, Settle: body events; Need: a level may cross a threshold;
-  // Activity: a chosen activity's end or the end of its least time with a decision deferred.
-  enum Kind : uint8_t { RoutineChange = 0, Arrival = 1, Begin = 2, Settle = 3, Need = 4, Activity = 5 };
+  // Activity: a chosen activity's end or the end of its least time with a decision deferred; Recheck: a decider's
+  // check whether a need in want is still not filled by what it does (decisions.recheck after its last decision).
+  enum Kind : uint8_t { RoutineChange = 0, Arrival = 1, Begin = 2, Settle = 3, Need = 4, Activity = 5, Recheck = 6 };
   Time     time = 0;
   uint64_t seq  = 0;
   uint32_t npc  = 0;
@@ -560,6 +573,7 @@ struct State {
   std::vector<Time>     actEnd;     // its end: needs at the setpoint or its kind's longest time
   std::vector<uint8_t>  actFinish;  // the FinishReason at actEnd: Setpoint, AboveLow (an anchor entry) or MaxTime
   std::vector<uint64_t> actSeq;     // the sequence number + 1 of its activity event in force, 0 for none
+  std::vector<uint64_t> recheckSeq; // the sequence number + 1 of its recheck event in force, 0 for none
   std::vector<uint16_t> objectUse;  // by object: holders — the routine's users, chosen activities, reservations
   std::vector<uint16_t> pointUse;   // by point: the same
   std::vector<uint32_t> routineTarget; // the place the routine uses now (World::targets' encoding), NoObject for none
@@ -637,8 +651,9 @@ double   needLevel(const Sim& sim, uint32_t npc, size_t need);
 
 // --- Policies: a batch in, a choice per row out -----------------------------------------------------------------
 // The teacher's score of every option of the batch ([n, K], -inf for a closed slot): how much lower the drive
-// D = (Σ w·|1 − h|^n)^(1/m) is after the option (the walk, the activity, then the routine) than after the routine over
-// the same window — the horizon, but no shorter than the walk and an hour of the activity — minus the walk's cost,
+// D = (Σ w·|1 − h|^n)^(1/m) is after the option (the walk, the activity, the walk back to the routine's point —
+// Option::back, the rest of the window when longer — then the routine's state) than after the routine over the same
+// window — the horizon, but no shorter than the walk and an hour of the activity — minus the walk's cost,
 // plus the inertia of the activity in hand (the routine's, scored 0, when it is not a chosen one). In a free entry a
 // need forecast to be critical in the next anchor run counts at its forecast low.
 void     teacherScores(const Sim& sim, const DecisionBatch& batch, std::span<float> scores);
