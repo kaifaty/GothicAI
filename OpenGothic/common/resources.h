@@ -30,6 +30,7 @@
 #include "graphics/material.h"
 #include "sound/soundfx.h"
 #include "texturebudget.h"
+#include "textureflow.h"
 
 class StaticMesh;
 class ProtoMesh;
@@ -195,6 +196,8 @@ class Resources final {
       uint32_t stage = 0, stageDeepest = 0;
       std::array<double,TextureBudget::MaxStage+1> stageSeconds{};
       uint64_t stageBytes0 = 0, stageBytes = 0;
+      // step 4 (textureflow.h): the shortfall by state, the visible shortfall, latencies, bursts, bytes in flight
+      TextureFlow::Tracker flow;
       };
     static TextureStats              textureStats();
     static uint64_t                  textureGeneration();
@@ -440,7 +443,19 @@ class Resources final {
     void                 queueTexture(TextureRecord& record);
     void                 unqueueTexture(TextureRecord& record);
     void                 updateNearTailTime();
-    uint8_t              wantedLevel(const TextureRecord& record) const;
+    uint8_t              wantedLevel(const TextureRecord& record) const { return wantedLevel(record,textureLadder.stage); }
+    uint8_t              wantedLevel(const TextureRecord& record, uint32_t stage) const;
+    // Step 4 (resources_textureflow.cpp): the shortfall's states. The level the screen needs: reserve 0.
+    uint8_t              visibleLevel(const TextureRecord& record) const;
+    // a record put into the missing or promotion queue `wanted`, or out of it; then whether its shortfall ended
+    void                 flowEnter(TextureRecord& record, uint8_t wanted);
+    void                 flowLeave(TextureRecord& record);
+    void                 flowSettle(TextureRecord& record);
+    // its load started, or the main thread saw it move on
+    void                 flowRestate(TextureRecord& record);
+    void                 flowStarted(TextureRecord& record, TextureReload& reload, uint8_t level);
+    void                 flowObserve(TextureReload& reload);
+    void                 textureFlowStats(TextureStats& stats);
     // Step 3 (resources_texturebudget.cpp): the level of the owners measured on screen at `stage`
     uint8_t              resolutionLevel(const TextureRecord& record, uint32_t stage) const;
     void                 setTextureBudget(const TextureBudget::Choice& budget, const TextureBudget::Choice& target,
@@ -564,6 +579,12 @@ class Resources final {
       // step 3 (resources_texturebudget.cpp), filled once: 0.5*log2(width*height), the chain's bytes from each level
       double stageTop = -1;
       std::array<uint64_t,16> stageChain{};
+      // step 4 (resources_textureflow.cpp): its state while short, whether short of the visible level, since when
+      // short, whether an async publication or a load came since, and its load in flight as the main thread saw it
+      uint8_t flowState = TextureFlow::NotShort, loadLevel = 0;
+      bool flowVisible = false, flowPublished = false, flowLoaded = false;
+      TextureFlow::Phase loadPhase = TextureFlow::Phase::Queued;
+      std::chrono::steady_clock::time_point shortSince{};
       bool tail() const { return firstMip!=0; }
       bool hasTail() const { return lowest!=0; }
       bool wanted() const;
@@ -579,6 +600,9 @@ class Resources final {
       uint8_t level = 0;  // asked for, then read
       bool lowering = false;
       std::weak_ptr<int> queued;
+      // step 4: how far the worker is (TextureFlow::Phase), and the bytes its payload will take
+      std::shared_ptr<std::atomic<uint8_t>> phase = std::make_shared<std::atomic<uint8_t>>(uint8_t(0));
+      uint64_t bytes = 0;
       };
     std::unordered_map<const Tempest::Texture2d*,TextureRecord> textureRecords;
     std::map<std::pair<uint64_t,uintptr_t>,const Tempest::Texture2d*> changedTextures;
@@ -591,6 +615,7 @@ class Resources final {
     std::set<TextureRecord*> nearTailTextures;
     std::chrono::steady_clock::time_point nearTailUpdated = std::chrono::steady_clock::now();
     double nearTailSeconds = 0, shortfallSeconds = 0;
+    TextureFlow::Tracker textureFlow;
     std::atomic<uint32_t> textureStartup{0};  // worlds loading (TextureStartup)
     uint32_t textureJumpMs = 300;
     struct TextureJump {

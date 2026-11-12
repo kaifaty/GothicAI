@@ -422,6 +422,7 @@ void Resources::trackTexture(Texture2d* texture, const TextureData& data, Textur
     record.lowest=std::max(data.firstMip,TextureLevels::lowest(data.width,data.height,data.mipCount));
   record.bytes=LoadProbe::textureBytes(*texture);
   auto entry=textureRecords.emplace(texture,std::move(record)).first;
+  updateNearTailTime();
   queueTexture(entry->second);
   }
 
@@ -448,6 +449,8 @@ void Resources::updateNearTailTime() {
   nearTailSeconds+=elapsed*double(nearTailTextures.size());
   // Missing and promotion queues hold exactly the wanted textures resident coarser than wanted.
   shortfallSeconds+=elapsed*double(textureMissing.size()+texturePromotions.size());
+  textureFlow.integrate(elapsed);
+  textureFlow.bursts.tick(now);
   nearTailUpdated=now;
   }
 
@@ -455,7 +458,7 @@ uint8_t Resources::tailLevel(const TextureRecord& record) const {
   return uint8_t(std::min<uint32_t>(textureSkipMips,record.lowest));
   }
 
-uint8_t Resources::wantedLevel(const TextureRecord& record) const {
+uint8_t Resources::wantedLevel(const TextureRecord& record, uint32_t stage) const {
   if(!textureStreaming || textureSkipMips==0 || record.lowest==0 || record.pinned ||
      record.distances.count(TextureAlwaysFull)!=0)
     return 0;
@@ -467,7 +470,7 @@ uint8_t Resources::wantedLevel(const TextureRecord& record) const {
   if(!record.ringNeeds.empty())
     level=std::min<uint8_t>(level,record.ringNeeds.begin()->first<=2 ? 0 : tail);
   if(!record.resolutions.empty())
-    level=std::min(level,resolutionLevel(record,textureLadder.stage));
+    level=std::min(level,resolutionLevel(record,stage));
   return level;
   }
 
@@ -484,6 +487,7 @@ std::tuple<uint64_t,uint64_t,uintptr_t> Resources::textureDemotionKey(const Text
 
 void Resources::unqueueTexture(TextureRecord& record) {
   updateNearTailTime();
+  flowLeave(record);
   nearTailTextures.erase(&record);
   textureIdle.erase({record.lastDemand,reinterpret_cast<uintptr_t>(record.texture)});
   textureMissing.erase(&record);
@@ -503,6 +507,8 @@ void Resources::queueTexture(TextureRecord& record) {
         textureMissing.insert(&record);
       else if(record.firstMip>wanted)
         texturePromotions.insert(&record);
+      if(!record.resident || record.firstMip>wanted)
+        flowEnter(record,wanted);
       }
     // Lowering waits five seconds of eligibility. An owner judged by the ring rule keeps it within ring 3.
     const auto& rings=textureScreen ? record.ringNeeds : record.distances;
@@ -526,6 +532,7 @@ void Resources::queueTexture(TextureRecord& record) {
     record.demoteAt={};
     textureIdle.emplace(std::make_pair(record.lastDemand,reinterpret_cast<uintptr_t>(record.texture)),&record);
     }
+  flowSettle(record);
   }
 
 void Resources::requeueTextures(const std::function<void()>& change) {
@@ -629,6 +636,7 @@ Resources::TextureStats Resources::textureStats() {
   stats.jumpsOpen=inst->textureJumpsUnresolved+(inst->textureJump.open ? 1 : 0);
   stats.jumpSyncMsMax=inst->textureJumpSyncMsMax;
   stats.jumpZeroMsMax=inst->textureJumpZeroMsMax;
+  inst->textureFlowStats(stats);
   for(const auto& queue:inst->recycled)
     stats.retiredBytes+=queue.textureBytes;
   stats.liveBytes=Texture2d::liveBytes();
@@ -875,6 +883,7 @@ void Resources::publishTexture(const std::shared_ptr<TextureReload>& reload) {
     record.firstMip=level;
     notifyTextureChanged(record);
     FrameProfile::textureEvent(FrameProfile::TextureActivity::Publish);
+    record.flowPublished=true;
     if(!wasResident) {
       ++texturesReloaded;
       ++record.reloads;
@@ -895,11 +904,14 @@ void Resources::startTextureLoad(TextureRecord& record, uint8_t level, bool lowe
   reload->lowering=lowering;
   ++textureLoadsStarted;
   record.loading=true;
-  reload->pending=std::async(std::launch::async,[path=record.source,mipmaps=record.mipmaps,level,device=dev] {
+  flowStarted(record,*reload,level);
+  reload->pending=std::async(std::launch::async,[path=record.source,mipmaps=record.mipmaps,level,device=dev,phase=reload->phase] {
     const auto started=LoadProbe::now();
+    phase->store(uint8_t(TextureFlow::Phase::Reading));
     FrameProfile::TextureWork reading(FrameProfile::TextureActivity::Read);
     auto data=Resources::decodeBaseTexture(path,mipmaps,level);
     reading.finish();
+    phase->store(uint8_t(TextureFlow::Phase::Uploading));
     FrameProfile::TextureWork uploading(FrameProfile::TextureActivity::Upload);
     auto texture=device->textureAsync(data.pixmap,data.useMipmap);
     uploading.finish();
@@ -907,6 +919,7 @@ void Resources::startTextureLoad(TextureRecord& record, uint8_t level, bool lowe
       throw std::runtime_error("texture reload returned an empty image");
     LoadProbe::countTexture(texture,started);
     FrameProfile::textureEvent(FrameProfile::TextureActivity::Complete);
+    phase->store(uint8_t(TextureFlow::Phase::Done));
     return TextureReload::Payload{std::move(texture),data.firstMip};
     });
   textureReloads.push_back(std::move(reload));
@@ -954,6 +967,7 @@ void Resources::updateTextures(ChunkResidency* residency) {
         reload->level=payload.level;
         reload->ready=std::move(payload.texture);
         }
+      resources.flowObserve(*reload);
       if(!publishing && !reload->ready.isEmpty() && reload->queued.expired() && reload->ready.uploadReady()) {
         FrameProfile::textureEvent(FrameProfile::TextureActivity::Ready);
         publishing=true;

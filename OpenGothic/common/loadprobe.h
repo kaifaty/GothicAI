@@ -679,6 +679,39 @@ inline void mark(std::string_view stage, double stageMs = -1, std::string_view e
                 int(stage.size()),stage.data(),elapsed,textures.stage,textures.stageDeepest,
                 (unsigned long long)textures.stageBytes0,(unsigned long long)textures.stageBytes);
   Tempest::Log::i(textureBuf);
+  // Step 4 (textureflow.h): the shortfall's texture-seconds by state, the visible shortfall (reserve 0), the loads
+  // in flight and their bytes, the latency demand -> publication, the wait for a slot and the bursts, since the start.
+  const auto& flow = textures.flow;
+  std::snprintf(textureBuf,sizeof(textureBuf),
+                "[loadprobe-textures] stage=%.*s t_ms=%.1f tex_shortfall_wait_seconds=%.9g tex_shortfall_read_seconds=%.9g "
+                "tex_shortfall_upload_seconds=%.9g",
+                int(stage.size()),stage.data(),elapsed,flow.seconds[TextureFlow::Waiting],flow.seconds[TextureFlow::Reading],
+                flow.seconds[TextureFlow::Uploading]);
+  Tempest::Log::i(textureBuf);
+  std::snprintf(textureBuf,sizeof(textureBuf),
+                "[loadprobe-textures] stage=%.*s t_ms=%.1f tex_shortfall_publish_seconds=%.9g tex_shortfall_stale_seconds=%.9g "
+                "tex_shortfall_wait_n=%llu",
+                int(stage.size()),stage.data(),elapsed,flow.seconds[TextureFlow::Publishing],flow.seconds[TextureFlow::Stale],
+                (unsigned long long)flow.count[TextureFlow::Waiting]);
+  Tempest::Log::i(textureBuf);
+  std::snprintf(textureBuf,sizeof(textureBuf),
+                "[loadprobe-textures] stage=%.*s t_ms=%.1f tex_visible_shortfall_n=%llu tex_visible_shortfall_seconds=%.9g "
+                "tex_load_bytes=%llu tex_short_entries=%llu",
+                int(stage.size()),stage.data(),elapsed,(unsigned long long)flow.visible,flow.visibleSeconds,
+                (unsigned long long)flow.bytesInFlight,(unsigned long long)flow.entries);
+  Tempest::Log::i(textureBuf);
+  std::snprintf(textureBuf,sizeof(textureBuf),
+                "[loadprobe-textures] stage=%.*s t_ms=%.1f tex_latency_n=%llu tex_latency_p50_ms=%.1f tex_latency_p90_ms=%.1f "
+                "tex_latency_max_ms=%.1f",
+                int(stage.size()),stage.data(),elapsed,(unsigned long long)flow.latency.count(),flow.latency.quantile(0.5),
+                flow.latency.quantile(0.9),flow.latency.max());
+  Tempest::Log::i(textureBuf);
+  std::snprintf(textureBuf,sizeof(textureBuf),
+                "[loadprobe-textures] stage=%.*s t_ms=%.1f tex_wait_p50_ms=%.1f tex_wait_p90_ms=%.1f tex_wait_max_ms=%.1f "
+                "tex_bursts=%llu tex_burst_p90=%.0f tex_burst_max=%u",
+                int(stage.size()),stage.data(),elapsed,flow.wait.quantile(0.5),flow.wait.quantile(0.9),flow.wait.max(),
+                (unsigned long long)flow.bursts.count(),flow.bursts.quantile(0.9),flow.bursts.max());
+  Tempest::Log::i(textureBuf);
   // seconds on each stage reached so far, four a line
   for(uint32_t first=0; first<=textures.stageDeepest && first<textures.stageSeconds.size(); first+=4) {
     int at=std::snprintf(textureBuf,sizeof(textureBuf),"[loadprobe-textures] stage=%.*s t_ms=%.1f",

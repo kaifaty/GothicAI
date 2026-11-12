@@ -476,6 +476,9 @@ void VisualObjects::updateTextureView(bool flush) {
     evaluate(entry.owner,object);
     if(!flush && count%16==0 && std::chrono::steady_clock::now()>=deadline) {
       late=true;
+      ++textureCensus.late;
+      if(textureScreen.due(textureView.odometer,entry))
+        textureCensus.lateMetres=std::max(textureCensus.lateMetres,textureView.odometer-entry.expiry);
       break;
       }
     }

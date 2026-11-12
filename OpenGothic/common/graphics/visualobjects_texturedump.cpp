@@ -75,9 +75,10 @@ void VisualObjects::reportTextureCensus() {
                 textureScreen.size(),textureScheduledCount);
   Tempest::Log::i(line);
   std::snprintf(line,sizeof(line),"[texture-demand] view_ms=%.3f view_max_ms=%.3f focus_ms=%.3f focus_max_ms=%.3f "
-                "resource_calls=%llu requeues=%llu loads=%llu odometer=%.1f",
+                "resource_calls=%llu requeues=%llu loads=%llu odometer=%.1f late=%llu late_m=%.2f",
                 c.viewMs,c.viewMaxMs,c.focusMs,c.focusMaxMs,(unsigned long long)(r.demandCalls-c.resourceCalls),
-                (unsigned long long)(r.requeues-c.requeues),(unsigned long long)(r.loadsStarted-c.loads),textureView.odometer);
+                (unsigned long long)(r.requeues-c.requeues),(unsigned long long)(r.loadsStarted-c.loads),textureView.odometer,
+                (unsigned long long)c.late,c.lateMetres);
   Tempest::Log::i(line);
   const bool enabled=c.enabled;
   c=TextureCensus();

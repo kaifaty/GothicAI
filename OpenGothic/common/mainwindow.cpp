@@ -388,6 +388,15 @@ void MainWindow::drawChunks(Painter& p, const World& world, const Camera& camera
       if(at>0 && size_t(at)<sizeof(text) && textures.stageSeconds[stage]>0)
         at+=std::snprintf(text+at,sizeof(text)-size_t(at),"  %u: %.0f",stage,textures.stageSeconds[stage]);
     fnt.drawText(p,x,top+8*line,text);
+    // step 4 (textureflow.h): the shortfall's texture-seconds by state, the visible part, loads in flight, latency
+    const auto& flow=textures.flow;
+    std::snprintf(text,sizeof(text),"Short s: wait %.1f read %.1f upload %.1f publish %.1f stale %.1f  visible %.1f  "
+                  "loads %llu %.1f MiB  latency p50/p90 %.0f/%.0f ms",
+                  flow.seconds[TextureFlow::Waiting],flow.seconds[TextureFlow::Reading],flow.seconds[TextureFlow::Uploading],
+                  flow.seconds[TextureFlow::Publishing],flow.seconds[TextureFlow::Stale],flow.visibleSeconds,
+                  static_cast<unsigned long long>(textures.loadsInFlight),double(flow.bytesInFlight)/1048576.0,
+                  flow.latency.quantile(0.5),flow.latency.quantile(0.9));
+    fnt.drawText(p,x,top+9*line,text);
     };
   auto drawNpcTiers = [&](int top) {
     const auto& tiers = world.npcSimTierStats();
@@ -403,7 +412,7 @@ void MainWindow::drawChunks(Painter& p, const World& world, const Camera& camera
   if(chunks==nullptr) {
     fnt.drawText(p,x,y,"Chunks: streaming manager disabled");
     drawTextures(y+line);
-    drawNpcTiers(y+10*line);
+    drawNpcTiers(y+11*line);
     return;
     }
   auto hero = world.player();
@@ -416,10 +425,10 @@ void MainWindow::drawChunks(Painter& p, const World& world, const Camera& camera
   const int64_t radius = std::max<int64_t>({8,std::abs(int64_t(cameraId.x)-center.x)+1,
                                             std::abs(int64_t(cameraId.z)-center.z)+1});
   const int mapSize = std::min(240,std::min(w(),h())/2);
-  const int mapY = y+18*line;
+  const int mapY = y+19*line;
   const float cell = float(mapSize)/float(radius*2+1);
   p.setBrush(Color(0.f,0.f,0.f,0.8f));
-  p.drawRect(x-5,y-5,std::max(660,mapSize+10),mapSize+20*line+10);
+  p.drawRect(x-5,y-5,std::max(660,mapSize+10),mapSize+21*line+10);
 
   const auto& stats = chunks->stats();
   char text[160];
@@ -445,7 +454,7 @@ void MainWindow::drawChunks(Painter& p, const World& world, const Camera& camera
   std::snprintf(text,sizeof(text),"Vobs Near missing: %zu  %.6f visual-seconds",stats.vobNearMissing,stats.vobNearMissingSeconds);
   fnt.drawText(p,x,y+6*line,text);
   drawTextures(y+7*line);
-  drawNpcTiers(y+16*line);
+  drawNpcTiers(y+17*line);
 
   const auto& entries = chunks->table().entries;
   for(size_t i=0;i<entries.size();++i) {

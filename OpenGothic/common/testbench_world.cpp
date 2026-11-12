@@ -423,7 +423,8 @@ bool worldCommand(const WorldContext& context,const std::string& line,const std:
           ",\"gpu_mb\":"+std::to_string(double(tempestProbeGpuBytes())/1048576.0)+
           ",\"tex_promoted\":"+std::to_string(textures.promoted-state.streamingTexturesBefore.promoted)+
           ",\"tex_demoted\":"+std::to_string(textures.demoted-state.streamingTexturesBefore.demoted)+
-          ",\"tex_near_tail_seconds\":"+textureSeconds+",\"tex_shortfall_seconds\":"+shortfallSeconds);
+          ",\"tex_near_tail_seconds\":"+textureSeconds+",\"tex_shortfall_seconds\":"+shortfallSeconds+
+          TextureDump::flowFields(textures,state.streamingTexturesBefore));
         }
       state.perfSegment.clear();
       }
