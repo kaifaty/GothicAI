@@ -1,26 +1,26 @@
 #pragma once
 
-#include "records/definitions.h"
+#include "camerapresets.h"
 
 #include <vector>
 
-class CameraDefinitions final {
+class CameraDefinitions final : public CameraPresets {
   public:
     CameraDefinitions();
 
-    const Def::Camera& dialogCam()    const { return camModDialog;    }
-    const Def::Camera& inventoryCam() const { return camModInventory; }
-    const Def::Camera& stdCam()       const { return camModNormal; }
-    const Def::Camera& fpCam()        const { return camModFp;     }
-    const Def::Camera& backCam()      const { return camModBack;   }
-    const Def::Camera& meleeCam()     const { return camModMelee;  }
-    const Def::Camera& rangeCam()     const { return camModRange;  }
-    const Def::Camera& mageCam()      const { return camModMage;   }
-    const Def::Camera& deathCam()     const { return camModDeath;  }
-    const Def::Camera& swimCam()      const { return camModSwim;   }
-    const Def::Camera& diveCam()      const { return camModDive;   }
-    const Def::Camera& fallCam()      const { return camModFall;   }
-    const Def::Camera& mobsiCam(std::string_view tag, std::string_view pos) const;
+    const Def::Camera& dialogCam()    const override { return camModDialog;    }
+    const Def::Camera& inventoryCam() const override { return camModInventory; }
+    const Def::Camera& stdCam()       const override { return camModNormal; }
+    const Def::Camera& fpCam()        const override { return camModFp;     }
+    const Def::Camera& backCam()      const override { return camModBack;   }
+    const Def::Camera& meleeCam()     const override { return camModMelee;  }
+    const Def::Camera& rangeCam()     const override { return camModRange;  }
+    const Def::Camera& mageCam()      const override { return camModMage;   }
+    const Def::Camera& deathCam()     const override { return camModDeath;  }
+    const Def::Camera& swimCam()      const override { return camModSwim;   }
+    const Def::Camera& diveCam()      const override { return camModDive;   }
+    const Def::Camera& fallCam()      const override { return camModFall;   }
+    const Def::Camera& mobsiCam(std::string_view tag, std::string_view pos) const override;
 
   private:
     Def::Camera getCam(std::string_view name);

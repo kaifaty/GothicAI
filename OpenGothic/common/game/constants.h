@@ -194,16 +194,6 @@ enum Attitude : int32_t {
   ATT_NULL     = -1
   };
 
-enum ItemMaterial : uint8_t {
-  MAT_WOOD    = 0,
-  MAT_STONE   = 1,
-  MAT_METAL   = 2,
-  MAT_LEATHER = 3,
-  MAT_CLAY    = 4,
-  MAT_GLAS    = 5,
-  MAT_COUNT   = 6,
-  };
-
 enum CollideMask : uint32_t {
   COLL_DONOTHING         = 0,
   COLL_DOEVERYTHING      = 1,

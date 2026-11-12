@@ -180,10 +180,27 @@ Npc *Gothic::player() {
   return nullptr;
   }
 
+const CameraTarget* Gothic::cameraTarget() {
+  return player();
+  }
+
 Camera* Gothic::camera() {
   if(game)
     return &game->camera();
   return nullptr;
+  }
+
+void Gothic::cameraProjection(Tempest::Matrix4x4& proj) {
+  if(auto w = world())
+    w->globalFx()->morph(proj);
+  }
+
+bool Gothic::cameraShake(Tempest::Vec3& shake) {
+  if(auto w = world()) {
+    w->globalFx()->shake(shake);
+    return true;
+    }
+  return false;
   }
 
 const QuestLog* Gothic::questLog() const {
@@ -1002,7 +1019,7 @@ void Gothic::printdebuginstch(int ch, std::string_view msg) {
   Log::d("[zspy,",ch,"]: ",msg);
   }
 
-const CameraDefinitions& Gothic::cameraDefinitions() const {
+const CameraPresets& Gothic::cameraDefinitions() const {
   return cameraDef();
   }
 

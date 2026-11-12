@@ -108,3 +108,6 @@ class Bullet final : public DynamicWorld::BulletCallback {
     void applySpellPhysics(Npc* target);
   };
 
+namespace ArrowTrace {
+DynamicWorld::BulletTrace* hook();
+}

@@ -6,10 +6,8 @@
 
 #include "records/definitions.h"
 
-class World;
-class Npc;
+class CameraTarget;
 class DbgPainter;
-class Serialize;
 
 class Camera final {
   public:
@@ -46,8 +44,20 @@ class Camera final {
       Tempest::Vec3 pos;
       };
 
+    struct SaveState {
+      float         range;
+      Tempest::Vec3 spin;
+      Tempest::Vec3 target;
+      Tempest::Vec3 interTarget;
+      Tempest::Vec3 rotOffset;
+      Tempest::Vec3 origin;
+      Tempest::Vec3 angles;
+      Tempest::Vec3 veloTrans;
+      float         userRange;
+      };
+
     void reset();
-    void reset(const Npc* pl);
+    void reset(const CameraTarget* pl);
     // a cut: the next frame does not continue this one (TAA starts its history over); counted, the renderer
     // compares the count
     void     markCut() { ++cutCount; }
@@ -55,8 +65,8 @@ class Camera final {
     // a blow along `dir` (world) nods the view by about `deg` and lets it back within a tenth of a second
     void impact(const Tempest::Vec3& dir, float deg);
 
-    void save(Serialize &s);
-    void load(Serialize &s, Npc* pl);
+    SaveState saveState() const;
+    void setSaveState(SaveState saved);
 
     void changeZoom(int delta);
     void setViewport(uint32_t w, uint32_t h);

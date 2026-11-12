@@ -72,7 +72,10 @@ class Gothic final : public GameServices {
     WorldView*   worldView() const override;
     const BloodDecalSource* bloodDecalSource() const override;
     Npc*         player() override;
+    const CameraTarget* cameraTarget() override;
     Camera*      camera() override;
+    void         cameraProjection(Tempest::Matrix4x4& proj) override;
+    bool         cameraShake(Tempest::Vec3& shake) override;
     auto         questLog() const -> const QuestLog*;
     // the hero's chronicle for the diary (ai_bridge keeps it fresh; empty without the server)
     auto         chronicle() const -> const ChronicleData& { return chronicleBook; }
@@ -252,7 +255,7 @@ class Gothic final : public GameServices {
     static float settingsSoundVolume() { return Settings::soundVolume(); }
     static void flushSettings() { Settings::flush(); }
 
-    const CameraDefinitions& cameraDefinitions() const override;
+    const CameraPresets& cameraDefinitions() const override;
     const Def::SoundEffect& soundEffect(std::string_view name) const override;
     int64_t worldTime() const override;
     uint64_t worldTickCount() const override;

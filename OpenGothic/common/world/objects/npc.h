@@ -3,6 +3,7 @@
 #include <functional>
 #include "animationsound.h"
 #include "particletarget.h"
+#include "cameratarget.h"
 
 #include "graphics/mesh/pose.h"
 #include "graphics/mesh/animation.h"
@@ -41,12 +42,13 @@
 #include "daedalus/classes.h"
 
 class Interactive;
+class Bullet;
 class WayPoint;
 struct PhysicsNoise;
 
 struct HeroDeed;
 
-class Npc final : public AnimationGroundSound, public ParticleTarget {
+class Npc final : public AnimationGroundSound, public ParticleTarget, public CameraTarget {
   public:
     using JumpStatus = MoveAlgo::JumpStatus;
 
@@ -130,6 +132,16 @@ class Npc final : public AnimationGroundSound, public ParticleTarget {
     auto       position()   const -> Tempest::Vec3;
     auto       cameraBone(bool isFirstPerson = false) const -> Tempest::Vec3;
     auto       cameraMatrix(bool isFirstPerson = false) const -> Tempest::Matrix4x4;
+    auto       cameraTargetBone() const -> Tempest::Vec3 override { return cameraBone(); }
+    float      cameraTargetRotation() const override { return rotation(); }
+    float      cameraTargetRotationRad() const override { return rotationRad(); }
+    auto       cameraTargetMatrix(bool firstPerson) const -> Tempest::Matrix4x4 override { return cameraMatrix(firstPerson); }
+    bool       cameraTargetSwim() const override { return isSwim(); }
+    bool       cameraTargetInAir() const override { return isInAir(); }
+    bool       cameraTargetJump() const override { return isJump(); }
+    bool       cameraTargetDead() const override { return isDead(); }
+    std::string_view cameraTargetScheme() const override;
+    std::string_view cameraTargetPosScheme() const override;
     float      rotation() const;
     float      rotationRad() const;
     float      rotationY() const;

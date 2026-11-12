@@ -12,6 +12,8 @@
 
 Цель частиц — `common/particletarget.h`: `ParticleTarget` даёт текущую матрицу цели; реализован `Npc`.
 
+Камера платформы — `common/camera.*`: `CameraTarget` (`common/cameratarget.h`, реализован `Npc`) даёт позу, состояния и имена схем мобси; `CameraPresets` (`common/camerapresets.h`, реализован `CameraDefinitions`) даёт записи режимов. `GameServices` передаёт того же героя, физический мир, изменение проекции и тряску; выбор режима остаётся в камере. Сохранение `Camera::SaveState` читает и пишет каркас RPG свободными функциями в `common/game/gamesession.cpp`, порядок полей и версия 55 прежние. Чистая математика `common/game/aimcamera.h` относится к платформе без переноса файла. [Шаг 4в разделения слоёв](../../reports/engine/2026-11-10-engine-layers/README.md#порядок-работы).
+
 Мир ткани — `common/clothworld.h`: `ClothWorld` даёт тики, `DynamicWorld` и регистрацию статичного вида; реализован `World`.
 
 Источник декалей крови — `common/blooddecalsource.h`: `BloodDecalSource` даёт записи пятен и игровое время в миллисекундах; реализован `World`, простая запись и общие величины рендера — `common/bloodstain.h`.
@@ -175,7 +177,9 @@ Ragdoll, физические тела живых NPC, возврат после
 
 Сохранение и загрузка NPC — в [`npc_save.cpp`](../../OpenGothic/common/world/objects/npc_save.cpp), таланты, атрибуты, гильдии и отношение — в [`npc_attributes.cpp`](../../OpenGothic/common/world/objects/npc_attributes.cpp). Объявление общего состояния превращения — в [`npc_transformback.h`](../../OpenGothic/common/world/objects/npc_transformback.h), его методы остаются в `npc.cpp`.
 
-Подвижные объекты, мебель, разрушение, обломки и их сохранения — в [`dynamicworld_movables.cpp`](../../OpenGothic/common/physics/dynamicworld_movables.cpp); оболочки предметов и перепись расставленных предметов с отпечатком входов — в [`dynamicworld_items.cpp`](../../OpenGothic/common/physics/dynamicworld_items.cpp); общие `DynamicWorld::MovableVobs`, `BodyData`, `ItemHulls` и помощники — в [`dynamicworld_internal.h`](../../OpenGothic/common/physics/dynamicworld_internal.h).
+Подвижные объекты, мебель, разрушение, обломки и их сохранения — в [`dynamicworld_movables.cpp`](../../OpenGothic/common/physics/dynamicworld_movables.cpp); оболочки предметов и перепись расставленных предметов с отпечатком входов — в [`dynamicworld_items.cpp`](../../OpenGothic/common/physics/dynamicworld_items.cpp); общие `DynamicWorld::MovableVobs`, `BodyData`, `ItemHulls` и помощники — в [`dynamicworld_internal.h`](../../OpenGothic/common/physics/dynamicworld_internal.h). Чистая математика `game/meleeimpact.*` и проверки матриц `game/physicssave.h` относятся к платформе; `ItemMaterial` для `physicsnoise.h` определён в `records/definitions.h` и доступен прежним пользователям через `game/constants.h`. До части 2 шага 4г NPC-зависимое определение `NpcBodyList::hasCollision` находится в `dynamicworld.cpp`, а `dynamicworld_bullets.cpp` прямо включает `npc.h` для `npc.rayHitZone`; эти два файла уже входят в оставшуюся пятёрку файлов платформы, достающих до VM.
+
+Трасса полёта стрел `OPENGOTHIC_ARROW_TRACE` — CSV-писатель RPG в [`world/bullet.cpp`](../../OpenGothic/common/world/bullet.cpp), объявление крючка — `world/bullet.h`. `World` устанавливает необязательный `DynamicWorld::BulletTrace`; `dynamicworld_bullets.cpp` и `dynamicworld_internal.h` передают ему прежние фазы, тело и непрозрачный указатель NPC, не включая писатель. Без переменной окружения физика не вызывает писатель. Формат CSV и точки записи прежние; проверка — `archery-smoke` с трассой до и после переноса.
 
 Загрузка базы, перепись ресурсов и индексы содержимого — в [`resources_base.cpp`](../../OpenGothic/common/resources_base.cpp); общий с [`resources.cpp`](../../OpenGothic/common/resources.cpp) помощник `modelKey` объявлен в [`resources_internal.h`](../../OpenGothic/common/resources_internal.h).
 

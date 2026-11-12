@@ -26,7 +26,7 @@ def options(argv):
 
 
 def load(raw, P, eye, opt):
-    unit = 887/1.1*0.0615/P['ipd_px']; R = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]], np.float32)
+    unit = P['res'][0]/1.1*0.0615/P['ipd_px']; R = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]], np.float32)
     rv = (raw['vertices']@R.T)*unit+np.array(P['ref_origin'], np.float32)
     if opt.get('place'):
         rv = (rv-eye)*opt['place']['scale']+eye+np.array(opt['place']['shift_mm'])/1000
