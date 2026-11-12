@@ -177,7 +177,11 @@ class TtsSettings(_Section):
         None, title="Адрес Audio2Face", description="gothic-a2f (http://…). Пусто: сервер decider, порт 47839"
     )
     a2f_timeout: float = Field(
-        1.5, gt=0, title="Ожидание лица, с", description="Дольше реплика уходит без дорожки лица"
+        1.0, gt=0, title="Ожидание лица, с", description="Запас на сеть и очередь; к нему — доля длины звука"
+    )
+    a2f_timeout_per_s: float = Field(
+        0.2, ge=0, title="Ожидание лица на секунду звука, с",
+        description="Реплика 9 с ждёт 1,0 + 0,2 × 9 = 2,8 с; не дождалась — уходит без дорожки лица",
     )
     a2f_emotions: dict[str, str] = Field(
         default_factory=dict,

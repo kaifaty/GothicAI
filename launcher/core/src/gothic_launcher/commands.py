@@ -355,6 +355,7 @@ def services(config: Config, layout: Layout, ports: Ports, cwd: Path) -> list[Pr
         server_args += ["--tts-url", f"ws://127.0.0.1:{ports.tts}"]
         # a line's face from its voice (v63); without an address the server asks the decider's host
         server_args += ["--a2f", s.tts.a2f, "--a2f-timeout", f"{s.tts.a2f_timeout:g}"]
+        server_args += ["--a2f-timeout-per-s", f"{s.tts.a2f_timeout_per_s:g}"]
         server_args += _opt("--a2f-url", s.tts.a2f_url)
         for mood, label in s.tts.a2f_emotions.items():
             server_args.append(f"--a2f-emotion={mood}={label}")
