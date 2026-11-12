@@ -22,8 +22,10 @@ DEPTH_MAX_CM = 0.5              # the depth of the iris under the cornea in the 
 TEAR_WIDTH_CM = 0.08            # the tear line from the lid's edge up the ball, cm (0.8 mm on a ball ~1.5 times a real one)
 TEAR_LIFT_CM = (0.012, 0.008)   # its middle and upper row over the white (the ball turns under it)
 TEAR_ROUGH = 0.05
-TEAR_ALPHA = 0.85               # the ribbon's coverage at its strongest (hashed alpha); fades to the ends and the top
-TEAR_SRGB = (205, 178, 168)     # warm, near the white and the lid's rim: the film reads by its highlight, not its colour
+TEAR_ALPHA = 0.6                # the ribbon's coverage at its strongest (hashed alpha); fades to the ends and the top
+# Its colour: about the white in the lids' shade, warm. The ribbon is not an eye (no lids' shade on it): a light colour
+# (205, 178, 168 at first) glowed 4 times the lit cheek in the sun instead of reading as a wet film by its highlight
+TEAR_SRGB = (120, 100, 95)
 # LidShade's constants (lidshade.h): yaw columns, how far up and down, the band of the lids round the ball
 COL_FROM, COL_STEP, COLUMNS, REACH, BAND = -70.0, 2.0, 71, 80.0, 0.25
 
