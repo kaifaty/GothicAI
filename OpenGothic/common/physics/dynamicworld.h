@@ -24,7 +24,7 @@ class HitZones;
 class Ragdoll;
 class ProtoMesh;
 
-class World;
+class PhysicsHost;
 class Npc;
 class Item;
 class Interactive;
@@ -95,7 +95,7 @@ class DynamicWorld final {
     static constexpr float spellSpeed  = 1; // centimeters per milliseconds
     static constexpr float characterItemRange = 300.f; // centimetres around the opt-in hero
 
-    DynamicWorld(World *world, const asset::WorldMesh& mesh, const asset::WorldMesh* originalCloth = nullptr);
+    DynamicWorld(PhysicsHost *host, const asset::WorldMesh& mesh, const asset::WorldMesh* originalCloth = nullptr);
     DynamicWorld(const DynamicWorld&)=delete;
     ~DynamicWorld();
 
@@ -814,7 +814,7 @@ class DynamicWorld final {
     std::unique_ptr<CollisionWorld>    world;
     std::unique_ptr<ItemTrace>         itemTrace;
     std::unique_ptr<Cloth>             clothWorld;
-    World*                            ownerWorld = nullptr;
+    PhysicsHost*                      host = nullptr;
     BulletTrace*                      bulletTrace = nullptr;
     bool                              splitStaticTriangles = true;
     StaticCollisionLoadStats          collisionLoadStats;

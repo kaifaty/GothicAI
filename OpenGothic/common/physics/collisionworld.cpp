@@ -8,9 +8,7 @@
 #include "frameprofile.h"
 #include "loadprobe.h"
 #include "testbench.h"
-#include "world/objects/item.h"
-#include "world/objects/npc.h"
-#include "world/world.h"
+#include "physicshost.h"
 #include "sha256.h"
 #include <Tempest/Log>
 
@@ -212,7 +210,7 @@ uint32_t Physics::triangleData(const JPH::Shape& shape, JPH::SubShapeID subShape
   return 0;
   }
 
-CollisionWorld::CollisionWorld() {
+CollisionWorld::CollisionWorld(PhysicsHost* host):host(host) {
   Physics::initialize();
   impl = std::make_unique<Impl>();
   impl->waterStep=[this](float seconds) { applyBuoyancyStep(seconds); };
@@ -499,14 +497,16 @@ bool CollisionWorld::CollisionBody::isSleeping() const {
   return !lock.Succeeded() || !lock.GetBody().IsDynamic() || !lock.GetBody().IsActive();
   }
 
+Npc* noiseCulpritNpc(const CollisionWorld::CollisionBody& body, uint64_t step) {
+  const auto culprit=step<=body.noiseCulpritUntilStep ? body.noiseCulprit.lock() : nullptr;
+  return culprit!=nullptr ? body.owner->physicsHost()->resolveNpc(culprit) : nullptr;
+  }
+
 void CollisionWorld::CollisionBody::setTraceCulprit(Npc* culprit) {
   traceCause.clear();
   if(culprit==nullptr)
     return;
-  if(culprit->isPlayer())
-    traceCause = "PLAYER";
-  else if(auto symbol = culprit->world().script().findSymbol(size_t(culprit->instanceSymbol())))
-    traceCause = symbol->name();
+  traceCause = owner->host->npcTraceName(*culprit);
   }
 
 bool CollisionWorld::CollisionBody::addImpulse(const Tempest::Vec3& impulseNs, Npc* culprit,
@@ -525,7 +525,7 @@ bool CollisionWorld::CollisionBody::addImpulse(const Tempest::Vec3& impulseNs, N
     interface.AddImpulse(id,JPH::Vec3(impulseNs.x,impulseNs.y,impulseNs.z),JPH::RVec3(toMeters(*pointCm)));
   else
     interface.AddImpulse(id,JPH::Vec3(impulseNs.x,impulseNs.y,impulseNs.z));
-  noiseCulprit=culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<daedalus::INpc>();
+  noiseCulprit=culprit!=nullptr ? owner->host->npcHandle(*culprit) : std::weak_ptr<void>();
   noiseCulpritUntilStep=owner->impl->simulationStep+300;
   noiseCulpritResolver=&noiseCulpritNpc;
   setTraceCulprit(culprit);
@@ -1428,7 +1428,7 @@ void CollisionWorld::recoverItem(CollisionBody& body, const Tempest::Vec3& faile
   body.waterRestTime=0;
   body.itemRecovered=true;
   const auto* item=body.ptrType()==DynamicWorld::P_Item ? static_cast<const Item*>(body.payload()) : nullptr;
-  const auto identity=item!=nullptr && item->isPlacedItem() ? " zen_id="+std::to_string(item->placedItemZenId()) : std::string();
+  const auto identity=item!=nullptr && host->isPlacedItem(*item) ? " zen_id="+std::to_string(host->placedItemZenId(*item)) : std::string();
   Tempest::Log::i("[physics] item recovered: body=",body.nativeId()," from=",failedPosition.x,",",
                  failedPosition.y,",",failedPosition.z," rest=",body.itemRestTransform.at(3,0),",",
                  body.itemRestTransform.at(3,1),",",body.itemRestTransform.at(3,2),identity);
@@ -1625,8 +1625,8 @@ void CollisionWorld::tick(uint64_t dt) {
       }
     else if(auto* body=reinterpret_cast<CollisionBody*>(lock.GetBody().GetUserData())) {
       const auto current=impact.step<=body->noiseCulpritUntilStep ? body->noiseCulprit.lock() : nullptr;
-      if(!knownCulprit && current!=nullptr && current->user_ptr!=nullptr) continue;
-      body->noiseCulprit=culprit->handlePtr();
+      if(!knownCulprit && current!=nullptr && host->resolveNpc(current)!=nullptr) continue;
+      body->noiseCulprit=host->npcHandle(*culprit);
       body->noiseCulpritUntilStep=impact.step+300;
       body->noiseCulpritResolver=&noiseCulpritNpc;
       body->setTraceCulprit(culprit);
@@ -1700,7 +1700,7 @@ void CollisionWorld::tick(uint64_t dt) {
           noise.material=body->noiseMaterial;
           noise.what=body->noiseWhat;
           const auto culprit=impact.step<=body->noiseCulpritUntilStep ? body->noiseCulprit.lock() : nullptr;
-          noise.culprit=culprit!=nullptr ? static_cast<Npc*>(culprit->user_ptr) : nullptr;
+          noise.culprit=culprit!=nullptr ? host->resolveNpc(culprit) : nullptr;
           }
         }
       noise.position=impact.point;
@@ -1772,11 +1772,11 @@ void CollisionWorld::tick(uint64_t dt) {
       // A sleeping water item also retains its native body, independently of
       // characters, so save/load, pickup and a buoyancy toggle remain physical.
       disable = !native.IsActive() && !body->keepSleepingItem(toCentimeters(native.GetPosition())) &&
-                !(Settings::physicsFlags().placedItems && item->isPlacedItem());
+                !(Settings::physicsFlags().placedItems && host->isPlacedItem(*item));
       }
-    item->setPhysicsMatrix(matrix);
+    host->setPhysicsMatrix(*item,matrix);
     if(disable)
-      item->setPhysicsDisable();
+      host->setPhysicsDisable(*item);
     }
   for(auto* body:rigid)
     body->itemRecovered=false;
