@@ -15,7 +15,8 @@
 # skin_material.py): they go into the skin material's `normal` and `orm` slots.
 # --eye-orm <png> is the eyes' roughness map (scripts/content/npc/eye_material.py, with its eye_game.png as the eye
 # texture): it goes into the eye material's `orm` slot and the material gets `eye: true`, so the engine lights the
-# eyes with its eye shader (reports/content/2026-11-hero-head/eye-shader.md). Without it the eye is as before.
+# eyes with its eye shader (reports/content/2026-11-hero-head/eye-shader.md), and the face profile gets the lids' shade
+# (eyes.lid_shade, LID_SHADE below) the face rig computes for that shader. Without it the eye and the face are as before.
 # --hair <npz> <png> and --beard <npz> <png> add the parts cut from the generator's model (skin/hair_cut.py,
 # skin/beard_shell.py; metres, the frame of the registered head). The hair is rigid; the beard is bound to the skin
 # and follows every face shape; its map is cut by alpha. A hair part with normals in its npz is hair cards
@@ -341,8 +342,16 @@ open(glb, 'wb').write(out)
 print('GLB', glb, len(out), 'bytes; targets per mesh', {k: len(v) for k, v in names.items()})
 
 # the face profile: the old face animation names as weights of these shapes (authored by hand, next to this script)
-shutil.copyfile(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'test-head.face.json'),
-                os.path.join(ROOT, 'characters', 'hero', NAME+'.face.json'))
+FACE = os.path.join(ROOT, 'characters', 'hero', NAME+'.face.json')
+shutil.copyfile(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'test-head.face.json'), FACE)
+# the lids' shade over the balls (eye-shader.md), only for a head with the eye shader: the share of the light the lids
+# leave to a point of a ball is upper_edge at the upper lid's edge and under it and all of it upper_cm below the edge (cm
+# on the ball, which is ~1.5 times a real one), the same for the lower lid, which hangs over the ball far less
+LID_SHADE = {'about': "The lids' shade over the balls for the eye shader (reports/content/2026-11-hero-head/eye-shader.md).",
+             'part': 'face', 'upper_cm': 0.3, 'lower_cm': 0.08, 'upper_edge': 0.25, 'lower_edge': 0.8}
+if '--eye-orm' in ARGS:
+    profile = json.load(open(FACE)); profile['eyes']['lid_shade'] = LID_SHADE
+    json.dump(profile, open(FACE, 'w'), indent=2, ensure_ascii=False)
 json.dump({'PC_HERO': {'head': 'hero/%s.glb' % NAME, 'face': 'hero/%s.face.json' % NAME}},
           open(os.path.join(ROOT, 'characters', 'characters.json'), 'w'), indent=2)
 # the map of to_export as a matrix, for parts that are not meshes (strands, scripts/content/npc/hair/groom_export.py):
