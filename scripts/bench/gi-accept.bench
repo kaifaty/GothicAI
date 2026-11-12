@@ -1,0 +1,135 @@
+# Reflected light (GI): the acceptance clips of step 2 of the ray-tracing revisit
+# (reports/render-features/2026-11-08-rt-revisit/README.md): the user judges «без GI | GI» by eye. Clips only, no
+# shots. The places and camera set-ups of gi-clips.bench; each clip is a slow turn of the held camera (1 s still,
+# 9 s turn, 1 s still), the last one a walk down the harbour street (route: the hero is placed on the path every
+# fixed step, so both runs move the same; he and the npcs are hidden, he would slide without steps). A turn before
+# a clip (`cloth camera-turn <deg> 1`) sets the first view; 10 s after it light the probes before `rec`.
+# Run it once per variant, the same window, and put the halves side by side:
+#   OPENGOTHIC_RT=0                  TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh gi-accept
+#   OPENGOTHIC_RT=1 OPENGOTHIC_GI=1  TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh gi-accept
+# @timeout 1500
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+cam lift off
+
+# 1. The candle- and torch-lit harbour house of perf-interior at 22:00: from the cabinet on the right past the candle
+#    and the lit wall to the shelves in the dark corner on the left.
+set time 22 0
+goto pos 3924 -73 -6663
+clear 3000
+watch player
+cam look 110
+cam world 160 170 180
+wait 3000
+cam hold
+cloth camera-turn -20 1
+wait 10000
+rec interior-night
+wait 1000
+cloth camera-turn 90 9000
+wait 1000
+stop
+
+# 2. The plank hut of the harbour's poor quarter at noon: from the sunlit wall on the left to the dark corner and the
+#    window on the right.
+set time 12 0
+goto NW_CITY_HABOUR_POOR_AREA_HUT_01_IN
+clear 3000
+watch player
+cam look 110
+cam world 180 170 0
+wait 3000
+cam hold
+cloth camera-turn 30 1
+wait 10000
+rec hut-day
+wait 1000
+cloth camera-turn -90 9000
+wait 1000
+stop
+
+# 3. A street of the harbour's poor quarter at midnight: the lamp post and the lit house on the left, then the street
+#    to the right.
+set time 0 0
+goto NW_CITY_HABOUR_POOR_AREA_PATH_06
+clear 3000
+watch player
+cam look 120
+cam world 500 200 270
+wait 3000
+cam hold
+cloth camera-turn 30 1
+wait 10000
+rec harbour-night
+wait 1000
+cloth camera-turn -90 9000
+wait 1000
+stop
+
+# 4. The same street at midnight, walked: the camera follows 5 m behind the hero from PATH_04 to PATH_06 (10.5 m at
+#    1.2 m/s, past the lamp posts; further on the camera passes through a beam). Probes are placed by the distance
+#    to the camera: light popping in shows here. `route` lifts the hero 50 cm from the ground to the waypoint on its
+#    first step, so the camera jumps at 1.0 s: the side-by-side starts at frame 31.
+goto NW_CITY_HABOUR_POOR_AREA_PATH_04
+clear 3000
+watch player
+cam look 120
+cam world 500 200 180
+view hide animated morph
+wait 10000
+rec harbour-night-walk
+wait 1000
+route 120 NW_CITY_HABOUR_POOR_AREA_PATH_04 NW_CITY_HABOUR_POOR_AREA_PATH_05 NW_CITY_HABOUR_POOR_AREA_PATH_06
+wait 1000
+stop
+view full
+
+# 5. The forest at noon under the crowns: from the rock on the left across the sunlit valley to the slope in the shade
+#    on the right.
+set time 12 0
+goto NW_FOREST_PATH_66
+clear 3000
+watch player
+cam look 130
+cam world 400 140 180
+wait 3000
+cam hold
+cloth camera-turn 30 1
+wait 10000
+rec forest-day
+wait 1000
+cloth camera-turn -90 9000
+wait 1000
+stop
+
+# 6. The bandit cave by Lobart's farm at noon: from the mouth with daylight on the left to the fire on the right.
+goto NW_FARM1_BANDITS_CAVE_02
+clear 3000
+watch player
+cam look 120
+cam world 350 180 0
+wait 3000
+cam hold
+cloth camera-turn 20 1
+wait 10000
+rec cave-day
+wait 1000
+cloth camera-turn -100 9000
+wait 1000
+stop
+
+# 7. The same cave at 23:00: the dark mouth, then the fire.
+set time 23 0
+cam world 350 180 0
+wait 3000
+cam hold
+cloth camera-turn 20 1
+wait 10000
+rec cave-night
+wait 1000
+cloth camera-turn -100 9000
+wait 1000
+stop
