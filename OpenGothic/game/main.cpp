@@ -21,6 +21,7 @@
 #include "resources.h"
 #include "aibridge.h"
 #include "basestore.h"
+#include "testbench.h"
 
 #include <dmusic.h>
 
@@ -91,6 +92,7 @@ static void setupPipelineCache() {
   }
 
 int main(int argc,const char** argv) {
+  TestBench::install();
   try {
     static Tempest::WFile logFile("log.txt");
     Tempest::Log::setOutputCallback([](Tempest::Log::Mode mode, const char* text) {

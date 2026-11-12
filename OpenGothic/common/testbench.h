@@ -20,6 +20,7 @@ struct PhysicsNoise;
 // drives the player and the camera, records video with a debug overlay and per-frame metrics.
 // Inert unless OPENGOTHIC_BENCH is set. Usage: scripts/bench.sh, see scripts/bench/README.md.
 namespace TestBench {
+  void     install();
   bool     isActive();
   // Explicit graph fixtures must fail instead of accepting a native fallback.
   bool     strictGraphMovement(const Npc& npc);

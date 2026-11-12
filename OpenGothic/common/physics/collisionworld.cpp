@@ -7,7 +7,7 @@
 #include "cloth.h"
 #include "frameprofile.h"
 #include "loadprobe.h"
-#include "testbench.h"
+#include "benchprobe.h"
 #include "physicshost.h"
 #include "sha256.h"
 #include <Tempest/Log>
@@ -1472,7 +1472,7 @@ void CollisionWorld::tick(uint64_t dt) {
           finishBuoyancy(seconds);
           for(auto* body:ragdolls) body->finishKinematicStep();
           impl->finishRagdollBirthStep();
-          if(TestBench::isActive())
+          if(auto* probe=BenchProbe::get(); probe!=nullptr && probe->active())
             for(auto* body:ragdolls) body->sampleBirth(seconds);
           impl->meleeSample.solveMs+=std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now()-solveStart).count();
           ++impl->meleeSample.updates;
@@ -1549,7 +1549,7 @@ void CollisionWorld::tick(uint64_t dt) {
       finishBuoyancy(step);
       for(auto* body:ragdolls) body->finishKinematicStep();
       impl->finishRagdollBirthStep();
-      if(TestBench::isActive())
+      if(auto* probe=BenchProbe::get(); probe!=nullptr && probe->active())
         for(auto* body:ragdolls) body->sampleBirth(step);
       itemWakeQueries=0;itemWakeCreated=0;
       recoverTunneledItems();

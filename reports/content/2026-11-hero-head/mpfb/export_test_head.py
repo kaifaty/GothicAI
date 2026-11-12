@@ -17,6 +17,9 @@
 # texture): it goes into the eye material's `orm` slot and the material gets `eye: true`, so the engine lights the
 # eyes with its eye shader (reports/content/2026-11-hero-head/eye-shader.md), and the face profile gets the lids' shade
 # (eyes.lid_shade, LID_SHADE below) the face rig computes for that shader. Without it the eye and the face are as before.
+# --cornea <eye_material.json> raises each iris onto the white and gives the front of the ball the normals of a corneal
+# dome (scripts/content/npc/eye_cornea.py); with eye_material.py --depth the iris then lies that deep under it for the
+# shader's refraction. Without it the head is as before.
 # --hair <npz> <png> and --beard <npz> <png> add the parts cut from the generator's model (skin/hair_cut.py,
 # skin/beard_shell.py; metres, the frame of the registered head). The hair is rigid; the beard is bound to the skin
 # and follows every face shape; its map is cut by alpha. A hair part with normals in its npz is hair cards
@@ -340,6 +343,11 @@ rest = data[20+jl:]
 out = struct.pack('<III', 0x46546C67, 2, 12+8+len(txt)+len(rest)) + struct.pack('<II', len(txt), 0x4E4F534A) + txt + rest
 open(glb, 'wb').write(out)
 print('GLB', glb, len(out), 'bytes; targets per mesh', {k: len(v) for k, v in names.items()})
+# the cornea (task 2 of the eye shader), on the GLB as written
+if '--cornea' in ARGS:
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), *(['..']*4), 'scripts', 'content', 'npc'))
+    import eye_cornea
+    eye_cornea.apply(glb, os.path.abspath(os.path.expanduser(ARGS[ARGS.index('--cornea')+1])), glb)
 
 # the face profile: the old face animation names as weights of these shapes (authored by hand, next to this script)
 FACE = os.path.join(ROOT, 'characters', 'hero', NAME+'.face.json')

@@ -9,7 +9,7 @@
 #include "graphics/visualobjects.h"
 #include "shaders.h"
 
-#include "testbench.h"
+#include "benchprobe.h"
 
 using namespace Tempest;
 
@@ -327,7 +327,8 @@ void DrawCommands::visibilityPass(Encoder<CommandBuffer>& cmd, int pass) {
     // bench `deterministic on`: one invocation appends the visible clusters in their canonical order (orderedClusters),
     // so the instance order of a draw (who wins equal depth, the order of blending) depends neither on how GPU threads
     // race for atomicAdd nor on the order the streaming threads published chunks and vobs in
-    const bool ordered = TestBench::orderedVisibility();
+    const auto* probe = BenchProbe::get();
+    const bool ordered = probe!=nullptr && probe->orderedVisibility();
     const Tempest::StorageBuffer* order = nullptr;
     if(ordered) {
       order = &orderedClusters();

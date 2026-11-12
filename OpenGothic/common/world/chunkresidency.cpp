@@ -38,6 +38,10 @@ std::unique_ptr<ChunkResidency> ChunkResidency::create(const ChunkTable& table) 
   }
 
 void ChunkResidency::update(const Tempest::Vec3& hero, const Tempest::Vec3& camera, float zFar) {
+  update(hero,camera,zFar,Clock::now());
+  }
+
+void ChunkResidency::update(const Tempest::Vec3& hero, const Tempest::Vec3& camera, float zFar, Clock::time_point now) {
   const auto started=Clock::now();
   counters.publicationTimesMs.clear();
   counters.farPublicationTimesMs.clear();
@@ -50,7 +54,26 @@ void ChunkResidency::update(const Tempest::Vec3& hero, const Tempest::Vec3& came
       return std::sqrt(x*x+y*y+z*z);
       };
     lastMove=std::max(moved(hero,heroPosition),moved(camera,cameraPosition))*0.01;
-    odometer+=lastMove;
+    // The look-ahead: a jump is no velocity; the paths' ends move with the points and with the velocities.
+    if(lastMove>JumpDistance) {
+      heroVelocity.reset();
+      cameraVelocity.reset();
+      }
+    const double seconds=std::chrono::duration<double>(now.time_since_epoch()).count();
+    heroVelocity.add(hero,seconds);
+    cameraVelocity.add(camera,seconds);
+    const auto nextHero=lookAhead>0 ? heroVelocity.velocity()*float(lookAhead) : Tempest::Vec3();
+    const auto nextCamera=lookAhead>0 ? cameraVelocity.velocity()*float(lookAhead) : Tempest::Vec3();
+    odometer+=std::max(moved(hero,heroPosition)+moved(nextHero,heroAhead),
+                       moved(camera,cameraPosition)+moved(nextCamera,cameraAhead))*0.01;
+    heroAhead=nextHero;
+    cameraAhead=nextCamera;
+    } else {
+    const double seconds=std::chrono::duration<double>(now.time_since_epoch()).count();
+    heroVelocity.reset();
+    cameraVelocity.reset();
+    heroVelocity.add(hero,seconds);
+    cameraVelocity.add(camera,seconds);
     }
   heroCell=nextHeroCell;
   cameraCell=nextCameraCell;

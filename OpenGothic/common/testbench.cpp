@@ -805,6 +805,7 @@ void TestBench::physicsNoiseHeard(const Npc& npc,const PhysicsNoise& noise,bool 
   }
 
 void TestBench::configure(std::string scenario, std::string output, int64_t seedOverride) {
+  install();
   stopBodyLive();
   benchTexturesSettle=false;
   benchTexturesFrozen=false;

@@ -1,20 +1,25 @@
 # The eyes of a head as a material of the game (reports/content/2026-11-hero-head/eye-shader.md, "Способ" 4): the white
 # of the eye warm and as light as the head's cheek skin times a share, not white; pinkish towards the corners; a dark
 # ring of the limbus round the iris; and the roughness of the tear film for the eye shader (`eye: true`).
-#   python eye_material.py <head.glb> <eye.png> <skin map> <out dir> [--share 1.0]
+#   python eye_material.py <head.glb> <eye.png> <skin map> <out dir> [--share 1.0] [--depth]
 # Input:
 # - head.glb: the head as exported (export_test_head.py): its parts face, eye_L, eye_R give where the cheeks are in the
 #   skin map and how each eyeball lies in the eye map (both eyes share one map, mirrored);
 # - eye.png: the eye map (RGBA; its alpha marks the cornea shell export_test_head.py leaves out, and is kept);
 # - skin map: the colour map of the head's skin as the game gets it (skin_game.png of skin_material.py, or its DDS);
 # - --share: the sclera's linear luminance as a share of the cheek skin's (1.0: as light as the skin; with the lids'
-#   shade of the eye shader the white then stays under the lit cheek, the acceptance of the eye shader).
+#   shade of the eye shader the white then stays under the lit cheek, the acceptance of the eye shader);
+# - --depth: how deep the iris lies under the cornea goes into the ORM's B (eye_cornea.py: the dome over each iris, its
+#   depth down to the plane of the limbus over DEPTH_MAX_CM), for the refraction of the eye shader (main.frag) and the
+#   export's --cornea, which raises the iris by the same eye_material.json. Without it B stays 0: no refraction.
 # Output:
 # - eye_game.png: the colour map: the sclera recoloured to a warm white of that luminance, its veins and shading kept
 #   as they were relative to it, pinkish at the corners; the iris by the sclera's gain; the limbus darkened over 12 % of
 #   the iris' diameter;
-# - eye_orm.png: R = 1, G = roughness (the cornea over the iris EYE_ROUGH_CORNEA, the sclera EYE_ROUGH_SCLERA), B = 0;
-# - eye_material.json: what was measured (cheek skin, sclera before and after, the iris of each eye in the map).
+# - eye_orm.png: R = 1, G = roughness (the cornea over the iris EYE_ROUGH_CORNEA, the sclera EYE_ROUGH_SCLERA), B = 0 or,
+#   with --depth, the iris' depth;
+# - eye_material.json: what was measured (cheek skin, sclera before and after, the iris of each eye in the map: its pupil,
+#   edge and the limbus' middle the cornea meets the white at).
 import sys, os, json, struct
 import numpy as np
 from PIL import Image
@@ -29,6 +34,9 @@ def opt(name, default):
 
 
 SHARE = float(opt('--share', '1.0'))
+DEPTH = '--depth' in a
+if DEPTH:
+    a.remove('--depth')
 GLB, EYE, SKIN, OUT = a[:4]
 os.makedirs(OUT, exist_ok=True)
 lin = lambda c: np.where(c > 0.04045, ((c+0.055)/1.055)**2.4, c/12.92)
@@ -104,7 +112,8 @@ for b in balls:
     iris_l, scl_l = np.median(prof[12:30]), np.median(prof[52:70])   # 0.03-0.075: the iris, 0.13-0.175: the sclera
     dark = np.nonzero(prof[12:70] < 0.5*(iris_l+scl_l))[0]             # the iris' edge: the outermost ring still
     edge = bins[12+dark.max()+1]                                       # under half way to the sclera (its fibres are light)
-    irises.append({'pupil_uv': pc.tolist(), 'iris_radius_uv': float(edge), 'iris_lum': float(iris_l), 'sclera_lum': float(scl_l)})
+    irises.append({'pupil_uv': pc.tolist(), 'iris_radius_uv': float(edge), 'limbus_uv': float(edge*(1+0.15*LIMBUS*2)),
+                   'iris_lum': float(iris_l), 'sclera_lum': float(scl_l)})
     ball_mask |= (d0 < half*1.05) & opaque
     iris_mask |= rr < edge
     w = LIMBUS*2*edge                                                  # the ring's width in UV
@@ -129,11 +138,39 @@ out = out*(1-wsc)+recol*wsc
 out = out*(1-(1-LIMBUS_DARK)*limbus[..., None]*ball_mask[..., None])
 res = np.concatenate([srgb(np.clip(out, 0, 1)), eye[..., 3:]], 2)
 Image.fromarray((res*255+0.5).astype(np.uint8), 'RGBA').save(os.path.join(OUT, 'eye_game.png'))
-orm = np.stack([np.ones((H, W)), rough, np.zeros((H, W))], 2)
+depth = np.zeros((H, W))
+if DEPTH:
+    # each ball's triangles in the map, rho (off the eye's axis) interpolated over them, the dome's depth of it
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import eye_cornea
+    glb = eye_cornea.Glb(GLB)
+    for side, iris in zip(('eye_L', 'eye_R'), irises):
+        P, _, uv, tris = eye_cornea.part(glb, side)
+        cor = eye_cornea.Cornea(P, uv, iris['pupil_uv'], iris['limbus_uv'])
+        rho = cor.rho(P)
+        for t in tris:
+            q = uv[t]*[W, H]-0.5
+            x0, y0 = np.maximum(np.floor(q.min(0)).astype(int), 0); x1, y1 = np.minimum(np.ceil(q.max(0)).astype(int), [W-1, H-1])
+            if x1 < x0 or y1 < y0:
+                continue
+            yy, xx = np.mgrid[y0:y1+1, x0:x1+1]
+            m = np.array([[q[1, 0]-q[0, 0], q[2, 0]-q[0, 0]], [q[1, 1]-q[0, 1], q[2, 1]-q[0, 1]]])
+            if abs(np.linalg.det(m)) < 1e-12:
+                continue
+            bc = np.linalg.solve(m, np.stack([xx.ravel()-q[0, 0], yy.ravel()-q[0, 1]]))
+            inside = (bc >= -1e-6).all(0) & (bc.sum(0) <= 1+1e-6)
+            r = rho[t[0]]*(1-bc[0]-bc[1])+rho[t[1]]*bc[0]+rho[t[2]]*bc[1]
+            dep = cor.depth(r[inside])
+            depth[yy.ravel()[inside], xx.ravel()[inside]] = np.maximum(depth[yy.ravel()[inside], xx.ravel()[inside]], dep)
+        iris.update({'limbus_cm': cor.limbus, 'cornea_radius_cm': cor.rc, 'ball_radius_cm': cor.r,
+                     'depth_centre_cm': float(cor.depth(np.array([0.0]))[0])})
+    assert depth.max() < eye_cornea.DEPTH_MAX_CM, 'the iris lies deeper than the ORM holds'
+orm = np.stack([np.ones((H, W)), rough, depth/(eye_cornea.DEPTH_MAX_CM if DEPTH else 1)], 2)
 Image.fromarray((orm*255+0.5).astype(np.uint8), 'RGB').save(os.path.join(OUT, 'eye_orm.png'))
 info = {'cheek_lin': cheek_lin.tolist(), 'cheek_lum': cheek_lum, 'share': SHARE,
         'sclera_before_lin': med.tolist(), 'sclera_before_lum': float(med @ LUM), 'sclera_after_lin': target.tolist(),
-        'sclera_after_srgb': (srgb(target)*255).round().tolist(), 'iris_gain': gain, 'irises': irises}
+        'sclera_after_srgb': (srgb(target)*255).round().tolist(), 'iris_gain': gain, 'irises': irises,
+        'depth_max_cm': eye_cornea.DEPTH_MAX_CM if DEPTH else 0}
 json.dump(info, open(os.path.join(OUT, 'eye_material.json'), 'w'), indent=1)
 print('EYE cheek lum %.3f, sclera %.3f -> %.3f (sRGB %s), iris gain %.2f, irises r %s' % (cheek_lum, med @ LUM, target @ LUM,
       info['sclera_after_srgb'], gain, [round(i['iris_radius_uv'], 3) for i in irises]))

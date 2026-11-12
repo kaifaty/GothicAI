@@ -6,7 +6,7 @@
 #include "skeleton.h"
 #include "pose.h"
 #include "resources.h"
-#include "testbench.h"
+#include "benchprobe.h"
 
 using namespace Tempest;
 
@@ -140,7 +140,8 @@ const Animation::Sequence* AnimationSolver::implSolveAnim(AnimationSolver::Anim 
       // Preserve the original shared RNG draw at precisely this solve point in every mode.
       // Only an explicit benchmark opt-in may replace its presentation-clip branch.
       const int fallback = std::rand()%3;
-      const int variant = npc==nullptr ? fallback : TestBench::bodyBlockVariant(*npc,fallback);
+      const auto* probe = BenchProbe::get();
+      const int variant = npc==nullptr || probe==nullptr ? fallback : probe->bodyBlockVariant(*npc,fallback);
       switch(variant) {
         case 0: s = solveFrm("T_%sPARADE_0",   st); break;
         case 1: s = solveFrm("T_%sPARADE_0_A2",st); break;
