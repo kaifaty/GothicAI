@@ -19,7 +19,8 @@ freeze BAU_952_VINO
 put BAU_952_VINO 200 0
 watch BAU_952_VINO
 wait 1500
-cam face 40 0 10
+# a little below the mouth: Vino bends his head about 9 degrees down to the hero, from above the face reads badly
+cam face 45 0 -8
 wait 1000
 rec clip
 wait 500
