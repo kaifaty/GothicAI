@@ -25,6 +25,26 @@ using namespace Tempest;
 const uint64_t GameSession::multTime=14500;
 const uint64_t GameSession::divTime =1000;
 
+static void saveCamera(Serialize& s, const Camera& camera) {
+  auto saved = camera.saveState();
+  s.write(saved.range, saved.spin, saved.target);
+  s.write(saved.interTarget, saved.rotOffset);
+  s.write(saved.origin,saved.angles,saved.veloTrans);
+  s.write(saved.userRange);
+  }
+
+static void loadCamera(Serialize& s, Camera& camera, const CameraTarget* pl) {
+  camera.reset(pl);
+  if(s.version()<55)
+    return;
+  auto saved = camera.saveState();
+  s.read(saved.range, saved.spin, saved.target);
+  s.read(saved.interTarget, saved.rotOffset);
+  s.read(saved.origin,saved.angles,saved.veloTrans);
+  s.read(saved.userRange);
+  camera.setSaveState(saved);
+  }
+
 void GameSession::HeroStorage::save(Npc& npc) {
   storage.clear();
   Tempest::MemWriter wr{storage};
@@ -218,7 +238,7 @@ GameSession::GameSession(Serialize &fin) {
     vm->setInstanceNPC("HERO",*hero);
 
   fin.setEntry("game/camera");
-  cam->load(fin,wrld->player());
+  loadCamera(fin,*cam,wrld->player());
   wrld->updateLandscape(*cam);
   wrld->updateNpcSimTiers();
   Gothic::inst().setLoadingProgress(96);
@@ -263,7 +283,7 @@ void GameSession::save(Serialize &fout, std::string_view name, const Pixmap& scr
   vm->ownSymbols().save(fout);
 
   fout.setEntry("game/camera");
-  cam->save(fout);
+  saveCamera(fout,*cam);
   Gothic::inst().setLoadingProgress(5);
 
   for(auto& i:visitedWorlds) {
