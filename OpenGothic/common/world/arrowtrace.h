@@ -4,7 +4,7 @@
 #include <cstdlib>
 #include <unordered_map>
 
-#include "dynamicworld.h"
+#include "physics/dynamicworld.h"
 #include "settings.h"
 #include "testbench.h"
 #include "world/bullet.h"
@@ -33,17 +33,19 @@ inline Output& output() {
   return value;
   }
 
-inline void forget(const DynamicWorld::BulletBody& body) {
+struct Writer final : DynamicWorld::BulletTrace {
+void forget(const DynamicWorld::BulletBody& body) override {
   auto& out=output();
   if(out.file!=nullptr) out.ids.erase(&body);
   }
 
-inline void write(const DynamicWorld::BulletBody& body, DynamicWorld::BulletCallback* callback,
-                  const char* phase, uint64_t dt, const Npc* npc=nullptr,
-                  bool hasHit=false, float fraction=1.f,
-                  Tempest::Vec3 hit={}, Tempest::Vec3 normal={}, unsigned material=0, unsigned category=0) {
+void write(const DynamicWorld::BulletBody& body, DynamicWorld::BulletCallback* callback,
+           const char* phase, uint64_t dt, const void* npcPtr,
+           bool hasHit, float fraction,
+           Tempest::Vec3 hit, Tempest::Vec3 normal, unsigned material, unsigned category) override {
   auto& out=output();
   if(out.file==nullptr) return;
+  const auto* npc=static_cast<const Npc*>(npcPtr);
   const auto* bullet=dynamic_cast<const Bullet*>(callback);
   auto* origin=bullet!=nullptr ? bullet->origin() : nullptr;
   const auto* target=origin!=nullptr ? origin->target() : nullptr;
@@ -66,5 +68,13 @@ inline void write(const DynamicWorld::BulletBody& body, DynamicWorld::BulletCall
     Settings::getI("GAME","living_bodies"),Settings::getI("GAME","arrow_physics"),
     Settings::getI("GAME","arrow_sticking"));
   std::fflush(out.file);
+  }
+};
+
+inline DynamicWorld::BulletTrace* hook() {
+  const auto* path=std::getenv("OPENGOTHIC_ARROW_TRACE");
+  if(path==nullptr || path[0]=='\0') return nullptr;
+  static Writer value;
+  return &value;
   }
 }

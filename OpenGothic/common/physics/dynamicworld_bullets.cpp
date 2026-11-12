@@ -19,7 +19,8 @@ DynamicWorld::BBoxBody DynamicWorld::bboxObj(BBoxCallback* cb, const Tempest::Ve
   }
 
 void DynamicWorld::moveBullet(BulletBody &b, const Tempest::Vec3& dir, uint64_t dt) {
-  ArrowTrace::write(b,b.cb,"begin",dt);
+  if(bulletTrace!=nullptr)
+    bulletTrace->write(b,b.cb,"begin",dt);
   const float dtF     = float(dt);
   const bool  isSpell = b.isSpell();
 
@@ -51,7 +52,8 @@ void DynamicWorld::moveBullet(BulletBody &b, const Tempest::Vec3& dir, uint64_t 
         hit=entry;
     }
   const auto matId = hit.hasHit ? hit.material : asset::MaterialGroup::NONE;
-  ArrowTrace::write(b,b.cb,"world_query",dt,nullptr,hit.hasHit,hit.fraction,hit.point,hit.normal,
+  if(bulletTrace!=nullptr)
+    bulletTrace->write(b,b.cb,"world_query",dt,nullptr,hit.hasHit,hit.fraction,hit.point,hit.normal,
                     unsigned(matId),hit.body!=nullptr ? unsigned(hit.body->category()) : 0);
 
   // Cloth has no blocking collision shape. Notify only the travelled part of
@@ -90,7 +92,8 @@ void DynamicWorld::moveBullet(BulletBody &b, const Tempest::Vec3& dir, uint64_t 
       return true;
       })) {
       b.cb->onStop();
-      ArrowTrace::write(b,b.cb,"end",dt);
+      if(bulletTrace!=nullptr)
+        bulletTrace->write(b,b.cb,"end",dt);
       return;
       }
     }
@@ -170,7 +173,8 @@ void DynamicWorld::moveBullet(BulletBody &b, const Tempest::Vec3& dir, uint64_t 
     if(precise)
       ; // tested above
     else if(auto ptr = npcList->rayTest(pos,to,b.targetRange(),nullptr,&npcDistance)) {
-      ArrowTrace::write(b,b.cb,"npc_collision",dt,ptr->toNpc());
+      if(bulletTrace!=nullptr)
+        bulletTrace->write(b,b.cb,"npc_collision",dt,ptr->toNpc());
       if(b.cb!=nullptr)
         stopBullet |= b.cb->onCollide(*ptr->toNpc()); else
         stopBullet  = true;
@@ -188,7 +192,8 @@ void DynamicWorld::moveBullet(BulletBody &b, const Tempest::Vec3& dir, uint64_t 
     }
 
   if(stopBullet || b.hitCount()>3 || b.pathLength()>10000) {
-    ArrowTrace::write(b,b.cb,"stop",dt,nullptr,hit.hasHit,hit.fraction,hit.point,hit.normal,
+    if(bulletTrace!=nullptr)
+      bulletTrace->write(b,b.cb,"stop",dt,nullptr,hit.hasHit,hit.fraction,hit.point,hit.normal,
                       unsigned(matId),hit.body!=nullptr ? unsigned(hit.body->category()) : 0);
     if(b.cb!=nullptr) {
       // Pin only after the unchanged flight code has decided to stop at a solid
@@ -214,7 +219,8 @@ void DynamicWorld::moveBullet(BulletBody &b, const Tempest::Vec3& dir, uint64_t 
       b.cb->onStop();
       }
     }
-  ArrowTrace::write(b,b.cb,"end",dt);
+  if(bulletTrace!=nullptr)
+    bulletTrace->write(b,b.cb,"end",dt);
   }
 
 DynamicWorld::BulletBody::BulletBody(DynamicWorld* wrld, DynamicWorld::BulletCallback* cb)

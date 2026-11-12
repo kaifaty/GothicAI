@@ -3,7 +3,6 @@
 #include "dynamicworld.h"
 #include "collisionworld.h"
 #include "convexparts.h"
-#include "arrowtrace.h"
 
 #include <Tempest/Log>
 
@@ -634,7 +633,8 @@ struct DynamicWorld::BulletsList final {
   void del(BulletBody* b) {
     for(auto i=body.begin(), e=body.end();i!=e;++i){
       if(&(*i)==b) {
-        ArrowTrace::forget(*i);
+        if(wrld.bulletTrace!=nullptr)
+          wrld.bulletTrace->forget(*i);
         body.erase(i);
         return;
         }
@@ -659,9 +659,11 @@ struct DynamicWorld::BulletsList final {
       const bool precise = i.cb->isPrecise();
       if(precise ? list.nearTest(npc, i.pos, Tempest::Vec3::normalize(dp), dp.length(), i.tgRange, proj)
                  : list.rayTest (npc, i.pos, Tempest::Vec3::normalize(dp), dp.length(), i.tgRange, proj)) {
-        ArrowTrace::write(i,i.cb,"moving_npc",0,npc.toNpc());
+        if(wrld.bulletTrace!=nullptr)
+          wrld.bulletTrace->write(i,i.cb,"moving_npc",0,npc.toNpc());
         const bool hit = precise ? i.cb->onCollidePrecise(*npc.toNpc(),i.lastPos,i.pos) : i.cb->onCollide(*npc.toNpc());
-        ArrowTrace::write(i,i.cb,hit ? "moving_npc_hit" : "moving_npc_pass",0,npc.toNpc());
+        if(wrld.bulletTrace!=nullptr)
+          wrld.bulletTrace->write(i,i.cb,hit ? "moving_npc_hit" : "moving_npc_pass",0,npc.toNpc());
         if(hit)
           i.cb->onStop();
         }
