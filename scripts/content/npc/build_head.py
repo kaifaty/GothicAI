@@ -214,7 +214,10 @@ def steps(cdir, cfg, work, content, gpu=None):
 
     # 4. registration onto the bald model
     R = j('reg')
+    # place_ref.py keeps the model as exported in ref_unplaced.npz and starts from it when it is there: a rerun of the
+    # step must not start from the model of the run before (another origin in params, the same file name)
     out.append(Step('reg', [
+        ['rm', '-f', j('reg', 'ref_unplaced.npz')],
         blend(fit, os.path.join(FR, 'reg_export.py'), raw['bald'], params, R),
         blend(fit, os.path.join(FR, 'groups.py'), j('reg', 'groups.npz')),
         blend(fit, os.path.join(FR, 'eye_deltas.py'), j('reg', 'eye_deltas.npz')),
@@ -249,6 +252,7 @@ def steps(cdir, cfg, work, content, gpu=None):
 
     # 5. the full model on the concept, brought to its tone
     out.append(Step('full', [
+        ['rm', '-f', j('full', 'ref_unplaced.npz')],
         blend(fit, os.path.join(FR, 'reg_export.py'), raw['full'], params, j('full')),
         [PY, os.path.join(FR, 'concept_frame.py'), j('full'), params, j('views', 'full_front.png'), j('views', 'full_profile.png')],
         [PY, os.path.join(S, 'place_ref.py'), j('full')],
