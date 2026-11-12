@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import logging
 import time
 
 import httpx
@@ -9,6 +10,7 @@ from gothic_ai.dialogue import DialogueManager
 from gothic_ai.face_track import (
     ARKIT_SHAPES,
     RETRY_S,
+    WARN_EVERY_S,
     A2fClient,
     FaceVoice,
     FakeFace,
@@ -135,22 +137,48 @@ async def test_a_line_whose_face_fails_goes_without_it_and_does_not_wait(stub):
     assert len(stub.requests) == 1
 
 
-async def test_after_the_service_is_down_lines_do_not_ask_it_for_a_while():
+@pytest.mark.parametrize(
+    "stub",
+    [A2fStub(_refused), A2fStub(delay=1.0), A2fStub(lambda r: httpx.Response(503, text="busy"))],
+    ids=["unavailable", "too-slow", "5xx"],
+)
+async def test_after_the_service_is_down_lines_do_not_ask_it_for_a_while(stub):
     clock = [100.0]
-    stub = A2fStub(_refused)
-    face = FaceVoice(stub.client(clock=lambda: clock[0]))
+    face = FaceVoice(stub.client(timeout=0.05, clock=lambda: clock[0]))
     pcm = b"\0\1" * 1600
 
     assert await face.say_face(XARDAS, "AIB_1", pcm, 16000, None) is None
     assert await face.say_face(XARDAS, "AIB_2", pcm, 16000, None) is None
     assert len(stub.requests) == 1
-    clock[0] += RETRY_S
-    stub.reply = None
+    clock[0] += RETRY_S - 0.1
+    assert await face.say_face(XARDAS, "AIB_2", pcm, 16000, None) is None
+    assert len(stub.requests) == 1
+    clock[0] += 0.1
+    stub.reply, stub.delay = None, 0.0
     assert (await face.say_face(XARDAS, "AIB_3", pcm, 16000, None)) is not None
     assert len(stub.requests) == 2
     # longer than the service takes: not asked at all
     assert await face.say_face(XARDAS, "AIB_4", b"\0\0" * 16000 * 31, 16000, None) is None
     assert len(stub.requests) == 2
+
+
+async def test_a_failing_service_is_warned_about_once_a_minute(caplog):
+    clock = [100.0]
+    stub = A2fStub(lambda r: httpx.Response(413, text="longer than 30 s"))  # no pause: asked every line
+    face = FaceVoice(stub.client(), clock=lambda: clock[0])
+    pcm = b"\0\1" * 1600
+
+    def warnings() -> int:
+        return sum(r.levelname == "WARNING" and "no face track" in r.message for r in caplog.records)
+
+    with caplog.at_level(logging.DEBUG, logger="gothic_ai.face_track"):
+        await face.say_face(XARDAS, "AIB_1", pcm, 16000, None)
+        clock[0] += WARN_EVERY_S - 1
+        await face.say_face(XARDAS, "AIB_2", pcm, 16000, None)
+        assert (len(stub.requests), warnings()) == (2, 1)
+        clock[0] += 1
+        await face.say_face(XARDAS, "AIB_3", pcm, 16000, None)
+        assert (len(stub.requests), warnings()) == (3, 2)
 
 
 async def test_first_reactions_and_the_originals_lines_do_not_wait_for_a_face():
