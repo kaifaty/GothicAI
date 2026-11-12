@@ -2,10 +2,14 @@
 // texture in the missing or promotion queue is short of its wanted level and counted in one state; the state changes
 // as its load starts, moves on the worker, becomes ready and is published.
 #include "resources.h"
+#include "frameprofile.h"
 #include "texturelevels.h"
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
+#include <stdexcept>
+#include <string>
 
 namespace {
 double milliseconds(std::chrono::steady_clock::duration d) {
@@ -103,4 +107,63 @@ void Resources::textureFlowStats(TextureStats& stats) {
   stats.flow.bytesInFlight=0;
   for(const auto& reload:textureReloads)
     stats.flow.bytesInFlight+=reload->bytes;
+  }
+
+bool Resources::admitsTextureLoad(const TextureRecord& record, uint8_t level) const {
+  if(!textureScreen)
+    return true;
+  uint64_t inFlight=0;
+  for(const auto& reload:textureReloads)
+    inFlight+=reload->bytes;
+  const auto bytes=TextureLevels::chainBytes(record.format,record.width,record.height,record.mipCount,level);
+  return TextureFlow::admits(textureReloads.size(),inFlight,bytes,textureLimits);
+  }
+
+void Resources::publishReadyTextures(const std::vector<std::shared_ptr<TextureReload>>& ready) {
+  if(ready.empty())
+    return;
+  // In the frame the main thread sees them ready, not a frame later through the residency's work queue; as many as
+  // fit the budget, the oldest load first.
+  const auto started=std::chrono::steady_clock::now();
+  size_t published=0;
+  for(const auto& reload:ready) {
+    const auto at=std::chrono::steady_clock::now();
+    if(!TextureFlow::publishes(published,milliseconds(at-started),textureLimits))
+      break;
+    FrameProfile::textureEvent(FrameProfile::TextureActivity::Ready);
+    publishTexture(reload);
+    const double cost=milliseconds(std::chrono::steady_clock::now()-at);
+    ++textureFlow.publications;
+    textureFlow.publishMs+=cost;
+    textureFlow.publishMaxMs=std::max(textureFlow.publishMaxMs,cost);
+    ++published;
+    }
+  }
+
+std::function<void()> Resources::configureTextureFlow(std::string_view lookAhead) {
+  const auto integer=[](const char* name, int64_t fallback, int64_t minimum, int64_t maximum) -> int64_t {
+    const char* value=std::getenv(name);
+    if(value==nullptr || value[0]=='\0')
+      return fallback;
+    char* end=nullptr;
+    const auto result=std::strtoll(value,&end,10);
+    if(end==value || *end!='\0' || result<minimum || result>maximum)
+      throw std::runtime_error(std::string(name)+" must be an integer from "+std::to_string(minimum)+" to "+
+                               std::to_string(maximum));
+    return result;
+    };
+  const TextureFlow::Limits defaults;
+  TextureFlow::Limits limits;
+  limits.loads=size_t(integer("OPENGOTHIC_TEXTURE_LOADS",int64_t(defaults.loads),1,16));
+  limits.bytes=uint64_t(integer("OPENGOTHIC_TEXTURE_LOAD_MB",int64_t(defaults.bytes/1048576),1,65536))*1048576;
+  // on by default; 0 in the setting or the environment (which wins) turns it off
+  const char* env=std::getenv("OPENGOTHIC_TEXTURE_LOOKAHEAD");
+  const std::string_view choice=env!=nullptr ? std::string_view(env) : lookAhead;
+  if(!choice.empty() && choice!="0" && choice!="1")
+    throw std::runtime_error("texture_lookahead must be 0 or 1");
+  const bool on=choice!="0";
+  return [this,limits,on] {
+    textureLimits=limits;
+    textureLookAheadOn=on;
+    };
   }

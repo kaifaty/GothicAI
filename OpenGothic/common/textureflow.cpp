@@ -145,3 +145,13 @@ uint64_t TextureFlow::Tracker::shortfall() const {
     n += c;
   return n;
   }
+
+bool TextureFlow::admits(size_t inFlight, uint64_t bytesInFlight, uint64_t bytes, const Limits& limits) {
+  if(inFlight==0)
+    return true;
+  return inFlight<limits.loads && bytesInFlight+bytes<=limits.bytes;
+  }
+
+bool TextureFlow::publishes(size_t published, double elapsedMs, const Limits& limits) {
+  return published==0 || elapsedMs<limits.publishMs;
+  }

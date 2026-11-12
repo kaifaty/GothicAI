@@ -14,6 +14,7 @@ namespace TextureDump {
   void write(std::string_view stage, WorldView* view);
   // Step 4 (textureflow.h): the JSON fields of a bench pass from `before` to `after`, each starting with a comma - the
   // shortfall's texture-seconds by state and the visible shortfall, loads started and textures that became short, the
-  // latency demand -> publication and the wait for a load slot (p50, p90, max ms), bursts (p50, p90, max textures).
+  // latency demand -> publication and the wait for a load slot (p50, p90, max ms), bursts (p50, p90, max textures),
+  // the publications' cost.
   std::string flowFields(const Resources::TextureStats& after, const Resources::TextureStats& before);
   }

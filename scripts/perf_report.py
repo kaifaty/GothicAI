@@ -351,9 +351,10 @@ def read_streaming(directory):
 # passes report the worst.
 FLOW_STATES = ("wait", "read", "upload", "publish", "stale")
 FLOW_SUM_FIELDS = (*(f"tex_shortfall_{state}_seconds" for state in FLOW_STATES), "tex_visible_shortfall_seconds",
-                   "tex_loads_started", "tex_short_entries", "tex_latency_n", "tex_wait_n", "tex_bursts")
+                   "tex_loads_started", "tex_short_entries", "tex_latency_n", "tex_wait_n", "tex_bursts", "tex_publications",
+                   "tex_publish_ms")
 FLOW_WORST_FIELDS = ("tex_latency_p50_ms", "tex_latency_p90_ms", "tex_latency_max_ms", "tex_wait_p50_ms", "tex_wait_p90_ms",
-                     "tex_wait_max_ms", "tex_burst_p50", "tex_burst_p90", "tex_burst_max")
+                     "tex_wait_max_ms", "tex_burst_p50", "tex_burst_p90", "tex_burst_max", "tex_publish_max_ms")
 
 
 def texture_flow(textures):
@@ -379,6 +380,10 @@ def texture_flow(textures):
         "latency": {"n": int(route("tex_latency_n")), **{key: worst(f"tex_latency_{key}") for key in ("p50_ms", "p90_ms", "max_ms")}},
         "wait": {"n": int(route("tex_wait_n")), **{key: worst(f"tex_wait_{key}") for key in ("p50_ms", "p90_ms", "max_ms")}},
         "bursts": {"n": int(route("tex_bursts")), **{key: worst(f"tex_burst_{key}") for key in ("p50", "p90", "max")}},
+        # the publications' own cost on the main thread: mean of the passes, the longest of the session
+        "publish": {"n": int(route("tex_publications")),
+                    "mean_us": 1000*route("tex_publish_ms")/route("tex_publications") if route("tex_publications") else None,
+                    "max_us": None if worst("tex_publish_max_ms") is None else 1000*worst("tex_publish_max_ms")},
         "waiting_peak": peak("tex_shortfall_wait_n"),
         "visible_peak": peak("tex_visible_shortfall_n"),
         "loads_peak": peak("tex_loads"),
@@ -669,13 +674,14 @@ def summary_table(report):
                       "latency from a rise of demand to the publication that met it and the wait for a slot (worst pass); "
                       "bursts, textures that became short within a second.", "",
                       "| Pass | Wait / read / upload / publish / stale | Visible | Loads started | Loads / MiB in flight peak | "
-                      "Waiting peak | Latency p50 / p90 / max ms | Wait p50 / p90 ms | Bursts p50 / p90 / max |",
-                      "|---|---:|---:|---:|---:|---:|---:|---:|---:|"])
+                      "Waiting peak | Latency p50 / p90 / max ms | Wait p50 / p90 ms | Bursts p50 / p90 / max | "
+                      "Publication µs mean / max |",
+                      "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"])
         for view, stats in streaming["views"].items():
             textures = stats["streaming"]["textures"]
             flow = textures.get("flow") if textures is not None else None
             if flow is None:
-                lines.append(f"| {view} | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |")
+                lines.append(f"| {view} | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |")
                 continue
             split = " / ".join(f"{flow['state_seconds'][state]:.2f}" for state in FLOW_STATES)
             in_flight = (f"{number(flow['loads_peak'], 0)} / "
@@ -684,7 +690,8 @@ def summary_table(report):
             wait = " / ".join(number(flow["wait"][key], 0) for key in ("p50_ms", "p90_ms"))
             bursts = " / ".join(number(flow["bursts"][key], 0) for key in ("p50", "p90", "max"))
             lines.append(f"| {view} | {split} | {flow['visible_seconds']:.2f} | {flow['loads_started']} | {in_flight} | "
-                         f"{number(flow['waiting_peak'], 0)} | {latency} | {wait} | {bursts} |")
+                         f"{number(flow['waiting_peak'], 0)} | {latency} | {wait} | {bursts} | "
+                         f"{number(flow['publish']['mean_us'], 1)} / {number(flow['publish']['max_us'], 1)} |")
         lines.extend(["", "Texture budget: the device's budget and this process's usage, the working target, the stage "
                       "above it, and D(s), the bytes the demanded textures take at stage s.", "",
                       "| Pass | Device budget / usage end MiB | Target end MiB (source) | Stage end / deepest | "

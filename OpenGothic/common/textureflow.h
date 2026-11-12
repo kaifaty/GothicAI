@@ -81,6 +81,21 @@ namespace TextureFlow {
       void close();
     };
 
+  // Loads in flight and publications with levels (part B). A load holds its slot from its start to its publication.
+  // The worker's own work is short (read p50 0.06 ms, p90 0.3 ms; upload p50 0.12 ms on Ryzen, t4), so a load takes the
+  // frame until the main thread sees it done and, before step 4, another frame through the residency's work queue to
+  // its publication: two slots made at most one load a frame.
+  struct Limits {
+    size_t   loads     = 4;               // loads in flight at most (OPENGOTHIC_TEXTURE_LOADS)
+    uint64_t bytes     = 64ull*1048576;   // bytes their payloads will take at most; one load may always start
+                                          // (OPENGOTHIC_TEXTURE_LOAD_MB)
+    double   publishMs = 0.1;             // publications of a frame stop after this many milliseconds, one at least
+    };
+  // Whether a load of `bytes` may start beside `inFlight` loads making `bytesInFlight`.
+  bool admits(size_t inFlight, uint64_t bytesInFlight, uint64_t bytes, const Limits& limits);
+  // Whether a frame that published `published` ready loads in `elapsedMs` publishes one more.
+  bool publishes(size_t published, double elapsedMs, const Limits& limits);
+
   // The counters Resources keeps: short textures by state now, the texture-seconds in each state, the visible
   // shortfall (against the level with reserve 0, what the screen needs), the loads' latencies and bursts, and the
   // bytes of the loads in flight.
@@ -94,6 +109,8 @@ namespace TextureFlow {
     Histogram wait;               // demand rose -> its first load started
     Bursts    bursts;
     uint64_t  bytesInFlight = 0;  // the payloads the loads in flight will make
+    uint64_t  publications = 0;   // asynchronous publications and their cost on the main thread, ms
+    double    publishMs = 0, publishMaxMs = 0;
 
     void integrate(double elapsed);
     uint64_t shortfall() const;

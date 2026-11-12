@@ -261,7 +261,10 @@ class Resources final {
     // OPENGOTHIC_TEXTURE_DUMP (texturedump.h): every tracked texture with its levels and demand, as CSV
     static void                      dumpTextures(const std::filesystem::path& file);
     static void                      configureTextures(std::string_view budget = {}, std::string_view skipMips = {}, std::string_view target = {},
-                                                       std::string_view screenMips = {});
+                                                       std::string_view screenMips = {}, std::string_view lookAhead = {});
+    // Step 4 (resources_textureflow.cpp): the look-ahead horizon by the view's velocity, seconds; 0 when it is off
+    // ([GAME] texture_lookahead, OPENGOTHIC_TEXTURE_LOOKAHEAD) or with the ring rule
+    static double                    textureLookAhead();
 
     static const AttachBinder*       bindMesh       (const ProtoMesh& anim, const Skeleton& s);
     static const ProtoMesh*          loadMesh       (std::string_view name);
@@ -456,6 +459,13 @@ class Resources final {
     void                 flowStarted(TextureRecord& record, TextureReload& reload, uint8_t level);
     void                 flowObserve(TextureReload& reload);
     void                 textureFlowStats(TextureStats& stats);
+    // Part B: whether a load of `record` at `level` fits beside the loads in flight; the ready loads published within
+    // the frame's budget
+    bool                 admitsTextureLoad(const TextureRecord& record, uint8_t level) const;
+    // OPENGOTHIC_TEXTURE_LOADS, OPENGOTHIC_TEXTURE_LOAD_MB, and the look-ahead switch from `lookAhead` and
+    // OPENGOTHIC_TEXTURE_LOOKAHEAD: read with the other texture settings, applied by `apply` within their requeue
+    std::function<void()> configureTextureFlow(std::string_view lookAhead);
+    void                 publishReadyTextures(const std::vector<std::shared_ptr<TextureReload>>& ready);
     // Step 3 (resources_texturebudget.cpp): the level of the owners measured on screen at `stage`
     uint8_t              resolutionLevel(const TextureRecord& record, uint32_t stage) const;
     void                 setTextureBudget(const TextureBudget::Choice& budget, const TextureBudget::Choice& target,
@@ -616,6 +626,8 @@ class Resources final {
     std::chrono::steady_clock::time_point nearTailUpdated = std::chrono::steady_clock::now();
     double nearTailSeconds = 0, shortfallSeconds = 0;
     TextureFlow::Tracker textureFlow;
+    TextureFlow::Limits textureLimits;
+    std::atomic<bool> textureLookAheadOn{true};
     std::atomic<uint32_t> textureStartup{0};  // worlds loading (TextureStartup)
     uint32_t textureJumpMs = 300;
     struct TextureJump {

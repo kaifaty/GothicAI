@@ -48,6 +48,10 @@ std::string TextureDump::flowFields(const Resources::TextureStats& after, const 
                   now.max(was));
     out+=field;
     };
+  // the publications' own cost on the main thread (part B): count and milliseconds of the pass, the session's longest
+  std::snprintf(field,sizeof(field),",\"tex_publications\":%llu,\"tex_publish_ms\":%.9g,\"tex_publish_max_ms\":%.9g",
+                (unsigned long long)(a.publications-b.publications),a.publishMs-b.publishMs,a.publishMaxMs);
+  out+=field;
   times("latency",a.latency,b.latency);
   times("wait",a.wait,b.wait);
   std::snprintf(field,sizeof(field),",\"tex_bursts\":%llu,\"tex_burst_p50\":%.0f,\"tex_burst_p90\":%.0f,\"tex_burst_max\":%u",

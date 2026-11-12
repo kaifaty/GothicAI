@@ -545,7 +545,7 @@ void Resources::requeueTextures(const std::function<void()>& change) {
   }
 
 void Resources::configureTextures(std::string_view budget, std::string_view skipMips, std::string_view target,
-                                  std::string_view screenMips) {
+                                  std::string_view screenMips, std::string_view lookAhead) {
   if(inst==nullptr)
     return;
   const auto* enabled=std::getenv("OPENGOTHIC_TEXTURE_STREAMING");
@@ -575,6 +575,7 @@ void Resources::configureTextures(std::string_view budget, std::string_view skip
   const auto reserve=integer(reserveEnv!=nullptr ? std::string_view(reserveEnv) : std::string_view(),1,
                              "OPENGOTHIC_TEXTURE_MIP_RESERVE",16);
   const auto jumpMs=integer(jumpEnv!=nullptr ? std::string_view(jumpEnv) : std::string_view(),300,"OPENGOTHIC_TEXTURE_JUMP_MS",60000);
+  const auto flow=inst->configureTextureFlow(lookAhead);
   std::lock_guard<std::recursive_mutex> guard(inst->sync);
   inst->requeueTextures([&] {
     inst->textureStreaming=enabled==nullptr || std::strcmp(enabled,"0")!=0;
@@ -582,6 +583,7 @@ void Resources::configureTextures(std::string_view budget, std::string_view skip
     inst->textureScreen=screen!=0;
     inst->textureReserve=uint32_t(reserve);
     inst->textureJumpMs=uint32_t(jumpMs);
+    flow();
     inst->textureOverBudget=false;
     inst->setTextureBudget(budgetChoice,targetChoice,vram);
     });
@@ -949,7 +951,9 @@ void Resources::updateTextures(ChunkResidency* residency) {
     };
   const auto deadline=ChunkResidency::Clock::now()+ChunkResidency::WorkBudget;
 
-  // Loads in flight: at most one publication a frame, through the residency's frame queue.
+  // Loads in flight. Levels publish the ready ones here within a budget (publishReadyTextures); the ring rule at most
+  // one a frame, through the residency's frame queue.
+  std::vector<std::shared_ptr<TextureReload>> ready;
   bool publishing=std::any_of(resources.textureReloads.begin(),resources.textureReloads.end(),
                               [](const auto& reload) { return !reload->queued.expired(); });
   for(size_t i=0;i<resources.textureReloads.size();) {
@@ -968,7 +972,11 @@ void Resources::updateTextures(ChunkResidency* residency) {
         reload->ready=std::move(payload.texture);
         }
       resources.flowObserve(*reload);
-      if(!publishing && !reload->ready.isEmpty() && reload->queued.expired() && reload->ready.uploadReady()) {
+      if(resources.textureScreen) {
+        if(!reload->ready.isEmpty() && reload->ready.uploadReady())
+          ready.push_back(reload);
+        }
+      else if(!publishing && !reload->ready.isEmpty() && reload->queued.expired() && reload->ready.uploadReady()) {
         FrameProfile::textureEvent(FrameProfile::TextureActivity::Ready);
         publishing=true;
         if(residency==nullptr) {
@@ -1003,8 +1011,9 @@ void Resources::updateTextures(ChunkResidency* residency) {
     ++i;
     }
 
-  // Levels keep two loads in flight, the ring rule one.
-  const size_t inFlight=resources.textureScreen ? 2 : 1;
+  resources.publishReadyTextures(ready);
+  // Levels keep up to textureLimits.loads in flight, the ring rule one.
+  const size_t inFlight=resources.textureScreen ? resources.textureLimits.loads : 1;
   if(resources.textureReloads.size()<inFlight) {
     const auto now=ChunkResidency::Clock::now();
     while(!resources.textureDemotions.empty() && resources.textureDemotions.begin()->first.first<=now) {
@@ -1051,7 +1060,7 @@ void Resources::updateTextures(ChunkResidency* residency) {
           break;
           }
       }
-    if(selected==nullptr)
+    if(selected==nullptr || !resources.admitsTextureLoad(*selected,resources.wantedLevel(*selected)))
       break;
     resources.startTextureLoad(*selected,resources.wantedLevel(*selected),lowering);
     }
