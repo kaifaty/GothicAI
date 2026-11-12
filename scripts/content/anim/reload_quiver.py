@@ -16,9 +16,13 @@ y left, z forward): `aim` (the stance's arrow, moved `back` along it and `out` f
 shoulder, cm), `quiver` (`u` cm up the quiver's axis from its mouth, the arrow along the axis), `shelf` (the arrow
 on the bow's line, its nock `ahead` cm in front of the string's middle), `string` (the stance's arrow with the nock
 on the string). Between keys the grip point follows cubic Hermite segments (a straight one along the quiver's
-axis while the arrow's tip is in it), the arrow's turn an eased slerp; the arm is solved by a two-bone IK every
-frame, the elbow toward the key's `elbow` (chest frame), the wrist's twist half into the forearm. `grip` is where
-the hand holds the arrow, cm from its nock: the arrow slides in the hand by the slot ZS_RIGHTHAND. The head
+axis while the arrow's tip is in it), the arrow's direction an eased slerp. The hand is not set by the arrow alone
+(round 2 bent the wrist to 160 degrees so): per frame the hand's roll round the arrow and, between the aim's keys,
+the arrow's turn in the hand (across the fist at the quiver, along the fingers as on the string) are chosen over
+all frames at once, and then the elbow's swivel round the shoulder-wrist line, for the least wrist bend and twist
+and elbow fold, the hand and the elbow moving smoothly, the elbow near the key's `elbow` (chest frame); the arm is
+a two-bone IK, the wrist's twist half into the forearm. `grip` is where the hand holds the arrow, cm from its
+nock: the arrow slides in the hand by the slot ZS_RIGHTHAND. The head
 pitches down (> 0) by its own keys. Writes HUMANS-like records <LEVEL>-T_BOWRELOADQ.MAN.json, a full-body preview
 and prints the checks; with a content dir packs them with the events of G2's entry, MUNITION_PLACE and the sound at
 the grab's frame, the string's morphs.
@@ -77,6 +81,93 @@ def triad(u1, u2, w1, w2) -> np.ndarray:
 def seg_dist(p, a, b) -> float:
     ab = b - a
     return float(np.linalg.norm(p - (a + ab * np.clip(np.dot(p - a, ab) / max(np.dot(ab, ab), 1e-9), 0, 1))))
+
+
+# the wrist: free up to WristFree degrees of bend (the aim holds the string at 64, G2's reload reaches 72) and
+# TwistFree of twist (G2's: 30), dearer past them; the arrow's turn in the hand tried between the aim's keys: across
+# the fist round the palm's normal (the hand's Z: the hand's mesh is thinnest along it), up to the slant a fist holds
+# a stick at (past 90 degrees toward the heel of the hand, short of pointing back at the wrist), tilted a little
+# round its Y;
+# the elbow's jump from frame to frame (cm) weighs against the bend it saves
+WristFree = 45.0
+TwistFree = 45.0
+ElbowFree = 135.0  # the elbow's flexion (G2's reload reaches 138; past ~145 the arm folds shut)
+CROSS_Y = (-30.0, 0.0, 30.0)
+CROSS_Z = tuple(float(a) for a in range(-135, 136, 15))
+ElbowJump = 1.0
+HandTurn = (0.5, 0.05)  # the hand's turn from frame to frame (degrees): linear and squared price
+AimRoll = 10.0  # the hand's roll round the arrow off the aim's at the aim's keys (per 30 degrees, squared)
+HandSlide = 0.5  # the wrist's way round the pinch from frame to frame (cm, squared): the turn swings the hand
+
+
+def hold_of(st: Stance, g: float, cross=(0.0, 0.0)) -> np.ndarray:
+    """The arrow's slot in the hand: the aim's (along the fingers, nock at the fingertips), slid by `g`, turned by
+    `cross` (degrees round the hand's Y, then Z) about the point the fingers pinch."""
+    hold = st.slot_aim.copy()
+    hold[:3, 3] = hold[:3, 3] + (hold[:3, :3] @ np.array([-1.0, 0, 0])) * (3.0 - g)
+    if cross[0] or cross[1]:
+        gp = (hold @ np.array([st.nock_back - g, 0.0, 0.0, 1.0]))[:3]
+        r = np.eye(4)
+        r[:3, :3] = axis_rot([0, 1, 0], cross[0]) @ axis_rot([0, 0, 1], cross[1])
+        r[:3, 3] = gp - r[:3, :3] @ gp
+        hold = r @ hold
+    return hold
+
+
+def swivel_poles(arm: Arm, hand_world: np.ndarray, hint: np.ndarray, deg: np.ndarray) -> np.ndarray:
+    """The elbow's poles (N) turned `deg` round the shoulder-wrist lines from the hints."""
+    ax = hand_world[:, :3, 3] - arm.up[:3, 3]
+    ax /= np.linalg.norm(ax, axis=1, keepdims=True)
+    p0 = hint - ax * np.sum(hint * ax, axis=1, keepdims=True)
+    p0 /= np.linalg.norm(p0, axis=1, keepdims=True)
+    t = np.radians(deg)[:, None]
+    # Rodrigues for p0 perpendicular to ax
+    return p0 * np.cos(t) + np.cross(ax, p0) * np.sin(t)
+
+
+def pose_costs(st: Stance, arm: Arm, hand_world: np.ndarray, pole: np.ndarray, hint: np.ndarray,
+               free: float = WristFree):
+    """Poses' prices (N): the wrist bent past `free` (WristFree, the aim's own bend near the aim) or twisted past
+    TwistFree, the elbow folded past ElbowFree, the hand out of reach, the elbow off the key's hint, the elbow, the
+    forearm or the hand in the trunk or the head. Also the elbows (world)."""
+    m = arm.measure(hand_world, pole)
+    c = 10.0 * (np.maximum(m["bend"] - free, 0.0) / 10.0) ** 2
+    c += 20.0 * (np.maximum(m["twist"] - TwistFree, 0.0) / 10.0) ** 2 + 200.0 * np.maximum(m["miss"], 0.0)
+    c += 20.0 * (np.maximum(m["flex"] - ElbowFree, 0.0) / 10.0) ** 2
+    ax = hand_world[:, :3, 3] - arm.up[:3, 3]
+    ax /= np.linalg.norm(ax, axis=1, keepdims=True)
+
+    def flat(v):
+        v = v - ax * np.sum(v * ax, axis=1, keepdims=True)
+        return v / np.linalg.norm(v, axis=1, keepdims=True)
+    off = np.degrees(np.arccos(np.clip(np.sum(flat(pole) * flat(hint), axis=1), -1, 1)))
+    c += 10.0 * (off / 45.0) ** 2
+    e = m["elbow"]
+    ci = st.chest_inv
+    ec = e @ ci[:3, :3].T + ci[:3, 3]
+    hc = hand_world[:, :3, 3] @ ci[:3, :3].T + ci[:3, 3]
+    for q in (ec, (ec + hc) / 2, hc):
+        c += 50.0 * np.maximum(4.0 - trunk_gaps(st, q), 0.0) + 50.0 * np.maximum(4.0 - head_gaps(st, q), 0.0)
+    return c, e
+
+
+def head_gaps(st: Stance, q: np.ndarray) -> np.ndarray:
+    """Points' (chest frame, N) way out of the head's capsule."""
+    a, b = st.c(st.W("BIP01 HEAD")[:3, 3]), st.c(st.W("ZS_HELMET")[:3, 3])
+    ab = b - a
+    t = np.clip(((q - a) @ ab) / max(float(ab @ ab), 1e-9), 0, 1)
+    return np.linalg.norm(q - (a + t[:, None] * ab), axis=1) - HEAD_R
+
+
+def trunk_gaps(st: Stance, q: np.ndarray) -> np.ndarray:
+    """Points' (chest frame, N) way out of the trunk (< 0 inside): the ellipse round the pelvis-spine line."""
+    pv = st.c(st.W("BIP01 PELVIS")[:3, 3])
+    tt = np.clip((q[:, 0] - pv[0]) / -pv[0], 0, 1)
+    y, z = q[:, 1] - pv[1] * (1 - tt), q[:, 2] - pv[2] * (1 - tt)
+    r = np.hypot(y, z)
+    k = np.maximum(np.hypot(y / 15, z / 11), 1e-6)
+    out = r * (1 - 1 / k)
+    return np.where((q[:, 0] > 15) | (q[:, 0] < pv[0]), 99.0, out)
 
 
 class Stance:
@@ -210,6 +301,39 @@ class Arm:
         self.a = float(np.linalg.norm(st.local["BIP01 R FOREARM"][:3, 3]))
         self.b = float(np.linalg.norm(st.local["BIP01 R HAND"][:3, 3]))
         self.bind_hand = st.skel.nodes[st.gi["BIP01 R HAND"]].rest[:3, :3]
+        self.fingers = unit(st.local["BIP01 R FINGER0"][:3, 3])
+        u1, u2 = unit(st.local["BIP01 R HAND"][:3, 3]), np.array([0.0, 1.0, 0.0])
+        c = unit(np.cross(u1, u2))
+        self.fore_basis = np.column_stack([u1, np.cross(c, u1), c])
+
+    def measure(self, hand_world: np.ndarray, pole: np.ndarray) -> dict:
+        """solve() for N hands at once, without the locals: the wrist's bend and twist, the miss, the elbows."""
+        a, b = self.a, self.b
+        sh, end = self.up[:3, 3], hand_world[:, :3, 3]
+        to = end - sh
+        dist = np.linalg.norm(to, axis=1)
+        d = np.clip(dist, abs(a - b) + 1e-3, a + b - 1e-3)
+        axis = to / dist[:, None]
+        along = (a * a - b * b + d * d) / (2 * d)
+        height = np.sqrt(np.maximum(a * a - along * along, 0.0))
+        end = sh + axis * d[:, None]
+        p = pole - axis * np.sum(pole * axis, axis=1, keepdims=True)
+        p /= np.linalg.norm(p, axis=1, keepdims=True)
+        e = sh + axis * along[:, None] + p * height[:, None]
+        hinge = np.cross(p, axis)
+        hinge /= np.linalg.norm(hinge, axis=1, keepdims=True)
+        f = end - e
+        f /= np.linalg.norm(f, axis=1, keepdims=True)
+        c = np.cross(f, hinge)
+        c /= np.linalg.norm(c, axis=1, keepdims=True)
+        w_fore = np.stack([f, np.cross(c, f), c], axis=2) @ self.fore_basis.T
+        w_hand = hand_world[:, :3, :3]
+        rel = self.bind_hand.T @ (np.transpose(w_fore, (0, 2, 1)) @ w_hand)
+        twist = np.degrees(np.arctan2(rel[:, 2, 1] - rel[:, 1, 2], rel[:, 1, 1] + rel[:, 2, 2]))
+        bend = np.degrees(np.arccos(np.clip(np.sum(f * (w_hand @ self.fingers), axis=1), -1, 1)))
+        # the elbow's flexion: the forearm's turn off the upper arm's line (0 straight)
+        flex = 180.0 - np.degrees(np.arccos(np.clip((a * a + b * b - d * d) / (2 * a * b), -1, 1)))
+        return {"miss": dist - d, "twist": np.abs(twist), "bend": bend, "elbow": e, "flex": flex}
 
     def solve(self, hand_world: np.ndarray, pole: np.ndarray) -> tuple[dict, dict, np.ndarray]:
         st = self.st
@@ -235,7 +359,8 @@ class Arm:
         w_fore = w_fore @ np.array([[1, 0, 0], [0, c, -sn], [0, sn, c]])
         locals_ = {"BIP01 R UPPERARM": self.clav[:3, :3].T @ w_up, "BIP01 R FOREARM": w_up.T @ w_fore,
                    "BIP01 R HAND": w_fore.T @ w_hand}
-        return locals_, {"miss": dist - d, "twist": abs(twist)}, e
+        bend = float(np.degrees(np.arccos(np.clip(np.dot(unit(end - e), w_hand @ self.fingers), -1, 1))))
+        return locals_, {"miss": dist - d, "twist": abs(twist), "bend": bend}, e
 
 
 def hermite(p0, p1, m0, m1, s):
@@ -293,57 +418,23 @@ def build(st: Stance, lv: dict, spec: dict, name: str) -> tuple[ga.Animation, di
             tang[i] = ax * np.dot(cr, ax) * k["along"]
         else:
             tang[i] = cr * k.get("tension", 1.0)
-    # the hand's roll round the arrow at each key: over the whole chain, the least wrist twist plus the hand's turn
-    # from key to key (a roll chosen key by key flips the wrist by 90-180 degrees between them); `roll` fixes one
-    hold0 = st.slot_aim.copy()
-    cands = list(range(-180, 180, 10))
-
-    def key_cost(i, roll):
-        k = keys[i]
-        fr = grip_frame(st, pts[i], dirs[i], float(roll), ref_y)
-        hold = hold0.copy()
-        g = k.get("grip", 3.0)
-        hold[:3, 3] = hold[:3, 3] + (hold[:3, :3] @ np.array([-1.0, 0, 0])) * (3.0 - g)
-        slot = fr.copy()
-        slot[:3, 3] = pts[i] + dirs[i] * (st.nock_back - g)
-        _, r, _ = arm.solve(st.chest @ (slot @ np.linalg.inv(hold)), st.chest[:3, :3] @ unit(k["elbow"]))
-        return r["twist"] + 20.0 * max(r["miss"], 0.0), fr[:3, :3]
-
-    options = []
-    for i, k in enumerate(keys):
-        rolls_i = [float(k["roll"])] if "roll" in k else [float(r) for r in cands]
-        options.append([(r, *key_cost(i, r)) for r in rolls_i])
-
-    def turn(a, b):
-        return float(np.degrees(np.linalg.norm(rs.axis_angle(a @ b.T))))
-    cost = [c for _, c, _ in options[0]]
-    back = []
-    for i in range(1, len(keys)):
-        nc, bk = [], []
-        for _, c, m in options[i]:
-            j = min(range(len(options[i - 1])), key=lambda q: cost[q] + turn(m, options[i - 1][q][2]))
-            nc.append(cost[j] + turn(m, options[i - 1][j][2]) + c)
-            bk.append(j)
-        cost, back = nc, back + [bk]
-    j = int(np.argmin(cost))
-    pick = [j]
-    for bk in reversed(back):
-        j = bk[j]
-        pick.append(j)
-    pick.reverse()
-    rolls = []
-    for i, k in enumerate(keys):
-        k["roll"] = options[i][pick[i]][0]
-        rolls.append(k["roll"])
+    # the hand per frame: the grip point, the arrow's direction, the slide of the grip and the elbow's hint as the
+    # keys lead them; how far the arrow may turn in the hand (across the fist at the quiver and on the way to the
+    # bow, along the fingers as on the string at the aim's keys, eased between)
+    free = [i for i, k in enumerate(keys) if k["hand"]["at"] in ("quiver", "point", "between")]
+    f0, f1 = free[0], free[-1]
+    ramp_in = (kp[f0 - 1], kp[f0]) if f0 > 0 else (kp[f0], kp[f0])
+    ramp_out = (kp[f1], kp[f1 + 1]) if f1 + 1 < len(keys) else (kp[f1], kp[f1])
     t = np.arange(frames) / fps
     p_of = t / total
     hk = np.array(lv["head"], float)
     from finish import monotone_cubic
     pitch = monotone_cubic(hk[:, 0], hk[:, 1], p_of)
-    rot = np.zeros((frames, len(NODES), 4))
-    loc = np.zeros((frames, len(NODES), 3))
-    report = {"miss": 0.0, "twist": 0.0}
-    track = []
+    rolls_all = np.arange(-180.0, 180.0, 15.0)
+    # the aim's own wrist (bent to hold the string): free near the aim's keys
+    aim_pole = (st.W("BIP01 R FOREARM")[:3, 3] - st.W("BIP01 R UPPERARM")[:3, 3])[None]
+    aim_bend = max(float(arm.measure(st.W("BIP01 R HAND")[None], aim_pole)["bend"][0]), WristFree)
+    frames_in = []
     for f in range(frames):
         p = p_of[f]
         j = int(np.clip(np.searchsorted(kp, p, side="right") - 1, 0, len(keys) - 2))
@@ -358,28 +449,109 @@ def build(st: Stance, lv: dict, spec: dict, name: str) -> tuple[ga.Animation, di
         else:
             grip = hermite(pts[j], pts[j + 1], tang[j] * h, tang[j + 1] * h, s)
         se = smooth(s)
-        # the arrow's direction and the hand's roll round it
-        d0, d1 = dirs[j], dirs[j + 1]
-        r0 = grip_frame(st, pts[j], d0, keys[j].get("roll", 0.0), ref_y)[:3, :3]
-        r1 = grip_frame(st, pts[j + 1], d1, keys[j + 1].get("roll", 0.0), ref_y)[:3, :3]
-        rs_ = slerp_m(r0, r1, se)
+        d = -slerp_m(grip_frame(st, pts[j], dirs[j], 0.0, ref_y)[:3, :3],
+                     grip_frame(st, pts[j + 1], dirs[j + 1], 0.0, ref_y)[:3, :3], se)[:, 0]
         g = keys[j].get("grip", 3.0) + (keys[j + 1].get("grip", 3.0) - keys[j].get("grip", 3.0)) * se
         pole = unit(unit(keys[j]["elbow"]) * (1 - se) + unit(keys[j + 1]["elbow"]) * se)
-        # the slot in the chest's frame: the arrow's origin (nock_back from the nock) is at the grip moved along
-        slot = np.eye(4)
-        slot[:3, :3] = rs_
-        dir_now = -rs_[:, 0]
-        slot[:3, 3] = grip + dir_now * (st.nock_back - g)
-        # the hand bone: the grip point and the arrow in it as the hand holds it (the aim's slot, slid by g)
-        hold = st.slot_aim.copy()
-        hold[:3, 3] = hold[:3, 3] + (hold[:3, :3] @ np.array([-1.0, 0, 0])) * (3.0 - g)
-        hand_c = slot @ np.linalg.inv(hold)
-        hand_w = st.chest @ hand_c
-        locals_, r, elbow = arm.solve(hand_w, st.chest[:3, :3] @ pole)
-        if r["miss"] > report["miss"]:
-            report["miss"], report["miss_at"] = round(r["miss"], 1), round(float(p), 2)
-        if r["twist"] > report["twist"]:
-            report["twist"], report["twist_at"] = round(r["twist"]), round(float(p), 2)
+        if p < ramp_in[1]:
+            room = smooth((p - ramp_in[0]) / max(ramp_in[1] - ramp_in[0], 1e-6))
+        elif p > ramp_out[0]:
+            room = 1.0 - smooth((p - ramp_out[0]) / max(ramp_out[1] - ramp_out[0], 1e-6))
+        else:
+            room = 1.0
+        ly, lz = max(map(abs, CROSS_Y)) * room + 1e-6, max(map(abs, CROSS_Z)) * room + 1e-6
+        cross = [(a, b) for a in CROSS_Y for b in CROSS_Z if abs(a) <= ly and abs(b) <= lz]
+        frames_in.append((grip, d, g, st.chest[:3, :3] @ pole, cross, WristFree + (aim_bend - WristFree) * (1.0 - room),
+                          room))
+    # the hand's turn per frame (its roll round the arrow, the arrow's turn in the hand): over all frames at once,
+    # the least wrist bend the elbow's swivel gives, the wrist's twist and the hand's turn from frame to frame
+    states, scost, squat, spos = [], [], [], []
+    sw_coarse = np.arange(-140.0, 141.0, 20.0)
+    for f, (grip, d, g, hint, cross, free_f, _) in enumerate(frames_in):
+        st_f, hands_f = [], []
+        # the first and the last frame hold the arrow as the aim does (the engine leads the hand from the aim and
+        # back to it)
+        for r in (rolls_all if 0 < f < frames - 1 else (0.0,)):
+            fr = grip_frame(st, grip, d, float(r), ref_y)
+            slot = fr.copy()
+            slot[:3, 3] = grip + d * (st.nock_back - g)
+            for cr in cross:
+                st_f.append((float(r), cr, slot))
+                hands_f.append(st.chest @ slot @ np.linalg.inv(hold_of(st, g, cr)))
+        hw = np.array(hands_f)
+        n, k = len(hw), len(sw_coarse)
+        hw_k = np.repeat(hw, k, axis=0)
+        hint_k = np.repeat(hint[None, :], n * k, axis=0)
+        c, _ = pose_costs(st, arm, hw_k, swivel_poles(arm, hw_k, hint_k, np.tile(sw_coarse, n)), hint_k, free_f)
+        c = c.reshape(n, k).min(axis=1)
+        c += np.array([abs(cr[0]) / 15.0 + abs(cr[1]) / 30.0 for _, cr, _ in st_f]) * 2.0
+        # at the aim's keys (on the bow, at the string) the hand holds the arrow as the aim does
+        c += AimRoll * (1.0 - frames_in[f][6]) * np.array([(min(abs(r), 360 - abs(r)) / 30.0) ** 2 for r, _, _ in st_f])
+        q = np.array([rs.mat_to_quat(m[:3, :3]) for m in hw])
+        states.append(st_f)
+        scost.append(c)
+        squat.append(q / np.linalg.norm(q, axis=1, keepdims=True))
+        spos.append(hw[:, :3, 3] - (st.chest @ np.append(grip, 1.0))[:3])
+    acc = scost[0].copy()
+    back = []
+    for f in range(1, frames):
+        turn = np.degrees(2 * np.arccos(np.clip(np.abs(squat[f] @ squat[f - 1].T), 0, 1)))
+        slide = np.linalg.norm(spos[f][:, None, :] - spos[f - 1][None, :, :], axis=2)
+        tot = acc[None, :] + HandTurn[0] * turn + HandTurn[1] * turn**2 + HandSlide * slide**2
+        bk = tot.argmin(axis=1)
+        acc = tot[np.arange(len(squat[f])), bk] + scost[f]
+        back.append(bk)
+    j = int(acc.argmin())
+    pick = [j]
+    for bk in reversed(back):
+        j = int(bk[j])
+        pick.append(j)
+    pick.reverse()
+    hands, hints, slots, held = [], [], [], []
+    for f, (grip, d, g, hint, _, _, _) in enumerate(frames_in):
+        r, cr, slot = states[f][pick[f]]
+        hands.append(slot @ np.linalg.inv(hold_of(st, g, cr)))
+        hints.append(hint)
+        slots.append((slot, grip, g))
+        held.append((r, cr))
+    # the elbow's swivel round the shoulder-wrist line per frame: the least wrist bend near the keys' hint, the
+    # elbow moving smoothly (over all frames at once)
+    sw = np.arange(-150.0, 151.0, 5.0)
+    costs, elbows, poles = [], [], []
+    for f in range(frames):
+        hw = np.repeat((st.chest @ hands[f])[None], len(sw), axis=0)
+        hint_k = np.repeat(hints[f][None, :], len(sw), axis=0)
+        pl = swivel_poles(arm, hw, hint_k, sw)
+        c, e = pose_costs(st, arm, hw, pl, hint_k, frames_in[f][5])
+        costs.append(c)
+        elbows.append(e)
+        poles.append(pl)
+    acc = costs[0].copy()
+    back = []
+    for f in range(1, frames):
+        jump = np.linalg.norm(elbows[f][:, None, :] - elbows[f - 1][None, :, :], axis=2)
+        tot = acc[None, :] + ElbowJump * jump**2
+        bk = tot.argmin(axis=1)
+        acc = tot[np.arange(len(sw)), bk] + costs[f]
+        back.append(bk)
+    j = int(acc.argmin())
+    chosen = [j]
+    for bk in reversed(back):
+        j = int(bk[j])
+        chosen.append(j)
+    chosen.reverse()
+    rot = np.zeros((frames, len(NODES), 4))
+    loc = np.zeros((frames, len(NODES), 3))
+    report = {"miss": 0.0, "twist": 0.0, "bend": 0.0}
+    track = []
+    for f in range(frames):
+        p = p_of[f]
+        hand_c = hands[f]
+        slot, grip, g = slots[f]
+        locals_, r, elbow = arm.solve(st.chest @ hand_c, poles[f][chosen[f]])
+        for key in ("miss", "twist", "bend"):
+            if r[key] > report[key]:
+                report[key], report[key + "_at"] = round(r[key], 1), round(float(p), 2)
         locals_["BIP01 R CLAVICLE"] = st.local["BIP01 R CLAVICLE"][:3, :3]
         locals_["BIP01 R FINGER0"] = st.local["BIP01 R FINGER0"][:3, :3]
         locals_["BIP01 HEAD"] = st.local["BIP01 HEAD"][:3, :3] @ rot_y(float(pitch[f]))
@@ -391,7 +563,9 @@ def build(st: Stance, lv: dict, spec: dict, name: str) -> tuple[ga.Animation, di
                 continue
             rot[f, col] = rs.mat_to_quat(locals_[n])
             loc[f, col] = st.local[n][:3, 3]
-        track.append({"p": round(float(p), 3), "grip": grip, "dir": dir_now, "g": g, "elbow": st.c(elbow)})
+        track.append({"p": round(float(p), 3), "grip": grip, "dir": -slot[:3, 0], "g": g, "elbow": st.c(elbow),
+                      "bend": r["bend"]})
+    report["held"] = [(round(float(p_of[f]), 2), r, list(cr)) for f, (r, cr) in enumerate(held) if f % 4 == 0]
     anim = ga.Animation(name, "S_BOWAIM", 1, fps, frames, [st.gi[n] for n in NODES], loc, rot)
     return anim, report, track
 
@@ -425,7 +599,7 @@ def checks(st: Stance, full: ga.Animation, lv: dict, spec: dict) -> dict:
     mouth, down = st.mouth(), st.down()
     out = {"head_hand": 99.0, "head_fore": 99.0, "head_arrow": 99.0, "trunk_hand": 99.0, "trunk_fore": 99.0,
            "trunk_arrow": 99.0, "tube_hand": 99.0, "tube_fore": 99.0, "off_axis": 0.0, "jerk": 0.0}
-    hands = []
+    hands, bends, flexes = [], [], []
     for f in range(full.frame_count):
         w = ga.world_pose(st.skel, full, f)
         ci = np.linalg.inv(w[gi["BIP01 SPINE2"]])
@@ -436,6 +610,11 @@ def checks(st: Stance, full: ga.Animation, lv: dict, spec: dict) -> dict:
         ax = unit(ci[:3, :3] @ -slot[:3, 0])
         nock, tip = sl - ax * st.nock_back, sl + ax * st.tip_ahead
         hands.append(hand)
+        # the wrist's bend: the forearm's line (elbow to wrist) against the hand's (wrist to fingers)
+        bends.append(float(np.degrees(np.arccos(np.clip(np.dot(unit(hand - fore), unit(c("BIP01 R FINGER0") - hand)),
+                                                        -1, 1)))))
+        upper = c("BIP01 R UPPERARM")
+        flexes.append(180.0 - float(np.degrees(np.arccos(np.clip(np.dot(unit(upper - fore), unit(hand - fore)), -1, 1)))))
         fm = (fore + hand) / 2
         seg = lambda a, b: [a + (b - a) * i / 8 for i in range(9)]  # noqa: E731
         out["head_hand"] = min(out["head_hand"], seg_dist(hand, h0, h1) - HEAD_R)
@@ -476,6 +655,11 @@ def checks(st: Stance, full: ga.Animation, lv: dict, spec: dict) -> dict:
     out["jerk"] = float(jerk.max())
     out["jerk_at"] = int(jerk.argmax()) + 1
     out["speed_max"] = float(np.linalg.norm(dv, axis=1).max())
+    out["wrist"] = max(bends)
+    out["wrist_at"] = round(int(np.argmax(bends)) / full.frame_count, 2)
+    out["wrist_step"] = float(np.abs(np.diff(bends)).max())
+    out["elbow"] = max(flexes)
+    out["elbow_at"] = round(int(np.argmax(flexes)) / full.frame_count, 2)
     return {k: round(v, 2) if isinstance(v, float) else v for k, v in out.items()}
 
 

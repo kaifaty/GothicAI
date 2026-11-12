@@ -11,6 +11,7 @@ Per segment (the hero's, or the watched npc's quiver columns) and per reload in 
 - the frame of the grab (p crosses K3 = 0.34), of the arrow in the hand, of one arrow less in the quiver;
 - at the end (the first frames nocked at draw 0): bd_nockgap, bd_overgrip, bd_atmiddle, bd_bowmiss;
 - the jump |Δx(i) − Δx(i−1)| of the hand (rh_*) at the joints K0, K2–K3, K7 and into S_BOWAIM, and the most anywhere;
+- the wrist's and the elbow's bend on the hand's way (rq_wrist, rq_elbow): most, degrees (G2's reload: 72 and 138);
 - the quiver: its turn from the rest (qv_swing) while the arrow is drawn out, its most change in 1/60 s, the leg and
   the flaps in the tube meanwhile (qv_leg, qv_armor), how far it is back 0.25 s after the tip left the tube.
 """
@@ -105,6 +106,10 @@ def one(rows, a, b):
     rep["head_arrow"] = arrow
     for k in ("tube_hand", "tube_fore"):
         rep[k] = min(num(r, f"rq_{k}", 99) for r in hd)
+    # the arm's joints on the hand's way: the wrist (forearm against the fingers' line), the elbow
+    for k in ("wrist", "elbow"):
+        vals = [num(r, f"rq_{k}", -1) for r in away]
+        rep[k] = max(vals or [-1.0])
     # the trunk by the armour's points (the quiver's lift: qv_thand, qv_tfore, qv_tarrow)
     for k, c in (("trunk_hand", "qv_thand"), ("trunk_fore", "qv_tfore"), ("trunk_arrow", "qv_tarrow")):
         rep[k] = min(num(r, c, 99) for r in away)

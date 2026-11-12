@@ -200,19 +200,20 @@ def setup_render(cfg, frames: int, center, span, arm_obj):
     return cam
 
 
-def place_camera(cam, view: str):
-    # Relative to the pivot under the hips; the character faces +Y, its right hand is at +X.
+def place_camera(cam, view: str, height: float = 0.9):
+    # Relative to the pivot under the hips; the character faces +Y, its right hand is at +X. `height` is where the
+    # frame's middle is (m): the hips by default, ~1.35 for the arms and the head.
     if view == "side":
-        cam.location = (6, 0, 0.9)
+        cam.location = (6, 0, height)
         cam.rotation_euler = (np.pi / 2, 0, np.pi / 2)
     elif view == "front":
-        cam.location = (0, 6, 0.9)
+        cam.location = (0, 6, height)
         cam.rotation_euler = (np.pi / 2, 0, np.pi)
     elif view == "back":
-        cam.location = (0, -6, 0.9)
+        cam.location = (0, -6, height)
         cam.rotation_euler = (np.pi / 2, 0, 0)
     else:  # three-quarter from the front right, slightly above
-        cam.location = (4.0, 4.0, 2.2)
+        cam.location = (4.0, 4.0, height + 1.3)
         cam.rotation_euler = (np.radians(75), 0, np.radians(135))
 
 
@@ -255,7 +256,7 @@ def main():
         cam = setup_render(rcfg, total, center, span, arm_obj)
         out = Path(rcfg["dir"])
         for view in rcfg.get("views", ["side"]):
-            place_camera(cam, view)
+            place_camera(cam, view, rcfg.get("height", 0.9))
             (out / view).mkdir(parents=True, exist_ok=True)
             bpy.context.scene.render.filepath = str(out / view / "f")
             bpy.ops.render.render(animation=True)

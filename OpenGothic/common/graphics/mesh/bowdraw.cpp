@@ -202,6 +202,7 @@ void BowDraw::setSkeleton(const Skeleton* sk) {
   upper   = find("BIP01 R UPPERARM");
   fore    = find("BIP01 R FOREARM");
   hand    = find("BIP01 R HAND");
+  finger  = find("BIP01 R FINGER0");
   slot    = find("ZS_RIGHTHAND"); // the arrow sits there
   head    = find("BIP01 HEAD");
   crown   = find("ZS_HELMET");
@@ -825,6 +826,8 @@ void BowDraw::probe(Probe& p) const {
   p.tipIn      = rq.tipIn;
   p.offAxis    = rq.offAxis;
   p.led        = rq.led;
+  p.wrist      = rq.wrist;
+  p.elbow      = rq.elbow;
   }
 
 void BowDraw::ownReload(Matrix4x4* tr, size_t numBones, const Vec3& nock, const Vec3& axis) {
@@ -935,6 +938,18 @@ void BowDraw::measureReload(const Matrix4x4* tr, size_t numBones) {
   rq.gripAt     = bowHand<numBones ? in(position(tr[bowHand])-slid) : Vec3();
   rq.slotAt     = in(position(tr[slot]));
   rq.foreAt     = in(position(tr[fore]));
+  {
+    auto bend = [](Vec3 a, Vec3 b) {
+      const float la = a.length(), lb = b.length();
+      if(la<1e-4f || lb<1e-4f)
+        return -1.f;
+      return std::acos(std::clamp(Vec3::dotProduct(a,b)/(la*lb),-1.f,1.f))*180.f/float(M_PI);
+      };
+    const Vec3 sh = position(tr[upper]), el = position(tr[fore]), wr = position(tr[hand]);
+    rq.elbow = bend(el-sh,wr-el);
+    if(finger<numBones)
+      rq.wrist = bend(wr-el,position(tr[finger])-wr);
+  }
   const Vec3 ax = arrowAxis(tr[slot]);
   const Vec3 sl = position(tr[slot]);
   rq.arrowNock  = in(sl-ax*ArrowNock);

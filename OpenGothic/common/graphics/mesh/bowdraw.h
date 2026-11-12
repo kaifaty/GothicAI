@@ -130,6 +130,8 @@ class BowDraw final {
       float         tipIn  = -99;    // cm the arrow's tip is under the quiver's mouth along its axis (> 0 in it)
       float         offAxis = -1;    // cm from the quiver's axis to the arrow's line at the mouth (the tip in it)
       float         led     = 0;     // 0..1 the hand led to the quiver as it hangs
+      float         wrist   = -1;    // degrees the wrist bends: the forearm's line against the hand's (to the fingers)
+      float         elbow   = -1;    // degrees the elbow bends: the forearm off the upper arm's line (0 straight)
       };
 
     static bool    isEnabled();
@@ -217,6 +219,7 @@ class BowDraw final {
     size_t              upper = size_t(-1), fore = size_t(-1), hand = size_t(-1), slot = size_t(-1), bowHand = size_t(-1);
     size_t              head = size_t(-1), crown = size_t(-1), chest = size_t(-1);
     size_t              neck = size_t(-1), clav = size_t(-1), pelvis = size_t(-1), spine0 = size_t(-1);
+    size_t              finger = size_t(-1); // the drawing hand's fingers (the wrist's bend, measured)
     std::vector<size_t> armTree, headTree; // the drawing arm from its clavicle, the head: the own clip's
     size_t              lUpper = size_t(-1), lFore = size_t(-1), lHand = size_t(-1); // the bow arm
     std::vector<size_t> upperTree, foreTree, handTree;
