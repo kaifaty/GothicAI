@@ -17,6 +17,7 @@
 #include "daedalus/classes.h"
 
 #include "game/definitions/definitiontypes.h"
+#include "game/definitions/baseprogram.h"
 #include "game/bodyenginepolicy.h"
 #include "game/definitions/visualfxdefinitions.h"
 #include "game/definitions/sounddefinitions.h"
@@ -622,7 +623,7 @@ std::unique_ptr<daedalus::DaedalusVm> Gothic::createPhoenixVm(std::string_view d
   }
 
 daedalus::DaedalusScript Gothic::loadScript(std::string_view datFile, const ScriptLang lang) {
-  return Resources::loadBaseProgram(datFile,int(lang));
+  return loadBaseProgram(datFile,int(lang));
   }
 
 void Gothic::setupCommonScriptClasses(daedalus::DaedalusScript& sc) {

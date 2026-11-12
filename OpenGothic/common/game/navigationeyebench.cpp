@@ -1,4 +1,5 @@
 #include "navigationeyebench.h"
+#include "game/navigationeyeworld.h"
 #include "navigationeye.h"
 
 #include "game/gamescript.h"
@@ -352,7 +353,7 @@ std::string wall(World& world) {
     const float yaw=float(angle)*Pi/12.f;
     const Vec3 direction(std::cos(yaw),0,std::sin(yaw));
     const Vec3 source=floor+Vec3(0,165,0);
-    const auto hit=world.physic()->navigationRay(source,source+direction*1500.f,&npc);
+    const auto hit=navigationRay(*world.physic(),source,source+direction*1500.f,&npc);
     if(!hit.hasCol || std::abs(hit.normal.y)>.12f ||
        (hit.kind!=DynamicWorld::NavigationHit::World && hit.kind!=DynamicWorld::NavigationHit::StaticVob)) continue;
     Vec3 normal=hit.normal;normal.y=0;normal*=1.f/normal.length();

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "navbench.h"
+#include "game/navigationeyeworld.h"
 #include "physics/navmesh.h"
 #include "physics/dynamicworld.h"
 #include "world/world.h"
@@ -99,7 +100,7 @@ inline void support(std::ostream& out,World& world,const Npc& npc,const Vec3& at
   const auto floor=world.physic()->landRay(at+Vec3(0,200,0),500.f);
   Vec3 normal=floor.n;
   if(floor.hasCol && normal.length()<.5f) {
-    const auto hit=world.physic()->navigationRay(floor.v+Vec3(0,2,0),floor.v-Vec3(0,2,0),&npc);
+    const auto hit=navigationRay(*world.physic(),floor.v+Vec3(0,2,0),floor.v-Vec3(0,2,0),&npc);
     if(hit.hasCol && (hit.point-floor.v).length()<3.f)normal=hit.normal;
   }
   const float normalLength=normal.length();
@@ -190,7 +191,7 @@ inline void command(const std::vector<std::string>& args,World& world,const std:
     const auto rayStart=start+Vec3(0,90,0),rayEnd=goal+Vec3(0,90,0);
     size_t selfHits=0;std::string obstructionLabel;
     const auto obstruction=world.physic()->rayClothCamera(rayStart,rayEnd,"",nullptr,selfHits,&obstructionLabel);
-    const auto sensor=world.physic()->navigationRay(rayStart,rayEnd,npc);
+    const auto sensor=navigationRay(*world.physic(),rayStart,rayEnd,npc);
     auto obstructionNormal=obstruction.n;
     if(obstruction.hasCol && sensor.hasCol && (obstruction.v-sensor.point).length()<3.f && obstructionNormal.length()<.5f)
       obstructionNormal=sensor.normal;

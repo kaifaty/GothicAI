@@ -12,7 +12,7 @@ class DynamicWorld;
 // Opt-in navigation sensor. It neither drives NPCs nor publishes bridge observations.
 // Coordinates and ranges are centimetres; yaw/pitch are degrees relative to the posed head.
 // The core (layout, near/far cadence, far cache, walking gaze) depends only on Tempest
-// math and RayCaster: the game casts through DynamicWorld::navigationRay
+// math and RayCaster: the game casts through navigationRay's NPC adapter
 // (navigationeyeworld.cpp), the nav-sim stand through Embree on the static dump
 // (scripts/navsim/stand/native). Keep navigationeye.cpp free of engine headers.
 class NavigationEye final {
@@ -75,7 +75,7 @@ class NavigationEye final {
 
     NavigationEye();
     explicit NavigationEye(const Config& config);
-    // Engine adapters (navigationeyeworld.cpp): DynamicWorld::navigationRay as the caster.
+    // Engine adapters (navigationeyeworld.cpp): resolve the NPC's rig before casting.
     Update update(const Npc& npc, uint64_t gameMs);
     Update update(const Pose& pose, const DynamicWorld& physics, const Npc* except, uint64_t gameMs);
     Update update(const Pose& pose, const RayCaster& caster, const Npc* except, uint64_t gameMs);

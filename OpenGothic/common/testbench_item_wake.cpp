@@ -1,4 +1,5 @@
 #include "testbench_internal.h"
+#include "game/navigationeyeworld.h"
 #include "testbench.h"
 
 #include <algorithm>
@@ -86,7 +87,7 @@ bool itemWakeTableItems(World& world,Npc& player,bool sword) {
         const auto target=sword?state.itemWakeBladePoints[i]:center;
         const Vec3 from(target.x,top+30.f,target.z);
         supports[i]=world.physic()->landRay(from,60.f);
-        const auto hit=world.physic()->navigationRay(from,from-Vec3(0,60.f,0),&player);
+        const auto hit=navigationRay(*world.physic(),from,from-Vec3(0,60.f,0),&player);
         supported=supports[i].hasCol && supports[i].uptr==state.itemWakeTable.get() &&
                   std::abs(supports[i].v.y-top)<=3.f && hit.hasCol && hit.normal.y>=.98f &&
                   (hit.point-supports[i].v).length()<.1f;

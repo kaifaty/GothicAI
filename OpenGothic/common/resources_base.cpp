@@ -158,6 +158,14 @@ void Resources::censusFile(std::u16string_view path) {
   inst->census->opened(source,source);
   }
 
+const ProgramData::Index& Resources::baseProgramIndex() {
+  return inst->basePrograms;
+  }
+
+ContentCensus* Resources::contentCensus() {
+  return inst->census.get();
+  }
+
 void Resources::censusProfile(std::string_view game, std::string_view outputUnits, int language) {
   if(inst!=nullptr && inst->census!=nullptr)
     inst->census->profile(game,outputUnits,language);
