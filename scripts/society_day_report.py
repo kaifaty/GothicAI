@@ -6,7 +6,7 @@
 
 Runs `gothic-society-day --config` on the export WORLD: the routine policy and the teacher for a day and for
 7 days, the random policy for 7 days, the teacher's day once more for each need with that need at 0 for everyone at
-the start, and the teacher's 7 days without the characters' cards. Reads the journals v3/v5 and the marks and
+the start, and the teacher's 7 days without the characters' cards. Reads the journals v3, v5 and v6 and the marks and
 measures, for the people who decide (a person with a routine, not protected, of a guild that decides, not on a post
 all day while posts do not release for needs):
 
@@ -56,6 +56,7 @@ DOWN = 0
 LOW, CRITICAL = 1, 2
 CHOSEN, FOLLOW_ON, START_STATE = 3, 2, 1
 TAKEN, INTERRUPTED, EVICTED = 1, 2, 3
+RECHECK = 128  # a cause bit of decision_requested (v6): a need in want not filled by what the NPC does
 FINISHED = ["setpoint", "max time", "switched", "anchor", "evicted", "above low"]
 NO_KIND = 0xFFFF
 NO_OBJECT = 0xFFFFFFFF
@@ -81,9 +82,10 @@ THRESHOLDS = {
 def read_journal(path: Path) -> dict:
     data = path.read_bytes()
     magic, version, size, world_hash, seed, start, npcs, _points, states = JOURNAL_HEADER.unpack_from(data)
-    # v4 (decisions before the places counted the routine's users) is not read: its holders are not all there.
-    if magic != b"GSOCJRNL" or version not in (3, 5) or size != JOURNAL_RECORD.size:
-        raise SystemExit(f"{path}: not a society journal v3 or v5: version {version}")
+    # v4 (decisions before the places counted the routine's users) is not read: its holders are not all there. v6 is
+    # v5 with the recheck cause of decision_requested.
+    if magic != b"GSOCJRNL" or version not in (3, 5, 6) or size != JOURNAL_RECORD.size:
+        raise SystemExit(f"{path}: not a society journal v3, v5 or v6: version {version}")
     at = JOURNAL_HEADER.size
 
     def names(count: int) -> list[str]:
@@ -100,7 +102,7 @@ def read_journal(path: Path) -> dict:
     at += 12
     need_ids = names(needs)
     policy, menu = "routine", 0
-    if version == 5:
+    if version >= 5:
         (n,) = struct.unpack_from("<H", data, at)
         policy = data[at + 2 : at + 2 + n].decode()
         at += 2 + n
@@ -384,6 +386,7 @@ def check_choices(journal: dict, rules: Rules) -> dict:
     failed = Counter()
     finished = Counter()
     routine_holds = 0
+    rechecks = 0
     records = journal["records"]
     def target_of(b: int, c: int) -> tuple:
         return ("object", c) if c != NO_OBJECT else ("point", b)
@@ -420,6 +423,8 @@ def check_choices(journal: dict, rules: Rules) -> dict:
         elif kind == TELEPORTED:
             walking.pop(npc, None)
             standing[npc] = b
+        elif kind == DECISION_REQUESTED:
+            rechecks += 1 if reason & RECHECK else 0
         elif kind == PLACE_HELD:
             routine_holds += 1
             add(npc, target_of(b, c), rules.kinds[a]["capacity"], t)
@@ -484,6 +489,7 @@ def check_choices(journal: dict, rules: Rules) -> dict:
     return {
         "choices": dict(chosen),
         "routine_holds": routine_holds,
+        "rechecks": rechecks,
         "out_of_mask": sum(bad.values()),
         "out_of_mask_by_rule": dict(bad),
         "out_of_mask_examples": examples,
@@ -768,7 +774,7 @@ def main() -> int:
             "anchor": anchor_time(j, rules, people, days),
             "changes": changes(j, people, days),
         }
-        if j["version"] == 5:
+        if j["version"] >= 5:
             entry["choices"] = check_choices(j, rules)
         report["runs"][name] = entry
         print(name, "done", file=sys.stderr)
@@ -853,10 +859,12 @@ def main() -> int:
     md += [f"| {c['what']} | {c['value']} | {'да' if c['ok'] else '**нет**'} |" for c in checks]
     md += ["", "## Места и концы занятий", "",
            "Держатели места — пользователи распорядка (`place_held`) и выбранные занятия с бронью. Выселен — "
-           "выбранное занятие уступило место пришедшему пользователю распорядка.", "",
+           "выбранное занятие уступило место пришедшему пользователю распорядка. Повторное решение — нужда в "
+           "«низко» или «критично» не наполняется тем, что NPC делает, `recheck_min` после прошлого решения.", "",
            "| Прогон | взято распорядком | больше всего держателей | сверх вместимости | выселено в пути / на месте "
-           "| конец: уставка / выше «низко» / наибольшее время / другой выбор / якорь | не удалось: занято / якорь |",
-           "|---|---|---|---|---|---|---|"]
+           "| конец: уставка / выше «низко» / наибольшее время / другой выбор / якорь | не удалось: занято / якорь "
+           "| повторных решений |",
+           "|---|---|---|---|---|---|---|---|"]
     for name, r in report["runs"].items():
         if "choices" not in r:
             continue
@@ -865,7 +873,7 @@ def main() -> int:
         md.append(f"| {name} | {ch['routine_holds']} | {ch['most_holders']} | {ch['over_capacity']} | "
                   f"{fl.get('evicted', 0)} / {f.get('evicted', 0)} | {f.get('setpoint', 0)} / {f.get('above low', 0)} / "
                   f"{f.get('max time', 0)} / {f.get('switched', 0)} / {f.get('anchor', 0)} | "
-                  f"{fl.get('taken', 0)} / {fl.get('interrupted', 0)} |")
+                  f"{fl.get('taken', 0)} / {fl.get('interrupted', 0)} | {ch.get('rechecks', 0)} |")
     md += ["", "## Часы в «критично» в сутки у решающих людей (человеко-сутки: медиана, p90, максимум)", ""]
     md += ["| Прогон | " + " | ".join(needs) + " |", "|---" * (len(needs) + 1) + "|"]
     for name, r in report["runs"].items():

@@ -19,8 +19,10 @@ Nearby::Nearby(const World& w) : world(&w) {
     done.assign(w.points.size(),0);
     dist.assign(w.points.size(),0);
     stamp.assign(w.points.size(),0);
-    // The farthest a decider walks in the travel limit (travelSeconds rounds to the second), and a metre more.
-    const double cm = double(w.config.decisions.travelLimit+1)*w.deciderWalk/w.clockRate;
+    // The farthest a decider walks in the travel limit or the teacher's window, the longer (travelSeconds rounds to the
+    // second), and a metre more: a place beyond it is farther than both (Option::back).
+    const auto& d = w.config.decisions;
+    const double cm = double(std::max(d.travelLimit,d.horizon)+1)*w.deciderWalk/w.clockRate;
     reach = int64_t(std::ceil(cm))+100;
     }
   }
@@ -111,6 +113,45 @@ bool critical(const Sim& sim, uint32_t npc) {
     if(sim.s.needZone[size_t(npc)*n+k]==2)
       return true;
   return false;
+  }
+
+// A need of the decider is in want: low or critical.
+bool wanting(const Sim& sim, uint32_t npc) {
+  const size_t n = needCount(*sim.world);
+  for(size_t k=0; k<n; ++k)
+    if(sim.s.needZone[size_t(npc)*n+k]>0)
+      return true;
+  return false;
+  }
+
+// A need in want that what the NPC does — its state, or the one it passes to (into bed) — does not fill, as its
+// decisions see it: low or critical in a free entry and in a chosen activity, critical in an anchor entry, none on a
+// guard's post.
+bool unfilled(const Sim& sim, uint32_t npc) {
+  const auto& w = *sim.world;
+  const auto h = hold(sim,npc);
+  if(h==Hold::Post)
+    return false;
+  const uint8_t  least = h==Hold::Anchor ? 2 : 1;
+  const uint16_t state = sim.s.state[npc];
+  const uint16_t next  = state==NoState ? NoState : w.followState[state];
+  const size_t n = needCount(w);
+  for(size_t k=0; k<n; ++k)
+    if(sim.s.needZone[size_t(npc)*n+k]>=least && !fills(w,state,k) && !(next!=NoState && fills(w,next,k)))
+      return true;
+  return false;
+  }
+
+void armRecheck(Sim& sim, uint32_t npc) {
+  auto& s = sim.s;
+  s.recheckSeq[npc] = push(s,s.now+dec(sim).recheck,npc,Pending::Recheck)+1;
+  }
+
+// A decision was taken: while a need is in want, the recheck comes decisions.recheck later; none without one.
+void decided(Sim& sim, uint32_t npc) {
+  if(wanting(sim,npc))
+    armRecheck(sim,npc); else
+    sim.s.recheckSeq[npc] = 0;
   }
 
 // The state fills a need that is critical now.
@@ -530,6 +571,44 @@ void buildRow(Sim& sim, uint32_t npc, DecisionBatch& b) {
   for(size_t i=0; i<cands.size(); ++i)
     if(!cands[i].ok)
       add(cands[i]);
+
+  // The walk back from each option's place to the routine's point (Option::back), as walk() counts the routine's own
+  // walk: the lengths come from the Nearby list of the routine's point (the waynet is symmetric), not a search of
+  // their own; a place not in it is farther than its reach.
+  const uint32_t home = r.point;
+  thread_local std::vector<int64_t> backCm; // by point: -1 not asked, -2 asked and not found yet, else the length
+  if(backCm.size()!=w.points.size())
+    backCm.assign(w.points.size(),-1);
+  size_t left = 0;
+  for(size_t j=1; j<count; ++j) {
+    auto& c = backCm[b.menu[at+j].point];
+    if(c==-1) {
+      c = -2;
+      ++left;
+      }
+    }
+  if(home!=NoPoint && left>0)
+    for(const auto& it:sim.nearby.at(w.points.graph[home])) {
+      const uint32_t id = targetId(it.target);
+      auto& c = backCm[targetIsPoint(it.target) ? id : w.objects.waypoint[id]];
+      if(c!=-2)
+        continue;
+      c = it.cm;
+      if(--left==0)
+        break;
+      }
+  for(size_t j=1; j<count; ++j) {
+    auto& o = b.menu[at+j];
+    const int64_t c = backCm[o.point];
+    if(home==NoPoint || o.point==home || near(w,o.point,home) || w.points.component[o.point]!=w.points.component[home])
+      o.back = 0;
+    else if(c>=0)
+      o.back = travelSeconds(w.points.graphCm[home]+c,speed,w.clockRate);
+    else
+      o.back = FarBack;
+    }
+  for(size_t j=1; j<count; ++j)
+    backCm[b.menu[at+j].point] = -1;
   b.count.push_back(uint8_t(count));
   }
 
@@ -553,6 +632,7 @@ void sizeDecisions(Sim& sim) {
   s.actEnd.resize(n);
   s.actFinish.resize(n);
   s.actSeq.resize(n);
+  s.recheckSeq.resize(n);
   s.forecastFor.resize(n);
   s.routineTarget.resize(n);
   s.routineKind.resize(n);
@@ -577,6 +657,7 @@ void resetDecisions(Sim& sim) {
   std::fill(s.actEnd.begin(),s.actEnd.end(),Never);
   std::fill(s.actFinish.begin(),s.actFinish.end(),uint8_t(FinishReason::MaxTime));
   std::fill(s.actSeq.begin(),s.actSeq.end(),0);
+  std::fill(s.recheckSeq.begin(),s.recheckSeq.end(),0);
   std::fill(s.forecastFor.begin(),s.forecastFor.end(),-1);
   std::fill(s.routineTarget.begin(),s.routineTarget.end(),NoObject);
   std::fill(s.routineKind.begin(),s.routineKind.end(),NoKind);
@@ -651,6 +732,9 @@ void beginEntry(Sim& sim, uint32_t npc) {
   }
 
 void onDown(Sim& sim, uint32_t npc, uint8_t zone) {
+  // A need came into want: the recheck runs from now, if none does (a decision of this second sets it anew).
+  if(sim.s.recheckSeq[npc]==0)
+    armRecheck(sim,npc);
   const uint8_t cause = zone>=2 ? CauseNeedCritical : CauseNeedLow;
   if(modeOf(sim.s,npc)!=Mode::Routine) {
     ask(sim,npc,cause);
@@ -675,6 +759,17 @@ void onSegment(Sim& sim, uint32_t npc) {
     return;
   s.forecastFor[npc] = run;
   ask(sim,npc,CauseForecast);
+  }
+
+void onRecheck(Sim& sim, uint32_t npc) {
+  auto& s = sim.s;
+  s.recheckSeq[npc] = 0;
+  if(!wanting(sim,npc))
+    return;
+  // The chain goes on while a need is in want, through masks and deferrals; a decision sets it anew.
+  armRecheck(sim,npc);
+  if(s.want[npc]==0 && unfilled(sim,npc))
+    ask(sim,npc,CauseRecheck);
   }
 
 // A chosen activity at `target` gives way to the place's routine user: on the way to it it failed, at it it finished
@@ -852,6 +947,7 @@ size_t buildBatch(Sim& sim, DecisionBatch& out) {
     b.mask.resize(row*K);
     emit(sim,EventKind::ActionChosen,npc,uint8_t(Chooser::Routine),NoKind,NoPoint,NoObject);
     routine(sim,npc);
+    decided(sim,npc);
     }
   asked.clear();
   out = b;
@@ -876,19 +972,19 @@ void applyChoices(Sim& sim, std::span<const Choice> choices) {
   const auto rows = std::move(b);
   b = DecisionBatch();
   b.stride = K;
-  for(size_t r=0; r<choices.size(); ++r) {
+  const auto apply = [&](size_t r) {
     const uint32_t npc = rows.npc[r];
     const auto& o = rows.menu[r*K+choices[r].option];
     emit(sim,EventKind::ActionChosen,npc,uint8_t(choices[r].by),o.kind,o.point,o.object);
     if(o.type==OptionType::Routine) {
       routine(sim,npc);
-      continue;
+      return;
       }
     const auto mode = modeOf(s,npc);
     const bool same = mode==Mode::Chosen && OptionType(s.actType[npc])==o.type && s.actKind[npc]==o.kind &&
                       s.actPoint[npc]==o.point && s.actObject[npc]==o.object;
     if(same)
-      continue;
+      return;
     // A place taken since the menu was made (by an earlier row of this batch): a chosen activity goes on; otherwise
     // the NPC is asked again at this second, with the menu as it is now.
     const uint32_t own = s.routineTarget[npc]==targetOf(o.type,o.object,o.point) ? 1u : 0u;
@@ -896,11 +992,15 @@ void applyChoices(Sim& sim, std::span<const Choice> choices) {
       emit(sim,EventKind::ActionFailed,npc,uint8_t(FailReason::Taken),o.kind,o.point,o.object);
       if(mode!=Mode::Chosen)
         ask(sim,npc,rows.cause[r]);
-      continue;
+      return;
       }
     if(mode==Mode::Chosen)
       stopChosen(sim,npc,FinishReason::Switched);
     startChosen(sim,npc,o);
+    };
+  for(size_t r=0; r<choices.size(); ++r) {
+    apply(r);
+    decided(sim,rows.npc[r]);
     }
   }
 
@@ -992,8 +1092,9 @@ void teacherScores(const Sim& sim, const DecisionBatch& b, std::span<float> scor
         out = float(mode!=Mode::Chosen ? d.inertia : 0.0);
         continue;
         }
-      // The walk, the activity, then the routine, over the window — at least the walk and an hour of the activity, so
-      // a far place gets its due — against the routine over the same window.
+      // The walk, the activity, then the routine as the routine option itself goes — the walk back to its point (only
+      // decay; the rest of the window when longer), then its state — over the window: at least the walk and an hour
+      // of the activity, so a far place gets its due; against the routine over the same window.
       h = now;
       run(w,decay,NoState,true,o.travel,h);
       bool full = false;
@@ -1001,7 +1102,10 @@ void teacherScores(const Sim& sim, const DecisionBatch& b, std::span<float> scor
       const Time span = std::max(d.horizon,o.travel+std::min(dur,d.horizon));
       const Time act  = std::min(dur,span-o.travel);
       run(w,decay,o.state,false,act,h);
-      run(w,decay,routineState,false,span-o.travel-act,h);
+      const Time rest = span-o.travel-act;
+      const Time back = std::min(o.back,rest);
+      run(w,decay,NoState,true,back,h);
+      run(w,decay,routineState,false,rest-back,h);
       const bool current = mode==Mode::Chosen && OptionType(s.actType[npc])==o.type && s.actKind[npc]==o.kind &&
                            s.actPoint[npc]==o.point && s.actObject[npc]==o.object;
       double score = (span==d.horizon ? base : routineOver(span))-ahead(h);
