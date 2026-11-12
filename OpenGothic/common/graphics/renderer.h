@@ -362,6 +362,7 @@ class Renderer final {
       Tempest::Vec3             lastCam;
       float                     alpha    = 0;     // 1 - exp(-dt/tau) of this frame
       uint32_t                  reset    = 1;
+      bool                      ranLast  = false; // the pass ran in the frame before (reset otherwise)
       uint32_t                  frame    = 0;
       } fogSky;
 

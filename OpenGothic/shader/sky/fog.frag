@@ -138,6 +138,8 @@ vec4 fog(vec2 uv, float z) {
   const bool skyVisOn  = scene.fogSkyVis<1.0;
   vec3  msDark         = vec3(0.0);
   float prevDd         = 0.0;
+  float msAtDd         = 0.0;       // the last read of the LUT: at this depth, faded in
+  vec3  msAt           = vec3(0.0); // (0 at the camera: the fade-in is 0 there)
 #endif
 #endif
 
@@ -175,9 +177,12 @@ vec4 fog(vec2 uv, float z) {
     // in the sun's shadow the air is taken as closed to the sky too (Д1); how far that holds, the sky over the camera
     // says (below). The run's multiple scattering is the LUT's at its end minus at its start, faded in as `val`
     if(skyVisOn && !bit) {
-      const vec3 msEnd   = textureLod(fogLutMs, vec3(uv,dd),     0).rgb * min(dd*steps*2.0,     1.0);
-      const vec3 msStart = textureLod(fogLutMs, vec3(uv,prevDd), 0).rgb * min(prevDd*steps*2.0, 1.0);
+      // the run's start is the end of the run before: read again only when that one was not read
+      const vec3 msStart = (prevDd==msAtDd) ? msAt : textureLod(fogLutMs, vec3(uv,prevDd), 0).rgb * min(prevDd*steps*2.0, 1.0);
+      const vec3 msEnd   = textureLod(fogLutMs, vec3(uv,dd), 0).rgb * min(dd*steps*2.0, 1.0);
       msDark += msEnd - msStart;
+      msAtDd  = dd;
+      msAt    = msEnd;
       }
     prevDd = dd;
 #endif

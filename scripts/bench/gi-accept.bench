@@ -144,6 +144,7 @@ stop
 #    in (1 stop/s) and darkens coming out (3 stops/s). Player input (`face wp`, `hold forward`): `walkto` does not move
 #    the hero here, and a `goto` to PATH_67 leaves him stuck in a hollow. The hero turns to the forest before the clip
 #    and the camera follows 2.5 m behind: turned at once in the clip, with 4 m, it flew into the slope behind him.
+#    He runs out 1.2 s: 2 s put the camera against a movable object (a fire with a grate) in the hollow, a grey plane.
 set time 12 0
 goto NW_FOREST_PATH_66
 clear 3000
@@ -153,8 +154,8 @@ cam lift on
 cam follow 250 160 180
 wait 3000
 face wp NW_FOREST_PATH_67
-hold forward 2000
-wait 3000
+hold forward 1200
+wait 2200
 face wp NW_FOREST_PATH_66
 wait 10000
 rec forest-walk

@@ -23,13 +23,17 @@ void Renderer::updateFogSky(const Camera& camera) {
   const uint64_t tick = GameServices::inst().worldTickCount();
   const Vec3     cam  = camera.listenerPosition().pos;
   auto& f = fogSky;
+  // the pass runs this frame only if prepareFogSkyVis dispatches it: a frame it did not run in (no ray scene yet, the
+  // pass off) leaves the state buffer stale or, after its creation, uninitialised; the next run starts over
+  const bool ranLast = f.ranLast;
+  f.ranLast = false;
   if(!fogSkyActive()) {
     f.hasLast = false;
     return;
     }
-  // no way, a jump to this frame's share: the first frame, the clock going back, a teleport or a cut moving the
-  // camera more than 3 m in a frame (as EyeAdaptation)
-  const bool jump = !f.hasLast || tick<f.lastTick || (cam-f.lastCam).length()>300.f;
+  // no way, a jump to this frame's share: the first run, a frame without the pass before it, the clock going back,
+  // a teleport or a cut moving the camera more than 3 m in a frame (as EyeAdaptation)
+  const bool jump = !ranLast || !f.hasLast || tick<f.lastTick || (cam-f.lastCam).length()>300.f;
   const float dt  = jump ? 0.f : float(tick-f.lastTick)/1000.f;
   f.reset    = jump ? 1 : 0;
   f.alpha    = 1.f - std::exp(-dt/Tau);
@@ -63,4 +67,5 @@ void Renderer::prepareFogSkyVis(Encoder<CommandBuffer>& cmd, WorldView& wview) {
   cmd.setPushData(push);
   cmd.setPipeline(shaders.fogSkyVis);
   cmd.dispatch(1);
+  fogSky.ranLast = true;
   }
