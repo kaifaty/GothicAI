@@ -49,6 +49,9 @@ CommandLine::CommandLine(int argc, const char** argv) {
     isGi    = GiMethod(std::clamp(std::max(0, intArg(gi)), 0, GiMethod::Count-1));
     isGiSet = true;
     }
+  // OPENGOTHIC_EYE=0|1: the eye's adaptation under GI (graphics/eyeadaptation.h) for benches; -eye wins
+  if(const char* eye = std::getenv("OPENGOTHIC_EYE"); eye!=nullptr && *eye!='\0')
+    isEye = boolArg(eye);
   if(argc<1)
     return;
 
@@ -121,6 +124,11 @@ CommandLine::CommandLine(int argc, const char** argv) {
       ++i;
       if(i<argc)
         isTaa = boolArg(argv[i]);
+      }
+    else if(arg=="-eye") {
+      ++i;
+      if(i<argc)
+        isEye = boolArg(argv[i]);
       }
     else if(arg=="-hashalpha") {
       ++i;

@@ -12,6 +12,7 @@
 #include "shaders.h"
 #include "blooddecals.h"
 #include "taa.h"
+#include "eyeadaptation.h"
 
 class Camera;
 class InventoryMenu;
@@ -78,6 +79,9 @@ class Renderer final {
     void prepareGi        (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& wview);
     void readGiStats      (uint8_t fId);
     void prepareExposure  (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview);
+    bool eyeActive() const;
+    void updateEye        (uint8_t fId, const Camera& camera);
+    void drawEyeMeter     (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, const WorldView& wview);
     void prepareEpipolar  (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview);
 
     void prepareLightsBvh (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview);
@@ -345,6 +349,8 @@ class Renderer final {
       Tempest::StorageBuffer    stats[Resources::MaxFramesInFlight];
       bool                      statsWritten[Resources::MaxFramesInFlight] = {};
       } gi;
+
+    EyeAdaptation             eye; // the eye's adaptation under GI (renderer_eye.cpp)
 
     struct {
       const Tempest::IVec2      gbufTile   = {8};

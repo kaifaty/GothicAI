@@ -286,6 +286,7 @@ add_shader(blood_decal_orm.frag      blood/blood_decal.frag -DMATERIAL_MAPS)
 
 add_shader(irradiance.comp           lighting/irradiance.comp)
 add_shader(sky_exposure.comp         lighting/sky_exposure.comp)
+add_shader(eye_meter.comp            lighting/eye_meter.comp)
 
 add_shader(tonemapping.frag          lighting/tonemapping.frag)
 add_shader(motion_view.frag          antialiasing/motion_view.frag)

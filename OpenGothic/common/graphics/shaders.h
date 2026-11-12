@@ -71,6 +71,7 @@ class Shaders {
     Tempest::ComputePipeline cloudsLut, fogOcclusion, fogOcclusionEmpty;
     Tempest::ComputePipeline fogViewLut3d, fogViewLutSep;
     Tempest::ComputePipeline skyExposure;
+    Tempest::ComputePipeline eyeMeter;
 
     Tempest::RenderPipeline  underwaterT, underwaterS;
     Tempest::RenderPipeline  waterReflection, waterReflectionSSR;

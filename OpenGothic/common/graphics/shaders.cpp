@@ -134,6 +134,7 @@ void Shaders::compileShaders() noexcept {
   fogOcclusionEmpty  = computeShader("fog3d_empty.comp.sprv");
 
   skyExposure        = computeShader("sky_exposure.comp.sprv");
+  eyeMeter           = computeShader("eye_meter.comp.sprv");
   sky                = postEffect("sky");
   skySep             = postEffect("sky_sep");
   fog                = fogShader ("fog");

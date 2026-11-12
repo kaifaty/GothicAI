@@ -777,6 +777,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     prepareLightsBvh(cmd, wview);
 
   updateCamera(wview, camera);
+  updateEye(fId, camera);
   prepareTaa(wview, camera);
   prepareMotion(wview);
   wview.setTaaReactiveLref(settings.taaReactiveLref);
@@ -912,6 +913,8 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     cmd.setDebugMarker("Underwater");
     drawUnderwater(cmd, wview);
     }
+  // the eye's level of the frame before TAA, bloom and the tone curve (renderer_eye.cpp)
+  drawEyeMeter(cmd, fId, wview);
 
   if(temporal.active) {
     // the frame of the swapchain's size from here on: bloom and tonemapping read temporal.output
