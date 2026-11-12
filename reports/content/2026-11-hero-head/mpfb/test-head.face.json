@@ -14,8 +14,8 @@
       "out":  [{"target": "eyeLookOut{side}", "from": 0, "to": 30, "max": 1.0}]
     },
     "lid_shade": {
-      "about": "The lids' shade over the balls (reports/content/2026-11-hero-head/eye-shader.md): the share of the light the lids leave to a point of a ball is upper_edge at the upper lid's edge and under it and all of it upper_cm below the edge (cm on the ball, which is ~1.5 times a real one), the same for the lower lid. part: the head part of the lids.",
-      "part": "face", "upper_cm": 0.3, "lower_cm": 0.12, "upper_edge": 0.25, "lower_edge": 0.55
+      "about": "The lids' shade over the balls (reports/content/2026-11-hero-head/eye-shader.md): the share of the light the lids leave to a point of a ball is upper_edge at the upper lid's edge and under it and all of it upper_cm below the edge (cm on the ball, which is ~1.5 times a real one), the same for the lower lid, which hangs over the ball far less (its shade is thin and light). part: the head part of the lids.",
+      "part": "face", "upper_cm": 0.3, "lower_cm": 0.08, "upper_edge": 0.25, "lower_edge": 0.8
     }
   },
   "anims": {
