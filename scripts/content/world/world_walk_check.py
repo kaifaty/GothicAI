@@ -34,6 +34,7 @@ What is measured, and how it follows the engine:
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import math
 import sys
@@ -120,7 +121,7 @@ class Columns:
         o = np.lexsort((ny, h, q))
         return q[o], h[o], ny[o]
 
-    def column(self, x: np.ndarray, z: np.ndarray) -> 'Column':
+    def column(self, x: np.ndarray, z: np.ndarray) -> Column:
         q, h, ny = self.hits(x, z)
         start = np.searchsorted(q, np.arange(len(x) + 1))
         return Column(start, h, ny)
@@ -162,7 +163,7 @@ class Column:
         out, nout = np.full(len(y), np.nan), np.full(len(y), np.nan)
         H, N, S = self.heights.tolist(), self.ny.tolist(), self.start.tolist()
         for i, at in enumerate(y.tolist()):
-            if at != at:
+            if math.isnan(at):
                 continue
             best = reach + 1e-9
             for k in range(S[i], S[i + 1]):
@@ -259,7 +260,7 @@ def stats(d: np.ndarray) -> dict:
                 'abs_max': None}
     a = np.abs(d)
     p = np.percentile(a, (50, 90, 99))
-    return {'n': int(len(d)), 'nonzero': int((d != 0).sum()), 'min': r(d.min()), 'max': r(d.max()),
+    return {'n': len(d), 'nonzero': int((d != 0).sum()), 'min': r(d.min()), 'max': r(d.max()),
             'abs_p50': r(p[0]), 'abs_p90': r(p[1]), 'abs_p99': r(p[2]), 'abs_max': r(a.max())}
 
 
@@ -359,7 +360,7 @@ def check_edges(points, pos, grounds, edges, A: State, B: State, region, tol: fl
                            'step_a_m': r(step_a), 'step_b_m': r(step_b), 'no_support_a': gap_a,
                            'no_support_b': gap_b, 'fails': why})
     failed = sorted((f for f in rows if f['fails']), key=lambda f: -(f['height_change_m'] or 0))
-    return {'edges': len(E), 'samples': int(len(X)), 'height_change_m': stats(np.array(worst)),
+    return {'edges': len(E), 'samples': len(X), 'height_change_m': stats(np.array(worst)),
             'changed': len(rows), 'failed': failed, 'chunks_changed': sorted({f['chunk'] for f in rows})}
 
 
@@ -432,7 +433,7 @@ def check_ground(A: State, B: State, region, tol: float, cell: float = 1.0):
         w['vanished'] = int(vanished[s].sum())
     for c in np.unique(cb[appeared], axis=0):
         row(chunk_name(c))['appeared'] = int((appeared & (keys_b == chunk_keys([c])[0])).sum())
-    return {'cell_m': cell, 'layers_a': int(len(ha)), 'layers_b': int(len(hb)), 'change_m': stats(d),
+    return {'cell_m': cell, 'layers_a': len(ha), 'layers_b': len(hb), 'change_m': stats(d),
             'over_tolerance_m2': float((np.abs(d) > tol).sum() * area),
             'vanished_layers': int(vanished.sum()), 'appeared_layers': int(appeared.sum()),
             'chunks': sorted(rows.values(), key=lambda w: w['chunk'])}
@@ -609,7 +610,7 @@ def markdown(R: dict) -> str:
                    f'by their angle from up — ground and rock above sea, and every collision surface. Walking stops '
                    f'above {L["slide_angle_deg"]:g}°.\n')
         bins = s['bins_deg']
-        out.append(table(['surface', 'state'] + [f'{a}-{b}°' for a, b in zip(bins, bins[1:])],
+        out.append(table(['surface', 'state'] + [f'{a}-{b}°' for a, b in itertools.pairwise(bins)],
                          [[label, st] + [num(v) for v in s[part][key]]
                           for part, label in (('natural', 'ground and rock'), ('all', 'every collision surface'))
                           for st, key in (('A', 'a_m2'), ('B', 'b_m2'))]))
