@@ -569,13 +569,15 @@ vec4 fogOwnDepth() {
   const float d1 = linearDepth(dFogMax,        scene.clipInfo);
   const float d  = (dZ-d0)/(d1-d0);
 
+  // as fog.frag: the scattering and the transmittance fade in from the camera over half the LUT's first slice
+  const float near = min(d*float(textureSize(fogLut,0).z)*2.0, 1.0);
   vec4 val = textureLod(fogLut, vec3(uv,d), 0);
   if(scene.fogQuality==2) {
     // as fog.frag (VOLUMETRIC), without the shadow occlusion of single scattering
     const vec4 ms = textureLod(fogLutMs, vec3(uv,d), 0);
-    val = vec4(val.rgb*min(d*64.0, 1.0) + ms.rgb, ms.a);
+    val = vec4(val.rgb + ms.rgb, ms.a);
     }
-  return vec4(val.rgb*scene.GSunIntensity*scene.exposure, val.a);
+  return vec4(val.rgb*near*scene.GSunIntensity*scene.exposure, mix(1.0, val.a, near));
   }
 #endif
 

@@ -165,10 +165,15 @@ vec4 fog(vec2 uv, float z) {
     scatteredLight += (val.rgb-prevVal.rgb)*shadow;
     prevVal = val;
     }
+  // A slice of the LUT holds the light scattered up to its far end: the first one, read at any depth nearer than
+  // its middle, puts the scattering of the whole slice (some 780 m of air at 50x) on a pixel a metre away, a veil of
+  // 0.002 over every daytime pixel (step-2-shade.md, «Привыкание глаза: сделано»). The multiple scattering and the
+  // transmittance fade in from the camera as the single scattering above does.
   const float d             = (distZ)/(dist);
+  const float near          = min(d*float(textureSize(fogLutMs,0).z)*2.0, 1.0);
   const vec4  ms            = textureLod(fogLutMs, vec3(uv,d), 0);
-  const float transmittance = ms.a;
-  return vec4(scatteredLight+ms.rgb, transmittance);
+  const float transmittance = mix(1.0, ms.a, near);
+  return vec4(scatteredLight+ms.rgb*near, transmittance);
 #endif
   }
 #else
@@ -179,7 +184,10 @@ vec4 fog(vec2 uv, float z) {
   float d    = (dZ-d0)/(d1-d0);
   // return vec4(debugColors[min(int(d*textureSize(fogLut,0).z), textureSize(fogLut,0).z-1)%MAX_DEBUG_COLORS], 0);
 
-  return textureLod(fogLut, vec3(uv,d), 0);
+  // fades in from the camera over half the first slice, as the volumetric fog
+  const float near = min(d*float(textureSize(fogLut,0).z)*2.0, 1.0);
+  const vec4  val  = textureLod(fogLut, vec3(uv,d), 0);
+  return vec4(val.rgb*near, mix(1.0, val.a, near));
   }
 #endif
 
