@@ -9,7 +9,9 @@
 seed 73013
 cheat god
 set time 12 0
-view clean 15
+# the near clip 30 cm before the mouth: Vino stands a little above the hero and bends his head to him, at 15 cm the
+# clip cut his forehead
+view clean 30
 overlay off
 goto NW_FARM1_PATH_01
 wait 3000
