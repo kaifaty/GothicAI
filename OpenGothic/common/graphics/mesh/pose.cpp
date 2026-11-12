@@ -4,7 +4,7 @@
 #include <Tempest/Log>
 
 #include "utils/string_frm.h"
-#include "game/serialize.h"
+#include "savearchive.h"
 #include "skeleton.h"
 #include "animmath.h"
 #include "ikmath.h"
@@ -188,7 +188,7 @@ uint8_t Pose::calcAniCombVert(const Vec3& dpos) {
   return uint8_t(cy+1u);
   }
 
-void Pose::save(Serialize &fout) {
+void Pose::save(SaveArchive &fout) {
   uint8_t sz=uint8_t(lay.size());
   fout.write(sz);
   for(auto& i:lay) {
@@ -201,7 +201,7 @@ void Pose::save(Serialize &fout) {
       if(back<double(lastUpdate))
         start = lastUpdate-uint64_t(back);
       }
-    fout.write(i.seq->name,start,i.bs,uint64_t(0)); // was the start of a blend
+    fout.write(i.seq->name,start,uint32_t(i.bs),uint64_t(0)); // was the start of a blend
     }
   fout.write(lastUpdate);
   fout.write(combo.bits);
@@ -219,7 +219,7 @@ void Pose::save(Serialize &fout) {
     fout.write(i);
   }
 
-void Pose::load(Serialize &fin, const AnimationSolver& solver) {
+void Pose::load(SaveArchive &fin, const AnimationSolver& solver) {
   clearRagdollPose();
   std::string name;
   uint8_t     sz = uint8_t(lay.size());
@@ -227,7 +227,7 @@ void Pose::load(Serialize &fin, const AnimationSolver& solver) {
   fin.read(sz);
   lay.resize(sz);
   for(auto& i:lay) {
-    fin.read(name,i.sAnim,i.bs);
+    fin.read(name,i.sAnim,reinterpret_cast<uint32_t&>(i.bs));
     i.sOrigin = i.sAnim;
     if(fin.version()>43) {
       uint64_t sBlend = 0;
@@ -737,7 +737,7 @@ void Pose::clearRagdollPose(bool blendFromPhysical, uint64_t tickCount) {
   needToUpdate = true;
   }
 
-void Pose::saveRagdollRecovery(Serialize& fout) const {
+void Pose::saveRagdollRecovery(SaveArchive& fout) const {
   fout.write(physicalReturning);
   if(!physicalReturning)
     return;
@@ -749,7 +749,7 @@ void Pose::saveRagdollRecovery(Serialize& fout) const {
   physicalBlend.saveExternal(fout);
   }
 
-void Pose::loadRagdollRecovery(Serialize& fin) {
+void Pose::loadRagdollRecovery(SaveArchive& fin) {
   clearRagdollPose();
   bool returning = false;
   fin.read(returning);

@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "worldchunksruntime.h"
+#include "graphics/texturelookahead.h"
 
 // Desired presentation residency. World logic remains loaded independently.
 class ChunkResidency {
@@ -65,6 +66,8 @@ class ChunkResidency {
     static std::unique_ptr<ChunkResidency> create(const ChunkTable& table);
 
     void update(const Tempest::Vec3& hero, const Tempest::Vec3& camera, float zFar);
+    // The same at `now` (tests).
+    void update(const Tempest::Vec3& hero, const Tempest::Vec3& camera, float zFar, Clock::time_point now);
     State desired(size_t index) const { return states.at(index); }
     State desired(ChunkId id) const;
     State desired(ChunkId id, State previous) const;
@@ -78,7 +81,8 @@ class ChunkResidency {
 
     // The hero's and camera's positions of the last update (centimetres) and the odometer: how far, in metres, the
     // nearer of them may have come to anything since the first update (the larger of their two moves, summed). An
-    // owner's demand by distance holds until the odometer passes the margin it was evaluated with.
+    // owner's demand by distance holds until the odometer passes the margin it was evaluated with. With the look-ahead
+    // each move adds how far its path's end moved too, so the closest point of a path is covered as the points are.
     bool viewKnown() const { return focused; }
     const Tempest::Vec3& viewHero() const { return heroPosition; }
     const Tempest::Vec3& viewCamera() const { return cameraPosition; }
@@ -86,6 +90,12 @@ class ChunkResidency {
     // The larger of the hero's and the camera's moves in the last update, metres; a jump past JumpDistance
     double viewMove() const { return lastMove; }
     bool   viewJumped() const { return lastMove>JumpDistance; }
+    // Step 4 (texturelookahead.h): the horizon in seconds the next updates look ahead by (0: off), and where the hero
+    // and the camera will be within it, as offsets in centimetres - their velocities over the last
+    // TextureLookAhead::Window times the horizon; a jump resets the velocities.
+    void   setLookAhead(double seconds) { lookAhead = seconds>0 ? seconds : 0; }
+    const Tempest::Vec3& viewHeroAhead() const { return heroAhead; }
+    const Tempest::Vec3& viewCameraAhead() const { return cameraAhead; }
 
     uint64_t subscribe(Listener listener);
     uint64_t subscribeFocus(FocusListener listener);
@@ -119,6 +129,9 @@ class ChunkResidency {
     Tempest::Vec3 cameraPosition;
     double odometer = 0;
     double lastMove = 0;
+    double lookAhead = 0;
+    TextureLookAhead::Velocity heroVelocity, cameraVelocity;
+    Tempest::Vec3 heroAhead, cameraAhead;
     float farDistance = 0;
     std::deque<Work> work;
     std::deque<std::pair<Clock::time_point,size_t>> recentTransitions;

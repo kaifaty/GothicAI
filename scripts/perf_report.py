@@ -327,13 +327,72 @@ def read_streaming(directory):
             if not math.isfinite(gpu_mb) or gpu_mb < 0:
                 raise ValueError(f"{directory}: invalid GPU allocation metric")
             grouped[parts[1]][-1]["gpu_mb"] = gpu_mb
-            for field in ("tex_promoted", "tex_demoted", "tex_near_tail_seconds", "tex_shortfall_seconds"):
+            for field in ("tex_promoted", "tex_demoted", "tex_near_tail_seconds", "tex_shortfall_seconds", *FLOW_SUM_FIELDS):
                 if field in event:
                     value = event[field]
                     if not math.isfinite(value) or value < 0:
                         raise ValueError(f"{directory}: invalid route texture metric")
                     grouped[parts[1]][-1][field + "_route"] = value
+            for field in FLOW_WORST_FIELDS:
+                # -1: nothing of that kind in the pass
+                if field in event:
+                    value = event[field]
+                    if not math.isfinite(value) or value < -1:
+                        raise ValueError(f"{directory}: invalid route texture metric")
+                    if value >= 0:
+                        grouped[parts[1]][-1][field + "_route"] = value
     return grouped
+
+
+# Step 4 (common/textureflow.h, common/texturedump.cpp): the streaming_end event's fields of a pass. The shortfall's
+# texture-seconds by state: waiting for a load slot, reading, uploading, waiting for publication, loading a level already
+# too coarse; then the visible shortfall (reserve 0), loads started and textures that became short - all added up over
+# passes - and the distributions of a pass (latency demand -> publication, wait for a slot, bursts), of which several
+# passes report the worst.
+FLOW_STATES = ("wait", "read", "upload", "publish", "stale")
+FLOW_SUM_FIELDS = (*(f"tex_shortfall_{state}_seconds" for state in FLOW_STATES), "tex_visible_shortfall_seconds",
+                   "tex_loads_started", "tex_short_entries", "tex_latency_n", "tex_wait_n", "tex_bursts", "tex_publications",
+                   "tex_publish_ms", "tex_ahead_seconds")
+FLOW_WORST_FIELDS = ("tex_latency_p50_ms", "tex_latency_p90_ms", "tex_latency_max_ms", "tex_wait_p50_ms", "tex_wait_p90_ms",
+                     "tex_wait_max_ms", "tex_burst_p50", "tex_burst_p90", "tex_burst_max", "tex_publish_max_ms",
+                     "tex_lookahead_ms")
+
+
+def texture_flow(textures):
+    """Where the shortfall goes (step 4): per pass from the events, peaks of the loads in flight from the CSV rows."""
+    if not any(f"{field}_route" in row for row in textures for field in FLOW_SUM_FIELDS) and "tex_loads" not in textures[-1]:
+        return None
+
+    def route(field):
+        return sum(row[f"{field}_route"] for row in textures if f"{field}_route" in row)
+
+    def worst(field):
+        return max((row[f"{field}_route"] for row in textures if f"{field}_route" in row), default=None)
+
+    def peak(field):
+        values = [row[field] for row in textures if field in row]
+        return int(max(values)) if values else None
+
+    return {
+        "state_seconds": {state: route(f"tex_shortfall_{state}_seconds") for state in FLOW_STATES},
+        "visible_seconds": route("tex_visible_shortfall_seconds"),
+        # part C: texture-seconds queued for the look-ahead alone; its horizon at the end of the pass (the longest)
+        "ahead_seconds": route("tex_ahead_seconds"),
+        "horizon_ms": worst("tex_lookahead_ms"),
+        "loads_started": int(route("tex_loads_started")),
+        "short_entries": int(route("tex_short_entries")),
+        "latency": {"n": int(route("tex_latency_n")), **{key: worst(f"tex_latency_{key}") for key in ("p50_ms", "p90_ms", "max_ms")}},
+        "wait": {"n": int(route("tex_wait_n")), **{key: worst(f"tex_wait_{key}") for key in ("p50_ms", "p90_ms", "max_ms")}},
+        "bursts": {"n": int(route("tex_bursts")), **{key: worst(f"tex_burst_{key}") for key in ("p50", "p90", "max")}},
+        # the publications' own cost on the main thread: mean of the passes, the longest of the session
+        "publish": {"n": int(route("tex_publications")),
+                    "mean_us": 1000*route("tex_publish_ms")/route("tex_publications") if route("tex_publications") else None,
+                    "max_us": None if worst("tex_publish_max_ms") is None else 1000*worst("tex_publish_max_ms")},
+        "waiting_peak": peak("tex_shortfall_wait_n"),
+        "visible_peak": peak("tex_visible_shortfall_n"),
+        "loads_peak": peak("tex_loads"),
+        "load_bytes_peak": peak("tex_load_bytes"),
+    }
 
 
 # Resources' TextureBudget::Source (common/texturebudget.h), as tex_target_source carries it
@@ -448,6 +507,7 @@ def streaming_stats(rows):
                 "zero_ms_max": textures[-1]["tex_jump_zero_max_ms"],
             } if "tex_jumps" in textures[-1] else None,
             "budget": texture_budget(textures),
+            "flow": texture_flow(textures),
             "categories": {category: {
                 "bytes": int(textures[-1][f"tex_{category}_bytes"]),
                 "count": int(textures[-1][f"tex_{category}_n"]),
@@ -613,6 +673,30 @@ def summary_table(report):
                           f"{number(jumps['zero_ms_max'], 1)}")
             lines.append(f"| {view} | {levels} | {number(textures['shortfall_peak'], 0)} | "
                          f"{number(textures['shortfall_seconds'], 9)} | {jump_cells} |")
+        lines.extend(["", "Texture shortfall by state (texture-seconds on route): waiting for a load slot, reading, uploading, "
+                      "waiting for publication, loading a level already too coarse; the visible shortfall (reserve 0); the "
+                      "latency from a rise of demand to the publication that met it and the wait for a slot (worst pass); "
+                      "bursts, textures that became short within a second.", "",
+                      "| Pass | Wait / read / upload / publish / stale | Visible | Loads started | Loads / MiB in flight peak | "
+                      "Waiting peak | Latency p50 / p90 / max ms | Wait p50 / p90 ms | Bursts p50 / p90 / max | "
+                      "Publication µs mean / max | Ahead s / horizon ms |",
+                      "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"])
+        for view, stats in streaming["views"].items():
+            textures = stats["streaming"]["textures"]
+            flow = textures.get("flow") if textures is not None else None
+            if flow is None:
+                lines.append(f"| {view} | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |")
+                continue
+            split = " / ".join(f"{flow['state_seconds'][state]:.2f}" for state in FLOW_STATES)
+            in_flight = (f"{number(flow['loads_peak'], 0)} / "
+                         f"{number(None if flow['load_bytes_peak'] is None else flow['load_bytes_peak']/1048576, 1)}")
+            latency = " / ".join(number(flow["latency"][key], 0) for key in ("p50_ms", "p90_ms", "max_ms"))
+            wait = " / ".join(number(flow["wait"][key], 0) for key in ("p50_ms", "p90_ms"))
+            bursts = " / ".join(number(flow["bursts"][key], 0) for key in ("p50", "p90", "max"))
+            lines.append(f"| {view} | {split} | {flow['visible_seconds']:.2f} | {flow['loads_started']} | {in_flight} | "
+                         f"{number(flow['waiting_peak'], 0)} | {latency} | {wait} | {bursts} | "
+                         f"{number(flow['publish']['mean_us'], 1)} / {number(flow['publish']['max_us'], 1)} | "
+                         f"{flow['ahead_seconds']:.2f} / {number(flow['horizon_ms'], 0)} |")
         lines.extend(["", "Texture budget: the device's budget and this process's usage, the working target, the stage "
                       "above it, and D(s), the bytes the demanded textures take at stage s.", "",
                       "| Pass | Device budget / usage end MiB | Target end MiB (source) | Stage end / deepest | "

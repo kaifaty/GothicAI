@@ -31,7 +31,7 @@
 
 #include "graphics/mesh/submesh/packedmesh.h"
 #include "physicshost.h"
-#include "game/serialize.h"
+#include "savearchive.h"
 #include "game/physicssave.h"
 
 const float DynamicWorld::worldHeight = 20000; //TODO: remove

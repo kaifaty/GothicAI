@@ -1,7 +1,7 @@
 #include "animblend.h"
 
 #include "animmath.h"
-#include "game/serialize.h"
+#include "savearchive.h"
 
 #include <Tempest/Log>
 
@@ -208,7 +208,7 @@ float AnimBlend::externalWeight(uint64_t now) const {
   return std::clamp(externalFade.at(float(now-externalStart)*.001f),0.f,1.f);
   }
 
-void AnimBlend::saveExternal(Serialize& fout) const {
+void AnimBlend::saveExternal(SaveArchive& fout) const {
   fout.write(uint32_t(off.size()),outTime,lastTime,externalStart,externalClockPending);
   auto curve = [&](const Curve& c) {
     fout.write(c.t1,c.x0,c.v0,c.a0,c.A,c.B,c.C);
@@ -228,7 +228,7 @@ void AnimBlend::saveExternal(Serialize& fout) const {
     fout.write(i);
   }
 
-void AnimBlend::loadExternal(Serialize& fin, size_t expectedBones, bool hasVelocityState) {
+void AnimBlend::loadExternal(SaveArchive& fin, size_t expectedBones, bool hasVelocityState) {
   uint32_t count = 0;
   fin.read(count);
   if(count!=expectedBones || count==0)

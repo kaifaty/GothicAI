@@ -28,6 +28,11 @@ class TextureScreenDemand final {
       // The class adds its margin only while the stages use it (stage 2 and deeper); otherwise an owner is due by its
       // exponent's margin alone, and its class is brought up to date only when it is evaluated anyway.
       bool          classMargin = false;
+      // Step 4, the look-ahead (texturelookahead.h): where the hero and the camera will be within the horizon, as
+      // offsets in centimetres from where they are (ChunkResidency::viewHeroAhead). An owner's exponent comes from the
+      // closest point of each path; zero offsets: from the points, as before.
+      Tempest::Vec3 heroAhead, cameraAhead;
+      bool lookAhead() const;
       };
     // The distance class an owner with an exponent registers in place of its chunk ring (TextureNeed::ring), for the
     // stages above the memory target (texturebudget.h): 0 nearer than one chunk, 1 nearer than two, 2 farther, from
@@ -44,6 +49,9 @@ class TextureScreenDemand final {
       double   margin   = 0;         // metres the distance may change before the exponent or the class does
       bool     scheduled = false;    // false: the demand does not change with distance
       uint32_t distanceClass = NoClass;  // with an exponent from a distance: the owner's distance class
+      // The exponent at the present distance, without the look-ahead: what the screen needs now, for the shortfall
+      // (Resources measures it against this). Equal to `exponent` while the view stands still or the look-ahead is off.
+      int32_t  present  = TextureLevels::NoExponent;
       };
     // The class at `distance` metres, `previous` the owner's class so far (or NoClass); `margin` gets the metres the
     // distance may change before the class does.
@@ -63,11 +71,14 @@ class TextureScreenDemand final {
     // from the nearer of the hero and the camera, due again when either may have come or gone by its margin. Without a
     // view: the ring rule, due as soon as there is one. Without a density: the whole chain; with nothing to draw: the
     // coarsest allowed level.
+    // With the look-ahead the exponent is from the closest point of the view's paths, `present` from the points; the
+    // owner is due again when either may change. `previousPresent` holds the present one as `previous` does the other.
     static Result evaluate(const View& view, const TexelDensity& texel, int32_t previous = TextureLevels::NoExponent,
-                           uint32_t previousClass = NoClass);
+                           uint32_t previousClass = NoClass, int32_t previousPresent = TextureLevels::NoExponent);
     // The same with the bounds a sphere; only the density and flatness of `texel` count.
     static Result evaluate(const View& view, const TexelDensity& texel, const Sphere& bounds,
-                           int32_t previous = TextureLevels::NoExponent, uint32_t previousClass = NoClass);
+                           int32_t previous = TextureLevels::NoExponent, uint32_t previousClass = NoClass,
+                           int32_t previousPresent = TextureLevels::NoExponent);
     // Distance in metres from `point` (centimetres) to the bounds of `texel`, or to a sphere.
     static double distance(const Tempest::Vec3& point, const TexelDensity& texel);
     static double distance(const Tempest::Vec3& point, const Sphere& sphere);

@@ -176,7 +176,11 @@ void finish() {
   stopRecording();
   if(!bench.streamingSamples.empty()) {
     if(auto* file=std::fopen((outDir+"/streaming.csv").c_str(),"w")) {
-      std::fprintf(file,"segment,frame,update_ms,work_ms,near,far,outside,near_transitions,far_transitions,publication_ms,published,released,page_used_bytes,page_free_bytes,page_retired_bytes,page_count,tex_live_bytes,tex_retired_bytes,tex_peak_bytes,tex_live_n,tex_evicted,tex_reloaded,tex_landscape_bytes,tex_landscape_n,tex_static_bytes,tex_static_n,tex_dynamic_bytes,tex_dynamic_n,tex_other_bytes,tex_other_n,tex_full_bytes,tex_tail_bytes,tex_promoted,tex_demoted,tex_promotion_queue,tex_near_tail_n,tex_near_tail_seconds,tex_level0_bytes,tex_level1_bytes,tex_level2_bytes,tex_level3_bytes,tex_level4_bytes,tex_level5_bytes,tex_shortfall_n,tex_shortfall_seconds,tex_jumps,tex_jumps_open,tex_jump_sync_max_ms,tex_jump_zero_max_ms,tex_device_budget_bytes,tex_device_usage_bytes,tex_device_shared,tex_device_measured,tex_target_bytes,tex_target_source,tex_budget_bytes,tex_stage,tex_stage_deepest,tex_stage_bytes0,tex_stage_bytes");
+      std::fprintf(file,"segment,frame,update_ms,work_ms,near,far,outside,near_transitions,far_transitions,publication_ms,published,released,page_used_bytes,page_free_bytes,page_retired_bytes,page_count,tex_live_bytes,tex_retired_bytes,tex_peak_bytes,tex_live_n,tex_evicted,tex_reloaded,tex_landscape_bytes,tex_landscape_n,tex_static_bytes,tex_static_n,tex_dynamic_bytes,tex_dynamic_n,tex_other_bytes,tex_other_n,tex_full_bytes,tex_tail_bytes,tex_promoted,tex_demoted,tex_promotion_queue,tex_near_tail_n,tex_near_tail_seconds,tex_level0_bytes,tex_level1_bytes,tex_level2_bytes,tex_level3_bytes,tex_level4_bytes,tex_level5_bytes,tex_shortfall_n,tex_shortfall_seconds,tex_jumps,tex_jumps_open,tex_jump_sync_max_ms,tex_jump_zero_max_ms,tex_device_budget_bytes,tex_device_usage_bytes,tex_device_shared,tex_device_measured,tex_target_bytes,tex_target_source,tex_budget_bytes,tex_stage,tex_stage_deepest,tex_stage_bytes0,tex_stage_bytes,"
+        "tex_shortfall_wait_seconds,tex_shortfall_read_seconds,tex_shortfall_upload_seconds,tex_shortfall_publish_seconds,"
+        "tex_shortfall_stale_seconds,tex_shortfall_wait_n,tex_visible_shortfall_n,tex_visible_shortfall_seconds,tex_loads,"
+        "tex_load_bytes,tex_short_entries,tex_latency_n,tex_latency_p50_ms,tex_latency_p90_ms,tex_latency_max_ms,"
+        "tex_ahead_n,tex_ahead_seconds,tex_lookahead_ms");
       for(uint32_t stage=0;stage<=TextureBudget::MaxStage;++stage)
         std::fprintf(file,",tex_stage%u_seconds",stage);
       std::fprintf(file,",vob_near,vob_far,vob_outside,vob_created,vob_released,vob_pending,vob_publication_ms,vob_near_missing,vob_near_missing_seconds,npc_full,npc_simplified,npc_tier_transitions,npc_full_tick_ms,npc_simplified_tick_ms\n");
@@ -209,6 +213,16 @@ void finish() {
           (unsigned long long)textures.device.usage,int(textures.device.shared),int(textures.device.measured),
           (unsigned long long)textures.targetBytes,int(textures.targetSource),(unsigned long long)textures.budgetBytes,
           textures.stage,textures.stageDeepest,(unsigned long long)textures.stageBytes0,(unsigned long long)textures.stageBytes);
+        // step 4 (textureflow.h): cumulative texture-seconds by state, the visible shortfall, loads and bytes in flight,
+        // textures that became short, and the session's latency demand -> publication (0 before the first)
+        const auto& flow = textures.flow;
+        for(const auto seconds:flow.seconds)
+          std::fprintf(file,",%.9g",seconds);
+        std::fprintf(file,",%llu,%llu,%.9g,%llu,%llu,%llu,%llu,%.9g,%.9g,%.9g",(unsigned long long)flow.count[TextureFlow::Waiting],
+          (unsigned long long)flow.visible,flow.visibleSeconds,(unsigned long long)textures.loadsInFlight,
+          (unsigned long long)flow.bytesInFlight,(unsigned long long)flow.entries,(unsigned long long)flow.latencyN,
+          std::max(0.0,flow.latencyP50),std::max(0.0,flow.latencyP90),std::max(0.0,flow.latencyMax));
+        std::fprintf(file,",%llu,%.9g,%.9g",(unsigned long long)flow.ahead,flow.aheadSeconds,1000*flow.horizon);
         for(const auto seconds:textures.stageSeconds)
           std::fprintf(file,",%.9g",seconds);
         std::fprintf(file,",%zu,%zu,%zu,%llu,%llu,%zu,%.9g,%zu,%.9g",

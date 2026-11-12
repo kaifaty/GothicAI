@@ -10,7 +10,7 @@ class Skeleton;
 class Overlay;
 class Pose;
 class Interactive;
-class Serialize;
+class SaveArchive;
 class World;
 class Npc;
 
@@ -85,8 +85,8 @@ class AnimationSolver final {
       uint64_t        time    =0;
       };
 
-    void                           save(Serialize& fout) const;
-    void                           load(Serialize& fin);
+    void                           save(SaveArchive& fout) const;
+    void                           load(SaveArchive& fin);
 
     void                           setSkeleton(const Skeleton* sk);
     void                           update(uint64_t tickCount);

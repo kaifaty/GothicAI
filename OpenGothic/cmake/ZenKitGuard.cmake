@@ -52,7 +52,7 @@ if(NOT CMAKE_SCRIPT_MODE_FILE)
     COMMAND "${CMAKE_COMMAND}" "-DGUARD_INPUTS=${guard_inputs}" "-DGUARD_STAMP=${guard_stamp}"
       -P "${CMAKE_CURRENT_LIST_FILE}"
     DEPENDS ${guard_sources} "${guard_inputs}" "${CMAKE_CURRENT_LIST_FILE}"
-      "${CMAKE_CURRENT_LIST_DIR}/ZenKitAllowlist.cmake"
+      "${CMAKE_CURRENT_LIST_DIR}/ZenKitAllowlist.cmake" "${CMAKE_CURRENT_LIST_DIR}/GuardDepfile.cmake"
     DEPFILE "${guard_stamp}.d"
     COMMENT "Checking game ZenKit includes"
     VERBATIM)
@@ -123,20 +123,8 @@ if(violations)
   message(FATAL_ERROR "ZenKit game include guard:${violations}\nAllowed headers: ${allowlist}")
 endif()
 
-# A newly included header enters the depfile on the next source/header edit.
-# Escape paths for Make/Ninja depfiles, including worktrees whose paths contain spaces.
-set(dependencies "${GUARD_STAMP}" ${checked})
-set(escaped)
-foreach(path IN LISTS dependencies)
-  string(REPLACE "$" "$$" path "${path}")
-  string(REPLACE "#" "\\#" path "${path}")
-  string(REPLACE " " "\\ " path "${path}")
-  list(APPEND escaped "${path}")
-endforeach()
-list(POP_FRONT escaped output)
-list(JOIN escaped " " depfiles)
-file(WRITE "${GUARD_STAMP}.d" "${output}: ${depfiles}\n")
-file(TOUCH "${GUARD_STAMP}")
+include("${CMAKE_CURRENT_LIST_DIR}/GuardDepfile.cmake")
+guard_write_depfile("${GUARD_STAMP}" ${checked})
 list(LENGTH ZENKIT_GUARD_SOURCES source_count)
 list(LENGTH checked file_count)
 message(STATUS "ZenKit game include guard: ${source_count} translation units, ${file_count} files checked")

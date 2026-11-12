@@ -395,6 +395,7 @@ bool worldCommand(const WorldContext& context,const std::string& line,const std:
         }
       state.perfSegment=a[2];state.perfFrame=0;
       state.streamingTexturesBefore=Resources::textureStats();
+      state.streamingFlowBefore=Resources::textureFlowDistributions();
       if(auto* residency=w.chunkResidency()) {
         state.streamingNearBefore=residency->stats().transitionsNear;
         state.streamingFarBefore=residency->stats().transitionsFar;
@@ -423,7 +424,9 @@ bool worldCommand(const WorldContext& context,const std::string& line,const std:
           ",\"gpu_mb\":"+std::to_string(double(tempestProbeGpuBytes())/1048576.0)+
           ",\"tex_promoted\":"+std::to_string(textures.promoted-state.streamingTexturesBefore.promoted)+
           ",\"tex_demoted\":"+std::to_string(textures.demoted-state.streamingTexturesBefore.demoted)+
-          ",\"tex_near_tail_seconds\":"+textureSeconds+",\"tex_shortfall_seconds\":"+shortfallSeconds);
+          ",\"tex_near_tail_seconds\":"+textureSeconds+",\"tex_shortfall_seconds\":"+shortfallSeconds+
+          TextureDump::flowFields(textures,state.streamingTexturesBefore,Resources::textureFlowDistributions(),
+                                  state.streamingFlowBefore));
         }
       state.perfSegment.clear();
       }
