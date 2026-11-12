@@ -31,6 +31,7 @@ from .console import Console
 from .dialogue import REACT_HINT, SVM_HINT
 from .embeddings import EmbedClient
 from .face_track import A2F_PORT, a2f_url, emotion_table, make_source
+from .face_track import DEFAULT_TIMEOUT_PER_S as DEFAULT_A2F_TIMEOUT_PER_S
 from .face_track import DEFAULT_TIMEOUT_S as DEFAULT_A2F_TIMEOUT_S
 from .game import GameLink, GameServer
 from .gamedata import storygraph
@@ -176,7 +177,7 @@ async def serve(args: argparse.Namespace) -> int:
     tts = None if args.no_tts else TtsClient(args.tts_url)
     # a line's face from its voice (v63): no voice, no face
     face_at = a2f_url(args.a2f_url, args.decider_url)
-    face = None if tts is None else make_source(args.a2f, face_at, args.a2f_timeout)
+    face = None if tts is None else make_source(args.a2f, face_at, args.a2f_timeout, args.a2f_timeout_per_s)
     journal = Journal(print_sink if args.journal else None)
     trace = None if args.no_trace else TraceWriter(Path(args.trace_dir))
     budget = Budget(per_npc_per_min=args.llm_per_npc_min, total_per_min=args.llm_total_min)
@@ -1092,7 +1093,13 @@ def main() -> None:
     )
     p.add_argument(
         "--a2f-timeout", type=float, default=DEFAULT_A2F_TIMEOUT_S,
-        help="seconds a line waits for its face track before it goes without one (default: %(default)s)",
+        help="seconds a line waits for its face track besides --a2f-timeout-per-s: the network and the "
+        "queue (default: %(default)s)",
+    )
+    p.add_argument(
+        "--a2f-timeout-per-s", type=float, default=DEFAULT_A2F_TIMEOUT_PER_S,
+        help="and this much per second of the line's voice; a line that gets no track in time goes without "
+        "one, and the service is not asked for 30 s (default: %(default)s)",
     )
     p.add_argument(
         "--a2f-emotion", action="append", default=[], type=_a2f_emotion, metavar="MOOD=LABEL",

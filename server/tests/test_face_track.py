@@ -1,7 +1,9 @@
 import asyncio
 import base64
+import json
 import logging
 import time
+from contextlib import asynccontextmanager
 
 import httpx
 import pytest
@@ -160,6 +162,51 @@ async def test_after_the_service_is_down_lines_do_not_ask_it_for_a_while(stub):
     # longer than the service takes: not asked at all
     assert await face.say_face(XARDAS, "AIB_4", b"\0\0" * 16000 * 31, 16000, None) is None
     assert len(stub.requests) == 2
+
+
+@asynccontextmanager
+async def slow_a2f(delay: float):
+    """A real HTTP stand-in for gothic-a2f that answers each line after `delay` s: httpx's own time-outs
+    apply to it, unlike a mock transport."""
+    asked: list[int] = []
+
+    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        head = await reader.readuntil(b"\r\n\r\n")
+        lines = head.lower().split(b"\r\n")
+        size = int(next(line.split(b":")[1] for line in lines if line.startswith(b"content-length")))
+        asked.append(len(await reader.readexactly(size)))
+        try:
+            await asyncio.sleep(delay)
+            data = base64.b64encode(bytes(3 * len(ARKIT_SHAPES))).decode()
+            body = json.dumps({"fps": 30, "shapes": ARKIT_SHAPES, "frames": 3, "data": data}).encode()
+            writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
+                         + str(len(body)).encode() + b"\r\nConnection: close\r\n\r\n" + body)
+            await writer.drain()
+        except (ConnectionError, asyncio.CancelledError):
+            pass
+        finally:
+            writer.close()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    async with server:
+        yield f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}", asked
+
+
+async def test_a_long_line_waits_for_its_track_as_long_as_its_voice_needs():
+    # 1.0 s + 0.2 s a second of voice: 20 s wait 5 s, 1 s waits 1.2 s; the service answers in 2.5 s
+    clock = [100.0]
+    async with slow_a2f(2.5) as (url, asked):
+        client = A2fClient(url, clock=lambda: clock[0])
+        face = FaceVoice(client)
+        try:
+            long = await face.say_face(XARDAS, "AIB_1", b"\0\1" * 16000 * 20, 16000, None)
+            assert long is not None and len(asked) == 1
+            short = await face.say_face(XARDAS, "AIB_2", b"\0\1" * 16000, 16000, None)
+            assert short is None and len(asked) == 2  # not answered in its limit: the service is down
+            assert await face.say_face(XARDAS, "AIB_3", b"\0\1" * 16000 * 20, 16000, None) is None
+            assert len(asked) == 2  # paused
+        finally:
+            await client.aclose()
 
 
 async def test_a_failing_service_is_warned_about_once_a_minute(caplog):

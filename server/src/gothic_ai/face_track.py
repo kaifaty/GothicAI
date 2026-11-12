@@ -28,7 +28,10 @@ log = logging.getLogger(__name__)
 
 A2F_PORT = 47839
 FPS = 30
-DEFAULT_TIMEOUT_S = 1.5
+# A line waits for its track base + per second of its voice: the service counts ~0.095 s a second of voice
+# (9 s in 0.85 s), one line queued ahead doubles it (1.75 s); 9 s of voice -> 2.8 s, 30 s -> 7 s.
+DEFAULT_TIMEOUT_S = 1.0  # the network and the queue
+DEFAULT_TIMEOUT_PER_S = 0.2  # per second of the line's voice
 MAX_AUDIO_S = 30.0  # the service answers 413 to a longer line
 RETRY_S = 30.0  # an unavailable service is not asked again for this long; lines do not wait meanwhile
 WARN_EVERY_S = 60.0
@@ -139,29 +142,32 @@ class A2fClient:
         self,
         url: str,
         timeout: float = DEFAULT_TIMEOUT_S,
+        per_s: float = DEFAULT_TIMEOUT_PER_S,
         *,
         transport: httpx.AsyncBaseTransport | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.url = url
-        self.timeout = timeout
+        self.timeout, self.per_s = timeout, per_s
         self._clock = clock
-        self._http = httpx.AsyncClient(base_url=url.rstrip("/") + "/", transport=transport, timeout=timeout)
+        self._http = httpx.AsyncClient(base_url=url.rstrip("/") + "/", transport=transport)
         self._paused_until = 0.0
 
     async def track(self, pcm: bytes, rate: int, emotion: str) -> FaceTrack | None:
         if self._clock() < self._paused_until:
             return None
         params = {"rate": str(rate)} | ({"emotion": emotion} if emotion else {})
+        limit = self.limit(len(pcm) / 2 / rate)
         try:
-            async with asyncio.timeout(self.timeout):
+            # the same limit for each read: httpx's default would cut a long line's answer short
+            async with asyncio.timeout(limit):
                 response = await self._http.post(
-                    "v1/face", params=params, content=pcm,
+                    "v1/face", params=params, content=pcm, timeout=limit,
                     headers={"Content-Type": "application/octet-stream"},
                 )
         except (TimeoutError, httpx.TimeoutException):
-            self._down()
-            raise FaceError(f"no answer from {self.url} in {self.timeout:g}s", down=True) from None
+            self._down()  # not even in the time a long line takes: the service is not there
+            raise FaceError(f"no answer from {self.url} in {limit:.2f}s", down=True) from None
         except httpx.TransportError as err:
             self._down()
             raise FaceError(f"{self.url}: {type(err).__name__}: {err}", down=True) from err
@@ -174,6 +180,10 @@ class A2fClient:
             return _parse(response.json())
         except (ValueError, TypeError, KeyError, binascii.Error) as err:
             raise FaceError(f"{self.url}: bad track: {err}") from err
+
+    def limit(self, audio_s: float) -> float:
+        """How long a line of `audio_s` seconds waits for its track."""
+        return self.timeout + self.per_s * audio_s
 
     def _down(self) -> None:
         self._paused_until = self._clock() + RETRY_S
@@ -216,12 +226,14 @@ class FakeFace:
         pass
 
 
-def make_source(mode: A2fMode, url: str | None, timeout: float = DEFAULT_TIMEOUT_S) -> FaceSource | None:
+def make_source(
+    mode: A2fMode, url: str | None, timeout: float = DEFAULT_TIMEOUT_S, per_s: float = DEFAULT_TIMEOUT_PER_S
+) -> FaceSource | None:
     """`service` without an address is off: there is nowhere to ask."""
     if mode == "fake":
         return FakeFace()
     if mode == "service" and url:
-        return A2fClient(url, timeout)
+        return A2fClient(url, timeout, per_s)
     return None
 
 
