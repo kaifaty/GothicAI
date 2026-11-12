@@ -5,7 +5,7 @@
 #include "physicshost.h"
 #include "graphics/mesh/hitzones.h"
 #include "graphics/mesh/skeleton.h"
-#include "testbench.h"
+#include "benchprobe.h"
 
 #include <Jolt/Physics/Body/BodyInterface.h>
 #include <Jolt/Physics/Body/BodyLock.h>
@@ -1207,14 +1207,16 @@ bool Ragdoll::queueHit(size_t bone, const Tempest::Vec3& pointCm,
 void Ragdoll::setNpc(Npc* npc) {
   impl->npc=npc!=nullptr ? impl->host->npcHandle(*npc) : std::weak_ptr<void>();
   updateBuoyancyFractions();
-  if(npc!=nullptr && !impl->kinematic && TestBench::isActive()) {
+  auto* probe=BenchProbe::get();
+  if(npc!=nullptr && !impl->kinematic && probe!=nullptr && probe->active()) {
     impl->birthBench=std::make_unique<Impl::BirthBench>();
     impl->birthBench->root=impl->host->npcPosition(*npc);
     }
   }
 
 void Ragdoll::sampleBirth(float deltaSeconds) {
-  if(!impl->birthBench) return;
+  auto* probe=BenchProbe::get();
+  if(!impl->birthBench || probe==nullptr || !probe->active()) return;
   auto& sample=*impl->birthBench;
   auto& system=impl->world->physicsSystem();
   const auto groups=impl->world->ragdollBirthGuardGroups(*this);
@@ -1240,8 +1242,8 @@ void Ragdoll::sampleBirth(float deltaSeconds) {
       for(size_t j=0;j<other->partCount();++j) {
         if(!system.WereBodiesInContact(id,other->impl->native->GetBodyID(int(j)))) continue;
         if(!contacts.empty()) contacts+=',';
-        contacts+="{\"part\":"+TestBench::bodyJson(name)+",\"rig\":"+TestBench::bodyJson(TestBench::who(other->noiseNpc()))+
-          ",\"rig_part\":"+TestBench::bodyJson(other->impl->rig->parts[j].name)+",\"group\":"+std::to_string(other->impl->group)+
+        contacts+="{\"part\":"+probe->bodyJson(name)+",\"rig\":"+probe->bodyJson(probe->who(other->noiseNpc()))+
+          ",\"rig_part\":"+probe->bodyJson(other->impl->rig->parts[j].name)+",\"group\":"+std::to_string(other->impl->group)+
           ",\"protected\":"+(std::find(groups.begin(),groups.end(),other->impl->group)!=groups.end() ? "true" : "false")+"}";
         }
       }
@@ -1259,7 +1261,7 @@ void Ragdoll::sampleBirth(float deltaSeconds) {
       }
     std::string contacts;
     for(const auto& region:sample.contacts) if(!region.empty()) { if(!contacts.empty()) contacts+=',';contacts+=region; }
-    TestBench::ragdollBirthPeak(*npc,impactCulprit(),"\"group\":"+std::to_string(impl->group)+
+    probe->ragdollBirthPeak(*npc,impactCulprit(),"\"group\":"+std::to_string(impl->group)+
       ",\"birth_distance_cm\":"+(sample.distance<0 ? "null" : std::to_string(sample.distance))+
       ",\"sampled_ms\":"+std::to_string(sample.ageMs)+",\"sampling\":\"after_each_positive_Update\""+
       ",\"pelvis_m_s\":"+std::to_string(sample.peaks[0])+",\"spine_m_s\":"+std::to_string(sample.peaks[1])+

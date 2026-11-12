@@ -109,7 +109,8 @@ LAYER_RULES: list[tuple[str, str]] = [
     ("common/gothic", "gothic"),
     ("common/marvin", "gothic"),
     ("common/mainwindow", "gothic"),
-    ("game/main", "gothic"),
+    # The entry point assembles all layers, including the bench and AI bridge.
+    ("game/main", "tools"),
     ("common/gamemusic", "gothic"),
     ("common/dmusic/*", "gothic"),
     ("common/programdata", "gothic"),

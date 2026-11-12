@@ -4,6 +4,8 @@
 
 Службы игры для платформы — `common/gameservices.*`: узкий виртуальный интерфейс мира, кадра, камеры, определений эффектов и звука; реализация — `Gothic`. Рендер получает время, тики и `DynamicWorld`, не разыменовывая `World`. [Шаг 3 разделения слоёв](../../reports/engine/2026-11-10-engine-layers/README.md#порядок-работы).
 
+Крючки стенда для платформы — `common/benchprobe.h`: `BenchProbe` передаёт запросы рендера и анимации, события разрушения и рождения рэгдолла; `Npc` непрозрачен. Адаптер `common/testbench_probe.cpp` устанавливается через `TestBench::install()` из `main` и `configure`; без него указатель пуст и стенд не действует. `game/main.cpp` относится к инструментам: точка входа собирает все слои, включая стенд и мост. [Шаг 6 разделения слоёв](../../reports/engine/2026-11-10-engine-layers/README.md#порядок-работы).
+
 Звуки анимации — `common/animationsound.h`: `AnimationSound` испускает звук для `Npc` и `Interactive`.
 
 Звуки шагов анимации — `common/animationsound.h`: `AnimationGroundSound` добавляет проверку воздуха и звук поверхности для `Npc`.
