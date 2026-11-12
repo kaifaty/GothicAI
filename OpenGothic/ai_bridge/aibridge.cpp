@@ -44,7 +44,7 @@ using namespace Tempest;
 
 namespace {
 
-constexpr int         ProtocolVersion = 62;
+constexpr int         ProtocolVersion = 63;
 AiBridge*             activeBridge = nullptr;
 constexpr const char* SaveEntry       = "ai_bridge/session";  // own entry in save games
 constexpr const char* DefaultUrl      = "ws://127.0.0.1:47817";
@@ -902,6 +902,18 @@ void AiBridge::Impl::handle(World* world, const std::string& text) {
     }
   else if(type=="say_audio" || type=="say_end") {
     onSayAudio(*world,doc);
+    }
+  else if(type=="say_face") {
+    // the face of a line from its sound (v63): the voice of that line plays it, whichever comes first
+    const auto line  = std::string(JsonRead::str(doc,"line"));
+    Npc*       npc   = npcBySymbol(*world,JsonRead::str(doc,"npc"));
+    auto       track = LineCues::readFace(doc);
+    if(track!=nullptr && npc==nullptr)
+      Log::e("[ai] say_face: no npc ",JsonRead::str(doc,"npc")," for ",line);
+    else if(track!=nullptr) {
+      npc->setFaceTrack(std::move(track),line);
+      Log::i("[ai] face track ",JsonRead::str(doc,"npc")," ",line);
+      }
     }
   else if(type=="chat_status") {
     onChatStatus(*world,doc);

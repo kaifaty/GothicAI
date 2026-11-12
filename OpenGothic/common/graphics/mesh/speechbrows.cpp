@@ -46,17 +46,7 @@ void SpeechBrows::setMood(TalkGestures::Mood m, std::string_view line) {
 bool SpeechBrows::lowered() const {
   if(track==nullptr || moodLine.empty() || !lowers(lineMood))
     return false;
-  // the track of the line: its id, or the id with ".WAV" (case aside, as the game names sounds)
-  const std::string name = track->name();
-  const auto same = [](std::string_view a, std::string_view b) {
-    return a.size()==b.size() && std::equal(a.begin(),a.end(),b.begin(),[](char x, char y) {
-      return std::tolower(uint8_t(x))==std::tolower(uint8_t(y));
-      });
-    };
-  const std::string_view n = name;
-  if(same(n,moodLine))
-    return true;
-  return n.size()==moodLine.size()+4 && same(n.substr(0,moodLine.size()),moodLine) && same(n.substr(moodLine.size()),".WAV");
+  return track->isOf(moodLine);
   }
 
 uint32_t SpeechBrows::play(FaceRig& face, uint64_t now) {

@@ -7,6 +7,7 @@
 #include <string_view>
 
 #include "graphics/mesh/speechcues.h"
+#include "graphics/mesh/speechface.h"
 
 // What the face of a line from the AI server does besides its mood: its facial gestures (say.cues, v61), the leak of
 // a felt emotion through a lie (say.leak, v61) and the time of its words (v62). SpeechCues plays it.
@@ -19,4 +20,8 @@ namespace LineCues {
   // and no leak. text: the line's text as the game holds it (its words as the server counts them)
   std::shared_ptr<SpeechCues::Plan> read(const rapidjson::Value& msg, const std::string& npc, const std::string& line,
                                          std::string_view text, bool streamed);
+
+  // the face track of a line from its sound (say_face, v63: fps, shapes, data, emotion?); a broken one: Log::e with
+  // the reason and nullptr - the line goes without it
+  std::shared_ptr<const SpeechFace::Track> readFace(const rapidjson::Value& msg);
   }

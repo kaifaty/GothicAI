@@ -141,5 +141,13 @@
     "flash": {"cue": "flash", "weight": 0.6, "time": 0.8},
     "frown": {"cue": "frown", "weight": 0.6, "time": 0.45},
     "smile": {"weight": 0.5, "on_ms": 400, "hold_ms": 700, "off_ms": 600, "chance": 0.6, "flash": 0.3}
+  },
+  "speech_face": {
+    "about": "The face from the voice (engine-plan.md, step 10): a track of Audio2Face v3.0 weights (solved for Mark's shapes) plays on the head by the time of the voice; the mouth by loudness (VISEME) and the brows of speech_brows give way to it. The rules make Mark's weights fit the MPFB shapes (audio2face.md, 'Проверка на русской речи'; face-shapes.md): mouthClose at most jawOpen (MPFB's mouthClose lifts the lower lip 37 mm, Mark's 1.3 mm), mouthRoll* halved, eyeLook* dropped (the gaze is Eyes'). The track's eyeBlink* is the level of the lids (0.14-0.24 with an emotion), the blinks go over it. A track made with an emotion has the expression: the mood faces of the line give way to it while it shows and come back after it. A head with Mark's shapes drops cap and scale.",
+    "fade_in_ms": 80, "fade_out_ms": 250,
+    "cap": {"mouthClose": "jawOpen"},
+    "scale": {"mouthRoll*": 0.5},
+    "drop": ["eyeLook*"],
+    "mood_faces": ["S_FRIENDLY", "S_ANGRY", "S_HOSTILE", "S_FRIGHTENED", "T_HURT"]
   }
 }

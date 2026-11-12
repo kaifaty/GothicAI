@@ -27,11 +27,14 @@
 #include "graphics/mesh/listenface.h"
 #include "graphics/mesh/speechbrows.h"
 #include "graphics/mesh/speechcues.h"
+#include "graphics/mesh/speechface.h"
 #include "gltfmesh.h"
 #include "linecues.h"
 
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <vector>
 
 #include <cmath>
@@ -1810,6 +1813,257 @@ void listenCases(const GltfHeadMesh& head, const FaceProfile& plain) {
   rejected(with(sec,"\"flash\": 0.4}","\"flash\": 0.4, \"y\": 1}"),"listen_face: smile: unknown field \"y\"");
   }
 
+// The face from the voice (speech_face, SpeechFace): a track of ARKit weights played by the time of the voice
+std::string base64(const std::vector<uint8_t>& in) {
+  static const char* abc = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  std::string out;
+  for(size_t i=0; i<in.size(); i+=3) {
+    const uint32_t n = uint32_t(in[i])<<16 | (i+1<in.size() ? uint32_t(in[i+1])<<8 : 0u) | (i+2<in.size() ? uint32_t(in[i+2]) : 0u);
+    out += abc[n>>18&63];
+    out += abc[n>>12&63];
+    out += i+1<in.size() ? abc[n>>6&63] : '=';
+    out += i+2<in.size() ? abc[n&63] : '=';
+    }
+  return out;
+  }
+
+const char* SpeechSection = R"(, "speech_face": {"about": "synthetic", "fade_in_ms": 100, "fade_out_ms": 200,
+  "cap": {"mouthClose": "jawOpen"}, "scale": {"mouthRoll*": 0.5}, "drop": ["eyeLook*"], "mood_faces": ["S_ANGRY", "S_FRIENDLY"]})";
+
+// the shapes of the test track: jawOpen opens over the second (frame i: i/30), the rest stay
+const std::vector<std::string> TrackShapes = {"jawOpen","mouthClose","mouthRollLower","eyeLookUpLeft","eyeBlink","browDown","noSuchShape"};
+
+std::string trackJson(size_t frames, const std::string& emotion = "", std::string data = "") {
+  if(data.empty()) {
+    std::vector<uint8_t> bytes;
+    for(size_t i=0; i<frames; ++i)
+      for(auto b:{uint8_t(std::lround(255.0*double(i)/30.0)),uint8_t(153),uint8_t(204),uint8_t(255),uint8_t(51),uint8_t(26),uint8_t(255)})
+        bytes.push_back(b);
+    data = base64(bytes);
+    }
+  std::string shapes;
+  for(auto& n:TrackShapes)
+    shapes += (shapes.empty() ? "\"" : ",\"")+n+"\"";
+  return R"({"type":"say_face","npc":"BAU_952_VINO","line":"AIB_7","fps":30,"shapes":[)"+shapes+R"(],"data":")"+data+"\""+
+         (emotion.empty() ? std::string() : R"(,"emotion":")"+emotion+"\"")+"}";
+  }
+
+void speechFaceCases(const GltfHeadMesh& plainHead) {
+  GltfHeadMesh head = plainHead;
+  const uint32_t MouthClose = uint32_t(head.targets.size()), MouthRoll = MouthClose+1, EyeLook = MouthClose+2;
+  head.targets.push_back({"mouthClose",    {{0,{0,1,0},{}}}});
+  head.targets.push_back({"mouthRollLower",{{0,{0,0,-1},{}}}});
+  head.targets.push_back({"eyeLookUpLeft", {{2,{0,1,0},{}}}});
+  std::string json = Profile;
+  json.insert(json.rfind('}'),std::string(BrowsSection)+SpeechSection);
+  const auto p = FaceProfile::parse(json,head);
+  require(p->speech.has_value() && p->speech->caps.size()==1 && p->speech->scales.size()==1 && p->speech->drop.size()==1 &&
+          p->speech->moodFaces.size()==2 && !FaceProfile::parse(Profile,head)->speech.has_value(),
+          "speech_face must be read; a profile without it has none");
+  const auto track   = SpeechFace::Track::parse(trackJson(31));
+  const auto angry   = SpeechFace::Track::parse(trackJson(31,"anger:0.8,disgust:0"));
+  require(track->frames==31 && close(track->durationMs(),1000.f) && !track->emotional && angry->emotional &&
+          angry->emotion=="anger:0.8,disgust:0","the track must be read: frames, time, its emotion");
+
+  // a voice of 1.5 s named as the line, the track of that line given before it starts
+  const auto voiceOf = [](const char* name, uint64_t ms) {
+    auto v = voice(ms,{{0,ms}});
+    v->setName(name);
+    return v;
+    };
+  FaceRig    rig;
+  SpeechFace sf;
+  rig.setup(&head,p.get());
+  sf.setTrack(track,"AIB_7");
+  require(sf.play(rig,0)==0.f && !sf.playing(),"no voice, no face from it");
+  sf.start(voiceOf("AIB_7",1500),"",1000);
+  const auto at = [&](uint64_t now) {
+    sf.play(rig,now);
+    rig.update(now);
+    return rig.weights();
+    };
+  // the rules: mouthClose under jawOpen, mouthRoll* halved, eyeLook* dropped, a shape the head lacks left out
+  auto w = at(1100);
+  require(close(rig.voiceFace(),1.f) && close(w[MouthClose],w[JawOpen]) && w[MouthClose]<0.15f,
+          "mouthClose must stay under jawOpen: "+std::to_string(w[MouthClose])+" over "+std::to_string(w[JawOpen]));
+  require(close(w[MouthRoll],0.4f) && w[EyeLook]==0.f,"mouthRoll* must be halved, eyeLook* dropped: "+
+          std::to_string(w[MouthRoll])+" "+std::to_string(w[EyeLook]));
+  // the lids: the track's eyeBlink is their level
+  require(close(w[Target::EyeBlink],0.2f),"the track's eyeBlink must stay as the level of the lids: "+std::to_string(w[Target::EyeBlink]));
+  // the frame by the time of the voice, linear between frames: 500 ms is frame 15, 517 ms 15.51
+  w = at(1500);
+  require(close(w[JawOpen],128.f/255.f) && close(rig.voiceFace(),1.f),"500 ms into the voice must show frame 15: "+
+          std::to_string(w[JawOpen]));
+  w = at(1517);
+  require(close(w[JawOpen],(128.f*0.49f+136.f*0.51f)/255.f),"517 ms must lie between frames 15 and 16: "+std::to_string(w[JawOpen]));
+  // fading in from the start of the voice
+  {
+    FaceRig r2; SpeechFace s2;
+    r2.setup(&head,p.get());
+    s2.setTrack(track,"AIB_7");
+    s2.start(voiceOf("AIB_7",1500),"",0);
+    require(close(s2.play(r2,50),0.5f) && close(s2.play(r2,100),1.f),"the face must come in over fade_in_ms");
+  }
+  // a blink goes over the level of the lids, the sum at most 1
+  rig.startAnim("R_EYESBLINK",0.5f,1800,1600);
+  w = at(1660);
+  require(close(w[Target::EyeBlink],0.7f),"a half blink must go over the level of the lids: "+std::to_string(w[Target::EyeBlink]));
+  rig.startAnim("R_EYESBLINK",1.f,1900,1660);
+  w = at(1710);
+  require(close(w[Target::EyeBlink],1.f),"a blink over the level must reach 1 and no more");
+
+  // VISEME and the brows of the voice are silent under the track
+  rig.startBrows(false,1,1720,1720);
+  for(uint64_t now=1740; now<=1820; now+=20) {
+    rig.setShape("VISEME",2,2,0,1,now);
+    w = at(now);
+    }
+  require(w[VisemeAa]==0.f && w[BrowUpLeft]==0.f && rig.browWeight(1820)==0.f,
+          "VISEME and the brows of the voice must be silent under the track: "+std::to_string(w[VisemeAa])+" "+
+          std::to_string(w[BrowUpLeft]));
+  // the track ends at 1 s, the voice goes on: the face fades over fade_out_ms holding its last frame, VISEME comes back
+  for(uint64_t now=1840; now<=2100; now+=20) {
+    rig.setShape("VISEME",2,2,0,1,now);
+    w = at(now);
+    if(now==2100)
+      require(rig.voiceFace()>0.2f && rig.voiceFace()<0.8f && w[VisemeAa]>0.2f && w[VisemeAa]<0.8f &&
+              close(w[JawOpen]/rig.voiceFace(),1.f,0.02f),
+              "past its end the track must fade holding its last frame as VISEME comes back: "+
+              std::to_string(rig.voiceFace())+" "+std::to_string(w[VisemeAa]));
+    }
+  for(uint64_t now=2120; now<=2300; now+=20) {
+    rig.setShape("VISEME",2,2,0,1,now);
+    w = at(now);
+    }
+  require(!sf.playing() && rig.voiceFace()==0.f && close(w[VisemeAa],1.f),"after its fade the mouth must be the voice's again");
+  // a voice shorter than its track: the face holds the frame at the end of the sound and fades
+  {
+    FaceRig r2; SpeechFace s2;
+    r2.setup(&head,p.get());
+    s2.setTrack(track,"AIB_7");
+    s2.start(voiceOf("AIB_7",600),"",0);
+    s2.play(r2,700);
+    const float k = s2.play(r2,800);
+    r2.update(800);
+    require(k>0.f && k<1.f && close(r2.weights()[JawOpen]/k,0.6f,0.01f),
+            "the face must end with the sound, holding the frame there: "+std::to_string(k));
+  }
+
+  // the moods: S_* gives way to a track made with an emotion, shows over one without; S_EXTRA is not a mood face
+  for(bool emo:{false,true}) {
+    FaceRig r2; SpeechFace s2;
+    r2.setup(&head,p.get());
+    r2.startAnim("S_ANGRY",1,uint64_t(-1),0);
+    r2.startAnim("S_EXTRA",1,uint64_t(-1),0);
+    s2.start(voiceOf("AIB_7",1500),"",1000);
+    s2.setTrack(emo ? angry : track,"AIB_7");  // after its voice started: it plays all the same
+    s2.play(r2,1500);
+    r2.update(1500);
+    const auto& ww = r2.weights();
+    // browDown: the track 0.1, S_ANGRY 0.8, S_EXTRA 0.6
+    require(emo ? close(ww[BrowDown],0.7f,0.01f) && close(r2.weight("S_ANGRY",1500),0.f) && close(r2.weight("S_EXTRA",1500),1.f)
+                : close(ww[BrowDown],1.f) && close(r2.weight("S_ANGRY",1500),1.f),
+            std::string(emo ? "S_ANGRY must give way to a track with an emotion: " : "S_ANGRY must show over a neutral track: ")+
+            std::to_string(ww[BrowDown]));
+  }
+  // the order: a track for another line waits for its voice; a sound file of the line ("<id>.WAV") plays it
+  {
+    FaceRig r2; SpeechFace s2;
+    r2.setup(&head,p.get());
+    s2.setTrack(track,"AIB_9");
+    s2.start(voiceOf("AIB_8",1500),"",0);
+    require(s2.play(r2,500)==0.f,"a track must not play on the voice of another line");
+    s2.start(voiceOf("AIB_9.WAV",1500),"",600);
+    require(s2.play(r2,1100)==1.f && s2.current()==track.get(),"the voice of its line must play the track waiting for it");
+    s2.stop(1200);
+    require(s2.play(r2,1300)<1.f && s2.play(r2,1450)==0.f && !s2.playing(),"a line cut off must take its face over fade_out_ms");
+  }
+  // without the section the head is as before; switched off, too
+  {
+    const auto plain = FaceProfile::parse(Profile,head);
+    FaceRig r2; SpeechFace s2;
+    r2.setup(&head,plain.get());
+    s2.setTrack(track,"AIB_7");
+    s2.start(voiceOf("AIB_7",1500),"",0);
+    r2.setShape("VISEME",2,2,0,1,500);
+    require(s2.play(r2,500)==0.f && r2.update(500)!=FaceRig::Result::Same && close(r2.weights()[VisemeAa],1.f) &&
+            r2.weights()[MouthClose]==0.f,"a profile without speech_face must show no track");
+    FaceRig r3; SpeechFace s3;
+    r3.setup(&head,p.get());
+    SpeechFace::setEnabled(false);
+    s3.setTrack(track,"AIB_7");
+    s3.start(voiceOf("AIB_7",1500),"",0);
+    const float off = s3.play(r3,500);
+    SpeechFace::setEnabled(true);
+    require(off==0.f && r3.voiceFace()==0.f,"OPENGOTHIC_SPEECH_FACE=0 must leave the face as without a track");
+  }
+  // a track of a file next to the head for a voice of the game, the name's case aside
+  {
+    const auto dir = std::filesystem::temp_directory_path()/"facerig-test-tracks";
+    std::filesystem::create_directories(dir);
+    std::ofstream(dir/"dia_test_01.face.json") << trackJson(31);
+    std::ofstream(dir/"DIA_TEST_02.face.json") << "{\"fps\":30}";
+    require(SpeechFace::fromFile("DIA_Test_01.WAV",dir.string())!=nullptr && SpeechFace::fromFile("DIA_TEST_03.WAV",dir.string())==nullptr &&
+            SpeechFace::fromFile("DIA_TEST_02.WAV",dir.string())==nullptr,"a voice of the game must find its track by name, a broken one none");
+    FaceRig r2; SpeechFace s2;
+    r2.setup(&head,p.get());
+    s2.start(voiceOf("DIA_TEST_01.WAV",1500),dir.string(),0);
+    require(s2.play(r2,500)==1.f,"a voice of the game must play the track of its file");
+    std::filesystem::remove_all(dir);
+  }
+  // rejections: the track, its rules, the bridge's say_face
+  const auto rejected = [&](const std::string& j, std::string_view reason) {
+    try {
+      (void)SpeechFace::Track::parse(j);
+      }
+    catch(const std::exception& e) {
+      require(std::string_view(e.what()).find(reason)!=std::string_view::npos,"want '"+std::string(reason)+"', got '"+e.what()+"'");
+      return;
+      }
+    require(false,"the track must be rejected: "+std::string(reason));
+    };
+  rejected(trackJson(31,"","AAA!"),"data: not base64");
+  rejected(trackJson(31,"",base64({1,2,3,4,5,6,7,8})),"not whole frames of 7 shapes");
+  rejected(trackJson(31,"rage:0.5"),"unknown emotion \"rage\"");
+  rejected(trackJson(31,"anger:2"),"must be a number 0..1");
+  rejected(R"({"fps":0,"shapes":["a"],"data":"AA=="})","fps must be");
+  rejected(R"({"fps":30,"shapes":["a","a"],"data":"AAA="})","listed twice");
+  const auto rules = [&](const std::string& section, std::string_view reason) {
+    std::string j = Profile;
+    j.insert(j.rfind('}'),", \"speech_face\": "+section);
+    try {
+      (void)FaceProfile::parse(j,head);
+      }
+    catch(const std::exception& e) {
+      require(std::string_view(e.what()).find(reason)!=std::string_view::npos,"want '"+std::string(reason)+"', got '"+e.what()+"'");
+      return;
+      }
+    require(false,"speech_face must be rejected: "+std::string(reason));
+    };
+  rules(R"({"fade_in_ms":100,"fade_out_ms":200,"extra":1})","speech_face: unknown field \"extra\"");
+  rules(R"({"fade_in_ms":100})","fade_out_ms must be");
+  rules(R"({"fade_in_ms":100,"fade_out_ms":200,"mood_faces":["S_NONE"]})","mood_faces: no anim \"S_NONE\"");
+  rules(R"({"fade_in_ms":100,"fade_out_ms":200,"scale":{"*":0.5}})","is not a shape or a prefix");
+  rules(R"({"fade_in_ms":100,"fade_out_ms":200,"cap":{"mouthClose":1}})","cap: \"mouthClose\" must name");
+  rapidjson::Document doc;
+  doc.Parse(trackJson(31,"","AAA!").c_str());
+  require(LineCues::readFace(doc)==nullptr,"a broken say_face must leave the line without a track");
+  doc.Parse(trackJson(31,"anger:0.8").c_str());
+  const auto read = LineCues::readFace(doc);
+  require(read!=nullptr && read->frames==31 && read->emotional,"say_face must be read by the bridge");
+
+  // the price on the CPU: a frame of the track into the face (the blend itself is FaceRig's, as before)
+  FaceRig r2; SpeechFace s2;
+  r2.setup(&head,p.get());
+  s2.setTrack(track,"AIB_7");
+  s2.start(voiceOf("AIB_7",1500),"",0);
+  const auto t0 = std::chrono::steady_clock::now();
+  for(uint64_t now=0; now<1000; ++now)
+    s2.play(r2,now);
+  const double us = std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-t0).count()/1000.0;
+  std::cout << "speech face: " << us << " us a frame to sample a track of " << track->shapes.size() << " shapes\n";
+  }
+
 int main() {
   try {
     const auto head    = makeHead();
@@ -1822,6 +2076,7 @@ int main() {
     toneCases();
     browCases(head,*profile);
     listenCases(head,*profile);
+    speechFaceCases(head);
     const auto eyeHead    = makeEyeHead();
     const auto eyeProfile = FaceProfile::parse(EyeProfile,eyeHead);
     eyeProfileCases(eyeHead,*eyeProfile);

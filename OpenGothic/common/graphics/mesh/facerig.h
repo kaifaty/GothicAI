@@ -145,6 +145,27 @@ struct FaceProfile final {
     float smileSpan() const { return smileOnMs+smileHoldMs+smileOffMs; }
     };
 
+  // The face from the voice ("speech_face", reports/content/2026-11-hero-head/engine-plan.md, step 10): a track of
+  // ARKit weights the voice of a line was solved into (Audio2Face v3.0, Mark's shapes) plays on the head along with the
+  // voice (SpeechFace). How its weights become the head's is this section's rules, so a head with shapes that mean
+  // what the solver's mean (Mark's, face-shapes.md) can drop them.
+  struct Speech final {
+    struct Cap final {
+      std::string shape, under;  // the track's weight of `shape` not above that of `under` (mouthClose <= jawOpen)
+      };
+    struct Scale final {
+      std::string shape;         // a name, or a prefix ending with '*'
+      float       k = 1;
+      };
+    float fadeInMs  = 0;         // it comes in over this from the start of the voice...
+    float fadeOutMs = 0;         // ...and goes over this at the end of its track or of the voice, holding its last frame
+    std::vector<Cap>         caps;
+    std::vector<Scale>       scales;
+    std::vector<std::string> drop;       // names or prefixes ('*') not played (eyeLook*: the gaze is Eyes')
+    std::vector<size_t>      moodFaces;  // anims put out while a track made with an emotion shows (S_ANGRY...)
+    static bool matches(std::string_view pattern, std::string_view name);
+    };
+
   std::vector<Anim>    anims;
   std::vector<Cue>     cues;
   std::vector<Leak>    leaks;     // none: the profile has no "leaks"
@@ -153,6 +174,7 @@ struct FaceProfile final {
   std::optional<Eyes>  eyes;   // none: the eyes stay as modelled, the gestures of the eyes are left out of cues
   std::optional<Brows> brows;  // none: the brows do not follow the voice
   std::optional<Listen> listen; // none: the face does not answer the nods of the one listening
+  std::optional<Speech> speech; // none: no face from the voice, the voice moves the mouth by its loudness (VISEME)
 
   const Anim* find(std::string_view name) const;
   size_t      index(std::string_view name) const;  // size_t(-1): none
@@ -193,6 +215,10 @@ class FaceRig final {
       float       listen   = 0;      // the face of the one listening as shown, 0..1 of its apex (listen_face)
       uint32_t    listenNods  = 0;   // nods of it listening seen by the face (ListenFace, filled by its owner)...
       uint32_t    listenFaces = 0;   // ...the faces it answered them with
+      float       voice    = 0;      // the face from the voice as shown, 0..1 (speech_face)
+      bool        voiceEmotion = false; // ...its track was made with an emotion
+      std::vector<float>  weights;   // the weights the deformation shows, per target of...
+      const GltfHeadMesh* head = nullptr;  // ...this head
       };
 
     // a face of the one listening (listen_face)
@@ -263,6 +289,14 @@ class FaceRig final {
     std::vector<float> strength(std::string_view name) const;
     // the eyeballs turned so (Eyes): the balls are turned in the deformation, the lids follow by the profile's table
     void   setEyes(const EyeTurn& left, const EyeTurn& right);
+    // the face from the voice (speech_face, SpeechFace): the weights of its track now as head targets, how far it
+    // shows (0..1), and whether the track was made with an emotion. Set by the owner each frame before update. While
+    // it shows, VISEME (the mouth by loudness) and the brows of the voice give way to it, the mouth shapes of the
+    // other layers are quieted as by a voice, and with an emotion the mood faces of the profile give way too
+    void   setVoiceFace(const std::vector<std::pair<uint32_t,float>>& weights, float strength, bool emotion);
+    float  voiceFace() const { return voiceK; }
+    // the head's target of that name, size_t(-1): none
+    size_t target(std::string_view name) const;
 
     Result update(uint64_t now);
     const std::vector<float>&         weights()     const { return applied; }
@@ -319,6 +353,7 @@ class FaceRig final {
     float  listenSpan(const ListenRun& r) const;
     float  listenQuiet(uint64_t now) const;
     float  speechWeight(uint64_t now) const;
+    float  slotWeight(const Slot& s, uint64_t now) const;  // as shown: intensity, fade, given way to the voice's face
     float  posedCut(uint64_t now) const;
     float  cueEnvelope(const CueRun& r, size_t part, uint64_t now) const;
     float  cueStrength(const CueRun& r, uint64_t now) const;
@@ -342,6 +377,9 @@ class FaceRig final {
     LeakRun                    leakRun;   // the leak shown now
     std::vector<BrowRun>       browRuns;  // the brows of the voice shown now
     std::vector<ListenRun>     listenRuns; // the faces of the one listening shown now
+    std::vector<std::pair<uint32_t,float>> voiceW;  // the face from the voice now (setVoiceFace)
+    float                      voiceK   = 0;
+    bool                       voiceEmo = false;
     bool                       posed    = false;
     uint64_t                   posedEnd = 0;      // when the posed smile ended (0: never)
     std::vector<uint8_t>       squint;            // per head target: eyeSquint*, cheekSquint* (a posed smile cuts them)

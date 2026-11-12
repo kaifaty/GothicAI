@@ -3,6 +3,7 @@
 #include "eyes.h"
 #include "gltfmesh.h"
 #include "graphics/eyeshader.h"
+#include "speechface.h"
 
 #include <rapidjson/document.h>
 #include <rapidjson/error/en.h>
@@ -663,7 +664,7 @@ std::unique_ptr<FaceProfile> FaceProfile::parse(std::string_view json, const Glt
   for(const auto& m:doc.GetObject()) {
     const auto key = str(m.name);
     if(key!="version" && key!="about" && key!="mouth" && key!="anims" && key!="cues" && key!="leaks" &&
-       key!="eyes" && key!="speech_brows" && key!="listen_face")
+       key!="eyes" && key!="speech_brows" && key!="listen_face" && key!="speech_face")
       fail("unknown field "+quoted(key));
     }
   if(!doc.HasMember("version") || !doc["version"].IsInt() || doc["version"].GetInt()!=1)
@@ -798,6 +799,8 @@ std::unique_ptr<FaceProfile> FaceProfile::parse(std::string_view json, const Glt
     }
   if(doc.HasMember("listen_face"))
     ret->listen = parseListen(doc["listen_face"],*ret);
+  if(doc.HasMember("speech_face"))
+    ret->speech = SpeechFace::parseRules(doc["speech_face"],*ret);
   return ret;
   }
 
@@ -814,6 +817,9 @@ void FaceRig::setup(const GltfHeadMesh* h, const FaceProfile* p) {
   browRuns.clear();
   listenRuns.clear();
   leakRun  = LeakRun();
+  voiceW.clear();
+  voiceK   = 0;
+  voiceEmo = false;
   posed    = false;
   posedEnd = 0;
   squint.clear();
@@ -970,8 +976,43 @@ float FaceRig::weight(std::string_view name, uint64_t now) const {
   float w = 0;
   for(auto& s:slots)
     if(isOn(s,now) && profile->anims[s.anim].name==name)
-      w = std::max(w, s.intensity*fade(s,now));
+      w = std::max(w, slotWeight(s,now));
   return w;
+  }
+
+float FaceRig::slotWeight(const Slot& s, uint64_t now) const {
+  float k = s.intensity*fade(s,now);
+  if(voiceK<=0 || k<=0)
+    return k;
+  // the face from the voice has the mouth of the voice, and the expression of its emotion
+  const auto& a = profile->anims[s.anim];
+  if(speechLayer>=0 && a.layer==speechLayer)
+    return k*(1.f-voiceK);
+  if(voiceEmo && profile->speech)
+    for(auto m:profile->speech->moodFaces)
+      if(m==s.anim)
+        return k*(1.f-voiceK);
+  return k;
+  }
+
+size_t FaceRig::target(std::string_view name) const {
+  if(head==nullptr)
+    return size_t(-1);
+  for(size_t t=0; t<head->targets.size(); ++t)
+    if(head->targets[t].name==name)
+      return t;
+  return size_t(-1);
+  }
+
+void FaceRig::setVoiceFace(const std::vector<std::pair<uint32_t,float>>& weights, float strength, bool emotion) {
+  voiceK   = isActive() && profile->speech ? std::clamp(strength,0.f,1.f) : 0.f;
+  voiceEmo = emotion && voiceK>0;
+  voiceW.clear();
+  if(voiceK<=0)
+    return;
+  for(auto& [t,w]:weights)
+    if(t<want.size())
+      voiceW.emplace_back(t,w);
   }
 
 bool FaceRig::startCue(std::string_view name, bool mirror, float hold, uint64_t start, uint64_t now) {
@@ -1051,7 +1092,7 @@ float FaceRig::browQuiet(uint64_t now) const {
 float FaceRig::browWeight(uint64_t now) const {
   if(!isActive() || !profile->brows.has_value() || browRuns.empty())
     return 0;
-  const float quiet = browQuiet(now);
+  const float quiet = browQuiet(now)*(1.f-voiceK);
   float       ret   = 0;
   for(auto& r:browRuns) {
     const float e = browEnvelope(r,now)*r.strength*quiet;
@@ -1095,11 +1136,12 @@ float FaceRig::listenSpan(const ListenRun& r) const {
   }
 
 float FaceRig::speechWeight(uint64_t now) const {
-  float ret = 0;
+  // the voice: its mouth by loudness, or its face from the track
+  float ret = voiceK;
   if(speechLayer>=0)
     for(auto& s:slots)
       if(isOn(s,now) && profile->anims[s.anim].layer==speechLayer)
-        ret = std::max(ret, s.intensity*fade(s,now));
+        ret = std::max(ret, slotWeight(s,now));
   return std::clamp(ret,0.f,1.f);
   }
 
@@ -1205,17 +1247,12 @@ std::vector<float> FaceRig::strength(std::string_view name) const {
 void FaceRig::mix(uint64_t now, std::vector<float>& out) const {
   std::fill(out.begin(),out.end(),0.f);
   // a voice takes the mouth: the mouth shapes of the other layers show only in part
-  float speech = 0;
-  if(speechLayer>=0)
-    for(auto& s:slots)
-      if(isOn(s,now) && profile->anims[s.anim].layer==speechLayer)
-        speech = std::max(speech, s.intensity*fade(s,now));
-  const float quiet = 1.f - SpeechMouth*std::clamp(speech,0.f,1.f);
+  const float quiet = 1.f - SpeechMouth*speechWeight(now);
   // a posed smile: the squint of the expression cut
   const float keep  = 1.f - posedCut(now);
 
   for(auto& s:slots) {
-    const float k = s.intensity*fade(s,now);
+    const float k = slotWeight(s,now);
     if(k<=0)
       continue;
     const auto& a = profile->anims[s.anim];
@@ -1240,6 +1277,9 @@ void FaceRig::mix(uint64_t now, std::vector<float>& out) const {
         out[t] += w*k*part*(damp && profile->mouth[t]!=0 ? quiet : 1.f)*(squint[t]!=0 ? keep : 1.f);
       }
     }
+  // the face from the voice (speech_face): its track's weights by the profile's rules
+  for(auto& [t,w]:voiceW)
+    out[t] += w*voiceK;
   // the gestures over all of it, not quieted by the voice (the mouth ones go into its pauses anyway)
   for(auto& r:runs) {
     const auto& c = profile->cues[r.cue];
@@ -1255,9 +1295,10 @@ void FaceRig::mix(uint64_t now, std::vector<float>& out) const {
   if(const float e = leakEnvelope(now); e>0)
     for(auto& [t,w]:profile->leaks[leakRun.leak].weights)
       out[t] += w*e;
-  // the brows of the voice, the same way, unless a brow gesture or a leak of the upper face has them
+  // the brows of the voice, the same way, unless a brow gesture or a leak of the upper face has them, or the face
+  // from the voice (its track moves the brows)
   if(profile->brows && !browRuns.empty()) {
-    const float quiet = browQuiet(now);
+    const float quiet = browQuiet(now)*(1.f-voiceK);
     for(auto& r:browRuns) {
       const float e = browEnvelope(r,now)*r.strength*quiet;
       if(e<=0)
@@ -1573,7 +1614,7 @@ void FaceRig::probe(Probe& p, uint64_t now) const {
   if(!p.valid)
     return;
   for(auto& s:slots) {
-    const float k = s.intensity*fade(s,now);
+    const float k = slotWeight(s,now);
     if(k<=0)
       continue;
     ++p.anims;
@@ -1612,9 +1653,18 @@ void FaceRig::probe(Probe& p, uint64_t now) const {
       std::snprintf(buf,sizeof(buf),"%slisten:%s %.2f",p.shown.empty() ? "" : " ",name,double(k));
       p.shown += buf;
       }
+  p.voice        = voiceK;
+  p.voiceEmotion = voiceEmo;
+  if(voiceK>0) {
+    char buf[64];
+    std::snprintf(buf,sizeof(buf),"%svoice%s %.2f",p.shown.empty() ? "" : " ",voiceEmo ? ":emotion" : "",double(voiceK));
+    p.shown += buf;
+    }
   for(auto w:applied)
     if(w>0)
       ++p.targets;
+  p.weights = applied;
+  p.head    = head;
   p.blendUs = blendUs;
   p.blends  = blends;
   }

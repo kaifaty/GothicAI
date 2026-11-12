@@ -19,6 +19,7 @@
 #include "graphics/mesh/talkgestures.h"
 #include "graphics/mesh/eyeblink.h"
 #include "graphics/mesh/facerig.h"
+#include "gltfmesh.h"
 #include "graphics/mesh/eyes.h"
 #include "graphics/mesh/lean.h"
 #include "graphics/mesh/pose.h"
@@ -36,6 +37,29 @@ using namespace Tempest;
 using namespace testbench_detail;
 
 namespace {
+
+// the weights of the watched one's own head as its deformation shows them, per row (face.csv: the lip gap of the face
+// from the voice is measured on them, reports/content/2026-11-hero-head/a2f/lip_gap_game.py)
+std::FILE* faceCsv = nullptr;
+
+void writeFaceWeights(const FaceRig::Probe& fr) {
+  if(!fr.valid || fr.head==nullptr || fr.weights.size()!=fr.head->targets.size())
+    return;
+  if(faceCsv==nullptr) {
+    faceCsv = std::fopen((outDir+"/face.csv").c_str(),"w");
+    if(faceCsv==nullptr)
+      return;
+    std::fprintf(faceCsv,"seg,frame,t_ms,vf_w,vf_emo");
+    for(auto& t:fr.head->targets)
+      std::fprintf(faceCsv,",%s",t.name.c_str());
+    std::fprintf(faceCsv,"\n");
+    }
+  std::fprintf(faceCsv,"%s,%llu,%llu,%.3f,%d",bench.recName.c_str(),(unsigned long long)bench.recFrame,
+               (unsigned long long)(bench.time-bench.recStart),double(fr.voice),int(fr.voiceEmotion));
+  for(auto w:fr.weights)
+    std::fprintf(faceCsv,",%.4f",double(w));
+  std::fprintf(faceCsv,"\n");
+  }
 
 // the faces a mood shows (the bridge's say.mood)
 struct FaceColumn { const char* column; const char* anim; };
@@ -75,7 +99,7 @@ void writeHeader() {
   for(auto* c:CueColumns)
     std::fprintf(bench.csv,",cue_%s",c);
   std::fprintf(bench.csv,",cue_leak");
-  std::fprintf(bench.csv,",lip_tone,br_w,br_acc,br_moves,ls_w,ls_nods,ls_faces");
+  std::fprintf(bench.csv,",lip_tone,br_w,br_acc,br_moves,ls_w,ls_nods,ls_faces,vf_w,vf_emo");
   std::fprintf(bench.csv,",f_on,f_bend,f_yaw,f_twist,f_head,f_hits,f_str,f_ht");
   std::fprintf(bench.csv,",hp_player,hp_subject");
   std::fprintf(bench.csv,",stamina_player,stamina_subject");
@@ -333,6 +357,9 @@ void finish() {
   if(bench.csv!=nullptr)
     std::fclose(bench.csv);
   bench.csv  = nullptr;
+  if(faceCsv!=nullptr)
+    std::fclose(faceCsv);
+  faceCsv = nullptr;
   if(bench.events!=nullptr)
     std::fclose(bench.events);
   bench.events = nullptr;
@@ -593,6 +620,9 @@ void writeRow(Npc& pl) {
   std::fprintf(bench.csv,",%.2f,%.3f,%u,%u",double(lp.tone),double(fr.brows),fr.accents,fr.browMoves);
   // the face of it listening as shown (listen_face, 0..1 of its apex), nods it saw, faces it answered them with
   std::fprintf(bench.csv,",%.3f,%u,%u",double(fr.listen),fr.listenNods,fr.listenFaces);
+  // the face from its voice (speech_face) as shown, 0..1, and whether its track was made with an emotion; its weights
+  std::fprintf(bench.csv,",%.3f,%d",double(fr.voice),int(fr.voiceEmotion));
+  writeFaceWeights(fr);
   // flinch of the watched one (or the hero)
   const auto& fl = bench.subject!=nullptr ? Flinch::subjectProbe : Flinch::playerProbe;
   std::fprintf(bench.csv,",%d,%.2f,%.1f,%.2f,%.2f,%u,%.2f,%.2f",int(fl.active),fl.bend,fl.bendYaw,fl.twist,fl.head,

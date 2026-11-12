@@ -5,6 +5,8 @@
 #include "graphics/mesh/facerig.h"
 #include "jsonread.h"
 
+#include <stdexcept>
+
 using namespace Tempest;
 
 void LineCues::readWords(const rapidjson::Value& msg, SpeechCues::Plan& plan) {
@@ -56,4 +58,17 @@ std::shared_ptr<SpeechCues::Plan> LineCues::read(const rapidjson::Value& msg, co
   plan->streamed = streamed;
   readWords(msg,*plan);
   return plan;
+  }
+
+std::shared_ptr<const SpeechFace::Track> LineCues::readFace(const rapidjson::Value& msg) {
+  const auto line = msg.IsObject() ? JsonRead::str(msg,"line") : std::string_view();
+  try {
+    if(line.empty())
+      throw std::runtime_error("no line");
+    return SpeechFace::Track::read(msg);
+    }
+  catch(const std::exception& e) {
+    Log::e("[ai] say_face: ",line.empty() ? std::string_view("?") : line,": ",e.what(),"; the line goes without its face track");
+    return nullptr;
+    }
   }
