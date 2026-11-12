@@ -347,7 +347,8 @@ def walk_vobs(vobs: list, out: list[Vob], source: str) -> None:
 
 def load_vobs(base: Path, world: str, content: Path | None = None) -> tuple[list[Vob], list[dict]]:
     """All vobs of the world with their children, after the content folder's vobs.json and vob layers. Returns the
-    vobs and one summary per applied layer file (name, added meshes, other additions, removed, moved, unknown ids)."""
+    vobs and one summary per layer file (name, added meshes, other additions, removed, moved; a file with an
+    unknown, removed or twice-used id is rejected whole, as the engine does, and lists why)."""
     path = base / 'worlds' / world / 'vobs.json'
     source = 'base'
     if content is not None and (content / 'worlds' / world / 'vobs.json').is_file():
@@ -362,25 +363,29 @@ def load_vobs(base: Path, world: str, content: Path | None = None) -> tuple[list
     removed: set[int] = set()
     for f in sorted(ldir.glob('*.json')):
         doc = json.loads(f.read_text())
-        row = {'file': f.name, 'meshes': 0, 'other_added': 0, 'removed': 0, 'moved': 0, 'unknown_ids': []}
+        row = {'file': f.name, 'meshes': 0, 'other_added': 0, 'removed': 0, 'moved': 0, 'rejected': []}
+        remove = list(doc.get('remove', []))
+        move = [m.get('id') for m in doc.get('move', [])]
+        # The engine applies a file whole or not at all (docs/asset-migration.md): only the ids are checked here.
+        for i in remove + move:
+            if i not in by_id or i in removed:
+                row['rejected'].append(f'unknown or removed id {i}')
+        row['rejected'] += [f'id {i} removed twice' for i in sorted({i for i in remove if remove.count(i) > 1})]
+        row['rejected'] += [f'id {i} removed and moved' for i in sorted(set(remove) & set(move))]
+        if row['rejected']:
+            layers.append(row)
+            continue
         for a in doc.get('add', []):
             if a.get('kind') == 'mesh':
                 vobs.append(Vob(None, str(a.get('visual', '')).upper(), tuple(a.get('position', (0, 0, 0))), f.name))
                 row['meshes'] += 1
             else:
                 row['other_added'] += 1
-        for i in doc.get('remove', []):
-            if i in by_id and i not in removed:
-                removed.add(i)
-                row['removed'] += 1
-            else:
-                row['unknown_ids'].append(i)
+        removed.update(remove)
+        row['removed'] = len(remove)
         for m in doc.get('move', []):
-            if m.get('id') in by_id and m['id'] not in removed:
-                by_id[m['id']].position = tuple(m.get('position', by_id[m['id']].position))
-                row['moved'] += 1
-            else:
-                row['unknown_ids'].append(m.get('id'))
+            by_id[m['id']].position = tuple(m.get('position', by_id[m['id']].position))
+        row['moved'] = len(move)
         layers.append(row)
     return [v for v in vobs if v.id is None or v.id not in removed], layers
 
@@ -659,9 +664,9 @@ def markdown(R: dict) -> str:
             out.append(f'Top meshes, {c}: ' + ', '.join(f'{n} ×{k} ({"n/a" if t is None else t})'
                                                         for n, k, t in r['top'][:6]) + '.\n')
     if o['layers']:
-        out.append(table(['vob layer', 'meshes added', 'other added', 'removed', 'moved', 'unknown ids'],
+        out.append(table(['vob layer', 'meshes added', 'other added', 'removed', 'moved', 'rejected whole because'],
                          [[L['file'], L['meshes'], L['other_added'], L['removed'], L['moved'],
-                           ', '.join(map(str, L['unknown_ids']))] for L in o['layers']]))
+                           '; '.join(L['rejected'])] for L in o['layers']]))
 
     out.append('## Texel density, ten largest ground materials\n')
     out.append('Texels per metre = sqrt(UV area × width × height / world area) per triangle over 0.05 m², '
@@ -689,6 +694,11 @@ def main(argv=None) -> int:
     where.add_argument('--rect', help='X0,Z0,X1,Z1 in chunk coordinates, inclusive')
     ap.add_argument('--cell', type=float, default=1.0, help='grid cell of the layer test, metres (default 1)')
     ap.add_argument('--out', type=Path, help='write <WORLD>_census.md and .json here')
+    argv = list(sys.argv[1:] if argv is None else argv)
+    for k, arg in enumerate(argv[:-1]):     # '--chunks -2_-3': argparse would take the value for an option
+        if arg in ('--chunks', '--rect'):
+            argv[k:k + 2] = [f'{arg}={argv[k + 1]}']
+            break
     a = ap.parse_args(argv)
     base = resolve_base(a.base)
     if not (base / 'worlds' / a.world / 'world.json').is_file():
