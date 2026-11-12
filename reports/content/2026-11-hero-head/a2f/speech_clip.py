@@ -137,7 +137,6 @@ def main():
                 continue
             sub = 'anger' if take is angry else 'neutral'
             sh, emo = track(next((tracks/sub).glob(f'{name}.face.json')))
-            row0 = r['rows'][ln['voiced'][0]] if ln['voiced'] else {}
             vf = [float(r['rows'][f]['vf_w']) for f in ln['voiced']]
             key.append(f'Реплика {i+1} ({ln["name"]}), прогон «{label}», {ln["frame"]/FPS:.2f} с'
                        + (' в прогоне' if take is angry else ''))
@@ -158,9 +157,8 @@ def main():
                                              'mouthFunnel', 'browInnerUp', 'browDownLeft')}
                 key.append(f'  {what}: {ms/1000:.2f} с звука, кадр прогона {f_on}'
                            + (f', было — кадр {f_off}' if f_off is not None else '')
-                           + '; ' + ', '.join(f'{s} {v:.2f}' for s, v in vals.items() if v >= 0.05))
+                           + '; веса дорожки до правил: ' + ', '.join(f'{s} {v:.2f}' for s, v in vals.items() if v >= 0.05))
                 shots.append((f'{i+1}{"*" if take is angry else ""}. {what}, {ms/1000:.2f} с', r, f_on, f_off))
-            del row0
             key.append('')
     key.append('* — прогон с дорожками anger:0.8.')
     key.append('')
@@ -182,9 +180,9 @@ def main():
         first = next(x for x in angry['lines'] if x['name'].upper() in ANGRY_LINES)
         cut(tmp/'angry.mp4', first['frame']/FPS, max(angry['rows'])/FPS, tmp/'angry-cut.mp4')
         (tmp/'list.txt').write_text(f"file '{tmp/'on.mp4'}'\nfile '{tmp/'angry-cut.mp4'}'\n")
-        subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'concat', '-safe', '0', '-i', str(tmp/'list.txt'),
-                        '-c:v', 'libx264', '-crf', '18', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '192k',
-                        str(out/'clip.mp4')], check=True)
+        subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'concat', '-safe', '0', '-i', str(tmp/'list.txt'), '-c:v',
+                        'libx264', '-crf', '18', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '192k', str(out/'clip.mp4')],
+                       check=True)
 
         tiles = []
         for label, r, f_on, f_off in shots:
