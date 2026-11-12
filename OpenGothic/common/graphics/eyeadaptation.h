@@ -14,7 +14,7 @@
 //  - the measure: the geometric mean of the luminance of the frame before the tone curve, without the sky (by the
 //    depth), over a grid of 128x72 bilinear taps (eye_meter.comp), read back a frame slot later;
 //  - the key: the level of the frame of an open place at this time of day, in EV from the grey 0.18: the market at
-//    noon by day, an open street at night; between them by the night's share of the scene's exposure
+//    noon by day, an open field without lamps at night; between them by the night's share of the scene's exposure
 //    (sky_exposure.comp: 1/(lum*1.25 + 1.5), the 1.5 holds the night);
 //  - only up: 2^(key - measure), at least 1 and at most 2^MaxEv; up (into the dark) at UpEvPerS, down (into the
 //    light) at DownEvPerS of the world's time;
@@ -29,10 +29,10 @@ class EyeAdaptation final {
 
     // EV: market-day at noon under GI after the fog's veil went (-2.98; -2.9 with the veil, step-2-shade.md З1)
     static constexpr float KeyDay     = -3.0f;
-    // EV: the open streets at night under GI, E1: harbour-night-1 -4.57, harbour-night-2 -4.50, the yard of Onar's
-    // farm -4.40. The cave at night (-6.9) gets +2.4 with it, the intent expected at most +1: the night's key awaits
-    // the user's decision (step-2-shade.md, «Привыкание глаза: сделано», Э1)
-    static constexpr float KeyNight   = -4.5f;
+    // EV: an open place without lamps at night under GI, the light of the time of day and not of lamps, as by day
+    // (the lead's decision 12.11.2026, Н1): the fields of Lobart and Onar at 23:00, -6.35 and -6.88. The open streets
+    // (-4.5, lit by lamp posts) lifted the cave at night by 2.4 stops (step-2-shade.md, Э1)
+    static constexpr float KeyNight   = -6.6f;
     static constexpr float MaxEv      = 2.5f;  // the ceiling: the cave's 2.1 of the decomposition, up to half a stop
     static constexpr float UpEvPerS   = 1.f;   // into the dark: UE's default
     static constexpr float DownEvPerS = 3.f;   // into the light: UE's default
