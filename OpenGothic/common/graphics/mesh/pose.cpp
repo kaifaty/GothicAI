@@ -319,6 +319,7 @@ void Pose::setSkeleton(const Skeleton* sk) {
   aim.setSkeleton(skeleton);
   walk.setSkeleton(skeleton);
   bowDraw.setSkeleton(skeleton);
+  qhand.setSkeleton(skeleton);
   flinch.setSkeleton(skeleton);
   trY          = skeleton==nullptr ? 0.f : skeleton->rootTr.y;
   needToUpdate = true;
@@ -645,6 +646,7 @@ void Pose::mkSkeleton(const Tempest::Matrix4x4& mt, float ikFloorY) {
   aim.apply(tr,numBones,Vec3(mt.at(3,0),mt.at(3,1),mt.at(3,2)),
             Vec3(mt.at(2,0),0,mt.at(2,2)));
   bowDraw.apply(tr,numBones);
+  qhand.apply(tr,numBones);
   gaze.apply(tr,numBones);
   flinch.apply(tr,numBones);
   if(!physical.empty())
@@ -1645,6 +1647,13 @@ bool Pose::updateBowDraw(const BowDraw::Input& input) {
     in.grabKnown = animRelative(BowDraw::ReloadAnim,BowDraw::GrabAt,chest,hand,in.grabHand) &&
                    animRelative(BowDraw::ReloadAnim,BowDraw::GrabAt,chest,elbow,in.grabElbow);
   if(!bowDraw.update(in))
+    return false;
+  mkSkeleton(pos);
+  return true;
+  }
+
+bool Pose::updateQuiverHand(const QuiverHand::Input& in) {
+  if(!qhand.update(in))
     return false;
   mkSkeleton(pos);
   return true;

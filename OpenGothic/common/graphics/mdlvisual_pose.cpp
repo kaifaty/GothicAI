@@ -265,6 +265,21 @@ bool MdlVisual::updateAim(Npc& npc, uint64_t dt) {
     bd.reload = p>=0.f ? p : (ar.isNocking() ? 1.f : 0.f);
     }
   changed  |= pose.updateBowDraw(bd);
+  // the right hand on the quiver while it slides along the belt (reports/archery/2026-11-12-quiver-to-hand)
+  {
+    QuiverHand::Input qh;
+    if(quiverHand>0.f && quiv.isShown() && skeleton!=nullptr && quiv.bone()<skInst->boneCount()) {
+      const size_t sp = quiv.spineBone()<skInst->boneCount() ? quiv.spineBone() : quiv.bone();
+      auto pelvisInv = renderedBone(quiv.bone());
+      pelvisInv.inverse();
+      Tempest::Matrix4x4 at;
+      at.identity();
+      at.translate(Tempest::Vec3(0,-Quiver::GripDown,Quiver::MouthRadius+Quiver::GripOff));
+      qh.weight = quiverHand;
+      qh.grip   = pelvisInv*quiv.frameNow(renderedBone(quiv.bone()),renderedBone(sp))*at;
+      }
+    changed |= pose.updateQuiverHand(qh);
+  }
   // the string as drawn by hand: straight back as far as the bow is held so, else as G2 draws it
   const float string = pose.bowDrawIk().string();
   const float held   = pose.bowDrawIk().aligned();

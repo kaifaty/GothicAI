@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <string_view>
 
+#include "ikmath.h"
 #include "protomesh.h"
 #include "skeleton.h"
 
@@ -215,7 +216,38 @@ std::vector<bool> Quiver::armBones(const Skeleton& sk) {
   return bonesNamed(sk,{"CLAVICLE","UPPERARM","FOREARM","HAND","FINGER","HEAD","NECK","ZS_"});
   }
 
+namespace {
+Quiver::Fit fitAt(const Skeleton& sk, const std::vector<Quiver::SkinPoint>& bind, const Quiver::Place& pl);
+}
+
 Quiver::Fit Quiver::fit(const Skeleton& sk, const std::vector<SkinPoint>& bind) {
+  // the probe's place (the bench) stands for both; else behind the side, and by it with the bow drawn
+  const Place walk = place.on ? place : Place();
+  Fit f = fitAt(sk,bind,walk);
+  if(!f.valid)
+    return f;
+  Place bow = walk;
+  if(!place.on)
+    bow.around = BowAround;
+  const Fit b = fitAt(sk,bind,bow);
+  f.bowLocal   = b.valid ? b.local : f.local;
+  f.bowOut     = b.valid ? b.out : f.out;
+  f.bowOutward = b.valid ? b.outward : f.outward;
+  return f;
+  }
+
+Quiver::Fit Quiver::bowPlace(const Fit& f) {
+  Fit b = f;
+  b.local   = f.bowLocal;
+  b.out     = f.bowOut;
+  b.outward = f.bowOutward;
+  return b;
+  }
+
+namespace {
+Quiver::Fit fitAt(const Skeleton& sk, const std::vector<Quiver::SkinPoint>& bind, const Quiver::Place& pl) {
+  using Fit = Quiver::Fit;
+  using Q   = Quiver;
   Fit f;
   f.pelvis = sk.findNode("BIP01 PELVIS");
   if(f.pelvis==size_t(-1) || bind.empty())
@@ -231,11 +263,10 @@ Quiver::Fit Quiver::fit(const Skeleton& sk, const std::vector<SkinPoint>& bind) 
   if(foot!=size_t(-1) && toe!=size_t(-1) && translation(sk.tr[toe]).z<translation(sk.tr[foot]).z)
     fwd = {0,0,-1};
 
-  const auto arm = armBones(sk);
+  const auto arm = Q::armBones(sk);
   float floor = bind[0].pos.y;
   for(auto& p:bind)
     floor = std::min(floor,p.pos.y);
-  const Place pl     = place.on ? place : Place();
   const Vec3  side   = right;
   const float ar     = pl.around*float(M_PI)/180.f;
   right = right*std::cos(ar) - fwd*std::sin(ar); // the push: to the right side, or behind it (the probe)
@@ -260,12 +291,12 @@ Quiver::Fit Quiver::fit(const Skeleton& sk, const std::vector<SkinPoint>& bind) 
       const Vec3  w0 = p.pos-mouth0;
       const float t0 = Vec3::dotProduct(w0,down);
       const float t  = t0 - s*rd;
-      if(t<-Clearance || t>Length+Clearance)
+      if(t<-Q::Clearance || t>Q::Length+Q::Clearance)
         continue;
       const Vec3  wp = w0 - down*t0;
       const float a  = Vec3::dotProduct(wp,rh);
       const float b  = (wp - rh*a).length();
-      const float r  = radiusAt(t) + Clearance;
+      const float r  = radiusAt(t) + Q::Clearance;
       if(b>=r)
         continue;
       need = std::max(need,(a + std::sqrt(r*r - b*b))/rl);
@@ -294,6 +325,7 @@ Quiver::Fit Quiver::fit(const Skeleton& sk, const std::vector<SkinPoint>& bind) 
                      b.at(0,2)*o.x+b.at(1,2)*o.y+b.at(2,2)*o.z);
   }
   f.fwd   = fwd;
+  f.up    = Vec3::normalize(turned(inv,up));
   f.spine = sk.findNode("BIP01 SPINE1");
   f.pelvisBind = inv;
   if(f.spine!=size_t(-1)) {
@@ -303,6 +335,7 @@ Quiver::Fit Quiver::fit(const Skeleton& sk, const std::vector<SkinPoint>& bind) 
   f.valid = true;
   return f;
   }
+}
 
 std::vector<Matrix4x4> Quiver::arrowLayout(const ProtoMesh* arrow, int count) {
   std::vector<Matrix4x4> ret;
@@ -392,9 +425,33 @@ float Quiver::twistOf(const Matrix4x4& pelvis, const Matrix4x4& spine) const {
   return std::atan2(Vec3::dotProduct(Vec3::crossProduct(fp,fs),Vec3(0,1,0)),Vec3::dotProduct(fp,fs));
   }
 
+Matrix4x4 Quiver::localNow() const {
+  if(slide<=0.f)
+    return fitted.local;
+  if(slide>=1.f)
+    return fitted.bowLocal;
+  // the ring along the belt: round the body's vertical through the pelvis bone, its height and its push between;
+  // the tube's turn between
+  const Vec3  u  = fitted.up;
+  const Vec3  p0 = translation(fitted.local), p1 = translation(fitted.bowLocal);
+  const float h0 = Vec3::dotProduct(p0,u), h1 = Vec3::dotProduct(p1,u);
+  const Vec3  r0 = p0-u*h0, r1 = p1-u*h1;
+  const float l0 = r0.length(), l1 = r1.length();
+  Vec3 at = p0 + (p1-p0)*slide;
+  if(l0>1e-3f && l1>1e-3f) {
+    const Vec3  d0  = r0/l0, d1 = r1/l1;
+    const float ang = std::atan2(Vec3::dotProduct(Vec3::crossProduct(d0,d1),u),Vec3::dotProduct(d0,d1));
+    const Vec3  d   = IkMath::mul(IkMath::axisAngle(u,ang*slide),d0);
+    at = u*(h0+(h1-h0)*slide) + d*(l0+(l1-l0)*slide);
+    }
+  const IkMath::Quat q = IkMath::slerp(IkMath::toQuat(IkMath::rotationOf(fitted.local)),
+                                       IkMath::toQuat(IkMath::rotationOf(fitted.bowLocal)),slide);
+  return IkMath::compose(IkMath::toMat3(q),at);
+  }
+
 Matrix4x4 Quiver::restFrame(const Matrix4x4& pelvis, const Matrix4x4& spine) const {
   (void)spine;
-  Matrix4x4 frame = pelvis*fitted.local;
+  Matrix4x4 frame = pelvis*localNow();
   if(yawOffset==0.f)
     return frame;
   // turned about the vertical through the ring by half the gait's turn of the pelvis against SPINE1 (step)
@@ -413,8 +470,9 @@ Matrix4x4 Quiver::frameNow(const Matrix4x4& pelvis, const Matrix4x4& spine) cons
   }
 
 Matrix4x4 Quiver::reloadFrame() const {
-  Matrix4x4 m = fitted.local;
-  const Vec3 back = fitted.outward*(ReloadOut-fitted.out);
+  // the reload is with the bow drawn: the quiver by the side
+  Matrix4x4 m = fitted.bowLocal;
+  const Vec3 back = fitted.bowOutward*(ReloadOut-fitted.bowOut);
   m.set(3,0,m.at(3,0)+back.x);
   m.set(3,1,m.at(3,1)+back.y);
   m.set(3,2,m.at(3,2)+back.z);
@@ -467,8 +525,9 @@ Quiver::Probe Quiver::probe(const Matrix4x4& pelvis, const Matrix4x4& spine, con
   if(!p.on)
     return p;
   p.arrows = int(arrows.size());
-  p.mouth  = translation(fitted.local);
-  p.out    = fitted.out;
+  p.mouth  = translation(localNow());
+  p.out    = fitted.out + (fitted.bowOut-fitted.out)*slide;
+  p.slide  = slide;
   const auto rest = restFrame(pelvis,spine);
   auto inv = rest*swingMatrix();
   inv.inverse();

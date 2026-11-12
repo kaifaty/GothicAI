@@ -368,8 +368,13 @@ def hermite(p0, p1, m0, m1, s):
     return h00 * p0 + h10 * m0 + h01 * p1 + h11 * m1
 
 
-def slerp_m(a: np.ndarray, b: np.ndarray, t: float) -> np.ndarray:
-    return ga.quat_matrix(rs.slerp(rs.mat_to_quat(a), rs.mat_to_quat(b), t))
+def slerp_v(a: np.ndarray, b: np.ndarray, t: float) -> np.ndarray:
+    """Unit vectors a to b along the shortest arc."""
+    a, b = unit(a), unit(b)
+    ang = float(np.arccos(np.clip(np.dot(a, b), -1, 1)))
+    if ang < 1e-5:
+        return a
+    return unit((np.sin((1 - t) * ang) * a + np.sin(t * ang) * b) / np.sin(ang))
 
 
 def grip_frame(st: Stance, grip: np.ndarray, d: np.ndarray, roll: float, ref: np.ndarray) -> np.ndarray:
@@ -449,8 +454,8 @@ def build(st: Stance, lv: dict, spec: dict, name: str) -> tuple[ga.Animation, di
         else:
             grip = hermite(pts[j], pts[j + 1], tang[j] * h, tang[j + 1] * h, s)
         se = smooth(s)
-        d = -slerp_m(grip_frame(st, pts[j], dirs[j], 0.0, ref_y)[:3, :3],
-                     grip_frame(st, pts[j + 1], dirs[j + 1], 0.0, ref_y)[:3, :3], se)[:, 0]
+        # the arrow's direction along the shortest arc (the hand's roll round it is chosen below)
+        d = slerp_v(dirs[j], dirs[j + 1], se)
         g = keys[j].get("grip", 3.0) + (keys[j + 1].get("grip", 3.0) - keys[j].get("grip", 3.0)) * se
         pole = unit(unit(keys[j]["elbow"]) * (1 - se) + unit(keys[j + 1]["elbow"]) * se)
         if p < ramp_in[1]:

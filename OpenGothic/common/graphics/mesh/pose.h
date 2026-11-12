@@ -14,6 +14,7 @@
 #include "aim.h"
 #include "aimwalk.h"
 #include "bowdraw.h"
+#include "quiverhand.h"
 #include "flinch.h"
 #include "resources.h"
 
@@ -127,6 +128,8 @@ class Pose final {
     AimWalk&           aimWalk() { return walk; }
     bool               updateAimWalk(const AimWalk::Input& in);
     bool               updateBowDraw(const BowDraw::Input& in);
+    const QuiverHand&  quiverHandIk() const { return qhand; }
+    bool               updateQuiverHand(const QuiverHand::Input& in);
     Flinch&            flinchIk() { return flinch; }
     bool               updateFlinch(const Flinch::Input& in);
     bool               updateLean(const Lean::Input& in);
@@ -304,6 +307,7 @@ class Pose final {
     Aim                             aim;
     AimWalk                         walk;
     BowDraw                         bowDraw;
+    QuiverHand                      qhand;
     Flinch                          flinch;
 
     std::vector<Tempest::Matrix4x4> physical;

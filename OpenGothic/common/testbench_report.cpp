@@ -82,7 +82,7 @@ void writeHeader() {
   std::fprintf(bench.csv,",mr_w,mr_dev,mr_hits,physics_ms");
   // the watched one's quiver (graphics/mesh/quiver): cm the armour and the legs go into it, the arrows shown,
   // the mouth in the pelvis bone's frame, how far out it was pushed, the arrows over the mouth and the bottom
-  std::fprintf(bench.csv,",qv_on,qv_arrows,qv_armor,qv_leg,qv_arm,qv_mx,qv_my,qv_mz,qv_out,qv_top,qv_bottom,qv_swing,qv_back,qv_outward,qv_us,qv_twist,qv_bow,qv_2h,qv_blade,qv_yield,qv_legt,qv_legl,qv_gnd,qv_gndm,qv_gmode,qv_gon,qv_botup,qv_gndt,qv_need,qv_needb,qv_needo,qv_needbody,qv_trunk,qv_clear,qv_rays,qv_rayus,qv_cpu,qv_ax,qv_ay,qv_az,qv_fletch,qv_line,qv_drawout,qv_lift,qv_thand,qv_tfore,qv_tarrow");
+  std::fprintf(bench.csv,",qv_on,qv_arrows,qv_armor,qv_leg,qv_arm,qv_mx,qv_my,qv_mz,qv_out,qv_top,qv_bottom,qv_swing,qv_back,qv_outward,qv_us,qv_twist,qv_bow,qv_2h,qv_blade,qv_yield,qv_legt,qv_legl,qv_gnd,qv_gndm,qv_gmode,qv_gon,qv_botup,qv_gndt,qv_need,qv_needb,qv_needo,qv_needbody,qv_trunk,qv_clear,qv_rays,qv_rayus,qv_cpu,qv_ax,qv_ay,qv_az,qv_fletch,qv_line,qv_drawout,qv_lift,qv_thand,qv_tfore,qv_tarrow,qv_slide,qv_hand,qv_handmiss");
   if(ragdollTrace)
     std::fprintf(bench.csv,",ph_ms,ph_bodies,ph_rays,rd_mode,rd_weight,rd_sleep");
   if(bench.routine.questTrace)
@@ -639,8 +639,8 @@ void writeRow(Npc& pl) {
     std::fprintf(bench.csv,",%.2f,%.1f,%d,%.1f,%.1f",q.trunk,double(qs.quiverClearance()),qs.quiverRays(),
                  double(qs.quiverRayUs()),double(qs.quiverCpuUs()));
     std::fprintf(bench.csv,",%.5f,%.5f,%.5f",q.axis.x,q.axis.y,q.axis.z);
-    std::fprintf(bench.csv,",%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f",q.fletch,q.line,q.drawOut,q.lift,q.trunkHand,q.trunkFore,
-                 q.trunkArrow);
+    std::fprintf(bench.csv,",%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.3f,%.3f,%.2f",q.fletch,q.line,q.drawOut,q.lift,q.trunkHand,
+                 q.trunkFore,q.trunkArrow,q.slide,q.hand,q.handMiss);
   }
   if(ragdollTrace)
     writeRagdoll(pl);

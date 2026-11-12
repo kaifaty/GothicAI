@@ -30,6 +30,19 @@ class Quiver final {
     static constexpr float MouthRadius  = 5.75f; // cm, outer: the mouth 11.5 cm across
     static constexpr float BottomRadius = 4.75f;
     static constexpr float Around       = 50.f;  // deg from the right side toward the back (research/sweep_armour.json)
+    // the bow drawn (reports/archery/2026-11-12-quiver-to-hand, the user's choice 2026-11-12): the right hand slides
+    // it along the belt to the right side, under the hand, while the left takes the bow; back when it is put away
+    static constexpr float BowAround    = 0.f;   // deg: by the right side (the drawn arrow's line clear of the shoulder)
+    static constexpr float SlideTime    = 0.35f; // s: the slide when no drawing or putting away plays (a jump of state)
+    // the shares of T_MOVE_2_BOWMOVE the right hand waits by the hip in (G2's frames 0-10 of 18) and of
+    // T_BOWMOVE_2_MOVE (the same played back): the hand takes the quiver in HandShare, slides it, lets it go in
+    // HandShare (QuiverHand)
+    static constexpr float HandShare      = 0.15f;
+    static constexpr float DrawSlideFrom  = 0.15f, DrawSlideTo  = 0.45f;
+    static constexpr float SheathSlideFrom= 0.6f,  SheathSlideTo= 0.85f;
+    // where the palm takes it: on the tube's front under the mouth, in the quiver's frame (QuiverHand)
+    static constexpr float GripDown       = 6.f;   // cm under the mouth
+    static constexpr float GripOff        = 2.5f;  // cm off the tube's side
     static constexpr float MinOut       = 20.5f; // cm the mouth's centre is out of the body's axis at least
     static constexpr float MouthHeight  = 105.f; // cm above the soles in the bind pose
     static constexpr float MouthBack    = 0.f;   // cm behind the body's axis before the push
@@ -77,8 +90,8 @@ class Quiver final {
     static constexpr float TrunkNear    = 10.f;  // cm: a point farther than that from the trunk's nearest point is out
     // the reload's clips draw the arrow out along this line (the light leather armour, the aim of talent 0): the turn
     // from the rest by its angle across (x, z: radians toward that way, the rest frame)
-    static constexpr float ReloadTurnX  = -0.045f;
-    static constexpr float ReloadTurnZ  = 0.346f;
+    static constexpr float ReloadTurnX  = 0.f;  // by the side (BowAround) the line is clear: along the tube as it hangs
+    static constexpr float ReloadTurnZ  = 0.f;
     static bool  liftOn; // the bench (`quiver lift on|off`): off, as before the lift
 
     static bool enabled();
@@ -128,9 +141,16 @@ class Quiver final {
       Tempest::Vec3      fwd = {0,0,1};          // the body's forward in the bind pose
       float              out = 0;
       Tempest::Vec3      outward = {1,0,0};      // the way the ring is pushed out, in the pelvis bone's frame
+      // the place with the bow drawn (BowAround), fitted the same way
+      Tempest::Matrix4x4 bowLocal;
+      float              bowOut = 0;
+      Tempest::Vec3      bowOutward = {1,0,0};
+      Tempest::Vec3      up = {0,1,0};           // the body's vertical in the pelvis bone's frame (the belt's axis)
       };
     // only the ring is pushed out, by the armour standing (the bind pose); the swing gets out of the legs' way
     static Fit fit(const Skeleton& sk, const std::vector<SkinPoint>& bind);
+    // the fit with the bow's place as its own (the points near it: nearPoints and the rest take Fit::local)
+    static Fit bowPlace(const Fit& f);
     // which of the armour's points can reach the quiver as it swings (the flaps, the legs): by their place
     // in the bind pose round the quiver at rest
     // (not the arms: the capsules; a robe's sleeves do not push it); leg: the point follows the right leg
@@ -178,7 +198,7 @@ class Quiver final {
     // the reload from the quiver (OPENGOTHIC_QUIVERRELOAD, BowDraw): its clips take the arrow out of the quiver at
     // rest pushed ReloadOut cm out (the light leather armour), in the pelvis bone's frame; the hand is led from
     // there to the quiver as it hangs (frameNow)
-    static constexpr float ReloadOut = 21.f;
+    static constexpr float ReloadOut = 27.8f; // the light leather by the side (BowAround), as fit pushes it
     Tempest::Matrix4x4 reloadFrame() const;
     // the quiver at rest in the world: on the pelvis, turned about the vertical halfway to SPINE1
     Tempest::Matrix4x4 restFrame(const Tempest::Matrix4x4& pelvis, const Tempest::Matrix4x4& spine) const;
@@ -219,6 +239,12 @@ class Quiver final {
     void         sync(const Tempest::Matrix4x4& pelvis, const Tempest::Matrix4x4& spine);
     float        setTextureOwner(const Tempest::Vec3& position, bool spatial);
 
+    // where it hangs on the belt: 0 behind the side (Around), 1 by the side (BowAround), between along the belt
+    void         setSlide(float s) { slide = std::min(std::max(s,0.f),1.f); }
+    float        slideNow() const { return slide; }
+    // the place in the pelvis bone's frame as slid now
+    Tempest::Matrix4x4 localNow() const;
+
     // the arrows the reload has taken out and holds (shown one less each): the next task's hook
     int          taken() const { return takenOut; }
     void         setTaken(int n) { takenOut = n; }
@@ -237,6 +263,8 @@ class Quiver final {
       float         blade = 0;            // cm an arrow comes out of the tube's wall
       float         yield = 0;            // deg the target gives way to the obstacles
       Tempest::Vec3 axis = {0,-1,0};      // the bottom's way in the rest frame
+      float         slide = 0;            // 0 behind the side, 1 by it (the bow drawn)
+      float         hand = 0, handMiss = -1; // the right hand on it as it slides (QuiverHand): weight, cm off the grip
       float         legAt = 0;            // cm down the axis where the leg goes in the deepest
       float         legLeft = 0;          // cm the left leg goes in
       float         trunk = 0;            // cm the points of the pelvis and the spine (the trunk, the buttock, the
@@ -312,6 +340,7 @@ class Quiver final {
     Tempest::Matrix4x4              lastPelvis;
     // the pelvis's turn against SPINE1 (rad): now, slowly followed; the rest turns by half their difference
     float                           twistNow = 0, twistSlow = 0, yawOffset = 0;
+    float                           slide = 0; // 0 behind the side, 1 by it (setSlide)
     float                           twistOf(const Tempest::Matrix4x4& pelvis, const Tempest::Matrix4x4& spine) const;
 
     Tempest::Matrix4x4              swingMatrix() const;

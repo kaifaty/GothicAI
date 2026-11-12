@@ -169,9 +169,23 @@ void MdlVisual::setQuiver(const Quiver::State& st, MeshObjects::Mesh&& body, std
     std::vector<Quiver::SkinPoint> bind;
     quiverPoints(true,bind);
     fit = Quiver::fit(*skeleton,bind);
+    // the points near it behind the side and by it (the bow drawn): both, once each
+    const Quiver::Fit bowFit = Quiver::bowPlace(fit);
+    std::vector<size_t>  nearB, aboveB;
+    std::vector<uint8_t> nearLegB;
     Quiver::nearPoints(fit,*skeleton,bind,near,nearLeg);
+    Quiver::nearPoints(bowFit,*skeleton,bind,nearB,nearLegB);
+    for(size_t i=0; i<nearB.size(); ++i)
+      if(std::find(near.begin(),near.end(),nearB[i])==near.end()) {
+        near.push_back(nearB[i]);
+        nearLeg.push_back(i<nearLegB.size() ? nearLegB[i] : 0);
+        }
     Quiver::widePoints(fit,*skeleton,bind,near,wide);
     Quiver::abovePoints(fit,*skeleton,bind,above);
+    Quiver::abovePoints(bowFit,*skeleton,bind,aboveB);
+    for(auto id:aboveB)
+      if(std::find(above.begin(),above.end(),id)==above.end())
+        above.push_back(id);
     quiverGround = QuiverGround();
     }
   quiv.set(st,fit,std::move(body),std::move(arrows),std::move(arrowLocal));
@@ -254,6 +268,40 @@ static double threadCpuUs(bool on) {
 bool MdlVisual::updateQuiver(const Npc& npc, uint64_t dt) {
   if(!quiv.isShown() || skeleton==nullptr || quiv.bone()>=skInst->boneCount())
     return false;
+  // the place on the belt (reports/archery/2026-11-12-quiver-to-hand): by the side while the bow is drawn. The right
+  // hand slides it there while the left takes the bow off the back (the drawing's frames with the right hand by the
+  // hip), and back while it is put away; else it goes there in SlideTime
+  {
+    const auto  win = [](float p, float a, float b) {
+      const float x = std::clamp((p-a)/(b-a),0.f,1.f);
+      return x*x*(3.f-2.f*x);
+      };
+    float drawP  = npc.animProgress("T_MOVE_2_BOWMOVE");
+    if(drawP<0.f)
+      drawP = npc.animProgress("T_BOW_2_BOWRUN");
+    float sheathP = npc.animProgress("T_BOWMOVE_2_MOVE");
+    if(sheathP<0.f)
+      sheathP = npc.animProgress("T_BOWRUN_2_BOW");
+    float s = quiv.slideNow();
+    quiverHand = 0;
+    if(drawP>=0.f) {
+      s = std::max(s,win(drawP,Quiver::DrawSlideFrom,Quiver::DrawSlideTo));
+      if(s<1.f || drawP<Quiver::DrawSlideTo+Quiver::HandShare)
+        quiverHand = win(drawP,Quiver::DrawSlideFrom-Quiver::HandShare,Quiver::DrawSlideFrom)*
+                     (1.f-win(drawP,Quiver::DrawSlideTo,Quiver::DrawSlideTo+Quiver::HandShare));
+      }
+    else if(sheathP>=0.f) {
+      s = std::min(s,1.f-win(sheathP,Quiver::SheathSlideFrom,Quiver::SheathSlideTo));
+      quiverHand = win(sheathP,Quiver::SheathSlideFrom-Quiver::HandShare,Quiver::SheathSlideFrom)*
+                   (1.f-win(sheathP,Quiver::SheathSlideTo,Quiver::SheathSlideTo+Quiver::HandShare));
+      }
+    else {
+      const float target = npc.weaponState()==WeaponState::Bow ? 1.f : 0.f;
+      const float step   = float(dt)*0.001f/Quiver::SlideTime;
+      s = target>s ? std::min(target,s+step) : std::max(target,s-step);
+      }
+    quiv.setSlide(s);
+  }
   // far or not drawn: at rest, not computed
   const auto* cam = GameServices::inst().camera();
   const Vec3  at  = npc.position();
@@ -549,9 +597,13 @@ Quiver::Probe MdlVisual::quiverProbe() const {
     trunk[i]    = name=="BIP01" || name.find("PELVIS")!=std::string::npos || name.find("SPINE")!=std::string::npos;
     }
   const size_t spine = quiv.spineBone()<skInst->boneCount() ? quiv.spineBone() : quiv.bone();
-  return quiv.probe(renderedBone(quiv.bone()),renderedBone(spine),posed,Quiver::legBones(*skeleton),
+  auto pr = quiv.probe(renderedBone(quiv.bone()),renderedBone(spine),posed,Quiver::legBones(*skeleton),
                     Quiver::armBones(*skeleton),carriedPoints(bow,"ZS_BOW"),carriedPoints(sword,"ZS_LONGSWORD"),
                     leftSide,trunk);
+  // the right hand on it as it slides (QuiverHand)
+  pr.hand     = pose().quiverHandIk().weight();
+  pr.handMiss = pose().quiverHandIk().miss();
+  return pr;
   }
 
 std::vector<Tempest::Vec3> MdlVisual::quiverSurface(int rings, int around) const {
