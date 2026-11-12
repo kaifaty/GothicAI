@@ -1,7 +1,7 @@
 #include "animationsolver.h"
 
 #include "world/objects/interactive.h"
-#include "game/serialize.h"
+#include "savearchive.h"
 #include "utils/fileext.h"
 #include "skeleton.h"
 #include "pose.h"
@@ -13,14 +13,14 @@ using namespace Tempest;
 AnimationSolver::AnimationSolver() {
   }
 
-void AnimationSolver::save(Serialize &fout) const {
+void AnimationSolver::save(SaveArchive &fout) const {
   fout.write(uint32_t(overlay.size()));
   for(auto& i:overlay){
     fout.write(i.skeleton->name(),i.time);
     }
   }
 
-void AnimationSolver::load(Serialize &fin) {
+void AnimationSolver::load(SaveArchive &fin) {
   uint32_t sz=0;
   std::string s;
 
