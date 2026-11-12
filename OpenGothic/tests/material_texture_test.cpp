@@ -9,9 +9,11 @@
 #include "graphics/sceneglobals.h"
 #include "graphics/shaders.h"
 #include "graphics/mesh/texeldensity.h"
+#include "graphics/texturelookahead.h"
 #include "graphics/texturescreendemand.h"
 #include "resources.h"
 #include "texturebudget.h"
+#include "textureflow.h"
 #include "texturelevels.h"
 #include "world/chunkresidency.h"
 
@@ -821,6 +823,7 @@ void textureMipResidency(Tempest::Device& device, const Fixture& fixture) {
           "Far initial loads must upload the DDS tail for every material map");
   require(noTail.tex!=nullptr && noTail.tex->w()==256,
           "a single-level DDS must remain Full in a Far loading scope");
+  require(Resources::textureLookAhead()==0,"the ring rule must not look ahead");
   Resources::textureDemand(material,Resources::TextureCategory::Static,true,4);
   Resources::textureDemand(noTail,Resources::TextureCategory::Static,true,4);
 
@@ -1172,6 +1175,126 @@ void textureLevelMaths() {
           "an owner must be evaluated from the nearer of the camera and the hero, due after its margin");
   }
 
+// Step 4 (textureflow.h, texturelookahead.h): the loads' slots and bytes in flight, the publications' budget, the
+// distributions; the look-ahead's horizon from the latency, the distance to the view's path, the velocity and a jump.
+void textureFlowMaths() {
+  using namespace TextureFlow;
+  constexpr uint64_t MiB=1048576;
+  Limits limits;
+  limits.loads=4;
+  limits.bytes=64*MiB;
+  require(admits(0,0,100*MiB,limits),"one load must always start, however large");
+  require(admits(3,30*MiB,20*MiB,limits) && !admits(3,30*MiB,40*MiB,limits) && !admits(4,0,1,limits),
+          "more loads must start only within the slots and within the bytes in flight");
+  require(publishes(0,5.0,limits) && publishes(1,0.05,limits) && !publishes(1,0.1,limits),
+          "a frame must publish one ready load at least, more only within its budget");
+  require(state(false,true,Phase::Ready)==Waiting && state(true,true,Phase::Reading)==Stale &&
+          state(true,false,Phase::Queued)==Reading && state(true,false,Phase::Done)==Uploading &&
+          state(true,false,Phase::Ready)==Publishing,"a short texture's state must follow its load");
+
+  Histogram times;
+  for(int i=1;i<=10;++i)
+    times.add(10.0*i);
+  const Histogram before=times;
+  times.add(1000);
+  // the 5th of 10 is 50 ms, in the bucket up to 2^(46/8) = 53.8 ms
+  require(times.quantile(0.5,before)==1000 && times.max(before)==1000 && times.count(before)==1 &&
+          before.quantile(0.5)>=50 && before.quantile(0.5)<=54 && before.max()==100 && Histogram().quantile(0.5)<0,
+          "a distribution must give quantiles within an eighth of an octave and the exact largest time since a copy");
+  Bursts bursts;
+  const auto t0=Clock::time_point()+std::chrono::seconds(100);
+  for(const int ms:{0,100,500})
+    bursts.add(t0+std::chrono::milliseconds(ms));
+  bursts.add(t0+std::chrono::milliseconds(1200));
+  bursts.tick(t0+std::chrono::milliseconds(2500));
+  require(bursts.count()==2 && bursts.max()==3 && bursts.quantile(0.5)==1 && bursts.quantile(1)==3,
+          "textures that become short within a second of the first must count as one burst");
+
+  using namespace TextureLookAhead;
+  require(horizon(10,WindowSamples-1)==DefaultHorizon && std::abs(horizon(10.5,WindowSamples)-0.021)<1e-12 &&
+          horizon(400,WindowSamples)==MaxHorizon,
+          "the horizon must be twice the p90 of a full window of latencies, at most the cap");
+
+  // a box 10 m ahead along x, 2 m wide; the view at the origin
+  const Tempest::Vec3 lo{1000,-100,-100}, hi{1200,100,100}, origin{0,0,0};
+  const auto near=[](double a, double b) { return std::abs(a-b)<1e-6; };
+  require(near(distance(origin,{600,0,0},lo,hi),4) && near(distance(origin,{2000,0,0},lo,hi),0),
+          "a path ahead must come closer, up to inside the bounds");
+  require(near(distance(origin,{-600,0,0},lo,hi),10) && near(distance(origin,{0,600,0},lo,hi),10) &&
+          near(distance(origin,{},lo,hi),10),
+          "a path behind, sideways or standing still must not bring the bounds closer");
+  // diagonally: (1000t, 1000t) is nearest at t = 0.55, 4.5 m short in x and over the top in y
+  require(near(distance(origin,{1000,1000,0},lo,hi),std::sqrt(2.0)*4.5),"the closest point may lie inside the path");
+  require(near(distance(origin,{600,0,0},Tempest::Vec3{1000,0,0},100),3) && near(distance(origin,{-600,0,0},Tempest::Vec3{1000,0,0},100),9),
+          "a sphere must come closer along a path ahead and not behind");
+
+  Velocity velocity;
+  for(int frame=0;frame<=30;++frame)
+    velocity.add({5.f*float(frame),0,0},0.01*frame);
+  const auto running=velocity.velocity();
+  require(std::abs(running.x-500)<1e-2 && std::abs(running.y)<1e-6,"the velocity must be the move over its window");
+  Velocity standing;
+  for(int frame=0;frame<=30;++frame)
+    standing.add({700,0,0},0.01*frame);
+  require(standing.velocity().x==0,"standing still must have no velocity");
+
+  // The residency: the paths from the hero's and the camera's velocities times the horizon; a jump is no velocity.
+  ChunkTable table;
+  table.entries.push_back({{0,0},"",{0,0,0},{1,1,0},1});
+  ChunkResidency residency(table);
+  residency.setLookAhead(0.1);
+  const auto at=[](int frame) { return ChunkResidency::Clock::time_point()+std::chrono::milliseconds(10*frame); };
+  Tempest::Vec3 hero{3200,0,3200};
+  int frame=0;
+  for(;frame<=30;++frame) {
+    hero.x=3200+5.f*float(frame);
+    residency.update(hero,hero,1000,at(frame));
+    }
+  const auto odometer=residency.viewOdometer();
+  require(std::abs(residency.viewHeroAhead().x-50)<0.1f && std::abs(residency.viewCameraAhead().x-50)<0.1f,
+          "running at 5 m/s with a horizon of 0.1 s must look 0.5 m ahead");
+  hero.x+=100000;
+  residency.update(hero,hero,1000,at(frame++));
+  require(residency.viewJumped() && residency.viewHeroAhead().x==0 && residency.viewOdometer()>=odometer+1000,
+          "a jump must not count as velocity");
+  hero.x+=5;
+  residency.update(hero,hero,1000,at(frame++));
+  require(std::abs(residency.viewHeroAhead().x-50)<0.1f,"after a jump the velocity must come from the moves after it");
+  residency.setLookAhead(0);
+  const auto before0=residency.viewOdometer();
+  hero.x+=5;
+  residency.update(hero,hero,1000,at(frame++));
+  require(residency.viewHeroAhead().x==0 && std::abs(residency.viewOdometer()-before0-0.05-0.5)<1e-6,
+          "without a horizon there must be no path; its end coming back counts on the odometer");
+  hero.x+=5;
+  const auto before1=residency.viewOdometer();
+  residency.update(hero,hero,1000,at(frame++));
+  require(std::abs(residency.viewOdometer()-before1-0.05)<1e-6,"without a horizon the odometer must count the moves only");
+
+  // An owner 10 m ahead at one UV unit per metre: 2^-3 from where the view is (holds from 8 m), 2^-2 from 5 m along its
+  // path (holds from 4 m: 1 m of margin).
+  TexelDensity texel;
+  texel.uvPerMetre=1;
+  texel.min=lo;
+  texel.max=hi;
+  TextureScreenDemand::View view;
+  view.known=true;
+  const auto still=TextureScreenDemand::evaluate(view,texel);
+  require(still.exponent==-3 && still.present==-3,"standing still the exponent and the present one must be the same");
+  view.heroAhead=view.cameraAhead={500,0,0};
+  const auto ahead=TextureScreenDemand::evaluate(view,texel);
+  require(ahead.exponent==-2 && ahead.present==-3 && std::abs(ahead.margin-1)<1e-9 && std::abs(still.margin-2)<1e-9,
+          "an owner ahead must want the level of the closest point of the path, keep its present exponent and be due "
+          "when either may change");
+  view.heroAhead=view.cameraAhead={-500,0,0};
+  require(TextureScreenDemand::evaluate(view,texel).exponent==-3,"an owner behind the view must not be pulled in");
+  view.heroAhead=view.cameraAhead={0,500,0};
+  require(TextureScreenDemand::evaluate(view,texel).exponent==-3,"an owner beside the path must not be pulled in");
+  view.heroAhead={};
+  view.cameraAhead={500,0,0};
+  require(TextureScreenDemand::evaluate(view,texel).exponent==-2,"the camera's path must count as the hero's does");
+  }
+
 // Step 3 (texturebudget.h): the target from the device's budget, the stage from the sums D(s), the way back.
 void textureBudgetMaths() {
   using namespace TextureBudget;
@@ -1406,9 +1529,9 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
     residency.update(hero,camera,1000);
     Resources::updateTextures(&residency);
     const auto after=Resources::textureStats();
-    require(after.promoted-before.promoted+after.demoted-before.demoted+after.reloaded-before.reloaded<=1 &&
-            Resources::textureGeneration()-generation<=1,
-            "a frame must publish at most one level replacement and one texture generation");
+    require(after.promoted-before.promoted+after.demoted-before.demoted+after.reloaded-before.reloaded<=
+            TextureFlow::Limits().loads && Resources::textureGeneration()-generation<=1,
+            "a frame must publish at most its loads in flight and one texture generation");
     };
   const auto waitFor=[&](auto done, const char* message) {
     const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
@@ -1421,11 +1544,45 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
   using Need=Resources::TextureNeed;
   const auto stat=Resources::TextureCategory::Static;
 
+  require(Resources::textureLookAhead()==TextureLookAhead::DefaultHorizon,
+          "the look-ahead must be on by default, at its default horizon before a window of loads was measured");
+  setenv("OPENGOTHIC_TEXTURE_LOOKAHEAD","0",1);
+  Resources::configureTextures();
+  require(Resources::textureLookAhead()==0,"OPENGOTHIC_TEXTURE_LOOKAHEAD=0 must turn the look-ahead off");
+  setenv("OPENGOTHIC_TEXTURE_LOOKAHEAD","2",1);
+  bool refused=false;
+  try {
+    Resources::configureTextures();
+    }
+  catch(const std::runtime_error&) {
+    refused=true;
+    }
+  require(refused,"the look-ahead switch must take 0 or 1 only");
+  unsetenv("OPENGOTHIC_TEXTURE_LOOKAHEAD");
+  Resources::configureTextures({},{},{},{},"0");
+  require(Resources::textureLookAhead()==0,"[GAME] texture_lookahead=0 must turn the look-ahead off");
+  Resources::configureTextures();
+
   // 2^-4 at log2 K 10.125: the 512 albedo needs level 1, the 256 maps level 0, one reserve level included.
   Resources::textureDemand(material,stat,true,Need{3,-4});
   Resources::updateTextures(&residency);
-  require(Resources::textureStats().loadsInFlight==2 && Resources::textureStats().shortfallCount==3,
-          "levels must keep two loads in flight and count every texture short of its level");
+  require(Resources::textureStats().loadsInFlight==3 && Resources::textureStats().shortfallCount==3,
+          "levels must keep up to four loads in flight and count every texture short of its level");
+  // The workers are done long before the next frame: it publishes all three, within its budget, in one generation.
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  {
+  const auto generation=Resources::textureGeneration();
+  Resources::updateTextures(&residency);
+  const auto flow=Resources::textureStats().flow;
+  require(sides(256,256) && Resources::textureGeneration()==generation+1 && flow.publications==3,
+          "ready loads must be published in the frame the main thread sees them, more than one within the budget");
+  double split=0;
+  for(const auto seconds:flow.seconds)
+    split+=seconds;
+  require(flow.latency.count()==3 && flow.wait.count()==3 && flow.entries==3 &&
+          std::abs(split-Resources::textureStats().shortfallSeconds)<1e-9 && flow.visibleSeconds<=split,
+          "the shortfall's split by state must add up to it, and each load must report its latency and wait");
+  }
   waitFor([&] { return sides(256,256); },"each texture of a material must load straight to its own wanted level");
   require(Resources::textureStats().promoted==3 && Resources::textureStats().shortfallCount==0 &&
           Resources::textureStats().shortfallSeconds>0 && Resources::textureStats().levelBytes[1]>0,
@@ -1440,6 +1597,20 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
   require(Resources::textureStats().promotionQueue==1,"the default reserve must want that texture one level sharper");
   waitFor([&] { return flat.tex->w()==128; },"the reserve level must be loaded");
   Resources::textureDemand(flat,stat,false,Need{3,-5});
+  // The look-ahead's exponent 2^-4 wants level 0, the present one 2^-5 the resident level 1: the texture loads ahead of
+  // its need without counting as shortfall.
+  {
+  const auto before=Resources::textureStats();
+  Resources::textureDemand(flat,stat,true,Need{3,-4,-5});
+  const auto queued=Resources::textureStats();
+  require(queued.promotionQueue==1 && queued.shortfallCount==0 && queued.flow.ahead==1,
+          "a texture queued for the look-ahead alone must not count as short");
+  waitFor([&] { return flat.tex->w()==256; },"a texture must load to its look-ahead level");
+  require(Resources::textureStats().shortfallSeconds==before.shortfallSeconds &&
+          Resources::textureStats().flow.aheadSeconds>before.flow.aheadSeconds,
+          "loading ahead must add no shortfall, only time ahead");
+  Resources::textureDemand(flat,stat,false,Need{3,-4,-5});
+  }
 
   Resources::textureDemand(material,stat,true,Need{4,-3});
   waitFor([&] { return sides(512,256); },"the sharpest demand over the owners must decide");
@@ -1891,6 +2062,22 @@ void textureOwnerLevels(Tempest::Device& device, const Fixture& fixture) {
   unsetenv("OPENGOTHIC_TEXTURE_JUMP_MS");
   Resources::configureTextures();
 
+  // The bytes in flight: the whole chain of a 4096 DXT1 takes 10.7 MiB. Within 16 MiB one load runs at a time, though
+  // four slots are free; without the cap the rest start together.
+  setenv("OPENGOTHIC_TEXTURE_LOAD_MB","16",1);
+  Resources::configureTextures();
+  for(auto& m:big)
+    Resources::textureDemand(m,stat,true,Need{3,20});
+  const auto shortBig=Resources::textureStats().shortfallCount;
+  tick();
+  require(shortBig>=2 && Resources::textureStats().loadsInFlight==1,"loads must start only within the bytes in flight");
+  unsetenv("OPENGOTHIC_TEXTURE_LOAD_MB");
+  Resources::configureTextures();
+  waitFor([&] { return std::all_of(big.begin(),big.end(),[](const Material& m) { return m.tex->w()==4096; }); },
+          "the capped loads must complete");
+  for(auto& m:big)
+    Resources::textureDemand(m,stat,false,Need{3,20});
+
   body=VisualObjects::Item();
   heroBody=VisualObjects::Item();
   lying=VisualObjects::Item();
@@ -2193,6 +2380,7 @@ int main(int argc, char** argv) {
   try {
     ddsMipTails();
     textureLevelMaths();
+    textureFlowMaths();
     textureBudgetMaths();
     if(argc==2 && std::string_view(argv[1])=="--dds-mip-tail") {
       std::cout << "{\"test\":\"dds_mip_tail\",\"passed\":true,\"assertions\":" << assertions << "}\n";
