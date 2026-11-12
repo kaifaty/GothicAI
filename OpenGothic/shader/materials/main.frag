@@ -619,13 +619,27 @@ vec4 fogOwnDepth() {
   const float d1 = linearDepth(dFogMax,        scene.clipInfo);
   const float d  = (dZ-d0)/(d1-d0);
 
+  // as fog.frag: the scattering and the transmittance fade in from the camera over half the LUT's first slice
+  const float near = min(d*float(textureSize(fogLut,0).z)*2.0, 1.0);
   vec4 val = textureLod(fogLut, vec3(uv,d), 0);
   if(scene.fogQuality==2) {
-    // as fog.frag (VOLUMETRIC), without the shadow occlusion of single scattering
+    // as fog.frag (VOLUMETRIC), without the shadow occlusion of single scattering.
+    // Under GI the multiple scattering as fog.frag (FOG_SKY_VIS) lets it: by mix(the sun's bit, 1, the sky over the
+    // camera) along the ray. The bits are those of the fog pass for this pixel (32 steps to the opaque surface behind);
+    // their lit share stands in for the lit share of the scattering up to this surface (step-2-shade.md, «Дымка
+    // прозрачного»). Exactly 1 without GI: the bits are not read
     const vec4 ms = textureLod(fogLutMs, vec3(uv,d), 0);
-    val = vec4(val.rgb*min(d*64.0, 1.0) + ms.rgb, ms.a);
+    float k = 1.0;
+    if(scene.fogSkyVis<1.0) {
+      const ivec2 occSize  = imageSize(fogOcclusion);
+      const ivec2 occRatio = (scene.screenRes + occSize - 1)/occSize;
+      const uint  bits     = imageLoad(fogOcclusion, min(ivec2(gl_FragCoord.xy)/occRatio, occSize-1)).r;
+      const float lit      = float(bitCount(bits))/32.0;
+      k = scene.fogSkyVis + (1.0-scene.fogSkyVis)*lit;
+      }
+    val = vec4(val.rgb + ms.rgb*k, ms.a);
     }
-  return vec4(val.rgb*scene.GSunIntensity*scene.exposure, val.a);
+  return vec4(val.rgb*near*scene.GSunIntensity*scene.exposure, mix(1.0, val.a, near));
   }
 #endif
 

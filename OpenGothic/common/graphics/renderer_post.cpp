@@ -131,6 +131,7 @@ void Renderer::drawTonemapping(Attachment& result, Encoder<CommandBuffer>& cmd, 
   p.contrast   = std::max(1.5f - settings.zVidContrast, 0.01f);
   p.gamma      = p.gamma/std::max(2.0f*settings.zVidGamma,  0.01f);
 
+  p.mul = eye.mul(); // 1 without GI (renderer_eye.cpp)
   static float mul = 0.f;
   if(mul>0)
     p.mul = mul;
@@ -187,6 +188,7 @@ void Renderer::drawCMAA2(Tempest::Attachment& result, Tempest::Encoder<Tempest::
   p.contrast   = std::max(1.5f - settings.zVidContrast, 0.01f);
   p.gamma      = p.gamma/std::max(2.0f*settings.zVidGamma,  0.01f);
 
+  p.mul = eye.mul(); // 1 without GI (renderer_eye.cpp)
   static float mul = 0.f;
   if(mul>0)
     p.mul = mul;
@@ -310,6 +312,7 @@ void Renderer::drawTonemappingTaa(Attachment& result, Encoder<CommandBuffer>& cm
   p.gamma       = p.gamma/std::max(2.0f*settings.zVidGamma,  0.01f);
   p.bloomLevels = float(bloomChain.size());
   p.sharpness   = settings.taaSharpness;
+  p.mul         = eye.mul();
 
   cmd.setFramebuffer({ {result, Tempest::Discard, Tempest::Preserve} });
   cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
@@ -333,6 +336,7 @@ void Renderer::drawTonemappingTemporal(Attachment& result, Encoder<CommandBuffer
   p.brightness = (settings.zVidBrightness - 0.5f)*0.1f;
   p.contrast   = std::max(1.5f - settings.zVidContrast, 0.01f);
   p.gamma      = p.gamma/std::max(2.0f*settings.zVidGamma,  0.01f);
+  p.mul        = eye.mul();
 
   const bool bloom = settings.bloomEnabled && !bloomChain[0].isEmpty();
   cmd.setFramebuffer({ {result, Tempest::Discard, Tempest::Preserve} });

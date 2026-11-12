@@ -739,6 +739,7 @@ void Renderer::drawPathtrace(Tempest::Encoder<Tempest::CommandBuffer>& cmd, Worl
   cmd.setPipeline(shaders.copy);
   cmd.draw(nullptr, 0, 3);
 
+  prepareFogSkyVis(cmd, wview);
   prepareFog(cmd,wview);
 
   cmd.setFramebuffer({{sceneLinear, Tempest::Discard, Tempest::Preserve}}, {zbuffer, Tempest::Readonly});

@@ -777,6 +777,8 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     prepareLightsBvh(cmd, wview);
 
   updateCamera(wview, camera);
+  updateEye(fId, camera);
+  updateFogSky(camera);
   prepareTaa(wview, camera);
   prepareMotion(wview);
   wview.setTaaReactiveLref(settings.taaReactiveLref);
@@ -849,6 +851,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   { FrameProfile::Scope timing(FrameProfile::Zone::EncodeMain); prepareIrradiance(cmd, wview); }
   prepareExposure(cmd, wview);
   FrameProfile::Scope lightingTiming(FrameProfile::Zone::EncodeMain);
+  prepareFogSkyVis(cmd, wview);
   prepareFog (cmd, wview);
   prepareGi  (cmd, fId, wview);
   prepareSurfels(cmd, wview);
@@ -883,6 +886,9 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     cmd.setDebugMarker("Fog");
     drawFog(cmd, wview);
     }
+  // the eye's meter after the opaque surfaces and the fog, before the translucent ones, particles and water: no fire or
+  // effect in the measure (renderer_eye.cpp, step-2-shade.md «Замер по правилам индустрии»)
+  drawEyeMeter(cmd, fId, wview);
 
   FrameProfile::Scope translucentTiming(FrameProfile::Zone::EncodeWater);
   // the TAA reactive mask is the second attachment: each translucent pipeline writes it under its own blend

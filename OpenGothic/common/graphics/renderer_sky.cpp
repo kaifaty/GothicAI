@@ -127,7 +127,9 @@ void Renderer::drawFog(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const Worl
       cmd.setBinding(2, zbuffer,        Sampler::nearest());
       cmd.setBinding(3, scene.uboGlobal[SceneGlobals::V_Main]);
       cmd.setBinding(4, sky.occlusionLut);
-      cmd.setPipeline(shaders.fog3dHQ);
+      // under GI with the sky seen from the camera (renderer_fogsky.cpp); the pipeline as before elsewhere
+      const bool skyVis = fogSkyActive() && !scene.rtScene.tlas.isEmpty();
+      cmd.setPipeline(skyVis ? shaders.fog3dHQSky : shaders.fog3dHQ);
       break;
       }
     }
@@ -250,6 +252,9 @@ void Renderer::prepareFog(Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview
     cmd.setPipeline(shaders.vsmFogShadow);
     cmd.dispatchThreads(epipolar.epTrace.size());
     }
+
+  // the fog of translucent surfaces under GI reads the same bits (main.frag, fogOwnDepth)
+  wview.setFogOcclusion(sky.quality==VolumetricHQ ? &usesImage2d(sky.occlusionLut, TextureFormat::R32U, effectResolution()) : nullptr);
 
   switch(sky.quality) {
     case None:
