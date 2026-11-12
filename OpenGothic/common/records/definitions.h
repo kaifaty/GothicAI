@@ -16,6 +16,16 @@ enum class SpellFxKey:uint8_t {
   Count
   };
 
+enum ItemMaterial : uint8_t {
+  MAT_WOOD    = 0,
+  MAT_STONE   = 1,
+  MAT_METAL   = 2,
+  MAT_LEATHER = 3,
+  MAT_CLAY    = 4,
+  MAT_GLAS    = 5,
+  MAT_COUNT   = 6,
+  };
+
 namespace Def {
 
 enum class FightMove : uint32_t {

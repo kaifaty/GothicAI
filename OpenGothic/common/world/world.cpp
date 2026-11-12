@@ -43,6 +43,7 @@
 #include "physics/cloth.h"
 #include "physics/worldcloth.h"
 #include "world/movablevobs.h"
+#include "world/bullet.h"
 
 namespace {
 
@@ -160,6 +161,7 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
       Workers::setThreadName("Loading: BVH thread");
       const auto t = LoadProbe::now();
       auto ret = std::unique_ptr<DynamicWorld>(new DynamicWorld(this,worldMesh,&worldCloth.original));
+      ret->setBulletTrace(ArrowTrace::hook());
       probePhysicsMs = LoadProbe::msSince(t);
       return ret;
       });

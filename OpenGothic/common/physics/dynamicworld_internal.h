@@ -3,7 +3,6 @@
 #include "dynamicworld.h"
 #include "collisionworld.h"
 #include "convexparts.h"
-#include "arrowtrace.h"
 
 #include <Tempest/Log>
 
@@ -534,42 +533,7 @@ struct DynamicWorld::NpcBodyList final {
     return ret;
     }
 
-  bool hasCollision(const NpcBody& a, const NpcBody& b, Tempest::Vec3& normal, float& colDepth) const {
-    if((a.toNpc()!=nullptr && a.toNpc()->usesSimplifiedMovement()) ||
-       (b.toNpc()!=nullptr && b.toNpc()->usesSimplifiedMovement()))
-      return false;
-    const float objMaxRXZ = a.maxRXZ + b.maxRXZ;
-    const float objMaxRY  = a.maxRY  + b.maxRY;
-
-    if((Tempest::Vec2(a.pos.x,a.pos.z)-Tempest::Vec2(b.pos.x,b.pos.z)).quadLength() > objMaxRXZ*objMaxRXZ)
-      return false;
-
-    if(std::abs(a.pos.y-b.pos.y) > objMaxRY)
-      return false;
-
-    if(&a==&b)
-      return false;
-
-    const float acos = std::cos(a.angle), asin = std::sin(a.angle);
-    const float bcos = std::cos(b.angle), bsin = std::sin(b.angle);
-
-    const auto  apos = a.pos + a.offsetCenter(acos, asin);
-    const auto  bpos = b.pos + b.offsetCenter(bcos, bsin);
-    const auto  dir  = bpos - apos;
-
-    auto dlen = dir.length();
-    auto ndir = dlen==0 ? Tempest::Vec3(1,0,0) : Tempest::Vec3::normalize(dir);
-    const float rA = a.ellipsoidRadius( ndir, acos, asin);
-    const float rB = b.ellipsoidRadius(-ndir, bcos, bsin);
-
-    if(dlen < rA + rB) {
-      float depth = (rA + rB - dlen)*0.5f;
-      colDepth = std::max(colDepth, depth);
-      normal -= ndir*depth;
-      return true;
-      }
-    return false;
-    }
+  bool hasCollision(const NpcBody& a, const NpcBody& b, Tempest::Vec3& normal, float& colDepth) const;
 
   void adjustSort() {
     std::sort(frozen.begin(),frozen.end(),[](Record& a,Record& b){
@@ -634,7 +598,8 @@ struct DynamicWorld::BulletsList final {
   void del(BulletBody* b) {
     for(auto i=body.begin(), e=body.end();i!=e;++i){
       if(&(*i)==b) {
-        ArrowTrace::forget(*i);
+        if(wrld.bulletTrace!=nullptr)
+          wrld.bulletTrace->forget(*i);
         body.erase(i);
         return;
         }
@@ -659,9 +624,11 @@ struct DynamicWorld::BulletsList final {
       const bool precise = i.cb->isPrecise();
       if(precise ? list.nearTest(npc, i.pos, Tempest::Vec3::normalize(dp), dp.length(), i.tgRange, proj)
                  : list.rayTest (npc, i.pos, Tempest::Vec3::normalize(dp), dp.length(), i.tgRange, proj)) {
-        ArrowTrace::write(i,i.cb,"moving_npc",0,npc.toNpc());
+        if(wrld.bulletTrace!=nullptr)
+          wrld.bulletTrace->write(i,i.cb,"moving_npc",0,npc.toNpc());
         const bool hit = precise ? i.cb->onCollidePrecise(*npc.toNpc(),i.lastPos,i.pos) : i.cb->onCollide(*npc.toNpc());
-        ArrowTrace::write(i,i.cb,hit ? "moving_npc_hit" : "moving_npc_pass",0,npc.toNpc());
+        if(wrld.bulletTrace!=nullptr)
+          wrld.bulletTrace->write(i,i.cb,hit ? "moving_npc_hit" : "moving_npc_pass",0,npc.toNpc());
         if(hit)
           i.cb->onStop();
         }

@@ -42,6 +42,7 @@
 #include "daedalus/classes.h"
 
 class Interactive;
+class Bullet;
 class WayPoint;
 struct PhysicsNoise;
 

@@ -25,7 +25,6 @@ class Ragdoll;
 class ProtoMesh;
 
 class World;
-class Bullet;
 class Npc;
 class Item;
 class Interactive;
@@ -380,6 +379,18 @@ class DynamicWorld final {
 
       friend class DynamicWorld;
       };
+
+    struct BulletTrace {
+      virtual ~BulletTrace()=default;
+      virtual void forget(const BulletBody& body)=0;
+      // NPC identity is opaque to physics; only the trace writer may inspect it.
+      virtual void write(const BulletBody& body, BulletCallback* callback,
+                         const char* phase, uint64_t dt, const void* npc=nullptr,
+                         bool hasHit=false, float fraction=1.f,
+                         Tempest::Vec3 hit={}, Tempest::Vec3 normal={}, unsigned material=0, unsigned category=0)=0;
+      };
+
+    void setBulletTrace(BulletTrace* trace) { bulletTrace=trace; }
 
     struct BBoxCallback {
       BBoxCallback() = default;
@@ -804,6 +815,7 @@ class DynamicWorld final {
     std::unique_ptr<ItemTrace>         itemTrace;
     std::unique_ptr<Cloth>             clothWorld;
     World*                            ownerWorld = nullptr;
+    BulletTrace*                      bulletTrace = nullptr;
     bool                              splitStaticTriangles = true;
     StaticCollisionLoadStats          collisionLoadStats;
 
