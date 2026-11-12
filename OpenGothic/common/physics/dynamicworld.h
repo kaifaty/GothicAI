@@ -24,12 +24,13 @@ class HitZones;
 class Ragdoll;
 class ProtoMesh;
 
-class World;
+class PhysicsHost;
 class Npc;
 class Item;
 class Interactive;
 class DbgPainter;
 class Serialize;
+class SaveArchive;
 
 class Cloth;
 
@@ -95,7 +96,7 @@ class DynamicWorld final {
     static constexpr float spellSpeed  = 1; // centimeters per milliseconds
     static constexpr float characterItemRange = 300.f; // centimetres around the opt-in hero
 
-    DynamicWorld(World *world, const asset::WorldMesh& mesh, const asset::WorldMesh* originalCloth = nullptr);
+    DynamicWorld(PhysicsHost *host, const asset::WorldMesh& mesh, const asset::WorldMesh* originalCloth = nullptr);
     DynamicWorld(const DynamicWorld&)=delete;
     ~DynamicWorld();
 
@@ -518,8 +519,8 @@ class DynamicWorld final {
     void           setPhysicsNoiseEnabled(bool enabled);
     bool           physicsNoiseEnabled() const;
     void           setPhysicsNoiseCallback(std::function<void(const PhysicsNoise&)> callback);
-    void           saveMovableVobs(Serialize& fout) const;
-    void           loadMovableVobs(Serialize& fin);
+    void           saveMovableVobs(SaveArchive& fout) const;
+    void           loadMovableVobs(SaveArchive& fin);
     // Absolute game minutes. Trace creation is recorded at the physics tick,
     // independently of which NPC happens to inspect the body.
     void           setTraceTime(int64_t minutes);
@@ -808,13 +809,13 @@ class DynamicWorld final {
     void           emitBreakNoise(const BodyData& body, const Tempest::Vec3& center);
     void           syncFragments(BodyData& body);
     void           cleanupFragments(BodyData& body);
-    void           saveDestructionVobs(Serialize& fout) const;
-    void           loadDestructionVobs(Serialize& fin);
+    void           saveDestructionVobs(SaveArchive& fout) const;
+    void           loadDestructionVobs(SaveArchive& fin);
 
     std::unique_ptr<CollisionWorld>    world;
     std::unique_ptr<ItemTrace>         itemTrace;
     std::unique_ptr<Cloth>             clothWorld;
-    World*                            ownerWorld = nullptr;
+    PhysicsHost*                      host = nullptr;
     BulletTrace*                      bulletTrace = nullptr;
     bool                              splitStaticTriangles = true;
     StaticCollisionLoadStats          collisionLoadStats;

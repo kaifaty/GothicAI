@@ -2,12 +2,10 @@
 
 #include "collisionworld.h"
 #include "dynamicworld.h"
-#include "game/constants.h"
+#include "physicshost.h"
 #include "graphics/mesh/hitzones.h"
 #include "graphics/mesh/skeleton.h"
-#include "world/objects/npc.h"
-#include "world/world.h"
-#include "testbench.h"
+#include "benchprobe.h"
 
 #include <Jolt/Physics/Body/BodyInterface.h>
 #include <Jolt/Physics/Body/BodyLock.h>
@@ -957,7 +955,8 @@ struct Ragdoll::Impl final {
   std::vector<BuoyancyPart> waterParts;
   bool legacyAncestors=false;
   uint32_t group=0;
-  std::weak_ptr<daedalus::INpc> npc,culprit,impactCulprit;
+  PhysicsHost* host = nullptr;
+  std::weak_ptr<void> npc,culprit,impactCulprit;
   float impactSpeed=0;
   uint64_t culpritUntilStep=0;
   uint64_t nextNoiseStep=0;
@@ -1154,6 +1153,7 @@ Ragdoll::Ragdoll(CollisionWorld& world, const Skeleton& skeleton, const HitZones
     }
   impl->group=world.registerRagdoll(*this);
   impl->world=&world;
+  impl->host=world.physicsHost();
   try {
     impl->native=settings->CreateRagdoll(impl->group,0,&world.physicsSystem());
     }
@@ -1205,16 +1205,18 @@ bool Ragdoll::queueHit(size_t bone, const Tempest::Vec3& pointCm,
   }
 
 void Ragdoll::setNpc(Npc* npc) {
-  impl->npc=npc!=nullptr ? npc->handlePtr() : std::weak_ptr<daedalus::INpc>();
+  impl->npc=npc!=nullptr ? impl->host->npcHandle(*npc) : std::weak_ptr<void>();
   updateBuoyancyFractions();
-  if(npc!=nullptr && !impl->kinematic && TestBench::isActive()) {
+  auto* probe=BenchProbe::get();
+  if(npc!=nullptr && !impl->kinematic && probe!=nullptr && probe->active()) {
     impl->birthBench=std::make_unique<Impl::BirthBench>();
-    impl->birthBench->root=npc->position();
+    impl->birthBench->root=impl->host->npcPosition(*npc);
     }
   }
 
 void Ragdoll::sampleBirth(float deltaSeconds) {
-  if(!impl->birthBench) return;
+  auto* probe=BenchProbe::get();
+  if(!impl->birthBench || probe==nullptr || !probe->active()) return;
   auto& sample=*impl->birthBench;
   auto& system=impl->world->physicsSystem();
   const auto groups=impl->world->ragdollBirthGuardGroups(*this);
@@ -1240,8 +1242,8 @@ void Ragdoll::sampleBirth(float deltaSeconds) {
       for(size_t j=0;j<other->partCount();++j) {
         if(!system.WereBodiesInContact(id,other->impl->native->GetBodyID(int(j)))) continue;
         if(!contacts.empty()) contacts+=',';
-        contacts+="{\"part\":"+TestBench::bodyJson(name)+",\"rig\":"+TestBench::bodyJson(TestBench::who(other->noiseNpc()))+
-          ",\"rig_part\":"+TestBench::bodyJson(other->impl->rig->parts[j].name)+",\"group\":"+std::to_string(other->impl->group)+
+        contacts+="{\"part\":"+probe->bodyJson(name)+",\"rig\":"+probe->bodyJson(probe->who(other->noiseNpc()))+
+          ",\"rig_part\":"+probe->bodyJson(other->impl->rig->parts[j].name)+",\"group\":"+std::to_string(other->impl->group)+
           ",\"protected\":"+(std::find(groups.begin(),groups.end(),other->impl->group)!=groups.end() ? "true" : "false")+"}";
         }
       }
@@ -1259,7 +1261,7 @@ void Ragdoll::sampleBirth(float deltaSeconds) {
       }
     std::string contacts;
     for(const auto& region:sample.contacts) if(!region.empty()) { if(!contacts.empty()) contacts+=',';contacts+=region; }
-    TestBench::ragdollBirthPeak(*npc,impactCulprit(),"\"group\":"+std::to_string(impl->group)+
+    probe->ragdollBirthPeak(*npc,impactCulprit(),"\"group\":"+std::to_string(impl->group)+
       ",\"birth_distance_cm\":"+(sample.distance<0 ? "null" : std::to_string(sample.distance))+
       ",\"sampled_ms\":"+std::to_string(sample.ageMs)+",\"sampling\":\"after_each_positive_Update\""+
       ",\"pelvis_m_s\":"+std::to_string(sample.peaks[0])+",\"spine_m_s\":"+std::to_string(sample.peaks[1])+
@@ -1295,11 +1297,8 @@ void Ragdoll::updateBuoyancyFractions() {
   for(char& c:name) c=char(std::toupper(static_cast<unsigned char>(c)));
   bool sinks=named(name,"SKELETON") || named(name,"GOLEM") || named(name,"STONEGUARDIAN");
   if(const auto* npc=noiseNpc()) {
-    const auto guild=npc->trueGuild();
-    sinks=sinks || guild==GIL_GOBBO_SKELETON || guild==GIL_SUMMONED_GOBBO_SKELETON ||
-          guild==GIL_SKELETON || guild==GIL_SUMMONED_SKELETON || guild==GIL_SKELETON_MAGE ||
-          guild==GIL_SHADOWBEAST_SKELETON || guild==GIL_STONEGOLEM || guild==GIL_SUMMONED_GOLEM ||
-          guild==GIL_Stoneguardian || guild==GIL_SummonedGuardian;
+    const auto sinksByGuild=impl->host->npcBodySinks(*npc);
+    sinks=sinks || sinksByGuild;
     }
   // A fraction above one leaves weight even when fully immersed. Stone and
   // bones still receive water drag and entry splashes, but settle on the bed.
@@ -1309,7 +1308,7 @@ void Ragdoll::updateBuoyancyFractions() {
 
 Npc* Ragdoll::impactCulprit() const {
   const auto culprit=impl->impactCulprit.lock();
-  return culprit!=nullptr ? static_cast<Npc*>(culprit->user_ptr) : nullptr;
+  return culprit!=nullptr ? impl->host->resolveNpc(culprit) : nullptr;
   }
 
 bool Ragdoll::impactBone(size_t bone) const {
@@ -1327,23 +1326,23 @@ float Ragdoll::takeImpactSpeed() {
   }
 
 void Ragdoll::setNoiseCulprit(Npc* culprit) {
-  impl->culprit=culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<daedalus::INpc>();
+  impl->culprit=culprit!=nullptr ? impl->host->npcHandle(*culprit) : std::weak_ptr<void>();
   impl->culpritUntilStep=impl->world!=nullptr ? impl->world->simulationStep()+300 : 0;
   if(culprit!=nullptr && impl->birthBench && impl->birthBench->ageMs==0) {
-    const auto delta=impl->birthBench->root-culprit->position();
+    const auto delta=impl->birthBench->root-impl->host->npcPosition(*culprit);
     impl->birthBench->distance=std::hypot(delta.x,delta.z);
     }
   }
 
 Npc* Ragdoll::noiseNpc() const {
   const auto npc=impl->npc.lock();
-  return npc!=nullptr ? static_cast<Npc*>(npc->user_ptr) : nullptr;
+  return npc!=nullptr ? impl->host->resolveNpc(npc) : nullptr;
   }
 
 Npc* Ragdoll::noiseCulprit() const {
   if(impl->world==nullptr || impl->world->simulationStep()>impl->culpritUntilStep) return nullptr;
   const auto npc=impl->culprit.lock();
-  return npc!=nullptr ? static_cast<Npc*>(npc->user_ptr) : nullptr;
+  return npc!=nullptr ? impl->host->resolveNpc(npc) : nullptr;
   }
 
 bool Ragdoll::acceptNoise(uint64_t step) {
@@ -1692,7 +1691,7 @@ void Ragdoll::setAllowSleeping(bool allow) {
 void Ragdoll::addImpulse(const Tempest::Vec3& impulse, Npc* culprit) {
   if(!valid() || impl->kinematic || !finite(impulse)) return;
   setNoiseCulprit(culprit);
-  impl->impactCulprit=culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<daedalus::INpc>();
+  impl->impactCulprit=culprit!=nullptr ? impl->host->npcHandle(*culprit) : std::weak_ptr<void>();
   auto& interface=impl->world->physicsSystem().GetBodyInterface();
   for(size_t i=0;i<partCount();++i) {
     const auto* settings=impl->native->GetRagdollSettings();
@@ -1707,7 +1706,7 @@ void Ragdoll::knockOff(const Tempest::Vec3& direction, float impulseNs, Npc* cul
   if(d.length()<1e-3f) return;
   d=Tempest::Vec3::normalize(d);
   setNoiseCulprit(culprit);
-  impl->impactCulprit=culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<daedalus::INpc>();
+  impl->impactCulprit=culprit!=nullptr ? impl->host->npcHandle(*culprit) : std::weak_ptr<void>();
   impl->knockedOff=true;
   // The blow alone moves 75 kg by under a metre a second; a man thrown down moves
   // his trunk at about two. The heavier the blow, the harder he goes down.

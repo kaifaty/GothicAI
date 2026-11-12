@@ -1,26 +1,26 @@
 #include "animationsolver.h"
 
 #include "world/objects/interactive.h"
-#include "game/serialize.h"
+#include "savearchive.h"
 #include "utils/fileext.h"
 #include "skeleton.h"
 #include "pose.h"
 #include "resources.h"
-#include "testbench.h"
+#include "benchprobe.h"
 
 using namespace Tempest;
 
 AnimationSolver::AnimationSolver() {
   }
 
-void AnimationSolver::save(Serialize &fout) const {
+void AnimationSolver::save(SaveArchive &fout) const {
   fout.write(uint32_t(overlay.size()));
   for(auto& i:overlay){
     fout.write(i.skeleton->name(),i.time);
     }
   }
 
-void AnimationSolver::load(Serialize &fin) {
+void AnimationSolver::load(SaveArchive &fin) {
   uint32_t sz=0;
   std::string s;
 
@@ -140,7 +140,8 @@ const Animation::Sequence* AnimationSolver::implSolveAnim(AnimationSolver::Anim 
       // Preserve the original shared RNG draw at precisely this solve point in every mode.
       // Only an explicit benchmark opt-in may replace its presentation-clip branch.
       const int fallback = std::rand()%3;
-      const int variant = npc==nullptr ? fallback : TestBench::bodyBlockVariant(*npc,fallback);
+      const auto* probe = BenchProbe::get();
+      const int variant = npc==nullptr || probe==nullptr ? fallback : probe->bodyBlockVariant(*npc,fallback);
       switch(variant) {
         case 0: s = solveFrm("T_%sPARADE_0",   st); break;
         case 1: s = solveFrm("T_%sPARADE_0_A2",st); break;

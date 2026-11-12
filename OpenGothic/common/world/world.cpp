@@ -130,7 +130,8 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
   :wname(std::move(file)), game(game), wsound(game,*this), wobj(*this) {
   const auto loadStarted = std::chrono::steady_clock::now();
   Resources::configureTextures(Gothic::settingsGetS("GAME","texture_budget_mb"),Gothic::settingsGetS("GAME","texture_far_skip_mips"),
-                               Gothic::settingsGetS("GAME","texture_target_mb"),Gothic::settingsGetS("GAME","texture_screen_mips"));
+                               Gothic::settingsGetS("GAME","texture_target_mb"),Gothic::settingsGetS("GAME","texture_screen_mips"),
+                               Gothic::settingsGetS("GAME","texture_lookahead"));
   // Until the first frame's completion: textures that can have a tail are read at their coarsest level.
   textureStartup.begin();
   if(LoadProbe::enabled())
@@ -342,6 +343,7 @@ void World::updateLandscape(const Camera& camera) {
     }
   if(wview)
     wview->prepareLandscapeWork();
+  residency->setLookAhead(Resources::textureLookAhead());
   residency->update(npcPlayer->position(),camera.originLwc(),camera.zFar());
   if(wview)
     wview->finishLandscapeUpdate();

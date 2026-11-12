@@ -301,6 +301,7 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
                                          "tex_device_measured", "tex_target_bytes", "tex_target_source", "tex_budget_bytes",
                                          "tex_stage", "tex_stage_deepest", "tex_stage_bytes0", "tex_stage_bytes",
                                          *(f"tex_stage{stage}_seconds" for stage in range(26)),
+                                         "tex_shortfall_wait_n", "tex_visible_shortfall_n", "tex_loads", "tex_load_bytes",
                                          "vob_near", "vob_far", "vob_outside", "vob_created", "vob_released", "vob_pending",
                                          "vob_publication_ms", "vob_near_missing", "vob_near_missing_seconds"])
         writer.writeheader()
@@ -331,6 +332,8 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
                           "tex_stage": (0, 2, 1)[frame], "tex_stage_deepest": 2, "tex_stage_bytes0": 300*1048576,
                           "tex_stage_bytes": 200*1048576,
                           **{f"tex_stage{stage}_seconds": 10+frame*(stage == 1)+2*frame*(stage == 13) for stage in range(26)},
+                          "tex_shortfall_wait_n": (1, 4, 2)[frame], "tex_visible_shortfall_n": frame,
+                          "tex_loads": (2, 6, 3)[frame], "tex_load_bytes": (frame+1)*1048576,
                           "vob_near": 100+frame, "vob_far": 700-frame, "vob_outside": 200,
                           "vob_created": frame, "vob_released": int(frame==2), "vob_pending": 2-frame,
                           "vob_publication_ms": frame*.25, "vob_near_missing": frame,
@@ -343,12 +346,20 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
             {"kind": "perf_segment", "segment": "streaming-flythrough/run", "residency_manager": True},
             {"kind": "route_end", "speed_cm_s": 500, "pass": True},
             {"kind": "streaming_end", "segment": "streaming-flythrough/run", "gpu_mb": 320.5,
-             "tex_promoted": 3, "tex_demoted": 2, "tex_near_tail_seconds": .25, "tex_shortfall_seconds": .5},
+             "tex_promoted": 3, "tex_demoted": 2, "tex_near_tail_seconds": .25, "tex_shortfall_seconds": .5,
+             "tex_shortfall_wait_seconds": .25, "tex_shortfall_read_seconds": .125, "tex_shortfall_upload_seconds": .0625,
+             "tex_shortfall_publish_seconds": .0625, "tex_shortfall_stale_seconds": 0, "tex_visible_shortfall_seconds": .125,
+             "tex_loads_started": 40, "tex_short_entries": 30, "tex_latency_n": 28, "tex_latency_p50_ms": 90.5,
+             "tex_latency_p90_ms": 304.4, "tex_latency_max_ms": 812.0, "tex_wait_n": 29, "tex_wait_p50_ms": 11.3,
+             "tex_wait_p90_ms": 107.6, "tex_wait_max_ms": 300.0, "tex_bursts": 6, "tex_burst_p50": 3, "tex_burst_p90": 9,
+             "tex_burst_max": 12, "tex_publications": 25, "tex_publish_ms": .1, "tex_publish_max_ms": .02,
+             "tex_ahead_seconds": .5, "tex_lookahead_ms": 22.0},
             {"kind": "streaming_ready", "far_publication_ms": [], "far_max_per_frame": 0, "queue_max_ms": .001},
             {"kind": "perf_segment", "segment": "streaming-flythrough/fly", "residency_manager": True},
             {"kind": "route_end", "speed_cm_s": 2000, "pass": True},
             {"kind": "streaming_end", "segment": "streaming-flythrough/fly", "gpu_mb": 330.5,
-             "tex_promoted": 5, "tex_demoted": 4, "tex_near_tail_seconds": .75}]))
+             "tex_promoted": 5, "tex_demoted": 4, "tex_near_tail_seconds": .75, "tex_latency_n": 0,
+             "tex_latency_p50_ms": -1.0, "tex_latency_p90_ms": -1.0, "tex_latency_max_ms": -1.0}]))
     data = report.build_report(streaming)["places"]["streaming-flythrough"]["views"]
     assert data["run"]["frame_ms"]["p50"] == 10
     assert data["fly"]["frame_ms"]["p99"] == data["fly"]["frame_ms"]["max"] == 20
@@ -386,6 +397,18 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
             budget["stage_seconds"][:2], budget["stage_seconds"][13], sum(budget["stage_seconds"]),
             budget["d0_end_bytes"]) == (2250*1048576, "rule", 1, 2, [0, 2], 4, 6, 300*1048576)
     assert ("| run | 9000 / 900 | 2250 (rule) | 1 / 2 | 1: 2.0, 13: 4.0 | 300.0 / 200.0 |"
+            in report.report_markdown(report.build_report(streaming)))
+    flow = textures["flow"]
+    assert (flow["state_seconds"], flow["visible_seconds"], flow["loads_started"], flow["short_entries"]) == (
+        {"wait": .25, "read": .125, "upload": .0625, "publish": .0625, "stale": 0}, .125, 40, 30)
+    assert (flow["latency"], flow["wait"]["p90_ms"], flow["bursts"]) == (
+        {"n": 28, "p50_ms": 90.5, "p90_ms": 304.4, "max_ms": 812.0}, 107.6, {"n": 6, "p50": 3, "p90": 9, "max": 12})
+    assert (flow["waiting_peak"], flow["visible_peak"], flow["loads_peak"], flow["load_bytes_peak"]) == (4, 2, 6, 3*1048576)
+    fly_flow = data["fly"]["streaming"]["textures"]["flow"]
+    assert fly_flow["latency"] == {"n": 0, "p50_ms": None, "p90_ms": None, "max_ms": None}
+    assert flow["publish"] == {"n": 25, "mean_us": pytest.approx(4.0), "max_us": pytest.approx(20.0)}
+    assert ("| run | 0.25 / 0.12 / 0.06 / 0.06 / 0.00 | 0.12 | 40 | 6 / 3.0 | 4 | 90 / 304 / 812 | 11 / 108 | 3 / 9 / 12 | "
+            "4.0 / 20.0 | 0.50 / 22 |"
             in report.report_markdown(report.build_report(streaming)))
     combined_budget = report.build_report(streaming)["places"]["streaming-flythrough"]["summary"]["streaming"]["textures"]["budget"]
     assert (combined_budget["stage_seconds"][1], combined_budget["stage_seconds"][13]) == (4, 8)

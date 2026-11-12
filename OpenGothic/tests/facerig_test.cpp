@@ -16,7 +16,11 @@
 // the same moves for the same seed, none without the section, rejections of it. The face of the one listening
 // (ListenFace, listen_face): on its nods, by chance and gap the same for the same seed, a smaller shorter flash, a
 // friendly half smile within its part of S_FRIENDLY, an angry or hostile frown and never a smile or a flash, silent
-// while the face is taken, none without the section, rejections of it. CPU only: no device, no game data.
+// while the face is taken, none without the section, rejections of it. The lids' shade over the balls (lid_shade,
+// LidShade): the edges of the lids found on a head with lid sheets, darker under the upper lid than over the lower,
+// more shade as the lids close (a blink, a squint) and as the eye looks up under its lid, the same for the head turned
+// whole, a neutral face that keeps it, none without the section, rejections of it. CPU only: no device, no game data.
+#include "graphics/eyeshader.h"
 #include "graphics/mesh/eyeblink.h"
 #include "graphics/mesh/facerig.h"
 #include "graphics/mesh/eyes.h"
@@ -737,6 +741,105 @@ void eyeProfileCases(const GltfHeadMesh& head, const FaceProfile& p) {
            "eyes: lids out 0: unknown field \"weight\"");
   }
 
+// A head for the lids' shade: two balls in rings of 10 degrees, lid sheets over each hugging the ball 1 mm off it
+// (the upper one from 15 degrees up, the lower one from 15 down, 60 degrees to each side), a far flat part. The blink
+// turns the upper sheets down by 25 degrees, the squint the lower ones up by 10, as the deltas of their vertices
+constexpr float LidOpen = 15;
+enum LidTarget : uint32_t { LidBlinkL, LidBlinkR, LidSquintL, LidSquintR };
+
+GltfHeadMesh makeLidHead() {
+  GltfHeadMesh head;
+  auto& m = head.mesh;
+  m.sub_meshes.emplace_back();
+  auto& sub = m.sub_meshes.back();
+  const auto tri = [&](uint32_t a, uint32_t b, uint32_t c) {
+    asset::MeshTriangle t;
+    for(uint32_t k=0; k<3; ++k) {
+      t.wedges[k] = uint16_t(sub.wedges.size());
+      asset::MeshWedge w;
+      w.index = uint16_t(k==0 ? a : k==1 ? b : c);
+      sub.wedges.push_back(w);
+      }
+    sub.triangles.push_back(t);
+    };
+  // a point at yaw, pitch degrees around the centre of the eye of `side`, dist cm away
+  const auto at = [](int side, float yaw, float pitch, float dist) {
+    const float y = side==0 ? EyeY : -EyeY;
+    return asset::Vec3{EyeX + dist*std::sin(pitch*Deg), y + dist*std::cos(pitch*Deg)*std::sin(yaw*Deg),
+                       EyeZ + dist*std::cos(pitch*Deg)*std::cos(yaw*Deg)};
+    };
+  std::vector<std::vector<uint32_t>> moved(4);  // per target: its vertices
+  std::vector<asset::Vec3> moveTo;              // per vertex: where its target takes it
+  const size_t skin = 0;
+  head.parts.push_back({"skin",0,0});
+  for(int side=0; side<2; ++side)
+    for(int lid=0; lid<2; ++lid) {
+      // rows from the edge out, columns of yaw; the edge row is the lid's edge
+      const uint32_t first = uint32_t(m.positions.size());
+      for(int r=0; r<6; ++r)
+        for(int c=0; c<=12; ++c) {
+          const float yaw = -60.f+10.f*float(c), off = LidOpen+9.f*float(r);
+          const float pitch = lid==0 ? off : -off;
+          m.positions.push_back(at(side,yaw,pitch,EyeR+0.1f));
+          moveTo.push_back(at(side,yaw,lid==0 ? pitch-25.f : pitch+10.f,EyeR+0.1f));
+          moved[size_t(lid*2+side)].push_back(uint32_t(m.positions.size()-1));
+          }
+      for(uint32_t r=0; r<5; ++r)
+        for(uint32_t c=0; c<12; ++c) {
+          const uint32_t a = first+r*13+c;
+          tri(a,a+1,a+13);
+          tri(a+1,a+14,a+13);
+          }
+      }
+  // a fold of the skin behind the left ball, as near to it as the lids but more than 80 degrees from its forward
+  // (the pocket of the socket): not a lid
+  {
+    const uint32_t first = uint32_t(m.positions.size());
+    for(float yaw:{150.f,170.f,160.f}) {
+      m.positions.push_back(at(0,yaw,yaw==160.f ? 10.f : 0.f,EyeR+0.1f));
+      moveTo.push_back(m.positions.back());
+      }
+    tri(first,first+1,first+2);
+  }
+  head.parts[skin].vertexCount = m.positions.size();
+  for(int side=0; side<2; ++side) {
+    const size_t first = m.positions.size();
+    for(int t=0; t<=18; ++t)
+      for(int f=0; f<(t==0 || t==18 ? 1 : 36); ++f) {
+        const float th = float(t)*10.f*Deg, ph = float(f)*10.f*Deg;
+        m.positions.push_back({EyeX + EyeR*std::sin(th)*std::sin(ph), (side==0 ? EyeY : -EyeY) + EyeR*std::sin(th)*std::cos(ph),
+                               EyeZ + EyeR*std::cos(th)});
+        }
+    head.parts.push_back({side==0 ? "eye_L" : "eye_R",first,m.positions.size()-first});
+    }
+  const size_t flat = m.positions.size();
+  for(int i=0; i<6; ++i)
+    m.positions.push_back({float(i%3),float(i/3),-20});
+  tri(uint32_t(flat),uint32_t(flat+1),uint32_t(flat+3));
+  head.parts.push_back({"flat",flat,6});
+  m.normals.assign(m.positions.size(),{0,0,1});
+  for(const char* name:{"eyeBlinkLeft","eyeBlinkRight","eyeSquintLeft","eyeSquintRight"}) {
+    head.targets.push_back({name,{}});
+    for(auto v:moved[head.targets.size()-1]) {
+      const auto& a = m.positions[v];
+      const auto& b = moveTo[v];
+      head.targets.back().vertices.push_back({v,{b.x-a.x,b.y-a.y,b.z-a.z},{}});
+      }
+    }
+  for(uint32_t i=0; i<m.positions.size(); ++i)
+    head.renderVertexIds.push_back(i);
+  return head;
+  }
+
+const std::string LidShadeBody = R"("part":"skin","upper_cm":0.6,"lower_cm":0.2,"upper_edge":0.2,"lower_edge":0.5)";
+std::string lidProfile(const std::string& shade) {
+  return R"({"version":1,"mouth":[],"anims":{)"
+         R"("R_EYESBLINK":{"layer":4,"blend_in_ms":0,"blend_out_ms":0,"duration_ms":0,"frame_ms":1000,"frames":[{"eyeBlinkLeft":1,"eyeBlinkRight":1}]},)"
+         R"("S_SQUINT":{"layer":2,"blend_in_ms":0,"blend_out_ms":0,"duration_ms":0,"frame_ms":1000,"frames":[{"eyeSquintLeft":1,"eyeSquintRight":1}]}},)"
+         R"("eyes":{"parts":{"left":"eye_L","right":"eye_R"},"limits_deg":{"out":35,"in":30,"up":25,"down":30},"lids":{})" +
+         (shade.empty() ? "" : R"(,"lid_shade":{)"+shade+"}") + "}}";
+  }
+
 Tempest::Vec3 vertex(const std::vector<Tempest::Vec4>& d, uint32_t v) {
   return {d[v*2].x,d[v*2].y,d[v*2].z};
   }
@@ -815,6 +918,110 @@ void eyeRigCases(const GltfHeadMesh& head, const FaceProfile& p) {
 
   rig.setEyes({},{});
   require(rig.update(100)==R::Rest,"straight eyes and no anims must return to the rest");
+  }
+
+void lidShadeCases() {
+  using R = FaceRig::Result;
+  const auto head = makeLidHead();
+  const auto p    = FaceProfile::parse(lidProfile(LidShadeBody),head);
+  require(p->eyes->shade.has_value() && p->eyes->shade->lids[0].corners.size()==2*120*3 && p->eyes->shade->lids[1].corners.size()==2*120*3,
+          "the lids of each eye must be the part's triangles around its ball: the far ones and the fold behind it left out");
+  const uint32_t left = uint32_t(head.parts[1].firstVertex);
+  // a vertex of the left ball at yaw, pitch degrees (rings of 10 degrees from the front pole, 36 around)
+  const auto ball = [&](int yaw, int pitch) {
+    const float th = std::acos(std::cos(float(pitch)*Deg)*std::cos(float(yaw)*Deg));
+    const int   t  = int(std::lround(th/Deg/10.f));
+    if(t==0)
+      return left;
+    const float ph = std::atan2(std::sin(float(pitch)*Deg),std::cos(float(pitch)*Deg)*std::sin(float(yaw)*Deg))/Deg;
+    const int   f  = (int(std::lround(ph/10.f))+36)%36;
+    return left + 1 + uint32_t((t-1)*36+f);
+    };
+  const uint32_t pupil = left, high = ball(0,10), low = ball(0,-10);
+
+  FaceRig rig;
+  rig.setup(&head,&*p);
+  require(rig.hasLidShade() && rig.update(0)==R::Deformed,"with the lids' shade a neutral face must keep its deformation");
+  const float open = rig.lidLight(pupil);
+  require(open>0.2f && open<1,"the pupil 15 degrees under the upper lid's edge must be in its soft shade");
+  require(rig.lidLight(high)<rig.lidLight(low),"under the upper lid the ball must be darker than over the lower one");
+  require(close(rig.lidLight(ball(0,30)),0.2f,0.01f),"under the lid the ball must keep the edge's share");
+  require(rig.lidLight(uint32_t(head.parts[0].firstVertex))==-1,"the lids' own vertices must carry no shade");
+
+  rig.startAnim("R_EYESBLINK",0.5f,uint64_t(-1),10);
+  rig.update(10);
+  const float half = rig.lidLight(pupil);
+  rig.startAnim("R_EYESBLINK",1,uint64_t(-1),20);
+  rig.update(20);
+  const float shut = rig.lidLight(pupil);
+  require(half<open-0.05f && shut<half && shut<=0.2f+1e-3f,"the shade must grow as the upper lid closes over the pupil");
+  rig.startAnim("R_EYESBLINK",1,0,30);
+  rig.update(30);
+  require(close(rig.lidLight(pupil),open,1e-4f),"the lid open again must give the shade back");
+
+  // the squint: the lower lid up 10 degrees over the ball
+  rig.startAnim("S_SQUINT",1,uint64_t(-1),32);
+  rig.update(32);
+  const float squint = rig.lidLight(low);
+  require(squint<rig.lidLight(pupil) && squint<0.5f+1e-3f,"the lower lid up over the ball must shade it");
+  rig.startAnim("S_SQUINT",1,0,34);
+  rig.update(34);
+
+  // the eye looking up under its upper lid
+  rig.setEyes({0,20*Deg},{});
+  rig.update(40);
+  require(rig.lidLight(pupil)<open-0.1f,"the pupil turned up under the lid must go into its shade");
+  rig.setEyes({0,-10*Deg},{});
+  rig.update(50);
+  require(rig.lidLight(pupil)>open,"the pupil turned down, away from the upper lid, must come out of its shade");
+  rig.setEyes({},{});
+  rig.update(60);
+
+
+  // without the section: no shade written, the neutral face rests as before
+  const auto plain = FaceProfile::parse(lidProfile(""),head);
+  FaceRig none;
+  none.setup(&head,&*plain);
+  require(!none.hasLidShade() && none.update(0)==R::Rest,"without lid_shade the neutral face must rest");
+  none.setEyes({0,20*Deg},{});
+  none.update(10);
+  require(none.lidLight(pupil)==-1,"without lid_shade no shade must be written");
+  // a head of the old export: the profile has eyes but no lid_shade (the rest after a deformation: eyeRigCases).
+  // A blink blends the lids as before and writes nothing of the shade
+  none.startAnim("R_EYESBLINK",1,uint64_t(-1),20);
+  none.update(20);
+  require(none.lidLight(pupil)==-1,"without lid_shade a blink must write no shade");
+
+  // OPENGOTHIC_EYE_SHADER=0: a profile with lid_shade is rigged as one without
+  setEyeShaderEnabled(false);
+  FaceRig off;
+  off.setup(&head,&*p);
+  const auto offRest = off.update(0);
+  off.setEyes({0,20*Deg},{});
+  off.update(10);
+  setEyeShaderEnabled(true);
+  require(!off.hasLidShade() && offRest==R::Rest && off.lidLight(pupil)==-1,
+          "with the eye shader off the face rig must not compute the lids' shade");
+
+  const auto rejected = [&](const std::string& shade, std::string_view reason) {
+    try {
+      (void)FaceProfile::parse(lidProfile(shade),head);
+      }
+    catch(const std::exception& e) {
+      require(std::string_view(e.what()).find(reason)!=std::string_view::npos,
+              "the lid_shade rejection must say why: want '"+std::string(reason)+"', got '"+e.what()+"'");
+      return;
+      }
+    require(false,"lid_shade must be rejected: "+std::string(reason));
+    };
+  rejected(LidShadeBody+R"(,"soft":1)",                                   "eyes: lid_shade: unknown field \"soft\"");
+  rejected(R"("part":"lids","upper_cm":0.6,"lower_cm":0.2,"upper_edge":0.2,"lower_edge":0.5)", "eyes: lid_shade: no head part \"lids\"");
+  rejected(R"("part":"eye_L","upper_cm":0.6,"lower_cm":0.2,"upper_edge":0.2,"lower_edge":0.5)", "eyes: lid_shade: part must be the lids'");
+  rejected(R"("part":"skin","upper_cm":0,"lower_cm":0.2,"upper_edge":0.2,"lower_edge":0.5)",    "eyes: lid_shade: upper_cm must be above 0");
+  rejected(R"("part":"skin","upper_cm":0.6,"lower_cm":1.6,"upper_edge":0.2,"lower_edge":0.5)",  "eyes: lid_shade: lower_cm must be above 0 and up to the ball's radius");
+  rejected(R"("part":"skin","upper_cm":0.6,"lower_cm":0.2,"upper_edge":0.2,"lower_edge":1.5)",  "eyes: lid_shade: lower_edge must be a number 0..1");
+  rejected(R"("part":"skin","upper_cm":0.6,"upper_edge":0.2,"lower_edge":0.5)",                 "eyes: lid_shade: no lower_cm");
+  rejected(R"("part":"flat","upper_cm":0.6,"lower_cm":0.2,"upper_edge":0.2,"lower_edge":0.5)",  "has no lids around the left eye");
   }
 
 // the head bone: its x up (world y), z forward turned by yaw degrees around up, at a man's height
@@ -1621,6 +1828,7 @@ int main() {
     eyeRigCases(eyeHead,*eyeProfile);
     eyeMotionCases(*eyeProfile);
     eyeCueCases(eyeHead);
+    lidShadeCases();
     }
   catch(const std::exception& e) {
     std::cerr << "facerig test: FAIL: " << e.what() << " (after " << assertions << " checks)\n";

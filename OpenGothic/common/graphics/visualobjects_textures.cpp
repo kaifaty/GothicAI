@@ -182,9 +182,10 @@ TextureScreenDemand::Result VisualObjects::evaluateTexture(const Object& object)
     // The owner may be anywhere within its reach of the anchor: the sphere grows by it, the view gets the whole margin.
     const float grown=object.textureRadius+(std::isfinite(object.textureReach) ? object.textureReach : 0.f);
     return TextureScreenDemand::evaluate(textureView,object.textureTexel,{object.texturePosition,grown},
-                                         object.textureNeed.resolution,textureClass(object));
+                                         object.textureNeed.resolution,textureClass(object),object.textureNeed.present);
     }
-  return TextureScreenDemand::evaluate(textureView,object.textureTexel,object.textureNeed.resolution,textureClass(object));
+  return TextureScreenDemand::evaluate(textureView,object.textureTexel,object.textureNeed.resolution,textureClass(object),
+                                       object.textureNeed.present);
   }
 
 uint32_t VisualObjects::textureClass(const Object& object) {
@@ -350,6 +351,7 @@ void VisualObjects::updateTextureDemand(size_t id) {
   if(textureScreenOwner(object) && object.texturePlaced) {
     const auto demand=evaluateTexture(object);
     need.resolution=demand.exponent;
+    need.present=demand.present;
     // measured from a distance: the stages coarsen by its distance class, not by the ring of its chunk
     if(demand.distanceClass!=TextureScreenDemand::NoClass)
       need.ring=demand.distanceClass;
@@ -377,6 +379,8 @@ void VisualObjects::updateTextureFocus() {
   textureView.odometer = textureResidency->viewOdometer();
   textureView.known    = textureResidency->viewKnown();
   textureView.coarsest = TextureLevels::coarsest(Resources::textureMipReserve(),Resources::textureViewScaleLog2());
+  textureView.heroAhead   = textureResidency->viewHeroAhead();
+  textureView.cameraAhead = textureResidency->viewCameraAhead();
   const auto started=textureCensus.enabled ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
   for(auto& entry:textureChunks) {
     const ChunkId chunk{entry.first.first,entry.first.second};
@@ -409,6 +413,8 @@ void VisualObjects::updateTextureView(bool flush) {
   textureView.odometer = textureResidency->viewOdometer();
   textureView.known    = textureResidency->viewKnown();
   textureView.coarsest = TextureLevels::coarsest(Resources::textureMipReserve(),Resources::textureViewScaleLog2());
+  textureView.heroAhead   = textureResidency->viewHeroAhead();
+  textureView.cameraAhead = textureResidency->viewCameraAhead();
   // The distance class adds its margin from stage 2 on, where the stages use it. Entering such a stage, every owner
   // is evaluated once after the due ones, within the same budget: its class may have gone stale meanwhile.
   const bool classMargin=Resources::textureStage()>=2;
@@ -447,12 +453,14 @@ void VisualObjects::updateTextureView(bool flush) {
       updateTextureDemand(id);
       return;
       }
-    // Only the exponent and the distance class can have changed here; a measured owner's ring is its class.
-    if(demand.exponent!=object.textureNeed.resolution || demand.distanceClass!=object.textureNeed.ring) {
-      if(demand.exponent==object.textureNeed.resolution)
+    // Only the exponents and the distance class can have changed here; a measured owner's ring is its class.
+    if(demand.exponent!=object.textureNeed.resolution || demand.distanceClass!=object.textureNeed.ring ||
+       demand.present!=object.textureNeed.present) {
+      if(demand.exponent==object.textureNeed.resolution && demand.present==object.textureNeed.present)
         ++textureCensus.classes;
       auto need=object.textureNeed;
       need.resolution=demand.exponent;
+      need.present=demand.present;
       need.ring=demand.distanceClass;
       if(object.textureDemand)
         Resources::textureDemand(object.bucketId->mat,object.textureCategory,object.textureNeed,need);
@@ -476,6 +484,9 @@ void VisualObjects::updateTextureView(bool flush) {
     evaluate(entry.owner,object);
     if(!flush && count%16==0 && std::chrono::steady_clock::now()>=deadline) {
       late=true;
+      ++textureCensus.late;
+      if(textureScreen.due(textureView.odometer,entry))
+        textureCensus.lateMetres=std::max(textureCensus.lateMetres,textureView.odometer-entry.expiry);
       break;
       }
     }

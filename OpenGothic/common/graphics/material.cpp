@@ -1,4 +1,5 @@
 #include "material.h"
+#include "graphics/eyeshader.h"
 
 #include "utils/parser.h"
 #include "resources.h"
@@ -77,6 +78,11 @@ Material::Material(const asset::Material& m, bool enableAlphaTest, bool requireA
     emissive = maps.orm!=nullptr ? maps.emissive : 0.f;
     hair = maps.hair || maps.strand;
     strand = maps.strand;
+    eye = maps.eye;
+    // OPENGOTHIC_EYE_SHADER=0: the eye as before the eye shader, Lambert of its colour; its roughness map is the
+    // eye shader's
+    if(eye && !eyeShaderEnabled())
+      orm = nullptr;
     materialMaps = maps.present;
     }
   }
@@ -128,6 +134,7 @@ bool Material::operator ==(const Material& other) const {
          emissive==other.emissive &&
          hair==other.hair &&
          strand==other.strand &&
+         eye==other.eye &&
          envMapping==other.envMapping;
   }
 

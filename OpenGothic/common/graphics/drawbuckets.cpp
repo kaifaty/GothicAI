@@ -8,6 +8,7 @@
 #include "graphics/shaders.h"
 #include "frameprofile.h"
 #include "commandline.h"
+#include "graphics/eyeshader.h"
 
 using namespace Tempest;
 
@@ -291,6 +292,9 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
     // Strands: the vertex shader makes ribbons of them (graphics/mesh/groommesh.cpp)
     if(i.mat.strand)
       bx.flags |= BK_STRAND;
+    // An eyeball: the wet highlight and the lid's shade (OPENGOTHIC_EYE_SHADER=0: lit as any own material)
+    if(i.mat.eye && (bx.flags & BK_MATERIAL_MAPS)!=0 && eyeShaderEnabled())
+      bx.flags |= BK_EYE;
     if(i.mat.alpha==Material::Water)
       bx.flags |= BK_WATER;
     bucket.push_back(bx);

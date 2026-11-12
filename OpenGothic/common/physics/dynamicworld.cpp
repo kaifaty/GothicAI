@@ -13,6 +13,7 @@
 #include "sha256.h"
 #include <Tempest/Log>
 #include "graphics/mesh/skeleton.h"
+#include "graphics/bounds.h"
 
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
@@ -29,11 +30,8 @@
 #include <cstdlib>
 
 #include "graphics/mesh/submesh/packedmesh.h"
-#include "world/objects/item.h"
-#include "world/objects/npc.h"
-#include "world/bullet.h"
-#include "world/world.h"
-#include "game/serialize.h"
+#include "physicshost.h"
+#include "savearchive.h"
 #include "game/physicssave.h"
 
 const float DynamicWorld::worldHeight = 20000; //TODO: remove
@@ -194,9 +192,9 @@ struct DynamicWorld::WorldBodies {
   std::unique_ptr<CollisionWorld::CollisionBody> originalCloth;
   };
 
-DynamicWorld::DynamicWorld(World* owner, const asset::WorldMesh& worldMesh, const asset::WorldMesh* originalCloth) {
-  world.reset(new CollisionWorld());
-  ownerWorld=owner;
+DynamicWorld::DynamicWorld(PhysicsHost* owner, const asset::WorldMesh& worldMesh, const asset::WorldMesh* originalCloth) {
+  world.reset(new CollisionWorld(owner));
+  host=owner;
   if(owner!=nullptr)
     splitStaticTriangles=Settings::getI("GAME","static_collision_split")!=0;
   clothWorld=std::make_unique<Cloth>(*world);
@@ -328,24 +326,10 @@ DynamicWorld::DynamicWorld(World* owner, const asset::WorldMesh& worldMesh, cons
 
   if(owner!=nullptr) {
     world->setItemWakeCallback([owner](const Tempest::Vec3& min,const Tempest::Vec3& max,size_t budget) {
-      const auto center=(min+max)*.5f;
-      const float radius=(max-min).length()*.5f;
-      size_t created=0;
-      owner->detectItem(center,radius,[&](::Item& item) {
-        const auto p=item.position();
-        if(p.x<min.x || p.x>max.x || p.y<min.y || p.y>max.y || p.z<min.z || p.z>max.z)
-          return;
-        if(item.isDynamic() || created<budget)
-          created+=item.wakePhysics() ? 1 : 0;
-        });
-      return created;
+      return owner->wakeItems(min,max,budget);
       });
     world->setItemHitCallback([owner](::Item& itm, asset::MaterialGroup mat, float impulse, float mass) {
-      auto  snd = owner->addLandHitEffect(ItemMaterial(itm.handle().material),mat,itm.transform());
-      float v   = impulse/mass;
-      float vol = snd.volume()*std::min(v/10.f,1.f);
-      snd.setVolume(vol);
-      snd.play();
+      owner->itemHit(itm,mat,impulse,mass);
       });
     }
   }
@@ -359,8 +343,8 @@ Cloth& DynamicWorld::cloth() { return *clothWorld; }
 const Cloth& DynamicWorld::cloth() const { return *clothWorld; }
 void DynamicWorld::setClothEnabled(bool value) {
   clothWorld->setEnabled(value);
-  if(ownerWorld!=nullptr && ownerWorld->view()!=nullptr)
-    ownerWorld->view()->setOriginalClothVisible(!value);
+  if(host!=nullptr)
+    host->setOriginalClothVisible(!value);
   if(value) {
     bodies->originalCloth.reset();
     } else if(bodies->originalCloth==nullptr && originalClothMesh!=nullptr &&
@@ -779,12 +763,12 @@ std::vector<DynamicWorld::RagdollSupport> DynamicWorld::ragdollSupports(const Ra
   }
 
 void DynamicWorld::tick(uint64_t dt) {
-  if(ownerWorld!=nullptr) {
+  if(host!=nullptr) {
     world->setBodyImpactEnabled(Settings::physicsFlags().bodyImpactDamage);
     const float cycle=Settings::getF("ENGINE","zWindCycleTime")+
                       Settings::getF("ENGINE","zWindCycleTimeVar");
     const uint64_t period=std::isfinite(cycle) && cycle>0.f ? uint64_t(cycle*1000.f) : 0;
-    clothWorld->setWind(WorldWind::sample(ownerWorld->tickCount(),period,
+    clothWorld->setWind(WorldWind::sample(host->tickCount(),period,
                                         Settings::getI("ENGINE","zWindEnabled")!=0));
     }
   npcList   ->tickAabbs();
@@ -809,10 +793,10 @@ void DynamicWorld::tick(uint64_t dt) {
   for(const auto* records:{&npcList->body,&npcList->frozen})
     for(const auto& record:*records)
       if(record.body!=nullptr && record.body->virtualCharacter!=nullptr)
-        if(auto* npc=record.body->toNpc(); npc!=nullptr && !npc->usesSimplifiedMovement())
+        if(auto* npc=record.body->toNpc(); npc!=nullptr && !host->npcUsesSimplifiedMovement(*npc))
           riders.push_back(npc);
   for(auto* npc:riders)
-    npc->finishCharacterVirtualSupport(dt);
+    host->finishNpcSupport(*npc,dt);
   }
 
 std::unique_ptr<Ragdoll> DynamicWorld::createRagdoll(const Skeleton& skeleton, const HitZones& zones,
@@ -1021,8 +1005,8 @@ std::string_view DynamicWorld::validateSectorName(std::string_view name) const {
   }
 
 bool DynamicWorld::NpcBodyList::hasCollision(const NpcBody& a, const NpcBody& b, Tempest::Vec3& normal, float& colDepth) const {
-    if((a.toNpc()!=nullptr && a.toNpc()->usesSimplifiedMovement()) ||
-       (b.toNpc()!=nullptr && b.toNpc()->usesSimplifiedMovement()))
+    if((a.toNpc()!=nullptr && wrld.host->npcUsesSimplifiedMovement(*a.toNpc())) ||
+       (b.toNpc()!=nullptr && wrld.host->npcUsesSimplifiedMovement(*b.toNpc())))
       return false;
     const float objMaxRXZ = a.maxRXZ + b.maxRXZ;
     const float objMaxRY  = a.maxRY  + b.maxRY;
@@ -1127,11 +1111,11 @@ void DynamicWorld::Item::setItem(::Item* it) {
   assert(obj->body->category()==DynamicWorld::C_Item);
   obj->body->setPayload(it,P_Item);
   if(it!=nullptr) {
-    const auto material=ItemMaterial(it->handle().material);
+    const auto material=owner->host->itemMaterial(*it);
     const auto surface=material==MAT_WOOD ? asset::MaterialGroup::WOOD :
                        material==MAT_METAL ? asset::MaterialGroup::METAL : asset::MaterialGroup::STONE;
-    obj->body->setNoiseProfile(material,surface,it->handle().visual);
-    obj->body->setLabel(it->handle().visual);
+    obj->body->setNoiseProfile(material,surface,owner->host->itemVisual(*it));
+    obj->body->setLabel(owner->host->itemVisual(*it));
     }
   }
 

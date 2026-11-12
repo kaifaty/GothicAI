@@ -1,6 +1,6 @@
 #include "dynamicworld_internal.h"
 
-#include "testbench.h"
+#include "benchprobe.h"
 
 #include <chrono>
 
@@ -151,9 +151,9 @@ void DynamicWorld::breakRemnant(BodyData& obj, uint32_t group) {
   syncFragments(obj);
   obj.breakImpulse=blow.impulse;
   emitBreakNoise(obj,center);
-  if(TestBench::isActive())
-    TestBench::destructionBreak(reinterpret_cast<uintptr_t>(&obj),obj.fragmentGroup.size(),
-                               float(std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count()),true);
+  if(auto* probe=BenchProbe::get(); probe!=nullptr && probe->active())
+    probe->destructionBreak(reinterpret_cast<uintptr_t>(&obj),obj.fragmentGroup.size(),
+                            float(std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count()),true);
   }
 
 bool DynamicWorld::meleeStoppedRemnant(const MeleeBladeContact& contact, float weaponDamage, float strength,

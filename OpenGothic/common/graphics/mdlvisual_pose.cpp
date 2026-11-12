@@ -250,12 +250,36 @@ bool MdlVisual::updateAim(Npc& npc, uint64_t dt) {
     bd.bowAxis   = ext.x>=ext.y && ext.x>=ext.z ? Tempest::Vec3(1,0,0) : (ext.y>=ext.z ? Tempest::Vec3(0,1,0) : Tempest::Vec3(0,0,1));
     bd.hasString = high && straight;
     }
+  if(quiv.isShown() && skeleton!=nullptr && quiv.bone()<skInst->boneCount()) {
+    // the quiver as it hung last (the reload's hand is led to it), relative to the pelvis
+    const size_t sp = quiv.spineBone()<skInst->boneCount() ? quiv.spineBone() : quiv.bone();
+    auto pelvisInv = renderedBone(quiv.bone());
+    pelvisInv.inverse();
+    bd.quiverKnown = true;
+    bd.quiverNow   = pelvisInv*quiv.frameNow(renderedBone(quiv.bone()),renderedBone(sp));
+    bd.quiverClip  = quiv.reloadFrame();
+    }
   if(ar.stage()==Archer::Reloading) {
     // how far the reload is: not begun (the shot), the animation, over (the bow comes to rest)
     const float p = pose.animProgress("T_BOWRELOAD",npc.world().tickCount());
     bd.reload = p>=0.f ? p : (ar.isNocking() ? 1.f : 0.f);
     }
   changed  |= pose.updateBowDraw(bd);
+  // the right hand on the quiver while it slides along the belt (reports/archery/2026-11-12-quiver-to-hand)
+  {
+    QuiverHand::Input qh;
+    if(quiverHand>0.f && quiv.isShown() && skeleton!=nullptr && quiv.bone()<skInst->boneCount()) {
+      const size_t sp = quiv.spineBone()<skInst->boneCount() ? quiv.spineBone() : quiv.bone();
+      auto pelvisInv = renderedBone(quiv.bone());
+      pelvisInv.inverse();
+      Tempest::Matrix4x4 at;
+      at.identity();
+      at.translate(Tempest::Vec3(0,-Quiver::GripDown,Quiver::MouthRadius+Quiver::GripOff));
+      qh.weight = quiverHand;
+      qh.grip   = pelvisInv*quiv.frameNow(renderedBone(quiv.bone()),renderedBone(sp))*at;
+      }
+    changed |= pose.updateQuiverHand(qh);
+  }
   // the string as drawn by hand: straight back as far as the bow is held so, else as G2 draws it
   const float string = pose.bowDrawIk().string();
   const float held   = pose.bowDrawIk().aligned();

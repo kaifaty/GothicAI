@@ -325,6 +325,7 @@ struct WorldBench {
   uint64_t streamingNearBefore = 0, streamingFarBefore = 0;
   uint64_t streamingPublishedBefore = 0, streamingReleasedBefore = 0;
   Resources::TextureStats streamingTexturesBefore;
+  TextureFlow::Distributions streamingFlowBefore;
   uint64_t streamingVobCreatedBefore = 0, streamingVobReleasedBefore = 0;
   double streamingVobMissingBefore = 0;
   uint64_t streamingNpcTransitionsBefore = 0;

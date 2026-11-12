@@ -1,8 +1,8 @@
 #include "dynamicworld_internal.h"
 
-#include "game/serialize.h"
+#include "savearchive.h"
 #include "game/physicssave.h"
-#include "testbench.h"
+#include "benchprobe.h"
 
 #include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
 
@@ -162,9 +162,9 @@ void DynamicWorld::breakMovableVob(BodyData& obj) {
   obj.fragmentsWereSleeping=false;
   syncFragments(obj);
   emitBreakNoise(obj,center);
-  if(TestBench::isActive())
-    TestBench::destructionBreak(reinterpret_cast<uintptr_t>(&obj),obj.fragmentGroup.size(),
-                               float(std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count()));
+  if(auto* probe=BenchProbe::get(); probe!=nullptr && probe->active())
+    probe->destructionBreak(reinterpret_cast<uintptr_t>(&obj),obj.fragmentGroup.size(),
+                            float(std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count()),false);
   }
 
 void DynamicWorld::chooseLastingGroups(BodyData& obj) {
@@ -251,11 +251,11 @@ void DynamicWorld::cleanupFragments(BodyData& obj) {
     const bool distant=hasFragmentObserver && (body->centerOfMass()-fragmentObserver).quadLength()>3000.f*3000.f;
     if(!obj.fragmentPermanent[i] && (expired || distant)) {
       // A group retires whole: every piece of it.
-      if(TestBench::isActive())
+      if(auto* probe=BenchProbe::get(); probe!=nullptr && probe->active())
         for(size_t piece=0;piece<obj.fragmentGroup.size();++piece)
           if(obj.fragmentGroup[piece]==i)
-            TestBench::destructionRetire(reinterpret_cast<uintptr_t>(&obj),piece,expired,
-                                         hasFragmentObserver ? (body->centerOfMass()-fragmentObserver).length() : -1.f);
+            probe->destructionRetire(reinterpret_cast<uintptr_t>(&obj),piece,expired,
+                                     hasFragmentObserver ? (body->centerOfMass()-fragmentObserver).length() : -1.f);
       body.reset();
       changed=true;
       }
@@ -264,7 +264,7 @@ void DynamicWorld::cleanupFragments(BodyData& obj) {
     obj.fragmentsWereSleeping=false;
   }
 
-void DynamicWorld::saveDestructionVobs(Serialize& fout) const {
+void DynamicWorld::saveDestructionVobs(SaveArchive& fout) const {
   if(!movableVobs->destructionEnabled)
     return;
   std::vector<const BodyData*> changed;
@@ -308,7 +308,7 @@ void DynamicWorld::saveDestructionVobs(Serialize& fout) const {
     }
   }
 
-void DynamicWorld::loadDestructionVobs(Serialize& fin) {
+void DynamicWorld::loadDestructionVobs(SaveArchive& fin) {
   if(!movableVobs->destructionEnabled || !fin.setEntry("worlds/",fin.worldName(),"/destruction-vobs"))
     return;
   try {

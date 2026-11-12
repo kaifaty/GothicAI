@@ -4,7 +4,7 @@
 #include <Tempest/Log>
 
 #include "utils/string_frm.h"
-#include "game/serialize.h"
+#include "savearchive.h"
 #include "skeleton.h"
 #include "animmath.h"
 #include "ikmath.h"
@@ -188,7 +188,7 @@ uint8_t Pose::calcAniCombVert(const Vec3& dpos) {
   return uint8_t(cy+1u);
   }
 
-void Pose::save(Serialize &fout) {
+void Pose::save(SaveArchive &fout) {
   uint8_t sz=uint8_t(lay.size());
   fout.write(sz);
   for(auto& i:lay) {
@@ -201,7 +201,7 @@ void Pose::save(Serialize &fout) {
       if(back<double(lastUpdate))
         start = lastUpdate-uint64_t(back);
       }
-    fout.write(i.seq->name,start,i.bs,uint64_t(0)); // was the start of a blend
+    fout.write(i.seq->name,start,uint32_t(i.bs),uint64_t(0)); // was the start of a blend
     }
   fout.write(lastUpdate);
   fout.write(combo.bits);
@@ -219,7 +219,7 @@ void Pose::save(Serialize &fout) {
     fout.write(i);
   }
 
-void Pose::load(Serialize &fin, const AnimationSolver& solver) {
+void Pose::load(SaveArchive &fin, const AnimationSolver& solver) {
   clearRagdollPose();
   std::string name;
   uint8_t     sz = uint8_t(lay.size());
@@ -227,7 +227,7 @@ void Pose::load(Serialize &fin, const AnimationSolver& solver) {
   fin.read(sz);
   lay.resize(sz);
   for(auto& i:lay) {
-    fin.read(name,i.sAnim,i.bs);
+    fin.read(name,i.sAnim,reinterpret_cast<uint32_t&>(i.bs));
     i.sOrigin = i.sAnim;
     if(fin.version()>43) {
       uint64_t sBlend = 0;
@@ -317,6 +317,7 @@ void Pose::setSkeleton(const Skeleton* sk) {
   aim.setSkeleton(skeleton);
   walk.setSkeleton(skeleton);
   bowDraw.setSkeleton(skeleton);
+  qhand.setSkeleton(skeleton);
   flinch.setSkeleton(skeleton);
   trY          = skeleton==nullptr ? 0.f : skeleton->rootTr.y;
   needToUpdate = true;
@@ -643,6 +644,7 @@ void Pose::mkSkeleton(const Tempest::Matrix4x4& mt, float ikFloorY) {
   aim.apply(tr,numBones,Vec3(mt.at(3,0),mt.at(3,1),mt.at(3,2)),
             Vec3(mt.at(2,0),0,mt.at(2,2)));
   bowDraw.apply(tr,numBones);
+  qhand.apply(tr,numBones);
   gaze.apply(tr,numBones);
   flinch.apply(tr,numBones);
   if(!physical.empty())
@@ -735,7 +737,7 @@ void Pose::clearRagdollPose(bool blendFromPhysical, uint64_t tickCount) {
   needToUpdate = true;
   }
 
-void Pose::saveRagdollRecovery(Serialize& fout) const {
+void Pose::saveRagdollRecovery(SaveArchive& fout) const {
   fout.write(physicalReturning);
   if(!physicalReturning)
     return;
@@ -747,7 +749,7 @@ void Pose::saveRagdollRecovery(Serialize& fout) const {
   physicalBlend.saveExternal(fout);
   }
 
-void Pose::loadRagdollRecovery(Serialize& fin) {
+void Pose::loadRagdollRecovery(SaveArchive& fin) {
   clearRagdollPose();
   bool returning = false;
   fin.read(returning);
@@ -1592,6 +1594,13 @@ bool Pose::animRelative(std::string_view name, float at, size_t from, size_t to,
   return true;
   }
 
+bool Pose::isOwnReload() const {
+  for(auto& i:lay)
+    if(i.seq->ownReload)
+      return true;
+  return false;
+  }
+
 float Pose::animDuration(std::string_view name) const {
   for(auto& i:lay)
     if(i.seq->name==name)
@@ -1623,10 +1632,26 @@ bool Pose::updateBowDraw(const BowDraw::Input& input) {
   size_t chest = size_t(-1), hand = size_t(-1), elbow = size_t(-1);
   if(in.reload>=0.f)
     in.reloadTime = animDuration(BowDraw::ReloadAnim);
-  if(in.reload>=0.f && bowDraw.grabNodes(chest,hand,elbow))
+  in.own = in.reload>=0.f && isOwnReload();
+  if(in.own && skeleton!=nullptr) {
+    // the own clip from the quiver: its hand and head at its first frame relative to the neck
+    const size_t neck = skeleton->findNode("BIP01 NECK"), rh = skeleton->findNode("BIP01 R HAND"),
+                 hd   = skeleton->findNode("BIP01 HEAD");
+    in.ownKnown = neck!=size_t(-1) && rh!=size_t(-1) && hd!=size_t(-1) &&
+                  animRelative(BowDraw::ReloadAnim,0,neck,rh,in.ownHand0) &&
+                  animRelative(BowDraw::ReloadAnim,0,neck,hd,in.ownHead0);
+    }
+  else if(in.reload>=0.f && bowDraw.grabNodes(chest,hand,elbow))
     in.grabKnown = animRelative(BowDraw::ReloadAnim,BowDraw::GrabAt,chest,hand,in.grabHand) &&
                    animRelative(BowDraw::ReloadAnim,BowDraw::GrabAt,chest,elbow,in.grabElbow);
   if(!bowDraw.update(in))
+    return false;
+  mkSkeleton(pos);
+  return true;
+  }
+
+bool Pose::updateQuiverHand(const QuiverHand::Input& in) {
+  if(!qhand.update(in))
     return false;
   mkSkeleton(pos);
   return true;

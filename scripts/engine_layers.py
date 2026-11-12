@@ -53,6 +53,8 @@ ALLOWED = {
 
 # (glob relative to OpenGothic/, layer); first match wins. Paths without extension
 # match every extension of that name.
+# OpenGothic/cmake/EngineLayerGuard.cmake reads this list line by line: keep one
+# ("glob", "layer") tuple per line, globs of letters, digits, `_`, `-`, `.`, `/` and `*`.
 LAYER_RULES: list[tuple[str, str]] = [
     # Import of the original install into our formats (ZenKit, DirectMusic, Bink).
     ("common/asset/*fromzenkit*", "import"),
@@ -107,7 +109,8 @@ LAYER_RULES: list[tuple[str, str]] = [
     ("common/gothic", "gothic"),
     ("common/marvin", "gothic"),
     ("common/mainwindow", "gothic"),
-    ("game/main", "gothic"),
+    # The entry point assembles all layers, including the bench and AI bridge.
+    ("game/main", "tools"),
     ("common/gamemusic", "gothic"),
     ("common/dmusic/*", "gothic"),
     ("common/programdata", "gothic"),

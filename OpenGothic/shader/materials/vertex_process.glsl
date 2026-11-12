@@ -323,6 +323,21 @@ vec3 processVertexCommon(out Varyings shOut, in Vertex v, uint bucketId, uint in
     shOut.normal = normalize(obj.mat*vec4(strandOctNormal(c.xy),0.0))*(0.5 + 0.5*c.z);
 #endif
     }
+#if defined(MAT_NORMAL) && defined(LVL_OBJECT)
+  if((bucket[bucketId].flags & BK_EYE)!=0u) {
+    // An eyeball (reports/content/2026-11-hero-head/eye-shader.md): the face rig writes how much of the light the lids
+    // leave to the vertex as 1 + that share into the free w of its deformed normal (FaceRig::write); 0 there, or no
+    // deformation at all, is a head the rig gives no shade: the mean. The share rides to main.frag in the normal's
+    // length, as the strands' light does
+    float lid = EyeLidFar;
+    if(vboOffset<obj.deformCount) {
+      const float w = uintBitsToFloat(instanceMem[obj.deformPtr + vboOffset*8 + 7]);
+      if(w>=0.5)
+        lid = clamp(w - 1.0, 0.0, 1.0);
+      }
+    shOut.normal = normalize(normal)*(0.5 + 0.5*lid);
+    }
+#endif
 #endif
 
 #if defined(MAT_MOTION) && defined(LVL_OBJECT)

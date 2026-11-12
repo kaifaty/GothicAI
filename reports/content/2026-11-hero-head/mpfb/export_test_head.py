@@ -13,6 +13,13 @@
 # the brow cards when the brows are painted on the skin).
 # --skin-normal <png> and --skin-orm <png> are the skin's normal and roughness maps (scripts/content/npc/
 # skin_material.py): they go into the skin material's `normal` and `orm` slots.
+# --eye-orm <png> is the eyes' roughness map (scripts/content/npc/eye_material.py, with its eye_game.png as the eye
+# texture): it goes into the eye material's `orm` slot and the material gets `eye: true`, so the engine lights the
+# eyes with its eye shader (reports/content/2026-11-hero-head/eye-shader.md), and the face profile gets the lids' shade
+# (eyes.lid_shade, LID_SHADE below) the face rig computes for that shader. Without it the eye and the face are as before.
+# --cornea <eye_material.json> raises each iris onto the white and gives the front of the ball the normals of a corneal
+# dome (scripts/content/npc/eye_cornea.py); with eye_material.py --depth the iris then lies that deep under it for the
+# shader's refraction. Without it the head is as before.
 # --hair <npz> <png> and --beard <npz> <png> add the parts cut from the generator's model (skin/hair_cut.py,
 # skin/beard_shell.py; metres, the frame of the registered head). The hair is rigid; the beard is bound to the skin
 # and follows every face shape; its map is cut by alpha. A hair part with normals in its npz is hair cards
@@ -336,10 +343,23 @@ rest = data[20+jl:]
 out = struct.pack('<III', 0x46546C67, 2, 12+8+len(txt)+len(rest)) + struct.pack('<II', len(txt), 0x4E4F534A) + txt + rest
 open(glb, 'wb').write(out)
 print('GLB', glb, len(out), 'bytes; targets per mesh', {k: len(v) for k, v in names.items()})
+# the cornea (task 2 of the eye shader), on the GLB as written
+if '--cornea' in ARGS:
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), *(['..']*4), 'scripts', 'content', 'npc'))
+    import eye_cornea
+    eye_cornea.apply(glb, os.path.abspath(os.path.expanduser(ARGS[ARGS.index('--cornea')+1])), glb)
 
 # the face profile: the old face animation names as weights of these shapes (authored by hand, next to this script)
-shutil.copyfile(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'test-head.face.json'),
-                os.path.join(ROOT, 'characters', 'hero', NAME+'.face.json'))
+FACE = os.path.join(ROOT, 'characters', 'hero', NAME+'.face.json')
+shutil.copyfile(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'test-head.face.json'), FACE)
+# the lids' shade over the balls (eye-shader.md), only for a head with the eye shader: the share of the light the lids
+# leave to a point of a ball is upper_edge at the upper lid's edge and under it and all of it upper_cm below the edge (cm
+# on the ball, which is ~1.5 times a real one), the same for the lower lid, which hangs over the ball far less
+LID_SHADE = {'about': "The lids' shade over the balls for the eye shader (reports/content/2026-11-hero-head/eye-shader.md).",
+             'part': 'face', 'upper_cm': 0.3, 'lower_cm': 0.08, 'upper_edge': 0.25, 'lower_edge': 0.8}
+if '--eye-orm' in ARGS:
+    profile = json.load(open(FACE)); profile['eyes']['lid_shade'] = LID_SHADE
+    json.dump(profile, open(FACE, 'w'), indent=2, ensure_ascii=False)
 json.dump({'PC_HERO': {'head': 'hero/%s.glb' % NAME, 'face': 'hero/%s.face.json' % NAME}},
           open(os.path.join(ROOT, 'characters', 'characters.json'), 'w'), indent=2)
 # the map of to_export as a matrix, for parts that are not meshes (strands, scripts/content/npc/hair/groom_export.py):
@@ -361,6 +381,9 @@ SKIN_MAPS = {slot: os.path.abspath(os.path.expanduser(ARGS[ARGS.index(flag)+1]))
              for slot, flag in (('normal', '--skin-normal'), ('orm', '--skin-orm')) if flag in ARGS}
 for slot, src in SKIN_MAPS.items():
     shutil.copyfile(src, os.path.join(png, 'skin_%s.png' % slot))
+EYE_ORM = os.path.abspath(os.path.expanduser(ARGS[ARGS.index('--eye-orm')+1])) if '--eye-orm' in ARGS else None
+if EYE_ORM:
+    shutil.copyfile(EYE_ORM, os.path.join(png, 'eye_orm.png'))
 subprocess.run([TEXPACK, png, dds], check=True)
 shutil.rmtree(png)
 mj = os.path.join(ROOT, 'materials', 'materials.json')
@@ -369,6 +392,8 @@ for key in TEX:
     table['OWN_%s_%s.TGA' % (MATS, key)] = {'albedo': '%s/%s.dds' % (NAME, key.lower())}
 for slot in SKIN_MAPS:
     table['OWN_%s_SKIN.TGA' % MATS][slot] = '%s/skin_%s.dds' % (NAME, slot)
+if EYE_ORM:
+    table['OWN_%s_EYE.TGA' % MATS].update({'orm': '%s/eye_orm.dds' % NAME, 'eye': True})
 if HAIR_MAP and 'HAIR' in TEX:
     table['OWN_%s_HAIR.TGA' % MATS].update({'orm': '%s/hair_map.dds' % NAME, 'hair': True})
 json.dump(table, open(mj, 'w'), indent=2)

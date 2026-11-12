@@ -18,8 +18,8 @@ using namespace Tempest;
 
 static_assert(TextureBudget::WholeChain==TextureScreenDemand::WholeChain,"the whole-chain exponent must match");
 
-uint8_t Resources::resolutionLevel(const TextureRecord& record, uint32_t stage) const {
-  const auto exponent=record.resolutions.rbegin()->first;
+uint8_t Resources::resolutionLevel(const TextureRecord& record, uint32_t stage, bool present) const {
+  const auto exponent=present && !record.presents.empty() ? record.presents.rbegin()->first : record.resolutions.rbegin()->first;
   const auto level=TextureLevels::level(record.width,record.height,textureViewScale,exponent,
                                         TextureBudget::reserve(stage,textureReserve),record.lowest);
   if(stage==0)

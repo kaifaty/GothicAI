@@ -537,6 +537,56 @@ void mainGBuffer(vec4 t) {
       outOrm.b = 0.0; // a degenerate UV: plain Lambert, not a strand of unknown direction
       }
     }
+  if((bucket[bucketId].flags & BK_EYE)!=0u) {
+    // An eyeball (eye_brdf.glsl): the lids' shade comes in the length of the normal (vertex_process.glsl). It darkens
+    // the albedo down to EyeLidAlbedo, as The Heretic's eyes do, and goes to the light passes in the channel of metal
+    // (an eye has none). Without an ORM map the tear film's roughness is EyeRoughness. The roughness grows by how
+    // fast the normal turns over the pixel (Kaplanyan and Tokuyoshi's specular antialiasing): a highlight of a pixel
+    // or two on the cornea flickers under TAA as the head turns otherwise
+    const float EyeLidAlbedo  = 0.65;
+    const float EyeRoughness  = 0.08;
+    const float EyeIrisDepth  = 0.5;          // cm at b = 1 (eye_cornea.py, DEPTH_MAX_CM)
+    const float EyeEta        = 1.0/1.336;    // air to the aqueous humour (the tear film and the cornea add little)
+    const float lid = clamp(length(shInp.normal)*2.0 - 1.0, 0.0, 1.0);
+    const vec3  n   = normalize(shInp.normal);
+    const vec3  dn  = dFdx(n), dm = dFdy(n);
+    const float kernel = min(0.5*(dot(dn,dn) + dot(dm,dm)), 0.18);
+    const float r0  = (bucket[bucketId].flags & BK_ORM)!=0 ? outOrm.g : EyeRoughness;
+    const float a2  = clamp(r0*r0*r0*r0 + kernel, 0.0, 1.0);
+    // The iris in its depth under the cornea (eye-shader.md, "Способ" 5; Jimenez 2012): the ORM's b is how deep the
+    // iris lies under this point of the dome (scripts/content/npc/eye_cornea.py), 0 off the iris and in older maps. The
+    // eye sees it along the ray the cornea bends, so the colour comes from where that ray meets the iris: the map is
+    // read that far along the ray's run over the surface. The run goes into the map by the surface gradients of u
+    // and v (the cotangent frame of mappedNormal): the two eyes share the map mirrored, the gradients carry the sign
+    const float depth = (bucket[bucketId].flags & BK_ORM)!=0 ? outOrm.b*EyeIrisDepth : 0.0;
+    // The limit: a ray that comes in through the cornea bends to at most 48.5 degrees off the normal, its run over the
+    // surface is at most 1.13 of the depth. Where the interpolated normal looks aside or away from the eye (the dome's
+    // edge under a lid, a grazing look at the limbus) the bent ray has no meaning: the shift fades out by the cosine
+    // of the view to the normal, 0.25 down to 0
+    const vec3  view = normalize(scene.camPos - shInp.pos);
+    const float noV  = dot(n, view);
+    if(depth>0.0 && noV>0.0) {
+      const vec3  ray  = refract(-view, n, EyeEta);
+      const vec3  run  = ray * (depth/dot(n, -ray)) * smoothstep(0.0, 0.25, noV);
+      const float det  = dot(n, cross(dpdx, dpdy));
+      if(abs(det)>1e-20) {
+        const vec3 gu = cross(dpdy, n)*duvdx.x + cross(n, dpdx)*duvdy.x;
+        const vec3 gv = cross(dpdy, n)*duvdx.y + cross(n, dpdx)*duvdy.y;
+        const vec2 shift = vec2(dot(gu, run), dot(gv, run))/det;
+        vec3 iris = textureGrad(sampler2D(textureMain[tId], samplerMain), uv + shift,
+                                duvdx*scene.mipGradScale, duvdy*scene.mipGradScale).rgb;
+#if defined(MAT_COLOR)
+        iris *= shInp.color.rgb;
+#endif
+        outDiffuse.rgb = iris;
+        }
+      }
+    outOrm.g        = sqrt(sqrt(a2));
+    outOrm.b        = lid;
+    outOrm.a        = 1.0;
+    outDiffuse.rgb *= mix(EyeLidAlbedo, 1.0, lid);
+    outDiffuse.a    = float(int(outDiffuse.a*255.0 + 0.5) | GBufEyeBit)/255.0;
+    }
   const float glow = bucket[bucketId].emissive;
   if(glow>0.0 && !maps.antitile && (bucket[bucketId].flags & BK_ORM)!=0) {
     // the ORM alpha marks the glowing texels (cracks of a burning log, the ember bed); they breathe slowly. Glowing
