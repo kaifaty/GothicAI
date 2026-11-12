@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import tomli_w
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 CONFIG_DIR = Path.home() / ".config" / "gothic-ai"
 SETTINGS_FILE = "settings.toml"
@@ -129,6 +129,32 @@ class VoiceSettings(_Section):
     mic_device: str | None = Field(None, title="Микрофон", description="Имя или номер; пусто: системный")
 
 
+# The rules of the server's `--a2f-emotion` (server/src/gothic_ai/face_track.py), repeated: the launcher does
+# not import the server. tests/test_settings.py checks the two lists against it.
+A2F_MOODS = ("neutral", "friendly", "angry", "hostile", "afraid", "pain")
+A2F_EMOTIONS = frozenset(
+    ("amazement", "anger", "cheekiness", "disgust", "fear", "grief", "joy", "outofbreath", "pain", "sadness")
+)
+
+
+def _check_a2f_emotions(table: dict[str, str]) -> dict[str, str]:
+    """mood -> `anger:0.8,disgust:0.3`; an empty label: neutral."""
+    for mood, label in table.items():
+        if mood not in A2F_MOODS:
+            raise ValueError(f"{mood!r} is not a mood ({', '.join(A2F_MOODS)})")
+        for item in (part.strip() for part in label.split(",")) if label.strip() else ():
+            name, _, value = item.partition(":")
+            if name not in A2F_EMOTIONS:
+                raise ValueError(f"{mood}: unknown emotion {item!r} ({', '.join(sorted(A2F_EMOTIONS))})")
+            try:
+                strength = float(value)
+            except ValueError:
+                raise ValueError(f"{mood}: {item!r} needs a strength 0..1") from None
+            if not 0.0 <= strength <= 1.0:
+                raise ValueError(f"{mood}: strength of {item!r} is out of 0..1")
+    return table
+
+
 class TtsSettings(_Section):
     enabled: bool = Field(True, title="Озвучка NPC", description="Выключено: только субтитры")
     original_voices: bool = Field(
@@ -162,6 +188,8 @@ class TtsSettings(_Section):
             "hostile → anger:0.8,disgust:0.4, afraid → fear:0.8, pain → pain:0.8"
         ),
     )
+
+    _a2f_emotions = field_validator("a2f_emotions")(_check_a2f_emotions)
 
 
 class PathSettings(_Section):

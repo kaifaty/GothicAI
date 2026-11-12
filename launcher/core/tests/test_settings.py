@@ -1,3 +1,4 @@
+import ast
 import stat
 import sys
 import tomllib
@@ -5,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from gothic_launcher.settings import Config, SettingsError
+from gothic_launcher.settings import A2F_EMOTIONS, A2F_MOODS, Config, SettingsError
 
 
 def test_missing_files_mean_defaults(tmp_path):
@@ -103,3 +104,32 @@ def test_a_broken_file_names_itself(tmp_path):
     (tmp_path / "settings.toml").write_text("[llm]\nbackend = 'nope'\n")
     with pytest.raises(SettingsError, match="llm.backend"):
         Config.load(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "label", ["sorrow:0.5", "pain:1.5", "pain", "pain:0.8,", "pain:-0.1", "pain:much"],
+)
+def test_a2f_emotions_are_checked_on_load_by_the_servers_rules(tmp_path, label):
+    good = 'friendly = "joy:0.4, cheekiness:0.2"\nhostile = ""\n'
+    (tmp_path / "settings.toml").write_text(f"[tts.a2f_emotions]\n{good}")
+    assert Config.load(tmp_path).settings.tts.a2f_emotions["friendly"] == "joy:0.4, cheekiness:0.2"
+    (tmp_path / "settings.toml").write_text(f'[tts.a2f_emotions]\n{good}pain = "{label}"\n')
+    with pytest.raises(SettingsError, match="tts.a2f_emotions"):
+        Config.load(tmp_path)
+    (tmp_path / "settings.toml").write_text('[tts.a2f_emotions]\ncalm = "joy:0.5"\n')
+    with pytest.raises(SettingsError, match="tts.a2f_emotions"):
+        Config.load(tmp_path)
+
+
+def test_a2f_rules_match_the_servers_face_track():
+    # the launcher repeats them without importing the server: server/src/gothic_ai/face_track.py
+    source = Path(__file__).resolve().parents[3] / "server/src/gothic_ai/face_track.py"
+    names: dict[str, ast.expr] = {}
+    for node in ast.parse(source.read_text(encoding="utf-8")).body:
+        if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
+            names[node.targets[0].id] = node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value:
+            names[node.target.id] = node.value
+    emotions = names["EMOTIONS"]
+    assert isinstance(emotions, ast.Call) and frozenset(ast.literal_eval(emotions.args[0])) == A2F_EMOTIONS
+    assert tuple(ast.literal_eval(names["DEFAULT_EMOTIONS"])) == A2F_MOODS
