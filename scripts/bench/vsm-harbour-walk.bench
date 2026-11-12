@@ -1,0 +1,29 @@
+# The night harbour walked past several lamps: the set of lamps with a VSM shadow changes as the hero goes
+# ([INTERNAL] vsmLampShadows, reports/render-features/2026-11-05-vsm-mac-hard/README.md, «Тени ближних ламп»).
+# The poor quarter's lane from PATH_04 to PATH_07 (≈15 m) between the Red Lantern and the huts: about ten torches
+# and room lights within 6 m of the way. The camera follows behind.
+# Run it with the variants side by side, e.g.:
+#   TEMPEST_WINDOW_SIZE=960x540 BENCH_VID_RES=1 OPENGOTHIC_VSM=1 OPENGOTHIC_VSM_LAMP_SHADOWS=<N> scripts/bench.sh vsm-harbour-walk
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+cam lift off
+set time 0 0
+goto NW_CITY_HABOUR_POOR_AREA_PATH_04
+face wp NW_CITY_HABOUR_POOR_AREA_PATH_07
+watch player
+cam look 120
+cam follow 450 180 170
+walkmode walk
+wait 10000
+pos
+shot harbour-walk-start
+rec harbour-walk
+walkto NW_CITY_HABOUR_POOR_AREA_PATH_07
+waitarrive 25000
+wait 1000
+stop
+pos
+shot harbour-walk-end
