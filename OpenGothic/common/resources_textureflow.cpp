@@ -67,8 +67,13 @@ void Resources::flowSettle(TextureRecord& record) {
   // Met by an asynchronous publication: its latency, and the look-ahead's horizon from it. Its demand fell, or a
   // synchronous load met it: none.
   if(record.flowPublished) {
-    textureFlow.latency.add(milliseconds(nearTailUpdated-record.shortSince));
-    textureHorizon=TextureLookAhead::horizon(textureFlow.latency.quantile(0.9),textureFlow.latency.count());
+    const double ms=milliseconds(nearTailUpdated-record.shortSince);
+    textureFlow.latency.add(ms);
+    textureHorizonWindow.add(ms);
+    if(textureHorizonWindow.count()>=TextureLookAhead::WindowSamples) {
+      textureHorizon=TextureLookAhead::horizon(textureHorizonWindow.quantile(0.9),textureHorizonWindow.count());
+      textureHorizonWindow=TextureFlow::Histogram();
+      }
     }
   record.shortSince={};
   record.flowPublished=false;

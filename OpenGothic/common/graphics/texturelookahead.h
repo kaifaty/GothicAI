@@ -19,13 +19,15 @@ namespace TextureLookAhead {
   constexpr double   HorizonFactor  = 2.0;
   // Seconds: the cap, against a latency that grows with a backlog (at most 10 m of path at 20 m/s)...
   constexpr double   MaxHorizon     = 0.5;
-  // ...and T before MinSamples latencies were measured: about two frames at 30 frames a second.
+  // ...and T before the first window of latencies: about two frames at 30 frames a second.
   constexpr double   DefaultHorizon = 0.05;
-  constexpr uint64_t MinSamples     = 16;
+  // The p90 is of the last WindowSamples loads, not of the session: a world load's backlog (seconds) must not hold T
+  // at the cap for the rest of the game.
+  constexpr uint64_t WindowSamples  = 32;
   // Seconds: the velocity is the move over the last Window, so a single uneven frame does not swing the path.
   constexpr double   Window         = 0.25;
 
-  // T in seconds from the p90 of the load latency in milliseconds and the number of latencies measured.
+  // T in seconds from the p90 of a window of load latencies in milliseconds and how many it holds.
   double horizon(double latencyP90Ms, uint64_t samples);
 
   // The velocity of a point from its positions over the last Window; a jump of the view (ChunkResidency::JumpDistance)

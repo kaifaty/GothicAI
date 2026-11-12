@@ -5,7 +5,7 @@
 #include <cmath>
 
 double TextureLookAhead::horizon(double latencyP90Ms, uint64_t samples) {
-  if(samples<MinSamples || !std::isfinite(latencyP90Ms) || latencyP90Ms<0)
+  if(samples<WindowSamples || !std::isfinite(latencyP90Ms) || latencyP90Ms<0)
     return DefaultHorizon;
   return std::clamp(HorizonFactor*latencyP90Ms*0.001,0.0,MaxHorizon);
   }

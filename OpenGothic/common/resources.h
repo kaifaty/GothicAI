@@ -641,7 +641,8 @@ class Resources final {
     TextureFlow::Tracker textureFlow;
     TextureFlow::Limits textureLimits;
     std::atomic<bool> textureLookAheadOn{true};
-    std::atomic<double> textureHorizon{0.05};  // TextureLookAhead::horizon of the latencies so far, seconds
+    std::atomic<double> textureHorizon{0.05};  // TextureLookAhead::horizon of the last window of latencies, seconds
+    TextureFlow::Histogram textureHorizonWindow;
     std::atomic<uint32_t> textureStartup{0};  // worlds loading (TextureStartup)
     uint32_t textureJumpMs = 300;
     struct TextureJump {
