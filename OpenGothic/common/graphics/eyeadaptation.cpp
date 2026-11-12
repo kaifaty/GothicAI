@@ -78,8 +78,8 @@ EyeAdaptation::Measure EyeAdaptation::read(uint8_t fId) {
   // a frame of sky alone (or nearly) says nothing of the place
   if(scene < 0.05*(scene+sky))
     return m;
-  m.valid = mean(false, 0.f, 1.f, m.scene) && mean(false, 0.1f, 0.9f, m.sceneTrim) &&
-            mean(true,  0.f, 1.f, m.all)   && mean(true,  0.1f, 0.9f, m.allTrim);
+  m.valid = mean(false, WindowLo, WindowHi, m.scene) && mean(false, 0.f, 1.f, m.full) &&
+            mean(false, 0.1f, 0.9f, m.trim) && mean(false, 0.5f, 0.95f, m.hi) && mean(true, 0.f, 1.f, m.all);
   return m;
   }
 
@@ -138,7 +138,7 @@ void EyeAdaptation::log(uint64_t tick, int64_t dayTime, const Vec3& cam, const M
         path = std::string(out) + "/" + path;
       logFile = std::fopen(path.c_str(), "w");
       if(logFile!=nullptr) {
-        std::fprintf(logFile, "tick,day_min,cam_x,cam_y,cam_z,exposure,lum_med,day_w,key,scene,scene_trim,all,all_trim,"
+        std::fprintf(logFile, "tick,day_min,cam_x,cam_y,cam_z,exposure,lum_med,day_w,key,scene,full,trim,hi,all,"
                               "sky_share,target,ev,fog_sky_vis\n");
         Log::i("eye: log ", path);
         }
@@ -147,10 +147,10 @@ void EyeAdaptation::log(uint64_t tick, int64_t dayTime, const Vec3& cam, const M
   if(logFile==nullptr)
     return;
   // ev of the frame before: this one moves after the row
-  std::fprintf(logFile, "%llu,%.3f,%.0f,%.0f,%.0f,%.6g,%.6g,%.4f,%.3f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f\n",
+  std::fprintf(logFile, "%llu,%.3f,%.0f,%.0f,%.0f,%.6g,%.6g,%.4f,%.3f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f\n",
                static_cast<unsigned long long>(tick), double(dayTime%(24*60*60*1000))/60000.0, double(cam.x), double(cam.y),
                double(cam.z), double(m.exposure), double(m.lumMed), double(dayW), double(key), double(m.scene),
-               double(m.sceneTrim), double(m.all), double(m.allTrim), double(m.skyShare), double(tgt), double(ev), double(m.skyVis));
+               double(m.full), double(m.trim), double(m.hi), double(m.all), double(m.skyShare), double(tgt), double(ev), double(m.skyVis));
   if(tick>=logFlush+1000) {
     std::fflush(logFile);
     logFlush = tick;

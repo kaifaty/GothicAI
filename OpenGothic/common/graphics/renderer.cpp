@@ -886,6 +886,9 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     cmd.setDebugMarker("Fog");
     drawFog(cmd, wview);
     }
+  // the eye's meter after the opaque surfaces and the fog, before the translucent ones, particles and water: no fire or
+  // effect in the measure (renderer_eye.cpp, step-2-shade.md «Замер по правилам индустрии»)
+  drawEyeMeter(cmd, fId, wview);
 
   FrameProfile::Scope translucentTiming(FrameProfile::Zone::EncodeWater);
   // the TAA reactive mask is the second attachment: each translucent pipeline writes it under its own blend
@@ -915,8 +918,6 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     cmd.setDebugMarker("Underwater");
     drawUnderwater(cmd, wview);
     }
-  // the eye's level of the frame before TAA, bloom and the tone curve (renderer_eye.cpp)
-  drawEyeMeter(cmd, fId, wview);
 
   if(temporal.active) {
     // the frame of the swapchain's size from here on: bloom and tonemapping read temporal.output

@@ -142,25 +142,27 @@ stop
 # 8. The forest at noon: the hero runs out of the crowns at NW_FOREST_PATH_66 onto the open slope towards PATH_67
 #    (10 s there to adapt), then the clip: into the forest under the crowns and back out; the frame brightens going
 #    in (1 stop/s) and darkens coming out (3 stops/s). Player input (`face wp`, `hold forward`): `walkto` does not move
-#    the hero here, and a `goto` to PATH_67 leaves him stuck in a hollow.
+#    the hero here, and a `goto` to PATH_67 leaves him stuck in a hollow. The hero turns to the forest before the clip
+#    and the camera follows 2.5 m behind: turned at once in the clip, with 4 m, it flew into the slope behind him.
 set time 12 0
 goto NW_FOREST_PATH_66
 clear 3000
 watch player
 walkmode run
 cam lift on
-cam follow 400 160 180
+cam follow 250 160 180
 wait 3000
 face wp NW_FOREST_PATH_67
-hold forward 2800
-wait 13000
+hold forward 2000
+wait 3000
+face wp NW_FOREST_PATH_66
+wait 10000
 rec forest-walk
 wait 2000
-face wp NW_FOREST_PATH_66
-hold forward 2800
-wait 6800
+hold forward 2000
+wait 7600
 face wp NW_FOREST_PATH_67
-hold forward 2800
+hold forward 2000
 wait 5300
 stop
 

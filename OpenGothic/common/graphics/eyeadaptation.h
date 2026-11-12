@@ -38,6 +38,10 @@ class EyeAdaptation final {
     static constexpr float UpEvPerS   = 1.f;   // into the dark: UE's default
     static constexpr float DownEvPerS = 3.f;   // into the light: UE's default
     static constexpr float NightL     = 1.5f;  // the night's term of the scene's exposure (Renderer::prepareExposure)
+    // the window of the histogram the eye takes, shares of the samples (step-2-shade.md, «Замер по правилам
+    // индустрии», Б)
+    static constexpr float WindowLo   = 0.f;
+    static constexpr float WindowHi   = 1.f;
 
     EyeAdaptation() = default;
     ~EyeAdaptation();
@@ -62,10 +66,11 @@ class EyeAdaptation final {
 
     struct Measure {
       bool  valid     = false;
-      float scene     = 0; // EV of the frame without the sky: what the eye takes
-      float sceneTrim = 0; // the same, the darkest and brightest 10 % left out
-      float all       = 0; // with the sky
-      float allTrim   = 0;
+      float scene     = 0; // EV of the illuminance without the sky in the window [WindowLo, WindowHi]: what the eye takes
+      float full      = 0; // the same over all samples (0-100 %)
+      float trim      = 0; // the darkest and brightest 10 % left out (10-90 %, the engines' default)
+      float hi        = 0; // the darkest half and the brightest 5 % left out (50-95 %, Narkowicz)
+      float all       = 0; // with the sky, 0-100 %
       float skyShare  = 0;
       float exposure  = 0;
       float lumMed    = 0;

@@ -7,13 +7,14 @@
 #include "scene.glsl"
 #include "common.glsl"
 
-// The sky seen from the camera's point for the fog under GI (step-2-shade.md, «Дымка в тени», Д4): rays over the
-// upper hemisphere, uniform in solid angle (the multiple scattering of the air is isotropic), alpha-tested as the
-// rays of the probes (probe_trace.comp: crowns let the sky through their gaps), a miss within 200 m is sky. 64 rays a
-// frame, 1024 directions over 16 frames, an exponential mean over time (push.alpha = 1 - exp(-dt/tau)); push.reset
-// jumps to this frame's share (the first frame, a teleport, a cut). The share goes into scene.fogSkyVis of this frame:
-// fog.frag (FOG_SKY_VIS) and main.frag (fogOwnDepth) read it; 1 where this pass does not run.
-layout(local_size_x = 64) in;
+// The sky over the camera for the fog under GI (step-2-shade.md, «Дымка в тени», Д4, круг 4 — В1): rays in the cone
+// of 45 degrees around the zenith, uniform in solid angle within it: whether the camera has a roof over it (crowns, a
+// cave's vault), not the hills and houses at the horizon. Alpha-tested as the rays of the probes (probe_trace.comp:
+// crowns let the sky through their gaps), a miss within 200 m is sky. 16 rays a frame, 256 directions over 16 frames,
+// an exponential mean over time (push.alpha = 1 - exp(-dt/tau)); on push.reset (the first frame, a teleport, a cut)
+// all 256 directions at once and a jump to their share. The share goes into scene.fogSkyVis of this frame: fog.frag
+// (FOG_SKY_VIS) and main.frag (fogOwnDepth) read it; 1 where this pass does not run.
+layout(local_size_x = 256) in;
 
 layout(push_constant, std430) uniform Push {
   float alpha;
@@ -31,6 +32,8 @@ layout(binding = 1, std430) buffer State {
 
 const float rayDistance = 200*100; // as probeRayDistance (probe_common.glsl)
 const uint  Turns       = 16;
+const uint  PerFrame    = 16;
+const float CosCone     = 0.70710678; // cos 45 degrees
 
 shared uint misses;
 
@@ -43,16 +46,28 @@ bool skyRay(vec3 origin, vec3 dir) {
   return rayQueryGetIntersectionTypeEXT(rayQuery, true)==gl_RayQueryCommittedIntersectionNoneEXT;
   }
 
+// direction i of n in the cone around +y, uniform in solid angle: cos(theta) uniform over [CosCone, 1]
+vec3 coneDir(uint i, uint n) {
+  const vec2  xi  = sampleHammersley(i, n);
+  const float y   = 1.0 - xi.x*(1.0-CosCone);
+  const float r   = sqrt(max(0.0, 1.0 - y*y));
+  const float a   = M_PI*2.0*xi.y;
+  return vec3(cos(a)*r, y, sin(a)*r);
+  }
+
 void main() {
   const uint i = gl_LocalInvocationIndex;
   if(i==0)
     misses = 0;
   barrier();
 
-  const uint n   = gl_WorkGroupSize.x;
-  const vec3 dir = sampleHemisphere(i + (push.frame%Turns)*n, n*Turns, 0.0);
-  if(skyRay(scene.camPos, dir))
-    atomicAdd(misses, 1u);
+  const uint total = PerFrame*Turns;
+  const uint n     = (push.reset!=0) ? total : PerFrame;
+  if(i<n) {
+    const uint id = (push.reset!=0) ? i : i + (push.frame%Turns)*PerFrame;
+    if(skyRay(scene.camPos, coneDir(id, total)))
+      atomicAdd(misses, 1u);
+    }
   barrier();
 
   if(i==0) {

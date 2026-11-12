@@ -27,6 +27,7 @@ void Renderer::drawEyeMeter(Encoder<CommandBuffer>& cmd, uint8_t fId, const Worl
   cmd.setBinding(0, sceneLinear, Sampler::bilinear(ClampMode::ClampToEdge));
   cmd.setBinding(1, zbuffer,     Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setBinding(2, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
+  cmd.setBinding(4, gbufDiffuse, Sampler::bilinear(ClampMode::ClampToEdge));
   cmd.setBinding(3, eye.result(fId));
   cmd.setPipeline(shaders.eyeMeter);
   cmd.dispatch(1);

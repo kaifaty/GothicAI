@@ -133,8 +133,11 @@ vec4 fog(vec2 uv, float z) {
   vec3  scatteredLight = vec3(0.0);
   vec4  prevVal        = vec4(0.0); //textureLod(fogLut, vec3(uv,0), 0);
 #if defined(FOG_SKY_VIS)
-  vec3  msShadowed     = vec3(0.0);
-  vec4  prevMs         = vec4(0.0);
+  // the multiple scattering of the steps in the sun's shadow (Д4 below); read only there and only when the camera
+  // has a roof over it at all
+  const bool skyVisOn  = scene.fogSkyVis<1.0;
+  vec3  msDark         = vec3(0.0);
+  float prevDd         = 0.0;
 #endif
 #endif
 
@@ -169,11 +172,14 @@ vec4 fog(vec2 uv, float z) {
     scatteredLight += (val.rgb-prevVal.rgb)*shadow;
     prevVal = val;
 #if defined(FOG_SKY_VIS)
-    // the multiple scattering of the step, lit as the single one: in the sun's shadow the air is taken as closed to
-    // the sky too (Д1); how far that holds, the sky seen from the camera says (below)
-    const vec4  msv = textureLod(fogLutMs, vec3(uv,dd), 0) * min(dd*steps*2.0, 1.0);
-    msShadowed += (msv.rgb-prevMs.rgb)*shadow;
-    prevMs = msv;
+    // in the sun's shadow the air is taken as closed to the sky too (Д1); how far that holds, the sky over the camera
+    // says (below). The run's multiple scattering is the LUT's at its end minus at its start, faded in as `val`
+    if(skyVisOn && !bit) {
+      const vec3 msEnd   = textureLod(fogLutMs, vec3(uv,dd),     0).rgb * min(dd*steps*2.0,     1.0);
+      const vec3 msStart = textureLod(fogLutMs, vec3(uv,prevDd), 0).rgb * min(prevDd*steps*2.0, 1.0);
+      msDark += msEnd - msStart;
+      }
+    prevDd = dd;
 #endif
     }
   // A slice of the LUT holds the light scattered up to its far end: the first one, read at any depth nearer than
@@ -185,11 +191,11 @@ vec4 fog(vec2 uv, float z) {
   const vec4  ms            = textureLod(fogLutMs, vec3(uv,d), 0);
   const float transmittance = mix(1.0, ms.a, near);
 #if defined(FOG_SKY_VIS)
-  // Д4 (step-2-shade.md, «Дымка в тени»): each step's multiple scattering by mix(its sun bit, 1, the sky seen from the
+  // Д4 (step-2-shade.md, «Дымка в тени»): each step's multiple scattering by mix(its sun bit, 1, the sky over the
   // camera): under the crowns and in a cave the air in the sun's shadow is closed to the sky as well, in the open it
-  // is not; 1 gives the fog as it is without this
+  // is not; 1 gives the fog as it is without this. Written through the shadowed part: ms*vis + lit*(1-vis), lit = ms - dark
   const float vis = scene.fogSkyVis;
-  return vec4(scatteredLight + ms.rgb*near*vis + msShadowed*(1.0-vis), transmittance);
+  return vec4(scatteredLight + ms.rgb*near - msDark*(1.0-vis), transmittance);
 #else
   return vec4(scatteredLight+ms.rgb*near, transmittance);
 #endif
