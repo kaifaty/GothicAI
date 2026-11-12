@@ -1,0 +1,16 @@
+[Unit]
+Description=Gothic AI: face track from speech (Audio2Face-3D v3.0, HTTP port 47839)
+After=network-online.target
+
+[Service]
+# the model directory: model.json with network.trt and the solver's shape file (bs_skin_Mark.npz);
+# A2F_MODEL_DIR in gothic-ai.env (GPU_A2F_MODEL_DIR in the repository's .env) overrides it
+Environment=A2F_MODEL_DIR=%h/gothic-ai/a2f/model/v3.0
+EnvironmentFile=-%h/gothic-ai/gothic-ai.env
+ExecStart=%h/gothic-ai/a2f-service/deploy/run.sh
+CPUAffinity=2-11
+Restart=on-failure
+RestartSec=15
+
+[Install]
+WantedBy=default.target

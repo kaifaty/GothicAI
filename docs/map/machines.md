@@ -11,6 +11,7 @@
  │  OpenGothic + bridge      │               │ Gemma 4 12B — быстрые реплики│
  │                           │               │ FRIDA — память, :47837       │
  │                           │               │ Zencastr — смех, :47838      │
+ │                           │               │ Audio2Face — лицо, :47839    │
  │        │ WebSocket JSON   │   HTTP / WS   │ P30 TCP — выключен, CPU 0–1  │
  │        ▼ :47817           │   TCP JSONL   │ (Voxtral, VoxCPM2 остановлены│
  │ ИИ-сервер gothic-ai serve ├──────────────►│  с 23 и 27 октября)          │
