@@ -469,6 +469,8 @@ class Resources final {
     void                 flowRestate(TextureRecord& record);
     void                 flowStarted(TextureRecord& record, TextureReload& reload, uint8_t level);
     void                 flowObserve(TextureReload& reload);
+    // the worker's moves since the main thread last saw them, at the times it wrote, up to `phase`
+    void                 flowAdvance(TextureRecord& record, TextureFlow::Phase phase);
     void                 textureFlowStats(TextureStats& stats);
     // Part B: the bytes a load of `record` at `level` makes, whether it fits beside the loads in flight; the ready
     // loads published within the frame's budget
@@ -608,6 +610,7 @@ class Resources final {
       uint8_t flowState = TextureFlow::NotShort, loadLevel = 0;
       bool flowVisible = false, flowPublished = false, flowLoaded = false;
       TextureFlow::Phase loadPhase = TextureFlow::Phase::Queued;
+      std::shared_ptr<TextureFlow::Progress> loadProgress;  // of its load in flight, as its worker writes it
       std::chrono::steady_clock::time_point shortSince{}, flowAt{};  // flowAt: since when it is counted in flowState
       bool tail() const { return firstMip!=0; }
       bool hasTail() const { return lowest!=0; }

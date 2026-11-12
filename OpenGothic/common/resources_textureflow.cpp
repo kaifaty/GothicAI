@@ -28,6 +28,9 @@ void Resources::flowEnter(TextureRecord& record, uint8_t wanted) {
   // `nearTailUpdated` is now: the queues change only right after updateNearTailTime (unqueueTexture, trackTexture).
   const auto now=nearTailUpdated;
   const uint32_t resident=record.resident ? record.firstMip : std::max<uint32_t>(record.mipCount,1);
+  // A load in flight may have moved on since the main thread last saw it: its state starts from where the worker is.
+  if(record.loading && record.loadProgress!=nullptr)
+    record.loadPhase=std::max(record.loadPhase,TextureFlow::Phase(record.loadProgress->phase.load(std::memory_order_acquire)));
   // Queued for the look-ahead alone: not short of the level its present demand needs.
   record.flowAt=now;
   if(resident>presentLevel(record)) {
@@ -53,6 +56,12 @@ void Resources::flowEnter(TextureRecord& record, uint8_t wanted) {
 void Resources::flowLeave(TextureRecord& record) {
   if(record.flowState==TextureFlow::NotShort)
     return;
+  // Leaving for a new registration while loading: the time so far goes to the states the worker was in.
+  if(record.loading && record.loadProgress!=nullptr && record.flowState!=TextureFlow::Ahead) {
+    const auto worker=TextureFlow::Phase(record.loadProgress->phase.load(std::memory_order_acquire));
+    if(worker>record.loadPhase)
+      flowAdvance(record,worker);
+    }
   if(record.flowState==TextureFlow::Ahead)
     --textureFlow.ahead;
   else
@@ -99,6 +108,7 @@ void Resources::flowRestate(TextureRecord& record) {
 void Resources::flowStarted(TextureRecord& record, TextureReload& reload, uint8_t level) {
   record.loadLevel=level;
   record.loadPhase=TextureFlow::Phase::Queued;
+  record.loadProgress=reload.progress;
   reload.bytes=textureLoadBytes(record,level);
   if(record.flowState!=TextureFlow::NotShort && !record.flowLoaded) {
     record.flowLoaded=true;
@@ -113,19 +123,25 @@ void Resources::flowObserve(TextureReload& reload) {
   if(found==textureRecords.end())
     return;
   auto& record=found->second;
-  const auto& progress=*reload.progress;
-  const auto worker=Phase(progress.phase.load(std::memory_order_acquire));
-  auto phase=worker;
+  auto phase=TextureFlow::Phase(reload.progress->phase.load(std::memory_order_acquire));
   // an upload not ready when its worker finished (Metal) is ready once its fence has passed, seen from here
   if(phase==Phase::Done && !reload.ready.isEmpty() && (record.loadPhase==Phase::Ready || reload.ready.uploadReady()))
     phase=Phase::Ready;
   if(phase==record.loadPhase && reload.level==record.loadLevel)
     return;
+  record.loadLevel=reload.level;  // the file may have no tail at the level asked for: then a sharper one
+  flowAdvance(record,phase);
+  }
+
+void Resources::flowAdvance(TextureRecord& record, TextureFlow::Phase phase) {
+  using TextureFlow::Phase;
   const auto before=record.loadPhase;
   record.loadPhase=phase;
-  record.loadLevel=reload.level;  // the file may have no tail at the level asked for: then a sharper one
-  if(record.flowState==TextureFlow::NotShort || record.flowState==TextureFlow::Ahead)
+  if(record.flowState==TextureFlow::NotShort || record.flowState==TextureFlow::Ahead || record.loadProgress==nullptr)
     return;
+  // not past `phase`: the worker may have moved on again since it was read
+  const auto& progress=*record.loadProgress;
+  const auto worker=std::min(Phase(progress.phase.load(std::memory_order_acquire)),phase);
   // Until now the interval since the last frame went to the state seen then. The worker moved on in between, at the
   // times it wrote: from each of them on, the time goes to the state it entered.
   updateNearTailTime();

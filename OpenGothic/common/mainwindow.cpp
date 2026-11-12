@@ -391,11 +391,11 @@ void MainWindow::drawChunks(Painter& p, const World& world, const Camera& camera
     // step 4 (textureflow.h): the shortfall's texture-seconds by state, the visible part, loads in flight, latency
     const auto& flow=textures.flow;
     std::snprintf(text,sizeof(text),"Short s: wait %.1f read %.1f upload %.1f publish %.1f stale %.1f  visible %.1f  "
-                  "loads %llu %.1f MiB  latency p50/p90 %.0f/%.0f ms",
+                  "loads %llu %.1f MiB  latency p50/p90/max %.0f/%.0f/%.0f ms",
                   flow.seconds[TextureFlow::Waiting],flow.seconds[TextureFlow::Reading],flow.seconds[TextureFlow::Uploading],
                   flow.seconds[TextureFlow::Publishing],flow.seconds[TextureFlow::Stale],flow.visibleSeconds,
                   static_cast<unsigned long long>(textures.loadsInFlight),double(flow.bytesInFlight)/1048576.0,
-                  flow.latencyP50,flow.latencyP90);
+                  flow.latencyP50,flow.latencyP90,flow.latencyMax);
     fnt.drawText(p,x,top+9*line,text);
     };
   auto drawNpcTiers = [&](int top) {

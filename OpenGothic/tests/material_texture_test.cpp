@@ -1202,6 +1202,9 @@ void textureFlowMaths() {
   require(publishWithin(3,none,[&](size_t) { ++calls; })==1 && calls==1 &&
           publishWithin(3,room,[&](size_t) { ++calls; })==3 && calls==4,
           "a frame's publications must stop at the budget, after the first");
+  // 0.1 ms a frame, 2 ms a publication: the first spends the budget
+  require(publishWithin(3,limits,[&](size_t) { std::this_thread::sleep_for(std::chrono::milliseconds(2)); })==1,
+          "a publication that outlasts the budget must be the frame's last");
   require(state(false,true,Phase::Ready)==Waiting && state(true,true,Phase::Reading)==Stale &&
           state(true,false,Phase::Queued)==Reading && state(true,false,Phase::Done)==Uploading &&
           state(true,false,Phase::Ready)==Publishing,"a short texture's state must follow its load");
@@ -1326,6 +1329,12 @@ void textureFlowMaths() {
   view.heroAhead={500,0,0};
   const auto heroOnly=TextureScreenDemand::evaluate(view,texel);
   require(heroOnly.exponent==-2 && heroOnly.present==-3,"the hero's path must count with the camera far away");
+  // An owner placed by a position, a 1 m sphere 10 m ahead: 9 m now (2^-3), 5 m from the end of a 4 m path (2^-2).
+  view.camera={};
+  view.heroAhead=view.cameraAhead={400,0,0};
+  const auto sphere=TextureScreenDemand::evaluate(view,texel,TextureScreenDemand::Sphere{{1000,0,0},100});
+  require(sphere.exponent==-2 && sphere.present==-3 && sphere.margin>0,
+          "a sphere owner ahead must want its sharper level before the present distance reaches its band");
   }
 
 // Step 3 (texturebudget.h): the target from the device's budget, the stage from the sums D(s), the way back.
@@ -1507,8 +1516,11 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
   write("lv-hold.dds",mipDds(0x31545844,256,256,9));
   write("lv-noarea.dds",mipDds(0x31545844,256,256,9));
   write("lv-turn.dds",mipDds(0x31545844,512,512,10));
-  for(const char* name:{"lv-order-0.dds","lv-order-1.dds","lv-order-2.dds","lv-visible.dds"})
+  for(const char* name:{"lv-order-0.dds","lv-visible.dds"})
     write(name,mipDds(0x31545844,512,512,10));
+  // the farther candidates of the load order test: another size, so their bytes in flight tell them apart
+  for(const char* name:{"lv-order-1.dds","lv-order-2.dds"})
+    write(name,mipDds(0x31545844,1024,1024,11));
   textFile(fixture.root/"materials/materials.json",R"({
     "LV_ORDER_0.TGA":{"albedo":"lv-order-0.dds"},
     "LV_ORDER_1.TGA":{"albedo":"lv-order-1.dds"},
@@ -1607,18 +1619,19 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
   Resources::configureTextures();
 
   // 2^-4 at log2 K 10.125: the 512 albedo needs level 1, the 256 maps level 0, one reserve level included. With three
-  // more 512 textures six are short: the two maps by two levels, the rest by one; two of those in ring 4. The four
-  // slots take the maps, the albedo and the ring-3 one: its bytes in flight tell which.
+  // more textures six are short: the two maps by two levels, the rest by one - the albedo and a 512 in ring 3, two 1024
+  // in ring 4 (2^-3). The four slots take the maps and the two in ring 3: their bytes in flight tell which.
   Resources::textureDemand(material,stat,true,Need{3,-4});
   Resources::textureDemand(order[0],stat,true,Need{3,-4});
-  Resources::textureDemand(order[1],stat,true,Need{4,-4});
-  Resources::textureDemand(order[2],stat,true,Need{4,-4});
+  Resources::textureDemand(order[1],stat,true,Need{4,-3});
+  Resources::textureDemand(order[2],stat,true,Need{4,-3});
   Resources::updateTextures(&residency);
+  const auto started=Resources::textureStats();
   {
-  const auto stats=Resources::textureStats();
   const auto maps=TextureLevels::chainBytes(Tempest::TextureFormat::DXT5,256,256,9,0);
-  const auto albedo=TextureLevels::chainBytes(Tempest::TextureFormat::DXT1,512,512,10,1);
-  require(stats.loadsInFlight==4 && stats.shortfallCount==6 && stats.flow.bytesInFlight==2*maps+2*albedo,
+  const auto near=TextureLevels::chainBytes(Tempest::TextureFormat::DXT1,512,512,10,1);
+  require(near!=TextureLevels::chainBytes(Tempest::TextureFormat::DXT1,1024,1024,11,1),"the candidates must differ in size");
+  require(started.loadsInFlight==4 && started.shortfallCount==6 && started.flow.bytesInFlight==2*maps+2*near,
           "four loads must start, the largest shortfall first, then the nearest ring");
   }
   // The workers are done long before the next frame: it publishes them in the frame it sees them, in one generation,
@@ -1640,11 +1653,14 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
     split+=seconds;
   require(flow.waitN>=4 && flow.entries==6 && std::abs(split-stats.shortfallSeconds)<1e-9 && flow.visibleSeconds<=split,
           "the shortfall's split by state must add up to it, and each load must report its latency and wait");
+  // Without the reserve only the two maps are short (the rest want their resident level 2): 2 x 0.2 s visible.
+  require(flow.visibleSeconds-started.flow.visibleSeconds>0.3,"the visible shortfall must grow while the maps are short");
   }
-  waitFor([&] { return sides(256,256) && order[2].tex->w()==256; },
+  waitFor([&] { return sides(256,256) && order[1].tex->w()==512 && order[2].tex->w()==512; },
           "each texture of a material must load straight to its own wanted level");
-  for(size_t i=0;i<order.size();++i)
-    Resources::textureDemand(order[i],stat,false,Need{i==0 ? 3u : 4u,-4});
+  Resources::textureDemand(order[0],stat,false,Need{3,-4});
+  Resources::textureDemand(order[1],stat,false,Need{4,-3});
+  Resources::textureDemand(order[2],stat,false,Need{4,-3});
   require(Resources::textureStats().promoted==6 && Resources::textureStats().shortfallCount==0 &&
           Resources::textureStats().shortfallSeconds>0 && Resources::textureStats().levelBytes[1]>0,
           "raising must clear the shortfall it counted in texture-seconds and report bytes by level");
@@ -1682,6 +1698,25 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
   require(Resources::textureStats().shortfallCount==1 && Resources::textureStats().flow.visible==1,
           "a texture short of its present demand without the reserve must be visibly short");
   Resources::textureDemand(visible,stat,false,Need{3,-3,-3});
+  // A load done between frames and its texture registered again before the next one (a second owner): the wait for
+  // that frame is still publication, from the worker's own times.
+  {
+  const auto before=Resources::textureStats().flow;
+  Resources::textureDemand(visible,stat,true,Need{3,-4});
+  Resources::updateTextures(&residency);
+  require(Resources::textureStats().loadsInFlight==1,"the 512 texture must start loading its level 1");
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  Resources::textureDemand(visible,stat,true,Need{3,-4});
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  Resources::updateTextures(&residency);
+  const auto after=Resources::textureStats().flow;
+  const auto delta=[&](TextureFlow::State state) { return after.seconds[state]-before.seconds[state]; };
+  require(visible.tex->w()==256 && delta(TextureFlow::Publishing)>0.15 &&
+          delta(TextureFlow::Reading)+delta(TextureFlow::Uploading)<0.05,
+          "a registration between frames must keep the worker's times");
+  Resources::textureDemand(visible,stat,false,Need{3,-4});
+  Resources::textureDemand(visible,stat,false,Need{3,-4});
+  }
 
   Resources::textureDemand(material,stat,true,Need{4,-3});
   waitFor([&] { return sides(512,256); },"the sharpest demand over the owners must decide");
