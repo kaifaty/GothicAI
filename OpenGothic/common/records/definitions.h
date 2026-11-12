@@ -7,6 +7,15 @@
 #include <cstdint>
 #include <string>
 
+enum class SpellFxKey:uint8_t {
+  Open,
+  Init,
+  Cast,
+  Invest,
+  Collide,
+  Count
+  };
+
 namespace Def {
 
 enum class FightMove : uint32_t {

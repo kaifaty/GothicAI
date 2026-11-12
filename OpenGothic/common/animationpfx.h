@@ -5,5 +5,5 @@
 class AnimationPfx {
   public:
     virtual ~AnimationPfx() = default;
-    virtual void animationPfx(const Animation::MdsParticleEffect& event, MdlVisual& visual) = 0;
+    virtual void animationPfx(const Animation::MdsParticleEffect& event) = 0;
   };

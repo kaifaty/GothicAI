@@ -1,5 +1,7 @@
 #pragma once
 
+#include "records/definitions.h"
+
 #include <cstdint>
 #include <string_view>
 
@@ -216,15 +218,6 @@ enum SpellCategory:int32_t {
   SPELL_GOOD   =0,
   SPELL_NEUTRAL=1,
   SPELL_BAD    =2,
-  };
-
-enum class SpellFxKey:uint8_t {
-  Open,
-  Init,
-  Cast,
-  Invest,
-  Collide,
-  Count
   };
 
 enum TargetCollect : int32_t {

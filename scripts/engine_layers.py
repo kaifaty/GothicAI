@@ -115,6 +115,10 @@ LAYER_RULES: list[tuple[str, str]] = [
     ("common/gothicglb", "gothic"),
     ("common/worldbase", "gothic"),
     # An action-RPG frame any such game needs: NPCs, items, fights, navigation, saves.
+    # Game-object visuals depend on NPCs, interactives and damage despite living in graphics/.
+    ("common/graphics/mdlvisual*", "rpg"),
+    ("common/graphics/objvisual*", "rpg"),
+    ("common/graphics/effect", "rpg"),
     ("common/game/*", "rpg"),
     ("common/world/*", "rpg"),
     ("common/nav*", "rpg"),

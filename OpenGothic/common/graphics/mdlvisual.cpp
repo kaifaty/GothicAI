@@ -1,6 +1,7 @@
 #include "mdlvisual.h"
 #include "gameservices.h"
 #include "mdlvisual_internal.h"
+#include "animationpfx.h"
 
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/protomesh.h"
@@ -31,6 +32,21 @@
 
 using namespace Tempest;
 using namespace MdlVisualInternal;
+
+namespace {
+class VisualAnimationPfx final : public AnimationPfx {
+  public:
+    VisualAnimationPfx(World& world, MdlVisual& visual) : world(world), visual(visual) {}
+
+    void animationPfx(const Animation::MdsParticleEffect& event) override {
+      world.animationPfx(event,visual);
+      }
+
+  private:
+    World& world;
+    MdlVisual& visual;
+  };
+}
 
 namespace MdlVisualInternal {
 
@@ -948,8 +964,10 @@ bool MdlVisual::updateAnimation(Npc* npc, Interactive* mobsi, World& world, uint
     pose.processSfx(*npc,tickCount);
   if(!pausePose && mobsi!=nullptr && world.isInSfxRange(pos3))
     pose.processSfx(*mobsi,tickCount);
-  if(!pausePose && world.isInPfxRange(pos3))
-    pose.processPfx(*this,world,tickCount);
+  if(!pausePose && world.isInPfxRange(pos3)) {
+    VisualAnimationPfx pfx(world,*this);
+    pose.processPfx(pfx,tickCount);
+    }
 
   for(size_t i=0;i<effects.size();) {
     if(effects[i].timeUntil<tickCount) {

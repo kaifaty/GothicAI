@@ -381,7 +381,7 @@ void Animation::Sequence::processSfx(uint64_t barrier, uint64_t sTime, uint64_t 
     }
   }
 
-void Animation::Sequence::processPfx(uint64_t barrier, uint64_t sTime, uint64_t now, MdlVisual& visual, AnimationPfx& world) const {
+void Animation::Sequence::processPfx(uint64_t barrier, uint64_t sTime, uint64_t now, AnimationPfx& world) const {
   if(data->pfx.empty())
     return;
 
@@ -397,24 +397,24 @@ void Animation::Sequence::processPfx(uint64_t barrier, uint64_t sTime, uint64_t 
     for(auto& i:d.pfx) {
       uint64_t fr = frameClamp(i.frame,d.firstFrame,d.numFrames,d.lastFrame);
       if(!(fr<frameB))
-        processPfx(i, visual, world);
+        processPfx(i, world);
       }
     for(auto& i:d.pfx) {
       uint64_t fr = frameClamp(i.frame,d.firstFrame,d.numFrames,d.lastFrame);
       if(!(frameA<=fr))
-        processPfx(i, visual, world);
+        processPfx(i, world);
       }
     } else {
     for(auto& i:d.pfx) {
       uint64_t fr = frameClamp(i.frame,d.firstFrame,d.numFrames,d.lastFrame);
       if(frameA<=fr && fr<frameB)
-        processPfx(i, visual, world);
+        processPfx(i, world);
       }
     }
   }
 
-void Animation::Sequence::processPfx(const MdsParticleEffect& p, MdlVisual& visual, AnimationPfx& world) const {
-  world.animationPfx(p,visual);
+void Animation::Sequence::processPfx(const MdsParticleEffect& p, AnimationPfx& world) const {
+  world.animationPfx(p);
   }
 
 Animation::LogicEvent Animation::Sequence::logicEvent(LogicEvent::Kind kind, size_t index, uint64_t frame) const {

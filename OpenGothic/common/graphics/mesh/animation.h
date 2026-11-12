@@ -7,7 +7,6 @@
 
 class AnimationGroundSound;
 class AnimationSound;
-class MdlVisual;
 class AnimationPfx;
 
 class Animation final {
@@ -128,8 +127,8 @@ class Animation final {
       void                                   logicEvents(std::vector<LogicEvent>& out) const;
       LogicEvent                             logicTag(size_t index) const;
       void                                   processSfx   (uint64_t barrier, uint64_t sTime, uint64_t now, AnimationGroundSound* npc, AnimationSound* mob) const;
-      void                                   processPfx   (uint64_t barrier, uint64_t sTime, uint64_t now, MdlVisual& visual, AnimationPfx& world) const;
-      void                                   processPfx   (const MdsParticleEffect& p, MdlVisual& visual, AnimationPfx& world) const;
+      void                                   processPfx   (uint64_t barrier, uint64_t sTime, uint64_t now, AnimationPfx& world) const;
+      void                                   processPfx   (const MdsParticleEffect& p, AnimationPfx& world) const;
 
       Tempest::Vec3                          speed(uint64_t at, uint64_t dt) const;
       Tempest::Vec3                          translateXZ(uint64_t at) const;
