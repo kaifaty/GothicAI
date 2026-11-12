@@ -61,6 +61,8 @@ def test_services_get_their_settings_and_find_each_other(config, tmp_path):
     config.set("llm.body_url", "tcp://gpu:47835")
     config.set("secrets.inworld_api_key", "iw-secret")
     config.set("secrets.openai_api_key", "sk-secret")
+    config.set("tts.a2f_url", "http://gpu:47839")
+    config.set("tts.a2f_emotions", {"friendly": "joy:0.4", "pain": ""})
 
     procs = services(config, LAYOUT, PORTS, tmp_path)
 
@@ -95,6 +97,12 @@ def test_services_get_their_settings_and_find_each_other(config, tmp_path):
     assert args[args.index("--quick-url") + 1] == "http://gpu:47834/v1" and "--no-quick" not in args
     assert args[args.index("--body-url") + 1] == "tcp://gpu:47835"
     assert args[args.index("--game-dir") + 1] == "/games/G2"
+    assert args[args.index("--a2f") + 1] == "service" and args[args.index("--a2f-timeout") + 1] == "1"
+    assert args[args.index("--a2f-timeout-per-s") + 1] == "0.2"
+    assert args[args.index("--a2f-url") + 1] == "http://gpu:47839"
+    assert [a for a in args if a.startswith("--a2f-emotion")] == [
+        "--a2f-emotion=friendly=joy:0.4", "--a2f-emotion=pain=",
+    ]
     for p in procs:  # keys never in argv: they would end up in logs and `ps`
         assert not any("secret" in a for a in p.argv)
     config.set("tts.original_voices", False)

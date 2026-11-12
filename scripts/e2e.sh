@@ -621,8 +621,10 @@ case "$SCENARIO" in
   bandit_hold|fight_reactions_bandits|fight_reactions_flee|crime_ally) FEAT_ARGS+=(--no-parley) ;;
 esac
 
+# A2F: face tracks of voiced lines (v63). fake (default) makes them from loudness, without a network;
+# service asks gothic-a2f (GOTHIC_A2F_URL, or the decider's host); off sends none
 (cd "$ROOT/server" && exec uv run gothic-ai serve --port "$PORT" --scenario "$SCENARIO" --llm "$LLM" --exit-after --no-console \
-  --memory-db "$LOG_DIR/memory.sqlite3" --trace-dir "$LOG_DIR/traces" "${VOICE_ARGS[@]}" "${TTS_ARGS[@]}" "${BRAIN_ARGS[@]}" "${QUICK_ARGS[@]}" ${SVM_ARGS[@]+"${SVM_ARGS[@]}"} ${FEAT_ARGS[@]+"${FEAT_ARGS[@]}"} "${BODY_ARGS[@]}") >"$LOG_DIR/server.log" 2>&1 &
+  --memory-db "$LOG_DIR/memory.sqlite3" --trace-dir "$LOG_DIR/traces" "${VOICE_ARGS[@]}" "${TTS_ARGS[@]}" --a2f "${A2F:-fake}" "${BRAIN_ARGS[@]}" "${QUICK_ARGS[@]}" ${SVM_ARGS[@]+"${SVM_ARGS[@]}"} ${FEAT_ARGS[@]+"${FEAT_ARGS[@]}"} "${BODY_ARGS[@]}") >"$LOG_DIR/server.log" 2>&1 &
 SRV=$!
 GAME=""
 

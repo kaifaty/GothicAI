@@ -26,7 +26,7 @@ from .executor import Intent
 from .llm import Message, Tool, ToolCall
 from .memory import NpcMemory
 from .persona import Persona
-from .protocol import HushCmd, Mood, SayCue, SayLeak, Snapshot
+from .protocol import HushCmd, Mood, SayCue, SayFaceCmd, SayLeak, Snapshot
 from .turn import ToolOutcome
 
 if TYPE_CHECKING:
@@ -141,8 +141,8 @@ class TurnExtension(Protocol):
         ...
 
 
-# A line's whole voice: sample rate, (PCM, subtitle word timings) chunks, seconds.
-Voice = tuple[int, list[tuple[bytes, list[tuple[int, float, float]] | None]], float]
+# A line's whole voice: sample rate, (PCM, subtitle word timings) chunks, seconds, its face track (v63).
+Voice = tuple[int, list[tuple[bytes, list[tuple[int, float, float]] | None]], float, SayFaceCmd | None]
 
 
 @dataclass

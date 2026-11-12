@@ -30,6 +30,9 @@ from .budget import Budget
 from .console import Console
 from .dialogue import REACT_HINT, SVM_HINT
 from .embeddings import EmbedClient
+from .face_track import A2F_PORT, a2f_url, emotion_table, make_source
+from .face_track import DEFAULT_TIMEOUT_PER_S as DEFAULT_A2F_TIMEOUT_PER_S
+from .face_track import DEFAULT_TIMEOUT_S as DEFAULT_A2F_TIMEOUT_S
 from .game import GameLink, GameServer
 from .gamedata import storygraph
 from .gamedata.ou import load_npc_lines
@@ -113,6 +116,14 @@ def _audio_source(args: argparse.Namespace) -> AudioSource:
     return Microphone(device)
 
 
+def _a2f_emotion(item: str) -> str:
+    try:
+        emotion_table([item])
+    except ValueError as err:
+        raise argparse.ArgumentTypeError(str(err)) from err
+    return item
+
+
 def embed_url(url: str | None, decider_url: str | None) -> str | None:
     """Explicit embedding service, or HTTP port 47837 on the decider's host."""
     if url:
@@ -164,6 +175,9 @@ async def serve(args: argparse.Namespace) -> int:
     tone_quick = make_quick(quick_at, max_tokens=TONE_MAX_TOKENS) if quick_at and args.beasts else None
     source = None if args.no_voice else _audio_source(args)
     tts = None if args.no_tts else TtsClient(args.tts_url)
+    # a line's face from its voice (v63): no voice, no face
+    face_at = a2f_url(args.a2f_url, args.decider_url)
+    face = None if tts is None else make_source(args.a2f, face_at, args.a2f_timeout, args.a2f_timeout_per_s)
     journal = Journal(print_sink if args.journal else None)
     trace = None if args.no_trace else TraceWriter(Path(args.trace_dir))
     budget = Budget(per_npc_per_min=args.llm_per_npc_min, total_per_min=args.llm_total_min)
@@ -173,6 +187,7 @@ async def serve(args: argparse.Namespace) -> int:
     log.info("turn traces: %s", "off" if trace is None else args.trace_dir)
     log.info("voice: %s", "off" if asr is None else f"{args.voice_file or 'microphone'} -> {args.asr_url}")
     log.info("npc voices: %s", "off" if tts is None else args.tts_url)
+    log.info("npc faces from voice: %s", "off" if face is None else getattr(face, "url", face.name))
     log.info("npc planner: %s", "off" if decider is None else args.decider_url)
     log.info(
         "neural body: policy=%s service=%s",
@@ -205,6 +220,7 @@ async def serve(args: argparse.Namespace) -> int:
         memory=memory,
         asr=asr,
         tts=tts,
+        face=face,
         decider=decider,
         quick=quick,
         graph=graph,
@@ -235,6 +251,8 @@ async def serve(args: argparse.Namespace) -> int:
         await asr.aclose()
     if tts is not None:
         await tts.aclose()
+    if face is not None:
+        await face.aclose()
     if decider is not None:
         await decider.aclose()
     if quick is not None:
@@ -1061,6 +1079,32 @@ def main() -> None:
     p.add_argument("--no-voice", action="store_true", help="disable push-to-talk")
     p.add_argument("--tts-url", default=os.environ.get("GOTHIC_TTS_URL", DEFAULT_TTS_URL))
     p.add_argument("--no-tts", action="store_true", help="npc's do not speak aloud (subtitles only)")
+    p.add_argument(
+        "--a2f",
+        choices=("service", "fake", "off"),
+        default=os.environ.get("GOTHIC_A2F", "service"),
+        help="face tracks of voiced lines (v63): the Audio2Face service, fake (from loudness, no network) "
+        "or off (GOTHIC_A2F; default: service)",
+    )
+    p.add_argument(
+        "--a2f-url",
+        default=os.environ.get("GOTHIC_A2F_URL"),
+        help=f"gothic-a2f service (GOTHIC_A2F_URL; default: the decider's host, http://<gpu>:{A2F_PORT})",
+    )
+    p.add_argument(
+        "--a2f-timeout", type=float, default=DEFAULT_A2F_TIMEOUT_S,
+        help="seconds a line waits for its face track besides --a2f-timeout-per-s: the network and the "
+        "queue (default: %(default)s)",
+    )
+    p.add_argument(
+        "--a2f-timeout-per-s", type=float, default=DEFAULT_A2F_TIMEOUT_PER_S,
+        help="and this much per second of the line's voice; a line that gets no track in time goes without "
+        "one, and the service is not asked for 30 s (default: %(default)s)",
+    )
+    p.add_argument(
+        "--a2f-emotion", action="append", default=[], type=_a2f_emotion, metavar="MOOD=LABEL",
+        help="the Audio2Face emotion of a line's mood, e.g. friendly=joy:0.6; empty LABEL: neutral",
+    )
     p.add_argument("--journal", action="store_true", help="print lines and actions as JOURNAL {json} lines")
     p.add_argument("--trace-dir", default=str(DEFAULT_TRACE_DIR), help="where turn traces go (a file a day)")
     p.add_argument("--no-trace", action="store_true", help="do not write turn traces")

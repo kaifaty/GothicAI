@@ -50,6 +50,7 @@ from gothic_ai.protocol import (
     RoutineEntry,
     SayAudioCmd,
     SayCmd,
+    SayFaceCmd,
     Snapshot,
     StoryEffect,
     StoryEffectCmd,
@@ -140,7 +141,7 @@ def test_v51_combat_hit_reports_actual_health_loss(kind):
 
 
 def test_v50_svm_lines_keep_the_native_meaning_and_addressee():
-    assert PROTOCOL_VERSION == 62
+    assert PROTOCOL_VERSION == 63
     msg = parse_game_message(_json({
         "type": "svm_line", "id": "svm-1", "npc": "X", "svm": "$KILLENEMY",
         "text": "Ещё одним монстром меньше.", "target": "WOLF", "overlay": True,
@@ -159,6 +160,13 @@ def test_word_timings_are_optional_for_streamed_and_whole_audio():
     chunk = SayAudioCmd(npc="X", line="AIB_1", data="AA==", words=timings)
     whole = SayCmd(npc="X", line="AIB_1", text="Ты опять здесь.", audio="AA==", words=timings)
     assert json.loads(chunk.to_json())["words"] == json.loads(whole.to_json())["words"] == [[2, 0.123, 0.456]]
+
+
+def test_v63_face_track_leaves_out_a_neutral_emotion():
+    face = SayFaceCmd(npc="X", line="AIB_1", fps=30, shapes=["jawOpen"], data="AA==")
+    assert json.loads(face.to_json()) == {
+        "type": "say_face", "npc": "X", "line": "AIB_1", "fps": 30, "shapes": ["jawOpen"], "data": "AA==",
+    }
 
 
 def test_hero_deed_retains_ownership_ids_and_engine_witnesses():
