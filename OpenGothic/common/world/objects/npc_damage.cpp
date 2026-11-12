@@ -16,7 +16,7 @@
 #include "game/meleeriposte.h"
 #include "world/objects/item.h"
 #include "world/world.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 #include "gothic.h"
 
 #include <filesystem>
@@ -113,8 +113,8 @@ void Npc::commitDamage() {
     const size_t affected=owner.physic()->meleeMovableVobs(collosionCenter(),{std::cos(angle),0,std::sin(angle)},
                                                          blow.rangeCm,blow.weaponDamage,blow.strength,blow.kind,this,
                                                          shadow!=nullptr ? &shadow->struckVobs : nullptr);
-    if(TestBench::isActive())
-      TestBench::destructionMeleeHit(*this,affected,blow.weaponDamage+blow.strength);
+    if(Bench::isActive())
+      Bench::destructionMeleeHit(*this,affected,blow.weaponDamage+blow.strength);
     }
   const bool physicsHits = isHuman() && (shadow!=nullptr ? shadow->physicsHits :
       MeleeFighter::physicsHits(Gothic::physicsFlags().meleePhysicsHits,isPlayer(),
@@ -128,9 +128,9 @@ void Npc::commitDamage() {
     if(physicsHits)
       return;
     BodyObservations::noteEvent(*this,currentTarget,result,owner.tickCount());
-    if(TestBench::bodyTracing())
-      TestBench::bodyEvent(*this,currentTarget,"hit_attempt",owner.tickCount(),
-                          "\"result\":" + TestBench::bodyJson(result),visual.pose().animNames());
+    if(Bench::bodyTracing())
+      Bench::bodyEvent(*this,currentTarget,"hit_attempt",owner.tickCount(),
+                          "\"result\":" + Bench::bodyJson(result),visual.pose().animNames());
     };
   if(currentTarget==nullptr) {
     hitTrace("no_target");
@@ -300,14 +300,14 @@ void Npc::applyMeleePosture(Npc& attacker, const MeleeBladeContact* contact, boo
   const auto who = meleeShadowWho(this);
   const auto beastFields = beast ? meleeBeastFields(physicsMass()) : std::string();
   const auto attackerFields = beastAttacker ? ",\"attacker_kind\":\"beast\",\"beast_mass\":"+std::to_string(beastMass)+
-                                             ",\"size_class\":"+TestBench::bodyJson(meleeBeastSizeClass(beastMass)) : std::string();
+                                             ",\"size_class\":"+Bench::bodyJson(meleeBeastSizeClass(beastMass)) : std::string();
   writeMeleePosture("{\"event\":\"hit\",\"tick_ms\":"+std::to_string(owner.tickCount())+
                    ",\"attacker\":"+meleeShadowWho(&attacker)+",\"target\":"+who+beastFields+attackerFields+
                    ",\"impulse_ns\":"+std::to_string(impulse.length())+
                    ",\"skill_threshold_scale\":"+std::to_string(skillScale)+
                    ",\"armor_threshold_scale\":"+std::to_string(armorScale)+
                    ",\"charge_mult\":"+std::to_string(chargeMult)+
-                   ",\"zone\":"+TestBench::bodyJson(contact ? HitZones::name(HitZones::Zone(contact->zone)) : std::string_view("body"))+
+                   ",\"zone\":"+Bench::bodyJson(contact ? HitZones::name(HitZones::Zone(contact->zone)) : std::string_view("body"))+
                    ",\"before\":"+std::to_string(before)+",\"after\":"+std::to_string(meleePosture.value)+
                    ",\"blocked\":"+(blocked ? "true" : "false")+",\"knockdown\":"+(knocked ? "true" : "false")+"}");
   if(staggered)
@@ -319,8 +319,8 @@ void Npc::applyMeleePosture(Npc& attacker, const MeleeBladeContact* contact, boo
   if(knocked)
     writeMeleePosture("{\"event\":\"knockdown\",\"tick_ms\":"+std::to_string(meleeFallTick)+
                      ",\"fall_ms\":"+std::to_string(meleeFallTick)+",\"target\":"+who+attackerFields+
-                     (heavyOnStaggered ? ",\"cause\":"+TestBench::bodyJson(barge ? "barge" : "heavy_on_staggered")+
-                                          ",\"heavy\":"+TestBench::bodyJson(heavyReason) : "")+"}");
+                     (heavyOnStaggered ? ",\"cause\":"+Bench::bodyJson(barge ? "barge" : "heavy_on_staggered")+
+                                          ",\"heavy\":"+Bench::bodyJson(heavyReason) : "")+"}");
   }
 
 bool Npc::tickMeleePosture(uint64_t dt) {
@@ -385,7 +385,7 @@ bool Npc::tickMeleePosture(uint64_t dt) {
       meleeRiposteKnockdown = false;
       ragdollRecovering = false;
       meleePosture.recover(now);
-      writeMeleePosture("{\"event\":"+TestBench::bodyJson(enabled ? "recover" : "cancel")+",\"tick_ms\":"+std::to_string(now)+
+      writeMeleePosture("{\"event\":"+Bench::bodyJson(enabled ? "recover" : "cancel")+",\"tick_ms\":"+std::to_string(now)+
                        ",\"target\":"+meleeShadowWho(this)+",\"fall_ms\":"+std::to_string(meleeFallTick)+
                        ",\"getup_ms\":"+std::to_string(meleeRiseTick)+",\"rise_ms\":"+std::to_string(now)+
                        (enabled && meleeRiseTick!=0 ? ",\"getup_duration_ms\":"+std::to_string(now-meleeRiseTick) : "")+
@@ -423,9 +423,9 @@ void Npc::takeDamage(Npc &other, const Bullet* b, bool ignoreDefence, float mele
     BodyObservations::noteEvent(*this,&other,isBlock ? "blocked" : "evaded",owner.tickCount());
   const auto parade = meleeParadeLayer(pose,owner.tickCount());
   const auto backstab = b==nullptr && !isBlock && !isJumpb ? meleeBackstabKind(other) : MeleeImpact::BackstabKind::None;
-  if(TestBench::bodyTracing())
-    TestBench::bodyEvent(*this,&other,"defence_result",owner.tickCount(),
-                        std::string("\"damage_kind\":") + TestBench::bodyJson(b==nullptr ? "melee" : "ranged") +
+  if(Bench::bodyTracing())
+    Bench::bodyEvent(*this,&other,"defence_result",owner.tickCount(),
+                        std::string("\"damage_kind\":") + Bench::bodyJson(b==nullptr ? "melee" : "ranged") +
                         ",\"blocked\":" + (isBlock && b==nullptr ? "true" : "false") +
                         ",\"jumped_back\":" + (isJumpb && b==nullptr ? "true" : "false") +
                         ",\"stun_bonus\":" + std::to_string(b==nullptr && !isBlock && !isJumpb && backstab==MeleeImpact::BackstabKind::None ? meleeStunBonus(other) : 1.f) +
@@ -479,7 +479,7 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const VisualFx* vfx, int32_t s
 void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32_t splId, bool isSpell, float meleeScale, const MeleeBladeContact* contact, bool barge) {
   const int32_t traceHpBefore = attribute(ATR_HITPOINTS);
   const bool traceKnockdownBefore = meleeKnockdown;
-  const auto traceAttackerAnimation = TestBench::bodyTracing() ? other.visual.pose().animNames() : std::string();
+  const auto traceAttackerAnimation = Bench::bodyTracing() ? other.visual.pose().animNames() : std::string();
   const float postureBefore = meleePosture.value;
   const auto backstab = !isSpell && b==nullptr ? meleeBackstabKind(other) : MeleeImpact::BackstabKind::None;
   const float backstabAngle = MeleeImpact::backstabAngle(angle,angleDir(other.x-x,other.z-z));
@@ -528,8 +528,8 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
       const auto tracePrimitiveBefore = fghAlgo.queuedAction();
       fghAlgo.onTakeHit();
       BodyController::takeHit(*this);
-      if(TestBench::bodyTracing())
-        TestBench::bodyEvent(*this,&other,"native_queue_clear",owner.tickCount(),
+      if(Bench::bodyTracing())
+        Bench::bodyEvent(*this,&other,"native_queue_clear",owner.tickCount(),
                             "\"reason\":\"take_hit\",\"primitive_before\":" + std::to_string(int(tracePrimitiveBefore)));
       implFaiWait(0);
       }
@@ -545,9 +545,9 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
       return hit.first==&other || !MeleeImpact::backstabRecentHit(now,hit.second);
       }),meleeRecentHits.end());
     meleeRecentHits.emplace_back(&other,now);
-    if(riposteMult==1.f && backstab!=MeleeImpact::BackstabKind::None && TestBench::bodyTracing())
-      TestBench::bodyEvent(*this,&other,"backstab",now,
-                          "\"backstab\":{\"kind\":"+TestBench::bodyJson(backstab==MeleeImpact::BackstabKind::Stunned ? "stunned" :
+    if(riposteMult==1.f && backstab!=MeleeImpact::BackstabKind::None && Bench::bodyTracing())
+      Bench::bodyEvent(*this,&other,"backstab",now,
+                          "\"backstab\":{\"kind\":"+Bench::bodyJson(backstab==MeleeImpact::BackstabKind::Stunned ? "stunned" :
                                                          backstab==MeleeImpact::BackstabKind::Sleeping ? "sleeping" : "unaware")+
                           ",\"angle_deg\":"+std::to_string(backstabAngle)+
                           ",\"sneak_talent\":"+std::to_string(other.talentSkill(TALENT_SNEAK))+
@@ -560,12 +560,12 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
     const int32_t lost = traceHpBefore-attribute(ATR_HITPOINTS);
     if(lost>0) {
       Gothic::inst().onCombatHit(*this,other,lost,isSpell ? "spell" : (b==nullptr ? "melee" : "ranged"));
-      TestBench::npcDuelHit(*this,other,traceHpBefore,attribute(ATR_HITPOINTS),baseDamage,
+      Bench::npcDuelHit(*this,other,traceHpBefore,attribute(ATR_HITPOINTS),baseDamage,
                            hitResult.critical,meleeScale,stunBonus,backstabMult);
       }
-    if(TestBench::bodyTracing())
-      TestBench::bodyEvent(*this,&other,"damage",owner.tickCount(),
-                          "\"damage_kind\":" + TestBench::bodyJson(isSpell ? "spell" : (b==nullptr ? "melee" : "ranged")) +
+    if(Bench::bodyTracing())
+      Bench::bodyEvent(*this,&other,"damage",owner.tickCount(),
+                          "\"damage_kind\":" + Bench::bodyJson(isSpell ? "spell" : (b==nullptr ? "melee" : "ranged")) +
                           ",\"hp_before\":" + std::to_string(traceHpBefore) + ",\"hp_after\":" +
                           std::to_string(attribute(ATR_HITPOINTS)) + ",\"net\":" + std::to_string(hitResult.value) +
                           ",\"stun_bonus\":" + std::to_string(stunBonus) +
@@ -576,10 +576,10 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
                           (hasMeleeBeastPoise() ? meleeBeastFields(physicsMass()) : std::string()) +
                           ",\"has_hit\":" + (hitResult.hasHit ? "true" : "false") +
                           ",\"melee_knockdown_before\":" + (traceKnockdownBefore ? "true" : "false") +
-                          ",\"attacker_animation\":" + TestBench::bodyJson(traceAttackerAnimation) +
+                          ",\"attacker_animation\":" + Bench::bodyJson(traceAttackerAnimation) +
                           ",\"down\":" + (isDown() ? "true" : "false") + ",\"dead\":" + (isDead() ? "true" : "false"));
     };
-  if(TestBench::isActive()) {
+  if(Bench::isActive()) {
     // what it did: the weapon's damage before the draw and the armour, k the draw times the zone (the zone
     // scales what the armour let through); the arrow's kind
     int32_t raw = 0;
@@ -589,13 +589,13 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
     const char* kind = isSpell ? "spell" : (b==nullptr ? "melee" : (b->isPrecise() ? "precise" : "dice"));
     const float k    = b!=nullptr && b->isPrecise() ? Archery::damageAt(b->draw())*Archery::zoneDamage(b->hitZone()) : 1.f;
     const auto  zone = b!=nullptr && b->isPrecise() ? HitZones::name(b->hitZone()) : std::string_view("-");
-    const auto  who  = TestBench::who(this);
-    const auto  by   = TestBench::who(&other);
+    const auto  who  = Bench::who(this);
+    const auto  by   = Bench::who(&other);
     char buf[256];
     std::snprintf(buf,sizeof(buf),"damage %.*s: raw %d zone %.*s k %.2f prot %d net %d hit %d, hp %d, %s, by %.*s",
                   int(who.size()),who.data(),int(raw),int(zone.size()),zone.data(),double(k),int(protection(PROT_POINT)),
                   int(hitResult.value),int(hitResult.hasHit),int(attribute(ATR_HITPOINTS)),kind,int(by.size()),by.data());
-    TestBench::note(buf);
+    Bench::note(buf);
     }
   if(!isSpell && !isDown() && hitResult.hasHit)
     owner.addWeaponHitEffect(other,b,*this).play();
@@ -624,8 +624,8 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
     }
 
   if(hitResult.hasHit && !benchStill && !meleeKnockdown && !bargeArmor && !riposteArmor) {
-    if(superArmor && hasMeleeBeastPoise() && TestBench::bodyTracing())
-      TestBench::bodyEvent(*this,&other,"super_armor",owner.tickCount(),
+    if(superArmor && hasMeleeBeastPoise() && Bench::bodyTracing())
+      Bench::bodyEvent(*this,&other,"super_armor",owner.tickCount(),
                           "\"active\":true"+meleeBeastFields(physicsMass()));
     auto state   = bodyStateMasked();
     bool stumble = false;
@@ -760,12 +760,12 @@ bool Npc::queueMeleeReaction(const Npc& other, const Vec3& at, const MeleeBladeC
   meleeReaction.impulseNs = impulse;
   meleeReaction.strength  = strength;
   ++meleeReaction.hits;
-  if(TestBench::isActive()) {
-    const auto who = TestBench::who(this);
+  if(Bench::isActive()) {
+    const auto who = Bench::who(this);
     char buf[200];
     std::snprintf(buf,sizeof(buf),"melee_reaction %.*s: bone %d momentum %.1f impulse %.1f strength %.2f",
                   int(who.size()),who.data(),int(bone),double(momentum),double(momentum*transfer),double(strength));
-    TestBench::note(buf);
+    Bench::note(buf);
     }
   return true;
   }
@@ -814,17 +814,17 @@ void Npc::applyBodyImpact() {
     else if(decision.perception==BodyImpact::Perception::Murder && isDead())
       owner.sendPassivePerc(*this,*culprit,*this,PERC_ASSESSMURDER,std::move(deed));
     }
-  if(TestBench::isActive()) {
-    const auto who=TestBench::who(this),by=TestBench::who(culprit);
+  if(Bench::isActive()) {
+    const auto who=Bench::who(this),by=Bench::who(culprit);
     char buf[384];
     std::snprintf(buf,sizeof(buf),"body_impact %.*s: source %s speed_cm_s %.6f damage %d hp_before %d hp_after %d dead %d by %.*s",
                   int(who.size()),who.data(),bodyImpactSource,double(speed*1000.f),before-attribute(ATR_HITPOINTS),
                   before,attribute(ATR_HITPOINTS),int(isDead()),int(by.size()),by.data());
-    TestBench::note(buf);
+    Bench::note(buf);
     }
-  if(TestBench::bodyTracing())
-    TestBench::bodyEvent(*this,culprit,"body_impact",owner.tickCount(),
-                        "\"source\":"+TestBench::bodyJson(bodyImpactSource)+
+  if(Bench::bodyTracing())
+    Bench::bodyEvent(*this,culprit,"body_impact",owner.tickCount(),
+                        "\"source\":"+Bench::bodyJson(bodyImpactSource)+
                         ",\"speed_cm_s\":"+std::to_string(speed*1000.f)+
                         ",\"damage\":"+std::to_string(before-attribute(ATR_HITPOINTS))+
                         ",\"hp_before\":"+std::to_string(before)+

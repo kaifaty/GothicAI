@@ -9,7 +9,7 @@
 #include "game/gamescript.h"
 #include "world/objects/item.h"
 #include "world/world.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 #include "gothic.h"
 
 #include <cmath>
@@ -148,9 +148,9 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
         case MeleeParry::StunnedAction::Attack: action = FightAlgo::MV_ATTACK; break;
         case MeleeParry::StunnedAction::None:   break;
         }
-      if(TestBench::bodyTracing() && action!=FightAlgo::MV_ATTACK)
-        TestBench::bodyEvent(*this,currentTarget,"stunned_target",owner.tickCount(),
-                            "\"action\":"+TestBench::bodyJson(action==FightAlgo::MV_MOVE ? "move" : "turn"));
+      if(Bench::bodyTracing() && action!=FightAlgo::MV_ATTACK)
+        Bench::bodyEvent(*this,currentTarget,"stunned_target",owner.tickCount(),
+                            "\"action\":"+Bench::bodyJson(action==FightAlgo::MV_MOVE ? "move" : "turn"));
       }
     if(action==FightAlgo::MV_MOVE) {
       implTurnToFai(*currentTarget,dt);
@@ -175,8 +175,8 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
           }
         const auto hit = owner.physic()->ray(collosionCenter(),currentTarget->collosionCenter());
         if(!hit.hasCol && doAttack(Anim::Attack,BS_HIT)) {
-          if(targetStunned && TestBench::bodyTracing())
-            TestBench::bodyEvent(*this,currentTarget,"stunned_target",owner.tickCount(),"\"action\":\"attack\"");
+          if(targetStunned && Bench::bodyTracing())
+            Bench::bodyEvent(*this,currentTarget,"stunned_target",owner.tickCount(),"\"action\":\"attack\"");
           implFaiWait(visual.pose().atkTotalTime()+1);
           }
         }
@@ -195,8 +195,8 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
     const auto before = fghAlgo.queuedAction();
     BodyTrajectory::nativeConsumed(*this);
     fghAlgo.consumeAction();
-    if(TestBench::bodyTracing())
-      TestBench::bodyEvent(*this,currentTarget,"native_consume",owner.tickCount(),
+    if(Bench::bodyTracing())
+      Bench::bodyEvent(*this,currentTarget,"native_consume",owner.tickCount(),
                           "\"choice_id\":" + std::to_string(fghAlgo.traceChoiceId()) +
                           ",\"primitive\":" + std::to_string(int(before)) +
                           ",\"next_primitive\":" + std::to_string(int(fghAlgo.queuedAction())));
@@ -244,8 +244,8 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
     if(parryAi) {
       const auto now = owner.tickCount();
       const auto skip = [&](std::string_view reason) {
-        if(TestBench::bodyTracing())
-          TestBench::bodyEvent(*this,currentTarget,"parade_skipped",now,"\"reason\":"+TestBench::bodyJson(reason));
+        if(Bench::bodyTracing())
+          Bench::bodyEvent(*this,currentTarget,"parade_skipped",now,"\"reason\":"+Bench::bodyJson(reason));
         consume();
         };
       const auto hold = [&] {
@@ -293,9 +293,9 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
         const double v = (double(owner.script().rand(1u<<24,this))+.5)/double(1u<<24);
         const float error = MeleeParry::timingSigmaMs(talent)*float(std::sqrt(-2.*std::log(u))*std::cos(2.*M_PI*v));
         meleeParadeTiming = MeleeParadeTiming{currentTarget,swing->sequence,swing->origin,began,swing->contact,error};
-        if(TestBench::bodyTracing()) {
+        if(Bench::bodyTracing()) {
           const auto start = MeleeParry::paradeStartMs(now,swing->contact,talent,error,meleeParryLeadMs());
-          TestBench::bodyEvent(*this,currentTarget,"parade_timed",now,
+          Bench::bodyEvent(*this,currentTarget,"parade_timed",now,
                               "\"predicted_contact_ms\":"+std::to_string(swing->contact-now)+
                               ",\"held_ms\":"+std::to_string(held)+
                               ",\"wait_ms\":"+std::to_string(start-now)+",\"error_ms\":"+std::to_string(error)+
@@ -506,10 +506,10 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
     if(dodgeAi && (!bodyOverride || act==FightAlgo::MV_JUMPBACK)) {
       const auto now = owner.tickCount();
       const auto skip = [&](std::string_view reason) {
-        if(TestBench::isActive())
-          TestBench::note(("melee ai dodge "+std::string(TestBench::who(this))+": skipped "+std::string(reason)).c_str());
-        if(TestBench::bodyTracing())
-          TestBench::bodyEvent(*this,currentTarget,"ai_dodge_skipped",now,"\"reason\":"+TestBench::bodyJson(reason));
+        if(Bench::isActive())
+          Bench::note(("melee ai dodge "+std::string(Bench::who(this))+": skipped "+std::string(reason)).c_str());
+        if(Bench::bodyTracing())
+          Bench::bodyEvent(*this,currentTarget,"ai_dodge_skipped",now,"\"reason\":"+Bench::bodyJson(reason));
         consume();
         };
       const auto hold = [&] {
@@ -604,14 +604,14 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
           const std::string description = std::string(MeleeDodge::name(timing.move.direction))+" "+std::string(kind);
           const auto swingMs = now-timing.origin;
           const auto contactMs = timing.contact-timing.origin;
-          if(TestBench::isActive())
-            TestBench::note(("melee ai dodge "+std::string(TestBench::who(this))+": "+description+
-                            (timing.sequence ? " at "+std::to_string(swingMs)+" ms of "+std::string(TestBench::who(currentTarget))+"'s swing, contact "+std::to_string(contactMs)+" ms" :
+          if(Bench::isActive())
+            Bench::note(("melee ai dodge "+std::string(Bench::who(this))+": "+description+
+                            (timing.sequence ? " at "+std::to_string(swingMs)+" ms of "+std::string(Bench::who(currentTarget))+"'s swing, contact "+std::to_string(contactMs)+" ms" :
                                                " now, no swing")).c_str());
-          if(TestBench::bodyTracing())
-            TestBench::bodyEvent(*this,currentTarget,"ai_dodge",now,
-                                "\"direction\":"+TestBench::bodyJson(MeleeDodge::name(timing.move.direction))+
-                                ",\"dodge_kind\":"+TestBench::bodyJson(MeleeDodge::name(timing.move.kind))+
+          if(Bench::bodyTracing())
+            Bench::bodyEvent(*this,currentTarget,"ai_dodge",now,
+                                "\"direction\":"+Bench::bodyJson(MeleeDodge::name(timing.move.direction))+
+                                ",\"dodge_kind\":"+Bench::bodyJson(MeleeDodge::name(timing.move.kind))+
                                 ",\"swing\":"+(timing.sequence ? "true" : "false")+
                                 ",\"swing_ms\":"+std::to_string(timing.sequence ? swingMs : 0)+
                                 ",\"contact_ms\":"+std::to_string(timing.sequence ? contactMs : 0));
@@ -760,7 +760,7 @@ bool Npc::doAttack(Anim anim, BodyState bs) {
   // Pose accepts a repeated request for an already playing layer too. Only a new
   // layer or combo segment pays, never a repeated input within the same swing.
   const auto staminaBefore = costsStamina ? meleeStaminaIdentity(visual.pose(),owner.tickCount()) : std::string();
-  const bool trace = TestBench::bodyTracing() && currentTarget!=nullptr;
+  const bool trace = Bench::bodyTracing() && currentTarget!=nullptr;
   const auto before = trace ? combatPoseIdentity() : std::string();
   const auto result = [&](bool accepted) {
     if(accepted && isUsingItemInHand())

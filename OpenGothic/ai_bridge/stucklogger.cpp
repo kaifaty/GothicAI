@@ -15,7 +15,7 @@
 #include "gothic.h"
 #include "jsonwriter.h"
 #include "stuckprogress.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 #include "textcodec.h"
 #include "world/objects/interactive.h"
 #include "world/objects/npc.h"
@@ -289,8 +289,8 @@ StuckLogger::StuckLogger(const char* path):impl(std::make_unique<Impl>(path)) {
   gothic.onTick.bind(impl.get(),&Impl::tick);
   gothic.onStartLoading.bind(impl.get(),&Impl::loading);
   gothic.onSessionUnload.bind(impl.get(),&Impl::unloaded);
-  TestBench::stuckBegin = [](World& w, std::string_view label, float radius) { return beginObservation(w,label,radius); };
-  TestBench::stuckEnd = [](World& w) { return endObservation(w); };
+  Bench::stuckBegin = [](World& w, std::string_view label, float radius) { return beginObservation(w,label,radius); };
+  Bench::stuckEnd = [](World& w) { return endObservation(w); };
   Tempest::Log::i("[stuck] logging to ",path);
   }
 
@@ -302,8 +302,8 @@ StuckLogger::~StuckLogger() {
   gothic.onTick.ubind(impl.get(),&Impl::tick);
   gothic.onStartLoading.ubind(impl.get(),&Impl::loading);
   gothic.onSessionUnload.ubind(impl.get(),&Impl::unloaded);
-  TestBench::stuckBegin = nullptr;
-  TestBench::stuckEnd = nullptr;
+  Bench::stuckBegin = nullptr;
+  Bench::stuckEnd = nullptr;
   Impl::current = nullptr;
   }
 

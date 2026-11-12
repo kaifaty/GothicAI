@@ -37,7 +37,7 @@
 #include "focus.h"
 #include "resources.h"
 #include "frameprofile.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 #include "loadprobe.h"
 #include "physics/physicsnoise.h"
 #include "physics/cloth.h"
@@ -842,7 +842,7 @@ void World::sweepBodiesAt(int64_t now) {
   // Stands and training hold their actors by pointer: an arena, navigation demos and any
   // bench but the one that asks for the sweep (body_traces) keep every body.
   if(BodyArena::enabled() || BodyArena::frozenWorld() || NavDemos::running() ||
-     (TestBench::isActive() && !TestBench::bodySweepAllowed()))
+     (Bench::isActive() && !Bench::bodySweepAllowed()))
     return;
   std::vector<Npc*> gone;
   for(size_t i=0;i<wobj.npcCount();++i) {
@@ -1546,13 +1546,13 @@ void World::applySpellImpact(int32_t spellId, const Tempest::Vec3& point, Npc* c
     if(!npc.addSpellImpulse(impulse,true,caster))
       return;
     ++npcHits;
-    if(TestBench::isActive()) {
-      const auto who = TestBench::who(&npc);
+    if(Bench::isActive()) {
+      const auto who = Bench::who(&npc);
       char buf[256];
       std::snprintf(buf,sizeof(buf),"spell physics %s %.*s mass %.9g impulse %.9g %.9g %.9g",
                     wind ? "wind" : "fireball",int(who.size()),who.data(),double(npc.physicsMass()),
                     double(impulse.x),double(impulse.y),double(impulse.z));
-      TestBench::note(buf);
+      Bench::note(buf);
       }
     });
   detectItem(center,radius,[&](Item& item) {
@@ -1570,11 +1570,11 @@ void World::applySpellImpact(int32_t spellId, const Tempest::Vec3& point, Npc* c
       impulse *= limit/length;
     return impulse;
     },caster);
-  if(TestBench::isActive()) {
+  if(Bench::isActive()) {
     char buf[256];
     std::snprintf(buf,sizeof(buf),"spell physics impact id %d at %.9g %.9g %.9g npc %zu items %zu vobs %zu",
                   spellId,double(point.x),double(point.y),double(point.z),npcHits,itemHits,vobHits);
-    TestBench::note(buf);
+    Bench::note(buf);
     }
   }
 
@@ -1588,11 +1588,11 @@ void World::startSpellField(int32_t spellId, const Tempest::Vec3& point, Npc* ca
   if(spellFields.size()>=16)
     spellFields.erase(spellFields.begin());
   spellFields.push_back({point,caster,target,tickCount()+uint64_t(seconds)*1000,spellId});
-  if(TestBench::isActive()) {
+  if(Bench::isActive()) {
     char buf[192];
     std::snprintf(buf,sizeof(buf),"spell physics field start id %d at %.9g %.9g %.9g duration %d",
                   spellId,double(point.x),double(point.y),double(point.z),seconds);
-    TestBench::note(buf);
+    Bench::note(buf);
     }
   }
 
@@ -1607,11 +1607,11 @@ void World::tickSpellFields(uint64_t dt) {
       ++i;
       continue;
       }
-    if(TestBench::isActive()) {
+    if(Bench::isActive()) {
       char buf[192];
       std::snprintf(buf,sizeof(buf),"spell physics field end id %d at %.9g %.9g %.9g",i->spellId,
                     double(i->center.x),double(i->center.y),double(i->center.z));
-      TestBench::note(buf);
+      Bench::note(buf);
       }
     i = spellFields.erase(i);
     }
@@ -1795,8 +1795,8 @@ void World::emitPhysicsNoise(const PhysicsNoise& noise) {
     }
   sound.setVolume(sound.volume()*noise.volume);
   sound.play();
-  if(TestBench::isActive() || TestBench::isPhysicsNoiseDebug())
-    TestBench::physicsNoise(noise,name,!sound.isEmpty());
+  if(Bench::isActive() || Bench::isPhysicsNoiseDebug())
+    Bench::physicsNoise(noise,name,!sound.isEmpty());
   wobj.emitPhysicsNoise(noise);
   }
 

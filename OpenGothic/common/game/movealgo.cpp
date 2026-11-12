@@ -8,7 +8,7 @@
 #include "world/world.h"
 #include "gothic.h"
 #include "serialize.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 #include "navdemos.h"
 
 #include <cstdio>
@@ -23,7 +23,7 @@
 struct MoveAlgo::MovementTrace final {
   MovementTrace(MoveAlgo& owner, uint64_t dt, MvFlags moveFlags)
     :owner(owner),previous(owner.movementTrace),dt(dt),moveFlags(moveFlags) {
-    active = TestBench::bodyTracing() && (owner.npc.bodyTraceMovementActive || owner.npc.target()!=nullptr);
+    active = Bench::bodyTracing() && (owner.npc.bodyTraceMovementActive || owner.npc.target()!=nullptr);
     if(!active)
       return;
     start = owner.npc.position();
@@ -54,7 +54,7 @@ struct MoveAlgo::MovementTrace final {
                   double(owner.npc.rotation()),owner.flags==Run ? "true" : "false",unsigned(owner.flags),
                   attempts,failures,land ? "true" : "false",otherNpc ? "true" : "false",vob ? "true" : "false",
                   preFall ? "true" : "false");
-    TestBench::bodyEvent(owner.npc,owner.npc.target(),"physics_step",owner.npc.world().tickCount(),fields);
+    Bench::bodyEvent(owner.npc,owner.npc.target(),"physics_step",owner.npc.world().tickCount(),fields);
     }
 
   void collision(const Tempest::Vec3& displacement, bool accepted, const DynamicWorld::CollisionTest& info) {
@@ -882,8 +882,8 @@ bool MoveAlgo::preserveMovementImpulse(uint64_t generation,State previousState,s
   // not clear that new velocity or replace the airborne state with Run.
   npc.setViewPosition(npc.physic.position());
   resetCharacterVirtual();
-  if(TestBench::isActive())
-    TestBench::movementImpulseHandoff(npc,backend,uint32_t(previousState),uint32_t(flags),spellVelocity());
+  if(Bench::isActive())
+    Bench::movementImpulseHandoff(npc,backend,uint32_t(previousState),uint32_t(flags),spellVelocity());
   return true;
   }
 
@@ -1497,7 +1497,7 @@ void MoveAlgo::onMoveFailed(const Tempest::Vec3& dp, const DynamicWorld::Collisi
   if(forward && !info.preFall && npc.currentTarget==info.npc && npc.bodyStateMasked()==BS_HIT) {
     // if charge attack run into npc, FAI should be reengaged
     // makes ai behaviour more consistent with vanilla, when fighting field-raiders
-    TestBench::monsterCharacterCollision(npc,info.npc);
+    Bench::monsterCharacterCollision(npc,info.npc);
     npc.implFaiWait(0);
     return;
     }

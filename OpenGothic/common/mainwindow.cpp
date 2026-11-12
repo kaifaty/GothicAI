@@ -34,7 +34,7 @@
 
 #include "commandline.h"
 #include "gothic.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 #include "frameprofile.h"
 #include "marvin.h"
 #include "world/chunkresidency.h"
@@ -45,7 +45,7 @@ using namespace Tempest;
 static constexpr uint64_t PipelineCacheSaveDelay = 20000;
 
 MainWindow::MainWindow(Device& device)
-  : Window(TestBench::isActive() ?
+  : Window(Bench::isActive() ?
       (std::getenv("OPENGOTHIC_BENCH_VISIBLE")!=nullptr && std::strcmp(std::getenv("OPENGOTHIC_BENCH_VISIBLE"),"1")==0 ? Normal : Minimized) : Maximized),
     device(device),swapchain(SystemApi::isOffscreen() ? Swapchain() : Swapchain(device,hwnd())),
     atlas(device),rootMenu(keycodec),inventory(keycodec),
@@ -81,7 +81,7 @@ MainWindow::MainWindow(Device& device)
 
   //renderer.resetSwapchain();
   setupUi();
-  TestBench::openMenu = [this](std::string_view menu) {
+  Bench::openMenu = [this](std::string_view menu) {
     rootMenu.setMenu(menu,KeyCodec::Log);
     if(auto pl = Gothic::inst().player())
       rootMenu.setPlayer(*pl);
@@ -156,7 +156,7 @@ MainWindow::MainWindow(Device& device)
   }
 
 MainWindow::~MainWindow() {
-  TestBench::openMenu = nullptr;
+  Bench::openMenu = nullptr;
   GameMusic::inst().stopMusic();
   Gothic::inst().cancelLoading();
   device.waitIdle();
@@ -492,7 +492,7 @@ void MainWindow::resizeEvent(SizeEvent&) {
   if(SystemApi::isOffscreen())
     offscreen = device.attachment(TextureFormat::RGBA8,uint32_t(w()),uint32_t(h())); else
     swapchain.reset();
-  if(TestBench::isActive())
+  if(Bench::isActive())
     Log::i("[bench] drawable ",frameW(),"x",frameH());
   if(auto camera = Gothic::inst().camera())
     camera->setViewport(frameW(),frameH());
@@ -540,7 +540,7 @@ void MainWindow::mouseMoveEvent(MouseEvent &event) {
 bool MainWindow::aimCatchesMouse() {
   // aiming by hand: the mouse aims, in a window too - but not a window in the background (the test bench
   // runs one: the mouse is someone else's)
-  return player.isManualAim() && hasFocus() && !TestBench::isActive();
+  return player.isManualAim() && hasFocus() && !Bench::isActive();
   }
 
 void MainWindow::processMouse(MouseEvent& event, bool enable) {
@@ -1141,8 +1141,8 @@ uint64_t MainWindow::tick() {
   auto time = Application::tickCount();
   auto dt   = time-lastTick;
   // NOTE: limit to ~200 FPS in game logic to avoid math issues; a deterministic bench steps every frame
-  // (its step is fixed, TestBench::frameDt), so how fast frames come does not change their count
-  if(dt<5 && !TestBench::deterministic())
+  // (its step is fixed, Bench::frameDt), so how fast frames come does not change their count
+  if(dt<5 && !Bench::deterministic())
     return 0;
   lastTick  = time;
 
@@ -1169,14 +1169,14 @@ uint64_t MainWindow::tick() {
   if(Gothic::inst().isPause()) {
     return 0;
     }
-  if(TestBench::simulationFrozen()) {
+  if(Bench::simulationFrozen()) {
     update();
     return 0;
     }
 
   if(dt>50)
     dt=50;
-  dt = TestBench::frameDt(dt);
+  dt = Bench::frameDt(dt);
 
   if(runtimeMode==R_Step) {
     runtimeMode = R_Suspended;
@@ -1432,9 +1432,9 @@ void MainWindow::onStartLoading() {
 
 void MainWindow::onWorldLoaded() {
   dMouse = Point();
-  if(TestBench::isActive())
+  if(Bench::isActive())
     Log::i("[bench] drawable ",frameW(),"x",frameH());
-  if(TestBench::isActive())
+  if(Bench::isActive())
     if(auto* world = Gothic::inst().world())
       Log::i("[bench] world ready: ",world->name());
 
@@ -1574,14 +1574,14 @@ void MainWindow::render(){
       FrameProfile::Scope timing(FrameProfile::Zone::FinishStep);
       return SimulationStep::finishStep(dt,player,[&] { FrameProfile::Scope cameraTiming(FrameProfile::Zone::Camera); tickCamera(dt); });
       }();
-    if(TestBench::takeRenderReset())
+    if(Bench::takeRenderReset())
       renderer.resetTemporal();
     if(auto world = Gothic::inst().world()) {
       auto hero = Gothic::inst().player();
       auto camera = Gothic::inst().camera();
       if(hero!=nullptr && camera!=nullptr) {
         world->updateLandscape(*camera);
-        TestBench::sampleStreaming(*world);
+        Bench::sampleStreaming(*world);
         }
       else if(Gothic::inst().checkLoading()==Gothic::LoadState::Idle) {
         Resources::updateTextures(nullptr);
@@ -1593,15 +1593,15 @@ void MainWindow::render(){
     if(capture) {
       profile.flag(FrameProfile::Flag::CaptureRequested);
       // filming draws every frame of the video into one image: a new one each step costs an allocation
-      auto   tex = TestBench::withUi() ? screenshotWithUi(std::move(captureImage))
+      auto   tex = Bench::withUi() ? screenshotWithUi(std::move(captureImage))
                                        : renderer.screenshoot(cmdId,std::move(captureImage));
       Pixmap pm;
       if(!tex.isEmpty()) {
         pm = device.readPixels(textureCast<const Texture2d&>(tex));
         profile.flag(FrameProfile::Flag::CaptureReadCompleted);
         }
-      TestBench::capture(pm,Gothic::interfaceScale(this));
-      if(TestBench::filming() && !tex.isEmpty()) {
+      Bench::capture(pm,Gothic::interfaceScale(this));
+      if(Bench::filming() && !tex.isEmpty()) {
         // nobody watches the window: the captured frame is the frame (the GPU is idle after the capture)
         Resources::resetRecycled(cmdId);
         cmdId = (cmdId+1u)%Resources::MaxFramesInFlight;

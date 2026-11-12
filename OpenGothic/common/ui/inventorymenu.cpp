@@ -12,7 +12,7 @@
 #include "utils/keycodec.h"
 #include "gothic.h"
 #include "resources.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 
 using namespace Tempest;
 
@@ -161,7 +161,7 @@ bool InventoryMenu::ransack(Npc &pl, Npc &tr) {
   adjustScroll();
   update();
   Gothic::inst().emitGlobalSound("INV_OPEN");
-  if(TestBench::ragdollLootOpened(pl,tr))
+  if(Bench::ragdollLootOpened(pl,tr))
     close();
   return true;
   }

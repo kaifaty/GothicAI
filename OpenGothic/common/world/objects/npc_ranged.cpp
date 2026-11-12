@@ -9,7 +9,7 @@
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"
 #include "world/world.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 
 #include <cstdio>
 #include <string>
@@ -307,12 +307,12 @@ bool Npc::shootBow(Interactive* focOverride) {
   auto& b = owner.shootBullet(*itm,*this,currentTarget,focOverride);
   // the arrow left the hand: the reload places the next one
   visual.dropAmmo();
-  if(TestBench::isActive()) {
-    const auto by = TestBench::who(this);
-    const auto at = TestBench::who(currentTarget);
+  if(Bench::isActive()) {
+    const auto by = Bench::who(this);
+    const auto at = Bench::who(currentTarget);
     char buf[200];
     std::snprintf(buf,sizeof(buf),"dice shot: by %.*s at %.*s",int(by.size()),by.data(),int(at.size()),at.data());
-    TestBench::note(buf);
+    Bench::note(buf);
     }
 
   invent.delItem(size_t(munition),1,*this);
@@ -429,12 +429,12 @@ bool Npc::releaseArrow(float draw, const Archery::Stats& st) {
   const float speed = Archery::speedAt(st,draw);
   auto&       b     = owner.shootArrow(*itm,pos,dir,speed);
   visual.dropAmmo();
-  if(TestBench::isActive()) {
-    const auto by = TestBench::who(this);
+  if(Bench::isActive()) {
+    const auto by = Bench::who(this);
     char buf[256];
     std::snprintf(buf,sizeof(buf),"arrow shot: from %.1f %.1f %.1f dir %.5f %.5f %.5f speed %.3f draw %.2f, by %.*s",
                   pos.x,pos.y,pos.z,dir.x,dir.y,dir.z,double(speed),double(draw),int(by.size()),by.data());
-    TestBench::note(buf);
+    Bench::note(buf);
     }
   invent.delItem(size_t(munition),1,*this);
   // the inventory shows as it is again (the arrow taken from the quiver is gone)

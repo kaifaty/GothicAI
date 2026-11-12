@@ -17,7 +17,7 @@
 #include "gothic.h"
 #include "physics/dynamicworld.h"
 #include "physics/physicsnoise.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 #include "world/aiqueue.h"
 #include "world/movablevobs.h"
 #include "world/waypoint.h"
@@ -445,7 +445,7 @@ void NpcObserver::physicsNoise(World& world, Npc& self, const PhysicsNoise& nois
         j.str("other_name",TextCodec::toUtf8(noise.culprit->displayName()));
       }
     }
-  TestBench::physicsNoiseBridgeEvent(self,world.tickCount());
+  Bench::physicsNoiseBridgeEvent(self,world.tickCount());
   emit(j.finish());
   }
 
@@ -847,7 +847,7 @@ void NpcObserver::act(World& world, const rapidjson::Value& msg) {
           if(!replaced)
             npc->startSpeech(std::move(voice));
           npc->setAiOutputBarrier(world.script().messageTime(line),true);
-          TestBench::npcOutput(*npc,svm,target,audioMs);
+          Bench::npcOutput(*npc,svm,target,audioMs);
           Tempest::Log::i("[ai] ",symbol," combat shout ",svm," audio_ms=",audioMs,
                          " replaced=",replaced," game_ms=",world.tickCount());
           }

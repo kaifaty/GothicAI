@@ -17,7 +17,7 @@
 #include "frameprofile.h"
 #include "gothic.h"
 #include "resources.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 
 #include <Tempest/Log>
 #include <algorithm>
@@ -240,11 +240,11 @@ void Npc::updateQuiver() {
       }
   visual.setQuiver(st,owner.addView(Quiver::Visual),std::move(arrows),std::move(local));
   const auto q   = visual.quiverProbe();
-  const auto who = TestBench::who(this);
+  const auto who = Bench::who(this);
   char buf[200];
   std::snprintf(buf,sizeof(buf),"quiver npc %.*s arrows %d out %.1f mouth %.2f %.2f %.2f",int(who.size()),who.data(),
                 q.arrows,double(q.out),double(q.mouth.x),double(q.mouth.y),double(q.mouth.z));
-  TestBench::note(buf);
+  Bench::note(buf);
   }
 
 void Npc::refitQuiver() {
@@ -391,7 +391,7 @@ const Animation::Sequence* Npc::setAnimAngGet(Anim a, uint8_t comb) {
     return nullptr;
   if(a==Anim::MoveBack && !allowMeleeStunAction("jumpback"))
     return nullptr;
-  const bool trace = TestBench::bodyTracing() && currentTarget!=nullptr;
+  const bool trace = Bench::bodyTracing() && currentTarget!=nullptr;
   const auto before = trace ? combatPoseIdentity() : std::string();
   auto st  = weaponState();
   auto wlk = walkMode();
