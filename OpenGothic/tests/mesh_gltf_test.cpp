@@ -34,6 +34,7 @@
 #include "world/objects/item.h"
 
 #include <Tempest/Device>
+#include <Tempest/Fence>
 #include <Tempest/Log>
 #include <Tempest/MemReader>
 #include <Tempest/MemWriter>
