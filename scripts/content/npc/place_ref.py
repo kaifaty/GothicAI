@@ -66,7 +66,7 @@ for s0 in (0.97, 1.0, 1.03):                                           # a few s
                      options={'initial_simplex': [[s0, tx0, 0, 0], [s0 + .02, tx0, 0, 0], [s0, tx0 + 6, 0, 0], [s0, tx0, 6, 0], [s0, tx0, 0, 6]], 'xatol': 0.05, 'fatol': 1e-4})
         if best is None or o.fun < best.fun: best = o
 q = best.x; print('PLACE scale %.4f shift mm x %+.1f y %+.1f z %+.1f  loss %.4f (unplaced %.4f)' % (*q, best.fun, loss([1, 0, 0, 0])))
-np.savez(os.path.join(D, 'ref.npz'), v=place(q, v).astype(np.float32), f=r['f'], n=r['n'])
+np.savez(os.path.join(D, 'ref.npz'), v=place(q, v).astype(np.float32), **{k: r[k] for k in r.files if k != 'v'})
 json.dump({'scale': float(q[0]), 'shift_mm': [float(x) for x in q[1:]], 'loss': float(best.fun), 'rows': [V0, V1]}, open(os.path.join(D, 'place.json'), 'w'))
 tiles = []
 for k in ('front', 'profile'):

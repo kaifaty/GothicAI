@@ -7,6 +7,7 @@ import numpy as np
 from scipy import sparse
 from scipy.sparse.linalg import splu
 from scipy.spatial import cKDTree
+from scipy import ndimage
 D=sys.argv[1]; J=lambda n: json.load(open(os.path.join(D,n)))
 m=np.load(os.path.join(D,'mpfb.npz')); r=np.load(os.path.join(D,'ref.npz')); V=J('views.json'); LM=J('lm.json')
 sched=J(sys.argv[2]) if len(sys.argv)>2 else {'alpha':[40,20,10,5,3,2],'beta':[10,6,4,3,2,2],'iters':8,'dmax':1.5,'cos':0.5}
@@ -161,8 +162,34 @@ w=np.zeros(len(co))
 cx,cy,ax,ay=600,640,350,470
 w=np.clip((1-np.hypot((U-cx)/ax,(Vv-cy)/ay))*12,0,1)*(co[:,1]<eye[1]+0.03)
 w=np.maximum(w,box(380,820,1000,1200)*(co[:,1]<eye[1]+0.06))
-if sched.get('bald'):                # a bald clean-shaven reference: no hair to mask, and the whole skull is data
-    w=np.maximum(w,np.clip((730-Vv)/20,0,1))
+ref_ok=np.ones(len(rv),bool)         # points of the reference the skin may be pulled to
+if sched.get('bald'):
+    # A bald clean-shaven reference: no hair to mask, and all of its skin is data: the skull, the cheeks back to the
+    # ears, the jaw and its angles, under the chin, the neck down to the collar. Its cloth is not, and neither is the
+    # rim where reg_export.py cut it. With the face oval alone the head came out 15 mm narrower at the jaw.
+    w=np.ones(len(co))
+    q_=r['v'].astype(np.float64)-eye
+    if 'c' in r.files:               # cloth by colour: nearer the low sides of the model than its face, in one piece from below
+        c_=r['c'].astype(np.float64); f2=np.c_[np.log((c_[:,1]+4)/(c_[:,0]+4)),np.log((c_[:,2]+4)/(c_[:,0]+4))]
+        fc=(np.abs(q_[:,0])<0.055)&(q_[:,2]>-0.055)&(q_[:,2]<0.045)&(q_[:,1]<0.025); lo=(q_[:,2]<-0.165)&(np.abs(q_[:,0])>0.06)
+        if lo.sum()>2000:
+            ms_,mc_=np.median(f2[fc],0),np.median(f2[lo],0); ax_=mc_-ms_
+            if np.linalg.norm(ax_)>0.08:
+                like=((f2-ms_)@ax_)/(ax_@ax_)>0.5
+                g_=0.004; o_=q_.min(0); vi=((q_-o_)/g_).astype(int); dims=vi.max(0)+1; flat=np.ravel_multi_index(vi.T,dims)
+                frac=np.bincount(flat,like,minlength=dims.prod())/np.maximum(np.bincount(flat,minlength=dims.prod()),1)
+                vox=(frac>0.6).reshape(dims); zc=o_[2]+(np.arange(dims[2])+0.5)*g_; vox[:,:,zc>-0.06]=False
+                lab,nl=ndimage.label(vox); low=np.unique(lab[:,:,zc<-0.18]); low=low[low>0]
+                cloth=np.isin(lab,low)[vi[:,0],vi[:,1],vi[:,2]]; ref_ok&=~cloth
+                ang=np.degrees(np.arctan2(q_[:,0],-(q_[:,1]-0.07)))
+                tops=[1000*np.percentile(q_[cloth&(ang>=a0)&(ang<a0+60),2],99) if (cloth&(ang>=a0)&(ang<a0+60)).sum()>50 else np.nan for a0 in range(-180,180,60)]
+                print('CLOTH',int(cloth.sum()),'points of the reference; its top under the eyes by direction round the neck, mm:',np.round(tops,0))
+            else: print('CLOTH none: the low sides of the reference have the colour of its face')
+    pj=os.path.join(D,'place.json')
+    if os.path.exists(pj):           # the head box of reg_export.py, where place_ref.py left it: its planes are not skin
+        pl=json.load(open(pj)); s_=pl['scale']; t_=np.array(pl['shift_mm'])/1000
+        cutp=(np.abs(q_[:,0]-t_[0])>0.12*s_-0.004)|(q_[:,2]<-0.20*s_+t_[2]+0.004)|(q_[:,1]>0.20*s_+t_[1]-0.004)
+        ref_ok&=~cutp; print('CUT RIM',int(cutp.sum()),'points of the reference')
 else:
     w*=1-box(430,770,695,792)          # moustache
     w*=1-box(400,800,858,1110)         # goatee
@@ -232,7 +259,7 @@ for alpha,beta in zip(sched['alpha'],sched['beta']):
         nrm=vnormals(cur)[fi]
         dist,j=tree.query(cur[fi]); U_=rv[j]
         cosn=np.abs(np.einsum('ij,ij->i',nrm,rn[j]))        # a generator winds its faces both ways: the sign of its normal means nothing
-        wd=wf*(dist<sched['dmax'])*(cosn>sched['cos'])
+        wd=wf*(dist<sched['dmax'])*(cosn>sched['cos'])*ref_ok[j]
         Wd=sparse.diags(wd)
         A=sparse.vstack([M,Wd@Dm,beta*Dl,eps*sparse.identity(4*nf)]).tocsc(); Bm=np.vstack([Bs,wd[:,None]*U_,beta*Ul,eps*X0])
         At=A.T.tocsc(); lu=splu((At@A).tocsc()); Xn=lu.solve(At@Bm)

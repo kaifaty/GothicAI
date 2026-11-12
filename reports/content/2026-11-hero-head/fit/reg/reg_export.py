@@ -1,7 +1,7 @@
 # Export the MPFB fit and the generator's reference for registration, and render both for landmark picking.
 #   blender -b <fit>/fit.blend -P reg_export.py -- raw.npz params.json <out dir>
 # Writes mpfb.npz (skin of the human with the fit applied, masks, eyes), ref.npz (the reference cropped to the head,
-# with vertex normals), views.json (ortho cameras: pixel -> world) and lm_{mpfb,ref}_{front,profile}.png.
+# with vertex normals and colours), views.json (ortho cameras: pixel -> world) and lm_{mpfb,ref}_{front,profile}.png.
 import bpy, sys, os, json, math
 import numpy as np
 from mathutils import Vector
@@ -28,13 +28,16 @@ np.savez(os.path.join(OUT,'mpfb.npz'),co=co,tris=tris,edges=edges,helper=helper,
 mpp=0.0615/P['ipd_px']; unit=P['res'][0]/1.1*mpp   # the generator saw a square view of res px
 R=np.array([[1,0,0],[0,0,-1],[0,1,0]],np.float32)
 rv=(raw['vertices']@R.T)*unit+np.array(P['ref_origin']); rf=raw['faces']
-box=(np.abs(rv[:,0])<0.12)&(rv[:,2]>eye[2]-0.20)&(rv[:,2]<eye[2]+0.13)&(rv[:,1]<eye[1]+0.16)
+# the back margin holds a long skull and the error of the first origin (place_ref.py moves the model by up to 2 cm
+# afterwards): at 0.16 the second face lost 7 mm of its occiput
+box=(np.abs(rv[:,0])<0.12)&(rv[:,2]>eye[2]-0.20)&(rv[:,2]<eye[2]+0.13)&(rv[:,1]<eye[1]+0.20)
 keep=box[rf].all(1); rf=rf[keep]
 used=np.unique(rf); remap=-np.ones(len(rv),np.int64); remap[used]=np.arange(len(used)); rv=rv[used].astype(np.float64); rf=remap[rf]
 fn=np.cross(rv[rf[:,1]]-rv[rf[:,0]],rv[rf[:,2]]-rv[rf[:,0]]); vn=np.zeros_like(rv)
 for k in range(3): np.add.at(vn,rf[:,k],fn)
 vn/=np.linalg.norm(vn,axis=1,keepdims=True)+1e-12
-np.savez(os.path.join(OUT,'ref.npz'),v=rv.astype(np.float32),f=rf.astype(np.int32),n=vn.astype(np.float32))
+rc=(np.clip(raw['color'][used],0,1)**(1/2.2)*255).astype(np.uint8)   # its colours: reg_solve.py tells cloth from skin by them
+np.savez(os.path.join(OUT,'ref.npz'),v=rv.astype(np.float32),f=rf.astype(np.int32),n=vn.astype(np.float32),c=rc)
 print('EXPORT mpfb verts',len(co),'ref verts',len(rv),'faces',len(rf))
 mesh=bpy.data.meshes.new('ref'); mesh.from_pydata(rv.tolist(),[],rf.tolist()); mesh.update()
 for p in mesh.polygons: p.use_smooth=True

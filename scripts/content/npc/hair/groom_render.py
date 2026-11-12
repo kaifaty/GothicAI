@@ -1,8 +1,10 @@
 # The head with a groom of strands, rendered in Cycles: the reference the game's hair is judged against.
 #   blender -b <round>/reg_sub.blend -P groom_render.py -- views.json skin.png groom.npz <out dir> <prefix>
-#       [--groom more.npz]... [--part part.npz part.png]... [--eye eye.png] [--size 1200] [--spp 256] [--views front,quarter,profile,back,hairline,knot]
+#       [--groom more.npz]... [--part part.npz part.png]... [--eye eye.png] [--ramp pigment.png] [--size 1200] [--spp 256]
+#       [--views front,quarter,profile,back,hairline,knot]
 # The cameras stand on the eye point of views.json, as render_skin.py's do. Hair is Cycles' hair curves with the
-# principled hair BSDF; a strand's colour is the hair colour moved by its lock's tint. The cord of the tail is a
+# principled hair BSDF; a strand's colour is looked up in a ramp by its tint: --ramp is a strip of
+# scripts/content/npc/concept_colours.py (hair_pigment.png), without it hero 3a's hand ramp. The cord of the tail is a
 # band of leather. --groom adds more strands of the same hair: the beard, the moustache and the stubble of beard.py.
 import bpy, sys, os, json, math
 import numpy as np
@@ -21,7 +23,7 @@ def opt(name, default=None, n=1):
 parts = opt('--part', n=2); MORE = []
 while '--groom' in a:
     i = a.index('--groom'); MORE.append(a[i+1]); del a[i:i+2]
-EYE = opt('--eye'); SIZE = int(opt('--size', 1200)); SPP = int(opt('--spp', 256))
+EYE = opt('--eye'); RAMP = opt('--ramp'); SIZE = int(opt('--size', 1200)); SPP = int(opt('--spp', 256))
 VIEWS = opt('--views', 'front,quarter,profile,back,hairline,knot').split(',')
 V = json.load(open(a[0])); G = np.load(a[2]); OUT, pre = a[3], a[4]
 sc = bpy.context.scene; hm = bpy.data.objects['Human']; cam = sc.camera
@@ -59,8 +61,14 @@ out = hn.nodes.new('ShaderNodeOutputMaterial'); hb = hn.nodes.new('ShaderNodeBsd
 at = hn.nodes.new('ShaderNodeAttribute'); at.attribute_name = 'tint'
 mp = hn.nodes.new('ShaderNodeMapRange'); mp.inputs['From Min'].default_value = -1; mp.inputs['From Max'].default_value = 1
 ramp = hn.nodes.new('ShaderNodeValToRGB'); el = ramp.color_ramp.elements
-el[0].position = 0.10; el[0].color = lin((20, 13, 8)); el[1].position = 0.95; el[1].color = lin((150, 92, 40))
-mid = el.new(0.55); mid.color = lin((56, 33, 17))                         # the concept's hair: shade, hair, the golden strands
+if RAMP:                                                                 # concept_colours.py's pigment strip, sRGB
+    strip = bpy.data.images.load(RAMP); w = strip.size[0]; px = np.array(strip.pixels[:]).reshape(-1, w, 4)[0]
+    for k in range(16):                                                  # a colour ramp holds at most 32 stops
+        e = el[k] if k < 2 else el.new(k/15)
+        e.position = k/15; e.color = lin(tuple(px[int(round(k/15*(w-1))), :3]*255))
+else:
+    el[0].position = 0.10; el[0].color = lin((20, 13, 8)); el[1].position = 0.95; el[1].color = lin((150, 92, 40))
+    mid = el.new(0.55); mid.color = lin((56, 33, 17))                     # hero 3a's hair: shade, hair, the golden strands
 hn.links.new(at.outputs['Fac'], mp.inputs['Value']); hn.links.new(mp.outputs['Result'], ramp.inputs['Fac'])
 hn.links.new(ramp.outputs['Color'], hb.inputs['Color']); hn.links.new(hb.outputs['BSDF'], out.inputs['Surface'])
 for k, v in (('Roughness', 0.33), ('Radial Roughness', 0.45), ('Random Roughness', 0.15), ('Random Color', 0.06), ('IOR', 1.55)):
