@@ -19,7 +19,7 @@
 #include "resources.h"
 
 class Skeleton;
-class Serialize;
+class SaveArchive;
 class AnimationSolver;
 struct NpcLogicalState;
 
@@ -40,8 +40,8 @@ class Pose final {
     static uint8_t     calcAniComb(const Tempest::Vec3& dpos, float rotation);
     static uint8_t     calcAniCombVert(const Tempest::Vec3& dpos);
 
-    void               save(Serialize& fout);
-    void               load(Serialize& fin, const AnimationSolver &solver);
+    void               save(SaveArchive& fout);
+    void               load(SaveArchive& fin, const AnimationSolver &solver);
 
     void               setFlags(Flags f);
     BodyState          bodyState() const;
@@ -139,8 +139,8 @@ class Pose final {
     void               clearRagdollPose(bool blendFromPhysical=false, uint64_t tickCount=0);
     bool               hasRagdollPose() const { return !physical.empty(); }
     bool               isRagdollBlending() const { return physicalReturning; }
-    void               saveRagdollRecovery(Serialize& fout) const;
-    void               loadRagdollRecovery(Serialize& fin);
+    void               saveRagdollRecovery(SaveArchive& fout) const;
+    void               loadRagdollRecovery(SaveArchive& fin);
     void               setAnimRotate(const AnimationSolver &solver, WalkBit walkMode, uint64_t tickCount, WeaponState fightMode, AnimationSolver::TurnType turn, int dir);
     auto               setAnimItem(const AnimationSolver &solver, uint64_t tickCount, std::string_view scheme, int state) -> const Animation::Sequence*;
     bool               stopItemStateAnim(const AnimationSolver &solver, uint64_t tickCount);

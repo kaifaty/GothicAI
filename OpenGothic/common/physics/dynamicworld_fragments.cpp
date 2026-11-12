@@ -1,6 +1,6 @@
 #include "dynamicworld_internal.h"
 
-#include "game/serialize.h"
+#include "savearchive.h"
 #include "game/physicssave.h"
 #include "testbench.h"
 
@@ -264,7 +264,7 @@ void DynamicWorld::cleanupFragments(BodyData& obj) {
     obj.fragmentsWereSleeping=false;
   }
 
-void DynamicWorld::saveDestructionVobs(Serialize& fout) const {
+void DynamicWorld::saveDestructionVobs(SaveArchive& fout) const {
   if(!movableVobs->destructionEnabled)
     return;
   std::vector<const BodyData*> changed;
@@ -308,7 +308,7 @@ void DynamicWorld::saveDestructionVobs(Serialize& fout) const {
     }
   }
 
-void DynamicWorld::loadDestructionVobs(Serialize& fin) {
+void DynamicWorld::loadDestructionVobs(SaveArchive& fin) {
   if(!movableVobs->destructionEnabled || !fin.setEntry("worlds/",fin.worldName(),"/destruction-vobs"))
     return;
   try {

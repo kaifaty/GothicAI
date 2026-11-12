@@ -4,7 +4,7 @@
 #include "cloth.h"
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/protomesh.h"
-#include "game/serialize.h"
+#include "savearchive.h"
 #include "game/physicssave.h"
 #include "testbench.h"
 
@@ -499,7 +499,7 @@ bool DynamicWorld::meleeStoppedMovableVob(const MeleeBladeContact& contact,float
   return true;
   }
 
-void DynamicWorld::saveMovableVobs(Serialize& fout) const {
+void DynamicWorld::saveMovableVobs(SaveArchive& fout) const {
   saveDestructionVobs(fout);
   if(!movableVobs->enabled)
     return;
@@ -517,7 +517,7 @@ void DynamicWorld::saveMovableVobs(Serialize& fout) const {
                obj->trace,uint64_t(obj->traceTime)+1,obj->traceCulprit);
   }
 
-void DynamicWorld::loadMovableVobs(Serialize& fin) {
+void DynamicWorld::loadMovableVobs(SaveArchive& fin) {
   loadDestructionVobs(fin);
   if(!movableVobs->enabled || !fin.setEntry("worlds/",fin.worldName(),"/movable-vobs"))
     return;

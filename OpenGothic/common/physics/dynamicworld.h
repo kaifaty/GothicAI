@@ -29,7 +29,7 @@ class Npc;
 class Item;
 class Interactive;
 class DbgPainter;
-class Serialize;
+class SaveArchive;
 
 class Cloth;
 
@@ -518,8 +518,8 @@ class DynamicWorld final {
     void           setPhysicsNoiseEnabled(bool enabled);
     bool           physicsNoiseEnabled() const;
     void           setPhysicsNoiseCallback(std::function<void(const PhysicsNoise&)> callback);
-    void           saveMovableVobs(Serialize& fout) const;
-    void           loadMovableVobs(Serialize& fin);
+    void           saveMovableVobs(SaveArchive& fout) const;
+    void           loadMovableVobs(SaveArchive& fin);
     // Absolute game minutes. Trace creation is recorded at the physics tick,
     // independently of which NPC happens to inspect the body.
     void           setTraceTime(int64_t minutes);
@@ -808,8 +808,8 @@ class DynamicWorld final {
     void           emitBreakNoise(const BodyData& body, const Tempest::Vec3& center);
     void           syncFragments(BodyData& body);
     void           cleanupFragments(BodyData& body);
-    void           saveDestructionVobs(Serialize& fout) const;
-    void           loadDestructionVobs(Serialize& fin);
+    void           saveDestructionVobs(SaveArchive& fout) const;
+    void           loadDestructionVobs(SaveArchive& fin);
 
     std::unique_ptr<CollisionWorld>    world;
     std::unique_ptr<ItemTrace>         itemTrace;
