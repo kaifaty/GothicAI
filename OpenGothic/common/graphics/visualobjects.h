@@ -284,6 +284,8 @@ class VisualObjects final {
       uint64_t demandCalls = 0, placements = 0, moves = 0, evaluations = 0, stale = 0, compactions = 0, focusOwners = 0;
       uint64_t classes = 0;  // registrations from a distance class change with the same exponent
       uint64_t sweep = 0;    // owners evaluated by the sweep on entering a stage that uses the class
+      uint64_t late = 0;     // frames whose due owners outlasted the budget; the most metres the queue was behind
+      double   lateMetres = 0;
       double   viewMs = 0, focusMs = 0, viewMaxMs = 0, focusMaxMs = 0;
       uint64_t resourceCalls = 0, requeues = 0, loads = 0;  // Resources totals at the last line
       std::chrono::steady_clock::time_point since{};

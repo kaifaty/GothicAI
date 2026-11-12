@@ -169,7 +169,8 @@ void Resources::completeTextureJump() {
   }
 
 void Resources::updateTextureJump() {
-  if(textureJump.open && textureMissing.empty() && texturePromotions.empty())
+  // the shortfall against the present demand: with the look-ahead the queues also hold textures loaded ahead
+  if(textureJump.open && textureFlow.shortfall()==0)
     closeTextureJump(true);
   }
 

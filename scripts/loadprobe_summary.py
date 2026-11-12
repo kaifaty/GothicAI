@@ -25,6 +25,16 @@ TEXTURE_FIELDS.extend(("tex_jumps", "tex_jumps_open", "tex_jump_sync_max_ms", "t
 TEXTURE_FIELDS.extend(("tex_device_budget_bytes", "tex_device_usage_bytes", "tex_device_shared", "tex_device_measured",
                        "tex_target_bytes", "tex_target_source", "tex_budget_bytes", "tex_stage", "tex_stage_deepest",
                        "tex_stage_bytes0", "tex_stage_bytes"))
+# step 4 (common/textureflow.h): the shortfall's texture-seconds by state (waiting for a slot, reading, uploading,
+# waiting for publication, loading a level already too coarse), short textures waiting now, the visible shortfall
+# (reserve 0), bytes of the loads in flight, textures that became short, and since the start the latency demand ->
+# publication, the wait for a load slot (ms) and the bursts of textures that became short within a second
+TEXTURE_FIELDS.extend(f"tex_shortfall_{state}_seconds" for state in ("wait", "read", "upload", "publish", "stale"))
+TEXTURE_FIELDS.extend(("tex_shortfall_wait_n", "tex_visible_shortfall_n", "tex_visible_shortfall_seconds", "tex_load_bytes",
+                       "tex_short_entries", "tex_latency_n", "tex_latency_p50_ms", "tex_latency_p90_ms", "tex_latency_max_ms",
+                       "tex_wait_p50_ms", "tex_wait_p90_ms", "tex_wait_max_ms", "tex_bursts", "tex_burst_p90", "tex_burst_max",
+                       # queued for the look-ahead alone (now, texture-seconds), its horizon, and the publications' cost
+                       "tex_ahead_n", "tex_ahead_seconds", "tex_lookahead_ms", "tex_publications", "tex_publish_ms"))
 # every stage up to TextureBudget::MaxStage (common/texturebudget.h); the probe writes those reached so far
 TEXTURE_FIELDS.extend(f"tex_stage{stage}_seconds" for stage in range(26))
 TEXTURE_FIELDS.extend(f"tex_source_{source}_{metric}" for source in ("base", "hd", "material", "other")
