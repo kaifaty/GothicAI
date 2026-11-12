@@ -12,8 +12,9 @@ const float EyeF0 = 0.021;
 
 // The lid's soft shade is lost by the shadow maps (a texel of the VSM is ~0.5 cm, the lid's edge a few mm), so the
 // shade takes this much of the direct light of the sun and the lamps at its darkest; the ambient light and the sky's
-// reflection it takes in full (ambient_light.frag)
-const float EyeLidDirect = 0.6;
+// reflection it takes in full (ambient_light.frag). Not all of it: the shade does not know where the light comes from.
+// 0.6 left the ball under the upper lid lighter than over the lower one by a torch above the head (eye-shader.md)
+const float EyeLidDirect = 0.85;
 
 float eyeLidDirect(float lid) {
   return 1.0 - EyeLidDirect*(1.0 - lid);
