@@ -1,6 +1,6 @@
 # Strands for the game: the grooms of groom.py and beard.py as one file the engine draws as ribbons.
 #   python groom_export.py frame.json uv.npz groups.npz <out dir> --hair groom.npz [--beard beard_groom.npz]
-#       [--strands 40000] [--seed 1] [--material OWN_HERO_HEAD_STRANDS.TGA]
+#       [--strands 40000] [--seed 1] [--material OWN_HERO_HEAD_STRANDS.TGA] [--ramp hair_ramp.png]
 # frame.json is written by export_test_head.py next to the head: the human's frame (metres) -> the head's frame in
 # the engine (cm). uv.npz and groups.npz are the registered head: its skin stands in the way of light.
 # What is done here, because the engine only draws:
@@ -32,7 +32,7 @@ def opt(name, default=None):
 
 
 HAIR, BEARD = opt('--hair'), opt('--beard'); KEEP = int(opt('--strands', 40000)); SEED = int(opt('--seed', 1))
-MATERIAL = opt('--material', 'OWN_HERO_HEAD_STRANDS.TGA')
+MATERIAL = opt('--material', 'OWN_HERO_HEAD_STRANDS.TGA'); RAMP = opt('--ramp')
 FRAME, UV, GR, OUT = a[:4]; rng = np.random.default_rng(SEED)
 FR = json.load(open(FRAME)); M = np.array(FR['matrix']); A, b = M[:, :3], M[:, 3]; SCALE = abs(np.linalg.det(A))**(1/3)   # cm in a metre of the head
 CUT = np.array(FR.get('cut', [0, 0, 1, -1e9]))                               # the head ends at this plane: no skin under it, so no hair
@@ -143,8 +143,12 @@ open(os.path.join(OUT, 'head.groom'), 'wb').write(b''.join(out))
 # ---- the colour ramp: the concept's hair from shade over hair to the golden strands. groom_render.py has the same
 # stops darker: there they are the pigment of Cycles' hair, which light scattered inside the hair makes lighter;
 # here they are the colour the hair is seen in
-stops = [(0.0, (30, 21, 14)), (0.10, (30, 21, 14)), (0.55, (84, 56, 34)), (0.95, (175, 125, 70)), (1.0, (175, 125, 70))]
-x = np.linspace(0, 1, 256); ramp = np.stack([np.interp(x, [s[0] for s in stops], [s[1][c] for s in stops]) for c in range(3)], 1)
+# here they are the colour the hair is seen in. --ramp: concept_colours.py's strip of the concept's own hair instead
+if RAMP:
+    ramp = np.asarray(Image.open(RAMP).convert('RGB').resize((256, 1), Image.BILINEAR))[0].astype(np.float64)
+else:
+    stops = [(0.0, (30, 21, 14)), (0.10, (30, 21, 14)), (0.55, (84, 56, 34)), (0.95, (175, 125, 70)), (1.0, (175, 125, 70))]
+    x = np.linspace(0, 1, 256); ramp = np.stack([np.interp(x, [s[0] for s in stops], [s[1][c] for s in stops]) for c in range(3)], 1)
 Image.fromarray(np.repeat(ramp[None], 8, 0).round().astype(np.uint8)).save(os.path.join(OUT, 'hair_ramp.png'))
 print('GROOM %d strands, %d points, %d triangles; long hairs kept %d of %d, %.2f times wider; %.1f MB' % (
     sum(len(p) for p, _, _ in groups), total, sum(2*len(p)*(p.shape[1]-1) for p, _, _ in groups), len(keep), len(long_), wide,

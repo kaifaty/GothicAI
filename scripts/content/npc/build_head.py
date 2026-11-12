@@ -285,6 +285,15 @@ def steps(cdir, cfg, work, content, gpu=None):
          T['points'], j('beard')]],
         [U, GR, V, j('skin', 'skin_brows.png'), j('skin', 'beard.npz'), T['points']],
         [j('beard', 'beard_groom.npz'), j('beard', 'skin_shaved.png')], 'beard, moustache, stubble'))
+    out.append(Step('colour', [
+        [PY, os.path.join(S, 'concept_colours.py'), j('views'), params, V, j('hair', 'groom.npz'), j('beard', 'beard_groom.npz'),
+         T['eye'], j('colour')]],
+        [params, V, j('hair', 'groom.npz'), j('beard', 'beard_groom.npz'), T['eye']]
+        + [j('views', n+'.png') for n in ('full_front', 'full_profile', 'bald_front')]
+        + [j('views', 'points', n+'.json') for n in ('full_front', 'bald_front')],
+        [j('colour', n) for n in ('groom.npz', 'beard_groom.npz', 'hair_ramp.png', 'hair_pigment.png', 'eye.png')],
+        'the colours of the hair, the beard and the iris from the concept'))
+    eye_map = j('colour', 'eye.png')
 
     # 8. into the game: the head (twice: the skin material needs the neck cut the export finds), strands
     brows_none = j('views', 'brows_none.png')
@@ -293,10 +302,10 @@ def steps(cdir, cfg, work, content, gpu=None):
         from PIL import Image
         Image.new('RGBA', (64, 64), (0, 0, 0, 0)).save(brows_none)
     export = lambda skin, *more: blend(T['probe'], os.path.join(H, 'mpfb', 'export_test_head.py'), content, '--hero', C1, R,
-                                       T['eye'], '--skin', skin, '--brows', brows_none, *more)
+                                       eye_map, '--skin', skin, '--brows', brows_none, *more)
     out.append(Step('cut', [no_brows, export(j('beard', 'skin_shaved.png'))],
                     [j('round', 'reg.npz'), j('round', 'blink.npz'), j('reg', 'mpfb.npz'), j('beard', 'skin_shaved.png'),
-                     T['probe'], T['eye']], [os.path.join(head, 'head.frame.json')], 'the neck cut'))
+                     T['probe'], eye_map], [os.path.join(head, 'head.frame.json')], 'the neck cut'))
     body = os.path.join(base_cache(), 'textures', 'HUM_BODY_NAKED_V8_C0.dds')
     out.append(Step('material', [
         [PY, os.path.join(S, 'skin_material.py'), U, GR, V, j('beard', 'skin_shaved.png'), T['points'], body,
@@ -305,7 +314,7 @@ def steps(cdir, cfg, work, content, gpu=None):
         [j('material', n) for n in ('skin_game.png', 'skin_normal.png', 'skin_orm.png')], 'skin for the game'))
     out.append(Step('export', [export(j('material', 'skin_game.png'), '--skin-normal', j('material', 'skin_normal.png'),
                                       '--skin-orm', j('material', 'skin_orm.png'))],
-                    [j('round', 'reg.npz'), j('round', 'blink.npz'), j('reg', 'mpfb.npz'), T['probe'], T['eye']]
+                    [j('round', 'reg.npz'), j('round', 'blink.npz'), j('reg', 'mpfb.npz'), T['probe'], eye_map]
                     + [j('material', n) for n in ('skin_game.png', 'skin_normal.png', 'skin_orm.png')],
                     [os.path.join(head, 'head.glb')], 'the head'))
 
@@ -322,20 +331,21 @@ def steps(cdir, cfg, work, content, gpu=None):
         json.dump(chars, open(cj, 'w'), indent=2)
     out.append(Step('strands', [
         [PY, os.path.join(S, 'hair', 'groom_export.py'), os.path.join(head, 'head.frame.json'), U, GR, head,
-         '--hair', j('hair', 'groom.npz'), '--beard', j('beard', 'beard_groom.npz')], install_strands],
-        [os.path.join(head, 'head.glb'), os.path.join(head, 'head.frame.json'), U, GR, j('hair', 'groom.npz'),
-         j('beard', 'beard_groom.npz')], [os.path.join(head, 'head.groom')], 'strands for the game'))
+         '--hair', j('colour', 'groom.npz'), '--beard', j('colour', 'beard_groom.npz'), '--ramp', j('colour', 'hair_ramp.png')],
+         install_strands],
+        [os.path.join(head, 'head.glb'), os.path.join(head, 'head.frame.json'), U, GR, j('colour', 'groom.npz'),
+         j('colour', 'beard_groom.npz'), j('colour', 'hair_ramp.png')], [os.path.join(head, 'head.groom')], 'strands for the game'))
 
     # 9. the check: the head with its strands at the concept's cameras next to the concept and the model
     out.append(Step('sheet', [
         # the map before the game material: its rim fades into the body's skin, which Blender's neck does not have
         blend(j('round', 'reg_sub.blend'), os.path.join(S, 'hair', 'groom_render.py'), V, j('beard', 'skin_shaved.png'),
-              j('hair', 'groom.npz'), j('sheet'), 's', '--groom', j('beard', 'beard_groom.npz'), '--eye', T['eye'],
-              '--views', 'front,quarter,profile', '--size', '900', '--spp', '128'),
+              j('colour', 'groom.npz'), j('sheet'), 's', '--groom', j('colour', 'beard_groom.npz'), '--eye', eye_map,
+              '--ramp', j('colour', 'hair_pigment.png'), '--views', 'front,quarter,profile', '--size', '900', '--spp', '128'),
         [PY, os.path.join(SK, 'likeness.py'), V, params, raw['full'], j('views', 'full_front.png'),
          j('views', 'full_profile.png'), j('sheet'), j('sheet', 'likeness.jpg'), *place]],
-        [j('round', 'reg_sub.blend'), V, j('beard', 'skin_shaved.png'), j('hair', 'groom.npz'), j('beard', 'beard_groom.npz'),
-         params, raw['full'], j('full', 'place.json'), j('full', 'tone.json')],
+        [j('round', 'reg_sub.blend'), V, j('beard', 'skin_shaved.png'), j('colour', 'groom.npz'), j('colour', 'beard_groom.npz'),
+         j('colour', 'hair_pigment.png'), eye_map, params, raw['full'], j('full', 'place.json'), j('full', 'tone.json')],
         [j('sheet', 'likeness.jpg')], 'Cycles renders and the likeness sheet'))
     lk = j('sheet', 'likeness.jpg')                                   # tiles of 600 px: concept, model, ours
     out.append(Step('measures', [[MPY, os.path.join(S, 'face_points.py'), j('sheet', 'points'),
