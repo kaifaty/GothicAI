@@ -25,7 +25,7 @@ ec=np.array([eo.matrix_world@v.co for v in eme.vertices]); et=np.array([t.vertic
 np.savez(os.path.join(OUT,'mpfb.npz'),co=co,tris=tris,edges=edges,helper=helper,leye=le,reye=re_,eye=eye,
          eye_obj_co=ec,eye_obj_tris=et,eye_obj_loc=np.array(eo.location))
 # the reference, placed as in ref_view.py, cropped to the head
-mpp=0.0615/P['ipd_px']; unit=887/1.1*mpp
+mpp=0.0615/P['ipd_px']; unit=P['res'][0]/1.1*mpp   # the generator saw a square view of res px
 R=np.array([[1,0,0],[0,0,-1],[0,1,0]],np.float32)
 rv=(raw['vertices']@R.T)*unit+np.array(P['ref_origin']); rf=raw['faces']
 box=(np.abs(rv[:,0])<0.12)&(rv[:,2]>eye[2]-0.20)&(rv[:,2]<eye[2]+0.13)&(rv[:,1]<eye[1]+0.16)
