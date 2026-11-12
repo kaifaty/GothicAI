@@ -404,7 +404,7 @@ void headGlbFile(const std::filesystem::path& path, bool sparse = false, std::st
   binary.insert(binary.end(),{1,2,0,0});
   views.emplace_back(start,2);
   std::string json=R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0,1]}],"nodes":[{"name":")";
-  json+=invalid=="node" ? "tail" : "face";
+  json+=invalid=="node" ? "tail" : invalid=="tears" ? "tears" : "face";
   json+=R"(","mesh":0},{"name":"beard","mesh":0,"translation":[0,0.01,0]}],"buffers":[{"byteLength":)"+
         std::to_string(binary.size())+"}],\"bufferViews\":[";
   for(size_t i=0; i<views.size(); ++i) {
@@ -578,6 +578,11 @@ void headConverterCases(const Fixture& fixture) {
                 "sparse and dense morph POSITION/NORMAL must match");
       }
     }
+  // the tear line along the lower lids (scripts/content/npc/eye_cornea.py) is a part of its own, with the face's shapes
+  headGlbFile(path,false,"tears");
+  const auto tears=loadGltfHeadMesh(path);
+  require(std::any_of(tears.parts.begin(),tears.parts.end(),[](const auto& p) { return p.name=="tears"; }) &&
+          tears.targets.size()==2,"a head must take the tear line as a part with its shapes");
   for(const auto& [invalid,reason]:{std::pair{"names","targetNames"}, {"normal","morph NORMAL"},
                                   {"joints","JOINTS_0"}, {"node","unknown head mesh node: tail"}}) {
     headGlbFile(path,false,invalid);

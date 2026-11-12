@@ -372,7 +372,9 @@ class Converter {
       std::string part;
       if(head!=nullptr) {
         part=node.name==nullptr ? "" : decodedString(node.name);
-        const std::array<std::string_view,9> allowed={"face","brows","lashes","beard","eye_L","eye_R","teeth","tongue","hair"};
+        // tears: the wet line along the lower lids (scripts/content/npc/eye_cornea.py), bound to the face's shapes
+        const std::array<std::string_view,10> allowed={"face","brows","lashes","beard","eye_L","eye_R","teeth","tongue","hair",
+                                                       "tears"};
         if(std::find(allowed.begin(),allowed.end(),part)==allowed.end())
           reject("unknown head mesh node: "+part);
         names=targetNames(*node.mesh);

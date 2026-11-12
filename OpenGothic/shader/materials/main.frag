@@ -545,12 +545,37 @@ void mainGBuffer(vec4 t) {
     // or two on the cornea flickers under TAA as the head turns otherwise
     const float EyeLidAlbedo  = 0.65;
     const float EyeRoughness  = 0.08;
+    const float EyeIrisDepth  = 0.5;          // cm at b = 1 (eye_cornea.py, DEPTH_MAX_CM)
+    const float EyeEta        = 1.0/1.336;    // air to the aqueous humour (the tear film and the cornea add little)
     const float lid = clamp(length(shInp.normal)*2.0 - 1.0, 0.0, 1.0);
     const vec3  n   = normalize(shInp.normal);
     const vec3  dn  = dFdx(n), dm = dFdy(n);
     const float kernel = min(0.5*(dot(dn,dn) + dot(dm,dm)), 0.18);
     const float r0  = (bucket[bucketId].flags & BK_ORM)!=0 ? outOrm.g : EyeRoughness;
     const float a2  = clamp(r0*r0*r0*r0 + kernel, 0.0, 1.0);
+    // The iris in its depth under the cornea (eye-shader.md, "Способ" 5; Jimenez 2012): the ORM's b is how deep the
+    // iris lies under this point of the dome (scripts/content/npc/eye_cornea.py), 0 off the iris and in older maps. The
+    // eye sees it along the ray the cornea bends, so the colour comes from where that ray meets the iris: the map is
+    // read that far along the ray's run over the surface. The run goes into the map by the surface gradients of u
+    // and v (the cotangent frame of mappedNormal): the two eyes share the map mirrored, the gradients carry the sign
+    const float depth = (bucket[bucketId].flags & BK_ORM)!=0 ? outOrm.b*EyeIrisDepth : 0.0;
+    if(depth>0.0) {
+      const vec3  view = normalize(scene.camPos - shInp.pos);
+      const vec3  ray  = refract(-view, n, EyeEta);
+      const vec3  run  = ray * (depth/max(dot(n, -ray), 0.2));
+      const float det  = dot(n, cross(dpdx, dpdy));
+      if(abs(det)>1e-20) {
+        const vec3 gu = cross(dpdy, n)*duvdx.x + cross(n, dpdx)*duvdy.x;
+        const vec3 gv = cross(dpdy, n)*duvdx.y + cross(n, dpdx)*duvdy.y;
+        const vec2 shift = vec2(dot(gu, run), dot(gv, run))/det;
+        vec3 iris = textureGrad(sampler2D(textureMain[tId], samplerMain), uv + shift,
+                                duvdx*scene.mipGradScale, duvdy*scene.mipGradScale).rgb;
+#if defined(MAT_COLOR)
+        iris *= shInp.color.rgb;
+#endif
+        outDiffuse.rgb = iris;
+        }
+      }
     outOrm.g        = sqrt(sqrt(a2));
     outOrm.b        = lid;
     outOrm.a        = 1.0;
