@@ -136,19 +136,8 @@ namespace TestBench {
   bool     voiceStems();
   std::function<void(const int16_t*,size_t)> aiVoiceStem(std::string_view npc, std::string_view line, uint32_t rate);
   void     aiHeard(std::string_view text, std::string_view to);
-  // set by the bridge: an npc of the AI speaks now or has a line waiting for its turn
-  extern std::function<bool()> aiBusy;
-  // set by the bridge: whether a thing of it has got that far (`waitai necro risen`: the necromancer's answer)
-  extern std::function<bool(std::string_view key, std::string_view stage)> aiReached;
-  // Installed only by the opt-in bridge stuck logger; the core engine has no bridge dependency.
-  extern std::function<bool(World&,std::string_view,float)> stuckBegin;
-  extern std::function<bool(World&)> stuckEnd;
   // World::sweepBodies leaves bodies alone under a bench (fixtures hold actors by pointer)
   // unless the scenario asks for the body lifetime: body_traces does.
   void     allowBodySweep(bool allow);
   bool     bodySweepAllowed();
-  // set by the bridge: the production npc_view of one npc (a JSON array of one view, or empty)
-  extern std::function<std::string(World&,std::string_view npc)> npcView;
-  // set by the main window: opens a game menu by its script name (`diary`: the diary for a look at it)
-  extern std::function<void(std::string_view menu)> openMenu;
   }

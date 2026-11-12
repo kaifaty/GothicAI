@@ -8,7 +8,7 @@
 #include "frameprofile.h"
 #include "gothic.h"
 #include "camera.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
 
@@ -16,7 +16,7 @@ void SimulationStep::worldPlayerStep(uint64_t dt, PlayerControl& player,
                                       const std::function<void()>& afterFocus) {
   BodyController::pumpWatchdogs();
   BodyObservations::beginStep(BodyObservations::currentStep()+1);
-  TestBench::beforeWorldTick(dt);
+  Bench::beforeWorldTick(dt);
   Gothic::inst().tick(dt);
   player.tickFocus();
   if(afterFocus)
@@ -34,7 +34,7 @@ bool SimulationStep::finishStep(uint64_t dt, PlayerControl& player,
   BodyController::postStep();
   BodyTrajectory::postStep();
   { FrameProfile::Scope timing(FrameProfile::Zone::Observations); BodyObservations::sampleAll(); }
-  const bool capture = TestBench::tick(dt,player);
+  const bool capture = Bench::tick(dt,player);
   if(dt>0)
     BodyReplay::postStep();
   // Animation LOD: the game and bench cameras have moved for this frame; NPCs they

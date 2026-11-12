@@ -22,7 +22,7 @@
 #include "gothic.h"
 #include "loadprobe.h"
 #include "navdemos.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 
 using namespace Tempest;
 
@@ -1286,8 +1286,8 @@ void GameScript::playerHotLameHeal(Npc& pl) {
 bool GameScript::startHotkeyPotion(Npc& pl, bool mana) {
   const char* kind = mana ? "mana" : "health";
   auto note = [kind](std::string_view item) {
-    if(TestBench::isActive())
-      TestBench::note(string_frm("heal hotkey ",kind,": ",item).c_str());
+    if(Bench::isActive())
+      Bench::note(string_frm("heal hotkey ",kind,": ",item).c_str());
     };
   if(pl.isDown()) {
     note("none");
@@ -1319,8 +1319,8 @@ bool GameScript::startHotkeyPotion(Npc& pl, bool mana) {
     }
   note(vm.find_symbol_by_index(uint32_t(selected))->name());
   if(pl.weaponState()!=WeaponState::NoWeapon && pl.itemUseInHandAnimation(*pl.getItem(selected)).empty()) {
-    if(TestBench::isActive())
-      TestBench::note(("item use "+std::string(TestBench::who(&pl))+": "+
+    if(Bench::isActive())
+      Bench::note(("item use "+std::string(Bench::who(&pl))+": "+
                       vm.find_symbol_by_index(uint32_t(selected))->name()+" holster path: no compatible in-hand clip or deferred effect").c_str());
     pl.stopAnim("");
     pl.aiPush(AiQueue::aiRemoveWeapon());

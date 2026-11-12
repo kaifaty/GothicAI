@@ -1,5 +1,6 @@
 #include "testbench_internal.h"
 #include "testbench.h"
+#include "world/benchhooks.h"
 
 #include <Tempest/SoundDevice>
 
@@ -183,7 +184,7 @@ bool waitingForAi() {
   if(bench.waitAiKey.empty())
     return false;
   const bool signalled=bench.waitAiKey=="broken" && bench.brokenSignals.count(bench.waitAiStage)>0;
-  if(signalled || (TestBench::aiReached && TestBench::aiReached(bench.waitAiKey,bench.waitAiStage))) {
+  if(signalled || (Bench::aiReached && Bench::aiReached(bench.waitAiKey,bench.waitAiStage))) {
     say("waitai " + bench.waitAiKey + " " + bench.waitAiStage);
     bench.waitAiKey.clear();
     return false;
@@ -753,7 +754,7 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
       }
     }
   bench.time += dt;
-  if(aiBusy && aiBusy())
+  if(Bench::aiBusy && Bench::aiBusy())
     bench.busyAt = bench.time;
 
   for(auto k:bench.taps)

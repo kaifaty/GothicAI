@@ -6,7 +6,7 @@
 #include "game/herodeed.h"
 #include "graphics/mesh/skeleton.h"
 #include "gothic.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 #include "utils/string_frm.h"
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"
@@ -265,14 +265,14 @@ bool Npc::startItemUse(const Item& item, bool allowMissing) {
       return false;
     if(!isPlayer())
       implAniWait(uint64_t(sq->totalTime()));
-    if(TestBench::isActive()) {
+    if(Bench::isActive()) {
       const auto* symbol = owner.script().findSymbol(item.clsId());
-      TestBench::note(("item use "+std::string(TestBench::who(this))+": "+
+      Bench::note(("item use "+std::string(Bench::who(this))+": "+
                       (symbol==nullptr ? item.handle().name : symbol->name())+" in hand "+sq->name+", layer 21").c_str());
       }
     return true;
     }
-  if(TestBench::isActive()) {
+  if(Bench::isActive()) {
     const auto& flags = Gothic::physicsFlags();
     const auto& scheme = item.handle().scheme_name;
     const auto main = ItmFlags(item.handle().main_flag);
@@ -291,7 +291,7 @@ bool Npc::startItemUse(const Item& item, bool allowMissing) {
       reason = weapon==WeaponState::Bow ? "bow" : weapon==WeaponState::CBow ? "crossbow" :
                weapon==WeaponState::Mage ? "spell" : "no melee weapon";
     const auto* symbol = owner.script().findSymbol(item.clsId());
-    TestBench::note(("item use "+std::string(TestBench::who(this))+": "+
+    Bench::note(("item use "+std::string(Bench::who(this))+": "+
                     (symbol==nullptr ? item.handle().name : symbol->name())+" holster path: "+reason).c_str());
     }
   return setAnimItem(item.handle().scheme_name,-1,allowMissing);
@@ -337,15 +337,15 @@ void Npc::finishItemUseEffect(const char* moment) {
   collectingFood = false;
   if(use.food && !isDown()) {
     Healing::add(foodPool,foodHp,foodMana);
-    if(TestBench::isActive()) {
-      TestBench::note(("food pool "+std::string(TestBench::who(this))+": +"+std::to_string(foodHp)+
+    if(Bench::isActive()) {
+      Bench::note(("food pool "+std::string(Bench::who(this))+": +"+std::to_string(foodHp)+
                       " hp +"+std::to_string(foodMana)+" mana over "+std::to_string(Healing::FoodDuration)+
                       " ms, pool "+std::to_string(foodPool.hp)+"/"+std::to_string(foodPool.mana)).c_str());
       }
     }
-  if(TestBench::isActive()) {
+  if(Bench::isActive()) {
     const auto* symbol = owner.script().findSymbol(use.item);
-    TestBench::note(("item use "+std::string(TestBench::who(this))+": "+
+    Bench::note(("item use "+std::string(Bench::who(this))+": "+
                     (symbol==nullptr ? name : symbol->name())+" effect at "+moment+", +"+
                     std::to_string(use.food ? foodHp : attribute(ATR_HITPOINTS)-hp)+" hp +"+
                     std::to_string(use.food ? foodMana : attribute(ATR_MANA)-mana)+" mana at "+
@@ -358,9 +358,9 @@ void Npc::interruptItemUse(std::string_view cause) {
   const bool inHand = isUsingItemInHand();
   if(itemUse.item==0 && !inHand)
     return;
-  if(itemUse.item!=0 && TestBench::isActive()) {
+  if(itemUse.item!=0 && Bench::isActive()) {
     const auto* symbol = owner.script().findSymbol(itemUse.item);
-    TestBench::note(("item use "+std::string(TestBench::who(this))+": "+
+    Bench::note(("item use "+std::string(Bench::who(this))+": "+
                     (symbol==nullptr ? std::to_string(itemUse.item) : symbol->name())+
                     (inHand ? " cancelled by " : " interrupted by ")+
                     std::string(cause)+" at "+std::to_string(owner.tickCount()-itemUse.started)+" ms, item kept").c_str());

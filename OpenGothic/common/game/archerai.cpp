@@ -11,7 +11,7 @@
 #include "world/objects/npc.h"
 #include "world/world.h"
 #include "gothic.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 
 using namespace Tempest;
 
@@ -249,11 +249,11 @@ void ArcherAi::tick(Npc& npc, uint64_t dt) {
     diceWeak = tooWeak;
     weapon   = npc.currentRangedWeapon();
     end(npc);
-    if(TestBench::isActive()) {
-      const auto by = TestBench::who(&npc);
+    if(Bench::isActive()) {
+      const auto by = Bench::who(&npc);
       char buf[160];
       std::snprintf(buf,sizeof(buf),"archer %.*s: dice from now (%s)",int(by.size()),by.data(),tooWeak ? "draw below minimum" : "raise stuck");
-      TestBench::note(buf);
+      Bench::note(buf);
       }
     return;
     }
@@ -327,15 +327,15 @@ void ArcherAi::tick(Npc& npc, uint64_t dt) {
     const float track   = npc.aimTrackError();
     const bool  settled = ar.disturbance()<=Settled && track>=0.f && track<ReleaseTrack;
     letGo = held>=MinHold && (settled || held>=ReleaseWait);
-    if(letGo && TestBench::isActive()) {
-      const auto  by = TestBench::who(&npc);
+    if(letGo && Bench::isActive()) {
+      const auto  by = Bench::who(&npc);
       const Vec2  e  = errFrom + (err-errFrom)*smooth(easeT);
       char buf[320];
       std::snprintf(buf,sizeof(buf),"arrow aim: at %.1f %.1f %.1f, true %.1f %.1f %.1f, err %.3f %.3f deg, sigma %.3f, pv %.0f p %.0f rho %.2f, lead %.0f, hold %.2f, disturb %.2f, %s, by %.*s",
                     at.x,at.y,at.z,c.x,c.y,c.z,double(e.x*sigma/Deg),double(e.y*sigma/Deg),double(sigma/Deg),double(pv*100.f),
                     double(ps*100.f),double(rho),double(lead),double(held),double(ar.disturbance()),settled ? "settled" : "waited",
                     int(by.size()),by.data());
-      TestBench::note(buf);
+      Bench::note(buf);
       }
     } else {
     heldAt = 0;

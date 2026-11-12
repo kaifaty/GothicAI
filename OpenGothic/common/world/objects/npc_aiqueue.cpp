@@ -6,7 +6,7 @@
 #include "commandline.h"
 #include "game/bodycontroller.h"
 #include "gothic.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"
 #include "world/world.h"
@@ -391,8 +391,8 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
             act.target->setTalkPartner(this,msgTime+tail);
             }
           }
-        if(TestBench::isActive())
-          TestBench::npcOutput(*this,act.s0,act.target,msgTime);
+        if(Bench::isActive())
+          Bench::npcOutput(*this,act.s0,act.target,msgTime);
         if(act.act!=AI_OutputSvmOverlay) {
           visual.startAnimDialog(*this);
           visual.setAnimRotate(*this,0);

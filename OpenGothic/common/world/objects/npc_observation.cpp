@@ -5,7 +5,7 @@
 #include "graphics/mesh/skeleton.h"
 #include "world/objects/item.h"
 #include "world/world.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 
 #include <chrono>
 #include <cmath>
@@ -47,7 +47,7 @@ std::string Npc::combatPoseLayers() const {
           optimal.push_back(frame);
     if(result.size()>1)
       result += ",";
-    result += "{\"name\":" + TestBench::bodyJson(seq.name) +
+    result += "{\"name\":" + Bench::bodyJson(seq.name) +
               ",\"is_attack\":" + (seq.isAttackAnim() || isFinishSequence(seq) ? "true" : "false") +
               ",\"start\":" + std::to_string(layer.start) + ",\"clock\":" + std::to_string(layer.time) +
               ",\"speed\":" + std::to_string(layer.speed) + ",\"combination\":" + std::to_string(layer.combination) +
@@ -61,7 +61,7 @@ std::string Npc::combatPoseLayers() const {
   }
 
 void Npc::traceCombatSnapshot() {
-  if(!TestBench::bodyTracing() || currentTarget==nullptr)
+  if(!Bench::bodyTracing() || currentTarget==nullptr)
     return;
   const auto now = owner.tickCount();
   const auto& pose = visual.pose();
@@ -97,7 +97,7 @@ void Npc::traceCombatSnapshot() {
                 double(x),double(y),double(z),double(angle),(unsigned long long)faiWaitTime,(unsigned long long)aniWaitTime,
                 (unsigned long long)waitTime,(unsigned long long)outWaitTime,size_t(aiQueue.size()),int(fghAlgo.queuedAction()),
                 (unsigned long long)fghAlgo.traceChoiceId());
-  TestBench::bodyEvent(*this,currentTarget,"phase_snapshot",now,std::string(values) +
+  Bench::bodyEvent(*this,currentTarget,"phase_snapshot",now,std::string(values) +
                        ",\"stunned\":" + (isMeleeStunned() ? "true" : "false") +
                        ",\"stamina\":" + std::to_string(stamina()) +
                        ",\"stamina_max\":" + std::to_string(staminaMax()) +
@@ -107,7 +107,7 @@ void Npc::traceCombatSnapshot() {
   }
 
 void Npc::traceVisibilityDiagnostic(std::string_view sourcePhase, bool force) noexcept {
-  if(!BodyController::visibilityDiagnosticsEnabled() || !TestBench::bodyTracing() ||
+  if(!BodyController::visibilityDiagnosticsEnabled() || !Bench::bodyTracing() ||
      !BodyObservations::watched(*this) || currentTarget==nullptr)
     return;
   try {
@@ -196,7 +196,7 @@ void Npc::traceVisibilityDiagnostic(std::string_view sourcePhase, bool force) no
       };
     if(!std::isfinite(view) || !std::isfinite(rotation())) throw std::runtime_error("nonfinite visibility diagnostic yaw");
     const auto ns=uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(snapshotTime.time_since_epoch()).count());
-    out << "\"diagnostic_schema_version\":1,\"source_phase\":" << TestBench::bodyJson(sourcePhase)
+    out << "\"diagnostic_schema_version\":1,\"source_phase\":" << Bench::bodyJson(sourcePhase)
         << ",\"diagnostic_generation\":" << generation << ",\"diagnostic_seq\":" << visibilityDiagnosticCount+1
         << ",\"oracle_debug_only\":true,\"sample_period_ms\":" << PeriodMs << ",\"forced_edge\":" << force
         << ",\"snapshot_wall_monotonic_ns\":" << ns << ",\"wall_monotonic_ns\":" << ns
@@ -208,8 +208,8 @@ void Npc::traceVisibilityDiagnostic(std::string_view sourcePhase, bool force) no
         << ",\"sim_step\":" << BodyObservations::currentStep() << ",\"session_epoch\":" << BodyObservations::sessionEpoch()
         << ",\"world_epoch\":" << BodyObservations::worldEpoch() << ",\"entity_id\":" << BodyObservations::entityId(*this)
         << ",\"target_entity_id\":" << BodyObservations::entityId(other)
-        << ",\"owner\":" << TestBench::bodyJson(control.owned ? "scripted" : "native")
-        << ",\"provider\":" << TestBench::bodyJson(control.provider) << ",\"control_generation\":" << control.controlGeneration
+        << ",\"owner\":" << Bench::bodyJson(control.owned ? "scripted" : "native")
+        << ",\"provider\":" << Bench::bodyJson(control.provider) << ",\"control_generation\":" << control.controlGeneration
         << ",\"command_id\":" << control.commandId << ",\"execution_id\":" << control.executionId
         << ",\"release_pending\":" << control.releasePending << ",\"control_allowed\":" << control.controlAllowed
         << ",\"body_state_base\":" << unsigned(bodyStateMasked()) << ",\"native_fai_wait\":" << (faiWaitTime>=now)
@@ -221,11 +221,11 @@ void Npc::traceVisibilityDiagnostic(std::string_view sourcePhase, bool force) no
         << ",\"senses_range_cm\":" << range << ",\"senses_see\":" << sense << ",\"target_terminal\":" << targetTerminal
         << ",\"actual_can_see\":" << actual << ",\"controller_visible\":" << (sense && actual && !targetTerminal)
         << ",\"query_matches_diagnostic\":" << (actual==(center.passes || (hasHead && head.passes)))
-        << ",\"reason\":" << TestBench::bodyJson(reason) << ",\"eye_cm\":";
+        << ",\"reason\":" << Bench::bodyJson(reason) << ",\"eye_cm\":";
     vec(eye); out << ",\"self_position_cm\":"; vec(position()); out << ",\"target_position_cm\":"; vec(other.position());
     out << ",\"target_has_head\":" << hasHead << ",\"center_ray\":"; ray(center);
     out << ",\"head_ray\":"; if(hasHead) ray(head); else out << "null";
-    TestBench::bodyEvent(*this,&other,"visibility_diagnostic",now,out.str(),animation);
+    Bench::bodyEvent(*this,&other,"visibility_diagnostic",now,out.str(),animation);
     ++visibilityDiagnosticCount; visibilityDiagnosticTime[slot]=now; visibilityDiagnosticKey[slot]=key;
     BodyController::visibilityDiagnosticRecorded();
     }
@@ -233,15 +233,15 @@ void Npc::traceVisibilityDiagnostic(std::string_view sourcePhase, bool force) no
   }
 
 void Npc::traceCombatGate(std::string_view reason) {
-  if(!TestBench::bodyTracing() || currentTarget==nullptr)
+  if(!Bench::bodyTracing() || currentTarget==nullptr)
     return;
   const auto key = std::string(reason) + ":" + std::to_string(fghAlgo.traceChoiceId()) + ":" +
                    std::to_string(int(fghAlgo.queuedAction()));
   if(key==bodyTraceGate)
     return;
   bodyTraceGate = key;
-  TestBench::bodyEvent(*this,currentTarget,"native_gate",owner.tickCount(),
-                      "\"reason\":" + TestBench::bodyJson(reason) + ",\"choice_id\":" + std::to_string(fghAlgo.traceChoiceId()) +
+  Bench::bodyEvent(*this,currentTarget,"native_gate",owner.tickCount(),
+                      "\"reason\":" + Bench::bodyJson(reason) + ",\"choice_id\":" + std::to_string(fghAlgo.traceChoiceId()) +
                       ",\"primitive\":" + std::to_string(int(fghAlgo.queuedAction())));
   }
 
@@ -337,14 +337,14 @@ Npc::BodyObservationTarget Npc::bodyObservationTarget(const Npc& tg) const {
   }
 
 void Npc::traceCombatAttempt(Anim requested, bool accepted, const std::string& before, std::string_view hook) {
-  if(!TestBench::bodyTracing())
+  if(!Bench::bodyTracing())
     return;
   const auto after = combatPoseIdentity();
   const bool changed = before!=after;
-  TestBench::bodyEvent(*this,currentTarget,"native_attempt",owner.tickCount(),
-                      "\"hook\":" + TestBench::bodyJson(hook) + ",\"choice_id\":" + std::to_string(fghAlgo.traceChoiceId()) + ",\"primitive\":" +
+  Bench::bodyEvent(*this,currentTarget,"native_attempt",owner.tickCount(),
+                      "\"hook\":" + Bench::bodyJson(hook) + ",\"choice_id\":" + std::to_string(fghAlgo.traceChoiceId()) + ",\"primitive\":" +
                       std::to_string(int(fghAlgo.queuedAction())) + ",\"requested_anim\":" + std::to_string(int(requested)) +
                       ",\"accepted\":" + (accepted ? "true" : "false") + ",\"pose_changed\":" + (changed ? "true" : "false") +
-                      ",\"pose_before\":" + TestBench::bodyJson(before) + ",\"pose_after\":" + TestBench::bodyJson(after) +
+                      ",\"pose_before\":" + Bench::bodyJson(before) + ",\"pose_after\":" + Bench::bodyJson(after) +
                       ",\"layers_after\":" + combatPoseLayers(),visual.pose().animNames());
   }

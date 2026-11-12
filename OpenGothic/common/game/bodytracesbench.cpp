@@ -1,3 +1,4 @@
+#include "world/benchhooks.h"
 #include "bodytracesbench.h"
 
 #include <Tempest/MemWriter>
@@ -341,8 +342,8 @@ void placeObserver(World& world, Npc& obs, const Npc& body) {
   }
 
 std::string view(World& world, Npc& hero, const std::string& label) {
-  if(!TestBench::npcView)
-    fail("the AI bridge did not install TestBench::npcView (GOTHIC_AI=0?)");
+  if(!Bench::npcView)
+    fail("the AI bridge did not install Bench::npcView (GOTHIC_AI=0?)");
   const bool on = Gothic::physicsFlags().bodyTraces;
   auto& obs = *findObserver(world,hero,label=="legacy");
   // The body this view is about: the victim, or the plain body of a legacy save.
@@ -355,7 +356,7 @@ std::string view(World& world, Npc& hero, const std::string& label) {
   if(subject==nullptr)
     fail("no body to look at");
   placeObserver(world,obs,*subject->npc);
-  const std::string raw = TestBench::npcView(world,symbolOf(world,obs));
+  const std::string raw = Bench::npcView(world,symbolOf(world,obs));
   rapidjson::Document doc;
   doc.Parse(raw.c_str(),raw.size());
   if(doc.HasParseError() || !doc.IsArray() || doc.Size()!=1 || !doc[rapidjson::SizeType(0)].HasMember("traces") ||

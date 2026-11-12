@@ -7,7 +7,7 @@
 #include "world/world.h"
 #include "world/bullet.h"
 #include "game/archery.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 
 // https://forum.worldofplayers.de/forum/threads/127320-Damage-System?p=2198181#post2198181
 // https://strafkolonie-online.net/forum/board/thread/1895-info-erkl%C3%A4rung-der-berechnung-der-trefferchance-im-fernkampf/
@@ -98,14 +98,14 @@ DamageCalculator::Val DamageCalculator::rangeDamage(Npc& nsrc, Npc& nother, cons
     const int32_t chance = vanillaChance(script,talent,d);
     const int32_t roll   = int32_t(script.rand(100,&nsrc));
     noHit = roll>=chance;
-    if(TestBench::isActive()) {
-      const auto who = TestBench::who(&nother);
-      const auto by  = TestBench::who(&nsrc);
+    if(Bench::isActive()) {
+      const auto who = Bench::who(&nother);
+      const auto by  = Bench::who(&nsrc);
       char buf[256];
       std::snprintf(buf,sizeof(buf),"arrow dice %.*s: dist %.0f path %.0f talent %d chance %d roll %d, %s, by %.*s",
                     int(who.size()),who.data(),double(d),double(dist),int(talent),int(chance),int(roll),noHit ? "miss" : "hit",
                     int(by.size()),by.data());
-      TestBench::note(buf);
+      Bench::note(buf);
       }
     }
 

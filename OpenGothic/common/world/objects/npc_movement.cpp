@@ -11,7 +11,7 @@
 #include "world/world.h"
 #include "gothic.h"
 #include "npcdayjournal.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 
 using namespace Tempest;
 
@@ -178,7 +178,7 @@ void Npc::fallbackSimpleMovement(std::string_view reason, bool ground) {
     owner.noteNpcGraphFallback(ground);
     }
   simpleMovement.nativeFallback=true;
-  if(TestBench::strictGraphMovement(*this))
+  if(Bench::strictGraphMovement(*this))
     throw std::runtime_error(std::string(reason));
   // Preserve the action, its remaining path and the transform. The native
   // body owns this action until arrival/cancellation, including tier changes.

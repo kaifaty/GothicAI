@@ -9,7 +9,7 @@
 #include "world/world.h"
 #include "gothic.h"
 #include "serialize.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 
 // According to Gothic1 scripts:
 // W  - Weapon Range (FIGHT_RANGE_FIST * 3)
@@ -213,7 +213,7 @@ FightAlgo::Action FightAlgo::nextFromQueue(Npc& npc, Npc& tg, GameScript& owner)
       }
     traceInstruction=int(selected); ++traceEntry;
     queueId = FightMove::NOP;
-    if(TestBench::bodyTracing()) {
+    if(Bench::bodyTracing()) {
       std::string moves = "[";
       for(size_t i=0; i<MV_MAX; ++i) {
         if(i!=0)
@@ -221,7 +221,7 @@ FightAlgo::Action FightAlgo::nextFromQueue(Npc& npc, Npc& tg, GameScript& owner)
         moves += std::to_string(int(tr[i]));
         }
       moves += "]";
-      TestBench::bodyEvent(npc,&tg,"native_choice",npc.world().tickCount(),
+      Bench::bodyEvent(npc,&tg,"native_choice",npc.world().tickCount(),
                           "\"choice_id\":" + std::to_string(++traceChoice) +
                           ",\"fai_instruction\":" + std::to_string(int(selected)) +
                           ",\"primitive\":" + std::to_string(int(tr[0])) + ",\"queue\":" + moves);
