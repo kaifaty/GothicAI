@@ -3,6 +3,7 @@
 #include "cloth.h"
 #include "game/gamescript.h"
 #include "world/world.h"
+#include "world/objects/npc.h"
 
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 

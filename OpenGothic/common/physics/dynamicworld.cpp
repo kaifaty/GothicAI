@@ -1020,6 +1020,43 @@ std::string_view DynamicWorld::validateSectorName(std::string_view name) const {
   return landMesh->validateSectorName(name);
   }
 
+bool DynamicWorld::NpcBodyList::hasCollision(const NpcBody& a, const NpcBody& b, Tempest::Vec3& normal, float& colDepth) const {
+    if((a.toNpc()!=nullptr && a.toNpc()->usesSimplifiedMovement()) ||
+       (b.toNpc()!=nullptr && b.toNpc()->usesSimplifiedMovement()))
+      return false;
+    const float objMaxRXZ = a.maxRXZ + b.maxRXZ;
+    const float objMaxRY  = a.maxRY  + b.maxRY;
+
+    if((Tempest::Vec2(a.pos.x,a.pos.z)-Tempest::Vec2(b.pos.x,b.pos.z)).quadLength() > objMaxRXZ*objMaxRXZ)
+      return false;
+
+    if(std::abs(a.pos.y-b.pos.y) > objMaxRY)
+      return false;
+
+    if(&a==&b)
+      return false;
+
+    const float acos = std::cos(a.angle), asin = std::sin(a.angle);
+    const float bcos = std::cos(b.angle), bsin = std::sin(b.angle);
+
+    const auto  apos = a.pos + a.offsetCenter(acos, asin);
+    const auto  bpos = b.pos + b.offsetCenter(bcos, bsin);
+    const auto  dir  = bpos - apos;
+
+    auto dlen = dir.length();
+    auto ndir = dlen==0 ? Tempest::Vec3(1,0,0) : Tempest::Vec3::normalize(dir);
+    const float rA = a.ellipsoidRadius( ndir, acos, asin);
+    const float rB = b.ellipsoidRadius(-ndir, bcos, bsin);
+
+    if(dlen < rA + rB) {
+      float depth = (rA + rB - dlen)*0.5f;
+      colDepth = std::max(colDepth, depth);
+      normal -= ndir*depth;
+      return true;
+      }
+    return false;
+    }
+
 bool DynamicWorld::hasCollision(const NpcItem& it, CollisionTest& out) {
   bool ret = false;
 
