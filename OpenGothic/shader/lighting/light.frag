@@ -16,6 +16,7 @@
 #if defined(MATERIAL_MAPS)
 #include "lighting/material_brdf.glsl"
 #include "lighting/hair_brdf.glsl"
+#include "lighting/eye_brdf.glsl"
 #endif
 
 layout(early_fragment_tests) in;
@@ -536,8 +537,13 @@ void main() {
 #if defined(MATERIAL_MAPS)
   // hair cards take the light by the shell term, not by the cosine of the hair's surface (hair_brdf.glsl)
   const vec4 orm    = texelFetch(gbufOrm, ivec2(gl_FragCoord.xy), 0);
-  const bool isHair = orm.a>0.5 && isGBufHair(texelFetch(gbufDiffuse, ivec2(gl_FragCoord.xy), 0).a);
+  const float hint   = texelFetch(gbufDiffuse, ivec2(gl_FragCoord.xy), 0).a;
+  const bool isHair = orm.a>0.5 && isGBufHair(hint);
+  const bool isEye  = orm.a>0.5 && isGBufEye(hint);
   float lambert = isHair ? hairShell(-dot(normalize(ldir),normal)) : max(0.0,-dot(normalize(ldir),normal));
+  // the lid's soft shade over the eye, which the lamp's shadow is too coarse to see (eye_brdf.glsl)
+  if(isEye)
+    lambert *= eyeLidDirect(orm.b);
 #else
   float lambert = max(0.0,-dot(normalize(ldir),normal));
 #endif
@@ -628,6 +634,7 @@ void main() {
   if(orm.a>0.5) {
     const vec3 view = normalize(scene.camPos - surfacePos);
     const vec3 brdf = isHair ? hairBrdf(linear, decodeHairDir(normal, orm.b), view, -normalize(ldir), orm.g, hairBacklit(-dot(normalize(ldir),normal)))
+                    : isEye  ? eyeBrdf(linear, normal, view, -normalize(ldir), orm.g)
                              : materialBrdf(linear, normal, view, -normalize(ldir), orm.rgb);
     ret = brdf * (color * light) * max(1.0, scene.exposure) * 0.25 * (isHair ? hairShade(orm.r) : 1.0);
     if(isHair && (scene.viewFlags & VF_HAIR_DEBUG)!=0u)

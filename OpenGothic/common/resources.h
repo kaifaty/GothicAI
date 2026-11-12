@@ -153,6 +153,7 @@ class Resources final {
       Material::Antitile       antitile = Material::Antitile::Off;
       bool                     hair = false; // hair cards: the ORM slot is the hair map, lit by the hair BRDF
       bool                     strand = false; // strands as ribbons: the albedo is the hair's colour ramp
+      bool                     eye = false; // an eyeball: wet highlight, the lid's shade (reports/content/2026-11-hero-head/eye-shader.md)
       bool                     present = false;
       bool                     hasAlbedo = false;
       };
@@ -643,6 +644,7 @@ class Resources final {
       Material::Antitile antitile = Material::Antitile::Off;
       bool        hair = false;
       bool        strand = false;
+      bool        eye = false;
       };
     std::unordered_map<std::string,MaterialMapFiles>                  materialMaps;
     TextureCache                                                     materialTextureCache;

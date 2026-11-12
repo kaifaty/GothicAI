@@ -16,6 +16,7 @@
 #if defined(MATERIAL_MAPS)
 #include "lighting/material_brdf.glsl"
 #include "lighting/hair_brdf.glsl"
+#include "lighting/eye_brdf.glsl"
 #endif
 #if defined(VIRTUAL_SHADOW)
 #include "virtual_shadow/vsm_sun_shadow.glsl"
@@ -259,7 +260,11 @@ void main(void) {
 #if defined(MATERIAL_MAPS)
   const vec4  orm    = texelFetch(gbufOrm, fragCoord, 0);
   const bool  isHair = orm.a>0.5 && isGBufHair(diff.a);
-  const float light  = shadowFactor(d, normal, isHair ? hairShell(dot(scene.sunDir,normal)) : (isFlat ? 0 : dot(scene.sunDir,normal)));
+  const bool  isEye  = orm.a>0.5 && isGBufEye(diff.a);
+  float       light  = shadowFactor(d, normal, isHair ? hairShell(dot(scene.sunDir,normal)) : (isFlat ? 0 : dot(scene.sunDir,normal)));
+  // the lid's soft shade over the eye, which the shadow map is too coarse to see (eye_brdf.glsl)
+  if(isEye)
+    light *= eyeLidDirect(orm.b);
 #else
   const float light  = shadowFactor(d, normal, isFlat ? 0 : dot(scene.sunDir,normal));
 #endif
@@ -316,6 +321,8 @@ void main(void) {
     const vec3 view = normalize(scene.camPos - pos.xyz/pos.w);
     if(isHair)
       luminance = hairBrdf(linear, decodeHairDir(normal, orm.b), view, scene.sunDir, orm.g, hairBacklit(dot(scene.sunDir,normal))) * illuminance * hairShade(orm.r); else
+    if(isEye)
+      luminance = eyeBrdf(linear, normal, view, scene.sunDir, orm.g) * illuminance; else
       luminance = materialBrdf(linear, normal, view, scene.sunDir, orm.rgb) * illuminance;
     }
   if(isHair && (scene.viewFlags & VF_HAIR_DEBUG)!=0u)
