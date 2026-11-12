@@ -133,7 +133,8 @@ def test_a_vob_layer_adds_a_mesh_and_removes_an_id(tmp_path):
     (content / 'worlds' / 'TEST' / 'vobs.d').mkdir(parents=True)
     (content / 'worlds' / 'TEST' / 'vobs.d' / 'test.json').write_text(json.dumps({
         'format': 1, 'remove': [1],
-        'add': [{'key': 'bush', 'kind': 'mesh', 'visual': 'OWN_BUSH', 'position': [300, 0, 300], 'yaw_deg': 0}]}))
+        'add': [{'key': 'bush', 'kind': 'mesh', 'visual': 'OWN_BUSH', 'position': [300, 0, 300], 'yaw_deg': 0,
+                 'collision': 'mesh'}]}))
     bush = square(0, 0, 1)
     write_glb(content / 'meshes' / 'own-bush' / 'model.glb', [(0, bush[0], np.full(4, -1), bush[1])], MATERIALS)
     (content / 'meshes' / 'meshes.json').write_text(json.dumps({'OWN_BUSH': {'glb': 'own-bush/model.glb'}}))
@@ -146,7 +147,8 @@ def test_a_vob_layer_adds_a_mesh_and_removes_an_id(tmp_path):
                             'rejected': []}]
     (content / 'worlds' / 'TEST' / 'vobs.d' / 'test.json').write_text(json.dumps({
         'format': 1, 'remove': [1, 1],
-        'add': [{'key': 'bush', 'kind': 'mesh', 'visual': 'OWN_BUSH', 'position': [300, 0, 300], 'yaw_deg': 0}]}))
+        'add': [{'key': 'bush', 'kind': 'mesh', 'visual': 'OWN_BUSH', 'position': [300, 0, 300], 'yaw_deg': 0,
+                 'collision': 'mesh'}]}))
     vobs, layers = census.load_vobs(base, 'TEST', content)
     assert [v.id for v in vobs] == [1, 2] and layers[0]['rejected'] == ['id 1 removed twice']
 
@@ -164,6 +166,20 @@ def test_the_base_is_the_newest_cache_directory_with_base_json(tmp_path, monkeyp
     monkeypatch.setenv('OPENGOTHIC_BASE', str(tmp_path / 'env'))
     assert census.resolve_base(None) == tmp_path / 'env'
     assert census.resolve_base(str(tmp_path / 'arg')) == tmp_path / 'arg'
+
+
+def test_a_visual_counts_the_same_mesh_with_no_suffix_3ds_or_mrm(tmp_path):
+    names = ('NW_NATURE_TANNE_75P', 'OWN_BUSH')
+    base = make_world(tmp_path / 'base', {'0_0': [square(0, 0, 8)]},
+                      vobs=[(i, n + suffix, (100, 0, 100)) for i, (n, suffix) in
+                            enumerate(((n, s) for n in names for s in ('', '.3DS', '.MRM')), 1)])
+    content = tmp_path / 'content'
+    bush = square(0, 0, 1)
+    write_glb(content / 'meshes' / 'own-bush' / 'model.glb', [(0, bush[0], np.full(4, -1), bush[1])], MATERIALS)
+    (content / 'meshes' / 'meshes.json').write_text(json.dumps({'OWN_BUSH': {'glb': 'own-bush/model.glb'}}))
+    o = run(base, content=content)['objects']['classes']
+    for cls in ('trees', 'bushes'):
+        assert (o[cls]['instances'], o[cls]['instances_with_mesh'], o[cls]['mesh_triangles']) == (3, 3, 6)
 
 
 def test_newworld_of_the_base_gives_the_research_numbers():

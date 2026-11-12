@@ -405,8 +405,8 @@ def object_census(base: Path, world: str, content: Path | None = None,
 
     def tris(name: str) -> int | None:
         if name not in tris_cache:
-            stem = wc.MESH_EXTENSION.sub('', name)
-            plain = name[:-4] if name.endswith(('.3DS', '.MDL', '.ASC')) else name
+            plain = name[:-4] if name.endswith(('.3DS', '.MDL', '.ASC', '.MRM')) else name
+            stem = wc.MESH_EXTENSION.sub('', plain)
             if stem in own:
                 tris_cache[name] = mesh_triangles(own[stem])
                 from_content.add(stem)
