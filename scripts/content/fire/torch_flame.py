@@ -1,7 +1,7 @@
 """Simulate a wall torch's flame in Mantaflow and render it from the front and the side for an atlas flipbook.
 
     blender -b --factory-startup -P torch_flame.py -- OUT_DIR [--scale 1] [--res 192] [--frames 320] [--start 97]
-        [--fps 64] [--cache DIR] [--drift 1.5] [--cpu] [--ramp 'LO HI GAMMA' ...] [--no-render]
+        [--fps 64] [--cache DIR] [--drift 1.5] [--vorticity 0.6] [--cpu] [--ramp 'LO HI GAMMA' ...] [--no-render]
 
 reports/content/remaster/wall-torch/flame-sim.md. A torch head is a bundle of pitch-soaked tow 7 cm across and
 10 cm tall on a stick; it burns over its whole skin, the flame is fuel-rich, 25-35 cm tall, and puffs at
@@ -39,6 +39,15 @@ parser.add_argument("--burning-rate", type=float, default=0.95)
 parser.add_argument("--fuel", type=float, default=1.0)
 parser.add_argument("--beta", type=float, default=1.2)          # heat lift; the puff rate goes as its root
 parser.add_argument("--flame-vorticity", type=float, default=2.0)
+parser.add_argument("--vorticity", type=float, default=0.6)    # curls in the whole gas
+# Forced puffing. A real torch flame is a continuous body only up to ~10-13 cm; above it tongues and blobs come and
+# go (McCaffrey's zones). At a 3 mm grid Mantaflow's puffing is too weak to pinch the flame off (r1-r3: a solid
+# body to 21-30 cm, brightness swing 2-3.5 %), so the fuel supply is modulated at the puff rate, as acoustic
+# forcing does in lab flames: fuel x (1 - depth * (1 - cos phase) / 2), the phase advancing at --puff Hz with a
+# slow random drift of +-jitter in rate. 0 keeps the supply steady.
+parser.add_argument("--puff", type=float, default=0.0)
+parser.add_argument("--puff-depth", type=float, default=0.8)
+parser.add_argument("--puff-jitter", type=float, default=0.15)
 parser.add_argument("--cpu", action="store_true")
 parser.add_argument("--no-render", action="store_true")
 # emission: "flame" as fire_flipbook.py (the `flame` grid alone), or "t4": the flame grid times (T / 2000 K)^4, as
@@ -80,7 +89,7 @@ for side in ("front", "back", "left", "right", "top", "bottom"):  # a closed flo
 ds.timesteps_max = 6        # a small cell at 64 fps: ~10 cells per frame at 2 m/s
 ds.alpha = -0.2             # pitch soot is heavy: smoke lifts less than heat
 ds.beta = args.beta         # heat lift
-ds.vorticity = 0.6
+ds.vorticity = args.vorticity
 ds.burning_rate = args.burning_rate  # how fast fuel burns away: the flame's length over the head
 ds.flame_vorticity = args.flame_vorticity  # curls in the flame itself tear the tips
 ds.flame_smoke = 1.0
@@ -115,13 +124,23 @@ fs.flow_type = 'FIRE'
 fs.flow_behavior = 'INFLOW'
 fs.flow_source = 'MESH'
 fs.surface_distance = 1.0
+bpy.context.preferences.edit.keyframe_new_interpolation_type = 'LINEAR'  # even keys: drift and puffs
 fs.fuel_amount = args.fuel
+if args.puff > 0:
+    phase = 0.0
+    for f in range(1, args.frames + 1):
+        t = f / args.fps
+        # rate and strength wander slowly (incommensurate sines), so no two puffs are the same
+        rate = 1 + args.puff_jitter * (0.6 * math.sin(2 * math.pi * 0.37 * t) + 0.4 * math.sin(2 * math.pi * 0.83 * t + 1.3))
+        depth = args.puff_depth * (0.8 + 0.2 * math.sin(2 * math.pi * 0.53 * t + 2.1))
+        fs.fuel_amount = args.fuel * (1 - depth * (1 - math.cos(phase)) / 2)
+        fs.keyframe_insert("fuel_amount", frame=f)
+        phase += 2 * math.pi * args.puff * rate / args.fps
 fs.temperature = 1.8
 fs.use_texture = True
 fs.noise_texture = noise
 fs.texture_map_type = 'AUTO'
 fs.texture_size = 0.6
-bpy.context.preferences.edit.keyframe_new_interpolation_type = 'LINEAR'  # an even drift up to the last frame
 fs.texture_offset = 0.0
 fs.keyframe_insert("texture_offset", frame=1)
 fs.texture_offset = args.drift * args.frames / args.fps  # the same drift per second at any fps
