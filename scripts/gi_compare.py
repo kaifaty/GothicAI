@@ -5,7 +5,7 @@
 # ///
 """GI shots against the path-traced reference, cell by cell (step 2 of the ray-tracing revisit).
 
-uv run scripts/gi_compare.py ROOT [--variants off,gi1,gi2] SHOT...
+uv run scripts/gi_compare.py ROOT [--variants off,gi1,gi2] [--tolerance 15] SHOT...
 uv run scripts/gi_compare.py --response CLIP.mp4
 uv run scripts/gi_compare.py --turn CLIP.mp4
 uv run scripts/gi_compare.py --decay CLIP.mp4
@@ -19,7 +19,8 @@ same tone mapper and sky-driven exposure serve every variant, so the ratios comp
 smaller than the ratios of scene radiance. The particle flames of fires are drawn only in the rasterised frame.
 
 Prints a Markdown table per shot (median ratio to the reference, its range, cells off by more than 15%) and a
-summary over all shots.
+summary over all shots. --tolerance sets that bound in percent; with the frames of one variant as pt/ it compares two
+variants (step 1c: the landscape by chunks against the whole one, ±5%).
 
 --response takes a clip of gi-clips.bench (hut-response: 22:00, then 12:00 in the same view 1 s later, 30 frames
 per second) and prints how long each cell takes to come within 10% of its new brightness, counted from the frame
@@ -43,7 +44,6 @@ import numpy as np
 from PIL import Image
 
 LUMA = np.array([0.2126, 0.7152, 0.0722])
-TOLERANCE = np.log(1.15)
 
 
 def luminance(path):
@@ -131,6 +131,7 @@ def main():
     ap.add_argument('root', type=Path, nargs='?')
     ap.add_argument('shots', nargs='*')
     ap.add_argument('--variants', default='off,gi1,gi2')
+    ap.add_argument('--tolerance', type=float, default=15, help='percent a cell may be off the reference (default 15)')
     ap.add_argument('--response', type=Path, help='a clip with a sharp change of light: the time to settle')
     ap.add_argument('--turn', type=Path, help='a clip of a turn and back (gi-turn.bench): the change it leaves')
     ap.add_argument('--decay', type=Path, help='a clip of noon to night (gi-decay.bench): the light dying out')
@@ -147,9 +148,11 @@ def main():
     if args.root is None or not args.shots:
         ap.error('ROOT and SHOT... are required without --response')
     names = args.variants.split(',')
+    tolerance = np.log(1 + args.tolerance / 100)
+    bound = f'{args.tolerance:g}%'
 
     print('| shot | ' + ' | '.join(f'{n}: median (range)' for n in names) + ' | '
-          + ' | '.join(f'{n}: cells off >15%' for n in names) + ' |')
+          + ' | '.join(f'{n}: cells off >{bound}' for n in names) + ' |')
     print('|---|' + '---|' * (2 * len(names)))
     logs = {n: [] for n in names}
     for shot in args.shots:
@@ -160,13 +163,13 @@ def main():
             r = cells(luminance(args.root / n / f'{shot}.png'))[keep] / ref[keep]
             logs[n].extend(np.log(r))
             ratio.append(f'{np.median(r):.2f} ({r.min():.2f}…{r.max():.2f})')
-            off.append(f'{int((np.abs(np.log(r)) > TOLERANCE).sum())}/{len(r)}')
+            off.append(f'{int((np.abs(np.log(r)) > tolerance).sum())}/{len(r)}')
         print(f'| {shot} | ' + ' | '.join(ratio) + ' | ' + ' | '.join(off) + ' |')
     print()
     for n in names:
         a = np.array(logs[n])
         print(f'- {n}: median {np.exp(np.median(a)):.2f} of the reference, mean deviation '
-              f'{np.exp(np.abs(a).mean()):.2f}x, {np.mean(np.abs(a) <= TOLERANCE) * 100:.0f}% of {len(a)} cells within ±15%')
+              f'{np.exp(np.abs(a).mean()):.2f}x, {np.mean(np.abs(a) <= tolerance) * 100:.0f}% of {len(a)} cells within ±{bound}')
 
 
 if __name__ == '__main__':

@@ -3,6 +3,7 @@
 #include <Tempest/VertexBuffer>
 #include <Tempest/IndexBuffer>
 #include <Tempest/Device>
+#include <Tempest/AccelerationStructure>
 
 #include <vector>
 #include <memory>
@@ -93,6 +94,13 @@ class StaticMesh {
     const Tempest::StorageBuffer& vboBuffer() const;
     const Tempest::StorageBuffer& ibo8Buffer() const;
     size_t firstMeshlet() const;
+
+    // What rays read the mesh from (RtScene, rt_common.glsl): the vertices of vboBuffer() and 32-bit indices of them,
+    // its own or, in landscape pages with the ray scene, the page's, which count from the page's first vertex
+    const Tempest::StorageBuffer& rtIbo() const;
+    size_t                        rtFirstIndex(size_t iboOffset) const;
+    // A submesh's triangles for a BLAS, from the same buffers
+    Tempest::RtGeometry           rtGeometry(size_t iboOffset, size_t iboLength) const;
 
     Tempest::VertexBuffer<Vertex>   vbo;
     Tempest::IndexBuffer<uint32_t>  ibo;

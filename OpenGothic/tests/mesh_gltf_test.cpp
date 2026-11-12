@@ -1873,6 +1873,117 @@ void landscapeLifetime(const Fixture& fixture, Tempest::Device& device) {
   std::cout << "landscape streaming lifetime: 2 Near/Outside cycles, live_buffers=" << baseline << '\n';
 }
 
+// -rt 1 (reports/render-features/2026-11-08-rt-revisit/step-1c.md): a chunk brings its landscape BLAS into the ray
+// scene when it is published and takes them out when it goes Outside; a teleport away and back publishes it again
+// into the same pages and ranges, and the live buffers and structures come back to where they were. The ray scene
+// is chosen from the command line once, by Shaders, so this is the test's last case.
+void landscapeRtLifetime(const Fixture& fixture) {
+  Tempest::VulkanApi api;
+  Tempest::Device device(api);
+  if(!device.properties().raytracing.rayQuery) {
+    std::cout << "landscape ray scene lifetime: skipped, the GPU has no ray query\n";
+    return;
+    }
+  static const std::string root=fixture.root.string();
+  static const char* args[]={"gothic-mesh-gltf-test","-g",root.c_str(),"-rt","1"};
+  static CommandLine rtCommandLine(5,args);
+  {
+  Resources resources(device);
+  Shaders shaders;
+  shaders.waitCompiler();
+  fixture.mount();
+  require(Shaders::options().doRtScene,"-rt 1 on a GPU with ray query must turn the ray scene on");
+  const auto source=loadGltfMesh(fixture.root/"meshes/test/opaque.glb");
+  // a triangle in each of the chunks (0,0) and (1,0)
+  asset::WorldMesh world;
+  world.materials={source.sub_meshes[0].mat};
+  world.vertices={{100,100,100},{100,200,100},{200,100,100},{6500,100,100},{6500,200,100},{6600,100,100}};
+  world.features={{{0,0},0xffffffffu,{0,0,1}},{{0,1},0xffffffffu,{0,0,1}},{{1,0},0xffffffffu,{0,0,1}}};
+  world.polygons.vertex_indices={0,1,2,3,4,5};
+  world.polygons.feature_indices={0,1,2,0,1,2};
+  world.polygons.material_indices={0,0};
+  world.polygons.lightmap_indices={-1,-1};
+  world.polygons.flags.resize(2);
+  PackedMesh packed(world,PackedMesh::PK_VisualLnd);
+  for(const auto& sub:packed.subMeshes)
+    require(Resources::loadMaterial(sub.material,true).alpha==Material::Solid,"the ray scene fixture must be solid");
+  Gothic gothic;
+  const auto directory=fixture.root/"landscape-rt-lifetime";
+  writeWorldChunks(world,{"CONTRACT.ZEN",0,0},directory);
+  ChunkTable table;
+  world=readWorldChunks(directory,{},&table);
+  require(table.entries.size()==2,"the ray scene fixture must span two chunks");
+  device.waitIdle();
+  for(uint8_t frame=0;frame<Resources::MaxFramesInFlight;++frame)
+    Resources::resetRecycled(frame);
+  const auto baselineBuffers=tempestProbeGpuBufferCount();
+  const auto baselineStructures=tempestProbeAccelerationStructureCount();
+  {
+  ChunkResidency residency(table);
+  WorldView view(packed.bbox(),"CONTRACT.ZEN");
+  view.startLandscapeStreaming(std::move(world),residency,0);
+  uint8_t frame=0;
+  // a frame: residency, then the ray scene as the renderer updates it, and the frame's recycle slot once it completed
+  const auto update=[&](const Tempest::Vec3& position) {
+    view.prepareLandscapeWork();
+    residency.update(position,position,1000);
+    view.finishLandscapeUpdate();
+    auto command=device.commandBuffer();
+    {
+    auto encoder=command.startEncoding(device);
+    view.updateRtScene(encoder,frame);
+    }
+    device.submit(command).wait();
+    frame=uint8_t((frame+1)%Resources::MaxFramesInFlight);
+    Resources::resetRecycled(frame);
+    };
+  const auto& scene=view.sceneGlobals().rtScene;
+  size_t structures=0,buffers=0;
+  uint32_t entries=0;
+  for(size_t cycle=0;cycle<2;++cycle) {
+    update({150,100,150});
+    require(residency.stats().published==2*(cycle+1) && residency.stats().landscapePageCount==1,
+            "Near must publish both chunks into one page");
+    const auto stats=scene.stats();
+    require(stats.landscapeSlots==2 && stats.landscapeShown==2,
+            "every published chunk must hold its solid BLAS as an active landscape instance");
+    require(residency.stats().landscapePageUsedBytes==2*(PackedMesh::MaxVert*sizeof(Resources::Vertex)+PackedMesh::MaxPrim*4+
+                                                            PackedMesh::MaxInd*sizeof(uint32_t)),
+            "with the ray scene a page keeps the meshlets' 32-bit indices as well");
+    if(cycle==0)
+      entries=stats.entries;
+    else
+      require(stats.entries==entries,"chunks published again must reuse the ranges of rtDesc");
+    // a teleport away: both chunks go Outside, their instances leave at once and their BLAS after the fence
+    update({1000000,0,1000000});
+    require(residency.stats().released==2*(cycle+1),"Outside must release both chunks");
+    require(scene.stats().landscapeSlots==0 && scene.stats().landscapeShown==0,
+            "released chunks must leave no landscape instance in the ray scene");
+    for(uint8_t i=0;i<Resources::MaxFramesInFlight;++i)
+      update({1000000,0,1000000});
+    device.waitIdle();
+    if(cycle==0) {
+      structures=tempestProbeAccelerationStructureCount();
+      buffers=tempestProbeGpuBufferCount();
+      }
+    else {
+      require(tempestProbeAccelerationStructureCount()==structures && tempestProbeGpuBufferCount()==buffers,
+              "publish/release cycles must not accumulate BLAS or buffers while the view remains alive");
+      }
+    }
+  require(structures>baselineStructures,"the view must keep its TLAS while it is alive");
+  }
+  device.waitIdle();
+  for(uint8_t frame=0;frame<Resources::MaxFramesInFlight;++frame)
+    Resources::resetRecycled(frame);
+  require(tempestProbeAccelerationStructureCount()==baselineStructures && tempestProbeGpuBufferCount()==baselineBuffers,
+          "destroying the streaming view must return the live structures and buffers to baseline");
+  std::cout << "landscape ray scene lifetime: 2 Near/Outside cycles of 2 chunks, structures=" << baselineStructures
+            << " buffers=" << baselineBuffers << '\n';
+  }
+  device.waitIdle();
+  }
+
 void staticVobLifetime(Tempest::Device& device) {
   setenv("OPENGOTHIC_VOB_STREAMING","1",1);
   setenv("OPENGOTHIC_TEXTURE_STREAMING","1",1);
@@ -2786,6 +2897,7 @@ int main() {
     modelCases(fixture);
     setenv("TEMPEST_AUDIO_LOOPBACK","48000",1);
     maskBc1Policy(fixture);
+    landscapeRtLifetime(fixture);
     std::cout << "{\"test\":\"mesh_gltf\",\"passed\":true,\"assertions\":" << assertions << "}\n";
     return 0;
     }

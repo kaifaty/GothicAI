@@ -27,13 +27,59 @@ bool sameMatrix(const Matrix4x4& a, const Matrix4x4& b) {
   }
 
 bool sameInstance(const RtInstance& a, const RtInstance& b) {
-  return a.blas==b.blas && a.mask==b.mask && a.flags==b.flags && sameMatrix(a.mat, b.mat);
+  return a.blas==b.blas && a.id==b.id && a.mask==b.mask && a.flags==b.flags && sameMatrix(a.mat, b.mat);
   }
 
 bool sameDesc(const RtScene::RtObjectDesc& a, const RtScene::RtObjectDesc& b) {
   return a.instanceId==b.instanceId && a.firstPrimitive==b.firstPrimitive && a.bits==b.bits;
   }
+
+RtInstanceFlags instanceFlags(Material::AlphaFunc alpha) {
+  const auto flags = (alpha==Material::Solid || alpha==Material::Water) ? RtInstanceFlags::Opaque : RtInstanceFlags::NonOpaque;
+  return flags | RtInstanceFlags::CullFlip;
+  }
 }
+
+uint32_t RtScene::Ranges::alloc(uint32_t count) {
+  auto it = bySize.lower_bound(std::make_pair(count, uint32_t(0)));
+  if(it==bySize.end()) {
+    const uint32_t first = end;
+    end += count;
+    return first;
+    }
+  const auto [size, first] = *it;
+  bySize.erase(it);
+  byFirst.erase(first);
+  if(size>count) {
+    byFirst.emplace(first+count, size-count);
+    bySize.emplace(size-count, first+count);
+    }
+  return first;
+  }
+
+void RtScene::Ranges::free(uint32_t first, uint32_t count) {
+  auto next = byFirst.lower_bound(first);
+  if(next!=byFirst.end() && first+count==next->first) {
+    count += next->second;
+    bySize.erase(std::make_pair(next->second, next->first));
+    next = byFirst.erase(next);
+    }
+  if(next!=byFirst.begin()) {
+    auto prev = std::prev(next);
+    if(prev->first+prev->second==first) {
+      first  = prev->first;
+      count += prev->second;
+      bySize.erase(std::make_pair(prev->second, prev->first));
+      byFirst.erase(prev);
+      }
+    }
+  if(first+count==end) {
+    end = first; // the tail is no range: a later one grows from here
+    return;
+    }
+  byFirst.emplace(first, count);
+  bySize.emplace(count, first);
+  }
 
 size_t RtScene::BucketHash::operator()(const BucketKey& k) const {
   const auto h = [](const void* p) { return std::hash<const void*>()(p); };
@@ -151,8 +197,8 @@ bool RtScene::isMergedLandscape(const Material& mat, Category cat) {
   return cat==RtScene::Landscape && (mat.alpha==Material::Solid || mat.alpha==Material::AlphaTest);
   }
 
-uint32_t RtScene::bucketId(const Material& mat, const StaticMesh& mesh) {
-  const BucketKey key = {mat.tex, &mesh.vbo, &mesh.ibo};
+uint32_t RtScene::bucketId(const Texture2d* t, const StorageBuffer* v, const StorageBuffer* i) {
+  const BucketKey key = {t, v, i};
   auto it = buckets.find(key);
   if(it!=buckets.end())
     return it->second;
@@ -164,13 +210,13 @@ uint32_t RtScene::bucketId(const Material& mat, const StaticMesh& mesh) {
   return id;
   }
 
-RtScene::RtObjectDesc RtScene::objectDesc(const Material& mat, const StaticMesh& mesh, size_t firstIndex) {
+RtScene::RtObjectDesc RtScene::objectDesc(const Geometry& geom, Material::AlphaFunc alpha) {
   RtObjectDesc desc = {};
-  desc.instanceId     = bucketId(mat,mesh);
-  desc.firstPrimitive = uint32_t(firstIndex/3) & 0x00FFFFFF; // 24 bit for primmitive + 8 for utility
-  if(mat.alpha==Material::Solid)
+  desc.instanceId     = bucketId(geom.tex, geom.vbo, geom.ibo);
+  desc.firstPrimitive = uint32_t(geom.firstIndex/3) & 0x00FFFFFF; // 24 bit for primmitive + 8 for utility
+  if(alpha==Material::Solid)
     desc.bits |= 0x1;
-  if(mat.alpha==Material::Water)
+  if(alpha==Material::Water)
     desc.bits |= 0x2;
   return desc;
   }
@@ -191,27 +237,76 @@ uint32_t RtScene::allocSlot() {
   return slot;
   }
 
+void RtScene::releaseRange(Slot& s) {
+  // the entries stay in the copy as they were: no instance points at them any more
+  if(s.descCount>0)
+    entries.free(s.descFirst, s.descCount);
+  s.descFirst = 0;
+  s.descCount = 0;
+  }
+
 void RtScene::freeSlot(uint32_t slot) {
   auto& s = slots[slot];
+  if(s.landscape) {
+    --landscapeSlots;
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+    landscapeTriangles -= s.triangles;
+    if(landscapeBytes>=0)
+      landscapeBytes = s.blasBytes<0 ? -1 : landscapeBytes - s.blasBytes;
+    landscapeChanged = true;
+#endif
+    }
+  releaseRange(s);
   s.used      = false;
+  s.landscape = false;
   s.inst      = RtInstance(); // no BLAS: inactive
   s.triangles = 0;
+  s.blasBytes = 0;
   markSlot(slot);
   freeSlots.push(slot);
+  }
+
+void RtScene::writeSlot(uint32_t slot, RtInstance ix, Material::AlphaFunc alpha, const Geometry* geom, size_t count) {
+  thread_local std::vector<RtObjectDesc> desc;
+  desc.resize(count);
+  uint64_t triangles = 0;
+  for(size_t i=0; i<count; ++i) {
+    desc[i]    = objectDesc(geom[i], alpha);
+    triangles += geom[i].indices/3;
+    }
+
+  auto& s = slots[slot];
+  s.triangles = triangles;
+  bool changed = false;
+  if(s.descCount!=count) {
+    releaseRange(s);
+    s.descFirst = entries.alloc(uint32_t(count));
+    s.descCount = uint32_t(count);
+    if(descCpu.cpu.size()<entries.end*sizeof(RtObjectDesc))
+      descCpu.resize(entries.end*sizeof(RtObjectDesc));
+    changed = true;
+    }
+  auto* at = reinterpret_cast<RtObjectDesc*>(descCpu.cpu.data()) + s.descFirst;
+  for(size_t i=0; i<count && !changed; ++i)
+    changed = !sameDesc(at[i], desc[i]);
+  if(changed) {
+    std::memcpy(at, desc.data(), count*sizeof(RtObjectDesc));
+    descCpu.mark(s.descFirst*sizeof(RtObjectDesc), count*sizeof(RtObjectDesc));
+    }
+
+  ix.id = s.descFirst;
+  if(!changed && sameInstance(s.inst, ix))
+    return;
+  s.inst = ix;
+  markSlot(slot);
   }
 
 void RtScene::setSlot(uint32_t slot, const Matrix4x4& pos, const AccelerationStructure& blas,
                       const Material& mat, const StaticMesh& mesh, size_t firstIndex, size_t iboLength, bool visible) {
   RtInstance ix;
-  ix.mat  = pos;
-  ix.blas = &blas;
-  if(mat.alpha==Material::Water)
-    ix.flags = RtInstanceFlags::Opaque;
-  else if(mat.alpha!=Material::Solid)
-    ix.flags = RtInstanceFlags::NonOpaque;
-  else
-    ix.flags = RtInstanceFlags::Opaque;
-  ix.flags = ix.flags | RtInstanceFlags::CullFlip;
+  ix.mat   = pos;
+  ix.blas  = &blas;
+  ix.flags = instanceFlags(mat.alpha);
 
   if(!visible)
     ix.mask = 0;
@@ -224,14 +319,41 @@ void RtScene::setSlot(uint32_t slot, const Matrix4x4& pos, const AccelerationStr
   else
     ix.mask = CullMask::CM_Unknown;
 
-  const RtObjectDesc desc = objectDesc(mat, mesh, firstIndex);
+  const Geometry geom = {mat.tex, &mesh.vboBuffer(), &mesh.rtIbo(), mesh.rtFirstIndex(firstIndex), iboLength};
+  writeSlot(slot, ix, mat.alpha, &geom, 1);
+  }
+
+void RtScene::setLandscapeSlot(uint32_t slot, const AccelerationStructure& blas, Material::AlphaFunc alpha,
+                               const Geometry* geom, size_t count, bool visible) {
   auto& s = slots[slot];
-  s.triangles = uint32_t(iboLength/3);
-  if(sameInstance(s.inst, ix) && sameDesc(s.desc, desc))
-    return;
-  s.inst = ix;
-  s.desc = desc;
-  markSlot(slot);
+  const bool added = !s.landscape;
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  const uint64_t prevTriangles = s.triangles;
+  const int64_t  prevBytes     = s.blasBytes;
+#endif
+  RtInstance ix;
+  ix.mat   = Matrix4x4::mkIdentity();
+  ix.blas  = &blas;
+  ix.flags = instanceFlags(alpha);
+  ix.mask  = visible ? 0xFF : 0;
+  writeSlot(slot, ix, alpha, geom, count);
+
+  if(added) {
+    s.landscape = true;
+    ++landscapeSlots;
+    }
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  s.blasBytes = profileByteSize(blas);
+  if(!added) {
+    landscapeTriangles -= prevTriangles;
+    if(landscapeBytes>=0)
+      landscapeBytes = prevBytes<0 ? -1 : landscapeBytes - prevBytes;
+    }
+  landscapeTriangles += s.triangles;
+  if(landscapeBytes>=0)
+    landscapeBytes = s.blasBytes<0 ? -1 : landscapeBytes + s.blasBytes;
+  landscapeChanged = true;
+#endif
   }
 
 void RtScene::markSlot(uint32_t slot) {
@@ -242,64 +364,37 @@ void RtScene::markSlot(uint32_t slot) {
   dirtySlots.push_back(slot);
   }
 
-void RtScene::beginLandscape() {
-  for(auto& m:landscape) {
-    m.geom.clear();
-    m.desc.clear();
-    }
-#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
-  landscapeTriangles = 0;
-#endif
-  landscapeDirty = true;
-  }
-
-void RtScene::addLandscape(const Material& mat, const StaticMesh& mesh, size_t firstIndex, size_t iboLength) {
-  auto& m = landscape[mat.alpha==Material::Solid ? 0 : 1];
-  m.geom.push_back({mesh.vbo, mesh.ibo, firstIndex, iboLength});
-  m.desc.push_back(objectDesc(mat, mesh, firstIndex));
-#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
-  landscapeTriangles += iboLength/3;
-#endif
-  }
-
-void RtScene::buildLandscape() {
-  auto& device = Resources::device();
-  for(auto& m:landscape) {
-    // the frames in flight keep the old BLAS; the instance that held it lets it go when packed anew
-    Resources::recycle(std::move(m.blas));
-    if(!m.geom.empty())
-      m.blas = device.blas(m.geom);
-    }
-  prefix = uint32_t(landscape[0].desc.size() + landscape[1].desc.size());
-  landscapeDirty = false;
-  }
-
 void RtScene::packInstance(size_t index, const RtInstance& inst) {
   const size_t sz = Resources::device().rtInstanceSize();
   Resources::device().packRtInstance(tlas, inst, instanceCpu.cpu.data()+index*sz);
   instanceCpu.mark(index*sz, sz);
   }
 
+RtScene::Stats RtScene::stats() const {
+  Stats ret;
+  ret.slots          = slots.size() - freeSlots.size();
+  ret.landscapeSlots = landscapeSlots;
+  ret.entries        = entries.end;
+  for(auto& s:slots)
+    if(s.used && s.landscape && s.inst.blas!=nullptr && !s.inst.blas->isEmpty() && s.inst.mask!=0)
+      ++ret.landscapeShown;
+  return ret;
+  }
+
 void RtScene::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
 #if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
   const auto start = std::chrono::steady_clock::now();
+  logLandscape();
 #endif
   auto& device = Resources::device();
   const char* reason = nullptr;
 
-  // every instance and entry anew: the landscape moves the slots' entries of rtDesc, a new TLAS its BLAS list (Metal)
-  bool everything = false;
-  if(landscapeDirty) {
-    const uint32_t prevPrefix = prefix;
-    buildLandscape();
-    reason     = "landscape";
-    everything = prefix!=prevPrefix;
-    }
-  const bool landscapeBuilt = reason!=nullptr;
-  if(dirtySlots.empty() && !landscapeBuilt && !tlas.isEmpty())
+  if(dirtySlots.empty() && !tlas.isEmpty())
     return;
 
-  const size_t count = LandscapeInstances + slots.size();
+  // an instance at least: no TLAS of nothing, the spare one holds zeros (inactive)
+  const size_t count = std::max<size_t>(slots.size(), 1);
+  bool everything = false;
   if(tlas.capacity()<count) {
     Resources::recycle(std::move(tlas));
     tlas = device.tlas(Tempest::Uninitialized, count + count/2);
@@ -310,30 +405,12 @@ void RtScene::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
   const size_t isz = device.rtInstanceSize();
   if(instanceCpu.cpu.size()<count*isz)
     instanceCpu.resize(count*isz);
-  const size_t entries = std::max<size_t>(prefix + slots.size(), 1); // never an empty buffer to bind
-  if(descCpu.cpu.size()<entries*sizeof(RtObjectDesc))
-    descCpu.resize(entries*sizeof(RtObjectDesc));
-
-  if(landscapeBuilt || everything) {
-    // the landscape: identity, one entry of rtDesc per geometry from the start of the table
-    uint32_t first = 0;
-    for(size_t i=0; i<LandscapeInstances; ++i) {
-      auto& m = landscape[i];
-      RtInstance ix;
-      ix.mat   = Matrix4x4::mkIdentity();
-      ix.id    = first;
-      ix.flags = (i==0 ? RtInstanceFlags::Opaque : RtInstanceFlags::NonOpaque) | RtInstanceFlags::CullFlip;
-      ix.blas  = m.blas.isEmpty() ? nullptr : &m.blas;
-      packInstance(i, ix);
-      if(!m.desc.empty()) {
-        std::memcpy(descCpu.cpu.data()+first*sizeof(RtObjectDesc), m.desc.data(), m.desc.size()*sizeof(RtObjectDesc));
-        descCpu.mark(first*sizeof(RtObjectDesc), m.desc.size()*sizeof(RtObjectDesc));
-        }
-      first += uint32_t(m.desc.size());
-      }
-    }
+  const size_t entriesCount = std::max<size_t>(entries.end, 1); // never an empty buffer to bind
+  if(descCpu.cpu.size()<entriesCount*sizeof(RtObjectDesc))
+    descCpu.resize(entriesCount*sizeof(RtObjectDesc));
 
   if(everything) {
+    // a new TLAS: every instance anew, its BLAS list too (Metal)
     for(uint32_t i=0; i<slots.size(); ++i)
       markSlot(i);
     }
@@ -341,12 +418,7 @@ void RtScene::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
   for(auto i:dirtySlots) {
     auto& s = slots[i];
     s.dirty = false;
-    RtInstance ix = s.inst;
-    ix.id = prefix + i;
-    packInstance(LandscapeInstances + i, ix);
-    const size_t at = (prefix + i)*sizeof(RtObjectDesc);
-    std::memcpy(descCpu.cpu.data()+at, &s.desc, sizeof(RtObjectDesc));
-    descCpu.mark(at, sizeof(RtObjectDesc));
+    packInstance(i, s.inst);
     }
   dirtySlots.clear();
 
@@ -360,8 +432,7 @@ void RtScene::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
     ibo = device.descriptors(bucketIbo);
     textureGeneration = Resources::textureGeneration();
     bucketsUploaded   = bucketTex.size();
-    if(reason==nullptr)
-      reason = "bucket";
+    reason            = "bucket";
     }
 
   cmd.setDebugMarker("RT-TLAS");
@@ -398,20 +469,36 @@ void RtScene::logBuild(const char* reason, double buildMs) const {
     const int64_t bytes = profileByteSize(*blas);
     blasBytes = (bytes<0 || blasBytes<0) ? -1 : blasBytes+bytes;
     };
-  if(!landscape[0].blas.isEmpty() || !landscape[1].blas.isEmpty()) {
-    // the merged landscape counted as before: its triangles once
-    add(landscape[0].blas.isEmpty() ? nullptr : &landscape[0].blas, landscapeTriangles);
-    add(landscape[1].blas.isEmpty() ? nullptr : &landscape[1].blas, 0);
-    }
   for(auto& s:slots)
     if(s.used && s.inst.mask!=0)
       add(s.inst.blas, s.triangles);
-  char line[320] = {};
+  char line[400] = {};
   std::snprintf(line, sizeof(line),
                 "render: rt scene reason=%s instances=%zu blas=%zu triangles=%" PRIu64 " tlas_bytes=%" PRId64
-                " blas_bytes=%" PRId64 " build_ms=%.3f slots=%zu buckets=%zu",
+                " blas_bytes=%" PRId64 " build_ms=%.3f slots=%zu buckets=%zu landscape_slots=%zu"
+                " landscape_triangles=%" PRIu64 " landscape_blas_bytes=%" PRId64 " entries=%u",
                 reason, active, unique.size(), triangles, profileByteSize(tlas), blasBytes, buildMs,
-                slots.size(), bucketTex.size());
+                slots.size(), bucketTex.size(), landscapeSlots, landscapeTriangles, landscapeBytes, entries.end);
+  Log::i(line);
+  }
+
+void RtScene::logLandscape() {
+  // The landscape of the scene once it settles: at most a line a second while chunks come and go, and the last change
+  // a second later at the latest (the frame calls commit with or without changes)
+  using namespace std::chrono;
+  if(!landscapeChanged)
+    return;
+  const auto now = steady_clock::now();
+  if(now-landscapeLogged<seconds(1))
+    return;
+  landscapeChanged = false;
+  landscapeLogged  = now;
+  char line[300] = {};
+  std::snprintf(line, sizeof(line),
+                "render: rt landscape slots=%zu triangles=%" PRIu64 " blas_bytes=%" PRId64 " tlas_bytes=%" PRId64
+                " instances=%zu entries=%u buckets=%zu",
+                landscapeSlots, landscapeTriangles, landscapeBytes, profileByteSize(tlas),
+                slots.size() - freeSlots.size(), entries.end, bucketTex.size());
   Log::i(line);
   }
 #endif

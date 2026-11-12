@@ -35,7 +35,8 @@ enum class Zone : size_t {
   // PfxObjects::preFrameUpdate, and the CPU wait of a synchronous buffer upload (Metal).
   PfxPrepare, UploadWait,
   // WorldView::updateRtScene: the changed objects into their slots of the ray scene, and in a frame with changes their
-  // upload and the TLAS build recorded into it (pass RT-TLAS); a landscape BLAS build and new descriptor arrays included.
+  // upload and the TLAS build recorded into it (pass RT-TLAS); new descriptor arrays included. A chunk's landscape
+  // BLAS are built at its publication, outside this zone.
   RtScene, Count
   };
 enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, IdenticalBytes,

@@ -284,6 +284,13 @@ range, it captures the first frame back in the market without waiting for Far pu
 Use `OPENGOTHIC_VOB_STREAMING=0` and `=1` to compare static vob residency. Claude compares
 the resulting frames on Mac.
 
+`streaming-shots-low-sun` takes the four views of `streaming-shots` at 20:30 (the sun 12.6° high in the west) and
+the island view again at 6:00 (15° in the east), as `low-sun-*`, for the ray scene with the landscape by chunks: the
+sun's shadow ray from a hit is longer than the Far range (1 km), so a hill beyond it that shades the view goes
+missing. Run it with `OPENGOTHIC_RT=1 OPENGOTHIC_GI=1`, once with `OPENGOTHIC_STREAMING=0`, and compare the pairs
+cell by cell: `uv run scripts/gi_compare.py <root> --variants chunks --tolerance 5 <shots>` with the whole
+landscape's frames as `<root>/pt` ([step 1c](../../reports/render-features/2026-11-08-rt-revisit/step-1c.md)).
+
 `texture-owners-shots` is the same kind of still comparison for owners that get their texture level by
 distance (NPCs, items in the world, interactive vobs): `owner-npc-face`, `owner-npc-body`,
 `owner-npc-10m`, `owner-npc-15m`, `owner-chest`, `owner-sword`, `owner-bench`, and
