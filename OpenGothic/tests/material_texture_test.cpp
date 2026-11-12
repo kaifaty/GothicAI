@@ -1627,7 +1627,9 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
   {
   const auto generation=Resources::textureGeneration();
   Resources::updateTextures(&residency);
-  const auto flow=Resources::textureStats().flow;
+  // one snapshot: two loads are still short, and a later one would count more time
+  const auto stats=Resources::textureStats();
+  const auto& flow=stats.flow;
   require(Resources::textureGeneration()==generation+1 && flow.publications>=1 && flow.latencyN==flow.publications,
           "ready loads must be published in the frame the main thread sees them");
   require(flow.seconds[TextureFlow::Publishing]>0.5 &&
@@ -1636,8 +1638,7 @@ void textureScreenLevels(Tempest::Device& device, const Fixture& fixture) {
   double split=0;
   for(const auto seconds:flow.seconds)
     split+=seconds;
-  require(flow.waitN>=4 && flow.entries==6 && std::abs(split-Resources::textureStats().shortfallSeconds)<1e-9 &&
-          flow.visibleSeconds<=split,
+  require(flow.waitN>=4 && flow.entries==6 && std::abs(split-stats.shortfallSeconds)<1e-9 && flow.visibleSeconds<=split,
           "the shortfall's split by state must add up to it, and each load must report its latency and wait");
   }
   waitFor([&] { return sides(256,256) && order[2].tex->w()==256; },
