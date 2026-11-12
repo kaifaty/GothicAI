@@ -22,7 +22,7 @@ void Landscape::init(const PackedMesh& packed, bool wholeWorld, const Vec3* text
   if(packed.indices.empty())
     return;
   auto&      device = Resources::device();
-  const bool rt     = Shaders::options().doRtScene;
+  const bool inRays = Shaders::options().doRtScene;
 
   if(wholeWorld) {
     meshletDesc = Resources::ssbo(packed.meshletBounds.data(), packed.meshletBounds.size()*sizeof(packed.meshletBounds[0]));
@@ -45,7 +45,7 @@ void Landscape::init(const PackedMesh& packed, bool wholeWorld, const Vec3* text
                         &sub.texel);
     b.mesh.setObjMatrix(Matrix4x4::mkIdentity());
 
-    if(rt && !b.mesh.isEmpty()) {
+    if(inRays && !b.mesh.isEmpty()) {
       if(RtScene::isMergedLandscape(material,RtScene::Landscape)) {
         const size_t k = material.alpha==Material::Solid ? 0 : 1;
         rtBuild[k].push_back(mesh.rtGeometry(sub.iboOffset,sub.iboLength));

@@ -224,7 +224,9 @@ size_t StaticMesh::firstMeshlet() const {
   }
 
 const Tempest::StorageBuffer& StaticMesh::rtIbo() const {
-  return pageRange ? pageRange->page->rtIbo : ibo;
+  if(pageRange)
+    return pageRange->page->rtIbo;
+  return ibo;
   }
 
 size_t StaticMesh::rtFirstIndex(size_t iboOffset) const {
