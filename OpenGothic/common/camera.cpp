@@ -108,7 +108,7 @@ Camera::SaveState Camera::saveState() const {
           origin, angles, veloTrans, userRange};
   }
 
-void Camera::setSaveState(const SaveState& saved) {
+void Camera::setSaveState(SaveState saved) {
   state.range     = saved.range;
   state.spin      = saved.spin;
   state.target    = saved.target;

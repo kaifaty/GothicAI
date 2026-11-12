@@ -66,7 +66,7 @@ class Camera final {
     void impact(const Tempest::Vec3& dir, float deg);
 
     SaveState saveState() const;
-    void setSaveState(const SaveState& saved);
+    void setSaveState(SaveState saved);
 
     void changeZoom(int delta);
     void setViewport(uint32_t w, uint32_t h);
