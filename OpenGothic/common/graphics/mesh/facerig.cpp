@@ -507,8 +507,8 @@ FaceProfile::Eyes::Shade parseLidShade(const rapidjson::Value& v, const GltfHead
     pos[i] = Vec3(mesh.positions[i].x,mesh.positions[i].y,mesh.positions[i].z);
   const char* side[2] = {"left","right"};
   for(int s=0; s<2; ++s) {
-    ret.tris[s] = LidShade::lidTriangles(tris,pos,eyes.eye[s].center,eyes.eye[s].radius);
-    if(ret.tris[s].empty())
+    ret.lids[s] = LidShade::lids(tris,pos,eyes.eye[s].center,eyes.eye[s].radius);
+    if(ret.lids[s].empty())
       fail(at+": part "+quoted(name)+" has no lids around the "+side[s]+" eye");
     }
   return ret;
@@ -1409,6 +1409,12 @@ void FaceRig::prepare() {
   pos = basePos;
   nrm = baseNrm;
   mark.assign(count,0);
+  lidVertex.assign(count,0);
+  if(hasLidShade())
+    for(auto& l:profile->eyes->shade->lids)
+      for(auto v:l.verts)
+        if(v<count)
+          lidVertex[v] = 1;
   moved.clear();
 
   deltas.assign(head->targets.size(),{});
@@ -1484,10 +1490,12 @@ void FaceRig::blend() {
     prepare();
   changedFirst = uint32_t(-1);
   changedEnd   = 0;
+  bool lidsMoved = false;  // the lids' edges are found again only when a shape moves a lid now or moved it before
   for(auto v:moved) {
     pos[v]  = basePos[v];
     nrm[v]  = baseNrm[v];
     mark[v] = 1;
+    lidsMoved |= lidVertex[v]!=0;
     }
   for(size_t t=0; t<applied.size(); ++t) {
     const float w = applied[t];
@@ -1499,13 +1507,15 @@ void FaceRig::blend() {
         if(mark[v]==0)
           moved.push_back(v);
         mark[v] = 2;
+        lidsMoved |= lidVertex[v]!=0;
         }
       pos[v] += d.position*w;
       nrm[v] += d.normal*w;
       }
     }
   // the lids are where the shapes put them now: their edges over the balls, before any vertex is written
-  lidMargins();
+  if(lidsMoved || !lidEdges[0].hasMargins())
+    lidMargins();
   size_t keep = 0;
   for(size_t i=0; i<moved.size(); ++i) {
     const uint32_t v = moved[i];
@@ -1537,7 +1547,7 @@ void FaceRig::lidMargins() {
     return;
   const auto& ey = *profile->eyes;
   for(int i=0; i<2; ++i)
-    lidEdges[i].margins(pos,ey.shade->tris[i],ey.eye[i].center);
+    lidEdges[i].margins(pos,ey.shade->lids[i],ey.eye[i].center);
   }
 
 float FaceRig::lidLight(uint32_t drawnVertex) const {

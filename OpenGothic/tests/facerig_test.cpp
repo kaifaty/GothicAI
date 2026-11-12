@@ -916,7 +916,7 @@ void lidShadeCases() {
   using R = FaceRig::Result;
   const auto head = makeLidHead();
   const auto p    = FaceProfile::parse(lidProfile(LidShadeBody),head);
-  require(p->eyes->shade.has_value() && p->eyes->shade->tris[0].size()==2*120*3 && p->eyes->shade->tris[1].size()==2*120*3,
+  require(p->eyes->shade.has_value() && p->eyes->shade->lids[0].corners.size()==2*120*3 && p->eyes->shade->lids[1].corners.size()==2*120*3,
           "the lids of each eye must be the part's triangles around its ball, the far ones left out");
   const uint32_t left = uint32_t(head.parts[1].firstVertex);
   // a vertex of the left ball at yaw, pitch degrees (rings of 10 degrees from the front pole, 36 around)

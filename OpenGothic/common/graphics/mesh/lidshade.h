@@ -24,14 +24,24 @@ class LidShade final {
     static constexpr float From    = -70.f;         // ...from this, degrees...
     static constexpr float Step    = 2.f;           // ...in these steps
     static constexpr float Reach   = 80.f;          // the lids are looked for this far up and down from forward
+    static constexpr float Band    = 0.25f;         // the lids' triangles are those this near the ball, of its radius
+    static constexpr float StillCm = 0.01f;         // lids moved less than this keep their edges (speech barely moves them)
 
-    // the lids' triangles of a part around a ball (logical vertex triplets): those of the part with every corner
-    // within 45 % of the radius from the ball's surface and less than 80 degrees from its forward
-    static std::vector<uint32_t> lidTriangles(const std::vector<std::array<uint32_t,3>>& partTriangles,
-                                              const std::vector<Tempest::Vec3>& pos, const Tempest::Vec3& center, float radius);
+    // The lids around a ball: their vertices (logical ids) and their triangles as triplets of indices into them
+    struct Lids final {
+      std::vector<uint32_t> verts;
+      std::vector<uint32_t> corners;
+      bool empty() const { return corners.empty(); }
+      };
+    // the lids of a part around a ball: the part's triangles with every corner within Band of the radius from the
+    // ball's surface and less than Reach degrees from its forward. Their band along the ball makes the opening's
+    // edge; the outer skin of the lids stands further off and lies beyond the edge as seen from the centre
+    static Lids lids(const std::vector<std::array<uint32_t,3>>& partTriangles, const std::vector<Tempest::Vec3>& pos,
+                     const Tempest::Vec3& center, float radius);
 
-    // the edges of the opening now, from the lids' triangles at the positions given
-    void  margins(const std::vector<Tempest::Vec3>& pos, const std::vector<uint32_t>& tris, const Tempest::Vec3& center);
+    // the edges of the opening now, from the lids at the positions given; false: no lid moved StillCm since the edges
+    // were found, they stay
+    bool  margins(const std::vector<Tempest::Vec3>& pos, const Lids& lids, const Tempest::Vec3& center);
     bool  hasMargins() const { return valid; }
     // the share of the light the lids leave to a point of the ball (`at` from its centre), 0..1
     float light(const Tempest::Vec3& at, float radius, const Params& p) const;
@@ -41,5 +51,7 @@ class LidShade final {
   private:
     std::array<float,Columns> lower{}, upper{};
     std::array<std::vector<std::pair<float,float>>,Columns> spans;  // the lids' cover per column, scratch
+    std::vector<float> across, rise;                                  // the lids' vertices seen from the centre, scratch
+    std::vector<Tempest::Vec3> seen;                                  // the lids' vertices the edges were found at
     bool valid = false;
   };

@@ -97,7 +97,7 @@ struct FaceProfile final {
     struct Shade final {
       size_t                part = 0;  // the head part of the lids (the skin)
       LidShade::Params      params;
-      std::vector<uint32_t> tris[2];   // per eye: the lids' triangles around it, logical vertex triplets
+      LidShade::Lids        lids[2];   // per eye: the lids' triangles around it
       };
     Eye   eye[2];            // the character's own left eye, the right one
     float limit[4] = {};     // in the socket per Dir, radians
@@ -364,6 +364,7 @@ class FaceRig final {
     EyeTurn                    eyeWant[2], eyeShown[2];
     float                      eyeTurn[2][3][3] = {};  // the rotation of each ball as shown, row-major
     LidShade                   lidEdges[2];             // the lids' edges over each ball as the face shows them
+    std::vector<uint8_t>       lidVertex;               // per logical vertex: one of the lids' (their edges move)
     bool                       lidShadeOn = false;
     uint32_t                   changedFirst = 0, changedEnd = 0;
     float                      blendUs = 0;
