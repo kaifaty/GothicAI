@@ -12,6 +12,7 @@
 #include <memory>
 
 class World;
+class Bullet;
 class Npc;
 class Pose;
 class Skeleton;

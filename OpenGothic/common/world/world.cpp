@@ -43,7 +43,7 @@
 #include "physics/cloth.h"
 #include "physics/worldcloth.h"
 #include "world/movablevobs.h"
-#include "world/arrowtrace.h"
+#include "world/bullet.h"
 
 namespace {
 
