@@ -1,33 +1,21 @@
 #pragma once
 
-#include "worldchunks.h"
+#include "worldchunkmanifest.h"
 
-#include <cmath>
 #include <memory>
 #include <span>
 #include <utility>
 
 class ChunkMeshSource;
 
-struct ChunkId {
-  // The converter uses a 64 m grid rooted at (0,0), including negative cells.
-  static constexpr int32_t Size = 6400;
-  int32_t x = 0;
-  int32_t z = 0;
-
-  static ChunkId fromPosition(float x, float z) {
-    return {int32_t(std::floor(double(x)/Size)),int32_t(std::floor(double(z)/Size))};
-    }
-  bool operator==(const ChunkId&) const = default;
-  };
-
 struct ChunkTable {
   struct Entry {
     ChunkId      id;
-    std::string  file; // relative to the world directory, even with an override
+    std::string  file; // the cell's draw level 0 mesh, relative to the world directory, even with an override
     asset::Vec3 min {};
     asset::Vec3 max {};
     uint32_t     triangleCount = 0;
+    std::vector<ChunkMeshRef> meshes; // every mesh of the cell from world.json; only file is read
     };
 
   std::vector<Entry> entries;
@@ -67,9 +55,8 @@ class ChunkMeshSource {
     friend asset::WorldMesh readWorldChunks(const std::filesystem::path&, const std::filesystem::path&, ChunkTable*);
   };
 
-WorldChunkManifest readWorldChunkManifest(const std::filesystem::path& dir);
-
-// Reads the chunks listed in dir/world.json. A chunk with the same file name
+// Reads the draw level 0 chunk of every cell in dir/world.json; other meshes of
+// a cell are carried in the table, not opened. A chunk with the same file name
 // under overrideDir (if not empty) replaces the base one. Fills materials,
 // vertices, features and polygons of a fresh mesh. Unedited chunks restore
 // the source arrays exactly, with every source index (the engine's meshlet

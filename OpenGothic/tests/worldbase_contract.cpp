@@ -26,6 +26,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -377,6 +378,146 @@ void selectionContract(const fs::path& root) {
   std::puts("Selection: matching override chunk replaces base");
   }
 
+std::string readText(const fs::path& path) {
+  std::ifstream file(path,std::ios::binary);
+  require(bool(file),"cannot read "+path.string());
+  return {std::istreambuf_iterator<char>(file),std::istreambuf_iterator<char>()};
+  }
+
+void writeText(const fs::path& path, const std::string& text) {
+  std::ofstream file(path,std::ios::binary|std::ios::trunc);
+  file << text;
+  require(bool(file),"cannot write "+path.string());
+  }
+
+// The writer's world.json with the body of its "chunks" array replaced.
+std::string withChunks(const std::string& json, const std::string& list) {
+  const std::string key="\"chunks\": [";
+  const auto begin=json.find(key);
+  const auto end=begin==std::string::npos ? begin : json.find(']',begin);
+  require(end!=std::string::npos,"world.json must list its chunks");
+  return json.substr(0,begin+key.size())+list+json.substr(end);
+  }
+
+// The fields world.json carries; the unreferenced counts are the writer's only.
+void sameManifest(const WorldChunkManifest& a, const WorldChunkManifest& b, const std::string& label) {
+  require(a.source.world==b.source.world && a.source.size==b.source.size && a.source.crc32==b.source.crc32 &&
+          a.chunkSize==b.chunkSize && a.chunks==b.chunks && a.triangles==b.triangles && a.vertices==b.vertices &&
+          a.features==b.features && a.materials.size()==b.materials.size(),label+": manifest fields differ");
+  for(size_t i=0;i<a.materials.size();++i)
+    require(sameMaterial(a.materials[i],b.materials[i]),label+": material "+std::to_string(i)+" differs");
+  }
+
+void expectRejected(const fs::path& dir, const std::string& json, const std::string& list, const std::string& reason) {
+  writeText(dir/"world.json",withChunks(json,list));
+  try {
+    (void)readWorldChunkManifest(dir);
+    }
+  catch(const std::runtime_error& error) {
+    const std::string message=error.what();
+    require(message.find(reason)!=std::string::npos,"manifest error must say '"+reason+"', got: "+message);
+    return;
+    }
+  throw std::runtime_error("manifest must be rejected with '"+reason+"': "+list);
+  }
+
+// world.json entries: strings as the writer writes them, the same world as
+// objects with extra meshes that are never opened, and every rejected form.
+void manifestContract(const fs::path& root, const fs::path& directory, const WorldChunkManifest& written,
+                      const asset::WorldMesh& restored, const ChunkTable& table) {
+  const auto strings=readWorldChunkManifest(directory);
+  sameManifest(written,strings,"string entries");
+  require(strings.cells.size()==written.chunks.size() && table.entries.size()==written.chunks.size(),
+          "string entries must give one cell and one table entry each");
+  for(size_t i=0;i<strings.cells.size();++i) {
+    const auto& cell=strings.cells[i];
+    require(fs::path(written.chunks[i]).stem().string()==std::to_string(cell.id.x)+"_"+std::to_string(cell.id.z) &&
+            cell.meshes==std::vector<ChunkMeshRef>{{written.chunks[i],ChunkMeshRole::Draw,0}} &&
+            table.entries[i].id==cell.id && table.entries[i].meshes==cell.meshes,
+            "a string entry must be one draw level 0 mesh in the cell of its file stem");
+    }
+
+  const auto objects=root/"chunk-objects";
+  fs::copy(directory,objects,fs::copy_options::recursive);
+  std::string list;
+  std::vector<ChunkCell> expected;
+  size_t extra=0;
+  for(size_t i=0;i<strings.cells.size();++i) {
+    auto cell=strings.cells[i];
+    std::string meshes="{\"file\":\""+cell.meshes[0].file+"\",\"role\":\"draw\",\"level\":0}";
+    if(i%2==0) {
+      // Listed before the draw level 0 mesh, with no files on disk.
+      const auto name="chunks/"+std::to_string(cell.id.x)+"_"+std::to_string(cell.id.z);
+      require(!fs::exists(objects/(name+"_collision.glb")) && !fs::exists(objects/(name+"_lod1.glb")),
+              "extra meshes of the fixture must have no files");
+      cell.meshes.insert(cell.meshes.begin(),{{name+"_collision.glb",ChunkMeshRole::Collision,0},
+                                              {name+"_lod1.glb",ChunkMeshRole::Draw,1}});
+      meshes="{\"file\":\""+name+"_collision.glb\",\"role\":\"collision\"},"
+             "{\"file\":\""+name+"_lod1.glb\",\"role\":\"draw\",\"level\":1},"+meshes;
+      extra+=2;
+      }
+    list+=std::string(i==0 ? "" : ",")+"{\"cell\":["+std::to_string(cell.id.x)+","+std::to_string(cell.id.z)+
+          "],\"meshes\":["+meshes+"]}";
+    expected.push_back(std::move(cell));
+    }
+  require(extra>0,"the object fixture must carry extra meshes");
+  const auto json=readText(directory/"world.json");
+  writeText(objects/"world.json",withChunks(json,list));
+  const auto read=readWorldChunkManifest(objects);
+  sameManifest(strings,read,"object entries");
+  require(read.cells==expected,"object entries must carry every mesh descriptor in manifest order");
+  ChunkTable objectTable;
+  const auto objectMesh=readWorldChunks(objects,{},&objectTable);
+  const auto difference=compareWorldMeshes(restored,objectMesh);
+  require(difference.empty(),"object entries must read the same world mesh: "+difference);
+  require(objectTable.entries.size()==table.entries.size() && objectTable.triangleChunks==table.triangleChunks &&
+          objectTable.triangleSources==table.triangleSources && objectTable.source!=nullptr,
+          "object entries must give the same triangle ownership");
+  for(size_t i=0;i<table.entries.size();++i) {
+    const auto& a=table.entries[i];
+    const auto& b=objectTable.entries[i];
+    require(a.id==b.id && a.file==b.file && a.min==b.min && a.max==b.max && a.triangleCount==b.triangleCount &&
+            b.meshes==expected[i].meshes,"object entries must give the same table entry apart from its meshes");
+    }
+
+  const auto rejected=root/"chunk-rejected";
+  fs::create_directories(rejected);
+  const auto draw=[](const std::string& file, const std::string& level="0") {
+    return "{\"file\":\""+file+"\",\"role\":\"draw\",\"level\":"+level+"}";
+    };
+  const auto cell=[](const std::string& id, const std::string& meshes) {
+    return "{\"cell\":"+id+",\"meshes\":["+meshes+"]}";
+    };
+  const auto zero=draw("chunks/0_0.glb");
+  const std::vector<std::pair<std::string,std::string>> cases={
+    {"\"chunks/0_0.glb\",\"other/0_0.glb\"","cell 0,0 is listed twice"},
+    {"\"chunks/0_0.glb\","+cell("[0,0]",zero),"cell 0,0 is listed twice"},
+    {cell("[0,0]",zero)+","+cell("[0,0]",draw("chunks/0_0_b.glb")),"cell 0,0 is listed twice"},
+    {cell("[0,0]",draw("chunks/0_0_lod1.glb","1")+",{\"file\":\"chunks/0_0_c.glb\",\"role\":\"collision\"}"),
+     "cell 0,0 has no draw level 0 mesh"},
+    {cell("[0,0]",zero+","+draw("chunks/0_0_b.glb")),"two draw level 0 meshes"},
+    {cell("[0,0]",zero+",{\"file\":\"chunks/0_0_c.glb\",\"role\":\"collision\"},"
+                       "{\"file\":\"chunks/0_0_d.glb\",\"role\":\"collision\"}"),"two collision meshes"},
+    {cell("[0,0]",zero+",{\"file\":\"chunks/0_0_s.glb\",\"role\":\"shadow\"}"),"unknown role 'shadow'"},
+    {cell("[0,0]",zero+","+draw("chunks/0_0_lod.glb","-1")),"level of chunks/0_0_lod.glb must be a non-negative integer"},
+    {cell("[0,0]",zero+","+draw("chunks/0_0_lod.glb","1.5")),"level of chunks/0_0_lod.glb must be a non-negative integer"},
+    {cell("[0,0]",zero+",{\"file\":\"chunks/0_0_c.glb\",\"role\":\"collision\",\"level\":0}"),
+     "collision mesh chunks/0_0_c.glb has a level"},
+    {"\"../0_0.glb\"","chunk path must stay inside the world directory: ../0_0.glb"},
+    {"\"/tmp/0_0.glb\"","chunk path must be relative: /tmp/0_0.glb"},
+    {"\"chunks/zero.glb\"","chunk file name is not <x>_<z>: chunks/zero.glb"},
+    {cell("[0,0]",draw("../0_0.glb")),"chunk path must stay inside the world directory: ../0_0.glb"},
+    {cell("[0]",zero),"chunks entry 0: cell must be two integers"},
+    {cell("[0,0.5]",zero),"chunks entry 0: cell must be two integers"},
+    {cell("\"0_0\"",zero),"chunks entry 0: cell must be two integers"},
+    {"{\"meshes\":["+zero+"]}","chunks entry 0: cell must be two integers"},
+  };
+  for(const auto& [entries,reason]:cases)
+    expectRejected(rejected,json,entries,reason);
+  std::printf("Chunk manifest: %zu string cells equal; object cells with %zu extra meshes read the same mesh and table; "
+              "%zu invalid manifests rejected\n",strings.cells.size(),extra,cases.size());
+  }
+
 using SourceTriangle = std::array<uint32_t,7>;
 
 std::multiset<SourceTriangle> unpackLandscape(const PackedMesh& packed, const asset::WorldMesh& source) {
@@ -484,6 +625,7 @@ void chunkContract(const fs::path& root) {
     require(chunk.triangleCount==count && chunk.min==minimum && chunk.max==maximum,
             "chunk bounds and counts must use their actual triangles, including overhangs");
     }
+  manifestContract(root,directory,manifest,restored,table);
 
   const auto beforeCloth=table.triangleChunks;
   const auto sourcesBeforeCloth=table.triangleSources;
@@ -674,6 +816,9 @@ int main() {
     auto base=readWorldChunks(dir);
     const auto difference=compareWorldMeshes(canonicalWorldMesh(zen),base);
     require(difference.empty(),"canonical round trip: "+difference);
+    const auto cells=readWorldChunkManifest(dir);
+    sameManifest(manifest,cells,"NEWWORLD string entries");
+    require(cells.cells.size()==manifest.chunks.size(),"NEWWORLD must give one cell per chunk");
     std::printf("NEWWORLD.ZEN: %zu bytes, CRC32 %08x, %zu triangles, %zu chunks; canonical round trip equal\n",
                 bytes.size(),source.crc32,zen.polygons.material_indices.size(),manifest.chunks.size());
     WorldData::Data loaded;
