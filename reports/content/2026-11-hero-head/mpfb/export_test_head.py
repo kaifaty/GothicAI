@@ -19,8 +19,7 @@
 # (eyes.lid_shade, LID_SHADE below) the face rig computes for that shader. Without it the eye and the face are as before.
 # --cornea <eye_material.json> raises each iris onto the white and gives the front of the ball the normals of a corneal
 # dome (scripts/content/npc/eye_cornea.py); with eye_material.py --depth the iris then lies that deep under it for the
-# shader's refraction. --tear-line <eye_material.json> adds the part `tears`: a wet line along each lower lid that the
-# face shapes move with the lid (material OWN_<head>_TEARS, MASK, its own maps). Without them the head is as before.
+# shader's refraction. Without it the head is as before.
 # --hair <npz> <png> and --beard <npz> <png> add the parts cut from the generator's model (skin/hair_cut.py,
 # skin/beard_shell.py; metres, the frame of the registered head). The hair is rigid; the beard is bound to the skin
 # and follows every face shape; its map is cut by alpha. A hair part with normals in its npz is hair cards
@@ -344,17 +343,11 @@ rest = data[20+jl:]
 out = struct.pack('<III', 0x46546C67, 2, 12+8+len(txt)+len(rest)) + struct.pack('<II', len(txt), 0x4E4F534A) + txt + rest
 open(glb, 'wb').write(out)
 print('GLB', glb, len(out), 'bytes; targets per mesh', {k: len(v) for k, v in names.items()})
-# the cornea and the tear line (task 2 of the eye shader), on the GLB as written
-EYE_JSON = {flag: os.path.abspath(os.path.expanduser(ARGS[ARGS.index(flag)+1])) for flag in ('--cornea', '--tear-line')
-            if flag in ARGS}
-TEAR_MAPS = None
-if EYE_JSON:
+# the cornea (task 2 of the eye shader), on the GLB as written
+if '--cornea' in ARGS:
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), *(['..']*4), 'scripts', 'content', 'npc'))
     import eye_cornea
-    assert len(set(EYE_JSON.values())) == 1, '--cornea and --tear-line take the same eye_material.json'
-    eye_cornea.apply(glb, next(iter(EYE_JSON.values())), glb, cornea='--cornea' in EYE_JSON, tears='--tear-line' in EYE_JSON)
-    if '--tear-line' in EYE_JSON:
-        TEAR_MAPS = eye_cornea.tear_maps()
+    eye_cornea.apply(glb, os.path.abspath(os.path.expanduser(ARGS[ARGS.index('--cornea')+1])), glb)
 
 # the face profile: the old face animation names as weights of these shapes (authored by hand, next to this script)
 FACE = os.path.join(ROOT, 'characters', 'hero', NAME+'.face.json')
@@ -388,9 +381,6 @@ SKIN_MAPS = {slot: os.path.abspath(os.path.expanduser(ARGS[ARGS.index(flag)+1]))
              for slot, flag in (('normal', '--skin-normal'), ('orm', '--skin-orm')) if flag in ARGS}
 for slot, src in SKIN_MAPS.items():
     shutil.copyfile(src, os.path.join(png, 'skin_%s.png' % slot))
-if TEAR_MAPS:
-    eye_cornea.write_png(os.path.join(png, 'tears.png'), TEAR_MAPS[0])
-    eye_cornea.write_png(os.path.join(png, 'tears_orm.png'), TEAR_MAPS[1])
 EYE_ORM = os.path.abspath(os.path.expanduser(ARGS[ARGS.index('--eye-orm')+1])) if '--eye-orm' in ARGS else None
 if EYE_ORM:
     shutil.copyfile(EYE_ORM, os.path.join(png, 'eye_orm.png'))
@@ -404,8 +394,6 @@ for slot in SKIN_MAPS:
     table['OWN_%s_SKIN.TGA' % MATS][slot] = '%s/skin_%s.dds' % (NAME, slot)
 if EYE_ORM:
     table['OWN_%s_EYE.TGA' % MATS].update({'orm': '%s/eye_orm.dds' % NAME, 'eye': True})
-if TEAR_MAPS:
-    table['OWN_%s_TEARS.TGA' % MATS] = {'albedo': '%s/tears.dds' % NAME, 'orm': '%s/tears_orm.dds' % NAME}
 if HAIR_MAP and 'HAIR' in TEX:
     table['OWN_%s_HAIR.TGA' % MATS].update({'orm': '%s/hair_map.dds' % NAME, 'hair': True})
 json.dump(table, open(mj, 'w'), indent=2)

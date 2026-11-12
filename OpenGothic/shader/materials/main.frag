@@ -559,10 +559,15 @@ void mainGBuffer(vec4 t) {
     // read that far along the ray's run over the surface. The run goes into the map by the surface gradients of u
     // and v (the cotangent frame of mappedNormal): the two eyes share the map mirrored, the gradients carry the sign
     const float depth = (bucket[bucketId].flags & BK_ORM)!=0 ? outOrm.b*EyeIrisDepth : 0.0;
-    if(depth>0.0) {
-      const vec3  view = normalize(scene.camPos - shInp.pos);
+    // The limit: a ray that comes in through the cornea bends to at most 48.5 degrees off the normal, its run over the
+    // surface is at most 1.13 of the depth. Where the interpolated normal looks aside or away from the eye (the dome's
+    // edge under a lid, a grazing look at the limbus) the bent ray has no meaning: the shift fades out by the cosine
+    // of the view to the normal, 0.25 down to 0
+    const vec3  view = normalize(scene.camPos - shInp.pos);
+    const float noV  = dot(n, view);
+    if(depth>0.0 && noV>0.0) {
       const vec3  ray  = refract(-view, n, EyeEta);
-      const vec3  run  = ray * (depth/max(dot(n, -ray), 0.2));
+      const vec3  run  = ray * (depth/dot(n, -ray)) * smoothstep(0.0, 0.25, noV);
       const float det  = dot(n, cross(dpdx, dpdy));
       if(abs(det)>1e-20) {
         const vec3 gu = cross(dpdy, n)*duvdx.x + cross(n, dpdx)*duvdy.x;
