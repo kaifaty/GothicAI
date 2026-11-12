@@ -184,7 +184,7 @@ bool waitingForAi() {
   if(bench.waitAiKey.empty())
     return false;
   const bool signalled=bench.waitAiKey=="broken" && bench.brokenSignals.count(bench.waitAiStage)>0;
-  if(signalled || (Bench::aiReached && Bench::aiReached(bench.waitAiKey,bench.waitAiStage))) {
+  if(signalled || (::Bench::aiReached && ::Bench::aiReached(bench.waitAiKey,bench.waitAiStage))) {
     say("waitai " + bench.waitAiKey + " " + bench.waitAiStage);
     bench.waitAiKey.clear();
     return false;
@@ -754,7 +754,7 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
       }
     }
   bench.time += dt;
-  if(Bench::aiBusy && Bench::aiBusy())
+  if(::Bench::aiBusy && ::Bench::aiBusy())
     bench.busyAt = bench.time;
 
   for(auto k:bench.taps)
@@ -771,7 +771,7 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
 
   bench.ctrl = &ctrl;
   if(bench.ragdoll.birthActor!=nullptr && !bench.ragdoll.birthActor->isDown()) {
-    const Bench::BirthLive live{bench.ragdoll.birthActor->position(),world->tickCount(),bench.ragdoll.birthActor->isInAir()};
+    const testbench_detail::Bench::BirthLive live{bench.ragdoll.birthActor->position(),world->tickCount(),bench.ragdoll.birthActor->isInAir()};
     if(bench.ragdoll.birthHistory.empty() || live.tick>bench.ragdoll.birthHistory.back().tick) {
       bench.ragdoll.birthHistory.push_back(live); if(bench.ragdoll.birthHistory.size()>4) bench.ragdoll.birthHistory.pop_front();
       event("ragdoll_birth_live","\"label\":"+jsonStr(bench.ragdoll.birthLabel)+",\"actor_id\":"+std::to_string(world->npcId(bench.ragdoll.birthActor))+

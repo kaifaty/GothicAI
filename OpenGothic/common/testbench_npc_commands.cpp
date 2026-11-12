@@ -323,12 +323,12 @@ bool npcCommandsCommand(const NpcCommandsContext& context,const std::string& lin
         say("stuck begin failed: radius must be positive and finite");
         return true;
         }
-      const bool ok = Bench::stuckBegin && Bench::stuckBegin(w,a[2],radius);
+      const bool ok = ::Bench::stuckBegin && ::Bench::stuckBegin(w,a[2],radius);
       say(std::string(ok ? "stuck begin " : "stuck begin failed: ") + a[2] +
           " radius_cm=" + std::to_string(radius));
       }
     else if(a.size()==2 && a[1]=="end") {
-      const bool ok = Bench::stuckEnd && Bench::stuckEnd(w);
+      const bool ok = ::Bench::stuckEnd && ::Bench::stuckEnd(w);
       say(ok ? "stuck end" : "stuck end failed: logger unavailable or no observation");
       }
     else {
