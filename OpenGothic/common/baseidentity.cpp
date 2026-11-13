@@ -1,5 +1,5 @@
 // Installation identity and ready-base validation use file I/O only.
-#include "baseimport.h"
+#include "baseidentity.h"
 #include "baseformat.h"
 #include "sha256.h"
 #include "gothicglb.h"

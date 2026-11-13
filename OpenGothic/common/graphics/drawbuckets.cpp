@@ -173,6 +173,16 @@ void DrawBuckets::updateBindlessArrays(bool updateBuffers, uint8_t fId) {
   for(const auto& bucket:bucketsCpu)
     if(bucket.mat.hasFrameAnimation())
       tex.insert(tex.end(),bucket.mat.frames.begin(),bucket.mat.frames.end());
+  // The fringes' maps follow at one index in all three arrays (commit gave the buckets their fringeTex)
+  if(Shaders::options().doMaterialMaps && !fringeMaps.empty()) {
+    normal.resize(tex.size());
+    orm   .resize(tex.size());
+    for(const auto& f:fringeMaps) {
+      tex   .push_back(f[0]);
+      normal.push_back(f[1]);
+      orm   .push_back(f[2]);
+      }
+    }
 
   // avoid shader linking stutter in vulkan
   tex    .resize(roundup(tex.size()));
@@ -224,6 +234,12 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
 
   std::vector<BucketGpu> bucket;
   uint32_t diffuseFrames=uint32_t(bucketsCpu.size());
+  for(auto& i:bucketsCpu)
+    if(i.mat.hasFrameAnimation())
+      diffuseFrames+=uint32_t(i.mat.frames.size());
+  const uint32_t fringeBase=diffuseFrames;
+  diffuseFrames=uint32_t(bucketsCpu.size());
+  fringeMaps.clear();
   for(auto& i:bucketsCpu) {
     BucketGpu bx;
     if(i.mat.hasFrameAnimation()) {
@@ -260,6 +276,28 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
           bx.flags |= BK_ANTITILE;
           if(i.mat.antitile==Material::Antitile::Rotate)
             bx.flags |= BK_ANTITILE_ROTATE;
+          }
+        // Maps by world position (material_projection.glsl): the slot of the UV scale, which the projection does not
+        // use, carries repeats per unit of the world (cm). Opaque only: an alpha-tested one is rejected (Material)
+        if(const float k = i.mat.projectionUvScale(); k>0) {
+          bx.uvScale = k;
+          bx.flags  |= BK_PROJECTION;
+          }
+        // Grass along the edges over the projection: its maps after the buckets in the bindless arrays, in its own
+        // slots without them (DrawCommands::setBindings)
+        if(i.mat.hasFringe()) {
+          const auto& f = i.mat.fringe;
+          const std::array<const Tempest::Texture2d*,3> set = {f.albedo,f.normal,f.orm};
+          auto at = std::find(fringeMaps.begin(),fringeMaps.end(),set);
+          if(at==fringeMaps.end())
+            at = fringeMaps.insert(fringeMaps.end(),set);
+          bx.fringeTex     = fringeBase+uint32_t(at-fringeMaps.begin());
+          bx.fringeScale   = i.mat.projectionTile/f.tile;
+          bx.fringeTop0    = f.top[0];
+          bx.fringeTop1    = f.top[1];
+          bx.fringeBottom0 = f.bottom[0];
+          bx.fringeBottom1 = f.bottom[1];
+          bx.flags        |= BK_FRINGE;
           }
         }
       }

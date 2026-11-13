@@ -706,6 +706,14 @@ the first choice: the lines of both are played the way the game plays them).
 The hero's head: `hero-head` (his face close up - still, the moods of the AI lines, a voiced dialog line, the eyes:
 he listens to Xardas, thinks, Xardas stands around him, he looks down and up - and running from behind in the market; the clips of the original and of the new head, side by side,
 [step 0](../../reports/content/2026-11-hero-head/test-head.md)).
+
+The head of an NPC against its concept: `npc-head-look` takes stills of the hero's face from the front, three quarters
+and the side and close on the eyes, in the torch light of Xardas' tower and in the noon sun of the market (first
+with the sun above and behind, then at an open spot with the sun in the face, where the head's skin and the body's
+neck are under one light: [skin-sun.md](../../reports/content/2026-11-npc-hair/skin-sun.md)); nobody blinks. Run it with the content root of a head built by `scripts/content/npc/build_head.py`
+(`OPENGOTHIC_CONTENT=<work>/content`, `TEMPEST_WINDOW_SIZE=1920x1080`, `BENCH_HOST=ryzen`); to see what a map adds,
+run it again with a copy of the root in which that map is replaced
+([likeness.md](../../reports/content/2026-11-npc-pipeline/likeness.md), "В игре").
 Faces: `faces` (the face animations of a head one after another, then two of them while Xardas speaks),
 `face-fade` (faces fade in and out, one gives way to the next, three a moment apart, the lips over a
 fading face), `mood-ai` (given lines of an AI server with moods: start `gothic-ai serve --scenario m1 --llm off
@@ -868,6 +876,9 @@ blow. `gaze_jerk` is not counted for a second after a blow: it throws the head o
 `blinks /min` counts the blinks seen (the eyes going half shut), with those in a pause of the voice and
 at a shift of the eyes; people blink some 15-25 times a minute, more while they speak. Flag `blink_shut`:
 a blink keeps the eyes shut longer than 7 frames.
+`g_animroll` and `g_froll` are the tilt of the head to a side as its animation gives it and as it is shown (a dialog
+gesture tilts it up to 32 degrees), `g_steady` how much the head is held against a gesture's animation (0..1); the
+flag `gaze_jerk` counts the tilt of a frame too.
 `gestures talk / listen %` is how much of the time the watched one speaks a gesture plays, and how much
 of the time it is quiet again (a second after its voice), then the gestures started, started over one
 that played and stopped before their end (the voice is over), and the nods on stressed syllables. The head
@@ -983,6 +994,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `gi-clips.bench` | reflected light (`-gi 0/1/2`): shots and clips of the places where it shows, for step 2 of the ray-tracing revisit — the harbour house by candle and torch at night, the plank hut of the poor quarter at noon and at night (and the clip `hut-response`, 22:00 → 12:00), Onar's stable and Lobart's house at noon, a harbour street at midnight, the forest at noon, the bandit cave at noon and at night, the market at noon. Every shot `X` is taken twice: as the player sees it and `X-bare` without the hero, the npc and the particles (`view hide animated morph pfx`; the ray scene and so the reference lack them). The views `leak-*` test light through thin plank walls (thinner than a probe cell of lod 0): `leak-lamp-night` (a lamp inside hut 1 behind its north wall, the camera outside), `leak-fire-night` (the fireplace of hut 3 behind its north wall, the camera in the alley), `leak-sun-day` (the west wall of hut 6 in the noon sun, the camera inside). `uv run scripts/gi_compare.py <root> --variants gi,bare <shots>` compares them with `gi-reference.bench` cell by cell ([step 2b](../../reports/render-features/2026-11-08-rt-revisit/step-2b.md#2б-2-сделано)) |
 | `gi-reference.bench` | the path-traced reference of the shots of `gi-clips.bench` (the same views, leaks included; 12 s to accumulate each; `OPENGOTHIC_RT=1 OPENGOTHIC_GI=0`): change both together. Its shadow rays skip the back faces of triangles (`rayQueryProceedShadow`): a one-sided surface that faces a lamp lets the lamp's light through in the reference too ([report](../../reports/render-features/2026-11-10-lamp-one-sided/README.md)); alpha-tested triangles skip their back faces in `rayQueryProceedAlphaTest` besides, and the reflected light lights places a lamp does not reach: judge lamp shadows against direct light alone ([report](../../reports/render-features/2026-11-11-lamp-objects-two-sided/README.md)) |
 | `gi-turn.bench` | reflected light (`-gi 1`) through a turn of the camera: the plank hut of `gi-clips` at noon (view `hut-day-2`), clip `hut-turn` — the camera stands 1 s, turns 180° round the hero at once (`cam cut`, `cam world` at +180°), stands 3 s, turns back, stands 2 s. `uv run scripts/gi_compare.py --turn <out>/hut-turn.mp4` prints the largest and the median cell change between the frame before the turn and the first frame after the return (8×4 cells without the two middle columns). Run it with `OPENGOTHIC_RT=1 OPENGOTHIC_GI=1 TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen` ([step 2b](../../reports/render-features/2026-11-08-rt-revisit/step-2b.md)) |
+| `landscape-rock-material.bench` | the rock material of the landscape pilot (step В3): the views of the layers probe — the wall and the boulder by the road south of Akil's farm (`road-1`…`road-4` at noon, `eve-1`, `eve-3` at 17:30), a ledge from afar (`ledge`, a held camera), the rock arch at the bandit camp (`arch`), the clip `walk-rock` along the wall. Run it with `OPENGOTHIC_CONTENT=<set>` and with `OPENGOTHIC_CONTENT=` for the original, `TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen`; 10 s before the stills lets reflected light settle when it is on ([note](../../reports/content/2026-11-landscape-pilot/b3-rock-material.md)) |
 | `gi-accept.bench` | the acceptance clips of reflected light (step 2 of the ray-tracing revisit): the user judges «без GI \| GI» by eye, so the scenario records clips only, no shots. The places and camera set-ups of `gi-clips.bench`; each clip is a slow turn of the held camera, 1 s still, 9 s turn (`cloth camera-turn`), 1 s still, after a turn of 1 ms that sets the first view and 10 s for the probes to light: `interior-night` (the harbour house at 22:00, cabinet → candle and lit wall → shelves in the dark corner), `hut-day` (the plank hut at noon, sunlit wall → dark corner), `harbour-night` (the street with lamp posts at midnight), `forest-day` (rock → sunlit valley → slope in the shade), `cave-day` and `cave-night` (the bandit cave: the mouth → the fire). `harbour-night-walk` follows the hero 5 m behind down the same street (`route 120` PATH_04 → PATH_06, 9 s; the hero and the npcs hidden, he would slide without steps; `route` lifts him 50 cm to the waypoint on its first step, so the camera jumps at 1.0 s and the side-by-side starts at frame 31): probes are placed by the distance to the camera, so light popping in shows there. The fixed step makes both runs frame for frame alike. The clips of the eye's adaptation under GI ([step 2](../../reports/render-features/2026-11-08-rt-revisit/step-2-shade.md#привыкание-глаза-сделано-12112026)): `forest-walk` (the hero runs from the open slope at `NW_FOREST_PATH_67` under the crowns to `PATH_66` and back, the camera following), `cave-walk` (from the path outside the bandit cave to the fire and out), `cave-mouth-turn` and `forest-turn` (360° in 12 s at the cave's mouth and under the crowns), `market-day` (the open sun, the control). Run it with `OPENGOTHIC_RT=0`, with `OPENGOTHIC_RT=1 OPENGOTHIC_GI=1 OPENGOTHIC_EYE=0` and with `OPENGOTHIC_RT=1 OPENGOTHIC_GI=1` (the eye on), `TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen`, and put the thirds side by side («без GI \| GI \| GI + привыкание») |
 | `gi-decay.bench` | how the light of `-gi 1` dies out in the chains of probes: the plank hut and the bandit cave of `gi-clips` (views `hut-night-1`, `cave-night-1`), clips `hut-decay` and `cave-decay` — 1 s of noon, then `set time 22 0` and 14 s of night, the camera still. A jump of the time of day relights the probes from nothing; `OPENGOTHIC_GI_JUMP_RESET=0` turns that off, and the clip shows the day's light dying out as after a fire put out. `uv run scripts/gi_compare.py --decay <out>/hut-decay.mp4` prints how many times brighter than its end (night) the brightest and the median cell are 0.5, 1 and 2 s after the change, and when every cell is within 10% of it; cells that flicker at the end by more than 10% (flames) are left out, each cell is the median of 15 frames (sparks). Run it with `OPENGOTHIC_GI_JUMP_RESET=0 OPENGOTHIC_RT=1 OPENGOTHIC_GI=1 TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen` ([step 2b](../../reports/render-features/2026-11-08-rt-revisit/step-2b.md#2б-1-пересмотр)) |
 | `facet-shards.bench` | the shadow test on a dense mesh's facets ([report](../../reports/render-features/2026-11-11-facet-shards/README.md)): the hero's own head (`OPENGOTHIC_CONTENT` with it) close to the camera under the noon sun of the market and the candle of the harbour house, then the market and the harbour at a low sun and the lamps at night; every view as stills of one camera — `-old` (`vsm study 1` or `2`), `-new`, `-old2`, `-class`, for the sun `-diff`. Run with `OPENGOTHIC_LIGHT_FREEZE=1`; `reports/render-features/2026-11-11-facet-shards/tools/pairs.py <out>` counts the changed pixels against the noise of the two old shots |
@@ -1009,10 +1021,11 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `dialog <npc\|nearest>` | the hero talks to it, as with the action key: the dialog window opens |
 | `choose <n>` | runs the n-th choice (from 1) of the dialog with the watched npc, as if the player picked it |
 | `faceanim <npc\|nearest\|player> <anim> [ms] [intensity]` | a face animation of the head (`S_ANGRY`, `S_FRIENDLY`, `T_HURT`...) |
+| `gestures pick [<n> ...]`, `gestures head on\|off` | `pick 6 3`: the next dialog gestures are `T_DIALOGGESTURE_06`, `03`, `06`... instead of ones at random (whatever the mood and the line left), `pick` alone: at random again; `head off`: the head goes with the gesture's animation and a gesture whose voice is over is cut in 0.3 s, as before (`OPENGOTHIC_GESTURE_HEAD=0`) |
 | `facecue <npc\|nearest\|player> <gesture> [L\|R]` | a facial gesture of its own head (`flash`, `doubt`, `smirk`...: the `cues` of its face profile); a one-sided one without a side goes on a side by the seed; columns `cue_*` show the gestures |
 | `faceleak <npc\|nearest\|player> <felt> <upper\|lower>` | a leak of the felt emotion (`friendly`, `angry`, `hostile`, `afraid`, `pain`) on half of its own head's face (the `leaks` of its face profile) now, as a line that hides a lie: with the liar's two blinks in the 2 s after it; column `cue_leak` shows its strongest weight |
 | `lips on\|off`, `lips param <name> <value>`, `lips params` | lip sync (off: the old talk loop) and its parameters |
-| `gestures on\|off`, `gestures param <name> <value>`, `gestures params` | the hands while one speaks (`TalkGestures`; off: a random gesture when a line starts) and its parameters: `Tail`, `Wait`, `MinLeft`, `Slack` (ms), `Long`, `RestScale`; the head: `Nod` (degrees), `NodHz`, `Stress`, `NodGap` (ms), `SwayYaw`, `SwayRoll` (degrees), `SwayTime`, `SwayLag` (ms); listening and thinking: `ListenSway`, `ListenNod` (degrees), `ListenHz`, `ListenGap` (ms), `ListenProb`, `DoubleNod`, `ThinkDelay` (ms), `ThinkYaw`, `ThinkPitch`, `ThinkTilt` (degrees), `AsideTime` (ms) |
+| `gestures on\|off`, `gestures param <name> <value>`, `gestures params` | the hands while one speaks (`TalkGestures`; off: a random gesture when a line starts) and its parameters: `Tail`, `Wait`, `MinLeft`, `Slack` (ms), `Long`, `RestScale`; the head: `Nod` (degrees; 0 by default: the speaker does not nod, the user's choice of 2026-11-13), `NodWeak` (of `Nod` on a just stressed syllable), `Stress`, `StressTop` (dB over the syllables before), `NodGap`, `NodDown`, `LiveDown`, `NodBack` (ms), `SwayYaw`, `SwayRoll` (degrees), `SwayTime`, `SwayLag` (ms); listening and thinking: `ListenSway`, `ListenNod` (degrees), `ListenDown`, `ListenBack`, `ListenGap` (ms), `ListenProb`, `DoubleNod`, `ThinkDelay` (ms), `ThinkYaw`, `ThinkPitch`, `ThinkTilt` (degrees), `AsideTime` (ms) |
 | `blink on\|off`, `blink param <name> <value>`, `blink params` | blinking (`EyeBlink`; off: nobody blinks) and its parameters: `MinGap`, `RestMean`, `SpeakMean`, `MaxGap`, `Hold`, `PauseMs`, `SoonMs`, `DoubleGap` (ms), `PauseProb`, `ShiftProb`, `DoubleProb` |
 | `hear <npc\|nearest\|player> <ms> [every ms]` | the hero speaks to it that long, his words come every so often (600 ms), as the bridge passes the partial transcripts of his voice: it listens, nods now and then; `player`: the hero listens to the nearest npc |
 | `think <npc\|nearest\|player> <ms>` | it thinks of an answer that long, as on the AI server's `thinking` status; `player`: the hero, of an answer to the nearest npc |
@@ -1129,6 +1142,31 @@ Lobart's lines and the accents Vino heard, each nod with its time and the face t
 `[face] listen` lines of `game.log`, the nods from `ge_lnods` of `metrics.csv`, the accents heard from
 `[ai] ... hears accent`.
 
+## Gesture head clip
+
+The head of one whose hands gesture as it speaks
+([gesture-head.md](../../reports/content/2026-11-hero-head/gesture-head.md)): the hero with an own head says lines of
+his original voice to Xardas in the tower of the default save, close up (`cam face 38`), each take with one dialog
+gesture the bench names (`gestures pick 3`: takes `g3`, `g6`, `g8`, `g9`); the nod and the sway of the voice are off,
+so the gesture alone moves the head. In `g6` and `g9` the line ends while the gesture plays and it is stopped half a
+second later. Take `wide` shows that stop whole from the front, take `npc` Xardas saying a line with gesture 06. No AI
+server. `OPENGOTHIC_GESTURE_HEAD=0` films "было" (the head goes with the gesture's animation, the gesture is cut in
+0.3 s):
+
+```bash
+OPENGOTHIC_CONTENT=<content with the hero's own head> TEMPEST_WINDOW_SIZE=1280x720 OPENGOTHIC_BENCH_REALTIME=1 \
+  TEMPEST_AUDIO_LOOPBACK=48000 SOUND=1 MUSIC=0 BENCH_HOST=ryzen [OPENGOTHIC_GESTURE_HEAD=0] \
+  scripts/bench.sh scripts/bench/gesture-head-clip.bench <out>
+uv run --with opencv-python-headless --with numpy python reports/content/2026-11-hero-head/gesture/track.py <out> g3 g6 g8 g9 npc
+uv run --with pillow --with numpy --with matplotlib python reports/content/2026-11-hero-head/gesture/clip.py <before out> <after out> <clip dir>
+```
+
+`track.py` writes `track-<take>.csv`: per frame the median optical flow of the face (brows, eyes, nose bridge) and of
+the wall behind, and prints the largest and the 95th percentile of the face against the wall, px a frame (the camera
+follows the head bone: a move of the whole head moves the wall, a turn or a tilt of it the face). `clip.py` writes
+`clip.mp4` ("было | стало" side by side, take by take), `key.txt` (the table of both runs: the screen, the tilt
+`g_froll`, the gaze error) and `steps.png` (the face against the wall over time).
+
 ## Speech face clip
 
 The acceptance clip of the face from the voice ([engine-plan.md](../../reports/content/2026-11-hero-head/engine-plan.md),
@@ -1159,6 +1197,44 @@ time of the voice) and `key.txt` (the lines, their tracks and emotions, the mome
 and the lip gap of each take by [`a2f/lip_gap_game.py`](../../reports/content/2026-11-hero-head/a2f/lip_gap_game.py) on
 its `face.csv`). The bench writes `face.csv` for any watched own head: per frame the weights its deformation shows; the
 columns `vf_w` (how far the face from the voice shows) and `vf_emo` (its track has an emotion) are in `metrics.csv`.
+
+## Player voice clip
+
+The acceptance clip of the hero's face under the player's live voice
+([player-voice-face.md](../../reports/content/2026-11-hero-head/player-voice-face.md), step 1): the hero with an own
+head says four recordings of the user's microphone through the AI server as the microphone (`ptt <wav>`: the server's
+`--voice-files` plays the file in real time, streams it back as `ptt_audio` v64, the bridge's live track drives
+`VISEME` and `SpeechBrows`), close up in Xardas' tower of the default save; then Xardas' line plays in the game while the
+microphone hears it (`npc-mix.wav`: his voice 12 dB below the hero's, the hero's phrase over it from 5 s on), once with
+`lips param LiveDuck 0` and once as it is; last the hero says two lines of his original voice (the mouth of a recorded
+voice on the same head). The recordings lie in `/tmp/player-voice/` on the Mac and on Ryzen (16 kHz mono 16-bit, not in
+git). The server runs on the Mac without a model or TTS, the ASR service with `--provider fake`; `--no-player-face`
+films "было" (the mouth still):
+
+```bash
+(cd asr-service && uv run gothic-asr serve --port 47930 --provider fake --fallback none --no-laughter) > $W/asr.log 2>&1 &
+(cd server && uv run gothic-ai serve --port 47931 --llm off --no-console --no-tts --a2f off --no-brain --no-quick \
+  --no-director --no-showrunner --no-embeddings --voice-files --asr-url ws://127.0.0.1:47930 \
+  --memory-db $W/memory.sqlite3 --trace-dir $W/traces [--no-player-face]) > $W/server.log 2>&1 &
+GOTHIC_AI_URL=ws://127.0.0.1:47931 OPENGOTHIC_CONTENT=<content with the hero's own head> TEMPEST_WINDOW_SIZE=1280x720 \
+  OPENGOTHIC_BENCH_REALTIME=1 TEMPEST_AUDIO_LOOPBACK=48000 SOUND=1 MUSIC=0 BENCH_HOST=ryzen \
+  scripts/bench.sh scripts/bench/player-voice-clip.bench <out>
+uv run --with pillow --with numpy python reports/content/2026-11-hero-head/a2f/player_voice_clip.py \
+  <now out> <before out> <MPFB head.glb> <head.glb> <clip dir> --clock-ms <game clock - server clock>
+```
+
+[`a2f/live_lag.py`](../../reports/content/2026-11-hero-head/a2f/live_lag.py) measures a run: per phrase the lag of the
+mouth (the gap between the lips from the weights of `face.csv` on the head's mesh) behind the voice by the peak of
+their cross-correlation, the voice starting where the server played its first chunk (`first_ms` and
+`first_delivery_us` of the bridge's `[ai] ptt_audio` line, the clocks corrected by `--clock-ms`); `lip_open` in the
+pauses of 150 ms and more, before the first word and while only Xardas' voice is in the microphone; the brow moves;
+and the bridge's times from the server's chunk to the bridge and to the tick that shows it (median and p95).
+`player_voice_clip.py` writes `clip.mp4` ("было | стало" side by side, then "без приглушения | с приглушением"; the
+sound is what the microphone heard, not shifted), `sheet.jpg` (pairs of frames on «п», «б», «у», a loud vowel, a
+pause and Xardas' voice) and `key.txt` (the parts, the frames and the measures).
+[`a2f/nod_clip.py`](../../reports/content/2026-11-hero-head/a2f/nod_clip.py) `<before out> <after out> <dir>` compares
+the hero's nod of two runs (segments `voice` and `own`): `clip.mp4` "было | стало", `nod.png` (`ge_pitch` over time with
+the syllables) and `key.txt` (nods, the largest step of a frame, the first frame of a nod, size, ms down and back).
 
 ## Native NPC calibration duels
 

@@ -21,11 +21,16 @@
 class Skeleton;
 class SaveArchive;
 class AnimationSolver;
-struct NpcLogicalState;
 
 class Pose final {
   public:
     Pose();
+
+    struct LogicEventObserver final {
+      void* context = nullptr;
+      void (*fired)(void*, const Animation::Sequence*, uint64_t origin,
+                    const Animation::LogicEvent&, uint64_t now) = nullptr;
+      };
 
     enum Flags {
       NoFlags       = 0,
@@ -51,7 +56,8 @@ class Pose final {
     bool               startAnim(const AnimationSolver &solver, const Animation::Sequence* sq,
                                  uint8_t comb, BodyState bs,
                                  StartHint hint, uint64_t tickCount);
-    bool               stopAnim(std::string_view name);
+    // atEase: its bones come to rest slowly (AnimBlend::easeOut: the hands of one whose voice is over)
+    bool               stopAnim(std::string_view name, bool atEase=false);
     bool               stopWalkAnim();
     void               interrupt();
     void               stopAllAnim();
@@ -59,8 +65,8 @@ class Pose final {
     void               setObjectMatrix(const Tempest::Matrix4x4& obj, bool sync);
     bool               update(uint64_t tickCount, bool force);
 
-    void               processLayers(AnimationSolver &solver, uint64_t tickCount, NpcLogicalState* logic=nullptr);
-    bool               processEvents(uint64_t& barrier, uint64_t now, Animation::EvCount &ev, NpcLogicalState* logic=nullptr) const;
+    void               processLayers(AnimationSolver &solver, uint64_t tickCount);
+    bool               processEvents(uint64_t& barrier, uint64_t now, Animation::EvCount &ev, const LogicEventObserver* logic=nullptr) const;
 
     Tempest::Vec3      animMoveSpeed(uint64_t tickCount, uint64_t dt) const;
     void               processSfx(AnimationGroundSound &npc, uint64_t tickCount);

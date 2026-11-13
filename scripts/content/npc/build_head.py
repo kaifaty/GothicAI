@@ -31,7 +31,10 @@ changed. A failing step stops the build with its name, the command and the tail 
 Writes into <content root> (default <work>/content): characters/<folder>/head.glb, head.face.json, head.frame.json,
 head.groom, materials/ and characters/characters.json (the instance's entry is replaced, others are kept). The sheet
 of likeness is <work>/sheet/likeness.jpg, the measures <work>/measures.json, the sheet and the numbers of the shape
-(outlines, hair and beard against the concept, shape_report.py) <work>/shape/shape.jpg and shape.json.
+(outlines, hair and beard against the concept, shape_report.py) <work>/shape/shape.jpg and shape.json, the bald
+head's outline against the concept's before and after the last pass <work>/outline/outline.jpg and outline.json,
+the bald model over the head before and after its folds went into the vertices <work>/relief/relief.jpg and
+relief.json, the lid lines read from the concept <work>/reg/eyes.jpg and eyes.json.
 """
 import hashlib
 import json
@@ -140,6 +143,8 @@ def steps(cdir, cfg, work, content, gpu=None):
     raw = {k: j('mesh', k, 'raw.npz') for k in ('full', 'bald')}
     place = ['--place', j('full', 'place.json'), '--tone', j('full', 'tone.json')]
     folder = 'hero'                                                    # export_test_head.py writes the hero only
+    VIEW = os.path.join(S, 'concept_view.py')                          # imported by place_ref.py and head_outline.py
+    EYES = os.path.join(S, 'eye_lines.py')                             # imported by auto_targets.py, concept_colours.py, head_measures.py
     head = os.path.join(content, 'characters', folder)
     out = []
 
@@ -228,8 +233,8 @@ def steps(cdir, cfg, work, content, gpu=None):
         blend(fit, os.path.join(FR, 'fu_deltas.py'), j('reg', 'eye_deltas.npz')),
         ['cp', T['lm'], T['lid_chains'], R],
         [PY, os.path.join(FR, 'concept_frame.py'), R, params, j('views', 'bald_front.png'), j('views', 'bald_profile.png')],
-        [PY, os.path.join(S, 'place_ref.py'), R]],
-        [fit, raw['bald'], params, j('views', 'bald_front.png'), j('views', 'bald_profile.png'), T['lm'], T['lid_chains']],
+        [PY, os.path.join(S, 'place_ref.py'), R, params, raw['bald'], j('views', 'bald_front.png'), j('views', 'bald_profile.png')]],
+        [fit, raw['bald'], params, j('views', 'bald_front.png'), j('views', 'bald_profile.png'), T['lm'], T['lid_chains'], VIEW],
         [j('reg', n) for n in ('mpfb.npz', 'ref.npz', 'views.json', 'groups.npz', 'eye_deltas.npz', 'place.json')],
         'export, frames, placing the bald model'))
     targets = [PY, os.path.join(S, 'auto_targets.py'), R, j('reg', 'lid_chains.json'), j('reg', 'points', 'concept_front.json'),
@@ -246,18 +251,30 @@ def steps(cdir, cfg, work, content, gpu=None):
          # no hand picks: the rims of the ears are found on the model and the template (ears.jpg shows them)
          [PY, os.path.join(S, 'ear_points.py'), R, j('reg', 'lm_fixed.json'), j('reg', 'lm_fixed.json'), j('reg', 'ears.jpg'),
           '--mask', j('reg', 'ears.npz')]]),
-        [j('reg', 'ref.npz'), j('reg', 'concept_front.png'), j('reg', 'lm_mpfb_front.png'), T['lm_fixed']] + ([picks] if picks else []),
-        [j('reg', 'lm_fixed.json')], 'face points, landmark targets'))
+        [j('reg', 'ref.npz'), j('reg', 'concept_front.png'), j('reg', 'lm_mpfb_front.png'), T['lm_fixed'], EYES] + ([picks] if picks else []),
+        [j('reg', 'lm_fixed.json'), j('reg', 'eyes.json')], 'face points, the lid lines of the concept, landmark targets'))
     out.append(Step('solve', [[PY, os.path.join(FR, 'reg_solve.py'), R, T['sched']]],
                     [j('reg', 'lm_fixed.json'), j('reg', 'ref.npz'), j('reg', 'mpfb.npz'), T['sched']],
                     [j('reg', 'reg.npz')], 'non-rigid registration'))
+    # the registration lays the vertices on the bald model, and bridges every fold narrower than its faces. The model's
+    # relief goes into the vertices (what is finer is kept for the normal map), then the head's outline is laid on the
+    # concept's, where the model itself departs from the concept
+    out.append(Step('relief', [[PY, os.path.join(S, 'head_relief.py'), R, j('relief'), '--ears', j('reg', 'ears.npz')]],
+                    [j('reg', n) for n in ('reg.npz', 'ref.npz', 'mpfb.npz', 'groups.npz', 'ears.npz')],
+                    [j('relief', n) for n in ('reg.npz', 'samples.npz', 'relief.json')], "the model's folds into the vertices"))
+    out.append(Step('outline', [[PY, os.path.join(S, 'head_outline.py'), R, params, j('views', 'bald_front.png'),
+                                 j('views', 'bald_profile.png'), j('outline'), '--ears', j('reg', 'ears.npz'),
+                                 '--reg', j('relief', 'reg.npz')]],
+                    [j('relief', 'reg.npz')] + [j('reg', n) for n in ('reg_log.json', 'ref.npz', 'mpfb.npz', 'groups.npz', 'ears.npz')]
+                    + [params, j('views', 'bald_front.png'), j('views', 'bald_profile.png'), VIEW],
+                    [j('outline', 'reg.npz'), j('outline', 'outline.json')], 'faces onto the model, the outline onto the concept'))
     C1 = j('round')
     out.append(Step('round', [
-        ['cp', j('reg', 'reg.npz'), j('reg', 'reg_log.json'), j('reg', 'lm_fixed.json'), C1],
-        blend(fit, os.path.join(FR, 'reg_apply.py'), j('reg', 'reg.npz'), j('reg', 'mpfb.npz'), j('round', 'reg.blend')),
+        ['cp', j('outline', 'reg.npz'), j('reg', 'reg_log.json'), j('reg', 'lm_fixed.json'), C1],
+        blend(fit, os.path.join(FR, 'reg_apply.py'), j('outline', 'reg.npz'), j('reg', 'mpfb.npz'), j('round', 'reg.blend')),
         blend(j('round', 'reg.blend'), os.path.join(FR, 'subsurf.py')),
         [PY, os.path.join(FR, 'blink_build.py'), R, C1, j('round', 'blink.npz')]],
-        [j('reg', 'reg.npz'), fit], [j('round', n) for n in ('reg.blend', 'reg_sub.blend', 'blink.npz')],
+        [j('outline', 'reg.npz'), fit], [j('round', n) for n in ('reg.blend', 'reg_sub.blend', 'blink.npz')],
         'the head, its subdivided copy, the blink'))
 
     # 5. the full model on the concept, brought to its tone
@@ -265,7 +282,7 @@ def steps(cdir, cfg, work, content, gpu=None):
         ['rm', '-f', j('full', 'ref_unplaced.npz')],
         blend(fit, os.path.join(FR, 'reg_export.py'), raw['full'], params, j('full')),
         [PY, os.path.join(FR, 'concept_frame.py'), j('full'), params, j('views', 'full_front.png'), j('views', 'full_profile.png')],
-        [PY, os.path.join(S, 'place_ref.py'), j('full')],
+        [PY, os.path.join(S, 'place_ref.py'), j('full'), params, raw['full'], j('views', 'full_front.png'), j('views', 'full_profile.png')],
         # outlines do not hold the full model along the view, and its outline is mostly hair: where both are bare
         # skin, it is put onto the head
         [PY, os.path.join(S, 'place_face.py'), j('full'), params, raw['full'], R, j('round', 'reg.npz'), j('views')],
@@ -273,7 +290,7 @@ def steps(cdir, cfg, work, content, gpu=None):
          j('full', 'tone.json'), '--place', j('full', 'place.json')],
         [MPY, os.path.join(S, 'face_points.py'), j('full', 'points'), 'concept_front=' + j('full', 'concept_front.png')]],
         [fit, raw['full'], params, j('views', 'full_front.png'), j('views', 'full_profile.png'), j('round', 'reg.npz'),
-         j('reg', 'mpfb.npz'), j('reg', 'groups.npz')],
+         j('reg', 'mpfb.npz'), j('reg', 'groups.npz'), VIEW],
         [j('full', n) for n in ('place.json', 'tone.json', 'concept_front.png', 'points/concept_front.json')],
         'placing the full model, its tone'))
 
@@ -309,7 +326,7 @@ def steps(cdir, cfg, work, content, gpu=None):
     out.append(Step('colour', [
         [PY, os.path.join(S, 'concept_colours.py'), j('views'), params, V, j('hair', 'groom.npz'), j('beard', 'beard_groom.npz'),
          T['eye'], j('colour')]],
-        [params, V, j('hair', 'groom.npz'), j('beard', 'beard_groom.npz'), T['eye']]
+        [params, V, j('hair', 'groom.npz'), j('beard', 'beard_groom.npz'), T['eye'], EYES]
         + [j('views', n+'.png') for n in ('full_front', 'full_profile', 'bald_front')]
         + [j('views', 'points', n+'.json') for n in ('full_front', 'bald_front')],
         [j('colour', n) for n in ('groom.npz', 'beard_groom.npz', 'hair_ramp.png', 'hair_pigment.png', 'eye.png')],
@@ -330,9 +347,10 @@ def steps(cdir, cfg, work, content, gpu=None):
     body = os.path.join(base_cache(), 'textures', 'HUM_BODY_NAKED_V8_C0.dds')
     out.append(Step('material', [
         [PY, os.path.join(S, 'skin_material.py'), U, GR, V, j('beard', 'skin_shaved.png'), T['points'], body,
-         os.path.join(head, 'head.frame.json'), j('material'), '--groom', j('hair', 'groom.npz')]],
-        [U, GR, V, j('beard', 'skin_shaved.png'), T['points'], body, os.path.join(head, 'head.frame.json'), j('hair', 'groom.npz')],
-        [j('material', n) for n in ('skin_game.png', 'skin_normal.png', 'skin_orm.png')], 'skin for the game'))
+         os.path.join(head, 'head.frame.json'), j('material'), '--groom', j('hair', 'groom.npz'), '--relief', j('relief', 'samples.npz')]],
+        [U, GR, V, j('beard', 'skin_shaved.png'), T['points'], body, os.path.join(head, 'head.frame.json'), j('hair', 'groom.npz'),
+         j('relief', 'samples.npz')],
+        [j('material', n) for n in ('skin_game.png', 'skin_normal.png', 'skin_orm.png', 'skin_height.png')], 'skin for the game'))
     shapes = cfg.get('shapes')
     if shapes not in (None, 'mark'):
         raise SystemExit(f'build_head: "shapes" may only be "mark", not {shapes!r}')
@@ -380,17 +398,23 @@ def steps(cdir, cfg, work, content, gpu=None):
         # the map before the game material: its rim fades into the body's skin, which Blender's neck does not have
         blend(j('round', 'reg_sub.blend'), os.path.join(S, 'hair', 'groom_render.py'), V, j('beard', 'skin_shaved.png'),
               j('colour', 'groom.npz'), j('sheet'), 's', '--groom', j('colour', 'beard_groom.npz'), '--eye', eye_map,
-              '--ramp', j('colour', 'hair_pigment.png'), '--views', 'front,quarter,profile', '--size', '900', '--spp', '128'),
+              '--ramp', j('colour', 'hair_pigment.png'), '--views', 'front,quarter,profile', '--size', '900', '--spp', '128',
+              '--height', j('material', 'skin_height.png'), '--light', 'portrait'),
         [PY, os.path.join(SK, 'likeness.py'), V, params, raw['full'], j('views', 'full_front.png'),
          j('views', 'full_profile.png'), j('sheet'), j('sheet', 'likeness.jpg'), *place]],
         [j('round', 'reg_sub.blend'), V, j('beard', 'skin_shaved.png'), j('colour', 'groom.npz'), j('colour', 'beard_groom.npz'),
-         j('colour', 'hair_pigment.png'), eye_map, params, raw['full'], j('full', 'place.json'), j('full', 'tone.json')],
+         j('colour', 'hair_pigment.png'), eye_map, params, raw['full'], j('full', 'place.json'), j('full', 'tone.json'),
+         j('material', 'skin_height.png')],
         [j('sheet', 'likeness.jpg')], 'Cycles renders and the likeness sheet'))
     lk = j('sheet', 'likeness.jpg')                                   # tiles of 600 px: concept, model, ours
     out.append(Step('measures', [[MPY, os.path.join(S, 'face_points.py'), j('sheet', 'points'),
-                                  f'concept={lk}:0,0,600,600', f'ours={lk}:1200,0,1800,600'],
+                                  f'concept={lk}:0,0,600,600', f'ours={lk}:1200,0,1800,600',
+                                  'ours_front=' + j('sheet', 's_front.png')],
                                  [PY, os.path.join(S, 'head_measures.py'), work]],
-                    [j('reg', 'reg_log.json'), j('reg', 'reg.npz'), j('sheet', 'likeness.jpg')],
+                    [j('reg', 'reg_log.json'), j('round', 'reg.npz'), j('outline', 'outline.json'), j('relief', 'relief.json'),
+                     j('reg', 'place.json'), j('full', 'place.json'), j('sheet', 'likeness.jpg'), j('sheet', 's_front.png'),
+                     j('reg', 'lid_chains.json'), j('views', 'full_front.png'), j('views', 'points', 'full_front.json'),
+                     EYES],
                     [j('measures.json')], 'measures of defects'))
     out.append(Step('shape', [[PY, os.path.join(S, 'shape_report.py'), work]],
                     [j('round', 'reg.npz'), j('reg', 'place.json'), j('full', 'place.json'), j('colour', 'groom.npz'),

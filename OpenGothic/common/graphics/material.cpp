@@ -4,6 +4,8 @@
 #include "utils/parser.h"
 #include "resources.h"
 
+#include <cmath>
+
 using namespace Tempest;
 
 static Tempest::Color toColor(asset::Color v) {
@@ -70,11 +72,24 @@ Material::Material(const asset::Material& m, bool enableAlphaTest, bool requireA
      !hasFrameAnimation() && !hasUvAnimation() && m.wave_mode==asset::WaveMode::NONE) {
     if(!maps.present)
       maps = Resources::loadMaterialMaps(m.texture);
+    // Projection by world position is for opaque surfaces: a texture with alpha (anything but DXT1) rejects the record
+    // whole, whatever the zen material using it, and the material takes the original texture as if there were none
+    if(maps.projectionTile>0 && tex!=nullptr && Resources::textureFormat(tex)!=Tempest::TextureFormat::DXT1) {
+      Resources::rejectMaterialMaps(m.texture,"projection on an alpha-tested texture");
+      maps = {};
+      tex  = Resources::loadTexture(m.texture,false,false);
+      if(tex==nullptr)
+        tex = Resources::loadTexture("DEFAULT.TGA",false,false);
+      alpha = loadAlphaFunc(sourceAlphaFunc,sourceMaterialGroup,sourceColorAlpha,tex,alphaTestEnabled,alphaTestRequired);
+      classifiedAlpha = alpha;
+      }
     normal  = maps.normal;
     orm     = maps.orm;
     uvScale = maps.scale;
     antitileCell = maps.antitileCell;
     antitile = maps.antitile;
+    projectionTile = maps.projectionTile;
+    fringe = maps.fringe;
     emissive = maps.orm!=nullptr ? maps.emissive : 0.f;
     hair = maps.hair || maps.strand;
     strand = maps.strand;
@@ -115,6 +130,8 @@ bool Material::operator ==(const Material& other) const {
          uvScale==other.uvScale &&
          antitileCell==other.antitileCell &&
          antitile==other.antitile &&
+         projectionTile==other.projectionTile &&
+         fringe==other.fringe &&
          materialMaps==other.materialMaps &&
          frames==other.frames &&
          alpha==other.alpha &&
@@ -136,6 +153,19 @@ bool Material::operator ==(const Material& other) const {
          strand==other.strand &&
          eye==other.eye &&
          envMapping==other.envMapping;
+  }
+
+float Material::projectionUvScale() const {
+  return hasProjection() && alpha==Solid ? 1.f/(projectionTile*100.f) : 0.f;
+  }
+
+float Material::textureUvPerMetre(float meshUvPerMetre, bool morph) const {
+  if(meshUvPerMetre<=0)
+    return meshUvPerMetre; // no usable triangle: the whole chain, as without a material
+  // by world position the density is the same on every face: one repeat per projectionTile metres
+  if(const float k = projectionUvScale(); k>0 && !morph)
+    return k*100.f;
+  return meshUvPerMetre*std::abs(uvScale);
   }
 
 bool Material::isSolid() const {

@@ -144,7 +144,7 @@ python $F/cutout.py bald.png views/view00_azim000.png 0 0 887; python $F/cutout.
 scripts/content/mesh3d/run-mesh3d.sh --model pixal3d --views views --seed 1 --min-free-mib 21000 --max-downtime 1500 --authorization <метка>
 blender -b $W/fit3a/base/fit.blend -P $F/reg/reg_export.py -- raw.npz $F/params-3a.json $D
 $PY $F/reg/concept_frame.py $D $F/params-3a.json front.png profile.png
-$PY $S/place_ref.py $D
+$PY $S/place_ref.py $D $F/params-3a.json raw.npz front.png profile.png
 $MP $S/face_points.py $D/points concept_front=$D/concept_front.png tmpl_front=$D/lm_mpfb_front.png
 $PY $F/reg/lm_pick.py $D $F/reg/picks-3a.json $F/reg/lm_fixed.json 5.8
 $PY $S/auto_targets.py $D $D/lid_chains.json $D/points/concept_front.json $D/points/tmpl_front.json $D/lm_fixed.json $D/lm_fixed.json 5.8
@@ -157,7 +157,7 @@ $PY $F/reg/reg_solve.py $D $F/reg/sched9.json
 
 ```
 H=reports/content/2026-11-hero-head; M="--place $F3/place.json --tone $F3/tone.json"
-$PY $S/place_ref.py $F3                      # ref.npz полной модели, views.json и кадры концепта с волосами
+$PY $S/place_ref.py $F3 $H/fit/params-3a.json $RAW front_ref.png profile_ref.png   # ref.npz полной модели, views.json и кадры концепта с волосами
 $PY $H/skin/tone_ref.py $R/views.json $H/fit/params-3a.json $RAW front_ref.png $F3/tone.json --place $F3/place.json
 blender -b $R/c1/reg.blend -P $H/skin/dump_uv.py -- uv.npz
 $PY $H/skin/beard_shell.py uv.npz $R/groups.npz $R/views.json $H/fit/params-3a.json $RAW $K 1024 $M

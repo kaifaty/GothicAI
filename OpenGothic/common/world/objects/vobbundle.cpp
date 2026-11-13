@@ -3,9 +3,10 @@
 #include "world/world.h"
 #include "world/voblayer.h"
 #include "resources.h"
+#include "worldbase.h"
 
 VobBundle::VobBundle(World& owner, std::string_view filename, Vob::Flags flags) {
-  auto* bundle = Resources::loadVobBundle(filename);
+  auto* bundle = loadVobBundle(filename);
   for(auto& vob:*bundle) {
     rootVobs.emplace_back(Vob::load(nullptr,owner,*vob,(flags | Vob::Startup)));
     if(VobLayer::isAdded(*vob)) slotLocalTransforms.push_back(rootVobs.back()->transform());

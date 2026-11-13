@@ -77,7 +77,7 @@ endif()
 file(GLOB_RECURSE OPENGOTHIC_SOURCES "common/*.h" "common/*.cpp")
 foreach(source zenkitlog daedalus/vm daedalus/script daedalus/classes baseidentity basestoreimport sha256 baseimport basesources worldchunks worldchunksruntime worldchunkmanifest worldchunkbinary worldchunkindex worldchunkcook worldchunkassemble worldchunkcookedsource physics/worldcloth physics/worldclothbundle physics/worldcollisionmesh worlddata modeldata fontdata programdata outputunits audiodata basemesh gothicglb gltfmesh asset/fromzenkit asset/worldfromzenkit asset/modelfromzenkit asset/programfromzenkit
                utils/fileutil dmusic/sourcefile dmusic/riff dmusic/segment dmusic/track dmusic/style dmusic/band
-               dmusic/reference dmusic/info dmusic/pattern musicdata dmusic/dlscollection dmusic/wave dmusic/soundfont
+               dmusic/reference dmusic/info dmusic/pattern musicdata dmusic/musicrecord dmusic/dlscollection dmusic/wave dmusic/soundfont
                dmusic/hydra dmusic/directmusicimport dmusic/dlsruntime dmusic/styleruntime dmusic/waveruntime
                videodata videoimport bink/video bink/frame)
   list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/${source}.cpp")
@@ -182,19 +182,8 @@ add_definitions(-DMINIZ_NO_STDIO)
 add_library(miniz STATIC EXCLUDE_FROM_ALL "lib/miniz/miniz.h" "lib/miniz/miniz.c")
 target_link_libraries(${PROJECT_NAME} miniz)
 include(cmake/BaseImport.cmake)
-# Runtime manifest reading and cooked chunks (.wcb), like worldchunksruntime.cpp, stay outside the base
-# format fingerprint: added here and not in BaseImport.cmake, which is a base format input.
-target_sources(gothic-base-runtime PRIVATE "${BASE_ROOT}/common/worldchunkmanifest.cpp"
-  "${BASE_ROOT}/common/worldchunkbinary.cpp" "${BASE_ROOT}/common/worldchunkindex.cpp" "${BASE_ROOT}/common/worldchunkcook.cpp"
-  "${BASE_ROOT}/common/worldchunkassemble.cpp" "${BASE_ROOT}/common/worldchunkcookedsource.cpp")
-include(cmake/WorldCloth.cmake)
-if(MSVC)
-  # musicnative.c (runtime) and basemusic.c/musicnativeimport.c (import) read dmusic's private structs
-  # with C11 _Atomic counters; dmusic opts its own sources in the same way. Set here, not in
-  # BaseImport.cmake: that file is a base format input, and a flag must not change the base fingerprint.
-  target_compile_options(gothic-base-runtime PRIVATE $<$<COMPILE_LANGUAGE:C>:/experimental:c11atomics>)
-  target_compile_options(gothic-base-import PRIVATE $<$<COMPILE_LANGUAGE:C>:/experimental:c11atomics>)
-endif()
+# Runtime manifest reading, cooked chunks, world cloth and the MSVC flag: one list for every build with the base.
+include(cmake/BaseRuntime.cmake)
 include(cmake/VideoImport.cmake)
 add_subdirectory(common/daedalus)
 target_link_libraries(${PROJECT_NAME} gothic-daedalus)
@@ -688,6 +677,9 @@ endif()
   add_executable(gothic-worldcollision-chunks-contract EXCLUDE_FROM_ALL tests/worldcollision_chunks_contract.cpp)
   target_link_libraries(gothic-worldcollision-chunks-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
   target_include_directories(gothic-worldcollision-chunks-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
+  add_executable(gothic-collisioncache-cpu-contract EXCLUDE_FROM_ALL tests/collisioncache_cpu_contract.cpp)
+  target_link_libraries(gothic-collisioncache-cpu-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
+  target_include_directories(gothic-collisioncache-cpu-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   add_executable(gothic-asset-digest EXCLUDE_FROM_ALL tests/asset_digest.cpp)
   target_link_libraries(gothic-asset-digest PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
   target_include_directories(gothic-asset-digest SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
@@ -733,6 +725,7 @@ endif()
     target_compile_options(gothic-wcb-source-contract PRIVATE -Wall -Wconversion -Werror)
     target_compile_options(gothic-worldcloth-cooked-contract PRIVATE -Wall -Wconversion -Werror)
     target_compile_options(gothic-worldcollision-chunks-contract PRIVATE -Wall -Wconversion -Werror)
+    target_compile_options(gothic-collisioncache-cpu-contract PRIVATE -Wall -Wconversion -Werror)
   endif()
   add_custom_target(check-cloth
     COMMAND $<TARGET_FILE:gothic-cloth-contract>

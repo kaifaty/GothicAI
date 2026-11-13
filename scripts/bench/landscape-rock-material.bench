@@ -1,0 +1,76 @@
+# Rock material of the landscape pilot (step В3, reports/content/2026-11-landscape-pilot/b3-rock-material.md): the
+# wall and the boulder by the road south of Akil's farm, a ledge seen from afar, the rock arch at the bandit camp,
+# a walk along the wall, the wall at a low sun. The views of the layers probe; change them only with the note.
+# Run with OPENGOTHIC_CONTENT=<set> and with OPENGOTHIC_CONTENT= (the original), put the frames side by side.
+# @timeout 900
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+walkmode run
+watch player
+cam game
+set time 12 0
+
+goto NW_FARM2_TO_TAVERN_02
+clear 3000
+face wp NW_FARM2_TO_TAVERN_04
+streaming wait
+wait 10000
+shot road-1
+wait 200
+turn 90
+wait 2500
+shot road-2
+wait 200
+turn 90
+wait 2500
+shot road-3
+wait 200
+turn 90
+wait 2500
+shot road-4
+wait 200
+
+goto pos 35110 3829 429
+clear 3000
+streaming wait
+cam at 35110 3969 429 35110 4139 1529
+wait 10000
+shot ledge
+wait 200
+
+cam game
+goto NW_FARM2_TO_TAVERN_05
+clear 3000
+face wp NW_FARM2_TO_TAVERN_06
+streaming wait
+wait 10000
+shot arch
+wait 200
+
+goto NW_FARM2_TO_TAVERN_01
+clear 3000
+face wp NW_FARM2_TO_TAVERN_03
+streaming wait
+wait 5000
+rec walk-rock
+wait 1000
+walkto NW_FARM2_TO_TAVERN_06
+waitarrive 60000
+wait 1000
+stop
+
+set time 17 30
+goto NW_FARM2_TO_TAVERN_02
+clear 3000
+face wp NW_FARM2_TO_TAVERN_04
+streaming wait
+wait 10000
+shot eve-1
+wait 200
+turn 180
+wait 2500
+shot eve-3
+wait 200

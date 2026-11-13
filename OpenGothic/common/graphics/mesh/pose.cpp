@@ -1,5 +1,4 @@
 #include "pose.h"
-#include "world/npclogicalstate.h"
 
 #include <Tempest/Log>
 
@@ -415,7 +414,7 @@ const Animation::Sequence* Pose::footTransition(const AnimationSolver& solver, c
   return ret;
   }
 
-bool Pose::stopAnim(std::string_view name) {
+bool Pose::stopAnim(std::string_view name, bool atEase) {
   bool done=false;
   size_t ret=0;
   for(size_t i=0;i<lay.size();++i) {
@@ -428,6 +427,8 @@ bool Pose::stopAnim(std::string_view name) {
         lay[ret] = lay[i];
       ret++;
       } else {
+      if(atEase)
+        blend.easeOut(lay[i].seq);
       onRemoveLayer(lay[i]);
       done=true;
       }
@@ -473,7 +474,7 @@ void Pose::stopAllAnim() {
   lay.clear();
   }
 
-void Pose::processLayers(AnimationSolver& solver, uint64_t tickCount, NpcLogicalState*) {
+void Pose::processLayers(AnimationSolver& solver, uint64_t tickCount) {
   if(hasTransitions==0)
     return;
 
@@ -1061,20 +1062,20 @@ void Pose::processPfx(AnimationPfx& world, uint64_t tickCount) {
     i.seq->processPfx(layerTime(i,lastUpdate),i.sAnim,layerTime(i,tickCount),world);
   }
 
-bool Pose::processEvents(uint64_t &barrier, uint64_t now, Animation::EvCount &ev, NpcLogicalState* logic) const {
+bool Pose::processEvents(uint64_t &barrier, uint64_t now, Animation::EvCount &ev, const LogicEventObserver* logic) const {
   if(hasEvents==0) {
     barrier=now;
     return false;
     }
 
   for(auto& i:lay) {
-    if(logic!=nullptr && NpcLogicAudit::enabled()) {
-      struct Context { NpcLogicalState* logic; const Layer* layer; uint64_t now; } context{logic,&i,now};
+    if(logic!=nullptr && logic->fired!=nullptr) {
+      struct Context { const LogicEventObserver* logic; const Layer* layer; uint64_t now; } context{logic,&i,now};
       Animation::LogicEventObserver observer;
       observer.context=&context;
       observer.fired=[](void* opaque, const Animation::LogicEvent& event) {
         const auto& ctx=*static_cast<Context*>(opaque);
-        ctx.logic->eventFired(ctx.layer->seq,ctx.layer->sOrigin,event,ctx.now);
+        ctx.logic->fired(ctx.logic->context,ctx.layer->seq,ctx.layer->sOrigin,event,ctx.now);
         };
       i.seq->processEvents(layerTime(i,barrier),i.sAnim,layerTime(i,now),ev,&observer);
       } else {

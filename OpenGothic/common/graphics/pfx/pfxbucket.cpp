@@ -202,7 +202,7 @@ PfxBucket::Block& PfxBucket::getBlock(ImplEmitter &e) {
   return block[e.block];
   }
 
-PfxBucket::Block& PfxBucket::getBlock(PfxEmitter& e) {
+PfxBucket::Block& PfxBucket::getBlock(PfxSlot& e) {
   return getBlock(impl[e.id]);
   }
 
@@ -543,7 +543,7 @@ void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
     const bool nearby = (dp.quadLength()<PfxObjects::viewRage*PfxObjects::viewRage);
 
     if(emitter.next==nullptr && decl.ppsCreateEm!=nullptr && emitter.waitforNext<dt && emitter.st==S_Active) {
-      emitter.next.reset(new PfxEmitter(parent,decl.ppsCreateEm));
+      emitter.next.reset(new PfxSlot(parent,decl.ppsCreateEm));
       auto& e = *emitter.next;
       e.setPosition(emitter.pos.x,emitter.pos.y,emitter.pos.z);
       e.setActive(true);

@@ -152,7 +152,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     auto       bBox() const -> const Tempest::Vec3*;
     auto       bBoxCol() const -> const Tempest::Vec3*;
 
-    void       stopDlgAnim();
+    void       stopDlgAnim(bool atEase=false);  // atEase: its line is over, the hands come to rest slowly
     void       clearSpeed();
     bool       resetPositionToTA();
     // Construction order of this process's NPCs (game/gamescript_startupfloor.h hides newer bodies while replaying a fix).
@@ -289,6 +289,8 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     // a voiced line starts: the mouth follows the voice (LipSync)
     void       startSpeech(const Tempest::Sound& voice, std::string_view name = {});  // name: of the line (the seed of the face)
     void       startSpeech(std::shared_ptr<LipSync::Track> voice);
+    // its voice sounds now: a voiced line moves its mouth or holds its output (a head without mouth shapes)
+    bool       isVoiceSounding() const;
     // the face track of a line of the AI (say_face): the voice of the line `line` plays it, in any order with it
     void       setFaceTrack(std::shared_ptr<const SpeechFace::Track> track, std::string_view line);
     // of the line it starts to say: its gestures follow it; line: its id of the AI (its brows follow the mood too);

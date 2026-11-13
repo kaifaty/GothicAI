@@ -2,14 +2,12 @@
 #include "settings.h"
 
 #include "collisionworld.h"
-#include "collisioncache.h"
 #include "physicmeshshape.h"
 #include "physicvbo.h"
 #include "ragdoll.h"
 #include "cloth.h"
 #include "worldwind.h"
 #include "frameprofile.h"
-#include "basestore.h"
 #include "sha256.h"
 #include <Tempest/Log>
 #include "graphics/mesh/skeleton.h"
@@ -185,14 +183,18 @@ struct DynamicWorld::ItemTrace {
   };
 
 struct DynamicWorld::WorldBodies {
-  std::vector<JPH::Vec3>                        vertices;
   std::vector<JPH::Vec3>                        clothVertices;
   std::unique_ptr<CollisionWorld::CollisionBody> landscape;
   std::unique_ptr<CollisionWorld::CollisionBody> water;
   std::unique_ptr<CollisionWorld::CollisionBody> originalCloth;
   };
 
-DynamicWorld::DynamicWorld(PhysicsHost* owner, const asset::WorldMesh& worldMesh, const asset::WorldMesh* originalCloth) {
+DynamicWorld::DynamicWorld(PhysicsHost* owner, const asset::WorldMesh& worldMesh, const asset::WorldMesh* originalCloth)
+  :DynamicWorld(owner,[&worldMesh]() -> const asset::WorldMesh& { return worldMesh; },originalCloth,nullptr) {
+  }
+
+DynamicWorld::DynamicWorld(PhysicsHost* owner, const StaticCollision::Input& input, const asset::WorldMesh* originalCloth,
+                           const StaticCollision::Cache* cache) {
   world.reset(new CollisionWorld(owner));
   host=owner;
   if(owner!=nullptr)
@@ -218,30 +220,11 @@ DynamicWorld::DynamicWorld(PhysicsHost* owner, const asset::WorldMesh& worldMesh
     });
 
   {
-  PackedMesh pkg(worldMesh,PackedMesh::PK_Physic);
-  sectors.resize(pkg.subMeshes.size());
-  for(size_t i=0;i<sectors.size();++i)
-    sectors[i] = pkg.subMeshes[i].material.name;
-
-  bodies->vertices.resize(pkg.vertices.size());
-  for(size_t i=0;i<pkg.vertices.size();++i) {
-    auto v = pkg.vertices[i];
-    bodies->vertices[i] = CollisionWorld::toMeters(Tempest::Vec3(v.pos[0],v.pos[1],v.pos[2]));
-    }
-
-  landMesh .reset(new PhysicVbo(&bodies->vertices));
-  waterMesh.reset(new PhysicVbo(&bodies->vertices));
-
-  for(size_t i=0;i<pkg.subMeshes.size();++i) {
-    auto& sm = pkg.subMeshes[i];
-    if(!sm.material.disable_collision && sm.iboLength>0) {
-      if(sm.material.group==asset::MaterialGroup::WATER) {
-        waterMesh->addIndex(pkg.indices,sm.iboOffset,sm.iboLength,sm.material.group);
-        } else {
-        landMesh ->addIndex(pkg.indices,sm.iboOffset,sm.iboLength,sm.material.group,sectors[i].c_str());
-        }
-      }
-    }
+  const auto started=std::chrono::steady_clock::now();
+  const auto game=cache==nullptr && owner!=nullptr ? StaticCollision::gameCache(*owner,splitStaticTriangles) : StaticCollision::Cache{};
+  const auto keyMs=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count();
+  statics=std::make_unique<StaticCollision>(input,cache!=nullptr ? *cache : game,splitStaticTriangles);
+  statics->stats.keyMs+=keyMs;
   }
 
   if(originalCloth!=nullptr && !originalCloth->polygons.material_indices.empty()) {
@@ -255,55 +238,12 @@ DynamicWorld::DynamicWorld(PhysicsHost* owner, const asset::WorldMesh& worldMesh
         originalClothMesh->addIndex(pkg.indices,sub.iboOffset,sub.iboLength,sub.material.group);
     }
 
-  auto started=std::chrono::steady_clock::now();
-  const auto elapsed=[&]() {
-    const auto now=std::chrono::steady_clock::now();
-    const auto milliseconds=std::chrono::duration<double,std::milli>(now-started).count();
-    started=now;
-    return milliseconds;
-    };
-  std::filesystem::path cacheRoot;
-  CollisionCache::Key key;
-  const auto* cacheEnabled=std::getenv("OPENGOTHIC_COLLISION_CACHE");
-  if(owner!=nullptr && (cacheEnabled==nullptr || std::string_view(cacheEnabled)!="0")) {
-    try {
-      cacheRoot=BaseStore::cacheRoot();
-      }
-    catch(const std::exception&) {
-      // An unavailable derived cache must not prevent building the collision.
-      }
-    const auto inputs=Resources::wayHeightInputs(owner->name());
-    const auto& flags=Settings::physicsFlags();
-    key={inputs.baseFingerprint,std::filesystem::path(owner->name()).stem().string(),inputs.contentFingerprint,
-         uint32_t(flags.cloth)|(uint32_t(flags.movableVobs)<<1)|(uint32_t(splitStaticTriangles)<<2)};
-    }
-  CollisionCache cache(cacheRoot,key);
-  collisionLoadStats.keyMs=elapsed();
-  JPH::ShapeRefC landscapeShape,waterShape;
-  if(!cache.path().empty()) {
-    collisionLoadStats.cacheHit=cache.read(landscapeShape,waterShape);
-    collisionLoadStats.readMs=elapsed();
-    }
-  if(!collisionLoadStats.cacheHit) {
-    landscapeShape=landMesh->shape(splitStaticTriangles);
-    waterShape=waterMesh->shape();
-    collisionLoadStats.buildMs=elapsed();
-    if(!cache.path().empty()) {
-      cache.save(landscapeShape.GetPtr(),waterShape.GetPtr());
-      collisionLoadStats.writeMs=elapsed();
-      }
-    }
-
-  // Cached shapes skip shape(), which normally prepares immutable source data.
-  // Contact listeners may query it concurrently once the bodies are published.
-  landMesh->prepareTriangleData();
-  waterMesh->prepareTriangleData();
   JPH::Vec3 bbox[2] = {JPH::Vec3::sZero(), JPH::Vec3::sZero()};
   Tempest::Matrix4x4 mt;
   mt.identity();
-  if(landscapeShape!=nullptr) {
-    bodies->landscape = world->addCollisionBody(landscapeShape,mt,materialFriction(asset::MaterialGroup::NONE),
-                                               C_Landscape,false,false,landMesh.get());
+  if(statics->landShape!=nullptr) {
+    bodies->landscape = world->addCollisionBody(statics->landShape,mt,materialFriction(asset::MaterialGroup::NONE),
+                                               C_Landscape,false,false,statics->land.get());
     bodies->landscape->setLabel("landscape");
     JPH::Vec3 min, max;
     bodies->landscape->getAabb(min,max);
@@ -311,8 +251,8 @@ DynamicWorld::DynamicWorld(PhysicsHost* owner, const asset::WorldMesh& worldMesh
     bbox[1] = JPH::Vec3::sMax(bbox[1],max);
     }
 
-  if(waterShape!=nullptr) {
-    bodies->water = world->addCollisionBody(waterShape,mt,0,C_Water,false,true,waterMesh.get());
+  if(statics->waterShape!=nullptr) {
+    bodies->water = world->addCollisionBody(statics->waterShape,mt,0,C_Water,false,true,statics->water.get());
     JPH::Vec3 min, max;
     bodies->water->getAabb(min,max);
     bbox[0] = JPH::Vec3::sMin(bbox[0],min);
@@ -1001,7 +941,7 @@ float DynamicWorld::rayBox(const Tempest::Vec3& orig, const Tempest::Vec3& dir, 
   }
 
 std::string_view DynamicWorld::validateSectorName(std::string_view name) const {
-  return landMesh->validateSectorName(name);
+  return statics->land->validateSectorName(name);
   }
 
 void DynamicWorld::setNpcReplaySeq(uint32_t seq) {

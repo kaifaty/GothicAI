@@ -5,10 +5,14 @@
 #include "physics/collisioncache.h"
 #include "physics/collisionworld.h"
 #include "physics/dynamicworld.h"
-#include "physics/physicvbo.h"
+#include "physics/staticcollision.h"
+#include "physics/worldcloth.h"
 #include "resources.h"
+#include "settings.h"
 #include "world/wayheights.h"
 #include "world/world.h"
+
+#include <Tempest/Log>
 
 #include <algorithm>
 #include <array>
@@ -67,9 +71,35 @@ void write(const fs::path& file, std::string_view bytes) {
   require(bool(output),"cannot write "+file.string());
   }
 
+// The world cloth part of a collision key from its parts, independently of StaticCollision::clothRules.
+std::string clothRulesKey() {
+  std::string out;
+  for(const auto byte:WorldCloth::rulesSha256()) {
+    char hex[3];
+    std::snprintf(hex,sizeof(hex),"%02x",unsigned(byte));
+    out+=hex;
+    }
+  return out+"/"+std::to_string(WorldCloth::Algorithm);
+  }
+
 std::string read(const fs::path& file) {
   std::ifstream input(file,std::ios::binary);
   return {std::istreambuf_iterator<char>(input),std::istreambuf_iterator<char>()};
+  }
+
+// A stone quad of the sector "cache-fixture" and a water quad: both shapes of the cache.
+asset::WorldMesh cacheFixtureMesh() {
+  asset::WorldMesh mesh;
+  mesh.vertices={{-100,0,-100},{-100,0,100},{100,0,100},{100,0,-100},
+                 {-100,-50,-100},{-100,-50,100},{100,-50,100},{100,-50,-100}};
+  mesh.materials.resize(2);
+  mesh.materials[0].name="cache-fixture";
+  mesh.materials[0].group=asset::MaterialGroup::STONE;
+  mesh.materials[1].name="cache-fixture-water";
+  mesh.materials[1].group=asset::MaterialGroup::WATER;
+  mesh.polygons.vertex_indices={0,2,1,0,3,2,4,6,5,4,7,6};
+  mesh.polygons.material_indices={0,0,1,1};
+  return mesh;
   }
 
 void collisionFiles(const fs::path& root) {
@@ -81,23 +111,24 @@ void collisionFiles(const fs::path& root) {
   const auto inputs=Resources::wayHeightInputs("SMALL.ZEN");
   require(!inputs.baseFingerprint.empty() && !inputs.contentFingerprint.empty(),"collision inputs unavailable");
   const CollisionCache::Key key{inputs.baseFingerprint,"SMALL",inputs.contentFingerprint};
-  const std::vector<JPH::Vec3> vertices={{-1,0,-1},{-1,0,1},{1,0,1},{1,0,-1}};
-  PhysicVbo mesh(&vertices);
-  mesh.addIndex({0,2,1,0,3,2},0,6,asset::MaterialGroup::STONE,"cache-fixture");
-  const auto shape=mesh.shape();
-  CollisionCache cache(root,key);
-  JPH::ShapeRefC land,water;
-  require(!cache.read(land,water),"cold collision cache must miss");
-  cache.save(shape.GetPtr(),shape.GetPtr());
-  require(cache.read(land,water) && land!=nullptr && water!=nullptr,"collision cache must restore both shapes");
+  const auto mesh=cacheFixtureMesh();
+  const StaticCollision::Input input=[&]() -> const asset::WorldMesh& { return mesh; };
+  // Each load reads the cache and, on a miss, builds from the mesh and writes it.
+  const auto hit=[&](const CollisionCache::Key& k) {
+    return StaticCollision(input,StaticCollision::Cache{root,k},false).stats.cacheHit;
+    };
+  const CollisionCache cache(root,key);
+  require(!hit(key),"cold collision cache must miss");
+  {
+    const StaticCollision restored(input,StaticCollision::Cache{root,key},false);
+    require(restored.stats.cacheHit && restored.landShape!=nullptr && restored.waterShape!=nullptr,
+            "collision cache must restore both shapes");
+  }
   const auto saved=read(cache.path());
   require(!saved.empty(),"collision save must write a file");
   const auto rebuild=[&](const CollisionCache::Key& changed,const char* reason) {
-    CollisionCache invalid(root,changed);
-    land=water=nullptr;
-    require(!invalid.read(land,water),reason);
-    invalid.save(shape.GetPtr(),shape.GetPtr());
-    require(invalid.read(land,water),"collision miss must be replaceable by a valid bake");
+    require(!hit(changed),reason);
+    require(hit(changed),"collision miss must be replaceable by a valid bake");
     };
   auto changed=key;
   changed.content="foreign content";
@@ -123,14 +154,11 @@ void collisionFiles(const fs::path& root) {
   rebuild(key,"damaged Jolt payload must rebuild before deserialization");
   {
     Environment disabled("OPENGOTHIC_COLLISION_CACHE","0");
-    CollisionCache bypass(root,key);
-    land=water=nullptr;
     const auto before=read(cache.path());
-    require(!bypass.read(land,water),"disabled collision cache must not read a valid bake");
-    bypass.save(nullptr,nullptr);
+    require(!hit(key),"disabled collision cache must not read a valid bake");
     require(read(cache.path())==before,"disabled collision cache must not overwrite an existing bake");
     fs::remove(cache.path());
-    bypass.save(shape.GetPtr(),shape.GetPtr());
+    hit(key);
     require(!fs::exists(cache.path()),"disabled collision cache must not create a bake");
   }
   std::puts("Collision files: both shapes restored; foreign key, world content edit, flags, bake version, truncated file and checksum rebuild; disabled read/write bypass passed");
@@ -257,6 +285,10 @@ struct WayHeightsContract {
     std::vector<CollisionWorld::CharacterMoveResult> movement;
     NavMesh::Geometry navigation;
     DynamicWorld::StaticCollisionLoadStats stats;
+    std::string mark;              // World's physics_static load mark, from stage= to its end
+    size_t worldCollisionLines=0;  // [world-collision] lines of the load
+    StaticCollision::Cache cache;  // the game's cache of the loaded World (StaticCollision::gameCache)
+    bool split=true;
     };
   struct Ground {
     std::string name;
@@ -299,11 +331,21 @@ struct WayHeightsContract {
     }
 
   static CollisionSnapshot collisionLoad(Gothic& gothic, const char* mode) {
+    std::string log;
+    // Tempest splits lines past 255 bytes; the pieces joined give the text back.
+    Tempest::Log::setOutputCallback([&log](Tempest::Log::Mode,const char* piece) { log+=piece; });
     gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
+    Tempest::Log::setOutputCallback({});
     auto& scene=*gothic.world();
     auto& physics=*scene.wdynamic;
     CollisionSnapshot result;
+    if(const auto at=log.find("stage=physics_static "); at!=std::string::npos)
+      result.mark=log.substr(at,log.find('[',at)-at);
+    for(auto at=log.find("[world-collision]");at!=std::string::npos;at=log.find("[world-collision]",at+1))
+      ++result.worldCollisionLines;
     result.stats=physics.staticCollisionLoadStats();
+    result.split=physics.staticCollisionSplit();
+    result.cache=StaticCollision::gameCache(scene,result.split);
     result.navigation=physics.navigationGeometry();
     const float infinity=std::numeric_limits<float>::infinity();
     Tempest::Vec3 minimum(infinity),maximum(-infinity);
@@ -406,6 +448,14 @@ struct WayHeightsContract {
                 static_cast<unsigned long long>(key));
     }
 
+  // A load that built the collision called the input once: the mark names it and says collision=build.
+  static void requireBuilt(const CollisionSnapshot& load, const char* mode) {
+    require(load.mark.find(" input=")!=std::string::npos && load.mark.find(" input=cache")==std::string::npos &&
+            load.mark.find(" collision=build ")!=std::string::npos,
+            std::string(mode)+" World load must call the collision input and build: physics_static '"+load.mark+"'");
+    std::printf("NEWWORLD collision %s load mark: %s\n",mode,load.mark.c_str());
+    }
+
   static void collisionRun(Gothic& gothic,const fs::path& root) {
     collisionFiles(root/"small");
     Environment wayHeightRays("OPENGOTHIC_WAYHEIGHT_CACHE","0");
@@ -417,16 +467,39 @@ struct WayHeightsContract {
       require(!built.stats.cacheHit && built.stats.buildMs>0 && built.stats.readMs==0 && built.stats.writeMs==0,
               "disabled world collision cache must build without reading or writing");
       require(!fs::exists(root/"base-cache/derived"),"disabled world load must not create collision files");
+      requireBuilt(built,"disabled");
     }
     Environment enabled("OPENGOTHIC_COLLISION_CACHE","1");
     {
       const auto cold=collisionLoad(gothic,"cold");
       require(!cold.stats.cacheHit && cold.stats.buildMs>0,"cold world collision cache must build");
+      requireBuilt(cold,"cold");
       collisionCompare(built,cold,"cold");
     }
     const auto warm=collisionLoad(gothic,"warm");
     require(warm.stats.cacheHit && warm.stats.buildMs==0 && warm.stats.writeMs==0,
             "warm world collision cache must restore without rebuilding or writing");
+    // World's load mark: the collision input was never called (WorldCollisionSource), nothing was built or logged.
+    require(warm.mark.find(" input=cache input_ms=0 collision=cache ")!=std::string::npos && warm.worldCollisionLines==0,
+            "warm World load must not call the collision input: physics_static '"+warm.mark+"'");
+    std::printf("NEWWORLD collision warm load mark: %s\n",warm.mark.c_str());
+    // The game's key of the loaded World: the cloth part from its own parts, the rest from the load's inputs; and
+    // the file the cold load wrote is found and taken with it, without the input.
+    const auto inputs=Resources::wayHeightInputs("NEWWORLD.ZEN");
+    const auto& flags=Settings::physicsFlags();
+    const auto& key=warm.cache.key;
+    require(key.clothRules==clothRulesKey(),"the game's collision key must hold the world cloth rules' SHA-256 and "
+            "WorldCloth::Algorithm: got '"+key.clothRules+"', expected '"+clothRulesKey()+"'");
+    require(!warm.cache.root.empty() && key.base==inputs.baseFingerprint && key.world=="NEWWORLD" &&
+            key.content==inputs.contentFingerprint && key.version==CollisionCache::BakeVersion &&
+            key.collisionFlags==(uint32_t(flags.cloth)|(uint32_t(flags.movableVobs)<<1)|(uint32_t(warm.split)<<2)),
+            "the game's collision key must be the load's base, world, content fingerprint and flags");
+    const StaticCollision::Input none=[]() -> const asset::WorldMesh& {
+      throw std::runtime_error("the game's key must find the cache without the collision input");
+      };
+    require(StaticCollision(none,warm.cache,warm.split).stats.cacheHit,"the game's key must find the cold load's file");
+    std::printf("NEWWORLD collision game key: cloth rules %s, flags %u, the cold load's file taken with it\n",
+                key.clothRules.c_str(),key.collisionFlags);
     collisionCompare(built,warm,"warm");
     }
 
@@ -465,6 +538,9 @@ int main(int argc, char* argv[]) {
     const auto* collisionOnly=std::getenv("OPENGOTHIC_COLLISION_CONTRACT_ONLY");
     const bool collision=(argc==2 && std::string_view(argv[1])=="--collision") ||
                          (collisionOnly!=nullptr && std::string_view(collisionOnly)=="1");
+    // The collision part reads World's physics_static load mark; the probe reads its switch once, before any load.
+    if(collision)
+      setenv("OPENGOTHIC_LOADPROBE","1",1);
     const auto* game=std::getenv("GOTHIC_DIR");
     if(game==nullptr || *game=='\0')
       throw std::runtime_error("GOTHIC_DIR must point to prepared Gothic II settings");

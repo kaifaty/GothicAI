@@ -38,8 +38,8 @@ std::string_view Npc::cameraTargetPosScheme() const {
   return inter!=nullptr ? inter->posSchemeName() : std::string_view();
   }
 
-void Npc::stopDlgAnim() {
-  visual.stopDlgAnim(*this);
+void Npc::stopDlgAnim(bool atEase) {
+  visual.stopDlgAnim(*this,atEase);
   }
 
 void Npc::setVisual(std::string_view visual) {
@@ -492,6 +492,10 @@ void Npc::startSpeech(const Tempest::Sound& voice, std::string_view name) {
 
 void Npc::startSpeech(std::shared_ptr<LipSync::Track> voice) {
   visual.startSpeech(*this,std::move(voice));
+  }
+
+bool Npc::isVoiceSounding() const {
+  return visual.isSpeaking(owner.tickCount()) || speechLeft()>0;
   }
 
 void Npc::setFaceTrack(std::shared_ptr<const SpeechFace::Track> track, std::string_view line) {

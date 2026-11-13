@@ -52,6 +52,12 @@ class AnimBlend final {
       // behind the left shoulder and crosses the front by its third frame; blended the usual 0.3 s from
       // the stance, it crossed with the arm still pulled to the stance, a palm short of the body
       float blowTime  = 0.08f;
+      // an animation stopped at ease (easeOut: the hands of one whose voice is over come to rest): its bones go
+      // back as fast at most as the MDS's blend out, a linear fade, would turn them. The quintic curve is 1.875
+      // times as fast at its middle as a linear fade of the same length, so it takes this many times as long;
+      // maxTime does not cut it (that limit is for legs: these bones carry no weight), easeMax does
+      float easeScale = 1.875f;
+      float easeMax   = 1.f;
       };
 
     // For the test bench
@@ -72,6 +78,9 @@ class AnimBlend final {
     void           setLog(bool l) { log = l; }  // switches to the log (the hero, OPENGOTHIC_ANIBLEND_LOG=1)
     // the body holds a weapon (its skeleton has the slot): its blows switch in blowTime at most
     void           setWeaponBody(bool w) { weaponBody = w; }
+    // This animation is being stopped at ease: the bones that switch from it at the next apply blend over
+    // easeScale times its blend out (Params), apart from the other switches of that frame
+    void           easeOut(const Animation::Sequence* seq) { easeSeq = seq; }
 
     // What drives a bone this frame: the animation and when it started (a switch is a change of
     // either), and the key frames around the time, a then b (the velocity of the animation)
@@ -143,6 +152,7 @@ class AnimBlend final {
       Tempest::Vec3 turn, dturn, move, dmove;
       float         angle = 0, len = 0;
       float         time  = 0;  // from the MDS
+      bool          ease  = false;  // out of an animation stopped at ease
       };
 
     void           prepare(size_t bone, const Sample& target, const Sample& shown, float dtShown, float dtNow);
@@ -161,6 +171,7 @@ class AnimBlend final {
     uint32_t            started  = 0;
     bool                log      = false;
     bool                weaponBody = false;
+    const Animation::Sequence* easeSeq = nullptr;  // stopped at ease since the last apply
     float               lastBlend = 0;
     bool                externalDriven = false;
     Curve               externalFade;

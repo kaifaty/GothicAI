@@ -19,17 +19,29 @@
 // while the face is taken, none without the section, rejections of it. The lids' shade over the balls (lid_shade,
 // LidShade): the edges of the lids found on a head with lid sheets, darker under the upper lid than over the lower,
 // more shade as the lids close (a blink, a squint) and as the eye looks up under its lid, the same for the head turned
-// whole, a neutral face that keeps it, none without the section, rejections of it. CPU only: no device, no game data.
+// whole, a neutral face that keeps it, none without the section, rejections of it. The head of one whose hands gesture
+// as it speaks (Gaze::Input::steady) on a synthetic body under a gesture keyed ten times a second: without the hold the
+// tilt and the quick bend of the animation rock it, held it stays on the partner and upright, forward without one, a
+// nod of another animation stays; a gesture stopped at ease (AnimBlend::easeOut) goes back as fast as its blend out as
+// a linear fade, other bones of that frame keep their time; the gestures the bench names (TalkGestures::setPicks).
+// CPU only: no device, no game data.
 #include "graphics/eyeshader.h"
+#include "graphics/mesh/animblend.h"
 #include "graphics/mesh/eyeblink.h"
+#include "graphics/mesh/gaze.h"
+#include "graphics/mesh/ikmath.h"
+#include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/facerig.h"
 #include "graphics/mesh/eyes.h"
 #include "graphics/mesh/listenface.h"
 #include "graphics/mesh/speechbrows.h"
 #include "graphics/mesh/speechcues.h"
 #include "graphics/mesh/speechface.h"
+#include "graphics/mesh/talkgestures.h"
 #include "gltfmesh.h"
 #include "linecues.h"
+#include "playervoice.h"
+#include "voicebuffer.h"
 
 #include <algorithm>
 #include <chrono>
@@ -41,6 +53,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstdio>
+#include <cstring>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -1050,6 +1063,308 @@ Tempest::Vec3 headPoint(const Tempest::Matrix4x4& head, float yaw, float pitch, 
   return p;
   }
 
+namespace {
+// The head of one whose hands gesture as it speaks (reports/content/2026-11-hero-head/gesture-head.md). A body as tall
+// as a man, identity joints, facing +Z; the gesture swings the trunk with the head on it as the dialog gestures of
+// Gothic II do: keys ten times a second, straight lines between them, up to 25 degrees aside, 15 down and 28 to a
+// side at 75-87 degrees a second.
+struct GestureBody final {
+  enum : size_t { Root, Pelvis, LThigh, RThigh, Spine1, Spine2, Head, Count };
+
+  static asset::ModelHierarchy hierarchy() {
+    struct Bone { const char* name; int16_t parent; float x, y, z; };
+    const Bone bones[] = {
+      {"BIP01",-1,0,0,0}, {"BIP01 PELVIS",0,0,95,0}, {"BIP01 L THIGH",1,-10,-5,0}, {"BIP01 R THIGH",1,10,-5,0},
+      {"BIP01 SPINE1",1,0,20,0}, {"BIP01 SPINE2",4,0,25,0}, {"BIP01 HEAD",5,0,30,0},
+      };
+    asset::ModelHierarchy h{};
+    for(const auto& b:bones) {
+      asset::ModelHierarchyNode n{};
+      n.parent_index = b.parent;
+      n.name         = b.name;
+      auto m = Tempest::Matrix4x4::mkIdentity();
+      m.set(3,0,b.x);
+      m.set(3,1,b.y);
+      m.set(3,2,b.z);
+      static_assert(sizeof(n.transform)==sizeof(m));
+      std::memcpy(&n.transform,&m,sizeof(m));
+      h.nodes.push_back(n);
+      }
+    h.bbox.min = {-30,0,-30};
+    h.bbox.max = { 30,190,30};
+    h.collision_bbox = h.bbox;
+    return h;
+    }
+
+  Skeleton skeleton{hierarchy(),nullptr,"HUMANS.MDS"};
+
+  // the trunk turned by the animation: aside, up, to a side (degrees), around its lower joint
+  std::vector<Tempest::Matrix4x4> pose(float yaw, float pitch, float roll) const {
+    using namespace IkMath;
+    constexpr float Deg = float(M_PI)/180.f;
+    std::vector<Tempest::Matrix4x4> tr = skeleton.tr;
+    const std::vector<size_t> trunk = {Spine1,Spine2,Head};
+    const Vec3 at = position(tr[Spine1]);
+    rotateAbout(tr.data(),trunk,axisAngle(Vec3(0,0,1),roll*Deg),at);
+    rotateAbout(tr.data(),trunk,axisAngle(Vec3(1,0,0),-pitch*Deg),at);
+    rotateAbout(tr.data(),trunk,axisAngle(Up,yaw*Deg),at);
+    return tr;
+    }
+
+  // the gesture at a time: its keys, a line between two
+  static void gesture(uint64_t ms, float& yaw, float& pitch, float& roll) {
+    const auto key = [](size_t i, float& y, float& p, float& r) {
+      const float t = float(i);
+      y = 25.f*std::sin(t*0.35f);
+      p = -15.f*std::sin(t*0.5f + 1.f) + 15.f*std::sin(1.f);
+      r = 28.f*std::sin(t*0.3f);
+      };
+    const size_t i = size_t(ms/100);
+    const float  a = float(ms%100)/100.f;
+    float y0, p0, r0, y1, p1, r1;
+    key(i,y0,p0,r0);
+    key(i+1,y1,p1,r1);
+    yaw   = y0 + (y1-y0)*a;
+    pitch = p0 + (p1-p0)*a;
+    roll  = r0 + (r1-r0)*a;
+    }
+
+  // a frame as Pose makes it: the pose with the gaze over it, the gaze updated, the pose again if that changed it
+  std::vector<Tempest::Matrix4x4> frame(Gaze& gaze, const Gaze::Input& in, float yaw, float pitch, float roll) const {
+    auto tr = pose(yaw,pitch,roll);
+    gaze.apply(tr.data(),tr.size());
+    if(gaze.update(in)) {
+      tr = pose(yaw,pitch,roll);
+      gaze.apply(tr.data(),tr.size());
+      }
+    return tr;
+    }
+  };
+
+Tempest::Vec3 column(const Tempest::Matrix4x4& m, int k) {
+  return IkMath::normalize(Tempest::Vec3(m.at(k,0),m.at(k,1),m.at(k,2)));
+  }
+
+float angleDeg(const Tempest::Vec3& a, const Tempest::Vec3& b) {
+  return std::acos(std::clamp(IkMath::dot(a,b),-1.f,1.f))*180.f/float(M_PI);
+  }
+
+void gestureHeadCases() {
+  const GestureBody body;
+  constexpr uint64_t Dt = 33;
+  const auto input = [&](bool active, bool steady) {
+    Gaze::Input in;
+    in.active   = active;
+    in.source   = active ? Gaze::Source::Talk : Gaze::Source::None;
+    // far ahead at the height of the head: the trunk swaying moves the head a hand aside, the goal stays
+    in.target   = {0,170,1000};
+    in.forward  = {0,0,1};
+    in.headOnly = true;
+    in.dt       = Dt;
+    in.steady   = steady;
+    return in;
+    };
+
+  // how the head as shown moves in a frame, the largest: where the face looks, and its up (a tilt keeps the first)
+  // late: the hold comes with the gesture, as in the game, not before it
+  const auto worstStep = [&](bool active, bool steady, float* worstOff, float* worstTilt, bool late = false) {
+    Gaze gaze;
+    gaze.setSkeleton(&body.skeleton);
+    require(gaze.isValid(),"the gaze must take the synthetic body");
+    const auto in = input(active,steady);
+    // at rest first: the gaze turns to the partner
+    for(uint64_t t=0; t<1500; t+=Dt)
+      (void)body.frame(gaze,input(active,steady && !late),0,0,0);
+    float worst = 0;
+    Tempest::Vec3 face, up;
+    for(uint64_t t=0; t<6000; t+=Dt) {
+      float y, p, r;
+      GestureBody::gesture(t,y,p,r);
+      const auto tr = body.frame(gaze,in,y,p,r);
+      const auto f  = column(tr[GestureBody::Head],2);
+      const auto u  = column(tr[GestureBody::Head],1);
+      if(t>0)
+        worst = std::max({worst,angleDeg(f,face),angleDeg(u,up)});
+      face = f;
+      up   = u;
+      const auto to = IkMath::normalize(in.target - IkMath::position(tr[GestureBody::Head]));
+      if(worstOff!=nullptr)
+        *worstOff = std::max(*worstOff,angleDeg(f,active ? to : Tempest::Vec3(0,0,1)));
+      if(worstTilt!=nullptr)
+        *worstTilt = std::max(*worstTilt,std::abs(std::asin(std::clamp(u.x,-1.f,1.f)))*180.f/float(M_PI));
+      }
+    return worst;
+    };
+
+  // as it was, and is for any other animation: the turn aside is taken out, the tilt and the quick bend are the animation's
+  float freeTilt = 0;
+  const float free = worstStep(true,false,nullptr,&freeTilt);
+  require(free>2.f && freeTilt>20.f,
+          "without the hold the gesture must rock the head as its animation does (the case the hold is for): step "+
+          std::to_string(free)+" deg, tilt "+std::to_string(freeTilt));
+
+  // held: the head is the gaze's, whatever the trunk does under it. 0.35 degrees a frame is a pixel of the face
+  // in the bench's close-up, a third of the threshold of the note
+  float off = 0, tilt = 0;
+  const float held = worstStep(true,true,&off,&tilt);
+  require(held<0.35f,"a head held against a gesture must not move with it: "+std::to_string(held)+" deg in a frame");
+  require(off<1.5f,"a head held against a gesture must go on looking at the partner: off by "+std::to_string(off)+" deg");
+  require(tilt<1.f,"a head held against a gesture must stay upright: tilted "+std::to_string(tilt)+" deg");
+
+  // the hold that starts with the gesture is whole at once: the first frames of the gesture do not come through
+  off = tilt = 0;
+  const float fresh = worstStep(true,true,&off,&tilt,true);
+  require(fresh<0.35f && tilt<1.f,"a hold that starts with the gesture must hold its first frames: step "+
+          std::to_string(fresh)+", tilt "+std::to_string(tilt)+" deg");
+
+  // nobody to look at: it faces where the body does, upright
+  off = tilt = 0;
+  const float alone = worstStep(false,true,&off,&tilt);
+  require(alone<0.35f && off<1.5f && tilt<1.f,
+          "without a partner a head held against a gesture must face forward: step "+std::to_string(alone)+
+          ", off "+std::to_string(off)+", tilt "+std::to_string(tilt)+" deg");
+
+  // a nod of another animation (T_YES) stays a nod: only the hold takes the quick bend out
+  for(const bool steady:{false,true}) {
+    Gaze gaze;
+    gaze.setSkeleton(&body.skeleton);
+    const auto in = input(true,steady);
+    for(uint64_t t=0; t<1500; t+=Dt)
+      (void)body.frame(gaze,in,0,0,0);
+    float deepest = 0;
+    for(uint64_t t=0; t<600; t+=Dt) {
+      // 12 degrees down in 0.15 s and back
+      const float x     = float(t)/150.f;
+      const float pitch = -12.f*(x<1.f ? x : std::max(0.f,2.f-x));
+      const auto  tr    = body.frame(gaze,in,0,pitch,0);
+      deepest = std::min(deepest,std::asin(column(tr[GestureBody::Head],2).y)*180.f/float(M_PI));
+      }
+    if(steady)
+      require(deepest>-1.f,"held against a gesture the head must not nod with it: "+std::to_string(deepest)+" deg"); else
+      require(deepest<-5.f,"a nod of the animation must stay a nod without the hold: "+std::to_string(deepest)+" deg");
+    }
+
+  // the gesture is over, the hold is let go at the stance: nothing is left of it, and the pose comes to rest
+  {
+    Gaze gaze;
+    gaze.setSkeleton(&body.skeleton);
+    for(uint64_t t=0; t<1500; t+=Dt)
+      (void)body.frame(gaze,input(true,true),0,0,0);
+    Gaze::Probe whole;
+    gaze.probe(whole);
+    require(close(whole.steady,1.f),"the hold must be whole after its ramp");
+    bool moving = true;
+    std::vector<Tempest::Matrix4x4> tr;
+    for(uint64_t t=0; t<1500; t+=Dt) {
+      tr = body.pose(0,0,0);
+      gaze.apply(tr.data(),tr.size());
+      moving = gaze.update(input(true,false));
+      }
+    Gaze::Probe now;
+    gaze.probe(now);
+    require(now.steady==0.f && !moving,"a hold let go must end and leave the pose at rest");
+    require(angleDeg(column(tr[GestureBody::Head],2),Tempest::Vec3(0,0,1))<1.f && std::abs(now.roll)<0.5f,
+            "the gaze must be as it was once the hold is let go");
+    }
+  }
+
+// A gesture stopped at ease (AnimBlend::easeOut): its bones go back as fast at most as the blend out of the model
+// script, a linear fade, would turn them; any other stop is as it was
+void easeOutCases() {
+  using Sample = AnimBlend::Sample;
+  constexpr float Deg = float(M_PI)/180.f;
+  Animation::Sequence stance, gesture, walk;
+  stance.name  = "S_RUN";
+  stance.blendIn = stance.blendOut = 100;
+  gesture.name = "T_DIALOGGESTURE_06";
+  gesture.blendIn  = 200;
+  gesture.blendOut = 400;
+  walk.name    = "S_WALKL";
+  walk.blendIn = walk.blendOut = 100;
+
+  const auto turned = [&](float deg) {
+    Sample s;
+    s.rotation = asset::Quat(std::cos(deg*Deg*0.5f),0,0,std::sin(deg*Deg*0.5f));
+    return s;
+    };
+  const Sample rest = turned(0), raised = turned(30);
+
+  struct Result { float lasts[2] = {}; float peak[2] = {}; };
+  // bone 0: the gesture's (30 degrees off the stance), stopped at 1 s; bone 1: the legs' - the stance, then a walk
+  const auto run = [&](bool atEase) {
+    AnimBlend blend;
+    blend.reset(2);
+    Sample raw[2], out[2];
+    Result res;
+    float  prev[2] = {};
+    for(uint64_t now=1000; now<4000; now+=10) {
+      const bool before = now<2000;
+      raw[0] = before ? raised : rest;
+      raw[1] = before ? rest : raised;
+      blend.drive(0,before ? gesture : stance,before ? 1000 : 500,raw[0],raw[0],10.f);
+      blend.drive(1,before ? stance : walk,   before ? 500 : 2000,raw[1],raw[1],25.f);
+      if(now==2000 && atEase)
+        blend.easeOut(&gesture);
+      blend.apply(raw,out,2,now);
+      for(size_t i=0; i<2; ++i) {
+        // how far the shown bone still is from its animation, and how fast it turns
+        const float w     = std::abs(out[i].rotation.w*raw[i].rotation.w + out[i].rotation.z*raw[i].rotation.z);
+        const float off   = 2.f*std::acos(std::min(1.f,w))/Deg;
+        const float shown = 2.f*std::acos(std::min(1.f,std::abs(out[i].rotation.w)))/Deg;
+        if(!before) {
+          if(off>0.05f)
+            res.lasts[i] = float(now-2000+10)/1000.f;
+          res.peak[i] = std::max(res.peak[i],std::abs(shown-prev[i])/0.01f);
+          }
+        prev[i] = shown;
+        }
+      }
+    return res;
+    };
+
+  const auto usual = run(false);
+  require(usual.lasts[0]<=0.31f && usual.peak[0]>150.f,
+          "a gesture cut off must go back as it did: "+std::to_string(usual.lasts[0])+" s, "+std::to_string(usual.peak[0])+" deg/s");
+  const auto eased = run(true);
+  // 30 degrees over the gestures' blend out, 0.4 s, as a linear fade: 75 degrees a second
+  require(eased.lasts[0]>0.7f && eased.lasts[0]<=0.76f && eased.peak[0]<=75.f*1.03f,
+          "a gesture stopped at ease must go back as fast at most as its blend out as a linear fade: "+
+          std::to_string(eased.lasts[0])+" s, "+std::to_string(eased.peak[0])+" deg/s");
+  // alone it takes the shortest blend, 0.15 s; a cut gesture next to it shares its 0.3 s with it, one at ease does not
+  require(eased.lasts[1]<=0.16f && usual.lasts[1]<=0.31f,
+          "the bones of another switch of that frame must keep their own time: "+std::to_string(eased.lasts[1])+" s");
+  }
+
+// The test bench names the gestures to start (gestures pick): in turn, over again; without names at random again
+void gesturePickCases() {
+  TalkGestures g;
+  g.setGestures({2400,2000,2200,2200,2000,9600});
+  TalkGestures::setPicks({6,3});
+  uint64_t now = 1000;
+  std::vector<uint8_t> got;
+  bool playing = false;
+  uint64_t until = 0;
+  g.lineStart(now);
+  for(; now<60000 && got.size()<4; now+=33) {
+    if(playing && now>=until)
+      playing = false;
+    TalkGestures::Input in;
+    in.now      = now;
+    in.allowed  = true;
+    in.speaking = true;
+    in.playing  = playing;
+    const auto d = g.update(in);
+    if(d.act==TalkGestures::Act::Start) {
+      got.push_back(d.gesture);
+      playing = true;
+      until   = now + 500;
+      }
+    }
+  TalkGestures::setPicks({});
+  require(got==std::vector<uint8_t>({6,3,6,3}),"the gestures the bench names must start in turn, over again");
+  }
+}
+
 void eyeMotionCases(const FaceProfile& p) {
   require(close(Eyes::bell(0),0) && close(Eyes::bell(0.5f),0.5f) && close(Eyes::bell(1),1) &&
           close(Eyes::bell(0.25f)+Eyes::bell(0.75f),1),"the saccade's path must be a symmetric S from 0 to 1");
@@ -1374,6 +1689,148 @@ std::shared_ptr<LipSync::Track> trackOf(uint32_t rate, const std::vector<int16_t
   return t;
   }
 
+void playerVoiceCases() {
+  const uint32_t rate = 16000;
+  const auto pcm = sing(rate,{{200,150,150,1},{200,0,0,0}});
+  PlayerVoice voice;
+  require(!voice.append(rate,pcm.data(),320,1000) && voice.track()==nullptr,
+          "microphone chunks outside PTT must not create a track");
+  voice.begin();
+  require(voice.append(rate,pcm.data(),320,1000),"the first microphone chunk must start a live track");
+  const auto first = voice.track();
+  require(!first->isFinished() && first->isLiveInput() && first->playedMs()==0 && first->name().find("player-microphone:")==0,
+          "the microphone track must start live, with its own name and waiting clock");
+  LipSync mouth;
+  mouth.setShapes({0,0.5f,1});
+  mouth.start(first,9000);  // world time differs from the microphone's arrival clock
+  const uint64_t buffer = LipSync::liveBufferMs();
+  voice.tick(1000+buffer);
+  require(first->playedMs()==0,"the microphone buffer must hold the clock behind the first chunk");
+  voice.append(rate,pcm.data()+320,320,1020);
+  voice.append(rate,pcm.data()+640,320,1040);
+  LipSync::Shape shape;
+  mouth.update(9000,16,shape);
+  LipSync::Probe probe;
+  mouth.probe(probe);
+  require(uint64_t(first->playedMs())==40-buffer && probe.time==40-buffer && probe.level>0 &&
+          close(probe.level,first->level(40-buffer)),
+          "a silent live track must drive the mouth by its buffered arrival time and level");
+  for(size_t i=3; i<pcm.size()/320; ++i)
+    voice.append(rate,pcm.data()+i*320,320,1000+i*20);
+  voice.tick(1000+voice.durationMs());
+  require(uint64_t(first->playedMs())+buffer==voice.durationMs() && mouth.isSpeaking(9001),
+          "the hero must still be speaking with exactly one microphone buffer left before finish");
+  voice.finish();
+  require(first->isFinished() && !mouth.isSpeaking(9001),"finishing the microphone must end the hero's speech");
+  require(!voice.append(rate,pcm.data(),320,5001),"cancelled microphone chunks must be ignored");
+  voice.begin();
+  require(voice.append(rate,pcm.data(),320,6000) && voice.track()!=first && voice.track()->playedMs()==0 &&
+          voice.track()->name()!=first->name() && voice.durationMs()==20,
+          "a new key press must create a fresh microphone track and reset its clock and duration");
+  voice.tick(10000);
+  const auto restarted = voice.track();
+  require(restarted->playedMs()==20 && restarted->playedMs()<=int64_t(voice.durationMs()) &&
+          restarted->level(uint64_t(restarted->playedMs()))==restarted->level(10) && restarted->level(10)>0,
+          "the microphone clock must not run ahead of appended samples, and a step not here yet holds the last one");
+  voice.finish();
+
+  // a first chunk that came late (a cold start), the next ones sooner, the last one late again: the clock goes by
+  // the one that came soonest after its time (40 ms of sound at 50062), not by the first or the latest
+  voice.begin(50000);
+  voice.append(rate,pcm.data(),320,50060);
+  voice.append(rate,pcm.data()+320,320,50061);
+  voice.append(rate,pcm.data()+640,320,50062);
+  voice.append(rate,pcm.data()+960,320,50090);
+  require(voice.track()->playedMs()==int64_t(50090-50022-LipSync::liveBufferMs()),
+          "the microphone clock must follow the chunk that came soonest after its time: "+
+          std::to_string(voice.track()->playedMs()));
+  voice.finish();
+  // a breath before the first word (30 dB below the voice): a stream of an npc stretches it to its own loudest
+  // moment, the microphone measures it against a speech level of its own and keeps the mouth shut
+  const auto breath = sing(rate,{{200,150,150,0.03f}});
+  auto streamed = std::make_shared<LipSync::Track>(rate);
+  streamed->append(breath.data(),breath.size());
+  voice.begin();
+  voice.append(rate,breath.data(),breath.size(),20000);
+  require(streamed->level(150)>0.5f && voice.track()->level(150)<0.05f,
+          "a breath must not open the hero's mouth: live "+std::to_string(voice.track()->level(150))+", streamed "+
+          std::to_string(streamed->level(150)));
+  voice.finish();
+  // an npc's voice from the speakers in the microphone, 12 dB below the hero's: ducked while it sounds and
+  // DuckHoldMs after its last chunk (the room, the output's delay), then heard as it is
+  const auto leak = sing(rate,{{400,150,150,0.25f}});
+  voice.begin();
+  uint64_t at = 30000;
+  for(size_t i=0; i+320<=leak.size(); i+=320, at+=20)
+    voice.append(rate,leak.data()+i,320,at,true);
+  const uint64_t sounded = voice.durationMs();  // ms of the utterance while the npc spoke
+  const uint64_t lastNpc = at-20;               // the tick of its last chunk
+  uint64_t       held    = sounded;             // ...and of the chunks still within DuckHoldMs after it
+  for(; at<lastNpc+PlayerVoice::DuckHoldMs+60; at+=20) {
+    voice.append(rate,leak.data(),320,at,false);
+    if(at<lastNpc+PlayerVoice::DuckHoldMs)
+      held = voice.durationMs();
+    }
+  const auto heard = voice.track();
+  require(held>=sounded+40 && held+40<=voice.durationMs(),"the duck test must have chunks within the hold and after it");
+  require(heard->peak(0,sounded-10)<0.05f,"an npc's voice in the microphone must not open the hero's mouth while it "
+          "sounds: "+std::to_string(heard->peak(0,sounded-10)));
+  require(heard->peak(sounded,held-10)<0.05f,"the microphone must stay ducked DuckHoldMs after the npc's last chunk: "+
+          std::to_string(heard->peak(sounded,held-10)));
+  require(heard->peak(held+10,voice.durationMs()-10)>0.3f,"after DuckHoldMs the same sound must open the mouth: "+
+          std::to_string(heard->peak(held+10,voice.durationMs()-10)));
+  voice.finish();
+  // who ducks it: not the hero (his own live track sounds), not one farther than DuckCm, not one silent
+  const float nearCm = PlayerVoice::DuckCm*0.5f, farCm = PlayerVoice::DuckCm*1.5f;
+  require(PlayerVoice::ducks(false,nearCm*nearCm,true) && !PlayerVoice::ducks(true,0,true) &&
+          !PlayerVoice::ducks(false,farCm*farCm,true) && !PlayerVoice::ducks(false,nearCm*nearCm,false),
+          "only a sounding voice of an npc near the hero must duck the microphone");
+
+  // a pause of 150 ms shuts the mouth of a live track (LiveRelease; LipSync::start must know the track is live)
+  {
+    const auto said = sing(rate,{{300,150,150,1},{200,0,0,0}});
+    voice.begin();
+    voice.append(rate,said.data(),said.size(),40000);
+    LipSync live;
+    live.setShapes({0,1,1});  // every shape opens fully: lip_open is the mouth itself
+    live.start(voice.track(),0);
+    LipSync::Probe p;
+    float loud = 0;
+    for(uint64_t now=0; now<=450; now+=10) {
+      voice.track()->setPlayed(now);
+      live.update(now,10,shape);
+      live.probe(p);
+      if(now==290)
+        loud = p.open;
+      }
+    require(loud>0.5f && p.open<0.05f,"150 ms of silence must shut the mouth of a live voice: "+std::to_string(loud)+
+            " -> "+std::to_string(p.open));
+    voice.finish();
+  }
+
+  VoiceBuffer npc(rate);
+  npc.append(reinterpret_cast<const uint8_t*>(pcm.data()),640);
+  require(npc.lipTrack()->playedMs()==0 && !npc.lipTrack()->isLiveInput(),"an NPC stream must still wait for its audio thread");
+  std::vector<int16_t> rendered(160);
+  npc.render(rendered.data(),rendered.size());
+  require(npc.lipTrack()->playedMs()==10 && std::equal(rendered.begin(),rendered.end(),pcm.begin()),
+          "an NPC stream must still follow rendered audio and preserve its samples");
+  npc.finish();
+  npc.render(rendered.data(),rendered.size());
+  require(npc.isDrained() && npc.lipTrack()->playedMs()==20,"an NPC stream must still drain at its audio clock");
+  auto recorded = trackOf(rate,sing(rate,{{40,0,0,0},{100,150,150,1}}));
+  recorded->setPlayed(10);
+  LipSync npcMouth;
+  npcMouth.setShapes({0,0.5f,1});
+  npcMouth.start(recorded,0);
+  npcMouth.update(1000,16,shape);
+  npcMouth.probe(probe);
+  require(probe.time==10 && probe.level>0 && recorded->level(10)==0 && close(probe.level,recorded->level(50)),
+          "an NPC voice must retain its existing 40 ms mouth lead");
+  const auto original = trackOf(rate,pcm);
+  require(original->playedMs()==-1 && !original->isLiveInput(),"an original NPC voice must retain its world-time clock");
+  }
+
 void toneCases() {
   // the tone of harmonics and of pulses at 90, 150, 250 Hz within 2 %, at the rates of the game and of the voice service
   for(uint32_t rate:{22050u,24000u,44100u})
@@ -1512,6 +1969,26 @@ void browCases(const GltfHeadMesh& head, const FaceProfile& plain) {
     require(late.update(*p->brows,uint64_t(at+80),s) && s.at==uint64_t(at+80),"a move found 80 ms late must start now");
     late.start(trackOf(16000,glide),7,0);
     require(!late.update(*p->brows,syl+20,s),"a move whose syllable has gone by must not start");
+  }
+  // the live microphone: no sound ahead, so the accent is found in its syllable and the brows start then
+  {
+    auto live = std::make_shared<LipSync::Track>(16000);
+    live->setLiveInput();
+    live->setPlayed(0);
+    SpeechBrows mic;
+    mic.start(live,7,0);
+    SpeechBrows::Start s;
+    std::vector<uint64_t> at;
+    for(size_t k=0; k*320<glide.size(); ++k) {
+      const uint64_t now = k*20;
+      live->append(glide.data()+k*320,std::min<size_t>(320,glide.size()-k*320));
+      live->setPlayed(now>LipSync::liveBufferMs() ? now-LipSync::liveBufferMs() : 0);
+      while(mic.update(*p->brows,now,s))
+        at.push_back(s.at);
+      }
+    require(at.size()==1 && at[0]>=syl && at[0]<=syl+SpeechBrows::LiveLateMs+LipSync::liveBufferMs(),
+            "the brows of a live voice must start within its accented syllable: "+std::to_string(at.size())+" moves"+
+            (at.empty() ? "" : " at "+std::to_string(at[0])+" ms, syllable "+std::to_string(syl)));
   }
 
   // the mood of the line into the face (SpeechBrows::play, as MdlVisual plays it): an angry line of the AI whose voice
@@ -2121,6 +2598,147 @@ void speechFaceCases(const GltfHeadMesh& plainHead) {
   std::cout << "speech face: " << us << " us a frame to sample a track of " << track->shapes.size() << " shapes\n";
   }
 
+// the head's nod while one speaks or listens (TalkGestures, player-voice-face.md "Кивок"): played at 30 frames a
+// second as the bench films it, the pitch in degrees per frame
+struct NodTrace final {
+  std::vector<uint64_t> at;
+  std::vector<float>    deg;
+  };
+
+NodTrace playNods(TalkGestures& g, uint64_t from, uint64_t to, const std::vector<std::pair<uint64_t,float>>& syllables,
+                  bool live, bool speak = true) {
+  NodTrace ret;
+  size_t   next = 0;
+  for(uint64_t now=from; now<to; now+=33) {
+    bool  beat = false;
+    float db   = -100;
+    while(next<syllables.size() && syllables[next].first<=now) {
+      beat = true;
+      db   = syllables[next].second;
+      ++next;
+      }
+    g.updateHead(now,33,speak,beat,db,live);
+    ret.at.push_back(now);
+    ret.deg.push_back(g.head().pitch*180.f/3.14159265f);
+    }
+  return ret;
+  }
+
+uint32_t nodsOf(const TalkGestures& g) {
+  TalkGestures::Probe p;
+  g.probe(p);
+  return p.nods;
+  }
+
+void headNodCases() {
+  // by default the speaker does not nod (the user's choice by the clip player-voice-3), the head sways
+  {
+    TalkGestures g;
+    std::vector<std::pair<uint64_t,float>> syl;
+    for(uint64_t t=0; t<2400; t+=200)
+      syl.emplace_back(t,(t/200)%2==1 ? -14.f : -20.f);
+    float pitch = 0, sway = 0;
+    size_t next = 0;
+    for(uint64_t now=0; now<2600; now+=33) {
+      bool  beat = false;
+      float db   = -100;
+      for(; next<syl.size() && syl[next].first<=now; ++next) {
+        beat = true;
+        db   = syl[next].second;
+        }
+      g.updateHead(now,33,true,beat,db,false);
+      pitch = std::max(pitch,std::abs(g.head().pitch));
+      sway  = std::max(sway,std::abs(g.head().yaw)+std::abs(g.head().roll));
+      }
+    require(nodsOf(g)==0 && pitch==0 && sway>0.2f*3.14159265f/180.f,
+            "by default a speaker must not nod (no nod counted either) and its head must sway: "+std::to_string(nodsOf(g))+
+            " nods, pitch "+std::to_string(pitch)+", sway "+std::to_string(sway));
+  }
+  // the nod as it was tuned (for trials and as the move of the listener's nod)
+  require(TalkGestures::setParam("Nod",3.5f),"the nod must stay a parameter");
+  const auto steps = [](const NodTrace& t, size_t from, size_t to) {
+    float step = 0, change = 0, prev = 0;
+    for(size_t i=std::max<size_t>(from,1); i<to && i<t.deg.size(); ++i) {
+      const float d = t.deg[i]-t.deg[i-1];
+      step   = std::max(step,std::abs(d));
+      change = std::max(change,std::abs(d-prev));
+      prev   = d;
+      }
+    return std::make_pair(step,change);
+    };
+  // a line: syllables every 200 ms at -20 dB, a stressed one 6 dB louder at 1000 ms
+  {
+    TalkGestures g;
+    std::vector<std::pair<uint64_t,float>> syl;
+    for(uint64_t t=0; t<2400; t+=200)
+      syl.emplace_back(t,t==1000 ? -14.f : -20.f);
+    const auto tr = playNods(g,0,2600,syl,false);
+    size_t first = 0, apex = 0;
+    for(size_t i=0; i<tr.deg.size(); ++i) {
+      if(first==0 && tr.deg[i]<-0.001f)
+        first = i;
+      if(tr.deg[i]<tr.deg[apex])
+        apex = i;
+      }
+    const auto [step,change] = steps(tr,0,tr.deg.size());
+    require(first>0 && tr.at[first]>=1000 && tr.at[first]<1070 && -tr.deg[first]<1.f,
+            "the nod's first frame must go down less than 1 degree: "+std::to_string(-tr.deg[first]));
+    require(change<1.f,"the nod must speed up and slow down smoothly (no kick): its step changed by "+
+            std::to_string(change)+" degrees a frame");
+    require(-tr.deg[apex]>=2.f && -tr.deg[apex]<=3.5f && tr.at[apex]>=1100 && tr.at[apex]<=1200,
+            "the strongest nod must reach 2..3.5 degrees 120..200 ms into its syllable: "+
+            std::to_string(-tr.deg[apex])+" at "+std::to_string(tr.at[apex]));
+    require(tr.deg[size_t((1000+150+320+40)/33)]>-0.05f && nodsOf(g)==1,
+            "the nod must be back 250..400 ms later, and only the stressed syllable nods ("+std::to_string(step)+")");
+  }
+  // every other syllable stressed, every 200 ms: nods at most once in NodGap (800 ms)
+  {
+    TalkGestures g;
+    std::vector<std::pair<uint64_t,float>> syl;
+    for(uint64_t t=0; t<6000; t+=200)
+      syl.emplace_back(t,(t/200)%2==1 ? -14.f : -20.f);
+    const auto tr = playNods(g,0,6200,syl,false);
+    std::vector<uint64_t> starts;
+    for(size_t i=1; i<tr.deg.size(); ++i)
+      if(tr.deg[i]<tr.deg[i-1]-0.001f && (i<2 || tr.deg[i-1]>=tr.deg[i-2]-0.001f))
+        starts.push_back(tr.at[i]);
+    bool spaced = !starts.empty();
+    for(size_t i=1; i<starts.size(); ++i)
+      spaced = spaced && starts[i]-starts[i-1]>=800-33;
+    require(spaced && nodsOf(g)>=4 && nodsOf(g)<=8,"stressed syllables 400 ms apart must nod at most once in "
+            "800 ms: "+std::to_string(nodsOf(g))+" nods");
+  }
+  // a live voice: the syllable is judged 80 ms in, the nod goes down quicker and still peaks in it (3.5 degrees in
+  // 120 ms by minimum jerk change the step by up to 1.5 degrees a frame; a kicked spring by 2.6..4.3)
+  {
+    TalkGestures g;
+    std::vector<std::pair<uint64_t,float>> syl = {{80,-20}, {280,-20}, {480,-20}, {1080,-14}};
+    const auto tr = playNods(g,0,1800,syl,true);
+    size_t apex = 0;
+    for(size_t i=0; i<tr.deg.size(); ++i)
+      if(tr.deg[i]<tr.deg[apex])
+        apex = i;
+    require(tr.at[apex]>=1000+100 && tr.at[apex]<=1000+250 && steps(tr,0,tr.deg.size()).second<1.6f,
+            "a live voice's nod must peak within its syllable, smoothly: at "+std::to_string(tr.at[apex])+", step change "+
+            std::to_string(steps(tr,0,tr.deg.size()).second));
+  }
+  // listening: a nod as the words come, as smooth
+  {
+    TalkGestures g;
+    g.listen(20000);
+    NodTrace tr;
+    for(uint64_t now=0; now<20000 && g.listenNodCount()==0; now+=33)
+      g.heard(now), tr = playNods(g,now,now+33,{},false,false);
+    const uint64_t from = tr.at.back();
+    const auto t2 = playNods(g,from+33,from+33*30,{},false,false);
+    const auto [step,change] = steps(t2,0,t2.deg.size());
+    require(g.listenNodCount()==1 && -t2.deg[0]<1.f && change<1.f && *std::min_element(t2.deg.begin(),t2.deg.end())<-1.f,
+            "a listening nod must start under 1 degree a frame and move smoothly: "+std::to_string(-t2.deg[0])+", "+
+            std::to_string(change));
+  }
+  TalkGestures::setParam("Nod",0);
+  }
+
 int main() {
   try {
     const auto head    = makeHead();
@@ -2131,6 +2749,8 @@ int main() {
     timingCases(*profile);
     leakCases(head,*profile);
     toneCases();
+    playerVoiceCases();
+    headNodCases();
     browCases(head,*profile);
     listenCases(head,*profile);
     speechFaceCases(head);
@@ -2141,6 +2761,9 @@ int main() {
     eyeMotionCases(*eyeProfile);
     eyeCueCases(eyeHead);
     lidShadeCases();
+    gestureHeadCases();
+    easeOutCases();
+    gesturePickCases();
     }
   catch(const std::exception& e) {
     std::cerr << "facerig test: FAIL: " << e.what() << " (after " << assertions << " checks)\n";

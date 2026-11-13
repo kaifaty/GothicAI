@@ -3,6 +3,7 @@
 #include "basemesh.h"
 #include "commandline.h"
 #include "resources.h"
+#include "worldbase.h"
 #include "graphics/mesh/protomesh.h"
 #include "gothic.h"
 #include "gamemusic.h"
@@ -176,6 +177,10 @@ void validLayers(const Fixture& f) {
   require(light->cookie=="OWN_LAMP_COOKIE.TGA","light mask name, upper case");
   require(VobLayer::lightSourceCm(*light)==1.5f,"light source size");
   require(VobLayer::lightNear(*light)==12.f && VobLayer::lightNear(*data.vobs[2])==0.f,"a lamp's own limit of the light near it");
+  require(VobLayer::lightSourceCm(*data.vobs[0])==VobLayer::DefaultLightSourceCm &&
+          VobLayer::lightSourceCm(*data.vobs[2])==VobLayer::DefaultLightSourceCm,"base vobs and layer props keep the default source size");
+  require(VobLayer::flicker(*data.vobs[0])==nullptr && VobLayer::flicker(*data.vobs[2])==nullptr &&
+          VobLayer::flicker(*light)==nullptr,"base vobs, layer props and a light without flicker_from carry no flame signal");
   const float rotationRows[3][3]={{0,0,1},{0,1,0},{-1,0,0}};
   for(unsigned row=0;row<3;++row) for(unsigned column=0;column<3;++column)
     require(light->rotation[column][row]==rotationRows[row][column] &&
@@ -692,6 +697,8 @@ void flameLayer(const Fixture& f, const fs::path& baseRoot) {
   require(emitterSignal && lightSignal && emitterSignal->pulseHz==6.f && emitterSignal->jitterHz==12.f &&
           emitterSignal->amount==0.2f && emitterSignal->seed==7 && lightSignal->seed==7 && lightSignal->amount==0.2f &&
           jitter==2.f,"the light takes its emitter's signal and its own trembling");
+  float emitterJitter=-1;
+  require(VobLayer::flicker(*tree[0],&emitterJitter)==emitterSignal && emitterJitter==0.f,"an emitter does not tremble its own light");
   const std::vector<std::pair<std::string,std::string>> bad={
     {"amount",R"({"key":"flame","kind":"emitter","pfx":"FIRE_SMOKE","position":[0,0,0],"yaw_deg":0,"flicker":{"pulse_hz":6,"jitter_hz":12,"amount":0,"seed":7}})"},
     {"field",R"({"key":"flame","kind":"emitter","pfx":"FIRE_SMOKE","position":[0,0,0],"yaw_deg":0,"flicker":{"pulse_hz":6,"jitter_hz":12,"amount":0.2,"seed":7,"phase":1}})"},
@@ -748,14 +755,14 @@ struct WorldDataContract {
     expected.vobs=base.vobs;
     const auto fallback=[&](const std::string& context) {
       WorldData::Data actual;
-      const auto* tree=Resources::loadVobBundle("FIRETREE_LAMP.ZEN");
+      const auto* tree=loadVobBundle("FIRETREE_LAMP.ZEN");
       require(tree!=nullptr,context+": bundle is available");
       actual.vobs=*tree;
       require(WorldData::compare(expected,actual).empty(),context+": every base bundle field is preserved");
       return tree;
       };
     const auto* missing=fallback("missing tree");
-    require(Resources::loadVobBundle("FIRETREE_LAMP.ZEN")==missing,"base bundle is cached");
+    require(loadVobBundle("FIRETREE_LAMP.ZEN")==missing,"base bundle is cached");
     const auto valid="{\"format\":1,\"add\":["+emitter("own-flame","own_test_smoke.pfx")+","+
                      emitter("base-flame","Fire_Medium.PfX")+","+mesh("slot-mesh","VOB_LAYER_TEST_CUBE")+
                      R"(,{"key":"slot-light","kind":"light","position":[1,2,3],"rotation":[[0,0,1],[0,1,0],[-1,0,0]],"range":450,"color":[255,128,0],"color_ani":[[255,128,0],[200,90,10]],"range_ani":[1,0.85],"ani_fps":12}]})";
@@ -767,7 +774,7 @@ struct WorldDataContract {
     require(subprocess({GOTHIC_CONTENT_CONVERT,"check-vob-tree",baseRoot.string(),file.string(),fixture.content.string()})==0,
             "converter CLI accepts a valid tree with own and base PFX names");
     resources.zenCache.clear();
-    const auto* tree=Resources::loadVobBundle("firetree_lamp.ZeN");
+    const auto* tree=loadVobBundle("firetree_lamp.ZeN");
     require(tree && tree->size()==4 && (*tree)[0]->visual_name=="OWN_TEST_SMOKE.PFX" &&
             (*tree)[1]->visual_name=="FIRE_MEDIUM.PFX" && (*tree)[2]->visual_name=="VOB_LAYER_TEST_CUBE.3DS",
             "a case-insensitive bundle name loads the complete own tree with canonical resource names");
@@ -802,7 +809,7 @@ struct WorldDataContract {
               "updating the slot reuses authored transforms without accumulating the previous slot");
       }
     fs::remove(file);
-    require(Resources::loadVobBundle("firetree_lamp.ZeN")==tree,"own bundle is cached after its file disappears");
+    require(loadVobBundle("firetree_lamp.ZeN")==tree,"own bundle is cached after its file disappears");
     textFile(file,valid);
     for(const char* flag:{"OPENGOTHIC_VOB_LAYERS","OPENGOTHIC_CONTENT"}) {
       setenv(flag,std::string_view(flag)=="OPENGOTHIC_CONTENT" ? "" : "0",1);
@@ -833,7 +840,7 @@ struct WorldDataContract {
         if(mode==Tempest::Log::Error) { ++errors; logged=line; }
         });
       const auto* rejectedTree=fallback(reason);
-      require(Resources::loadVobBundle("FIRETREE_LAMP.ZEN")==rejectedTree,reason+": rejected tree fallback is cached");
+      require(loadVobBundle("FIRETREE_LAMP.ZEN")==rejectedTree,reason+": rejected tree fallback is cached");
       Tempest::Log::setOutputCallback({});
       require(errors==1 && logged.find(file.string())!=std::string::npos && logged.find(reason)!=std::string::npos,
               reason+": one runtime error names the rejected tree file and reason");
@@ -874,7 +881,7 @@ struct WorldDataContract {
         });
       WorldData::Data data;
       asset::WorldMesh worldMesh;
-      Resources::loadWorld(data,worldMesh,"TEST.ZEN");
+      loadWorld(data,worldMesh,"TEST.ZEN");
       Tempest::Log::setOutputCallback({});
       require(errors==1 && WorldData::compare(Fixture::original(),data).empty(),
               "running Resources rejects a late mesh entry atomically using its startup registry");
@@ -884,7 +891,7 @@ struct WorldDataContract {
       resources.automaticBase.path=fixture.base;
       WorldData::Data data;
       asset::WorldMesh worldMesh;
-      Resources::loadWorld(data,worldMesh,"TEST.ZEN");
+      loadWorld(data,worldMesh,"TEST.ZEN");
       require(data.vobs.size()==4 && data.vobs.back()->vob_name=="late-mesh" && VobLayer::isAdded(*data.vobs.back()),
               "fresh Resources accepts the mesh entry and applies the layer");
       resources.baseFingerprint="particle-height-contract";

@@ -1,4 +1,5 @@
 #include "videodata.h"
+#include "baseimport.h"
 #include "videoio.h"
 #include "bink/video.h"
 #include <zenkit/Vfs.hh>

@@ -184,6 +184,7 @@ vec4 dbgLambert() {
 
 #if defined(MATERIAL_MAPS) && defined(MAT_UV) && (MESH_TYPE!=T_PFX) && !defined(WATER)
 #define ANTITILE_MATERIAL 1
+#include "material_projection.glsl"
 
 // Mikkelsen, Practical Real-Time Hex-Tiling (JCGT 2022), section 2:
 // https://jcgt.org/published/0011/03/05/
@@ -203,6 +204,7 @@ struct MaterialSampling {
   AntitileCell a, b, c;
   vec3 weights;
   bool antitile;
+  Projection proj;
   };
 
 vec3 antitileRandom(ivec2 cell) {
@@ -312,6 +314,7 @@ vec4 diffuseTex() {
   maps.dpdx = dFdx(shInp.pos);
   maps.dpdy = dFdy(shInp.pos);
 #endif
+  projectionPlanes(maps.proj);
 #endif
 #if !defined(SIMPLE_MAT) && (MESH_TYPE!=T_PFX)
   ivec2 texAniMapDirPeriod = bucket[bucketId].texAniMapDirPeriod;
@@ -362,6 +365,8 @@ vec4 diffuseTex() {
   vec4 tex;
   if(maps.antitile)
     tex = antitileDiffuse(maps, tId);
+  else if(maps.proj.on)
+    tex = projectionAlbedo(maps.proj, tId);
   else
     // The material flag is uniform within the primitive (flat bucketId).
     tex = texture(sampler2D(textureMain[tId], samplerMain),uv,scene.mipBias);
@@ -500,6 +505,8 @@ void mainGBuffer(vec4 t) {
                                            vec3(slope,1)));
     if(hasOrm)
       outOrm.rgb = orm;
+    } else if(maps.proj.on) {
+    projectionMaps(maps.proj, tId, outNormal, outOrm.rgb);
     } else {
     if((bucket[bucketId].flags & BK_NORMAL)!=0) {
       vec4 nm = textureGrad(sampler2D(textureNormal[tId], samplerMain), uv, duvdx*scene.mipGradScale, duvdy*scene.mipGradScale);
@@ -970,13 +977,4 @@ void main() {
 #if DEBUG_DRAW && !defined(GBUFFER) && !defined(DEPTH_ONLY)
   outColor   = vec4(debugColors[debugId%debugColors.length()],1.0);
 #endif
-
-  //outColor = vec4(inZ.xyz/inZ.w,1.0);
-  //outColor = vec4(vec3(inPos.xyz)/1000.0,1.0);
-  //outColor = vec4(vec3(shMap),1.0);
-  //outColor = vec4(vec3(calcLight()),1.0);
-  //outColor = vec4(vec3(calcShadow()),1.0);
-  //vec3 shPos0  = (shInp.shadowPos[0].xyz)/shInp.shadowPos[0].w;
-  //outColor   = vec4(vec3(shPos0.xy,0),1.0);
-  //outColor = dbgLambert();
   }

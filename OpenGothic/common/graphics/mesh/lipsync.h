@@ -36,9 +36,18 @@ class LipSync final {
         // a streamed voice tells how much of it has been played (from the audio thread)
         void     setPlayed(uint64_t ms) { played.store(int64_t(ms)); }
         int64_t  playedMs() const { return played.load(); }  // -1: it plays from the start of the line
+        // A live microphone has no future audio: sample its played time without the recorded voice lead.
+        // Its loudness is measured against a speech level of its own (LiveRef), not only the loudest moment so
+        // far: a breath before the first word is not stretched to a wide mouth; a step not here yet holds the last
+        void     setLiveInput() { liveInput = true; }
+        bool     isLiveInput() const { return liveInput; }
+        // dB added to the loudness of the steps appended from now on (a live track: an npc's voice is in the
+        // microphone, LiveDuck), 0: as it is
+        void     setLiveGain(float db);
 
         float    level(uint64_t ms) const;                 // 0..1: how wide the voice opens the mouth
         float    peak (uint64_t from, uint64_t to) const;  // the largest level in [from,to]
+        float    loudestDb(uint64_t from, uint64_t to) const;  // the loudest step in [from,to], dB of the speech band
         uint64_t durationMs() const;
         bool     isFinished() const;
         // the first stretch of at least minMs after `from` where the level stays below `below`: [start, end) in ms,
@@ -81,6 +90,8 @@ class LipSync final {
         float                peakDb   = -100;
         bool                 finished = false;
         std::atomic<int64_t> played{-1};
+        bool                 liveInput = false;
+        float                liveGain  = 0;
 
         // the tone: the sound without what lies above 1 kHz, brought down to 8 kHz
         Biquad               toneLp[2];
@@ -121,6 +132,10 @@ class LipSync final {
     static void    setEnabled(bool e);
     static bool    setParam(std::string_view name, float value);
     static auto    paramList() -> std::string;
+    // the live microphone (PlayerVoice): ms its clock stays behind what has arrived, dB its loudness is lowered by
+    // while an npc's voice sounds near the hero (the speakers' sound in the microphone)
+    static uint64_t liveBufferMs();
+    static float    liveDuckDb();
 
     // how wide each VISEME frame of the head opens the mouth, 0..1; empty: the head has none
     void           setShapes(std::vector<float> open);
@@ -134,6 +149,13 @@ class LipSync final {
     // last one, which ended when the voice fell below `dip` of its loudest moment
     static void    syllableRule(float& dip, float& rise);
     uint32_t       syllableCount() const { return syllables; }  // syllables of voices started so far
+    // the syllables judged so far, how loud the latest one is (dB of the speech band, its loudest 10 ms): a syllable
+    // is judged on JudgeMs of its sound (LiveJudgeMs of a live voice, which has none ahead) once that has arrived
+    static constexpr uint64_t JudgeMs     = 150;
+    static constexpr uint64_t LiveJudgeMs = 80;
+    uint32_t       judgedCount()   const { return judged; }
+    float          judgedDb()      const { return judgedLoud; }
+    bool           isLive()        const { return live; }       // the voice now (or last) is a live microphone
     float          syllablePeak()  const { return sylLoud; }    // how loud the latest one gets, 0..1
     float          voiceLevel()    const { return lvl; }        // how loud the voice is now, 0..1
     // per frame; false: nothing to show
@@ -152,6 +174,7 @@ class LipSync final {
     uint64_t               startTick = 0;
     uint64_t               time      = 0;  // ms into the line, debug
     bool                   active    = false;
+    bool                   live      = false;  // the voice is a live microphone (its own times, LiveAttack...)
     float                  lvl       = 0;  // level of the voice now
     float                  mouth     = 0;  // smoothed
     float                  sylMax    = 0;  // the loudest moment of the current syllable so far
@@ -165,6 +188,10 @@ class LipSync final {
     uint32_t               picks     = 0;
     uint32_t               syllables = 0;
     float                  sylLoud   = 0;
+    uint64_t               sylAt     = 0;      // ms of the line the latest syllable starts at...
+    bool                   sylPending = false; // ...not judged yet
+    uint32_t               judged    = 0;
+    float                  judgedLoud = -100;
     uint32_t               rnd       = 1;
     Shape                  shown;
     float                  shownOpen = 0;

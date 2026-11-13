@@ -7,6 +7,7 @@
 #include <optional>
 #include <sstream>
 
+#include "game/definitions/basescripts.h"
 #include "game/definitions/spelldefinitions.h"
 #include "game/serialize.h"
 #include "game/herodeed.h"
@@ -21,6 +22,7 @@
 #include "commandline.h"
 #include "gothic.h"
 #include "loadprobe.h"
+#include "outputunits.h"
 #include "navdemos.h"
 #include "world/benchhooks.h"
 
@@ -450,7 +452,7 @@ void GameScript::loadDialogOU() {
   const std::array<std::string,2> names = {prefix + ".BIN", prefix + ".DAT"};
 
   for(auto& OU:names) {
-    if(Resources::loadBaseOutputUnits(OU,vmLang,dialogs))
+    if(loadBaseOutputUnits(OU,vmLang,dialogs))
       return;
     }
   Log::e("none of Zen-files for OU could be loaded");

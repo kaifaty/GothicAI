@@ -27,6 +27,8 @@ bool MdlVisual::updateGaze(Npc& npc, uint64_t dt) {
   in.dt      = dt;
   in.forward = {std::cos(a), 0, std::sin(a)};
   in.talk    = {gestures.head().pitch, gestures.head().yaw, gestures.head().roll};
+  // its hands gesture as it speaks: the head is not the gesture's (updateGestures)
+  in.steady  = Gaze::holdsGestureHead() && npc.world().tickCount()<gestureHead;
   // a blow throws the head around: the gaze lets go while one stumbles
   if(!npc.isDown() && (npc.bodyStateMasked() & BS_MAX)!=BS_STUMBLE)
     in.source = npc.gazeTarget(in.target);

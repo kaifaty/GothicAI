@@ -2,7 +2,8 @@
 # chunks into gothic-base-runtime: the cook (worldchunkcook.cpp) runs the island search, the game takes the bundle.
 # Static collision's input from the cooked chunks (worldcollisionmesh.cpp) leaves the bundle's triangles out.
 # The rules (data/cloth-world.csv) are compiled in as clothworlddata.h. Included by every build that has
-# gothic-base-runtime, after BaseImport.cmake; outside it, since that file is a base format input.
+# gothic-base-runtime through BaseRuntime.cmake, after BaseImport.cmake; outside it, since that file is a base
+# format input.
 set(WORLD_CLOTH_CSV "${BASE_ROOT}/data/cloth-world.csv")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${WORLD_CLOTH_CSV}")
 file(READ "${WORLD_CLOTH_CSV}" CLOTH_WORLD_DATA)

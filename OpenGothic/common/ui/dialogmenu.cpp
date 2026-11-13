@@ -225,12 +225,13 @@ bool DialogMenu::aiOutput(Npc &npc, std::string_view msg) {
   if(Npc* said = &npc==pl ? other : pl; said!=nullptr && said->speechLeft()>0)
     return false;
 
+  // the one who spoke before: its hands come to rest
   if(pl==&npc) {
     if(other!=nullptr)
-      other->stopDlgAnim();
+      other->stopDlgAnim(true);
     } else {
     if(pl!=nullptr)
-      pl->stopDlgAnim();
+      pl->stopDlgAnim(true);
     }
 
   current.txt     = Gothic::inst().messageByName(msg);
@@ -376,10 +377,10 @@ void DialogMenu::close() {
       prevPl->setInteraction(nullptr);
     }
   if(prevPl){
-    prevPl->stopDlgAnim();
+    prevPl->stopDlgAnim(true);
     }
   if(prevNpc && prevNpc!=prevPl){
-    prevNpc->stopDlgAnim();
+    prevNpc->stopDlgAnim(true);
     }
   }
 

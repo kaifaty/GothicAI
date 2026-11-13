@@ -23,16 +23,8 @@ if(PROJECT_IS_TOP_LEVEL)
   set(DM_ENABLE_ASAN OFF CACHE INTERNAL "")
   add_subdirectory(../../lib/dmusic dmusic EXCLUDE_FROM_ALL)
   include(../../cmake/BaseImport.cmake)
-  # runtime manifest reading and cooked chunks, outside the base format fingerprint (see the game's CMakeLists.txt)
-  target_sources(gothic-base-runtime PRIVATE "${BASE_ROOT}/common/worldchunkmanifest.cpp"
-    "${BASE_ROOT}/common/worldchunkbinary.cpp" "${BASE_ROOT}/common/worldchunkindex.cpp" "${BASE_ROOT}/common/worldchunkcook.cpp"
-    "${BASE_ROOT}/common/worldchunkcookedsource.cpp")
-  include(../../cmake/WorldCloth.cmake)
-  if(MSVC)
-    # the base C sources read dmusic's _Atomic structs (see the game's CMakeLists.txt)
-    target_compile_options(gothic-base-runtime PRIVATE $<$<COMPILE_LANGUAGE:C>:/experimental:c11atomics>)
-    target_compile_options(gothic-base-import PRIVATE $<$<COMPILE_LANGUAGE:C>:/experimental:c11atomics>)
-  endif()
+  # runtime manifest reading, cooked chunks, world cloth and the MSVC flag (one list with the game)
+  include(../../cmake/BaseRuntime.cmake)
   # basestore.cpp, linked into the tool below, also resolves the video part
   include(../../cmake/VideoImport.cmake)
   add_subdirectory(../../common/daedalus daedalus)

@@ -9,8 +9,6 @@
 #include "asset/staticmesh.h"
 #include "asset/modeltypes.h"
 #include "basestore.h"
-#include "programdata.h"
-#include "outputunits.h"
 #include "audiodata.h"
 #include "musicdata.h"
 #include "asset/worldtypes.h"
@@ -151,6 +149,8 @@ class Resources final {
       float                    turbidity = 0.f;
       float                    turbidityDepth = 0.f;
       float                    emissive = 0.f;
+      float                    projectionTile = 0.f; // metres per repeat by world position ("projection"); 0: mesh UV
+      Material::Fringe         fringe; // "fringe": the second layer over the projection, its maps loaded
       Material::Antitile       antitile = Material::Antitile::Off;
       bool                     hair = false; // hair cards: the ORM slot is the hair map, lit by the hair BRDF
       bool                     strand = false; // strands as ribbons: the albedo is the hair's colour ramp
@@ -160,6 +160,9 @@ class Resources final {
       };
     static MaterialMaps              loadMaterialMaps(std::string_view name);
     static const Tempest::Texture2d* loadMaterialAlbedo(std::string_view name);
+    // Drops the materials.json record of `name` with one log line, for a fault seen only once the material is built
+    // (projection on an alpha-tested texture): the texture then loads as if the record were not there
+    static void                      rejectMaterialMaps(std::string_view name, std::string_view reason);
     static void                      materialAlbedoReplaced(std::string_view name);
     static bool                      materialMapsEnabled();
 
@@ -306,7 +309,7 @@ class Resources final {
     static void                      videoFrameRead(std::string_view name);
     static const ProtoMesh*          decalMesh(const asset::VisualDecal& decal);
 
-    static const VobTree*            loadVobBundle(std::string_view name);
+    static const VobTree*            loadVobBundle(std::string_view name, bool (*readLayer)(VobTree&,std::string_view));
 
     template<class V>
     static Tempest::VertexBuffer<V>  vbo(const V* data,size_t sz){ return device().vbo(data,sz); }
@@ -337,15 +340,8 @@ class Resources final {
     static void recycle(std::shared_ptr<void>&& lifetime);
 
     static bool                      hasWorld(std::string_view name);
-    static int                       baseLanguage();
-    static const ProgramData::Index&  baseProgramIndex();
-    static bool                      loadBaseOutputUnits(std::string_view request, int language,
-                                                        std::vector<std::shared_ptr<asset::CutsceneBlock>>& blocks);
-    static bool                      loadBaseOutputUnits(std::string_view request, int language,
-                                                        std::string_view branch,
-                                                        std::vector<std::shared_ptr<asset::CutsceneBlock>>& blocks,
-                                                        std::u16string_view hostPath = {});
 
+    static std::filesystem::path      baseDir();
     static std::filesystem::path      worldBaseDir(std::string_view world);
     static std::filesystem::path      contentDir();
     static std::filesystem::path      worldOverrideDir(std::string_view world);
@@ -357,8 +353,9 @@ class Resources final {
     static void                      censusFile(std::u16string_view path);
     static ContentCensus*            contentCensus();
     static void                      censusProfile(std::string_view game, std::string_view outputUnits, int language);
-    static void                      loadWorld(WorldData::Data& world, asset::WorldMesh& worldMesh, std::string_view name,
-                                               ChunkTable* chunks = nullptr);
+    static const std::vector<std::pair<std::string,uintmax_t>>& baseArchiveFiles();
+    static std::map<std::string,std::filesystem::path> meshReplacementFiles();
+    static std::filesystem::path      worldContentDir(const std::filesystem::path& root, std::string_view world);
     static bool                      loadBaseZen(std::string_view name, std::string_view kind, WorldData::ZenFile& out);
     static bool                      writeCensus();
 
@@ -384,8 +381,6 @@ class Resources final {
     BaseIndex baseTextures, baseMeshes, baseZen, baseModels, baseFonts;
     std::map<std::string,std::filesystem::path> contentModels;
     std::unique_ptr<RenderRigIndex> renderRigs;
-    ProgramData::Index basePrograms;
-    OutputUnits::Index baseOutputUnits;
     AudioData::Index baseAudio;
     MusicData::Index baseMusic;
     std::vector<std::pair<std::string,uintmax_t>> baseArchives;
@@ -396,7 +391,6 @@ class Resources final {
     std::shared_ptr<VideoBase> videoBase;
     std::mutex videoStartSync;
     std::thread videoWorker;
-    static std::filesystem::path baseDir();
     void indexBaseContent();
     void indexContentModels();
     void indexRenderRigs(const std::filesystem::path& file);
@@ -526,7 +520,7 @@ class Resources final {
                                         const char* kind, const MusicData::Source& source);
     GthFont&              implLoadFont(std::string_view fname, FontType type, const float scale);
     PfxEmitterMesh*       implLoadEmiterMesh(std::string_view name);
-    const VobTree*        implLoadVobBundle(std::string_view name);
+    const VobTree*        implLoadVobBundle(std::string_view name, bool (*readLayer)(VobTree&,std::string_view));
 
     Tempest::VertexBuffer<Vertex> sphere(int passCount, float R);
 
@@ -699,6 +693,9 @@ class Resources final {
       float       turbidity = 0.f;
       float       turbidityDepth = 0.f;
       float       emissive = 0.f;
+      float       projectionTile = 0.f;
+      std::string fringeAlbedo, fringeNormal, fringeOrm;
+      Material::Fringe fringe; // its tile and bands; the maps are loaded with the record
       Material::Antitile antitile = Material::Antitile::Off;
       bool        hair = false;
       bool        strand = false;

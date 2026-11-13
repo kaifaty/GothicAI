@@ -6,7 +6,7 @@
 #include <map>
 #include <unordered_set>
 
-#include "world/objects/pfxemitter.h"
+#include "graphics/pfx/pfxslot.h"
 #include "graphics/pfx/pfxobjects.h"
 #include "graphics/pfx/pfxmotion.h"
 #include "resources.h"
@@ -47,7 +47,7 @@ class PfxBucket {
       const std::vector<Tempest::Matrix4x4>* skin = nullptr;
 
       uint64_t      waitforNext = 0;
-      std::unique_ptr<PfxEmitter> next;
+      std::unique_ptr<PfxSlot> next;
 
       PfxMotion::Flicker flicker;  // a layer emitter's flame signal (vobs.d "flicker"): the particles' brightness
       };
@@ -162,7 +162,7 @@ class PfxBucket {
     static float                randf(float base, float var);
 
     Block&                      getBlock(ImplEmitter& emitter);
-    Block&                      getBlock(PfxEmitter&  emitter);
+    Block&                      getBlock(PfxSlot&     emitter);
 
     void                        init     (Block& block, ImplEmitter& emitter, size_t particle);
     void                        finalize (size_t particle);
@@ -199,6 +199,6 @@ class PfxBucket {
 
     static std::mt19937         rndEngine;
 
-    friend class PfxEmitter;
+    friend class PfxSlot;
   };
 
