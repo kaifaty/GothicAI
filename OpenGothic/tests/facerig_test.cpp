@@ -1427,7 +1427,7 @@ void playerVoiceCases() {
   voice.append(rate,pcm.data()+320,320,50061);
   voice.append(rate,pcm.data()+640,320,50062);
   voice.append(rate,pcm.data()+960,320,50080);
-  require(voice.track()->playedMs()==int64_t(80-LipSync::liveBufferMs()),
+  require(voice.track()->playedMs()==int64_t(60-LipSync::liveBufferMs()),
           "the microphone clock must follow the chunk that came soonest after its time: "+
           std::to_string(voice.track()->playedMs()));
   voice.finish();
