@@ -1,0 +1,66 @@
+# The head of an NPC built by build_head.py as the game shows it, to lay next to its concept
+# (reports/content/2026-11-npc-pipeline/likeness.md): stills of the hero's face from the front, three quarters and
+# the side and close on the eyes, first in the torch light of Xardas' tower (the default save), then in the noon sun
+# of the market. Nobody blinks, so a still is never a half shut eye.
+#   TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=ryzen OPENGOTHIC_CONTENT=<content root of the head> \
+#     scripts/bench.sh npc-head-look <out dir>
+# @timeout 420
+seed 73013
+cheat god
+set time 12 0
+blink off
+view clean 30
+watch nearest
+freeze nearest
+wait 500
+place 110 0
+wait 800
+watch player
+cam cut
+cam face 38 0 1
+wait 2500
+shot tower_front
+wait 400
+cam cut
+cam face 38 35 1
+wait 1200
+shot tower_quarter
+wait 400
+cam cut
+cam face 38 90 1
+wait 1200
+shot tower_profile
+wait 400
+cam cut
+cam face 30 0 6
+wait 1200
+shot tower_eyes
+wait 400
+goto NW_CITY_MERCHANT_TRADE_04
+watch player
+wait 4000
+cam cut
+cam face 38 0 1
+wait 2500
+shot sun_front
+wait 400
+cam cut
+cam face 38 35 1
+wait 1200
+shot sun_quarter
+wait 400
+cam cut
+cam face 38 -35 1
+wait 1200
+shot sun_quarter_other
+wait 400
+cam cut
+cam face 38 90 1
+wait 1200
+shot sun_profile
+wait 400
+cam cut
+cam face 30 0 6
+wait 1200
+shot sun_eyes
+wait 400

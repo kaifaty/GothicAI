@@ -21,7 +21,8 @@
 # Output:
 # - skin_game.png: the colour map. The head's bare skin is as light as the body's (one gain for the whole head, the
 #   face keeps its own hue); in the band over the cut the colour runs into the body's, so the rim has its colour;
-# - skin_orm.png: R = 1 (no baked occlusion), G = roughness, B = 0. The forehead, the nose and the lips shine, hair
+# - skin_orm.png: R = 1 (no baked occlusion), G = roughness, B = 0.
+#   The forehead, the nose and the lips shine, wrinkled skin is rougher by the spread of the relief's normals, hair
 #   painted on the skin does not; at the rim the skin is as matte as the body, which the game lights without a
 #   highlight;
 # - skin_normal.png: tangent normals as the game reads them (X in alpha, Y in green): the model's relief (--relief),
@@ -181,9 +182,6 @@ r += 0.30*hair_b
 r += 0.02*ndimage.gaussian_filter(rng.standard_normal((N, N)).astype(np.float32), 1.5*MM)*1.5*MM*3.5
 r = r+(ROUGH_BODY-r)*rim_s
 r = np.where(m, np.clip(r, 0.30, 0.95), ROUGH_BODY)
-SO = 4; orm = np.zeros((N//SO, N//SO, 3), np.uint8); orm[..., 0] = 255
-orm[..., 1] = np.clip(ndimage.zoom(r, 1/SO, order=1)*255+0.5, 0, 255).astype(np.uint8)
-Image.fromarray(orm).save(os.path.join(OUT, 'skin_orm.png'))
 
 # ---- the normal map: creases from the dark lines of the colour map, pores from noise; metres of height
 ll = np.log(np.maximum(img_lin@LUM, 1e-3))                                    # the map without the painted hair
@@ -218,11 +216,26 @@ yb = np.clip((ny*0.5+0.5)*255+0.5, 0, 255).astype(np.uint8); xb = np.clip((nx*0.
 Image.fromarray(np.dstack([yb, yb, yb, np.minimum(xb, 254)])).save(os.path.join(OUT, 'skin_normal.png'))   # alpha under 255: packed as DXT5
 tilt = np.degrees(np.arctan(np.sqrt(du*du+dv*dv)))[m & (keep > 0.9)]
 
+# ---- the roughness map. Wrinkled skin is rougher than smooth skin: with the relief in the normals alone, every
+# ridge of a forehead wrinkle threw its own white streak under a torch. The normal map holds the model's relief at
+# RELIEF_GAIN of its height and without its grain; what it does not hold widens the highlight instead: the spread
+# of the normals of the relief at full height within two millimetres goes into the roughness (Toksvig; in GGX's
+# alpha: alpha^2 + 2 variance).
+r0 = r
+if RELIEF:
+    fu = (np.roll(relief, -1, 1)-np.roll(relief, 1, 1))*0.5*tm/RELIEF_GAIN; fv = (np.roll(relief, -1, 0)-np.roll(relief, 1, 0))*0.5*tm/RELIEF_GAIN
+    fz = 1/np.sqrt(fu*fu+fv*fv+1); mean = [ndimage.gaussian_filter(c, 2.0*MM) for c in (-fu*fz, -fv*fz, fz)]
+    ln = np.sqrt(sum(c*c for c in mean)); var = (1-ln)/np.maximum(ln, 1e-3)
+    r = np.where(m, np.clip((r**4+np.minimum(2*var, 0.25))**0.25, 0.30, 0.95), r)
+SO = 4; orm = np.zeros((N//SO, N//SO, 3), np.uint8); orm[..., 0] = 255
+orm[..., 1] = np.clip(ndimage.zoom(r, 1/SO, order=1)*255+0.5, 0, 255).astype(np.uint8)
+Image.fromarray(orm).save(os.path.join(OUT, 'skin_orm.png'))
+
 # ---- a sheet to look at: before, after, roughness, relief
 ys, xs = np.nonzero(m); y0, y1, x0, x1 = ys.min(), ys.max(), xs.min(), xs.max(); c = lambda a: a[y0:y1:3, x0:x1:3]
 relief = np.clip(0.5+0.5*(nx*0.6+ny*0.6)*6, 0, 1)
 sheet = np.concatenate([c(img/255), c(srgb(game)), np.repeat(c(r)[..., None], 3, 2), np.repeat(c(relief)[..., None], 3, 2)], 1)
 Image.fromarray(np.clip(sheet*255, 0, 255).astype(np.uint8)).save(os.path.join(OUT, 'skin_material.jpg'), quality=88)
 f8 = lambda v: tuple(int(x) for x in np.clip(srgb(v)*255+0.5, 0, 255))
-print('SKIN head %s body %s gain %.2f; hair roots over %.0f cm2; %d rim vertices, %.1f texels/mm; roughness %.2f..%.2f, median %.2f; tilt median %.1f deg, 95%% %.1f deg'
-      % (f8(head_lin), f8(body_lin), GAIN, float((cover > 0.5).sum())/MM/MM/100, len(rim), MM, r[m].min(), r[m].max(), float(np.median(r[bare])), float(np.median(tilt)), float(np.percentile(tilt, 95))))
+print('SKIN head %s body %s gain %.2f; hair roots over %.0f cm2; %d rim vertices, %.1f texels/mm; roughness %.2f..%.2f, median %.2f (before the relief %.2f); tilt median %.1f deg, 95%% %.1f deg'
+      % (f8(head_lin), f8(body_lin), GAIN, float((cover > 0.5).sum())/MM/MM/100, len(rim), MM, r[m].min(), r[m].max(), float(np.median(r[bare])), float(np.median(r0[bare])), float(np.median(tilt)), float(np.percentile(tilt, 95))))
