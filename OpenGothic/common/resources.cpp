@@ -68,6 +68,7 @@ using ResourcesInternal::modelKey;
 namespace ModelData { asset::ModelScript readScriptOverlay(const std::filesystem::path& file); }
 
 Resources* Resources::inst=nullptr;
+std::atomic<uint64_t> Resources::instGeneration{0};
 
 struct Resources::VideoBase {
   std::shared_ptr<std::atomic_bool> cancelled=std::make_shared<std::atomic_bool>(false);
@@ -100,6 +101,7 @@ const char* scriptDirectory(int language) {
 
 Resources::Resources() {
   inst=this;
+  ++instGeneration;
   configureTextures();
   initCensus();
   indexMeshOverrides();
@@ -112,6 +114,7 @@ Resources::Resources() {
 Resources::Resources(Tempest::Device &device)
   : dev(&device), sound(std::make_unique<Tempest::SoundDevice>()) {
   inst=this;
+  ++instGeneration;
   configureTextures();
   initCensus();
 

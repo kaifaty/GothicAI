@@ -2612,7 +2612,7 @@ void effectCases(const std::string& game, const std::string& base) {
     ::close(file);
     setenv("OPENGOTHIC_CENSUS",censusPath.c_str(),1);
     try {
-      {
+      for(int pass=0;pass<2;++pass) {
       Resources resources(device);
       Gothic gothic;
       auto* segment=Resources::loadMusicSegment("NW_DayStd.sgt");
@@ -2635,8 +2635,12 @@ void effectCases(const std::string& game, const std::string& base) {
                 "native music wiring must not open original VFS or host music files");
         }
       const auto index=MusicData::readIndex(std::filesystem::path(base)/"music");
-      size_t gk=0,dx8=0,replacements=0;
+      size_t gk=0,dx8=0,dx8Styles=0,dx8Dls=0,replacements=0;
       for(const auto& row:music["selections"].GetArray()) {
+        if(std::string_view(row["provider"].GetString())=="dx8") {
+          dx8Styles+=std::string_view(row["kind"].GetString())=="style";
+          dx8Dls+=std::string_view(row["kind"].GetString())=="dls";
+          }
         if(std::string_view(row["kind"].GetString())!="segment") continue;
         require(std::string_view(row["request"].GetString())=="NW_DayStd.sgt","music wiring segment request must retain its spelling");
         const bool isGk=std::string_view(row["provider"].GetString())=="gk";
@@ -2666,7 +2670,9 @@ void effectCases(const std::string& game, const std::string& base) {
         replacements+=std::string_view(row["kind"].GetString())=="basemusic";
       require(gk==1 && dx8==1 && replacements==music["selections"].Size(),
               "both Resources music providers must record one segment and every verified native read");
-      std::cout << "p16-music wiring: both native providers selected NW_DayStd.sgt with zero original music opens\n";
+      require(dx8Styles>0 && dx8Dls>0,"each Resources instance must reread Dx8 styles and DLS records");
+      std::cout << "p16-music wiring: both native providers selected NW_DayStd.sgt with zero original music opens; pass "
+                << pass+1 << ": Dx8 " << dx8Styles << " styles, " << dx8Dls << " DLS records\n";
       }
       }
     catch(...) {

@@ -6,6 +6,7 @@
 
 #include <Tempest/TextCodec>
 #include <mutex>
+#include <optional>
 
 Dx8::PatternList loadDxMusic(std::string_view name) {
   if(Resources::isHeadless())
@@ -21,17 +22,23 @@ Dx8::PatternList loadDxMusic(std::string_view name) {
     u"_work/Data/Music/orchestra/",
     u"_work/Data/Music/"
     };
-  static Dx8::DirectMusic music(Dx8::DirectMusic::Native{
-    [](const char16_t* file) {
-      return MusicData::decodeDx8Segment(Resources::readDxMusic(musicPaths,file,"segment"));
-      },
-    [](const char16_t* file) {
-      return MusicData::decodeDx8Style(Resources::readDxMusic(musicPaths,file,"style"));
-      },
-    [](const char16_t* file) {
-      return MusicData::decodeDx8Dls(Resources::readDxMusic(musicPaths,file,"dls"));
-      }
-    });
+  static std::optional<Dx8::DirectMusic> music;
+  static uint64_t generation = 0;
+  const auto currentGeneration = Resources::generation();
+  if(!music || generation!=currentGeneration) {
+    music.emplace(Dx8::DirectMusic::Native{
+      [](const char16_t* file) {
+        return MusicData::decodeDx8Segment(Resources::readDxMusic(musicPaths,file,"segment"));
+        },
+      [](const char16_t* file) {
+        return MusicData::decodeDx8Style(Resources::readDxMusic(musicPaths,file,"style"));
+        },
+      [](const char16_t* file) {
+        return MusicData::decodeDx8Dls(Resources::readDxMusic(musicPaths,file,"dls"));
+        }
+      });
+    generation = currentGeneration;
+    }
   auto u = Tempest::TextCodec::toUtf16(name);
-  return music.load(u.c_str());
+  return music->load(u.c_str());
   }

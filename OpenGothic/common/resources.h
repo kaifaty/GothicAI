@@ -106,6 +106,7 @@ class Resources final {
     static Tempest::Device&          device();
     static bool                      hasGraphicsDevice() { return inst!=nullptr && inst->dev!=nullptr; }
     static bool                      isHeadless() { return inst!=nullptr && inst->dev==nullptr; }
+    static uint64_t                  generation() { return instGeneration.load(); }
     static const char*               renderer();
     static void                      loadBase();
     // The fingerprint of the selected game base (the one OPENGOTHIC_BASE_FINGERPRINT selects), empty before loadBase.
@@ -361,6 +362,7 @@ class Resources final {
     friend struct WorldDataContract;
     friend struct AssetDigest;
     static Resources* inst;
+    static std::atomic<uint64_t> instGeneration;
     void initCensus();
 
     struct BaseIndex {
