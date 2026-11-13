@@ -715,6 +715,10 @@ game's frame (until 2026-11-13 the scenario left the overlay on, and its `bright
 (`OPENGOTHIC_CONTENT=<work>/content`, `TEMPEST_WINDOW_SIZE=1920x1080`, `BENCH_HOST=ryzen`); to see what a map adds,
 run it again with a copy of the root in which that map is replaced
 ([likeness.md](../../reports/content/2026-11-npc-pipeline/likeness.md), "В игре").
+Its stills are taken from 38 cm, where the game's lens narrows a face by 15 %: they show the skin, not the likeness.
+`npc-head-sheet` takes the head as its likeness sheet frames it, front and profile from 120 cm under the torch and
+with the sun in the face, then the same front from 70 and 38 cm; the head is small there, so the window is
+`TEMPEST_WINDOW_SIZE=3840x2160` (the same note, "Blender и игра").
 Faces: `faces` (the face animations of a head one after another, then two of them while Xardas speaks),
 `face-fade` (faces fade in and out, one gives way to the next, three a moment apart, the lips over a
 fading face), `mood-ai` (given lines of an AI server with moods: start `gothic-ai serve --scenario m1 --llm off
