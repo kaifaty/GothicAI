@@ -101,7 +101,12 @@ def main(argv):
     h = head_glb.read(glb)
     hero = X.hero_from_parts(h, reg)
     rg = X.register(hero, X.load_mark())
+    X.GUARD_MOVED.clear()
     res, new, extra = X.carry(hero, rg)
+    moved = max(X.GUARD_MOVED, key=lambda m: m[1], default=(0, 0.0))
+    print('lid_guard moved %d vertices in all, at most %.3f mm (the transfer itself keeps the lids out of the balls '
+          'when it is 0)' % (sum(m[0] for m in X.GUARD_MOVED), moved[1]*1000))
+    extra['lid_guard_moved'] = {'vertices': sum(m[0] for m in X.GUARD_MOVED), 'max_mm': moved[1]*1000}
     n = head_glb.write(glb, res, out)
     print('shapes set: %d -> %s' % (n, out))
     prof = json.load(open(face[0] if face else PROFILE))

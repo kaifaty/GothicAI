@@ -317,6 +317,9 @@ def local_rbf(P, D, X, radius):
     return k(X, P) @ np.linalg.solve(k(P, P)+1e-6*np.eye(len(P)), D)
 
 
+SMOOTH_LIDS, SLIDE, GUARD, FILL_LIPS = True, True, True, True   # switches for checks
+SMOOTH_STEPS = 50
+GUARD_MOVED = []                 # (vertices, largest push, m) per shape lid_guard() had to move
 # Amberg's schedule: stiffness, landmark weight, normal weight, iterations (trimesh.registration.nricp_amberg)
 # (the landmarks held at 3 to the end: the skin still slides into place, local_rbf() closes the rest)
 STEPS = [[20, 3, 0.5, 10], [5, 3, 0.5, 10], [2, 3, 0.5, 10], [0.8, 3, 0.0, 10], [0.3, 3, 0.0, 10], [0.1, 3, 0.0, 10],
@@ -430,36 +433,115 @@ def ball_depth(e, P, R=None):
 
 
 def lid_guard(hero, d, gap=0.0003):
-    """No skin into the eyeballs: a vertex of the skin that a shape would bring inside a ball (or nearer than gap to
-    it) while it is outside at rest is moved back out along the ray from the ball's centre."""
+    """No skin into the eyeballs (the socket's lining behind the lids is not seen and not held): a vertex of the
+    skin that is outside a ball at rest and that a shape would bring
+    nearer to it than gap (or, if it lies nearer at rest, nearer than at rest) is moved back out along the ray from the
+    ball's centre. A safety net: what it moves is counted in GUARD_MOVED (head_shapes.py reports it)."""
     V = hero['V']
     P = V+d
     for e in hero['balls'].values():
-        near = np.nonzero(np.linalg.norm(V-e['c'], axis=1) < e['rmax']+0.02)[0]
+        near = np.nonzero(hero['valid'] & (np.linalg.norm(V-e['c'], axis=1) < e['rmax']+0.02))[0]   # the skin
         d0 = ball_depth(e, V[near])
         for _ in range(4):
             d1 = ball_depth(e, P[near])
-            bad = (d1 > np.minimum(-gap, d0)) & (d0 < 0)
+            bad = (d1 > np.maximum(-gap, d0)) & (d0 < 0)
             if not bad.any():
                 break
             i = near[bad]
             ray = P[i]-e['c']
             ray /= np.linalg.norm(ray, axis=1, keepdims=True)
-            P[i] += ray*(d1[bad]-np.minimum(-gap, d0[bad]))[:, None]
+            P[i] += ray*(d1[bad]-np.maximum(-gap, d0[bad]))[:, None]
+    moved = np.linalg.norm(P-V-d, axis=1)
+    GUARD_MOVED.append((int((moved > 1e-6).sum()), float(moved.max())))
     return P-V
 
 
-def smooth_lids(hero, d, w, nbr, steps=50, a=0.5):
-    """The carried shift smoothed over the mesh around the eyes (weight w): Mark's lid has its margin and the
-    margin's back face next to each other moving apart, and neighbouring vertices of ours that found one or the other
-    tore the lid; smoothed, the lid moves as one sheet, the shift of the face round it is kept."""
-    cnt = np.bincount(nbr[:, 0], minlength=len(d)).astype(float)[:, None]
+def lid_margins(hero, fr):
+    """The margins of the lids: per eye and per 1 mm across it, the lowest skin vertex of the upper lid and the
+    highest of the lower one that lie on the ball (within 3.5 mm of it, in front of its centre), split at the middle
+    of the opening (the lid landmarks). The fold over the hero's upper lid is a layer of its own above them."""
+    V = hero['V']
+    out = []
+    for sd, e in hero['balls'].items():
+        r = V-e['c']
+        cand = np.nonzero(hero['valid'] & (-ball_depth(e, V) < 0.0035) & (r @ fr['fwd'] > 0.5*e['r']))[0]
+        x, y = r[cand] @ fr['left'], r[cand] @ fr['down']
+        mid = ((V[fr['lm_v']['lid'+sd]]+V[fr['lm_v']['lidLow'+sd]])/2-e['c']) @ fr['down']
+        for b in np.unique(np.floor(x/0.001)):
+            col = (np.floor(x/0.001) == b)
+            up, lo = col & (y < mid), col & (y >= mid)
+            if up.any():
+                out.append(cand[up][np.argmax(y[up])])
+            if lo.any():
+                out.append(cand[lo][np.argmin(y[lo])])
+    return np.array(out)
+
+
+def fill_lips(d, lips, nbr, steps=15):
+    """The inner faces of the lips and the front of the vestibule (`lips`: the interior near the mouth) take the
+    shift that runs smoothly over the mesh from the outer skin of the lips to the deeper mouth bag (a harmonic fill:
+    each such vertex the mean of its neighbours, the rest held). Their own MPFB shift plus a correction disagreed with
+    Mark's outer lips where MPFB moves the lips' insides most (its funnel is a sharp chevron) and stood up as teeth."""
+    cnt = np.maximum(np.bincount(nbr[:, 0], minlength=len(d)).astype(float)[:, None], 1)
     s = d.copy()
     for _ in range(steps):
         m = np.zeros_like(s)
         np.add.at(m, nbr[:, 0], s[nbr[:, 1]])
-        s = (1-a)*s+a*m/np.maximum(cnt, 1)
+        s[lips] = (m/cnt)[lips]
+    return s
+
+
+def smooth_lids(hero, d, w, nbr, margin, steps=None, hold=(0.001, 0.003)):
+    """The carried shift smoothed over the mesh around the eyes (weight w). Mark's lid has its margin and the
+    margin's back face next to each other moving apart, and neighbouring vertices of ours that found one or the other
+    tore the lid. The margins of the lids (lid_margins()) are smoothed only along themselves and then held - fully up
+    to hold[0] from them, less and less to hold[1] - so the lids open and close as far as Mark's (averaged with the
+    skin over them, eyeWide opened the eye half as far); the rest round the eyes is averaged towards them, and the lid
+    moves as one sheet. Holding all the skin that lies on the ball held the hero's lid under its fold too, and the
+    fold opened a slit when the brows rose."""
+    steps = SMOOTH_STEPS if steps is None else steps
+    V = hero['V']
+    dist = cKDTree(V[margin]).query(V)[0]
+    x = np.clip((dist-hold[0])/(hold[1]-hold[0]), 0, 1)
+    h = np.where(hero['valid'], 1-x*x*(3-2*x), 0.0)[:, None]
+    strip = h[:, 0] > 0
+
+    def average(s, edges, n):
+        cnt = np.maximum(np.bincount(edges[:, 0], minlength=len(s)).astype(float)[:, None], 1)
+        for _ in range(n):
+            m = np.zeros_like(s)
+            np.add.at(m, edges[:, 0], s[edges[:, 1]])
+            s = 0.5*s+0.5*m/cnt
+        return s
+    held = average(d.copy(), nbr[strip[nbr[:, 0]] & strip[nbr[:, 1]]], 10)    # along the margins only
+    s = h*held+(1-h)*d
+    cnt = np.maximum(np.bincount(nbr[:, 0], minlength=len(d)).astype(float)[:, None], 1)
+    for _ in range(steps):
+        m = np.zeros_like(s)
+        np.add.at(m, nbr[:, 0], s[nbr[:, 1]])
+        s = h*held+(1-h)*(0.5*s+0.5*m/cnt)
     return d+w[:, None]*(s-d)
+
+
+def slide_on_balls(hero, d, near=0.0015, far=0.004):
+    """The lid that lies on a ball slides over it: a skin vertex up to `near` off a ball at rest keeps its distance to
+    the ball in every shape, fading out by `far` (Mark's lids lie on Mark's balls, carried onto ours they would sink
+    into them or lift off where the two balls' curves differ)."""
+    V = hero['V']
+    P = V+d
+    for e in hero['balls'].values():
+        idx = np.nonzero(hero['valid'] & (np.linalg.norm(V-e['c'], axis=1) < e['rmax']+far+0.005))[0]
+        d0 = ball_depth(e, V[idx])
+        x = np.clip((-d0-near)/(far-near), 0, 1)
+        w = np.where(d0 < 0, 1-x*x*(3-2*x), 0.0)
+        sel = w > 0
+        idx, d0, w = idx[sel], d0[sel], w[sel]
+        for _ in range(3):
+            d1 = ball_depth(e, P[idx])
+            ray = P[idx]-e['c']
+            ray /= np.linalg.norm(ray, axis=1, keepdims=True)
+            P[idx] += ray*(w*(d1-d0))[:, None]
+    return P-V
 
 
 def carry(hero, rg, log=print):
@@ -480,6 +562,15 @@ def carry(hero, rg, log=print):
     lid_w = x*x*(3-2*x)                          # 1 up to 10 mm off a ball, 0 from 20 mm
     E = np.vstack([hero['T'][:, [0, 1]], hero['T'][:, [1, 2]], hero['T'][:, [2, 0]]])
     nbr = np.unique(np.vstack([E, E[:, ::-1]]), axis=0)
+    margin = lid_margins(hero, rg['fh'])
+    mesh_nbr = nbr
+    lips = inner[np.linalg.norm(V[inner]-rg['fh']['mc'], axis=1) < 0.35*rg['fh']['u']]
+    # round the eyes the smoothing also joins vertices near in space: the hero's fold over the upper lid is a layer
+    # of its own, joined to the lid under it only deep in the crease, and the two moved apart and opened a slit
+    near_eye = np.nonzero(lid_w > 0)[0]
+    pairs = cKDTree(V[near_eye]).query_pairs(0.0025, output_type='ndarray')
+    pairs = near_eye[pairs]
+    nbr = np.unique(np.vstack([nbr, pairs, pairs[:, ::-1]]), axis=0)
     new = {}
     for n in ARKIT:
         if n in KEEP or n not in rg['DS']:
@@ -499,7 +590,10 @@ def carry(hero, rg, log=print):
         wk = 1/np.maximum(dk, 1e-4)**2
         wk /= wk.sum(1, keepdims=True)
         d[inner[sock]] = hero['S'][n][inner[sock]]+(corr[jk]*wk[..., None]).sum(1)
-        new[n] = lid_guard(hero, smooth_lids(hero, d, lid_w, nbr))
+        d = fill_lips(d, lips, mesh_nbr) if FILL_LIPS else d
+        d = smooth_lids(hero, d, lid_w, nbr, margin) if SMOOTH_LIDS else d
+        d = slide_on_balls(hero, d) if SLIDE else d
+        new[n] = lid_guard(hero, d) if GUARD else d
     out = {'face|'+n: V+new[n] for n in ARKIT}
     # brows and lashes keep their own shape of the hero plus the change of the skin under them: the mean change of
     # the nearest skin vertices, a shift without a turn (riding on one skin triangle turned the lashes about their

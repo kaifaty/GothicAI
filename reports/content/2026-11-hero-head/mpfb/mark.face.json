@@ -80,13 +80,13 @@
       "frame_ms": 1000,
       "frames": [
         {
-          "mouthSmileLeft": 0.645,
-          "mouthSmileRight": 0.516,
-          "cheekSquintLeft": 0.326,
-          "cheekSquintRight": 0.234,
-          "eyeSquintLeft": 0.195,
-          "eyeSquintRight": 0.156,
-          "browInnerUp": 0.108
+          "mouthSmileLeft": 0.53,
+          "mouthSmileRight": 0.424,
+          "cheekSquintLeft": 0.329,
+          "cheekSquintRight": 0.237,
+          "eyeSquintLeft": 0.164,
+          "eyeSquintRight": 0.131,
+          "browInnerUp": 0.161
         }
       ]
     },
@@ -98,17 +98,17 @@
       "frame_ms": 1000,
       "frames": [
         {
-          "browDownLeft": 0.914,
-          "browDownRight": 0.818,
-          "noseSneerLeft": 0.136,
-          "noseSneerRight": 0.109,
-          "eyeSquintLeft": 1.0,
-          "eyeSquintRight": 1.0,
-          "mouthPressLeft": 0.474,
-          "mouthPressRight": 0.421,
-          "mouthFrownLeft": 0.328,
-          "mouthFrownRight": 0.262,
-          "jawForward": 0.003
+          "browDownLeft": 1.0,
+          "browDownRight": 0.895,
+          "noseSneerLeft": 0.216,
+          "noseSneerRight": 0.173,
+          "eyeSquintLeft": 0.721,
+          "eyeSquintRight": 0.618,
+          "mouthPressLeft": 0.246,
+          "mouthPressRight": 0.219,
+          "mouthFrownLeft": 0.003,
+          "mouthFrownRight": 0.003,
+          "jawForward": 0.0
         }
       ]
     },
@@ -120,13 +120,13 @@
       "frame_ms": 1000,
       "frames": [
         {
-          "browDownLeft": 0.447,
-          "browDownRight": 0.39,
-          "eyeSquintLeft": 1.0,
-          "eyeSquintRight": 1.0,
-          "mouthPressLeft": 0.586,
-          "mouthPressRight": 0.533,
-          "noseSneerLeft": 0.188
+          "browDownLeft": 0.63,
+          "browDownRight": 0.55,
+          "eyeSquintLeft": 0.557,
+          "eyeSquintRight": 0.468,
+          "mouthPressLeft": 0.452,
+          "mouthPressRight": 0.411,
+          "noseSneerLeft": 0.302
         }
       ]
     },
@@ -139,27 +139,27 @@
       "frames": [
         {
           "browInnerUp": 1.0,
-          "browOuterUpLeft": 0.139,
-          "browOuterUpRight": 0.16,
-          "eyeWideLeft": 1.0,
-          "eyeWideRight": 1.0,
-          "jawOpen": 0.231,
-          "mouthStretchLeft": 0.336,
-          "mouthStretchRight": 0.336,
-          "mouthLowerDownLeft": 0.097,
-          "mouthLowerDownRight": 0.097
+          "browOuterUpLeft": 0.355,
+          "browOuterUpRight": 0.408,
+          "eyeWideLeft": 0.725,
+          "eyeWideRight": 0.725,
+          "jawOpen": 0.057,
+          "mouthStretchLeft": 0.297,
+          "mouthStretchRight": 0.297,
+          "mouthLowerDownLeft": 0.44,
+          "mouthLowerDownRight": 0.44
         },
         {
-          "browInnerUp": 1.0,
-          "browOuterUpLeft": 0.11,
-          "browOuterUpRight": 0.125,
-          "eyeWideLeft": 0.998,
-          "eyeWideRight": 0.998,
-          "jawOpen": 0.295,
-          "mouthStretchLeft": 0.282,
-          "mouthStretchRight": 0.3,
-          "mouthLowerDownLeft": 0.112,
-          "mouthLowerDownRight": 0.102
+          "browInnerUp": 0.993,
+          "browOuterUpLeft": 0.337,
+          "browOuterUpRight": 0.381,
+          "eyeWideLeft": 0.677,
+          "eyeWideRight": 0.69,
+          "jawOpen": 0.067,
+          "mouthStretchLeft": 0.296,
+          "mouthStretchRight": 0.315,
+          "mouthLowerDownLeft": 0.6,
+          "mouthLowerDownRight": 0.547
         }
       ]
     },
@@ -197,20 +197,20 @@
       "frame_ms": 1000,
       "frames": [
         {
-          "eyeSquintLeft": 1.0,
-          "eyeSquintRight": 1.0,
+          "eyeSquintLeft": 0.915,
+          "eyeSquintRight": 0.801,
           "eyeBlinkLeft": 0.45,
           "eyeBlinkRight": 0.55,
-          "browDownLeft": 0.535,
-          "browDownRight": 0.446,
-          "browInnerUp": 0.505,
-          "noseSneerLeft": 0.022,
-          "noseSneerRight": 0.02,
-          "mouthStretchLeft": 0.375,
-          "mouthStretchRight": 0.33,
-          "jawOpen": 0.249,
-          "mouthUpperUpLeft": 0.307,
-          "mouthUpperUpRight": 0.287
+          "browDownLeft": 0.546,
+          "browDownRight": 0.455,
+          "browInnerUp": 1.0,
+          "noseSneerLeft": 0.215,
+          "noseSneerRight": 0.189,
+          "mouthStretchLeft": 0.334,
+          "mouthStretchRight": 0.294,
+          "jawOpen": 0.244,
+          "mouthUpperUpLeft": 0.0,
+          "mouthUpperUpRight": 0.0
         }
       ]
     },
@@ -226,30 +226,30 @@
           "mouthClose": 0.0
         },
         {
-          "jawOpen": 0.16,
-          "mouthClose": 0.33,
-          "jawLeft": 0.042
+          "jawOpen": 0.151,
+          "mouthClose": 0.0,
+          "jawLeft": 0.0
         },
         {
-          "jawOpen": 0.276,
-          "mouthClose": 0.489,
-          "jawLeft": 0.023,
-          "cheekPuff": 0.01
+          "jawOpen": 0.249,
+          "mouthClose": 0.0,
+          "jawLeft": 0.0,
+          "cheekPuff": 0.0
         },
         {
-          "jawOpen": 0.078,
-          "mouthClose": 0.193,
-          "jawRight": 0.028
+          "jawOpen": 0.077,
+          "mouthClose": 0.0,
+          "jawRight": 0.023
         },
         {
-          "jawOpen": 0.221,
-          "mouthClose": 0.41,
-          "jawRight": 0.054,
-          "cheekPuff": 0.007
+          "jawOpen": 0.101,
+          "mouthClose": 0.0,
+          "jawRight": 0.533,
+          "cheekPuff": 0.0
         },
         {
-          "jawOpen": 0.038,
-          "mouthClose": 0.095
+          "jawOpen": 0.037,
+          "mouthClose": 0.0
         }
       ]
     },
@@ -328,11 +328,11 @@
       "parts": [
         {
           "weights": {
-            "browInnerUp": 0.869,
-            "browOuterUpLeft": 0.206,
-            "browOuterUpRight": 0.206,
-            "eyeWideLeft": 0.413,
-            "eyeWideRight": 0.413
+            "browInnerUp": 1.0,
+            "browOuterUpLeft": 0.45,
+            "browOuterUpRight": 0.45,
+            "eyeWideLeft": 0.289,
+            "eyeWideRight": 0.289
           },
           "delay_ms": 0,
           "on_ms": 100,
@@ -347,10 +347,10 @@
       "parts": [
         {
           "weights": {
-            "browOuterUpLeft": 0.242,
-            "browInnerUp": 0.244,
-            "browDownRight": 0.748,
-            "eyeSquintRight": 1.0
+            "browOuterUpLeft": 0.695,
+            "browInnerUp": 1.0,
+            "browDownRight": 1.0,
+            "eyeSquintRight": 0.436
           },
           "delay_ms": 0,
           "on_ms": 250,
@@ -365,10 +365,10 @@
       "parts": [
         {
           "weights": {
-            "mouthSmileLeft": 1.0,
+            "mouthSmileLeft": 0.668,
             "mouthDimpleLeft": 1.0,
-            "cheekSquintLeft": 0.028,
-            "mouthPressRight": 0.272
+            "cheekSquintLeft": 0.0,
+            "mouthPressRight": 0.422
           },
           "delay_ms": 0,
           "on_ms": 200,
@@ -382,11 +382,11 @@
       "parts": [
         {
           "weights": {
-            "mouthPressLeft": 0.96,
-            "mouthPressRight": 0.96,
-            "mouthRollLower": 0.012,
-            "mouthRollUpper": 0.652,
-            "mouthShrugLower": 0.001
+            "mouthPressLeft": 0.0,
+            "mouthPressRight": 0.0,
+            "mouthRollLower": 1.0,
+            "mouthRollUpper": 0.279,
+            "mouthShrugLower": 0.687
           },
           "delay_ms": 0,
           "on_ms": 150,
@@ -400,14 +400,14 @@
       "parts": [
         {
           "weights": {
-            "noseSneerLeft": 0.249,
-            "noseSneerRight": 0.249,
-            "mouthUpperUpLeft": 0.08,
-            "mouthUpperUpRight": 0.08,
-            "cheekSquintLeft": 0.439,
-            "cheekSquintRight": 0.439,
-            "browDownLeft": 0.328,
-            "browDownRight": 0.328
+            "noseSneerLeft": 0.04,
+            "noseSneerRight": 0.04,
+            "mouthUpperUpLeft": 0.266,
+            "mouthUpperUpRight": 0.266,
+            "cheekSquintLeft": 0.83,
+            "cheekSquintRight": 0.83,
+            "browDownLeft": 0.486,
+            "browDownRight": 0.486
           },
           "delay_ms": 0,
           "on_ms": 150,
@@ -421,12 +421,12 @@
       "parts": [
         {
           "weights": {
-            "eyeSquintLeft": 1.0,
-            "eyeSquintRight": 1.0,
+            "eyeSquintLeft": 0.76,
+            "eyeSquintRight": 0.76,
             "eyeBlinkLeft": 0.12,
             "eyeBlinkRight": 0.12,
-            "browDownLeft": 0.104,
-            "browDownRight": 0.104
+            "browDownLeft": 0.007,
+            "browDownRight": 0.007
           },
           "delay_ms": 0,
           "on_ms": 250,
@@ -440,10 +440,10 @@
       "parts": [
         {
           "weights": {
-            "browDownLeft": 0.633,
-            "browDownRight": 0.633,
-            "eyeSquintLeft": 1.0,
-            "eyeSquintRight": 1.0
+            "browDownLeft": 0.993,
+            "browDownRight": 0.993,
+            "eyeSquintLeft": 0.278,
+            "eyeSquintRight": 0.278
           },
           "delay_ms": 0,
           "on_ms": 300,
@@ -457,12 +457,12 @@
       "parts": [
         {
           "weights": {
-            "mouthShrugLower": 0.027,
-            "mouthShrugUpper": 0.402,
-            "mouthPressLeft": 0.522,
-            "mouthPressRight": 0.522,
-            "mouthFrownLeft": 0.903,
-            "mouthFrownRight": 0.903
+            "mouthShrugLower": 0.337,
+            "mouthShrugUpper": 0.283,
+            "mouthPressLeft": 0.0,
+            "mouthPressRight": 0.0,
+            "mouthFrownLeft": 0.0,
+            "mouthFrownRight": 0.0
           },
           "delay_ms": 0,
           "on_ms": 150,
@@ -478,12 +478,12 @@
           "weights": {
             "cheekSquintLeft": 1.0,
             "cheekSquintRight": 1.0,
-            "eyeSquintLeft": 1.0,
-            "eyeSquintRight": 1.0,
-            "noseSneerLeft": 0.221,
-            "noseSneerRight": 0.221,
-            "browDownLeft": 0.339,
-            "browDownRight": 0.339,
+            "eyeSquintLeft": 0.825,
+            "eyeSquintRight": 0.825,
+            "noseSneerLeft": 0.347,
+            "noseSneerRight": 0.347,
+            "browDownLeft": 0.351,
+            "browDownRight": 0.351,
             "eyeBlinkLeft": 0.25,
             "eyeBlinkRight": 0.25
           },
@@ -538,108 +538,108 @@
     "felt": {
       "angry": {
         "upper": {
-          "browDownLeft": 0.437,
-          "browDownRight": 0.436,
+          "browDownLeft": 0.629,
+          "browDownRight": 0.627,
           "eyeBlinkLeft": 0.089,
           "eyeBlinkRight": 0.088,
-          "eyeSquintRight": 0.124
+          "eyeSquintRight": 0.213
         },
         "lower": {
-          "noseSneerRight": 0.234,
-          "noseSneerLeft": 0.225,
-          "mouthShrugUpper": 0.045,
-          "mouthStretchLeft": 0.045,
-          "mouthStretchRight": 0.045,
-          "mouthUpperUpRight": 0.036,
-          "mouthUpperUpLeft": 0.033
+          "noseSneerRight": 0.003,
+          "noseSneerLeft": 0.003,
+          "mouthShrugUpper": 0.357,
+          "mouthStretchLeft": 0.0,
+          "mouthStretchRight": 0.0,
+          "mouthUpperUpRight": 0.296,
+          "mouthUpperUpLeft": 0.274
         }
       },
       "afraid": {
         "upper": {
-          "browInnerUp": 0.259,
-          "browOuterUpRight": 0.046,
-          "browOuterUpLeft": 0.045,
-          "browDownLeft": 0.148,
-          "browDownRight": 0.143,
-          "eyeWideRight": 0.391,
-          "eyeWideLeft": 0.391
+          "browInnerUp": 0.263,
+          "browOuterUpRight": 0.06,
+          "browOuterUpLeft": 0.058,
+          "browDownLeft": 0.132,
+          "browDownRight": 0.128,
+          "eyeWideRight": 0.267,
+          "eyeWideLeft": 0.267
         },
         "lower": {
-          "mouthFrownLeft": 0.563,
-          "mouthFrownRight": 0.558
+          "mouthFrownLeft": 0.483,
+          "mouthFrownRight": 0.479
         }
       },
       "hostile": {
         "upper": {
-          "browDownLeft": 0.351,
-          "browDownRight": 0.349,
-          "eyeSquintRight": 1.0,
-          "eyeSquintLeft": 1.0,
+          "browDownLeft": 0.525,
+          "browDownRight": 0.523,
+          "eyeSquintRight": 0.449,
+          "eyeSquintLeft": 0.367,
           "eyeBlinkLeft": 0.174,
           "eyeBlinkRight": 0.172
         },
         "lower": {
-          "noseSneerRight": 0.228,
-          "noseSneerLeft": 0.225,
-          "cheekSquintRight": 0.549,
-          "cheekSquintLeft": 0.549,
-          "mouthStretchLeft": 0.119,
-          "mouthStretchRight": 0.117,
-          "mouthDimpleLeft": 0.135,
-          "mouthDimpleRight": 0.135,
-          "mouthShrugLower": 0.018,
-          "mouthFrownLeft": 0.024,
-          "mouthFrownRight": 0.023
+          "noseSneerRight": 0.223,
+          "noseSneerLeft": 0.22,
+          "cheekSquintRight": 0.332,
+          "cheekSquintLeft": 0.332,
+          "mouthStretchLeft": 0.105,
+          "mouthStretchRight": 0.104,
+          "mouthDimpleLeft": 0.198,
+          "mouthDimpleRight": 0.198,
+          "mouthShrugLower": 0.002,
+          "mouthFrownLeft": 0.046,
+          "mouthFrownRight": 0.045
         }
       },
       "friendly": {
         "upper": {
-          "eyeSquintRight": 1.0,
-          "eyeSquintLeft": 1.0,
-          "browInnerUp": 0.565,
-          "browOuterUpRight": 0.096,
-          "browOuterUpLeft": 0.096
+          "eyeSquintRight": 0.439,
+          "eyeSquintLeft": 0.4,
+          "browInnerUp": 1.0,
+          "browOuterUpRight": 0.241,
+          "browOuterUpLeft": 0.241
         },
         "lower": {
-          "mouthSmileRight": 0.596,
-          "mouthSmileLeft": 0.591,
-          "mouthUpperUpLeft": 0.221,
-          "mouthUpperUpRight": 0.221,
-          "mouthStretchLeft": 0.101,
-          "mouthStretchRight": 0.098,
-          "cheekSquintRight": 0.007,
-          "cheekSquintLeft": 0.006,
-          "mouthDimpleRight": 0.066,
-          "mouthDimpleLeft": 0.064
+          "mouthSmileRight": 0.061,
+          "mouthSmileLeft": 0.06,
+          "mouthUpperUpLeft": 0.0,
+          "mouthUpperUpRight": 0.0,
+          "mouthStretchLeft": 0.69,
+          "mouthStretchRight": 0.667,
+          "cheekSquintRight": 0.0,
+          "cheekSquintLeft": 0.0,
+          "mouthDimpleRight": 0.986,
+          "mouthDimpleLeft": 0.954
         }
       },
       "pain": {
         "upper": {
-          "browDownLeft": 0.34,
-          "browDownRight": 0.338,
-          "eyeSquintRight": 1.0,
-          "eyeSquintLeft": 1.0,
-          "browOuterUpRight": 0.034,
-          "browOuterUpLeft": 0.034,
+          "browDownLeft": 1.0,
+          "browDownRight": 0.993,
+          "eyeSquintRight": 0.557,
+          "eyeSquintLeft": 0.544,
+          "browOuterUpRight": 0.593,
+          "browOuterUpLeft": 0.583,
           "eyeBlinkLeft": 0.067,
           "eyeBlinkRight": 0.066
         },
         "lower": {
-          "cheekSquintRight": 1.0,
-          "cheekSquintLeft": 1.0,
-          "mouthFrownLeft": 0.388,
-          "mouthFrownRight": 0.385,
-          "noseSneerRight": 0.03,
-          "noseSneerLeft": 0.028,
-          "mouthSmileLeft": 0.177,
-          "mouthSmileRight": 0.157,
-          "mouthStretchLeft": 0.099,
-          "mouthDimpleLeft": 0.232,
-          "mouthStretchRight": 0.087,
-          "mouthUpperUpRight": 0.117,
-          "mouthUpperUpLeft": 0.116,
-          "mouthDimpleRight": 0.213,
-          "mouthShrugLower": 0.001
+          "cheekSquintRight": 0.91,
+          "cheekSquintLeft": 0.906,
+          "mouthFrownLeft": 0.166,
+          "mouthFrownRight": 0.165,
+          "noseSneerRight": 0.202,
+          "noseSneerLeft": 0.193,
+          "mouthSmileLeft": 0.0,
+          "mouthSmileRight": 0.0,
+          "mouthStretchLeft": 0.326,
+          "mouthDimpleLeft": 0.26,
+          "mouthStretchRight": 0.287,
+          "mouthUpperUpRight": 0.0,
+          "mouthUpperUpLeft": 0.0,
+          "mouthDimpleRight": 0.239,
+          "mouthShrugLower": 0.012
         }
       }
     }
@@ -657,17 +657,17 @@
     "gap_ms": 1000,
     "chance": 0.7,
     "up": {
-      "browInnerUp": 0.801,
-      "browOuterUpLeft": 0.104,
-      "browOuterUpRight": 0.104
+      "browInnerUp": 0.716,
+      "browOuterUpLeft": 0.427,
+      "browOuterUpRight": 0.427
     },
     "down": {
-      "browDownLeft": 0.33,
-      "browDownRight": 0.33,
-      "eyeSquintLeft": 0.25,
-      "eyeSquintRight": 0.25,
-      "noseSneerLeft": 0.15,
-      "noseSneerRight": 0.15
+      "browDownLeft": 0.459,
+      "browDownRight": 0.459,
+      "eyeSquintLeft": 0.249,
+      "eyeSquintRight": 0.249,
+      "noseSneerLeft": 0.09,
+      "noseSneerRight": 0.09
     },
     "quiet_cues": [
       "flash",

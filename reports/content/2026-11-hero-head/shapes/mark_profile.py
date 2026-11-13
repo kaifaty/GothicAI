@@ -6,8 +6,9 @@
 #       <template face.json> <out face.json> [<table.md>]
 # The points: brows (inner, middle, outer), the lids' margins, the cheeks, the nose's wings and tip, the mouth's
 # corners, the lips and the chin of transfer.landmarks(); a zone's reach is the mean shift of its points. Per shape a
-# factor: MPFB's reach over Mark's in the zone where the shape reaches furthest on MPFB (its zone), one for both sides.
-# Then per weight set the shapes of each zone once more, until the set's reach there is MPFB's; a weight stays 0..1.
+# factor: MPFB's reach over Mark's in the zone where both move the shape furthest (its zone), one for both sides.
+# Then per weight set the shapes of each zone once more, and last all the set's weights together by least squares of
+# the reach per zone (fit()); a weight stays 0..1.
 # The other zones show what Mark's shapes do besides (Mark's squint leaves the cheek, its press pulls the chin): that
 # is the table's deviation, not corrected. (Matching all the points' shifts by least squares shrank the weights, the
 # directions of the two sets differ.) The blink, the gaze
@@ -59,6 +60,39 @@ def reach(S, W, pts):
     return {k: float(np.linalg.norm(d[i], axis=1).mean()*1000) for k, i in pts.items()}
 
 
+def fit(SK, W0, W, a, k, pts):
+    """The set's weights of Mark's shapes whose reach per zone comes closest to MPFB's a: one factor per shape and
+    its other side (the template's left/right ratio is kept: a free weight per side traded one side for the other,
+    the zone's reach is the mean of both), the weights within 0..1, least squares of the relative differences - the
+    zone MPFB moves most counted 25 times (it must hold), zones it moves under 0.3 mm a quarter (what Mark moves there
+    besides) - started from W. Zone by zone per shape the zones fought: a shape scaled to its own zone took the set's
+    reach away from another."""
+    from scipy.optimize import minimize
+    fam = {}
+    for n in W0:
+        if n in k and W0[n] > 0:
+            fam.setdefault(n.replace('Left', '').replace('Right', ''), []).append(n)
+    if not fam:
+        return W
+    keys = list(fam)
+    hi = [1/max(W0[n] for n in fam[f]) for f in keys]
+    # the set's own zone weighs most: it is what the set is for. A zone Mark's shapes of the set cannot move half as
+    # far even at their limits (the cheek of a squint) is not it: chasing it overdrove the shapes that do move it
+    bmax = reach(SK, {**W, **{n: W0[n]*h for f, h in zip(keys, hi) for n in fam[f]}}, pts)
+    top = max((z for z in ZONES if bmax[z] >= 0.5*a[z]), key=lambda z: a[z], default=max(a, key=a.get))
+    wz = {z: (25.0 if z == top else 1.0) if a[z] >= 0.3 else 0.25 for z in ZONES}
+
+    def weights(x):
+        return {**W, **{n: W0[n]*m for f, m in zip(keys, x) for n in fam[f]}}
+
+    def cost(x):
+        b = reach(SK, weights(x), pts)
+        return sum(wz[z]*((b[z]-a[z])/max(a[z], 0.5))**2 for z in ZONES)
+    x0 = [min(h, np.mean([W[n]/W0[n] for n in fam[f]])) for f, h in zip(keys, hi)]
+    x = minimize(cost, x0, method='L-BFGS-B', bounds=[(0, h) for h in hi]).x
+    return {n: float(v) for n, v in weights(x).items()}
+
+
 def is_weights(v):
     return isinstance(v, dict) and v and all(isinstance(x, (int, float)) for x in v.values()) and \
         all(k[:1].islower() and not k.endswith('_ms') for k in v)
@@ -92,7 +126,9 @@ def profile(hm, SK, tmpl, log=print):
         pair = [m for m in (n.replace('Left', 'Right'), n.replace('Right', 'Left')) if m in A]
         aa = {z: np.mean([A[m][0][z] for m in pair]) for z in ZONES}
         bb = {z: np.mean([A[m][1][z] for m in pair]) for z in ZONES}
-        dom[n] = max(aa, key=aa.get)
+        # its zone: where both sets move it most (a zone only MPFB moves - its squint lifts the cheek, Mark's does
+        # not - would push the weight to its limit for nothing)
+        dom[n] = max(ZONES, key=lambda z: min(aa[z], bb[z]))
         k[n] = float(np.clip(aa[dom[n]]/max(bb[dom[n]], 1e-6), 0.25, 4))
     prof = json.load(open(tmpl))
     sets = {}
@@ -112,6 +148,7 @@ def profile(hm, SK, tmpl, log=print):
             for n in new:
                 if n in k and a[dom[n]] > 0.3 and b[dom[n]] > 1e-6:
                     new[n] = float(min(1.0, new[n]*a[dom[n]]/b[dom[n]]))
+        new = fit(SK, W0, new, a, k, pts)
         b = reach(SK, new, pts)
         for n in W:
             W[n] = round(new[n], 3)
