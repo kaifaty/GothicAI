@@ -306,3 +306,55 @@ The bundle saves 12 ms of the island search at ×1 and 150 ms at ×16. What is l
 | `[world-cloth]` line | `bundle …/x1/worlds/NEWWORLD/cloth.wcl: 17 surfaces, 1280 triangles` | none: no index in use, the island search ran |
 | `cloth_surfaces` load mark | `surfaces=17` (29.3 ms) | `surfaces=17` (27.5 ms) |
 | chunk reads cooked / GLB | 403 / 0, 128.2 ms | 0 / 403, 534.1 ms |
+
+## Task 5: the collision input (2026-11-13)
+
+Static collision packed the whole stitched landscape (`PackedMesh PK_Physic` in `DynamicWorld`'s constructor). The world load now builds that input from the cooked records instead ([`worldcollisionmesh.h`](../../../../OpenGothic/common/physics/worldcollisionmesh.h)): a slim `asset::WorldMesh` with the vertices, the vertex and material indices and the materials table, made from every cell's `.wcb` and the index by the assembler the converter's checks use (`assembleCookedWorld` with `CookedParts`, now in `worldchunkassemble.cpp`), with the world cloth bundle's exclusions left out. It is used when the index is in use, no GLB had another length at load, `WorldCloth::extract` took the bundle and every `.wcb` passes `checkCookedCell`; otherwise the stitched landscape, with one `[world-collision]` line. Until task 8 the stitched mesh still exists at load, so the cells are read a second time; the numbers below are that cost.
+
+### Machine and commands
+
+Ryzen as above; the branch's `content-convert` and `gothic-worldcollision-chunks-contract` from the check build (`RelWithDebInfo`), branch `codex/landscape-d3-collision`, `scripts/gq` jobs of class `quick` (4 threads, 12 GB) in `~/gothic-ai/landscape-d3-collision/`, the same base `c885037e…d09e`, warm page cache. Load average 1.5–3.4 for `time-world`; the second `--time` run had a build of 12 threads beside it (load 11–15).
+
+```
+content-convert stress-base $B $T/x1  --subdivide 0 --meshes 0            # 8.3 s, peak RSS 0.29 GB
+content-convert stress-base $B $T/w16 --subdivide 2 --meshes 0            # 41.5 s, peak RSS 4.16 GB
+content-convert time-world $T/<set>/worlds/NEWWORLD                       # new row: the collision mesh
+gothic-worldcollision-chunks-contract --time $T/<set>/worlds/NEWWORLD     # the builder and PK_Physic of both inputs
+```
+
+`content-convert` links no graphics code, so `PackedMesh PK_Physic` is timed by the contract's `--time` mode, which loads the world as the game does (`readWorldChunks`, `extract`) and packs both inputs. The collision mesh of `NEWWORLD`: ×1 — 472 222 triangles (1 280 taken out as cloth), 260 696 vertices, 1 400 materials, 804 `PK_Physic` sub meshes; ×16 — 7 556 000 triangles (20 032 as cloth), 3 505 786 vertices.
+
+### Wall time, `NEWWORLD`
+
+Five runs each, milliseconds: median, then min–max. «Read + build» is the whole builder: world.json, every `.wcb` read and checked against the index and its GLB's length, the bundle read and checked, the placing and the removal of the cloth triangles.
+
+| Stage | ×1 | ×16 |
+|---|---:|---:|
+| `time-world`: collision mesh from chunk records (read + build) | 23.6 (23.6–24.8) | 390.6 (383.0–392.2) |
+| `--time`: the same builder | 24.8 (23.6–28.4) | 249.4 (248.2–266.1) |
+| `--time`: `PackedMesh PK_Physic` of the stitched landscape | 28.0 (27.5–28.3) | 519.0 (517.4–526.0) |
+| `--time`: `PackedMesh PK_Physic` of the collision mesh | 28.2 (27.0–28.2) | 525.1 (509.8–527.3) |
+| for comparison: read the `.wcb` files and the index | 8.5 (8.4–8.9) | 102.1 (96.8–104.7) |
+| for comparison: validate them | 7.0 (7.0–7.1) | 28.5 (25.7–31.2) |
+| for comparison: assemble the whole mesh and table | 26.4 (26.1–27.7) | 464.9 (462.0–486.3) |
+| for comparison: apply the cloth bundle | 9.9 (9.9–10.2) | 229.2 (219.4–232.3) |
+| for comparison: `readWorldChunks` total | 508.5 (506.1–540.2) | 7817.2 (7714.6–8250.4) |
+
+`PK_Physic` does the same work on both inputs (within 1 %). In a first `--time` run both packages were alive at once and the second one, always the collision mesh, came out 7 % (×1) and 15 % (×16) slower; packed one at a time in alternating order they are equal. The builder at ×16 takes 390 ms inside `time-world` and 249 ms in the contract's loop; in `time-world` it runs right after each run's stitched mesh and its copies, so its 513 MB of `.wcb` bytes and its output arrays land on fresh pages, while the contract's loop repeats the same allocations — probably the difference, not measured further. While it runs the builder holds every `.wcb` of the world (44.5 MB at ×1, 513 MB at ×16) and its output (about 11 MB and 160 MB). Peak RSS of the whole runs (`/usr/bin/time -v`; the tools print none): `time-world` 0.29 and 3.73 GB, `--time` 0.23 and 3.37 GB.
+
+The Near summary of `time-world` now counts the ring's triangles before the bundle changes the table: 63 337 at ×1 (task 4's line printed 63 333) and 1 013 458 at ×16.
+
+### In the game
+
+`scripts/bench.sh streaming-flythrough` on Ryzen (`BENCH_HOST=ryzen`) with the ×1 copy (`OPENGOTHIC_BASE=$T/x1`, its own `OPENGOTHIC_BASE_CACHE=$T/x1.cache`, `OPENGOTHIC_CONTENT=` and `OPENGOTHIC_TEXTURES=` empty): first the cooked path with a cold derived cache, then `OPENGOTHIC_WCB=0` on the caches the first run wrote. The look was not assessed.
+
+| | cooked path | `OPENGOTHIC_WCB=0` |
+|---|---|---|
+| bench | exit 0, 202 s | exit 0, 197 s |
+| `[world-collision]` line | `chunks …/x1/worlds/NEWWORLD/chunks.wci: 472222 triangles, 260696 vertices, 57.1 ms` | none (no index in use) |
+| `physics_static` mark | 821.6 ms: `input=chunks input_ms=57.1 collision=build build_ms=653.8` | 221.1 ms: `input=landscape input_ms=0 collision=cache read_ms=97.1 build_ms=0` |
+| derived caches | collision cache and way heights written (`waypoints: hits=0 rays=5249`) | both read: `collision=cache`, `waypoints: hits=5249 rays=0`; `NEWWORLD.collision` keeps the first run's time |
+| `landscape_pack` (Near ring at the start) | 35.4 ms | 95.8 ms |
+| frames, whole route: FPS, p99 | 105.3, 11.9 ms | 107.2, 11.8 ms |
+
+The second run accepted the collision cache the first run built from the collision mesh: the key is the same and the shapes are the same. The bench does not build a navigation mesh, so it shows no navigation cache; the contract shows its input instead: on `NEWWORLD` two `DynamicWorld`s from the stitched landscape and from the collision mesh give byte-identical `navigationGeometry()` (1 564 611 land and 10 530 water triangles) and the same answer to 8 192 vertical grid rays and 3 035 short rays through named-sector triangles. The builder cost 57 ms of the first run's 821.6 ms `physics_static`, on the BVH thread beside the view's packing; with one run each there is no noise estimate. The `OPENGOTHIC_WCB=0` run was repeated once after a machine restart lost its local report; its first try, before the restart, also exited 0.
