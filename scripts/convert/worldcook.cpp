@@ -100,7 +100,7 @@ struct Series {
 void printSeries(const Series& s) {
   auto v = s.values;
   std::sort(v.begin(),v.end());
-  std::printf("| %-44s | %10.1f | %10.1f | %10.1f |\n",s.name.c_str(),v[v.size()/2],v.front(),v.back());
+  std::printf("| %-48s | %10.1f | %10.1f | %10.1f |\n",s.name.c_str(),v[v.size()/2],v.front(),v.back());
   }
 
 int timeWorld(const Options& o) {
@@ -118,21 +118,37 @@ int timeWorld(const Options& o) {
       cooked = false;
     }
 
+  // The Near ring: the 5 x 5 cells around the start point.
+  const auto data = WorldData::read(o.world);
+  const auto* start = startPoint(data.vobs);
+  std::vector<size_t> nearCells;
+  ChunkId startCell;
+  if(start!=nullptr) {
+    startCell = ChunkId::fromPosition(start->position.x,start->position.z);
+    for(size_t i=0;i<manifest.cells.size();++i)
+      if(std::abs(manifest.cells[i].id.x-startCell.x)<=2 && std::abs(manifest.cells[i].id.z-startCell.z)<=2)
+        nearCells.push_back(i);
+    }
+
   // Warm the page cache once: every run below reads the same files from memory.
   for(const auto* list:{&glbs,&wcbs})
     for(const auto& path:*list)
       if(fs::exists(path))
         (void)gothicglb::readFile(path);
 
+  enum { ReadGlb, Today, Parse, Sort, Stitch, Rest, TodayNear, ReadWcb, Validate, Assemble, CookedNear };
   std::vector<Series> series = {
     {"today: read GLB files (separate pass)",{}},
     {"today: readWorldChunks total",{}},
     {"  read + cgltf parse + attribute extraction",{}},
     {"  source-order sort",{}},
     {"  ID resolution, dedup maps, stitching, table",{}},
+    {"  rest: trace copy, teardown of reader and sets",{}},
+    {"today: ChunkMeshSource::read of the Near ring",{}},
     {"cooked: read .wcb files",{}},
     {"cooked: validate (open + world.json + GLB stat)",{}},
     {"cooked: assemble whole mesh and table",{}},
+    {"cooked: read + validate the Near ring",{}},
     };
   ChunkTable table;
   size_t triangles = 0;
@@ -141,7 +157,7 @@ int timeWorld(const Options& o) {
     uint64_t read = 0;
     for(const auto& path:glbs)
       read += gothicglb::readFile(path).size();
-    series[0].values.push_back(ms(t0,Clock::now()));
+    series[ReadGlb].values.push_back(ms(t0,Clock::now()));
     if(read!=glbBytes)
       throw std::runtime_error("GLB files changed while timing");
 
@@ -152,10 +168,22 @@ int timeWorld(const Options& o) {
     const auto mesh = readWorldChunks(o.world,o.content,&table,&trace);
     const auto t1 = Clock::now();
     triangles = mesh.polygons.material_indices.size();
-    series[1].values.push_back(ms(t0,t1));
-    series[2].values.push_back(ms(t0,trace.parsed));
-    series[3].values.push_back(ms(trace.parsed,trace.ordered));
-    series[4].values.push_back(ms(trace.ordered,trace.stitched));
+    series[Today].values.push_back(ms(t0,t1));
+    series[Parse].values.push_back(ms(t0,trace.parsed));
+    series[Sort].values.push_back(ms(trace.parsed,trace.ordered));
+    series[Stitch].values.push_back(ms(trace.ordered,trace.stitched));
+    series[Rest].values.push_back(ms(trace.stitched,t1));
+    // The game's streaming reader today: one GLB per chunk, IDs from the stitched world's tables.
+    const auto lists = chunkTriangleLists(mesh,table);
+    const auto t2 = Clock::now();
+    for(const auto i:nearCells) {
+      std::vector<uint32_t> sources;
+      for(const auto t:lists[i])
+        sources.push_back(table.triangleSources[t]);
+      if(table.source->read(i,sources).mesh.polygons.material_indices.size()!=sources.size())
+        throw std::runtime_error("a Near chunk reads back another triangle count");
+      }
+    series[TodayNear].values.push_back(ms(t2,Clock::now()));
     }
     if(!cooked)
       continue;
@@ -179,38 +207,38 @@ int timeWorld(const Options& o) {
     const auto t3 = Clock::now();
     if(mesh.polygons.material_indices.size()!=triangles)
       throw std::runtime_error("the cooked world has another triangle count");
-    series[5].values.push_back(ms(t0,t1));
-    series[6].values.push_back(ms(t1,t2));
-    series[7].values.push_back(ms(t2,t3));
+    series[ReadWcb].values.push_back(ms(t0,t1));
+    series[Validate].values.push_back(ms(t1,t2));
+    series[Assemble].values.push_back(ms(t2,t3));
+
+    const auto t4 = Clock::now();
+    for(const auto i:nearCells) {
+      const auto chunk = CookedChunk::read(wcbs[i]);
+      checkCookedCell(chunk,manifest.cells[i],manifest,glbs[i]);
+      }
+    series[CookedNear].values.push_back(ms(t4,Clock::now()));
     }
 
   std::printf("world %s: %zu cells, %zu triangles; GLB %llu bytes, .wcb %llu bytes%s\n",o.world.string().c_str(),
               manifest.cells.size(),triangles,static_cast<unsigned long long>(glbBytes),
               static_cast<unsigned long long>(wcbBytes),cooked ? "" : " (not cooked: cooked path skipped)");
-  const auto data = WorldData::read(o.world);
-  if(const auto* start=startPoint(data.vobs)) {
-    const auto cell = ChunkId::fromPosition(start->position.x,start->position.z);
+  if(start!=nullptr) {
     uint64_t nearTriangles = 0, nearGlb = 0, nearWcb = 0;
-    size_t nearCells = 0;
-    for(size_t i=0;i<table.entries.size();++i) {
-      const auto& e = table.entries[i];
-      if(std::abs(e.id.x-cell.x)>2 || std::abs(e.id.z-cell.z)>2)
-        continue;
-      ++nearCells;
-      nearTriangles += e.triangleCount;
+    for(const auto i:nearCells) {
+      nearTriangles += table.entries[i].triangleCount;
       nearGlb += fs::file_size(glbs[i]);
       if(cooked)
         nearWcb += fs::file_size(wcbs[i]);
       }
     std::printf("start point %s at (%.0f, %.0f, %.0f), cell %d,%d; Near ring 5 x 5: %zu cells, %llu triangles, "
                 "GLB %llu bytes, .wcb %llu bytes\n",start->vob_name.c_str(),double(start->position.x),
-                double(start->position.y),double(start->position.z),cell.x,cell.z,nearCells,
+                double(start->position.y),double(start->position.z),startCell.x,startCell.z,nearCells.size(),
                 static_cast<unsigned long long>(nearTriangles),static_cast<unsigned long long>(nearGlb),
                 static_cast<unsigned long long>(nearWcb));
     }
   else
     std::printf("no start point in %s\n",o.world.string().c_str());
-  std::printf("wall ms over %d runs, warm page cache:\n| %-44s | %10s | %10s | %10s |\n|---|---:|---:|---:|\n",o.runs,
+  std::printf("wall ms over %d runs, warm page cache:\n| %-48s | %10s | %10s | %10s |\n|---|---:|---:|---:|\n",o.runs,
               "stage","median","min","max");
   for(const auto& s:series)
     if(!s.values.empty())
