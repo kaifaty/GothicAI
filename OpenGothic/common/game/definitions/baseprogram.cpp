@@ -1,5 +1,7 @@
 #include "baseprogram.h"
+#include "basescripts.h"
 
+#include "programdata.h"
 #include "resources.h"
 #include "resources_internal.h"
 #include "contentcensus.h"
@@ -16,22 +18,22 @@ using ResourcesInternal::scriptDirectory;
 daedalus::DaedalusScript loadBaseProgram(std::string_view request, int language) {
   try {
     std::string_view branch;
-    if(Resources::baseProgramIndex().findVfs(request,&branch)!=nullptr)
+    if(baseProgramIndex().findVfs(request,&branch)!=nullptr)
       return loadBaseProgram(request,language,branch);
     const std::string name(request.substr(0,255));
     std::string path="_work/Data/Scripts/_compiled/"+name;
-    const ProgramData::Source* source=Resources::baseProgramIndex().findHost(path);
+    const ProgramData::Source* source=baseProgramIndex().findHost(path);
     branch="host_ordinary";
     if(source==nullptr && language>=0) {
       path="_work/Data/"+std::string(scriptDirectory(language))+"/_compiled/"+name;
-      source=Resources::baseProgramIndex().findHost(path);
+      source=baseProgramIndex().findHost(path);
       branch="host_localized_full";
       }
     if(source==nullptr && language>=0) {
       const auto separator=request.find_last_of("/\\");
       const auto basename=separator==std::string_view::npos ? request : request.substr(separator+1);
       path="_work/Data/"+std::string(scriptDirectory(language))+"/_compiled/"+std::string(basename.substr(0,255));
-      source=Resources::baseProgramIndex().findHost(path);
+      source=baseProgramIndex().findHost(path);
       branch="host_localized_basename";
       }
     if(source==nullptr)
@@ -45,7 +47,7 @@ daedalus::DaedalusScript loadBaseProgram(std::string_view request, int language)
 daedalus::DaedalusScript loadBaseProgram(std::string_view request, int language,
                                        std::string_view branch, std::u16string_view hostPath) {
   try {
-    const auto& index = Resources::baseProgramIndex();
+    const auto& index = baseProgramIndex();
     const ProgramData::Source* source = nullptr;
     if(hostPath.empty()) {
       std::string_view selectedBranch;
@@ -67,7 +69,8 @@ daedalus::DaedalusScript loadBaseProgram(std::string_view request, int language,
     if(Resources::contentCensus()) {
       const auto record = "base/programs/"+file.filename().generic_string();
       Resources::contentCensus()->replaced(request,record);
-      Resources::contentCensus()->program("Gothic::loadScript",request,language,branch,record,actualSha256,*source);
+      Resources::contentCensus()->program("Gothic::loadScript",request,language,branch,record,actualSha256,
+                                          {source->origin,source->path,source->archive,source->sha256,source->size});
       }
     return script;
     }
