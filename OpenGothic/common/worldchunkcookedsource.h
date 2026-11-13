@@ -48,6 +48,7 @@ struct CookedSet {
   size_t                 cells = 0;
   // Empty when every cell's GLB had at load its index entry's length; else the first that had not.
   std::string            stale;
+  std::filesystem::path  dir, overrideDir; // the world and override directories it was loaded from
   };
 
 // The GLB readWorldChunks read for a cell, with its length and time then.
@@ -78,8 +79,9 @@ class CookedChunkSource {
     WorldChunkMesh read(size_t cell, std::span<const uint32_t> sources, bool currentFile, const World& world,
                         const std::function<WorldChunkMesh()>& glb) const;
     bool            active() const { return index.has_value(); }
-    // The set the index in use came from; null without one.
-    const CookedSet* cookedSet() const { return index ? &set : nullptr; }
+    // The set the index in use came from, and that index as the load read it; null without one.
+    const CookedSet*   cookedSet() const { return index ? &set : nullptr; }
+    const CookedIndex* cookedIndex() const { return index ? &*index : nullptr; }
     ChunkReadCounts counts() const;
     size_t          memoryBytes() const;
 

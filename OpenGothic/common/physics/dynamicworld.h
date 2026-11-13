@@ -778,6 +778,7 @@ class DynamicWorld final {
 
   private:
     friend struct WayHeightsContract;
+    friend struct WorldCollisionChunksContract;
     friend class ClothBulletBenchDriver;
     void           moveBullet(BulletBody& b, const Tempest::Vec3& dir, uint64_t dt);
     RayWaterResult implWaterRay(const Tempest::Vec3& from, const Tempest::Vec3& to, float stepHeight,

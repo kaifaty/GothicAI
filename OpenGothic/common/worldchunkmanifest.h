@@ -63,7 +63,9 @@ WorldCellManifest readWorldChunkManifest(const std::filesystem::path& dir);
 
 // Sets the vertices and features no triangle uses from dir/unreferenced.bin at
 // their source IDs and marks them in the sets; the arrays are sized to the
-// manifest's counts. Throws std::runtime_error on a malformed file.
+// manifest's counts. Without keepFeatures the features are read past and their
+// arrays left alone (static collision needs none). Throws std::runtime_error on
+// a malformed file.
 void readWorldUnreferenced(const std::filesystem::path& dir, std::vector<asset::Vec3>& vertices,
                            std::vector<asset::VertexFeature>& features,
-                           std::vector<char>& vertexSet, std::vector<char>& featureSet);
+                           std::vector<char>& vertexSet, std::vector<char>& featureSet, bool keepFeatures = true);
