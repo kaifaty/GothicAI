@@ -13,6 +13,7 @@
 #include "worldchunksruntime.h"
 
 #include <filesystem>
+#include <functional>
 #include <span>
 #include <string>
 #include <vector>
@@ -43,14 +44,22 @@ struct CookedWorldStats {
 
 // Reads dir with overrideDir through readWorldChunks, then writes one .wcb per
 // cell of world.json (cookedChunkPath) and the index (cookedIndexPath). A file
-// that already holds the encoded bytes is left as it is. Throws std::runtime_error.
+// that already holds the encoded bytes is left as it is. Write order: the index
+// is removed before the first cell file is created or replaced, and written
+// last, so a cook stopped at any point leaves either no index or a consistent
+// set; every writer of cooked files keeps this order. beforeIndex, when given,
+// runs after the cells and before the index (the tests stop a cook there).
+// Throws std::runtime_error.
 CookedWorldStats cookWorldChunks(const std::filesystem::path& dir, const std::filesystem::path& overrideDir = {},
-                                 const std::filesystem::path& outDir = {});
+                                 const std::filesystem::path& outDir = {},
+                                 const std::function<void()>& beforeIndex = {});
 
 // Writes bytes to path through a temporary name unique to the process and the
 // call, then renames it over path; leaves a file that already holds these bytes
-// untouched. True when it wrote. Throws std::runtime_error.
-bool writeCookedFile(const std::filesystem::path& path, std::span<const uint8_t> bytes);
+// untouched. True when it wrote. beforeWrite, when given, runs once a write is
+// needed and before the temporary is created. Throws std::runtime_error.
+bool writeCookedFile(const std::filesystem::path& path, std::span<const uint8_t> bytes,
+                     const std::function<void()>& beforeWrite = {});
 // The temporary name writeCookedFile uses: path.<process id>-<call number>.tmp.
 std::filesystem::path cookedTemporaryPath(const std::filesystem::path& path);
 

@@ -20,7 +20,11 @@
 // but cannot be used logs one line and reads its GLB from then on. A missing
 // .wcb is not logged. OPENGOTHIC_WCB=0 at world load turns the cooked path off.
 // The game writes no cooked file and hashes no GLB: a GLB changed at the same
-// length after the cook is not noticed.
+// length after the cook is not noticed. The cook removes the index before it
+// writes cells and writes it last (worldchunkcook.h), so an interrupted cook
+// leaves no index; an older index put back by hand beside newer cells is
+// outside this contract, and content-convert verify-cooked-world finds it (it
+// compares each cell's hash with the index).
 
 #include "worldchunkindex.h"
 #include "worldchunksruntime.h"

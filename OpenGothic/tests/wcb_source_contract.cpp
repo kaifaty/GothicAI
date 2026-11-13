@@ -304,6 +304,35 @@ std::vector<uint8_t> padJson(std::vector<uint8_t> glb) {
   return glb;
   }
 
+// Cell 1,0 of the strip as an edit that only gives its ground triangles a material of its own (no world.json
+// index): one appended material, the same geometry and source ids.
+void writeMaterialEdit(const fs::path& over, const asset::WorldMesh& base) {
+  fs::create_directories(over/"chunks");
+  const auto& p=base.polygons;
+  std::vector<GlbPrimitive> primitives(base.materials.size());
+  for(size_t m=0;m<primitives.size();++m) {
+    primitives[m].material=base.materials[m];
+    primitives[m].index=int64_t(m);
+    }
+  primitives[0].material.name="STRIP_GROUND_EDIT";
+  primitives[0].index=-1;
+  for(size_t t=0;t<p.material_indices.size();++t) {
+    if(!(centroidCell(base,t)==ChunkId{1,0}))
+      continue;
+    auto corner=[&](unsigned c) {
+      const auto v=p.vertex_indices[t*3+c], f=p.feature_indices[t*3+c];
+      return GlbCorner{base.vertices[v],base.features[f],float(v),float(f)};
+      };
+    auto& primitive=primitives[p.material_indices[t]];
+    primitive.triangles.push_back({corner(0),corner(1),corner(2)});
+    primitive.order.push_back(float(t));
+    primitive.flags.push_back(wcb::packFlags(p.flags[t]));
+    primitive.flags.push_back(uint16_t(p.flags[t].sector_index));
+    primitive.lightmap.push_back(float(p.lightmap_indices[t]));
+    }
+  writeChunkGlb(over/"chunks/1_0.glb",primitives);
+  }
+
 void fallbacks(const fs::path& root) {
   const auto cooked=root/"fallback-cooked";
   writeWorldChunks(stripMesh(),fixtureSource,cooked);
@@ -341,6 +370,23 @@ void fallbacks(const fs::path& root) {
          "28 features, 2 materials and 24 triangles differ from the loaded world's 27, 27,");
 
   dir=copy();
+  index=fileBytes(dir/wci::FileName);
+  put32(index,52,get32(index,52)+1); // the triangle total alone
+  writeBytes(dir/wci::FileName,index);
+  expect("an index with another triangle total",compareSet("an index with another triangle total",dir),0,1,
+         "2 materials and 25 triangles differ from the loaded world's 27, 27, 2 and 24");
+
+  // Only the material total: an index that passes its own checks, cooked for a set whose 1_0 has an
+  // appended material and the base's geometry, put beside the base without that override.
+  dir=copy();
+  const auto materialEdit=root/"fallback-material-edit";
+  writeMaterialEdit(materialEdit,stripMesh());
+  cookWorldChunks(dir,materialEdit);
+  fs::copy_file(materialEdit/wci::FileName,dir/wci::FileName,fs::copy_options::overwrite_existing);
+  expect("an index with another material total",compareSet("an index with another material total",dir),0,1,
+         "27 vertices, 27 features, 3 materials and 24 triangles differ from the loaded world's 27, 27, 2 and 24");
+
+  dir=copy();
   fs::remove(dir/"chunks/1_0.wcb");
   expect("a missing .wcb",compareSet("a missing .wcb",dir),2,1,{},"chunks/1_0.glb");
 
@@ -375,6 +421,36 @@ void fallbacks(const fs::path& root) {
   require(fs::file_size(over/"chunks/1_0.glb")!=before,"the edited set's new 1_0.glb must have another length");
   expect("an edited set's GLB of another length",compareSet("an edited set's GLB of another length",base,over),0,1,
          "the set's edited ids depend on every cell");
+  }
+
+  // A cook stopped after the cells, before the index. The border override moves 1_0's vertex shared with 0_0;
+  // its new GLB, of the same length, moves the one shared with 2_0 instead, which renumbers both neighbours'
+  // copies at the same totals. The stopped cook leaves no index, so every cell reads its GLB; the completed
+  // cook gives every cell cooked, equal to the GLB path.
+  {
+  const auto base=root/"interrupted", over=root/"interrupted-override";
+  writeWorldChunks(stripMesh(),fixtureSource,base);
+  writeStripOverride(over,stripMesh(),true);
+  cookWorldChunks(base,over);
+  auto moved=stripMesh();
+  moved.vertices[stripVertex(8,0)].y+=30.f;
+  const auto other=writeStripOverride(root/"interrupted-other",moved,false);
+  require(fs::file_size(other/"chunks/1_0.glb")==fs::file_size(over/"chunks/1_0.glb"),
+          "the edit moved to border 8 must keep its GLB's length");
+  fs::copy_file(other/"chunks/1_0.glb",over/"chunks/1_0.glb",fs::copy_options::overwrite_existing);
+  const auto cell=fileBytes(over/"chunks/1_0.wcb");
+  bool stopped=false;
+  try {
+    cookWorldChunks(base,over,{},[] { throw std::runtime_error("stopped before the index"); });
+    }
+  catch(const std::runtime_error& error) {
+    stopped=std::string(error.what())=="stopped before the index";
+    }
+  require(stopped && fileBytes(over/"chunks/1_0.wcb")!=cell,"the cook must stop after writing 1_0's new .wcb");
+  require(!fs::exists(over/wci::FileName),"a cook stopped after the cells must leave no index");
+  expect("a cook stopped after the cells, before the index",compareSet("a stopped cook",base,over),0,0);
+  cookWorldChunks(base,over);
+  expectAllCooked("the same cook completed",base,over);
   }
 
   // The GLB changed at the same length and its cell cooked again, the index left from the first cook.

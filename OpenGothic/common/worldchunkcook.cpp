@@ -5,6 +5,7 @@
 #include <bit>
 #include <chrono>
 #include <fstream>
+#include <functional>
 #include <stdexcept>
 #include <thread>
 #include <tuple>
@@ -97,7 +98,23 @@ fs::path cookedTemporaryPath(const fs::path& path) {
   return temporary;
   }
 
-bool writeCookedFile(const fs::path& path, std::span<const uint8_t> bytes) {
+namespace {
+
+// Windows refuses to delete or replace a file another process holds open, as a concurrent cook does while it
+// compares the file; that read ends within milliseconds, so the callers retry for up to a second.
+template<class Step>
+void retryFileStep(Step&& step, std::error_code& error) {
+  for(int attempt=0;;++attempt) {
+    step(error);
+    if(!error || attempt==100)
+      return;
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  }
+
+}
+
+bool writeCookedFile(const fs::path& path, std::span<const uint8_t> bytes, const std::function<void()>& beforeWrite) {
   std::error_code error;
   const auto size = fs::file_size(path,error);
   if(!error && size==bytes.size()) {
@@ -110,6 +127,8 @@ bool writeCookedFile(const fs::path& path, std::span<const uint8_t> bytes) {
     catch(const std::exception&) {
       }
     }
+  if(beforeWrite)
+    beforeWrite();
   // Unique to the process and the call: two cooks into the same files never share a temporary.
   const auto temporary = cookedTemporaryPath(path);
   if(!path.parent_path().empty())
@@ -123,14 +142,7 @@ bool writeCookedFile(const fs::path& path, std::span<const uint8_t> bytes) {
     fail("cannot write "+temporary.string());
     }
   }
-  // Windows refuses to replace a file another process holds open, as a concurrent cook does while it
-  // compares the file above; that read ends within milliseconds, so retry for up to a second.
-  for(int attempt=0;;++attempt) {
-    fs::rename(temporary,path,error);
-    if(!error || attempt==100)
-      break;
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+  retryFileStep([&](std::error_code& e) { fs::rename(temporary,path,e); },error);
   if(error) {
     std::error_code ignored;
     fs::remove(temporary,ignored);
@@ -139,8 +151,22 @@ bool writeCookedFile(const fs::path& path, std::span<const uint8_t> bytes) {
   return true;
   }
 
-CookedWorldStats cookWorldChunks(const fs::path& dir, const fs::path& overrideDir, const fs::path& outDir) {
+CookedWorldStats cookWorldChunks(const fs::path& dir, const fs::path& overrideDir, const fs::path& outDir,
+                                 const std::function<void()>& beforeIndex) {
   const auto manifest = readWorldChunkManifest(dir);
+  // The index goes before the first cell file is created or replaced and comes back last: a cook stopped at
+  // any point leaves either no index, and the game reads the GLBs, or a consistent set.
+  const auto indexPath = cookedIndexPath(dir,overrideDir,outDir);
+  bool indexRemoved = false;
+  const std::function<void()> removeIndex = [&] {
+    if(indexRemoved)
+      return;
+    std::error_code error;
+    retryFileStep([&](std::error_code& e) { fs::remove(indexPath,e); },error);
+    if(error)
+      fail("cannot remove "+indexPath.string()+" before writing cells: "+error.message());
+    indexRemoved = true;
+    };
   // Each GLB's length and time before the read: the bytes hashed below must be the ones the mesh came from.
   std::vector<std::pair<uintmax_t,fs::file_time_type>> inputs;
   for(const auto& cell:manifest.cells) {
@@ -286,7 +312,7 @@ CookedWorldStats cookWorldChunks(const fs::path& dir, const fs::path& overrideDi
     addedNext += added;
 
     const auto encoded = encodeCookedChunk(data);
-    if(writeCookedFile(cookedChunkPath(dir,overrideDir,entry.file,outDir),encoded))
+    if(writeCookedFile(cookedChunkPath(dir,overrideDir,entry.file,outDir),encoded,removeIndex))
       ++stats.written;
     else
       ++stats.left;
@@ -308,7 +334,9 @@ CookedWorldStats cookWorldChunks(const fs::path& dir, const fs::path& overrideDi
   h.sourceTriangles = sourceTriangles;
   index.appended.assign(mesh.materials.begin()+ptrdiff_t(baseMaterials),mesh.materials.end());
   const auto encoded = encodeCookedIndex(index);
-  stats.indexWritten = writeCookedFile(cookedIndexPath(dir,overrideDir,outDir),encoded);
+  if(beforeIndex)
+    beforeIndex();
+  stats.indexWritten = writeCookedFile(indexPath,encoded);
   stats.indexBytes   = encoded.size();
   return stats;
   }
