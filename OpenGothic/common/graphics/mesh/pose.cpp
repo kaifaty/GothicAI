@@ -299,6 +299,9 @@ void Pose::setSkeleton(const Skeleton* sk) {
     return;
   clearRagdollPose();
   skeleton = sk;
+  // another body: nothing is left of the last one's root on its curve
+  rootNow   = rootShown = RootDriver();
+  rootShift = rootCarry = Vec3();
   for(auto& i:tr)
     i.identity();
   ++trRevision;
