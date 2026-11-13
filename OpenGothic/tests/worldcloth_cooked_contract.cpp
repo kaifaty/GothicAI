@@ -167,14 +167,9 @@ uint32_t addMaterial(asset::WorldMesh& mesh, const std::string& name, const std:
 
 void addTriangle(asset::WorldMesh& mesh, uint32_t material, const std::array<uint32_t,3>& indices) {
   const auto face = uint32_t(mesh.polygons.material_indices.size());
-  asset::PolygonFlagSet flags = {};
-  flags.is_occluder = uint8_t(face%2);
-  flags.is_sector = uint8_t((face/2)%2);
-  flags.should_relight = uint8_t((face/3)%2);
-  flags.is_dynamically_lit = uint8_t((face/5)%2);
-  flags.sector_index = int16_t(100+face);
-  flags.is_lod = uint8_t((face/7)%2);
-  flags.normal_axis = uint8_t(face%3);
+  // worldcloth_contract.cpp's flags (occluder, sector, relight, dynamically lit, LOD, normal axis), as .wcb packs them.
+  const auto bits = (face%2)<<2 | ((face/2)%2)<<3 | ((face/3)%2)<<4 | ((face/5)%2)<<7 | ((face/7)%2)<<8 | (face%3)<<9;
+  const auto flags = wcb::unpackFlags(uint16_t(bits),int16_t(100+face));
   mesh.polygons.material_indices.push_back(material);
   mesh.polygons.lightmap_indices.push_back(face%2 ? -1 : 0);
   mesh.polygons.flags.push_back(flags);
