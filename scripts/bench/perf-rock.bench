@@ -1,0 +1,26 @@
+# The rock wall by the road south of Akil's farm, the view `road-3` of landscape-rock-material.bench: the frame's
+# GPU time of a rock material (reports/content/2026-11-landscape-pilot/b3-rock-material.md, task 1). Run with the
+# set under test in PERF_ENV='OPENGOTHIC_CONTENT=<path on the host>'.
+seed 73013
+cheat god
+set time 12 0
+cadence normal
+overlay off
+ui off
+view full
+walkmode run
+watch player
+cam game
+goto NW_FARM2_TO_TAVERN_02
+clear 3000
+face wp NW_FARM2_TO_TAVERN_04
+turn 180
+# Twenty real seconds after the teleport for loading and native simulation (`streaming wait` times out under the
+# normal clock)
+wait 20000
+cam hold
+perf sample perf-rock/view-1
+wait 8000
+perf stop
+shot road-3
+wait 200
