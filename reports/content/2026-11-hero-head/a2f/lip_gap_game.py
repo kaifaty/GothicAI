@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The lip guard rail of face-shapes.md on the face from the voice in the game (engine-plan.md, step 10).
 
-  lip_gap_game.py <head.glb> <bench face.csv> [<a2f-weights csv>...]
+  lip_gap_game.py [--contact <MPFB head.glb>] [--mark] <head.glb> <bench face.csv> [<a2f-weights csv>...]
 
 face.csv is what the bench writes for the watched own head: per frame the weights its deformation shows (all layers,
 after the rules of speech_face) and vf_w, how far the face from the voice shows. The frames where it shows fully are
@@ -9,8 +9,14 @@ played on the head's "face" part at the midline lip contact (the method of shape
 over the upper one by more than 2 mm while the jaw is nearly closed (jawOpen < 0.15) - the share of such frames.
 The a2f-weights CSVs given after it are measured the same way as they are and with the rules (mouthClose at most
 jawOpen, mouthRoll* halved): the same lines outside the game, for comparison with 9.6 % / 35.3 % of face-shapes.md.
+A head with Mark's shapes (face-shapes.md, "Формы Mark в игре") has the MPFB head's mesh but not its shapes: --contact
+finds the contact on the MPFB head and measures the given one there. --mark adds the second measure of shapes/lip_gap.py:
+in the frames where Mark's own face with the same weights shuts the lips (gap < 1 mm from its rest, in the head's
+scale), the share where the head leaves them open more than 1 mm (and 3 mm); the reference undoes the scale of
+speech_face in the head's profile (<head>.face.json next to it), the head plays it.
 """
 import json
+import os
 import struct
 import sys
 
@@ -88,10 +94,44 @@ def report(label, gap, jaw):
           % (label, len(gap), c.sum(), 100*over, (gap[c].min() if c.any() else 0)*1000))
 
 
+def closing(model, eyes, names, W, scale):
+    """The second measure: where Mark's own face shuts the lips with the weights W, how often the head does not. The
+    reference plays the track as solved: the profile's speech_face scale (form or prefix* -> factor) is undone."""
+    sys.path.insert(0, __file__.rsplit('/', 2)[0]+'/shapes')
+    from lip_gap import mark_reference
+    V, sk, iu, il, down = model
+    ref = mark_reference(abs((V[iu]-eyes) @ down))
+    order = [names.index(n) if n in names else -1 for n in SHAPES]
+    Wm = np.stack([W[:, i] if i >= 0 else np.zeros(len(W)) for i in order], 1)
+    for k, n in enumerate(SHAPES):
+        f = next((v for p, v in scale.items() if p == n or (p.endswith('*') and n.startswith(p[:-1]))), 1.0)
+        Wm[:, k] /= f
+    r = ref(Wm)
+    g = gaps(model, names, W)-(V[il]-V[iu]) @ down
+    shut = r < 0.001
+    print('%-34s frames where Mark shuts the lips %5d: the head open > 1 mm %5.1f %%, > 3 mm %5.1f %%; mean gap '
+          'difference %.1f mm' % ('game, lips shut by Mark', shut.sum(), 100*(shut & (g > 0.001)).sum()/max(shut.sum(), 1),
+                                  100*(shut & (g > 0.003)).sum()/max(shut.sum(), 1), np.abs(g-r).mean()*1000))
+
+
 def main(argv):
+    argv = list(argv)
+    base = None
+    if '--contact' in argv:
+        i = argv.index('--contact')
+        base = argv[i+1]
+        del argv[i:i+2]
+    mark = '--mark' in argv
+    if mark:
+        argv.remove('--mark')
     if len(argv) < 2:
         sys.exit(__doc__)
-    model = contact(glb(argv[0]))
+    parts = glb(argv[0])
+    if base:
+        b = contact(glb(base))
+        model = (parts['face'][0], parts['face'][1], b[2], b[3], b[4])
+    else:
+        model = contact(parts)
     print('contact: upper %d lower %d, rest gap %.2f mm' % (model[2], model[3], (model[0][model[3]]-model[0][model[2]]) @ model[4]*1000))
     head = open(argv[1]).readline().strip().split(',')
     rows = (np.loadtxt(argv[1], delimiter=',', skiprows=1, usecols=range(3, len(head)), ndmin=2)
@@ -102,6 +142,10 @@ def main(argv):
     on = vf >= 0.99
     if on.any():
         report('game, face from the voice', gaps(model, names, W[on]), W[on][:, names.index('jawOpen')])
+        if mark:
+            prof = argv[0].rsplit('.', 1)[0]+'.face.json'
+            scale = json.load(open(prof)).get('speech_face', {}).get('scale', {}) if os.path.exists(prof) else {}
+            closing(model, (parts['eye_L'][0].mean(0)+parts['eye_R'][0].mean(0))/2, names, W[on], scale)
     else:
         print('game: no frame with the face from the voice')
     for csv in argv[2:]:
