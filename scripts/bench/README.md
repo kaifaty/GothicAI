@@ -1012,7 +1012,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `facecue <npc\|nearest\|player> <gesture> [L\|R]` | a facial gesture of its own head (`flash`, `doubt`, `smirk`...: the `cues` of its face profile); a one-sided one without a side goes on a side by the seed; columns `cue_*` show the gestures |
 | `faceleak <npc\|nearest\|player> <felt> <upper\|lower>` | a leak of the felt emotion (`friendly`, `angry`, `hostile`, `afraid`, `pain`) on half of its own head's face (the `leaks` of its face profile) now, as a line that hides a lie: with the liar's two blinks in the 2 s after it; column `cue_leak` shows its strongest weight |
 | `lips on\|off`, `lips param <name> <value>`, `lips params` | lip sync (off: the old talk loop) and its parameters |
-| `gestures on\|off`, `gestures param <name> <value>`, `gestures params` | the hands while one speaks (`TalkGestures`; off: a random gesture when a line starts) and its parameters: `Tail`, `Wait`, `MinLeft`, `Slack` (ms), `Long`, `RestScale`; the head: `Nod` (degrees), `NodHz`, `Stress`, `NodGap` (ms), `SwayYaw`, `SwayRoll` (degrees), `SwayTime`, `SwayLag` (ms); listening and thinking: `ListenSway`, `ListenNod` (degrees), `ListenHz`, `ListenGap` (ms), `ListenProb`, `DoubleNod`, `ThinkDelay` (ms), `ThinkYaw`, `ThinkPitch`, `ThinkTilt` (degrees), `AsideTime` (ms) |
+| `gestures on\|off`, `gestures param <name> <value>`, `gestures params` | the hands while one speaks (`TalkGestures`; off: a random gesture when a line starts) and its parameters: `Tail`, `Wait`, `MinLeft`, `Slack` (ms), `Long`, `RestScale`; the head: `Nod` (degrees), `NodWeak` (of `Nod` on a just stressed syllable), `Stress`, `StressTop` (dB over the syllables before), `NodGap`, `NodDown`, `LiveDown`, `NodBack` (ms), `SwayYaw`, `SwayRoll` (degrees), `SwayTime`, `SwayLag` (ms); listening and thinking: `ListenSway`, `ListenNod` (degrees), `ListenDown`, `ListenBack`, `ListenGap` (ms), `ListenProb`, `DoubleNod`, `ThinkDelay` (ms), `ThinkYaw`, `ThinkPitch`, `ThinkTilt` (degrees), `AsideTime` (ms) |
 | `blink on\|off`, `blink param <name> <value>`, `blink params` | blinking (`EyeBlink`; off: nobody blinks) and its parameters: `MinGap`, `RestMean`, `SpeakMean`, `MaxGap`, `Hold`, `PauseMs`, `SoonMs`, `DoubleGap` (ms), `PauseProb`, `ShiftProb`, `DoubleProb` |
 | `hear <npc\|nearest\|player> <ms> [every ms]` | the hero speaks to it that long, his words come every so often (600 ms), as the bridge passes the partial transcripts of his voice: it listens, nods now and then; `player`: the hero listens to the nearest npc |
 | `think <npc\|nearest\|player> <ms>` | it thinks of an answer that long, as on the AI server's `thinking` status; `player`: the hero, of an answer to the nearest npc |
@@ -1194,6 +1194,9 @@ and the bridge's times from the server's chunk to the bridge and to the tick tha
 `player_voice_clip.py` writes `clip.mp4` ("было | стало" side by side, then "без приглушения | с приглушением"; the
 sound is what the microphone heard, not shifted), `sheet.jpg` (pairs of frames on «п», «б», «у», a loud vowel, a
 pause and Xardas' voice) and `key.txt` (the parts, the frames and the measures).
+[`a2f/nod_clip.py`](../../reports/content/2026-11-hero-head/a2f/nod_clip.py) `<before out> <after out> <dir>` compares
+the hero's nod of two runs (segments `voice` and `own`): `clip.mp4` "было | стало", `nod.png` (`ge_pitch` over time with
+the syllables) and `key.txt` (nods, the largest step of a frame, the first frame of a nod, size, ms down and back).
 
 ## Native NPC calibration duels
 
