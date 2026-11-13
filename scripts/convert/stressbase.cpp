@@ -103,13 +103,13 @@ std::vector<std::string> worldNames(const fs::path& base) {
   return names;
   }
 
-// Files of a world the chunk writer produces; everything else of the base is linked.
+// Files of a world the chunk writer and the cook produce; everything else of the base is linked.
 bool writtenWorldFile(const fs::path& relative, const std::set<std::string>& worlds) {
   auto it = relative.begin();
   if(it==relative.end() || *it!="worlds" || ++it==relative.end() || worlds.count(it->string())==0 ||
      ++it==relative.end())
     return false;
-  return *it=="chunks" || *it=="world.json" || *it=="unreferenced.bin";
+  return *it=="chunks" || *it=="world.json" || *it=="unreferenced.bin" || *it==wci::FileName;
   }
 
 // writeWorldChunks leaves out the archive index the import adds after it (baseimport.cpp,
@@ -204,11 +204,12 @@ int build(const fs::path& baseArg, const fs::path& outArg, int subdivide, int me
       keepArchives(source,out/"worlds"/c.name);
       require(written.triangles==c.after,"world "+c.name+": written triangle count differs");
       c.chunksAfter = written.chunks.size();
-      // Cooked chunks (.wcb) beside the GLBs, listed in base-files.json like every chunk file.
+      // Cooked chunks (.wcb) beside the GLBs and the world's index (chunks.wci), listed in base-files.json
+      // like every chunk file.
       const auto cooked = cookWorldChunks(out/"worlds"/c.name);
       std::cout << c.name << ": " << c.before << " -> " << c.after << " triangles (x" << factor << "), "
                 << c.chunksBefore << " -> " << c.chunksAfter << " chunks; cooked: GLB " << cooked.glbBytes
-                << " bytes, .wcb " << cooked.wcbBytes << " bytes" << std::endl;
+                << " bytes, .wcb " << cooked.wcbBytes << " bytes, index " << cooked.indexBytes << " bytes" << std::endl;
       }
 
     // Static meshes that fit the format after the split; the rest is linked below.

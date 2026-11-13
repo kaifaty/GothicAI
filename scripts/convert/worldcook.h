@@ -1,6 +1,7 @@
 #pragma once
 
-// Cooked binary chunks (.wcb, OpenGothic/common/worldchunkbinary.h) from the converter:
+// Cooked binary chunks (.wcb, OpenGothic/common/worldchunkbinary.h) and the set's index (chunks.wci,
+// worldchunkindex.h) from the converter:
 //   cook-world <world dir> [--content <override world dir>] [--out <dir>]
 //   verify-cooked-world <world dir> [--content <dir>] [--out <dir>]
 //   time-world <world dir> [--content <dir>] [--out <dir>]

@@ -56,7 +56,8 @@
 //   content-convert stress-base <ready base> <out dir> --subdivide 0..3 | verify-stress-base <base> <copy>
 //       A copy of a ready base with every world triangle split in four N times (stressbase.h).
 //   content-convert cook-world|verify-cooked-world <world dir> [--content <dir>] [--out <dir>]
-//       Cooked binary chunks (.wcb) beside the GLBs, and their comparison with readWorldChunks (worldcook.h).
+//       Cooked binary chunks (.wcb) beside the GLBs and the set's index (chunks.wci), and their comparison
+//       with readWorldChunks (worldcook.h).
 //   content-convert time-world <world dir> [--content <dir>] [--out <dir>]
 //       Wall time of the stages (five runs) of the GLB and the cooked read.
 //   content-convert --self-test

@@ -643,47 +643,12 @@ asset::WorldMesh readWorldChunks(const std::filesystem::path& dir, const std::fi
   if(trace!=nullptr) {
     trace->stitched=WorldChunkTrace::Clock::now();
     trace->orders.clear();
-    for(const auto t:ordered)
+    trace->corners.clear();
+    for(const auto t:ordered) {
       trace->orders.push_back(reader.triangles[t].order);
+      for(const auto& c:reader.triangles[t].corners)
+        trace->corners.emplace_back(uint32_t(c.vertex.id),uint32_t(c.feature.id));
+      }
     }
   return out;
-  }
-
-std::string compareWorldMeshes(const asset::WorldMesh& e, const asset::WorldMesh& a) {
-  if(e.materials.size()!=a.materials.size())
-    return "materials: " + std::to_string(e.materials.size()) + " vs " + std::to_string(a.materials.size());
-  for(size_t i=0; i<e.materials.size(); ++i)
-    if(!sameMaterial(e.materials[i],a.materials[i]))
-      return "material " + std::to_string(i) + " (" + e.materials[i].name + ") differs";
-  if(e.vertices.size()!=a.vertices.size())
-    return "vertices: " + std::to_string(e.vertices.size()) + " vs " + std::to_string(a.vertices.size());
-  for(size_t i=0; i<e.vertices.size(); ++i)
-    for(unsigned ax=0; ax<3; ++ax)
-      if(bits(e.vertices[i][ax])!=bits(a.vertices[i][ax]))
-        return "vertex " + std::to_string(i) + " differs";
-  if(e.features.size()!=a.features.size())
-    return "features: " + std::to_string(e.features.size()) + " vs " + std::to_string(a.features.size());
-  for(size_t i=0; i<e.features.size(); ++i) {
-    const auto& x = e.features[i];
-    const auto& y = a.features[i];
-    if(bits(x.texture.x)!=bits(y.texture.x) || bits(x.texture.y)!=bits(y.texture.y) || x.light!=y.light ||
-       bits(x.normal.x)!=bits(y.normal.x) || bits(x.normal.y)!=bits(y.normal.y) || bits(x.normal.z)!=bits(y.normal.z))
-      return "feature " + std::to_string(i) + " differs";
-    }
-  const auto& p = e.polygons;
-  const auto& q = a.polygons;
-  if(p.material_indices!=q.material_indices)
-    return "polygon materials differ";
-  if(p.vertex_indices!=q.vertex_indices)
-    return "polygon vertex indices differ";
-  if(p.feature_indices!=q.feature_indices)
-    return "polygon feature indices differ";
-  if(p.lightmap_indices!=q.lightmap_indices)
-    return "polygon lightmap indices differ";
-  if(p.flags.size()!=q.flags.size())
-    return "polygon flags differ in count";
-  for(size_t i=0; i<p.flags.size(); ++i)
-    if(!(p.flags[i]==q.flags[i]))
-      return "polygon flags " + std::to_string(i) + " differ";
-  return {};
   }
