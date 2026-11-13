@@ -24,9 +24,9 @@ const float ProjectionLimitCos  = 0.93969262;
 // layer's height (the blue of its ORM; grass has no metal) stands above a threshold rising from 0 to 1 across the
 // zone. The zone's depth wanders along the wall by world position, so its lower edge is no line from afar either,
 // where the height is averaged by the mips. A pixel is grass or rock: colour, normal and ORM all come from one.
-const float FringeWander   = 0.30;  // the shares of a band change by up to this part of themselves...
+const float FringeWander   = 0.35;  // the shares of a band change by up to this part of themselves...
 const float FringeWanderCm = 900.0; // ...over this length of the world, plus half as much over a quarter of it
-const float FringeDetail   = 0.15;
+const float FringeDetail   = 0.20;
 
 struct Projection {
   bool  on;
