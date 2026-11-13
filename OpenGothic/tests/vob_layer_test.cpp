@@ -176,6 +176,10 @@ void validLayers(const Fixture& f) {
           light->range_animation_fps==12,"light flicker keys");
   require(light->cookie=="OWN_LAMP_COOKIE.TGA","light mask name, upper case");
   require(VobLayer::lightSourceCm(*light)==1.5f,"light source size");
+  require(VobLayer::lightSourceCm(*data.vobs[0])==VobLayer::DefaultLightSourceCm &&
+          VobLayer::lightSourceCm(*data.vobs[2])==VobLayer::DefaultLightSourceCm,"base vobs and layer props keep the default source size");
+  require(VobLayer::flicker(*data.vobs[0])==nullptr && VobLayer::flicker(*data.vobs[2])==nullptr &&
+          VobLayer::flicker(*light)==nullptr,"base vobs, layer props and a light without flicker_from carry no flame signal");
   const float rotationRows[3][3]={{0,0,1},{0,1,0},{-1,0,0}};
   for(unsigned row=0;row<3;++row) for(unsigned column=0;column<3;++column)
     require(light->rotation[column][row]==rotationRows[row][column] &&
@@ -597,6 +601,8 @@ void flameLayer(const Fixture& f, const fs::path& baseRoot) {
   require(emitterSignal && lightSignal && emitterSignal->pulseHz==6.f && emitterSignal->jitterHz==12.f &&
           emitterSignal->amount==0.2f && emitterSignal->seed==7 && lightSignal->seed==7 && lightSignal->amount==0.2f &&
           jitter==2.f,"the light takes its emitter's signal and its own trembling");
+  float emitterJitter=-1;
+  require(VobLayer::flicker(*tree[0],&emitterJitter)==emitterSignal && emitterJitter==0.f,"an emitter does not tremble its own light");
   const std::vector<std::pair<std::string,std::string>> bad={
     {"amount",R"({"key":"flame","kind":"emitter","pfx":"FIRE_SMOKE","position":[0,0,0],"yaw_deg":0,"flicker":{"pulse_hz":6,"jitter_hz":12,"amount":0,"seed":7}})"},
     {"field",R"({"key":"flame","kind":"emitter","pfx":"FIRE_SMOKE","position":[0,0,0],"yaw_deg":0,"flicker":{"pulse_hz":6,"jitter_hz":12,"amount":0.2,"seed":7,"phase":1}})"},

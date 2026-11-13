@@ -24,7 +24,7 @@
 
 Подготовка входов анимации и физики в каркасе — `mkFootIkInput` (`world/objects/npc_visual.cpp`) и `noiseCulpritNpc` (`world/objects/npc_ragdoll.cpp`), объявления — в `npc.h`; `Item::drawInventory` готовит меш, материал и матрицу для платформенного рендера. Платформенные обработчики этих входов определены в платформе.
 
-VM-адаптер базовых программ — свободные функции `loadBaseProgram` в `common/game/definitions/baseprogram.*`; `Resources::baseProgramIndex` и `contentCensus` дают индекс программ и перепись типами платформы, общие помощники путей — в `resources_internal.h`. Порядок поиска программ, ошибки и метка переписи `"Gothic::loadScript"` сохранены.
+VM-адаптер базовых программ — свободные функции `loadBaseProgram` в `common/game/definitions/baseprogram.*`; индекс программ и библиотеки реплик базы держит `BaseScripts` (`common/game/definitions/basescripts.*`), `Resources::contentCensus` даёт перепись типами платформы, общие помощники путей — в `resources_internal.h`. Порядок поиска программ, ошибки и метка переписи `"Gothic::loadScript"` сохранены.
 
 Луч навигации — `DynamicWorld::navigationRay` в `common/physics/dynamicworld_navigation.cpp`: принимает собственный риг `Ragdoll`, не NPC. Адаптер RPG `navigationRay` в `common/game/navigationeyeworld.*` выбирает живой или упавший риг NPC; ядро `navigationeye.h` остаётся без заголовков движка для nav-sim. Дамп коллизии — свободная функция стенда в `common/game/navperceptionbench.cpp`, имя мира передаёт вызывающий код; `DynamicWorld::navigationCollisionTriangles` только пересылает запрос статичных и кинематических треугольников платформе.
 
@@ -126,6 +126,16 @@ VM-адаптер базовых программ — свободные фун�
 
 Граница движка и Готики (исследование, не решение): [слои и перепись](../../reports/engine/2026-11-10-engine-layers/README.md) — платформа, каркас RPG, Готика, импорт, мост ИИ и стенды; [`scripts/engine_layers.py`](../../scripts/engine_layers.py) считает включения против слоёв и файлы, достающие до VM Daedalus; [`scripts/engine_link_census.py`](../../scripts/engine_link_census.py) — перепись компоновки (шаг 8.2): по объектным файлам собранной `Gothic2Notr` (`nm`, Mach-O и ELF) находит символы, которых платформе не хватит без верхних слоёв, и сторонние библиотеки, которые она тянет; `check` в `debt-ratchet.yml` предупреждает о новых; страж `cmake/EngineLayerGuard.cmake` роняет сборку, если файл платформы достаёт до VM. План шага 8, «пустого острова» — программы только на платформе без установки и базы Готики: [заметка](../../reports/engine/2026-11-13-empty-island/README.md).
 Перечисления платформы `BodyState`, `WeaponState`, `WalkBit`, `AaPreset`, `Benchmark`, `GiMethod` — в [`common/engineconstants.h`](../../OpenGothic/common/engineconstants.h); `game/constants.h` включает их для верхних слоёв.
+Шаг 8.3 закрыл дыры компоновки платформы, кроме паспорта базы и DirectMusic. Модули по узлам:
+- крючок выбора базы — `common/gamebasecontent.*`: `Resources::loadBase` зовёт `GameBaseContent`. Реализация в Готике — `BaseScripts`: индексы программ и реплик, загрузчики `loadBaseOutputUnits`, язык. `ContentCensus::ImportedSource` заменяет типы источников Готики;
+- кадр с интерфейсом — `ui/gameframe.*` (`drawGameFrame`): `Renderer::drawScene` рисует сцену, Готика — интерфейс поверх;
+- события анимации для логики NPC — `Pose::LogicEventObserver`; его ставит `MdlVisual::processEvents`, только когда включён `NpcLogicAudit`;
+- анимация интерактивов — `graphics/mesh/animationinteractive.h`, его реализует `Interactive`;
+- записи света слоя предметов и `lightSourceCm`, `flicker` — `graphics/voblight.*`;
+- место вложенного эмиттера в корзине частиц — `graphics/pfx/pfxslot.*` (`PfxSlot`), `PfxEmitter` держит его последним членом;
+- загрузка мира и наложение `vobtrees.d` — свободные функции RPG `loadWorld` и `loadVobBundle` в `common/worldbase.*`; `Resources::loadVobBundle` принимает читатель слоя.
+
+Общие исходники `gothic-base-runtime` для игры, `content-convert` и отдельного `storygraph` — в `cmake/BaseRuntime.cmake`; его включают все три сборки, поэтому новый файл мира попадает во все три.
 
 ## Навигация: исследования и обучение
 
