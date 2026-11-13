@@ -75,7 +75,7 @@ endif()
 
 # sources
 file(GLOB_RECURSE OPENGOTHIC_SOURCES "common/*.h" "common/*.cpp")
-foreach(source zenkitlog daedalus/vm daedalus/script daedalus/classes baseidentity basestoreimport sha256 baseimport basesources worldchunks worldchunksruntime worldchunkmanifest worldchunkbinary worldchunkcook worlddata modeldata fontdata programdata outputunits audiodata basemesh gothicglb gltfmesh asset/fromzenkit asset/worldfromzenkit asset/modelfromzenkit asset/programfromzenkit
+foreach(source zenkitlog daedalus/vm daedalus/script daedalus/classes baseidentity basestoreimport sha256 baseimport basesources worldchunks worldchunksruntime worldchunkmanifest worldchunkbinary worldchunkindex worldchunkcook worlddata modeldata fontdata programdata outputunits audiodata basemesh gothicglb gltfmesh asset/fromzenkit asset/worldfromzenkit asset/modelfromzenkit asset/programfromzenkit
                utils/fileutil dmusic/sourcefile dmusic/riff dmusic/segment dmusic/track dmusic/style dmusic/band
                dmusic/reference dmusic/info dmusic/pattern musicdata dmusic/dlscollection dmusic/wave dmusic/soundfont
                dmusic/hydra dmusic/directmusicimport dmusic/dlsruntime dmusic/styleruntime dmusic/waveruntime
@@ -188,7 +188,7 @@ include(cmake/BaseImport.cmake)
 # Runtime manifest reading and cooked chunks (.wcb), like worldchunksruntime.cpp, stay outside the base
 # format fingerprint: added here and not in BaseImport.cmake, which is a base format input.
 target_sources(gothic-base-runtime PRIVATE "${BASE_ROOT}/common/worldchunkmanifest.cpp"
-  "${BASE_ROOT}/common/worldchunkbinary.cpp" "${BASE_ROOT}/common/worldchunkcook.cpp")
+  "${BASE_ROOT}/common/worldchunkbinary.cpp" "${BASE_ROOT}/common/worldchunkindex.cpp" "${BASE_ROOT}/common/worldchunkcook.cpp")
 if(MSVC)
   # musicnative.c (runtime) and basemusic.c/musicnativeimport.c (import) read dmusic's private structs
   # with C11 _Atomic counters; dmusic opts its own sources in the same way. Set here, not in

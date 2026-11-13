@@ -14,6 +14,8 @@ class ChunkMeshSource;
 struct WorldChunkTrace {
   using Clock = std::chrono::steady_clock;
   std::vector<int64_t> orders; // per stitched triangle: its GLB "order", -1 for geometry an edit added
+  // Per stitched corner (three per triangle): the _VERTEX and _FEATURE its GLB carries, 0xFFFFFFFF for none.
+  std::vector<std::pair<uint32_t,uint32_t>> corners;
   Clock::time_point parsed, ordered, stitched; // ends of reading, source-order sort, and ID resolution with stitching
   };
 

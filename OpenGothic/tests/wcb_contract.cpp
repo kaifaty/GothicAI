@@ -1,8 +1,11 @@
-// Cooked binary chunks (.wcb): cook -> assemble equals readWorldChunks for the
-// world base contract's fixtures, an edited override and the base's NEWWORLD;
-// malformed and stale files are rejected; the override question of
-// docs/landscape-plan.md (Д3, task 2) is answered; and the manifest cases
-// carried over from task 1. Needs GOTHIC_DIR and a ready base for NEWWORLD.
+// Cooked binary chunks (.wcb) and their index (chunks.wci): cook -> assemble
+// equals readWorldChunks for the world base contract's fixtures, edited
+// overrides and the base's NEWWORLD; a cell's .wcb is byte for byte the same
+// whatever other cells and overrides the set holds (the override question of
+// docs/landscape-plan.md, Д3, tasks 2 and 2b); a second cook rewrites nothing
+// unchanged, and two cooks into the same files at once both finish; malformed,
+// stale and mismatched files are rejected; and the manifest cases carried over
+// from task 1. Needs GOTHIC_DIR and a ready base for NEWWORLD.
 
 #include "commandline.h"
 #include "gothicglb.h"
@@ -24,6 +27,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -46,15 +50,27 @@ struct TemporaryDirectory {
 
 const WorldChunkSource fixtureSource = {"CONTRACT.ZEN",3,0x00C0FFEEu};
 
+void printCooked(const std::string& label, const CookedWorldStats& stats) {
+  std::printf("%s: %zu cells, %llu triangles, %llu GLB -> %llu .wcb bytes, index %llu bytes; "
+              "cook -> assemble equals readWorldChunks\n",
+              label.c_str(),stats.cells,static_cast<unsigned long long>(stats.triangles),
+              static_cast<unsigned long long>(stats.glbBytes),static_cast<unsigned long long>(stats.wcbBytes),
+              static_cast<unsigned long long>(stats.indexBytes));
+  }
+
 CookedWorldStats cookedRoundTrip(const fs::path& dir, const fs::path& over, const fs::path& out, const std::string& label) {
   const auto stats=cookWorldChunks(dir,over,out);
   require(stats.cells==readWorldChunkManifest(dir).cells.size(),label+": one cooked chunk per cell");
+  require(stats.written+stats.left==stats.cells && fs::exists(cookedIndexPath(dir,over,out)),
+          label+": every cell and the index are on disk");
   const auto difference=verifyCookedWorld(dir,over,out,true);
   require(difference.empty(),label+": cook -> assemble differs from readWorldChunks: "+difference);
-  std::printf("%s: %zu cells, %llu triangles, %llu GLB -> %llu .wcb bytes; cook -> assemble equals readWorldChunks\n",
-              label.c_str(),stats.cells,static_cast<unsigned long long>(stats.triangles),
-              static_cast<unsigned long long>(stats.glbBytes),static_cast<unsigned long long>(stats.wcbBytes));
+  printCooked(label,stats);
   return stats;
+  }
+
+std::vector<uint8_t> fileBytes(const fs::path& path) {
+  return gothicglb::readFile(path);
   }
 
 void expectThrows(const std::function<void()>& call, const std::vector<std::string>& parts, const std::string& what) {
@@ -260,8 +276,11 @@ ChunkId centroidCell(const asset::WorldMesh& mesh, size_t triangle) {
 // Cell 1,0 edited: an inner vertex moved, its last source triangle (order 15)
 // replaced by two around a new vertex with a material the edit added, and,
 // with moveBorder, the vertex it shares with cell 0,0 moved too, which splits it.
-fs::path writeStripOverride(const fs::path& over, const asset::WorldMesh& base, bool moveBorder) {
+// With cell 2,0 the edit replaces its source triangle 20 the same way, with
+// another new vertex, feature and material.
+fs::path writeStripOverride(const fs::path& over, const asset::WorldMesh& base, bool moveBorder, ChunkId cell={1,0}) {
   fs::create_directories(over/"chunks");
+  const bool second=cell==ChunkId{2,0};
   const auto& p=base.polygons;
   auto corner=[&](size_t t, unsigned c) {
     const auto v=p.vertex_indices[t*3+c], f=p.feature_indices[t*3+c];
@@ -277,9 +296,9 @@ fs::path writeStripOverride(const fs::path& over, const asset::WorldMesh& base, 
     primitives[m].material=base.materials[m];
     primitives[m].index=m;
     }
-  constexpr size_t dropped=15;
+  const size_t dropped=second ? 20 : 15;
   for(size_t t=0;t<p.material_indices.size();++t) {
-    if(!(centroidCell(base,t)==ChunkId{1,0}) || t==dropped)
+    if(!(centroidCell(base,t)==cell) || t==dropped)
       continue;
     auto& primitive=primitives[p.material_indices[t]];
     primitive.triangles.push_back({corner(t,0),corner(t,1),corner(t,2)});
@@ -290,26 +309,26 @@ fs::path writeStripOverride(const fs::path& over, const asset::WorldMesh& base, 
     }
   auto& added=primitives[2];
   added.material=base.materials[0];
-  added.material.name="STRIP_EDIT";
-  added.material.group=asset::MaterialGroup::WOOD;
+  added.material.name=second ? "STRIP_EDIT_2" : "STRIP_EDIT";
+  added.material.group=second ? asset::MaterialGroup::METAL : asset::MaterialGroup::WOOD;
   const auto a=corner(dropped,0), b=corner(dropped,1), c=corner(dropped,2);
   GlbCorner middle {{(a.position.x+b.position.x)*0.5f,(a.position.y+b.position.y)*0.5f+20.f,(a.position.z+b.position.z)*0.5f},
-                    {{0.25f,0.75f},0xFF406080u,{0.f,0.8f,0.6f}},-1.f,-1.f};
+                    {{0.25f,0.75f},second ? 0xFF608040u : 0xFF406080u,{0.f,0.8f,0.6f}},-1.f,-1.f};
   added.triangles={{a,middle,c},{middle,b,c}};
   added.flags={0,0,0,0};
   added.lightmap={-1.f,-1.f};
-  writeChunkGlb(over/"chunks/1_0.glb",primitives);
+  writeChunkGlb(over/("chunks/"+std::to_string(cell.x)+"_"+std::to_string(cell.z)+".glb"),primitives);
   return over;
   }
 
 // The GLB order of each cooked triangle, against the base triangle with the
-// same corner ids (its index is its order); added counts those without one.
+// same corner source keys (its index is its order); added counts those without one.
 void checkOrders(const CookedChunk& chunk, const asset::WorldMesh& base, size_t added, const std::string& label) {
   size_t without=0;
   const auto& vi=base.polygons.vertex_indices;
   for(const auto& t:chunk.triangles()) {
-    const std::array<uint32_t,3> ids={chunk.positions()[t.vertex[0]].id,chunk.positions()[t.vertex[1]].id,
-                                      chunk.positions()[t.vertex[2]].id};
+    const std::array<uint32_t,3> ids={chunk.positions()[t.vertex[0]].source,chunk.positions()[t.vertex[1]].source,
+                                      chunk.positions()[t.vertex[2]].source};
     size_t order=0;
     while(order<base.polygons.material_indices.size() &&
           !(vi[order*3]==ids[0] && vi[order*3+1]==ids[1] && vi[order*3+2]==ids[2]))
@@ -342,8 +361,8 @@ std::set<std::string> differingFields(const CookedChunk& a, const CookedChunk& b
     const auto& q=b.positions()[i];
     if(bits(p.x)!=bits(q.x) || bits(p.y)!=bits(q.y) || bits(p.z)!=bits(q.z))
       out.insert("positions.value");
-    if(p.id!=q.id)
-      out.insert("positions.id");
+    if(p.source!=q.source)
+      out.insert("positions.source");
     }
   for(size_t i=0;i<std::min(a.features().size(),b.features().size());++i) {
     const auto& p=a.features()[i];
@@ -351,8 +370,8 @@ std::set<std::string> differingFields(const CookedChunk& a, const CookedChunk& b
     if(bits(p.u)!=bits(q.u) || bits(p.v)!=bits(q.v) || p.light!=q.light || bits(p.nx)!=bits(q.nx) ||
        bits(p.ny)!=bits(q.ny) || bits(p.nz)!=bits(q.nz))
       out.insert("features.value");
-    if(p.id!=q.id)
-      out.insert("features.id");
+    if(p.source!=q.source)
+      out.insert("features.source");
     }
   for(size_t i=0;i<std::min(a.triangles().size(),b.triangles().size());++i) {
     const auto& p=a.triangles()[i];
@@ -365,12 +384,11 @@ std::set<std::string> differingFields(const CookedChunk& a, const CookedChunk& b
       }
     if(p.material!=q.material) out.insert("triangles.material");
     if(p.order!=q.order)       out.insert("triangles.order");
-    if(p.rank!=q.rank)         out.insert("triangles.rank");
     if(p.lightmap!=q.lightmap || p.flags!=q.flags || p.sector!=q.sector)
       out.insert("triangles.lightmap/flags/sector");
     }
   for(size_t i=0;i<std::min(a.materials().size(),b.materials().size());++i)
-    if(a.materials()[i].id!=b.materials()[i].id || !gothicglb::sameMaterial(a.material(i),b.material(i)))
+    if(a.materials()[i].source!=b.materials()[i].source || !gothicglb::sameMaterial(a.material(i),b.material(i)))
       out.insert("materials");
   return out;
   }
@@ -413,25 +431,142 @@ void editedOverride(const fs::path& root) {
   require(fs::exists(beside/"chunks/0_0.wcb") && fs::exists(beside/"chunks/2_0.wcb") &&
           fs::exists(besideOver/"chunks/1_0.wcb") && !fs::exists(beside/"chunks/1_0.wcb"),
           "a cell read from the override must have its .wcb beside the override GLB, the others beside theirs");
+  require(fs::exists(besideOver/wci::FileName) && !fs::exists(beside/wci::FileName),
+          "the index of a world with an override lies in the override directory");
   require(verifyCookedWorld(beside,besideOver,{},true).empty(),"cooked chunks beside their GLBs must assemble");
+  // The base on its own: its cells are already on disk, only its own 1_0 and its own index are new.
+  const auto alone=cookWorldChunks(beside);
+  require(alone.written==1 && alone.left==2 && fs::exists(beside/wci::FileName),
+          "cooking the base after its override set writes only the cell the override replaced and the base's index");
+  require(verifyCookedWorld(beside,{},{},true).empty() && verifyCookedWorld(beside,besideOver,{},true).empty(),
+          "the base and its override set must each assemble from the same base cells and their own index");
 
-  // The override question: do the cooked records of the cells the override does
-  // not replace differ from the records cooked without it?
-  struct Answer { std::string override, cell; std::set<std::string> expected; };
+  // The override question: do the cooked chunks of the cells the override does
+  // not replace differ from those cooked without it? Since task 2b: no, byte for byte.
+  struct Answer { std::string override, cell; };
   const std::vector<Answer> answers = {
-    {"strip-edit-cooked","0_0",{}},
-    {"strip-edit-cooked","2_0",{"triangles.rank"}},
-    {"strip-border-cooked","0_0",{"positions.id"}},
-    {"strip-border-cooked","2_0",{"triangles.rank"}},
+    {"strip-edit-cooked","0_0"},{"strip-edit-cooked","2_0"},{"strip-border-cooked","0_0"},{"strip-border-cooked","2_0"},
     };
   for(const auto& answer:answers) {
     const auto file="chunks/"+answer.cell+".wcb";
     const auto fields=differingFields(CookedChunk::read(plain/file),CookedChunk::read(root/answer.override/file));
     std::printf("Override question: %s, cell %s not replaced, differs from its cook without the override in: %s\n",
                 answer.override.c_str(),answer.cell.c_str(),joined(fields).c_str());
-    require(fields==answer.expected,"override question: cell "+answer.cell+" of "+answer.override+" differs in "+
-            joined(fields)+", expected "+joined(answer.expected));
+    require(fields.empty() && fileBytes(plain/file)==fileBytes(root/answer.override/file),
+            "override question: cell "+answer.cell+" of "+answer.override+" must be byte for byte its cook without "
+            "the override, differs in "+joined(fields));
     }
+
+  // What depends on the set lies in the index: the dropped order 15, the appended
+  // material and, per cell, the local indices whose stitched id is not their source key.
+  struct Expected { std::string out; std::vector<uint32_t> missing; std::vector<std::array<size_t,3>> exceptions; size_t appended; };
+  const std::vector<Expected> indexes = {
+    {"strip-cooked",{},{{0,0,0},{0,0,0},{0,0,0}},0},
+    {"strip-edit-cooked",{15},{{0,0,0},{1,1,1},{0,0,0}},1},
+    {"strip-border-cooked",{15},{{1,0,0},{1,1,1},{0,0,0}},1},
+    };
+  for(const auto& expected:indexes) {
+    const auto index=CookedIndex::read(root/expected.out/wci::FileName);
+    const std::vector<uint32_t> missing(index.missing().begin(),index.missing().end());
+    std::vector<std::array<size_t,3>> exceptions;
+    std::string list;
+    for(size_t i=0;i<index.cells().size();++i) {
+      exceptions.push_back({index.vertexExceptions(i).size(),index.featureExceptions(i).size(),
+                            index.materialExceptions(i).size()});
+      list+=(i==0 ? "" : ", ")+std::to_string(exceptions.back()[0])+"/"+std::to_string(exceptions.back()[1])+"/"+
+            std::to_string(exceptions.back()[2]);
+      }
+    std::printf("Index of %s: %zu bytes, %zu missing orders, %zu appended materials, vertex/feature/material "
+                "exceptions per cell: %s\n",expected.out.c_str(),index.byteSize(),missing.size(),
+                index.appendedMaterials(),list.c_str());
+    require(missing==expected.missing && exceptions==expected.exceptions && index.appendedMaterials()==expected.appended,
+            "the index of "+expected.out+" must hold the missing orders, exceptions and appended materials of its edit");
+    }
+
+  // Two overridden cells that each add a vertex and a material: each one's .wcb
+  // is the one cooked with only that cell overridden, though the set numbers
+  // their new vertices and materials differently.
+  const auto second=writeStripOverride(root/"strip-second",base,false,{2,0});
+  const auto both=root/"strip-both";
+  fs::create_directories(both/"chunks");
+  fs::copy_file(edit/"chunks/1_0.glb",both/"chunks/1_0.glb");
+  fs::copy_file(second/"chunks/2_0.glb",both/"chunks/2_0.glb");
+  cookedRoundTrip(dir,second,root/"strip-second-cooked","strip, override of 2_0 alone");
+  cookedRoundTrip(dir,both,root/"strip-both-cooked","strip, overrides of 1_0 and 2_0");
+  require(fileBytes(root/"strip-both-cooked/chunks/1_0.wcb")==fileBytes(root/"strip-edit-cooked/chunks/1_0.wcb") &&
+          fileBytes(root/"strip-both-cooked/chunks/2_0.wcb")==fileBytes(root/"strip-second-cooked/chunks/2_0.wcb"),
+          "with two overridden cells each one's .wcb must be byte for byte its cook with only that cell overridden");
+  const auto alone2=CookedIndex::read(root/"strip-second-cooked"/wci::FileName);
+  const auto both2=CookedIndex::read(root/"strip-both-cooked"/wci::FileName);
+  require(alone2.materialExceptions(2).size()==1 && both2.materialExceptions(2).size()==1 &&
+          alone2.materialExceptions(2)[0].id==2 && both2.materialExceptions(2)[0].id==3 &&
+          alone2.vertexExceptions(2)[0].id!=both2.vertexExceptions(2)[0].id,
+          "the two sets must number 2_0's new vertex and material differently");
+  std::printf("Two overridden cells: 1_0 and 2_0 each byte for byte their single-override cook; 2_0's new material "
+              "is stitched %u alone and %u with 1_0, its new vertex %u and %u\n",alone2.materialExceptions(2)[0].id,
+              both2.materialExceptions(2)[0].id,alone2.vertexExceptions(2)[0].id,both2.vertexExceptions(2)[0].id);
+
+  // The same GLBs cooked as part of another world directory with the same
+  // world.json source and materials: here without cell 0,0, the edited 1,0 its own chunk.
+  const auto other=root/"strip-other";
+  fs::copy(dir,other,fs::copy_options::recursive);
+  fs::remove(other/"chunks/0_0.glb");
+  fs::copy_file(edit/"chunks/1_0.glb",other/"chunks/1_0.glb",fs::copy_options::overwrite_existing);
+  writeText(other/"world.json",withChunks(readText(dir/"world.json"),"\"chunks/1_0.glb\",\"chunks/2_0.glb\""));
+  cookedRoundTrip(other,{},root/"strip-other-cooked","strip without cell 0,0 and the edited 1,0 as its own chunk");
+  require(fileBytes(root/"strip-other-cooked/chunks/1_0.wcb")==fileBytes(root/"strip-edit-cooked/chunks/1_0.wcb") &&
+          fileBytes(root/"strip-other-cooked/chunks/2_0.wcb")==fileBytes(plain/"chunks/2_0.wcb"),
+          "a GLB cooked as part of another world directory must give the same .wcb byte for byte");
+  std::puts("Independence: cells not replaced, two overridden cells and the same GLBs in another world directory "
+            "give the same .wcb byte for byte");
+
+  // A second cook of an unchanged world writes no cell; after an override is
+  // added only the replaced cell and the index are written. An old time on every
+  // file shows a rewrite whatever the clock's resolution.
+  const auto recook=root/"strip-recook";
+  auto stats=cookWorldChunks(dir,{},recook);
+  require(stats.written==3 && stats.left==0 && stats.indexWritten,"a first cook must write every cell and the index");
+  const fs::file_time_type old=std::chrono::floor<std::chrono::seconds>(fs::file_time_type::clock::now()-std::chrono::hours(24));
+  const std::vector<fs::path> files={recook/"chunks/0_0.wcb",recook/"chunks/1_0.wcb",recook/"chunks/2_0.wcb",
+                                     recook/wci::FileName};
+  for(const auto& file:files)
+    fs::last_write_time(file,old);
+  stats=cookWorldChunks(dir,{},recook);
+  require(stats.written==0 && stats.left==3 && !stats.indexWritten,"a second cook of an unchanged world must write nothing");
+  for(const auto& file:files)
+    require(fs::last_write_time(file)==old,file.string()+" must keep its modification time on a second cook");
+  stats=cookWorldChunks(dir,edit,recook);
+  require(stats.written==1 && stats.left==2 && stats.indexWritten,"adding an override must write its cell and the index");
+  require(fs::last_write_time(files[0])==old && fs::last_write_time(files[2])==old &&
+          fs::last_write_time(files[1])!=old && fs::last_write_time(files[3])!=old,
+          "adding an override must rewrite only the replaced cell and the index");
+  require(verifyCookedWorld(dir,edit,recook,true).empty(),"the re-cooked world with its override must assemble");
+  std::puts("Second cook: unchanged world 0 of 3 cells written, times kept; with an override 1 cell and the index written");
+  }
+
+// Two cooks of the same world into the same folder at once: each writes
+// through its own temporary names, both finish, and the result verifies.
+CookedWorldStats concurrentCooks(const fs::path& world, const fs::path& out, const std::string& label) {
+  std::string errors[2];
+  CookedWorldStats stats[2];
+  auto cook=[&](int i) {
+    try {
+      stats[i]=cookWorldChunks(world,{},out);
+      }
+    catch(const std::exception& error) {
+      errors[i]=error.what();
+      }
+    };
+  std::thread first(cook,0), second(cook,1);
+  first.join();
+  second.join();
+  for(int i=0;i<2;++i)
+    require(errors[i].empty(),label+": one of two cooks at once failed: "+errors[i]);
+  const auto difference=verifyCookedWorld(world,{},out,true);
+  require(difference.empty(),label+": the world cooked twice at once differs from readWorldChunks: "+difference);
+  std::printf("%s: two cooks into one folder at once both finished (%zu and %zu cells written, %zu and %zu left); "
+              "it verifies\n",label.c_str(),stats[0].written,stats[1].written,stats[0].left,stats[1].left);
+  return stats[0];
   }
 
 // ---- malformed and stale cooked chunks ----
@@ -451,6 +586,10 @@ void put32(std::vector<uint8_t>& bytes, size_t at, uint32_t value) {
 void put64(std::vector<uint8_t>& bytes, size_t at, uint64_t value) {
   for(unsigned i=0;i<8;++i)
     bytes[at+i]=uint8_t(value>>(8*i));
+  }
+
+uint64_t get64(const std::vector<uint8_t>& bytes, size_t at) {
+  return uint64_t(get32(bytes,at)) | (uint64_t(get32(bytes,at+4))<<32);
   }
 
 void rejections(const fs::path& root) {
@@ -480,6 +619,9 @@ void rejections(const fs::path& root) {
   bytes=good;
   put32(bytes,4,wcb::Version+1);
   expectThrows(open(bytes),{"header","version "+std::to_string(wcb::Version+1)},"another version");
+  bytes=good;
+  put32(bytes,4,1);
+  expectThrows(open(bytes),{"header","version 1, this reader reads 2"},"a version 1 .wcb, with rank and resolved ids");
   bytes=good;
   put64(bytes,triangles+16,(good.size()+31)/16*16);
   expectThrows(open(bytes),{"triangles","past the end of the file"},"a section past the end of the file");
@@ -524,8 +666,90 @@ void rejections(const fs::path& root) {
           "verify with hashes must reject a GLB with other bytes");
   gothicglb::writeFile(glb,original.data(),original.size());
   require(verifyCookedWorld(dir,{},{},true).empty(),"the restored GLB matches its cooked chunk again");
-  std::puts("Rejections: truncated, short, wrong magic, version, a section starting and one ending past the end, "
-            "two count mismatches, GLB of another length and of another SHA-256; SHA-256 vector");
+  std::puts("Rejections: truncated, short, wrong magic, version, version 1, a section starting and one ending past "
+            "the end, two count mismatches, GLB of another length and of another SHA-256; SHA-256 vector");
+  }
+
+// The index: malformed, of another world, with other cells than world.json, an
+// entry that names another GLB than its cell's .wcb, exceptions out of range, missing.
+void indexRejections(const fs::path& root) {
+  const auto dir=root/"stale"; // cooked by rejections(), GLBs restored
+  const auto indexFile=dir/wci::FileName;
+  const auto good=fileBytes(indexFile);
+  const auto open=[](const std::vector<uint8_t>& bytes) {
+    return [bytes] { (void)CookedIndex::open(bytes,"fixture.wci"); };
+    };
+  (void)CookedIndex::open(good,"fixture.wci");
+  auto bytes=good;
+  bytes.pop_back();
+  expectThrows(open(bytes),{"chunk index fixture.wci","header","truncated"},"a truncated index");
+  bytes.assign(good.begin(),good.begin()+50);
+  expectThrows(open(bytes),{"header","truncated: 50 bytes"},"an index shorter than its header");
+  bytes=good;
+  bytes[0]='X';
+  expectThrows(open(bytes),{"header","wrong magic"},"an index with a wrong magic");
+  bytes=good;
+  put32(bytes,4,wci::Version+1);
+  expectThrows(open(bytes),{"header","version "+std::to_string(wci::Version+1)},"an index of another version");
+
+  // Against world.json and the cells, through readCookedWorld; each case writes the index in place.
+  const auto readWith=[&](const fs::path& world, const fs::path& over, const fs::path& out,
+                          const fs::path& file, const std::vector<uint8_t>& index) {
+    return [=] {
+      gothicglb::writeFile(file,index.data(),index.size());
+      (void)readCookedWorld(world,over,out);
+      };
+    };
+  bytes=good;
+  put32(bytes,32,get32(good,32)^1u); // the source world's CRC32
+  expectThrows(readWith(dir,{},{},indexFile,bytes),{wci::FileName,"names another source world than CONTRACT.ZEN"},
+               "an index of another source world");
+  const auto cellsAt=size_t(get64(good,wci::HeaderSize+16));
+  bytes=good;
+  bytes[cellsAt+16]^=1u; // the first byte of cell 0's GLB SHA-256
+  expectThrows(readWith(dir,{},{},indexFile,bytes),{"with another GLB hash than","re-cooked without the index"},
+               "an index whose cell entry names another GLB than the cell's .wcb");
+  gothicglb::writeFile(indexFile,good.data(),good.size());
+
+  const auto json=readText(dir/"world.json");
+  const auto chunks=readWorldChunkManifest(dir).chunks;
+  require(chunks.size()>=3,"the chunk fixture must have three cells or more");
+  std::string fewer, swapped;
+  for(size_t i=0;i<chunks.size();++i) {
+    const auto quoted="\""+chunks[i]+"\"";
+    if(i+1<chunks.size())
+      fewer+=(i==0 ? "" : ",")+quoted;
+    swapped+=(i==0 ? "" : ",")+("\""+chunks[i==0 ? 1 : i==1 ? 0 : i]+"\"");
+    }
+  writeText(dir/"world.json",withChunks(json,fewer));
+  expectThrows([&] { (void)readCookedWorld(dir); },{"lists "+std::to_string(chunks.size())+" cells, world.json "+
+               std::to_string(chunks.size()-1)},"an index with another cell count than world.json");
+  writeText(dir/"world.json",withChunks(json,swapped));
+  expectThrows([&] { (void)readCookedWorld(dir); },{"another cell order"},"an index with another cell order than world.json");
+  writeText(dir/"world.json",json);
+  require(readCookedWorld(dir).cells.size()==chunks.size(),"the restored index and world.json read again");
+
+  // Exceptions: the strip's border override gives cell 0,0 one vertex exception.
+  const auto strip=root/"strip", border=root/"strip-border", out=root/"strip-border-cooked";
+  const auto borderFile=out/wci::FileName;
+  const auto borderGood=fileBytes(borderFile);
+  const auto vertexExceptionsAt=size_t(get64(borderGood,wci::HeaderSize+2*32+16));
+  bytes=borderGood;
+  put32(bytes,vertexExceptionsAt,1000); // local
+  expectThrows(readWith(strip,border,out,borderFile,bytes),{"an exception points to local 1000, past the"},
+               "an exception that points past a cell's arrays");
+  bytes=borderGood;
+  put32(bytes,vertexExceptionsAt+4,get32(borderGood,40)); // the stitched id: the vertex total
+  expectThrows(open(bytes),{"vertex exceptions","past the totals"},"a stitched id past the totals");
+  gothicglb::writeFile(borderFile,borderGood.data(),borderGood.size());
+  require(verifyCookedWorld(strip,border,out,true).empty(),"the restored border index assembles again");
+
+  fs::remove(indexFile);
+  expectThrows([&] { (void)readCookedWorld(dir); },{wci::FileName,"is missing"},"a missing index");
+  gothicglb::writeFile(indexFile,good.data(),good.size());
+  std::puts("Index rejections: truncated, short, wrong magic, version, another source world, another GLB hash than "
+            "the cell's .wcb, another cell count and order than world.json, an exception past a cell's arrays, "
+            "a stitched id past the totals, missing");
   }
 
 // ---- manifest cases carried over from task 1 ----
@@ -566,6 +790,7 @@ int main() {
     chunkFixtures(temporary.path);
     editedOverride(temporary.path);
     rejections(temporary.path);
+    indexRejections(temporary.path);
     manifestCases(temporary.path);
 
     const auto* gothic=std::getenv("GOTHIC_DIR");
@@ -576,7 +801,13 @@ int main() {
     Resources::loadBase();
     const auto world=Resources::worldBaseDir("NEWWORLD.ZEN");
     require(!world.empty() && fs::exists(world/"world.json"),"the base has no NEWWORLD");
-    cookedRoundTrip(world,{},temporary.path/"NEWWORLD-cooked","base NEWWORLD ("+world.string()+")");
+    const auto label="base NEWWORLD ("+world.string()+")";
+    const auto out=temporary.path/"NEWWORLD-cooked";
+    concurrentCooks(world,out,label);
+    const auto again=cookWorldChunks(world,{},out);
+    require(again.written==0 && again.left==again.cells && !again.indexWritten,
+            label+": a second cook of the unchanged world must write nothing");
+    printCooked(label,again);
     std::puts("Cooked chunk contract passed");
     return EXIT_SUCCESS;
     }
