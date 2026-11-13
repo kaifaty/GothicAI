@@ -12,7 +12,6 @@
 #              on у, the apex of the brows, up or down with anger), the moods of hero-head.bench at their middle, the
 #              apex of every gesture of face-cues.bench;
 #   key.txt    where each tile and segment comes from.
-import json
 import subprocess
 import sys
 import tempfile

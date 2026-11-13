@@ -548,9 +548,11 @@ def carry(hero, rg, log=print):
     """Every shape of the source on the hero's face: (4) the outer skin takes the source's shift at its corresponding
     points; interior vertices (mouth bag, vestibule, the lips' inner faces) keep their own motion plus the correction
     of the outer vertices that moved like them in the hero's shape (near in place and in shift), so the inside of
-    the upper lip follows the upper lip even where the lips touch; the lids take the source's shift like the rest of
-    the face (the brows, the squint and the wide eyes from one source: no seam on the upper lid), kept out of the
-    eyeballs by lid_guard(). Blink and gaze stay the hero's. (5) Brows and lashes follow the skin under them, lower
+    the upper lip follows the upper lip even where the lips touch, and near the mouth they are smoothed towards the
+    outer lips (fill_lips()); the lids take the source's shift like the rest of the face (the brows, the squint and
+    the wide eyes from one source: no seam on the upper lid), smoothed round the eyes with their margins held
+    (smooth_lids()), sliding over the balls (slide_on_balls()), lid_guard() a safety net. Blink and gaze stay the
+    hero's. (5) Brows and lashes follow the skin under them, lower
     teeth and tongue follow the chin."""
     V, h = hero['V'], hero['h']
     outer_v = rg['outer_v']
