@@ -206,3 +206,49 @@ At ×16, reading and validating every cell and the index takes 99 ms (73 + 26), 
 
 1. A `.wcb` no longer holds a rank or resolved ids: positions and features carry the GLB's source keys, triangles a local material and no rank (40 bytes instead of 44), materials their `world.json` index or none. A cell's file depends only on its GLB and `world.json`, so base cells cooked once stay valid under any override set, and a second cook rewrites nothing that did not change.
 2. What depends on the set — missing orders, where each cell's added triangles start, exceptions and appended materials — is the index `chunks.wci`: 304 + 80 bytes per cell without edits, growing with the edit, not with the world. An edit of one cell re-cooks that cell and the index.
+
+## Task 3: the game's reader (2026-11-13)
+
+`ChunkMeshSource::read`, which the streaming manager calls each time a cell enters the ring, now takes the cell from its `.wcb` and the set's index ([`worldchunkcookedsource.h`](../../../../OpenGothic/common/worldchunkcookedsource.h)). It does so when the index found at world load names the same source world, lists the same cells in the same order and carries the totals `readWorldChunks` has just produced, the cell's GLB has the length of the index's entry, and the `.wcb` carries that entry's GLB length and SHA-256. Otherwise the cell is read from its GLB, with the same result; `OPENGOTHIC_WCB=0` turns the cooked path off. The start of the game is unchanged: `readWorldChunks` still parses every GLB, and now also reads and checks the index (0.1 ms).
+
+### Machine and commands
+
+Ryzen as above; the branch's `content-convert` from the check build (`RelWithDebInfo`, `-O2 -g1`), branch `codex/landscape-d3-wcb-source` at `1b287205f`, one `scripts/gq` job of class `quick` in `~/gothic-ai/landscape-d3-wcb-source/`. Load average 3.5–5.1 during the runs, warm page cache. The game reads cooked files only beside the GLBs (it ignores `--out`), so both sets are copies of the base `c885037e…d09e` that `stress-base` cooks as it writes them:
+
+```
+content-convert stress-base $B $T/x1  --subdivide 0 --meshes 0      # 8.4 s
+content-convert stress-base $B $T/w16 --subdivide 2 --meshes 0      # 40.1 s, peak RSS 4.2 GB
+content-convert verify-cooked-world $T/<set>/worlds/NEWWORLD        # passed for both
+content-convert time-world $T/<set>/worlds/NEWWORLD
+```
+
+### Wall time, `NEWWORLD`
+
+Five runs each, milliseconds: median, then min–max. The GLB row reads with `currentFile=true`, which always takes the GLB path; with the files unchanged it reads what `OPENGOTHIC_WCB=0` reads. The triangle lists are now built before the timed region in both rows.
+
+| Stage | ×1 | ×16 |
+|---|---:|---:|
+| `ChunkMeshSource::read` of the 25 Near cells, GLB path | 67.0 (63.5–74.0) | 839.7 (831.4–842.2) |
+| `ChunkMeshSource::read` of the 25 Near cells, cooked path | 6.8 (6.3–9.4) | 42.4 (39.7–43.5) |
+| for comparison: read and validate the index and the 25 Near `.wcb` | 1.0 (1.0–1.1) | 7.7 (7.3–7.8) |
+| `readWorldChunks` total, with the index read | 540.8 (517.6–546.0) | 7924.4 (7898.5–8262.9) |
+
+The cooked read is 10 times faster at ×1 and 20 times at ×16 (1 013 458 triangles in the Near ring). Of its 42 ms at ×16, 7.7 ms read and validate the files. The rest builds the result as the GLB path does: a stitched id for every local index, the five polygon arrays, the compact vertices and features, and a copy of the world's materials table per cell. `readWorldChunks` ran 9.6 % (×1) and 12.9 % (×16) slower than in the version 2 rows above; its code changed only by the index read, and the machine's load differed.
+
+`gothic-wcb-source-contract` reads every cell of the ×1 base `NEWWORLD`, cooked into a scratch copy, twice on each path: 806 reads take 101.9 ms cooked against 772.8 ms from the GLBs.
+
+### In the game
+
+The flight bench `scripts/bench.sh streaming-flythrough` on Ryzen with the ×1 copy (`OPENGOTHIC_BASE=$T/x1`, its own `OPENGOTHIC_BASE_CACHE`, `OPENGOTHIC_CONTENT=` and `OPENGOTHIC_TEXTURES=` empty), once with the cooked path and then once with `OPENGOTHIC_WCB=0`. The cooked run came first, with cold derived and pipeline caches. Both exited 0. The `[world-chunks]` line the bench now logs at the end of each pass counts reads since world load:
+
+| | cooked path | `OPENGOTHIC_WCB=0` |
+|---|---:|---:|
+| bench | exit 0, 202 s | exit 0, 197 s |
+| index line at load | 403 of 403 cells from `.wcb` | none (path off) |
+| reads cooked / GLB | 403 / 0 | 0 / 403 |
+| their summed wall time | 122.3 ms | 568.6 ms |
+| `landscape_pack`: the 25 Near cells read and packed at the start | 34.7 ms | 99.2 ms |
+| warm-up: 359 Far publications, sum / max | 80.8 / 0.99 ms | 82.2 / 1.09 ms |
+| frames, whole route: FPS, p99 | 104.8, 12.2 ms | 105.6, 11.8 ms |
+
+Every cell was read once, during load and warm-up: in this route no cell leaves the Far ring, so the passes publish nothing and their counters stay at 403. The read time counts the Far reads on the packing thread as well as the Near reads on the main thread. Frame times are close on both paths; with one run each there is no noise estimate.

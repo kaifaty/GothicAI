@@ -5,13 +5,15 @@
 // the truth: the cook runs it once and splits its stitched result into what
 // each cell's GLB and world.json alone decide (the .wcb) and what the whole
 // world and override set decide (the index). The assembler is for the
-// converter's checks, tests and measurements; the game does not read .wcb yet.
+// converter's checks, tests and measurements; the game reads a cell through
+// worldchunkcookedsource.h.
 
 #include "worldchunkbinary.h"
 #include "worldchunkindex.h"
 #include "worldchunksruntime.h"
 
 #include <filesystem>
+#include <functional>
 #include <span>
 #include <string>
 #include <vector>
@@ -42,14 +44,24 @@ struct CookedWorldStats {
 
 // Reads dir with overrideDir through readWorldChunks, then writes one .wcb per
 // cell of world.json (cookedChunkPath) and the index (cookedIndexPath). A file
-// that already holds the encoded bytes is left as it is. Throws std::runtime_error.
+// that already holds the encoded bytes is left as it is. Write order: the index
+// is removed before the first cell file is created or replaced, and written
+// last, so a cook stopped at any point leaves either no index or a consistent
+// set; every writer of cooked files keeps this order. A cook whose GLBs changed
+// while it ran writes no index: another cook may hold newer cells. beforeIndex,
+// when given, runs after the cells and before the index (the tests stop a cook
+// there).
+// Throws std::runtime_error.
 CookedWorldStats cookWorldChunks(const std::filesystem::path& dir, const std::filesystem::path& overrideDir = {},
-                                 const std::filesystem::path& outDir = {});
+                                 const std::filesystem::path& outDir = {},
+                                 const std::function<void()>& beforeIndex = {});
 
 // Writes bytes to path through a temporary name unique to the process and the
 // call, then renames it over path; leaves a file that already holds these bytes
-// untouched. True when it wrote. Throws std::runtime_error.
-bool writeCookedFile(const std::filesystem::path& path, std::span<const uint8_t> bytes);
+// untouched. True when it wrote. beforeWrite, when given, runs once a write is
+// needed and before the temporary is created. Throws std::runtime_error.
+bool writeCookedFile(const std::filesystem::path& path, std::span<const uint8_t> bytes,
+                     const std::function<void()>& beforeWrite = {});
 // The temporary name writeCookedFile uses: path.<process id>-<call number>.tmp.
 std::filesystem::path cookedTemporaryPath(const std::filesystem::path& path);
 
@@ -71,6 +83,9 @@ void checkCookedIndex(const CookedIndex& index, const WorldCellManifest& manifes
 // Checks cell i's cooked chunk against world.json, the index and its GLB (length only).
 void checkCookedCell(const CookedChunk& chunk, size_t i, const WorldCellManifest& manifest, const CookedIndex& index,
                      const std::filesystem::path& glb);
+// The same without the GLB: against cell i's id, the source world and the index; name names the chunk in errors.
+void checkCookedCell(const CookedChunk& chunk, size_t i, ChunkId id, const WorldChunkSource& source,
+                     const CookedIndex& index, const std::string& name);
 
 // The stitched mesh and, if given, the chunk table rebuilt from the index, the
 // cooked chunks, world.json and unreferenced.bin alone: no glTF and none of

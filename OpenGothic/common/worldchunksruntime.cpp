@@ -10,6 +10,7 @@
 #include <tuple>
 
 #include "gothicglb.h"
+#include "worldchunkcookedsource.h"
 
 void retainWorldTriangles(asset::WorldMesh& mesh, std::span<const uint32_t> triangles, ChunkTable* chunks) {
   const auto count=mesh.polygons.material_indices.size();
@@ -373,17 +374,7 @@ class ChunkReader {
 }
 
 struct ChunkMeshSource::Impl {
-  struct File {
-    std::filesystem::path path;
-    uintmax_t size = 0;
-    std::filesystem::file_time_type modified;
-
-    void verify() const {
-      if(std::filesystem::file_size(path)!=size || std::filesystem::last_write_time(path)!=modified)
-        fail("chunk changed after world load: "+path.string());
-      }
-    };
-  std::vector<File> files;
+  std::vector<WorldChunkFile> files;
   std::vector<asset::Material> materials;
   std::map<int64_t,uint32_t> materialIds;
   std::map<std::string,uint32_t> addedMaterials;
@@ -393,11 +384,12 @@ struct ChunkMeshSource::Impl {
   std::vector<std::pair<FeatureKey,uint32_t>> features;
   size_t vertexCount = 0;
   size_t featureCount = 0;
+  CookedChunkSource cooked; // the cells' .wcb files, when the world is cooked beside its GLBs
   };
 
 size_t ChunkMeshSource::memoryBytes() const {
-  size_t bytes=sizeof(*this)+sizeof(Impl)+impl->files.capacity()*sizeof(Impl::File)+
-               impl->materials.capacity()*sizeof(asset::Material);
+  size_t bytes=sizeof(*this)+sizeof(Impl)+impl->files.capacity()*sizeof(WorldChunkFile)+
+               impl->materials.capacity()*sizeof(asset::Material)+impl->cooked.memoryBytes();
   for(const auto& file:impl->files)
     bytes+=file.path.native().capacity()*sizeof(std::filesystem::path::value_type);
   for(const auto& material:impl->materials)
@@ -411,6 +403,13 @@ size_t ChunkMeshSource::memoryBytes() const {
   }
 
 WorldChunkMesh ChunkMeshSource::read(size_t chunk, std::span<const uint32_t> sources, bool currentFile) const {
+  return impl->cooked.read(chunk,sources,currentFile,{impl->files.at(chunk),impl->materials,impl->vertexCount,
+                           impl->featureCount},[&] { return readGlb(chunk,sources,currentFile); });
+  }
+
+ChunkReadCounts ChunkMeshSource::reads() const { return impl->cooked.counts(); }
+
+WorldChunkMesh ChunkMeshSource::readGlb(size_t chunk, std::span<const uint32_t> sources, bool currentFile) const {
   auto file=impl->files.at(chunk);
   if(currentFile) {
     file.size=std::filesystem::file_size(file.path);
@@ -637,6 +636,7 @@ asset::WorldMesh readWorldChunks(const std::filesystem::path& dir, const std::fi
     source->features.assign(newFeatures.begin(),newFeatures.end());
     source->vertexCount=out.vertices.size();
     source->featureCount=out.features.size();
+    source->cooked.load(dir,overrideDir,manifest,source->files,out);
     table.source=std::shared_ptr<const ChunkMeshSource>(new ChunkMeshSource(std::move(source)));
     *chunks=std::move(table);
     }

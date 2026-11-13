@@ -1,7 +1,7 @@
 #pragma once
 
 // Synthetic world meshes and world.json helpers shared by the chunk contracts
-// (worldbase_contract.cpp, wcb_contract.cpp).
+// (worldbase_contract.cpp, wcb_contract.cpp, wcb_source_contract.cpp).
 
 #include "asset/worldmesh.h"
 
@@ -85,6 +85,15 @@ inline std::string withChunks(const std::string& json, const std::string& list) 
   if(end==std::string::npos)
     throw std::runtime_error("world.json must list its chunks");
   return json.substr(0,begin+key.size())+list+json.substr(end);
+  }
+
+// world.json object entries: a draw mesh and a cell with its meshes.
+inline std::string drawMesh(const std::string& file, const std::string& level="0") {
+  return "{\"file\":\""+file+"\",\"role\":\"draw\",\"level\":"+level+"}";
+  }
+
+inline std::string cellEntry(const std::string& id, const std::string& meshes) {
+  return "{\"cell\":"+id+",\"meshes\":["+meshes+"]}";
   }
 
 }

@@ -141,7 +141,7 @@ int timeWorld(const Options& o) {
   if(cooked)
     (void)gothicglb::readFile(indexPath);
 
-  enum { ReadGlb, Today, Parse, Sort, Stitch, Rest, TodayNear, ReadWcb, Validate, Index, Assemble, CookedNear };
+  enum { ReadGlb, Today, Parse, Sort, Stitch, Rest, TodayNear, SourceNear, ReadWcb, Validate, Index, Assemble, CookedNear };
   std::vector<Series> series = {
     {"today: read GLB files (separate pass)",{}},
     {"today: readWorldChunks total",{}},
@@ -150,6 +150,7 @@ int timeWorld(const Options& o) {
     {"  ID resolution, dedup maps, stitching, table",{}},
     {"  rest: trace copy, teardown of reader and sets",{}},
     {"today: ChunkMeshSource::read of the Near ring",{}},
+    {"cooked: ChunkMeshSource::read of the Near ring",{}},
     {"cooked: read .wcb files and the index",{}},
     {"cooked: validate (open + index + world.json + GLB stat)",{}},
     {"cooked: read + validate the index alone",{}},
@@ -158,6 +159,7 @@ int timeWorld(const Options& o) {
     };
   ChunkTable table;
   size_t triangles = 0;
+  uint64_t nearCooked = 0;
   for(int run=0;run<runs;++run) {
     auto t0 = Clock::now();
     uint64_t read = 0;
@@ -179,17 +181,31 @@ int timeWorld(const Options& o) {
     series[Sort].values.push_back(ms(trace.parsed,trace.ordered));
     series[Stitch].values.push_back(ms(trace.ordered,trace.stitched));
     series[Rest].values.push_back(ms(trace.stitched,t1));
-    // The game's streaming reader today: one GLB per chunk, IDs from the stitched world's tables.
+    // The game's streaming reader on the GLB path: one GLB per chunk, IDs from the stitched world's tables.
+    // currentFile always takes that path; the files are unchanged, so it reads what OPENGOTHIC_WCB=0 reads.
     const auto lists = chunkTriangleLists(mesh,table);
-    const auto t2 = Clock::now();
+    std::vector<std::vector<uint32_t>> sources;
     for(const auto i:nearCells) {
-      std::vector<uint32_t> sources;
+      sources.emplace_back();
       for(const auto t:lists[i])
-        sources.push_back(table.triangleSources[t]);
-      if(table.source->read(i,sources).mesh.polygons.material_indices.size()!=sources.size())
-        throw std::runtime_error("a Near chunk reads back another triangle count");
+        sources.back().push_back(table.triangleSources[t]);
       }
+    auto nearRing = [&](bool glb) {
+      for(size_t k=0;k<nearCells.size();++k)
+        if(table.source->read(nearCells[k],sources[k],glb).mesh.polygons.material_indices.size()!=sources[k].size())
+          throw std::runtime_error("a Near chunk reads back another triangle count");
+      };
+    const auto t2 = Clock::now();
+    nearRing(true);
     series[TodayNear].values.push_back(ms(t2,Clock::now()));
+    // The same reads on the cooked path, when the world is cooked beside its GLBs (the game ignores --out).
+    const auto before = table.source->reads().cooked;
+    const auto t3 = Clock::now();
+    nearRing(false);
+    const auto t4 = Clock::now();
+    nearCooked = table.source->reads().cooked-before;
+    if(nearCooked==nearCells.size())
+      series[SourceNear].values.push_back(ms(t3,t4));
     }
     if(!cooked)
       continue;
@@ -277,6 +293,9 @@ int timeWorld(const Options& o) {
   for(const auto& s:series)
     if(!s.values.empty())
       printSeries(s);
+    else if(&s==&series[SourceNear])
+      std::printf("| %-48s | not cooked: %llu of %zu Near cells read their .wcb beside the GLB |\n",s.name.c_str(),
+                  static_cast<unsigned long long>(nearCooked),nearCells.size());
   return 0;
   }
 

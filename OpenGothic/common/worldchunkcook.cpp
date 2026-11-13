@@ -5,6 +5,7 @@
 #include <bit>
 #include <chrono>
 #include <fstream>
+#include <functional>
 #include <stdexcept>
 #include <thread>
 #include <tuple>
@@ -97,7 +98,23 @@ fs::path cookedTemporaryPath(const fs::path& path) {
   return temporary;
   }
 
-bool writeCookedFile(const fs::path& path, std::span<const uint8_t> bytes) {
+namespace {
+
+// Windows refuses to delete or replace a file another process holds open, as a concurrent cook does while it
+// compares the file; that read ends within milliseconds, so the callers retry for up to a second.
+template<class Step>
+void retryFileStep(Step&& step, std::error_code& error) {
+  for(int attempt=0;;++attempt) {
+    step(error);
+    if(!error || attempt==100)
+      return;
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  }
+
+}
+
+bool writeCookedFile(const fs::path& path, std::span<const uint8_t> bytes, const std::function<void()>& beforeWrite) {
   std::error_code error;
   const auto size = fs::file_size(path,error);
   if(!error && size==bytes.size()) {
@@ -110,6 +127,8 @@ bool writeCookedFile(const fs::path& path, std::span<const uint8_t> bytes) {
     catch(const std::exception&) {
       }
     }
+  if(beforeWrite)
+    beforeWrite();
   // Unique to the process and the call: two cooks into the same files never share a temporary.
   const auto temporary = cookedTemporaryPath(path);
   if(!path.parent_path().empty())
@@ -123,14 +142,7 @@ bool writeCookedFile(const fs::path& path, std::span<const uint8_t> bytes) {
     fail("cannot write "+temporary.string());
     }
   }
-  // Windows refuses to replace a file another process holds open, as a concurrent cook does while it
-  // compares the file above; that read ends within milliseconds, so retry for up to a second.
-  for(int attempt=0;;++attempt) {
-    fs::rename(temporary,path,error);
-    if(!error || attempt==100)
-      break;
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+  retryFileStep([&](std::error_code& e) { fs::rename(temporary,path,e); },error);
   if(error) {
     std::error_code ignored;
     fs::remove(temporary,ignored);
@@ -139,8 +151,22 @@ bool writeCookedFile(const fs::path& path, std::span<const uint8_t> bytes) {
   return true;
   }
 
-CookedWorldStats cookWorldChunks(const fs::path& dir, const fs::path& overrideDir, const fs::path& outDir) {
+CookedWorldStats cookWorldChunks(const fs::path& dir, const fs::path& overrideDir, const fs::path& outDir,
+                                 const std::function<void()>& beforeIndex) {
   const auto manifest = readWorldChunkManifest(dir);
+  // The index goes before the first cell file is created or replaced and comes back last: a cook stopped at
+  // any point leaves either no index, and the game reads the GLBs, or a consistent set.
+  const auto indexPath = cookedIndexPath(dir,overrideDir,outDir);
+  bool indexRemoved = false;
+  const std::function<void()> removeIndex = [&] {
+    if(indexRemoved)
+      return;
+    std::error_code error;
+    retryFileStep([&](std::error_code& e) { fs::remove(indexPath,e); },error);
+    if(error)
+      fail("cannot remove "+indexPath.string()+" before writing cells: "+error.message());
+    indexRemoved = true;
+    };
   // Each GLB's length and time before the read: the bytes hashed below must be the ones the mesh came from.
   std::vector<std::pair<uintmax_t,fs::file_time_type>> inputs;
   for(const auto& cell:manifest.cells) {
@@ -286,7 +312,7 @@ CookedWorldStats cookWorldChunks(const fs::path& dir, const fs::path& overrideDi
     addedNext += added;
 
     const auto encoded = encodeCookedChunk(data);
-    if(writeCookedFile(cookedChunkPath(dir,overrideDir,entry.file,outDir),encoded))
+    if(writeCookedFile(cookedChunkPath(dir,overrideDir,entry.file,outDir),encoded,removeIndex))
       ++stats.written;
     else
       ++stats.left;
@@ -308,7 +334,19 @@ CookedWorldStats cookWorldChunks(const fs::path& dir, const fs::path& overrideDi
   h.sourceTriangles = sourceTriangles;
   index.appended.assign(mesh.materials.begin()+ptrdiff_t(baseMaterials),mesh.materials.end());
   const auto encoded = encodeCookedIndex(index);
-  stats.indexWritten = writeCookedFile(cookedIndexPath(dir,overrideDir,outDir),encoded);
+  if(beforeIndex)
+    beforeIndex();
+  // A GLB that changed since it was read means another cook may already have published newer cells and their
+  // index: this snapshot must not replace it. (A change between this check and the rename below would also have
+  // to be read and cooked by that other cook first, which removes the index before its first cell.)
+  for(size_t cell=0;cell<manifest.cells.size();++cell) {
+    const auto glb = chunkGlbPath(dir,overrideDir,manifest.cells[cell].drawFile());
+    std::error_code error;
+    const auto size = fs::file_size(glb,error);
+    if(error || size!=inputs[cell].first || fs::last_write_time(glb,error)!=inputs[cell].second || error)
+      fail(glb.string()+" changed while the world was cooked: its index is not written");
+    }
+  stats.indexWritten = writeCookedFile(indexPath,encoded);
   stats.indexBytes   = encoded.size();
   return stats;
   }
@@ -348,16 +386,23 @@ void checkCookedIndex(const CookedIndex& index, const WorldCellManifest& manifes
 
 void checkCookedCell(const CookedChunk& chunk, size_t i, const WorldCellManifest& manifest, const CookedIndex& index,
                      const fs::path& glb) {
-  const auto& h = chunk.header();
-  const auto& cell = manifest.cells.at(i);
   const auto name = glb.filename().replace_extension(".wcb").string();
-  if(!(h.cell==cell.id))
-    fail(name+" was cooked for cell "+cellName(h.cell)+", world.json lists it for cell "+cellName(cell.id));
-  if(h.worldSize!=manifest.source.size || h.worldCrc32!=manifest.source.crc32)
-    fail(name+" was cooked for another source world than "+manifest.source.world);
+  checkCookedCell(chunk,i,manifest.cells.at(i).id,manifest.source,index,name);
+  const auto stale = cookedChunkStale(chunk,glb,false);
+  if(!stale.empty())
+    fail(name+" is stale: "+stale);
+  }
+
+void checkCookedCell(const CookedChunk& chunk, size_t i, ChunkId id, const WorldChunkSource& source,
+                     const CookedIndex& index, const std::string& name) {
+  const auto& h = chunk.header();
+  if(!(h.cell==id))
+    fail(name+" was cooked for cell "+cellName(h.cell)+", world.json lists it for cell "+cellName(id));
+  if(h.worldSize!=source.size || h.worldCrc32!=source.crc32)
+    fail(name+" was cooked for another source world than "+source.world);
   const auto& entry = index.cells()[i];
   if(entry.glbSize!=h.glbSize || !std::equal(h.glbSha256.begin(),h.glbSha256.end(),entry.glbSha256))
-    fail(index.name()+" lists cell "+cellName(cell.id)+" with another GLB (length or SHA-256) than "+name+
+    fail(index.name()+" lists cell "+cellName(id)+" with another GLB (length or SHA-256) than "+name+
          ": the cell was re-cooked without the index");
   const std::tuple<std::span<const wci::Exception>,size_t,const char*> lists[] = {
     {index.vertexExceptions(i),chunk.positions().size(),"positions"},
@@ -365,14 +410,11 @@ void checkCookedCell(const CookedChunk& chunk, size_t i, const WorldCellManifest
     {index.materialExceptions(i),chunk.materials().size(),"materials"}};
   for(const auto& [list,count,kind]:lists)
     if(!list.empty() && list.back().local>=count)
-      fail(index.name()+": cell "+cellName(cell.id)+": an exception points to local "+
+      fail(index.name()+": cell "+cellName(id)+": an exception points to local "+
            std::to_string(list.back().local)+", past the "+std::to_string(count)+" "+kind+" of "+name);
   if(uint64_t(entry.addedStart)+chunk.added()!=index.addedEnd(i))
-    fail(index.name()+": cell "+cellName(cell.id)+" places "+std::to_string(index.addedEnd(i)-entry.addedStart)+
+    fail(index.name()+": cell "+cellName(id)+" places "+std::to_string(index.addedEnd(i)-entry.addedStart)+
          " added triangles, "+name+" holds "+std::to_string(chunk.added()));
-  const auto stale = cookedChunkStale(chunk,glb,false);
-  if(!stale.empty())
-    fail(name+" is stale: "+stale);
   }
 
 CookedWorld readCookedWorld(const fs::path& dir, const fs::path& overrideDir, const fs::path& outDir) {

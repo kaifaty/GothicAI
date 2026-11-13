@@ -7,6 +7,8 @@
 #include <cmath>
 #include <fstream>
 
+#include <Tempest/Log>
+
 #include "appcadence.h"
 #include "frameprofile.h"
 #include "game/gamescript.h"
@@ -427,6 +429,12 @@ bool worldCommand(const WorldContext& context,const std::string& line,const std:
           ",\"tex_near_tail_seconds\":"+textureSeconds+",\"tex_shortfall_seconds\":"+shortfallSeconds+
           TextureDump::flowFields(textures,state.streamingTexturesBefore,Resources::textureFlowDistributions(),
                                   state.streamingFlowBefore));
+        // Which path ChunkMeshSource::read took since world load: the cell's .wcb or its GLB.
+        if(const auto& source=w.chunkTable().source) {
+          const auto reads=source->reads();
+          Tempest::Log::i("[world-chunks] segment=",state.perfSegment," cooked_reads=",reads.cooked," glb_reads=",
+                          reads.glb," cooked_ms=",reads.cookedMs," glb_ms=",reads.glbMs);
+          }
         }
       state.perfSegment.clear();
       }

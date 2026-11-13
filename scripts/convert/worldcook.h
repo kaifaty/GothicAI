@@ -5,7 +5,9 @@
 //   cook-world <world dir> [--content <override world dir>] [--out <dir>]
 //   verify-cooked-world <world dir> [--content <dir>] [--out <dir>]
 //   time-world <world dir> [--content <dir>] [--out <dir>]
-// Nothing in the game reads .wcb yet (docs/landscape-plan.md, step Д3).
+// The game's per-cell reader takes a cell from its .wcb beside the GLB (worldchunkcookedsource.h); time-world
+// times it next to the GLB read of the same Near cells. The start of the game still reads every GLB
+// (docs/landscape-plan.md, step Д3).
 
 #include <filesystem>
 #include <optional>

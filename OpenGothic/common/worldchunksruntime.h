@@ -49,19 +49,30 @@ struct WorldChunkMesh {
   std::vector<uint32_t>  featureIds;
   };
 
+// How ChunkMeshSource::read took its cells since the world was loaded.
+struct ChunkReadCounts {
+  uint64_t cooked = 0, glb = 0;      // reads from the cell's .wcb, and from its GLB
+  double   cookedMs = 0, glbMs = 0;  // their wall time, summed over the calling threads
+  };
+
 class ChunkMeshSource {
   public:
     // Reads only this chunk's selected file. Polygon order follows sources,
     // including cloth filtering. Calls on the same source are independent.
     // currentFile retries a changed file against the existing IDs/materials;
-    // the file must remain unchanged during this read.
+    // the file must remain unchanged during this read. The cell comes from its
+    // cooked .wcb when the world was loaded with a valid index for it, else
+    // from its GLB, with the same result (worldchunkcookedsource.h);
+    // currentFile always reads the GLB.
     WorldChunkMesh read(size_t chunk, std::span<const uint32_t> sources, bool currentFile=false) const;
+    ChunkReadCounts reads() const;
     // Estimated retained container storage, including strings; excludes allocator metadata.
     size_t memoryBytes() const;
 
   private:
     struct Impl;
     std::shared_ptr<const Impl> impl;
+    WorldChunkMesh readGlb(size_t chunk, std::span<const uint32_t> sources, bool currentFile) const;
     explicit ChunkMeshSource(std::shared_ptr<const Impl> data) : impl(std::move(data)) {}
     friend asset::WorldMesh readWorldChunks(const std::filesystem::path&, const std::filesystem::path&, ChunkTable*,
                                             WorldChunkTrace*);
