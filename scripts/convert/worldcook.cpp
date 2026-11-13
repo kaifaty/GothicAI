@@ -389,14 +389,16 @@ void clothRoundTrip(const fs::path& dir) {
   if(bundle.cloth.surfaces.size()!=1 || excluded!=4 || cells!=2)
     fail(std::to_string(bundle.cloth.surfaces.size())+" surfaces, "+std::to_string(excluded)+" triangles out of "+
          std::to_string(cells)+" cells; expected one banner of 4 triangles across two cells");
-  // The game's extract takes the bundle and gives the island search's result.
+  // The game's extract takes the bundle (the island search with OPENGOTHIC_WCB=0) and gives the search's result.
+  const char* flag = std::getenv("OPENGOTHIC_WCB");
+  const bool off = flag!=nullptr && std::string(flag)=="0";
   ChunkTable cookedTable, searchedTable;
   auto cookedMesh = readWorldChunks(dir,{},&cookedTable);
   auto searchedMesh = cookedMesh;
   searchedTable = cookedTable;
   const auto taken = WorldCloth::extract(cookedMesh,&cookedTable);
-  if(WorldCloth::lastPath()!=WorldCloth::Path::Bundle)
-    fail("extract did not take the bundle");
+  if(WorldCloth::lastPath()!=(off ? WorldCloth::Path::Search : WorldCloth::Path::Bundle))
+    fail(off ? "extract with OPENGOTHIC_WCB=0 took the bundle" : "extract did not take the bundle");
   const auto searched = WorldCloth::searchIslands(searchedMesh,&searchedTable);
   auto difference = compareWorldCloth(searched,taken);
   if(difference.empty())

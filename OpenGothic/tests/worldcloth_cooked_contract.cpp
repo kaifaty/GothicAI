@@ -525,6 +525,37 @@ void fallbacks(const fs::path& root, const ClothWorld& world) {
   expectSearch("exclusions one fewer than the original mesh",dir,
                "its exclusions name 87 triangles, the loaded chunk table holds 87 of them, its original mesh has 88");
 
+  // The set re-cooked between the world's load and extract: the new bundle is for the new index, not for the
+  // landscape the load read, so the island search runs on that landscape.
+  {
+  dir = copy();
+  LogCapture log;
+  ChunkTable table;
+  auto mesh = readWorldChunks(dir,{},&table);
+  mesh.name = "CLOTH_CONTRACT_MESH";
+  auto searchedMesh = mesh;
+  auto searchedTable = table;
+  writeCell(dir/"chunks/0_0.glb",world.mesh,{0,0},[](size_t) { return true; },[&](GlbCorner& c, uint32_t v) {
+    if(v==world.bannerVertex+2)
+      c.position.x += 10.f;
+    });
+  require(cookWorldChunks(dir).clothWritten,"the edit must change the bundle");
+  const auto cloth = WorldCloth::extract(mesh,&table);
+  const auto path = WorldCloth::lastPath();
+  const auto searched = WorldCloth::searchIslands(searchedMesh,&searchedTable);
+  auto difference = compareWorldCloth(searched,cloth);
+  if(difference.empty())
+    difference = compareWorldMeshes(searchedMesh,mesh);
+  if(difference.empty())
+    difference = compareChunkTables(searchedTable,table);
+  const auto text = log.take();
+  std::printf("the set re-cooked between load and extract: island search; log: %s\n",text.c_str());
+  require(path==WorldCloth::Path::Search && difference.empty(),
+          "a set re-cooked after the world's load must give the island search on the loaded landscape: "+difference);
+  require(tagged(text,"[world-cloth] ")==1 && text.find("was cooked with another index than")!=std::string::npos,
+          "the bundle of the re-cooked set must be refused by the index the load read, got: "+text);
+  }
+
   // One GLB of another length at load: the set has no edits, so the index stays in use for the other cells.
   dir = copy();
   writeBytes(dir/"chunks/2_0.glb",padJson(fileBytes(dir/"chunks/2_0.glb")));
@@ -686,10 +717,15 @@ void lock(const fs::path& root) {
   const bool stopped = gate.waitStopped();
   bool waited = false;
   if(stopped) {
-    fs::copy_file(edited,over/"chunks/1_0.glb",fs::copy_options::overwrite_existing);
+    // While B waits, its GLB is unreadable (broken magic at the same length), then becomes the moved edit: a B that
+    // read a GLB before taking the lock would fail on it.
+    auto broken = fileBytes(edited);
+    broken[0] = 'X';
+    writeBytes(over/"chunks/1_0.glb",broken);
     b.start([&] { cookWorldChunks(base,over); });
     std::this_thread::sleep_for(std::chrono::milliseconds(1500));
     waited = !b.finished;
+    fs::copy_file(edited,over/"chunks/1_0.glb",fs::copy_options::overwrite_existing);
     }
   gate.release();
   a.thread.join();
@@ -703,8 +739,9 @@ void lock(const fs::path& root) {
   require(difference.empty(),"after both cooks the set must verify with hashes: "+difference);
   cellsFromWcb("after two cooks of one directory",base,over);
   expectBundle("after two cooks of one directory",base,over);
-  std::puts("lock: cook B waited 1.5 s while cook A was stopped before its index; both finished, the set verifies "
-            "with hashes and every cell reads its .wcb equal to its GLB");
+  std::puts("lock: cook B waited 1.5 s while cook A was stopped before its index, reading no GLB (a broken one was "
+            "replaced before A went on); both finished, the set verifies with hashes and every cell reads its .wcb "
+            "equal to its GLB");
   }
 
   // Cooks of two directories do not wait for each other.
