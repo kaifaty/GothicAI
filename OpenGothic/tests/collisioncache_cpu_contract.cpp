@@ -58,6 +58,9 @@
 #if defined(__unix__) || defined(__APPLE__)
 #include <sys/resource.h>
 #endif
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
 
 namespace {
 namespace fs = std::filesystem;
@@ -99,7 +102,8 @@ struct Environment {
     }
   };
 
-// Peak RSS of a stage: Linux resets the high-water mark through /proc/self/clear_refs; elsewhere the process peak.
+// Peak RSS of a stage: Linux resets the high-water mark through /proc/self/clear_refs after glibc returns the freed
+// heap to the system, so a stage's allocations raise it instead of reusing pages; elsewhere the process peak.
 struct Memory {
   static uint64_t statusKb(const char* field) {
     std::ifstream status("/proc/self/status");
@@ -110,6 +114,9 @@ struct Memory {
     return 0;
     }
   static void resetPeak() {
+#if defined(__GLIBC__)
+    malloc_trim(0);
+#endif
     std::ofstream clear("/proc/self/clear_refs");
     if(clear)
       clear<<"5";
