@@ -1955,14 +1955,37 @@ void landscapeRtLifetime(const Fixture& fixture) {
       entries=stats.entries;
     else
       require(stats.entries==entries,"chunks published again must reuse the ranges of rtDesc");
+    // The second chunk of the page reads its triangles from its own range: its 32-bit indices count from the page's
+    // first vertex, and its geometry starts at its first meshlet (a chunk-local index would build the first chunk's).
+    {
+    std::vector<const StaticMesh*> meshes;
+    for(const auto& bucket:view.drawBuckets().buckets())
+      if(bucket.staticMesh!=nullptr && std::find(meshes.begin(),meshes.end(),bucket.staticMesh)==meshes.end())
+        meshes.push_back(bucket.staticMesh);
+    require(meshes.size()==2,"both published chunks must register their meshes in draw buckets");
+    std::vector<uint32_t> indices(2*PackedMesh::MaxInd);
+    device.readBytes(meshes[0]->rtIbo(),indices.data(),indices.size()*sizeof(uint32_t));
+    for(const auto* mesh:meshes) {
+      require(&mesh->rtIbo()==&meshes[0]->rtIbo() && mesh->firstMeshlet()<2,"both chunks must share the page's indices");
+      const auto first=mesh->firstMeshlet();
+      require(mesh->rtFirstIndex(0)==first*PackedMesh::MaxInd,"a chunk's geometry for rays must start at its first meshlet");
+      for(size_t i=first*PackedMesh::MaxInd;i<(first+1)*PackedMesh::MaxInd;++i)
+        require(indices[i]>=first*PackedMesh::MaxVert && indices[i]<(first+1)*PackedMesh::MaxVert,
+                "a chunk's 32-bit indices must address its own vertices in the page");
+      }
+    }
     // a teleport away: both chunks go Outside, their instances leave at once and their BLAS after the fence
     update({1000000,0,1000000});
     require(residency.stats().released==2*(cycle+1),"Outside must release both chunks");
     require(scene.stats().landscapeSlots==0 && scene.stats().landscapeShown==0,
             "released chunks must leave no landscape instance in the ray scene");
+    // the frames in flight may still trace the released BLAS: Resources::recycle keeps them until their frame slot
+    const auto released=tempestProbeAccelerationStructureCount();
     for(uint8_t i=0;i<Resources::MaxFramesInFlight;++i)
       update({1000000,0,1000000});
     device.waitIdle();
+    require(released>=tempestProbeAccelerationStructureCount()+2,
+            "a released chunk's BLAS must outlive the frames in flight in Resources::recycle");
     if(cycle==0) {
       structures=tempestProbeAccelerationStructureCount();
       buffers=tempestProbeGpuBufferCount();
