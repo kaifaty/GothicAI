@@ -35,18 +35,54 @@
 | Шейдеры | да | Собираются при сборке и вшиты в библиотеку. |
 | Звук | с заглушками | `Resources(Device&)` всегда открывает `SoundDevice` и создаёт DirectMusic. |
 | Скелеты, анимации | нет | Индекс своих моделей строится только внутри `loadBase()`. Острову не нужны: герой — капсула. |
-| Библиотека только из платформы | нет | Сборка по общему шаблону файлов. 12 файлов платформы лежат в `gothic-base-runtime`. Есть дыры компоновки (ниже). |
+| Библиотека только из платформы | нет | Сборка по общему шаблону файлов. 20 файлов платформы лежат в `gothic-base-runtime` (перепись 8.2). Есть дыры компоновки (ниже). |
 
-**Дыры компоновки платформы** — символы верхних слоёв, без которых платформа не скомпонуется:
+**Дыры компоновки платформы** — символы верхних слоёв, без которых платформа не скомпонуется. Перепись 8.2 от 2026-11-13, `origin/main` `491f45236`: `scripts/engine_link_census.py` по объектным файлам собранной `Gothic2Notr`. Mac и Linux дали одни и те же 35 ссылок на 32 символа в 8 файлах. Пути — от `OpenGothic/common/`.
 
-| Файл платформы | Что ему нужно сверху |
-|---|---|
-| `graphics/renderer.cpp` | `InventoryMenu::isOpen/draw`, `VideoWidget::isActive` — только в перегрузке `draw` с интерфейсом |
-| `graphics/mesh/animationsolver.cpp` | `Interactive::animNpc` |
-| `graphics/mesh/pose.cpp` | `NpcLogicalState::eventFired` |
-| `graphics/lightgroup.cpp` | `VobLayer::lightSourceCm`, `VobLayer::flicker` |
-| `resources.cpp` | `VobLayer::readTree`, `tryWorldData` (`worldbase.cpp`), DirectMusic |
-| `graphics/mesh/submesh/packedmesh.cpp`, `pfxemittermesh.cpp` | `phoenix_compat::get_total_aabb`, `pack_softskin_mesh` — чистые функции |
+| Файл платформы | Что нужно сверху | Где определено | Слой |
+|---|---|---|---|
+| `graphics/renderer.cpp` | `InventoryMenu::isOpen`, `InventoryMenu::draw`, `VideoWidget::isActive` — только перегрузка `draw` с интерфейсом | `ui/inventorymenu.cpp`, `ui/videowidget.cpp` | Готика |
+| `graphics/mesh/animationsolver.cpp` | `Interactive::animNpc` | `world/objects/interactive.cpp` | RPG |
+| `graphics/mesh/pose.cpp` | событие анимации для логики NPC: `NpcLogicalState::eventFired` и проверка журнала `NpcLogicAudit::enabled` | `world/npclogicalstate.cpp` | RPG |
+| `graphics/lightgroup.cpp` | свет предмета мира: `VobLayer::lightSourceCm`, `VobLayer::flicker` | `world/voblayer.cpp` | RPG |
+| `graphics/pfx/pfxbucket.cpp` | вложенный эмиттер (`ppsCreateEm`): конструктор и деструктор `PfxEmitter`, `setActive`, `setLooped`, `setPosition` | `world/objects/pfxemitter.cpp` | RPG |
+| `resources.cpp` | загрузка предметов мира: `VobLayer::readTree` | `world/voblayer.cpp` | RPG |
+| `resources.cpp` | DirectMusic: конструктор и `load` | `dmusic/directmusic.cpp` | Готика |
+| `resources.cpp` | библиотека реплик (OU): `OutputUnits::readLibrary`, `sortedBlocks`, поиск в индексе `Index::findHost`, `findVfs`, `path` | `outputunits.cpp` | Готика |
+| `resources_base.cpp` | загрузка мира `tryWorldData`; индексы базы `OutputUnits::readIndex`, `ProgramData::readIndex` | `worldbase.cpp`, `outputunits.cpp`, `programdata.cpp` | Готика |
+| `resources_base.cpp` | паспорт базы: `BaseImport::readIdentity`, `runtimeArchives`, `sha256` | `baseidentity.cpp` | импорт |
+| `basestore.cpp` | паспорт и сверка базы: `BaseImport::identify` и `snapshot` (по две перегрузки), `matches`, `readIdentity`, `runtimeArchives`, `sha256` | `baseidentity.cpp` | импорт |
+
+Итог по слоям: RPG — 11 символов, Готика — 13, импорт — 8 (11 ссылок: `readIdentity`, `runtimeArchives` и `sha256` нужны двум файлам). По файлам: `basestore.cpp` и `resources.cpp` — по 8, `resources_base.cpp` — 6, `pfxbucket.cpp` — 5, `renderer.cpp` — 3, `lightgroup.cpp` и `pose.cpp` — по 2, `animationsolver.cpp` — 1. Остальные 145 файлов платформы на Mac (144 на Linux) сверху ничего не берут.
+
+Слабые копии не мешают: если символ определён и в платформе, и выше (встроенная функция, экземпляр шаблона), это не дыра. Счёт сверен с компоновщиком: объекты платформы, сторонние библиотеки с той же строки сборки и пустой `main` дают у ld64 на Mac и GNU ld на Linux ровно эти 32 неопределённых символа.
+
+**Сторонние библиотеки платформы** (Mac / Linux, символов; в скобках — файлы платформы):
+- Tempest — 190 / 192, почти все файлы графики, звука и ресурсов (102 / 97 файлов);
+- Jolt — 130 / 132, 15 файлов `physics/`;
+- шейдеры `GothicShaders` — 398, только `graphics/shaders.cpp`;
+- Recast 26 и Detour 29 — только `physics/navmesh.cpp`;
+- dmusic — 15: `musicnative.c` (11) и `resources.cpp` (4);
+- miniz — 14: `savearchive.cpp` (12), `resources.cpp` и `videodata.cpp` (по 1).
+
+Прямо платформе не нужны ixwebsocket (мост ИИ), а также png, zlib, openal, minivorbis, squish, шрифты и spirv-cross (их тянет сам Tempest), а также dmusic-tsf (её тянет dmusic). Системными (libc++/libstdc++, libc, фреймворки) остались 367 символов на Mac и 359 на Linux.
+
+**Mac и Linux.** Дыры совпали по файлам и символам. Остальные отличия — в разделе сторонних библиотек и счёте файлов:
+- на Mac на один файл платформы больше (153 против 152) — `utils/installdetect.mm`, он собирается только на Apple. Сверху ему ничего не нужно, из Tempest — `TextCodec::toUtf16`;
+- `uint64_t` на Mac — `unsigned long long`, на Linux — `unsigned long`. Поэтому `Log::write`, `BodyManager::LockRead` и подобные — одни и те же символы под разными именами;
+- Clang и GCC по-разному выносят встроенные функции и таблицы виртуальных функций. Поэтому Linux берёт из Tempest и Jolt на 1–2 символа больше в нескольких файлах (`vtable for Tempest::MemReader`, `Pixmap(Pixmap&&)`, `SphereShape::GetWorldSpaceBounds`), а Mac — `vtable for JPH::ConstraintSettings`;
+- на Mac слабые копии `std::bad_function_call` из libc++ лежат в объектах Tempest и spirv-cross-glsl, и 14 файлов платформы находят их там. На Linux этот символ определён в libstdc++ и считается системным. Скрипт помечает такие символы как «только слабые копии» (2 на Mac), поэтому spirv-cross-glsl на Mac числится библиотекой со слабыми копиями, а не настоящей зависимостью.
+
+**Сравнение с прежней прикидкой** (по включениям и чтению кода, `main` `b89d19b2e`):
+- *Подтвердились* `renderer.cpp` (те же три метода), `animationsolver.cpp`, `pose.cpp`, `lightgroup.cpp`, а в `resources.cpp` — `VobLayer::readTree` и DirectMusic. `tryWorldData` тоже нужен, но вызывает его `resources_base.cpp` — часть `Resources`, вынесенная в отдельный файл. Прикидка записала его на `resources.cpp`.
+- *Лишней* оказалась строка `phoenix_compat`. В 8.1 правило отнесло `game/compatibility/phoenix` к платформе, поэтому `get_total_aabb` и `pack_softskin_mesh` теперь определены в ней самой.
+- *Не было в прикидке:*
+  - `NpcLogicAudit::enabled` в `pose.cpp` — проверка журнала в двух строках от `eventFired`, тот же заголовок `world/npclogicalstate.h`. Закрывается вместе с `eventFired`.
+  - `PfxEmitter` в `pfxbucket.cpp`. Прикидка сочла включение `pfxemitter.h` лишним (только `friend`), но корзина частиц сама создаёт вложенные эмиттеры (`new PfxEmitter(parent, decl.ppsCreateEm)`). 8.1 уже заметила это и перенесла включение в `pfxbucket.h`.
+  - `OutputUnits` и `ProgramData` в `resources.cpp` и `resources_base.cpp`. Эти файлы лежат в `gothic-base-runtime` рядом с файлами платформы, и прикидка считала эту библиотеку частью платформы. По правилам же `outputunits` и `programdata` относятся к Готике. Нарушение было видно и во включениях (`resources.h` и `contentcensus.cpp` включают `outputunits.h` и `programdata.h`). Но `contentcensus.cpp` берёт из них только типы, поэтому дыр у него нет.
+  - `BaseImport::*` из `baseidentity.cpp` (слой импорта) в `basestore.cpp` и `resources_base.cpp`. Прикидка отметила `baseimport.h` как нарушение включений: «данным нужны только типы». Перепись показывает, что выбор и проверка базы зовут и функции паспорта базы. `baseidentity.cpp` — вход отпечатка базы, как и `baseimport.h`, поэтому его перенос ждёт того же окна правки формата.
+- Нарушения включений без дыр компоновки: `musicdata.h`, `audiodata.h`, `videodata.h`, `basestore.h` (типы `baseimport.h` и `dmusic/`), `contentcensus.cpp`, `graphics/mesh/animation.cpp` (`interactive.h`). Им в 8.3 хватит правки включений или переноса типов.
+- В `gothic-base-runtime` сейчас 20 файлов платформы, а не 12. После прикидки туда добавились `worldchunk*` и `physics/worldcloth*`. Кроме них там один файл импорта (`baseidentity`) и семь файлов Готики (`programdata`, `outputunits`, три `dmusic/*runtime`, `dmusic/hydra`, `dmusic/soundfont`).
 
 **Нарушения включений платформы — 43 в 20 узлах.** Половину из них снимают дешёвые правки:
 - `common/gothicglb` (9 включений) — это наш собственный формат GLB, правило зря относит его к Готике;
@@ -70,14 +106,21 @@
    Готово, когда нарушений платформы 43 → около 21 и все цели, которые включают изменённые заголовки, собираются. Поведение не меняется (перенос без правки кода, значения перечислений прежние), поэтому паритет бенчей не нужен — по правилу `AGENTS.md` о переносе кода.
 
    Итог 2026-11-13 относительно `origin/main` `fb9e88a25`: платформа 43 → 22, всего 174 → 152, `vm_transitive` платформы и `foreign_definitions` — 0. Вместо 21 осталось 22: `pfxbucket.h` действительно использует `PfxEmitter`, поэтому нужное включение переехало туда из `pfxobjects.h`; правило `gothicglb` дополнительно сняло одно нарушение RPG (128 → 127). Шесть перечислений и четыре оператора перенесены в `engineconstants.h` дословно, входы отпечатка базы не менялись. `Gothic2Notr`, `gothic-body-runner`, `content-convert` собраны на Ryzen через `gq quick` (4 потока, 4 ГиБ) и на Mac, оба стража зелёные; `check.py run` — 12 тестов пройдено. На Mac собраны 16 из 19 тестовых целей с прямыми или транзитивными включениями этих заголовков: `gothic-base-store-contract` после добавления прямого включения `daedalus/script.h` собирается, запуск не требовался. Оставшиеся три Vulkan-цели не линкуются в штатной Metal-конфигурации Mac; эти сбои воспроизведены на чистой `origin/main` и существовали до 8.1. `engine_layers.py check` даёт одно новое предупреждение о перенесённом включении `pfxbucket.h → pfxemitter.h`: 158 → 152 текущим скриптом, 174 → 168 копией скрипта с базы, которая не видит новые правила. Новое предупреждение `pfxbucket.h → pfxemitter.h` — та же зависимость, перенесённая туда, где она нужна; принято при ревью, снимается в 8.3. Паритет бенчей не запускался.
-2. **8.2. Перепись компоновки.** Исполнитель — Codex. Библиотека `engine-platform` собирается из файлов платформы по `LAYER_RULES` (тот же разбор, что у стража). Туда же переходят 12 файлов платформы из `gothic-base-runtime`, а `OpenGothic` компонуется с ней. Цель `engine-platform-link` подключает всю библиотеку целиком (`-force_load`, `--whole-archive`, `/WHOLEARCHIVE`) и больше ничего из движка. Пока она только печатает список недостающих символов. Готово, когда список совпадает с таблицей дыр выше или каждое отличие объяснено.
+2. **8.2. Перепись компоновки — сделано 2026-11-13.** Исполнитель — Claude (пул), ревью — Codex.
+   - **Способ.** `scripts/engine_link_census.py <папка сборки>` берёт у Ninja ровно те объекты, что компонуются в `Gothic2Notr` (`ninja -t query` по цели и её архивам, без порядковых зависимостей), и сопоставляет их с исходниками по `ninja -t compdb`. Исходник в `OpenGothic/` вне `lib/` и папки сборки — наш код, слой по `layer_of`; остальное — сторонние библиотеки. Символы читает `nm` (на Mac `nm -m`, на Linux — ELF), слабые определения считаются определениями. Дыра — неопределённый символ объекта платформы, который определён только нашим кодом другого слоя. Вывод — таблица, итоги по файлам и слоям и сторонние библиотеки; `--json` даёт то же. Тесты — `scripts/tests/test_engine_link_census.py`.
+   - **Почему способ изменился.** План предлагал собрать библиотеку `engine-platform` по `LAYER_RULES` и перенести в неё 12 файлов платформы из `gothic-base-runtime`. Но `gothic-base-runtime` задан в `cmake/BaseImport.cmake`, а это вход отпечатка базы (`cmake/BaseFormat.cmake`): любая правка в нём пересобирает все базы. Кроме того, пока дыры не закрыты, отдельная статическая библиотека платформы и `OpenGothic` ссылаются друг на друга. GNU ld зависит от порядка библиотек, и такая сборка хрупкая. Поэтому перепись идёт по объектным файлам уже собранной игры, без правки сборки, а библиотека платформы и обязательная проверка компоновки переезжают в конец 8.3.
+   - **Итог** (`origin/main` `491f45236`): 35 ссылок на 32 символа в 8 файлах из 153 на Mac и 152 на Linux. Из них RPG — 11 символов, Готика — 13, импорт — 8. Mac и Linux совпали; ld64 и GNU ld на объектах платформы со сторонними библиотеками называют те же 32 символа. Из таблицы прикидки подтвердились 5 строк, одна (`phoenix_compat`) снята в 8.1. Новых строк четыре: `NpcLogicAudit`, `PfxEmitter`, `OutputUnits`/`ProgramData`, `BaseImport` (разбор — под таблицей дыр). Скрипт работает 7–12 с на Mac (903 объекта) и около 1,3 с на Ryzen с 8 потоками (904 объекта).
 3. **8.3. Закрыть дыры компоновки и оставшиеся включения.** Исполнитель — Codex, рефакторинг.
    - Перегрузку `draw` с интерфейсом переносим из `Renderer` в Готику: окно Готики рисует сцену, потом свой интерфейс.
    - `animNpc` и `eventFired` уходят за интерфейсы платформы, как в шагах 4 и 6.
    - Чистые функции света `VobLayer` переходят в платформу.
    - Загрузка мира (`readTree`, `tryWorldData`) выходит из `Resources` в свободные функции RPG и Готики, как `loadBaseProgram` в шаге 3.
 
-   Готово, когда у платформы 0 нарушений и `engine-platform-link` компонуется. Тогда эта цель становится обязательной: от неё зависят `Gothic2Notr` и `gothic-body-runner`, как от стража.
+   - Новые дыры из переписи 8.2 тоже закрываются здесь: `NpcLogicAudit::enabled` — вместе с `eventFired`, `PfxEmitter` во вложенных эмиттерах частиц, библиотека реплик и индексы базы (`OutputUnits`, `ProgramData`) в `Resources`, паспорт базы (`BaseImport` из `baseidentity.cpp`) в `basestore.cpp` и `resources_base.cpp`. `baseidentity.cpp` — вход отпечатка базы, поэтому его перенос ждёт правки формата.
+
+   Готово, когда у платформы 0 нарушений и `scripts/engine_link_census.py` не находит дыр.
+
+   Только после этого собирается библиотека `engine-platform` из одних файлов платформы, и её компоновка становится обязательной проверкой: цель `engine-platform-link` подключает библиотеку целиком (`-force_load`, `--whole-archive`, `/WHOLEARCHIVE`), от неё зависят `Gothic2Notr` и `gothic-body-runner`, как от стража. `gothic-base-runtime` при этом не меняется: из статического архива подтягиваются только нужные объекты. Перепись должна показать, что ни один из них не из верхних слоёв. Сейчас нужны три таких объекта: `baseidentity`, `programdata` и `outputunits`.
 4. **8.4. Ресурсы без базы и без звука.** Исполнитель — Claude, логика.
    - `Resources(Device&)` открывает звук по флагу. Игра звук включает, остров — нет.
    - DirectMusic создаётся при первом запросе музыки или переходит в Готику вместе с заголовками музыки.
@@ -135,7 +178,7 @@
 
 ## Пробелы
 
-- Перепись компоновки (задача 8.2) может найти символы, которых нет в таблице выше: разбор шёл по включениям и чтению кода, а не по объектным файлам.
+- Перепись компоновки (8.2) идёт по сборкам Mac и Linux. Windows не проверялась: там свои `#ifdef` и MSVC, а PR его не собирают.
 - `CommandLine` при создании ищет установку (`InstallDetect`). Падения без установки при чтении кода не нашлось, но проверить надо запуском.
 - Флаги для Windows (`/WHOLEARCHIVE`) проверятся только сборкой выпуска: PR его не собирают.
 - Сторонние ссылки — по памяти, без новой проверки источников, кроме OpenMW из заметки шага 0.
