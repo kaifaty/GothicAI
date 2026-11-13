@@ -131,7 +131,7 @@ VM-адаптер базовых программ — свободные фун�
 - кадр с интерфейсом — `ui/gameframe.*` (`drawGameFrame`): `Renderer::drawScene` рисует сцену, Готика — интерфейс поверх;
 - события анимации для логики NPC — `Pose::LogicEventObserver`; его ставит `MdlVisual::processEvents`, только когда включён `NpcLogicAudit`;
 - анимация интерактивов — `graphics/mesh/animationinteractive.h`, его реализует `Interactive`;
-- записи света слоя предметов (лампа слоя и лампа базы с правкой на месте) и `lightSourceCm`, `lightNear`, `flicker` — `graphics/voblight.*`;
+- записи света слоя предметов (лампа слоя и лампа базы с правкой на месте) и `lightSourceCm`, `lightNear`, `lightOffset`, `flicker` — `graphics/voblight.*`;
 - место вложенного эмиттера в корзине частиц — `graphics/pfx/pfxslot.*` (`PfxSlot`), `PfxEmitter` держит его последним членом;
 - загрузка мира и наложение `vobtrees.d` — свободные функции RPG `loadWorld` и `loadVobBundle` в `common/worldbase.*`; `Resources::loadVobBundle` принимает читатель слоя.
 

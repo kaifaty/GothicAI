@@ -357,7 +357,7 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
       layerFields(doc,{"format","add"});
       array(member(doc,"add"));
       } else {
-      layerFields(doc,{"format","add","remove","move","light"});
+      layerFields(doc,{"format","add","remove","move","light","visual"});
       }
     std::unordered_map<uint32_t,Vob> base;
     std::set<uint32_t> ids;
@@ -489,7 +489,7 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
           const auto* lamp=dynamic_cast<const asset::VLight*>(&target);
           require(lamp!=nullptr,"class "+std::string(className(target.type))+" is not a lamp");
           require(std::none_of(relit.begin(),relit.end(),[&](const auto& r) { return r.first==id; }),"duplicate light id");
-          layerFields(entry,{"id","color","range","near","source_cm","flicker_from","jitter_cm"});
+          layerFields(entry,{"id","color","range","near","source_cm","flicker_from","jitter_cm","offset_cm"});
           require(entry.MemberCount()>1,"nothing to change");
           const auto* earlier=dynamic_cast<const BaseLight*>(lamp);
           auto edited=earlier!=nullptr ? std::make_shared<BaseLight>(*earlier) : std::make_shared<BaseLight>(*lamp);
@@ -502,6 +502,14 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
             require(edited->range>0,"range must be positive");
             }
           layerLamp(entry,*edited,false);
+          if(entry.HasMember("offset_cm")) {
+            // the light leaves the lamp's place for the flame of a model the layer put there; the lamp itself stays
+            const auto& value=entry["offset_cm"]; array(value,3);
+            for(unsigned i=0;i<3;++i) {
+              edited->offsetCm[i]=layerFloat(value[i]);
+              require(std::abs(edited->offsetCm[i])<=100,"offset_cm must be within 100 cm");
+              }
+            }
           if(entry.HasMember("flicker_from")) {
             edited->color_animation_list.clear();
             edited->range_animation_scale.clear();
@@ -529,6 +537,39 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
     for(auto& v:additions)
       if(auto* light=dynamic_cast<Light*>(v.get())) signal(*light,"key "+jsonString(light->key));
     for(auto& [id,lamp]:relit) signal(*lamp,"id "+std::to_string(id));
+    // A base mesh vob given another visual in place, by its id ("visual"): a model of the content takes the place
+    // of the base's where the vob cannot be removed, because a lamp or a MOB under it holds saved state (a wall
+    // torch's lamp hangs under its mesh). The id, the place, the tree and the collision flags stay, so a save fits
+    struct Swap { Vob target; std::shared_ptr<Visual> visual; };
+    std::vector<Swap> swaps;
+    if(doc.HasMember("visual")) {
+      array(doc["visual"]);
+      for(const auto& entry:doc["visual"].GetArray()) {
+        std::string entryContext="visual: ";
+        try {
+          const auto& value=member(entry,"id");
+          if(value.IsInt64()) entryContext="id "+std::to_string(value.GetInt64())+": ";
+          else if(value.IsUint64()) entryContext="id "+std::to_string(value.GetUint64())+": ";
+          require(value.IsUint(),"expected unsigned base ID");
+          const auto id=value.GetUint();
+          require(base.count(id)!=0,"unknown base ID");
+          const auto& target=base.at(id);
+          layerFields(entry,{"id","visual"});
+          require(target->type==VirtualObjectType::zCVob && target->visual!=nullptr &&
+                  (target->visual->type==VisualType::MESH || target->visual->type==VisualType::MULTI_RESOLUTION_MESH),
+                  "class "+std::string(className(target->type))+" is not a static mesh vob");
+          require(MovableVobs::classify(*target)==nullptr,"the vob's physics is bound to its base ID");
+          require(std::none_of(swaps.begin(),swaps.end(),[&](const Swap& s) { return s.target->id==id; }),"duplicate visual id");
+          auto name=layerString(member(entry,"visual"));
+          require(name.find_first_of("/\\")==std::string::npos,"invalid visual name");
+          for(auto& c:name) c=char(std::toupper(uint8_t(c)));
+          require(visuals.count(name)!=0,"unknown visual "+name);
+          require(visuals.at(name)->type==VisualType::MESH,"visual "+name+" is not a static mesh");
+          swaps.push_back({target,visuals.at(name)});
+          }
+        catch(const std::exception& e) { error(entryContext,e); }
+        }
+      }
     for(const char* operation:{"remove","move"}) if(doc.HasMember(operation)) {
       array(doc[operation]);
       for(const auto& entry:doc[operation].GetArray()) {
@@ -547,6 +588,8 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
             const auto affected="id "+std::to_string(bound->id)+" class "+className(bound->type);
             fail("class "+kind+" cannot "+operation+": "+affected+" has base-ID or tree-bound saved state");
             }
+          require(moving || std::none_of(swaps.begin(),swaps.end(),[&](const Swap& s) { return s.target->id==id; }),
+                  "visual and remove of one id");
           if(moving) {
             layerFields(entry,{"id","position","rotation","yaw_deg"});
             moves.push_back({base.at(id),layerPosition(entry),layerRotation(entry)});
@@ -562,6 +605,11 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
     // before the removals: a lamp's copy holds the children the lamp had when the file was read
     for(const auto& [id,lamp]:relit)
       if(replaceLayerVob(data.vobs,id,lamp)) ++result.lit;
+    for(auto& swap:swaps) {
+      swap.target->visual=swap.visual; swap.target->visual_name=swap.visual->name;
+      swap.target->associated_visual_type=swap.visual->type;
+      ++result.swapped;
+      }
     for(const auto id:removals)
       if(removeLayerVob(data.vobs,id,context.removed)) ++result.removed;
     for(auto& move:moves) {
@@ -605,10 +653,10 @@ Result apply(WorldData::Data& data,const fs::path& baseWorldDir,const fs::path& 
   for(const auto& file:files) {
     const auto result=applyFile(data,context,baseWorldDir.parent_path().parent_path(),file,worldContentDir.parent_path().parent_path());
     if(result.errors.empty())
-      Tempest::Log::i("vob layer: ",file.string(),": applied added=",result.added," removed=",result.removed," moved=",result.moved," lit=",result.lit);
+      Tempest::Log::i("vob layer: ",file.string(),": applied added=",result.added," removed=",result.removed," moved=",result.moved," lit=",result.lit," visual=",result.swapped);
     else
       for(const auto& error:result.errors) Tempest::Log::e("vob layer: skipped ",error);
-    total.added+=result.added; total.removed+=result.removed; total.moved+=result.moved; total.lit+=result.lit;
+    total.added+=result.added; total.removed+=result.removed; total.moved+=result.moved; total.lit+=result.lit; total.swapped+=result.swapped;
     total.errors.insert(total.errors.end(),result.errors.begin(),result.errors.end());
     }
   total.errors.insert(total.errors.end(),context.ownParticles.errors.begin(),context.ownParticles.errors.end());

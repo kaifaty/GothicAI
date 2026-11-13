@@ -12,5 +12,6 @@ class VobLight : public Vob {
     void  fillAttachmentSnapshot(AttachmentSnapshot& out) const override;
 
     LightGroup::Light light;
+    Tempest::Vec3     lightOffset = {}; // the light's place from the lamp's own (vobs.d "offset_cm")
   };
 

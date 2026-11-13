@@ -1,0 +1,37 @@
+{
+ "id": "wall-torch",
+ "seed": 7,
+ "goal": {
+  "id": "wall-torch",
+  "visual": "OW_MISC_WALL_TORCH_01",
+  "budget_tris": 3000,
+  "bbox_min": [-0.081, -0.387, -0.228],
+  "bbox_max": [0.081, 0.372, 0.228],
+  "zones": [
+   {"key": "OWN_TORCH_WOOD", "group": "WOOD", "role": "the hewn pine club, dark with soot, pitch and handling"},
+   {"key": "OWN_TORCH_IRON", "group": "METAL", "role": "the two forged rings with their pegs, the wire"},
+   {"key": "OWN_TORCH_TOW", "group": "UNDEF", "role": "the wrap of tow and rags in pitch, its lower part: charred, no heat"},
+   {"key": "OWN_TORCH_TOW_HOT", "group": "UNDEF", "role": "the wrap's upper part under the flame: the same tile, its creases hold the embers"},
+   {"key": "OWN_TORCH_PITCH", "group": "UNDEF", "role": "hardened drips of pitch"}
+  ]
+ },
+ "butt": [0.1, -35.9, -13.0],
+ "tip": [0.1, 37.2, 20.2],
+ "wall": -22.8,
+ "radius": [[0.0, 0.034], [0.495, 0.056], [0.74, 0.06], [0.803, 0.058]],
+ "club": {"sides": 12, "step": 0.055, "facets": 20, "crook": 0.005},
+ "upper": {"at": [0.495, 0.545], "thick": 0.006, "teeth": 12, "tooth": [0.016, 0.028], "arm": 0.025, "spike": 0.09},
+ "lower": {"at": [0.012, 0.047], "thick": 0.005, "teeth": 9, "tooth": [0.01, 0.017], "arm": 0.02, "spike": 0.06},
+ "wrap": {
+  "profile": [[0.557, 0.063], [0.585, 0.069], [0.63, 0.073], [0.69, 0.077], [0.75, 0.078], [0.785, 0.076],
+              [0.808, 0.07], [0.826, 0.057], [0.838, 0.037], [0.843, 0.017], [0.839, 0.005]],
+  "sides": 20,
+  "step": 0.014,
+  "lumps": 0.007,
+  "skirt": 0.011,
+  "hot_from": 0.7,
+  "wires": [0.635, 0.705, 0.775],
+  "wire": 0.0018
+ },
+ "drips": 7
+}

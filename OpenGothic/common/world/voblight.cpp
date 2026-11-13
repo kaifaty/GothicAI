@@ -3,6 +3,7 @@
 #include <cmath>
 
 #include "world.h"
+#include "graphics/voblight.h"
 
 VobLight::VobLight(Vob* parent, World& world, const asset::VLight& vob, Flags flags)
   : Vob(parent,world,vob,flags) {
@@ -12,6 +13,8 @@ VobLight::VobLight(Vob* parent, World& world, const asset::VLight& vob, Flags fl
 #endif
 
   light = world.addLight(vob);
+  const auto offset = VobLayer::lightOffset(vob);
+  lightOffset = Tempest::Vec3(offset[0],offset[1],offset[2]);
   if(!vob.is_static && !vob.on) {
     light.setEnabled(false);
     return;
@@ -44,7 +47,7 @@ VobLight::VobLight(Vob* parent, World& world, const asset::VLight& vob, Flags fl
   }
 
 void VobLight::moveEvent() {
-  light.setPosition(position());
+  light.setPosition(position()+lightOffset);
   // the light mask turns with the light's own axes: the yaw of its X axis in the world
   auto t = transform();
   Tempest::Vec3 o = {}, x = {1,0,0};

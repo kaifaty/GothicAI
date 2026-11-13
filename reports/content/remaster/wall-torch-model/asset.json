@@ -1,0 +1,204 @@
+{
+  "asset": "wall-torch-model",
+  "title": "Настенный факел: модель и жар головки",
+  "kind": "props",
+  "created": "2026-11-13",
+  "goal": "the same Gothic, better made",
+  "namespaces": [
+    "wall-torch-model"
+  ],
+  "sources": [
+    {
+      "file": "wall-torch-model/concept-attempt-1.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 1,
+      "sha256": "3cbdfdd76aa3a25215913a3e82b611b6809cb080d64e00f5b994c0d82c15eae6",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-13T21:03:36Z",
+      "thread": "01a1d6b8-452c-7bc2-b86e-6215611ec922",
+      "parent": null
+    },
+    {
+      "file": "wall-torch-model/concept-attempt-2.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 2,
+      "sha256": "48b533cb08d639d8f2f556914652e83484bed6d7da5cd9e597510b076c2fa350",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-13T21:04:17Z",
+      "thread": "01a1d6b8-452c-7bc2-b86e-6215611ec922",
+      "parent": "wall-torch-model/concept-attempt-1.png"
+    },
+    {
+      "file": "wall-torch-model/concept-attempt-3.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 3,
+      "sha256": "050c48e7387a6d9b0bd4bd25b8f1545afca51863adf016b3568b69bf3c27824d",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-13T21:03:25Z",
+      "thread": "01a1d6b8-57e7-73b0-81e2-6a07fe877800",
+      "parent": null
+    },
+    {
+      "file": "wall-torch-model/concept-attempt-4.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 4,
+      "sha256": "cddd5209ef6f6afbd26709b9556f71e4e69b76836b994b2d43c02645e86fc7f2",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-13T21:04:08Z",
+      "thread": "01a1d6b8-57e7-73b0-81e2-6a07fe877800",
+      "parent": "wall-torch-model/concept-attempt-3.png"
+    },
+    {
+      "file": "wall-torch-model/concept-attempt-5.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 5,
+      "sha256": "15a20103b115340106e782b575dfea9161efca7ee4e1328bf0fd9a7052d026dc",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-13T21:07:08Z",
+      "thread": "01a1d6bb-e8d3-7230-b26f-c15a49e30af5",
+      "parent": null
+    },
+    {
+      "file": "wall-torch-model/concept-attempt-6.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 6,
+      "sha256": "10d2384adbc72c76f1416f91565f2c8455d8c941fe3e0b738527cde789c4440c",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-13T21:07:56Z",
+      "thread": "01a1d6bb-e8d3-7230-b26f-c15a49e30af5",
+      "parent": "wall-torch-model/concept-attempt-5.png"
+    },
+    {
+      "file": "wall-torch-model/concept-attempt-7.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 7,
+      "sha256": "d92a6edb49506342060f66f9e608310a25f7e0ffe359421245963cd650cb25a6",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-13T21:16:36Z",
+      "thread": "01a1d6c4-600b-7250-8d29-793c1be20a2c",
+      "parent": "wall-torch-model/concept-attempt-1.png"
+    },
+    {
+      "file": "wall-torch-model/concept-attempt-8.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 8,
+      "sha256": "f41d3e5349b93d1e22e23058a9b5d00caf5539c754b2be29da8f27b770c900f6",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-13T21:19:08Z",
+      "thread": "01a1d6c6-96b7-77a3-a5a3-d5ce1c589cbb",
+      "parent": "wall-torch-model/concept-attempt-7.png"
+    },
+    {
+      "file": "wall-torch-model/OWN_TORCH_WOOD-attempt-1.png",
+      "role": "texture",
+      "texture": "OWN_TORCH_WOOD.TGA",
+      "attempt": 1,
+      "sha256": "32550aaea4cb15388f0ba7e1bc09fe14b8f8a63e5455542f206a294d5c74029b",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-13T21:22:49Z",
+      "thread": "01a1d6ca-50de-7723-acbd-71a423043e54",
+      "parent": null
+    },
+    {
+      "file": "wall-torch-model/OWN_TORCH_TOW-attempt-1.png",
+      "role": "texture",
+      "texture": "OWN_TORCH_TOW.TGA",
+      "attempt": 1,
+      "sha256": "37e0ffe0ef554bf01d84fa345d155269ad5565ed43d1cba3ae977235392c02a5",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-13T21:22:38Z",
+      "thread": "01a1d6ca-650a-7450-bc24-84da87a2a127",
+      "parent": null
+    }
+  ],
+  "selected": {},
+  "reviews": [
+    {
+      "id": "r1-wrap",
+      "stage": "concept",
+      "mode": "reference",
+      "verdict": "REJECT",
+      "date": "2026-11-13",
+      "path": "reviews/r1-wrap/merged.json"
+    },
+    {
+      "id": "r3-side",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-11-13"
+    },
+    {
+      "id": "r3-far",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-11-13"
+    }
+  ],
+  "gates": [
+    {
+      "gate": "preserve",
+      "verdict": "approved",
+      "by": "user",
+      "date": "2026-11-13",
+      "quote": "Б. Обмотка",
+      "note": "ответ на вопрос «Какую горящую часть делать у факела?» по листу трёх концептов; список сохранения принят с отступлением Б по пункту 5a: верхняя треть обмотана паклей в смоле"
+    }
+  ],
+  "build": null,
+  "backup": {
+    "date": "2026-11-13",
+    "host": "dev-ubuntu",
+    "matched": 20,
+    "mismatched": []
+  }
+}
