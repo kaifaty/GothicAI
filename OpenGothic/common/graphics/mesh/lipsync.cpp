@@ -39,6 +39,12 @@ float Dip     = 0.6f;   // a syllable ends when the voice falls below this part 
 float Rise    = 0.15f;  // ...and the next one starts when it rises this much above the quietest moment
 float MinOpen = 0.15f;  // shapes that open the mouth less than this are not used
 float Fit     = 0.5f;   // a shape may open this part of what the syllable needs (more shapes to pick from)
+// the live microphone (player-voice-face.md): no voice ahead to look at, so no lead; quicker so the delay stays small
+float LiveRef     = -16.f;  // dB of the speech band: the loudest moment of a live track is taken as at least this
+float LiveAttack  = 15.f;   // ms, time constant of opening
+float LiveRelease = 40.f;   // ms, of closing: a pause of 150 ms shuts the mouth
+float LiveBuffer  = 10.f;   // ms the clock stays behind the arrived sound (a chunk late by less moves on smoothly)
+float LiveDuck    = 18.f;   // dB lower while an npc's voice sounds near the hero
 
 struct Param final {
   std::string_view name;
@@ -49,6 +55,8 @@ const Param params[] = {
   {"Range", &Range}, {"Top", &Top}, {"Gamma", &Gamma}, {"Lead", &Lead},
   {"Attack", &Attack}, {"Release", &Release}, {"Look", &Look}, {"Blend", &Blend},
   {"Dip", &Dip}, {"Rise", &Rise}, {"MinOpen", &MinOpen}, {"Fit", &Fit},
+  {"LiveRef", &LiveRef}, {"LiveAttack", &LiveAttack}, {"LiveRelease", &LiveRelease}, {"LiveBuffer", &LiveBuffer},
+  {"LiveDuck", &LiveDuck},
   };
 
 bool enabled = []() {
@@ -88,6 +96,14 @@ bool LipSync::setParam(std::string_view name, float value) {
       return true;
       }
   return false;
+  }
+
+uint64_t LipSync::liveBufferMs() {
+  return uint64_t(std::max(0.f,LiveBuffer));
+  }
+
+float LipSync::liveDuckDb() {
+  return std::max(0.f,LiveDuck);
   }
 
 std::string LipSync::paramList() {
@@ -160,7 +176,7 @@ void LipSync::Track::append(const int16_t* pcm, size_t count, uint16_t channels)
     acc += double(x*x);
     if(++accN<perStep)
       continue;
-    db.push_back(float(10.0*std::log10(acc/double(accN) + 1e-10)));
+    db.push_back(float(10.0*std::log10(acc/double(accN) + 1e-10)) + liveGain);
     acc  = 0;
     accN = 0;
     // a click is not the loudest moment: the peak is taken over 30 ms
@@ -248,7 +264,7 @@ float LipSync::Track::yin(size_t at) const {
 void LipSync::Track::finish() {
   std::lock_guard<std::mutex> guard(sync);
   if(accN>perStep/2)
-    db.push_back(float(10.0*std::log10(acc/double(accN) + 1e-10)));
+    db.push_back(float(10.0*std::log10(acc/double(accN) + 1e-10)) + liveGain);
   acc      = 0;
   accN     = 0;
   finished = true;
@@ -292,6 +308,11 @@ uint64_t LipSync::Track::toneKnownMs() const {
   return hz.size()*StepMs;
   }
 
+void LipSync::Track::setLiveGain(float gain) {
+  std::lock_guard<std::mutex> guard(sync);
+  liveGain = gain;
+  }
+
 void LipSync::Track::setName(std::string_view n) {
   std::lock_guard<std::mutex> guard(sync);
   lineName = std::string(n);
@@ -320,7 +341,7 @@ bool LipSync::Track::isOf(std::string_view line) const {
 float LipSync::Track::implLevel(size_t step) const {
   if(step>=db.size())
     return 0;
-  const float ref = std::max(peakDb, MinPeak);
+  const float ref = std::max(peakDb, liveInput ? LiveRef : MinPeak);
   const float lo  = ref - Range;
   const float hi  = ref - std::min(Top, Range-1.f);
   const float v   = std::clamp((db[step]-lo)/(hi-lo), 0.f, 1.f);
@@ -329,8 +350,14 @@ float LipSync::Track::implLevel(size_t step) const {
 
 float LipSync::Track::level(uint64_t ms) const {
   std::lock_guard<std::mutex> guard(sync);
-  const size_t i = size_t(ms/StepMs);
-  const float  k = float(ms%StepMs)/float(StepMs);
+  size_t      i = size_t(ms/StepMs);
+  const float k = float(ms%StepMs)/float(StepMs);
+  if(liveInput && !db.empty()) {
+    // the microphone: a step that has not arrived yet holds the last one (a late chunk does not shut the mouth)
+    i = std::min(i, db.size()-1);
+    const size_t j = std::min(i+1, db.size()-1);
+    return implLevel(i)*(1.f-k) + implLevel(j)*k;
+    }
   return implLevel(i)*(1.f-k) + implLevel(i+1)*k;
   }
 
@@ -387,6 +414,7 @@ void LipSync::start(std::shared_ptr<Track> t, uint64_t now) {
   if(!enabled || open.empty() || t==nullptr)
     return;
   track     = std::move(t);
+  live      = track->isLiveInput();
   startTick = now;
   active    = true;
   inDip     = true;
@@ -511,7 +539,7 @@ bool LipSync::update(uint64_t now, uint64_t dt, Shape& out) {
     }
 
   if(dt>0)
-    mouth = smooth(mouth, lvl, dt, lvl>mouth ? Attack : Release);
+    mouth = smooth(mouth, lvl, dt, lvl>mouth ? (live ? LiveAttack : Attack) : (live ? LiveRelease : Release));
   // louder than the syllable looked: a shape for that
   if(!inDip && mouth>sylPeak*1.2f && now>=lastPick+uint64_t(std::max(0.f,Blend))) {
     const uint64_t t = time + lead;

@@ -1390,20 +1390,22 @@ void playerVoiceCases() {
   LipSync mouth;
   mouth.setShapes({0,0.5f,1});
   mouth.start(first,9000);  // world time differs from the microphone's arrival clock
-  voice.tick(1020);
-  require(first->playedMs()==0,"the named microphone buffer must hold the first 20 ms");
+  const uint64_t buffer = LipSync::liveBufferMs();
+  voice.tick(1000+buffer);
+  require(first->playedMs()==0,"the microphone buffer must hold the clock behind the first chunk");
   voice.append(rate,pcm.data()+320,320,1020);
   voice.append(rate,pcm.data()+640,320,1040);
   LipSync::Shape shape;
   mouth.update(9000,16,shape);
   LipSync::Probe probe;
   mouth.probe(probe);
-  require(first->playedMs()==20 && probe.time==20 && probe.level>0 && close(probe.level,first->level(20)),
+  require(uint64_t(first->playedMs())==40-buffer && probe.time==40-buffer && probe.level>0 &&
+          close(probe.level,first->level(40-buffer)),
           "a silent live track must drive the mouth by its buffered arrival time and level");
   for(size_t i=3; i<pcm.size()/320; ++i)
     voice.append(rate,pcm.data()+i*320,320,1000+i*20);
   voice.tick(1000+voice.durationMs());
-  require(uint64_t(first->playedMs())+PlayerVoice::BufferMs==voice.durationMs() && mouth.isSpeaking(9001),
+  require(uint64_t(first->playedMs())+buffer==voice.durationMs() && mouth.isSpeaking(9001),
           "the hero must still be speaking with exactly one microphone buffer left before finish");
   voice.finish();
   require(first->isFinished() && !mouth.isSpeaking(9001),"finishing the microphone must end the hero's speech");
@@ -1415,8 +1417,35 @@ void playerVoiceCases() {
   voice.tick(10000);
   const auto restarted = voice.track();
   require(restarted->playedMs()==20 && restarted->playedMs()<=int64_t(voice.durationMs()) &&
-          restarted->level(uint64_t(restarted->playedMs()))==0,
-          "the microphone clock must not run ahead of appended samples");
+          restarted->level(uint64_t(restarted->playedMs()))==restarted->level(10) && restarted->level(10)>0,
+          "the microphone clock must not run ahead of appended samples, and a step not here yet holds the last one");
+  voice.finish();
+
+  // a breath before the first word (30 dB below the voice): a stream of an npc stretches it to its own loudest
+  // moment, the microphone measures it against a speech level of its own and keeps the mouth shut
+  const auto breath = sing(rate,{{200,150,150,0.03}});
+  auto streamed = std::make_shared<LipSync::Track>(rate);
+  streamed->append(breath.data(),breath.size());
+  voice.begin();
+  voice.append(rate,breath.data(),breath.size(),20000);
+  require(streamed->level(150)>0.5f && voice.track()->level(150)<0.05f,
+          "a breath must not open the hero's mouth: live "+std::to_string(voice.track()->level(150))+", streamed "+
+          std::to_string(streamed->level(150)));
+  voice.finish();
+  // an npc's voice from the speakers in the microphone, 12 dB below the hero's: ducked while it sounds and
+  // DuckHoldMs after, then heard as it is
+  const auto leak = sing(rate,{{400,150,150,0.25}});
+  voice.begin();
+  uint64_t at = 30000;
+  for(size_t i=0; i+320<=leak.size(); i+=320, at+=20)
+    voice.append(rate,leak.data()+i,320,at,true);
+  const uint64_t ducked = voice.durationMs()-20;
+  for(uint64_t end=at+PlayerVoice::DuckHoldMs+40; at<end; at+=20)
+    voice.append(rate,leak.data(),320,at,false);
+  const auto heard = voice.track();
+  require(heard->peak(0,ducked)<0.05f && heard->level(voice.durationMs()-10)>0.3f,
+          "an npc's voice in the microphone must not open the hero's mouth while it sounds: "+
+          std::to_string(heard->peak(0,ducked))+", after it "+std::to_string(heard->level(voice.durationMs()-10)));
   voice.finish();
 
   VoiceBuffer npc(rate);
@@ -1580,6 +1609,26 @@ void browCases(const GltfHeadMesh& head, const FaceProfile& plain) {
     require(late.update(*p->brows,uint64_t(at+80),s) && s.at==uint64_t(at+80),"a move found 80 ms late must start now");
     late.start(trackOf(16000,glide),7,0);
     require(!late.update(*p->brows,syl+20,s),"a move whose syllable has gone by must not start");
+  }
+  // the live microphone: no sound ahead, so the accent is found in its syllable and the brows start then
+  {
+    auto live = std::make_shared<LipSync::Track>(16000);
+    live->setLiveInput();
+    live->setPlayed(0);
+    SpeechBrows mic;
+    mic.start(live,7,0);
+    SpeechBrows::Start s;
+    std::vector<uint64_t> at;
+    for(size_t k=0; k*320<glide.size(); ++k) {
+      const uint64_t now = k*20;
+      live->append(glide.data()+k*320,std::min<size_t>(320,glide.size()-k*320));
+      live->setPlayed(now>LipSync::liveBufferMs() ? now-LipSync::liveBufferMs() : 0);
+      while(mic.update(*p->brows,now,s))
+        at.push_back(s.at);
+      }
+    require(at.size()==1 && at[0]>=syl && at[0]<=syl+SpeechBrows::LiveLateMs+LipSync::liveBufferMs(),
+            "the brows of a live voice must start within its accented syllable: "+std::to_string(at.size())+" moves"+
+            (at.empty() ? "" : " at "+std::to_string(at[0])+" ms, syllable "+std::to_string(syl)));
   }
 
   // the mood of the line into the face (SpeechBrows::play, as MdlVisual plays it): an angry line of the AI whose voice

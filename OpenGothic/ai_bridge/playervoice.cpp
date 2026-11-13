@@ -16,12 +16,13 @@ void PlayerVoice::begin() {
   held = true;
   ++utterance;
   lips.reset();
-  samples = chunks = 0;
+  samples = chunks = ducked = 0;
+  duckUntil = 0;
   freq = 0;
   deliveryUs.clear();
   }
 
-bool PlayerVoice::append(uint32_t rate, const int16_t* pcm, size_t count, uint64_t now) {
+bool PlayerVoice::append(uint32_t rate, const int16_t* pcm, size_t count, uint64_t now, bool npcVoice) {
   if(!held || count==0 || rate==0)
     return false;
   const bool first = lips==nullptr;
@@ -37,7 +38,13 @@ bool PlayerVoice::append(uint32_t rate, const int16_t* pcm, size_t count, uint64
     Tempest::Log::e("[ai] ptt_audio: sample rate changed within an utterance");
     return false;
     }
+  if(npcVoice)
+    duckUntil = now+DuckHoldMs;
+  const bool duck = now<duckUntil;
+  lips->setLiveGain(duck ? -LipSync::liveDuckDb() : 0.f);
   lips->append(pcm,count);
+  if(duck)
+    ++ducked;
   samples += count;
   ++chunks;
   tick(now);
@@ -59,8 +66,15 @@ void PlayerVoice::audio(World& world, const rapidjson::Value& msg, uint64_t now)
     }
   std::vector<int16_t> pcm(bytes.size()/2);
   std::memcpy(pcm.data(),bytes.data(),bytes.size());
+  // the voice of an npc near the hero is in the microphone too (the speakers): it does not open his mouth
+  Npc* const pl = world.player();
+  bool npcVoice = false;
+  for(uint32_t i=0; i<world.npcCount() && !npcVoice; ++i) {
+    const Npc* npc = world.npcById(i);
+    npcVoice = npc!=nullptr && npc!=pl && npc->qDistTo(pl->position())<DuckCm*DuckCm && npc->isVoiceSounding();
+    }
   const auto before = chunks;
-  const bool first = append(uint32_t(rate),pcm.data(),pcm.size(),now);
+  const bool first = append(uint32_t(rate),pcm.data(),pcm.size(),now,npcVoice);
   if(chunks==before)
     return;
   const int64_t received = JsonRead::integer(msg,"received_at_us",0);
@@ -76,7 +90,8 @@ void PlayerVoice::audio(World& world, const rapidjson::Value& msg, uint64_t now)
 void PlayerVoice::tick(uint64_t now) {
   if(!held || lips==nullptr)
     return;
-  const auto elapsed = now>arrivedAt+BufferMs ? now-arrivedAt-BufferMs : 0;
+  const uint64_t buffer  = LipSync::liveBufferMs();
+  const auto     elapsed = now>arrivedAt+buffer ? now-arrivedAt-buffer : 0;
   lips->setPlayed(std::min(durationMs(),elapsed));
   }
 
@@ -91,6 +106,7 @@ void PlayerVoice::finish() {
     return deliveryUs.empty() ? 0 : deliveryUs[(deliveryUs.size()-1)*percent/100];
     };
   Tempest::Log::i("[ai] ptt_audio ",lips->name()," chunks=",chunks," duration_ms=",durationMs(),
+                 " ducked=",ducked,
                  " live_track=1 silent=1 delivery_samples=",deliveryUs.size(),
                  " delivery_median_us=",percentile(50)," delivery_p95_us=",percentile(95));
   }
