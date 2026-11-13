@@ -453,6 +453,96 @@ void fallbacks(const fs::path& root) {
   expectAllCooked("the same cook completed",base,over);
   }
 
+  // 1_0 of the border override with its shift moved from border 4 to border 8: a GLB of the same length.
+  const auto movedEdit=[&](const std::string& name) {
+    auto moved=stripMesh();
+    moved.vertices[stripVertex(8,0)].y+=30.f;
+    return writeStripOverride(root/name,moved,false)/"chunks/1_0.glb";
+    };
+
+  // Two cooks of one set: A has passed its cells and waits before its index; meanwhile the GLB changes at the
+  // same length and B cooks the set completely. A must not publish its older index over B's.
+  {
+  const auto base=root/"overtaken", over=root/"overtaken-override";
+  writeWorldChunks(stripMesh(),fixtureSource,base);
+  writeStripOverride(over,stripMesh(),true);
+  cookWorldChunks(base,over);
+  const auto edited=movedEdit("overtaken-other");
+  require(fs::file_size(edited)==fs::file_size(over/"chunks/1_0.glb"),"the moved edit must keep its GLB's length");
+  std::string error;
+  try {
+    cookWorldChunks(base,over,{},[&] {
+      fs::copy_file(edited,over/"chunks/1_0.glb",fs::copy_options::overwrite_existing);
+      fs::last_write_time(over/"chunks/1_0.glb",
+                          std::chrono::floor<std::chrono::seconds>(fs::file_time_type::clock::now()-std::chrono::hours(24)));
+      cookWorldChunks(base,over);
+      });
+    }
+  catch(const std::runtime_error& e) {
+    error=e.what();
+    }
+  require(error.find("changed while the world was cooked: its index is not written")!=std::string::npos,
+          "a cook overtaken before its index must not write it, got: "+error);
+  require(verifyCookedWorld(base,over,{},true).empty(),"the newer cook's cells and index must stay a consistent set");
+  expectAllCooked("a cook overtaken by a newer one before its index",base,over);
+  }
+
+  // A cook that fails writing its first changed cell: the index went before that write, so none is left.
+  {
+  const auto base=root/"write-failed", over=root/"write-failed-override";
+  writeWorldChunks(stripMesh(),fixtureSource,base);
+  writeStripOverride(over,stripMesh(),true);
+  cookWorldChunks(base,over);
+  fs::copy_file(movedEdit("write-failed-other"),over/"chunks/1_0.glb",fs::copy_options::overwrite_existing);
+  fs::remove(over/"chunks/1_0.wcb");
+  fs::create_directories(over/"chunks/1_0.wcb/blocker"); // a directory where the cell's file goes: its rename fails
+  bool failed=false;
+  try {
+    cookWorldChunks(base,over);
+    }
+  catch(const std::runtime_error& e) {
+    failed=std::string(e.what()).find("cannot rename")!=std::string::npos;
+    }
+  require(failed && !fs::exists(over/wci::FileName),"a cook that fails writing a cell must leave no index");
+  fs::remove_all(over/"chunks/1_0.wcb");
+  cookWorldChunks(base,over);
+  expectAllCooked("the same cook after a failed cell write",base,over);
+  }
+
+  // The cooked path opens no GLB: with its magic broken at the same length and time, the cooked read still gives
+  // the cell, and the GLB read fails.
+  {
+  dir=copy();
+  const auto plain=loadWorld(dir,{},false);
+  const auto withCooked=loadWorld(dir,{},true);
+  const auto expected=plain.source().read(1,plain.full[1]);
+  const auto path=dir/"chunks/1_0.glb";
+  const auto time=fs::last_write_time(path);
+  auto bytes=fileBytes(path);
+  bytes[0]='X';
+  writeBytes(path,bytes);
+  fs::last_write_time(path,time);
+  require(compareReads(expected,withCooked.source().read(1,plain.full[1])).empty() &&
+          withCooked.source().reads().glb==0,"the cooked read must not open the GLB");
+  bool failed=false;
+  try {
+    (void)plain.source().read(1,plain.full[1]);
+    }
+  catch(const std::exception&) {
+    failed=true;
+    }
+  require(failed,"the GLB read of the broken GLB must fail");
+  std::puts("A GLB broken at the same length and time: the cooked read gives the cell, the GLB read fails");
+  }
+
+  // A .wcb position whose source key is the loaded world's vertex count: outside the world, the cell falls back.
+  dir=copy();
+  chunk=fileBytes(dir/"chunks/1_0.wcb");
+  put32(chunk,get32(chunk,wcb::HeaderSize+16)+12,27); // the source of position 0; the strip has 27 vertices
+  writeBytes(dir/"chunks/1_0.wcb",chunk);
+  expect("a .wcb source key outside the loaded world",compareSet("a source key outside the world",dir),2,2,
+         "position 0 has the stitched id 27, outside the loaded world's 27","chunks/1_0.glb");
+
   // The GLB changed at the same length and its cell cooked again, the index left from the first cook.
   dir=copy();
   index=fileBytes(dir/wci::FileName);

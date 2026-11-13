@@ -47,8 +47,10 @@ struct CookedWorldStats {
 // that already holds the encoded bytes is left as it is. Write order: the index
 // is removed before the first cell file is created or replaced, and written
 // last, so a cook stopped at any point leaves either no index or a consistent
-// set; every writer of cooked files keeps this order. beforeIndex, when given,
-// runs after the cells and before the index (the tests stop a cook there).
+// set; every writer of cooked files keeps this order. A cook whose GLBs changed
+// while it ran writes no index: another cook may hold newer cells. beforeIndex,
+// when given, runs after the cells and before the index (the tests stop a cook
+// there).
 // Throws std::runtime_error.
 CookedWorldStats cookWorldChunks(const std::filesystem::path& dir, const std::filesystem::path& overrideDir = {},
                                  const std::filesystem::path& outDir = {},

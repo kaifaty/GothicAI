@@ -336,6 +336,16 @@ CookedWorldStats cookWorldChunks(const fs::path& dir, const fs::path& overrideDi
   const auto encoded = encodeCookedIndex(index);
   if(beforeIndex)
     beforeIndex();
+  // A GLB that changed since it was read means another cook may already have published newer cells and their
+  // index: this snapshot must not replace it. (A change between this check and the rename below would also have
+  // to be read and cooked by that other cook first, which removes the index before its first cell.)
+  for(size_t cell=0;cell<manifest.cells.size();++cell) {
+    const auto glb = chunkGlbPath(dir,overrideDir,manifest.cells[cell].drawFile());
+    std::error_code error;
+    const auto size = fs::file_size(glb,error);
+    if(error || size!=inputs[cell].first || fs::last_write_time(glb,error)!=inputs[cell].second || error)
+      fail(glb.string()+" changed while the world was cooked: its index is not written");
+    }
   stats.indexWritten = writeCookedFile(indexPath,encoded);
   stats.indexBytes   = encoded.size();
   return stats;
