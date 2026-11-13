@@ -12,7 +12,12 @@ struct LandscapePages::State {
   static constexpr size_t PageMeshlets = 4096;
   static constexpr size_t VertexBytes = PackedMesh::MaxVert*sizeof(StaticMesh::Vertex);
   static constexpr size_t IndexBytes = PackedMesh::MaxPrim*4;
-  static constexpr size_t MeshletBytes = VertexBytes+IndexBytes;
+  // With the ray scene a page keeps the meshlets' triangles for rays as well: 32-bit indices of the page's vertices,
+  // which BLAS of chunks are built from and hit shaders read (rt_common.glsl)
+  static constexpr size_t RtIndexBytes = PackedMesh::MaxInd*sizeof(uint32_t);
+
+  // the bytes of a meshlet in a page: its vertices and 8-bit indices, and with the ray scene its 32-bit indices
+  const size_t MeshletBytes = VertexBytes+IndexBytes+(Shaders::options().doRtScene ? RtIndexBytes : 0);
 
   struct Span {
     size_t first = 0;
@@ -21,6 +26,7 @@ struct LandscapePages::State {
   struct Page {
     Tempest::StorageBuffer vbo;
     Tempest::StorageBuffer ibo;
+    Tempest::StorageBuffer rtIbo;  // only with the ray scene
     std::vector<Span> free;
     size_t capacity = 0;
     };
@@ -55,7 +61,7 @@ class LandscapeRange final {
     ~LandscapeRange() {
       if(page==nullptr)
         return;
-      const auto bytes=span.count*LandscapePages::State::MeshletBytes;
+      const auto bytes=span.count*owner->MeshletBytes;
       if(retired)
         owner->retired-=bytes;
       else
@@ -65,7 +71,7 @@ class LandscapeRange final {
 
     void retire() {
       assert(!retired);
-      const auto bytes=span.count*LandscapePages::State::MeshletBytes;
+      const auto bytes=span.count*owner->MeshletBytes;
       owner->occupied-=bytes;
       owner->retired+=bytes;
       retired=true;
@@ -83,7 +89,7 @@ LandscapePages::Stats LandscapePages::stats() const {
   ret.retiredBytes=state->retired.load();
   ret.pageCount=state->pages.size();
   for(const auto& page:state->pages)
-    ret.freeBytes+=page->capacity*State::MeshletBytes;
+    ret.freeBytes+=page->capacity*state->MeshletBytes;
   ret.freeBytes-=ret.occupiedBytes+ret.retiredBytes;
   return ret;
   }
@@ -111,6 +117,8 @@ std::shared_ptr<LandscapeRange> LandscapePages::allocate(const PackedMesh& mesh)
     auto& device=Resources::device();
     next->vbo=device.ssbo(Tempest::Uninitialized,next->capacity*State::VertexBytes);
     next->ibo=device.ssbo(Tempest::Uninitialized,next->capacity*State::IndexBytes);
+    if(Shaders::options().doRtScene)
+      next->rtIbo=device.ssbo(Tempest::Uninitialized,next->capacity*State::RtIndexBytes);
     next->free.push_back({0,next->capacity});
     page=next.get();
     state->pages.push_back(std::move(next));
@@ -124,12 +132,22 @@ std::shared_ptr<LandscapeRange> LandscapePages::allocate(const PackedMesh& mesh)
   page->free[index].count-=count;
   if(page->free[index].count==0)
     page->free.erase(page->free.begin()+ptrdiff_t(index));
-  state->occupied+=count*State::MeshletBytes;
+  state->occupied+=count*state->MeshletBytes;
 
   // These ranges are either new or have passed the frame recycle fence.
   // Uploads precede consuming draws without waiting for the GPU on the CPU.
   page->vbo.updateAsync(mesh.vertices.data(),range->span.first*State::VertexBytes,count*State::VertexBytes);
   page->ibo.updateAsync(mesh.indices8.data(),range->span.first*State::IndexBytes,count*State::IndexBytes);
+  if(!page->rtIbo.isEmpty()) {
+    // the chunk's indices count from its first vertex, the page's from the page's first one
+    assert(mesh.indices.size()==count*PackedMesh::MaxInd);
+    const auto base=uint32_t(range->span.first*PackedMesh::MaxVert);
+    thread_local std::vector<uint32_t> indices;
+    indices.resize(mesh.indices.size());
+    for(size_t i=0;i<indices.size();++i)
+      indices[i]=mesh.indices[i]+base;
+    page->rtIbo.updateAsync(indices.data(),range->span.first*State::RtIndexBytes,count*State::RtIndexBytes);
+    }
   return range;
   }
 
@@ -156,8 +174,15 @@ StaticMesh::StaticMesh(const PackedMesh& mesh) {
 
 StaticMesh::StaticMesh(const PackedMesh& mesh, LandscapePages& pages)
   :pageRange(pages.allocate(mesh)) {
-  assert(!Shaders::options().doRtScene);
-  // Landscape takes materials from PackedMesh; RT keeps the whole-mesh path.
+  // Landscape takes materials from PackedMesh. The ray scene finds the BLAS of a submesh by its slice (blas()), so
+  // with it the submeshes keep their slices: Landscape builds the BLAS from the page (rtGeometry).
+  if(Shaders::options().doRtScene) {
+    sub.resize(mesh.subMeshes.size());
+    for(size_t i=0;i<mesh.subMeshes.size();++i) {
+      sub[i].iboOffset = mesh.subMeshes[i].iboOffset;
+      sub[i].iboLength = mesh.subMeshes[i].iboLength;
+      }
+    }
   bbox.assign(mesh.bbox());
   }
 
@@ -196,6 +221,23 @@ const Tempest::StorageBuffer& StaticMesh::ibo8Buffer() const {
 
 size_t StaticMesh::firstMeshlet() const {
   return pageRange ? pageRange->span.first : 0;
+  }
+
+const Tempest::StorageBuffer& StaticMesh::rtIbo() const {
+  if(pageRange)
+    return pageRange->page->rtIbo;
+  return ibo;
+  }
+
+size_t StaticMesh::rtFirstIndex(size_t iboOffset) const {
+  return firstMeshlet()*PackedMesh::MaxInd + iboOffset;
+  }
+
+Tempest::RtGeometry StaticMesh::rtGeometry(size_t iboOffset, size_t iboLength) const {
+  if(pageRange)
+    return Tempest::RtGeometry(vboBuffer(),sizeof(Vertex),rtIbo(),Tempest::Detail::IndexClass::i32,
+                               rtFirstIndex(iboOffset),iboLength);
+  return Tempest::RtGeometry(vbo,ibo,iboOffset,iboLength);
   }
 
 void StaticMesh::initSubMeshes(const PackedMesh& mesh) {

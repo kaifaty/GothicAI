@@ -34,6 +34,7 @@
 bool tempestLoadProbeEnabled();
 size_t tempestProbeGpuBytes();
 size_t tempestProbeGpuBufferCount();
+size_t tempestProbeAccelerationStructureCount();
 void tempestProbeUploadBuffers(size_t& stagingCount, size_t& stagingBytes);
 
 namespace LoadProbe {

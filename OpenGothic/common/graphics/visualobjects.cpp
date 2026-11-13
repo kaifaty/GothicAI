@@ -337,8 +337,9 @@ void VisualObjects::updateRtAs(size_t id) {
   rtDirty.push_back(id);
   }
 
-void VisualObjects::updateRtSlot(RtScene& out, Object& obj, bool& landscape) {
-  // What the frame-time walk of the old scene took: visible objects with a BLAS of a supported category and material
+void VisualObjects::updateRtSlot(RtScene& out, Object& obj) {
+  // What the frame-time walk of the old scene took: visible objects with a BLAS of a supported category and material.
+  // The solid and alpha-tested landscape is in the BLAS of its Landscape (addRtLandscape) instead.
   const AccelerationStructure* blas = nullptr;
   const StaticMesh*            mesh = nullptr;
   const auto                   cat  = toRtCategory(obj.type);
@@ -346,11 +347,8 @@ void VisualObjects::updateRtSlot(RtScene& out, Object& obj, bool& landscape) {
   if(inScene) {
     mesh    = obj.bucketId->staticMesh;
     blas    = mesh!=nullptr ? mesh->blas(obj.iboOff, obj.iboLen) : nullptr;
-    inScene = blas!=nullptr && RtScene::isSupported(obj.bucketId->mat, cat);
-    }
-  if(inScene && RtScene::isMergedLandscape(obj.bucketId->mat, cat)) {
-    landscape = true;
-    inScene   = false;
+    inScene = blas!=nullptr && RtScene::isSupported(obj.bucketId->mat, cat) &&
+              !RtScene::isMergedLandscape(obj.bucketId->mat, cat);
     }
   if(!inScene) {
     if(obj.rtSlot!=RtScene::NoSlot)
@@ -554,8 +552,6 @@ void VisualObjects::free(size_t id) {
     std::lock_guard<std::mutex> guard(rtSync);
     if(obj.rtSlot!=RtScene::NoSlot)
       rtFreed.push_back(obj.rtSlot);
-    if(RtScene::isMergedLandscape(obj.bucketId->mat, toRtCategory(obj.type)))
-      rtLandscape = true;
     }
 
   if(obj.wind!=asset::AnimationType::NONE)
@@ -982,13 +978,10 @@ void VisualObjects::postFrameupdate() {
   }
 
 void VisualObjects::updateRtScene(RtScene& out, Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId) {
-  bool landscape = false;
   {
     std::lock_guard<std::mutex> guard(rtSync);
     std::swap(rtDirty, rtDirtyFrame);
     std::swap(rtFreed, rtFreedFrame);
-    landscape   = rtLandscape;
-    rtLandscape = false;
     for(auto id:rtDirtyFrame)
       if(id<objects.size())
         objects[id].rtDirty = false;
@@ -997,22 +990,75 @@ void VisualObjects::updateRtScene(RtScene& out, Tempest::Encoder<Tempest::Comman
     out.freeSlot(slot);
   for(auto id:rtDirtyFrame)
     if(id<objects.size())
-      updateRtSlot(out, objects[id], landscape);
+      updateRtSlot(out, objects[id]);
   rtFreedFrame.clear();
   rtDirtyFrame.clear();
 
-  if(landscape) {
-    // the merged landscape anew, as the walk of the old scene merged it: rare, its streaming is off with -rt 1
-    out.beginLandscape();
-    for(auto& obj:objects) {
-      if(obj.isEmpty() || !obj.visible || !RtScene::isMergedLandscape(obj.bucketId->mat, toRtCategory(obj.type)))
+  {
+    // the BLAS of Landscapes: a chunk comes with its publication and goes when it is released
+    std::lock_guard<std::mutex> guard(rtSync);
+    std::swap(rtLandscapeDirty, rtLandscapeDirtyFrame);
+    for(auto id:rtLandscapeDirtyFrame) {
+      auto& l = rtLandscapes[id];
+      l.dirty = false;
+      if(!l.used)
         continue;
-      auto* mesh = obj.bucketId->staticMesh;
-      if(mesh!=nullptr && mesh->blas(obj.iboOff, obj.iboLen)!=nullptr)
-        out.addLandscape(obj.bucketId->mat, *mesh, obj.iboOff, obj.iboLen);
+      if(l.slot==RtScene::NoSlot)
+        l.slot = out.allocSlot();
+      out.setLandscapeSlot(l.slot, *l.blas, l.alpha, l.geom.data(), l.geom.size(), l.visible);
       }
-    }
+    rtLandscapeDirtyFrame.clear();
+  }
   out.commit(cmd, fId);
+  }
+
+size_t VisualObjects::addRtLandscape(const AccelerationStructure& blas, Material::AlphaFunc alpha,
+                                     std::vector<RtScene::Geometry> geom) {
+  std::lock_guard<std::mutex> guard(rtSync);
+  size_t id = rtLandscapes.size();
+  if(!rtLandscapesFree.empty()) {
+    id = rtLandscapesFree.back();
+    rtLandscapesFree.pop_back();
+    } else {
+    rtLandscapes.emplace_back();
+    }
+  auto& l = rtLandscapes[id];
+  l.blas    = &blas;
+  l.geom    = std::move(geom);
+  l.alpha   = alpha;
+  l.slot    = RtScene::NoSlot;
+  l.used    = true;
+  l.visible = true;
+  if(!l.dirty) {
+    l.dirty = true;
+    rtLandscapeDirty.push_back(id);
+    }
+  return id;
+  }
+
+void VisualObjects::setRtLandscapeVisible(size_t id, bool visible) {
+  std::lock_guard<std::mutex> guard(rtSync);
+  auto& l = rtLandscapes[id];
+  if(l.visible==visible)
+    return;
+  l.visible = visible;
+  if(!l.dirty) {
+    l.dirty = true;
+    rtLandscapeDirty.push_back(id);
+    }
+  }
+
+void VisualObjects::freeRtLandscape(size_t id) {
+  std::lock_guard<std::mutex> guard(rtSync);
+  auto& l = rtLandscapes[id];
+  // the slot goes at the next frame, as an object's; a dirty mark left behind finds the record unused or reused
+  if(l.slot!=RtScene::NoSlot)
+    rtFreed.push_back(l.slot);
+  l.blas = nullptr;
+  l.geom.clear();
+  l.slot = RtScene::NoSlot;
+  l.used = false;
+  rtLandscapesFree.push_back(id);
   }
 
 void VisualObjects::dbgClusters(Tempest::Painter& p, Vec2 wsz) {

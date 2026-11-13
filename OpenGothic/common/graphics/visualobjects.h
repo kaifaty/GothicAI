@@ -135,6 +135,13 @@ class VisualObjects final {
 
     // The objects marked since the last frame into their slots of `out`, then the frame's upload and TLAS build
     void updateRtScene(RtScene& out, Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
+    // A BLAS of a Landscape in the ray scene: its solid or alpha-tested submeshes (RtScene::isMergedLandscape), a
+    // geometry each. Like an object it takes its slot at the next frame; until that frame frees the slot, the BLAS and
+    // the buffers of `geom` outlive freeRtLandscape (Resources::recycle).
+    size_t addRtLandscape(const Tempest::AccelerationStructure& blas, Material::AlphaFunc alpha,
+                          std::vector<RtScene::Geometry> geom);
+    void   setRtLandscapeVisible(size_t id, bool visible);
+    void   freeRtLandscape(size_t id);
 
     void dbgClusters(Tempest::Painter& p, Tempest::Vec2 wsz);
 
@@ -255,7 +262,7 @@ class VisualObjects final {
     void     updateInstance(size_t id, Tempest::Matrix4x4* pos = nullptr);
     // Marks the object for the ray scene: its slot takes the object's state when the frame is built
     void     updateRtAs(size_t id);
-    void     updateRtSlot(RtScene& out, Object& obj, bool& landscape);
+    void     updateRtSlot(RtScene& out, Object& obj);
 
     void     dbgDraw(Tempest::Painter& p, Tempest::Vec2 wsz, const Camera& cam, const DrawClusters::Cluster& cx);
     void     dbgDrawBBox(Tempest::Painter& p, Tempest::Vec2 wsz, const Camera& cam, const DrawClusters::Cluster& c);
@@ -301,11 +308,25 @@ class VisualObjects final {
       };
     std::map<std::pair<int32_t,int32_t>,TextureChunk> textureChunks;
 
-    // Marks of the ray scene: objects move and appear from worker threads too (Interactive::updateAnimation)
+    // A BLAS of a Landscape in the ray scene (addRtLandscape)
+    struct RtLandscape {
+      const Tempest::AccelerationStructure* blas    = nullptr;
+      std::vector<RtScene::Geometry>        geom;
+      Material::AlphaFunc                   alpha   = Material::Solid;
+      uint32_t                              slot    = RtScene::NoSlot;
+      bool                                  used    = false;
+      bool                                  visible = true;
+      bool                                  dirty   = false;
+      };
+
+    // Marks of the ray scene: objects move and appear from worker threads too (Interactive::updateAnimation), and the
+    // whole world's landscape comes from a loading thread
     std::mutex                 rtSync;
     std::vector<size_t>        rtDirty, rtDirtyFrame;
     std::vector<uint32_t>      rtFreed, rtFreedFrame;
-    bool                       rtLandscape = false;  // the merged landscape changed
+    std::vector<RtLandscape>   rtLandscapes;
+    std::vector<size_t>        rtLandscapesFree;
+    std::vector<size_t>        rtLandscapeDirty, rtLandscapeDirtyFrame;
 
     friend class Item;
   };
