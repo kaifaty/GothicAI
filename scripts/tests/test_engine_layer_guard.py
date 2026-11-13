@@ -1,4 +1,4 @@
-"""OpenGothic/cmake/EngineLayerGuard.cmake in `cmake -P` mode on a tiny synthetic engine tree."""
+"""Engine layer include and link-map guards in `cmake -P` mode."""
 
 import importlib.util
 import shutil
@@ -10,6 +10,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 GUARD = ROOT / "OpenGothic/cmake/EngineLayerGuard.cmake"
+PLATFORM_MAP = ROOT / "OpenGothic/cmake/EnginePlatformMap.cmake"
 RULES = ROOT / "scripts/engine_layers.py"
 SPEC = importlib.util.spec_from_file_location("gothic_engine_layers_guard", RULES)
 layers = importlib.util.module_from_spec(SPEC)
@@ -111,3 +112,29 @@ def test_unsupported_glob_fails(tmp_path, glob):
     result = guard(tmp_path, TREE, rules)
     assert result.returncode != 0
     assert f'unsupported glob "{glob}"' in " ".join(result.stderr.split())
+
+
+@pytest.mark.parametrize("link_map,error", [
+    ("libgothic-base-runtime.a(sha256.cpp.o)\n", ""),
+    ("[ 9] /build/libgothic-base-runtime.a[5](sha256.cpp.o)\n", ""),
+    ("libgothic-base-runtime.a(programdata.cpp.o)\n",
+     "gothic-base-runtime(programdata.cpp.o) from common/programdata.cpp belongs to gothic, not platform"),
+    ("# Object files:\n[ 1] unrelated.cpp.o\n", "no mixed runtime objects found"),
+], ids=["gnu-platform", "ld64-platform", "gothic-object", "no-runtime-objects"])
+def test_platform_link_map(tmp_path, link_map, error):
+    directory = tmp_path / "with space"
+    directory.mkdir()
+    map_file = directory / "link.map"
+    map_file.write_text(link_map)
+    inputs = directory / "inputs.cmake"
+    inputs.write_text(f"set(PLATFORM_RULES [==[{RULES}]==])\n"
+                      "set(PLATFORM_MEMBERS [==[gothic-base-runtime|sha256.cpp.o|common/sha256.cpp;"
+                      "gothic-base-runtime|programdata.cpp.o|common/programdata.cpp]==])\n")
+    result = subprocess.run(["cmake", f"-DPLATFORM_MAP={map_file}", f"-DPLATFORM_INPUTS={inputs}",
+                             "-P", str(PLATFORM_MAP)], capture_output=True, text=True)
+    if error:
+        assert result.returncode != 0
+        assert error in " ".join(result.stderr.split())
+    else:
+        assert result.returncode == 0, result.stderr
+        assert "1 mixed runtime objects checked, all platform" in result.stdout

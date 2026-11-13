@@ -27,10 +27,23 @@ foreach(property COMPILE_OPTIONS COMPILE_DEFINITIONS INCLUDE_DIRECTORIES)
 endforeach()
 # CMake exposes no target property for PRIVATE SYSTEM include directories.
 target_include_directories(engine-platform SYSTEM PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/lib/rapidjson/include")
-# The existing dependencies are third-party libraries and the two mixed runtimes, except for
-# the VM. Copy their usage requirements as well as the target's own compile settings above.
+# Explicit current link inputs: vendored libraries, generated platform shader data, OS
+# libraries and the two mixed runtimes. SOURCE_DIR alone would reject miniz, which is
+# created in the root directory. New dependencies require an intentional review here.
+set(platform_allowed_dependencies
+  GothicShaders edd_dbg dmusic Tempest miniz zlibstatic Recast Detour Jolt
+  shlwapi DbgHelp -lpthread -ldl "-framework AppKit"
+  gothic-base-runtime gothic-video-runtime)
 get_target_property(platform_dependencies OpenGothic LINK_LIBRARIES)
+# The VM belongs to OpenGothic only; it has never been an input of the platform link.
 list(REMOVE_ITEM platform_dependencies gothic-daedalus)
+foreach(dependency IN LISTS platform_dependencies)
+  if(NOT dependency IN_LIST platform_allowed_dependencies)
+    message(FATAL_ERROR "engine-platform: OpenGothic dependency '${dependency}' is not an allowed platform link input. "
+      "Keep RPG, Gothic and bridge libraries on OpenGothic only. Review new vendored/system dependencies "
+      "before adding them to platform_allowed_dependencies in cmake/EnginePlatform.cmake.")
+  endif()
+endforeach()
 target_link_libraries(engine-platform PUBLIC ${platform_dependencies})
 # OpenGothic uses the plain signature, whose interface is public by default.
 target_link_libraries(OpenGothic engine-platform)
