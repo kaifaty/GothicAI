@@ -6,11 +6,12 @@
 //     island of added geometry, a removed island) and the base's NEWWORLD in a scratch copy of hard links.
 //   - Every fallback gives the island search's result and its log line.
 //   - The cook: a second cook writes nothing, an override writes its cells, the bundle and the index, two cooks
-//     at once both finish and verify; verify-cooked-world names the surface of a changed pin.
+//     at once both finish and verify; verify-cooked-world (the function and the command) names the surface of a
+//     changed pin, and the command fails.
 //   - One cook per directory: a cook stopped before its index holds back a second cook of the same directory
 //     until it ends, and not a cook of another directory (closes #1284).
 //   - Carried over from the review of task 3: a .wcb of another source world falls back alone.
-//   - A digest of searchIslands' result on the fixture guards WorldCloth::Algorithm.
+//   - A digest of searchIslands' result on the fixture, loaded with its chunk table, guards WorldCloth::Algorithm.
 // Needs GOTHIC_DIR and a ready base for NEWWORLD.
 
 #include "commandline.h"
@@ -49,8 +50,9 @@ namespace fs = std::filesystem;
 using namespace WorldChunkFixtures;
 using Clock = std::chrono::steady_clock;
 
-// SHA-256 of searchIslands' result on clothWorld() (the Digest below). Update it together with WorldCloth::Algorithm.
-constexpr const char* resultDigest = "afc9f4cda11448f5e652611eac3da08b1170fefb09c8d8c07676569fab0b62bb";
+// SHA-256 of searchIslands' result on clothWorld() as chunks, with its chunk table (guardAlgorithm). Update it
+// together with WorldCloth::Algorithm.
+constexpr const char* resultDigest = "536af1672a01bf79dba2b5b0d2a326cb298fc41188159c9dff06273aaee94e30";
 
 void require(bool condition, const std::string& message) {
   if(!condition)
@@ -627,7 +629,19 @@ void cooks(const fs::path& root, const ClothWorld& world) {
   const auto pin = verifyCookedWorld(pinned,{},{},true);
   require(pin.find("surface 1 ("+surface.visual+"): pins differ")!=std::string::npos,
           "verify-cooked-world must name the surface whose pin changed, got: "+pin);
-  std::printf("verify-cooked-world with one pin changed: %s\n",pin.c_str());
+  // The command fails with the same difference.
+  const auto output = root/"pin-verify.txt";
+  std::string command = std::string("\"")+GOTHIC_CONTENT_CONVERT+"\" verify-cooked-world \""+pinned.string()+"\" >\""+
+                        output.string()+"\" 2>&1";
+#ifdef _WIN32
+  command = "\""+command+"\""; // cmd.exe drops the outer pair of quotes
+#endif
+  const int status = std::system(command.c_str());
+  const auto text = readText(output);
+  require(status!=0 && text.find("surface 1 ("+surface.visual+"): pins differ")!=std::string::npos,
+          "content-convert verify-cooked-world must fail naming the surface whose pin changed, status "+
+          std::to_string(status)+": "+text);
+  std::printf("verify-cooked-world with one pin changed: %s; the command exits with status %d\n",pin.c_str(),status);
   }
 
 // ---- one cook per directory (#1284) ----
@@ -899,10 +913,14 @@ struct Digest {
     }
   };
 
-void guardAlgorithm(const ClothWorld& world) {
-  auto landscape = world.mesh;
+// On the game's input: the fixture written as chunks and read back with its chunk table, which the result changes.
+void guardAlgorithm(const fs::path& root, const ClothWorld& world) {
+  const auto dir = root/"guard";
+  writeWorldChunks(world.mesh,clothSource,dir);
+  ChunkTable table;
+  auto landscape = readWorldChunks(dir,{},&table);
   landscape.name = "CLOTH_CONTRACT_MESH";
-  const auto cloth = WorldCloth::searchIslands(landscape);
+  const auto cloth = WorldCloth::searchIslands(landscape,&table);
   Digest d;
   d.u32(uint32_t(cloth.surfaces.size()));
   for(const auto& s:cloth.surfaces) {
@@ -917,6 +935,18 @@ void guardAlgorithm(const ClothWorld& world) {
     }
   d.mesh(cloth.original);
   d.polygons(landscape.polygons);
+  d.u32(uint32_t(table.entries.size()));
+  for(const auto& entry:table.entries) {
+    d.u32(entry.triangleCount);
+    for(const auto* v:{&entry.min,&entry.max}) {
+      d.f32(v->x); d.f32(v->y); d.f32(v->z);
+      }
+    }
+  d.u32(uint32_t(table.triangleChunks.size()));
+  for(size_t t=0;t<table.triangleChunks.size();++t) {
+    d.u32(table.triangleChunks[t]);
+    d.u32(table.triangleSources[t]);
+    }
   const auto value = d.hash.finish();
   std::printf("searchIslands on the fixture: %zu surfaces, digest %s\n",cloth.surfaces.size(),value.c_str());
   require(value==resultDigest,"extract's result changed: raise WorldCloth::Algorithm and update this digest (now "+
@@ -946,7 +976,7 @@ int main() {
     require(!base.empty() && fs::exists(base/"world.json"),"the base has no NEWWORLD");
     newWorld(temporary.path,base);
 
-    guardAlgorithm(world);
+    guardAlgorithm(temporary.path,world);
     std::puts("World cloth bundle contract passed");
     return EXIT_SUCCESS;
     }
