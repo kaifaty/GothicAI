@@ -1160,6 +1160,41 @@ and the lip gap of each take by [`a2f/lip_gap_game.py`](../../reports/content/20
 its `face.csv`). The bench writes `face.csv` for any watched own head: per frame the weights its deformation shows; the
 columns `vf_w` (how far the face from the voice shows) and `vf_emo` (its track has an emotion) are in `metrics.csv`.
 
+## Player voice clip
+
+The acceptance clip of the hero's face under the player's live voice
+([player-voice-face.md](../../reports/content/2026-11-hero-head/player-voice-face.md), step 1): the hero with an own
+head says four recordings of the user's microphone through the AI server as the microphone (`ptt <wav>`: the server's
+`--voice-files` plays the file in real time, streams it back as `ptt_audio` v64, the bridge's live track drives
+`VISEME` and `SpeechBrows`), close up in Xardas' tower of the default save; then Xardas' line plays in the game while the
+microphone hears it (`npc-mix.wav`: his voice 12 dB below the hero's, the hero's phrase over it from 5 s on), once with
+`lips param LiveDuck 0` and once as it is; last the hero says two lines of his original voice (the mouth of a recorded
+voice on the same head). The recordings lie in `/tmp/player-voice/` on the Mac and on Ryzen (16 kHz mono 16-bit, not in
+git). The server runs on the Mac without a model or TTS, the ASR service with `--provider fake`; `--no-player-face`
+films "было" (the mouth still):
+
+```bash
+(cd asr-service && uv run gothic-asr serve --port 47930 --provider fake --fallback none --no-laughter) > $W/asr.log 2>&1 &
+(cd server && uv run gothic-ai serve --port 47931 --llm off --no-console --no-tts --a2f off --no-brain --no-quick \
+  --no-director --no-showrunner --no-embeddings --voice-files --asr-url ws://127.0.0.1:47930 \
+  --memory-db $W/memory.sqlite3 --trace-dir $W/traces [--no-player-face]) > $W/server.log 2>&1 &
+GOTHIC_AI_URL=ws://127.0.0.1:47931 OPENGOTHIC_CONTENT=<content with the hero's own head> TEMPEST_WINDOW_SIZE=1280x720 \
+  OPENGOTHIC_BENCH_REALTIME=1 TEMPEST_AUDIO_LOOPBACK=48000 SOUND=1 MUSIC=0 BENCH_HOST=ryzen \
+  scripts/bench.sh scripts/bench/player-voice-clip.bench <out>
+uv run --with pillow --with numpy python reports/content/2026-11-hero-head/a2f/player_voice_clip.py \
+  <now out> <before out> <MPFB head.glb> <head.glb> <clip dir> --clock-ms <game clock - server clock>
+```
+
+[`a2f/live_lag.py`](../../reports/content/2026-11-hero-head/a2f/live_lag.py) measures a run: per phrase the lag of the
+mouth (the gap between the lips from the weights of `face.csv` on the head's mesh) behind the voice by the peak of
+their cross-correlation, the voice starting where the server played its first chunk (`first_ms` and
+`first_delivery_us` of the bridge's `[ai] ptt_audio` line, the clocks corrected by `--clock-ms`); `lip_open` in the
+pauses of 150 ms and more, before the first word and while only Xardas' voice is in the microphone; the brow moves;
+and the bridge's times from the server's chunk to the bridge and to the tick that shows it (median and p95).
+`player_voice_clip.py` writes `clip.mp4` ("было | стало" side by side, then "без приглушения | с приглушением"; the
+sound is what the microphone heard, not shifted), `sheet.jpg` (pairs of frames on «п», «б», «у», a loud vowel, a
+pause and Xardas' voice) and `key.txt` (the parts, the frames and the measures).
+
 ## Native NPC calibration duels
 
 ### Как работает сейчас
