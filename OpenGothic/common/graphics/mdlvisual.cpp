@@ -1626,9 +1626,12 @@ void MdlVisual::updateGestures(Npc& npc, uint64_t dt) {
   in.playing  = playing;
   in.syllable = beat;
 
-  // the head is the gaze's and the voice's while the hands gesture, and until they are back at rest (updateGaze)
+  // the head is the gaze's and the voice's while the hands gesture, and until they are back at rest (updateGaze);
+  // an animation that took the gesture's place (a nod of the ai queue) has the head at once
   if(playing)
     gestureHead = now + GestureHeadHold;
+  else if(!in.allowed)
+    gestureHead = std::min(gestureHead,now);
   const auto d = gestures.update(in);
   if(d.act==TalkGestures::Act::Start) {
     auto sq = solver.solveFrm(gestureName(d.gesture).data());
