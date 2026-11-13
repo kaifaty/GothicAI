@@ -1421,13 +1421,14 @@ void playerVoiceCases() {
           "the microphone clock must not run ahead of appended samples, and a step not here yet holds the last one");
   voice.finish();
 
-  // a first chunk that came late (a cold start), the next ones on time: the clock goes by them, not by the first
+  // a first chunk that came late (a cold start), the next ones sooner, the last one late again: the clock goes by
+  // the one that came soonest after its time (40 ms of sound at 50062), not by the first or the latest
   voice.begin(50000);
   voice.append(rate,pcm.data(),320,50060);
   voice.append(rate,pcm.data()+320,320,50061);
   voice.append(rate,pcm.data()+640,320,50062);
-  voice.append(rate,pcm.data()+960,320,50080);
-  require(voice.track()->playedMs()==int64_t(60-LipSync::liveBufferMs()),
+  voice.append(rate,pcm.data()+960,320,50090);
+  require(voice.track()->playedMs()==int64_t(50090-50022-LipSync::liveBufferMs()),
           "the microphone clock must follow the chunk that came soonest after its time: "+
           std::to_string(voice.track()->playedMs()));
   voice.finish();
@@ -1443,20 +1444,56 @@ void playerVoiceCases() {
           std::to_string(streamed->level(150)));
   voice.finish();
   // an npc's voice from the speakers in the microphone, 12 dB below the hero's: ducked while it sounds and
-  // DuckHoldMs after, then heard as it is
+  // DuckHoldMs after its last chunk (the room, the output's delay), then heard as it is
   const auto leak = sing(rate,{{400,150,150,0.25f}});
   voice.begin();
   uint64_t at = 30000;
   for(size_t i=0; i+320<=leak.size(); i+=320, at+=20)
     voice.append(rate,leak.data()+i,320,at,true);
-  const uint64_t ducked = voice.durationMs()-20;
-  for(uint64_t end=at+PlayerVoice::DuckHoldMs+40; at<end; at+=20)
+  const uint64_t sounded = voice.durationMs();  // ms of the utterance while the npc spoke
+  const uint64_t lastNpc = at-20;               // the tick of its last chunk
+  uint64_t       held    = sounded;             // ...and of the chunks still within DuckHoldMs after it
+  for(; at<lastNpc+PlayerVoice::DuckHoldMs+60; at+=20) {
     voice.append(rate,leak.data(),320,at,false);
+    if(at<lastNpc+PlayerVoice::DuckHoldMs)
+      held = voice.durationMs();
+    }
   const auto heard = voice.track();
-  require(heard->peak(0,ducked)<0.05f && heard->level(voice.durationMs()-10)>0.3f,
-          "an npc's voice in the microphone must not open the hero's mouth while it sounds: "+
-          std::to_string(heard->peak(0,ducked))+", after it "+std::to_string(heard->level(voice.durationMs()-10)));
+  require(held>=sounded+40 && held+40<=voice.durationMs(),"the duck test must have chunks within the hold and after it");
+  require(heard->peak(0,sounded-10)<0.05f,"an npc's voice in the microphone must not open the hero's mouth while it "
+          "sounds: "+std::to_string(heard->peak(0,sounded-10)));
+  require(heard->peak(sounded,held-10)<0.05f,"the microphone must stay ducked DuckHoldMs after the npc's last chunk: "+
+          std::to_string(heard->peak(sounded,held-10)));
+  require(heard->peak(held+10,voice.durationMs()-10)>0.3f,"after DuckHoldMs the same sound must open the mouth: "+
+          std::to_string(heard->peak(held+10,voice.durationMs()-10)));
   voice.finish();
+  // who ducks it: not the hero (his own live track sounds), not one farther than DuckCm, not one silent
+  const float nearCm = PlayerVoice::DuckCm*0.5f, farCm = PlayerVoice::DuckCm*1.5f;
+  require(PlayerVoice::ducks(false,nearCm*nearCm,true) && !PlayerVoice::ducks(true,0,true) &&
+          !PlayerVoice::ducks(false,farCm*farCm,true) && !PlayerVoice::ducks(false,nearCm*nearCm,false),
+          "only a sounding voice of an npc near the hero must duck the microphone");
+
+  // a pause of 150 ms shuts the mouth of a live track (LiveRelease; LipSync::start must know the track is live)
+  {
+    const auto said = sing(rate,{{300,150,150,1},{200,0,0,0}});
+    voice.begin();
+    voice.append(rate,said.data(),said.size(),40000);
+    LipSync live;
+    live.setShapes({0,1,1});  // every shape opens fully: lip_open is the mouth itself
+    live.start(voice.track(),0);
+    LipSync::Probe p;
+    float loud = 0;
+    for(uint64_t now=0; now<=450; now+=10) {
+      voice.track()->setPlayed(now);
+      live.update(now,10,shape);
+      live.probe(p);
+      if(now==290)
+        loud = p.open;
+      }
+    require(loud>0.5f && p.open<0.05f,"150 ms of silence must shut the mouth of a live voice: "+std::to_string(loud)+
+            " -> "+std::to_string(p.open));
+    voice.finish();
+  }
 
   VoiceBuffer npc(rate);
   npc.append(reinterpret_cast<const uint8_t*>(pcm.data()),640);

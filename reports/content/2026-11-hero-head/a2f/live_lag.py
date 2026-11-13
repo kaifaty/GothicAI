@@ -102,6 +102,17 @@ def runs(mask):
             i += 1
 
 
+def read_log(path):
+    """game.log by lines: our lines are UTF-8, the game's names in them Windows-1251 (the hero is «Я», 0xDF)."""
+    out = []
+    for raw in Path(path).read_bytes().splitlines():
+        try:
+            out.append(raw.decode('utf-8'))
+        except UnicodeDecodeError:
+            out.append(raw.decode('cp1251', 'replace'))
+    return out
+
+
 def deliveries(log, clock):
     out = []
     us = clock*1000
@@ -158,7 +169,7 @@ def measure(src, base, head, segs=('voice',), offset=0.0, clock=0.0):
         face = list(csv.reader(f))
     with open(src/'metrics.csv') as f:
         metrics = list(csv.DictReader(f))
-    log = (src/'game.log').read_text(errors='replace').splitlines()
+    log = read_log(src/'game.log')
     report = {'phrases': [], 'delivery': deliveries(log, clock)}
     # the bridge's "[ai] ptt_audio" lines and the bench's `ptt`s go in the same order
     ptts = [dict(e) for e in events if e['kind'] == 'hero']

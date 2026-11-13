@@ -81,7 +81,7 @@ void PlayerVoice::audio(World& world, const rapidjson::Value& msg, uint64_t now)
   bool npcVoice = false;
   for(uint32_t i=0; i<world.npcCount() && !npcVoice; ++i) {
     const Npc* npc = world.npcById(i);
-    npcVoice = npc!=nullptr && npc!=pl && npc->qDistTo(pl->position())<DuckCm*DuckCm && npc->isVoiceSounding();
+    npcVoice = npc!=nullptr && ducks(npc==pl,npc->qDistTo(pl->position()),npc->isVoiceSounding());
     }
   const auto     before  = chunks;
   const uint64_t startMs = durationMs();  // where the chunk lies in the utterance

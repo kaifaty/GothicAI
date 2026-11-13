@@ -2,6 +2,7 @@
 """The clip of the hero's face under the player's live voice (player-voice-face.md, step 1).
 
   player_voice_clip.py <now run> <before run> <MPFB head.glb> <head.glb> <out dir> [--clock-ms X] [--extra text]
+      [--key-only]   (key.txt alone: clip.mp4 and sheet.jpg are left as they are)
 
 The runs are outputs of scripts/bench/player-voice-clip.bench: "now" with the server's player face, "before" with
 --no-player-face (the mouth still). Each recording starts where the server played its first chunk (live_lag.py: by
@@ -63,14 +64,17 @@ def ptts(r, seg):
     return [e for e in r['hero'] if e['seg'] == seg]
 
 
-def part(now, before, seg_l, seg_r, left, right, title, start, tmp, n):
-    """One part of the clip: two recordings side by side from LEAD before their first phrase, with the microphone."""
+def part(now, before, seg_l, seg_r, left, right, title, start, tmp, n, encode=True):
+    """One part of the clip: two recordings side by side from LEAD before their first phrase, with the microphone.
+    encode=False: only its length."""
     L, R = ptts(before if left == 'было' else now, seg_l), ptts(now, seg_r)
     src_l = (before if left == 'было' else now)['src']/f'{seg_l}.mp4'
     src_r = now['src']/f'{seg_r}.mp4'
     fps = now['fps'][seg_r]
     a_l, a_r = L[0]['frame']/fps-LEAD, R[0]['frame']/fps-LEAD
     dur = (R[-1]['frame']-R[0]['frame'])/fps+R[-1]['ms']/1000+LEAD+TAIL
+    if not encode:
+        return None, dur
     # the microphone: each recording from the time the server started to play it
     mic = np.zeros(int(dur*RATE))
     for e in R:
@@ -121,6 +125,9 @@ def frame(r, seg, wav, t, ms):
 def main(argv):
     args = list(argv)
     opt = {}
+    key_only = '--key-only' in args
+    if key_only:
+        args.remove('--key-only')
     for name in ('--clock-ms', '--extra'):
         if name in args:
             i = args.index(name)
@@ -146,10 +153,12 @@ def main(argv):
                  part(now, before, 'npc', 'npc', 'было', 'стало',
                       'Голос Ксардаса в микрофоне (на 12 дБ тише героя), с 5 с — фраза героя', start, tmp, 1),
                  part(now, before, 'npc0', 'npc', 'без приглушения', 'с приглушением',
-                      'Голос Ксардаса в микрофоне: как было бы без приглушения', start, tmp, 2)]
+                      'Голос Ксардаса в микрофоне: как было бы без приглушения', start, tmp, 2)] if not key_only else \
+            [part(now, before, s, s, '', '', '', start, tmp, i, False) for i, s in enumerate(('voice', 'npc', 'npc'))]
         (tmp/'list.txt').write_text(''.join(f"file '{p}'\n" for p, _ in parts))
-        subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'concat', '-safe', '0', '-i', str(tmp/'list.txt'),
-                        '-c', 'copy', str(out/'clip.mp4')], check=True)
+        if not key_only:
+            subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'concat', '-safe', '0', '-i', str(tmp/'list.txt'),
+                            '-c', 'copy', str(out/'clip.mp4')], check=True)
 
         # the sheet
         shots = []
@@ -182,10 +191,12 @@ def main(argv):
                 fl = pick(src_l, seg_l, frame(src_l, seg_l, wav, at, ms), how)
             title += '; lip_open %s %.2f, %s %.2f' % (left, src_l['lip'].get((seg_l, fl), 0), right,
                                                     now['lip'].get((seg_r, fr), 0))
+            key_moments.append(f'лист: {title} — {left} кадр {fl} ({seg_l}.mp4), {right} кадр {fr} ({seg_r}.mp4)')
+            if key_only:
+                continue
             il = frame_at(src_l['src']/f'{seg_l}.mp4', fl, src_l['fps'][seg_l], tmp/'l.png')
             ir = frame_at(now['src']/f'{seg_r}.mp4', fr, now['fps'][seg_r], tmp/'r.png')
             cells.append((title, left, right, il, ir))
-            key_moments.append(f'лист: {title} — {left} кадр {fl} ({seg_l}.mp4), {right} кадр {fr} ({seg_r}.mp4)')
         w, h = 640, 360
         crop = lambda im: im.crop((im.width//2-im.height*8//9, 0, im.width//2+im.height*8//9, im.height))  # noqa: E731
         sheet = Image.new('RGB', (2*w+30, len(cells)*(h+60)+20), BG)
@@ -198,7 +209,8 @@ def main(argv):
                 x = 10+k*(w+10)
                 sheet.paste(crop(im).resize((w, h)), (x, y+34))
                 d.text((x+8, y+40), lbl, fill=(255, 255, 255), font=fs)
-        sheet.save(out/'sheet.jpg', quality=90)
+        if not key_only:
+            sheet.save(out/'sheet.jpg', quality=90)
 
     key = ['Лицо героя под живой голос игрока (player-voice-face.md, шаг 1). Стенд player-voice-clip.bench на Ryzen, '
            'голова героя 3a с формами Mark (контент hero-head-3a-voice1, профиль mark.face.json), сервер без модели, '

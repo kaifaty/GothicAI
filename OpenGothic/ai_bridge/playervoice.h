@@ -18,6 +18,10 @@ class PlayerVoice final {
     static constexpr uint64_t DuckHoldMs = 150;  // the room and the output's delay after an npc's voice ends
     static constexpr float    DuckCm     = 2000; // an npc this near the hero is heard (WorldSound::talkRange)
 
+    // a voice of this one is in the microphone and ducks it: not the hero (his own live track sounds too), nearer
+    // than DuckCm (qDist: squared cm), its voice sounding now
+    static bool ducks(bool hero, float qDist, bool sounding) { return !hero && qDist<DuckCm*DuckCm && sounding; }
+
     void begin(uint64_t now = 0);  // the talk key is pressed (now: the tick, for first_ms in the log)
     void audio(World& world, const rapidjson::Value& msg, uint64_t now);
     // npcVoice: an npc's voice sounds near the hero now
