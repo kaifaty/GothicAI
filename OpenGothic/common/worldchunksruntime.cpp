@@ -407,7 +407,7 @@ WorldChunkMesh ChunkMeshSource::read(size_t chunk, std::span<const uint32_t> sou
                            impl->featureCount},[&] { return readGlb(chunk,sources,currentFile); });
   }
 
-ChunkReadCounts ChunkMeshSource::reads() const { return impl->cooked.counts(); }
+const CookedChunkSource& ChunkMeshSource::cooked() const { return impl->cooked; }
 
 WorldChunkMesh ChunkMeshSource::readGlb(size_t chunk, std::span<const uint32_t> sources, bool currentFile) const {
   auto file=impl->files.at(chunk);

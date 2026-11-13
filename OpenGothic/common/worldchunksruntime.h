@@ -8,6 +8,7 @@
 #include <utility>
 
 class ChunkMeshSource;
+class CookedChunkSource;
 
 // What readWorldChunks computes on the way, for the cooked chunks
 // (worldchunkcook.h) and their timing; the game passes none.
@@ -66,6 +67,8 @@ class ChunkMeshSource {
     // currentFile always reads the GLB.
     WorldChunkMesh read(size_t chunk, std::span<const uint32_t> sources, bool currentFile=false) const;
     ChunkReadCounts reads() const;
+    // The cooked set the world was loaded with, if any (worldchunkcookedsource.h).
+    const CookedChunkSource& cooked() const;
     // Estimated retained container storage, including strings; excludes allocator metadata.
     size_t memoryBytes() const;
 

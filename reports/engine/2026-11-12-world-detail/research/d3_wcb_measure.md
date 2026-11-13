@@ -252,3 +252,57 @@ The flight bench `scripts/bench.sh streaming-flythrough` on Ryzen with the ×1 c
 | frames, whole route: FPS, p99 | 104.8, 12.2 ms | 105.6, 11.8 ms |
 
 Every cell was read once, during load and warm-up: in this route no cell leaves the Far ring, so the passes publish nothing and their counters stay at 403. The read time counts the Far reads on the packing thread as well as the Near reads on the main thread. Frame times are close on both paths; with one run each there is no noise estimate.
+
+## Task 4: world cloth (2026-11-13)
+
+`WorldCloth::extract` searches the stitched mesh for cloth islands, which cross cell borders. The cook now runs that search once per world and override set and writes its result beside the index as `cloth.wcl` ([`worldclothbundle.h`](../../../../OpenGothic/common/physics/worldclothbundle.h) holds the byte table): the surfaces, the original mesh, and per cell the ascending local triangle ordinals taken out as cloth. At load `extract` takes it when the cooked index is in use, every GLB had its index entry's length, and the bundle names the same source world, the SHA-256 of the index bytes the load read, this build's rules hash and `WorldCloth::Algorithm`. Otherwise, and on any failure, it runs the island search as before. The landscape and the chunk table come from the same `retainWorldTriangles` call on both paths. `OPENGOTHIC_WCB=0` turns the bundle off with the index. The whole cook now runs under an exclusive lock on the index's directory (`flock`; a named mutex on Windows, not run here).
+
+### Machine and commands
+
+Ryzen as above; the branch's `content-convert` from the check build (`RelWithDebInfo`, `-O2 -g1`), branch `codex/landscape-d3-cloth`, one `scripts/gq` job of class `quick` (4 threads, 12 GB) in `~/gothic-ai/landscape-d3-cloth/`. Load average 1.5–3.7 during the runs, warm page cache. The same base `c885037e…d09e`:
+
+```
+content-convert --self-test                                                # passed
+content-convert cook-world $B/worlds/<W> --out $T/x1-cooked/<W>           # then verify-cooked-world, then a second cook
+content-convert stress-base $B $T/x1  --subdivide 0 --meshes 0            # 8.6 s
+content-convert stress-base $B $T/w16 --subdivide 2 --meshes 0            # 41.3 s, peak RSS 4.2 GB
+content-convert verify-cooked-world $T/w16/worlds/<W>
+content-convert time-world $T/<set>/worlds/NEWWORLD
+```
+
+`verify-cooked-world` now also compares the bundle with a fresh island search on the stitched mesh. It passed on the four worlds at ×1 (cooked with `--out`; the base held no `.wcb`, `.wci` or `.wcl` before and after) and at ×16; ×16 `NEWWORLD` took 10.7 s with a peak RSS of 3.4 GB. A second `cook-world` of each ×1 world wrote no cell and left the index and the bundle.
+
+### Bytes and surfaces
+
+| World | ×1 surfaces, triangles | ×1 bundle | ×16 surfaces, triangles | ×16 bundle |
+|---|---:|---:|---:|---:|
+| NEWWORLD | 17, 1 280 | 187 979 | 10, 20 032 | 2 358 628 |
+| ADDONWORLD | 0, 0 | 3 504 | 0, 0 | 3 760 |
+| OLDWORLD | 0, 0 | 3 968 | 0, 0 | 4 176 |
+| DRAGONISLAND | 10, 1 252 | 179 876 | 10, 20 032 | 2 357 828 |
+
+A world without cloth costs 8 bytes per cell plus about 500 bytes of header, directory and the empty original mesh. At ×16 `NEWWORLD` has 10 surfaces instead of 17: the subdivided city banners have 16 triangles and no longer pass the rule's four-position, four-triangle filter. This is how the island search treats the stress set, the same on both paths.
+
+### Wall time, `NEWWORLD`
+
+Five runs each, milliseconds: median, then min–max. The island search row runs on a copy of `readWorldChunks`' mesh and table and includes its own `retainWorldTriangles`. The bundle rows read and check the file against the index, then apply it to the loaded mesh and table: the exclusions against the table, then the same `retainWorldTriangles`.
+
+| Stage | ×1 | ×16 |
+|---|---:|---:|
+| `WorldCloth::extract` by island search | 21.8 (21.4–23.6) | 359.1 (343.1–368.9) |
+| read and validate the bundle | 0.1 (0.1–0.1) | 0.4 (0.4–0.4) |
+| apply the bundle (exclusions, `retainWorldTriangles`) | 10.0 (9.9–10.4) | 209.1 (182.6–226.2) |
+| for comparison: `readWorldChunks` total | 533.1 (507.4–541.7) | 7724.3 (7666.1–8128.4) |
+
+The bundle saves 12 ms of the island search at ×1 and 150 ms at ×16. What is left is mostly `retainWorldTriangles`, which copies the five polygon arrays of the whole stitched mesh on either path. Its real gain comes with task 8: a start without the stitched mesh needs the bundle, not the search.
+
+### In the game
+
+`scripts/bench.sh streaming-flythrough` on Ryzen (`BENCH_HOST=ryzen`) with the ×1 copy (`OPENGOTHIC_BASE=$T/x1`, its own `OPENGOTHIC_BASE_CACHE`, `OPENGOTHIC_CONTENT=` and `OPENGOTHIC_TEXTURES=` empty), once with the cooked path and then once with `OPENGOTHIC_WCB=0`. The look of the cloth was not assessed: nothing in its simulation or drawing changed.
+
+| | cooked path | `OPENGOTHIC_WCB=0` |
+|---|---|---|
+| bench | exit 0, 203 s | exit 0, 197 s |
+| `[world-cloth]` line | `bundle …/x1/worlds/NEWWORLD/cloth.wcl: 17 surfaces, 1280 triangles` | none: no index in use, the island search ran |
+| `cloth_surfaces` load mark | `surfaces=17` (29.3 ms) | `surfaces=17` (27.5 ms) |
+| chunk reads cooked / GLB | 403 / 0, 128.2 ms | 0 / 403, 534.1 ms |

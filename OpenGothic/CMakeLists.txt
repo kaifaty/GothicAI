@@ -75,7 +75,7 @@ endif()
 
 # sources
 file(GLOB_RECURSE OPENGOTHIC_SOURCES "common/*.h" "common/*.cpp")
-foreach(source zenkitlog daedalus/vm daedalus/script daedalus/classes baseidentity basestoreimport sha256 baseimport basesources worldchunks worldchunksruntime worldchunkmanifest worldchunkbinary worldchunkindex worldchunkcook worldchunkcookedsource worlddata modeldata fontdata programdata outputunits audiodata basemesh gothicglb gltfmesh asset/fromzenkit asset/worldfromzenkit asset/modelfromzenkit asset/programfromzenkit
+foreach(source zenkitlog daedalus/vm daedalus/script daedalus/classes baseidentity basestoreimport sha256 baseimport basesources worldchunks worldchunksruntime worldchunkmanifest worldchunkbinary worldchunkindex worldchunkcook worldchunkcookedsource physics/worldcloth physics/worldclothbundle worlddata modeldata fontdata programdata outputunits audiodata basemesh gothicglb gltfmesh asset/fromzenkit asset/worldfromzenkit asset/modelfromzenkit asset/programfromzenkit
                utils/fileutil dmusic/sourcefile dmusic/riff dmusic/segment dmusic/track dmusic/style dmusic/band
                dmusic/reference dmusic/info dmusic/pattern musicdata dmusic/dlscollection dmusic/wave dmusic/soundfont
                dmusic/hydra dmusic/directmusicimport dmusic/dlsruntime dmusic/styleruntime dmusic/waveruntime
@@ -104,9 +104,6 @@ configure_file(common/physics/fracturedata.h.in generated/fracturedata.h @ONLY)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/data/cloth-vobs.csv")
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/data/cloth-vobs.csv" CLOTH_VOBS_DATA)
 configure_file(common/graphics/clothdata.h.in generated/clothdata.h @ONLY)
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/data/cloth-world.csv")
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/data/cloth-world.csv" CLOTH_WORLD_DATA)
-configure_file(common/physics/clothworlddata.h.in generated/clothworlddata.h @ONLY)
 target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 # The census builder digest is generated at build time, without reconfiguring
@@ -190,6 +187,7 @@ include(cmake/BaseImport.cmake)
 target_sources(gothic-base-runtime PRIVATE "${BASE_ROOT}/common/worldchunkmanifest.cpp"
   "${BASE_ROOT}/common/worldchunkbinary.cpp" "${BASE_ROOT}/common/worldchunkindex.cpp" "${BASE_ROOT}/common/worldchunkcook.cpp"
   "${BASE_ROOT}/common/worldchunkcookedsource.cpp")
+include(cmake/WorldCloth.cmake)
 if(MSVC)
   # musicnative.c (runtime) and basemusic.c/musicnativeimport.c (import) read dmusic's private structs
   # with C11 _Atomic counters; dmusic opts its own sources in the same way. Set here, not in
@@ -682,6 +680,11 @@ endif()
   add_executable(gothic-wcb-source-contract EXCLUDE_FROM_ALL tests/wcb_source_contract.cpp)
   target_link_libraries(gothic-wcb-source-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
   target_include_directories(gothic-wcb-source-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
+  add_executable(gothic-worldcloth-cooked-contract EXCLUDE_FROM_ALL tests/worldcloth_cooked_contract.cpp)
+  target_link_libraries(gothic-worldcloth-cooked-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
+  target_include_directories(gothic-worldcloth-cooked-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
+  target_compile_definitions(gothic-worldcloth-cooked-contract PRIVATE GOTHIC_CONTENT_CONVERT="$<TARGET_FILE:content-convert>")
+  add_dependencies(gothic-worldcloth-cooked-contract content-convert)
   add_executable(gothic-asset-digest EXCLUDE_FROM_ALL tests/asset_digest.cpp)
   target_link_libraries(gothic-asset-digest PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
   target_include_directories(gothic-asset-digest SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
@@ -725,6 +728,7 @@ endif()
     target_compile_options(gothic-worldbase-contract PRIVATE -Wall -Wconversion -Werror)
     target_compile_options(gothic-wcb-contract PRIVATE -Wall -Wconversion -Werror)
     target_compile_options(gothic-wcb-source-contract PRIVATE -Wall -Wconversion -Werror)
+    target_compile_options(gothic-worldcloth-cooked-contract PRIVATE -Wall -Wconversion -Werror)
   endif()
   add_custom_target(check-cloth
     COMMAND $<TARGET_FILE:gothic-cloth-contract>

@@ -1,12 +1,13 @@
 #pragma once
 
-// Cooking a world's chunks into .wcb files (worldchunkbinary.h) and the set's
-// index (worldchunkindex.h), and assembling them back. readWorldChunks stays
-// the truth: the cook runs it once and splits its stitched result into what
-// each cell's GLB and world.json alone decide (the .wcb) and what the whole
-// world and override set decide (the index). The assembler is for the
-// converter's checks, tests and measurements; the game reads a cell through
-// worldchunkcookedsource.h.
+// Cooking a world's chunks into .wcb files (worldchunkbinary.h), the set's
+// index (worldchunkindex.h) and its world cloth bundle (physics/worldclothbundle.h),
+// and assembling them back. readWorldChunks stays the truth: the cook runs it
+// once and splits its stitched result into what each cell's GLB and world.json
+// alone decide (the .wcb) and what the whole world and override set decide (the
+// index), then runs the island search of world cloth on it (the bundle). The
+// assembler is for the converter's checks, tests and measurements; the game
+// reads a cell through worldchunkcookedsource.h.
 
 #include "worldchunkbinary.h"
 #include "worldchunkindex.h"
@@ -36,25 +37,37 @@ struct CookedWorldStats {
   size_t   written      = 0;     // cells whose .wcb was written
   size_t   left         = 0;     // cells whose .wcb on disk already held the bytes: not rewritten
   bool     indexWritten = false;
+  bool     clothWritten = false; // the world cloth bundle
   uint64_t triangles    = 0;
   uint64_t glbBytes     = 0;     // of the GLBs read
   uint64_t wcbBytes     = 0;     // of every cell's .wcb, written or left
   uint64_t indexBytes   = 0;
+  uint64_t clothBytes   = 0;
+  size_t   clothSurfaces  = 0;
+  uint64_t clothTriangles = 0;   // taken out of the cells as cloth
   };
 
 // Reads dir with overrideDir through readWorldChunks, then writes one .wcb per
-// cell of world.json (cookedChunkPath) and the index (cookedIndexPath). A file
-// that already holds the encoded bytes is left as it is. Write order: the index
-// is removed before the first cell file is created or replaced, and written
-// last, so a cook stopped at any point leaves either no index or a consistent
-// set; every writer of cooked files keeps this order. A cook whose GLBs changed
-// while it ran writes no index: another cook may hold newer cells. beforeIndex,
-// when given, runs after the cells and before the index (the tests stop a cook
-// there).
+// cell of world.json (cookedChunkPath), the world cloth bundle (cookedClothPath,
+// physics/worldclothbundle.h) and the index (cookedIndexPath). A file that
+// already holds the encoded bytes is left as it is. Write order: the index is
+// removed before the first cell or bundle file is created or replaced, and
+// written last, so a cook stopped at any point leaves either no index or a
+// consistent set; every writer of cooked files keeps this order. A cook whose
+// GLBs changed while it ran writes no index (something other than a cook may
+// have changed them). One cook per directory at a time: the whole cook runs
+// under an exclusive lock on the directory of the index (flock on POSIX, a named
+// mutex on Windows; both go with the process, no file is left), a second cook
+// waits; a cook nested in another's hook on the same thread takes no second
+// lock. Where no lock can be taken (a file system without locks) the cook logs
+// one line and runs without it. The hooks are for the tests: beforeIndex runs
+// after the cells and the bundle, before the GLB check; afterCheck after the
+// check, before the index is written.
 // Throws std::runtime_error.
 CookedWorldStats cookWorldChunks(const std::filesystem::path& dir, const std::filesystem::path& overrideDir = {},
                                  const std::filesystem::path& outDir = {},
-                                 const std::function<void()>& beforeIndex = {});
+                                 const std::function<void()>& beforeIndex = {},
+                                 const std::function<void()>& afterCheck = {});
 
 // Writes bytes to path through a temporary name unique to the process and the
 // call, then renames it over path; leaves a file that already holds these bytes
@@ -98,7 +111,9 @@ std::string compareChunkTables(const ChunkTable& expected, const ChunkTable& act
 
 // Assembles the cooked chunks of dir (cookedChunkPath, cookedIndexPath) and
 // compares them with readWorldChunks of the same files: empty when the mesh and
-// the table are equal field by field, otherwise the first difference. With
-// hash, every GLB's SHA-256 is checked against its chunk as well.
+// the table are equal field by field and the world cloth bundle equals a fresh
+// island search on that mesh (with the index's SHA-256, this build's rules and
+// algorithm), otherwise the first difference. With hash, every GLB's SHA-256 is
+// checked against its chunk as well.
 std::string verifyCookedWorld(const std::filesystem::path& dir, const std::filesystem::path& overrideDir = {},
                               const std::filesystem::path& outDir = {}, bool hash = false);
