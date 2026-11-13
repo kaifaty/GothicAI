@@ -117,7 +117,7 @@ def cmd_layer(_args) -> int:
     emitters = [('wall-torch-fire-flame', 'OWN_TORCH_FLAME', flame),
                 ('wall-torch-fire-flame-a', 'OWN_TORCH_FLAME_SIDE', rim[0]),
                 ('wall-torch-fire-flame-b', 'OWN_TORCH_FLAME_SIDE', rim[1]),
-                ('wall-torch-fire-licks', 'OWN_TORCH_LICKS', top - axis * 5),
+                ('wall-torch-fire-licks', 'OWN_TORCH_LICKS', top - axis * 8),
                 ('wall-torch-fire-sparks', 'OWN_TORCH_SPARKS', top + up * 5),
                 ('wall-torch-fire-drops', 'OWN_TORCH_DROPS', top - axis * wrap_cm + lean * radius_cm),
                 ('wall-torch-fire-soot', 'OWN_TORCH_SOOT', top + up * 24)]

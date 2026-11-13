@@ -5,11 +5,11 @@
  "light": [{"id": 20160, "color": [230, 84, 15], "near": 8, "flicker_from": "wall-torch-fire-flame", "jitter_cm": 1.5, "offset_cm": [1.2, 21.6, -0.2]}],
  "add": [
   {"key": "wall-torch-fire-flame", "kind": "emitter", "pfx": "OWN_TORCH_FLAME", "position": [405.3, 151.4, -3086.7], "yaw_deg": 0, "flicker": {"pulse_hz": 4.5, "jitter_hz": 12, "amount": 0.2, "seed": 7}},
-  {"key": "wall-torch-fire-flame-a", "kind": "emitter", "pfx": "OWN_TORCH_FLAME_SIDE", "position": [405.5, 145.3, -3082.1], "yaw_deg": 0, "flicker": {"pulse_hz": 4.5, "jitter_hz": 12, "amount": 0.2, "seed": 8}},
-  {"key": "wall-torch-fire-flame-b", "kind": "emitter", "pfx": "OWN_TORCH_FLAME_SIDE", "position": [405.5, 145.3, -3091.3], "yaw_deg": 0, "flicker": {"pulse_hz": 4.5, "jitter_hz": 12, "amount": 0.2, "seed": 9}},
-  {"key": "wall-torch-fire-licks", "kind": "emitter", "pfx": "OWN_TORCH_LICKS", "position": [405.6, 132.5, -3086.7], "yaw_deg": 0},
+  {"key": "wall-torch-fire-flame-a", "kind": "emitter", "pfx": "OWN_TORCH_FLAME_SIDE", "position": [405.4, 145.3, -3082.5], "yaw_deg": 0, "flicker": {"pulse_hz": 4.5, "jitter_hz": 12, "amount": 0.2, "seed": 8}},
+  {"key": "wall-torch-fire-flame-b", "kind": "emitter", "pfx": "OWN_TORCH_FLAME_SIDE", "position": [405.4, 145.3, -3091.0], "yaw_deg": 0, "flicker": {"pulse_hz": 4.5, "jitter_hz": 12, "amount": 0.2, "seed": 9}},
+  {"key": "wall-torch-fire-licks", "kind": "emitter", "pfx": "OWN_TORCH_LICKS", "position": [406.4, 129.6, -3086.7], "yaw_deg": 0},
   {"key": "wall-torch-fire-sparks", "kind": "emitter", "pfx": "OWN_TORCH_SPARKS", "position": [404.1, 142.3, -3086.7], "yaw_deg": 0},
-  {"key": "wall-torch-fire-drops", "kind": "emitter", "pfx": "OWN_TORCH_DROPS", "position": [404.5, 110.3, -3086.7], "yaw_deg": 0},
+  {"key": "wall-torch-fire-drops", "kind": "emitter", "pfx": "OWN_TORCH_DROPS", "position": [405.1, 110.3, -3086.7], "yaw_deg": 0},
   {"key": "wall-torch-fire-soot", "kind": "emitter", "pfx": "OWN_TORCH_SOOT", "position": [404.1, 161.3, -3086.7], "yaw_deg": 0}
  ]
 }

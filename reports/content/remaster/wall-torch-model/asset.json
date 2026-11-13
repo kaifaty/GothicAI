@@ -173,15 +173,33 @@
       "id": "r3-side",
       "stage": "ingame",
       "mode": "blind",
-      "verdict": "pending",
-      "date": "2026-11-13"
+      "verdict": "REJECT",
+      "date": "2026-11-13",
+      "path": "reviews/r3-side/merged.json"
     },
     {
       "id": "r3-far",
       "stage": "ingame",
       "mode": "blind",
-      "verdict": "pending",
-      "date": "2026-11-13"
+      "verdict": "REJECT",
+      "date": "2026-11-13",
+      "path": "reviews/r3-far/merged.json"
+    },
+    {
+      "id": "r3b-side",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "REJECT",
+      "date": "2026-11-13",
+      "path": "reviews/r3b-side/merged.json"
+    },
+    {
+      "id": "r3b-far",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "REJECT",
+      "date": "2026-11-13",
+      "path": "reviews/r3b-far/merged.json"
     }
   ],
   "gates": [

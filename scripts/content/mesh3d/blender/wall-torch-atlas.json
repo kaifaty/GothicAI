@@ -12,8 +12,8 @@
   "OWN_TORCH_TOW_HOT": "wall-torch-model/tiles/own_torch_tow"
  },
  "targets": {
-  "OWN_TORCH_WOOD": [0.022, 0.017, 0.012],
-  "OWN_TORCH_IRON": [0.085, 0.08, 0.062],
+  "OWN_TORCH_WOOD": [0.02, 0.017, 0.014],
+  "OWN_TORCH_IRON": [0.13, 0.125, 0.105],
   "OWN_TORCH_TOW": [0.02, 0.016, 0.0125],
   "OWN_TORCH_TOW_HOT": [0.02, 0.016, 0.0125],
   "OWN_TORCH_PITCH": [0.006, 0.0055, 0.005]
@@ -26,23 +26,23 @@
   "OWN_TORCH_PITCH": ["OWN_WALL_TORCH_FIRE", "UNDEF"]
  },
  "metal": ["OWN_TORCH_IRON"],
- "metal_scale": 0.0,
+ "metal_scale": 0.3,
  "edge_wear": {
   "OWN_TORCH_WOOD": 0.3,
-  "OWN_TORCH_IRON": 0.6,
+  "OWN_TORCH_IRON": 0.45,
   "OWN_TORCH_TOW": 0.0,
   "OWN_TORCH_TOW_HOT": 0.0,
   "OWN_TORCH_PITCH": 0.0
  },
  "tile_normal": {
   "OWN_TORCH_WOOD": 0.35,
-  "OWN_TORCH_IRON": 0.5,
+  "OWN_TORCH_IRON": 1.0,
   "OWN_TORCH_TOW": 0.8,
   "OWN_TORCH_TOW_HOT": 0.8,
   "OWN_TORCH_PITCH": 1.0
  },
  "contrast": {
-  "OWN_TORCH_WOOD": 1.15
+  "OWN_TORCH_WOOD": 1.0
  },
  "measure_ao": {
   "OWN_TORCH_WOOD": 0.5,

@@ -199,7 +199,8 @@ def wrap_radius(t, angle):
     lumps += 0.45 * sum(a * math.sin(m * angle + p) * math.sin(q * t + s) for m, q, p, s, a in fine) / 1.8
     folds = 0.3 * math.sin(3 * angle + 70 * t)  # the layers of the winding run round and up
     bite = sum(depth * (0.35 + 0.65 * (0.5 + 0.5 * math.cos(angle - at))) * math.exp(-((t - tw) / 0.007) ** 2) for tw, at, depth in bites)
-    return float(np.interp(t, profile_t[:-3], profile_r[:-3])) + lump_amp * (lumps + folds) - bite
+    r = float(np.interp(t, profile_t[:-3], profile_r[:-3])) + lump_amp * (lumps + folds) - bite
+    return max(r, club_radius(min(t, length)) + 0.004)  # a dent never lets the club through
 
 
 # its shell folds back under the torn edge, where the normal recalculation picks the wrong side: wound here
