@@ -499,6 +499,8 @@ WorldView::WorldView(std::pair<Vec3,Vec3> bounds, std::string_view skyPreset)
     : aabb(bounds), gSky(skyPreset), gLights(sGlobal), visuals(sGlobal,bounds),
     objGroup(visuals), pfxGroup(*this,sGlobal,visuals) {
   pfxGroup.resetTicks();
+  // A scene without a single lamp still binds the (empty) light buffer: VSM visibility reads it unconditionally
+  sGlobal.lights = &gLights.lightsSsbo();
   }
 
 WorldView::~WorldView() {

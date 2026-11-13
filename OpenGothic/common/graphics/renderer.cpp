@@ -37,6 +37,7 @@ uint32_t RendererInternal::nextPot(uint32_t x) {
 
 uint32_t Renderer::benchVsmLampSides = 0;
 uint32_t Renderer::benchVsmStudy     = 0;
+uint32_t Renderer::benchSsaoStudy    = 0;
 
 Renderer::Renderer() {
   auto& device = Resources::device();
@@ -206,6 +207,13 @@ void Renderer::setupSettings() {
     const int v = std::atoi(env);
     benchVsmStudy = uint32_t(v<0 ? 0 : (v>15 ? 15 : v));
     Log::i("vsm: study bits = ", benchVsmStudy, " by OPENGOTHIC_VSM_STUDY");
+    }
+  // OPENGOTHIC_SSAO_STUDY=<bits>: the bench command `ssao study` from the environment, for a whole run (one binary
+  // measures both sides, reports/engine/2026-11-13-ssao-behind-camera). The command wins while a scenario runs.
+  if(const char* env = std::getenv("OPENGOTHIC_SSAO_STUDY")) {
+    const int v = std::atoi(env);
+    benchSsaoStudy = uint32_t(v<0 ? 0 : (v>3 ? 3 : v));
+    Log::i("ssao: study bits = ", benchSsaoStudy, " by OPENGOTHIC_SSAO_STUDY");
     }
 
   // VSM lamps: the soft PCSS, or hard shadows in one gather (light.frag, VSM_LAMP_HARD). On Metal hard by default:
@@ -914,6 +922,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     drawTonemappingTemporal(result, cmd, wview);
     drawMotionView(result, cmd);
     drawReactiveView(result, cmd);
+    drawSsaoView(result, cmd);
     postTiming.finish();
     wview.postFrameupdate();
     return;
@@ -942,6 +951,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     drawUpscale(result, cmd);
   drawMotionView(result, cmd);
   drawReactiveView(result, cmd);
+  drawSsaoView(result, cmd);
   postTiming.finish();
 
   //drawRayQueryDbg(cmd, wview);
@@ -1226,6 +1236,7 @@ void Renderer::prepareSSAO(Encoder<CommandBuffer>& cmd, WorldView& wview) {
     uint32_t  frame   = 0;
     uint32_t  reset   = 0;
     uint32_t  fullSet = 0; // the whole set this frame, no history
+    uint32_t  behindOld = 0; // bench `ssao study 1`
     } push;
   if(!camHistory.continuous)
     ssao.valid = false;
@@ -1236,6 +1247,7 @@ void Renderer::prepareSSAO(Encoder<CommandBuffer>& cmd, WorldView& wview) {
   push.frame     = ssao.frame;
   push.reset     = ssao.valid && settings.ssaoHistory ? 0 : 1;
   push.fullSet   = settings.ssaoHistory ? 0 : 1;
+  push.behindOld = benchSsaoStudy & 1u;
 
   auto& device = Resources::device();
   const auto aoSize = effectResolution();

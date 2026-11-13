@@ -19,6 +19,7 @@ layout(push_constant, std140) uniform PushConstant {
   uint frame;     // the cycle of 4 frames picks the samples
   uint reset;     // no history: this frame alone
   uint fullSet;   // the whole set of 32 this frame (OPENGOTHIC_SSAO_HISTORY=0); reset is set with it
+  uint behindOld; // bench `ssao study 1`: a sample behind the camera is read off the screen, as before 2026-11-13
   } push;
 
 layout(binding  = 0) uniform writeonly image2D result;
@@ -90,7 +91,18 @@ void calcOcclussion(const vec3 pos0, const float f0, uint seed, uint step) {
     vec3  h      = sampleHemisphereCos(i,numSamples,f0);
 
     vec3  v      = tangent * h;
-    vec3  at1    = project(pos0 + v*sphereLen*r);
+    const vec3 smp = pos0 + v*sphereLen*r;
+    // A sample behind the camera has no place on the screen. Projected all the same, it lands at the point mirrored
+    // through the centre of the frame, deeper than the far plane: whatever is drawn there counted as its occluder.
+    // A face 40 cm from the camera took many of its samples so, off its own mirrored pixels, and came out in dark
+    // patches of the mesh's facets (reports/engine/2026-11-13-ssao-behind-camera). Nothing seen stands there: the
+    // surface is seen from the camera, so the way to it is free - the sample is open
+    if(smp.z*scene.project[2][3] + scene.project[3][3] <= 0.0 && push.behindOld==0u) {
+      sumM += 1.0;
+      sumN += 1.0;
+      continue;
+      }
+    vec3  at1    = project(smp);
     if(abs(at1.x)>1.0 || abs(at1.y)>1.0) {
       continue;
       }

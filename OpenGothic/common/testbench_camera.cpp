@@ -869,6 +869,11 @@ bool cameraCommand(const CameraContext& ctx,const std::string& line,const std::v
     // the sun's shadow as colours; 0 the game's
     Renderer::benchVsmStudy = uint32_t(std::clamp(int(num(a,2,0)), 0, 15));
     }
+  else if(c=="ssao" && a.size()>2 && a[1]=="study") {
+    // ssao study <bits>: for shots of one frame (reports/engine/2026-11-13-ssao-behind-camera): 1 the samples behind
+    // the camera are read off the screen as before 2026-11-13, 2 the frame is the occlusion alone (red); 0 the game's
+    Renderer::benchSsaoStudy = uint32_t(std::clamp(int(num(a,2,0)), 0, 3));
+    }
   else if(c=="slowmo") {
     // slowmo <k>: the game runs k times slower than the video (1: normal); the game's sound is not recorded
     // while slowed (silence keeps the sound in step with the picture)

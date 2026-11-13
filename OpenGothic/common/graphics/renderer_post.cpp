@@ -81,6 +81,17 @@ void Renderer::drawReactiveView(Attachment& result, Encoder<CommandBuffer>& cmd)
   cmd.draw(nullptr, 0, 3);
   }
 
+void Renderer::drawSsaoView(Attachment& result, Encoder<CommandBuffer>& cmd) {
+  if((benchSsaoStudy & 2u)==0 || !ssao.valid || ssao.ssaoBlur.isEmpty() || ssao.ssaoBlur.size()!=result.size())
+    return;
+  // debug: the frame is the blurred occlusion as the ambient light takes it, in the red channel (1 open)
+  cmd.setDebugMarker("SSAO-view");
+  cmd.setFramebuffer({{result, Tempest::Discard, Tempest::Preserve}});
+  cmd.setBinding(0, ssao.ssaoBlur, Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setPipeline(shaders.copy);
+  cmd.draw(nullptr, 0, 3);
+  }
+
 void Renderer::drawBloom(Encoder<CommandBuffer>& cmd, bool fused) {
   if(!settings.bloomEnabled || bloomChain[0].isEmpty())
     return;
