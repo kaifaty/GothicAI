@@ -361,7 +361,7 @@ The second run accepted the collision cache the first run built from the collisi
 
 Until now `DynamicWorld` built static collision's CPU data on every start: the collision input (task 5: every `.wcb` read again and placed), `PackedMesh PK_Physic`, the vertices in metres and the land and water index lists, and only then asked the collision cache, which held the two Jolt shapes alone; after a hit it still ran `prepareTriangleData` on both meshes. The cache file now holds everything the static landscape and water bodies need, from one build ([`collisioncache.h`](../../../../OpenGothic/common/physics/collisioncache.h) has the byte table): the sector names, the vertices in metres, for the land and the water mesh the index list, the segments (offset, triangle count, material group, sector) and the ray duplicate groups, then the shapes. The set-up before the bodies lives in [`staticcollision.*`](../../../../OpenGothic/common/physics/staticcollision.h) and gets the input lazily: `World` passes a `WorldCollisionSource` that runs `worldCollisionInput` on its first call, and only a miss or the cache off calls it. On a hit nothing is built from a mesh: no `.wcb` is read for the collision, no `PackedMesh`, no `[world-collision]` line, and `physics_static` says `input=cache input_ms=0`.
 
-**Stored or recomputed.** Stored: the ray duplicate groups `prepareTriangleData` finds (`rayDuplicates`, in their order); the lookup from a triangle to its group and each triangle's segment are filled from the groups and the segments when the file is read. The reason is the table below: `prepareTriangleData` hashes every triangle into a multimap, 45 ms at ×1 and 1.6 s at ×16, while the groups are 25 at ×1 (300 bytes in the file) and 506 at ×16 (6 152 bytes). Each triangle's segment is a fill over the segments and is not stored (it would add 4 bytes per triangle, 30 MB at ×16).
+**Stored or recomputed.** Stored: the ray duplicate groups `prepareTriangleData` finds (`rayDuplicates`, in their order); the lookup from a triangle to its group and each triangle's segment are filled from the groups and the segments when the file is read. The reason is the table below: `prepareTriangleData` hashes every triangle into a multimap, 61 ms at ×1 and 1.7 s at ×16, while the groups are 25 at ×1 (300 bytes in the file) and 506 at ×16 (6 152 bytes). Each triangle's segment is a fill over the segments and is not stored (it would add 4 bytes per triangle, 30 MB at ×16).
 
 **Validation.** Magic and format version 2 (a version 1 file, the shapes alone, misses and is replaced), the identity of the key, the file size against the twelve section sizes, an XXH64 checksum of the payload, then the ranges: every index below the vertex count, segments that tile their index list, sector references inside the names, duplicate members inside their mesh and each once; Jolt restores the shapes last. Any failure is a miss with one line `[collision-cache] derived/<base>/<WORLD>.collision: <reason>; rebuilding`, at most 255 bytes so that Tempest does not split it, then a rebuild from the input and a rewrite. A missing file is a miss without a line, unless temporary files of an interrupted write lie beside it: the line counts them, and they are not removed, since their age does not prove that their writer has finished.
 
@@ -369,16 +369,16 @@ Until now `DynamicWorld` built static collision's CPU data on every start: the c
 
 ### Machine and commands
 
-Ryzen as above; branch `codex/landscape-d3-cache` at `6f5c41361` (merged with `main`), the check build (`RelWithDebInfo`) of `gothic-collisioncache-cpu-contract`, one `scripts/gq` job of class `quiet` (4 threads, 14 GB) in `~/gothic-ai/landscape-d3-cache/`, base `c885037e…d09e`, warm page cache, load average 11 at the start. The ×1 and ×16 copies are cooked as `stress-base` writes them:
+Ryzen as above; branch `codex/landscape-d3-cache` at `6a8672217` (after review), the check build (`RelWithDebInfo`) of `gothic-collisioncache-cpu-contract`, one `scripts/gq` job of class `quiet` (4 threads, 14 GB) in `~/gothic-ai/landscape-d3-cache/`, base `c885037e…d09e`, warm page cache, load average 4.6–5.3. The ×1 and ×16 copies are cooked as `stress-base` writes them:
 
 ```
-content-convert stress-base $B $T/x1  --subdivide 0 --meshes 0      # 8.6 s, peak RSS 0.30 GB
-content-convert stress-base $B $T/w16 --subdivide 2 --meshes 0      # 46.5 s, peak RSS 4.16 GB
-gothic-collisioncache-cpu-contract --world $T/x1/worlds/NEWWORLD    # 4.2 s, peak RSS 0.32 GB
-gothic-collisioncache-cpu-contract --world $T/w16/worlds/NEWWORLD   # 34.6 s, peak RSS 1.75 GB
+content-convert stress-base $B $T/x1  --subdivide 0 --meshes 0      # 8.5 s, peak RSS 0.30 GB
+content-convert stress-base $B $T/w16 --subdivide 2 --meshes 0      # 42.1 s, peak RSS 4.16 GB
+gothic-collisioncache-cpu-contract --world $T/x1/worlds/NEWWORLD    # 4.4 s, peak RSS 0.34 GB
+gothic-collisioncache-cpu-contract --world $T/w16/worlds/NEWWORLD   # 34.0 s, peak RSS 1.88 GB
 ```
 
-With `--world` the contract loads the world as the game does (`readWorldChunks` with the cooked set, `WorldCloth::extract`), checks that a start with the cache off, a cold start and a warm start give the same navigation, rays and `PhysicVbo` answers, and times the set-up alone (`StaticCollision`, without the bodies) with its own cache root: cold once after removing the file, warm three times. «Main's warm» repeats what `main`'s constructor does on a hit, three times: `PackedMesh PK_Physic` of the same input into the two meshes, a version 1 file of the same shapes read whole, checked with its CRC-32 and restored, and `prepareTriangleData` of both meshes (the input itself is built once beforehand and not counted, as on `main` it is built before the cache is asked). Peak RSS: the process's high-water mark during the stage, reset through `/proc/self/clear_refs` after `malloc_trim(0)`, and in brackets how far it rose above the stage's start.
+With `--world` the contract loads the world as the game does (`readWorldChunks` with the cooked set, `WorldCloth::extract`), checks that a start with the cache off, a cold start and a warm start give the same navigation, rays and `PhysicVbo` answers, and times the set-up alone (`StaticCollision`, without the bodies) with its own cache root: cold once after removing the file, warm three times. «Main's warm» repeats what `main`'s constructor does on a hit, three times, with its lifetimes: `PackedMesh PK_Physic` of the same input into the two meshes, the package released before the read; a version 1 file of the same shapes read whole, checked with its CRC-32 and restored, the file's bytes released with the read and the shapes kept; `prepareTriangleData` of both meshes with the shapes alive. The input itself is built once beforehand and not counted, as on `main` it is built before the cache is asked. Peak RSS: the process's high-water mark during the stage, reset through `/proc/self/clear_refs` after `malloc_trim(0)`, and in brackets how far it rose above the stage's start.
 
 ### Wall time, `NEWWORLD`
 
@@ -386,19 +386,19 @@ Milliseconds; warm and main's warm are medians of three.
 
 | Static collision set-up | ×1 | ×16 |
 |---|---:|---:|
-| cold: miss, input, `PackedMesh` and shapes, write | 736.0 | 4 689.4 |
-| of it: the collision input (`worldCollisionInput`) | 45.6 | 469.7 |
-| of it: `PackedMesh` and the shapes | 667.3 | 4 078.9 |
-| of it: the write | 23.1 | 140.7 |
-| **warm: hit** (file read, checks, shapes restored) | **43.2** | **256.7** |
-| main's warm: `PackedMesh` + shapes-only file + `prepareTriangleData` | 183.5 (43.6 + 92.5 + 45.4) | 2 783.6 (770.8 + 390.9 + 1 645.9) |
+| cold: miss, input, `PackedMesh` and shapes, write | 736.8 | 4 626.1 |
+| of it: the collision input (`worldCollisionInput`) | 43.7 | 445.7 |
+| of it: `PackedMesh` and the shapes | 671.2 | 4 048.8 |
+| of it: the write | 21.8 | 131.6 |
+| **warm: hit** (file read, checks, shapes restored) | **41.3** | **259.5** |
+| main's warm: `PackedMesh` + shapes-only file + `prepareTriangleData` | 191.6 (41.4 + 90.4 + 60.5) | 2 830.7 (782.5 + 316.8 + 1 676.9) |
 | cache file on `main` (shapes only), bytes | 31 433 480 | 131 072 603 |
 | cache file now, bytes | 38 174 237 | 235 793 200 |
-| peak RSS cold, MB | 372 (+185) | 2 073 (+1 199) |
-| peak RSS warm, MB | 267 (+68) | 1 471 (+383) |
-| peak RSS main's warm, MB | 280 (+82) | 1 712 (+625) |
+| peak RSS cold, MB | 374 (+173) | 2 081 (+1 147) |
+| peak RSS warm, MB | 281 (+68) | 1 521 (+380) |
+| peak RSS main's warm, MB | 296 (+84) | 1 714 (+574) |
 
-A first run of the same contract before the merge with `main` and without `malloc_trim` (load average 7.5–8.3, a `quick` job) gave warm 15.5 and 158.0 ms and main's warm 199.4 and 2 580.7 ms; there the stages reused heap pages the previous stage had freed, so a hit read into pages already mapped. The game starts in a fresh process, which the trimmed run is closer to.
+A first run of the contract before review (without `malloc_trim`, the package alive through main's whole warm start and its shapes released before `prepareTriangleData`; load average 7.5–8.3, a `quick` job) gave warm 15.5 and 158.0 ms and main's warm 199.4 and 2 580.7 ms; there the stages reused heap pages the previous stage had freed, so a hit read into pages already mapped. The game starts in a fresh process, which the trimmed run is closer to.
 
 The file's sections, bytes:
 
@@ -430,4 +430,4 @@ The CPU part adds 21 % to the file at ×1 and 80 % at ×16; the shapes grow 4.2 
 | `world_end` | 4 159.7 ms | 1 954.1 ms |
 | frames, whole route: FPS, p99 | 103.2, 12.3 ms | 105.5, 12.2 ms |
 
-On `main` a warm start of the same copy took 221.1 ms in `physics_static` (task 5's table, `read_ms=97.1` after packing). The cache file the cold run wrote has the contract's size, 38 174 237 bytes. `world_end` also counts the other derived caches the cold run fills (way heights, census, pipelines). The read takes 59 ms in the game against 43 ms in the contract: the game's BVH thread reads while the view packs on another thread. One run each, no noise estimate. An earlier warm run on a busy machine (load average 23, other sessions' builds; class `quick`, `TIMEOUT` 300) reached the same `input=cache` mark and way heights, then was killed in the first route at frame 11 175; the pair above replaced that run on a quiet machine.
+On `main` a warm start of the same copy took 221.1 ms in `physics_static` (task 5's table, `read_ms=97.1` after packing). The cache file the cold run wrote has the contract's size, 38 174 237 bytes. `world_end` also counts the other derived caches the cold run fills (way heights, census, pipelines). The read takes 59 ms in the game against 41 ms in the contract: the game's BVH thread reads while the view packs on another thread. One run each, no noise estimate. An earlier warm run on a busy machine (load average 23, other sessions' builds; class `quick`, `TIMEOUT` 300) reached the same `input=cache` mark and way heights, then was killed in the first route at frame 11 175; the pair above replaced that run on a quiet machine.
