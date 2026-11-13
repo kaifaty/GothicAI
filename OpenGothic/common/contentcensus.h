@@ -9,14 +9,18 @@
 #include <utility>
 #include <vector>
 
-namespace ProgramData { struct Source; }
-namespace OutputUnits { struct Source; }
 namespace AudioData { struct Sound; }
 namespace MusicData { struct Source; struct Outcome; }
 
 // Session-only accounting. Resources creates this object only with OPENGOTHIC_CENSUS.
 class ContentCensus final {
   public:
+    // Where the import found a game record of the base (imported_source): its index source, by value.
+    struct ImportedSource {
+      std::string_view origin, path, archive, sha256;
+      uint64_t         size = 0;
+      };
+
     explicit ContentCensus(const char* output);
 
     void opened(std::string_view name, std::string_view source) noexcept;
@@ -25,10 +29,10 @@ class ContentCensus final {
     void profile(std::string_view game, std::string_view outputUnits, int language) noexcept;
     void program(std::string_view consumer, std::string_view request, int language,
                  std::string_view branch, std::string_view record, std::string_view sha256,
-                 const ProgramData::Source& source) noexcept;
+                 const ImportedSource& source) noexcept;
     void outputUnits(std::string_view consumer, std::string_view request, int language,
                      std::string_view branch, std::string_view record, std::string_view sha256,
-                     const OutputUnits::Source& source) noexcept;
+                     const ImportedSource& source) noexcept;
     void audioLoaded(std::string_view request, const AudioData::Sound& source) noexcept;
     void musicLoaded(std::string_view provider, std::string_view request,
                      const MusicData::Source& source, const MusicData::Outcome& outcome) noexcept;
