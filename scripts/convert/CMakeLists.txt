@@ -15,8 +15,9 @@ set(DM_BUILD_STATIC ON CACHE INTERNAL "")
 set(DM_ENABLE_ASAN OFF CACHE INTERNAL "")
 add_subdirectory(../../OpenGothic/lib/dmusic dmusic EXCLUDE_FROM_ALL)
 include(../../OpenGothic/cmake/BaseImport.cmake)
-# runtime manifest reading, outside the base format fingerprint (see OpenGothic/CMakeLists.txt)
-target_sources(gothic-base-runtime PRIVATE "${BASE_ROOT}/common/worldchunkmanifest.cpp")
+# runtime manifest reading and cooked chunks, outside the base format fingerprint (see OpenGothic/CMakeLists.txt)
+target_sources(gothic-base-runtime PRIVATE "${BASE_ROOT}/common/worldchunkmanifest.cpp"
+  "${BASE_ROOT}/common/worldchunkbinary.cpp" "${BASE_ROOT}/common/worldchunkcook.cpp")
 if(MSVC)
   # the base C sources read dmusic's _Atomic structs (see OpenGothic/CMakeLists.txt)
   target_compile_options(gothic-base-runtime PRIVATE $<$<COMPILE_LANGUAGE:C>:/experimental:c11atomics>)
@@ -29,7 +30,7 @@ if(MSVC)
   target_compile_definitions(gothic-video-import PRIVATE _USE_MATH_DEFINES)
 endif()
 endif()
-add_executable(content-convert convert.cpp stressbase.cpp stressmeshes.cpp ../../OpenGothic/common/basestore.cpp
+add_executable(content-convert convert.cpp stressbase.cpp stressmeshes.cpp worldcook.cpp ../../OpenGothic/common/basestore.cpp
   ../../OpenGothic/common/world/voblayer.cpp ../../OpenGothic/common/world/movablevobs.cpp
   ../../OpenGothic/common/game/definitions/particlecontent.cpp
   ../../OpenGothic/common/game/definitions/definitiontypes.cpp)

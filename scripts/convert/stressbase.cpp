@@ -6,6 +6,7 @@
 #include "basemesh.h"
 #include "basestore.h"
 #include "gothicglb.h"
+#include "worldchunkcook.h"
 #include "worldchunksruntime.h"
 
 #include <rapidjson/document.h>
@@ -203,8 +204,11 @@ int build(const fs::path& baseArg, const fs::path& outArg, int subdivide, int me
       keepArchives(source,out/"worlds"/c.name);
       require(written.triangles==c.after,"world "+c.name+": written triangle count differs");
       c.chunksAfter = written.chunks.size();
+      // Cooked chunks (.wcb) beside the GLBs, listed in base-files.json like every chunk file.
+      const auto cooked = cookWorldChunks(out/"worlds"/c.name);
       std::cout << c.name << ": " << c.before << " -> " << c.after << " triangles (x" << factor << "), "
-                << c.chunksBefore << " -> " << c.chunksAfter << " chunks" << std::endl;
+                << c.chunksBefore << " -> " << c.chunksAfter << " chunks; cooked: GLB " << cooked.glbBytes
+                << " bytes, .wcb " << cooked.wcbBytes << " bytes" << std::endl;
       }
 
     // Static meshes that fit the format after the split; the rest is linked below.

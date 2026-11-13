@@ -2,11 +2,20 @@
 
 #include "worldchunkmanifest.h"
 
+#include <chrono>
 #include <memory>
 #include <span>
 #include <utility>
 
 class ChunkMeshSource;
+
+// What readWorldChunks computes on the way, for the cooked chunks
+// (worldchunkcook.h) and their timing; the game passes none.
+struct WorldChunkTrace {
+  using Clock = std::chrono::steady_clock;
+  std::vector<int64_t> orders; // per stitched triangle: its GLB "order", -1 for geometry an edit added
+  Clock::time_point parsed, ordered, stitched; // ends of reading, source-order sort, and ID resolution with stitching
+  };
 
 struct ChunkTable {
   struct Entry {
@@ -52,7 +61,8 @@ class ChunkMeshSource {
     struct Impl;
     std::shared_ptr<const Impl> impl;
     explicit ChunkMeshSource(std::shared_ptr<const Impl> data) : impl(std::move(data)) {}
-    friend asset::WorldMesh readWorldChunks(const std::filesystem::path&, const std::filesystem::path&, ChunkTable*);
+    friend asset::WorldMesh readWorldChunks(const std::filesystem::path&, const std::filesystem::path&, ChunkTable*,
+                                            WorldChunkTrace*);
   };
 
 // Reads the draw level 0 chunk of every cell in dir/world.json; other meshes of
@@ -62,7 +72,7 @@ class ChunkMeshSource {
 // the source arrays exactly, with every source index (the engine's meshlet
 // packing keys on them); geometry an edit added or moved goes after them.
 asset::WorldMesh readWorldChunks(const std::filesystem::path& dir, const std::filesystem::path& overrideDir = {},
-                                 ChunkTable* chunks = nullptr);
+                                 ChunkTable* chunks = nullptr, WorldChunkTrace* trace = nullptr);
 
 // Keep an increasing, unique list of source triangle IDs in source order.
 // Only polygon arrays and their corresponding triangleChunks/triangleSources are filtered;
