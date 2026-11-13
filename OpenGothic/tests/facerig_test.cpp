@@ -1165,14 +1165,15 @@ void gestureHeadCases() {
     };
 
   // how the head as shown moves in a frame, the largest: where the face looks, and its up (a tilt keeps the first)
-  const auto worstStep = [&](bool active, bool steady, float* worstOff, float* worstTilt) {
+  // late: the hold comes with the gesture, as in the game, not before it
+  const auto worstStep = [&](bool active, bool steady, float* worstOff, float* worstTilt, bool late = false) {
     Gaze gaze;
     gaze.setSkeleton(&body.skeleton);
     require(gaze.isValid(),"the gaze must take the synthetic body");
     const auto in = input(active,steady);
-    // at rest first: the gaze turns to the partner, the hold comes in
+    // at rest first: the gaze turns to the partner
     for(uint64_t t=0; t<1500; t+=Dt)
-      (void)body.frame(gaze,in,0,0,0);
+      (void)body.frame(gaze,input(active,steady && !late),0,0,0);
     float worst = 0;
     Tempest::Vec3 face, up;
     for(uint64_t t=0; t<6000; t+=Dt) {
@@ -1208,6 +1209,12 @@ void gestureHeadCases() {
   require(held<0.35f,"a head held against a gesture must not move with it: "+std::to_string(held)+" deg in a frame");
   require(off<1.5f,"a head held against a gesture must go on looking at the partner: off by "+std::to_string(off)+" deg");
   require(tilt<1.f,"a head held against a gesture must stay upright: tilted "+std::to_string(tilt)+" deg");
+
+  // the hold that starts with the gesture is whole at once: the first frames of the gesture do not come through
+  off = tilt = 0;
+  const float fresh = worstStep(true,true,&off,&tilt,true);
+  require(fresh<0.35f && tilt<1.f,"a hold that starts with the gesture must hold its first frames: step "+
+          std::to_string(fresh)+", tilt "+std::to_string(tilt)+" deg");
 
   // nobody to look at: it faces where the body does, upright
   off = tilt = 0;

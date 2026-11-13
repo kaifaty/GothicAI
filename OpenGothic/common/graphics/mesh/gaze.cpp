@@ -35,7 +35,8 @@ constexpr float MaxAnimPitch = 30.f*Deg;
 // gestures of Gothic II bend the head up to 35 degrees down and tilt it up to 32 to a side
 constexpr float MaxSteadyPitch = 45.f*Deg;
 constexpr float MaxSteadyRoll  = 45.f*Deg;
-constexpr float SteadyIn     = 0.15f;     // seconds: a gesture starts from the stance and blends in 0.2 s
+constexpr float SteadyIn     = 0.15f;     // seconds, the hold coming over a head the animation already moved...
+constexpr float SteadyNone   = 0.3f*Deg;  // ...moved less than this (a gesture starts from the stance): it is whole at once
 constexpr float SteadyOut    = 0.25f;     // the caller holds it until the gesture has blended out
 constexpr float FaceAxisCos  = 0.85f;     // the axis of the face is picked when the head looks this close to forward
 constexpr float MaxFaceDown  = 0.8f;      // the face looks further down or up (a bent head): its turn is not known
@@ -254,6 +255,11 @@ bool Gaze::update(const Input& in) {
   // the hands gesture: the head is held against the gesture's animation
   const float prevS = steadyW;
   steadyW = hold ? std::min(1.f, steadyW + dt/SteadyIn) : std::max(0.f, steadyW - dt/SteadyOut);
+  // nothing to take out yet (beyond what the gaze takes out already): fading in would let the first frames of the
+  // gesture through
+  if(hold && std::abs(animRoll)<SteadyNone && std::abs(animPitch-animPitchLp)<SteadyNone &&
+     (weight>=1.f || (std::abs(animYaw)<SteadyNone && std::abs(animPitch)<SteadyNone)))
+    steadyW = 1.f;
   if(steadyW!=prevS)
     changed = true;
 

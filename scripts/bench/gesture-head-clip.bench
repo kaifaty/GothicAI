@@ -47,7 +47,7 @@ wait 700
 speak player DIA_Addon_Xardas_AddonSuccess_15_00 NONE_100_XARDAS
 wait 6200
 stop
-cam front 230 140
+cam front 150 140
 cam look 125
 wait 800
 gestures pick 6
