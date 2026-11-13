@@ -94,10 +94,11 @@ def _tangents(p0, p1, p2, p3, method):
     return m1, m2
 
 
-def sample(pos, rot, u, method="linear", loop=False, ends="rest"):
+def sample(pos, rot, u, method="linear", loop=False, ends="engine"):
     """pos [K, N, 3], rot [K, N, 4] keys; u [T] times in key units. Returns pos [T, N, 3], rot [T, N, 4].
 
     ends - what stands for the key a clip that is no loop does not have outside its first and last one:
+      engine  mirror at the start, rest at the end (what the engine has)
       rest    the outer key again: the clip starts from rest and comes to rest (zero tangent there)
       mirror  the next key mirrored: the outer chord goes on at its speed, as on the straight line
       half    the outer key again, without the limit there: half the chord's speed (plain Catmull-Rom's end)
@@ -124,9 +125,10 @@ def sample(pos, rot, u, method="linear", loop=False, ends="rest"):
     lo = hi = None
     if not loop:
         lo, hi = ext[0][:, None, None], ext[3][:, None, None]
-        if ends == "mirror":
+        if ends in ("mirror", "engine"):
             p[0] = np.where(lo, 2 * p[1] - p[2], p[0])
             q[0] = np.where(lo, 2 * q[1] - q[2], q[0])
+        if ends == "mirror":
             p[3] = np.where(hi, 2 * p[2] - p[1], p[3])
             q[3] = np.where(hi, 2 * q[2] - q[1], q[3])
 

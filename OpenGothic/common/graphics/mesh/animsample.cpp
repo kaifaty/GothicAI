@@ -44,11 +44,12 @@ Vec<N> tangent(const Vec<N>& in, const Vec<N>& out) {
   return m;
   }
 
-// the offset from a at t on the curve; in, out - the chords before a and after b (null: the clip has no key
-// there, it starts from rest or comes to rest)
+// the offset from a at t on the curve; in, out - the chords before a and after b. Null: the clip has no key there.
+// It starts at the speed of its first chord (the switch into it is AnimBlend's, which takes that speed) and comes
+// to rest at its last key (the game holds that key)
 template<size_t N>
 Vec<N> curve(const Vec<N>* in, const Vec<N>& chord, const Vec<N>* out, float t) {
-  const Vec<N> m1 = in !=nullptr ? tangent(*in,chord)  : Vec<N>();
+  const Vec<N> m1 = in !=nullptr ? tangent(*in,chord)  : chord;
   const Vec<N> m2 = out!=nullptr ? tangent(chord,*out) : Vec<N>();
   const float  t2 = t*t, t3 = t2*t;
   // Hermite, as an offset from a: a hold (no chord, no tangents) gives exactly a

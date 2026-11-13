@@ -5,8 +5,9 @@ interval sampled back by the curve with each rule and compared with the dropped 
   python3 ends.py <base> [model=HUMANS]
 
   mirror  the outer chord goes on at its speed
-  rest    the clip starts from rest and comes to rest (what the engine has)
+  rest    the clip starts from rest and comes to rest
   half    half the chord's speed (plain Catmull-Rom's end)
+  engine  the first chord goes on at its speed, the clip comes to rest at its last key (what the engine has)
 
 Also prints how fast the source itself moves in its first and last frame against the mean of that key interval, and
 for the sparse clips, shown as the game shows them (the first key held before, the last one after), the largest
@@ -24,7 +25,7 @@ import numpy as np
 import sampling as sp
 
 ga = sp.ga
-RULES = ("mirror", "rest", "half")
+RULES = ("mirror", "rest", "half", "engine")
 FPS = 30.0
 
 
@@ -83,7 +84,7 @@ def main():
                 if chord > 0.5:
                     first.append(np.linalg.norm(t[1] - t[0]) / chord)
     print(f"{model}: {clips} clips of 25 keys a second that end")
-    print("| keys kept | interval | " + " | ".join(f"{r}: rms / p95, cm" for r in RULES) + " |\n|---|---|---|---|---|")
+    print("| keys kept | interval | " + " | ".join(f"{r}: rms / p95, cm" for r in RULES) + " |\n|---|---|---|---|---|---|")
     for k in (2, 3):
         for where in ("first", "last"):
             cells = []

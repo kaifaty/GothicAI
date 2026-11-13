@@ -20,9 +20,10 @@
 // hold stays a hold, and a joint that stops sharply does not swing past its key (plain Catmull-Rom took a hand
 // up to 2.8 cm past it, this one 1.7 at most). The pose at a key is the key, as it was.
 //
-// A clip that is no loop starts from rest and comes to rest at its last key: the game shows its first key
-// before it starts (the stance it rises from) and holds its last key for one more key interval when its keys
-// are over, so on the chord's speed the joints started and stopped in one frame.
+// A clip that is no loop comes to rest at its last key: the game holds that key for one more key interval when
+// the keys are over, so on the chord's speed the joints stopped in one frame. It starts at the speed of its
+// first chord, as it did: a clip starts with a switch from another pose, and AnimBlend, which takes the clip's
+// speed, brings the joints up to it (from rest the clip would speed up on top of that switch).
 //
 // Clips keyed 16 times a second or more stay on the straight line: at 30 frames a second nearly every frame
 // crosses a key there and the curve changes nothing (measured at 19 and 25 keys a second), and blows and walks
@@ -58,7 +59,8 @@ struct Keys final {
 Keys   keys(uint64_t ms, float fpsRate, size_t count, bool loop, bool reverse);
 
 // The pose t of the way from a to b on the curve; before and after are the keys around them as played, null
-// where the clip has none: there it starts from rest (no key before a) or comes to rest (none after b)
+// where the clip has none: its first chord then goes on at its speed (no key before a), and it comes to rest at
+// its last key (none after b)
 Sample mix(const Sample* before, const Sample& a, const Sample& b, const Sample* after, float t);
 
 // How far the curve through these positions is from the straight line from a to b at t. The body travels along

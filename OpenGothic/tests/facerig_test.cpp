@@ -1349,9 +1349,9 @@ void smoothSwitchCases() {
     return s;
     };
   const auto angle = [&](const Sample& s) { return 2.f*std::atan2(s.rotation.z,s.rotation.w)/Deg; };
-  // an arm that swings out and comes to rest, ten keys a second; the same 5 degrees further on
+  // an arm that waits, swings out and comes to rest, ten keys a second; the same 5 degrees further on
   std::vector<Sample> clip, ahead;
-  for(const float deg:{0.f,30.f,40.f,42.f,42.f,42.f}) {
+  for(const float deg:{0.f,0.f,0.f,30.f,40.f,42.f,42.f,42.f}) {
     clip.push_back(turned(deg));
     ahead.push_back(turned(deg+5.f));
     }
@@ -1360,25 +1360,25 @@ void smoothSwitchCases() {
   second.name = "T_DIALOGGESTURE_08";
   first.blendIn = first.blendOut = second.blendIn = second.blendOut = 200;
 
-  // 0.11 s into the clip, a tenth past its second key: the curve is still fast there (170 degrees a second), the
-  // chord to the third key is 100. Without a switch the bone's speed changes there as the curve's does
+  // 0.31 s into the clip, a tenth past the key at 30 degrees: the curve is still fast there (170 degrees a second),
+  // the chord to the next key is 100. Without a switch the bone's speed changes there as the curve's does
   enum class Run { Plain, ChordSpeed, CurveSpeed };
   const auto run = [&](Run way) {
     AnimBlend blend;
     blend.reset(1);
     Sample raw[1], out[1];
     float  shown[3] = {}, change = 0;
-    for(uint64_t now=1000; now<1200; now+=10) {
-      const bool  on = way!=Run::Plain && now>=1110;
+    for(uint64_t now=1000; now<1400; now+=10) {
+      const bool  on = way!=Run::Plain && now>=1310;
       const auto& c  = on ? ahead : clip;
       const auto  k  = AnimSample::keys(now-1000,10.f,c.size(),false,false);
       const Sample* before = k.hasBefore ? &c[k.before] : nullptr;
       const Sample* after  = k.hasAfter  ? &c[k.after]  : nullptr;
       raw[0] = AnimSample::mix(before,c[k.a],c[k.b],after,k.t);
-      blend.drive(0,on ? second : first,on ? 1110 : 1000,c[k.a],c[k.b],10.f,before,after,k.t,way!=Run::ChordSpeed);
+      blend.drive(0,on ? second : first,on ? 1310 : 1000,c[k.a],c[k.b],10.f,before,after,k.t,way!=Run::ChordSpeed);
       blend.apply(raw,out,1,now);
       shown[0] = shown[1]; shown[1] = shown[2]; shown[2] = angle(out[0]);
-      if(now==1120)
+      if(now==1320)
         change = ((shown[2]-shown[1])-(shown[1]-shown[0]))/0.01f;
       }
     return change;

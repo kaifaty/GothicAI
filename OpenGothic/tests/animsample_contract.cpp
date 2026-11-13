@@ -2,7 +2,7 @@
 // shown thirty times a second: on the straight line between two keys (what the engine did, and still does for
 // clips keyed 25 times a second) its speed changes in one frame at a key; on the curve it does not. The traps of
 // a curve: the pose at a key is the key, a hold stays a hold, a sharp stop does not swing past its key, a clip
-// starts from rest and comes to rest at its last key, a rotation's two signs are one rotation. The keys around a time for loops,
+// starts at its first chord's speed and comes to rest at its last key, a rotation's two signs are one rotation. The keys around a time for loops,
 // clips that end, and clips played backwards; the root's curve against the line the body travels by.
 #include "graphics/mesh/animsample.h"
 
@@ -83,16 +83,18 @@ void speedCases() {
   require(jumpLine>15.f,"on the line the speed must jump at a key (the case the curve is for): "+std::to_string(jumpLine)+" deg/s");
   require(jumpCurve<1.5f,"on the curve the speed must not jump at a key: "+std::to_string(jumpCurve)+" deg/s");
 
-  // shown thirty times a second: the step changes less from frame to frame, also where the clip starts at its
-  // full speed (this swing does) and where it ends
-  const float was = stepChange(clip,false), now = stepChange(clip,true);
-  require(now<0.7f*was,"on the curve the step of a joint must change less between frames: "+std::to_string(now)+
-          " deg against "+std::to_string(was)+" on the line");
-  // inside the clip, away from its ends, far less
-  const std::vector<Sample> inner(clip.begin()+4,clip.begin()+29);  // starts and ends at the swing's turn: at rest
+  // shown thirty times a second, a part of the swing from one turn to another (it starts and ends at rest): the step
+  // changes far less from frame to frame
+  const std::vector<Sample> inner(clip.begin()+4,clip.begin()+29);
   const float wasIn = stepChange(inner,false), nowIn = stepChange(inner,true);
-  require(nowIn<0.6f*wasIn,"inside a clip the step of a joint on the curve must change far less: "+std::to_string(nowIn)+
+  require(nowIn<0.6f*wasIn,"on the curve the step of a joint must change far less between frames: "+std::to_string(nowIn)+
           " deg against "+std::to_string(wasIn)+" on the line");
+  // a part cut at the swing's full speed, as Gothic's clips are: the game holds the last key, the joint stops there.
+  // On the line it stops in one frame, on the curve it slows down into the key
+  const std::vector<Sample> cut(clip.begin()+4,clip.begin()+17);
+  const float wasCut = stepChange(cut,false), nowCut = stepChange(cut,true);
+  require(nowCut<0.8f*wasCut,"a clip cut in motion must stop softer on the curve: the step changes by "+std::to_string(nowCut)+
+          " deg against "+std::to_string(wasCut)+" on the line");
 
   // and the curve is nearer to the swing the keys were taken from
   float offLine = 0, offCurve = 0;
@@ -140,17 +142,15 @@ void trapCases() {
     low = std::min(low,degrees(AnimSample::mix(&f0,f1,f2,&f3,t))-1.f);
   require(low>-0.01f,"out of a slow key the joint must not dip back first: "+std::to_string(low)+" deg");
 
-  // a clip's ends have no key outside: it starts from rest and comes to rest. The game shows the first key before
-  // the clip starts and holds the last one after its keys are over: on the chord's speed the joint would start
-  // and stop in one frame
+  // a clip's ends have no key outside. It comes to rest at its last key: the game holds that key after the keys
+  // are over, and on the chord's speed the joint would stop in one frame. It starts at the speed of its first
+  // chord: the switch into the clip (AnimBlend) brings the joint up to it
   const Sample c0 = key(0), c1 = key(10), c2 = key(20), c3 = key(30);
   const float first = degrees(AnimSample::mix(nullptr,c0,c1,&c2,0.1f));
   const float last  = 30.f-degrees(AnimSample::mix(&c1,c2,c3,nullptr,0.9f));
-  require(first<0.5f && last<0.5f,"a clip must start from rest and come to rest at its last key: "+std::to_string(first)+
-          " and "+std::to_string(last)+" deg over its outer tenths, 1 on the chord");
-  const Sample mid = AnimSample::mix(nullptr,a,b,nullptr,0.5f);
-  require(std::abs(degrees(mid)-17.5f)<0.01f && std::abs(mid.position.x-2.5f)<1e-4f,
-          "between two keys with none around the pose must be half way at half the time");
+  require(std::abs(first-1.f)<0.05f,"a clip must start at the speed of its first chord: "+std::to_string(first)+
+          " deg over its first tenth, 1 on the chord");
+  require(last<0.5f,"a clip must come to rest at its last key: "+std::to_string(last)+" deg over its last tenth, 1 on the chord");
 
   // q and -q are one rotation
   Sample nb = b, nafter = after;
