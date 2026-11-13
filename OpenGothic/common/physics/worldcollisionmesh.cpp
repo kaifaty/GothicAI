@@ -129,3 +129,14 @@ WorldCollisionInput worldCollisionInput(const ChunkTable& table, bool clothBundl
     }
   return out;
   }
+
+const asset::WorldMesh& WorldCollisionSource::operator()() {
+  ++count;
+  if(!built)
+    built = worldCollisionInput(table,clothBundle);
+  return built->select(landscape);
+  }
+
+std::string WorldCollisionSource::probe() const {
+  return built ? built->probe() : " input=cache input_ms=0";
+  }

@@ -17,7 +17,9 @@ eye.png the template's eye map. Writes into <out dir>:
   look lighter. The brightness is converted by a fit to hero 3a's two hand ramps, the hue kept;
 - eye.png: the template's eye map with the iris recoloured to the concept's: the iris of the face_points detector
   (centre 468/473, ring 469-472/474-477) on the full and the bald front, the median of its middle ring under the lid,
-  without highlights. The map keeps the template's iris detail as brightness over that colour;
+  without highlights. The map keeps the template's iris detail as brightness over that colour. The iris is also
+  brought to the concept's size: its diameter there (eye_lines.py, both fronts) over IRIS_MM, the diameter the same
+  reading gives on a render of the template's map; the pupil keeps its share of the iris;
 - colour.json: the numbers; colour.jpg: the concept next to the strands drawn in their new colours, the ramp and the iris.
 Hair in a view: on the front, where the full sheet differs from the bald one and the pixel looks like hair; on the
 profile, whose bald sheet is another generation and does not lie on the full one, where it looks like hair. "Looks
@@ -34,6 +36,10 @@ from PIL import Image, ImageDraw
 from scipy import ndimage
 from scipy.spatial import cKDTree
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import eye_lines
+
+IRIS_MM = 12.45        # the template's iris as eye_lines.py reads it on a front render of our head (the second face, 0.4 mm a pixel)
 VD, PJ, VJ, GROOM, BEARD, EYE, OUT = sys.argv[1:8]
 os.makedirs(OUT, exist_ok=True)
 P = json.load(open(PJ)); eye = np.array(json.load(open(VJ))['eye'])
@@ -179,7 +185,20 @@ for i in range(1, pup.max()+1):
     wgt = np.clip((edge+2-rr)/6, 0, 1)[..., None]
     out = out*(1-wgt)+(iris*(lum(e)/med)[..., None])*wgt
     spots.append([round(cx), round(cy), round(r0, 1), int(edge)])
-a[..., :3] = srgb(np.clip(out, 0, 1)); Image.fromarray(a.round().astype(np.uint8)).save(os.path.join(OUT, 'eye.png'))
+a[..., :3] = srgb(np.clip(out, 0, 1))
+# the iris' size: the map is pulled towards each pupil so that the iris' edge comes to the concept's share of the eye
+sizes = [e['iris']['diameter_mm'] for name in ('full_front', 'bald_front')
+         for e in eye_lines.read(os.path.join(VD, name+'.png'), os.path.join(VD, 'points', name+'.json'), mpp*1000)[2].values()]
+iris_mm = float(np.median(sizes)); scale = float(np.clip(iris_mm/IRIS_MM, 0.75, 1.15))
+for sp in spots:
+    cx, cy, r0, edge = sp; far = 1.8*edge; b0 = int(far)+2
+    yy, xx = np.mgrid[int(cy)-b0:int(cy)+b0+1, int(cx)-b0:int(cx)+b0+1].astype(np.float64); dx, dy = xx-cx, yy-cy; rr = np.hypot(dx, dy)
+    src = np.where(rr <= scale*edge, rr/scale, np.where(rr < far, edge+(rr-scale*edge)*(far-edge)/(far-scale*edge), rr))   # where a texel comes from
+    k = src/np.maximum(rr, 1e-9)
+    for ch in range(4):
+        a[int(cy)-b0:int(cy)+b0+1, int(cx)-b0:int(cx)+b0+1, ch] = ndimage.map_coordinates(a[..., ch], [cy+dy*k, cx+dx*k], order=1, mode='nearest')
+    sp[2], sp[3] = round(r0*scale, 1), int(round(edge*scale))
+Image.fromarray(a.round().astype(np.uint8)).save(os.path.join(OUT, 'eye.png'))
 
 # ---- the record and the picture
 rec = {'hair_diff': HAIR_DIFF, 'gain': GAIN, 'strands': len(col), 'seen': round(float(seen.mean()), 3),
@@ -188,7 +207,7 @@ rec = {'hair_diff': HAIR_DIFF, 'gain': GAIN, 'strands': len(col), 'seen': round(
        'hair_median': [int(v) for v in srgb(np.median(col[kind < 3], 0)).round()],
        'beard_median': [int(v) for v in srgb(np.median(col[(kind == 3) | (kind == 4)], 0)).round()],
        'iris_srgb': [int(v) for v in srgb(iris).round()], 'irises_srgb': [[int(v) for v in srgb(c).round()] for c in irises],
-       'eye_map_irises': spots}
+       'eye_map_irises': spots, 'iris_mm': round(iris_mm, 2), 'irises_mm': sizes, 'iris_scale': round(scale, 3)}
 json.dump(rec, open(os.path.join(OUT, 'colour.json'), 'w'), indent=1)
 print('COLOUR', json.dumps(rec))
 N = front.shape[0]; sheet = Image.new('RGB', (4*N, N+80), (122, 124, 128))

@@ -1,11 +1,17 @@
 # The head with a groom of strands, rendered in Cycles: the reference the game's hair is judged against.
 #   blender -b <round>/reg_sub.blend -P groom_render.py -- views.json skin.png groom.npz <out dir> <prefix>
 #       [--groom more.npz]... [--part part.npz part.png]... [--eye eye.png] [--ramp pigment.png] [--size 1200] [--spp 256]
-#       [--views front,quarter,profile,back,hairline,knot]
+#       [--views front,quarter,profile,back,hairline,knot] [--height skin_height.png] [--light portrait]
 # The cameras stand on the eye point of views.json, as render_skin.py's do. Hair is Cycles' hair curves with the
 # principled hair BSDF; a strand's colour is looked up in a ramp by its tint: --ramp is a strip of
 # scripts/content/npc/concept_colours.py (hair_pigment.png), without it hero 3a's hand ramp. The cord of the tail is a
 # band of leather. --groom adds more strands of the same hair: the beard, the moustache and the stubble of beard.py.
+# --height: the relief of the skin that is finer than the mesh (skin_material.py's skin_height.png, 0.5 micrometres a
+# step round 32768), as a bump: the sheet shows the wrinkles the game has in its normal map.
+# --light portrait: the light of the concept sheets, for the likeness sheet: the key stands 45 degrees up and is wide,
+# so the brows shade the eyes as they do on a concept; the fill and the sky are weaker; the eye is as wet as the
+# game's (F0 0.02, a sharp highlight). Under the default light (the key 30 degrees up, a grey sky at 0.5) the whites
+# glare and a grey veil of the sky lies on a dark iris: the second face's brown eyes came out grey.
 import bpy, sys, os, json, math
 import numpy as np
 from mathutils import Vector
@@ -23,7 +29,7 @@ def opt(name, default=None, n=1):
 parts = opt('--part', n=2); MORE = []
 while '--groom' in a:
     i = a.index('--groom'); MORE.append(a[i+1]); del a[i:i+2]
-EYE = opt('--eye'); RAMP = opt('--ramp'); SIZE = int(opt('--size', 1200)); SPP = int(opt('--spp', 256))
+HEIGHT = opt('--height'); PORTRAIT = opt('--light') == 'portrait'; EYE = opt('--eye'); RAMP = opt('--ramp'); SIZE = int(opt('--size', 1200)); SPP = int(opt('--spp', 256))
 VIEWS = opt('--views', 'front,quarter,profile,back,hairline,knot').split(',')
 V = json.load(open(a[0])); G = np.load(a[2]); OUT, pre = a[3], a[4]
 sc = bpy.context.scene; hm = bpy.data.objects['Human']; cam = sc.camera
@@ -33,6 +39,12 @@ lin = lambda c: tuple(((v/255+0.055)/1.055)**2.4 if v/255 > 0.04045 else v/255/1
 mat = bpy.data.materials.new('skin_tex'); mat.use_nodes = True; nt = mat.node_tree
 bsdf = nt.nodes['Principled BSDF']; tex = nt.nodes.new('ShaderNodeTexImage'); tex.image = bpy.data.images.load(a[1])
 nt.links.new(tex.outputs['Color'], bsdf.inputs['Base Color']); bsdf.inputs['Roughness'].default_value = 0.6; bsdf.inputs['Specular IOR Level'].default_value = 0.3
+if HEIGHT:
+    ht = nt.nodes.new('ShaderNodeTexImage'); ht.image = bpy.data.images.load(HEIGHT); ht.image.colorspace_settings.name = 'Non-Color'
+    zero = nt.nodes.new('ShaderNodeMath'); zero.operation = 'SUBTRACT'; zero.inputs[1].default_value = 32768/65535
+    bump = nt.nodes.new('ShaderNodeBump'); bump.inputs['Strength'].default_value = 1.0; bump.inputs['Distance'].default_value = 65535*5e-7
+    nt.links.new(ht.outputs['Color'], zero.inputs[0]); nt.links.new(zero.outputs[0], bump.inputs['Height'])
+    nt.links.new(bump.outputs['Normal'], bsdf.inputs['Normal'])
 for i, s in enumerate(hm.material_slots):
     if s.material and not any(k in s.material.name.lower() for k in ('eye', 'teeth', 'tongue', 'brow', 'lash')): s.material = mat
 for npz, png in parts:
@@ -52,7 +64,8 @@ if EYE:
             em = bpy.data.materials.new('eye_tex'); em.use_nodes = True; en = em.node_tree
             et = en.nodes.new('ShaderNodeTexImage'); et.image = bpy.data.images.load(EYE); pb = en.nodes['Principled BSDF']
             en.links.new(et.outputs['Color'], pb.inputs['Base Color']); en.links.new(et.outputs['Alpha'], pb.inputs['Alpha'])
-            pb.inputs['Roughness'].default_value = 0.3
+            pb.inputs['Roughness'].default_value = 0.12 if PORTRAIT else 0.3
+            if PORTRAIT: pb.inputs['Specular IOR Level'].default_value = 0.25
             for sl in o.material_slots: sl.material = em
 
 # ---- the strands
@@ -98,10 +111,11 @@ for i in range(5):                                                       # five 
 # ---- light and render
 for o in list(bpy.data.objects):
     if o.type == 'LIGHT': bpy.data.objects.remove(o)
-for rx, rz, en in ((60, -30, 2.6), (60, 40, 1.2), (70, 180, 1.4)):
-    ld = bpy.data.lights.new('l', 'SUN'); ld.energy = en; ld.angle = 0.25; lo = bpy.data.objects.new('l', ld); sc.collection.objects.link(lo)
+LIGHTS = ((45, -20, 2.8, 0.6), (60, 50, 1.0, 0.4), (70, 180, 1.4, 0.25)) if PORTRAIT else ((60, -30, 2.6, 0.25), (60, 40, 1.2, 0.25), (70, 180, 1.4, 0.25))
+for rx, rz, en, wide in LIGHTS:
+    ld = bpy.data.lights.new('l', 'SUN'); ld.energy = en; ld.angle = wide; lo = bpy.data.objects.new('l', ld); sc.collection.objects.link(lo)
     lo.rotation_euler = (math.radians(rx), 0, math.radians(rz))
-sc.world.node_tree.nodes['Background'].inputs[1].default_value = 0.5
+sc.world.node_tree.nodes['Background'].inputs[1].default_value = 0.4 if PORTRAIT else 0.5
 sc.render.engine = 'CYCLES'; sc.cycles.samples = SPP; sc.cycles.use_denoising = False; sc.render.film_transparent = True
 sc.cycles.max_bounces = 16; sc.cycles.transmission_bounces = 16; sc.cycles.transparent_max_bounces = 32
 try:
