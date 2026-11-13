@@ -321,7 +321,7 @@ bool CollisionCache::read(StaticCollision& out) const {
         }
       if(left.empty())
         return false;
-      reason="missing; leftover temporary files of an interrupted write:";
+      reason="missing; leftovers of an interrupted write:";
       for(const auto& name:left)
         reason+=" "+name;
       fail(reason);
@@ -334,14 +334,14 @@ bool CollisionCache::read(StaticCollision& out) const {
     in.raw(header.data(),size_t(head));
     const std::string_view magic(header.data(),std::min(head,uintmax_t(Magic.size())));
     if(magic.starts_with(LegacyMagic) && magic!=Magic)
-      fail("format "+std::string(magic.substr(0,magic.find('\n')))+", this build reads "+
-           std::string(Magic.substr(0,Magic.size()-1))+" (version 1 held the shapes alone)");
+      fail("format version "+std::string(magic.substr(LegacyMagic.size(),magic.find('\n')-LegacyMagic.size()))+
+           ", this build reads "+std::to_string(BakeVersion));
     if(magic!=Magic)
       fail("not a collision cache file");
     if(fileSize<HeaderSize)
       fail("truncated: "+count(fileSize)+" bytes, the header alone has "+count(HeaderSize));
     if(std::string_view(header.data()+IdentityAt,64)!=identity)
-      fail("built for another key (base, world, content, collision flags, cloth rules, bake version or Jolt build)");
+      fail("another key (base, world, content, flags, cloth rules, version or Jolt build)");
     uint64_t stored=0, size[Sizes]={};
     std::memcpy(&stored,header.data()+ChecksumAt,8);
     std::memcpy(size,header.data()+SizesAt,sizeof(size));
@@ -365,7 +365,7 @@ bool CollisionCache::read(StaticCollision& out) const {
     std::vector<uint8_t> names;
     in.vector(names,size_t(size[NameBytes]));
     std::vector<std::string> sectors;
-    std::vector<JPH::Vec3> vertices(size_t(size[Vertices]));
+    std::vector<JPH::Vec3> vertices(static_cast<size_t>(size[Vertices]));
     {
     std::array<float,3*4096> block;
     for(size_t at=0;at<vertices.size();) {
@@ -436,7 +436,8 @@ bool CollisionCache::read(StaticCollision& out) const {
   catch(const std::exception& error) {
     reason=std::string("read failed: ")+error.what();
     }
-  Tempest::Log::i("[collision-cache] ",file.string(),": ",reason,"; rebuilding from the collision input");
+  // One line: Tempest splits lines past 255 bytes, so the reasons stay short.
+  Tempest::Log::i("[collision-cache] ",file.string(),": ",reason,"; rebuilding");
   return false;
   }
 

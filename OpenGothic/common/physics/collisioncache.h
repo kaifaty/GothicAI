@@ -33,7 +33,7 @@ class StaticCollision;
 // A file is used only when the magic, the identity, the file size against the sizes and the checksum hold, every
 // index is below the vertex count, the segments tile their index list, every sector reference names a sector,
 // every duplicate member names a triangle of its mesh once, and Jolt restores the shapes. Anything else is a miss
-// with one log line "[collision-cache] <file>: <reason>; rebuilding from the collision input", never a failed load.
+// with one log line "[collision-cache] <file>: <reason>; rebuilding", never a failed load.
 class CollisionCache final {
   public:
     static constexpr uint32_t BakeVersion = 2;

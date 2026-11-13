@@ -17,6 +17,7 @@
 #include "physics/dynamicworld.h"
 #include "physics/physicvbo.h"
 #include "worldchunks.h"
+#include "worldchunksruntime.h"
 #include "worldcloth_fixtures.h"
 
 #include <algorithm>

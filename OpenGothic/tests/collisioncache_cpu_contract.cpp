@@ -35,6 +35,7 @@
 #include "worldcloth_fixtures.h"
 
 #include <Jolt/Core/StreamWrapper.h>
+#include <Jolt/Core/UnorderedMap.h>
 #include <Jolt/Physics/Collision/PhysicsMaterial.h>
 
 #include <algorithm>
@@ -51,6 +52,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #if defined(__unix__) || defined(__APPLE__)
@@ -166,9 +168,11 @@ StaticCollision::Cache cacheOf(const fs::path& root, const std::string& world) {
   return {root,{std::string(64,'c'),world,"collisioncache-cpu-contract",0b101u,StaticCollision::clothRules()}};
   }
 
-std::string firstLine(const std::string& log, const std::string& tag) {
-  const auto at = log.find(tag);
-  return at==std::string::npos ? std::string("none") : log.substr(at,log.find('\n',at)-at);
+// The cache's line: LogCapture joins the pieces without line ends, so it ends at its own last words.
+std::string cacheLine(const std::string& log) {
+  const std::string tag = "[collision-cache] ", end = "; rebuilding";
+  const auto at = log.find(tag), last = log.find(end,at);
+  return at==std::string::npos || last==std::string::npos ? std::string("none") : log.substr(at,last+end.size()-at);
   }
 
 // ---- 1: three starts, one answer ----
@@ -268,11 +272,11 @@ struct Damage {
     const auto& use = key!=nullptr ? *key : cache;
     const auto miss = start(world,use);
     const auto line = "[collision-cache] "+file.string()+": ";
-    std::printf("%s: %s\n",label.c_str(),firstLine(miss.log,"[collision-cache] ").c_str());
+    std::printf("%s: %s\n",label.c_str(),cacheLine(miss.log).c_str());
     require(!miss.stats.cacheHit && miss.source->calls()==1,label+": must miss and call the input once");
     require(tagged(miss.log,"[collision-cache] ")==1 && miss.log.find(line)!=std::string::npos &&
             miss.log.find(reason)!=std::string::npos &&
-            miss.log.find("; rebuilding from the collision input")!=std::string::npos,
+            miss.log.find("; rebuilding")!=std::string::npos,
             label+": the log must hold one line '"+line+"…"+reason+"…', got: "+miss.log);
     expectSame(label+", the rebuild against the cold start",cold,Probe::probe(*miss.physics,world.landscape,world.table));
     const auto next = start(world,use);
@@ -305,7 +309,7 @@ void damage(const Loaded& world, const StaticCollision::Cache& cache, const Prob
     auto& byte = bytes[size_t(layout.at[Layout::Shapes]+layout.size[Layout::Shapes]/2)];
     byte = uint8_t(byte^0x10u);
     });
-  d.edited("a version 1 file","format GOTHIC-COLLISION-1, this build reads GOTHIC-COLLISION-2",[&](auto& bytes) {
+  d.edited("a version 1 file","format version 1, this build reads 2",[&](auto& bytes) {
     // Version 1: its magic, the identity, a CRC-32 and the shapes alone.
     const std::string magic = "GOTHIC-COLLISION-1\n";
     std::vector<uint8_t> v1(magic.begin(),magic.end());
@@ -339,7 +343,7 @@ void damage(const Loaded& world, const StaticCollision::Cache& cache, const Prob
       other.key.collisionFlags ^= 2u;
     else
       other.key.clothRules = std::string(64,'0')+"/"+std::to_string(WorldCloth::Algorithm);
-    d.expectMiss(std::string("another key: ")+keys[k],"built for another key",&other);
+    d.expectMiss(std::string("another key: ")+keys[k],"another key (base, world, content, flags, cloth rules",&other);
     }
   // A leftover of an interrupted write beside a missing cache: named, removed when it is old, rebuilt.
   fs::remove(d.file);
@@ -348,7 +352,7 @@ void damage(const Loaded& world, const StaticCollision::Cache& cache, const Prob
   writeBytes(leftover,std::vector<uint8_t>(d.good.begin(),d.good.begin()+1000));
   fs::last_write_time(leftover,fs::file_time_type::clock::now()-std::chrono::hours(1));
   d.expectMiss("a leftover temporary file beside a missing cache",
-               "missing; leftover temporary files of an interrupted write: "+leftover.filename().string()+" (removed)");
+               "missing; leftovers of an interrupted write: "+leftover.filename().string()+" (removed)");
   require(!fs::exists(leftover),"the old leftover must be removed");
   }
 
@@ -381,10 +385,25 @@ void cacheOff(const Loaded& world, const StaticCollision::Cache& cache, const Pr
 
 // ---- the numbers ----
 
-// Main's warm start: PackedMesh PK_Physic into the two meshes, the shapes-only file of version 1 read and checked
-// with its CRC-32 and restored, prepareTriangleData of both meshes.
+// Main's warm start: PackedMesh PK_Physic into the two meshes, the shapes-only file of version 1 read whole,
+// checked with its CRC-32 and restored through a memcpy stream, prepareTriangleData of both meshes.
 struct MainWarm {
   double packMs = 0, shapesMs = 0, prepareMs = 0;
+  };
+
+class BytesIn final : public JPH::StreamIn {
+  public:
+    explicit BytesIn(std::string_view bytes):bytes(bytes) {}
+    void ReadBytes(void* data, size_t size) override {
+      require(size<=bytes.size(),"the version 1 shapes end early");
+      std::memcpy(data,bytes.data(),size);
+      bytes.remove_prefix(size);
+      }
+    bool IsEOF() const override { return false; }
+    bool IsFailed() const override { return false; }
+
+  private:
+    std::string_view bytes;
   };
 
 std::string shapesOnly(const StaticCollision& statics) {
@@ -437,8 +456,7 @@ MainWarm mainWarm(const asset::WorldMesh& input, const fs::path& v1) {
   uint32_t crc = 0;
   std::memcpy(&crc,bytes.data()+header-4,4);
   require(worldChunkCrc32(bytes.data()+header,bytes.size()-header)==crc,"the version 1 file must check");
-  std::stringstream payload(bytes.substr(header));
-  JPH::StreamInWrapper stream(payload);
+  BytesIn stream(std::string_view(bytes).substr(header));
   JPH::Shape::IDToShapeMap shapes;
   JPH::Shape::IDToMaterialMap materials;
   const auto a = JPH::Shape::sRestoreWithChildren(stream,shapes,materials);
