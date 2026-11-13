@@ -31,10 +31,12 @@ def linear(path: Path) -> np.ndarray:
 
 
 def band(frame: np.ndarray) -> np.ndarray:
-    """Pixels of the magenta band: red and blue well over green, away from its rim."""
+    """Pixels of the magenta band: red and blue well over green, away from its rim. In the shade the sky's light
+    turns the magenta blue, red about half the blue (.45-.55), so the hue test leaves room below that: a test at
+    half cut through the shaded pixels and took a part of them that changed with the roughness of the mask."""
     from scipy.ndimage import binary_erosion
     r, g, b = frame[..., 0], frame[..., 1], frame[..., 2]
-    return binary_erosion((np.minimum(r, b) > 3 * g + .004) & (np.abs(r - b) < .5 * np.maximum(r, b)), iterations=2)
+    return binary_erosion((np.minimum(r, b) > 3 * g + .004) & (np.minimum(r, b) > .3 * np.maximum(r, b)), iterations=2)
 
 
 def stats(frame: np.ndarray, mask: np.ndarray) -> dict:

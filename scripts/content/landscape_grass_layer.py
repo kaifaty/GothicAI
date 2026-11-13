@@ -2,7 +2,7 @@
 """Build a staging set whose grass along the rock edges is baked from 3D grass: the `fringe` layer with depth.
 
     uv run --no-project --with numpy --with pillow --with scipy python \
-        scripts/content/landscape_grass_layer.py rock-grass-2 [--from rock-projection-world] \
+        scripts/content/landscape_grass_layer.py rock-grass-3 [--from rock-projection-world] \
         [--screen R G B] [--contrast K] [--rough-floor F] [--preview DIR]
 
 Step 1 of reports/engine/2026-11-13-grass/README.md. Copies a set with the projected rock and gives the two strip
@@ -13,13 +13,15 @@ straight down (mesh3d/blender/grass_patch.py; baked once into the work folder, `
   sun a flat layer shows no shadow by itself; the painter of the original drew it, and so does this. The shadow is
   the share of the sky a blade sees (the bake's light pass) times a root-to-tip curve, (height / height of the
   canopy around) ** 1.5 over a floor;
+- the clumps that stand out of the tile are dimmed to a cap: one clump much lighter than the rest shows the repeat;
 - the colour is then brought to the original's painted grass in mean (per channel, times the on-screen correction
   `--screen`) and in spread (`--contrast`: the exponent of luma around its mean), both measured on frames of the
   game by landscape_grass_measure.py;
 - the colour's mips are averaged in linear light: the writer of test-material.py averages the encoded values,
   and a texture of bright tips over dark gaps then darkens with distance (by a fifth at 1.5 cm a texel);
 - normal: the bake's, leaned toward the plane; ORM: the sky share as AO, weakened (the shadow is in the colour
-  already, and in the shade the engine would apply it twice), the scan's roughness, and in the blue the height,
+  already, and in the shade the engine would apply it twice), the scan's roughness over a floor that makes the
+  blades matte (as scanned they shine white in our renderer), and in the blue the height,
   which the shader compares with the threshold across the tufts (ranked per mip, landscape_fringe). The height
   there is the blades' plus the canopy's with a trail down the image, down a wall: under a tall clump the
   threshold leaves a tongue of grass half a metre long, not a fringe of single blades.
@@ -40,6 +42,7 @@ import subprocess
 from pathlib import Path
 
 import numpy as np
+from scipy.ndimage import gaussian_filter
 
 HERE = Path(__file__).parent
 SOURCES = Path.home() / '.local/share/gothic-ai/content-sources/landscape-probe'
@@ -53,26 +56,31 @@ FLOOR = .22
 CANOPY_M = .12              # the height share is taken against the tallest grass this near
 UP = .35                    # share of the plane's normal in the layer's
 AO_POWER = .3               # AO = sky share ** .3: on the colour's weight .88 instead of .67
-ROUGH_FLOOR = 0.            # the scan's roughness as it is: .70 on average, blades from .44, and they shine
+ROUGH_FLOOR = .85           # matte blades, .96 on average; the scan's own are .70, from .44, and shine white
 TONGUE_M = .5               # the canopy's trail down the image falls e times over this
 TONGUE = .6                 # its weight against the blades' own height
+CLUMP_M = .15               # the scale a clump is told by: the blur of luma
+CLUMP_CAP = 1.45            # a clump brighter than this many means of the tile is dimmed to it
 # On-screen correction of the mean and the exponent of the spread, by rounds (2026-11-13), measured on the solid
 # band of `ledge` and `road-3` (landscape_grass_measure.py), original against layer, linear display RGB.
 # Round 1: 1.03 / 1.04 / 1.02, the last correction of the scanned layer (landscape_fringe.SCREEN) times its
-# residue, and exponent 1: it gave the tile, at the original's texel (1 cm), the spread of the original's painted
-# grass. Mips averaged encoded, AO = sky share. On the frames original / layer = 1.034 / 1.081 / 0.789, luma
-# 1.063, spread 1.040; but 1.02 on `ledge` against 1.15 on `road-3`, and 1.3-1.4 in the shade of both.
-# Round 2: linear mips, the weaker AO, less straw in the bake, the tongues; the correction is the hue of round 1
-# on `ledge`, the nearer view, 0.961 / 1.022 / 0.725, times .895 for what the mips and the AO were expected to
-# add. Exponent 1.06: with the straw gone the tile's spread at 1 cm fell from .75 of its mean (the painted grass
-# has .754) to .71, and the exponent returns it. On the frames original / layer = 1.053 / 1.019 / 0.857, luma
-# 1.023, spread 1.054; in the shade 1.12-1.18; but luma 0.94 on `ledge` against 1.22 on `road-3`, the blue a
-# quarter over the original's on `ledge`, and the lit grass at 17:30 a quarter brighter than the original's.
-# The cause is ROUGH_FLOOR, measured: the same set with `--rough-floor .85` (matte blades, as the scanned layer's)
-# gives luma 1.14 on `ledge`, 1.29 on `road-3`, 1.22 lit at 17:30, and the blue 1.26, the scanned layer's ratio.
-# The round that follows is that floor and the correction times these ratios; it is the user's to order.
-SCREEN = (.886, .951, .663)
-CONTRAST = 1.06
+# residue, and exponent 1. Mips averaged encoded, AO = sky share. On the frames original / layer = 1.034 / 1.081 /
+# 0.789, luma 1.063, spread 1.040; but 1.02 on `ledge` against 1.15 on `road-3`, and 1.3-1.4 in the shade of both.
+# Round 2: linear mips, the weaker AO, less straw in the bake, the tongues; 0.886 / 0.951 / 0.663 and exponent
+# 1.06. On the frames 1.053 / 1.019 / 0.857, luma 1.023, spread 1.054; but luma 0.94 on `ledge` against 1.22 on
+# `road-3`, the blue a quarter over the original's on `ledge`, the lit grass at 17:30 a quarter brighter: the
+# blades shone white. The same set with `--rough-floor .85` gave luma 1.14 on `ledge` and 1.29 on `road-3`.
+# The numbers of rounds 1 and 2 are on a part of the band: the measure's hue test cut through its shaded pixels.
+# Round 3, on the whole band: ROUGH_FLOOR .85 and the correction of round 2 times the ratios of that matte set,
+# 1.104 / 1.141 / 0.898, gave 0.990 / 0.991 / 1.094 on `ledge` and 1.136 / 1.128 / 1.232 on `road-3`: one
+# correction does not bring both views to the original (why they differ is not measured).
+# The correction below is that one times the geometric mean of the two views, to the power 1 / .85 for the tone
+# curve: luma 0.937 on `ledge`, 1.069 on `road-3`, 0.981 on both; spread 0.895, 1.142, 1.015; in the shade the
+# layer stays 9-16 % darker than the original.
+# Exponent 1.17: the tile's spread of luma at the original's texel (1 cm) is then .80 of its mean, as that of the
+# original's painted grass on the pixels of its mask (.803; painted_stats).
+SCREEN = (1.183, 1.218, 1.07)
+CONTRAST = 1.17
 
 
 def sibling(name: str):
@@ -137,18 +145,29 @@ def spread(value: np.ndarray, exponent: float) -> np.ndarray:
     return value * ((level / middle) ** (exponent - 1))[..., None]
 
 
+def level_clumps(value: np.ndarray, texel_m: float) -> np.ndarray:
+    """Dim the clumps that stand out of the tile: one clump much lighter than the rest is what the eye finds again
+    4 m further along a wall. Of the bake of seed 7 this takes the two lightest, 1.97 and 1.78 of the tile's mean
+    at this scale, down to 1.64 and 1.62 (the cap is on the blur, the clump keeps its bright middle); the third
+    is at 1.53."""
+    low = gaussian_filter(luma(value), CLUMP_M / texel_m, mode='wrap')
+    low /= low.mean()
+    return value * np.minimum(CLUMP_CAP / low, 1)[..., None]
+
+
 def painted_stats(probe, pilot) -> dict:
-    """Mean and spread of luma of the original's painted grass, at its own texel (about 1 cm)."""
+    """Mean and spread of luma of the original's painted grass, at its own texel (about 1 cm): the pixels of
+    landscape_fringe.painted_grass, those its mask holds as grass, the bottom band of NW_NATURE_STEIN_04 too."""
     from PIL import Image
     base = sorted(Path.home().glob('.cache/gothic-ai/base/*/textures'), key=lambda p: p.stat().st_mtime)[-1]
     values = []
     for texture, strip in probe.STRIPS.items():
         with Image.open(base / f'{texture}.dds') as image:
             original = np.asarray(image.convert('RGB'))
-        rows = int(original.shape[0] * strip['top'][0])     # the solid band
-        values.append(luma(pilot.linear(original[:rows])).ravel())
+        mask = probe.grass_mask(original, strip['top'], strip['bottom'])
+        values.append(luma(pilot.linear(original[mask > .5])))
     values = np.concatenate(values)
-    return dict(mean=float(values.mean()), std=float(values.std()))
+    return dict(mean=float(values.mean()), std=float(values.std()), pixels=int(values.size))
 
 
 def preview(folder: Path, albedo: np.ndarray, rank: np.ndarray, pilot) -> None:
@@ -190,6 +209,7 @@ def main() -> int:
     parser.add_argument('--contrast', type=float, default=CONTRAST, help='exponent of the luma spread')
     parser.add_argument('--rough-floor', type=float, default=ROUGH_FLOOR,
                         help='roughness = floor + (1 - floor) * the scan\'s (default: %(default)s)')
+    parser.add_argument('--keep-clumps', action='store_true', help='do not dim the clumps that stand out')
     parser.add_argument('--mask', action='store_true', help='a flat magenta layer without tufts, for the measure')
     parser.add_argument('--preview', type=Path, help='write previews of the tile here and stop: no set')
     args = parser.parse_args()
@@ -214,6 +234,9 @@ def main() -> int:
     light = passes['light'].astype(np.float64)
     shade = shadow(height, light, args.tile / args.size)
     value = spread(passes['colour'].astype(np.float64) * shade[..., None], args.contrast)
+    clumps = gaussian_filter(luma(value), CLUMP_M / (args.tile / args.size), mode='wrap')
+    if not args.keep_clumps:
+        value = level_clumps(value, args.tile / args.size)
     target = fringe_set.painted_grass(probe, pilot)
     factor = target / value.reshape(-1, 3).mean(axis=0) * np.array(args.screen)
     value = np.clip(value * factor, 0, 1)
@@ -224,6 +247,8 @@ def main() -> int:
     report = dict(source=args.source, tufts=TUFTS, ground=GROUND, patch=patch, size=args.size, tile_m=args.tile,
                   curve=CURVE, floor=FLOOR, canopy_m=CANOPY_M, ao_power=AO_POWER, tongue_m=TONGUE_M, tongue=TONGUE,
                   rough_floor=args.rough_floor,
+                  clumps=dict(scale_m=CLUMP_M, cap=CLUMP_CAP, levelled=not args.keep_clumps,
+                              brightest=round(float(clumps.max() / clumps.mean()), 3)),
                   screen=list(args.screen), contrast=args.contrast,
                   painted_grass=target.round(4).tolist(), gains=factor.round(3).tolist(),
                   mean=value.reshape(-1, 3).mean(axis=0).round(4).tolist(),
