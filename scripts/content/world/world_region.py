@@ -10,13 +10,15 @@ into its chunk (the face attribute region_chunk, which children of a face inheri
 in the converter's form (chunk_canon.py) and checked against its own base chunk (chunk_glb.check): border vertices
 only towards the chunks outside the region, vertex light, source triangles, materials. The open edges are judged
 over the union of the region's chunks against the union of their base chunks, welded by position: an inner border
-edge split on both sides passes, split on one side only it is a T-junction and fails. One failing chunk fails the
-build, and nothing is published.
+edge split on both sides passes, split on one side only it is a T-junction and fails. An open edge of the base
+(the free side of a tree crown, of duckweed) that the edits moved or split along new vertices passes, unless it is
+the region's outer border. One failing chunk fails the build, and nothing is published.
 
-Two things Blender loses are put back from the base (pass_by, base_materials): the triangles its importer drops (a
-corner twice, or the same corners as another triangle: up to 10 per chunk of the pilot, without them a build that
-changes nothing loses border vertices and edges) and the material records as the converter wrote them (Blender writes
-[9.99999975e-05, 0] as [9.99999975e-05, 0.0]). So an edit that changes nothing gives every chunk equal to its base.
+Two things Blender loses are put back: the triangles it cannot hold (a corner twice, or the same corners as another
+triangle: the weld makes the two sides of a double-sided pair one face, 7 264 triangles on the pilot), where the
+edits took them (world_region_dropped.py, chunk_dropped.py), and the material records as the
+converter wrote them (base_materials: Blender writes [9.99999975e-05, 0] as [9.99999975e-05, 0.0]). So an edit that
+changes nothing gives every chunk equal to its base.
 
 A passing chunk the edits changed goes to <staging>/<set>/worlds/<WORLD>/chunks/<x>_<z>.glb (left as it is when it
 is the same as the published one); a chunk equal to its base is not published. The region's record in the registry
@@ -27,7 +29,6 @@ appends to its list; a rebuild that changes nothing leaves the record as it is.
 """
 from __future__ import annotations
 
-from collections import Counter
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -37,12 +38,11 @@ import struct
 import sys
 import time
 
-import numpy as np
-
 import chunk_canon
+import chunk_dropped
 import chunk_glb
 import world_edit
-from world_edit import EditError
+from edit_error import EditError
 
 KIND = 'worldregion'
 REGION = re.compile(r'([A-Z0-9_]+)/(-?[0-9]+),(-?[0-9]+),(-?[0-9]+),(-?[0-9]+)')
@@ -114,81 +114,58 @@ def union(paths) -> chunk_glb.Chunk:
     return out
 
 
-def union_open_edges(bases, editeds, allowed: set[tuple] = frozenset()) -> tuple[dict, list[str]]:
+def _ids_at(chunk: chunk_glb.Chunk) -> dict[tuple, set[int]]:
+    """Exact position -> the _VERTEX ids of the corners there (-1 for a new vertex)."""
+    pos, vid = chunk.corners()
+    out: dict[tuple, set[int]] = {}
+    for k, v in zip(chunk_glb._key_tuples(chunk_glb.position_keys(pos)), vid):
+        out.setdefault(k, set()).add(int(v))
+    return out
+
+
+def _followed(new: set[tuple], base_open: set[tuple], base: chunk_glb.Chunk, edited: chunk_glb.Chunk,
+              outer: set[int]) -> set[tuple]:
+    """The new open edges that are an open edge of the base the edits moved or split: between the same two base
+    vertices (by _VERTEX), directly or along a chain of new vertices. Not the region's outer border (both ends shared
+    with a chunk outside): it is open only because the region ends there."""
+    base_ids, ids = _ids_at(base), _ids_at(edited)
+    pairs = {frozenset((x, y)) for a, b in base_open for x in base_ids.get(a, ()) for y in base_ids.get(b, ())
+             if x >= 0 and y >= 0 and not (x in outer and y in outer)}
+    old = {k for k, v in ids.items() if any(i >= 0 for i in v)}
+    links: dict[tuple, list[tuple]] = {}
+    for e in new:
+        for k in e:
+            links.setdefault(k, []).append(e)
+    followed: set[tuple] = set()
+    for start in (k for k in links if k in old):
+        for first in links[start]:
+            chain, at, edge = [first], start, first
+            while True:
+                at = edge[1] if edge[0] == at else edge[0]
+                if at in old or len(links[at]) != 2:
+                    break
+                edge = links[at][0] if links[at][1] == edge else links[at][1]
+                chain.append(edge)
+            if at in old and any(frozenset((x, y)) in pairs for x in ids[start] for y in ids[at]):
+                followed.update(chain)
+    return followed
+
+
+def union_open_edges(bases, editeds, allowed: set[tuple] = frozenset(),
+                     outer: set[int] = frozenset()) -> tuple[dict, list[str]]:
     """The open-edge rule over a region: an edge of the edited chunks together that has one triangle (welded by exact
-    position) is new if the base chunks together do not have it open and no edit declared it."""
-    base_open, out_open = chunk_glb.open_edges(union(bases)), chunk_glb.open_edges(union(editeds))
-    new = sorted(out_open - base_open - set(allowed))
+    position) is new if the base chunks together do not have it open, no edit declared it and it is not an open edge
+    of the base the edits moved or split (_followed). outer: the _VERTEX ids shared with chunks outside the region."""
+    base, edited = union(bases), union(editeds)
+    base_open, out_open = chunk_glb.open_edges(base), chunk_glb.open_edges(edited)
+    new = out_open - base_open - set(allowed)
+    followed = _followed(new, base_open, base, edited, set(outer))
+    new = sorted(new - followed)
     problems = [f'new open edge of the region {chunk_glb._floats(a)} - {chunk_glb._floats(b)}' for a, b in new[:20]]
     if len(new) > 20:
         problems.append(f'... {len(new) - 20} more new open edges of the region')
-    return {'base': len(base_open), 'edited': len(out_open), 'declared': len(allowed), 'new': len(new)}, problems
-
-
-def pass_by(src: Path, out: Path, held: list) -> tuple[int, list[str]]:
-    """Write into out the base triangles Blender never had: Blender's importer drops a triangle with two corners at
-    one place and one over the same corners as another (the converter has both: up to 10 per chunk of the pilot), so a
-    build that changes nothing lost them and with them a border vertex or an edge. held: the base triangles Blender
-    had after the join (world_region_bpy.held_triangles); a base triangle missing in out beyond those goes back as
-    the base has it, with its order, flags and lightmap, when its corners that Blender had (a triangle it held has
-    them) are still where they were. Returns how many went back and the problems."""
-    base_doc, base = chunk_canon._primitives(src)
-    doc, edited = chunk_canon._primitives(out)
-    have = {float(o) for _, _, order, _, _ in edited if order is not None for o in order}
-    present = {(c['pos'].tobytes(), float(c['vid']), float(c['fid'])) for _, tris, *_ in edited for tri in tris
-               for c in tri}
-    budget = Counter(chunk_canon._key(tri) for _, tris, *_ in base for tri in tris)
-    budget.subtract(tuple(tuple(pair) for pair in key) for key in held)
-    shared = {tuple(pair) for key in held for pair in key}    # corners Blender had: an edit could move them
-    back, problems = {}, []
-    for m, tris, order, flags, light in base:
-        for t, tri in enumerate(tris):
-            key = chunk_canon._key(tri)
-            if order is None or float(order[t]) in have or budget[key] <= 0:
-                continue
-            budget[key] -= 1
-            if all((int(c['vid']), int(c['fid'])) not in shared or
-                   (c['pos'].tobytes(), float(c['vid']), float(c['fid'])) in present for c in tri):
-                back.setdefault(m['name'], (m, []))[1].append(
-                    (tri, order[t], None if flags is None else flags[t], None if light is None else light[t]))
-            else:
-                problems.append(f'triangle of order {int(order[t])} ({m["name"]}), which Blender cannot hold: an edit '
-                                f'moved or removed its corners')
-    count = sum(len(rows) for _, rows in back.values())
-    if not count:
-        return 0, problems
-    names = [m['name'] for m in doc['materials']]
-    prims = []
-    for m, tris, order, flags, light in edited:
-        rows = [(tri, None if order is None else order[t], None if flags is None else flags[t],
-                 None if light is None else light[t]) for t, tri in enumerate(tris)]
-        if order is not None and m['name'] in back:
-            rows = sorted(rows + back.pop(m['name'])[1], key=lambda r: float(r[1]))
-        prims.append((names.index(m['name']), rows, order is not None))
-    for name, (m, rows) in back.items():     # a material of which out kept no source triangle
-        if name not in names:
-            doc['materials'].append(m)
-            names.append(name)
-        prims.append((names.index(name), sorted(rows, key=lambda r: float(r[1])), True))
-    corners, index = [], {}
-
-    def corner(c):
-        b = c.tobytes()
-        if b not in index:
-            index[b] = len(corners)
-            corners.append(c)
-        return index[b]
-    written = []
-    for mi, rows, source in prims:
-        tris = [[corner(c) for c in r[0]] for r in rows]
-        if not source:
-            written.append((mi, tris, None, None, None))
-            continue
-        written.append((mi, tris, np.array([r[1] for r in rows], np.float32),
-                        None if rows[0][2] is None else np.array([r[2] for r in rows], np.uint16),
-                        None if rows[0][3] is None else np.array([r[3] for r in rows], np.float32)))
-    chunk_canon._write(out, base_doc, doc, np.array(corners, chunk_canon.CORNER), written)
-    return count, problems
+    return {'base': len(base_open), 'edited': len(out_open), 'declared': len(allowed), 'followed': len(followed),
+            'new': len(new)}, problems
 
 
 def base_materials(out: Path, records: dict[str, dict]) -> None:
@@ -268,10 +245,10 @@ def cmd_build_region(a) -> int:
             print(f'note: the base chunks {", ".join(changed)} changed since the record')
     outside = outside_ids(chunks_dir, names)
 
-    result_path, held_path = work / 'region.json', work / 'held.json'
+    result_path, dropped_path = work / 'region.json', work / 'dropped.json'
     result_path.unlink(missing_ok=True)
     job = {'region': region, 'chunks': names, 'bases': [str(c) for c in copies], 'outs': [str(o) for o in outs],
-           'outside': sorted(set().union(*outside.values())), 'out': str(result_path), 'held': str(held_path),
+           'outside': sorted(set().union(*outside.values())), 'out': str(result_path), 'dropped': str(dropped_path),
            'allowed': str(work / 'allowed.json'), 'meta': str(work / 'meta.json'), 'world': world,
            'gui': bool(a.gui), 'repo': str(world_edit.REPO), 'base_chunks': str(chunks_dir),
            'edits': [str(world_edit.REPO / e) for e in edits], 'names': {str(world_edit.REPO / e): e for e in edits}}
@@ -282,8 +259,8 @@ def cmd_build_region(a) -> int:
         return 0
     result = json.loads(result_path.read_text())
     print(f'Blender: {time.perf_counter() - start:.1f} s, {result["seconds"]} s in the script, peak memory '
-          f'{result["peak_rss_mb"]} MB; {result["welded"]} vertices welded, {result["border_vertices"]} on the '
-          f'outer border')
+          f'{result["peak_rss_mb"]} MB; {result["welded"]} vertices welded ({result["feature_seams"]} feature seams '
+          f'closed), {result["border_vertices"]} on the outer border, {result["dropped"]} triangles Blender cannot hold')
     if result['problems']:
         print('\n'.join(f'FAIL: {p}' for p in result['problems']))
         print(f'{a.id}: the edits failed, nothing published (work folder {work})', file=sys.stderr)
@@ -292,29 +269,34 @@ def cmd_build_region(a) -> int:
     allowed = json.loads((work / 'allowed.json').read_text())
     declared = world_edit.allowed_edges(allowed)
     indexes = material_indexes(a, staging, set_name, record)
-    held = json.loads(held_path.read_text())
+    lost_triangles = json.loads(dropped_path.read_text())
     records = {}
     for src in srcs:
         for m in chunk_glb.read_glb(src)[0]['materials']:
             records.setdefault(m['name'], {'name': m['name'], 'extras': m.get('extras', {})})
-    reports, ok, lost = {}, True, []
+    reports, ok, lost, total = {}, True, [], {}
     print('per chunk the open edges are counted; the region judges them over all its chunks (below)')
-    for name, src, out in zip(names, srcs, outs):
-        canon = chunk_canon.canonical(src, out, out)
-        back, problems = pass_by(src, out, held[name])
+    canons = [chunk_canon.canonical(src, out, out) for src, out in zip(srcs, outs)]
+    fresh = chunk_dropped.new_corners(outs)
+    for name, src, out, canon in zip(names, srcs, outs, canons):
+        back, problems = chunk_dropped.write(src, out, [e for e in lost_triangles if e['chunk'] == name], fresh)
         lost += [f'{world}/{name}: {p}' for p in problems]
+        total = {k: total.get(k, 0) + v for k, v in back.items()}
         base_materials(out, records)
         report = chunk_glb.check(src, out, allowed_open=declared, material_indexes=indexes,
                                  world_json=chunks_dir.parent / 'world.json', shared=outside[name],
                                  judge_open_edges=False)
         reports[name] = report
         ok &= report.ok
-        print(f'{world}/{name}: source triangles from the base {canon["kept"]} of {canon["source"]} and {back} '
-              f'Blender cannot hold, new or changed {canon["changed"]}; ' + chunk_glb.format_report(report))
-    edges, problems = union_open_edges(srcs, outs, declared)
+        print(f'{world}/{name}: source triangles from the base {canon["kept"]} of {canon["source"]}, new or changed '
+              f'{canon["changed"]}; Blender cannot hold {back["unchanged"]} as they were, {back["moved"]} moved as '
+              f'{back["triangles"]} triangles; ' + chunk_glb.format_report(report))
+    edges, problems = union_open_edges(srcs, outs, declared, set().union(*outside.values()))
     problems = lost + problems
+    print(f'triangles Blender cannot hold: {total.get("unchanged", 0)} written back as they were, '
+          f'{total.get("moved", 0)} moved with their corners as {total.get("triangles", 0)} triangles')
     print(f'region open edges: base {edges["base"]}, edited {edges["edited"]}, declared {edges["declared"]}, '
-          f'new {edges["new"]}')
+          f'base open edges moved or split {edges["followed"]}, new {edges["new"]}')
     for p in problems:
         print(f'FAIL: {p}')
     (work / 'report.json').write_text(json.dumps({
@@ -330,7 +312,7 @@ def cmd_build_region(a) -> int:
         return 0
 
     published = {c['chunk']: c['output']['path'] for c in (record or {}).get('chunks', []) if c.get('output')}
-    rows = []
+    rows, stale = [], []      # chunks the edits no longer change: removed once the record no longer lists them
     for name, out in zip(names, outs):
         chunk = f'{world}/{name}'
         target = staging / set_name / 'worlds' / world / 'chunks' / f'{name}.glb'
@@ -344,8 +326,7 @@ def cmd_build_region(a) -> int:
                 print(f'{target}: published')
             row['output'] = {'path': target.relative_to(staging).as_posix(), 'sha256': world_edit.sha256(target)}
         elif chunk in published and (staging / published[chunk]).exists():
-            (staging / published[chunk]).unlink()
-            print(f'{staging / published[chunk]}: the edits no longer change it, removed')
+            stale.append(staging / published[chunk])
         rows.append(row)
 
     meta = json.loads((work / 'meta.json').read_text())
@@ -376,4 +357,7 @@ def cmd_build_region(a) -> int:
     entries = [entry if e['id'] == a.id else e for e in entries] if record is not None else entries + [entry]
     world_edit.write_registry(registry_path, entries)
     print(f'{a.id}: recorded in {registry_path}')
+    for path in stale:
+        path.unlink()
+        print(f'{path}: the edits no longer change it, removed')
     return 0

@@ -51,6 +51,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import chunk_canon  # noqa: E402
 import chunk_glb  # noqa: E402
+from edit_error import EditError  # noqa: E402,F401
 
 REPO = Path(__file__).resolve().parents[3]
 REGISTRY = REPO / 'data/content/world-edits.jsonl'
@@ -63,8 +64,6 @@ BLENDER_VERSION = '5.2'
 CHUNK = re.compile(r'[A-Z0-9_]+/-?[0-9]+_-?[0-9]+')
 
 
-class EditError(RuntimeError):
-    pass
 
 
 def sha256(path: Path) -> str:
@@ -210,13 +209,13 @@ def cmd_build(a) -> int:
     by_id = {e['id']: e for e in entries}
     record = by_id.get(a.id)
     if record is not None:
+        if record.get('kind') == 'worldregion':
+            raise EditError(f'{a.id} is a region record: use build-region')
         chunk = record['replaces'][0]
         published = Path(record['files']['glb']['path'])
         set_name = published.parts[0]
         if (a.set and a.set != set_name) or (a.chunk and a.chunk != chunk):
             raise EditError(f'{a.id} is {set_name} {chunk}: a record keeps its set and chunk')
-        if record.get('kind') == 'worldregion':
-            raise EditError(f'{a.id} is a region record: use build-region')
         edits = record_edits(record)
     else:
         if not (a.set and a.chunk):
@@ -226,6 +225,8 @@ def cmd_build(a) -> int:
         source = by_id.get(a.from_id)
         if source is None:
             raise EditError(f'--from {a.from_id}: no such record')
+        if source.get('kind') == 'worldregion':
+            raise EditError(f'--from {a.from_id} is a region record: a chunk record starts from a chunk record')
         if source['replaces'][0] != chunk:
             raise EditError(f'--from {a.from_id} edits {source["replaces"][0]}, not {chunk}')
         edits = record_edits(source)

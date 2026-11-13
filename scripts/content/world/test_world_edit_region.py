@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -26,8 +27,18 @@ INSIDE = ['1_1', '1_2', '2_1', '2_2']
 NEW = ('--set', 'test-r', '--region', REGION)
 
 
+DEGENERATE = ((6, 3), (6, 3), (6, 4))     # in 2_1, on an inner edge
+TWIN = ((5, 3), (6, 4), (6, 3))           # an inner triangle of 2_1, its duplicate the other way round
+
+
 def light(i):
     return 0.2 + 0.06 * i
+
+
+def feature(i, j, material, chunk):
+    """_FEATURE of a corner: one vertex has another feature per material and per row of chunks, as the converter's
+    vertices have on feature seams; so the seam x = 500 and the inner border z ≈ 460 cut features."""
+    return 10 * i + j + 1000 * material + 2000 * (int(chunk.split('_')[1]) % 2)
 
 
 def region_world(tmp_path):
@@ -43,10 +54,9 @@ def region_world(tmp_path):
                 name = f'{int(cx // SIZE)}_{int(cz // SIZE)}'
                 by_chunk.setdefault(name, {}).setdefault(0 if i < 5 else 1, []).append(tri)
                 order[tri] = len(order)
-    # as the converter has them, two triangles Blender's importer drops: one with a corner twice and the first one
-    # of 2_1 again, the other way round
-    first = by_chunk['2_1'][1][0]
-    for tri in (((6, 3), (6, 3), (6, 4)), first[::-1]):
+    # as the converter has them, two triangles Blender's importer drops: one with a corner twice and the triangle
+    # TWIN of 2_1 again, the other way round
+    for tri in (DEGENERATE, TWIN[::-1]):
         by_chunk['2_1'][1].append(tri)
         order[tri] = len(order)
     materials = [{'name': m['name'], 'extras': {'gothic': {'index': k, **m}}} for k, m in enumerate(MATERIALS)]
@@ -54,14 +64,15 @@ def region_world(tmp_path):
         corners, index, prims = [], {}, []
         for material, tris in sorted(by_material.items()):
             for i, j in (p for t in tris for p in t):
-                if (i, j) not in index:
+                fid = feature(i, j, material, name)
+                if (i, j, fid) not in index:
                     corner = np.zeros((), chunk_canon.CORNER)
                     corner['pos'], corner['nrm'], corner['uv'] = (STEP * i, 0, STEP * j), (0, 1, 0), (i, j)
-                    corner['col'] = (*[round(light(i) * 255)] * 3, 255)
-                    corner['vid'] = corner['fid'] = 10 * i + j
-                    index[(i, j)] = len(corners)
+                    corner['col'] = (*[round((light(i) + 0.02 * material) * 255)] * 3, 255)
+                    corner['vid'], corner['fid'] = 10 * i + j, fid
+                    index[(i, j, fid)] = len(corners)
                     corners.append(corner)
-            prims.append((material, [[index[p] for p in t] for t in tris],
+            prims.append((material, [[index[(*p, feature(*p, material, name))] for p in t] for t in tris],
                           np.array([order[t] for t in tris], np.float32),
                           np.array([[3, order[t] % 7] for t in tris], np.uint16), np.full(len(tris), -1, np.float32)))
         doc = {'asset': {'version': '2.0', 'extras': {'gothic': {'format': 'gothic-world-chunk'}}},
@@ -128,6 +139,13 @@ def test_a_t_junction_inside_a_region_fails_the_union(tmp_path):
     b_split = chunk(tmp_path / 'b2/1_0.glb', ['qtu', 'mur', 'qum'])
     summary, problems = world_region.union_open_edges([a, b], [a_split, b_split])
     assert summary['new'] == 0 and problems == []
+    # an open edge of the base split by a new vertex is no opening, unless it is the region's outer border
+    pts['n'], ids['n'] = (50, 0, 0), -1
+    a_open = chunk(tmp_path / 'a3/0_0.glb', ['pnr', 'nqr', 'prs'])
+    summary, problems = world_region.union_open_edges([a, b], [a_open, b])
+    assert (summary['followed'], summary['new']) == (2, 0)
+    summary, problems = world_region.union_open_edges([a, b], [a_open, b], outer={ids['p'], ids['q']})
+    assert summary['new'] == 2 and any('(0.00 0.00 0.00) - (50.00 0.00 0.00)' in p for p in problems)
 
 
 def test_a_chunk_belongs_to_one_record(tmp_path, capsys):
@@ -147,7 +165,9 @@ def test_a_region_edit_that_changes_nothing_publishes_nothing(tmp_path, capsys):
     code, staging, registry = build_region(tmp_path, base, *NEW, *edit_args('region_nothing'))
     out = capsys.readouterr().out
     assert code == 0, out
-    assert 'TESTWORLD/2_1: source triangles from the base 13 of 14 and 2 Blender cannot hold' in out
+    assert 'TESTWORLD/2_1: source triangles from the base 13 of 14, new or changed 0; Blender cannot hold 2 as they ' \
+        'were' in out
+    assert '(17 feature seams closed)' in out
     assert not (staging / 'test-r').exists()
     for name in INSIDE:
         src, _ = chunk_paths(base, staging, name)
@@ -197,7 +217,7 @@ def test_a_subdivided_region(tmp_path, capsys):
         for p in e.primitives:
             for v, c, x in zip(p.vertex_ids.reshape(-1), p.colors.reshape(-1, 4), p.positions[:, :, 0].reshape(-1)):
                 if v < 0:
-                    assert abs(c[0] - light(x / STEP)) < 0.03, (x, c)
+                    assert abs(c[0] - light(x / STEP)) < 0.05, (x, c)
     entry = json.loads(registry.read_text())
     assert entry['kind'] == 'worldregion' and entry['region'] == REGION and entry['set'] == 'test-r'
     assert [e['script'] for e in entry['edits']] == ['scripts/content/world/test_edits/region_subdivide.py']
@@ -246,3 +266,69 @@ def test_a_face_from_nothing_needs_its_chunk(tmp_path, capsys):
     pos, vid = chunk_glb.read_chunk(pub).corners()
     assert chunk_glb.read_chunk(pub).triangles == chunk_glb.read_chunk(src).triangles + 1
     assert np.allclose(np.sort(pos[vid < 0][:, 0]), [290, 290, 310])
+
+
+@blender
+def test_one_side_of_an_inner_border_and_of_a_feature_seam_is_split_for_both(tmp_path, capsys):
+    # region_subdivide_part chooses faces of 1_1 and the TEST_A faces of 2_1 only: one surface splits their
+    # neighbours across the inner borders and across the feature seam x = 500 along the shared edges
+    base = region_world(tmp_path)
+    code, staging, _ = build_region(tmp_path, base, *NEW, *edit_args('region_subdivide_part'))
+    out = capsys.readouterr().out
+    assert code == 0, out
+    for name in ('1_2', '2_1'):
+        src, pub = chunk_paths(base, staging, name)
+        assert chunk_glb.read_chunk(pub).triangles > chunk_glb.read_chunk(src).triangles
+    b = chunk_glb.read_chunk(chunk_paths(base, staging, '2_1')[1])
+    assert any(p.material['name'] == 'TEST_B' and (p.vertex_ids < 0).any() for p in b.primitives)
+    srcs, pubs = zip(*(chunk_paths(base, staging, n) for n in INSIDE))
+    assert world_region.union_open_edges(srcs, pubs)[0]['new'] == 0
+
+
+@blender
+@pytest.mark.parametrize('edits, pieces, children', [(('region_lift',), 1, 1),
+                                                     (('region_lift', 'region_subdivide'), 2, 4)])
+def test_triangles_blender_cannot_hold_follow_the_edits(tmp_path, capsys, edits, pieces, children):
+    base = region_world(tmp_path)
+    code, staging, _ = build_region(tmp_path, base, *NEW, *edit_args(*edits))
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert f'Blender cannot hold 0 as they were, 2 moved as {pieces + children} triangles' in out
+    chunk = chunk_glb.read_chunk(chunk_paths(base, staging, '2_1')[1])
+    tris = [tri for p in chunk.primitives for tri in p.positions]
+    keys = [[tuple(c) for c in chunk_glb.position_keys(t)] for t in tris]
+    # the triangle with a corner twice: at its new place, split as its edge was
+    flat = [t for t, k in zip(tris, keys) if len(set(k)) < 3]
+    assert len(flat) == pieces and all(np.allclose(t[:, 1], 1) for t in flat)
+    xs = sorted({float(z) for t in flat for z in t[:, 2]})
+    assert xs[0] == 300 and xs[-1] == 400
+    # the duplicate: its twin's children again, the other way round
+    turns = [[b[0], b[2], b[1]] for b in keys]
+    turned = sum(1 for a in keys for r in turns if len(set(a)) == 3 and any(a == r[k:] + r[:k] for k in range(3)))
+    assert turned == 2 * children
+
+
+def test_errors_end_as_messages(tmp_path):
+    # run as a script, world_edit.py is __main__: world_region's errors still end as 'world_edit: ...', exit 2
+    import subprocess
+    base = region_world(tmp_path)
+    registry = tmp_path / 'world-edits.jsonl'
+    registry.write_text(json.dumps({'id': 'test-region', 'kind': 'worldregion', 'set': 'test-r', 'region': REGION,
+                                    'chunks': [{'chunk': 'TESTWORLD/1_1'}], 'replaces': [],
+                                    'files': {'glb': []}}) + '\n')
+
+    def run(*args):
+        result = subprocess.run([sys.executable, str(HERE / 'world_edit.py'), *args, '--base', str(base),
+                                 '--registry', str(registry), '--staging', str(tmp_path / 'staging'),
+                                 '--work', str(tmp_path / 'work')], capture_output=True, text=True)
+        return result.returncode, result.stderr
+    nothing = ['--edit', str(EDITS / 'region_nothing.py')]
+    cases = [(['build-region', 'x', '--set', 's', '--region', 'BAD', *nothing], "world_edit: region 'BAD'"),
+             (['build', 'test-region'], 'world_edit: test-region is a region record: use build-region'),
+             (['build', 'x', '--from', 'test-region', '--set', 'test-r2', '--chunk', 'TESTWORLD/1_1'],
+              'world_edit: --from test-region is a region record'),
+             (['build', 'x', '--set', 'test-r', '--chunk', 'TESTWORLD/1_1', *nothing],
+              'world_edit: TESTWORLD/1_1 of test-r belongs to the record test-region')]
+    for args, message in cases:
+        code, err = run(*args)
+        assert code == 2 and message in err and 'Traceback' not in err, (args, err)
