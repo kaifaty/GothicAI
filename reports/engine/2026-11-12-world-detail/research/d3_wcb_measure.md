@@ -25,6 +25,8 @@ content-convert time-world $T/w16/worlds/NEWWORLD
 
 ## The layout as built
 
+*This section describes version 1, as task 2 measured it. Version 2 and its index are in [«Version 2»](#version-2-2026-11-13) below.*
+
 Little-endian, uncompressed, one file per cell beside its GLB (`chunks/4_-2.glb` → `chunks/4_-2.wcb`). Code: [`OpenGothic/common/worldchunkbinary.h`](../../../../OpenGothic/common/worldchunkbinary.h), whose header comment holds the byte table.
 
 | Part | Size | Content |
@@ -114,3 +116,91 @@ So a base cell's `.wcb` cooked with an override is not the one cooked without it
 1. **Today's cost at ×16:** two thirds of `readWorldChunks` is the cgltf parse and attribute extraction (5.07 of 7.55 s). The source-order sort takes 19 % (1.41 s), and ID resolution and stitching 7.5 % (0.57 s). Reading the GLB bytes is 49.5 ms. The streaming reader's 25 Near cells cost another 852 ms on top, because each one parses its GLB again.
 2. **What is left with `.wcb`:** reading and validating every cell of the ×16 world takes 106 ms (81 + 25), 71 times less than `readWorldChunks`. The 25 Near cells take 7.7 ms, and at ×1 1.0 ms. Assembling the whole stitched mesh from the chunks costs 391 ms at ×16. That is the price of stitching alone, which task 8 avoids by reading only the Near ring.
 3. **What may change in the layout:** at ×16 the 44-byte triangle record makes `.wcb` 27 % larger than the GLB (61 % of its bytes). Narrow local indices in cells under 65 536 vertices and features would save 12 bytes a triangle, but reading is not the cost here, so this can wait for cold-read numbers. Before the format is frozen it must be decided whether `rank` and the appended ids stay in the file, because they depend on the whole override set (above).
+
+## Version 2 (2026-11-13)
+
+Task 2b answers the override question by the second choice above: a `.wcb` keeps only what follows from its own GLB and `world.json`, and what depends on the whole world and override set moves to one index per set, `chunks.wci`. Code: [`worldchunkbinary.h`](../../../../OpenGothic/common/worldchunkbinary.h) (the cell) and [`worldchunkindex.h`](../../../../OpenGothic/common/worldchunkindex.h) (the index); both header comments hold the byte tables.
+
+### The layout as built
+
+The cell, `.wcb` version 2. Header and directory as in version 1, with version 2. Positions, features and materials are in first use: the order in which the GLB's triangles, by ordinal and then corner, first name them.
+
+| Part | Size | Content |
+|---|---|---|
+| Header | 144 bytes | as version 1 |
+| Directory | 32 bytes per section | as version 1 |
+| Positions | 16 | `f32×3`; the source key `u32`: the GLB's `_VERTEX`, `0xFFFFFFFF` without one |
+| Features | 28 | UV `f32×2`, light `u32`, normal `f32×3`; the source key `u32`: the GLB's `_FEATURE` or `0xFFFFFFFF` |
+| Triangles | 40 | local position and feature indices `u32×3` each, local material `u32`, GLB `order` `u32` (`0xFFFFFFFF` = added by an edit), lightmap `i32`, flags `u16`, sector `i16`; no rank |
+| Materials | 88 | the `world.json` index when `world.json` holds the same record there, else `0xFFFFFFFF`; then the record as in version 1 |
+| Strings | 1 | as version 1 |
+
+The index, `chunks.wci` version 1. It lies in the world directory, in the override directory when there is one, and in `--out` when that is given.
+
+| Part | Size | Content |
+|---|---|---|
+| Header | 80 bytes | magic `GWCI`, version 1, byte order mark, header size, file size; size `u64` and CRC32 of the source `.ZEN`; cell count; the stitched mesh's vertices, features, materials and triangles `u32×4`; source triangles `u32`, the rank of the first added triangle; section count; directory offset |
+| Directory | 32 bytes per section | as in `.wcb` |
+| Cells | 80 | in `world.json` order: cell `i32×2`; length `u64` and SHA-256 of the GLB the numbers came from; `addedStart` `u32`, the rank of the cell's first added triangle; first and count `u32×2` of the cell's vertex, feature and material exceptions; zero `u32` |
+| Missing orders | 4 | ascending: the source orders below the highest held that no cell holds |
+| Vertex, feature, material exceptions | 8 each | local index `u32`, stitched id `u32`; grouped by cell in cell order, ascending by local index |
+| Materials | 88 | the appended materials in stitched order, in the `.wcb` record with source `0xFFFFFFFF` |
+| Strings | 1 | the bytes of their names |
+
+The stitched mesh from these: a source triangle of order *o* has the rank *o* minus the missing orders below *o*; the *k*-th added triangle of a cell, by GLB ordinal, has the rank `addedStart` + *k*; a local position, feature or material has its source key as stitched id unless the cell's exceptions give another one. Geometry and materials without a source key always have one. An exception only ever names an id past `world.json`'s counts, because below them `readWorldChunks` gives a key its own id. The index alone places a single cell's triangles and ids, so a Near reader needs the index and its own cells, not the others.
+
+Where it differs from the brief, and why:
+
+- **The header also holds the source triangle count.** With it a reader of one cell can tell a source rank from an added one without the other cells. The reader checks that each cell's `addedStart` plus its own added count is the next cell's `addedStart`.
+- **The missing orders end at the highest order held**, not at `world.json`'s triangle count: a missing order past it would shift no rank.
+- **The source keys come from `readWorldChunks`' trace.** The stitched result does not hold the `_VERTEX` and `_FEATURE` of a moved or added copy, only its new id, so `WorldChunkTrace` now also carries each stitched corner's source ids. `readWorldChunks` behaves as before; it fills them only when a trace is given, and the game passes none. `compareWorldMeshes` moved unchanged to `worldchunkmanifest.cpp`, so `worldchunksruntime.cpp` went from 689 to 654 lines.
+- **Materials are in first use**, not sorted by stitched id as in version 1, because the stitched id of an appended material depends on the set.
+
+Every cell field turned out to depend only on the cell's GLB and `world.json`. The bounds are a minimum and maximum over the cell's own triangles in their own order (source orders ascending, then added ones by ordinal), which is the same in every set. `gothic-wcb-contract` checks this byte for byte on the strip of the override question:
+
+- `0_0` and `2_0` cooked with either override of `1_0` equal their cooks without it;
+- with `1_0` and `2_0` both overridden, each adding a vertex and a material, each `.wcb` equals its cook with only that cell overridden. The sets number `2_0`'s new material 2 and 3 and its new vertex 27 and 28;
+- `1_0` (edited) and `2_0` cooked in a world directory without cell `0_0` equal their cooks in the three-cell world.
+
+### Machine and commands
+
+As in task 2: Ryzen, `RelWithDebInfo` with `-O2 -g1` through `scripts/ryzen-build.sh`, `scripts/gq` class `quick` (4 threads, 12 GB), in `~/gothic-ai/landscape-d3-wcb-index/`, branch `codex/landscape-d3-wcb-index` at `2dfc248ea`. Load average 3.6–4.6 during the runs, warm page cache, cold reads not measured. The same base `c885037e…d09e` (the contract's `base: cache` line names the same directory as in task 2) and the same commands, ×16 built anew with `stress-base --subdivide 2 --meshes 0`. `content-convert --self-test` passed. `verify-cooked-world` passed on the four worlds ×1 (cooked with `--out`; the base has no `.wcb` or `.wci` after the runs) and ×16; ×16 `NEWWORLD` took 9.5 s with a peak RSS of 3.4 GB. A second `cook-world` of each ×1 world wrote no cell and left the index.
+
+### Bytes on disk
+
+| World | ×1 `.wcb` | ×1 index | ×16 `.wcb` | ×16 index |
+|---|---:|---:|---:|---:|
+| NEWWORLD | 44 516 364 | 32 544 | 512 807 471 | 37 344 |
+| ADDONWORLD | 30 015 911 | 29 984 | 359 423 252 | 32 544 |
+| OLDWORLD | 8 900 531 | 34 624 | 97 554 255 | 36 704 |
+| DRAGONISLAND | 8 218 276 | 23 504 | 99 880 004 | 26 064 |
+
+Against version 1, `.wcb` is 4.1 % smaller at ×1 and 5.6 % at ×16, from the four bytes of rank per triangle. At ×16 `NEWWORLD` `.wcb` is 20 % larger than the GLB (version 1: 27 %); the 40-byte triangle records are 59 % of its bytes. The Near ring of `NEWWORLD` is 6 032 806 bytes at ×1 and 68 548 829 at ×16.
+
+The index of a base world holds no missing orders, exceptions or appended materials: 304 bytes plus 80 per cell, 32 544 bytes for `NEWWORLD`'s 403 cells. An edit adds 4 bytes per source triangle it drops, 8 per exception, and 88 plus its names' bytes per appended material, each section padded to 16 bytes. On the contract's strip of three cells the index is 544 bytes without an override and 730 bytes with either override of `1_0` (missing order 15; one vertex, one feature and one material exception for `1_0`; with the border move one more vertex exception for `0_0`; one appended material). With `1_0` and `2_0` both overridden it is 838 bytes.
+
+### Wall time, `NEWWORLD`
+
+Five runs each, milliseconds: median, then min–max. The cooked rows now include reading and validating the index. The "rest" stage includes the trace's copy of the corners' source ids added in this task (the game's call makes no trace).
+
+| Stage | ×1 | ×16 |
+|---|---:|---:|
+| today: read all GLB files (a separate pass) | 8.2 (8.2–8.4) | 48.9 (46.7–52.4) |
+| today: `readWorldChunks` total | 493.2 (488.7–515.1) | 7021.2 (6989.9–7465.6) |
+| read + cgltf parse + attribute extraction | 330.4 (326.0–337.6) | 4266.5 (4252.0–4443.8) |
+| source-order sort | 78.8 (76.8–81.5) | 1394.3 (1382.4–1599.2) |
+| ID resolution, dedup maps, stitching, table | 36.3 (35.8–50.0) | 604.4 (595.9–656.2) |
+| rest: trace copy, teardown | 48.2 (47.3–49.2) | 760.0 (751.1–766.5) |
+| today: `ChunkMeshSource::read` of the 25 Near cells | 66.9 (63.7–69.3) | 757.3 (751.1–759.4) |
+| cooked: read all `.wcb` files and the index | 9.1 (8.9–9.3) | 73.1 (70.5–92.3) |
+| cooked: validate (open the index and every chunk, `world.json`, a GLB `stat` per cell) | 7.4 (7.3–7.7) | 25.6 (24.2–25.7) |
+| cooked: read and validate the index alone | 0.1 (0.1–0.1) | 0.1 (0.1–0.1) |
+| cooked: assemble the whole stitched mesh and table | 23.8 (23.6–24.3) | 436.9 (433.0–452.5) |
+| cooked: read and validate the index and the 25 Near `.wcb` | 1.1 (1.1–1.2) | 7.6 (7.3–9.1) |
+
+At ×16, reading and validating every cell and the index takes 99 ms (73 + 26), the index alone 0.1 ms, the Near ring with its index 7.6 ms (version 1: 7.7 ms). Assembling the whole mesh takes 437 ms, 12 % more than version 1's 391 ms: ids now come from the source key or an exception per local index, and every triangle's rank from the index. The cgltf parse ran 16 % faster than in task 2 with the same parsing code (4.27 against 5.07 s); the machine's load differed between the runs, so the "today" rows of the two sections are not a comparison.
+
+### What changed against version 1
+
+1. A `.wcb` no longer holds a rank or resolved ids: positions and features carry the GLB's source keys, triangles a local material and no rank (40 bytes instead of 44), materials their `world.json` index or none. A cell's file depends only on its GLB and `world.json`, so base cells cooked once stay valid under any override set, and a second cook rewrites nothing that did not change.
+2. What depends on the set — missing orders, where each cell's added triangles start, exceptions and appended materials — is the index `chunks.wci`: 304 + 80 bytes per cell without edits, growing with the edit, not with the world. An edit of one cell re-cooks that cell and the index.
