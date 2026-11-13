@@ -43,6 +43,11 @@ if(TARGET Tempest)
   target_sources(content-convert PRIVATE ../../OpenGothic/common/graphics/mesh/submesh/packedmesh.cpp
     ../../OpenGothic/common/graphics/mesh/texeldensity.cpp ../../OpenGothic/common/game/compatibility/phoenix.cpp)
   target_compile_definitions(content-convert PRIVATE CONTENT_CONVERT_PACKED_MESH=1)
+  # Tempest of a frame-profile build records into FrameProfile (OpenGothic/CMakeLists.txt): link the recorder too
+  if(OPENGOTHIC_ENABLE_FRAME_PROFILE)
+    target_sources(content-convert PRIVATE ../../OpenGothic/common/frameprofile.cpp)
+    target_compile_definitions(content-convert PRIVATE OPENGOTHIC_ENABLE_FRAME_PROFILE=1)
+  endif()
 endif()
 target_include_directories(content-convert SYSTEM PRIVATE ../../OpenGothic/lib/rapidjson/include ../../OpenGothic/lib/miniz)
 if(NOT MSVC)
