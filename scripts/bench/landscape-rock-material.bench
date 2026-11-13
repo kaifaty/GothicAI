@@ -40,6 +40,11 @@ cam at 35110 3969 429 35110 4139 1529
 wait 10000
 shot ledge
 wait 200
+# the grass band at the top of the lower wall of the same ledge, 5 m from it: the blades themselves
+cam at 34800 3990 900 34800 4040 1390
+wait 4000
+shot ledge-near
+wait 200
 
 cam game
 goto NW_FARM2_TO_TAVERN_05
