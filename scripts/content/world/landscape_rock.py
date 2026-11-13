@@ -136,32 +136,38 @@ def key(co):
     return (co.x + 0.0, co.y + 0.0, co.z + 0.0)
 
 
-def edit(ctx):
+class Rock:
+    """The chosen rock of a region, split and rounded: what refine() leaves for the relief (variant A below) or for a
+    rebuild (landscape_rock_sdf.py)."""
+
+
+def refine(ctx, bm):
+    """Choose the rock, split its edges to STEP_CM, round the ridges. The positions of the free places are in r.at
+    and in the mesh."""
     me = ctx.mesh
-    names = [gothic_name(m) for m in me.materials]
-    rock = [first(MATERIAL_RULES, n) == 'rock' and not n.startswith('S:') for n in names]
+    r = Rock()
+    r.bm = bm
+    r.names = [gothic_name(m) for m in me.materials]
+    rock = [first(MATERIAL_RULES, n) == 'rock' and not n.startswith('S:') for n in r.names]
     centre = waypoint(ctx, WAYPOINT)
     base_normals = [Vector(n.vector) for n in me.corner_normals]
-
-    bm = bmesh.new()
-    bm.from_mesh(me)
     border = ctx.border_layer(bm)
-    old = bm.loops.layers.float_vector.new('rock_old_normal')
+    r.old = old = bm.loops.layers.float_vector.new('rock_old_normal')
     k = 0
     for f in bm.faces:
         for loop in f.loops:
             loop[old] = base_normals[k]
             k += 1
-    chosen = bm.faces.layers.int.new('rock_chosen')
-    before_faces = 0
+    r.chosen = chosen = bm.faces.layers.int.new('rock_chosen')
+    r.before_faces = 0
     for f in bm.faces:
         c = f.calc_center_median()
         f[chosen] = int(rock[f.material_index] and math.hypot(c.x - centre.x, c.y - centre.y) <= RADIUS_CM and
                         c.z >= centre.z - BELOW_CM and not any(v[border] for v in f.verts))
-        before_faces += f[chosen]
-    if not before_faces:
+        r.before_faces += f[chosen]
+    if not r.before_faces:
         raise SystemExit(f'landscape_rock: no rock within {RADIUS_CM:.0f} cm of {WAYPOINT}')
-    base_count = len(bm.verts)
+    r.base_count = len(bm.verts)
 
     for _ in range(PASSES):
         cut = [e for e in bm.edges if e.calc_length() > STEP_CM and any(f[chosen] for f in e.link_faces)]
@@ -177,99 +183,119 @@ def edit(ctx):
         bmesh.ops.triangulate(bm, faces=[f for f in bm.faces if len(f.verts) > 3])
 
     bm.verts.index_update()
-    place_of = [key(v.co) for v in bm.verts]
-    members = {}
+    r.place_of = place_of = [key(v.co) for v in bm.verts]
+    r.members = members = {}
     for v in bm.verts:
         members.setdefault(place_of[v.index], []).append(v)
-    free = {k for k, vs in members.items()
-            if all(v.link_faces and all(f[chosen] for f in v.link_faces) for v in vs)}
-    stay = [k for k, vs in members.items() if k not in free and any(f[chosen] for v in vs for f in v.link_faces)]
-    tree = KDTree(len(stay))
-    for n, k in enumerate(stay):
-        tree.insert(Vector(k), n)
-    tree.balance()
+    r.free = free = {k for k, vs in members.items()
+                     if all(v.link_faces and all(f[chosen] for f in v.link_faces) for v in vs)}
+    r.stay = [k for k, vs in members.items() if k not in free and any(f[chosen] for v in vs for f in v.link_faces)]
+    r.tree = KDTree(len(r.stay))
+    for n, k in enumerate(r.stay):
+        r.tree.insert(Vector(k), n)
+    r.tree.balance()
     around = {k: {place_of[e.other_vert(v).index] for v in members[k] for e in v.link_edges} - {k} for k in free}
     gothic = {k: to_gothic(Vector(k)) for k in free}
-    segments = waynet_segments(ctx, (min(g.x for g in gothic.values()), min(g.z for g in gothic.values())),
-                               (max(g.x for g in gothic.values()), max(g.z for g in gothic.values()))) if free else []
-    nearest, fade, limit = {}, {}, {}
+    r.segments = waynet_segments(ctx, (min(g.x for g in gothic.values()), min(g.z for g in gothic.values())),
+                                 (max(g.x for g in gothic.values()), max(g.z for g in gothic.values()))) if free else []
+    r.nearest, r.fade, r.limit = {}, {}, {}
     for k in free:
-        place, _, distance = tree.find(Vector(k))
-        nearest[k] = (place, distance)
-        fade[k] = smoothstep(distance / FADE_CM)
-        g = gothic[k]
-        away = smoothstep((way_distance(g.x, g.z, segments) - WAY_NEAR_CM) / (WAY_FAR_CM - WAY_NEAR_CM))
-        limit[k] = WAY_LIMIT_CM + (LIMIT_CM - WAY_LIMIT_CM) * away
-
-    def place_normals():
-        bm.normal_update()
-        out = {}
-        for k in free:
-            total = Vector()
-            for v in members[k]:
-                for f in v.link_faces:
-                    total += f.normal * f.calc_area()
-            out[k] = total.normalized() if total.length > 1e-9 else Vector()
-        return out
-
-    def put(at):
-        for k, co in at.items():
-            for v in members[k]:
-                v.co = co
-
+        place, _, distance = r.tree.find(Vector(k))
+        r.nearest[k] = (place, distance)
+        r.fade[k] = smoothstep(distance / FADE_CM)
+        r.limit[k] = way_limit(r, Vector(k))
     bm.normal_update()
-    faced = {f: f.normal.copy() for f in bm.faces if f[chosen]}
+    r.faced = {f: f.normal.copy() for f in bm.faces if f[chosen]}
     walk = math.cos(math.radians(WALK_DEG))
-    for k, n in place_normals().items():
+    for k, n in place_normals(r).items():
         if n.z >= walk:
-            limit[k] = min(limit[k], WALK_LIMIT_CM)
+            r.limit[k] = min(r.limit[k], WALK_LIMIT_CM)
 
     # round the ridges of the base's flat faces
-    at = {k: Vector(k) for k in free}
+    r.at = at = {k: Vector(k) for k in free}
     for _ in range(ROUND_PASSES):
         step = {}
         for k in free:
             if not around[k]:
                 continue
             mean = sum((at.get(n) or Vector(n) for n in around[k]), Vector()) / len(around[k])
-            delta = at[k].lerp(mean, ROUND_STEP * fade[k]) - Vector(k)
-            if delta.length > limit[k]:
-                delta *= limit[k] / delta.length
+            delta = at[k].lerp(mean, ROUND_STEP * r.fade[k]) - Vector(k)
+            if delta.length > r.limit[k]:
+                delta *= r.limit[k] / delta.length
             step[k] = Vector(k) + delta
         at.update(step)
-    put(at)
-    normal = place_normals()
+    put(r)
+    heights = [k[2] for k in free]
+    r.levels = bed_levels(min(heights), max(heights))
+    return r
+
+
+def way_limit(r, co):
+    """How far a place may move, by its distance to the waynet."""
+    g = to_gothic(co)
+    away = smoothstep((way_distance(g.x, g.z, r.segments) - WAY_NEAR_CM) / (WAY_FAR_CM - WAY_NEAR_CM))
+    return WAY_LIMIT_CM + (LIMIT_CM - WAY_LIMIT_CM) * away
+
+
+def place_normals(r):
+    r.bm.normal_update()
+    out = {}
+    for k in r.free:
+        total = Vector()
+        for v in r.members[k]:
+            for f in v.link_faces:
+                total += f.normal * f.calc_area()
+        out[k] = total.normalized() if total.length > 1e-9 else Vector()
+    return out
+
+
+def put(r):
+    for k, co in r.at.items():
+        for v in r.members[k]:
+            v.co = co
+
+
+def depth_at(r, co, n, foot, distance):
+    """How far the surface stands out along its normal n at co, cm: the beds' cushions, the bedding and vertical
+    joints on walls, the slow unevenness, the undercut above a foot (the nearest place that stays, when it lies
+    lower, and its distance)."""
+    wall_from, wall_full = (math.cos(math.radians(a)) for a in (WALL_FROM_DEG, WALL_FULL_DEG))
+    wall = smoothstep((wall_from - n.z) / (wall_from - wall_full))
+    depth = wall * (bedding(co, r.levels) + joints(co))
+    depth += SLOW_CM * noise((co.x + co.z) / SLOW_LEN_CM, (co.y - co.z) / SLOW_LEN_CM, SEED + 3)
+    if foot.z < co.z - 10.0 and distance < UNDER_REACH_CM:
+        depth -= wall * UNDER_DEPTH_CM * math.sin(math.pi * distance / UNDER_REACH_CM)
+    return depth
+
+
+def edit(ctx):
+    me = ctx.mesh
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    r = refine(ctx, bm)
+    chosen, old, free, at, place_of, members = r.chosen, r.old, r.free, r.at, r.place_of, r.members
 
     # bedded sandstone: cushions of the beds, bedding and vertical joints, the undercut foot
-    wall_from, wall_full = (math.cos(math.radians(a)) for a in (WALL_FROM_DEG, WALL_FULL_DEG))
-    heights = [k[2] for k in free]
-    levels = bed_levels(min(heights), max(heights))
-    moved = []
+    normal = place_normals(r)
     for k in free:
-        co, n = at[k], normal[k]
-        wall = smoothstep((wall_from - n.z) / (wall_from - wall_full))
-        depth = wall * (bedding(co, levels) + joints(co))
-        depth += SLOW_CM * noise((co.x + co.z) / SLOW_LEN_CM, (co.y - co.z) / SLOW_LEN_CM, SEED + 3)
-        place, distance = nearest[k]
-        if place.z < k[2] - 10.0 and distance < UNDER_REACH_CM:
-            depth -= wall * UNDER_DEPTH_CM * math.sin(math.pi * distance / UNDER_REACH_CM)
-        delta = co + n * (depth * fade[k]) - Vector(k)
-        if delta.length > limit[k]:
-            delta *= limit[k] / delta.length
+        place, distance = r.nearest[k]
+        delta = at[k] + normal[k] * (depth_at(r, at[k], normal[k], place, distance) * r.fade[k]) - Vector(k)
+        if delta.length > r.limit[k]:
+            delta *= r.limit[k] / delta.length
         at[k] = Vector(k) + delta
-    put(at)
+    put(r)
     # where the rounding and the relief folded the surface (a face turned over), the places go halfway back
     turn, folded = math.cos(math.radians(TURN_DEG)), 0
     for _ in range(10):
         bm.normal_update()
-        back = {place_of[v.index] for f, n in faced.items() if n.length > 0.5 and f.normal.dot(n) < turn
+        back = {place_of[v.index] for f, n in r.faced.items() if n.length > 0.5 and f.normal.dot(n) < turn
                 for v in f.verts} & free
         if not back:
             break
         folded = max(folded, len(back))
         for k in back:
             at[k] = Vector(k).lerp(at[k], 0.5)
-        put(at)
+        put(r)
     moved = [(at[k] - Vector(k)).length for k in free]
     bm.normal_update()
 
@@ -287,12 +313,13 @@ def edit(ctx):
                 n = Vector(loop[old])
                 normals.append(n.normalized() if n.length > 1e-9 else f.normal.copy())
     after_faces = sum(1 for f in bm.faces if f[chosen])
-    new = len(bm.verts) - base_count
+    new = len(bm.verts) - r.base_count
     bm.loops.layers.float_vector.remove(old)
     bm.faces.layers.int.remove(chosen)
     bm.to_mesh(me)
     bm.free()
     me.normals_split_custom_set(normals)
-    print(f'landscape_rock: {before_faces} -> {after_faces} rock triangles within {RADIUS_CM / 100:.0f} m of '
+    print(f'landscape_rock: {r.before_faces} -> {after_faces} rock triangles within {RADIUS_CM / 100:.0f} m of '
           f'{WAYPOINT}; {new} new vertices, {len(moved)} places moved, mean '
-          f'{sum(moved) / max(1, len(moved)):.1f} cm, max {max(moved, default=0.0):.1f} cm; {len(levels) - 1} beds; {folded} places taken back from folds')
+          f'{sum(moved) / max(1, len(moved)):.1f} cm, max {max(moved, default=0.0):.1f} cm; {len(r.levels) - 1} beds; '
+          f'{folded} places taken back from folds')
