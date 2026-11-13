@@ -10,6 +10,8 @@ seed 73013
 cheat god
 set time 12 0
 blink off
+# the game's frame: the overlay stretches the brightness of a shot by default (`overlay bright`)
+overlay off
 view clean 30
 watch nearest
 freeze nearest
