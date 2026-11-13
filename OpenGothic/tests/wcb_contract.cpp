@@ -457,6 +457,20 @@ void editedOverride(const fs::path& root) {
     ++kept;
     }
   require(added==1 && kept==2,"edited 1_0 must hold the added material and both world.json materials");
+  // Its one new vertex and one new feature (the middle of the split triangle) carry None, the rest their source ids.
+  size_t newPositions=0, newFeatures=0;
+  for(const auto& v:edited1.positions())
+    if(v.source==wcb::None)
+      ++newPositions;
+    else
+      require(v.source<base.vertices.size(),"edited 1_0: a source position must carry its _VERTEX");
+  for(const auto& f:edited1.features())
+    if(f.source==wcb::None)
+      ++newFeatures;
+    else
+      require(f.source<base.features.size(),"edited 1_0: a source feature must carry its _FEATURE");
+  require(newPositions==1,"edited 1_0: the new vertex must have the source None, "+std::to_string(newPositions)+" have");
+  require(newFeatures==1,"edited 1_0: the new feature must have the source None, "+std::to_string(newFeatures)+" have");
   }
 
   // Without --out the cooked chunks lie beside the GLB each cell is read from.
