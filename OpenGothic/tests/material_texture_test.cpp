@@ -555,6 +555,65 @@ void projectionRecords(Tempest::Device& device, const Fixture& fixture) {
   require(changed.alpha==Material::AlphaTest,"the rejected material must be classified by its original texture");
   }
 
+// materials.json "fringe": grass over a projection where the strip's v says (b3-rock-material.md, task 2)
+void fringeRecords(Tempest::Device& device, const Fixture& fixture) {
+  const std::string maps = R"("albedo":"solid.dds","normal":"alpha.dds","orm":"solid.dds")";
+  const std::string rock = R"("albedo":"solid.dds","projection":{"tile_m":5.75})";
+  const auto record = [&](std::string_view name, std::string_view fringe, bool projection = true) {
+    return "\"" + std::string(name) + "\":{" + (projection ? rock : std::string(R"("albedo":"solid.dds")")) +
+           ",\"fringe\":" + std::string(fringe) + "}";
+    };
+  const std::string both = "{" + maps + R"(,"tile_m":2,"top":[0.2,0.4],"bottom":[0.14,0.26]})";
+  textFile(fixture.root/"materials/materials.json", "{" +
+    record("FRINGE_BOTH.TGA", both) + "," +
+    record("FRINGE_TOP.TGA", "{" + maps + R"(,"tile_m":2,"top":[0.2,0.2]})") + "," +
+    "\"FRINGE_NONE.TGA\":{" + rock + "}," +
+    record("FRINGE_NO_PROJECTION.TGA", both, false) + "," +
+    record("FRINGE_NUMBER.TGA", "2") + "," +
+    record("FRINGE_TILE_TEXT.TGA", "{" + maps + R"(,"tile_m":"2","top":[0.2,0.4]})") + "," +
+    record("FRINGE_TILE_ZERO.TGA", "{" + maps + R"(,"tile_m":0,"top":[0.2,0.4]})") + "," +
+    record("FRINGE_NO_TILE.TGA", "{" + maps + R"(,"top":[0.2,0.4]})") + "," +
+    record("FRINGE_BAND_NUMBER.TGA", "{" + maps + R"(,"tile_m":2,"top":0.4})") + "," +
+    record("FRINGE_BAND_THREE.TGA", "{" + maps + R"(,"tile_m":2,"top":[0.1,0.2,0.4]})") + "," +
+    record("FRINGE_BAND_TEXT.TGA", "{" + maps + R"(,"tile_m":2,"top":["0.2",0.4]})") + "," +
+    record("FRINGE_MAP_NUMBER.TGA", R"({"albedo":1,"normal":"alpha.dds","orm":"solid.dds","tile_m":2,"top":[0.2,0.4]})") + "," +
+    record("FRINGE_BELOW.TGA", "{" + maps + R"(,"tile_m":2,"top":[-0.1,0.4]})") + "," +
+    record("FRINGE_ABOVE.TGA", "{" + maps + R"(,"tile_m":2,"bottom":[0.2,1.2]})") + "," +
+    record("FRINGE_REVERSED.TGA", "{" + maps + R"(,"tile_m":2,"top":[0.4,0.2]})") + "," +
+    record("FRINGE_NO_BAND.TGA", "{" + maps + R"(,"tile_m":2})") + "," +
+    record("FRINGE_ZERO_BANDS.TGA", "{" + maps + R"(,"tile_m":2,"top":[0,0],"bottom":[0,0]})") + "," +
+    record("FRINGE_NO_ORM.TGA", R"({"albedo":"solid.dds","normal":"alpha.dds","tile_m":2,"top":[0.2,0.4]})") + "," +
+    record("FRINGE_ABSENT_FILE.TGA", R"({"albedo":"solid.dds","normal":"alpha.dds","orm":"absent.dds","tile_m":2,"top":[0.2,0.4]})") +
+    "}");
+  Resources resources(device);
+  const auto accepted = Resources::loadMaterialMaps("FRINGE_BOTH.TGA");
+  const auto& f = accepted.fringe;
+  require(accepted.present && f.tile==2.f && f.top[0]==0.2f && f.top[1]==0.4f && f.bottom[0]==0.14f &&
+          f.bottom[1]==0.26f && f.present() && f.albedo!=f.normal,
+          "an accepted fringe must carry its tile, both bands and its three maps");
+  const Material grass(source("FRINGE_BOTH.TGA"),true);
+  require(grass.hasProjection() && grass.hasFringe() && grass.fringe==f,"an opaque projected material keeps its fringe");
+  const auto top = Resources::loadMaterialMaps("FRINGE_TOP.TGA").fringe;
+  require(top.present() && top.top[0]==0.2f && top.top[1]==0.2f && top.bottom[0]==0.f && top.bottom[1]==0.f,
+          "one edge is enough; a band without tufts is allowed");
+  const Material bare(source("FRINGE_NONE.TGA"),true);
+  require(bare.hasProjection() && !bare.hasFringe() && bare.fringe==Material::Fringe() && !(bare==grass),
+          "without the field a projected record stays as it was");
+  auto translucent = source("FRINGE_BOTH.TGA");
+  translucent.color.a = 128;
+  require(!Material(translucent,true).hasFringe(),"no fringe where the projection is not drawn");
+  for(const auto* name:{"FRINGE_NO_PROJECTION.TGA","FRINGE_NUMBER.TGA","FRINGE_TILE_TEXT.TGA","FRINGE_TILE_ZERO.TGA",
+                       "FRINGE_NO_TILE.TGA","FRINGE_BAND_NUMBER.TGA","FRINGE_BAND_THREE.TGA","FRINGE_BAND_TEXT.TGA",
+                       "FRINGE_MAP_NUMBER.TGA","FRINGE_BELOW.TGA","FRINGE_ABOVE.TGA","FRINGE_REVERSED.TGA",
+                       "FRINGE_NO_BAND.TGA","FRINGE_ZERO_BANDS.TGA","FRINGE_NO_ORM.TGA"})
+    require(!Resources::loadMaterialMaps(name).present,
+            (std::string("a fringe without projection, of a wrong type, with a band outside 0..1 or reversed, or "
+                        "without a map must reject the record whole: ")+name).c_str());
+  const Material absent(source("FRINGE_ABSENT_FILE.TGA"),true);
+  require(absent.hasProjection() && !absent.hasFringe(),
+          "a fringe map that does not load leaves the plain projected material");
+  }
+
 void textureResidency(Tempest::Device& device, const Fixture& fixture) {
   std::string materials=R"({"STREAM.TGA":{"albedo":"solid.dds","normal":"alpha.dds","orm":"alpha.dds"})";
   for(size_t i=0;i<17;++i) {
@@ -2627,6 +2686,7 @@ int main(int argc, char** argv) {
     census(fixture);
     emptyTable(device,fixture);
     projectionRecords(device,fixture);
+    fringeRecords(device,fixture);
     textureResidency(device,fixture);
     textureMipResidency(device,fixture);
     textureScreenLevels(device,fixture);

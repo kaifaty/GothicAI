@@ -121,6 +121,7 @@ const uint BK_HAIR = 0x400; // hair cards: the strand's direction and the hair b
 const uint BK_STRAND = 0x800; // strands: the vertex shader makes ribbons of them (strandRibbon, vertex_process.glsl)
 const uint BK_EYE = 0x1000; // an eyeball: the lid's shade from the face rig, the eye bit into the G-buffer (main.frag)
 const uint BK_PROJECTION = 0x2000; // maps by world position, uvScale: repeats per cm (material_projection.glsl)
+const uint BK_FRINGE = 0x4000; // grass over the projection where the mesh's v says (material_projection.glsl)
 
 // Strands in a shadow view: the first part of the list casts the shadow for all of it (the meshlets are dealt out
 // evenly, groommesh.cpp), each strand as wide as that part is small (strandShadowRibbon, vertex_process.glsl).
@@ -148,6 +149,10 @@ struct Bucket {
   float turbidityDepth;
   float emissive;
   float reactive; // the TAA reactive weight of the material: 1 with a texture animation, else 0 (graphics plan 1v)
+  uint  fringeTex;   // BK_FRINGE: its maps' index in the bindless arrays
+  float fringeScale; // its repeats per repeat of the projection
+  float fringeTop0, fringeTop1, fringeBottom0, fringeBottom1; // shares of v: solid to the first, tufts to the second
+  float padding0, padding1;
   };
 
 #endif

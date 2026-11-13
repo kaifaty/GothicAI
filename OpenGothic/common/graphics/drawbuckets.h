@@ -79,6 +79,7 @@ class DrawBuckets {
       BK_STRAND = 0x800,
       BK_EYE = 0x1000,
       BK_PROJECTION = 0x2000,
+      BK_FRINGE = 0x4000,
       };
 
     struct BucketGpu final {
@@ -99,8 +100,18 @@ class DrawBuckets {
       float          emissive         = 0.f;
       float          reactive         = 0.f; // Material::taaReactive (graphics plan 1v); scalars: an array member here
                                              // faulted the GPU on Metal
+      // the layer over a projection (BK_FRINGE, material_projection.glsl): where its three maps sit in the bindless
+      // arrays, its repeats per repeat of the projection, its bands as shares of v (Material::Fringe)
+      uint32_t       fringeTex        = 0;
+      float          fringeScale      = 0.f;
+      float          fringeTop0       = 0.f;
+      float          fringeTop1       = 0.f;
+      float          fringeBottom0    = 0.f;
+      float          fringeBottom1    = 0.f;
+      float          padding0         = 0.f;
+      float          padding1         = 0.f;
       };
-    static_assert(sizeof(BucketGpu)==96); // GPU array stride of Bucket in scene.glsl
+    static_assert(sizeof(BucketGpu)==128); // GPU array stride of Bucket in scene.glsl
 
     struct {
       Tempest::DescriptorArray vbo;
@@ -119,6 +130,10 @@ class DrawBuckets {
     std::array<std::vector<const Tempest::Texture2d*>,3> textureSlots;
     std::unordered_map<const Tempest::Texture2d*,std::vector<TextureSlot>> textureUsers;
     uint8_t currentFrame = 0;
+
+    // the fringes' maps (albedo, normal, ORM) in the bindless arrays after the buckets and their frames, one entry
+    // per distinct set: BucketGpu::fringeTex is the first's index plus its place here
+    std::vector<std::array<const Tempest::Texture2d*,3>> fringeMaps;
 
     std::vector<Bucket>      bucketsCpu;
     Tempest::StorageBuffer   bucketsGpu;
