@@ -170,7 +170,7 @@ class MdlVisual final {
     bool                           updateFlinch(Npc& npc, uint64_t dt);
     void                           flinch(const Npc& npc, const Flinch::Hit& hit);
     bool                           updateGaze(Npc& npc, uint64_t dt);
-    void                           processLayers  (World& world, NpcLogicalState* logic=nullptr);
+    void                           processLayers  (World& world);
     bool                           processEvents(World& world, uint64_t &barrier, Animation::EvCount &ev, NpcLogicalState* logic=nullptr);
     auto                           mapBone(const size_t boneId) const -> Tempest::Vec3;
     auto                           mapWeaponBone() const -> Tempest::Vec3;
