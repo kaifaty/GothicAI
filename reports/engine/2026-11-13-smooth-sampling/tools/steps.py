@@ -39,14 +39,15 @@ FONTS = ["/System/Library/Fonts/Supplemental/Arial.ttf", "/usr/share/fonts/truet
 YELLOW = (255, 214, 120)
 
 
-def load(src, seg, clip):
+def load(src, seg, clip, speech):
     with open(src / "metrics.csv") as f:
         rows = [r for r in csv.DictReader(f) if r["seg"] == seg]
     if not rows:
         return None
     ev = [e for e in map(json.loads, (src / "events.jsonl").read_text().splitlines()) if e.get("seg") == seg]
     col = lambda c: np.array([float(r[c]) if r.get(c, "") not in ("", "-") else np.nan for r in rows])  # noqa: E731
-    out = {"src": src, "seg": seg, "frames": len(rows), "said": [e for e in ev if e["kind"] == "output"],
+    # the hero's line starts a gesture take; in the other takes a line is somebody else's, they start at their start
+    out = {"src": src, "seg": seg, "frames": len(rows), "said": [e for e in ev if e["kind"] == "output"] if speech else [],
            "fps": next((e["fps"] for e in ev if e["kind"] == "rec"), 30), "sm": col("sm_on")}
     for c in ("an_hand", "an_head", "an_chest", "an_hand_v"):
         out[c] = col(c)
@@ -189,7 +190,7 @@ def main(argv):
     src = Path(argv[0])
     pairs = []
     for seg, title, clip in TAKES:
-        a, b = load(src, f"{seg}-line", clip), load(src, f"{seg}-curve", clip)
+        a, b = load(src, f"{seg}-line", clip, seg in GESTURES), load(src, f"{seg}-curve", clip, seg in GESTURES)
         if a is None or b is None:
             continue
         if np.nanmax(a["sm"]) != 0 or np.nanmin(b["sm"]) != 1:
