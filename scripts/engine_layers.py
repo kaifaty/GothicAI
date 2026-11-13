@@ -119,7 +119,8 @@ LAYER_RULES: list[tuple[str, str]] = [
     ("common/outputunits", "gothic"),
     # Our own GLB format reader and writer, independent of Gothic rules.
     ("common/gothicglb", "platform"),
-    ("common/worldbase", "gothic"),
+    # Our world format and object layers belong to the RPG framework.
+    ("common/worldbase", "rpg"),
     # An action-RPG frame any such game needs: NPCs, items, fights, navigation, saves.
     # Game-object visuals depend on NPCs, interactives and damage despite living in graphics/.
     ("common/graphics/mdlvisual*", "rpg"),

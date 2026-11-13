@@ -3,7 +3,7 @@
 #include "commandline.h"
 #include "contentcensus.h"
 #include "gamebasecontent.h"
-#include "worldbase.h"
+#include "worlddata.h"
 #include "graphics/mesh/protomesh.h"
 #include "graphics/mesh/renderrig.h"
 #include "utils/fileext.h"
@@ -72,8 +72,9 @@ std::string wayHeightFileStamp(const std::filesystem::path& file) {
     }
   }
 
+}
 
-std::filesystem::path worldContentDir(const std::filesystem::path& root, std::string_view world) {
+std::filesystem::path Resources::worldContentDir(const std::filesystem::path& root, std::string_view world) {
   const auto separator = world.find_last_of("/\\");
   std::string name(separator==std::string_view::npos ? world : world.substr(separator+1));
   name = std::filesystem::path(name).stem().string();
@@ -81,7 +82,6 @@ std::filesystem::path worldContentDir(const std::filesystem::path& root, std::st
     c = char(std::toupper(static_cast<unsigned char>(c)));
   return root/"worlds"/name;
   }
-}
 
 void Resources::loadBase() {
   if(!inst->automaticBase.path.empty()) return;
@@ -162,21 +162,15 @@ void Resources::censusProfile(std::string_view game, std::string_view outputUnit
     inst->census->profile(game,outputUnits,language);
   }
 
-void Resources::loadWorld(WorldData::Data& world, asset::WorldMesh& worldMesh, std::string_view name, ChunkTable* chunks) {
-  const auto dir = worldBaseDir(name);
+const std::vector<std::pair<std::string,uintmax_t>>& Resources::baseArchiveFiles() {
+  return inst->baseArchives;
+  }
+
+std::map<std::string,std::filesystem::path> Resources::meshReplacementFiles() {
   std::map<std::string,std::filesystem::path> ownMeshes;
   for(const auto& [key,mesh]:inst->meshOverrides)
     ownMeshes.emplace(key,mesh.file);
-  const auto result = tryWorldData(world,worldMesh,name,dir,worldOverrideDir(name),inst->baseArchives,&ownMeshes,chunks);
-  if(result.replaced) {
-    if(inst->census)
-      inst->census->replaced(name,(worldContentDir("base",name)/"world.json").generic_string());
-    Log::i("world base: \"",dir.string(),"\", ",result.triangles," triangles, ",
-           result.chunks," chunks, ",result.readMs," ms");
-    return;
-    }
-  if(inst->census) inst->census->missing(name,result.error);
-  throw BaseStore::Error("world "+std::string(name)+": "+result.error);
+  return ownMeshes;
   }
 
 bool Resources::loadBaseZen(std::string_view name, std::string_view kind, WorldData::ZenFile& out) {

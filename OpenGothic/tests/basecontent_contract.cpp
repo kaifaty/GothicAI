@@ -19,6 +19,7 @@
 #include "game/serialize.h"
 #include "physics/physicvbo.h"
 #include "resources.h"
+#include "worldbase.h"
 #include "sha256.h"
 #include "modeldata.h"
 #include "musicdata.h"
@@ -3299,7 +3300,7 @@ struct BaseContentContract {
     Resources resources;
     Resources::loadBase();
     require(Resources::loadVisualMesh("BASE_CONTRACT_MISSING.MRM").positions.empty(),"missing mesh must stay empty");
-    require(Resources::loadVobBundle("BASE_CONTRACT_MISSING.ZEN")->empty(),"missing bundle must stay empty");
+    require(loadVobBundle("BASE_CONTRACT_MISSING.ZEN")->empty(),"missing bundle must stay empty");
     }
     const auto missing=json(censusPath);
     equal(missing["files"].Size(),0u,"missing resources must not open archives");

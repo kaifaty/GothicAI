@@ -3,6 +3,10 @@
 #include "worldchunksruntime.h"
 #include "world/voblayer.h"
 #include "loadprobe.h"
+#include "resources.h"
+#include "contentcensus.h"
+
+#include <Tempest/Log>
 
 #include <rapidjson/document.h>
 #include <algorithm>
@@ -10,6 +14,9 @@
 #include <chrono>
 #include <cctype>
 #include <stdexcept>
+#include <cstdlib>
+
+using Tempest::Log;
 
 WorldBaseResult tryWorldData(WorldData::Data& world, asset::WorldMesh& worldMesh,
                             std::string_view name, const std::filesystem::path& dir,
@@ -91,4 +98,63 @@ WorldBaseResult tryWorldData(WorldData::Data& world, asset::WorldMesh& worldMesh
     }
   result.readMs = std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count();
   return result;
+  }
+
+void loadWorld(WorldData::Data& world, asset::WorldMesh& worldMesh, std::string_view name, ChunkTable* chunks) {
+  const auto dir = Resources::worldBaseDir(name);
+  const auto ownMeshes = Resources::meshReplacementFiles();
+  const auto result = tryWorldData(world,worldMesh,name,dir,Resources::worldOverrideDir(name),Resources::baseArchiveFiles(),&ownMeshes,chunks);
+  if(result.replaced) {
+    if(Resources::contentCensus())
+      Resources::contentCensus()->replaced(name,(Resources::worldContentDir("base",name)/"world.json").generic_string());
+    Log::i("world base: \"",dir.string(),"\", ",result.triangles," triangles, ",
+           result.chunks," chunks, ",result.readMs," ms");
+    return;
+    }
+  if(Resources::contentCensus()) Resources::contentCensus()->missing(name,result.error);
+  throw BaseStore::Error("world "+std::string(name)+": "+result.error);
+  }
+
+namespace {
+bool readVobTreeLayer(Resources::VobTree& bundle, std::string_view filename) {
+  bool overridden=false;
+  const auto content=Resources::contentDir();
+  const auto* layers=std::getenv("OPENGOTHIC_VOB_LAYERS");
+  if(!content.empty() && (layers==nullptr || std::string_view(layers)!="0")) {
+    auto file=content/"vobtrees.d";
+    try {
+      const auto separator=filename.find_last_of("/\\");
+      auto name=std::filesystem::path(std::string(filename.substr(separator==std::string_view::npos ? 0 : separator+1)))
+                  .stem().string()+".json";
+      for(auto& c:name) c=char(std::toupper(uint8_t(c)));
+      if(std::filesystem::is_directory(file))
+        for(const auto& entry:std::filesystem::directory_iterator(file)) {
+          auto candidate=entry.path().filename().string();
+          for(auto& c:candidate) c=char(std::toupper(uint8_t(c)));
+          if(candidate!=name || !entry.is_regular_file()) continue;
+          file=entry.path();
+          const auto ownMeshes=Resources::meshReplacementFiles();
+          const auto result=VobLayer::readTree(bundle,Resources::baseDir(),file,content,&ownMeshes);
+          overridden=result.errors.empty();
+          if(!overridden) {
+            std::string errors;
+            for(const auto& error:result.errors) {
+              if(!errors.empty()) errors+="; ";
+              errors+=error;
+              }
+            Log::e("vob tree: skipped ",errors);
+            }
+          break;
+          }
+      }
+    catch(const std::exception& error) {
+      Log::e("vob tree: skipped ",file.string(),": ",error.what());
+      }
+    }
+  return overridden;
+  }
+}
+
+const std::vector<std::shared_ptr<asset::VirtualObject>>* loadVobBundle(std::string_view name) {
+  return Resources::loadVobBundle(name,readVobTreeLayer);
   }

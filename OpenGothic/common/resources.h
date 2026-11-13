@@ -304,7 +304,7 @@ class Resources final {
     static void                      videoFrameRead(std::string_view name);
     static const ProtoMesh*          decalMesh(const asset::VisualDecal& decal);
 
-    static const VobTree*            loadVobBundle(std::string_view name);
+    static const VobTree*            loadVobBundle(std::string_view name, bool (*readLayer)(VobTree&,std::string_view));
 
     template<class V>
     static Tempest::VertexBuffer<V>  vbo(const V* data,size_t sz){ return device().vbo(data,sz); }
@@ -336,6 +336,7 @@ class Resources final {
 
     static bool                      hasWorld(std::string_view name);
 
+    static std::filesystem::path      baseDir();
     static std::filesystem::path      worldBaseDir(std::string_view world);
     static std::filesystem::path      contentDir();
     static std::filesystem::path      worldOverrideDir(std::string_view world);
@@ -347,8 +348,9 @@ class Resources final {
     static void                      censusFile(std::u16string_view path);
     static ContentCensus*            contentCensus();
     static void                      censusProfile(std::string_view game, std::string_view outputUnits, int language);
-    static void                      loadWorld(WorldData::Data& world, asset::WorldMesh& worldMesh, std::string_view name,
-                                               ChunkTable* chunks = nullptr);
+    static const std::vector<std::pair<std::string,uintmax_t>>& baseArchiveFiles();
+    static std::map<std::string,std::filesystem::path> meshReplacementFiles();
+    static std::filesystem::path      worldContentDir(const std::filesystem::path& root, std::string_view world);
     static bool                      loadBaseZen(std::string_view name, std::string_view kind, WorldData::ZenFile& out);
     static bool                      writeCensus();
 
@@ -384,7 +386,6 @@ class Resources final {
     std::shared_ptr<VideoBase> videoBase;
     std::mutex videoStartSync;
     std::thread videoWorker;
-    static std::filesystem::path baseDir();
     void indexBaseContent();
     void indexContentModels();
     void indexRenderRigs(const std::filesystem::path& file);
@@ -514,7 +515,7 @@ class Resources final {
                                         const char* kind, const MusicData::Source& source);
     GthFont&              implLoadFont(std::string_view fname, FontType type, const float scale);
     PfxEmitterMesh*       implLoadEmiterMesh(std::string_view name);
-    const VobTree*        implLoadVobBundle(std::string_view name);
+    const VobTree*        implLoadVobBundle(std::string_view name, bool (*readLayer)(VobTree&,std::string_view));
 
     Tempest::VertexBuffer<Vertex> sphere(int passCount, float R);
 

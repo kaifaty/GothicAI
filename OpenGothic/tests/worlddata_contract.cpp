@@ -442,7 +442,7 @@ struct WorldDataContract {
           write(dir/"world.json",index);
           resources.automaticBase.path=reference;
           } else {
-          Resources::loadWorld(loaded,loadedMesh,file);
+          loadWorld(loaded,loadedMesh,file);
           require(zenOpens(census)==0,file+": base loader opened ZEN");
           auto restored=WorldData::read(base/"worlds"/name);
           const auto diff=WorldData::compare(original,restored);
@@ -477,11 +477,11 @@ struct WorldDataContract {
     WorldData::Data fallback;
     asset::WorldMesh fallbackMesh;
     bool rejected=false;
-    try { Resources::loadWorld(fallback,fallbackMesh,"NEWWORLD.ZEN"); }
+    try { loadWorld(fallback,fallbackMesh,"NEWWORLD.ZEN"); }
     catch(const BaseStore::Error&) { rejected=true; }
     require(rejected,"archive size +1 must reject the world");
     index["archives"][0]["size"].SetUint64(size); write(dir/"world.json",index);
-    Resources::loadWorld(fallback,fallbackMesh,"NEWWORLD.ZEN");
+    loadWorld(fallback,fallbackMesh,"NEWWORLD.ZEN");
     const auto content=root/"content"; const auto overrides=content/"worlds/NEWWORLD";
     fs::create_directories(overrides);
     auto vobs=json(dir/"vobs.json");
@@ -491,7 +491,7 @@ struct WorldDataContract {
     setenv("OPENGOTHIC_CONTENT",content.c_str(),1);
     WorldData::Data changed;
     asset::WorldMesh changedMesh;
-    Resources::loadWorld(changed,changedMesh,"NEWWORLD.ZEN");
+    loadWorld(changed,changedMesh,"NEWWORLD.ZEN");
     require(changed.vobs.empty() && !fallback.vobs.empty(),"content vobs.json must replace the whole base tree");
     require(changed.waynet->edges.empty() && !fallback.waynet->edges.empty(),"content waynet.json must replace the whole base graph");
     const auto zenIndex=json(base/"zen/zen.json");
