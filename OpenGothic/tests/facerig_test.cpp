@@ -1361,32 +1361,36 @@ void smoothSwitchCases() {
   first.blendIn = first.blendOut = second.blendIn = second.blendOut = 200;
 
   // 0.11 s into the clip, a tenth past its second key: the curve is still fast there (170 degrees a second), the
-  // chord to the third key is 100
-  const auto run = [&](bool curveSpeed) {
+  // chord to the third key is 100. Without a switch the bone's speed changes there as the curve's does
+  enum class Run { Plain, ChordSpeed, CurveSpeed };
+  const auto run = [&](Run way) {
     AnimBlend blend;
     blend.reset(1);
     Sample raw[1], out[1];
-    float  shown[3] = {}, jump = 0;
+    float  shown[3] = {}, change = 0;
     for(uint64_t now=1000; now<1200; now+=10) {
-      const bool  on = now>=1110;
+      const bool  on = way!=Run::Plain && now>=1110;
       const auto& c  = on ? ahead : clip;
       const auto  k  = AnimSample::keys(now-1000,10.f,c.size(),false,false);
       const Sample* before = k.hasBefore ? &c[k.before] : nullptr;
       const Sample* after  = k.hasAfter  ? &c[k.after]  : nullptr;
       raw[0] = AnimSample::mix(before,c[k.a],c[k.b],after,k.t);
-      blend.drive(0,on ? second : first,on ? 1110 : 1000,c[k.a],c[k.b],10.f,before,after,k.t,curveSpeed);
+      blend.drive(0,on ? second : first,on ? 1110 : 1000,c[k.a],c[k.b],10.f,before,after,k.t,way!=Run::ChordSpeed);
       blend.apply(raw,out,1,now);
       shown[0] = shown[1]; shown[1] = shown[2]; shown[2] = angle(out[0]);
       if(now==1120)
-        jump = std::abs((shown[2]-shown[1])-(shown[1]-shown[0]))/0.01f;
+        change = ((shown[2]-shown[1])-(shown[1]-shown[0]))/0.01f;
       }
-    return jump;
+    return change;
     };
-  const float chord = run(false), curve = run(true);
-  require(chord>40.f,"with the chord's speed for a clip on the curve the bone must jerk at the switch (the case): "+
-          std::to_string(chord)+" deg/s");
-  require(curve<15.f,"a switch into a clip on the curve must keep the bone's speed: it changed by "+
-          std::to_string(curve)+" deg/s");
+  const float plain = run(Run::Plain), chord = run(Run::ChordSpeed), curve = run(Run::CurveSpeed);
+  require(std::abs(chord-plain)>40.f,"with the chord's speed for a clip on the curve the bone must jerk at the switch (the case): "+
+          std::to_string(chord)+" deg/s against "+std::to_string(plain)+" without a switch");
+  // what is left is half a frame of the bone's own slowing (2800 deg/s2 here): AnimBlend reads the shown speed from
+  // the last two frames
+  require(std::abs(curve-plain)<18.f && std::abs(curve-plain)<0.3f*std::abs(chord-plain),
+          "a switch into a clip on the curve must keep the bone's speed: it changed by "+
+          std::to_string(curve)+" deg/s, "+std::to_string(plain)+" without a switch, "+std::to_string(chord)+" with the chord's speed");
   }
 
 // The test bench names the gestures to start (gestures pick): in turn, over again; without names at random again
