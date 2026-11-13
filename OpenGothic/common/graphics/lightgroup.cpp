@@ -1,5 +1,5 @@
 #include "lightgroup.h"
-#include "world/voblayer.h"
+#include "voblight.h"
 #include "loadprobe.h"
 
 #include <cmath>

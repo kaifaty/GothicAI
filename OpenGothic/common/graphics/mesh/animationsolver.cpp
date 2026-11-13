@@ -1,6 +1,6 @@
 #include "animationsolver.h"
 
-#include "world/objects/interactive.h"
+#include "animationinteractive.h"
 #include "savearchive.h"
 #include "utils/fileext.h"
 #include "skeleton.h"
@@ -441,18 +441,18 @@ const Animation::Sequence* AnimationSolver::solveAnim(std::string_view scheme, b
   return solveFrm(name);
   }
 
-const Animation::Sequence *AnimationSolver::solveAnim(Interactive *inter, AnimationSolver::Anim a, const Pose &) const {
+const Animation::Sequence *AnimationSolver::solveAnim(AnimationInteractive *inter, AnimationSolver::Anim a, const Pose &) const {
   if(inter==nullptr)
     return nullptr;
   switch(a) {
     case AnimationSolver::InteractIn:
-      return inter->animNpc(*this,Interactive::In);
+      return inter->animNpc(*this,AnimationInteractive::In);
     case AnimationSolver::InteractOut:
-      return inter->animNpc(*this,Interactive::Out);
+      return inter->animNpc(*this,AnimationInteractive::Out);
     case AnimationSolver::InteractToStand:
-      return inter->animNpc(*this,Interactive::ToStand);
+      return inter->animNpc(*this,AnimationInteractive::ToStand);
     case AnimationSolver::InteractFromStand:
-      return inter->animNpc(*this,Interactive::FromStand);
+      return inter->animNpc(*this,AnimationInteractive::FromStand);
     default:
       return nullptr;
     }
