@@ -23,7 +23,8 @@
 // as it speaks (Gaze::Input::steady) on a synthetic body under a gesture keyed ten times a second: without the hold the
 // tilt and the quick bend of the animation rock it, held it stays on the partner and upright, forward without one, a
 // nod of another animation stays; a gesture stopped at ease (AnimBlend::easeOut) goes back as fast as its blend out as
-// a linear fade, other bones of that frame keep their time; the gestures the bench names (TalkGestures::setPicks).
+// a linear fade, other bones of that frame keep their time; a switch into a clip on the curve through its sparse keys
+// (AnimSample) takes the clip's speed from the curve; the gestures the bench names (TalkGestures::setPicks).
 // CPU only: no device, no game data.
 #include "graphics/eyeshader.h"
 #include "graphics/mesh/animblend.h"
@@ -37,6 +38,7 @@
 #include "graphics/mesh/speechbrows.h"
 #include "graphics/mesh/speechcues.h"
 #include "graphics/mesh/speechface.h"
+#include "graphics/mesh/animsample.h"
 #include "graphics/mesh/talkgestures.h"
 #include "gltfmesh.h"
 #include "linecues.h"
@@ -1087,7 +1089,7 @@ struct GestureBody final {
       m.set(3,1,b.y);
       m.set(3,2,b.z);
       static_assert(sizeof(n.transform)==sizeof(m));
-      std::memcpy(&n.transform,&m,sizeof(m));
+      std::memcpy(static_cast<void*>(&n.transform),&m,sizeof(m)); // GCC: Mat4 is no trivial type
       h.nodes.push_back(n);
       }
     h.bbox.min = {-30,0,-30};
@@ -1333,6 +1335,62 @@ void easeOutCases() {
   // alone it takes the shortest blend, 0.15 s; a cut gesture next to it shares its 0.3 s with it, one at ease does not
   require(eased.lasts[1]<=0.16f && usual.lasts[1]<=0.31f,
           "the bones of another switch of that frame must keep their own time: "+std::to_string(eased.lasts[1])+" s");
+  }
+
+// A switch into a clip that goes on the curve through its sparse keys (AnimSample): AnimBlend takes the clip's
+// speed from the curve at that time, not from the chord between the two keys, so the shown bone keeps its speed
+// over the switch
+void smoothSwitchCases() {
+  using Sample = AnimBlend::Sample;
+  constexpr float Deg = float(M_PI)/180.f;
+  const auto turned = [&](float deg) {
+    Sample s;
+    s.rotation = asset::Quat(std::cos(deg*Deg*0.5f),0,0,std::sin(deg*Deg*0.5f));
+    return s;
+    };
+  const auto angle = [&](const Sample& s) { return 2.f*std::atan2(s.rotation.z,s.rotation.w)/Deg; };
+  // an arm that waits, swings out and comes to rest, ten keys a second; the same 5 degrees further on
+  std::vector<Sample> clip, ahead;
+  for(const float deg:{0.f,0.f,0.f,30.f,40.f,42.f,42.f,42.f}) {
+    clip.push_back(turned(deg));
+    ahead.push_back(turned(deg+5.f));
+    }
+  Animation::Sequence first, second;
+  first.name  = "T_DIALOGGESTURE_03";
+  second.name = "T_DIALOGGESTURE_08";
+  first.blendIn = first.blendOut = second.blendIn = second.blendOut = 200;
+
+  // 0.31 s into the clip, a tenth past the key at 30 degrees: the curve is still fast there (170 degrees a second),
+  // the chord to the next key is 100. Without a switch the bone's speed changes there as the curve's does
+  enum class Run { Plain, ChordSpeed, CurveSpeed };
+  const auto run = [&](Run way) {
+    AnimBlend blend;
+    blend.reset(1);
+    Sample raw[1], out[1];
+    float  shown[3] = {}, change = 0;
+    for(uint64_t now=1000; now<1400; now+=10) {
+      const bool  on = way!=Run::Plain && now>=1310;
+      const auto& c  = on ? ahead : clip;
+      const auto  k  = AnimSample::keys(now-1000,10.f,c.size(),false,false);
+      const Sample* before = k.hasBefore ? &c[k.before] : nullptr;
+      const Sample* after  = k.hasAfter  ? &c[k.after]  : nullptr;
+      raw[0] = AnimSample::mix(before,c[k.a],c[k.b],after,k.t);
+      blend.drive(0,on ? second : first,on ? 1310 : 1000,c[k.a],c[k.b],10.f,before,after,k.t,way!=Run::ChordSpeed);
+      blend.apply(raw,out,1,now);
+      shown[0] = shown[1]; shown[1] = shown[2]; shown[2] = angle(out[0]);
+      if(now==1320)
+        change = ((shown[2]-shown[1])-(shown[1]-shown[0]))/0.01f;
+      }
+    return change;
+    };
+  const float plain = run(Run::Plain), chord = run(Run::ChordSpeed), curve = run(Run::CurveSpeed);
+  require(std::abs(chord-plain)>40.f,"with the chord's speed for a clip on the curve the bone must jerk at the switch (the case): "+
+          std::to_string(chord)+" deg/s against "+std::to_string(plain)+" without a switch");
+  // what is left is half a frame of the bone's own slowing (2800 deg/s2 here): AnimBlend reads the shown speed from
+  // the last two frames
+  require(std::abs(curve-plain)<18.f && std::abs(curve-plain)<0.3f*std::abs(chord-plain),
+          "a switch into a clip on the curve must keep the bone's speed: it changed by "+
+          std::to_string(curve)+" deg/s, "+std::to_string(plain)+" without a switch, "+std::to_string(chord)+" with the chord's speed");
   }
 
 // The test bench names the gestures to start (gestures pick): in turn, over again; without names at random again
@@ -2763,6 +2821,7 @@ int main() {
     lidShadeCases();
     gestureHeadCases();
     easeOutCases();
+    smoothSwitchCases();
     gesturePickCases();
     }
   catch(const std::exception& e) {

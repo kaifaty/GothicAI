@@ -715,6 +715,10 @@ game's frame (until 2026-11-13 the scenario left the overlay on, and its `bright
 (`OPENGOTHIC_CONTENT=<work>/content`, `TEMPEST_WINDOW_SIZE=1920x1080`, `BENCH_HOST=ryzen`); to see what a map adds,
 run it again with a copy of the root in which that map is replaced
 ([likeness.md](../../reports/content/2026-11-npc-pipeline/likeness.md), "В игре").
+Its stills are taken from 38 cm, where the game's lens narrows a face by 15 %: they show the skin, not the likeness.
+`npc-head-sheet` takes the head as its likeness sheet frames it, front and profile from 120 cm under the torch and
+with the sun in the face, then the same front from 70 and 38 cm; the head is small there, so the window is
+`TEMPEST_WINDOW_SIZE=3840x2160` (the same note, "Blender и игра").
 Faces: `faces` (the face animations of a head one after another, then two of them while Xardas speaks),
 `face-fade` (faces fade in and out, one gives way to the next, three a moment apart, the lips over a
 fading face), `mood-ai` (given lines of an AI server with moods: start `gothic-ai serve --scenario m1 --llm off
@@ -951,6 +955,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `gazeinfo` | gaze state of the watched npc to `bench.log`: why it looks, at whom |
 | `lean on\|off` | the lean into turns and on slopes |
 | `blend on\|off`, `blend param <name> <value>` | transitions between animations (`AnimBlend`; off: the old cross-fade); params `min`, `max`, `scale` (blend time, s), `turn` (rad/s), `move` (cm/s), `out`, `side`, `blow` (the longest switch into a blow of a weapon body, s) |
+| `sample on\|off` | clips with few keys (under 16 a second: the dialog gestures, the stances with a weapon, sitting, dances) on a cubic curve through the keys (`AnimSample`, on by default) or on straight lines between them as before (`OPENGOTHIC_ANIM_SMOOTH=0`) |
 | `flinch on\|off` | the upper body giving way to blows |
 | `hit <npc\|player> <angle> [strength] [height] [twist]` | a blow from that side of it (angle from its facing, 0 in front, as `place`) to the flinch only: no damage, no stumble; strength 0..1 (1), height 0 the hips .. 1 the head (0.6), twist -1..1 about up (0) |
 | `strike <victim\|player> [attacker\|player]` | the attacker's blow lands as the game deals it (the stumble, the damage, the flinch); the victim gets its hit points back below a third |
@@ -1170,6 +1175,32 @@ the wall behind, and prints the largest and the 95th percentile of the face agai
 follows the head bone: a move of the whole head moves the wall, a turn or a tilt of it the face). `clip.py` writes
 `clip.mp4` ("было | стало" side by side, take by take), `key.txt` (the table of both runs: the screen, the tilt
 `g_froll`, the gaze error) and `steps.png` (the face against the wall over time).
+
+## Anim smooth clip
+
+Clips with sparse keys on a curve through their keys
+([research and result](../../reports/engine/2026-11-13-smooth-sampling/README.md)): every take twice in one run, first
+on straight lines between the keys as before (`sample off`, takes `*-line`), then on the curve (`sample on`, takes
+`*-curve`). The hero says lines of his original voice to Xardas with one dialog gesture the bench names
+(`T_DIALOGGESTURE_03`, `08`, `09`, `06`: ten keys a second), seen whole from the front, so the arms and the trunk are
+judged and the head as the trunk carries it; then clips of the whole body from the side, for the feet, each played to
+its end before the next take: standing with a sword drawn (the stance `S_1HRUN`), looking the sword over
+(`T_1HSINSPECT`), sitting down and getting up, a dance (`T_DANCE_01`, fifteen keys a second). No AI server:
+
+```bash
+OPENGOTHIC_CONTENT=<content with the hero's own head> TEMPEST_WINDOW_SIZE=1280x720 OPENGOTHIC_BENCH_REALTIME=1 \
+  TEMPEST_AUDIO_LOOPBACK=48000 SOUND=1 MUSIC=0 BENCH_HOST=ryzen scripts/bench.sh scripts/bench/anim-smooth-clip.bench <out>
+uv run --with pillow --with numpy --with matplotlib python reports/engine/2026-11-13-smooth-sampling/tools/steps.py <out> <clip dir>
+```
+
+`metrics.csv` has, for the watched one or the hero, `an_hand`, `an_head`, `an_chest`: how much the step of the hands
+(the larger of the two), the head and the chest changes between two frames, cm, in the model's space before the
+post-passes (the head as the animation carries it, not as the gaze holds it); `an_hand_v`, `an_head_v`: their speed,
+cm/s; `sm_on`: the curve is on. `steps.py` prints the table of both ways per take: the largest change of a step and
+its 95th percentile, and the ladder - how much more the step changes on the frames at a key (one frame in three for a
+clip keyed ten times a second) than on the others: over 6 on the lines, at most 2.5 on the curve, which is the
+threshold for the gestures; for the takes of the whole body, the slide of a planted foot. It writes `clip.mp4` ("было
+| стало" side by side), `key.txt` and `steps.png`, and exits 1 when a gesture is over the threshold.
 
 ## Speech face clip
 

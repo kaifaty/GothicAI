@@ -1,0 +1,56 @@
+# The head of an NPC as its likeness sheet frames it, to lay next to the sheet's Cycles tiles
+# (reports/content/2026-11-npc-pipeline/likeness.md, "Blender и игра"): front and profile from 120 cm, where the
+# game's lens bends a face little (the sheet's camera is orthographic), in the torch light of Xardas' tower and with
+# the noon sun in the face; then the same front from 70 and from 38 cm, the close-up of npc-head-look, for what the
+# lens does. The head is small at 120 cm: shoot in a large window.
+#   TEMPEST_WINDOW_SIZE=3840x2160 BENCH_HOST=ryzen OPENGOTHIC_CONTENT=<content root of the head> \
+#     scripts/bench.sh npc-head-sheet <out dir>
+# @timeout 480
+seed 73013
+cheat god
+set time 12 0
+blink off
+overlay off
+view clean 30
+watch nearest
+freeze nearest
+wait 500
+place 110 0
+wait 800
+watch player
+cam cut
+cam face 120 0 1
+wait 2500
+shot tower_front
+wait 400
+cam cut
+cam face 120 90 1
+wait 1200
+shot tower_profile
+wait 400
+cam cut
+goto pos 7900 270 -4350
+watch player
+wait 4000
+turn 180
+wait 2500
+cam cut
+cam face 120 0 1
+wait 2500
+shot sunface_front
+wait 400
+cam cut
+cam face 120 90 1
+wait 1200
+shot sunface_profile
+wait 400
+cam cut
+cam face 70 0 1
+wait 1200
+shot sunface_front70
+wait 400
+cam cut
+cam face 38 0 1
+wait 1200
+shot sunface_close
+wait 400

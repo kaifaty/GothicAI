@@ -410,15 +410,15 @@ def steps(cdir, cfg, work, content, gpu=None):
     out.append(Step('measures', [[MPY, os.path.join(S, 'face_points.py'), j('sheet', 'points'),
                                   f'concept={lk}:0,0,600,600', f'ours={lk}:1200,0,1800,600',
                                   'ours_front=' + j('sheet', 's_front.png')],
-                                 [PY, os.path.join(S, 'head_measures.py'), work]],
+                                 [PY, os.path.join(S, 'head_measures.py'), work, '--params', params]],
                     [j('reg', 'reg_log.json'), j('round', 'reg.npz'), j('outline', 'outline.json'), j('relief', 'relief.json'),
                      j('reg', 'place.json'), j('full', 'place.json'), j('sheet', 'likeness.jpg'), j('sheet', 's_front.png'),
                      j('reg', 'lid_chains.json'), j('views', 'full_front.png'), j('views', 'points', 'full_front.json'),
-                     EYES],
+                     EYES, params],
                     [j('measures.json')], 'measures of defects'))
-    out.append(Step('shape', [[PY, os.path.join(S, 'shape_report.py'), work]],
+    out.append(Step('shape', [[PY, os.path.join(S, 'shape_report.py'), work, '--params', params]],
                     [j('round', 'reg.npz'), j('reg', 'place.json'), j('full', 'place.json'), j('colour', 'groom.npz'),
-                     j('colour', 'beard_groom.npz')] + [j('views', f'{k}_{v}.png') for k in ('full', 'bald') for v in ('front', 'profile')],
+                     j('colour', 'beard_groom.npz'), params] + [j('views', f'{k}_{v}.png') for k in ('full', 'bald') for v in ('front', 'profile')],
                     [j('shape', 'shape.json')], 'where the shape goes: outlines, hair and beard against the concept'))
     return out
 
