@@ -36,7 +36,7 @@ Material::Material(const asset::Material& m, bool enableAlphaTest, bool requireA
     tex = Resources::loadTexture(m.texture,false,false);
   if(tex==nullptr) {
     if(!m.texture.empty()) {
-      tex = Resources::loadTexture("DEFAULT.TGA",false,false);
+      tex = Resources::loadDefaultTexture();
       } else {
       tex = Resources::loadTexture(toColor(m.color));
       alphaTestEnabled &= (m.color.a!=255);
@@ -79,7 +79,7 @@ Material::Material(const asset::Material& m, bool enableAlphaTest, bool requireA
       maps = {};
       tex  = Resources::loadTexture(m.texture,false,false);
       if(tex==nullptr)
-        tex = Resources::loadTexture("DEFAULT.TGA",false,false);
+        tex = Resources::loadDefaultTexture();
       alpha = loadAlphaFunc(sourceAlphaFunc,sourceMaterialGroup,sourceColorAlpha,tex,alphaTestEnabled,alphaTestRequired);
       classifiedAlpha = alpha;
       }
@@ -106,7 +106,7 @@ Material::Material(const asset::VisualDecal& decal)
   :alphaTestEnabled(true), sourceAlphaFunc(static_cast<asset::AlphaFunction>(decal.alpha_func)), sourceColorAlpha(decal.alpha_weight) {
   tex = Resources::loadTexture(decal.name,false,false);
   if(tex==nullptr && !decal.name.empty())
-    tex = Resources::loadTexture("DEFAULT.TGA",false,false);
+    tex = Resources::loadDefaultTexture();
   loadFrames(decal.name, decal.texture_anim_fps);
 
   alpha        = loadAlphaFunc(sourceAlphaFunc, sourceMaterialGroup, sourceColorAlpha, tex, alphaTestEnabled);
