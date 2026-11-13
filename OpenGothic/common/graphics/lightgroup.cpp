@@ -179,7 +179,9 @@ LightGroup::Light LightGroup::add(const asset::LightPreset& vob) {
 
 LightGroup::Light LightGroup::add(const asset::VLight& vob) {
   auto l = add(static_cast<const asset::LightPreset&>(vob));
-  l.setPosition(Vec3(vob.position.x,vob.position.y,vob.position.z));
+  // a base lamp's light may sit off the lamp's own place (vobs.d "offset_cm"; VobLight::moveEvent keeps it there)
+  const auto offset = VobLayer::lightOffset(vob);
+  l.setPosition(Vec3(vob.position.x+offset[0],vob.position.y+offset[1],vob.position.z+offset[2]));
   if(const float sourceCm = VobLayer::lightSourceCm(vob); sourceCm!=VobLayer::DefaultLightSourceCm) {
     std::lock_guard<std::mutex> guard(sync);
     lightSourceData[l.id].sourceSize = sourceCm;

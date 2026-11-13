@@ -9,6 +9,7 @@ namespace VobLayer {
 struct Result {
   size_t added = 0, removed = 0, moved = 0;
   size_t lit = 0; // base lamps edited in place ("light")
+  size_t swapped = 0; // base mesh vobs given another visual in place ("visual")
   std::vector<std::string> errors;
   };
 

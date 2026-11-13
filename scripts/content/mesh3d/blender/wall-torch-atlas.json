@@ -1,0 +1,63 @@
+{
+ "glb": "wall-torch-model/build/torch/model.glb",
+ "maps_dir": "wall-torch-model/tiles",
+ "scales": {
+  "OWN_TORCH_WOOD": 4.0,
+  "OWN_TORCH_IRON": 4.0,
+  "OWN_TORCH_TOW": 5.0,
+  "OWN_TORCH_TOW_HOT": 5.0,
+  "OWN_TORCH_PITCH": 4.0
+ },
+ "tiles": {
+  "OWN_TORCH_TOW_HOT": "wall-torch-model/tiles/own_torch_tow"
+ },
+ "targets": {
+  "OWN_TORCH_WOOD": [0.02, 0.017, 0.014],
+  "OWN_TORCH_IRON": [0.13, 0.125, 0.105],
+  "OWN_TORCH_TOW": [0.02, 0.016, 0.0125],
+  "OWN_TORCH_TOW_HOT": [0.02, 0.016, 0.0125],
+  "OWN_TORCH_PITCH": [0.006, 0.0055, 0.005]
+ },
+ "slots": {
+  "OWN_TORCH_WOOD": ["OWN_WALL_TORCH_WOOD", "WOOD"],
+  "OWN_TORCH_IRON": ["OWN_WALL_TORCH_IRON", "METAL"],
+  "OWN_TORCH_TOW": ["OWN_WALL_TORCH_FIRE", "UNDEF"],
+  "OWN_TORCH_TOW_HOT": ["OWN_WALL_TORCH_FIRE", "UNDEF"],
+  "OWN_TORCH_PITCH": ["OWN_WALL_TORCH_FIRE", "UNDEF"]
+ },
+ "metal": ["OWN_TORCH_IRON"],
+ "metal_scale": 0.3,
+ "edge_wear": {
+  "OWN_TORCH_WOOD": 0.3,
+  "OWN_TORCH_IRON": 0.45,
+  "OWN_TORCH_TOW": 0.0,
+  "OWN_TORCH_TOW_HOT": 0.0,
+  "OWN_TORCH_PITCH": 0.0
+ },
+ "tile_normal": {
+  "OWN_TORCH_WOOD": 0.35,
+  "OWN_TORCH_IRON": 1.0,
+  "OWN_TORCH_TOW": 0.8,
+  "OWN_TORCH_TOW_HOT": 0.8,
+  "OWN_TORCH_PITCH": 1.0
+ },
+ "contrast": {
+  "OWN_TORCH_WOOD": 1.0
+ },
+ "measure_ao": {
+  "OWN_TORCH_WOOD": 0.5,
+  "OWN_TORCH_IRON": 0.5,
+  "OWN_TORCH_TOW": 0.4,
+  "OWN_TORCH_TOW_HOT": 0.4
+ },
+ "size": 1024,
+ "seed": 1,
+ "angle_limit": 66,
+ "margin": 0.004,
+ "wet_height": 0.0,
+ "algae": 0.0,
+ "bleach": 0.0,
+ "tone_spread": 0.12,
+ "crevice": {"distance": 0.02, "dirt": 0.4, "colour": [0.004, 0.0035, 0.003]},
+ "glow": {"OWN_TORCH_TOW_HOT": 1.0, "OWN_TORCH_TOW": 0.12}
+}

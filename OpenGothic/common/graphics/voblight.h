@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+
 #include "asset/worldtypes.h"
 #include "graphics/pfx/pfxmotion.h"
 
@@ -23,6 +25,8 @@ struct LampExtra {
   PfxMotion::Flicker flicker;
   float              jitterCm  = 0; // the light's trembling ("jitter_cm")
   float              nearLimit = 0; // the lamp's own limit of the light near it ("near"); 0: the common one
+  // Where the light sits from the lamp's own place, cm along the world's axes ("offset_cm", base lamps only)
+  std::array<float,3> offsetCm = {};
   };
 struct Light final : asset::VLight, Added, LampExtra {};
 // A base lamp edited in place ("light"): the same id, place and tree, so the saved state of the base still fits it
@@ -37,5 +41,8 @@ float lightNear(const asset::VirtualObject& vob);
 // The flame's signal of a layer emitter ("flicker") or of the emitter a lamp names ("flicker_from": a layer lamp
 // or a base lamp edited in place), with the light's trembling in cm ("jitter_cm"); nullptr for other vobs (pfxmotion.h)
 const PfxMotion::Flicker* flicker(const asset::VirtualObject& vob, float* jitterCm = nullptr);
+// Where a base lamp's light sits from the lamp itself ("offset_cm"), cm along the world's axes. The lamp keeps its
+// place, which its saved state is bound to; its light follows the flame of a model the layer put there
+std::array<float,3> lightOffset(const asset::VirtualObject& vob);
 
 } // namespace VobLayer

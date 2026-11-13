@@ -12,6 +12,11 @@ float lightNear(const asset::VirtualObject& vob) {
   return 0;
   }
 
+std::array<float,3> lightOffset(const asset::VirtualObject& vob) {
+  if(const auto* lamp=dynamic_cast<const LampExtra*>(&vob)) return lamp->offsetCm;
+  return {};
+  }
+
 const PfxMotion::Flicker* flicker(const asset::VirtualObject& vob, float* jitterCm) {
   if(const auto* e=dynamic_cast<const Emitter*>(&vob); e!=nullptr && e->flicker.active()) {
     if(jitterCm!=nullptr) *jitterCm=0;

@@ -263,11 +263,12 @@ void baseLamps(const Fixture& f) {
     const auto data=lampWorld();
     const auto* lamp=find(data,950);
     require(VobLayer::lightNear(*lamp)==0.f && VobLayer::lightSourceCm(*lamp)==VobLayer::DefaultLightSourceCm &&
-            VobLayer::flicker(*lamp)==nullptr,"a base lamp has nothing of the layer's until it is edited");
+            VobLayer::flicker(*lamp)==nullptr && VobLayer::lightOffset(*lamp)==std::array<float,3>{},
+            "a base lamp has nothing of the layer's until it is edited");
   }
   f.clearLayers();
   textFile(f.layers/"10-lamp.json",R"({"format":1,"light":[{"id":950,"color":[230,84,15],"near":8}],"remove":[951]})");
-  textFile(f.layers/"20-lamp.json",R"({"format":1,"light":[{"id":950,"range":350,"source_cm":9}]})");
+  textFile(f.layers/"20-lamp.json",R"({"format":1,"light":[{"id":950,"range":350,"source_cm":9,"offset_cm":[1.5,-2,30]}]})");
   auto data=lampWorld();
   const auto result=VobLayer::apply(data,f.world,f.content/"worlds/TEST");
   require(result.errors.empty() && result.lit==2 && result.removed==1 && result.added==0 && result.moved==0,
@@ -284,6 +285,8 @@ void baseLamps(const Fixture& f) {
           "the range changes, the base's range keys stay");
   require(VobLayer::lightNear(*lamp)==8.f && VobLayer::lightSourceCm(*lamp)==9.f,
           "a later file keeps what an earlier one gave the lamp");
+  require(VobLayer::lightOffset(*lamp)==(std::array<float,3>{1.5f,-2.f,30.f}),
+          "the light's place moves off the lamp, whose own place stays");
   require(lamp->children.empty() && find(data,951)==nullptr,"a vob under the lamp removed by the same file is gone");
   setenv("OPENGOTHIC_VOB_LAYERS","0",1);
   auto plain=lampWorld();
@@ -301,6 +304,7 @@ void baseLamps(const Fixture& f) {
     {"color",R"({"id":950,"color":[256,0,0]})","950","color must contain"},
     {"range",R"({"id":950,"range":0})","950","range must be positive"},
     {"near",R"({"id":950,"near":0})","950","near must be"},
+    {"offset",R"({"id":950,"offset_cm":[0,101,0]})","950","offset_cm must be"},
     {"source",R"({"id":950,"source_cm":501})","950","source_cm must be"},
     {"jitter-alone",R"({"id":950,"jitter_cm":1})","950","jitter_cm without flicker_from"},
     {"flicker-from",R"({"id":950,"flicker_from":"no-such-flame"})","950","no emitter"},
@@ -328,6 +332,47 @@ void baseLamps(const Fixture& f) {
     }
   Tempest::Log::setOutputCallback({});
   f.clearLayers();
+  }
+
+// A base mesh vob given another visual in place ("visual"): a vob with a lamp under it cannot be removed, so its
+// model changes under the same id, class, place and tree
+void baseVisuals(const Fixture& f) {
+  f.clearLayers();
+  textFile(f.layers/"10-visual.json",R"({"format":1,"visual":[{"id":31,"visual":"vob_layer_test_cube"}],"light":[{"id":950,"near":8}]})");
+  auto data=lampWorld();
+  const auto result=VobLayer::apply(data,f.world,f.content/"worlds/TEST");
+  require(result.errors.empty() && result.swapped==1 && result.lit==1 && result.removed==0 && result.added==0 && result.moved==0,
+          "a base mesh vob takes a content model in place");
+  const auto* vob=find(data,31);
+  require(vob!=nullptr && !VobLayer::isAdded(*vob) && vob->type==asset::VirtualObjectType::zCVob && vob->position.x==31 &&
+          vob->visual!=nullptr && vob->visual->type==asset::VisualType::MESH && vob->visual_name=="VOB_LAYER_TEST_CUBE.3DS" &&
+          vob->associated_visual_type==asset::VisualType::MESH,"the vob keeps its id, class and place and shows the content model");
+  require(vob->children.size()==1 && vob->children[0]->id==950,"the lamp under the vob stays in the tree");
+  require(find(data,7)->visual_name=="BASE.3DS" && find(data,19)->visual_name=="BASE.3DS",
+          "other vobs with the same base visual keep it");
+  struct Case { std::string name,json,id,message; };
+  Tempest::Log::setOutputCallback([](Tempest::Log::Mode,const char*) {});
+  for(const auto& c:std::initializer_list<Case>{
+    {"unknown-id",R"({"id":98765,"visual":"VOB_LAYER_TEST_CUBE"})","98765","unknown base ID"},
+    {"not-a-mesh",R"({"id":950,"visual":"VOB_LAYER_TEST_CUBE"})","950","is not a static mesh vob"},
+    {"unknown-visual",R"({"id":31,"visual":"MISSING"})","31","unknown visual"},
+    {"twice",R"({"id":31,"visual":"BASE"},{"id":31,"visual":"VOB_LAYER_TEST_CUBE"})","31","duplicate visual id"},
+    {"field",R"({"id":31,"visual":"BASE","collision":"none"})","31","collision"}
+    }) {
+    f.clearLayers();
+    textFile(f.layers/"10-bad.json","{\"format\":1,\"visual\":["+c.json+"]}");
+    auto world=lampWorld();
+    const auto failed=VobLayer::apply(world,f.world,f.content/"worlds/TEST");
+    require(failed.errors.size()==1 && failed.swapped==0 && failed.errors.front().find(c.id)!=std::string::npos &&
+            failed.errors.front().find(c.message)!=std::string::npos,"visual "+c.name+": the file is rejected with the id and the cause");
+    require(find(world,31)->visual_name=="BASE.3DS","visual "+c.name+": a rejected file leaves the vob its model");
+    }
+  f.clearLayers();
+  textFile(f.layers/"10-both.json",R"({"format":1,"visual":[{"id":7,"visual":"VOB_LAYER_TEST_CUBE"}],"remove":[7]})");
+  auto world=lampWorld();
+  require(!VobLayer::apply(world,f.world,f.content/"worlds/TEST").errors.empty() && find(world,7)!=nullptr &&
+          find(world,7)->visual_name=="BASE.3DS","one file cannot give a vob a model and remove it");
+  Tempest::Log::setOutputCallback({});
   }
 
 void removedReferences(const Fixture& f) {
@@ -1108,6 +1153,7 @@ int main() {
     rejectedLayers(fixture);
     removedReferences(fixture);
     baseLamps(fixture);
+    baseVisuals(fixture);
     unreadableLayers(fixture);
     saveBoundPolicy(fixture);
     particleMotion();
