@@ -15,7 +15,8 @@
 // when the voice is over, the hands rest. Only decides: the caller plays and stops the animations.
 //
 // The head goes with the voice too (Gaze turns it): a small nod down on a syllable clearly louder
-// than the ones before it (a stressed word), a slow sway aside while the voice lasts.
+// than the ones before it (a stressed word, at most one in NodGap), a smooth move down into the syllable and back
+// (minimum jerk: no jump of speed), and a slow sway aside while the voice lasts.
 //
 // And while the other one speaks (the hero's voice): it listens, the head sways a little, now and then
 // it nods as the words come. Then it thinks of its answer (the AI server's model takes a second or
@@ -91,8 +92,9 @@ class TalkGestures final {
     void           stop();                   // cut off: the other one speaks, a weapon is drawn...
     Decision       update(const Input& in);
 
-    // per frame: whether it speaks, whether a syllable starts now and how loud it gets (0..1)
-    void           updateHead(uint64_t now, uint64_t dt, bool speaking, bool syllable, float loud);
+    // per frame: whether it speaks, whether a syllable was judged now (LipSync::judgedCount) and how loud it is (dB
+    // of the speech band, LipSync::judgedDb), whether the voice is live (judged later: the nod goes down quicker)
+    void           updateHead(uint64_t now, uint64_t dt, bool speaking, bool syllable, float loudDb, bool live = false);
     const Head&    head() const { return headNow; }
 
     // the other one speaks to it until then (renewed while the voice goes on)
@@ -117,6 +119,17 @@ class TalkGestures final {
   private:
     enum Kind : uint8_t { Calm, Lively, Sharp };
 
+    // a nod: down `depth` radians in downMs, back in backMs, both minimum jerk
+    struct NodMove final {
+      uint64_t at    = 0;
+      float    from  = 0;
+      float    depth = 0;
+      float    down  = 1;
+      float    back  = 1;
+      bool     on    = false;
+      };
+    void           startNod(uint64_t now, float depth, float downMs, float backMs);
+    float          nodAt(uint64_t now);
     uint8_t        pick(uint64_t left, bool more);
     uint64_t       rest();
     uint32_t       random();
@@ -138,12 +151,13 @@ class TalkGestures final {
     Head                  headNow;
     bool                  headMoves  = false;
     float                 talkW      = 0;  // the sway fades in and out with the voice
-    float                 nod        = 0;  // radians, and its speed: a critically damped spring
-    float                 nodSpeed   = 0;
+    float                 nod        = 0;  // radians, down < 0
+    NodMove               nodMove;
     float                 sway[2]    = {}; // yaw, roll
     float                 swayGoal[2] = {};
     uint64_t              swayLeft   = 0;
-    float                 sylMean    = 0;  // how loud the syllables were so far
+    float                 sylMean    = 0;  // how loud the syllables were so far, dB
+    bool                  sylSeen    = false;
     uint64_t              sinceNod   = 0;
     uint32_t              nods       = 0;
     uint64_t              lastNow     = 0;
@@ -153,7 +167,6 @@ class TalkGestures final {
     uint64_t              lastHeardNod = 0;
     uint64_t              secondNod  = 0;  // a double nod: the second one then
     float                 wantNod    = 0;  // a nod asked for by heard(), its strength
-    float                 nodHz      = 2.5f;  // of the nod now: listening nods are slower
     float                 tiltSign   = 1;
     float                 tilt       = 0;  // radians, the head tilted while it thinks
     Aside                 aside;

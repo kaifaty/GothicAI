@@ -1590,12 +1590,12 @@ void MdlVisual::updateGestures(Npc& npc, uint64_t dt) {
   const bool playing = gestureSeq!=nullptr && skInst->isInAnim(gestureSeq);
   if(!playing)
     gestureSeq = nullptr;
-  const uint32_t syl = mouth.syllableCount();
+  const uint32_t syl = mouth.judgedCount();
   const bool     beat = syl!=gestureSyl;
   gestureSyl = syl;
 
   // the head: Gaze turns it (updateGaze)
-  gestures.updateHead(now,dt,voiced || left>0,beat,mouth.syllablePeak());
+  gestures.updateHead(now,dt,voiced || left>0,beat,mouth.judgedDb(),mouth.isLive());
   if(gestures.listenNodCount()!=listenNodsSeen) {
     listenNodsSeen = gestures.listenNodCount();
     listenNod(npc,now,voiced || left>0);

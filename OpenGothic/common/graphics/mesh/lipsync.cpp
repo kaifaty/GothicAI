@@ -369,6 +369,14 @@ float LipSync::Track::peak(uint64_t from, uint64_t to) const {
   return ret;
   }
 
+float LipSync::Track::loudestDb(uint64_t from, uint64_t to) const {
+  std::lock_guard<std::mutex> guard(sync);
+  float ret = -100;
+  for(size_t i=size_t(from/StepMs); i<=size_t(to/StepMs) && i<db.size(); ++i)
+    ret = std::max(ret, db[i]);
+  return ret;
+  }
+
 uint64_t LipSync::Track::durationMs() const {
   std::lock_guard<std::mutex> guard(sync);
   return db.size()*StepMs;
@@ -535,6 +543,19 @@ bool LipSync::update(uint64_t now, uint64_t dt, Shape& out) {
       const uint64_t t = time + lead;
       sylLoud = track!=nullptr ? track->peak(t, t+uint64_t(std::max(0.f,Look))) : lvl;
       pick(sylLoud, now);
+      sylAt      = t;
+      sylPending = track!=nullptr;
+      }
+    }
+  // judged once its first JudgeMs have arrived (a recorded voice has them at once)
+  if(sylPending) {
+    const uint64_t span = live ? LiveJudgeMs : JudgeMs;
+    if(track==nullptr)
+      sylPending = false;
+    else if(track->durationMs()>=sylAt+span || track->isFinished()) {
+      judgedLoud = track->loudestDb(sylAt, sylAt+span);
+      sylPending = false;
+      ++judged;
       }
     }
 

@@ -28,6 +28,7 @@
 #include "graphics/mesh/speechbrows.h"
 #include "graphics/mesh/speechcues.h"
 #include "graphics/mesh/speechface.h"
+#include "graphics/mesh/talkgestures.h"
 #include "gltfmesh.h"
 #include "linecues.h"
 #include "playervoice.h"
@@ -2285,6 +2286,121 @@ void speechFaceCases(const GltfHeadMesh& plainHead) {
   std::cout << "speech face: " << us << " us a frame to sample a track of " << track->shapes.size() << " shapes\n";
   }
 
+// the head's nod while one speaks or listens (TalkGestures, player-voice-face.md "Кивок"): played at 30 frames a
+// second as the bench films it, the pitch in degrees per frame
+struct NodTrace final {
+  std::vector<uint64_t> at;
+  std::vector<float>    deg;
+  };
+
+NodTrace playNods(TalkGestures& g, uint64_t from, uint64_t to, const std::vector<std::pair<uint64_t,float>>& syllables,
+                  bool live, bool speak = true) {
+  NodTrace ret;
+  size_t   next = 0;
+  for(uint64_t now=from; now<to; now+=33) {
+    bool  beat = false;
+    float db   = -100;
+    while(next<syllables.size() && syllables[next].first<=now) {
+      beat = true;
+      db   = syllables[next].second;
+      ++next;
+      }
+    g.updateHead(now,33,speak,beat,db,live);
+    ret.at.push_back(now);
+    ret.deg.push_back(g.head().pitch*180.f/3.14159265f);
+    }
+  return ret;
+  }
+
+uint32_t nodsOf(const TalkGestures& g) {
+  TalkGestures::Probe p;
+  g.probe(p);
+  return p.nods;
+  }
+
+void headNodCases() {
+  const auto steps = [](const NodTrace& t, size_t from, size_t to) {
+    float step = 0, change = 0, prev = 0;
+    for(size_t i=std::max<size_t>(from,1); i<to && i<t.deg.size(); ++i) {
+      const float d = t.deg[i]-t.deg[i-1];
+      step   = std::max(step,std::abs(d));
+      change = std::max(change,std::abs(d-prev));
+      prev   = d;
+      }
+    return std::make_pair(step,change);
+    };
+  // a line: syllables every 200 ms at -20 dB, a stressed one 6 dB louder at 1000 ms
+  {
+    TalkGestures g;
+    std::vector<std::pair<uint64_t,float>> syl;
+    for(uint64_t t=0; t<2400; t+=200)
+      syl.emplace_back(t,t==1000 ? -14.f : -20.f);
+    const auto tr = playNods(g,0,2600,syl,false);
+    size_t first = 0, apex = 0;
+    for(size_t i=0; i<tr.deg.size(); ++i) {
+      if(first==0 && tr.deg[i]<-0.001f)
+        first = i;
+      if(tr.deg[i]<tr.deg[apex])
+        apex = i;
+      }
+    const auto [step,change] = steps(tr,0,tr.deg.size());
+    require(first>0 && tr.at[first]>=1000 && tr.at[first]<1070 && -tr.deg[first]<1.f,
+            "the nod's first frame must go down less than 1 degree: "+std::to_string(-tr.deg[first]));
+    require(change<1.f,"the nod must speed up and slow down smoothly (no kick): its step changed by "+
+            std::to_string(change)+" degrees a frame");
+    require(-tr.deg[apex]>=2.f && -tr.deg[apex]<=3.5f && tr.at[apex]>=1100 && tr.at[apex]<=1200,
+            "the strongest nod must reach 2..3.5 degrees 120..200 ms into its syllable: "+
+            std::to_string(-tr.deg[apex])+" at "+std::to_string(tr.at[apex]));
+    require(tr.deg[size_t((1000+150+320+40)/33)]>-0.05f && nodsOf(g)==1,
+            "the nod must be back 250..400 ms later, and only the stressed syllable nods ("+std::to_string(step)+")");
+  }
+  // every other syllable stressed, every 200 ms: nods at most once in NodGap (800 ms)
+  {
+    TalkGestures g;
+    std::vector<std::pair<uint64_t,float>> syl;
+    for(uint64_t t=0; t<6000; t+=200)
+      syl.emplace_back(t,(t/200)%2==1 ? -14.f : -20.f);
+    const auto tr = playNods(g,0,6200,syl,false);
+    std::vector<uint64_t> starts;
+    for(size_t i=1; i<tr.deg.size(); ++i)
+      if(tr.deg[i]<tr.deg[i-1]-0.001f && (i<2 || tr.deg[i-1]>=tr.deg[i-2]-0.001f))
+        starts.push_back(tr.at[i]);
+    bool spaced = !starts.empty();
+    for(size_t i=1; i<starts.size(); ++i)
+      spaced = spaced && starts[i]-starts[i-1]>=800-33;
+    require(spaced && nodsOf(g)>=4 && nodsOf(g)<=8,"stressed syllables 400 ms apart must nod at most once in "
+            "800 ms: "+std::to_string(nodsOf(g))+" nods");
+  }
+  // a live voice: the syllable is judged 80 ms in, the nod goes down quicker and still peaks in it (3.5 degrees in
+  // 120 ms by minimum jerk change the step by up to 1.5 degrees a frame; a kicked spring by 2.6..4.3)
+  {
+    TalkGestures g;
+    std::vector<std::pair<uint64_t,float>> syl = {{80,-20}, {280,-20}, {480,-20}, {1080,-14}};
+    const auto tr = playNods(g,0,1800,syl,true);
+    size_t apex = 0;
+    for(size_t i=0; i<tr.deg.size(); ++i)
+      if(tr.deg[i]<tr.deg[apex])
+        apex = i;
+    require(tr.at[apex]>=1000+100 && tr.at[apex]<=1000+250 && steps(tr,0,tr.deg.size()).second<1.6f,
+            "a live voice's nod must peak within its syllable, smoothly: at "+std::to_string(tr.at[apex])+", step change "+
+            std::to_string(steps(tr,0,tr.deg.size()).second));
+  }
+  // listening: a nod as the words come, as smooth
+  {
+    TalkGestures g;
+    g.listen(20000);
+    NodTrace tr;
+    for(uint64_t now=0; now<20000 && g.listenNodCount()==0; now+=33)
+      g.heard(now), tr = playNods(g,now,now+33,{},false,false);
+    const uint64_t from = tr.at.back();
+    const auto t2 = playNods(g,from+33,from+33*30,{},false,false);
+    const auto [step,change] = steps(t2,0,t2.deg.size());
+    require(g.listenNodCount()==1 && -t2.deg[0]<1.f && change<1.f && *std::min_element(t2.deg.begin(),t2.deg.end())<-1.f,
+            "a listening nod must start under 1 degree a frame and move smoothly: "+std::to_string(-t2.deg[0])+", "+
+            std::to_string(change));
+  }
+  }
+
 int main() {
   try {
     const auto head    = makeHead();
@@ -2296,6 +2412,7 @@ int main() {
     leakCases(head,*profile);
     toneCases();
     playerVoiceCases();
+    headNodCases();
     browCases(head,*profile);
     listenCases(head,*profile);
     speechFaceCases(head);

@@ -13,11 +13,15 @@ float MinLeft   = 1200.f;  // ms: with less of the line left no gesture starts
 float Slack     = 600.f;   // ms: a gesture longer than the line left by more than this is unlikely...
 float Long      = 0.15f;   // ...this many times as likely as one that fits
 float RestScale = 1.f;     // of the rests between gestures
-// the head
-float Nod       = 5.f;     // degrees down on a stressed syllable (the loudest ones; less on the others)
-float NodHz     = 2.5f;    // the nod is down in 1/(2 pi NodHz) s, back in about four times that
-float Stress    = 1.1f;    // a syllable this many times as loud as the ones before it is stressed
-float NodGap    = 350.f;   // ms, nods at most this often
+// the head (player-voice-face.md, "Кивок"): a nod is a minimum-jerk move down and back, no kick of speed
+float Nod       = 3.5f;    // degrees down on the most stressed syllable...
+float NodWeak   = 0.55f;   // ...this part of it on one just stressed
+float Stress    = 1.5f;    // dB: a syllable this much louder than the ones before it is stressed...
+float StressTop = 4.f;     // ...and this much more is the strongest nod
+float NodGap    = 800.f;   // ms, nods at most this often (about one a stressed word: half the syllable rate or less)
+float NodDown   = 150.f;   // ms down, the apex in the syllable: its loudness is known at its start (lead ahead)...
+float LiveDown  = 120.f;   // ...a live voice's after LipSync::LiveJudgeMs of it: down quicker
+float NodBack   = 320.f;   // ms back
 float SwayYaw   = 2.5f;    // degrees aside, at most, while the voice lasts
 float SwayRoll  = 2.f;
 float SwayTime  = 1300.f;  // ms, a new sway this often (+-40%)...
@@ -25,7 +29,8 @@ float SwayLag   = 450.f;   // ...reached with this time constant
 // listening and thinking
 float ListenSway = 0.6f;   // of the sway while it listens (0.4 while it thinks)
 float ListenNod  = 4.f;    // degrees, a nod as the words of the other one come...
-float ListenHz   = 1.6f;   // ...slower than one on a stressed syllable
+float ListenDown = 200.f;  // ...slower than one on a stressed syllable: ms down...
+float ListenBack = 400.f;  // ...and back
 float ListenGap  = 1500.f; // ms, such nods at most this often...
 float ListenProb = 0.45f;  // ...and with this chance when words come
 float DoubleNod  = 0.25f;  // the chance of a second nod right after (350 ms)
@@ -42,14 +47,22 @@ struct Param final {
 
 const Param params[] = {
   {"Tail", &Tail}, {"Wait", &Wait}, {"MinLeft", &MinLeft}, {"Slack", &Slack}, {"Long", &Long},
-  {"RestScale", &RestScale}, {"Nod", &Nod}, {"NodHz", &NodHz}, {"Stress", &Stress}, {"NodGap", &NodGap},
+  {"RestScale", &RestScale}, {"Nod", &Nod}, {"NodWeak", &NodWeak}, {"Stress", &Stress}, {"StressTop", &StressTop},
+  {"NodGap", &NodGap}, {"NodDown", &NodDown}, {"LiveDown", &LiveDown}, {"NodBack", &NodBack},
   {"SwayYaw", &SwayYaw}, {"SwayRoll", &SwayRoll}, {"SwayTime", &SwayTime}, {"SwayLag", &SwayLag},
-  {"ListenSway", &ListenSway}, {"ListenNod", &ListenNod}, {"ListenHz", &ListenHz}, {"ListenGap", &ListenGap},
+  {"ListenSway", &ListenSway}, {"ListenNod", &ListenNod}, {"ListenDown", &ListenDown}, {"ListenBack", &ListenBack},
+  {"ListenGap", &ListenGap},
   {"ListenProb", &ListenProb}, {"DoubleNod", &DoubleNod}, {"ThinkDelay", &ThinkDelay}, {"ThinkYaw", &ThinkYaw},
   {"ThinkPitch", &ThinkPitch}, {"ThinkTilt", &ThinkTilt}, {"AsideTime", &AsideTime},
   };
 
 constexpr float Deg = 3.14159265f/180.f;
+
+// 0..1 over 0..1 with no speed and no acceleration at either end: the minimum-jerk move (Flash, Hogan 1985)
+float minJerk(float x) {
+  x = std::clamp(x,0.f,1.f);
+  return x*x*x*(10.f + x*(-15.f + 6.f*x));
+  }
 
 bool enabled = []() {
   const char* v = std::getenv("OPENGOTHIC_GESTURES");
@@ -230,7 +243,28 @@ void TalkGestures::think(uint64_t now, uint64_t until) {
   thinkUntil = until;
   }
 
-void TalkGestures::updateHead(uint64_t now, uint64_t dt, bool speak, bool syllable, float loud) {
+void TalkGestures::startNod(uint64_t now, float depth, float downMs, float backMs) {
+  nodMove.from  = nod;  // from where the head is: a nod over the end of the last one goes on from there
+  nodMove.at    = now;
+  nodMove.depth = depth;
+  nodMove.down  = std::max(1.f,downMs);
+  nodMove.back  = std::max(1.f,backMs);
+  nodMove.on    = true;
+  }
+
+float TalkGestures::nodAt(uint64_t now) {
+  if(!nodMove.on)
+    return 0;
+  const float t = float(now - std::min(now,nodMove.at));
+  if(t<nodMove.down)
+    return nodMove.from + (-nodMove.depth - nodMove.from)*minJerk(t/nodMove.down);
+  if(t<nodMove.down+nodMove.back)
+    return -nodMove.depth*(1.f - minJerk((t-nodMove.down)/nodMove.back));
+  nodMove.on = false;
+  return 0;
+  }
+
+void TalkGestures::updateHead(uint64_t now, uint64_t dt, bool speak, bool syllable, float loudDb, bool live) {
   lastNow = now;
   const bool  listening = enabled && !speak && now<listenUntil;
   const bool  thinking  = enabled && !speak && now<thinkUntil;
@@ -241,20 +275,20 @@ void TalkGestures::updateHead(uint64_t now, uint64_t dt, bool speak, bool syllab
   if(talkW>swayW)
     talkW = std::max(swayW, talkW - t/0.5f);
 
-  // a stressed syllable: clearly louder than the ones before it in this line
+  // a stressed syllable: clearly louder (dB, before the mouth's scale saturates) than the ones before it in this line
   sinceNod += dt;
-  if(enabled && speak && syllable && loud>0.f) {
-    if(sylMean>0.f && loud>sylMean*Stress && float(sinceNod)>=NodGap) {
-      const float s = std::clamp((loud/sylMean - 1.f)/0.5f, 0.3f, 1.f);
-      nodHz     = NodHz;
-      nodSpeed -= Nod*Deg*s*2.f*3.14159265f*nodHz*2.7182818f;  // a spring kicked so: its largest turn is speed/(w e)
-      sinceNod  = 0;
+  if(enabled && speak && syllable && loudDb>-90.f) {
+    if(sylSeen && loudDb>sylMean+Stress && float(sinceNod)>=NodGap) {
+      const float over = std::clamp((loudDb-sylMean-Stress)/std::max(0.1f,StressTop),0.f,1.f);
+      startNod(now,Nod*Deg*(NodWeak + (1.f-NodWeak)*over),live ? LiveDown : NodDown,NodBack);
+      sinceNod = 0;
       ++nods;
       }
-    sylMean = sylMean>0.f ? sylMean + (loud-sylMean)*0.3f : loud;
+    sylMean = sylSeen ? sylMean + (loudDb-sylMean)*0.3f : loudDb;
+    sylSeen = true;
     }
   if(!speak)
-    sylMean = 0;
+    sylSeen = false;
 
   // listening: a nod as the words come (asked for by heard), sometimes two
   if(secondNod!=0 && now>=secondNod) {
@@ -264,25 +298,13 @@ void TalkGestures::updateHead(uint64_t now, uint64_t dt, bool speak, bool syllab
     }
   if(wantNod>0.f) {
     if(listening) {
-      nodHz     = ListenHz;
-      nodSpeed -= ListenNod*Deg*wantNod*2.f*3.14159265f*nodHz*2.7182818f;
+      startNod(now,ListenNod*Deg*wantNod,ListenDown,ListenBack);
       sinceNod  = 0;
       ++listenNods;
       }
     wantNod = 0;
     }
-
-  // the nod: x(t) = (x0 + (v0 + w x0) t) e^(-w t)
-  if(t>0.f) {
-    const float w  = 2.f*3.14159265f*nodHz;
-    const float c  = nodSpeed + w*nod;
-    const float e  = std::exp(-w*t);
-    const float x  = (nod + c*t)*e;
-    nodSpeed = (c - w*(nod + c*t))*e;
-    nod      = x;
-    if(std::abs(nod)<1e-4f && std::abs(nodSpeed)<1e-3f)
-      nod = nodSpeed = 0;
-    }
+  nod = nodAt(now);
 
   // the sway: now and then somewhere else aside, slowly
   if(on && swayLeft<=dt) {
@@ -314,7 +336,7 @@ void TalkGestures::updateHead(uint64_t now, uint64_t dt, bool speak, bool syllab
   headNow.pitch = nod;
   headNow.yaw   = sway[0]*talkW;
   headNow.roll  = sway[1]*talkW + tilt;
-  headMoves     = talkW>0.f || nod!=0.f || nodSpeed!=0.f || sway[0]!=0.f || sway[1]!=0.f || aside.weight>0.f;
+  headMoves     = talkW>0.f || nod!=0.f || nodMove.on || sway[0]!=0.f || sway[1]!=0.f || aside.weight>0.f;
   }
 
 void TalkGestures::started(uint8_t gesture, bool overPlaying) {
