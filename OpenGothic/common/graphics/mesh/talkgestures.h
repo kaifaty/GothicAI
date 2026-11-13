@@ -79,6 +79,9 @@ class TalkGestures final {
     static void    setEnabled(bool e);
     static bool    setParam(std::string_view name, float value);
     static auto    paramList() -> std::string;
+    // for the test bench: the gestures to start next, in turn and over again (1 is T_DIALOGGESTURE_01), instead of
+    // ones picked at random; none: at random again
+    static void    setPicks(std::vector<uint8_t> gestures);
     static Mood    moodOf(std::string_view mood);  // the bridge's say.mood; unknown: neutral
     static auto    moodName(Mood m) -> std::string_view;
 

@@ -56,7 +56,8 @@ class Pose final {
     bool               startAnim(const AnimationSolver &solver, const Animation::Sequence* sq,
                                  uint8_t comb, BodyState bs,
                                  StartHint hint, uint64_t tickCount);
-    bool               stopAnim(std::string_view name);
+    // atEase: its bones come to rest slowly (AnimBlend::easeOut: the hands of one whose voice is over)
+    bool               stopAnim(std::string_view name, bool atEase=false);
     bool               stopWalkAnim();
     void               interrupt();
     void               stopAllAnim();

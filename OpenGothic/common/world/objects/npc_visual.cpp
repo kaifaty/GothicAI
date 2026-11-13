@@ -38,8 +38,8 @@ std::string_view Npc::cameraTargetPosScheme() const {
   return inter!=nullptr ? inter->posSchemeName() : std::string_view();
   }
 
-void Npc::stopDlgAnim() {
-  visual.stopDlgAnim(*this);
+void Npc::stopDlgAnim(bool atEase) {
+  visual.stopDlgAnim(*this,atEase);
   }
 
 void Npc::setVisual(std::string_view visual) {

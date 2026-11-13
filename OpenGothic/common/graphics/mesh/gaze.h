@@ -11,6 +11,15 @@ class Skeleton;
 // Gaze: a character looks at whom it talks to. Runs as a post-pass over the world-space bone
 // matrices that Pose builds (after FootIk): the head turns first, the chest and the waist join for
 // larger angles; the turn is smooth and limited, a partner behind the back is let go.
+//
+// The head as the animation moves it: its turn aside is taken out whole (the head looks at the partner, not
+// where the animation turns it), of its bend up and down the slow part (a nod stays), its tilt to a side
+// stays. While the hands gesture as it speaks (Input::steady) the head is not the gesture's: the dialog
+// gestures swing the trunk with the head on it up to 30 degrees aside, down and to a side at up to 110
+// degrees a second, keyed ten times a second - with the turn taken out, the tilt and the quick part of the
+// bend were left over, a head rocking on a still gaze. All three are taken out then: the head is held by the
+// gaze and moved by the voice (TalkGestures), the trunk and the hands gesture under it
+// (reports/content/2026-11-hero-head/gesture-head.md).
 class Gaze final {
   public:
     // why it looks there
@@ -33,6 +42,7 @@ class Gaze final {
       Tempest::Vec3 talk    = {};      // the head moving with the voice: pitch (+ up), yaw, roll, radians
       bool          eyes    = false;   // an own head with eyes: the face aims at the target from them...
       Tempest::Vec3 eyesAt  = {};      // ...here in the frame of the head bone (else from the bone itself)
+      bool          steady  = false;   // its hands gesture as it speaks: the head is not moved by the gesture's animation
       };
 
     // State for the test bench, degrees
@@ -51,6 +61,9 @@ class Gaze final {
       float         waistYaw = 0;
       float         animYaw  = 0;  // the head as animated, from the body facing
       float         animPitch= 0;
+      float         animRoll = 0;  // its tilt to a side as animated (the turn around where the face looks)
+      float         roll     = 0;  // the tilt of the head as shown
+      float         steady   = 0;  // how much the head is held against the gesture's animation, 0..1
       float         hipsYaw  = 0;  // the hips as animated, from where the npc faces
       Tempest::Vec3 head     = {};
       Tempest::Vec3 facing   = {};
@@ -59,6 +72,10 @@ class Gaze final {
 
     static bool    isEnabled();
     static void    setEnabled(bool e);
+    // the head of one whose hands gesture is held against the gesture's animation, and a gesture whose voice is over
+    // is stopped at ease (OPENGOTHIC_GESTURE_HEAD=0: the head goes with the gesture and the gesture is cut, as before)
+    static bool    holdsGestureHead();
+    static void    setGestureHead(bool e);
 
     void           setSkeleton(const Skeleton* sk);
     bool           isValid() const { return valid; }
@@ -104,6 +121,11 @@ class Gaze final {
     int                 faceAxis = -1;  // local axis of the head bone that points where the face does
     float               faceSign = 1;
     bool                faceFixed = false; // known from the bind pose
+    int                 upAxis   = -1;  // local axis of the head bone that points up (from the bind pose: else the tilt is not known)
+    float               upSign   = 1;
+    float               steadyW  = 0;   // the head held against the gesture's animation, 0..1
+    float               animRoll = 0;   // the tilt of the head as animated
+    float               roll     = 0;   // debug: and as shown
     float               animYaw  = 0;   // the head as animated, from the body facing
     float               animPitch = 0;
     float               animPitchLp = 0; // its slow part

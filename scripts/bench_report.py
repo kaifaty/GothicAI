@@ -38,7 +38,7 @@ FLAGS = {
     "stretch":   (2.0, "cm",  "planted leg straight and still can not reach the ground"),
     "gaze_off":  (15.0, "deg", "looking past the partner although it is within reach of the turn"),
     "aim_off":   (3.0, "deg", "the bow (the spell) aims past where the shot leaves, although the turn could reach it"),
-    "gaze_jerk": (10.0, "deg", "the face turned this much in one frame (a turn to the partner goes up to 9)"),
+    "gaze_jerk": (10.0, "deg", "the face turned or tilted this much in one frame (a turn to the partner goes up to 9)"),
     "anim_pop":  (20.0, "cm", "a joint of the animated pose (before lean, IK, gaze) jumped at a switch of animations: second difference over 3 frames"),
     "lip_open":  (0.3, "",    "the mouth stays open although the voice is silent"),
     "lip_shut":  (0.7, "",    "the voice is loud but the mouth stays shut"),
@@ -138,7 +138,9 @@ def frame_flags(prev2, prev, r, switch=False):
             # after a segment starts: the bench teleports the hero there
             if r["g_w"] > 0 and prev["g_w"] > 0 and r["frame"] >= 6:
                 dy = (r["g_fyaw"] - prev["g_fyaw"] + 180) % 360 - 180
-                out.append(("gaze_jerk", "-", math.hypot(dy, r["g_fpitch"] - prev["g_fpitch"])))
+                # and its tilt to a side: a gesture's animation rocks the head so while the face looks on
+                dr = (r["g_froll"] - prev["g_froll"] + 180) % 360 - 180 if "g_froll" in r and "g_froll" in prev else 0
+                out.append(("gaze_jerk", "-", math.hypot(dy, r["g_fpitch"] - prev["g_fpitch"], dr)))
         elif prev is not None and "g_w" in prev:
             out.append(("gaze_jerk", "-", abs(r["g_yaw"] * r["g_w"] - prev["g_yaw"] * prev["g_w"])))
     # the bench starts the history of the pose with the segment: two frames before the first difference.

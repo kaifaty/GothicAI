@@ -1540,6 +1540,10 @@ const Animation::Sequence* MdlVisual::startAnimSpell(Npc &npc, std::string_view 
   }
 
 namespace {
+// The head is held against a gesture's animation (Gaze::Input::steady) this long after the gesture is over, ms: its
+// bones blend back to the stance meanwhile, at ease the longest (AnimBlend: 1.875 of the gestures' blend out, 0.4 s)
+constexpr uint64_t GestureHeadHold = 900;
+
 // T_DIALOGGESTURE_01..
 std::array<char,32> gestureName(uint16_t id) {
   std::array<char,32> name = {};
@@ -1622,14 +1626,26 @@ void MdlVisual::updateGestures(Npc& npc, uint64_t dt) {
   in.playing  = playing;
   in.syllable = beat;
 
+  // the head is the gaze's and the voice's while the hands gesture, and until they are back at rest (updateGaze);
+  // an animation that took the gesture's place (a nod of the ai queue) has the head at once
+  if(playing)
+    gestureHead = now + GestureHeadHold;
+  else if(!in.allowed)
+    gestureHead = std::min(gestureHead,now);
   const auto d = gestures.update(in);
   if(d.act==TalkGestures::Act::Start) {
     auto sq = solver.solveFrm(gestureName(d.gesture).data());
-    if(sq!=nullptr && skInst->startAnim(solver,sq,0,BS_STAND,Pose::NoHint,now))
-      gestureSeq = sq;
+    if(sq!=nullptr && skInst->startAnim(solver,sq,0,BS_STAND,Pose::NoHint,now)) {
+      gestureSeq  = sq;
+      gestureHead = now + GestureHeadHold;
+      }
     }
   else if(d.act==TalkGestures::Act::Stop && gestureSeq!=nullptr) {
-    skInst->stopAnim(gestureSeq->name);
+    // the voice is over: the hands come to rest; another animation takes the body (in.allowed is off): at once, and
+    // the head is that animation's from now on
+    skInst->stopAnim(gestureSeq->name,in.allowed && Gaze::holdsGestureHead());
+    if(!in.allowed)
+      gestureHead = now;
     gestureSeq = nullptr;
     }
   if(probing)
@@ -1912,7 +1928,7 @@ void MdlVisual::updateMouth(Npc& npc, uint64_t dt) {
     mouth.probe(LipSync::subjectProbe);
   }
 
-void MdlVisual::stopDlgAnim(Npc& npc) {
+void MdlVisual::stopDlgAnim(Npc& npc, bool atEase) {
   mouth.stop();
   cues.stop();
   voiceBrows.stop();
@@ -1920,9 +1936,12 @@ void MdlVisual::stopDlgAnim(Npc& npc) {
   voiceNow = nullptr;
   gestures.stop();
   gestureSeq = nullptr;
+  atEase     = atEase && Gaze::holdsGestureHead();
+  if(!atEase)
+    gestureHead = npc.world().tickCount();  // the head goes with what the body does next
   const uint16_t count = 11;
   for(uint16_t i=0; i<count; i++)
-    skInst->stopAnim(gestureName(uint16_t(i+1)).data());
+    skInst->stopAnim(gestureName(uint16_t(i+1)).data(),atEase);
 
   if(npc.processPolicy()<=NpcProcessPolicy::AiNormal) {
     // avoid PCI traffic on distant npc's

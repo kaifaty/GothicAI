@@ -235,7 +235,9 @@ class MdlVisual final {
     bool                           startLeak      (Npc& npc, std::string_view felt, bool lower);
     float                          leakWeight     (const Npc& npc) const;
     const GltfHeadMesh*            headMesh() const;
-    void                           stopDlgAnim    (Npc& npc);
+    // atEase: its line is over and it stands on (the other one answers, the talk ends) - the hands of a gesture come
+    // to rest slowly; else they are needed at once (a weapon drawn, an item used)
+    void                           stopDlgAnim    (Npc& npc, bool atEase=false);
     // a voiced line: the mouth follows the voice instead of the talk loop
     void                           startSpeech    (Npc& npc, std::shared_ptr<LipSync::Track> voice);
     void                           stopSpeech     (uint64_t now);
@@ -393,6 +395,7 @@ class MdlVisual final {
     LipSync                        mouth;
     TalkGestures                   gestures;
     const Animation::Sequence*     gestureSeq = nullptr;  // the gesture started last
+    uint64_t                       gestureHead = 0;       // until then the head is held against the gesture (Gaze::Input::steady)
     uint32_t                       gestureSyl = 0;        // syllables of the voice seen so far
     EyeBlink                       blink;
     uint32_t                       blinkShift = 0;        // gaze shifts seen so far

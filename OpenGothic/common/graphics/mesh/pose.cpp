@@ -414,7 +414,7 @@ const Animation::Sequence* Pose::footTransition(const AnimationSolver& solver, c
   return ret;
   }
 
-bool Pose::stopAnim(std::string_view name) {
+bool Pose::stopAnim(std::string_view name, bool atEase) {
   bool done=false;
   size_t ret=0;
   for(size_t i=0;i<lay.size();++i) {
@@ -427,6 +427,8 @@ bool Pose::stopAnim(std::string_view name) {
         lay[ret] = lay[i];
       ret++;
       } else {
+      if(atEase)
+        blend.easeOut(lay[i].seq);
       onRemoveLayer(lay[i]);
       done=true;
       }

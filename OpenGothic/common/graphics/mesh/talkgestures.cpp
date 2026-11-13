@@ -94,6 +94,10 @@ constexpr MoodStyle Styles[] = {
   {{0,0,0},    0,    0},
   };
 
+// the test bench names the gestures to start (setPicks)
+std::vector<uint8_t> picks;
+size_t               pickAt = 0;
+
 }
 
 TalkGestures::Probe TalkGestures::subjectProbe;
@@ -124,6 +128,11 @@ std::string TalkGestures::paramList() {
     ret += buf;
     }
   return ret;
+  }
+
+void TalkGestures::setPicks(std::vector<uint8_t> gestures) {
+  picks  = std::move(gestures);
+  pickAt = 0;
   }
 
 TalkGestures::Mood TalkGestures::moodOf(std::string_view m) {
@@ -350,6 +359,12 @@ void TalkGestures::started(uint8_t gesture, bool overPlaying) {
   }
 
 uint8_t TalkGestures::pick(uint64_t left, bool more) {
+  if(!picks.empty()) {
+    // named by the test bench: whatever the mood and the line left
+    const uint8_t g = picks[pickAt++ % picks.size()];
+    if(g>0 && g<=duration.size() && duration[g-1]>0)
+      return g;
+    }
   const auto& st = Styles[size_t(mood)];
   // the weight of a kind is shared by its gestures: five calm ones are not five times as likely
   float n[3] = {};

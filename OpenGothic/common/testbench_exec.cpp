@@ -519,10 +519,23 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       say("unknown lips command: " + line);
     }
   else if(c=="gestures") {
-    // gestures on|off|param <name> <value>|params: the hands while one speaks (off: a random gesture per line)
+    // gestures on|off|param <name> <value>|params|pick [<n> ...]|head on|off: the hands while one speaks (off: a random
+    // gesture per line); pick 6 3: the next gestures are T_DIALOGGESTURE_06, 03, 06.. instead of ones at random, pick:
+    // at random; head off: the head goes with the gesture's animation and a gesture is cut, as before (Gaze)
     const std::string m = a.size()>1 ? a[1] : "";
     if(m=="on" || m=="off")
       TalkGestures::setEnabled(m=="on");
+    else if(m=="head" && a.size()>2 && (a[2]=="on" || a[2]=="off")) {
+      Gaze::setGestureHead(a[2]=="on");
+      say("gestures head " + a[2]);
+      }
+    else if(m=="pick") {
+      std::vector<uint8_t> picks;
+      for(size_t i=2; i<a.size(); ++i)
+        picks.push_back(uint8_t(std::clamp(num(a,i,0),0.f,255.f)));
+      say("gestures pick" + std::string(picks.empty() ? " at random" : "") + line.substr(std::min(line.size(),line.find("pick")+4)));
+      TalkGestures::setPicks(std::move(picks));
+      }
     else if(m=="param" && a.size()>3)
       say(std::string(TalkGestures::setParam(a[2],num(a,3,0)) ? "gestures param " : "gestures: unknown param ") + a[2] + " " + a[3]);
     else if(m=="params")
