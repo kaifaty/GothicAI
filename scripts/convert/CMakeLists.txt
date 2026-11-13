@@ -45,6 +45,13 @@ configure_file(../../OpenGothic/common/world/movablevobsdata.h.in vob-layer-gene
 target_include_directories(content-convert PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/vob-layer-generated"
   "${CMAKE_BINARY_DIR}/baseimport-generated")
 target_include_directories(content-convert PRIVATE ../../OpenGothic/common)
+# time-world packs static collision's two inputs with the game's PackedMesh PK_Physic. It needs Tempest's graphics
+# library, so only the build with the game (OpenGothic/CMakeLists.txt) has it; the converter alone skips those rows.
+if(TARGET Tempest)
+  target_sources(content-convert PRIVATE ../../OpenGothic/common/graphics/mesh/submesh/packedmesh.cpp
+    ../../OpenGothic/common/graphics/mesh/texeldensity.cpp ../../OpenGothic/common/game/compatibility/phoenix.cpp)
+  target_compile_definitions(content-convert PRIVATE CONTENT_CONVERT_PACKED_MESH=1)
+endif()
 target_include_directories(content-convert SYSTEM PRIVATE ../../OpenGothic/lib/rapidjson/include ../../OpenGothic/lib/miniz)
 if(NOT MSVC)
   target_compile_options(content-convert PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wconversion>)

@@ -3,6 +3,9 @@
 #include "gothicglb.h"
 #include "physics/worldclothbundle.h"
 #include "physics/worldcollisionmesh.h"
+#if CONTENT_CONVERT_PACKED_MESH
+#include "graphics/mesh/submesh/packedmesh.h"
+#endif
 #include "worldchunkcook.h"
 #include "worldchunkcookedsource.h"
 #include "worldchunks.h"
@@ -112,6 +115,29 @@ void printSeries(const Series& s) {
   std::printf("| %-48s | %10.1f | %10.1f | %10.1f |\n",s.name.c_str(),v[v.size()/2],v.front(),v.back());
   }
 
+#if CONTENT_CONVERT_PACKED_MESH
+// FNV-1a over what DynamicWorld takes from a PK_Physic package: vertices, indices, each sub mesh's material name,
+// group, offset and length. Two inputs that pack the same give the same value.
+uint64_t packedDigest(const PackedMesh& p) {
+  uint64_t h = 1469598103934665603ull;
+  auto bytes = [&](const void* data, size_t size) {
+    const auto* b = static_cast<const uint8_t*>(data);
+    for(size_t i=0;i<size;++i)
+      h = (h^b[i])*1099511628211ull;
+    };
+  const uint64_t counts[] = {p.vertices.size(),p.indices.size(),p.subMeshes.size()};
+  bytes(counts,sizeof(counts));
+  bytes(p.vertices.data(),p.vertices.size()*sizeof(p.vertices[0]));
+  bytes(p.indices.data(),p.indices.size()*sizeof(p.indices[0]));
+  for(const auto& sub:p.subMeshes) {
+    const uint64_t fields[] = {sub.material.name.size(),uint64_t(sub.material.group),sub.iboOffset,sub.iboLength};
+    bytes(fields,sizeof(fields));
+    bytes(sub.material.name.data(),sub.material.name.size());
+    }
+  return h;
+  }
+#endif
+
 int timeWorld(const Options& o) {
   const auto manifest = readWorldChunkManifest(o.world);
   std::vector<fs::path> glbs, wcbs;
@@ -159,7 +185,7 @@ int timeWorld(const Options& o) {
     }
 
   enum { ReadGlb, Today, Parse, Sort, Stitch, Rest, TodayNear, SourceNear, ReadWcb, Validate, Index, Assemble, CookedNear,
-         ClothSearch, ClothRead, ClothApply, Collision };
+         ClothSearch, ClothRead, ClothApply, Collision, PackLandscape, PackCollision };
   std::vector<Series> series = {
     {"today: read GLB files (separate pass)",{}},
     {"today: readWorldChunks total",{}},
@@ -178,6 +204,8 @@ int timeWorld(const Options& o) {
     {"cloth: read + validate the bundle",{}},
     {"cloth: apply the bundle (exclusions, retain)",{}},
     {"collision mesh from chunk records (read + build)",{}},
+    {"PackedMesh PK_Physic of the stitched landscape",{}},
+    {"PackedMesh PK_Physic of the collision mesh",{}},
     };
   ChunkTable table;
   size_t triangles = 0, collisionTriangles = 0;
@@ -265,6 +293,19 @@ int timeWorld(const Options& o) {
           throw std::runtime_error("the collision mesh has another triangle count than the landscape");
         collisionTriangles = collision.mesh->polygons.material_indices.size();
         series[Collision].values.push_back(collision.ms);
+#if CONTENT_CONVERT_PACKED_MESH
+        // Both inputs packed as DynamicWorld packs them, each alone and in turns: the same work, the same package.
+        uint64_t digests[2] = {};
+        for(int k=0;k<2;++k) {
+          const bool landscape = (run+k)%2==0;
+          const auto p0 = Clock::now();
+          const PackedMesh packed(landscape ? mesh : *collision.mesh,PackedMesh::PK_Physic);
+          series[landscape ? PackLandscape : PackCollision].values.push_back(ms(p0,Clock::now()));
+          digests[landscape ? 0 : 1] = packedDigest(packed);
+          }
+        if(digests[0]!=digests[1])
+          throw std::runtime_error("PackedMesh PK_Physic of the collision mesh differs from the stitched landscape's");
+#endif
         }
       }
     }
@@ -364,6 +405,9 @@ int timeWorld(const Options& o) {
                   static_cast<unsigned long long>(nearCooked),nearCells.size());
     else if(&s==&series[Collision])
       std::printf("| %-48s | not cooked beside the GLBs with a bundle (the game ignores --out) |\n",s.name.c_str());
+    else if(&s==&series[PackLandscape] || &s==&series[PackCollision])
+      std::printf("| %-48s | no collision mesh, or a converter built without the game (no PackedMesh) |\n",
+                  s.name.c_str());
   return 0;
   }
 

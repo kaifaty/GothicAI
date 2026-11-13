@@ -10,10 +10,7 @@
 //   - the base's NEWWORLD in a scratch copy of hard links, where two DynamicWorlds (stitched landscape, collision
 //     mesh) also give byte-identical navigation geometry and the same answer to a grid of vertical rays.
 // Every fallback leaves the stitched landscape in use with its log line.
-//   gothic-worldcollision-chunks-contract               the contract; needs GOTHIC_DIR and a ready base for NEWWORLD
-//   gothic-worldcollision-chunks-contract --time <dir>  times the builder and PackedMesh PK_Physic on both inputs of
-//                                                       a world cooked beside its GLBs (5 runs, warm page cache;
-//                                                       content-convert time-world cannot: it links no graphics code)
+// Needs GOTHIC_DIR and a ready base for NEWWORLD. content-convert time-world times the builder and PK_Physic.
 
 #include "commandline.h"
 #include "graphics/mesh/submesh/packedmesh.h"
@@ -39,7 +36,6 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
-#include <string_view>
 #include <vector>
 
 namespace {
@@ -165,7 +161,8 @@ Packed comparePacked(const asset::WorldMesh& landscape, const asset::WorldMesh& 
 Loaded expectEqual(const std::string& label, const fs::path& dir, const fs::path& over={}) {
   auto loaded = load(dir,over);
   require(loaded.path==WorldCloth::Path::Bundle,label+": extract must take the bundle; log: "+loaded.log);
-  require(loaded.input.mesh.has_value(),label+": the builder must give the collision mesh; log: "+loaded.log);
+  require(loaded.input.mesh.has_value() && &loaded.input.select(loaded.landscape)==&*loaded.input.mesh,
+          label+": the builder must give the collision mesh and DynamicWorld must get it; log: "+loaded.log);
   const auto& mesh = *loaded.input.mesh;
   const auto line = "[world-collision] chunks "+cookedIndexPath(dir,over).string()+": "+
                     std::to_string(mesh.polygons.material_indices.size())+" triangles, "+
@@ -309,7 +306,8 @@ void expectLandscape(const std::string& label, const fs::path& dir, const fs::pa
   const auto at = loaded.log.find("[world-collision] ");
   std::printf("%s: the stitched landscape; %s\n",label.c_str(),at==std::string::npos ? "no [world-collision] line" :
               loaded.log.substr(at,loaded.log.find('\n',at)-at).c_str());
-  require(!loaded.input.mesh,label+": the stitched landscape must give the collision; log: "+loaded.log);
+  require(!loaded.input.mesh && &loaded.input.select(loaded.landscape)==&loaded.landscape,
+          label+": the stitched landscape must give the collision; log: "+loaded.log);
   if(reason.empty()) {
     require(lines==0,label+": nothing must be logged, got: "+loaded.log);
     return;
@@ -331,6 +329,21 @@ void fallbacks(const fs::path& root) {
     fs::copy(cooked,dir,fs::copy_options::recursive);
     return dir;
     };
+
+  // Every file valid, but extract did not take the bundle for this load: that alone keeps the records out.
+  {
+  const auto loaded = load(cooked,{});
+  require(loaded.input.mesh.has_value(),"the cooked cloth world must give the collision mesh");
+  LogCapture log;
+  const auto refused = worldCollisionInput(loaded.table,false);
+  const auto text = log.take();
+  const auto line = "[world-collision] "+(cooked/wcl::FileName).string()+": WorldCloth::extract did not take the "
+                    "bundle for this load; the collision comes from the stitched landscape";
+  std::printf("extract did not take the bundle: the stitched landscape; %s\n",line.c_str());
+  require(!refused.mesh && &refused.select(loaded.landscape)==&loaded.landscape && tagged(text,"[world-collision] ")==1 &&
+          text.find(line)!=std::string::npos,"without the bundle taken by extract the stitched landscape must give the "
+          "collision with the line '"+line+"', got: "+text);
+  }
 
   auto dir = copy();
   expectLandscape("OPENGOTHIC_WCB=0",dir,{},{},false);
@@ -492,68 +505,8 @@ struct WorldCollisionChunksContract {
     }
   };
 
-namespace {
-
-// ---- --time <world dir> ----
-
-void printSeries(const char* name, std::vector<double> v) {
-  std::sort(v.begin(),v.end());
-  std::printf("| %-48s | %10.1f | %10.1f | %10.1f |\n",name,v[v.size()/2],v.front(),v.back());
-  }
-
-int timeWorld(const fs::path& dir) {
-  constexpr int runs = 5;
-  const auto loaded = load(dir,{});
-  require(loaded.path==WorldCloth::Path::Bundle && loaded.input.mesh.has_value(),
-          dir.string()+" must be cooked beside its GLBs with its bundle; log: "+loaded.log);
-  const auto& mesh = *loaded.input.mesh;
-  auto difference = compareInput(loaded.landscape,mesh);
-  if(difference.empty())
-    difference = comparePacked(loaded.landscape,mesh).difference;
-  require(difference.empty(),"the collision mesh differs from the landscape: "+difference);
-  std::vector<double> build, landscape, collision;
-  size_t subMeshes = 0;
-  {
-  LogCapture quiet;
-  for(int run=0;run<runs;++run) {
-    const auto input = worldCollisionInput(loaded.table,true);
-    require(input.mesh.has_value(),"a timed build gave no collision mesh");
-    build.push_back(input.ms);
-    // Each package alone, the order turning every run: the second of two live packages would pay for the memory.
-    auto pack = [&](const asset::WorldMesh& mesh, std::vector<double>& out) {
-      const auto t0 = Clock::now();
-      const PackedMesh packed(mesh,PackedMesh::PK_Physic);
-      out.push_back(ms(t0,Clock::now()));
-      subMeshes = packed.subMeshes.size();
-      };
-    if(run%2==0) {
-      pack(loaded.landscape,landscape);
-      pack(*input.mesh,collision);
-      }
-    else {
-      pack(*input.mesh,collision);
-      pack(loaded.landscape,landscape);
-      }
-    }
-  }
-  std::printf("world %s: %zu triangles (%zu taken out as cloth), %zu vertices, %zu materials; PK_Physic %zu sub "
-              "meshes, identical from both inputs\nwall ms over %d runs, warm page cache:\n"
-              "| %-48s | %10s | %10s | %10s |\n|---|---:|---:|---:|\n",dir.string().c_str(),
-              mesh.polygons.material_indices.size(),loaded.cloth.original.polygons.material_indices.size(),
-              mesh.vertices.size(),mesh.materials.size(),subMeshes,runs,"stage","median","min","max");
-  printSeries("collision mesh from chunk records (read + build)",build);
-  printSeries("PackedMesh PK_Physic of the stitched landscape",landscape);
-  printSeries("PackedMesh PK_Physic of the collision mesh",collision);
-  return EXIT_SUCCESS;
-  }
-
-}
-
-int main(int argc, char* argv[]) {
+int main() {
   try {
-    if(argc==3 && std::string_view(argv[1])=="--time")
-      return timeWorld(argv[2]);
-    require(argc==1,"usage: gothic-worldcollision-chunks-contract [--time <world dir>]");
     TemporaryDirectory temporary;
     fs::create_directories(temporary.path);
     clothFixtures(temporary.path);
