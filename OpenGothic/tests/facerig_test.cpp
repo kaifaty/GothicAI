@@ -1402,10 +1402,9 @@ void playerVoiceCases() {
           "a silent live track must drive the mouth by its buffered arrival time and level");
   for(size_t i=3; i<pcm.size()/320; ++i)
     voice.append(rate,pcm.data()+i*320,320,1000+i*20);
-  voice.tick(5000);
-  require(first->playedMs()==400 && first->playedMs()<=int64_t(voice.durationMs()) &&
-          first->level(uint64_t(first->playedMs()))==0,
-          "the microphone clock must not run ahead of appended samples");
+  voice.tick(1000+voice.durationMs());
+  require(uint64_t(first->playedMs())+PlayerVoice::BufferMs==voice.durationMs() && mouth.isSpeaking(9001),
+          "the hero must still be speaking with exactly one microphone buffer left before finish");
   voice.finish();
   require(first->isFinished() && !mouth.isSpeaking(9001),"finishing the microphone must end the hero's speech");
   require(!voice.append(rate,pcm.data(),320,5001),"cancelled microphone chunks must be ignored");
@@ -1413,6 +1412,11 @@ void playerVoiceCases() {
   require(voice.append(rate,pcm.data(),320,6000) && voice.track()!=first && voice.track()->playedMs()==0 &&
           voice.track()->name()!=first->name() && voice.durationMs()==20,
           "a new key press must create a fresh microphone track and reset its clock and duration");
+  voice.tick(10000);
+  const auto restarted = voice.track();
+  require(restarted->playedMs()==20 && restarted->playedMs()<=int64_t(voice.durationMs()) &&
+          restarted->level(uint64_t(restarted->playedMs()))==0,
+          "the microphone clock must not run ahead of appended samples");
   voice.finish();
 
   VoiceBuffer npc(rate);

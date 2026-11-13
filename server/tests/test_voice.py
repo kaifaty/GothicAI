@@ -3,7 +3,10 @@ import base64
 import json
 import math
 import struct
+import sys
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from websockets.asyncio.server import serve
@@ -14,6 +17,7 @@ from gothic_ai.llm.fake import FakeBackend
 from gothic_ai.persona import PersonaProvider
 from gothic_ai.talk import TalkDesk
 from gothic_ai.voice import LAUGH, MIC_DENIED, AsrClient, VoiceInput, laughter
+from gothic_ai.voice_audio import Microphone, PlayerAudio
 from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import XARDAS, _until
 
@@ -463,3 +467,42 @@ async def test_player_audio_and_asr_are_independent(monkeypatch, blocked):
             assert not any(m["type"] == "ptt_audio" for m in fake.received)
         gate.set()
         await asr.aclose()
+
+
+def test_microphone_requests_20ms_pcm_blocks(monkeypatch):
+    stream = Mock()
+    raw_input_stream = Mock(return_value=stream)
+    monkeypatch.setitem(sys.modules, "sounddevice", SimpleNamespace(RawInputStream=raw_input_stream))
+    microphone = Microphone(rate=24000)
+    try:
+        microphone.start(lambda data: None)
+        kwargs = raw_input_stream.call_args.kwargs
+        assert kwargs["blocksize"] == microphone.rate // 50
+    finally:
+        microphone.stop()
+
+
+async def test_player_audio_rejects_late_callbacks_after_stop():
+    audio = PlayerAudio(SimpleNamespace(send=AsyncMock()), rate=16000)
+    try:
+        audio.stop()
+        audio.feed(b"\x01\x02", 123)
+        await asyncio.sleep(0)  # run the posted callback with the sender already cancelled
+        assert audio._queue.empty()
+    finally:
+        audio._task.cancel()
+        await asyncio.gather(audio._task, return_exceptions=True)
+
+
+async def test_player_audio_cancels_prequeued_chunks_at_stop():
+    link = SimpleNamespace(send=AsyncMock())
+    audio = PlayerAudio(link, rate=16000)
+    try:
+        audio._enqueue(b"\x01\x02", 123)
+        assert audio._queue.qsize() == 1
+        audio.stop()
+        await asyncio.sleep(0)  # let a sender lacking cancellation drain its prequeued chunk
+        link.send.assert_not_awaited()
+    finally:
+        audio._task.cancel()
+        await asyncio.gather(audio._task, return_exceptions=True)
