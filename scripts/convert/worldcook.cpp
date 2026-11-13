@@ -2,6 +2,7 @@
 
 #include "gothicglb.h"
 #include "physics/worldclothbundle.h"
+#include "physics/worldcollisionmesh.h"
 #include "worldchunkcook.h"
 #include "worldchunkcookedsource.h"
 #include "worldchunks.h"
@@ -158,7 +159,7 @@ int timeWorld(const Options& o) {
     }
 
   enum { ReadGlb, Today, Parse, Sort, Stitch, Rest, TodayNear, SourceNear, ReadWcb, Validate, Index, Assemble, CookedNear,
-         ClothSearch, ClothRead, ClothApply };
+         ClothSearch, ClothRead, ClothApply, Collision };
   std::vector<Series> series = {
     {"today: read GLB files (separate pass)",{}},
     {"today: readWorldChunks total",{}},
@@ -176,9 +177,11 @@ int timeWorld(const Options& o) {
     {"cloth: WorldCloth::extract by island search",{}},
     {"cloth: read + validate the bundle",{}},
     {"cloth: apply the bundle (exclusions, retain)",{}},
+    {"collision mesh from chunk records (read + build)",{}},
     };
   ChunkTable table;
-  size_t triangles = 0;
+  size_t triangles = 0, collisionTriangles = 0;
+  uint64_t nearTriangles = 0;
   uint64_t nearCooked = 0;
   size_t clothSurfaces = 0, clothTriangles = 0;
   for(int run=0;run<runs;++run) {
@@ -197,6 +200,10 @@ int timeWorld(const Options& o) {
     auto mesh = readWorldChunks(o.world,o.content,&table,&trace);
     const auto t1 = Clock::now();
     triangles = mesh.polygons.material_indices.size();
+    // The Near ring's triangles as loaded, before the world cloth bundle takes its triangles out of the table.
+    nearTriangles = 0;
+    for(const auto i:nearCells)
+      nearTriangles += table.entries[i].triangleCount;
     series[Today].values.push_back(ms(t0,t1));
     series[Parse].values.push_back(ms(t0,trace.parsed));
     series[Sort].values.push_back(ms(trace.parsed,trace.ordered));
@@ -249,6 +256,16 @@ int timeWorld(const Options& o) {
         throw std::runtime_error("the world cloth bundle holds other surfaces than the island search");
       series[ClothRead].values.push_back(ms(c1,c2));
       series[ClothApply].values.push_back(ms(c2,c3));
+      // Static collision's input from the records of the set the load read (the game ignores --out).
+      if(table.source->cooked().cookedSet()!=nullptr) {
+        const auto collision = worldCollisionInput(table,true);
+        if(!collision.mesh)
+          throw std::runtime_error("the collision mesh could not be built from the chunk records");
+        if(collision.mesh->polygons.material_indices.size()!=mesh.polygons.material_indices.size())
+          throw std::runtime_error("the collision mesh has another triangle count than the landscape");
+        collisionTriangles = collision.mesh->polygons.material_indices.size();
+        series[Collision].values.push_back(collision.ms);
+        }
       }
     }
     if(!cooked)
@@ -319,10 +336,12 @@ int timeWorld(const Options& o) {
   std::printf("world cloth: %zu surfaces, %zu triangles by island search; bundle %s%s\n",clothSurfaces,clothTriangles,
               clothPath.string().c_str(),bundled ? (": "+std::to_string(fs::file_size(clothPath))+" bytes").c_str() :
               " missing (bundle rows skipped)");
+  if(!series[Collision].values.empty())
+    std::printf("collision mesh from chunk records: %zu triangles, the landscape's after the bundle\n",
+                collisionTriangles);
   if(start!=nullptr) {
-    uint64_t nearTriangles = 0, nearGlb = 0, nearWcb = 0;
+    uint64_t nearGlb = 0, nearWcb = 0;
     for(const auto i:nearCells) {
-      nearTriangles += table.entries[i].triangleCount;
       nearGlb += fs::file_size(glbs[i]);
       if(cooked)
         nearWcb += fs::file_size(wcbs[i]);
@@ -343,6 +362,8 @@ int timeWorld(const Options& o) {
     else if(&s==&series[SourceNear])
       std::printf("| %-48s | not cooked: %llu of %zu Near cells read their .wcb beside the GLB |\n",s.name.c_str(),
                   static_cast<unsigned long long>(nearCooked),nearCells.size());
+    else if(&s==&series[Collision])
+      std::printf("| %-48s | not cooked beside the GLBs with a bundle (the game ignores --out) |\n",s.name.c_str());
   return 0;
   }
 

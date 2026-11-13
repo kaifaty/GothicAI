@@ -6,8 +6,9 @@
 //   verify-cooked-world <world dir> [--content <dir>] [--out <dir>]
 //   time-world <world dir> [--content <dir>] [--out <dir>]
 // The game's per-cell reader takes a cell from its .wcb beside the GLB (worldchunkcookedsource.h); time-world
-// times it next to the GLB read of the same Near cells, and the world cloth island search next to reading and
-// applying the bundle. verify-cooked-world also compares the bundle with a fresh island search. The start of the
+// times it next to the GLB read of the same Near cells, the world cloth island search next to reading and
+// applying the bundle, and static collision's input from the chunk records (physics/worldcollisionmesh.h: read,
+// check and build). verify-cooked-world also compares the bundle with a fresh island search. The start of the
 // game still reads every GLB (docs/landscape-plan.md, step Д3).
 
 #include <filesystem>
