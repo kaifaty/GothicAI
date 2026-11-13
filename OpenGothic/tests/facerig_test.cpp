@@ -1089,7 +1089,7 @@ struct GestureBody final {
       m.set(3,1,b.y);
       m.set(3,2,b.z);
       static_assert(sizeof(n.transform)==sizeof(m));
-      std::memcpy(&n.transform,&m,sizeof(m));
+      std::memcpy(static_cast<void*>(&n.transform),&m,sizeof(m)); // GCC: Mat4 is no trivial type
       h.nodes.push_back(n);
       }
     h.bbox.min = {-30,0,-30};
