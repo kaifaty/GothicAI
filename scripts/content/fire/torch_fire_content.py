@@ -16,7 +16,7 @@ OWN_HUT_SMOKE.TGA, the puff of the huts' smoke that the soot reuses (default: th
 `--set NAME` writes a new staging set, a part of the working content (docs/remaster-pipeline.md, sets): the effects,
 the layer and the flame atlas. The soot's OWN_HUT_SMOKE.TGA is not in it: a texture belongs to one part, and
 this one is the harbour's (a `motion-*` part), so the working set must hold that part too. The game gets the
-part by `building_set.py compose working-N <the parts of the current set> NAME` and, on the user's word,
+part by `building_set.py compose working-N <the current working set> NAME` and, on the user's word,
 `building_set.py enable working-N`.
 """
 from __future__ import annotations
