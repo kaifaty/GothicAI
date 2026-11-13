@@ -14,7 +14,7 @@ import pytest
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import world_census as census  # noqa: E402
-from test_world_edit import write_glb  # noqa: E402
+from world_fixtures import write_glb  # noqa: E402
 
 GROUND = {'name': 'NW_NATURE_WALDBODEN_03', 'group': 4, 'texture': 'NW_NATURE_WALDBODEN_03.TGA'}
 ROCK = {'name': 'NW_NATURE_STEIN_03', 'group': 2, 'texture': 'NW_NATURE_STEIN_03.TGA'}

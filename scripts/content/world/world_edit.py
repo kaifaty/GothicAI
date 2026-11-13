@@ -7,6 +7,8 @@
     python3 scripts/content/world/world_edit.py check <base.glb> <edited.glb> [--allowed allowed.json] \\
         [--materials <materials.json> ...]
     python3 scripts/content/world/world_edit.py compare <a.glb> <b.glb> [--full]
+    python3 scripts/content/world/world_edit.py build-region <id> [--set <set> --region <WORLD>/<x0>,<z0>,<x1>,<z1>] \\
+        [--edit <script> ...] [--materials <materials.json> ...] [--dry-run] [--gui]
 
 An edit is a Blender script in git with one function, edit(ctx) (world_bpy.Context): harbour_stairs.py,
 roof_holes.py. A chunk's record in data/content/world-edits.jsonl holds its list of edits; build applies the whole
@@ -26,6 +28,12 @@ exact boolean of roof_holes.py orders the cut roof's vertices differently from r
 The base: --base, else OPENGOTHIC_BASE, else the newest base in ~/.cache/gothic-ai/base/current/. The base and its
 cache are only read. Materials a base world does not have must be keys of the set's materials/materials.json or
 of a --materials file under the staging root.
+
+build-region (world_region.py, Blender side world_region_bpy.py) edits the chunks of a rectangle as one surface: one
+mesh in Blender with the borders between its chunks free and only its outer border fixed, every face back into its
+chunk, each chunk checked and published as by build, one record of kind worldregion for the region. A chunk of a set
+belongs to one record: build on a chunk of a region record of the same set fails, as does a region over a chunk with
+a record of its own.
 """
 from __future__ import annotations
 
@@ -207,6 +215,8 @@ def cmd_build(a) -> int:
         set_name = published.parts[0]
         if (a.set and a.set != set_name) or (a.chunk and a.chunk != chunk):
             raise EditError(f'{a.id} is {set_name} {chunk}: a record keeps its set and chunk')
+        if record.get('kind') == 'worldregion':
+            raise EditError(f'{a.id} is a region record: use build-region')
         edits = record_edits(record)
     else:
         if not (a.set and a.chunk):
@@ -228,6 +238,8 @@ def cmd_build(a) -> int:
         if not (REPO / e).is_file():
             raise EditError(f'edit {e} of {a.id} is not in the repository')
     world, name = split_chunk(chunk)
+    import world_region
+    world_region.check_owner(entries, set_name, [chunk], a.id)
 
     base = resolve_base(a.base)
     src = base_chunk(base, chunk)
@@ -354,12 +366,26 @@ def main(argv=None) -> int:
     c.add_argument('edited')
     c.add_argument('--allowed')
     c.add_argument('--materials', action='append')
+    r = sub.add_parser('build-region', help='edit the chunks of a rectangle as one surface, check, publish')
+    r.add_argument('id')
+    r.add_argument('--set')
+    r.add_argument('--region', help='<WORLD>/<x0>,<z0>,<x1>,<z1>, inclusive chunk coordinates')
+    for name in ('--edit', '--materials'):
+        r.add_argument(name, action='append')
+    for name, default in (('--notes', None), ('--base', None), ('--staging', str(STAGING)),
+                          ('--registry', str(REGISTRY)), ('--work', None)):
+        r.add_argument(name, default=default)
+    r.add_argument('--dry-run', action='store_true', help='build and check in the work folder only')
+    r.add_argument('--gui', action='store_true', help='open the joined region in Blender with the underlay')
     m = sub.add_parser('compare', help='are two chunks the same geometry')
     m.add_argument('a')
     m.add_argument('b')
     m.add_argument('--full', action='store_true')
     a = ap.parse_args(argv)
     try:
+        if a.command == 'build-region':
+            import world_region
+            return world_region.cmd_build_region(a)
         return {'take': cmd_take, 'build': cmd_build, 'check': cmd_check, 'compare': cmd_compare}[a.command](a)
     except EditError as error:
         print(f'world_edit: {error}', file=sys.stderr)
