@@ -56,7 +56,7 @@ class PfxObjects final {
     uint64_t                      lastUpdate=0;
     uint64_t                      now=0;  // the world tick of the update: the curl field's clock and the flicker's
 
-  friend class PfxEmitter;
+  friend class PfxSlot;
   friend class PfxBucket;
   friend class TrlObjects;
   };
