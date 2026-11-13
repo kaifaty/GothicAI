@@ -14,6 +14,7 @@
 #include "game/archerai.h"
 #include "game/playercontrol.h"
 #include "graphics/drawcommands.h"
+#include "graphics/mesh/animsample.h"
 #include "graphics/mesh/footik.h"
 #include "graphics/mesh/lipsync.h"
 #include "graphics/mesh/talkgestures.h"
@@ -81,6 +82,9 @@ void writeHeader() {
   std::fprintf(bench.csv,",g_on,g_src,g_w,g_err,g_yaw,g_pitch,g_yawgoal,g_pitchgoal,g_head,g_chest,g_waist,g_animyaw,g_animpitch,g_hipsyaw,g_fyaw,g_fpitch,g_animroll,g_froll,g_steady,pg_on,pg_src,pg_w,pg_err,pg_yaw");
   std::fprintf(bench.csv,",ln_on,ln_roll,ln_pitch,ln_speed,ln_turn,ln_slope");
   std::fprintf(bench.csv,",an_pop,an_bone,an_speed,an_layers,bl_on,bl_active,bl_started,bl_angle,bl_time");
+  // the same change of the step for the hands (the larger of the two), the head and the chest, cm, and their speed,
+  // cm/s: the steps of a clip with sparse keys (AnimSample; sm_on - its curve is on)
+  std::fprintf(bench.csv,",an_hand,an_hand_v,an_head,an_head_v,an_chest,sm_on");
   std::fprintf(bench.csv,",a_on,a_w,a_yaw,a_pitch,a_animyaw,a_animpitch,a_turn,a_bend,a_err,a_steady,a_lean,a_side,ik_crouch,m_crouch,m_peek,m_cant,m_walk,aw_w,aw_speed,aw_twist,aw_chest,aw_drop");
   std::fprintf(bench.csv,",m_stage,m_draw,m_hold,m_fatigue,m_breath,m_holding,m_short,m_disturb,m_amp,m_sway_yaw,m_sway_pitch,m_off,m_spread,m_cross");
   std::fprintf(bench.csv,",bd_w,bd_draw,bd_span,bd_travel,bd_miss,bd_follow,bd_fit,bd_offset,bd_angle,hd_hand,hd_fore,hd_arrow,bd_hold,bd_nock,rh_x,rh_y,rh_z,bd_held,bd_overgrip,bd_atmiddle,bd_nockgap,bd_square,bd_cant,bd_bowmove,bd_bowmiss,bd_back,bd_kick,bd_turn");
@@ -134,6 +138,19 @@ void writeAnim() {
       speed = std::max(speed,(a.joint[i] - bench.anim1[i]).length()*float(Fps));
       }
     }
+  // the hands, the head and the chest on their own
+  float part[3] = {}, partSpeed[3] = {};
+  if(bench.anim2.size()==n && bench.anim1.size()==n && a.skeleton!=nullptr) {
+    static const char* const names[][2] = {{"BIP01 R HAND","BIP01 L HAND"},{"BIP01 HEAD",nullptr},{"BIP01 SPINE2",nullptr}};
+    for(size_t p=0; p<3; ++p)
+      for(const char* nm:names[p]) {
+        const size_t i = nm!=nullptr ? a.skeleton->findNode(nm) : size_t(-1);
+        if(i>=n)
+          continue;
+        part[p]      = std::max(part[p],(a.joint[i] - bench.anim1[i]*2.f + bench.anim2[i]).length());
+        partSpeed[p] = std::max(partSpeed[p],(a.joint[i] - bench.anim1[i]).length()*float(Fps));
+        }
+    }
   bench.anim2 = std::move(bench.anim1);
   bench.anim1.assign(a.joint,a.joint+n);
 
@@ -145,6 +162,7 @@ void writeAnim() {
       c = '_';
   std::fprintf(bench.csv,",%.2f,%s,%.0f,%s",pop,name.c_str(),speed,a.layers.empty() ? "-" : a.layers.c_str());
   std::fprintf(bench.csv,",%d,%u,%u,%.1f,%.3f",int(AnimBlend::isEnabled()),a.blend.active,a.blend.started,a.blend.angle,a.blend.time);
+  std::fprintf(bench.csv,",%.3f,%.1f,%.3f,%.1f,%.3f,%d",part[0],partSpeed[0],part[1],partSpeed[1],part[2],int(AnimSample::enabled()));
   }
 
 }

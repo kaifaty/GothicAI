@@ -1,0 +1,170 @@
+# Clips with sparse keys on a curve through their keys (reports/engine/2026-11-13-smooth-sampling/README.md): each take
+# twice in one run, first on straight lines between the keys as before (`sample off`, takes `*-line`), then on the
+# curve (`sample on`, takes `*-curve`). The hero says lines of his original voice to Xardas in the tower of the default
+# save with one dialog gesture the bench names (T_DIALOGGESTURE_03, 08, 09, 06: ten keys a second), seen whole from the
+# front: the camera does not follow the head, so the arms and the trunk are judged, and the head as the trunk carries
+# it. The nod and the sway of the voice are off, and so is the pause of random length between two gestures, so that both
+# takes play as many of them. Then clips of the whole body from the side, for the feet, each played
+# to its end before the next take so that both takes show the same frames: standing with a sword drawn (the stance
+# S_1HRUN, a loop), looking the sword over (T_1HSINSPECT), sitting down and getting up (T_STAND_2_SIT) - ten keys a
+# second - and a dance (T_DANCE_01: fifteen keys a second, the root travels a metre).
+# CSV: an_hand, an_head, an_chest - the change of the step of the hands, the head and the chest between two frames, cm;
+# sm_on. No AI server. How to run it and make the clip - scripts/bench/README.md, "Anim smooth clip".
+# @timeout 420
+seed 73013
+cheat god
+set time 12 0
+view clean 30
+overlay off
+gestures param Nod 0
+gestures param SwayYaw 0
+gestures param SwayRoll 0
+gestures param RestScale 0
+watch nearest
+freeze nearest
+wait 500
+place 110 0
+wait 800
+watch player
+cam front 150 140
+cam look 125
+wait 1500
+sample off
+gestures pick 3
+rec g3-line
+wait 700
+speak player DIA_Addon_Xardas_Hello_15_01 NONE_100_XARDAS
+wait 6500
+stop
+wait 1500
+sample on
+gestures pick 3
+rec g3-curve
+wait 700
+speak player DIA_Addon_Xardas_Hello_15_01 NONE_100_XARDAS
+wait 6500
+stop
+wait 1500
+sample off
+gestures pick 8
+rec g8-line
+wait 700
+speak player DIA_Addon_Xardas_Hello_15_01 NONE_100_XARDAS
+wait 6500
+stop
+wait 1500
+sample on
+gestures pick 8
+rec g8-curve
+wait 700
+speak player DIA_Addon_Xardas_Hello_15_01 NONE_100_XARDAS
+wait 6500
+stop
+wait 1500
+sample off
+gestures pick 9
+rec g9-line
+wait 700
+speak player DIA_Addon_Xardas_Hello_15_01 NONE_100_XARDAS
+wait 6500
+stop
+wait 1500
+sample on
+gestures pick 9
+rec g9-curve
+wait 700
+speak player DIA_Addon_Xardas_Hello_15_01 NONE_100_XARDAS
+wait 6500
+stop
+wait 1500
+sample off
+gestures pick 6
+rec g6-line
+wait 700
+speak player DIA_Addon_Xardas_Hello_15_01 NONE_100_XARDAS
+wait 6500
+stop
+wait 1500
+sample on
+gestures pick 6
+rec g6-curve
+wait 700
+speak player DIA_Addon_Xardas_Hello_15_01 NONE_100_XARDAS
+wait 6500
+stop
+gestures pick
+wait 1500
+# the whole body, from the side on the flat floor of the tower
+goto NW_XARDAS_TOWER_IN1_26
+cam follow 300 90 90
+equip ItMw_1h_Mil_Sword
+wait 800
+# The sword is drawn anew before each of these takes: a loop in place lets the feet slide more the longer it plays
+# (the body's way loops over one frame less than the pose), so both takes start as long after the draw
+tap weapon
+wait 3000
+sample off
+rec stance-line
+wait 5000
+stop
+tap weapon
+wait 2500
+tap weapon
+wait 3000
+sample on
+rec stance-curve
+wait 5000
+stop
+tap weapon
+wait 2500
+tap weapon
+wait 3000
+sample off
+rec inspect-line
+wait 500
+ani player T_1HSINSPECT
+wait 10500
+stop
+tap weapon
+wait 2500
+tap weapon
+wait 3000
+sample on
+rec inspect-curve
+wait 500
+ani player T_1HSINSPECT
+wait 10500
+stop
+wait 1000
+tap weapon
+wait 3000
+sample off
+rec sit-line
+wait 500
+ani player T_STAND_2_SIT
+wait 5500
+stop
+goto NW_XARDAS_TOWER_IN1_26
+wait 2000
+sample on
+rec sit-curve
+wait 500
+ani player T_STAND_2_SIT
+wait 5500
+stop
+goto NW_XARDAS_TOWER_IN1_26
+wait 2000
+sample off
+rec dance-line
+wait 500
+ani player T_DANCE_01
+wait 12000
+stop
+goto NW_XARDAS_TOWER_IN1_26
+wait 2000
+sample on
+rec dance-curve
+wait 500
+ani player T_DANCE_01
+wait 12000
+stop

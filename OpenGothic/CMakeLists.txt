@@ -626,6 +626,15 @@ endif()
   add_custom_target(check-stopfoot
     COMMAND $<TARGET_FILE:gothic-stopfoot-contract>
     DEPENDS gothic-stopfoot-contract USES_TERMINAL)
+  add_executable(gothic-animsample-contract EXCLUDE_FROM_ALL
+    tests/animsample_contract.cpp common/graphics/mesh/animsample.cpp)
+  target_include_directories(gothic-animsample-contract PRIVATE common)
+  if(NOT MSVC)
+    target_compile_options(gothic-animsample-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  add_custom_target(check-animsample
+    COMMAND $<TARGET_FILE:gothic-animsample-contract>
+    DEPENDS gothic-animsample-contract USES_TERMINAL)
   add_executable(gothic-leanaccel-contract EXCLUDE_FROM_ALL
     tests/leanaccel_contract.cpp common/graphics/mesh/leanaccel.cpp)
   target_include_directories(gothic-leanaccel-contract PRIVATE common)

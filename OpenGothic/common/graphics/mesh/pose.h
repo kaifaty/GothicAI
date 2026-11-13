@@ -272,6 +272,15 @@ class Pose final {
 
     // sOrigin names the play for AnimBlend: a speed change moves sTime, it is no switch
     bool updateFrame(const Animation::Sequence &s, BodyState bs, uint64_t sTime, uint64_t sOrigin, uint64_t now);
+    // The root of a clip sampled on a curve (animsample.h) against the straight line the body travels by: what
+    // drives the root this frame and how far its curve is off that line, along the ground
+    struct RootDriver final {
+      const Animation::Sequence* seq    = nullptr;
+      uint64_t                   origin = 0;
+      Tempest::Vec3              shift;
+      };
+    // rootShift from this frame's root; true if it changed
+    bool settleRootShift(uint64_t now);
 
     const Animation::Sequence* solveNext(const AnimationSolver& solver, const Layer& lay);
 
@@ -305,6 +314,10 @@ class Pose final {
     std::vector<LogicalInput>       logicalInputQueue;
 
     float                           headRotX = 0, headRotY = 0;
+    RootDriver                      rootNow, rootShown;  // sampled this frame; the one rootShift was made from
+    Tempest::Vec3                   rootShift;           // shown: the pose's root off the body, x and z
+    Tempest::Vec3                   rootCarry;           // what is left of the last root's shift after a switch
+    uint64_t                        rootCarryStart = 0;
     FootIk                          ik;
     Gaze                            gaze;
     Lean                            lean;
