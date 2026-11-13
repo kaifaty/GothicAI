@@ -1,6 +1,7 @@
 #include "worldchunkmanifest.h"
 
 #include <charconv>
+#include <cstring>
 #include <set>
 #include <stdexcept>
 #include <utility>
@@ -19,6 +20,7 @@ constexpr int         formatVersion    = 2;
 constexpr const char* manifestName     = "world.json";
 constexpr const char* worldFormat      = "gothic-world";
 constexpr const char* unreferencedName = "unreferenced.bin";
+constexpr char        unreferencedMagic[4] = {'G','W','U','R'};
 
 std::string cellName(ChunkId id) {
   return std::to_string(id.x) + "," + std::to_string(id.z);
@@ -172,4 +174,54 @@ WorldCellManifest readWorldChunkManifest(const std::filesystem::path& dir) {
     m.materials.push_back(materialFromJson(mats[i]));
     }
   return m;
+  }
+
+void readWorldUnreferenced(const std::filesystem::path& dir, std::vector<asset::Vec3>& vertices,
+                           std::vector<asset::VertexFeature>& features,
+                           std::vector<char>& vertexSet, std::vector<char>& featureSet) {
+  const auto bin = readFile(dir/unreferencedName);
+  size_t o = 0;
+  auto u32 = [&]() {
+    if(o+4>bin.size())
+      fail("unreferenced.bin is truncated");
+    const uint32_t v = uint32_t(bin[o]) | (uint32_t(bin[o+1])<<8) | (uint32_t(bin[o+2])<<16) | (uint32_t(bin[o+3])<<24);
+    o += 4;
+    return v;
+    };
+  auto f32 = [&]() {
+    const uint32_t v = u32();
+    float f;
+    std::memcpy(&f,&v,sizeof(f));
+    return f;
+    };
+  if(bin.size()<4 || std::memcmp(bin.data(),unreferencedMagic,4)!=0)
+    fail("unreferenced.bin has a wrong header");
+  o = 4;
+  if(u32()!=uint32_t(formatVersion))
+    fail("unreferenced.bin has another version");
+  const uint32_t nv = u32(), nf = u32();
+  for(uint32_t i=0; i<nv; ++i) {
+    const auto id = u32();
+    if(id>=vertices.size())
+      fail("unreferenced vertex out of range");
+    const float x = f32(), y = f32(), z = f32();
+    vertices[id] = {x,y,z};
+    vertexSet[id] = 1;
+    }
+  for(uint32_t i=0; i<nf; ++i) {
+    const auto id = u32();
+    if(id>=features.size())
+      fail("unreferenced feature out of range");
+    asset::VertexFeature f;
+    f.texture.x = f32();
+    f.texture.y = f32();
+    f.light     = u32();
+    f.normal.x  = f32();
+    f.normal.y  = f32();
+    f.normal.z  = f32();
+    features[id] = f;
+    featureSet[id] = 1;
+    }
+  if(o!=bin.size())
+    fail("unreferenced.bin has trailing bytes");
   }
