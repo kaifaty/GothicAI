@@ -185,6 +185,30 @@ void keyCases() {
   require(k.a==0 && k.b==3 && k.before==1 && k.after==2 && k.cycB==-1 && k.cycAfter==-1,
           "a loop played backwards crosses its seam a cycle back");
 
+  // the two keys around the time and the way between them are what Pose::updateFrame took before: the clips on
+  // the straight line (25 keys a second: blows, walks) get the same frames
+  for(const float fps:{5.f,10.f,12.5f,15.f,25.f,29.56f,30.f})
+    for(const size_t count:{size_t(1),size_t(2),size_t(3),size_t(20),size_t(41)})
+      for(const bool loop:{false,true})
+        for(const bool reverse:{false,true})
+          for(uint64_t ms=0; ms<9000; ms+=7) {
+            const uint64_t frame = uint64_t(float(ms)*fps);
+            uint64_t a = frame/1000, b = frame/1000+1;
+            if(loop) {
+              a %= count; b %= count;
+              } else {
+              a = std::min<uint64_t>(a,count-1); b = std::min<uint64_t>(b,count-1);
+              }
+            if(reverse) {
+              a = count-1-a; b = count-1-b;
+              }
+            const auto now = AnimSample::keys(ms,fps,count,loop,reverse);
+            require(now.a==a && now.b==b && now.t==float(frame%1000)/1000.f,
+                    "the two keys around a time must be the ones the pose took before: "+std::to_string(ms)+" ms at "+
+                    std::to_string(fps)+" keys/s, "+std::to_string(count)+" frames");
+            require(now.before<count && now.after<count,"the keys around must be frames of the clip");
+            }
+
   // a loop on the curve has no jump of speed over its seam
   std::vector<Sample> loop;
   for(int i=0; i<16; ++i)
