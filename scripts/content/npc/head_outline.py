@@ -13,14 +13,14 @@ reg_solve.py lays the head's vertices on the bald model. Two things are left to 
    over every face are measured against the model along the face's normal, and the vertices move along their
    normals so that the faces lie on the model in the mean, weighed by area.
 2. Outline. Where the model itself departs from the concept, the concept is right: it is what the user accepted.
-   On the second face the model's ears stand out 2-3 mm more than the concept's in the front view, and the
-   underside of its chin is 4-5 mm higher in the profile. The head's outline in each whole view is compared with the
-   concept's: every pixel of our outline knows its signed distance to the concept's and votes for the nearest
-   vertex near our outline. Those vertices are asked to move by their mean distance along the direction to the
-   concept's outline, in the plane of the view; the depth along the view is not asked. The rest of the head
-   follows by the stiffness of Amberg's registration (reg_solve.py): the smoothest change that satisfies the
-   outline, so a head a little short from front to back is stretched as a whole, and an ear or the underside of
-   a chin move as a piece. The lids and the mouth stay where the detector's points put them; the eyes do not move.
+   On the second face the underside of the model's chin is 3-5 mm higher than the concept's in the profile, and
+   its lower lip 1-3 mm behind. The head's outline in each whole view is compared with the concept's: every pixel
+   of our outline knows its signed distance to the concept's and votes for the nearest vertex near our outline.
+   Those vertices are asked to move by their mean distance along the direction to the concept's outline, in the
+   plane of the view; the depth along the view is not asked. The rest of the head follows by the stiffness of
+   Amberg's registration (reg_solve.py): the smoothest change that satisfies the outline, so a head a little
+   short from front to back is stretched as a whole, and the underside of a chin moves as a piece. The corners of
+   the mouth stay where the detector's points put them in the front view; nothing moves round the eyes.
    Not asked: the brows (hair on the concept's outline), the ears (--ears: their rim is laid by ear_points.py),
    vertices over the model's cloth or within 15 mm of it (the collar is in the concept's outline, not in ours),
    and anything below 140 mm under the eyes.
