@@ -36,6 +36,7 @@
 #include "npcfind.h"
 #include "textcodec.h"
 #include "voicebuffer.h"
+#include "base64.h"
 #include "world/benchhooks.h"
 
 #include "aibridge_impl.h"
@@ -44,7 +45,7 @@ using namespace Tempest;
 
 namespace {
 
-constexpr int         ProtocolVersion = 63;
+constexpr int         ProtocolVersion = 64;
 AiBridge*             activeBridge = nullptr;
 constexpr const char* SaveEntry       = "ai_bridge/session";  // own entry in save games
 constexpr const char* DefaultUrl      = "ws://127.0.0.1:47817";
@@ -89,33 +90,6 @@ std::string newBranchId() {
       id += hex[v&0xF];
     }
   return id;
-  }
-
-std::vector<uint8_t> fromBase64(std::string_view in) {
-  static const auto table = [] {
-    std::array<int8_t,256> t{};
-    t.fill(-1);
-    const char* abc = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    for(int i=0; i<64; ++i)
-      t[uint8_t(abc[i])] = int8_t(i);
-    return t;
-    }();
-  std::vector<uint8_t> out;
-  out.reserve(in.size()*3/4);
-  uint32_t acc  = 0;
-  int      bits = 0;
-  for(char c:in) {
-    const int8_t v = table[uint8_t(c)];
-    if(v<0)
-      continue;  // padding, line breaks
-    acc   = (acc<<6) | uint32_t(v);
-    bits += 6;
-    if(bits>=8) {
-      bits -= 8;
-      out.push_back(uint8_t(acc>>bits));
-      }
-    }
-  return out;
   }
 
 // listening to the hero's voice, thinking of an answer (tickListener)
@@ -350,6 +324,7 @@ void AiBridge::Impl::onTick(uint64_t /*dt*/) {
           send(std::move(report));
         }
       }
+    playerVoice.tick(Application::tickCount());
     tickVoices(*world);
     tickDeal(*world);
     tickListener(*world);
@@ -389,6 +364,7 @@ void AiBridge::Impl::processInbound(World* world, Inbound& in) {
       break;
     case Inbound::Close:
     case Inbound::Error:
+      playerVoice.finish();
       replaceSvm = false;
       BodyController::disconnect("");
       if(connected) {
@@ -427,6 +403,7 @@ void AiBridge::Impl::processInbound(World* world, Inbound& in) {
   }
 
 void AiBridge::Impl::onStartLoading() {
+  playerVoice.finish();
   if(Gothic::inst().checkLoading()==Gothic::LoadState::Saving) {
     // the same session continues after saving: npc's stay attached
     saving = true;
@@ -899,6 +876,9 @@ void AiBridge::Impl::handle(World* world, const std::string& text) {
     chat->upsertLine(JsonRead::str(doc,"reply"),
                      npc!=nullptr ? std::string(npc->displayName()) : std::string(symbol),
                      text,LineLibrary::durationFor(text));
+    }
+  else if(type=="ptt_audio") {
+    playerVoice.audio(*world,doc,Application::tickCount());
     }
   else if(type=="say_audio" || type=="say_end") {
     onSayAudio(*world,doc);
@@ -1868,6 +1848,9 @@ void AiBridge::Impl::tickAddressed(World& world) {
   }
 
 void AiBridge::Impl::sendPtt(std::string_view type, std::string_view audio) {
+  if(type=="ptt_start")
+    playerVoice.begin(); else
+    playerVoice.finish();
   JsonWriter j(type);
   if(World* world = Gothic::inst().world())
     if(auto focus = focusSymbol(*world); !focus.empty())

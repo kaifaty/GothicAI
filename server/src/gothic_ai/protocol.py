@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 # story_program), v24: choices in the director's dialogs (steps choice, clear_choices; debug choices, talk,
 # menu, menu_pick), v25: story_program.own (the scripts' program under the director's), v26: the director's
 # lines in the npc's voice (line_voice).
-PROTOCOL_VERSION = 63
+PROTOCOL_VERSION = 64
 NOISE_PROTOCOL = 36  # npc_event noise and npc_act investigate
 TRACE_PROTOCOL = 37  # visible physical traces and game time on noise events
 PACE_PROTOCOL = 38  # go_to_waypoint.pace: a guide keeps the hero's pace; start_activity.place
@@ -1635,6 +1635,16 @@ class ChatTextCmd(_Command):
     reply: str
     text: str
     final: bool = False
+
+
+class PttAudioCmd(_Command):
+    """v64: live player PCM16 mono for a silent speech track, in capture order."""
+
+    type: Literal["ptt_audio"] = "ptt_audio"
+    data: str
+    rate: int
+    sequence: int
+    received_at_us: int  # Unix microseconds at the server's source callback, for delivery timing
 
 
 class SayAudioCmd(_Command):
