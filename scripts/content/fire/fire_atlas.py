@@ -3,10 +3,13 @@
 
     OPENCV_IO_ENABLE_OPENEXR=1 uv run --no-project --with numpy --with pillow --with opencv-python-headless \
         python scripts/content/fire/fire_atlas.py FRAMES_DIR OUT_DDS [--frames 64] [--fade 16] [--cols 8] [--rows 8] \
-        [--white 0.95] [--keep 1.0] [--sides 0.0] [--cone 'BASE SLOPE'] [--sheet PNG]
+        [--white 0.95] [--keep 1.0] [--sides 0.0] [--cone 'BASE SLOPE'] [--scale 1.0] [--search] [--sheet PNG]
+        [--atlas-png PNG] [--step 2] [--blur STEP]
 
 reports/engine/2026-11-01-fire-rendering.md, section 8. Pairs of 48 fps frames average into one (the motion blur
-of 1/24 s, without which a flipbook strobes). The loop takes FRAMES+FADE of them: the last FADE fade into the first
+of 1/24 s, without which a flipbook strobes). --step N takes one cell per N frames and --blur K averages the first
+K of them (default all N): a torch simulated at twice its size puffs sqrt(2) slower, so its cells are spaced wider
+in the sim and played faster (reports/content/remaster/wall-torch/flame-sim.md). The loop takes FRAMES+FADE cells: the last FADE fade into the first
 FADE, so frame FRAMES-1 runs on into frame 0. Cells are filled row by row from the top left, as pfx.vert reads them
 (particles.d "flipbook" {cols, rows, frames, fps}). The flame is additive: RGB carries it, alpha its brightest
 channel. The render is linear EXR with the hot core far above 1; a hard clip turned it into a flat slab (r1), so each
@@ -20,6 +23,11 @@ stones along the whole frame, and on a card that turns to the camera such wide w
 holdout edges show the plane. --cone BASE SLOPE keeps only a cone that widens upward from the bottom centre,
 half-width BASE + SLOPE * height in frame widths (soft over 0.06): a tongue widens as it rises, while that leak
 lies flat at the stones' height and a fade by width alone left it as flat spikes beside each tongue (r2).
+--scale F resizes each frame (area filter), e.g. 0.5 for a torch rendered at twice the cell size. --search picks
+the loop's window anywhere in the sim instead of its end: the one whose tail is most like its head where they
+cross-fade (difference weighted by w(1 - w), the ghost of two tongues is worst half-way), as EmberGen users move
+the loop range until the seam is gone (reports/content/remaster/wall-torch/flame-sim.md). --atlas-png writes the
+atlas at full size as 8-bit sRGB RGBA, for previews (flipbook_clip.py) without decoding DXT5.
 """
 from __future__ import annotations
 
@@ -80,14 +88,27 @@ def main() -> int:
     parser.add_argument('--keep', type=float, default=1.0)
     parser.add_argument('--sides', type=float, default=0.0)
     parser.add_argument('--cone', type=str)
+    parser.add_argument('--scale', type=float, default=1.0)
+    parser.add_argument('--search', action='store_true')
     parser.add_argument('--sheet', type=Path)
+    parser.add_argument('--atlas-png', type=Path)
+    parser.add_argument('--step', type=int, default=2, help='sim frames per cell')
+    parser.add_argument('--blur', type=int, help='frames averaged per cell, from its first (default --step)')
     args = parser.parse_args()
+    step = args.step
+    blur = args.blur or step
+    if not 1 <= blur <= step:
+        raise SystemExit(f'--blur {blur}: 1..{step}')
     files = sorted(args.frames_dir.glob('flame_*.exr'))
-    need = 2 * (args.frames + args.fade)
+    need = step * (args.frames + args.fade)
     if len(files) < need:
         raise SystemExit(f'{len(files)} frames, need {need}')
-    files = files[len(files) - need:]  # the steadiest end of the sim
-    seq = [(load(a) + load(b)) * 0.5 for a, b in zip(files[0::2], files[1::2])]
+    files = files[len(files) % step:] if args.search else files[len(files) - need:]  # default: the steadiest end
+    seq = [sum(load(f) for f in files[i:i + blur]) / blur for i in range(0, len(files), step)]
+    if args.scale != 1.0:
+        h, w = seq[0].shape[:2]
+        size = (int(round(w * args.scale)), int(round(h * args.scale)))
+        seq = [cv2.resize(f, size, interpolation=cv2.INTER_AREA) for f in seq]
     cut = seq[0].shape[0] - int(round(seq[0].shape[0] * args.keep))
     if cut:
         lost = max(float(f[:cut].max()) for f in seq) / max(float(f.max()) for f in seq)
@@ -109,6 +130,16 @@ def main() -> int:
         window = (edge * edge * (3 - 2 * edge)).astype(np.float32)[..., None]
         seq = [f * window for f in seq]
     n, fade = args.frames, args.fade
+    if args.search:
+        w = np.arange(fade) / fade
+        weight = w * (1 - w)
+        scale = float(np.mean([f.mean() for f in seq])) or 1.0
+        errors = [sum(weight[k] * float(np.abs(seq[s + n + k] - seq[s + k]).mean()) for k in range(fade))
+                  / weight.sum() / scale for s in range(len(seq) - n - fade + 1)]
+        best = int(np.argmin(errors))
+        print(f'loop window: cells {best}..{best + n + fade - 1} of {len(seq)}, seam {errors[best]:.3f} '
+              f'(end of sim {errors[-1]:.3f}, median {float(np.median(errors)):.3f}; mean abs diff / mean)')
+        seq = seq[best:best + n + fade]
     loop = []
     for k in range(n):
         if k < fade:  # the tail runs into the head: frame n-1 -> 0 is the sim's own step n-1 -> n
@@ -127,6 +158,8 @@ def main() -> int:
         atlas[r * h:(r + 1) * h, c * w:(c + 1) * w, :3] = rgb
         atlas[r * h:(r + 1) * h, c * w:(c + 1) * w, 3] = np.clip(rgb.max(axis=2), 0, 1)
     write_dxt5(args.out, atlas)
+    if args.atlas_png:
+        Image.fromarray(np.rint(np.clip(atlas, 0, 1) * 255).astype('uint8'), 'RGBA').save(args.atlas_png)
     if args.sheet:
         Image.fromarray(np.rint(atlas[..., :3] * 255).astype('uint8')).resize(
             (atlas.shape[1] // 4, atlas.shape[0] // 4)).save(args.sheet)
