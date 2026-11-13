@@ -1,6 +1,9 @@
 """Where the shape of a head is lost on the way from the concept to our head: a sheet and numbers by stage.
 
-    python shape_report.py <work dir of build_head.py> [out dir, default <work dir>/shape]
+    python shape_report.py <work dir of build_head.py> [out dir, default <work dir>/shape] [--params params.json]
+
+--params: the concept's frame when it was given by hand (npc.json "params"); without it <work dir>/params.json,
+which auto_params.py writes.
 
 Three things are compared at the concept's cameras (front and profile, the frame of the concept views):
 - the concept, its bald sheet and its full one (outlines);
@@ -33,9 +36,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, '..', '..', '..', 'reports', 'content', '2026-11-hero-head', 'skin'))
 import ref_model
 
-W = os.path.abspath(sys.argv[1]); OUT = sys.argv[2] if len(sys.argv) > 2 else os.path.join(W, 'shape'); os.makedirs(OUT, exist_ok=True)
+a = sys.argv[1:]; PARAMS = None
+if '--params' in a:
+    i = a.index('--params'); PARAMS = a[i+1]; del a[i:i+2]
+W = os.path.abspath(a[0]); OUT = a[1] if len(a) > 1 else os.path.join(W, 'shape'); os.makedirs(OUT, exist_ok=True)
 j = lambda *p: os.path.join(W, *p)
-P = json.load(open(j('params.json'))); V = json.load(open(j('reg', 'views.json')))
+P = json.load(open(PARAMS or j('params.json'))); V = json.load(open(j('reg', 'views.json')))
 mpp = 0.0615/P['ipd_px']; eye = np.array(V['eye']); R = P['res'][0]
 EYE_PX = {'front': P['front_eye'], 'profile': P['profile_eye']}
 BG = np.array([122, 124, 128])

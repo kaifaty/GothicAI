@@ -1,6 +1,9 @@
 """Measures of defects of a head built by build_head.py, written to <work>/measures.json and printed.
 
-  python head_measures.py <work dir>
+  python head_measures.py <work dir> [--params params.json]
+
+--params: the concept's frame when it was given by hand (npc.json "params"); without it <work dir>/params.json,
+which auto_params.py writes.
 
 - skin_mm: how far the registered skin lies from the bald dense model, median and 95th percentile (reg_solve.py's
   last step), and the landmark error;
@@ -25,7 +28,10 @@ import sys
 
 import numpy as np
 
-W = sys.argv[1]
+a = sys.argv[1:]; PARAMS = None
+if '--params' in a:
+    i = a.index('--params'); PARAMS = a[i+1]; del a[i:i+2]
+W = a[0]
 j = lambda *p: os.path.join(W, *p)
 out = {}
 
@@ -71,7 +77,7 @@ else:
 # ---- the eyes
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import eye_lines
-P = json.load(open(j('params.json'))); V = json.load(open(j('reg', 'views.json'))); ez = V['eye'][2]
+P = json.load(open(PARAMS or j('params.json'))); V = json.load(open(j('reg', 'views.json'))); ez = V['eye'][2]
 pick = lambda e: {k: e[k] for k in ('opening_mm', 'upper_over_iris_centre_mm', 'lower_under_iris_centre_mm', 'upper_by', 'lower_by')} | {
     'iris_mm': e['iris']['diameter_mm'], 'iris_srgb': e['iris']['srgb']}
 eyes = {}
