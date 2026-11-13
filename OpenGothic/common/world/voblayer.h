@@ -8,6 +8,7 @@ namespace VobLayer {
 
 struct Result {
   size_t added = 0, removed = 0, moved = 0;
+  size_t lit = 0; // base lamps edited in place ("light")
   std::vector<std::string> errors;
   };
 

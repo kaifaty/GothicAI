@@ -206,6 +206,10 @@ void SceneGlobals::setVsmLampNear(float cm) {
   uboGlobalCpu.vsmLampNear = cm;
   }
 
+void SceneGlobals::setLampNearKnee(float knee) {
+  uboGlobalCpu.lampNearKnee = knee;
+  }
+
 void SceneGlobals::setVsmLampSides(uint32_t sides) {
   uboGlobalCpu.vsmLampSides = sides;
   }

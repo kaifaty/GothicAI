@@ -31,8 +31,15 @@ struct Motion {
   float drag          = 0;  // 1/s, velocity decays towards zero
   float stretch       = 0;  // s of path: a VELO/VELO3D sprite is size + |v|*stretch long
   float minPixels     = 0;  // px: a smaller sprite is drawn this size, its alpha down by the area
+  // "hdr" of an additive effect (main.frag mainEmissive): how the night's gain of the emission (up to x6) goes over
+  // a texel's own brightness, its brightest channel in the scene's white at noon. Up to hdrFrom a texel takes the
+  // share hdrEdge of the gain, so the edges of a flame keep their orange under the tone curve; from hdrTo all of
+  // it, so the core goes to white. hdrTo 0: off, the whole sprite takes the whole gain
+  float hdrFrom       = 0;
+  float hdrTo         = 0;
+  float hdrEdge       = 1;
 
-  bool empty() const { return curlStrength==0 && drag==0 && stretch==0 && minPixels==0; }
+  bool empty() const { return curlStrength==0 && drag==0 && stretch==0 && minPixels==0 && hdrTo==0; }
   };
 
 struct Result {

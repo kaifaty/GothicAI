@@ -77,6 +77,7 @@ class WorldView {
     void setMotionVectors(bool enabled, const Tempest::Matrix4x4& reprojectClip, const Tempest::Matrix4x4& viewProjectPrev);
     void setTaaReactiveLref(float lref);
     void setVsmLampNear(float cm) { sGlobal.setVsmLampNear(cm); }
+    void setLampNearKnee(float knee) { sGlobal.setLampNearKnee(knee); }
     void setVsmLampSides(uint32_t sides) { sGlobal.setVsmLampSides(sides); }
     void setVsmStudy(uint32_t bits) { sGlobal.setVsmStudy(bits); }
     void setWindEnabled(bool enabled, uint64_t period);

@@ -85,7 +85,8 @@ class LightGroup final {
       Tempest::Vec3 color;
       float         cookie = 0; // scene.glsl LightSource
       float         sourceSize = 6;  // cm, VobLayer::DefaultLightSourceCm
-      float         padding[3] = {};
+      float         nearLimit  = 0;  // the lamp's own limit of the light near it (vobs.d "near"), 0: the common one
+      float         padding[2] = {};
       };
 
     struct VsmSsbo {

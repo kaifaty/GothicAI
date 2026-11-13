@@ -64,6 +64,7 @@ layout(location = 0) in vec4      cenPosition;
 layout(location = 1) in vec3      color;
 layout(location = 2) in flat uint lightId;
 layout(location = 3) in flat float cookie;
+layout(location = 4) in flat float nearLimit;
 
 // light masks (LightGroup::cookie): a lantern's cage as a latitude-longitude map round the light in its own
 // axes, glTF handed (x mirrored against the engine's), u the azimuth atan(z,x), v the angle from straight up
@@ -548,6 +549,16 @@ void main() {
   float lambert = max(0.0,-dot(normalize(ldir),normal));
 #endif
   float light   = (lambert/max(factor, 0.005)) * (smoothFactor*smoothFactor);
+  // The inverse square runs 100 times over the light at the range 40 cm from a torch, and the wall behind it burned
+  // out to white, the flame on it lost. Up to 0.4 of the limit the light is as it was, above it bends over and never
+  // passes the limit (reports/content/remaster/wall-torch/fire-on-wall.md). A lamp may bring a limit of its own
+  // (vobs.d "near"): a torch on a plastered wall, whose flame has to read on the wall it lights
+  if(scene.lampNearKnee>0.0) {
+    const float limit = nearLimit>0.0 ? nearLimit : scene.lampNearKnee;
+    const float knee  = 0.4*limit;
+    if(light>knee)
+      light = knee + (limit-knee)*(1.0 - exp(-(light-knee)/(limit-knee)));
+    }
   if(cookie>0.0)
     light *= cookieMask(normalize(ldir));
   if(light<=0.0)

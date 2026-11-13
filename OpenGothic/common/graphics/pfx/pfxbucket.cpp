@@ -45,7 +45,9 @@ bool PfxBucket::Draw::isEmpty() const {
   }
 
 PfxBucket::PfxBucket(const ParticleFx &decl, PfxObjects& parent, const SceneGlobals& scene, VisualObjects& visual)
-  :decl(decl), parent(parent), reactive(decl.taaReactive()), visual(visual)  {
+  :decl(decl), parent(parent),
+   push{decl.taaReactive(), decl.hdrFrom, decl.hdrTo>decl.hdrFrom ? 1.f/(decl.hdrTo-decl.hdrFrom) : 0.f, decl.hdrEdge},
+   visual(visual)  {
   uint64_t lt      = decl.maxLifetime();
   uint64_t pps     = uint64_t(std::ceil(decl.maxPps()));
   uint64_t reserve = (lt*pps+1000-1)/1000;
@@ -989,8 +991,8 @@ void PfxBucket::drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const 
   cmd.setBinding(L_Scene, scene.uboGlobal[view]);
   cmd.setBinding(L_Pfx,   itm.pfxGpu);
   if(view==SceneGlobals::V_Main && (mat.alpha==Material::Transparent || mat.alpha==Material::AdditiveLight)) {
-    // the weight of the TAA reactive mask (main.frag, graphics plan 1v)
-    cmd.setPushData(reactive);
+    // the weight of the TAA reactive mask (graphics plan 1v), the "hdr" of an additive effect (main.frag PushPfx)
+    cmd.setPushData(push);
     }
   cmd.setPipeline(*pso);
   cmd.draw(nullptr, 0, 6, 0, itm.pfxGpu.byteSize()/sizeof(PfxState));

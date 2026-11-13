@@ -99,6 +99,14 @@ void readMotion(const Json& entry, Motion& motion) {
   if(entry.HasMember("drag"))      motion.drag     =number(entry["drag"],"drag",0,50,"0..50");
   if(entry.HasMember("stretch"))   motion.stretch  =number(entry["stretch"],"stretch",0,0.5,"0..0.5");
   if(entry.HasMember("minPixels")) motion.minPixels=number(entry["minPixels"],"minPixels",0,15,"0..15");
+  if(entry.HasMember("hdr")) {
+    const auto& hdr=entry["hdr"];
+    fields(hdr,{"from","to","edge"});
+    motion.hdrFrom=number(member(hdr,"from"),"hdr.from",0,50,"0..50");
+    motion.hdrTo  =number(member(hdr,"to"),"hdr.to",0,200,"0..200");
+    motion.hdrEdge=number(member(hdr,"edge"),"hdr.edge",0,1,"0..1");
+    require(motion.hdrTo>motion.hdrFrom,"hdr.to: must be over hdr.from");
+    }
   }
 } // namespace
 
@@ -173,7 +181,7 @@ Result load(daedalus::DaedalusVm& vm, const fs::path& contentRoot) {
       decltype(result.flipbooks) pendingFlipbooks;
       decltype(result.motions) pendingMotions;
       for(const auto& entry:effects.GetArray()) {
-        fields(entry,{"name","base","set","flipbook","curl","drag","stretch","minPixels"});
+        fields(entry,{"name","base","set","flipbook","curl","drag","stretch","minPixels","hdr"});
         const auto name=text(member(entry,"name"));
         require(!name.empty() && std::all_of(name.begin(),name.end(),[](char c) {
           return (c>='A' && c<='Z') || (c>='0' && c<='9') || c=='_';
@@ -229,6 +237,7 @@ Result load(daedalus::DaedalusVm& vm, const fs::path& contentRoot) {
           require(orientation=="VELO" || orientation=="VELO3D","stretch: needs visOrientation_S VELO or VELO3D");
           }
         require(motion.minPixels==0 || pendingFlipbooks.count(name)==0,"minPixels: not with a flipbook");
+        require(motion.hdrTo==0 || uppercase(definition->vis_alpha_func_s)=="ADD","hdr: needs visAlphaFunc_S ADD");
         if(!motion.empty()) pendingMotions.emplace(name,motion);
         pending.emplace(name,std::move(definition));
         }

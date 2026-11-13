@@ -1,0 +1,43 @@
+# The wall torch's own fire (README of reports/content/remaster/wall-torch, item 8): the "Red Lantern" torch
+# (flame over the head at 406 131 -3086, the wall behind it at +x) at night. Three held views, a shot and a 6 s
+# clip of each: along the wall from 1 m, where the dark rock is behind the flame; in front from 1 m, where the wall
+# the torch lights is behind it; three-quarter from 3 m. A shot is taken on a later frame, so each is followed by
+# a wait before the camera moves. The hero (hidden with the animated draw type) only keeps the place loaded.
+# Run it twice: with OPENGOTHIC_CONTENT= (the original FIRE_MEDIUM and its flare) and with a content folder made
+# by scripts/content/fire/torch_fire_content.py (OWN_TORCH_FLAME, sparks, drops, soot).
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+view hide animated morph
+cam lift off
+
+set time 0 0
+goto pos 400 -129 -2985
+wait 3000
+set time 0 0
+cam at 405 150 -2985 405 140 -3085
+wait 2500
+shot side-1m
+wait 500
+rec side-1m
+wait 6000
+stop
+wait 300
+cam at 305 145 -3085 405 140 -3085
+wait 2500
+shot front-1m
+wait 500
+rec front-1m
+wait 6000
+stop
+wait 300
+cam at 190 120 -2960 405 135 -3085
+wait 2500
+shot far-3m
+wait 500
+rec far-3m
+wait 6000
+stop
+wait 300
