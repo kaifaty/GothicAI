@@ -9,7 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 
-#include "game/constants.h"
+#include "engineconstants.h"
 #include "physics/dynamicworld.h"
 #include "skeleton.h"
 #include "ikmath.h"

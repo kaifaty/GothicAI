@@ -93,6 +93,8 @@ LAYER_RULES: list[tuple[str, str]] = [
     ("common/daedalus/*", "gothic"),
     ("common/game/gamescript*", "gothic"),
     ("common/game/definitions/*", "gothic"),
+    # Pure mesh packing over our asset types, independent of Gothic.
+    ("common/game/compatibility/phoenix", "platform"),
     ("common/game/compatibility/*", "gothic"),
     ("common/game/constants", "gothic"),
     ("common/game/ownsymbols", "gothic"),
@@ -115,7 +117,8 @@ LAYER_RULES: list[tuple[str, str]] = [
     ("common/dmusic/*", "gothic"),
     ("common/programdata", "gothic"),
     ("common/outputunits", "gothic"),
-    ("common/gothicglb", "gothic"),
+    # Our own GLB format reader and writer, independent of Gothic rules.
+    ("common/gothicglb", "platform"),
     ("common/worldbase", "gothic"),
     # An action-RPG frame any such game needs: NPCs, items, fights, navigation, saves.
     # Game-object visuals depend on NPCs, interactives and damage despite living in graphics/.
@@ -128,6 +131,8 @@ LAYER_RULES: list[tuple[str, str]] = [
     ("common/game/meleeimpact", "platform"),
     ("common/game/physicssave", "platform"),
     ("common/game/*", "rpg"),
+    # Pure chunk residency and lookahead logic, independent of game objects.
+    ("common/world/chunkresidency", "platform"),
     ("common/world/*", "rpg"),
     ("common/nav*", "rpg"),
     # The platform: resources of our formats, render, animation, physics, sound, nets.
