@@ -3,15 +3,17 @@
 
     uv run --no-project --with numpy --with pillow python scripts/content/fire/flipbook_clip.py ATLAS_PNG OUT_MP4 \
         --fps 32 [--cols 8] [--rows 8] [--frames 64] [--speed 1] [--loops 3] [--height 280] [--video-fps 60] \
-        [--label TEXT]
+        [--label TEXT] [--aspect W/H] [--occluder 'X0 X1 Y0 Y1']
 
 reports/content/remaster/wall-torch/flame-sim.md, step 5. ATLAS_PNG is fire_atlas.py --atlas-png (sRGB RGBA, cells
 row by row from the top left). pfx.vert takes cell floor(t * fps) mod frames and the next one and mixes them by the
 fraction; the texture is decoded from sRGB, so the mix is linear, and the flame adds onto black. --speed 0.25 plays
 at a quarter of the speed, where a loop's seam would show; --loops sets the clip's length in loops of the atlas.
 --height is the flame frame's height on screen in pixels (a 0.6 m frame from 1 m in 1080p is about 560 px, the
-flame in it about 280). --occluder draws the torch head as a dark box over the cell, as its mesh hides the card
-in the game. Needs ffmpeg on PATH.
+flame in it about 280). --aspect is the card's width over its height when its texels are not square (a cell cut
+to the flame, flame_cells.py); by default the cell's own. --occluder draws the torch head as a dark box over the
+cell, as its mesh hides the card in the game; Y0 below 0 lets the head hang under a card that starts inside it.
+Needs ffmpeg on PATH.
 """
 from __future__ import annotations
 
@@ -48,17 +50,20 @@ def main() -> int:
     # a dark box in the frame, 'X0 X1 Y0 Y1' in fractions of the cell from its bottom left: the torch head mesh,
     # which in the game hides the card behind it
     parser.add_argument('--occluder', type=str)
+    parser.add_argument('--aspect', type=float)
     args = parser.parse_args()
     atlas = np.asarray(Image.open(args.atlas).convert('RGB'), dtype=np.float32) / 255
     h, w = atlas.shape[0] // args.rows, atlas.shape[1] // args.cols
     out_h = args.height // 2 * 2
-    out_w = int(round(w * out_h / h)) // 2 * 2
+    out_w = int(round((args.aspect or w / h) * out_h)) // 2 * 2
+    box = [float(v) for v in args.occluder.split()] if args.occluder else None
+    below = int(round(max(0.0, -box[2]) * out_h)) if box else 0
     cells = []
     for i in range(args.frames):
         r, c = divmod(i, args.cols)
         cell = Image.fromarray(np.rint(atlas[r * h:(r + 1) * h, c * w:(c + 1) * w] * 255).astype('uint8'))
         cells.append(to_linear(np.asarray(cell.resize((out_w, out_h), Image.LANCZOS), dtype=np.float32) / 255))
-    pad_w, pad_h = max(out_w + 80, 320) // 2 * 2, out_h + 60
+    pad_w, pad_h = max(out_w + 80, 320) // 2 * 2, (out_h + below + 60) // 2 * 2
     duration = args.loops * args.frames / args.fps / args.speed
     count = int(round(duration * args.video_fps))
     ffmpeg = subprocess.Popen(
@@ -71,12 +76,12 @@ def main() -> int:
         a = int(np.floor(t)) % args.frames
         frac = t - np.floor(t)
         lin = cells[a] * (1 - frac) + cells[(a + 1) % args.frames] * frac
-        if args.occluder:
-            ox0, ox1, oy0, oy1 = (float(v) for v in args.occluder.split())
-            lin = lin.copy()
-            lin[int(out_h * (1 - oy1)):int(out_h * (1 - oy0)), int(out_w * ox0):int(out_w * ox1)] = 0.004
         frame = np.zeros((pad_h, pad_w, 3), dtype=np.uint8)
         frame[y0:y0 + out_h, x0:x0 + out_w] = np.rint(to_srgb(lin) * 255).astype('uint8')
+        if box:
+            ox0, ox1, oy0, oy1 = box
+            frame[y0 + int(out_h * (1 - oy1)):y0 + int(out_h * (1 - oy0)),
+                  x0 + int(out_w * ox0):x0 + int(out_w * ox1)] = 13  # linear 0.004
         img = Image.fromarray(frame)
         draw = ImageDraw.Draw(img)
         draw.text((8, pad_h - 44), args.label, fill=(200, 200, 200))
