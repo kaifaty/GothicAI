@@ -137,6 +137,8 @@ VM-адаптер базовых программ — свободные фун�
 
 Паспорт базы — `common/baseidentity.*` (платформа): типы `BaseImport::Identity`, `Files`, `RuntimeArchive`, опознание установки, чтение и сверка `base.json`; `baseimport.h` включает его и держит функции импорта. Кодек Dx8-записей музыки `encodeDx8` / `decodeDx8*` — в `common/dmusic/musicrecord.*` (Готика), индекс и записи музыки — в `musicdata.*`.
 
+Шаг 8.4: провайдер музыки Dx8 — в Готике, `common/dmusic/dxmusicsource.*` (`loadDxMusic`, `DirectMusic` на поколение `Resources::generation()`); `Resources::readDxMusic` отдаёт байты записей базы. `Resources(Device&, Audio::Off)` не открывает звук; `Resources::loadDefaultTexture()` — `DEFAULT.TGA` из базы, без базы — шахматка в коде.
+
 Общие исходники `gothic-base-runtime` для игры, `content-convert` и отдельного `storygraph` — в `cmake/BaseRuntime.cmake`; его включают все три сборки, поэтому новый файл мира попадает во все три.
 
 ## Навигация: исследования и обучение
