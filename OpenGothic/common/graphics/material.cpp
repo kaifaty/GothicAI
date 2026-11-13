@@ -89,6 +89,7 @@ Material::Material(const asset::Material& m, bool enableAlphaTest, bool requireA
     antitileCell = maps.antitileCell;
     antitile = maps.antitile;
     projectionTile = maps.projectionTile;
+    fringe = maps.fringe;
     emissive = maps.orm!=nullptr ? maps.emissive : 0.f;
     hair = maps.hair || maps.strand;
     strand = maps.strand;
@@ -130,6 +131,7 @@ bool Material::operator ==(const Material& other) const {
          antitileCell==other.antitileCell &&
          antitile==other.antitile &&
          projectionTile==other.projectionTile &&
+         fringe==other.fringe &&
          materialMaps==other.materialMaps &&
          frames==other.frames &&
          alpha==other.alpha &&
