@@ -3,7 +3,10 @@ shows them (a clip that ends: its first key held before it, its last key held af
 the head and the chest changes between two frames (the stand's an_pop, cm), what share of that change falls on
 the frames next to a key, and how far the hand is from where the line has it at the same moment.
 
-  python3 sparse.py <base> [model=HUMANS] [name-regex=T_DIALOGGESTURE]
+  python3 sparse.py <base> [model=HUMANS] [name-regex=T_DIALOGGESTURE] [frames a second=30] [keys a second under=16]
+
+Ends with the gain by key rate: with `. 30 26` also the clips of 19 and 25 keys a second, which the engine leaves
+on the line.
 """
 from __future__ import annotations
 
@@ -62,14 +65,18 @@ def measure(skel, a, loop):
 
 
 def main():
+    global FPS, RATE
     base = Path(sys.argv[1])
     model = sys.argv[2] if len(sys.argv) > 2 else "HUMANS"
     pattern = re.compile(sys.argv[3] if len(sys.argv) > 3 else "T_DIALOGGESTURE")
+    FPS = float(sys.argv[4]) if len(sys.argv) > 4 else FPS
+    RATE = float(sys.argv[5]) if len(sys.argv) > 5 else RATE
     skel = ga.read_skeleton(base / "models" / f"{model}.MDH.json")
     print("| clip | keys/s | method | hand: step change max / p95, cm | on key frames | hand speed, cm/s |"
           " head: max / p95 | chest: max / p95 | hand off the line at the same moment, cm |")
     print("|---|---|---|---|---|---|---|---|---|")
     total = {}
+    rates = {}
     for path in sorted((base / "models").glob(f"{model}-*.MAN.json")):
         meta = json.loads(path.read_text())["data"]
         if meta["fps"] >= RATE or meta["frame_count"] < 3 or not pattern.search(meta["name"]):
@@ -86,11 +93,19 @@ def main():
             print(f"| {a.name} | {a.fps:g} | {m} | {h[0]:.2f} / {h[1]:.2f} | {h[2] * 100:.0f}% | {h[3]:.0f} |"
                   f" {hd[0]:.2f} / {hd[1]:.2f} | {ch[0]:.2f} / {ch[1]:.2f} | {off} |")
             total.setdefault(m, []).append((h[0], h[1], h[2], hd[0], ch[0]))
+        for part in ("hand", "chest"):
+            line, curve = res.get(("linear", part)), res.get(("crlim", part))
+            if line is not None and line[0] >= 0.05:
+                rates.setdefault((a.fps, part), []).append((curve[0] / line[0], curve[1] / max(line[1], 1e-6)))
     for m, rows in total.items():
         r = np.array(rows)
         print(f"all {len(rows)} clips, {m}: hand max {r[:, 0].max():.2f}, median of max {np.median(r[:, 0]):.2f},"
               f" median p95 {np.median(r[:, 1]):.2f}, median share on key frames {np.median(r[:, 2]) * 100:.0f}%,"
               f" head max {r[:, 3].max():.2f}, chest max {r[:, 4].max():.2f}")
+    print(f"by key rate at {FPS:g} frames a second, curve / line, medians over clips (largest, 95th percentile):")
+    for (fps, part), rows in sorted(rates.items()):
+        r = np.array(rows)
+        print(f"  {fps:g} keys/s, {part}, {len(rows)} clips: {np.median(r[:, 0]):.2f} / {np.median(r[:, 1]):.2f}")
 
 
 if __name__ == "__main__":
