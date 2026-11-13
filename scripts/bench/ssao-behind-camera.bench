@@ -1,0 +1,339 @@
+# SSAO samples behind the camera (reports/engine/2026-11-13-ssao-behind-camera): a face close to the camera lit by
+# the sky alone, where the samples read off the screen drew dark patches of the mesh's facets, then the views the fix
+# must leave as they are (a talk's distance, the game's camera, the market from afar and near the ground) and the
+# other place of the same fault, a wall within a step of the camera (at a market house, inside the harbour house).
+# Every view as shots of one camera: `-old` the samples behind the camera read as before 2026-11-13
+# (`ssao study 1`), `-new` the game's, `-old2` the old again (the world does not stand still between shots: what
+# differs between the two old ones is not the fix), and the same three as the occlusion alone, `-ao-old`, `-ao-new`,
+# `-ao-old2` (`ssao study 3`, `2`: the frame's red channel, 1 open).
+#   TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=ryzen [OPENGOTHIC_CONTENT=<content with a head>] \
+#     scripts/bench.sh ssao-behind-camera <out>
+#   python reports/engine/2026-11-13-ssao-behind-camera/tools/pairs.py <out> [<sheets dir>]
+# @timeout 900
+seed 73013
+cheat god
+overlay off
+ui off
+blink off
+view full
+cam lift off
+set time 12 0
+# the hero's facing of npc-head-look.bench (placed in front of Xardas first): at the market the noon sun is then
+# above and behind him, the face in its own shade
+watch nearest
+freeze nearest
+wait 500
+place 110 0
+wait 800
+watch player
+goto NW_CITY_MERCHANT_TRADE_04
+watch player
+wait 5000
+# 1. The face in its own shade: close, three quarters, a talk's distance
+cam cut
+cam face 38 0 1
+wait 3000
+ssao study 1
+wait 700
+shot shade-close-old
+wait 200
+ssao study 0
+wait 700
+shot shade-close-new
+wait 200
+ssao study 1
+wait 700
+shot shade-close-old2
+wait 200
+ssao study 3
+wait 700
+shot shade-close-ao-old
+wait 200
+ssao study 2
+wait 700
+shot shade-close-ao-new
+wait 200
+ssao study 3
+wait 700
+shot shade-close-ao-old2
+wait 200
+ssao study 0
+wait 300
+cam cut
+cam face 38 35 1
+wait 1500
+ssao study 1
+wait 700
+shot shade-quarter-old
+wait 200
+ssao study 0
+wait 700
+shot shade-quarter-new
+wait 200
+ssao study 1
+wait 700
+shot shade-quarter-old2
+wait 200
+ssao study 3
+wait 700
+shot shade-quarter-ao-old
+wait 200
+ssao study 2
+wait 700
+shot shade-quarter-ao-new
+wait 200
+ssao study 3
+wait 700
+shot shade-quarter-ao-old2
+wait 200
+ssao study 0
+wait 300
+cam cut
+cam face 140 0 1
+wait 2500
+ssao study 1
+wait 700
+shot shade-talk-old
+wait 200
+ssao study 0
+wait 700
+shot shade-talk-new
+wait 200
+ssao study 1
+wait 700
+shot shade-talk-old2
+wait 200
+ssao study 3
+wait 700
+shot shade-talk-ao-old
+wait 200
+ssao study 2
+wait 700
+shot shade-talk-ao-new
+wait 200
+ssao study 3
+wait 700
+shot shade-talk-ao-old2
+wait 200
+ssao study 0
+wait 300
+# 2. The market: the game's camera, from afar, at the wall of a house (the camera a step from it), the ground near
+cam cut
+cam game
+wait 3000
+ssao study 1
+wait 700
+shot market-game-old
+wait 200
+ssao study 0
+wait 700
+shot market-game-new
+wait 200
+ssao study 1
+wait 700
+shot market-game-old2
+wait 200
+ssao study 3
+wait 700
+shot market-game-ao-old
+wait 200
+ssao study 2
+wait 700
+shot market-game-ao-new
+wait 200
+ssao study 3
+wait 700
+shot market-game-ao-old2
+wait 200
+ssao study 0
+wait 300
+cam cut
+cam look 120
+cam world 700 280 0
+wait 2500
+cam hold
+wait 300
+ssao study 1
+wait 700
+shot market-far-old
+wait 200
+ssao study 0
+wait 700
+shot market-far-new
+wait 200
+ssao study 1
+wait 700
+shot market-far-old2
+wait 200
+ssao study 3
+wait 700
+shot market-far-ao-old
+wait 200
+ssao study 2
+wait 700
+shot market-far-ao-new
+wait 200
+ssao study 3
+wait 700
+shot market-far-ao-old2
+wait 200
+ssao study 0
+wait 300
+cam cut
+cam world 700 280 180
+wait 2500
+cam hold
+wait 300
+ssao study 1
+wait 700
+shot market-wall-old
+wait 200
+ssao study 0
+wait 700
+shot market-wall-new
+wait 200
+ssao study 1
+wait 700
+shot market-wall-old2
+wait 200
+ssao study 3
+wait 700
+shot market-wall-ao-old
+wait 200
+ssao study 2
+wait 700
+shot market-wall-ao-new
+wait 200
+ssao study 3
+wait 700
+shot market-wall-ao-old2
+wait 200
+ssao study 0
+wait 300
+cam cut
+cam world 260 150 200
+wait 2500
+cam hold
+wait 300
+ssao study 1
+wait 700
+shot market-near-old
+wait 200
+ssao study 0
+wait 700
+shot market-near-new
+wait 200
+ssao study 1
+wait 700
+shot market-near-old2
+wait 200
+ssao study 3
+wait 700
+shot market-near-ao-old
+wait 200
+ssao study 2
+wait 700
+shot market-near-ao-new
+wait 200
+ssao study 3
+wait 700
+shot market-near-ao-old2
+wait 200
+ssao study 0
+wait 300
+# 3. The harbour house inside at noon: the camera at a wall, in the room, close to the face
+cam cut
+goto pos 3924 -73 -6663
+watch player
+wait 5000
+cam look 110
+cam world 160 170 0
+wait 2500
+cam hold
+wait 300
+ssao study 1
+wait 700
+shot house-wall-old
+wait 200
+ssao study 0
+wait 700
+shot house-wall-new
+wait 200
+ssao study 1
+wait 700
+shot house-wall-old2
+wait 200
+ssao study 3
+wait 700
+shot house-wall-ao-old
+wait 200
+ssao study 2
+wait 700
+shot house-wall-ao-new
+wait 200
+ssao study 3
+wait 700
+shot house-wall-ao-old2
+wait 200
+ssao study 0
+wait 300
+cam cut
+cam world 160 170 90
+wait 2500
+cam hold
+wait 300
+ssao study 1
+wait 700
+shot house-old
+wait 200
+ssao study 0
+wait 700
+shot house-new
+wait 200
+ssao study 1
+wait 700
+shot house-old2
+wait 200
+ssao study 3
+wait 700
+shot house-ao-old
+wait 200
+ssao study 2
+wait 700
+shot house-ao-new
+wait 200
+ssao study 3
+wait 700
+shot house-ao-old2
+wait 200
+ssao study 0
+wait 300
+cam cut
+cam face 40 20 1
+wait 2500
+ssao study 1
+wait 700
+shot house-face-old
+wait 200
+ssao study 0
+wait 700
+shot house-face-new
+wait 200
+ssao study 1
+wait 700
+shot house-face-old2
+wait 200
+ssao study 3
+wait 700
+shot house-face-ao-old
+wait 200
+ssao study 2
+wait 700
+shot house-face-ao-new
+wait 200
+ssao study 3
+wait 700
+shot house-face-ao-old2
+wait 200
+ssao study 0
+wait 300
