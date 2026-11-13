@@ -29,6 +29,12 @@ const float ProjectionLimitCos  = 0.93969262;
 // itself, over FringeWanderCm of the world with a quarter of it at a quarter of the length; never past the record
 const float FringeWander   = 0.45;
 const float FringeWanderCm = 900.0;
+// The strips' v overshoots 0..1 at their vertices: to -0.1 at the top edge, to 1.39 at the foot (NEWWORLD, the
+// two strip textures). There it is the same strip, clamped; beyond, a repeat, wrapped as the texture is. No triangle
+// lies wholly above 1, so the foot keeps the strip to 1.5; strips repeated in -1..0 end at 0 by their foot, so the top
+// keeps it only to -0.05: 341 of the 379 top-edge overshoots, the feet of 24 repeated triangles
+const float FringeOverTop  = 0.05;
+const float FringeOverFoot = 0.5;
 
 struct Projection {
   bool  on;
@@ -134,7 +140,8 @@ void projectionFringe(inout Projection p) {
   if(!p.on || (bucket[bucketId].flags & BK_FRINGE)==0u)
     return;
   // a strip repeats down its v: each repeat has its own edges
-  const float v = fract(shInp.uv.y);
+  const float u = shInp.uv.y;
+  const float v = (u>=-FringeOverTop && u<=1.0 + FringeOverFoot) ? clamp(u, 0.0, 1.0) : fract(u);
   const vec2  x = shInp.pos.xz/FringeWanderCm;
   const float n = 0.8*fringeNoise(x) + 0.2*fringeNoise(x*4.0 + 17.0);
   const float m = 1.0 - FringeWander*(0.5 + 0.5*n);

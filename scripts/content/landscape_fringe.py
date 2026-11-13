@@ -93,7 +93,6 @@ def main() -> int:
     parser.add_argument('--tile', type=float, default=TILE_M, help='metres per repeat of the grass')
     parser.add_argument('--screen', type=float, nargs=3, default=SCREEN, metavar=('R', 'G', 'B'),
                         help='on-screen correction of the grass colour, measured on frames of the game')
-    parser.add_argument('--raw', action='store_true', help="keep the scan's own colour")
     args = parser.parse_args()
 
     source, output = STAGING / args.source, STAGING / args.set
@@ -121,11 +120,10 @@ def main() -> int:
     directory = output / 'materials/landscape_fringe'
     directory.mkdir(parents=True)
     albedo = pilot.load(scan / f'{SCAN}_diff_4k.jpg', args.size)
-    gains, target = [1., 1., 1.], painted_grass(probe, pilot)
-    if not args.raw:
-        value = pilot.linear(albedo)
-        factor = target / value.reshape(-1, 3).mean(axis=0) * np.array(args.screen)
-        albedo, gains = pilot.encode(value * factor), factor.round(3).tolist()
+    target = painted_grass(probe, pilot)
+    value = pilot.linear(albedo)
+    factor = target / value.reshape(-1, 3).mean(axis=0) * np.array(args.screen)
+    albedo, gains = pilot.encode(value * factor), factor.round(3).tolist()
     write_dds(directory / 'albedo.dds', albedo)
     write_dds(directory / 'normal.dds', pilot.load(scan / f'{SCAN}_nor_gl_4k.png', args.size), normal=True)
     arm = pilot.load(scan / f'{SCAN}_arm_4k.jpg', args.size)

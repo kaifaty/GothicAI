@@ -583,6 +583,9 @@ void fringeRecords(Tempest::Device& device, const Fixture& fixture) {
     record("FRINGE_NO_BAND.TGA", "{" + maps + R"(,"tile_m":2})") + "," +
     record("FRINGE_ZERO_BANDS.TGA", "{" + maps + R"(,"tile_m":2,"top":[0,0],"bottom":[0,0]})") + "," +
     record("FRINGE_NO_ORM.TGA", R"({"albedo":"solid.dds","normal":"alpha.dds","tile_m":2,"top":[0.2,0.4]})") + "," +
+    record("FRINGE_NO_ALBEDO.TGA", R"({"normal":"alpha.dds","orm":"solid.dds","tile_m":2,"top":[0.2,0.4]})") + "," +
+    record("FRINGE_NO_NORMAL.TGA", R"({"albedo":"solid.dds","orm":"solid.dds","tile_m":2,"top":[0.2,0.4]})") + "," +
+    record("FRINGE_WHOLE.TGA", "{" + maps + R"(,"tile_m":2,"top":[0,1]})") + "," +
     record("FRINGE_ABSENT_FILE.TGA", R"({"albedo":"solid.dds","normal":"alpha.dds","orm":"absent.dds","tile_m":2,"top":[0.2,0.4]})") +
     "}");
   Resources resources(device);
@@ -596,6 +599,9 @@ void fringeRecords(Tempest::Device& device, const Fixture& fixture) {
   const auto top = Resources::loadMaterialMaps("FRINGE_TOP.TGA").fringe;
   require(top.present() && top.top[0]==0.2f && top.top[1]==0.2f && top.bottom[0]==0.f && top.bottom[1]==0.f,
           "one edge is enough; a band without tufts is allowed");
+  const auto whole = Resources::loadMaterialMaps("FRINGE_WHOLE.TGA").fringe;
+  require(whole.present() && whole.top[0]==0.f && whole.top[1]==1.f,
+          "a band may start at the very edge and end at the far one: both limits are inclusive");
   const Material bare(source("FRINGE_NONE.TGA"),true);
   require(bare.hasProjection() && !bare.hasFringe() && bare.fringe==Material::Fringe() && !(bare==grass),
           "without the field a projected record stays as it was");
@@ -605,7 +611,8 @@ void fringeRecords(Tempest::Device& device, const Fixture& fixture) {
   for(const auto* name:{"FRINGE_NO_PROJECTION.TGA","FRINGE_NUMBER.TGA","FRINGE_TILE_TEXT.TGA","FRINGE_TILE_ZERO.TGA",
                        "FRINGE_NO_TILE.TGA","FRINGE_BAND_NUMBER.TGA","FRINGE_BAND_THREE.TGA","FRINGE_BAND_TEXT.TGA",
                        "FRINGE_MAP_NUMBER.TGA","FRINGE_BELOW.TGA","FRINGE_ABOVE.TGA","FRINGE_REVERSED.TGA",
-                       "FRINGE_NO_BAND.TGA","FRINGE_ZERO_BANDS.TGA","FRINGE_NO_ORM.TGA"})
+                       "FRINGE_NO_BAND.TGA","FRINGE_ZERO_BANDS.TGA","FRINGE_NO_ORM.TGA","FRINGE_NO_ALBEDO.TGA",
+                       "FRINGE_NO_NORMAL.TGA"})
     require(!Resources::loadMaterialMaps(name).present,
             (std::string("a fringe without projection, of a wrong type, with a band outside 0..1 or reversed, or "
                         "without a map must reject the record whole: ")+name).c_str());
