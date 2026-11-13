@@ -333,7 +333,7 @@ bool Npc::tickMeleePosture(uint64_t dt) {
     }
   const auto now = owner.tickCount();
   lastEventTime = now;
-  visual.processLayers(owner,&logicalBody);
+  visual.processLayers(owner);
   const bool enabled = Gothic::physicsFlags().meleePosture || (meleeBargeKnockdown && Gothic::physicsFlags().meleeBarge) ||
                        (meleeRiposteKnockdown && Gothic::physicsFlags().meleeRiposte);
   if(ragdoll && (now-meleeFallTick>=1200 || !enabled)) {

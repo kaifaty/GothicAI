@@ -379,6 +379,7 @@ async def run_session(env: SessionEnv, link: GameLink) -> None:
             asr,
             journal=journal,
             files=args.voice_files,
+            player_face=not args.no_player_face,
             hints=state.talk.asr_hints,
         )
     if graph is not None and not args.no_knowledge:

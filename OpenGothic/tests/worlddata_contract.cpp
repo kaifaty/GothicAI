@@ -3,6 +3,9 @@
 #include <zenkit/Vfs.hh>
 #include "commandline.h"
 #include "gothic.h"
+#include "game/definitions/basescripts.h"
+#include "programdata.h"
+#include "outputunits.h"
 #include "resources.h"
 #include "sha256.h"
 #include "worldbase.h"
@@ -200,7 +203,7 @@ struct WorldDataContract {
       const ProgramData::Source* selected=nullptr;
       if(branch=="vfs_find_request" || branch=="vfs_find_basename") {
         std::string_view selectedBranch;
-        selected=resources.basePrograms.findVfs(request,&selectedBranch);
+        selected=baseProgramIndex().findVfs(request,&selectedBranch);
         require(selectedBranch==branch,request+": native VFS branch differs from the index");
         const auto lookup=branch=="vfs_find_basename" ? fs::path(request).filename().string() : request;
         const auto* node=sourceVfs().resolve(imported["path"].GetString());
@@ -210,7 +213,7 @@ struct WorldDataContract {
       else {
         require(branch=="host_ordinary" || branch=="host_localized_full" || branch=="host_localized_basename",
                 request+": unexpected native host branch");
-        selected=resources.basePrograms.findHost(imported["path"].GetString());
+        selected=baseProgramIndex().findHost(imported["path"].GetString());
         }
       require(selected!=nullptr && selected->origin==imported["origin"].GetString() &&
               selected->path==imported["path"].GetString() && selected->size==imported["size"].GetUint64() &&
@@ -218,7 +221,7 @@ struct WorldDataContract {
       require(selected->archive.empty() ? imported["archive"].IsNull() :
               imported["archive"].IsString() && selected->archive==imported["archive"].GetString(),
               request+": native provenance archive differs from the index");
-      const auto file=resources.basePrograms.path(*selected);
+      const auto file=baseProgramIndex().path(*selected);
       auto bin=file; bin.replace_extension(".bin");
       const auto& record=row["record"];
       require(std::string(record["json"].GetString())=="base/programs/"+file.filename().string() &&
@@ -280,7 +283,7 @@ struct WorldDataContract {
       const OutputUnits::Source* selected=nullptr;
       if(branch=="vfs_find_request" || branch=="vfs_find_basename") {
         std::string_view selectedBranch;
-        selected=resources.baseOutputUnits.findVfs(request,&selectedBranch);
+        selected=baseOutputUnitsIndex().findVfs(request,&selectedBranch);
         require(selectedBranch==branch,request+": native OU VFS branch differs from the index");
         const auto& vfs=sourceVfs();
         const auto* node=vfs.resolve(path.generic_string());
@@ -289,7 +292,7 @@ struct WorldDataContract {
         }
       else {
         require(branch=="host_ordinary" || branch=="host_localized",request+": unexpected native OU host branch");
-        selected=resources.baseOutputUnits.findHost(path.generic_string());
+        selected=baseOutputUnitsIndex().findHost(path.generic_string());
         }
       require(selected!=nullptr && selected->skipped.empty() &&
               selected->origin==imported["origin"].GetString() && selected->path==path.generic_string() &&
@@ -298,14 +301,14 @@ struct WorldDataContract {
       require(selected->archive.empty() ? imported["archive"].IsNull() :
               imported["archive"].IsString() && selected->archive==imported["archive"].GetString(),
               request+": imported OU archive differs from the index");
-      const auto file=resources.baseOutputUnits.path(*selected);
+      const auto file=baseOutputUnitsIndex().path(*selected);
       std::ifstream native(file,std::ios::binary);
       require(bool(native),request+": cannot read native OU oracle");
       const std::string nativeBytes{std::istreambuf_iterator<char>(native),std::istreambuf_iterator<char>()};
       const auto digest=Sha256::hash(nativeBytes);
       require(std::string(row["record"]["json"].GetString())=="base/outputunits/"+file.filename().string() &&
               digest==row["record"]["sha256"].GetString() && digest==selected->recordSha256 &&
-              resources.baseOutputUnits.records.at(selected->record)==digest,
+              baseOutputUnitsIndex().records.at(selected->record)==digest,
               request+": native OU identity differs from actual JSON bytes");
       blocks=OutputUnits::sortedBlocks(OutputUnits::readLibrary(file));
       // Original reads below are independent test oracles, after zero runtime opens were checked.

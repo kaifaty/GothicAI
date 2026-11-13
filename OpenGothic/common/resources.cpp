@@ -66,8 +66,6 @@
 
 using namespace Tempest;
 using ResourcesInternal::modelKey;
-using ResourcesInternal::censusSourcePath;
-using ResourcesInternal::scriptDirectory;
 
 namespace ModelData { asset::ModelScript readScriptOverlay(const std::filesystem::path& file); }
 
@@ -101,68 +99,6 @@ const char* scriptDirectory(int language) {
   return language>=0 && language<8 ? directories[language] : "Scripts";
   }
 }
-
-bool Resources::loadBaseOutputUnits(std::string_view request, int language,
-                                    std::vector<std::shared_ptr<asset::CutsceneBlock>>& blocks) {
-  try {
-    std::string_view branch;
-    if(inst->baseOutputUnits.findVfs(request,&branch)!=nullptr)
-      return loadBaseOutputUnits(request,language,branch,blocks);
-    const std::string name(request.substr(0,255));
-    const OutputUnits::Source* source=inst->baseOutputUnits.findHost("_work/Data/Scripts/content/CUTSCENE/"+name);
-    branch="host_ordinary";
-    if(source==nullptr && language>=0) {
-      source=inst->baseOutputUnits.findHost("_work/Data/"+std::string(scriptDirectory(language))+"/"+name);
-      branch="host_localized";
-      }
-    if(source==nullptr) return false;
-    return loadBaseOutputUnits(request,language,branch,blocks,std::filesystem::path(source->path).u16string());
-    }
-  catch(const BaseStore::Error&) { throw; }
-  catch(const std::exception& error) { throw BaseStore::Error("output units "+std::string(request)+": "+error.what()); }
-  }
-
-bool Resources::loadBaseOutputUnits(std::string_view request, int language, std::string_view branch,
-                                   std::vector<std::shared_ptr<asset::CutsceneBlock>>& blocks,
-                                   std::u16string_view hostPath) {
-  try {
-    const auto& index = inst->baseOutputUnits;
-    const OutputUnits::Source* source = nullptr;
-    if(hostPath.empty()) {
-      std::string_view selectedBranch;
-      source = index.findVfs(request,&selectedBranch);
-      if(source==nullptr || selectedBranch!=branch)
-        throw std::runtime_error("selected VFS source missing from output units base index");
-      }
-    else {
-      source = index.findHost(censusSourcePath(std::filesystem::path(hostPath)));
-      if(source==nullptr)
-        throw std::runtime_error("selected host source missing from output units base index");
-      if(!source->skipped.empty())
-        return false;
-      }
-    if(!source->skipped.empty())
-      throw std::runtime_error("selected VFS output units source skipped: "+source->skipped);
-    const auto file = index.path(*source);
-    std::string actualSha256;
-    auto library = OutputUnits::readLibrary(file,&actualSha256);
-    if(actualSha256!=source->recordSha256)
-      throw std::runtime_error("output units record identity differs from base index");
-    auto loaded = OutputUnits::sortedBlocks(library);
-    blocks = std::move(loaded);
-    if(inst->census) {
-      const auto record = "base/outputunits/"+file.filename().generic_string();
-      inst->census->replaced(request,record);
-      inst->census->outputUnits("GameScript::loadDialogOU",request,language,branch,record,actualSha256,*source);
-      }
-    return true;
-    }
-  catch(const std::exception& error) {
-    if(inst->census) inst->census->missing(request,error.what());
-    throw BaseStore::Error("output units "+std::string(request)+": "+error.what());
-    }
-  }
-
 
 Resources::Resources() {
   inst=this;

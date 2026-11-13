@@ -47,6 +47,7 @@ from gothic_ai.protocol import (
     NpcThing,
     NpcViews,
     PerceptionHeld,
+    PttAudioCmd,
     RoutineEntry,
     SayAudioCmd,
     SayCmd,
@@ -141,7 +142,7 @@ def test_v51_combat_hit_reports_actual_health_loss(kind):
 
 
 def test_v50_svm_lines_keep_the_native_meaning_and_addressee():
-    assert PROTOCOL_VERSION == 63
+    assert PROTOCOL_VERSION == 64
     msg = parse_game_message(_json({
         "type": "svm_line", "id": "svm-1", "npc": "X", "svm": "$KILLENEMY",
         "text": "Ещё одним монстром меньше.", "target": "WOLF", "overlay": True,
@@ -151,6 +152,15 @@ def test_v50_svm_lines_keep_the_native_meaning_and_addressee():
         "svm-1", "X", "$KILLENEMY", "Ещё одним монстром меньше.", "WOLF", True,
     )
     assert json.loads(SvmModeCmd(replace=True).to_json()) == {"type": "svm_mode", "replace": True}
+
+
+def test_v64_player_audio_is_a_silent_pcm_stream_with_delivery_timing():
+    assert PROTOCOL_VERSION == 64
+    chunk = PttAudioCmd(data="AAE=", rate=16000, sequence=0, received_at_us=1794567890123456)
+    assert json.loads(chunk.to_json()) == {
+        "type": "ptt_audio", "data": "AAE=", "rate": 16000,
+        "sequence": 0, "received_at_us": 1794567890123456,
+    }
 
 
 def test_word_timings_are_optional_for_streamed_and_whole_audio():

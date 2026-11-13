@@ -116,6 +116,9 @@ class LlmSettings(_Section):
 
 
 class VoiceSettings(_Section):
+    player_face: bool = Field(
+        True, title="Лицо героя под голос", description="Передавать голос в игру без воспроизведения"
+    )
     enabled: bool = Field(True, title="Голосовой ввод", description="Удерживайте T, чтобы сказать реплику")
     provider: str = Field(
         "inworld", title="Распознавание", description="inworld, voxtral, chatgpt или openai:…"

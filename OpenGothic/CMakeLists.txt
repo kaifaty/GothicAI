@@ -182,19 +182,8 @@ add_definitions(-DMINIZ_NO_STDIO)
 add_library(miniz STATIC EXCLUDE_FROM_ALL "lib/miniz/miniz.h" "lib/miniz/miniz.c")
 target_link_libraries(${PROJECT_NAME} miniz)
 include(cmake/BaseImport.cmake)
-# Runtime manifest reading and cooked chunks (.wcb), like worldchunksruntime.cpp, stay outside the base
-# format fingerprint: added here and not in BaseImport.cmake, which is a base format input.
-target_sources(gothic-base-runtime PRIVATE "${BASE_ROOT}/common/worldchunkmanifest.cpp"
-  "${BASE_ROOT}/common/worldchunkbinary.cpp" "${BASE_ROOT}/common/worldchunkindex.cpp" "${BASE_ROOT}/common/worldchunkcook.cpp"
-  "${BASE_ROOT}/common/worldchunkassemble.cpp" "${BASE_ROOT}/common/worldchunkcookedsource.cpp")
-include(cmake/WorldCloth.cmake)
-if(MSVC)
-  # musicnative.c (runtime) and basemusic.c/musicnativeimport.c (import) read dmusic's private structs
-  # with C11 _Atomic counters; dmusic opts its own sources in the same way. Set here, not in
-  # BaseImport.cmake: that file is a base format input, and a flag must not change the base fingerprint.
-  target_compile_options(gothic-base-runtime PRIVATE $<$<COMPILE_LANGUAGE:C>:/experimental:c11atomics>)
-  target_compile_options(gothic-base-import PRIVATE $<$<COMPILE_LANGUAGE:C>:/experimental:c11atomics>)
-endif()
+# Runtime manifest reading, cooked chunks, world cloth and the MSVC flag: one list for every build with the base.
+include(cmake/BaseRuntime.cmake)
 include(cmake/VideoImport.cmake)
 add_subdirectory(common/daedalus)
 target_link_libraries(${PROJECT_NAME} gothic-daedalus)

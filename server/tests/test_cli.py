@@ -1,5 +1,6 @@
 """CLI defaults start the director only for ordinary play."""
 
+import argparse
 import asyncio
 import importlib.util
 import json
@@ -879,3 +880,10 @@ def test_serve_embedding_options_create_client_only_when_enabled(monkeypatch, fl
     else:
         client.assert_called_once_with(expected)
         assert memory.call_args.kwargs["embeddings"] is client.return_value
+
+
+def test_player_face_is_enabled_unless_explicitly_disabled():
+    parser = argparse.ArgumentParser()
+    cli._add_voice_args(parser)
+    assert parser.parse_args([]).no_player_face is False
+    assert parser.parse_args(["--no-player-face"]).no_player_face is True

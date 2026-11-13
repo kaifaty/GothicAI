@@ -16,8 +16,6 @@
 #include <cstdio>
 #include <cstdlib>
 
-#include "ui/inventorymenu.h"
-#include "ui/videowidget.h"
 #include "graphics/drawcommands.h"
 #include "camera.h"
 #include "frameprofile.h"
@@ -683,33 +681,21 @@ void Renderer::resetShadowmap() {
     }
   }
 
-void Renderer::draw(Attachment& result, Encoder<CommandBuffer>& cmd, uint8_t fId,
-                    VectorImage::Mesh& uiLayer, VectorImage::Mesh& numOverlay,
-                    InventoryMenu& inventory, VideoWidget& video) {
+void Renderer::drawScene(Attachment& result, Encoder<CommandBuffer>& cmd, uint8_t fId, bool sceneActive) {
   auto wview  = GameServices::inst().worldView();
   auto camera = GameServices::inst().camera();
 
-  if(!video.isActive() && wview!=nullptr && camera!=nullptr) {
+  if(sceneActive && wview!=nullptr && camera!=nullptr) {
     draw(result, cmd, fId, *wview, *camera);
     cmd.setFramebuffer({{result, Tempest::Preserve, Tempest::Preserve}});
     } else {
     taa.valid = false; // a video or no world: the next world frame starts over
     cmd.setFramebuffer({{result, Vec4(), Tempest::Preserve}});
     }
-  FrameProfile::Scope uiTiming(FrameProfile::Zone::EncodeUi);
-  cmd.setDebugMarker("UI");
-  uiLayer.draw(cmd);
+  }
 
-  if(inventory.isOpen()!=InventoryMenu::State::Closed) {
-    auto& zb = (zbufferUi.isEmpty() ? zbuffer : zbufferUi);
-    cmd.setFramebuffer({{result, Tempest::Preserve, Tempest::Preserve}},{zb, 1.f, Tempest::Preserve});
-    cmd.setDebugMarker("Inventory");
-    inventory.draw(cmd);
-
-    cmd.setFramebuffer({{result, Tempest::Preserve, Tempest::Preserve}});
-    cmd.setDebugMarker("Inventory-counters");
-    numOverlay.draw(cmd);
-    }
+Tempest::ZBuffer& Renderer::uiDepthBuffer() {
+  return (zbufferUi.isEmpty() ? zbuffer : zbufferUi);
   }
 
 void Renderer::dbgDraw(Tempest::Painter& p) {

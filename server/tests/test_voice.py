@@ -1,8 +1,12 @@
 import asyncio
+import base64
 import json
 import math
 import struct
+import sys
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from websockets.asyncio.server import serve
@@ -13,6 +17,7 @@ from gothic_ai.llm.fake import FakeBackend
 from gothic_ai.persona import PersonaProvider
 from gothic_ai.talk import TalkDesk
 from gothic_ai.voice import LAUGH, MIC_DENIED, AsrClient, VoiceInput, laughter
+from gothic_ai.voice_audio import Microphone, PlayerAudio
 from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import XARDAS, _until
 
@@ -269,6 +274,11 @@ async def test_the_bench_says_a_recording_for_the_hero_only_when_files_are_allow
         await fake.send(type="ptt_stop")
         await _until(lambda: heard == ["Я от Ли"])
         assert not mic.recording and utterances == [9600]
+        chunks = [m for m in fake.received if m["type"] == "ptt_audio"]
+        assert [m["sequence"] for m in chunks] == list(range(15))
+        assert all(m["rate"] == 16000 and len(base64.b64decode(m["data"])) == 640 for m in chunks)
+        assert b"".join(base64.b64decode(m["data"]) for m in chunks) == speech(0.3)
+        assert 250_000 <= chunks[-1]["received_at_us"] - chunks[0]["received_at_us"] <= 450_000
 
         voice.files = False
         await fake.send(type="ptt_start", audio=str(rec))
@@ -376,3 +386,123 @@ async def test_voice_snapshots_hints_once_per_start_with_the_heros_focus():
         assert focuses == [XARDAS, None]
         assert starts[1]["hints"] == ["Ватрас"]
         await asr.aclose()
+
+
+@pytest.mark.parametrize("ending", ["ptt_stop", "ptt_cancel", "loading", "watchdog"])
+async def test_player_audio_stops_with_the_utterance_and_ignores_late_callbacks(monkeypatch, ending):
+    from gothic_ai import voice as voice_module
+
+    monkeypatch.setattr(voice_module, "MAX_SECONDS", 0.08 if ending == "watchdog" else 10)
+    fake = FakeGame()
+    callback = None
+    source = FakeSource(b"")
+
+    def start(on_chunk):
+        nonlocal callback
+        callback = on_chunk
+
+    source.start = start
+    async with fake_asr() as (url, _), connected(fake) as link:
+        asr = AsrClient(url)
+        voice = VoiceInput(link, lambda *args: None, source, asr)
+        await fake.send(type="ptt_start")
+        await _until(lambda: callback is not None)
+        chunks = [speech(0.02), speech(0.02)[::-1]]
+        for chunk in chunks:
+            callback(chunk)
+        await _until(lambda: len([m for m in fake.received if m["type"] == "ptt_audio"]) == 2)
+        received = [m for m in fake.received if m["type"] == "ptt_audio"]
+        assert [m["sequence"] for m in received] == [0, 1]
+        assert [base64.b64decode(m["data"]) for m in received] == chunks
+        if ending != "watchdog":
+            await fake.send(type=ending)
+        await _until(lambda: voice.active is None)
+        callback(speech(0.02))
+        await asyncio.sleep(0.04)
+        assert [m for m in fake.received if m["type"] == "ptt_audio"] == received
+        await asr.aclose()
+
+
+@pytest.mark.parametrize("blocked", ["asr", "game", "disabled"])
+async def test_player_audio_and_asr_are_independent(monkeypatch, blocked):
+    fake = FakeGame()
+    callback = None
+    source = FakeSource(b"")
+    gate = asyncio.Event()
+
+    def start(on_chunk):
+        nonlocal callback
+        callback = on_chunk
+
+    source.start = start
+    async with capturing_asr() as (url, _, recordings), connected(fake) as link:
+        asr = AsrClient(url)
+        original_open, original_send = asr.open, link.send
+
+        async def open_asr(*args, **kwargs):
+            if blocked == "asr":
+                await gate.wait()
+            return await original_open(*args, **kwargs)
+
+        async def send(cmd):
+            if blocked == "game" and cmd.type == "ptt_audio":
+                await gate.wait()
+            await original_send(cmd)
+
+        monkeypatch.setattr(asr, "open", open_asr)
+        monkeypatch.setattr(link, "send", send)
+        voice = VoiceInput(link, lambda *args: None, source, asr, player_face=blocked != "disabled")
+        voice.start()
+        pcm = speech(0.02)
+        callback(pcm)
+        if blocked == "asr":
+            await _until(lambda: any(m["type"] == "ptt_audio" for m in fake.received))
+            gate.set()
+        else:
+            # ASR reaches its final answer even with game transport blocked or disabled.
+            await asyncio.sleep(0.02)
+        voice.stop(recognize=True)
+        await _until(lambda: recordings == [pcm])
+        if blocked != "asr":
+            assert not any(m["type"] == "ptt_audio" for m in fake.received)
+        gate.set()
+        await asr.aclose()
+
+
+def test_microphone_requests_20ms_pcm_blocks(monkeypatch):
+    stream = Mock()
+    raw_input_stream = Mock(return_value=stream)
+    monkeypatch.setitem(sys.modules, "sounddevice", SimpleNamespace(RawInputStream=raw_input_stream))
+    microphone = Microphone(rate=24000)
+    try:
+        microphone.start(lambda data: None)
+        kwargs = raw_input_stream.call_args.kwargs
+        assert kwargs["blocksize"] == microphone.rate // 50
+    finally:
+        microphone.stop()
+
+
+async def test_player_audio_rejects_late_callbacks_after_stop():
+    audio = PlayerAudio(SimpleNamespace(send=AsyncMock()), rate=16000)
+    try:
+        audio.stop()
+        audio.feed(b"\x01\x02", 123)
+        await asyncio.sleep(0)  # run the posted callback with the sender already cancelled
+        assert audio._queue.empty()
+    finally:
+        audio._task.cancel()
+        await asyncio.gather(audio._task, return_exceptions=True)
+
+
+async def test_player_audio_cancels_prequeued_chunks_at_stop():
+    link = SimpleNamespace(send=AsyncMock())
+    audio = PlayerAudio(link, rate=16000)
+    try:
+        audio._enqueue(b"\x01\x02", 123)
+        assert audio._queue.qsize() == 1
+        audio.stop()
+        await asyncio.sleep(0)  # let a sender lacking cancellation drain its prequeued chunk
+        link.send.assert_not_awaited()
+    finally:
+        audio._task.cancel()
+        await asyncio.gather(audio._task, return_exceptions=True)
