@@ -4,6 +4,8 @@ Date: 2026-11-13. Plan: [`docs/landscape-plan.md`](../../../../docs/landscape-pl
 
 Question: what does reading the world cost today, stage by stage, what is left when each cell is read from a cooked binary chunk instead, and does the measurement ask for a change of the layout before later tasks build on it.
 
+The sections up to «What the numbers say about the layout» record version 1 (task 2). Task 2b changed the layout after the override question: [«Version 2»](#version-2-2026-11-13) at the end has the layout as built now, with its index, and the refreshed numbers.
+
 ## Machine and commands
 
 Ryzen 3950X (16 cores, 32 threads), 30 GB RAM, NVMe, Ubuntu; GCC, `RelWithDebInfo` with `-O2 -g1` (`scripts/ryzen-build.sh`); branch `codex/landscape-d3-wcb` at `b11be919a`. Every run went through `scripts/gq` class `quick` (4 threads, 12 GB) in `~/gothic-ai/landscape-d3-wcb/`. The code is single-threaded. The machine was not idle: load average 4–6, and another session's `quiet` job was running at the time. All timings are with a warm page cache: `time-world` reads every file once before the runs, and dropping the cache needs `sudo`. Cold reads were not measured.
