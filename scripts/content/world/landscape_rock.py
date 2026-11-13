@@ -25,8 +25,11 @@ The base has rows of vertices at the same places with other _VERTEX ids (meshes 
 the region's weld keeps apart. Everything here is decided per place (the exact position, as the check welds): the
 twins of such a row are split alike (new twins are snapped together within WELD_CM) and moved alike.
 
-Normals: a corner of a moved or new rock vertex takes the smooth normal of the rock around it; every other corner
-keeps its base normal. New vertices get _VERTEX -1 (the build bakes their light from the base around them).
+A face may not turn further than TURN_DEG from where it faced: where the rounding or the relief folds the surface
+(rock sheets that meet at an angle), the places go halfway back until it does not.
+
+Normals: a corner of a moved or new rock vertex takes the smooth normal of the rock faces around its place that face
+its own face's way; every other corner keeps its base normal. New vertices get _VERTEX -1 (the build bakes their light from the base around them).
 
 The numbers are estimates by eye from the photos, not measurements; a clip corrects them.
 """
@@ -53,8 +56,8 @@ ROUND_PASSES = 10
 ROUND_STEP = 0.5
 FADE_CM = 120.0          # the relief reaches full depth this far from a vertex that stays
 BED_MIN_CM, BED_MAX_CM = 150.0, 380.0
-BED_BULGE_CM = (14.0, 26.0)      # how far the middle of a bed stands out of its joints
-BED_OFFSET_CM = (-8.0, 14.0)     # a bed's own overhang
+BED_BULGE_CM = (20.0, 36.0)      # how far the middle of a bed stands out of its joints
+BED_OFFSET_CM = (-10.0, 20.0)    # a bed's own overhang
 BED_WARP_CM, BED_WARP_LEN_CM = 40.0, 900.0   # the beds are level within this
 JOINT_SPACING_CM = (520.0, 640.0)
 JOINT_ANGLE_DEG = 25.0
@@ -62,10 +65,11 @@ JOINT_HALF_CM, JOINT_DEPTH_CM = 70.0, 22.0
 JOINT_SHARE = 0.6        # of the vertical joints show
 SLOW_CM, SLOW_LEN_CM = 12.0, 700.0
 UNDER_REACH_CM, UNDER_DEPTH_CM = 160.0, 28.0
-LIMIT_CM = 60.0          # nothing moves further than this
+LIMIT_CM = 75.0          # nothing moves further than this
 WALK_LIMIT_CM = 25.0     # ... and rock one can stand on (not steeper than WALK_DEG) no further than this: the
 WALK_DEG = 53.0          # pilot allows 30 cm on walkable ground, walking stops above 50 degrees
 WALL_FROM_DEG, WALL_FULL_DEG = 41.0, 66.0   # the beds and joints show on faces steeper than this
+TURN_DEG = 70.0          # a face may not turn further than this from where it faced: no folds
 WAY_NEAR_CM, WAY_FAR_CM, WAY_LIMIT_CM = 50.0, 200.0, 4.0
 SEED = 20261113
 INPUTS = [Path(__file__).with_name('landscape_ground.py')]
@@ -76,7 +80,7 @@ PARAMETERS = {'waypoint': WAYPOINT, 'radius_cm': RADIUS_CM, 'below_cm': BELOW_CM
               'joint_angle_deg': JOINT_ANGLE_DEG, 'joint_cm': [JOINT_HALF_CM, JOINT_DEPTH_CM],
               'joint_share': JOINT_SHARE, 'slow_cm': [SLOW_CM, SLOW_LEN_CM],
               'undercut_cm': [UNDER_REACH_CM, UNDER_DEPTH_CM], 'limit_cm': LIMIT_CM, 'walk_limit_cm': WALK_LIMIT_CM, 'walk_deg': WALK_DEG,
-              'wall_deg': [WALL_FROM_DEG, WALL_FULL_DEG],
+              'wall_deg': [WALL_FROM_DEG, WALL_FULL_DEG], 'turn_deg': TURN_DEG,
               'way_cm': [WAY_NEAR_CM, WAY_FAR_CM, WAY_LIMIT_CM], 'seed': SEED}
 
 
@@ -213,6 +217,8 @@ def edit(ctx):
             for v in members[k]:
                 v.co = co
 
+    bm.normal_update()
+    faced = {f: f.normal.copy() for f in bm.faces if f[chosen]}
     walk = math.cos(math.radians(WALK_DEG))
     for k, n in place_normals().items():
         if n.z >= walk:
@@ -251,16 +257,32 @@ def edit(ctx):
         if delta.length > limit[k]:
             delta *= limit[k] / delta.length
         at[k] = Vector(k) + delta
-        moved.append(delta.length)
     put(at)
-    normal = place_normals()
+    # where the rounding and the relief folded the surface (a face turned over), the places go halfway back
+    turn, folded = math.cos(math.radians(TURN_DEG)), 0
+    for _ in range(10):
+        bm.normal_update()
+        back = {place_of[v.index] for f, n in faced.items() if n.length > 0.5 and f.normal.dot(n) < turn
+                for v in f.verts} & free
+        if not back:
+            break
+        folded = max(folded, len(back))
+        for k in back:
+            at[k] = Vector(k).lerp(at[k], 0.5)
+        put(at)
+    moved = [(at[k] - Vector(k)).length for k in free]
+    bm.normal_update()
 
+    # a corner's normal: the faces around its place that face its own face's way (two sheets back to back, or
+    # meeting at more than a right angle, do not share normals)
+    around_faces = {k: [(f.normal.copy(), f.calc_area()) for v in members[k] for f in v.link_faces] for k in free}
     normals = []
     for f in bm.faces:
         for loop in f.loops:
             k = place_of[loop.vert.index]
-            if f[chosen] and k in free and normal[k].length > 0.5:
-                normals.append(normal[k].copy())
+            if f[chosen] and k in free:
+                total = sum((n * a for n, a in around_faces[k] if n.dot(f.normal) > 0.0), Vector())
+                normals.append(total.normalized() if total.length > 1e-9 else f.normal.copy())
             else:
                 n = Vector(loop[old])
                 normals.append(n.normalized() if n.length > 1e-9 else f.normal.copy())
@@ -273,4 +295,4 @@ def edit(ctx):
     me.normals_split_custom_set(normals)
     print(f'landscape_rock: {before_faces} -> {after_faces} rock triangles within {RADIUS_CM / 100:.0f} m of '
           f'{WAYPOINT}; {new} new vertices, {len(moved)} places moved, mean '
-          f'{sum(moved) / max(1, len(moved)):.1f} cm, max {max(moved, default=0.0):.1f} cm; {len(levels) - 1} beds')
+          f'{sum(moved) / max(1, len(moved)):.1f} cm, max {max(moved, default=0.0):.1f} cm; {len(levels) - 1} beds; {folded} places taken back from folds')
