@@ -18,7 +18,9 @@
 // that index, opens, names the same source world, carries the SHA-256 of the index bytes the source read and this
 // build's rules hash and algorithm, and its exclusions name triangles the loaded table holds, as many as its
 // original mesh has. Anything else runs the island search, with one log line naming the bundle and the reason; a
-// missing bundle is not logged. OPENGOTHIC_WCB=0 uses no index, so no bundle.
+// missing bundle is not logged. OPENGOTHIC_WCB=0 uses no index, so no bundle. As for the cells, a GLB changed at
+// the same length after the cook is not noticed (the game hashes no GLB); content-convert verify-cooked-world
+// compares the bundle with a fresh island search and finds it.
 //
 // Little-endian, in the style of .wcb and the index (worldchunkbinary.h): a 136-byte header, a directory of
 // 32-byte entries, 16-byte aligned sections.

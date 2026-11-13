@@ -395,8 +395,10 @@ void fixture(const fs::path& root, const ClothWorld& world) {
   for(size_t i=0;i<manifest.cells.size();++i) {
     const auto& id = manifest.cells[i].id;
     const auto n = bundle.exclusions[i].size();
-    clothCells += n>0 ? 1 : 0;
-    plain      += n==0 ? 1 : 0;
+    if(n>0)
+      ++clothCells;
+    else
+      ++plain;
     if(id==ChunkId{1,0})
       across = n;
     if(id==ChunkId{0,0})
