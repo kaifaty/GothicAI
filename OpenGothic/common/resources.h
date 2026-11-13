@@ -701,6 +701,7 @@ class Resources final {
       bool        hair = false;
       bool        strand = false;
       bool        eye = false;
+      FoliageWind::Params foliage; // `on` with the field
       };
     std::unordered_map<std::string,MaterialMapFiles>                  materialMaps;
     TextureCache                                                     materialTextureCache;

@@ -174,7 +174,7 @@ void main() {
   const vec3  diff    = diff4.rgb;
   const vec3  norm    = normalFetch(gbufNormal, ivec2(gl_FragCoord.xy));
 #if defined(MATERIAL_MAPS)
-  const vec4 orm = texelFetch(gbufOrm, ivec2(gl_FragCoord.xy), 0);
+  const vec4 orm = gbufOrmMaterial(texelFetch(gbufOrm, ivec2(gl_FragCoord.xy), 0), diff4.a);
   // hair cards keep their own values in the ORM channels (common.glsl, GBufHairBit): the probes light them as a
   // matte surface of the hair's colour, like the pixels of the original
   ownMaterial = orm.a>0.5 && !isGBufHair(diff4.a);

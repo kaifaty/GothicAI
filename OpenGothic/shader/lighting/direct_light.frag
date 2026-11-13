@@ -17,6 +17,7 @@
 #include "lighting/material_brdf.glsl"
 #include "lighting/hair_brdf.glsl"
 #include "lighting/eye_brdf.glsl"
+#include "lighting/foliage_light.glsl"
 #endif
 #if defined(VIRTUAL_SHADOW)
 #include "virtual_shadow/vsm_sun_shadow.glsl"
@@ -258,10 +259,34 @@ void main(void) {
 
   const bool  isFlat = isGBufFlat(diff.a);
 #if defined(MATERIAL_MAPS)
-  const vec4  orm    = texelFetch(gbufOrm, fragCoord, 0);
+  const vec4  ormG   = texelFetch(gbufOrm, fragCoord, 0);
+  const vec4  orm    = gbufOrmMaterial(ormG, diff.a);
   const bool  isHair = orm.a>0.5 && isGBufHair(diff.a);
   const bool  isEye  = orm.a>0.5 && isGBufEye(diff.a);
-  float       light  = shadowFactor(d, normal, isHair ? hairShell(dot(scene.sunDir,normal)) : (isFlat ? 0 : dot(scene.sunDir,normal)));
+  // A leaf (common.glsl, GBufFoliageBit) also takes the sun that comes through it (foliage_light.glsl). The shadow
+  // is looked up once for both parts; a leaf turned from the sun looks it up from the side of the sun, or the
+  // offset along its normal would put the point behind its own card
+  float through      = 0.0;
+  vec3  shadowNormal = normal;
+  if(orm.a>0.5 && isGBufFoliage(diff.a) && !isFlat) {
+    const vec4 pos = worldPos(d);
+    through = foliageThrough(ormG.b, normal, normalize(scene.camPos - pos.xyz/pos.w), scene.sunDir);
+    if(through>0.0 && dot(scene.sunDir,normal)<0.0) {
+      shadowNormal = -normal;
+#if defined(VIRTUAL_SHADOW)
+      geomNormal   = -geomNormal;
+#endif
+      }
+    }
+  float       light  = shadowFactor(d, shadowNormal, isHair ? hairShell(dot(scene.sunDir,normal)) :
+                                    (through>0.0 ? max(dot(scene.sunDir,normal),0.0) + through :
+                                    (isFlat ? 0 : dot(scene.sunDir,normal))));
+  float lightThrough = 0.0;
+  if(through>0.0) {
+    const float lit = light/(max(dot(scene.sunDir,normal),0.0) + through); // what the shadow leaves of the sun
+    lightThrough = through*lit;
+    light        = max(dot(scene.sunDir,normal),0.0)*lit;
+    }
   // the lid's soft shade over the eye, which the shadow map is too coarse to see (eye_brdf.glsl)
   if(isEye)
     light *= eyeLidDirect(orm.b);
@@ -327,6 +352,7 @@ void main(void) {
     }
   if(isHair && (scene.viewFlags & VF_HAIR_DEBUG)!=0u)
     luminance = vec3(0);
+  luminance += linear * scene.sunColor * (lightThrough*Fd_Lambert) * FoliageThroughTint;
 #endif
 
   outColor = vec4(luminance * scene.exposure, 0.0);

@@ -100,7 +100,7 @@ void main() {
   vec3 color;
   vec3 eyeReflection = vec3(0); // the tear film's reflection of the sky, over the screen-space visibility below
 #if defined(MATERIAL_MAPS) && !defined(SURFEL_GI)
-  const vec4 orm = texelFetch(gbufOrm, fragCoord, 0);
+  const vec4 orm = gbufOrmMaterial(texelFetch(gbufOrm, fragCoord, 0), diff4.a);
   if(orm.a>0.5 && isGBufHair(diff4.a)) {
     // Hair cards: the ORM channels are the hair's own (no metal, no map AO); the sky and the ambient light it as a
     // matte surface of the hair's colour, the highlights belong to the sun and the lamps
@@ -148,7 +148,7 @@ void main() {
     color = linear;
     color *= luminance(norm);
 #if defined(MATERIAL_MAPS) && defined(SURFEL_GI)
-    const vec4 orm = texelFetch(gbufOrm, fragCoord, 0);
+    const vec4 orm = gbufOrmMaterial(texelFetch(gbufOrm, fragCoord, 0), diff4.a);
     if(orm.a>0.5 && isGBufEye(diff4.a))
       color *= orm.r * orm.b; // the lid's shade of an eye (common.glsl, GBufEyeBit)
     else if(orm.a>0.5 && !isGBufHair(diff4.a))

@@ -8,6 +8,7 @@
 #endif
 
 #include "materials_common.glsl"
+#include "foliage_wind.glsl"
 #include "water/gerstner_wave.glsl"
 #include "lighting/shadow_sampling.glsl"
 #include "lighting/tonemapping.glsl"
@@ -596,6 +597,16 @@ void mainGBuffer(vec4 t) {
     outOrm.a        = 1.0;
     outDiffuse.rgb *= mix(EyeLidAlbedo, 1.0, lid);
     outDiffuse.a    = float(int(outDiffuse.a*255.0 + 0.5) | GBufEyeBit)/255.0;
+    }
+  if((bucket[bucketId].flags & BK_FOLIAGE)!=0u) {
+    // Leaves (foliage_light.glsl): the share of the sun a leaf lets through goes to the sun's pass in the channel
+    // of metal, which a leaf has none of, under the foliage bit. With that half switched off (the share is 0) the
+    // pixel is any own material's
+    const float through = foliageTranslucency(bucket[bucketId].foliage);
+    if(through>0.0) {
+      outOrm.b     = through;
+      outDiffuse.a = float(int(outDiffuse.a*255.0 + 0.5) | GBufFoliageBit)/255.0;
+      }
     }
   const float glow = bucket[bucketId].emissive;
   if(glow>0.0 && !maps.antitile && (bucket[bucketId].flags & BK_ORM)!=0) {

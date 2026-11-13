@@ -17,6 +17,7 @@
 #include <cstdlib>
 
 #include "graphics/drawcommands.h"
+#include "graphics/foliagewind.h"
 #include "camera.h"
 #include "frameprofile.h"
 #include "utils/string_frm.h"
@@ -316,6 +317,16 @@ void Renderer::setupSettings() {
       logged = int(settings.taaReactive);
       Log::i("render: taa reactive = ", logged, ", max = ", settings.taaReactiveMax, ", lref = ",
              settings.taaReactiveLref, settings.taaReactiveView ? ", view = 1" : "");
+      }
+  }
+  // Living foliage (reports/engine/2026-11-14-living-foliage), on by default: [INTERNAL] foliage=0 turns it off,
+  // OPENGOTHIC_FOLIAGE=0|wind|light|1 (test benches) overrides it. Read where the buckets are filled (DrawBuckets)
+  {
+    FoliageWind::setSwitch(::Settings::getI("INTERNAL","foliage")!=0);
+    static int logged = -1;
+    if(logged!=int(FoliageWind::enabled())) {
+      logged = int(FoliageWind::enabled());
+      Log::i("render: foliage = ", logged, " (1 wind, 2 light, 3 both)");
       }
   }
   // SSAO over frames (reports/engine/2026-11-08-ssao-temporal), on by default: OPENGOTHIC_SSAO_HISTORY=0 traces the

@@ -194,13 +194,20 @@ void realMain() {
   bool isWater = false;
   decodeBits(diff.a, isFlat, isATest, isWater);
 
-  const float light = (isFlat ? 0 : lambert(normal));
+  float light = (isFlat ? 0 : lambert(normal));
+  // A leaf turned from the sun takes the light that comes through it (direct_light.frag, GBufFoliageBit): its page
+  // is needed too, and found from the side of the sun, as that pass looks its shadow up
+  vec3  pageNormal = normal;
+  if(!isFlat && isGBufFoliage(diff.a) && dot(scene.sunDir,normal)<0.0) {
+    pageNormal = -normal;
+    light      = 1.0;
+    }
   if(light<=0)
     return;
 
   vec3 page = vec3(0);
   int  mip  = 0;
-  if(!calcMipIndex(page, mip, z, normal))
+  if(!calcMipIndex(page, mip, z, pageNormal))
     return;
 
   //if(mip>6)

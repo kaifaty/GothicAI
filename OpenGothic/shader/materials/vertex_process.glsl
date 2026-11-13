@@ -2,6 +2,7 @@
 #define VERTEX_PROCESS_GLSL
 
 #include "common.glsl"
+#include "foliage_wind.glsl"
 
 struct Vertex {
 #if (MESH_TYPE==T_LANDSCAPE) || (MESH_TYPE==T_OBJ) || (MESH_TYPE==T_MORPH)
@@ -243,6 +244,14 @@ vec3 processVertexCommon(out Varyings shOut, in Vertex v, uint bucketId, uint in
     }
 #endif
 
+#if (MESH_TYPE==T_OBJ) && defined(LVL_OBJECT)
+  // Living foliage (foliage_wind.glsl): the leaves of a material with `foliage` move in the world's wind, in every
+  // pass alike, so the shadow moves with them. The normal stays the card's
+  const uint foliage = (bucket[bucketId].flags & BK_FOLIAGE)!=0u ? bucket[bucketId].foliage : 0u;
+  if(foliageMoves(foliage))
+    v.pos = foliageBend(v.pos, foliage, bucket[bucketId].foliageReach, obj.mat, scene.foliageWind, scene.foliagePhase);
+#endif
+
   // Normals
   vec3 normal = v.normal;
 #if defined(LVL_OBJECT)
@@ -373,6 +382,11 @@ vec3 processVertexCommon(out Varyings shOut, in Vertex v, uint bucketId, uint in
       local += morphDelta*(1.0-simulationWeight);
 #endif
       }
+#if (MESH_TYPE==T_OBJ)
+    // the leaf where the previous frame's wind had it; the same wind (a pause) gives the same place and no motion
+    if(foliageMoves(foliage))
+      local = foliageBend(local, foliage, bucket[bucketId].foliageReach, obj.mat, scene.foliageWindPrev, scene.foliagePhasePrev);
+#endif
     // prev.mat*local' - mat*local = (prev.mat - mat)*local' + mat*(local' - local); v.pos is this frame's local
     const mat4x3 prevMat = pullInstanceMatPrev(instanceId);
     shOut.prevDelta = (prevMat - obj.mat)*vec4(local,1.0) + obj.mat*vec4(local - v.pos,0.0);
