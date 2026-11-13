@@ -1,4 +1,5 @@
 #include "asset/fromzenkit.h"
+#include "baseimport.h"
 #include <zenkit/World.hh>
 #include "commandline.h"
 #include "graphics/mesh/submesh/packedmesh.h"
