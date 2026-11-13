@@ -1,7 +1,7 @@
 # The skin of a head as a material of the game: its tone against the body it sits on, the neck rim blended into the
 # body's skin, a roughness map by the zones of the face and a normal map (creases and pores).
 #   python skin_material.py uv.npz groups.npz views.json skin.png template_points.json <body> <cut> <out dir>
-#       [--groom groom.npz]... [--under r,g,b] [--seed 1]
+#       [--groom groom.npz]... [--under r,g,b] [--seed 1] [--relief samples.npz]
 # Input:
 # - uv.npz, groups.npz, views.json: the registered head (co, no, tri, tuv; body; eye), metres, Z up, the face to -Y;
 # - skin.png: the colour map of the head (after beard.py: skin_shaved.png);
@@ -13,14 +13,21 @@
 #   generator's model is taken off: seen between the strands, it reads as patches of a texture. Its place takes
 #   skin shaded towards --under, the colour of the hair at its roots (sRGB), by the density of the roots: a gap in
 #   thick hair reads as depth, and the shade runs out towards the hairline. The beard's zone is beard.py's.
+# - --relief: what the head's vertices could not take of the bald model's relief (head_relief.py: places on the
+#   head's faces and the height of the model over them). It goes into the normal map: wrinkles and the fine part of
+#   the folds, wider than half a millimetre (finer is the generator's grain), without what changes over
+#   centimetres (that is shape, not relief), no deeper than a millimetre (a pit of the generator's) and at
+#   RELIEF_GAIN of its height. Without it the only creases are the dark lines of the colour map.
 # Output:
 # - skin_game.png: the colour map. The head's bare skin is as light as the body's (one gain for the whole head, the
 #   face keeps its own hue); in the band over the cut the colour runs into the body's, so the rim has its colour;
 # - skin_orm.png: R = 1 (no baked occlusion), G = roughness, B = 0. The forehead, the nose and the lips shine, hair
 #   painted on the skin does not; at the rim the skin is as matte as the body, which the game lights without a
 #   highlight;
-# - skin_normal.png: tangent normals as the game reads them (X in alpha, Y in green): creases where the colour map
-#   has dark lines, and pores.
+# - skin_normal.png: tangent normals as the game reads them (X in alpha, Y in green): the model's relief (--relief),
+#   creases where the colour map has dark lines, and pores;
+# - skin_height.png (with --relief): the model's relief alone, 16 bit: (value - 32768) * 0.5 micrometres, for the
+#   bump of the Cycles check sheet (groom_render.py --height).
 import sys, os, json
 import numpy as np
 from PIL import Image
@@ -39,7 +46,7 @@ def opt(name, default):
     return default
 
 
-UNDER = np.array([float(v) for v in opt('--under', '58,40,26').split(',')])/255; SEED = int(opt('--seed', 1))
+UNDER = np.array([float(v) for v in opt('--under', '58,40,26').split(',')])/255; SEED = int(opt('--seed', 1)); RELIEF = opt('--relief', None)
 UV, GR, VJ, SKIN, TP, BODY, CUT, OUT = a[:8]
 rng = np.random.default_rng(SEED); os.makedirs(OUT, exist_ok=True)
 d = np.load(UV); g = np.load(GR); eye = np.array(json.load(open(VJ))['eye'])
@@ -51,6 +58,8 @@ step = lambda x, a, b: np.clip((x-a)/(b-a), 0, 1)**2*(3-2*np.clip((x-a)/(b-a), 0
 lin = lambda c: np.where(c > 0.04045, ((c+0.055)/1.055)**2.4, c/12.92)
 srgb = lambda c: np.where(c > 0.0031308, 1.055*np.maximum(c, 1e-9)**(1/2.4)-0.055, c*12.92)
 LUM = np.array([0.2126, 0.7152, 0.0722])
+RELIEF_GAIN = 0.5            # of the model's height in the normal map: the colour map carries the same wrinkles as dark lines (the
+                             # concept's light, baked in), and at full height the two together read as cracks
 BAND = 0.045                 # the band along the skin from the cut where the head's colour runs into the body's, metres
 ROUGH, ROUGH_BODY = 0.52, 0.90
 
@@ -185,7 +194,23 @@ pores = ndimage.gaussian_filter(n0, 0.11*MM)-ndimage.gaussian_filter(n0, 0.30*MM
 pores *= 0.000008/max(float(pores.std()), 1e-9)                              # 0.008 mm of relief at 0.1..0.3 mm: more of it glitters under a low sun
 keep = m*(1-np.clip(hair_b*1.5, 0, 1))*(1-eye_t)*(1-rim_s)
 keep = ndimage.gaussian_filter(keep.astype(np.float32), 0.4*MM)
-h = (crease+pores*np.where(lips_t, 0.3, 1.0))*keep
+relief = np.zeros((N, N), np.float32)
+if RELIEF:
+    # the model over the head's faces, laid into the map: every place finds its texel by where it is on the head now
+    sm = np.load(RELIEF); assert sm['tri'].max() < len(co), 'the relief is of another mesh'
+    pts = (co[sm['tri']]*sm['bary'][:, :, None]).sum(1); ys, xs = np.nonzero(m)
+    dd, kk = cKDTree(pos_t[ys, xs]).query(pts, workers=-1); ok = dd < 0.0008
+    acc = np.zeros((N, N), np.float32); cnt = np.zeros((N, N), np.float32)
+    np.add.at(acc, (ys[kk[ok]], xs[kk[ok]]), (sm['h']*sm['w'])[ok]); np.add.at(cnt, (ys[kk[ok]], xs[kk[ok]]), 1)
+    blur = lambda x, sg: ndimage.gaussian_filter(x, sg)
+    cb = blur(cnt, 0.5*MM); fine = blur(acc, 0.5*MM)/np.maximum(cb, 1e-3); known = np.clip(cb/0.1, 0, 1)*m
+    slow = blur(fine*known, 8*MM)/np.maximum(blur(known, 8*MM), 1e-3)
+    inner = ndimage.gaussian_filter(ndimage.binary_erosion(m, iterations=int(2*MM)).astype(np.float32), 0.7*MM)   # no step at the island's seams
+    relief = RELIEF_GAIN*np.clip((fine-slow)*known, -0.001, 0.001)*keep*inner*(1-ndimage.gaussian_filter(lips_t.astype(np.float32), 0.5*MM))
+    Image.fromarray(np.clip(32768+relief/5e-7, 0, 65535).astype(np.uint16)).save(os.path.join(OUT, 'skin_height.png'))
+    print('RELIEF %d places, in the map %.0f%%; height mean |.| %.2f mm, 95%% %.2f mm' % (
+        len(pts), 100*ok.mean(), 1000*float(np.abs(relief[m & (keep > 0.9)]).mean()), 1000*float(np.percentile(np.abs(relief[m & (keep > 0.9)]), 95))))
+h = (crease*(0.5 if RELIEF else 1.0)+pores*np.where(lips_t, 0.3, 1.0))*keep+relief
 tm = MM*1000                                                                 # texels in a metre
 du = (np.roll(h, -1, 1)-np.roll(h, 1, 1))*0.5*tm; dv = (np.roll(h, -1, 0)-np.roll(h, 1, 0))*0.5*tm
 nz = 1/np.sqrt(du*du+dv*dv+1); nx, ny = -du*nz, -dv*nz

@@ -1,9 +1,11 @@
 """The last pass of the wrap: the head's faces onto the bald model, its outline onto the concept's.
 
   python head_outline.py <reg dir> <params.json> <bald front.png> <bald profile.png> <out dir> [--ears ears.npz]
+      [--reg reg.npz]
 
 <reg dir>: mpfb.npz, groups.npz, views.json, ref.npz (the bald model, placed by place_ref.py), reg.npz and
-reg_log.json of reg_solve.py. The pictures are the whole bald views of the concept in the frame of params.json.
+reg_log.json of reg_solve.py; --reg: the head to start from when it is not <reg dir>/reg.npz (head_relief.py's).
+The pictures are the whole bald views of the concept in the frame of params.json.
 Writes <out dir>/reg.npz (the arrays of reg_solve.py with `co` moved), outline.json and outline.jpg.
 
 reg_solve.py lays the head's vertices on the bald model. Two things are left to the outline.
@@ -12,6 +14,8 @@ reg_solve.py lays the head's vertices on the bald model. Two things are left to 
    outline is that much smaller than the model's. Here the faces are laid on the model, not the vertices: points
    over every face are measured against the model along the face's normal, and the vertices move along their
    normals so that the faces lie on the model in the mean, weighed by area.
+   After head_relief.py (--reg) the faces already lie on the model and this part moves next to nothing (0.01 mm on
+   the second face); it stays for a head that comes straight from reg_solve.py.
 2. Outline. Where the model itself departs from the concept, the concept is right: it is what the user accepted.
    On the second face the underside of the model's chin is 3-5 mm higher than the concept's in the profile, and
    its lower lip 1-3 mm behind. The head's outline in each whole view is compared with the concept's: every pixel
@@ -37,11 +41,11 @@ sys.path.insert(0, HERE); sys.path.insert(0, os.path.join(HERE, '..', '..', '..'
 import ref_model
 from concept_view import Views
 
-EARS = ref_model.take(sys.argv, '--ears')
+EARS = ref_model.take(sys.argv, '--ears'); REG = ref_model.take(sys.argv, '--reg')
 D, PJ, OUT = sys.argv[1], sys.argv[2], sys.argv[5]; PIC = {'front': sys.argv[3], 'profile': sys.argv[4]}
 J = lambda n: os.path.join(D, n)
 P = json.load(open(PJ)); V = json.load(open(J('views.json'))); eye = np.array(V['eye']); W = Views(P, eye, 2)
-m = np.load(J('mpfb.npz')); g = np.load(J('groups.npz')); R = np.load(J('reg.npz')); ref = np.load(J('ref.npz'))
+m = np.load(J('mpfb.npz')); g = np.load(J('groups.npz')); R = np.load(REG or J('reg.npz')); ref = np.load(J('ref.npz'))
 names = json.load(open(J('reg_log.json')))['landmarks']
 co0 = R['co'].astype(np.float64); tris, edges = m['tris'], m['edges']; body = g['body'].astype(bool)
 free, follow, interior, wgt = R['free'], R['follow'], R['interior'], R['w']
