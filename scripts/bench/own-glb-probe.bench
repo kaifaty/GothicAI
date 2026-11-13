@@ -1,0 +1,27 @@
+# How the engine draws a card of an own GLB with an alpha mask: vertex normals, sides, the layer's `rotation`
+# (reports/engine/2026-11-13-grass/README.md, section 4). The set is built by scripts/content/own_glb_probe.py;
+# run with OPENGOTHIC_CONTENT=<that set>. The panels hang 2.7 m over the hero's spot of the `ledge` view of
+# landscape-rock-material.bench and face the first camera.
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+set time 12 0
+goto pos 35110 3829 429
+clear 3000
+streaming wait
+cam at 35110 4100 99 35110 4100 429
+wait 6000
+shot front
+wait 200
+cam at 35110 4100 759 35110 4100 429
+wait 4000
+shot back
+wait 200
+# a low sun from the side: the normals against a light that is not overhead
+set time 17 30
+cam at 35110 4100 99 35110 4100 429
+wait 6000
+shot front-eve
+wait 200
