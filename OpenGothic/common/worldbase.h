@@ -20,6 +20,10 @@ struct WorldBaseResult {
   std::string error;
   };
 
+void loadWorld(WorldData::Data& world, asset::WorldMesh& worldMesh, std::string_view name,
+               ChunkTable* chunks = nullptr);
+const std::vector<std::shared_ptr<asset::VirtualObject>>* loadVobBundle(std::string_view name);
+
 // Select a complete world against the selected base identity, without opening its ZEN.
 // Failure leaves outputs untouched.
 WorldBaseResult tryWorldData(WorldData::Data& world, asset::WorldMesh& worldMesh,

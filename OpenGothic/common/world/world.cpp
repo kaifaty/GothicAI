@@ -36,6 +36,7 @@
 #include "gothic.h"
 #include "focus.h"
 #include "resources.h"
+#include "worldbase.h"
 #include "frameprofile.h"
 #include "world/benchhooks.h"
 #include "loadprobe.h"
@@ -140,7 +141,7 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
   try {
     WorldData::Data world;
     asset::WorldMesh worldMesh;
-    Resources::loadWorld(world,worldMesh,wname,&chunks);
+    loadWorld(world,worldMesh,wname,&chunks);
     if(LoadProbe::enabled())
       LoadProbe::mark("world_read_total",LoadProbe::msSince(loadStarted));
     residency = ChunkResidency::create(chunks);

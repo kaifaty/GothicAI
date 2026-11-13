@@ -768,7 +768,7 @@ int main() {
     std::printf("NEWWORLD.ZEN: %zu bytes, CRC32 %08x, %zu triangles, %zu chunks; canonical round trip equal\n",
                 bytes.size(),source.crc32,zen.polygons.material_indices.size(),manifest.chunks.size());
     WorldData::Data loaded;
-    Resources::loadWorld(loaded,base,"NEWWORLD.ZEN");
+    loadWorld(loaded,base,"NEWWORLD.ZEN");
     require(base.name==zen.name && base.bbox.min==zen.bbox.min && base.bbox.max==zen.bbox.max,"base load must preserve source name and bounds");
     require(world.world_mesh.geometry.size()==rawPolygons && world.world_mesh.polygon_vertex_indices==rawVertices &&
             world.world_mesh.polygon_feature_indices==rawFeatures,"mesh conversion must preserve raw BSP geometry");
