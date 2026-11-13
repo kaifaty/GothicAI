@@ -22,11 +22,13 @@ const float ProjectionLimitCos  = 0.93969262;
 // of the strips the original laid with its v from 0 at the top edge of a wall to 1 at its foot, where its artist
 // painted grass. Solid from an edge to the first share of v, tufts to the second: there a pixel is grass where the
 // layer's height (the blue of its ORM; grass has no metal) stands above a threshold rising from 0 to 1 across the
-// zone. The zone's depth wanders along the wall by world position, so its lower edge is no line from afar either,
-// where the height is averaged by the mips. A pixel is grass or rock: colour, normal and ORM all come from one.
-const float FringeWander   = 0.35;  // the shares of a band change by up to this part of themselves...
-const float FringeWanderCm = 900.0; // ...over this length of the world, plus half as much over a quarter of it
-const float FringeDetail   = 0.20;
+// zone. The zone's depth wanders along the wall by world position, so its lower edge is no line from afar either; the
+// height is ranked per mip (scripts/content/landscape_fringe.py), so the share of grass at a threshold holds at any
+// distance. A pixel is grass or rock: colour, normal and ORM all come from one.
+// The record's shares are where the original's grass ends: the wander only narrows a band, by up to this part of
+// itself, over FringeWanderCm of the world with a quarter of it at a quarter of the length; never past the record
+const float FringeWander   = 0.45;
+const float FringeWanderCm = 900.0;
 
 struct Projection {
   bool  on;
@@ -134,7 +136,8 @@ void projectionFringe(inout Projection p) {
   // a strip repeats down its v: each repeat has its own edges
   const float v = fract(shInp.uv.y);
   const vec2  x = shInp.pos.xz/FringeWanderCm;
-  const float m = 1.0 + FringeWander*fringeNoise(x) + FringeDetail*fringeNoise(x*4.0 + 17.0);
+  const float n = 0.8*fringeNoise(x) + 0.2*fringeNoise(x*4.0 + 17.0);
+  const float m = 1.0 - FringeWander*(0.5 + 0.5*n);
   const vec2  top = vec2(bucket[bucketId].fringeTop0,    bucket[bucketId].fringeTop1)*m;
   const vec2  bot = vec2(bucket[bucketId].fringeBottom0, bucket[bucketId].fringeBottom1)*m;
   // across the tufts 0..1 from the solid band, below 0 in it
