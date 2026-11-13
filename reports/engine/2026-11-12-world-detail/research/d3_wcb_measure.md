@@ -313,34 +313,32 @@ Static collision packed the whole stitched landscape (`PackedMesh PK_Physic` in 
 
 ### Machine and commands
 
-Ryzen as above; the branch's `content-convert` and `gothic-worldcollision-chunks-contract` from the check build (`RelWithDebInfo`), branch `codex/landscape-d3-collision`, `scripts/gq` jobs of class `quick` (4 threads, 12 GB) in `~/gothic-ai/landscape-d3-collision/`, the same base `c885037e…d09e`, warm page cache. Load average 1.5–3.4 for `time-world`; the second `--time` run had a build of 12 threads beside it (load 11–15).
+Ryzen as above; the branch's `content-convert` from the check build (`RelWithDebInfo`), branch `codex/landscape-d3-collision`, built with the game: then `time-world` also packs both inputs with the game's `PackedMesh PK_Physic` (the converter built alone skips those two rows, the package needs Tempest's graphics library). One `scripts/gq` job of class `quick` (4 threads, 12 GB) in `~/gothic-ai/landscape-d3-collision/`, the same base `c885037e…d09e`, warm page cache, load average 2.2–3.1.
 
 ```
-content-convert stress-base $B $T/x1  --subdivide 0 --meshes 0            # 8.3 s, peak RSS 0.29 GB
-content-convert stress-base $B $T/w16 --subdivide 2 --meshes 0            # 41.5 s, peak RSS 4.16 GB
-content-convert time-world $T/<set>/worlds/NEWWORLD                       # new row: the collision mesh
-gothic-worldcollision-chunks-contract --time $T/<set>/worlds/NEWWORLD     # the builder and PK_Physic of both inputs
+content-convert stress-base $B $T/x1  --subdivide 0 --meshes 0            # 8.3 s, peak RSS 0.30 GB
+content-convert stress-base $B $T/w16 --subdivide 2 --meshes 0            # 39.1 s, peak RSS 4.16 GB
+content-convert time-world $T/<set>/worlds/NEWWORLD                       # new rows: the collision mesh, PK_Physic of both
 ```
 
-`content-convert` links no graphics code, so `PackedMesh PK_Physic` is timed by the contract's `--time` mode, which loads the world as the game does (`readWorldChunks`, `extract`) and packs both inputs. The collision mesh of `NEWWORLD`: ×1 — 472 222 triangles (1 280 taken out as cloth), 260 696 vertices, 1 400 materials, 804 `PK_Physic` sub meshes; ×16 — 7 556 000 triangles (20 032 as cloth), 3 505 786 vertices.
+The collision mesh of `NEWWORLD`: ×1 — 472 222 triangles (1 280 taken out as cloth), 260 696 vertices, 1 400 materials, 804 `PK_Physic` sub meshes; ×16 — 7 556 000 triangles (20 032 as cloth), 3 505 786 vertices.
 
 ### Wall time, `NEWWORLD`
 
-Five runs each, milliseconds: median, then min–max. «Read + build» is the whole builder: world.json, every `.wcb` read and checked against the index and its GLB's length, the bundle read and checked, the placing and the removal of the cloth triangles.
+`time-world`, five runs each, milliseconds: median, then min–max. «Read + build» is the whole builder: world.json, every `.wcb` read and checked against the index and its GLB's length, the bundle read and checked, the placing and the removal of the cloth triangles. The two packages are built each alone, the order turning every run, from the landscape after the bundle and from the collision mesh; `time-world` stops unless both have the same digest of vertices, indices and sub meshes.
 
 | Stage | ×1 | ×16 |
 |---|---:|---:|
-| `time-world`: collision mesh from chunk records (read + build) | 23.6 (23.6–24.8) | 390.6 (383.0–392.2) |
-| `--time`: the same builder | 24.8 (23.6–28.4) | 249.4 (248.2–266.1) |
-| `--time`: `PackedMesh PK_Physic` of the stitched landscape | 28.0 (27.5–28.3) | 519.0 (517.4–526.0) |
-| `--time`: `PackedMesh PK_Physic` of the collision mesh | 28.2 (27.0–28.2) | 525.1 (509.8–527.3) |
-| for comparison: read the `.wcb` files and the index | 8.5 (8.4–8.9) | 102.1 (96.8–104.7) |
-| for comparison: validate them | 7.0 (7.0–7.1) | 28.5 (25.7–31.2) |
-| for comparison: assemble the whole mesh and table | 26.4 (26.1–27.7) | 464.9 (462.0–486.3) |
-| for comparison: apply the cloth bundle | 9.9 (9.9–10.2) | 229.2 (219.4–232.3) |
-| for comparison: `readWorldChunks` total | 508.5 (506.1–540.2) | 7817.2 (7714.6–8250.4) |
+| collision mesh from chunk records (read + build) | 25.0 (24.2–25.5) | 359.7 (324.4–395.2) |
+| `PackedMesh PK_Physic` of the stitched landscape | 35.1 (33.2–40.7) | 536.1 (521.0–547.3) |
+| `PackedMesh PK_Physic` of the collision mesh | 34.7 (33.1–35.3) | 528.1 (524.9–557.7) |
+| for comparison: read the `.wcb` files and the index | 8.3 (8.2–8.6) | 72.0 (68.6–105.3) |
+| for comparison: validate them | 7.2 (7.1–7.4) | 27.0 (24.8–28.7) |
+| for comparison: assemble the whole mesh and table | 26.2 (25.6–28.4) | 444.5 (428.8–464.2) |
+| for comparison: apply the cloth bundle | 10.1 (9.9–10.2) | 236.6 (218.0–244.3) |
+| for comparison: `readWorldChunks` total | 511.5 (506.2–554.5) | 7796.0 (7695.6–8016.1) |
 
-`PK_Physic` does the same work on both inputs (within 1 %). In a first `--time` run both packages were alive at once and the second one, always the collision mesh, came out 7 % (×1) and 15 % (×16) slower; packed one at a time in alternating order they are equal. The builder at ×16 takes 390 ms inside `time-world` and 249 ms in the contract's loop; in `time-world` it runs right after each run's stitched mesh and its copies, so its 513 MB of `.wcb` bytes and its output arrays land on fresh pages, while the contract's loop repeats the same allocations — probably the difference, not measured further. While it runs the builder holds every `.wcb` of the world (44.5 MB at ×1, 513 MB at ×16) and its output (about 11 MB and 160 MB). Peak RSS of the whole runs (`/usr/bin/time -v`; the tools print none): `time-world` 0.29 and 3.73 GB, `--time` 0.23 and 3.37 GB.
+`PK_Physic` does the same work on both inputs (within 1.5 %). In a first try both packages were alive at once and the second one, always the collision mesh, came out 7 % (×1) and 15 % (×16) slower; packed one at a time they are equal. The builder's ×16 runs spread over 324–395 ms: after each run's stitched mesh and its copies its 513 MB of `.wcb` bytes and its output arrays land on fresh pages, and a loop that repeated only the builder (an earlier test mode, removed in review) measured 249 ms — probably the difference, not measured further. While it runs the builder holds every `.wcb` of the world (44.5 MB at ×1, 513 MB at ×16) and its output (about 11 MB and 160 MB). Peak RSS of the whole `time-world` runs (`/usr/bin/time -v`; the tool prints none): 0.33 and 3.74 GB.
 
 The Near summary of `time-world` now counts the ring's triangles before the bundle changes the table: 63 337 at ×1 (task 4's line printed 63 333) and 1 013 458 at ×16.
 
