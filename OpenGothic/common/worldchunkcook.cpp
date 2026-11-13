@@ -50,6 +50,12 @@ fs::path cookedChunkPath(const fs::path& dir, const fs::path& overrideDir, const
 
 CookedWorldStats cookWorldChunks(const fs::path& dir, const fs::path& overrideDir, const fs::path& outDir) {
   const auto manifest = readWorldChunkManifest(dir);
+  // Each GLB's length and time before the read: the bytes hashed below must be the ones the mesh came from.
+  std::vector<std::pair<uintmax_t,fs::file_time_type>> inputs;
+  for(const auto& cell:manifest.cells) {
+    const auto glb = chunkGlbPath(dir,overrideDir,cell.drawFile());
+    inputs.emplace_back(fs::file_size(glb),fs::last_write_time(glb));
+    }
   ChunkTable table;
   WorldChunkTrace trace;
   const auto mesh = readWorldChunks(dir,overrideDir,&table,&trace);
@@ -121,6 +127,9 @@ CookedWorldStats cookWorldChunks(const fs::path& dir, const fs::path& overrideDi
 
     const auto glb = chunkGlbPath(dir,overrideDir,entry.file);
     const auto bytes = gothicglb::readFile(glb);
+    if(bytes.size()!=inputs[cell].first || fs::file_size(glb)!=inputs[cell].first ||
+       fs::last_write_time(glb)!=inputs[cell].second)
+      fail(glb.string()+" changed while it was cooked");
     auto& h = data.header;
     h.cell       = entry.id;
     h.min        = entry.min;

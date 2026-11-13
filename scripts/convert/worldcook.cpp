@@ -19,11 +19,12 @@ namespace WorldCook {
 
 const char* const usage =
   "       content-convert cook-world|verify-cooked-world <world dir> [--content <override world dir>] [--out <dir>]\n"
-  "       content-convert time-world <world dir> [--content <dir>] [--out <dir>] [--runs N]\n";
+  "       content-convert time-world <world dir> [--content <dir>] [--out <dir>]\n";
 
 namespace {
 
 using Clock = std::chrono::steady_clock;
+constexpr int runs = 5;
 
 double ms(Clock::time_point a, Clock::time_point b) {
   return std::chrono::duration<double,std::milli>(b-a).count();
@@ -31,10 +32,9 @@ double ms(Clock::time_point a, Clock::time_point b) {
 
 struct Options {
   fs::path world, content, out;
-  int      runs = 5;
   };
 
-std::optional<Options> parse(const std::vector<std::string>& args, bool timing) {
+std::optional<Options> parse(const std::vector<std::string>& args) {
   if(args.size()<2)
     return std::nullopt;
   Options o;
@@ -46,8 +46,6 @@ std::optional<Options> parse(const std::vector<std::string>& args, bool timing) 
       o.content = args[i+1];
     else if(args[i]=="--out")
       o.out = args[i+1];
-    else if(timing && args[i]=="--runs" && args[i+1].size()==1 && args[i+1][0]>='1' && args[i+1][0]<='9')
-      o.runs = args[i+1][0]-'0';
     else
       return std::nullopt;
     }
@@ -152,7 +150,7 @@ int timeWorld(const Options& o) {
     };
   ChunkTable table;
   size_t triangles = 0;
-  for(int run=0;run<o.runs;++run) {
+  for(int run=0;run<runs;++run) {
     auto t0 = Clock::now();
     uint64_t read = 0;
     for(const auto& path:glbs)
@@ -238,7 +236,7 @@ int timeWorld(const Options& o) {
     }
   else
     std::printf("no start point in %s\n",o.world.string().c_str());
-  std::printf("wall ms over %d runs, warm page cache:\n| %-48s | %10s | %10s | %10s |\n|---|---:|---:|---:|\n",o.runs,
+  std::printf("wall ms over %d runs, warm page cache:\n| %-48s | %10s | %10s | %10s |\n|---|---:|---:|---:|\n",runs,
               "stage","median","min","max");
   for(const auto& s:series)
     if(!s.values.empty())
@@ -258,7 +256,7 @@ void roundTrip(const fs::path& dir, const fs::path& overrideDir, const fs::path&
 std::optional<int> run(const std::vector<std::string>& args) {
   if(args.empty() || (args[0]!="cook-world" && args[0]!="verify-cooked-world" && args[0]!="time-world"))
     return std::nullopt;
-  const auto options = parse(args,args[0]=="time-world");
+  const auto options = parse(args);
   if(!options) {
     std::cerr << "usage:\n" << usage;
     return 2;

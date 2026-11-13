@@ -302,6 +302,29 @@ fs::path writeStripOverride(const fs::path& over, const asset::WorldMesh& base, 
   return over;
   }
 
+// The GLB order of each cooked triangle, against the base triangle with the
+// same corner ids (its index is its order); added counts those without one.
+void checkOrders(const CookedChunk& chunk, const asset::WorldMesh& base, size_t added, const std::string& label) {
+  size_t without=0;
+  const auto& vi=base.polygons.vertex_indices;
+  for(const auto& t:chunk.triangles()) {
+    const std::array<uint32_t,3> ids={chunk.positions()[t.vertex[0]].id,chunk.positions()[t.vertex[1]].id,
+                                      chunk.positions()[t.vertex[2]].id};
+    size_t order=0;
+    while(order<base.polygons.material_indices.size() &&
+          !(vi[order*3]==ids[0] && vi[order*3+1]==ids[1] && vi[order*3+2]==ids[2]))
+      ++order;
+    if(order==base.polygons.material_indices.size()) {
+      require(t.order==wcb::Added,label+": a triangle an edit added must carry the added order");
+      ++without;
+      continue;
+      }
+    require(t.order==order,label+": a source triangle must carry its order "+std::to_string(order)+", got "+
+            std::to_string(t.order));
+    }
+  require(without==added,label+": "+std::to_string(without)+" added triangles, expected "+std::to_string(added));
+  }
+
 // Fields in which two cooked chunks of one cell differ.
 std::set<std::string> differingFields(const CookedChunk& a, const CookedChunk& b) {
   std::set<std::string> out;
@@ -377,6 +400,9 @@ void editedOverride(const fs::path& root) {
           "the edited override must split the border vertex, add one vertex, one feature, one material and one net triangle");
   cookedRoundTrip(dir,edit,root/"strip-edit-cooked","strip, override that moves an inner vertex and splits a triangle");
   cookedRoundTrip(dir,border,root/"strip-border-cooked","strip, override that also moves a border vertex");
+  for(const auto* cell:{"0_0","1_0","2_0"})
+    checkOrders(CookedChunk::read(plain/"chunks"/(std::string(cell)+".wcb")),base,0,std::string("strip ")+cell);
+  checkOrders(CookedChunk::read(root/"strip-edit-cooked/chunks/1_0.wcb"),base,2,"edited 1_0");
 
   // Without --out the cooked chunks lie beside the GLB each cell is read from.
   const auto beside=root/"strip-beside";
@@ -441,7 +467,7 @@ void rejections(const fs::path& root) {
     };
   (void)CookedChunk::open(good,"fixture.wcb");
   constexpr size_t directory=wcb::HeaderSize, entry=32;
-  constexpr size_t positions=directory, triangles=directory+2*entry;
+  constexpr size_t positions=directory, triangles=directory+2*entry, strings=directory+4*entry;
 
   auto bytes=good;
   bytes.pop_back();
@@ -458,11 +484,21 @@ void rejections(const fs::path& root) {
   put64(bytes,triangles+16,(good.size()+31)/16*16);
   expectThrows(open(bytes),{"triangles","past the end of the file"},"a section past the end of the file");
   bytes=good;
+  put32(bytes,strings+8,get32(good,strings+8)+1); // the last section: starts inside the file, ends one byte past it
+  put64(bytes,strings+24,get32(good,strings+24)+1ull);
+  expectThrows(open(bytes),{"strings","past the end of the file"},"a section that ends past the end of the file");
+  bytes=good;
   put32(bytes,positions+8,get32(good,positions+8)+1);
   expectThrows(open(bytes),{"positions","records of 16 bytes do not fill"},"a count that disagrees with its section");
   bytes=good;
   put32(bytes,32,get32(good,32)+1);
   expectThrows(open(bytes),{"positions","the header counts"},"a header count that disagrees with its section");
+
+  // The stored hash is SHA-256 itself (FIPS 180-4 vector "abc"), not only a function of the bytes.
+  const std::string abc="abc";
+  const std::array<uint8_t,32> abcSha={0xba,0x78,0x16,0xbf,0x8f,0x01,0xcf,0xea,0x41,0x41,0x40,0xde,0x5d,0xae,0x22,0x23,
+                                       0xb0,0x03,0x61,0xa3,0x96,0x17,0x7a,0x9c,0xb4,0x10,0xff,0x61,0xf2,0x00,0x15,0xad};
+  require(sha256Bytes({reinterpret_cast<const uint8_t*>(abc.data()),abc.size()})==abcSha,"sha256Bytes must be SHA-256");
 
   // A GLB that changed after cooking: by length (the cheap check) and, same length, by SHA-256.
   const auto glb=dir/file;
@@ -488,8 +524,8 @@ void rejections(const fs::path& root) {
           "verify with hashes must reject a GLB with other bytes");
   gothicglb::writeFile(glb,original.data(),original.size());
   require(verifyCookedWorld(dir,{},{},true).empty(),"the restored GLB matches its cooked chunk again");
-  std::puts("Rejections: truncated, short, wrong magic, version, section past the end, two count mismatches, "
-            "GLB of another length and of another SHA-256");
+  std::puts("Rejections: truncated, short, wrong magic, version, a section starting and one ending past the end, "
+            "two count mismatches, GLB of another length and of another SHA-256; SHA-256 vector");
   }
 
 // ---- manifest cases carried over from task 1 ----

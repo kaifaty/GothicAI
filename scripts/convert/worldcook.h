@@ -3,7 +3,7 @@
 // Cooked binary chunks (.wcb, OpenGothic/common/worldchunkbinary.h) from the converter:
 //   cook-world <world dir> [--content <override world dir>] [--out <dir>]
 //   verify-cooked-world <world dir> [--content <dir>] [--out <dir>]
-//   time-world <world dir> [--content <dir>] [--out <dir>] [--runs N]
+//   time-world <world dir> [--content <dir>] [--out <dir>]
 // Nothing in the game reads .wcb yet (docs/landscape-plan.md, step Д3).
 
 #include <filesystem>

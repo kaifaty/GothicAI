@@ -17,8 +17,8 @@ content-convert verify-stress-base $B $T/w16                        # passed, 49
 content-convert cook-world $B/worlds/<W> --out $T/x1-cooked/<W>     # the base stays untouched
 content-convert verify-cooked-world $B/worlds/<W> --out $T/x1-cooked/<W>   # passed for all four worlds
 content-convert verify-cooked-world $T/w16/worlds/<W>                     # passed for all four worlds
-content-convert time-world $B/worlds/NEWWORLD --out $T/x1-cooked/NEWWORLD --runs 5
-content-convert time-world $T/w16/worlds/NEWWORLD --runs 5
+content-convert time-world $B/worlds/NEWWORLD --out $T/x1-cooked/NEWWORLD
+content-convert time-world $T/w16/worlds/NEWWORLD
 ```
 
 `verify-cooked-world` builds the world mesh and chunk table from the `.wcb` files alone (`assembleCookedWorld`). It compares them field by field with `readWorldChunks` and checks every GLB against its chunk's length and SHA-256. On ×16 `NEWWORLD` this takes 10.1 s with a peak RSS of 3.4 GB.

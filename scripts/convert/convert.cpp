@@ -57,8 +57,8 @@
 //       A copy of a ready base with every world triangle split in four N times (stressbase.h).
 //   content-convert cook-world|verify-cooked-world <world dir> [--content <dir>] [--out <dir>]
 //       Cooked binary chunks (.wcb) beside the GLBs, and their comparison with readWorldChunks (worldcook.h).
-//   content-convert time-world <world dir> [--content <dir>] [--out <dir>] [--runs N]
-//       Wall time of the stages of the GLB and the cooked read.
+//   content-convert time-world <world dir> [--content <dir>] [--out <dir>]
+//       Wall time of the stages (five runs) of the GLB and the cooked read.
 //   content-convert --self-test
 //       Round trips of synthetic meshes, world data and presets; no game files.
 //
