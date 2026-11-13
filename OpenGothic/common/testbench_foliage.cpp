@@ -37,7 +37,7 @@ bool foliageCommand(const std::vector<std::string>& a,World& w) {
     const auto v = WorldWind::sample(uint64_t(tick),uint64_t(period),true,scale);
     return std::sqrt(v.x*v.x + v.z*v.z);
     };
-  event("foliage_wait","\"kind\":"+jsonStr(a[1])+",\"lead_ms\":"+std::to_string(uint64_t(lead))+
+  event("foliage_wait","\"what\":"+jsonStr(a[1])+",\"lead_ms\":"+std::to_string(uint64_t(lead))+
         ",\"wait_ms\":"+std::to_string(wait)+",\"tick\":"+std::to_string(uint64_t(now))+
         ",\"at_tick\":"+std::to_string(uint64_t(peak))+",\"cycle_ms\":"+std::to_string(uint64_t(cycle))+
         ",\"wind_scale\":"+ragdollNumber(scale)+",\"speed_now_ms\":"+ragdollNumber(speed(now))+
