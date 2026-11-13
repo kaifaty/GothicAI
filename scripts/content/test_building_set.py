@@ -387,6 +387,33 @@ def test_compose_and_enable_carry_a_vob_layer(tmp_path, monkeypatch):
         building_set.compose('duplicate-tree', ['lamps-1', 'lamps-2'])
 
 
+def test_compose_takes_a_composed_set_as_a_part_and_keeps_its_parts(tmp_path, monkeypatch):
+    monkeypatch.setenv('GOTHIC_AI_DATA', str(tmp_path))
+    staged(tmp_path, 'roofs-1', {'ROOF_01.TGA': 'roofs-1-roof-01'})
+    layer = tmp_path / 'content-staging/life-1/worlds/NEWWORLD/vobs.d/harbour-life.json'
+    layer.parent.mkdir(parents=True)
+    layer.write_text('{"format": 1, "add": []}\n')
+    building_set.compose('working-1', ['roofs-1', 'life-1'])
+    staged(tmp_path, 'torch-1', {'OWN_TORCH_FLAME.TGA': 'own-torch-flame'})
+    result = building_set.compose('working-2', ['working-1', 'torch-1'])
+    assert result['parts'] == {'working-1': 2, 'torch-1': 1}
+    out = tmp_path / 'content-staging/working-2'
+    assert json.loads((out / 'composition.json').read_text())['parts'] == {
+        'roofs-1': ['ROOF_01.TGA'], 'life-1': ['worlds/NEWWORLD/vobs.d/harbour-life.json'],
+        'torch-1': ['OWN_TORCH_FLAME.TGA']}
+    assert (out / 'materials/roofs-1-roof-01/orm.dds').read_bytes() == b'roofs-1/roofs-1-roof-01/orm'
+    assert (out / 'worlds/NEWWORLD/vobs.d/harbour-life.json').read_text() == layer.read_text()
+    # a part already inside the composed set cannot join once more
+    staged(tmp_path, 'smoke-1', {'OWN_SMOKE.TGA': 'own-smoke'})
+    (tmp_path / 'content-staging/life-1/worlds/NEWWORLD/vobs.d/harbour-life.json').rename(layer.with_name('other.json'))
+    with pytest.raises(ValueError, match='life-1: a part twice'):
+        building_set.compose('working-3', ['working-2', 'smoke-1', 'life-1'])
+    # a set changed after it was composed is refused
+    (out / 'materials/materials.json').write_text(json.dumps({'ROOF_01.TGA': {'albedo': 'roofs-1-roof-01/albedo.dds'}}))
+    with pytest.raises(ValueError, match='working-2: composition.json does not list what the set holds'):
+        building_set.compose('working-4', ['working-2', 'smoke-1'])
+
+
 def test_crop_band_drops_grey_margins():
     from PIL import Image
     canvas = Image.new('RGB', (300, 200), (200, 200, 200))

@@ -30,7 +30,8 @@ with a staging set as base, it is that set with only these entries replaced.
 `compose SET PART...` joins the sets of several assets into one staging set for the game:
 each texture belongs to exactly one part, so a shared texture lives in its own asset. Meshes of a
 part (a prop's GLB with its `.convex-parts` and `.fracture` caches and its `.debris.glb`), particle descriptions
-(`particles.d/*.json`) and vob trees (`vobtrees.d/*.json`) come along.
+(`particles.d/*.json`) and vob trees (`vobtrees.d/*.json`) come along. A part may be a composed set: the working
+set plus one new part keeps the names of the working set's parts.
 
 `enable SET` copies a staging set into the working content `~/.local/share/gothic-ai/content`, which
 the game reads by default; only on the user's word (gate `enable`). A movable table or cupboard GLB
@@ -370,7 +371,9 @@ def compose(name: str, parts: list[str]) -> dict:
     world chunk edits (`worlds/<WORLD>/chunks/*.glb`, like the harbour stairs) and vob layer files
     (`worlds/<WORLD>/vobs.d/*.json`, like the harbour's traces of life) come along too; such a part may have no
     materials at all. Particle descriptions (`particles.d/*.json`) and vob trees (`vobtrees.d/*.json`)
-    come along as well; file and effect names must belong to one part only."""
+    come along as well; file and effect names must belong to one part only. A part may be a composed set
+    itself: `compose working-16 working-15 torch-fire-1` is the working set with one more part, its files byte
+    for byte with their caches, and `composition.json` lists the parts of `working-15` by their own names."""
     if len(parts) < 2 or len(set(parts)) != len(parts):
         raise ValueError('compose needs two or more distinct parts')
     staging = remaster.data_root() / 'content-staging'
@@ -454,11 +457,20 @@ def compose(name: str, parts: list[str]) -> dict:
     (output / 'materials/materials.json').write_text(json.dumps(index, indent=2) + '\n')
     if mesh_index:
         (output / 'meshes/meshes.json').write_text(json.dumps(mesh_index, indent=2) + '\n')
-    composition = dict(set=name, date=datetime.now(timezone.utc).strftime('%Y-%m-%d'),
-                       parts={part: sorted(part_index) + sorted(meshes[part]) + [f'worlds/{c.as_posix()}' for c in chunks[part]]
-                                    + [f'particles.d/{f}' for f in particles[part]]
-                                    + [f'vobtrees.d/{f}' for f in trees[part]]
-                              for part, part_index in indexes.items()},
+    # A part that is a composed set itself (the working set, joined with one new part) keeps the names of its parts
+    record = {}
+    for part, part_index in indexes.items():
+        listing = (sorted(part_index) + sorted(meshes[part]) + [f'worlds/{c.as_posix()}' for c in chunks[part]]
+                   + [f'particles.d/{f}' for f in particles[part]] + [f'vobtrees.d/{f}' for f in trees[part]])
+        inner = staging / part / 'composition.json'
+        entries = json.loads(inner.read_text())['parts'] if inner.is_file() else {part: listing}
+        if sorted(entry for names in entries.values() for entry in names) != sorted(listing):
+            raise ValueError(f'{part}: composition.json does not list what the set holds')
+        for inner_part, names in entries.items():
+            if inner_part in record:
+                raise ValueError(f'{inner_part}: a part twice')
+            record[inner_part] = names
+    composition = dict(set=name, date=datetime.now(timezone.utc).strftime('%Y-%m-%d'), parts=record,
                        dds_sha256=digests['materials'])
     if mesh_index:
         composition['glb_sha256'] = digests['meshes']
