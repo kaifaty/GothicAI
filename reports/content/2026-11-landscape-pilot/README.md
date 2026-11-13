@@ -2,7 +2,7 @@
 
 Шаг В1 [плана ландшафта](../../../docs/landscape-plan.md). Здесь записано, какой участок переделываем первым, что в нём от замысла оригинала и что от железа 2002 года, что обязано сохраниться и по чему пилот будет принят.
 
-**Состояние (2026-11-13):** участок выбран пользователем; список сохранения и критерии приёмки пользователь подтвердил без правок (2026-11-13) — ворота шага В1 пройдены, дальше шаг В2 ([заметка о приёме](b2-geometry.md)). Открыты два вопроса: эталон скал и разрешение скачать эталонные фото; до ответа фото не собраны, и шаг В2 идёт по числам исследования.
+**Состояние (2026-11-13):** участок выбран пользователем; список сохранения и критерии приёмки пользователь подтвердил без правок (2026-11-13) — ворота шага В1 пройдены, дальше шаг В2 ([заметка о приёме](b2-geometry.md)). Эталонные фото собраны 2026-11-13 с разрешения пользователя (раздел «Эталон из жизни»). Открыт один вопрос: годится ли песчаник Эльбских гор как эталон скал.
 
 ## Участок
 
@@ -159,7 +159,31 @@ TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh landscape-pilot
 
 Числа из [исследования](../../engine/2026-11-12-world-detail/README.md), ограничители, а не цели: осыпь 35–40°, лесной склон до 41°, свет под сомкнутым пологом 1–3 % дневного.
 
-**Фото не собраны.** План: около десяти снимков с Wikimedia Commons под CC0 или CC BY, с авторами в подписи, вне git. Нужно разрешение пользователя на скачивание.
+**Фото собраны 2026-11-13** (пользователь разрешил скачивание): 11 снимков Саксонской Швейцарии с Wikimedia Commons под CC BY и CC0, шириной 1920 пикселей. Лежат вне git, в `~/.local/share/gothic-ai/reference/landscape-pilot/`, рядом `credits.json` с авторами и лицензиями.
+
+| Файл | Снимок | Автор | Лицензия | Что на нём для работы |
+|---|---|---|---|---|
+| `01.jpg` | [Nationalpark Sächsische Schweiz Gamrig lub 2024-01-21 img01](https://commons.wikimedia.org/wiki/File:Nationalpark_S%C3%A4chsische_Schweiz_Gamrig_lub_2024-01-21_img01.jpg) | Lukas Beck | CC BY 4.0 | грань скальной башни вблизи: выветренная поверхность, вертикальные трещины, мох и лишайник пятнами |
+| `02.jpg` | [Nationalpark Sächsische Schweiz Rotkehlchenstiege 2024-03-16 img01](https://commons.wikimedia.org/wiki/File:Nationalpark_S%C3%A4chsische_Schweiz_Rotkehlchenstiege_2024-03-16_img01.jpg) | Lukas Beck | CC BY 4.0 | подножие стены: подрезанный низ с нависанием, упавшие окатанные глыбы 0,5–1,5 м, песок, корни, листва |
+| `03.jpg` | [Rosenthal-Bielatal lub 2024-07-20 img02 Bielatal](https://commons.wikimedia.org/wiki/File:Rosenthal-Bielatal_lub_2024-07-20_img02_Bielatal.jpg) | Lukas Beck | CC BY 4.0 | кромка плато издали: короткие стены над сплошным ельником |
+| `04.jpg` | [Nationalpark Sächsische Schweiz Affensteine lub 2024-09-21](https://commons.wikimedia.org/wiki/File:Nationalpark_S%C3%A4chsische_Schweiz_Affensteine_lub_2024-09-21.jpg) | Lukas Beck | CC BY 4.0 | слоистая стена: тонкая горизонтальная слоистость, скруглённый верх, деревья на кромке и полках |
+| `05.jpg` | [2010 Sächsische Schweiz 213 Neuer Alter Wildenstein Bloßstock Affensteine](https://commons.wikimedia.org/wiki/File:2010_S%C3%A4chsische_Schweiz_213_Neuer_Alter_Wildenstein_Blo%C3%9Fstock_Affensteine.jpg) | Steffen 962 | CC0 | общий вид: столовые массивы над лесом |
+| `08.jpg` | [Nationalpark Sächsische Schweiz Tunnelweg lub 2024-10-26 img01](https://commons.wikimedia.org/wiki/File:Nationalpark_S%C3%A4chsische_Schweiz_Tunnelweg_lub_2024-10-26_img01.jpg) | Lukas Beck | CC BY 4.0 | песчаная тропа в вереске: светлая полоса 0,6–1 м, край неровный, трава нависает |
+| `09.jpg` | [Nationalpark Sächsische Schweiz Königsweg lub 2023-10-23 img05](https://commons.wikimedia.org/wiki/File:Nationalpark_S%C3%A4chsische_Schweiz_K%C3%B6nigsweg_lub_2023-10-23_img05.jpg) | Lukas Beck | CC BY 4.0 | лесная тропа: пучки травы, замшелый валун, корни и камни в колее |
+| `10.jpg` | [Nationalpark Sächsische Schweiz Zeughausstraße lub 2025-03-21 img04](https://commons.wikimedia.org/wiki/File:Nationalpark_S%C3%A4chsische_Schweiz_Zeughausstra%C3%9Fe_lub_2025-03-21_img04.jpg) | Lukas Beck | CC BY 4.0 | ельник с выходом слоистой скалы: голые стволы, хвойная подстилка, мох на камне, пятна света |
+| `11.jpg` | [Cottaer Busch (Landkreis Sächische Schweiz-Osterzgebirge, Sachsen) 07](https://commons.wikimedia.org/wiki/File:Cottaer_Busch_%28Landkreis_S%C3%A4chische_Schweiz-Osterzgebirge%2C_Sachsen%29_07.jpg) | Singlespeedfahrer | CC0 | лесной склон: листовая подстилка, замшелые камни, валежник |
+| `12.jpg` | [Cottaer Busch (Landkreis Sächische Schweiz-Osterzgebirge, Sachsen) 02](https://commons.wikimedia.org/wiki/File:Cottaer_Busch_%28Landkreis_S%C3%A4chische_Schweiz-Osterzgebirge%2C_Sachsen%29_02.jpg) | Singlespeedfahrer | CC0 | лесная дорога с колеями: две тёмные мокрые колеи, полоса травы посередине, моховой бортик |
+| `13.jpg` | [Polenztal - panoramio](https://commons.wikimedia.org/wiki/File:Polenztal_-_panoramio.jpg) | qwesy qwesy | CC BY 3.0 | узкая долина с речкой: лес до воды, стены за деревьями |
+
+Что снимки меняют в гипотезе (оценки на глаз, не замеры):
+
+- **Подножие стены — не осыпь.** Песчаник выветривается в песок и окатанные глыбы: у стены лежит песок с листвой и несколько крупных скруглённых блоков, а низ стены подрезан и нависает (`02`). Откос из щебня 35–40° из исследования сюда не подходит; он остаётся ограничителем для земляных склонов.
+- **Слоистость тонкая, формы крупные.** Линии слоёв идут через 0,3–1 м, а читаемые уступы и ниши — через несколько метров; верх стены скруглён куполом, а не срезан ребром (`01`, `04`). Тонкие линии — дело материала, крупные уступы и скруглённые кромки — геометрии.
+- **Колеи читаются цветом и влагой.** Две тёмные мокрые колеи, трава посередине, моховой бортик; глубина на глаз 5–15 см (`12`). Это подтверждает вывод проб земли шага В2: колеи делает материал.
+- **Край тропы неровный и заросший:** трава и вереск нависают над светлой полосой песка (`08`, `09`).
+- **Земля ельника** — бурая подстилка с пятнами мха на камнях и редкой травой, свет пятнами, стволы снизу голые (`10`, `11`).
+
+Чего в наборе нет: тесного сырого ущелья с папоротником, природной арки и вида полки с травой сверху. Добрать, когда дойдёт до этих мест.
 
 ## Критерии приёмки пилота
 
@@ -187,4 +211,4 @@ TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh landscape-pilot
 
 1. ~~Список сохранения — полон? Что лишнее, чего не хватает?~~ Подтверждён без правок 2026-11-13, вместе с критериями приёмки.
 2. Эталон скал — песчаник Эльбских гор — годится как ориентир?
-3. Можно ли скачать около десяти эталонных фото с Wikimedia Commons (CC0 и CC BY, вне git)?
+3. ~~Можно ли скачать около десяти эталонных фото с Wikimedia Commons (CC0 и CC BY, вне git)?~~ Да, 2026-11-13; фото собраны.
