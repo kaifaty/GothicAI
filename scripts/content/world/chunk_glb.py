@@ -287,7 +287,10 @@ class Report:
 
 def check(base_path: Path | str, edited_path: Path | str, *, allowed_open: set[tuple] = frozenset(),
           material_indexes: list[Path] = (), world_json: Path | None = None,
-          shared: set[int] | None = None) -> Report:
+          shared: set[int] | None = None, judge_open_edges: bool = True) -> Report:
+    """Check an edited chunk against its base chunk (the module doc). shared: the _VERTEX ids of the border, by
+    default those of every neighbour chunk. judge_open_edges=False counts the open edges without judging them:
+    world_region.py judges them over the union of a region's chunks."""
     base_path, edited_path = Path(base_path), Path(edited_path)
     base, edited = read_chunk(base_path), read_chunk(edited_path)
     if shared is None:
@@ -313,9 +316,9 @@ def check(base_path: Path | str, edited_path: Path | str, *, allowed_open: set[t
     base_open = open_edges(base)
     out_open = open_edges(edited)
     new_open = out_open - base_open - set(allowed_open)
-    for a, b in sorted(new_open)[:20]:
+    for a, b in sorted(new_open)[:20] if judge_open_edges else ():
         problems.append(f'new open edge {_floats(a)} - {_floats(b)}')
-    if len(new_open) > 20:
+    if len(new_open) > 20 and judge_open_edges:
         problems.append(f'... {len(new_open) - 20} more new open edges')
 
     names, textures = known_materials(world_json, list(material_indexes))
