@@ -392,7 +392,7 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
     {"name":"OWN_TEST_FLIP","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":8,"rows":4,"frames":30,"fps":24,"yaw":true,"steady":true}},
     {"name":"OWN_TEST_FLIP_CHILD","base":"OWN_TEST_FLIP","set":{"velAvg":0.1}}]})");
   textFile(directory/"40-motion.json",R"({"format":1,"effects":[
-    {"name":"OWN_TEST_SPARKS","base":"FIRE_SPARKS","set":{"visOrientation_S":"VELO"},"curl":{"strength":1.5,"frequency":4,"speed":0.3},"drag":2,"stretch":0.025,"minPixels":1.5},
+    {"name":"OWN_TEST_SPARKS","base":"FIRE_SPARKS","set":{"visOrientation_S":"VELO","visAlphaFunc_S":"ADD"},"curl":{"strength":1.5,"frequency":4,"speed":0.3},"drag":2,"stretch":0.025,"minPixels":1.5,"hdr":{"from":1,"to":9,"edge":0.25}},
     {"name":"OWN_TEST_SPARKS_CHILD","base":"OWN_TEST_SPARKS","set":{},"drag":3}]})");
   auto vm=ParticleContent::openProgram(baseRoot);
   const auto original=ParticleContent::base(*vm,"FIRE_SMOKE");
@@ -401,8 +401,9 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
   require(loaded.errors.empty() && loaded.effects.size()==8,"own definitions load in filename and declaration order");
   const auto& sparks=loaded.motions.at("OWN_TEST_SPARKS_CHILD");
   require(sparks.curlStrength==1.5f && sparks.curlFrequency==4.f && sparks.curlSpeed==0.3f && sparks.drag==3.f &&
-          sparks.stretch==0.025f && sparks.minPixels==1.5f && loaded.motions.at("OWN_TEST_SPARKS").drag==2.f,
-          "curl, drag, stretch and minPixels are read and inherited field by field from an own base");
+          sparks.stretch==0.025f && sparks.minPixels==1.5f && loaded.motions.at("OWN_TEST_SPARKS").drag==2.f &&
+          sparks.hdrFrom==1.f && sparks.hdrTo==9.f && sparks.hdrEdge==0.25f,
+          "curl, drag, stretch, minPixels and hdr are read and inherited field by field from an own base");
   require(loaded.motions.count("OWN_TEST_SMOKE")==0 && loaded.motions.count("OWN_TEST_FLIP")==0,"effects without them have no motion");
   const auto flip=loaded.flipbooks.find("OWN_TEST_FLIP");
   require(flip!=loaded.flipbooks.end() && flip->second.cols==8 && flip->second.rows==4 && flip->second.frames==30 &&
@@ -439,7 +440,10 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
     {"curl-field",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"curl":{"strength":1,"frequency":2,"octaves":3}})"},
     {"drag-range",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"drag":60})"},
     {"stretch-orientation",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{"visOrientation_S":"NONE"},"stretch":0.02})"},
-    {"min-pixels-flipbook",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"minPixels":1.5,"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24}})"}
+    {"min-pixels-flipbook",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"minPixels":1.5,"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24}})"},
+    {"hdr-blend",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{"visAlphaFunc_S":"BLEND"},"hdr":{"from":1,"to":9,"edge":0.25}})"},
+    {"hdr-range",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{"visAlphaFunc_S":"ADD"},"hdr":{"from":4,"to":4,"edge":0.25}})"},
+    {"hdr-field",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{"visAlphaFunc_S":"ADD"},"hdr":{"from":1,"to":9}})"}
     };
   const auto errorsRoot=f.root/"particle-errors";
   for(const auto& [kind,entry]:invalid) {
@@ -486,9 +490,10 @@ void runtimeParticles(Gothic& gothic, const Fixture& f, const fs::path& baseRoot
   require(sparks && std::abs(sparks->motion.curlStrength-1.5e-4f)<1e-9f && std::abs(sparks->motion.curlWave-0.04f*6.2831853f)<1e-6f &&
           std::abs(sparks->motion.curlDrift-0.03f)<1e-7f && std::abs(sparks->motion.drag-3e-3f)<1e-8f &&
           std::abs(sparks->stretchMs-25.f)<1e-4f && sparks->minPixels==1.5f &&
-          sparks->visOrientation==ParticleFx::Orientation::Velocity,"own motion reaches the native effect in cm and ms");
-  require(!custom->motion.active() && custom->stretchMs==0 && custom->minPixels==0 &&
-          !original->motion.active(),"base effects and effects without own motion keep the native path");
+          sparks->hdrFrom==1.f && sparks->hdrTo==9.f && sparks->hdrEdge==0.25f &&
+          sparks->visOrientation==ParticleFx::Orientation::Velocity,"own motion and hdr reach the native effect in cm and ms");
+  require(!custom->motion.active() && custom->stretchMs==0 && custom->minPixels==0 && custom->hdrTo==0 &&
+          custom->hdrEdge==1.f && !original->motion.active(),"base effects and effects without own motion keep the native path");
   }
 
 

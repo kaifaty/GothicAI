@@ -54,7 +54,10 @@ layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec4 outReactive;
 #if (MESH_TYPE==T_PFX) && !defined(GHOST)
 layout(push_constant, std430) uniform PushPfx {
-  float reactive; // ParticleFx::taaReactive: 1 for particles, 0 for rain and snow
+  float reactive;    // ParticleFx::taaReactive: 1 for particles, 0 for rain and snow
+  float hdrFrom;     // particles.d "hdr" (mainEmissive): the night's gain over a texel's brightness
+  float hdrInvRange; // 1/(to - from); 0: off
+  float hdrEdge;
   } pushPfx;
 #endif
 #endif
@@ -704,7 +707,18 @@ void mainEmissive(vec4 t) {
   // night; the factor leaves it as it was under the noon sun (EmissiveSunRatio, common.glsl). The exposure does
   // not see the fire itself, and the night's is hundreds of times the noon's: the gain stops at EmissiveMaxGain,
   // as an eye that adapts to the fire it looks at.
-  color *= min(EmissiveSunRatio * scene.GSunIntensity * scene.exposure, EmissiveMaxGain);
+  float gain = min(EmissiveSunRatio * scene.GSunIntensity * scene.exposure, EmissiveMaxGain);
+#if defined(TAA_REACTIVE)
+  // particles.d "hdr": the tone curve works by channel, so a gain over the whole sprite turns the orange of a
+  // flame into a flat yellow. The dim texels (its edges) take only the share hdrEdge of the gain and keep their
+  // hue; the bright ones (its core) take all of it and go to white. At noon the gain is 1 and nothing changes.
+  if(pushPfx.hdrInvRange>0.0) {
+    const float peak = max(color.r, max(color.g, color.b));
+    const float k    = clamp((peak-pushPfx.hdrFrom)*pushPfx.hdrInvRange, 0.0, 1.0);
+    gain = 1.0 + (gain-1.0)*mix(pushPfx.hdrEdge, 1.0, k*k*(3.0-2.0*k));
+    }
+#endif
+  color *= gain;
 #endif
 #if defined(MAT_FOG)
   color *= fogOwnDepth().a;

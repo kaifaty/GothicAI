@@ -355,6 +355,16 @@ void Renderer::setupSettings() {
   // bloom from the HDR scene before tonemapping; OPENGOTHIC_BLOOM=0 turns it off
   if(const char* bloom = std::getenv("OPENGOTHIC_BLOOM"))
     settings.bloomEnabled = std::string_view(bloom)!="0";
+  if(const char* glare = std::getenv("OPENGOTHIC_BLOOM_GLARE")) {
+    float boost = settings.bloomGlare, from = settings.bloomGlareFrom, to = settings.bloomGlareTo;
+    const int n = std::sscanf(glare, "%f,%f,%f", &boost, &from, &to);
+    if(n>=1 && std::isfinite(boost))
+      settings.bloomGlare = std::clamp(boost, 0.f, 100.f);
+    if(n==3 && std::isfinite(from) && std::isfinite(to) && from>=0 && to>from) {
+      settings.bloomGlareFrom = from;
+      settings.bloomGlareTo   = to;
+      }
+    }
 
   // direct lighting
   if(settings.vsmEnabled)
@@ -391,7 +401,8 @@ void Renderer::setupSettings() {
 
   Log::i("render: ray query = ", int(Shaders::options().doRayQuery), ", meshlets = ", int(Shaders::options().doMeshShading),
          ", gi = ", int(settings.giMethod), ", aa = ", settings.aaEnabled ? int(::Settings::options().aaPreset) : 0,
-         ", bloom = ", int(settings.bloomEnabled));
+         ", bloom = ", int(settings.bloomEnabled), ", glare = ", settings.bloomGlare, " from ", settings.bloomGlareFrom,
+         " to ", settings.bloomGlareTo);
   Log::i("render: vsm = ", int(settings.vsmEnabled));
 
   if(settings.giMethod!=GiMethod::None) {

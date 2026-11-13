@@ -94,6 +94,19 @@ void Renderer::drawBloom(Encoder<CommandBuffer>& cmd, bool fused) {
       cmd.setBinding(0, taa.history[taa.cur^1], Sampler::bilinear(ClampMode::ClampToEdge));
     else
       cmd.setBinding(0, i==0 ? sceneLinear : bloomChain[i-1], Sampler::bilinear(ClampMode::ClampToEdge));
+    if(i==0) {
+      // the glare (bloom_down.frag): thresholds in the white of the frame as the tone mapping shows it
+      struct Glare {
+        float from     = 0;
+        float invRange = 0;
+        float boost    = 0;
+        } glare;
+      const float mul = std::max(eye.mul(), 1e-3f);
+      glare.from      = settings.bloomGlareFrom/mul;
+      glare.invRange  = mul/std::max(settings.bloomGlareTo-settings.bloomGlareFrom, 1e-3f);
+      glare.boost     = settings.bloomGlare;
+      cmd.setPushData(glare);
+      }
     cmd.setPipeline(i==0 ? shaders.bloomDownKaris : shaders.bloomDown);
     cmd.draw(nullptr, 0, 3);
     }

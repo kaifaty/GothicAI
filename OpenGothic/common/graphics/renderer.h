@@ -167,6 +167,12 @@ class Renderer final {
       bool           upscaleMipBiasSet  = false; // OPENGOTHIC_UPSCALE_MIP_BIAS over log2(in/out) - 1
       float          upscaleMipBias     = 0;
       bool           bloomEnabled       = true;
+      // the glare of the bloom (bloom_down.frag): a pixel whose brightest channel is over bloomGlareTo whites of
+      // the frame gives the chain 1 + bloomGlare times its light, from bloomGlareFrom on by a smooth step.
+      // OPENGOTHIC_BLOOM_GLARE=<boost>[,<from>,<to>], 0 turns it off
+      float          bloomGlare         = 10;
+      float          bloomGlareFrom     = 2;
+      float          bloomGlareTo       = 6;
       // motion vectors of objects (graphics plan 1b), on by default: -mv 0, [INTERNAL] motionVectors=0,
       // OPENGOTHIC_MOTION_VECTORS=0|1 over both
       bool           motionVectors      = false;
