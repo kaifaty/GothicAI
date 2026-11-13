@@ -1157,8 +1157,8 @@ server. `OPENGOTHIC_GESTURE_HEAD=0` films "было" (the head goes with the ges
 OPENGOTHIC_CONTENT=<content with the hero's own head> TEMPEST_WINDOW_SIZE=1280x720 OPENGOTHIC_BENCH_REALTIME=1 \
   TEMPEST_AUDIO_LOOPBACK=48000 SOUND=1 MUSIC=0 BENCH_HOST=ryzen [OPENGOTHIC_GESTURE_HEAD=0] \
   scripts/bench.sh scripts/bench/gesture-head-clip.bench <out>
-uv run --with opencv-python-headless --with numpy python reports/content/2026-11-hero-head/gesture/track.py <out> g3 g6 g8 g9
-uv run --with pillow --with numpy python reports/content/2026-11-hero-head/gesture/clip.py <before out> <after out> <clip dir>
+uv run --with opencv-python-headless --with numpy python reports/content/2026-11-hero-head/gesture/track.py <out> g3 g6 g8 g9 npc
+uv run --with pillow --with numpy --with matplotlib python reports/content/2026-11-hero-head/gesture/clip.py <before out> <after out> <clip dir>
 ```
 
 `track.py` writes `track-<take>.csv`: per frame the median optical flow of the face (brows, eyes, nose bridge) and of
