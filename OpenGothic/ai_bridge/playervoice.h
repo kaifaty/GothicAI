@@ -11,14 +11,14 @@
 class World;
 
 // The microphone has no sound producer: only its analysis track reaches the hero's speech layers.
-// Its clock stays LipSync::liveBufferMs() behind the arrived sound. While an npc's voice sounds near the hero (its sound
+// Its clock stays LipSync::liveBufferMs() behind the arrived sound, by the chunk that came soonest after its time. While an npc's voice sounds near the hero (its sound
 // from the speakers is in the microphone) and DuckHoldMs after it, the chunks are LipSync::liveDuckDb() quieter.
 class PlayerVoice final {
   public:
     static constexpr uint64_t DuckHoldMs = 150;  // the room and the output's delay after an npc's voice ends
     static constexpr float    DuckCm     = 2000; // an npc this near the hero is heard (WorldSound::talkRange)
 
-    void begin();
+    void begin(uint64_t now = 0);  // the talk key is pressed (now: the tick, for first_ms in the log)
     void audio(World& world, const rapidjson::Value& msg, uint64_t now);
     // npcVoice: an npc's voice sounds near the hero now
     bool append(uint32_t rate, const int16_t* pcm, size_t count, uint64_t now, bool npcVoice = false);
@@ -37,6 +37,9 @@ class PlayerVoice final {
     uint64_t                     chunks = 0;
     uint64_t                     ducked = 0;     // chunks made quieter for an npc's voice
     uint64_t                     duckUntil = 0;
+    uint64_t                     pressedAt = 0;
+    uint64_t                     firstMs   = 0;  // from the key to the first chunk
+    int64_t                      firstDeliveryUs = 0;
     std::shared_ptr<LipSync::Track> lips;
     std::vector<int64_t>          deliveryUs;   // from the server's chunk to the bridge (the system clocks)
     std::vector<int64_t>          shownUs;      // ...to the tick that shows its start

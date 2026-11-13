@@ -1421,6 +1421,16 @@ void playerVoiceCases() {
           "the microphone clock must not run ahead of appended samples, and a step not here yet holds the last one");
   voice.finish();
 
+  // a first chunk that came late (a cold start), the next ones on time: the clock goes by them, not by the first
+  voice.begin(50000);
+  voice.append(rate,pcm.data(),320,50060);
+  voice.append(rate,pcm.data()+320,320,50061);
+  voice.append(rate,pcm.data()+640,320,50062);
+  voice.append(rate,pcm.data()+960,320,50080);
+  require(voice.track()->playedMs()==int64_t(80-LipSync::liveBufferMs()),
+          "the microphone clock must follow the chunk that came soonest after its time: "+
+          std::to_string(voice.track()->playedMs()));
+  voice.finish();
   // a breath before the first word (30 dB below the voice): a stream of an npc stretches it to its own loudest
   // moment, the microphone measures it against a speech level of its own and keeps the mouth shut
   const auto breath = sing(rate,{{200,150,150,0.03f}});
