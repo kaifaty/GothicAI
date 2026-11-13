@@ -499,6 +499,51 @@ void emptyTable(Tempest::Device& device, const Fixture& fixture) {
   skinnedVariant(false);
   }
 
+// materials.json "projection": maps by world position (reports/content/2026-11-landscape-pilot/b3-rock-material.md)
+void projectionRecords(Tempest::Device& device, const Fixture& fixture) {
+  ddsFile(fixture.root/"_work/ROCK_ALPHA.dds",false,true);
+  textFile(fixture.root/"materials/materials.json",R"({
+    "ROCK_PROJECTED.TGA":{"albedo":"solid.dds","scale":3,"projection":{"tile_m":5.75}},
+    "ROCK_ANTITILE_OFF.TGA":{"albedo":"solid.dds","antitile":"off","projection":{"tile_m":2}},
+    "ROCK_PLAIN.TGA":{"albedo":"solid.dds","scale":3},
+    "ROCK_NUMBER.TGA":{"albedo":"solid.dds","projection":5.75},
+    "ROCK_TEXT.TGA":{"albedo":"solid.dds","projection":{"tile_m":"5.75"}},
+    "ROCK_EMPTY.TGA":{"albedo":"solid.dds","projection":{}},
+    "ROCK_ZERO.TGA":{"albedo":"solid.dds","projection":{"tile_m":0}},
+    "ROCK_NEGATIVE.TGA":{"albedo":"solid.dds","projection":{"tile_m":-5.75}},
+    "ROCK_ROTATE.TGA":{"albedo":"solid.dds","antitile":"rotate","projection":{"tile_m":5.75}},
+    "ROCK_OFFSET.TGA":{"albedo":"solid.dds","antitile":"offset","projection":{"tile_m":5.75}},
+    "ROCK_ALPHA.TGA":{"albedo":"alpha.dds","projection":{"tile_m":5.75}}
+  })");
+  Resources resources(device);
+  const auto maps = Resources::loadMaterialMaps("ROCK_PROJECTED.TGA");
+  require(maps.present && maps.projectionTile==5.75f,"a projection record must carry its tile in metres");
+  require(Resources::loadMaterialMaps("ROCK_ANTITILE_OFF.TGA").projectionTile==2.f,
+          "projection must be accepted with the antitile off");
+  const Material rock(source("ROCK_PROJECTED.TGA"),true);
+  require(rock.hasProjection() && rock.projectionTile==5.75f && rock.alpha==Material::Solid,
+          "an opaque material must keep its record's projection");
+  require(std::abs(rock.textureUvPerMetre(40.f)-1.f/5.75f)<1e-6f && rock.textureUvPerMetre(0.f)==0.f,
+          "the projected density must be one repeat per tile, whatever the mesh UV");
+  const Material plain(source("ROCK_PLAIN.TGA"),true);
+  require(plain.materialMaps && !plain.hasProjection() && plain.projectionTile==0.f && plain.uvScale==3.f &&
+          plain.textureUvPerMetre(40.f)==120.f && !(plain==rock),
+          "without the field a record must keep the mesh UV and its scale");
+  for(const auto* name:{"ROCK_NUMBER.TGA","ROCK_TEXT.TGA","ROCK_EMPTY.TGA","ROCK_ZERO.TGA","ROCK_NEGATIVE.TGA",
+                       "ROCK_ROTATE.TGA","ROCK_OFFSET.TGA"})
+    require(!Resources::loadMaterialMaps(name).present,
+            "a wrong type, a non-positive tile or projection with an antitile must reject the record whole");
+  const auto* original = Resources::loadTexture("ROCK_ALPHA.TGA");
+  require(Resources::loadMaterialMaps("ROCK_ALPHA.TGA").present,"the alpha check needs the material, not the table");
+  const Material alpha(source("ROCK_ALPHA.TGA"),true);
+  require(original!=nullptr && alpha.tex==original && !alpha.materialMaps && !alpha.hasProjection() &&
+          alpha.alpha==Material::Solid,
+          "projection on an alpha-tested texture must leave the material as without its record");
+  require(!Resources::loadMaterialMaps("ROCK_ALPHA.TGA").present &&
+          Resources::loadMaterialAlbedo("ROCK_ALPHA.TGA")==original,
+          "the rejected record must be gone for every later material");
+  }
+
 void textureResidency(Tempest::Device& device, const Fixture& fixture) {
   std::string materials=R"({"STREAM.TGA":{"albedo":"solid.dds","normal":"alpha.dds","orm":"alpha.dds"})";
   for(size_t i=0;i<17;++i) {
@@ -2570,6 +2615,7 @@ int main(int argc, char** argv) {
     replacements(device,fixture);
     census(fixture);
     emptyTable(device,fixture);
+    projectionRecords(device,fixture);
     textureResidency(device,fixture);
     textureMipResidency(device,fixture);
     textureScreenLevels(device,fixture);

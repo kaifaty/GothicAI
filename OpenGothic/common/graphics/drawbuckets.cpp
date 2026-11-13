@@ -261,6 +261,12 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
           if(i.mat.antitile==Material::Antitile::Rotate)
             bx.flags |= BK_ANTITILE_ROTATE;
           }
+        // Maps by world position (material_projection.glsl): the slot of the UV scale, which the projection does not
+        // use, carries repeats per unit of the world (cm). Opaque only: an alpha-tested one is rejected (Material)
+        if(i.mat.hasProjection() && i.mat.alpha==Material::Solid) {
+          bx.uvScale = 1.f/(i.mat.projectionTile*100.f);
+          bx.flags |= BK_PROJECTION;
+          }
         }
       }
     else if(i.animMesh!=nullptr) {

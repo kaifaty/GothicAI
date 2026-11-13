@@ -149,6 +149,7 @@ class Resources final {
       float                    turbidity = 0.f;
       float                    turbidityDepth = 0.f;
       float                    emissive = 0.f;
+      float                    projectionTile = 0.f; // metres per repeat by world position ("projection"); 0: mesh UV
       Material::Antitile       antitile = Material::Antitile::Off;
       bool                     hair = false; // hair cards: the ORM slot is the hair map, lit by the hair BRDF
       bool                     strand = false; // strands as ribbons: the albedo is the hair's colour ramp
@@ -158,6 +159,9 @@ class Resources final {
       };
     static MaterialMaps              loadMaterialMaps(std::string_view name);
     static const Tempest::Texture2d* loadMaterialAlbedo(std::string_view name);
+    // Drops the materials.json record of `name` with one log line, for a fault seen only once the material is built
+    // (projection on an alpha-tested texture): the texture then loads as if the record were not there
+    static void                      rejectMaterialMaps(std::string_view name, std::string_view reason);
     static void                      materialAlbedoReplaced(std::string_view name);
     static bool                      materialMapsEnabled();
 
@@ -688,6 +692,7 @@ class Resources final {
       float       turbidity = 0.f;
       float       turbidityDepth = 0.f;
       float       emissive = 0.f;
+      float       projectionTile = 0.f;
       Material::Antitile antitile = Material::Antitile::Off;
       bool        hair = false;
       bool        strand = false;

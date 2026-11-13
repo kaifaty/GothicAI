@@ -257,6 +257,22 @@ void Resources::indexMaterialMaps() {
           maps.scale = float(value);
         }
       }
+    // Rock and other steep surfaces (reports/content/2026-11-landscape-pilot/b3-rock-material.md): the maps are taken by
+    // world position in the two planes the normal faces most (material_projection.glsl), `tile_m` metres of the world
+    // per repeat; the mesh UV and `scale` are not used. Not with an antitile; an alpha-tested texture rejects the
+    // record when its material is built (Material)
+    if(const auto projection = entry.value.FindMember("projection"); projection!=entry.value.MemberEnd()) {
+      double tile = 0;
+      if(projection->value.IsObject())
+        if(const auto it = projection->value.FindMember("tile_m"); it!=projection->value.MemberEnd() && it->value.IsNumber())
+          tile = it->value.GetDouble();
+      const float units = float(tile*100.0); // the game's centimetres
+      if(!std::isfinite(tile) || tile<=0 || tile>1e4 || !(units>0) || !std::isfinite(1.f/units) ||
+         maps.antitile!=Material::Antitile::Off)
+        valid = false;
+      else
+        maps.projectionTile = float(tile);
+      }
     if(!valid) {
       Log::e("materials: invalid entry \"",entry.name.GetString(),"\"");
       continue;
@@ -1240,6 +1256,7 @@ Resources::MaterialMaps Resources::loadMaterialMaps(std::string_view name) {
   ret.turbidity = files.turbidity;
   ret.turbidityDepth = files.turbidityDepth;
   ret.emissive = files.emissive;
+  ret.projectionTile = files.projectionTile;
   ret.antitile = files.antitile;
   ret.hair = files.hair;
   ret.strand = files.strand;
@@ -1258,6 +1275,17 @@ const Texture2d* Resources::loadMaterialAlbedo(std::string_view name) {
     return &fallbackTexture();
   materialAlbedoReplaced(name);
   return maps.albedo;
+  }
+
+void Resources::rejectMaterialMaps(std::string_view name, std::string_view reason) {
+  std::lock_guard<std::recursive_mutex> g(inst->sync);
+  std::string key(name);
+  for(auto& c:key)
+    c = char(std::toupper(uint8_t(c)));
+  if(inst->materialMaps.erase(key)==0)
+    return;
+  // materialMapsPresent stays: the shaders were chosen by it
+  Log::e("materials: invalid entry \"",name,"\": ",reason);
   }
 
 void Resources::materialAlbedoReplaced(std::string_view name) {

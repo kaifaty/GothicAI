@@ -78,6 +78,7 @@ class DrawBuckets {
       BK_HAIR = 0x400,
       BK_STRAND = 0x800,
       BK_EYE = 0x1000,
+      BK_PROJECTION = 0x2000,
       };
 
     struct BucketGpu final {
