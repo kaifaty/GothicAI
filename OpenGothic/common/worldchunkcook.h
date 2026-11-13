@@ -5,7 +5,8 @@
 // the truth: the cook runs it once and splits its stitched result into what
 // each cell's GLB and world.json alone decide (the .wcb) and what the whole
 // world and override set decide (the index). The assembler is for the
-// converter's checks, tests and measurements; the game does not read .wcb yet.
+// converter's checks, tests and measurements; the game reads a cell through
+// worldchunkcookedsource.h.
 
 #include "worldchunkbinary.h"
 #include "worldchunkindex.h"
@@ -71,6 +72,9 @@ void checkCookedIndex(const CookedIndex& index, const WorldCellManifest& manifes
 // Checks cell i's cooked chunk against world.json, the index and its GLB (length only).
 void checkCookedCell(const CookedChunk& chunk, size_t i, const WorldCellManifest& manifest, const CookedIndex& index,
                      const std::filesystem::path& glb);
+// The same without the GLB: against cell i's id, the source world and the index; name names the chunk in errors.
+void checkCookedCell(const CookedChunk& chunk, size_t i, ChunkId id, const WorldChunkSource& source,
+                     const CookedIndex& index, const std::string& name);
 
 // The stitched mesh and, if given, the chunk table rebuilt from the index, the
 // cooked chunks, world.json and unreferenced.bin alone: no glTF and none of

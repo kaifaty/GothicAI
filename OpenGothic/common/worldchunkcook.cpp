@@ -348,16 +348,23 @@ void checkCookedIndex(const CookedIndex& index, const WorldCellManifest& manifes
 
 void checkCookedCell(const CookedChunk& chunk, size_t i, const WorldCellManifest& manifest, const CookedIndex& index,
                      const fs::path& glb) {
-  const auto& h = chunk.header();
-  const auto& cell = manifest.cells.at(i);
   const auto name = glb.filename().replace_extension(".wcb").string();
-  if(!(h.cell==cell.id))
-    fail(name+" was cooked for cell "+cellName(h.cell)+", world.json lists it for cell "+cellName(cell.id));
-  if(h.worldSize!=manifest.source.size || h.worldCrc32!=manifest.source.crc32)
-    fail(name+" was cooked for another source world than "+manifest.source.world);
+  checkCookedCell(chunk,i,manifest.cells.at(i).id,manifest.source,index,name);
+  const auto stale = cookedChunkStale(chunk,glb,false);
+  if(!stale.empty())
+    fail(name+" is stale: "+stale);
+  }
+
+void checkCookedCell(const CookedChunk& chunk, size_t i, ChunkId id, const WorldChunkSource& source,
+                     const CookedIndex& index, const std::string& name) {
+  const auto& h = chunk.header();
+  if(!(h.cell==id))
+    fail(name+" was cooked for cell "+cellName(h.cell)+", world.json lists it for cell "+cellName(id));
+  if(h.worldSize!=source.size || h.worldCrc32!=source.crc32)
+    fail(name+" was cooked for another source world than "+source.world);
   const auto& entry = index.cells()[i];
   if(entry.glbSize!=h.glbSize || !std::equal(h.glbSha256.begin(),h.glbSha256.end(),entry.glbSha256))
-    fail(index.name()+" lists cell "+cellName(cell.id)+" with another GLB (length or SHA-256) than "+name+
+    fail(index.name()+" lists cell "+cellName(id)+" with another GLB (length or SHA-256) than "+name+
          ": the cell was re-cooked without the index");
   const std::tuple<std::span<const wci::Exception>,size_t,const char*> lists[] = {
     {index.vertexExceptions(i),chunk.positions().size(),"positions"},
@@ -365,14 +372,11 @@ void checkCookedCell(const CookedChunk& chunk, size_t i, const WorldCellManifest
     {index.materialExceptions(i),chunk.materials().size(),"materials"}};
   for(const auto& [list,count,kind]:lists)
     if(!list.empty() && list.back().local>=count)
-      fail(index.name()+": cell "+cellName(cell.id)+": an exception points to local "+
+      fail(index.name()+": cell "+cellName(id)+": an exception points to local "+
            std::to_string(list.back().local)+", past the "+std::to_string(count)+" "+kind+" of "+name);
   if(uint64_t(entry.addedStart)+chunk.added()!=index.addedEnd(i))
-    fail(index.name()+": cell "+cellName(cell.id)+" places "+std::to_string(index.addedEnd(i)-entry.addedStart)+
+    fail(index.name()+": cell "+cellName(id)+" places "+std::to_string(index.addedEnd(i)-entry.addedStart)+
          " added triangles, "+name+" holds "+std::to_string(chunk.added()));
-  const auto stale = cookedChunkStale(chunk,glb,false);
-  if(!stale.empty())
-    fail(name+" is stale: "+stale);
   }
 
 CookedWorld readCookedWorld(const fs::path& dir, const fs::path& overrideDir, const fs::path& outDir) {
