@@ -289,6 +289,8 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     // a voiced line starts: the mouth follows the voice (LipSync)
     void       startSpeech(const Tempest::Sound& voice, std::string_view name = {});  // name: of the line (the seed of the face)
     void       startSpeech(std::shared_ptr<LipSync::Track> voice);
+    // its voice sounds now: a voiced line moves its mouth or holds its output (a head without mouth shapes)
+    bool       isVoiceSounding() const;
     // the face track of a line of the AI (say_face): the voice of the line `line` plays it, in any order with it
     void       setFaceTrack(std::shared_ptr<const SpeechFace::Track> track, std::string_view line);
     // of the line it starts to say: its gestures follow it; line: its id of the AI (its brows follow the mood too);

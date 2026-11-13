@@ -494,6 +494,10 @@ void Npc::startSpeech(std::shared_ptr<LipSync::Track> voice) {
   visual.startSpeech(*this,std::move(voice));
   }
 
+bool Npc::isVoiceSounding() const {
+  return visual.isSpeaking(owner.tickCount()) || speechLeft()>0;
+  }
+
 void Npc::setFaceTrack(std::shared_ptr<const SpeechFace::Track> track, std::string_view line) {
   visual.setFaceTrack(std::move(track),line);
   }

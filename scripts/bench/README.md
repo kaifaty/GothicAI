@@ -1021,7 +1021,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `facecue <npc\|nearest\|player> <gesture> [L\|R]` | a facial gesture of its own head (`flash`, `doubt`, `smirk`...: the `cues` of its face profile); a one-sided one without a side goes on a side by the seed; columns `cue_*` show the gestures |
 | `faceleak <npc\|nearest\|player> <felt> <upper\|lower>` | a leak of the felt emotion (`friendly`, `angry`, `hostile`, `afraid`, `pain`) on half of its own head's face (the `leaks` of its face profile) now, as a line that hides a lie: with the liar's two blinks in the 2 s after it; column `cue_leak` shows its strongest weight |
 | `lips on\|off`, `lips param <name> <value>`, `lips params` | lip sync (off: the old talk loop) and its parameters |
-| `gestures on\|off`, `gestures param <name> <value>`, `gestures params` | the hands while one speaks (`TalkGestures`; off: a random gesture when a line starts) and its parameters: `Tail`, `Wait`, `MinLeft`, `Slack` (ms), `Long`, `RestScale`; the head: `Nod` (degrees), `NodHz`, `Stress`, `NodGap` (ms), `SwayYaw`, `SwayRoll` (degrees), `SwayTime`, `SwayLag` (ms); listening and thinking: `ListenSway`, `ListenNod` (degrees), `ListenHz`, `ListenGap` (ms), `ListenProb`, `DoubleNod`, `ThinkDelay` (ms), `ThinkYaw`, `ThinkPitch`, `ThinkTilt` (degrees), `AsideTime` (ms) |
+| `gestures on\|off`, `gestures param <name> <value>`, `gestures params` | the hands while one speaks (`TalkGestures`; off: a random gesture when a line starts) and its parameters: `Tail`, `Wait`, `MinLeft`, `Slack` (ms), `Long`, `RestScale`; the head: `Nod` (degrees; 0 by default: the speaker does not nod, the user's choice of 2026-11-13), `NodWeak` (of `Nod` on a just stressed syllable), `Stress`, `StressTop` (dB over the syllables before), `NodGap`, `NodDown`, `LiveDown`, `NodBack` (ms), `SwayYaw`, `SwayRoll` (degrees), `SwayTime`, `SwayLag` (ms); listening and thinking: `ListenSway`, `ListenNod` (degrees), `ListenDown`, `ListenBack`, `ListenGap` (ms), `ListenProb`, `DoubleNod`, `ThinkDelay` (ms), `ThinkYaw`, `ThinkPitch`, `ThinkTilt` (degrees), `AsideTime` (ms) |
 | `blink on\|off`, `blink param <name> <value>`, `blink params` | blinking (`EyeBlink`; off: nobody blinks) and its parameters: `MinGap`, `RestMean`, `SpeakMean`, `MaxGap`, `Hold`, `PauseMs`, `SoonMs`, `DoubleGap` (ms), `PauseProb`, `ShiftProb`, `DoubleProb` |
 | `hear <npc\|nearest\|player> <ms> [every ms]` | the hero speaks to it that long, his words come every so often (600 ms), as the bridge passes the partial transcripts of his voice: it listens, nods now and then; `player`: the hero listens to the nearest npc |
 | `think <npc\|nearest\|player> <ms>` | it thinks of an answer that long, as on the AI server's `thinking` status; `player`: the hero, of an answer to the nearest npc |
@@ -1168,6 +1168,44 @@ time of the voice) and `key.txt` (the lines, their tracks and emotions, the mome
 and the lip gap of each take by [`a2f/lip_gap_game.py`](../../reports/content/2026-11-hero-head/a2f/lip_gap_game.py) on
 its `face.csv`). The bench writes `face.csv` for any watched own head: per frame the weights its deformation shows; the
 columns `vf_w` (how far the face from the voice shows) and `vf_emo` (its track has an emotion) are in `metrics.csv`.
+
+## Player voice clip
+
+The acceptance clip of the hero's face under the player's live voice
+([player-voice-face.md](../../reports/content/2026-11-hero-head/player-voice-face.md), step 1): the hero with an own
+head says four recordings of the user's microphone through the AI server as the microphone (`ptt <wav>`: the server's
+`--voice-files` plays the file in real time, streams it back as `ptt_audio` v64, the bridge's live track drives
+`VISEME` and `SpeechBrows`), close up in Xardas' tower of the default save; then Xardas' line plays in the game while the
+microphone hears it (`npc-mix.wav`: his voice 12 dB below the hero's, the hero's phrase over it from 5 s on), once with
+`lips param LiveDuck 0` and once as it is; last the hero says two lines of his original voice (the mouth of a recorded
+voice on the same head). The recordings lie in `/tmp/player-voice/` on the Mac and on Ryzen (16 kHz mono 16-bit, not in
+git). The server runs on the Mac without a model or TTS, the ASR service with `--provider fake`; `--no-player-face`
+films "было" (the mouth still):
+
+```bash
+(cd asr-service && uv run gothic-asr serve --port 47930 --provider fake --fallback none --no-laughter) > $W/asr.log 2>&1 &
+(cd server && uv run gothic-ai serve --port 47931 --llm off --no-console --no-tts --a2f off --no-brain --no-quick \
+  --no-director --no-showrunner --no-embeddings --voice-files --asr-url ws://127.0.0.1:47930 \
+  --memory-db $W/memory.sqlite3 --trace-dir $W/traces [--no-player-face]) > $W/server.log 2>&1 &
+GOTHIC_AI_URL=ws://127.0.0.1:47931 OPENGOTHIC_CONTENT=<content with the hero's own head> TEMPEST_WINDOW_SIZE=1280x720 \
+  OPENGOTHIC_BENCH_REALTIME=1 TEMPEST_AUDIO_LOOPBACK=48000 SOUND=1 MUSIC=0 BENCH_HOST=ryzen \
+  scripts/bench.sh scripts/bench/player-voice-clip.bench <out>
+uv run --with pillow --with numpy python reports/content/2026-11-hero-head/a2f/player_voice_clip.py \
+  <now out> <before out> <MPFB head.glb> <head.glb> <clip dir> --clock-ms <game clock - server clock>
+```
+
+[`a2f/live_lag.py`](../../reports/content/2026-11-hero-head/a2f/live_lag.py) measures a run: per phrase the lag of the
+mouth (the gap between the lips from the weights of `face.csv` on the head's mesh) behind the voice by the peak of
+their cross-correlation, the voice starting where the server played its first chunk (`first_ms` and
+`first_delivery_us` of the bridge's `[ai] ptt_audio` line, the clocks corrected by `--clock-ms`); `lip_open` in the
+pauses of 150 ms and more, before the first word and while only Xardas' voice is in the microphone; the brow moves;
+and the bridge's times from the server's chunk to the bridge and to the tick that shows it (median and p95).
+`player_voice_clip.py` writes `clip.mp4` ("было | стало" side by side, then "без приглушения | с приглушением"; the
+sound is what the microphone heard, not shifted), `sheet.jpg` (pairs of frames on «п», «б», «у», a loud vowel, a
+pause and Xardas' voice) and `key.txt` (the parts, the frames and the measures).
+[`a2f/nod_clip.py`](../../reports/content/2026-11-hero-head/a2f/nod_clip.py) `<before out> <after out> <dir>` compares
+the hero's nod of two runs (segments `voice` and `own`): `clip.mp4` "было | стало", `nod.png` (`ge_pitch` over time with
+the syllables) and `key.txt` (nods, the largest step of a frame, the first frame of a nod, size, ms down and back).
 
 ## Native NPC calibration duels
 

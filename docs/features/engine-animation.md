@@ -10,7 +10,7 @@
 | Остановка по ноге: из петли хода с левой или правой ноги по фазе петли, если в своём контенте есть клип на правую (`T_RUNR_2_RUN`) с флагом `SETTLE` (64); такая остановка уступает другой анимации, когда корень встал. С клипами базы поведение прежнее | `OPENGOTHIC_STOPFOOT=0` | `stopfoot.*`, `pose.cpp` (`footTransition`), `animation.cpp` (`canInterrupt`) | контракт `gothic-stopfoot-contract` (`check-stopfoot`), бенч `hero-run-startstop` | [пилот, шаг 3](../../reports/content/2026-11-hero-locomotion/README.md#пилот-шаг-3-старт-и-остановки-бега) |
 | Foot IK, у четвероногих тоже | `OPENGOTHIC_FOOTIK=0` | `footik.*` | бенчи `ik-ab`, `ik-moves`, `ik-stairs`, `ik-sweep`, `quad-wolf`, `quad-zoo` | — |
 | Моргание | `OPENGOTHIC_BLINK=0` | `eyeblink.*` | бенчи `blink`, `listen` | — |
-| Жесты рук при речи | `OPENGOTHIC_GESTURES=0` | `talkgestures.*` | бенч `gestures` | — |
+| Жесты рук при речи; голова при речи: покачивание (кивок говорящего на ударный слог выключен, `Nod` 0, — выбор пользователя 2026-11-13); плавный кивок слушающего (минимальный рывок) | `OPENGOTHIC_GESTURES=0` | `talkgestures.*`, `lipsync.*` (`judgedDb`) | бенч `gestures`; `gothic-facerig-test` (по умолчанию говорящий не кивает и покачивается; кивок при `Nod` 3,5: первый кадр, плавность, вершина, промежуток; кивок слушающего); клип `player-voice-clip.bench`, замер `a2f/nod_clip.py` | [npc-agent.md](../npc-agent.md#лицо) |
 | Губы по голосу | `OPENGOTHIC_LIPSYNC=0` | `lipsync.*` | бенчи `lips`, `lips-dialog` | — |
 | Взгляд | `OPENGOTHIC_GAZE=0` | `gaze.*` | бенчи `gaze`, `gaze-ambient` | — |
 | Наклон на бегу: крен в повороте, наклон корпуса на склоне | `OPENGOTHIC_LEAN=0` | `lean.*` | бенч `lean` | — |
