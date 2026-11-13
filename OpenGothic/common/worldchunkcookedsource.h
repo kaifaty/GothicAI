@@ -29,6 +29,7 @@
 #include "worldchunkindex.h"
 #include "worldchunksruntime.h"
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
@@ -36,7 +37,18 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
 #include <vector>
+
+// The cooked set a world was loaded with, as the world cloth bundle checks it (physics/worldclothbundle.h).
+struct CookedSet {
+  std::filesystem::path  index;         // the index file
+  std::array<uint8_t,32> indexSha256 {}; // of its bytes as the load read them
+  WorldChunkSource       source;        // the source world of world.json, which the index names
+  size_t                 cells = 0;
+  // Empty when every cell's GLB had at load its index entry's length; else the first that had not.
+  std::string            stale;
+  };
 
 // The GLB readWorldChunks read for a cell, with its length and time then.
 struct WorldChunkFile {
@@ -66,6 +78,8 @@ class CookedChunkSource {
     WorldChunkMesh read(size_t cell, std::span<const uint32_t> sources, bool currentFile, const World& world,
                         const std::function<WorldChunkMesh()>& glb) const;
     bool            active() const { return index.has_value(); }
+    // The set the index in use came from; null without one.
+    const CookedSet* cookedSet() const { return index ? &set : nullptr; }
     ChunkReadCounts counts() const;
     size_t          memoryBytes() const;
 
@@ -74,7 +88,7 @@ class CookedChunkSource {
     enum State : uint8_t { Cooked = 0, Stale = 1, Glb = 2 };
 
     std::optional<CookedIndex>                 index;
-    WorldChunkSource                           source;
+    CookedSet                                  set;
     std::vector<ChunkId>                       cells;
     std::unique_ptr<std::atomic<uint8_t>[]>    states;
     mutable std::atomic<uint64_t>              cookedReads {0}, glbReads {0}, cookedNs {0}, glbNs {0};

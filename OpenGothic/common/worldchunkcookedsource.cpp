@@ -121,7 +121,10 @@ void CookedChunkSource::load(const fs::path& dir, const fs::path& overrideDir, c
   if(!fs::is_regular_file(path,error))
     return;
   try {
-    auto read = CookedIndex::read(path);
+    auto bytes = std::make_shared<const std::vector<uint8_t>>(gothicglb::readFile(path));
+    const std::span<const uint8_t> view(bytes->data(),bytes->size());
+    const auto hash = sha256Bytes(view);
+    auto read = CookedIndex::open(view,path.string(),std::move(bytes));
     checkCookedIndex(read,manifest);
     const auto& h = read.header();
     const uint64_t loaded[] = {mesh.vertices.size(),mesh.features.size(),mesh.materials.size(),
@@ -139,21 +142,24 @@ void CookedChunkSource::load(const fs::path& dir, const fs::path& overrideDir, c
     const bool edited = h.vertices>manifest.vertices || h.features>manifest.features || read.appendedMaterials()>0;
     states = std::make_unique<std::atomic<uint8_t>[]>(files.size());
     size_t stale = 0;
+    std::string first;
     for(size_t i=0;i<files.size();++i)
       if(read.cells()[i].glbSize!=files[i].size) {
+        const auto lengths = files[i].path.string()+" had "+std::to_string(files[i].size)+
+                             " bytes at world load, the index lists the cell with a GLB of "+
+                             std::to_string(read.cells()[i].glbSize)+" bytes";
         if(edited)
-          throw std::runtime_error(files[i].path.string()+" has "+std::to_string(files[i].size)+
-                                   " bytes, the index lists the cell with a GLB of "+
-                                   std::to_string(read.cells()[i].glbSize)+" bytes, and the set's edited ids "
-                                   "depend on every cell");
+          throw std::runtime_error(lengths+", and the set's edited ids depend on every cell");
+        if(stale==0)
+          first = lengths;
         states[i] = Stale;
         ++stale;
         }
     cells.clear();
     for(const auto& cell:manifest.cells)
       cells.push_back(cell.id);
-    source = manifest.source;
-    index  = std::move(read);
+    set = {path,hash,manifest.source,files.size(),std::move(first)};
+    index = std::move(read);
     Tempest::Log::i("[world-chunks] index ",path.string(),": ",uint64_t(files.size()-stale)," of ",
                     uint64_t(files.size())," cells read from their .wcb when it is there (OPENGOTHIC_WCB=0 turns this off)");
     }
@@ -200,7 +206,7 @@ std::optional<WorldChunkMesh> CookedChunkSource::readCooked(size_t cell, std::sp
                                std::to_string(entry.glbSize)+" bytes");
     const auto chunk = CookedChunk::read(path);
     const auto name = path.filename().string();
-    checkCookedCell(chunk,cell,cells[cell],source,*index,name);
+    checkCookedCell(chunk,cell,cells[cell],set.source,*index,name);
     world.glb.verify();
     return build(chunk,*index,cell,sources,world,name);
     }
@@ -214,6 +220,8 @@ std::optional<WorldChunkMesh> CookedChunkSource::readCooked(size_t cell, std::sp
     }
   }
 
+ChunkReadCounts ChunkMeshSource::reads() const { return cooked().counts(); }
+
 ChunkReadCounts CookedChunkSource::counts() const {
   ChunkReadCounts out;
   out.cooked   = cookedReads.load();
@@ -224,6 +232,7 @@ ChunkReadCounts CookedChunkSource::counts() const {
   }
 
 size_t CookedChunkSource::memoryBytes() const {
-  return (index ? index->byteSize()+index->name().capacity() : 0)+source.world.capacity()+
+  return (index ? index->byteSize()+index->name().capacity() : 0)+set.source.world.capacity()+
+         set.index.native().capacity()*sizeof(fs::path::value_type)+set.stale.capacity()+
          cells.capacity()*sizeof(ChunkId)+(states ? cells.size()*sizeof(std::atomic<uint8_t>) : 0);
   }

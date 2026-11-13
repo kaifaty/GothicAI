@@ -27,6 +27,7 @@ if(PROJECT_IS_TOP_LEVEL)
   target_sources(gothic-base-runtime PRIVATE "${BASE_ROOT}/common/worldchunkmanifest.cpp"
     "${BASE_ROOT}/common/worldchunkbinary.cpp" "${BASE_ROOT}/common/worldchunkindex.cpp" "${BASE_ROOT}/common/worldchunkcook.cpp"
     "${BASE_ROOT}/common/worldchunkcookedsource.cpp")
+  include(../../cmake/WorldCloth.cmake)
   if(MSVC)
     # the base C sources read dmusic's _Atomic structs (see the game's CMakeLists.txt)
     target_compile_options(gothic-base-runtime PRIVATE $<$<COMPILE_LANGUAGE:C>:/experimental:c11atomics>)

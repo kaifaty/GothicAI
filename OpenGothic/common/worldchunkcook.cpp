@@ -1,9 +1,14 @@
 #include "worldchunkcook.h"
 
+#include <Tempest/Log>
+
 #include <algorithm>
 #include <atomic>
 #include <bit>
+#include <cctype>
+#include <cerrno>
 #include <chrono>
+#include <cstring>
 #include <fstream>
 #include <functional>
 #include <stdexcept>
@@ -11,10 +16,20 @@
 #include <tuple>
 
 #include "gothicglb.h"
+#include "physics/worldclothbundle.h"
 
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
 #include <process.h>
 #else
+#include <fcntl.h>
+#include <sys/file.h>
 #include <unistd.h>
 #endif
 
@@ -100,6 +115,96 @@ fs::path cookedTemporaryPath(const fs::path& path) {
 
 namespace {
 
+// One cook per directory at a time: an exclusive lock on the directory that holds the index, for the whole cook.
+// POSIX: flock on the directory's descriptor; Windows: a named mutex whose name comes from its canonical path.
+// Both go with the process. A cook nested in another's hook on the same thread takes no second lock.
+class CookLock {
+  public:
+    explicit CookLock(const fs::path& dir) {
+      std::error_code error;
+      fs::create_directories(dir,error);
+      auto canonical = fs::weakly_canonical(dir,error);
+      if(error)
+        canonical = fs::absolute(dir);
+      const auto utf8 = canonical.generic_u8string();
+      key.assign(reinterpret_cast<const char*>(utf8.data()),utf8.size());
+      for(const auto& held:holding())
+        if(held==key)
+          return;
+#ifdef _WIN32
+      std::string lower;
+      for(const auto c:key)
+        lower += char(std::tolower(static_cast<unsigned char>(c)));
+      const auto hash = sha256Bytes({reinterpret_cast<const uint8_t*>(lower.data()),lower.size()});
+      std::wstring name = L"Local\\gothic-ai-cook-";
+      static constexpr wchar_t digits[] = L"0123456789abcdef";
+      for(const auto b:hash) {
+        name += digits[b>>4];
+        name += digits[b&15];
+        }
+      handle = CreateMutexW(nullptr,FALSE,name.c_str());
+      if(handle==nullptr) {
+        warn("CreateMutexW failed with error "+std::to_string(GetLastError()));
+        return;
+        }
+      const auto wait = WaitForSingleObject(handle,INFINITE);
+      if(wait!=WAIT_OBJECT_0 && wait!=WAIT_ABANDONED) {
+        warn("waiting for the mutex failed with error "+std::to_string(GetLastError()));
+        CloseHandle(handle);
+        handle = nullptr;
+        return;
+        }
+#else
+      fd = ::open(canonical.c_str(),O_RDONLY | O_CLOEXEC | O_DIRECTORY);
+      if(fd<0) {
+        warn(std::string("cannot open the directory: ")+std::strerror(errno));
+        return;
+        }
+      while(::flock(fd,LOCK_EX)!=0) {
+        if(errno==EINTR)
+          continue;
+        warn(std::string("flock failed: ")+std::strerror(errno));
+        ::close(fd);
+        fd = -1;
+        return;
+        }
+#endif
+      holding().push_back(key);
+      locked = true;
+      }
+    ~CookLock() {
+      if(!locked)
+        return;
+      auto& held = holding();
+      held.erase(std::find(held.begin(),held.end(),key));
+#ifdef _WIN32
+      ReleaseMutex(handle);
+      CloseHandle(handle);
+#else
+      ::flock(fd,LOCK_UN);
+      ::close(fd);
+#endif
+      }
+    CookLock(const CookLock&) = delete;
+    CookLock& operator=(const CookLock&) = delete;
+
+  private:
+    std::string key;
+    bool        locked = false;
+#ifdef _WIN32
+    HANDLE      handle = nullptr;
+#else
+    int         fd = -1;
+#endif
+    static std::vector<std::string>& holding() {
+      thread_local std::vector<std::string> held;
+      return held;
+      }
+    void warn(const std::string& reason) const {
+      Tempest::Log::e("cooked world: no lock on ",key,", the cook runs without one: ",reason);
+      }
+  };
+
 // Windows refuses to delete or replace a file another process holds open, as a concurrent cook does while it
 // compares the file; that read ends within milliseconds, so the callers retry for up to a second.
 template<class Step>
@@ -152,11 +257,12 @@ bool writeCookedFile(const fs::path& path, std::span<const uint8_t> bytes, const
   }
 
 CookedWorldStats cookWorldChunks(const fs::path& dir, const fs::path& overrideDir, const fs::path& outDir,
-                                 const std::function<void()>& beforeIndex) {
-  const auto manifest = readWorldChunkManifest(dir);
-  // The index goes before the first cell file is created or replaced and comes back last: a cook stopped at
-  // any point leaves either no index, and the game reads the GLBs, or a consistent set.
+                                 const std::function<void()>& beforeIndex, const std::function<void()>& afterCheck) {
   const auto indexPath = cookedIndexPath(dir,overrideDir,outDir);
+  const CookLock lock(indexPath.parent_path());
+  const auto manifest = readWorldChunkManifest(dir);
+  // The index goes before the first cell or bundle file is created or replaced and comes back last: a cook
+  // stopped at any point leaves either no index, and the game reads the GLBs, or a consistent set.
   bool indexRemoved = false;
   const std::function<void()> removeIndex = [&] {
     if(indexRemoved)
@@ -175,7 +281,7 @@ CookedWorldStats cookWorldChunks(const fs::path& dir, const fs::path& overrideDi
     }
   ChunkTable table;
   WorldChunkTrace trace;
-  const auto mesh = readWorldChunks(dir,overrideDir,&table,&trace);
+  auto mesh = readWorldChunks(dir,overrideDir,&table,&trace);
   const auto& p = mesh.polygons;
   const size_t n = p.material_indices.size();
   if(table.entries.size()!=manifest.cells.size() || table.triangleChunks.size()!=n ||
@@ -334,11 +440,19 @@ CookedWorldStats cookWorldChunks(const fs::path& dir, const fs::path& overrideDi
   h.sourceTriangles = sourceTriangles;
   index.appended.assign(mesh.materials.begin()+ptrdiff_t(baseMaterials),mesh.materials.end());
   const auto encoded = encodeCookedIndex(index);
+
+  // The world cloth bundle: the island search on this stitched mesh and table, for exactly these index bytes.
+  const auto cloth = cookClothBundle(mesh,table,manifest.source,sha256Bytes(encoded));
+  const auto clothBytes = encodeClothBundle(cloth);
+  stats.clothWritten   = writeCookedFile(cookedClothPath(dir,overrideDir,outDir),clothBytes,removeIndex);
+  stats.clothBytes     = clothBytes.size();
+  stats.clothSurfaces  = cloth.cloth.surfaces.size();
+  stats.clothTriangles = cloth.cloth.original.polygons.material_indices.size();
+
   if(beforeIndex)
     beforeIndex();
-  // A GLB that changed since it was read means another cook may already have published newer cells and their
-  // index: this snapshot must not replace it. (A change between this check and the rename below would also have
-  // to be read and cooked by that other cook first, which removes the index before its first cell.)
+  // A GLB that changed since it was read must not get this snapshot's index. Another cook cannot have changed
+  // anything meanwhile (the lock), but an edit can.
   for(size_t cell=0;cell<manifest.cells.size();++cell) {
     const auto glb = chunkGlbPath(dir,overrideDir,manifest.cells[cell].drawFile());
     std::error_code error;
@@ -346,6 +460,8 @@ CookedWorldStats cookWorldChunks(const fs::path& dir, const fs::path& overrideDi
     if(error || size!=inputs[cell].first || fs::last_write_time(glb,error)!=inputs[cell].second || error)
       fail(glb.string()+" changed while the world was cooked: its index is not written");
     }
+  if(afterCheck)
+    afterCheck();
   stats.indexWritten = writeCookedFile(indexPath,encoded);
   stats.indexBytes   = encoded.size();
   return stats;
@@ -607,7 +723,7 @@ std::string compareChunkTables(const ChunkTable& e, const ChunkTable& a) {
 
 std::string verifyCookedWorld(const fs::path& dir, const fs::path& overrideDir, const fs::path& outDir, bool hash) {
   ChunkTable expectedTable, actualTable;
-  const auto expected = readWorldChunks(dir,overrideDir,&expectedTable);
+  auto expected = readWorldChunks(dir,overrideDir,&expectedTable);
   const auto world = readCookedWorld(dir,overrideDir,outDir);
   if(hash) {
     for(size_t i=0;i<world.cells.size();++i) {
@@ -624,5 +740,15 @@ std::string verifyCookedWorld(const fs::path& dir, const fs::path& overrideDir, 
   difference = compareChunkTables(expectedTable,actualTable);
   if(!difference.empty())
     return "chunk table: "+difference;
+
+  const auto clothPath = cookedClothPath(dir,overrideDir,outDir);
+  if(!fs::exists(clothPath))
+    return "the world cloth bundle "+clothPath.string()+" is missing: cook the world again";
+  const auto bundle = ClothBundle::read(clothPath).data();
+  const auto indexBytes = gothicglb::readFile(cookedIndexPath(dir,overrideDir,outDir));
+  const auto fresh = cookClothBundle(expected,expectedTable,world.manifest.source,sha256Bytes(indexBytes));
+  difference = compareClothBundles(fresh,bundle);
+  if(!difference.empty())
+    return "world cloth bundle "+clothPath.string()+": "+difference;
   return {};
   }

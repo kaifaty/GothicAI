@@ -1,7 +1,10 @@
 #include "worldcook.h"
 
 #include "gothicglb.h"
+#include "physics/worldclothbundle.h"
 #include "worldchunkcook.h"
+#include "worldchunkcookedsource.h"
+#include "worldchunks.h"
 #include "worlddata.h"
 
 #include <algorithm>
@@ -62,6 +65,10 @@ int cook(const Options& o) {
               stats.indexWritten ? "written" : "left unchanged",static_cast<unsigned long long>(stats.glbBytes),
               static_cast<unsigned long long>(stats.wcbBytes),static_cast<unsigned long long>(stats.indexBytes),
               ms(started,Clock::now())/1000.0);
+  std::printf("world cloth bundle %s %s: %zu surfaces, %llu triangles taken out of the cells, %llu bytes\n",
+              cookedClothPath(o.world,o.content,o.out).string().c_str(),stats.clothWritten ? "written" : "left unchanged",
+              stats.clothSurfaces,static_cast<unsigned long long>(stats.clothTriangles),
+              static_cast<unsigned long long>(stats.clothBytes));
   return 0;
   }
 
@@ -75,8 +82,8 @@ int verify(const Options& o) {
     }
   const auto manifest = readWorldChunkManifest(o.world);
   std::printf("%s: %zu cooked cells and the index assemble into readWorldChunks' mesh and chunk table; every GLB "
-              "matches its chunk's length and SHA-256 (%.1f s)\n",o.world.string().c_str(),manifest.cells.size(),
-              ms(started,Clock::now())/1000.0);
+              "matches its chunk's length and SHA-256; the world cloth bundle equals a fresh island search (%.1f s)\n",
+              o.world.string().c_str(),manifest.cells.size(),ms(started,Clock::now())/1000.0);
   return 0;
   }
 
@@ -140,8 +147,18 @@ int timeWorld(const Options& o) {
         (void)gothicglb::readFile(path);
   if(cooked)
     (void)gothicglb::readFile(indexPath);
+  // The world cloth bundle beside the index, checked against it as the game checks it at load.
+  const auto clothPath = cookedClothPath(o.world,o.content,o.out);
+  const bool bundled = cooked && fs::exists(clothPath);
+  CookedSet set;
+  if(bundled) {
+    const auto bytes = gothicglb::readFile(indexPath);
+    set = {indexPath,sha256Bytes(bytes),manifest.source,manifest.cells.size(),{}};
+    (void)gothicglb::readFile(clothPath);
+    }
 
-  enum { ReadGlb, Today, Parse, Sort, Stitch, Rest, TodayNear, SourceNear, ReadWcb, Validate, Index, Assemble, CookedNear };
+  enum { ReadGlb, Today, Parse, Sort, Stitch, Rest, TodayNear, SourceNear, ReadWcb, Validate, Index, Assemble, CookedNear,
+         ClothSearch, ClothRead, ClothApply };
   std::vector<Series> series = {
     {"today: read GLB files (separate pass)",{}},
     {"today: readWorldChunks total",{}},
@@ -156,10 +173,14 @@ int timeWorld(const Options& o) {
     {"cooked: read + validate the index alone",{}},
     {"cooked: assemble whole mesh and table",{}},
     {"cooked: read + validate the index and the Near ring",{}},
+    {"cloth: WorldCloth::extract by island search",{}},
+    {"cloth: read + validate the bundle",{}},
+    {"cloth: apply the bundle (exclusions, retain)",{}},
     };
   ChunkTable table;
   size_t triangles = 0;
   uint64_t nearCooked = 0;
+  size_t clothSurfaces = 0, clothTriangles = 0;
   for(int run=0;run<runs;++run) {
     auto t0 = Clock::now();
     uint64_t read = 0;
@@ -173,7 +194,7 @@ int timeWorld(const Options& o) {
     WorldChunkTrace trace;
     table = {};
     t0 = Clock::now();
-    const auto mesh = readWorldChunks(o.world,o.content,&table,&trace);
+    auto mesh = readWorldChunks(o.world,o.content,&table,&trace);
     const auto t1 = Clock::now();
     triangles = mesh.polygons.material_indices.size();
     series[Today].values.push_back(ms(t0,t1));
@@ -206,6 +227,29 @@ int timeWorld(const Options& o) {
     nearCooked = table.source->reads().cooked-before;
     if(nearCooked==nearCells.size())
       series[SourceNear].values.push_back(ms(t3,t4));
+
+    // World cloth: the island search on a copy of the stitched mesh and table, then the bundle on the loaded ones.
+    {
+    auto searchedMesh = mesh;
+    auto searchedTable = table;
+    const auto c0 = Clock::now();
+    const auto searched = WorldCloth::searchIslands(searchedMesh,&searchedTable);
+    series[ClothSearch].values.push_back(ms(c0,Clock::now()));
+    clothSurfaces  = searched.surfaces.size();
+    clothTriangles = searched.original.polygons.material_indices.size();
+    }
+    if(bundled) {
+      const auto c1 = Clock::now();
+      const auto bundle = ClothBundle::read(clothPath);
+      checkClothBundle(bundle,set);
+      const auto c2 = Clock::now();
+      const auto applied = applyClothBundle(bundle,mesh,table);
+      const auto c3 = Clock::now();
+      if(applied.surfaces.size()!=clothSurfaces || applied.original.polygons.material_indices.size()!=clothTriangles)
+        throw std::runtime_error("the world cloth bundle holds other surfaces than the island search");
+      series[ClothRead].values.push_back(ms(c1,c2));
+      series[ClothApply].values.push_back(ms(c2,c3));
+      }
     }
     if(!cooked)
       continue;
@@ -272,6 +316,9 @@ int timeWorld(const Options& o) {
                 "%zu appended materials\n",indexPath.string().c_str(),index.cells().size(),index.missing().size(),
                 vertexExceptions,featureExceptions,materialExceptions,index.appendedMaterials());
     }
+  std::printf("world cloth: %zu surfaces, %zu triangles by island search; bundle %s%s\n",clothSurfaces,clothTriangles,
+              clothPath.string().c_str(),bundled ? (": "+std::to_string(fs::file_size(clothPath))+" bytes").c_str() :
+              " missing (bundle rows skipped)");
   if(start!=nullptr) {
     uint64_t nearTriangles = 0, nearGlb = 0, nearWcb = 0;
     for(const auto i:nearCells) {
@@ -306,6 +353,58 @@ void roundTrip(const fs::path& dir, const fs::path& overrideDir, const fs::path&
   const auto difference = verifyCookedWorld(dir,overrideDir,outDir,true);
   if(!difference.empty())
     throw std::runtime_error("cooked round trip of "+dir.string()+": "+difference);
+  }
+
+void clothRoundTrip(const fs::path& dir) {
+  auto fail = [&](const std::string& reason) {
+    throw std::runtime_error("world cloth round trip in "+dir.string()+": "+reason);
+    };
+  // A city banner across the border of cells 0,0 and 1,0 (four positions, four triangles, both sides) and a
+  // ground triangle in cell 2,0.
+  asset::WorldMesh mesh;
+  mesh.materials.resize(2);
+  mesh.materials[0].name = "SELF_TEST_GROUND";
+  mesh.materials[1].name = "NW_CITY_FLAG_01";
+  mesh.vertices = {{6300,600,100},{6500,600,100},{6500,300,100},{6300,300,100},{13000,0,0},{13100,0,0},{13000,0,100}};
+  for(uint32_t i=0;i<7;++i)
+    mesh.features.push_back({{float(i)*0.25f,0.5f},0xFF102030u+i,{0.f,0.f,1.f}});
+  const uint32_t triangles[5][3] = {{0,1,2},{0,2,3},{0,2,1},{0,3,2},{4,5,6}};
+  for(uint32_t t=0;t<5;++t) {
+    for(const auto v:triangles[t]) {
+      mesh.polygons.vertex_indices.push_back(v);
+      mesh.polygons.feature_indices.push_back(v);
+      }
+    mesh.polygons.material_indices.push_back(t<4 ? 1 : 0);
+    mesh.polygons.lightmap_indices.push_back(-1);
+    mesh.polygons.flags.emplace_back();
+    }
+  writeWorldChunks(mesh,{"CLOTH.ZEN",5,0xC10751u},dir);
+  roundTrip(dir,{},{});
+  const auto bundle = ClothBundle::read(cookedClothPath(dir,{})).data();
+  size_t excluded = 0, cells = 0;
+  for(const auto& cell:bundle.exclusions) {
+    excluded += cell.size();
+    cells += cell.empty() ? 0 : 1;
+    }
+  if(bundle.cloth.surfaces.size()!=1 || excluded!=4 || cells!=2)
+    fail(std::to_string(bundle.cloth.surfaces.size())+" surfaces, "+std::to_string(excluded)+" triangles out of "+
+         std::to_string(cells)+" cells; expected one banner of 4 triangles across two cells");
+  // The game's extract takes the bundle and gives the island search's result.
+  ChunkTable cookedTable, searchedTable;
+  auto cookedMesh = readWorldChunks(dir,{},&cookedTable);
+  auto searchedMesh = cookedMesh;
+  searchedTable = cookedTable;
+  const auto taken = WorldCloth::extract(cookedMesh,&cookedTable);
+  if(WorldCloth::lastPath()!=WorldCloth::Path::Bundle)
+    fail("extract did not take the bundle");
+  const auto searched = WorldCloth::searchIslands(searchedMesh,&searchedTable);
+  auto difference = compareWorldCloth(searched,taken);
+  if(difference.empty())
+    difference = compareWorldMeshes(searchedMesh,cookedMesh);
+  if(difference.empty())
+    difference = compareChunkTables(searchedTable,cookedTable);
+  if(!difference.empty())
+    fail("extract with the bundle differs from the island search: "+difference);
   }
 
 std::optional<int> run(const std::vector<std::string>& args) {

@@ -6,6 +6,7 @@
 #include "basemesh.h"
 #include "basestore.h"
 #include "gothicglb.h"
+#include "physics/worldclothbundle.h"
 #include "worldchunkcook.h"
 #include "worldchunksruntime.h"
 
@@ -109,7 +110,7 @@ bool writtenWorldFile(const fs::path& relative, const std::set<std::string>& wor
   if(it==relative.end() || *it!="worlds" || ++it==relative.end() || worlds.count(it->string())==0 ||
      ++it==relative.end())
     return false;
-  return *it=="chunks" || *it=="world.json" || *it=="unreferenced.bin" || *it==wci::FileName;
+  return *it=="chunks" || *it=="world.json" || *it=="unreferenced.bin" || *it==wci::FileName || *it==wcl::FileName;
   }
 
 // writeWorldChunks leaves out the archive index the import adds after it (baseimport.cpp,
@@ -204,12 +205,13 @@ int build(const fs::path& baseArg, const fs::path& outArg, int subdivide, int me
       keepArchives(source,out/"worlds"/c.name);
       require(written.triangles==c.after,"world "+c.name+": written triangle count differs");
       c.chunksAfter = written.chunks.size();
-      // Cooked chunks (.wcb) beside the GLBs and the world's index (chunks.wci), listed in base-files.json
-      // like every chunk file.
+      // Cooked chunks (.wcb) beside the GLBs, the world's index (chunks.wci) and world cloth bundle (cloth.wcl),
+      // listed in base-files.json like every chunk file.
       const auto cooked = cookWorldChunks(out/"worlds"/c.name);
       std::cout << c.name << ": " << c.before << " -> " << c.after << " triangles (x" << factor << "), "
                 << c.chunksBefore << " -> " << c.chunksAfter << " chunks; cooked: GLB " << cooked.glbBytes
-                << " bytes, .wcb " << cooked.wcbBytes << " bytes, index " << cooked.indexBytes << " bytes" << std::endl;
+                << " bytes, .wcb " << cooked.wcbBytes << " bytes, index " << cooked.indexBytes << " bytes, cloth "
+                << cooked.clothBytes << " bytes (" << cooked.clothSurfaces << " surfaces)" << std::endl;
       }
 
     // Static meshes that fit the format after the split; the rest is linked below.
