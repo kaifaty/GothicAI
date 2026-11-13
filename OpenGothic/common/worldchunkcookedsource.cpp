@@ -158,7 +158,7 @@ void CookedChunkSource::load(const fs::path& dir, const fs::path& overrideDir, c
     cells.clear();
     for(const auto& cell:manifest.cells)
       cells.push_back(cell.id);
-    set = {path,hash,manifest.source,files.size(),std::move(first)};
+    set = {path,hash,manifest.source,files.size(),std::move(first),dir,overrideDir};
     index = std::move(read);
     Tempest::Log::i("[world-chunks] index ",path.string(),": ",uint64_t(files.size()-stale)," of ",
                     uint64_t(files.size())," cells read from their .wcb when it is there (OPENGOTHIC_WCB=0 turns this off)");
@@ -233,6 +233,7 @@ ChunkReadCounts CookedChunkSource::counts() const {
 
 size_t CookedChunkSource::memoryBytes() const {
   return (index ? index->byteSize()+index->name().capacity() : 0)+set.source.world.capacity()+
-         set.index.native().capacity()*sizeof(fs::path::value_type)+set.stale.capacity()+
+         (set.index.native().capacity()+set.dir.native().capacity()+set.overrideDir.native().capacity())*
+         sizeof(fs::path::value_type)+set.stale.capacity()+
          cells.capacity()*sizeof(ChunkId)+(states ? cells.size()*sizeof(std::atomic<uint8_t>) : 0);
   }

@@ -103,7 +103,21 @@ void checkCookedCell(const CookedChunk& chunk, size_t i, ChunkId id, const World
 // The stitched mesh and, if given, the chunk table rebuilt from the index, the
 // cooked chunks, world.json and unreferenced.bin alone: no glTF and none of
 // readWorldChunks' ID resolution. The table has no file-backed source.
+// Defined in worldchunkassemble.cpp.
 asset::WorldMesh assembleCookedWorld(const CookedWorld& world, ChunkTable* table = nullptr);
+
+// What assembleCookedWorld builds when not everything is wanted. collision:
+// only what static collision reads (PackedMesh PK_Physic): vertices, vertex
+// and material indices, materials; features, feature indices, lightmaps and
+// flags stay empty. exclusions: empty, or one list per cell of ascending
+// cell-local triangle ordinals (the world cloth bundle's) that are left out;
+// the other triangles keep their stitched order, as retainWorldTriangles keeps
+// them. Exclusions take no chunk table.
+struct CookedParts {
+  bool                                   collision = false;
+  std::vector<std::span<const uint32_t>> exclusions;
+  };
+asset::WorldMesh assembleCookedWorld(const CookedWorld& world, ChunkTable* table, const CookedParts& parts);
 
 // Empty when equal: entries (cell, file, meshes, count, bounds bit for bit),
 // triangle ownership and GLB ordinals; otherwise the first difference.

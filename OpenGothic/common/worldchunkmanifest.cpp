@@ -179,7 +179,7 @@ WorldCellManifest readWorldChunkManifest(const std::filesystem::path& dir) {
 
 void readWorldUnreferenced(const std::filesystem::path& dir, std::vector<asset::Vec3>& vertices,
                            std::vector<asset::VertexFeature>& features,
-                           std::vector<char>& vertexSet, std::vector<char>& featureSet) {
+                           std::vector<char>& vertexSet, std::vector<char>& featureSet, bool keepFeatures) {
   const auto bin = readFile(dir/unreferencedName);
   size_t o = 0;
   auto u32 = [&]() {
@@ -211,6 +211,12 @@ void readWorldUnreferenced(const std::filesystem::path& dir, std::vector<asset::
     }
   for(uint32_t i=0; i<nf; ++i) {
     const auto id = u32();
+    if(!keepFeatures) {
+      if(o+24>bin.size())
+        fail("unreferenced.bin is truncated");
+      o += 24;
+      continue;
+      }
     if(id>=features.size())
       fail("unreferenced feature out of range");
     asset::VertexFeature f;

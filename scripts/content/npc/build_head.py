@@ -15,9 +15,12 @@ reports/content/2026-11-npc-pipeline/build.md).
                                         (fit_head.py) may be given here
    "picks": "picks.json",               optional: ears and the profile midline by hand (fit/reg/picks-*.json);
                                         without it the ears follow the dense model as plain surface
-   "mesh": {"full": "raw.npz", "bald": "raw.npz"}}   optional: the generator's dense models (run-mesh3d.sh);
+   "mesh": {"full": "raw.npz", "bald": "raw.npz"},   optional: the generator's dense models (run-mesh3d.sh);
                                         without it they come from the cache in work/build/_mesh by the hash of the
                                         views, or Pixal3D makes them with --gpu-authorization <label>
+   "shapes": "mark"}                    optional: the face shapes of Audio2Face's Mark instead of MPFB's and the face
+                                        profile re-scaled for them (step "shapes", face-shapes.md "Формы Mark в
+                                        игре"); without it the head keeps MPFB's shapes
 Relative paths are relative to the concept dir.
 
 Every step writes into its own folder of the work dir (default ~/.local/share/gothic-ai/mpfb/work/build/<name>) and
@@ -330,11 +333,29 @@ def steps(cdir, cfg, work, content, gpu=None):
          os.path.join(head, 'head.frame.json'), j('material'), '--groom', j('hair', 'groom.npz')]],
         [U, GR, V, j('beard', 'skin_shaved.png'), T['points'], body, os.path.join(head, 'head.frame.json'), j('hair', 'groom.npz')],
         [j('material', n) for n in ('skin_game.png', 'skin_normal.png', 'skin_orm.png')], 'skin for the game'))
+    shapes = cfg.get('shapes')
+    if shapes not in (None, 'mark'):
+        raise SystemExit(f'build_head: "shapes" may only be "mark", not {shapes!r}')
+    # with "shapes": the head as exported (MPFB's shapes) is kept in export/, the step "shapes" makes the game's head
+    keep = [['cp', os.path.join(head, 'head.glb'), j('export', 'head-mpfb.glb')],
+            ['cp', os.path.join(head, 'head.face.json'), j('export', 'head-mpfb.face.json')]] if shapes else []
     out.append(Step('export', [export(j('material', 'skin_game.png'), '--skin-normal', j('material', 'skin_normal.png'),
-                                      '--skin-orm', j('material', 'skin_orm.png'))],
+                                      '--skin-orm', j('material', 'skin_orm.png'))] + keep,
                     [j('round', 'reg.npz'), j('round', 'blink.npz'), j('reg', 'mpfb.npz'), T['probe'], eye_map]
                     + [j('material', n) for n in ('skin_game.png', 'skin_normal.png', 'skin_orm.png')],
-                    [os.path.join(head, 'head.glb')], 'the head'))
+                    [os.path.join(head, 'head.glb')] + [c[2] for c in keep], 'the head'))
+    if shapes == 'mark':
+        # 8b. Audio2Face's Mark face shapes instead of MPFB's (reports/content/2026-11-hero-head/face-shapes.md,
+        #     "Формы Mark в игре") and the face profile re-scaled for them; NVIDIA's data: the head is not for git
+        out.append(Step('shapes', [
+            [PY, os.path.join(H, 'shapes', 'head_shapes.py'), j('export', 'head-mpfb.glb'), j('round', 'reg.npz'),
+             os.path.join(head, 'head.glb'), '--json', j('shapes', 'info.json'),
+             '--face', j('export', 'head-mpfb.face.json'), os.path.join(head, 'head.face.json')]],
+            [j('export', 'head-mpfb.glb'), j('export', 'head-mpfb.face.json'), j('round', 'reg.npz'),
+             os.path.join(H, 'shapes', 'transfer.py'), os.path.join(H, 'shapes', 'head_glb.py'),
+             os.path.join(H, 'shapes', 'mark_profile.py'), os.path.expanduser(
+                 '~/.local/share/gothic-ai/face-sources/mark/bs_skin_Mark.npz')],
+            [j('shapes', 'info.json')], "Mark's face shapes"))
 
     def install_strands():
         ramp = os.path.join(j('strands'), 'png'); dds = os.path.join(content, 'materials', 'head')
