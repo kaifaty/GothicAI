@@ -2,15 +2,15 @@
 """Build a staging set whose grass band on the rock has tufts of real leaves: meshes of cards over the layer.
 
     uv run --no-project --with numpy --with pillow --with scipy python \
-        scripts/content/landscape_grass_tufts.py rock-grass-tufts-1 [--from rock-grass-3] [--rect 4,-1,5,0] \
+        scripts/content/landscape_grass_tufts.py rock-grass-tufts-2 [--from rock-grass-3] [--rect 4,-1,5,0] \
         [--normal-up .75] [--preview DIR]
 
 Step 2 of reports/engine/2026-11-13-grass/README.md. Copies a set with the baked grass layer
 (landscape_grass_layer.py) and adds, without touching what it copies:
 
-- one atlas of card pictures, `materials/landscape_grass_tufts/`: side views of clusters of the same scanned
-  tufts the layer is baked from (mesh3d/blender/grass_cards.py; rendered once into the work folder, `--rerender`
-  to render again). A picture is darkened from tip to root, FLOOR + (1 - FLOOR) * (height share) ** CURVE, the
+- one atlas of card pictures, `materials/landscape_grass_tufts/`: side views of fans of single blades of the
+  scanned tufts the layer is baked from, each blade scaled to a leaf as wide as a stroke of the original's painted
+  grass (mesh3d/blender/grass_cards.py; rendered once into the work folder, `--rerender` to render again). A picture is darkened from tip to root, FLOOR + (1 - FLOOR) * (height share) ** CURVE, the
   depth the engine's light does not give a card; its pale straw root takes the colour of the leaves; then the
   whole atlas is brought per channel to the mean colour of the layer it stands on (`grass-layer.json` of the
   copied set), so the same calibration carries over. Alpha is the texel's coverage and every mip averages it
