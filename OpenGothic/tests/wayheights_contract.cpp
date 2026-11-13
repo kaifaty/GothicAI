@@ -10,6 +10,8 @@
 #include "world/wayheights.h"
 #include "world/world.h"
 
+#include <Tempest/Log>
+
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -270,6 +272,8 @@ struct WayHeightsContract {
     std::vector<CollisionWorld::CharacterMoveResult> movement;
     NavMesh::Geometry navigation;
     DynamicWorld::StaticCollisionLoadStats stats;
+    std::string mark;              // World's physics_static load mark, from stage= to its end
+    size_t worldCollisionLines=0;  // [world-collision] lines of the load
     };
   struct Ground {
     std::string name;
@@ -312,10 +316,18 @@ struct WayHeightsContract {
     }
 
   static CollisionSnapshot collisionLoad(Gothic& gothic, const char* mode) {
+    std::string log;
+    // Tempest splits lines past 255 bytes; the pieces joined give the text back.
+    Tempest::Log::setOutputCallback([&log](Tempest::Log::Mode,const char* piece) { log+=piece; });
     gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
+    Tempest::Log::setOutputCallback({});
     auto& scene=*gothic.world();
     auto& physics=*scene.wdynamic;
     CollisionSnapshot result;
+    if(const auto at=log.find("stage=physics_static "); at!=std::string::npos)
+      result.mark=log.substr(at,log.find('[',at)-at);
+    for(auto at=log.find("[world-collision]");at!=std::string::npos;at=log.find("[world-collision]",at+1))
+      ++result.worldCollisionLines;
     result.stats=physics.staticCollisionLoadStats();
     result.navigation=physics.navigationGeometry();
     const float infinity=std::numeric_limits<float>::infinity();
@@ -419,6 +431,14 @@ struct WayHeightsContract {
                 static_cast<unsigned long long>(key));
     }
 
+  // A load that built the collision called the input once: the mark names it and says collision=build.
+  static void requireBuilt(const CollisionSnapshot& load, const char* mode) {
+    require(load.mark.find(" input=")!=std::string::npos && load.mark.find(" input=cache")==std::string::npos &&
+            load.mark.find(" collision=build ")!=std::string::npos,
+            std::string(mode)+" World load must call the collision input and build: physics_static '"+load.mark+"'");
+    std::printf("NEWWORLD collision %s load mark: %s\n",mode,load.mark.c_str());
+    }
+
   static void collisionRun(Gothic& gothic,const fs::path& root) {
     collisionFiles(root/"small");
     Environment wayHeightRays("OPENGOTHIC_WAYHEIGHT_CACHE","0");
@@ -430,16 +450,22 @@ struct WayHeightsContract {
       require(!built.stats.cacheHit && built.stats.buildMs>0 && built.stats.readMs==0 && built.stats.writeMs==0,
               "disabled world collision cache must build without reading or writing");
       require(!fs::exists(root/"base-cache/derived"),"disabled world load must not create collision files");
+      requireBuilt(built,"disabled");
     }
     Environment enabled("OPENGOTHIC_COLLISION_CACHE","1");
     {
       const auto cold=collisionLoad(gothic,"cold");
       require(!cold.stats.cacheHit && cold.stats.buildMs>0,"cold world collision cache must build");
+      requireBuilt(cold,"cold");
       collisionCompare(built,cold,"cold");
     }
     const auto warm=collisionLoad(gothic,"warm");
     require(warm.stats.cacheHit && warm.stats.buildMs==0 && warm.stats.writeMs==0,
             "warm world collision cache must restore without rebuilding or writing");
+    // World's load mark: the collision input was never called (WorldCollisionSource), nothing was built or logged.
+    require(warm.mark.find(" input=cache input_ms=0 collision=cache ")!=std::string::npos && warm.worldCollisionLines==0,
+            "warm World load must not call the collision input: physics_static '"+warm.mark+"'");
+    std::printf("NEWWORLD collision warm load mark: %s\n",warm.mark.c_str());
     collisionCompare(built,warm,"warm");
     }
 
@@ -478,6 +504,9 @@ int main(int argc, char* argv[]) {
     const auto* collisionOnly=std::getenv("OPENGOTHIC_COLLISION_CONTRACT_ONLY");
     const bool collision=(argc==2 && std::string_view(argv[1])=="--collision") ||
                          (collisionOnly!=nullptr && std::string_view(collisionOnly)=="1");
+    // The collision part reads World's physics_static load mark; the probe reads its switch once, before any load.
+    if(collision)
+      setenv("OPENGOTHIC_LOADPROBE","1",1);
     const auto* game=std::getenv("GOTHIC_DIR");
     if(game==nullptr || *game=='\0')
       throw std::runtime_error("GOTHIC_DIR must point to prepared Gothic II settings");

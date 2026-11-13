@@ -33,7 +33,8 @@ class StaticCollision;
 // A file is used only when the magic, the identity, the file size against the sizes and the checksum hold, every
 // index is below the vertex count, the segments tile their index list, every sector reference names a sector,
 // every duplicate member names a triangle of its mesh once, and Jolt restores the shapes. Anything else is a miss
-// with one log line "[collision-cache] <file>: <reason>; rebuilding", never a failed load.
+// with one log line "[collision-cache] derived/<base>/<WORLD>.collision: <reason>; rebuilding" (at most 255 bytes,
+// Tempest's line), never a failed load.
 class CollisionCache final {
   public:
     static constexpr uint32_t BakeVersion = 2;
@@ -50,7 +51,7 @@ class CollisionCache final {
     CollisionCache(const std::filesystem::path& cacheRoot, const Key& key);
     // Fills out's sectors, vertices, land and water meshes (their triangle data prepared) and shapes and returns
     // true. A missing file is a miss without a log line, unless leftover temporary files of an interrupted write
-    // lie beside it; out is left as it was on any miss.
+    // lie beside it (counted, not removed); out is left as it was on any miss.
     bool read(StaticCollision& out) const;
     void save(const StaticCollision& in) const;
     const std::filesystem::path& path() const { return file; }

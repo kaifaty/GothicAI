@@ -4,11 +4,13 @@
 // (WorldCollisionSource, as World passes it) with a cache root of this contract:
 //   1. a cold start (miss, write), a warm start (hit) and a start with the cache off give byte-identical navigation
 //      geometry, the same grid and named sector rays and the same PhysicVbo answers (staticcollision_probe.h);
-//   2. on a hit the input is not called, no [world-collision] line is logged and the load mark says input=cache;
+//   2. on a hit the input is not called, no [world-collision] line is logged and the source's mark says input=cache
+//      (gothic-wayheights-contract --collision checks the mark of a real World load);
 //   3. a truncated file, a flipped byte in the CPU part or in the shapes, a version 1 file, another key (content,
-//      flags, cloth rules), an index, a segment or a sector reference out of range with the checksum recomputed,
-//      and a leftover temporary file beside a missing cache: each a miss with its one log line, a rebuild equal to
-//      the cold start and a hit on the next start;
+//      flags, cloth rules), a land and a water index and segment and a sector reference out of range with the
+//      checksum recomputed, and a leftover temporary file beside a missing cache: each a miss with its one whole log
+//      line, a rebuild equal to the cold start and a hit on the next start; the key's cloth part is the rules'
+//      SHA-256 and WorldCloth::Algorithm;
 //   4. OPENGOTHIC_COLLISION_CACHE=0 builds from the input and leaves the cache directory untouched.
 // On the collision contract's fixtures (the cloth world and its three overrides, the strip and its two overrides,
 // the world with disable_collision, water and named sectors) and the base's NEWWORLD in a scratch copy, where it
@@ -48,6 +50,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -153,20 +156,38 @@ Loaded load(const fs::path& dir, const fs::path& over) {
   return out;
   }
 
+// Every line Tempest writes while it lives: one callback call is one output line (it splits past 255 bytes).
+struct LineCapture {
+  std::mutex               sync;
+  std::vector<std::string> lines;
+  LineCapture() {
+    Tempest::Log::setOutputCallback([this](Tempest::Log::Mode,const char* line) {
+      std::lock_guard guard(sync);
+      lines.emplace_back(line);
+      });
+    }
+  ~LineCapture() { Tempest::Log::setOutputCallback({}); }
+  };
+
 // One start of the world: DynamicWorld with the world load's lazy input and the given cache, the log it wrote.
 struct Start {
   std::unique_ptr<WorldCollisionSource> source;
   std::unique_ptr<DynamicWorld>         physics;
-  std::string                           log;
+  std::vector<std::string>              lines;
+  std::string                           log; // the lines joined, for the tags
   StaticCollision::Stats                stats;
   };
 
 Start start(const Loaded& world, const StaticCollision::Cache& cache) {
   Start out;
-  LogCapture log;
+  {
+  LineCapture capture;
   out.source  = std::make_unique<WorldCollisionSource>(world.table,world.bundle,world.landscape);
   out.physics = std::make_unique<DynamicWorld>(nullptr,std::ref(*out.source),&world.cloth.original,&cache);
-  out.log     = log.take();
+  out.lines   = std::move(capture.lines);
+  }
+  for(const auto& line:out.lines)
+    out.log += line+"\n";
   out.stats   = out.physics->staticCollisionLoadStats();
   return out;
   }
@@ -175,11 +196,24 @@ StaticCollision::Cache cacheOf(const fs::path& root, const std::string& world) {
   return {root,{std::string(64,'c'),world,"collisioncache-cpu-contract",0b101u,StaticCollision::clothRules()}};
   }
 
-// The cache's line: LogCapture joins the pieces without line ends, so it ends at its own last words.
-std::string cacheLine(const std::string& log) {
-  const std::string tag = "[collision-cache] ", end = "; rebuilding";
-  const auto at = log.find(tag), last = log.find(end,at);
-  return at==std::string::npos || last==std::string::npos ? std::string("none") : log.substr(at,last+end.size()-at);
+// The lines that hold the tag.
+std::vector<std::string> tagLines(const std::vector<std::string>& lines, const std::string& tag) {
+  std::vector<std::string> out;
+  for(const auto& line:lines)
+    if(line.find(tag)!=std::string::npos)
+      out.push_back(line);
+  return out;
+  }
+
+// The world cloth part of the key from its parts, independently of StaticCollision::clothRules.
+std::string clothRulesKey() {
+  std::string out;
+  for(const auto byte:WorldCloth::rulesSha256()) {
+    char hex[3];
+    std::snprintf(hex,sizeof(hex),"%02x",unsigned(byte));
+    out += hex;
+    }
+  return out+"/"+std::to_string(WorldCloth::Algorithm);
   }
 
 // ---- 1: three starts, one answer ----
@@ -278,13 +312,15 @@ struct Damage {
   void expectMiss(const std::string& label, const std::string& reason, const StaticCollision::Cache* key = nullptr) {
     const auto& use = key!=nullptr ? *key : cache;
     const auto miss = start(world,use);
-    const auto line = "[collision-cache] "+file.string()+": ";
-    std::printf("%s: %s\n",label.c_str(),cacheLine(miss.log).c_str());
+    // The file under the cache root, then the reason: one whole line, not split by Tempest's 255 bytes.
+    const auto head = "[collision-cache] derived/"+file.parent_path().filename().string()+"/"+
+                      file.filename().string()+": ";
+    const auto lines = tagLines(miss.lines,"[collision-cache] ");
+    std::printf("%s: %s\n",label.c_str(),lines.empty() ? "no [collision-cache] line" : lines.front().c_str());
     require(!miss.stats.cacheHit && miss.source->calls()==1,label+": must miss and call the input once");
-    require(tagged(miss.log,"[collision-cache] ")==1 && miss.log.find(line)!=std::string::npos &&
-            miss.log.find(reason)!=std::string::npos &&
-            miss.log.find("; rebuilding")!=std::string::npos,
-            label+": the log must hold one line '"+line+"…"+reason+"…', got: "+miss.log);
+    require(lines.size()==1 && tagged(miss.log,"[collision-cache] ")==1 && lines[0].rfind(head,0)==0 &&
+            lines[0].find(reason)!=std::string::npos && lines[0].size()<=255 && lines[0].ends_with("; rebuilding"),
+            label+": the log must hold one whole line '"+head+"…"+reason+"…; rebuilding', got: "+miss.log);
     expectSame(label+", the rebuild against the cold start",cold,Probe::probe(*miss.physics,world.landscape,world.table));
     const auto next = start(world,use);
     require(next.stats.cacheHit && next.source->calls()==0 && tagged(next.log,"[collision-cache] ")==0,
@@ -335,6 +371,16 @@ void damage(const Loaded& world, const StaticCollision::Cache& cache, const Prob
     std::memcpy(bytes.data()+layout.at[Layout::LandSegments]+8,&triangles,8);
     rechecksum(bytes);
     });
+  d.edited("a water index out of range, checksum recomputed","water index 0 is ",[&](auto& bytes) {
+    const auto vertices = uint32_t(layout.size[Layout::Vertices]);
+    std::memcpy(bytes.data()+layout.at[Layout::WaterIndices],&vertices,4);
+    rechecksum(bytes);
+    });
+  d.edited("a water segment out of range, checksum recomputed","water segment 0 runs past its ",[&](auto& bytes) {
+    const uint64_t triangles = layout.size[Layout::WaterIndices];
+    std::memcpy(bytes.data()+layout.at[Layout::WaterSegments]+8,&triangles,8);
+    rechecksum(bytes);
+    });
   d.edited("a sector reference out of range, checksum recomputed","land segment 0 names sector ",[&](auto& bytes) {
     const auto names = uint32_t(layout.size[Layout::Names]);
     std::memcpy(bytes.data()+layout.at[Layout::LandSegments]+20,&names,4);
@@ -352,15 +398,14 @@ void damage(const Loaded& world, const StaticCollision::Cache& cache, const Prob
       other.key.clothRules = std::string(64,'0')+"/"+std::to_string(WorldCloth::Algorithm);
     d.expectMiss(std::string("another key: ")+keys[k],"another key (base, world, content, flags, cloth rules",&other);
     }
-  // A leftover of an interrupted write beside a missing cache: named, removed when it is old, rebuilt.
+  // A leftover of an interrupted write beside a missing cache: counted, left to its writer, rebuilt beside it.
   fs::remove(d.file);
   auto leftover = d.file;
   leftover += ".tmp-1-2";
   writeBytes(leftover,std::vector<uint8_t>(d.good.begin(),d.good.begin()+1000));
-  fs::last_write_time(leftover,fs::file_time_type::clock::now()-std::chrono::hours(1));
   d.expectMiss("a leftover temporary file beside a missing cache",
-               "missing; leftovers of an interrupted write: "+leftover.filename().string()+" (removed)");
-  require(!fs::exists(leftover),"the old leftover must be removed");
+               "missing; 1 leftover .tmp file(s) of an interrupted write beside it");
+  require(fs::exists(leftover),"the leftover must not be removed: its writer may still run");
   }
 
 // ---- 4: the cache off ----
@@ -431,18 +476,23 @@ std::string shapesOnly(const StaticCollision& statics) {
   return file+payload;
   }
 
+// The lifetimes are main's constructor's: the package ends before the cache is read, the file's bytes with the read,
+// and the restored shapes outlive prepareTriangleData (all of it is released after the timed stages).
 MainWarm mainWarm(const asset::WorldMesh& input, const fs::path& v1) {
   MainWarm out;
   auto t = Clock::now();
+  std::vector<std::string> sectors;
+  std::vector<JPH::Vec3> vertices;
+  PhysicVbo land(&vertices), water(&vertices);
+  {
   PackedMesh pkg(input,PackedMesh::PK_Physic);
-  std::vector<std::string> sectors(pkg.subMeshes.size());
+  sectors.resize(pkg.subMeshes.size());
   for(size_t i=0;i<sectors.size();++i)
     sectors[i] = pkg.subMeshes[i].material.name;
-  std::vector<JPH::Vec3> vertices(pkg.vertices.size());
+  vertices.resize(pkg.vertices.size());
   for(size_t i=0;i<pkg.vertices.size();++i)
     vertices[i] = CollisionWorld::toMeters(Tempest::Vec3(pkg.vertices[i].pos[0],pkg.vertices[i].pos[1],
                                                          pkg.vertices[i].pos[2]));
-  PhysicVbo land(&vertices), water(&vertices);
   for(size_t i=0;i<pkg.subMeshes.size();++i) {
     const auto& sm = pkg.subMeshes[i];
     if(!sm.material.disable_collision && sm.iboLength>0) {
@@ -452,9 +502,11 @@ MainWarm mainWarm(const asset::WorldMesh& input, const fs::path& v1) {
         land.addIndex(pkg.indices,sm.iboOffset,sm.iboLength,sm.material.group,sectors[i].c_str());
       }
     }
+  }
   auto now = Clock::now();
   out.packMs = ms(t,now);
   t = now;
+  JPH::ShapeRefC landShape, waterShape;
   {
   std::ifstream file(v1,std::ios::binary);
   std::string bytes(size_t(fs::file_size(v1)),'\0');
@@ -469,6 +521,8 @@ MainWarm mainWarm(const asset::WorldMesh& input, const fs::path& v1) {
   const auto a = JPH::Shape::sRestoreWithChildren(stream,shapes,materials);
   const auto b = JPH::Shape::sRestoreWithChildren(stream,shapes,materials);
   require(!a.HasError() && !b.HasError(),"the version 1 shapes must restore");
+  landShape = a.Get();
+  waterShape = b.Get();
   }
   now = Clock::now();
   out.shapesMs = ms(t,now);
@@ -573,6 +627,10 @@ void numbers(const std::string& label, const Loaded& world, const StaticCollisio
 // ---- worlds ----
 
 void fixtures(const fs::path& root) {
+  // The cloth part of every key here and of the game's (StaticCollision::gameCache): the rules' SHA-256 and the
+  // algorithm's number, so a new algorithm or new rules miss.
+  require(StaticCollision::clothRules()==clothRulesKey(),"the key's cloth rules must be the rules' SHA-256 and "
+          "WorldCloth::Algorithm, got '"+StaticCollision::clothRules()+"', expected '"+clothRulesKey()+"'");
   size_t number = 0;
   auto check = [&](const std::string& label, const fs::path& dir, const fs::path& over) {
     const auto world = load(dir,over);

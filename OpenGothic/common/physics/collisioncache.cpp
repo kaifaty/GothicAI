@@ -304,27 +304,15 @@ bool CollisionCache::read(StaticCollision& out) const {
     std::error_code error;
     const auto fileSize=fs::file_size(file,error);
     if(error) {
-      // A miss as before, unless an interrupted write left its temporary file: name it, and remove it once it is
-      // old enough not to belong to a writer of another process.
+      // A miss as before, unless an interrupted write left its temporary file. It is named, never removed: its
+      // age does not prove that its writer has finished.
       const auto prefix=file.filename().string()+".tmp-";
-      std::vector<std::string> left;
-      for(const auto& entry:fs::directory_iterator(file.parent_path(),error)) {
-        const auto name=entry.path().filename().string();
-        if(!name.starts_with(prefix))
-          continue;
-        std::error_code ignored;
-        const auto written=fs::last_write_time(entry.path(),ignored);
-        const bool stale=!ignored && fs::file_time_type::clock::now()-written>std::chrono::minutes(10);
-        if(stale)
-          fs::remove(entry.path(),ignored);
-        left.push_back(name+(stale ? " (removed)" : " (kept: younger than 10 minutes)"));
-        }
-      if(left.empty())
+      size_t left=0;
+      for(const auto& entry:fs::directory_iterator(file.parent_path(),error))
+        left+=entry.path().filename().string().starts_with(prefix);
+      if(left==0)
         return false;
-      reason="missing; leftovers of an interrupted write:";
-      for(const auto& name:left)
-        reason+=" "+name;
-      fail(reason);
+      fail("missing; "+count(left)+" leftover .tmp file(s) of an interrupted write beside it");
       }
 
     Hash64 hash;
@@ -436,8 +424,16 @@ bool CollisionCache::read(StaticCollision& out) const {
   catch(const std::exception& error) {
     reason=std::string("read failed: ")+error.what();
     }
-  // One line: Tempest splits lines past 255 bytes, so the reasons stay short.
-  Tempest::Log::i("[collision-cache] ",file.string(),": ",reason,"; rebuilding");
+  // One line: Tempest splits a line past 255 bytes. The file is named under the cache root, and a reason too
+  // long for the rest is cut.
+  constexpr std::string_view end="; rebuilding";
+  auto line="[collision-cache] "+(fs::path("derived")/file.parent_path().filename()/file.filename()).generic_string()+
+            ": "+reason;
+  if(line.size()+end.size()>255) {
+    line.resize(255-end.size()-3);
+    line+="...";
+    }
+  Tempest::Log::i(line+std::string(end));
   return false;
   }
 
