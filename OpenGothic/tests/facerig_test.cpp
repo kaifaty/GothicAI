@@ -37,6 +37,7 @@
 #include "graphics/mesh/speechbrows.h"
 #include "graphics/mesh/speechcues.h"
 #include "graphics/mesh/speechface.h"
+#include "graphics/mesh/talkgestures.h"
 #include "gltfmesh.h"
 #include "linecues.h"
 #include "playervoice.h"
@@ -1702,20 +1703,22 @@ void playerVoiceCases() {
   LipSync mouth;
   mouth.setShapes({0,0.5f,1});
   mouth.start(first,9000);  // world time differs from the microphone's arrival clock
-  voice.tick(1020);
-  require(first->playedMs()==0,"the named microphone buffer must hold the first 20 ms");
+  const uint64_t buffer = LipSync::liveBufferMs();
+  voice.tick(1000+buffer);
+  require(first->playedMs()==0,"the microphone buffer must hold the clock behind the first chunk");
   voice.append(rate,pcm.data()+320,320,1020);
   voice.append(rate,pcm.data()+640,320,1040);
   LipSync::Shape shape;
   mouth.update(9000,16,shape);
   LipSync::Probe probe;
   mouth.probe(probe);
-  require(first->playedMs()==20 && probe.time==20 && probe.level>0 && close(probe.level,first->level(20)),
+  require(uint64_t(first->playedMs())==40-buffer && probe.time==40-buffer && probe.level>0 &&
+          close(probe.level,first->level(40-buffer)),
           "a silent live track must drive the mouth by its buffered arrival time and level");
   for(size_t i=3; i<pcm.size()/320; ++i)
     voice.append(rate,pcm.data()+i*320,320,1000+i*20);
   voice.tick(1000+voice.durationMs());
-  require(uint64_t(first->playedMs())+PlayerVoice::BufferMs==voice.durationMs() && mouth.isSpeaking(9001),
+  require(uint64_t(first->playedMs())+buffer==voice.durationMs() && mouth.isSpeaking(9001),
           "the hero must still be speaking with exactly one microphone buffer left before finish");
   voice.finish();
   require(first->isFinished() && !mouth.isSpeaking(9001),"finishing the microphone must end the hero's speech");
@@ -1727,9 +1730,83 @@ void playerVoiceCases() {
   voice.tick(10000);
   const auto restarted = voice.track();
   require(restarted->playedMs()==20 && restarted->playedMs()<=int64_t(voice.durationMs()) &&
-          restarted->level(uint64_t(restarted->playedMs()))==0,
-          "the microphone clock must not run ahead of appended samples");
+          restarted->level(uint64_t(restarted->playedMs()))==restarted->level(10) && restarted->level(10)>0,
+          "the microphone clock must not run ahead of appended samples, and a step not here yet holds the last one");
   voice.finish();
+
+  // a first chunk that came late (a cold start), the next ones sooner, the last one late again: the clock goes by
+  // the one that came soonest after its time (40 ms of sound at 50062), not by the first or the latest
+  voice.begin(50000);
+  voice.append(rate,pcm.data(),320,50060);
+  voice.append(rate,pcm.data()+320,320,50061);
+  voice.append(rate,pcm.data()+640,320,50062);
+  voice.append(rate,pcm.data()+960,320,50090);
+  require(voice.track()->playedMs()==int64_t(50090-50022-LipSync::liveBufferMs()),
+          "the microphone clock must follow the chunk that came soonest after its time: "+
+          std::to_string(voice.track()->playedMs()));
+  voice.finish();
+  // a breath before the first word (30 dB below the voice): a stream of an npc stretches it to its own loudest
+  // moment, the microphone measures it against a speech level of its own and keeps the mouth shut
+  const auto breath = sing(rate,{{200,150,150,0.03f}});
+  auto streamed = std::make_shared<LipSync::Track>(rate);
+  streamed->append(breath.data(),breath.size());
+  voice.begin();
+  voice.append(rate,breath.data(),breath.size(),20000);
+  require(streamed->level(150)>0.5f && voice.track()->level(150)<0.05f,
+          "a breath must not open the hero's mouth: live "+std::to_string(voice.track()->level(150))+", streamed "+
+          std::to_string(streamed->level(150)));
+  voice.finish();
+  // an npc's voice from the speakers in the microphone, 12 dB below the hero's: ducked while it sounds and
+  // DuckHoldMs after its last chunk (the room, the output's delay), then heard as it is
+  const auto leak = sing(rate,{{400,150,150,0.25f}});
+  voice.begin();
+  uint64_t at = 30000;
+  for(size_t i=0; i+320<=leak.size(); i+=320, at+=20)
+    voice.append(rate,leak.data()+i,320,at,true);
+  const uint64_t sounded = voice.durationMs();  // ms of the utterance while the npc spoke
+  const uint64_t lastNpc = at-20;               // the tick of its last chunk
+  uint64_t       held    = sounded;             // ...and of the chunks still within DuckHoldMs after it
+  for(; at<lastNpc+PlayerVoice::DuckHoldMs+60; at+=20) {
+    voice.append(rate,leak.data(),320,at,false);
+    if(at<lastNpc+PlayerVoice::DuckHoldMs)
+      held = voice.durationMs();
+    }
+  const auto heard = voice.track();
+  require(held>=sounded+40 && held+40<=voice.durationMs(),"the duck test must have chunks within the hold and after it");
+  require(heard->peak(0,sounded-10)<0.05f,"an npc's voice in the microphone must not open the hero's mouth while it "
+          "sounds: "+std::to_string(heard->peak(0,sounded-10)));
+  require(heard->peak(sounded,held-10)<0.05f,"the microphone must stay ducked DuckHoldMs after the npc's last chunk: "+
+          std::to_string(heard->peak(sounded,held-10)));
+  require(heard->peak(held+10,voice.durationMs()-10)>0.3f,"after DuckHoldMs the same sound must open the mouth: "+
+          std::to_string(heard->peak(held+10,voice.durationMs()-10)));
+  voice.finish();
+  // who ducks it: not the hero (his own live track sounds), not one farther than DuckCm, not one silent
+  const float nearCm = PlayerVoice::DuckCm*0.5f, farCm = PlayerVoice::DuckCm*1.5f;
+  require(PlayerVoice::ducks(false,nearCm*nearCm,true) && !PlayerVoice::ducks(true,0,true) &&
+          !PlayerVoice::ducks(false,farCm*farCm,true) && !PlayerVoice::ducks(false,nearCm*nearCm,false),
+          "only a sounding voice of an npc near the hero must duck the microphone");
+
+  // a pause of 150 ms shuts the mouth of a live track (LiveRelease; LipSync::start must know the track is live)
+  {
+    const auto said = sing(rate,{{300,150,150,1},{200,0,0,0}});
+    voice.begin();
+    voice.append(rate,said.data(),said.size(),40000);
+    LipSync live;
+    live.setShapes({0,1,1});  // every shape opens fully: lip_open is the mouth itself
+    live.start(voice.track(),0);
+    LipSync::Probe p;
+    float loud = 0;
+    for(uint64_t now=0; now<=450; now+=10) {
+      voice.track()->setPlayed(now);
+      live.update(now,10,shape);
+      live.probe(p);
+      if(now==290)
+        loud = p.open;
+      }
+    require(loud>0.5f && p.open<0.05f,"150 ms of silence must shut the mouth of a live voice: "+std::to_string(loud)+
+            " -> "+std::to_string(p.open));
+    voice.finish();
+  }
 
   VoiceBuffer npc(rate);
   npc.append(reinterpret_cast<const uint8_t*>(pcm.data()),640);
@@ -1892,6 +1969,26 @@ void browCases(const GltfHeadMesh& head, const FaceProfile& plain) {
     require(late.update(*p->brows,uint64_t(at+80),s) && s.at==uint64_t(at+80),"a move found 80 ms late must start now");
     late.start(trackOf(16000,glide),7,0);
     require(!late.update(*p->brows,syl+20,s),"a move whose syllable has gone by must not start");
+  }
+  // the live microphone: no sound ahead, so the accent is found in its syllable and the brows start then
+  {
+    auto live = std::make_shared<LipSync::Track>(16000);
+    live->setLiveInput();
+    live->setPlayed(0);
+    SpeechBrows mic;
+    mic.start(live,7,0);
+    SpeechBrows::Start s;
+    std::vector<uint64_t> at;
+    for(size_t k=0; k*320<glide.size(); ++k) {
+      const uint64_t now = k*20;
+      live->append(glide.data()+k*320,std::min<size_t>(320,glide.size()-k*320));
+      live->setPlayed(now>LipSync::liveBufferMs() ? now-LipSync::liveBufferMs() : 0);
+      while(mic.update(*p->brows,now,s))
+        at.push_back(s.at);
+      }
+    require(at.size()==1 && at[0]>=syl && at[0]<=syl+SpeechBrows::LiveLateMs+LipSync::liveBufferMs(),
+            "the brows of a live voice must start within its accented syllable: "+std::to_string(at.size())+" moves"+
+            (at.empty() ? "" : " at "+std::to_string(at[0])+" ms, syllable "+std::to_string(syl)));
   }
 
   // the mood of the line into the face (SpeechBrows::play, as MdlVisual plays it): an angry line of the AI whose voice
@@ -2501,6 +2598,147 @@ void speechFaceCases(const GltfHeadMesh& plainHead) {
   std::cout << "speech face: " << us << " us a frame to sample a track of " << track->shapes.size() << " shapes\n";
   }
 
+// the head's nod while one speaks or listens (TalkGestures, player-voice-face.md "Кивок"): played at 30 frames a
+// second as the bench films it, the pitch in degrees per frame
+struct NodTrace final {
+  std::vector<uint64_t> at;
+  std::vector<float>    deg;
+  };
+
+NodTrace playNods(TalkGestures& g, uint64_t from, uint64_t to, const std::vector<std::pair<uint64_t,float>>& syllables,
+                  bool live, bool speak = true) {
+  NodTrace ret;
+  size_t   next = 0;
+  for(uint64_t now=from; now<to; now+=33) {
+    bool  beat = false;
+    float db   = -100;
+    while(next<syllables.size() && syllables[next].first<=now) {
+      beat = true;
+      db   = syllables[next].second;
+      ++next;
+      }
+    g.updateHead(now,33,speak,beat,db,live);
+    ret.at.push_back(now);
+    ret.deg.push_back(g.head().pitch*180.f/3.14159265f);
+    }
+  return ret;
+  }
+
+uint32_t nodsOf(const TalkGestures& g) {
+  TalkGestures::Probe p;
+  g.probe(p);
+  return p.nods;
+  }
+
+void headNodCases() {
+  // by default the speaker does not nod (the user's choice by the clip player-voice-3), the head sways
+  {
+    TalkGestures g;
+    std::vector<std::pair<uint64_t,float>> syl;
+    for(uint64_t t=0; t<2400; t+=200)
+      syl.emplace_back(t,(t/200)%2==1 ? -14.f : -20.f);
+    float pitch = 0, sway = 0;
+    size_t next = 0;
+    for(uint64_t now=0; now<2600; now+=33) {
+      bool  beat = false;
+      float db   = -100;
+      for(; next<syl.size() && syl[next].first<=now; ++next) {
+        beat = true;
+        db   = syl[next].second;
+        }
+      g.updateHead(now,33,true,beat,db,false);
+      pitch = std::max(pitch,std::abs(g.head().pitch));
+      sway  = std::max(sway,std::abs(g.head().yaw)+std::abs(g.head().roll));
+      }
+    require(nodsOf(g)==0 && pitch==0 && sway>0.2f*3.14159265f/180.f,
+            "by default a speaker must not nod (no nod counted either) and its head must sway: "+std::to_string(nodsOf(g))+
+            " nods, pitch "+std::to_string(pitch)+", sway "+std::to_string(sway));
+  }
+  // the nod as it was tuned (for trials and as the move of the listener's nod)
+  require(TalkGestures::setParam("Nod",3.5f),"the nod must stay a parameter");
+  const auto steps = [](const NodTrace& t, size_t from, size_t to) {
+    float step = 0, change = 0, prev = 0;
+    for(size_t i=std::max<size_t>(from,1); i<to && i<t.deg.size(); ++i) {
+      const float d = t.deg[i]-t.deg[i-1];
+      step   = std::max(step,std::abs(d));
+      change = std::max(change,std::abs(d-prev));
+      prev   = d;
+      }
+    return std::make_pair(step,change);
+    };
+  // a line: syllables every 200 ms at -20 dB, a stressed one 6 dB louder at 1000 ms
+  {
+    TalkGestures g;
+    std::vector<std::pair<uint64_t,float>> syl;
+    for(uint64_t t=0; t<2400; t+=200)
+      syl.emplace_back(t,t==1000 ? -14.f : -20.f);
+    const auto tr = playNods(g,0,2600,syl,false);
+    size_t first = 0, apex = 0;
+    for(size_t i=0; i<tr.deg.size(); ++i) {
+      if(first==0 && tr.deg[i]<-0.001f)
+        first = i;
+      if(tr.deg[i]<tr.deg[apex])
+        apex = i;
+      }
+    const auto [step,change] = steps(tr,0,tr.deg.size());
+    require(first>0 && tr.at[first]>=1000 && tr.at[first]<1070 && -tr.deg[first]<1.f,
+            "the nod's first frame must go down less than 1 degree: "+std::to_string(-tr.deg[first]));
+    require(change<1.f,"the nod must speed up and slow down smoothly (no kick): its step changed by "+
+            std::to_string(change)+" degrees a frame");
+    require(-tr.deg[apex]>=2.f && -tr.deg[apex]<=3.5f && tr.at[apex]>=1100 && tr.at[apex]<=1200,
+            "the strongest nod must reach 2..3.5 degrees 120..200 ms into its syllable: "+
+            std::to_string(-tr.deg[apex])+" at "+std::to_string(tr.at[apex]));
+    require(tr.deg[size_t((1000+150+320+40)/33)]>-0.05f && nodsOf(g)==1,
+            "the nod must be back 250..400 ms later, and only the stressed syllable nods ("+std::to_string(step)+")");
+  }
+  // every other syllable stressed, every 200 ms: nods at most once in NodGap (800 ms)
+  {
+    TalkGestures g;
+    std::vector<std::pair<uint64_t,float>> syl;
+    for(uint64_t t=0; t<6000; t+=200)
+      syl.emplace_back(t,(t/200)%2==1 ? -14.f : -20.f);
+    const auto tr = playNods(g,0,6200,syl,false);
+    std::vector<uint64_t> starts;
+    for(size_t i=1; i<tr.deg.size(); ++i)
+      if(tr.deg[i]<tr.deg[i-1]-0.001f && (i<2 || tr.deg[i-1]>=tr.deg[i-2]-0.001f))
+        starts.push_back(tr.at[i]);
+    bool spaced = !starts.empty();
+    for(size_t i=1; i<starts.size(); ++i)
+      spaced = spaced && starts[i]-starts[i-1]>=800-33;
+    require(spaced && nodsOf(g)>=4 && nodsOf(g)<=8,"stressed syllables 400 ms apart must nod at most once in "
+            "800 ms: "+std::to_string(nodsOf(g))+" nods");
+  }
+  // a live voice: the syllable is judged 80 ms in, the nod goes down quicker and still peaks in it (3.5 degrees in
+  // 120 ms by minimum jerk change the step by up to 1.5 degrees a frame; a kicked spring by 2.6..4.3)
+  {
+    TalkGestures g;
+    std::vector<std::pair<uint64_t,float>> syl = {{80,-20}, {280,-20}, {480,-20}, {1080,-14}};
+    const auto tr = playNods(g,0,1800,syl,true);
+    size_t apex = 0;
+    for(size_t i=0; i<tr.deg.size(); ++i)
+      if(tr.deg[i]<tr.deg[apex])
+        apex = i;
+    require(tr.at[apex]>=1000+100 && tr.at[apex]<=1000+250 && steps(tr,0,tr.deg.size()).second<1.6f,
+            "a live voice's nod must peak within its syllable, smoothly: at "+std::to_string(tr.at[apex])+", step change "+
+            std::to_string(steps(tr,0,tr.deg.size()).second));
+  }
+  // listening: a nod as the words come, as smooth
+  {
+    TalkGestures g;
+    g.listen(20000);
+    NodTrace tr;
+    for(uint64_t now=0; now<20000 && g.listenNodCount()==0; now+=33)
+      g.heard(now), tr = playNods(g,now,now+33,{},false,false);
+    const uint64_t from = tr.at.back();
+    const auto t2 = playNods(g,from+33,from+33*30,{},false,false);
+    const auto [step,change] = steps(t2,0,t2.deg.size());
+    require(g.listenNodCount()==1 && -t2.deg[0]<1.f && change<1.f && *std::min_element(t2.deg.begin(),t2.deg.end())<-1.f,
+            "a listening nod must start under 1 degree a frame and move smoothly: "+std::to_string(-t2.deg[0])+", "+
+            std::to_string(change));
+  }
+  TalkGestures::setParam("Nod",0);
+  }
+
 int main() {
   try {
     const auto head    = makeHead();
@@ -2512,6 +2750,7 @@ int main() {
     leakCases(head,*profile);
     toneCases();
     playerVoiceCases();
+    headNodCases();
     browCases(head,*profile);
     listenCases(head,*profile);
     speechFaceCases(head);

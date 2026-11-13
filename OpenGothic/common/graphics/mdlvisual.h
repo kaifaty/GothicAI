@@ -241,6 +241,7 @@ class MdlVisual final {
     // a voiced line: the mouth follows the voice instead of the talk loop
     void                           startSpeech    (Npc& npc, std::shared_ptr<LipSync::Track> voice);
     void                           stopSpeech     (uint64_t now);
+    bool                           isSpeaking     (uint64_t now) const { return mouth.isSpeaking(now); }
     // the face track of a line (say_face): the voice of that line plays it, whichever comes first (SpeechFace)
     void                           setFaceTrack   (std::shared_ptr<const SpeechFace::Track> track, std::string_view line);
     void                           updateMouth    (Npc& npc, uint64_t dt);

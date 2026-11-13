@@ -1849,7 +1849,7 @@ void AiBridge::Impl::tickAddressed(World& world) {
 
 void AiBridge::Impl::sendPtt(std::string_view type, std::string_view audio) {
   if(type=="ptt_start")
-    playerVoice.begin(); else
+    playerVoice.begin(Application::tickCount()); else
     playerVoice.finish();
   JsonWriter j(type);
   if(World* world = Gothic::inst().world())

@@ -139,6 +139,11 @@ void DrawCommands::setBindings(Tempest::Encoder<CommandBuffer>& cmd, const DrawC
       } else {
       cmd.setBinding(L_Normal, bx.mat.normal!=nullptr ? *bx.mat.normal : Resources::fallbackTexture());
       cmd.setBinding(L_Orm, bx.mat.orm!=nullptr ? *bx.mat.orm : Resources::fallbackTexture());
+      const auto& f = bx.mat.fringe;
+      const bool  on = bx.mat.hasFringe();
+      cmd.setBinding(L_FringeMain,   on ? *f.albedo : Resources::fallbackTexture());
+      cmd.setBinding(L_FringeNormal, on ? *f.normal : Resources::fallbackTexture());
+      cmd.setBinding(L_FringeOrm,    on ? *f.orm    : Resources::fallbackTexture());
       }
     }
 

@@ -150,6 +150,7 @@ class Resources final {
       float                    turbidityDepth = 0.f;
       float                    emissive = 0.f;
       float                    projectionTile = 0.f; // metres per repeat by world position ("projection"); 0: mesh UV
+      Material::Fringe         fringe; // "fringe": the second layer over the projection, its maps loaded
       Material::Antitile       antitile = Material::Antitile::Off;
       bool                     hair = false; // hair cards: the ORM slot is the hair map, lit by the hair BRDF
       bool                     strand = false; // strands as ribbons: the albedo is the hair's colour ramp
@@ -693,6 +694,8 @@ class Resources final {
       float       turbidityDepth = 0.f;
       float       emissive = 0.f;
       float       projectionTile = 0.f;
+      std::string fringeAlbedo, fringeNormal, fringeOrm;
+      Material::Fringe fringe; // its tile and bands; the maps are loaded with the record
       Material::Antitile antitile = Material::Antitile::Off;
       bool        hair = false;
       bool        strand = false;

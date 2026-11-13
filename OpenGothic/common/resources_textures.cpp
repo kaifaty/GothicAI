@@ -153,9 +153,10 @@ void Resources::indexMaterialMaps() {
       continue;
       }
     MaterialMapFiles maps;
-    auto path = [&](const char* field, std::string& out, std::string* replacement = nullptr) {
-      const auto it = entry.value.FindMember(field);
-      if(it==entry.value.MemberEnd())
+    auto pathIn = [&](const rapidjson::Value& object, const char* field, std::string& out,
+                      std::string* replacement = nullptr) {
+      const auto it = object.FindMember(field);
+      if(it==object.MemberEnd())
         return true;
       if(!it->value.IsString())
         return false;
@@ -170,6 +171,9 @@ void Resources::indexMaterialMaps() {
       if(replacement!=nullptr)
         *replacement = (std::filesystem::path("materials")/relative).lexically_normal().generic_string();
       return true;
+      };
+    auto path = [&](const char* field, std::string& out, std::string* replacement = nullptr) {
+      return pathIn(entry.value, field, out, replacement);
       };
     bool valid = path("albedo", maps.albedo, &maps.albedoReplacement) && path("normal", maps.normal) && path("orm", maps.orm);
     if(const auto mode = entry.value.FindMember("antitile"); mode!=entry.value.MemberEnd()) {
@@ -272,6 +276,38 @@ void Resources::indexMaterialMaps() {
         valid = false;
       else
         maps.projectionTile = float(tile);
+      }
+    // Grass along the edges of the strips (b3-rock-material.md, task 2): its own three maps by world position at
+    // `tile_m`, where the mesh's v is within `top` of the top edge (v=0) or `bottom` of the foot (v=1) - solid to the
+    // first share, tufts to the second (material_projection.glsl). Only with the projection; all three maps
+    if(const auto fringe = entry.value.FindMember("fringe"); fringe!=entry.value.MemberEnd()) {
+      const auto& value = fringe->value;
+      auto band = [&](const char* field, float (&out)[2]) {
+        const auto it = value.FindMember(field);
+        if(it==value.MemberEnd())
+          return true;
+        if(!it->value.IsArray() || it->value.Size()!=2 || !it->value[0].IsNumber() || !it->value[1].IsNumber())
+          return false;
+        const double solid = it->value[0].GetDouble(), end = it->value[1].GetDouble();
+        if(!(solid>=0) || !(solid<=end) || !(end<=1))
+          return false;
+        out[0] = float(solid);
+        out[1] = float(end);
+        return true;
+        };
+      double tile = 0;
+      if(value.IsObject())
+        if(const auto it = value.FindMember("tile_m"); it!=value.MemberEnd() && it->value.IsNumber())
+          tile = it->value.GetDouble();
+      const bool maps3 = value.IsObject() && value.HasMember("albedo") && value.HasMember("normal") &&
+                         value.HasMember("orm");
+      if(maps.projectionTile<=0 || !maps3 || !std::isfinite(tile) || tile<=0 || tile>1e4 ||
+         !pathIn(value,"albedo",maps.fringeAlbedo) || !pathIn(value,"normal",maps.fringeNormal) ||
+         !pathIn(value,"orm",maps.fringeOrm) || !band("top",maps.fringe.top) || !band("bottom",maps.fringe.bottom) ||
+         (maps.fringe.top[1]<=0 && maps.fringe.bottom[1]<=0))
+        valid = false;
+      else
+        maps.fringe.tile = float(tile);
       }
     if(!valid) {
       Log::e("materials: invalid entry \"",entry.name.GetString(),"\"");
@@ -792,7 +828,9 @@ void Resources::textureDemand(const Material& material, TextureCategory category
 void Resources::implTextureDemand(const Material& material, TextureCategory category, const TextureNeed* release,
                                   const TextureNeed* add) {
   ++textureDemandCalls;
-  std::array<const Texture2d*,3> maps={material.tex,material.normal,material.orm};
+  // the fringe's maps are asked at the density of its material: finer than the layer's own tile needs, never coarser
+  std::array<const Texture2d*,6> maps={material.tex,material.normal,material.orm,
+                                       material.fringe.albedo,material.fringe.normal,material.fringe.orm};
   const auto unique=[&](const Texture2d* texture, size_t index) {
     for(size_t i=0;i<index && i<maps.size();++i)
       if(maps[i]==texture)
@@ -1257,6 +1295,15 @@ Resources::MaterialMaps Resources::loadMaterialMaps(std::string_view name) {
   ret.turbidityDepth = files.turbidityDepth;
   ret.emissive = files.emissive;
   ret.projectionTile = files.projectionTile;
+  if(files.fringe.tile>0) {
+    ret.fringe        = files.fringe;
+    ret.fringe.albedo = inst->implLoadMaterialTexture(files.fringeAlbedo,TextureKind::Color);
+    ret.fringe.normal = inst->implLoadMaterialTexture(files.fringeNormal,TextureKind::Normal);
+    ret.fringe.orm    = inst->implLoadMaterialTexture(files.fringeOrm,TextureKind::Orm);
+    // a map that does not load: the plain projected material, with one line (Material::hasFringe)
+    if(!ret.fringe.present())
+      Log::e("materials: \"",name,"\": a fringe map does not load, drawn without the layer");
+    }
   ret.antitile = files.antitile;
   ret.hair = files.hair;
   ret.strand = files.strand;

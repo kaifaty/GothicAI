@@ -127,7 +127,9 @@ float SpeechBrows::riseAt(const FaceProfile::Brows& b, int64_t from, int64_t to)
 
 bool SpeechBrows::judge(const FaceProfile::Brows& b, int64_t syllable) {
   // its rise and loudness need the tone and the sound of the syllable_ms after its start
-  const int64_t end = syllable+int64_t(b.syllableMs);
+  const int64_t span = track->isLiveInput() ? std::min<int64_t>(int64_t(b.syllableMs),int64_t(LiveSyllableMs))
+                                            : int64_t(b.syllableMs);
+  const int64_t end  = syllable+span;
   if(int64_t(track->toneKnownMs())<end && !track->isFinished())
     return false;
   Accent a;
@@ -168,8 +170,8 @@ bool SpeechBrows::update(const FaceProfile::Brows& b, uint64_t now, Start& out) 
     const int64_t late = t-at;
     if(late<=int64_t(LateMs))
       out.at = now-std::min<uint64_t>(now,uint64_t(late));
-    else if(t<=a.ms)
-      out.at = now;  // found late (the voice came late): it starts now, still before its syllable
+    else if(t<=a.ms + (track->isLiveInput() ? int64_t(LiveLateMs) : 0))
+      out.at = now;  // found late (the voice came late, or it is live): it starts now, still before or in its syllable
     else
       continue;      // its syllable has gone by
     // a larger rise moves the brows more: from half of the weights at rise_st to all of them at twice that
