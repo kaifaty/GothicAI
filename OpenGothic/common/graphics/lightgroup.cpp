@@ -185,9 +185,15 @@ LightGroup::Light LightGroup::add(const asset::VLight& vob) {
     lightSourceData[l.id].sourceSize = sourceCm;
     markAsDurtyNoSync(l.id);
     }
+  if(const float nearLimit = VobLayer::lightNear(vob); nearLimit>0) {
+    // the lamp's own limit of the light near it in place of the common one (vobs.d "near", light.frag)
+    std::lock_guard<std::mutex> guard(sync);
+    lightSourceData[l.id].nearLimit = nearLimit;
+    markAsDurtyNoSync(l.id);
+    }
   float jitterCm = 0;
   if(const auto* flicker = VobLayer::flicker(vob, &jitterCm)) {
-    // the brightness of a layer light follows its emitter's flame signal (vobs.d "flicker_from")
+    // the brightness of a lamp follows its emitter's flame signal (vobs.d "flicker_from")
     std::lock_guard<std::mutex> guard(sync);
     lightSourceDesc[l.id].setFlicker(*flicker, jitterCm);
     animatedLights.insert(l.id);
@@ -392,6 +398,7 @@ void LightGroup::tick(uint64_t time) {
     ssbo.range  = light.isEnabled() ? clampRange(light.currentRange()) : 0;
     ssbo.cookie = dst.cookie;
     ssbo.sourceSize = dst.sourceSize;
+    ssbo.nearLimit  = dst.nearLimit;
 
     if(std::memcmp(&dst, &ssbo, sizeof(ssbo))==0)
       continue;
