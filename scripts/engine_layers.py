@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Engine layers: includes and member definitions across the engine/Gothic boundary.
 
-Every source file of OpenGothic/common, OpenGothic/game and OpenGothic/ai_bridge gets a
+Every source file of OpenGothic/common, game, ai_bridge and island gets a
 layer from LAYER_RULES (first matching rule wins). An include edge is a violation when the
 included file's layer is not in ALLOWED[layer of the including file].
 
@@ -28,18 +28,19 @@ import tempfile
 from collections import Counter, defaultdict
 from pathlib import Path
 
-SCAN_DIRS = ("common", "game", "ai_bridge")
+SCAN_DIRS = ("common", "game", "ai_bridge", "island")
 EXTS = {".h", ".cpp", ".c", ".mm"}
 INCLUDE_ROOTS = ("common", ".", "ai_bridge")
 
 # Layers, bottom to top.
-LAYERS = ("platform", "rpg", "gothic", "import", "bridge", "tools")
+LAYERS = ("platform", "rpg", "gothic", "import", "bridge", "island", "tools")
 TITLES = {
     "platform": "Платформа",
     "rpg": "Каркас RPG",
     "gothic": "Готика",
     "import": "Импорт Готики",
     "bridge": "Мост ИИ",
+    "island": "Остров",
     "tools": "Стенды и инструменты",
 }
 ALLOWED = {
@@ -48,6 +49,7 @@ ALLOWED = {
     "gothic": {"platform", "rpg", "gothic"},
     "import": {"platform", "gothic", "import"},
     "bridge": {"platform", "rpg", "gothic", "bridge"},
+    "island": {"platform", "island"},
     "tools": set(LAYERS),
 }
 
@@ -147,6 +149,8 @@ LAYER_RULES: list[tuple[str, str]] = [
     ("common/*", "platform"),
     # A new side executable is a tool until it gets its own rule.
     ("game/*", "tools"),
+    # The empty island (reports/engine/2026-11-13-empty-island/README.md): a program of the platform alone.
+    ("island/*", "island"),
 ]
 
 INCLUDE_RE = re.compile(r'^\s*#\s*include\s*([<"])([^>"]+)[>"]', re.M)
