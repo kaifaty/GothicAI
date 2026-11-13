@@ -4,9 +4,9 @@
 // A material's maps by world position instead of the mesh UV (materials.json "projection", BK_PROJECTION): rock whose
 // original unwrap tilts the beds, stretches faces and breaks at seams (reports/content/2026-11-landscape-pilot/
 // b3-rock-material.md, task 1). Biplanar mapping (Quilez, https://iquilezles.org/articles/biplanar/): the two planes
-// the normal faces most, two fetches per map where they blend, one elsewhere. In a side plane v is the world's height
-// (down, as the engine's v), so beds stay horizontal on any face; from above and below the plane is XZ. The bucket's
-// uvScale carries repeats per cm (drawbuckets.cpp). Only the G-buffer of opaque world and static meshes: elsewhere off.
+// the selecting normal faces most, two fetches per map where they blend, one elsewhere. In a side plane v is the
+// world's height (down, as the engine's v), so beds stay horizontal on any face; from above and below the plane is XZ.
+// The bucket's uvScale carries repeats per cm (drawbuckets.cpp). Only the G-buffer of opaque world and static meshes.
 
 // how fast a plane gives way past 45 degrees: 1 is Quilez's k=8; 2 halves the band where two planes show at once
 const float ProjectionSharpness = 2.0;
@@ -14,6 +14,9 @@ const float ProjectionSharpness = 2.0;
 // split stays even where the major axis changes
 const float ProjectionSkip      = 1.0/64.0;
 const float ProjectionDiagonal  = 0.57735027; // |n| on the diagonal (1,1,1): the least share a major axis has
+// how far the normal that picks the planes may stand off the face: sin and cos of 20 degrees
+const float ProjectionLimitSin  = 0.34202014;
+const float ProjectionLimitCos  = 0.93969262;
 
 struct Projection {
   bool  on;
@@ -26,8 +29,8 @@ struct Projection {
 
 #if defined(GBUFFER)
 void projectionPlane(out vec2 uv, out vec2 dx, out vec2 dy, out vec3 t, out vec3 b,
-                     uint axis, vec3 face, vec3 n, vec3 pos, vec3 dpdx, vec3 dpdy, float k, float frame) {
-  const float side = face[axis]>=0.0 ? 1.0 : -1.0;
+                     uint axis, vec3 select, vec3 n, vec3 pos, vec3 dpdx, vec3 dpdy, float k, float frame) {
+  const float side = select[axis]>=0.0 ? 1.0 : -1.0;
   // cross(u, v) is the plane's axis toward the surface: the texture is not mirrored on either side
   vec3 eu, ev;
   if(axis==1u) {
@@ -57,14 +60,21 @@ void projectionPlanes(out Projection p) {
   const vec3 pos  = shInp.pos;
   const vec3 dpdx = dFdx(pos), dpdy = dFdy(pos);
   const vec3 n    = normalize(shInp.normal);
-  // The planes follow the face as it stands, not the shading normal: Gothic smooths that over sharp edges of rock by up
-  // to 45 degrees, and a plane picked by it smears the face it lies across. A face in one plane has no stretch over
-  // 1.41; neighbours in the same plane continue the texture without a seam, a change of plane falls on their edge
+  // The planes are picked by the vertex normal kept within 20 degrees of the face. The vertex normal alone gives shares
+  // continuous across facets, but Gothic smooths it over sharp edges of rock by up to 45 degrees, and a plane picked
+  // that far off lies across the face and smears it; the face normal alone keeps the shares constant on a facet and
+  // jumps on its edges. Within the limit it is the vertex normal; past it, the face normal turned toward it by the
+  // limit: facets up to 40 degrees apart continue without a break, a sharper edge keeps a smaller one
   vec3 face = cross(dpdx,dpdy);
   face = dot(face,face)>1e-20 ? normalize(face) : n;
   if(dot(face,n)<0.0)
     face = -face;
-  const vec3 a    = abs(face);
+  vec3 select = n;
+  if(dot(face,n)<ProjectionLimitCos) {
+    const vec3 side = n - face*dot(face,n);
+    select = dot(side,side)>1e-12 ? face*ProjectionLimitCos + normalize(side)*ProjectionLimitSin : face;
+    }
+  const vec3 a    = abs(select);
   const uint major  = (a.x>=a.y && a.x>=a.z) ? 0u : (a.y>=a.z ? 1u : 2u);
   const uint o1     = (major+1u)%3u, o2 = (major+2u)%3u;
   const uint median = a[o1]>=a[o2] ? o1 : o2;
@@ -78,8 +88,8 @@ void projectionPlanes(out Projection p) {
   p.n  = n;
   const float k     = bucket[bucketId].uvScale;
   const float frame = dot(n, cross(dpdx,dpdy))<0.0 ? -1.0 : 1.0;
-  projectionPlane(p.uv0, p.dx0, p.dy0, p.t0, p.b0, major,  face, n, pos, dpdx, dpdy, k, frame);
-  projectionPlane(p.uv1, p.dx1, p.dy1, p.t1, p.b1, median, face, n, pos, dpdx, dpdy, k, frame);
+  projectionPlane(p.uv0, p.dx0, p.dy0, p.t0, p.b0, major,  select, n, pos, dpdx, dpdy, k, frame);
+  projectionPlane(p.uv1, p.dx1, p.dy1, p.t1, p.b1, median, select, n, pos, dpdx, dpdy, k, frame);
 #endif
   }
 
