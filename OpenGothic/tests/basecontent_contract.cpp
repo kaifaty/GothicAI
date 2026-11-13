@@ -25,6 +25,7 @@
 #include "musicdata.h"
 #include "musicnative.h"
 #include "dmusic/directmusic.h"
+#include "dmusic/dxmusicsource.h"
 #include "dmusic/musicrecord.h"
 #include "dmusic/sourcefile.h"
 #include "programdata.h"
@@ -2363,7 +2364,7 @@ struct BaseContentContract {
     const auto gothic=fs::path(CommandLine::inst().rootPath());
     const std::vector<std::u16string> dirs{(gothic/fs::path(selected.path).parent_path()).u16string()+u"/"};
     require(Resources::loadMusicSegment(request.c_str())==nullptr,"headless public GK music must remain empty");
-    (void)Resources::loadDxMusic(request); // Its legacy empty PatternList has no safe size() query.
+    (void)loadDxMusic(request); // Its legacy empty PatternList has no safe size() query.
     std::vector<uint8_t> bin;
     require(resources.readGkMusic(request,"segment",bin)==DmResult_SUCCESS,"private GK reader must verify native record");
     vector(bin,musicRecord(resources.baseMusic,selected.gk),"private GK record bytes");

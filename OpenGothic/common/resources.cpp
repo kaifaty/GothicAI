@@ -47,8 +47,6 @@
 #include "graphics/mesh/attachbinder.h"
 #include "graphics/mesh/bowdraw.h"
 #include "graphics/material.h"
-#include "dmusic/directmusic.h"
-#include "dmusic/musicrecord.h"
 #include "utils/fileext.h"
 #include "utils/gthfont.h"
 
@@ -70,6 +68,7 @@ using ResourcesInternal::modelKey;
 namespace ModelData { asset::ModelScript readScriptOverlay(const std::filesystem::path& file); }
 
 Resources* Resources::inst=nullptr;
+std::atomic<uint64_t> Resources::instGeneration{0};
 
 struct Resources::VideoBase {
   std::shared_ptr<std::atomic_bool> cancelled=std::make_shared<std::atomic_bool>(false);
@@ -102,6 +101,7 @@ const char* scriptDirectory(int language) {
 
 Resources::Resources() {
   inst=this;
+  ++instGeneration;
   configureTextures();
   initCensus();
   indexMeshOverrides();
@@ -114,6 +114,7 @@ Resources::Resources() {
 Resources::Resources(Tempest::Device &device, Audio audio)
   : dev(&device), sound(audio==Audio::Open ? std::make_unique<Tempest::SoundDevice>() : nullptr) {
   inst=this;
+  ++instGeneration;
   configureTextures();
   initCensus();
 
@@ -126,26 +127,6 @@ Resources::Resources(Tempest::Device &device, Audio audio)
       4, 5, 0, 0, 5, 1
     };
   cube = device.ibo(index, sizeof(index)/sizeof(index[0]));
-
-  const std::vector<std::u16string> musicPaths = {
-    u"_work/Data/Music/newworld/",
-    u"_work/Data/Music/AddonWorld/",
-    u"_work/Data/Music/dungeon/",
-    u"_work/Data/Music/menu_men/",
-    u"_work/Data/Music/orchestra/",
-    u"_work/Data/Music/"
-    };
-  Dx8::DirectMusic::Native dxSource;
-  dxSource.segment = [this,musicPaths](const char16_t* name) {
-    return MusicData::decodeDx8Segment(readDxMusic(musicPaths,name,"segment"));
-    };
-  dxSource.style = [this,musicPaths](const char16_t* name) {
-    return MusicData::decodeDx8Style(readDxMusic(musicPaths,name,"style"));
-    };
-  dxSource.dls = [this,musicPaths](const char16_t* name) {
-    return MusicData::decodeDx8Dls(readDxMusic(musicPaths,name,"dls"));
-    };
-  dxMusic.reset(new Dx8::DirectMusic(std::move(dxSource)));
 
   fBuff .reserve(8*1024*1024);
   indexHdTextures();
@@ -988,24 +969,18 @@ DmResult Resources::readGkMusic(std::string_view name, const char* kind, std::ve
 
 std::vector<uint8_t> Resources::readDxMusic(const std::vector<std::u16string>& paths, const char16_t* name,
                                           const char* kind) {
+  std::lock_guard<std::recursive_mutex> g(inst->sync);
   for(const auto& path:paths) {
     auto file=std::filesystem::path(path)/name;
     if(file.is_absolute()) file=file.lexically_relative(std::filesystem::path(CommandLine::inst().rootPath()));
-    const auto* source=baseMusic.findDx8(file.lexically_normal().generic_string());
+    const auto* source=inst->baseMusic.findDx8(file.lexically_normal().generic_string());
     if(source==nullptr) continue;
     if(source->dx8.failure)
       throw std::runtime_error(*source->dx8.failure);
-    return readMusicRecord("dx8",Tempest::TextCodec::toUtf8(name),kind,*source);
+    return inst->readMusicRecord("dx8",Tempest::TextCodec::toUtf8(name),kind,*source);
     }
-  if(census) census->missing(Tempest::TextCodec::toUtf8(name),"music data: missing from base index");
+  if(inst->census) inst->census->missing(Tempest::TextCodec::toUtf8(name),"music data: missing from base index");
   throw std::runtime_error("file not found");
-  }
-
-Dx8::PatternList Resources::implLoadDxMusic(std::string_view name) {
-  if(isHeadless())
-    return Dx8::PatternList();
-  auto u = Tempest::TextCodec::toUtf16(name);
-  return dxMusic->load(u.c_str());
   }
 
 DmSegment* Resources::implLoadMusicSegment(char const* name) {
@@ -1307,11 +1282,6 @@ asset::MorphMesh Resources::loadMorphData(std::string_view name) {
 Tempest::Sound Resources::loadSoundBuffer(std::string_view name) {
   std::lock_guard<std::recursive_mutex> g(inst->sync);
   return inst->implLoadSoundBuffer(name);
-  }
-
-Dx8::PatternList Resources::loadDxMusic(std::string_view name) {
-  std::lock_guard<std::recursive_mutex> g(inst->sync);
-  return inst->implLoadDxMusic(name);
   }
 
 DmSegment* Resources::loadMusicSegment(char const* name) {
