@@ -60,7 +60,9 @@ class Resources final {
     // Simulation resources: base geometry, skeletons and animation data,
     // without constructing a graphics or audio device.
     Resources();
-    explicit Resources(Tempest::Device& device);
+    // Audio::Off leaves the sound device closed: a program of the platform without sound (a render test, the island)
+    enum class Audio : uint8_t { Open, Off };
+    explicit Resources(Tempest::Device& device, Audio audio = Audio::Open);
     ~Resources();
 
     enum class FontType : uint8_t {
@@ -125,6 +127,9 @@ class Resources final {
 
     static const Tempest::Texture2d& fallbackTexture();
     static const Tempest::Texture2d& fallbackBlack();
+    // The texture of a material whose own one is missing: DEFAULT.TGA of the base, else a grey checker built in code,
+    // so that the mesh is still drawn without a base. nullptr in a headless simulation.
+    static const Tempest::Texture2d* loadDefaultTexture();
     static auto                      fallbackImage() -> const Tempest::StorageImage&;
     static auto                      fallbackImage3d() -> const Tempest::StorageImage&;
     // an R32U 1x1x1 image: the VSM page table bound where VSM is off (materials/main.frag reads the cascades then)
@@ -525,6 +530,7 @@ class Resources final {
     Tempest::VertexBuffer<Vertex> sphere(int passCount, float R);
 
     Tempest::Texture2d fallback, fbZero;
+    Tempest::Texture2d fbDefault; // loadDefaultTexture without DEFAULT.TGA, made on the first such material
     Tempest::StorageImage fbImg, fbImg3d, fbPageTbl;
 
     using BindK  = std::tuple<const Skeleton*,const ProtoMesh*>;

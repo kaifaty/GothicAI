@@ -1198,6 +1198,28 @@ const Texture2d* Resources::loadTexture(Tempest::Color color) {
   return ret;
   }
 
+const Texture2d* Resources::loadDefaultTexture() {
+  if(auto* tex = loadTexture("DEFAULT.TGA",false,false))
+    return tex;
+  if(isHeadless())
+    return nullptr;
+  std::lock_guard<std::recursive_mutex> g(inst->sync);
+  if(inst->fbDefault.isEmpty()) {
+    // Without a base: a 64x64 checker of 8x8 cells, 40 % and 60 % grey, opaque. Grey lets the light show as it
+    // is, the checker reads as "no texture" at once and shows the UV, its mips average to a middle grey far away.
+    Pixmap pm(64,64,TextureFormat::RGBA8);
+    auto* pix = reinterpret_cast<uint8_t*>(pm.data());
+    for(uint32_t y=0; y<64; ++y)
+      for(uint32_t x=0; x<64; ++x) {
+        const uint8_t v = ((x/8+y/8)%2==0) ? 0x66 : 0x99;
+        uint8_t* p = pix + (y*64+x)*4;
+        p[0] = v; p[1] = v; p[2] = v; p[3] = 255;
+        }
+    inst->fbDefault = device().texture(pm,true);
+    }
+  return &inst->fbDefault;
+  }
+
 bool Resources::hasTextureVariant(std::string_view name) {
   return name.find("_V0")!=std::string_view::npos || name.find("_C0")!=std::string_view::npos;
   }

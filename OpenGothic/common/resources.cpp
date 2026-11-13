@@ -111,8 +111,8 @@ Resources::Resources() {
   fBuff.reserve(8*1024*1024);
   }
 
-Resources::Resources(Tempest::Device &device)
-  : dev(&device), sound(std::make_unique<Tempest::SoundDevice>()) {
+Resources::Resources(Tempest::Device &device, Audio audio)
+  : dev(&device), sound(audio==Audio::Open ? std::make_unique<Tempest::SoundDevice>() : nullptr) {
   inst=this;
   configureTextures();
   initCensus();
