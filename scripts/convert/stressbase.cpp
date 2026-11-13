@@ -103,13 +103,13 @@ std::vector<std::string> worldNames(const fs::path& base) {
   return names;
   }
 
-// Files of a world the chunk writer produces; everything else of the base is linked.
+// Files of a world the chunk writer and the cook produce; everything else of the base is linked.
 bool writtenWorldFile(const fs::path& relative, const std::set<std::string>& worlds) {
   auto it = relative.begin();
   if(it==relative.end() || *it!="worlds" || ++it==relative.end() || worlds.count(it->string())==0 ||
      ++it==relative.end())
     return false;
-  return *it=="chunks" || *it=="world.json" || *it=="unreferenced.bin";
+  return *it=="chunks" || *it=="world.json" || *it=="unreferenced.bin" || *it==wci::FileName;
   }
 
 // writeWorldChunks leaves out the archive index the import adds after it (baseimport.cpp,
