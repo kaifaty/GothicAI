@@ -145,19 +145,33 @@ def _validate_world_chunk(entry: dict[str, Any], content_root: Path | None) -> N
         raise RegistryError("worldchunk: expected blender-world-edit pipeline, no models and null seed")
     if not isinstance(entry["prompt"], str) or not isinstance(entry["negative"], str):
         raise RegistryError("worldchunk: prompt and negative must be strings")
+    _validate_world_edits(entry, "worldchunk")
+    inputs = entry.get("inputs")
+    expected = f"converted world mesh {replaces[0]}"
+    if not isinstance(inputs, list) or len(inputs) != 1 or not isinstance(inputs[0], dict) or \
+            inputs[0].get("input") != expected or not SHA256.fullmatch(str(inputs[0].get("sha256", ""))):
+        raise RegistryError(f"worldchunk.inputs: expected one '{expected}' with its sha256")
+    files = entry["files"]
+    if not isinstance(files, dict) or files.keys() != {"glb"} or not isinstance(files["glb"], dict):
+        raise RegistryError("worldchunk.files: expected only glb with path and sha256")
+    _validate_world_glb(files["glb"], "worldchunk.files.glb", content_root)
+
+
+def _validate_world_edits(entry: dict[str, Any], kind: str) -> None:
+    """The tool and the list of edits of a world edit record (worldchunk or worldregion)."""
     tool = entry.get("tool")
     if not isinstance(tool, dict) or not _nonempty(tool.get("script")) or \
             not isinstance(tool.get("commit"), str) or not REVISION.fullmatch(tool["commit"]):
-        raise RegistryError("worldchunk.tool: expected script and a full commit hash")
+        raise RegistryError(f"{kind}.tool: expected script and a full commit hash")
     if not isinstance(entry["parameters"], dict):
         raise RegistryError("parameters: expected an object")
-    if "edits" in entry:
-        edits = entry["edits"]
+    if "edits" in entry or kind != "worldchunk":
+        edits = entry.get("edits")
         if tool["script"] != WORLD_EDIT_TOOL or not isinstance(edits, list) or not edits:
-            raise RegistryError(f"worldchunk.edits: expected a nonempty list built by {WORLD_EDIT_TOOL}")
+            raise RegistryError(f"{kind}.edits: expected a nonempty list built by {WORLD_EDIT_TOOL}")
         seen = set()
         for index, edit in enumerate(edits):
-            field = f"worldchunk.edits[{index}]"
+            field = f"{kind}.edits[{index}]"
             if not isinstance(edit, dict) or not _nonempty(edit.get("script")) or \
                     not SHA256.fullmatch(str(edit.get("sha256", ""))):
                 raise RegistryError(f"{field}: expected script and sha256")
@@ -169,18 +183,16 @@ def _validate_world_chunk(entry: dict[str, Any], content_root: Path | None) -> N
                 if not isinstance(item, dict) or not _nonempty(item.get("path")) or \
                         not SHA256.fullmatch(str(item.get("sha256", ""))):
                     raise RegistryError(f"{field}.inputs: expected path and sha256")
-    inputs = entry.get("inputs")
-    expected = f"converted world mesh {replaces[0]}"
-    if not isinstance(inputs, list) or len(inputs) != 1 or not isinstance(inputs[0], dict) or \
-            inputs[0].get("input") != expected or not SHA256.fullmatch(str(inputs[0].get("sha256", ""))):
-        raise RegistryError(f"worldchunk.inputs: expected one '{expected}' with its sha256")
-    files = entry["files"]
-    if not isinstance(files, dict) or files.keys() != {"glb"} or not isinstance(files["glb"], dict):
-        raise RegistryError("worldchunk.files: expected only glb with path and sha256")
-    relative = _safe_path(files["glb"].get("path"), "files.glb.path")
-    digest = files["glb"].get("sha256")
+
+
+def _validate_world_glb(item: Any, field: str, content_root: Path | None) -> None:
+    """A published chunk of a world edit record: a .glb path under the content root and its sha256."""
+    if not isinstance(item, dict):
+        raise RegistryError(f"{field}: expected a .glb path and a sha256")
+    relative = _safe_path(item.get("path"), "files.glb.path")
+    digest = item.get("sha256")
     if relative.suffix != ".glb" or not isinstance(digest, str) or not SHA256.fullmatch(digest):
-        raise RegistryError("worldchunk.files.glb: expected a .glb path and a sha256")
+        raise RegistryError(f"{field}: expected a .glb path and a sha256")
     if content_root is not None:
         root = Path(content_root).expanduser().resolve()
         candidate = (root / relative).resolve()
@@ -188,6 +200,49 @@ def _validate_world_chunk(entry: dict[str, Any], content_root: Path | None) -> N
             raise RegistryError(f"files.glb: file does not exist: {relative}")
         if hashlib.sha256(candidate.read_bytes()).hexdigest() != digest:
             raise RegistryError(f"files.glb: sha256 mismatch for {relative}")
+
+
+WORLD_REGION = re.compile(r"[A-Z0-9_]+/-?[0-9]+,-?[0-9]+,-?[0-9]+,-?[0-9]+\Z")
+
+
+def _validate_world_region(entry: dict[str, Any], content_root: Path | None) -> None:
+    """Chunks of a rectangle of the converted world mesh edited as one surface (world_edit.py build-region).
+
+    ``region`` is ``<WORLD>/<x0>,<z0>,<x1>,<z1>``, ``set`` the content set. ``chunks`` lists every chunk of the
+    region with its base chunk's digest (``base_sha256``) and the check, and, for a chunk the edits changed, its
+    ``output`` (path and sha256). ``replaces`` names the chunks with an output, ``files.glb`` lists the outputs."""
+    if entry["status"] != "draft":
+        raise RegistryError("status: expected 'draft'")
+    if entry["pipeline"] != "blender-world-edit" or entry["models"] != [] or entry["seed"] is not None:
+        raise RegistryError("worldregion: expected blender-world-edit pipeline, no models and null seed")
+    if not isinstance(entry["prompt"], str) or not isinstance(entry["negative"], str):
+        raise RegistryError("worldregion: prompt and negative must be strings")
+    region = entry.get("region")
+    if not isinstance(region, str) or not WORLD_REGION.fullmatch(region):
+        raise RegistryError("worldregion.region: expected '<WORLD>/<x0>,<z0>,<x1>,<z1>'")
+    if not isinstance(entry.get("set"), str) or not SLUG.fullmatch(entry["set"]):
+        raise RegistryError("worldregion.set: expected a content set name")
+    _validate_world_edits(entry, "worldregion")
+    chunks = entry.get("chunks")
+    if not isinstance(chunks, list) or not chunks:
+        raise RegistryError("worldregion.chunks: expected a nonempty list")
+    world = region.split("/")[0]
+    outputs = []
+    for index, chunk in enumerate(chunks):
+        field = f"worldregion.chunks[{index}]"
+        if not isinstance(chunk, dict) or not isinstance(chunk.get("chunk"), str) or \
+                not WORLD_CHUNK.fullmatch(chunk["chunk"]) or not chunk["chunk"].startswith(world + "/") or \
+                not SHA256.fullmatch(str(chunk.get("base_sha256", ""))) or not isinstance(chunk.get("check"), dict):
+            raise RegistryError(f"{field}: expected a chunk of {world}, base_sha256 and check")
+        if "output" in chunk:
+            _validate_world_glb(chunk["output"], f"{field}.output", content_root)
+            outputs.append(chunk)
+    if len({c["chunk"] for c in chunks}) != len(chunks):
+        raise RegistryError("worldregion.chunks: a chunk appears twice")
+    if entry["replaces"] != [c["chunk"] for c in outputs]:
+        raise RegistryError("worldregion.replaces: expected the chunks with an output, in order")
+    if entry["files"] != {"glb": [c["output"] for c in outputs]}:
+        raise RegistryError("worldregion.files: expected glb, the outputs of the chunks in order")
 
 
 def validate_entry(entry: Any, *, content_root: Path | None = None,
@@ -210,8 +265,11 @@ def validate_entry(entry: Any, *, content_root: Path | None = None,
     if entry["kind"] == "worldchunk":
         _validate_world_chunk(entry, content_root)
         return
+    if entry["kind"] == "worldregion":
+        _validate_world_region(entry, content_root)
+        return
     if entry["kind"] not in ("material", "concept"):
-        raise RegistryError("kind: expected 'material', 'concept' or 'worldchunk'")
+        raise RegistryError("kind: expected 'material', 'concept', 'worldchunk' or 'worldregion'")
     concept = entry["kind"] == "concept"
     if entry["status"] != "draft":
         raise RegistryError("status: expected 'draft'")

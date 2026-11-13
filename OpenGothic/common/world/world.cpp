@@ -42,6 +42,7 @@
 #include "physics/physicsnoise.h"
 #include "physics/cloth.h"
 #include "physics/worldcloth.h"
+#include "physics/worldcollisionmesh.h"
 #include "world/movablevobs.h"
 #include "world/bullet.h"
 
@@ -146,6 +147,7 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     loadProgress(20);
     windRooms.reset(world.bsp.mode,std::move(world.rooms));
     auto worldCloth=WorldCloth::extract(worldMesh,&chunks);
+    const bool clothBundle=WorldCloth::lastPath()==WorldCloth::Path::Bundle;
     // With the ray scene a chunk brings its BLAS when it is published (Landscape) and takes them when it goes
     const bool streamLandscape=residency && !Resources::isHeadless() && !Gothic::inst().isBenchmarkMode();
     if(residency && !Resources::isHeadless() && !streamLandscape)
@@ -154,10 +156,13 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     const bool probeSerial = LoadProbe::serial();
     const auto probeLaunch = probeSerial ? std::launch::deferred : std::launch::async;
     double probePhysicsMs = 0, probeViewMs = 0;
+    std::string probeInput;
     auto wdynamicFut = std::async(probeLaunch, [&]() {
       Workers::setThreadName("Loading: BVH thread");
       const auto t = LoadProbe::now();
-      auto ret = std::unique_ptr<DynamicWorld>(new DynamicWorld(this,worldMesh,&worldCloth.original));
+      const auto collision = worldCollisionInput(chunks,clothBundle);
+      probeInput = collision.probe();
+      auto ret = std::unique_ptr<DynamicWorld>(new DynamicWorld(this,collision.select(worldMesh),&worldCloth.original));
       ret->setBulletTrace(ArrowTrace::hook());
       probePhysicsMs = LoadProbe::msSince(t);
       return ret;
@@ -239,7 +244,7 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     wdynamic->setFurniturePartsEnabled(Gothic::physicsFlags().furnitureParts);
     if(LoadProbe::enabled()) {
       const auto& collision=wdynamic->staticCollisionLoadStats();
-      LoadProbe::mark("physics_static",probePhysicsMs,"wait_ms="+std::to_string(LoadProbe::msSince(probeT))+
+      LoadProbe::mark("physics_static",probePhysicsMs,"wait_ms="+std::to_string(LoadProbe::msSince(probeT))+probeInput+
                       " collision="+(collision.cacheHit ? "cache" : "build")+
                       " key_ms="+std::to_string(collision.keyMs)+" read_ms="+std::to_string(collision.readMs)+
                       " build_ms="+std::to_string(collision.buildMs)+" write_ms="+std::to_string(collision.writeMs));

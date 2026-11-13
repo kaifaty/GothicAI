@@ -290,6 +290,21 @@ def bake_light(obj, underlay):
     return len(light) - new, new
 
 
+def run_edits(ctx, job):
+    """Run the job's edits in order on the context; returns the registry's meta of each edit."""
+    meta = {}
+    for path in job['edits']:
+        ctx.edit = job.get('names', {}).get(path, path)
+        print(f'edit {ctx.edit}')
+        module = load_edit(path)
+        module.edit(ctx)
+        # what the registry keeps of the edit besides its script: its constants and the data files it read
+        meta[ctx.edit] = {'parameters': getattr(module, 'PARAMETERS', None),
+                          'inputs': [Path(p).resolve().relative_to(job['repo']).as_posix()
+                                     for p in getattr(module, 'INPUTS', [])]}
+    return meta
+
+
 def remove_underlay_on_save(*_):
     remove_underlay()
 
@@ -301,16 +316,7 @@ def main(job_path):
     underlay = make_underlay(import_chunk(job['base']))
     world, chunk = job.get('world', ''), job.get('chunk') or Path(job['base']).stem
     ctx = Context(obj, underlay, world, chunk, job.get('base_chunks'))
-    meta = {}
-    for path in job['edits']:
-        ctx.edit = job.get('names', {}).get(path, path)
-        print(f'edit {ctx.edit}')
-        module = load_edit(path)
-        module.edit(ctx)
-        # what the registry keeps of the edit besides its script: its constants and the data files it read
-        meta[ctx.edit] = {'parameters': getattr(module, 'PARAMETERS', None),
-                          'inputs': [Path(p).resolve().relative_to(job['repo']).as_posix()
-                                     for p in getattr(module, 'INPUTS', [])]}
+    meta = run_edits(ctx, job)
     kept, lit = bake_light(obj, underlay)
     print(f'baked light: {kept} base vertices as in the base, {lit} new vertices from the base around them')
     if job.get('gui'):

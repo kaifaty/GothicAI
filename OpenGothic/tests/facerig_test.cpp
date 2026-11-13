@@ -30,6 +30,8 @@
 #include "graphics/mesh/speechface.h"
 #include "gltfmesh.h"
 #include "linecues.h"
+#include "playervoice.h"
+#include "voicebuffer.h"
 
 #include <algorithm>
 #include <chrono>
@@ -1374,6 +1376,72 @@ std::shared_ptr<LipSync::Track> trackOf(uint32_t rate, const std::vector<int16_t
   return t;
   }
 
+void playerVoiceCases() {
+  const uint32_t rate = 16000;
+  const auto pcm = sing(rate,{{200,150,150,1},{200,0,0,0}});
+  PlayerVoice voice;
+  require(!voice.append(rate,pcm.data(),320,1000) && voice.track()==nullptr,
+          "microphone chunks outside PTT must not create a track");
+  voice.begin();
+  require(voice.append(rate,pcm.data(),320,1000),"the first microphone chunk must start a live track");
+  const auto first = voice.track();
+  require(!first->isFinished() && first->isLiveInput() && first->playedMs()==0 && first->name().find("player-microphone:")==0,
+          "the microphone track must start live, with its own name and waiting clock");
+  LipSync mouth;
+  mouth.setShapes({0,0.5f,1});
+  mouth.start(first,9000);  // world time differs from the microphone's arrival clock
+  voice.tick(1020);
+  require(first->playedMs()==0,"the named microphone buffer must hold the first 20 ms");
+  voice.append(rate,pcm.data()+320,320,1020);
+  voice.append(rate,pcm.data()+640,320,1040);
+  LipSync::Shape shape;
+  mouth.update(9000,16,shape);
+  LipSync::Probe probe;
+  mouth.probe(probe);
+  require(first->playedMs()==20 && probe.time==20 && probe.level>0 && close(probe.level,first->level(20)),
+          "a silent live track must drive the mouth by its buffered arrival time and level");
+  for(size_t i=3; i<pcm.size()/320; ++i)
+    voice.append(rate,pcm.data()+i*320,320,1000+i*20);
+  voice.tick(1000+voice.durationMs());
+  require(uint64_t(first->playedMs())+PlayerVoice::BufferMs==voice.durationMs() && mouth.isSpeaking(9001),
+          "the hero must still be speaking with exactly one microphone buffer left before finish");
+  voice.finish();
+  require(first->isFinished() && !mouth.isSpeaking(9001),"finishing the microphone must end the hero's speech");
+  require(!voice.append(rate,pcm.data(),320,5001),"cancelled microphone chunks must be ignored");
+  voice.begin();
+  require(voice.append(rate,pcm.data(),320,6000) && voice.track()!=first && voice.track()->playedMs()==0 &&
+          voice.track()->name()!=first->name() && voice.durationMs()==20,
+          "a new key press must create a fresh microphone track and reset its clock and duration");
+  voice.tick(10000);
+  const auto restarted = voice.track();
+  require(restarted->playedMs()==20 && restarted->playedMs()<=int64_t(voice.durationMs()) &&
+          restarted->level(uint64_t(restarted->playedMs()))==0,
+          "the microphone clock must not run ahead of appended samples");
+  voice.finish();
+
+  VoiceBuffer npc(rate);
+  npc.append(reinterpret_cast<const uint8_t*>(pcm.data()),640);
+  require(npc.lipTrack()->playedMs()==0 && !npc.lipTrack()->isLiveInput(),"an NPC stream must still wait for its audio thread");
+  std::vector<int16_t> rendered(160);
+  npc.render(rendered.data(),rendered.size());
+  require(npc.lipTrack()->playedMs()==10 && std::equal(rendered.begin(),rendered.end(),pcm.begin()),
+          "an NPC stream must still follow rendered audio and preserve its samples");
+  npc.finish();
+  npc.render(rendered.data(),rendered.size());
+  require(npc.isDrained() && npc.lipTrack()->playedMs()==20,"an NPC stream must still drain at its audio clock");
+  auto recorded = trackOf(rate,sing(rate,{{40,0,0,0},{100,150,150,1}}));
+  recorded->setPlayed(10);
+  LipSync npcMouth;
+  npcMouth.setShapes({0,0.5f,1});
+  npcMouth.start(recorded,0);
+  npcMouth.update(1000,16,shape);
+  npcMouth.probe(probe);
+  require(probe.time==10 && probe.level>0 && recorded->level(10)==0 && close(probe.level,recorded->level(50)),
+          "an NPC voice must retain its existing 40 ms mouth lead");
+  const auto original = trackOf(rate,pcm);
+  require(original->playedMs()==-1 && !original->isLiveInput(),"an original NPC voice must retain its world-time clock");
+  }
+
 void toneCases() {
   // the tone of harmonics and of pulses at 90, 150, 250 Hz within 2 %, at the rates of the game and of the voice service
   for(uint32_t rate:{22050u,24000u,44100u})
@@ -2131,6 +2199,7 @@ int main() {
     timingCases(*profile);
     leakCases(head,*profile);
     toneCases();
+    playerVoiceCases();
     browCases(head,*profile);
     listenCases(head,*profile);
     speechFaceCases(head);

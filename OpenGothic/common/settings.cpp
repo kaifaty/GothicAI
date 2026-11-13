@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cassert>
 
+#include "gamebasecontent.h"
 #include "resources.h"
 #include "utils/inifile.h"
 
@@ -227,8 +228,10 @@ bool Settings::has(std::string_view sec) {
 int Settings::getI(std::string_view sec, std::string_view name) {
   if(name.empty())
     return 0;
-  if(sec=="GAME" && name=="language")
-    return Resources::baseLanguage();
+  if(sec=="GAME" && name=="language") {
+    const auto* game=GameBaseContent::inst();
+    return game!=nullptr ? game->language() : -1;
+    }
   if(instance->iniFile->has(sec,name))
     return instance->iniFile->getI(sec,name);
   if(instance->baseIniFile->has(sec,name))

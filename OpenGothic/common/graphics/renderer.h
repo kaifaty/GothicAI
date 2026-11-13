@@ -15,8 +15,6 @@
 #include "eyeadaptation.h"
 
 class Camera;
-class InventoryMenu;
-class VideoWidget;
 
 class Renderer final {
   public:
@@ -32,9 +30,9 @@ class Renderer final {
     // bench `vsm study <bits>`: the shadow test on a mesh's facets (scene.vsmStudy, VSM_STUDY_* of scene.glsl)
     static uint32_t benchVsmStudy;
 
-    void draw(Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId,
-              Tempest::VectorImage::Mesh& uiLayer, Tempest::VectorImage::Mesh& numOverlay,
-              InventoryMenu &inventory, VideoWidget& video);
+    void drawScene(Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId,
+                   bool sceneActive);
+    Tempest::ZBuffer& uiDepthBuffer();
     void draw(Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId,
               WorldView& view, const Camera& camera);
 

@@ -9,8 +9,6 @@
 #include "asset/staticmesh.h"
 #include "asset/modeltypes.h"
 #include "basestore.h"
-#include "programdata.h"
-#include "outputunits.h"
 #include "audiodata.h"
 #include "musicdata.h"
 #include "asset/worldtypes.h"
@@ -337,14 +335,6 @@ class Resources final {
     static void recycle(std::shared_ptr<void>&& lifetime);
 
     static bool                      hasWorld(std::string_view name);
-    static int                       baseLanguage();
-    static const ProgramData::Index&  baseProgramIndex();
-    static bool                      loadBaseOutputUnits(std::string_view request, int language,
-                                                        std::vector<std::shared_ptr<asset::CutsceneBlock>>& blocks);
-    static bool                      loadBaseOutputUnits(std::string_view request, int language,
-                                                        std::string_view branch,
-                                                        std::vector<std::shared_ptr<asset::CutsceneBlock>>& blocks,
-                                                        std::u16string_view hostPath = {});
 
     static std::filesystem::path      worldBaseDir(std::string_view world);
     static std::filesystem::path      contentDir();
@@ -384,8 +374,6 @@ class Resources final {
     BaseIndex baseTextures, baseMeshes, baseZen, baseModels, baseFonts;
     std::map<std::string,std::filesystem::path> contentModels;
     std::unique_ptr<RenderRigIndex> renderRigs;
-    ProgramData::Index basePrograms;
-    OutputUnits::Index baseOutputUnits;
     AudioData::Index baseAudio;
     MusicData::Index baseMusic;
     std::vector<std::pair<std::string,uintmax_t>> baseArchives;

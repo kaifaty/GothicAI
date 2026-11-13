@@ -27,6 +27,7 @@
 #include "npccontroller.h"
 #include "npcobserver.h"
 #include "npcview.h"
+#include "playervoice.h"
 #include "storyruntime.h"
 #include "storytriggers.h"
 #include "storyworld.h"
@@ -97,6 +98,7 @@ struct AiBridge::Impl final {
   void processInbound(World* world, Inbound& in);
   void onStartLoading();
   void onSessionUnload() {
+    playerVoice.finish();
     if(auto world = Gothic::inst().world()) {
       if(!saving)
         if(auto* pl = world->player())
@@ -223,6 +225,7 @@ struct AiBridge::Impl final {
 
   LineLibrary                  lines;
   std::vector<struct Voice>    voices;
+  PlayerVoice                  playerVoice;
   std::unordered_map<std::string,std::string> lastLine;  // npc -> line it speaks (or spoke) last
   std::unordered_set<std::string>             voicing;   // the director's lines the server is asked to voice
   std::unordered_map<std::string,std::string> originalLines;  // original line sent with `say` -> npc, until it starts

@@ -2,6 +2,7 @@
 #include "resources_internal.h"
 #include "commandline.h"
 #include "contentcensus.h"
+#include "gamebasecontent.h"
 #include "worldbase.h"
 #include "graphics/mesh/protomesh.h"
 #include "graphics/mesh/renderrig.h"
@@ -124,14 +125,8 @@ void Resources::loadBase() {
     validateLoose(inst->baseModels.looseFiles,"models");
     inst->baseFonts.validate(validationArchives);
     validateLoose(inst->baseFonts.looseFiles,"fonts");
-    if(inst->basePrograms.archives!=validationArchives)
-      throw std::runtime_error("selected base archives differ from program base index: "+inst->basePrograms.dir.string());
-    validateLoose(inst->basePrograms.looseFiles,"program");
-    Log::i("base: ",inst->basePrograms.programs.size()," programs from \"",inst->basePrograms.dir.string(),"\"");
-    if(inst->baseOutputUnits.archives!=validationArchives)
-      throw std::runtime_error("selected base archives differ from output units base index: "+inst->baseOutputUnits.dir.string());
-    validateLoose(inst->baseOutputUnits.looseFiles,"output units");
-    Log::i("base: ",inst->baseOutputUnits.records.size()," output units records from \"",inst->baseOutputUnits.dir.string(),"\"");
+    if(const auto* game=GameBaseContent::inst())
+      game->validate(validationArchives,validateLoose);
     if(inst->baseAudio.archives!=validationArchives)
       throw std::runtime_error("selected base archives differ from audio base index: "+inst->baseAudio.dir.string());
     validateLoose(inst->baseAudio.looseFiles,"audio");
@@ -156,10 +151,6 @@ void Resources::censusFile(std::u16string_view path) {
     return;
   const auto source = TextCodec::toUtf8(path);
   inst->census->opened(source,source);
-  }
-
-const ProgramData::Index& Resources::baseProgramIndex() {
-  return inst->basePrograms;
   }
 
 ContentCensus* Resources::contentCensus() {
@@ -225,24 +216,6 @@ bool Resources::hasWorld(std::string_view name) {
   return inst->baseWorlds.contains(dir.filename().string());
   }
 
-int Resources::baseLanguage() {
-  for(int language=-1;language<8;++language) {
-    const bool program=std::any_of(inst->basePrograms.selections.begin(),inst->basePrograms.selections.end(),
-                                  [&](const auto& row) {
-      return row.language==language && row.request=="GOTHIC.DAT" && row.source &&
-             inst->basePrograms.sources.at(*row.source).skipped.empty();
-      });
-    const bool outputUnits=std::any_of(inst->baseOutputUnits.selections.begin(),inst->baseOutputUnits.selections.end(),
-                                      [&](const auto& row) {
-      return row.language==language && row.source &&
-             inst->baseOutputUnits.sources.at(*row.source).skipped.empty();
-      });
-    if(program && outputUnits) return language;
-    }
-  return -1;
-  }
-
-
 std::filesystem::path Resources::baseDir() {
   return inst->automaticBase.path;
   }
@@ -260,8 +233,8 @@ void Resources::indexBaseContent() {
   baseModels.load(root,"models");
   indexContentModels();
   baseFonts.load(root,"fonts");
-  basePrograms = ProgramData::readIndex(root/"programs");
-  baseOutputUnits = OutputUnits::readIndex(root/"outputunits");
+  if(auto* game=GameBaseContent::inst())
+    game->index(root);
   baseAudio = AudioData::readIndex(root/"audio");
   baseMusic = MusicData::readIndex(root/"music");
   baseWorlds.clear();

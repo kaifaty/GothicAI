@@ -943,7 +943,7 @@ void Npc::tickAnimationTags() {
   if(itemUse.item!=0 && !hasItemUseAnimation())
     interruptItemUse("animation interrupted");
   const bool hasEvents = visual.processEvents(owner,lastEventTime,ev,&logicalBody);
-  visual.processLayers(owner,&logicalBody);
+  visual.processLayers(owner);
   visual.setNpcEffect(owner,*this,hnpc->effect,hnpc->flags);
   if(itemUse.item!=0 && !hasItemUseAnimation()) {
     tickTimedEvt(ev);

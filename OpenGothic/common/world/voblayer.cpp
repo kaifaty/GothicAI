@@ -25,20 +25,7 @@ using Json=rapidjson::Value;
 using gothicglb::jsonString;
 namespace {
 using Vob = std::shared_ptr<asset::VirtualObject>;
-struct Added {
-  virtual ~Added() = default;
-  std::string key;
-  };
 struct LayerVob final : asset::VirtualObject, Added {};
-struct Emitter final : asset::VirtualObject, Added {
-  PfxMotion::Flicker flicker; // the flame's signal ("flicker"), off by default
-  };
-struct Light final : asset::VLight, Added {
-  float sourceCm = VobLayer::DefaultLightSourceCm; // the flame's size ("source_cm")
-  std::string        flickerFrom; // the emitter's key whose signal drives the light ("flicker_from")
-  PfxMotion::Flicker flicker;
-  float              jitterCm = 0; // the light's trembling ("jitter_cm")
-  };
 struct Context {
   std::vector<Vob> removed;
   const std::map<std::string,fs::path>* ownMeshes = nullptr;
@@ -531,23 +518,6 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
 
 bool isAdded(const asset::VirtualObject& vob) {
   return dynamic_cast<const Added*>(&vob)!=nullptr;
-  }
-
-float lightSourceCm(const asset::VirtualObject& vob) {
-  if(const auto* light=dynamic_cast<const Light*>(&vob)) return light->sourceCm;
-  return DefaultLightSourceCm;
-  }
-
-const PfxMotion::Flicker* flicker(const asset::VirtualObject& vob, float* jitterCm) {
-  if(const auto* e=dynamic_cast<const Emitter*>(&vob); e!=nullptr && e->flicker.active()) {
-    if(jitterCm!=nullptr) *jitterCm=0;
-    return &e->flicker;
-    }
-  if(const auto* l=dynamic_cast<const Light*>(&vob); l!=nullptr && l->flicker.active()) {
-    if(jitterCm!=nullptr) *jitterCm=l->jitterCm;
-    return &l->flicker;
-    }
-  return nullptr;
   }
 
 const std::string& key(const asset::VirtualObject& vob) {

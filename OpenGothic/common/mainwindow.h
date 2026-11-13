@@ -26,6 +26,7 @@
 #include "world/focus.h"
 #include "game/playercontrol.h"
 #include "graphics/renderer.h"
+#include "ui/gameframe.h"
 #include "ui/dialogmenu.h"
 #include "ui/inventorymenu.h"
 #include "ui/chapterscreen.h"

@@ -8,6 +8,8 @@
 #include "fontdata.h"
 #include "game/definitions/definitiontypes.h"
 #include "game/definitions/baseprogram.h"
+#include "game/definitions/basescripts.h"
+#include "gamebasecontent.h"
 #include "gothic.h"
 #include "gltfmesh.h"
 #include "gothicglb.h"
@@ -1939,10 +1941,24 @@ struct BaseContentContract {
       const auto host=row.step.starts_with("host_") ?
         (fs::path(CommandLine::inst().rootPath())/source.path).u16string() : std::u16string{};
       std::vector<std::shared_ptr<asset::CutsceneBlock>> loaded;
-      require(Resources::loadBaseOutputUnits(row.candidate,row.language,row.step,loaded,host),
+      require(loadBaseOutputUnits(row.candidate,row.language,row.step,loaded,host),
               "OU indexed selection must load its native library");
       equal(loaded.size(),OutputUnits::readLibrary(index.path(source)).blocks.size(),"OU selected native root count");
       }
+    {
+    // The game's own lookup (GameScript::loadDialogOU): default prefix, .BIN before .DAT, the base's language.
+    const auto* game=GameBaseContent::inst();
+    require(game!=nullptr,"Gothic's base content must be registered");
+    std::vector<std::shared_ptr<asset::CutsceneBlock>> dialogs;
+    bool loaded=false;
+    for(const char* name:{"OU.BIN","OU.DAT"})
+      if((loaded=loadBaseOutputUnits(name,game->language(),dialogs)))
+        break;
+    require(loaded,"the game's OU lookup must load a native library");
+    const auto line=OutputUnits::blockByName(dialogs,"SVM_14_NOTNOW");
+    const auto message=line!=nullptr && line->name=="SVM_14_NOTNOW" ? OutputUnits::message(*line) : nullptr;
+    require(message!=nullptr && !message->text.empty(),"the game's OU lookup must give SVM_14_NOTNOW its text");
+    }
     require(Resources::writeCensus(),"cannot write OU selected-native census");
     const auto afterSelections=json(censusPath);
     require(beforeSelections["files"]==afterSelections["files"],"Resources native OU selections must open zero original sources");
@@ -3255,7 +3271,7 @@ struct BaseContentContract {
     std::vector<std::shared_ptr<asset::CutsceneBlock>> blocks{sentinel};
     const auto fails=[&](const std::string& description, const std::string& reason=std::string{}) {
       bool failed=false;
-      try { (void)Resources::loadBaseOutputUnits(selected->candidate,selected->language,selected->step,blocks,host); }
+      try { (void)loadBaseOutputUnits(selected->candidate,selected->language,selected->step,blocks,host); }
       catch(const BaseStore::Error& error) {
         const std::string message=error.what();
         failed=message.find("output units "+selected->candidate+":")!=std::string::npos &&
