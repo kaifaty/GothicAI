@@ -5,7 +5,7 @@
 #include "physics/collisioncache.h"
 #include "physics/collisionworld.h"
 #include "physics/dynamicworld.h"
-#include "physics/physicvbo.h"
+#include "physics/staticcollision.h"
 #include "resources.h"
 #include "world/wayheights.h"
 #include "world/world.h"
@@ -72,6 +72,21 @@ std::string read(const fs::path& file) {
   return {std::istreambuf_iterator<char>(input),std::istreambuf_iterator<char>()};
   }
 
+// A stone quad of the sector "cache-fixture" and a water quad: both shapes of the cache.
+asset::WorldMesh cacheFixtureMesh() {
+  asset::WorldMesh mesh;
+  mesh.vertices={{-100,0,-100},{-100,0,100},{100,0,100},{100,0,-100},
+                 {-100,-50,-100},{-100,-50,100},{100,-50,100},{100,-50,-100}};
+  mesh.materials.resize(2);
+  mesh.materials[0].name="cache-fixture";
+  mesh.materials[0].group=asset::MaterialGroup::STONE;
+  mesh.materials[1].name="cache-fixture-water";
+  mesh.materials[1].group=asset::MaterialGroup::WATER;
+  mesh.polygons.vertex_indices={0,2,1,0,3,2,4,6,5,4,7,6};
+  mesh.polygons.material_indices={0,0,1,1};
+  return mesh;
+  }
+
 void collisionFiles(const fs::path& root) {
   const auto content=root/"content";
   const auto layer=content/"worlds/SMALL/vobs.d/fixture.json";
@@ -81,23 +96,24 @@ void collisionFiles(const fs::path& root) {
   const auto inputs=Resources::wayHeightInputs("SMALL.ZEN");
   require(!inputs.baseFingerprint.empty() && !inputs.contentFingerprint.empty(),"collision inputs unavailable");
   const CollisionCache::Key key{inputs.baseFingerprint,"SMALL",inputs.contentFingerprint};
-  const std::vector<JPH::Vec3> vertices={{-1,0,-1},{-1,0,1},{1,0,1},{1,0,-1}};
-  PhysicVbo mesh(&vertices);
-  mesh.addIndex({0,2,1,0,3,2},0,6,asset::MaterialGroup::STONE,"cache-fixture");
-  const auto shape=mesh.shape();
-  CollisionCache cache(root,key);
-  JPH::ShapeRefC land,water;
-  require(!cache.read(land,water),"cold collision cache must miss");
-  cache.save(shape.GetPtr(),shape.GetPtr());
-  require(cache.read(land,water) && land!=nullptr && water!=nullptr,"collision cache must restore both shapes");
+  const auto mesh=cacheFixtureMesh();
+  const StaticCollision::Input input=[&]() -> const asset::WorldMesh& { return mesh; };
+  // Each load reads the cache and, on a miss, builds from the mesh and writes it.
+  const auto hit=[&](const CollisionCache::Key& k) {
+    return StaticCollision(input,StaticCollision::Cache{root,k},false).stats.cacheHit;
+    };
+  const CollisionCache cache(root,key);
+  require(!hit(key),"cold collision cache must miss");
+  {
+    const StaticCollision restored(input,StaticCollision::Cache{root,key},false);
+    require(restored.stats.cacheHit && restored.landShape!=nullptr && restored.waterShape!=nullptr,
+            "collision cache must restore both shapes");
+  }
   const auto saved=read(cache.path());
   require(!saved.empty(),"collision save must write a file");
   const auto rebuild=[&](const CollisionCache::Key& changed,const char* reason) {
-    CollisionCache invalid(root,changed);
-    land=water=nullptr;
-    require(!invalid.read(land,water),reason);
-    invalid.save(shape.GetPtr(),shape.GetPtr());
-    require(invalid.read(land,water),"collision miss must be replaceable by a valid bake");
+    require(!hit(changed),reason);
+    require(hit(changed),"collision miss must be replaceable by a valid bake");
     };
   auto changed=key;
   changed.content="foreign content";
@@ -123,14 +139,11 @@ void collisionFiles(const fs::path& root) {
   rebuild(key,"damaged Jolt payload must rebuild before deserialization");
   {
     Environment disabled("OPENGOTHIC_COLLISION_CACHE","0");
-    CollisionCache bypass(root,key);
-    land=water=nullptr;
     const auto before=read(cache.path());
-    require(!bypass.read(land,water),"disabled collision cache must not read a valid bake");
-    bypass.save(nullptr,nullptr);
+    require(!hit(key),"disabled collision cache must not read a valid bake");
     require(read(cache.path())==before,"disabled collision cache must not overwrite an existing bake");
     fs::remove(cache.path());
-    bypass.save(shape.GetPtr(),shape.GetPtr());
+    hit(key);
     require(!fs::exists(cache.path()),"disabled collision cache must not create a bake");
   }
   std::puts("Collision files: both shapes restored; foreign key, world content edit, flags, bake version, truncated file and checksum rebuild; disabled read/write bypass passed");
