@@ -60,3 +60,10 @@ struct WorldCellManifest : WorldChunkManifest {
 // Reads and validates dir/world.json without opening any chunk. Throws
 // std::runtime_error naming the entry, cell or file at fault.
 WorldCellManifest readWorldChunkManifest(const std::filesystem::path& dir);
+
+// Sets the vertices and features no triangle uses from dir/unreferenced.bin at
+// their source IDs and marks them in the sets; the arrays are sized to the
+// manifest's counts. Throws std::runtime_error on a malformed file.
+void readWorldUnreferenced(const std::filesystem::path& dir, std::vector<asset::Vec3>& vertices,
+                           std::vector<asset::VertexFeature>& features,
+                           std::vector<char>& vertexSet, std::vector<char>& featureSet);

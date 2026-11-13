@@ -55,6 +55,10 @@
 //       Print the compiled base and video importer format hashes as JSON.
 //   content-convert stress-base <ready base> <out dir> --subdivide 0..3 | verify-stress-base <base> <copy>
 //       A copy of a ready base with every world triangle split in four N times (stressbase.h).
+//   content-convert cook-world|verify-cooked-world <world dir> [--content <dir>] [--out <dir>]
+//       Cooked binary chunks (.wcb) beside the GLBs, and their comparison with readWorldChunks (worldcook.h).
+//   content-convert time-world <world dir> [--content <dir>] [--out <dir>]
+//       Wall time of the stages (five runs) of the GLB and the cooked read.
 //   content-convert --self-test
 //       Round trips of synthetic meshes, world data and presets; no game files.
 //
@@ -79,6 +83,7 @@
 #include "game/definitions/particlecontent.h"
 #include "gothicglb.h"
 #include "stressbase.h"
+#include "worldcook.h"
 
 #include <zenkit/Archive.hh>
 #include <zenkit/CutsceneLibrary.hh>
@@ -211,6 +216,9 @@ int selfTest() {
   fs::copy_file(dir/manifest.chunks[0],over/manifest.chunks[0]);
   diff = compareWorldMeshes(expected,readWorldChunks(dir,over));
   require(diff.empty(),"override round trip: "+diff);
+  // The same world cooked into .wcb, with and without the override, assembles into readWorldChunks' result.
+  WorldCook::roundTrip(dir,{},dir/"cooked");
+  WorldCook::roundTrip(dir,over,dir/"cooked-override");
   fs::remove(over/manifest.chunks[0]);
   fs::copy_file(dir/manifest.chunks[1],over/manifest.chunks[0]);
   bool rejected = false;
@@ -823,6 +831,7 @@ int main(int argc, char** argv) {
     if(args.size()==1 && args[0]=="--self-test")
       return selfTest();
     if(const auto stress=StressBase::run(args)) return *stress;
+    if(const auto cooked=WorldCook::run(args)) return *cooked;
     if(args.size()==3 && args[0]=="check-particles") {
       const auto result=ParticleContent::check(args[1],args[2]);
       for(const auto& error:result.errors)
@@ -933,7 +942,7 @@ int main(int argc, char** argv) {
                  "       content-convert resolve-base|resolve-videos|resolve <gothic dir>\n"
                  "       content-convert sources|verify-sources <gothic dir> <dir>\n"
                  "       content-convert base <gothic dir> <dir>\n"
-                 "       content-convert formats\n" << StressBase::usage <<
+                 "       content-convert formats\n" << StressBase::usage << WorldCook::usage <<
                  "       content-convert --self-test\n";
     return 2;
     }

@@ -87,9 +87,6 @@ using namespace gothicglb;
   throw std::runtime_error("world chunks: " + reason);
   }
 
-constexpr int         formatVersion = 2;
-constexpr const char* unreferencedName  = "unreferenced.bin";
-constexpr char        unreferencedMagic[4] = {'G','W','U','R'};
 // Float attributes carry source indices; floats are exact up to 2^24.
 constexpr uint32_t    exactIndexLimit = 1u << 24;
 constexpr float       baseScale = 0.01f;
@@ -483,7 +480,7 @@ asset::WorldMesh canonicalWorldMesh(const asset::WorldMesh& mesh) {
   }
 
 asset::WorldMesh readWorldChunks(const std::filesystem::path& dir, const std::filesystem::path& overrideDir,
-                                 ChunkTable* chunks) {
+                                 ChunkTable* chunks, WorldChunkTrace* trace) {
   const auto manifest = readWorldChunkManifest(dir);
   ChunkTable table;
   auto source=chunks!=nullptr ? std::make_shared<ChunkMeshSource::Impl>() : nullptr;
@@ -504,6 +501,8 @@ asset::WorldMesh readWorldChunks(const std::filesystem::path& dir, const std::fi
     if(source!=nullptr)
       source->files.back().verify();
     }
+  if(trace!=nullptr)
+    trace->parsed=WorldChunkTrace::Clock::now();
 
   // Source triangles in source order, then edited ones in chunk order.
   std::vector<size_t> ordered, edited;
@@ -522,6 +521,8 @@ asset::WorldMesh readWorldChunks(const std::filesystem::path& dir, const std::fi
     return reader.triangles[a].order<reader.triangles[b].order;
     });
   ordered.insert(ordered.end(),edited.begin(),edited.end());
+  if(trace!=nullptr)
+    trace->ordered=WorldChunkTrace::Clock::now();
 
   asset::WorldMesh out;
   out.materials = manifest.materials;
@@ -530,53 +531,7 @@ asset::WorldMesh readWorldChunks(const std::filesystem::path& dir, const std::fi
   std::vector<char> vertexSet(out.vertices.size(),0), featureSet(out.features.size(),0);
 
   // Vertices and features no triangle uses come from unreferenced.bin.
-  {
-  const auto bin = readFile(dir/unreferencedName);
-  size_t o = 0;
-  auto u32 = [&]() {
-    if(o+4>bin.size())
-      fail("unreferenced.bin is truncated");
-    const uint32_t v = uint32_t(bin[o]) | (uint32_t(bin[o+1])<<8) | (uint32_t(bin[o+2])<<16) | (uint32_t(bin[o+3])<<24);
-    o += 4;
-    return v;
-    };
-  auto f32 = [&]() {
-    const uint32_t v = u32();
-    float f;
-    std::memcpy(&f,&v,sizeof(f));
-    return f;
-    };
-  if(bin.size()<4 || std::memcmp(bin.data(),unreferencedMagic,4)!=0)
-    fail("unreferenced.bin has a wrong header");
-  o = 4;
-  if(u32()!=uint32_t(formatVersion))
-    fail("unreferenced.bin has another version");
-  const uint32_t nv = u32(), nf = u32();
-  for(uint32_t i=0; i<nv; ++i) {
-    const auto id = u32();
-    if(id>=out.vertices.size())
-      fail("unreferenced vertex out of range");
-    const float x = f32(), y = f32(), z = f32();
-    out.vertices[id] = {x,y,z};
-    vertexSet[id] = 1;
-    }
-  for(uint32_t i=0; i<nf; ++i) {
-    const auto id = u32();
-    if(id>=out.features.size())
-      fail("unreferenced feature out of range");
-    asset::VertexFeature f;
-    f.texture.x = f32();
-    f.texture.y = f32();
-    f.light     = u32();
-    f.normal.x  = f32();
-    f.normal.y  = f32();
-    f.normal.z  = f32();
-    out.features[id] = f;
-    featureSet[id] = 1;
-    }
-  if(o!=bin.size())
-    fail("unreferenced.bin has trailing bytes");
-  }
+  readWorldUnreferenced(dir,out.vertices,out.features,vertexSet,featureSet);
 
   // A source material comes back at its index when the chunk still carries
   // the same record; a changed or new one is appended.
@@ -684,6 +639,12 @@ asset::WorldMesh readWorldChunks(const std::filesystem::path& dir, const std::fi
     source->featureCount=out.features.size();
     table.source=std::shared_ptr<const ChunkMeshSource>(new ChunkMeshSource(std::move(source)));
     *chunks=std::move(table);
+    }
+  if(trace!=nullptr) {
+    trace->stitched=WorldChunkTrace::Clock::now();
+    trace->orders.clear();
+    for(const auto t:ordered)
+      trace->orders.push_back(reader.triangles[t].order);
     }
   return out;
   }
