@@ -31,6 +31,12 @@ constexpr float MaxTrackSpeed= 270.f*Deg; // following the partner, or turning t
 constexpr float MaxAnimYaw   = 50.f*Deg;  // the turn of the head the animation does, the gaze takes out
 constexpr float AnimLag      = 0.12f;     // seconds: of the head up and down only the slow part (a nod stays)
 constexpr float MaxAnimPitch = 30.f*Deg;
+// the hands gesture (Input::steady): the head is held against all the gesture's animation gives it. The dialog
+// gestures of Gothic II bend the head up to 35 degrees down and tilt it up to 32 to a side
+constexpr float MaxSteadyPitch = 45.f*Deg;
+constexpr float MaxSteadyRoll  = 45.f*Deg;
+constexpr float SteadyIn     = 0.15f;     // seconds: a gesture starts from the stance and blends in 0.2 s
+constexpr float SteadyOut    = 0.25f;     // the caller holds it until the gesture has blended out
 constexpr float FaceAxisCos  = 0.85f;     // the axis of the face is picked when the head looks this close to forward
 constexpr float MaxFaceDown  = 0.8f;      // the face looks further down or up (a bent head): its turn is not known
 constexpr float Snap         = 0.002f;
@@ -38,6 +44,11 @@ constexpr float ShiftJump    = 15.f*Deg;  // the target moved this far in one up
 
 bool enabled = []() {
   const char* v = std::getenv("OPENGOTHIC_GAZE");
+  return v==nullptr || v[0]!='0';
+  }();
+
+bool gestureHead = []() {
+  const char* v = std::getenv("OPENGOTHIC_GESTURE_HEAD");
   return v==nullptr || v[0]!='0';
   }();
 
@@ -52,6 +63,20 @@ void approach(float& v, float target, float k, float maxStep, bool& changed) {
 
 Vec3 axis(const Matrix4x4& m, int k) {
   return normalize(Vec3(m.at(k,0), m.at(k,1), m.at(k,2)));
+  }
+
+float smooth(float w) {
+  return w*w*(3.f - 2.f*w);
+  }
+
+// how far the head is tilted to a side: the turn around the face axis that takes it there from upright
+float tiltOf(const Vec3& face, const Vec3& up) {
+  const Vec3 fh = Vec3(face.x,0,face.z);
+  if(length(fh)<0.2f)
+    return 0.f; // looks straight up or down: a tilt is a turn there
+  const Vec3 side    = cross(Up,normalize(fh));
+  const Vec3 upright = normalize(cross(face,side));
+  return std::atan2(-dot(up,side),dot(up,upright));
   }
 
 // where the body faces, from the hip joints: y up, the left hip on the left
@@ -78,6 +103,15 @@ bool Gaze::isEnabled() {
 void Gaze::setEnabled(bool e) {
   enabled = e;
   Log::i("gaze: ", e ? "on" : "off");
+  }
+
+bool Gaze::holdsGestureHead() {
+  return gestureHead;
+  }
+
+void Gaze::setGestureHead(bool e) {
+  gestureHead = e;
+  Log::i("gesture head: ", e ? "held" : "free");
   }
 
 void Gaze::setSkeleton(const Skeleton* sk) {
@@ -138,6 +172,18 @@ void Gaze::setSkeleton(const Skeleton* sk) {
       if(!faceFixed)
         faceAxis = -1;
       }
+    // and which of the other axes points up there: the tilt of the head is counted from it
+    float up = 0;
+    for(int k=0; faceFixed && k<3; ++k) {
+      const float c = axis(sk->tr[head],k).y;
+      if(k!=faceAxis && std::abs(c)>std::abs(up)) {
+        up     = c;
+        upAxis = k;
+        upSign = c>0 ? 1.f : -1.f;
+        }
+      }
+    if(std::abs(up)<=FaceAxisCos)
+      upAxis = -1;
     }
   valid = true;
   }
@@ -149,6 +195,7 @@ bool Gaze::update(const Input& in) {
   const float dt      = float(in.dt)/1000.f;
   bool        changed = false;
   bool        on      = in.active && enabled;
+  const bool  hold    = in.steady && enabled;
   headOnly = in.headOnly;
   if(in.talk.x!=talk.x || in.talk.y!=talk.y || in.talk.z!=talk.z) {
     talk    = in.talk;
@@ -160,6 +207,12 @@ bool Gaze::update(const Input& in) {
   npcForward = normalize(Vec3(in.forward.x,0,in.forward.z));
   eyes       = in.eyes;
   eyesAt     = in.eyesAt;
+  if(!on && (hold || steadyW>0.f)) {
+    // held against a gesture without one to look at: the head faces where the body does
+    const Vec3 f = length(hips)>0.5f ? hips : npcForward;
+    if(length(f)>0.5f)
+      forward = f;
+    }
   if(on) {
     // the body facing: the hips as animated (at a mob the animation may turn the whole body), or the npc's
     const Vec3 f = length(hips)>0.5f ? hips : npcForward;
@@ -195,7 +248,13 @@ bool Gaze::update(const Input& in) {
   // the animation bends the head up and down too (down to a book): follow its slow part
   const float prevAp = animPitchLp;
   animPitchLp += (animPitch-animPitchLp)*(1.f - std::exp(-dt/AnimLag));
-  if(weight>0.f && std::abs(animPitchLp-prevAp)>Snap*0.1f)
+  if((weight>0.f || steadyW>0.f) && std::abs(animPitchLp-prevAp)>Snap*0.1f)
+    changed = true;
+
+  // the hands gesture: the head is held against the gesture's animation
+  const float prevS = steadyW;
+  steadyW = hold ? std::min(1.f, steadyW + dt/SteadyIn) : std::max(0.f, steadyW - dt/SteadyOut);
+  if(steadyW!=prevS)
     changed = true;
 
   const float prevW = weight;
@@ -262,16 +321,22 @@ void Gaze::apply(Matrix4x4* tr, size_t numBones) {
     const Vec3 fh = Vec3(fa.x,0,fa.z);
     animYaw   = std::abs(fa.y)<MaxFaceDown ? yawBetween(forward,normalize(fh)) : 0.f;
     animPitch = std::asin(std::clamp(fa.y,-1.f,1.f));
+    animRoll  = upAxis>=0 ? tiltOf(fa,axis(tr[head],upAxis)*upSign) : 0.f;
     }
 
   parts[0] = parts[1] = parts[2] = 0;
   error    = -1;
-  if(weight>0.f) {
+  // held against a gesture: as much as it looks at the partner at least (without one: the head faces forward)
+  const float steady = smooth(steadyW);
+  const float take   = std::max(weight,steady);
+  if(take>0.f) {
     const float y = yaw*weight;
     const float p = pitch*weight;
-    // the head takes out what the animation turned it by, so it looks at the partner
-    const float ay = std::clamp(animYaw,    -MaxAnimYaw,  MaxAnimYaw  )*weight;
-    const float ap = std::clamp(animPitchLp,-MaxAnimPitch,MaxAnimPitch)*weight;
+    // the head takes out what the animation turned it by, so it looks at the partner; of its bend up and down the
+    // slow part, held against a gesture the quick part too
+    const float maxAp = MaxAnimPitch + (MaxSteadyPitch-MaxAnimPitch)*steady;
+    const float ay = std::clamp(animYaw,-MaxAnimYaw,MaxAnimYaw)*take;
+    const float ap = std::clamp(animPitchLp + (animPitch-animPitchLp)*steady,-maxAp,maxAp)*take;
     // the head turns first, the chest and the waist take what is left (not with the head only)
     float hy = std::clamp(y*(headOnly || chest==size_t(-1) ? 1.f : HeadShare), -MaxHeadYaw, MaxHeadYaw);
     float cy = 0, wy = 0;
@@ -304,6 +369,14 @@ void Gaze::apply(Matrix4x4* tr, size_t numBones) {
     parts[2] = wy;
     }
 
+  // held against a gesture: the tilt to a side its animation gives (the gaze knows none of its own) goes too
+  if(steady>0.f && upAxis>=0 && faceAxis>=0) {
+    const Vec3  fa = axis(tr[head],faceAxis)*faceSign;
+    const float r  = std::clamp(tiltOf(fa,axis(tr[head],upAxis)*upSign),-MaxSteadyRoll,MaxSteadyRoll)*steady;
+    if(r!=0.f)
+      rotateAbout(tr,headTree,axisAngle(fa,-r),position(tr[head]));
+    }
+
   // the head moving with the voice (TalkGestures): around the neck, after the turn to the partner
   if(talk.x!=0.f || talk.y!=0.f || talk.z!=0.f) {
     const Vec3 body = length(forward)>0.5f ? forward : npcForward;
@@ -327,6 +400,7 @@ void Gaze::apply(Matrix4x4* tr, size_t numBones) {
     }
   if(faceAxis>=0) {
     facing = axis(tr[head],faceAxis)*faceSign;
+    roll   = upAxis>=0 ? tiltOf(facing,axis(tr[head],upAxis)*upSign) : 0.f;
     const Vec3 d = normalize(target - (eyesKnown ? eyesPos : position(tr[head])));
     if(weight>0.f && length(d)>0.5f)
       error = std::acos(std::clamp(dot(facing,d),-1.f,1.f))/Deg;
@@ -348,6 +422,9 @@ void Gaze::probe(Probe& p) const {
   p.waistYaw  = parts[2]/Deg;
   p.animYaw   = animYaw/Deg;
   p.animPitch = animPitch/Deg;
+  p.animRoll  = animRoll/Deg;
+  p.roll      = roll/Deg;
+  p.steady    = steadyW;
   p.hipsYaw   = length(hips)>0.5f && length(npcForward)>0.5f ? yawBetween(npcForward,hips)/Deg : 0.f;
   p.head      = headPos;
   p.facing    = facing;

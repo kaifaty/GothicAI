@@ -19,9 +19,18 @@
 // while the face is taken, none without the section, rejections of it. The lids' shade over the balls (lid_shade,
 // LidShade): the edges of the lids found on a head with lid sheets, darker under the upper lid than over the lower,
 // more shade as the lids close (a blink, a squint) and as the eye looks up under its lid, the same for the head turned
-// whole, a neutral face that keeps it, none without the section, rejections of it. CPU only: no device, no game data.
+// whole, a neutral face that keeps it, none without the section, rejections of it. The head of one whose hands gesture
+// as it speaks (Gaze::Input::steady) on a synthetic body under a gesture keyed ten times a second: without the hold the
+// tilt and the quick bend of the animation rock it, held it stays on the partner and upright, forward without one, a
+// nod of another animation stays; a gesture stopped at ease (AnimBlend::easeOut) goes back as fast as its blend out as
+// a linear fade, other bones of that frame keep their time; the gestures the bench names (TalkGestures::setPicks).
+// CPU only: no device, no game data.
 #include "graphics/eyeshader.h"
+#include "graphics/mesh/animblend.h"
 #include "graphics/mesh/eyeblink.h"
+#include "graphics/mesh/gaze.h"
+#include "graphics/mesh/ikmath.h"
+#include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/facerig.h"
 #include "graphics/mesh/eyes.h"
 #include "graphics/mesh/listenface.h"
@@ -43,6 +52,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstdio>
+#include <cstring>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -1051,6 +1061,301 @@ Tempest::Vec3 headPoint(const Tempest::Matrix4x4& head, float yaw, float pitch, 
   head.project(p);
   return p;
   }
+
+namespace {
+// The head of one whose hands gesture as it speaks (reports/content/2026-11-hero-head/gesture-head.md). A body as tall
+// as a man, identity joints, facing +Z; the gesture swings the trunk with the head on it as the dialog gestures of
+// Gothic II do: keys ten times a second, straight lines between them, up to 25 degrees aside, 15 down and 28 to a
+// side at 75-87 degrees a second.
+struct GestureBody final {
+  enum : size_t { Root, Pelvis, LThigh, RThigh, Spine1, Spine2, Head, Count };
+
+  static asset::ModelHierarchy hierarchy() {
+    struct Bone { const char* name; int16_t parent; float x, y, z; };
+    const Bone bones[] = {
+      {"BIP01",-1,0,0,0}, {"BIP01 PELVIS",0,0,95,0}, {"BIP01 L THIGH",1,-10,-5,0}, {"BIP01 R THIGH",1,10,-5,0},
+      {"BIP01 SPINE1",1,0,20,0}, {"BIP01 SPINE2",4,0,25,0}, {"BIP01 HEAD",5,0,30,0},
+      };
+    asset::ModelHierarchy h{};
+    for(const auto& b:bones) {
+      asset::ModelHierarchyNode n{};
+      n.parent_index = b.parent;
+      n.name         = b.name;
+      auto m = Tempest::Matrix4x4::mkIdentity();
+      m.set(3,0,b.x);
+      m.set(3,1,b.y);
+      m.set(3,2,b.z);
+      static_assert(sizeof(n.transform)==sizeof(m));
+      std::memcpy(&n.transform,&m,sizeof(m));
+      h.nodes.push_back(n);
+      }
+    h.bbox.min = {-30,0,-30};
+    h.bbox.max = { 30,190,30};
+    h.collision_bbox = h.bbox;
+    return h;
+    }
+
+  Skeleton skeleton{hierarchy(),nullptr,"HUMANS.MDS"};
+
+  // the trunk turned by the animation: aside, up, to a side (degrees), around its lower joint
+  std::vector<Tempest::Matrix4x4> pose(float yaw, float pitch, float roll) const {
+    using namespace IkMath;
+    constexpr float Deg = float(M_PI)/180.f;
+    std::vector<Tempest::Matrix4x4> tr = skeleton.tr;
+    const std::vector<size_t> trunk = {Spine1,Spine2,Head};
+    const Vec3 at = position(tr[Spine1]);
+    rotateAbout(tr.data(),trunk,axisAngle(Vec3(0,0,1),roll*Deg),at);
+    rotateAbout(tr.data(),trunk,axisAngle(Vec3(1,0,0),-pitch*Deg),at);
+    rotateAbout(tr.data(),trunk,axisAngle(Up,yaw*Deg),at);
+    return tr;
+    }
+
+  // the gesture at a time: its keys, a line between two
+  static void gesture(uint64_t ms, float& yaw, float& pitch, float& roll) {
+    const auto key = [](size_t i, float& y, float& p, float& r) {
+      const float t = float(i);
+      y = 25.f*std::sin(t*0.35f);
+      p = -15.f*std::sin(t*0.5f + 1.f) + 15.f*std::sin(1.f);
+      r = 28.f*std::sin(t*0.3f);
+      };
+    const size_t i = size_t(ms/100);
+    const float  a = float(ms%100)/100.f;
+    float y0, p0, r0, y1, p1, r1;
+    key(i,y0,p0,r0);
+    key(i+1,y1,p1,r1);
+    yaw   = y0 + (y1-y0)*a;
+    pitch = p0 + (p1-p0)*a;
+    roll  = r0 + (r1-r0)*a;
+    }
+
+  // a frame as Pose makes it: the pose with the gaze over it, the gaze updated, the pose again if that changed it
+  std::vector<Tempest::Matrix4x4> frame(Gaze& gaze, const Gaze::Input& in, float yaw, float pitch, float roll) const {
+    auto tr = pose(yaw,pitch,roll);
+    gaze.apply(tr.data(),tr.size());
+    if(gaze.update(in)) {
+      tr = pose(yaw,pitch,roll);
+      gaze.apply(tr.data(),tr.size());
+      }
+    return tr;
+    }
+  };
+
+Tempest::Vec3 column(const Tempest::Matrix4x4& m, int k) {
+  return IkMath::normalize(Tempest::Vec3(m.at(k,0),m.at(k,1),m.at(k,2)));
+  }
+
+float angleDeg(const Tempest::Vec3& a, const Tempest::Vec3& b) {
+  return std::acos(std::clamp(IkMath::dot(a,b),-1.f,1.f))*180.f/float(M_PI);
+  }
+
+void gestureHeadCases() {
+  const GestureBody body;
+  constexpr uint64_t Dt = 33;
+  const auto input = [&](bool active, bool steady) {
+    Gaze::Input in;
+    in.active   = active;
+    in.source   = active ? Gaze::Source::Talk : Gaze::Source::None;
+    // far ahead at the height of the head: the trunk swaying moves the head a hand aside, the goal stays
+    in.target   = {0,170,1000};
+    in.forward  = {0,0,1};
+    in.headOnly = true;
+    in.dt       = Dt;
+    in.steady   = steady;
+    return in;
+    };
+
+  // how the head as shown moves in a frame, the largest: where the face looks, and its up (a tilt keeps the first)
+  const auto worstStep = [&](bool active, bool steady, float* worstOff, float* worstTilt) {
+    Gaze gaze;
+    gaze.setSkeleton(&body.skeleton);
+    require(gaze.isValid(),"the gaze must take the synthetic body");
+    const auto in = input(active,steady);
+    // at rest first: the gaze turns to the partner, the hold comes in
+    for(uint64_t t=0; t<1500; t+=Dt)
+      (void)body.frame(gaze,in,0,0,0);
+    float worst = 0;
+    Tempest::Vec3 face, up;
+    for(uint64_t t=0; t<6000; t+=Dt) {
+      float y, p, r;
+      GestureBody::gesture(t,y,p,r);
+      const auto tr = body.frame(gaze,in,y,p,r);
+      const auto f  = column(tr[GestureBody::Head],2);
+      const auto u  = column(tr[GestureBody::Head],1);
+      if(t>0)
+        worst = std::max({worst,angleDeg(f,face),angleDeg(u,up)});
+      face = f;
+      up   = u;
+      const auto to = IkMath::normalize(in.target - IkMath::position(tr[GestureBody::Head]));
+      if(worstOff!=nullptr)
+        *worstOff = std::max(*worstOff,angleDeg(f,active ? to : Tempest::Vec3(0,0,1)));
+      if(worstTilt!=nullptr)
+        *worstTilt = std::max(*worstTilt,std::abs(std::asin(std::clamp(u.x,-1.f,1.f)))*180.f/float(M_PI));
+      }
+    return worst;
+    };
+
+  // as it was, and is for any other animation: the turn aside is taken out, the tilt and the quick bend are the animation's
+  float freeTilt = 0;
+  const float free = worstStep(true,false,nullptr,&freeTilt);
+  require(free>2.f && freeTilt>20.f,
+          "without the hold the gesture must rock the head as its animation does (the case the hold is for): step "+
+          std::to_string(free)+" deg, tilt "+std::to_string(freeTilt));
+
+  // held: the head is the gaze's, whatever the trunk does under it. 0.35 degrees a frame is a pixel of the face
+  // in the bench's close-up, a third of the threshold of the note
+  float off = 0, tilt = 0;
+  const float held = worstStep(true,true,&off,&tilt);
+  require(held<0.35f,"a head held against a gesture must not move with it: "+std::to_string(held)+" deg in a frame");
+  require(off<1.5f,"a head held against a gesture must go on looking at the partner: off by "+std::to_string(off)+" deg");
+  require(tilt<1.f,"a head held against a gesture must stay upright: tilted "+std::to_string(tilt)+" deg");
+
+  // nobody to look at: it faces where the body does, upright
+  off = tilt = 0;
+  const float alone = worstStep(false,true,&off,&tilt);
+  require(alone<0.35f && off<1.5f && tilt<1.f,
+          "without a partner a head held against a gesture must face forward: step "+std::to_string(alone)+
+          ", off "+std::to_string(off)+", tilt "+std::to_string(tilt)+" deg");
+
+  // a nod of another animation (T_YES) stays a nod: only the hold takes the quick bend out
+  for(const bool steady:{false,true}) {
+    Gaze gaze;
+    gaze.setSkeleton(&body.skeleton);
+    const auto in = input(true,steady);
+    for(uint64_t t=0; t<1500; t+=Dt)
+      (void)body.frame(gaze,in,0,0,0);
+    float deepest = 0;
+    for(uint64_t t=0; t<600; t+=Dt) {
+      // 12 degrees down in 0.15 s and back
+      const float x     = float(t)/150.f;
+      const float pitch = -12.f*(x<1.f ? x : std::max(0.f,2.f-x));
+      const auto  tr    = body.frame(gaze,in,0,pitch,0);
+      deepest = std::min(deepest,std::asin(column(tr[GestureBody::Head],2).y)*180.f/float(M_PI));
+      }
+    if(steady)
+      require(deepest>-1.f,"held against a gesture the head must not nod with it: "+std::to_string(deepest)+" deg"); else
+      require(deepest<-5.f,"a nod of the animation must stay a nod without the hold: "+std::to_string(deepest)+" deg");
+    }
+
+  // the gesture is over, the hold is let go at the stance: nothing is left of it, and the pose comes to rest
+  {
+    Gaze gaze;
+    gaze.setSkeleton(&body.skeleton);
+    for(uint64_t t=0; t<1500; t+=Dt)
+      (void)body.frame(gaze,input(true,true),0,0,0);
+    Gaze::Probe whole;
+    gaze.probe(whole);
+    require(close(whole.steady,1.f),"the hold must be whole after its ramp");
+    bool moving = true;
+    std::vector<Tempest::Matrix4x4> tr;
+    for(uint64_t t=0; t<1500; t+=Dt) {
+      tr = body.pose(0,0,0);
+      gaze.apply(tr.data(),tr.size());
+      moving = gaze.update(input(true,false));
+      }
+    Gaze::Probe now;
+    gaze.probe(now);
+    require(now.steady==0.f && !moving,"a hold let go must end and leave the pose at rest");
+    require(angleDeg(column(tr[GestureBody::Head],2),Tempest::Vec3(0,0,1))<1.f && std::abs(now.roll)<0.5f,
+            "the gaze must be as it was once the hold is let go");
+    }
+  }
+
+// A gesture stopped at ease (AnimBlend::easeOut): its bones go back as fast at most as the blend out of the model
+// script, a linear fade, would turn them; any other stop is as it was
+void easeOutCases() {
+  using Sample = AnimBlend::Sample;
+  constexpr float Deg = float(M_PI)/180.f;
+  Animation::Sequence stance, gesture, walk;
+  stance.name  = "S_RUN";
+  stance.blendIn = stance.blendOut = 100;
+  gesture.name = "T_DIALOGGESTURE_06";
+  gesture.blendIn  = 200;
+  gesture.blendOut = 400;
+  walk.name    = "S_WALKL";
+  walk.blendIn = walk.blendOut = 100;
+
+  const auto turned = [&](float deg) {
+    Sample s;
+    s.rotation = asset::Quat(std::cos(deg*Deg*0.5f),0,0,std::sin(deg*Deg*0.5f));
+    return s;
+    };
+  const Sample rest = turned(0), raised = turned(30);
+
+  struct Result { float lasts[2] = {}; float peak[2] = {}; };
+  // bone 0: the gesture's (30 degrees off the stance), stopped at 1 s; bone 1: the legs' - the stance, then a walk
+  const auto run = [&](bool atEase) {
+    AnimBlend blend;
+    blend.reset(2);
+    Sample raw[2], out[2];
+    Result res;
+    float  prev[2] = {};
+    for(uint64_t now=1000; now<4000; now+=10) {
+      const bool before = now<2000;
+      raw[0] = before ? raised : rest;
+      raw[1] = before ? rest : raised;
+      blend.drive(0,before ? gesture : stance,before ? 1000 : 500,raw[0],raw[0],10.f);
+      blend.drive(1,before ? stance : walk,   before ? 500 : 2000,raw[1],raw[1],25.f);
+      if(now==2000 && atEase)
+        blend.easeOut(&gesture);
+      blend.apply(raw,out,2,now);
+      for(size_t i=0; i<2; ++i) {
+        // how far the shown bone still is from its animation, and how fast it turns
+        const float w     = std::abs(out[i].rotation.w*raw[i].rotation.w + out[i].rotation.z*raw[i].rotation.z);
+        const float off   = 2.f*std::acos(std::min(1.f,w))/Deg;
+        const float shown = 2.f*std::acos(std::min(1.f,std::abs(out[i].rotation.w)))/Deg;
+        if(!before) {
+          if(off>0.05f)
+            res.lasts[i] = float(now-2000+10)/1000.f;
+          res.peak[i] = std::max(res.peak[i],std::abs(shown-prev[i])/0.01f);
+          }
+        prev[i] = shown;
+        }
+      }
+    return res;
+    };
+
+  const auto usual = run(false);
+  require(usual.lasts[0]<=0.31f && usual.peak[0]>150.f,
+          "a gesture cut off must go back as it did: "+std::to_string(usual.lasts[0])+" s, "+std::to_string(usual.peak[0])+" deg/s");
+  const auto eased = run(true);
+  // 30 degrees over the gestures' blend out, 0.4 s, as a linear fade: 75 degrees a second
+  require(eased.lasts[0]>0.7f && eased.lasts[0]<=0.76f && eased.peak[0]<=75.f*1.03f,
+          "a gesture stopped at ease must go back as fast at most as its blend out as a linear fade: "+
+          std::to_string(eased.lasts[0])+" s, "+std::to_string(eased.peak[0])+" deg/s");
+  // alone it takes the shortest blend, 0.15 s; a cut gesture next to it shares its 0.3 s with it, one at ease does not
+  require(eased.lasts[1]<=0.16f && usual.lasts[1]<=0.31f,
+          "the bones of another switch of that frame must keep their own time: "+std::to_string(eased.lasts[1])+" s");
+  }
+
+// The test bench names the gestures to start (gestures pick): in turn, over again; without names at random again
+void gesturePickCases() {
+  TalkGestures g;
+  g.setGestures({2400,2000,2200,2200,2000,9600});
+  TalkGestures::setPicks({6,3});
+  uint64_t now = 1000;
+  std::vector<uint8_t> got;
+  bool playing = false;
+  uint64_t until = 0;
+  g.lineStart(now);
+  for(; now<60000 && got.size()<4; now+=33) {
+    if(playing && now>=until)
+      playing = false;
+    TalkGestures::Input in;
+    in.now      = now;
+    in.allowed  = true;
+    in.speaking = true;
+    in.playing  = playing;
+    const auto d = g.update(in);
+    if(d.act==TalkGestures::Act::Start) {
+      got.push_back(d.gesture);
+      playing = true;
+      until   = now + 500;
+      }
+    }
+  TalkGestures::setPicks({});
+  require(got==std::vector<uint8_t>({6,3,6,3}),"the gestures the bench names must start in turn, over again");
+  }
+}
 
 void eyeMotionCases(const FaceProfile& p) {
   require(close(Eyes::bell(0),0) && close(Eyes::bell(0.5f),0.5f) && close(Eyes::bell(1),1) &&
@@ -2210,6 +2515,9 @@ int main() {
     eyeMotionCases(*eyeProfile);
     eyeCueCases(eyeHead);
     lidShadeCases();
+    gestureHeadCases();
+    easeOutCases();
+    gesturePickCases();
     }
   catch(const std::exception& e) {
     std::cerr << "facerig test: FAIL: " << e.what() << " (after " << assertions << " checks)\n";

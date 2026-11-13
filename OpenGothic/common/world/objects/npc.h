@@ -152,7 +152,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     auto       bBox() const -> const Tempest::Vec3*;
     auto       bBoxCol() const -> const Tempest::Vec3*;
 
-    void       stopDlgAnim();
+    void       stopDlgAnim(bool atEase=false);  // atEase: its line is over, the hands come to rest slowly
     void       clearSpeed();
     bool       resetPositionToTA();
     // Construction order of this process's NPCs (game/gamescript_startupfloor.h hides newer bodies while replaying a fix).

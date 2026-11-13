@@ -876,6 +876,9 @@ blow. `gaze_jerk` is not counted for a second after a blow: it throws the head o
 `blinks /min` counts the blinks seen (the eyes going half shut), with those in a pause of the voice and
 at a shift of the eyes; people blink some 15-25 times a minute, more while they speak. Flag `blink_shut`:
 a blink keeps the eyes shut longer than 7 frames.
+`g_animroll` and `g_froll` are the tilt of the head to a side as its animation gives it and as it is shown (a dialog
+gesture tilts it up to 32 degrees), `g_steady` how much the head is held against a gesture's animation (0..1); the
+flag `gaze_jerk` counts the tilt of a frame too.
 `gestures talk / listen %` is how much of the time the watched one speaks a gesture plays, and how much
 of the time it is quiet again (a second after its voice), then the gestures started, started over one
 that played and stopped before their end (the voice is over), and the nods on stressed syllables. The head
@@ -1018,6 +1021,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `dialog <npc\|nearest>` | the hero talks to it, as with the action key: the dialog window opens |
 | `choose <n>` | runs the n-th choice (from 1) of the dialog with the watched npc, as if the player picked it |
 | `faceanim <npc\|nearest\|player> <anim> [ms] [intensity]` | a face animation of the head (`S_ANGRY`, `S_FRIENDLY`, `T_HURT`...) |
+| `gestures pick [<n> ...]`, `gestures head on\|off` | `pick 6 3`: the next dialog gestures are `T_DIALOGGESTURE_06`, `03`, `06`... instead of ones at random (whatever the mood and the line left), `pick` alone: at random again; `head off`: the head goes with the gesture's animation and a gesture whose voice is over is cut in 0.3 s, as before (`OPENGOTHIC_GESTURE_HEAD=0`) |
 | `facecue <npc\|nearest\|player> <gesture> [L\|R]` | a facial gesture of its own head (`flash`, `doubt`, `smirk`...: the `cues` of its face profile); a one-sided one without a side goes on a side by the seed; columns `cue_*` show the gestures |
 | `faceleak <npc\|nearest\|player> <felt> <upper\|lower>` | a leak of the felt emotion (`friendly`, `angry`, `hostile`, `afraid`, `pain`) on half of its own head's face (the `leaks` of its face profile) now, as a line that hides a lie: with the liar's two blinks in the 2 s after it; column `cue_leak` shows its strongest weight |
 | `lips on\|off`, `lips param <name> <value>`, `lips params` | lip sync (off: the old talk loop) and its parameters |
@@ -1137,6 +1141,31 @@ Lobart's lines and the accents Vino heard, each nod with its time and the face t
 `ls_w`) and `sheet.jpg` (before and apex of the faces); with `--off` only `clip-off.mp4`. The faces come from the
 `[face] listen` lines of `game.log`, the nods from `ge_lnods` of `metrics.csv`, the accents heard from
 `[ai] ... hears accent`.
+
+## Gesture head clip
+
+The head of one whose hands gesture as it speaks
+([gesture-head.md](../../reports/content/2026-11-hero-head/gesture-head.md)): the hero with an own head says lines of
+his original voice to Xardas in the tower of the default save, close up (`cam face 38`), each take with one dialog
+gesture the bench names (`gestures pick 3`: takes `g3`, `g6`, `g8`, `g9`); the nod and the sway of the voice are off,
+so the gesture alone moves the head. In `g6` and `g9` the line ends while the gesture plays and it is stopped half a
+second later. Take `wide` shows that stop whole from the front, take `npc` Xardas saying a line with gesture 06. No AI
+server. `OPENGOTHIC_GESTURE_HEAD=0` films "было" (the head goes with the gesture's animation, the gesture is cut in
+0.3 s):
+
+```bash
+OPENGOTHIC_CONTENT=<content with the hero's own head> TEMPEST_WINDOW_SIZE=1280x720 OPENGOTHIC_BENCH_REALTIME=1 \
+  TEMPEST_AUDIO_LOOPBACK=48000 SOUND=1 MUSIC=0 BENCH_HOST=ryzen [OPENGOTHIC_GESTURE_HEAD=0] \
+  scripts/bench.sh scripts/bench/gesture-head-clip.bench <out>
+uv run --with opencv-python-headless --with numpy python reports/content/2026-11-hero-head/gesture/track.py <out> g3 g6 g8 g9
+uv run --with pillow --with numpy python reports/content/2026-11-hero-head/gesture/clip.py <before out> <after out> <clip dir>
+```
+
+`track.py` writes `track-<take>.csv`: per frame the median optical flow of the face (brows, eyes, nose bridge) and of
+the wall behind, and prints the largest and the 95th percentile of the face against the wall, px a frame (the camera
+follows the head bone: a move of the whole head moves the wall, a turn or a tilt of it the face). `clip.py` writes
+`clip.mp4` ("было | стало" side by side, take by take), `key.txt` (the table of both runs: the screen, the tilt
+`g_froll`, the gaze error) and `steps.png` (the face against the wall over time).
 
 ## Speech face clip
 

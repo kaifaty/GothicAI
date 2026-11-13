@@ -1,0 +1,68 @@
+# The head of one whose hands gesture as it speaks (reports/content/2026-11-hero-head/gesture-head.md): the hero with an
+# own head says lines of his original voice to Xardas in the tower of the default save, close up, each take with one
+# dialog gesture named by the bench (T_DIALOGGESTURE_03, 06, 08, 09: the ones that rocked the head most). The nod and
+# the sway of the voice are off, so what moves the head here is the gesture alone. The line of g6 and g9 ends while the
+# gesture plays: it is stopped half a second later (g6: the head tilted 30 degrees by the animation then). Then the same
+# stop seen whole from the front (wide), and Xardas says a line with gesture 06 (npc: his trunk turns to the hero too).
+# OPENGOTHIC_GESTURE_HEAD=0 films "было": the head goes with the gesture's animation, the gesture is cut in 0.3 s.
+# No AI server. How to run it and measure the screen - scripts/bench/README.md, "Gesture head clip".
+# @timeout 240
+seed 73013
+cheat god
+set time 12 0
+view clean 30
+overlay off
+gestures param Nod 0
+gestures param SwayYaw 0
+gestures param SwayRoll 0
+watch nearest
+freeze nearest
+wait 500
+place 110 0
+wait 800
+watch player
+cam face 38 0 1
+wait 1500
+gestures pick 3
+rec g3
+wait 700
+speak player DIA_Addon_Xardas_Hello_15_01 NONE_100_XARDAS
+wait 6500
+stop
+gestures pick 6
+rec g6
+wait 700
+speak player DIA_Addon_Xardas_AddonSuccess_15_00 NONE_100_XARDAS
+wait 6200
+stop
+gestures pick 8
+rec g8
+wait 700
+speak player DIA_Addon_Xardas_Hello_15_01 NONE_100_XARDAS
+wait 6500
+stop
+gestures pick 9
+rec g9
+wait 700
+speak player DIA_Addon_Xardas_AddonSuccess_15_00 NONE_100_XARDAS
+wait 6200
+stop
+cam front 230 140
+cam look 125
+wait 800
+gestures pick 6
+rec wide
+wait 700
+speak player DIA_Addon_Xardas_AddonSuccess_15_00 NONE_100_XARDAS
+wait 6200
+stop
+watch nearest
+cam face 38 0 1
+wait 1200
+gestures pick 6
+rec npc
+wait 700
+speak nearest DIA_Addon_Xardas_Hello_14_00
+wait 9000
+stop
+gestures pick
