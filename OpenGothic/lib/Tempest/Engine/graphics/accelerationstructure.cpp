@@ -4,10 +4,26 @@
 #include "gapi/vulkan/vaccelerationstructure.h"
 #endif
 
+#include <atomic>
+
 using namespace Tempest;
+
+static std::atomic<size_t> liveStructures{0};
+
+// Structures alive now, the ones Resources::recycle still keeps included (a test's count of what a world leaves)
+size_t tempestProbeAccelerationStructureCount() {
+  return liveStructures.load(std::memory_order_relaxed);
+  }
 
 AccelerationStructure::AccelerationStructure(Device& dev, AbstractGraphicsApi::PRtAs&& impl, size_t capacity)
   :impl(std::move(impl)), cap(capacity) {
+  if(this->impl.handler!=nullptr)
+    liveStructures.fetch_add(1,std::memory_order_relaxed);
+  }
+
+AccelerationStructure::~AccelerationStructure() {
+  if(impl.handler!=nullptr)
+    liveStructures.fetch_sub(1,std::memory_order_relaxed);
   }
 
 AccelerationStructure::AccelerationStructure(AccelerationStructure&& other)

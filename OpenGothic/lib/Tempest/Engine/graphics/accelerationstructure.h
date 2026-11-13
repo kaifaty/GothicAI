@@ -51,6 +51,14 @@ class RtGeometry {
   RtGeometry(const VertexBuffer<V>& vbo, const IndexBuffer<I>& ibo, size_t offset, size_t count):
       vbo(&vbo),vboStride(sizeof(V)),ibo(&ibo),icls(Detail::indexCls<I>()),iboOffset(offset),iboSize(count){}
 
+  // Triangles of storage buffers (Vulkan, Metal): float3 positions at the start of every `stride` bytes of `vbo`,
+  // `count` indices of class `icls` from index `offset` of `ibo`. The buffers of a shared page of meshes hold many;
+  // a geometry addresses its vertices from the start of `vbo`, and the offset of its indices in bytes must be a
+  // multiple of 32 on Metal.
+  RtGeometry(const StorageBuffer& vbo, size_t stride, const StorageBuffer& ibo, Detail::IndexClass icls,
+             size_t offset, size_t count):
+      vbo(&vbo),vboStride(stride),ibo(&ibo),icls(icls),iboOffset(offset),iboSize(count){}
+
   const StorageBuffer* vbo       = nullptr;
   size_t               vboStride = 0;
   const StorageBuffer* ibo       = nullptr;
@@ -68,7 +76,7 @@ class AccelerationStructure final {
   public:
     AccelerationStructure() = default;
     AccelerationStructure(AccelerationStructure&& other);
-    ~AccelerationStructure()=default;
+    ~AccelerationStructure();
     AccelerationStructure& operator=(AccelerationStructure&& other);
 
     bool   isEmpty() const;
