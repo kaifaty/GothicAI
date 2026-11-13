@@ -1,0 +1,59 @@
+# The hero's face under the player's live voice (reports/content/2026-11-hero-head/player-voice-face.md, step 1): the hero
+# with an own head says four phrases of the user through the AI server as the microphone (`ptt`: the server's
+# --voice-files plays the recording in real time and streams it back as ptt_audio, v64), close up in Xardas' tower of
+# the default save. Then Xardas' voice from the speakers in the microphone: his line DIA_Addon_Xardas_Hello_14_00 plays
+# in the game while the microphone hears it 12 dB below the hero's voice and the hero's phrase over it from 3 s on -
+# first without ducking (LiveDuck 0), then as it is. Last the hero's own recorded voice on the same head (a line of
+# the dialog with Xardas), the mouth of a voice of the game to compare with. The recordings lie in /tmp/player-voice/
+# on the machine of the game and of the server (phrase-1..4.wav, npc-mix.wav: 16 kHz mono, not in git).
+# Needs an AI server with --voice-files and an ASR service; the server's --no-player-face films "было" (the mouth
+# still). How to run it and make the clip - scripts/bench/README.md, "Player voice clip".
+# @timeout 300
+seed 73013
+cheat god
+set time 12 0
+view clean 30
+overlay off
+watch nearest
+freeze nearest
+wait 500
+place 110 0
+wait 800
+watch player
+cam face 38 0 1
+wait 1500
+rec voice
+wait 700
+ptt /tmp/player-voice/phrase-1.wav
+wait 900
+ptt /tmp/player-voice/phrase-2.wav
+wait 900
+ptt /tmp/player-voice/phrase-3.wav
+wait 900
+ptt /tmp/player-voice/phrase-4.wav
+wait 1000
+stop
+lips param LiveDuck 0
+rec npc0
+wait 500
+speak nearest DIA_Addon_Xardas_Hello_14_00
+ptt /tmp/player-voice/npc-mix.wav
+wait 1500
+stop
+lips param LiveDuck 18
+rec npc
+wait 500
+speak nearest DIA_Addon_Xardas_Hello_14_00
+ptt /tmp/player-voice/npc-mix.wav
+wait 1500
+stop
+watch nearest
+dialog nearest
+wait 300
+watch player
+cam face 38 0 1
+rec own
+wait 1500
+choose 1
+wait 9000
+stop

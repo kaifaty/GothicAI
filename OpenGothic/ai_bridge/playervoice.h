@@ -38,5 +38,6 @@ class PlayerVoice final {
     uint64_t                     ducked = 0;     // chunks made quieter for an npc's voice
     uint64_t                     duckUntil = 0;
     std::shared_ptr<LipSync::Track> lips;
-    std::vector<int64_t>          deliveryUs;
+    std::vector<int64_t>          deliveryUs;   // from the server's chunk to the bridge (the system clocks)
+    std::vector<int64_t>          shownUs;      // ...to the tick that shows its start
   };
