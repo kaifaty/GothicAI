@@ -403,6 +403,8 @@ void damage(const Loaded& world, const StaticCollision::Cache& cache, const Prob
   auto leftover = d.file;
   leftover += ".tmp-1-2";
   writeBytes(leftover,std::vector<uint8_t>(d.good.begin(),d.good.begin()+1000));
+  // An hour old: age alone must not remove it.
+  fs::last_write_time(leftover,fs::file_time_type::clock::now()-std::chrono::hours(1));
   d.expectMiss("a leftover temporary file beside a missing cache",
                "missing; 1 leftover .tmp file(s) of an interrupted write beside it");
   require(fs::exists(leftover),"the leftover must not be removed: its writer may still run");

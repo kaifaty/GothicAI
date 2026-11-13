@@ -6,7 +6,9 @@
 #include "physics/collisionworld.h"
 #include "physics/dynamicworld.h"
 #include "physics/staticcollision.h"
+#include "physics/worldcloth.h"
 #include "resources.h"
+#include "settings.h"
 #include "world/wayheights.h"
 #include "world/world.h"
 
@@ -67,6 +69,17 @@ void write(const fs::path& file, std::string_view bytes) {
   std::ofstream output(file,std::ios::binary|std::ios::trunc);
   output.write(bytes.data(),std::streamsize(bytes.size()));
   require(bool(output),"cannot write "+file.string());
+  }
+
+// The world cloth part of a collision key from its parts, independently of StaticCollision::clothRules.
+std::string clothRulesKey() {
+  std::string out;
+  for(const auto byte:WorldCloth::rulesSha256()) {
+    char hex[3];
+    std::snprintf(hex,sizeof(hex),"%02x",unsigned(byte));
+    out+=hex;
+    }
+  return out+"/"+std::to_string(WorldCloth::Algorithm);
   }
 
 std::string read(const fs::path& file) {
@@ -274,6 +287,8 @@ struct WayHeightsContract {
     DynamicWorld::StaticCollisionLoadStats stats;
     std::string mark;              // World's physics_static load mark, from stage= to its end
     size_t worldCollisionLines=0;  // [world-collision] lines of the load
+    StaticCollision::Cache cache;  // the game's cache of the loaded World (StaticCollision::gameCache)
+    bool split=true;
     };
   struct Ground {
     std::string name;
@@ -329,6 +344,8 @@ struct WayHeightsContract {
     for(auto at=log.find("[world-collision]");at!=std::string::npos;at=log.find("[world-collision]",at+1))
       ++result.worldCollisionLines;
     result.stats=physics.staticCollisionLoadStats();
+    result.split=physics.staticCollisionSplit();
+    result.cache=StaticCollision::gameCache(scene,result.split);
     result.navigation=physics.navigationGeometry();
     const float infinity=std::numeric_limits<float>::infinity();
     Tempest::Vec3 minimum(infinity),maximum(-infinity);
@@ -466,6 +483,23 @@ struct WayHeightsContract {
     require(warm.mark.find(" input=cache input_ms=0 collision=cache ")!=std::string::npos && warm.worldCollisionLines==0,
             "warm World load must not call the collision input: physics_static '"+warm.mark+"'");
     std::printf("NEWWORLD collision warm load mark: %s\n",warm.mark.c_str());
+    // The game's key of the loaded World: the cloth part from its own parts, the rest from the load's inputs; and
+    // the file the cold load wrote is found and taken with it, without the input.
+    const auto inputs=Resources::wayHeightInputs("NEWWORLD.ZEN");
+    const auto& flags=Settings::physicsFlags();
+    const auto& key=warm.cache.key;
+    require(key.clothRules==clothRulesKey(),"the game's collision key must hold the world cloth rules' SHA-256 and "
+            "WorldCloth::Algorithm: got '"+key.clothRules+"', expected '"+clothRulesKey()+"'");
+    require(!warm.cache.root.empty() && key.base==inputs.baseFingerprint && key.world=="NEWWORLD" &&
+            key.content==inputs.contentFingerprint && key.version==CollisionCache::BakeVersion &&
+            key.collisionFlags==(uint32_t(flags.cloth)|(uint32_t(flags.movableVobs)<<1)|(uint32_t(warm.split)<<2)),
+            "the game's collision key must be the load's base, world, content fingerprint and flags");
+    const StaticCollision::Input none=[]() -> const asset::WorldMesh& {
+      throw std::runtime_error("the game's key must find the cache without the collision input");
+      };
+    require(StaticCollision(none,warm.cache,warm.split).stats.cacheHit,"the game's key must find the cold load's file");
+    std::printf("NEWWORLD collision game key: cloth rules %s, flags %u, the cold load's file taken with it\n",
+                key.clothRules.c_str(),key.collisionFlags);
     collisionCompare(built,warm,"warm");
     }
 
