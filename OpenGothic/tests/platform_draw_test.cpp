@@ -317,16 +317,16 @@ void drawCase(Tempest::Device& device, const Fixture& fixture, const std::filesy
   const auto bg = measure(pixels, ground);
   std::cout << describe(first, a) << '\n' << describe(second, b) << '\n' << describe(ground, bg) << '\n';
 
-  // Light and tonemapping move the colour, so the PNG is judged by its hue: green at least 1.5 times red and blue
-  // where the PNG has 6 times blue and 6 times red, in 90 % of the pixels.
+  // Light and tonemapping move the colour, so the PNG is judged by its hue, not its value: green at least 1.5 times
+  // red and blue in 90 % of the pixels, where the PNG has 6 times red and 3 times blue (2.6 times blue in the frame).
   require(a.pngShare>=0.9f, "the first material must show the PNG's green: "+describe(first, a));
   // The default texture is a grey checker: hueless (max-min channel within a fifth of the brightest plus 8 of 255,
   // room for the sun's and the sky's tint) in 90 % of the pixels, and two greys, its cells: 10th and 90th
-  // percentiles of the brightness 12 of 255 apart.
+  // percentiles of the brightness at least 24 of 255 apart (about 70 in the frame, the flat background 6).
   require(b.neutralShare>=0.9f && b.pngShare<=0.05f,
           "the material without a texture must be drawn grey by the default texture: "+describe(second, b));
-  require(b.lumaHigh-b.lumaLow>=12.f, "the default texture's checker must show: "+describe(second, b));
-  // The background, the sky beyond the quads, is neither: 40 of 255 away from both means.
+  require(b.lumaHigh-b.lumaLow>=24.f, "the default texture's checker must show: "+describe(second, b));
+  // The background, the sky below the horizon beyond the quads, is neither: 40 of 255 away from both means.
   require(distance(bg.mean, a.mean)>=40.f && distance(bg.mean, b.mean)>=40.f,
           "the background must differ from both materials: "+describe(ground, bg));
 
