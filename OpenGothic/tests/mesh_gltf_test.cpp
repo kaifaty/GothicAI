@@ -25,6 +25,7 @@
 #include "musicdata.h"
 #include "sha256.h"
 #include "dmusic/patternlist.h"
+#include "dmusic/dxmusicsource.h"
 #include "dmusic.h"
 #include "utils/gthfont.h"
 #include "game/gamesession.h"
@@ -2617,8 +2618,8 @@ void effectCases(const std::string& game, const std::string& base) {
       auto* segment=Resources::loadMusicSegment("NW_DayStd.sgt");
       require(segment!=nullptr,"native GK music segment must load through Resources");
       DmSegment_release(segment);
-      const auto patterns=Resources::loadDxMusic("NW_DayStd.sgt");
-      require(patterns.size()>0,"native Dx8 music must produce patterns through Resources");
+      const auto patterns=loadDxMusic("NW_DayStd.sgt");
+      require(patterns.size()>0,"native Dx8 music must produce patterns through the Gothic source");
       require(Resources::writeCensus(),"music wiring census must be writable");
       const auto bytes=gothicglb::readFile(censusPath);
       rapidjson::Document census;

@@ -48,11 +48,6 @@ namespace asset { struct WorldMesh; }
 namespace WorldData { struct Data; struct ZenFile; }
 namespace VideoData { class Reader; }
 
-namespace Dx8 {
-class DirectMusic;
-class PatternList;
-}
-
 class Resources final {
   public:
     static void probeMemory(std::string_view stage);
@@ -301,7 +296,8 @@ class Resources final {
     static asset::MorphMesh           loadMorphData(std::string_view name);
     static Tempest::Sound            loadSoundBuffer(std::string_view name);
 
-    static Dx8::PatternList          loadDxMusic(std::string_view name);
+    static std::vector<uint8_t>      readDxMusic(const std::vector<std::u16string>& paths, const char16_t* name,
+                                               const char* kind);
     static DmSegment*                loadMusicSegment(char const* name);
     static std::unique_ptr<VideoData::Reader> loadVideo(std::string_view name);
     static void                      startVideoBase();
@@ -511,10 +507,8 @@ class Resources final {
     std::unique_ptr<Animation> implLoadAnimation(std::string name);
     ProtoMesh*            implDecalMesh(const asset::VisualDecal& decal);
     Tempest::Sound        implLoadSoundBuffer(std::string_view name);
-    Dx8::PatternList      implLoadDxMusic(std::string_view name);
     DmSegment*            implLoadMusicSegment(char const* name);
     DmResult              readGkMusic(std::string_view name, const char* kind, std::vector<uint8_t>& bytes) noexcept;
-    std::vector<uint8_t>  readDxMusic(const std::vector<std::u16string>& paths, const char16_t* name, const char* kind);
     std::vector<uint8_t>  readMusicRecord(std::string_view provider, std::string_view request,
                                         const char* kind, const MusicData::Source& source);
     GthFont&              implLoadFont(std::string_view fname, FontType type, const float scale);
@@ -554,7 +548,6 @@ class Resources final {
     std::unique_ptr<Tempest::SoundDevice> sound;
 
     std::recursive_mutex              sync;
-    std::unique_ptr<Dx8::DirectMusic> dxMusic;
     DmLoader*                         dmLoader = nullptr;
     std::unique_ptr<ContentCensus>     census;
 

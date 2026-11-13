@@ -7,6 +7,7 @@
 
 #include "game/definitions/musicdefinitions.h"
 #include "dmusic/mixer.h"
+#include "dmusic/dxmusicsource.h"
 #include "resources.h"
 #include "dmusic.h"
 
@@ -126,7 +127,7 @@ struct GameMusic::OpenGothicMusicProvider : GameMusic::MusicProvider {
 
     try {
       if(/*reloadTheme*/true) {
-        Dx8::PatternList p = Resources::loadDxMusic(theme.file);
+        Dx8::PatternList p = loadDxMusic(theme.file);
 
         Dx8::Music m;
         m.addPattern(p);
