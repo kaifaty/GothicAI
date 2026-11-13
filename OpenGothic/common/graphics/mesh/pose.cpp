@@ -6,6 +6,7 @@
 #include "savearchive.h"
 #include "skeleton.h"
 #include "animmath.h"
+#include "animsample.h"
 #include "ikmath.h"
 #include "stopfoot.h"
 
@@ -148,7 +149,7 @@ Pose::Pose() {
 // or the physical/recovery histories that a complete Pose copy would allocate.
 Pose::Pose(const Pose& source, OriginReplayTag)
   :skeleton(source.skeleton), trY(source.trY), flag(source.flag), lastUpdate(source.lastUpdate),
-   headRotX(source.headRotX), headRotY(source.headRotY),
+   headRotX(source.headRotX), headRotY(source.headRotY), rootShift(source.rootShift),
    ik(source.ik), gaze(source.gaze), lean(source.lean), aim(source.aim),
    walk(source.walk), bowDraw(source.bowDraw), flinch(source.flinch),
    numBones(source.numBones), pos(source.pos) {
@@ -537,6 +538,7 @@ bool Pose::update(uint64_t tickCount, bool force) {
 
   bool needMkSkeleton = false;
   if(lastUpdate!=tickCount || force) {
+    rootNow = RootDriver();
     for(auto& i:lay) {
       const Animation::Sequence* seq = i.seq;
       if(0<i.comb && i.comb<=i.seq->comb.size()) {
@@ -551,6 +553,7 @@ bool Pose::update(uint64_t tickCount, bool force) {
 
       needMkSkeleton |= updateFrame(*seq,i.bs,i.sAnim,i.sOrigin,layerTime(i,tickCount));
       }
+    needMkSkeleton |= settleRootShift(tickCount);
     // The physical return already owns the transition from the shown pose. A second ordinary
     // offset underneath it would change its target, and is not part of the legacy pose save.
     if(physicalReturning)
@@ -577,37 +580,26 @@ bool Pose::updateFrame(const Animation::Sequence &s, BodyState bs, uint64_t sTim
 
   now = now-sTime;
 
-  float    fpsRate = d.fpsRate;
-  uint64_t frame   = uint64_t(float(now)*fpsRate);
-  uint64_t frameA  = frame/1000;
-  uint64_t frameB  = frame/1000+1; //next
+  // a loop that carries the body ends on its next cycle's first frame: that frame is not played twice
+  const bool  loop    = s.animCls==Animation::Loop;
+  const float fpsRate = d.fpsRate;
+  const auto  k       = AnimSample::keys(now,fpsRate,loop ? d.loopFrames() : numFrames,loop,s.reverse);
+  // a clip with fewer keys than its source goes on a curve through them (animsample.h), the others on a line
+  const bool  smooth  = d.sparse && AnimSample::enabled();
 
-  float    a       = float(frame%1000)/1000.f;
+  auto* sampleA = &d.samples[k.a*idSize];
+  auto* sampleB = &d.samples[k.b*idSize];
+  auto* before  = smooth && k.hasBefore ? &d.samples[k.before*idSize] : nullptr;
+  auto* after   = smooth && k.hasAfter  ? &d.samples[k.after *idSize] : nullptr;
 
-  if(s.animCls==Animation::Loop) {
-    // a loop that carries the body ends on its next cycle's first frame: that frame is not played twice
-    const uint64_t count = d.loopFrames();
-    frameA%=count;
-    frameB%=count;
-    } else {
-    frameA = std::min<uint64_t>(frameA,d.numFrames-1);
-    frameB = std::min<uint64_t>(frameB,d.numFrames-1);
-    }
-
-  if(s.reverse) {
-    const uint64_t last = (s.animCls==Animation::Loop ? d.loopFrames() : d.numFrames)-1;
-    frameA = last-frameA;
-    frameB = last-frameB;
-    }
-
-  auto* sampleA = &d.samples[size_t(frameA*idSize)];
-  auto* sampleB = &d.samples[size_t(frameB*idSize)];
-
+  const size_t root = (skeleton!=nullptr && !skeleton->rootNodes.empty()) ? skeleton->rootNodes[0] : 0;
   for(size_t i=0; i<idSize; ++i) {
     size_t idx = d.nodeIndex[i];
     if(idx>=numBones)
       continue;
-    auto smp = mix(sampleA[i],sampleB[i],a);
+    auto smp = smooth ? AnimSample::mix(before!=nullptr ? before+i : nullptr,sampleA[i],sampleB[i],
+                                        after!=nullptr ? after+i : nullptr,k.t)
+                      : mix(sampleA[i],sampleB[i],k.t);
     if(i==0) {
       if(bs==BS_CLIMB)
         smp.position.y = trY;
@@ -616,12 +608,56 @@ bool Pose::updateFrame(const Animation::Sequence &s, BodyState bs, uint64_t sTim
       else if(bs==BS_JUMP) //else if(s.isFly())
         smp.position.y = trY;
       }
+    if(idx==root) {
+      rootNow.seq    = &s;
+      rootNow.origin = sOrigin;
+      rootNow.shift  = Vec3();
+      if(smooth && i==0) {
+        // The body travels along the straight line between the root's keys (Animation::Sequence::translateXZ),
+        // the legs are on the curve: the root of the pose is as far off the body as its curve is off that line,
+        // or a planted foot would slide by it. A loop's keys of the next cycle are one travel further on
+        auto key = [&](size_t frame, int cycles) {
+          auto p = d.samples[frame*idSize].position;
+          p.x += d.moveTr.x*float(cycles);
+          p.z += d.moveTr.z*float(cycles);
+          return p;
+          };
+        const auto pb = key(k.b,k.cycB);
+        const auto p0 = key(k.before,k.cycBefore), p3 = key(k.after,k.cycAfter);
+        const auto off = AnimSample::offLine(k.hasBefore ? &p0 : nullptr,sampleA[0].position,pb,
+                                             k.hasAfter ? &p3 : nullptr,k.t);
+        rootNow.shift = Vec3(off.x,0,off.z);
+        }
+      }
 
     hasSamples[idx] = S_Valid;
     raw       [idx] = smp;
-    blend.drive(idx,s,sOrigin,sampleA[i],sampleB[i],fpsRate);
+    blend.drive(idx,s,sOrigin,sampleA[i],sampleB[i],fpsRate,
+                before!=nullptr ? before+i : nullptr,after!=nullptr ? after+i : nullptr,k.t,smooth);
     }
   return true;
+  }
+
+bool Pose::settleRootShift(uint64_t now) {
+  if(rootNow.seq==nullptr)
+    return false; // nothing sampled the root this frame: what is shown stays
+  if(rootNow.seq!=rootShown.seq || rootNow.origin!=rootShown.origin) {
+    // another animation has the root: the shift shown goes over to the new one's without a jump
+    rootCarry      = rootShift-rootNow.shift;
+    rootCarryStart = now;
+    }
+  rootShown = rootNow;
+  Vec3 shift = rootNow.shift;
+  if(rootCarry!=Vec3()) {
+    static const float CarryTime = 150.f; // ms: AnimBlend's shortest switch
+    const float t = now>rootCarryStart ? float(now-rootCarryStart)/CarryTime : 0.f;
+    if(t>=1.f)
+      rootCarry = Vec3(); else
+      shift += rootCarry*(1.f-t*t*(3.f-2.f*t));
+    }
+  const bool changed = shift!=rootShift;
+  rootShift = shift;
+  return changed;
   }
 
 void Pose::mkSkeleton(const Tempest::Matrix4x4& mt) {
@@ -1777,7 +1813,7 @@ void Pose::probe(Probe& p) {
   bool      done[Resources::MAX_NUM_SKELETAL_NODES] = {};
   const Matrix4x4 root = rootNode();
   Matrix4x4 org = Matrix4x4::mkIdentity();
-  org.translate(Vec3(-root.at(3,0),0,-root.at(3,2)));
+  org.translate(Vec3(rootShift.x-root.at(3,0),0,rootShift.z-root.at(3,2)));
 
   for(size_t i=0; i<p.numBones; ++i) {
     // parents first, whatever the order of the nodes
@@ -1802,9 +1838,10 @@ Vec3 Pose::mkBaseTranslation() {
 
   auto  b0 = rootNode();
 
-  float dx = b0.at(3,0);
+  // rootShift: the root of a clip on a curve is that far off the body, which travels on a straight line
+  float dx = b0.at(3,0)-rootShift.x;
   float dy = 0;
-  float dz = b0.at(3,2);
+  float dz = b0.at(3,2)-rootShift.z;
 
   if((flag&NoTranslation)==NoTranslation) {
     dy = b0.at(3,1);

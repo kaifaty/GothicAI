@@ -83,17 +83,24 @@ class AnimBlend final {
     void           easeOut(const Animation::Sequence* seq) { easeSeq = seq; }
 
     // What drives a bone this frame: the animation and when it started (a switch is a change of
-    // either), and the key frames around the time, a then b (the velocity of the animation)
+    // either), and the key frames around the time, a then b (the velocity of the animation). smooth: the
+    // animation is sampled on the curve through its keys (animsample.h), t of the way from a to b, with the
+    // keys before a and after b (null where the clip has none): its velocity is the curve's there
     void           drive(size_t bone, const Animation::Sequence& seq, uint64_t sAnim,
-                         const Sample& a, const Sample& b, float fpsRate) {
-      auto& d = cur[bone];
-      d.seq   = &seq;
-      d.sAnim = sAnim;
-      d.in    = seq.blendIn;
-      d.out   = seq.blendOut;
-      d.a     = &a;
-      d.b     = &b;
-      d.rate  = fpsRate;
+                         const Sample& a, const Sample& b, float fpsRate,
+                         const Sample* before=nullptr, const Sample* after=nullptr, float t=0, bool smooth=false) {
+      auto& d  = cur[bone];
+      d.seq    = &seq;
+      d.sAnim  = sAnim;
+      d.in     = seq.blendIn;
+      d.out    = seq.blendOut;
+      d.a      = &a;
+      d.b      = &b;
+      d.rate   = fpsRate;
+      d.before = before;
+      d.after  = after;
+      d.t      = t;
+      d.smooth = smooth;
       }
 
     // out = what the animations give (raw) with the offsets of the bones that switched; bones nothing
@@ -123,6 +130,10 @@ class AnimBlend final {
       const Sample*              a     = nullptr;
       const Sample*              b     = nullptr;
       float                      rate  = 0;
+      const Sample*              before = nullptr;
+      const Sample*              after  = nullptr;
+      float                      t      = 0;
+      bool                       smooth = false;
       };
 
     // x(t) from x0 with velocity v0 to 0 at t1, zero velocity and acceleration there

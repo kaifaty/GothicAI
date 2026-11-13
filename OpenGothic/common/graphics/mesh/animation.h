@@ -78,6 +78,7 @@ class Animation final {
       uint32_t                                    lastFrame =0;
       float                                       fpsRate   =60.f;
       uint32_t                                    numFrames =0;
+      bool                                        sparse    =false; // fewer keys than the source: on a curve (animsample.h)
 
       std::vector<asset::MdsSoundEffectGround>   gfx;
       std::vector<asset::MdsSoundEffect>         sfx;

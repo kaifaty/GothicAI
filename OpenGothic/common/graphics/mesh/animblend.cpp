@@ -1,6 +1,7 @@
 #include "animblend.h"
 
 #include "animmath.h"
+#include "animsample.h"
 #include "savearchive.h"
 
 #include <Tempest/Log>
@@ -202,6 +203,7 @@ void AnimBlend::setExternalTarget(const Sample* current, const Sample* next, siz
     cur[i].a=current+i;
     cur[i].b=next+i;
     cur[i].rate=rate;
+    cur[i].smooth=false;
     }
   }
 
@@ -344,7 +346,17 @@ void AnimBlend::prepare(size_t i, const Sample& target, const Sample& shown, flo
   const Quat rot = normalize(mul(fromRotVec(turn*dtNow),shown.rotation));
 
   Vec3 tvel, tturn;
-  if(c.a!=nullptr && c.b!=nullptr && c.rate>0) {
+  if(c.a!=nullptr && c.b!=nullptr && c.rate>0 && c.smooth) {
+    // on the curve through its keys the animation moves as the curve does at this time, not as the chord
+    // between the two keys: over a short step of the curve
+    static const float Step = 1.f/32.f;
+    const float  t0 = c.t+Step<=1.f ? c.t : 1.f-Step;
+    const Sample s0 = AnimSample::mix(c.before,*c.a,*c.b,c.after,t0);
+    const Sample s1 = AnimSample::mix(c.before,*c.a,*c.b,c.after,t0+Step);
+    tvel  = (vec(s1.position) - vec(s0.position))*(c.rate/Step);
+    tturn = rotVec(mul(s1.rotation,conj(s0.rotation)))*(c.rate/Step);
+    }
+  else if(c.a!=nullptr && c.b!=nullptr && c.rate>0) {
     tvel  = (vec(c.b->position) - vec(c.a->position))*c.rate;
     tturn = rotVec(mul(c.b->rotation,conj(c.a->rotation)))*c.rate;
     if(externalDriven) {

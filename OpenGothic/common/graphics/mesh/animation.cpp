@@ -12,6 +12,7 @@
 #include "animationpfx.h"
 #include "stopfoot.h"
 #include "transend.h"
+#include "animsample.h"
 
 #include <array>
 
@@ -251,6 +252,7 @@ Animation::Sequence::Sequence(const asset::MdsAnimation& hdr, std::string_view f
   data->samples   = p.samples;
 
   data->setupMoveTr();
+  data->sparse = AnimSample::sparse(data->fpsRate,data->numFrames);
   }
 
 bool Animation::Sequence::isFinished(uint64_t now, uint64_t sTime, uint16_t comboLen) const {

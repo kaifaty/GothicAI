@@ -27,6 +27,7 @@
 #include "graphics/mesh/pose.h"
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/animblend.h"
+#include "graphics/mesh/animsample.h"
 #include "graphics/mesh/bowdraw.h"
 #include "graphics/mesh/flinch.h"
 #include "world/objects/npc.h"
@@ -420,6 +421,17 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       say(std::string(AnimBlend::setParam(a[2],num(a,3,0)) ? "blend param " : "blend: unknown param ") + a[2] + " " + a[3]);
     else
       say("unknown blend command: " + line);
+    }
+  else if(c=="sample") {
+    // sample on|off: clips with fewer keys than their source on a curve through the keys, or on straight lines
+    // between them as before (AnimSample)
+    const std::string m = a.size()>1 ? a[1] : "";
+    if(m=="on" || m=="off") {
+      AnimSample::setEnabled(m=="on");
+      say("sample " + m);
+      }
+    else
+      say("unknown sample command: " + line);
     }
   else if(c=="ik") {
     const std::string m = a.size()>1 ? a[1] : "";
