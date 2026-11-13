@@ -11,7 +11,8 @@ up and down by what lies on it:
   PATH) takes ROAD_SHARE of it.
 
 The first probe (the note, "Проба земли 1") had ruts of 6 cm and tussocks of a few centimetres at twice this
-density: nothing of it showed in the game. Ruts and fine texture belong to the materials (step В3).
+density: nothing of it showed in the game. Ruts and fine texture belong to the materials (step В3). The second
+("Проба земли 2", this version) shows only as softer crests; the density stays for the material blends of В3.
 
 What stays where it was: every vertex on an edge the chunk shares with something else — the chunk's own border
 (an open edge after welding by position), rock, man-made and vegetation faces — and those edges are not split, so
