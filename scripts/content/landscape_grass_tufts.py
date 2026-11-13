@@ -47,7 +47,7 @@ DENSITY = 1024              # pixels per metre of a card
 MATERIAL = 'OWN_LANDSCAPE_GRASS_TUFTS'
 VISUAL = 'OWN_LANDSCAPE_GRASS_TUFT'
 CURVE = 1.5                 # brightness = height share ** 1.5 over FLOOR, as the layer's
-FLOOR = .4
+FLOOR = .6                  # the layer's is .22; a hanging root lies on the lit layer and must not line it
 TIP = .75                   # a leaf is at full brightness from this share of the tallest beside it
 ROOT_HUE = .85              # how much of the leaves' mean colour the root takes: the scan's is pale straw
 ROUGH = .92
@@ -56,21 +56,23 @@ NORMAL_UP = .75             # share of the common direction in a vertex normal
 COMMON = (0., .45, .9)      # that direction in the tuft's axes: out of the rock and up the surface
 SIZES = (1., .7)
 
-# A tuft's cards. hang: x of the root, swing in the rock's plane, twist about the hanging axis (degrees), how far
-# it stands off at the bend (cm). up: turn about the growth axis (degrees).
+# A tuft's cards. hang: x of the root (cm), swing in the rock's plane, twist about the hanging axis (degrees), how
+# far it stands off at the bend (cm). up: turn about the growth axis (degrees). LONG and MID are 80 cm wide: two
+# tufts a metre of the band's end overlap into a curtain, as the original's strokes hang.
 SHAPES = dict(
-    LONG=(('hang', 'hang_long_a', dict(x=0, swing=2, twist=8, out=9)),
-          ('hang', 'hang_long_b', dict(x=-9, swing=-16, twist=-38, out=7)),
-          ('hang', 'hang_mid_a', dict(x=10, swing=17, twist=35, out=11))),
-    MID=(('hang', 'hang_mid_a', dict(x=0, swing=-3, twist=-6, out=9)),
-         ('hang', 'hang_mid_b', dict(x=-10, swing=-18, twist=36, out=7)),
-         ('hang', 'droop_b', dict(x=8, swing=15, twist=-32, out=11))),
-    WISP=(('hang', 'hang_long_b', dict(x=0, swing=6, twist=12, out=8)),
-          ('hang', 'hang_mid_b', dict(x=4, swing=-14, twist=-30, out=10))),
-    DROOP=(('hang', 'droop_a', dict(x=0, swing=-5, twist=10, out=12)),
-           ('hang', 'droop_thin', dict(x=6, swing=20, twist=-35, out=9)),
-           ('up', 'clump_b', dict(turn=20)),
-           ('up', 'clump_thin', dict(turn=110))),
+    LONG=(('hang', 'hang_long_a', dict(x=-20, swing=-4, twist=10, out=6)),
+          ('hang', 'hang_long_b', dict(x=19, swing=5, twist=-14, out=8)),
+          ('hang', 'hang_mid_a', dict(x=1, swing=2, twist=22, out=10)),
+          ('hang', 'hang_mid_b', dict(x=-3, swing=-8, twist=-25, out=5))),
+    MID=(('hang', 'hang_mid_a', dict(x=-19, swing=-3, twist=-8, out=6)),
+         ('hang', 'hang_mid_b', dict(x=20, swing=6, twist=14, out=8)),
+         ('hang', 'droop_b', dict(x=0, swing=3, twist=-20, out=10)),
+         ('hang', 'droop_a', dict(x=4, swing=-6, twist=24, out=5))),
+    WISP=(('hang', 'hang_long_b', dict(x=0, swing=6, twist=12, out=6)),
+          ('hang', 'hang_mid_b', dict(x=4, swing=-14, twist=-25, out=8))),
+    DROOP=(('hang', 'droop_a', dict(x=-12, swing=-5, twist=10, out=6)),
+           ('hang', 'droop_b', dict(x=14, swing=8, twist=-16, out=8)),
+           ('hang', 'droop_thin', dict(x=2, swing=20, twist=-28, out=5))),
     CLUMP=(('up', 'clump_a', dict(turn=0)),
            ('up', 'clump_b', dict(turn=60)),
            ('up', 'clump_low', dict(turn=120))),

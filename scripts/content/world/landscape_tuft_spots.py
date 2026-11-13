@@ -13,7 +13,7 @@ where the layer thins out (grass on the share 1 - t of the texels), above 1 rock
 layer's height map, which says which texel of the zone is grass: a root may stand on a bare texel of it.
 
 Four populations, all seeded, the same base gives the same places:
-- fringe: roots in the zone where the layer thins out (t from 0.1 to 0.7), in clumps with gaps by a noise of a few
+- fringe: roots in the zone where the layer thins out (t from 0.15 to 0.6), in clumps with gaps by a noise of a few
   metres; the leaves hang from there over the rest of the zone and the rock;
 - crease: along the strip's top edge, where the wall meets the ground above it: grass that stands over the edge;
 - band: thinly across the solid band;
@@ -46,16 +46,17 @@ WANDER, WANDER_CM, OVER_TOP, OVER_FOOT = .45, 900., .05, .5
 
 SAMPLES_M2 = 60.          # candidate points per square metre of a strip
 CLOUD_CM = 9.             # spacing of the points the rock around is known by
-ROOT_T = (.1, .7)         # the fringe's roots, in t
+ROOT_T = (.15, .6)        # the fringe's roots, in t
 EDGE_CM = (3., 16.)       # the crease's roots below the top edge
 FLAT_UP = .8              # normal's Y above which nothing hangs: the surface is ground
+STEEP_UP = .5             # normal's Y below which only the crease has upright clumps
 BEND_DEG = 40.
 SUNK_CM, AIR_CM = 6., 35.
 SWING_DEG = 14.
 # population: share of the candidates kept where the clump noise is high, the noise's range that maps to 0..1,
 # spacing inside the population and to tufts placed before it (cm), wavelength of the clumps (cm), shapes.
 POPULATIONS = dict(
-    fringe=dict(keep=1., noise=(.38, .6), gap=46., other=30., wave=330.,
+    fringe=dict(keep=1., noise=(.38, .6), gap=50., other=30., wave=330.,
                 shapes=(('LONG', .3), ('MID', .32), ('WISP', .16), ('DROOP', .22))),
     crease=dict(keep=1., noise=(.4, .62), gap=36., other=30., wave=420.,
                 shapes=(('DROOP', .45), ('CLUMP', .55))),
@@ -297,8 +298,10 @@ def place(world: Path, rect, records: dict, tufts: list, key: str = 'landscape-g
             if not spacing.clear(p, rule['gap'], (name,)) or not spacing.clear(p, rule['other'], counts.keys()):
                 continue
             shape = str(rng.choice(labels, p=shares))
-            if n[1] > FLAT_UP and shape in SHORTER:
-                shape = 'DROOP'
+            if n[1] > FLAT_UP:
+                shape = 'CLUMP'     # nothing hangs on the ground
+            elif n[1] < STEEP_UP and shape == 'CLUMP' and name != 'crease':
+                shape = 'DROOP'     # an upright clump on a wall sticks out of it and shades a metre of the band
             size = 0 if rng.random() < BIG else -1
             axes = None
             while True:
