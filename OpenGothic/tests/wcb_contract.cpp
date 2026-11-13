@@ -12,6 +12,7 @@
 #include "resources.h"
 #include "worldchunkcook.h"
 #include "worldchunk_fixtures.h"
+#include "worldchunk_strip.h"
 #include "worldchunks.h"
 
 #include <algorithm>
