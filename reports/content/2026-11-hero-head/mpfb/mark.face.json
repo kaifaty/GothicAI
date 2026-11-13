@@ -545,13 +545,13 @@
           "eyeSquintRight": 0.213
         },
         "lower": {
-          "noseSneerRight": 0.003,
-          "noseSneerLeft": 0.003,
-          "mouthShrugUpper": 0.357,
-          "mouthStretchLeft": 0.0,
-          "mouthStretchRight": 0.0,
-          "mouthUpperUpRight": 0.296,
-          "mouthUpperUpLeft": 0.274
+          "noseSneerRight": 0.005,
+          "noseSneerLeft": 0.004,
+          "mouthShrugUpper": 0.345,
+          "mouthStretchLeft": 0.005,
+          "mouthStretchRight": 0.005,
+          "mouthUpperUpRight": 0.294,
+          "mouthUpperUpLeft": 0.272
         }
       },
       "afraid": {
@@ -583,7 +583,7 @@
           "noseSneerLeft": 0.22,
           "cheekSquintRight": 0.332,
           "cheekSquintLeft": 0.332,
-          "mouthStretchLeft": 0.105,
+          "mouthStretchLeft": 0.106,
           "mouthStretchRight": 0.104,
           "mouthDimpleLeft": 0.198,
           "mouthDimpleRight": 0.198,

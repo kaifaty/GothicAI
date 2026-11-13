@@ -317,8 +317,9 @@ def local_rbf(P, D, X, radius):
     return k(X, P) @ np.linalg.solve(k(P, P)+1e-6*np.eye(len(P)), D)
 
 
-SMOOTH_LIDS, SLIDE, GUARD, FILL_LIPS = True, True, True, True   # switches for checks
+SMOOTH_LIDS, SLIDE, GUARD, INNER_LIPS = True, True, True, True   # switches for checks
 SMOOTH_STEPS = 50
+LIP_EDGE = 0.3                   # interior near the mouth facing forward more than this is the lips' free edge
 GUARD_MOVED = []                 # (vertices, largest push, m) per shape lid_guard() had to move
 # Amberg's schedule: stiffness, landmark weight, normal weight, iterations (trimesh.registration.nricp_amberg)
 # (the landmarks held at 3 to the end: the skin still slides into place, local_rbf() closes the rest)
@@ -477,20 +478,6 @@ def lid_margins(hero, fr):
     return np.array(out)
 
 
-def fill_lips(d, lips, nbr, steps=15):
-    """The inner faces of the lips and the front of the vestibule (`lips`: the interior near the mouth) take the
-    shift that runs smoothly over the mesh from the outer skin of the lips to the deeper mouth bag (a harmonic fill:
-    each such vertex the mean of its neighbours, the rest held). Their own MPFB shift plus a correction disagreed with
-    Mark's outer lips where MPFB moves the lips' insides most (its funnel is a sharp chevron) and stood up as teeth."""
-    cnt = np.maximum(np.bincount(nbr[:, 0], minlength=len(d)).astype(float)[:, None], 1)
-    s = d.copy()
-    for _ in range(steps):
-        m = np.zeros_like(s)
-        np.add.at(m, nbr[:, 0], s[nbr[:, 1]])
-        s[lips] = (m/cnt)[lips]
-    return s
-
-
 def smooth_lids(hero, d, w, nbr, margin, steps=None, hold=(0.001, 0.003)):
     """The carried shift smoothed over the mesh around the eyes (weight w). Mark's lid has its margin and the
     margin's back face next to each other moving apart, and neighbouring vertices of ours that found one or the other
@@ -548,8 +535,8 @@ def carry(hero, rg, log=print):
     """Every shape of the source on the hero's face: (4) the outer skin takes the source's shift at its corresponding
     points; interior vertices (mouth bag, vestibule, the lips' inner faces) keep their own motion plus the correction
     of the outer vertices that moved like them in the hero's shape (near in place and in shift), so the inside of
-    the upper lip follows the upper lip even where the lips touch, and near the mouth they are smoothed towards the
-    outer lips (fill_lips()); the lids take the source's shift like the rest of the face (the brows, the squint and
+    the upper lip follows the upper lip even where the lips touch, and near the mouth the lips' insides go with the
+    nearest outer skin of their own lip; the lids take the source's shift like the rest of the face (the brows, the squint and
     the wide eyes from one source: no seam on the upper lid), smoothed round the eyes with their margins held
     (smooth_lids()), sliding over the balls (slide_on_balls()), lid_guard() a safety net. Blink and gaze stay the
     hero's. (5) Brows and lashes follow the skin under them, lower
@@ -565,8 +552,24 @@ def carry(hero, rg, log=print):
     E = np.vstack([hero['T'][:, [0, 1]], hero['T'][:, [1, 2]], hero['T'][:, [2, 0]]])
     nbr = np.unique(np.vstack([E, E[:, ::-1]]), axis=0)
     margin = lid_margins(hero, rg['fh'])
-    mesh_nbr = nbr
     lips = inner[np.linalg.norm(V[inner]-rg['fh']['mc'], axis=1) < 0.35*rg['fh']['u']]
+    # the lips' free edge is interior in the fit too, but it faces forward and is seen: it keeps the rule above (by
+    # the MPFB shift), which closes the lips where Mark closes them; the rule by place is for the inside that faces
+    # into the mouth
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from head_glb import normals
+    lips = lips[(normals(V, hero['T'])[lips] @ rg['fh']['fwd']) < LIP_EDGE]
+    # the lips' insides: the nearest outer skin of the same lip half (what goes with the chin in jawOpen)
+    jaw = halves(hero['S'], V, rg['fh']['lm'], rg['fh'])[0]
+    lip_k, lip_w = np.zeros((len(lips), 4), int), np.zeros((len(lips), 4))
+    for half in (True, False):
+        pool = np.nonzero(jaw[outer_v] == half)[0]          # positions in outer_v
+        sel = jaw[lips] == half
+        dk, jk = cKDTree(V[outer_v[pool]]).query(V[lips[sel]], k=4)
+        wk = 1/np.maximum(dk, 1e-4)**2
+        lip_k[sel], lip_w[sel] = pool[jk], wk/wk.sum(1, keepdims=True)
+    x = np.clip((np.linalg.norm(V[lips]-rg['fh']['mc'], axis=1)-0.25*rg['fh']['u'])/(0.1*rg['fh']['u']), 0, 1)
+    lip_b = 1-x*x*(3-2*x)                                     # 1 up to 0.25 eye distances off the mouth, 0 by 0.35
     # round the eyes the smoothing also joins vertices near in space: the hero's fold over the upper lid is a layer
     # of its own, joined to the lid under it only deep in the crease, and the two moved apart and opened a slit
     near_eye = np.nonzero(lid_w > 0)[0]
@@ -592,7 +595,16 @@ def carry(hero, rg, log=print):
         wk = 1/np.maximum(dk, 1e-4)**2
         wk /= wk.sum(1, keepdims=True)
         d[inner[sock]] = hero['S'][n][inner[sock]]+(corr[jk]*wk[..., None]).sum(1)
-        d = fill_lips(d, lips, mesh_nbr) if FILL_LIPS else d
+        if INNER_LIPS:
+            # the inside of each lip goes with the nearest outer skin of its own lip: its own MPFB shift plus their
+            # correction, by place (not by the MPFB shift as above), blended in over the mouth. By the MPFB shift the
+            # correction differed from vertex to vertex and stood up as teeth in the funnel; smoothing it (round 2)
+            # flattened the jaw's fall-off from the lip to the deeper vestibule - the inside of the lower lip went
+            # down three quarters as far as its lip and stood up in front of the teeth - and let the deep mouth's
+            # correction thin out the lip's (mouthClose: MPFB's lifts the lower lip 37 mm, Mark's 1.3; the inside
+            # stayed 9 mm over the lip)
+            c = (corr[lip_k]*lip_w[..., None]).sum(1)
+            d[lips] = hero['S'][n][lips]+lip_b[:, None]*c+(1-lip_b[:, None])*(d[lips]-hero['S'][n][lips])
         d = smooth_lids(hero, d, lid_w, nbr, margin) if SMOOTH_LIDS else d
         d = slide_on_balls(hero, d) if SLIDE else d
         new[n] = lid_guard(hero, d) if GUARD else d

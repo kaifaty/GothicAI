@@ -20,6 +20,7 @@ sys.path.insert(0, HERE)
 import head_glb  # noqa: E402
 import transfer as X  # noqa: E402
 import mark_profile  # noqa: E402
+import lip_inside  # noqa: E402
 
 PROFILE = os.path.join(HERE, '..', 'mpfb', 'test-head.face.json')
 
@@ -115,6 +116,15 @@ def main(argv):
     before = lids_check(hero, rg['fh'], hero['S'], lim, prof['eyes']['lids'])
     bad = {k: round(v, 2) for k, v in lids.items() if v > 0.05}
     print('lids into the balls (mm, over 0.05): %s' % (bad or 'none'))
+    sets, lfr = lip_inside.lips(hero)
+    lips_mark, lips_mpfb = lip_inside.measure(hero, new, sets, lfr), lip_inside.measure(hero, hero['S'], sets, lfr)
+    vs = lip_inside.against(lips_mark, lips_mpfb)
+    worst = lip_inside.summary(lips_mark)
+    print('lips\' insides over their rims (lip_inside.py): ' + ' | '.join(
+        '%s worst %.1f mm (MPFB %.1f), over MPFB by more than 0.5 mm in %d of %d cases' % (
+            lip, worst[lip][1], lip_inside.summary(lips_mpfb)[lip][1], vs[lip][0], len(lips_mark)) for lip in worst))
+    extra['lips_inside_mm'] = {'%.1f %s' % k: v for k, v in lips_mark.items()}
+    extra['lips_inside_mpfb_mm'] = {'%.1f %s' % k: v for k, v in lips_mpfb.items()}
     if face:
         q, rows = mark_profile.profile(hero, new, face[0])
         json.dump(q, open(face[1], 'w'), indent=2, ensure_ascii=False)
