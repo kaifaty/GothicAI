@@ -13,8 +13,11 @@ float MinLeft   = 1200.f;  // ms: with less of the line left no gesture starts
 float Slack     = 600.f;   // ms: a gesture longer than the line left by more than this is unlikely...
 float Long      = 0.15f;   // ...this many times as likely as one that fits
 float RestScale = 1.f;     // of the rests between gestures
-// the head (player-voice-face.md, "Кивок"): a nod is a minimum-jerk move down and back, no kick of speed
-float Nod       = 3.5f;    // degrees down on the most stressed syllable...
+// the head (player-voice-face.md, "Кивок головы"): a nod is a minimum-jerk move down and back, no kick of speed.
+// The speaker's nod is off (Nod 0): the user chose so by the clip player-voice-3 (2026-11-13) - a quick peck down out
+// of a still head looked jerky whatever its speed; the sway stays. The nod is kept for trials (gestures param Nod 3.5)
+// and the listener's nod (ListenNod) uses the same move
+float Nod       = 0.f;     // degrees down on the most stressed syllable (0: the speaker does not nod)...
 float NodWeak   = 0.55f;   // ...this part of it on one just stressed
 float Stress    = 1.f;     // dB: a syllable this much louder than the ones before it is stressed...
 float StressTop = 4.f;     // ...and this much more is the strongest nod
@@ -278,7 +281,7 @@ void TalkGestures::updateHead(uint64_t now, uint64_t dt, bool speak, bool syllab
   // a stressed syllable: clearly louder (dB, before the mouth's scale saturates) than the ones before it in this line
   sinceNod += dt;
   if(enabled && speak && syllable && loudDb>-90.f) {
-    if(sylSeen && loudDb>sylMean+Stress && float(sinceNod)>=NodGap) {
+    if(Nod>0.f && sylSeen && loudDb>sylMean+Stress && float(sinceNod)>=NodGap) {
       const float over = std::clamp((loudDb-sylMean-Stress)/std::max(0.1f,StressTop),0.f,1.f);
       startNod(now,Nod*Deg*(NodWeak + (1.f-NodWeak)*over),live ? LiveDown : NodDown,NodBack);
       sinceNod = 0;

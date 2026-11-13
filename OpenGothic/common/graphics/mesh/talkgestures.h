@@ -14,9 +14,10 @@
 // starting on a syllable; the mood of the line decides how lively they are and how long the rests;
 // when the voice is over, the hands rest. Only decides: the caller plays and stops the animations.
 //
-// The head goes with the voice too (Gaze turns it): a small nod down on a syllable clearly louder
-// than the ones before it (a stressed word, at most one in NodGap), a smooth move down into the syllable and back
-// (minimum jerk: no jump of speed), and a slow sway aside while the voice lasts.
+// The head goes with the voice too (Gaze turns it): a slow sway aside while the voice lasts. A nod down on a syllable
+// clearly louder than the ones before it (a stressed word, at most one in NodGap, a smooth move into the syllable and
+// back) is off by default (Nod 0): the user chose so by the clip player-voice-3 (2026-11-13), a quick peck down out of
+// a still head; it stays for trials (gestures param Nod) and its move for the listener's nod.
 //
 // And while the other one speaks (the hero's voice): it listens, the head sways a little, now and then
 // it nods as the words come. Then it thinks of its answer (the AI server's model takes a second or

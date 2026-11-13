@@ -2319,6 +2319,31 @@ uint32_t nodsOf(const TalkGestures& g) {
   }
 
 void headNodCases() {
+  // by default the speaker does not nod (the user's choice by the clip player-voice-3), the head sways
+  {
+    TalkGestures g;
+    std::vector<std::pair<uint64_t,float>> syl;
+    for(uint64_t t=0; t<2400; t+=200)
+      syl.emplace_back(t,(t/200)%2==1 ? -14.f : -20.f);
+    float pitch = 0, sway = 0;
+    size_t next = 0;
+    for(uint64_t now=0; now<2600; now+=33) {
+      bool  beat = false;
+      float db   = -100;
+      for(; next<syl.size() && syl[next].first<=now; ++next) {
+        beat = true;
+        db   = syl[next].second;
+        }
+      g.updateHead(now,33,true,beat,db,false);
+      pitch = std::max(pitch,std::abs(g.head().pitch));
+      sway  = std::max(sway,std::abs(g.head().yaw)+std::abs(g.head().roll));
+      }
+    require(nodsOf(g)==0 && pitch==0 && sway>0.2f*3.14159265f/180.f,
+            "by default a speaker must not nod (no nod counted either) and its head must sway: "+std::to_string(nodsOf(g))+
+            " nods, pitch "+std::to_string(pitch)+", sway "+std::to_string(sway));
+  }
+  // the nod as it was tuned (for trials and as the move of the listener's nod)
+  require(TalkGestures::setParam("Nod",3.5f),"the nod must stay a parameter");
   const auto steps = [](const NodTrace& t, size_t from, size_t to) {
     float step = 0, change = 0, prev = 0;
     for(size_t i=std::max<size_t>(from,1); i<to && i<t.deg.size(); ++i) {
@@ -2399,6 +2424,7 @@ void headNodCases() {
             "a listening nod must start under 1 degree a frame and move smoothly: "+std::to_string(-t2.deg[0])+", "+
             std::to_string(change));
   }
+  TalkGestures::setParam("Nod",0);
   }
 
 int main() {
