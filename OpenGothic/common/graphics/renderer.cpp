@@ -189,6 +189,11 @@ void Renderer::setupSettings() {
   settings.vsmLampNearCm      = ::Settings::getF("INTERNAL","vsmLampNearCm");
   if(settings.vsmLampNearCm<=0)
     settings.vsmLampNearCm = 30;
+  // The light near a lamp (light.frag), in units of the lamp's light at its range: as it was up to 0.4 of this limit,
+  // then it bends over and never passes it, so a wall 40 cm from a torch keeps its texture and the flame reads on it.
+  // OPENGOTHIC_LAMP_KNEE=0 gives the bare inverse square back (100 times the light at the range there, a white spot)
+  if(const char* env = std::getenv("OPENGOTHIC_LAMP_KNEE"))
+    settings.lampNearKnee = std::max(0.f, float(std::atof(env)));
   // VSM lamps: which sides of a surface go into a lamp's cube faces (main.vert, meshShader): 1 the side away from the
   // light alone (before 2026-11-10: a one-sided floor or wall lit by the lamp let its light through), 2 both sides of
   // the world mesh alone (2026-11-10), 3 both sides of objects too (0 or unset; since 2026-11-11: a one-sided object
@@ -784,6 +789,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   prepareMotion(wview);
   wview.setTaaReactiveLref(settings.taaReactiveLref);
   wview.setVsmLampNear(settings.vsmLampNearCm);
+  wview.setLampNearKnee(settings.lampNearKnee);
   // the faces are two-sided only where the mesh shader draws them (main.vert); the vertex path culls as before
   wview.setVsmLampSides(!Shaders::options().doMeshShading ? 1u : (benchVsmLampSides!=0 ? benchVsmLampSides : settings.vsmLampSides));
 

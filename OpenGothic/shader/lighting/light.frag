@@ -548,6 +548,14 @@ void main() {
   float lambert = max(0.0,-dot(normalize(ldir),normal));
 #endif
   float light   = (lambert/max(factor, 0.005)) * (smoothFactor*smoothFactor);
+  // The inverse square runs 100 times over the light at the range 40 cm from a torch, and the wall behind it burned
+  // out to white, the flame on it lost. Up to 0.4 of the limit the light is as it was, above it bends over and never
+  // passes the limit (reports/content/remaster/wall-torch/fire-on-wall.md)
+  if(scene.lampNearKnee>0.0) {
+    const float knee = 0.4*scene.lampNearKnee;
+    if(light>knee)
+      light = knee + (scene.lampNearKnee-knee)*(1.0 - exp(-(light-knee)/(scene.lampNearKnee-knee)));
+    }
   if(cookie>0.0)
     light *= cookieMask(normalize(ldir));
   if(light<=0.0)
