@@ -1423,7 +1423,7 @@ void playerVoiceCases() {
 
   // a breath before the first word (30 dB below the voice): a stream of an npc stretches it to its own loudest
   // moment, the microphone measures it against a speech level of its own and keeps the mouth shut
-  const auto breath = sing(rate,{{200,150,150,0.03}});
+  const auto breath = sing(rate,{{200,150,150,0.03f}});
   auto streamed = std::make_shared<LipSync::Track>(rate);
   streamed->append(breath.data(),breath.size());
   voice.begin();
@@ -1434,7 +1434,7 @@ void playerVoiceCases() {
   voice.finish();
   // an npc's voice from the speakers in the microphone, 12 dB below the hero's: ducked while it sounds and
   // DuckHoldMs after, then heard as it is
-  const auto leak = sing(rate,{{400,150,150,0.25}});
+  const auto leak = sing(rate,{{400,150,150,0.25f}});
   voice.begin();
   uint64_t at = 30000;
   for(size_t i=0; i+320<=leak.size(); i+=320, at+=20)
