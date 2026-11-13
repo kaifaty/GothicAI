@@ -14,10 +14,10 @@ cam game
 goto NW_FARM2_TO_TAVERN_02
 clear 3000
 face wp NW_FARM2_TO_TAVERN_04
-streaming wait
 turn 180
-# Ten real seconds after the teleport for loading and native simulation.
-wait 10000
+# Twenty real seconds after the teleport for loading and native simulation (`streaming wait` times out under the
+# normal clock)
+wait 20000
 cam hold
 perf sample perf-rock/view-1
 wait 8000
