@@ -706,6 +706,13 @@ the first choice: the lines of both are played the way the game plays them).
 The hero's head: `hero-head` (his face close up - still, the moods of the AI lines, a voiced dialog line, the eyes:
 he listens to Xardas, thinks, Xardas stands around him, he looks down and up - and running from behind in the market; the clips of the original and of the new head, side by side,
 [step 0](../../reports/content/2026-11-hero-head/test-head.md)).
+
+The head of an NPC against its concept: `npc-head-look` takes stills of the hero's face from the front, three quarters
+and the side and close on the eyes, in the torch light of Xardas' tower and in the noon sun of the market; nobody
+blinks. Run it with the content root of a head built by `scripts/content/npc/build_head.py`
+(`OPENGOTHIC_CONTENT=<work>/content`, `TEMPEST_WINDOW_SIZE=1920x1080`, `BENCH_HOST=ryzen`); to see what a map adds,
+run it again with a copy of the root in which that map is replaced
+([likeness.md](../../reports/content/2026-11-npc-pipeline/likeness.md), "В игре").
 Faces: `faces` (the face animations of a head one after another, then two of them while Xardas speaks),
 `face-fade` (faces fade in and out, one gives way to the next, three a moment apart, the lips over a
 fading face), `mood-ai` (given lines of an AI server with moods: start `gothic-ai serve --scenario m1 --llm off
