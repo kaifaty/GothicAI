@@ -72,10 +72,9 @@ Material::Material(const asset::Material& m, bool enableAlphaTest, bool requireA
      !hasFrameAnimation() && !hasUvAnimation() && m.wave_mode==asset::WaveMode::NONE) {
     if(!maps.present)
       maps = Resources::loadMaterialMaps(m.texture);
-    // Projection by world position is for opaque surfaces: a texture alpha-tested where its mesh allows it rejects the
-    // record whole, and the material takes the original texture as if there were none
-    if(maps.projectionTile>0 &&
-       loadAlphaFunc(sourceAlphaFunc,sourceMaterialGroup,sourceColorAlpha,tex,true,alphaTestRequired)==AlphaTest) {
+    // Projection by world position is for opaque surfaces: a texture with alpha (anything but DXT1) rejects the record
+    // whole, whatever the zen material using it, and the material takes the original texture as if there were none
+    if(maps.projectionTile>0 && tex!=nullptr && Resources::textureFormat(tex)!=Tempest::TextureFormat::DXT1) {
       Resources::rejectMaterialMaps(m.texture,"projection on an alpha-tested texture");
       maps = {};
       tex  = Resources::loadTexture(m.texture,false,false);
@@ -154,11 +153,17 @@ bool Material::operator ==(const Material& other) const {
          envMapping==other.envMapping;
   }
 
-float Material::textureUvPerMetre(float meshUvPerMetre) const {
+float Material::projectionUvScale() const {
+  return hasProjection() && alpha==Solid ? 1.f/(projectionTile*100.f) : 0.f;
+  }
+
+float Material::textureUvPerMetre(float meshUvPerMetre, bool morph) const {
   if(meshUvPerMetre<=0)
     return meshUvPerMetre; // no usable triangle: the whole chain, as without a material
   // by world position the density is the same on every face: one repeat per projectionTile metres
-  return hasProjection() ? 1.f/projectionTile : meshUvPerMetre*std::abs(uvScale);
+  if(const float k = projectionUvScale(); k>0 && !morph)
+    return k*100.f;
+  return meshUvPerMetre*std::abs(uvScale);
   }
 
 bool Material::isSolid() const {

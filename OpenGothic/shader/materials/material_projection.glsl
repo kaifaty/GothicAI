@@ -10,7 +10,8 @@
 
 // how fast a plane gives way past 45 degrees: 1 is Quilez's k=8; 2 halves the band where two planes show at once
 const float ProjectionSharpness = 2.0;
-// below this share the second plane is not fetched; the shares are remapped so the cut does not show
+// below this share a plane is not fetched; both shares are remapped alike, so the cut does not show and an even
+// split stays even where the major axis changes
 const float ProjectionSkip      = 1.0/64.0;
 const float ProjectionDiagonal  = 0.57735027; // |n| on the diagonal (1,1,1): the least share a major axis has
 
@@ -71,8 +72,9 @@ void projectionPlanes(out Projection p) {
   // changes where its share is 0
   vec2 w = clamp((vec2(a[major], a[median]) - ProjectionDiagonal)/(1.0 - ProjectionDiagonal), 0.0, 1.0);
   w = pow(w, vec2(ProjectionSharpness));
-  p.w1 = w.y/max(w.x + w.y, 1e-6);
-  p.w1 = max(p.w1 - ProjectionSkip, 0.0)/(1.0 - ProjectionSkip);
+  const float r  = w.y/max(w.x + w.y, 1e-6);
+  const float s0 = max(1.0 - r - ProjectionSkip, 0.0), s1 = max(r - ProjectionSkip, 0.0);
+  p.w1 = s1/(s0 + s1);
   p.n  = n;
   const float k     = bucket[bucketId].uvScale;
   const float frame = dot(n, cross(dpdx,dpdy))<0.0 ? -1.0 : 1.0;

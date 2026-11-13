@@ -525,6 +525,14 @@ void projectionRecords(Tempest::Device& device, const Fixture& fixture) {
           "an opaque material must keep its record's projection");
   require(std::abs(rock.textureUvPerMetre(40.f)-1.f/5.75f)<1e-6f && rock.textureUvPerMetre(0.f)==0.f,
           "the projected density must be one repeat per tile, whatever the mesh UV");
+  require(std::abs(rock.projectionUvScale()-1.f/575.f)<1e-9f,"the bucket must get repeats per cm of the world");
+  require(rock.textureUvPerMetre(40.f,true)==120.f,"a morph mesh is drawn by its UV and keeps its density");
+  auto translucent = source("ROCK_PROJECTED.TGA");
+  translucent.color.a = 128;
+  const Material blended(translucent,true);
+  const Material later(source("ROCK_PROJECTED.TGA"),true);
+  require(blended.alpha==Material::AlphaTest && blended.projectionUvScale()==0.f && later.hasProjection(),
+          "an alpha-tested zen material on an opaque texture must neither project nor drop the record for the others");
   const Material plain(source("ROCK_PLAIN.TGA"),true);
   require(plain.materialMaps && !plain.hasProjection() && plain.projectionTile==0.f && plain.uvScale==3.f &&
           plain.textureUvPerMetre(40.f)==120.f && !(plain==rock),
@@ -542,6 +550,9 @@ void projectionRecords(Tempest::Device& device, const Fixture& fixture) {
   require(!Resources::loadMaterialMaps("ROCK_ALPHA.TGA").present &&
           Resources::loadMaterialAlbedo("ROCK_ALPHA.TGA")==original,
           "the rejected record must be gone for every later material");
+  Material changed = alpha;
+  changed.setAlbedo(Resources::loadTexture("HUM_BODY_V0_C0.TGA"));
+  require(changed.alpha==Material::AlphaTest,"the rejected material must be classified by its original texture");
   }
 
 void textureResidency(Tempest::Device& device, const Fixture& fixture) {

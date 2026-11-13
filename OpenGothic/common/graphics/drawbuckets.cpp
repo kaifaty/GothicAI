@@ -263,9 +263,9 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
           }
         // Maps by world position (material_projection.glsl): the slot of the UV scale, which the projection does not
         // use, carries repeats per unit of the world (cm). Opaque only: an alpha-tested one is rejected (Material)
-        if(i.mat.hasProjection() && i.mat.alpha==Material::Solid) {
-          bx.uvScale = 1.f/(i.mat.projectionTile*100.f);
-          bx.flags |= BK_PROJECTION;
+        if(const float k = i.mat.projectionUvScale(); k>0) {
+          bx.uvScale = k;
+          bx.flags  |= BK_PROJECTION;
           }
         }
       }

@@ -60,8 +60,11 @@ class Material final {
 
     bool hasMaterialMaps()       const { return materialMaps; }
     bool hasProjection()         const { return materialMaps && projectionTile>0; }
-    // UV units per metre the shader samples at, from the mesh's (TexelDensity): uv*uvScale, or by world position
-    float textureUvPerMetre(float meshUvPerMetre) const;
+    // repeats per cm the shader projects by world position (BK_PROJECTION, opaque only); 0: by the mesh UV
+    float projectionUvScale()    const;
+    // UV units per metre the shader samples at, from the mesh's (TexelDensity): uv*uvScale, or by world position;
+    // a morph mesh is drawn by its UV
+    float textureUvPerMetre(float meshUvPerMetre, bool morph = false) const;
     bool hasFrameAnimation()     const { return !frames.empty() && texAniFPSInv!=0;    }
     bool hasUvAnimation()        const { return texAniMapDirPeriod!=Tempest::Point(0); }
     // the weight of the TAA reactive mask of a translucent mesh (graphics plan 1v): 1 when its texture changes by

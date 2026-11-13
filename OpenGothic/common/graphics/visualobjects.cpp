@@ -403,7 +403,7 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
     if(sub.iboOffset==iboOff && sub.iboLength==iboLen) {
       obj.textureLocal=sub.texel;
       // the shader samples uv*uvScale (materials.json "scale") or by world position ("projection")
-      obj.textureLocal.uvPerMetre=mat.textureUvPerMetre(obj.textureLocal.uvPerMetre);
+      obj.textureLocal.uvPerMetre=mat.textureUvPerMetre(obj.textureLocal.uvPerMetre,mesh.morph.anim!=nullptr);
       break;
       }
   { FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand); updateTextureDemand(id); }
@@ -508,7 +508,7 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
     obj.textureMeasured=true;
     obj.texturePlaced=true;
     obj.textureLocal=*texel;
-    obj.textureLocal.uvPerMetre=mat.textureUvPerMetre(obj.textureLocal.uvPerMetre);
+    obj.textureLocal.uvPerMetre=mat.textureUvPerMetre(obj.textureLocal.uvPerMetre,mesh.morph.anim!=nullptr);
     obj.textureTexel=obj.textureLocal;
     }
   { FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand); updateTextureDemand(id); }
