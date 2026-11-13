@@ -23,6 +23,11 @@ Step 2 of reports/engine/2026-11-13-grass/README.md. Copies a set with the baked
   the direction up and out of the rock and the rest the card's own, so cards turned differently are lit alike
   and close to the layer under them;
 - the places, `worlds/<WORLD>/vobs.d/landscape-grass-tufts.json` (world/landscape_tuft_spots.py).
+
+The tufts' material declares itself foliage (`"foliage": {}` in materials.json, the engine's defaults): the wind
+moves the leaves and the low sun shines through them (reports/engine/2026-11-14-living-foliage). A set built before
+that takes the field with `--living`: `landscape_grass_tufts.py rock-grass-tufts-3 --living rock-grass-tufts-2`
+copies the set and adds the field to the record, nothing else.
 """
 from __future__ import annotations
 
@@ -46,6 +51,7 @@ ATLAS = 2048
 DENSITY = 1024              # pixels per metre of a card
 MATERIAL = 'OWN_LANDSCAPE_GRASS_TUFTS'
 VISUAL = 'OWN_LANDSCAPE_GRASS_TUFT'
+FOLIAGE: dict = {}          # the engine's defaults: wind 1, flutter 1, translucency .6, the roots on the mesh's X
 CURVE = 1.5                 # brightness = height share ** 1.5 over FLOOR, as the layer's
 FLOOR = .6                  # the layer's is .22; a hanging root lies on the lit layer and must not line it
 TIP = .75                   # a leaf is at full brightness from this share of the tallest beside it
@@ -196,11 +202,24 @@ def main() -> int:
                         help='share of the direction up and out of the rock in a vertex normal (default: %(default)s)')
     parser.add_argument('--gain', type=float, default=1., help='the atlas against the layer\'s mean colour')
     parser.add_argument('--preview', type=Path, help='write the atlas as PNG here and stop: no set')
+    parser.add_argument('--living', metavar='SET',
+                        help='copy this set of tufts and declare their material foliage; nothing is built')
     args = parser.parse_args()
 
     source, output = STAGING / args.source, STAGING / args.set
     if output.exists() and not args.preview:
         raise SystemExit(f'{output}: staging set exists; choose a new set name')
+    if args.living:
+        work = output.with_name(output.name + '.tmp')
+        shutil.rmtree(work, ignore_errors=True)
+        shutil.copytree(STAGING / args.living, work, symlinks=True)
+        table = work / 'materials/materials.json'
+        materials = json.loads(table.read_text())
+        materials[f'{MATERIAL}.TGA']['foliage'] = FOLIAGE
+        table.write_text(json.dumps(materials, indent=2) + '\n')
+        work.rename(output)
+        print(json.dumps({f'{MATERIAL}.TGA': materials[f'{MATERIAL}.TGA'], 'copied': args.living}, indent=2))
+        return 0
     layer = json.loads((source / 'grass-layer.json').read_text())
     cards, dds, pilot = sibling('glb_cards.py'), sibling('test-material.py'), sibling('megascans_pilot.py')
     spots = sibling('world/landscape_tuft_spots.py')
@@ -293,7 +312,7 @@ def main() -> int:
     orm = np.stack([ao, np.full_like(ao, ROUGH), np.zeros_like(ao)], axis=2).astype(np.float32)
     dds.write_dds(directory / 'orm.dds', orm)
     materials = json.loads((work / 'materials/materials.json').read_text())
-    materials[f'{MATERIAL}.TGA'] = dict(albedo=f'{folder}/albedo.dds', orm=f'{folder}/orm.dds')
+    materials[f'{MATERIAL}.TGA'] = dict(albedo=f'{folder}/albedo.dds', orm=f'{folder}/orm.dds', foliage=FOLIAGE)
     (work / 'materials/materials.json').write_text(json.dumps(materials, indent=2) + '\n')
 
     base = args.base or next(Path.home().glob('.cache/gothic-ai/base/*/worlds')).parent
