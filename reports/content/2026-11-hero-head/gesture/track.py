@@ -15,8 +15,12 @@ import csv
 import sys
 from pathlib import Path
 
-import cv2
 import numpy as np
+
+try:
+    import cv2
+except ImportError:  # clip.py reads the tracks only
+    cv2 = None
 
 F = 360/np.tan(np.radians(67.5/2))   # px
 DEG = np.degrees(1/F)
