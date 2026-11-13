@@ -101,9 +101,14 @@ bool writeCookedFile(const fs::path& path, std::span<const uint8_t> bytes) {
   std::error_code error;
   const auto size = fs::file_size(path,error);
   if(!error && size==bytes.size()) {
-    const auto old = gothicglb::readFile(path);
-    if(std::equal(old.begin(),old.end(),bytes.begin(),bytes.end()))
-      return false;
+    // A file that cannot be read, as when a reader meets another cook's rename on Windows, counts as different.
+    try {
+      const auto old = gothicglb::readFile(path);
+      if(std::equal(old.begin(),old.end(),bytes.begin(),bytes.end()))
+        return false;
+      }
+    catch(const std::exception&) {
+      }
     }
   // Unique to the process and the call: two cooks into the same files never share a temporary.
   const auto temporary = cookedTemporaryPath(path);

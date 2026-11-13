@@ -440,6 +440,24 @@ void editedOverride(const fs::path& root) {
   for(const auto* cell:{"0_0","1_0","2_0"})
     checkOrders(CookedChunk::read(plain/"chunks"/(std::string(cell)+".wcb")),base,0,std::string("strip ")+cell);
   checkOrders(CookedChunk::read(root/"strip-edit-cooked/chunks/1_0.wcb"),base,2,"edited 1_0");
+  // The material the edit added has no source index; those world.json holds unchanged keep theirs.
+  {
+  const auto edited1=CookedChunk::read(root/"strip-edit-cooked/chunks/1_0.wcb");
+  size_t added=0, kept=0;
+  for(size_t i=0;i<edited1.materials().size();++i) {
+    const auto source=edited1.materials()[i].source;
+    const auto name=edited1.material(i).name;
+    if(name=="STRIP_EDIT") {
+      require(source==wcb::None,"edited 1_0: the material the edit added must have no source index");
+      ++added;
+      continue;
+      }
+    require(source<base.materials.size() && base.materials[source].name==name,
+            "edited 1_0: material "+name+" must carry its world.json index");
+    ++kept;
+    }
+  require(added==1 && kept==2,"edited 1_0 must hold the added material and both world.json materials");
+  }
 
   // Without --out the cooked chunks lie beside the GLB each cell is read from.
   const auto beside=root/"strip-beside";
@@ -733,6 +751,10 @@ void indexRejections(const fs::path& root) {
   expectThrows(readWith(dir,{},{},indexFile,bytes),{"with another GLB (length or SHA-256) than","re-cooked without the index"},
                "an index whose cell entry names another GLB than the cell's .wcb");
   bytes=good;
+  bytes[cellsAt+16+31]^=1u; // the last byte of cell 0's GLB SHA-256, the first unchanged
+  expectThrows(readWith(dir,{},{},indexFile,bytes),{"with another GLB (length or SHA-256) than","re-cooked without the index"},
+               "an index whose cell entry differs from the cell's .wcb in the last byte of the GLB SHA-256");
+  bytes=good;
   put64(bytes,cellsAt+8,get64(good,cellsAt+8)+1); // cell 0's GLB length alone
   expectThrows(readWith(dir,{},{},indexFile,bytes),{"with another GLB (length or SHA-256) than","re-cooked without the index"},
                "an index whose cell entry names a GLB of another length than the cell's .wcb");
@@ -782,6 +804,13 @@ void indexRejections(const fs::path& root) {
   bytes=borderGood;
   put32(bytes,vertexExceptionsAt+4,get32(borderGood,40)); // the stitched id: the vertex total
   expectThrows(open(bytes),{"vertex exceptions","past the totals"},"a stitched id past the totals");
+  // The same for 1,0's feature and material exception: the id equal to the feature and the material total.
+  const std::tuple<uint32_t,size_t,const char*> totals[] = {{4,44,"feature exceptions"},{5,48,"material exceptions"}};
+  for(const auto& [type,total,kind]:totals) {
+    bytes=borderGood;
+    put32(bytes,size_t(get64(borderGood,wci::HeaderSize+(type-1)*32+16))+4,get32(borderGood,total));
+    expectThrows(open(bytes),{kind,"past the totals"},std::string("a stitched id past the totals in the ")+kind);
+    }
   gothicglb::writeFile(borderFile,borderGood.data(),borderGood.size());
   require(verifyCookedWorld(strip,border,out,true).empty(),"the restored border index assembles again");
 
@@ -789,9 +818,9 @@ void indexRejections(const fs::path& root) {
   expectThrows([&] { (void)readCookedWorld(dir); },{wci::FileName,"is missing"},"a missing index");
   gothicglb::writeFile(indexFile,good.data(),good.size());
   std::puts("Index rejections: truncated, short, wrong magic, version, another source world by CRC32 and by size, "
-            "another GLB than the cell's .wcb by SHA-256 and by length, more and fewer cells and another cell order "
-            "than world.json, an exception one past a cell's positions, features and materials, a stitched id past "
-            "the totals, missing");
+            "another GLB than the cell's .wcb by the first and the last SHA-256 byte and by length, more and fewer cells and another cell order "
+            "than world.json, an exception one past a cell's positions, features and materials, a vertex, feature "
+            "and material id past the totals, missing");
   }
 
 // Temporary names are unique to the process as well as the call: a forked child
