@@ -50,7 +50,7 @@ using namespace WorldChunkFixtures;
 using Clock = std::chrono::steady_clock;
 
 // SHA-256 of searchIslands' result on clothWorld() (the Digest below). Update it together with WorldCloth::Algorithm.
-constexpr const char* resultDigest = "unset";
+constexpr const char* resultDigest = "afc9f4cda11448f5e652611eac3da08b1170fefb09c8d8c07676569fab0b62bb";
 
 void require(bool condition, const std::string& message) {
   if(!condition)
