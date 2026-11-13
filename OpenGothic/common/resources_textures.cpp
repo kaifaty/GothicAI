@@ -1358,6 +1358,7 @@ Resources::MaterialMaps Resources::loadMaterialMaps(std::string_view name) {
   ret.hair = files.hair;
   ret.strand = files.strand;
   ret.eye = files.eye;
+  ret.foliage = files.foliage;
   ret.present = true;
   ret.hasAlbedo = !files.albedo.empty();
   return ret;
