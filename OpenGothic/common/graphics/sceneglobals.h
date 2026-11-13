@@ -55,6 +55,7 @@ class SceneGlobals final {
     void setTaaReactiveLref(float lref);
     // VSM lamps: an object nearer than this to a light (cm, along its cube face's axis) is no blocker of it
     void setVsmLampNear(float cm);
+    void setLampNearKnee(float knee);
     // VSM lamps: the sides of a surface a cube face keeps: 1 the far one, 2 both for the world mesh, 3 for objects too
     void setVsmLampSides(uint32_t sides);
     // bench `vsm study <bits>`: the shadow test on a mesh's facets, VSM_STUDY_* of scene.glsl (0: the game's)
@@ -170,6 +171,7 @@ class SceneGlobals final {
       uint32_t                        vsmStudy        = 0;    // bench `vsm study`: VSM_STUDY_* of scene.glsl
       uint32_t                        viewFlags       = 0; // VF_* of scene.glsl: VF_HIZ in V_HiZ only (commitUbo), VF_TAA
       float                           fogSkyVis       = 1; // the sky seen from the camera under GI (fog_sky_vis.comp)
+      float                           lampNearKnee    = 0; // lamps: the limit of the light near a lamp (light.frag), 0 off
       };
 
     Tempest::UniformBuffer<UboGlobal> uboGlobalPf[Resources::MaxFramesInFlight][V_Count];

@@ -138,6 +138,36 @@ Mat3 layerRotation(const Json& obj) {
     }
   return rotation;
   }
+asset::Color layerColor(const Json& value, const char* name) {
+  array(value,3);
+  for(unsigned i=0;i<3;++i)
+    require(value[i].IsUint() && value[i].GetUint()<=255,std::string(name)+" must contain integers from 0 to 255");
+  return {uint8_t(value[0].GetUint()),uint8_t(value[1].GetUint()),uint8_t(value[2].GetUint()),255};
+  }
+// the fields a lamp added by the layer and a base lamp edited in place share; animated: the entry gives it colour or
+// range keys of its own
+void layerLamp(const Json& entry, LampExtra& lamp, bool animated) {
+  // the flame's size (cm): the soft edge of the light's shadow, 6 by default (a torch)
+  if(entry.HasMember("source_cm")) {
+    lamp.sourceCm=layerFloat(entry["source_cm"]);
+    require(lamp.sourceCm>0 && lamp.sourceCm<=500,"source_cm must be in 0..500");
+    }
+  // the lamp's own limit of the light near it, in its light at the range, in place of the common one (light.frag):
+  // a torch on a plastered wall
+  if(entry.HasMember("near")) {
+    lamp.nearLimit=layerFloat(entry["near"]);
+    require(lamp.nearLimit>0 && lamp.nearLimit<=1000,"near must be in 0..1000");
+    }
+  // the brightness follows an emitter's flame signal, the position trembles by jitter_cm
+  if(entry.HasMember("flicker_from")) {
+    require(!animated,"flicker_from replaces color_ani and range_ani");
+    lamp.flickerFrom=layerString(entry["flicker_from"]);
+    if(entry.HasMember("jitter_cm")) {
+      lamp.jitterCm=layerFloat(entry["jitter_cm"]);
+      require(lamp.jitterCm>=0 && lamp.jitterCm<=10,"jitter_cm must be in 0..10");
+      }
+    } else require(!entry.HasMember("jitter_cm"),"jitter_cm without flicker_from");
+  }
 rapidjson::Document layerIndex(const fs::path& file) {
   const auto bytes=gothicglb::readFile(file);
   rapidjson::Document doc;
@@ -235,6 +265,13 @@ std::vector<fs::path> layerFiles(const fs::path& worldDir) {
   std::sort(result.begin(),result.end());
   return result;
   }
+bool replaceLayerVob(std::vector<Vob>& tree, uint32_t id, const Vob& with) {
+  for(auto& v:tree) {
+    if(v->id==id && !isAdded(*v)) { v=with; return true; }
+    if(replaceLayerVob(v->children,id,with)) return true;
+    }
+  return false;
+  }
 bool removeLayerVob(std::vector<Vob>& tree, uint32_t id, std::vector<Vob>& removed) {
   for(size_t i=0;i<tree.size();++i) {
     if(tree[i]->id==id && !isAdded(*tree[i])) {
@@ -320,7 +357,7 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
       layerFields(doc,{"format","add"});
       array(member(doc,"add"));
       } else {
-      layerFields(doc,{"format","add","remove","move"});
+      layerFields(doc,{"format","add","remove","move","light"});
       }
     std::unordered_map<uint32_t,Vob> base;
     std::set<uint32_t> ids;
@@ -383,17 +420,11 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
             v->visual=std::move(visual);
             v->visual_name=v->visual->name; v->associated_visual_type=v->visual->type;
             } else if(kind=="light") {
-            layerFields(entry,{"key","kind","position","rotation","yaw_deg","range","color","color_ani","range_ani","ani_fps","cookie","source_cm","flicker_from","jitter_cm"});
+            layerFields(entry,{"key","kind","position","rotation","yaw_deg","range","color","color_ani","range_ani","ani_fps","cookie","source_cm","near","flicker_from","jitter_cm"});
             auto light=std::make_shared<Light>();
             light->type=VirtualObjectType::zCVobLight; light->light_type=LightType::POINT;
             light->range=layerFloat(member(entry,"range")); require(light->range>0,"range must be positive");
-            const auto& color=member(entry,"color"); array(color,3);
-            uint8_t rgb[3];
-            for(unsigned i=0;i<3;++i) {
-              require(color[i].IsUint() && color[i].GetUint()<=255,"color must contain integers from 0 to 255");
-              rgb[i]=uint8_t(color[i].GetUint());
-              }
-            light->color={rgb[0],rgb[1],rgb[2],255};
+            light->color=layerColor(member(entry,"color"),"color");
             // flicker as the original's lights have it: colour and range keys looped at ani_fps, blended smoothly
             if(entry.HasMember("color_ani") || entry.HasMember("range_ani")) {
               const float fps=layerFloat(member(entry,"ani_fps"));
@@ -401,12 +432,8 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
               if(entry.HasMember("color_ani")) {
                 const auto& keys=entry["color_ani"];
                 require(keys.IsArray() && keys.Size()>=2 && keys.Size()<=256,"color_ani must be an array of 2..256 colors");
-                for(const auto& key:keys.GetArray()) {
-                  array(key,3);
-                  for(unsigned i=0;i<3;++i)
-                    require(key[i].IsUint() && key[i].GetUint()<=255,"color_ani must contain integers from 0 to 255");
-                  light->color_animation_list.push_back({uint8_t(key[0].GetUint()),uint8_t(key[1].GetUint()),uint8_t(key[2].GetUint()),255});
-                  }
+                for(const auto& key:keys.GetArray())
+                  light->color_animation_list.push_back(layerColor(key,"color_ani"));
                 light->color_animation_fps=fps;
                 }
               if(entry.HasMember("range_ani")) {
@@ -428,20 +455,7 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
                       cookie.size()>4 && cookie.substr(cookie.size()-4)==".TGA","cookie: expected a texture name NAME.TGA");
               light->cookie=std::move(cookie);
               }
-            // the flame's size (cm): the soft edge of the light's shadow, 6 by default (a torch)
-            if(entry.HasMember("source_cm")) {
-              light->sourceCm=layerFloat(entry["source_cm"]);
-              require(light->sourceCm>0 && light->sourceCm<=500,"source_cm must be in 0..500");
-              }
-            // the brightness follows an emitter's flame signal, the position trembles by jitter_cm
-            if(entry.HasMember("flicker_from")) {
-              require(!entry.HasMember("color_ani") && !entry.HasMember("range_ani"),"flicker_from replaces color_ani and range_ani");
-              light->flickerFrom=layerString(entry["flicker_from"]);
-              if(entry.HasMember("jitter_cm")) {
-                light->jitterCm=layerFloat(entry["jitter_cm"]);
-                require(light->jitterCm>=0 && light->jitterCm<=10,"jitter_cm must be in 0..10");
-                }
-              } else require(!entry.HasMember("jitter_cm"),"jitter_cm without flicker_from");
+            layerLamp(entry,*light,entry.HasMember("color_ani") || entry.HasMember("range_ani"));
             light->is_static=true; light->on=true; light->can_move=false; light->cd_static=false;
             v=std::move(light);
             } else fail("expected kind mesh, light or emitter");
@@ -456,22 +470,65 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
         catch(const std::exception& e) { error(entryContext,e); }
         }
       }
-    // a light's flicker_from names an emitter with "flicker" added by this or an earlier file
-    for(auto& v:additions) {
-      auto* light=dynamic_cast<Light*>(v.get());
-      if(light==nullptr || light->flickerFrom.empty()) continue;
+    // A base lamp edited in place, by its id: the colour (its own colour keys go), the range, and what the layer
+    // gives its own lamps: "near", "source_cm", "flicker_from" (the base's colour and range keys go), "jitter_cm".
+    // The id, the place and the tree stay, so a save made before or after the edit fits the lamp as it did
+    std::vector<std::pair<uint32_t,std::shared_ptr<BaseLight>>> relit;
+    if(doc.HasMember("light")) {
+      array(doc["light"]);
+      for(const auto& entry:doc["light"].GetArray()) {
+        std::string entryContext="light: ";
+        try {
+          const auto& value=member(entry,"id");
+          if(value.IsInt64()) entryContext="id "+std::to_string(value.GetInt64())+": ";
+          else if(value.IsUint64()) entryContext="id "+std::to_string(value.GetUint64())+": ";
+          require(value.IsUint(),"expected unsigned base ID");
+          const auto id=value.GetUint();
+          require(base.count(id)!=0,"unknown base ID");
+          const auto& target=*base.at(id);
+          const auto* lamp=dynamic_cast<const asset::VLight*>(&target);
+          require(lamp!=nullptr,"class "+std::string(className(target.type))+" is not a lamp");
+          require(std::none_of(relit.begin(),relit.end(),[&](const auto& r) { return r.first==id; }),"duplicate light id");
+          layerFields(entry,{"id","color","range","near","source_cm","flicker_from","jitter_cm"});
+          require(entry.MemberCount()>1,"nothing to change");
+          const auto* earlier=dynamic_cast<const BaseLight*>(lamp);
+          auto edited=earlier!=nullptr ? std::make_shared<BaseLight>(*earlier) : std::make_shared<BaseLight>(*lamp);
+          if(entry.HasMember("color")) {
+            edited->color=layerColor(entry["color"],"color");
+            edited->color_animation_list.clear();
+            }
+          if(entry.HasMember("range")) {
+            edited->range=layerFloat(entry["range"]);
+            require(edited->range>0,"range must be positive");
+            }
+          layerLamp(entry,*edited,false);
+          if(entry.HasMember("flicker_from")) {
+            edited->color_animation_list.clear();
+            edited->range_animation_scale.clear();
+            }
+          relit.emplace_back(id,std::move(edited));
+          }
+        catch(const std::exception& e) { error(entryContext,e); }
+        }
+      }
+    // a lamp's flicker_from names an emitter with "flicker" added by this or an earlier file
+    const auto signal=[&](LampExtra& lamp, const std::string& label) {
+      if(lamp.flickerFrom.empty()) return;
       const Emitter* source=nullptr;
       auto look=[&](const Vob& o) {
-        if(auto* e=dynamic_cast<const Emitter*>(o.get()); e!=nullptr && e->key==light->flickerFrom) source=e;
+        if(auto* e=dynamic_cast<const Emitter*>(o.get()); e!=nullptr && e->key==lamp.flickerFrom) source=e;
         };
       for(const auto& o:additions) look(o);
       if(source==nullptr) visitVobs(data.vobs,look);
       if(source==nullptr || !source->flicker.active())
-        result.errors.push_back(file.string()+": key "+jsonString(light->key)+": flicker_from: no emitter "+
-                                jsonString(light->flickerFrom)+" with flicker");
+        result.errors.push_back(file.string()+": "+label+": flicker_from: no emitter "+
+                                jsonString(lamp.flickerFrom)+" with flicker");
       else
-        light->flicker=source->flicker;
-      }
+        lamp.flicker=source->flicker;
+      };
+    for(auto& v:additions)
+      if(auto* light=dynamic_cast<Light*>(v.get())) signal(*light,"key "+jsonString(light->key));
+    for(auto& [id,lamp]:relit) signal(*lamp,"id "+std::to_string(id));
     for(const char* operation:{"remove","move"}) if(doc.HasMember(operation)) {
       array(doc[operation]);
       for(const auto& entry:doc[operation].GetArray()) {
@@ -502,6 +559,9 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
         }
       }
     if(!result.errors.empty()) return result;
+    // before the removals: a lamp's copy holds the children the lamp had when the file was read
+    for(const auto& [id,lamp]:relit)
+      if(replaceLayerVob(data.vobs,id,lamp)) ++result.lit;
     for(const auto id:removals)
       if(removeLayerVob(data.vobs,id,context.removed)) ++result.removed;
     for(auto& move:moves) {
@@ -545,10 +605,10 @@ Result apply(WorldData::Data& data,const fs::path& baseWorldDir,const fs::path& 
   for(const auto& file:files) {
     const auto result=applyFile(data,context,baseWorldDir.parent_path().parent_path(),file,worldContentDir.parent_path().parent_path());
     if(result.errors.empty())
-      Tempest::Log::i("vob layer: ",file.string(),": applied added=",result.added," removed=",result.removed," moved=",result.moved);
+      Tempest::Log::i("vob layer: ",file.string(),": applied added=",result.added," removed=",result.removed," moved=",result.moved," lit=",result.lit);
     else
       for(const auto& error:result.errors) Tempest::Log::e("vob layer: skipped ",error);
-    total.added+=result.added; total.removed+=result.removed; total.moved+=result.moved;
+    total.added+=result.added; total.removed+=result.removed; total.moved+=result.moved; total.lit+=result.lit;
     total.errors.insert(total.errors.end(),result.errors.begin(),result.errors.end());
     }
   total.errors.insert(total.errors.end(),context.ownParticles.errors.begin(),context.ownParticles.errors.end());

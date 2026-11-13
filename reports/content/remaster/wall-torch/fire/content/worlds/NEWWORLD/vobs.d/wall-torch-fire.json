@@ -1,0 +1,14 @@
+{
+ "format": 1,
+ "remove": [20158, 20161],
+ "light": [
+  {"id": 20160, "color": [230, 84, 15], "near": 8, "flicker_from": "wall-torch-fire-flame", "jitter_cm": 1.5}
+ ],
+ "add": [
+  {"key": "wall-torch-fire-flame", "kind": "emitter", "pfx": "OWN_TORCH_FLAME", "position": [406.4, 144.3, -3086.5], "yaw_deg": 0,
+   "flicker": {"pulse_hz": 6, "jitter_hz": 12, "amount": 0.2, "seed": 7}},
+  {"key": "wall-torch-fire-sparks", "kind": "emitter", "pfx": "OWN_TORCH_SPARKS", "position": [406.4, 136.0, -3086.5], "yaw_deg": 0},
+  {"key": "wall-torch-fire-drops", "kind": "emitter", "pfx": "OWN_TORCH_DROPS", "position": [406.4, 125.0, -3086.5], "yaw_deg": 0},
+  {"key": "wall-torch-fire-soot", "kind": "emitter", "pfx": "OWN_TORCH_SOOT", "position": [406.4, 153.0, -3086.5], "yaw_deg": 0}
+ ]
+}

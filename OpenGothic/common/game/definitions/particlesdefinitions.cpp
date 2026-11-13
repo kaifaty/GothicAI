@@ -63,6 +63,9 @@ const ParticleFx* ParticlesDefinitions::implGet(std::string_view name, bool rela
     p->motion.drag         = own.drag*1e-3f;
     p->stretchMs           = own.stretch*1000.f;
     p->minPixels           = own.minPixels;
+    p->hdrFrom             = own.hdrFrom;
+    p->hdrTo               = own.hdrTo;
+    p->hdrEdge             = own.hdrEdge;
     }
   auto elt = pfx.insert(std::make_pair(std::move(cname),std::move(p)));
 

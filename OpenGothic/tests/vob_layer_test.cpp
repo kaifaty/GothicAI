@@ -151,7 +151,7 @@ void validLayers(const Fixture& f) {
   f.clearLayers();
   textFile(f.layers/"10-add.json","{\"format\":1,\"add\":["+mesh("base-solid","BASE.3DS","mesh")+","+
            mesh("own-ghost","VOB_LAYER_TEST_CUBE","none")+
-           R"(,{"key":"lamp","kind":"light","position":[1,2,3],"rotation":[[0,0,1],[0,1,0],[-1,0,0]],"range":450,"color":[255,128,0],"color_ani":[[255,128,0],[200,90,10],[240,120,30]],"range_ani":[1,0.85],"ani_fps":12,"cookie":"own_lamp_cookie.tga","source_cm":1.5}],"remove":[19],"move":[{"id":7,"position":[11,22,33],"yaw_deg":0}]})");
+           R"(,{"key":"lamp","kind":"light","position":[1,2,3],"rotation":[[0,0,1],[0,1,0],[-1,0,0]],"range":450,"color":[255,128,0],"color_ani":[[255,128,0],[200,90,10],[240,120,30]],"range_ani":[1,0.85],"ani_fps":12,"cookie":"own_lamp_cookie.tga","source_cm":1.5,"near":12}],"remove":[19],"move":[{"id":7,"position":[11,22,33],"yaw_deg":0}]})");
   textFile(f.layers/"20-move.json",R"({"format":1,"move":[{"id":7,"position":[44,55,66],"rotation":[[0,0,1],[0,1,0],[-1,0,0]]},{"id":43,"position":[10,20,30],"yaw_deg":90}]})");
   const auto checked=VobLayer::check(f.world,f.layers/"10-add.json",f.content);
   require(checked.errors.empty() && checked.added==3 && checked.removed==1 && checked.moved==1,"offline checker valid layer counts");
@@ -176,6 +176,7 @@ void validLayers(const Fixture& f) {
           light->range_animation_fps==12,"light flicker keys");
   require(light->cookie=="OWN_LAMP_COOKIE.TGA","light mask name, upper case");
   require(VobLayer::lightSourceCm(*light)==1.5f,"light source size");
+  require(VobLayer::lightNear(*light)==12.f && VobLayer::lightNear(*data.vobs[2])==0.f,"a lamp's own limit of the light near it");
   require(VobLayer::lightSourceCm(*data.vobs[0])==VobLayer::DefaultLightSourceCm &&
           VobLayer::lightSourceCm(*data.vobs[2])==VobLayer::DefaultLightSourceCm,"base vobs and layer props keep the default source size");
   require(VobLayer::flicker(*data.vobs[0])==nullptr && VobLayer::flicker(*data.vobs[2])==nullptr &&
@@ -203,6 +204,7 @@ void rejectedLayers(const Fixture& f) {
     {"light-ani-scale",R"({"format":1,"add":[{"key":"bad-flicker","kind":"light","position":[0,0,0],"yaw_deg":0,"range":100,"color":[1,2,3],"range_ani":[1,5],"ani_fps":10}]})"},
     {"light-cookie",R"({"format":1,"add":[{"key":"bad-cookie","kind":"light","position":[0,0,0],"yaw_deg":0,"range":100,"color":[1,2,3],"cookie":"masks/LAMP.TGA"}]})"},
     {"light-source",R"({"format":1,"add":[{"key":"bad-source","kind":"light","position":[0,0,0],"yaw_deg":0,"range":100,"color":[1,2,3],"source_cm":0}]})"},
+    {"light-near",R"({"format":1,"add":[{"key":"bad-near","kind":"light","position":[0,0,0],"yaw_deg":0,"range":100,"color":[1,2,3],"near":0}]})"},
     {"light-ani-alone",R"({"format":1,"add":[{"key":"bad-flicker","kind":"light","position":[0,0,0],"yaw_deg":0,"range":100,"color":[1,2,3],"ani_fps":10}]})"},
     {"light-flicker-from",R"({"format":1,"add":[{"key":"bad-flicker","kind":"light","position":[0,0,0],"yaw_deg":0,"range":100,"color":[1,2,3],"flicker_from":"no-such-flame"}]})"},
     {"light-jitter-alone",R"({"format":1,"add":[{"key":"bad-flicker","kind":"light","position":[0,0,0],"yaw_deg":0,"range":100,"color":[1,2,3],"jitter_cm":1}]})"},
@@ -237,6 +239,95 @@ void rejectedLayers(const Fixture& f) {
     if(name=="schema")
       require(subprocess({GOTHIC_CONTENT_CONVERT,"check-vob-layer",f.world.string(),file.string(),f.content.string()})!=0,"converter CLI rejects schema errors");
     }
+  }
+
+// The fixture's world with a base lamp under vob 31: a torch's lamp with colour and range keys and a vob of its own
+WorldData::Data lampWorld() {
+  auto data=Fixture::original();
+  auto lamp=std::make_shared<asset::VLight>();
+  lamp->type=asset::VirtualObjectType::zCVobLight; lamp->id=950; lamp->position={5,6,7};
+  lamp->preset="FIRESMALL"; lamp->light_type=asset::LightType::POINT; lamp->range=400; lamp->on=true;
+  lamp->color={184,122,107,255};
+  lamp->color_animation_list={{184,122,107,255},{152,54,54,255}}; lamp->color_animation_fps=2;
+  lamp->range_animation_scale={1.f,0.9f}; lamp->range_animation_fps=4;
+  auto child=std::make_shared<asset::VirtualObject>(*data.vobs[2]);
+  child->id=951; lamp->children.push_back(child);
+  data.vobs[2]->children.push_back(lamp);
+  return data;
+  }
+
+// A base lamp edited in place ("light"): its colour, range, limit of the light near it and flame's size change under
+// the same id, class, place and tree, which the saved state of the base is bound to
+void baseLamps(const Fixture& f) {
+  {
+    const auto data=lampWorld();
+    const auto* lamp=find(data,950);
+    require(VobLayer::lightNear(*lamp)==0.f && VobLayer::lightSourceCm(*lamp)==VobLayer::DefaultLightSourceCm &&
+            VobLayer::flicker(*lamp)==nullptr,"a base lamp has nothing of the layer's until it is edited");
+  }
+  f.clearLayers();
+  textFile(f.layers/"10-lamp.json",R"({"format":1,"light":[{"id":950,"color":[230,84,15],"near":8}],"remove":[951]})");
+  textFile(f.layers/"20-lamp.json",R"({"format":1,"light":[{"id":950,"range":350,"source_cm":9}]})");
+  auto data=lampWorld();
+  const auto result=VobLayer::apply(data,f.world,f.content/"worlds/TEST");
+  require(result.errors.empty() && result.lit==2 && result.removed==1 && result.added==0 && result.moved==0,
+          "two files edit one base lamp");
+  const auto* lamp=dynamic_cast<const asset::VLight*>(find(data,950));
+  require(lamp!=nullptr && !VobLayer::isAdded(*lamp) && lamp->type==asset::VirtualObjectType::zCVobLight &&
+          lamp->preset=="FIRESMALL" && lamp->position.x==5 && lamp->position.y==6 && lamp->position.z==7 && lamp->on,
+          "an edited base lamp keeps its id, class, preset and place");
+  require(data.vobs.size()==3 && data.vobs[2]->children.size()==1 && data.vobs[2]->children[0].get()==lamp,
+          "an edited base lamp stays where it was in the tree");
+  require(lamp->color==asset::Color(230,84,15,255) && lamp->color_animation_list.empty(),
+          "the colour replaces the base's colour and its colour keys");
+  require(lamp->range==350 && lamp->range_animation_scale.size()==2 && lamp->range_animation_fps==4,
+          "the range changes, the base's range keys stay");
+  require(VobLayer::lightNear(*lamp)==8.f && VobLayer::lightSourceCm(*lamp)==9.f,
+          "a later file keeps what an earlier one gave the lamp");
+  require(lamp->children.empty() && find(data,951)==nullptr,"a vob under the lamp removed by the same file is gone");
+  setenv("OPENGOTHIC_VOB_LAYERS","0",1);
+  auto plain=lampWorld();
+  require(VobLayer::apply(plain,f.world,f.content/"worlds/TEST").lit==0 &&
+          WorldData::compare(lampWorld(),plain).empty(),"OPENGOTHIC_VOB_LAYERS=0 leaves the base lamp as it is");
+  unsetenv("OPENGOTHIC_VOB_LAYERS");
+
+  struct Bad { std::string name, entry, id, reason; };
+  const std::vector<Bad> bad={
+    {"unknown-id",R"({"id":98765,"near":8})","98765","unknown base ID"},
+    {"not-a-lamp",R"({"id":31,"near":8})","31","is not a lamp"},
+    {"added-lamp",R"({"id":"own-lamp","near":8})","","expected unsigned base ID"},
+    {"nothing",R"({"id":950})","950","nothing to change"},
+    {"place",R"({"id":950,"position":[1,2,3]})","950","unknown field position"},
+    {"color",R"({"id":950,"color":[256,0,0]})","950","color must contain"},
+    {"range",R"({"id":950,"range":0})","950","range must be positive"},
+    {"near",R"({"id":950,"near":0})","950","near must be"},
+    {"source",R"({"id":950,"source_cm":501})","950","source_cm must be"},
+    {"jitter-alone",R"({"id":950,"jitter_cm":1})","950","jitter_cm without flicker_from"},
+    {"flicker-from",R"({"id":950,"flicker_from":"no-such-flame"})","950","no emitter"},
+    {"twice",R"({"id":950,"near":8},{"id":950,"range":300})","950","duplicate light id"}
+    };
+  Tempest::Log::setOutputCallback([](Tempest::Log::Mode,const char*) {});
+  for(const auto& c:bad) {
+    f.clearLayers();
+    const auto file=f.layers/"10-bad.json";
+    // the addition before the error is rolled back with it
+    textFile(file,"{\"format\":1,\"add\":["+mesh("rolled-back")+"],\"light\":["+c.entry+"]}");
+    textFile(f.layers/"20-valid.json",R"({"format":1,"light":[{"id":950,"near":4}]})");
+    auto rejected=lampWorld();
+    const auto failed=VobLayer::apply(rejected,f.world,f.content/"worlds/TEST");
+    std::string errors;
+    for(const auto& error:failed.errors) errors+=error;
+    require(failed.errors.size()==1 && errors.find(file.string())!=std::string::npos &&
+            errors.find(c.id)!=std::string::npos && errors.find(c.reason)!=std::string::npos,
+            "lamp "+c.name+": the file is rejected with its name, the id and the reason");
+    const auto* kept=dynamic_cast<const asset::VLight*>(find(rejected,950));
+    require(rejected.vobs.size()==3 && failed.added==0 && kept!=nullptr && kept->color==asset::Color(184,122,107,255) &&
+            kept->color_animation_list.size()==2 && kept->range==400 && kept->children.size()==1,
+            "lamp "+c.name+": the rejected file changes nothing");
+    require(failed.lit==1 && VobLayer::lightNear(*kept)==4.f,"lamp "+c.name+": the following file still applies");
+    }
+  Tempest::Log::setOutputCallback({});
+  f.clearLayers();
   }
 
 void removedReferences(const Fixture& f) {
@@ -397,7 +488,7 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
     {"name":"OWN_TEST_FLIP","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":8,"rows":4,"frames":30,"fps":24,"yaw":true,"steady":true}},
     {"name":"OWN_TEST_FLIP_CHILD","base":"OWN_TEST_FLIP","set":{"velAvg":0.1}}]})");
   textFile(directory/"40-motion.json",R"({"format":1,"effects":[
-    {"name":"OWN_TEST_SPARKS","base":"FIRE_SPARKS","set":{"visOrientation_S":"VELO"},"curl":{"strength":1.5,"frequency":4,"speed":0.3},"drag":2,"stretch":0.025,"minPixels":1.5},
+    {"name":"OWN_TEST_SPARKS","base":"FIRE_SPARKS","set":{"visOrientation_S":"VELO","visAlphaFunc_S":"ADD"},"curl":{"strength":1.5,"frequency":4,"speed":0.3},"drag":2,"stretch":0.025,"minPixels":1.5,"hdr":{"from":1,"to":9,"edge":0.25}},
     {"name":"OWN_TEST_SPARKS_CHILD","base":"OWN_TEST_SPARKS","set":{},"drag":3}]})");
   auto vm=ParticleContent::openProgram(baseRoot);
   const auto original=ParticleContent::base(*vm,"FIRE_SMOKE");
@@ -406,8 +497,9 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
   require(loaded.errors.empty() && loaded.effects.size()==8,"own definitions load in filename and declaration order");
   const auto& sparks=loaded.motions.at("OWN_TEST_SPARKS_CHILD");
   require(sparks.curlStrength==1.5f && sparks.curlFrequency==4.f && sparks.curlSpeed==0.3f && sparks.drag==3.f &&
-          sparks.stretch==0.025f && sparks.minPixels==1.5f && loaded.motions.at("OWN_TEST_SPARKS").drag==2.f,
-          "curl, drag, stretch and minPixels are read and inherited field by field from an own base");
+          sparks.stretch==0.025f && sparks.minPixels==1.5f && loaded.motions.at("OWN_TEST_SPARKS").drag==2.f &&
+          sparks.hdrFrom==1.f && sparks.hdrTo==9.f && sparks.hdrEdge==0.25f,
+          "curl, drag, stretch, minPixels and hdr are read and inherited field by field from an own base");
   require(loaded.motions.count("OWN_TEST_SMOKE")==0 && loaded.motions.count("OWN_TEST_FLIP")==0,"effects without them have no motion");
   const auto flip=loaded.flipbooks.find("OWN_TEST_FLIP");
   require(flip!=loaded.flipbooks.end() && flip->second.cols==8 && flip->second.rows==4 && flip->second.frames==30 &&
@@ -444,7 +536,10 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
     {"curl-field",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"curl":{"strength":1,"frequency":2,"octaves":3}})"},
     {"drag-range",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"drag":60})"},
     {"stretch-orientation",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{"visOrientation_S":"NONE"},"stretch":0.02})"},
-    {"min-pixels-flipbook",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"minPixels":1.5,"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24}})"}
+    {"min-pixels-flipbook",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"minPixels":1.5,"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24}})"},
+    {"hdr-blend",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{"visAlphaFunc_S":"BLEND"},"hdr":{"from":1,"to":9,"edge":0.25}})"},
+    {"hdr-range",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{"visAlphaFunc_S":"ADD"},"hdr":{"from":4,"to":4,"edge":0.25}})"},
+    {"hdr-field",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{"visAlphaFunc_S":"ADD"},"hdr":{"from":1,"to":9}})"}
     };
   const auto errorsRoot=f.root/"particle-errors";
   for(const auto& [kind,entry]:invalid) {
@@ -491,9 +586,10 @@ void runtimeParticles(Gothic& gothic, const Fixture& f, const fs::path& baseRoot
   require(sparks && std::abs(sparks->motion.curlStrength-1.5e-4f)<1e-9f && std::abs(sparks->motion.curlWave-0.04f*6.2831853f)<1e-6f &&
           std::abs(sparks->motion.curlDrift-0.03f)<1e-7f && std::abs(sparks->motion.drag-3e-3f)<1e-8f &&
           std::abs(sparks->stretchMs-25.f)<1e-4f && sparks->minPixels==1.5f &&
-          sparks->visOrientation==ParticleFx::Orientation::Velocity,"own motion reaches the native effect in cm and ms");
-  require(!custom->motion.active() && custom->stretchMs==0 && custom->minPixels==0 &&
-          !original->motion.active(),"base effects and effects without own motion keep the native path");
+          sparks->hdrFrom==1.f && sparks->hdrTo==9.f && sparks->hdrEdge==0.25f &&
+          sparks->visOrientation==ParticleFx::Orientation::Velocity,"own motion and hdr reach the native effect in cm and ms");
+  require(!custom->motion.active() && custom->stretchMs==0 && custom->minPixels==0 && custom->hdrTo==0 &&
+          custom->hdrEdge==1.f && !original->motion.active(),"base effects and effects without own motion keep the native path");
   }
 
 
@@ -616,6 +712,23 @@ void flameLayer(const Fixture& f, const fs::path& baseRoot) {
     require(!result.errors.empty() && rejected.empty(),"flicker "+reason+": the file is rejected");
     }
   fs::remove_all(file.parent_path());
+
+  // a base lamp edited in place takes the signal as well: its own colour and range keys go
+  const auto lampLayers=f.content/"worlds/LAMPTEST/vobs.d";
+  textFile(lampLayers/"00-flame.json","{\"format\":1,\"add\":["+flame+"]}");
+  textFile(lampLayers/"10-lamp.json",R"({"format":1,"light":[{"id":950,"color":[230,84,15],"flicker_from":"flame","jitter_cm":1.5}]})");
+  auto data=lampWorld();
+  const auto relit=VobLayer::apply(data,baseRoot/"worlds/LAMPTEST",f.content/"worlds/LAMPTEST");
+  const auto* lamp=dynamic_cast<const asset::VLight*>(find(data,950));
+  float lampJitter=-1;
+  const auto* lampSignal=lamp!=nullptr ? VobLayer::flicker(*lamp,&lampJitter) : nullptr;
+  require(relit.errors.empty() && relit.added==1 && relit.lit==1 && lampSignal!=nullptr && lampSignal->seed==7 &&
+          lampSignal->pulseHz==6.f && lampSignal->amount==0.2f && lampJitter==1.5f,
+          "a base lamp takes the signal of an emitter an earlier file added");
+  require(lamp->color==asset::Color(230,84,15,255) && lamp->color_animation_list.empty() &&
+          lamp->range_animation_scale.empty() && lamp->range==400 && !VobLayer::isAdded(*lamp),
+          "the signal replaces the base lamp's colour and range keys");
+  fs::remove_all(f.content/"worlds/LAMPTEST");
   }
 
 void runtimeMesh(const Fixture& f) {
@@ -841,8 +954,14 @@ struct WorldDataContract {
     Workers::setSerialExecution(true);
     const auto layer=fixture.content/"worlds/NEWWORLD/vobs.d/save-test.json";
     std::vector<uint8_t> baseline,layered;
-    uint32_t removed=0,moved=0;
-    Tempest::Vec3 originalPosition;
+    uint32_t removed=0,moved=0,lamp=0;
+    Tempest::Vec3 originalPosition,lampPosition;
+    bool foundLamp=false;
+    // the base lamp the layer edits in place stands where the base has it, whichever save is loaded
+    const auto lampInPlace=[&](const World& w) {
+      const auto* vob=runtimeVob(w,lamp);
+      return vob!=nullptr && (vob->position()-lampPosition).quadLength()<1.f;
+      };
     size_t baseRoots=0;
     for(int phase=0;phase<4;++phase) {
       if(phase==2) setenv("OPENGOTHIC_VOB_LAYERS","0",1);
@@ -875,6 +994,16 @@ struct WorldDataContract {
             }
           }
         require(foundRemoved && foundMoved,"real base must contain two static leaf vobs outside movable physics");
+        const auto lamps=[&](const auto& self,const auto& list)->void {
+          for(const auto& vob:list) {
+            if(!foundLamp && dynamic_cast<const asset::VLight*>(vob.get())!=nullptr) {
+              lamp=vob->id; lampPosition={vob->position.x,vob->position.y,vob->position.z}; foundLamp=true;
+              }
+            self(self,vob->children);
+            }
+          };
+        lamps(lamps,data.vobs);
+        require(foundLamp,"real base must contain a lamp");
         }
       gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
       auto& world=*gothic.world();
@@ -882,8 +1011,9 @@ struct WorldDataContract {
         vobTrees(fixture,resources,world);
         baseRoots=world.wobj.rootVobs.size();
         baseline=save(world);
-        require(!baseline.empty(),"save without layer writes an archive");
-        textFile(layer,"{\"format\":1,\"remove\":["+std::to_string(removed)+"],\"move\":[{\"id\":"+
+        require(!baseline.empty() && lampInPlace(world),"save without layer writes an archive");
+        textFile(layer,"{\"format\":1,\"light\":[{\"id\":"+std::to_string(lamp)+",\"color\":[230,84,15],\"near\":8}],"+
+                 "\"remove\":["+std::to_string(removed)+"],\"move\":[{\"id\":"+
                  std::to_string(moved)+",\"position\":[111,222,333],\"yaw_deg\":0}],\"add\":["+
                  mesh("save-cube","VOB_LAYER_TEST_CUBE","mesh")+","+
                  emitter("save-smoke","own_test_smoke.pfx")+","+
@@ -892,7 +1022,7 @@ struct WorldDataContract {
                  R"(,{"key":"save-flies","kind":"emitter","pfx":"FLIES","position":[10,20,30],"rotation":[[0,0,1],[0,1,0],[-1,0,0]]},{"key":"save-light","kind":"light","position":[10,20,30],"yaw_deg":0,"range":400,"color":[255,100,20]}]})");
         const auto baseWorld=Resources::baseDir()/"worlds/NEWWORLD";
         const auto checked=VobLayer::check(baseWorld,layer,fixture.content);
-        require(checked.errors.empty() && checked.added==6,"offline checker accepts base and custom PFX names in different cases with optional suffix");
+        require(checked.errors.empty() && checked.added==6 && checked.lit==1,"offline checker accepts base and custom PFX names in different cases with optional suffix");
         require(subprocess({GOTHIC_CONTENT_CONVERT,"check-vob-layer",baseWorld.string(),layer.string(),fixture.content.string()})==0,
                 "converter CLI resolves emitters from base programs and particles.d");
         const auto invalid=layer.parent_path()/"zz-unknown.json";
@@ -906,6 +1036,9 @@ struct WorldDataContract {
         const auto applied=VobLayer::apply(data,baseWorld,layer.parent_path().parent_path());
         require(applied.errors.size()==1 && applied.added==6 && find(data,moved)->position.x==111,
                 "unknown PFX skips the entire file including its valid emitter and move");
+        const auto* relit=dynamic_cast<const asset::VLight*>(find(data,lamp));
+        require(applied.lit==1 && relit!=nullptr && relit->color==asset::Color(230,84,15,255) &&
+                VobLayer::lightNear(*relit)==8.f && !VobLayer::isAdded(*relit),"the real base lamp is edited in place");
         size_t emitters=0;
         for(const auto& vob:data.vobs) {
           if(!VobLayer::isAdded(*vob) || vob->associated_visual_type!=asset::VisualType::PARTICLE_EFFECT) continue;
@@ -925,8 +1058,10 @@ struct WorldDataContract {
         require(runtimeVob(world,removed)==nullptr,"old save cannot resurrect a removed base vob");
         const auto* movedVob=runtimeVob(world,moved);
         require(movedVob && movedVob->position()==Tempest::Vec3(111,222,333),"old save cannot undo an authored layer move");
+        require(lampInPlace(world),"a save made before the lamp's edit fits the edited lamp");
         layered=save(world);
         load(world,layered);
+        require(lampInPlace(world),"a save made with the edited lamp loads onto it");
         require(layerCount(world)==6 && runtimeVob(world,removed)==nullptr,"layered save reload keeps additions once and removal active");
         require(runtimeVob(world,moved)->position()==Tempest::Vec3(111,222,333),"layered save reload keeps current layer move");
         gothic.clearGame().reset();
@@ -952,6 +1087,7 @@ struct WorldDataContract {
         require(world.wobj.rootVobs.size()==baseRoots && layerCount(world)==0,"layered save loads without the layer or extra objects");
         const auto* movedVob=runtimeVob(world,moved);
         require(movedVob && movedVob->position()==originalPosition,"layer move is not baked into a layer-free save load");
+        require(lampInPlace(world),"a save made with the edited lamp fits the base lamp without the layer");
         require(runtimeVob(world,removed)!=nullptr,"disabled layer restores the base tree when reading a layered save");
         }
       gothic.clearGame().reset();
@@ -971,6 +1107,7 @@ int main() {
     validLayers(fixture);
     rejectedLayers(fixture);
     removedReferences(fixture);
+    baseLamps(fixture);
     unreadableLayers(fixture);
     saveBoundPolicy(fixture);
     particleMotion();

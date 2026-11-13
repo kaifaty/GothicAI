@@ -52,6 +52,7 @@ struct SceneDesc {
   uint  vsmStudy;        // bench `vsm study <bits>`: VSM_STUDY_* below (0 in the game)
   uint  viewFlags;       // VF_* below: the occluder pass, TAA, shadow views
   float fogSkyVis;       // the sky seen from the camera under GI, 0..1 (fog_sky_vis.comp); 1 without it
+  float lampNearKnee;    // a lamp's light never passes this many times its light at the range (light.frag); 0 off
   };
 
 // bench `vsm study <bits>`: the shadow test on a mesh's facets (reports/render-features/2026-11-11-facet-shards)
@@ -66,7 +67,7 @@ struct LightSource {
   vec3  color;
   float cookie; // 0: none; else the light mask's slot (integer part) and the light's yaw in turns (fraction)
   float sourceSize; // cm: the flame's size, which sets the soft edge of its shadow (VSM, light.frag)
-  float padding0;
+  float nearLimit;  // the lamp's own limit of the light near it in place of scene.lampNearKnee; 0: the common one
   float padding1;
   float padding2;
   };

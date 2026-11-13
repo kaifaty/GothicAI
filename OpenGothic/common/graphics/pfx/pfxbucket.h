@@ -63,7 +63,14 @@ class PfxBucket {
 
     const ParticleFx&           decl;
     PfxObjects&                 parent;
-    const float                 reactive; // ParticleFx::taaReactive: the push data of main_pfx_f/_e (graphics plan 1v)
+    // the push data of main_pfx_f/_e (main.frag PushPfx)
+    struct Push {
+      float reactive    = 0; // ParticleFx::taaReactive (graphics plan 1v)
+      float hdrFrom     = 0; // particles.d "hdr": the night's gain over a texel's brightness
+      float hdrInvRange = 0; // 1/(to - from); 0: off
+      float hdrEdge     = 1;
+      };
+    const Push                  push;
 
     bool                        isEmpty() const;
     void                        invalidateDecal();

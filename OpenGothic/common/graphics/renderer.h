@@ -169,6 +169,12 @@ class Renderer final {
       bool           upscaleMipBiasSet  = false; // OPENGOTHIC_UPSCALE_MIP_BIAS over log2(in/out) - 1
       float          upscaleMipBias     = 0;
       bool           bloomEnabled       = true;
+      // the glare of the bloom (bloom_down.frag): a pixel whose brightest channel is over bloomGlareTo whites of
+      // the frame gives the chain 1 + bloomGlare times its light, from bloomGlareFrom on by a smooth step.
+      // OPENGOTHIC_BLOOM_GLARE=<boost>[,<from>,<to>], 0 turns it off
+      float          bloomGlare         = 10;
+      float          bloomGlareFrom     = 2;
+      float          bloomGlareTo       = 6;
       // motion vectors of objects (graphics plan 1b), on by default: -mv 0, [INTERNAL] motionVectors=0,
       // OPENGOTHIC_MOTION_VECTORS=0|1 over both
       bool           motionVectors      = false;
@@ -203,6 +209,7 @@ class Renderer final {
       bool           vsmLampTaa         = false; // OPENGOTHIC_VSM_LAMP_TAA=1: the frame-turned lamp taps under TAA (study)
       bool           vsmLampStudy       = false; // any OPENGOTHIC_VSM_LAMP*: the study shader light_vsm_probe
       float          vsmLampNearCm      = 30;    // [INTERNAL] vsmLampNearCm: a lamp's fixture this close casts no shadow
+      float          lampNearKnee       = 30;    // OPENGOTHIC_LAMP_KNEE: the light near a lamp never passes this, 0 off
       // [INTERNAL] vsmLampSoft (0 on Metal, 1 elsewhere), OPENGOTHIC_VSM_LAMP_SOFT=0|1 wins: the lamps' PCSS;
       // false: one gather per lamp and pixel (light_vsm_hard)
       bool           vsmLampSoft        = true;
