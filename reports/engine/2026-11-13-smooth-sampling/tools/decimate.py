@@ -56,7 +56,9 @@ def main():
             u = np.arange(n) / k
             inner = (np.arange(n) % k) != 0
             for m in sp.METHODS:
-                p, q = sp.sample(a.positions[keys], a.rotations[keys], u, m)
+                # the ends at the chord's speed: the source is cut in motion (ends.py), so the methods differ only
+                # by what they do between keys
+                p, q = sp.sample(a.positions[keys], a.rotations[keys], u, m, ends="mirror")
                 got = sp.world(skel, a.node_indices, p, q)[:, :, :3, 3]
                 rec = acc.setdefault((g, k, m), {"err": {t: [] for t in track}, "pop": [], "pop0": [], "hold": []})
                 for t, nodes in track.items():

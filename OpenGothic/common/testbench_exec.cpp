@@ -423,7 +423,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       say("unknown blend command: " + line);
     }
   else if(c=="sample") {
-    // sample on|off: clips with fewer keys than their source on a curve through the keys, or on straight lines
+    // sample on|off: clips with few keys a second on a curve through the keys, or on straight lines
     // between them as before (AnimSample)
     const std::string m = a.size()>1 ? a[1] : "";
     if(m=="on" || m=="off") {

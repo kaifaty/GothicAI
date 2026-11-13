@@ -94,8 +94,14 @@ def _tangents(p0, p1, p2, p3, method):
     return m1, m2
 
 
-def sample(pos, rot, u, method="linear", loop=False):
-    """pos [K, N, 3], rot [K, N, 4] keys; u [T] times in key units. Returns pos [T, N, 3], rot [T, N, 4]."""
+def sample(pos, rot, u, method="linear", loop=False, ends="rest"):
+    """pos [K, N, 3], rot [K, N, 4] keys; u [T] times in key units. Returns pos [T, N, 3], rot [T, N, 4].
+
+    ends - what stands for the key a clip that is no loop does not have outside its first and last one:
+      rest    the outer key again: the clip starts from rest and comes to rest (zero tangent there)
+      mirror  the next key mirrored: the outer chord goes on at its speed, as on the straight line
+      half    the outer key again, without the limit there: half the chord's speed (plain Catmull-Rom's end)
+    """
     u = np.asarray(u, dtype=np.float64)
     count = pos.shape[0]
     i = np.floor(u).astype(np.int64)
@@ -115,15 +121,23 @@ def sample(pos, rot, u, method="linear", loop=False):
     q[3] = _align(q[2], q[3])
     if method == "linear":
         return p[1] + (p[2] - p[1]) * t, slerp(q[1], q[2], t)
+    lo = hi = None
     if not loop:
-        # no key past the clip's ends: the missing neighbour mirrors the next one, so the clip starts and ends at
-        # the speed of its outer chord, as it did
         lo, hi = ext[0][:, None, None], ext[3][:, None, None]
-        p[0] = np.where(lo, 2 * p[1] - p[2], p[0])
-        q[0] = np.where(lo, 2 * q[1] - q[2], q[0])
-        p[3] = np.where(hi, 2 * p[2] - p[1], p[3])
-        q[3] = np.where(hi, 2 * q[2] - q[1], q[3])
-    pm = _tangents(*p, "cr" if method == "squad" else method)
+        if ends == "mirror":
+            p[0] = np.where(lo, 2 * p[1] - p[2], p[0])
+            q[0] = np.where(lo, 2 * q[1] - q[2], q[0])
+            p[3] = np.where(hi, 2 * p[2] - p[1], p[3])
+            q[3] = np.where(hi, 2 * q[2] - q[1], q[3])
+
+    def tangents(x, m):
+        a, b = _tangents(*x, m)
+        if lo is not None and ends == "half":
+            a = np.where(lo, 0.5 * (x[2] - x[1]), a)
+            b = np.where(hi, 0.5 * (x[2] - x[1]), b)
+        return a, b
+
+    pm = tangents(p, "cr" if method == "squad" else method)
     out_p = _hermite(p[1], p[2], pm[0], pm[1], t)
     if method == "squad":
         def inner(a, b, c):  # the control point at b between a and c
@@ -133,7 +147,7 @@ def sample(pos, rot, u, method="linear", loop=False):
         s1, s2 = inner(qn[0], qn[1], qn[2]), inner(qn[1], qn[2], qn[3])
         out_q = slerp(slerp(qn[1], qn[2], t), slerp(s1, s2, t), 2 * t * (1 - t))
     else:
-        qm = _tangents(*q, method)
+        qm = tangents(q, method)
         out_q = _hermite(q[1], q[2], qm[0], qm[1], t)
         out_q = out_q / _norm(out_q)
     return out_p, out_q

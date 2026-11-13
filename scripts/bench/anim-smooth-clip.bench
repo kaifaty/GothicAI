@@ -3,12 +3,13 @@
 # curve (`sample on`, takes `*-curve`). The hero says lines of his original voice to Xardas in the tower of the default
 # save with one dialog gesture the bench names (T_DIALOGGESTURE_03, 08, 09, 06: ten keys a second), seen whole from the
 # front: the camera does not follow the head, so the arms and the trunk are judged, and the head as the trunk carries
-# it. The nod and the sway of the voice are off. Then clips of the whole body from the side, for the feet: the sword
-# practice with a sword drawn (T_1HSFREE over the stance S_1HRUN, ten keys a second), sitting down and getting up
-# (T_STAND_2_SIT, S_SIT), a dance (T_DANCE_01: fifteen keys a second, the root travels a metre).
+# it. The nod and the sway of the voice are off. Then clips of the whole body from the side, for the feet, each played
+# to its end before the next take so that both takes show the same frames: standing with a sword drawn (the stance
+# S_1HRUN, a loop), looking the sword over (T_1HSINSPECT), sitting down and getting up (T_STAND_2_SIT) - ten keys a
+# second - and a dance (T_DANCE_01: fifteen keys a second, the root travels a metre).
 # CSV: an_hand, an_head, an_chest - the change of the step of the hands, the head and the chest between two frames, cm;
 # sm_on. No AI server. How to run it and make the clip - scripts/bench/README.md, "Anim smooth clip".
-# @timeout 360
+# @timeout 420
 seed 73013
 cheat god
 set time 12 0
@@ -97,56 +98,60 @@ cam follow 300 90 90
 equip ItMw_1h_Mil_Sword
 wait 800
 tap weapon
-wait 2000
+wait 3000
 sample off
-rec sword-line
-wait 1500
-ani player T_1HSFREE
-wait 8000
+rec stance-line
+wait 5000
 stop
-goto NW_XARDAS_TOWER_IN1_26
-wait 2500
 sample on
-rec sword-curve
-wait 1500
-ani player T_1HSFREE
-wait 8000
+wait 500
+rec stance-curve
+wait 5000
 stop
-goto NW_XARDAS_TOWER_IN1_26
+sample off
+wait 500
+rec inspect-line
+wait 500
+ani player T_1HSINSPECT
+wait 10500
+stop
+wait 1500
+sample on
+rec inspect-curve
+wait 500
+ani player T_1HSINSPECT
+wait 10500
+stop
 wait 1500
 tap weapon
-wait 2500
+wait 3000
 sample off
 rec sit-line
 wait 500
 ani player T_STAND_2_SIT
-wait 4500
-ani player T_SIT_2_STAND
-wait 2500
+wait 5500
 stop
 goto NW_XARDAS_TOWER_IN1_26
-wait 1500
+wait 2000
 sample on
 rec sit-curve
 wait 500
 ani player T_STAND_2_SIT
-wait 4500
-ani player T_SIT_2_STAND
-wait 2500
+wait 5500
 stop
 goto NW_XARDAS_TOWER_IN1_26
-wait 1500
+wait 2000
 sample off
 rec dance-line
 wait 500
 ani player T_DANCE_01
-wait 9000
+wait 12000
 stop
 goto NW_XARDAS_TOWER_IN1_26
-wait 2500
+wait 2000
 sample on
 rec dance-curve
 wait 500
 ani player T_DANCE_01
-wait 9000
+wait 12000
 stop

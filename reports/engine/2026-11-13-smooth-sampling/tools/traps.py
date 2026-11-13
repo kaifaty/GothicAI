@@ -24,7 +24,7 @@ METHODS = ("linear", "cr", "crlim")
 def sparse_clips(base, model):
     for path in sorted((base / "models").glob(f"{model}-*.MAN.json")):
         meta = json.loads(path.read_text())["data"]
-        if meta["fps"] < 25.0 and meta["frame_count"] >= 3:
+        if meta["fps"] < 16.0 and meta["frame_count"] >= 3:
             yield ga.read_animation(path)
 
 

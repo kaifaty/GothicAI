@@ -20,15 +20,20 @@
 // hold stays a hold, and a joint that stops sharply does not swing past its key (plain Catmull-Rom took a hand
 // up to 2.8 cm past it, this one 1.7 at most). The pose at a key is the key, as it was.
 //
-// Clips keyed 25 times a second or more stay on the straight line: at 30 frames a second nearly every frame
-// crosses a key there and the curve changes nothing (measured), and blows and walks keep their frames.
-// OPENGOTHIC_ANIM_SMOOTH=0 (the bench: `sample off`) brings the straight line back for all.
+// A clip that is no loop starts from rest and comes to rest at its last key: the game shows its first key
+// before it starts (the stance it rises from) and holds its last key for one more key interval when its keys
+// are over, so on the chord's speed the joints started and stopped in one frame.
+//
+// Clips keyed 16 times a second or more stay on the straight line: at 30 frames a second nearly every frame
+// crosses a key there and the curve changes nothing (measured at 19 and 25 keys a second), and blows and walks
+// (25) keep their frames. OPENGOTHIC_ANIM_SMOOTH=0 (the bench: `sample off`) brings the straight line back for
+// all.
 namespace AnimSample {
 
 using Sample = asset::AnimationSample;
 
-// keys a second: a clip keyed slower than this goes on the curve
-constexpr float SparseRate = 25.f;
+// keys a second: a clip keyed slower than this goes on the curve (the base has 5, 10, 12.5 and 15)
+constexpr float SparseRate = 16.f;
 
 bool enabled();
 void setEnabled(bool e);
@@ -53,7 +58,7 @@ struct Keys final {
 Keys   keys(uint64_t ms, float fpsRate, size_t count, bool loop, bool reverse);
 
 // The pose t of the way from a to b on the curve; before and after are the keys around them as played, null
-// where the clip has none: its outer chord then goes on as it is
+// where the clip has none: there it starts from rest (no key before a) or comes to rest (none after b)
 Sample mix(const Sample* before, const Sample& a, const Sample& b, const Sample* after, float t);
 
 // How far the curve through these positions is from the straight line from a to b at t. The body travels along

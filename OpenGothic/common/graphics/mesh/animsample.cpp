@@ -44,12 +44,12 @@ Vec<N> tangent(const Vec<N>& in, const Vec<N>& out) {
   return m;
   }
 
-// the offset from a at t on the curve; in, out - the chords before a and after b (null: none, the chord a-b
-// goes on)
+// the offset from a at t on the curve; in, out - the chords before a and after b (null: the clip has no key
+// there, it starts from rest or comes to rest)
 template<size_t N>
 Vec<N> curve(const Vec<N>* in, const Vec<N>& chord, const Vec<N>* out, float t) {
-  const Vec<N> m1 = tangent(in !=nullptr ? *in  : chord, chord);
-  const Vec<N> m2 = tangent(chord, out!=nullptr ? *out : chord);
+  const Vec<N> m1 = in !=nullptr ? tangent(*in,chord)  : Vec<N>();
+  const Vec<N> m2 = out!=nullptr ? tangent(chord,*out) : Vec<N>();
   const float  t2 = t*t, t3 = t2*t;
   // Hermite, as an offset from a: a hold (no chord, no tangents) gives exactly a
   return chord*(3.f*t2-2.f*t3) + m1*(t3-2.f*t2+t) + m2*(t3-t2);

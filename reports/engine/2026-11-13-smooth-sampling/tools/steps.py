@@ -8,10 +8,15 @@ and `<take>-curve` (sample on, "стало").
 Prints the table; with <out dir> also writes there:
   key.txt    the parts of the clip and the table: per take the change of the step of the hands, the head and the
              chest between two frames (an_hand, an_head, an_chest of metrics.csv, cm): the largest and the 95th
-             percentile on the lines and on the curve, their ratio against the threshold; for the takes of the
-             whole body the slide of a planted foot along the ground, cm a frame;
+             percentile on the lines and on the curve, and the ladder; for the takes of the whole body the slide of
+             a planted foot along the ground, cm a frame;
   steps.png  the change of the hands' step over time, both ways, a panel a gesture;
   clip.mp4   "было | стало" side by side, take by take, the game's sound of the curve's take.
+
+The ladder: the bench's frames go 33, 33, 34 ms, so three frames are one key interval of a clip keyed ten times a
+second and its keys fall on the same frame in three all through one play of it. On the lines the step changes on
+that frame and hardly on the two between; the ladder is the mean change on the frames at a key over the mean on the
+others (over 6 on the lines). On the curve it must be 2.5 at most, and the largest change of a step must not grow.
 """
 import csv
 import json
@@ -22,17 +27,19 @@ from pathlib import Path
 
 import numpy as np
 
-TAKES = [("g3", "Жест 03"), ("g8", "Жест 08"), ("g9", "Жест 09"), ("g6", "Жест 06"),
-         ("sword", "Тренировка с мечом (T_1HSFREE)"), ("sit", "Сел и встал (T_STAND_2_SIT, S_SIT)"),
-         ("dance", "Танец (T_DANCE_01)")]
+TAKES = [("g3", "Жест 03", "DIALOGGESTURE"), ("g8", "Жест 08", "DIALOGGESTURE"), ("g9", "Жест 09", "DIALOGGESTURE"),
+         ("g6", "Жест 06", "DIALOGGESTURE"), ("stance", "Стойка с мечом (S_1HRUN)", "S_1HRUN"),
+         ("inspect", "Осматривает меч (T_1HSINSPECT)", "T_1HSINSPECT"), ("sit", "Сел и встал (T_STAND_2_SIT)", "SIT"),
+         ("dance", "Танец (T_DANCE_01, 15 ключей/с)", None)]
 GESTURES = ("g3", "g8", "g9", "g6")
-LIMIT = 0.65          # the curve's largest change of a step against the lines'
+LADDER = 2.5          # the curve's ladder at most
+GROWTH = 1.05         # the curve's largest change of a step against the lines' at most
 LEAD = 0.5            # seconds of a take before its line starts
 FONTS = ["/System/Library/Fonts/Supplemental/Arial.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"]
 YELLOW = (255, 214, 120)
 
 
-def load(src, seg):
+def load(src, seg, clip):
     with open(src / "metrics.csv") as f:
         rows = [r for r in csv.DictReader(f) if r["seg"] == seg]
     if not rows:
@@ -40,10 +47,14 @@ def load(src, seg):
     ev = [e for e in map(json.loads, (src / "events.jsonl").read_text().splitlines()) if e.get("seg") == seg]
     col = lambda c: np.array([float(r[c]) if r.get(c, "") not in ("", "-") else np.nan for r in rows])  # noqa: E731
     out = {"src": src, "seg": seg, "frames": len(rows), "said": [e for e in ev if e["kind"] == "output"],
-           "fps": next((e["fps"] for e in ev if e["kind"] == "rec"), 30), "sm": col("sm_on"),
-           "layers": sorted({r["an_layers"] for r in rows})}
-    for c in ("an_hand", "an_head", "an_chest", "an_hand_v", "an_head_v", "an_pop"):
-        out[c] = col(c)[2:]  # the first two frames of a take have no second difference
+           "fps": next((e["fps"] for e in ev if e["kind"] == "rec"), 30), "sm": col("sm_on")}
+    for c in ("an_hand", "an_head", "an_chest", "an_hand_v"):
+        out[c] = col(c)
+        out[c][:2] = np.nan  # the first two frames of a take have no second difference
+    # the plays of the clip: runs of frames where it plays and nothing blends
+    plays = np.array([clip is not None and clip in r["an_layers"] and r["bl_active"] == "0" for r in rows])
+    plays[:2] = False
+    out["plays"] = plays
     # a planted foot along the ground, cm a frame (the final ankle of the foot IK's probe, world)
     slide = []
     for leg in ("l", "r"):
@@ -59,24 +70,43 @@ def stat(x):
     return (float(x.max()), float(np.percentile(x, 95))) if len(x) else (float("nan"), float("nan"))
 
 
+def ladder(r, c):
+    """The worst play of the clip: mean change of the step on the frames at a key over the mean on the others."""
+    worst, start = float("nan"), None
+    plays = np.append(r["plays"], False)
+    for i, on in enumerate(plays):
+        if on and start is None:
+            start = i
+        elif not on and start is not None:
+            v = r[c][start:i]
+            start = None
+            if len(v) < 24:
+                continue
+            m = sorted(v[k::3].mean() for k in range(3))
+            worst = np.nanmax([worst, m[2] / max((m[0] + m[1]) / 2, 1e-6)])
+    return worst
+
+
 def table(pairs):
-    lines = ["| дубль | кисть на прямых: наиб. / p95, см | на кривой | отношение наиб. | голова: прямые → кривая (отношение) |"
-             " грудь: прямые → кривая (отношение) | скорость кисти, см/с: прямые / кривая | порог 0,65 |",
-             "|---|---|---|---|---|---|---|---|"]
+    lines = ["| дубль | кисть: наиб. / p95, см — прямые → кривая | голова | грудь | лесенка (кисть / голова / грудь): прямые |"
+             " кривая | порог |",
+             "|---|---|---|---|---|---|---|"]
     ok = True
     for seg, title, a, b in pairs:
-        h0, h1 = stat(a["an_hand"]), stat(b["an_hand"])
-        d0, d1 = stat(a["an_head"]), stat(b["an_head"])
-        c0, c1 = stat(a["an_chest"]), stat(b["an_chest"])
-        ratio = [h1[0] / h0[0], d1[0] / d0[0], c1[0] / c0[0]]
+        cells, grow = [], 0.0
+        for c in ("an_hand", "an_head", "an_chest"):
+            x, y = stat(a[c]), stat(b[c])
+            cells.append(f"{x[0]:.2f} / {x[1]:.2f} → {y[0]:.2f} / {y[1]:.2f}")
+            grow = max(grow, y[0] / max(x[0], 1e-6))
+        la = [ladder(a, c) for c in ("an_hand", "an_head", "an_chest")]
+        lb = [ladder(b, c) for c in ("an_hand", "an_head", "an_chest")]
+        fmt = lambda v: " / ".join("—" if np.isnan(x) else f"{x:.1f}" for x in v)  # noqa: E731
         verdict = "—"
         if seg in GESTURES:
-            good = max(ratio) <= LIMIT
-            ok = ok and good
+            good = np.nanmax(lb) <= LADDER and grow <= GROWTH
+            ok = ok and bool(good)
             verdict = "да" if good else "нет"
-        lines.append(f"| {title} | {h0[0]:.2f} / {h0[1]:.2f} | {h1[0]:.2f} / {h1[1]:.2f} | {ratio[0]:.2f} |"
-                     f" {d0[0]:.2f} → {d1[0]:.2f} ({ratio[1]:.2f}) | {c0[0]:.2f} → {c1[0]:.2f} ({ratio[2]:.2f}) |"
-                     f" {np.nanmax(a['an_hand_v']):.0f} / {np.nanmax(b['an_hand_v']):.0f} | {verdict} |")
+        lines.append(f"| {title} | {cells[0]} | {cells[1]} | {cells[2]} | {fmt(la)} | {fmt(lb)} | {verdict} |")
     lines += ["", "Стопы: скольжение опорной стопы по земле за кадр, см (кадры, где стопа опорная два кадра подряд).", "",
               "| дубль | на прямых: средн. / p95 / наиб. | на кривой | опорных кадров: прямые / кривая |", "|---|---|---|---|"]
     for seg, title, a, b in pairs:
@@ -145,7 +175,7 @@ def plot(pairs, out):
     for ax, (_, title, a, b) in zip(axes[:, 0], pairs):
         for name, r, color in (("прямые (было)", a, "#9a9a9a"), ("кривая (стало)", b, "#1f6fb4")):
             t0 = r["said"][0]["frame"] / r["fps"] if r["said"] else 0
-            ax.plot((np.arange(len(r["an_hand"])) + 2) / r["fps"] - t0, r["an_hand"], color=color, lw=1.1, label=name)
+            ax.plot(np.arange(len(r["an_hand"])) / r["fps"] - t0, r["an_hand"], color=color, lw=1.1, label=name)
         ax.set_title(f"{title}: изменение шага кисти между кадрами, см", fontsize=10)
         ax.set_xlabel("с от начала реплики")
         ax.grid(alpha=0.3)
@@ -158,8 +188,8 @@ def main(argv):
         sys.exit(__doc__)
     src = Path(argv[0])
     pairs = []
-    for seg, title in TAKES:
-        a, b = load(src, f"{seg}-line"), load(src, f"{seg}-curve")
+    for seg, title, clip in TAKES:
+        a, b = load(src, f"{seg}-line", clip), load(src, f"{seg}-curve", clip)
         if a is None or b is None:
             continue
         if np.nanmax(a["sm"]) != 0 or np.nanmin(b["sm"]) != 1:
@@ -189,7 +219,9 @@ def main(argv):
         key.append("")
         plot(pairs, out / "steps.png")
     key += ["Изменение шага сустава между двумя кадрами (вторая разность положения в пространстве модели), см: "
-            "an_hand — кисти (большая из двух), an_head — голова, как её несёт корпус, an_chest — грудь.", ""] + lines
+            "кисти (большая из двух), голова, как её несёт корпус, грудь. Лесенка — во сколько раз шаг меняется сильнее "
+            "на кадрах у ключа (каждый третий), чем на остальных, в худшем проигрыше клипа; на кривой порог "
+            f"{LADDER:g}, и наибольшее изменение шага не растёт (не больше {GROWTH:g} от прямых).", ""] + lines
     key += ["", "порог по жестам выдержан" if ok else "порог по жестам НЕ выдержан"]
     if len(argv) > 1:
         (Path(argv[1]) / "key.txt").write_text("\n".join(key) + "\n")

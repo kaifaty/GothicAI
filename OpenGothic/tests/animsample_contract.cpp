@@ -1,8 +1,8 @@
 // AnimSample (graphics/mesh/animsample): the pose of a clip between its keys. A joint keyed ten times a second and
 // shown thirty times a second: on the straight line between two keys (what the engine did, and still does for
 // clips keyed 25 times a second) its speed changes in one frame at a key; on the curve it does not. The traps of
-// a curve: the pose at a key is the key, a hold stays a hold, a sharp stop does not swing past its key, a clip's
-// ends go on as the outer chord, a rotation's two signs are one rotation. The keys around a time for loops,
+// a curve: the pose at a key is the key, a hold stays a hold, a sharp stop does not swing past its key, a clip
+// starts from rest and comes to rest at its last key, a rotation's two signs are one rotation. The keys around a time for loops,
 // clips that end, and clips played backwards; the root's curve against the line the body travels by.
 #include "graphics/mesh/animsample.h"
 
@@ -51,16 +51,16 @@ Sample play(const std::vector<Sample>& clip, uint64_t ms, bool smooth, bool loop
                          k.hasAfter ? &clip[k.after] : nullptr,k.t);
   }
 
-// the largest change of the step between two frames, degrees: the stand's an_pop for one joint
+// the largest change of the step between two frames, degrees: the stand's an_pop for one joint. The clip as the
+// game shows it: its first key before it starts, its last key held after its keys are over
 float stepChange(const std::vector<Sample>& clip, bool smooth) {
-  float       worst = 0;
-  const float end   = float(clip.size()-1)*100.f;
-  for(float ms=0; ms+2000.f/30.f<=end; ms+=1000.f/30.f) {
-    const float a = degrees(play(clip,uint64_t(ms),smooth));
-    const float b = degrees(play(clip,uint64_t(ms+1000.f/30.f),smooth));
-    const float c = degrees(play(clip,uint64_t(ms+2000.f/30.f),smooth));
-    worst = std::max(worst,std::abs(c-2.f*b+a));
-    }
+  float     worst  = 0;
+  const int frames = int(float(clip.size()-1)*100.f*30.f/1000.f)+4;
+  auto at = [&](int frame) {
+    return degrees(play(clip,uint64_t(std::max(frame,0))*1000/30,smooth));
+    };
+  for(int f=-4; f+2<=frames; ++f)
+    worst = std::max(worst,std::abs(at(f+2)-2.f*at(f+1)+at(f)));
   return worst;
   }
 
@@ -83,10 +83,16 @@ void speedCases() {
   require(jumpLine>15.f,"on the line the speed must jump at a key (the case the curve is for): "+std::to_string(jumpLine)+" deg/s");
   require(jumpCurve<1.5f,"on the curve the speed must not jump at a key: "+std::to_string(jumpCurve)+" deg/s");
 
-  // shown thirty times a second: the step changes far less from frame to frame
+  // shown thirty times a second: the step changes less from frame to frame, also where the clip starts at its
+  // full speed (this swing does) and where it ends
   const float was = stepChange(clip,false), now = stepChange(clip,true);
-  require(now<0.6f*was,"on the curve the step of a joint must change less between frames: "+std::to_string(now)+
+  require(now<0.7f*was,"on the curve the step of a joint must change less between frames: "+std::to_string(now)+
           " deg against "+std::to_string(was)+" on the line");
+  // inside the clip, away from its ends, far less
+  const std::vector<Sample> inner(clip.begin()+4,clip.begin()+29);  // starts and ends at the swing's turn: at rest
+  const float wasIn = stepChange(inner,false), nowIn = stepChange(inner,true);
+  require(nowIn<0.6f*wasIn,"inside a clip the step of a joint on the curve must change far less: "+std::to_string(nowIn)+
+          " deg against "+std::to_string(wasIn)+" on the line");
 
   // and the curve is nearer to the swing the keys were taken from
   float offLine = 0, offCurve = 0;
@@ -134,10 +140,17 @@ void trapCases() {
     low = std::min(low,degrees(AnimSample::mix(&f0,f1,f2,&f3,t))-1.f);
   require(low>-0.01f,"out of a slow key the joint must not dip back first: "+std::to_string(low)+" deg");
 
-  // a clip's ends have no key outside: the outer chord goes on as it is
+  // a clip's ends have no key outside: it starts from rest and comes to rest. The game shows the first key before
+  // the clip starts and holds the last one after its keys are over: on the chord's speed the joint would start
+  // and stop in one frame
+  const Sample c0 = key(0), c1 = key(10), c2 = key(20), c3 = key(30);
+  const float first = degrees(AnimSample::mix(nullptr,c0,c1,&c2,0.1f));
+  const float last  = 30.f-degrees(AnimSample::mix(&c1,c2,c3,nullptr,0.9f));
+  require(first<0.5f && last<0.5f,"a clip must start from rest and come to rest at its last key: "+std::to_string(first)+
+          " and "+std::to_string(last)+" deg over its outer tenths, 1 on the chord");
   const Sample mid = AnimSample::mix(nullptr,a,b,nullptr,0.5f);
   require(std::abs(degrees(mid)-17.5f)<0.01f && std::abs(mid.position.x-2.5f)<1e-4f,
-          "between two keys with none around the pose must go on the chord");
+          "between two keys with none around the pose must be half way at half the time");
 
   // q and -q are one rotation
   Sample nb = b, nafter = after;
@@ -152,9 +165,11 @@ void trapCases() {
   }
 
 void keyCases() {
-  // which clips: fewer keys than the source's 25 a second, three frames at least
-  require(AnimSample::sparse(10.f,96) && AnimSample::sparse(15.f,30) && AnimSample::sparse(5.f,10),"sparse clips go on the curve");
-  require(!AnimSample::sparse(25.f,40) && !AnimSample::sparse(30.f,40),"clips keyed 25 times a second or more stay on the line");
+  // which clips: under 16 keys a second, three frames at least
+  require(AnimSample::sparse(10.f,96) && AnimSample::sparse(15.f,30) && AnimSample::sparse(12.5f,30) && AnimSample::sparse(5.f,10),
+          "sparse clips go on the curve");
+  require(!AnimSample::sparse(19.f,40) && !AnimSample::sparse(25.f,40) && !AnimSample::sparse(30.f,40),
+          "clips keyed 16 times a second or more stay on the line");
   require(!AnimSample::sparse(10.f,2) && !AnimSample::sparse(10.f,1) && !AnimSample::sparse(0.f,10),"a pose or a pair of keys is no curve");
 
   // a clip that ends: 5 frames, ten a second

@@ -951,7 +951,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `gazeinfo` | gaze state of the watched npc to `bench.log`: why it looks, at whom |
 | `lean on\|off` | the lean into turns and on slopes |
 | `blend on\|off`, `blend param <name> <value>` | transitions between animations (`AnimBlend`; off: the old cross-fade); params `min`, `max`, `scale` (blend time, s), `turn` (rad/s), `move` (cm/s), `out`, `side`, `blow` (the longest switch into a blow of a weapon body, s) |
-| `sample on\|off` | clips with fewer keys than their source (under 25 a second: the dialog gestures, the stances with a weapon, sitting, dances) on a cubic curve through the keys (`AnimSample`, on by default) or on straight lines between them as before (`OPENGOTHIC_ANIM_SMOOTH=0`) |
+| `sample on\|off` | clips with few keys (under 16 a second: the dialog gestures, the stances with a weapon, sitting, dances) on a cubic curve through the keys (`AnimSample`, on by default) or on straight lines between them as before (`OPENGOTHIC_ANIM_SMOOTH=0`) |
 | `flinch on\|off` | the upper body giving way to blows |
 | `hit <npc\|player> <angle> [strength] [height] [twist]` | a blow from that side of it (angle from its facing, 0 in front, as `place`) to the flinch only: no damage, no stumble; strength 0..1 (1), height 0 the hips .. 1 the head (0.6), twist -1..1 about up (0) |
 | `strike <victim\|player> [attacker\|player]` | the attacker's blow lands as the game deals it (the stumble, the damage, the flinch); the victim gets its hit points back below a third |
@@ -1178,9 +1178,9 @@ Clips with sparse keys on a curve through their keys
 on straight lines between the keys as before (`sample off`, takes `*-line`), then on the curve (`sample on`, takes
 `*-curve`). The hero says lines of his original voice to Xardas with one dialog gesture the bench names
 (`T_DIALOGGESTURE_03`, `08`, `09`, `06`: ten keys a second), seen whole from the front, so the arms and the trunk are
-judged and the head as the trunk carries it; then clips of the whole body from the side, for the feet: the sword
-practice with a sword drawn (`T_1HSFREE`), sitting down and getting up, a dance (`T_DANCE_01`, fifteen keys a second).
-No AI server:
+judged and the head as the trunk carries it; then clips of the whole body from the side, for the feet, each played to
+its end before the next take: standing with a sword drawn (the stance `S_1HRUN`), looking the sword over
+(`T_1HSINSPECT`), sitting down and getting up, a dance (`T_DANCE_01`, fifteen keys a second). No AI server:
 
 ```bash
 OPENGOTHIC_CONTENT=<content with the hero's own head> TEMPEST_WINDOW_SIZE=1280x720 OPENGOTHIC_BENCH_REALTIME=1 \
@@ -1191,10 +1191,11 @@ uv run --with pillow --with numpy --with matplotlib python reports/engine/2026-1
 `metrics.csv` has, for the watched one or the hero, `an_hand`, `an_head`, `an_chest`: how much the step of the hands
 (the larger of the two), the head and the chest changes between two frames, cm, in the model's space before the
 post-passes (the head as the animation carries it, not as the gaze holds it); `an_hand_v`, `an_head_v`: their speed,
-cm/s; `sm_on`: the curve is on. `steps.py` prints the table of both ways per take (the largest and the 95th percentile,
-the ratio against the threshold of 0.65 for the gestures, the slide of a planted foot for the takes of the whole body)
-and writes `clip.mp4` ("было | стало" side by side), `key.txt` and `steps.png`. It exits 1 when a gesture is over the
-threshold.
+cm/s; `sm_on`: the curve is on. `steps.py` prints the table of both ways per take: the largest change of a step and
+its 95th percentile, and the ladder - how much more the step changes on the frames at a key (one frame in three for a
+clip keyed ten times a second) than on the others: over 6 on the lines, at most 2.5 on the curve, which is the
+threshold for the gestures; for the takes of the whole body, the slide of a planted foot. It writes `clip.mp4` ("было
+| стало" side by side), `key.txt` and `steps.png`, and exits 1 when a gesture is over the threshold.
 
 ## Speech face clip
 
