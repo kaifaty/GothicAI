@@ -135,6 +135,8 @@ VM-адаптер базовых программ — свободные фун�
 - место вложенного эмиттера в корзине частиц — `graphics/pfx/pfxslot.*` (`PfxSlot`), `PfxEmitter` держит его последним членом;
 - загрузка мира и наложение `vobtrees.d` — свободные функции RPG `loadWorld` и `loadVobBundle` в `common/worldbase.*`; `Resources::loadVobBundle` принимает читатель слоя.
 
+Паспорт базы — `common/baseidentity.*` (платформа): типы `BaseImport::Identity`, `Files`, `RuntimeArchive`, опознание установки, чтение и сверка `base.json`; `baseimport.h` включает его и держит функции импорта. Кодек Dx8-записей музыки `encodeDx8` / `decodeDx8*` — в `common/dmusic/musicrecord.*` (Готика), индекс и записи музыки — в `musicdata.*`.
+
 Общие исходники `gothic-base-runtime` для игры, `content-convert` и отдельного `storygraph` — в `cmake/BaseRuntime.cmake`; его включают все три сборки, поэтому новый файл мира попадает во все три.
 
 ## Навигация: исследования и обучение
