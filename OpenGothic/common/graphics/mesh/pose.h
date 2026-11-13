@@ -4,7 +4,7 @@
 #include <optional>
 #include <vector>
 
-#include "game/constants.h"
+#include "engineconstants.h"
 #include "animation.h"
 #include "animblend.h"
 #include "animationsolver.h"

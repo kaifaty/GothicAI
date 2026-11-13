@@ -27,7 +27,8 @@ changed. A failing step stops the build with its name, the command and the tail 
 
 Writes into <content root> (default <work>/content): characters/<folder>/head.glb, head.face.json, head.frame.json,
 head.groom, materials/ and characters/characters.json (the instance's entry is replaced, others are kept). The sheet
-of likeness is <work>/sheet/likeness.jpg, the measures <work>/measures.json.
+of likeness is <work>/sheet/likeness.jpg, the measures <work>/measures.json, the sheet and the numbers of the shape
+(outlines, hair and beard against the concept, shape_report.py) <work>/shape/shape.jpg and shape.json.
 """
 import hashlib
 import json
@@ -262,10 +263,14 @@ def steps(cdir, cfg, work, content, gpu=None):
         blend(fit, os.path.join(FR, 'reg_export.py'), raw['full'], params, j('full')),
         [PY, os.path.join(FR, 'concept_frame.py'), j('full'), params, j('views', 'full_front.png'), j('views', 'full_profile.png')],
         [PY, os.path.join(S, 'place_ref.py'), j('full')],
+        # outlines do not hold the full model along the view, and its outline is mostly hair: where both are bare
+        # skin, it is put onto the head
+        [PY, os.path.join(S, 'place_face.py'), j('full'), params, raw['full'], R, j('round', 'reg.npz'), j('views')],
         [PY, os.path.join(SK, 'tone_ref.py'), j('full', 'views.json'), params, raw['full'], j('views', 'full_front.png'),
          j('full', 'tone.json'), '--place', j('full', 'place.json')],
         [MPY, os.path.join(S, 'face_points.py'), j('full', 'points'), 'concept_front=' + j('full', 'concept_front.png')]],
-        [fit, raw['full'], params, j('views', 'full_front.png'), j('views', 'full_profile.png')],
+        [fit, raw['full'], params, j('views', 'full_front.png'), j('views', 'full_profile.png'), j('round', 'reg.npz'),
+         j('reg', 'mpfb.npz'), j('reg', 'groups.npz')],
         [j('full', n) for n in ('place.json', 'tone.json', 'concept_front.png', 'points/concept_front.json')],
         'placing the full model, its tone'))
 
@@ -273,7 +278,8 @@ def steps(cdir, cfg, work, content, gpu=None):
     U, GR, V = j('skin', 'uv.npz'), j('reg', 'groups.npz'), j('reg', 'views.json')
     out.append(Step('skin', [
         blend(j('round', 'reg.blend'), os.path.join(SK, 'dump_uv.py'), U),
-        [PY, os.path.join(SK, 'beard_shell.py'), U, GR, V, params, raw['full'], j('skin'), '1024', *place],
+        # the beard is where the full model stands over the skin of the lower face: no colour thresholds
+        [PY, os.path.join(S, 'hair', 'beard_layer.py'), U, GR, V, params, raw['full'], j('skin'), *place],
         [PY, os.path.join(SK, 'bake_ref.py'), U, GR, V, params, raw['full'], T['base_skin'], j('skin'), '4096', *place,
          '--offsets', j('skin', 'beard.npz'), '--front', j('views', 'full_front.png'), j('reg', 'lid_chains.json')],
         [PY, os.path.join(SK, 'brow_paint.py'), U, GR, V, j('full', 'concept_front.png'),
@@ -285,7 +291,9 @@ def steps(cdir, cfg, work, content, gpu=None):
     # 7. hair and facial hair as strands
     out.append(Step('hair', [
         ['mkdir', '-p', j('hair', 'cap')],
-        [PY, os.path.join(SK, 'hair_cut.py'), V, params, raw['full'], j('hair', 'cap'), '1024', *place],
+        # hair is where the full model stands over the head's skin: no colour thresholds
+        [PY, os.path.join(S, 'hair', 'hair_layer.py'), V, params, raw['full'], U, GR, j('hair', 'cap'), *place,
+         '--ears', j('reg', 'ears.npz')],
         [PY, os.path.join(S, 'hair', 'groom.py'), j('hair', 'cap', 'cap.npz'), U, GR, j('hair'), '90000', '1',
          '--skin', j('skin', 'skin_brows.png'), '--ears', j('reg', 'ears.npz')]],
         [V, params, raw['full'], j('full', 'place.json'), j('full', 'tone.json'), U, GR, j('skin', 'skin_brows.png'), j('reg', 'ears.npz')],
@@ -363,6 +371,10 @@ def steps(cdir, cfg, work, content, gpu=None):
                                  [PY, os.path.join(S, 'head_measures.py'), work]],
                     [j('reg', 'reg_log.json'), j('reg', 'reg.npz'), j('sheet', 'likeness.jpg')],
                     [j('measures.json')], 'measures of defects'))
+    out.append(Step('shape', [[PY, os.path.join(S, 'shape_report.py'), work]],
+                    [j('round', 'reg.npz'), j('reg', 'place.json'), j('full', 'place.json'), j('colour', 'groom.npz'),
+                     j('colour', 'beard_groom.npz')] + [j('views', f'{k}_{v}.png') for k in ('full', 'bald') for v in ('front', 'profile')],
+                    [j('shape', 'shape.json')], 'where the shape goes: outlines, hair and beard against the concept'))
     return out
 
 
@@ -396,7 +408,7 @@ def main():
             if os.path.exists(sp): os.remove(sp)
         run(s, work)
     print(f'build_head: done in {time.time()-t0:.0f} s\n  content {content}\n  sheet {work}/sheet/likeness.jpg\n'
-          f'  measures {work}/measures.json')
+          f'  measures {work}/measures.json\n  shape {work}/shape/shape.jpg')
 
 
 if __name__ == '__main__':

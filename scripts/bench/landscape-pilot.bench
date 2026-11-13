@@ -1,0 +1,382 @@
+# Landscape pilot (docs/landscape-plan.md, step В1): the area of chunks 4_-2 … 7_1 around the tavern as the player
+# sees it now — the reference of the intent sheet and the «сейчас» half of the pilot's pairs and clips
+# (reports/content/2026-11-landscape-pilot/README.md). Each spot gives four shots <spot>-1..4 of the game's own
+# camera, the hero turned by 90° between them (1: along the path); five spots again at night (<spot>-night-1, -2:
+# along the path and back). Clips: `walk-road` runs from the road south of Akil's farm over the bridge and along
+# the cliff to the crossroads at the tavern and on to the road to Onar's farm; `walk-forest` runs from the road into
+# the forest towards the cave. Change the spots only together with the note: later runs are compared with these.
+#   TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh landscape-pilot
+# @timeout 1200
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+walkmode run
+watch player
+cam game
+set time 12 0
+
+# the road up from the city, west edge of the area
+goto NW_CITY_TO_FARM2_04
+clear 3000
+face wp NW_CITY_TO_FARM2_06
+streaming wait
+wait 5000
+shot city-road-1
+wait 200
+turn 90
+wait 2500
+shot city-road-2
+wait 200
+turn 90
+wait 2500
+shot city-road-3
+wait 200
+turn 90
+wait 2500
+shot city-road-4
+wait 200
+
+# Akil's farm from the road
+goto NW_FARM2_PATH_02
+face wp NW_FARM2_PATH_06
+streaming wait
+wait 5000
+shot farm-1
+wait 200
+turn 90
+wait 2500
+shot farm-2
+wait 200
+turn 90
+wait 2500
+shot farm-3
+wait 200
+turn 90
+wait 2500
+shot farm-4
+wait 200
+
+# the road south of the farm, towards the bridge
+goto NW_FARM2_TO_TAVERN_02
+clear 3000
+face wp NW_FARM2_TO_TAVERN_04
+streaming wait
+wait 5000
+shot road-1
+wait 200
+turn 90
+wait 2500
+shot road-2
+wait 200
+turn 90
+wait 2500
+shot road-3
+wait 200
+turn 90
+wait 2500
+shot road-4
+wait 200
+
+# on the bridge over the path down to the city forest
+goto NW_FARM2_TO_TAVERN_05
+clear 3000
+face wp NW_FARM2_TO_TAVERN_07
+streaming wait
+wait 5000
+shot bridge-1
+wait 200
+turn 90
+wait 2500
+shot bridge-2
+wait 200
+turn 90
+wait 2500
+shot bridge-3
+wait 200
+turn 90
+wait 2500
+shot bridge-4
+wait 200
+
+# the lower path under the bridge
+goto NW_TAVERN_TO_FOREST_06
+clear 3000
+face wp NW_TAVERN_TO_FOREST_04
+streaming wait
+wait 5000
+shot under-bridge-1
+wait 200
+turn 90
+wait 2500
+shot under-bridge-2
+wait 200
+turn 90
+wait 2500
+shot under-bridge-3
+wait 200
+turn 90
+wait 2500
+shot under-bridge-4
+wait 200
+
+# the road along the cliff, the turn towards the tavern
+goto NW_FARM2_TO_TAVERN_08
+clear 3000
+face wp NW_FARM2_TO_TAVERN_10
+streaming wait
+wait 5000
+shot cliff-road-1
+wait 200
+turn 90
+wait 2500
+shot cliff-road-2
+wait 200
+turn 90
+wait 2500
+shot cliff-road-3
+wait 200
+turn 90
+wait 2500
+shot cliff-road-4
+wait 200
+
+# the crossroads at the tavern
+goto NW_TAVERNE_CROSS
+face wp TAVERNE
+streaming wait
+wait 5000
+shot tavern-1
+wait 200
+turn 90
+wait 2500
+shot tavern-2
+wait 200
+turn 90
+wait 2500
+shot tavern-3
+wait 200
+turn 90
+wait 2500
+shot tavern-4
+wait 200
+
+# the open meadow east of the tavern
+goto NW_TAVERNE_TROLLAREA_03
+clear 3000
+face wp NW_TAVERNE_TROLLAREA_05
+streaming wait
+wait 5000
+shot meadow-1
+wait 200
+turn 90
+wait 2500
+shot meadow-2
+wait 200
+turn 90
+wait 2500
+shot meadow-3
+wait 200
+turn 90
+wait 2500
+shot meadow-4
+wait 200
+
+# the north shore of the lake
+goto NW_BIGFARM_LAKE_06
+clear 3000
+face wp NW_LAKE__WATER_03
+streaming wait
+wait 5000
+shot lake-1
+wait 200
+turn 90
+wait 2500
+shot lake-2
+wait 200
+turn 90
+wait 2500
+shot lake-3
+wait 200
+turn 90
+wait 2500
+shot lake-4
+wait 200
+
+# inside the forest south-west of the tavern, towards the cave
+goto NW_FARM2_TO_TAVERNCAVE1_03
+clear 3000
+face wp NW_FARM2_TO_TAVERNCAVE1_05
+streaming wait
+wait 5000
+shot forest-1
+wait 200
+turn 90
+wait 2500
+shot forest-2
+wait 200
+turn 90
+wait 2500
+shot forest-3
+wait 200
+turn 90
+wait 2500
+shot forest-4
+wait 200
+
+# the road on to Onar's farm, south edge
+goto NW_FARM3_PATH_13
+clear 3000
+face wp NW_FARM3_PATH_12
+streaming wait
+wait 5000
+shot onar-road-1
+wait 200
+turn 90
+wait 2500
+shot onar-road-2
+wait 200
+turn 90
+wait 2500
+shot onar-road-3
+wait 200
+turn 90
+wait 2500
+shot onar-road-4
+wait 200
+
+# the bottom of the gorge, 60 m below the road
+goto NW_CITYFOREST_10
+clear 3000
+face wp NW_CITYFOREST_12
+streaming wait
+wait 5000
+shot gorge-1
+wait 200
+turn 90
+wait 2500
+shot gorge-2
+wait 200
+turn 90
+wait 2500
+shot gorge-3
+wait 200
+turn 90
+wait 2500
+shot gorge-4
+wait 200
+
+# the path north towards the monastery
+goto NW_PATH_TO_MONASTERY_03
+clear 3000
+face wp NW_PATH_TO_MONASTERY_05
+streaming wait
+wait 5000
+shot monastery-path-1
+wait 200
+turn 90
+wait 2500
+shot monastery-path-2
+wait 200
+turn 90
+wait 2500
+shot monastery-path-3
+wait 200
+turn 90
+wait 2500
+shot monastery-path-4
+wait 200
+
+# The clips, at noon.
+goto NW_FARM2_TO_TAVERN_01
+clear 3000
+face wp NW_FARM2_TO_TAVERN_03
+streaming wait
+wait 5000
+rec walk-road
+wait 1000
+walkto NW_TAVERNE_CROSS
+waitarrive 90000
+walkto NW_FARM3_PATH_13
+waitarrive 60000
+wait 1000
+stop
+
+goto NW_FARM2_TO_TAVERN_10
+clear 3000
+face wp NW_FARM2_TO_TAVERNCAVE1_01
+streaming wait
+wait 5000
+rec walk-forest
+wait 1000
+walkto NW_FARM2_TO_TAVERNCAVE1_04
+waitarrive 60000
+wait 1000
+stop
+
+# Night: the same spots at 23:00, along the path and back.
+set time 23 0
+# the road south of the farm, towards the bridge, at night
+goto NW_FARM2_TO_TAVERN_02
+clear 3000
+face wp NW_FARM2_TO_TAVERN_04
+streaming wait
+wait 5000
+shot road-night-1
+wait 200
+turn 180
+wait 2500
+shot road-night-2
+wait 200
+
+# the road along the cliff, the turn towards the tavern, at night
+goto NW_FARM2_TO_TAVERN_08
+clear 3000
+face wp NW_FARM2_TO_TAVERN_10
+streaming wait
+wait 5000
+shot cliff-road-night-1
+wait 200
+turn 180
+wait 2500
+shot cliff-road-night-2
+wait 200
+
+# the crossroads at the tavern, at night
+goto NW_TAVERNE_CROSS
+face wp TAVERNE
+streaming wait
+wait 5000
+shot tavern-night-1
+wait 200
+turn 180
+wait 2500
+shot tavern-night-2
+wait 200
+
+# inside the forest south-west of the tavern, towards the cave, at night
+goto NW_FARM2_TO_TAVERNCAVE1_03
+clear 3000
+face wp NW_FARM2_TO_TAVERNCAVE1_05
+streaming wait
+wait 5000
+shot forest-night-1
+wait 200
+turn 180
+wait 2500
+shot forest-night-2
+wait 200
+
+# the north shore of the lake, at night
+goto NW_BIGFARM_LAKE_06
+clear 3000
+face wp NW_LAKE__WATER_03
+streaming wait
+wait 5000
+shot lake-night-1
+wait 200
+turn 180
+wait 2500
+shot lake-night-2
+wait 200

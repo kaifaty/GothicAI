@@ -1,6 +1,7 @@
 #include "baseimport.h"
 #include "basestoreimport.h"
 #include "commandline.h"
+#include "daedalus/script.h"
 #include "programdata.h"
 #include "outputunits.h"
 #include "resources.h"

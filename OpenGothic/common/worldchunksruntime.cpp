@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <array>
-#include <charconv>
 #include <cmath>
 #include <cstring>
 #include <map>
@@ -89,8 +88,6 @@ using namespace gothicglb;
   }
 
 constexpr int         formatVersion = 2;
-constexpr const char* manifestName  = "world.json";
-constexpr const char* worldFormat   = "gothic-world";
 constexpr const char* unreferencedName  = "unreferenced.bin";
 constexpr char        unreferencedMagic[4] = {'G','W','U','R'};
 // Float attributes carry source indices; floats are exact up to 2^24.
@@ -485,51 +482,6 @@ asset::WorldMesh canonicalWorldMesh(const asset::WorldMesh& mesh) {
   return out;
   }
 
-WorldChunkManifest readWorldChunkManifest(const std::filesystem::path& dir) {
-  const auto bytes = readFile(dir/manifestName);
-  rapidjson::Document doc;
-  doc.Parse<rapidjson::kParseFullPrecisionFlag>(reinterpret_cast<const char*>(bytes.data()),bytes.size());
-  if(doc.HasParseError() || !doc.IsObject())
-    fail("invalid " + (dir/manifestName).string());
-  if(jsonToString(member(doc,"format"),"format")!=worldFormat)
-    fail("not a converted world: " + dir.string());
-  if(jsonToInt(member(doc,"version"),"version")!=formatVersion)
-    fail("unsupported world format version in " + dir.string());
-  WorldChunkManifest m;
-  const auto& s = member(doc,"source");
-  m.source.world = jsonToString(member(s,"world"),"world");
-  m.source.size  = uint64_t(jsonToInt(member(s,"size"),"size"));
-  m.source.crc32 = uint32_t(jsonToInt(member(s,"crc32"),"crc32"));
-  m.chunkSize    = int32_t(jsonToInt(member(doc,"chunk_size_cm"),"chunk_size_cm"));
-  m.triangles    = uint64_t(jsonToInt(member(doc,"triangles"),"triangles"));
-  const auto& c  = member(doc,"chunks");
-  if(!c.IsArray())
-    fail("chunks must be an array");
-  for(const auto& v:c.GetArray()) {
-    auto name = jsonToString(v,"chunks");
-    const std::filesystem::path rel(name);
-    if(rel.is_absolute() || rel.empty())
-      fail("chunk path must be relative: " + name);
-    for(const auto& part:rel)
-      if(part=="..")
-        fail("chunk path must stay inside the world directory: " + name);
-    m.chunks.push_back(std::move(name));
-    }
-  m.vertices = uint64_t(jsonToInt(member(doc,"vertices"),"vertices"));
-  m.features = uint64_t(jsonToInt(member(doc,"features"),"features"));
-  if(jsonToString(member(doc,"unreferenced"),"unreferenced")!=unreferencedName)
-    fail("unexpected unreferenced file name");
-  const auto& mats = member(doc,"materials");
-  if(!mats.IsArray())
-    fail("materials must be an array");
-  for(rapidjson::SizeType i=0; i<mats.Size(); ++i) {
-    if(jsonToInt(member(mats[i],"index"),"index")!=int64_t(i))
-      fail("materials must be listed in source order");
-    m.materials.push_back(materialFromJson(mats[i]));
-    }
-  return m;
-  }
-
 asset::WorldMesh readWorldChunks(const std::filesystem::path& dir, const std::filesystem::path& overrideDir,
                                  ChunkTable* chunks) {
   const auto manifest = readWorldChunkManifest(dir);
@@ -538,19 +490,8 @@ asset::WorldMesh readWorldChunks(const std::filesystem::path& dir, const std::fi
   if(chunks!=nullptr) {
     if(manifest.chunkSize!=ChunkId::Size)
       fail("runtime chunks require a 64 m grid");
-    for(const auto& file:manifest.chunks) {
-      const auto name=std::filesystem::path(file).stem().string();
-      const auto separator=name.find('_');
-      ChunkId id;
-      if(separator==std::string::npos)
-        fail("invalid runtime chunk name: "+file);
-      const auto x=std::from_chars(name.data(),name.data()+separator,id.x);
-      const auto z=std::from_chars(name.data()+separator+1,name.data()+name.size(),id.z);
-      if(x.ec!=std::errc{} || x.ptr!=name.data()+separator ||
-         z.ec!=std::errc{} || z.ptr!=name.data()+name.size())
-        fail("invalid runtime chunk name: "+file);
-      table.entries.push_back({id,file});
-      }
+    for(const auto& cell:manifest.cells)
+      table.entries.push_back({cell.id,cell.drawFile(),{},{},0,cell.meshes});
     }
   ChunkReader reader;
   for(const auto& chunk:manifest.chunks) {
