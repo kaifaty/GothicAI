@@ -12,7 +12,8 @@
 // Every fallback leaves the stitched landscape in use with its log line.
 //   gothic-worldcollision-chunks-contract               the contract; needs GOTHIC_DIR and a ready base for NEWWORLD
 //   gothic-worldcollision-chunks-contract --time <dir>  times the builder and PackedMesh PK_Physic on both inputs of
-//                                                       a world cooked beside its GLBs (5 runs, warm page cache)
+//                                                       a world cooked beside its GLBs (5 runs, warm page cache;
+//                                                       content-convert time-world cannot: it links no graphics code)
 
 #include "commandline.h"
 #include "graphics/mesh/submesh/packedmesh.h"
@@ -30,6 +31,7 @@
 #include <algorithm>
 #include <bit>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -385,6 +387,7 @@ struct WorldCollisionChunksContract {
   struct Result {
     NavMesh::Geometry navigation;
     std::vector<Ray>  rays;
+    size_t            grid = 0; // the grid's rays come first
     double            buildMs = 0;
     };
 
@@ -403,25 +406,45 @@ struct WorldCollisionChunksContract {
           hi[axis] = std::max(hi[axis],entry.max[axis]);
           }
     require(lo.x<hi.x && lo.z<hi.z,"the ray grid needs the island's bounds");
+    auto cast = [&](const Tempest::Vec3& from, const Tempest::Vec3& to, uint32_t mask) {
+      const auto hit = physics.world->rayCast(from,to,mask);
+      Ray ray;
+      ray.hit = hit.hasHit;
+      const float point[3] = {hit.point.x,hit.point.y,hit.point.z}, normal[3] = {hit.normal.x,hit.normal.y,hit.normal.z};
+      for(unsigned axis=0;axis<3;++axis) {
+        ray.point[axis]  = bits(point[axis]);
+        ray.normal[axis] = bits(normal[axis]);
+        }
+      ray.material = hit.material;
+      ray.sector   = hit.sector==nullptr ? "" : hit.sector;
+      out.rays.push_back(std::move(ray));
+      };
+    // The grid: land and water rays in turn.
     constexpr int side = 64;
-    constexpr uint32_t masks[] = {1u<<DynamicWorld::C_Landscape,1u<<DynamicWorld::C_Water};
     for(int i=0;i<side;++i)
       for(int k=0;k<side;++k) {
         const float x = lo.x+(hi.x-lo.x)*(float(i)+.5f)/float(side), z = lo.z+(hi.z-lo.z)*(float(k)+.5f)/float(side);
-        for(const auto mask:masks) {
-          const auto hit = physics.world->rayCast({x,hi.y+1000.f,z},{x,lo.y-1000.f,z},mask);
-          Ray ray;
-          ray.hit = hit.hasHit;
-          const float point[3] = {hit.point.x,hit.point.y,hit.point.z}, normal[3] = {hit.normal.x,hit.normal.y,hit.normal.z};
-          for(unsigned axis=0;axis<3;++axis) {
-            ray.point[axis]  = bits(point[axis]);
-            ray.normal[axis] = bits(normal[axis]);
-            }
-          ray.material = hit.material;
-          ray.sector   = hit.sector==nullptr ? "" : hit.sector;
-          out.rays.push_back(std::move(ray));
-          }
+        cast({x,hi.y+1000.f,z},{x,lo.y-1000.f,z},1u<<DynamicWorld::C_Landscape);
+        cast({x,hi.y+1000.f,z},{x,lo.y-1000.f,z},1u<<DynamicWorld::C_Water);
         }
+    // Then short vertical land rays through every 16th roughly level triangle of a named sector, from the same input.
+    out.grid = out.rays.size();
+    const auto& p = mesh.polygons;
+    for(size_t t=0,named=0;t<p.material_indices.size();++t) {
+      const auto& material = mesh.materials[p.material_indices[t]];
+      if(material.disable_collision || material.name.find(':')==std::string::npos || named++%16!=0)
+        continue;
+      Tempest::Vec3 v[3];
+      for(unsigned k=0;k<3;++k) {
+        const auto& x = mesh.vertices[p.vertex_indices[t*3+k]];
+        v[k] = {x.x,x.y,x.z};
+        }
+      const auto n = Tempest::Vec3::crossProduct(v[1]-v[0],v[2]-v[0]);
+      if(std::abs(n.y)*2.f<n.length())
+        continue;
+      const auto c = (v[0]+v[1]+v[2])/3.f;
+      cast(c+Tempest::Vec3(0,10,0),c-Tempest::Vec3(0,10,0),1u<<DynamicWorld::C_Landscape);
+      }
     return out;
     }
 
@@ -437,19 +460,22 @@ struct WorldCollisionChunksContract {
     require(sameBytes(a.vertices,b.vertices) && sameBytes(a.triangles,b.triangles) &&
             sameBytes(a.waterVertices,b.waterVertices) && sameBytes(a.waterTriangles,b.waterTriangles),
             "NEWWORLD: the navigation geometry of the two DynamicWorlds differs");
-    require(stitched.rays.size()==chunks.rays.size(),"NEWWORLD: ray counts differ");
+    require(stitched.rays.size()==chunks.rays.size() && stitched.grid==chunks.grid,"NEWWORLD: ray counts differ");
     size_t hits[2] = {}, sectors = 0;
     for(size_t i=0;i<stitched.rays.size();++i) {
       require(stitched.rays[i]==chunks.rays[i],"NEWWORLD: ray "+std::to_string(i)+" differs (hit, point, normal, "
               "material or sector)");
-      hits[i%2] += stitched.rays[i].hit;
+      if(i<stitched.grid)
+        hits[i%2] += stitched.rays[i].hit;
       sectors += !stitched.rays[i].sector.empty();
       }
-    require(hits[0]>0 && hits[1]>0 && sectors>0,"NEWWORLD: the grid must hit land, water and named sectors");
+    require(hits[0]>0 && hits[1]>0 && stitched.grid>=4000 && sectors>0,
+            "NEWWORLD: the rays must hit land, water and named sectors");
     std::printf("NEWWORLD: two DynamicWorlds (%.0f ms from the stitched landscape, %.0f ms from the collision mesh): "
-                "navigation %zu+%zu triangles byte-identical; %zu vertical rays identical (%zu land, %zu water hits, "
-                "%zu in a named sector)\n",stitched.buildMs,chunks.buildMs,a.triangles.size()/3,a.waterTriangles.size()/3,
-                stitched.rays.size(),hits[0],hits[1],sectors);
+                "navigation %zu+%zu triangles byte-identical; %zu vertical grid rays (%zu land, %zu water hits) and "
+                "%zu short rays through named sector triangles identical, %zu rays in a named sector\n",
+                stitched.buildMs,chunks.buildMs,a.triangles.size()/3,a.waterTriangles.size()/3,stitched.grid,hits[0],
+                hits[1],stitched.rays.size()-stitched.grid,sectors);
     }
 
   static void newWorld(const fs::path& root, const fs::path& world) {
@@ -493,13 +519,21 @@ int timeWorld(const fs::path& dir) {
     const auto input = worldCollisionInput(loaded.table,true);
     require(input.mesh.has_value(),"a timed build gave no collision mesh");
     build.push_back(input.ms);
-    auto t0 = Clock::now();
-    const PackedMesh a(loaded.landscape,PackedMesh::PK_Physic);
-    landscape.push_back(ms(t0,Clock::now()));
-    t0 = Clock::now();
-    const PackedMesh b(*input.mesh,PackedMesh::PK_Physic);
-    collision.push_back(ms(t0,Clock::now()));
-    subMeshes = b.subMeshes.size();
+    // Each package alone, the order turning every run: the second of two live packages would pay for the memory.
+    auto pack = [&](const asset::WorldMesh& mesh, std::vector<double>& out) {
+      const auto t0 = Clock::now();
+      const PackedMesh packed(mesh,PackedMesh::PK_Physic);
+      out.push_back(ms(t0,Clock::now()));
+      subMeshes = packed.subMeshes.size();
+      };
+    if(run%2==0) {
+      pack(loaded.landscape,landscape);
+      pack(*input.mesh,collision);
+      }
+    else {
+      pack(*input.mesh,collision);
+      pack(loaded.landscape,landscape);
+      }
     }
   }
   std::printf("world %s: %zu triangles (%zu taken out as cloth), %zu vertices, %zu materials; PK_Physic %zu sub "
