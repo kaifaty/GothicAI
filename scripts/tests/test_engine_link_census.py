@@ -54,18 +54,20 @@ def unit(source, layer, undefined=(), strong=(), weak=(), library="OpenGothic"):
 
 def test_hole_rule():
     units = [
-        unit("common/graphics/a.cpp", "platform", undefined={"inl", "jolt", "upper", "libc", "strong"}),
+        unit("common/graphics/a.cpp", "platform", undefined={"inl", "jolt", "upper", "libc", "strong", "bfc"}),
         unit("common/graphics/b.cpp", "platform", weak={"inl"}),
         unit("common/world/w.cpp", "rpg", strong={"upper", "inl", "jolt", "strong"}),
-        unit("lib/JoltPhysics/x.cpp", None, strong={"jolt"}, library="Jolt"),
+        unit("lib/JoltPhysics/x.cpp", None, strong={"jolt"}, weak={"bfc"}, library="Jolt"),
+        unit("lib/Tempest/y.cpp", None, weak={"jolt", "bfc"}, library="Tempest"),
         unit("common/ui/m.cpp", "gothic", weak={"strong"}),
     ]
     r = census.report(units, "c++filt")
     assert [h["mangled"] for h in r["holes"]] == ["strong", "upper"]
     assert r["holes"][0]["defined_in"] == [{"file": "common/world/w.cpp", "layer": "rpg", "weak": False},
                                            {"file": "common/ui/m.cpp", "layer": "gothic", "weak": True}]
-    assert (r["resolved_in_platform"], r["third_party_references"], r["system_symbols"]) == (1, 1, 1)
-    assert r["third_party"] == [{"library": "Jolt", "symbols": 1, "files": [{"file": "common/graphics/a.cpp", "symbols": 1}]}]
+    assert (r["resolved_in_platform"], r["third_party_references"], r["system_symbols"]) == (1, 2, 1)
+    # A strong definition wins over weak copies; a weak-only symbol goes to every library holding a copy.
+    assert [(t["library"], t["symbols"], t["weak_only_symbols"]) for t in r["third_party"]] == [("Jolt", 2, 1), ("Tempest", 1, 1)]
     assert r["hole_symbols_by_layer"] == {"rpg": 2, "gothic": 1}
 
 

@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from engine_layers import LAYERS, layer_of  # noqa: E402
+from engine_layers import LAYERS, layer_of
 
 LINKABLE = (".o", ".obj", ".a", ".lib")
 OBJECT = (".o", ".obj")
@@ -64,7 +64,7 @@ def parse_nm(text: str, fmt: str) -> Symbols:
             m = MACHO_LINE.match(line)
             if not m or m["kind"] == "non-external":
                 continue
-            name = m["name"][1:] if m["name"].startswith("_") else m["name"]
+            name = m["name"].removeprefix("_")
             if m["section"] == "undefined":
                 out.undefined.add(name)
             else:
@@ -201,8 +201,9 @@ def analyse(units: list[Unit]) -> dict:
 
     holes: dict[str, dict[str, list[dict]]] = defaultdict(dict)  # platform file -> symbol -> definers
     third: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))  # library -> file -> symbols
-    system: set[str] = set()
-    internal = 0
+    system: Counter = Counter()  # symbol -> references
+    weak_only: dict[str, set[str]] = defaultdict(set)  # library -> symbols it holds only as weak copies
+    internal = third_refs = 0
     platform = [u for u in units if u.layer == "platform"]
     for u in platform:
         for name in sorted(u.symbols.undefined):
@@ -210,16 +211,24 @@ def analyse(units: list[Unit]) -> dict:
             if any(d.layer == "platform" for d, _ in found):
                 internal += 1
             elif any(d.layer is None for d, _ in found):
-                for d, _ in found:
-                    if d.layer is None:
-                        third[d.library][u.source].add(name)
+                third_refs += 1
+                # A strong definition is the library's own code; weak copies of header code (libc++'s
+                # bad_function_call in Tempest objects on macOS) count only when no library has a strong one.
+                outside = [(d, weak) for d, weak in found if d.layer is None]
+                strong = [d for d, weak in outside if not weak]
+                for d in strong or [d for d, _ in outside]:
+                    third[d.library][u.source].add(name)
+                    if not strong:
+                        weak_only[d.library].add(name)
             elif found:
                 holes[u.source][name] = sorted(
                     ({"file": d.source, "layer": d.layer, "weak": weak} for d, weak in found),
                     key=lambda x: (x["weak"], x["file"]))
             else:
-                system.add(name)
-    return {"holes": holes, "third": third, "system": system, "internal": internal, "platform": platform}
+                system[name] += 1
+    return {"holes": holes, "third": third, "system": system, "internal": internal, "third_refs": third_refs,
+            "weak_only": weak_only,
+            "platform": platform}
 
 
 def report(units: list[Unit], cxxfilt: str) -> dict:
@@ -241,6 +250,7 @@ def report(units: list[Unit], cxxfilt: str) -> dict:
     for library in sorted(a["third"]):
         files = a["third"][library]
         third.append({"library": library, "symbols": len(set().union(*files.values())),
+                      "weak_only_symbols": len(a["weak_only"].get(library, ())),
                       "files": [{"file": f, "symbols": len(s)} for f, s in sorted(files.items())]})
     objects: Counter = Counter(u.layer or "third-party" for u in units)
     return {
@@ -248,11 +258,12 @@ def report(units: list[Unit], cxxfilt: str) -> dict:
         "platform_files": len(a["platform"]),
         "platform_undefined": sum(len(u.symbols.undefined) for u in a["platform"]),
         "resolved_in_platform": a["internal"],
-        "third_party_references": sum(len(s) for files in a["third"].values() for s in files.values()),
+        "third_party_references": a["third_refs"],
         "hole_references": len(holes),
         "hole_symbols": len(names),
         "hole_files": len(by_file),
         "system_symbols": len(a["system"]),
+        "system_references": sum(a["system"].values()),
         "holes_by_file": dict(by_file.most_common()),
         "hole_symbols_by_layer": {l: n for l, n in by_layer.items() if n},
         "hole_references_by_layer": {l: n for l, n in pairs_by_layer.items() if n},
@@ -266,10 +277,10 @@ def markdown(r: dict, target: str) -> str:
            "Создано `scripts/engine_link_census.py`; слои — по `LAYER_RULES` из `scripts/engine_layers.py`.", "",
            "| Объектов по слоям | |", "|---|---:|"]
     out += [f"| `{k}` | {v} |" for k, v in r["objects"].items()]
-    out += ["", f"Файлов платформы: **{r['platform_files']}**, неопределённых ссылок у них: **{r['platform_undefined']}**. "
+    out += ["", (f"Файлов платформы: **{r['platform_files']}**, неопределённых ссылок у них: **{r['platform_undefined']}**. "
             f"Из них в платформе: {r['resolved_in_platform']}, в сторонних библиотеках: {r['third_party_references']}, "
             f"дыр: **{r['hole_references']}** ({r['hole_symbols']} символов в {r['hole_files']} файлах), "
-            f"системных символов: {r['system_symbols']}.", "",
+            f"системных: {r['system_references']} ({r['system_symbols']} символов)."), "",
             "## Дыры", "", "| Файл платформы | Символ | Где определён |", "|---|---|---|"]
     for h in r["holes"]:
         where = [f"`{d['file']}` ({d['layer']}{', слабое' if d['weak'] else ''})" for d in h["defined_in"]]
@@ -280,11 +291,11 @@ def markdown(r: dict, target: str) -> str:
     out += ["", "| Файл платформы | Дыр |", "|---|---:|"] + [f"| `{f}` | {n} |" for f, n in r["holes_by_file"].items()]
     out += ["", "| Слой, где определено | Символов | Ссылок |", "|---|---:|---:|"]
     out += [f"| `{l}` | {n} | {r['hole_references_by_layer'][l]} |" for l, n in r["hole_symbols_by_layer"].items()]
-    out += ["", "## Сторонние библиотеки платформы", "", "| Библиотека | Символов | Файлы платформы (ссылок) |",
-            "|---|---:|---|"]
+    out += ["", "## Сторонние библиотеки платформы", "", "| Библиотека | Символов | Из них только слабые копии | Файлы платформы (ссылок) |",
+            "|---|---:|---:|---|"]
     for t in r["third_party"]:
         files = ", ".join(f"`{f['file']}` ({f['symbols']})" for f in t["files"])
-        out.append(f"| `{t['library']}` | {t['symbols']} | {files} |")
+        out.append(f"| `{t['library']}` | {t['symbols']} | {t['weak_only_symbols']} | {files} |")
     return "\n".join(out) + "\n"
 
 
@@ -303,7 +314,7 @@ def collect(build: Path, target: str, engine: Path, nm: str, fmt: str, jobs: int
 def engine_dir(build: Path) -> Path:
     cache = build / "CMakeCache.txt"
     if cache.is_file():
-        m = re.search(r"^CMAKE_HOME_DIRECTORY:INTERNAL=(.*)$", cache.read_text(errors="replace"), re.M)
+        m = re.search(r"^CMAKE_HOME_DIRECTORY:INTERNAL=(.*)$", cache.read_text(errors="replace"), re.MULTILINE)
         if m:
             return Path(m.group(1)).resolve()
     raise SystemExit(f"{cache}: no CMAKE_HOME_DIRECTORY; pass --engine")
