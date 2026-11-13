@@ -1,4 +1,5 @@
 #include "basestoreimport.h"
+#include "baseimport.h"
 #include "videodata.h"
 
 BaseStore::Selection BaseStore::ensure(const std::filesystem::path& gothic,

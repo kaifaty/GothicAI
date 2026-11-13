@@ -62,7 +62,6 @@ LAYER_RULES: list[tuple[str, str]] = [
     ("common/baseimport", "import"),
     ("common/basestoreimport", "import"),
     ("common/basesources", "import"),
-    ("common/baseidentity", "import"),
     ("common/musicnativeimport", "import"),
     ("common/videoimport", "import"),
     ("common/dmusic/directmusicimport", "import"),
@@ -137,6 +136,8 @@ LAYER_RULES: list[tuple[str, str]] = [
     ("common/world/*", "rpg"),
     ("common/nav*", "rpg"),
     # The platform: resources of our formats, render, animation, physics, sound, nets.
+    # Installation identity and ready-base validation use file I/O only.
+    ("common/baseidentity", "platform"),
     ("common/asset/*", "platform"),
     ("common/graphics/*", "platform"),
     ("common/physics/*", "platform"),

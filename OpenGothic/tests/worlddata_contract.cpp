@@ -1,4 +1,5 @@
 #include "asset/fromzenkit.h"
+#include "baseimport.h"
 #include <zenkit/World.hh>
 #include <zenkit/Vfs.hh>
 #include "commandline.h"

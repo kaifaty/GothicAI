@@ -25,6 +25,7 @@
 #include "musicdata.h"
 #include "musicnative.h"
 #include "dmusic/directmusic.h"
+#include "dmusic/musicrecord.h"
 #include "dmusic/sourcefile.h"
 #include "programdata.h"
 #include "outputunits.h"
