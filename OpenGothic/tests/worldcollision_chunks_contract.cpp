@@ -23,6 +23,7 @@
 #include "worldchunkcook.h"
 #include "worldchunkcookedsource.h"
 #include "worldchunks.h"
+#include "staticcollision_probe.h"
 #include "worldcloth_fixtures.h"
 
 #include <algorithm>
@@ -56,9 +57,6 @@ struct TemporaryDirectory {
     fs::remove_all(path,error);
     }
   };
-
-const WorldChunkSource stripSource     = {"CONTRACT.ZEN",3,0x00C0FFEEu};
-const WorldChunkSource collisionSource = {"COLLISION_CONTRACT.ZEN",13,0x0C0111DEu};
 
 uint32_t bits(float v) { return std::bit_cast<uint32_t>(v); }
 
@@ -235,35 +233,6 @@ void stripFixtures(const fs::path& root) {
   expectEqual("strip with the override of cell 2,0 (a material appended)",strip,second);
   }
 
-// 8 x 4 quads of 32 m over cells -1..2 x 0..1, each of one of five materials in turn — ground, a material with
-// disable_collision, water and two named sector materials (a ':' in the name, the same group) — so each lies in
-// several cells; a city banner across the border of cells 0,0 and 1,0 goes to cloth; one position is unused.
-asset::WorldMesh collisionWorld() {
-  asset::WorldMesh mesh;
-  const uint32_t materials[5] = {addMaterial(mesh,"COLLISION_GROUND","GROUND.TGA"),
-    addMaterial(mesh,"COLLISION_FOLIAGE","FOLIAGE.TGA"),addMaterial(mesh,"COLLISION_LAKE","LAKE.TGA"),
-    addMaterial(mesh,"SECTOR:HALL_A","HALL_A.TGA"),addMaterial(mesh,"SECTOR:HALL_B","HALL_B.TGA")};
-  mesh.materials[materials[0]].group = asset::MaterialGroup::EARTH;
-  mesh.materials[materials[1]].disable_collision = true;
-  mesh.materials[materials[2]].group = asset::MaterialGroup::WATER;
-  mesh.materials[materials[3]].group = asset::MaterialGroup::STONE;
-  mesh.materials[materials[4]].group = asset::MaterialGroup::STONE;
-  const auto base = uint32_t(mesh.vertices.size());
-  for(uint32_t row=0;row<=4;++row)
-    for(uint32_t col=0;col<=8;++col)
-      mesh.vertices.push_back({-6400.f+float(col)*3200.f,float(row*7+col*3),float(row)*3200.f});
-  for(uint32_t row=0;row<4;++row)
-    for(uint32_t col=0;col<8;++col) {
-      const auto material = materials[(row+col)%5];
-      const auto a = base+row*9+col, b = a+1, c = a+9, d = c+1;
-      addTriangle(mesh,material,{a,b,d});
-      addTriangle(mesh,material,{a,d,c});
-      }
-  addBanner(mesh,addMaterial(mesh,"NW_CITY_FLAG_01","SYNTHETIC_CITY.TGA"),6300);
-  mesh.vertices.push_back({1.f,2.f,3.f}); // referenced by nothing: unreferenced.bin
-  return mesh;
-  }
-
 void collisionFixture(const fs::path& root) {
   const auto mesh = collisionWorld();
   const auto dir = root/"collision";
@@ -388,90 +357,13 @@ void fallbacks(const fs::path& root) {
 
 // ---- the base's NEWWORLD: the same bodies from both inputs ----
 
-// A friend of DynamicWorld: the rays go straight to its collision world with one category mask each.
+// The two DynamicWorlds go through the shared probe (staticcollision_probe.h).
 struct WorldCollisionChunksContract {
-  struct Ray {
-    bool                 hit = false;
-    uint32_t             point[3] = {}, normal[3] = {};
-    asset::MaterialGroup material = asset::MaterialGroup::UNDEFINED;
-    std::string          sector;
-    bool operator==(const Ray&) const = default;
-    };
-  struct Result {
-    NavMesh::Geometry navigation;
-    std::vector<Ray>  rays;
-    size_t            grid = 0; // the grid's rays come first
-    double            buildMs = 0;
-    };
-
-  static Result probe(const asset::WorldMesh& mesh, const asset::WorldMesh& original, const ChunkTable& table) {
-    Result out;
-    const auto started = Clock::now();
-    const DynamicWorld physics(nullptr,mesh,&original);
-    out.buildMs = ms(started,Clock::now());
-    out.navigation = physics.navigationGeometry();
-    const float infinity = std::numeric_limits<float>::infinity();
-    asset::Vec3 lo {infinity,infinity,infinity}, hi {-infinity,-infinity,-infinity};
-    for(const auto& entry:table.entries)
-      if(entry.triangleCount!=0)
-        for(unsigned axis=0;axis<3;++axis) {
-          lo[axis] = std::min(lo[axis],entry.min[axis]);
-          hi[axis] = std::max(hi[axis],entry.max[axis]);
-          }
-    require(lo.x<hi.x && lo.z<hi.z,"the ray grid needs the island's bounds");
-    auto cast = [&](const Tempest::Vec3& from, const Tempest::Vec3& to, uint32_t mask) {
-      const auto hit = physics.world->rayCast(from,to,mask);
-      Ray ray;
-      ray.hit = hit.hasHit;
-      const float point[3] = {hit.point.x,hit.point.y,hit.point.z}, normal[3] = {hit.normal.x,hit.normal.y,hit.normal.z};
-      for(unsigned axis=0;axis<3;++axis) {
-        ray.point[axis]  = bits(point[axis]);
-        ray.normal[axis] = bits(normal[axis]);
-        }
-      ray.material = hit.material;
-      ray.sector   = hit.sector==nullptr ? "" : hit.sector;
-      out.rays.push_back(std::move(ray));
-      };
-    // The grid: land and water rays in turn.
-    constexpr int side = 64;
-    for(int i=0;i<side;++i)
-      for(int k=0;k<side;++k) {
-        const float x = lo.x+(hi.x-lo.x)*(float(i)+.5f)/float(side), z = lo.z+(hi.z-lo.z)*(float(k)+.5f)/float(side);
-        cast({x,hi.y+1000.f,z},{x,lo.y-1000.f,z},1u<<DynamicWorld::C_Landscape);
-        cast({x,hi.y+1000.f,z},{x,lo.y-1000.f,z},1u<<DynamicWorld::C_Water);
-        }
-    // Then short vertical land rays through every 16th roughly level triangle of a named sector, from the same input.
-    out.grid = out.rays.size();
-    const auto& p = mesh.polygons;
-    for(size_t t=0,named=0;t<p.material_indices.size();++t) {
-      const auto& material = mesh.materials[p.material_indices[t]];
-      if(material.disable_collision || material.name.find(':')==std::string::npos || named++%16!=0)
-        continue;
-      Tempest::Vec3 v[3];
-      for(unsigned k=0;k<3;++k) {
-        const auto& x = mesh.vertices[p.vertex_indices[t*3+k]];
-        v[k] = {x.x,x.y,x.z};
-        }
-      const auto n = Tempest::Vec3::crossProduct(v[1]-v[0],v[2]-v[0]);
-      if(std::abs(n.y)*2.f<n.length())
-        continue;
-      const auto c = (v[0]+v[1]+v[2])/3.f;
-      cast(c+Tempest::Vec3(0,10,0),c-Tempest::Vec3(0,10,0),1u<<DynamicWorld::C_Landscape);
-      }
-    return out;
-    }
-
-  static bool sameBytes(const auto& a, const auto& b) {
-    return a.size()==b.size() && (a.empty() || std::memcmp(a.data(),b.data(),a.size()*sizeof(a[0]))==0);
-    }
-
   static void compare(const Loaded& loaded) {
-    const auto stitched = probe(loaded.landscape,loaded.cloth.original,loaded.table);
-    const auto chunks   = probe(*loaded.input.mesh,loaded.cloth.original,loaded.table);
+    const auto stitched = StaticCollisionProbe::probe(loaded.landscape,loaded.cloth.original,loaded.table);
+    const auto chunks   = StaticCollisionProbe::probe(*loaded.input.mesh,loaded.cloth.original,loaded.table);
     const auto& a = stitched.navigation;
-    const auto& b = chunks.navigation;
-    require(sameBytes(a.vertices,b.vertices) && sameBytes(a.triangles,b.triangles) &&
-            sameBytes(a.waterVertices,b.waterVertices) && sameBytes(a.waterTriangles,b.waterTriangles),
+    require(StaticCollisionProbe::sameNavigation(a,chunks.navigation),
             "NEWWORLD: the navigation geometry of the two DynamicWorlds differs");
     require(stitched.rays.size()==chunks.rays.size() && stitched.grid==chunks.grid,"NEWWORLD: ray counts differ");
     size_t hits[2] = {}, sectors = 0;

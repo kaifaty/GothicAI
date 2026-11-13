@@ -48,3 +48,23 @@ struct WorldCollisionInput {
 // The world load's choice for the loaded chunk table, after WorldCloth::extract changed it: clothBundle is true
 // when extract took the bundle for this load (WorldCloth::lastPath on the loading thread). Never throws.
 WorldCollisionInput worldCollisionInput(const ChunkTable& table, bool clothBundle);
+
+// The world load's collision input for DynamicWorld (StaticCollision::Input, through std::ref): the first call runs
+// worldCollisionInput and selects from it and the landscape as above. DynamicWorld calls it only when the collision
+// cache misses or is off (staticcollision.h); on a hit nothing is read or built and nothing is logged.
+class WorldCollisionSource final {
+  public:
+    WorldCollisionSource(const ChunkTable& table, bool clothBundle, const asset::WorldMesh& landscape)
+      :table(table), clothBundle(clothBundle), landscape(landscape) {}
+    const asset::WorldMesh& operator()();
+    size_t calls() const { return count; }
+    // For the physics_static load mark: WorldCollisionInput::probe(), or " input=cache input_ms=0" when never called.
+    std::string probe() const;
+
+  private:
+    const ChunkTable&                  table;
+    bool                               clothBundle = false;
+    const asset::WorldMesh&            landscape;
+    std::optional<WorldCollisionInput> built;
+    size_t                             count = 0;
+  };

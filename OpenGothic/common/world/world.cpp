@@ -161,9 +161,9 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     auto wdynamicFut = std::async(probeLaunch, [&]() {
       Workers::setThreadName("Loading: BVH thread");
       const auto t = LoadProbe::now();
-      const auto collision = worldCollisionInput(chunks,clothBundle);
+      WorldCollisionSource collision(chunks,clothBundle,worldMesh); // read and built only if the collision cache misses
+      auto ret = std::unique_ptr<DynamicWorld>(new DynamicWorld(this,std::ref(collision),&worldCloth.original,nullptr));
       probeInput = collision.probe();
-      auto ret = std::unique_ptr<DynamicWorld>(new DynamicWorld(this,collision.select(worldMesh),&worldCloth.original));
       ret->setBulletTrace(ArrowTrace::hook());
       probePhysicsMs = LoadProbe::msSince(t);
       return ret;
