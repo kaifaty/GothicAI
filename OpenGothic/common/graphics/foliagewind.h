@@ -32,11 +32,13 @@ enum : uint8_t { Wind = 1, Light = 2, Both = 3 };
 
 constexpr float MaxScale     = 4.f;      // the range of wind and flutter in the record
 constexpr float GustSpeed    = 5.65f;    // m/s: the peak of the world's gust at scale 1 (WorldWind::sample)
+constexpr float PressureCurve = 0.75f;   // the pressure is (speed/GustSpeed) to this power: a leaf that leans gives way,
+                                         // so the breeze between gusts (2.2..2.85 m/s) still has half of the gust's
 constexpr float BendK        = 0.162f;   // tan of the bend per unit of pressure (1 at that peak), on the crest of the waves
 constexpr float BendMaxTan   = 0.3093f;  // tan(0.30 rad): the cap of the bend
 constexpr float BendRoot     = 0.35f;    // the share of the bend a vertex at the root takes
-constexpr float WaveSteady   = 0.6f;     // the bend is WaveSteady + WaveSwing*G, G in -1..1
-constexpr float WaveSwing    = 0.4f;
+constexpr float WaveSteady   = 0.5f;     // the bend is WaveSteady + WaveSwing*G, G in -1..1: from rest to the full lean
+constexpr float WaveSwing    = 0.5f;
 constexpr float Wave1Length  = 2400.f;   // cm; along +Z, the mean direction of the wind
 constexpr float Wave2Length  = 950.f;    // cm; turned 55 degrees to +X
 constexpr float Wave1Share   = 0.55f;
@@ -51,10 +53,11 @@ constexpr float FlutterCalm  = 0.004f;   // of the arm, at no pressure
 constexpr float FlutterWind  = 0.022f;   // more of it per unit of pressure
 constexpr float FlutterMaxQ  = 1.5f;     // the pressure the flutter stops growing at
 constexpr float FlutterLeaf  = 0.35f;    // rad per cm across the tuft: leaves side by side are out of step
-constexpr float WallShare    = 0.5f;     // of the wind that blows into the wall goes along it
-constexpr float WallSign     = 0.1f;     // the side it goes to turns over smoothly within this share of the wind
+constexpr float WallSign     = 0.04f;    // the wind a wall stops turns along it, to the side of its own part along
+                                         // the wall; that side turns over smoothly within this share of the wind
 constexpr float LeeLift      = 0.35f;    // of the wind that blows away from the rock lifts the leaf off it
-constexpr float BoundsDir    = 1.5f;     // the longest the wind's direction in the tuft's axes can get
+constexpr float BoundsDir    = 1.1f;     // the wind's direction in the tuft's axes is no longer than 1; the rest is
+                                         // the chord of the arm's turn
 
 // The switch: on by default. OPENGOTHIC_FOLIAGE=0 turns both halves off, `wind` or `light` keeps that one only
 // (test benches); [INTERNAL] foliage=0 of Gothic.ini is given by the renderer before the first bucket is built
@@ -120,7 +123,7 @@ inline Scene scene(uint64_t tick, uint64_t periodMs, bool windEnabled, float sca
   const float speed = std::sqrt(v.x*v.x + v.z*v.z);
   if(speed<=1e-4f)
     return s;
-  const float q = (speed/GustSpeed)*(speed/GustSpeed);
+  const float q = std::pow(speed/GustSpeed, PressureCurve);
   s.wind = Tempest::Vec4(v.x/speed, v.z/speed, q, 1.f);
   return s;
   }
@@ -169,7 +172,7 @@ inline Tempest::Vec3 bend(const Tempest::Vec3& p, uint32_t bits, float reach,
   const float s = std::min(len/std::max(reach,1e-3f), 1.f);
   const float q = sc.wind.z;
 
-  // the wind in the tuft's axes: along the wall its own part and a share of what the wall stops; none into the rock
+  // the wind in the tuft's axes: what the wall stops turns along it and keeps its speed; none goes into the rock
   const Tempest::Vec3 w(sc.wind.x, 0.f, sc.wind.y);
   float wl[3] = {};
   for(int i=0; i<3; ++i) {
@@ -177,7 +180,8 @@ inline Tempest::Vec3 bend(const Tempest::Vec3& p, uint32_t bits, float reach,
     wl[i] = l>1e-6f ? Tempest::Vec3::dotProduct(w,axis[i])/l : 0.f;
     }
   const float own   = wl[0];
-  const float along = own + WallShare*std::max(-wl[2],0.f)*own/std::sqrt(own*own + WallSign*WallSign);
+  const float into  = std::max(-wl[2],0.f);
+  const float along = own + (std::sqrt(own*own + into*into) - std::abs(own))*own/std::sqrt(own*own + WallSign*WallSign);
   const Tempest::Vec3 dir(along, wl[1], LeeLift*std::max(wl[2],0.f));
 
   // the gusts: two waves that run over the world

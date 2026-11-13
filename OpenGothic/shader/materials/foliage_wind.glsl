@@ -14,8 +14,8 @@ const float FoliageMaxScale    = 4.0;
 const float FoliageBendK       = 0.162;
 const float FoliageBendMaxTan  = 0.3093;
 const float FoliageBendRoot    = 0.35;
-const float FoliageWaveSteady  = 0.6;
-const float FoliageWaveSwing   = 0.4;
+const float FoliageWaveSteady  = 0.5;
+const float FoliageWaveSwing   = 0.5;
 const float FoliageWave1Length = 2400.0;
 const float FoliageWave2Length = 950.0;
 const float FoliageWave1Share  = 0.55;
@@ -25,8 +25,7 @@ const float FoliageFlutterCalm = 0.004;
 const float FoliageFlutterWind = 0.022;
 const float FoliageFlutterMaxQ = 1.5;
 const float FoliageFlutterLeaf = 0.35;
-const float FoliageWallShare   = 0.5;
-const float FoliageWallSign    = 0.1;
+const float FoliageWallSign    = 0.04;
 const float FoliageLeeLift     = 0.35;
 
 float foliagePackedWind   (uint bits) { return float( bits       & 0xFFu)*(FoliageMaxScale/255.0); }
@@ -55,14 +54,15 @@ vec3 foliageBend(vec3 p, uint bits, float reach, mat4x3 mat, vec4 wind, vec4 pha
   const float s = min(len/max(reach,1e-3), 1.0);
   const float q = wind.z;
 
-  // the wind in the tuft's axes: along the wall its own part and a share of what the wall stops; none into the rock
+  // the wind in the tuft's axes: what the wall stops turns along it and keeps its speed; none goes into the rock
   const vec3  w  = vec3(wind.x, 0.0, wind.y);
   const vec3  al = vec3(length(mat[0]), length(mat[1]), length(mat[2]));
   const vec3  wl = vec3(al.x>1e-6 ? dot(w,mat[0])/al.x : 0.0,
                         al.y>1e-6 ? dot(w,mat[1])/al.y : 0.0,
                         al.z>1e-6 ? dot(w,mat[2])/al.z : 0.0);
   const float own   = wl.x;
-  const float along = own + FoliageWallShare*max(-wl.z,0.0)*own/sqrt(own*own + FoliageWallSign*FoliageWallSign);
+  const float into  = max(-wl.z,0.0);
+  const float along = own + (length(vec2(own,into)) - abs(own))*own/sqrt(own*own + FoliageWallSign*FoliageWallSign);
   const vec3  dir   = vec3(along, wl.y, FoliageLeeLift*max(wl.z,0.0));
 
   // the gusts: two waves that run over the world

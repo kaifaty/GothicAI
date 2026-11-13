@@ -702,11 +702,11 @@ void foliageWindMaths() {
   require(off.wind.w==0.f && off.wind.z==0.f,"no wind in the world: nothing blows");
   const Scene legacy = scene(3000,period,true,1.f,true);
   require(legacy.wind.w==1.f && legacy.wind.x==0.f && legacy.wind.y==1.f &&
-          std::abs(legacy.wind.z-(4.f/GustSpeed)*(4.f/GustSpeed))<1e-5f && legacy.phase.x==0.5f,
+          std::abs(legacy.wind.z-std::pow(4.f/GustSpeed,PressureCurve))<1e-5f && legacy.phase.x==0.5f,
           "without the cloth's wind: a steady 4 m/s along +Z, the waves still run");
   const Scene gust = scene(peak,period,true,1.f,false), calm = scene(lull,period,true,1.f,false);
-  require(gust.wind.w==1.f && gust.wind.z>0.55f && gust.wind.z<=1.02f,"the peak of the world's gust is pressure 1");
-  require(calm.wind.w==1.f && calm.wind.z>0.05f && calm.wind.z<0.27f,"between gusts the pressure is 0.075..0.25");
+  require(gust.wind.w==1.f && gust.wind.z>0.8f && gust.wind.z<=1.01f,"the peak of the world's gust is pressure 1");
+  require(calm.wind.w==1.f && calm.wind.z>0.36f && calm.wind.z<0.61f,"between gusts the pressure is 0.38..0.60");
   require(std::abs(gust.wind.x*gust.wind.x + gust.wind.y*gust.wind.y - 1.f)<1e-4f,"the direction is a unit vector");
   const Scene again = scene(peak,period,true,1.f,false);
   require(again.wind==gust.wind && again.phase==gust.phase,"the same tick gives the same wind");
@@ -763,13 +763,29 @@ void foliageWindMaths() {
   flutterOnly.wind = 0.f;
   float low = 0.f, high = 0.f;
   sweep(bendOnly,1.f,true,low,high);
-  require(low>2.6f && low<3.0f && high>13.2f && high<13.9f,"the world's gust bends an 85 cm leaf by 2.8..13.6 cm, 16 %");
-  sweep(bendOnly,0.075f,true,low,high);
-  require(low>0.15f && low<0.25f && high>0.9f && high<1.1f,"between gusts the same leaf goes 0.2..1.0 cm");
+  require(low<0.05f && high>13.2f && high<13.9f,"the world's gust bends an 85 cm leaf from rest to 13.6 cm, 16 %");
+  sweep(bendOnly,0.38f,true,low,high);
+  require(low<0.05f && high>4.9f && high<5.5f,"in the calmest wind between gusts the same leaf goes to 5.2 cm");
+  sweep(bendOnly,0.60f,true,low,high);
+  require(low<0.05f && high>7.9f && high<8.5f,"and to 8.2 cm in the steady one");
   sweep(flutterOnly,1.f,false,low,high);
   require(high>2.0f && high<2.3f,"the flutter of that leaf in the gust is 2.2 cm");
-  sweep(flutterOnly,0.075f,false,low,high);
-  require(high>0.42f && high<0.52f,"and half a centimetre between gusts");
+  sweep(flutterOnly,0.38f,false,low,high);
+  require(high>0.95f && high<1.15f,"and a centimetre between gusts");
+
+  // a wall the wind blows into: the wind turns along it, to the side of its own part, and keeps its speed
+  const auto lean = [&](float angle) {
+    Scene sc;
+    sc.wind  = Tempest::Vec4(std::sin(angle),std::cos(angle),1.f,1.f);
+    sc.phase = Tempest::Vec4(0.75f,0.75f,0,0);
+    return bend(Vec3(0,-85,0),pack(bendOnly,Both),85.f,wallZ,Vec3(0,0,0),sc) - Vec3(0,-85,0);
+    };
+  const Vec3 left = lean(0.3f), right = lean(-0.3f), head = lean(0.f);
+  require(left.x<-13.f && left.x>-13.9f && right.x>13.f && right.x<13.9f && std::abs(left.z)<1e-3f,
+          "the leaf of a windward wall leans along it as far as one the wind runs along, and never into the rock");
+  require(head.length()<1e-3f,"the wind straight into the wall leans it to neither side");
+  const Vec3 turning = lean(0.02f);
+  require(turning.x<-3.f && turning.x>-9.f,"the side turns over smoothly");
 
   const Scene same = scene(4242,period,true,1.f,false);
   require(bend(leaves[1],bits,arm,wallZ,places[0],same)==bend(leaves[1],bits,arm,wallZ,places[0],same),
