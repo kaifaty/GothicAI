@@ -344,6 +344,11 @@ if(UNIX)
   target_compile_definitions(gothic-mesh-gltf-test PRIVATE
     GOTHIC_TEST_BARREL_SCRIPT="${PROJECT_SOURCE_DIR}/../scripts/meshes/make_test_barrel.py")
   target_compile_options(gothic-mesh-gltf-test PRIVATE -Wall -Wconversion -Werror)
+  # The platform draws a glTF mesh into a frame without a window, Gothic, its base or sound (engine layers 8.4).
+  add_executable(gothic-platform-draw-test EXCLUDE_FROM_ALL tests/platform_draw_test.cpp)
+  target_link_libraries(gothic-platform-draw-test PRIVATE OpenGothic)
+  target_include_directories(gothic-platform-draw-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
+  target_compile_options(gothic-platform-draw-test PRIVATE -Wall -Wconversion -Werror)
 endif()
 
 # The society stand's core (common/society/README.md): the standard library and rapidjson only. Its include path

@@ -29,6 +29,9 @@ class Renderer final {
     static uint32_t benchVsmLampSides;
     // bench `vsm study <bits>`: the shadow test on a mesh's facets (scene.vsmStudy, VSM_STUDY_* of scene.glsl)
     static uint32_t benchVsmStudy;
+    // bench `ssao study <bits>` (reports/engine/2026-11-13-ssao-behind-camera): 1 the samples of ssao.comp behind
+    // the camera are read off the screen as before 2026-11-13, 2 the frame is the blurred occlusion alone (red)
+    static uint32_t benchSsaoStudy;
 
     void drawScene(Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId,
                    bool sceneActive);
@@ -126,6 +129,7 @@ class Renderer final {
     void drawRayQueryDbg  (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
     void drawMotionView   (Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawReactiveView (Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd);
+    void drawSsaoView     (Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void prepareMotion    (WorldView& wview);
     void drawProbesDbg    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
     void drawSurfelsDbg   (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);

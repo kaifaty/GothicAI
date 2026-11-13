@@ -48,11 +48,6 @@ namespace asset { struct WorldMesh; }
 namespace WorldData { struct Data; struct ZenFile; }
 namespace VideoData { class Reader; }
 
-namespace Dx8 {
-class DirectMusic;
-class PatternList;
-}
-
 class Resources final {
   public:
     static void probeMemory(std::string_view stage);
@@ -60,7 +55,9 @@ class Resources final {
     // Simulation resources: base geometry, skeletons and animation data,
     // without constructing a graphics or audio device.
     Resources();
-    explicit Resources(Tempest::Device& device);
+    // Audio::Off leaves the sound device closed: a program of the platform without sound (a render test, the island)
+    enum class Audio : uint8_t { Open, Off };
+    explicit Resources(Tempest::Device& device, Audio audio = Audio::Open);
     ~Resources();
 
     enum class FontType : uint8_t {
@@ -111,6 +108,7 @@ class Resources final {
     static Tempest::Device&          device();
     static bool                      hasGraphicsDevice() { return inst!=nullptr && inst->dev!=nullptr; }
     static bool                      isHeadless() { return inst!=nullptr && inst->dev==nullptr; }
+    static uint64_t                  generation() { return instGeneration.load(); }
     static const char*               renderer();
     static void                      loadBase();
     // The fingerprint of the selected game base (the one OPENGOTHIC_BASE_FINGERPRINT selects), empty before loadBase.
@@ -125,6 +123,9 @@ class Resources final {
 
     static const Tempest::Texture2d& fallbackTexture();
     static const Tempest::Texture2d& fallbackBlack();
+    // The texture of a material whose own one is missing: DEFAULT.TGA of the base, else a grey checker built in code,
+    // so that the mesh is still drawn without a base. nullptr in a headless simulation.
+    static const Tempest::Texture2d* loadDefaultTexture();
     static auto                      fallbackImage() -> const Tempest::StorageImage&;
     static auto                      fallbackImage3d() -> const Tempest::StorageImage&;
     // an R32U 1x1x1 image: the VSM page table bound where VSM is off (materials/main.frag reads the cascades then)
@@ -302,7 +303,8 @@ class Resources final {
     static asset::MorphMesh           loadMorphData(std::string_view name);
     static Tempest::Sound            loadSoundBuffer(std::string_view name);
 
-    static Dx8::PatternList          loadDxMusic(std::string_view name);
+    static std::vector<uint8_t>      readDxMusic(const std::vector<std::u16string>& paths, const char16_t* name,
+                                               const char* kind);
     static DmSegment*                loadMusicSegment(char const* name);
     static std::unique_ptr<VideoData::Reader> loadVideo(std::string_view name);
     static void                      startVideoBase();
@@ -366,6 +368,7 @@ class Resources final {
     friend struct WorldDataContract;
     friend struct AssetDigest;
     static Resources* inst;
+    static std::atomic<uint64_t> instGeneration;
     void initCensus();
 
     struct BaseIndex {
@@ -512,10 +515,8 @@ class Resources final {
     std::unique_ptr<Animation> implLoadAnimation(std::string name);
     ProtoMesh*            implDecalMesh(const asset::VisualDecal& decal);
     Tempest::Sound        implLoadSoundBuffer(std::string_view name);
-    Dx8::PatternList      implLoadDxMusic(std::string_view name);
     DmSegment*            implLoadMusicSegment(char const* name);
     DmResult              readGkMusic(std::string_view name, const char* kind, std::vector<uint8_t>& bytes) noexcept;
-    std::vector<uint8_t>  readDxMusic(const std::vector<std::u16string>& paths, const char16_t* name, const char* kind);
     std::vector<uint8_t>  readMusicRecord(std::string_view provider, std::string_view request,
                                         const char* kind, const MusicData::Source& source);
     GthFont&              implLoadFont(std::string_view fname, FontType type, const float scale);
@@ -525,6 +526,7 @@ class Resources final {
     Tempest::VertexBuffer<Vertex> sphere(int passCount, float R);
 
     Tempest::Texture2d fallback, fbZero;
+    Tempest::Texture2d fbDefault; // loadDefaultTexture without DEFAULT.TGA, made on the first such material
     Tempest::StorageImage fbImg, fbImg3d, fbPageTbl;
 
     using BindK  = std::tuple<const Skeleton*,const ProtoMesh*>;
@@ -555,7 +557,6 @@ class Resources final {
     std::unique_ptr<Tempest::SoundDevice> sound;
 
     std::recursive_mutex              sync;
-    std::unique_ptr<Dx8::DirectMusic> dxMusic;
     DmLoader*                         dmLoader = nullptr;
     std::unique_ptr<ContentCensus>     census;
 
