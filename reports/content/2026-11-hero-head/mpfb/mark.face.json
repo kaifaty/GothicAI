@@ -702,9 +702,12 @@
     }
   },
   "speech_face": {
-    "about": "The face from the voice (engine-plan.md, step 10) on a head with Mark's shapes (face-shapes.md, 'Формы Mark в игре'): a track of Audio2Face v3.0 weights, solved for Mark's shapes, plays as it is - no cap, no scale; eyeLook* dropped (the gaze is Eyes'). The track's eyeBlink* is the level of the lids, the blinks go over it. A track made with an emotion has the expression: the mood faces of the line give way to it while it shows and come back after it.",
+    "about": "The face from the voice (engine-plan.md, step 10) on a head with Mark's shapes (face-shapes.md, 'Формы Mark в игре'): a track of Audio2Face v3.0 weights, solved for Mark's shapes, plays as it is but for mouthClose x1.4 (our lips are fuller than Mark's: where Mark shuts them, Vino's stayed 1.0-1.3 mm apart in 6 % of the frames of the clip, 1 % with it; the lip over the upper one unchanged) - no cap; eyeLook* dropped (the gaze is Eyes'). The track's eyeBlink* is the level of the lids, the blinks go over it. A track made with an emotion has the expression: the mood faces of the line give way to it while it shows and come back after it.",
     "fade_in_ms": 80,
     "fade_out_ms": 250,
+    "scale": {
+      "mouthClose": 1.4
+    },
     "drop": [
       "eyeLook*"
     ],

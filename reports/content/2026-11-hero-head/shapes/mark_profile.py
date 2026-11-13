@@ -12,7 +12,7 @@
 # is the table's deviation, not corrected. (Matching all the points' shifts by least squares shrank the weights, the
 # directions of the two sets differ.) The blink, the gaze
 # and the visemes are the same shapes on both heads and keep their weights. speech_face plays Mark's weights on Mark's
-# shapes: no cap and no scale.
+# shapes: no cap, only mouthClose x1.4 (measured in the game, face-shapes.md).
 import json
 import os
 import sys
@@ -119,10 +119,12 @@ def profile(hm, SK, tmpl, log=print):
     if 'speech_face' in prof:
         sf = prof['speech_face']
         sf.pop('cap', None)
-        sf.pop('scale', None)
+        sf['scale'] = {'mouthClose': 1.4}
         sf['about'] = ("The face from the voice (engine-plan.md, step 10) on a head with Mark's shapes (face-shapes.md, "
                        "'Формы Mark в игре'): a track of Audio2Face v3.0 weights, solved for Mark's shapes, plays as it "
-                       "is - no cap, no scale; eyeLook* dropped (the gaze is Eyes'). The track's eyeBlink* is the level "
+                       "is but for mouthClose x1.4 (our lips are fuller than Mark's: where Mark shuts them, Vino's stayed "
+                       "1.0-1.3 mm apart in 6 % of the frames of the clip, 1 % with it; the lip over the upper one "
+                       "unchanged) - no cap; eyeLook* dropped (the gaze is Eyes'). The track's eyeBlink* is the level "
                        "of the lids, the blinks go over it. A track made with an emotion has the expression: the mood "
                        "faces of the line give way to it while it shows and come back after it.")
     prof['about'] = ("Face profile of a head with Mark's shapes (Audio2Face v3.0, carried by shapes/head_shapes.py): the "
