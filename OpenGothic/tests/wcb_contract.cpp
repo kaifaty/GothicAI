@@ -28,7 +28,13 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <vector>
+
+#ifndef _WIN32
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 namespace {
 namespace fs = std::filesystem;
@@ -418,6 +424,19 @@ void editedOverride(const fs::path& root) {
           "the edited override must split the border vertex, add one vertex, one feature, one material and one net triangle");
   cookedRoundTrip(dir,edit,root/"strip-edit-cooked","strip, override that moves an inner vertex and splits a triangle");
   cookedRoundTrip(dir,border,root/"strip-border-cooked","strip, override that also moves a border vertex");
+  // The assembler opens no GLB: with every GLB of the set moved away it still gives readWorldChunks' result.
+  {
+  ChunkTable expectedTable, actualTable;
+  const auto expectedMesh=readWorldChunks(dir,border,&expectedTable);
+  const auto world=readCookedWorld(dir,border,root/"strip-border-cooked");
+  for(const auto* d:{&dir,&border})
+    fs::rename(*d/"chunks",*d/"chunks-away");
+  const auto actual=assembleCookedWorld(world,&actualTable);
+  for(const auto* d:{&dir,&border})
+    fs::rename(*d/"chunks-away",*d/"chunks");
+  const auto difference=compareWorldMeshes(expectedMesh,actual)+compareChunkTables(expectedTable,actualTable);
+  require(difference.empty(),"the cooked world assembled without its GLBs differs from readWorldChunks: "+difference);
+  }
   for(const auto* cell:{"0_0","1_0","2_0"})
     checkOrders(CookedChunk::read(plain/"chunks"/(std::string(cell)+".wcb")),base,0,std::string("strip ")+cell);
   checkOrders(CookedChunk::read(root/"strip-edit-cooked/chunks/1_0.wcb"),base,2,"edited 1_0");
@@ -704,11 +723,19 @@ void indexRejections(const fs::path& root) {
   put32(bytes,32,get32(good,32)^1u); // the source world's CRC32
   expectThrows(readWith(dir,{},{},indexFile,bytes),{wci::FileName,"names another source world than CONTRACT.ZEN"},
                "an index of another source world");
+  bytes=good;
+  put64(bytes,24,get64(good,24)+1); // the source world's size alone
+  expectThrows(readWith(dir,{},{},indexFile,bytes),{wci::FileName,"names another source world than CONTRACT.ZEN"},
+               "an index of a source world of another size");
   const auto cellsAt=size_t(get64(good,wci::HeaderSize+16));
   bytes=good;
   bytes[cellsAt+16]^=1u; // the first byte of cell 0's GLB SHA-256
-  expectThrows(readWith(dir,{},{},indexFile,bytes),{"with another GLB hash than","re-cooked without the index"},
+  expectThrows(readWith(dir,{},{},indexFile,bytes),{"with another GLB (length or SHA-256) than","re-cooked without the index"},
                "an index whose cell entry names another GLB than the cell's .wcb");
+  bytes=good;
+  put64(bytes,cellsAt+8,get64(good,cellsAt+8)+1); // cell 0's GLB length alone
+  expectThrows(readWith(dir,{},{},indexFile,bytes),{"with another GLB (length or SHA-256) than","re-cooked without the index"},
+               "an index whose cell entry names a GLB of another length than the cell's .wcb");
   gothicglb::writeFile(indexFile,good.data(),good.size());
 
   const auto json=readText(dir/"world.json");
@@ -728,16 +755,30 @@ void indexRejections(const fs::path& root) {
   expectThrows([&] { (void)readCookedWorld(dir); },{"another cell order"},"an index with another cell order than world.json");
   writeText(dir/"world.json",json);
   require(readCookedWorld(dir).cells.size()==chunks.size(),"the restored index and world.json read again");
+  // And an index of fewer cells: the strip's world without cell 0,0, read with the strip's world.json.
+  const auto plainOut=root/"strip-cooked", plainIndex=root/"strip-cooked"/wci::FileName;
+  const auto plainGood=fileBytes(plainIndex);
+  expectThrows(readWith(root/"strip",{},plainOut,plainIndex,fileBytes(root/"strip-other-cooked"/wci::FileName)),
+               {"lists 2 cells, world.json 3"},"an index with fewer cells than world.json");
+  gothicglb::writeFile(plainIndex,plainGood.data(),plainGood.size());
 
-  // Exceptions: the strip's border override gives cell 0,0 one vertex exception.
+  // Exceptions: the strip's border override gives cell 0,0 one vertex exception and cell 1,0 one
+  // vertex, one feature and one material exception. Each of 1,0's locals set to the first index past its array.
   const auto strip=root/"strip", border=root/"strip-border", out=root/"strip-border-cooked";
   const auto borderFile=out/wci::FileName;
   const auto borderGood=fileBytes(borderFile);
   const auto vertexExceptionsAt=size_t(get64(borderGood,wci::HeaderSize+2*32+16));
-  bytes=borderGood;
-  put32(bytes,vertexExceptionsAt,1000); // local
-  expectThrows(readWith(strip,border,out,borderFile,bytes),{"an exception points to local 1000, past the"},
-               "an exception that points past a cell's arrays");
+  const auto cell=CookedChunk::read(out/"chunks/1_0.wcb");
+  const std::tuple<uint32_t,size_t,size_t,const char*> past[] = {
+    {3,1,cell.positions().size(),"positions"},{4,0,cell.features().size(),"features"},
+    {5,0,cell.materials().size(),"materials"}};
+  for(const auto& [type,entry,count,kind]:past) {
+    bytes=borderGood;
+    put32(bytes,size_t(get64(borderGood,wci::HeaderSize+(type-1)*32+16))+entry*8,uint32_t(count)); // local
+    expectThrows(readWith(strip,border,out,borderFile,bytes),{"an exception points to local "+std::to_string(count)+
+                 ", past the "+std::to_string(count)+" "+kind+" of 1_0.wcb"},
+                 std::string("an exception one past a cell's ")+kind);
+    }
   bytes=borderGood;
   put32(bytes,vertexExceptionsAt+4,get32(borderGood,40)); // the stitched id: the vertex total
   expectThrows(open(bytes),{"vertex exceptions","past the totals"},"a stitched id past the totals");
@@ -747,9 +788,37 @@ void indexRejections(const fs::path& root) {
   fs::remove(indexFile);
   expectThrows([&] { (void)readCookedWorld(dir); },{wci::FileName,"is missing"},"a missing index");
   gothicglb::writeFile(indexFile,good.data(),good.size());
-  std::puts("Index rejections: truncated, short, wrong magic, version, another source world, another GLB hash than "
-            "the cell's .wcb, another cell count and order than world.json, an exception past a cell's arrays, "
-            "a stitched id past the totals, missing");
+  std::puts("Index rejections: truncated, short, wrong magic, version, another source world by CRC32 and by size, "
+            "another GLB than the cell's .wcb by SHA-256 and by length, more and fewer cells and another cell order "
+            "than world.json, an exception one past a cell's positions, features and materials, a stitched id past "
+            "the totals, missing");
+  }
+
+// Temporary names are unique to the process as well as the call: a forked child
+// continues the parent's call count, so only the process id tells their names apart.
+void temporaryNames(const fs::path& root) {
+  const auto path=root/"names"/"0_0.wcb";
+  require(cookedTemporaryPath(path)!=cookedTemporaryPath(path),"two calls must give two temporary names");
+#ifndef _WIN32
+  const auto childName=root/"child-temporary.txt";
+  const pid_t child=fork();
+  require(child>=0,"fork failed");
+  if(child==0) {
+    try {
+      writeText(childName,cookedTemporaryPath(path).string());
+      }
+    catch(...) {
+      _exit(1);
+      }
+    _exit(0);
+    }
+  const auto own=cookedTemporaryPath(path).string();
+  int status=0;
+  require(waitpid(child,&status,0)==child && WIFEXITED(status) && WEXITSTATUS(status)==0,
+          "the forked process must write its temporary name");
+  require(readText(childName)!=own,"two processes at the same call count must get two temporary names, both got "+own);
+  std::puts("Temporary names: two calls and two processes at the same call count get different names");
+#endif
   }
 
 // ---- manifest cases carried over from task 1 ----
@@ -792,6 +861,7 @@ int main() {
     rejections(temporary.path);
     indexRejections(temporary.path);
     manifestCases(temporary.path);
+    temporaryNames(temporary.path); // forks: before any other thread starts
 
     const auto* gothic=std::getenv("GOTHIC_DIR");
     require(gothic!=nullptr && *gothic!='\0',"GOTHIC_DIR must point to a Gothic II installation");

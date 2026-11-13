@@ -50,6 +50,8 @@ CookedWorldStats cookWorldChunks(const std::filesystem::path& dir, const std::fi
 // call, then renames it over path; leaves a file that already holds these bytes
 // untouched. True when it wrote. Throws std::runtime_error.
 bool writeCookedFile(const std::filesystem::path& path, std::span<const uint8_t> bytes);
+// The temporary name writeCookedFile uses: path.<process id>-<call number>.tmp.
+std::filesystem::path cookedTemporaryPath(const std::filesystem::path& path);
 
 struct CookedWorld {
   std::filesystem::path    dir;      // the world directory, for unreferenced.bin

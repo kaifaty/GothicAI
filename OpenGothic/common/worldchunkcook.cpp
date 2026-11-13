@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <atomic>
 #include <bit>
+#include <chrono>
 #include <fstream>
 #include <stdexcept>
+#include <thread>
 #include <tuple>
 
 #include "gothicglb.h"
@@ -88,6 +90,13 @@ fs::path cookedIndexPath(const fs::path& dir, const fs::path& overrideDir, const
   return (overrideDir.empty() ? dir : overrideDir)/wci::FileName;
   }
 
+fs::path cookedTemporaryPath(const fs::path& path) {
+  static std::atomic<uint64_t> calls {0};
+  auto temporary = path;
+  temporary += "."+std::to_string(processId())+"-"+std::to_string(++calls)+".tmp";
+  return temporary;
+  }
+
 bool writeCookedFile(const fs::path& path, std::span<const uint8_t> bytes) {
   std::error_code error;
   const auto size = fs::file_size(path,error);
@@ -97,9 +106,7 @@ bool writeCookedFile(const fs::path& path, std::span<const uint8_t> bytes) {
       return false;
     }
   // Unique to the process and the call: two cooks into the same files never share a temporary.
-  static std::atomic<uint64_t> calls {0};
-  auto temporary = path;
-  temporary += "."+std::to_string(processId())+"-"+std::to_string(++calls)+".tmp";
+  const auto temporary = cookedTemporaryPath(path);
   if(!path.parent_path().empty())
     fs::create_directories(path.parent_path());
   {
@@ -111,7 +118,14 @@ bool writeCookedFile(const fs::path& path, std::span<const uint8_t> bytes) {
     fail("cannot write "+temporary.string());
     }
   }
-  fs::rename(temporary,path,error);
+  // Windows refuses to replace a file another process holds open, as a concurrent cook does while it
+  // compares the file above; that read ends within milliseconds, so retry for up to a second.
+  for(int attempt=0;;++attempt) {
+    fs::rename(temporary,path,error);
+    if(!error || attempt==100)
+      break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
   if(error) {
     std::error_code ignored;
     fs::remove(temporary,ignored);
@@ -338,7 +352,7 @@ void checkCookedCell(const CookedChunk& chunk, size_t i, const WorldCellManifest
     fail(name+" was cooked for another source world than "+manifest.source.world);
   const auto& entry = index.cells()[i];
   if(entry.glbSize!=h.glbSize || !std::equal(h.glbSha256.begin(),h.glbSha256.end(),entry.glbSha256))
-    fail(index.name()+" lists cell "+cellName(cell.id)+" with another GLB hash than "+name+
+    fail(index.name()+" lists cell "+cellName(cell.id)+" with another GLB (length or SHA-256) than "+name+
          ": the cell was re-cooked without the index");
   const std::tuple<std::span<const wci::Exception>,size_t,const char*> lists[] = {
     {index.vertexExceptions(i),chunk.positions().size(),"positions"},
