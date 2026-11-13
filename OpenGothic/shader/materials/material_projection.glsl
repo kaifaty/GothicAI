@@ -25,8 +25,8 @@ struct Projection {
 
 #if defined(GBUFFER)
 void projectionPlane(out vec2 uv, out vec2 dx, out vec2 dy, out vec3 t, out vec3 b,
-                     uint axis, vec3 n, vec3 pos, vec3 dpdx, vec3 dpdy, float k, float frame) {
-  const float side = n[axis]>=0.0 ? 1.0 : -1.0;
+                     uint axis, vec3 face, vec3 n, vec3 pos, vec3 dpdx, vec3 dpdy, float k, float frame) {
+  const float side = face[axis]>=0.0 ? 1.0 : -1.0;
   // cross(u, v) is the plane's axis toward the surface: the texture is not mirrored on either side
   vec3 eu, ev;
   if(axis==1u) {
@@ -56,7 +56,14 @@ void projectionPlanes(out Projection p) {
   const vec3 pos  = shInp.pos;
   const vec3 dpdx = dFdx(pos), dpdy = dFdy(pos);
   const vec3 n    = normalize(shInp.normal);
-  const vec3 a    = abs(n);
+  // The planes follow the face as it stands, not the shading normal: Gothic smooths that over sharp edges of rock by up
+  // to 45 degrees, and a plane picked by it smears the face it lies across. A face in one plane has no stretch over
+  // 1.41; neighbours in the same plane continue the texture without a seam, a change of plane falls on their edge
+  vec3 face = cross(dpdx,dpdy);
+  face = dot(face,face)>1e-20 ? normalize(face) : n;
+  if(dot(face,n)<0.0)
+    face = -face;
+  const vec3 a    = abs(face);
   const uint major  = (a.x>=a.y && a.x>=a.z) ? 0u : (a.y>=a.z ? 1u : 2u);
   const uint o1     = (major+1u)%3u, o2 = (major+2u)%3u;
   const uint median = a[o1]>=a[o2] ? o1 : o2;
@@ -69,8 +76,8 @@ void projectionPlanes(out Projection p) {
   p.n  = n;
   const float k     = bucket[bucketId].uvScale;
   const float frame = dot(n, cross(dpdx,dpdy))<0.0 ? -1.0 : 1.0;
-  projectionPlane(p.uv0, p.dx0, p.dy0, p.t0, p.b0, major,  n, pos, dpdx, dpdy, k, frame);
-  projectionPlane(p.uv1, p.dx1, p.dy1, p.t1, p.b1, median, n, pos, dpdx, dpdy, k, frame);
+  projectionPlane(p.uv0, p.dx0, p.dy0, p.t0, p.b0, major,  face, n, pos, dpdx, dpdy, k, frame);
+  projectionPlane(p.uv1, p.dx1, p.dy1, p.t1, p.b1, median, face, n, pos, dpdx, dpdy, k, frame);
 #endif
   }
 
