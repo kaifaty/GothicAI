@@ -98,6 +98,33 @@ def chunk_paths(base, staging, name):
     return (base / f'worlds/TESTWORLD/chunks/{name}.glb', staging / f'test-r/worlds/TESTWORLD/chunks/{name}.glb')
 
 
+def base_light(srcs, at, k=4):
+    """The light bake_light gives a new vertex at `at`: the inverse-distance mean of the k nearest base vertices of
+    the region (each the mean light of its corners in the triangles Blender holds). Several values when vertices tie
+    for the last places, as on a grid."""
+    import itertools
+    corners, seen = {}, set()
+    for src in srcs:
+        for p in chunk_glb.read_chunk(src).primitives:
+            for pos, vid, col in zip(p.positions, p.vertex_ids, p.colors):
+                ids = frozenset(vid.tolist())
+                if len(ids) < 3 or ids in seen:
+                    continue          # a triangle Blender cannot hold: not in the underlay
+                seen.add(ids)
+                for q, v, c in zip(pos, vid, col):
+                    corners.setdefault(int(v), (q, []))[1].append(c[0])
+    points = np.array([q for q, _ in corners.values()], np.float64)
+    lights = np.array([np.mean(cs) for _, cs in corners.values()])
+    d = np.linalg.norm(points - at, axis=1)
+    last = np.sort(d)[k - 1]
+    sure = list(np.flatnonzero(d < last - 1e-3))
+    tied = np.flatnonzero(np.abs(d - last) <= 1e-3)
+    for extra in itertools.combinations(tied, k - len(sure)):
+        idx = sure + list(extra)
+        w = 1 / np.maximum(d[idx], 1e-3)
+        yield float((w * lights[idx]).sum() / w.sum())
+
+
 def inside_any(tris, point, eps=1e-3):
     """Is the point (x, z) inside one of the triangles (n, 3, 2)?"""
     a, b, c = tris[:, 0], tris[:, 1], tris[:, 2]
@@ -212,12 +239,12 @@ def test_a_subdivided_region(tmp_path, capsys):
         # the triangles it left are the base's byte for byte
         exact, bad = chunk_canon.source_violations(src, pub)
         assert bad == [] and exact > 0
-        # a new vertex takes the light of the base around it: the light rises with x
+        # a new vertex takes the inverse-distance mean of the base vertices around it, not the nearest one's light
         assert (e.corners()[1] < 0).sum() > 0
         for p in e.primitives:
-            for v, c, x in zip(p.vertex_ids.reshape(-1), p.colors.reshape(-1, 4), p.positions[:, :, 0].reshape(-1)):
+            for v, c, at in zip(p.vertex_ids.reshape(-1), p.colors.reshape(-1, 4), p.positions.reshape(-1, 3)):
                 if v < 0:
-                    assert abs(c[0] - light(x / STEP)) < 0.05, (x, c)
+                    assert any(abs(c[0] - want) < 1.5 / 255 for want in base_light(srcs, at)), (at, c)
     entry = json.loads(registry.read_text())
     assert entry['kind'] == 'worldregion' and entry['region'] == REGION and entry['set'] == 'test-r'
     assert [e['script'] for e in entry['edits']] == ['scripts/content/world/test_edits/region_subdivide.py']
