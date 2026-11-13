@@ -356,7 +356,8 @@ void checkBeach(const Land& land) {
 void checkStream(const Land& land) {
   const auto& stream = island::terrain().stream();
   require(stream.size()>=100, "the stream must be at least 100 m long");
-  float last = 0, rise = 0, steepest = 0, spring = 0;
+  // rise: the most that the bed climbs back between any two points, the lower one upstream
+  float lowest = 0, rise = 0, steepest = 0, spring = 0;
   size_t onLand = 0;
   std::vector<float> bed(stream.size());
   for(size_t i=0; i<stream.size(); ++i) {
@@ -365,21 +366,22 @@ void checkStream(const Land& land) {
     require(tri!=nullptr, "the stream must lie on the ground");
     bed[i] = h;
     if(i==0)
-      spring = h;
-    else
-      rise = std::max(rise, h-last);
+      spring = lowest = h;
+    rise   = std::max(rise, h-lowest);
+    lowest = std::min(lowest, h);
     if(h>0) {
       onLand = i+1;
       require(tri->material==island::StreamBed, text("the stream's bed must be of its own material %zu m down", i));
       }
-    last = h;
     }
   for(size_t i=0; i+20<onLand; ++i)
     steepest = std::max(steepest, (bed[i]-bed[i+20])/20.f);
-  std::cout << text("stream: %zu m, %zu m on land, spring at %.2f m, steepest 20 m fall %.1f %%, highest rise downstream "
-                    "%.1f mm\n", stream.size()-1, onLand, double(spring), double(steepest)*100.0, double(rise)*1000.0);
-  // the centre line is sampled every metre on triangles of a metre: 2 mm is the mesh's own chord, not a rise
-  require(rise<=0.002f, text("the stream's bed must not rise downstream: %.1f mm", double(rise)*1000.0));
+  std::cout << text("stream: %zu m, %zu m on land, spring at %.2f m, steepest 20 m fall %.1f %%, the bed climbs back "
+                    "%.1f mm at most\n", stream.size()-1, onLand, double(spring), double(steepest)*100.0,
+                    double(rise)*1000.0);
+  // Over the whole length, not a step: a slow even climb adds up. The centre line is sampled on triangles of a
+  // metre, so 3 mm is the mesh's own chord, not a rise.
+  require(rise<=0.003f, text("the stream's bed must not rise downstream: %.1f mm", double(rise)*1000.0));
   require(spring>=3.f, text("the spring must lie on the hill's slope: %.2f m", double(spring)));
   require(steepest>=0.03f && steepest<=0.08f,
           text("the stream's steep stretch must fall 3-8 %%: %.1f %%", double(steepest)*100.0));
@@ -700,7 +702,8 @@ void drawCase(Tempest::Device& device, const Fixture& fixture, const asset::Worl
     s.down = true;
     // The fog counts its air from the near plane and stretches it 50 times (fog_view_lut.comp): straight down from
     // 290 m its ray ends 14 km under the sea, where the haze's density has grown without bound, and the frame is one
-    // colour of fog. With the near plane 40 m over the sea the fog is that of 40 m of air.
+    // colour of fog. With the near plane 40 m over the sea the fog is that of 40 m of air. A way around, not a
+    // cure: the debt is issue #1342.
     s.near = s.from.y-4000.f;
     s.probes.push_back({"the meadow", onGround(land, -40.f, -70.f, 0), 24, Hue::Grass, 0.7f});
     s.probes.push_back({"the sea", {-17500, 0, 17500}, 24, Hue::Blue, 0.7f});
