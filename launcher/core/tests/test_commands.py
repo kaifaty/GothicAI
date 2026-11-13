@@ -159,6 +159,9 @@ def test_voice_and_npc_voices_can_be_off(config, tmp_path):
     procs = services(config, LAYOUT, PORTS, tmp_path)
     assert [p.name for p in procs] == ["server"]
     assert "--no-voice" in procs[0].argv and "--no-tts" in procs[0].argv
+    assert "--no-player-face" not in procs[0].argv
+    config.set("voice.player_face", False)
+    assert "--no-player-face" in services(config, LAYOUT, PORTS, tmp_path)[0].argv
 
 
 def test_the_quick_model_is_on_unless_turned_off(config, tmp_path):

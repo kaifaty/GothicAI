@@ -36,6 +36,9 @@ class LipSync final {
         // a streamed voice tells how much of it has been played (from the audio thread)
         void     setPlayed(uint64_t ms) { played.store(int64_t(ms)); }
         int64_t  playedMs() const { return played.load(); }  // -1: it plays from the start of the line
+        // A live microphone has no future audio: sample its played time without the recorded voice lead.
+        void     setLiveInput() { liveInput = true; }
+        bool     isLiveInput() const { return liveInput; }
 
         float    level(uint64_t ms) const;                 // 0..1: how wide the voice opens the mouth
         float    peak (uint64_t from, uint64_t to) const;  // the largest level in [from,to]
@@ -81,6 +84,7 @@ class LipSync final {
         float                peakDb   = -100;
         bool                 finished = false;
         std::atomic<int64_t> played{-1};
+        bool                 liveInput = false;
 
         // the tone: the sound without what lies above 1 kHz, brought down to 8 kHz
         Biquad               toneLp[2];

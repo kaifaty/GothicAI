@@ -6,6 +6,7 @@
 
 | Фича | Как выключить | Модуль | Проверка | Документ |
 |---|---|---|---|---|
+| Живой PCM микрофона или WAV в немую дорожку речи героя, 20 мс; ASR и доставка независимы | `--no-player-face`, лаунчер `voice.player_face = false` | `voice_audio.py`, `voice.py`, `ai_bridge/playervoice.*` | `test_voice.py`, `test_protocol.py`, `gothic-facerig-test`; e2e `m5e_talk` | [Протокол v64](../protocol.md#живой-голос-игрока-v64) |
 | Автоматическая регрессия групп `OFF` и `GIVEN` одной командой, до трёх игр на Ryzen или по одной на Mac | не запускать `scripts/e2e-regression.sh` | `scripts/e2e-regression.sh`, `scenarios/groups.py` (`RUN`) | `scripts/tests/test_e2e_live.py`; e2e `graph`, `lie`, `deal` | [e2e.md](../e2e.md#автоматическая-регрессия) |
 | Ручные живые наборы e2e: повторения, доли, факты игры, расшифровки и запросы | не запускать `scripts/e2e-live.sh` | `scenarios/live.py`, `scripts/e2e-live.sh` | `test_live.py`, `scripts/tests/test_e2e_live.py`; живые `haggle`, `surrender_live` | [e2e.md](../e2e.md#живая-группа) |
 | Живые решения NPC и режиссёра: 9 и 8 случаев без «дано», зачёт по фактам | не запускать `SUITE=live_npc` / `live_director` | `scenarios/live_npc.py`, `scenarios/live_director.py`, живые режимы сценариев группы 2 | `test_live.py`, `test_cli.py`; по одному `RUNS=1 LLM=chatgpt` | [NPC](../e2e.md#live_npc), [режиссёр](../e2e.md#live_director) |

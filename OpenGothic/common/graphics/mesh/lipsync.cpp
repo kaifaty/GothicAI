@@ -477,11 +477,12 @@ bool LipSync::update(uint64_t now, uint64_t dt, Shape& out) {
     return false;
     }
 
+  const uint64_t lead = track!=nullptr && track->isLiveInput() ? 0 : uint64_t(std::max(0.f,Lead));
   float target = 0;
   if(track!=nullptr) {
     time = lineTime(now);
-    const uint64_t t = time + uint64_t(std::max(0.f,Lead));
-    if(track->isFinished() && t>track->durationMs()+uint64_t(std::max(0.f,Lead)))
+    const uint64_t t = time + lead;
+    if(track->isFinished() && t>track->durationMs()+lead)
       track = nullptr;  // the line is over
     else if(track->playedMs()!=0)
       target = track->level(t);  // (a streamed voice that has not started playing yet: the mouth waits)
@@ -503,7 +504,7 @@ bool LipSync::update(uint64_t now, uint64_t dt, Shape& out) {
       inDip  = false;
       sylMax = lvl;
       ++syllables;
-      const uint64_t t = time + uint64_t(std::max(0.f,Lead));
+      const uint64_t t = time + lead;
       sylLoud = track!=nullptr ? track->peak(t, t+uint64_t(std::max(0.f,Look))) : lvl;
       pick(sylLoud, now);
       }
@@ -513,7 +514,7 @@ bool LipSync::update(uint64_t now, uint64_t dt, Shape& out) {
     mouth = smooth(mouth, lvl, dt, lvl>mouth ? Attack : Release);
   // louder than the syllable looked: a shape for that
   if(!inDip && mouth>sylPeak*1.2f && now>=lastPick+uint64_t(std::max(0.f,Blend))) {
-    const uint64_t t = time + uint64_t(std::max(0.f,Lead));
+    const uint64_t t = time + lead;
     pick(std::max(mouth, track!=nullptr ? track->peak(t, t+uint64_t(std::max(0.f,Look))) : 0.f), now);
     }
   if(blend<1.f && dt>0)
