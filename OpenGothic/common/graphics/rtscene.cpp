@@ -34,6 +34,17 @@ bool sameDesc(const RtScene::RtObjectDesc& a, const RtScene::RtObjectDesc& b) {
   return a.instanceId==b.instanceId && a.firstPrimitive==b.firstPrimitive && a.bits==b.bits;
   }
 
+// The arrays of the buckets with at least 1024 entries, as DrawBuckets: Tempest gives such an array a capacity of 8192
+// in the pipeline layout, so a new bucket (a vob's mesh, a chunk's texture in a page) does not make every ray query
+// pipeline compile anew for the next array size. The tail is never read (bucket ids are below the real count).
+template<class T>
+std::vector<const T*> padded(const std::vector<const T*>& v) {
+  constexpr size_t Rounding = 1024;
+  auto ret = v;
+  ret.resize((v.size()+Rounding-1)/Rounding*Rounding, nullptr);
+  return ret;
+  }
+
 RtInstanceFlags instanceFlags(Material::AlphaFunc alpha) {
   const auto flags = (alpha==Material::Solid || alpha==Material::Water) ? RtInstanceFlags::Opaque : RtInstanceFlags::NonOpaque;
   return flags | RtInstanceFlags::CullFlip;
@@ -427,9 +438,9 @@ void RtScene::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
     Resources::recycle(std::move(tex));
     Resources::recycle(std::move(vbo));
     Resources::recycle(std::move(ibo));
-    tex = device.descriptors(bucketTex);
-    vbo = device.descriptors(bucketVbo);
-    ibo = device.descriptors(bucketIbo);
+    tex = device.descriptors(padded(bucketTex));
+    vbo = device.descriptors(padded(bucketVbo));
+    ibo = device.descriptors(padded(bucketIbo));
     textureGeneration = Resources::textureGeneration();
     bucketsUploaded   = bucketTex.size();
     reason            = "bucket";
@@ -508,7 +519,7 @@ bool RtScene::refreshTextures() {
   if(textureGeneration==generation || bucketsUploaded==size_t(-1))
     return false;
   Resources::recycle(std::move(tex));
-  tex=Resources::device().descriptors(bucketTex);
+  tex=Resources::device().descriptors(padded(bucketTex));
   textureGeneration=generation;
   return true;
   }
