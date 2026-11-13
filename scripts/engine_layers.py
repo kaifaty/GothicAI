@@ -62,7 +62,6 @@ LAYER_RULES: list[tuple[str, str]] = [
     ("common/baseimport", "import"),
     ("common/basestoreimport", "import"),
     ("common/basesources", "import"),
-    ("common/baseidentity", "import"),
     ("common/musicnativeimport", "import"),
     ("common/videoimport", "import"),
     ("common/dmusic/directmusicimport", "import"),
@@ -119,7 +118,8 @@ LAYER_RULES: list[tuple[str, str]] = [
     ("common/outputunits", "gothic"),
     # Our own GLB format reader and writer, independent of Gothic rules.
     ("common/gothicglb", "platform"),
-    ("common/worldbase", "gothic"),
+    # Our world format and object layers belong to the RPG framework.
+    ("common/worldbase", "rpg"),
     # An action-RPG frame any such game needs: NPCs, items, fights, navigation, saves.
     # Game-object visuals depend on NPCs, interactives and damage despite living in graphics/.
     ("common/graphics/mdlvisual*", "rpg"),
@@ -136,6 +136,8 @@ LAYER_RULES: list[tuple[str, str]] = [
     ("common/world/*", "rpg"),
     ("common/nav*", "rpg"),
     # The platform: resources of our formats, render, animation, physics, sound, nets.
+    # Installation identity and ready-base validation use file I/O only.
+    ("common/baseidentity", "platform"),
     ("common/asset/*", "platform"),
     ("common/graphics/*", "platform"),
     ("common/physics/*", "platform"),

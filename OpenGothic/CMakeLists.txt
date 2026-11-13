@@ -77,7 +77,7 @@ endif()
 file(GLOB_RECURSE OPENGOTHIC_SOURCES "common/*.h" "common/*.cpp")
 foreach(source zenkitlog daedalus/vm daedalus/script daedalus/classes baseidentity basestoreimport sha256 baseimport basesources worldchunks worldchunksruntime worldchunkmanifest worldchunkbinary worldchunkindex worldchunkcook worldchunkassemble worldchunkcookedsource physics/worldcloth physics/worldclothbundle physics/worldcollisionmesh worlddata modeldata fontdata programdata outputunits audiodata basemesh gothicglb gltfmesh asset/fromzenkit asset/worldfromzenkit asset/modelfromzenkit asset/programfromzenkit
                utils/fileutil dmusic/sourcefile dmusic/riff dmusic/segment dmusic/track dmusic/style dmusic/band
-               dmusic/reference dmusic/info dmusic/pattern musicdata dmusic/dlscollection dmusic/wave dmusic/soundfont
+               dmusic/reference dmusic/info dmusic/pattern musicdata dmusic/musicrecord dmusic/dlscollection dmusic/wave dmusic/soundfont
                dmusic/hydra dmusic/directmusicimport dmusic/dlsruntime dmusic/styleruntime dmusic/waveruntime
                videodata videoimport bink/video bink/frame)
   list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/${source}.cpp")
@@ -677,6 +677,9 @@ endif()
   add_executable(gothic-worldcollision-chunks-contract EXCLUDE_FROM_ALL tests/worldcollision_chunks_contract.cpp)
   target_link_libraries(gothic-worldcollision-chunks-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
   target_include_directories(gothic-worldcollision-chunks-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
+  add_executable(gothic-collisioncache-cpu-contract EXCLUDE_FROM_ALL tests/collisioncache_cpu_contract.cpp)
+  target_link_libraries(gothic-collisioncache-cpu-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
+  target_include_directories(gothic-collisioncache-cpu-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   add_executable(gothic-asset-digest EXCLUDE_FROM_ALL tests/asset_digest.cpp)
   target_link_libraries(gothic-asset-digest PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
   target_include_directories(gothic-asset-digest SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
@@ -722,6 +725,7 @@ endif()
     target_compile_options(gothic-wcb-source-contract PRIVATE -Wall -Wconversion -Werror)
     target_compile_options(gothic-worldcloth-cooked-contract PRIVATE -Wall -Wconversion -Werror)
     target_compile_options(gothic-worldcollision-chunks-contract PRIVATE -Wall -Wconversion -Werror)
+    target_compile_options(gothic-collisioncache-cpu-contract PRIVATE -Wall -Wconversion -Werror)
   endif()
   add_custom_target(check-cloth
     COMMAND $<TARGET_FILE:gothic-cloth-contract>

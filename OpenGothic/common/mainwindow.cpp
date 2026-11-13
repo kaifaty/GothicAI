@@ -1357,7 +1357,7 @@ Attachment MainWindow::screenshotWithUi(Attachment&& reuse) {
   CommandBuffer cmd;
   {
   auto enc = cmd.startEncoding(device);
-  renderer.draw(img,enc,cmdId,uiMesh[cmdId],numMesh[cmdId],inventory,video);
+  drawGameFrame(renderer,img,enc,cmdId,uiMesh[cmdId],numMesh[cmdId],inventory,video);
   }
   auto sync = device.submit(cmd);
   sync.wait();
@@ -1636,7 +1636,7 @@ void MainWindow::render(){
     {
     FrameProfile::Scope timing(FrameProfile::Zone::Encode);
     auto enc = cmd.startEncoding(device);
-    renderer.draw(frameImage(),enc,cmdId,uiMesh[cmdId],numMesh[cmdId],inventory,video);
+    drawGameFrame(renderer,frameImage(),enc,cmdId,uiMesh[cmdId],numMesh[cmdId],inventory,video);
     }
     { FrameProfile::Scope timing(FrameProfile::Zone::Submit); sync = device.submit(cmd); }
     profile.flag(FrameProfile::Flag::SubmitCompleted);

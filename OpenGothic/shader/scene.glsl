@@ -120,6 +120,7 @@ const uint BK_HASHED_ALPHA = 0x200; // our glTF MASK: the alpha test takes a thr
 const uint BK_HAIR = 0x400; // hair cards: the strand's direction and the hair bit go into the G-buffer (main.frag)
 const uint BK_STRAND = 0x800; // strands: the vertex shader makes ribbons of them (strandRibbon, vertex_process.glsl)
 const uint BK_EYE = 0x1000; // an eyeball: the lid's shade from the face rig, the eye bit into the G-buffer (main.frag)
+const uint BK_PROJECTION = 0x2000; // maps by world position, uvScale: repeats per cm (material_projection.glsl)
 
 // Strands in a shadow view: the first part of the list casts the shadow for all of it (the meshlets are dealt out
 // evenly, groommesh.cpp), each strand as wide as that part is small (strandShadowRibbon, vertex_process.glsl).

@@ -1,0 +1,95 @@
+# The head of an NPC built by build_head.py as the game shows it, to lay next to its concept
+# (reports/content/2026-11-npc-pipeline/likeness.md): stills of the hero's face from the front, three quarters and
+# the side and close on the eyes, first in the torch light of Xardas' tower (the default save), then in the noon sun
+# of the market: with the sun above and behind, and at an open spot with the sun in the face (the head's skin against
+# the body's neck, reports/content/2026-11-npc-hair/skin-sun.md). Nobody blinks, so a still is never a half shut eye.
+#   TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=ryzen OPENGOTHIC_CONTENT=<content root of the head> \
+#     scripts/bench.sh npc-head-look <out dir>
+# @timeout 480
+seed 73013
+cheat god
+set time 12 0
+blink off
+view clean 30
+watch nearest
+freeze nearest
+wait 500
+place 110 0
+wait 800
+watch player
+cam cut
+cam face 38 0 1
+wait 2500
+shot tower_front
+wait 400
+cam cut
+cam face 38 35 1
+wait 1200
+shot tower_quarter
+wait 400
+cam cut
+cam face 38 90 1
+wait 1200
+shot tower_profile
+wait 400
+cam cut
+cam face 30 0 6
+wait 1200
+shot tower_eyes
+wait 400
+goto NW_CITY_MERCHANT_TRADE_04
+watch player
+wait 4000
+cam cut
+cam face 38 0 1
+wait 2500
+shot sun_front
+wait 400
+cam cut
+cam face 38 35 1
+wait 1200
+shot sun_quarter
+wait 400
+cam cut
+cam face 38 -35 1
+wait 1200
+shot sun_quarter_other
+wait 400
+cam cut
+cam face 38 90 1
+wait 1200
+shot sun_profile
+wait 400
+cam cut
+cam face 30 0 6
+wait 1200
+shot sun_eyes
+wait 400
+# the sun in the face: an open spot of the market (the waypoints around stand in the houses' shade); the hero comes
+# with the back to the noon sun and turns round. Here the head's skin and the body's neck are under one light
+cam cut
+goto pos 7900 270 -4350
+watch player
+wait 4000
+turn 180
+wait 2500
+cam cut
+cam face 38 0 1
+wait 2500
+shot sunface_front
+wait 400
+cam cut
+cam face 38 35 1
+wait 1200
+shot sunface_quarter
+wait 400
+cam cut
+cam face 38 -35 1
+wait 1200
+shot sunface_quarter_other
+wait 400
+cam cut
+cam face 70 20 1
+wait 1200
+shot sunface_bust
+wait 400

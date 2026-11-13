@@ -48,6 +48,7 @@
 #include "graphics/mesh/bowdraw.h"
 #include "graphics/material.h"
 #include "dmusic/directmusic.h"
+#include "dmusic/musicrecord.h"
 #include "utils/fileext.h"
 #include "utils/gthfont.h"
 
@@ -56,8 +57,7 @@
 #include "basemesh.h"
 #include "modeldata.h"
 #include "fontdata.h"
-#include "worldbase.h"
-#include "world/voblayer.h"
+#include "worlddata.h"
 #include "utils/string_frm.h"
 
 #include <dmusic.h>
@@ -66,8 +66,6 @@
 
 using namespace Tempest;
 using ResourcesInternal::modelKey;
-using ResourcesInternal::censusSourcePath;
-using ResourcesInternal::scriptDirectory;
 
 namespace ModelData { asset::ModelScript readScriptOverlay(const std::filesystem::path& file); }
 
@@ -101,68 +99,6 @@ const char* scriptDirectory(int language) {
   return language>=0 && language<8 ? directories[language] : "Scripts";
   }
 }
-
-bool Resources::loadBaseOutputUnits(std::string_view request, int language,
-                                    std::vector<std::shared_ptr<asset::CutsceneBlock>>& blocks) {
-  try {
-    std::string_view branch;
-    if(inst->baseOutputUnits.findVfs(request,&branch)!=nullptr)
-      return loadBaseOutputUnits(request,language,branch,blocks);
-    const std::string name(request.substr(0,255));
-    const OutputUnits::Source* source=inst->baseOutputUnits.findHost("_work/Data/Scripts/content/CUTSCENE/"+name);
-    branch="host_ordinary";
-    if(source==nullptr && language>=0) {
-      source=inst->baseOutputUnits.findHost("_work/Data/"+std::string(scriptDirectory(language))+"/"+name);
-      branch="host_localized";
-      }
-    if(source==nullptr) return false;
-    return loadBaseOutputUnits(request,language,branch,blocks,std::filesystem::path(source->path).u16string());
-    }
-  catch(const BaseStore::Error&) { throw; }
-  catch(const std::exception& error) { throw BaseStore::Error("output units "+std::string(request)+": "+error.what()); }
-  }
-
-bool Resources::loadBaseOutputUnits(std::string_view request, int language, std::string_view branch,
-                                   std::vector<std::shared_ptr<asset::CutsceneBlock>>& blocks,
-                                   std::u16string_view hostPath) {
-  try {
-    const auto& index = inst->baseOutputUnits;
-    const OutputUnits::Source* source = nullptr;
-    if(hostPath.empty()) {
-      std::string_view selectedBranch;
-      source = index.findVfs(request,&selectedBranch);
-      if(source==nullptr || selectedBranch!=branch)
-        throw std::runtime_error("selected VFS source missing from output units base index");
-      }
-    else {
-      source = index.findHost(censusSourcePath(std::filesystem::path(hostPath)));
-      if(source==nullptr)
-        throw std::runtime_error("selected host source missing from output units base index");
-      if(!source->skipped.empty())
-        return false;
-      }
-    if(!source->skipped.empty())
-      throw std::runtime_error("selected VFS output units source skipped: "+source->skipped);
-    const auto file = index.path(*source);
-    std::string actualSha256;
-    auto library = OutputUnits::readLibrary(file,&actualSha256);
-    if(actualSha256!=source->recordSha256)
-      throw std::runtime_error("output units record identity differs from base index");
-    auto loaded = OutputUnits::sortedBlocks(library);
-    blocks = std::move(loaded);
-    if(inst->census) {
-      const auto record = "base/outputunits/"+file.filename().generic_string();
-      inst->census->replaced(request,record);
-      inst->census->outputUnits("GameScript::loadDialogOU",request,language,branch,record,actualSha256,*source);
-      }
-    return true;
-    }
-  catch(const std::exception& error) {
-    if(inst->census) inst->census->missing(request,error.what());
-    throw BaseStore::Error("output units "+std::string(request)+": "+error.what());
-    }
-  }
-
 
 Resources::Resources() {
   inst=this;
@@ -1388,9 +1324,9 @@ const ProtoMesh* Resources::decalMesh(const asset::VisualDecal& decal) {
   return inst->implDecalMesh(decal);
   }
 
-const Resources::VobTree* Resources::loadVobBundle(std::string_view name) {
+const Resources::VobTree* Resources::loadVobBundle(std::string_view name, bool (*readLayer)(VobTree&,std::string_view)) {
   std::lock_guard<std::recursive_mutex> g(inst->sync);
-  return inst->implLoadVobBundle(name);
+  return inst->implLoadVobBundle(name,readLayer);
   }
 
 void Resources::resetRecycled(uint8_t fId) {
@@ -1456,48 +1392,14 @@ void Resources::recycle(std::shared_ptr<void>&& lifetime) {
   inst->recycled[inst->recycledId].lifetime.emplace_back(std::move(lifetime));
   }
 
-const Resources::VobTree* Resources::implLoadVobBundle(std::string_view filename) {
+const Resources::VobTree* Resources::implLoadVobBundle(std::string_view filename, bool (*readLayer)(VobTree&,std::string_view)) {
   auto cname = std::string(filename);
   auto i     = zenCache.find(cname);
   if(i!=zenCache.end())
     return i->second.get();
 
   std::vector<std::shared_ptr<asset::VirtualObject>> bundle;
-  bool overridden=false;
-  const auto content=contentDir();
-  const auto* layers=std::getenv("OPENGOTHIC_VOB_LAYERS");
-  if(!content.empty() && (layers==nullptr || std::string_view(layers)!="0")) {
-    auto file=content/"vobtrees.d";
-    try {
-      const auto separator=filename.find_last_of("/\\");
-      auto name=std::filesystem::path(std::string(filename.substr(separator==std::string_view::npos ? 0 : separator+1)))
-                  .stem().string()+".json";
-      for(auto& c:name) c=char(std::toupper(uint8_t(c)));
-      if(std::filesystem::is_directory(file))
-        for(const auto& entry:std::filesystem::directory_iterator(file)) {
-          auto candidate=entry.path().filename().string();
-          for(auto& c:candidate) c=char(std::toupper(uint8_t(c)));
-          if(candidate!=name || !entry.is_regular_file()) continue;
-          file=entry.path();
-          std::map<std::string,std::filesystem::path> ownMeshes;
-          for(const auto& [key,mesh]:meshOverrides) ownMeshes.emplace(key,mesh.file);
-          const auto result=VobLayer::readTree(bundle,baseDir(),file,content,&ownMeshes);
-          overridden=result.errors.empty();
-          if(!overridden) {
-            std::string errors;
-            for(const auto& error:result.errors) {
-              if(!errors.empty()) errors+="; ";
-              errors+=error;
-              }
-            Log::e("vob tree: skipped ",errors);
-            }
-          break;
-          }
-      }
-    catch(const std::exception& error) {
-      Log::e("vob tree: skipped ",file.string(),": ",error.what());
-      }
-    }
+  const bool overridden=readLayer(bundle,filename);
   if(!overridden) {
     try {
       WorldData::ZenFile base;

@@ -1,6 +1,4 @@
 #include "contentcensus.h"
-#include "programdata.h"
-#include "outputunits.h"
 #include "audiodata.h"
 #include "musicdata.h"
 
@@ -119,7 +117,7 @@ void ContentCensus::profile(std::string_view game, std::string_view outputUnits,
 
 void ContentCensus::program(std::string_view consumer, std::string_view request, int language,
                             std::string_view branch, std::string_view record, std::string_view sha256,
-                            const ProgramData::Source& source) noexcept {
+                            const ImportedSource& source) noexcept {
   try {
     ProgramSelection entry;
     entry.consumer = consumer;
@@ -141,7 +139,7 @@ void ContentCensus::program(std::string_view consumer, std::string_view request,
 
 void ContentCensus::outputUnits(std::string_view consumer, std::string_view request, int language,
                                 std::string_view branch, std::string_view record, std::string_view sha256,
-                                const OutputUnits::Source& source) noexcept {
+                                const ImportedSource& source) noexcept {
   try {
     ProgramSelection entry;
     entry.consumer = consumer;

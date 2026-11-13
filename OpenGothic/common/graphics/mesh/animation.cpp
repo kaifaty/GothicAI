@@ -6,7 +6,6 @@
 #include <cctype>
 #include <cmath>
 
-#include "world/objects/interactive.h"
 #include "utils/string_frm.h"
 #include "resources.h"
 #include "animationsound.h"

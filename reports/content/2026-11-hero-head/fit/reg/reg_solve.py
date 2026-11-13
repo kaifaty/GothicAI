@@ -301,5 +301,7 @@ for nm,mask,cen in (('l',m['leye'],lc),('r',m['reye'],rc)):
     print('EYE',nm,'skin inside the ball after the shift',int((ga<0).sum()),'deepest mm %.2f'%(10*ga.min()))
     print('EYE',nm,'shift mm',(10*sh).round(1),'ring',len(ring),'gap mm min %.2f median %.2f'%(10*gap.min(),10*np.median(gap)))
 newpos=co+disp/100.0
-np.savez(os.path.join(D,'reg.npz'),co=newpos,interior=interior,socket=socket,cav=cav,eye_l=eyes['l'],eye_r=eyes['r'],w=w,src_l=src_l,tgt_l=tgt_l/100+eye)
+follow=np.zeros(len(co),bool); follow[hk]=True      # free, follow, ref_ok: for the pass after this one (head_outline.py)
+np.savez(os.path.join(D,'reg.npz'),co=newpos,interior=interior,socket=socket,cav=cav,eye_l=eyes['l'],eye_r=eyes['r'],w=w,src_l=src_l,tgt_l=tgt_l/100+eye,
+         free=free,follow=follow,ref_ok=ref_ok)
 json.dump({'eye':eye_info,'sched':sched,'steps':log,'landmarks':names},open(os.path.join(D,'reg_log.json'),'w'),indent=1)

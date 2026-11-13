@@ -4,6 +4,7 @@
 #include "asset/worldtypes.h"
 
 #include "graphics/mesh/animationsolver.h"
+#include "graphics/mesh/animationinteractive.h"
 #include "graphics/objvisual.h"
 #include "world/triggers/abstracttrigger.h"
 #include "game/inventory.h"
@@ -16,17 +17,8 @@ class World;
 class Trigger;
 struct HeroDeed;
 
-class Interactive : public Vob, public AnimationSound {
+class Interactive : public Vob, public AnimationSound, public AnimationInteractive {
   public:
-    enum Anim : int8_t {
-      In        =  1,
-      Active    =  0,
-      Out       = -1,
-
-      ToStand   = 10,
-      FromStand = 11,
-      };
-
     Interactive(Vob* parent, World& world, const asset::VMovableObject& vob, Flags flags);
 
     void                load(Serialize& fin) override;
@@ -97,7 +89,7 @@ class Interactive : public Vob, public AnimationSound {
     bool                detach(Npc& npc, bool quick);
     bool                isAttached(const Npc& to);
 
-    auto                animNpc(const AnimationSolver &solver, Anim t) const -> const Animation::Sequence*;
+    auto                animNpc(const AnimationSolver &solver, Anim t) const -> const Animation::Sequence* override;
     void                marchInteractives(DbgPainter& p) const;
 
   protected:

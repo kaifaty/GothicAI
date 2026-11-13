@@ -77,6 +77,7 @@
 #include "outputunits.h"
 #include "audiodata.h"
 #include "musicdata.h"
+#include "dmusic/musicrecord.h"
 #include "musicnative.h"
 #include "worldchunksruntime.h"
 #include "worlddata.h"

@@ -36,6 +36,7 @@ class Material final {
     float                     uvScale          = 1.f;
     float                     antitileCell     = 1.f;
     Antitile                  antitile         = Antitile::Off;
+    float                     projectionTile   = 0;  // metres per repeat by world position (materials.json); 0: mesh UV
     bool                      materialMaps     = false;
     std::vector<const Tempest::Texture2d*> frames;
     AlphaFunc                 alpha            = AlphaTest;
@@ -58,6 +59,12 @@ class Material final {
     void setAlbedo(const Tempest::Texture2d* texture);
 
     bool hasMaterialMaps()       const { return materialMaps; }
+    bool hasProjection()         const { return materialMaps && projectionTile>0; }
+    // repeats per cm the shader projects by world position (BK_PROJECTION, opaque only); 0: by the mesh UV
+    float projectionUvScale()    const;
+    // UV units per metre the shader samples at, from the mesh's (TexelDensity): uv*uvScale, or by world position;
+    // a morph mesh is drawn by its UV
+    float textureUvPerMetre(float meshUvPerMetre, bool morph = false) const;
     bool hasFrameAnimation()     const { return !frames.empty() && texAniFPSInv!=0;    }
     bool hasUvAnimation()        const { return texAniMapDirPeriod!=Tempest::Point(0); }
     // the weight of the TAA reactive mask of a translucent mesh (graphics plan 1v): 1 when its texture changes by

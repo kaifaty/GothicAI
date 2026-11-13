@@ -402,8 +402,8 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
   for(const auto& sub:mesh.sub)
     if(sub.iboOffset==iboOff && sub.iboLength==iboLen) {
       obj.textureLocal=sub.texel;
-      // the shader samples uv*uvScale (materials.json "scale")
-      obj.textureLocal.uvPerMetre*=std::abs(mat.uvScale);
+      // the shader samples uv*uvScale (materials.json "scale") or by world position ("projection")
+      obj.textureLocal.uvPerMetre=mat.textureUvPerMetre(obj.textureLocal.uvPerMetre,mesh.morph.anim!=nullptr);
       break;
       }
   { FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand); updateTextureDemand(id); }
@@ -462,7 +462,7 @@ VisualObjects::Item VisualObjects::get(const AnimMesh& mesh, const Material& mat
   for(const auto& sub:mesh.sub)
     if(sub.iboOffset==iboOff && sub.iboSize==iboLen) {
       obj.textureLocal=sub.texel;
-      obj.textureLocal.uvPerMetre*=std::abs(mat.uvScale);
+      obj.textureLocal.uvPerMetre*=std::abs(mat.uvScale); // a body is not projected by world position
       break;
       }
   { FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand); updateTextureDemand(id); }
@@ -508,7 +508,7 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
     obj.textureMeasured=true;
     obj.texturePlaced=true;
     obj.textureLocal=*texel;
-    obj.textureLocal.uvPerMetre*=std::abs(mat.uvScale);
+    obj.textureLocal.uvPerMetre=mat.textureUvPerMetre(obj.textureLocal.uvPerMetre,mesh.morph.anim!=nullptr);
     obj.textureTexel=obj.textureLocal;
     }
   { FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand); updateTextureDemand(id); }

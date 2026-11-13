@@ -350,6 +350,24 @@ void PhysicVbo::prepareTriangleData() const {
   triangleDataReady = true;
   }
 
+void PhysicVbo::adopt(std::vector<uint32_t>&& indices, std::vector<Segment>&& parts,
+                      std::vector<std::vector<uint32_t>>&& duplicates) {
+  id = std::move(indices);
+  segments = std::move(parts);
+  meshShape = nullptr;
+  splitMeshShape = nullptr;
+  // What prepareTriangleData derives: each triangle's segment, and every member of a group pointing at it.
+  triangleSegments.assign(id.size()/3,std::numeric_limits<uint32_t>::max());
+  for(size_t s=0;s<segments.size();++s)
+    std::fill_n(triangleSegments.begin()+std::ptrdiff_t(segments[s].off/3),segments[s].size,uint32_t(s));
+  rayDuplicates = std::move(duplicates);
+  duplicateGroup.clear();
+  for(size_t g=0;g<rayDuplicates.size();++g)
+    for(const auto triangle:rayDuplicates[g])
+      duplicateGroup.emplace(triangle,uint32_t(g));
+  triangleDataReady = true;
+  }
+
 asset::MaterialGroup PhysicVbo::materialId(size_t triangle) const {
   prepareTriangleData();
   if(triangle<triangleSegments.size() && triangleSegments[triangle]<segments.size())

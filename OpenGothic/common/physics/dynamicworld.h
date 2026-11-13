@@ -7,6 +7,7 @@
 #include "physics/charactervirtualdiagnostics.h"
 #include "physics/navmesh.h"
 #include "physics/fracture.h"
+#include "physics/staticcollision.h"
 
 #include <Tempest/Matrix4x4>
 #include <cstdint>
@@ -97,6 +98,9 @@ class DynamicWorld final {
     static constexpr float characterItemRange = 300.f; // centimetres around the opt-in hero
 
     DynamicWorld(PhysicsHost *host, const asset::WorldMesh& mesh, const asset::WorldMesh* originalCloth = nullptr);
+    // Static collision from a lazy input (staticcollision.h); no cache: the game's cache of host, if any.
+    DynamicWorld(PhysicsHost *host, const StaticCollision::Input& input, const asset::WorldMesh* originalCloth,
+                 const StaticCollision::Cache* cache);
     DynamicWorld(const DynamicWorld&)=delete;
     ~DynamicWorld();
 
@@ -748,11 +752,8 @@ class DynamicWorld final {
       size_t shapeBytes = 0, triangles = 0;
       };
     StaticCollisionStats staticCollisionStats() const;
-    struct StaticCollisionLoadStats {
-      bool cacheHit = false;
-      double keyMs = 0, readMs = 0, buildMs = 0, writeMs = 0;
-      };
-    const StaticCollisionLoadStats& staticCollisionLoadStats() const { return collisionLoadStats; }
+    using StaticCollisionLoadStats = StaticCollision::Stats;
+    const StaticCollisionLoadStats& staticCollisionLoadStats() const { return statics->stats; }
     bool staticCollisionSplit() const { return splitStaticTriangles; }
     uint64_t simulationStep() const;
 
@@ -778,7 +779,7 @@ class DynamicWorld final {
 
   private:
     friend struct WayHeightsContract;
-    friend struct WorldCollisionChunksContract;
+    friend struct StaticCollisionProbe;
     friend class ClothBulletBenchDriver;
     void           moveBullet(BulletBody& b, const Tempest::Vec3& dir, uint64_t dt);
     RayWaterResult implWaterRay(const Tempest::Vec3& from, const Tempest::Vec3& to, float stepHeight,
@@ -824,12 +825,7 @@ class DynamicWorld final {
     PhysicsHost*                      host = nullptr;
     BulletTrace*                      bulletTrace = nullptr;
     bool                              splitStaticTriangles = true;
-    StaticCollisionLoadStats          collisionLoadStats;
-
-    std::vector<std::string>           sectors;
-
-    std::unique_ptr<PhysicVbo>         landMesh;
-    std::unique_ptr<PhysicVbo>         waterMesh;
+    std::unique_ptr<StaticCollision>   statics;
     std::unique_ptr<PhysicVbo>         originalClothMesh;
     std::unique_ptr<WorldBodies>       bodies;
 

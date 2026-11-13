@@ -11,6 +11,7 @@
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"
 #include "world/world.h"
+#include "world/npclogicalstate.h"
 #include "graphics/worldview.h"
 #include "objvisual.h"
 
@@ -1058,16 +1059,24 @@ bool MdlVisual::updateFootIk(Npc& npc, World& world, uint64_t dt, bool alignedTo
   return changed;
   }
 
-void MdlVisual::processLayers(World& world, NpcLogicalState* logic) {
+void MdlVisual::processLayers(World& world) {
   Pose&    pose      = *skInst;
   uint64_t tickCount = world.tickCount();
-  pose.processLayers(solver,tickCount,logic);
+  pose.processLayers(solver,tickCount);
   }
 
 bool MdlVisual::processEvents(World& world, uint64_t &barrier, Animation::EvCount &ev, NpcLogicalState* logic) {
   Pose&    pose      = *skInst;
   uint64_t tickCount = world.tickCount();
-  return pose.processEvents(barrier,tickCount,ev,logic);
+  Pose::LogicEventObserver observer;
+  if(logic!=nullptr && NpcLogicAudit::enabled()) {
+    observer.context=logic;
+    observer.fired=[](void* opaque, const Animation::Sequence* sequence, uint64_t origin,
+                      const Animation::LogicEvent& event, uint64_t now) {
+      static_cast<NpcLogicalState*>(opaque)->eventFired(sequence,origin,event,now);
+      };
+    }
+  return pose.processEvents(barrier,tickCount,ev,&observer);
   }
 
 Vec3 MdlVisual::mapBone(const size_t boneId) const {
