@@ -6,6 +6,7 @@
 #include "gothicglb.h"
 #include "audiodata.h"
 #include "musicdata.h"
+#include "dmusic/musicrecord.h"
 #include "musicnative.h"
 #include "outputunits.h"
 #include "programdata.h"

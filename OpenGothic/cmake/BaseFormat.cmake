@@ -11,7 +11,7 @@ set(BASE_SOURCES
   common/dmusic/style.cpp common/dmusic/band.cpp common/dmusic/reference.cpp common/dmusic/info.cpp common/dmusic/pattern.cpp
   # P16: the Dx8 DLS parser with its SoundFont/Hydra finalization, and both music record codecs.
   common/dmusic/dlscollection.cpp common/dmusic/wave.cpp common/dmusic/soundfont.cpp common/dmusic/hydra.cpp
-  common/musicdata.cpp common/musicnative.c common/musicnativeimport.c
+  common/musicdata.cpp common/dmusic/musicrecord.cpp common/musicnative.c common/musicnativeimport.c
   common/dmusic/directmusicimport.cpp common/dmusic/dlsruntime.cpp common/dmusic/styleruntime.cpp common/dmusic/waveruntime.cpp)
 set(BASE_NATIVE_IO
   lib/Tempest/Engine/io/rfile.cpp lib/Tempest/Engine/io/idevice.cpp lib/Tempest/Engine/utility/dir.cpp
@@ -34,11 +34,11 @@ file(GLOB_RECURSE BASE_FORMAT_INPUTS ${BASE_FORMAT_CONFIGURE_DEPENDS} RELATIVE "
 # Runtime chunk reading (worldchunksruntime.*) is deliberately outside this
 # fingerprint: changing residency metadata or reading must not reimport the base.
 list(APPEND BASE_FORMAT_INPUTS ${BASE_SOURCES} ${BASE_NATIVE_IO}
-  common/sha256.h common/baseimport.h common/basemusic.h common/worldchunks.h common/worlddata.h common/modeldata.h common/fontdata.h common/programdata.h common/outputunits.h common/audiodata.h common/basemesh.h
+  common/sha256.h common/baseimport.h common/baseidentity.h common/basemusic.h common/worldchunks.h common/worlddata.h common/modeldata.h common/fontdata.h common/programdata.h common/outputunits.h common/audiodata.h common/basemesh.h
   common/gothicglb.h common/gltfmesh.h common/utils/fileutil.h common/dmusic/sourcefile.h common/dmusic/riff.h common/dmusic/segment.h
   common/dmusic/track.h common/dmusic/style.h common/dmusic/band.h common/dmusic/reference.h common/dmusic/info.h common/dmusic/pattern.h
   common/dmusic/structs.h common/dmusic/dlscollection.h common/dmusic/wave.h common/dmusic/soundfont.h common/dmusic/hydra.h
-  common/musicdata.h common/musicnative.h lib/TinySoundFont/tsf.h lib/Tempest/Engine/sound/sound.h
+  common/musicdata.h common/dmusic/musicrecord.h common/musicnative.h lib/TinySoundFont/tsf.h lib/Tempest/Engine/sound/sound.h
   lib/Tempest/Engine/include/Tempest/Sound lib/Tempest/Engine/include/Tempest/MemReader lib/Tempest/Engine/include/Tempest/MemWriter
   lib/Tempest/Engine/include/Tempest/ODevice lib/Tempest/Engine/include/Tempest/Log
   lib/Tempest/Engine/system/platform.h lib/Tempest/Engine/include/Tempest/File lib/Tempest/Engine/include/Tempest/Dir

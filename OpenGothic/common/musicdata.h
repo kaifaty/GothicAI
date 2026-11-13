@@ -8,10 +8,7 @@
 // kind "segment" | "style" | "dls". Record key "<projection>/<kind>/<BIN_SHA>"; record identity =
 // SHA-256(JSON bytes || BIN bytes). The imported original SHA-256 is provenance only.
 
-#include "baseimport.h"
-#include "dmusic/dlscollection.h"
-#include "dmusic/segment.h"
-#include "dmusic/style.h"
+#include "baseidentity.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -68,13 +65,6 @@ Index readIndex(const std::filesystem::path& dir);
 // BIN bytes. Throws std::runtime_error("music data: <key>: <reason>").
 std::vector<uint8_t> readRecord(const Index& index, std::string_view key);
 
-// Dx8 projection codec: every parsed field memberwise, owning string lengths and raw UTF-16 units kept.
-// Decoders require exact consumption and throw std::runtime_error("music data: <reason>").
-std::vector<uint8_t>       encodeDx8(const Dx8::Segment& segment);
-std::vector<uint8_t>       encodeDx8(const Dx8::Style& style);
-std::vector<uint8_t>       encodeDx8(const Dx8::DlsCollection::Parsed& dls);
-Dx8::Segment               decodeDx8Segment(const std::vector<uint8_t>& bin);
-Dx8::Style                 decodeDx8Style(const std::vector<uint8_t>& bin);
-Dx8::DlsCollection::Parsed decodeDx8Dls(const std::vector<uint8_t>& bin);
+void require(bool ok, const std::string& reason);
 
 }

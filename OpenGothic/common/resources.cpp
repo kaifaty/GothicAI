@@ -48,6 +48,7 @@
 #include "graphics/mesh/bowdraw.h"
 #include "graphics/material.h"
 #include "dmusic/directmusic.h"
+#include "dmusic/musicrecord.h"
 #include "utils/fileext.h"
 #include "utils/gthfont.h"
 
