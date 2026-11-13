@@ -134,10 +134,18 @@ void CookedChunkSource::load(const fs::path& dir, const fs::path& overrideDir, c
     if(files.size()!=manifest.cells.size())
       throw std::runtime_error("the world has "+std::to_string(files.size())+" chunk files for "+
                                std::to_string(manifest.cells.size())+" cells");
+    // Ids past world.json's counts number edited geometry across the whole set: a cell whose GLB changed can
+    // renumber its neighbours' copies, so then no cell may use the index. Without them every id is its source key.
+    const bool edited = h.vertices>manifest.vertices || h.features>manifest.features || read.appendedMaterials()>0;
     states = std::make_unique<std::atomic<uint8_t>[]>(files.size());
     size_t stale = 0;
     for(size_t i=0;i<files.size();++i)
       if(read.cells()[i].glbSize!=files[i].size) {
+        if(edited)
+          throw std::runtime_error(files[i].path.string()+" has "+std::to_string(files[i].size)+
+                                   " bytes, the index lists the cell with a GLB of "+
+                                   std::to_string(read.cells()[i].glbSize)+" bytes, and the set's edited ids "
+                                   "depend on every cell");
         states[i] = Stale;
         ++stale;
         }

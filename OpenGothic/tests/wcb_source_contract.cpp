@@ -157,6 +157,7 @@ struct Outcome {
   ChunkReadCounts cooked, glb; // the counters of the source loaded with the cooked path, and with OPENGOTHIC_WCB=0
   std::string     log;
   size_t          cells = 0;
+  std::vector<std::string> glbCells; // the cells the cooked source read from their GLB
   };
 
 // Loads dir with over twice, with the cooked path and with OPENGOTHIC_WCB=0, and reads every cell from
@@ -166,19 +167,26 @@ Outcome compareSet(const std::string& label, const fs::path& dir, const fs::path
   const auto glb=loadWorld(dir,over,false);
   const auto cooked=loadWorld(dir,over,true);
   const auto cells=glb.table.entries.size();
-  for(size_t i=0;i<cells;++i)
+  std::vector<std::string> glbCells;
+  for(size_t i=0;i<cells;++i) {
+    const auto before=cooked.source().reads().glb;
     for(const auto* lists:{&glb.full,&glb.filtered}) {
       const auto& sources=(*lists)[i];
       const auto difference=compareReads(glb.source().read(i,sources),cooked.source().read(i,sources));
       require(difference.empty(),label+": cell "+glb.table.entries[i].file+", "+(lists==&glb.full ? "full" : "filtered")+
               " list: the cooked path reads another result than the GLB path: "+difference);
       }
-  return {cooked.source().reads(),glb.source().reads(),log.take(),cells};
+    if(cooked.source().reads().glb!=before)
+      glbCells.push_back(glb.table.entries[i].file);
+    }
+  return {cooked.source().reads(),glb.source().reads(),log.take(),cells,std::move(glbCells)};
   }
 
 // cookedCells of the set's cells took the cooked path for both their reads, the rest the GLB path; the
-// source with OPENGOTHIC_WCB=0 read every cell from its GLB; the reader logged lines lines, with reason.
-void expect(const std::string& label, const Outcome& o, size_t cookedCells, size_t lines, const std::string& reason={}) {
+// source with OPENGOTHIC_WCB=0 read every cell from its GLB; the reader logged lines lines, with reason;
+// with glbCell, that cell is the one that took the GLB path.
+void expect(const std::string& label, const Outcome& o, size_t cookedCells, size_t lines, const std::string& reason={},
+            const std::string& glbCell={}) {
   std::printf("%s: %llu of %zu cells cooked; log: %s\n",label.c_str(),static_cast<unsigned long long>(o.cooked.cooked/2),
               o.cells,o.log.empty() ? "(none)" : o.log.c_str());
   require(o.cooked.cooked==2*cookedCells && o.cooked.glb==2*(o.cells-cookedCells),
@@ -187,6 +195,8 @@ void expect(const std::string& label, const Outcome& o, size_t cookedCells, size
   require(o.glb.cooked==0 && o.glb.glb==2*o.cells,label+": with OPENGOTHIC_WCB=0 every read must take the GLB path");
   require(readerLines(o.log)==lines,label+": the reader must log "+std::to_string(lines)+" lines, logged: "+o.log);
   require(reason.empty() || o.log.find(reason)!=std::string::npos,label+": the log must say '"+reason+"', got: "+o.log);
+  require(glbCell.empty() || o.glbCells==std::vector<std::string>{glbCell},label+": only "+glbCell+
+          " must take the GLB path");
   }
 
 void expectAllCooked(const std::string& label, const fs::path& dir, const fs::path& over={}) {
@@ -254,6 +264,14 @@ void fixtureSets(const fs::path& root) {
     cookWorldChunks(strip,*over);
     expectAllCooked("strip with the override "+over->filename().string(),strip,*over);
     }
+  // The same GLBs as another world directory: without cell 0,0, the edited 1,0 its own chunk.
+  const auto other=root/"strip-other";
+  writeWorldChunks(base,fixtureSource,other);
+  fs::remove(other/"chunks/0_0.glb");
+  fs::copy_file(edit/"chunks/1_0.glb",other/"chunks/1_0.glb",fs::copy_options::overwrite_existing);
+  writeText(other/"world.json",withChunks(readText(strip/"world.json"),"\"chunks/1_0.glb\",\"chunks/2_0.glb\""));
+  cookWorldChunks(other);
+  expectAllCooked("strip without cell 0,0 and the edited 1,0 as its own chunk",other);
   }
 
 // ---- an override directory: its cells' .wcb beside its GLBs, its own index ----
@@ -271,7 +289,8 @@ void overrideDirectory(const fs::path& root) {
   expectAllCooked("the same base without its override, from its own index",base);
   // Without the override's 1_0.wcb the cell reads its override GLB, not the base's 1_0.wcb.
   fs::remove(over/"chunks/1_0.wcb");
-  expect("override set without the override's 1_0.wcb",compareSet("override set without 1_0.wcb",base,over),2,1);
+  expect("override set without the override's 1_0.wcb",compareSet("override set without 1_0.wcb",base,over),2,1,{},
+         "chunks/1_0.glb");
   }
 
 // ---- fallbacks: each case in a fresh copy of the strip cooked beside its GLBs ----
@@ -315,24 +334,48 @@ void fallbacks(const fs::path& root) {
          "differ from the loaded world's");
 
   dir=copy();
+  index=fileBytes(dir/wci::FileName);
+  put32(index,44,get32(index,44)+1); // the feature total alone
+  writeBytes(dir/wci::FileName,index);
+  expect("an index with another feature total",compareSet("an index with another feature total",dir),0,1,
+         "28 features, 2 materials and 24 triangles differ from the loaded world's 27, 27,");
+
+  dir=copy();
   fs::remove(dir/"chunks/1_0.wcb");
-  expect("a missing .wcb",compareSet("a missing .wcb",dir),2,1);
+  expect("a missing .wcb",compareSet("a missing .wcb",dir),2,1,{},"chunks/1_0.glb");
 
   dir=copy();
   auto chunk=fileBytes(dir/"chunks/1_0.wcb");
   chunk.pop_back();
   writeBytes(dir/"chunks/1_0.wcb",chunk);
-  expect("a truncated .wcb",compareSet("a truncated .wcb",dir),2,2,"truncated");
+  expect("a truncated .wcb",compareSet("a truncated .wcb",dir),2,2,"truncated","chunks/1_0.glb");
 
   dir=copy();
   fs::copy_file(dir/"chunks/0_0.wcb",dir/"chunks/1_0.wcb",fs::copy_options::overwrite_existing);
   expect("the .wcb of another cell",compareSet("the .wcb of another cell",dir),2,2,
-         "was cooked for cell 0,0, world.json lists it for cell 1,0");
+         "was cooked for cell 0,0, world.json lists it for cell 1,0","chunks/1_0.glb");
 
   dir=copy();
   writeBytes(dir/"chunks/1_0.glb",padJson(fileBytes(dir/"chunks/1_0.glb")));
   expect("a GLB of another length after the cook",compareSet("a GLB of another length",dir),2,2,
-         "bytes at world load, the index lists the cell with a GLB of");
+         "bytes at world load, the index lists the cell with a GLB of","chunks/1_0.glb");
+
+  // In a set with edits a GLB of another length rejects the whole index. Here 1_0's new edit moves the border
+  // vertex it shares with 2_0 instead of the one it shares with 0_0: the totals stay, both neighbours' copies renumber.
+  {
+  const auto base=root/"fallback-edited", over=root/"fallback-edited-override";
+  writeWorldChunks(stripMesh(),fixtureSource,base);
+  writeStripOverride(over,stripMesh(),true);
+  cookWorldChunks(base,over);
+  auto moved=stripMesh();
+  moved.vertices[stripVertex(8,0)].y+=30.f;
+  const auto other=writeStripOverride(root/"fallback-edited-other",moved,false);
+  const auto before=fs::file_size(over/"chunks/1_0.glb");
+  writeBytes(over/"chunks/1_0.glb",padJson(fileBytes(other/"chunks/1_0.glb")));
+  require(fs::file_size(over/"chunks/1_0.glb")!=before,"the edited set's new 1_0.glb must have another length");
+  expect("an edited set's GLB of another length",compareSet("an edited set's GLB of another length",base,over),0,1,
+         "the set's edited ids depend on every cell");
+  }
 
   // The GLB changed at the same length and its cell cooked again, the index left from the first cook.
   dir=copy();
@@ -346,21 +389,34 @@ void fallbacks(const fs::path& root) {
   require(cookWorldChunks(dir).written==1,"the changed GLB's cell must be cooked again");
   writeBytes(dir/wci::FileName,index);
   expect("a .wcb cooked again without the index",compareSet("a .wcb cooked again without the index",dir),2,2,
-         "re-cooked without the index");
+         "re-cooked without the index","chunks/1_0.glb");
 
-  // currentFile: the retry of a changed file always reads the GLB.
+  // currentFile: the retry of a file changed after world load reads the GLB as it is now, on both sources;
+  // a plain read of it fails on both.
   {
   dir=copy();
   const auto plain=loadWorld(dir,{},false);
   const auto withCooked=loadWorld(dir,{},true);
+  writeBytes(dir/"chunks/1_0.glb",padJson(fileBytes(dir/"chunks/1_0.glb")));
   for(size_t i=0;i<plain.full.size();++i) {
-    const auto difference=compareReads(plain.source().read(i,plain.full[i]),withCooked.source().read(i,plain.full[i],true));
+    const auto difference=compareReads(plain.source().read(i,plain.full[i],true),
+                                       withCooked.source().read(i,plain.full[i],true));
     require(difference.empty(),"currentFile: cell "+std::to_string(i)+" differs from the GLB path: "+difference);
     }
   const auto reads=withCooked.source().reads();
   require(reads.cooked==0 && reads.glb==plain.full.size(),"currentFile must take the GLB path for every cell");
-  std::printf("currentFile=true: %llu of %zu cells from the GLB, equal to the GLB path\n",
-              static_cast<unsigned long long>(reads.glb),plain.full.size());
+  for(const auto* world:{&plain,&withCooked}) {
+    bool failed=false;
+    try {
+      (void)world->source().read(1,world->full[1]);
+      }
+    catch(const std::runtime_error& error) {
+      failed=std::string(error.what()).find("chunk changed after world load")!=std::string::npos;
+      }
+    require(failed,"a plain read of a GLB changed after world load must fail");
+    }
+  std::printf("currentFile=true after 1_0.glb changed: %llu of %zu cells from the GLB, equal on both sources; "
+              "a plain read fails\n",static_cast<unsigned long long>(reads.glb),plain.full.size());
   }
 
   // A source ordinal past the cell's triangles fails on the cooked path, naming the file, as on the GLB path.

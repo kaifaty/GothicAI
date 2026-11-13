@@ -10,14 +10,17 @@
 //     and its totals (vertices, features, materials, triangles) are what
 //     readWorldChunks has just produced;
 //   - the cell's GLB had at load the byte length of the index's entry, and
-//     still has the length and time it had then;
+//     still has the length and time it had then. In a set with edits (ids past
+//     world.json's counts) one GLB of another length rejects the whole index:
+//     a changed cell can renumber the edited copies of its neighbours;
 //   - the cell's .wcb, beside that GLB, opens, is for this cell and world, and
 //     carries the GLB length and SHA-256 of the index's entry.
 // Otherwise the cell is read from its GLB, with the same result. The index logs
 // one line per world load, none when it is missing; a cell whose .wcb is there
 // but cannot be used logs one line and reads its GLB from then on. A missing
 // .wcb is not logged. OPENGOTHIC_WCB=0 at world load turns the cooked path off.
-// The game writes no cooked file and hashes no GLB.
+// The game writes no cooked file and hashes no GLB: a GLB changed at the same
+// length after the cook is not noticed.
 
 #include "worldchunkindex.h"
 #include "worldchunksruntime.h"
