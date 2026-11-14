@@ -900,9 +900,13 @@ void Resources::textureDemand(const Material& material, TextureCategory category
 void Resources::implTextureDemand(const Material& material, TextureCategory category, const TextureNeed* release,
                                   const TextureNeed* add) {
   ++textureDemandCalls;
-  // the fringe's maps are asked at the density of its material: finer than the layer's own tile needs, never coarser
-  std::array<const Texture2d*,6> maps={material.tex,material.normal,material.orm,
-                                       material.fringe.albedo,material.fringe.normal,material.fringe.orm};
+  // the fringe's maps are asked at the density of its material: finer than the layer's own tile needs, never coarser.
+  // The maps of the ground's two layers (Material::layers) as well: of the meadow and of the road with its verge
+  const auto& ground=material.layers;
+  std::array<const Texture2d*,12> maps={material.tex,material.normal,material.orm,
+                                        material.fringe.albedo,material.fringe.normal,material.fringe.orm,
+                                        ground.sward[0],ground.sward[1],ground.sward[2],
+                                        ground.earth[0],ground.earth[1],ground.earth[2]};
   const auto unique=[&](const Texture2d* texture, size_t index) {
     for(size_t i=0;i<index && i<maps.size();++i)
       if(maps[i]==texture)

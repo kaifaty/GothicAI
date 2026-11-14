@@ -808,6 +808,21 @@ void groundRecords(Tempest::Device& device, const Fixture& fixture) {
             (std::string("ground or verge of a wrong type or range, without its grass or its maps, or beside a projection "
                         "must reject the record whole: ")+name).c_str());
     }
+
+  // The layers' maps are of their ground's demand, at the density of the finer tile: with no owner asking they
+  // would stay at the coarse level they are read at
+  const auto asked = [] { return Resources::textureStats().categoryCount[size_t(Resources::TextureCategory::Landscape)]; };
+  Material layered;
+  layered.layers = meadow.layers;
+  const auto before = asked();
+  Resources::textureDemand(layered,Resources::TextureCategory::Landscape,true);
+  const auto with = asked();
+  Resources::textureDemand(layered,Resources::TextureCategory::Landscape,false);
+  require(with-before==5,"the owner of a ground of two layers must demand each of their five maps once");
+  require(ground.textureUvPerMetre(0.1f)==0.5f && ground.textureUvPerMetre(3.f)==3.f*std::abs(ground.uvScale) &&
+          ground.textureUvPerMetre(0.f)==0.f && way.textureUvPerMetre(0.1f)==0.5f &&
+          Material(source("MEADOW_PLAIN.TGA"),true).textureUvPerMetre(0.1f)==0.1f*std::abs(unlisted.uvScale),
+          "a ground of two layers is asked no coarser than a repeat per its finer tile, the others by their mesh");
   }
 
 // graphics/foliagewind.h: the processor's copy of the rule of shader/materials/foliage_wind.glsl
