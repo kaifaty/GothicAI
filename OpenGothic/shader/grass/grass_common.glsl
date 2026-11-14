@@ -62,8 +62,10 @@ const float GrassTaper       = 0.7;                      // of the width is gone
 // gone from where the blades start to thin to half of the distance where they start to go (grass_ground.glsl)
 const float GrassGroundShade = 0.72;
 const vec3  GrassFarTint     = vec3(1.00, 1.10, 0.74);
-// of a ground with its own layers: its sward is grass already, the far look only leans it to the blades' colour
+// of a ground with its own layers: its sward is grass already, the far look only leans it to the blades' colour,
+// and the shade between the blades is in part baked into it
 const vec3  GrassOwnFarTint  = vec3(1.00, 1.03, 0.80);
+const float GrassOwnGroundShade = 0.82;
 const float GrassFarAo       = 0.95;
 const float GrassGrazeFrom   = 0.25;
 const float GrassGrazeTo     = 0.70;

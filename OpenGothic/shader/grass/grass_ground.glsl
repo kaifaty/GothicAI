@@ -55,7 +55,7 @@ void grassGround(uint bits, vec3 pos, vec3 normal, float sward, inout vec4 diffu
   const bool  plain = (partsOff & GrassPartFar)!=0u;
   const float far   = plain ? 0.0 : smoothstep(ring.y*0.5, ring.y, d);
   const float graze = plain ? 0.0 : 1.0 - smoothstep(GrassGrazeFrom, GrassGrazeTo, dot(gn,toEye)/max(d,1.0));
-  const float nearShade = (partsOff & GrassPartGroundShade)!=0u ? 1.0 : GrassGroundShade;
+  const float nearShade = (partsOff & GrassPartGroundShade)!=0u ? 1.0 : (sward<0.0 ? GrassGroundShade : GrassOwnGroundShade);
   const float along = plain ? 0.0 : max(max(far,graze), smoothstep(ring.x, ring.y*0.5, d));
   vec3 tint = mix(vec3(mix(1.0, nearShade, stand)), mix(vec3(1.0), sward<0.0 ? GrassFarTint : GrassOwnFarTint, stand), along);
   if(far>0.0) {
