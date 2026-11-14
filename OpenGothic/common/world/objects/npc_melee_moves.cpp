@@ -529,7 +529,7 @@ void Npc::endMeleeAiSpecial() {
   if(meleeAiSpecial==MeleeAi::Special::None)
     return;
   const auto handle = meleeAiSpecialTarget.lock();
-  auto* target = handle ? reinterpret_cast<Npc*>(handle->user_ptr) : nullptr;
+  auto* target = owner.script().findNpc(handle.get());
   if(target!=nullptr)
     target->meleeAiSpecialSlot.release(this);
   const auto move = meleeAiSpecial;
@@ -714,7 +714,7 @@ void Npc::tickMeleeCharge() {
     return;
   if(!isPlayer() && isMeleeCharging()) {
     const auto handle = meleeAiSpecialTarget.lock();
-    auto* target = handle ? reinterpret_cast<Npc*>(handle->user_ptr) : nullptr;
+    auto* target = owner.script().findNpc(handle.get());
     if(!Gothic::physicsFlags().meleeAiCharge || target==nullptr || target!=currentTarget || target->isDown() ||
        target->isLie() || target->meleeKnockdown) {
       cancelMeleeCharge("AI target unavailable");

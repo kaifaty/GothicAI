@@ -295,11 +295,11 @@ StoryRuntime::Bind::Bind(daedalus::DaedalusVm& v, Npc* s, Npc* o)
   :self(v.global_self()), other(v.global_other()) {
   if(self!=nullptr) {
     prevSelf = self->get_instance();
-    self->set_instance(s!=nullptr ? std::shared_ptr<daedalus::DaedalusInstance>(s->handlePtr()) : nullptr);
+    self->set_instance(s!=nullptr ? std::static_pointer_cast<daedalus::INpc>(s->handlePtr()) : nullptr);
     }
   if(other!=nullptr) {
     prevOther = other->get_instance();
-    other->set_instance(o!=nullptr ? std::shared_ptr<daedalus::DaedalusInstance>(o->handlePtr()) : nullptr);
+    other->set_instance(o!=nullptr ? std::static_pointer_cast<daedalus::INpc>(o->handlePtr()) : nullptr);
     }
   }
 

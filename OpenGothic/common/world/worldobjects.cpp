@@ -1167,7 +1167,7 @@ Npc *WorldObjects::findHero() {
 
 Npc *WorldObjects::findNpcByInstance(size_t instance, size_t n) {
   for(auto& i:npcArr) {
-    if(i->handle().symbol_index()==instance) {
+    if(i->instanceSymbol()==instance) {
       if(n==0)
         return i.get();
       --n;

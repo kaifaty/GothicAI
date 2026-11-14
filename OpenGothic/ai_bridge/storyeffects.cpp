@@ -224,8 +224,8 @@ void StoryEffect::run(daedalus::DaedalusVm& vm, Npc& npc, Npc& player, std::stri
   auto* other = vm.global_other();
   auto  prevSelf  = self->get_instance();
   auto  prevOther = other->get_instance();
-  self->set_instance(npc.handlePtr());
-  other->set_instance(player.handlePtr());
+  self->set_instance(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()));
+  other->set_instance(std::static_pointer_cast<daedalus::INpc>(player.handlePtr()));
 
   if(kind=="chest_take") {
     // v48: an outcome far from the hero. Direct transfer sends neither perceptions nor npc_deed;
@@ -243,7 +243,7 @@ void StoryEffect::run(daedalus::DaedalusVm& vm, Npc& npc, Npc& player, std::stri
     auto* t = vm.find_symbol_by_name(target);
     auto  inst = t!=nullptr ? t->get_instance() : nullptr;
     if(s!=nullptr && inst!=nullptr)
-      call("B_GIVEINVITEMS",{Value::instance(npc.handlePtr()),Value::instance(inst),
+      call("B_GIVEINVITEMS",{Value::instance(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr())),Value::instance(inst),
                              Value::integer(int32_t(s->index())),Value::integer(count)}); else
       Log::e("[story] ",who,": give to ",target,": no such npc in the world");
     }
@@ -251,20 +251,20 @@ void StoryEffect::run(daedalus::DaedalusVm& vm, Npc& npc, Npc& player, std::stri
     if(auto* s = vm.find_symbol_by_name(item)) {
       auto& from = toHero ? npc : player;
       auto& to   = toHero ? player : npc;
-      call("B_GIVEINVITEMS",{Value::instance(from.handlePtr()),Value::instance(to.handlePtr()),
+      call("B_GIVEINVITEMS",{Value::instance(std::static_pointer_cast<daedalus::INpc>(from.handlePtr())),Value::instance(std::static_pointer_cast<daedalus::INpc>(to.handlePtr())),
                              Value::integer(int32_t(s->index())),Value::integer(count)});
       }
     }
   else if(kind=="create") {
     // into the npc's own hands first: a thing it keeps elsewhere (the server's stash), given after this
     if(auto* s = vm.find_symbol_by_name(item))
-      call("CREATEINVITEMS",{Value::instance(npc.handlePtr()),Value::integer(int32_t(s->index())),
+      call("CREATEINVITEMS",{Value::instance(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr())),Value::integer(int32_t(s->index())),
                              Value::integer(count)});
     }
   else if(kind=="teach") {
     // the scripts' teacher function, as a teacher's dialog calls it: it takes the learning points itself
     if(auto* t = teaching(teach)) {
-      std::vector<Value> args = {Value::instance(npc.handlePtr()),Value::instance(player.handlePtr())};
+      std::vector<Value> args = {Value::instance(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr())),Value::instance(std::static_pointer_cast<daedalus::INpc>(player.handlePtr()))};
       if(teach=="circle")
         args.push_back(Value::integer(count)); else
         args.push_back(Value::integer(intConst(vm,arg)));
@@ -287,7 +287,7 @@ void StoryEffect::run(daedalus::DaedalusVm& vm, Npc& npc, Npc& player, std::stri
   else if(kind=="crime_memory") {
     // B_MemorizePlayerCrime also writes PETZ counters. Project only its NPC-local fields, with
     // the current native absolution stamp so a new deed after payment remains readable.
-    auto level = call("B_GETCURRENTABSOLUTIONLEVEL",{Value::instance(npc.handlePtr())});
+    auto level = call("B_GETCURRENTABSOLUTIONLEVEL",{Value::instance(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()))});
     if(level) {
       auto& aiv = npc.handlePtr()->aivar;
       aiv[size_t(intConst(vm,"AIV_NPCSAWPLAYERCOMMIT"))] = count;
@@ -302,18 +302,18 @@ void StoryEffect::run(daedalus::DaedalusVm& vm, Npc& npc, Npc& player, std::stri
       call("B_LOGENTRY",{Value::str(topic),Value::str(text)});
     }
   else if(kind=="end") {
-    call("AI_STOPPROCESSINFOS",{Value::instance(npc.handlePtr())});
+    call("AI_STOPPROCESSINFOS",{Value::instance(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()))});
     }
   else if(kind=="attack") {
     // the scripts' own attack: the reason decides how far it goes (AR_NONE: until the hero is down)
-    call("B_ATTACK",{Value::instance(npc.handlePtr()),Value::instance(player.handlePtr()),
+    call("B_ATTACK",{Value::instance(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr())),Value::instance(std::static_pointer_cast<daedalus::INpc>(player.handlePtr())),
                      Value::integer(constant(reason,0)),Value::integer(0)});
     }
   else if(kind=="calm") {
     // the npc calls off its fight with the hero (v20, talked down: "Воу, ты чего, спокуха") and keeps to it:
     // its attitude to him as the scripts set it (B_SetAttitude), so their B_AssessEnemy sees no enemy in
     // him any more; and a fight with him ends now, the npc back to its routine
-    call("B_SETATTITUDE",{Value::instance(npc.handlePtr()),Value::integer(constant(attitude,2))});
+    call("B_SETATTITUDE",{Value::instance(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr())),Value::integer(constant(attitude,2))});
     auto* target = npc.target();
     if(target!=nullptr && (target==&player || HeroDeed::aivar(*target,"AIV_PARTYMEMBER")!=0) && !npc.isDown()) {
       npc.clearAiQueue();
@@ -340,12 +340,12 @@ void StoryEffect::run(daedalus::DaedalusVm& vm, Npc& npc, Npc& player, std::stri
       npc.handlePtr()->aivar[size_t(aiv)] = count!=0 ? 1 : 0;
     }
   else if(kind=="refuse_talk") {
-    call("NPC_SETREFUSETALK",{Value::instance(npc.handlePtr()),Value::integer(count)});
+    call("NPC_SETREFUSETALK",{Value::instance(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr())),Value::integer(count)});
     }
   else if(kind=="routine") {
     // as the dialogs do it (B_StartOtherRoutine): the symbol holds the npc the world made of it
     auto* s    = target.empty() ? nullptr : vm.find_symbol_by_name(target);
-    auto  inst = s!=nullptr ? s->get_instance() : npc.handlePtr();
+    auto  inst = s!=nullptr ? s->get_instance() : std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
     if(inst!=nullptr)
       call("B_STARTOTHERROUTINE",{Value::instance(inst),Value::str(routine)}); else
       Log::e("[story] ",who,": routine of ",target,": no such npc in the world");
@@ -363,7 +363,7 @@ int32_t StoryEffect::learnCost(daedalus::DaedalusVm& vm, Npc& player, std::strin
     }
   // as the teacher function itself asks it (B_Teach*: disassembled from GOTHIC.DAT)
   const char*        fn   = teach=="attribute" ? "B_GETLEARNCOSTATTRIBUTE" : "B_GETLEARNCOSTTALENT";
-  std::vector<Value> args = {Value::instance(player.handlePtr())};
+  std::vector<Value> args = {Value::instance(std::static_pointer_cast<daedalus::INpc>(player.handlePtr()))};
   if(teach=="attribute") {
     args.push_back(Value::integer(intConst(vm,arg)));
     }
