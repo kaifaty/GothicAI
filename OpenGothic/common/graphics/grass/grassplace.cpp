@@ -9,68 +9,6 @@ namespace Grass {
 
 namespace {
 
-int32_t floorDiv(int32_t a, int32_t b) {
-  const int32_t q = a/b;
-  return (a%b!=0 && ((a<0)!=(b<0))) ? q-1 : q;
-  }
-
-// The same hash as grassHash of grass_common.glsl: 32 bits, so the ground's shader repeats the patches
-uint32_t hash32(int32_t ix, int32_t iz, uint32_t salt) {
-  uint32_t h = uint32_t(ix)*0x9E3779B1u ^ uint32_t(iz)*0x85EBCA77u ^ salt;
-  h ^= h >> 15;
-  h *= 0x2C1B3C6Du;
-  h ^= h >> 12;
-  h *= 0x297A2D39u;
-  h ^= h >> 15;
-  return h;
-  }
-
-uint64_t hash64(int32_t a, int32_t b, uint32_t salt) {
-  uint64_t x = (uint64_t(uint32_t(a)) << 32 | uint64_t(uint32_t(b))) ^ (uint64_t(salt)*0x9E3779B97F4A7C15ull);
-  x ^= x >> 33;
-  x *= 0xff51afd7ed558ccdull;
-  x ^= x >> 33;
-  x *= 0xc4ceb9fe1a85ec53ull;
-  x ^= x >> 33;
-  return x;
-  }
-
-// Value noise on a lattice of `step` units: 0..65280
-int32_t valueNoise(int32_t x, int32_t z, int32_t step, uint32_t salt) {
-  const int32_t ix = floorDiv(x,step), iz = floorDiv(z,step);
-  const int32_t tx = ((x-ix*step)*256)/step, tz = ((z-iz*step)*256)/step;
-  const int32_t sx = (tx*tx*(768-2*tx)) >> 16, sz = (tz*tz*(768-2*tz)) >> 16;
-  auto at = [&](int32_t i, int32_t j) { return int32_t((hash32(i,j,salt) >> 8) & 0xFFu); };
-  const int32_t top = at(ix,iz)  *(256-sx) + at(ix+1,iz)  *sx;
-  const int32_t bot = at(ix,iz+1)*(256-sx) + at(ix+1,iz+1)*sx;
-  return (top*(256-sz) + bot*sz) >> 8;
-  }
-
-uint32_t isqrt(uint64_t v) {
-  auto r = uint64_t(std::sqrt(double(v)));
-  while(r*r>v)
-    --r;
-  while((r+1)*(r+1)<=v)
-    ++r;
-  return uint32_t(r);
-  }
-
-// The patches by the noise's value: its measured quantiles 7, 11, 30, 38 and 88 % and the top of the clumps
-constexpr int32_t PatchBare  = 15962;
-constexpr int32_t PatchShort = 18361;
-constexpr int32_t PatchMain0 = 26192;
-constexpr int32_t PatchMain1 = 28857;
-constexpr int32_t PatchClump = 46436;
-constexpr int32_t PatchTop   = 56000;
-
-int32_t ramp(int32_t n, int32_t a, int32_t b, int32_t va, int32_t vb) {
-  return va + int32_t(int64_t(vb-va)*int64_t(n-a)/int64_t(b-a));
-  }
-
-float rampF(int32_t n, int32_t a, int32_t b, float va, float vb) {
-  return va + (vb-va)*float(n-a)/float(b-a);
-  }
-
 // A triangle made ready: its edges' functions, its plane
 struct Ready final {
   const Tri* t = nullptr;
@@ -181,40 +119,6 @@ void addBeside(Summary& out, const float pos[3][3], const float normal[3][3]) {
     t.z[i] = units(pos[i][2]);
     }
   out.beside.push_back(t);
-  }
-
-int32_t patchNoise(int32_t x, int32_t z) {
-  return (3*valueNoise(x,z,600*Unit,0x51u) + valueNoise(x+1777,z+911,220*Unit,0xA7u)) >> 2;
-  }
-
-int32_t patchDensity(int32_t n) {
-  if(n<PatchBare)
-    return 0;
-  if(n<PatchShort)
-    return ramp(n,PatchBare,PatchShort,0,205);
-  if(n<PatchMain0)
-    return 205;
-  if(n<PatchMain1)
-    return ramp(n,PatchMain0,PatchMain1,205,256);
-  if(n<PatchClump)
-    return 256;
-  if(n<PatchTop)
-    return ramp(n,PatchClump,PatchTop,256,512);
-  return 512;
-  }
-
-float patchHeight(int32_t n) {
-  if(n<PatchShort)
-    return 0.45f;
-  if(n<PatchMain0)
-    return rampF(n,PatchShort,PatchMain0,0.45f,0.65f);
-  if(n<PatchMain1)
-    return rampF(n,PatchMain0,PatchMain1,0.65f,0.9f);
-  if(n<PatchClump)
-    return rampF(n,PatchMain1,PatchClump,0.9f,1.15f);
-  if(n<PatchTop)
-    return rampF(n,PatchClump,PatchTop,1.5f,2.4f);
-  return 2.4f;
   }
 
 BladeInfo decode(const Blade& b, int32_t cx, int32_t cz, int32_t minY) {
@@ -531,25 +435,12 @@ CellBlades buildCell(const CellInput& in) {
     };
 
   // the tufts round the cell: a jittered centre in each square of TuftStep, its patch and its own numbers
-  struct Tuft final {
-    int32_t  x = 0, z = 0;
-    int32_t  densityQ8 = 0;
-    float    height = 1.f;
-    uint64_t hash = 0;
-    };
-  const int32_t tx0 = floorDiv(lo[0],TuftStep)-1, tz0 = floorDiv(lo[1],TuftStep)-1;
-  const int32_t tnx = floorDiv(hi[0],TuftStep)+2-tx0, tnz = floorDiv(hi[1],TuftStep)+2-tz0;
+  const int32_t tx0 = floorDiv(lo[0],TuftStep)-2, tz0 = floorDiv(lo[1],TuftStep)-2;
+  const int32_t tnx = floorDiv(hi[0],TuftStep)+3-tx0, tnz = floorDiv(hi[1],TuftStep)+3-tz0;
   std::vector<Tuft> tufts(size_t(tnx*tnz));
   for(int32_t j=0; j<tnz; ++j)
-    for(int32_t i=0; i<tnx; ++i) {
-      Tuft& t = tufts[size_t(j*tnx+i)];
-      t.hash = hash64(tx0+i,tz0+j,0x7Fu);
-      t.x    = (tx0+i)*TuftStep + int32_t(t.hash % uint64_t(TuftStep));
-      t.z    = (tz0+j)*TuftStep + int32_t((t.hash >> 16) % uint64_t(TuftStep));
-      const int32_t n = in.patch>=0 ? in.patch : patchNoise(t.x,t.z);
-      t.densityQ8 = patchDensity(n);
-      t.height    = patchHeight(n)*(0.8f + 0.45f*float((t.hash >> 32) & 0xFFu)/255.f);
-      }
+    for(int32_t i=0; i<tnx; ++i)
+      tufts[size_t(j*tnx+i)] = Grass::tuft(tx0+i,tz0+j,in.patch);
 
   std::vector<Raw> raw;
   raw.reserve(size_t(CellNodes)*size_t(CellNodes)/4);
@@ -563,14 +454,14 @@ CellBlades buildCell(const CellInput& in) {
         continue;
       const int32_t px = i*NodeStep + int32_t((h >> 8) & 63u), pz = j*NodeStep + int32_t((h >> 14) & 63u);
 
-      // its tuft: the nearest centre
+      // its tuft: the least measure of the 25 round it (a wide tuft reaches over its neighbour's square)
       const int32_t ti = floorDiv(px,TuftStep)-tx0, tj = floorDiv(pz,TuftStep)-tz0;
       const Tuft* tuft = nullptr;
       int64_t     near = INT64_MAX;
-      for(int32_t dj=-1; dj<=1; ++dj)
-        for(int32_t di=-1; di<=1; ++di) {
+      for(int32_t dj=-2; dj<=2; ++dj)
+        for(int32_t di=-2; di<=2; ++di) {
           const Tuft& t = tufts[size_t((tj+dj)*tnx + ti+di)];
-          const int64_t d = int64_t(t.x-px)*int64_t(t.x-px) + int64_t(t.z-pz)*int64_t(t.z-pz);
+          const int64_t d = tuftMeasure(t,px,pz);
           if(d<near) {
             near = d;
             tuft = &t;
@@ -610,15 +501,17 @@ CellBlades buildCell(const CellInput& in) {
         edgeQ8      = 0;
         edgeDensity = 115*(PastEdge-past)/PastEdge;
         }
-      const int64_t share = int64_t(tuft->densityQ8)*slot.densityQ8*slopeQ8*edgeDensity;
-      if(roll*NodesPerM2*(int64_t(1) << 32) >= share*int64_t(BladesPerM2)*1024)
+      // a spot of bare earth in the sward: no blade in it, fewer and lower ones on its rim
+      const int32_t bare  = in.patch<0 ? patchBare(px,pz) : 0;
+      const int64_t share = int64_t(tuft->densityQ8)*slot.densityQ8*slopeQ8*edgeDensity*(256-bare);
+      if(roll*NodesPerM2*(int64_t(1) << 40) >= share*int64_t(BladesPerM2)*1024)
         continue;
 
       // gathered towards the tuft's centre; the root must still stand on grass and out of the water. A root past
       // an edge stays where its node put it
       int32_t pull = 0, fx = px, fz = pz;
       if(past<0) {
-        pull = int32_t(std::lround((20.f + float((h >> 30) & 31u))*par.clumps*2.56f));
+        pull = std::min(int32_t(std::lround((20.f + float((h >> 30) & 31u))*par.clumps*2.56f))*tuft->pullQ8/256, 166);
         fx   = px + int32_t(int64_t(tuft->x-px)*pull/256);
         fz   = pz + int32_t(int64_t(tuft->z-pz)*pull/256);
         at   = locate(fx,fz,w,y);
@@ -632,9 +525,10 @@ CellBlades buildCell(const CellInput& in) {
 
       const float edgeShare  = float(edgeQ8)/256.f;
       const float slopeShare = float(slopeQ8)/256.f;
-      const float fromCentre = float(std::sqrt(double(near)))*(1.f-float(pull)/256.f)/float(TuftStep);
-      float height = fp.height*tuft->height*(0.65f + 0.5f*float((h >> 35) & 0xFFu)/255.f);
-      height *= 1.f - 0.4f*std::min(fromCentre*1.6f,1.f);
+      const float fromCentre = float(std::sqrt(double(near)/65536.0))*(1.f-float(pull)/256.f)/float(TuftStep);
+      float height = fp.height*tuft->height*(0.9f + tuft->spread*(float((h >> 35) & 0xFFu)/255.f - 0.5f));
+      height *= 1.f - tuft->fall*std::min(fromCentre*1.6f,1.f);
+      height *= 1.f - 0.5f*float(bare)/256.f;
       height *= 0.5f + 0.5f*edgeShare;
       height *= 0.5f + 0.5f*slopeShare;
       if(past>=0)
@@ -647,10 +541,13 @@ CellBlades buildCell(const CellInput& in) {
         }
       height = std::clamp(height,2.f,63.f);
 
-      // leans out of its tuft, and over an open edge
+      // leans out of its tuft and to the tuft's own side, and over an open edge
       float dirX = float(fx-tuft->x), dirZ = float(fz-tuft->z);
+      const float out1 = std::max(std::sqrt(dirX*dirX+dirZ*dirZ),1.f);
+      dirX = dirX/out1*tuft->fan + tuft->leanX*(1.f-tuft->fan);
+      dirZ = dirZ/out1*tuft->fan + tuft->leanZ*(1.f-tuft->fan);
       float angle = std::atan2(dirZ,dirX) + (float((h >> 43) & 0xFFu)/255.f-0.5f)*2.2f;
-      float lean  = 10.f + 25.f*float((h >> 51) & 0x3Fu)/63.f*(0.4f + 0.6f*std::min(fromCentre*2.f,1.f));
+      float lean  = (10.f + 25.f*float((h >> 51) & 0x3Fu)/63.f*(0.4f + 0.6f*std::min(fromCentre*2.f,1.f)))*tuft->lean;
       if(edge!=nullptr && edgeShare<1.f) {
         const float out = std::atan2(edge->outZ,edge->outX);
         float d = angle-out;
@@ -668,11 +565,11 @@ CellBlades buildCell(const CellInput& in) {
       r.rank   = uint8_t(rank);
       r.height = uint8_t(std::clamp(int(std::lround(height*4.f)),1,255));
       r.facing = uint8_t(int(std::floor((turn-std::floor(turn))*256.f)) & 0xFF);
-      r.phase  = uint8_t((tuft->hash >> 40) & 0xFFu);
+      r.phase  = tuft->phase;
       r.lean   = uint8_t(std::clamp(int(std::lround((lean-8.f)*15.f/40.f)),0,15));
-      const bool clump = tuft->densityQ8>256;
-      r.width  = uint8_t(std::clamp(int((h >> 57) & 7u) + (clump ? 6 : 0),0,15));
-      r.tint   = uint8_t(std::clamp(int((tuft->hash >> 48) & 15u) + int((h >> 60) & 3u) - 1,0,15));
+      // a blade of the sward is broad for its length, a blade of a tall clump is broad
+      r.width  = uint8_t(std::clamp(int((h >> 57) & 7u) + (tuft->clump ? 5 : (tuft->sward ? 3 : 0)),0,15));
+      r.tint   = uint8_t(std::clamp(int(tuft->tint) + int((h >> 60) & 3u) - 1,0,15));
       const double nx = b0*t.nx[0] + b1*t.nx[1] + b2*t.nx[2];
       const double ny = b0*t.ny[0] + b1*t.ny[1] + b2*t.ny[2];
       const double nz = b0*t.nz[0] + b1*t.nz[1] + b2*t.nz[2];

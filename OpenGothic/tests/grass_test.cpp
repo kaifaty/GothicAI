@@ -288,19 +288,22 @@ void placementRepeats() {
       require(same(half,build(flat,cx,cz,record)), "the record's density and the quality's thin alike"+at(cx,cz));
       }
 
-  // 25 cells of 64 m2. The patches thin the 320 per m2 to about 0.9 of it on the average; the band is wide, since
-  // 40 m hold only a few of the patches
+  // 25 cells of 64 m2: the short sward has 400 blades per m2, the main grass 320, the clumps up to 640; the band
+  // is wide, since 40 m hold only a few of the patches
   const double area = 25.0*64.0;
-  require(double(total)>=0.45*320.0*area && double(total)<=1.5*320.0*area,
+  require(double(total)>=0.8*320.0*area && double(total)<=1.6*320.0*area,
           "the count must follow the area and the density: "+std::to_string(total)+" blades on 1600 m2");
-  // and against the patches' own densities, read every 20 cm: a node takes the patch at its tuft's centre, up to
-  // a metre away, and no more blades than nodes stand on a metre
+  // and against the patches' own densities and the spots of bare earth, read every 20 cm: a node takes the patch
+  // at its tuft's centre, up to a metre away, and the tuft's own count, and no more blades than nodes stand on a
+  // metre
   double expected = 0;
   for(int32_t z=-790; z<3200; z+=20)
-    for(int32_t x=-790; x<3200; x+=20)
-      expected += 0.04*std::min(double(Grass::NodesPerM2),
-                                double(Grass::patchDensity(Grass::patchNoise(x*U,z*U)))*double(Grass::BladesPerM2)/256.0);
-  require(double(total)>=0.95*expected && double(total)<=1.05*expected,
+    for(int32_t x=-790; x<3200; x+=20) {
+      const int32_t n    = Grass::patchNoise(x*U,z*U);
+      const double  bare = double(Grass::patchBare(x*U,z*U))/256.0;
+      expected += 0.04*(1.0-bare)*std::min(double(Grass::NodesPerM2), double(Grass::patchDensity(n))*double(Grass::BladesPerM2)/256.0);
+      }
+  require(double(total)>=0.93*expected && double(total)<=1.07*expected,
           "the count must be the patches' density over the area: "+std::to_string(total)+" blades, "+
           std::to_string(expected)+" by the patches");
   const double lowShare = double(low)/double(total);
@@ -556,31 +559,101 @@ void placementItems() {
 
 // The patches: Grass::patchNoise and what the placement and the ground's shader read from it
 void patches() {
-  size_t bare = 0, clump = 0, all = 0;
+  size_t sward = 0, clump = 0, bare = 0, all = 0;
   for(int32_t z=-100; z<100; ++z)
     for(int32_t x=-100; x<100; ++x) {
       const int32_t n = Grass::patchNoise(x*97*U,z*97*U);
       require(n>=0 && n<=65535, "the patches' noise is of 16 bits");
       require(n==Grass::patchNoise(x*97*U,z*97*U), "the patches stand where they stood");
-      if(Grass::patchDensity(n)==0)
-        ++bare;
+      const int32_t b = Grass::patchBare(x*97*U,z*97*U);
+      require(b>=0 && b<=256 && b==Grass::patchBare(x*97*U,z*97*U), "a spot of bare earth stands where it stood");
+      if(Grass::patchSward(n))
+        ++sward;
       if(Grass::patchDensity(n)>256)
         ++clump;
+      if(b>=128)
+        ++bare;
       ++all;
       }
-  const double bareShare = double(bare)/double(all), clumpShare = double(clump)/double(all);
-  require(bareShare>=0.02 && bareShare<=0.14, "bare ground is a small part of the meadow: "+std::to_string(bareShare));
+  const double swardShare = double(sward)/double(all), clumpShare = double(clump)/double(all), bareShare = double(bare)/double(all);
+  require(swardShare>=0.2 && swardShare<=0.4, "the short sward is a third of the meadow: "+std::to_string(swardShare));
   require(clumpShare>=0.05 && clumpShare<=0.22, "the tall clumps are a small part of the meadow: "+std::to_string(clumpShare));
-  int32_t density = 0;
-  float   height  = 0.f;
+  // bare earth is an accent: a few hundredths of the ground, no hole of the patches' size
+  require(bareShare>=0.01 && bareShare<=0.06, "bare earth is a few hundredths of the meadow: "+std::to_string(bareShare));
+  float height = 0.f;
   for(int32_t n=0; n<=65535; n+=7) {
     const int32_t d = Grass::patchDensity(n);
     const float   h = Grass::patchHeight(n);
-    require(d>=density && d<=512 && h>=height && h>=0.3f && h<=2.4f, "the denser the patch, the taller: no step down");
-    density = d;
-    height  = h;
+    require(h>=height && h>=0.5f && h<=2.4f, "the higher the patches' noise, the taller: no step down");
+    // every patch is grass: the sward makes up in blades what it lacks in height, no patch is thin or empty
+    require(d>=256 && d<=512, "no patch of the meadow is thinner than the main grass");
+    require(!Grass::patchSward(n) || (d>256 && h<=0.65f), "the sward is short and dense");
+    height = h;
     }
-  require(Grass::patchDensity(0)==0 && density==512, "from bare ground to the clumps of twice the density");
+  require(Grass::patchDensity(65535)==512, "the clumps are of twice the density");
+
+  // a spot of bare earth is a metre or two across, and two may touch: no line through a bare place is bare for 5 m
+  for(int32_t z=-60; z<60; ++z)
+    for(int32_t x=-60; x<60; ++x) {
+      const int32_t px = x*53*U, pz = z*53*U;
+      if(Grass::patchBare(px,pz)<256)
+        continue;
+      int runX = 0, runZ = 0;
+      for(int32_t i=-350; i<=350; i+=10) {
+        runX += Grass::patchBare(px+i*U,pz)>=128 ? 1 : 0;
+        runZ += Grass::patchBare(px,pz+i*U)>=128 ? 1 : 0;
+        }
+      require(runX<=50 && runZ<=50, "a spot of bare earth is no hole of the patches' size");
+      }
+  }
+
+// The tufts: no two neighbours are copies
+void tufts() {
+  size_t pairs = 0, alike = 0, loose = 0, all = 0;
+  float  reach[2] = {1e9f,0.f}, count[2] = {1e9f,0.f}, longest = 0.f;
+  for(int32_t tz=-20; tz<20; ++tz)
+    for(int32_t tx=-20; tx<20; ++tx) {
+      const Grass::Tuft a = Grass::tuft(tx,tz,36000);
+      const Grass::Tuft same = Grass::tuft(tx,tz,36000);
+      require(a.x==same.x && a.z==same.z && a.reachQ8==same.reachQ8 && a.densityQ8==same.densityQ8 && a.phase==same.phase,
+              "a tuft is the same every time");
+      require(a.x>=tx*Grass::TuftStep && a.x<(tx+1)*Grass::TuftStep && a.z>=tz*Grass::TuftStep && a.z<(tz+1)*Grass::TuftStep,
+              "a tuft's centre lies in its square");
+      require(!a.sward && !a.clump && a.reachQ8>=160 && a.reachQ8<=415 && a.longQ8>=256 && a.longQ8<=511 &&
+              a.pullQ8>=0 && a.pullQ8<=300 && a.fan>=0.f && a.fan<=1.f && a.lean>=0.6f && a.lean<=1.4f &&
+              a.fall>=0.15f && a.fall<=0.55f && a.spread>=0.25f && a.spread<=0.8f &&
+              std::abs(a.leanX*a.leanX+a.leanZ*a.leanZ-1.f)<1e-3f && a.axisX*a.axisX+a.axisZ*a.axisZ>1040000 &&
+              a.axisX*a.axisX+a.axisZ*a.axisZ<1056000, "a tuft's own numbers are in their ranges");
+      // its own centre is nearer to it by its measure than a point a square away
+      require(Grass::tuftMeasure(a,a.x,a.z)==0 && Grass::tuftMeasure(a,a.x+Grass::TuftStep,a.z)>0, "the measure grows from the centre");
+      reach[0] = std::min(reach[0],float(a.reachQ8)); reach[1] = std::max(reach[1],float(a.reachQ8));
+      count[0] = std::min(count[0],float(a.densityQ8)); count[1] = std::max(count[1],float(a.densityQ8));
+      longest  = std::max(longest,float(a.longQ8));
+      if(a.pullQ8<40)
+        ++loose;
+      ++all;
+      for(const auto& d:{std::pair<int32_t,int32_t>{1,0},std::pair<int32_t,int32_t>{0,1}}) {
+        const Grass::Tuft b = Grass::tuft(tx+d.first,tz+d.second,36000);
+        // a copy: about the same size, count, height and lean at once
+        const bool copy = std::abs(a.reachQ8-b.reachQ8)<24 && std::abs(a.densityQ8-b.densityQ8)<24 &&
+                          std::abs(a.height-b.height)<0.08f && std::abs(a.lean-b.lean)<0.1f &&
+                          (a.leanX*b.leanX+a.leanZ*b.leanZ)>0.9f && std::abs(a.longQ8-b.longQ8)<32;
+        ++pairs;
+        if(copy)
+          ++alike;
+        }
+      }
+  require(alike*200<=pairs, "neighbouring tufts must differ: "+std::to_string(alike)+" pairs alike of "+std::to_string(pairs));
+  require(reach[0]<180.f && reach[1]>395.f && count[0]<180.f && count[1]>330.f && longest>490.f,
+          "the tufts differ in size, in outline and in the count of their blades");
+  const double looseShare = double(loose)/double(all);
+  require(looseShare>=0.1 && looseShare<=0.3, "one tuft in five is loose: "+std::to_string(looseShare));
+  // the sward is even: its tufts differ by half as much, and hardly gather
+  for(int32_t tx=0; tx<200; ++tx) {
+    const Grass::Tuft s = Grass::tuft(tx,7,20000);
+    require(s.sward && !s.clump && s.densityQ8>=320*207/256 && s.densityQ8<=320*305/256 && s.pullQ8<=135 &&
+            s.fall<=0.28f && s.height>=0.55f*0.86f && s.height<=0.65f*1.19f, "a tuft of the sward is short, dense and even");
+    }
   }
 
 // ---- the wind's front ----
@@ -658,6 +731,7 @@ int main() {
     bucketBits();
     switches();
     patches();
+    tufts();
     placementRepeats();
     placementGround();
     placementEdge();
