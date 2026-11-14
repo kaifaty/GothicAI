@@ -4,6 +4,7 @@
 
 | Что | Как |
 |---|---|
+| Снимок определений NPC (Д1) | `gothic-npc-snapshot-contract`: придуманная программа без установки (прототип, помощники, предмет, две строки распорядка, расстановка, случайность и чтение глобальной переменной); затем весь корпус выбранной готовой базы, без неё — явный пропуск. Цель есть и в отдельной сборке `scripts/convert`; исходник — [`npc_snapshot_contract.cpp`](../../OpenGothic/tests/npc_snapshot_contract.cpp) |
 | Тесты изменённых файлов | `python3 scripts/check.py plan` — выбор по диффу от `origin/main` и правило для каждого файла; `run` — прямой уровень на этой машине, `run --all` — полный. CI `.github/workflows/tests.yml` гоняет полный уровень на каждом PR, итог — проверка `tests` |
 | Адреса в коммитах PR | `python3 scripts/commit_identity.py check [--base origin/main]`; CI `.github/workflows/commit-identity.yml` — проверка `commit-identity`: аккаунт проекта подписывает только своим noreply с id, noreply без id запрещён всем; коммиты, сделанные GitHub, лишь предупреждают; тесты `scripts/tests/test_commit_identity.py` |
 | pytest одного модуля | `cd server && uv run pytest tests/test_<модуль>.py -q`; на Ryzen — `scripts/ryzen.sh pytest tests/test_<модуль>.py` |

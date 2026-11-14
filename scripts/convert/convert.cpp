@@ -85,6 +85,7 @@
 #include "game/definitions/particlecontent.h"
 #include "gothicglb.h"
 #include "stressbase.h"
+#include "npcsnapshot.h"
 #include "worldcook.h"
 
 #include <zenkit/Archive.hh>
@@ -869,6 +870,18 @@ int main(int argc, char** argv) {
       return BaseImport::convertModels(args[1],args[2],args[0]=="verify-models");
     if(args.size()==3 && (args[0]=="fonts" || args[0]=="verify-fonts"))
       return BaseImport::convertFonts(args[1],args[2],args[0]=="verify-fonts");
+    if(args.size()==3 && (args[0]=="npc-snapshot" || args[0]=="verify-npc-snapshot")) {
+      const auto base = fs::weakly_canonical(args[1]);
+      const auto output = fs::weakly_canonical(args[2]);
+      const auto relative = output.lexically_relative(base);
+      if(relative.empty() || *relative.begin()!="..")
+        throw std::runtime_error("NPC snapshot output must be outside the base");
+      const auto program = NpcSnapshot::load(base);
+      if(args[0]=="verify-npc-snapshot")
+        return NpcSnapshot::verify(program,args[2])==0 ? 0 : 1;
+      NpcSnapshot::write(program,args[2]);
+      return 0;
+      }
     if(args.size()==3 && (args[0]=="programs" || args[0]=="verify-programs"))
       return BaseImport::convertPrograms(args[1],args[2],args[0]=="verify-programs");
     if(args.size()==3 && (args[0]=="outputunits" || args[0]=="verify-outputunits"))
@@ -936,6 +949,7 @@ int main(int argc, char** argv) {
                  "       content-convert textures|verify-textures|meshes|verify-meshes|zen|verify-zen <gothic dir> <dir>\n"
                  "       content-convert models|verify-models <gothic dir> <dir>\n"
                  "       content-convert fonts|verify-fonts <gothic dir> <dir>\n"
+                 "       content-convert npc-snapshot|verify-npc-snapshot <ready base> <dir>\n"
                  "       content-convert programs|verify-programs <gothic dir> <dir>\n"
                  "       content-convert outputunits|verify-outputunits <gothic dir> <dir>\n"
                  "       content-convert outputunits-file <OU.BIN|OU.DAT> <record.json>\n"
