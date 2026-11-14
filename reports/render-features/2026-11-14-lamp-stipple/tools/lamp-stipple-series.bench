@@ -1,0 +1,39 @@
+# The net of dots of a lamp's shadow on the hero's nape (../README.md): the profile from 120 cm, eight frames 0.3 s
+# apart, for how the net stands in time (also with OPENGOTHIC_LIGHT_FREEZE=1). Run as lamp-stipple.bench.
+# @timeout 300
+seed 73013
+cheat god
+set time 12 0
+blink off
+overlay off
+view clean 30
+watch nearest
+freeze nearest
+wait 500
+place 110 0
+wait 800
+watch player
+cam cut
+cam face 120 0 1
+wait 2500
+shot front
+wait 400
+cam cut
+cam face 120 90 1
+wait 1200
+shot s0
+wait 300
+shot s1
+wait 300
+shot s2
+wait 300
+shot s3
+wait 300
+shot s4
+wait 300
+shot s5
+wait 300
+shot s6
+wait 300
+shot s7
+wait 400
