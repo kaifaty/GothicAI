@@ -3,6 +3,8 @@
 import gzip
 import importlib.util
 import json
+import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -60,10 +62,11 @@ def test_pass(tmp_path):
 
 
 @pytest.mark.parametrize('defect,reason', [
-    ('exit', 'exit 0'), ('short', '30–60'), ('crossings', 'only 1'), ('axis', 'both X and Z'),
+    ('exit', 'exit 0'), ('short', '30–60'), ('long', '30–60'),
+    ('crossings', 'only 1'), ('two_crossings', 'only 2'), ('axis', 'both X and Z'),
     ('load', 'streaming missing'), ('unload', 'streaming missing'), ('jump', 'jump/landing'),
     ('land', 'incomplete'), ('ground', 'off ground'), ('shot', 'missing shots'),
-    ('samples', 'position samples'), ('census', 'content census'), ('texture', 'texture loads'),
+    ('samples', 'position samples'), ('sparse_samples', 'position samples'), ('census', 'content census'), ('texture', 'texture loads'),
 ])
 def test_motion_failures(tmp_path, defect, reason):
     events = evidence(tmp_path)
@@ -71,9 +74,14 @@ def test_motion_failures(tmp_path, defect, reason):
         events[-1]['completed'] = False
     elif defect == 'short':
         events[-1]['ms'] = 20000
-    elif defect == 'crossings':
+    elif defect == 'long':
+        events[-1]['ms'] = 61000
+        sample = next(e for e in events if e['event'] == 'position' and e['ms'] == 30000)
+        events[-1:-1] = [dict(sample, ms=ms) for ms in range(30100, 61001, 100)]
+    elif defect in ('crossings', 'two_crossings'):
         crossings = [e for e in events if e['event'] == 'chunk']
-        events = [e for e in events if e not in crossings[1:]]
+        keep = 1 if defect == 'crossings' else 2
+        events = [e for e in events if e not in crossings[keep:]]
     elif defect == 'axis':
         for e in events:
             if e['event'] == 'chunk':
@@ -94,6 +102,8 @@ def test_motion_failures(tmp_path, defect, reason):
         (tmp_path / 'hill.png').unlink()
     elif defect == 'samples':
         events = [e for e in events if e['event'] != 'position']
+    elif defect == 'sparse_samples':
+        events = [e for e in events if e['event'] != 'position' or e['ms'] % 200 == 0]
     save(tmp_path, events)
     report = check.verify(tmp_path)
     assert not report['passed']
@@ -103,6 +113,7 @@ def test_motion_failures(tmp_path, defect, reason):
 @pytest.mark.parametrize('syscall', [
     'openat(AT_FDCWD, "/home/player/game/system/Gothic.ini", O_RDONLY) = 3</home/player/game/system/Gothic.ini>',
     'openat(AT_FDCWD, "/home/player/game/system/Gothic.ini", O_RDONLY) = -1 ENOENT (No such file or directory)',
+    'openat(7</task/run/data>, "../../../home/player/Gothic.ini", O_RDONLY) = -1 ENOENT',
     'openat(7</home/player/game>, "system/Gothic.ini", O_RDONLY) = -1 ENOENT',
     'openat(AT_FDCWD, "../../game/Gothic.ini", O_RDONLY) = -1 ENOENT',
     'openat(AT_FDCWD, "/task/run/symlink", O_RDONLY) = 3</home/player/game/Gothic.ini>',
@@ -140,3 +151,37 @@ def test_startup_publications_do_not_count(tmp_path):
     save(tmp_path, events)
     report = check.verify(tmp_path)
     assert not report['passed'] and report['loads'] == report['unloads'] == report['texture_loads'] == 0
+
+
+def test_crash_before_events_has_verdict(tmp_path):
+    (tmp_path / 'report.json').write_text(json.dumps(dict(
+        run_root='/task/run', binary_dir='/task/build', uid=1000, program_exit=134)))
+    report = check.verify(tmp_path)
+    assert not report['passed'] and report['failures'] == ['program exited with code 134']
+    assert json.loads((tmp_path / 'report.json').read_text()) == report
+
+
+@pytest.mark.parametrize('failure,expected', [('configure', 76), ('build', 1), ('contract', 1)])
+def test_remote_build_exit_codes(tmp_path, failure, expected):
+    state = tmp_path / 'state'
+    tools = tmp_path / 'bin'
+    tools.mkdir()
+    (state / 'source/scripts').mkdir(parents=True)
+    (state / 'source/scripts/ryzen-build.sh').write_text('RYZEN_CMAKE_FLAGS=(-DTEST=ON)\n')
+    binary = state / 'build/opengothic/gothic-island-program-test'
+    binary.parent.mkdir(parents=True)
+    binary.write_text('#!/bin/sh\nexit 9\n' if failure == 'contract' else '#!/bin/sh\nexit 0\n')
+    binary.chmod(0o755)
+    cmake = tools / 'cmake'
+    cmake.write_text('#!/bin/sh\ncase "$1:$ISLAND_TEST_FAILURE" in\n'
+                     '  -S:configure|--build:build) exit 9 ;;\nesac\nexit 0\n')
+    cmake.chmod(0o755)
+    # These preflight tools are not executed by the fake CMake.
+    for name in ('ninja', 'gcc', 'g++', 'glslangValidator'):
+        (tools / name).symlink_to(cmake)
+    environment = dict(os.environ, HOME=str(tmp_path), PATH=str(tools)+':'+os.environ['PATH'],
+                       ISLAND_TEST_FAILURE=failure)
+    result = subprocess.run(['bash', str(Path(__file__).resolve().parents[1] / 'island-remote.sh'),
+                             'build', str(state), str(state / 'run')], env=environment,
+                            capture_output=True, text=True, check=False)
+    assert result.returncode == expected, result.stdout + result.stderr

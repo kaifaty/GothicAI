@@ -118,6 +118,7 @@ def trace_paths(text, run_root):
                 elif directory != 'AT_FDCWD' and not path.startswith('/'):
                     errors.append('unresolved directory fd: ' + line[:160])
                     continue
+            # Normalize after resolving dirfd: '..' can escape an otherwise allowed directory.
             full = posixpath.normpath(posixpath.join(base, path))
             paths.add(full)
             resolved.append(full)
@@ -137,6 +138,11 @@ def verify(folder):
     context = {k: report[k] for k in ('run_root', 'binary_dir', 'uid', 'program_exit')}
     if 'total_seconds' in report:
         context['total_seconds'] = report['total_seconds']
+    if context['program_exit'] != 0:
+        # A crash before the first event is a program regression, with a persisted verdict even without a clip.
+        result = dict(context, passed=False, failures=[f"program exited with code {context['program_exit']}"])
+        (folder / 'report.json').write_text(json.dumps(result, indent=2) + '\n')
+        return result
     events = [json.loads(line) for line in (folder / 'events.jsonl').read_text().splitlines()]
     failures = []
     def require(ok, reason):

@@ -6,17 +6,23 @@ source "$state/source/scripts/ryzen-build.sh"
 if [[ "$action" == build ]]; then
   export VULKAN_SDK="$HOME/gothic-ai/body-baseline/toolchain/vulkan-1.4.341.0"
   export PATH="$HOME/.local/bin:$VULKAN_SDK/bin:$PATH"
+  for tool in cmake ninja gcc g++ glslangValidator python3; do
+    command -v "$tool" >/dev/null || { echo "island: missing tool: $tool" >&2; exit 76; }
+  done
   cmake -S "$state/source/OpenGothic" -B "$state/build" -G Ninja \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
     "${RYZEN_CMAKE_FLAGS[@]}" \
     -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib" \
     >"$state/configure.log" 2>&1 || { tail -80 "$state/configure.log"; exit 76; }
   cmake --build "$state/build" --target engine-island gothic-island-program-test --parallel 12 \
-    >"$state/build.log" 2>&1 || { tail -80 "$state/build.log"; exit 76; }
-  "$state/build/opengothic/gothic-island-program-test"
+    >"$state/build.log" 2>&1 || { tail -80 "$state/build.log"; exit 1; }
+  "$state/build/opengothic/gothic-island-program-test" || exit 1
   exit
 fi
 [[ "$action" == run ]] || exit 76
+for tool in strace ffmpeg xdpyinfo gzip python3; do
+  command -v "$tool" >/dev/null || { echo "island: missing tool: $tool" >&2; exit 76; }
+done
 mkdir -p "$run"/{home,output,frames}
 cp -a "$state/build/island" "$run/data"
 cp "$state/source/OpenGothic/island/scripts/route.txt" "$run/route.txt"
@@ -62,7 +68,8 @@ for name in beach rocks hill; do
   [[ ! -f "$run/$name.png" ]] || mv "$run/$name.png" "$run/output/"
 done
 gzip "$run/output/strace.log"
+# A failed program may leave no PNGs. Preserve its failure for the checker instead of treating missing video as
+# an encoder/stand failure. The report and trace still reach the caller after gq's verified archive move.
+if [[ "$rc" != 0 ]]; then exit 1; fi
 ffmpeg -hide_banner -loglevel error -framerate 15 -i "$run/frames/frame-%05d.png" \
   -c:v libx264 -preset fast -crf 20 -pix_fmt yuv420p -r 30 "$run/output/clip.mp4" || exit 76
-# The caller fetches output after gq's verified archive move.
-[[ "$rc" == 0 ]] || exit 1
