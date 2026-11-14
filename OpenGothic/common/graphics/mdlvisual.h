@@ -20,7 +20,7 @@
 #include "graphics/mesh/speechface.h"
 #include "graphics/mesh/quiver.h"
 #include "graphics/mesh/renderrig.h"
-#include "game/constants.h"
+#include "game/rpgvocabulary.h"
 #include "meshobjects.h"
 #include "effect.h"
 

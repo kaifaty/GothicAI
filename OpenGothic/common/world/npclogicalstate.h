@@ -1,6 +1,6 @@
 #pragma once
 
-#include "game/constants.h"
+#include "game/rpgvocabulary.h"
 #include "graphics/mesh/animation.h"
 
 #include <map>
