@@ -35,6 +35,7 @@
 #include "ui/menuroot.h"
 #include "ui/consolewidget.h"
 #include "ui/touchinput.h"
+#include "input/handmotion.h"
 
 #include "utils/keycodec.h"
 #include "resources.h"
@@ -174,6 +175,8 @@ class MainWindow : public Tempest::Window {
     Tempest::Widget*          uiKeyUp=nullptr;
     Tempest::Point            dMouse;
     PlayerControl             player;
+    // hand motion over local UDP (docs/hand-motion.md): read every frame, no consumer before step 2
+    HandMotionReceiver        handMotion;
     uint64_t                  lastTick=0;
 
     Tempest::Shortcut         funcKey[11];
