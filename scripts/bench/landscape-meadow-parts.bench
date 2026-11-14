@@ -8,6 +8,9 @@
 #                 bands of the distance from the camera, and the bands alone
 #   near-paint, far-paint, near-ground, far-ground, cover-<place>-ground   the blades red, and the frame without
 #                 blades: `grass_look.py blades` reads the colour of the blades against the ground under them
+#   road-0, road-cover   the view meadow-3 and the same with the meadow's own ground painted by its cover
+#                 (`grass parts 256`): the road's pixels left unpainted are past the verge's strip and must not
+#                 differ between a set with `verge` records and one without
 #   OPENGOTHIC_CONTENT=<set> TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh landscape-meadow-parts
 # OPENGOTHIC_GRASS_PATCH=22000 makes the whole meadow short grass, 36000 the main one: the cover of each kind.
 # @timeout 600
@@ -86,6 +89,14 @@ wait 2500
 grass parts 193
 wait 1200
 shot mask-meadow-3
+wait 200
+grass parts 0
+wait 1200
+shot road-0
+wait 200
+grass parts 256
+wait 1200
+shot road-cover
 wait 200
 turn 90
 wait 2500
