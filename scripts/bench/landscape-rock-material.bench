@@ -100,23 +100,23 @@ rec ledge-steady
 wait 8000
 stop
 
-# a walk under the band, east along the foot of the lower wall, between two firs (their crowns hide the wall west
-# of x 34430 and east of 35600); the camera follows from behind and to the right; the gust peaks mid-walk
+# a walk under the band, west along the foot of the lower wall, through the stretch where the tufts hang densest
+# (x 34500..34900, in the sun at 14:00); the camera follows from behind and to the left, so the band stays in the
+# frame for the whole walk; the swing shows the wind all the way, so the clip is not timed to a gust
 walkmode walk
-goto pos 34700 3640 1100
+goto pos 35150 3640 1100
 clear 3000
-face 0
-cam world 420 300 240
+face 180
+cam world 420 300 300
 cam look 250
 streaming wait
 wait 3000
-foliage wait-gust 5000
 rec walk-ledge
-wait 1500
+wait 800
 press forward
-wait 6500
+wait 5000
 release forward
-wait 2000
+wait 2200
 stop
 walkmode run
 
