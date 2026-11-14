@@ -67,8 +67,30 @@ shot stone
 wait 200
 grass stats
 
-# the walk along the cart track
+# the game's camera behind the hero who stands still: where the turn of meadow-turn showed flat ground, and in
+# two patches of the meadow that the first round left bare and short (the round of the look, the same note)
 cam game
+goto NW_TAVERNE_TROLLAREA_03
+face wp NW_TAVERNE_TROLLAREA_05
+turn 150
+grass wait
+wait 5000
+shot game-turn
+wait 200
+goto pos 41800 3380 480
+face 45
+grass wait
+wait 5000
+shot game-bare
+wait 200
+goto pos 41450 3400 300
+face 80
+grass wait
+wait 5000
+shot game-short
+wait 200
+
+# the walk along the cart track
 walkmode walk
 goto NW_TAVERNE_TROLLAREA_03
 face wp NW_TAVERNE_TROLLAREA_04
