@@ -170,6 +170,7 @@ namespace daedalus {
 
 	bool DaedalusVm::exec() {
 		auto instr = instruction_at(_m_pc);
+		if (_m_instruction_observer) _m_instruction_observer(instr);
 
 		try {
 			std::int32_t a, b;
@@ -369,6 +370,7 @@ namespace daedalus {
 
 				if (!ref->is_member() || context != nullptr ||
 				    !(_m_flags & DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS)) {
+					if (_m_read_observer) _m_read_observer(*ref);
 					auto result = ref->get_int(idx, context.get()) + value;
 					ref->set_int(result, idx, context.get());
 				} else if (ref->is_member()) {
@@ -387,6 +389,7 @@ namespace daedalus {
 
 				if (!ref->is_member() || context != nullptr ||
 				    !(_m_flags & DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS)) {
+					if (_m_read_observer) _m_read_observer(*ref);
 					auto result = ref->get_int(idx, context.get()) - value;
 					ref->set_int(result, idx, context.get());
 				} else if (ref->is_member()) {
@@ -404,6 +407,7 @@ namespace daedalus {
 
 				if (!ref->is_member() || context != nullptr ||
 				    !(_m_flags & DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS)) {
+					if (_m_read_observer) _m_read_observer(*ref);
 					auto result = ref->get_int(idx, context.get()) * value;
 					ref->set_int(result, idx, context.get());
 				} else if (ref->is_member()) {
@@ -426,6 +430,7 @@ namespace daedalus {
 
 				if (!ref->is_member() || context != nullptr ||
 				    !(_m_flags & DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS)) {
+					if (_m_read_observer) _m_read_observer(*ref);
 					auto result = ref->get_int(idx, context.get()) / value;
 					ref->set_int(result, idx, context.get());
 				} else if (ref->is_member()) {
@@ -453,6 +458,7 @@ namespace daedalus {
 				if (sym == nullptr) {
 					throw DaedalusVmException {"gmovi: no symbol found for index"};
 				}
+				if (_m_read_observer) _m_read_observer(*sym);
 				_m_instance = sym->get_instance();
 				break;
 			}
@@ -808,7 +814,9 @@ namespace daedalus {
 		DaedalusStackFrame v = std::move(_m_stack[--_m_stack_ptr]);
 
 		if (v.reference) {
-			return std::get<DaedalusSymbol*>(v.value)->get_instance();
+			auto* sym = std::get<DaedalusSymbol*>(v.value);
+			if (_m_read_observer) _m_read_observer(*sym);
+			return sym->get_instance();
 		}
 
 		if (std::holds_alternative<std::shared_ptr<DaedalusInstance>>(v.value)) {
@@ -821,6 +829,7 @@ namespace daedalus {
 	std::string const& DaedalusVm::pop_string() {
 		static std::string empty {};
 		auto [s, i, context] = pop_reference();
+		if (_m_read_observer) _m_read_observer(*s);
 
 		// compatibility: sometimes the context might be zero, but we can't fail so when
 		//                the compatibility flag is set, we just return 0
@@ -1104,6 +1113,7 @@ namespace daedalus {
 	                    std::variant<int32_t, float, DaedalusSymbol*, std::shared_ptr<DaedalusInstance>> const& value,
 	                    uint16_t index) const {
 		auto* sym = std::get<DaedalusSymbol*>(value);
+		if (_m_read_observer) _m_read_observer(*sym);
 
 		// compatibility: sometimes the context might be zero, but we can't fail so when
 		//                the compatibility flag is set, we just return 0
@@ -1124,6 +1134,7 @@ namespace daedalus {
 	                      std::variant<int32_t, float, DaedalusSymbol*, std::shared_ptr<DaedalusInstance>> const& value,
 	                      uint16_t index) const {
 		auto* sym = std::get<DaedalusSymbol*>(value);
+		if (_m_read_observer) _m_read_observer(*sym);
 
 		// compatibility: sometimes the context might be zero, but we can't fail so when
 		//                the compatibility flag is set, we just return 0

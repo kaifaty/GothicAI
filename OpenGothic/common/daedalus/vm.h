@@ -617,6 +617,15 @@ namespace daedalus {
 
 		void register_access_trap(std::function<void(DaedalusSymbol&)> const& callback);
 
+		// Optional offline instrumentation. Unset in the game; reads are observed when consumed,
+		// not when a reference is pushed (a pushed reference may be a store destination).
+		void observe_reads(std::function<void(DaedalusSymbol const&)> callback) { _m_read_observer = std::move(callback); }
+		void observe_instructions(std::function<void(DaedalusInstruction const&)> callback) { _m_instruction_observer = std::move(callback); }
+		// Like override_function, with a signature read from program records by the caller.
+		void override_function_custom(DaedalusSymbol const& sym, std::function<void(DaedalusVm&)> callback) {
+			_m_function_overrides[sym.address()] = std::move(callback);
+		}
+
 		/// \brief Registers a function to be called when script execution fails.
 		///
 		/// A variety of exceptions can occur within the VM while executing. The function passed to this handler can
@@ -1018,6 +1027,8 @@ namespace daedalus {
 		std::unordered_map<uint32_t, std::function<void(DaedalusVm&)>> _m_function_overrides;
 		std::optional<std::function<void(DaedalusVm&, DaedalusSymbol&)>> _m_default_external {std::nullopt};
 		std::function<void(DaedalusSymbol&)> _m_access_trap;
+		std::function<void(DaedalusSymbol const&)> _m_read_observer;
+		std::function<void(DaedalusInstruction const&)> _m_instruction_observer;
 		std::optional<std::function<
 		    DaedalusVmExceptionStrategy(DaedalusVm&, DaedalusScriptError const&, DaedalusInstruction const&)>>
 		    _m_exception_handler {std::nullopt};
