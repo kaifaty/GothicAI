@@ -217,7 +217,7 @@ std::string StoryCast::npc(World& world, const rapidjson::Value& msg, std::strin
   // the scripts' own functions, with it as self
   auto* self = vm.global_self();
   auto  prev = self->get_instance();
-  self->set_instance(npc->handlePtr());
+  self->set_instance(std::static_pointer_cast<daedalus::INpc>(npc->handlePtr()));
   auto call = [&](const char* fn, std::vector<Value> args) {
     std::string err;
     auto*       s = vm.find_symbol_by_name(fn);
@@ -231,11 +231,11 @@ std::string StoryCast::npc(World& world, const rapidjson::Value& msg, std::strin
       npc->unequipItem(cls);
       npc->delItem(cls,1);
       }
-    call("B_SETNPCVISUAL",{Value::instance(npc->handlePtr()),Value::integer(d.gender),Value::str(d.head),
+    call("B_SETNPCVISUAL",{Value::instance(std::static_pointer_cast<daedalus::INpc>(npc->handlePtr())),Value::integer(d.gender),Value::str(d.head),
                            Value::integer(d.face),Value::integer(d.skin),Value::integer(d.armor)});
     }
   for(auto& [item,count] : d.items)
-    call("CREATEINVITEMS",{Value::instance(npc->handlePtr()),Value::integer(int32_t(item)),Value::integer(count)});
+    call("CREATEINVITEMS",{Value::instance(std::static_pointer_cast<daedalus::INpc>(npc->handlePtr())),Value::integer(int32_t(item)),Value::integer(count)});
   self->set_instance(prev);
 
   if(!d.routine.empty()) {

@@ -10,12 +10,11 @@
 
 namespace daedalus {
   enum class DaedalusDataType : std::uint32_t;
-  class DaedalusVm;
-  struct INpc;
   }
 
 class WayPoint;
 class Npc;
+struct NpcRecord;
 class Interactive;
 class World;
 class FpLock;
@@ -41,7 +40,7 @@ class Serialize : public SaveArchive {
       (readValue(*this,a),... );
       }
 
-    void readNpc(daedalus::DaedalusVm& vm, std::shared_ptr<daedalus::INpc>& npc);
+    void readNpc(NpcRecord& npc);
 
   private:
     friend class SaveArchive;
@@ -70,7 +69,7 @@ class Serialize : public SaveArchive {
     void implWrite(const SaveGameHeader& p);
     void implRead (SaveGameHeader&       p);
 
-    void implWrite(const daedalus::INpc& h);
+    void implWrite(const NpcRecord& h);
 
     void implWrite(const FpLock& fp);
     void implRead (FpLock& fp);
