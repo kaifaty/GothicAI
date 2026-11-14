@@ -676,6 +676,45 @@ void foliageRecords(Tempest::Device& device, const Fixture& fixture) {
                         "reject the record whole: ")+name).c_str());
   }
 
+// materials.json "grass": the ground grows grass (reports/engine/2026-11-14-grass-system). The field alone leaves
+// the material as it is without a record; the field's own numbers are tests/grass_test.cpp's
+void grassRecords(Tempest::Device& device, const Fixture& fixture) {
+  const std::string maps = R"("albedo":"solid.dds","normal":"alpha.dds","orm":"alpha.dds")";
+  textFile(fixture.root/"materials/materials.json", std::string("{") +
+    R"("GROUND_ALONE.TGA":{"grass":{}},)" +
+    R"("GROUND_SET.TGA":{"grass":{"density":0.5,"height":32,"edge":0}},)" +
+    R"("GROUND_OWN.TGA":{)" + maps + R"(,"grass":{"height":12}},)" +
+    R"("GROUND_NONE.TGA":{)" + maps + R"(},)" +
+    R"("GROUND_BAD.TGA":{"grass":{"height":90}},)" +
+    R"("GROUND_NUMBER.TGA":{"grass":1},)" +
+    R"("GROUND_LEAF.TGA":{)" + maps + R"(,"foliage":{},"grass":{}},)" +
+    R"("GROUND_TILE.TGA":{)" + maps + R"(,"antitile":"rotate","grass":{}})" +
+    "}");
+  Resources resources(device);
+  const auto alone = Resources::loadMaterialMaps("GROUND_ALONE.TGA");
+  const Material ground(source("GROUND_ALONE.TGA"),true), unlisted(source("UNLISTED.TGA"),true);
+  require(!alone.present && !alone.hasAlbedo && alone.normal==nullptr && alone.orm==nullptr && alone.grass.on &&
+          alone.grass==Resources::grassParams("ground_alone.tga") && alone.grass.height==20.f,
+          "a record of grass alone carries the defaults and no maps");
+  require(ground.grass.on && !ground.hasMaterialMaps() && ground.normal==nullptr && ground.orm==nullptr &&
+          ground.uvScale==unlisted.uvScale && ground.antitile==unlisted.antitile && !(ground==unlisted),
+          "a ground of grass alone is drawn as without a record, in a bucket of its own");
+  const auto set = Resources::grassParams("GROUND_SET.TGA");
+  require(set.on && set.density==0.5f && set.height==32.f && set.edge==0.f && set.wind==1.f,
+          "grass must carry the record's numbers");
+  const auto own = Resources::loadMaterialMaps("GROUND_OWN.TGA");
+  require(own.present && own.grass.on && own.grass.height==12.f && Material(source("GROUND_OWN.TGA"),true).hasMaterialMaps(),
+          "grass beside the maps of an own material keeps the material");
+  require(Resources::loadMaterialMaps("GROUND_NONE.TGA").present && !Resources::grassParams("GROUND_NONE.TGA").on &&
+          !Resources::grassParams("UNLISTED.TGA").on && !Resources::grassParams("").on &&
+          Grass::pack(Material(source("GROUND_NONE.TGA"),true).grass)==0,
+          "a record without the field grows no grass");
+  for(const auto* name:{"GROUND_BAD.TGA","GROUND_NUMBER.TGA","GROUND_LEAF.TGA","GROUND_TILE.TGA"})
+    require(!Resources::loadMaterialMaps(name).present && !Resources::grassParams(name).on,
+            (std::string("grass of a wrong type or range, or beside foliage or antitile, must reject the record whole: ")+
+             name).c_str());
+  }
+
 // graphics/foliagewind.h: the processor's copy of the rule of shader/materials/foliage_wind.glsl
 void foliageWindMaths() {
   using namespace FoliageWind;
@@ -2945,6 +2984,7 @@ int main(int argc, char** argv) {
     projectionRecords(device,fixture);
     fringeRecords(device,fixture);
     foliageRecords(device,fixture);
+    grassRecords(device,fixture);
     textureResidency(device,fixture);
     textureMipResidency(device,fixture);
     textureScreenLevels(device,fixture);

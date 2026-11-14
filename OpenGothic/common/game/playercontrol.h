@@ -2,7 +2,7 @@
 
 #include "world/focus.h"
 #include "utils/keycodec.h"
-#include "constants.h"
+#include "rpgvocabulary.h"
 #include "aimstep.h"
 #include "meleedodge.h"
 

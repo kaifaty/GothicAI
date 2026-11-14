@@ -30,6 +30,7 @@
 #include "graphics/mesh/animsample.h"
 #include "graphics/mesh/bowdraw.h"
 #include "graphics/mesh/flinch.h"
+#include "physics/ragdoll_brace.h"
 #include "world/objects/npc.h"
 #include "world/objects/item.h"
 #include "world/world.h"
@@ -212,6 +213,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
   if(c=="water-film" && waterFilmCommand(waterFilmContext(),a,w,pl)) return;
   else if(c=="cloth" && clothCommand(clothContext(),a,w,pl)) return;
   else if(c=="foliage" && foliageCommand(a,w)) return;
+  else if(c=="grass" && grassCommand(a,w)) return;
   else if(waterCommand(bench.water,waterContext(),a,w,pl,ctrl)) return;
   else if(c=="item-save" && a.size()==2 && a[1]=="initial") {
     arenaAbort("item save initial must be the first scenario command before simulation");
@@ -341,6 +343,15 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
        npc->currentMeleeWeapon()->clsId()!=weapon) {arenaAbort("knockdown launch requires the exact drawn two-handed axe");return;}
     event("launch_weapon","\"actor\":"+jsonStr(symName(w,npc))+",\"actor_id\":"+std::to_string(w.npcId(npc))+
           ",\"weapon\":\"ITMW_2H_SLD_AXE\",\"state\":\"W2H\"");
+    }
+  else if(c=="brace-profile") {
+    // brace-profile [<arms|neck|spine|legs> <enter|hold|drop|level|yield|torque> <value>]: a number of the
+    // protective fall's motor table for the next knockdowns (physics/ragdoll_brace.h); bare: print the table
+    auto& profile=RagdollBrace::profile();
+    if(a.size()==4 && (!isNumber(a[3]) || !RagdollBrace::setNumber(profile,a[1],a[2],num(a,3,-1.f)))) {arenaAbort("brace-profile: unknown number or bad value: "+line);return;}
+    if(a.size()!=1 && a.size()!=4) {arenaAbort("brace-profile needs <group> <key> <value>: "+line);return;}
+    say("brace-profile "+RagdollBrace::describe(profile));
+    event("brace_profile","\"profile\":"+jsonStr(RagdollBrace::describe(profile)));
     }
   else if(c=="mds") {
     // mds <npc|player> <OVERLAY.MDS> [off]: an overlay of the model script on it or off (a gait: HUMANS_MILITIA.MDS)

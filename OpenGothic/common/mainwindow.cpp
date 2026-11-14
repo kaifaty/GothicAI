@@ -44,6 +44,13 @@ using namespace Tempest;
 // Seconds of play before the first pipeline-cache write (the device writes it again on clean shutdown).
 static constexpr uint64_t PipelineCacheSaveDelay = 20000;
 
+// OPENGOTHIC_HAND_MOTION*, and --no-hand-motion on top
+static HandMotionReceiver::Config handMotionConfig() {
+  auto cfg = HandMotionReceiver::Config::fromEnvironment();
+  cfg.enabled = cfg.enabled && CommandLine::inst().doHandMotion();
+  return cfg;
+  }
+
 MainWindow::MainWindow(Device& device)
   : Window(Bench::isActive() ?
       (std::getenv("OPENGOTHIC_BENCH_VISIBLE")!=nullptr && std::strcmp(std::getenv("OPENGOTHIC_BENCH_VISIBLE"),"1")==0 ? Normal : Minimized) : Maximized),
@@ -54,7 +61,8 @@ MainWindow::MainWindow(Device& device)
 #if defined(__MOBILE_PLATFORM__)
     mobileUi(player),
 #endif
-    player(dialogs,inventory) {
+    player(dialogs,inventory),
+    handMotion(handMotionConfig()) {
   Settings::inst().onSettingsChanged.bind(this,&MainWindow::onSettings);
   onSettings();
 
@@ -1138,6 +1146,8 @@ void MainWindow::onMarvinKey() {
   }
 
 uint64_t MainWindow::tick() {
+  // before every early return: the socket is read in menus, loading, video and pause too
+  handMotion.tick();
   auto time = Application::tickCount();
   auto dt   = time-lastTick;
   // NOTE: limit to ~200 FPS in game logic to avoid math issues; a deterministic bench steps every frame

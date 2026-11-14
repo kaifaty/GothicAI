@@ -196,7 +196,7 @@ bool GameScript::wld_detectnpc(std::shared_ptr<daedalus::INpc> npcRef, int inst,
       }
     });
   if(ret)
-    vm.global_other()->set_instance(ret->handlePtr());
+    vm.global_other()->set_instance(std::static_pointer_cast<daedalus::INpc>(ret->handlePtr()));
   return ret != nullptr;
   }
 
@@ -222,7 +222,7 @@ bool GameScript::wld_detectnpcex(std::shared_ptr<daedalus::INpc> npcRef, int ins
       }
     });
   if(ret)
-    vm.global_other()->set_instance(ret->handlePtr());
+    vm.global_other()->set_instance(std::static_pointer_cast<daedalus::INpc>(ret->handlePtr()));
   return ret != nullptr;
   }
 
@@ -902,7 +902,7 @@ bool GameScript::hlp_isvaliditem(std::shared_ptr<daedalus::IItem> itemRef) {
 std::shared_ptr<daedalus::INpc> GameScript::hlp_getnpc(int instanceSymbol) {
   auto npc = findNpcById(uint32_t(instanceSymbol));
   if(npc != nullptr)
-    return npc->handlePtr();
+    return std::static_pointer_cast<daedalus::INpc>(npc->handlePtr());
   else
     return nullptr;
   }

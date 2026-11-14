@@ -1,6 +1,6 @@
 # The quiver behind the right hip in the hero's melee dodges and on the ground (reports/archery/2026-11-05-quiver-rolls):
 # a one-hander in hand at 1H talent 1 (HUMANS_1HST1), the bow and the quiver worn. Medium armour (ITAR_MIL_M): the roll
-# four ways; heavy (ITAR_PAL_H): the slow roll four ways (forward with melee_barge off) and the shoulder barge; light
+# four ways; heavy (ITAR_PAL_H): the slow roll four ways; light
 # (ITAR_Leather_L): the dash forward and right. One dodge a clip, 0.5 s before and after; each writes its
 # `melee dodge PC_HERO: ...` line after its `rec`. Then on the ground: sneaking in light leather and the fire mage's
 # robe (ITAR_KDF_H), an npc bowman sitting down by a campfire, the hero knocked down for real (posture stun and a
@@ -30,7 +30,7 @@ equip ITAR_MIL_M
 arrows player 20
 melee-shadow weapon 1h
 stats 1h 45 talent 1
-animinfo T_1HROLLB T_1HROLLL T_1HROLLR T_1HROLLF T_1HROLLHEAVYB T_1HROLLHEAVYL T_1HROLLHEAVYR T_1HROLLHEAVYF T_1HBARGE T_1HDASHF T_1HDASHR
+animinfo T_1HROLLB T_1HROLLL T_1HROLLR T_1HROLLF T_1HROLLHEAVYB T_1HROLLHEAVYL T_1HROLLHEAVYR T_1HROLLHEAVYF T_1HDASHF T_1HDASHR
 cam look 95
 cam follow 200 115 -135
 slowmo 4
@@ -76,7 +76,7 @@ dodge player forward
 wait 1520
 stop
 
-# --- heavy: the slow roll, forward with the barge off
+# --- heavy: the slow roll
 equip ITAR_PAL_H
 goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
 face 210
@@ -108,7 +108,6 @@ wait 500
 dodge player right
 wait 1880
 stop
-toggle melee_barge
 goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
 face 210
 melee-shadow weapon 1h
@@ -118,17 +117,6 @@ rec pal_heavyroll_forward
 wait 500
 dodge player forward
 wait 1880
-stop
-toggle melee_barge
-goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
-face 210
-melee-shadow weapon 1h
-stats 1h 45 talent 1
-wait 2000
-rec pal_barge_forward
-wait 500
-dodge player forward
-wait 1640
 stop
 
 # --- light: the dash, to compare

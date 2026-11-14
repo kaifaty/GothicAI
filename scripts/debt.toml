@@ -42,6 +42,7 @@ paths = [
     "docs/features/engine-animation.md",
     "docs/features/engine-render.md",
     "docs/features/engine-archery.md",
+    "docs/features/engine-input.md",
     "docs/features/off-by-default.md",
     "docs/features/coverage-gaps.md",
     "docs/features/dev-tools.md",

@@ -60,8 +60,10 @@ set(island_program "${CMAKE_CURRENT_SOURCE_DIR}/island/program")
 add_library(engine-island-lib STATIC EXCLUDE_FROM_ALL
   "${island_program}/islandcontrol.cpp" "${island_program}/islandflags.cpp" "${island_program}/islandhero.cpp"
   "${island_program}/islandservices.cpp" "${island_program}/islandview.cpp" "${island_program}/islandwindow.cpp"
-  "${island_program}/islandworld.cpp")
+  "${island_program}/islandworld.cpp" "${island_program}/islandscript.cpp" "${island_program}/islandevents.cpp")
 target_include_directories(engine-island-lib PUBLIC "${island_program}")
+target_include_directories(engine-island-lib SYSTEM BEFORE PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/lib/rapidjson/include")
 target_link_libraries(engine-island-lib PUBLIC engine-platform island-content-lib)
 add_executable(engine-island "${island_program}/main.cpp")
 target_link_libraries(engine-island PRIVATE engine-island-lib)

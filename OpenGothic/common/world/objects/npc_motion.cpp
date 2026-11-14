@@ -2,7 +2,6 @@
 
 #include "graphics/mesh/skeleton.h"
 #include "game/gamescript.h"
-#include "game/meleeriposte.h"
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"
 #include "world/world.h"
@@ -202,10 +201,7 @@ void Npc::resetNavigationEpisode() {
   ragdollDormant.reset();
   ragdollLegacyDown = ragdollRecovering = ragdollHasLastPosition = false;
   meleePosture.reset();
-  meleeBargeOrigin.reset();
   meleeKnockdown = false;
-  meleeBargeKnockdown = false;
-  meleeRiposteKnockdown = false;
   meleeGetupForced = false;
   meleeFallTick = meleeRiseTick = 0;
   meleeSlowSince = 0;
@@ -221,8 +217,6 @@ void Npc::resetNavigationEpisode() {
   bodyImpactPendingCulprit.reset();
   bodyImpactSpellFlight=false;
   arrowImpacts.clear();
-  meleeRiposte.reset();
-  meleeRiposteHoldUntil = 0;
   pendingSpellImpulse = {};
   spellImpulseCulprit.reset();
   visual.clearPhysicalPose();

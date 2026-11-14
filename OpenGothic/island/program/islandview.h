@@ -23,6 +23,7 @@ class View final {
     ~View();
 
     WorldView&            view() { return *wview; }
+    ChunkResidency&       residency() { return *chunks; }
     const ChunkResidency& residency() const { return *chunks; }
 
     void setHero(const Tempest::Matrix4x4& body);

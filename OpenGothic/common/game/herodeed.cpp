@@ -41,8 +41,7 @@ HeroDeed::Person resolveOwner(Npc& hero, std::string_view name) {
   // Preserve an explicit C_NPC owner even when that NPC is not in this world.
   HeroDeed::Person p;
   p.npc = s->name();
-  if(s->is_instance_of<daedalus::INpc>()) {
-    auto instance = std::static_pointer_cast<daedalus::INpc>(s->get_instance());
+  if(auto instance = script.npcRecord(s)) {
     p.guild = instance->guild;
     p.npctype = int32_t(instance->type);
     }
@@ -78,7 +77,7 @@ int32_t HeroDeed::constant(Npc& npc, std::string_view name, int32_t fallback) {
 
 int32_t HeroDeed::aivar(Npc& npc, std::string_view name) {
   const auto index = constant(npc,name);
-  if(index<0 || uint32_t(index)>=daedalus::INpc::aivar_count)
+  if(index<0 || uint32_t(index)>=NpcRecord::aivar_count)
     return 0;
   return npc.handlePtr()->aivar[size_t(index)];
   }

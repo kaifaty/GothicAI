@@ -51,18 +51,15 @@ class Settings final {
       bool placedItems = true;
       bool bodyImpactDamage = true;
       bool meleeDodge = true;
-      bool meleeBarge = true;
       bool meleeCharge = true;
-      bool meleeRiposte = true;
       bool meleeHealInterrupt = true;
       bool meleeUseInHand = true;
       bool foodOverTime = true;
       bool meleeAiDodge = true;
-      bool meleeAiRiposte = true;
       bool meleeAiCharge = true;
-      bool meleeAiBarge = true;
       bool bodyTraces = true;
       bool blood = true;
+      bool ragdollBrace = true;
 
       bool allowsMonsterCharacterVirtual(bool down, bool flying) const {
         return monsterCharacterVirtual && !down && !flying;

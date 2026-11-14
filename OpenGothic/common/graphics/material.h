@@ -6,6 +6,7 @@
 #include "asset/worldtypes.h"
 #include "records/definitions.h"
 #include "graphics/foliagewind.h"
+#include "graphics/grass/grassparams.h"
 
 class Material final {
   public:
@@ -67,6 +68,7 @@ class Material final {
     bool                      strand           = false; // strands as ribbons (materials.json): BK_STRAND
     bool                      eye              = false; // an eyeball (materials.json): BK_EYE
     FoliageWind::Params       foliage;                 // leaves in the wind (materials.json): BK_FOLIAGE
+    Grass::Params             grass;                   // a ground that grows grass (materials.json): BK_GRASS
     float                     envMapping       = 0;
 
     bool operator == (const Material& other) const;

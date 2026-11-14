@@ -39,7 +39,7 @@
 #include <string>
 #include <vector>
 
-#include "daedalus/classes.h"
+#include "world/records/npcrecord.h"
 
 class Interactive;
 class Bullet;
@@ -422,11 +422,8 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     bool      isMeleeStunned() const;
     bool      meleeStunSecondBeat() const { return meleeStunBeat; }
     void      startMeleeStun(Npc& by, std::string_view reason);
-    // Charged forward strike: transient hero-only windup/hold and an ordinary event-driven release.
-    bool      beginMeleeRiposte();
-    bool      isMeleeRiposting() const;
-    bool      isMeleeRiposteHeld() const;
     void      endMeleeAiSpecial();
+    // Charged forward strike: transient windup/hold and an ordinary event-driven release.
     bool      canMeleeCharge() const;
     bool      beginMeleeCharge();
     void      releaseMeleeCharge();
@@ -735,8 +732,8 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
 
     auto      dialogChoices(Npc &player, const std::vector<uint32_t> &except, bool includeImp) -> std::vector<GameScript::DlgChoice>;
 
-    daedalus::INpc&                        handle() { return *hnpc; }
-    const std::shared_ptr<daedalus::INpc>& handlePtr() const { return hnpc; }
+    NpcRecord&                        handle() { return *hnpc; }
+    const std::shared_ptr<NpcRecord>& handlePtr() const { return hnpc; }
 
     auto      inventory() const -> const Inventory& { return invent; }
     size_t    itemCount  (size_t id) const;
@@ -884,8 +881,8 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
 
     bool      doAttack(Anim anim, BodyState bs);
     void      commitSpell();
-    // Confirmed npc_hit/barge contacts bypass defence; barge filters dodge immunity before calling.
-    void      takeDamage(Npc& other, const Bullet* b, bool ignoreDefence = false, float meleeScale = 1.f, const MeleeBladeContact* contact = nullptr, bool barge = false);
+    // Confirmed npc_hit contacts bypass defence.
+    void      takeDamage(Npc& other, const Bullet* b, bool ignoreDefence = false, float meleeScale = 1.f, const MeleeBladeContact* contact = nullptr);
     void      takeDamage(Npc& other, const Bullet* b, const VisualFx* vfx, int32_t splId);
     bool      isTargetableBySpell(TargetType t) const;
 
@@ -1027,7 +1024,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     bool      hasAutoroll() const;
     bool      prepareTurn();
     void      stopWalkAnimation();
-    void      takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32_t splId, bool isSpell, float meleeScale = 1.f, const MeleeBladeContact* contact = nullptr, bool barge = false);
+    void      takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32_t splId, bool isSpell, float meleeScale = 1.f, const MeleeBladeContact* contact = nullptr);
     void      hitReaction(const Npc& other, const Bullet* b, int32_t damage, bool stumble, const MeleeBladeContact* contact = nullptr);
     void      takeFallDamage(const Tempest::Vec3& fallSpeed);
     void      takeDrownDamage();
@@ -1072,7 +1069,8 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     std::array<uint64_t,2>          visibilityDiagnosticTime={};
     std::array<std::string,2>       visibilityDiagnosticKey;
     // main props
-    std::shared_ptr<daedalus::INpc>  hnpc={};
+    std::shared_ptr<NpcRecord>      hnpc={};
+    uint32_t                       npcInstanceSymbol=uint32_t(-1);
     float                          x=0.f;
     float                          y=0.f;
     float                          z=0.f;
@@ -1162,15 +1160,15 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
       size_t bone;
       Tempest::Vec3 point, impulseNs;
       float strength;
-      std::weak_ptr<daedalus::INpc> culprit;
+      std::weak_ptr<NpcRecord> culprit;
       bool melee = false;
       float stiffness = 1.f;
       };
     std::vector<ArrowImpact>       arrowImpacts;
     Tempest::Vec3                  pendingSpellImpulse = {};
-    std::weak_ptr<daedalus::INpc>     spellImpulseCulprit;
+    std::weak_ptr<NpcRecord>     spellImpulseCulprit;
     BodyImpactWindow              bodyImpactWindow;
-    std::weak_ptr<daedalus::INpc>     bodyImpactLaunchCulprit,bodyImpactPendingCulprit;
+    std::weak_ptr<NpcRecord>     bodyImpactLaunchCulprit,bodyImpactPendingCulprit;
     const char*                   bodyImpactSource = "ragdoll";
     bool                          bodyImpactSpellFlight = false;
     void                          applyBodyImpact();
@@ -1187,7 +1185,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     uint64_t                      ragdollStartTick = 0;
     bool                          ragdollLegacyDown = false;
     bool                          ragdollRecovering = false;
-    void                          applyMeleePosture(Npc& attacker, const MeleeBladeContact* contact, bool blocked, float before, bool barge = false);
+    void                          applyMeleePosture(Npc& attacker, const MeleeBladeContact* contact, bool blocked, float before);
     bool                          tickMeleePosture(uint64_t dt);
     MeleeImpact::Posture           meleePosture;
     MeleeStamina::State            meleeStamina;
@@ -1205,21 +1203,11 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     void                          finishItemUseEffect(const char* moment);
     void                          interruptItemUse(std::string_view cause);
     void                          tickFoodPool();
-    struct Riposte final {
-      std::weak_ptr<daedalus::INpc> victim;
-      Tempest::Vec3 heroStart, from, pair;
-      uint64_t start = 0, bladeAt = 0, hitEnd = 0;
-      bool blade = false, handover = false, applying = false, blocked = false;
-      };
-    std::optional<Riposte>         meleeRiposte;
-    uint64_t                      meleeRiposteHoldUntil = 0;
-    bool                          meleeRiposteAiHeld = false;
-    bool                          tryMeleeAiRiposte();
-    void                          tickMeleeRiposte();
-    void                          meleeRiposteBlade();
-    float                         meleeRiposteMultiplier(const Npc& target) const;
-    void                          meleeRiposteNote(const Npc* victim, const std::string& text, std::string_view phase, const std::string& fields = {});
-    bool                          knockDownMelee(Npc& attacker, const Tempest::Vec3& impulse, bool barge, std::string_view reason);
+    bool                          knockDownMelee(Npc& attacker, const Tempest::Vec3& impulse, std::string_view reason);
+    // A protective fall (npc_brace.cpp): the knocked-off body's motors take the S_BRACE_* pose.
+    void                          startRagdollBrace(const Tempest::Vec3& thrown);
+    void                          finishRagdollBrace(std::string_view end);
+    std::string                   ragdollBraceField() const;
     enum class ChargePhase : uint8_t { None, Windup, Hold, Release };
     ChargePhase                   meleeChargePhase = ChargePhase::None;
     uint64_t                      meleeChargeStart = 0;
@@ -1241,14 +1229,12 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     float                         meleePostureSkillScale(const Npc& attacker) const;
     bool                          hasMeleeBeastPoise() const;
     bool                          hasMeleeSuperArmor() const;
-    bool                          hasMeleeBargeSuperArmor() const;
     float                         meleeStunBonus(const Npc& attacker) const;
     MeleeImpact::BackstabKind      meleeBackstabKind(const Npc& attacker) const;
     float                         meleeBackstabMultiplier(MeleeImpact::BackstabKind kind) const;
     struct MeleeDodgeLayer final {
       MeleeDodge::Move move;
       uint64_t         origin = 0; // the layer's start as it began: a hit stop moves its start, not this
-      uint64_t         elapsed = 0; // played clip time, including speed and hit stop (barge contact/super armor)
       };
     std::optional<MeleeDodgeLayer> meleeDodgeLayer() const;
     // An incoming blow, arrow or spell inside the dodge's window (meleeGuard): true, it does not pass (logged)
@@ -1256,21 +1242,11 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     // Its dodge, jump back and parade against this attacker's melee blow, by MeleeDodge::guard
     MeleeDodge::Guard             meleeGuard(const Npc& attacker) const;
     void                          meleeDodgeNote(const std::string& text, std::string_view phase, const std::string& fields);
-    void                          tickMeleeBarge();
-    void                          meleeBargeNote(const Npc* target, uint64_t elapsed, std::string_view outcome, std::string_view predicted = {});
-    std::optional<uint64_t>        meleeBargeOrigin; // one contact per clip; transient, like posture and stun
-    bool                          meleeBargeContact = false;
     // Transient per-attacker awareness, sampled before damage perception changes combat state.
     std::vector<std::pair<const Npc*,uint64_t>> meleeRecentHits;
     std::string                   meleeStunReason;
     bool                          meleeStunBeat = true; // the second beat of a lost balance is played
     uint64_t                      meleeStunUntil = 0;
-    uint64_t                      meleeStunSerial = 0;
-    struct MeleeAiRiposteRoll final {
-      std::weak_ptr<daedalus::INpc> victim;
-      uint64_t stun = 0;
-      };
-    std::vector<MeleeAiRiposteRoll> meleeAiRiposteRolls;
     struct MeleeAiDodgeTiming final {
       const Npc* target = nullptr;
       const Animation::Sequence* sequence = nullptr;
@@ -1281,19 +1257,12 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     std::optional<MeleeAiDodgeTiming> meleeAiDodgeTiming;
     MeleeAi::DodgeStreak            meleeAiDodgeStreak;
     MeleeAi::SpecialSlot           meleeAiSpecialSlot; // held by an attacker of this NPC
-    std::weak_ptr<daedalus::INpc>    meleeAiSpecialTarget;
+    std::weak_ptr<NpcRecord>    meleeAiSpecialTarget;
     MeleeAi::Special               meleeAiSpecial = MeleeAi::Special::None;
     std::optional<uint64_t>        meleeAiSpecialEnded;
     uint64_t                      meleeAiChargeHold = 0;
     float                         meleeAiChargeYaw = 0.f, meleeAiChargeTurn = 0.f;
-    struct MeleeAiBargeMemory final {
-      std::weak_ptr<daedalus::INpc> target;
-      std::optional<uint64_t> guarded, guardedRoll, paradeRoll;
-      const Animation::Sequence* paradeSequence = nullptr;
-      };
-    std::vector<MeleeAiBargeMemory> meleeAiBargeMemory;
     bool                          tryMeleeAiCharge();
-    bool                          tryMeleeAiBarge();
     bool                          meleeAiSpecialBusy(std::string_view move);
     void                          beginMeleeAiSpecial(MeleeAi::Special move);
     void                          tickMeleeAiSpecial();
@@ -1308,8 +1277,6 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
       };
     std::optional<MeleeParadeTiming> meleeParadeTiming; // native AI only, transient
     bool                          meleeKnockdown = false;
-    bool                          meleeBargeKnockdown = false;
-    bool                          meleeRiposteKnockdown = false;
     bool                          meleeDownStrike = false; // the chop from above at one lying is playing
     bool                          meleeGetupForced = false;
     uint64_t                      meleeFallTick = 0, meleeRiseTick = 0;
@@ -1473,6 +1440,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
 
     Sound                          sfxWeapon;
 
+  friend class GameScript;
   friend class MoveAlgo;
   friend class BodyController;
   friend class BodyArena;

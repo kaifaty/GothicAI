@@ -69,6 +69,7 @@ class Shaders {
 
     // Blood on the GBuffer (physics stage 8, step 4c): albedo RGB, and roughness with material maps
     Tempest::RenderPipeline  bloodDecal, bloodDecalAlbedo; // with and without the ORM target
+    Tempest::RenderPipeline  grass;                        // blades into the G-buffer; only with material maps
     Tempest::RenderPipeline  sun;
     Tempest::ComputePipeline cloudsLut, fogOcclusion, fogOcclusionEmpty;
     Tempest::ComputePipeline fogViewLut3d, fogViewLutSep;

@@ -10,7 +10,7 @@
 #include "physics/dynamicworld.h"
 #include "game/gametime.h"
 #include "game/perceptionmsg.h"
-#include "game/constants.h"
+#include "game/rpgvocabulary.h"
 #include "objects/vob.h"
 #include "npcsimtier.h"
 #include "animationlod.h"

@@ -37,14 +37,6 @@ void MeleeAi::DodgeStreak::reset() {
   count = 0;
   }
 
-float MeleeAi::riposteChance(int talent) {
-  return float(std::clamp(talent,0,100))/100.f;
-  }
-
-bool MeleeAi::riposteRoll(int talent, float uniform) {
-  return uniform<riposteChance(talent);
-  }
-
 float MeleeAi::chargeChance(int talent) {
   return .3f*float(std::clamp(talent,0,100))/100.f;
   }
@@ -59,39 +51,6 @@ uint64_t MeleeAi::chargeHoldMs(float uniform) {
 
 bool MeleeAi::chargeRelease(uint64_t elapsedMs, uint64_t holdMs, bool inRange) {
   return elapsedMs>=MeleeCharge::AutoReleaseMs || (elapsedMs>=holdMs && inRange);
-  }
-
-float MeleeAi::bargeChance(int talent) {
-  return float(std::clamp(talent,0,100))/100.f;
-  }
-
-bool MeleeAi::bargeRoll(int talent, float uniform) {
-  return uniform<bargeChance(talent);
-  }
-
-MeleeAi::BargeTrigger MeleeAi::bargeTrigger(bool parade, uint64_t now, std::optional<uint64_t> lastGuardedMs) {
-  if(parade)
-    return BargeTrigger::Parade;
-  if(lastGuardedMs && now-*lastGuardedMs<=2000)
-    return BargeTrigger::Guarded;
-  return BargeTrigger::None;
-  }
-
-bool MeleeAi::bargeGeometry(float distanceCm, float heightCm, float angleDeg) {
-  return 80.f<=distanceCm && distanceCm<=200.f && std::abs(heightCm)<=100.f && std::abs(angleDeg)<=50.f;
-  }
-
-bool MeleeAi::bargeArmor(std::optional<MeleeImpact::ArmorClass> armor) {
-  return armor==MeleeImpact::ArmorClass::Heavy;
-  }
-
-std::string_view MeleeAi::name(BargeTrigger trigger) {
-  switch(trigger) {
-    case BargeTrigger::None:    return "none";
-    case BargeTrigger::Parade:  return "parade";
-    case BargeTrigger::Guarded: return "guarded";
-    }
-  return "none";
   }
 
 bool MeleeAi::specialCooldownReady(uint64_t now, std::optional<uint64_t> endedMs) {

@@ -49,3 +49,32 @@ def test_world_maps_the_model_to_the_base_pose():
     assert np.allclose(up, np.array(torch.POSE['rotation'])[:, 1] * 100)
     side = torch.world([1, 0, 0]) - torch.world([0, 0, 0])
     assert np.allclose(side, -np.array(torch.POSE['rotation'])[:, 0] * 100)
+
+
+def test_every_torch_of_a_place_gets_the_model_its_fire_and_one_light_in_the_flame():
+    effects = {e['name']: e for e in json.loads(torch.PARTICLES.read_text())['effects']}
+    for name, place in torch.PLACES.items():
+        layer = json.loads(torch.LAYER.with_name(f'wall-torch-{name}.json').read_text())
+        ids = [e['id'] for e in layer['visual']]
+        assert len(ids) == len(set(ids)) == place['count'] and all(e['visual'] == torch.VISUAL for e in layer['visual'])
+        # the mesh and the lamp stay in the base's tree; three vobs of the original's fire go at most
+        assert not set(layer['remove']) & (set(ids) | {lamp['id'] for lamp in layer['light']})
+        assert len(layer['remove']) == len(set(layer['remove'])) <= 3 * len(ids)
+        added = {e['key']: e for e in layer['add']}
+        assert len(added) == len(layer['add'])
+        lights = [e for e in layer['add'] if e['kind'] == 'light']
+        followed = [e['flicker_from'] for e in layer['light'] + lights]
+        assert sorted(followed) == sorted(f'wall-torch-{name}-{mesh}-flame' for mesh in ids), 'one light a flame'
+        for mesh in ids:
+            fire = [added[f'wall-torch-{name}-{mesh}-{end}'] for end in ('flame', 'flame-a', 'flame-b', 'licks', 'sparks', 'drops', 'soot')]
+            assert all(e['kind'] == 'emitter' and e['pfx'] in effects for e in fire) and 'flicker' in fire[0]
+        seeds = [e['flicker']['seed'] for e in layer['add'] if 'flicker' in e]
+        assert len(seeds) == len(set(seeds)) == 3 * len(ids), 'no two flames pulse in step'
+        assert all(max(abs(v) for v in lamp['offset_cm']) <= 100 for lamp in layer['light'])
+        keys = [e['key'] for e in layer['add']]
+        for light in lights:
+            flame = np.array(added[light['flicker_from']]['position'])
+            assert keys.index(light['flicker_from']) < keys.index(light['key']), 'the signal is known before its light'
+            assert light['range'] == place['range'] and light['color'] == torch.LAMP['color']
+            gap = np.array(light['position']) - flame
+            assert abs(gap[1]) < torch.CARD[1] / 2 and np.hypot(gap[0], gap[2]) < 8, 'the light sits inside the flame'

@@ -468,7 +468,7 @@ std::string StoryWorld::state(World& world, const rapidjson::Value& msg) {
     auto*       s = vm.find_symbol_by_name(name);
     std::string err;
     auto        r = s!=nullptr && pl!=nullptr && knows!=nullptr
-                    ? storygraph::callFunction(vm,*knows,{storygraph::Value::instance(pl->handlePtr()),
+                    ? storygraph::callFunction(vm,*knows,{storygraph::Value::instance(std::static_pointer_cast<daedalus::INpc>(pl->handlePtr())),
                                                           storygraph::Value::integer(int32_t(s->index()))},err)
                     : std::nullopt;
     if(r && r->type==storygraph::Value::Int) {

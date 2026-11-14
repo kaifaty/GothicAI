@@ -20,7 +20,7 @@
 #include "graphics/mesh/speechface.h"
 #include "graphics/mesh/quiver.h"
 #include "graphics/mesh/renderrig.h"
-#include "game/constants.h"
+#include "game/rpgvocabulary.h"
 #include "meshobjects.h"
 #include "effect.h"
 
@@ -31,7 +31,8 @@ struct NpcLogicalState;
 class Item;
 class WorldView;
 struct GltfHeadMesh;
-namespace daedalus { enum class NpcFlag : uint32_t; }
+enum class NpcFlag : uint32_t;
+namespace daedalus { using NpcFlag = ::NpcFlag; }
 namespace TestBench { bool ragdollBodyDrawable(const Npc& npc); }
 
 class MdlVisual final {

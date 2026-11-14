@@ -130,8 +130,7 @@ void PlayerControl::onKeyPressed(KeyCodec::Action a, Tempest::KeyEvent::KeyType 
 
   if(w!=nullptr && w->isCutsceneLock())
     return;
-  if(pl!=nullptr && (pl->isMeleeRiposteHeld() ||
-                    ((pl->isMeleeKnockedDown() || pl->isMeleeRiposting()) && (c==nullptr || !c->isFree())))) {
+  if(pl!=nullptr && pl->isMeleeKnockedDown() && (c==nullptr || !c->isFree())) {
     clearInput();
     return;
     }
@@ -265,9 +264,7 @@ void PlayerControl::onKeyPressed(KeyCodec::Action a, Tempest::KeyEvent::KeyType 
     actrl[fk]         = true;
 
     ctrl[a] = true;
-    if(fk==ActForward && pl!=nullptr && pl->beginMeleeRiposte()) {
-      actrl[ActForward] = false;
-      } else if(fk==ActForward && pl!=nullptr && pl->canMeleeCharge()) {
+    if(fk==ActForward && pl!=nullptr && pl->canMeleeCharge()) {
       chargePress = ChargePress{w->tickCount()};
       actrl[ActForward] = false;
       }
@@ -323,7 +320,7 @@ void PlayerControl::onKeyReleased(KeyCodec::Action a, KeyCodec::Mapping mapping)
 
   auto w  = Gothic::inst().world();
   auto pl = w ? w->player() : nullptr;
-  if(pl!=nullptr && (pl->isMeleeKnockedDown() || pl->isMeleeRiposting() || pl->isMeleeRiposteHeld())) {
+  if(pl!=nullptr && pl->isMeleeKnockedDown()) {
     clearInput();
     return;
     }
@@ -759,13 +756,6 @@ bool PlayerControl::tickMove(uint64_t dt) {
 
   if(pl==nullptr)
     return true;
-
-  if(pl->isMeleeRiposting() || pl->isMeleeRiposteHeld()) {
-    clearInput();
-    rotMouse = rotMouseY = 0;
-    runAngleDest = 0;
-    return true;
-    }
 
   if(pl->isMeleeStunned()) {
     if(dodgeRequest)

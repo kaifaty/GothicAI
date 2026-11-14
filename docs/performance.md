@@ -44,6 +44,7 @@
 | `face` | `scripts/bench/perf-face.bench` | лицо героя крупно на рынке днём: цена волос, бровей и ресниц своей головы, запускать с её контентом (`PERF_ENV='OPENGOTHIC_CONTENT=…'`) |
 | `face-far` | `scripts/bench/perf-face-far.bench` | голова героя с 1,2, 3, 7 и 15 м там же: цена прядей, когда голова мала в кадре; после каждого вида — кадр |
 | `rock` | `scripts/bench/perf-rock.bench` | стена у дороги южнее фермы Акила, вид `road-3` съёмки материала скал, и пучки травы у камеры, вид `ledge-near`: цена своего материала скалы и живой листвы, запускать с набором (`PERF_ENV='OPENGOTHIC_CONTENT=…'`) |
+| `xardas` | `scripts/bench/perf-xardas.bench` | башня Ксардаса в полночь, 23 настенных факела первой сцены: стартовая комната с двумя факелами в 5 м, проход у входа с тремя, нижний зал, факел лестницы в 1,3 м; цена своей модели и огня факела, сравнение наборов — `scripts/perf-content.sh A B xardas` |
 
 `shot`, `face`, `face-far` и `rock` не входят в прогон по умолчанию. `shot` снимает PNG `market-a`, `market-b`,
 `forest`, `interior` в папку повтора с `ui on`: кадр проходит путь до экрана,
@@ -205,7 +206,7 @@ scripts/perf-content.sh none working-8 harbour market --noise-pct 2 --threshold-
 `scripts/perf-content.sh <A> <B> [места]` сравнивает наборы из
 `~/.local/share/gothic-ai/content-staging/<набор>/` на Mac; `none` задаёт
 игре пустой `OPENGOTHIC_CONTENT=`. По умолчанию места — `harbour market`;
-доступны также `harbour-night` (порт в полночь, для ночного света), `forest`, `interior`, `combat`. Запуск только на Ryzen, без
+доступны также `harbour-night` (порт в полночь, для ночного света), `forest`, `interior`, `combat`, `xardas` (башня Ксардаса в полночь, 23 настенных факела). Запуск только на Ryzen, без
 автоматического перехода на Mac. Окно и настройки — те же `PERF_WINDOW`,
 `PERF_VID_RES`, `PERF_ARGS`, `PERF_ENV`, `PERF_INI`, что у `perf.sh`;
 `OPENGOTHIC_CONTENT` всегда определяется аргументом A/B.

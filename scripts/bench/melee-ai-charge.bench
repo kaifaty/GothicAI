@@ -1,6 +1,6 @@
 # Native 1H charges. Run unchanged with MELEE_AI_CHARGE=1 and 0.
 # WORLD=NEWWORLD.ZEN OPENGOTHIC_BODY_TRACE=1 MELEE_CHARGE=1 MELEE_STAMINA=1 MELEE_POSTURE=0
-# MELEE_STAGGER=1 MELEE_PARRY=1 MELEE_AI_BARGE=0 MELEE_AI_DODGE=0 MELEE_AI_RIPOSTE=1 TIMEOUT=900
+# MELEE_STAGGER=1 MELEE_PARRY=1 MELEE_AI_DODGE=0 TIMEOUT=900
 # OPENGOTHIC_CONTENT=/Users/kaifat/.local/share/gothic-ai/content-staging/anim-strikes
 # Metrics only: ai_charge_roll/ai_charge_release contain chance and hold timing.
 # Measure release rotation from ai_charge_end.turn_deg and the bench.log line "release turn ... deg".
@@ -94,7 +94,7 @@ freeze BDT_1013_BANDIT_L
 stop shadow
 wait 8000
 
-# (d) Two masters fight the same hero. Charge, barge and AI riposte share one target slot.
+# (d) Two masters fight the same hero. Charges share one target slot.
 stats npc BDT_1013_BANDIT_L 1h 100 talent auto
 melee-shadow bandit 1h
 arc BDT_1003_BANDIT_M 1 180 0

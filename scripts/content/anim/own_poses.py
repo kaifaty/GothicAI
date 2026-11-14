@@ -9,6 +9,7 @@ and true-edge directions, the free hand by palm and finger directions. Taken fro
 the skeleton, the bone lengths of the stance clip (every clip of ours shares them), its ankle height
 over the floor and the finger's grip on the hilt. Writes one-frame records HUMANS-<name>.MAN.json
 (the pose dir is the fifth argument of kimodo_moves.py) and prints the checks of each pose.
+A pose given as {"mirror": "<name>"} is that pose with left and right swapped.
 
 Frame: Gothic world, cm, Y up, the floor at 0, the character faces +Z, its right hand is at +X.
 Angles in degrees: yaw > 0 turns to the character's right, pitch > 0 leans forward (towards +Z,
@@ -153,11 +154,12 @@ class Builder:
         up_l = bf.T @ np.array([0.0, 1.0, 0.0])
         fwd = rot([0, 1, 0], foot.get("yaw", 0)) @ np.array([0.0, 0.0, 1.0])
         flat = triad(fwd_l, up_l, fwd, [0, 1, 0])
-        ankle = np.array([foot["pos"][0], self.ankle_y, foot["pos"][1]])
+        free = len(foot["pos"]) == 3  # a foot off the floor: the ankle itself, x, y, z
+        ankle = np.asarray(foot["pos"], float) if free else np.array([foot["pos"][0], self.ankle_y, foot["pos"][1]])
         toe = ankle + flat @ self.off(names[3])
         lift = rot(np.cross([0, 1, 0], fwd), foot.get("heel", 0))  # heel up, pivoting on the toe
         r_foot = lift @ flat
-        ankle = toe + lift @ (ankle - toe)
+        ankle = ankle if free else toe + lift @ (ankle - toe)
         pole = np.asarray(knee if knee is not None else fwd, float)
         hip = pos[names[0]]
         a, b = np.linalg.norm(self.off(names[1])), np.linalg.norm(self.off(names[2]))
@@ -167,8 +169,14 @@ class Builder:
         y = np.array([0.0, 1.0, 0.0])
         W[names[0]] = triad(unit(self.off(names[1])), y, k - hip, hinge)
         W[names[1]] = triad(unit(self.off(names[2])), y, end - k, hinge)
-        W[names[2]] = r_foot
-        W[names[3]] = flat @ bf.T @ B[gi[names[3]]]  # toes stay flat on the floor
+        if free:  # the ankle keeps its bind angle to the shin, bent by "heel" (> 0 points the toes)
+            to_shin = W[names[1]] @ B[gi[names[1]]].T
+            point = rot(to_shin @ np.cross([0, 1, 0], [0, 0, 1.0]), foot.get("heel", 0))
+            W[names[2]] = point @ to_shin @ bf
+            W[names[3]] = point @ to_shin @ B[gi[names[3]]]
+        else:
+            W[names[2]] = r_foot
+            W[names[3]] = flat @ bf.T @ B[gi[names[3]]]  # toes stay flat on the floor
         report["miss"][f"foot {s}"] = round(miss, 1)
         pos.update(self.positions(W, pos["BIP01"]))
 
@@ -212,12 +220,24 @@ class Builder:
         else:
             # bind: arms hang with the palms to the thighs; the wrist stays straight unless "fingers" bends it
             palm_l = bh.T @ np.array([-1.0 if s == "R" else 1.0, 0, 0])
-            hand = triad([1.0, 0, 0], palm_l, arm.get("fingers", end - e), arm["palm"])
+            fingers, palm = arm.get("fingers", end - e), np.asarray(arm["palm"], float)
+            if "wrist_ext" in arm:
+                # The wrist bends back by so many degrees, away from where the palm faces: a hand put out
+                # to meet a surface. The palm turns towards the forearm's direction by the same angle.
+                fx, t = unit(end - e), np.radians(arm["wrist_ext"])
+                across = unit(palm - fx * np.dot(palm, fx))
+                fingers, palm = np.cos(t) * fx - np.sin(t) * across, np.cos(t) * across + np.sin(t) * fx
+            hand = triad([1.0, 0, 0], palm_l, fingers, palm)
+            if "turn" in arm:
+                # The hand turned about the forearm by so many degrees from the palm asked for: a palm
+                # that faces along the arm's reach needs the full pronation, more than a ragdoll's wrist has.
+                hand = rot(end - e, arm["turn"]) @ hand
         # Half of the forearm-hand twist goes into the forearm, as the radius turns: skinning only,
-        # the wrist stays on the forearm's axis.
+        # the wrist stays on the forearm's axis. A pose for ragdoll motors asks for "forearm_twist": 0:
+        # the ragdoll's elbow is a hinge, the whole twist is the wrist's.
         rel = fore.T @ hand
         twist = np.degrees(np.arctan2(rel[2, 1] - rel[1, 2], rel[1, 1] + rel[2, 2]))
-        W[names[1]] = fore @ rot([1, 0, 0], 0.5 * twist)
+        W[names[1]] = fore @ rot([1, 0, 0], arm.get("forearm_twist", 0.5) * twist)
         W[names[2]] = hand
         W[names[3]] = hand @ self.finger_local[s]
         report["miss"][f"hand {s}"] = round(miss, 1)
@@ -287,6 +307,24 @@ class Builder:
         ga.write_animation(path, anim, source=source)
 
 
+def mirror(spec):
+    """The pose with left and right swapped: sides trade places, X and the turns about Y and Z change sign."""
+    if isinstance(spec, dict):
+        out = {}
+        for k, v in spec.items():
+            k = {"L": "R", "R": "L"}.get(k, k)
+            if k in ("yaw", "roll", "turn"):
+                out[k] = -v
+            elif k == "pos" and len(v) == 2:  # a foot: x, z
+                out[k] = [-v[0], v[1]]
+            elif isinstance(v, list) and len(v) == 3 and all(isinstance(x, (int, float)) for x in v):
+                out[k] = [-v[0], v[1], v[2]]
+            else:
+                out[k] = mirror(v)
+        return out
+    return spec
+
+
 def main():
     models, spec_path, out = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
     only = set(sys.argv[4:])
@@ -296,6 +334,8 @@ def main():
     for name, ps in spec["poses"].items():
         if only and name not in only:
             continue
+        if "mirror" in ps:  # {"mirror": "<pose>"}: that pose with left and right swapped
+            ps = mirror(spec["poses"][ps["mirror"]])
         pose = b.build(ps)
         b.save(out / f"HUMANS-{name}.MAN.json", name, pose, source=f"own pose {spec_path.name}:{name}")
         print(name, json.dumps(pose["report"]))

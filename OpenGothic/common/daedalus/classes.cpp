@@ -149,45 +149,45 @@ void daedalus::IParticleEffectEmitKey::register_(DaedalusScript& s) {
 
 void daedalus::INpc::register_(DaedalusScript& s) {
 	ZKLOG_CLASS("C_NPC", "INpc");
-	s.register_member("C_NPC.ID", &INpc::id);
-	s.register_member("C_NPC.NAME", &INpc::name);
-	s.register_member("C_NPC.SLOT", &INpc::slot);
-	s.register_member("C_NPC.NPCTYPE", &INpc::type);
-	s.register_member("C_NPC.FLAGS", &INpc::flags);
-	s.register_member("C_NPC.ATTRIBUTE", &INpc::attribute);
-	s.register_member("C_NPC.PROTECTION", &INpc::protection);
-	s.register_member("C_NPC.DAMAGE", &INpc::damage);
-	s.register_member("C_NPC.DAMAGETYPE", &INpc::damage_type);
-	s.register_member("C_NPC.GUILD", &INpc::guild);
-	s.register_member("C_NPC.LEVEL", &INpc::level);
-	s.register_member("C_NPC.MISSION", &INpc::mission);
-	s.register_member("C_NPC.FIGHT_TACTIC", &INpc::fight_tactic);
-	s.register_member("C_NPC.WEAPON", &INpc::weapon);
-	s.register_member("C_NPC.VOICE", &INpc::voice);
-	s.register_member("C_NPC.VOICEPITCH", &INpc::voice_pitch);
-	s.register_member("C_NPC.BODYMASS", &INpc::body_mass);
-	s.register_member("C_NPC.DAILY_ROUTINE", &INpc::daily_routine);
-	s.register_member("C_NPC.START_AISTATE", &INpc::start_aistate);
-	s.register_member("C_NPC.SPAWNPOINT", &INpc::spawnpoint);
-	s.register_member("C_NPC.SPAWNDELAY", &INpc::spawn_delay);
-	s.register_member("C_NPC.SENSES", &INpc::senses);
-	s.register_member("C_NPC.SENSES_RANGE", &INpc::senses_range);
-	s.register_member("C_NPC.AIVAR", &INpc::aivar);
-	s.register_member("C_NPC.WP", &INpc::wp);
-	s.register_member("C_NPC.EXP", &INpc::exp);
-	s.register_member("C_NPC.EXP_NEXT", &INpc::exp_next);
-	s.register_member("C_NPC.LP", &INpc::lp);
+	s.register_member<INpc>("C_NPC.ID", &INpc::id);
+	s.register_member<INpc>("C_NPC.NAME", &INpc::name);
+	s.register_member<INpc>("C_NPC.SLOT", &INpc::slot);
+	s.register_member<INpc>("C_NPC.NPCTYPE", &INpc::type);
+	s.register_member<INpc>("C_NPC.FLAGS", &INpc::flags);
+	s.register_member<INpc>("C_NPC.ATTRIBUTE", &INpc::attribute);
+	s.register_member<INpc>("C_NPC.PROTECTION", &INpc::protection);
+	s.register_member<INpc>("C_NPC.DAMAGE", &INpc::damage);
+	s.register_member<INpc>("C_NPC.DAMAGETYPE", &INpc::damage_type);
+	s.register_member<INpc>("C_NPC.GUILD", &INpc::guild);
+	s.register_member<INpc>("C_NPC.LEVEL", &INpc::level);
+	s.register_member<INpc>("C_NPC.MISSION", &INpc::mission);
+	s.register_member<INpc>("C_NPC.FIGHT_TACTIC", &INpc::fight_tactic);
+	s.register_member<INpc>("C_NPC.WEAPON", &INpc::weapon);
+	s.register_member<INpc>("C_NPC.VOICE", &INpc::voice);
+	s.register_member<INpc>("C_NPC.VOICEPITCH", &INpc::voice_pitch);
+	s.register_member<INpc>("C_NPC.BODYMASS", &INpc::body_mass);
+	s.register_member<INpc>("C_NPC.DAILY_ROUTINE", &INpc::daily_routine);
+	s.register_member<INpc>("C_NPC.START_AISTATE", &INpc::start_aistate);
+	s.register_member<INpc>("C_NPC.SPAWNPOINT", &INpc::spawnpoint);
+	s.register_member<INpc>("C_NPC.SPAWNDELAY", &INpc::spawn_delay);
+	s.register_member<INpc>("C_NPC.SENSES", &INpc::senses);
+	s.register_member<INpc>("C_NPC.SENSES_RANGE", &INpc::senses_range);
+	s.register_member<INpc>("C_NPC.AIVAR", &INpc::aivar);
+	s.register_member<INpc>("C_NPC.WP", &INpc::wp);
+	s.register_member<INpc>("C_NPC.EXP", &INpc::exp);
+	s.register_member<INpc>("C_NPC.EXP_NEXT", &INpc::exp_next);
+	s.register_member<INpc>("C_NPC.LP", &INpc::lp);
 
 	// Gothic 2 only
 	if (s.find_symbol_by_name("C_NPC.HITCHANCE") != nullptr) {
-		s.register_member("C_NPC.HITCHANCE", &INpc::hitchance);
-		s.register_member("C_NPC.BODYSTATEINTERRUPTABLEOVERRIDE", &INpc::bodystate_interruptable_override);
-		s.register_member("C_NPC.NOFOCUS", &INpc::no_focus);
+		s.register_member<INpc>("C_NPC.HITCHANCE", &INpc::hitchance);
+		s.register_member<INpc>("C_NPC.BODYSTATEINTERRUPTABLEOVERRIDE", &INpc::bodystate_interruptable_override);
+		s.register_member<INpc>("C_NPC.NOFOCUS", &INpc::no_focus);
 	}
 
 	// Gothic 2 Night of the Raven only
 	if (s.find_symbol_by_name("C_NPC.EFFECT") != nullptr) {
-		s.register_member("C_NPC.EFFECT", &INpc::effect);
+		s.register_member<INpc>("C_NPC.EFFECT", &INpc::effect);
 	}
 }
 
@@ -210,81 +210,81 @@ void daedalus::IMission::register_(DaedalusScript& s) {
 
 void daedalus::IItem::register_(DaedalusScript& s) {
 	ZKLOG_CLASS("C_ITEM", "IItem");
-	s.register_member("C_ITEM.ID", &IItem::id);
-	s.register_member("C_ITEM.NAME", &IItem::name);
-	s.register_member("C_ITEM.NAMEID", &IItem::name_id);
-	s.register_member("C_ITEM.HP", &IItem::hp);
-	s.register_member("C_ITEM.HP_MAX", &IItem::hp_max);
-	s.register_member("C_ITEM.MAINFLAG", &IItem::main_flag);
-	s.register_member("C_ITEM.FLAGS", &IItem::flags);
-	s.register_member("C_ITEM.WEIGHT", &IItem::weight);
-	s.register_member("C_ITEM.VALUE", &IItem::value);
-	s.register_member("C_ITEM.DAMAGETYPE", &IItem::damage_type);
-	s.register_member("C_ITEM.DAMAGETOTAL", &IItem::damage_total);
-	s.register_member("C_ITEM.DAMAGE", &IItem::damage);
-	s.register_member("C_ITEM.WEAR", &IItem::wear);
-	s.register_member("C_ITEM.PROTECTION", &IItem::protection);
-	s.register_member("C_ITEM.NUTRITION", &IItem::nutrition);
-	s.register_member("C_ITEM.COND_ATR", &IItem::cond_atr);
-	s.register_member("C_ITEM.COND_VALUE", &IItem::cond_value);
-	s.register_member("C_ITEM.CHANGE_ATR", &IItem::change_atr);
-	s.register_member("C_ITEM.CHANGE_VALUE", &IItem::change_value);
-	s.register_member("C_ITEM.MAGIC", &IItem::magic);
-	s.register_member("C_ITEM.ON_EQUIP", &IItem::on_equip);
-	s.register_member("C_ITEM.ON_UNEQUIP", &IItem::on_unequip);
-	s.register_member("C_ITEM.ON_STATE", &IItem::on_state);
-	s.register_member("C_ITEM.OWNER", &IItem::owner);
-	s.register_member("C_ITEM.OWNERGUILD", &IItem::owner_guild);
-	s.register_member("C_ITEM.DISGUISEGUILD", &IItem::disguise_guild);
-	s.register_member("C_ITEM.VISUAL", &IItem::visual);
-	s.register_member("C_ITEM.VISUAL_CHANGE", &IItem::visual_change);
-	s.register_member("C_ITEM.VISUAL_SKIN", &IItem::visual_skin);
-	s.register_member("C_ITEM.SCEMENAME", &IItem::scheme_name);
-	s.register_member("C_ITEM.MATERIAL", &IItem::material);
-	s.register_member("C_ITEM.MUNITION", &IItem::munition);
-	s.register_member("C_ITEM.SPELL", &IItem::spell);
-	s.register_member("C_ITEM.RANGE", &IItem::range);
-	s.register_member("C_ITEM.MAG_CIRCLE", &IItem::mag_circle);
-	s.register_member("C_ITEM.DESCRIPTION", &IItem::description);
-	s.register_member("C_ITEM.TEXT", &IItem::text);
-	s.register_member("C_ITEM.COUNT", &IItem::count);
+	s.register_member<IItem>("C_ITEM.ID", &IItem::id);
+	s.register_member<IItem>("C_ITEM.NAME", &IItem::name);
+	s.register_member<IItem>("C_ITEM.NAMEID", &IItem::name_id);
+	s.register_member<IItem>("C_ITEM.HP", &IItem::hp);
+	s.register_member<IItem>("C_ITEM.HP_MAX", &IItem::hp_max);
+	s.register_member<IItem>("C_ITEM.MAINFLAG", &IItem::main_flag);
+	s.register_member<IItem>("C_ITEM.FLAGS", &IItem::flags);
+	s.register_member<IItem>("C_ITEM.WEIGHT", &IItem::weight);
+	s.register_member<IItem>("C_ITEM.VALUE", &IItem::value);
+	s.register_member<IItem>("C_ITEM.DAMAGETYPE", &IItem::damage_type);
+	s.register_member<IItem>("C_ITEM.DAMAGETOTAL", &IItem::damage_total);
+	s.register_member<IItem>("C_ITEM.DAMAGE", &IItem::damage);
+	s.register_member<IItem>("C_ITEM.WEAR", &IItem::wear);
+	s.register_member<IItem>("C_ITEM.PROTECTION", &IItem::protection);
+	s.register_member<IItem>("C_ITEM.NUTRITION", &IItem::nutrition);
+	s.register_member<IItem>("C_ITEM.COND_ATR", &IItem::cond_atr);
+	s.register_member<IItem>("C_ITEM.COND_VALUE", &IItem::cond_value);
+	s.register_member<IItem>("C_ITEM.CHANGE_ATR", &IItem::change_atr);
+	s.register_member<IItem>("C_ITEM.CHANGE_VALUE", &IItem::change_value);
+	s.register_member<IItem>("C_ITEM.MAGIC", &IItem::magic);
+	s.register_member<IItem>("C_ITEM.ON_EQUIP", &IItem::on_equip);
+	s.register_member<IItem>("C_ITEM.ON_UNEQUIP", &IItem::on_unequip);
+	s.register_member<IItem>("C_ITEM.ON_STATE", &IItem::on_state);
+	s.register_member<IItem>("C_ITEM.OWNER", &IItem::owner);
+	s.register_member<IItem>("C_ITEM.OWNERGUILD", &IItem::owner_guild);
+	s.register_member<IItem>("C_ITEM.DISGUISEGUILD", &IItem::disguise_guild);
+	s.register_member<IItem>("C_ITEM.VISUAL", &IItem::visual);
+	s.register_member<IItem>("C_ITEM.VISUAL_CHANGE", &IItem::visual_change);
+	s.register_member<IItem>("C_ITEM.VISUAL_SKIN", &IItem::visual_skin);
+	s.register_member<IItem>("C_ITEM.SCEMENAME", &IItem::scheme_name);
+	s.register_member<IItem>("C_ITEM.MATERIAL", &IItem::material);
+	s.register_member<IItem>("C_ITEM.MUNITION", &IItem::munition);
+	s.register_member<IItem>("C_ITEM.SPELL", &IItem::spell);
+	s.register_member<IItem>("C_ITEM.RANGE", &IItem::range);
+	s.register_member<IItem>("C_ITEM.MAG_CIRCLE", &IItem::mag_circle);
+	s.register_member<IItem>("C_ITEM.DESCRIPTION", &IItem::description);
+	s.register_member<IItem>("C_ITEM.TEXT", &IItem::text);
+	s.register_member<IItem>("C_ITEM.COUNT", &IItem::count);
 
 	// Gothic 2 only
 	if (s.find_symbol_by_name("C_ITEM.INV_ZBIAS") != nullptr) {
-		s.register_member("C_ITEM.INV_ZBIAS", &IItem::inv_zbias);
-		s.register_member("C_ITEM.INV_ROTX", &IItem::inv_rot_x);
-		s.register_member("C_ITEM.INV_ROTY", &IItem::inv_rot_y);
-		s.register_member("C_ITEM.INV_ROTZ", &IItem::inv_rot_z);
-		s.register_member("C_ITEM.INV_ANIMATE", &IItem::inv_animate);
+		s.register_member<IItem>("C_ITEM.INV_ZBIAS", &IItem::inv_zbias);
+		s.register_member<IItem>("C_ITEM.INV_ROTX", &IItem::inv_rot_x);
+		s.register_member<IItem>("C_ITEM.INV_ROTY", &IItem::inv_rot_y);
+		s.register_member<IItem>("C_ITEM.INV_ROTZ", &IItem::inv_rot_z);
+		s.register_member<IItem>("C_ITEM.INV_ANIMATE", &IItem::inv_animate);
 	}
 
 	// Gothic 2 Night of the Raven only
 	if (s.find_symbol_by_name("C_ITEM.EFFECT") != nullptr) {
-		s.register_member("C_ITEM.EFFECT", &IItem::effect);
+		s.register_member<IItem>("C_ITEM.EFFECT", &IItem::effect);
 	}
 }
 
 void daedalus::IFocus::register_(DaedalusScript& s) {
 	ZKLOG_CLASS("C_FOCUS", "IFocus");
-	s.register_member("C_FOCUS.NPC_LONGRANGE", &IFocus::npc_longrange);
-	s.register_member("C_FOCUS.NPC_RANGE1", &IFocus::npc_range1);
-	s.register_member("C_FOCUS.NPC_RANGE2", &IFocus::npc_range2);
-	s.register_member("C_FOCUS.NPC_AZI", &IFocus::npc_azi);
-	s.register_member("C_FOCUS.NPC_ELEVDO", &IFocus::npc_elevdo);
-	s.register_member("C_FOCUS.NPC_ELEVUP", &IFocus::npc_elevup);
-	s.register_member("C_FOCUS.NPC_PRIO", &IFocus::npc_prio);
-	s.register_member("C_FOCUS.ITEM_RANGE1", &IFocus::item_range1);
-	s.register_member("C_FOCUS.ITEM_RANGE2", &IFocus::item_range2);
-	s.register_member("C_FOCUS.ITEM_AZI", &IFocus::item_azi);
-	s.register_member("C_FOCUS.ITEM_ELEVDO", &IFocus::item_elevdo);
-	s.register_member("C_FOCUS.ITEM_ELEVUP", &IFocus::item_elevup);
-	s.register_member("C_FOCUS.ITEM_PRIO", &IFocus::item_prio);
-	s.register_member("C_FOCUS.MOB_RANGE1", &IFocus::mob_range1);
-	s.register_member("C_FOCUS.MOB_RANGE2", &IFocus::mob_range2);
-	s.register_member("C_FOCUS.MOB_AZI", &IFocus::mob_azi);
-	s.register_member("C_FOCUS.MOB_ELEVDO", &IFocus::mob_elevdo);
-	s.register_member("C_FOCUS.MOB_ELEVUP", &IFocus::mob_elevup);
-	s.register_member("C_FOCUS.MOB_PRIO", &IFocus::mob_prio);
+	s.register_member<IFocus>("C_FOCUS.NPC_LONGRANGE", &IFocus::npc_longrange);
+	s.register_member<IFocus>("C_FOCUS.NPC_RANGE1", &IFocus::npc_range1);
+	s.register_member<IFocus>("C_FOCUS.NPC_RANGE2", &IFocus::npc_range2);
+	s.register_member<IFocus>("C_FOCUS.NPC_AZI", &IFocus::npc_azi);
+	s.register_member<IFocus>("C_FOCUS.NPC_ELEVDO", &IFocus::npc_elevdo);
+	s.register_member<IFocus>("C_FOCUS.NPC_ELEVUP", &IFocus::npc_elevup);
+	s.register_member<IFocus>("C_FOCUS.NPC_PRIO", &IFocus::npc_prio);
+	s.register_member<IFocus>("C_FOCUS.ITEM_RANGE1", &IFocus::item_range1);
+	s.register_member<IFocus>("C_FOCUS.ITEM_RANGE2", &IFocus::item_range2);
+	s.register_member<IFocus>("C_FOCUS.ITEM_AZI", &IFocus::item_azi);
+	s.register_member<IFocus>("C_FOCUS.ITEM_ELEVDO", &IFocus::item_elevdo);
+	s.register_member<IFocus>("C_FOCUS.ITEM_ELEVUP", &IFocus::item_elevup);
+	s.register_member<IFocus>("C_FOCUS.ITEM_PRIO", &IFocus::item_prio);
+	s.register_member<IFocus>("C_FOCUS.MOB_RANGE1", &IFocus::mob_range1);
+	s.register_member<IFocus>("C_FOCUS.MOB_RANGE2", &IFocus::mob_range2);
+	s.register_member<IFocus>("C_FOCUS.MOB_AZI", &IFocus::mob_azi);
+	s.register_member<IFocus>("C_FOCUS.MOB_ELEVDO", &IFocus::mob_elevdo);
+	s.register_member<IFocus>("C_FOCUS.MOB_ELEVUP", &IFocus::mob_elevup);
+	s.register_member<IFocus>("C_FOCUS.MOB_PRIO", &IFocus::mob_prio);
 }
 
 void daedalus::IInfo::register_(DaedalusScript& s) {

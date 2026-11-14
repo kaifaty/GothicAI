@@ -866,8 +866,8 @@ bool cameraCommand(const CameraContext& ctx,const std::string& line,const std::v
     // vsm study <bits>: the shadow test on a mesh's facets, for shots of one frame
     // (reports/render-features/2026-11-11-facet-shards): 1 the sun takes the facet's plane over one pixel and 2 the
     // lamps keep it on facets edge-on to them, both as before 2026-11-11; 4 the facets' classes and 8 the change of
-    // the sun's shadow as colours; 0 the game's
-    Renderer::benchVsmStudy = uint32_t(std::clamp(int(num(a,2,0)), 0, 15));
+    // the sun's shadow as colours; 16 the lamps' first search as before 2026-11-14 (2026-11-14-lamp-stipple); 0 the game's
+    Renderer::benchVsmStudy = uint32_t(std::clamp(int(num(a,2,0)), 0, 31));
     }
   else if(c=="ssao" && a.size()>2 && a[1]=="study") {
     // ssao study <bits>: for shots of one frame (reports/engine/2026-11-13-ssao-behind-camera): 1 the samples behind

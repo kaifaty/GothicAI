@@ -172,7 +172,7 @@ void Npc::dropItem(size_t id, size_t count) {
   if(rightHand<visual.pose().boneCount())
     mat = visual.pose().bone(rightHand);
 
-  auto it = owner.addItemDyn(id,mat,hnpc->symbol_index());
+  auto it = owner.addItemDyn(id,mat,npcInstanceSymbol);
   it->setCount(count);
   invent.delItem(id,count,*this);
   }

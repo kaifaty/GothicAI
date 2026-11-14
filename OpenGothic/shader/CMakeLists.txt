@@ -284,6 +284,10 @@ add_shader(blood_decal.vert          blood/blood_decal.vert)
 add_shader(blood_decal.frag          blood/blood_decal.frag)
 add_shader(blood_decal_orm.frag      blood/blood_decal.frag -DMATERIAL_MAPS)
 
+# grass round the camera (reports/engine/2026-11-14-grass-system): blades into the G-buffer with material maps
+add_shader(grass.vert                grass/grass.vert)
+add_shader(grass.frag                grass/grass.frag)
+
 add_shader(irradiance.comp           lighting/irradiance.comp)
 add_shader(sky_exposure.comp         lighting/sky_exposure.comp)
 add_shader(eye_meter.comp            lighting/eye_meter.comp)

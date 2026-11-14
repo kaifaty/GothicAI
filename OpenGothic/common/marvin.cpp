@@ -194,6 +194,7 @@ Marvin::Marvin() {
     {"toggle item_hulls",         C_ToggleItemHulls},
     {"toggle item_deepest_contact",C_ToggleItemDeepestContact},
     {"toggle ragdoll_birth_guard",C_ToggleRagdollBirthGuard},
+    {"toggle ragdoll_brace",      C_ToggleRagdollBrace},
     {"toggle furniture_parts",    C_ToggleFurnitureParts},
     {"toggle physics_noise",      C_TogglePhysicsNoise},
     {"toggle destruction",        C_ToggleDestruction},
@@ -212,16 +213,12 @@ Marvin::Marvin() {
     {"toggle melee_beast_poise",  C_ToggleMeleeBeastPoise},
     {"toggle melee_backstab",     C_ToggleMeleeBackstab},
     {"toggle melee_dodge",        C_ToggleMeleeDodge},
-    {"toggle melee_barge",        C_ToggleMeleeBarge},
     {"toggle melee_charge",       C_ToggleMeleeCharge},
-    {"toggle melee_riposte",      C_ToggleMeleeRiposte},
     {"toggle melee_heal_interrupt", C_ToggleMeleeHealInterrupt},
     {"toggle melee_use_in_hand", C_ToggleMeleeUseInHand},
     {"toggle food_over_time",     C_ToggleFoodOverTime},
     {"toggle melee_ai_dodge",     C_ToggleMeleeAiDodge},
-    {"toggle melee_ai_riposte",   C_ToggleMeleeAiRiposte},
     {"toggle melee_ai_charge",    C_ToggleMeleeAiCharge},
-    {"toggle melee_ai_barge",     C_ToggleMeleeAiBarge},
     {"toggle melee_down_tactics", C_ToggleMeleeDownTactics},
     {"toggle melee_hitstop",      C_ToggleMeleeHitStop},
     {"toggle melee_stamina",      C_ToggleMeleeStamina},
@@ -678,6 +675,9 @@ bool Marvin::exec(std::string_view v) {
     case C_ToggleRagdollBirthGuard:
       Gothic::settingsSetI("GAME","ragdoll_birth_guard",Gothic::settingsGetI("GAME","ragdoll_birth_guard")==0 ? 1 : 0);
       return true;
+    case C_ToggleRagdollBrace:
+      Gothic::settingsSetI("GAME","ragdoll_brace",Gothic::settingsGetI("GAME","ragdoll_brace")==0 ? 1 : 0);
+      return true;
     case C_ToggleFurnitureParts:
       Gothic::settingsSetI("GAME","furniture_parts",Gothic::settingsGetI("GAME","furniture_parts")==0 ? 1 : 0);
       return true;
@@ -774,22 +774,10 @@ bool Marvin::exec(std::string_view v) {
       print(enabled ? "Melee dodge: ON" : "Melee dodge: OFF");
       return true;
       }
-    case C_ToggleMeleeBarge: {
-      const bool enabled = Gothic::settingsGetI("GAME","melee_barge")==0;
-      Gothic::settingsSetI("GAME","melee_barge",enabled ? 1 : 0);
-      print(enabled ? "Melee barge: ON" : "Melee barge: OFF");
-      return true;
-      }
     case C_ToggleMeleeCharge: {
       const bool enabled = !Gothic::physicsFlags().meleeCharge;
       Gothic::settingsSetI("GAME","melee_charge",enabled ? 1 : 0);
       print(enabled ? "Melee charge: ON" : "Melee charge: OFF");
-      return true;
-      }
-    case C_ToggleMeleeRiposte: {
-      const bool enabled = !Gothic::physicsFlags().meleeRiposte;
-      Gothic::settingsSetI("GAME","melee_riposte",enabled ? 1 : 0);
-      print(enabled ? "Melee riposte: ON" : "Melee riposte: OFF");
       return true;
       }
     case C_ToggleMeleeHealInterrupt: {
@@ -816,22 +804,10 @@ bool Marvin::exec(std::string_view v) {
       print(enabled ? "Melee AI dodge: ON" : "Melee AI dodge: OFF");
       return true;
       }
-    case C_ToggleMeleeAiRiposte: {
-      const bool enabled = !Gothic::physicsFlags().meleeAiRiposte;
-      Gothic::settingsSetI("GAME","melee_ai_riposte",enabled ? 1 : 0);
-      print(enabled ? "Melee AI riposte: ON" : "Melee AI riposte: OFF");
-      return true;
-      }
     case C_ToggleMeleeAiCharge: {
       const bool enabled = !Gothic::physicsFlags().meleeAiCharge;
       Gothic::settingsSetI("GAME","melee_ai_charge",enabled ? 1 : 0);
       print(enabled ? "Melee AI charge: ON" : "Melee AI charge: OFF");
-      return true;
-      }
-    case C_ToggleMeleeAiBarge: {
-      const bool enabled = !Gothic::physicsFlags().meleeAiBarge;
-      Gothic::settingsSetI("GAME","melee_ai_barge",enabled ? 1 : 0);
-      print(enabled ? "Melee AI barge: ON" : "Melee AI barge: OFF");
       return true;
       }
     case C_ToggleMeleeDownTactics: {

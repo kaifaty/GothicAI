@@ -20,6 +20,7 @@
 #include "graphics/visualfx.h"
 #include "graphics/pfx/pfxobjects.h"
 #include "graphics/clothvisual.h"
+#include "graphics/grass/grassfield.h"
 #include "world/objects/globalfx.h"
 #include "world/objects/npc.h"
 #include "world/objects/item.h"
@@ -268,6 +269,12 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     probeT = LoadProbe::now();
     if(streamLandscape) {
       wview->startLandscapeStreaming(std::move(worldMesh),*residency,probeViewMs);
+      if(auto* grass=wview->grassField())
+        grass->setItems([this](float x0, float z0, float x1, float z1, std::vector<Grass::Disc>& out) {
+          for(size_t i=0; i<wobj.itmCount(); ++i)
+            if(const auto p=wobj.itm(i).position(); p.x>=x0 && p.x<=x1 && p.z>=z0 && p.z<=z1)
+              out.push_back(Grass::Disc{int32_t(std::lround(p.x*float(Grass::Unit))),int32_t(std::lround(p.z*float(Grass::Unit)))});
+          });
       // The visual consumer owns its selected file IDs; the stitched mesh is gone.
       std::vector<uint32_t>().swap(chunks.triangleChunks);
       std::vector<uint32_t>().swap(chunks.triangleSources);

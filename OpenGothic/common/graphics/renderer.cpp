@@ -18,6 +18,7 @@
 
 #include "graphics/drawcommands.h"
 #include "graphics/foliagewind.h"
+#include "graphics/grass/grassparams.h"
 #include "camera.h"
 #include "frameprofile.h"
 #include "utils/string_frm.h"
@@ -207,11 +208,11 @@ void Renderer::setupSettings() {
   }
   // OPENGOTHIC_VSM_STUDY=<bits>: the bench command `vsm study` from the environment, so one binary measures what the
   // shadow test on a mesh's facets costs (reports/render-features/2026-11-11-facet-shards): 1 the sun reads the
-  // facet's plane over one pixel and 2 the lamps keep it on facets edge-on to them, both as before 2026-11-11. The
-  // command wins over this while a scenario runs.
+  // facet's plane over one pixel and 2 the lamps keep it on facets edge-on to them, both as before 2026-11-11; 16 the
+  // lamps' first search without the point's own texels, as before 2026-11-14. The command wins while a scenario runs.
   if(const char* env = std::getenv("OPENGOTHIC_VSM_STUDY")) {
     const int v = std::atoi(env);
-    benchVsmStudy = uint32_t(v<0 ? 0 : (v>15 ? 15 : v));
+    benchVsmStudy = uint32_t(v<0 ? 0 : (v>31 ? 31 : v));
     Log::i("vsm: study bits = ", benchVsmStudy, " by OPENGOTHIC_VSM_STUDY");
     }
   // OPENGOTHIC_SSAO_STUDY=<bits>: the bench command `ssao study` from the environment, for a whole run (one binary
@@ -327,6 +328,17 @@ void Renderer::setupSettings() {
     if(logged!=int(FoliageWind::enabled())) {
       logged = int(FoliageWind::enabled());
       Log::i("render: foliage = ", logged, " (1 wind, 2 light, 3 both)");
+      }
+  }
+  // The grass round the camera (reports/engine/2026-11-14-grass-system): [INTERNAL] grass=0|1|2, 2 by default;
+  // OPENGOTHIC_GRASS=0|1|2|ground (test benches) overrides it. Read where the buckets are filled and by WorldView
+  {
+    Grass::setSwitch(::Settings::getI("INTERNAL","grass"));
+    static int logged = -1;
+    const auto sw = Grass::enabled();
+    if(logged!=int(sw.mode)*2+int(sw.blades)) {
+      logged = int(sw.mode)*2+int(sw.blades);
+      Log::i("render: grass = ", int(sw.mode), (sw.blades || sw.mode==Grass::Off) ? "" : " (the ground only)");
       }
   }
   // SSAO over frames (reports/engine/2026-11-08-ssao-temporal), on by default: OPENGOTHIC_SSAO_HISTORY=0 traces the

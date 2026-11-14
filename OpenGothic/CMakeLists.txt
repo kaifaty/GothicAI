@@ -135,7 +135,8 @@ if(WIN32)
 endif()
 
 if(WIN32)
-  target_link_libraries(${PROJECT_NAME} shlwapi DbgHelp)
+  # ws2_32: the hand motion receiver's socket (common/input/handmotion.cpp)
+  target_link_libraries(${PROJECT_NAME} shlwapi DbgHelp ws2_32)
 elseif(UNIX)
   target_link_libraries(${PROJECT_NAME} -lpthread -ldl)
 endif()
@@ -332,6 +333,12 @@ if(UNIX)
   add_executable(gothic-raytracing-rule-test EXCLUDE_FROM_ALL tests/raytracing_rule_test.cpp)
   target_link_libraries(gothic-raytracing-rule-test PRIVATE OpenGothic AiBridge)
   target_compile_options(gothic-raytracing-rule-test PRIVATE -Wall -Wconversion -Werror)
+  # The grass system (graphics/grass, graphics/foliagefront.h): the record, the placement on synthetic ground, the
+  # wind's travelling front; CPU only, no device or game data.
+  add_executable(gothic-grass-test EXCLUDE_FROM_ALL tests/grass_test.cpp)
+  target_link_libraries(gothic-grass-test PRIVATE OpenGothic AiBridge)
+  target_include_directories(gothic-grass-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
+  target_compile_options(gothic-grass-test PRIVATE -Wall -Wconversion -Werror)
   # The own head's face (graphics/mesh/facerig): a synthetic head and profile, the bridge's say cues; CPU only, no device or game data.
   add_executable(gothic-facerig-test EXCLUDE_FROM_ALL tests/facerig_test.cpp)
   target_link_libraries(gothic-facerig-test PRIVATE OpenGothic AiBridge)
@@ -657,15 +664,6 @@ endif()
   add_custom_target(check-meleecharge
     COMMAND $<TARGET_FILE:gothic-meleecharge-contract>
     DEPENDS gothic-meleecharge-contract USES_TERMINAL)
-  add_executable(gothic-meleeriposte-contract EXCLUDE_FROM_ALL
-    tests/meleeriposte_contract.cpp common/game/meleeriposte.cpp common/game/meleestamina.cpp)
-  target_include_directories(gothic-meleeriposte-contract PRIVATE common)
-  if(NOT MSVC)
-    target_compile_options(gothic-meleeriposte-contract PRIVATE -Wall -Wconversion -Werror)
-  endif()
-  add_custom_target(check-meleeriposte
-    COMMAND $<TARGET_FILE:gothic-meleeriposte-contract>
-    DEPENDS gothic-meleeriposte-contract USES_TERMINAL)
   add_executable(gothic-furniture-parts-contract EXCLUDE_FROM_ALL tests/furniture_parts_contract.cpp)
   target_link_libraries(gothic-furniture-parts-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_custom_target(check-physics
@@ -716,6 +714,12 @@ endif()
   if(NOT MSVC)
     target_compile_options(gothic-settings-test PRIVATE -Wall -Wconversion -Werror)
   endif()
+  if(UNIX)
+    # The hand motion receiver (docs/hand-motion.md) over a real loopback socket; the test's sender is POSIX.
+    add_executable(gothic-hand-motion-test EXCLUDE_FROM_ALL tests/hand_motion_test.cpp)
+    target_link_libraries(gothic-hand-motion-test PRIVATE OpenGothic AiBridge)
+    target_compile_options(gothic-hand-motion-test PRIVATE -Wall -Wconversion -Werror)
+  endif()
   if(TARGET content-convert)
     add_executable(gothic-vob-layer-test EXCLUDE_FROM_ALL tests/vob_layer_test.cpp)
     target_link_libraries(gothic-vob-layer-test PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
@@ -756,7 +760,7 @@ endif()
     COMMAND $<TARGET_FILE:gothic-clothgeometry-contract>
     COMMAND $<TARGET_FILE:gothic-worldcloth-contract>
     DEPENDS gothic-cloth-contract gothic-clothgeometry-contract gothic-worldcloth-contract USES_TERMINAL)
-  add_executable(gothic-ragdoll-contract EXCLUDE_FROM_ALL tests/physics_ragdoll_contract.cpp)
+  add_executable(gothic-ragdoll-contract EXCLUDE_FROM_ALL tests/physics_ragdoll_contract.cpp tests/physics_ragdoll_brace_contract.cpp)
   target_link_libraries(gothic-ragdoll-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_executable(gothic-ragdoll-save-contract EXCLUDE_FROM_ALL tests/ragdoll_save_contract.cpp)
   target_link_libraries(gothic-ragdoll-save-contract PRIVATE OpenGothic AiBridge gothic-base-import)

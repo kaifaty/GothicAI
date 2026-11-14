@@ -23,7 +23,7 @@ constexpr uint32_t BodyTraceMagic = 0x31544442; // "BDT1": /body-trace of a dead
 void Npc::save(Serialize &fout, size_t id, std::string_view directory) {
   tickFoodPool();
   fout.setEntry("worlds/",fout.worldName(),directory,id,"/data");
-  fout.write(*hnpc);
+  fout.write(npcInstanceSymbol,*hnpc);
   fout.write(body,head,vHead,vTeeth,bdColor,vColor,bdFatness);
   if(meleeKnockdown)
     fout.write(meleeSavePosition.x,meleeSavePosition.y,meleeSavePosition.z,angle,sz);
@@ -112,7 +112,6 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
   endMeleeAiSpecial();
   meleeAiSpecialSlot = {};
   meleeAiSpecialEnded.reset();
-  meleeAiBargeMemory.clear();
   bodyImpactWindow.clear();
   bodyImpactLaunchCulprit.reset();
   bodyImpactPendingCulprit.reset();
@@ -124,18 +123,13 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
   Healing::clear(foodPool);
   foodPoolTick = owner.tickCount();
   collectingFood = false;
-  meleeRiposte.reset();
-  meleeRiposteHoldUntil = 0;
   meleeFighter = {};
   meleeChargePhase = ChargePhase::None;
   meleeChargeStart = 0;
   meleeChargeMult = 1.f;
   meleeChargeReleased = false;
   meleePosture.reset();
-  meleeBargeOrigin.reset();
   meleeKnockdown = false;
-  meleeBargeKnockdown = false;
-  meleeRiposteKnockdown = false;
   meleeGetupForced = false;
   meleeFallTick = meleeRiseTick = 0;
   meleeSlowSince = 0;
@@ -151,14 +145,10 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
   ragdollQuestFrom = {};
   fin.setEntry("worlds/",fin.worldName(),directory,id,"/data");
 
-  hnpc = std::make_shared<daedalus::INpc>();
-  hnpc->user_ptr        = this;
-  fin.readNpc(owner.script().getVm(), hnpc);
+  hnpc = owner.script().loadNpc(fin,this,npcInstanceSymbol);
   fin.read(body,head,vHead,vTeeth,bdColor,vColor,bdFatness);
 
-  auto* sym = owner.script().findSymbol(hnpc->symbol_index());
-  if (sym != nullptr)
-    sym->set_instance(hnpc);
+  owner.script().bindNpc(hnpc);
 
   fin.read(x,y,z,angle,sz);
   loadedFpPosition = position();
@@ -390,5 +380,5 @@ void Npc::loadTrState(Serialize& fin) {
   bool hasTr = false;
   fin.read(hasTr);
   if(hasTr)
-    transformSpl.reset(new TransformBack(*this, owner.script().getVm(), fin));
+    transformSpl.reset(new TransformBack(*this, fin));
   }

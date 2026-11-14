@@ -1,6 +1,7 @@
 #include "ragdoll.h"
 
 #include "collisionworld.h"
+#include "ragdoll_brace_rig.h"
 #include "dynamicworld.h"
 #include "physicshost.h"
 #include "graphics/mesh/hitzones.h"
@@ -916,24 +917,27 @@ struct Ragdoll::Impl final {
       const float strength=knockedOff ? fadeStrength(rig->parts[i].name) : 1.f;
       const float t=std::clamp((fadeAge-hold)/fade,0.f,1.f);
       const float weight=1.f-t*t*(3.f-2.f*t);
-      if(weight<=0.f) {
+      // The living reaction's strength: enough to keep a limb's shape for an
+      // instant, too weak to carry the body, so the knees buckle under it.
+      const float partMass=settings->mParts[i].mMassPropertiesOverride.mMass;
+      float torque=partMass*8.f*weight*strength;
+      auto target=fadeTargets[size_t(parent)].Conjugated()*fadeTargets[i];
+      if(brace) brace->drive(i,partMass,target,torque); // a protective fall leads to its pose
+      joint->SetTargetOrientationBS(target);
+      if(torque<=0.f) {
         joint->SetSwingMotorState(JPH::EMotorState::Off);
         joint->SetTwistMotorState(JPH::EMotorState::Off);
         continue;
         }
       active=true;
-      // The living reaction's strength: enough to keep a limb's shape for an
-      // instant, too weak to carry the body, so the knees buckle under it.
-      const float partMass=settings->mParts[i].mMassPropertiesOverride.mMass;
       for(auto* motor:{&joint->GetSwingMotorSettings(),&joint->GetTwistMotorSettings()}) {
         motor->mSpringSettings=JPH::SpringSettings(JPH::ESpringMode::FrequencyAndDamping,6.f,1.f);
-        motor->SetTorqueLimit(partMass*8.f*weight*strength);
+        motor->SetTorqueLimit(torque);
         }
       joint->SetSwingMotorState(JPH::EMotorState::Position);
       joint->SetTwistMotorState(JPH::EMotorState::Position);
-      joint->SetTargetOrientationBS(fadeTargets[size_t(parent)].Conjugated()*fadeTargets[i]);
       }
-    if(!active) {
+    if(!active && !brace) {
       fadeAge=-1.f;
       fadeTargets.clear();
       }
@@ -983,6 +987,7 @@ struct Ragdoll::Impl final {
   };
   std::unique_ptr<BirthBench> birthBench;
   std::vector<JPH::Quat> fadeTargets;
+  std::unique_ptr<RagdollBrace::Rig> brace;
   std::vector<JPH::Mat44> targets, scratch;
   std::vector<bool> dirty;
   std::vector<size_t> changed, moving;
@@ -1175,6 +1180,7 @@ Ragdoll::Ragdoll(CollisionWorld& world, const Skeleton& skeleton, const HitZones
 Ragdoll::~Ragdoll() { detach(); }
 
 void Ragdoll::detach() {
+  endBrace();
   impl->waterParts.clear();
   if(impl->benchHand!=nullptr) {
     impl->world->physicsSystem().RemoveConstraint(impl->benchHand.GetPtr());
@@ -1548,6 +1554,7 @@ void Ragdoll::prepareKinematicStep(float deltaSeconds, float targetFraction) {
     impl->hits.clear();
     }
   if(!impl->kinematic) {
+    if(impl->brace) impl->brace->advance(deltaSeconds);
     impl->stepFade(deltaSeconds);
     return;
     }
@@ -1579,6 +1586,7 @@ void Ragdoll::prepareKinematicStep(float deltaSeconds, float targetFraction) {
   }
 
 void Ragdoll::finishKinematicStep() {
+  if(valid() && impl->brace) impl->brace->afterStep(*impl->native,impl->world->physicsSystem().GetBodyInterface());
   if(!valid() || !impl->kinematic) return;
   auto& interface=impl->world->physicsSystem().GetBodyInterface();
   // MoveKinematic sets velocities rather than a persistent destination. Stop
@@ -1726,6 +1734,53 @@ void Ragdoll::knockOff(const Tempest::Vec3& direction, float impulseNs, Npc* cul
     }
   }
 
+RagdollBrace::Kind Ragdoll::braceKind(const Tempest::Vec3& d) const {
+  const auto axes=valid() && !impl->kinematic ? Impl::bodyAxes(*impl->rig) : Impl::BodyAxes();
+  if(!axes.valid) return RagdollBrace::Kind::None;
+  const auto forward=impl->object.rigid.Multiply3x3(axes.forward), left=impl->object.rigid.Multiply3x3(axes.left);
+  return RagdollBrace::select(d.x*forward.GetX()+d.z*forward.GetZ(),d.x*left.GetX()+d.z*left.GetZ());
+  }
+
+bool Ragdoll::brace(RagdollBrace::Kind kind, const Tempest::Matrix4x4* modelPose, size_t numBones,
+                    const RagdollBrace::Profile& profile, const Tempest::Matrix4x4* landPose) {
+  if(!valid() || impl->kinematic || impl->fadeAge<0.f || impl->brace || !Impl::bodyAxes(*impl->rig).valid) return false;
+  std::vector<JPH::Quat> pose, land;
+  if(kind!=RagdollBrace::Kind::None) {
+    if(modelPose==nullptr || numBones!=boneCount()) return false;
+    for(size_t bone:impl->rig->boneIndices) {
+      JPH::Mat44 frame; // the same decomposition as the birth pose and the living targets
+      if(!posedFrame(impl->initialObject*modelPose[bone],impl->object,frame)) return false;
+      pose.push_back(frame.GetQuaternion());
+      if(landPose!=nullptr) {
+        if(!posedFrame(impl->initialObject*landPose[bone],impl->object,frame)) return false;
+        land.push_back(frame.GetQuaternion());
+        }
+      }
+    }
+  std::vector<RagdollBrace::Rig::Joint> joints;
+  for(const auto& part:impl->rig->parts) joints.push_back({part.name,part.parent});
+  impl->brace=RagdollBrace::Rig::create(kind,profile,*impl->native,joints,pose,impl->fadeAge,land);
+  if(!impl->brace) return false;
+  impl->world->trackBraceContacts(impl->group,&impl->brace->contacts());
+  if(kind!=RagdollBrace::Kind::None) impl->stepFade(0.f);
+  return true;
+  }
+
+bool Ragdoll::braceReport(RagdollBrace::Report& report) const {
+  if(impl->brace) report=impl->brace->report();
+  return bool(impl->brace);
+  }
+
+void Ragdoll::endBrace() {
+  if(impl->brace && impl->world!=nullptr) impl->world->trackBraceContacts(impl->group,nullptr);
+  impl->brace.reset();
+  }
+
+std::vector<RagdollBrace::MotorProbe> Ragdoll::motorProbes() const {
+  if(!valid() || impl->kinematic) return {};
+  return RagdollBrace::probes(*impl->native,impl->rig->boneIndices,impl->brace.get());
+  }
+
 Ragdoll::State Ragdoll::state() const {
   State result;
   if(!valid() || impl->kinematic) return result;
@@ -1859,6 +1914,7 @@ bool Ragdoll::restore(const State& state) {
   // A restored body carries no muscles: the saved state is all there is.
   impl->fadeAge=-1.f;
   impl->fadeTargets.clear();
+  endBrace();
   auto& interface=impl->world->physicsSystem().GetBodyInterface();
   for(size_t i=0;i<state.parts.size();++i) {
     const auto& p=state.parts[i];

@@ -3,6 +3,8 @@
 #include <Tempest/Matrix4x4>
 #include <Tempest/Vec>
 
+#include "ragdoll_brace.h"
+
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -122,6 +124,18 @@ class Ragdoll final {
     // A living body knocked off its feet: the trunk is thrown along the blow while the
     // feet stay, so it topples over them; the legs hold a moment longer than in death.
     void knockOff(const Tempest::Vec3& direction, float impulseNs, Npc* culprit = nullptr);
+    // A protective fall (ragdoll_brace.h). braceKind picks the pose by the throw's direction
+    // in the body's frame; None for a body without human anatomy. brace accepts the pose,
+    // a skeleton-indexed model-space animation frame, only on a fresh limp body that still
+    // has its muscles; Kind::None with no pose only measures the fall. endBrace returns the
+    // motors to the ordinary fade from the next step. Optional landPose is the same
+    // model's landing frame, indexed by the same skeleton and sampled at its first frame.
+    RagdollBrace::Kind braceKind(const Tempest::Vec3& throwDirection) const;
+    bool brace(RagdollBrace::Kind kind, const Tempest::Matrix4x4* modelPose, size_t numBones,
+               const RagdollBrace::Profile& profile, const Tempest::Matrix4x4* landPose = nullptr);
+    bool braceReport(RagdollBrace::Report& report) const;
+    void endBrace();
+    std::vector<RagdollBrace::MotorProbe> motorProbes() const;
     State state() const;
     // Rejects incompatible, nonfinite or malformed states without changing bodies.
     bool restore(const State& state);

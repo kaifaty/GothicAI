@@ -5,6 +5,9 @@
 
 #pragma once
 #include "script.h"
+#include "world/records/npcrecord.h"
+#include "world/records/itemrecord.h"
+#include "world/records/focusrecord.h"
 
 #include <cstdint>
 
@@ -59,164 +62,12 @@ namespace daedalus {
 		static void register_(DaedalusScript& s);
 	};
 
-	namespace DamageType {
-		static constexpr std::uint32_t BARRIER = 0U;
-		static constexpr std::uint32_t BLUNT = 1U;
-		static constexpr std::uint32_t EDGE = 2U;
-		static constexpr std::uint32_t FIRE = 3U;
-		static constexpr std::uint32_t FLY = 4U;
-		static constexpr std::uint32_t MAGIC = 5U;
-		static constexpr std::uint32_t POINT = 6U;
-		static constexpr std::uint32_t FALL = 7U;
+	namespace DamageType = ::DamageType;
+	namespace NpcAttribute = ::NpcAttribute;
+	using NpcType = ::NpcType;
+	using NpcFlag = ::NpcFlag;
 
-		static constexpr std::uint32_t NUM = 8U;
-
-		static constexpr std::uint32_t barrier = BARRIER;
-		static constexpr std::uint32_t blunt = BLUNT;
-		static constexpr std::uint32_t edge = EDGE;
-		static constexpr std::uint32_t fire = FIRE;
-		static constexpr std::uint32_t fly = FLY;
-		static constexpr std::uint32_t magic = MAGIC;
-		static constexpr std::uint32_t point = POINT;
-		static constexpr std::uint32_t fall = FALL;
-		static constexpr std::uint32_t count = NUM;
-	} // namespace DamageType
-
-	namespace NpcAttribute {
-		static constexpr std::uint32_t HITPOINTS = 0U;
-		static constexpr std::uint32_t HITPOINTS_MAX = 1U;
-		static constexpr std::uint32_t MANA = 2U;
-		static constexpr std::uint32_t MANA_MAX = 3U;
-		static constexpr std::uint32_t STRENGTH = 4U;
-		static constexpr std::uint32_t DEXTERITY = 5U;
-		static constexpr std::uint32_t REGENERATE_HP = 6U;
-		static constexpr std::uint32_t REGENERATE_MANA = 7U;
-
-		static constexpr std::uint32_t NUM = 8U;
-
-		static constexpr std::uint32_t hitpoints = HITPOINTS;
-		static constexpr std::uint32_t hitpoints_max = HITPOINTS_MAX;
-		static constexpr std::uint32_t mana = MANA;
-		static constexpr std::uint32_t mana_max = MANA_MAX;
-		static constexpr std::uint32_t strength = STRENGTH;
-		static constexpr std::uint32_t dexterity = DEXTERITY;
-		static constexpr std::uint32_t regenerate_hp = REGENERATE_HP;
-		static constexpr std::uint32_t
-		    regenerate_mana = REGENERATE_MANA;
-		static constexpr std::uint32_t count = NUM;
-	} // namespace NpcAttribute
-
-	enum class NpcType : std::uint32_t {
-		G1_AMBIENT = 0U,
-		G1_MAIN = 1U,
-		G1_GUARD = 2U,
-		G1_FRIEND = 3U,
-		G1_MINE_AMBIENT = 4U,
-		G1_MINE_GUARD = 5U,
-		G1_OW_AMBIENT = 6U,
-		G1_OW_GUARD = 7U,
-		G1_ROGUE = 8U,
-
-		G2_AMBIENT = 0U,
-		G2_MAIN = 1U,
-		G2_FRIEND = 2U,
-		G2_OC_AMBIENT = 3U,
-		G2_OC_MAIN = 4U,
-		G2_BL_AMBIENT = 5U,
-		G2_TAL_AMBIENT = 6U,
-		G2_BL_MAIN = 7U,
-
-		AMBIENT = G2_AMBIENT,
-		MAIN = G2_MAIN,
-
-		g1_ambient = G1_AMBIENT,
-		g1_main = G1_MAIN,
-		g1_guard = G1_GUARD,
-		g1_friend = G1_FRIEND,
-		g1_mine_ambient = G1_MINE_AMBIENT,
-		g1_mine_guard = G1_MINE_GUARD,
-		g1_ow_ambient = G1_OW_AMBIENT,
-		g1_ow_guard = G1_OW_GUARD,
-		g1_rogue = G1_ROGUE,
-
-		g2_ambient = G2_AMBIENT,
-		g2_main = G2_MAIN,
-		g2_friend = G2_FRIEND,
-		g2_oc_ambient = G2_OC_AMBIENT,
-		g2_oc_main = G2_OC_MAIN,
-		g2_bl_ambient = G2_BL_AMBIENT,
-		g2_tal_ambient = G2_TAL_AMBIENT,
-		g2_bl_main = G2_BL_MAIN,
-
-		ambient = AMBIENT,
-		main = MAIN,
-
-		friend_ = G2_FRIEND,
-		oc_ambient = G2_OC_AMBIENT,
-		oc_main = G2_OC_MAIN,
-		bl_ambient = G2_BL_AMBIENT,
-		tal_ambient = G2_TAL_AMBIENT,
-		bl_main = G2_BL_MAIN,
-	};
-
-	static_assert(NpcType::G1_AMBIENT == NpcType::G2_AMBIENT);
-	static_assert(NpcType::G1_MAIN == NpcType::G2_MAIN);
-
-	enum class NpcFlag : std::uint32_t {
-		NONE = 0U,
-		FRIENDS = 1U << 0U,
-		IMMORTAL = 1U << 1U,
-		GHOST = 1U << 2U,
-		PROTECTED = 1U << 3U,
-
-		none = NONE,
-		friends = FRIENDS,
-		immortal = IMMORTAL,
-		ghost = GHOST,
-		protected_ = PROTECTED,
-	};
-	FLAG(NpcFlag)
-
-	struct INpc : DaedalusInstance {
-		static constexpr std::uint32_t hitchance_count =
-		    5; // -> TODO: one of "unknown", "one-handed", "two-handed", "bow", "crossbow"
-		static constexpr std::uint32_t name_count = 5;
-		static constexpr std::uint32_t mission_count = 5;
-		static constexpr std::uint32_t aivar_count = 100;
-
-		var int32_t id;
-		var string name[name_count];
-		var string slot;
-		var string effect;
-		var NpcType type;
-		var NpcFlag flags;
-		var int32_t attribute[NpcAttribute::NUM];
-		var int32_t hitchance[hitchance_count];
-		var int32_t protection[DamageType::NUM];
-		var int32_t damage[DamageType::NUM];
-		var int32_t damage_type;
-		var int32_t guild;
-		var int32_t level;
-		var func mission[mission_count];
-		var int32_t fight_tactic;
-		var int32_t weapon;
-		var int32_t voice;
-		var int32_t voice_pitch;
-		var int32_t body_mass;
-		var func daily_routine;
-		var func start_aistate;
-		var string spawnpoint;
-		var int32_t spawn_delay;
-		var int32_t senses;
-		var int32_t senses_range;
-		var int32_t aivar[aivar_count];
-		var string wp;
-		var int32_t exp;
-		var int32_t exp_next;
-		var int32_t lp;
-		var int32_t bodystate_interruptable_override;
-		var int32_t no_focus;
-
+	struct INpc : DaedalusInstance, NpcRecord {
 		static void register_(DaedalusScript& s);
 	};
 
@@ -238,110 +89,14 @@ namespace daedalus {
 		static void register_(DaedalusScript& s);
 	};
 
-	enum class ItemFlag : std::uint32_t {
-		DAGGER = 1U << 13U,
-		SWORD = 1U << 14U,
-		AXE = 1U << 15U,
-		TWO_HANDED_SWORD = 1U << 16U,
-		TWO_HANDED_AXE = 1U << 17U,
-		BOW = 1U << 19U,
-		CROSSBOW = 1U << 20U,
-		AMULET = 1U << 22U,
-		RING = 1U << 11U,
-		BELT = 1U << 24U,
-		MISSION = 1U << 12U,
+	using ItemFlag = ::ItemFlag;
 
-		dagger = DAGGER,
-		sword = SWORD,
-		axe = AXE,
-		two_handed_sword = TWO_HANDED_SWORD,
-		two_handed_axe = TWO_HANDED_AXE,
-		bow = BOW,
-		crossbow = CROSSBOW,
-		amulet = AMULET,
-		ring = RING,
-		belt = BELT,
-		mission = MISSION,
-	};
-	FLAG(ItemFlag)
-
-	struct IItem : DaedalusInstance {
-		static constexpr std::uint32_t condition_count = 3;
-		static constexpr std::uint32_t state_count = 4;
-		static constexpr std::uint32_t text_count = 6;
-
-		var int32_t id;
-		var string name;
-		var string name_id;
-		var int32_t hp;
-		var int32_t hp_max;
-		var int32_t main_flag;
-		var ItemFlag flags;
-		var int32_t weight;
-		var int32_t value;
-		var int32_t damage_type;
-		var int32_t damage_total;
-		var int32_t damage[DamageType::NUM];
-		var int32_t wear;
-		var int32_t protection[DamageType::NUM];
-		var int32_t nutrition;
-		var int32_t cond_atr[condition_count];
-		var int32_t cond_value[condition_count];
-		var int32_t change_atr[condition_count];
-		var int32_t change_value[condition_count];
-		var func magic;
-		var func on_equip;
-		var func on_unequip;
-		var func on_state[state_count];
-		var func owner;
-		var int32_t owner_guild;
-		var int32_t disguise_guild;
-		var string visual;
-		var string visual_change;
-		var string effect;
-		var int32_t visual_skin;
-		var string scheme_name;
-		var int32_t material;
-		var int32_t munition;
-		var int32_t spell;
-		var int32_t range;
-		var int32_t mag_circle;
-		var string description;
-		var string text[text_count];
-		var int32_t count[text_count];
-		var int32_t inv_zbias;
-		var int32_t inv_rot_x;
-		var int32_t inv_rot_y;
-		var int32_t inv_rot_z;
-		var int32_t inv_animate;
-
+	struct IItem : DaedalusInstance, ItemRecord {
 		static void register_(DaedalusScript& s);
 	};
-
-	struct IFocus : DaedalusInstance {
-		var float npc_longrange;
-		var float npc_range1;
-		var float npc_range2;
-		var float npc_azi;
-		var float npc_elevdo;
-		var float npc_elevup;
-		var int32_t npc_prio;
-		var float item_range1;
-		var float item_range2;
-		var float item_azi;
-		var float item_elevdo;
-		var float item_elevup;
-		var int32_t item_prio;
-		var float mob_range1;
-		var float mob_range2;
-		var float mob_azi;
-		var float mob_elevdo;
-		var float mob_elevup;
-		var int32_t mob_prio;
-
+	struct IFocus : DaedalusInstance, FocusRecord {
 		static void register_(DaedalusScript& s);
 	};
-
 	struct IInfoChoice {
 		var string text;
 		var int32_t function = 0;

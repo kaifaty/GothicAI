@@ -1,8 +1,9 @@
-# Look of the enemies' new moves (decision 16; PR #789 reactions, then charge and barge), video takes for the
-# user's acceptance: a 1H master dodges the hero's running swing in light, medium and heavy armour (dash, roll,
-# heavy roll), ripostes the stunned hero, charges (hit, dodged, parried), barges the blocking hero in paladin
-# armour, and a bandit fights a guard (dodges and ripostes between NPCs). Every take starts both at the
-# same sunlit spot 16 m into the field from the fixture (the fixture's own spot lies in a tree's shadow at noon).
+# Look of the enemies' moves (decision 16; PR #789 reactions, then the charge), video takes for the user's
+# acceptance: a 1H master dodges the hero's running swing in light, medium and heavy armour (dash, roll, heavy
+# roll), charges (hit, dodged, parried), and a bandit fights a guard (dodges between NPCs). The riposte and the
+# shoulder barge left the game on 2026-11-14 (plan decisions 19 and 20), their takes with them. Every take starts
+# both at the same sunlit spot 16 m into the field from the fixture (the fixture's own spot lies in a tree's shadow
+# at noon).
 # Only takes whose bench.log line says "at <ms> ms of PC_HERO's swing" show a reaction to the swing; "now, no
 # swing" is the old post-hit jump-back trigger.
 # WORLD=NEWWORLD.ZEN BENCH_HOST=ryzen OPENGOTHIC_BODY_TRACE=1 TIMEOUT=900 TEMPEST_WINDOW_SIZE=1280x720
@@ -389,41 +390,10 @@ release all
 wait 1700
 stop
 
-# The stunned hero: a master ripostes him, from either side.
-mark riposte-hero
+# Back to medium armour after the heavy takes.
 freeze BDT_1013_BANDIT_L
 stop shadow
 npcequip BDT_1013_BANDIT_L ITAR_BDT_M
-still player off
-melee-shadow weapon 1h
-wait 600
-put-at player 61737 2198 -13323
-put-at BDT_1013_BANDIT_L 61796 2195 -13461
-face npc BDT_1013_BANDIT_L
-wait 1000
-cam two BDT_1013_BANDIT_L 380 60 1
-rec riposte-hero-a
-fight BDT_1013_BANDIT_L player
-stun player posture
-wait 3500
-stop
-freeze BDT_1013_BANDIT_L
-stop shadow
-wait 6000
-melee-shadow weapon 1h
-wait 600
-put-at player 61737 2198 -13323
-put-at BDT_1013_BANDIT_L 61796 2195 -13461
-face npc BDT_1013_BANDIT_L
-wait 1000
-cam two BDT_1013_BANDIT_L 380 60 -1
-rec riposte-hero-b
-fight BDT_1013_BANDIT_L player
-stun player posture
-wait 3500
-stop
-freeze BDT_1013_BANDIT_L
-stop shadow
 wait 6000
 
 # Charge (PR melee-ai-special): a master's charged first blow lands on the hero standing still, then the hero
@@ -472,77 +442,8 @@ freeze BDT_1013_BANDIT_L
 stop shadow
 wait 6000
 
-# Barge: the same master in paladin armour against the hero holding his block; 7 s apart for the cooldown.
-mark barge
 still player off
-# G2 controls: a held parade key keeps the block up (the default scheme parries once per press).
-melee-shadow controls g2
-# The two-subject camera dives between them when the barge closes in: follow the hero from the side instead.
-cam follow 440 110 270
-npcequip BDT_1013_BANDIT_L ITAR_PAL_H
-melee-shadow weapon 1h
-wait 600
 release all
-put-at player 61737 2198 -13323
-put-at BDT_1013_BANDIT_L 61796 2195 -13461
-face npc BDT_1013_BANDIT_L
-press parade
-wait 100
-rec barge-01
-fight BDT_1013_BANDIT_L player
-wait 4000
-stop
-release all
-freeze BDT_1013_BANDIT_L
-stop shadow
-wait 4500
-melee-shadow weapon 1h
-release all
-put-at player 61737 2198 -13323
-put-at BDT_1013_BANDIT_L 61796 2195 -13461
-face npc BDT_1013_BANDIT_L
-press parade
-wait 100
-rec barge-02
-fight BDT_1013_BANDIT_L player
-wait 4000
-stop
-release all
-freeze BDT_1013_BANDIT_L
-stop shadow
-wait 4500
-melee-shadow weapon 1h
-release all
-put-at player 61737 2198 -13323
-put-at BDT_1013_BANDIT_L 61796 2195 -13461
-face npc BDT_1013_BANDIT_L
-press parade
-wait 100
-rec barge-03
-fight BDT_1013_BANDIT_L player
-wait 4000
-stop
-release all
-freeze BDT_1013_BANDIT_L
-stop shadow
-wait 4500
-melee-shadow weapon 1h
-release all
-put-at player 61737 2198 -13323
-put-at BDT_1013_BANDIT_L 61796 2195 -13461
-face npc BDT_1013_BANDIT_L
-press parade
-wait 100
-rec barge-04
-fight BDT_1013_BANDIT_L player
-wait 4000
-stop
-release all
-freeze BDT_1013_BANDIT_L
-stop shadow
-wait 4500
-melee-shadow weapon 1h
-npcequip BDT_1013_BANDIT_L ITAR_BDT_M
 
 # Two NPCs: a master bandit against a guard in medium armour, an ordinary fight; the hero stands 8 m away.
 mark npc-duel

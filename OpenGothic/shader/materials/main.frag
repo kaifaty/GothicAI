@@ -9,6 +9,10 @@
 
 #include "materials_common.glsl"
 #include "foliage_wind.glsl"
+// FLAT_NORMAL: the landscape's variants (a fragment shader is not told MESH_TYPE)
+#if defined(GBUFFER) && defined(MATERIAL_MAPS) && defined(FLAT_NORMAL)
+#include "grass/grass_ground.glsl"
+#endif
 #include "water/gerstner_wave.glsl"
 #include "lighting/shadow_sampling.glsl"
 #include "lighting/tonemapping.glsl"
@@ -971,6 +975,10 @@ void main() {
   mainGBuffer(t);
 #endif
   outMotion = motionResidual();
+#if defined(MATERIAL_MAPS) && defined(FLAT_NORMAL)
+  if((bucket[bucketId].flags & BK_GRASS)!=0u)
+    grassGround(bucket[bucketId].foliage, shInp.pos, shInp.normal, outDiffuse, outNormal, outOrm);
+#endif
 #if defined(ATEST) && defined(MATERIAL_MAPS)
   if(alphaTest<alphaThreshold())
     discard;
