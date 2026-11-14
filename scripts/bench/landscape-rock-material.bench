@@ -100,13 +100,14 @@ rec ledge-steady
 wait 8000
 stop
 
-# a walk under the band, east along the foot of the lower wall; the gust peaks in the middle of the walk
+# a walk under the band, east along the foot of the lower wall, between two firs (their crowns hide the wall west
+# of x 34430 and east of 35600); the camera follows from behind and to the right; the gust peaks mid-walk
 walkmode walk
 goto pos 34700 3640 1100
 clear 3000
 face 0
-cam world 300 200 180
-cam look 330
+cam world 420 300 240
+cam look 250
 streaming wait
 wait 3000
 foliage wait-gust 5000
