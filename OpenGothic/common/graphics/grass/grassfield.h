@@ -63,8 +63,9 @@ class GrassField final {
       size_t waiting   = 0; // cells not built yet
       };
     Stats stats() const { return last; }
-    // nothing is being built for the camera's place of the last frame, and no chunk came since
-    bool  ready() const { return last.waiting==0 && !dirty.load(); }
+    // nothing is being built for the camera's place of the last frame, and no chunk came since; without the blades
+    // (the ground's look alone) nothing is ever built
+    bool  ready() const { return !blades || (last.waiting==0 && !dirty.load()); }
 
   private:
     struct Slot final {
