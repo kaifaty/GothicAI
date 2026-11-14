@@ -14,6 +14,7 @@ struct Flags {
   std::filesystem::path capture;         // --capture: a PNG of every frame there, 30 frames a second of island time
   std::filesystem::path script;          // --script: recorded controls
   std::filesystem::path events;          // --events: JSONL journal
+  uint32_t              captureEvery = 1; // --capture-every: keep every first or second 30 Hz capture frame
   bool                  demo    = false; // --demo: the built-in track instead of the keys and the mouse
   int64_t               dayTime = 12ll*60*60*1000; // --time HH:MM
   float                 pace    = 0;     // --time-pace: island seconds per real second (0: the time stands)

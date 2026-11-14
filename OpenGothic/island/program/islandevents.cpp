@@ -1,7 +1,7 @@
 #include "islandevents.h"
 
 #include "islandhero.h"
-#include "islandview.h"
+#include "world/chunkresidency.h"
 #include "resources.h"
 
 #include <rapidjson/document.h>
@@ -51,7 +51,7 @@ void Events::emit(const char* kind, uint64_t time, const Hero& hero,
   output<<buffer.GetString()<<'\n';
   }
 
-void Events::census(uint64_t time, const Hero& hero, bool final) {
+void Events::census(uint64_t time, const Hero& hero) {
   const char* file = std::getenv("OPENGOTHIC_CENSUS");
   if(!file || !Resources::writeCensus())
     return;
@@ -60,40 +60,52 @@ void Events::census(uint64_t time, const Hero& hero, bool final) {
   rapidjson::Document doc;
   if(doc.Parse(text.c_str()).HasParseError() || !doc.IsObject())
     throw std::runtime_error("cannot read content census");
-  for(const auto* list:{"files", "replacements"}) {
-    if(!doc.HasMember(list))
-      continue;
-    for(const auto& item:doc[list].GetArray()) {
-      const char* source = item.HasMember("source") ? "source" : "replacement";
-      const std::string path = item[source].GetString();
-      if((path.ends_with(".dds") || path.ends_with(".DDS")) && textures.insert(path).second)
-        emit("texture", time, hero, {{"name", item["name"].GetString()}, {"source", path}});
-      }
-    }
-  if(final) {
-    rapidjson::StringBuffer buffer;
-    Writer w(buffer);
-    begin(w, "census", time, hero);
-    w.Key("content"); doc.Accept(w);
-    w.EndObject();
-    output<<buffer.GetString()<<'\n';
-    }
+  rapidjson::StringBuffer buffer;
+  Writer w(buffer);
+  begin(w, "census", time, hero);
+  w.Key("content"); doc.Accept(w);
+  w.EndObject();
+  output<<buffer.GetString()<<'\n';
   }
 
-void Events::observe(uint64_t time, const Hero& hero, const View& view) {
+Events::~Events() {
+  if(residency)
+    residency->unsubscribe(subscription);
+  }
+
+void Events::watch(ChunkResidency& chunks, const Hero& hero, const uint64_t& time) {
   if(!output.is_open())
     return;
-  // Actual GPU publications/releases, not the desired Near/Far states. A frame may publish several chunks.
-  const auto& stats = view.residency().stats();
-  if(stats.published>published)
-    emit("chunk_load", time, hero, {{"count", std::to_string(stats.published-published)}});
-  if(stats.released>released)
-    emit("chunk_unload", time, hero, {{"count", std::to_string(stats.released-released)}});
-  published = stats.published;
-  released = stats.released;
-  if(time>=sampled) {
-    census(time, hero, false);
-    sampled = time+100;
+  residency = &chunks;
+  subscription = chunks.subscribe([this,&hero,&time](ChunkId id, ChunkResidency::State from, ChunkResidency::State to) {
+    const auto state = [](ChunkResidency::State s) {
+      switch(s) {
+        case ChunkResidency::State::Near: return "Near";
+        case ChunkResidency::State::Far: return "Far";
+        case ChunkResidency::State::Outside: return "Outside";
+        }
+      return "Unknown";
+      };
+    emit("residency", time, hero, {{"id", std::to_string(id.x)+","+std::to_string(id.z)},
+                                 {"from", state(from)}, {"to", state(to)}});
+    });
+  }
+
+void Events::observe(uint64_t time, const Hero& hero) {
+  if(!output.is_open())
+    return;
+  for(const auto& texture:Resources::textureSnapshot()) {
+    const auto source = texture.source.string();
+    const auto value = std::make_pair(texture.firstMip, texture.reloads);
+    const auto found = textures.find(source);
+    if(texture.resident && (found==textures.end() || found->second!=value))
+      emit("texture", time, hero, {{"name", texture.source.filename().string()}, {"source", source},
+                                  {"first_mip", std::to_string(texture.firstMip)},
+                                  {"reloads", std::to_string(texture.reloads)}});
+    if(texture.resident)
+      textures[source] = value;
+    else
+      textures.erase(source);
     }
   }
 
@@ -101,7 +113,8 @@ void Events::finish(uint64_t time, const Hero& hero, uint64_t frames, const std:
                     int code, bool completed) {
   if(!output.is_open())
     return;
-  census(time, hero, true);
+  observe(time, hero);
+  census(time, hero);
   // Match Window's statistics: exclude the first 60 intervals (shader/texture warm-up).
   std::vector<uint32_t> ms(frameMs.size()>60 ? frameMs.begin()+60 : frameMs.end(), frameMs.end());
   std::sort(ms.begin(), ms.end());

@@ -47,6 +47,7 @@ Window::Window(Device& device, const Flags& flags, Services& services, World& wo
     hero.tick({}, 16);
     control = script.get();
     }
+  events.watch(view.residency(), hero, time);
   inAir = !hero.onGround();
   events.emit("start", 0, hero, {{"frames", "0"}, {"frame_median_ms", "0"}, {"frame_p95_ms", "0"}, {"exit_code", "0"}});
 
@@ -56,6 +57,10 @@ Window::Window(Device& device, const Flags& flags, Services& services, World& wo
   camera.reset(&hero);
   renderer.onWorldChanged();
   chunk = ChunkId::fromPosition(hero.position().x, hero.position().z);
+  // Baseline publications belong to startup; later texture events must prove work during the route.
+  view.setHero(hero.bodyMatrix());
+  view.updateLandscape(camera, hero.position());
+  events.observe(0, hero);
   setFocus(true);
   }
 
@@ -64,7 +69,7 @@ Window::~Window() {
     f.wait();
   device.waitIdle();
   events.finish(time, hero, frames, frameMs, exitCode(), control->finished(time));
-  // the time between frames, from the second second on: the first frames wait for shaders and textures
+  // Exclude the first 60 frame intervals, which wait for shaders and textures.
   std::vector<uint32_t> ms(frameMs.size()>60 ? frameMs.begin()+60 : frameMs.end(), frameMs.end());
   if(!ms.empty()) {
     std::sort(ms.begin(), ms.end());
@@ -180,9 +185,9 @@ void Window::render() {
       }
 
     if(!flags.capture.empty()) {
-      // a frame of the clip is 1/30 s of the island
-      step();
-      step();
+      // Capture at 30 Hz, or every second frame at 15 Hz; simulation stays at 60 Hz.
+      for(uint32_t i=0; i<2*flags.captureEvery && !control->finished(time); ++i)
+        step();
       }
     else {
       const uint64_t due = now-started;
@@ -197,7 +202,7 @@ void Window::render() {
 
     view.setHero(hero.bodyMatrix());
     view.updateLandscape(camera, hero.position());
-    events.observe(time, hero, view);
+    events.observe(time, hero);
     Resources::resetRecycled(cmdId);
 
     CommandBuffer& cmd = commands[cmdId];

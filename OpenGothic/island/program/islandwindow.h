@@ -6,7 +6,7 @@
 // saved as PNG). Frames in flight: Resources::MaxFramesInFlight.
 //
 // The island's time goes in fixed steps of 1/60 s (16 or 17 ms): the same track gives the same walk on any machine.
-// In the window the steps follow the clock; with --capture every frame is two steps, 30 frames a second.
+// In the window the steps follow the clock; with --capture every frame is two steps (four with --capture-every 2).
 
 #include "islandcontrol.h"
 #include "islandflags.h"

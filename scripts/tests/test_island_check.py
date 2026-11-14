@@ -19,7 +19,8 @@ def evidence(folder):
         return dict(event=kind, ms=ms, x=1., y=1., z=1., grounded=True, **fields)
     events = [event('start', 0)]
     events += [event('position', ms) for ms in range(100, 30001, 100)]
-    events += [event('chunk_load', 100, count='2'), event('chunk_unload', 200, count='1'),
+    events += [event('residency', 100, id='-3,0', **{'from': 'Far', 'to': 'Near'}),
+               event('residency', 200, id='2,0', **{'from': 'Near', 'to': 'Far'}),
                event('texture', 200, name='sand', source='/task/run/data/sand.dds'),
                event('jump', 550), event('land', 750)]
     for e in events:
@@ -62,7 +63,7 @@ def test_pass(tmp_path):
     ('exit', 'exit 0'), ('short', '30–60'), ('crossings', 'only 1'), ('axis', 'both X and Z'),
     ('load', 'streaming missing'), ('unload', 'streaming missing'), ('jump', 'jump/landing'),
     ('land', 'incomplete'), ('ground', 'off ground'), ('shot', 'missing shots'),
-    ('samples', 'position samples'), ('census', 'content census'), ('texture', 'texture load'),
+    ('samples', 'position samples'), ('census', 'content census'), ('texture', 'texture loads'),
 ])
 def test_motion_failures(tmp_path, defect, reason):
     events = evidence(tmp_path)
@@ -78,8 +79,11 @@ def test_motion_failures(tmp_path, defect, reason):
             if e['event'] == 'chunk':
                 e.update(z=1., **{'from': '0,0', 'to': '1,0'})
     elif defect in ('load', 'unload', 'jump', 'land', 'census', 'texture'):
-        kind = {'load': 'chunk_load', 'unload': 'chunk_unload'}.get(defect, defect)
-        events = [e for e in events if e['event'] != kind]
+        if defect in ('load', 'unload'):
+            source = 'Far' if defect == 'load' else 'Near'
+            events = [e for e in events if e['event'] != 'residency' or e['from'] != source]
+        else:
+            events = [e for e in events if e['event'] != defect]
         if defect == 'jump':
             events = [e for e in events if e['event'] != 'land']
             for e in events:
@@ -114,6 +118,7 @@ def test_private_paths_including_failed_opens(tmp_path, syscall):
 
 def test_child_cwd_and_resumed_call():
     paths, errors = check.trace_paths(
+        '100 symlink("../nvidiactl", "/dev/char/195:255") = -1 EEXIST\n'
         '100 chdir("data") = 0\n'
         '100 clone(child_stack=NULL, flags=CLONE_VM|SIGCHLD <unfinished ...>\n'
         '100 <... clone resumed>) = 101\n'
@@ -121,5 +126,17 @@ def test_child_cwd_and_resumed_call():
         '101 <... openat resumed>) = 3</task/run/data/sand.dds>\n'
         '101 +++ exited with 0 +++\n', '/task/run')
     assert not errors and '/task/run/data/sand.dds' in paths
+    assert '/dev/nvidiactl' in paths and '/task/nvidiactl' not in paths
     assert check.trace_paths('', '/task/run')[1]
     assert check.trace_paths('100 openat(AT_FDCWD, "data", O_RDONLY <unfinished ...>\n', '/task/run')[1]
+
+
+def test_startup_publications_do_not_count(tmp_path):
+    events = evidence(tmp_path)
+    for e in events:
+        if e['event'] in ('residency', 'texture'):
+            e['ms'] = 0
+    events.sort(key=lambda e: e['ms'])
+    save(tmp_path, events)
+    report = check.verify(tmp_path)
+    assert not report['passed'] and report['loads'] == report['unloads'] == report['texture_loads'] == 0

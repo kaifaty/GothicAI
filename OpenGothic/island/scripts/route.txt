@@ -1,11 +1,16 @@
-# Route preparation is pending: the current 1000 m streaming horizon never unloads island chunks.
-# Time in milliseconds, position in metres, yaw in degrees.
+# Time in milliseconds, position in metres, yaw in degrees; # begins a comment.
 # Held controls: move time forward strafe turn-deg/s pitch-deg/s run(0/1).
-start 119.277 0.510632 69.0537 -130
+# West beach beside the small rock, independently of World::start.
+start -110 0.0327 65 -25
 move 0 0 0 0 0 0
 shot 1000 beach
 move 2000 1 0 0 0 1
+shot 4000 rocks
 jump 8000
-shot 15000 rocks
-shot 35000 hill
-end 40000
+# Pass south of the spring and climb the grassy slope.
+shot 42000 hill
+# Turn along the grassy north face, away from the steep eastern rock belt.
+move 44000 1 0 -40 0 1
+move 45000 1 0 0 0 1
+# Both hero and following camera finish in X cell 1, more than three cells from the westernmost chunks.
+end 60000

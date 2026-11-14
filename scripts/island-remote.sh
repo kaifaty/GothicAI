@@ -47,7 +47,7 @@ strace -f -yy -s 65535 -o "$run/output/strace.log" \
   VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json \
   OPENGOTHIC_CENSUS="$run/output/census.json" \
   "$state/build/opengothic/engine-island" --data "$run/data" --script "$run/route.txt" \
-  --events "$run/output/events.jsonl" --capture "$run/frames" --size 1280x720 \
+  --events "$run/output/events.jsonl" --capture "$run/frames" --capture-every 2 --size 1280x720 \
   >"$run/output/program.log" 2>&1
 rc=$?
 set -e
@@ -62,7 +62,7 @@ for name in beach rocks hill; do
   [[ ! -f "$run/$name.png" ]] || mv "$run/$name.png" "$run/output/"
 done
 gzip "$run/output/strace.log"
-ffmpeg -hide_banner -loglevel error -framerate 30 -i "$run/frames/frame-%05d.png" \
+ffmpeg -hide_banner -loglevel error -framerate 15 -i "$run/frames/frame-%05d.png" \
   -c:v libx264 -preset fast -crf 20 -pix_fmt yuv420p -r 30 "$run/output/clip.mp4" || exit 76
 # The caller fetches output after gq's verified archive move.
 [[ "$rc" == 0 ]] || exit 1

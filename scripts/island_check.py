@@ -14,7 +14,7 @@ import subprocess
 MIN_CROSSINGS = 3
 CHUNK_METRES = 64
 SHOTS = {"beach", "rocks", "hill"}
-SYSTEM_ROOTS = ("/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/etc", "/proc", "/sys", "/dev", "/tmp/.X11-unix")
+SYSTEM_ROOTS = ("/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/etc", "/proc", "/sys", "/dev", "/tmp/.X11-unix", "/selinux", "/var/cache/libx11")
 # Path operand indices, counting all syscall arguments. execve's argv/env strings are not file operands.
 PATH_ARGS = {
     "open": (0,), "creat": (0,), "openat": (1,), "openat2": (1,),
@@ -99,6 +99,17 @@ def trace_paths(text, run_root):
                 errors.append('non-string path: ' + line[:160])
                 continue
             base = cwd[pid]
+            if name in ('symlink', 'symlinkat') and index == 0:
+                # A relative symlink target is relative to the new link's directory, not the process cwd.
+                destination = ast.literal_eval(args[PATH_ARGS[name][-1]])
+                if name == 'symlinkat':
+                    annotation = re.search(r'<(/[^>]*)>', args[1])
+                    if annotation:
+                        base = annotation[1]
+                    elif args[1] != 'AT_FDCWD' and not destination.startswith('/'):
+                        errors.append('unresolved symlink directory fd: ' + line[:160])
+                        continue
+                base = posixpath.dirname(posixpath.join(base, destination))
             if name in AT_CALLS and index > 0:
                 directory = args[index-1]
                 annotation = re.search(r'<(/[^>]*)>', directory)
@@ -160,9 +171,13 @@ def verify(folder):
             crossings += 1
     require(crossings >= MIN_CROSSINGS, f'only {crossings} chunk crossings; need {MIN_CROSSINGS}')
     require(len(axes) == 2, 'chunk crossings must cover both X and Z axes')
-    loads = sum(int(e['count']) for e in events if e['event'] == 'chunk_load')
-    unloads = sum(int(e['count']) for e in events if e['event'] == 'chunk_unload')
-    require(loads > 0 and unloads > 0, f'chunk streaming missing: {loads} loads, {unloads} unloads')
+    transitions = [e for e in events if e['event'] == 'residency']
+    for e in transitions:
+        require(bool(re.fullmatch(r'-?\d+,-?\d+', e['id'])) and e['from'] != e['to']
+                and {e['from'], e['to']} <= {'Outside', 'Far', 'Near'}, 'invalid residency transition')
+    loads = sum(e['ms'] > 0 and e['from'] == 'Far' and e['to'] == 'Near' for e in transitions)
+    unloads = sum(e['ms'] > 0 and e['from'] == 'Near' and e['to'] == 'Far' for e in transitions)
+    require(loads > 0 and unloads > 0, f'near-belt streaming missing after startup: {loads} Far→Near, {unloads} Near→Far')
     require(jumps > 0 and lands == jumps and not jumping, f'jump/landing missing or incomplete: {jumps} jumps, {lands} landings')
     samples = [e['ms'] for e in events if e['event'] == 'position']
     require(bool(samples) and max(b-a for a, b in zip([0]+samples, samples+[end.get('ms', 0)])) <= 117,
@@ -171,7 +186,8 @@ def verify(folder):
              and (folder / (e['name']+'.png')).is_file()}
     require(SHOTS <= shots, 'missing shots: ' + ', '.join(sorted(SHOTS-shots)))
     require((folder / 'clip.mp4').is_file(), 'missing clip.mp4')
-    require('texture' in kinds, 'missing texture load events')
+    texture_loads = sum(e['event'] == 'texture' and e['ms'] > 0 for e in events)
+    require(texture_loads > 0, 'missing texture loads after startup')
     with gzip.open(folder / 'strace.log.gz', 'rt') as trace:
         paths, errors = trace_paths(trace.read(), context['run_root'])
     allowed = SYSTEM_ROOTS + (context['run_root'], context['binary_dir'], f"/run/user/{context['uid']}")
@@ -181,7 +197,7 @@ def verify(folder):
     result = dict(context, passed=not failures, crossings=crossings, loads=loads, unloads=unloads, jumps=jumps,
                   landings=lands, shots=sorted(shots), traced_paths=len(paths), forbidden_paths=forbidden,
                   frame_median_ms=end.get('frame_median_ms'), frame_p95_ms=end.get('frame_p95_ms'),
-                  frames=end.get('frames'), duration_ms=end.get('ms'), failures=sorted(set(failures)))
+                  frames=end.get('frames'), duration_ms=end.get('ms'), texture_loads=texture_loads, failures=sorted(set(failures)))
     (folder / 'report.json').write_text(json.dumps(result, indent=2) + '\n')
     return result
 
