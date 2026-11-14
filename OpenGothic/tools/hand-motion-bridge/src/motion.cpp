@@ -48,26 +48,23 @@ void HandProcessor::reset() {
   q = Quat();
   }
 
-// The newest sample of a packet gets the arrival time; the earlier ones go back by their sensor steps. When those
-// steps do not fit after the hand's previous sample (the previous packet came late), the packet is spread evenly
-// between the previous sample and the arrival, so that the hand's time still grows strictly.
+// The newest sample of a packet gets the arrival time; the earlier ones go back by their sensor steps. When the
+// packet would start at or before the hand's previous sample (the previous packet came late), the whole packet moves
+// forward to start right after it: the steps stay the sensor's, the newest sample lands later than the arrival.
 void HandProcessor::stamp(const Packet& p, std::vector<int64_t>& t) {
   const size_t  n      = p.samples.size();
   const int64_t newest = p.samples[n-1].sensorUs;
   t.resize(n);
-  bool fits = true;
-  for(size_t i=0; i<n; ++i) {
+  for(size_t i=0; i<n; ++i)
     t[i] = p.arrivalUs - (newest - p.samples[i].sensorUs);
-    if(i>0 ? t[i]<=t[i-1] : anyTime && t[i]<=lastUs)
-      fits = false;
-    }
-  if(!fits) {
-    ++squeezedPackets;
-    // the first packet with disordered sensor times: a nominal 5 ms step
-    const int64_t lo   = anyTime ? lastUs : p.arrivalUs - int64_t(n)*5000;
-    const int64_t span = p.arrivalUs - lo;
-    for(size_t i=0; i<n; ++i)
-      t[i] = span>=int64_t(n) ? lo + span*int64_t(i+1)/int64_t(n) : lo + int64_t(i) + 1;
+  const int64_t shift = anyTime && t[0]<=lastUs ? lastUs + 1 - t[0] : 0;
+  if(shift>0)
+    ++shiftedPackets;
+  for(size_t i=0; i<n; ++i) {
+    t[i] += shift;
+    // sensor times that do not grow inside a packet: 1 µs apart
+    if(i>0 && t[i]<=t[i-1])
+      t[i] = t[i-1] + 1;
     }
   lastUs  = t[n-1];
   anyTime = true;

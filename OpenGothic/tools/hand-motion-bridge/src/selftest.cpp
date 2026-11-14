@@ -68,9 +68,12 @@ double median(std::vector<double> v) {
   return v[v.size()/2];
   }
 
-// the angle between the measured "up" and the one the frame's orientation predicts, degrees
+// the angle between the measured "up" and the one the frame's orientation predicts, degrees; a quaternion that is not
+// a unit one counts as 180
 double tiltError(const HandMotion::Frame& f) {
   const double w = f.quat[0], x = f.quat[1], y = f.quat[2], z = f.quat[3];
+  if(std::abs(std::sqrt(w*w + x*x + y*y + z*z) - 1.0)>1e-3)
+    return 180;
   const double v[3] = {2*(x*z - w*y), 2*(w*x + y*z), w*w - x*x - y*y + z*z};
   const double n = len3(f.accel);
   double c = (v[0]*f.accel[0] + v[1]*f.accel[1] + v[2]*f.accel[2])/n;
@@ -233,10 +236,10 @@ void tilt(const std::vector<RecordEvent>& part1, const std::vector<RecordEvent>&
       err.push_back(tiltError(*f));
       still = std::max(still,len3(f->gyro)*RadToDeg);
       }
-  const double m = median(err);
+  const double m = err.empty() ? NAN : *std::max_element(err.begin(),err.end());
   report(swings>=3 && err.size()>=100 && m<=5.0,"tilt-after-swings",
-         fmt("%d swings over 300 deg/s, peak %.0f deg/s; held still afterwards (|w| up to %.0f deg/s): median "
-             "tilt error %.2f deg over the last second (limit 5)",swings,peak,still,m));
+         fmt("%d swings over 300 deg/s, peak %.0f deg/s; held still afterwards (|w| up to %.0f deg/s): the worst "
+             "tilt error over the last second %.2f deg on %zu frames (limit 5)",swings,peak,still,m,err.size()));
   }
 
 void yawDrift(const std::vector<RecordEvent>& part1) {
@@ -296,8 +299,8 @@ void timing(const std::vector<RecordEvent>& ev) {
   size_t  next[HandMotion::HandCount] = {};
   auto    byHand = std::vector<std::vector<const HandMotion::Frame*>>{ofHand(frames,HandMotion::Left),
                                                                      ofHand(frames,HandMotion::Right)};
-  size_t  packets = 0, squeezed = 0, wrongSqueeze = 0, notGrowing = 0;
-  double  worstStep = 0;
+  size_t  packets = 0, steps = 0, stepBad = 0, late = 0, lateWrong = 0, notGrowing = 0;
+  double  worstStep = 0, worstLead = 0;
   for(auto& h:byHand)
     for(size_t i=1; i<h.size(); ++i)
       if(h[i]->tUs<=h[i-1]->tUs)
@@ -310,30 +313,32 @@ void timing(const std::vector<RecordEvent>& ev) {
     const size_t at = next[p.hand];
     next[p.hand] += p.samples.size();
     ++packets;
-    bool fits = fr[at+p.samples.size()-1]->tUs==uint64_t(p.arrivalUs);
-    double worst = 0;
+    // every step inside every packet repeats the sensor's step
     for(size_t i=1; i<p.samples.size(); ++i) {
-      const double d = double(int64_t(fr[at+i]->tUs - fr[at+i-1]->tUs) - (p.samples[i].sensorUs - p.samples[i-1].sensorUs));
-      worst = std::max(worst,std::abs(d));
+      const double d = std::abs(double(int64_t(fr[at+i]->tUs - fr[at+i-1]->tUs) -
+                                       (p.samples[i].sensorUs - p.samples[i-1].sensorUs)));
+      worstStep = std::max(worstStep,d);
+      ++steps;
+      if(d>500)
+        ++stepBad;
       }
-    if(worst>500)
-      fits = false;
-    if(fits) {
-      worstStep = std::max(worstStep,worst);
+    // the newest sample is at the arrival, unless the packet would have started at or before the previous sample:
+    // then the packet starts right after it
+    const int64_t newest = int64_t(fr[at+p.samples.size()-1]->tUs);
+    if(newest==p.arrivalUs)
       continue;
-      }
-    ++squeezed;
-    // squeezing is allowed only where the sensor steps would have gone back past the hand's previous sample
+    ++late;
     const int64_t wouldStart = p.arrivalUs - (p.samples.back().sensorUs - p.samples.front().sensorUs);
-    if(at==0 || wouldStart>int64_t(fr[at-1]->tUs))
-      ++wrongSqueeze;
+    if(at==0 || wouldStart>int64_t(fr[at-1]->tUs) || fr[at]->tUs!=fr[at-1]->tUs+1)
+      ++lateWrong;
+    worstLead = std::max(worstLead,double(newest - p.arrivalUs));
     }
-  const uint64_t reported = b.processor(HandMotion::Left).squeezed() + b.processor(HandMotion::Right).squeezed();
-  report(notGrowing==0 && wrongSqueeze==0 && squeezed==reported && squeezed*100<=packets*3,"time",
-         fmt("%zu frames grow strictly (%zu do not); %zu packets: in-packet step = sensor step within %.0f us "
-             "(limit 500); %zu packets squeezed because they overlapped the previous one (%.1f%%, %zu without "
-             "reason)",frames.size(),notGrowing,packets,worstStep,squeezed,100.0*double(squeezed)/double(packets),
-             wrongSqueeze));
+  const uint64_t reported = b.processor(HandMotion::Left).shifted() + b.processor(HandMotion::Right).shifted();
+  report(notGrowing==0 && stepBad==0 && lateWrong==0 && late==reported,"time",
+         fmt("%zu frames grow strictly (%zu do not); %zu steps inside %zu packets repeat the sensor's within %.0f us "
+             "(limit 500, %zu over); %zu packets overlapped the previous one and start right after it, the newest up "
+             "to %.1f ms past the arrival (%zu wrong)",frames.size(),notGrowing,steps,packets,worstStep,stepBad,late,
+             worstLead*1e-3,lateWrong));
   }
 
 void loopback(const std::vector<RecordEvent>& ev) {
@@ -381,9 +386,16 @@ void loopback(const std::vector<RecordEvent>& ev) {
   for(auto& e:ev)
     if(!e.isDevice)
       samples += e.packet.samples.size();
+  // the frames the bridge handed to the socket, to compare with what came out of it
+  struct Tee final : FrameSink {
+    FrameSink&                     out;
+    std::vector<HandMotion::Frame> sent[HandMotion::HandCount];
+    explicit Tee(FrameSink& o):out(o) {}
+    void send(const HandMotion::Frame& f) override { sent[f.hand].push_back(f); out.send(f); }
+    } tee(tx);
   uint16_t session = 0;
   if(tx.open("127.0.0.1",port,err)) {
-    Bridge        b(0xA11C,tx);
+    Bridge        b(0xA11C,tee);
     ReplayOptions o;
     o.speed = 20;
     replay(ev,b,o);
@@ -394,18 +406,27 @@ void loopback(const std::vector<RecordEvent>& ev) {
   ::close(rx);
 
   uint32_t want[HandMotion::HandCount] = {};
-  size_t   gaps = 0, foreign = 0;
+  size_t   gaps = 0, foreign = 0, differ = 0;
   for(auto& f:got) {
     if(f.seq!=want[f.hand])
       ++gaps;
     want[f.hand] = f.seq+1;
     if(f.session!=session)
       ++foreign;
+    // every field as the bridge built it
+    const auto& sent = tee.sent[f.hand];
+    const HandMotion::Frame* m = f.seq<sent.size() ? &sent[f.seq] : nullptr;
+    if(m==nullptr || f.hand!=m->hand || f.flags!=m->flags || f.session!=m->session || f.seq!=m->seq ||
+       f.buttons!=m->buttons || f.tUs!=m->tUs || std::memcmp(f.gyro,m->gyro,sizeof(f.gyro))!=0 ||
+       std::memcmp(f.accel,m->accel,sizeof(f.accel))!=0 || std::memcmp(f.quat,m->quat,sizeof(f.quat))!=0)
+      ++differ;
     }
-  report(err.empty() && got.size()==samples && gaps==0 && bad==0 && foreign==0 && tx.errors()==0,"loopback",
-         fmt("port %u: %zu of %zu frames came (%zu bad, %llu send errors%s%s); seq in a row: left 0..%d, right 0..%d, "
-             "%zu breaks; session %04x on all",unsigned(port),got.size(),samples,bad,(unsigned long long)tx.errors(),
-             err.empty() ? "" : ", ",err.c_str(),int(want[0])-1,int(want[1])-1,gaps,unsigned(session)));
+  report(err.empty() && got.size()==samples && gaps==0 && bad==0 && foreign==0 && differ==0 && tx.errors()==0,
+         "loopback",
+         fmt("port %u: %zu of %zu frames came (%zu bad, %llu send errors%s%s), decoded into the fields the bridge built "
+             "(%zu differ); seq in a row: left 0..%d, right 0..%d, %zu breaks; session %04x on all",unsigned(port),
+             got.size(),samples,bad,(unsigned long long)tx.errors(),err.empty() ? "" : ", ",err.c_str(),differ,
+             int(want[0])-1,int(want[1])-1,gaps,unsigned(session)));
   }
 
 void recordRoundTrip(const std::vector<RecordEvent>& ev) {

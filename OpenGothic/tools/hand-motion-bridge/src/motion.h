@@ -77,8 +77,8 @@ class HandProcessor final {
     bool     quatValid() const { return hasBias && hasQuat; }
     Quat     orientation() const { return q; }
     const double* bias() const { return gyroBias; }
-    // packets whose sensor steps did not fit between the previous sample and the arrival: squeezed evenly
-    uint64_t squeezed() const { return squeezedPackets; }
+    // packets that would have started at or before the hand's previous sample: moved forward whole
+    uint64_t shifted() const { return shiftedPackets; }
 
   private:
     struct WindowSample {
@@ -95,7 +95,7 @@ class HandProcessor final {
     bool     anyTime = false;
     int64_t  lastUs  = 0;
     int64_t  lastSensorUs = 0;
-    uint64_t squeezedPackets = 0;
+    uint64_t shiftedPackets = 0;
 
     std::deque<WindowSample> window;
     bool     rest = false;

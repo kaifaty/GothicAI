@@ -52,8 +52,17 @@ void replay(const std::vector<RecordEvent>& events, Bridge& bridge, const Replay
       Packet p = e.packet;
       const int64_t since = p.arrivalUs - first + int64_t(pass)*passLen;
       p.arrivalUs = base + since;
-      if(o.speed>0)
-        std::this_thread::sleep_until(start + std::chrono::microseconds(int64_t(double(since)/o.speed)));
+      if(o.speed>0) {
+        // in short naps, so that a stop during a long pause of the record ends the replay at once
+        const auto due = start + std::chrono::microseconds(int64_t(double(since)/o.speed));
+        for(auto now=Clock::now(); now<due; now=Clock::now()) {
+          if(o.stop!=nullptr && o.stop->load())
+            return;
+          std::this_thread::sleep_for(std::min<Clock::duration>(due - now,std::chrono::milliseconds(20)));
+          }
+        if(o.stop!=nullptr && o.stop->load())
+          return;
+        }
       bridge.feed(p);
       if(o.tick)
         o.tick();
