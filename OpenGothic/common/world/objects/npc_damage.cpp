@@ -563,7 +563,7 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
     const auto  who  = Bench::who(this);
     const auto  by   = Bench::who(&other);
     char buf[256];
-    std::snprintf(buf,sizeof(buf),"damage %.*s: raw %d zone %.*s k %.2f prot %d net %d hit %d, hp %d, %s, by %.*s, stun_bonus %.2f",
+    std::snprintf(buf,sizeof(buf),"damage %.*s: raw %d zone %.*s k %.2f prot %d net %d hit %d, hp %d, %s, by %.*s stun_bonus %.2f",
                   int(who.size()),who.data(),int(raw),int(zone.size()),zone.data(),double(k),int(protection(PROT_POINT)),
                   int(hitResult.value),int(hitResult.hasHit),int(attribute(ATR_HITPOINTS)),kind,int(by.size()),by.data(),double(stunBonus));
     Bench::note(buf);
