@@ -749,7 +749,7 @@ endif()
     COMMAND $<TARGET_FILE:gothic-clothgeometry-contract>
     COMMAND $<TARGET_FILE:gothic-worldcloth-contract>
     DEPENDS gothic-cloth-contract gothic-clothgeometry-contract gothic-worldcloth-contract USES_TERMINAL)
-  add_executable(gothic-ragdoll-contract EXCLUDE_FROM_ALL tests/physics_ragdoll_contract.cpp)
+  add_executable(gothic-ragdoll-contract EXCLUDE_FROM_ALL tests/physics_ragdoll_contract.cpp tests/physics_ragdoll_brace_contract.cpp)
   target_link_libraries(gothic-ragdoll-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_executable(gothic-ragdoll-save-contract EXCLUDE_FROM_ALL tests/ragdoll_save_contract.cpp)
   target_link_libraries(gothic-ragdoll-save-contract PRIVATE OpenGothic AiBridge gothic-base-import)

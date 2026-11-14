@@ -194,6 +194,7 @@ Marvin::Marvin() {
     {"toggle item_hulls",         C_ToggleItemHulls},
     {"toggle item_deepest_contact",C_ToggleItemDeepestContact},
     {"toggle ragdoll_birth_guard",C_ToggleRagdollBirthGuard},
+    {"toggle ragdoll_brace",      C_ToggleRagdollBrace},
     {"toggle furniture_parts",    C_ToggleFurnitureParts},
     {"toggle physics_noise",      C_TogglePhysicsNoise},
     {"toggle destruction",        C_ToggleDestruction},
@@ -673,6 +674,9 @@ bool Marvin::exec(std::string_view v) {
       return true;
     case C_ToggleRagdollBirthGuard:
       Gothic::settingsSetI("GAME","ragdoll_birth_guard",Gothic::settingsGetI("GAME","ragdoll_birth_guard")==0 ? 1 : 0);
+      return true;
+    case C_ToggleRagdollBrace:
+      Gothic::settingsSetI("GAME","ragdoll_brace",Gothic::settingsGetI("GAME","ragdoll_brace")==0 ? 1 : 0);
       return true;
     case C_ToggleFurnitureParts:
       Gothic::settingsSetI("GAME","furniture_parts",Gothic::settingsGetI("GAME","furniture_parts")==0 ? 1 : 0);

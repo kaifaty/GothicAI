@@ -490,6 +490,7 @@ bool Npc::checkHealth(bool onChange, bool allowUnconscious) {
 
 void Npc::onNoHealth(bool death, HitSound sndMask) {
   interruptItemUse(death ? "death" : "unconscious");
+  finishRagdollBrace(death ? "death" : "unconscious");
   Healing::clear(foodPool);
   endMeleeAiSpecial();
   const bool wasDead = isDead();

@@ -145,6 +145,7 @@ bool Npc::createRagdoll() {
   }
 
 void Npc::releaseRagdoll(bool blend) {
+  finishRagdollBrace("release");
   const bool hadBody = ragdoll!=nullptr;
   if(hadBody)
     if(const auto* trace=std::getenv("OPENGOTHIC_RAGDOLL_TRACE");trace!=nullptr && trace[0]=='1')
@@ -207,6 +208,7 @@ bool Npc::recoverRagdoll(bool force) {
     // Creatures without wounded poses retain the standard idle fallback.
     visual.startAnimAndGet("S_RUN",owner.tickCount(),true);
     }
+  finishRagdollBrace("getup");
   // Do not interpolate a world-space corpse pose across the whole ravine.
   releaseRagdoll(!returnToAnchor);
   ragdollDormant.reset();

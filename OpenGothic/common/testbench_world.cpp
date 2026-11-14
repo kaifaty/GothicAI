@@ -163,6 +163,7 @@ bool worldCommand(const WorldContext& context,const std::string& line,const std:
       {"item_hulls",&Gothic::PhysicsFlags::itemHulls},
       {"item_deepest_contact",&Gothic::PhysicsFlags::itemDeepestContact},
       {"ragdoll_birth_guard",&Gothic::PhysicsFlags::ragdollBirthGuard},
+      {"ragdoll_brace",&Gothic::PhysicsFlags::ragdollBrace},
       {"furniture_parts",&Gothic::PhysicsFlags::furnitureParts},
       {"placed_items",&Gothic::PhysicsFlags::placedItems},
       {"cloth",&Gothic::PhysicsFlags::cloth}
