@@ -278,7 +278,14 @@ bool HandMotionReceiver::accept(const void* data, size_t size, Clock::time_point
     return false;
     }
   Track& t = hands[f.hand];
-  if(t.any) {
+  if(t.any && f.session!=t.lastSample.frame.session) {
+    // a restarted sender: its seq and its clock start over, the old stream's history goes; no loss counted
+    ++t.st.restarts;
+    t.offsets.clear();
+    t.begin = 0;
+    t.count = 0;
+    }
+  else if(t.any) {
     // serial arithmetic: survives the wrap of the 32-bit counter
     const auto step = int32_t(f.seq-t.lastSeq);
     if(step<=0) {
@@ -337,11 +344,12 @@ void HandMotionReceiver::report(Clock::time_point now) {
       toEuler(f.quat,roll,pitch,yaw);
       std::snprintf(quat,sizeof(quat),"roll %.1f pitch %.1f yaw %.1f",roll,pitch,yaw);
       }
-    std::snprintf(line,sizeof(line),"[hand-motion] %s: %.1f fps, lost %llu, dropped %llu, overflow %llu, last %lld ms ago, %s",
+    std::snprintf(line,sizeof(line),"[hand-motion] %s: %.1f fps, lost %llu, dropped %llu, overflow %llu, restarts %llu, last %lld ms ago, %s",
                   name[h],double(t.st.fps),
                   static_cast<unsigned long long>(t.st.lost),
                   static_cast<unsigned long long>(t.st.dropped),
                   static_cast<unsigned long long>(t.st.overflow),
+                  static_cast<unsigned long long>(t.st.restarts),
                   static_cast<long long>(ago),quat);
     Tempest::Log::i(line);
     }

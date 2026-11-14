@@ -36,6 +36,7 @@ class HandMotionReceiver final {
       uint64_t lost     = 0; // missing by gaps of seq
       uint64_t dropped  = 0; // seq not above the last one: repeated or late
       uint64_t overflow = 0; // pushed out of a full history before they aged
+      uint64_t restarts = 0; // new streams: `session` of a frame differs from the last one's
       float    fps      = 0; // accepted per second, over the last second
       };
 

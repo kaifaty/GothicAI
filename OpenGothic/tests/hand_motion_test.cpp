@@ -40,11 +40,12 @@ Receiver::Config anyPort() {
   return c;
   }
 
-HandMotion::Frame frame(uint8_t hand, uint32_t seq, uint64_t tUs = 0) {
+HandMotion::Frame frame(uint8_t hand, uint32_t seq, uint64_t tUs = 0, uint16_t session = 0) {
   HandMotion::Frame f;
   f.hand    = hand;
   f.seq     = seq;
   f.tUs     = tUs;
+  f.session = session;
   f.gyro[0] = float(seq)*0.5f;
   return f;
   }
@@ -93,7 +94,7 @@ void encodeDecode() {
   HandMotion::Frame f;
   f.hand     = HandMotion::Right;
   f.flags    = uint8_t(HandMotion::GyroBiasRemoved | HandMotion::AtRest | HandMotion::QuatValid);
-  f.reserved = 0;
+  f.session  = 0xBEEF;
   f.seq      = 0xA1B2C3D4u;
   f.buttons  = (1u<<9) | (1u<<0);
   f.tUs      = 0x0102030405060708ull;
@@ -101,12 +102,12 @@ void encodeDecode() {
   f.accel[0] = 0.f;    f.accel[1] = -9.81f; f.accel[2] = 12.f;
   f.quat[0]  = 0.5f;   f.quat[1]  = -0.5f; f.quat[2]  = 0.5f; f.quat[3] = -0.5f;
   const auto b = bytes(f);
-  require(b[0]=='G' && b[3]=='1' && b[4]==1 && b[8]==0xD4 && b[11]==0xA1 && b[16]==0x08 && b[23]==0x01,
+  require(b[0]=='G' && b[3]=='1' && b[4]==1 && b[6]==0xEF && b[7]==0xBE && b[8]==0xD4 && b[11]==0xA1 && b[16]==0x08 && b[23]==0x01,
           "little-endian bytes at the table's offsets");
 
   HandMotion::Frame g;
   require(HandMotion::decode(b.data(),b.size(),g)==HandMotion::Status::Ok,"decode a good frame");
-  require(std::equal(f.magic,f.magic+4,g.magic) && g.hand==f.hand && g.flags==f.flags && g.reserved==f.reserved &&
+  require(std::equal(f.magic,f.magic+4,g.magic) && g.hand==f.hand && g.flags==f.flags && g.session==f.session &&
           g.seq==f.seq && g.buttons==f.buttons && g.tUs==f.tUs,"integer fields survive");
   for(int i=0; i<3; ++i)
     require(g.gyro[i]==f.gyro[i] && g.accel[i]==f.accel[i],"gyro and accel survive");
@@ -185,17 +186,45 @@ void seqGaps() {
   require(r.hand(HandMotion::Right).stats().frames==0,"the other hand is untouched");
   }
 
+// a new session is a new stream: seq from 0 is taken at once, no loss, the clock starts over; within a session seq
+// back is still dropped
+void sessionRestart() {
+  Receiver r(offline());
+  const auto     t0  = Receiver::Clock::now();
+  const uint64_t was = 9'000'000'000'000ull; // the old sender's clock
+  const uint64_t now = 1'000'000ull;         // the new one started later from a smaller origin
+  for(int k=0; k<50; ++k)
+    require(feed(r,frame(HandMotion::Right,uint32_t(100+k),was+uint64_t(5000*k),7),t0+microseconds(5000*k+500)),
+            "old stream "+std::to_string(k));
+  require(!feed(r,frame(HandMotion::Right,120,was,7),t0+milliseconds(260)),"same session, seq back: dropped");
+  const auto& t = r.hand(HandMotion::Right);
+  for(int k=0; k<50; ++k) {
+    const auto sent = t0+milliseconds(300)+microseconds(5000*k);
+    require(feed(r,frame(HandMotion::Right,uint32_t(k),now+uint64_t(5000*k),8),sent+microseconds(700)),
+            "new stream "+std::to_string(k)+" accepted at once");
+    const auto err = duration<double,std::milli>(t.last()->time-sent).count();
+    require(std::abs(err)<=2.0,"new stream "+std::to_string(k)+" off by "+std::to_string(err)+" ms");
+    }
+  require(t.stats().restarts==1 && t.stats().lost==0 && t.stats().dropped==1 && t.stats().frames==100,
+          "restarts 1, lost 0, dropped 1, frames 100; got restarts "+std::to_string(t.stats().restarts)+", lost "+
+          std::to_string(t.stats().lost));
+  require(t.size()==50 && t[0].frame.seq==0 && t[0].frame.session==8,"the old stream's history is gone");
+  require(!feed(r,frame(HandMotion::Right,10,now,8),t0+milliseconds(600)),"new session, seq back: dropped");
+  require(t.stats().dropped==2 && t.stats().restarts==1,"dropped 2, still one restart");
+  require(r.hand(HandMotion::Left).stats().restarts==0,"the other hand is untouched");
+  }
+
 // tick on an empty socket changes nothing and does not block
 void emptyTick() {
   Receiver r(anyPort());
   require(r.isOpen(),"open: "+r.error());
   Sender s(r.port());
-  for(uint32_t i=0; i<5; ++i)
-    s.send(frame(HandMotion::Right,1+i));
+  for(uint32_t seq:{10u,13u,14u,15u,16u})
+    s.send(frame(HandMotion::Right,seq));
   settle();
   r.tick();
   const auto& t = r.hand(HandMotion::Right);
-  require(t.size()==5 && t.stats().frames==5,"5 frames before the empty ticks");
+  require(t.size()==5 && t.stats().frames==5 && t.stats().lost==2,"5 frames and 2 lost before the empty ticks");
   const auto before = t.stats();
   const auto lastAt = t.lastReceived();
   for(int i=0; i<21; ++i) {
@@ -204,9 +233,10 @@ void emptyTick() {
     const auto ms = duration<double,std::milli>(steady_clock::now()-t0).count();
     require(ms<1.0,"tick "+std::to_string(i)+" under 1 ms, got "+std::to_string(ms));
     }
-  require(t.size()==5 && t[0].frame.seq==1 && t.last()->frame.seq==5 && t.lastReceived()==lastAt,"history kept");
+  require(t.size()==5 && t[0].frame.seq==10 && t.last()->frame.seq==16 && t.lastReceived()==lastAt,"history kept");
+  require(t.stats().lost==2,"lost kept: 2, got "+std::to_string(t.stats().lost));
   require(t.stats().frames==before.frames && t.stats().lost==before.lost && t.stats().dropped==before.dropped &&
-          t.stats().overflow==before.overflow,"statistics kept");
+          t.stats().overflow==before.overflow && t.stats().restarts==before.restarts,"statistics kept");
   require(r.hand(HandMotion::Left).size()==0 && r.malformed()==0 && r.isOpen(),"still open, nothing counted");
   }
 
@@ -350,6 +380,7 @@ int main() {
     {"encode-decode",    encodeDecode},
     {"socket-two-hands", socketTwoHands},
     {"seq-gaps",         seqGaps},
+    {"session-restart",  sessionRestart},
     {"empty-tick",       emptyTick},
     {"history-overflow", historyOverflow},
     {"receive-buffer",   receiveBuffer},

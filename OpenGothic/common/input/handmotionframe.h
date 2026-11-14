@@ -30,7 +30,7 @@ struct Frame {
   char     magic[4] = {'G','H','M','1'};
   uint8_t  hand     = Left;
   uint8_t  flags    = 0;
-  uint16_t reserved = 0;
+  uint16_t session  = 0;          // the sender picks it at start, one for both hands; a change is a new stream
   uint32_t seq      = 0;          // the sender's frame number of this hand, +1 for every frame sent
   uint32_t buttons  = 0;          // bit N: SDL_GamepadButton N
   uint64_t tUs      = 0;          // the sample's time on the sender's monotonic clock, µs; any origin
@@ -44,7 +44,7 @@ static_assert(sizeof(Frame)==FrameSize);
 static_assert(offsetof(Frame,magic)   ==0);
 static_assert(offsetof(Frame,hand)    ==4);
 static_assert(offsetof(Frame,flags)   ==5);
-static_assert(offsetof(Frame,reserved)==6);
+static_assert(offsetof(Frame,session) ==6);
 static_assert(offsetof(Frame,seq)     ==8);
 static_assert(offsetof(Frame,buttons) ==12);
 static_assert(offsetof(Frame,tUs)     ==16);
@@ -106,7 +106,7 @@ inline void encode(const Frame& f, void* out) {
   std::memcpy(p,f.magic,4);
   p[4] = f.hand;
   p[5] = f.flags;
-  detail::put16(p+6, f.reserved);
+  detail::put16(p+6, f.session);
   detail::put32(p+8, f.seq);
   detail::put32(p+12,f.buttons);
   detail::put64(p+16,f.tUs);
@@ -131,7 +131,7 @@ inline Status decode(const void* data, size_t size, Frame& out) {
   std::memcpy(f.magic,p,4);
   f.hand     = p[4];
   f.flags    = p[5];
-  f.reserved = detail::get16(p+6);
+  f.session  = detail::get16(p+6);
   f.seq      = detail::get32(p+8);
   f.buttons  = detail::get32(p+12);
   f.tUs      = detail::get64(p+16);
