@@ -204,7 +204,6 @@ bool same(const Grass::CellBlades& a, const Grass::CellBlades& b) {
   }
 
 uint32_t rankOf(const Words& w)   { return w[1] >> 24; }
-float    heightOf(const Words& w) { return float((w[1] >> 16) & 0xFFu)*0.25f; }
 // the root and its height over the cell's lowest, without what dresses the blade
 std::pair<uint32_t,uint32_t> rootOf(const Words& w) { return {w[0] & 0x0FFFFFFFu, w[1] & 0xFFFFu}; }
 
@@ -423,7 +422,8 @@ void placementEdge() {
     for(size_t i=0; i<plain.blades.size(); ++i) {
       const auto& w = wPlain[i];
       const auto b = Grass::decode(plain.blades[i],0,cz,plain.minY);
-      roots[rootOf(w)] = b.height;
+      float& tallest = roots[rootOf(w)]; // two blades may share a root: 1/16 cm
+      tallest = std::max(tallest,b.height);
       if(b.x>=border-50*U)
         ++nearPlain;
       if(b.x<200*U) {
