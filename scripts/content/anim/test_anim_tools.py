@@ -1123,3 +1123,32 @@ def test_fix_layer_tread_lays_the_toe_on_the_floor_from_above_and_from_below():
     assert np.array_equal(anim.rotations[[0, 1, 6, 7]], orig[[0, 1, 6, 7]])
     ankle = [ga.world_pose(skel, anim, f)[foot][:3, 3] for f in range(8)]
     assert np.allclose(ankle, ankle[0])                    # the ankle stays: only the foot turns
+
+
+def test_brace_poses_stay_inside_the_ragdoll_joints():
+    models = base_models()
+    if models is None:
+        pytest.skip("no converted base")
+    import json
+    import own_poses as op
+    import ragdoll_limits as rl
+    import retarget_soma as rs
+    spec = json.loads((Path(__file__).resolve().parent / "poses-brace.json").read_text())
+    b, limits = op.Builder(models, spec["stance"]), rl.Limits(models)
+    hands = {}
+    for name, ps in spec["poses"].items():
+        if "mirror" in ps:
+            ps = op.mirror(spec["poses"][ps["mirror"]])
+        pose = b.build(ps)
+        assert max(pose["report"]["miss"].values()) == 0, name
+        pos = rs.world_positions(b.skel, pose["world"], pose["root"])
+        joints = limits.measure(pose["world"], pos)
+        assert not [j for j, v in joints.items() if not v["ok"]], name
+        # a motor target on the limit leaves the motor pushing against it
+        assert all(abs(v["twist"]) <= 70 for j, v in joints.items() if "HAND" in j), name
+        # elbows give way on the landing: neither locked nor folded
+        assert all(20 <= joints[f"BIP01 {s} FOREARM"]["flex"] <= 70 for s in "LR"), name
+        hands[name] = {s: pos[b.gi[f"BIP01 {s} HAND"]] for s in "LR"}
+    for s, o in (("L", "R"), ("R", "L")):
+        assert np.allclose(hands["S_BRACE_R"][s], hands["S_BRACE_L"][o] * [-1, 1, 1], atol=1e-6)
+

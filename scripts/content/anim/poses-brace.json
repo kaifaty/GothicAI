@@ -1,0 +1,232 @@
+{
+ "note": "Protective poses of a knocked-down person (step 1 of docs/physical-character-plan.md), built by own_poses.py. They are targets of the ragdoll's motors, so only the joint angles matter: every pose is given standing, the lean of the body in the world is the fall's. Numbers and their sources: reports/physics/2026-11-14-fall-bracing/README.md. Check the joints with ragdoll_limits.py.",
+ "stance": "HUMANS-S_RUN.MAN",
+ "poses": {
+  "S_BRACE_F": {
+   "pelvis": {
+    "pos": [
+     0,
+     93,
+     0
+    ]
+   },
+   "chest": {
+    "pitch": -8
+   },
+   "head": {
+    "pitch": -30
+   },
+   "feet": {
+    "L": {
+     "pos": [
+      -11,
+      -6
+     ],
+     "yaw": -8
+    },
+    "R": {
+     "pos": [
+      12,
+      8
+     ],
+     "yaw": 8
+    }
+   },
+   "arms": {
+    "L": {
+     "hand": [
+      -26,
+      136,
+      42
+     ],
+     "elbow": [
+      -0.56,
+      -0.77,
+      0.31
+     ],
+     "palm": [
+      0,
+      0,
+      1
+     ],
+     "wrist_ext": 38,
+     "forearm_twist": 0,
+     "turn": 42
+    },
+    "R": {
+     "hand": [
+      25,
+      124,
+      38
+     ],
+     "elbow": [
+      0.2,
+      -0.85,
+      -0.4
+     ],
+     "palm": [
+      0,
+      0,
+      1
+     ],
+     "wrist_ext": 38,
+     "forearm_twist": 0,
+     "turn": -48
+    }
+   }
+  },
+  "S_BRACE_B": {
+   "pelvis": {
+    "pos": [
+     0,
+     62,
+     -16
+    ]
+   },
+   "chest": {
+    "pitch": 10
+   },
+   "head": {
+    "pitch": 32
+   },
+   "feet": {
+    "L": {
+     "pos": [
+      -13,
+      10
+     ],
+     "yaw": -10
+    },
+    "R": {
+     "pos": [
+      13,
+      16
+     ],
+     "yaw": 10
+    }
+   },
+   "arms": {
+    "L": {
+     "hand": [
+      -44,
+      66,
+      -30
+     ],
+     "elbow": [
+      -0.3,
+      0.6,
+      -0.75
+     ],
+     "palm": [
+      0,
+      -0.6,
+      -0.8
+     ],
+     "wrist_ext": 35,
+     "forearm_twist": 0,
+     "turn": 12
+    },
+    "R": {
+     "hand": [
+      40,
+      60,
+      -34
+     ],
+     "elbow": [
+      0.3,
+      0.6,
+      -0.75
+     ],
+     "palm": [
+      0,
+      -0.6,
+      -0.8
+     ],
+     "wrist_ext": 35,
+     "forearm_twist": 0,
+     "turn": -12
+    }
+   }
+  },
+  "S_BRACE_L": {
+   "pelvis": {
+    "pos": [
+     0,
+     90,
+     0
+    ]
+   },
+   "chest": {
+    "yaw": -28,
+    "pitch": 6,
+    "roll": 6
+   },
+   "head": {
+    "yaw": -38,
+    "pitch": -2,
+    "roll": -6
+   },
+   "feet": {
+    "L": {
+     "pos": [
+      -12,
+      -4
+     ],
+     "yaw": -12
+    },
+    "R": {
+     "pos": [
+      12,
+      4
+     ],
+     "yaw": 0
+    }
+   },
+   "arms": {
+    "L": {
+     "hand": [
+      -58,
+      118,
+      22
+     ],
+     "elbow": [
+      -0.27,
+      0.62,
+      -0.74
+     ],
+     "palm": [
+      -1,
+      0,
+      0.3
+     ],
+     "wrist_ext": 35,
+     "forearm_twist": 0,
+     "turn": 54
+    },
+    "R": {
+     "hand": [
+      -26,
+      124,
+      40
+     ],
+     "elbow": [
+      0.29,
+      -0.89,
+      -0.36
+     ],
+     "palm": [
+      -0.8,
+      0,
+      0.6
+     ],
+     "wrist_ext": 35,
+     "forearm_twist": 0,
+     "turn": -42
+    }
+   }
+  },
+  "S_BRACE_R": {
+   "mirror": "S_BRACE_L"
+  }
+ }
+}
