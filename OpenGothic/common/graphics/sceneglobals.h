@@ -179,6 +179,8 @@ class SceneGlobals final {
       Tempest::Vec4                   foliagePhase;
       Tempest::Vec4                   foliageWindPrev;
       Tempest::Vec4                   foliagePhasePrev;
+      Tempest::Vec4                   foliageSwing;
+      Tempest::Vec4                   foliageSwingPrev;
       };
 
     Tempest::UniformBuffer<UboGlobal> uboGlobalPf[Resources::MaxFramesInFlight][V_Count];

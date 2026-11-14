@@ -6,8 +6,9 @@
 // has one normal for both of its sides, so the side is told by the eye: the light comes through where the eye
 // looks toward the sun, and fades where the normal already faces the sun (no light counted twice).
 
-// the light that has passed a leaf: yellower and greener than the sun
-const vec3 FoliageThroughTint = vec3(1.1, 1.0, 0.5);
+// the light that has passed a leaf: greener than the sun, a leaf keeps most of the red and the blue. Under the low
+// warm sun the tuft reads as the same grass lit from behind, a warm yellow-green
+const vec3 FoliageThroughTint = vec3(0.75, 1.15, 0.32);
 
 // The share of the sun that comes through, on the scale of the cosine of a lit surface. view: from the pixel to
 // the eye; sunDir: to the sun

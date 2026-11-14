@@ -249,7 +249,8 @@ vec3 processVertexCommon(out Varyings shOut, in Vertex v, uint bucketId, uint in
   // pass alike, so the shadow moves with them. The normal stays the card's
   const uint foliage = (bucket[bucketId].flags & BK_FOLIAGE)!=0u ? bucket[bucketId].foliage : 0u;
   if(foliageMoves(foliage))
-    v.pos = foliageBend(v.pos, foliage, bucket[bucketId].foliageReach, obj.mat, scene.foliageWind, scene.foliagePhase);
+    v.pos = foliageBend(v.pos, foliage, bucket[bucketId].foliageReach, obj.mat, scene.foliageWind, scene.foliagePhase,
+                        scene.foliageSwing);
 #endif
 
   // Normals
@@ -385,7 +386,8 @@ vec3 processVertexCommon(out Varyings shOut, in Vertex v, uint bucketId, uint in
 #if (MESH_TYPE==T_OBJ)
     // the leaf where the previous frame's wind had it; the same wind (a pause) gives the same place and no motion
     if(foliageMoves(foliage))
-      local = foliageBend(local, foliage, bucket[bucketId].foliageReach, obj.mat, scene.foliageWindPrev, scene.foliagePhasePrev);
+      local = foliageBend(local, foliage, bucket[bucketId].foliageReach, obj.mat, scene.foliageWindPrev, scene.foliagePhasePrev,
+                          scene.foliageSwingPrev);
 #endif
     // prev.mat*local' - mat*local = (prev.mat - mat)*local' + mat*(local' - local); v.pos is this frame's local
     const mat4x3 prevMat = pullInstanceMatPrev(instanceId);

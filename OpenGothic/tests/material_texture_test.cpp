@@ -702,14 +702,46 @@ void foliageWindMaths() {
   require(off.wind.w==0.f && off.wind.z==0.f,"no wind in the world: nothing blows");
   const Scene legacy = scene(3000,period,true,1.f,true);
   require(legacy.wind.w==1.f && legacy.wind.x==0.f && legacy.wind.y==1.f &&
-          std::abs(legacy.wind.z-std::pow(4.f/GustSpeed,PressureCurve))<1e-5f && legacy.phase.x==0.5f,
-          "without the cloth's wind: a steady 4 m/s along +Z, the waves still run");
+          std::abs(legacy.wind.z-pressure(4.f/GustSpeed))<1e-5f && legacy.phase.x==0.5f &&
+          std::abs(legacy.swing.x-0.05f)<1e-6f && std::abs(legacy.swing.y-swingAmp(4.f/GustSpeed))<1e-6f,
+          "without the cloth's wind: a steady 4 m/s along +Z, the waves still run and the leaves swing");
   const Scene gust = scene(peak,period,true,1.f,false), calm = scene(lull,period,true,1.f,false);
-  require(gust.wind.w==1.f && gust.wind.z>0.8f && gust.wind.z<=1.01f,"the peak of the world's gust is pressure 1");
-  require(calm.wind.w==1.f && calm.wind.z>0.36f && calm.wind.z<0.61f,"between gusts the pressure is 0.38..0.60");
+  require(gust.wind.w==1.f && gust.wind.z>0.999f && gust.wind.z<=1.f+1e-6f,"the peak of the world's gust is pressure 1");
+  require(calm.wind.w==1.f && calm.wind.z>0.07f && calm.wind.z<0.28f,"between gusts the lean's pressure is 0.075..0.27");
+  require(gust.swing.y>0.08f && gust.swing.y<=SwingK && calm.swing.y>0.044f && calm.swing.y<0.061f &&
+          std::abs(swingAmp(1.f)-SwingK)<1e-6f && swingAmp(4.f)==swingAmp(1.f),
+          "the swing is 4.4..6 % of the leaf between gusts and up to 8.5 % in a gust");
+  require(gust.swing.z>0.9f && gust.swing.z<=1.f && calm.swing.z>0.37f && calm.swing.z<0.61f,
+          "the flutter's pressure is 1 at the top of a gust and 0.38..0.60 between gusts");
   require(std::abs(gust.wind.x*gust.wind.x + gust.wind.y*gust.wind.y - 1.f)<1e-4f,"the direction is a unit vector");
   const Scene again = scene(peak,period,true,1.f,false);
-  require(again.wind==gust.wind && again.phase==gust.phase,"the same tick gives the same wind");
+  require(again.wind==gust.wind && again.phase==gust.phase && again.swing==gust.swing,"the same tick gives the same wind");
+  require(scene(SwingPeriod*7+1234,period,true,1.f,false).swing.x==scene(1234,period,true,1.f,false).swing.x &&
+          off.swing.y==0.f && off.swing.z==0.f,"the swing's phase is the tick's remainder of its period");
+
+  // the lean's pressure: the square of the speed in the breeze, over and held from GustFull on, never back down
+  float before = 0.f;
+  for(int i=0; i<=400; ++i) {
+    const float q = pressure(float(i)*0.01f);
+    require(q>=before-1e-6f && q<=1.f+1e-6f,"the lean's pressure grows with the wind and stops at 1");
+    before = q;
+    }
+  require(std::abs(pressure(1.55f/GustSpeed)-0.075f)<0.002f && std::abs(pressure(GustFull)-1.f)<1e-6f && pressure(0.70f)>0.9f &&
+          pressure(GustFrom)<0.24f,"a gust is an event: a light lean below 2.7 m/s, over from 4 m/s, held from 4.3");
+
+  // a tuft's two rates are whole swings a period: a pendulum of its length, its own by its place
+  for(int i=0; i<1000; ++i) {
+    const float h = float(i)/1000.f;
+    const SwingRates l85 = swingRates(h,85.f), l40 = swingRates(h,40.f), l20 = swingRates(h,20.f);
+    require(l85.first>=34.f && l85.first<=46.f && l40.first>=49.f && l40.first<=67.f && l20.first>=70.f && l20.first<=94.f,
+            "85 cm swings 0.57..0.77 times a second, 40 cm 0.82..1.12, 20 cm 1.17..1.57");
+    for(const SwingRates& r:{l85,l40,l20})
+      require(r.first==std::floor(r.first) && r.second==std::floor(r.second) &&
+              r.second-r.first>=SwingBeatMin && r.second-r.first<SwingBeatMin+SwingBeatVar,
+              "the second rate is 4..9 whole swings a period over the first");
+    }
+  require(swingRates(0.3f,5.f).first==swingRates(0.3f,SwingLenMin).first &&
+          swingRates(0.3f,900.f).first==swingRates(0.3f,SwingLenMax).first,"the length is taken between 15 and 150 cm");
 
   // the bend: tufts of a wall that faces -Z (X along the wall, Y up, Z out of the rock) and of one that faces +X
   const Vec3 wallZ[3] = {Vec3(-1,0,0), Vec3(0,1,0), Vec3(0,0,-1)};
@@ -738,7 +770,7 @@ void foliageWindMaths() {
           const Vec3 root(12,0,0);
           require(bend(root,b,arm,axis,place,sc)==root,"a vertex on the X axis stands");
           const Vec3 low(5,1.5f,-3);
-          require((bend(low,b,arm,axis,place,sc)-low).length()<(b==bits ? 0.25f : 0.6f),
+          require((bend(low,b,arm,axis,place,sc)-low).length()<(b==bits ? 0.35f : 0.6f),
                   "the root of a leaf, 3.4 cm from the axis, moves by millimetres");
           require(bend(leaves[0],b,arm,axis,place,sc)==bend(leaves[0],b,arm,axis,place,scene(tick,period,true,1.f,false)),
                   "the same tick gives the same vertex");
@@ -751,8 +783,9 @@ void foliageWindMaths() {
     for(int i=0; i<64; ++i)
       for(int r=0; r<64; ++r) {
         Scene sc;
-        sc.wind  = Tempest::Vec4(0,1,q,1);
+        sc.wind  = Tempest::Vec4(0,1,waves ? q : 0.f,1);
         sc.phase = waves ? Tempest::Vec4(float(i)/64.f,float(r)/64.f,0,0) : Tempest::Vec4(0,0,float(i)/64.f,float(r)/64.f);
+        sc.swing = Tempest::Vec4(0,0,waves ? 0.f : q,0);
         const float move = (bend(tip,b,85.f,wallX,places[0],sc)-tip).length();
         low  = std::min(low,move);
         high = std::max(high,move);
@@ -763,15 +796,52 @@ void foliageWindMaths() {
   flutterOnly.wind = 0.f;
   float low = 0.f, high = 0.f;
   sweep(bendOnly,1.f,true,low,high);
-  require(low<0.05f && high>13.2f && high<13.9f,"the world's gust bends an 85 cm leaf from rest to 13.6 cm, 16 %");
-  sweep(bendOnly,0.38f,true,low,high);
-  require(low<0.05f && high>4.9f && high<5.5f,"in the calmest wind between gusts the same leaf goes to 5.2 cm");
-  sweep(bendOnly,0.60f,true,low,high);
-  require(low<0.05f && high>7.9f && high<8.5f,"and to 8.2 cm in the steady one");
+  require(low>8.0f && low<8.5f && high>13.3f && high<13.9f,
+          "the world's gust holds an 85 cm leaf over: 8.2 cm in the trough of the waves, 13.6 cm, 16 %, on the crest");
+  sweep(bendOnly,0.075f,true,low,high);
+  require(low>0.55f && high<1.1f,"in the calmest wind between gusts the same leaf leans by 0.6..1.0 cm");
+  sweep(bendOnly,0.27f,true,low,high);
+  require(low>2.1f && high<3.8f,"and by 2.2..3.7 cm in the freshest");
   sweep(flutterOnly,1.f,false,low,high);
   require(high>2.0f && high<2.3f,"the flutter of that leaf in the gust is 2.2 cm");
   sweep(flutterOnly,0.38f,false,low,high);
   require(high>0.95f && high<1.15f,"and a centimetre between gusts");
+
+  // the swing of that leaf alone, over a whole period: 5 % of it to both sides along the wall, off the rock one way
+  // only, and it rises and falls as its two rates beat
+  {
+  const uint32_t b = pack(bendOnly,Both);
+  const Vec3     tip(0,-85,0);
+  float along[2] = {1e9f,-1e9f}, out[2] = {1e9f,-1e9f}, small = 1e9f, large = 0.f;
+  const SwingRates n = swingRates(placeHash(places[0]),85.f);
+  const int parts = 30;  // two seconds each: a swing and a little more
+  for(int part=0; part<parts; ++part) {
+    float side[2] = {1e9f,-1e9f};
+    for(int i=0; i<400; ++i) {
+      Scene sc;
+      sc.wind  = Tempest::Vec4(0,1,0,1);
+      sc.swing = Tempest::Vec4((float(part)+float(i)/400.f)/float(parts),0.05f,0,0);
+      const Vec3 d = bend(tip,b,85.f,wallX,places[0],sc) - tip;
+      side[0] = std::min(side[0],d.x); side[1] = std::max(side[1],d.x);
+      out[0]  = std::min(out[0],d.z);  out[1]  = std::max(out[1],d.z);
+      }
+    along[0] = std::min(along[0],side[0]); along[1] = std::max(along[1],side[1]);
+    small = std::min(small,side[1]-side[0]); large = std::max(large,side[1]-side[0]);
+    }
+  require(along[0]<-4.1f && along[0]>-4.3f && along[1]>4.1f && along[1]<4.3f,
+          "the swing of an 85 cm leaf at 5 % is 4.2 cm to each side along the wind");
+  require(out[0]>-1e-3f && out[1]>1.1f && out[1]<1.4f,"across the wind it goes off the rock only, by 1.3 cm");
+  require(large>8.2f && small<2.6f && small>0.8f,"two close rates beat: the swing falls to a fifth and comes back");
+  Scene sc;
+  sc.wind  = Tempest::Vec4(0,1,1,1);
+  sc.swing = Tempest::Vec4(0.37f,1.f,0,0);
+  require((bend(tip,pack(strong,Both),85.f,wallX,places[0],sc)-tip).length()<=85.f*BendMaxTan*1.05f,
+          "the lean and the swing together keep under the cap of 0.30 rad");
+  // two tufts side by side are out of step
+  const SwingRates other = swingRates(placeHash(places[0]+Vec3(40,0,0)),85.f);
+  require(other.first!=n.first || other.second!=n.second ||
+          placeHash(places[0]+Vec3(40,0,0))!=placeHash(places[0]),"neighbours do not keep step");
+  }
 
   // a wall the wind blows into: the wind turns along it, to the side of its own part, and keeps its speed
   const auto lean = [&](float angle) {

@@ -234,8 +234,10 @@ void SceneGlobals::setTime(uint64_t time) {
   const bool next = foliageTick!=uint64_t(-1) && time>=foliageTick && time-foliageTick<1000;
   uboGlobalCpu.foliageWindPrev  = next ? uboGlobalCpu.foliageWind  : wind.wind;
   uboGlobalCpu.foliagePhasePrev = next ? uboGlobalCpu.foliagePhase : wind.phase;
+  uboGlobalCpu.foliageSwingPrev = next ? uboGlobalCpu.foliageSwing : wind.swing;
   uboGlobalCpu.foliageWind      = wind.wind;
   uboGlobalCpu.foliagePhase     = wind.phase;
+  uboGlobalCpu.foliageSwing     = wind.swing;
   foliageTick                   = time;
   }
 
