@@ -12,6 +12,7 @@
 
 #include <Jolt/Jolt.h>
 #include <Jolt/Physics/PhysicsSystem.h>
+#include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 
 #include <zenkit/ModelHierarchy.hh>
@@ -33,6 +34,18 @@ zenkit::ModelHierarchy ragdollContractHierarchy();
 class RagdollBraceContract final {
   public:
     static void zeroGravity(CollisionWorld& world) { world.physicsSystem().SetGravity(JPH::Vec3::sZero()); }
+    // World bounds of all ragdoll parts together, metres.
+    static JPH::AABox ragdollBounds(CollisionWorld& world) {
+      JPH::BodyIDVector ids;
+      world.physicsSystem().GetBodies(ids);
+      JPH::AABox result;
+      for(const auto id:ids) {
+        JPH::BodyLockRead lock(world.physicsSystem().GetBodyLockInterface(),id);
+        if(lock.Succeeded() && lock.GetBody().GetObjectLayer()==DynamicWorld::C_Ragdoll)
+          result.Encapsulate(lock.GetBody().GetWorldSpaceBounds());
+        }
+      return result;
+      }
   };
 
 namespace {
@@ -226,7 +239,8 @@ void testForwardFall() {
               double(with.handMs[0]),double(with.handMs[1]),double(with.torsoMs),double(with.elbowDeg[0]),double(with.elbowDeg[1]),
               double(with.headImpact),double(with.handDepthCm),double(without.handMs[0]),double(without.handMs[1]),
               double(without.torsoMs),double(without.headImpact));
-  require(first(with)>=0.f && (with.torsoMs<0.f || first(with)<with.torsoMs),"with the pose a hand touches the ground before the trunk");
+  require(with.torsoMs>=0.f,"with the pose the trunk still lands: its touch must be seen");
+  require(first(with)>=0.f && first(with)<with.torsoMs,"with the pose a hand touches the ground before the trunk");
   require(without.torsoMs>=0.f && (first(without)<0.f || without.torsoMs<=first(without)),
           "the same throw without a pose lands the trunk no later than a hand");
   }
@@ -274,7 +288,34 @@ void testYieldAfterTouch() {
   require(rightAfter<1.f,"after 0.7 s an untouched arm gives way too");
   }
 
-void testDeathEndsBrace() {
+void testGapIsNoTouch() {
+  // A still body 1 cm short of a wall at each fingertip: Jolt reports speculative contacts
+  // there, but surfaces that stay apart are no touch.
+  Human human;
+  CollisionWorld world;
+  RagdollBraceContract::zeroGravity(world);
+  auto body=human.create(world,at(0,300,0));
+  require(body->brace(Kind::None,nullptr,0,RagdollBrace::Profile{}),"the gap case measures only");
+  const auto bounds=RagdollBraceContract::ragdollBounds(world);
+  const auto c=bounds.GetCenter();
+  auto left =world.addCollisionBody(new JPH::BoxShape(JPH::Vec3(.05f,2,2)),at((bounds.mMin.GetX()-.06f)*100.f,c.GetY()*100.f,c.GetZ()*100.f),.75f,DynamicWorld::C_Landscape);
+  auto right=world.addCollisionBody(new JPH::BoxShape(JPH::Vec3(.05f,2,2)),at((bounds.mMax.GetX()+.06f)*100.f,c.GetY()*100.f,c.GetZ()*100.f),.75f,DynamicWorld::C_Landscape);
+  for(int frame=0;frame<6;++frame)
+    world.tick(17);
+  RagdollBrace::Report report;
+  require(body->braceReport(report),"the measures must last");
+  const auto after=RagdollBraceContract::ragdollBounds(world);
+  std::printf("ragdoll brace 1 cm gap: span %.4f -> %.4f m, arm_ms=%.0f/%.0f hand_ms=%.0f/%.0f\n",
+              double(bounds.GetSize().GetX()),double(after.GetSize().GetX()),double(report.armMs[0]),double(report.armMs[1]),
+              double(report.handMs[0]),double(report.handMs[1]));
+  require(std::abs(after.GetSize().GetX()-bounds.GetSize().GetX())<.002f,"the still body keeps its gaps");
+  require(report.armMs[0]<0.f && report.armMs[1]<0.f && report.handMs[0]<0.f && report.handMs[1]<0.f,
+          "a speculative contact of surfaces 1 cm apart is no touch");
+  }
+
+// The physics half of "death ends the protection": Npc::onNoHealth calls endBrace through
+// Npc::finishRagdollBrace; this contract has no Npc, so it ends the brace itself.
+void testEndBraceRestoresFade() {
   Human human;
   CollisionWorld world,control;
   auto floor=ground(world),controlFloor=ground(control);
@@ -282,7 +323,7 @@ void testDeathEndsBrace() {
   const auto birth=world.simulationStep();
   body->knockOff({0,0,1},30.f); reference->knockOff({0,0,1},30.f);
   const auto pose=human.armsForward();
-  require(body->brace(Kind::Front,pose.data(),pose.size(),RagdollBrace::Profile{}),"the death case needs an accepted pose");
+  require(body->brace(Kind::Front,pose.data(),pose.size(),RagdollBrace::Profile{}),"the end case needs an accepted pose");
   for(int frame=0;float(world.simulationStep()-birth)/60.f<.2f;++frame) {
     tick(world,frame,birth);
     tick(control,frame,birth);
@@ -292,15 +333,15 @@ void testDeathEndsBrace() {
   require(probe(braced,LUpper).torqueLimit!=probe(reference->motorProbes(),LUpper).torqueLimit,"the braced arm differs from the fade");
   body->endBrace();
   RagdollBrace::Report report;
-  require(!body->braceReport(report),"death ends the protection");
+  require(!body->braceReport(report),"endBrace ends the protection");
   world.tick(17); control.tick(17);
   const auto a=body->motorProbes(), b=reference->motorProbes();
   require(a.size()==b.size() && !a.empty(),"both bodies have the same motors");
   for(size_t i=0;i<a.size();++i)
     require(a[i].bone==b[i].bone && a[i].on==b[i].on && std::memcmp(&a[i].torqueLimit,&b[i].torqueLimit,sizeof(float))==0 &&
             std::memcmp(&a[i].target,&b[i].target,sizeof(a[i].target))==0,
-            "the step after death drives the ordinary fade: the same targets and limits as a body never braced");
-  std::printf("ragdoll brace death: %zu motors equal the ordinary fade in the next step\n",a.size());
+            "the step after endBrace drives the ordinary fade: the same targets and limits as a body never braced");
+  std::printf("ragdoll brace end: %zu motors equal the ordinary fade in the next step\n",a.size());
   }
 
 void testClampedTarget() {
@@ -315,16 +356,22 @@ void testClampedTarget() {
   RagdollBrace::Report report;
   require(body->braceReport(report),"the clamp must be reported");
   const float clamp=probe(body->motorProbes(),LFore).clampDeg;
+  // Every step of the way into the pose, not only its end: the motors get only targets inside the limits.
   float request=0;
-  for(int frame=0;tick(world,frame,birth)<.35f;++frame) {}
-  for(const auto& p:body->motorProbes())
-    request=std::max(request,p.requestDeg);
-  std::printf("ragdoll brace clamp: max %.3f deg at %s (forearm %.3f), largest target the limits moved after entry %.5f deg\n",
+  const auto worst=[&] { for(const auto& p:body->motorProbes()) request=std::max(request,p.requestDeg); };
+  worst();
+  for(int frame=0;tick(world,frame,birth)<.35f;++frame)
+    worst();
+  std::printf("ragdoll brace clamp: max %.3f deg at %s (forearm %.3f), largest target the limits moved on any step %.5f deg\n",
               double(report.clampMaxDeg),report.clampBone.c_str(),double(clamp),double(request));
   require(report.clampBone=="BIP01 L FOREARM" && std::abs(clamp-25.f)<1.f && std::abs(report.clampMaxDeg-clamp)<1.e-4f,
           "a target past the elbow's range is clamped to it once, by the excess");
   require(request<.05f,"the motors never receive a target outside their joint limits");
   }
+
+// The unbraced fall below on main before the brace code (merge base ce07b507b, Mac and Linux):
+// an independent reference. A deliberate change of the knock-off fall updates it.
+constexpr uint64_t mainFallDigest=0xae473cf18cd65887ull;
 
 uint64_t digest(const Ragdoll::State& state) {
   uint64_t hash=1469598103934665603ull;
@@ -357,6 +404,7 @@ void testUnbracedUnchanged() {
     }
   std::printf("ragdoll brace unbraced fall digest=%016llx measured=%016llx refused=%016llx\n",
               (unsigned long long)hashes[0],(unsigned long long)hashes[1],(unsigned long long)hashes[2]);
+  require(hashes[0]==mainFallDigest,"a fall without a pose is bit for bit the fall of the code before the brace");
   require(hashes[0]==hashes[1] && hashes[0]==hashes[2],"measuring or refusing a pose must not change the fall by one bit");
   }
 
@@ -416,7 +464,8 @@ void testFallBrace() {
   testReachWithoutGravity();
   testForwardFall();
   testYieldAfterTouch();
-  testDeathEndsBrace();
+  testGapIsNoTouch();
+  testEndBraceRestoresFade();
   testClampedTarget();
   testUnbracedUnchanged();
   testAuthoredPoses();

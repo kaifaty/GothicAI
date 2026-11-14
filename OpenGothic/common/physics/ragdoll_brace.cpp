@@ -16,10 +16,11 @@ namespace {
     return name.find(part)!=std::string_view::npos;
     }
 
-  // Angle between two orientations, either sign of the quaternion.
+  // Angle between two orientations, either sign of the quaternion. atan2 of the relative
+  // rotation, not acos of a dot product: that one cannot tell 0.04 degrees from 0 in float.
   float angleDeg(JPH::QuatArg a, JPH::QuatArg b) {
-    const float dot=std::min(1.f,std::abs(a.Normalized().Dot(b.Normalized())));
-    return 2.f*std::acos(dot)*degrees;
+    const auto r=a.Normalized().Conjugated()*b.Normalized();
+    return 2.f*std::atan2(r.GetXYZ().Length(),std::abs(r.GetW()))*degrees;
     }
 
   void raise(std::atomic<uint32_t>& value, uint32_t candidate) {
@@ -301,8 +302,11 @@ std::vector<MotorProbe> probes(const JPH::Ragdoll& native, const std::vector<siz
     MotorProbe probe;
     probe.bone=uint32_t(bones[i]);
     probe.massKg=settings->mParts[i].mMassPropertiesOverride.mMass;
-    probe.on=joint.GetSwingMotorState()==JPH::EMotorState::Position;
-    probe.torqueLimit=probe.on ? joint.GetSwingMotorSettings().mMaxTorqueLimit : 0.f;
+    const bool swing=joint.GetSwingMotorState()==JPH::EMotorState::Position;
+    const bool twist=joint.GetTwistMotorState()==JPH::EMotorState::Position;
+    probe.on=swing || twist;
+    probe.torqueLimit=std::max(swing ? joint.GetSwingMotorSettings().mMaxTorqueLimit : 0.f,
+                               twist ? joint.GetTwistMotorSettings().mMaxTorqueLimit : 0.f);
     const auto target=joint.GetTargetOrientationCS();
     probe.target={target.GetX(),target.GetY(),target.GetZ(),target.GetW()};
     probe.errorDeg=angleDeg(joint.GetRotationInConstraintSpace(),target);

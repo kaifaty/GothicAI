@@ -29,6 +29,11 @@ void CollisionWorld::Impl::markBraceContact(const JPH::Body& a, const JPH::Body&
           approach=std::max(approach,(a.GetPointVelocity(point)-b.GetPointVelocity(point)).Dot(manifold.mWorldSpaceNormal));
           }
         }
+      // A speculative contact (negative depth) of surfaces still apart is a touch only if
+      // they close within this native step: a hand passing a centimetre from a table is not.
+      constexpr float step=1.f/60.f; // CollisionWorld::tick
+      if(manifold.mPenetrationDepth<0.f && approach*step< -manifold.mPenetrationDepth)
+        return;
       contacts->mark(part->GetCollisionGroup().GetSubGroupID(),manifold.mPenetrationDepth,approach);
       break;
       }

@@ -72,12 +72,12 @@ struct Report final {
 struct MotorProbe final {
   uint32_t      bone = 0;
   float         massKg = 0;
-  float         torqueLimit = 0;   // N*m; zero while the motor is off
+  float         torqueLimit = 0;   // N*m, the larger of the swing and twist motors; zero while both are off
   float         errorDeg = 0;      // the joint's rotation from its motor target
   float         requestDeg = 0;    // how far the limits moved the brace's latest target (0 without a brace)
   float         clampDeg = 0;      // how far the limits moved the pose target when it was accepted
   Tempest::Vec4 target;            // constraint-space target quaternion, xyzw
-  bool          on = false;
+  bool          on = false;        // the swing or the twist motor drives
   };
 
 // Touches written by the contact listener of the physics workers: no allocation, no lock.
