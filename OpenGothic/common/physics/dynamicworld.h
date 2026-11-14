@@ -104,6 +104,10 @@ class DynamicWorld final {
     DynamicWorld(const DynamicWorld&)=delete;
     ~DynamicWorld();
 
+    // The native world of these bodies: a program's own walking character (CollisionWorld::createVirtualCharacter)
+    // moves among them. The game's characters go through NpcItem instead.
+    CollisionWorld& collision() { return *world; }
+
     enum Category {
       C_Null      = 1,
       C_Landscape = 2,
