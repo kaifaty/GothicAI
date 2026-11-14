@@ -556,7 +556,7 @@ bool GameScript::npc_checkinfo(std::shared_ptr<daedalus::INpc> npcRef, int imp) 
     }
   if(Gothic::inst().dialogExtraFn) {
     std::vector<DlgChoice> extra;
-    Gothic::inst().dialogExtraFn(*npcRef,imp!=0,extra);
+    Gothic::inst().dialogExtraFn(static_cast<const daedalus::INpc&>(n->handle()),imp!=0,extra);
     return !extra.empty();
     }
   return false;
