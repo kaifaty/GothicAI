@@ -53,6 +53,13 @@ struct SceneDesc {
   uint  viewFlags;       // VF_* below: the occluder pass, TAA, shadow views
   float fogSkyVis;       // the sky seen from the camera under GI, 0..1 (fog_sky_vis.comp); 1 without it
   float lampNearKnee;    // a lamp's light never passes this many times its light at the range (light.frag); 0 off
+  // living foliage (materials/foliage_wind.glsl): the world's wind of this frame and of the previous one
+  vec4  foliageWind;      // xy: its direction in the world's x and z; z: the lean's pressure; w: 1 when it blows
+  vec4  foliagePhase;     // 0..1 of the periods of the two waves and the two flutters
+  vec4  foliageWindPrev;
+  vec4  foliagePhasePrev;
+  vec4  foliageSwing;     // x: 0..1 of the swing's period; y: the swing as a share of the arm; z: the flutter's pressure
+  vec4  foliageSwingPrev;
   };
 
 // bench `vsm study <bits>`: the shadow test on a mesh's facets (reports/render-features/2026-11-11-facet-shards)
@@ -123,6 +130,7 @@ const uint BK_STRAND = 0x800; // strands: the vertex shader makes ribbons of the
 const uint BK_EYE = 0x1000; // an eyeball: the lid's shade from the face rig, the eye bit into the G-buffer (main.frag)
 const uint BK_PROJECTION = 0x2000; // maps by world position, uvScale: repeats per cm (material_projection.glsl)
 const uint BK_FRINGE = 0x4000; // grass over the projection where the mesh's v says (material_projection.glsl)
+const uint BK_FOLIAGE = 0x8000; // leaves: the wind moves the vertices (foliage_wind.glsl), the sun shines through (main.frag)
 
 // Strands in a shadow view: the first part of the list casts the shadow for all of it (the meshlets are dealt out
 // evenly, groommesh.cpp), each strand as wide as that part is small (strandShadowRibbon, vertex_process.glsl).
@@ -153,7 +161,8 @@ struct Bucket {
   uint  fringeTex;   // BK_FRINGE: its maps' index in the bindless arrays
   float fringeScale; // its repeats per repeat of the projection
   float fringeTop0, fringeTop1, fringeBottom0, fringeBottom1; // shares of v: solid to the first, tufts to the second
-  float padding0, padding1;
+  uint  foliage;     // BK_FOLIAGE: 8 bits each of wind, flutter, translucency, anchor (FoliageWind::pack)
+  float foliageReach; // the largest arm of its mesh at rest, from the X axis; bbox is grown by the leaves' travel
   };
 
 #endif

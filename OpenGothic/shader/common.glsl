@@ -175,6 +175,23 @@ bool isGBufEye(float v) {
   return (x & GBufEyeBit)!=0;
   }
 
+// Leaves (reports/engine/2026-11-14-living-foliage): bit 6 of the hint bits. Such a pixel keeps in gbufOrm.b, in
+// place of metal (a leaf has none), the share of the sun it lets through; r, g and a = 1 as any own material. The
+// sun reads it (direct_light.frag, lighting/foliage_light.glsl); every other reader of metal takes gbufOrmMaterial
+const int GBufFoliageBit = 1 << 6;
+
+bool isGBufFoliage(float v) {
+  int x = int(v*255+0.5);
+  return (x & GBufFoliageBit)!=0;
+  }
+
+// gbufOrm as the material's AO, roughness and metal: a leaf has no metal
+vec4 gbufOrmMaterial(vec4 orm, float hint) {
+  if(orm.a>0.5 && isGBufFoliage(hint))
+    orm.b = 0.0;
+  return orm;
+  }
+
 // The lid's shade of an eyeball whose rig has none (no face rig, a head without eyes.lid_shade): the mean over the
 // open part of the test heads' eyes (0.65..0.73), not 0 and not 1
 const float EyeLidFar = 0.7;

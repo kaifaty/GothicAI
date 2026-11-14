@@ -24,3 +24,14 @@ wait 8000
 perf stop
 shot road-3
 wait 200
+# The grass tufts of the ledge right at the camera, the view `ledge-near` of the same scenario: what living foliage
+# costs where its leaves fill the frame (reports/engine/2026-11-14-living-foliage); off with OPENGOTHIC_FOLIAGE=0
+goto pos 35110 3829 429
+clear 3000
+cam at 34800 3990 900 34800 4040 1390
+wait 20000
+perf sample perf-rock/view-2
+wait 8000
+perf stop
+shot ledge-near
+wait 200

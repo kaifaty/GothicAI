@@ -94,6 +94,7 @@ Material::Material(const asset::Material& m, bool enableAlphaTest, bool requireA
     hair = maps.hair || maps.strand;
     strand = maps.strand;
     eye = maps.eye;
+    foliage = maps.foliage;
     // OPENGOTHIC_EYE_SHADER=0: the eye as before the eye shader, Lambert of its colour; its roughness map is the
     // eye shader's
     if(eye && !eyeShaderEnabled())
@@ -152,6 +153,7 @@ bool Material::operator ==(const Material& other) const {
          hair==other.hair &&
          strand==other.strand &&
          eye==other.eye &&
+         foliage==other.foliage &&
          envMapping==other.envMapping;
   }
 

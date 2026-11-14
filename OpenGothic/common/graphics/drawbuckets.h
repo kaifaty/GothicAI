@@ -80,6 +80,7 @@ class DrawBuckets {
       BK_EYE = 0x1000,
       BK_PROJECTION = 0x2000,
       BK_FRINGE = 0x4000,
+      BK_FOLIAGE = 0x8000,
       };
 
     struct BucketGpu final {
@@ -108,8 +109,8 @@ class DrawBuckets {
       float          fringeTop1       = 0.f;
       float          fringeBottom0    = 0.f;
       float          fringeBottom1    = 0.f;
-      float          padding0         = 0.f;
-      float          padding1         = 0.f;
+      uint32_t       foliage          = 0;   // BK_FOLIAGE: FoliageWind::pack of Material::foliage
+      float          foliageReach     = 0.f; // the largest arm of its mesh at rest (FoliageWind::reach)
       };
     static_assert(sizeof(BucketGpu)==128); // GPU array stride of Bucket in scene.glsl
 

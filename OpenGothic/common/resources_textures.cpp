@@ -309,6 +309,34 @@ void Resources::indexMaterialMaps() {
       else
         maps.fringe.tile = float(tile);
       }
+    // Living foliage (reports/engine/2026-11-14-living-foliage): the wind moves the mesh's vertices about its X axis
+    // and the low sun shines through (graphics/foliagewind.h). {} takes the defaults; a wrong value drops the record
+    if(const auto foliage = entry.value.FindMember("foliage"); foliage!=entry.value.MemberEnd()) {
+      const auto& value = foliage->value;
+      FoliageWind::Params p;
+      p.on = true;
+      auto number = [&](const char* field, float& out, double max) {
+        const auto it = value.FindMember(field);
+        if(it==value.MemberEnd())
+          return true;
+        if(!it->value.IsNumber())
+          return false;
+        const double v = it->value.GetDouble();
+        if(!(v>=0) || !(v<=max))
+          return false;
+        out = float(v);
+        return true;
+        };
+      bool ok = value.IsObject();
+      if(ok)
+        if(const auto it = value.FindMember("anchor"); it!=value.MemberEnd())
+          ok = it->value.IsString() && std::string_view(it->value.GetString())=="line";
+      if(!ok || !number("wind",p.wind,FoliageWind::MaxScale) || !number("flutter",p.flutter,FoliageWind::MaxScale) ||
+         !number("translucency",p.translucency,1.0))
+        valid = false;
+      else
+        maps.foliage = p;
+      }
     if(!valid) {
       Log::e("materials: invalid entry \"",entry.name.GetString(),"\"");
       continue;
@@ -1330,6 +1358,7 @@ Resources::MaterialMaps Resources::loadMaterialMaps(std::string_view name) {
   ret.hair = files.hair;
   ret.strand = files.strand;
   ret.eye = files.eye;
+  ret.foliage = files.foliage;
   ret.present = true;
   ret.hasAlbedo = !files.albedo.empty();
   return ret;

@@ -6,6 +6,7 @@
 #include "graphics/dynamic/frustrum.h"
 #include "rtscene.h"
 #include "resources.h"
+#include "graphics/foliagewind.h"
 
 class Sky;
 class WorldView;
@@ -172,6 +173,14 @@ class SceneGlobals final {
       uint32_t                        viewFlags       = 0; // VF_* of scene.glsl: VF_HIZ in V_HiZ only (commitUbo), VF_TAA
       float                           fogSkyVis       = 1; // the sky seen from the camera under GI (fog_sky_vis.comp)
       float                           lampNearKnee    = 0; // lamps: the limit of the light near a lamp (light.frag), 0 off
+      float                           foliagePadding[2] = {}; // std140: the vectors below start at 16 bytes
+      // living foliage (graphics/foliagewind.h): the world's wind of this frame and of the previous one (setTime)
+      Tempest::Vec4                   foliageWind;
+      Tempest::Vec4                   foliagePhase;
+      Tempest::Vec4                   foliageWindPrev;
+      Tempest::Vec4                   foliagePhasePrev;
+      Tempest::Vec4                   foliageSwing;
+      Tempest::Vec4                   foliageSwingPrev;
       };
 
     Tempest::UniformBuffer<UboGlobal> uboGlobalPf[Resources::MaxFramesInFlight][V_Count];
@@ -183,6 +192,7 @@ class SceneGlobals final {
     bool                              legacyWind = true;
     float                             windScale = 1.f;
     uint64_t                          windPeriod = 6000;
+    uint64_t                          foliageTick = uint64_t(-1); // the tick of the last setTime (the previous frame's wind)
 
     RtScene                           rtScene;
 

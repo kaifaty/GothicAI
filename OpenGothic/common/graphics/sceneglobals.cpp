@@ -227,6 +227,18 @@ void SceneGlobals::setTime(uint64_t time) {
   uboGlobalCpu.waveAnim    = 2.f*float(M_PI)*float(tickCount%3000)/3000.f;
   uboGlobalCpu.tickCount32 = uint32_t(tickCount);
 
+  // Living foliage: the wind of this tick, and the one the previous frame was drawn with for the motion vectors.
+  // A frame at the same tick (a pause) gets both alike; so does the first frame and one after a jump of the clock
+  static_assert(offsetof(UboGlobal, foliageWind)%16==0, "std140: a vec4 starts at 16 bytes");
+  const auto wind = FoliageWind::scene(tickCount, windPeriod, zWindEnabled, windScale, legacyWind);
+  const bool next = foliageTick!=uint64_t(-1) && time>=foliageTick && time-foliageTick<1000;
+  uboGlobalCpu.foliageWindPrev  = next ? uboGlobalCpu.foliageWind  : wind.wind;
+  uboGlobalCpu.foliagePhasePrev = next ? uboGlobalCpu.foliagePhase : wind.phase;
+  uboGlobalCpu.foliageSwingPrev = next ? uboGlobalCpu.foliageSwing : wind.swing;
+  uboGlobalCpu.foliageWind      = wind.wind;
+  uboGlobalCpu.foliagePhase     = wind.phase;
+  uboGlobalCpu.foliageSwing     = wind.swing;
+  foliageTick                   = time;
   }
 
 void SceneGlobals::commitUbo(uint8_t fId) {

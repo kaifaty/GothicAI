@@ -79,3 +79,58 @@ turn 180
 wait 2500
 shot eve-3
 wait 200
+
+# Living foliage (reports/engine/2026-11-14-living-foliage): the tufts of the same ledge in the world's own wind
+# and against a low sun. Run with OPENGOTHIC_FOLIAGE=0 and without it, put the clips side by side.
+set time 12 0
+goto pos 35110 3829 429
+clear 3000
+streaming wait
+cam at 34800 3990 900 34800 4040 1390
+wait 4000
+# the world's gust: every 19.35 s on the stand. Its peak is 7 s into the clip, its front comes at about 4.5 s
+foliage wait-gust 7000
+rec ledge-wind
+wait 14000
+stop
+# the breeze between two gusts from the 14 m of `ledge`
+cam at 35110 3969 429 35110 4139 1529
+foliage wait-lull 4000
+rec ledge-steady
+wait 8000
+stop
+
+# a walk under the band, west along the foot of the lower wall, through the stretch where the tufts hang densest
+# (x 34500..34900, in the sun at 14:00) and stops at x 34670, before the crown of the fir west of it comes into the
+# frame; the camera follows from behind and to the left, so the band stays in the frame for the whole walk; the
+# swing shows the wind all the way, so the clip is not timed to a gust
+walkmode walk
+goto pos 35400 3640 1100
+clear 3000
+face 180
+cam world 420 300 300
+cam look 250
+streaming wait
+wait 3000
+rec walk-ledge
+wait 800
+press forward
+wait 5000
+release forward
+wait 2200
+stop
+walkmode run
+
+# the sun 15 degrees high behind the tufts of the ledge's upper edge
+set time 20 15
+goto pos 35300 4200 1750
+clear 3000
+streaming wait
+cam at 35398 4739 1945 35565 4812 2194
+wait 8000
+foliage wait-gust 4000
+rec eve-backlit
+wait 8000
+stop
+shot eve-backlit
+wait 200

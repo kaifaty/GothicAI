@@ -537,8 +537,8 @@ void main() {
 
 #if defined(MATERIAL_MAPS)
   // hair cards take the light by the shell term, not by the cosine of the hair's surface (hair_brdf.glsl)
-  const vec4 orm    = texelFetch(gbufOrm, ivec2(gl_FragCoord.xy), 0);
   const float hint   = texelFetch(gbufDiffuse, ivec2(gl_FragCoord.xy), 0).a;
+  const vec4 orm    = gbufOrmMaterial(texelFetch(gbufOrm, ivec2(gl_FragCoord.xy), 0), hint);
   const bool isHair = orm.a>0.5 && isGBufHair(hint);
   const bool isEye  = orm.a>0.5 && isGBufEye(hint);
   float lambert = isHair ? hairShell(-dot(normalize(ldir),normal)) : max(0.0,-dot(normalize(ldir),normal));

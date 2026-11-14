@@ -621,6 +621,255 @@ void fringeRecords(Tempest::Device& device, const Fixture& fixture) {
           "a fringe map that does not load leaves the plain projected material");
   }
 
+// materials.json "foliage": leaves in the wind and the sun through them (reports/engine/2026-11-14-living-foliage)
+void foliageRecords(Tempest::Device& device, const Fixture& fixture) {
+  const auto record = [](std::string_view name, std::string_view foliage) {
+    return "\"" + std::string(name) + R"(":{"albedo":"solid.dds","normal":"alpha.dds","orm":"alpha.dds","foliage":)" +
+           std::string(foliage) + "}";
+    };
+  textFile(fixture.root/"materials/materials.json", "{" +
+    record("LEAF_DEFAULT.TGA", "{}") + "," +
+    record("LEAF_SET.TGA", R"({"wind":1.5,"flutter":0.5,"translucency":0.25,"anchor":"line"})") + "," +
+    record("LEAF_LIMITS.TGA", R"({"wind":4,"flutter":0,"translucency":1})") + "," +
+    record("LEAF_STILL.TGA", R"({"wind":0,"flutter":0,"translucency":0})") + "," +
+    R"("LEAF_NONE.TGA":{"albedo":"solid.dds","normal":"alpha.dds","orm":"alpha.dds"},)" +
+    record("LEAF_NUMBER.TGA", "1") + "," +
+    record("LEAF_TRUE.TGA", "true") + "," +
+    record("LEAF_WIND_TEXT.TGA", R"({"wind":"1"})") + "," +
+    record("LEAF_WIND_ABOVE.TGA", R"({"wind":4.5})") + "," +
+    record("LEAF_WIND_BELOW.TGA", R"({"wind":-0.1})") + "," +
+    record("LEAF_FLUTTER_ABOVE.TGA", R"({"flutter":5})") + "," +
+    record("LEAF_FLUTTER_TEXT.TGA", R"({"flutter":[1]})") + "," +
+    record("LEAF_LIGHT_ABOVE.TGA", R"({"translucency":1.01})") + "," +
+    record("LEAF_LIGHT_BELOW.TGA", R"({"translucency":-1})") + "," +
+    record("LEAF_ANCHOR_OTHER.TGA", R"({"anchor":"root"})") + "," +
+    record("LEAF_ANCHOR_NUMBER.TGA", R"({"anchor":0})") +
+    "}");
+  Resources resources(device);
+  const auto byDefault = Resources::loadMaterialMaps("LEAF_DEFAULT.TGA");
+  require(byDefault.present && byDefault.foliage.on && byDefault.foliage.wind==1.f && byDefault.foliage.flutter==1.f &&
+          byDefault.foliage.translucency==0.6f && byDefault.foliage.anchor==FoliageWind::AnchorLine,
+          "an empty foliage object must take the defaults");
+  const auto set = Resources::loadMaterialMaps("LEAF_SET.TGA").foliage;
+  require(set.on && set.wind==1.5f && set.flutter==0.5f && set.translucency==0.25f && set.anchor==FoliageWind::AnchorLine,
+          "foliage must carry the record's numbers");
+  const auto limits = Resources::loadMaterialMaps("LEAF_LIMITS.TGA").foliage;
+  require(limits.on && limits.wind==4.f && limits.flutter==0.f && limits.translucency==1.f,
+          "both ends of the ranges are allowed");
+  const auto still = Resources::loadMaterialMaps("LEAF_STILL.TGA").foliage;
+  require(still.on && FoliageWind::pack(still,FoliageWind::Both)==0,
+          "foliage of all zeroes is accepted and packs as no foliage");
+  const Material leaf(source("LEAF_SET.TGA"),true);
+  require(leaf.foliage==set && leaf.hasMaterialMaps(),"the material keeps its foliage");
+  const auto none = Resources::loadMaterialMaps("LEAF_NONE.TGA");
+  const Material bare(source("LEAF_NONE.TGA"),true);
+  require(none.present && !none.foliage.on && bare.foliage==FoliageWind::Params() &&
+          FoliageWind::pack(bare.foliage,FoliageWind::Both)==0 &&
+          FoliageWind::travel(bare.foliage,Tempest::Vec3(-50,-80,-10),Tempest::Vec3(50,20,10))==0.f,
+          "a record without the field has no foliage: no bits for its bucket, no growth of its bounds");
+  require(!(bare==Material(source("LEAF_DEFAULT.TGA"),true)),"materials with and without foliage must not share a bucket");
+  for(const auto* name:{"LEAF_NUMBER.TGA","LEAF_TRUE.TGA","LEAF_WIND_TEXT.TGA","LEAF_WIND_ABOVE.TGA",
+                       "LEAF_WIND_BELOW.TGA","LEAF_FLUTTER_ABOVE.TGA","LEAF_FLUTTER_TEXT.TGA","LEAF_LIGHT_ABOVE.TGA",
+                       "LEAF_LIGHT_BELOW.TGA","LEAF_ANCHOR_OTHER.TGA","LEAF_ANCHOR_NUMBER.TGA"})
+    require(!Resources::loadMaterialMaps(name).present,
+            (std::string("foliage of a wrong type, with a number outside its range or with an unknown anchor must "
+                        "reject the record whole: ")+name).c_str());
+  }
+
+// graphics/foliagewind.h: the processor's copy of the rule of shader/materials/foliage_wind.glsl
+void foliageWindMaths() {
+  using namespace FoliageWind;
+  using Tempest::Vec3;
+  Params p;
+  require(pack(p,Both)==0 && travel(p,Vec3(-1,-1,-1),Vec3(1,1,1))==0.f,"foliage that is off packs as nothing");
+  p.on = true;
+  const uint32_t bits = pack(p,Both);
+  require(std::abs(packedWind(bits)-1.f)<0.01f && std::abs(packedFlutter(bits)-1.f)<0.01f &&
+          ((bits>>16)&0xFFu)==153u && (bits>>24)==uint32_t(AnchorLine) && moves(bits),
+          "the defaults pack as wind 1, flutter 1, translucency 0.6");
+  require(!moves(pack(p,Light)) && ((pack(p,Light)>>16)&0xFFu)==153u,"the light half alone moves nothing");
+  require(moves(pack(p,Wind)) && ((pack(p,Wind)>>16)&0xFFu)==0u,"the wind half alone lets no sun through");
+  require(pack(p,0)==0,"both halves off: no foliage");
+  Params strong = p;
+  strong.wind = 4.f; strong.flutter = 4.f;
+  require(packedWind(pack(strong,Both))==4.f && packedFlutter(pack(strong,Both))==4.f,"the top of the range packs exactly");
+
+  // the scene's wind
+  const uint64_t period = 10000;
+  const double   cycle  = double(period)/0.31;
+  const uint64_t peak = uint64_t(cycle*0.25), lull = uint64_t(cycle*0.75);
+  const Scene off = scene(peak,period,false,1.f,false);
+  require(off.wind.w==0.f && off.wind.z==0.f,"no wind in the world: nothing blows");
+  const Scene legacy = scene(3000,period,true,1.f,true);
+  require(legacy.wind.w==1.f && legacy.wind.x==0.f && legacy.wind.y==1.f &&
+          std::abs(legacy.wind.z-pressure(4.f/GustSpeed))<1e-5f && legacy.phase.x==0.5f &&
+          std::abs(legacy.swing.x-0.05f)<1e-6f && std::abs(legacy.swing.y-swingAmp(4.f/GustSpeed))<1e-6f,
+          "without the cloth's wind: a steady 4 m/s along +Z, the waves still run and the leaves swing");
+  const Scene gust = scene(peak,period,true,1.f,false), calm = scene(lull,period,true,1.f,false);
+  require(gust.wind.w==1.f && gust.wind.z>0.999f && gust.wind.z<=1.f+1e-6f,"the peak of the world's gust is pressure 1");
+  require(calm.wind.w==1.f && calm.wind.z>0.07f && calm.wind.z<0.28f,"between gusts the lean's pressure is 0.075..0.27");
+  require(std::abs(gust.swing.y-SwingTop)<1e-6f && calm.swing.y>0.044f && calm.swing.y<0.061f &&
+          std::abs(swingAmp(1.f)-SwingTop)<1e-6f && swingAmp(4.f)==swingAmp(1.f) && swingAmp(0.f)==0.f &&
+          std::abs(swingAmp(0.504f)-0.0603f)<2e-4f && swingAmp(0.59f)==SwingTop &&
+          BendK*(WaveSteady-WaveSwing)-SwingTop>0.05f,
+          "the swing is 4.4..6 % of the leaf between gusts and 6.5 % in a gust, half of the lean it rides on");
+  require(gust.swing.z>0.9f && gust.swing.z<=1.f && calm.swing.z>0.37f && calm.swing.z<0.61f,
+          "the flutter's pressure is 1 at the top of a gust and 0.38..0.60 between gusts");
+  require(std::abs(gust.wind.x*gust.wind.x + gust.wind.y*gust.wind.y - 1.f)<1e-4f,"the direction is a unit vector");
+  const Scene again = scene(peak,period,true,1.f,false);
+  require(again.wind==gust.wind && again.phase==gust.phase && again.swing==gust.swing,"the same tick gives the same wind");
+  require(scene(SwingPeriod*7+1234,period,true,1.f,false).swing.x==scene(1234,period,true,1.f,false).swing.x &&
+          off.swing.y==0.f && off.swing.z==0.f,"the swing's phase is the tick's remainder of its period");
+
+  // the lean's pressure: the square of the speed in the breeze, over and held from GustFull on, never back down
+  float before = 0.f;
+  for(int i=0; i<=400; ++i) {
+    const float q = pressure(float(i)*0.01f);
+    require(q>=before-1e-6f && q<=1.f+1e-6f,"the lean's pressure grows with the wind and stops at 1");
+    before = q;
+    }
+  require(std::abs(pressure(1.55f/GustSpeed)-0.075f)<0.002f && std::abs(pressure(GustFull)-1.f)<1e-6f && pressure(0.70f)>0.9f &&
+          pressure(GustFrom)<0.24f,"a gust is an event: a light lean below 2.7 m/s, over from 4 m/s, held from 4.3");
+
+  // a tuft's two rates are whole swings a period: a pendulum of its length, its own by its place
+  for(int i=0; i<1000; ++i) {
+    const float h = float(i)/1000.f;
+    const SwingRates l85 = swingRates(h,85.f), l40 = swingRates(h,40.f), l20 = swingRates(h,20.f);
+    require(l85.first>=34.f && l85.first<=46.f && l40.first>=49.f && l40.first<=67.f && l20.first>=70.f && l20.first<=94.f,
+            "85 cm swings 0.57..0.77 times a second, 40 cm 0.82..1.12, 20 cm 1.17..1.57");
+    for(const SwingRates& r:{l85,l40,l20})
+      require(r.first==std::floor(r.first) && r.second==std::floor(r.second) &&
+              r.second-r.first>=SwingBeatMin && r.second-r.first<SwingBeatMin+SwingBeatVar,
+              "the second rate is 4..9 whole swings a period over the first");
+    }
+  require(swingRates(0.3f,5.f).first==swingRates(0.3f,SwingLenMin).first &&
+          swingRates(0.3f,900.f).first==swingRates(0.3f,SwingLenMax).first,"the length is taken between 15 and 150 cm");
+
+  // the bend: tufts of a wall that faces -Z (X along the wall, Y up, Z out of the rock) and of one that faces +X
+  const Vec3 wallZ[3] = {Vec3(-1,0,0), Vec3(0,1,0), Vec3(0,0,-1)};
+  const Vec3 wallX[3] = {Vec3(0,0,1),  Vec3(0,1,0), Vec3(1,0,0)};
+  const Vec3 boxMin(-60,-85,-12), boxMax(60,12,14);
+  const float arm = reach(boxMin,boxMax);
+  require(std::abs(arm-std::sqrt(85.f*85.f+14.f*14.f))<1e-3f,"the reach is the far corner of the box from the X axis");
+  const Vec3 leaves[] = {Vec3(10,-85,4), Vec3(-40,-40,3), Vec3(25,-20,-8), Vec3(0,10,12), Vec3(-55,-3,-3), Vec3(5,1.5f,-3)};
+  const Vec3 places[] = {Vec3(34731,4015,1367), Vec3(28202,3530,-831), Vec3(-1200.5f,90,-7300.25f)};
+  const uint32_t all[] = {bits, pack(strong,Both)};
+  for(const auto& place:places)
+    for(const auto* axis:{wallZ,wallX})
+      for(const uint32_t b:all)
+        for(uint64_t tick=0; tick<=uint64_t(cycle)*2; tick+=37) {
+          for(const float scale:{0.25f,1.f,4.f}) {
+            const Scene sc = scene(tick,period,true,scale,false);
+            for(const auto& v:leaves) {
+              const Vec3  r    = bend(v,b,arm,axis,place,sc);
+              const float len  = std::sqrt(v.y*v.y + v.z*v.z);
+              const Vec3  from = r - Vec3(v.x,0,0);
+              require(std::abs(from.length()-len)<=len*1e-4f+1e-4f,"a vertex keeps the length of its arm from the X axis");
+              require((r-v).length()<=travel(b,arm),"the bounds' travel must cover the vertex in any wind");
+              }
+            }
+          const Scene sc = scene(tick,period,true,1.f,false);
+          const Vec3 root(12,0,0);
+          require(bend(root,b,arm,axis,place,sc)==root,"a vertex on the X axis stands");
+          const Vec3 low(5,1.5f,-3);
+          require((bend(low,b,arm,axis,place,sc)-low).length()<(b==bits ? 0.35f : 0.6f),
+                  "the root of a leaf, 3.4 cm from the axis, moves by millimetres");
+          require(bend(leaves[0],b,arm,axis,place,sc)==bend(leaves[0],b,arm,axis,place,scene(tick,period,true,1.f,false)),
+                  "the same tick gives the same vertex");
+          }
+  // the sizes of the note's table: the tip of an 85 cm leaf, the longest of its tuft, on a wall the wind runs along
+  const auto sweep = [&](const Params& leafOf, float q, bool waves, float& low, float& high) {
+    const uint32_t b = pack(leafOf,Both);
+    const Vec3     tip(0,-85,0);
+    low = 1e9f; high = 0.f;
+    for(int i=0; i<64; ++i)
+      for(int r=0; r<64; ++r) {
+        Scene sc;
+        sc.wind  = Tempest::Vec4(0,1,waves ? q : 0.f,1);
+        sc.phase = waves ? Tempest::Vec4(float(i)/64.f,float(r)/64.f,0,0) : Tempest::Vec4(0,0,float(i)/64.f,float(r)/64.f);
+        sc.swing = Tempest::Vec4(0,0,waves ? 0.f : q,0);
+        const float move = (bend(tip,b,85.f,wallX,places[0],sc)-tip).length();
+        low  = std::min(low,move);
+        high = std::max(high,move);
+        }
+    };
+  Params bendOnly = p, flutterOnly = p;
+  bendOnly.flutter = 0.f;
+  flutterOnly.wind = 0.f;
+  float low = 0.f, high = 0.f;
+  sweep(bendOnly,1.f,true,low,high);
+  require(low>10.0f && low<10.6f && high>13.3f && high<13.9f,
+          "the world's gust holds an 85 cm leaf over: 10.2 cm in the trough of the waves, 13.6 cm, 16 %, on the crest");
+  sweep(bendOnly,0.075f,true,low,high);
+  require(low>0.7f && high<1.1f,"in the calmest wind between gusts the same leaf leans by 0.8..1.0 cm");
+  sweep(bendOnly,0.27f,true,low,high);
+  require(low>2.6f && high<3.8f,"and by 2.8..3.7 cm in the freshest");
+  sweep(flutterOnly,1.f,false,low,high);
+  require(high>2.0f && high<2.3f,"the flutter of that leaf in the gust is 2.2 cm");
+  sweep(flutterOnly,0.38f,false,low,high);
+  require(high>0.95f && high<1.15f,"and a centimetre between gusts");
+
+  // the swing of that leaf alone, over a whole period: 5 % of it to both sides along the wall, off the rock one way
+  // only, and it rises and falls as its two rates beat
+  {
+  const uint32_t b = pack(bendOnly,Both);
+  const Vec3     tip(0,-85,0);
+  float along[2] = {1e9f,-1e9f}, out[2] = {1e9f,-1e9f}, small = 1e9f, large = 0.f;
+  const SwingRates n = swingRates(placeHash(places[0]),85.f);
+  const int parts = 30;  // two seconds each: a swing and a little more
+  for(int part=0; part<parts; ++part) {
+    float side[2] = {1e9f,-1e9f};
+    for(int i=0; i<400; ++i) {
+      Scene sc;
+      sc.wind  = Tempest::Vec4(0,1,0,1);
+      sc.swing = Tempest::Vec4((float(part)+float(i)/400.f)/float(parts),0.05f,0,0);
+      const Vec3 d = bend(tip,b,85.f,wallX,places[0],sc) - tip;
+      side[0] = std::min(side[0],d.x); side[1] = std::max(side[1],d.x);
+      out[0]  = std::min(out[0],d.z);  out[1]  = std::max(out[1],d.z);
+      }
+    along[0] = std::min(along[0],side[0]); along[1] = std::max(along[1],side[1]);
+    small = std::min(small,side[1]-side[0]); large = std::max(large,side[1]-side[0]);
+    }
+  require(along[0]<-4.1f && along[0]>-4.3f && along[1]>4.1f && along[1]<4.3f,
+          "the swing of an 85 cm leaf at 5 % is 4.2 cm to each side along the wind");
+  require(out[0]>-1e-3f && out[1]>1.1f && out[1]<1.4f,"across the wind it goes off the rock only, by 1.3 cm");
+  require(large>8.2f && small<2.6f && small>0.8f,"two close rates beat: the swing falls to a fifth and comes back");
+  Scene sc;
+  sc.wind  = Tempest::Vec4(0,1,1,1);
+  sc.swing = Tempest::Vec4(0.37f,1.f,0,0);
+  require((bend(tip,pack(strong,Both),85.f,wallX,places[0],sc)-tip).length()<=85.f*BendMaxTan*1.05f,
+          "the lean and the swing together keep under the cap of 0.30 rad");
+  // two tufts side by side are out of step
+  const SwingRates other = swingRates(placeHash(places[0]+Vec3(40,0,0)),85.f);
+  require(other.first!=n.first || other.second!=n.second ||
+          placeHash(places[0]+Vec3(40,0,0))!=placeHash(places[0]),"neighbours do not keep step");
+  }
+
+  // a wall the wind blows into: the wind turns along it, to the side of its own part, and keeps its speed
+  const auto lean = [&](float angle) {
+    Scene sc;
+    sc.wind  = Tempest::Vec4(std::sin(angle),std::cos(angle),1.f,1.f);
+    sc.phase = Tempest::Vec4(0.75f,0.75f,0,0);
+    return bend(Vec3(0,-85,0),pack(bendOnly,Both),85.f,wallZ,Vec3(0,0,0),sc) - Vec3(0,-85,0);
+    };
+  const Vec3 left = lean(0.3f), right = lean(-0.3f), head = lean(0.f);
+  require(left.x<-13.f && left.x>-13.9f && right.x>13.f && right.x<13.9f && std::abs(left.z)<1e-3f,
+          "the leaf of a windward wall leans along it as far as one the wind runs along, and never into the rock");
+  require(head.length()<1e-3f,"the wind straight into the wall leans it to neither side");
+  const Vec3 turning = lean(0.02f);
+  require(turning.x<-3.f && turning.x>-9.f,"the side turns over smoothly");
+
+  const Scene same = scene(4242,period,true,1.f,false);
+  require(bend(leaves[1],bits,arm,wallZ,places[0],same)==bend(leaves[1],bits,arm,wallZ,places[0],same),
+          "equal ticks: this frame's vertex is the previous frame's, no motion");
+  Scene stopped = same;
+  stopped.wind = Tempest::Vec4();
+  require(bend(leaves[1],bits,arm,wallZ,places[0],stopped)==leaves[1],"no wind: the leaf rests where the mesh has it");
+  require(bend(leaves[1],pack(p,Light),arm,wallZ,places[0],same)==leaves[1],"the wind half off: the leaf rests");
+  require(placeHash(places[0])==placeHash(places[0]+Vec3(0.25f,50,0.25f)) && placeHash(places[0])!=placeHash(places[1]),
+          "a tuft's step is its place on the ground");
+  }
+
 void textureResidency(Tempest::Device& device, const Fixture& fixture) {
   std::string materials=R"({"STREAM.TGA":{"albedo":"solid.dds","normal":"alpha.dds","orm":"alpha.dds"})";
   for(size_t i=0;i<17;++i) {
@@ -2684,6 +2933,7 @@ int main(int argc, char** argv) {
       std::cout << "{\"test\":\"dds_mip_tail\",\"passed\":true,\"assertions\":" << assertions << "}\n";
       return 0;
       }
+    foliageWindMaths();
     variants();
     Fixture fixture;
     CommandLine commandLine(0,nullptr);
@@ -2694,6 +2944,7 @@ int main(int argc, char** argv) {
     emptyTable(device,fixture);
     projectionRecords(device,fixture);
     fringeRecords(device,fixture);
+    foliageRecords(device,fixture);
     textureResidency(device,fixture);
     textureMipResidency(device,fixture);
     textureScreenLevels(device,fixture);
