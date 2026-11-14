@@ -128,8 +128,77 @@ void write(const fs::path& path,const rapidjson::Document& j) {
   f.write(bytes.GetString(),std::streamsize(bytes.GetSize()));
   check(bool(f),"write fixture JSON");
   }
+void npcLayout(const NpcSnapshot::Program& program) {
+  auto script=DaedalusScript::from_program(program.data);
+  INpc::register_(script); IItem::register_(script);
+  DaedalusVm vm(std::move(script));
+  auto npc=vm.allocate_instance<INpc>("NPC_TEST");
+  auto item=vm.allocate_instance<IItem>("IT_TEST");
+  auto& record=static_cast<NpcRecord&>(*npc);
+  const auto begin=reinterpret_cast<uintptr_t>(npc.get());
+  const auto recordBegin=reinterpret_cast<uintptr_t>(&record);
+  check(recordBegin>=begin && recordBegin+sizeof(record)<=begin+sizeof(*npc),"whole NpcRecord lies within INpc");
+  check(reinterpret_cast<uintptr_t>(static_cast<DaedalusInstance*>(npc.get()))==begin,"VM data starts at INpc");
+  std::string signature;
+  unsigned fields=0;
+  snapshotFields(*npc,[&](const char* name,auto& field,bool,const char* binding) {
+    ++fields;
+    signature+=std::string(name)+":"+binding+" ";
+    auto* symbol=vm.find_symbol_by_name(binding);
+    check(symbol!=nullptr,std::string("bound NPC field ")+name);
+    check(symbol->registered_to()==typeid(INpc),std::string("INpc context for ")+name);
+    const auto address=reinterpret_cast<uintptr_t>(&field);
+    check(symbol->offset_as_member()==address-begin,std::string("VM offset for ")+name);
+    check(address>=recordBegin && address+sizeof(field)<=recordBegin+sizeof(record),std::string("record owns ")+name);
+    auto value=[&](auto& element,uint16_t index) {
+      using T=std::remove_reference_t<decltype(element)>;
+      if constexpr(std::is_same_v<T,std::string>) {
+        symbol->set_string("from VM",index,npc.get());
+        check(element=="from VM",std::string("VM writes record ")+name);
+        element="from record";
+        check(symbol->get_string(index,npc.get())=="from record",std::string("VM reads record ")+name);
+        }
+      else {
+        symbol->set_int(1000+index,index,npc.get());
+        check(int32_t(element)==1000+index,std::string("VM writes record ")+name);
+        element=T(2000+index);
+        check(symbol->get_int(index,npc.get())==2000+index,std::string("VM reads record ")+name);
+        }
+      };
+    if constexpr(std::is_array_v<std::remove_reference_t<decltype(field)>>) {
+      for(uint16_t i=0;i<std::extent_v<std::remove_reference_t<decltype(field)>>;++i) value(field[i],i);
+      }
+    else value(field,0);
+    });
+  check(fields==32,"all 32 NPC fields checked");
+  // Independent of the generated visitor: changing declaration order or a binding must fail.
+  check(signature==
+    "id:C_NPC.ID name:C_NPC.NAME slot:C_NPC.SLOT effect:C_NPC.EFFECT type:C_NPC.NPCTYPE flags:C_NPC.FLAGS "
+    "attribute:C_NPC.ATTRIBUTE hitchance:C_NPC.HITCHANCE protection:C_NPC.PROTECTION damage:C_NPC.DAMAGE "
+    "damage_type:C_NPC.DAMAGETYPE guild:C_NPC.GUILD level:C_NPC.LEVEL mission:C_NPC.MISSION "
+    "fight_tactic:C_NPC.FIGHT_TACTIC weapon:C_NPC.WEAPON voice:C_NPC.VOICE voice_pitch:C_NPC.VOICEPITCH "
+    "body_mass:C_NPC.BODYMASS daily_routine:C_NPC.DAILY_ROUTINE start_aistate:C_NPC.START_AISTATE "
+    "spawnpoint:C_NPC.SPAWNPOINT spawn_delay:C_NPC.SPAWNDELAY senses:C_NPC.SENSES senses_range:C_NPC.SENSES_RANGE "
+    "aivar:C_NPC.AIVAR wp:C_NPC.WP exp:C_NPC.EXP exp_next:C_NPC.EXP_NEXT lp:C_NPC.LP "
+    "bodystate_interruptable_override:C_NPC.BODYSTATEINTERRUPTABLEOVERRIDE no_focus:C_NPC.NOFOCUS ",
+    "original NPC field order and bindings");
+  check(std::extent_v<decltype(record.name)> == 5,"original NPC name array size");
+  check(std::extent_v<decltype(record.attribute)> == 8,"original NPC attribute array size");
+  check(std::extent_v<decltype(record.hitchance)> == 5,"original NPC hitchance array size");
+  check(std::extent_v<decltype(record.protection)> == 8,"original NPC protection array size");
+  check(std::extent_v<decltype(record.damage)> == 8,"original NPC damage array size");
+  check(std::extent_v<decltype(record.mission)> == 5,"original NPC mission array size");
+  check(std::extent_v<decltype(record.aivar)> == 100,"original NPC aivar array size");
+  bool rejected=false;
+  try { vm.find_symbol_by_name("C_NPC.ID")->set_int(1,0,item.get()); }
+  catch(const DaedalusIllegalContextType&) { rejected=true; }
+  check(rejected,"NPC member rejects an item context");
+  std::cout<<"NPC layout: "<<fields<<" fields, sizeof(INpc)="<<sizeof(INpc)
+           <<", sizeof(NpcRecord)="<<sizeof(NpcRecord)<<", record offset="<<recordBegin-begin<<'\n';
+  }
 void fixture(const fs::path& dir) {
   auto p=Fixture().make();
+  npcLayout(p);
   auto a=dir/"a",b=dir/"b";
   NpcSnapshot::write(p,a); check(NpcSnapshot::verify(p,a)==0,"fixture verifies");
   NpcSnapshot::write(p,b);

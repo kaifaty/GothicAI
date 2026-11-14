@@ -149,45 +149,45 @@ void daedalus::IParticleEffectEmitKey::register_(DaedalusScript& s) {
 
 void daedalus::INpc::register_(DaedalusScript& s) {
 	ZKLOG_CLASS("C_NPC", "INpc");
-	s.register_member("C_NPC.ID", &INpc::id);
-	s.register_member("C_NPC.NAME", &INpc::name);
-	s.register_member("C_NPC.SLOT", &INpc::slot);
-	s.register_member("C_NPC.NPCTYPE", &INpc::type);
-	s.register_member("C_NPC.FLAGS", &INpc::flags);
-	s.register_member("C_NPC.ATTRIBUTE", &INpc::attribute);
-	s.register_member("C_NPC.PROTECTION", &INpc::protection);
-	s.register_member("C_NPC.DAMAGE", &INpc::damage);
-	s.register_member("C_NPC.DAMAGETYPE", &INpc::damage_type);
-	s.register_member("C_NPC.GUILD", &INpc::guild);
-	s.register_member("C_NPC.LEVEL", &INpc::level);
-	s.register_member("C_NPC.MISSION", &INpc::mission);
-	s.register_member("C_NPC.FIGHT_TACTIC", &INpc::fight_tactic);
-	s.register_member("C_NPC.WEAPON", &INpc::weapon);
-	s.register_member("C_NPC.VOICE", &INpc::voice);
-	s.register_member("C_NPC.VOICEPITCH", &INpc::voice_pitch);
-	s.register_member("C_NPC.BODYMASS", &INpc::body_mass);
-	s.register_member("C_NPC.DAILY_ROUTINE", &INpc::daily_routine);
-	s.register_member("C_NPC.START_AISTATE", &INpc::start_aistate);
-	s.register_member("C_NPC.SPAWNPOINT", &INpc::spawnpoint);
-	s.register_member("C_NPC.SPAWNDELAY", &INpc::spawn_delay);
-	s.register_member("C_NPC.SENSES", &INpc::senses);
-	s.register_member("C_NPC.SENSES_RANGE", &INpc::senses_range);
-	s.register_member("C_NPC.AIVAR", &INpc::aivar);
-	s.register_member("C_NPC.WP", &INpc::wp);
-	s.register_member("C_NPC.EXP", &INpc::exp);
-	s.register_member("C_NPC.EXP_NEXT", &INpc::exp_next);
-	s.register_member("C_NPC.LP", &INpc::lp);
+	s.register_member<INpc>("C_NPC.ID", &INpc::id);
+	s.register_member<INpc>("C_NPC.NAME", &INpc::name);
+	s.register_member<INpc>("C_NPC.SLOT", &INpc::slot);
+	s.register_member<INpc>("C_NPC.NPCTYPE", &INpc::type);
+	s.register_member<INpc>("C_NPC.FLAGS", &INpc::flags);
+	s.register_member<INpc>("C_NPC.ATTRIBUTE", &INpc::attribute);
+	s.register_member<INpc>("C_NPC.PROTECTION", &INpc::protection);
+	s.register_member<INpc>("C_NPC.DAMAGE", &INpc::damage);
+	s.register_member<INpc>("C_NPC.DAMAGETYPE", &INpc::damage_type);
+	s.register_member<INpc>("C_NPC.GUILD", &INpc::guild);
+	s.register_member<INpc>("C_NPC.LEVEL", &INpc::level);
+	s.register_member<INpc>("C_NPC.MISSION", &INpc::mission);
+	s.register_member<INpc>("C_NPC.FIGHT_TACTIC", &INpc::fight_tactic);
+	s.register_member<INpc>("C_NPC.WEAPON", &INpc::weapon);
+	s.register_member<INpc>("C_NPC.VOICE", &INpc::voice);
+	s.register_member<INpc>("C_NPC.VOICEPITCH", &INpc::voice_pitch);
+	s.register_member<INpc>("C_NPC.BODYMASS", &INpc::body_mass);
+	s.register_member<INpc>("C_NPC.DAILY_ROUTINE", &INpc::daily_routine);
+	s.register_member<INpc>("C_NPC.START_AISTATE", &INpc::start_aistate);
+	s.register_member<INpc>("C_NPC.SPAWNPOINT", &INpc::spawnpoint);
+	s.register_member<INpc>("C_NPC.SPAWNDELAY", &INpc::spawn_delay);
+	s.register_member<INpc>("C_NPC.SENSES", &INpc::senses);
+	s.register_member<INpc>("C_NPC.SENSES_RANGE", &INpc::senses_range);
+	s.register_member<INpc>("C_NPC.AIVAR", &INpc::aivar);
+	s.register_member<INpc>("C_NPC.WP", &INpc::wp);
+	s.register_member<INpc>("C_NPC.EXP", &INpc::exp);
+	s.register_member<INpc>("C_NPC.EXP_NEXT", &INpc::exp_next);
+	s.register_member<INpc>("C_NPC.LP", &INpc::lp);
 
 	// Gothic 2 only
 	if (s.find_symbol_by_name("C_NPC.HITCHANCE") != nullptr) {
-		s.register_member("C_NPC.HITCHANCE", &INpc::hitchance);
-		s.register_member("C_NPC.BODYSTATEINTERRUPTABLEOVERRIDE", &INpc::bodystate_interruptable_override);
-		s.register_member("C_NPC.NOFOCUS", &INpc::no_focus);
+		s.register_member<INpc>("C_NPC.HITCHANCE", &INpc::hitchance);
+		s.register_member<INpc>("C_NPC.BODYSTATEINTERRUPTABLEOVERRIDE", &INpc::bodystate_interruptable_override);
+		s.register_member<INpc>("C_NPC.NOFOCUS", &INpc::no_focus);
 	}
 
 	// Gothic 2 Night of the Raven only
 	if (s.find_symbol_by_name("C_NPC.EFFECT") != nullptr) {
-		s.register_member("C_NPC.EFFECT", &INpc::effect);
+		s.register_member<INpc>("C_NPC.EFFECT", &INpc::effect);
 	}
 }
 
