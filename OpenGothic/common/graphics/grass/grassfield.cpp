@@ -148,9 +148,21 @@ void GrassField::addChunk(ChunkId id, const asset::WorldMesh& mesh) {
     }
   }
 
+  // the corners of the grass: other ground that shares one lies beside it
+  std::vector<bool> corner(mesh.vertices.size(), false);
   for(size_t i=0; i<p.material_indices.size(); ++i) {
     const uint32_t m = p.material_indices[i];
-    if(m>=slot.size() || (slot[m]==uint16_t(-1) && !water[m]))
+    if(m<slot.size() && slot[m]!=uint16_t(-1))
+      for(size_t k=0; k<3; ++k)
+        corner[p.vertex_indices[i*3+k]] = true;
+    }
+
+  for(size_t i=0; i<p.material_indices.size(); ++i) {
+    const uint32_t m = p.material_indices[i];
+    if(m>=slot.size())
+      continue;
+    const bool beside = slot[m]==uint16_t(-1) && !water[m];
+    if(beside && !corner[p.vertex_indices[i*3]] && !corner[p.vertex_indices[i*3+1]] && !corner[p.vertex_indices[i*3+2]])
       continue;
     if(i<p.flags.size()) {
       const auto& f = p.flags[i];
@@ -167,6 +179,8 @@ void GrassField::addChunk(ChunkId id, const asset::WorldMesh& mesh) {
       }
     if(water[m])
       Grass::addWater(*summary,pos);
+    else if(beside)
+      Grass::addBeside(*summary,pos,normal);
     else
       Grass::addGrass(*summary,pos,uv,normal,slot[m]);
     }

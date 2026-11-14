@@ -1,8 +1,9 @@
 // The grass system (reports/engine/2026-11-14-grass-system): the `grass` field of a record and its bits for the
 // ground's shader, the switch, the placement of the blades on synthetic ground (the same blades every run and for
 // any split into chunks, none off the grass materials, over the slope limit or under water, the count by area,
-// density and rank, the band at an open edge, the low grass round a thing to pick up) and the processor's mirror of
-// the wind's travelling front against the scene's wind. CPU only: no device, no game data.
+// density and rank, the band at an open edge and the low blades past it, the low grass round a thing to pick up)
+// and the processor's mirror of the wind's travelling front against the scene's wind. CPU only: no device, no game
+// data.
 #include "graphics/foliagefront.h"
 #include "graphics/grass/grassparams.h"
 #include "graphics/grass/grassplace.h"
@@ -147,6 +148,18 @@ void addField(Grass::Summary& out, float x0, float z0, float x1, float z1, float
           }
         Grass::addGrass(out,pos,uv,normal,slot);
         }
+      }
+  }
+
+// Ground of another material, level at `y`, in the same squares
+void addRoad(Grass::Summary& out, float x0, float z0, float x1, float z1, float y) {
+  const float up[3][3] = {{0,1,0},{0,1,0},{0,1,0}};
+  for(float z=z0; z<z1; z+=200.f)
+    for(float x=x0; x<x1; x+=200.f) {
+      const float a[3][3] = {{x,y,z},{x+200.f,y,z},{x+200.f,y,z+200.f}};
+      const float b[3][3] = {{x,y,z},{x+200.f,y,z+200.f},{x,y,z+200.f}};
+      Grass::addBeside(out,a,up);
+      Grass::addBeside(out,b,up);
       }
   }
 
@@ -450,6 +463,43 @@ void placementEdge() {
   require(farPlain>0 && nearPlain>0 && double(nearBand)<0.9*double(nearPlain),
           "the grass is thinner on the last 50 cm before an open edge: "+std::to_string(nearBand)+" of "+
           std::to_string(nearPlain));
+
+  // The exception to "a root stands on grass": where ground of another material goes on from the grass past an
+  // open edge, sparse low blades root up to 35 cm past it, so the mesh's straight line does not read
+  Grass::Summary road = field, ledge = field, wall = field;
+  addRoad(road, 600.f,-600.f,1000.f,2400.f,0.f);
+  addRoad(ledge,600.f,-600.f,1000.f,2400.f,-30.f);
+  const float side[3][3]  = {{1,0,0},{1,0,0},{1,0,0}};
+  const float stand[3][3] = {{600,0,-600},{600,0,2400},{600,300,2400}};
+  Grass::addBeside(wall,stand,side);
+  require(road.beside.size()==2u*2u*15u && wall.beside.empty(), "level ground beside the grass is kept, a wall is not");
+  size_t past = 0, last = 0;
+  for(int32_t cz=0; cz<2; ++cz) {
+    const auto band  = build(field,0,cz,meadow(150.f));
+    const auto wBand = words(band);
+    const std::set<Words> onGrass(wBand.begin(),wBand.end());
+    const auto with  = build(road,0,cz,meadow(150.f));
+    const auto wWith = words(with);
+    size_t on = 0;
+    for(size_t i=0; i<with.blades.size(); ++i) {
+      const auto b = Grass::decode(with.blades[i],0,cz,with.minY);
+      if(b.x<=border) {
+        require(onGrass.count(wWith[i])==1, "the ground beside the grass moves no blade on it"+at(0,cz));
+        ++on;
+        if(b.x>=border-Grass::PastEdge*U)
+          ++last;
+        continue;
+        }
+      require(b.x<=border+Grass::PastEdge*U, "a root past an open edge is no further than 35 cm from it"+at(0,cz));
+      require(b.height<=Grass::PastHeight && b.y==0, "a blade past an open edge is low and stands on the ground there"+at(0,cz));
+      ++past;
+      }
+    require(on==band.blades.size(), "the blades on the grass are all there"+at(0,cz));
+    require(same(build(ledge,0,cz,meadow(150.f)),band), "no blade past an edge where the ground steps down"+at(0,cz));
+    require(same(build(road,0,cz,meadow(0.f)),build(field,0,cz,meadow(0.f))), "no band: no blade past an edge"+at(0,cz));
+    }
+  require(past>0 && 2*past<last, "the blades past an open edge are sparse: "+std::to_string(past)+" past it, "+
+          std::to_string(last)+" on the last 35 cm before it");
   }
 
 // A thing to pick up: the grass round it is low, the blades are the same

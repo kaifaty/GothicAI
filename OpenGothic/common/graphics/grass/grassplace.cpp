@@ -116,8 +116,9 @@ int32_t units(float cm) {
   }
 
 struct Segment final { // an open edge: grass on its left only
-  int32_t ax = 0, az = 0, bx = 0, bz = 0; // cm
-  float   outX = 0.f, outZ = 0.f;
+  int32_t  ax = 0, az = 0, bx = 0, bz = 0; // cm
+  float    outX = 0.f, outZ = 0.f;
+  uint32_t tri = 0;                        // the triangle it is an edge of
   };
 
 struct Raw final { // a blade before it is packed
@@ -170,6 +171,18 @@ void addWater(Summary& out, const float pos[3][3]) {
   out.water.push_back(t);
   }
 
+void addBeside(Summary& out, const float pos[3][3], const float normal[3][3]) {
+  if(normal[0][1]+normal[1][1]+normal[2][1]<=0.6f)
+    return;
+  WaterTri t;
+  for(int i=0; i<3; ++i) {
+    t.x[i] = units(pos[i][0]);
+    t.y[i] = units(pos[i][1]);
+    t.z[i] = units(pos[i][2]);
+    }
+  out.beside.push_back(t);
+  }
+
 int32_t patchNoise(int32_t x, int32_t z) {
   return (3*valueNoise(x,z,600*Unit,0x51u) + valueNoise(x+1777,z+911,220*Unit,0xA7u)) >> 2;
   }
@@ -178,11 +191,11 @@ int32_t patchDensity(int32_t n) {
   if(n<PatchBare)
     return 0;
   if(n<PatchShort)
-    return ramp(n,PatchBare,PatchShort,0,179);
+    return ramp(n,PatchBare,PatchShort,0,205);
   if(n<PatchMain0)
-    return 179;
+    return 205;
   if(n<PatchMain1)
-    return ramp(n,PatchMain0,PatchMain1,179,256);
+    return ramp(n,PatchMain0,PatchMain1,205,256);
   if(n<PatchClump)
     return 256;
   if(n<PatchTop)
@@ -192,11 +205,11 @@ int32_t patchDensity(int32_t n) {
 
 float patchHeight(int32_t n) {
   if(n<PatchShort)
-    return 0.3f;
+    return 0.45f;
   if(n<PatchMain0)
-    return rampF(n,PatchShort,PatchMain0,0.3f,0.55f);
+    return rampF(n,PatchShort,PatchMain0,0.45f,0.65f);
   if(n<PatchMain1)
-    return rampF(n,PatchMain0,PatchMain1,0.55f,0.9f);
+    return rampF(n,PatchMain0,PatchMain1,0.65f,0.9f);
   if(n<PatchClump)
     return rampF(n,PatchMain1,PatchClump,0.9f,1.15f);
   if(n<PatchTop)
@@ -338,14 +351,16 @@ CellBlades buildCell(const CellInput& in) {
     struct Edge final {
       int32_t a[3], b[3]; // sorted ends
       int32_t from[2], to[2]; // as the triangle goes round
+      uint32_t tri;
       };
     std::vector<Edge> edges;
     edges.reserve(tris.size()*3);
-    for(const Ready& r:tris) {
-      const auto& t = *r.t;
+    for(size_t id=0; id<tris.size(); ++id) {
+      const auto& t = *tris[id].t;
       for(int i=0; i<3; ++i) {
         const int j = (i+1)%3;
         Edge e;
+        e.tri = uint32_t(id);
         e.from[0] = t.x[i]; e.from[1] = t.z[i]; e.to[0] = t.x[j]; e.to[1] = t.z[j];
         const std::array<int32_t,3> p = {t.x[i],t.z[i],t.y[i]}, q = {t.x[j],t.z[j],t.y[j]};
         const auto& first = p<q ? p : q; const auto& second = p<q ? q : p;
@@ -398,6 +413,7 @@ CellBlades buildCell(const CellInput& in) {
           s.bz = int32_t(std::lround((double(e.from[1]) + dz*double(k)/double(pieces))/Unit));
           s.outX = float(ox);
           s.outZ = float(oz);
+          s.tri  = e.tri;
           segments.push_back(s);
           start = -1;
           }
@@ -457,6 +473,63 @@ CellBlades buildCell(const CellInput& in) {
     return false;
     };
 
+  // The ground beside the grass under a root past an open edge. The root takes that ground's height where it goes
+  // on from the grass's plane: no blade hangs over a ledge or stands in a wall
+  std::vector<const WaterTri*> beside;
+  if(!segments.empty()) {
+    for(const Summary* s:in.summaries) {
+      if(s==nullptr)
+        continue;
+      for(const auto& t:s->beside) {
+        if(std::max({t.x[0],t.x[1],t.x[2]})<lo[0] || std::min({t.x[0],t.x[1],t.x[2]})>hi[0] ||
+           std::max({t.z[0],t.z[1],t.z[2]})<lo[1] || std::min({t.z[0],t.z[1],t.z[2]})>hi[1])
+          continue;
+        beside.push_back(&t);
+        }
+      }
+    }
+  // w: the edge functions of the grass triangle the edge `s` belongs to, at the root outside it; d: cm past it
+  auto pastEdge = [&](int32_t px, int32_t pz, int64_t w[3], int32_t& y, int32_t& d, const Segment*& s) -> const Ready* {
+    if(beside.empty())
+      return nullptr;
+    const Segment* near = nullptr;
+    const int32_t  cm   = edgeDistance(px,pz,PastEdge,near);
+    if(near==nullptr)
+      return nullptr;
+    const Ready& r = tris[near->tri];
+    const Tri&   t = *r.t;
+    for(int i=0; i<3; ++i) {
+      const int a = (i+1)%3, b = (i+2)%3;
+      w[i] = int64_t(t.x[b]-t.x[a])*int64_t(pz-t.z[a]) - int64_t(t.z[b]-t.z[a])*int64_t(px-t.x[a]);
+      }
+    const auto plane = int32_t((w[0]*t.y[0] + w[1]*t.y[1] + w[2]*t.y[2])/r.area2);
+    int32_t off = PastStep+1;
+    for(const WaterTri* g:beside) {
+      int32_t x[3] = {g->x[0],g->x[1],g->x[2]}, z[3] = {g->z[0],g->z[1],g->z[2]};
+      if(px<std::min({x[0],x[1],x[2]}) || px>std::max({x[0],x[1],x[2]}) ||
+         pz<std::min({z[0],z[1],z[2]}) || pz>std::max({z[0],z[1],z[2]}) || !insideXZ(x,z,px,pz))
+        continue;
+      const int64_t area2 = int64_t(x[1]-x[0])*int64_t(z[2]-z[0]) - int64_t(x[2]-x[0])*int64_t(z[1]-z[0]);
+      if(area2==0)
+        continue;
+      int64_t sum = 0;
+      for(int i=0; i<3; ++i) {
+        const int a = (i+1)%3, b = (i+2)%3;
+        sum += (int64_t(x[b]-x[a])*int64_t(pz-z[a]) - int64_t(z[b]-z[a])*int64_t(px-x[a]))*int64_t(g->y[i]);
+        }
+      const auto h = int32_t(sum/area2);
+      if(std::abs(h-plane)<std::abs(off)) {
+        off = h-plane;
+        y   = h;
+        }
+      }
+    if(std::abs(off)>PastStep)
+      return nullptr;
+    d = cm;
+    s = near;
+    return &r;
+    };
+
   // the tufts round the cell: a jittered centre in each square of TuftStep, its patch and its own numbers
   struct Tuft final {
     int32_t  x = 0, z = 0;
@@ -509,8 +582,11 @@ CellBlades buildCell(const CellInput& in) {
         continue;
 
       int64_t w[3];
-      int32_t y = 0;
+      int32_t y = 0, past = -1; // cm past an open edge, or on the grass
+      const Segment* edge = nullptr;
       const Ready* at = locate(px,pz,w,y);
+      if(at==nullptr && !segments.empty())
+        at = pastEdge(px,pz,w,y,past,edge);
       if(at==nullptr)
         continue;
       const Slot&   slot = slots[at->t->slot];
@@ -521,20 +597,32 @@ CellBlades buildCell(const CellInput& in) {
                               int32_t(int64_t(slot.tanMax-at->tanQ12)*256/int64_t(slot.tanMax-slot.tanFull));
       // the band at an open edge: the distance with a noise of 1.5 m on it
       int32_t edgeQ8 = 256;
-      const Segment* edge = nullptr;
-      if(slot.edgeCm>0 && !segments.empty()) {
+      if(past>=0 && slot.edgeCm<=0)
+        continue;
+      if(past<0 && slot.edgeCm>0 && !segments.empty()) {
         const int32_t d = edgeDistance(px,pz,slot.edgeCm*2,edge);
         const int32_t n = valueNoise(px,pz,150*Unit,0x33u) - 32640;
         edgeQ8 = std::clamp((d*256 + int32_t(int64_t(n)*slot.edgeCm*154/32640))/slot.edgeCm, 0, 256);
         }
-      const int64_t share = int64_t(tuft->densityQ8)*slot.densityQ8*slopeQ8*(77+179*edgeQ8/256);
+      // 55 % of the patch's grass at the edge; past it from 45 % down to none at PastEdge
+      int32_t edgeDensity = 141 + 115*edgeQ8/256;
+      if(past>=0) {
+        edgeQ8      = 0;
+        edgeDensity = 115*(PastEdge-past)/PastEdge;
+        }
+      const int64_t share = int64_t(tuft->densityQ8)*slot.densityQ8*slopeQ8*edgeDensity;
       if(roll*NodesPerM2*(int64_t(1) << 32) >= share*int64_t(BladesPerM2)*1024)
         continue;
 
-      // gathered towards the tuft's centre; the root must still stand on grass and out of the water
-      const int32_t pull = int32_t(std::lround((20.f + float((h >> 30) & 31u))*par.clumps*2.56f));
-      const int32_t fx = px + int32_t(int64_t(tuft->x-px)*pull/256), fz = pz + int32_t(int64_t(tuft->z-pz)*pull/256);
-      at = locate(fx,fz,w,y);
+      // gathered towards the tuft's centre; the root must still stand on grass and out of the water. A root past
+      // an edge stays where its node put it
+      int32_t pull = 0, fx = px, fz = pz;
+      if(past<0) {
+        pull = int32_t(std::lround((20.f + float((h >> 30) & 31u))*par.clumps*2.56f));
+        fx   = px + int32_t(int64_t(tuft->x-px)*pull/256);
+        fz   = pz + int32_t(int64_t(tuft->z-pz)*pull/256);
+        at   = locate(fx,fz,w,y);
+        }
       if(at==nullptr || underWater(fx,fz,y))
         continue;
       const Tri&    t  = *at->t;
@@ -547,8 +635,10 @@ CellBlades buildCell(const CellInput& in) {
       const float fromCentre = float(std::sqrt(double(near)))*(1.f-float(pull)/256.f)/float(TuftStep);
       float height = fp.height*tuft->height*(0.65f + 0.5f*float((h >> 35) & 0xFFu)/255.f);
       height *= 1.f - 0.4f*std::min(fromCentre*1.6f,1.f);
-      height *= (1.f + 2.f*edgeShare)/3.f;
+      height *= 0.5f + 0.5f*edgeShare;
       height *= 0.5f + 0.5f*slopeShare;
+      if(past>=0)
+        height = std::min(height*(1.f - 0.5f*float(past)/float(PastEdge)),PastHeight);
       for(const Disc& d:in.items) {
         const double dx = double(d.x-fx)/Unit, dz = double(d.z-fz)/Unit;
         const double r  = std::sqrt(dx*dx+dz*dz);

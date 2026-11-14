@@ -81,9 +81,11 @@ wait 11500
 stop
 walkmode run
 
-# the game's camera, a full circle in 12 s
+# a full circle in 12 s from the place of the game's camera behind the hero
 goto NW_TAVERNE_TROLLAREA_03
 face wp NW_TAVERNE_TROLLAREA_05
+cam look 110
+cam world 300 170 180
 grass wait
 wait 3000
 cam hold

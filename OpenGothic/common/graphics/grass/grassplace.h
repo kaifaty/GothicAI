@@ -24,6 +24,9 @@ constexpr int32_t CellMargin = 64*Unit;          // a root lies no further out o
 constexpr int32_t TuftStep   = 75*Unit;          // the lattice of the tufts' centres
 constexpr int32_t NodesPerM2 = 625;
 constexpr int32_t MaxExtent  = 1<<18;            // units: a longer triangle is left out (164 m)
+constexpr int32_t PastEdge   = 35;               // cm: sparse low blades root this far past an open edge
+constexpr int32_t PastStep   = 12*Unit;          // of the ground there against the grass's plane: more is a ledge
+constexpr float   PastHeight = 12.f;             // cm: no blade past an edge is taller
 
 // A triangle of a ground material with `grass`, as the chunk's mesh has it
 struct Tri final {
@@ -40,6 +43,7 @@ struct WaterTri final {
 struct Summary final {
   std::vector<Tri>      grass;
   std::vector<WaterTri> water;
+  std::vector<WaterTri> beside; // ground of other materials that touches the grass
   bool empty() const { return grass.empty(); }
   };
 
@@ -47,6 +51,9 @@ struct Summary final {
 // one longer than MaxExtent
 void addGrass(Summary& out, const float pos[3][3], const float uv[3][2], const float normal[3][3], uint16_t slot);
 void addWater(Summary& out, const float pos[3][3]);
+// Ground without grass that shares a corner with the grass: a root past an open edge stands on it. Left out: one
+// that faces down or stands upright
+void addBeside(Summary& out, const float pos[3][3], const float normal[3][3]);
 
 // 16 bytes of a blade (shader/grass/grass_common.glsl):
 //   w0: x 14 | z 14 | lean 4          root in units from the cell's corner less CellMargin

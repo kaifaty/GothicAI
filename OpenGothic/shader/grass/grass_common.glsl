@@ -18,12 +18,12 @@ float grassPackedThrough(uint bits) { return float( bits >> 24)/255.0; }
 // The look
 const float GrassRoughness   = 0.92;
 const float GrassRootShade   = 0.55;                     // of the ground's colour at the root
-const vec3  GrassTipGreen    = vec3(0.95, 1.15, 0.70);   // of it at the tip, by the tuft's dryness
-const vec3  GrassTipStraw    = vec3(1.25, 1.15, 0.75);
+const vec3  GrassTipGreen    = vec3(0.90, 1.20, 0.68);   // of it at the tip, by the tuft's dryness
+const vec3  GrassTipStraw    = vec3(1.14, 1.16, 0.70);
 const float GrassRootAo      = 0.35;
 // The ground: in the shade of the blades that stand on it; and from afar what the blades look like together
 const float GrassGroundShade = 0.65;
-const vec3  GrassFarTint     = vec3(0.88, 0.93, 0.66);
+const vec3  GrassFarTint     = vec3(0.82, 0.95, 0.63);
 const float GrassFarAo       = 0.74;
 
 // The wind on an upright blade (change A of the note): it bends as a rod, by its length. Radians at pressure 1:
@@ -79,14 +79,14 @@ const float GrassPatchShort = 18361.0;
 const float GrassPatchMain0 = 26192.0;
 const float GrassPatchMain1 = 28857.0;
 
-// How much grass stands at a place of the patches: 0 bare ground, about 0.3 the short grass, 1 the main and the
+// How much grass stands at a place of the patches: 0 bare ground, about 0.45 the short grass, 1 the main and the
 // clumps
 float grassStand(int noise) {
   const float n       = float(noise);
-  const float density = n<GrassPatchShort ? 0.7*clamp((n-GrassPatchBare)/(GrassPatchShort-GrassPatchBare), 0.0, 1.0)
-                                          : mix(0.7, 1.0, clamp((n-GrassPatchMain0)/(GrassPatchMain1-GrassPatchMain0), 0.0, 1.0));
-  const float height  = n<GrassPatchMain0 ? mix(0.3, 0.55, clamp((n-GrassPatchShort)/(GrassPatchMain0-GrassPatchShort), 0.0, 1.0))
-                                          : mix(0.55, 0.9, clamp((n-GrassPatchMain0)/(GrassPatchMain1-GrassPatchMain0), 0.0, 1.0));
+  const float density = n<GrassPatchShort ? 0.8*clamp((n-GrassPatchBare)/(GrassPatchShort-GrassPatchBare), 0.0, 1.0)
+                                          : mix(0.8, 1.0, clamp((n-GrassPatchMain0)/(GrassPatchMain1-GrassPatchMain0), 0.0, 1.0));
+  const float height  = n<GrassPatchMain0 ? mix(0.45, 0.65, clamp((n-GrassPatchShort)/(GrassPatchMain0-GrassPatchShort), 0.0, 1.0))
+                                          : mix(0.65, 0.9, clamp((n-GrassPatchMain0)/(GrassPatchMain1-GrassPatchMain0), 0.0, 1.0));
   return density*height/0.9;
   }
 
