@@ -33,8 +33,8 @@ const char* usage() {
          "  --demo            play the built-in 13.5 s track instead of the keys and the mouse\n"
          "  --time HH:MM      the time of day (default 12:00; it stands still)\n"
          "  --time-pace K     let the time run, K island seconds a real second\n"
-         "  --size WxH        the frame (default 1280x720)\n"
-         "keys: WASD walk, Shift run, Space jump, mouse look, Esc quit\n";
+         "  --size WxH        the frame of --capture (default 1280x720); the window keeps its own size\n"
+         "keys: WASD walk, Shift run, Space jump, the mouse with its left button held looks, Esc quit\n";
   }
 
 bool parseFlags(int argc, const char* const* argv, Flags& flags, std::string& error) {

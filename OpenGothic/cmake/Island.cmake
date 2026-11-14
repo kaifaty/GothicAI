@@ -70,7 +70,7 @@ add_dependencies(engine-island island-data)
 engine_link_map_check(engine-island "platform;island")
 if(MSVC)
   # No PR builds Windows: until the release build has built it, a broken target must not break ALL there
-  # (debt: GothicAI#1345).
+  # (debt: GothicAI#1349).
   set_target_properties(engine-island PROPERTIES EXCLUDE_FROM_ALL TRUE)
 else()
   target_compile_options(engine-island-lib PRIVATE -Wall -Wconversion -Werror)

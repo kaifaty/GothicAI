@@ -239,6 +239,25 @@ void checkGentleSlope(Sim& sim) {
       require(progress>=0.8f*island::WalkSpeed*3.f*std::cos(radians(30.f)),
               text("ground of %.1f degrees must be walked up: %.2f m in 3 s", double(s0), double(progress)));
       require(rise>=1.f, text("walking up %.1f degrees he must rise: %.2f m", double(s0), double(rise)));
+
+      // a jump on the run up the slope lands as soon as the flight is over
+      sim.place(x, z, uphill*180.f/Pi);
+      island::Control c;
+      c.forward = 1;
+      c.run     = true;
+      sim.run(300, c);
+      c.jump = true;
+      const auto landings = sim.hero.landings();
+      float air = 0;
+      sim.run(1500, c, [&] {
+        if(sim.hero.landings()==landings)
+          air += 1.f/60.f;
+        });
+      const float flight = 2.f*std::sqrt(2.f*island::JumpHeight/island::Gravity);
+      std::cout << text("running jump up %.1f degrees: %.3f s in the air (%.3f on level ground)\n", double(s0),
+                        double(air), double(flight));
+      require(sim.hero.landings()==landings+1 && sim.hero.onGround(), "a jump up the slope must land");
+      require(air<=flight, text("up the slope the flight must not outlast a level one: %.3f s", double(air)));
       return;
       }
   throw std::runtime_error("the island must have ground of 20-30 degrees, 5 m up");

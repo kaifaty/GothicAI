@@ -101,17 +101,22 @@ void Hero::tick(const Control& control, uint64_t dt) {
   feet = moved.position;
 
   if(airborne) {
-    // what the contacts left of the asked speed: the ground under a fall or a slide, a ceiling over a rise
+    // Ground under him once the rise is over: he lands. Running uphill the contacts leave an upward speed along
+    // the slope; it is the ground's, not a jump's, and does not keep him in the air.
     const float solved = moved.velocity.y*0.01f;
-    if(solved>mean+1e-3f)
-      vy = std::max(vy, solved);
-    else if(mean>0.f && solved<mean-1e-3f)
-      vy = std::min(vy, solved);
-    if(moved.grounded && vy<=0.f) {
+    if(moved.grounded && mean<=0.f) {
       grounded = true;
       inJump   = false;
       vy       = 0;
       ++landCount;
+      }
+    else if(solved>mean+1e-3f) {
+      // a slide down ground too steep to stand on: the ground takes some of the fall, but never lifts him
+      vy = std::max(vy, std::min(solved, 0.f));
+      }
+    else if(mean>0.f && solved<mean-1e-3f) {
+      // a ceiling over the rise
+      vy = std::min(vy, solved);
       }
     } else if(!moved.grounded) {
     // off a ledge or onto ground too steep to stand on: he falls from rest

@@ -41,6 +41,10 @@ int main(int argc, const char** argv) {
     const island::DataDir data{std::filesystem::absolute(flags.data)};
     island::useIslandFolders(data);
     island::Arguments arguments(data.root);
+    // Metal's compiled shaders and the pipelines, kept with the island: the first start compiles them (about 45 s on
+    // an M1 Pro), the next ones read them back
+    Tempest::Device::setPipelineCacheDirectory(data.root/"cache"/"pipelines");
+    Tempest::Device::setShaderCacheDirectory(data.root/"cache"/"msl");
 
 #if defined(__APPLE__)
     Tempest::MetalApi  api;

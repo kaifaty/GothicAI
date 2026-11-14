@@ -34,14 +34,10 @@ Window::Window(Device& device, const Flags& flags, Services& services, World& wo
   : Tempest::Window(Normal), device(device), flags(flags), services(services), world(world), view(view), hero(hero),
     swapchain(SystemApi::isOffscreen() || !flags.capture.empty() ? Swapchain() : Swapchain(device, hwnd())) {
   setWindowTitle("engine-island");
-  resize(int(flags.width), int(flags.height));
-  if(!flags.capture.empty()) {
+  if(!flags.capture.empty())
     std::filesystem::create_directories(flags.capture);
+  if(!flags.capture.empty() || SystemApi::isOffscreen())
     offscreen = device.attachment(TextureFormat::RGBA8, flags.width, flags.height);
-    }
-  else if(SystemApi::isOffscreen()) {
-    offscreen = device.attachment(TextureFormat::RGBA8, flags.width, flags.height);
-    }
   control = flags.demo ? static_cast<ControlSource*>(&demo) : &keys;
 
   services.cam    = &camera;
@@ -57,15 +53,15 @@ Window::~Window() {
   for(auto& f:fence)
     f.wait();
   device.waitIdle();
-  setCursorShape(CursorShape::Arrow);
   // the time between frames, from the second second on: the first frames wait for shaders and textures
   std::vector<uint32_t> ms(frameMs.size()>60 ? frameMs.begin()+60 : frameMs.end(), frameMs.end());
   if(!ms.empty()) {
     std::sort(ms.begin(), ms.end());
     const auto median = ms[ms.size()/2];
     const auto p95    = ms[std::min(ms.size()-1, ms.size()*95/100)];
-    std::printf("island: %llu frames, %.1f s of island time; frame time median %u ms, p95 %u ms over %zu frames\n",
-                static_cast<unsigned long long>(frames), double(time)*0.001, median, p95, ms.size());
+    std::printf("island: %llu frames of %ux%u, %.1f s of island time; frame time median %u ms, p95 %u ms over %zu "
+                "frames\n", static_cast<unsigned long long>(frames), frameW, frameH, double(time)*0.001, median, p95,
+                ms.size());
     }
   else {
     std::printf("island: %llu frames, %.1f s of island time\n", static_cast<unsigned long long>(frames),
@@ -81,10 +77,9 @@ Attachment& Window::target() {
   }
 
 void Window::setViewport() {
-  if(!offscreen.isEmpty())
-    camera.setViewport(uint32_t(offscreen.w()), uint32_t(offscreen.h()));
-  else
-    camera.setViewport(swapchain.w(), swapchain.h());
+  frameW = offscreen.isEmpty() ? swapchain.w() : uint32_t(offscreen.w());
+  frameH = offscreen.isEmpty() ? swapchain.h() : uint32_t(offscreen.h());
+  camera.setViewport(frameW, frameH);
   }
 
 uint64_t Window::stepLength() const {
@@ -206,7 +201,7 @@ void Window::render() {
 void Window::resizeEvent(SizeEvent&) {
   for(auto& f:fence)
     f.wait();
-  if(offscreen.isEmpty() && !SystemApi::isOffscreen())
+  if(offscreen.isEmpty())
     swapchain.reset();
   setViewport();
   }
@@ -223,32 +218,30 @@ void Window::keyUpEvent(KeyEvent& event) {
   keys.key(event.key, false);
   }
 
-void Window::mouseMoveEvent(MouseEvent& event) {
-  if(flags.demo || !hasFocus())
+// The mouse looks while its left button is held, as in Gothic's window: the cursor stays the user's.
+void Window::mouseDownEvent(MouseEvent& event) {
+  if(flags.demo || event.button!=Event::ButtonLeft)
     return;
-  const Point center(w()/2, h()/2);
-  if(!mouseLook) {
-    // the first move after the focus came: the cursor may be anywhere, it is not a turn
-    mouseLook = true;
-    setCursorShape(CursorShape::Hidden);
-    setCursorPosition(center);
-    return;
-    }
-  if(event.pos()!=center) {
-    keys.mouse(event.pos().x-center.x, event.pos().y-center.y);
-    setCursorPosition(center);
-    }
+  looking = true;
+  lastMouse = event.pos();
+  }
+
+void Window::mouseUpEvent(MouseEvent& event) {
+  if(event.button==Event::ButtonLeft)
+    looking = false;
   }
 
 void Window::mouseDragEvent(MouseEvent& event) {
-  mouseMoveEvent(event);
+  if(!looking)
+    return;
+  keys.mouse(event.pos().x-lastMouse.x, event.pos().y-lastMouse.y);
+  lastMouse = event.pos();
   }
 
 void Window::focusEvent(FocusEvent& event) {
   if(!event.in) {
-    mouseLook = false;
+    looking = false;
     keys.clear();
-    setCursorShape(CursorShape::Arrow);
     }
   }
 

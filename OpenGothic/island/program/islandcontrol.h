@@ -20,7 +20,7 @@ class ControlSource {
     virtual bool    finished(uint64_t /*time*/) const { return false; }
   };
 
-// WASD, Shift to run, Space to jump; the mouse turns the hero and tilts the camera.
+// WASD, Shift to run, Space to jump; the mouse (its left button held) turns the hero and tilts the camera.
 class Keys final : public ControlSource {
   public:
     void    key(Tempest::KeyEvent::KeyType key, bool down);

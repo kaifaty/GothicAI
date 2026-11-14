@@ -15,7 +15,7 @@ struct Flags {
   bool                  demo    = false; // --demo: the built-in track instead of the keys and the mouse
   int64_t               dayTime = 12ll*60*60*1000; // --time HH:MM
   float                 pace    = 0;     // --time-pace: island seconds per real second (0: the time stands)
-  uint32_t              width   = 1280, height = 720; // --size WxH: the window's frame, and the capture's
+  uint32_t              width   = 1280, height = 720; // --size WxH: the frame of --capture
   bool                  help    = false;
   };
 

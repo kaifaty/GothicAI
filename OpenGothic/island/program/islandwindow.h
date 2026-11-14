@@ -43,7 +43,8 @@ class Window final : public Tempest::Window {
     void resizeEvent  (Tempest::SizeEvent&  event) override;
     void keyDownEvent (Tempest::KeyEvent&   event) override;
     void keyUpEvent   (Tempest::KeyEvent&   event) override;
-    void mouseMoveEvent(Tempest::MouseEvent& event) override;
+    void mouseDownEvent(Tempest::MouseEvent& event) override;
+    void mouseUpEvent  (Tempest::MouseEvent& event) override;
     void mouseDragEvent(Tempest::MouseEvent& event) override;
     void focusEvent   (Tempest::FocusEvent& event) override;
     void closeEvent   (Tempest::CloseEvent& event) override;
@@ -78,12 +79,14 @@ class Window final : public Tempest::Window {
     uint64_t             steps    = 0;  // fixed steps so far
     uint64_t             time     = 0;  // island milliseconds: the sum of the steps
     uint64_t             frames   = 0;
+    uint32_t             frameW   = 0, frameH = 0;
     uint64_t             started  = 0;  // the clock at the first frame
     uint64_t             lastFrame = 0;
     std::vector<uint32_t> frameMs;      // the time between frames, for the report at the end
     ChunkId              chunk;
     bool                 inAir    = false;
-    bool                 mouseLook = false;
+    bool                 looking  = false; // the left button is held: the mouse looks
+    Tempest::Point       lastMouse;
     bool                 quitting = false;
     bool                 failed   = false;
   };
