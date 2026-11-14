@@ -145,6 +145,7 @@ bool Npc::createRagdoll() {
   }
 
 void Npc::releaseRagdoll(bool blend) {
+  finishRagdollBrace("release");
   const bool hadBody = ragdoll!=nullptr;
   if(hadBody)
     if(const auto* trace=std::getenv("OPENGOTHIC_RAGDOLL_TRACE");trace!=nullptr && trace[0]=='1')
