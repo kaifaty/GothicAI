@@ -21,6 +21,27 @@ namespace Taa {
   uint32_t           upscalePhases(uint32_t inW, uint32_t inH, uint32_t outW, uint32_t outH);
   // and its mip bias of the scene's textures: log2(in/out) − 1, by the width
   float              upscaleMipBias(uint32_t inW, uint32_t outW);
+  // Our own temporal upscale (taau_resolve.frag): the input texel that holds the centre of output pixel (outX, outY)
+  // in a frame moved by `jitter` input pixels, and how far that texel's sample of the scene lies from the centre,
+  // in input pixels (within ±0.5 away from the frame's edge)
+  struct UpscaleTap {
+    int32_t       x = 0, y = 0;
+    Tempest::Vec2 offset;
+    };
+  UpscaleTap         upscaleTap(uint32_t outX, uint32_t outY, uint32_t outW, uint32_t outH,
+                                uint32_t inW, uint32_t inH, const Tempest::Vec2& jitter);
+  // the share of the new frame's alpha such a sample gets: exp(-kernel*d²), d its offset in output pixels
+  float              upscaleConfidence(const Tempest::Vec2& offset, float scaleX, float scaleY, float kernel);
+  // The resolve's accumulation (taau_resolve.frag): `conf` this frame's sample weight, `gathered` the weight in the
+  // history's alpha, `wMax` its cap, `moved` how far the colour box moved the history in box extents, `mask` this
+  // frame's reactive mask under the ceiling. The new frame's share is conf/(conf + gathered) and grows to the whole
+  // under the mask; the history then keeps min(gathered + conf, wMax)*(1 - mask), never less than UpscaleWeightInit
+  constexpr float    UpscaleWeightInit = 0.05f;
+  struct UpscaleShare {
+    float share  = 0; // of the new frame
+    float weight = 0; // the history's alpha after this frame
+    };
+  UpscaleShare       upscaleShare(float conf, float gathered, float wMax, float moved, float clipTrust, float mask);
   // the clip-space translation that moves the picture by `px` pixels of a w×h target: J of J*proj
   Tempest::Matrix4x4 jitterMatrix(const Tempest::Vec2& px, uint32_t w, uint32_t h);
 

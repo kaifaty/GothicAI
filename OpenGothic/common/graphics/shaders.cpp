@@ -242,9 +242,12 @@ void Shaders::compileShaders() noexcept {
 #if defined(__APPLE__)
   // the Mac is always Metal: half colours, -14% of the pass; Vulkan would need shaderFloat16
   taaResolve             = postEffect("triangle", "taa_resolve_h", RenderState::ZTestMode::Always);
+  taauResolve            = postEffect("triangle", "taau_resolve_h", RenderState::ZTestMode::Always);
 #else
   taaResolve             = postEffect("triangle", "taa_resolve", RenderState::ZTestMode::Always);
+  taauResolve            = postEffect("triangle", "taau_resolve", RenderState::ZTestMode::Always);
 #endif
+  motionCameraDilated    = postEffect("triangle", "motion_camera_dilated", RenderState::ZTestMode::Always);
   taaSharpen             = postEffect("triangle", "taa_sharpen", RenderState::ZTestMode::Always);
   motionCamera           = postEffect("triangle",    "motion_camera",     RenderState::ZTestMode::Always);
   tonemappingBloom       = postEffect("triangle_uv", "tonemapping_bloom", RenderState::ZTestMode::Always);

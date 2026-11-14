@@ -1,0 +1,80 @@
+# Our own temporal upscale (graphics plan 1г, reports/render-features/2026-11-05-upscale/step-1g-1-taau.md): the five
+# clips of taa-clips.bench with `ui on`, which routes every recorded frame through the swapchain-sized frame, so a
+# reduced resolution is upscaled as the player sees it. Judged side by side as clips, in 1:1 crops.
+# On the Mac at the player's frame, 3456x1918:
+#   BENCH_VID_RES=1 TEMPEST_WINDOW_SIZE=1728x959 BENCH_HOST=local scripts/bench.sh upscale-clips <out>   # now: 75 %
+#   BENCH_VID_RES=0 OPENGOTHIC_UPSCALE=taau OPENGOTHIC_RENDER_SCALE=0.5 TEMPEST_WINDOW_SIZE=1728x959 \
+#     BENCH_HOST=local scripts/bench.sh upscale-clips <out>                                            # TAAU 50 %
+# @timeout 600
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui on
+view full
+cam lift off
+# 1. The market at noon: the hero walks, the camera follows, passers-by around
+goto NW_CITY_MERCHANT_TRADE_04
+watch player
+walkmode walk
+cam look 120
+cam follow 380 170 160
+wait 10000
+walkto NW_CITY_MERCHANT_PATH_09
+wait 500
+rec up-market
+wait 7000
+stop
+# 2. The forest road: leaves in the wind, the camera holds still
+cam cut
+goto NW_FOREST_PATH_16
+watch player
+cam look 150
+cam world 500 230 0
+wait 10000
+cam hold
+rec up-forest
+wait 7000
+stop
+# 3. A slow turn of the camera on the spot by the market roofs: it stands, the hero walks off and it turns after him
+cam cut
+goto NW_CITY_MERCHANT_TRADE_04
+watch player
+walkmode walk
+cam look 350
+cam world 700 280 270
+wait 10000
+cam fixed
+walkto NW_CITY_MERCHANT_SHOP01_FRONT_03
+wait 500
+rec up-roofs-turn
+wait 7000
+stop
+# 4. Flicker: the camera stands at noon on the way from the city to the farms, a tree in the wind, a fence and
+# tall grass against the sky
+cam cut
+set time 12 0
+goto NW_FARM1_PATH_CITY_13
+watch player
+cam look 300
+cam world 600 200 180
+wait 10000
+cam hold
+wait 1000
+rec up-flicker
+wait 7000
+stop
+# 5. The harbour at midnight: the fishers' corner from 7 m, two of their three burning braziers, a net rack
+# (fire and smoke under the reactive mask); the shot of harbour-motion-night.bench
+cam cut
+set time 0 0
+cam look -2033.524
+goto pos -3202.329 1917.000 -3435.690
+cam world 5999.906 -2000.000 -155.224859
+wait 34
+cam hold
+wait 8000
+set time 0 0
+rec up-harbour-night
+wait 7000
+stop
