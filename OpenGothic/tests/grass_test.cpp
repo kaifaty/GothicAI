@@ -569,7 +569,7 @@ void patches() {
       require(b>=0 && b<=256 && b==Grass::patchBare(x*97*U,z*97*U), "a spot of bare earth stands where it stood");
       if(Grass::patchSward(n))
         ++sward;
-      if(Grass::patchDensity(n)>256)
+      if(Grass::patchHeight(n)>=1.5f)
         ++clump;
       if(b>=128)
         ++bare;
@@ -620,8 +620,8 @@ void tufts() {
       require(a.x>=tx*Grass::TuftStep && a.x<(tx+1)*Grass::TuftStep && a.z>=tz*Grass::TuftStep && a.z<(tz+1)*Grass::TuftStep,
               "a tuft's centre lies in its square");
       require(!a.sward && !a.clump && a.reachQ8>=160 && a.reachQ8<=415 && a.longQ8>=256 && a.longQ8<=511 &&
-              a.pullQ8>=0 && a.pullQ8<=300 && a.fan>=0.f && a.fan<=1.f && a.lean>=0.6f && a.lean<=1.4f &&
-              a.fall>=0.15f && a.fall<=0.55f && a.spread>=0.25f && a.spread<=0.8f &&
+              a.pullQ8>=0 && a.pullQ8<=300 && a.fan>=0.f && a.fan<=1.f && a.lean>=0.599f && a.lean<=1.401f &&
+              a.fall>=0.149f && a.fall<=0.551f && a.spread>=0.249f && a.spread<=0.801f &&
               std::abs(a.leanX*a.leanX+a.leanZ*a.leanZ-1.f)<1e-3f && a.axisX*a.axisX+a.axisZ*a.axisZ>1040000 &&
               a.axisX*a.axisX+a.axisZ*a.axisZ<1056000, "a tuft's own numbers are in their ranges");
       // its own centre is nearer to it by its measure than a point a square away

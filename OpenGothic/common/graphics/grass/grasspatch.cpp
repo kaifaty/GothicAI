@@ -103,7 +103,7 @@ Tuft tuft(int32_t tx, int32_t tz, int32_t patch) {
   t.z = tz*TuftStep + int32_t((h >> 16) % uint64_t(TuftStep));
   const int32_t n = patch>=0 ? patch : patchNoise(t.x,t.z);
   t.sward = patchSward(n);
-  t.clump = patchDensity(n)>256;
+  t.clump = !t.sward && patchDensity(n)>256;
   // the sward is even: half the difference between its tufts, and its blades are hardly gathered
   const float wild = t.sward ? 0.5f : 1.f;
 
