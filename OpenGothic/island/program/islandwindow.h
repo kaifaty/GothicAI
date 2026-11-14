@@ -6,10 +6,12 @@
 // saved as PNG). Frames in flight: Resources::MaxFramesInFlight.
 //
 // The island's time goes in fixed steps of 1/60 s (16 or 17 ms): the same track gives the same walk on any machine.
-// In the window the steps follow the clock; with --capture every frame is two steps, 30 frames a second.
+// In the window the steps follow the clock; with --capture every frame is two steps (four with --capture-every 2).
 
 #include "islandcontrol.h"
 #include "islandflags.h"
+#include "islandscript.h"
+#include "islandevents.h"
 
 #include "camera.h"
 #include "resources.h"
@@ -74,6 +76,11 @@ class Window final : public Tempest::Window {
     Renderer             renderer;
     Keys                 keys;
     DemoTrack            demo;
+    std::unique_ptr<ScriptTrack> script;
+    Events               events;
+    size_t               nextShot = 0;
+    uint64_t             nextPosition = 0;
+    bool                 wasJumping = false;
     ControlSource*       control = nullptr;
 
     uint64_t             steps    = 0;  // fixed steps so far
