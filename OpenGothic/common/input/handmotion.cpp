@@ -213,13 +213,16 @@ void HandMotionReceiver::tick() {
   tick(Clock::now());
   }
 
+void HandMotionReceiver::expire(Track& t, Clock::time_point now) {
+  while(t.count>0 && now-t.ring[t.begin].received>HistoryAge) {
+    t.begin = (t.begin+1)%HistoryCapacity;
+    --t.count;
+    }
+  }
+
 void HandMotionReceiver::tick(Clock::time_point now) {
-  const size_t cap = HistoryCapacity;
   for(auto& t:hands) {
-    while(t.count>0 && now-t.ring[t.begin].received>HistoryAge) {
-      t.begin = (t.begin+1)%cap;
-      --t.count;
-      }
+    expire(t,now);
     const auto dt = now-t.rateMark;
     if(dt>=seconds(1)) {
       t.st.fps      = float(double(t.st.frames-t.rateFrames)/duration<double>(dt).count());
@@ -275,12 +278,7 @@ bool HandMotionReceiver::accept(const void* data, size_t size, Clock::time_point
     return false;
     }
   Track& t = hands[f.hand];
-  if(t.streaming && received-t.lastSample.received>=StreamGap) {
-    // a new stream: its seq and its clock start over, the gap is not a loss
-    t.streaming = false;
-    t.offsets.clear();
-    }
-  if(t.streaming) {
+  if(t.any) {
     // serial arithmetic: survives the wrap of the 32-bit counter
     const auto step = int32_t(f.seq-t.lastSeq);
     if(step<=0) {
@@ -289,8 +287,7 @@ bool HandMotionReceiver::accept(const void* data, size_t size, Clock::time_point
       }
     t.st.lost += uint64_t(step-1);
     }
-  t.streaming = true;
-  t.lastSeq   = f.seq;
+  t.lastSeq = f.seq;
   ++t.st.frames;
 
   // the sliding minimum of "receipt - tUs" over the last ClockWindow: the least delayed frame sets the scale
@@ -308,6 +305,8 @@ bool HandMotionReceiver::accept(const void* data, size_t size, Clock::time_point
   s.received = received;
   t.toGameTime(f.tUs,s.time);
 
+  // what aged while the game did not read (a pause, a load) leaves before the new frames, not as overflow
+  expire(t,received);
   const size_t cap = HistoryCapacity;
   if(t.count==cap) {
     t.begin = (t.begin+1)%cap;

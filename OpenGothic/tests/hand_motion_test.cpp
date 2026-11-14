@@ -92,7 +92,7 @@ void settle() {
 void encodeDecode() {
   HandMotion::Frame f;
   f.hand     = HandMotion::Right;
-  f.flags    = uint8_t(HandMotion::GyroBiasRemoved | HandMotion::QuatValid);
+  f.flags    = uint8_t(HandMotion::GyroBiasRemoved | HandMotion::AtRest | HandMotion::QuatValid);
   f.reserved = 0;
   f.seq      = 0xA1B2C3D4u;
   f.buttons  = (1u<<9) | (1u<<0);
@@ -113,23 +113,26 @@ void encodeDecode() {
   for(int i=0; i<4; ++i)
     require(g.quat[i]==f.quat[i],"quat survives");
 
-  auto magic = b;
-  magic[3] = '2';
-  auto hand = b;
-  hand[4] = 2;
-  require(HandMotion::decode(magic.data(),magic.size(),g)==HandMotion::Status::BadMagic,"bad magic");
-  require(HandMotion::decode(b.data(),63,g)==HandMotion::Status::BadSize,"63 bytes");
-  require(HandMotion::decode(hand.data(),hand.size(),g)==HandMotion::Status::BadHand,"hand 2");
-
   Receiver r(offline());
   const auto now = Receiver::Clock::now();
+  for(size_t i=0; i<4; ++i) {
+    auto magic = b;
+    magic[i] = 'X';
+    require(HandMotion::decode(magic.data(),magic.size(),g)==HandMotion::Status::BadMagic,"bad magic byte "+std::to_string(i));
+    require(!r.accept(magic.data(),magic.size(),now),"receiver drops bad magic byte "+std::to_string(i));
+    }
+  for(uint8_t h:{uint8_t(2),uint8_t(255)}) {
+    auto hand = b;
+    hand[4] = h;
+    require(HandMotion::decode(hand.data(),hand.size(),g)==HandMotion::Status::BadHand,"hand "+std::to_string(h));
+    require(!r.accept(hand.data(),hand.size(),now),"receiver drops hand "+std::to_string(h));
+    }
+  require(HandMotion::decode(b.data(),63,g)==HandMotion::Status::BadSize,"63 bytes");
   auto longer = b;
   longer.push_back(0);
-  require(!r.accept(magic.data(),magic.size(),now),"receiver drops bad magic");
   require(!r.accept(b.data(),63,now),"receiver drops 63 bytes");
   require(!r.accept(longer.data(),longer.size(),now),"receiver drops 65 bytes");
-  require(!r.accept(hand.data(),hand.size(),now),"receiver drops hand 2");
-  require(r.malformed()==4,"four bad datagrams counted, got "+std::to_string(r.malformed()));
+  require(r.malformed()==8,"eight bad datagrams counted, got "+std::to_string(r.malformed()));
   require(r.hand(HandMotion::Left).last()==nullptr && r.hand(HandMotion::Right).last()==nullptr,"no hand got a frame");
   require(r.accept(b.data(),b.size(),now) && r.hand(HandMotion::Right).stats().frames==1,"the good one is accepted");
   }
@@ -143,6 +146,11 @@ void socketTwoHands() {
     s.send(frame(HandMotion::Left, 1+i));
     s.send(frame(HandMotion::Right,101+i));
     }
+  // a good frame with a byte more or less: recv must not cut or pass it
+  auto longer = bytes(frame(HandMotion::Left,50));
+  longer.push_back(0);
+  s.send(longer.data(),longer.size());
+  s.send(longer.data(),HandMotion::FrameSize-1);
   settle();
   r.tick();
   for(uint8_t h=0; h<HandMotion::HandCount; ++h) {
@@ -155,21 +163,24 @@ void socketTwoHands() {
       }
     require(t.last()!=nullptr && t.last()->frame.seq==first+19,"last frame");
     }
-  require(r.malformed()==0,"nothing malformed");
+  require(r.malformed()==2,"65 and 63 bytes counted as malformed, got "+std::to_string(r.malformed()));
   }
 
-// a gap 10 -> 13 is 2 lost; a repeat and a lower seq are dropped
+// a gap 10 -> 13 is 2 lost; a repeat and a lower seq are dropped; a pause of 1.1 s changes none of it
 void seqGaps() {
   Receiver r(offline());
-  auto at = Receiver::Clock::now();
-  require(feed(r,frame(HandMotion::Left,10),at),"seq 10");
-  require(feed(r,frame(HandMotion::Left,13),at+=milliseconds(5)),"seq 13");
+  const auto t0 = Receiver::Clock::now();
+  auto at = t0;
+  require(feed(r,frame(HandMotion::Left,10,1'000'000),at),"seq 10");
+  require(feed(r,frame(HandMotion::Left,13,1'005'000),at+=milliseconds(1100)),"seq 13");
   require(r.hand(HandMotion::Left).stats().lost==2,"10 -> 13: 2 lost");
-  require(!feed(r,frame(HandMotion::Left,13),at+=milliseconds(5)),"repeat dropped");
-  require(!feed(r,frame(HandMotion::Left,12),at+=milliseconds(5)),"lower dropped");
+  const auto late = duration<double,std::milli>(r.hand(HandMotion::Left).last()->time-t0).count();
+  require(std::abs(late-5.0)<0.01,"13 keeps the clock of 10: 5 ms after it, got "+std::to_string(late));
+  require(!feed(r,frame(HandMotion::Left,13),at+=milliseconds(1100)),"repeat dropped");
+  require(!feed(r,frame(HandMotion::Left,10),at+=milliseconds(1100)),"lower dropped");
   const auto& st = r.hand(HandMotion::Left).stats();
   require(st.dropped==2 && st.frames==2 && st.lost==2,"dropped 2, frames 2, lost still 2");
-  require(r.hand(HandMotion::Left).size()==2 && r.hand(HandMotion::Left)[1].frame.seq==13,"history 10, 13");
+  require(r.hand(HandMotion::Left).size()==1 && r.hand(HandMotion::Left)[0].frame.seq==13,"history: 10 aged, 13 stays");
   require(feed(r,frame(HandMotion::Left,14),at+=milliseconds(5)) && st.lost==2,"14 follows 13 without a loss");
   require(r.hand(HandMotion::Right).stats().frames==0,"the other hand is untouched");
   }
@@ -178,19 +189,25 @@ void seqGaps() {
 void emptyTick() {
   Receiver r(anyPort());
   require(r.isOpen(),"open: "+r.error());
-  std::vector<double> ms;
+  Sender s(r.port());
+  for(uint32_t i=0; i<5; ++i)
+    s.send(frame(HandMotion::Right,1+i));
+  settle();
+  r.tick();
+  const auto& t = r.hand(HandMotion::Right);
+  require(t.size()==5 && t.stats().frames==5,"5 frames before the empty ticks");
+  const auto before = t.stats();
+  const auto lastAt = t.lastReceived();
   for(int i=0; i<21; ++i) {
     const auto t0 = steady_clock::now();
     r.tick();
-    ms.push_back(duration<double,std::milli>(steady_clock::now()-t0).count());
+    const auto ms = duration<double,std::milli>(steady_clock::now()-t0).count();
+    require(ms<1.0,"tick "+std::to_string(i)+" under 1 ms, got "+std::to_string(ms));
     }
-  std::sort(ms.begin(),ms.end());
-  require(ms[ms.size()/2]<1.0,"median tick under 1 ms, got "+std::to_string(ms[ms.size()/2]));
-  for(uint8_t h=0; h<HandMotion::HandCount; ++h) {
-    const auto& t = r.hand(HandMotion::Hand(h));
-    require(t.size()==0 && t.last()==nullptr && t.stats().frames==0 && t.stats().dropped==0,"no frames");
-    }
-  require(r.malformed()==0 && r.isOpen(),"still open, nothing counted");
+  require(t.size()==5 && t[0].frame.seq==1 && t.last()->frame.seq==5 && t.lastReceived()==lastAt,"history kept");
+  require(t.stats().frames==before.frames && t.stats().lost==before.lost && t.stats().dropped==before.dropped &&
+          t.stats().overflow==before.overflow,"statistics kept");
+  require(r.hand(HandMotion::Left).size()==0 && r.malformed()==0 && r.isOpen(),"still open, nothing counted");
   }
 
 // more frames than the history holds: the newest stay, the rest count as overflow
@@ -207,6 +224,17 @@ void historyOverflow() {
     require(t[i].frame.seq==t[i-1].frame.seq+1,"in seq order");
   require(t.stats().overflow==88 && t.stats().frames==total && t.stats().lost==0,
           "88 overflow, got "+std::to_string(t.stats().overflow));
+
+  // a pause of 3 s: what aged leaves first, 400 newer frames fit without an overflow
+  Receiver p(offline());
+  const auto t0 = Receiver::Clock::now();
+  for(uint32_t seq=1; seq<=200; ++seq)
+    feed(p,frame(HandMotion::Left,seq),t0+milliseconds(5*seq));
+  for(uint32_t seq=201; seq<=600; ++seq)
+    feed(p,frame(HandMotion::Left,seq),t0+milliseconds(3000));
+  const auto& q = p.hand(HandMotion::Left);
+  require(q.size()==400 && q[0].frame.seq==201 && q.stats().overflow==0 && q.stats().lost==0,
+          "after a pause: 400 frames, 0 overflow, got "+std::to_string(q.size())+", "+std::to_string(q.stats().overflow));
   }
 
 // the socket asks for >= 256 KB; 400 frames sent between two ticks all come
@@ -255,6 +283,16 @@ void clockOffset() {
   require(r.hand(HandMotion::Right).toGameTime(origin+5000*400,back),"translate a later time");
   const auto err = duration<double,std::milli>(back-(t0+microseconds(5000*400))).count();
   require(std::abs(err)<=2.0,"a later time off by "+std::to_string(err)+" ms");
+
+  // the window: the first frame came in 1 ms, the rest in 11 ms; its minimum holds 2 s, then expires
+  for(int k=0; k<=50; ++k) {
+    const auto sent = t0+milliseconds(50*k);
+    feed(r,frame(HandMotion::Left,uint32_t(1+k),origin+uint64_t(50'000*k)),sent+milliseconds(k==0 ? 1 : 11));
+    const auto lag  = duration<double,std::milli>(r.hand(HandMotion::Left).last()->time-sent).count();
+    const double want = k<40 ? 1.0 : 11.0; // k=39 came 1.95 s after the first, k=40 2.01 s
+    require(std::abs(lag-want)<0.01,"window: frame "+std::to_string(k)+" lags "+std::to_string(lag)+" ms, want "+
+            std::to_string(want));
+    }
   }
 
 // a second receiver on a busy port: no crash, an error, tick works

@@ -42,8 +42,6 @@ class HandMotionReceiver final {
     static constexpr size_t HistoryCapacity = 512;     // ~1 s at 500 frames per second
     static constexpr auto   HistoryAge      = std::chrono::seconds(1);
     static constexpr auto   ClockWindow     = std::chrono::seconds(2);
-    // a hand silent this long starts a new stream: seq and the sender's clock begin again (a restarted bridge)
-    static constexpr auto   StreamGap       = std::chrono::seconds(1);
     static constexpr int    ReceiveBuffer   = 256*1024; // a pause of 0.5 s at 400 frames per second
 
     class Track {
@@ -69,7 +67,6 @@ class HandMotionReceiver final {
         size_t              count = 0;
         Sample              lastSample;
         bool                any       = false;
-        bool                streaming = false;
         uint32_t            lastSeq   = 0;
         // the sliding minimum of the offset over ClockWindow: a frame late on its way does not move the scale
         std::deque<Offset>  offsets;
@@ -108,6 +105,8 @@ class HandMotionReceiver final {
     void               close();
     void               fail(std::string what);
     void               drain();
+    // drops samples older than HistoryAge: not an overflow
+    static void        expire(Track& t, Clock::time_point now);
     void               report(Clock::time_point now);
 
     Config             cfg;
