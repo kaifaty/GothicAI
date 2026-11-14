@@ -1,0 +1,82 @@
+# A long flythrough under ray tracing (reports/render-features/2026-11-08-rt-revisit/step-default.md, «Приёмка»):
+# the route of streaming-flythrough, market -> harbour -> forest and back, ten laps at 10 m/s, so chunks and their
+# landscape BLAS come and go many times. Each lap ends in the market after the streaming settles with a `mark lap-N`;
+# the process's video memory (nvidia-smi) and the `render: rt landscape` / `render: rt scene` lines of game.log at the
+# marks are compared with lap 1. Run it under the default:
+#   TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh rt-default-soak
+# @timeout 3600
+seed 73030
+cheat god
+world-check NEWWORLD.ZEN
+set time 12 0
+overlay off
+ui off
+view full
+cam lift off
+watch player
+cam look 120
+cam world 700 280 180
+goto NW_CITY_MERCHANT_TRADE_04
+wait 10000
+streaming wait
+mark lap-0
+route 1000 NW_CITY_MERCHANT_TRADE_04 NW_CITY_HABOUR_BENCH_01 NW_FOREST_PATH_16
+streaming wait
+route 1000 NW_FOREST_PATH_16 NW_CITY_HABOUR_BENCH_01 NW_CITY_MERCHANT_TRADE_04
+streaming wait
+wait 5000
+mark lap-1
+route 1000 NW_CITY_MERCHANT_TRADE_04 NW_CITY_HABOUR_BENCH_01 NW_FOREST_PATH_16
+streaming wait
+route 1000 NW_FOREST_PATH_16 NW_CITY_HABOUR_BENCH_01 NW_CITY_MERCHANT_TRADE_04
+streaming wait
+wait 5000
+mark lap-2
+route 1000 NW_CITY_MERCHANT_TRADE_04 NW_CITY_HABOUR_BENCH_01 NW_FOREST_PATH_16
+streaming wait
+route 1000 NW_FOREST_PATH_16 NW_CITY_HABOUR_BENCH_01 NW_CITY_MERCHANT_TRADE_04
+streaming wait
+wait 5000
+mark lap-3
+route 1000 NW_CITY_MERCHANT_TRADE_04 NW_CITY_HABOUR_BENCH_01 NW_FOREST_PATH_16
+streaming wait
+route 1000 NW_FOREST_PATH_16 NW_CITY_HABOUR_BENCH_01 NW_CITY_MERCHANT_TRADE_04
+streaming wait
+wait 5000
+mark lap-4
+route 1000 NW_CITY_MERCHANT_TRADE_04 NW_CITY_HABOUR_BENCH_01 NW_FOREST_PATH_16
+streaming wait
+route 1000 NW_FOREST_PATH_16 NW_CITY_HABOUR_BENCH_01 NW_CITY_MERCHANT_TRADE_04
+streaming wait
+wait 5000
+mark lap-5
+route 1000 NW_CITY_MERCHANT_TRADE_04 NW_CITY_HABOUR_BENCH_01 NW_FOREST_PATH_16
+streaming wait
+route 1000 NW_FOREST_PATH_16 NW_CITY_HABOUR_BENCH_01 NW_CITY_MERCHANT_TRADE_04
+streaming wait
+wait 5000
+mark lap-6
+route 1000 NW_CITY_MERCHANT_TRADE_04 NW_CITY_HABOUR_BENCH_01 NW_FOREST_PATH_16
+streaming wait
+route 1000 NW_FOREST_PATH_16 NW_CITY_HABOUR_BENCH_01 NW_CITY_MERCHANT_TRADE_04
+streaming wait
+wait 5000
+mark lap-7
+route 1000 NW_CITY_MERCHANT_TRADE_04 NW_CITY_HABOUR_BENCH_01 NW_FOREST_PATH_16
+streaming wait
+route 1000 NW_FOREST_PATH_16 NW_CITY_HABOUR_BENCH_01 NW_CITY_MERCHANT_TRADE_04
+streaming wait
+wait 5000
+mark lap-8
+route 1000 NW_CITY_MERCHANT_TRADE_04 NW_CITY_HABOUR_BENCH_01 NW_FOREST_PATH_16
+streaming wait
+route 1000 NW_FOREST_PATH_16 NW_CITY_HABOUR_BENCH_01 NW_CITY_MERCHANT_TRADE_04
+streaming wait
+wait 5000
+mark lap-9
+route 1000 NW_CITY_MERCHANT_TRADE_04 NW_CITY_HABOUR_BENCH_01 NW_FOREST_PATH_16
+streaming wait
+route 1000 NW_FOREST_PATH_16 NW_CITY_HABOUR_BENCH_01 NW_CITY_MERCHANT_TRADE_04
+streaming wait
+wait 5000
+mark lap-10
