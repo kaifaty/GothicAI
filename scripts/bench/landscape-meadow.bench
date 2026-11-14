@@ -1,0 +1,130 @@
+# The meadow east of the tavern under the grass system (reports/engine/2026-11-14-grass-system): the four views of
+# landscape-pilot.bench, the meadow from afar and from above where the ring's end could show, the ground at the
+# hero's feet, a stone in the grass, the walk along the cart track, a turn of the game's camera, a gust crossing the
+# field, the low sun behind the grass, the night. The camera spots stand on surveyed ground: change them only with
+# the note.
+# Run it twice in the same window and put the halves side by side («выключено | включено»):
+#   OPENGOTHIC_GRASS=0 OPENGOTHIC_CONTENT=<set> TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh landscape-meadow
+#                      OPENGOTHIC_CONTENT=<set> TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh landscape-meadow
+# OPENGOTHIC_GRASS=ground: the ground's mark without the blades.
+# @timeout 900
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+walkmode run
+watch player
+cam game
+set time 12 0
+
+# the four views of the pilot
+goto NW_TAVERNE_TROLLAREA_03
+clear 3000
+face wp NW_TAVERNE_TROLLAREA_05
+streaming wait
+grass wait
+wait 5000
+shot meadow-1
+wait 200
+turn 90
+wait 2500
+shot meadow-2
+wait 200
+turn 90
+wait 2500
+shot meadow-3
+wait 200
+turn 90
+wait 2500
+shot meadow-4
+wait 200
+grass stats
+
+# from 12 m above the ground, 40 m from the track, 30 degrees down: where the blades end
+goto NW_TAVERNE_TROLLAREA_04
+cam at 38907 4994 -1252 42532 2685 438
+grass wait
+wait 3000
+shot far
+wait 200
+
+# down at the hero's feet, on the slope west of the track
+goto pos 41001 3440 -507
+cam follow 120 250 180
+cam look 0
+grass wait
+wait 3000
+shot feet
+wait 200
+
+# a stone in the grass, 70 cm over the ground; the hero behind the camera
+goto pos 40003 3790 -1503
+cam at 40503 3581 -902 41503 3480 -902
+grass wait
+wait 3000
+shot stone
+wait 200
+grass stats
+
+# the walk along the cart track
+cam game
+walkmode walk
+goto NW_TAVERNE_TROLLAREA_03
+face wp NW_TAVERNE_TROLLAREA_04
+grass wait
+wait 3000
+rec meadow-walk
+wait 500
+walkto NW_TAVERNE_TROLLAREA_05
+wait 11500
+stop
+walkmode run
+
+# a full circle in 12 s from the place of the game's camera behind the hero
+goto NW_TAVERNE_TROLLAREA_03
+face wp NW_TAVERNE_TROLLAREA_05
+cam look 110
+cam world 300 170 180
+grass wait
+wait 3000
+cam hold
+rec meadow-turn
+cloth camera-turn 360 12000
+wait 300
+stop
+
+# a gust crosses the field: 70 cm over the ground, to the east across the meadow to the track; the recording starts
+# 5 s before the gust is at the camera's place
+goto pos 40003 3790 -1503
+cam at 40503 3581 -902 41503 3480 -902
+grass wait
+wait 3000
+foliage wait-gust 5000 -902
+rec meadow-gust
+wait 22000
+stop
+
+# the low sun behind the grass: 60 cm over the ground, towards the sun
+set time 19 30
+goto pos 40503 3545 -902
+cam at 41001 3468 -507 41421 3420 393
+grass wait
+wait 6000
+rec meadow-eve
+wait 8000
+stop
+shot eve
+wait 200
+
+# the night, the view meadow-2
+set time 0 30
+cam game
+goto NW_TAVERNE_TROLLAREA_03
+face wp NW_TAVERNE_TROLLAREA_05
+grass wait
+wait 1500
+turn 90
+wait 6000
+shot night-2
+wait 200

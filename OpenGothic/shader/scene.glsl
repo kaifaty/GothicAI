@@ -60,6 +60,12 @@ struct SceneDesc {
   vec4  foliagePhasePrev;
   vec4  foliageSwing;     // x: 0..1 of the swing's period; y: the swing as a share of the arm; z: the flutter's pressure
   vec4  foliageSwingPrev;
+  // the travelling front of the gust (foliageFrontAt, foliage_wind.glsl; common/graphics/foliagefront.h)
+  vec4  foliageFront;     // xy: 0..1 of the turns of the wind speed's two terms at z=0; zw: the previous frame's
+  vec4  foliageFrontK;    // xy: their turns per cm of z; z: the wind's scale; w: 1 when the front runs
+  // grass (grass/grass_common.glsl): x full density to here, cm; y the blades go into the ground from here; z the
+  // ring's radius; w 1 with blades, 0.5 the ground's mark alone, 0 off
+  vec4  grassRing;
   };
 
 // bench `vsm study <bits>`: the shadow test on a mesh's facets (reports/render-features/2026-11-11-facet-shards)
@@ -132,6 +138,7 @@ const uint BK_EYE = 0x1000; // an eyeball: the lid's shade from the face rig, th
 const uint BK_PROJECTION = 0x2000; // maps by world position, uvScale: repeats per cm (material_projection.glsl)
 const uint BK_FRINGE = 0x4000; // grass over the projection where the mesh's v says (material_projection.glsl)
 const uint BK_FOLIAGE = 0x8000; // leaves: the wind moves the vertices (foliage_wind.glsl), the sun shines through (main.frag)
+const uint BK_GRASS = 0x10000; // a ground that grows grass: its look under and beyond the blades (grass/grass_ground.glsl)
 
 // Strands in a shadow view: the first part of the list casts the shadow for all of it (the meshlets are dealt out
 // evenly, groommesh.cpp), each strand as wide as that part is small (strandShadowRibbon, vertex_process.glsl).
@@ -162,7 +169,8 @@ struct Bucket {
   uint  fringeTex;   // BK_FRINGE: its maps' index in the bindless arrays
   float fringeScale; // its repeats per repeat of the projection
   float fringeTop0, fringeTop1, fringeBottom0, fringeBottom1; // shares of v: solid to the first, tufts to the second
-  uint  foliage;     // BK_FOLIAGE: 8 bits each of wind, flutter, translucency, anchor (FoliageWind::pack)
+  uint  foliage;     // BK_FOLIAGE: 8 bits each of wind, flutter, translucency, anchor (FoliageWind::pack);
+                     // BK_GRASS: the record's numbers of the ground (Grass::pack)
   float foliageReach; // the largest arm of its mesh at rest, from the X axis; bbox is grown by the leaves' travel
   };
 

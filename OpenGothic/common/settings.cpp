@@ -161,6 +161,9 @@ void Settings::load(std::u16string_view systemIni, std::u16string_view userIni) 
   // living foliage: leaves in the wind and the sun through them (graphics/foliagewind.h); 0 or OPENGOTHIC_FOLIAGE=0
   // draw such materials as any other of our own
   defaults->set("INTERNAL",     "foliage", 1);
+  // the grass round the camera (graphics/grass/grassparams.h): 0 off, 1 a smaller and thinner ring, 2 the whole;
+  // OPENGOTHIC_GRASS overrides it
+  defaults->set("INTERNAL",     "grass", 2);
   defaults->set("INTERNAL",     "taaSharpness", 0.75f);
   // VSM lamp shadows: the soft PCSS, or 0 hard in one gather (Renderer::setupSettings); hard on Metal, where the PCSS
   // costs ~11 ms GPU indoors on an M1 Pro

@@ -212,6 +212,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
   if(c=="water-film" && waterFilmCommand(waterFilmContext(),a,w,pl)) return;
   else if(c=="cloth" && clothCommand(clothContext(),a,w,pl)) return;
   else if(c=="foliage" && foliageCommand(a,w)) return;
+  else if(c=="grass" && grassCommand(a,w)) return;
   else if(waterCommand(bench.water,waterContext(),a,w,pl,ctrl)) return;
   else if(c=="item-save" && a.size()==2 && a[1]=="initial") {
     arenaAbort("item save initial must be the first scenario command before simulation");

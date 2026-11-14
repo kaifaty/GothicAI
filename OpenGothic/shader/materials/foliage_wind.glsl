@@ -51,6 +51,30 @@ float foliagePackedFlutter(uint bits) { return float((bits >> 8) & 0xFFu)*(Folia
 float foliageTranslucency (uint bits) { return float((bits >> 16) & 0xFFu)/255.0; }
 bool  foliageMoves        (uint bits) { return (bits & 0xFFFFu)!=0u; }
 
+// The travelling front (common/graphics/foliagefront.h): a gust does not come to the whole scene at once. The
+// lean's pressure, the swing's share and the flutter's pressure of the place at `z` are those of the world's wind
+// at the tick `t - z/c`, the front running along +Z. ph: 0..1 of the turns of the two terms of the wind's speed
+// (SceneDesc::foliageFront, xy this frame's, zw the previous one's); k: SceneDesc::foliageFrontK. Returns what
+// foliageBend reads as wind.z, swingOf.y and swingOf.z; without a front, the scene's own
+const float FoliageGustSpeed = 5.65;
+const float FoliageGustFrom  = 0.48;
+const float FoliageGustFull  = 0.76;
+const float FoliageEddyCurve = 0.75;
+const float FoliageSwingK    = 0.085;
+const float FoliageSwingTop  = 0.065;
+
+vec3 foliageFrontAt(float z, vec2 ph, vec4 k, vec4 wind, vec4 swingOf) {
+  if(k.w<=0.0)
+    return vec3(wind.z, swingOf.y, swingOf.z);
+  const float sa   = sin(6.2831853*fract(ph.x - z*k.x));
+  const float g    = 0.5 + 0.5*sin(6.2831853*fract(ph.y - z*k.y));
+  const float x    = (2.2 + 0.65*sa + 2.8*g*g*g*g)*k.z/FoliageGustSpeed;
+  const float t    = clamp((x-FoliageGustFrom)/(FoliageGustFull-FoliageGustFrom), 0.0, 1.0);
+  const float gust = t*t*(3.0-2.0*t);
+  const float air  = min(x*x, 1.0);
+  return vec3(air + (1.0-air)*gust, min(FoliageSwingK*sqrt(max(x,0.0)), FoliageSwingTop), pow(x, FoliageEddyCurve));
+  }
+
 float foliagePlaceHash(vec3 place) {
   uint h = uint(int(floor(place.x)))*0x9E3779B1u ^ uint(int(floor(place.z)))*0x85EBCA77u;
   h ^= h >> 15;
