@@ -27,7 +27,7 @@ layout(push_constant, std430) uniform Push {
 
 layout(location = 0) out vec3 outColor;
 layout(location = 1) out vec3 outNormal;
-layout(location = 2) out vec2 outShade;      // AO, the share of the sun through
+layout(location = 2) out vec4 outShade;      // the share of the blade's length, of the sun through, the dryness, the sheen
 layout(location = 3) out vec3 outPrevStatic; // as Varyings of materials_common.glsl
 layout(location = 4) out vec3 outPrevDelta;
 
@@ -111,7 +111,7 @@ void main() {
   const vec3  gn     = vec3(gxz.x, sqrt(max(1.0 - dot(gxz,gxz), 0.04)), gxz.y);
   const vec2  uv     = vec2(float(b.w & 0xFFFu), float((b.w >> 12) & 0xFFFu))/4096.0;
   const float dry    = float(b.w >> 28)/15.0;
-  float       width  = 0.8 + float((b.w >> 24) & 0xFu)*0.08;
+  float       width  = GrassWidth + float((b.w >> 24) & 0xFu)*GrassWidthStep;
   float       height = float((b.y >> 16) & 0xFFu)*0.25;
 
   // The ring: past `full` a share full/d of the blades is left, each d/full wider; a blade of a rank over the
@@ -120,11 +120,12 @@ void main() {
   const float d    = distance(root, scene.camPos);
   const float grow = clamp((ring.x/max(d,1.0)*1.12 - rank)/0.12, 0.0, 1.0);
   height *= grow*(1.0 - smoothstep(ring.y, ring.z, d));
-  if(height<=0.05 || ring.w<0.75) {
+  const uint  partsOff = grassPartsOff(ring.w);
+  if(height<=0.05 || ring.w<0.75 || (partsOff & GrassPartHide)!=0u) {
     gl_Position   = vec4(uintBitsToFloat(0x7fc00000));
     outColor      = vec3(0);
     outNormal     = vec3(0,1,0);
-    outShade      = vec2(0);
+    outShade      = vec4(0);
     outPrevStatic = vec3(0,0,1);
     outPrevDelta  = vec3(0);
     return;
@@ -152,7 +153,7 @@ void main() {
   const vec3  loc   = foliageFrontAt(root.z, scene.foliageFront.xy, scene.foliageFrontK, scene.foliageWind, scene.foliageSwing);
   const Tilt  tilt  = bladeTilt(fwd, lean0, height, tuft, rank, still, scene.foliageWind, scene.foliagePhase,
                                 scene.foliageSwing, loc, root);
-  const vec3  off   = sideV*(side*width*(1.0 - 0.75*t));
+  const vec3  off   = sideV*(side*width*(1.0 - GrassTaper*t));
   const vec3  pos   = root + bladePoint(tilt, k, n, height) + off;
 
   const vec4 clip = scene.viewProject*vec4(pos,1.0);
@@ -172,13 +173,11 @@ void main() {
     }
 
   // The colour of the ground under the root, from a coarse level of its texture: the strokes of the painted grass
-  // pass into the blades as patches. Darker at the root, lighter and greener or more like straw at the tip
-  const float lod    = max(float(textureQueryLevels(ground)) - 6.0, 0.0);
-  const vec3  earth  = textureLod(ground, uv, lod).rgb;
-  const float lean   = length(tilt.lean);
-  const float sheen  = 1.0 + GrassLeanSheen*min(lean/(0.5*GrassLeanMaxTan), 1.0)*t;
-  outColor = min(earth*mix(vec3(GrassRootShade), mix(GrassTipGreen, GrassTipStraw, dry), t)*sheen, vec3(1.0));
-  outShade = vec2(mix(GrassRootAo, 1.0, t), push.translucency);
+  // pass into the blades as patches. The pixel makes the blade's tone of it (grass.frag)
+  const float lod  = max(float(textureQueryLevels(ground)) - 6.0, 0.0);
+  const float lean = length(tilt.lean);
+  outColor = textureLod(ground, uv, lod).rgb;
+  outShade = vec4(t, push.translucency, dry, GrassLeanSheen*min(lean/(0.5*GrassLeanMaxTan), 1.0));
 
   // Three quarters the ground's normal, a quarter the blade's own, rounded across it; the lean turns it against
   // the wind, as the faces of the blades that lie over turn up: grass under a gust differs in tone from grass
@@ -188,4 +187,6 @@ void main() {
     face = -face;
   face = normalize(face + sideV*(side*1.2));
   outNormal = normalize(gn*0.75 + face*0.25 - vec3(tilt.lean.x, 0.0, tilt.lean.y)*(t*GrassNormalLean*0.5));
+  if((partsOff & GrassPartNormal)!=0u)
+    outNormal = gn;
   }

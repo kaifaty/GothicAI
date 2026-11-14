@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "graphics/grass/grassparams.h"
+#include "graphics/grass/grasspatch.h"
 
 // Where the grass grows (reports/engine/2026-11-14-grass-system, "Где растёт трава"). No device, no engine state:
 // the summary of a chunk's ground goes in, the blades of one cell of the world come out.
@@ -88,6 +89,7 @@ struct CellInput final {
   std::span<const Disc>          items;
   uint32_t                       rankLimit = 256; // blades of a rank below it only (a cell far from the camera)
   float                          density   = 1.f; // of the records' (the quality)
+  int32_t                        patch     = -1;  // every tuft is of this patches' noise (a bench's measure)
   };
 
 CellBlades buildCell(const CellInput& in);
@@ -99,11 +101,5 @@ struct BladeInfo final {
   uint8_t rank   = 0;
   };
 BladeInfo decode(const Blade& b, int32_t cx, int32_t cz, int32_t minY);
-
-// The patches of the meadow: 0..65535 at a place (units), the same numbers as grassPatch of grass_common.glsl
-int32_t patchNoise(int32_t x, int32_t z);
-// The share of BladesPerM2 a patch keeps, in 1/256, and the height against the record's
-int32_t patchDensity(int32_t noise);
-float   patchHeight(int32_t noise);
 
 }

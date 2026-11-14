@@ -16,7 +16,7 @@ layout(binding = 0, std140) uniform UboScene {
 
 layout(location = 0) in vec3 inColor;
 layout(location = 1) in vec3 inNormal;
-layout(location = 2) in vec2 inShade;
+layout(location = 2) in vec4 inShade;     // the share of the blade's length, of the sun through, the dryness, the sheen
 layout(location = 3) in vec3 inPrevStatic;
 layout(location = 4) in vec3 inPrevDelta;
 
@@ -26,9 +26,24 @@ layout(location = 2) out vec4 outOrm;
 layout(location = 3) out vec2 outMotion;
 
 void main() {
-  outDiffuse = vec4(inColor, float(GBufFoliageBit)/255.0);
+  // Darker at the root, lighter and greener or more like straw at the tip. Counted here, not per vertex: a blade
+  // of one link far away has the tone of a blade of four
+  const uint  partsOff = grassPartsOff(scene.grassRing.w);
+  const float t        = clamp(inShade.x, 0.0, 1.0);
+  const float tone     = grassTone(t);
+  const vec3  tip      = (partsOff & GrassPartTip)!=0u ? vec3(1.0) : mix(GrassTipGreen, GrassTipStraw, inShade.z);
+  const float root     = (partsOff & GrassPartRoot)!=0u ? 1.0 : GrassRootShade;
+  vec3  color   = min(inColor*mix(vec3(root), tip, tone)*(1.0 + inShade.w*t), vec3(1.0));
+  float ao      = (partsOff & GrassPartRootAo)!=0u ? 1.0 : mix(GrassRootAo, 1.0, tone);
+  float through = inShade.y;
+  if((partsOff & GrassPartPaint)!=0u) {
+    color   = vec3(1,0,0);
+    ao      = 1.0;
+    through = 0.0;
+    }
+  outDiffuse = vec4(color, float(GBufFoliageBit)/255.0);
   outNormal  = encodeNormal(normalize(inNormal));
-  outOrm     = vec4(inShade.x, GrassRoughness, inShade.y, 1.0);
+  outOrm     = vec4(ao, GrassRoughness, through, 1.0);
 
   // as motionResidual of materials/main.frag
   outMotion = vec2(0);
