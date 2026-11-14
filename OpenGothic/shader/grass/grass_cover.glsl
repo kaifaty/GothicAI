@@ -8,8 +8,8 @@
 // end where the blades do. Keep the numbers here and there in step.
 const int GrassCoverNotch  = 35;
 const int GrassCoverSpan   = 125;
-const int GrassCoverRipple = 30;
-const int GrassCoverSoft   = 25;
+const int GrassCoverRipple = 15;
+const int GrassCoverSoft   = 40;
 const int GrassCoverInside = 80;
 const int GrassCoverReach  = 90;
 const int GrassCoverSward  = 128;
@@ -19,7 +19,7 @@ int grassCoverBeyond(int reach) { return reach + GrassCoverRipple + GrassCoverSo
 
 // Grass::coverBare: a spot of bare earth, 0..256
 int grassCoverBare(ivec2 p) {
-  const int step = 6400, radius = 720, spread = 960, soft = 320;
+  const int step = 6400, radius = 720, spread = 960, soft = 720;
   const int cx = grassFloorDiv(p.x-step/2,step), cz = grassFloorDiv(p.y-step/2,step);
   int  bare = 0, bend = 0;
   bool bent = false;

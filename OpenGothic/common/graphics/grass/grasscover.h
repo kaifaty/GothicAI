@@ -16,8 +16,8 @@ namespace Grass {
 
 constexpr int32_t CoverNotch  = 35;  // cm: a bay of earth goes this far into the meadow
 constexpr int32_t CoverSpan   = 125; // cm: from the deepest bay to the longest tongue, at a reach of 90
-constexpr int32_t CoverRipple = 30;  // cm: the quick noise on the line, to either side
-constexpr int32_t CoverSoft   = 25;  // cm: the sward thins over this across the line
+constexpr int32_t CoverRipple = 15;  // cm: the quick noise on the line, to either side
+constexpr int32_t CoverSoft   = 40;  // cm: the sward thins over this across the line
 constexpr int32_t CoverInside = 80;  // cm: deeper in the meadow the border is not felt
 constexpr int32_t CoverReach  = 90;  // cm: the reach the span is given for
 constexpr int32_t CoverSward  = 128; // of 256: the ground is sward where the level is over it
