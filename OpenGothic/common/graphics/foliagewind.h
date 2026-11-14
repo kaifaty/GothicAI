@@ -74,7 +74,7 @@ constexpr float SwingBeatVar = 6.f;      // this many more: the swing rises and 
 constexpr float Swing1Share  = 0.6f;
 constexpr float Swing2Share  = 0.4f;
 constexpr float SwingK       = 0.085f;   // of the arm, by the root of the speed over GustSpeed: 4.4..6 % in the breeze
-constexpr float SwingTop     = 0.065f;   // and no more in a gust: a leaf held 10..16 % over must not swing back to where
+constexpr float SwingTop     = 0.065f;   // and no more in a gust: a leaf held 12..16 % over must not swing back to where
                                          // the breeze keeps it, or the gust reads as a wider swing and not as a push
 constexpr float SwingMaxTan  = 0.12f;    // the cap of it; the lean keeps under BendMaxTan less the swing
 constexpr float SwingAcross  = 0.3f;     // the part of the swing across the wind
