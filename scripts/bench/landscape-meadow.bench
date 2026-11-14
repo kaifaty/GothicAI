@@ -1,8 +1,9 @@
 # The meadow east of the tavern under the grass system (reports/engine/2026-11-14-grass-system): the four views of
 # landscape-pilot.bench, the meadow from afar and from above where the ring's end could show, the ground at the
-# hero's feet, a stone in the grass, the walk along the cart track, a turn of the game's camera, a gust crossing the
-# field, the low sun behind the grass, the night. The camera spots stand on surveyed ground: change them only with
-# the note.
+# hero's feet, a stone in the grass, the game's camera behind the hero standing still in three places (game-turn,
+# game-bare, game-short), the walk along the cart track, a turn of the game's camera, a gust crossing the field,
+# the low sun behind the grass, the night. The camera spots stand on surveyed ground: change them only with the
+# note.
 # Run it twice in the same window and put the halves side by side («выключено | включено»):
 #   OPENGOTHIC_GRASS=0 OPENGOTHIC_CONTENT=<set> TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh landscape-meadow
 #                      OPENGOTHIC_CONTENT=<set> TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh landscape-meadow
