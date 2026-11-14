@@ -384,9 +384,13 @@ void placementGround() {
     const auto i = Grass::decode(b,0,0,onGentle.minY);
     require(std::abs(double(i.y)-double(i.x)*double(tanOf(20)))<=8.0, "a root stands on the slope");
     }
-  const size_t onSteep = build(steep,0,0,par).blades.size();
-  require(double(onSteep)>=0.3*double(onLevel) && double(onSteep)<=0.75*double(onLevel),
-          "the last 10 degrees under the limit thin the grass: "+std::to_string(onSteep)+" of "+std::to_string(onLevel));
+  // by the share of the way to the limit left: 0.525 at 30 degrees of 25 to 35. The level meadow keeps every node
+  // the patches ask for, so the share is the only place where the count shows the node's final roll
+  const size_t onSteep  = build(steep,0,0,par).blades.size();
+  const double thinning = double(tanOf(par.slope)-tanOf(30))/double(tanOf(par.slope)-tanOf(par.slope-10.f));
+  require(double(onSteep)>=0.95*thinning*double(onLevel) && double(onSteep)<=1.05*thinning*double(onLevel),
+          "the last 10 degrees under the limit thin the grass by the slope: "+std::to_string(onSteep)+" of "+
+          std::to_string(onLevel)+", "+std::to_string(thinning)+" of it expected");
   require(build(wall,0,0,par).blades.empty(), "no grass over the slope limit");
   Grass::Params climber = par;
   climber.slope = 60.f;
