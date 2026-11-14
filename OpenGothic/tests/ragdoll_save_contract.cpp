@@ -1,5 +1,8 @@
 #include "game/ragdollsave.h"
 #include "game/serialize.h"
+#include "world/records/itemrecord.h"
+#include "world/records/npcrecord.h"
+#include "sha256.h"
 #include "resources.h"
 #include "asset/fromzenkit.h"
 #include "asset/modeltypes.h"
@@ -17,6 +20,7 @@
 #include <functional>
 #include <limits>
 #include <stdexcept>
+#include <type_traits>
 #include <vector>
 
 namespace {
@@ -165,6 +169,93 @@ namespace {
       write(output);
     }
     return bytes;
+    }
+
+  template<class T>
+  void fillRecordField(T& field, int& value, const char* prefix) {
+    if constexpr(std::is_array_v<T>) {
+      for(auto& element:field)
+        fillRecordField(element,value,prefix);
+      } else {
+      ++value;
+      if constexpr(std::is_same_v<T,std::string>)
+        field = std::string(prefix)+std::to_string(value);
+      else
+        field = static_cast<T>(value);
+      }
+    }
+
+  template<class... T>
+  int fillRecordFields(int value, const char* prefix, T&... fields) {
+    (fillRecordField(fields,value,prefix),...);
+    return value;
+    }
+
+  void requireRecordBytes(const std::vector<uint8_t>& bytes, const char* entry,
+                          size_t expectedSize, const char* expectedHash) {
+    mz_zip_archive zip = {};
+    require(mz_zip_reader_init_mem(&zip,bytes.data(),bytes.size(),0),"record archive must open");
+    const int index = mz_zip_reader_locate_file(&zip,entry,nullptr,0);
+    mz_zip_archive_file_stat stat = {};
+    require(index>=0 && mz_zip_reader_file_stat(&zip,mz_uint(index),&stat),"record entry must exist");
+    require(stat.m_uncomp_size==expectedSize,"record length must match main");
+    std::vector<uint8_t> raw(expectedSize);
+    require(mz_zip_reader_extract_to_mem(&zip,mz_uint(index),raw.data(),raw.size(),0),"record bytes must extract");
+    mz_zip_reader_end(&zip);
+    const auto hash = Sha256::hash(std::string_view(reinterpret_cast<const char*>(raw.data()),raw.size()));
+    std::printf("record save: %s bytes=%zu sha256=%s\n",entry,raw.size(),hash.c_str());
+    require(hash==expectedHash,"record byte order must match main");
+    }
+
+  void testRecordByteCompatibility() {
+    ItemRecord item = {};
+    require(fillRecordFields(100,"field_",item.id,item.name,item.name_id,item.hp,item.hp_max,
+            item.main_flag,item.flags,item.weight,item.value,item.damage_type,item.damage_total,item.damage,
+            item.wear,item.protection,item.nutrition,item.cond_atr,item.cond_value,item.change_atr,
+            item.change_value,item.magic,item.on_equip,item.on_unequip,item.on_state,item.owner,
+            item.owner_guild,item.disguise_guild,item.visual,item.visual_change,item.effect,item.visual_skin,
+            item.scheme_name,item.material,item.munition,item.spell,item.range,item.mag_circle,
+            item.description,item.text,item.count,item.inv_zbias,item.inv_rot_x,item.inv_rot_y,
+            item.inv_rot_z,item.inv_animate)==179,"item fixture must fill all 79 values");
+    NpcRecord npc = {};
+    require(fillRecordFields(0,"NPC-field-",npc.id,npc.name,npc.slot,npc.effect,npc.type,npc.flags,
+            npc.attribute,npc.hitchance,npc.protection,npc.damage,npc.damage_type,npc.guild,npc.level,
+            npc.mission,npc.fight_tactic,npc.weapon,npc.voice,npc.voice_pitch,npc.body_mass,
+            npc.daily_routine,npc.start_aistate,npc.spawnpoint,npc.spawn_delay,npc.senses,npc.senses_range,
+            npc.aivar,npc.wp,npc.exp,npc.exp_next,npc.lp,npc.bodystate_interruptable_override,
+            npc.no_focus)==164,"NPC fixture must fill all 164 values");
+
+    // Item::save at main 577610f6e: record bytes only, without kind and Item's footer.
+    constexpr const char* itemHash = "effd767d8c1b4a583f45c42499686250c179e68c3852b2751bf2fa08bd1a5be0";
+    // INpc serializer at main d35b21280, before #1387: includes the uint32_t(-1) kind.
+    constexpr const char* npcHash = "1759becef76991f2cc56effda3e944d15eb6fa17fecac9628d606e377a1c8245";
+    const auto bytes = archive([&](Serialize& output) {
+      output.setEntry("records/item");
+      output.write(item);
+      output.setEntry("records/npc");
+      output.write(uint32_t(-1),npc);
+      });
+    requireRecordBytes(bytes,"records/item",433,itemHash);
+    requireRecordBytes(bytes,"records/npc",762,npcHash);
+
+    Tempest::MemReader reader(bytes);
+    Serialize input(reader);
+    ItemRecord restoredItem = {};
+    NpcRecord restoredNpc = {};
+    uint32_t kind = 0;
+    require(input.setEntry("records/item"),"saved item record must exist");
+    input.readItem(restoredItem);
+    require(input.setEntry("records/npc"),"saved NPC record must exist");
+    input.read(kind);
+    input.readNpc(restoredNpc);
+    const auto restored = archive([&](Serialize& output) {
+      output.setEntry("records/item");
+      output.write(restoredItem);
+      output.setEntry("records/npc");
+      output.write(kind,restoredNpc);
+      });
+    requireRecordBytes(restored,"records/item",433,itemHash);
+    requireRecordBytes(restored,"records/npc",762,npcHash);
     }
 
   void testAnimationSampleCompatibility() {
@@ -747,6 +838,7 @@ namespace {
   }
 
 int main() {
+  testRecordByteCompatibility();
   testAnimationSampleCompatibility();
   testQuestReturn();
   testRoundTrip();

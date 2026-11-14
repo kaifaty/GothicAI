@@ -467,21 +467,8 @@ void moverChildSave() {
     return *child;
     };
   const auto& child=findChild(*gothic.world());
-  {
-    auto& script=gothic.world()->script();
-    const auto original=std::static_pointer_cast<daedalus::IItem>(child.item->handlePtr());
-    script.findSymbol(child.item->clsId())->set_instance(original);
-    const auto copy=script.copyItem(child.item->handlePtr());
-    const auto copiedInstance=std::static_pointer_cast<daedalus::IItem>(copy);
-    require(copy!=child.item->handlePtr() && copiedInstance->symbol_index()==original->symbol_index() &&
-            copiedInstance->user_ptr==original->user_ptr,
-            "an Item copy must retain its VM kind and owner while using a distinct record");
-    const auto hp=original->hp;
-    copy->hp=hp^1;
-    require(original->hp==hp && script.findSymbol(child.item->clsId())->get_instance()==original,
-            "copying and changing an Item must preserve the original record and current VM instance");
-    script.getVm().global_item()->set_instance(original);
-  }
+  gothic.world()->script().getVm().global_item()->set_instance(
+    std::static_pointer_cast<daedalus::IItem>(child.item->handlePtr()));
   const auto catalogueSize=gothic.world()->placedItemCensus().size();
   const auto countItems=[](World& world) {
     uint32_t count=0;

@@ -79,7 +79,6 @@ class GameScript final {
     auto         createItem(size_t instance) -> std::shared_ptr<ItemRecord>;
     auto         loadItem(Serialize& fin, Item& owner, uint32_t& kind) -> std::shared_ptr<ItemRecord>;
     void         attachItem(const std::shared_ptr<ItemRecord>& item, Item& owner);
-    auto         copyItem(const std::shared_ptr<ItemRecord>& item) -> std::shared_ptr<ItemRecord>;
     void         initializeInstanceItem(const std::shared_ptr<daedalus::IItem>& item, size_t instance);
     void         resetVarPointers();
 

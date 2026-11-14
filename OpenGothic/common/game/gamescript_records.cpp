@@ -123,7 +123,3 @@ auto GameScript::loadItem(Serialize& fin, Item& owner, uint32_t& kind) -> std::s
 void GameScript::attachItem(const std::shared_ptr<ItemRecord>& record, Item& owner) {
   std::static_pointer_cast<daedalus::IItem>(record)->user_ptr = &owner;
   }
-
-auto GameScript::copyItem(const std::shared_ptr<ItemRecord>& record) -> std::shared_ptr<ItemRecord> {
-  return std::make_shared<daedalus::IItem>(*std::static_pointer_cast<daedalus::IItem>(record));
-  }
