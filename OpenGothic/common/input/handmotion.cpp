@@ -1,7 +1,6 @@
 #if defined(_WIN32)
 // before anything that may pull <windows.h>
 #include <winsock2.h>
-#include <ws2tcpip.h>
 #else
 #include <cerrno>
 #include <fcntl.h>
