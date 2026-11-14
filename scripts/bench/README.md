@@ -343,6 +343,18 @@ waterfall); run it with `OPENGOTHIC_CONTENT=<abs>/reports/content/remaster/wall-
 layer), `OPENGOTHIC_TAA_REACTIVE=0`, `=1`, `=1` with the view and `OPENGOTHIC_TAA=0` at 1920x1080 on Ryzen with
 `WORLD=NEWWORLD.ZEN`, and measure with `reports/render-features/2026-11-10-taa-reactive/metrics.py`.
 
+`rt-default-sheet`, `rt-default-soak` and `rt-default-unload` belong to ray tracing by default on a PC
+([step-default](../../reports/render-features/2026-11-08-rt-revisit/step-default.md#сделано-1415112026)): since
+2026-11-14 the engine turns ray tracing (with the GI probes and the eye) on by itself on a discrete NVIDIA RTX on
+Vulkan, so every bench on Ryzen runs with it unless `OPENGOTHIC_RT=0` or `-rt 0`; the Mac stays without.
+`rt-default-sheet` shoots the views accepted without GI (the torch of the Red Lantern, the harbour at night, the
+harbour house, the market, the hut, the hero's face); run it with `OPENGOTHIC_RT=0` and without, the same build, and
+put the halves side by side. `rt-default-soak` (ten laps of the flythrough route) and `rt-default-unload` (eighteen
+cycles: the market, 2 km outside the world, Xardas' valley, the big farm, back to the market, so every chunk unloads
+and its landscape BLAS is freed) run as a copy named `streaming-flythrough` for the frame-profile build and its
+`render: rt landscape` lines; run `rt-default-unload` with `TEMPEST_OFFSCREEN=1`: a covered window on Ryzen drops to
+1 FPS, and its streaming waits then time out.
+
 ## План и журнал
 
 - 2026-11-11: `deterministic on` walks visibility clusters in a canonical order (sorted by sphere and meshlets,
