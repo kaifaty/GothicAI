@@ -458,7 +458,6 @@ void GameScript::loadDialogOU() {
   Log::e("none of Zen-files for OU could be loaded");
   }
 
-
 void GameScript::initializeInstanceNpc(const std::shared_ptr<daedalus::INpc>& npc, size_t instance) {
   LoadProbe::Startup::Detail::Scope detail("npc_init",[&]{
     const auto* symbol=vm.find_symbol_by_index(uint32_t(instance));
