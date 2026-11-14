@@ -360,6 +360,8 @@ std::vector<MotorProbe> probes(const JPH::Ragdoll& native, const std::vector<siz
     probe.on=swing || twist;
     probe.torqueLimit=std::max(swing ? joint.GetSwingMotorSettings().mMaxTorqueLimit : 0.f,
                                twist ? joint.GetTwistMotorSettings().mMaxTorqueLimit : 0.f);
+    probe.swingHz=joint.GetSwingMotorSettings().mSpringSettings.mFrequency;
+    probe.twistHz=joint.GetTwistMotorSettings().mSpringSettings.mFrequency;
     const auto target=joint.GetTargetOrientationCS();
     probe.target={target.GetX(),target.GetY(),target.GetZ(),target.GetW()};
     probe.errorDeg=angleDeg(joint.GetRotationInConstraintSpace(),target);
