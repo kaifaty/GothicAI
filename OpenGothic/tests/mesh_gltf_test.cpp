@@ -2914,8 +2914,10 @@ int main() {
       }
     Fixture fixture;
     const auto root=fixture.root.string();
-    const char* args[]={"gothic-mesh-gltf-test","-g",root.c_str()};
-    CommandLine commandLine(3,args);
+    // -rt 0: the toy fixture's cases count landscape pages without the ray scene's indices; on an RTX the device
+    // rule would turn it on. landscapeRtLifetime checks the ray scene with its own -rt 1.
+    const char* args[]={"gothic-mesh-gltf-test","-g",root.c_str(),"-rt","0"};
+    CommandLine commandLine(5,args);
     fixture.index();
     resourcePaths(fixture,true);
     converterCases(fixture);
