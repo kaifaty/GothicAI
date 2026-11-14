@@ -1,5 +1,5 @@
 # The meadow east of the tavern under the grass system (reports/engine/2026-11-14-grass-system): the frame's GPU
-# time where the blades fill the frame, and while walking the cart track. Run with the set under test in
+# time where the blades fill the frame, over the whole meadow from afar, and while walking the cart track. Run with the set under test in
 # PERF_ENV='OPENGOTHIC_CONTENT=<path on the host>'; off with OPENGOTHIC_GRASS=0 in the same PERF_ENV.
 seed 73013
 cheat god
@@ -34,13 +34,23 @@ wait 8000
 perf stop
 shot stone
 wait 200
+# the whole meadow from afar and above, where the ring ends in the frame: the view `far` of landscape-meadow.bench
+goto NW_TAVERNE_TROLLAREA_04
+cam at 38907 4994 -1252 42532 2685 438
+wait 20000
+grass stats
+perf sample perf-meadow/view-3
+wait 8000
+perf stop
+shot far
+wait 200
 # the walk of `meadow-walk`: the cells built and dropped on the way
 cam game
 walkmode walk
 goto NW_TAVERNE_TROLLAREA_03
 face wp NW_TAVERNE_TROLLAREA_04
 wait 20000
-perf sample perf-meadow/walk
+perf sample perf-meadow/view-4
 walkto NW_TAVERNE_TROLLAREA_05
 wait 12000
 perf stop

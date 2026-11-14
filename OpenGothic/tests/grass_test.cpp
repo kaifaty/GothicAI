@@ -293,6 +293,16 @@ void placementRepeats() {
   const double area = 25.0*64.0;
   require(double(total)>=0.45*320.0*area && double(total)<=1.5*320.0*area,
           "the count must follow the area and the density: "+std::to_string(total)+" blades on 1600 m2");
+  // and against the patches' own densities, read every 20 cm: a node takes the patch at its tuft's centre, up to
+  // a metre away, and no more blades than nodes stand on a metre
+  double expected = 0;
+  for(int32_t z=-790; z<3200; z+=20)
+    for(int32_t x=-790; x<3200; x+=20)
+      expected += 0.04*std::min(double(Grass::NodesPerM2),
+                                double(Grass::patchDensity(Grass::patchNoise(x*U,z*U)))*double(Grass::BladesPerM2)/256.0);
+  require(double(total)>=0.95*expected && double(total)<=1.05*expected,
+          "the count must be the patches' density over the area: "+std::to_string(total)+" blades, "+
+          std::to_string(expected)+" by the patches");
   const double lowShare = double(low)/double(total);
   require(lowShare>=0.22 && lowShare<=0.28, "a quarter of the ranks holds a quarter of the blades: "+std::to_string(lowShare));
   const double halfShare = double(halfTotal)/double(total);

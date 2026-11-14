@@ -9,12 +9,15 @@
 // of the distance where the blades start to go, to that distance, it takes what the grass looks like from afar
 // and keeps it beyond: the blades then vanish against an equal ground, and the meadow does not end at the ring.
 // The mark of an own material (gbufOrm.a) is written at any distance: the sun through the far grass is read only
-// under it, and a mark that came in with the distance would be a step of the light.
+// under it, and a mark that came in with the distance would be a step of the light. A ground with maps of its own
+// keeps its mark and what the maps wrote: the far look is mixed in over them. Its metal is not kept where the far
+// look begins: under the foliage bit that channel is the share of the sun let through.
 void grassGround(uint bits, vec3 pos, vec3 normal, inout vec4 diffuse, inout uint normalOut, inout vec4 orm) {
   const vec4 ring = scene.grassRing;
   if(ring.w<=0.0)
     return;
-  orm = vec4(1.0, 1.0, 0.0, 1.0);
+  if(orm.a<=0.0)
+    orm.a = 1.0;
   if(ring.w<0.75)
     return; // the mark alone: the pair that shows what it does to the near ground
 
@@ -36,9 +39,9 @@ void grassGround(uint bits, vec3 pos, vec3 normal, inout vec4 diffuse, inout uin
     const float lean  = tan(min(grassLeanAngle(grassPackedHeight(bits))*loc.x*grassPackedWind(bits), 0.698))*scene.foliageWind.w;
     const float k     = stand*far;
     tint     *= 1.0 + GrassLeanSheen*k*min(lean/(0.5*GrassLeanMaxTan), 1.0);
-    normalOut = encodeNormal(normalize(gn - vec3(scene.foliageWind.x, 0.0, scene.foliageWind.y)*(lean*GrassNormalLean*k)));
-    orm.r     = mix(1.0, GrassFarAo, k);
-    orm.g     = mix(1.0, GrassRoughness, far);
+    normalOut = encodeNormal(normalize(mix(decodeNormal(normalOut), gn, k) - vec3(scene.foliageWind.x, 0.0, scene.foliageWind.y)*(lean*GrassNormalLean*k)));
+    orm.r     = mix(orm.r, GrassFarAo, k);
+    orm.g     = mix(orm.g, GrassRoughness, far);
     orm.b     = grassPackedThrough(bits)*k;
     diffuse.a = float(int(diffuse.a*255.0 + 0.5) | GBufFoliageBit)/255.0;
     }
