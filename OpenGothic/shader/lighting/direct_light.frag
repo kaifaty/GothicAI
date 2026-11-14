@@ -256,8 +256,8 @@ void main(void) {
   if((scene.vsmStudy & VSM_STUDY_SUN_PIXEL)==0u && pixelNormal!=vec3(0))
     geomNormal = depthNormalWide(fragCoord, d, pixelNormal);
   geomNormal = facedNormal(geomNormal, normal);
-  // a blade of grass against the sun: the plane of its normal, not its own (grass/grass_common.glsl)
-  if(isGrassThin(diff.a, geomNormal, normal, scene.sunDir))
+  // a blade of grass: the plane of its normal, not its own (grass/grass_light.glsl)
+  if(isGrassBlade(diff.a, geomNormal, normal))
     geomNormal = vec3(0);
 #endif
 

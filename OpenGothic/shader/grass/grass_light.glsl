@@ -12,13 +12,13 @@ bool isGBufGrass(float hint) {
   return (x & (GBufFoliageBit | (1 << 2)))==GBufFoliageBit;
   }
 
-// A blade is thinner than the shadow's filter and turns its width to the eye. Seen against the sun, its own plane
-// (geomNormal, from the depth buffer) has its back to the sun, while its normal, three quarters the ground's,
-// takes the light: the filter carried that plane over the ground behind the blade and read half of it as the
-// blade's shadow - the meadow against the light stood dark. Such a pixel takes the plane of its normal, as a facet
-// edge-on to a lamp does (light.frag). The ground and a blade whose plane faces the sun keep their own
-bool isGrassThin(float hint, vec3 geomNormal, vec3 normal, vec3 sunDir) {
-  return isGBufGrass(hint) && geomNormal!=vec3(0) && dot(geomNormal,sunDir)<0.2 && dot(normal,sunDir)>0.0;
+// A blade is thinner than the shadow's filter and turns its width to the eye, so its own plane (geomNormal, from
+// the depth buffer) stands upright while its normal is three quarters the ground's. The filter carries the
+// receiver's plane over its taps: an upright one went under the ground behind the blade and read the ground as
+// the blade's shadow - the tall grass stood dark in the open sun. A blade whose plane is not its normal's takes
+// the plane of its normal, as a facet edge-on to a lamp does (light.frag); the ground keeps its own
+bool isGrassBlade(float hint, vec3 geomNormal, vec3 normal) {
+  return isGBufGrass(hint) && dot(geomNormal,normal)<0.8;
   }
 
 #endif
