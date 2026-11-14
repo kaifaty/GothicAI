@@ -6,6 +6,8 @@
 #   calm          3 s of the view meadow-2 in still air: what differs from frame to frame is shimmer
 #   cover-<place>-paint, -bands   from the game's camera in two patches: the blades red over the ground painted in
 #                 bands of the distance from the camera, and the bands alone
+#   near-paint, far-paint, near-ground, far-ground, cover-<place>-ground   the blades red, and the frame without
+#                 blades: `grass_look.py blades` reads the colour of the blades against the ground under them
 #   OPENGOTHIC_CONTENT=<set> TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh landscape-meadow-parts
 # OPENGOTHIC_GRASS_PATCH=22000 makes the whole meadow short grass, 36000 the main one: the cover of each kind.
 # @timeout 600
@@ -71,6 +73,14 @@ grass parts 63
 wait 1200
 shot near-63
 wait 200
+grass parts 64
+wait 1200
+shot near-paint
+wait 200
+grass parts 128
+wait 1200
+shot near-ground
+wait 200
 turn 90
 wait 2500
 grass parts 193
@@ -125,6 +135,14 @@ grass parts 63
 wait 1200
 shot far-63
 wait 200
+grass parts 64
+wait 1200
+shot far-paint
+wait 200
+grass parts 128
+wait 1200
+shot far-ground
+wait 200
 
 goto pos 41001 3440 -507
 cam follow 120 250 180
@@ -170,6 +188,10 @@ grass parts 192
 wait 1200
 shot cover-bare-bands
 wait 200
+grass parts 128
+wait 1200
+shot cover-bare-ground
+wait 200
 
 goto pos 41450 3400 300
 face 80
@@ -191,5 +213,9 @@ wait 200
 grass parts 192
 wait 1200
 shot cover-short-bands
+wait 200
+grass parts 128
+wait 1200
+shot cover-short-ground
 wait 200
 grass parts 0

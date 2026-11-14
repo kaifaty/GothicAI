@@ -49,7 +49,7 @@ const vec3  GrassTipGreen    = vec3(1.10, 1.40, 0.90);   // of it at the tip, by
 const vec3  GrassTipStraw    = vec3(1.46, 1.38, 0.96);
 // of a ground with its own layers (grass_layers.glsl): the colour under the root is the sward's own
 const float GrassOwnRootShade= 0.62;
-const vec3  GrassOwnTipGreen = vec3(1.16, 1.22, 1.04);
+const vec3  GrassOwnTipGreen = vec3(1.12, 1.24, 1.02);
 const vec3  GrassOwnTipStraw = vec3(1.30, 1.24, 1.02);
 const float GrassRootAo      = 0.35;
 const float GrassWidth       = 1.3;                      // cm at the root, and per step of the blade's four bits
@@ -62,6 +62,8 @@ const float GrassTaper       = 0.7;                      // of the width is gone
 // gone from where the blades start to thin to half of the distance where they start to go (grass_ground.glsl)
 const float GrassGroundShade = 0.72;
 const vec3  GrassFarTint     = vec3(1.00, 1.10, 0.74);
+// of a ground with its own layers: its sward is grass already, the far look only leans it to the blades' colour
+const vec3  GrassOwnFarTint  = vec3(1.00, 1.03, 0.80);
 const float GrassFarAo       = 0.95;
 const float GrassGrazeFrom   = 0.25;
 const float GrassGrazeTo     = 0.70;

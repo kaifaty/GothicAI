@@ -57,7 +57,7 @@ void grassGround(uint bits, vec3 pos, vec3 normal, float sward, inout vec4 diffu
   const float graze = plain ? 0.0 : 1.0 - smoothstep(GrassGrazeFrom, GrassGrazeTo, dot(gn,toEye)/max(d,1.0));
   const float nearShade = (partsOff & GrassPartGroundShade)!=0u ? 1.0 : GrassGroundShade;
   const float along = plain ? 0.0 : max(max(far,graze), smoothstep(ring.x, ring.y*0.5, d));
-  vec3 tint = mix(vec3(mix(1.0, nearShade, stand)), mix(vec3(1.0), GrassFarTint, stand), along);
+  vec3 tint = mix(vec3(mix(1.0, nearShade, stand)), mix(vec3(1.0), sward<0.0 ? GrassFarTint : GrassOwnFarTint, stand), along);
   if(far>0.0) {
     // the far grass under the gust: the pressure of the place tilts the normal and lightens the tone, as the
     // blades' own (grass.vert), so the band of the gust does not stop where the blades end

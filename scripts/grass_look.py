@@ -7,6 +7,9 @@ Reads the frames of scripts/bench/landscape-meadow.bench and landscape-meadow-pa
   tone    <mask.png> <frame>...          the mean luminance (of the light) and luma (of the coded values) and the
                                          colour of that area in each frame, against the first
   cover   <paint.png> <bands.png>        the share of the ground the blades cover, by the band of the distance
+  blades  <mask.png> <paint.png> <frame> <ground>
+                                         the colour of the blades (red in the paint, inside the mask) in the frame
+                                         against the ground under them, in the frame without blades
   columns <clip> [--half left|right] [--rows a:b] [--strips n] [--step s]
                                          the tone of the frame's vertical strips in time: a gust that crosses
   still   <clip> [--half left|right] [--crop x0:y0:x1:y1]
@@ -145,6 +148,18 @@ def cmd_cover(a: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_blades(a: argparse.Namespace) -> int:
+    paint = read_image(a.paint).astype(np.int32)
+    blades = (paint[..., 0] > 40) & (3*paint[..., 1] < paint[..., 0]) & (3*paint[..., 2] < paint[..., 0])
+    area = blades & (read_image(a.mask)[..., 0] > 127)
+    grass, ground = tone_of(read_image(a.frame), area), tone_of(read_image(a.ground), area)
+    print(json.dumps({"blades_share_of_mask": round(float(area.sum())/max(int((read_image(a.mask)[..., 0] > 127).sum()), 1), 3),
+                      "blades": grass, "ground": ground, "hue_difference": round(grass["hue"] - ground["hue"], 1),
+                      "saturation_ratio": round(grass["saturation"]/max(ground["saturation"], 1e-6), 3),
+                      "luminance_ratio": round(grass["luminance"]/max(ground["luminance"], 1e-9), 3)}, ensure_ascii=False))
+    return 0
+
+
 def clip_frames(path: str, half: str | None, scale: int):
     w, h = probe(path)
     crop = {"left": f"crop=iw/2:ih:0:0,", "right": f"crop=iw/2:ih:iw/2:0,", None: ""}[half]
@@ -211,6 +226,8 @@ def main() -> int:
     p = sub.add_parser("mask"); p.add_argument("frame"); p.add_argument("out"); p.set_defaults(fn=cmd_mask)
     p = sub.add_parser("tone"); p.add_argument("mask"); p.add_argument("frames", nargs="+"); p.set_defaults(fn=cmd_tone)
     p = sub.add_parser("cover"); p.add_argument("paint"); p.add_argument("bands"); p.set_defaults(fn=cmd_cover)
+    p = sub.add_parser("blades"); p.add_argument("mask"); p.add_argument("paint"); p.add_argument("frame")
+    p.add_argument("ground"); p.set_defaults(fn=cmd_blades)
     p = sub.add_parser("columns"); p.add_argument("clip"); p.add_argument("--half", choices=["left", "right"])
     p.add_argument("--rows", default="0.45:0.95"); p.add_argument("--strips", type=int, default=8)
     p.add_argument("--step", type=float, default=0.5); p.set_defaults(fn=cmd_columns)

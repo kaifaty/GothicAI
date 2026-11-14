@@ -61,7 +61,7 @@ STONE_GREY = .2             # a pebble's chroma drawn to grey by this share
 STONE_LIGHT = 1.9           # and its luma against the soil's
 # On-screen corrections of the mean colour, by frames of the game (scripts/grass_look.py tone), linear RGB.
 SWARD_SCREEN = (1., 1., 1.)
-EARTH_SCREEN = (.62, .60, .55)   # a lit layer comes out lighter than the road's paint beside it: down to the road's
+EARTH_SCREEN = (.70, .67, .60)   # a lit layer comes out lighter than the road's paint beside it: down to the road's
 SWARD_CONTRAST = 1.
 EARTH_CONTRAST = 1.4
 
