@@ -48,25 +48,6 @@ target_link_libraries(engine-platform PUBLIC ${platform_dependencies})
 # OpenGothic uses the plain signature, whose interface is public by default.
 target_link_libraries(OpenGothic engine-platform)
 
-set(link_main "${CMAKE_CURRENT_BINARY_DIR}/engine-platform-link.cpp")
-file(CONFIGURE OUTPUT "${link_main}" CONTENT "int main() {}\n")
-add_executable(engine-platform-link "${link_main}")
-set(link_map "${CMAKE_CURRENT_BINARY_DIR}/engine-platform-link-$<CONFIG>.map")
-if(MSVC)
-  target_link_libraries(engine-platform-link PRIVATE engine-platform)
-  target_link_options(engine-platform-link PRIVATE
-    "/WHOLEARCHIVE:$<TARGET_FILE:engine-platform>" "/MAP:${link_map}" /OPT:NOREF /INCREMENTAL:NO)
-elseif(APPLE)
-  target_link_libraries(engine-platform-link PRIVATE engine-platform)
-  target_link_options(engine-platform-link PRIVATE
-    "LINKER:-force_load,$<TARGET_FILE:engine-platform>" "LINKER:-map,${link_map}"
-    "LINKER:-undefined,error")
-else()
-  target_link_libraries(engine-platform-link PRIVATE
-    "-Wl,--whole-archive" engine-platform "-Wl,--no-whole-archive")
-  target_link_options(engine-platform-link PRIVATE "LINKER:-Map,${link_map}" "LINKER:--no-undefined")
-endif()
-
 # Archive member names come from the actual runtime source lists, never a second layer list.
 set(members)
 foreach(runtime gothic-base-runtime gothic-video-runtime)
@@ -82,23 +63,54 @@ foreach(runtime gothic-base-runtime gothic-video-runtime)
     list(APPEND members "${runtime}|${name}.o|${relative}")
   endforeach()
 endforeach()
-set(map_inputs "${CMAKE_CURRENT_BINARY_DIR}/engine-platform-map-inputs.cmake")
-file(GENERATE OUTPUT "${map_inputs}" CONTENT
+set(ENGINE_LINK_MAP_INPUTS "${CMAKE_CURRENT_BINARY_DIR}/engine-platform-map-inputs.cmake")
+set(ENGINE_LINK_MAP_CHECK "${CMAKE_CURRENT_LIST_DIR}/EnginePlatformMap.cmake")
+file(GENERATE OUTPUT "${ENGINE_LINK_MAP_INPUTS}" CONTENT
   "set(PLATFORM_RULES [==[${guard_rules}]==])\nset(PLATFORM_MEMBERS [==[${members}]==])\n")
-if(MSVC)
-  # /MAP lists public symbols, rather than an exhaustive archive-member load table. Native
-  # validation is needed before relying on it for the mixed-runtime boundary.
-  message(WARNING "engine-platform-link: mixed-runtime map check disabled on MSVC (GothicAI#1324); whole-archive link remains enabled")
-else()
-  set(map_check "${CMAKE_CURRENT_LIST_DIR}/EnginePlatformMap.cmake")
-  set_property(TARGET engine-platform-link APPEND PROPERTY LINK_DEPENDS
-    "${map_check}" "${map_inputs}" "${guard_rules}" "${CMAKE_CURRENT_LIST_DIR}/EngineLayerGuard.cmake")
-  add_custom_command(TARGET engine-platform-link POST_BUILD
-    COMMAND "${CMAKE_COMMAND}" "-DPLATFORM_MAP=${link_map}" "-DPLATFORM_INPUTS=${map_inputs}"
-      -P "${map_check}"
-    COMMENT "Checking engine-platform-link: mixed runtime objects must belong to platform"
+
+# The link map of a program of the platform: an undefined symbol fails the link, and after it every object of the
+# mixed runtimes (gothic-base-runtime, gothic-video-runtime) the linker took must be of `layers` (a ;-list), else the
+# build fails. engine-platform-link takes the platform alone, engine-island (Island.cmake) the platform and the island.
+function(engine_link_map_check target layers)
+  set(map "${CMAKE_CURRENT_BINARY_DIR}/${target}-$<CONFIG>.map")
+  if(MSVC)
+    # /MAP lists public symbols, rather than an exhaustive archive-member load table. Native
+    # validation is needed before relying on it for the mixed-runtime boundary.
+    target_link_options(${target} PRIVATE "/MAP:${map}")
+    message(WARNING "${target}: mixed-runtime map check disabled on MSVC (GothicAI#1324); the link itself remains")
+    return()
+  endif()
+  if(APPLE)
+    target_link_options(${target} PRIVATE "LINKER:-map,${map}" "LINKER:-undefined,error")
+  else()
+    target_link_options(${target} PRIVATE "LINKER:-Map,${map}" "LINKER:--no-undefined")
+  endif()
+  string(REPLACE ";" "," allowed "${layers}")
+  string(REPLACE ";" " or " named "${layers}")
+  set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS
+    "${ENGINE_LINK_MAP_CHECK}" "${ENGINE_LINK_MAP_INPUTS}" "${guard_rules}" "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/EngineLayerGuard.cmake")
+  add_custom_command(TARGET ${target} POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" "-DPLATFORM_MAP=${map}" "-DPLATFORM_INPUTS=${ENGINE_LINK_MAP_INPUTS}"
+      "-DPLATFORM_TARGET=${target}" "-DPLATFORM_LAYERS=${allowed}" -P "${ENGINE_LINK_MAP_CHECK}"
+    COMMENT "Checking ${target}: mixed runtime objects must belong to ${named}"
     VERBATIM)
+endfunction()
+
+set(link_main "${CMAKE_CURRENT_BINARY_DIR}/engine-platform-link.cpp")
+file(CONFIGURE OUTPUT "${link_main}" CONTENT "int main() {}\n")
+add_executable(engine-platform-link "${link_main}")
+if(MSVC)
+  target_link_libraries(engine-platform-link PRIVATE engine-platform)
+  target_link_options(engine-platform-link PRIVATE
+    "/WHOLEARCHIVE:$<TARGET_FILE:engine-platform>" /OPT:NOREF /INCREMENTAL:NO)
+elseif(APPLE)
+  target_link_libraries(engine-platform-link PRIVATE engine-platform)
+  target_link_options(engine-platform-link PRIVATE "LINKER:-force_load,$<TARGET_FILE:engine-platform>")
+else()
+  target_link_libraries(engine-platform-link PRIVATE
+    "-Wl,--whole-archive" engine-platform "-Wl,--no-whole-archive")
 endif()
+engine_link_map_check(engine-platform-link platform)
 foreach(target Gothic2Notr gothic-body-runner)
   if(TARGET ${target})
     add_dependencies(${target} engine-platform-link)

@@ -138,3 +138,28 @@ def test_platform_link_map(tmp_path, link_map, error):
     else:
         assert result.returncode == 0, result.stderr
         assert "1 mixed runtime objects checked, all platform" in result.stdout
+
+
+@pytest.mark.parametrize("link_map,error", [
+    ("libgothic-base-runtime.a(sha256.cpp.o)\n", ""),
+    ("libgothic-base-runtime.a(programdata.cpp.o)\n",
+     "engine-island: gothic-base-runtime(programdata.cpp.o) from common/programdata.cpp belongs to gothic, "
+     "not platform or island"),
+], ids=["platform", "gothic-object"])
+def test_island_link_map(tmp_path, link_map, error):
+    """engine-island's map (cmake/Island.cmake): the island besides the platform, named in the messages."""
+    map_file = tmp_path / "link.map"
+    map_file.write_text(link_map)
+    inputs = tmp_path / "inputs.cmake"
+    inputs.write_text(f"set(PLATFORM_RULES [==[{RULES}]==])\n"
+                      "set(PLATFORM_MEMBERS [==[gothic-base-runtime|sha256.cpp.o|common/sha256.cpp;"
+                      "gothic-base-runtime|programdata.cpp.o|common/programdata.cpp]==])\n")
+    result = subprocess.run(["cmake", f"-DPLATFORM_MAP={map_file}", f"-DPLATFORM_INPUTS={inputs}",
+                             "-DPLATFORM_TARGET=engine-island", "-DPLATFORM_LAYERS=platform,island",
+                             "-P", str(PLATFORM_MAP)], capture_output=True, text=True)
+    if error:
+        assert result.returncode != 0
+        assert error in " ".join(result.stderr.split())
+    else:
+        assert result.returncode == 0, result.stderr
+        assert "engine-island: 1 mixed runtime objects checked, all platform or island" in result.stdout
