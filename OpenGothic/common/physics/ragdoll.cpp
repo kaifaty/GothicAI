@@ -923,6 +923,7 @@ struct Ragdoll::Impl final {
       float torque=partMass*8.f*weight*strength;
       auto target=fadeTargets[size_t(parent)].Conjugated()*fadeTargets[i];
       if(brace) brace->drive(i,partMass,target,torque); // a protective fall leads to its pose
+      joint->SetTargetOrientationBS(target);
       if(torque<=0.f) {
         joint->SetSwingMotorState(JPH::EMotorState::Off);
         joint->SetTwistMotorState(JPH::EMotorState::Off);
@@ -935,9 +936,8 @@ struct Ragdoll::Impl final {
         }
       joint->SetSwingMotorState(JPH::EMotorState::Position);
       joint->SetTwistMotorState(JPH::EMotorState::Position);
-      joint->SetTargetOrientationBS(target);
       }
-    if(!active) {
+    if(!active && !brace) {
       fadeAge=-1.f;
       fadeTargets.clear();
       }
@@ -1742,20 +1742,24 @@ RagdollBrace::Kind Ragdoll::braceKind(const Tempest::Vec3& d) const {
   }
 
 bool Ragdoll::brace(RagdollBrace::Kind kind, const Tempest::Matrix4x4* modelPose, size_t numBones,
-                    const RagdollBrace::Profile& profile) {
+                    const RagdollBrace::Profile& profile, const Tempest::Matrix4x4* landPose) {
   if(!valid() || impl->kinematic || impl->fadeAge<0.f || impl->brace || !Impl::bodyAxes(*impl->rig).valid) return false;
-  std::vector<JPH::Quat> pose;
+  std::vector<JPH::Quat> pose, land;
   if(kind!=RagdollBrace::Kind::None) {
     if(modelPose==nullptr || numBones!=boneCount()) return false;
     for(size_t bone:impl->rig->boneIndices) {
       JPH::Mat44 frame; // the same decomposition as the birth pose and the living targets
       if(!posedFrame(impl->initialObject*modelPose[bone],impl->object,frame)) return false;
       pose.push_back(frame.GetQuaternion());
+      if(landPose!=nullptr) {
+        if(!posedFrame(impl->initialObject*landPose[bone],impl->object,frame)) return false;
+        land.push_back(frame.GetQuaternion());
+        }
       }
     }
   std::vector<RagdollBrace::Rig::Joint> joints;
   for(const auto& part:impl->rig->parts) joints.push_back({part.name,part.parent});
-  impl->brace=RagdollBrace::Rig::create(kind,profile,*impl->native,joints,pose,impl->fadeAge);
+  impl->brace=RagdollBrace::Rig::create(kind,profile,*impl->native,joints,pose,impl->fadeAge,land);
   if(!impl->brace) return false;
   impl->world->trackBraceContacts(impl->group,&impl->brace->contacts());
   if(kind!=RagdollBrace::Kind::None) impl->stepFade(0.f);

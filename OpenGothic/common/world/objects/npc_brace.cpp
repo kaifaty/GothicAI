@@ -41,17 +41,22 @@ void Npc::startRagdollBrace(const Vec3& thrown) {
   if(seq==nullptr || seq->data==nullptr)
     return;
   // The first frame in model space, sampled without playing the clip, as the melee shadow does.
-  Pose sampled;
-  sampled.setSkeleton(skeleton);
-  AnimationSolver solver;
-  solver.setSkeleton(skeleton);
-  if(!sampled.startAnim(solver,seq,0,BS_NONE,Pose::Force,0))
-    return;
-  std::vector<Matrix4x4> model(skeleton->nodes.size());
-  for(size_t bone=0; bone<model.size(); ++bone)
-    if(!sampled.animRelative(seq->name,0.f,size_t(-1),bone,model[bone]))
-      return;
-  ragdoll->brace(kind,model.data(),model.size(),RagdollBrace::profile());
+  const auto sample = [skeleton](const Animation::Sequence* clip, std::vector<Matrix4x4>& model) {
+    if(clip==nullptr || clip->data==nullptr) return false;
+    Pose sampled;
+    sampled.setSkeleton(skeleton);
+    AnimationSolver solver;
+    solver.setSkeleton(skeleton);
+    if(!sampled.startAnim(solver,clip,0,BS_NONE,Pose::Force,0)) return false;
+    model.resize(skeleton->nodes.size());
+    for(size_t bone=0; bone<model.size(); ++bone)
+      if(!sampled.animRelative(clip->name,0.f,size_t(-1),bone,model[bone])) return false;
+    return true;
+    };
+  std::vector<Matrix4x4> model, land;
+  if(!sample(seq,model)) return;
+  if(!sample(skeleton->sequence(RagdollBrace::landClipName(kind)),land)) land.clear();
+  ragdoll->brace(kind,model.data(),model.size(),RagdollBrace::profile(),land.empty() ? nullptr : land.data());
   }
 
 std::string Npc::ragdollBraceField() const {
@@ -70,6 +75,7 @@ void Npc::finishRagdollBrace(std::string_view end) {
   writeMeleePosture("{\"event\":\"brace\",\"tick_ms\":"+std::to_string(owner.tickCount())+
                     ",\"target\":"+meleeShadowWho(this)+",\"fall_ms\":"+std::to_string(meleeFallTick)+
                     ",\"end\":\""+std::string(end)+"\",\"pose\":\""+std::string(RagdollBrace::clipName(r.kind))+"\""+
+                    ",\"land_ms\":"+value(r.landMs)+",\"land_pose\":\""+std::string(RagdollBrace::landClipName(r.landKind))+"\""+
                     ",\"hand_l_ms\":"+value(r.handMs[0])+",\"hand_r_ms\":"+value(r.handMs[1])+
                     ",\"arm_l_ms\":"+value(r.armMs[0])+",\"arm_r_ms\":"+value(r.armMs[1])+
                     ",\"torso_ms\":"+value(r.torsoMs)+",\"head_impact_m_s\":"+value(r.headImpact)+
