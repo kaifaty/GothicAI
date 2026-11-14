@@ -177,7 +177,10 @@ class Renderer final {
       float          taauClipTrust      = 4.f;   // OPENGOTHIC_TAAU_CLIP_TRUST: weight lost by a clipped history
       float          taauGamma          = 1.f;   // OPENGOTHIC_TAAU_GAMMA: the variance box in sigmas
       float          taauBoxStatic      = 3.f;   // OPENGOTHIC_TAAU_BOX_STATIC: the colour box of a still point, times
-      float          taauBoxMotion      = 1.f;   // OPENGOTHIC_TAAU_BOX_MOTION: output px a frame of the box's own size
+      float          taauBoxMotion      = 20.f;  // OPENGOTHIC_TAAU_BOX_MOTION: output px a frame of the box's own size
+      float          taauHistSharp      = 0.75f; // OPENGOTHIC_TAAU_HIST_SHARP: the history's cubic in motion (Keys' -a)
+      float          taauMoveShare      = 0.2f;  // OPENGOTHIC_TAAU_MOVE_SHARE: the enlarged frame's share in motion; 0: off
+      float          taauMoveSpeed      = 1.f;   // OPENGOTHIC_TAAU_MOVE_SPEED: output px a frame of the full motion
       bool           bloomEnabled       = true;
       // the glare of the bloom (bloom_down.frag): a pixel whose brightest channel is over bloomGlareTo whites of
       // the frame gives the chain 1 + bloomGlare times its light, from bloomGlareFrom on by a smooth step.

@@ -366,7 +366,8 @@ void Renderer::setupSettings() {
     if(const char* e = std::getenv("OPENGOTHIC_UPSCALE"); e!=nullptr && std::string_view(e)=="temporal")
       settings.temporalUpscale = settings.taaEnabled && Resources::device().properties().temporalUpscale;
     // OPENGOTHIC_UPSCALE=taau: our own resolve in the same place, on any backend; OPENGOTHIC_TAAU_ALPHA, _KERNEL,
-    // _CLIP_TRUST, _GAMMA, _BOX_STATIC and _BOX_MOTION are its knobs (taau_resolve.frag)
+    // _CLIP_TRUST, _GAMMA, _BOX_STATIC, _BOX_MOTION, _MOVE_SHARE, _MOVE_SPEED and _HIST_SHARP are its knobs
+    // (taau_resolve.frag)
     if(const char* e = std::getenv("OPENGOTHIC_UPSCALE"); e!=nullptr && std::string_view(e)=="taau")
       settings.taau = settings.taaEnabled;
     settings.taauAlpha     = 0.2f;
@@ -374,7 +375,16 @@ void Renderer::setupSettings() {
     settings.taauClipTrust = 4.f;
     settings.taauGamma   = 1.f;
     settings.taauBoxStatic = 3.f;
-    settings.taauBoxMotion = 1.f;
+    settings.taauBoxMotion = 20.f;
+    settings.taauHistSharp = 0.75f;
+    settings.taauMoveShare = 0.2f;
+    settings.taauMoveSpeed = 1.f;
+    if(const char* e = std::getenv("OPENGOTHIC_TAAU_MOVE_SPEED"))
+      settings.taauMoveSpeed = std::clamp(std::strtof(e, nullptr), 0.01f, 64.f);
+    if(const char* e = std::getenv("OPENGOTHIC_TAAU_HIST_SHARP"))
+      settings.taauHistSharp = std::clamp(std::strtof(e, nullptr), 0.f, 2.f);
+    if(const char* e = std::getenv("OPENGOTHIC_TAAU_MOVE_SHARE"))
+      settings.taauMoveShare = std::clamp(std::strtof(e, nullptr), 0.f, 1.f);
     if(const char* e = std::getenv("OPENGOTHIC_TAAU_BOX_STATIC"))
       settings.taauBoxStatic = std::clamp(std::strtof(e, nullptr), 1.f, 1000.f);
     if(const char* e = std::getenv("OPENGOTHIC_TAAU_BOX_MOTION"))
@@ -402,7 +412,9 @@ void Renderer::setupSettings() {
       if(settings.taau)
         Log::i("render: taau alpha = ", settings.taauAlpha, ", kernel = ", settings.taauKernel,
                ", clip trust = ", settings.taauClipTrust, ", gamma = ", settings.taauGamma,
-               ", box static = ", settings.taauBoxStatic, ", box motion = ", settings.taauBoxMotion);
+               ", box static = ", settings.taauBoxStatic, ", box motion = ", settings.taauBoxMotion,
+               ", move share = ", settings.taauMoveShare, ", move speed = ", settings.taauMoveSpeed,
+               ", hist sharp = ", settings.taauHistSharp);
       }
   }
   // CMAA2 runs at internal resolution, so it needs a same-size target: native or the upscaler input

@@ -397,6 +397,21 @@ void upscaleShares() {
   // and the mask 0 changes nothing
   const auto plain = Taa::upscaleShare(0.3f, 2.f, wMax, 0.f, trust, 0.f);
   require(std::abs(plain.share - 0.3f/(2.3f + 1e-4f))<1e-6f && std::abs(plain.weight - 2.3f)<1e-6f, "mask 0 changes the share");
+  // in full motion the enlarged frame has one weight at every pixel: a near and a far sample take the same share, and
+  // against a full history it is the share that was asked for; a history the box has moved gives way to it at once
+  const float moveConf = Taa::upscaleMoveConf(0.2f, wMax);
+  const float nearM = Taa::upscaleConfInMotion(1.f,     moveConf, 1.f);
+  const float farM  = Taa::upscaleConfInMotion(0.0001f, moveConf, 1.f);
+  require(nearM==farM, "the weight in motion depends on the sample's distance");
+  const auto moving = Taa::upscaleShare(farM, w, wMax, 0.f, trust, 0.f);
+  require(std::abs(moving.share - 0.2f)<1e-3f, "the share in motion is " + std::to_string(moving.share));
+  require(std::abs(moving.weight - wMax)<1e-4f, "the history loses its weight in motion");
+  const auto movingClipped = Taa::upscaleShare(farM, w, wMax, 2.f, trust, 0.f);
+  require(movingClipped.share>0.65f, "a clipped history in motion keeps " + std::to_string(1.f-movingClipped.share));
+  // at rest nothing changes, half way the weights are mixed, and no share means no weight
+  require(Taa::upscaleConfInMotion(0.3f, moveConf, 0.f)==0.3f, "the motion weight at rest");
+  require(std::abs(Taa::upscaleConfInMotion(0.f, moveConf, 0.5f) - 0.5f*moveConf)<1e-6f, "the motion weight half way");
+  require(Taa::upscaleMoveConf(0.f, wMax)==0.f, "no share gives a weight in motion");
   }
 
 // the resolve's blend with the reactive mask (graphics plan 1v): the mask 0 changes nothing, a spark under it keeps

@@ -45,6 +45,12 @@ namespace Taa {
     float weight = 0; // the history's alpha after this frame
     };
   UpscaleShare       upscaleShare(float conf, float gathered, float wMax, float moved, float clipTrust, float mask);
+  // In motion the history is read between its pixels every frame, and each reading softens it; a pixel far from
+  // this frame's sample would keep that softened history for many frames. So from `moveSpeed` output pixels a frame
+  // the new frame is its enlargement at every pixel, with one weight for all of them, `upscaleMoveConf`: the one that
+  // gives it `share` against a history of `wMax`. Below that speed the two are mixed by `move` = speed/moveSpeed
+  float              upscaleMoveConf(float share, float wMax);
+  float              upscaleConfInMotion(float conf, float moveConf, float move);
   // the clip-space translation that moves the picture by `px` pixels of a w×h target: J of J*proj
   Tempest::Matrix4x4 jitterMatrix(const Tempest::Vec2& px, uint32_t w, uint32_t h);
 

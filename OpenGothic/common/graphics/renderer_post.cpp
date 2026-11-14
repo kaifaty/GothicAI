@@ -327,6 +327,10 @@ void Renderer::drawTaau(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
     float     clipTrust   = 4;
     float     boxStatic   = 1;
     float     boxMotion   = 1;
+    float     histSharp   = 0.5f;
+    float     moveConf    = 1;
+    float     moveSpeed   = 1;
+    float     pad0        = 0;
     } push;
   push.jitter      = taa.jitter;
   push.wMax        = 1.f/settings.taauAlpha - 1.f;
@@ -337,6 +341,10 @@ void Renderer::drawTaau(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   push.clipTrust   = settings.taauClipTrust;
   push.boxStatic   = settings.taauBoxStatic;
   push.boxMotion   = settings.taauBoxMotion;
+  push.histSharp   = settings.taauHistSharp;
+  // the enlarged frame's weight in motion from its share against a full history; no share: no motion at any speed
+  push.moveConf    = Taa::upscaleMoveConf(settings.taauMoveShare, push.wMax);
+  push.moveSpeed   = settings.taauMoveShare>0.f ? settings.taauMoveSpeed : 1e9f;
 
   auto& next = taa.history[taa.cur];
   auto& prev = taa.history[taa.cur^1];

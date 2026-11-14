@@ -26,9 +26,15 @@ const float BoxEps = 1e-5;
 // The colour box and the motion come from taau_prepare.frag, once per input texel; the history is read by
 // Catmull-Rom and written at the output resolution.
 // The nine input samples of the box do not span what the history has gathered between them (a joint narrower than
-// an input pixel), so a box of their own size wears the detail down every frame: where the point stands still and
-// the history has gathered a sample's weight the box is `boxStatic` times wider. A history that has gathered
-// nothing (after a cut, where a flame has just been) has no such detail to keep and is clipped to the box as it is.
+// an input pixel), so a box of their own size wears the detail down every frame: where the history has gathered a
+// sample's weight the box is up to `boxStatic` times wider, the full width at rest and its own size from `boxMotion`
+// output pixels a frame (FSR 2 narrows its box at 20 too). A history that has gathered nothing (after a cut, where
+// a flame has just been) has no such detail to keep and is clipped to the box as it is.
+// In motion the history is read between its pixels every frame and each reading softens it, while a pixel far from
+// this frame's sample takes almost nothing new for many frames: cobbles under a walking camera lost a third of
+// their sharpness. So from `moveSpeed` output pixels a frame the new frame is its enlargement at every pixel, with
+// one weight `moveConf` for all of them (so what the box clips shows no grid of dots either), and the history's
+// cubic has deeper lobes, `histSharp`, which give back a part of what the reading takes.
 // Where the history is not trusted (reset, off the screen) the frame alone is enlarged by Catmull-Rom at the point
 // the output pixel looks at: sharp, and free of the nearest sample's blocks.
 // Under the reactive mask (a flame, smoke: they change every frame and have no motion vector) the resolve is the
@@ -45,6 +51,10 @@ layout(push_constant, std430) uniform Push {
   float clipTrust;   // how fast a history that the colour box has moved loses its weight
   float boxStatic;   // the colour box's extent where nothing moves, times its own; 1 in motion
   float boxMotion;   // output pixels a frame from which the box is its own size
+  float histSharp;   // the history's cubic in full motion: Keys' -a, 0.5 is Catmull-Rom
+  float moveConf;    // the weight of the enlarged frame in full motion, as a sample at every pixel's centre
+  float moveSpeed;   // output pixels a frame from which the motion is full
+  float pad0;
   } push;
 
 layout(binding = 0) uniform sampler2D current;  // linear HDR, pre-exposed, input resolution, bilinear
@@ -73,16 +83,17 @@ hvec3 ycocg2rgb(hvec3 c) {
                c.x - c.y - c.z);
   }
 
-// 5 bilinear taps of the 4x4 Catmull-Rom, as taa_resolve.frag; `pos` in texels of `tex`, `centerA` is the alpha of
-// the centre tap
-hvec3 sampleCatmullRom(sampler2D tex, vec2 pos, vec2 size, out float centerA) {
+// 5 bilinear taps of the 4x4 cubic of Keys with a = -`sharp` (0.5: Catmull-Rom, as taa_resolve.frag; more: deeper
+// negative lobes); `pos` in texels of `tex`, `centerA` is the alpha of the centre tap
+hvec3 sampleCubic(sampler2D tex, vec2 pos, vec2 size, float sharp, out float centerA) {
   const vec2 pos1 = floor(pos - 0.5) + 0.5;
   const vec2 f    = pos - pos1;
+  const vec2 g    = 1.0 - f;
 
-  const vec2 w0  = f*(-0.5 + f*(1.0 - 0.5*f));
-  const vec2 w1  = 1.0 + f*f*(-2.5 + 1.5*f);
-  const vec2 w2  = f*(0.5 + f*(2.0 - 1.5*f));
-  const vec2 w3  = f*f*(-0.5 + 0.5*f);
+  const vec2 w0  = -sharp*f*g*g;
+  const vec2 w1  = 1.0 + f*f*((2.0 - sharp)*f - (3.0 - sharp));
+  const vec2 w2  = 1.0 + g*g*((2.0 - sharp)*g - (3.0 - sharp));
+  const vec2 w3  = -sharp*g*f*f;
   const vec2 w12 = w1 + w2;
 
   const vec2 tc0  = (pos1 - 1.0)/size;
@@ -149,22 +160,25 @@ void main() {
   const bool  alone  = push.reset!=0 || any(lessThan(histUv, vec2(0))) || any(greaterThan(histUv, vec2(1)));
   float unused = 0.0;
   if(alone) {
-    outHistory = vec4(sampleCatmullRom(current, pos, inSize, unused), WeightInit);
+    outHistory = vec4(sampleCubic(current, pos, inSize, 0.5, unused), WeightInit);
     return;
     }
 
-  const float conf = exp(-push.kernel*dot(dC,dC)); // 1: a sample at this pixel's centre
-  const float kS   = clamp(k*MaskSmooth, 0.0, 1.0);
-  vec3        cur  = texelFetch(current, c, 0).rgb;
-  if(kS>0.0)
-    cur = mix(cur, vec3(sampleCatmullRom(current, pos, inSize, unused)), kS);
+  const float speed = length(mv*outSize);
+  const float still = 1.0 - clamp(speed/push.boxMotion, 0.0, 1.0);
+  const float move  = clamp(speed/push.moveSpeed, 0.0, 1.0);
+  const float conf  = exp(-push.kernel*dot(dC,dC)); // 1: a sample at this pixel's centre
+  const float kS    = clamp(k*MaskSmooth, 0.0, 1.0);
+  const float kE    = max(kS, move);
+  vec3        cur   = texelFetch(current, c, 0).rgb;
+  if(kE>0.0)
+    cur = mix(cur, vec3(sampleCubic(current, pos, inSize, 0.5, unused)), kE);
 
   float histA = 0.0;
-  hvec3 hist  = sampleCatmullRom(history, histUv*outSize, outSize, histA);
+  hvec3 hist  = sampleCubic(history, histUv*outSize, outSize, mix(0.5, push.histSharp, move), histA);
   if(any(isnan(hist)) || any(isinf(hist)))
     hist = hvec3(cur);
 
-  const float still  = 1.0 - clamp(length(mv*outSize)/push.boxMotion, 0.0, 1.0);
   const float held   = clamp((histA - WeightInit)/(1.0 - WeightInit), 0.0, 1.0);
   const hvec3 bMid   = hvec3(bm.rgb);
   const hvec3 bExt   = hvec3(be.rgb)*hfloat(mix(1.0, push.boxStatic, still*held));
@@ -176,14 +190,16 @@ void main() {
   const float moved = length(vec3(histY - histY0))/(length(vec3(bExt)) + 1e-3);
   const float wH    = min(max(histA, 0.0), push.wMax)/(1.0 + push.clipTrust*moved);
 
-  // The new frame's share by the weights. Under the mask it is a full history's 1/(1 + wMax) for every pixel and
+  // The new frame's share by the weights; in motion the frame's weight is one for all pixels (Taa::upscaleConfInMotion).
+  // Under the mask the share is a full history's 1/(1 + wMax) for every pixel and
   // grows to the whole with the mask, the weights by luminance fade and the frame is the enlarged one. The mask
   // also empties the gathered weight: a pixel the flame has left takes the next frames at once (Taa::upscaleShare)
-  const float aAcc  = conf/(conf + wH + 1e-4);
+  const float confM = mix(conf, push.moveConf, move);
+  const float aAcc  = confM/(confM + wH + 1e-4);
   const float a     = mix(mix(aAcc, 1.0/(1.0 + push.wMax), kS), 1.0, k);
   const float wCur  = a      /(1.0 + (1.0-k)*float(rgb2ycocg(hvec3(cur)).x));
   const float wHist = (1.0-a)/(1.0 + (1.0-k)*float(histY.x));
   const vec3  res   = (cur*wCur + vec3(hist)*wHist)/max(wCur + wHist, 1e-6);
 
-  outHistory = vec4(res, max(min(wH + conf, push.wMax)*(1.0-kS), WeightInit));
+  outHistory = vec4(res, max(min(wH + confM, push.wMax)*(1.0-kS), WeightInit));
   }

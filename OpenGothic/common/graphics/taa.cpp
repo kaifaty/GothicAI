@@ -147,6 +147,15 @@ Taa::UpscaleShare Taa::upscaleShare(float conf, float gathered, float wMax, floa
   return r;
   }
 
+float Taa::upscaleMoveConf(float share, float wMax) {
+  const float s = std::clamp(share, 0.f, 0.95f);
+  return wMax*s/(1.f - s);
+  }
+
+float Taa::upscaleConfInMotion(float conf, float moveConf, float move) {
+  return conf + (moveConf - conf)*std::clamp(move, 0.f, 1.f);
+  }
+
 Matrix4x4 Taa::jitterMatrix(const Vec2& px, uint32_t w, uint32_t h) {
   auto m = Matrix4x4::mkIdentity();
   m.translate(2.f*px.x/float(std::max(w,1u)), 2.f*px.y/float(std::max(h,1u)), 0.f);
