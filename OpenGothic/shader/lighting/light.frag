@@ -34,8 +34,7 @@ layout(push_constant, std140) uniform Pbo {
   uint  probeFlags; // 1 OPENGOTHIC_VSM_LAMP_FLOOR, 2 OPENGOTHIC_VSM_LAMP_CENTRE
   // OPENGOTHIC_VSM_LAMP_EXP (step-2d-why.md): 1 still, the pattern of main under TAA too; 2 inner, the first search
   // takes the inner taps; 4 litall, 'all lit' only after the whole search; 8 radial, the taps' radii move per frame;
-  // 16 expect, the mean of 16 frames' patterns in one frame; 32 paths, the exit path as a colour instead of light;
-  // 64 own (2026-11-14-lamp-stipple), the still pattern's first search reads the point's own texels too
+  // 16 expect, the mean of 16 frames' patterns in one frame; 32 paths, the exit path as a colour instead of light
   uint  probeExp;
 #endif
   } push;
@@ -116,9 +115,9 @@ bool isShadow(vec3 rayOrigin, vec3 direction, float R) {
   }
 
 #if defined(VIRTUAL_SHADOW)
-// Lamp shadows from the light's cube faces in the virtual shadow map, as a PCSS: 8 blocker-search and 12 filter
-// taps, each a bilinear gather. The penumbra is w = S*(d2-d1)/d1 at the receiver: S the flame's size
-// (LightSource.sourceSize), d1 the blocker's and d2 the receiver's distance from the light
+// Lamp shadows from the light's cube faces in the virtual shadow map, as a PCSS: 8 blocker-search taps and the
+// point's own, 12 filter taps, each a bilinear gather. The penumbra is w = S*(d2-d1)/d1 at the receiver: S the
+// flame's size (LightSource.sourceSize), d1 the blocker's and d2 the receiver's distance from the light
 // (reports/render-features/2026-11-03-lamp-shadows/README.md). Taps are directions round the light, so a tap past
 // the face's edge reads the neighbour face and the cube's seams do not show; a neighbour without pages falls back
 // to the home face, clamped inside its block. Every gathered texel is compared with the receiver plane along that
@@ -450,7 +449,11 @@ float omniShadow(const vec3 P, const vec3 n, const float R, const float S, const
   const mat2  rm  = mat2(cos(rot), sin(rot), -sin(rot), cos(rot));
 
   // blockers: within the cone that one at a fifth of the distance could shadow, S/2*(1/0.2 - 1)/d.
-  // Four spread taps first: where they agree (all lit or all blocked, 16 texels) the answer is clear
+  // Four spread taps and the point's own texels first: where they agree (all lit or all blocked, 20 texels) the
+  // answer is clear. The four stand 0.43..0.97 of the search's radius from the point (5..12 cm at a flame of 6 cm):
+  // a blocker smaller than that close over the point (hair over skin, a torch's holder on its wall) was met by them
+  // or not as the pixel's noise turned them, and without the point's own texels the point read as lit in a net of
+  // pixels (reports/render-features/2026-11-14-lamp-stipple; bench `vsm study 16` is the search as before 2026-11-14)
   const float searchR    = clamp(2.0*S/dist, 1.5*texel, OmniMaxRadius*texel);
   const bool  searchHome = fcMax + 2.5*searchR < fcEdge;
   [[unroll]]
@@ -458,27 +461,19 @@ float omniShadow(const vec3 P, const vec3 n, const float R, const float S, const
     const vec2 o = (rm*omniSearch[i])*searchR;
     omniGather(u + o.x*T + o.y*B, hf, searchHome, P, n, R, atlasInv, ratio, count);
     }
-#if defined(VSM_LAMP_PROBE)
-  // the study's 'own' (reports/render-features/2026-11-14-lamp-stipple): the four taps above stand 0.43..0.97 of the
-  // search's radius from the point, and a blocker smaller than that close over it (hair over skin) is seen by them or
-  // not as the pixel's noise turns them. Here the point's own four texels join them
   float blockedAll = 2.0*omniSearch.length();
-  if((push.probeExp & 64u)!=0u) {
+  if((scene.vsmStudy & VSM_STUDY_LAMP_FAR)==0u) {
     omniGatherFace(u, hf, R, atlasInv, ratio, count);
     blockedAll += 4.0;
     }
+#if defined(VSM_LAMP_PROBE)
   probeEarly = count==0 ? 1u : (count>=blockedAll ? 2u : 0u);
   probeBin   = searchR<=1.5*texel ? 16u : 0u;
+#endif
   if(count==0)
     return 1.0;
   if(count>=blockedAll)
     return 0.0;
-#else
-  if(count==0)
-    return 1.0;
-  if(count>=2.0*omniSearch.length())
-    return 0.0;
-#endif
   [[unroll]]
   for(int i=0; i<omniSearch.length(); i+=2) {
     const vec2 o = (rm*omniSearch[i])*searchR;

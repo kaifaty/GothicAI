@@ -130,11 +130,11 @@ Renderer::Renderer() {
     settings.vsmLampStudy  = true;
     Log::i("vsm: lamp filter study: the narrow penumbra in texels of the face's centre");
     }
-  // OPENGOTHIC_VSM_LAMP_EXP=still,inner,litall,radial,expect,paths,own: step-2d-why.md, 2026-11-14-lamp-stipple (light.frag, probeExp)
+  // OPENGOTHIC_VSM_LAMP_EXP=still,inner,litall,radial,expect,paths: the experiments of step-2d-why.md (light.frag, probeExp)
   if(const char* e = std::getenv("OPENGOTHIC_VSM_LAMP_EXP")) {
     const std::string_view s = e;
-    const char* names[] = {"still", "inner", "litall", "radial", "expect", "paths", "own"};
-    for(uint32_t i=0; i<7; ++i)
+    const char* names[] = {"still", "inner", "litall", "radial", "expect", "paths"};
+    for(uint32_t i=0; i<6; ++i)
       if(s.find(names[i])!=std::string_view::npos)
         settings.vsmLampExp |= 1u << i;
     settings.vsmLampStudy = true;
@@ -207,11 +207,11 @@ void Renderer::setupSettings() {
   }
   // OPENGOTHIC_VSM_STUDY=<bits>: the bench command `vsm study` from the environment, so one binary measures what the
   // shadow test on a mesh's facets costs (reports/render-features/2026-11-11-facet-shards): 1 the sun reads the
-  // facet's plane over one pixel and 2 the lamps keep it on facets edge-on to them, both as before 2026-11-11. The
-  // command wins over this while a scenario runs.
+  // facet's plane over one pixel and 2 the lamps keep it on facets edge-on to them, both as before 2026-11-11; 16 the
+  // lamps' first search without the point's own texels, as before 2026-11-14. The command wins while a scenario runs.
   if(const char* env = std::getenv("OPENGOTHIC_VSM_STUDY")) {
     const int v = std::atoi(env);
-    benchVsmStudy = uint32_t(v<0 ? 0 : (v>15 ? 15 : v));
+    benchVsmStudy = uint32_t(v<0 ? 0 : (v>31 ? 31 : v));
     Log::i("vsm: study bits = ", benchVsmStudy, " by OPENGOTHIC_VSM_STUDY");
     }
   // OPENGOTHIC_SSAO_STUDY=<bits>: the bench command `ssao study` from the environment, for a whole run (one binary

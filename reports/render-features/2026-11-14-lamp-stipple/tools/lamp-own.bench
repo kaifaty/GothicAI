@@ -1,0 +1,236 @@
+# The lamps' first search with the point's own texels (../README.md, "Правка в игре"): every view as three shots of one
+# camera, `-old` the search as before 2026-11-14 (`vsm study 16`), `-new` the game's, `-old2` the old one again (the
+# world does not stand still between shots: what differs between the two old ones is not the fix).
+# Views: the hero's nape in Xardas' tower (profile from 120 cm, behind the ear from 60 cm), the candle- and torch-lit
+# harbour house (four views), the night harbour at brazier 1 and at the lamp posts (four views).
+#   TEMPEST_WINDOW_SIZE=2560x1440 OPENGOTHIC_LIGHT_FREEZE=1 BENCH_HOST=ryzen OPENGOTHIC_CONTENT=<content with the head> \
+#     scripts/bench.sh reports/render-features/2026-11-14-lamp-stipple/tools/lamp-own.bench <out>
+# The reference is the same run with OPENGOTHIC_VSM_LAMP=truth (its three shots of a view are all the reference).
+#   python reports/render-features/2026-11-14-lamp-stipple/tools/own_pairs.py <out> <out of the reference> <sheets dir> [view ...]
+# @timeout 900
+seed 73013
+cheat god
+blink off
+overlay off
+# 1. Xardas' tower, the torch: the hero's nape under the tail
+set time 12 0
+view clean 30
+watch nearest
+freeze nearest
+wait 500
+place 110 0
+wait 800
+watch player
+cam cut
+cam face 120 90 1
+wait 2500
+vsm study 16
+wait 1500
+shot tower-nape-old
+wait 400
+vsm study 0
+wait 1500
+shot tower-nape-new
+wait 400
+vsm study 16
+wait 1500
+shot tower-nape-old2
+wait 400
+vsm study 0
+wait 300
+cam cut
+cam face 60 140 1
+wait 2000
+vsm study 16
+wait 1500
+shot tower-ear-old
+wait 400
+vsm study 0
+wait 1500
+shot tower-ear-new
+wait 400
+vsm study 16
+wait 1500
+shot tower-ear-old2
+wait 400
+vsm study 0
+wait 300
+# 2. The candle- and torch-lit harbour house of perf-interior: four views
+ui off
+view full
+cam lift off
+cam cut
+set time 22 0
+goto pos 3924 -73 -6663
+watch player
+cam look 110
+cam world 160 170 0
+wait 10000
+cam hold
+vsm study 16
+wait 1500
+shot interior-1-old
+wait 400
+vsm study 0
+wait 1500
+shot interior-1-new
+wait 400
+vsm study 16
+wait 1500
+shot interior-1-old2
+wait 400
+vsm study 0
+wait 300
+cam world 160 170 90
+wait 300
+cam hold
+wait 1500
+vsm study 16
+wait 1500
+shot interior-2-old
+wait 400
+vsm study 0
+wait 1500
+shot interior-2-new
+wait 400
+vsm study 16
+wait 1500
+shot interior-2-old2
+wait 400
+vsm study 0
+wait 300
+cam world 160 170 180
+wait 300
+cam hold
+wait 1500
+vsm study 16
+wait 1500
+shot interior-3-old
+wait 400
+vsm study 0
+wait 1500
+shot interior-3-new
+wait 400
+vsm study 16
+wait 1500
+shot interior-3-old2
+wait 400
+vsm study 0
+wait 300
+cam world 160 170 270
+wait 300
+cam hold
+wait 1500
+vsm study 16
+wait 1500
+shot interior-4-old
+wait 400
+vsm study 0
+wait 1500
+shot interior-4-new
+wait 400
+vsm study 16
+wait 1500
+shot interior-4-old2
+wait 400
+vsm study 0
+wait 300
+# 3. The night harbour at brazier 1: the hero and the crates by the fire
+cam cut
+set time 0 0
+goto pos -3150 140 -4560
+watch player
+cam look 120
+cam world 600 220 60
+wait 10000
+cam hold
+vsm study 16
+wait 1500
+shot harbour-brazier-old
+wait 400
+vsm study 0
+wait 1500
+shot harbour-brazier-new
+wait 400
+vsm study 16
+wait 1500
+shot harbour-brazier-old2
+wait 400
+vsm study 0
+wait 300
+# 4. The night harbour at the lamp posts: four views
+cam cut
+goto pos 5391 320 -5822
+watch player
+cam look 120
+cam world 850 300 0
+wait 10000
+cam hold
+vsm study 16
+wait 1500
+shot harbour-night-1-old
+wait 400
+vsm study 0
+wait 1500
+shot harbour-night-1-new
+wait 400
+vsm study 16
+wait 1500
+shot harbour-night-1-old2
+wait 400
+vsm study 0
+wait 300
+cam world 850 300 90
+wait 300
+cam hold
+wait 1500
+vsm study 16
+wait 1500
+shot harbour-night-2-old
+wait 400
+vsm study 0
+wait 1500
+shot harbour-night-2-new
+wait 400
+vsm study 16
+wait 1500
+shot harbour-night-2-old2
+wait 400
+vsm study 0
+wait 300
+cam world 850 300 180
+wait 300
+cam hold
+wait 1500
+vsm study 16
+wait 1500
+shot harbour-night-3-old
+wait 400
+vsm study 0
+wait 1500
+shot harbour-night-3-new
+wait 400
+vsm study 16
+wait 1500
+shot harbour-night-3-old2
+wait 400
+vsm study 0
+wait 300
+cam world 850 300 270
+wait 300
+cam hold
+wait 1500
+vsm study 16
+wait 1500
+shot harbour-night-4-old
+wait 400
+vsm study 0
+wait 1500
+shot harbour-night-4-new
+wait 400
+vsm study 16
+wait 1500
+shot harbour-night-4-old2
+wait 400
+vsm study 0
+wait 300
