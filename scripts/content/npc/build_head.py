@@ -350,7 +350,8 @@ def steps(cdir, cfg, work, content, gpu=None):
          os.path.join(head, 'head.frame.json'), j('material'), '--groom', j('hair', 'groom.npz'), '--relief', j('relief', 'samples.npz')]],
         [U, GR, V, j('beard', 'skin_shaved.png'), T['points'], body, os.path.join(head, 'head.frame.json'), j('hair', 'groom.npz'),
          j('relief', 'samples.npz')],
-        [j('material', n) for n in ('skin_game.png', 'skin_normal.png', 'skin_orm.png', 'skin_height.png')], 'skin for the game'))
+        [j('material', n) for n in ('skin_game.png', 'skin_normal.png', 'skin_orm.png', 'skin_height.png', 'skin_sheet.png')],
+        'skin for the game'))
     shapes = cfg.get('shapes')
     if shapes not in (None, 'mark'):
         raise SystemExit(f'build_head: "shapes" may only be "mark", not {shapes!r}')
@@ -395,14 +396,16 @@ def steps(cdir, cfg, work, content, gpu=None):
 
     # 9. the check: the head with its strands at the concept's cameras next to the concept and the model
     out.append(Step('sheet', [
-        # the map before the game material: its rim fades into the body's skin, which Blender's neck does not have
-        blend(j('round', 'reg_sub.blend'), os.path.join(S, 'hair', 'groom_render.py'), V, j('beard', 'skin_shaved.png'),
+        # the game's colour map of the skin; under the cut, where the game has its own body, Blender's neck has the
+        # colour of that body (skin_material.py's skin_sheet.png). With the map before the game material the sheet
+        # showed a pinker head than the game draws (reports/content/2026-11-npc-pipeline/likeness.md)
+        blend(j('round', 'reg_sub.blend'), os.path.join(S, 'hair', 'groom_render.py'), V, j('material', 'skin_sheet.png'),
               j('colour', 'groom.npz'), j('sheet'), 's', '--groom', j('colour', 'beard_groom.npz'), '--eye', eye_map,
               '--ramp', j('colour', 'hair_pigment.png'), '--views', 'front,quarter,profile', '--size', '900', '--spp', '128',
               '--height', j('material', 'skin_height.png'), '--light', 'portrait'),
         [PY, os.path.join(SK, 'likeness.py'), V, params, raw['full'], j('views', 'full_front.png'),
          j('views', 'full_profile.png'), j('sheet'), j('sheet', 'likeness.jpg'), *place]],
-        [j('round', 'reg_sub.blend'), V, j('beard', 'skin_shaved.png'), j('colour', 'groom.npz'), j('colour', 'beard_groom.npz'),
+        [j('round', 'reg_sub.blend'), V, j('material', 'skin_sheet.png'), j('colour', 'groom.npz'), j('colour', 'beard_groom.npz'),
          j('colour', 'hair_pigment.png'), eye_map, params, raw['full'], j('full', 'place.json'), j('full', 'tone.json'),
          j('material', 'skin_height.png')],
         [j('sheet', 'likeness.jpg')], 'Cycles renders and the likeness sheet'))

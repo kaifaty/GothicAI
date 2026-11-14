@@ -2,6 +2,9 @@
 #   blender -b <round>/reg_sub.blend -P groom_render.py -- views.json skin.png groom.npz <out dir> <prefix>
 #       [--groom more.npz]... [--part part.npz part.png]... [--eye eye.png] [--ramp pigment.png] [--size 1200] [--spp 256]
 #       [--views front,quarter,profile,back,hairline,knot] [--height skin_height.png] [--light portrait]
+# skin.png is the colour map of the skin; for the likeness sheet, skin_material.py's skin_sheet.png: the game's map
+# with Blender's neck at the colour of the game's body. The highlight is Blender's own (roughness 0.6), not the
+# game's roughness map.
 # The cameras stand on the eye point of views.json, as render_skin.py's do. Hair is Cycles' hair curves with the
 # principled hair BSDF; a strand's colour is looked up in a ramp by its tint: --ramp is a strip of
 # scripts/content/npc/concept_colours.py (hair_pigment.png), without it hero 3a's hand ramp. The cord of the tail is a

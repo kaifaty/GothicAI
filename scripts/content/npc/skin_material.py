@@ -25,6 +25,11 @@
 #   centimetres of open skin, in lightness only); the open face then takes the colour of the body's skin, lightness
 #   and hue (a gain per channel for the whole head: lips, cheeks and shades keep their difference from it); in the
 #   band over the cut the colour runs into the body's, so the rim has its colour;
+# - skin_sheet.png: skin_game.png for the Cycles check sheet (groom_render.py). Blender's head stands on MPFB's body,
+#   whose skin is the rest of this map; the game draws its own body there. In skin_game.png the rest of the map keeps
+#   the source's colour: on Blender's body, a step of colour under the cut that the game does not have. Here the
+#   rest of the map takes the colour of the game's body (a gain per channel, measured on the skin of the neck and
+#   the shoulders, and within 4 cm under the cut the colour runs into the body's, as it does over the cut);
 # - skin_orm.png: R = 1 (no baked occlusion), G = roughness, B = 0.
 #   Skin has a soft highlight (ROUGH is inside the range where the game fades an own material's highlight); the
 #   forehead, the nose and the lips shine more, wrinkled skin is rougher by the spread of the relief's normals, hair
@@ -110,16 +115,30 @@ gr = sparse.coo_matrix((ln, (ue[:, 0], ue[:, 1])), shape=(len(co), len(co)))
 dist = dijkstra(gr, directed=False, indices=rim, min_only=True)
 rim_v = 1-step(np.where(np.isfinite(dist), dist, 1.0), 0.003, BAND)
 F = np.concatenate([co, no, rim_v[:, None]], 1); fld = np.zeros((N, N, 7), np.float32); m = np.zeros((N, N), bool)
-for k in np.nonzero(head)[0]:
+
+
+def texels(k):
+    """The texels of the map under triangle k (rows, columns) and their weights of its corners."""
     a = tuv[k]*[N, N]; a[:, 1] = N-a[:, 1]
     x0, y0 = np.floor(a.min(0)).astype(int)-1; x1, y1 = np.ceil(a.max(0)).astype(int)+1
     x0, y0, x1, y1 = max(x0, 0), max(y0, 0), min(x1, N-1), min(y1, N-1)
     X, Y = np.meshgrid(np.arange(x0, x1+1)+0.5, np.arange(y0, y1+1)+0.5)
     T = np.array([[a[0, 0]-a[2, 0], a[1, 0]-a[2, 0]], [a[0, 1]-a[2, 1], a[1, 1]-a[2, 1]]])
-    if abs(np.linalg.det(T)) < 1e-9: continue
+    if abs(np.linalg.det(T)) < 1e-9: return None
     l = np.linalg.solve(T, np.stack([X.ravel()-a[2, 0], Y.ravel()-a[2, 1]])); w = np.vstack([l, 1-l.sum(0)]).T
-    ok = (w > -0.02).all(1); yy, xx = Y.ravel()[ok].astype(int), X.ravel()[ok].astype(int)
-    fld[yy, xx] = np.clip(w[ok], 0, 1) @ F[tri[k]]; m[yy, xx] = True
+    ok = (w > -0.02).all(1); return Y.ravel()[ok].astype(int), X.ravel()[ok].astype(int), np.clip(w[ok], 0, 1)
+
+
+for k in np.nonzero(head)[0]:
+    t = texels(k)
+    if t is not None: fld[t[0], t[1]] = t[2] @ F[tri[k]]; m[t[0], t[1]] = True
+# the body under the cut, which the game does not draw (the neck and the shoulders of Blender's body, in whatever
+# part of the map: within 12 cm under the plane), and how far under the plane it is, metres
+neck = np.zeros((N, N), bool); under = np.zeros((N, N), np.float32)
+for k in np.nonzero(g['body'][tri].all(1) & (over[tri] < 0).all(1) & (over[tri] > -0.12).all(1))[0]:
+    t = texels(k)
+    if t is not None: neck[t[0], t[1]] = True; under[t[0], t[1]] = -(t[2] @ over[tri[k]])
+neck &= ~m
 pos_t, nor_t, rim_t = fld[..., :3], fld[..., 3:6], fld[..., 6]
 nor_t /= np.maximum(np.linalg.norm(nor_t, axis=2, keepdims=True), 1e-9)
 hk = np.nonzero(head)[0]
@@ -198,6 +217,18 @@ out = out+(lin(UNDER)-out)*(0.85*cover[..., None])                            # 
 edge = ndimage.gaussian_filter(m.astype(np.float32), 0.5*MM)                 # the island's border: no step against the rest of the map
 game = np.where(m[..., None], out, img_lin*(1+(GAIN-1)*np.clip(edge*2, 0, 1)[..., None]))
 Image.fromarray(np.clip(srgb(game)*255+0.5, 0, 255).astype(np.uint8)).save(os.path.join(OUT, 'skin_game.png'))
+# the check sheet's map: the head as in the game, the rest of the map (Blender's neck and shoulders) at the colour of
+# the game's body: one gain per channel, by the skin of the neck and the shoulders (not by the skin at the cut alone:
+# on the second face that was a few dark texels of the model's shade, and the body came out burnt); and as over the
+# cut, within centimetres under it the colour runs into the body's, so the cut does not show as a step
+assert neck.sum() > 10000, 'no skin found under the cut'
+neck_lin = np.median(img_lin[neck], 0); TO_BODY = body_lin/np.maximum(neck_lin, 1e-4)
+ns = neck[::S, ::S].astype(np.float32); wn = ndimage.gaussian_filter(ns, 6*mm_s)
+locn = np.stack([ndimage.gaussian_filter(img_lin[::S, ::S, c]*ns, 6*mm_s) for c in range(3)], -1)/np.maximum(wn, 1e-6)[..., None]
+locn = np.stack([ndimage.zoom(locn[..., c], S, order=1) for c in range(3)], -1)[:N, :N]
+at_cut = ((1-step(under, 0.01, 0.04))*neck)[..., None]
+for_sheet = np.where(m[..., None], out, img_lin*(TO_BODY+at_cut*(body_lin/np.maximum(locn, 1e-4)-TO_BODY)))
+Image.fromarray(np.clip(srgb(for_sheet)*255+0.5, 0, 255).astype(np.uint8)).save(os.path.join(OUT, 'skin_sheet.png'))
 
 # ---- roughness
 hair_b = ndimage.gaussian_filter(hair_t, 0.8*MM)
@@ -268,5 +299,6 @@ relief = np.clip(0.5+0.5*(nx*0.6+ny*0.6)*6, 0, 1)
 sheet = np.concatenate([c(img/255), c(srgb(game)), np.repeat(c(r)[..., None], 3, 2), np.repeat(c(relief)[..., None], 3, 2)], 1)
 Image.fromarray(np.clip(sheet*255, 0, 255).astype(np.uint8)).save(os.path.join(OUT, 'skin_material.jpg'), quality=88)
 f8 = lambda v: tuple(int(x) for x in np.clip(srgb(v)*255+0.5, 0, 255))
+print('SHEET the neck and the shoulders under the cut %s (%d texels) take the body\'s colour: gain by channel %s' % (f8(neck_lin), int(neck.sum()), '%.2f %.2f %.2f' % tuple(TO_BODY)))
 print('SKIN head %s body %s gain %.2f, by channel %s; hair roots over %.0f cm2; %d rim vertices, %.1f texels/mm; roughness %.2f..%.2f, median %.2f (before the relief %.2f); tilt median %.1f deg, 95%% %.1f deg'
       % (f8(head_lin), f8(body_lin), LIGHT, '%.2f %.2f %.2f' % tuple(LIGHT*HUE), float((cover > 0.5).sum())/MM/MM/100, len(rim), MM, r[m].min(), r[m].max(), float(np.median(r[bare])), float(np.median(r0[bare])), float(np.median(tilt)), float(np.percentile(tilt, 95))))

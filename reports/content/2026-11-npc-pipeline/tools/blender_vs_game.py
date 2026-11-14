@@ -6,7 +6,8 @@
 #   the irises: the median and by groups; and the width of the face over its height (points 234-454 over 10-152): a
 #   short lens narrows it;
 # - luminance (linear) against the cheeks': the eye socket between the upper lid and the brow, the beard on the chin,
-#   the moustache. Patches of a twentieth of the distance between the irises, medians.
+#   the moustache; and the cheeks' own green and blue over red. Patches of a twentieth of the distance between the
+#   irises, medians.
 import sys, os, json
 import numpy as np
 from PIL import Image
@@ -35,16 +36,18 @@ def fit(a, b):
 
 ipd = lambda p: np.linalg.norm(p[468:473].mean(0)-p[473:478].mean(0))
 ref = points(REF); mm = 61.5/ipd(ref)
-print('%-14s | median mm | ' % 'points' + ' | '.join('%-5s' % k for k in G) + ' | width/height || socket | chin beard | moustache  (over the cheeks)')
+print('%-14s | median mm | ' % 'points' + ' | '.join('%-5s' % k for k in G) + ' | width/height || socket | chin beard | moustache  (over the cheeks) || cheeks g/r b/r')
 for name, path in PICS:
     p = points(name); d = np.linalg.norm(fit(ref[:468], p[:468])-ref[:468], axis=1)*mm
     im = Image.open(path).convert('RGBA'); bg = Image.new('RGBA', im.size, (128, 128, 128, 255)); bg.alpha_composite(im)
     a = np.asarray(bg.convert('RGB')).astype(float); r = max(2, int(ipd(p)*0.05))
 
-    def lum(c):
-        x, y = int(round(c[0])), int(round(c[1])); return lin(np.median(a[y-r:y+r+1, x-r:x+r+1].reshape(-1, 3), 0)/255) @ LUM
-    cheek = (lum(p[50])+lum(p[280]))/2
+    def col(c):
+        x, y = int(round(c[0])), int(round(c[1])); return lin(np.median(a[y-r:y+r+1, x-r:x+r+1].reshape(-1, 3), 0)/255)
+    lum = lambda c: col(c) @ LUM
+    cheek = (lum(p[50])+lum(p[280]))/2; cc = (col(p[50])+col(p[280]))/2
     socket = (lum((p[159]+p[105])/2)+lum((p[386]+p[334])/2))/2
     moustache = (lum((p[37]+p[97])/2)+lum((p[267]+p[326])/2))/2
     print('%-14s | %8.1f  | ' % (name, np.median(d)) + ' | '.join('%5.1f' % np.median(d[G[k]]) for k in G)
-          + ' | %.3f        || %.2f   | %.2f       | %.2f' % (np.linalg.norm(p[234]-p[454])/np.linalg.norm(p[10]-p[152]), socket/cheek, lum(p[175])/cheek, moustache/cheek))
+          + ' | %.3f        || %.2f   | %.2f       | %.2f                         || %.2f %.2f' % (
+              np.linalg.norm(p[234]-p[454])/np.linalg.norm(p[10]-p[152]), socket/cheek, lum(p[175])/cheek, moustache/cheek, cc[1]/cc[0], cc[2]/cc[0]))
