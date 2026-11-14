@@ -1442,7 +1442,8 @@ game_queue_args() {
       GQ_ARGS=(--class "${BENCH_CLASS:-batch}" --threads 4 --mem 6G --max "${RYZEN_MAX:-30m}" --wait-max "$LOCK_WAIT")
     elif ! bench_window; then
       # Offscreen: the same game without --display, so no window slot to wait for.
-      # Peak ~0.7 GB of video memory per offscreen game (2026-11-09), as e2e: 2G.
+      # Peak ~0.7 GB of video memory per offscreen game (2026-11-09), ~1 GB with ray tracing on by the device rule
+      # on the RTX 3080 (993 MiB at 800x600, 2026-11-14), as e2e: 2G.
       # RAM 4G: typical peaks stay under 3.6 GiB (gq journal, 1560 benches); the few
       # at 5.00 were one-off runaways that fill any limit. Five benches fit in 20G.
       GQ_ARGS=(--class "${BENCH_CLASS:-quick}" --threads 4 --mem 4G --max "${RYZEN_MAX:-30m}" --wait-max "$LOCK_WAIT"
@@ -1461,6 +1462,7 @@ game_queue_args() {
     GQ_ARGS+=(--name "bench $(basename "$BENCH_SCENARIO" .bench)")
     if [[ -n "${RYZEN_BENCH_ARCHIVE:-}" ]]; then GQ_ARGS+=(--archive "$RYZEN_BENCH_ARCHIVE"); fi
   else
+    # Peak ~1 GB of video memory per e2e game with ray tracing on by the device rule (981 MiB at 640x360, 2026-11-14)
     GQ_ARGS+=(--gpu-mem 2G --name "e2e ${SCENARIO:-m0}")
     # A custom size or position cannot share the default slot layout safely.
     if [[ "${TEMPEST_WINDOW_SIZE:-640x360}" != 640x360 || -n "${TEMPEST_WINDOW_POS+x}" ]] || \

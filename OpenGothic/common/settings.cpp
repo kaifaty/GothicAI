@@ -231,9 +231,10 @@ bool Settings::has(std::string_view sec) {
   }
 
 bool Settings::has(std::string_view sec, std::string_view name) {
-  if(instance==nullptr || instance->iniFile==nullptr)
+  if(instance==nullptr)
     return false;
-  return instance->iniFile->has(sec,name) || instance->baseIniFile->has(sec,name);
+  return (instance->iniFile!=nullptr     && instance->iniFile->has(sec,name)) ||
+         (instance->baseIniFile!=nullptr && instance->baseIniFile->has(sec,name));
   }
 
 int Settings::getI(std::string_view sec, std::string_view name) {

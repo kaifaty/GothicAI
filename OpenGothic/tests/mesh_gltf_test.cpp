@@ -2914,8 +2914,9 @@ int main() {
       }
     Fixture fixture;
     const auto root=fixture.root.string();
-    // -rt 0: the toy fixture's cases count landscape pages without the ray scene's indices; on an RTX the device
-    // rule would turn it on. landscapeRtLifetime checks the ray scene with its own -rt 1.
+    // -rt 0: the toy fixture's cases count the landscape's pages as they are without the ray scene, whose indices add
+    // pages of their own; on an RTX the device rule would turn the ray scene on and break those counts. The ray scene
+    // is checked by landscapeRtLifetime, which passes its own -rt 1.
     const char* args[]={"gothic-mesh-gltf-test","-g",root.c_str(),"-rt","0"};
     CommandLine commandLine(5,args);
     fixture.index();
