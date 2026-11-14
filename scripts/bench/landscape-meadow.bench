@@ -124,6 +124,8 @@ wait 500
 walkto NW_TAVERNE_TROLLAREA_05
 wait 11500
 stop
+# the walk ends before the next place: a walk still in the queue goes on after the jump and takes the hero away
+waitarrive 20000
 walkmode run
 
 # back along the track's edge, the camera low behind the hero and to a side: the verge passes in the foreground
@@ -139,6 +141,7 @@ wait 500
 walkto NW_TAVERNE_TROLLAREA_03
 wait 10000
 stop
+waitarrive 20000
 walkmode run
 cam game
 
