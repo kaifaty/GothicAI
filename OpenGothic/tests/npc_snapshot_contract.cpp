@@ -291,6 +291,7 @@ void itemLayout(const NpcSnapshot::Program& program) {
   check(std::extent_v<decltype(record.count)> == 6,"original item count array size");
   }
 void focusLayout() {
+  check(sizeof(FocusRecord)==76,"original focus record size");
   Fixture f;
   auto cls=f.symbol("C_FOCUS",Type::CLASS);
   f.p.symbols[cls].class_size=sizeof(IFocus);
