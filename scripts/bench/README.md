@@ -207,6 +207,8 @@ pin `BENCH_HOST=dev-ubuntu`, `BENCH_HOST=ryzen` or `BENCH_HOST=local`.
 
 Результаты нокдаунов ON/OFF и опыта дрейфа — в отчёте; сценарий дрейфа не запускает 60 нокдаунов.
 
+`ragdoll-brace-look` снимает для глаза нокдаун по стойкости в четыре стороны на ровном поле: назад, вперёд и на оба бока. Жертва всегда стоит лицом к герою, атакующий — перед ней, за ней или сбоку. Каждое падение — три дубля: сбоку от падения, в три четверти и сбоку с замедлением втрое, имена `<сторона>-<вид>[-slow]`. Сценарий пишет [`look_bench.py`](../../reports/physics/2026-11-14-fall-bracing/look_bench.py); его гоняют на игре до и после правки и сводят дубли по именам ([заметка](../../reports/physics/2026-11-14-fall-bracing/README.md)).
+
 `game.log` must contain `[bench] done` for a complete scenario (including an explicit `quit`).
 Closing the window, a crash, `TIMEOUT` (default 300 seconds), or the stall watchdog before that marker
 returns code 1 and prints one reason with elapsed/limit seconds to stderr. Partial output still goes
