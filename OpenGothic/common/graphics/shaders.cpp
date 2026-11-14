@@ -247,7 +247,7 @@ void Shaders::compileShaders() noexcept {
   taaResolve             = postEffect("triangle", "taa_resolve", RenderState::ZTestMode::Always);
   taauResolve            = postEffect("triangle", "taau_resolve", RenderState::ZTestMode::Always);
 #endif
-  motionCameraDilated    = postEffect("triangle", "motion_camera_dilated", RenderState::ZTestMode::Always);
+  taauPrepare            = postEffect("triangle", "taau_prepare", RenderState::ZTestMode::Always);
   taaSharpen             = postEffect("triangle", "taa_sharpen", RenderState::ZTestMode::Always);
   motionCamera           = postEffect("triangle",    "motion_camera",     RenderState::ZTestMode::Always);
   tonemappingBloom       = postEffect("triangle_uv", "tonemapping_bloom", RenderState::ZTestMode::Always);

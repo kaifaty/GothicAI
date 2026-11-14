@@ -660,7 +660,9 @@ void Renderer::resetViewport(Tempest::Size res, Tempest::Size fullRes) {
   if(temporalOn) {
     temporal.taau    = settings.taau;
     temporal.outSize = Size(int(bw), int(bh));
-    temporal.motion  = device.attachment(TextureFormat::RG16F, w, h);
+    temporal.motion  = temporal.taau ? Attachment() : device.attachment(TextureFormat::RG16F, w, h);
+    temporal.boxMid  = temporal.taau ? device.attachment(TextureFormat::RGBA16F, w, h) : Attachment();
+    temporal.boxExt  = temporal.taau ? device.attachment(TextureFormat::RGBA16F, w, h) : Attachment();
     temporal.output  = temporal.taau ? StorageImage() : device.image2d(TextureFormat::R11G11B10UF, bw, bh);
     temporal.phases  = Taa::upscalePhases(w, h, bw, bh);
     // MetalFX takes Apple's log2(in/out) - 1; our own resolve half a level less sharp, as TAA's -0.5 at 100 %
@@ -672,6 +674,8 @@ void Renderer::resetViewport(Tempest::Size res, Tempest::Size fullRes) {
     temporal.taau    = false;
     temporal.outSize = Size(0, 0);
     temporal.motion  = Attachment();
+    temporal.boxMid  = Attachment();
+    temporal.boxExt  = Attachment();
     temporal.output  = StorageImage();
     }
 

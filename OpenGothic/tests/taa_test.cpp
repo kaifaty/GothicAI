@@ -385,6 +385,18 @@ void upscaleShares() {
   require(masked.share>0.9f, "the mask leaves " + std::to_string(1.f-masked.share) + " of the history");
   const auto after = Taa::upscaleShare(1.f, masked.weight, wMax, 0.f, trust, 0.f);
   require(after.share>0.7f, "the frame after the mask keeps " + std::to_string(1.f-after.share));
+  // thin smoke (a mask of 1/8 and more): a near and a far sample take the same share, so the output pixels of one
+  // input texel do not differ in what changes every frame
+  for(float m : {0.125f, 0.3f, 0.9f}) {
+    const auto nearS = Taa::upscaleShare(1.f,     w, wMax, 0.f, trust, m);
+    const auto farS  = Taa::upscaleShare(0.0001f, Taa::UpscaleWeightInit, wMax, 0.f, trust, m);
+    require(std::abs(nearS.share - farS.share)<1e-5f, "the share under the mask depends on the sample's distance");
+    require(nearS.share>=m && nearS.share>=1.f/(1.f + wMax), "the share under the mask " + std::to_string(m) + " is " + std::to_string(nearS.share));
+    require(nearS.weight==Taa::UpscaleWeightInit, "the mask keeps the gathered weight");
+    }
+  // and the mask 0 changes nothing
+  const auto plain = Taa::upscaleShare(0.3f, 2.f, wMax, 0.f, trust, 0.f);
+  require(std::abs(plain.share - 0.3f/(2.3f + 1e-4f))<1e-6f && std::abs(plain.weight - 2.3f)<1e-6f, "mask 0 changes the share");
   }
 
 // the resolve's blend with the reactive mask (graphics plan 1v): the mask 0 changes nothing, a spark under it keeps

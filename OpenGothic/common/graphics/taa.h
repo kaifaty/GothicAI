@@ -34,9 +34,12 @@ namespace Taa {
   float              upscaleConfidence(const Tempest::Vec2& offset, float scaleX, float scaleY, float kernel);
   // The resolve's accumulation (taau_resolve.frag): `conf` this frame's sample weight, `gathered` the weight in the
   // history's alpha, `wMax` its cap, `moved` how far the colour box moved the history in box extents, `mask` this
-  // frame's reactive mask under the ceiling. The new frame's share is conf/(conf + gathered) and grows to the whole
-  // under the mask; the history then keeps min(gathered + conf, wMax)*(1 - mask), never less than UpscaleWeightInit
+  // frame's reactive mask under the ceiling. The new frame's share is conf/(conf + gathered). A mask from
+  // 1/UpscaleMaskSmooth makes it a full history's 1/(1 + wMax) whatever the sample's distance, so that the output
+  // pixels of one input texel take what changes every frame alike, and it grows to the whole with the mask; the
+  // history then keeps min(gathered + conf, wMax)*(1 - mask*UpscaleMaskSmooth), never less than UpscaleWeightInit
   constexpr float    UpscaleWeightInit = 0.05f;
+  constexpr float    UpscaleMaskSmooth = 8.f;
   struct UpscaleShare {
     float share  = 0; // of the new frame
     float weight = 0; // the history's alpha after this frame

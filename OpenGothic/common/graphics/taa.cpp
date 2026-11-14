@@ -138,10 +138,12 @@ float Taa::upscaleConfidence(const Vec2& offset, float scaleX, float scaleY, flo
 
 Taa::UpscaleShare Taa::upscaleShare(float conf, float gathered, float wMax, float moved, float clipTrust, float mask) {
   const float wH = std::min(std::max(gathered, 0.f), wMax)/(1.f + clipTrust*moved);
+  const float kS = std::clamp(mask*UpscaleMaskSmooth, 0.f, 1.f);
   UpscaleShare r;
   r.share  = conf/(conf + wH + 1e-4f);
+  r.share  = r.share + (1.f/(1.f + wMax) - r.share)*kS;
   r.share  = r.share + (1.f - r.share)*mask;
-  r.weight = std::max(std::min(wH + conf, wMax)*(1.f - mask), UpscaleWeightInit);
+  r.weight = std::max(std::min(wH + conf, wMax)*(1.f - kS), UpscaleWeightInit);
   return r;
   }
 

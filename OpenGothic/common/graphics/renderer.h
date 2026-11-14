@@ -115,7 +115,7 @@ class Renderer final {
     void drawUpscale      (Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawTemporalUpscale(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawTaau         (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
-    void drawMotionCamera (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const Tempest::RenderPipeline& pso);
+    void drawMotionCamera (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawTonemappingTemporal(Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
     bool useTemporalUpscale(Tempest::Size res, Tempest::Size fullRes) const;
     void drawReflections  (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
@@ -333,7 +333,8 @@ class Renderer final {
     // OPENGOTHIC_UPSCALE=temporal: MetalFX Temporal, which keeps the history itself and writes `output`.
     // OPENGOTHIC_UPSCALE=taau: our own resolve (drawTaau), the history is taa.history at the swapchain's size
     struct {
-      Tempest::Attachment       motion;              // RG16F: to where the point was a frame ago, input texture coordinates
+      Tempest::Attachment       motion;              // MetalFX, RG16F: to where the point was a frame ago, input texture coordinates
+      Tempest::Attachment       boxMid, boxExt;      // our own, RGBA16F of the input's size (taau_prepare.frag): the colour box, the motion in the alphas
       Tempest::StorageImage     output;              // MetalFX: linear HDR of the swapchain's size
       Tempest::Size             outSize;             // the resolved frame's size; 0 with no temporal upscale
       bool                      taau      = false;   // our own resolve, not MetalFX
