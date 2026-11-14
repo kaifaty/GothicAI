@@ -157,11 +157,11 @@ void HandMotionReceiver::open() {
     return v;
     };
   rcvBuf = readBuffer();
-  if(rcvBuf<ReceiveBuffer) {
+  if(rcvBuf<ReceiveBufferReported) {
     const int want = ReceiveBuffer;
     ::setsockopt(s,SOL_SOCKET,SO_RCVBUF,reinterpret_cast<const char*>(&want),SockLen(sizeof(want)));
     rcvBuf = readBuffer();
-    if(rcvBuf<ReceiveBuffer)
+    if(rcvBuf<ReceiveBufferReported)
       Tempest::Log::i("[hand-motion] receive buffer ",rcvBuf," bytes, asked for ",ReceiveBuffer);
     }
 

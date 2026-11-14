@@ -44,6 +44,12 @@ class HandMotionReceiver final {
     static constexpr auto   HistoryAge      = std::chrono::seconds(1);
     static constexpr auto   ClockWindow     = std::chrono::seconds(2);
     static constexpr int    ReceiveBuffer   = 256*1024; // a pause of 0.5 s at 400 frames per second
+    // SO_RCVBUF as getsockopt reports a granted ReceiveBuffer: Linux doubles a request for its bookkeeping
+#if defined(__linux__)
+    static constexpr int    ReceiveBufferReported = 2*ReceiveBuffer;
+#else
+    static constexpr int    ReceiveBufferReported = ReceiveBuffer;
+#endif
 
     class Track {
       public:

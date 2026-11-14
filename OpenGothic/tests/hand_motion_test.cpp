@@ -1,6 +1,8 @@
 // gothic-hand-motion-test: the hand motion frame and its receiver (docs/hand-motion.md), without the game.
 #include "input/handmotion.h"
 
+#include <Tempest/Log>
+
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -46,6 +48,7 @@ HandMotion::Frame frame(uint8_t hand, uint32_t seq, uint64_t tUs = 0, uint16_t s
   f.seq     = seq;
   f.tUs     = tUs;
   f.session = session;
+  f.flags   = uint8_t(seq&7);
   f.gyro[0] = float(seq)*0.5f;
   return f;
   }
@@ -113,6 +116,13 @@ void encodeDecode() {
     require(g.gyro[i]==f.gyro[i] && g.accel[i]==f.accel[i],"gyro and accel survive");
   for(int i=0; i<4; ++i)
     require(g.quat[i]==f.quat[i],"quat survives");
+  for(uint8_t flags:{uint8_t(0),uint8_t(HandMotion::GyroBiasRemoved|HandMotion::QuatValid),uint8_t(HandMotion::AtRest)}) {
+    auto h = f;
+    h.flags = flags;
+    const auto hb = bytes(h);
+    require(HandMotion::decode(hb.data(),hb.size(),g)==HandMotion::Status::Ok && g.flags==flags,
+            "flags "+std::to_string(flags)+" survive, off bits stay off");
+    }
 
   Receiver r(offline());
   const auto now = Receiver::Clock::now();
@@ -160,7 +170,7 @@ void socketTwoHands() {
     const uint32_t first = h==HandMotion::Left ? 1 : 101;
     for(size_t i=0; i<t.size(); ++i) {
       require(t[i].frame.hand==h && t[i].frame.seq==first+i,"hand and seq order");
-      require(t[i].frame.gyro[0]==float(first+i)*0.5f,"payload");
+      require(t[i].frame.gyro[0]==float(first+i)*0.5f && t[i].frame.flags==((first+i)&7),"payload and flags");
       }
     require(t.last()!=nullptr && t.last()->frame.seq==first+19,"last frame");
     }
@@ -183,6 +193,7 @@ void seqGaps() {
   require(st.dropped==2 && st.frames==2 && st.lost==2,"dropped 2, frames 2, lost still 2");
   require(r.hand(HandMotion::Left).size()==1 && r.hand(HandMotion::Left)[0].frame.seq==13,"history: 10 aged, 13 stays");
   require(feed(r,frame(HandMotion::Left,14),at+=milliseconds(5)) && st.lost==2,"14 follows 13 without a loss");
+  require(feed(r,frame(HandMotion::Left,17),at+=milliseconds(5)) && st.lost==4,"14 -> 17: the losses add up to 4");
   require(r.hand(HandMotion::Right).stats().frames==0,"the other hand is untouched");
   }
 
@@ -211,6 +222,8 @@ void sessionRestart() {
   require(t.size()==50 && t[0].frame.seq==0 && t[0].frame.session==8,"the old stream's history is gone");
   require(!feed(r,frame(HandMotion::Right,10,now,8),t0+milliseconds(600)),"new session, seq back: dropped");
   require(t.stats().dropped==2 && t.stats().restarts==1,"dropped 2, still one restart");
+  require(feed(r,frame(HandMotion::Right,0,now,0),t0+milliseconds(700)),"session 8 -> 0, seq 0: a new stream as well");
+  require(t.stats().restarts==2 && t.stats().lost==0 && t.size()==1,"zero has no special meaning: restarts 2");
   require(r.hand(HandMotion::Left).stats().restarts==0,"the other hand is untouched");
   }
 
@@ -219,12 +232,13 @@ void emptyTick() {
   Receiver r(anyPort());
   require(r.isOpen(),"open: "+r.error());
   Sender s(r.port());
-  for(uint32_t seq:{10u,13u,14u,15u,16u})
+  for(uint32_t seq:{10u,13u,14u,15u,16u,16u})
     s.send(frame(HandMotion::Right,seq));
   settle();
   r.tick();
   const auto& t = r.hand(HandMotion::Right);
-  require(t.size()==5 && t.stats().frames==5 && t.stats().lost==2,"5 frames and 2 lost before the empty ticks");
+  require(t.size()==5 && t.stats().frames==5 && t.stats().lost==2 && t.stats().dropped==1,
+          "5 frames, 2 lost and 1 dropped before the empty ticks");
   const auto before = t.stats();
   const auto lastAt = t.lastReceived();
   for(int i=0; i<21; ++i) {
@@ -234,7 +248,8 @@ void emptyTick() {
     require(ms<1.0,"tick "+std::to_string(i)+" under 1 ms, got "+std::to_string(ms));
     }
   require(t.size()==5 && t[0].frame.seq==10 && t.last()->frame.seq==16 && t.lastReceived()==lastAt,"history kept");
-  require(t.stats().lost==2,"lost kept: 2, got "+std::to_string(t.stats().lost));
+  require(t.stats().lost==2 && t.stats().dropped==1,"lost 2 and dropped 1 kept, got "+std::to_string(t.stats().lost)+
+          ", "+std::to_string(t.stats().dropped));
   require(t.stats().frames==before.frames && t.stats().lost==before.lost && t.stats().dropped==before.dropped &&
           t.stats().overflow==before.overflow && t.stats().restarts==before.restarts,"statistics kept");
   require(r.hand(HandMotion::Left).size()==0 && r.malformed()==0 && r.isOpen(),"still open, nothing counted");
@@ -254,6 +269,7 @@ void historyOverflow() {
     require(t[i].frame.seq==t[i-1].frame.seq+1,"in seq order");
   require(t.stats().overflow==88 && t.stats().frames==total && t.stats().lost==0,
           "88 overflow, got "+std::to_string(t.stats().overflow));
+  require(t.last()!=nullptr && t.last()->frame.seq==total,"last() is the last frame sent");
 
   // a pause of 3 s: what aged leaves first, 400 newer frames fit without an overflow
   Receiver p(offline());
@@ -271,7 +287,9 @@ void historyOverflow() {
 void receiveBuffer() {
   Receiver r(anyPort());
   require(r.isOpen(),"open: "+r.error());
-  require(r.receiveBuffer()>=256*1024,"SO_RCVBUF >= 256 KB, got "+std::to_string(r.receiveBuffer()));
+  // asked for >= 256 KB: on Linux getsockopt shows twice the request
+  require(r.receiveBuffer()>=Receiver::ReceiveBufferReported,"SO_RCVBUF granted >= 256 KB, got "+
+          std::to_string(r.receiveBuffer())+" of "+std::to_string(Receiver::ReceiveBufferReported)+" reported");
   r.tick();
   Sender s(r.port());
   for(uint32_t i=0; i<200; ++i) {
@@ -323,6 +341,16 @@ void clockOffset() {
     require(std::abs(lag-want)<0.01,"window: frame "+std::to_string(k)+" lags "+std::to_string(lag)+" ms, want "+
             std::to_string(want));
     }
+  // a new minimum wins at once: the first frame came in 10 ms, the next in 1 ms
+  Receiver q(offline());
+  feed(q,frame(HandMotion::Right,1,origin),t0+milliseconds(10));
+  feed(q,frame(HandMotion::Right,2,origin+5000),t0+milliseconds(6));
+  const auto lag = duration<double,std::milli>(q.hand(HandMotion::Right).last()->time-(t0+milliseconds(5))).count();
+  Receiver::Clock::time_point first;
+  require(q.hand(HandMotion::Right).toGameTime(origin,first),"translate the first frame");
+  const auto firstLag = duration<double,std::milli>(first-t0).count();
+  require(std::abs(lag-1.0)<0.01 && std::abs(firstLag-1.0)<0.01,"the faster frame sets the scale at once: lags "+
+          std::to_string(lag)+" and "+std::to_string(firstLag)+" ms, want 1");
   }
 
 // a second receiver on a busy port: no crash, an error, tick works
@@ -331,10 +359,19 @@ void portInUse() {
   require(first.isOpen(),"first open: "+first.error());
   Receiver::Config c;
   c.port = first.port();
+  struct Capture {
+    std::vector<std::string> lines;
+    Capture()  { Tempest::Log::setOutputCallback([this](Tempest::Log::Mode,const char* text){ lines.emplace_back(text); }); }
+    ~Capture() { Tempest::Log::setOutputCallback(nullptr); }
+    } log;
   Receiver second(c);
   require(!second.isOpen() && !second.error().empty() && second.port()==0,"second reports the busy port");
-  second.tick();
-  second.tick();
+  for(int i=0; i<5; ++i)
+    second.tick();
+  const auto off = std::count_if(log.lines.begin(),log.lines.end(),[](const std::string& l){
+    return l.rfind("[hand-motion] off: bind",0)==0;
+    });
+  require(off==1,"one log line about the busy port, got "+std::to_string(off));
   Sender s(first.port());
   s.send(frame(HandMotion::Left,1));
   settle();
@@ -361,12 +398,12 @@ void disabledByEnv() {
   ::setenv("OPENGOTHIC_HAND_MOTION","0",1);
   ::setenv("OPENGOTHIC_HAND_MOTION_PORT",std::to_string(port).c_str(),1);
   const auto cfg = Receiver::Config::fromEnvironment();
-  ::unsetenv("OPENGOTHIC_HAND_MOTION");
-  ::unsetenv("OPENGOTHIC_HAND_MOTION_PORT");
   require(!cfg.enabled && cfg.port==port,"OPENGOTHIC_HAND_MOTION=0 turns it off");
 
   Receiver off(cfg);
   off.tick();
+  ::unsetenv("OPENGOTHIC_HAND_MOTION");
+  ::unsetenv("OPENGOTHIC_HAND_MOTION_PORT");
   require(!off.isOpen() && off.port()==0 && off.error().empty(),"off: no socket, no error");
   Receiver::Config again;
   again.port = port;
