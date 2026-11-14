@@ -1,6 +1,6 @@
 // The protective fall (physics/ragdoll_brace.*): cases of gothic-ragdoll-contract, run from
 // physics_ragdoll_contract.cpp's main. The pose is built here on the synthetic human; the
-// four authored records are read only when OPENGOTHIC_BRACE_POSES names their content folder.
+// eight authored records are read only when OPENGOTHIC_BRACE_POSES names their content folder.
 #include "physics/collisionworld.h"
 #include "physics/dynamicworld.h"
 #include "physics/ragdoll.h"
@@ -53,7 +53,8 @@ namespace {
 using RagdollBrace::Kind;
 constexpr float pi = 3.14159265358979323846f;
 // Bones of the synthetic human.
-enum : size_t { Spine1=3, LUpper=6, LFore=7, LHand=8, RUpper=9, RFore=10, RHand=11 };
+enum : size_t { Spine1=3, LUpper=6, LFore=7, LHand=8, RUpper=9, RFore=10, RHand=11,
+                LThigh=12, LCalf=13, LFoot=14, LToe=15, RThigh=16, RCalf=17, RFoot=18, RToe=19 };
 
 void require(bool condition, const char* message) {
   if(condition)
@@ -126,6 +127,20 @@ struct Human final {
     turn(pose,RFore,40.f);
     return pose;
     }
+
+  std::vector<Tempest::Matrix4x4> landed() const {
+    auto pose=armsForward(90.f);
+    turn(pose,RFore,50.f); // both elbows at 90 degrees
+    auto bend=Tempest::Matrix4x4::mkIdentity();
+    bend.rotateOX(60.f);
+    for(size_t calf:{size_t(LCalf),size_t(RCalf)}) {
+      const auto o=origin(pose[calf]);
+      const auto r=at(o.x,o.y,o.z)*bend*at(-o.x,-o.y,-o.z);
+      for(size_t i=0;i<pose.size();++i)
+        if(descends(i,calf)) pose[i]=r*pose[i];
+      }
+    return pose;
+    }
   };
 
 auto ground(CollisionWorld& world) {
@@ -137,6 +152,18 @@ const RagdollBrace::MotorProbe& probe(const std::vector<RagdollBrace::MotorProbe
     if(p.bone==bone) return p;
   require(false,"every joint of the synthetic human must have a motor probe");
   return probes.front();
+  }
+
+JPH::Quat target(const RagdollBrace::MotorProbe& p) { return {p.target.x,p.target.y,p.target.z,p.target.w}; }
+
+std::vector<RagdollBrace::MotorProbe> poseTargets(const Human& human, const std::vector<Tempest::Matrix4x4>& pose) {
+  CollisionWorld world;
+  RagdollBraceContract::zeroGravity(world);
+  auto body=human.create(world,at(0,300,0));
+  RagdollBrace::Profile profile;
+  profile.armsEnter=profile.neckEnter=profile.spineEnter=profile.legsEnter=0.f;
+  require(body->brace(Kind::Back,pose.data(),pose.size(),profile),"the target reference needs its pose");
+  return body->motorProbes();
   }
 
 // Tick in the birth guard's 17/17/16 rhythm; the age counts native steps since birth.
@@ -313,35 +340,151 @@ void testGapIsNoTouch() {
           "a speculative contact of surfaces 1 cm apart is no touch");
   }
 
+void testLandingPhase() {
+  Human human;
+  const auto first=human.armsForward(),land=human.landed();
+  const auto firstTargets=poseTargets(human,first),landTargets=poseTargets(human,land);
+  const RagdollBrace::Profile profile;
+  for(bool touchHand:{true,false}) {
+    CollisionWorld world;
+    RagdollBraceContract::zeroGravity(world);
+    auto body=human.create(world,at(0,300,0));
+    const auto birth=world.simulationStep();
+    require(body->brace(Kind::Front,first.data(),first.size(),profile,land.data()),"the landing case needs both poses");
+    float age=0.f;
+    int frame=0;
+    for(;age<.35f-1.e-4f;++frame) age=tick(world,frame,birth);
+    RagdollBrace::Report report;
+    require(body->braceReport(report) && report.landMs<0.f && report.landKind==Kind::Front,"before touch the second pose waits");
+    float beforeError=0.f;
+    for(size_t bone:{LUpper,LFore,LHand,RUpper,RFore,RHand})
+      beforeError=std::max(beforeError,angleDeg(target(probe(body->motorProbes(),bone)),target(probe(firstTargets,bone))));
+    require(beforeError<1.f,"before contact the arm targets equal the first pose");
+    // Put a small support inside the left hand's current collision capsule. There is
+    // no other scenery or gravity; this is a real hand contact, after the first pose.
+    Tempest::Vec3 handPosition;
+    for(const auto& part:body->state().parts)
+      if(part.bone==LHand) handPosition=part.centerOfMassMeters*100.f;
+    auto support=touchHand ? world.addCollisionBody(new JPH::BoxShape(JPH::Vec3(.015f,.015f,.015f)),
+                        at(handPosition.x,handPosition.y,handPosition.z),.75f,DynamicWorld::C_Landscape) : nullptr;
+    float landedAt=-1.f,afterError=0.f,restMin=1.f,restMax=0.f,armAfter=0.f,legFloor=1.e9f,legAfter=0.f;
+    size_t restSamples=0,legSamples=0,targetSamples=0;
+    for(;age<1.5f;++frame) {
+      age=tick(world,frame,birth);
+      require(body->braceReport(report),"the landing measures last");
+      if(report.landMs>=0.f) landedAt=report.landMs*.001f;
+      if(landedAt<0.f) continue;
+      const float since=age-landedAt;
+      const auto motors=body->motorProbes();
+      if(since>=profile.landEnter+1.e-3f && targetSamples==0) {
+        for(size_t bone:{LUpper,LFore,LHand,RUpper,RFore,RHand,LThigh,LCalf,LFoot,LToe,RThigh,RCalf,RFoot,RToe})
+          afterError=std::max(afterError,angleDeg(target(probe(motors,bone)),target(probe(landTargets,bone))));
+        ++targetSamples;
+        }
+      for(size_t bone:{LUpper,LFore,LHand}) {
+        const auto& p=probe(motors,bone);
+        const float share=p.torqueLimit/(p.massKg*profile.armsTorque);
+        if(since>=profile.armsDrop+1.e-3f && since<=profile.armsDrop+profile.armsRest-1.e-3f) {
+          restMin=std::min(restMin,share); restMax=std::max(restMax,share); ++restSamples;
+          }
+        if(since>=profile.armsDrop+profile.armsRest+profile.armsYield+1.e-3f)
+          armAfter=std::max(armAfter,share);
+        }
+      for(size_t bone:{LThigh,LCalf,LFoot,LToe,RThigh,RCalf,RFoot,RToe}) {
+        const auto& p=probe(motors,bone);
+        if(since>=.1f && since<=profile.landHold-1.e-3f) {
+          legFloor=std::min(legFloor,p.torqueLimit/p.massKg); ++legSamples;
+          }
+        if(since>=profile.landHold+profile.landYield+1.e-3f)
+          legAfter=std::max(legAfter,p.torqueLimit);
+        }
+      }
+    std::printf("ragdoll brace landing %s: land_ms=%.3f hand_ms=%.3f/%.3f target_error_deg before=%.5f after=%.5f; "
+                "arm_rest_share=%.5f..%.5f after_yield=%.5f; leg_floor_Nm_kg=%.5f after_yield_Nm=%.5f\n",
+                touchHand ? "hand" : "timeout",double(report.landMs),double(report.handMs[0]),double(report.handMs[1]),
+                double(beforeError),double(afterError),double(restMin),double(restMax),double(armAfter),double(legFloor),double(legAfter));
+    require(targetSamples>0 && afterError<1.f,"after landEnter the targets equal the second pose within one degree");
+    if(touchHand)
+      require(report.handMs[0]>=0.f && std::abs(report.landMs-report.handMs[0])<.01f && landedAt<profile.armsHold,
+              "the first hand contact starts landing before the timeout");
+    else
+      require(report.handMs[0]<0.f && report.handMs[1]<0.f && report.torsoMs<0.f && std::abs(landedAt-profile.armsHold)<.001f,
+              "without contact landing starts at armsHold from birth");
+    require(restSamples>0 && std::abs(restMin-profile.armsLevel)<1.e-4f && std::abs(restMax-profile.armsLevel)<1.e-4f,
+            "the arm keeps armsLevel for armsRest after its drop");
+    require(armAfter==0.f,"after armsRest and armsYield the arm torque is zero");
+    require(legSamples>0 && legFloor>=profile.landTorque-1.e-4f,"landed legs keep at least mass times landTorque");
+    require(legAfter==0.f,"after landHold and landYield the leg torque is zero");
+    }
+  }
+
+void testSideLegSwitch() {
+  Human human;
+  CollisionWorld world;
+  RagdollBraceContract::zeroGravity(world);
+  auto body=human.create(world,at(0,300,0));
+  const auto birth=world.simulationStep();
+  const auto initial=body->motorProbes();
+  const auto pose=human.landed();
+  RagdollBrace::Profile profile;
+  require(RagdollBrace::setNumber(profile,"land","enter",profile.landEnter) &&
+          RagdollBrace::setNumber(profile,"land","hold",profile.landHold) &&
+          RagdollBrace::setNumber(profile,"land","yield",profile.landYield) &&
+          RagdollBrace::setNumber(profile,"land","torque",profile.landTorque) &&
+          RagdollBrace::setNumber(profile,"arms","rest",profile.armsRest) &&
+          RagdollBrace::setNumber(profile,"legs","front",profile.legsFront) &&
+          RagdollBrace::setNumber(profile,"legs","back",profile.legsBack) &&
+          !RagdollBrace::setNumber(profile,"legs","side",.5f),"brace-profile accepts the new numbers and rejects a fractional leg switch");
+  require(RagdollBrace::setNumber(profile,"legs","side",0.f),"brace-profile accepts legs side 0");
+  require(body->brace(Kind::Left,pose.data(),pose.size(),profile,pose.data()),"the side switch needs both poses");
+  float error=0.f;
+  for(int frame=0;tick(world,frame,birth)<.4f;++frame)
+    for(size_t bone:{LThigh,LCalf,LFoot,LToe,RThigh,RCalf,RFoot,RToe})
+      error=std::max(error,angleDeg(target(probe(body->motorProbes(),bone)),target(probe(initial,bone))));
+  std::printf("ragdoll brace legs side 0: birth_target_error_deg=%.5f\n",double(error));
+  require(error<.05f,"with legs side 0 the leg targets stay at birth until landing");
+  }
+
 // The physics half of "death ends the protection": Npc::onNoHealth calls endBrace through
 // Npc::finishRagdollBrace; this contract has no Npc, so it ends the brace itself.
 void testEndBraceRestoresFade() {
   Human human;
-  CollisionWorld world,control;
-  auto floor=ground(world),controlFloor=ground(control);
-  auto body=human.create(world,at(0,1,0)),reference=human.create(control,at(0,1,0));
-  const auto birth=world.simulationStep();
-  body->knockOff({0,0,1},30.f); reference->knockOff({0,0,1},30.f);
-  const auto pose=human.armsForward();
-  require(body->brace(Kind::Front,pose.data(),pose.size(),RagdollBrace::Profile{}),"the end case needs an accepted pose");
-  for(int frame=0;float(world.simulationStep()-birth)/60.f<.2f;++frame) {
-    tick(world,frame,birth);
-    tick(control,frame,birth);
+  for(float deathAge:{.2f,.9f,1.5f}) {
+    const bool secondPose=deathAge>.2f;
+    CollisionWorld world,control;
+    auto floor=ground(world),controlFloor=ground(control);
+    auto body=human.create(world,at(0,1,0)),reference=human.create(control,at(0,1,0));
+    const auto birth=world.simulationStep();
+    body->knockOff({0,0,1},30.f); reference->knockOff({0,0,1},30.f);
+    const auto pose=human.armsForward();
+    const auto land=human.landed();
+    require(body->brace(Kind::Front,pose.data(),pose.size(),RagdollBrace::Profile{},secondPose ? land.data() : nullptr),"the end case needs an accepted pose");
+    for(int frame=0;float(world.simulationStep()-birth)/60.f<deathAge;++frame) {
+      tick(world,frame,birth);
+      tick(control,frame,birth);
+      }
+    require(world.simulationStep()==control.simulationStep(),"both bodies must be at the same age");
+    RagdollBrace::Report report;
+    if(secondPose)
+      require(body->braceReport(report) && report.landMs>=0.f,"death in phase two needs an already landed body");
+    const auto braced=body->motorProbes();
+    if(deathAge<1.4f)
+      require(probe(braced,secondPose ? LCalf : LUpper).torqueLimit!=probe(reference->motorProbes(),secondPose ? LCalf : LUpper).torqueLimit,
+              "the braced motor differs from the fade");
+    else
+      require(std::memcmp(&probe(braced,LFore).target,&probe(reference->motorProbes(),LFore).target,sizeof(Tempest::Vec4))!=0,
+              "after torque expiry the landed target still differs from the fade");
+    body->endBrace();
+    require(!body->braceReport(report),"endBrace ends the protection");
+    world.tick(17); control.tick(17);
+    const auto a=body->motorProbes(), b=reference->motorProbes();
+    require(a.size()==b.size() && !a.empty(),"both bodies have the same motors");
+    for(size_t i=0;i<a.size();++i)
+      require(a[i].bone==b[i].bone && a[i].on==b[i].on && std::memcmp(&a[i].torqueLimit,&b[i].torqueLimit,sizeof(float))==0 &&
+              std::memcmp(&a[i].target,&b[i].target,sizeof(a[i].target))==0,
+              "the step after endBrace drives the ordinary fade: the same targets and limits as a body never braced");
+    std::printf("ragdoll brace end phase %d age=%.3f s: %zu motors equal the ordinary fade in the next step\n",secondPose ? 2 : 1,double(deathAge),a.size());
     }
-  require(world.simulationStep()==control.simulationStep(),"both bodies must be at the same age");
-  const auto braced=body->motorProbes();
-  require(probe(braced,LUpper).torqueLimit!=probe(reference->motorProbes(),LUpper).torqueLimit,"the braced arm differs from the fade");
-  body->endBrace();
-  RagdollBrace::Report report;
-  require(!body->braceReport(report),"endBrace ends the protection");
-  world.tick(17); control.tick(17);
-  const auto a=body->motorProbes(), b=reference->motorProbes();
-  require(a.size()==b.size() && !a.empty(),"both bodies have the same motors");
-  for(size_t i=0;i<a.size();++i)
-    require(a[i].bone==b[i].bone && a[i].on==b[i].on && std::memcmp(&a[i].torqueLimit,&b[i].torqueLimit,sizeof(float))==0 &&
-            std::memcmp(&a[i].target,&b[i].target,sizeof(a[i].target))==0,
-            "the step after endBrace drives the ordinary fade: the same targets and limits as a body never braced");
-  std::printf("ragdoll brace end: %zu motors equal the ordinary fade in the next step\n",a.size());
   }
 
 void testClampedTarget() {
@@ -408,10 +551,42 @@ void testUnbracedUnchanged() {
   require(hashes[0]==hashes[1] && hashes[0]==hashes[2],"measuring or refusing a pose must not change the fall by one bit");
   }
 
+void testSinglePoseUnchanged() {
+  // Captured before adding the landing phase: all native part positions, orientations
+  // and velocities after two seconds, with the original single-pose profile.
+  Human human;
+  const Kind kinds[]={Kind::Front,Kind::Back,Kind::Left,Kind::Right};
+  const Tempest::Vec3 throws[]={{0,0,1},{0,0,-1},{1,0,0},{-1,0,0}};
+  constexpr uint64_t expected[]={0xe4d49eeb6c33f417ull,0xbf297ce1c5e0d71aull,0x808500ad0404c278ull,0xaee2c61b88c0d2c0ull};
+  for(size_t i=0;i<4;++i) {
+    for(bool changedNumbers:{false,true}) {
+      CollisionWorld world;
+      auto floor=ground(world);
+      auto body=human.create(world,at(0,1,0));
+      const auto birth=world.simulationStep();
+      body->knockOff(throws[i],30.f);
+      const auto pose=human.armsForward();
+      RagdollBrace::Profile numbers;
+      if(changedNumbers) {
+        numbers.landEnter=5.f; numbers.landHold=5.f; numbers.landYield=5.f; numbers.landTorque=500.f;
+        numbers.armsRest=5.f; numbers.legsFront=1.f; numbers.legsBack=0.f; numbers.legsSide=0.f;
+        }
+      require(body->brace(kinds[i],pose.data(),pose.size(),numbers),"the legacy case needs its first pose");
+      for(int frame=0;tick(world,frame,birth)<2.f;++frame) {}
+      const auto actual=digest(body->state());
+      RagdollBrace::Report report;
+      require(body->braceReport(report) && report.landKind==Kind::None && report.landMs<0.f,"without a second pose there is no landing phase");
+      std::printf("ragdoll brace single pose %.*s changed_new_numbers=%d digest=%016llx\n",int(RagdollBrace::clipName(kinds[i]).size()),
+                  RagdollBrace::clipName(kinds[i]).data(),changedNumbers,(unsigned long long)actual);
+      require(actual==expected[i],"without the second pose all parts remain bit for bit the pre-change single-pose fall");
+      }
+    }
+  }
+
 void testAuthoredPoses() {
   const char* dir=std::getenv("OPENGOTHIC_BRACE_POSES");
   if(dir==nullptr || dir[0]==0) {
-    std::puts("ragdoll brace authored poses: skipped, set OPENGOTHIC_BRACE_POSES=<content folder with models/HUMANS-S_BRACE_*.MAN.json>");
+    std::puts("ragdoll brace authored poses: skipped, set OPENGOTHIC_BRACE_POSES=<content folder with S_BRACE and S_BRACELAND records>");
     return;
     }
   const char* base=std::getenv("OPENGOTHIC_BASE");
@@ -420,40 +595,59 @@ void testAuthoredPoses() {
   HitZones zones;
   zones.setSkeleton(&skeleton);
   for(const auto kind:{Kind::Front,Kind::Back,Kind::Left,Kind::Right}) {
-    const auto clip=std::string(RagdollBrace::clipName(kind));
-    const auto anim=ModelData::readAnimation(std::filesystem::path(dir)/"models"/("HUMANS-"+clip+".MAN.json"));
-    require(anim.frame_count>=1 && anim.node_indices.size()==anim.node_count && anim.samples.size()>=anim.node_count,
-            "an authored brace record must hold one full frame");
-    // Frame 0 in model space: the same chain as Pose::animRelative from the model frame.
-    std::vector<Tempest::Matrix4x4> model(skeleton.nodes.size());
-    for(size_t i=0;i<skeleton.nodes.size();++i) {
-      auto local=skeleton.nodes[i].tr;
-      for(size_t k=0;k<anim.node_indices.size();++k)
-        if(anim.node_indices[k]==i) local=mkMatrix(anim.samples[k]);
-      const size_t parent=skeleton.nodes[i].parent;
-      require(parent==size_t(-1) || parent<i,"the hierarchy lists parents first");
-      model[i]=parent==size_t(-1) ? local : model[parent]*local;
+    std::vector<Tempest::Matrix4x4> first;
+    for(bool secondPose:{false,true}) {
+      const auto clip=std::string(secondPose ? RagdollBrace::landClipName(kind) : RagdollBrace::clipName(kind));
+      const auto anim=ModelData::readAnimation(std::filesystem::path(dir)/"models"/("HUMANS-"+clip+".MAN.json"));
+      require(anim.frame_count>=1 && anim.node_indices.size()==anim.node_count && anim.samples.size()>=anim.node_count,
+              "an authored brace record must hold one full frame");
+      // Frame 0 in model space: the same chain as Pose::animRelative from the model frame.
+      std::vector<Tempest::Matrix4x4> model(skeleton.nodes.size());
+      for(size_t i=0;i<skeleton.nodes.size();++i) {
+        auto local=skeleton.nodes[i].tr;
+        for(size_t k=0;k<anim.node_indices.size();++k)
+          if(anim.node_indices[k]==i) local=mkMatrix(anim.samples[k]);
+        const size_t parent=skeleton.nodes[i].parent;
+        require(parent==size_t(-1) || parent<i,"the hierarchy lists parents first");
+        model[i]=parent==size_t(-1) ? local : model[parent]*local;
+        }
+      CollisionWorld world;
+      auto body=world.createRagdoll(skeleton,zones,skeleton.tr.data(),skeleton.tr.size(),Tempest::Matrix4x4::mkIdentity());
+      require(body && body->valid(),"the human hierarchy makes a ragdoll");
+      require(body->brace(kind,model.data(),model.size(),RagdollBrace::Profile{}),"an authored pose is accepted");
+      RagdollBrace::Report report;
+      require(body->braceReport(report),"an authored pose reports its clamp");
+      // Read actual frame samples, including elbow flexion, rather than the bind pose.
+      const auto elbow=[&](const char* side) {
+        const auto bone=[&](const char* part) { return skeleton.findNode(std::string("BIP01 ")+side+" "+part); };
+        const auto upper=origin(model[bone("FOREARM")])-origin(model[bone("UPPERARM")]);
+        const auto lower=origin(model[bone("HAND")])-origin(model[bone("FOREARM")]);
+        return std::acos(std::clamp(Tempest::Vec3::dotProduct(Tempest::Vec3::normalize(upper),Tempest::Vec3::normalize(lower)),-1.f,1.f))*180.f/pi;
+        };
+      float allClamp=0.f;
+      const char* clampBone="-";
+      const auto motors=body->motorProbes();
+      for(const auto& p:motors)
+        if(p.clampDeg>allClamp) {
+          allClamp=p.clampDeg;
+          clampBone=skeleton.nodes[p.bone].name.c_str();
+          }
+      std::printf("ragdoll brace authored %s: elbows %.1f/%.1f deg, clamp_max_deg=%.3f at %s;",clip.c_str(),double(elbow("L")),
+                  double(elbow("R")),double(allClamp),clampBone);
+      for(const auto& p:motors) {
+        if(p.clampDeg>=.05f)
+          std::printf(" %s=%.2f",skeleton.nodes[p.bone].name.c_str(),double(p.clampDeg));
+        }
+      std::printf("\n");
+      require(allClamp<=2.f,"every joint of each authored pose lies within 2 degrees of its limits");
+      if(!secondPose) first=model;
+      else {
+        auto paired=world.createRagdoll(skeleton,zones,skeleton.tr.data(),skeleton.tr.size(),Tempest::Matrix4x4::mkIdentity());
+        require(paired && paired->brace(kind,first.data(),first.size(),RagdollBrace::Profile{},model.data()),"the two authored poses are accepted together");
+        for(const auto& p:paired->motorProbes())
+          require(p.clampDeg<=2.f,"both accepted poses are clamped within two degrees in each paired joint");
+        }
       }
-    CollisionWorld world;
-    auto body=world.createRagdoll(skeleton,zones,skeleton.tr.data(),skeleton.tr.size(),Tempest::Matrix4x4::mkIdentity());
-    require(body && body->valid(),"the human hierarchy makes a ragdoll");
-    require(body->brace(kind,model.data(),model.size(),RagdollBrace::Profile{}),"an authored pose is accepted");
-    RagdollBrace::Report report;
-    require(body->braceReport(report),"an authored pose reports its clamp");
-    // The record is read, not the bind pose: its elbows are bent (poses-brace.json, 22-65 degrees).
-    const auto elbow=[&](const char* side) {
-      const auto bone=[&](const char* part) { return skeleton.findNode(std::string("BIP01 ")+side+" "+part); };
-      const auto upper=origin(model[bone("FOREARM")])-origin(model[bone("UPPERARM")]);
-      const auto lower=origin(model[bone("HAND")])-origin(model[bone("FOREARM")]);
-      return std::acos(std::clamp(Tempest::Vec3::dotProduct(Tempest::Vec3::normalize(upper),Tempest::Vec3::normalize(lower)),-1.f,1.f))*180.f/pi;
-      };
-    std::printf("ragdoll brace authored %s: elbows %.1f/%.1f deg, clamp_max_deg=%.3f at %s;",clip.c_str(),double(elbow("L")),
-                double(elbow("R")),double(report.clampMaxDeg),report.clampBone.empty() ? "-" : report.clampBone.c_str());
-    for(const auto& p:body->motorProbes())
-      if(p.clampDeg>=.05f)
-        std::printf(" %s=%.2f",skeleton.nodes[p.bone].name.c_str(),double(p.clampDeg));
-    std::printf("\n");
-    require(report.clampMaxDeg<=2.f,"every driven joint of an authored brace pose lies within 2 degrees of its limits");
     }
   }
 
@@ -465,9 +659,12 @@ void testFallBrace() {
   testForwardFall();
   testYieldAfterTouch();
   testGapIsNoTouch();
+  testLandingPhase();
+  testSideLegSwitch();
   testEndBraceRestoresFade();
   testClampedTarget();
   testUnbracedUnchanged();
+  testSinglePoseUnchanged();
   testAuthoredPoses();
   std::puts("Ragdoll brace contracts passed");
   }

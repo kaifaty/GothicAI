@@ -128,10 +128,11 @@ class Ragdoll final {
     // in the body's frame; None for a body without human anatomy. brace accepts the pose,
     // a skeleton-indexed model-space animation frame, only on a fresh limp body that still
     // has its muscles; Kind::None with no pose only measures the fall. endBrace returns the
-    // motors to the ordinary fade from the next step.
+    // motors to the ordinary fade from the next step. Optional landPose is the same
+    // model's landing frame, indexed by the same skeleton and sampled at its first frame.
     RagdollBrace::Kind braceKind(const Tempest::Vec3& throwDirection) const;
     bool brace(RagdollBrace::Kind kind, const Tempest::Matrix4x4* modelPose, size_t numBones,
-               const RagdollBrace::Profile& profile);
+               const RagdollBrace::Profile& profile, const Tempest::Matrix4x4* landPose = nullptr);
     bool braceReport(RagdollBrace::Report& report) const;
     void endBrace();
     std::vector<RagdollBrace::MotorProbe> motorProbes() const;

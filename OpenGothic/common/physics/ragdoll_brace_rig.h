@@ -21,14 +21,16 @@ class Rig final {
 
     // pose: world rotation of every native part in the brace pose (empty for Kind::None,
     // which only measures). age: the body's fade clock now. Pose targets outside their
-    // joint limits are moved onto them here, once. Returns null for a rig without the
+    // joint limits are moved onto them here, once, as is the optional landPose.
+    // An empty landPose retains the single-pose behavior. Returns null for a rig without the
     // human parts the profile names.
     static std::unique_ptr<Rig> create(Kind kind, const Profile& profile, JPH::Ragdoll& native,
-                                       const std::vector<Joint>& joints, const std::vector<JPH::Quat>& pose, float age);
+                                       const std::vector<Joint>& joints, const std::vector<JPH::Quat>& pose, float age,
+                                       const std::vector<JPH::Quat>& landPose);
 
     Contacts& contacts() { return touch; }
     Kind      kind() const { return braceKind; }
-    void      advance(float deltaSeconds) { age+=deltaSeconds; }
+    void      advance(float deltaSeconds);
     // One part's fade motor: target is the parent-relative body-space orientation and
     // torque the N*m limit of the ordinary fade; both change only for a braced part.
     void      drive(size_t part, float mass, JPH::Quat& target, float& torque);
@@ -46,6 +48,7 @@ class Rig final {
       Group     group = Group::None;
       bool      posed = false;            // the motor leads this part to the pose
       JPH::Quat pose = JPH::Quat::sIdentity();
+      JPH::Quat landPose = JPH::Quat::sIdentity();
       JPH::Quat request = JPH::Quat::sIdentity();
       bool      requested = false;
       float     clampDeg = 0;
@@ -59,6 +62,8 @@ class Rig final {
     Profile           numbers;
     std::vector<Part> parts;
     float             age = 0;
+    bool              hasLandPose = false;
+    float             landAt = -1;
     float             armAt[2] = {-1,-1}, handAt[2] = {-1,-1}, torsoAt = -1, headAt = -1;
     Contacts          touch;
     uint64_t          armMask[2] = {}, handMask[2] = {}, torsoMask = 0, headMask = 0;

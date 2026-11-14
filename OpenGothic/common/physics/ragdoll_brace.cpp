@@ -35,9 +35,13 @@ namespace {
   struct Number final { std::string_view group, key; float Profile::*field; };
   constexpr Number numbers[] = {
     {"arms","enter",&Profile::armsEnter}, {"arms","hold",&Profile::armsHold}, {"arms","drop",&Profile::armsDrop},
-    {"arms","level",&Profile::armsLevel}, {"arms","yield",&Profile::armsYield}, {"arms","torque",&Profile::armsTorque},
+    {"arms","level",&Profile::armsLevel}, {"arms","rest",&Profile::armsRest},
+    {"arms","yield",&Profile::armsYield}, {"arms","torque",&Profile::armsTorque},
     {"neck","enter",&Profile::neckEnter}, {"neck","hold",&Profile::neckHold}, {"neck","yield",&Profile::neckYield},
     {"neck","torque",&Profile::neckTorque}, {"spine","enter",&Profile::spineEnter}, {"legs","enter",&Profile::legsEnter},
+    {"legs","front",&Profile::legsFront}, {"legs","back",&Profile::legsBack}, {"legs","side",&Profile::legsSide},
+    {"land","enter",&Profile::landEnter}, {"land","hold",&Profile::landHold},
+    {"land","yield",&Profile::landYield}, {"land","torque",&Profile::landTorque},
     };
   }
 
@@ -47,6 +51,17 @@ std::string_view clipName(Kind kind) {
     case Kind::Back:  return "S_BRACE_B";
     case Kind::Left:  return "S_BRACE_L";
     case Kind::Right: return "S_BRACE_R";
+    case Kind::None:  break;
+    }
+  return "none";
+  }
+
+std::string_view landClipName(Kind kind) {
+  switch(kind) {
+    case Kind::Front: return "S_BRACELAND_F";
+    case Kind::Back:  return "S_BRACELAND_B";
+    case Kind::Left:  return "S_BRACELAND_L";
+    case Kind::Right: return "S_BRACELAND_R";
     case Kind::None:  break;
     }
   return "none";
@@ -97,6 +112,8 @@ Profile& profile() {
 bool setNumber(Profile& profile, std::string_view group, std::string_view key, float value) {
   if(!std::isfinite(value) || value<0.f || (key=="level" && value>1.f))
     return false;
+  if(group=="legs" && (key=="front" || key=="back" || key=="side") && value!=0.f && value!=1.f)
+    return false;
   for(const auto& n:numbers)
     if(n.group==group && n.key==key) {
       profile.*n.field=value;
@@ -131,16 +148,21 @@ void Contacts::mark(uint32_t part, float penetrationM, float approachMs) {
   }
 
 std::unique_ptr<Rig> Rig::create(Kind kind, const Profile& profile, JPH::Ragdoll& native,
-                                 const std::vector<Joint>& joints, const std::vector<JPH::Quat>& pose, float age) {
+                                 const std::vector<Joint>& joints, const std::vector<JPH::Quat>& pose, float age,
+                                 const std::vector<JPH::Quat>& landPose) {
   const size_t count=native.GetBodyCount();
-  if(count==0 || count>64 || joints.size()!=count || (kind!=Kind::None && pose.size()!=count))
+  if(count==0 || count>64 || joints.size()!=count || (kind!=Kind::None && pose.size()!=count) ||
+     (!landPose.empty() && landPose.size()!=count))
     return nullptr;
   std::unique_ptr<Rig> rig(new Rig());
   rig->braceKind=kind;
   rig->numbers=profile;
   rig->age=age;
+  rig->hasLandPose=kind!=Kind::None && !landPose.empty();
+  if(rig->hasLandPose && age>=profile.armsHold) rig->landAt=profile.armsHold;
   rig->parts.resize(count);
   rig->measures.kind=kind;
+  rig->measures.landKind=rig->hasLandPose ? kind : Kind::None;
   for(size_t i=0;i<count;++i) {
     auto& p=rig->parts[i];
     p.role=role(joints[i].name);
@@ -188,16 +210,21 @@ std::unique_ptr<Rig> Rig::create(Kind kind, const Profile& profile, JPH::Ragdoll
     // The constraint clamps whatever target it gets. Let it clamp the pose once, here,
     // and measure by how much: the motors then never receive a target off their limits.
     auto* joint=static_cast<JPH::SwingTwistConstraint*>(native.GetConstraint(index));
-    const auto request=(pose[size_t(parent)].Conjugated()*pose[i]).Normalized();
     const auto previous=joint->GetTargetOrientationCS();
-    joint->SetTargetOrientationBS(request);
-    const auto clamped=joint->GetTargetOrientationCS();
-    joint->SetTargetOrientationCS(previous);
     const auto toBody1=joint->GetConstraintToBody1(), toBody2=joint->GetConstraintToBody2();
-    p.clampDeg=angleDeg(toBody1.Conjugated()*request*toBody2,clamped);
-    p.pose=(toBody1*clamped*toBody2.Conjugated()).Normalized();
-    p.posed=p.group!=Group::Legs || kind==Kind::Back;
-    if(p.posed && p.clampDeg>rig->measures.clampMaxDeg) {
+    const auto clamp=[&](const std::vector<JPH::Quat>& frame) {
+      const auto request=(frame[size_t(parent)].Conjugated()*frame[i]).Normalized();
+      joint->SetTargetOrientationBS(request);
+      const auto clamped=joint->GetTargetOrientationCS();
+      p.clampDeg=std::max(p.clampDeg,angleDeg(toBody1.Conjugated()*request*toBody2,clamped));
+      return (toBody1*clamped*toBody2.Conjugated()).Normalized();
+      };
+    p.pose=clamp(pose);
+    if(rig->hasLandPose) p.landPose=clamp(landPose);
+    joint->SetTargetOrientationCS(previous);
+    const float legs=kind==Kind::Front ? profile.legsFront : kind==Kind::Back ? profile.legsBack : profile.legsSide;
+    p.posed=p.group!=Group::Legs || (rig->hasLandPose ? legs!=0.f : kind==Kind::Back);
+    if((p.posed || rig->hasLandPose) && p.clampDeg>rig->measures.clampMaxDeg) {
       rig->measures.clampMaxDeg=p.clampDeg;
       rig->measures.clampBone=std::string(joints[i].name);
       }
@@ -216,10 +243,12 @@ uint64_t Rig::mask(Role a, Role b, Role c, Side s) const {
 float Rig::armWeight(size_t s) const {
   const float touched=armAt[s]>=0.f ? armAt[s] : std::numeric_limits<float>::infinity();
   const float d=age-std::min(touched,numbers.armsHold);
+  const float rest=hasLandPose ? numbers.armsRest : 0.f;
   if(d<=0.f) return 1.f;
-  if(d>=numbers.armsDrop+numbers.armsYield) return 0.f;
+  if(d>=numbers.armsDrop+rest+numbers.armsYield) return 0.f;
   if(d<numbers.armsDrop) return 1.f-(1.f-numbers.armsLevel)*d/numbers.armsDrop;
-  return numbers.armsLevel*(1.f-(d-numbers.armsDrop)/numbers.armsYield);
+  if(d<numbers.armsDrop+rest) return numbers.armsLevel;
+  return numbers.armsLevel*(1.f-(d-numbers.armsDrop-rest)/numbers.armsYield);
   }
 
 float Rig::neckWeight() const {
@@ -230,15 +259,30 @@ float Rig::neckWeight() const {
   return 1.f-d/numbers.neckYield;
   }
 
+void Rig::advance(float deltaSeconds) {
+  age+=deltaSeconds;
+  if(hasLandPose && landAt<0.f && age>=numbers.armsHold) landAt=numbers.armsHold;
+  }
+
 void Rig::drive(size_t part, float mass, JPH::Quat& target, float& torque) {
   if(braceKind==Kind::None || part>=parts.size()) return;
   auto& p=parts[part];
   if(p.posed) {
     const float enter=p.group==Group::Arms ? numbers.armsEnter : p.group==Group::Neck ? numbers.neckEnter :
                       p.group==Group::Spine ? numbers.spineEnter : numbers.legsEnter;
-    float s=enter>0.f ? std::clamp(age/enter,0.f,1.f) : 1.f;
+    // The ordinary fade supplies the birth target on every step. At landing, freeze
+    // its first-phase interpolation at that instant, including a still-entering pose.
+    const float firstAge=landAt>=0.f ? landAt : age;
+    float s=enter>0.f ? std::clamp(firstAge/enter,0.f,1.f) : 1.f;
     s=s*s*(3.f-2.f*s);
     target=s>=1.f ? p.pose : target.SLERP(p.pose,s).Normalized();
+    }
+  if(landAt>=0.f && p.group!=Group::None) {
+    float s=numbers.landEnter>0.f ? std::clamp((age-landAt)/numbers.landEnter,0.f,1.f) : 1.f;
+    s=s*s*(3.f-2.f*s);
+    target=s>=1.f ? p.landPose : target.SLERP(p.landPose,s).Normalized();
+    }
+  if(p.posed || (landAt>=0.f && p.group!=Group::None)) {
     p.request=target;
     p.requested=true;
     }
@@ -247,6 +291,11 @@ void Rig::drive(size_t part, float mass, JPH::Quat& target, float& torque) {
     torque=mass*numbers.armsTorque*armWeight(s);
   else if(p.group==Group::Neck)
     torque=mass*numbers.neckTorque*neckWeight();
+  else if(p.group==Group::Legs && landAt>=0.f) {
+    const float elapsed=age-landAt-numbers.landHold;
+    const float weight=elapsed<=0.f ? 1.f : numbers.landYield>0.f ? std::max(0.f,1.f-elapsed/numbers.landYield) : 0.f;
+    torque=std::max(torque,mass*numbers.landTorque*weight);
+    }
   }
 
 float Rig::elbow(const JPH::Ragdoll& native, const JPH::BodyInterface& bodies, size_t s) const {
@@ -260,6 +309,7 @@ void Rig::afterStep(const JPH::Ragdoll& native, const JPH::BodyInterface& bodies
   const uint64_t touched=touch.touched.exchange(0,std::memory_order_relaxed);
   const uint32_t speed=touch.speedMmS.exchange(0,std::memory_order_relaxed);
   if(touched==0) return;
+  if(hasLandPose && landAt<0.f && (touched&(armMask[0]|armMask[1]|torsoMask))!=0) landAt=age;
   for(size_t s=0;s<2;++s) {
     if(armAt[s]<0.f && (touched&armMask[s])!=0) armAt[s]=age;
     if(handAt[s]<0.f && (touched&handMask[s])!=0) {
@@ -282,6 +332,7 @@ Report Rig::report() const {
     result.armMs[s]=ms(armAt[s]);
     }
   result.torsoMs=ms(torsoAt);
+  result.landMs=ms(landAt);
   result.handDepthCm=float(touch.depthUm.load(std::memory_order_relaxed))*1.e-4f;
   return result;
   }
