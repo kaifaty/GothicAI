@@ -210,6 +210,7 @@ struct CollisionWorld::Impl final : JPH::ContactListener, JPH::PhysicsStepListen
       settings.mIsSensor=true;
       return;
       }
+    if(!braceContacts.empty()) markBraceContact(a,b,manifold);
     if(emitBodyImpacts && !a.IsSensor() && !b.IsSensor()) {
       const auto accepts=[](const JPH::Body& body) {
         const auto layer=body.GetObjectLayer();
@@ -408,6 +409,9 @@ struct CollisionWorld::Impl final : JPH::ContactListener, JPH::PhysicsStepListen
   std::unordered_map<uint32_t,BirthGuard> birthGuards;
   std::mutex birthMutex;
   std::vector<std::pair<uint32_t,uint32_t>> birthTouches;
+  // Braced rigs by collision group; workers only read the list during Update.
+  std::vector<std::pair<uint32_t,RagdollBrace::Contacts*>> braceContacts;
+  void markBraceContact(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold& manifold);
   std::atomic<const Item*> solverTraceTarget {nullptr};
   std::vector<ItemSolverContact> solverContacts;
   struct BodyImpact { JPH::BodyID body;float speed; };

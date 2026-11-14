@@ -1203,6 +1203,10 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     void                          interruptItemUse(std::string_view cause);
     void                          tickFoodPool();
     bool                          knockDownMelee(Npc& attacker, const Tempest::Vec3& impulse, std::string_view reason);
+    // A protective fall (npc_brace.cpp): the knocked-off body's motors take the S_BRACE_* pose.
+    void                          startRagdollBrace(const Tempest::Vec3& thrown);
+    void                          finishRagdollBrace(std::string_view end);
+    std::string                   ragdollBraceField() const;
     enum class ChargePhase : uint8_t { None, Windup, Hold, Release };
     ChargePhase                   meleeChargePhase = ChargePhase::None;
     uint64_t                      meleeChargeStart = 0;

@@ -3086,6 +3086,9 @@ bool benchmarkTwentyBodies(const char* output, bool preflight) {
 
 }
 
+zenkit::ModelHierarchy ragdollContractHierarchy() { return hierarchy(); }
+void testFallBrace(); // physics_ragdoll_brace_contract.cpp
+
 int main(int argc, const char** argv) {
   try {
     if(argc==3 && (std::string_view(argv[1])=="--benchmark20" || std::string_view(argv[1])=="--preflight20")) {
@@ -3137,6 +3140,7 @@ int main(int argc, const char** argv) {
     testStateRoundTripAndAtomicRejection();
     testMovedStateRebaseAndReference();
     testAnatomicalKneeWithLongitudinalBoneAxis();
+    testFallBrace();
     std::puts("Ragdoll contracts passed");
     return EXIT_SUCCESS;
     } catch(const std::exception& error) {

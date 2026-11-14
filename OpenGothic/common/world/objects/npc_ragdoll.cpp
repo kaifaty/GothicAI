@@ -207,6 +207,7 @@ bool Npc::recoverRagdoll(bool force) {
     // Creatures without wounded poses retain the standard idle fallback.
     visual.startAnimAndGet("S_RUN",owner.tickCount(),true);
     }
+  finishRagdollBrace("getup");
   // Do not interpolate a world-space corpse pose across the whole ravine.
   releaseRagdoll(!returnToAnchor);
   ragdollDormant.reset();
