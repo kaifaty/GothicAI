@@ -3,6 +3,7 @@
 #   mask-<view>   the meadow's ground painted (`grass parts 193`): the area whose tone scripts/grass_look.py reads
 #   near-<mask>, far-<mask>   the view meadow-2 and the meadow from afar with parts of the look switched off
 #                 (`grass parts <mask>`, Grass::Part of common/graphics/grass/grassdiag.h); 0 is the look, 63 all off
+#   calm          3 s of the view meadow-2 in still air: what differs from frame to frame is shimmer
 #   cover-<place>-paint, -bands   from the game's camera in two patches: the blades red over the ground painted in
 #                 bands of the distance from the camera, and the bands alone
 #   OPENGOTHIC_CONTENT=<set> TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh landscape-meadow-parts
@@ -39,6 +40,9 @@ grass parts 0
 wait 1200
 shot near-0
 wait 200
+rec calm
+wait 3000
+stop
 grass parts 1
 wait 1200
 shot near-1

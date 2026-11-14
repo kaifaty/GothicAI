@@ -44,8 +44,8 @@ vec3 grassPaintBand(float d) {
 // in the grass and what the eye meets from the side is the lit upper half
 const float GrassRoughness   = 0.92;
 const float GrassRootShade   = 0.55;                     // of the ground's colour at the root
-const vec3  GrassTipGreen    = vec3(1.10, 1.44, 0.78);   // of it at the tip, by the tuft's dryness
-const vec3  GrassTipStraw    = vec3(1.48, 1.40, 0.86);
+const vec3  GrassTipGreen    = vec3(1.10, 1.40, 0.90);   // of it at the tip, by the tuft's dryness
+const vec3  GrassTipStraw    = vec3(1.46, 1.38, 0.96);
 const float GrassRootAo      = 0.35;
 const float GrassWidth       = 1.3;                      // cm at the root, and per step of the blade's four bits
 const float GrassWidthStep   = 0.11;
@@ -53,9 +53,10 @@ const float GrassTaper       = 0.7;                      // of the width is gone
 // The ground. Seen from above it lies between the blades in their shade. Seen along the meadow it stands for the
 // blades the eye would meet behind the ones that are drawn, and from afar for all of them: it takes what the
 // grass looks like together. The share of that look: by the eye's direction against the ground, from GrassGrazeTo
-// (none) to GrassGrazeFrom (whole), and by the distance (grass_ground.glsl)
+// (none) to GrassGrazeFrom (whole), and by the distance: the shade between the blades is a thing of the close view,
+// gone from where the blades start to thin to half of the distance where they start to go (grass_ground.glsl)
 const float GrassGroundShade = 0.72;
-const vec3  GrassFarTint     = vec3(1.03, 1.13, 0.66);
+const vec3  GrassFarTint     = vec3(1.00, 1.10, 0.74);
 const float GrassFarAo       = 0.95;
 const float GrassGrazeFrom   = 0.25;
 const float GrassGrazeTo     = 0.70;

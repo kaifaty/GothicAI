@@ -6,8 +6,9 @@
 
 // The ground of a material with `grass` (BK_GRASS; reports/engine/2026-11-14-grass-system), in the landscape's
 // G-buffer pass with material maps. Seen from above, near the camera, the ground between the blades lies in their
-// shade. Seen along the meadow it takes the colour of the grass from afar, since there it stands for the blades
-// behind the drawn ones: the colour alone, the light stays the ground's. From half of the distance where the
+// shade. Seen along the meadow, or from further than the blades stand at their full count, it takes the colour of
+// the grass from afar, since there it stands for the blades behind the drawn ones and for the thinned ones: the
+// colour alone, the light stays the ground's. From half of the distance where the
 // blades start to go, to that distance, it takes the whole of the far look and keeps it beyond: the blades then
 // vanish against an equal ground, and the meadow does not end at the ring.
 // The mark of an own material (gbufOrm.a) is written at any distance: the sun through the far grass is read only
@@ -50,7 +51,8 @@ void grassGround(uint bits, vec3 pos, vec3 normal, inout vec4 diffuse, inout uin
   const float far   = plain ? 0.0 : smoothstep(ring.y*0.5, ring.y, d);
   const float graze = plain ? 0.0 : 1.0 - smoothstep(GrassGrazeFrom, GrassGrazeTo, dot(gn,toEye)/max(d,1.0));
   const float nearShade = (partsOff & GrassPartGroundShade)!=0u ? 1.0 : GrassGroundShade;
-  vec3 tint = mix(vec3(mix(1.0, nearShade, stand)), mix(vec3(1.0), GrassFarTint, stand), max(far,graze));
+  const float along = plain ? 0.0 : max(max(far,graze), smoothstep(ring.x, ring.y*0.5, d));
+  vec3 tint = mix(vec3(mix(1.0, nearShade, stand)), mix(vec3(1.0), GrassFarTint, stand), along);
   if(far>0.0) {
     // the far grass under the gust: the pressure of the place tilts the normal and lightens the tone, as the
     // blades' own (grass.vert), so the band of the gust does not stop where the blades end
