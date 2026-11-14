@@ -9,7 +9,9 @@
 #include "world/world.h"
 #include "settings.h"
 
+#include <cstdlib>
 #include <string>
+#include <string_view>
 #include <vector>
 
 using namespace Tempest;
@@ -19,8 +21,19 @@ using namespace Tempest;
 // ragdoll; dead, unconscious, restored and animal bodies fall as before.
 
 void Npc::startRagdollBrace(const Vec3& thrown) {
-  if(!ragdoll || !Settings::physicsFlags().ragdollBrace || !isHuman() || isDown())
+  if(!ragdoll || !isHuman() || isDown())
     return;
+  if(!Settings::physicsFlags().ragdollBrace) {
+    // Benches: OPENGOTHIC_BRACE_MEASURE=1 measures the unprotected fall with the same `brace`
+    // event ("pose":"none"); the measuring rig does not move the body.
+    static const bool measure = [] {
+      const char* v = std::getenv("OPENGOTHIC_BRACE_MEASURE");
+      return v!=nullptr && std::string_view(v)=="1";
+      }();
+    if(measure)
+      ragdoll->brace(RagdollBrace::Kind::None,nullptr,0,RagdollBrace::profile());
+    return;
+    }
   const auto  kind     = ragdoll->braceKind(thrown);
   const auto* skeleton = visual.visualSkeleton();
   const auto* seq      = kind!=RagdollBrace::Kind::None && skeleton!=nullptr ? skeleton->sequence(RagdollBrace::clipName(kind)) : nullptr;
