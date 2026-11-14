@@ -15,6 +15,7 @@ namespace daedalus {
 class WayPoint;
 class Npc;
 struct NpcRecord;
+struct ItemRecord;
 class Interactive;
 class World;
 class FpLock;
@@ -41,6 +42,7 @@ class Serialize : public SaveArchive {
       }
 
     void readNpc(NpcRecord& npc);
+    void readItem(ItemRecord& item);
 
   private:
     friend class SaveArchive;
@@ -70,6 +72,7 @@ class Serialize : public SaveArchive {
     void implRead (SaveGameHeader&       p);
 
     void implWrite(const NpcRecord& h);
+    void implWrite(const ItemRecord& h);
 
     void implWrite(const FpLock& fp);
     void implRead (FpLock& fp);

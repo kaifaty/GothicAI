@@ -363,7 +363,7 @@ float Npc::meleeAttackCost() const {
   int requirement = 0;
   if(const auto* weapon = invent.activeWeapon()) {
     const auto& item = weapon->handle();
-    for(size_t i=0;i<daedalus::IItem::condition_count;++i)
+    for(size_t i=0;i<ItemRecord::condition_count;++i)
       if(item.cond_atr[i]==ATR_STRENGTH)
         requirement = std::max(requirement,int(item.cond_value[i]));
     }

@@ -1078,7 +1078,7 @@ MeshObjects::Mesh World::addView(std::string_view visual, int32_t headTex, int32
   return view()->addView(visual,headTex,teetTex,bodyColor);
   }
 
-MeshObjects::Mesh World::addView(const daedalus::IItem& itm) {
+MeshObjects::Mesh World::addView(const ItemRecord& itm) {
   if(Resources::isHeadless())
     return addView(itm.visual,itm.material,0,itm.material);
   return view()->addView(itm.visual,itm.material,0,itm.material);
@@ -1908,7 +1908,7 @@ void World::invalidateVobIndex() {
   wobj.invalidateVobIndex();
   }
 
-const daedalus::IFocus& World::searchPolicy(const Npc& pl, TargetCollect& collAlgo, TargetType& collType, WorldObjects::SearchFlg& opt) const {
+const FocusRecord& World::searchPolicy(const Npc& pl, TargetCollect& collAlgo, TargetType& collType, WorldObjects::SearchFlg& opt) const {
   opt      = WorldObjects::NoFlg;
   collAlgo = TARGET_COLLECT_FOCUS;
   collType = TARGET_TYPE_ALL;

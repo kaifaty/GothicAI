@@ -1178,7 +1178,7 @@ Npc *WorldObjects::findNpcByInstance(size_t instance, size_t n) {
 
 Item* WorldObjects::findItemByInstance(size_t instance, size_t n) {
   for(auto& i:itemArr) {
-    if(i->handle().symbol_index()==instance) {
+    if(i->clsId()==instance) {
       if(n==0)
         return i.get();
       --n;
@@ -1676,7 +1676,7 @@ void WorldObjects::sendPassivePerc(Npc &self, Npc &other, Npc* victim, Item* itm
   m.other  = &other;
   m.victim = victim;
   if(itm!=nullptr)
-    m.item   = itm->handle().symbol_index();
+    m.item   = itm->clsId();
   sndPerc.push_back(m);
   }
 
@@ -1692,7 +1692,7 @@ void WorldObjects::sendImmediatePerc(Npc& self, Npc& other, Npc& victim, Item* i
   r.other  = &other;
   r.victim = &victim;
   if(itm!=nullptr)
-    r.item   = itm->handle().symbol_index();
+    r.item   = itm->clsId();
 
   for(auto& ptr:npcNear) {
     passivePerceptionProcess(r, *ptr, *pl);

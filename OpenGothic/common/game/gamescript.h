@@ -75,6 +75,11 @@ class GameScript final {
     void         detachNpc(const std::shared_ptr<NpcRecord>& npc, Npc& owner);
     Npc*         findNpc(NpcRecord* npc);
     auto         npcRecord(daedalus::DaedalusSymbol* symbol) -> std::shared_ptr<NpcRecord>;
+    auto         createItem(Item& owner, size_t instance, uint32_t& kind) -> std::shared_ptr<ItemRecord>;
+    auto         createItem(size_t instance) -> std::shared_ptr<ItemRecord>;
+    auto         loadItem(Serialize& fin, Item& owner, uint32_t& kind) -> std::shared_ptr<ItemRecord>;
+    void         attachItem(const std::shared_ptr<ItemRecord>& item, Item& owner);
+    auto         copyItem(const std::shared_ptr<ItemRecord>& item) -> std::shared_ptr<ItemRecord>;
     void         initializeInstanceItem(const std::shared_ptr<daedalus::IItem>& item, size_t instance);
     void         resetVarPointers();
 
@@ -126,10 +131,10 @@ class GameScript final {
     auto*            lockPickSymbol() const { return ItKE_lockpick; }
     uint32_t         lockPickId() const;
 
-    const daedalus::IFocus&       focusNorm()  const { return cFocusNorm;  }
-    const daedalus::IFocus&       focusMelee() const { return cFocusMelee; }
-    const daedalus::IFocus&       focusRange() const { return cFocusRange; }
-    const daedalus::IFocus&       focusMage()  const { return cFocusMage;  }
+    const FocusRecord&           focusNorm()  const { return cFocusNorm;  }
+    const FocusRecord&           focusMelee() const { return cFocusMelee; }
+    const FocusRecord&           focusRange() const { return cFocusRange; }
+    const FocusRecord&           focusMage()  const { return cFocusMage;  }
     const daedalus::IGuildValues& guildVal()   const { return *cGuildVal;  }
 
     std::string_view            menuMain() const;
