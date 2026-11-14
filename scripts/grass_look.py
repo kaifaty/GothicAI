@@ -9,7 +9,9 @@ Reads the frames of scripts/bench/landscape-meadow.bench and landscape-meadow-pa
   cover   <paint.png> <bands.png>        the share of the ground the blades cover, by the band of the distance
   columns <clip> [--half left|right] [--rows a:b] [--strips n] [--step s]
                                          the tone of the frame's vertical strips in time: a gust that crosses
-  still   <clip> [--half left|right]     the mean difference of a frame from the one before, of 255
+  still   <clip> [--half left|right] [--crop x0:y0:x1:y1]
+                                         the mean difference of a frame from the one before, of 255; the crop in
+                                         shares of the frame keeps the hero and the sky out
 """
 from __future__ import annotations
 
@@ -190,12 +192,15 @@ def cmd_columns(a: argparse.Namespace) -> int:
 
 def cmd_still(a: argparse.Namespace) -> int:
     prev, diffs = None, []
+    x0, y0, x1, y1 = (float(v) for v in a.crop.split(":"))
     for f in clip_frames(a.clip, a.half, 1):
+        h, w = f.shape
+        f = f[int(y0*h):int(y1*h), int(x0*w):int(x1*w)]
         if prev is not None:
             diffs.append(float(np.abs(f - prev).mean()))
         prev = f
     d = np.array(diffs)
-    print(json.dumps({"clip": a.clip, "half": a.half, "frames": len(d) + 1, "mean_diff_of_255": round(float(d.mean()), 3),
+    print(json.dumps({"clip": a.clip, "half": a.half, "crop": a.crop, "frames": len(d) + 1, "mean_diff_of_255": round(float(d.mean()), 3),
                       "worst_diff_of_255": round(float(d.max()), 3)}))
     return 0
 
@@ -209,7 +214,8 @@ def main() -> int:
     p = sub.add_parser("columns"); p.add_argument("clip"); p.add_argument("--half", choices=["left", "right"])
     p.add_argument("--rows", default="0.45:0.95"); p.add_argument("--strips", type=int, default=8)
     p.add_argument("--step", type=float, default=0.5); p.set_defaults(fn=cmd_columns)
-    p = sub.add_parser("still"); p.add_argument("clip"); p.add_argument("--half", choices=["left", "right"]); p.set_defaults(fn=cmd_still)
+    p = sub.add_parser("still"); p.add_argument("clip"); p.add_argument("--half", choices=["left", "right"])
+    p.add_argument("--crop", default="0:0:1:1"); p.set_defaults(fn=cmd_still)
     a = ap.parse_args()
     return a.fn(a)
 
