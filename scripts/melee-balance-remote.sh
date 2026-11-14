@@ -41,9 +41,7 @@ MELEE_HITSTOP sets GAME melee_hitstop in every series (0 or 1).
 MELEE_PARRY sets GAME melee_parry in every series (0 or 1).
 MELEE_PARRY_AI sets GAME melee_parry_ai in every series (0 or 1).
 MELEE_AI_DODGE sets GAME melee_ai_dodge in every series (0 or 1).
-MELEE_AI_RIPOSTE sets GAME melee_ai_riposte in every series (0 or 1).
 MELEE_AI_CHARGE sets GAME melee_ai_charge in every series (0 or 1).
-MELEE_AI_BARGE sets GAME melee_ai_barge in every series (0 or 1).
 MELEE_STAGGER sets GAME melee_stagger in every series (0 or 1).
 MELEE_STAMINA sets GAME melee_stamina in every series (0 or 1).
 USAGE
@@ -86,7 +84,7 @@ done
 remote_script() {
   local remote_args='' remote_env='' arg key
   for arg in "$@"; do printf -v remote_args '%s %q' "$remote_args" "$arg"; done
-  for key in GQ_BIN GQ_PROFILE MELEE_BALANCE_PYTHON MELEE_POSTURE_SCALE MELEE_DOWN_TACTICS MELEE_HITSTOP MELEE_STAMINA MELEE_PARRY MELEE_PARRY_AI MELEE_AI_DODGE MELEE_AI_RIPOSTE MELEE_AI_CHARGE MELEE_AI_BARGE MELEE_STAGGER; do
+  for key in GQ_BIN GQ_PROFILE MELEE_BALANCE_PYTHON MELEE_POSTURE_SCALE MELEE_DOWN_TACTICS MELEE_HITSTOP MELEE_STAMINA MELEE_PARRY MELEE_PARRY_AI MELEE_AI_DODGE MELEE_AI_CHARGE MELEE_STAGGER; do
     if [[ -n "${!key:-}" ]]; then printf -v remote_env '%s %q' "$remote_env" "$key=${!key}"; fi
   done
   {
@@ -221,14 +219,8 @@ for name in "${series[@]}"; do
   if [[ -n "${MELEE_AI_DODGE:-}" ]]; then
     scale_env+=("MELEE_AI_DODGE=$MELEE_AI_DODGE")
   fi
-  if [[ -n "${MELEE_AI_RIPOSTE:-}" ]]; then
-    scale_env+=("MELEE_AI_RIPOSTE=$MELEE_AI_RIPOSTE")
-  fi
   if [[ -n "${MELEE_AI_CHARGE:-}" ]]; then
     scale_env+=("MELEE_AI_CHARGE=$MELEE_AI_CHARGE")
-  fi
-  if [[ -n "${MELEE_AI_BARGE:-}" ]]; then
-    scale_env+=("MELEE_AI_BARGE=$MELEE_AI_BARGE")
   fi
   if [[ -n "${MELEE_STAGGER:-}" ]]; then
     scale_env+=("MELEE_STAGGER=$MELEE_STAGGER")

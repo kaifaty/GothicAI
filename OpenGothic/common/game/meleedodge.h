@@ -10,13 +10,13 @@
 #include <vector>
 
 // The melee dodge (step 6 of the NRFTW port, [GAME] melee_dodge): its own action, the direction of the movement
-// keys at the press, the kind of move by the armour, its stamina cost and dodge or barge contact windows.
+// keys at the press, the kind of move by the armour, its stamina cost and invulnerability windows.
 // Pure rules: no world, no base. Npc::meleeDodge plays them; the playing move is told by its animation's name.
 namespace MeleeDodge {
   // Relative to the dodger's facing.
   enum class Direction : uint8_t { Back, Left, Right, Forward };
-  // Light armour (or none) dashes, medium rolls, heavy rolls slowly or barges forward.
-  enum class Kind      : uint8_t { Dash, Roll, HeavyRoll, Barge };
+  // Light armour (or none) dashes, medium rolls, heavy rolls slowly.
+  enum class Kind      : uint8_t { Dash, Roll, HeavyRoll };
   // The weapon prefix of the animation names, as T_%sJUMPB has it: FIST, 1H, 2H.
   enum class Stance    : uint8_t { Fist, OneHand, TwoHand };
   // What the dodger is doing at the press, by its body state.
@@ -42,7 +42,7 @@ namespace MeleeDodge {
     Activity activity    = Activity::Stand;
     };
 
-  // A dodge animation: T_<stance><kind><direction>, or T_<stance>BARGE (forward only).
+  // A dodge animation: T_<stance><kind><direction>.
   struct Move final {
     Kind      kind      = Kind::Dash;
     Stance    stance    = Stance::OneHand;
@@ -54,27 +54,11 @@ namespace MeleeDodge {
     std::string name;
     };
 
-  // The animations to look for, in order: the move of the armour's kind, then the dash the same way. A missing
-  // barge first falls back to the heavy roll. None there: back plays the original jump back (jumpBack).
+  // The animations to look for, in order: the move of the armour's kind, then the dash the same way.
+  // None there: back plays the original jump back (jumpBack).
   struct Plan final {
     std::vector<Candidate> candidates;
     bool                   jumpBack = false;
-    };
-
-  enum class BargeOutcome : uint8_t { Stun, Knockdown, NoneHuge };
-
-  struct BargeTarget final {
-    // The caller supplies a human or a beast; distance is horizontal, angle is relative to the barger's facing.
-    float distanceCm = 0.f;
-    float heightCm   = 0.f;
-    float angleDeg   = 0.f;
-    bool alive       = true;
-    bool human       = true;
-    bool down        = false;
-    bool knockedDown = false;
-    bool invulnerable = false;
-    bool stunned     = false;
-    MeleeImpact::BeastSize beastSize = MeleeImpact::BeastSize::Small;
     };
 
   // The defender against one melee blow, as Npc::meleeGuard reads it.
@@ -105,8 +89,6 @@ namespace MeleeDodge {
   Direction   direction(float forwardAxis, float strafeAxis, float turnAxis = 0.f);
   // No armour: light.
   Kind        kind(std::optional<MeleeImpact::ArmorClass> armor);
-  Kind        kind(std::optional<MeleeImpact::ArmorClass> armor, Direction direction, bool bargeEnabled);
-  bool        bargeAllowed(bool player, bool aiEnabled);
   std::string animationName(Kind kind, Stance stance, Direction direction);
   Plan        plan(Kind kind, Stance stance, Direction direction);
   std::optional<Move> parseAnimation(std::string_view name);
@@ -118,10 +100,6 @@ namespace MeleeDodge {
 
   Window      invulnerability(Kind kind);
   bool        invulnerable(Kind kind, uint64_t elapsedMs);
-  bool        bargeContact(uint64_t elapsedMs);
-  bool        bargeSuperArmor(uint64_t elapsedMs);
-  bool        bargeCanContact(const BargeTarget& target);
-  BargeOutcome bargeOutcome(const BargeTarget& target);
 
   float       cost(Kind kind);
   // The rules of the jump back: the full cost for the native AI (fullCost), a positive remainder for the player;

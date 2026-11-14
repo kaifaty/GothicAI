@@ -60,22 +60,12 @@ int main() {
   require(kind(MeleeImpact::armorClass(40))==Kind::Roll,     "edge protection 40 is medium");
   require(kind(MeleeImpact::armorClass(79))==Kind::Roll,     "edge protection 79 is medium");
   require(kind(MeleeImpact::armorClass(80))==Kind::HeavyRoll,"edge protection 80 is heavy");
-  require(kind(ArmorClass::Heavy,Direction::Forward,true)==Kind::Barge,"heavy armour barges forward");
-  require(kind(ArmorClass::Heavy,Direction::Back,true)==Kind::HeavyRoll,"heavy armour still rolls back");
-  require(kind(ArmorClass::Medium,Direction::Forward,true)==Kind::Roll,"medium armour still rolls forward");
-  require(kind(ArmorClass::Heavy,Direction::Forward,false)==Kind::HeavyRoll,"melee_barge=0 restores the heavy roll");
-  require(kind(ArmorClass::Heavy,Direction::Forward,bargeAllowed(false,false))==Kind::HeavyRoll,
-          "an NPC without melee_ai_barge cannot barge");
-  require(kind(ArmorClass::Heavy,Direction::Forward,bargeAllowed(false,true))==Kind::Barge,
-          "melee_ai_barge admits the hero's heavy forward barge");
-  require(bargeAllowed(true,false),"the hero does not need melee_ai_barge");
 
   // Animation names, by the weapon prefix of T_%sJUMPB.
   requireName(animationName(Kind::Dash,Stance::OneHand,Direction::Back),"T_1HDASHB","1H dash back");
   requireName(animationName(Kind::Roll,Stance::TwoHand,Direction::Left),"T_2HROLLL","2H roll left");
   requireName(animationName(Kind::HeavyRoll,Stance::Fist,Direction::Forward),"T_FISTROLLHEAVYF","fist heavy roll forward");
   requireName(animationName(Kind::Dash,Stance::Fist,Direction::Right),"T_FISTDASHR","fist dash right");
-  requireName(animationName(Kind::Barge,Stance::OneHand,Direction::Forward),"T_1HBARGE","barge has no direction suffix");
 
   // Fallback chain: the armour's move, the dash the same way, then the old jump back only backwards.
   {
@@ -106,17 +96,12 @@ int main() {
     const auto p = plan(Kind::Roll,Stance::OneHand,Direction::Forward);
     require(p.candidates.size()==2 && !p.jumpBack,"roll forward has no jump back");
   }
-  for(auto stance:{Stance::Fist,Stance::OneHand,Stance::TwoHand}) {
-    const auto p = plan(Kind::Barge,stance,Direction::Forward);
-    const auto old = plan(Kind::HeavyRoll,stance,Direction::Forward);
-    require(p.candidates.size()==3 && !p.jumpBack,"barge tries its animation then the previous forward plan");
-    require(p.candidates[0].kind==Kind::Barge,"barge is the first choice");
-    for(size_t i=0;i<old.candidates.size();++i)
-      require(p.candidates[i+1].name==old.candidates[i].name && p.candidates[i+1].kind==old.candidates[i].kind,
-              "missing barge animation falls back to the unchanged heavy forward roll plan");
-    const auto move = parseAnimation(p.candidates[0].name);
-    require(move && move->kind==Kind::Barge && move->stance==stance && move->direction==Direction::Forward,
-            "a barge name reads back");
+  {
+    const auto p = plan(kind(ArmorClass::Heavy),Stance::OneHand,direction(1.f,0.f));
+    require(p.candidates.size()==2 && !p.jumpBack,"heavy armour forward uses the slow roll then the dash");
+    require(p.candidates[0].kind==Kind::HeavyRoll,"heavy armour forward chooses the slow roll");
+    requireName(p.candidates[0].name,"T_1HROLLHEAVYF","heavy armour forward uses T_1HROLLHEAVYF");
+    require(p.candidates[1].kind==Kind::Dash,"heavy armour forward falls back to the dash");
     }
 
   // The playing move is told by its name; every name the rules make reads back.
@@ -154,60 +139,11 @@ int main() {
   require(!invulnerable(Kind::HeavyRoll,39) && invulnerable(Kind::HeavyRoll,40) &&
           invulnerable(Kind::HeavyRoll,390) && !invulnerable(Kind::HeavyRoll,391),"heavy roll: 40-390 ms");
   require(invulnerability(Kind::Dash).beginMs==40 && invulnerability(Kind::Dash).endMs==360,"dash window");
-  for(uint64_t t:{0ULL,40ULL,300ULL,440ULL,600ULL,601ULL,1040ULL})
-    require(!invulnerable(Kind::Barge,t),"barge has no invulnerability");
-  require(!bargeContact(439) && bargeContact(440) && bargeContact(600) && !bargeContact(601),
-          "barge contact window includes 440 and 600 ms");
-  require(bargeSuperArmor(0) && bargeSuperArmor(300) && bargeSuperArmor(600) && !bargeSuperArmor(601),
-          "barge super armour includes 0 through 600 ms");
-
-  // Root distance, facing and height are inclusive; only living standing targets outside dodge immunity count.
-  BargeTarget target;
-  target.distanceCm = 130.f;
-  target.heightCm = 100.f;
-  target.angleDeg = 50.f;
-  require(bargeCanContact(target),"barge accepts the 130 cm, 100 cm, 50 degree edges");
-  target.distanceCm = 131.f;
-  require(!bargeCanContact(target),"131 cm is outside barge reach");
-  target.distanceCm = 130.f;
-  target.heightCm = 101.f;
-  require(!bargeCanContact(target),"101 cm is outside barge height");
-  target.heightCm = -100.f;
-  target.angleDeg = -50.f;
-  require(bargeCanContact(target),"negative height and angle edges are inclusive");
-  target.angleDeg = 51.f;
-  require(!bargeCanContact(target),"51 degrees is outside the barge cone");
-  target.angleDeg = 50.f;
-  target.alive = false;
-  require(!bargeCanContact(target),"a dead target is ineligible");
-  target.alive = true;
-  target.down = true;
-  require(!bargeCanContact(target),"a down target is ineligible");
-  target.down = false;
-  target.knockedDown = true;
-  require(!bargeCanContact(target),"a knocked down target is ineligible");
-  target.knockedDown = false;
-  target.invulnerable = true;
-  require(!bargeCanContact(target),"a target in dodge immunity is ineligible");
-  target.invulnerable = false;
-  require(bargeOutcome(target)==BargeOutcome::Stun && MeleeImpact::stunDuration("barge")==1000,
-          "barge stuns a standing human for 1000 ms");
-  target.stunned = true;
-  require(bargeOutcome(target)==BargeOutcome::Knockdown,"barge knocks down a human already stunned");
-  target.human = false;
-  for(auto size:{MeleeImpact::BeastSize::Small,MeleeImpact::BeastSize::Medium}) {
-    target.beastSize = size;
-    require(bargeOutcome(target)==BargeOutcome::Stun,"small and medium beasts are stunned, including already stunned beasts");
-    }
-  target.beastSize = MeleeImpact::BeastSize::Huge;
-  require(bargeOutcome(target)==BargeOutcome::NoneHuge,"a huge beast is unaffected");
 
   // Costs, and the rules of the jump back for paying them.
   requireNear(cost(Kind::Dash),15.f,"dash costs 15");
   requireNear(cost(Kind::Roll),20.f,"roll costs 20");
   requireNear(cost(Kind::HeavyRoll),30.f,"heavy roll costs 30");
-  requireNear(cost(Kind::Barge),30.f,"barge costs 30");
-  requireNear(charged(Kind::Barge,false),0.f,"without melee_stamina barge costs nothing");
   requireNear(charged(Kind::HeavyRoll,true),30.f,"with melee_stamina the cost is paid");
   requireNear(charged(Kind::HeavyRoll,false),0.f,"without melee_stamina nothing is paid");
 
@@ -218,16 +154,13 @@ int main() {
   require(!staminaAllows(state,Kind::Dash,true,true),"native AI: 14 is short of a dash");
   require( staminaAllows(state,Kind::Dash,false,true),"player: a positive remainder starts a dash");
   require( staminaAllows(state,Kind::HeavyRoll,false,true),"player: a positive remainder starts a heavy roll");
-  require( staminaAllows(state,Kind::Barge,false,true),"player: a positive remainder starts a barge");
   MeleeStamina::reset(state,100.f,1000);
   MeleeStamina::drain(state,85.f,1000);
   require( staminaAllows(state,Kind::Dash,true,true),"native AI: 15 pays a dash");
   require(!staminaAllows(state,Kind::Roll,true,true),"native AI: 15 is short of a roll");
-  require(!staminaAllows(state,Kind::Barge,true,true),"native AI: 15 is short of the full barge price");
   MeleeStamina::drain(state,charged(Kind::Roll,true),1000);
   require(state.current==0.f && state.exhausted,"a dash dearer than the rest empties the bar");
   require(!staminaAllows(state,Kind::Dash,false,true),"empty bar: the player is refused");
-  require(!staminaAllows(state,Kind::Barge,false,true),"empty bar: the player cannot barge");
   require(!staminaAllows(state,Kind::Dash,true,true),"empty bar: the native AI is refused");
   MeleeStamina::recover(state,100.f,1000+800+700,false);
   requireNear(state.current,24.5f,"recovery to 24.5");

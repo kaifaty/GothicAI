@@ -8,7 +8,6 @@
 #include "game/bodycontroller.h"
 #include "game/meleeparry.h"
 #include "game/meleecharge.h"
-#include "game/meleeriposte.h"
 #include "world/objects/item.h"
 #include "world/world.h"
 #include "world/benchhooks.h"
@@ -20,7 +19,7 @@
 
 using namespace Tempest;
 
-// Melee moves of Npc: stamina, stun, parry, dodges, barge, charge, AI special moves and riposte.
+// Melee moves of Npc: stamina, stun, parry, dodges, charge and AI special moves.
 // Moved from npc.cpp unchanged.
 
 namespace {
@@ -112,18 +111,7 @@ bool Npc::hasMeleeBeastPoise() const {
   return Gothic::physicsFlags().meleeBeastPoise && isMonster() && invent.activeWeapon()==nullptr;
   }
 
-bool Npc::hasMeleeBargeSuperArmor() const {
-  const auto layer = meleeDodgeLayer();
-  return MeleeDodge::bargeAllowed(isPlayer(),Gothic::physicsFlags().meleeAiBarge) &&
-         Gothic::physicsFlags().meleeBarge && layer && layer->move.kind==MeleeDodge::Kind::Barge &&
-         MeleeDodge::bargeSuperArmor(layer->elapsed);
-  }
-
 bool Npc::hasMeleeSuperArmor() const {
-  if(meleeRiposte)
-    return MeleeRiposte::superArmor(isMeleeRiposting(),owner.tickCount()-meleeRiposte->start,meleeRiposte->hitEnd);
-  if(hasMeleeBargeSuperArmor())
-    return true;
   if(isMeleeCharging())
     return MeleeCharge::superArmor(true,false,0,0);
   if(isMeleeChargeReleasing()) {
@@ -164,7 +152,7 @@ bool Npc::hasMeleeSuperArmor() const {
   }
 
 bool Npc::isMeleeStunned() const {
-  const bool enabled = meleeStunReason=="barge" ? Gothic::physicsFlags().meleeBarge : meleeStunReason=="posture" ? Gothic::physicsFlags().meleeStagger && (isHuman() || hasMeleeBeastPoise()) : Gothic::physicsFlags().meleeParry;
+  const bool enabled = meleeStunReason=="posture" ? Gothic::physicsFlags().meleeStagger && (isHuman() || hasMeleeBeastPoise()) : Gothic::physicsFlags().meleeParry;
   return enabled && owner.tickCount()<meleeStunUntil;
   }
 
@@ -178,15 +166,14 @@ bool Npc::allowMeleeStunAction(std::string_view action) {
   }
 
 void Npc::startMeleeStun(Npc& by, std::string_view reason) {
-  const bool enabled = reason=="barge" ? Gothic::physicsFlags().meleeBarge : reason=="posture" ? Gothic::physicsFlags().meleeStagger : Gothic::physicsFlags().meleeParry;
-  const bool beast = (reason=="posture" || reason=="barge") && hasMeleeBeastPoise() && MeleeImpact::beastCanAccumulatePosture(physicsMass());
-  if(!enabled || (!isHuman() && !beast) || isDown() || meleeKnockdown || (isMeleeStunned() && reason!="barge") || hasMeleeBargeSuperArmor() || isMeleeRiposteHeld() || (isMeleeRiposting() && hasMeleeSuperArmor()))
+  const bool enabled = reason=="posture" ? Gothic::physicsFlags().meleeStagger : Gothic::physicsFlags().meleeParry;
+  const bool beast = reason=="posture" && hasMeleeBeastPoise() && MeleeImpact::beastCanAccumulatePosture(physicsMass());
+  if(!enabled || (!isHuman() && !beast) || isDown() || meleeKnockdown || isMeleeStunned())
     return;
   interruptItemUse("stagger");
   endMeleeStun("timeout");
   meleeStunReason = reason;
   meleeStunUntil = owner.tickCount()+MeleeImpact::stunDuration(reason);
-  ++meleeStunSerial;
   if(beast)
     meleePosture.value = 0;
   stopMeleeSwing();
@@ -288,7 +275,7 @@ void Npc::tickMeleeParry() {
   if(!Gothic::physicsFlags().meleeParryAi || !Gothic::physicsFlags().meleeParry ||
      currentTarget==nullptr || isDown() || meleeKnockdown || isMeleeStunned())
     meleeParadeTiming.reset();
-  const bool stunEnabled = meleeStunReason=="barge" ? Gothic::physicsFlags().meleeBarge : meleeStunReason=="posture" ? Gothic::physicsFlags().meleeStagger && (isHuman() || hasMeleeBeastPoise()) : Gothic::physicsFlags().meleeParry;
+  const bool stunEnabled = meleeStunReason=="posture" ? Gothic::physicsFlags().meleeStagger && (isHuman() || hasMeleeBeastPoise()) : Gothic::physicsFlags().meleeParry;
   if(meleeStunUntil!=0 && (!stunEnabled || now>=meleeStunUntil))
     endMeleeStun(stunEnabled ? "timeout" : "reset");
   if(!Gothic::physicsFlags().meleeParry) {
@@ -442,7 +429,7 @@ std::optional<Npc::MeleeDodgeLayer> Npc::meleeDodgeLayer() const {
   for(const auto& layer:pose.combatLayers(owner.tickCount()))
     if(layer.state==BS_PARADE)
       if(auto move = MeleeDodge::parseAnimation(layer.sequence->name))
-        return MeleeDodgeLayer{*move,layer.origin,layer.time-layer.start};
+        return MeleeDodgeLayer{*move,layer.origin};
   return std::nullopt;
   }
 
@@ -515,89 +502,6 @@ bool Npc::meleeDodgeEvades(Npc& other, std::string_view kind) {
   return true;
   }
 
-void Npc::meleeBargeNote(const Npc* target, uint64_t elapsed, std::string_view outcome, std::string_view predicted) {
-  const bool differs = !predicted.empty() && predicted!=outcome;
-  if(Bench::isActive())
-    Bench::note(("melee barge "+std::string(Bench::who(this))+": contact "+
-                    (target ? std::string(Bench::who(target)) : "-")+" at "+std::to_string(elapsed)+
-                    " ms, "+std::string(outcome)+(differs ? " (predicted "+std::string(predicted)+")" : "")).c_str());
-  if(Bench::bodyTracing())
-    Bench::bodyEvent(*this,target,"barge_contact",owner.tickCount(),
-                        "\"elapsed_ms\":"+std::to_string(elapsed)+",\"outcome\":"+Bench::bodyJson(outcome)+
-                        (predicted.empty() ? "" : ",\"predicted\":"+Bench::bodyJson(predicted)),
-                        visual.pose().animNames());
-  }
-
-void Npc::tickMeleeBarge() {
-  if(!meleeBargeOrigin || meleeBargeContact)
-    return;
-  const auto now = owner.tickCount();
-  const auto layer = meleeDodgeLayer();
-  const auto elapsed = layer ? layer->elapsed : (now>=*meleeBargeOrigin ? now-*meleeBargeOrigin : 0);
-  if(!MeleeDodge::bargeAllowed(isPlayer(),Gothic::physicsFlags().meleeAiBarge) ||
-     !Gothic::physicsFlags().meleeBarge || isDown() || !layer ||
-     layer->move.kind!=MeleeDodge::Kind::Barge || layer->origin!=*meleeBargeOrigin || elapsed>600) {
-    meleeBargeContact = true;
-    meleeBargeNote(nullptr,elapsed,"miss");
-    return;
-    }
-  if(!MeleeDodge::bargeContact(elapsed))
-    return;
-
-  Npc* target = nullptr;
-  MeleeDodge::BargeOutcome outcome = MeleeDodge::BargeOutcome::Stun;
-  owner.detectNpc(position(),165.f,[&](Npc& other) {
-    const bool beast = other.isMonster() && other.inventory().activeWeapon()==nullptr;
-    if(target!=nullptr || &other==this || (!other.isHuman() && !beast))
-      return;
-    const auto dp = other.position()-position();
-    MeleeDodge::BargeTarget candidate;
-    candidate.distanceCm = std::sqrt(dp.x*dp.x+dp.z*dp.z);
-    candidate.heightCm = dp.y;
-    candidate.angleDeg = std::remainder(angleDir(dp.x,dp.z)-angle,360.f);
-    candidate.alive = !other.isDead();
-    candidate.human = other.isHuman();
-    candidate.down = other.isDown();
-    candidate.knockedDown = other.meleeKnockdown;
-    candidate.invulnerable = other.isMeleeDodgeInvulnerable();
-    candidate.stunned = other.isMeleeStunned();
-    candidate.beastSize = MeleeImpact::beastSize(other.physicsMass());
-    if(!MeleeDodge::bargeCanContact(candidate))
-      return;
-    target = &other;
-    outcome = MeleeDodge::bargeOutcome(candidate);
-    });
-  if(target==nullptr)
-    return;
-
-  meleeBargeContact = true; // Damage perceptions may re-enter combat; the clip spends its contact first.
-  if(outcome==MeleeDodge::BargeOutcome::NoneHuge) {
-    meleeBargeNote(target,elapsed,"none huge");
-    return;
-    }
-  target->takeDamage(*this,nullptr,true,1.f,nullptr,true);
-  const bool knockdown = outcome==MeleeDodge::BargeOutcome::Knockdown;
-  if(knockdown)
-    target->applyMeleePosture(*this,nullptr,false,target->meleePosture.value,true);
-  else
-    target->startMeleeStun(*this,"barge");
-  // The log names what happened, not what the rules predicted: the fist's damage may drop the target
-  // first, and a beast is not stunned without its poise (melee_beast_poise=0).
-  const char* result = target->isDead()        ? "dead" :
-                       target->isUnconscious() ? "unconscious" :
-                       knockdown               ? (target->meleeKnockdown ? "knockdown" : "no knockdown") :
-                       (target->isMeleeStunned() && target->meleeStunReason=="barge" ? "stun" : "no stun");
-  meleeBargeNote(target,elapsed,result,knockdown ? "knockdown" : "stun");
-  }
-
-bool Npc::isMeleeRiposting() const {
-  return meleeRiposte.has_value();
-  }
-
-bool Npc::isMeleeRiposteHeld() const {
-  return owner.tickCount()<meleeRiposteHoldUntil && !isDown() && !meleeKnockdown;
-  }
-
 bool Npc::meleeAiSpecialBusy(std::string_view move) {
   if(currentTarget==nullptr || !currentTarget->meleeAiSpecialSlot.busy())
     return false;
@@ -618,8 +522,7 @@ void Npc::beginMeleeAiSpecial(MeleeAi::Special move) {
   meleeAiSpecial = move;
   if(Bench::bodyTracing())
     Bench::bodyEvent(*this,currentTarget,"ai_special_start",owner.tickCount(),
-                        "\"special\":"+Bench::bodyJson(move==MeleeAi::Special::Charge ? "charge" :
-                                                          move==MeleeAi::Special::Barge ? "barge" : "riposte"));
+                        "\"special\":"+Bench::bodyJson("charge"));
   }
 
 void Npc::endMeleeAiSpecial() {
@@ -630,8 +533,7 @@ void Npc::endMeleeAiSpecial() {
   if(target!=nullptr)
     target->meleeAiSpecialSlot.release(this);
   const auto move = meleeAiSpecial;
-  if(move!=MeleeAi::Special::Riposte)
-    meleeAiSpecialEnded = owner.tickCount();
+  meleeAiSpecialEnded = owner.tickCount();
   if(move==MeleeAi::Special::Charge && Bench::isActive())
     Bench::note(("melee ai charge "+std::string(Bench::who(this))+": release turn "+
                     std::to_string(meleeAiChargeTurn)+" deg").c_str());
@@ -640,8 +542,7 @@ void Npc::endMeleeAiSpecial() {
       Bench::bodyEvent(*this,target,"ai_charge_end",owner.tickCount(),
                           "\"turn_deg\":"+std::to_string(meleeAiChargeTurn));
     Bench::bodyEvent(*this,target,"ai_special_end",owner.tickCount(),
-                        "\"special\":"+Bench::bodyJson(move==MeleeAi::Special::Charge ? "charge" :
-                                                          move==MeleeAi::Special::Barge ? "barge" : "riposte"));
+                        "\"special\":"+Bench::bodyJson("charge"));
     }
   meleeAiSpecialTarget.reset();
   meleeAiSpecial = MeleeAi::Special::None;
@@ -661,14 +562,6 @@ void Npc::tickMeleeAiSpecial() {
           if(layer.sequence->name=="T_1HCHARGEHIT" && !layer.sequence->data->defHitEnd.empty())
             active |= layer.time-layer.start<=layer.sequence->data->defHitEnd.back();
         }
-      break;
-    case MeleeAi::Special::Barge: {
-      const auto layer = meleeDodgeLayer();
-      active = layer && layer->move.kind==MeleeDodge::Kind::Barge && meleeBargeOrigin==layer->origin;
-      break;
-      }
-    case MeleeAi::Special::Riposte:
-      active = meleeRiposte && !meleeRiposte->handover;
       break;
     }
   if(!active || isDown())
@@ -727,308 +620,6 @@ bool Npc::tryMeleeAiCharge() {
   return charge;
   }
 
-bool Npc::tryMeleeAiBarge() {
-  const auto& flags = Gothic::physicsFlags();
-  if(!flags.meleeAiBarge || !flags.meleeBarge || !flags.meleeDodge || !isHuman() ||
-     weaponState()!=WeaponState::W1H || currentTarget==nullptr || !visual.hasAnim("T_1HBARGE") ||
-     !visual.pose().isStanding() || !isStanding() || isMeleeStunned() || isMeleeCharging() ||
-     isMeleeRiposting() || interactive()!=nullptr)
-    return false;
-  const auto* armor = invent.currentArmor();
-  if(!MeleeAi::bargeArmor(armor ? std::optional<MeleeImpact::ArmorClass>(MeleeImpact::armorClass(armor->handle().protection[PROT_EDGE])) :
-                                std::nullopt))
-    return false;
-  const auto now = owner.tickCount();
-  if(!MeleeAi::specialCooldownReady(now,meleeAiSpecialEnded))
-    return false;
-  const auto dp = currentTarget->position()-position();
-  if(!MeleeAi::bargeGeometry(std::hypot(dp.x,dp.z),dp.y,std::remainder(angleDir(dp.x,dp.z)-angle,360.f)))
-    return false;
-  auto& memories = meleeAiBargeMemory;
-  memories.erase(std::remove_if(memories.begin(),memories.end(),[](const auto& m) { return m.target.expired(); }),memories.end());
-  const auto handle = currentTarget->handlePtr();
-  auto memory = std::find_if(memories.begin(),memories.end(),[&](const auto& m) { return m.target.lock()==handle; });
-  const auto parade = meleeParadeLayer(currentTarget->visual.pose(),now);
-  const bool defending = parade && currentTarget->visual.pose().isDefence(now) &&
-                         MeleeDodge::cutsParade(parade->sequence->name,true);
-  const bool paradeRolled = defending && memory!=memories.end() && memory->paradeRoll==parade->origin &&
-                            memory->paradeSequence==parade->sequence;
-  const auto trigger = MeleeAi::bargeTrigger(defending && !paradeRolled,now,
-                                            memory==memories.end() ? std::nullopt : memory->guarded);
-  if(trigger==MeleeAi::BargeTrigger::None)
-    return false;
-  if(memory==memories.end()) {
-    memories.push_back({handle,{},{},{},nullptr});
-    memory = std::prev(memories.end());
-    }
-  if(trigger==MeleeAi::BargeTrigger::Guarded && memory->guardedRoll==memory->guarded)
-    return false;
-  if(meleeAiSpecialBusy("barge"))
-    return false;
-  tickMeleeStamina();
-  if(!MeleeDodge::staminaAllows(meleeStamina,MeleeDodge::Kind::Barge,true,hasStamina()))
-    return false;
-  // The move's shared refusal and clip admission run before the single roll is spent.
-  MeleeDodge::Situation situation;
-  situation.meleeWeapon = true;
-  situation.attacking = isAttackAnim();
-  situation.stunned = isMeleeStunned();
-  situation.knockedDown = meleeKnockdown || isDown();
-  situation.inAir = isInAir() || isFalling() || isSlide() || isJump() || isJumpUp();
-  situation.inWater = isInWater() || isSwim() || isDive();
-  situation.dodging = isMeleeDodging();
-  const auto bs = bodyStateMasked();
-  situation.activity = bs==BS_STAND || bs==BS_NONE ? MeleeDodge::Activity::Stand : MeleeDodge::Activity::Other;
-  if(MeleeDodge::refusal(situation)!=MeleeDodge::Refusal::None)
-    return false;
-  if(trigger==MeleeAi::BargeTrigger::Parade) {
-    memory->paradeRoll = parade->origin;
-    memory->paradeSequence = parade->sequence;
-    } else {
-    memory->guardedRoll = memory->guarded;
-    }
-  const int talent = hitChance(TALENT_1H);
-  const float chance = MeleeAi::bargeChance(talent);
-  const float uniform = float(owner.script().rand(1u<<24,this))/float(1u<<24);
-  const bool barge = MeleeAi::bargeRoll(talent,uniform) && meleeDodge(MeleeDodge::Direction::Forward);
-  if(barge)
-    meleeAiDodgeStreak.reset();
-  if(Bench::isActive())
-    Bench::note(("melee ai barge "+std::string(Bench::who(this))+": "+std::string(Bench::who(currentTarget))+" "+
-                    std::string(MeleeAi::name(trigger))+" chance "+std::to_string(chance)+" → "+(barge ? "barge" : "none")).c_str());
-  if(Bench::bodyTracing())
-    Bench::bodyEvent(*this,currentTarget,"ai_barge_roll",now,
-                        "\"trigger\":"+Bench::bodyJson(MeleeAi::name(trigger))+
-                        ",\"chance\":"+std::to_string(chance)+",\"roll\":"+std::to_string(uniform)+
-                        ",\"outcome\":"+Bench::bodyJson(barge ? "barge" : "none"));
-  return barge;
-  }
-
-bool Npc::tryMeleeAiRiposte() {
-  const auto& flags = Gothic::physicsFlags();
-  if(!flags.meleeAiRiposte || !flags.meleeRiposte || !isHuman() || weaponState()!=WeaponState::W1H ||
-     !visual.hasAnim("T_1HRIPOSTE") || currentTarget==nullptr || !currentTarget->isMeleeStunned() ||
-     currentTarget->isMeleeRiposteHeld() || !currentTarget->isHuman() ||
-     !currentTarget->visual.hasAnim("T_RIPOSTEVICTIM"))
-    return false;
-  auto& victim = *currentTarget;
-  if(meleeAiSpecialBusy("riposte"))
-    return false;
-  const auto handle = victim.handlePtr();
-  auto& rolls = meleeAiRiposteRolls;
-  rolls.erase(std::remove_if(rolls.begin(),rolls.end(),[](const auto& roll) { return roll.victim.expired(); }),rolls.end());
-  auto roll = std::find_if(rolls.begin(),rolls.end(),[&](const auto& r) { return r.victim.lock()==handle; });
-  if(roll!=rolls.end() && roll->stun==victim.meleeStunSerial)
-    return false;
-  if(roll==rolls.end())
-    rolls.push_back({handle,victim.meleeStunSerial});
-  else
-    roll->stun = victim.meleeStunSerial;
-  const int talent = hitChance(TALENT_1H);
-  const float chance = MeleeAi::riposteChance(talent);
-  const float uniform = float(owner.script().rand(1u<<24,this))/float(1u<<24);
-  const bool riposte = MeleeAi::riposteRoll(talent,uniform) && beginMeleeRiposte();
-  if(Bench::isActive())
-    Bench::note(("melee ai riposte "+std::string(Bench::who(this))+": "+std::string(Bench::who(&victim))+
-                    " chance "+std::to_string(chance)+" → "+(riposte ? "riposte" : "attack")).c_str());
-  if(Bench::bodyTracing())
-    Bench::bodyEvent(*this,&victim,"ai_riposte_roll",owner.tickCount(),
-                        "\"chance\":"+std::to_string(chance)+",\"roll\":"+std::to_string(uniform)+
-                        ",\"stun\":"+std::to_string(victim.meleeStunSerial)+
-                        ",\"outcome\":"+Bench::bodyJson(riposte ? "riposte" : "attack"));
-  return riposte;
-  }
-
-float Npc::meleeRiposteMultiplier(const Npc& target) const {
-  return meleeRiposte && meleeRiposte->applying && meleeRiposte->victim.lock()==target.handlePtr() ?
-         MeleeRiposte::multiplier() : 1.f;
-  }
-
-void Npc::meleeRiposteNote(const Npc* victim, const std::string& text, std::string_view phase, const std::string& fields) {
-  if(Bench::isActive())
-    Bench::note(("melee riposte "+std::string(Bench::who(this))+": "+text).c_str());
-  if(Bench::bodyTracing())
-    Bench::bodyEvent(*this,victim,phase,owner.tickCount(),fields,visual.pose().animNames());
-  }
-
-bool Npc::beginMeleeRiposte() {
-  if(currentTarget==nullptr || isMeleeRiposting())
-    return false;
-  auto& victim = *currentTarget;
-  const auto bs = bodyStateMasked();
-  const auto dp = victim.position()-position();
-  MeleeRiposte::Situation s;
-  s.enabled = Gothic::physicsFlags().meleeRiposte;
-  s.player = isPlayer() && isHuman();
-  s.aiEnabled = isHuman() && Gothic::physicsFlags().meleeAiRiposte;
-  s.standingOneHand = weaponState()==WeaponState::W1H && (bs==BS_STAND || bs==BS_NONE) &&
-                      isStanding() && interactive()==nullptr && !isMeleeCharging() && !isAttackAnim() &&
-                      !hasState(BS_PARADE) && !isMeleeStunned() && !meleeKnockdown && !isDown() &&
-                      !isInAir() && !isFalling() && !isSlide() && !isJump() && !isJumpUp() &&
-                      !isInWater() && !isSwim() && !isDive();
-  s.heroClip = visual.hasAnim("T_1HRIPOSTE");
-  s.victimHuman = victim.isHuman();
-  s.victimAlive = !victim.isDead() && !victim.isUnconscious();
-  s.victimDown = victim.isDown() || victim.isLie() || victim.meleeKnockdown || victim.isMeleeRiposteHeld();
-  s.victimStunned = victim.isMeleeStunned();
-  s.victimClip = victim.visual.hasAnim("T_RIPOSTEVICTIM");
-  s.distanceCm = std::sqrt(dp.x*dp.x+dp.z*dp.z);
-  s.heightCm = dp.y;
-  s.heroAngleDeg = std::remainder(angleDir(dp.x,dp.z)-angle,360.f);
-  s.victimAngleDeg = MeleeImpact::backstabAngle(victim.angle,angleDir(-dp.x,-dp.z));
-  if(!MeleeRiposte::available(s) || (!isPlayer() && meleeAiSpecialBusy("riposte")))
-    return false;
-  const float cost = MeleeRiposte::cost(meleeAttackCost(),hasStamina());
-  if(!allowStaminaAction("riposte",cost,true))
-    return false;
-  const auto* seq = visual.startAnimAndGet(*this,"T_1HRIPOSTE",0,BS_HIT);
-  if(seq==nullptr)
-    return false;
-  uint64_t bladeAt = std::numeric_limits<uint64_t>::max();
-  for(const auto& event:seq->data->events)
-    if(event.type==asset::MdsEventType::OPTIMAL_FRAME)
-      for(const auto frame:event.frames)
-        bladeAt = std::min(bladeAt,MeleeRiposte::frameTimeMs(seq->data->optimalFrame(frame),seq->data->fpsRate));
-  if(seq->data->defHitEnd.empty() || bladeAt==std::numeric_limits<uint64_t>::max())
-    throw std::runtime_error("Melee riposte requires DEF_OPT_FRAME and DEF_HIT_END");
-  if(!isPlayer())
-    beginMeleeAiSpecial(MeleeAi::Special::Riposte);
-  spendStamina("riposte",cost);
-  meleeAiDodgeStreak.reset();
-  setDirection(angleDir(dp.x,dp.z));
-  const auto at = position();
-  const auto pair = MeleeRiposte::pairPosition({at.x,at.y,at.z},std::cos(rotationRad()),std::sin(rotationRad()));
-  meleeRiposte.emplace();
-  meleeRiposte->victim = victim.handlePtr();
-  meleeRiposte->heroStart = at;
-  meleeRiposte->from = victim.position();
-  meleeRiposte->pair = Vec3(pair.x,pair.y,pair.z);
-  meleeRiposte->start = owner.tickCount();
-  meleeRiposte->bladeAt = bladeAt;
-  meleeRiposte->hitEnd = seq->data->defHitEnd.back();
-  victim.meleeStunUntil = std::max(victim.meleeStunUntil,owner.tickCount()+MeleeRiposte::HandoverMs);
-  victim.meleeRiposteHoldUntil = owner.tickCount()+MeleeRiposte::HandoverMs;
-  victim.meleeRiposteAiHeld = !isPlayer();
-  victim.setDirection(angleDir(-dp.x,-dp.z));
-  victim.clearGoTo();
-  victim.mvAlgo.clearSpeed();
-  clearGoTo();
-  mvAlgo.clearSpeed();
-  finishMeleeShadowSwing(true,true);
-  meleeRiposteNote(&victim,"start "+std::string(Bench::who(&victim))+" at "+std::to_string(s.distanceCm)+" cm",
-                   "riposte_start","\"distance_cm\":"+std::to_string(s.distanceCm)+",\"cost\":"+std::to_string(cost)+
-                   ",\"hero_y_cm\":"+std::to_string(y)+",\"victim_y_cm\":"+std::to_string(victim.y));
-  return true;
-  }
-
-void Npc::meleeRiposteBlade() {
-  if(!meleeRiposte || meleeRiposte->blade)
-    return;
-  auto& r = *meleeRiposte;
-  r.blade = true; // Perception callbacks cannot spend this contact again.
-  const auto handle = r.victim.lock();
-  auto* victim = handle ? reinterpret_cast<Npc*>(handle->user_ptr) : nullptr;
-  const auto elapsed = owner.tickCount()-r.start;
-  if(victim==nullptr || victim->isDown() || victim->isLie() || victim->meleeKnockdown || !victim->isHuman()) {
-    meleeRiposteNote(victim,"empty "+std::string(victim==nullptr ? "victim removed" : "victim down"),
-                     "riposte_empty","\"elapsed_ms\":"+std::to_string(elapsed));
-    r.handover = true;
-    if(victim)
-      victim->meleeRiposteHoldUntil = 0;
-    return;
-    }
-  // Last alignment sample is taken at the event, including a frame that crosses 400 ms.
-  if(!r.blocked)
-    victim->tryMove(Vec3(r.pair.x-victim->x,0,r.pair.z-victim->z));
-  const auto dp = victim->position()-position();
-  const float distance = std::sqrt(dp.x*dp.x+dp.z*dp.z);
-  const auto startDp = victim->position()-r.heroStart;
-  const float startDistance = std::sqrt(startDp.x*startDp.x+startDp.z*startDp.z);
-  r.applying = true;
-  victim->takeDamage(*this,nullptr,true);
-  r.applying = false;
-  victim = reinterpret_cast<Npc*>(handle->user_ptr);
-  if(victim==nullptr) {
-    r.handover = true;
-    meleeRiposteNote(nullptr,"no handover victim removed","riposte_no_handover","\"reason\":\"victim removed\"");
-    return;
-    }
-  meleeRiposteNote(victim,"blade "+std::string(Bench::who(victim))+" at "+std::to_string(elapsed)+
-                   " ms d="+std::to_string(distance)+" start_d="+std::to_string(startDistance)+" mult="+std::to_string(MeleeRiposte::multiplier()),
-                   "riposte_blade","\"elapsed_ms\":"+std::to_string(elapsed)+",\"distance_cm\":"+std::to_string(distance)+
-                   ",\"start_distance_cm\":"+std::to_string(startDistance)+",\"riposte_mult\":"+std::to_string(MeleeRiposte::multiplier())+
-                   ",\"victim_y_cm\":"+std::to_string(victim->y)+
-                   ",\"pair_distance_cm\":"+std::to_string(std::hypot(r.pair.x-victim->x,r.pair.z-victim->z))+
-                   ",\"blocked\":"+(r.blocked ? "true" : "false"));
-  writeMeleeShadow("{\"event\":\"riposte\",\"attacker\":"+meleeShadowWho(this)+",\"target\":"+meleeShadowWho(victim)+
-                   ",\"tick_ms\":"+std::to_string(owner.tickCount())+",\"distance_cm\":"+std::to_string(distance)+
-                   ",\"start_distance_cm\":"+std::to_string(startDistance)+",\"riposte_mult\":"+std::to_string(MeleeRiposte::multiplier())+"}");
-  // The normal damage path owns death and unconsciousness; never replace those clips.
-  if(victim->isDown() || victim->meleeKnockdown) {
-    victim->meleeRiposteHoldUntil = 0;
-    r.handover = true;
-    meleeRiposteNote(victim,"no handover victim down","riposte_no_handover","\"reason\":\"victim down\"");
-    return;
-    }
-  victim->endMeleeStun("riposte");
-  const auto* seq = victim->playAnimByName("T_RIPOSTEVICTIM",BS_HIT,true);
-  if(seq==nullptr)
-    throw std::runtime_error("Melee riposte victim animation disappeared");
-  victim->meleeRiposteHoldUntil = owner.tickCount()+uint64_t(seq->totalTime());
-  }
-
-void Npc::tickMeleeRiposte() {
-  if(!meleeRiposte)
-    return;
-  auto& r = *meleeRiposte;
-  const auto handle = r.victim.lock();
-  auto* victim = handle ? reinterpret_cast<Npc*>(handle->user_ptr) : nullptr;
-  const auto elapsed = owner.tickCount()-r.start;
-  if(!r.blade && victim!=nullptr && !victim->isDown() && !victim->meleeKnockdown) {
-    victim->setDirection(angleDir(x-victim->x,z-victim->z));
-    if(!r.blocked) {
-      const auto p = MeleeRiposte::alignment({r.from.x,r.from.y,r.from.z},{r.pair.x,r.pair.y,r.pair.z},elapsed);
-      victim->tryMove(Vec3(p.x-victim->x,0,p.z-victim->z));
-      const auto remaining = Vec3(p.x-victim->x,0,p.z-victim->z);
-      r.blocked = remaining.quadLength()>1.f;
-      }
-    if(Bench::bodyTracing())
-      Bench::bodyEvent(*this,victim,"riposte_alignment",owner.tickCount(),
-                          "\"elapsed_ms\":"+std::to_string(elapsed)+",\"victim_y_cm\":"+std::to_string(victim->y)+
-                          ",\"pair_distance_cm\":"+std::to_string(std::hypot(r.pair.x-victim->x,r.pair.z-victim->z))+
-                          ",\"blocked\":"+(r.blocked ? "true" : "false"));
-    }
-  // Native event dispatch waits for the whole tagged frame to pass. A paired
-  // contact uses that tag's timestamp, so the victim starts on blade entry.
-  if(!r.blade && MeleeRiposte::bladeReady(elapsed,r.bladeAt))
-    meleeRiposteBlade();
-  if(r.blade && !r.handover && MeleeRiposte::handoverReady(elapsed)) {
-    r.handover = true;
-    if(victim==nullptr || victim->isDown() || victim->meleeKnockdown) {
-      meleeRiposteNote(victim,"no handover victim down or removed","riposte_no_handover",
-                       "\"reason\":\"victim down or removed\"");
-      } else {
-      auto away = victim->position()-position();
-      away.y = 0;
-      if(away.length()>1e-3f)
-        away = Vec3::normalize(away)*20.f;
-      if(victim->knockDownMelee(*this,away,false,"riposte")) {
-        victim->meleeRiposteHoldUntil = 0;
-        meleeRiposteNote(victim,"handover "+std::string(Bench::who(victim))+" at "+std::to_string(elapsed)+" ms",
-                         "riposte_handover","\"elapsed_ms\":"+std::to_string(elapsed)+",\"reason\":\"riposte\"");
-        } else {
-        meleeRiposteNote(victim,"no handover ragdoll unavailable","riposte_no_handover",
-                         "\"reason\":\"ragdoll unavailable\"");
-        }
-      }
-    }
-  if(isDown() || !visual.pose().isInAnim("T_1HRIPOSTE")) {
-    if(victim!=nullptr && !r.handover)
-      victim->meleeRiposteHoldUntil = 0;
-    meleeRiposte.reset();
-    }
-  }
-
 bool Npc::canMeleeCharge() const {
   const auto bs = bodyStateMasked();
   MeleeCharge::Situation s;
@@ -1039,7 +630,7 @@ bool Npc::canMeleeCharge() const {
   s.windupAnimation  = visual.hasAnim("T_1HCHARGE");
   s.holdAnimation    = visual.hasAnim("S_1HCHARGE");
   s.releaseAnimation = visual.hasAnim("T_1HCHARGEHIT");
-  s.standing         = (bs==BS_STAND || bs==BS_NONE) && isStanding() && interactive()==nullptr && !isMeleeCharging() && !isMeleeRiposting();
+  s.standing         = (bs==BS_STAND || bs==BS_NONE) && isStanding() && interactive()==nullptr && !isMeleeCharging();
   s.attacking        = isAttackAnim();
   s.parading         = hasState(BS_PARADE);
   s.stunned          = isMeleeStunned();
@@ -1179,19 +770,12 @@ void Npc::tickMeleeCharge() {
   }
 
 bool Npc::meleeDodge(MeleeDodge::Direction direction) {
-  if(isMeleeRiposting() || isMeleeRiposteHeld())
-    return false;
   const auto ws    = weaponState();
   const auto bs    = bodyStateMasked();
   auto*      armor = invent.currentArmor();
   const auto armorClass = armor!=nullptr ? std::optional<MeleeImpact::ArmorClass>(MeleeImpact::armorClass(armor->handle().protection[PROT_EDGE])) :
                                            std::optional<MeleeImpact::ArmorClass>();
-  const auto& flags = Gothic::physicsFlags();
-  const auto wanted = MeleeDodge::kind(armorClass,direction,flags.meleeBarge &&
-                                     MeleeDodge::bargeAllowed(isPlayer(),isHuman() && ws==WeaponState::W1H && flags.meleeAiBarge));
-  if(wanted==MeleeDodge::Kind::Barge && !isPlayer() &&
-     (currentTarget==nullptr || meleeAiSpecialBusy("barge")))
-    return false;
+  const auto wanted = MeleeDodge::kind(armorClass);
   const std::string dir    = std::string(MeleeDodge::name(direction));
   const std::string armour = std::string(MeleeDodge::name(armorClass));
   const std::string head   = "\"direction\":"+Bench::bodyJson(dir)+",\"armour\":"+Bench::bodyJson(armour)+
@@ -1314,22 +898,12 @@ bool Npc::meleeDodge(MeleeDodge::Direction direction) {
   if(isUsingItemInHand())
     interruptItemUse("dodge");
   cancelMeleeCharge("dodge");
-  if(kind==MeleeDodge::Kind::Barge) {
-    if(!isPlayer())
-      beginMeleeAiSpecial(MeleeAi::Special::Barge);
-    meleeBargeOrigin = now;
-    meleeBargeContact = false;
-    if(Bench::bodyTracing())
-      Bench::bodyEvent(*this,currentTarget,"barge_start",now,
-                          "\"animation_name\":"+Bench::bodyJson(chosen->name));
-    }
   const float staminaBefore = stamina();
   const float cost          = MeleeDodge::charged(kind,hasStamina());
   spendStamina("dodge",cost);
   meleeDodgeNote(dir+", armour "+armour+", "+moveText+", cost "+std::to_string(int(cost))+
                  (hasStamina() ? "" : " (melee_stamina off)")+", window "+
-                 (kind==MeleeDodge::Kind::Barge ? "none, contact 440-600 ms, super armor 0-600 ms" :
-                  std::to_string(window.beginMs)+"-"+std::to_string(window.endMs)+" ms"),
+                 std::to_string(window.beginMs)+"-"+std::to_string(window.endMs)+" ms",
                  "dodge",head+",\"kind\":"+Bench::bodyJson(MeleeDodge::name(kind))+
                  ",\"animation_name\":"+Bench::bodyJson(chosen->name)+",\"fallback\":"+(fallback ? "true" : "false")+
                  ",\"missing\":"+Bench::bodyJson(missing)+",\"cost\":"+std::to_string(cost)+

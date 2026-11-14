@@ -12,7 +12,7 @@
 // https://forum.worldofplayers.de/forum/threads/127320-Damage-System?p=2198181#post2198181
 // https://strafkolonie-online.net/forum/board/thread/1895-info-erkl%C3%A4rung-der-berechnung-der-trefferchance-im-fernkampf/
 
-DamageCalculator::Val DamageCalculator::damageValue(Npc& src, Npc& other, const Bullet* b, bool isSpell, const DamageCalculator::Damage& splDmg, const CollideMask bMsk, bool fist) {
+DamageCalculator::Val DamageCalculator::damageValue(Npc& src, Npc& other, const Bullet* b, bool isSpell, const DamageCalculator::Damage& splDmg, const CollideMask bMsk) {
   DamageCalculator::Val ret;
   if(b!=nullptr) {
     ret = rangeDamage(src,other,*b,bMsk);
@@ -21,7 +21,7 @@ DamageCalculator::Val DamageCalculator::damageValue(Npc& src, Npc& other, const 
     ret = rangeDamage(src,other,splDmg,bMsk);
     }
   else {
-    ret = swordDamage(src,other,fist);
+    ret = swordDamage(src,other);
     }
 
 #if 0
@@ -147,8 +147,8 @@ DamageCalculator::Val DamageCalculator::rangeDamage(Npc&, Npc& nother, Damage dm
   return Val(value,true,invincible);
   }
 
-DamageCalculator::Val DamageCalculator::swordDamage(Npc& nsrc, Npc& nother, bool fist) {
-  if(fist ? nsrc.handle().damage_type==0 : !checkDamageMask(nsrc,nother,nullptr))
+DamageCalculator::Val DamageCalculator::swordDamage(Npc& nsrc, Npc& nother) {
+  if(!checkDamageMask(nsrc,nother,nullptr))
     return Val(0,true,true);
 
   auto& script = nsrc.world().script();
@@ -156,30 +156,18 @@ DamageCalculator::Val DamageCalculator::swordDamage(Npc& nsrc, Npc& nother, bool
   auto& other  = nother.handle();
 
   // Swords/Fists
-  const int dtype      = fist ? src.damage_type : damageTypeMask(nsrc);
+  const int dtype      = damageTypeMask(nsrc);
   Talent    tal        = TALENT_UNKNOWN;
   int       str        = nsrc.attribute(Attribute::ATR_STRENGTH);
   int       critChance = int(script.rand(100,&nsrc));
 
   int value = 0;
 
-  const auto* weapon = nsrc.inventory().activeWeapon();
-  if(auto w = fist ? nullptr : weapon) {
+  if(auto w = nsrc.inventory().activeWeapon()) {
     if(w->is2H())
       tal = TALENT_2H; else
       tal = TALENT_1H;
     }
-
-  // A shoulder contact uses the unarmed damage without changing the drawn weapon or its stats.
-  const auto damage = [&](size_t i) {
-    int32_t value = src.damage[i];
-    if(fist && weapon!=nullptr) {
-      value -= weapon->handle().damage[i];
-      if((weapon->handle().damage_type & (1<<i))!=0)
-        value -= weapon->handle().damage_total;
-      }
-    return value;
-    };
 
   if(nsrc.isMonster() && tal==TALENT_UNKNOWN) {
     // regular monsters always do critical damage
@@ -190,7 +178,7 @@ DamageCalculator::Val DamageCalculator::swordDamage(Npc& nsrc, Npc& nother, bool
   for(unsigned int i=0; i<daedalus::DamageType::NUM; ++i) {
     if((dtype & (1<<i))==0)
       continue;
-    int vd = std::max(str + damage(i) - other.protection[i],0);
+    int vd = std::max(str + src.damage[i] - other.protection[i],0);
     if(src.hitchance[tal]<=critChance)
       vd = (vd-1)/10;
     if(other.protection[i]>=0) { // Filter immune

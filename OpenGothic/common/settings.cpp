@@ -118,16 +118,12 @@ void Settings::load(std::u16string_view systemIni, std::u16string_view userIni) 
   defaults->set("GAME", "melee_parry",           1);
   defaults->set("GAME", "melee_parry_ai",        1);
   defaults->set("GAME", "melee_dodge",           1);
-  defaults->set("GAME", "melee_barge",           1);
   defaults->set("GAME", "melee_charge",          1);
-  defaults->set("GAME", "melee_riposte",         1);
   defaults->set("GAME", "melee_heal_interrupt",  1);
   defaults->set("GAME", "melee_use_in_hand",     1);
   defaults->set("GAME", "food_over_time",        1);
   defaults->set("GAME", "melee_ai_dodge",        1);
-  defaults->set("GAME", "melee_ai_riposte",      1);
   defaults->set("GAME", "melee_ai_charge",       1);
-  defaults->set("GAME", "melee_ai_barge",        1);
 
   defaults->set("GAME", "animatedWindows",     1);
   defaults->set("GAME", "subTitles",           1);
@@ -330,16 +326,12 @@ void Settings::refreshPhysicsFlags() {
     getI("GAME","placed_items")!=0,
     getI("GAME","body_impact_damage")!=0,
     getI("GAME","melee_dodge")!=0,
-    getI("GAME","melee_dodge")!=0 && getI("GAME","melee_barge")!=0,
     getI("GAME","melee_charge")!=0,
-    getI("GAME","melee_riposte")!=0,
     getI("GAME","melee_heal_interrupt")!=0,
     getI("GAME","melee_use_in_hand")!=0,
     getI("GAME","food_over_time")!=0,
     getI("GAME","melee_ai_dodge")!=0,
-    getI("GAME","melee_ai_riposte")!=0,
     getI("GAME","melee_ai_charge")!=0,
-    getI("GAME","melee_ai_barge")!=0,
     getI("GAME","body_traces")!=0,
     getI("GAME","blood")!=0
     };

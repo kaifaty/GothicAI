@@ -34,7 +34,6 @@
 #include "game/ragdollsave.h"
 #include "game/meleeparry.h"
 #include "game/meleecharge.h"
-#include "game/meleeriposte.h"
 #include "game/gamescript.h"
 #include "utils/string_frm.h"
 #include "world/objects/interactive.h"
@@ -500,8 +499,6 @@ void Npc::onNoHealth(bool death, HitSound sndMask) {
   endMeleeStun("death");
   meleeParadeOrigin.reset();
   meleeKnockdown = false;
-  meleeBargeKnockdown = false;
-  meleeRiposteKnockdown = false;
   meleeSlowSince = 0;
   meleePosture.reset();
   living.reset();
@@ -992,9 +989,7 @@ void Npc::tick(uint64_t dt) {
   tickFoodPool();
   tickMeleeParry();
   tickMeleeStamina();
-  tickMeleeBarge();
   tickMeleeCharge();
-  tickMeleeRiposte();
   tickMeleeAiSpecial();
   // Only NPCs inserted in the live world are ticked. A restored NPC starts
   // with fresh shadow geometry, never a sweep from its former holding point.
@@ -1047,15 +1042,9 @@ void Npc::tick(uint64_t dt) {
   if(!visual.pose().hasAnim())
     setAnim(AnimationSolver::Idle);
 
-  if(meleeAiSpecial==MeleeAi::Special::Charge || meleeAiSpecial==MeleeAi::Special::Barge) {
-    if(meleeAiSpecial==MeleeAi::Special::Charge && isMeleeCharging() && currentTarget!=nullptr)
+  if(meleeAiSpecial==MeleeAi::Special::Charge) {
+    if(isMeleeCharging() && currentTarget!=nullptr)
       implTurnToFai(*currentTarget,dt);
-    mvAlgo.clearSpeed();
-    mvAlgo.tick(dt,MoveAlgo::WaitMove);
-    return;
-    }
-
-  if(isMeleeRiposting() || isMeleeRiposteHeld()) {
     mvAlgo.clearSpeed();
     mvAlgo.tick(dt,MoveAlgo::WaitMove);
     return;

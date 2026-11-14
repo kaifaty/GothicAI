@@ -1,0 +1,63 @@
+# Heavy forward dodge and an ordinary frontal 1H hit against a stunned human. Metrics only.
+# WORLD=NEWWORLD.ZEN OPENGOTHIC_BODY_TRACE=1 MELEE_DODGE=1 MELEE_CHARGE=1 MELEE_STAGGER=1 MELEE_STAMINA=1
+# OPENGOTHIC_CONTENT=<content-staging/anim-strikes>
+# bench.log: T_1HROLLHEAVYF, cost 30, window 40-390 ms; one normal damage line in stunned-strike.
+# body_combat: one damage event with stun_bonus=1.5, backstab_mult=1 and charge_mult=1.
+# stun-drift and animation snapshots show the target's ordinary stun, without paired alignment or a victim clip.
+seed 73013
+set time 12 0
+release all
+overlay off
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 500
+watch player
+clear 3000
+corner right go 0
+melee-shadow setup 1h
+stats hp 100000 hpmax 100000
+wait 600
+melee-shadow target 2
+wait 600
+put WOLF 5000 90
+put WOLF 5000 -90
+turn 180
+put BDT_1013_BANDIT_L 1000 90
+equip ITAR_PAL_H
+wait 2000
+rec heavy-forward novideo
+mark heavy-forward
+press forward
+tap dodge
+wait 34
+release forward
+wait 66
+anims
+wait 2400
+stop
+wait 8000
+
+melee-shadow controls g2
+pin BDT_1013_BANDIT_L 150 0 0
+wait 100
+rec stunned-strike novideo
+mark stunned-strike
+hp BDT_1013_BANDIT_L
+pair player BDT_1013_BANDIT_L
+stun-drift BDT_1013_BANDIT_L player
+stun BDT_1013_BANDIT_L posture
+hold attack 100
+pin off
+wait 200
+pair player BDT_1013_BANDIT_L
+watch BDT_1013_BANDIT_L
+anims
+watch player
+anims
+wait 1200
+hp BDT_1013_BANDIT_L
+pair player BDT_1013_BANDIT_L
+watch BDT_1013_BANDIT_L
+anims
+watch player
+release all
+stop

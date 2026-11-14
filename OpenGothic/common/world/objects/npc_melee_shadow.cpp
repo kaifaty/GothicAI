@@ -439,7 +439,7 @@ Npc::MeleeReach Npc::sampleMeleeReach(const Npc& target, Pose& sampled, const Po
 void Npc::syncMeleeShadowSwing() {
   const auto mode = weaponState();
   const bool enabled = Gothic::physicsFlags().meleeBladeShadow || Gothic::physicsFlags().meleePhysicsHits;
-  if(isMeleeRiposting() || meleeShadowSuspended || !isHuman() || isDown() || meleeKnockdown ||
+  if(meleeShadowSuspended || !isHuman() || isDown() || meleeKnockdown ||
      (mode!=WeaponState::Fist && mode!=WeaponState::W1H && mode!=WeaponState::W2H)) {
     finishMeleeShadowSwing(true,meleeShadowSuspended);
     return;
@@ -1163,7 +1163,6 @@ void Npc::finishMeleeShadowSwing(bool remove, bool discard) {
                 ",\"stun_bonus\":" + std::to_string(entry.stunBonus) +
                 ",\"backstab_mult\":" + std::to_string(entry.backstabMult) +
                 ",\"charge_mult\":" + std::to_string(entry.chargeMult) +
-                ",\"riposte_mult\":1" +
                 ",\"super_armor\":" + (entry.superArmor ? "true" : "false") +
                 ",\"target\":" + entry.target +
                 ",\"part\":" + Bench::bodyJson(HitZones::name(HitZones::Zone(contact.zone))) +
