@@ -120,7 +120,8 @@ void main() {
   const float d    = distance(root, scene.camPos);
   const float grow = clamp((ring.x/max(d,1.0)*1.12 - rank)/0.12, 0.0, 1.0);
   height *= grow*(1.0 - smoothstep(ring.y, ring.z, d));
-  if(height<=0.05 || ring.w<0.75) {
+  const uint  partsOff = grassPartsOff(ring.w);
+  if(height<=0.05 || ring.w<0.75 || (partsOff & GrassPartHide)!=0u) {
     gl_Position   = vec4(uintBitsToFloat(0x7fc00000));
     outColor      = vec3(0);
     outNormal     = vec3(0,1,0);
@@ -177,8 +178,14 @@ void main() {
   const vec3  earth  = textureLod(ground, uv, lod).rgb;
   const float lean   = length(tilt.lean);
   const float sheen  = 1.0 + GrassLeanSheen*min(lean/(0.5*GrassLeanMaxTan), 1.0)*t;
-  outColor = min(earth*mix(vec3(GrassRootShade), mix(GrassTipGreen, GrassTipStraw, dry), t)*sheen, vec3(1.0));
-  outShade = vec2(mix(GrassRootAo, 1.0, t), push.translucency);
+  const vec3  tip    = (partsOff & GrassPartTip)!=0u ? vec3(1.0) : mix(GrassTipGreen, GrassTipStraw, dry);
+  const float rootC  = (partsOff & GrassPartRoot)!=0u ? 1.0 : GrassRootShade;
+  outColor = min(earth*mix(vec3(rootC), tip, t)*sheen, vec3(1.0));
+  outShade = vec2((partsOff & GrassPartRootAo)!=0u ? 1.0 : mix(GrassRootAo, 1.0, t), push.translucency);
+  if((partsOff & GrassPartPaint)!=0u) {
+    outColor = vec3(1,0,0);
+    outShade = vec2(1.0, 0.0);
+    }
 
   // Three quarters the ground's normal, a quarter the blade's own, rounded across it; the lean turns it against
   // the wind, as the faces of the blades that lie over turn up: grass under a gust differs in tone from grass
@@ -188,4 +195,6 @@ void main() {
     face = -face;
   face = normalize(face + sideV*(side*1.2));
   outNormal = normalize(gn*0.75 + face*0.25 - vec3(tilt.lean.x, 0.0, tilt.lean.y)*(t*GrassNormalLean*0.5));
+  if((partsOff & GrassPartNormal)!=0u)
+    outNormal = gn;
   }

@@ -9,6 +9,7 @@
 #include <string>
 
 #include "graphics/dynamic/frustrum.h"
+#include "graphics/grass/grassdiag.h"
 #include "graphics/sceneglobals.h"
 #include "graphics/shaders.h"
 #include "utils/workers.h"
@@ -228,6 +229,7 @@ void GrassField::run() {
     in.items     = job.items;
     in.rankLimit = rankLimit(job.level);
     in.density   = ring.density;
+    in.patch     = Grass::forcedPatch();
 
     Done d;
     d.cx    = job.cx;
@@ -283,6 +285,7 @@ void GrassField::upload(Cell& c, Done&& d) {
 void GrassField::update() {
   if(!blades)
     return;
+  scene.setGrassRing(Vec4(ring.full, ring.fadeFrom, ring.radius, 1.f + 2.f*float(Grass::partsOff())));
   const Vec3    cam = scene.camPos();
   const int32_t ccx = int32_t(std::floor(cam.x/CellCm)), ccz = int32_t(std::floor(cam.z/CellCm));
   const int32_t r   = int32_t(std::ceil(ring.radius/CellCm));

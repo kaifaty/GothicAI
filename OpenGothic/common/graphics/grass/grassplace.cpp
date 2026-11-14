@@ -546,7 +546,7 @@ CellBlades buildCell(const CellInput& in) {
       t.hash = hash64(tx0+i,tz0+j,0x7Fu);
       t.x    = (tx0+i)*TuftStep + int32_t(t.hash % uint64_t(TuftStep));
       t.z    = (tz0+j)*TuftStep + int32_t((t.hash >> 16) % uint64_t(TuftStep));
-      const int32_t n = patchNoise(t.x,t.z);
+      const int32_t n = in.patch>=0 ? in.patch : patchNoise(t.x,t.z);
       t.densityQ8 = patchDensity(n);
       t.height    = patchHeight(n)*(0.8f + 0.45f*float((t.hash >> 32) & 0xFFu)/255.f);
       }

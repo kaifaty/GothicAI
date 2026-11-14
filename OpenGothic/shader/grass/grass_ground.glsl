@@ -21,6 +21,12 @@ void grassGround(uint bits, vec3 pos, vec3 normal, inout vec4 diffuse, inout uin
   if(ring.w<0.75)
     return; // the mark alone: the pair that shows what it does to the near ground
 
+  const uint  partsOff = grassPartsOff(ring.w);
+  if((partsOff & GrassPartPaint)!=0u) {
+    // with the ground's shade off as well: the whole ground of the grass, the mask of the tone's measure
+    diffuse.rgb = (partsOff & GrassPartGroundShade)!=0u ? vec3(1,0,1) : grassPaintBand(distance(pos.xz, scene.camPos.xz));
+    return;
+    }
   const vec3  gn       = normalize(normal);
   const float slopeMax = grassPackedSlope(bits);
   const float tanS     = length(gn.xz)/max(gn.y, 1e-3);
@@ -30,8 +36,9 @@ void grassGround(uint bits, vec3 pos, vec3 normal, inout vec4 diffuse, inout uin
     return;
 
   const float d   = distance(pos, scene.camPos);
-  const float far = smoothstep(ring.y*0.5, ring.y, d);
-  vec3 tint = mix(vec3(mix(1.0, GrassGroundShade, stand)), mix(vec3(1.0), GrassFarTint, stand), far);
+  const float far = (partsOff & GrassPartFar)!=0u ? 0.0 : smoothstep(ring.y*0.5, ring.y, d);
+  const float nearShade = (partsOff & GrassPartGroundShade)!=0u ? 1.0 : GrassGroundShade;
+  vec3 tint = mix(vec3(mix(1.0, nearShade, stand)), mix(vec3(1.0), GrassFarTint, stand), far);
   if(far>0.0) {
     // the far grass under the gust: the pressure of the place tilts the normal and lightens the tone, as the
     // blades' own (grass.vert), so the band of the gust does not stop where the blades end

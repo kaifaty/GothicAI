@@ -15,6 +15,29 @@ float grassPackedSlope  (uint bits) { return float((bits >> 12) & 0x3Fu); }
 float grassPackedWind   (uint bits) { return float((bits >> 18) & 0x3Fu)*(4.0/63.0); }
 float grassPackedThrough(uint bits) { return float( bits >> 24)/255.0; }
 
+// Parts of the look a bench switches off to weigh them, and the paint that measures the cover (Grass::Part of
+// common/graphics/grass/grassdiag.h; `grass parts <mask>` of the bench): grassRing.w = 1 + 2*mask
+const uint GrassPartGroundShade = 1u;
+const uint GrassPartFar         = 2u;
+const uint GrassPartTip         = 4u;
+const uint GrassPartRoot        = 8u;
+const uint GrassPartRootAo      = 16u;
+const uint GrassPartNormal      = 32u;
+const uint GrassPartPaint       = 64u;
+const uint GrassPartHide        = 128u;
+
+uint grassPartsOff(float ringW) { return uint(max(ringW - 1.0, 0.0)*0.5 + 0.25); }
+
+// The paint of the ground: bands of the distance from the camera along the ground, 2, 3.5, 5 and 10 m, each an
+// eighth of it wide to either side; black between them
+vec3 grassPaintBand(float d) {
+  if(abs(d- 200.0)< 25.0) return vec3(0,0,1);
+  if(abs(d- 350.0)< 44.0) return vec3(0,1,1);
+  if(abs(d- 500.0)< 62.0) return vec3(0,1,0);
+  if(abs(d-1000.0)<125.0) return vec3(1,1,0);
+  return vec3(0);
+  }
+
 // The look
 const float GrassRoughness   = 0.92;
 const float GrassRootShade   = 0.55;                     // of the ground's colour at the root

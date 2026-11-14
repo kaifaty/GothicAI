@@ -88,6 +88,7 @@ struct CellInput final {
   std::span<const Disc>          items;
   uint32_t                       rankLimit = 256; // blades of a rank below it only (a cell far from the camera)
   float                          density   = 1.f; // of the records' (the quality)
+  int32_t                        patch     = -1;  // every tuft is of this patches' noise (a bench's measure)
   };
 
 CellBlades buildCell(const CellInput& in);
