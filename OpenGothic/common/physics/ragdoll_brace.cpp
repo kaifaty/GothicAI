@@ -36,7 +36,7 @@ namespace {
   constexpr Number numbers[] = {
     {"arms","enter",&Profile::armsEnter}, {"arms","hold",&Profile::armsHold}, {"arms","drop",&Profile::armsDrop},
     {"arms","level",&Profile::armsLevel}, {"arms","rest",&Profile::armsRest},
-    {"arms","yield",&Profile::armsYield}, {"arms","torque",&Profile::armsTorque},
+    {"arms","yield",&Profile::armsYield}, {"arms","torque",&Profile::armsTorque}, {"arms","stiff",&Profile::armsStiff},
     {"neck","enter",&Profile::neckEnter}, {"neck","hold",&Profile::neckHold}, {"neck","yield",&Profile::neckYield},
     {"neck","torque",&Profile::neckTorque}, {"spine","enter",&Profile::spineEnter}, {"legs","enter",&Profile::legsEnter},
     {"legs","front",&Profile::legsFront}, {"legs","back",&Profile::legsBack}, {"legs","side",&Profile::legsSide},
@@ -264,7 +264,7 @@ void Rig::advance(float deltaSeconds) {
   if(hasLandPose && landAt<0.f && age>=numbers.armsHold) landAt=numbers.armsHold;
   }
 
-void Rig::drive(size_t part, float mass, JPH::Quat& target, float& torque) {
+void Rig::drive(size_t part, float mass, JPH::Quat& target, float& torque, float& hz) {
   if(braceKind==Kind::None || part>=parts.size()) return;
   auto& p=parts[part];
   if(p.posed) {
@@ -287,8 +287,10 @@ void Rig::drive(size_t part, float mass, JPH::Quat& target, float& torque) {
     p.requested=true;
     }
   const size_t s=p.side==Side::Right ? 1 : 0;
-  if(p.group==Group::Arms)
+  if(p.group==Group::Arms) {
     torque=mass*numbers.armsTorque*armWeight(s);
+    if(armAt[s]>=0.f) hz=std::max(1.f,numbers.armsStiff); // reaching is soft, an arm that bears the body is tense
+    }
   else if(p.group==Group::Neck)
     torque=mass*numbers.neckTorque*neckWeight();
   else if(p.group==Group::Legs && landAt>=0.f) {

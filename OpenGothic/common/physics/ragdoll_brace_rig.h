@@ -32,8 +32,8 @@ class Rig final {
     Kind      kind() const { return braceKind; }
     void      advance(float deltaSeconds);
     // One part's fade motor: target is the parent-relative body-space orientation and
-    // torque the N*m limit of the ordinary fade; both change only for a braced part.
-    void      drive(size_t part, float mass, JPH::Quat& target, float& torque);
+    // torque the N*m limit of the ordinary fade, hz its spring frequency; they change only for a braced part.
+    void      drive(size_t part, float mass, JPH::Quat& target, float& torque, float& hz);
     // After a native Update: first touches, the head's first impact and the elbows.
     void      afterStep(const JPH::Ragdoll& native, const JPH::BodyInterface& bodies);
     Report    report() const;

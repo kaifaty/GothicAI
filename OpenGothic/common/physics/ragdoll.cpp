@@ -920,9 +920,9 @@ struct Ragdoll::Impl final {
       // The living reaction's strength: enough to keep a limb's shape for an
       // instant, too weak to carry the body, so the knees buckle under it.
       const float partMass=settings->mParts[i].mMassPropertiesOverride.mMass;
-      float torque=partMass*8.f*weight*strength;
+      float torque=partMass*8.f*weight*strength, hz=6.f;
       auto target=fadeTargets[size_t(parent)].Conjugated()*fadeTargets[i];
-      if(brace) brace->drive(i,partMass,target,torque); // a protective fall leads to its pose
+      if(brace) brace->drive(i,partMass,target,torque,hz); // a protective fall leads to its pose
       joint->SetTargetOrientationBS(target);
       if(torque<=0.f) {
         joint->SetSwingMotorState(JPH::EMotorState::Off);
@@ -931,7 +931,7 @@ struct Ragdoll::Impl final {
         }
       active=true;
       for(auto* motor:{&joint->GetSwingMotorSettings(),&joint->GetTwistMotorSettings()}) {
-        motor->mSpringSettings=JPH::SpringSettings(JPH::ESpringMode::FrequencyAndDamping,6.f,1.f);
+        motor->mSpringSettings=JPH::SpringSettings(JPH::ESpringMode::FrequencyAndDamping,hz,1.f);
         motor->SetTorqueLimit(torque);
         }
       joint->SetSwingMotorState(JPH::EMotorState::Position);

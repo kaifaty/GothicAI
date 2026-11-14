@@ -34,22 +34,23 @@ Side side(std::string_view boneName);
 struct Profile final {
   float armsEnter = .28f;  // the target goes from the birth angles to the pose
   float armsHold  = .70f;  // held until the arm's hand, fingers or forearm touches, no longer than this from birth
-  float armsDrop  = .10f;  // after the touch the limit falls to armsLevel in this time
-  float armsLevel = .35f;
-  float armsRest  = .20f;  // with a landing pose, hold armsLevel before yielding
+  float armsDrop  = .25f;  // after the touch the limit falls to armsLevel in this time
+  float armsLevel = .70f;
+  float armsRest  = .25f;  // with a landing pose, hold armsLevel before yielding
   float armsYield = .40f;  // then to zero in this time
-  float armsTorque = 18.f;
+  float armsTorque = 90.f;
+  float armsStiff = 25.f;  // spring frequency of an arm's motors once it has touched, Hz; 6 is the ordinary fade's
   float neckEnter = .25f;
   float neckHold  = 1.f;   // held until the trunk (pelvis or spine) touches, no longer than this
   float neckYield = .40f;
   float neckTorque = 12.f;
   float spineEnter = 0.f;
   float legsEnter  = .12f;
-  float legsFront = 0.f, legsBack = 1.f, legsSide = 1.f; // first-pose switches, 0 or 1
+  float legsFront = 1.f, legsBack = 1.f, legsSide = 1.f; // first-pose switches, 0 or 1
   float landEnter = .18f;
-  float landHold = .25f;
-  float landYield = .45f;
-  float landTorque = 14.f;
+  float landHold = .12f;
+  float landYield = .30f;
+  float landTorque = 10.f;
   };
 
 // The game's profile; the bench command `brace-profile <group> <key> <value>` edits it.
