@@ -48,12 +48,13 @@ constexpr float   FineWidth    = 0.5f;     // cm at the root, and per step of th
 constexpr float   FineWidthStep= 0.036f;
 
 struct Push final {
-  Vec4     origin;                 // w: 1 the blade takes the sward's own colour, by the world's x and z
+  Vec4     origin;
   float    wind         = 1.f;
   float    translucency = 0.f;
   uint32_t first        = 0;
   uint32_t segments     = 0;
   Vec4     shape;                  // the width at the root and per step, cm; the ring's full and fade, 0 the scene's
+  float    swardK       = 0.f;     // repeats of the sward's map in a cm, by the world's x and z; 0 without own layers
   };
 
 int32_t floorDiv(int32_t a, int32_t b) {
@@ -139,6 +140,7 @@ uint16_t GrassField::slotOf(const asset::Material& m) {
     if(const auto g = Resources::groundParams(name); g.ground.on) {
       params.cover = true;
       params.tile  = g.ground.swardTile*100.f;
+      params.fine  = params.fine && !Grass::fineOff();
       }
     }
   uint16_t id = uint16_t(-1);
@@ -483,10 +485,11 @@ void GrassField::update() {
     std::lock_guard guard(sync);
     m = slots[slotTex.size()].material;
     }
-    // a ground with its own layers: the sward's map, laid by the world's x and z (Grass::Params::tile)
+    // of a ground with its own layers the sward's map as well, laid by the world's x and z (Grass::Params::tile)
     const auto& mat = Resources::loadMaterial(m,true);
     const bool  own = slotParams[slotTex.size()].cover && mat.layers.present();
-    slotTex.push_back(own ? mat.layers.sward[0] : mat.tex);
+    slotSward.push_back(own ? mat.layers.sward[0] : nullptr);
+    slotTex.push_back(mat.tex);
     }
 
   // buffers: a budget a frame, the nearest results first
@@ -660,17 +663,21 @@ void GrassField::draw(Encoder<CommandBuffer>& cmd) {
       if(b.slot>=slotTex.size() || slotTex[b.slot]==nullptr || count==0)
         continue;
       st.drawn     += count;
+      st.fine      += fine ? count : 0;
       st.triangles += size_t(count)*size_t(2*links-1);
       const auto& p = slotParams[b.slot];
       Push push;
       push.origin       = Vec4(float(c.cx)*CellCm - float(Grass::CellMargin/Grass::Unit), float(c.minY)/float(Grass::Unit),
-                               float(c.cz)*CellCm - float(Grass::CellMargin/Grass::Unit), p.cover ? 1.f : 0.f);
+                               float(c.cz)*CellCm - float(Grass::CellMargin/Grass::Unit), 0.f);
       push.wind         = p.wind;
       push.translucency = p.translucency;
       push.first        = b.first;
       push.segments     = links;
       push.shape        = fine ? Vec4(FineWidth,FineWidthStep,FineFull,FineFade) : Vec4(0.f,0.f,0.f,0.f);
+      const auto* sward = slotSward[b.slot];
+      push.swardK       = (sward!=nullptr && p.tile>0.f) ? 1.f/p.tile : 0.f;
       cmd.setBinding(2, *slotTex[b.slot], Sampler::trillinear());
+      cmd.setBinding(3, sward!=nullptr ? *sward : *slotTex[b.slot], Sampler::trillinear());
       cmd.setPushData(push);
       cmd.draw(nullptr, ibo, indexOffset(links), size_t(2*links-1)*3, 0, count);
       }

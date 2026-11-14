@@ -29,7 +29,8 @@ void grassGround(uint bits, vec3 pos, vec3 normal, float sward, inout vec4 diffu
   const uint  partsOff = grassPartsOff(ring.w);
   if((partsOff & GrassPartPaint)!=0u) {
     // with the ground's shade off as well: the whole ground of the grass, the mask of the tone's measure
-    diffuse.rgb = (partsOff & GrassPartGroundShade)!=0u ? vec3(1,0,1) : grassPaintBand(distance(pos.xz, scene.camPos.xz));
+    diffuse.rgb = (partsOff & GrassPartGroundShade)==0u ? grassPaintBand(distance(pos.xz, scene.camPos.xz)) :
+                  ((partsOff & GrassPartCells)!=0u ? grassPaintCells(pos.xz) : vec3(1,0,1));
     return;
     }
   const vec3  gn       = normalize(normal);
@@ -55,9 +56,11 @@ void grassGround(uint bits, vec3 pos, vec3 normal, float sward, inout vec4 diffu
   const bool  plain = (partsOff & GrassPartFar)!=0u;
   const float far   = plain ? 0.0 : smoothstep(ring.y*0.5, ring.y, d);
   const float graze = plain ? 0.0 : 1.0 - smoothstep(GrassGrazeFrom, GrassGrazeTo, dot(gn,toEye)/max(d,1.0));
-  const float nearShade = (partsOff & GrassPartGroundShade)!=0u ? 1.0 : (sward<0.0 ? GrassGroundShade : GrassOwnGroundShade);
+  // the shade and the far tint of a ground with its own layers; the bench takes them back, or the layers alone
+  const bool  own   = (partsOff & GrassPartOwnShade)==0u && (sward>=0.0 || (partsOff & GrassPartLayers)!=0u);
+  const float nearShade = (partsOff & GrassPartGroundShade)!=0u ? 1.0 : (own ? GrassOwnGroundShade : GrassGroundShade);
   const float along = plain ? 0.0 : max(max(far,graze), smoothstep(ring.x, ring.y*0.5, d));
-  vec3 tint = mix(vec3(mix(1.0, nearShade, stand)), mix(vec3(1.0), sward<0.0 ? GrassFarTint : GrassOwnFarTint, stand), along);
+  vec3 tint = mix(vec3(mix(1.0, nearShade, stand)), mix(vec3(1.0), own ? GrassOwnFarTint : GrassFarTint, stand), along);
   if(far>0.0) {
     // the far grass under the gust: the pressure of the place tilts the normal and lightens the tone, as the
     // blades' own (grass.vert), so the band of the gust does not stop where the blades end

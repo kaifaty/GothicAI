@@ -39,6 +39,9 @@ float grassLayers(uint flags, uint tex, float swardK, float earthK, float farK, 
     return -1.0;
 
   const bool  verge = (flags & BK_VERGE)!=0u;
+  const uint  partsOff = grassPartsOff(ring.w);
+  if(!verge && (partsOff & GrassPartLayers)!=0u)
+    return -1.0; // the bench's: the painted ground
   const ivec2 place = ivec2(floor(pos.xz*16.0));
   float dist, reach, margin;
   const bool  near  = grassBorderNear(pos.xz, verge ? 180.0 : float(GrassCoverInside), dist, reach, margin);
@@ -73,7 +76,6 @@ float grassLayers(uint flags, uint tex, float swardK, float earthK, float farK, 
       return -1.0;
     }
 
-  const uint partsOff = grassPartsOff(ring.w);
   if((partsOff & GrassPartCover)!=0u) {
     diffuse.rgb = sward ? vec3(0.0,0.7,0.0) : mix(vec3(1.0,0.0,1.0), vec3(0.8,0.2,0.0), share);
     return -2.0;

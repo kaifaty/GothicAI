@@ -17,7 +17,8 @@ std::string grassFields(const GrassField* field) {
   const auto st = field->stats();
   return "\"field\":true,\"ready\":"+std::string(field->ready() ? "true" : "false")+
          ",\"cells\":"+std::to_string(st.cells)+",\"blades_stored\":"+std::to_string(st.stored)+
-         ",\"blades_drawn\":"+std::to_string(st.drawn)+",\"triangles\":"+std::to_string(st.triangles)+
+         ",\"blades_drawn\":"+std::to_string(st.drawn)+",\"blades_fine\":"+std::to_string(st.fine)+
+         ",\"triangles\":"+std::to_string(st.triangles)+
          ",\"buffer_bytes\":"+std::to_string(st.bytes)+",\"cells_waiting\":"+std::to_string(st.waiting);
   }
 

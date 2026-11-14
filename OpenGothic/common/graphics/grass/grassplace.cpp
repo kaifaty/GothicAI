@@ -127,7 +127,7 @@ CellBlades buildCell(const CellInput& in) {
 
   // per slot, in whole numbers
   struct Slot final {
-    int32_t densityQ8 = 0, tanMax = 0, tanFull = 0, edgeCm = 0, tile = 0;
+    int32_t densityQ8 = 0, tanMax = 0, tanFull = 0, edgeCm = 0;
     };
   std::vector<Slot> slots(in.params.size());
   int32_t maxEdge = 0, maxDensity = 0;
@@ -140,7 +140,6 @@ CellBlades buildCell(const CellInput& in) {
     slots[i].tanMax    = int32_t(std::lround(std::tan(double(p.slope)*M_PI/180.0)*4096.0));
     slots[i].tanFull   = int32_t(std::lround(std::tan(double(std::max(p.slope-10.f,0.f))*M_PI/180.0)*4096.0));
     slots[i].edgeCm    = int32_t(std::lround(p.edge));
-    slots[i].tile      = p.cover ? std::max(int32_t(std::lround(double(p.tile)*Unit)),Unit) : 0;
     anyFine            = anyFine || (p.cover && p.fine);
     maxEdge    = std::max(maxEdge,slots[i].edgeCm);
     maxDensity = std::max(maxDensity,slots[i].densityQ8);
@@ -605,15 +604,9 @@ CellBlades buildCell(const CellInput& in) {
       const double nl = std::max(std::sqrt(nx*nx+ny*ny+nz*nz),1e-6);
       r.nx     = uint8_t(std::clamp(int(std::lround(nx/nl*127.0))+128,1,255));
       r.nz     = uint8_t(std::clamp(int(std::lround(nz/nl*127.0))+128,1,255));
-      if(const int32_t tile = slots[t.slot].tile; tile>0) {
-        // the sward's map lies by the world's x and z (shader/grass/grass_layers.glsl)
-        r.u    = uint16_t((int64_t(fx-floorDiv(fx,tile)*tile)*4096/tile) & 0xFFF);
-        r.v    = uint16_t((int64_t(fz-floorDiv(fz,tile)*tile)*4096/tile) & 0xFFF);
-        } else {
-        const double u = b0*t.u[0] + b1*t.u[1] + b2*t.u[2], v = b0*t.v[0] + b1*t.v[1] + b2*t.v[2];
-        r.u    = uint16_t(int(std::floor((u-std::floor(u))*4096.0)) & 0xFFF);
-        r.v    = uint16_t(int(std::floor((v-std::floor(v))*4096.0)) & 0xFFF);
-        }
+      const double u = b0*t.u[0] + b1*t.u[1] + b2*t.u[2], v = b0*t.v[0] + b1*t.v[1] + b2*t.v[2];
+      r.u      = uint16_t(int(std::floor((u-std::floor(u))*4096.0)) & 0xFFF);
+      r.v      = uint16_t(int(std::floor((v-std::floor(v))*4096.0)) & 0xFFF);
       raw.push_back(r);
       minY = std::min(minY,y);
       maxY = std::max(maxY,y);

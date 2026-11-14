@@ -33,7 +33,7 @@ void main() {
   const float tone     = grassTone(t);
   // a blade of a ground with its own sward takes that sward's colour, which is grass already: the tip barely
   // shifts it, so the blades and the ground between them are of one palette
-  const float own      = inColor.a;
+  const float own      = (partsOff & GrassPartOwnTip)!=0u ? 0.0 : inColor.a;
   const vec3  tip      = (partsOff & GrassPartTip)!=0u ? vec3(1.0)
                          : mix(mix(GrassTipGreen, GrassTipStraw, inShade.z), mix(GrassOwnTipGreen, GrassOwnTipStraw, inShade.z), own);
   const float root     = (partsOff & GrassPartRoot)!=0u ? 1.0 : mix(GrassRootShade, GrassOwnRootShade, own);

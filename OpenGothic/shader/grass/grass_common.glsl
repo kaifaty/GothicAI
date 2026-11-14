@@ -27,6 +27,12 @@ const uint GrassPartNormal      = 32u;
 const uint GrassPartPaint       = 64u;
 const uint GrassPartHide        = 128u;
 const uint GrassPartCover       = 256u; // the paint of the meadow's own ground (grass_layers.glsl): sward green, earth red
+// a ground with its own layers taken back to what a painted ground has
+const uint GrassPartOwnTip      = 512u;
+const uint GrassPartOwnBase     = 1024u;
+const uint GrassPartOwnShade    = 2048u;
+const uint GrassPartLayers      = 4096u;
+const uint GrassPartCells       = 8192u;
 
 uint grassPartsOff(float ringW) { return uint(max(ringW - 1.0, 0.0)*0.5 + 0.25); }
 
@@ -38,6 +44,13 @@ vec3 grassPaintBand(float d) {
   if(abs(d- 500.0)< 62.0) return vec3(0,1,0);
   if(abs(d-1000.0)<125.0) return vec3(1,1,0);
   return vec3(0);
+  }
+
+// The paint of the squares: red by the squares of 0.5 m, green by those of 5 m, as a chessboard each; blue the
+// ground's mark. scripts/grass_look.py `variety` reads the spread of the meadow's tone between them
+vec3 grassPaintCells(vec2 xz) {
+  const ivec2 a = ivec2(floor(xz/50.0)), b = ivec2(floor(xz/500.0));
+  return vec3(float((a.x+a.y) & 1)*0.5, float((b.x+b.y) & 1)*0.5, 0.5);
   }
 
 // The look. A blade takes the colour of the ground under its root (a coarse level of its texture) and is darker

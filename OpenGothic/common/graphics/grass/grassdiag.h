@@ -4,7 +4,7 @@
 #include <cstdlib>
 
 // What the look of the grass is measured with (reports/engine/2026-11-14-grass-system, "Круг правки вида"). Nothing
-// here changes a frame until a bench asks: `grass parts <mask>` and OPENGOTHIC_GRASS_PATCH.
+// here changes a frame until a bench asks: `grass parts <mask>`, OPENGOTHIC_GRASS_PATCH and OPENGOTHIC_GRASS_FINE.
 namespace Grass {
 
 // Parts of the look a bench switches off one at a time, to weigh what each does to the tone; the last two measure
@@ -19,13 +19,29 @@ enum Part : uint32_t {
   PartPaint       = 64,  // blades red, the ground in bands of the distance from the camera, the rest black
   PartHide        = 128, // no blades: the bands alone
   PartCover       = 256, // the meadow's own ground painted by its cover: sward green, earth red (grass_layers.glsl)
-  PartAll         = 511,
+  // a ground with its own layers taken back, a part at a time, to what a painted ground has
+  // (reports/engine/2026-11-14-meadow-ground, "Что отняло жизнь")
+  PartOwnTip      = 512,  // the blades' tips and root shade
+  PartOwnBase     = 1024, // the colour a blade starts from: the painted texture's, not the sward's
+  PartOwnShade    = 2048, // the ground's shade between the blades and its far tint
+  PartLayers      = 4096, // the painted ground in place of the two layers
+  PartCells       = 8192, // with the mask's paint (1+64+128): squares of 0.5 m in red, of 5 m in green, by the world's x and z
+  PartAll         = 16383,
   };
 
 // SceneDesc::grassRing.w carries it: 1 + 2*mask
 inline uint32_t& partsOff() {
   static uint32_t mask = 0;
   return mask;
+  }
+
+// OPENGOTHIC_GRASS_FINE=0: the short sward keeps its broad blades where the record asks for fine ones
+inline bool fineOff() {
+  static const bool value = [] {
+    const char* e = std::getenv("OPENGOTHIC_GRASS_FINE");
+    return e!=nullptr && e[0]=='0' && e[1]=='\0';
+    }();
+  return value;
   }
 
 // OPENGOTHIC_GRASS_PATCH=<0..65535>: every tuft takes this number for the patches' noise, so the whole meadow is

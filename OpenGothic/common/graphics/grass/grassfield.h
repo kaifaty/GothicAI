@@ -64,6 +64,7 @@ class GrassField final {
       size_t cells     = 0; // with blades
       size_t stored    = 0; // blades in the buffers of the ring
       size_t drawn     = 0; // of them the last frame drew: in view, of a rank the ring keeps at the cell's distance
+      size_t fine      = 0; // of those the fine blades of the short sward
       size_t triangles = 0; // of those
       size_t bytes     = 0; // of the buffers
       size_t waiting   = 0; // cells not built yet
@@ -173,6 +174,7 @@ class GrassField final {
     std::unordered_map<uint64_t,Cell>   cells;
     std::deque<Done>                    toUpload;
     std::vector<const Tempest::Texture2d*> slotTex;
+    std::vector<const Tempest::Texture2d*> slotSward; // of a ground with its own layers the sward's map
     std::vector<Grass::Params>          slotParams;
     Tempest::IndexBuffer<uint16_t>      ibo;
     Tempest::StorageBuffer              borderGpu;
