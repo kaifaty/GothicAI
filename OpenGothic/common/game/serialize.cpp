@@ -4,6 +4,7 @@
 #include "world/world.h"
 #include "world/fplock.h"
 #include "world/waypoint.h"
+#include "world/records/npcrecord.h"
 
 #include <Tempest/Log>
 
@@ -91,8 +92,7 @@ void Serialize::implRead(SaveGameHeader& p) {
   p = SaveGameHeader(*this);
   }
 
-void Serialize::implWrite(const daedalus::INpc& h) {
-  write(uint32_t(h.symbol_index()));
+void Serialize::implWrite(const NpcRecord& h) {
   write(h.id,h.name,h.slot,h.effect,int32_t(h.type));
   write(int32_t(h.flags));
   write(h.attribute,h.hitchance,h.protection,h.damage);
@@ -105,28 +105,17 @@ void Serialize::implWrite(const daedalus::INpc& h) {
   write(h.wp,h.exp,h.exp_next,h.lp,h.bodystate_interruptable_override,h.no_focus);
   }
 
-void Serialize::readNpc(daedalus::DaedalusVm& vm, std::shared_ptr<daedalus::INpc>& h) {
-  uint32_t instanceSymbol=0;
-  read(instanceSymbol);
-
-  auto sym = vm.find_symbol_by_index(instanceSymbol);
-
-  if (sym != nullptr) {
-    vm.allocate_instance(h, sym);
-    } else {
-    Tempest::Log::e("Cannot load serialized NPC ", instanceSymbol, ": Symbol not found.");
-    }
-
-  read(h->id,h->name,h->slot,h->effect, reinterpret_cast<int32_t&>(h->type));
-  read(reinterpret_cast<int32_t&>(h->flags));
-  read(h->attribute,h->hitchance,h->protection,h->damage);
-  read(h->damage_type,h->guild,h->level);
-  read(h->mission);
-  read(h->fight_tactic,h->weapon,h->voice,h->voice_pitch,h->body_mass);
-  read(h->daily_routine,h->start_aistate);
-  read(h->spawnpoint,h->spawn_delay,h->senses,h->senses_range);
-  read(h->aivar);
-  read(h->wp,h->exp,h->exp_next,h->lp,h->bodystate_interruptable_override,h->no_focus);
+void Serialize::readNpc(NpcRecord& h) {
+  read(h.id,h.name,h.slot,h.effect, reinterpret_cast<int32_t&>(h.type));
+  read(reinterpret_cast<int32_t&>(h.flags));
+  read(h.attribute,h.hitchance,h.protection,h.damage);
+  read(h.damage_type,h.guild,h.level);
+  read(h.mission);
+  read(h.fight_tactic,h.weapon,h.voice,h.voice_pitch,h.body_mass);
+  read(h.daily_routine,h.start_aistate);
+  read(h.spawnpoint,h.spawn_delay,h.senses,h.senses_range);
+  read(h.aivar);
+  read(h.wp,h.exp,h.exp_next,h.lp,h.bodystate_interruptable_override,h.no_focus);
   }
 
 void Serialize::implWrite(const FpLock &fp) {

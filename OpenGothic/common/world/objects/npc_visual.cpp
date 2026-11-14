@@ -130,7 +130,7 @@ void Npc::dropTorch(bool burnout) {
     if(leftHand<visual.pose().boneCount())
       mat = visual.pose().bone(leftHand);
 
-    owner.addItemDyn(torchId,mat,hnpc->symbol_index());
+    owner.addItemDyn(torchId,mat,npcInstanceSymbol);
     }
   }
 

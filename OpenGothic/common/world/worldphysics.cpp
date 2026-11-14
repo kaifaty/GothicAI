@@ -21,7 +21,7 @@ PhysicsHost::PhysicalSpell World::physicalSpell(int32_t spellId) const {
 std::weak_ptr<void> World::npcHandle(const Npc& npc) const { return npc.handlePtr(); }
 
 Npc* World::resolveNpc(const std::shared_ptr<void>& handle) const {
-  return handle!=nullptr ? static_cast<Npc*>(static_cast<daedalus::INpc*>(handle.get())->user_ptr) : nullptr;
+  return script().findNpc(static_cast<NpcRecord*>(handle.get()));
   }
 
 std::string World::npcTraceName(const Npc& npc) const {

@@ -66,7 +66,15 @@ class GameScript final {
 
     bool         hasSymbolName(std::string_view fn);
 
-    void         initializeInstanceNpc(const std::shared_ptr<daedalus::INpc>& npc, size_t instance);
+    auto         createNpc(Npc& owner, size_t instance, std::string_view waypoint, uint32_t& kind) -> std::shared_ptr<NpcRecord>;
+    uint32_t     initializeInstanceNpc(const std::shared_ptr<NpcRecord>& npc, size_t instance);
+    auto         loadNpc(Serialize& fin, Npc* owner, uint32_t& kind) -> std::shared_ptr<NpcRecord>;
+    void         bindNpc(const std::shared_ptr<NpcRecord>& npc);
+    auto         copyNpc(const std::shared_ptr<NpcRecord>& npc) -> std::shared_ptr<NpcRecord>;
+    void         restoreNpc(const std::shared_ptr<NpcRecord>& dst, const std::shared_ptr<NpcRecord>& src, Npc& owner);
+    void         detachNpc(const std::shared_ptr<NpcRecord>& npc, Npc& owner);
+    Npc*         findNpc(NpcRecord* npc);
+    auto         npcRecord(daedalus::DaedalusSymbol* symbol) -> std::shared_ptr<NpcRecord>;
     void         initializeInstanceItem(const std::shared_ptr<daedalus::IItem>& item, size_t instance);
     void         resetVarPointers();
 
@@ -129,7 +137,7 @@ class GameScript final {
     daedalus::DaedalusSymbol*     findSymbol(std::string_view s);
     daedalus::DaedalusSymbol*     findSymbol(const size_t s);
     // the hero has heard this dialog of the npc's, as when it is played (Npc_KnowsInfo)
-    void                        setNpcInfoKnown(const daedalus::INpc& npc, const daedalus::IInfo& info);
+    void                        setNpcInfoKnown(const NpcRecord& npc, const daedalus::IInfo& info);
     size_t                      findSymbolIndex(std::string_view s);
     size_t                      symbolsCount() const;
 
@@ -139,7 +147,7 @@ class GameScript final {
     enum class PhysicalSpell : uint8_t { None, WindFist, Whirlwind, Fireball, IceCube };
     PhysicalSpell              physicalSpell(int32_t splId) const;
 
-    auto dialogChoices(std::shared_ptr<daedalus::INpc> self, std::shared_ptr<daedalus::INpc> npc, const std::vector<uint32_t> &except, bool includeImp) -> std::vector<DlgChoice>;
+    auto dialogChoices(std::shared_ptr<NpcRecord> self, std::shared_ptr<NpcRecord> npc, const std::vector<uint32_t> &except, bool includeImp) -> std::vector<DlgChoice>;
     auto updateDialog (const GameScript::DlgChoice &dlg, Npc &player, Npc &npc) -> std::vector<GameScript::DlgChoice>;
     void exec(const DlgChoice &dlg, Npc &player, Npc &npc);
 
@@ -153,7 +161,7 @@ class GameScript final {
     void  printMobMissingLockpick     (Npc &npc);
     void  printMobTooFar              (Npc &npc);
 
-    void invokeState(const std::shared_ptr<daedalus::INpc>& hnpc, const std::shared_ptr<daedalus::INpc>& hother, const char* name);
+    void invokeState(const std::shared_ptr<NpcRecord>& hnpc, const std::shared_ptr<NpcRecord>& hother, const char* name);
     int  invokeState(Npc* npc, Npc* other, Npc *victim, ScriptFn fn);
     void invokeItem (Npc* npc, ScriptFn fn);
     int  invokeMana (Npc& npc, Npc* target, int mana);
@@ -184,7 +192,7 @@ class GameScript final {
 
     void     printNothingToGet();
     float    tradeValueMultiplier() const { return tradeValMult; }
-    void     useInteractive(const std::shared_ptr<daedalus::INpc>& hnpc, std::string_view func);
+    void     useInteractive(const std::shared_ptr<NpcRecord>& hnpc, std::string_view func);
     Attitude guildAttitude(const Npc& p0,const Npc& p1) const;
     Attitude personAttitude(const Npc& p0,const Npc& p1) const;
     bool     isFriendlyFire(const Npc& src, const Npc& dst) const;
@@ -196,6 +204,7 @@ class GameScript final {
     StartupFloor& startupFloor() { return floorDefer; }
 
   private:
+    void initializeInstanceNpc(const std::shared_ptr<daedalus::INpc>& npc, size_t instance);
     bool startHotkeyPotion(Npc& pl, bool mana);
 
     template<typename T>
@@ -489,7 +498,7 @@ class GameScript final {
     void sort(std::vector<DlgChoice>& dlg);
     // a dialog's condition, information or choice: the story graph runs it if it takes it, else the VM
     int32_t dialogFunction(daedalus::DaedalusSymbol* fn, bool returns);
-    bool doesNpcKnowInfo(const daedalus::INpc& npc, size_t infoInstance) const;
+    bool doesNpcKnowInfo(const NpcRecord& npc, size_t infoInstance) const;
 
     void saveSym(Serialize& fout, daedalus::DaedalusSymbol& s);
 

@@ -84,7 +84,7 @@ bool GameScript::npc_knowsinfo(std::shared_ptr<daedalus::INpc> npcRef, int infoi
   if(!npc)
     return false;
 
-  daedalus::INpc& vnpc = npc->handle();
+  auto& vnpc = npc->handle();
   return doesNpcKnowInfo(vnpc, uint32_t(infoinstance));
   }
 
@@ -220,7 +220,7 @@ int GameScript::npc_getbodystate(std::shared_ptr<daedalus::INpc> npcRef) {
 
 std::shared_ptr<daedalus::INpc> GameScript::npc_getlookattarget(std::shared_ptr<daedalus::INpc> npcRef) {
   auto npc = findNpc(npcRef);
-  return npc && npc->lookAtTarget() ? npc->lookAtTarget()->handlePtr() : nullptr;
+  return npc && npc->lookAtTarget() ? std::static_pointer_cast<daedalus::INpc>(npc->lookAtTarget()->handlePtr()) : nullptr;
   }
 
 int GameScript::npc_getdisttonpc(std::shared_ptr<daedalus::INpc> aRef, std::shared_ptr<daedalus::INpc> bRef) {
@@ -470,7 +470,7 @@ bool GameScript::npc_gettarget(std::shared_ptr<daedalus::INpc> npcRef) {
   auto s   = vm.global_other();
 
   if(npc!=nullptr && npc->target()) {
-    s->set_instance(npc->target()->handlePtr());
+    s->set_instance(std::static_pointer_cast<daedalus::INpc>(npc->target()->handlePtr()));
     return true;
     }
 
@@ -502,7 +502,7 @@ bool GameScript::npc_getnexttarget(std::shared_ptr<daedalus::INpc> npcRef) {
 
   auto s = vm.global_other();
   if(ret!=nullptr) {
-    s->set_instance(ret->handlePtr());
+    s->set_instance(std::static_pointer_cast<daedalus::INpc>(ret->handlePtr()));
     return true;
     } else {
     s->set_instance(nullptr);
@@ -536,9 +536,8 @@ bool GameScript::npc_checkinfo(std::shared_ptr<daedalus::INpc> npcRef, int imp) 
     return false;
 
   auto& pl  = hero->handle();
-  auto& npc = n->handle();
   for(auto& info:dialogsInfo) {
-    if(info->npc!=int32_t(npc.symbol_index()) || info->important!=imp)
+    if(info->npc!=int32_t(n->instanceSymbol()) || info->important!=imp)
       continue;
     bool npcKnowsInfo = doesNpcKnowInfo(pl,info->symbol_index());
     if(npcKnowsInfo && !info->permanent)
@@ -557,7 +556,7 @@ bool GameScript::npc_checkinfo(std::shared_ptr<daedalus::INpc> npcRef, int imp) 
     }
   if(Gothic::inst().dialogExtraFn) {
     std::vector<DlgChoice> extra;
-    Gothic::inst().dialogExtraFn(npc,imp!=0,extra);
+    Gothic::inst().dialogExtraFn(*npcRef,imp!=0,extra);
     return !extra.empty();
     }
   return false;
@@ -799,7 +798,7 @@ bool GameScript::npc_ownedbynpc(std::shared_ptr<daedalus::IItem> itmRef, std::sh
     }
 
   auto* sym = vm.find_symbol_by_index(uint32_t(itm->handle().owner));
-  return sym != nullptr && npc->handlePtr()==sym->get_instance();
+  return sym != nullptr && std::static_pointer_cast<daedalus::INpc>(npc->handlePtr())==sym->get_instance();
   }
 
 bool GameScript::npc_canseesource(std::shared_ptr<daedalus::INpc> npcRef) {

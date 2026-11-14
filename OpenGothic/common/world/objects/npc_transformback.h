@@ -4,11 +4,12 @@
 
 struct Npc::TransformBack {
   TransformBack(Npc& self);
-  TransformBack(Npc& owner, daedalus::DaedalusVm& vm, Serialize& fin);
+  TransformBack(Npc& owner, Serialize& fin);
   void undo(Npc& self);
   void save(Serialize& fout);
 
-  std::shared_ptr<daedalus::INpc>   hnpc={};
+  std::shared_ptr<NpcRecord>       hnpc={};
+  uint32_t                        npcInstanceSymbol=uint32_t(-1);
   Inventory                       invent;
   int32_t                         talentsSk[TALENT_MAX_G2]={};
   int32_t                         talentsVl[TALENT_MAX_G2]={};
