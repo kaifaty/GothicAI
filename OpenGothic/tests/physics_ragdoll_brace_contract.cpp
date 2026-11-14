@@ -346,14 +346,16 @@ void testLandingPhase() {
   const auto firstTargets=poseTargets(human,first),landTargets=poseTargets(human,land);
   const RagdollBrace::Profile profile;
   for(bool touchHand:{true,false}) {
-    CollisionWorld world;
+    CollisionWorld world,control;
     RagdollBraceContract::zeroGravity(world);
-    auto body=human.create(world,at(0,300,0));
+    RagdollBraceContract::zeroGravity(control);
+    auto body=human.create(world,at(0,300,0)),reference=human.create(control,at(0,300,0));
     const auto birth=world.simulationStep();
+    body->knockOff({0,0,1},30.f); reference->knockOff({0,0,1},30.f);
     require(body->brace(Kind::Front,first.data(),first.size(),profile,land.data()),"the landing case needs both poses");
     float age=0.f;
     int frame=0;
-    for(;age<.35f-1.e-4f;++frame) age=tick(world,frame,birth);
+    for(;age<.35f-1.e-4f;++frame) { age=tick(world,frame,birth); tick(control,frame,birth); }
     RagdollBrace::Report report;
     require(body->braceReport(report) && report.landMs<0.f && report.landKind==Kind::Front,"before touch the second pose waits");
     float beforeError=0.f;
@@ -368,14 +370,29 @@ void testLandingPhase() {
     auto support=touchHand ? world.addCollisionBody(new JPH::BoxShape(JPH::Vec3(.015f,.015f,.015f)),
                         at(handPosition.x,handPosition.y,handPosition.z),.75f,DynamicWorld::C_Landscape) : nullptr;
     float landedAt=-1.f,afterError=0.f,restMin=1.f,restMax=0.f,armAfter=0.f,legFloor=1.e9f,legAfter=0.f;
-    size_t restSamples=0,legSamples=0,targetSamples=0;
+    float midFromStart=180.f,midToLand=180.f,earlyLegRatio=1.e9f,ordinaryLegMax=0.f;
+    size_t restSamples=0,legSamples=0,targetSamples=0,midSamples=0,earlyLegSamples=0,strongerFadeSamples=0;
+    std::vector<RagdollBrace::MotorProbe> landingTargets;
     for(;age<1.5f;++frame) {
       age=tick(world,frame,birth);
+      tick(control,frame,birth);
+      require(world.simulationStep()==control.simulationStep(),"the landing and ordinary fade must have the same age");
       require(body->braceReport(report),"the landing measures last");
       if(report.landMs>=0.f) landedAt=report.landMs*.001f;
       if(landedAt<0.f) continue;
       const float since=age-landedAt;
       const auto motors=body->motorProbes();
+      if(landingTargets.empty()) landingTargets=motors;
+      if(since>=profile.landEnter*.4f && since<=profile.landEnter*.6f && midSamples==0) {
+        for(size_t bone:{LFore,RFore,LCalf,RCalf}) {
+          const auto start=target(probe(landingTargets,bone)),end=target(probe(landTargets,bone)),now=target(probe(motors,bone));
+          const float fromStart=angleDeg(start,now),toLand=angleDeg(now,end),span=angleDeg(start,end);
+          midFromStart=std::min(midFromStart,fromStart); midToLand=std::min(midToLand,toLand);
+          require(fromStart>1.f && toLand>1.f && fromStart<span && toLand<span && std::abs(fromStart+toLand-span)<.1f,
+                  "midway through landEnter each elbow and knee target lies strictly between its landing-onset and second-pose targets");
+          }
+        ++midSamples;
+        }
       if(since>=profile.landEnter+1.e-3f && targetSamples==0) {
         for(size_t bone:{LUpper,LFore,LHand,RUpper,RFore,RHand,LThigh,LCalf,LFoot,LToe,RThigh,RCalf,RFoot,RToe})
           afterError=std::max(afterError,angleDeg(target(probe(motors,bone)),target(probe(landTargets,bone))));
@@ -392,6 +409,15 @@ void testLandingPhase() {
         }
       for(size_t bone:{LThigh,LCalf,LFoot,LToe,RThigh,RCalf,RFoot,RToe}) {
         const auto& p=probe(motors,bone);
+        if(since>1.e-3f && since<=.1f+1.e-4f) {
+          const float ordinary=probe(reference->motorProbes(),bone).torqueLimit;
+          const float floor=p.massKg*profile.landTorque,expected=std::max(ordinary,floor);
+          earlyLegRatio=std::min(earlyLegRatio,p.torqueLimit/expected);
+          ordinaryLegMax=std::max(ordinaryLegMax,ordinary/p.massKg);
+          ++earlyLegSamples;
+          if(ordinary>floor+1.e-4f) ++strongerFadeSamples;
+          require(p.torqueLimit>=expected-1.e-4f,"in the first 0.1 s landed legs keep the greater of ordinary fade and mass times landTorque");
+          }
         if(since>=.1f && since<=profile.landHold-1.e-3f) {
           legFloor=std::min(legFloor,p.torqueLimit/p.massKg); ++legSamples;
           }
@@ -400,9 +426,13 @@ void testLandingPhase() {
         }
       }
     std::printf("ragdoll brace landing %s: land_ms=%.3f hand_ms=%.3f/%.3f target_error_deg before=%.5f after=%.5f; "
-                "arm_rest_share=%.5f..%.5f after_yield=%.5f; leg_floor_Nm_kg=%.5f after_yield_Nm=%.5f\n",
+                "mid_target_deg from_start=%.5f to_land=%.5f; arm_rest_share=%.5f..%.5f after_yield=%.5f; "
+                "leg_floor_Nm_kg=%.5f after_yield_Nm=%.5f early_min_ratio=%.5f ordinary_max_Nm_kg=%.5f stronger_fade_samples=%zu\n",
                 touchHand ? "hand" : "timeout",double(report.landMs),double(report.handMs[0]),double(report.handMs[1]),
-                double(beforeError),double(afterError),double(restMin),double(restMax),double(armAfter),double(legFloor),double(legAfter));
+                double(beforeError),double(afterError),double(midFromStart),double(midToLand),double(restMin),double(restMax),
+                double(armAfter),double(legFloor),double(legAfter),double(earlyLegRatio),double(ordinaryLegMax),strongerFadeSamples);
+    require(midSamples>0,"the landing transition must be sampled near landEnter/2");
+    require(earlyLegSamples>0 && (!touchHand || strongerFadeSamples>0),"the early landing samples must include a stronger ordinary leg fade");
     require(targetSamples>0 && afterError<1.f,"after landEnter the targets equal the second pose within one degree");
     if(touchHand)
       require(report.handMs[0]>=0.f && std::abs(report.landMs-report.handMs[0])<.01f && landedAt<profile.armsHold,
@@ -420,12 +450,8 @@ void testLandingPhase() {
 
 void testSideLegSwitch() {
   Human human;
-  CollisionWorld world;
-  RagdollBraceContract::zeroGravity(world);
-  auto body=human.create(world,at(0,300,0));
-  const auto birth=world.simulationStep();
-  const auto initial=body->motorProbes();
-  const auto pose=human.landed();
+  const auto pose=human.landed(),land=human.armsForward();
+  const auto posed=poseTargets(human,pose);
   RagdollBrace::Profile profile;
   require(RagdollBrace::setNumber(profile,"land","enter",profile.landEnter) &&
           RagdollBrace::setNumber(profile,"land","hold",profile.landHold) &&
@@ -435,14 +461,35 @@ void testSideLegSwitch() {
           RagdollBrace::setNumber(profile,"legs","front",profile.legsFront) &&
           RagdollBrace::setNumber(profile,"legs","back",profile.legsBack) &&
           !RagdollBrace::setNumber(profile,"legs","side",.5f),"brace-profile accepts the new numbers and rejects a fractional leg switch");
-  require(RagdollBrace::setNumber(profile,"legs","side",0.f),"brace-profile accepts legs side 0");
-  require(body->brace(Kind::Left,pose.data(),pose.size(),profile,pose.data()),"the side switch needs both poses");
-  float error=0.f;
-  for(int frame=0;tick(world,frame,birth)<.4f;++frame)
-    for(size_t bone:{LThigh,LCalf,LFoot,LToe,RThigh,RCalf,RFoot,RToe})
-      error=std::max(error,angleDeg(target(probe(body->motorProbes(),bone)),target(probe(initial,bone))));
-  std::printf("ragdoll brace legs side 0: birth_target_error_deg=%.5f\n",double(error));
-  require(error<.05f,"with legs side 0 the leg targets stay at birth until landing");
+  for(const auto kind:{Kind::Left,Kind::Right}) {
+    for(float enabled:{0.f,1.f}) {
+      CollisionWorld world;
+      RagdollBraceContract::zeroGravity(world);
+      auto body=human.create(world,at(0,300,0));
+      const auto birth=world.simulationStep();
+      const auto initial=body->motorProbes();
+      require(RagdollBrace::setNumber(profile,"legs","side",enabled) &&
+              RagdollBrace::setNumber(profile,"legs","front",1.f-enabled) &&
+              RagdollBrace::setNumber(profile,"legs","back",1.f-enabled),"brace-profile accepts opposite side and front/back leg switches");
+      require(body->brace(kind,pose.data(),pose.size(),profile,land.data()),"the side switch needs both poses");
+      float birthError=0.f,poseError=0.f;
+      for(int frame=0;tick(world,frame,birth)<.4f;++frame) {
+        const auto motors=body->motorProbes();
+        for(size_t bone:{LThigh,LCalf,LFoot,LToe,RThigh,RCalf,RFoot,RToe}) {
+          birthError=std::max(birthError,angleDeg(target(probe(motors,bone)),target(probe(initial,bone))));
+          if(float(world.simulationStep()-birth)/60.f>=profile.legsEnter)
+            poseError=std::max(poseError,angleDeg(target(probe(motors,bone)),target(probe(posed,bone))));
+          }
+        }
+      RagdollBrace::Report report;
+      require(body->braceReport(report) && report.landMs<0.f,"the side switch is measured before landing");
+      std::printf("ragdoll brace %.*s legs side %.0f front/back %.0f: birth_target_error_deg=%.5f first_pose_error_deg=%.5f\n",
+                  int(RagdollBrace::clipName(kind).size()),RagdollBrace::clipName(kind).data(),double(enabled),double(1.f-enabled),
+                  double(birthError),double(poseError));
+      require(enabled==0.f ? birthError<.05f : birthError>30.f && poseError<.05f,
+              "legsSide alone chooses whether side-fall leg targets stay at birth or enter the first pose");
+      }
+    }
   }
 
 // The physics half of "death ends the protection": Npc::onNoHealth calls endBrace through
