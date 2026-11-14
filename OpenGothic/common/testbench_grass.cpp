@@ -2,6 +2,7 @@
 
 #include <chrono>
 
+#include "graphics/grass/grassdiag.h"
 #include "graphics/grass/grassfield.h"
 #include "graphics/worldview.h"
 #include "world/world.h"
@@ -24,10 +25,15 @@ std::string grassFields(const GrassField* field) {
 
 // The grass round the camera (reports/engine/2026-11-14-grass-system) is built over several frames on its own
 // thread. `grass wait [timeout ms]` holds the scenario until the ring of the camera's place is whole (real time:
-// the command is taken again every 30 ms); `grass stats` writes the counts of the last frame. Both write an event
+// the command is taken again every 30 ms); `grass stats` writes the counts of the last frame. Both write an event.
+// `grass parts <mask>` switches parts of the look off or paints the cover (Grass::Part); 0 gives the look back
 bool grassCommand(const std::vector<std::string>& a,World& w) {
-  if(a.size()<2 || a[0]!="grass" || (a[1]!="wait" && a[1]!="stats"))
+  if(a.size()<2 || a[0]!="grass" || (a[1]!="wait" && a[1]!="stats" && a[1]!="parts"))
     return false;
+  if(a[1]=="parts") {
+    Grass::partsOff() = uint32_t(num(a,2,0)) & Grass::PartAll;
+    return true;
+    }
   const GrassField* field = w.view()!=nullptr ? w.view()->grassField() : nullptr;
   if(a[1]=="stats") {
     event("grass_stats",grassFields(field));

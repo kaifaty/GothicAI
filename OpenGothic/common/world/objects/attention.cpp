@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
-#include "game/constants.h"
+#include "game/rpgvocabulary.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
 

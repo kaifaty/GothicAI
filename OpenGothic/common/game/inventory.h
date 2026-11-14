@@ -5,7 +5,7 @@
 #include <string_view>
 #include <string>
 
-#include "game/constants.h"
+#include "game/rpgvocabulary.h"
 
 class Item;
 class World;

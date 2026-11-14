@@ -1,9 +1,10 @@
 #ifndef GRASS_COMMON_GLSL
 #define GRASS_COMMON_GLSL
 
-// The grass system (reports/engine/2026-11-14-grass-system): what the blades (grass.vert) and the ground under
-// them (grass_ground.glsl) share. The patches are the processor's (common/graphics/grass/grassplace.cpp): the same
-// whole numbers, so the ground knows where the grass stands without being told. Keep the two in step.
+// The grass system (reports/engine/2026-11-14-grass-system): what the blades (grass.vert, grass.frag) and the
+// ground under them (grass_ground.glsl) share. The patches and the spots of bare earth are the processor's
+// (common/graphics/grass/grasspatch.cpp): the same whole numbers, so the ground knows where the grass stands
+// without being told. Keep the two in step.
 
 // SceneDesc::grassRing: x full density to here, cm; y the blades go into the ground from here; z to here;
 // w 1 with blades, 0.5 the ground's mark alone (OPENGOTHIC_GRASS=ground), 0 off
@@ -15,16 +16,53 @@ float grassPackedSlope  (uint bits) { return float((bits >> 12) & 0x3Fu); }
 float grassPackedWind   (uint bits) { return float((bits >> 18) & 0x3Fu)*(4.0/63.0); }
 float grassPackedThrough(uint bits) { return float( bits >> 24)/255.0; }
 
-// The look
+// Parts of the look a bench switches off to weigh them, and the paint that measures the cover (Grass::Part of
+// common/graphics/grass/grassdiag.h; `grass parts <mask>` of the bench): grassRing.w = 1 + 2*mask
+const uint GrassPartGroundShade = 1u;
+const uint GrassPartFar         = 2u;
+const uint GrassPartTip         = 4u;
+const uint GrassPartRoot        = 8u;
+const uint GrassPartRootAo      = 16u;
+const uint GrassPartNormal      = 32u;
+const uint GrassPartPaint       = 64u;
+const uint GrassPartHide        = 128u;
+
+uint grassPartsOff(float ringW) { return uint(max(ringW - 1.0, 0.0)*0.5 + 0.25); }
+
+// The paint of the ground: bands of the distance from the camera along the ground, 2, 3.5, 5 and 10 m, each an
+// eighth of it wide to either side; black between them
+vec3 grassPaintBand(float d) {
+  if(abs(d- 200.0)< 25.0) return vec3(0,0,1);
+  if(abs(d- 350.0)< 44.0) return vec3(0,1,1);
+  if(abs(d- 500.0)< 62.0) return vec3(0,1,0);
+  if(abs(d-1000.0)<125.0) return vec3(1,1,0);
+  return vec3(0);
+  }
+
+// The look. A blade takes the colour of the ground under its root (a coarse level of its texture) and is darker
+// at the root and lighter at the tip: the tone grows as the root of the height along it, so the shade sits low
+// in the grass and what the eye meets from the side is the lit upper half
 const float GrassRoughness   = 0.92;
 const float GrassRootShade   = 0.55;                     // of the ground's colour at the root
-const vec3  GrassTipGreen    = vec3(0.90, 1.20, 0.68);   // of it at the tip, by the tuft's dryness
-const vec3  GrassTipStraw    = vec3(1.14, 1.16, 0.70);
+const vec3  GrassTipGreen    = vec3(1.10, 1.40, 0.90);   // of it at the tip, by the tuft's dryness
+const vec3  GrassTipStraw    = vec3(1.46, 1.38, 0.96);
 const float GrassRootAo      = 0.35;
-// The ground: in the shade of the blades that stand on it; and from afar what the blades look like together
-const float GrassGroundShade = 0.65;
-const vec3  GrassFarTint     = vec3(0.82, 0.95, 0.63);
-const float GrassFarAo       = 0.74;
+const float GrassWidth       = 1.3;                      // cm at the root, and per step of the blade's four bits
+const float GrassWidthStep   = 0.11;
+const float GrassTaper       = 0.7;                      // of the width is gone at the tip
+// The ground. Seen from above it lies between the blades in their shade. Seen along the meadow it stands for the
+// blades the eye would meet behind the ones that are drawn, and from afar for all of them: it takes what the
+// grass looks like together. The share of that look: by the eye's direction against the ground, from GrassGrazeTo
+// (none) to GrassGrazeFrom (whole), and by the distance: the shade between the blades is a thing of the close view,
+// gone from where the blades start to thin to half of the distance where they start to go (grass_ground.glsl)
+const float GrassGroundShade = 0.72;
+const vec3  GrassFarTint     = vec3(1.00, 1.10, 0.74);
+const float GrassFarAo       = 0.95;
+const float GrassGrazeFrom   = 0.25;
+const float GrassGrazeTo     = 0.70;
+const vec3  GrassEarthTint   = vec3(0.92, 0.70, 0.80);   // the ground of a bare spot: earth, not painted grass
+
+float grassTone(float t) { return sqrt(clamp(t, 0.0, 1.0)); }
 
 // The wind on an upright blade (change A of the note): it bends as a rod, by its length. Radians at pressure 1:
 // 7.5 degrees at 12 cm, 16 at 20, 33 at 45
@@ -68,26 +106,39 @@ int grassValueNoise(ivec2 p, int step, uint salt) {
   return (top*(256-sz) + bot*sz) >> 8;
   }
 
-// p: the place in 1/16 cm. Grass::patchNoise
+// Grass::patchNoise at a place in 1/16 cm; under GrassPatchMain0 the short sward, over GrassPatchMain1 the main
+// grass (common/graphics/grass/grasspatch.cpp)
+const float GrassPatchMain0 = 26192.0;
+const float GrassPatchMain1 = 28857.0;
+
 int grassPatch(ivec2 p) {
   return (3*grassValueNoise(p,9600,0x51u) + grassValueNoise(p+ivec2(1777,911),3520,0xA7u)) >> 2;
   }
 
-// Grass::patchDensity and patchHeight, as shares
-const float GrassPatchBare  = 15962.0;
-const float GrassPatchShort = 18361.0;
-const float GrassPatchMain0 = 26192.0;
-const float GrassPatchMain1 = 28857.0;
+// Grass::patchBare: a spot of bare earth in the short sward, 0..1
+float grassBare(ivec2 p) {
+  const int step = 6400, radius = 880, soft = 480, rim = 320;
+  const int cx = grassFloorDiv(p.x-step/2,step), cz = grassFloorDiv(p.y-step/2,step);
+  float bare = 0.0;
+  for(int j=cz; j<=cz+1; ++j)
+    for(int i=cx; i<=cx+1; ++i) {
+      const uint h = grassHash(i,j,0xB3u);
+      if((h & 0xFFu)>=140u)
+        continue;
+      const ivec2 c = ivec2(i,j)*step + ivec2((((h >> 8) & 0xFFFu)*uint(step)) >> 12, (((h >> 20) & 0xFFFu)*uint(step)) >> 12);
+      const int   r = radius + int(((grassHash(i,j,0xB4u) & 0xFFu)*uint(radius)) >> 8);
+      const vec2  d = vec2(p-c);
+      if(dot(d,d)>=float(r+rim)*float(r+rim) || grassPatch(c)>=int(GrassPatchMain0))
+        continue;
+      const float l = length(d) + float(grassValueNoise(p,960,0xB5u)-32640)*(float(rim)/32640.0);
+      bare = max(bare, clamp((float(r)-l)/float(soft), 0.0, 1.0));
+      }
+  return bare;
+  }
 
-// How much grass stands at a place of the patches: 0 bare ground, about 0.45 the short grass, 1 the main and the
-// clumps
+// How much grass stands at a place of the patches, of the main grass: the short sward is as dense to the eye
 float grassStand(int noise) {
-  const float n       = float(noise);
-  const float density = n<GrassPatchShort ? 0.8*clamp((n-GrassPatchBare)/(GrassPatchShort-GrassPatchBare), 0.0, 1.0)
-                                          : mix(0.8, 1.0, clamp((n-GrassPatchMain0)/(GrassPatchMain1-GrassPatchMain0), 0.0, 1.0));
-  const float height  = n<GrassPatchMain0 ? mix(0.45, 0.65, clamp((n-GrassPatchShort)/(GrassPatchMain0-GrassPatchShort), 0.0, 1.0))
-                                          : mix(0.65, 0.9, clamp((n-GrassPatchMain0)/(GrassPatchMain1-GrassPatchMain0), 0.0, 1.0));
-  return density*height/0.9;
+  return mix(0.85, 1.0, clamp((float(noise)-GrassPatchMain0)/(GrassPatchMain1-GrassPatchMain0), 0.0, 1.0));
   }
 
 #endif

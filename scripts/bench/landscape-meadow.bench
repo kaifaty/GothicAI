@@ -1,8 +1,9 @@
 # The meadow east of the tavern under the grass system (reports/engine/2026-11-14-grass-system): the four views of
 # landscape-pilot.bench, the meadow from afar and from above where the ring's end could show, the ground at the
-# hero's feet, a stone in the grass, the walk along the cart track, a turn of the game's camera, a gust crossing the
-# field, the low sun behind the grass, the night. The camera spots stand on surveyed ground: change them only with
-# the note.
+# hero's feet, a stone in the grass, the game's camera behind the hero standing still in three places (game-turn,
+# game-bare, game-short), the walk along the cart track, a turn of the game's camera, a gust crossing the field,
+# the low sun behind the grass, the night. The camera spots stand on surveyed ground: change them only with the
+# note.
 # Run it twice in the same window and put the halves side by side («выключено | включено»):
 #   OPENGOTHIC_GRASS=0 OPENGOTHIC_CONTENT=<set> TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh landscape-meadow
 #                      OPENGOTHIC_CONTENT=<set> TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh landscape-meadow
@@ -67,8 +68,30 @@ shot stone
 wait 200
 grass stats
 
-# the walk along the cart track
+# the game's camera behind the hero who stands still: where the turn of meadow-turn showed flat ground, and in
+# two patches of the meadow that the first round left bare and short (the round of the look, the same note)
 cam game
+goto NW_TAVERNE_TROLLAREA_03
+face wp NW_TAVERNE_TROLLAREA_05
+turn 150
+grass wait
+wait 5000
+shot game-turn
+wait 200
+goto pos 41800 3380 480
+face 45
+grass wait
+wait 5000
+shot game-bare
+wait 200
+goto pos 41450 3400 300
+face 80
+grass wait
+wait 5000
+shot game-short
+wait 200
+
+# the walk along the cart track
 walkmode walk
 goto NW_TAVERNE_TROLLAREA_03
 face wp NW_TAVERNE_TROLLAREA_04

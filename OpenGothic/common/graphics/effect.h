@@ -7,7 +7,7 @@
 #include "graphics/meshobjects.h"
 #include "graphics/visualfx.h"
 
-#include "game/constants.h"
+#include "game/rpgvocabulary.h"
 
 #include <memory>
 
