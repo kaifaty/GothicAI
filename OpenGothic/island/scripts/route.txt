@@ -1,0 +1,11 @@
+# Route preparation is pending: the current 1000 m streaming horizon never unloads island chunks.
+# Time in milliseconds, position in metres, yaw in degrees.
+# Held controls: move time forward strafe turn-deg/s pitch-deg/s run(0/1).
+start 119.277 0.510632 69.0537 -130
+move 0 0 0 0 0 0
+shot 1000 beach
+move 2000 1 0 0 0 1
+jump 8000
+shot 15000 rocks
+shot 35000 hill
+end 40000

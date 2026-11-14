@@ -26,10 +26,12 @@ bool number(std::string_view text, float& out) {
 
 const char* usage() {
   return "usage: engine-island [--data <dir>] [--frames N] [--capture <dir>] [--demo] [--time HH:MM]\n"
-         "                     [--time-pace K] [--size WxH]\n"
+         "                     [--time-pace K] [--size WxH] [--script <file>] [--events <file>]\n"
          "  --data <dir>      the island (default: the build's island-data folder)\n"
          "  --frames N        quit after N frames\n"
          "  --capture <dir>   save every frame there as PNG, 30 frames a second of island time\n"
+         "  --script <file>   play recorded controls (exclusive with --demo)\n"
+         "  --events <file>   write the JSONL event journal\n"
          "  --demo            play the built-in 13.5 s track instead of the keys and the mouse\n"
          "  --time HH:MM      the time of day (default 12:00; it stands still)\n"
          "  --time-pace K     let the time run, K island seconds a real second\n"
@@ -64,6 +66,11 @@ bool parseFlags(int argc, const char* const* argv, Flags& flags, std::string& er
       if(!value(v))
         return false;
       flags.capture = std::filesystem::path(v);
+      }
+    else if(arg=="--script" || arg=="--events") {
+      if(!value(v))
+        return false;
+      (arg=="--script" ? flags.script : flags.events) = std::filesystem::path(v);
       }
     else if(arg=="--frames") {
       if(!value(v) || !number(v, flags.frames) || flags.frames==0) {
@@ -100,6 +107,10 @@ bool parseFlags(int argc, const char* const* argv, Flags& flags, std::string& er
       error = "unknown argument "+std::string(arg);
       return false;
       }
+    }
+  if(flags.demo && !flags.script.empty()) {
+    error = "--demo and --script are exclusive";
+    return false;
     }
   return true;
   }

@@ -32,13 +32,23 @@ uint64_t stepEnd(uint64_t step) {
 
 Window::Window(Device& device, const Flags& flags, Services& services, World& world, View& view, Hero& hero)
   : Tempest::Window(Normal), device(device), flags(flags), services(services), world(world), view(view), hero(hero),
-    swapchain(SystemApi::isOffscreen() || !flags.capture.empty() ? Swapchain() : Swapchain(device, hwnd())) {
+    swapchain(SystemApi::isOffscreen() || !flags.capture.empty() ? Swapchain() : Swapchain(device, hwnd())),
+    events(flags.events) {
   setWindowTitle("engine-island");
   if(!flags.capture.empty())
     std::filesystem::create_directories(flags.capture);
   if(!flags.capture.empty() || SystemApi::isOffscreen())
     offscreen = device.attachment(TextureFormat::RGBA8, flags.width, flags.height);
   control = flags.demo ? static_cast<ControlSource*>(&demo) : &keys;
+  if(!flags.script.empty()) {
+    script = std::make_unique<ScriptTrack>(flags.script);
+    hero.teleport(script->start(), script->yaw());
+    // Establish the contact before the journal starts; track coordinates stay independent of World::start.
+    hero.tick({}, 16);
+    control = script.get();
+    }
+  inAir = !hero.onGround();
+  events.emit("start", 0, hero, {{"frames", "0"}, {"frame_median_ms", "0"}, {"frame_p95_ms", "0"}, {"exit_code", "0"}});
 
   services.cam    = &camera;
   services.target = &hero;
@@ -53,6 +63,7 @@ Window::~Window() {
   for(auto& f:fence)
     f.wait();
   device.waitIdle();
+  events.finish(time, hero, frames, frameMs, exitCode(), control->finished(time));
   // the time between frames, from the second second on: the first frames wait for shaders and textures
   std::vector<uint32_t> ms(frameMs.size()>60 ? frameMs.begin()+60 : frameMs.end(), frameMs.end());
   if(!ms.empty()) {
@@ -111,23 +122,45 @@ void Window::report(const Control&) {
   const auto  id = ChunkId::fromPosition(at.x, at.z);
   if(!(id==chunk)) {
     Log::i("island: ", double(time)*0.001, " s: chunk ", chunk.x, ",", chunk.z, " -> ", id.x, ",", id.z);
+    events.emit("chunk", time, hero, {{"from", std::to_string(chunk.x)+","+std::to_string(chunk.z)},
+                                      {"to", std::to_string(id.x)+","+std::to_string(id.z)}});
     chunk = id;
     }
   if(hero.jumping() && !inAir)
     Log::i("island: ", double(time)*0.001, " s: jump at ", at.x, " ", at.y, " ", at.z);
   if(inAir && hero.onGround())
     Log::i("island: ", double(time)*0.001, " s: on the ground at ", at.x, " ", at.y, " ", at.z);
+  if(hero.jumping() && !wasJumping)
+    events.emit("jump", time, hero);
+  if(inAir && hero.onGround())
+    events.emit("land", time, hero);
+  if(time>=nextPosition) {
+    events.emit("position", time, hero);
+    nextPosition = (time/100+1)*100;
+    }
+  wasJumping = hero.jumping();
   inAir = !hero.onGround();
   }
 
 void Window::save(const Pixmap& frame) {
   Pixmap pixels = frame.format()==TextureFormat::RGBA8 ? frame : Pixmap(frame, TextureFormat::RGBA8);
-  char name[32];
-  std::snprintf(name, sizeof(name), "frame-%05llu.png", static_cast<unsigned long long>(frames));
-  const auto file = flags.capture/name;
-  pixels.save(file.string().c_str());
-  if(!std::filesystem::is_regular_file(file))
-    throw std::runtime_error("unable to write "+file.string());
+  if(!flags.capture.empty()) {
+    char name[32];
+    std::snprintf(name, sizeof(name), "frame-%05llu.png", static_cast<unsigned long long>(frames));
+    const auto file = flags.capture/name;
+    pixels.save(file.string().c_str());
+    if(!std::filesystem::is_regular_file(file))
+      throw std::runtime_error("unable to write "+file.string());
+    }
+  while(script && nextShot<script->shots().size() && script->shots()[nextShot].time<=time) {
+    const auto& shot = script->shots()[nextShot++];
+    const auto directory = !flags.capture.empty() ? flags.capture.parent_path() : flags.events.parent_path();
+    const auto path = directory/(shot.name+".png");
+    pixels.save(path.string().c_str());
+    if(!std::filesystem::is_regular_file(path))
+      throw std::runtime_error("unable to write "+path.string());
+    events.emit("shot", time, hero, {{"name", shot.name}, {"file", path.string()}});
+    }
   }
 
 void Window::render() {
@@ -164,6 +197,7 @@ void Window::render() {
 
     view.setHero(hero.bodyMatrix());
     view.updateLandscape(camera, hero.position());
+    events.observe(time, hero, view);
     Resources::resetRecycled(cmdId);
 
     CommandBuffer& cmd = commands[cmdId];
@@ -172,17 +206,17 @@ void Window::render() {
     renderer.draw(target(), enc, cmdId, view.view(), camera);
     }
     sync = device.submit(cmd);
-    if(!flags.capture.empty()) {
+    const bool shotDue = script && nextShot<script->shots().size() && script->shots()[nextShot].time<=time;
+    if(!flags.capture.empty() || shotDue) {
       sync.wait();
-      save(device.readPixels(offscreen));
+      save(device.readPixels(target()));
       }
-    else if(offscreen.isEmpty()) {
+    if(offscreen.isEmpty())
       device.present(swapchain);
-      }
     cmdId = uint8_t((cmdId+1u)%Resources::MaxFramesInFlight);
     ++frames;
 
-    if((flags.frames>0 && frames>=flags.frames) || (flags.demo && demo.finished(time)))
+    if((flags.frames>0 && frames>=flags.frames) || control->finished(time))
       quit();
     }
   catch(const SwapchainSuboptimal&) {
@@ -220,7 +254,7 @@ void Window::keyUpEvent(KeyEvent& event) {
 
 // The mouse looks while its left button is held, as in Gothic's window: the cursor stays the user's.
 void Window::mouseDownEvent(MouseEvent& event) {
-  if(flags.demo || event.button!=Event::ButtonLeft)
+  if(flags.demo || script || event.button!=Event::ButtonLeft)
     return;
   looking = true;
   lastMouse = event.pos();

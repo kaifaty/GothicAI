@@ -10,6 +10,8 @@
 
 #include "islandcontrol.h"
 #include "islandflags.h"
+#include "islandscript.h"
+#include "islandevents.h"
 
 #include "camera.h"
 #include "resources.h"
@@ -74,6 +76,11 @@ class Window final : public Tempest::Window {
     Renderer             renderer;
     Keys                 keys;
     DemoTrack            demo;
+    std::unique_ptr<ScriptTrack> script;
+    Events               events;
+    size_t               nextShot = 0;
+    uint64_t             nextPosition = 0;
+    bool                 wasJumping = false;
     ControlSource*       control = nullptr;
 
     uint64_t             steps    = 0;  // fixed steps so far
