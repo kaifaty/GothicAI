@@ -4,7 +4,8 @@
 Reads the frames of scripts/bench/landscape-meadow.bench and landscape-meadow-parts.bench; needs numpy and ffmpeg.
 
   mask    <mask-view.png> <out.png>      the sunlit ground of the meadow, from the frame painted by `grass parts 193`
-  tone    <mask.png> <frame>...          the mean luminance and colour of that area in each frame, against the first
+  tone    <mask.png> <frame>...          the mean luminance (of the light) and luma (of the coded values) and the
+                                         colour of that area in each frame, against the first
   cover   <paint.png> <bands.png>        the share of the ground the blades cover, by the band of the distance
   columns <clip> [--half left|right] [--rows a:b] [--strips n] [--step s]
                                          the tone of the frame's vertical strips in time: a gust that crosses
@@ -90,7 +91,9 @@ def tone_of(rgb: np.ndarray, mask: np.ndarray) -> dict:
     lin = linear(px).mean(axis=0)
     srgb = np.where(lin <= 0.0031308, lin*12.92, 1.055*lin**(1/2.4) - 0.055)*255.0
     h, s, v = colorsys.rgb_to_hsv(*(srgb/255.0))
-    return {"luminance": round(lum, 5), "mean_srgb": [round(float(x), 1) for x in mean],
+    # the luma of the coded values: the tone as the eye reads it off the screen
+    luma = float(mean @ np.array([0.2126, 0.7152, 0.0722]))
+    return {"luminance": round(lum, 5), "luma": round(luma, 2), "mean_srgb": [round(float(x), 1) for x in mean],
             "colour": [round(float(x), 1) for x in srgb], "hue": round(h*360.0, 1), "saturation": round(s, 3)}
 
 
@@ -102,6 +105,7 @@ def cmd_tone(a: argparse.Namespace) -> int:
         if first is None:
             first = t
         t["luminance_ratio"] = round(t["luminance"]/first["luminance"], 3)
+        t["luma_ratio"] = round(t["luma"]/first["luma"], 3)
         t["saturation_ratio"] = round(t["saturation"]/max(first["saturation"], 1e-6), 3)
         t["frame"] = path
         print(json.dumps(t, ensure_ascii=False))
