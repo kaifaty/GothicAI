@@ -316,6 +316,12 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
             bx.flags       |= BK_FOLIAGE;
             }
           }
+        // A ground that grows grass (graphics/grass/grassfield.h): its look under the blades and beyond them, in
+        // the landscape's G-buffer pass. The record excludes `foliage`, so the slot of its bits is free
+        if(i.mat.grass.on && Shaders::options().doMaterialMaps && Grass::enabled().mode!=Grass::Off) {
+          bx.foliage = Grass::pack(i.mat.grass);
+          bx.flags  |= BK_GRASS;
+          }
         }
       }
     else if(i.animMesh!=nullptr) {

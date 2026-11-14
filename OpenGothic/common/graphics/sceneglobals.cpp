@@ -1,4 +1,5 @@
 #include "sceneglobals.h"
+#include "graphics/foliagefront.h"
 #include "settings.h"
 
 #include <cstddef>
@@ -238,6 +239,13 @@ void SceneGlobals::setTime(uint64_t time) {
   uboGlobalCpu.foliageWind      = wind.wind;
   uboGlobalCpu.foliagePhase     = wind.phase;
   uboGlobalCpu.foliageSwing     = wind.swing;
+  // the front of the gust: its two phases at z=0 of this frame and of the previous one
+  const auto front = FoliageFront::make(tickCount, windPeriod, zWindEnabled, windScale, legacyWind);
+  const bool ran   = next && uboGlobalCpu.foliageFrontK.w>0.f;
+  uboGlobalCpu.foliageFront  = Tempest::Vec4(front.phase.x, front.phase.y,
+                                             ran ? uboGlobalCpu.foliageFront.x : front.phase.x,
+                                             ran ? uboGlobalCpu.foliageFront.y : front.phase.y);
+  uboGlobalCpu.foliageFrontK = front.k;
   foliageTick                   = time;
   }
 

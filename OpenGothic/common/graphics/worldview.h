@@ -21,6 +21,7 @@ class ParticleFx;
 class PackedMesh;
 class ChunkResidency;
 class StreamedVisual;
+class GrassField;
 struct ChunkId;
 namespace asset { struct WorldMesh; }
 
@@ -45,6 +46,8 @@ class WorldView {
     void prepareLandscapeWork();
     void finishLandscapeUpdate();
     bool landscapeReady() const;
+    // the grass round the camera (graphics/grass/grassfield.h); nullptr: no streamed landscape, or switched off
+    GrassField* grassField() const { return grass.get(); }
     std::string landscapeWaitState() const;
 
     const LightSource&        mainLight() const;
@@ -133,6 +136,7 @@ class WorldView {
     PfxObjects    pfxGroup;
     std::unique_ptr<Landscape> land;
     std::unique_ptr<Landscape> originalCloth;
+    std::unique_ptr<GrassField> grass; // before `streaming`: the packing gives it the chunks
     struct LandscapeStreaming;
     std::unique_ptr<LandscapeStreaming> streaming;
     struct VobStreaming;

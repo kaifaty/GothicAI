@@ -337,6 +337,13 @@ void Resources::indexMaterialMaps() {
       else
         maps.foliage = p;
       }
+    // Grass (reports/engine/2026-11-14-grass-system): the ground of this texture grows blades round the camera. The
+    // field alone leaves the ground's look as it is; with `foliage` or `antitile` the record is dropped
+    if(const auto grass = entry.value.FindMember("grass"); grass!=entry.value.MemberEnd()) {
+      if(maps.foliage.on || maps.antitile!=Material::Antitile::Off || !Grass::parse(grass->value,maps.grass))
+        valid = false;
+      maps.grassOnly = entry.value.MemberCount()==1;
+      }
     if(!valid) {
       Log::e("materials: invalid entry \"",entry.name.GetString(),"\"");
       continue;
@@ -1359,9 +1366,21 @@ Resources::MaterialMaps Resources::loadMaterialMaps(std::string_view name) {
   ret.strand = files.strand;
   ret.eye = files.eye;
   ret.foliage = files.foliage;
-  ret.present = true;
+  ret.grass = files.grass;
+  ret.present = !files.grassOnly;
   ret.hasAlbedo = !files.albedo.empty();
   return ret;
+  }
+
+Grass::Params Resources::grassParams(std::string_view name) {
+  if(isHeadless() || name.empty())
+    return {};
+  std::lock_guard<std::recursive_mutex> g(inst->sync);
+  std::string key(name);
+  for(auto& c:key)
+    c = char(std::toupper(uint8_t(c)));
+  const auto it = inst->materialMaps.find(key);
+  return it==inst->materialMaps.end() ? Grass::Params{} : it->second.grass;
   }
 
 const Texture2d* Resources::loadMaterialAlbedo(std::string_view name) {

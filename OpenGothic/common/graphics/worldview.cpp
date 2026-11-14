@@ -12,6 +12,7 @@
 
 #include "graphics/mesh/submesh/packedmesh.h"
 #include "graphics/streamedvisual.h"
+#include "graphics/grass/grassfield.h"
 #include "camera.h"
 #include "shaders.h"
 #include "world/chunkresidency.h"
@@ -241,6 +242,8 @@ struct WorldView::LandscapeStreaming {
           chunk.gpu.reset();
           this->residency.recordRelease();
           }
+        if(this->view.grass)
+          this->view.grass->dropChunk(id);
         }
       else if(next==ChunkResidency::State::Near && !chunk.gpu) {
         // Build Near synchronously, including teleports. Invalidate any
@@ -399,6 +402,8 @@ struct WorldView::LandscapeStreaming {
 
   std::unique_ptr<PackedMesh> pack(size_t i, bool currentFile=false) const {
     auto chunk=source->read(i,triangles[i],currentFile);
+    if(view.grass)
+      view.grass->addChunk(residency.table().entries[i].id,chunk.mesh);
     std::vector<uint32_t> selected(chunk.mesh.polygons.material_indices.size());
     std::iota(selected.begin(),selected.end(),uint32_t(0));
     return std::make_unique<PackedMesh>(chunk.mesh,selected,materials,chunk.vertexIds,chunk.featureIds);
@@ -507,10 +512,18 @@ WorldView::~WorldView() {
   // cmd buffers must not be in use
   Resources::device().waitIdle();
   streaming.reset();
+  grass.reset();
   vobStreaming.reset();
   }
 
 void WorldView::startLandscapeStreaming(asset::WorldMesh&& mesh, ChunkResidency& residency, double preloadMs) {
+  if(Grass::enabled().mode!=Grass::Off && Resources::materialMapsEnabled()) {
+    std::vector<ChunkId> ids;
+    for(auto& e:residency.table().entries)
+      if(e.triangleCount!=0)
+        ids.push_back(e.id);
+    grass=std::make_unique<GrassField>(sGlobal,std::move(ids));
+    }
   streaming=std::make_unique<LandscapeStreaming>(*this,std::move(mesh),residency,preloadMs);
   }
 
@@ -627,6 +640,8 @@ void WorldView::preFrameUpdate(const Camera& camera, uint64_t tickCount, uint8_t
   pfxGroup.tick(tickCount);
   gLights.tick(tickCount);
   sGlobal.setTime(tickCount);
+  if(grass)
+    grass->update();
   sGlobal.commitUbo(fId);
 
   {
@@ -741,6 +756,8 @@ void WorldView::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
 
 void WorldView::drawGBuffer(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId) {
   visuals.drawGBuffer(cmd);
+  if(grass)
+    grass->draw(cmd);
   pfxGroup.drawGBuffer(cmd, fId);
   }
 

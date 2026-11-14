@@ -248,9 +248,12 @@ vec3 processVertexCommon(out Varyings shOut, in Vertex v, uint bucketId, uint in
   // Living foliage (foliage_wind.glsl): the leaves of a material with `foliage` move in the world's wind, in every
   // pass alike, so the shadow moves with them. The normal stays the card's
   const uint foliage = (bucket[bucketId].flags & BK_FOLIAGE)!=0u ? bucket[bucketId].foliage : 0u;
-  if(foliageMoves(foliage))
-    v.pos = foliageBend(v.pos, foliage, bucket[bucketId].foliageReach, obj.mat, scene.foliageWind, scene.foliagePhase,
-                        scene.foliageSwing);
+  if(foliageMoves(foliage)) {
+    // the gust comes to the tuft's place when the front does (foliageFrontAt)
+    const vec3 at = foliageFrontAt(obj.mat[3].z, scene.foliageFront.xy, scene.foliageFrontK, scene.foliageWind, scene.foliageSwing);
+    v.pos = foliageBend(v.pos, foliage, bucket[bucketId].foliageReach, obj.mat, vec4(scene.foliageWind.xy, at.x, scene.foliageWind.w),
+                        scene.foliagePhase, vec4(scene.foliageSwing.x, at.y, at.z, 0.0));
+    }
 #endif
 
   // Normals
@@ -385,9 +388,13 @@ vec3 processVertexCommon(out Varyings shOut, in Vertex v, uint bucketId, uint in
       }
 #if (MESH_TYPE==T_OBJ)
     // the leaf where the previous frame's wind had it; the same wind (a pause) gives the same place and no motion
-    if(foliageMoves(foliage))
-      local = foliageBend(local, foliage, bucket[bucketId].foliageReach, obj.mat, scene.foliageWindPrev, scene.foliagePhasePrev,
-                          scene.foliageSwingPrev);
+    if(foliageMoves(foliage)) {
+      const vec3 at = foliageFrontAt(obj.mat[3].z, scene.foliageFront.zw, scene.foliageFrontK, scene.foliageWindPrev,
+                                     scene.foliageSwingPrev);
+      local = foliageBend(local, foliage, bucket[bucketId].foliageReach, obj.mat,
+                          vec4(scene.foliageWindPrev.xy, at.x, scene.foliageWindPrev.w), scene.foliagePhasePrev,
+                          vec4(scene.foliageSwingPrev.x, at.y, at.z, 0.0));
+      }
 #endif
     // prev.mat*local' - mat*local = (prev.mat - mat)*local' + mat*(local' - local); v.pos is this frame's local
     const mat4x3 prevMat = pullInstanceMatPrev(instanceId);

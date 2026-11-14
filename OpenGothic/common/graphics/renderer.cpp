@@ -18,6 +18,7 @@
 
 #include "graphics/drawcommands.h"
 #include "graphics/foliagewind.h"
+#include "graphics/grass/grassparams.h"
 #include "camera.h"
 #include "frameprofile.h"
 #include "utils/string_frm.h"
@@ -327,6 +328,17 @@ void Renderer::setupSettings() {
     if(logged!=int(FoliageWind::enabled())) {
       logged = int(FoliageWind::enabled());
       Log::i("render: foliage = ", logged, " (1 wind, 2 light, 3 both)");
+      }
+  }
+  // The grass round the camera (reports/engine/2026-11-14-grass-system): [INTERNAL] grass=0|1|2, 2 by default;
+  // OPENGOTHIC_GRASS=0|1|2|ground (test benches) overrides it. Read where the buckets are filled and by WorldView
+  {
+    Grass::setSwitch(::Settings::getI("INTERNAL","grass"));
+    static int logged = -1;
+    const auto sw = Grass::enabled();
+    if(logged!=int(sw.mode)*2+int(sw.blades)) {
+      logged = int(sw.mode)*2+int(sw.blades);
+      Log::i("render: grass = ", int(sw.mode), sw.blades ? "" : " (the ground only)");
       }
   }
   // SSAO over frames (reports/engine/2026-11-08-ssao-temporal), on by default: OPENGOTHIC_SSAO_HISTORY=0 traces the

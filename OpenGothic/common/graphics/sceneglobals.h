@@ -84,6 +84,8 @@ class SceneGlobals final {
     const Tempest::Vec3       clipInfo() const;
     // the eye of the main view and the size of the frame it is drawn into (the levels of strands, VisualObjects)
     Tempest::Vec3             camPos()    const { return uboGlobalCpu.camPos;    }
+    // SceneDesc::grassRing: the field of grass says where its blades end (GrassField); zero without it
+    void                      setGrassRing(const Tempest::Vec4& ring) { uboGlobalCpu.grassRing = ring; }
     Tempest::Point            screenRes() const { return uboGlobalCpu.screenRes; }
 
     const Tempest::Matrix4x4  viewProjectLwc() const;
@@ -181,6 +183,10 @@ class SceneGlobals final {
       Tempest::Vec4                   foliagePhasePrev;
       Tempest::Vec4                   foliageSwing;
       Tempest::Vec4                   foliageSwingPrev;
+      // the travelling front of the gust (graphics/foliagefront.h) and the grass ring (graphics/grass/grassparams.h)
+      Tempest::Vec4                   foliageFront;
+      Tempest::Vec4                   foliageFrontK;
+      Tempest::Vec4                   grassRing;
       };
 
     Tempest::UniformBuffer<UboGlobal> uboGlobalPf[Resources::MaxFramesInFlight][V_Count];
