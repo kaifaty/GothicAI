@@ -711,7 +711,7 @@ void foliageWindMaths() {
   require(std::abs(gust.swing.y-SwingTop)<1e-6f && calm.swing.y>0.044f && calm.swing.y<0.061f &&
           std::abs(swingAmp(1.f)-SwingTop)<1e-6f && swingAmp(4.f)==swingAmp(1.f) && swingAmp(0.f)==0.f &&
           std::abs(swingAmp(0.504f)-0.0603f)<2e-4f && swingAmp(0.59f)==SwingTop &&
-          BendK*WaveSteady-SwingTop>0.06f,
+          BendK*(WaveSteady-WaveSwing)-SwingTop>0.05f,
           "the swing is 4.4..6 % of the leaf between gusts and 6.5 % in a gust, half of the lean it rides on");
   require(gust.swing.z>0.9f && gust.swing.z<=1.f && calm.swing.z>0.37f && calm.swing.z<0.61f,
           "the flutter's pressure is 1 at the top of a gust and 0.38..0.60 between gusts");
@@ -798,12 +798,12 @@ void foliageWindMaths() {
   flutterOnly.wind = 0.f;
   float low = 0.f, high = 0.f;
   sweep(bendOnly,1.f,true,low,high);
-  require(low>8.0f && low<8.5f && high>13.3f && high<13.9f,
-          "the world's gust holds an 85 cm leaf over: 8.2 cm in the trough of the waves, 13.6 cm, 16 %, on the crest");
+  require(low>10.0f && low<10.6f && high>13.3f && high<13.9f,
+          "the world's gust holds an 85 cm leaf over: 10.2 cm in the trough of the waves, 13.6 cm, 16 %, on the crest");
   sweep(bendOnly,0.075f,true,low,high);
-  require(low>0.55f && high<1.1f,"in the calmest wind between gusts the same leaf leans by 0.6..1.0 cm");
+  require(low>0.7f && high<1.1f,"in the calmest wind between gusts the same leaf leans by 0.8..1.0 cm");
   sweep(bendOnly,0.27f,true,low,high);
-  require(low>2.1f && high<3.8f,"and by 2.2..3.7 cm in the freshest");
+  require(low>2.6f && high<3.8f,"and by 2.8..3.7 cm in the freshest");
   sweep(flutterOnly,1.f,false,low,high);
   require(high>2.0f && high<2.3f,"the flutter of that leaf in the gust is 2.2 cm");
   sweep(flutterOnly,0.38f,false,low,high);
