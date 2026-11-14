@@ -73,7 +73,9 @@ constexpr float SwingBeatMin = 4.f;      // the second rate is this many swings 
 constexpr float SwingBeatVar = 6.f;      // this many more: the swing rises and falls every 6.7..15 s
 constexpr float Swing1Share  = 0.6f;
 constexpr float Swing2Share  = 0.4f;
-constexpr float SwingK       = 0.085f;   // of the arm at GustSpeed; grows as the root of the speed: 4.4..6 % in the breeze
+constexpr float SwingK       = 0.085f;   // of the arm, by the root of the speed over GustSpeed: 4.4..6 % in the breeze
+constexpr float SwingTop     = 0.065f;   // and no more in a gust: a leaf held 10..16 % over must not swing back to where
+                                         // the breeze keeps it, or the gust reads as a wider swing and not as a push
 constexpr float SwingMaxTan  = 0.12f;    // the cap of it; the lean keeps under BendMaxTan less the swing
 constexpr float SwingAcross  = 0.3f;     // the part of the swing across the wind
 constexpr float Swing1Leaf   = 0.012f;   // rad per cm across the tuft: its sides are a little out of step, and a card
@@ -147,7 +149,7 @@ inline float pressure(float x) {
   return air + (1.f-air)*gust;
   }
 inline float eddy(float x)     { return std::pow(x, EddyCurve); }
-inline float swingAmp(float x) { return SwingK*std::sqrt(std::min(x, 1.f)); }
+inline float swingAmp(float x) { return std::min(SwingK*std::sqrt(std::max(x, 0.f)), SwingTop); }
 
 // The same wind as the tilt of the original's vegetation (WorldWind::shaderMatrix): a steady 4 m/s without the
 // cloth's world wind. Every phase is a whole remainder of the tick, so a fixed step repeats and a pause stands

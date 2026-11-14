@@ -708,9 +708,11 @@ void foliageWindMaths() {
   const Scene gust = scene(peak,period,true,1.f,false), calm = scene(lull,period,true,1.f,false);
   require(gust.wind.w==1.f && gust.wind.z>0.999f && gust.wind.z<=1.f+1e-6f,"the peak of the world's gust is pressure 1");
   require(calm.wind.w==1.f && calm.wind.z>0.07f && calm.wind.z<0.28f,"between gusts the lean's pressure is 0.075..0.27");
-  require(gust.swing.y>0.08f && gust.swing.y<=SwingK && calm.swing.y>0.044f && calm.swing.y<0.061f &&
-          std::abs(swingAmp(1.f)-SwingK)<1e-6f && swingAmp(4.f)==swingAmp(1.f),
-          "the swing is 4.4..6 % of the leaf between gusts and up to 8.5 % in a gust");
+  require(std::abs(gust.swing.y-SwingTop)<1e-6f && calm.swing.y>0.044f && calm.swing.y<0.061f &&
+          std::abs(swingAmp(1.f)-SwingTop)<1e-6f && swingAmp(4.f)==swingAmp(1.f) && swingAmp(0.f)==0.f &&
+          std::abs(swingAmp(0.504f)-0.0603f)<2e-4f && swingAmp(0.59f)==SwingTop &&
+          BendK*WaveSteady-SwingTop>0.06f,
+          "the swing is 4.4..6 % of the leaf between gusts and 6.5 % in a gust, half of the lean it rides on");
   require(gust.swing.z>0.9f && gust.swing.z<=1.f && calm.swing.z>0.37f && calm.swing.z<0.61f,
           "the flutter's pressure is 1 at the top of a gust and 0.38..0.60 between gusts");
   require(std::abs(gust.wind.x*gust.wind.x + gust.wind.y*gust.wind.y - 1.f)<1e-4f,"the direction is a unit vector");
