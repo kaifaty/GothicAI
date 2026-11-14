@@ -16,7 +16,10 @@
 
 #include "resources.h"
 #include "worldchunksruntime.h"
+#include "asset/worldmesh.h"
+#include "graphics/mesh/submesh/packedmesh.h"
 #include "physics/dynamicworld.h"
+#include "physics/physicmeshshape.h"
 
 #include <algorithm>
 #include <cmath>
@@ -25,6 +28,7 @@
 #include <functional>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -57,6 +61,14 @@ constexpr float Pi = 3.14159265358979f;
 float radians(float degrees) {
   return degrees*Pi/180.f;
   }
+
+// The world's numbers, written out here and not taken from islandbody.h: a hero who falls by other ones fails.
+constexpr float EarthGravity = 9.81f; // m/s^2
+constexpr float StandingJump = 0.5f;  // m: a standing jump of an untrained man rises 0.4-0.6 m
+constexpr float WalkWanted   = 1.37f; // m/s: S_WALKL of Gothic's hero
+constexpr float RunWanted    = 3.45f; // m/s: S_RUNL
+// a jump of StandingJump under EarthGravity: up and down again
+const float JumpFlight = 2.f*std::sqrt(2.f*StandingJump/EarthGravity);
 
 float horizontal(const Vec3& a, const Vec3& b) {
   return std::hypot(a.x-b.x, a.z-b.z);
@@ -160,7 +172,7 @@ void checkSpeed(Sim& sim, float x, float z, float yaw, bool run) {
   const Vec3 from = sim.hero.position();
   sim.run(5000, c, [&] { require(sim.hero.onGround(), "the hero must keep to the meadow"); });
   const float speed  = horizontal(sim.hero.position(), from)*0.01f/5.f;
-  const float wanted = island::Hero::speed(run);
+  const float wanted = run ? RunWanted : WalkWanted;
   std::cout << text("%s: %.3f m/s over 5 s on the meadow, %.3f m/s wanted\n", run ? "run" : "walk", double(speed),
                     double(wanted));
   require(std::abs(speed-wanted)<=wanted*0.05f,
@@ -188,13 +200,13 @@ void checkJump(Sim& sim, float x, float z) {
       back = true;
       }
     });
-  const float flight = 2.f*std::sqrt(2.f*island::JumpHeight/island::Gravity);
+  const float flight = JumpFlight;
   std::cout << text("jump: apex %.3f m (%.2f wanted), %.3f s in the air (%.3f), %u jump, %u landing\n", double(apex),
-                    double(island::JumpHeight), double(air), double(flight), sim.hero.jumps()-jumps,
+                    double(StandingJump), double(air), double(flight), sim.hero.jumps()-jumps,
                     sim.hero.landings()-landings);
   require(sim.hero.jumps()==jumps+1, "a press of the jump must begin one jump");
-  require(apex>=island::JumpHeight*0.95f && apex<=island::JumpHeight*1.05f,
-          text("the jump's apex must be %.2f m within 5 %%: %.3f m", double(island::JumpHeight), double(apex)));
+  require(apex>=StandingJump*0.95f && apex<=StandingJump*1.05f,
+          text("the jump's apex must be %.2f m within 5 %%: %.3f m", double(StandingJump), double(apex)));
   require(back && sim.hero.onGround() && !sim.hero.jumping(), "the hero must land and stand again");
   require(sim.hero.landings()==landings+1, "the landing must be counted once");
   require(std::abs(air-flight)<=0.05f, text("the flight must last %.2f s: %.3f s", double(flight), double(air)));
@@ -253,7 +265,7 @@ void checkGentleSlope(Sim& sim) {
         if(sim.hero.landings()==landings)
           air += 1.f/60.f;
         });
-      const float flight = 2.f*std::sqrt(2.f*island::JumpHeight/island::Gravity);
+      const float flight = JumpFlight;
       std::cout << text("running jump up %.1f degrees: %.3f s in the air (%.3f on level ground)\n", double(s0),
                         double(air), double(flight));
       require(sim.hero.landings()==landings+1 && sim.hero.onGround(), "a jump up the slope must land");
@@ -309,6 +321,71 @@ void checkSteepSlope(Sim& sim, const asset::WorldMesh& mesh) {
     return;
     }
   throw std::runtime_error("the island must have a steep band with walkable ground at its foot");
+  }
+
+// Ground at the limit: the island has no long run of 30-40 degrees, so two ramps of a plane stand in the sea off
+// the north-east corner, 3 m over the water, in the same DynamicWorld: 8 m level, then `angle` for 6 m, then level.
+struct Ramp {
+  std::unique_ptr<PhysicMeshShape> shape;
+  DynamicWorld::Item               body;
+  float                            x = 0, z = 0, rise = 0; // the level start's middle, metres; the slope's height
+  };
+
+Ramp makeRamp(DynamicWorld& physics, float x, float z, float angle) {
+  Ramp ramp;
+  ramp.x    = x;
+  ramp.z    = z;
+  ramp.rise = 6.f*std::tan(radians(angle));
+  asset::WorldMesh mesh;
+  mesh.materials.resize(1);
+  mesh.materials[0].group = asset::MaterialGroup::STONE;
+  // the profile along x, centimetres from the start: level, slope, level
+  const float px[] = {0, 800, 1400, 1800}, py[] = {0, 0, ramp.rise*100.f, ramp.rise*100.f};
+  for(int i=0; i<3; ++i) {
+    const auto first = uint32_t(mesh.vertices.size());
+    mesh.vertices.push_back({px[i],   py[i],   -200});
+    mesh.vertices.push_back({px[i+1], py[i+1], -200});
+    mesh.vertices.push_back({px[i+1], py[i+1],  200});
+    mesh.vertices.push_back({px[i],   py[i],    200});
+    mesh.polygons.vertex_indices.insert(mesh.polygons.vertex_indices.end(),
+                                        {first, first+1, first+2, first, first+2, first+3});
+    mesh.polygons.material_indices.insert(mesh.polygons.material_indices.end(), {0, 0});
+    }
+  ramp.shape.reset(PhysicMeshShape::load(PackedMesh(mesh, PackedMesh::PK_Physic)));
+  auto at = Tempest::Matrix4x4::mkIdentity();
+  at.translate(x*100.f, 300.f, z*100.f);
+  ramp.body = physics.addStaticObj(ramp.shape.get(), at, "ISLAND_TEST_RAMP");
+  require(!ramp.body.isEmpty(), "the ramp must have a body");
+  return ramp;
+  }
+
+// Two degrees and three degrees from the limit, on either side of it: under it he walks up, over it he does not run up.
+void checkSlopeLimit(Sim& sim) {
+  const float under = island::WalkSlope-3.f, over = island::WalkSlope+3.f;
+  require(under>=30.f && under<=34.f && over>=36.f && over<=40.f, "the ramps lie 30-34 and 36-40 degrees");
+  const Ramp gentle = makeRamp(sim.world.physics(), 150.f, 140.f, under);
+  const Ramp steep  = makeRamp(sim.world.physics(), 150.f, 160.f, over);
+  for(const Ramp* ramp:{&gentle, &steep}) {
+    const bool  walkable = ramp==&gentle;
+    const float angle    = walkable ? under : over;
+    sim.place(ramp->x+4.f, ramp->z, 0);
+    require(std::abs(sim.hero.position().y-300.f)<=2.f, text("the hero must stand on the ramp's level start: %.1f cm", double(sim.hero.position().y)));
+    island::Control c;
+    c.forward = 1;
+    c.run     = !walkable; // over the limit even running does not take him up
+    float top = sim.hero.position().y;
+    sim.run(12000, c, [&] { top = std::max(top, sim.hero.position().y); });
+    const float rise = (top-300.f)*0.01f;
+    std::cout << text("ramp of %.0f degrees (limit %.0f): %s it for 12 s he rose %.2f m of %.2f m\n", double(angle),
+                      double(island::WalkSlope), walkable ? "walking up" : "running at", double(rise),
+                      double(ramp->rise));
+    if(walkable)
+      require(rise>=ramp->rise-0.05f, text("%.0f degrees must be walked up: %.2f m of %.2f m", double(angle),
+                                            double(rise), double(ramp->rise)));
+    else
+      require(rise<=0.3f, text("%.0f degrees must not be run up: %.2f m of %.2f m", double(angle), double(rise),
+                               double(ramp->rise)));
+    }
   }
 
 // Out to sea from the demo's start: he wades in and stops at his hips.
@@ -402,6 +479,7 @@ int main(int argc, char**) {
     checkJump(sim, x, z);
 
     checkGentleSlope(sim);
+    checkSlopeLimit(sim);
     checkSteepSlope(sim, readWorldChunks(data.world()));
     checkSea(sim);
     checkBoulder(sim);
