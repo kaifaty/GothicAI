@@ -3,7 +3,7 @@
 #include "savearchive.h"
 
 #include "gametime.h"
-#include "constants.h"
+#include "rpgvocabulary.h"
 
 #include <ctime>
 #include <memory>
