@@ -30,32 +30,33 @@ Role role(std::string_view boneName);
 Side side(std::string_view boneName);
 
 // The one table of the motor phases (seconds; torque in N*m per kilogram of the part).
-// Without a landing pose every new number is ignored, retaining the single-pose fall.
+// Without a landing pose land*, armsRest and the leg switches are ignored.
 struct Profile final {
   float armsEnter = .28f;  // the target goes from the birth angles to the pose
   float armsHold  = .70f;  // held until the arm's hand, fingers or forearm touches, no longer than this from birth
-  float armsDrop  = .10f;  // after the touch the limit falls to armsLevel in this time
-  float armsLevel = .35f;
-  float armsRest  = .20f;  // with a landing pose, hold armsLevel before yielding
+  float armsDrop  = .25f;  // after the touch the limit falls to armsLevel in this time
+  float armsLevel = .70f;
+  float armsRest  = .25f;  // with a landing pose, hold armsLevel before yielding
   float armsYield = .40f;  // then to zero in this time
-  float armsTorque = 18.f;
+  float armsTorque = 90.f;
+  float armsStiff = 25.f;  // spring frequency of an arm's motors once it has touched, Hz; 6 is the ordinary fade's
   float neckEnter = .25f;
   float neckHold  = 1.f;   // held until the trunk (pelvis or spine) touches, no longer than this
   float neckYield = .40f;
   float neckTorque = 12.f;
   float spineEnter = 0.f;
   float legsEnter  = .12f;
-  float legsFront = 0.f, legsBack = 1.f, legsSide = 1.f; // first-pose switches, 0 or 1
+  float legsFront = 1.f, legsBack = 1.f, legsSide = 1.f; // first-pose switches, 0 or 1
   float landEnter = .18f;
-  float landHold = .25f;
-  float landYield = .45f;
-  float landTorque = 14.f;
+  float landHold = .12f;
+  float landYield = .30f;
+  float landTorque = 10.f;
   };
 
 // The game's profile; the bench command `brace-profile <group> <key> <value>` edits it.
 // A changed number applies to the next fall.
 Profile& profile();
-// Also land enter|hold|yield|torque, arms rest, legs front|back|side (0 or 1).
+// Also land enter|hold|yield|torque, arms rest|stiff (Hz), legs front|back|side (0 or 1).
 // Rejects unknown names and negative or nonfinite numbers without changing the profile.
 bool setNumber(Profile& profile, std::string_view group, std::string_view key, float value);
 std::string describe(const Profile& profile);
@@ -81,6 +82,7 @@ struct MotorProbe final {
   uint32_t      bone = 0;
   float         massKg = 0;
   float         torqueLimit = 0;   // N*m, the larger of the swing and twist motors; zero while both are off
+  float         swingHz = 0, twistHz = 0; // motor spring frequencies, Hz, including the last settings while off
   float         errorDeg = 0;      // the joint's rotation from its motor target
   float         requestDeg = 0;    // how far the limits moved the brace's latest target (0 without a brace)
   float         clampDeg = 0;      // how far the limits moved the pose target when it was accepted

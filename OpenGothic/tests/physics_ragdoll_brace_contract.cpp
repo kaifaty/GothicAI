@@ -24,11 +24,18 @@
 #include <cstring>
 #include <filesystem>
 #include <memory>
+#include <limits>
 #include <string>
 #include <vector>
 
 // The synthetic human of physics_ragdoll_contract.cpp.
 zenkit::ModelHierarchy ragdollContractHierarchy();
+
+// The bench command's numeric parser, before RagdollBrace::setNumber.
+namespace testbench_detail {
+bool isNumber(const std::string& s);
+float num(const std::vector<std::string>& a, size_t i, float def);
+}
 
 // CollisionWorld's friend: the arms' reach is measured without gravity.
 class RagdollBraceContract final {
@@ -283,7 +290,8 @@ void testYieldAfterTouch() {
   const auto pose=human.armsForward();
   require(body->brace(Kind::Front,pose.data(),pose.size(),RagdollBrace::Profile{}),"the yield case needs an accepted pose");
   const RagdollBrace::Profile profile;
-  float touchedAt=-1, worstLeft01=0, worstLeft05=0, rightHeld=1, rightAfter=1;
+  float touchedAt=-1, worstLeft025=0, worstLeft065=0, rightHeld=1, rightAfter=1;
+  size_t softSamples=0,stiffSamples=0,otherSamples=0;
   float age=0;
   for(int frame=0;age<1.3f;++frame) {
     age=tick(world,frame,birth);
@@ -295,24 +303,52 @@ void testYieldAfterTouch() {
     for(size_t bone:{LUpper,LFore,LHand}) {
       const auto& p=probe(probes,bone);
       const float share=p.torqueLimit/(p.massKg*profile.armsTorque);
-      if(touchedAt>=0.f && age>=touchedAt+.1f-1.e-4f) worstLeft01=std::max(worstLeft01,share);
-      if(touchedAt>=0.f && age>=touchedAt+.5f+1.e-3f) worstLeft05=std::max(worstLeft05,p.on ? 1.f : share);
+      if(touchedAt>=0.f && age>=touchedAt+.25f-1.e-4f) worstLeft025=std::max(worstLeft025,share);
+      if(touchedAt>=0.f && age>=touchedAt+.65f+1.e-3f) worstLeft065=std::max(worstLeft065,p.on ? 1.f : share);
+      // Contacts are read after the native step; its motor still used the previous touch state.
+      if(touchedAt<0.f || age>touchedAt+1.e-4f) {
+        const float hz=touchedAt<0.f ? 6.f : profile.armsStiff;
+        require(p.swingHz==hz && p.twistHz==hz,"an arm's motors use 6 Hz before its own touch, armsStiff afterwards");
+        if(touchedAt<0.f) ++softSamples; else ++stiffSamples;
+        }
       }
     for(size_t bone:{RUpper,RFore,RHand}) {
       const auto& p=probe(probes,bone);
+      require(p.swingHz==6.f && p.twistHz==6.f,"an untouched second arm stays at 6 Hz, even after armsHold");
       const float share=p.on ? p.torqueLimit/(p.massKg*profile.armsTorque) : 0.f;
       if(age<=profile.armsHold+1.e-4f) rightHeld=std::min(rightHeld,share);
       if(age>=profile.armsHold+.05f) rightAfter=std::min(rightAfter,share);
       }
+    for(const auto& p:probes) {
+      if(p.bone>=LUpper && p.bone<=RHand) continue;
+      require(p.swingHz==6.f && p.twistHz==6.f,"neck, head, spine and leg motors always keep the ordinary 6 Hz");
+      ++otherSamples;
+      }
     }
-  std::printf("ragdoll brace yield: left touch %.3f s, left limit share after 0.1 s <= %.3f, after 0.5 s %.3f; "
-              "right held share >= %.4f until 0.7 s, then down to %.3f\n",
-              double(touchedAt),double(worstLeft01),double(worstLeft05),double(rightHeld),double(rightAfter));
+  std::printf("ragdoll brace yield: left touch %.3f s, left limit share after 0.25 s <= %.3f, after 0.65 s %.3f; "
+              "right held share >= %.4f until 0.7 s, then down to %.3f; spring_Hz 6 -> %.0f, samples soft=%zu stiff=%zu other=%zu\n",
+              double(touchedAt),double(worstLeft025),double(worstLeft065),double(rightHeld),double(rightAfter),
+              double(profile.armsStiff),softSamples,stiffSamples,otherSamples);
   require(touchedAt>0.f && touchedAt<.7f,"the post must stop the left arm before its hold ends");
-  require(worstLeft01<=profile.armsLevel+1.e-4f,"0.1 s after its touch an arm holds at most 35 per cent of its limit");
-  require(worstLeft05==0.f,"0.5 s after its touch an arm has no motor torque");
+  require(worstLeft025<=profile.armsLevel+1.e-4f,"0.25 s after its touch an arm holds at most 70 per cent of its limit");
+  require(worstLeft065==0.f,"0.65 s after its touch an arm has no motor torque");
+  require(softSamples>0 && stiffSamples>0 && otherSamples>0,"spring frequencies must be sampled before and after contact");
   require(rightHeld>=1.f-1.e-5f,"an arm without a touch holds its full limit until 0.7 s");
   require(rightAfter<1.f,"after 0.7 s an untouched arm gives way too");
+  }
+
+void testStiffnessNumber() {
+  RagdollBrace::Profile numbers;
+  const std::vector<std::string> command={"brace-profile","arms","stiff","37.5"};
+  require(testbench_detail::isNumber(command[3]) &&
+          RagdollBrace::setNumber(numbers,command[1],command[2],testbench_detail::num(command,3,-1.f)) && numbers.armsStiff==37.5f,
+          "brace-profile arms stiff accepts a numeric frequency");
+  require(!RagdollBrace::setNumber(numbers,"arms","stiff",-1.f) && numbers.armsStiff==37.5f,
+          "brace-profile arms stiff rejects a negative frequency without changing it");
+  require(!testbench_detail::isNumber("nope") &&
+          !RagdollBrace::setNumber(numbers,"arms","stiff",std::numeric_limits<float>::quiet_NaN()) && numbers.armsStiff==37.5f,
+          "brace-profile arms stiff rejects nonnumeric input without changing the frequency");
+  std::puts("ragdoll brace arms stiff: 37.5 Hz accepted; -1, nope and NaN rejected, profile unchanged");
   }
 
 void testGapIsNoTouch() {
@@ -614,6 +650,11 @@ void testSinglePoseUnchanged() {
       body->knockOff(throws[i],30.f);
       const auto pose=human.armsForward();
       RagdollBrace::Profile numbers;
+      numbers.armsEnter=.28f; numbers.armsHold=.70f; numbers.armsDrop=.10f; numbers.armsLevel=.35f;
+      numbers.armsRest=.20f; numbers.armsYield=.40f; numbers.armsTorque=18.f; numbers.armsStiff=6.f;
+      numbers.neckEnter=.25f; numbers.neckHold=1.f; numbers.neckYield=.40f; numbers.neckTorque=12.f;
+      numbers.spineEnter=0.f; numbers.legsEnter=.12f; numbers.legsFront=0.f; numbers.legsBack=1.f; numbers.legsSide=1.f;
+      numbers.landEnter=.18f; numbers.landHold=.25f; numbers.landYield=.45f; numbers.landTorque=14.f;
       if(changedNumbers) {
         numbers.landEnter=5.f; numbers.landHold=5.f; numbers.landYield=5.f; numbers.landTorque=500.f;
         numbers.armsRest=5.f; numbers.legsFront=1.f; numbers.legsBack=0.f; numbers.legsSide=0.f;
@@ -705,6 +746,7 @@ void testFallBrace() {
   testReachWithoutGravity();
   testForwardFall();
   testYieldAfterTouch();
+  testStiffnessNumber();
   testGapIsNoTouch();
   testLandingPhase();
   testSideLegSwitch();
