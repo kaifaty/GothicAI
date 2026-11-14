@@ -34,7 +34,8 @@ layout(push_constant, std140) uniform Pbo {
   uint  probeFlags; // 1 OPENGOTHIC_VSM_LAMP_FLOOR, 2 OPENGOTHIC_VSM_LAMP_CENTRE
   // OPENGOTHIC_VSM_LAMP_EXP (step-2d-why.md): 1 still, the pattern of main under TAA too; 2 inner, the first search
   // takes the inner taps; 4 litall, 'all lit' only after the whole search; 8 radial, the taps' radii move per frame;
-  // 16 expect, the mean of 16 frames' patterns in one frame; 32 paths, the exit path as a colour instead of light
+  // 16 expect, the mean of 16 frames' patterns in one frame; 32 paths, the exit path as a colour instead of light;
+  // 64 own (2026-11-14-lamp-stipple), the still pattern's first search reads the point's own texels too
   uint  probeExp;
 #endif
   } push;
@@ -458,13 +459,26 @@ float omniShadow(const vec3 P, const vec3 n, const float R, const float S, const
     omniGather(u + o.x*T + o.y*B, hf, searchHome, P, n, R, atlasInv, ratio, count);
     }
 #if defined(VSM_LAMP_PROBE)
-  probeEarly = count==0 ? 1u : (count>=2.0*omniSearch.length() ? 2u : 0u);
+  // the study's 'own' (reports/render-features/2026-11-14-lamp-stipple): the four taps above stand 0.43..0.97 of the
+  // search's radius from the point, and a blocker smaller than that close over it (hair over skin) is seen by them or
+  // not as the pixel's noise turns them. Here the point's own four texels join them
+  float blockedAll = 2.0*omniSearch.length();
+  if((push.probeExp & 64u)!=0u) {
+    omniGatherFace(u, hf, R, atlasInv, ratio, count);
+    blockedAll += 4.0;
+    }
+  probeEarly = count==0 ? 1u : (count>=blockedAll ? 2u : 0u);
   probeBin   = searchR<=1.5*texel ? 16u : 0u;
-#endif
+  if(count==0)
+    return 1.0;
+  if(count>=blockedAll)
+    return 0.0;
+#else
   if(count==0)
     return 1.0;
   if(count>=2.0*omniSearch.length())
     return 0.0;
+#endif
   [[unroll]]
   for(int i=0; i<omniSearch.length(); i+=2) {
     const vec2 o = (rm*omniSearch[i])*searchR;

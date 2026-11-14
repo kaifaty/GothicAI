@@ -130,11 +130,11 @@ Renderer::Renderer() {
     settings.vsmLampStudy  = true;
     Log::i("vsm: lamp filter study: the narrow penumbra in texels of the face's centre");
     }
-  // OPENGOTHIC_VSM_LAMP_EXP=still,inner,litall,radial,expect,paths: the experiments of step-2d-why.md (light.frag, probeExp)
+  // OPENGOTHIC_VSM_LAMP_EXP=still,inner,litall,radial,expect,paths,own: step-2d-why.md, 2026-11-14-lamp-stipple (light.frag, probeExp)
   if(const char* e = std::getenv("OPENGOTHIC_VSM_LAMP_EXP")) {
     const std::string_view s = e;
-    const char* names[] = {"still", "inner", "litall", "radial", "expect", "paths"};
-    for(uint32_t i=0; i<6; ++i)
+    const char* names[] = {"still", "inner", "litall", "radial", "expect", "paths", "own"};
+    for(uint32_t i=0; i<7; ++i)
       if(s.find(names[i])!=std::string_view::npos)
         settings.vsmLampExp |= 1u << i;
     settings.vsmLampStudy = true;
