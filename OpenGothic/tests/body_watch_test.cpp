@@ -1071,12 +1071,12 @@ class NpcLogicalStateContract final {
       }
 
     static void meleeAi(Npc& actor,Npc& target) {
-      if(!actor.hasAnim("T_1HDASHB") || !actor.hasAnim("T_1HRIPOSTE") || !target.hasAnim("T_RIPOSTEVICTIM")) {
+      if(!actor.hasAnim("T_1HDASHB")) {
         std::cerr << "melee AI fixture skipped: needs OPENGOTHIC_CONTENT with anim-strikes\n";
         return;
         }
-      const std::array<std::pair<const char*,int>,7> settings{{
-        {"melee_dodge",1},{"melee_ai_dodge",1},{"melee_riposte",1},{"melee_ai_riposte",1},
+      const std::array<std::pair<const char*,int>,5> settings{{
+        {"melee_dodge",1},{"melee_ai_dodge",1},
         {"melee_stagger",1},{"melee_stamina",0},{"melee_parry_ai",0},
         }};
       std::array<int,settings.size()> saved{};
@@ -1086,10 +1086,8 @@ class NpcLogicalStateContract final {
         }
       const auto talent=actor.hitChance(TALENT_1H);
       const auto prepare=[&](float distance=150.f,float yaw=0.f) {
-        for(auto* npc:{&actor,&target}) {
-          npc->endMeleeStun("fixture"); npc->meleeRiposte.reset();
-          npc->meleeRiposteHoldUntil=0; npc->meleeRiposteAiHeld=false; npc->meleeAiRiposteRolls.clear();
-          }
+        for(auto* npc:{&actor,&target})
+          npc->endMeleeStun("fixture");
         actor.meleeAiDodgeTiming.reset(); actor.meleeAiDodgeStreak.reset();
         BodyController::fixturePrepare(actor,target,distance,yaw);
         actor.setExternalControl(true);
@@ -1121,7 +1119,7 @@ class NpcLogicalStateContract final {
       expect(target.isMeleeStunned(),"native combo fixture has a stunned target");
       queue(FightAlgo::MV_ATTACKL,FightAlgo::MV_ATTACKR);
       actor.implAttack(tickMs);
-      expect(actor.fghAlgo.queuedAction()==FightAlgo::MV_ATTACKR && actor.meleeAiRiposteRolls.empty(),
+      expect(actor.fghAlgo.queuedAction()==FightAlgo::MV_ATTACKR,
              "parry AI off preserves the native combo against a stunned target");
 
       for(const bool parade:{false,true}) {
@@ -1201,14 +1199,6 @@ class NpcLogicalStateContract final {
         expect(backward,"P30 jump back starts an actual backward dodge animation");
         }
 
-      ++cases;
-      prepare();
-      actor.handle().hitchance[TALENT_1H]=100;
-      target.startMeleeStun(actor,"posture");
-      expect(target.isMeleeStunned(),"P30 riposte fixture has a stunned target");
-      actor.implAttack(tickMs,true,FightAlgo::MV_ATTACK);
-      expect(actor.isMeleeRiposting() && target.isMeleeRiposteHeld() && !actor.meleeAiRiposteRolls.empty(),
-             "P30 direct attack on a stunned target reaches the real riposte roll and paired execution");
       prepare(300);
       actor.handle().hitchance[TALENT_1H]=talent;
       actor.meleeStamina={};

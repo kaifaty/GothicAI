@@ -32,7 +32,7 @@ class DamageCalculator {
       void     operator /= (int32_t v) { for(auto& i:val) i/=v; }
       };
 
-    static Val     damageValue(Npc& src, Npc& other, const Bullet* b, bool isSpell, const DamageCalculator::Damage& splDmg, const CollideMask bMsk, bool fist = false);
+    static Val     damageValue(Npc& src, Npc& other, const Bullet* b, bool isSpell, const DamageCalculator::Damage& splDmg, const CollideMask bMsk);
     static float   meleeMultiplier(float speedCmS, float typicalCmS, float bladeFraction, float surfaceAngleDeg, size_t targetIndex);
     static Val     damageFall(Npc& src, float speed);
     // G2's dice for an arrow, % (Gothic2.exe, oCAIArrow::ReportCollisionToAI): a hit chance of hitChance %,
@@ -46,6 +46,6 @@ class DamageCalculator {
 
     static Val     rangeDamage(Npc& src, Npc& other, const Bullet& b, const CollideMask bMsk);
     static Val     rangeDamage(Npc& src, Npc& other, Damage dmg, const CollideMask bMsk);
-    static Val     swordDamage(Npc& src, Npc& other, bool fist = false);
+    static Val     swordDamage(Npc& src, Npc& other);
   };
 

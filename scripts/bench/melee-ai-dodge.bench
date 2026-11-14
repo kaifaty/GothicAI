@@ -1,5 +1,5 @@
 # Native 1H dodge replacement: run unchanged with MELEE_AI_DODGE=1 and 0.
-# WORLD=NEWWORLD.ZEN OPENGOTHIC_BODY_TRACE=1 MELEE_DODGE=1 MELEE_STAMINA=1 MELEE_POSTURE=0 MELEE_AI_RIPOSTE=0 TIMEOUT=900
+# WORLD=NEWWORLD.ZEN OPENGOTHIC_BODY_TRACE=1 MELEE_DODGE=1 MELEE_STAMINA=1 MELEE_POSTURE=0 TIMEOUT=900
 # OPENGOTHIC_CONTENT=/Users/kaifat/.local/share/gothic-ai/content-staging/anim-strikes
 # Ordinary running attacks use T_1HATTACKMOVE; NPC animations and hit reactions run normally.
 # Prime one native fight per case. Reposition only the hero, preserving the native FAI queue and weapon stance.
