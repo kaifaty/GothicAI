@@ -13,6 +13,7 @@
 #include "lighting/purkinje_shift.glsl"
 #include "scene.glsl"
 #include "common.glsl"
+#include "grass/grass_light.glsl"
 #if defined(MATERIAL_MAPS)
 #include "lighting/material_brdf.glsl"
 #include "lighting/hair_brdf.glsl"
@@ -255,6 +256,9 @@ void main(void) {
   if((scene.vsmStudy & VSM_STUDY_SUN_PIXEL)==0u && pixelNormal!=vec3(0))
     geomNormal = depthNormalWide(fragCoord, d, pixelNormal);
   geomNormal = facedNormal(geomNormal, normal);
+  // a blade of grass against the sun: the plane of its normal, not its own (grass/grass_common.glsl)
+  if(isGrassThin(diff.a, geomNormal, normal, scene.sunDir))
+    geomNormal = vec3(0);
 #endif
 
   const bool  isFlat = isGBufFlat(diff.a);
