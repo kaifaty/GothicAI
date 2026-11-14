@@ -59,6 +59,7 @@ class Settings final {
       bool meleeAiCharge = true;
       bool bodyTraces = true;
       bool blood = true;
+      bool ragdollBrace = true;
 
       bool allowsMonsterCharacterVirtual(bool down, bool flying) const {
         return monsterCharacterVirtual && !down && !flying;

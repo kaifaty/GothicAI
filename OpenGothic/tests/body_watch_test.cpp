@@ -1788,6 +1788,36 @@ class NpcLogicalStateContract final {
       expect(samples.ticks==3 && samples.bodyMismatch==0,
              "body overrides cannot turn hidden layer forecasts into body comparisons");
 
+      {
+        ++cases;
+        auto& world=*gothic.world();
+        const auto originalKind=static_cast<const daedalus::INpc&>(npc->handle()).symbol_index();
+        const auto sheep=world.script().findSymbolIndex("SHEEP");
+        expect(sheep!=size_t(-1) && sheep!=originalKind,"transformation fixture uses a different stock NPC kind");
+        expect(npc->transformInto(sheep),"transformation fixture changes the real NPC instance");
+        std::vector<uint8_t> bytes;
+        {
+          Tempest::MemWriter writer(bytes);
+          Serialize out(writer);
+          out.setContext(&world);
+          out.setEntry("transform-kind");
+          npc->saveTrState(out);
+          npc->transformBack();
+          npc->save(out,id,"/npc/");
+          }
+        Tempest::MemReader reader(bytes);
+        Serialize in(reader);
+        in.setContext(&world);
+        expect(in.setEntry("transform-kind"),"transformation snapshot entry exists");
+        bool transformed=false;
+        uint32_t kind=uint32_t(-1);
+        in.read(transformed,kind);
+        expect(transformed && kind==originalKind,"transformation snapshot stores the original NPC kind");
+        expect(in.setEntry("worlds/",in.worldName(),"/npc/",id,"/data"),"restored NPC save entry exists");
+        in.read(kind);
+        expect(kind==originalKind && npc->instanceSymbol()==originalKind,"restored NPC save stores the original kind");
+        }
+
       ++cases;
       auto retained=npc->handlePtr(); // Keep the invalid actor eligible for revival.
       const auto* waypoint=npc->world().findWayPoint(npc->position());
@@ -1888,6 +1918,28 @@ int main(int argc,const char** argv) {
     const auto wireStatus=parse(BodyController::statusJson(&a));
     for(const char* field:{"process_policy","segment_remaining_ms","fai_gate","ani_gate","ai_gate","output_gate","interruptible"})
       expect(!wireStatus["actors"][0].HasMember(field),"wire status keeps the strict server schema; boundary diagnostics are opt-in");
+    if(!missingNetwork) {
+      ++cases;
+      auto& script=gothic.world()->script();
+      auto& vm=script.getVm();
+      const auto current=std::static_pointer_cast<daedalus::INpc>(gothic.player()->handlePtr());
+      const auto copied=std::static_pointer_cast<daedalus::INpc>(script.copyNpc(gothic.player()->handlePtr()));
+      expect(copied!=current,"dialog fixture uses a copied NPC instance");
+      const auto previousOther=vm.global_other()->get_instance();
+      auto previousExtra=std::move(gothic.dialogExtraFn);
+      bool receivedCurrent=false;
+      vm.global_other()->set_instance(current);
+      gothic.dialogExtraFn=[&](const daedalus::INpc& npc,bool,std::vector<GameScript::DlgChoice>&) {
+        receivedCurrent=&npc==current.get();
+        };
+      vm.push_instance(copied);
+      vm.push_int(1);
+      expect(vm.unsafe_call_external(vm.find_symbol_by_name("NPC_CHECKINFO")),"NPC_CHECKINFO external is registered");
+      const auto offered=vm.pop_int();
+      vm.global_other()->set_instance(previousOther);
+      gothic.dialogExtraFn=std::move(previousExtra);
+      expect(receivedCurrent && offered==0,"NPC_CHECKINFO extra dialogs receive the current NPC instance");
+      }
     if(!missingNetwork) NpcLogicalStateContract::meleeAi(a,b);
 #ifdef GOTHIC_BODY_ENGINE_NET
     if(missingNetwork) {

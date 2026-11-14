@@ -196,7 +196,8 @@ void Npc::GoTo::setFlee() {
 
 
 Npc::TransformBack::TransformBack(Npc& self) {
-    hnpc        = std::make_shared<daedalus::INpc>(*self.hnpc);
+    hnpc        = self.owner.script().copyNpc(self.hnpc);
+    npcInstanceSymbol = self.npcInstanceSymbol;
     invent      = std::move(self.invent);
     self.invent = Inventory(); // cleanup
 
@@ -213,10 +214,8 @@ Npc::TransformBack::TransformBack(Npc& self) {
     skeleton = self.visual.visualSkeleton();
     }
 
-Npc::TransformBack::TransformBack(Npc& owner, daedalus::DaedalusVm& vm, Serialize& fin) {
-    hnpc           = std::make_shared<daedalus::INpc>();
-    hnpc->user_ptr = nullptr;
-    fin.readNpc(vm, hnpc);
+Npc::TransformBack::TransformBack(Npc& owner, Serialize& fin) {
+    hnpc = owner.owner.script().loadNpc(fin,nullptr,npcInstanceSymbol);
     invent.load(fin,owner);
     fin.read(talentsSk,talentsVl);
     fin.read(body,head,vHead,vTeeth,vColor,bdColor);
@@ -227,7 +226,7 @@ Npc::TransformBack::TransformBack(Npc& owner, daedalus::DaedalusVm& vm, Serializ
     }
 
 void Npc::TransformBack::undo(Npc& self) {
-    int32_t aivar[daedalus::INpc::aivar_count]={};
+    int32_t aivar[NpcRecord::aivar_count]={};
 
     auto exp      = self.hnpc->exp;
     auto exp_next = self.hnpc->exp_next;
@@ -235,9 +234,8 @@ void Npc::TransformBack::undo(Npc& self) {
     auto level    = self.hnpc->level;
     std::memcpy(aivar,self.hnpc->aivar,sizeof(aivar));
 
-    *self.hnpc          = *hnpc;
-
-    self.hnpc->user_ptr = &self;
+    self.owner.script().restoreNpc(self.hnpc,hnpc,self);
+    self.npcInstanceSymbol = npcInstanceSymbol;
     self.hnpc->exp      = exp;
     self.hnpc->exp_next = exp_next;
     self.hnpc->lp       = lp;
@@ -257,7 +255,7 @@ void Npc::TransformBack::undo(Npc& self) {
     }
 
 void Npc::TransformBack::save(Serialize& fout) {
-    fout.write(*hnpc);
+    fout.write(npcInstanceSymbol,*hnpc);
     invent.save(fout);
     fout.write(talentsSk,talentsVl);
     fout.write(body,head,vHead,vTeeth,vColor,bdColor);
@@ -271,15 +269,10 @@ Npc::Npc(World &owner, size_t instance, std::string_view waypoint, NpcProcessPol
   animLodSeed    = AnimationLod::nextSeed();
   outputPipe     = owner.script().openAiOuput();
 
-  hnpc           = std::make_shared<daedalus::INpc>();
-  hnpc->user_ptr = this;
-  hnpc->id       = int32_t(instance & 0x7FFFFFFF);
-  hnpc->wp       = std::string(waypoint);
+  hnpc = owner.script().createNpc(*this,instance,waypoint,npcInstanceSymbol);
 
   if(instance==size_t(-1))
     return;
-
-  owner.script().initializeInstanceNpc(hnpc, instance);
 
   // vanilla behavior: equip best weapon and set non-zero damage type
   if(!isPlayer())
@@ -302,8 +295,7 @@ Npc::~Npc(){
   Bench::bodyForget(this);
   if(currentInteract)
     currentInteract->detach(*this,true);
-  if(hnpc && hnpc->user_ptr==this)
-    hnpc->user_ptr=nullptr;
+  owner.script().detachNpc(hnpc,*this);
   }
 
 std::string Npc::startupFloorDigest() const {
@@ -490,6 +482,7 @@ bool Npc::checkHealth(bool onChange, bool allowUnconscious) {
 
 void Npc::onNoHealth(bool death, HitSound sndMask) {
   interruptItemUse(death ? "death" : "unconscious");
+  finishRagdollBrace(death ? "death" : "unconscious");
   Healing::clear(foodPool);
   endMeleeAiSpecial();
   const bool wasDead = isDead();
@@ -1370,7 +1363,7 @@ bool Npc::transformInto(size_t instance) {
   invent.updateView(*this);
   visual.clearOverlays();
 
-  owner.script().initializeInstanceNpc(hnpc, instance);
+  npcInstanceSymbol = owner.script().initializeInstanceNpc(hnpc, instance);
   hnpc->level = transformSpl->hnpc->level;
   return true;
   }

@@ -128,8 +128,190 @@ void write(const fs::path& path,const rapidjson::Document& j) {
   f.write(bytes.GetString(),std::streamsize(bytes.GetSize()));
   check(bool(f),"write fixture JSON");
   }
+void npcLayout(const NpcSnapshot::Program& program) {
+  auto script=DaedalusScript::from_program(program.data);
+  INpc::register_(script); IItem::register_(script);
+  DaedalusVm vm(std::move(script));
+  auto npc=vm.allocate_instance<INpc>("NPC_TEST");
+  auto item=vm.allocate_instance<IItem>("IT_TEST");
+  auto& record=static_cast<NpcRecord&>(*npc);
+  const auto begin=reinterpret_cast<uintptr_t>(npc.get());
+  const auto recordBegin=reinterpret_cast<uintptr_t>(&record);
+  check(recordBegin>=begin && recordBegin+sizeof(record)<=begin+sizeof(*npc),"whole NpcRecord lies within INpc");
+  check(reinterpret_cast<uintptr_t>(static_cast<DaedalusInstance*>(npc.get()))==begin,"VM data starts at INpc");
+  std::string signature;
+  unsigned fields=0;
+  snapshotFields(*npc,[&](const char* name,auto& field,bool,const char* binding) {
+    ++fields;
+    signature+=std::string(name)+":"+binding+" ";
+    auto* symbol=vm.find_symbol_by_name(binding);
+    check(symbol!=nullptr,std::string("bound NPC field ")+name);
+    check(symbol->registered_to()==typeid(INpc),std::string("INpc context for ")+name);
+    const auto address=reinterpret_cast<uintptr_t>(&field);
+    check(symbol->offset_as_member()==address-begin,std::string("VM offset for ")+name);
+    check(address>=recordBegin && address+sizeof(field)<=recordBegin+sizeof(record),std::string("record owns ")+name);
+    auto value=[&](auto& element,uint16_t index) {
+      using T=std::remove_reference_t<decltype(element)>;
+      if constexpr(std::is_same_v<T,std::string>) {
+        symbol->set_string("from VM",index,npc.get());
+        check(element=="from VM",std::string("VM writes record ")+name);
+        element="from record";
+        check(symbol->get_string(index,npc.get())=="from record",std::string("VM reads record ")+name);
+        }
+      else {
+        symbol->set_int(1000+index,index,npc.get());
+        check(int32_t(element)==1000+index,std::string("VM writes record ")+name);
+        element=T(2000+index);
+        check(symbol->get_int(index,npc.get())==2000+index,std::string("VM reads record ")+name);
+        }
+      };
+    if constexpr(std::is_array_v<std::remove_reference_t<decltype(field)>>) {
+      for(uint16_t i=0;i<std::extent_v<std::remove_reference_t<decltype(field)>>;++i) value(field[i],i);
+      }
+    else value(field,0);
+    });
+  check(fields==32,"all 32 NPC fields checked");
+  // Independent of the generated visitor: changing declaration order or a binding must fail.
+  check(signature==
+    "id:C_NPC.ID name:C_NPC.NAME slot:C_NPC.SLOT effect:C_NPC.EFFECT type:C_NPC.NPCTYPE flags:C_NPC.FLAGS "
+    "attribute:C_NPC.ATTRIBUTE hitchance:C_NPC.HITCHANCE protection:C_NPC.PROTECTION damage:C_NPC.DAMAGE "
+    "damage_type:C_NPC.DAMAGETYPE guild:C_NPC.GUILD level:C_NPC.LEVEL mission:C_NPC.MISSION "
+    "fight_tactic:C_NPC.FIGHT_TACTIC weapon:C_NPC.WEAPON voice:C_NPC.VOICE voice_pitch:C_NPC.VOICEPITCH "
+    "body_mass:C_NPC.BODYMASS daily_routine:C_NPC.DAILY_ROUTINE start_aistate:C_NPC.START_AISTATE "
+    "spawnpoint:C_NPC.SPAWNPOINT spawn_delay:C_NPC.SPAWNDELAY senses:C_NPC.SENSES senses_range:C_NPC.SENSES_RANGE "
+    "aivar:C_NPC.AIVAR wp:C_NPC.WP exp:C_NPC.EXP exp_next:C_NPC.EXP_NEXT lp:C_NPC.LP "
+    "bodystate_interruptable_override:C_NPC.BODYSTATEINTERRUPTABLEOVERRIDE no_focus:C_NPC.NOFOCUS ",
+    "original NPC field order and bindings");
+  check(std::extent_v<decltype(record.name)> == 5,"original NPC name array size");
+  check(std::extent_v<decltype(record.attribute)> == 8,"original NPC attribute array size");
+  check(std::extent_v<decltype(record.hitchance)> == 5,"original NPC hitchance array size");
+  check(std::extent_v<decltype(record.protection)> == 8,"original NPC protection array size");
+  check(std::extent_v<decltype(record.damage)> == 8,"original NPC damage array size");
+  check(std::extent_v<decltype(record.mission)> == 5,"original NPC mission array size");
+  check(std::extent_v<decltype(record.aivar)> == 100,"original NPC aivar array size");
+  bool rejected=false;
+  try { vm.find_symbol_by_name("C_NPC.ID")->set_int(1,0,item.get()); }
+  catch(const DaedalusIllegalContextType&) { rejected=true; }
+  check(rejected,"NPC member rejects an item context");
+  std::cout<<"NPC layout: "<<fields<<" fields, sizeof(INpc)="<<sizeof(INpc)
+           <<", sizeof(NpcRecord)="<<sizeof(NpcRecord)<<", record offset="<<recordBegin-begin<<'\n';
+  }
+template<class F> void focusFields(IFocus& v,F f) {
+#define FOCUS_FIELD(name,script) f(#name,v.name,false,"C_FOCUS." script)
+  FOCUS_FIELD(npc_longrange,"NPC_LONGRANGE");
+  FOCUS_FIELD(npc_range1,"NPC_RANGE1"); FOCUS_FIELD(npc_range2,"NPC_RANGE2");
+  FOCUS_FIELD(npc_azi,"NPC_AZI"); FOCUS_FIELD(npc_elevdo,"NPC_ELEVDO"); FOCUS_FIELD(npc_elevup,"NPC_ELEVUP");
+  FOCUS_FIELD(npc_prio,"NPC_PRIO");
+  FOCUS_FIELD(item_range1,"ITEM_RANGE1"); FOCUS_FIELD(item_range2,"ITEM_RANGE2");
+  FOCUS_FIELD(item_azi,"ITEM_AZI"); FOCUS_FIELD(item_elevdo,"ITEM_ELEVDO"); FOCUS_FIELD(item_elevup,"ITEM_ELEVUP");
+  FOCUS_FIELD(item_prio,"ITEM_PRIO");
+  FOCUS_FIELD(mob_range1,"MOB_RANGE1"); FOCUS_FIELD(mob_range2,"MOB_RANGE2");
+  FOCUS_FIELD(mob_azi,"MOB_AZI"); FOCUS_FIELD(mob_elevdo,"MOB_ELEVDO"); FOCUS_FIELD(mob_elevup,"MOB_ELEVUP");
+  FOCUS_FIELD(mob_prio,"MOB_PRIO");
+#undef FOCUS_FIELD
+  }
+template<class Instance,class Record,class Visit>
+std::string recordLayout(Instance& instance,Record& record,DaedalusVm& vm,Visit visit,unsigned expected) {
+  const auto begin=reinterpret_cast<uintptr_t>(&instance);
+  const auto recordBegin=reinterpret_cast<uintptr_t>(&record);
+  check(reinterpret_cast<uintptr_t>(static_cast<DaedalusInstance*>(&instance))==begin,"VM base comes first");
+  check(recordBegin>begin && recordBegin+sizeof(record)<=begin+sizeof(instance),"record base follows VM base within instance");
+  auto previousEnd=recordBegin;
+  unsigned fields=0;
+  std::string signature;
+  visit(instance,[&](const char* name,auto& field,bool,const char* binding) {
+    ++fields;
+    signature+=std::string(name)+":"+binding+" ";
+    auto* symbol=vm.find_symbol_by_name(binding);
+    check(symbol!=nullptr,std::string("bound record field ")+name);
+    check(symbol->registered_to()==typeid(Instance),std::string("concrete VM context for ")+name);
+    const auto address=reinterpret_cast<uintptr_t>(&field);
+    check(symbol->offset_as_member()==address-begin,std::string("VM offset for ")+name);
+    check(address>=previousEnd && address+sizeof(field)<=recordBegin+sizeof(record),std::string("record field order and ownership for ")+name);
+    previousEnd=address+sizeof(field);
+    auto value=[&](auto& element,uint16_t index) {
+      using T=std::remove_reference_t<decltype(element)>;
+      if constexpr(std::is_same_v<T,std::string>) {
+        symbol->set_string("from VM",index,&instance);
+        check(element=="from VM",std::string("VM writes record ")+name);
+        element="from record";
+        check(symbol->get_string(index,&instance)=="from record",std::string("VM reads record ")+name);
+        }
+      else if constexpr(std::is_same_v<T,float>) {
+        symbol->set_float(1.25f,index,&instance);
+        check(element==1.25f,std::string("VM writes record ")+name);
+        element=2.5f;
+        check(symbol->get_float(index,&instance)==2.5f,std::string("VM reads record ")+name);
+        }
+      else {
+        symbol->set_int(1000+index,index,&instance);
+        check(int32_t(element)==1000+index,std::string("VM writes record ")+name);
+        element=T(2000+index);
+        check(symbol->get_int(index,&instance)==2000+index,std::string("VM reads record ")+name);
+        }
+      };
+    if constexpr(std::is_array_v<std::remove_reference_t<decltype(field)>>) {
+      for(uint16_t i=0;i<std::extent_v<std::remove_reference_t<decltype(field)>>;++i) value(field[i],i);
+      }
+    else value(field,0);
+    });
+  check(fields==expected,"all record fields checked");
+  std::cout<<"Record layout: "<<fields<<" fields, instance size="<<sizeof(instance)
+           <<", record size="<<sizeof(record)<<", record offset="<<recordBegin-begin<<'\n';
+  return signature;
+  }
+void itemLayout(const NpcSnapshot::Program& program) {
+  auto script=DaedalusScript::from_program(program.data);
+  IItem::register_(script);
+  DaedalusVm vm(std::move(script));
+  auto item=vm.allocate_instance<IItem>("IT_TEST");
+  auto& record=static_cast<ItemRecord&>(*item);
+  auto signature=recordLayout(*item,record,vm,[](auto& v,auto f) { snapshotFields(v,f); },44);
+  check(signature==
+    "id:C_ITEM.ID name:C_ITEM.NAME name_id:C_ITEM.NAMEID hp:C_ITEM.HP hp_max:C_ITEM.HP_MAX "
+    "main_flag:C_ITEM.MAINFLAG flags:C_ITEM.FLAGS weight:C_ITEM.WEIGHT value:C_ITEM.VALUE "
+    "damage_type:C_ITEM.DAMAGETYPE damage_total:C_ITEM.DAMAGETOTAL damage:C_ITEM.DAMAGE wear:C_ITEM.WEAR "
+    "protection:C_ITEM.PROTECTION nutrition:C_ITEM.NUTRITION cond_atr:C_ITEM.COND_ATR cond_value:C_ITEM.COND_VALUE "
+    "change_atr:C_ITEM.CHANGE_ATR change_value:C_ITEM.CHANGE_VALUE magic:C_ITEM.MAGIC on_equip:C_ITEM.ON_EQUIP "
+    "on_unequip:C_ITEM.ON_UNEQUIP on_state:C_ITEM.ON_STATE owner:C_ITEM.OWNER owner_guild:C_ITEM.OWNERGUILD "
+    "disguise_guild:C_ITEM.DISGUISEGUILD visual:C_ITEM.VISUAL visual_change:C_ITEM.VISUAL_CHANGE effect:C_ITEM.EFFECT "
+    "visual_skin:C_ITEM.VISUAL_SKIN scheme_name:C_ITEM.SCEMENAME material:C_ITEM.MATERIAL munition:C_ITEM.MUNITION "
+    "spell:C_ITEM.SPELL range:C_ITEM.RANGE mag_circle:C_ITEM.MAG_CIRCLE description:C_ITEM.DESCRIPTION "
+    "text:C_ITEM.TEXT count:C_ITEM.COUNT inv_zbias:C_ITEM.INV_ZBIAS inv_rot_x:C_ITEM.INV_ROTX "
+    "inv_rot_y:C_ITEM.INV_ROTY inv_rot_z:C_ITEM.INV_ROTZ inv_animate:C_ITEM.INV_ANIMATE ",
+    "original item field order and bindings");
+  check(std::extent_v<decltype(record.damage)> == 8,"original item damage array size");
+  check(std::extent_v<decltype(record.protection)> == 8,"original item protection array size");
+  check(std::extent_v<decltype(record.cond_atr)> == 3,"original item condition attribute array size");
+  check(std::extent_v<decltype(record.cond_value)> == 3,"original item condition value array size");
+  check(std::extent_v<decltype(record.change_atr)> == 3,"original item change attribute array size");
+  check(std::extent_v<decltype(record.change_value)> == 3,"original item change value array size");
+  check(std::extent_v<decltype(record.on_state)> == 4,"original item state array size");
+  check(std::extent_v<decltype(record.text)> == 6,"original item text array size");
+  check(std::extent_v<decltype(record.count)> == 6,"original item count array size");
+  }
+void focusLayout() {
+  check(sizeof(FocusRecord)==76,"original focus record size");
+  Fixture f;
+  auto cls=f.symbol("C_FOCUS",Type::CLASS);
+  f.p.symbols[cls].class_size=sizeof(IFocus);
+  IFocus focus{};
+  focusFields(focus,[&](const char*,auto& value,bool,const char* binding) {
+    auto type=std::is_same_v<std::remove_reference_t<decltype(value)>,float> ? Type::FLOAT : Type::INT;
+    f.symbol(binding,type,1,Flag::MEMBER,int32_t(cls));
+    });
+  f.symbol("FOCUS_TEST",Type::INSTANCE,0,Flag::CONST,int32_t(cls));
+  auto script=DaedalusScript::from_program(std::move(f.p));
+  IFocus::register_(script);
+  DaedalusVm vm(std::move(script));
+  auto instance=vm.allocate_instance<IFocus>("FOCUS_TEST");
+  recordLayout(*instance,static_cast<FocusRecord&>(*instance),vm,[](auto& v,auto f) { focusFields(v,f); },19);
+  }
 void fixture(const fs::path& dir) {
   auto p=Fixture().make();
+  npcLayout(p);
+  itemLayout(p);
+  focusLayout();
   auto a=dir/"a",b=dir/"b";
   NpcSnapshot::write(p,a); check(NpcSnapshot::verify(p,a)==0,"fixture verifies");
   NpcSnapshot::write(p,b);

@@ -7,6 +7,7 @@
 #include "commandline.h"
 #include "gamemusic.h"
 #include "gothic.h"
+#include "game/gamescript.h"
 #include "game/serialize.h"
 #include "world/objects/item.h"
 
@@ -466,6 +467,8 @@ void moverChildSave() {
     return *child;
     };
   const auto& child=findChild(*gothic.world());
+  gothic.world()->script().getVm().global_item()->set_instance(
+    std::static_pointer_cast<daedalus::IItem>(child.item->handlePtr()));
   const auto catalogueSize=gothic.world()->placedItemCensus().size();
   const auto countItems=[](World& world) {
     uint32_t count=0;
@@ -499,6 +502,9 @@ void moverChildSave() {
     gothic.setGame(std::make_unique<GameSession>(in));
   }
   const auto& restored=findChild(*gothic.world());
+  require(gothic.world()->script().getVm().global_item()->get_instance()==
+          std::static_pointer_cast<daedalus::IItem>(restored.item->handlePtr()),
+          "the saved global Item reference must resolve to the restored world Item");
   require(gothic.world()->placedItemCensus().size()==catalogueSize && countItems(*gothic.world())==itemCount,
           "loading a mover-child identity must preserve the catalogue and avoid duplicate Items");
   require(restored.instance==instance && restored.validation.disposition==verdict &&

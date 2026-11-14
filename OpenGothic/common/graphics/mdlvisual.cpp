@@ -704,7 +704,7 @@ void MdlVisual::dropWeapon(Npc& npc) {
   if(itm==nullptr)
     return;
 
-  auto it = npc.world().addItemDyn(itm->clsId(),p,npc.handle().symbol_index());
+  auto it = npc.world().addItemDyn(itm->clsId(),p,npc.instanceSymbol());
   it->setCount(1);
 
   npc.delItem(itm->clsId(),1);
@@ -725,7 +725,7 @@ void MdlVisual::dropShield(Npc& npc) {
   if(itm==nullptr)
     return;
 
-  auto it = npc.world().addItemDyn(itm->clsId(),p,npc.handle().symbol_index());
+  auto it = npc.world().addItemDyn(itm->clsId(),p,npc.instanceSymbol());
   it->setCount(1);
 
   npc.delItem(itm->clsId(),1);
@@ -936,8 +936,7 @@ void MdlVisual::setTorch(bool t, World& owner) {
   if(torchId==size_t(-1))
     return;
 
-  auto hitem = std::make_shared<daedalus::IItem>();
-  owner.script().initializeInstanceItem(hitem, torchId);
+  auto hitem = owner.script().createItem(torchId);
   const auto* residency=owner.chunkResidency();
   Resources::TextureLoadScope textureLoadScope(textureOwnerKnown && textureOwnerSpatial && residency &&
       residency->textureDistance(ChunkId::fromPosition(textureOwnerPosition.x,textureOwnerPosition.z))>2);

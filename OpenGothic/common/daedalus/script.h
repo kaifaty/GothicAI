@@ -820,6 +820,15 @@ namespace daedalus {
 			sym->_m_registered_to = type;
 		}
 
+		/// \brief Registers an inherited field relative to the concrete VM instance.
+		/// The member-pointer conversion includes the base subobject offset, while
+		/// the existing registration keeps the context type check on the instance.
+		template <typename _instance, typename _class, typename _member>
+		    requires std::derived_from<_instance, _class> && (!std::same_as<_instance, _class>)
+		void register_member(std::string_view name, _member _class::* field) {
+			register_member(name, static_cast<_member _instance::*>(field));
+		}
+
 		/// \return All symbols in the script
 		[[nodiscard]] std::vector<DaedalusSymbol> const& symbols() const noexcept {
 			return _m_symbols;

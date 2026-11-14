@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <string>
 
-#include "game/constants.h"
+#include "game/rpgvocabulary.h"
 #include "worldchunksruntime.h"
 
 class ChunkResidency;

@@ -48,18 +48,18 @@ bool Npc::addSpellImpulse(const Vec3& impulseNs, bool reaction, Npc* culprit) {
     return false;
   if(ragdoll) {
     ragdoll->addImpulse(impulseNs,culprit);
-    bodyImpactLaunchCulprit=culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<daedalus::INpc>();
+    bodyImpactLaunchCulprit=culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<NpcRecord>();
     return true;
     }
   if(isDown()) {
     pendingSpellImpulse += impulseNs;
-    spellImpulseCulprit = culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<daedalus::INpc>();
+    spellImpulseCulprit = culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<NpcRecord>();
     return true;
     }
   updateRagdollQuestAnchor();
   if(!mvAlgo.addSpellImpulse(impulseNs,physicsMass(),reaction))
     return false;
-  spellImpulseCulprit = culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<daedalus::INpc>();
+  spellImpulseCulprit = culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<NpcRecord>();
   bodyImpactLaunchCulprit=spellImpulseCulprit;
   bodyImpactSpellFlight=true;
   if(living)
@@ -127,11 +127,11 @@ bool Npc::createRagdoll() {
   ragdoll = std::move(body);
   ragdoll->setNpc(this);
   if(const auto culprit = spellImpulseCulprit.lock())
-    ragdoll->setNoiseCulprit(static_cast<Npc*>(culprit->user_ptr));
+    ragdoll->setNoiseCulprit(owner.script().findNpc(culprit.get()));
   dispatchArrowPhysics(*ragdoll);
   if(Gothic::physicsFlags().spellPhysics && pendingSpellImpulse.quadLength()>0.f) {
     const auto culprit = spellImpulseCulprit.lock();
-    ragdoll->addImpulse(pendingSpellImpulse,culprit ? reinterpret_cast<Npc*>(culprit->user_ptr) : nullptr);
+    ragdoll->addImpulse(pendingSpellImpulse,owner.script().findNpc(culprit.get()));
     }
   pendingSpellImpulse = {};
   spellImpulseCulprit.reset();
@@ -145,6 +145,7 @@ bool Npc::createRagdoll() {
   }
 
 void Npc::releaseRagdoll(bool blend) {
+  finishRagdollBrace("release");
   const bool hadBody = ragdoll!=nullptr;
   if(hadBody)
     if(const auto* trace=std::getenv("OPENGOTHIC_RAGDOLL_TRACE");trace!=nullptr && trace[0]=='1')
@@ -207,6 +208,7 @@ bool Npc::recoverRagdoll(bool force) {
     // Creatures without wounded poses retain the standard idle fallback.
     visual.startAnimAndGet("S_RUN",owner.tickCount(),true);
     }
+  finishRagdollBrace("getup");
   // Do not interpolate a world-space corpse pose across the whole ravine.
   releaseRagdoll(!returnToAnchor);
   ragdollDormant.reset();
@@ -483,7 +485,7 @@ void Npc::prepareLivingBody() {
                                 meleeBenchDynamicPelvis ? Ragdoll::BenchPelvis::Dynamic : Ragdoll::BenchPelvis::Kinematic))
         throw std::runtime_error("melee benchmark motor configuration failed");
     if(const auto culprit = spellImpulseCulprit.lock())
-      living->setNoiseCulprit(static_cast<Npc*>(culprit->user_ptr));
+      living->setNoiseCulprit(owner.script().findNpc(culprit.get()));
     }
   else
     livingRetryTick = owner.tickCount()+1000;
@@ -537,7 +539,7 @@ void Npc::queueArrowPhysics(const Bullet& bullet) {
   const float strength = std::clamp(momentum/8.f,0.1f,1.f);
   const Vec3 impulse = direction*(momentum/speed);
   arrowImpacts.push_back({bone,point,impulse,strength,
-                           bullet.origin()!=nullptr ? bullet.origin()->handlePtr() : std::weak_ptr<daedalus::INpc>()});
+                           bullet.origin()!=nullptr ? bullet.origin()->handlePtr() : std::weak_ptr<NpcRecord>()});
   arrowPhysics.bone = bone;
   arrowPhysics.point = point;
   arrowPhysics.impulseNs = impulse;
@@ -548,7 +550,7 @@ void Npc::queueArrowPhysics(const Bullet& bullet) {
 void Npc::dispatchArrowPhysics(Ragdoll& body) {
   for(const auto& hit:arrowImpacts) {
     const auto culprit = hit.culprit.lock();
-    if(body.queueHit(hit.bone,hit.point,hit.impulseNs,hit.strength,culprit ? reinterpret_cast<Npc*>(culprit->user_ptr) : nullptr,
+    if(body.queueHit(hit.bone,hit.point,hit.impulseNs,hit.strength,owner.script().findNpc(culprit.get()),
                      hit.stiffness)) {
       auto& probe = hit.melee ? meleeReaction : arrowPhysics;
       ++probe.applied;

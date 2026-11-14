@@ -29,6 +29,7 @@ PR, который добавляет фичу или выключатель, д
 | Движок: анимация | [engine-animation.md](features/engine-animation.md) | 14 | Анимация и движение персонажей. |
 | Движок: рендер | [engine-render.md](features/engine-render.md) | 55 | Рендер, материалы, свет и эффекты. |
 | Движок: стрельба | [engine-archery.md](features/engine-archery.md) | 3 | Стрельба, прицеливание и снаряды. |
+| Движок: ввод | [engine-input.md](features/engine-input.md) | 1 | Устройства ввода помимо клавиатуры и мыши: движение руки. |
 | Выключено по умолчанию | [off-by-default.md](features/off-by-default.md) | 27 | Экспериментальные и явно запускаемые возможности. |
 | Пробелы покрытия | [coverage-gaps.md](features/coverage-gaps.md) | 0 | Возможности без e2e и бенчей или с отдельными условиями проверки. |
 | Инструменты разработки | [dev-tools.md](features/dev-tools.md) | 52 | Сборка, стенды, проверки и инструменты разработки. |

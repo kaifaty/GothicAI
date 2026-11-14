@@ -4,6 +4,8 @@
 #include "world/world.h"
 #include "world/fplock.h"
 #include "world/waypoint.h"
+#include "world/records/npcrecord.h"
+#include "world/records/itemrecord.h"
 
 #include <Tempest/Log>
 
@@ -91,8 +93,7 @@ void Serialize::implRead(SaveGameHeader& p) {
   p = SaveGameHeader(*this);
   }
 
-void Serialize::implWrite(const daedalus::INpc& h) {
-  write(uint32_t(h.symbol_index()));
+void Serialize::implWrite(const NpcRecord& h) {
   write(h.id,h.name,h.slot,h.effect,int32_t(h.type));
   write(int32_t(h.flags));
   write(h.attribute,h.hitchance,h.protection,h.damage);
@@ -105,28 +106,41 @@ void Serialize::implWrite(const daedalus::INpc& h) {
   write(h.wp,h.exp,h.exp_next,h.lp,h.bodystate_interruptable_override,h.no_focus);
   }
 
-void Serialize::readNpc(daedalus::DaedalusVm& vm, std::shared_ptr<daedalus::INpc>& h) {
-  uint32_t instanceSymbol=0;
-  read(instanceSymbol);
+void Serialize::readNpc(NpcRecord& h) {
+  read(h.id,h.name,h.slot,h.effect, reinterpret_cast<int32_t&>(h.type));
+  read(reinterpret_cast<int32_t&>(h.flags));
+  read(h.attribute,h.hitchance,h.protection,h.damage);
+  read(h.damage_type,h.guild,h.level);
+  read(h.mission);
+  read(h.fight_tactic,h.weapon,h.voice,h.voice_pitch,h.body_mass);
+  read(h.daily_routine,h.start_aistate);
+  read(h.spawnpoint,h.spawn_delay,h.senses,h.senses_range);
+  read(h.aivar);
+  read(h.wp,h.exp,h.exp_next,h.lp,h.bodystate_interruptable_override,h.no_focus);
+  }
 
-  auto sym = vm.find_symbol_by_index(instanceSymbol);
+void Serialize::implWrite(const ItemRecord& h) {
+  write(h.id,h.name,h.name_id,h.hp,h.hp_max,h.main_flag);
+  write(int32_t(h.flags),h.weight,h.value,h.damage_type,h.damage_total,h.damage);
+  write(h.wear,h.protection,h.nutrition,h.cond_atr,h.cond_value,h.change_atr,h.change_value,h.magic);
+  write(h.on_equip,h.on_unequip,h.on_state);
+  write(h.owner,h.owner_guild,h.disguise_guild,h.visual,h.visual_change);
+  write(h.effect,h.visual_skin,h.scheme_name,h.material);
+  write(h.munition,h.spell,h.range,h.mag_circle);
+  write(h.description,h.text,h.count);
+  write(h.inv_zbias,h.inv_rot_x,h.inv_rot_y,h.inv_rot_z,h.inv_animate);
+  }
 
-  if (sym != nullptr) {
-    vm.allocate_instance(h, sym);
-    } else {
-    Tempest::Log::e("Cannot load serialized NPC ", instanceSymbol, ": Symbol not found.");
-    }
-
-  read(h->id,h->name,h->slot,h->effect, reinterpret_cast<int32_t&>(h->type));
-  read(reinterpret_cast<int32_t&>(h->flags));
-  read(h->attribute,h->hitchance,h->protection,h->damage);
-  read(h->damage_type,h->guild,h->level);
-  read(h->mission);
-  read(h->fight_tactic,h->weapon,h->voice,h->voice_pitch,h->body_mass);
-  read(h->daily_routine,h->start_aistate);
-  read(h->spawnpoint,h->spawn_delay,h->senses,h->senses_range);
-  read(h->aivar);
-  read(h->wp,h->exp,h->exp_next,h->lp,h->bodystate_interruptable_override,h->no_focus);
+void Serialize::readItem(ItemRecord& h) {
+  read(h.id,h.name,h.name_id,h.hp,h.hp_max,h.main_flag);
+  read(reinterpret_cast<int32_t&>(h.flags),h.weight,h.value,h.damage_type,h.damage_total,h.damage);
+  read(h.wear,h.protection,h.nutrition,h.cond_atr,h.cond_value,h.change_atr,h.change_value,h.magic);
+  read(h.on_equip,h.on_unequip,h.on_state);
+  read(h.owner,h.owner_guild,h.disguise_guild,h.visual,h.visual_change);
+  read(h.effect,h.visual_skin,h.scheme_name,h.material);
+  read(h.munition,h.spell,h.range,h.mag_circle);
+  read(h.description,h.text,h.count);
+  read(h.inv_zbias,h.inv_rot_x,h.inv_rot_y,h.inv_rot_z,h.inv_animate);
   }
 
 void Serialize::implWrite(const FpLock &fp) {

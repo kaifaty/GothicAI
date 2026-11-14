@@ -34,6 +34,10 @@ const char* meleeBeastSizeClass(float mass) {
          size==MeleeImpact::BeastSize::Medium ? "medium" : "huge";
   }
 
+}
+
+namespace NpcMelee {
+
 void writeMeleePosture(const std::string& row) {
   static std::mutex mutex;
   std::lock_guard<std::mutex> guard(mutex);
@@ -63,10 +67,6 @@ void writeMeleePosture(const std::string& row) {
     bytes += entry.size()+1;
     }
   }
-
-}
-
-namespace NpcMelee {
 
 std::string meleeBeastFields(float mass) {
   return std::string(",\"target_kind\":\"beast\",\"size_class\":\"")+meleeBeastSizeClass(mass)+'"';
@@ -227,7 +227,9 @@ bool Npc::knockDownMelee(Npc& attacker, const Vec3& impulse, std::string_view re
     away.y = 0;
     if(away.length()>1e-3f)
       away = Vec3::normalize(away)*(impulse.length()*.5f);
-    ragdoll->knockOff(Vec3(impulse.x,0,impulse.z)+away,impulse.length(),&attacker);
+    away += Vec3(impulse.x,0,impulse.z);
+    ragdoll->knockOff(away,impulse.length(),&attacker);
+    startRagdollBrace(away);
     fghAlgo.onTakeHit();
     clearSpeed();
     writeMeleePosture("{\"event\":\"knockdown_health\",\"tick_ms\":"+std::to_string(meleeFallTick)+
@@ -311,7 +313,7 @@ void Npc::applyMeleePosture(Npc& attacker, const MeleeBladeContact* contact, boo
                             heavy==MeleeImpact::HeavyHit::Charged ? "charged" : "posture";
   if(knocked)
     writeMeleePosture("{\"event\":\"knockdown\",\"tick_ms\":"+std::to_string(meleeFallTick)+
-                     ",\"fall_ms\":"+std::to_string(meleeFallTick)+",\"target\":"+who+attackerFields+
+                     ",\"fall_ms\":"+std::to_string(meleeFallTick)+",\"target\":"+who+attackerFields+ragdollBraceField()+
                      (heavyOnStaggered ? ",\"cause\":"+Bench::bodyJson("heavy_on_staggered")+
                                           ",\"heavy\":"+Bench::bodyJson(heavyReason) : "")+"}");
   }
@@ -743,7 +745,7 @@ bool Npc::queueMeleeReaction(const Npc& other, const Vec3& at, const MeleeBladeC
 
 Npc* Npc::bodyImpactCulprit() const {
   const auto culprit=bodyImpactLaunchCulprit.lock();
-  return culprit!=nullptr ? static_cast<Npc*>(culprit->user_ptr) : nullptr;
+  return owner.script().findNpc(culprit.get());
   }
 
 void Npc::recordBodyImpact(float speedCmMs, Npc* culprit, const char* source) {
@@ -753,7 +755,7 @@ void Npc::recordBodyImpact(float speedCmMs, Npc* culprit, const char* source) {
   applyBodyImpact();
   if(isDead()) return;
   if(bodyImpactWindow.add(owner.tickCount(),speedCmMs)) {
-    bodyImpactPendingCulprit=culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<daedalus::INpc>();
+    bodyImpactPendingCulprit=culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<NpcRecord>();
     bodyImpactSource=source;
     }
   }
@@ -767,7 +769,7 @@ void Npc::applyBodyImpact() {
   const float speed=bodyImpactWindow.take(owner.tickCount());
   if(speed<=0.f) return;
   const auto culpritHandle=bodyImpactPendingCulprit.lock();
-  auto* culprit=culpritHandle!=nullptr ? static_cast<Npc*>(culpritHandle->user_ptr) : nullptr;
+  auto* culprit=owner.script().findNpc(culpritHandle.get());
   bodyImpactPendingCulprit.reset();
   const auto damage=DamageCalculator::damageFall(*this,speed);
   const int32_t before=attribute(ATR_HITPOINTS);
@@ -808,7 +810,7 @@ void Npc::tickBodyImpact() {
     const float speed=ragdoll->takeImpactSpeed();
     if(speed>0.f) {
       auto* culprit=ragdoll->impactCulprit();
-      bodyImpactLaunchCulprit=culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<daedalus::INpc>();
+      bodyImpactLaunchCulprit=culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<NpcRecord>();
       recordBodyImpact(speed,culprit,"ragdoll");
       }
     }

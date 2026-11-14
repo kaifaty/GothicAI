@@ -39,9 +39,7 @@ Item::Item(World &owner, size_t itemInstance, Type type, const Tempest::Matrix4x
   LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Item);
   LoadProbe::Startup::Scope::bytes(LoadProbe::Startup::Item,sizeof(Item));
   assert(itemInstance!=size_t(-1));
-  hitem = std::make_shared<daedalus::IItem>();
-  hitem->user_ptr=this;
-  owner.script().initializeInstanceItem(hitem, itemInstance);
+  hitem = owner.script().createItem(*this,itemInstance,itemInstanceSymbol);
   setCount(1);
   // Mass and native inertia are fixed when physics is created. The default
   // Vob transform is zero, so establish the final pose and scale first.
@@ -62,33 +60,8 @@ Item::Item(World &owner, size_t itemInstance, Type type, const Tempest::Matrix4x
 
 Item::Item(World &owner, Serialize &fin, Type type)
   :Vob(owner) {
-  auto& h = hitem;
-  h = std::make_shared<daedalus::IItem>();
-  h->user_ptr = this;
-
+  hitem = owner.script().loadItem(fin,*this,itemInstanceSymbol);
   Tempest::Matrix4x4 mat;
-
-  uint32_t instanceSymbol=0;
-  fin.read(instanceSymbol);
-
-  auto& vm = owner.script().getVm();
-  auto* sym = vm.find_symbol_by_index(instanceSymbol);
-
-  if (sym != nullptr) {
-    vm.allocate_instance(h, sym);
-    } else {
-    Tempest::Log::e("Loading unknown item from save: " , instanceSymbol);
-    }
-
-  fin.read(h->id,h->name,h->name_id,h->hp,h->hp_max,h->main_flag);
-  fin.read(reinterpret_cast<int&>(h->flags),h->weight,h->value,h->damage_type,h->damage_total,h->damage);
-  fin.read(h->wear,h->protection,h->nutrition,h->cond_atr,h->cond_value,h->change_atr,h->change_value,h->magic);
-  fin.read(h->on_equip,h->on_unequip,h->on_state);
-  fin.read(h->owner,h->owner_guild,h->disguise_guild,h->visual,h->visual_change);
-  fin.read(h->effect,h->visual_skin,h->scheme_name,h->material);
-  fin.read(h->munition,h->spell,h->range,h->mag_circle);
-  fin.read(h->description,h->text,h->count);
-  fin.read(h->inv_zbias,h->inv_rot_x,h->inv_rot_y,h->inv_rot_z,h->inv_animate);
   fin.read(amount);
   fin.read(pos,equipped,itSlot);
   fin.read(mat);
@@ -111,10 +84,10 @@ Item::Item(World &owner, Serialize &fin, Type type)
   }
 
 Item::Item(Item &&it)
-  : Vob(it.world), hitem(std::move(it.hitem)),
+  : Vob(it.world), hitem(std::move(it.hitem)),itemInstanceSymbol(it.itemInstanceSymbol),
     pos(it.pos),amount(it.amount),equipped(it.equipped),itSlot(it.itSlot),
     placedZenId(it.placedZenId),placedAllowed(it.placedAllowed),proto(it.proto),visual(std::move(it.visual)) {
-  hitem->user_ptr=this;
+  world.script().attachItem(hitem,*this);
   setLocalTransform(it.localTransform());
   physic = std::move(it.physic);
   if(!physic.isEmpty())
@@ -157,17 +130,7 @@ void Item::drawVobRay(DbgPainter& p, const Npc& npc) const {
   }
 
 void Item::save(Serialize &fout) const {
-  auto& h = *hitem;
-  fout.write(uint32_t(h.symbol_index()));
-  fout.write(h.id,h.name,h.name_id,h.hp,h.hp_max,h.main_flag);
-  fout.write(reinterpret_cast<int&>(h.flags),h.weight,h.value,h.damage_type,h.damage_total,h.damage);
-  fout.write(h.wear,h.protection,h.nutrition,h.cond_atr,h.cond_value,h.change_atr,h.change_value,h.magic);
-  fout.write(h.on_equip,h.on_unequip,h.on_state);
-  fout.write(h.owner,h.owner_guild,h.disguise_guild,h.visual,h.visual_change);
-  fout.write(h.effect,h.visual_skin,h.scheme_name,h.material);
-  fout.write(h.munition,h.spell,h.range,h.mag_circle);
-  fout.write(h.description,h.text,h.count);
-  fout.write(h.inv_zbias,h.inv_rot_x,h.inv_rot_y,h.inv_rot_z,h.inv_animate);
+  fout.write(uint32_t(clsId()),*hitem);
   fout.write(amount);
   fout.write(pos,equipped,itSlot);
   fout.write(localTransform());
@@ -345,7 +308,7 @@ Vec3 Item::midPosition() const {
   }
 
 bool Item::isGold() const {
-  return hitem->symbol_index()==world.script().goldId()->index();
+  return itemInstanceSymbol==world.script().goldId()->index();
   }
 
 ItmFlags Item::mainFlag() const {
@@ -442,7 +405,7 @@ bool Item::checkCond(const Npc &other) const {
   }
 
 bool Item::checkCondUse(const Npc &other, int32_t &a, int32_t &nv) const {
-  for(size_t i=0;i<daedalus::IItem::condition_count;++i){
+  for(size_t i=0;i<ItemRecord::condition_count;++i){
     auto atr = Attribute(hitem->cond_atr[i]);
     if(other.attribute(atr)<hitem->cond_value[i] && hitem->cond_value[i]!=0) {
       a  = atr;
@@ -460,7 +423,7 @@ bool Item::checkCondRune(const Npc &other, int32_t &cPl, int32_t &cIt) const {
   }
 
 size_t Item::clsId() const {
-  return hitem->symbol_index();
+  return itemInstanceSymbol;
   }
 
 void Item::updateMatrix() {

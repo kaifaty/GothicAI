@@ -41,8 +41,7 @@ HeroDeed::Person resolveOwner(Npc& hero, std::string_view name) {
   // Preserve an explicit C_NPC owner even when that NPC is not in this world.
   HeroDeed::Person p;
   p.npc = s->name();
-  if(s->is_instance_of<daedalus::INpc>()) {
-    auto instance = std::static_pointer_cast<daedalus::INpc>(s->get_instance());
+  if(auto instance = script.npcRecord(s)) {
     p.guild = instance->guild;
     p.npctype = int32_t(instance->type);
     }
@@ -78,7 +77,7 @@ int32_t HeroDeed::constant(Npc& npc, std::string_view name, int32_t fallback) {
 
 int32_t HeroDeed::aivar(Npc& npc, std::string_view name) {
   const auto index = constant(npc,name);
-  if(index<0 || uint32_t(index)>=daedalus::INpc::aivar_count)
+  if(index<0 || uint32_t(index)>=NpcRecord::aivar_count)
     return 0;
   return npc.handlePtr()->aivar[size_t(index)];
   }
@@ -136,7 +135,7 @@ std::shared_ptr<HeroDeed> HeroDeed::snapshot(Npc& hero, std::string_view kind, N
   d->hour = time.hour();
   d->minute = time.minute();
   if(item!=nullptr) {
-    if(auto* sym = script.findSymbol(item->handle().symbol_index()))
+    if(auto* sym = script.findSymbol(item->clsId()))
       d->item = sym->name();
     d->count = count==0 ? item->count() : count;
     d->ownerGuild = item->handle().owner_guild;
@@ -171,7 +170,7 @@ std::shared_ptr<HeroDeed> HeroDeed::snapshot(Npc& hero, std::string_view kind, N
 std::vector<HeroDeed::InventoryItem> HeroDeed::inventory(Npc& npc) {
   std::map<std::string,size_t> counts;
   for(auto i = npc.inventory().iterator(Inventory::T_Inventory); i.isValid(); ++i)
-    if(auto* s = npc.world().script().findSymbol(i->handle().symbol_index()))
+    if(auto* s = npc.world().script().findSymbol(i->clsId()))
       counts[s->name()] += i.count();
   std::vector<InventoryItem> result;
   for(auto& [item,count]:counts)
