@@ -614,14 +614,14 @@ void GameScript::loadVar(Serialize &fin) {
             }
           else if(dataClass==2) {
             auto itm = world().itmById(id);
-            s->set_instance(itm != nullptr ? itm->handlePtr() : nullptr);
+            s->set_instance(itm != nullptr ? std::static_pointer_cast<daedalus::IItem>(itm->handlePtr()) : nullptr);
             }
           else if(dataClass==3) {
             uint32_t itmClass=0;
             fin.read(itmClass);
             if(auto npc = world().npcById(id)) {
               auto itm = npc->getItem(itmClass);
-              s->set_instance(itm ? itm->handlePtr() : nullptr);
+              s->set_instance(itm ? std::static_pointer_cast<daedalus::IItem>(itm->handlePtr()) : nullptr);
               }
             }
           }
@@ -705,7 +705,7 @@ void GameScript::saveSym(Serialize &fout, daedalus::DaedalusSymbol& i) {
         }
       else if(i.is_instance_of<daedalus::IItem>()){
         auto     item = reinterpret_cast<const daedalus::IItem*>(i.get_instance().get());
-        uint32_t id   = w.itmId(item);
+        uint32_t id   = w.itmId(static_cast<const ItemRecord*>(item));
         if(id!=uint32_t(-1) || item==nullptr) {
           fout.write(uint8_t(2),i.name(),id);
           } else {
@@ -811,7 +811,7 @@ daedalus::IFocus GameScript::findFocus(std::string_view name) {
 void GameScript::storeItem(Item *itm) {
   auto* s = vm.global_item();
   if(itm!=nullptr) {
-    s->set_instance(itm->handlePtr());
+    s->set_instance(std::static_pointer_cast<daedalus::IItem>(itm->handlePtr()));
     } else {
     s->set_instance(nullptr);
     }
@@ -1517,7 +1517,7 @@ BodyState GameScript::schemeToBodystate(std::string_view sc) {
   }
 
 void GameScript::onWldItemRemoved(const Item& itm) {
-  onWldInstanceRemoved(&itm.handle());
+  onWldInstanceRemoved(&static_cast<const daedalus::IItem&>(itm.handle()));
   }
 
 void GameScript::onWldInstanceRemoved(const daedalus::DaedalusInstance* obj) {
@@ -1529,7 +1529,7 @@ void GameScript::makeCurrent(Item* w) {
     return;
   auto* s = vm.find_symbol_by_index(uint32_t(w->clsId()));
   if(s != nullptr)
-    s->set_instance(w->handlePtr());
+    s->set_instance(std::static_pointer_cast<daedalus::IItem>(w->handlePtr()));
   }
 
 bool GameScript::searchScheme(std::string_view sc, std::string_view listName) {

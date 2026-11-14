@@ -5,6 +5,7 @@
 #include "world/fplock.h"
 #include "world/waypoint.h"
 #include "world/records/npcrecord.h"
+#include "world/records/itemrecord.h"
 
 #include <Tempest/Log>
 
@@ -116,6 +117,30 @@ void Serialize::readNpc(NpcRecord& h) {
   read(h.spawnpoint,h.spawn_delay,h.senses,h.senses_range);
   read(h.aivar);
   read(h.wp,h.exp,h.exp_next,h.lp,h.bodystate_interruptable_override,h.no_focus);
+  }
+
+void Serialize::implWrite(const ItemRecord& h) {
+  write(h.id,h.name,h.name_id,h.hp,h.hp_max,h.main_flag);
+  write(int32_t(h.flags),h.weight,h.value,h.damage_type,h.damage_total,h.damage);
+  write(h.wear,h.protection,h.nutrition,h.cond_atr,h.cond_value,h.change_atr,h.change_value,h.magic);
+  write(h.on_equip,h.on_unequip,h.on_state);
+  write(h.owner,h.owner_guild,h.disguise_guild,h.visual,h.visual_change);
+  write(h.effect,h.visual_skin,h.scheme_name,h.material);
+  write(h.munition,h.spell,h.range,h.mag_circle);
+  write(h.description,h.text,h.count);
+  write(h.inv_zbias,h.inv_rot_x,h.inv_rot_y,h.inv_rot_z,h.inv_animate);
+  }
+
+void Serialize::readItem(ItemRecord& h) {
+  read(h.id,h.name,h.name_id,h.hp,h.hp_max,h.main_flag);
+  read(reinterpret_cast<int32_t&>(h.flags),h.weight,h.value,h.damage_type,h.damage_total,h.damage);
+  read(h.wear,h.protection,h.nutrition,h.cond_atr,h.cond_value,h.change_atr,h.change_value,h.magic);
+  read(h.on_equip,h.on_unequip,h.on_state);
+  read(h.owner,h.owner_guild,h.disguise_guild,h.visual,h.visual_change);
+  read(h.effect,h.visual_skin,h.scheme_name,h.material);
+  read(h.munition,h.spell,h.range,h.mag_circle);
+  read(h.description,h.text,h.count);
+  read(h.inv_zbias,h.inv_rot_x,h.inv_rot_y,h.inv_rot_z,h.inv_animate);
   }
 
 void Serialize::implWrite(const FpLock &fp) {

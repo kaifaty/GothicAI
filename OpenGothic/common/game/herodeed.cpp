@@ -135,7 +135,7 @@ std::shared_ptr<HeroDeed> HeroDeed::snapshot(Npc& hero, std::string_view kind, N
   d->hour = time.hour();
   d->minute = time.minute();
   if(item!=nullptr) {
-    if(auto* sym = script.findSymbol(item->handle().symbol_index()))
+    if(auto* sym = script.findSymbol(item->clsId()))
       d->item = sym->name();
     d->count = count==0 ? item->count() : count;
     d->ownerGuild = item->handle().owner_guild;
@@ -170,7 +170,7 @@ std::shared_ptr<HeroDeed> HeroDeed::snapshot(Npc& hero, std::string_view kind, N
 std::vector<HeroDeed::InventoryItem> HeroDeed::inventory(Npc& npc) {
   std::map<std::string,size_t> counts;
   for(auto i = npc.inventory().iterator(Inventory::T_Inventory); i.isValid(); ++i)
-    if(auto* s = npc.world().script().findSymbol(i->handle().symbol_index()))
+    if(auto* s = npc.world().script().findSymbol(i->clsId()))
       counts[s->name()] += i.count();
   std::vector<InventoryItem> result;
   for(auto& [item,count]:counts)

@@ -10,7 +10,7 @@ class Npc;
 class World;
 class ClothVisual;
 class WorldView;
-namespace daedalus { struct IItem; }
+struct ItemRecord;
 
 class ObjVisual : public StreamedVisual {
   public:
@@ -24,8 +24,8 @@ class ObjVisual : public StreamedVisual {
     void save(Serialize& fout, const Interactive& mob) const;
     void load(Serialize& fin,  Interactive &mob);
 
-    void setVisual(const daedalus::IItem& visual, World& world, bool staticDraw);
-    void setWorldItem(const daedalus::IItem& item, World& world, const Tempest::Matrix4x4& matrix);
+    void setVisual(const ItemRecord& visual, World& world, bool staticDraw);
+    void setWorldItem(const ItemRecord& item, World& world, const Tempest::Matrix4x4& matrix);
     void setVisual(const asset::VirtualObject& visual, World& world, bool staticDraw, bool enablePhysics = true);
     void setObjMatrix(const Tempest::Matrix4x4& obj);
     // MeshObjects::Mesh::setTextureOwner of its view: how far it may move before a call can change its demand

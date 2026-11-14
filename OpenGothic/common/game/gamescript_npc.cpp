@@ -136,7 +136,7 @@ int GameScript::npc_getinvitem(std::shared_ptr<daedalus::INpc> npcRef, int itemI
   auto itm = npc==nullptr ? nullptr : npc->getItem(uint32_t(itemId));
   storeItem(itm);
   if(itm!=nullptr) {
-    return int(itm->handle().symbol_index());
+    return int(itm->clsId());
     }
   return -1;
   }
@@ -328,7 +328,7 @@ int GameScript::npc_getheighttonpc(std::shared_ptr<daedalus::INpc> aRef, std::sh
 std::shared_ptr<daedalus::IItem> GameScript::npc_getequippedmeleeweapon(std::shared_ptr<daedalus::INpc> npcRef) {
   auto npc = findNpc(npcRef);
   if(npc!=nullptr && npc->currentMeleeWeapon() != nullptr) {
-    return npc->currentMeleeWeapon()->handlePtr();
+    return std::static_pointer_cast<daedalus::IItem>(npc->currentMeleeWeapon()->handlePtr());
     }
   return nullptr;
   }
@@ -336,7 +336,7 @@ std::shared_ptr<daedalus::IItem> GameScript::npc_getequippedmeleeweapon(std::sha
 std::shared_ptr<daedalus::IItem> GameScript::npc_getequippedrangedweapon(std::shared_ptr<daedalus::INpc> npcRef) {
   auto npc = findNpc(npcRef);
   if(npc!=nullptr && npc->currentRangedWeapon() != nullptr) {
-    return npc->currentRangedWeapon()->handlePtr();
+    return std::static_pointer_cast<daedalus::IItem>(npc->currentRangedWeapon()->handlePtr());
     }
   return nullptr;
   }
@@ -344,7 +344,7 @@ std::shared_ptr<daedalus::IItem> GameScript::npc_getequippedrangedweapon(std::sh
 std::shared_ptr<daedalus::IItem> GameScript::npc_getequippedarmor(std::shared_ptr<daedalus::INpc> npcRef) {
   auto npc = findNpc(npcRef);
   if(npc!=nullptr && npc->currentArmor()!=nullptr) {
-    return npc->currentArmor()->handlePtr();
+    return std::static_pointer_cast<daedalus::IItem>(npc->currentArmor()->handlePtr());
     }
   return nullptr;
   }
@@ -592,7 +592,7 @@ std::shared_ptr<daedalus::IItem> GameScript::npc_getreadiedweapon(std::shared_pt
   auto ret = npc->activeWeapon();
   if(ret!=nullptr) {
     makeCurrent(ret);
-    return ret->handlePtr();
+    return std::static_pointer_cast<daedalus::IItem>(ret->handlePtr());
     } else {
     return nullptr;
     }

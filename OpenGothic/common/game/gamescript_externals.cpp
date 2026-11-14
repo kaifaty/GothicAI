@@ -245,7 +245,7 @@ bool GameScript::wld_detectitem(std::shared_ptr<daedalus::INpc> npcRef, int flag
     });
 
   if(ret)
-    vm.global_item()->set_instance(ret->handlePtr());
+    vm.global_item()->set_instance(std::static_pointer_cast<daedalus::IItem>(ret->handlePtr()));
   return ret != nullptr;
   }
 
@@ -887,8 +887,7 @@ bool GameScript::hlp_isvalidnpc(std::shared_ptr<daedalus::INpc> npcRef) {
 bool GameScript::hlp_isitem(std::shared_ptr<daedalus::IItem> itemRef, int instanceSymbol) {
   auto item = findItem(itemRef.get());
   if(item!=nullptr){
-    auto& v = item->handle();
-    return int(v.symbol_index()) == instanceSymbol;
+    return int(item->clsId()) == instanceSymbol;
     } else {
       return false;
     }
