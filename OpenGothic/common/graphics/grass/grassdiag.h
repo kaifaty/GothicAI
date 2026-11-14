@@ -18,7 +18,8 @@ enum Part : uint32_t {
   PartNormal      = 32,  // the blade's own share of its normal: the ground's alone
   PartPaint       = 64,  // blades red, the ground in bands of the distance from the camera, the rest black
   PartHide        = 128, // no blades: the bands alone
-  PartAll         = 255,
+  PartCover       = 256, // the meadow's own ground painted by its cover: sward green, earth red (grass_layers.glsl)
+  PartAll         = 511,
   };
 
 // SceneDesc::grassRing.w carries it: 1 + 2*mask

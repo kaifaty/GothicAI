@@ -26,6 +26,7 @@ const uint GrassPartRootAo      = 16u;
 const uint GrassPartNormal      = 32u;
 const uint GrassPartPaint       = 64u;
 const uint GrassPartHide        = 128u;
+const uint GrassPartCover       = 256u; // the paint of the meadow's own ground (grass_layers.glsl): sward green, earth red
 
 uint grassPartsOff(float ringW) { return uint(max(ringW - 1.0, 0.0)*0.5 + 0.25); }
 
@@ -46,6 +47,10 @@ const float GrassRoughness   = 0.92;
 const float GrassRootShade   = 0.55;                     // of the ground's colour at the root
 const vec3  GrassTipGreen    = vec3(1.10, 1.40, 0.90);   // of it at the tip, by the tuft's dryness
 const vec3  GrassTipStraw    = vec3(1.46, 1.38, 0.96);
+// of a ground with its own layers (grass_layers.glsl): the colour under the root is the sward's own
+const float GrassOwnRootShade= 0.62;
+const vec3  GrassOwnTipGreen = vec3(1.16, 1.22, 1.04);
+const vec3  GrassOwnTipStraw = vec3(1.30, 1.24, 1.02);
 const float GrassRootAo      = 0.35;
 const float GrassWidth       = 1.3;                      // cm at the root, and per step of the blade's four bits
 const float GrassWidthStep   = 0.11;

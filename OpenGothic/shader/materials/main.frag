@@ -450,6 +450,10 @@ float emberBreath(vec3 pos) {
   }
 #endif
 
+#if defined(BINDLESS) && defined(MATERIAL_MAPS) && defined(FLAT_NORMAL)
+#include "grass/grass_layers.glsl"
+#endif
+
 #if defined(ANTITILE_MATERIAL)
 void mainGBuffer(vec4 t, MaterialSampling maps) {
 #else
@@ -976,8 +980,19 @@ void main() {
 #endif
   outMotion = motionResidual();
 #if defined(MATERIAL_MAPS) && defined(FLAT_NORMAL)
-  if((bucket[bucketId].flags & BK_GRASS)!=0u)
-    grassGround(bucket[bucketId].foliage, shInp.pos, shInp.normal, outDiffuse, outNormal, outOrm);
+  {
+  const uint ground = bucket[bucketId].flags;
+  float sward = -1.0;
+#if defined(BINDLESS)
+  // the meadow's own two layers, and the strip of them along a road (grass/grass_layers.glsl)
+  if((ground & (BK_GROUND | BK_VERGE))!=0u)
+    sward = grassLayers(ground, bucket[bucketId].fringeTex, bucket[bucketId].fringeScale, bucket[bucketId].fringeTop0,
+                        bucket[bucketId].fringeTop1, shInp.pos, shInp.normal, maps.dpdx, maps.dpdy,
+                        outDiffuse, outNormal, outOrm);
+#endif
+  if(sward>-1.5 && ((ground & BK_GRASS)!=0u || sward>0.0))
+    grassGround(bucket[bucketId].foliage, shInp.pos, shInp.normal, sward, outDiffuse, outNormal, outOrm);
+  }
 #endif
 #if defined(ATEST) && defined(MATERIAL_MAPS)
   if(alphaTest<alphaThreshold())

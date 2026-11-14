@@ -111,6 +111,7 @@ class DrawCommands {
       L_FringeMain   = 23, // the fringe's maps without bindless (material_projection.glsl); with it, in the arrays
       L_FringeNormal = 24,
       L_FringeOrm    = 25,
+      L_GrassBorder  = 26, // the meadows' borders with a verge, bindless only (shader/grass/grass_border.glsl)
       L_VsmPages   = L_Shadow0,
       L_Lights     = L_Shadow1,
       };

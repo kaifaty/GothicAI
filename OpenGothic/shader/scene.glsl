@@ -139,6 +139,8 @@ const uint BK_PROJECTION = 0x2000; // maps by world position, uvScale: repeats p
 const uint BK_FRINGE = 0x4000; // grass over the projection where the mesh's v says (material_projection.glsl)
 const uint BK_FOLIAGE = 0x8000; // leaves: the wind moves the vertices (foliage_wind.glsl), the sun shines through (main.frag)
 const uint BK_GRASS = 0x10000; // a ground that grows grass: its look under and beyond the blades (grass/grass_ground.glsl)
+const uint BK_GROUND = 0x20000; // a meadow's own two layers by world position (grass/grass_layers.glsl)
+const uint BK_VERGE = 0x40000; // the ground beside a meadow: the strip of its layers along their border
 
 // Strands in a shadow view: the first part of the list casts the shadow for all of it (the meshlets are dealt out
 // evenly, groommesh.cpp), each strand as wide as that part is small (strandShadowRibbon, vertex_process.glsl).
@@ -169,8 +171,10 @@ struct Bucket {
   uint  fringeTex;   // BK_FRINGE: its maps' index in the bindless arrays
   float fringeScale; // its repeats per repeat of the projection
   float fringeTop0, fringeTop1, fringeBottom0, fringeBottom1; // shares of v: solid to the first, tufts to the second
+                     // BK_GROUND, BK_VERGE: fringeTex the sward's maps, the earth's the next; fringeScale and
+                     // fringeTop0 their repeats per cm; fringeTop1 the far repeat's tile of the sward's
   uint  foliage;     // BK_FOLIAGE: 8 bits each of wind, flutter, translucency, anchor (FoliageWind::pack);
-                     // BK_GRASS: the record's numbers of the ground (Grass::pack)
+                     // BK_GRASS, BK_VERGE: the record's numbers of the grass (Grass::pack)
   float foliageReach; // the largest arm of its mesh at rest, from the X axis; bbox is grown by the leaves' travel
   };
 

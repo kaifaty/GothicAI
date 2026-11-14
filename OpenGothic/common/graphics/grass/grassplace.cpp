@@ -5,6 +5,9 @@
 #include <cmath>
 #include <tuple>
 
+#include "graphics/grass/grassborder.h"
+#include "graphics/grass/grasscover.h"
+
 namespace Grass {
 
 namespace {
@@ -34,34 +37,16 @@ bool inside(const Tri& t, int32_t px, int32_t pz, int64_t w[3]) {
   return true;
   }
 
-bool insideXZ(int32_t x[3], int32_t z[3], int32_t px, int32_t pz) {
-  int sign = 0;
-  for(int i=0; i<3; ++i) {
-    const int a = i, b = (i+1)%3;
-    const int64_t w = int64_t(x[b]-x[a])*int64_t(pz-z[a]) - int64_t(z[b]-z[a])*int64_t(px-x[a]);
-    if(w==0)
-      continue;
-    const int s = w>0 ? 1 : -1;
-    if(sign!=0 && s!=sign)
-      return false;
-    sign = s;
-    }
-  return true;
-  }
-
 int32_t units(float cm) {
   return int32_t(std::lround(double(cm)*Unit));
   }
 
-struct Segment final { // an open edge: grass on its left only
-  int32_t  ax = 0, az = 0, bx = 0, bz = 0; // cm
-  float    outX = 0.f, outZ = 0.f;
-  uint32_t tri = 0;                        // the triangle it is an edge of
-  };
+using Segment = OpenEdge;
 
 struct Raw final { // a blade before it is packed
   int32_t  x = 0, y = 0, z = 0;
   uint16_t slot = 0;
+  uint8_t  kind = 0;
   uint8_t  rank = 0, height = 0, facing = 0, phase = 0, lean = 0, width = 0, tint = 0, nx = 0, nz = 0;
   uint16_t u = 0, v = 0;
   };
@@ -142,10 +127,11 @@ CellBlades buildCell(const CellInput& in) {
 
   // per slot, in whole numbers
   struct Slot final {
-    int32_t densityQ8 = 0, tanMax = 0, tanFull = 0, edgeCm = 0;
+    int32_t densityQ8 = 0, tanMax = 0, tanFull = 0, edgeCm = 0, tile = 0;
     };
   std::vector<Slot> slots(in.params.size());
   int32_t maxEdge = 0, maxDensity = 0;
+  bool    anyFine = false;
   for(size_t i=0; i<slots.size(); ++i) {
     const auto& p = in.params[i];
     if(!p.on)
@@ -154,13 +140,30 @@ CellBlades buildCell(const CellInput& in) {
     slots[i].tanMax    = int32_t(std::lround(std::tan(double(p.slope)*M_PI/180.0)*4096.0));
     slots[i].tanFull   = int32_t(std::lround(std::tan(double(std::max(p.slope-10.f,0.f))*M_PI/180.0)*4096.0));
     slots[i].edgeCm    = int32_t(std::lround(p.edge));
+    slots[i].tile      = p.cover ? std::max(int32_t(std::lround(double(p.tile)*Unit)),Unit) : 0;
+    anyFine            = anyFine || (p.cover && p.fine);
     maxEdge    = std::max(maxEdge,slots[i].edgeCm);
     maxDensity = std::max(maxDensity,slots[i].densityQ8);
     }
   if(maxDensity<=0)
     return ret;
-  // an open edge is felt to twice the record's band (the noise on the distance)
-  const int32_t reach = CellMargin + (2*maxEdge+100)*Unit;
+  // the ground with `verge` round the cell: the sward of a slot with the cover comes onto it
+  constexpr int32_t VergeBand = (MaxVergeCm+5)*Unit;
+  std::vector<const VergeTri*> verge;
+  for(const Summary* s:in.summaries) {
+    if(s==nullptr)
+      continue;
+    for(const auto& t:s->verge) {
+      if(size_t(t.slot)>=slots.size() || !in.params[t.slot].cover ||
+         std::max({t.x[0],t.x[1],t.x[2]})<lo[0]-VergeBand || std::min({t.x[0],t.x[1],t.x[2]})>hi[0]+VergeBand ||
+         std::max({t.z[0],t.z[1],t.z[2]})<lo[1]-VergeBand || std::min({t.z[0],t.z[1],t.z[2]})>hi[1]+VergeBand)
+        continue;
+      verge.push_back(&t);
+      }
+    }
+  // an open edge is felt to twice the record's band (the noise on the distance), a verge's to the tongues' end
+  const int32_t band  = verge.empty() ? 2*maxEdge*Unit : std::max(2*maxEdge*Unit,VergeBand);
+  const int32_t reach = CellMargin + band + 100*Unit;
 
   // the triangles round the cell, in an order that does not depend on the chunks'
   std::vector<Ready> tris;
@@ -193,16 +196,12 @@ CellBlades buildCell(const CellInput& in) {
     }
   if(tris.empty())
     return ret;
-  std::sort(tris.begin(),tris.end(),[](const Ready& a, const Ready& b) {
-    const auto& l = *a.t; const auto& r = *b.t;
-    return std::tie(l.x[0],l.z[0],l.y[0],l.x[1],l.z[1],l.y[1],l.x[2],l.z[2],l.y[2],l.slot) <
-           std::tie(r.x[0],r.z[0],r.y[0],r.x[1],r.z[1],r.y[1],r.x[2],r.z[2],r.y[2],r.slot);
-    });
+  std::sort(tris.begin(),tris.end(),[](const Ready& a, const Ready& b) { return triLess(*a.t,*b.t); });
 
   // bins over the cell and its margin: the triangles and the open edges near each
   constexpr int32_t Bins = 16;
   const int32_t binSize = (hi[0]-lo[0]+Bins-1)/Bins;
-  std::array<std::vector<uint32_t>,Bins*Bins> triBins, segBins;
+  std::array<std::vector<uint32_t>,Bins*Bins> triBins, segBins, vergeBins;
   auto forBins = [&](int32_t minX, int32_t maxX, int32_t minZ, int32_t maxZ, auto&& fn) {
     const int32_t bx0 = std::max((minX-lo[0])/binSize,0), bx1 = std::min((maxX-lo[0])/binSize,Bins-1);
     const int32_t bz0 = std::max((minZ-lo[1])/binSize,0), bz1 = std::min((maxZ-lo[1])/binSize,Bins-1);
@@ -237,97 +236,26 @@ CellBlades buildCell(const CellInput& in) {
       }
     return best;
     };
-  auto onGrass = [&](int32_t px, int32_t pz) {
-    for(const Ready& r:tris) {
-      if(px<r.minX || px>r.maxX || pz<r.minZ || pz>r.maxZ)
-        continue;
-      int32_t x[3] = {r.t->x[0],r.t->x[1],r.t->x[2]}, z[3] = {r.t->z[0],r.t->z[1],r.t->z[2]};
-      if(insideXZ(x,z,px,pz))
-        return true;
-      }
-    return false;
-    };
 
-  // Open edges: an edge one triangle has, whose pieces of 50 cm have no grass 6 cm outside (so an edge that meets
-  // two shorter ones of its neighbours is not open). Neighbouring open pieces are joined
+  // Open edges (grassborder.h); those along a verge apart as well
   std::vector<Segment> segments;
-  if(maxEdge>0) {
-    struct Edge final {
-      int32_t a[3], b[3]; // sorted ends
-      int32_t from[2], to[2]; // as the triangle goes round
-      uint32_t tri;
-      };
-    std::vector<Edge> edges;
-    edges.reserve(tris.size()*3);
-    for(size_t id=0; id<tris.size(); ++id) {
-      const auto& t = *tris[id].t;
-      for(int i=0; i<3; ++i) {
-        const int j = (i+1)%3;
-        Edge e;
-        e.tri = uint32_t(id);
-        e.from[0] = t.x[i]; e.from[1] = t.z[i]; e.to[0] = t.x[j]; e.to[1] = t.z[j];
-        const std::array<int32_t,3> p = {t.x[i],t.z[i],t.y[i]}, q = {t.x[j],t.z[j],t.y[j]};
-        const auto& first = p<q ? p : q; const auto& second = p<q ? q : p;
-        std::copy(first.begin(),first.end(),e.a);
-        std::copy(second.begin(),second.end(),e.b);
-        edges.push_back(e);
-        }
-      }
-    auto key = [](const Edge& e) { return std::tie(e.a[0],e.a[1],e.a[2],e.b[0],e.b[1],e.b[2]); };
-    std::sort(edges.begin(),edges.end(),[&](const Edge& l, const Edge& r) {
-      return std::tie(l.a[0],l.a[1],l.a[2],l.b[0],l.b[1],l.b[2],l.from[0],l.from[1]) <
-             std::tie(r.a[0],r.a[1],r.a[2],r.b[0],r.b[1],r.b[2],r.from[0],r.from[1]);
-      });
-    const int32_t band = 2*maxEdge*Unit;
-    for(size_t i=0; i<edges.size();) {
-      size_t n = i+1;
-      while(n<edges.size() && key(edges[n])==key(edges[i]))
-        ++n;
-      const Edge& e = edges[i];
-      const bool  single = n==i+1;
-      i = n;
-      if(!single)
-        continue;
-      if(std::max(e.from[0],e.to[0])<lo[0]-band || std::min(e.from[0],e.to[0])>hi[0]+band ||
-         std::max(e.from[1],e.to[1])<lo[1]-band || std::min(e.from[1],e.to[1])>hi[1]+band)
-        continue;
-      const double dx = double(e.to[0]-e.from[0]), dz = double(e.to[1]-e.from[1]);
-      const double len = std::sqrt(dx*dx+dz*dz);
-      if(len<1.0)
-        continue;
-      // the triangle is counter-clockwise: its inside is on the left of the edge, (-dz,dx)
-      const double ox = dz/len, oz = -dx/len;
-      const int    pieces = std::max(1,int(std::ceil(len/(50.0*Unit))));
-      int          start  = -1;
-      for(int k=0; k<=pieces; ++k) {
-        bool open = false;
-        if(k<pieces) {
-          const double m = (double(k)+0.5)/double(pieces);
-          const auto px = int32_t(std::lround(double(e.from[0]) + dx*m + ox*6.0*Unit));
-          const auto pz = int32_t(std::lround(double(e.from[1]) + dz*m + oz*6.0*Unit));
-          open = !onGrass(px,pz);
-          }
-        if(open && start<0)
-          start = k;
-        if(!open && start>=0) {
-          Segment s;
-          s.ax = int32_t(std::lround((double(e.from[0]) + dx*double(start)/double(pieces))/Unit));
-          s.az = int32_t(std::lround((double(e.from[1]) + dz*double(start)/double(pieces))/Unit));
-          s.bx = int32_t(std::lround((double(e.from[0]) + dx*double(k)/double(pieces))/Unit));
-          s.bz = int32_t(std::lround((double(e.from[1]) + dz*double(k)/double(pieces))/Unit));
-          s.outX = float(ox);
-          s.outZ = float(oz);
-          s.tri  = e.tri;
-          segments.push_back(s);
-          start = -1;
-          }
-        }
-      }
+  bool                 anyVerge = false;
+  if(maxEdge>0 || !verge.empty()) {
+    std::vector<const Tri*> list(tris.size());
+    for(size_t i=0; i<tris.size(); ++i)
+      list[i] = tris[i].t;
+    openEdges(list,verge,lo,hi,band,segments);
     for(size_t i=0; i<segments.size(); ++i) {
       const auto& s = segments[i];
       forBins(std::min(s.ax,s.bx)*Unit-band, std::max(s.ax,s.bx)*Unit+band,
               std::min(s.az,s.bz)*Unit-band, std::max(s.az,s.bz)*Unit+band,
               [&](size_t b) { segBins[b].push_back(uint32_t(i)); });
+      if(!s.verge)
+        continue;
+      anyVerge = true;
+      forBins(std::min(s.ax,s.bx)*Unit-VergeBand, std::max(s.ax,s.bx)*Unit+VergeBand,
+              std::min(s.az,s.bz)*Unit-VergeBand, std::max(s.az,s.bz)*Unit+VergeBand,
+              [&](size_t b) { vergeBins[b].push_back(uint32_t(i)); });
       }
     }
   // cm to the nearest open edge, `limit` when none is nearer; which: that edge
@@ -354,6 +282,32 @@ CellBlades buildCell(const CellInput& in) {
         }
       }
     return int32_t(isqrt(uint64_t(best)));
+    };
+
+  // units to the nearest piece of a border with a verge, `limit` when none is nearer; which: that piece
+  auto vergeDistance = [&](int32_t px, int32_t pz, int32_t limit, const Segment*& which) {
+    int64_t best = limit;
+    if(px<lo[0] || px>=hi[0] || pz<lo[1] || pz>=hi[1])
+      return int32_t(best);
+    for(uint32_t id:vergeBins[size_t(((pz-lo[1])/binSize)*Bins + (px-lo[0])/binSize)]) {
+      const Segment& s = segments[id];
+      const int64_t ax = int64_t(s.ax)*Unit, az = int64_t(s.az)*Unit;
+      const int64_t abx = int64_t(s.bx)*Unit-ax, abz = int64_t(s.bz)*Unit-az, apx = px-ax, apz = pz-az;
+      const int64_t len2 = abx*abx + abz*abz, t = apx*abx + apz*abz;
+      int64_t d;
+      if(t<=0 || len2==0) {
+        d = isqrt(uint64_t(apx*apx + apz*apz));
+        } else if(t>=len2) {
+        d = isqrt(uint64_t((apx-abx)*(apx-abx) + (apz-abz)*(apz-abz)));
+        } else {
+        d = std::abs(apx*abz - apz*abx)/int64_t(isqrt(uint64_t(len2)));
+        }
+      if(d<best) {
+        best  = d;
+        which = &s;
+        }
+      }
+    return int32_t(best);
     };
 
   // water over the cell
@@ -398,8 +352,8 @@ CellBlades buildCell(const CellInput& in) {
       return nullptr;
     const Segment* near = nullptr;
     const int32_t  cm   = edgeDistance(px,pz,PastEdge,near);
-    if(near==nullptr)
-      return nullptr;
+    if(near==nullptr || near->verge)
+      return nullptr; // past a verge's border the cover decides
     const Ready& r = tris[near->tri];
     const Tri&   t = *r.t;
     for(int i=0; i<3; ++i) {
@@ -434,6 +388,41 @@ CellBlades buildCell(const CellInput& in) {
     return &r;
     };
 
+  // A root on a verge past the border `s`: the verge's own height under it, the nearest to the grass's plane there.
+  // w: the edge functions of the grass triangle the border belongs to
+  auto vergeRoot = [&](int32_t px, int32_t pz, const Segment& s, int64_t w[3], int32_t& y) -> const Ready* {
+    const Ready& r = tris[s.tri];
+    const Tri&   t = *r.t;
+    for(int i=0; i<3; ++i) {
+      const int a = (i+1)%3, b = (i+2)%3;
+      w[i] = int64_t(t.x[b]-t.x[a])*int64_t(pz-t.z[a]) - int64_t(t.z[b]-t.z[a])*int64_t(px-t.x[a]);
+      }
+    const auto plane = int32_t((w[0]*t.y[0] + w[1]*t.y[1] + w[2]*t.y[2])/r.area2);
+    bool    found = false;
+    int32_t off   = 0;
+    for(const VergeTri* g:verge) {
+      if(g->slot!=t.slot ||
+         px<std::min({g->x[0],g->x[1],g->x[2]}) || px>std::max({g->x[0],g->x[1],g->x[2]}) ||
+         pz<std::min({g->z[0],g->z[1],g->z[2]}) || pz>std::max({g->z[0],g->z[1],g->z[2]}) || !insideXZ(g->x,g->z,px,pz))
+        continue;
+      const int64_t area2 = int64_t(g->x[1]-g->x[0])*int64_t(g->z[2]-g->z[0]) - int64_t(g->x[2]-g->x[0])*int64_t(g->z[1]-g->z[0]);
+      if(area2==0)
+        continue;
+      int64_t sum = 0;
+      for(int i=0; i<3; ++i) {
+        const int a = (i+1)%3, b = (i+2)%3;
+        sum += (int64_t(g->x[b]-g->x[a])*int64_t(pz-g->z[a]) - int64_t(g->z[b]-g->z[a])*int64_t(px-g->x[a]))*int64_t(g->y[i]);
+        }
+      const auto h = int32_t(sum/area2);
+      if(!found || std::abs(h-plane)<std::abs(off)) {
+        found = true;
+        off   = h-plane;
+        y     = h;
+        }
+      }
+    return found ? &r : nullptr;
+    };
+
   // the tufts round the cell: a jittered centre in each square of TuftStep, its patch and its own numbers
   const int32_t tx0 = floorDiv(lo[0],TuftStep)-2, tz0 = floorDiv(lo[1],TuftStep)-2;
   const int32_t tnx = floorDiv(hi[0],TuftStep)+3-tx0, tnz = floorDiv(hi[1],TuftStep)+3-tz0;
@@ -450,7 +439,7 @@ CellBlades buildCell(const CellInput& in) {
     for(int32_t i=i0; i<i0+CellNodes; ++i) {
       const uint64_t h = hash64(i,j,0x11u);
       const auto rank = uint32_t(h & 0xFFu);
-      if(rank>=in.rankLimit)
+      if(rank>=std::max(in.rankLimit,anyFine ? in.rankLimitFine : 0u))
         continue;
       const int32_t px = i*NodeStep + int32_t((h >> 8) & 63u), pz = j*NodeStep + int32_t((h >> 14) & 63u);
 
@@ -469,19 +458,33 @@ CellBlades buildCell(const CellInput& in) {
           }
       // keep by the patch: `roll` of 1024 against the share of the lattice's nodes the density asks for
       const auto roll = int64_t((h >> 20) & 1023u);
-      if(roll*NodesPerM2*256*256 >= int64_t(tuft->densityQ8)*maxDensity*int64_t(BladesPerM2)*1024)
+      // a fine blade is of the lattice's every node: the patch's count is not asked
+      const bool kept = roll*NodesPerM2*256*256 < int64_t(tuft->densityQ8)*maxDensity*int64_t(BladesPerM2)*1024;
+      if(!kept && !(anyFine && (tuft->sward || anyVerge)))
         continue;
 
       int64_t w[3];
       int32_t y = 0, past = -1; // cm past an open edge, or on the grass
+      int32_t onVerge = -1;     // units past a border with a verge, on the verge
       const Segment* edge = nullptr;
       const Ready* at = locate(px,pz,w,y);
+      if(at==nullptr && anyVerge) {
+        const Segment* near = nullptr;
+        const int32_t  d    = vergeDistance(px,pz,VergeBand,near);
+        if(near!=nullptr && (at = vergeRoot(px,pz,*near,w,y))!=nullptr) {
+          onVerge = d;
+          edge    = near;
+          }
+        }
       if(at==nullptr && !segments.empty())
         at = pastEdge(px,pz,w,y,past,edge);
       if(at==nullptr)
         continue;
       const Slot&   slot = slots[at->t->slot];
       const Params& par  = in.params[at->t->slot];
+      const bool    fine = par.cover && par.fine && (tuft->sward || onVerge>=0);
+      if(fine ? rank>=in.rankLimitFine : (!kept || rank>=in.rankLimit))
+        continue;
       if(at->tanQ12>=slot.tanMax)
         continue;
       const int32_t slopeQ8 = at->tanQ12<=slot.tanFull ? 256 :
@@ -491,7 +494,8 @@ CellBlades buildCell(const CellInput& in) {
       if(past>=0 && slot.edgeCm<=0)
         continue;
       if(past<0 && slot.edgeCm>0 && !segments.empty()) {
-        const int32_t d = edgeDistance(px,pz,slot.edgeCm*2,edge);
+        // on a verge: as at the border itself
+        const int32_t d = onVerge>=0 ? 0 : edgeDistance(px,pz,slot.edgeCm*2,edge);
         const int32_t n = valueNoise(px,pz,150*Unit,0x33u) - 32640;
         edgeQ8 = std::clamp((d*256 + int32_t(int64_t(n)*slot.edgeCm*154/32640))/slot.edgeCm, 0, 256);
         }
@@ -501,16 +505,20 @@ CellBlades buildCell(const CellInput& in) {
         edgeQ8      = 0;
         edgeDensity = 115*(PastEdge-past)/PastEdge;
         }
-      // a spot of bare earth in the sward: no blade in it, fewer and lower ones on its rim
-      const int32_t bare  = in.patch<0 ? patchBare(px,pz) : 0;
-      const int64_t share = int64_t(tuft->densityQ8)*slot.densityQ8*slopeQ8*edgeDensity*(256-bare);
-      if(roll*NodesPerM2*(int64_t(1) << 40) >= share*int64_t(BladesPerM2)*1024)
+      // a spot of bare earth in the sward: no blade in it, fewer and lower ones on its rim. With the cover that
+      // is asked at the root below
+      const int32_t bare  = (in.patch<0 && !par.cover) ? patchBare(px,pz) : 0;
+      // of 2^40; a fine blade: the record's count to 1, of the lattice's every node
+      const int64_t share = fine ? int64_t(std::min(slot.densityQ8,256))*slopeQ8*edgeDensity*(int64_t(1) << 16)
+                                 : int64_t(tuft->densityQ8)*slot.densityQ8*slopeQ8*edgeDensity*(256-bare);
+      const int64_t nodes = fine ? int64_t(BladesPerM2) : NodesPerM2;
+      if(roll*nodes*(int64_t(1) << 40) >= share*int64_t(BladesPerM2)*1024)
         continue;
 
       // gathered towards the tuft's centre; the root must still stand on grass and out of the water. A root past
       // an edge stays where its node put it
       int32_t pull = 0, fx = px, fz = pz;
-      if(past<0) {
+      if(past<0 && onVerge<0) {
         pull = std::min(int32_t(std::lround((20.f + float((h >> 30) & 31u))*par.clumps*2.56f))*tuft->pullQ8/256, 166);
         fx   = px + int32_t(int64_t(tuft->x-px)*pull/256);
         fz   = pz + int32_t(int64_t(tuft->z-pz)*pull/256);
@@ -520,6 +528,22 @@ CellBlades buildCell(const CellInput& in) {
         continue;
       const Tri&    t  = *at->t;
       const Params& fp = in.params[t.slot];
+      // the cover at the root (grasscover.h): the spots, the border with a verge
+      int32_t stand = 256;
+      if(fp.cover) {
+        int32_t border = 256;
+        if(onVerge>=0) {
+          border = coverBorder(fx,fz,onVerge,edge->reach);
+          } else if(anyVerge) {
+          const Segment* near = nullptr;
+          const int32_t  d    = vergeDistance(fx,fz,CoverInside*Unit,near);
+          if(near!=nullptr)
+            border = coverBorder(fx,fz,-d,near->reach);
+          }
+        stand = coverBlades(in.patch<0 ? coverLevel(fx,fz,border) : border);
+        if(roll*nodes*(int64_t(1) << 40) >= (share >> 8)*stand*int64_t(BladesPerM2)*1024)
+          continue;
+        }
       const double  k  = 1.0/double(at->area2);
       const double  b0 = double(w[0])*k, b1 = double(w[1])*k, b2 = double(w[2])*k;
 
@@ -529,10 +553,13 @@ CellBlades buildCell(const CellInput& in) {
       float height = fp.height*tuft->height*(0.9f + tuft->spread*(float((h >> 35) & 0xFFu)/255.f - 0.5f));
       height *= 1.f - tuft->fall*std::min(fromCentre*1.6f,1.f);
       height *= 1.f - 0.5f*float(bare)/256.f;
+      height *= 0.55f + 0.45f*float(stand)/256.f;
       height *= 0.5f + 0.5f*edgeShare;
       height *= 0.5f + 0.5f*slopeShare;
       if(past>=0)
         height = std::min(height*(1.f - 0.5f*float(past)/float(PastEdge)),PastHeight);
+      if(onVerge>=0)
+        height = std::min(height*(1.f - 0.4f*std::min(float(onVerge)/float(MaxVergeCm*Unit),1.f)),PastHeight);
       for(const Disc& d:in.items) {
         const double dx = double(d.x-fx)/Unit, dz = double(d.z-fz)/Unit;
         const double r  = std::sqrt(dx*dx+dz*dz);
@@ -562,13 +589,15 @@ CellBlades buildCell(const CellInput& in) {
       r.y      = y;
       r.z      = fz;
       r.slot   = t.slot;
+      r.kind   = fine ? 1 : 0;
       r.rank   = uint8_t(rank);
       r.height = uint8_t(std::clamp(int(std::lround(height*4.f)),1,255));
       r.facing = uint8_t(int(std::floor((turn-std::floor(turn))*256.f)) & 0xFF);
       r.phase  = tuft->phase;
       r.lean   = uint8_t(std::clamp(int(std::lround((lean-8.f)*15.f/40.f)),0,15));
       // a blade of the sward is broad for its length, a blade of a tall clump is broad
-      r.width  = uint8_t(std::clamp(int((h >> 57) & 7u) + (tuft->clump ? 5 : (tuft->sward ? 3 : 0)),0,15));
+      r.width  = fine ? uint8_t((h >> 57) & 7u) :
+                 uint8_t(std::clamp(int((h >> 57) & 7u) + (tuft->clump ? 5 : (tuft->sward ? 3 : 0)),0,15));
       r.tint   = uint8_t(std::clamp(int(tuft->tint) + int((h >> 60) & 3u) - 1,0,15));
       const double nx = b0*t.nx[0] + b1*t.nx[1] + b2*t.nx[2];
       const double ny = b0*t.ny[0] + b1*t.ny[1] + b2*t.ny[2];
@@ -576,9 +605,15 @@ CellBlades buildCell(const CellInput& in) {
       const double nl = std::max(std::sqrt(nx*nx+ny*ny+nz*nz),1e-6);
       r.nx     = uint8_t(std::clamp(int(std::lround(nx/nl*127.0))+128,1,255));
       r.nz     = uint8_t(std::clamp(int(std::lround(nz/nl*127.0))+128,1,255));
-      const double u = b0*t.u[0] + b1*t.u[1] + b2*t.u[2], v = b0*t.v[0] + b1*t.v[1] + b2*t.v[2];
-      r.u      = uint16_t(int(std::floor((u-std::floor(u))*4096.0)) & 0xFFF);
-      r.v      = uint16_t(int(std::floor((v-std::floor(v))*4096.0)) & 0xFFF);
+      if(const int32_t tile = slots[t.slot].tile; tile>0) {
+        // the sward's map lies by the world's x and z (shader/grass/grass_layers.glsl)
+        r.u    = uint16_t((int64_t(fx-floorDiv(fx,tile)*tile)*4096/tile) & 0xFFF);
+        r.v    = uint16_t((int64_t(fz-floorDiv(fz,tile)*tile)*4096/tile) & 0xFFF);
+        } else {
+        const double u = b0*t.u[0] + b1*t.u[1] + b2*t.u[2], v = b0*t.v[0] + b1*t.v[1] + b2*t.v[2];
+        r.u    = uint16_t(int(std::floor((u-std::floor(u))*4096.0)) & 0xFFF);
+        r.v    = uint16_t(int(std::floor((v-std::floor(v))*4096.0)) & 0xFFF);
+        }
       raw.push_back(r);
       minY = std::min(minY,y);
       maxY = std::max(maxY,y);
@@ -588,7 +623,7 @@ CellBlades buildCell(const CellInput& in) {
 
   // by slot, then by rank; the lattice's order within a rank
   std::stable_sort(raw.begin(),raw.end(),[](const Raw& a, const Raw& b) {
-    return std::tie(a.slot,a.rank)<std::tie(b.slot,b.rank);
+    return std::tie(a.slot,a.kind,a.rank)<std::tie(b.slot,b.kind,b.rank);
     });
   ret.minY = minY;
   ret.maxY = maxY;
@@ -600,8 +635,8 @@ CellBlades buildCell(const CellInput& in) {
     b.w[1] = uint32_t(std::min((r.y-minY)/2,0xFFFF)) | (uint32_t(r.height) << 16) | (uint32_t(r.rank) << 24);
     b.w[2] = uint32_t(r.facing) | (uint32_t(r.phase) << 8) | (uint32_t(r.nx) << 16) | (uint32_t(r.nz) << 24);
     b.w[3] = uint32_t(r.u) | (uint32_t(r.v) << 12) | (uint32_t(r.width) << 24) | (uint32_t(r.tint) << 28);
-    if(ret.batches.empty() || ret.batches.back().slot!=r.slot)
-      ret.batches.push_back(Batch{r.slot,uint32_t(i),0});
+    if(ret.batches.empty() || ret.batches.back().slot!=r.slot || ret.batches.back().kind!=r.kind)
+      ret.batches.push_back(Batch{r.slot,r.kind,uint32_t(i),0});
     ++ret.batches.back().count;
     }
   return ret;

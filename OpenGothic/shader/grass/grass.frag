@@ -14,7 +14,7 @@ layout(binding = 0, std140) uniform UboScene {
   SceneDesc scene;
   };
 
-layout(location = 0) in vec3 inColor;
+layout(location = 0) in vec4 inColor;     // w: the share of the sward's own palette
 layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec4 inShade;     // the share of the blade's length, of the sun through, the dryness, the sheen
 layout(location = 3) in vec3 inPrevStatic;
@@ -31,9 +31,13 @@ void main() {
   const uint  partsOff = grassPartsOff(scene.grassRing.w);
   const float t        = clamp(inShade.x, 0.0, 1.0);
   const float tone     = grassTone(t);
-  const vec3  tip      = (partsOff & GrassPartTip)!=0u ? vec3(1.0) : mix(GrassTipGreen, GrassTipStraw, inShade.z);
-  const float root     = (partsOff & GrassPartRoot)!=0u ? 1.0 : GrassRootShade;
-  vec3  color   = min(inColor*mix(vec3(root), tip, tone)*(1.0 + inShade.w*t), vec3(1.0));
+  // a blade of a ground with its own sward takes that sward's colour, which is grass already: the tip barely
+  // shifts it, so the blades and the ground between them are of one palette
+  const float own      = inColor.a;
+  const vec3  tip      = (partsOff & GrassPartTip)!=0u ? vec3(1.0)
+                         : mix(mix(GrassTipGreen, GrassTipStraw, inShade.z), mix(GrassOwnTipGreen, GrassOwnTipStraw, inShade.z), own);
+  const float root     = (partsOff & GrassPartRoot)!=0u ? 1.0 : mix(GrassRootShade, GrassOwnRootShade, own);
+  vec3  color   = min(inColor.rgb*mix(vec3(root), tip, tone)*(1.0 + inShade.w*t), vec3(1.0));
   float ao      = (partsOff & GrassPartRootAo)!=0u ? 1.0 : mix(GrassRootAo, 1.0, tone);
   float through = inShade.y;
   if((partsOff & GrassPartPaint)!=0u) {

@@ -158,13 +158,22 @@ class Resources final {
       bool                     eye = false; // an eyeball: wet highlight, the lid's shade (reports/content/2026-11-hero-head/eye-shader.md)
       FoliageWind::Params      foliage; // "foliage": leaves in the wind, the sun through them (graphics/foliagewind.h)
       Grass::Params            grass;   // "grass": the ground grows grass (graphics/grass/grassparams.h)
-      bool                     present = false; // the material is drawn by its record; not for a record of `grass` alone
+      Material::Layers         layers;  // "ground" or "verge": the meadow's two layers, loaded (graphics/grass/grassground.h)
+      bool                     present = false; // the material is drawn by its record; not for a record of `grass`, `ground`, `verge` alone
       bool                     hasAlbedo = false;
       };
     static MaterialMaps              loadMaterialMaps(std::string_view name);
     static const Tempest::Texture2d* loadMaterialAlbedo(std::string_view name);
     // The `grass` field of the texture's record, no texture loaded; off without one
     static Grass::Params             grassParams(std::string_view name);
+    // The meadow's ground of the record, no texture loaded: `ground` on with its field (and `grass`); `verge` on
+    // with its field, `of` then the upper-case name of the grass's texture
+    struct GroundParams {
+      Grass::Ground ground;
+      Grass::Verge  verge;
+      std::string   of;
+      };
+    static GroundParams              groundParams(std::string_view name);
     // Drops the materials.json record of `name` with one log line, for a fault seen only once the material is built
     // (projection on an alpha-tested texture): the texture then loads as if the record were not there
     static void                      rejectMaterialMaps(std::string_view name, std::string_view reason);
@@ -714,9 +723,15 @@ class Resources final {
       bool        eye = false;
       FoliageWind::Params foliage; // `on` with the field
       Grass::Params grass;         // `on` with the field
-      bool        grassOnly = false; // nothing but `grass`: the ground keeps the look it has without a record
+      bool        grassOnly = false; // nothing but `grass`, `ground`, `verge`: the ground keeps the texture it has without a record
+      Grass::Ground ground;        // `on` with the field: the six maps below
+      std::string swardAlbedo, swardNormal, swardOrm, earthAlbedo, earthNormal, earthOrm;
+      Grass::Verge verge;          // `on` with the field
+      std::string vergeOf;         // upper-case: the record of the grass this ground is the verge of
       };
     std::unordered_map<std::string,MaterialMapFiles>                  materialMaps;
+    // the record of a grass with `ground` by its upper-case name, or none
+    const MaterialMapFiles*                                           groundOf(const std::string& key) const;
     TextureCache                                                     materialTextureCache;
     bool                                                             materialMapsPresent = false;
     struct MeshOverride {

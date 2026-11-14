@@ -114,6 +114,10 @@ class SceneGlobals final {
     const Tempest::StorageImage*      fogOcclusion = &Resources::fallbackImage();
 
     const Tempest::StorageBuffer*     lights        = nullptr;
+    // the meadows' borders with a verge (GrassField, shader/grass/grass_border.glsl); without a field the buffer
+    // that says there is none
+    const Tempest::StorageBuffer*     grassBorder   = nullptr;
+    Tempest::StorageBuffer            grassBorderNone;
 
     const Tempest::Texture2d*         vsmPageData   = nullptr;
     const Tempest::StorageImage*      vsmPageTbl    = nullptr;
