@@ -227,7 +227,11 @@ class Runner {
       size_t instructions=0;
       vm.observe_reads([&](const DaedalusSymbol& sym) {
         if(!mutableGlobal(sym,vm)) return;
-        if(kind=="population") { if(pending.empty()) pending=sym.name(); }
+        if(kind=="population") {
+          if(pending.empty()) pending=sym.name();
+          // A bare global condition is first consumed inside BZ, after its instruction observer.
+          if(vm.instruction_at(vm.pc()).op==Op::BZ) throw Stop("game_state",pending+" before state branch");
+          }
         else throw Stop("game_state",sym.name());
         });
       vm.observe_instructions([&](const DaedalusInstruction& op) {

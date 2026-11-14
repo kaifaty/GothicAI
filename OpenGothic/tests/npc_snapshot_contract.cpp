@@ -4,6 +4,8 @@
 #include "npcsnapshotfields.h"
 #include "programdata.h"
 #include <rapidjson/document.h>
+#include <rapidjson/stringbuffer.h>
+#include <rapidjson/writer.h>
 #include <chrono>
 #include <bit>
 #include <cstdlib>
@@ -103,6 +105,10 @@ struct Fixture {
     op(Op::PUSHI,item); op(Op::PUSHV,point); op(Op::BE,insertItem);
     op(Op::PUSHV,point); op(Op::PUSHI,3); op(Op::BE,guild);
     op(Op::PUSHI,8); op(Op::PUSHI,0); op(Op::PUSHV,point); op(Op::PUSHI,1); op(Op::BE,mob); op(Op::RSR);
+    auto computed=fn("INIT_COMPUTED_STATE"); begin(computed);
+    op(Op::PUSHI,npc); op(Op::PUSHV,point); op(Op::BE,insert);
+    op(Op::PUSHV,global); op(Op::PUSHI,0); op(Op::EQ);
+    op(Op::BZ,uint32_t(p.bytecode.size()+6)); op(Op::RSR); op(Op::RSR);
     auto init=fn("INIT_STATE"); begin(init);
     op(Op::PUSHI,npc); op(Op::PUSHV,point); op(Op::BE,insert);
     op(Op::PUSHV,global); op(Op::BZ,uint32_t(p.bytecode.size()+6)); op(Op::RSR); op(Op::RSR);
@@ -112,7 +118,15 @@ struct Fixture {
   };
 rapidjson::Document read(const fs::path& path) {
   std::ifstream f(path); std::string s{std::istreambuf_iterator<char>(f),{}};
-  rapidjson::Document j; j.Parse(s.c_str()); check(!j.HasParseError(),"valid fixture JSON"); return j;
+  rapidjson::Document j; j.Parse<rapidjson::kParseFullPrecisionFlag>(s.c_str()); check(!j.HasParseError(),"valid fixture JSON"); return j;
+  }
+void write(const fs::path& path,const rapidjson::Document& j) {
+  rapidjson::StringBuffer bytes;
+  rapidjson::Writer<rapidjson::StringBuffer> writer(bytes);
+  check(j.Accept(writer),"encode fixture JSON");
+  std::ofstream f(path,std::ios::binary);
+  f.write(bytes.GetString(),std::streamsize(bytes.GetSize()));
+  check(bool(f),"write fixture JSON");
   }
 void fixture(const fs::path& dir) {
   auto p=Fixture().make();
@@ -126,6 +140,7 @@ void fixture(const fs::path& dir) {
   auto npc=read(a/"npcs.json"); auto& records=npc["records"];
   check(records.Size()==2,"two NPCs");
   check(std::string(records[0]["reason"].GetString())=="game_state","global dependency refused");
+  check(std::string(records[0]["detail"].GetString())=="CHAPTER","global dependency names the variable");
   auto& good=records[1];
   check(good["fields"]["id"].GetInt()==123 && good["fields"]["attribute"][0].GetInt()==42,"prototype and helper executed");
   check(std::string(good["fields"]["daily_routine"].GetString())=="RTN_START_123","function field uses symbol name");
@@ -135,10 +150,27 @@ void fixture(const fs::path& dir) {
   auto routines=read(a/"routines.json"); check(routines["records"][0]["rows"].Size()==2,"two routine rows");
   check(std::string(routines["records"][0]["rows"][0]["state"].GetString())=="ZS_TEST","routine state symbol");
   auto population=read(a/"population.json");
-  check(population["records"][0]["calls"].Size()==1 && population["records"][0].HasMember("reason"),"safe startup prefix before state branch");
-  check(population["records"][1]["calls"].Size()==4,"all four population APIs");
+  for(unsigned i=0;i<2;++i) {
+    check(population["records"][i]["calls"].Size()==1 && population["records"][i].HasMember("reason"),"safe startup prefix before state branch");
+    check(std::string(population["records"][i]["detail"].GetString())=="CHAPTER before state branch","startup stops at the state branch");
+    }
+  check(population["records"][2]["calls"].Size()==4,"all four population APIs");
   auto report=read(a/"report.json");
-  check(report["deferred_calls"]["AMBIENT"].GetInt()==1 && report["uncaptured"].Size()==2,"report reasons and deferred counts");
+  check(report["deferred_calls"]["AMBIENT"].GetInt()==1 && report["uncaptured"].Size()==3,"report reasons and deferred counts");
+
+  good["fields"]["attribute"][0].SetInt(43);
+  write(b/"npcs.json",npc);
+  check(NpcSnapshot::verify(p,b)>0,"verification rejects a changed attribute");
+  good["fields"]["attribute"][0].SetInt(42);
+  good["calls"][0].Swap(good["calls"][1]);
+  write(b/"npcs.json",npc);
+  check(NpcSnapshot::verify(p,b)>0,"verification rejects reordered constructor calls");
+  good["calls"][0].Swap(good["calls"][1]);
+  write(b/"npcs.json",npc);
+  check(NpcSnapshot::verify(p,b)==0,"restored snapshot verifies");
+  routines["records"][0]["rows"].PopBack();
+  write(b/"routines.json",routines);
+  check(NpcSnapshot::verify(p,b)>0,"verification rejects a missing routine row");
   }
 fs::path readyBase() {
   if(auto* p=std::getenv("OPENGOTHIC_BASE"); p && *p) return p;
@@ -147,14 +179,21 @@ fs::path readyBase() {
   else if(auto* p=std::getenv("HOME")) cache=fs::path(p)/".cache/gothic-ai/base";
   auto* fingerprint=std::getenv("OPENGOTHIC_BASE_FINGERPRINT");
   if(fingerprint && *fingerprint) return cache/fingerprint;
-  // Without an explicit selection, use the ready base selected by the installation pointer.
-  if(!fs::is_directory(cache/"current")) return {};
-  fs::path newest;
-  for(auto& f:fs::directory_iterator(cache/"current"))
-    if(f.path().extension()==".json" && (newest.empty() || fs::last_write_time(f.path())>fs::last_write_time(newest))) newest=f.path();
-  if(newest.empty()) return {};
-  auto pointer=read(newest);
-  if(pointer.HasMember("base") && pointer["base"].HasMember("path")) return pointer["base"]["path"].GetString();
+  // Match BaseStore's installation-specific pointer; unrelated fixture pointers are irrelevant.
+  const auto* game=std::getenv("GOTHIC_DIR");
+  if(!game || !*game) return {};
+  const auto gothic=fs::weakly_canonical(game).generic_string();
+  const auto file=cache/"current"/(BaseImport::sha256(gothic)+".json");
+  if(!fs::is_regular_file(file)) return {};
+  auto pointer=read(file);
+  if(!pointer.IsObject() || !pointer.HasMember("version") || pointer["version"]!=1 ||
+     !pointer.HasMember("gothic") || !pointer["gothic"].IsString() || pointer["gothic"].GetString()!=gothic ||
+     !pointer.HasMember("base") || !pointer["base"].IsObject()) return {};
+  const auto& base=pointer["base"];
+  if(base.HasMember("path") && base["path"].IsString()) {
+    fs::path path=base["path"].GetString();
+    if(path.is_absolute() && fs::is_regular_file(path/"programs/programs.json")) return path;
+    }
   return {};
   }
 }
@@ -164,7 +203,7 @@ int main() {
     fs::create_directories(dir);
     fixture(dir);
     auto base=readyBase();
-    if(base.empty()) std::cout<<"SKIP real corpus: no ready base selected (OPENGOTHIC_BASE or current-base pointer)\n";
+    if(base.empty()) std::cout<<"SKIP real corpus: no ready base selected (OPENGOTHIC_BASE or the GOTHIC_DIR current-base pointer)\n";
     else {
       auto program=NpcSnapshot::load(base);
       NpcSnapshot::write(program,dir/"real");
