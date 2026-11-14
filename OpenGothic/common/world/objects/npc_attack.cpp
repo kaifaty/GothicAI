@@ -55,18 +55,6 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
     return false;
     }
 
-  // A paired victim belongs to its riposter until handover (or the victim clip ends).
-  if(currentTarget->meleeRiposteAiHeld && currentTarget->isMeleeRiposteHeld()) {
-    meleeParadeTiming.reset();
-    meleeAiDodgeTiming.reset();
-    visual.stopWalkAnim(*this);
-    if(!visual.pose().isStanding())
-      setAnim(Anim::Idle);
-    implTurnToFai(*currentTarget,dt);
-    mvAlgo.tick(dt,MoveAlgo::WaitMove);
-    return true;
-    }
-
   const auto ws = weaponState();
   const auto bs = bodyStateMasked();
   const auto& flags = Gothic::physicsFlags();
@@ -128,11 +116,6 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
     return true;
     }
 
-  if(!bodyOverride && tryMeleeAiBarge()) {
-    mvAlgo.tick(dt,MoveAlgo::WaitMove);
-    return true;
-    }
-
   if(targetKnockdown || targetStunned) {
     const bool rising = currentTarget->meleeRiseTick!=0;
     // Use the same root-transformed distance as isInFinishRange, bounded by its script limit.
@@ -167,8 +150,6 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
         setAnim(Anim::Idle);
       implTurnToFai(*currentTarget,dt);
       if(action==FightAlgo::MV_ATTACK && visual.pose().isStanding()) {
-        if(targetStunned && tryMeleeAiRiposte())
-          return true;
         if(!allowStaminaAction("attack",meleeAttackCost(),true)) {
           waitForMeleeStamina(dt);
           return true;
@@ -415,10 +396,6 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
       const auto hit = owner.physic()->ray(this->collosionCenter(),currentTarget->collosionCenter());
       if(hit.hasCol) {
         // blocked by wall
-        consume();
-        return true;
-        }
-      if(bodyOverride && act==FightAlgo::MV_ATTACK && tryMeleeAiRiposte()) {
         consume();
         return true;
         }

@@ -18,6 +18,7 @@
 #include "graphics/worldview.h"
 #include "graphics/mesh/submesh/packedmesh.h"
 
+#include "islandbody.h"
 #include "islandcontent.h"
 #include "islandterrain.h"
 
@@ -389,8 +390,8 @@ void checkStream(const Land& land) {
 
 // The way up: from the summit, over ground no steeper than the limit and not under the sea, the beach is reached
 // all around the island. The platform has no slope limit of its own: it is an argument of VirtualCharacter::move,
-// and the game passes the guild's slide angle. 35 degrees is under any of them.
-constexpr float WalkSlope = 35.f;
+// and the island's hero passes island::WalkSlope (islandbody.h), the limit this way is measured with.
+using island::WalkSlope;
 
 void checkWayUp(const Land& land, float summitX, float summitZ) {
   std::unordered_map<uint64_t,std::array<uint32_t,2>> edges;

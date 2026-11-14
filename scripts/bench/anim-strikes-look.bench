@@ -1,13 +1,14 @@
-# Our own 1H strikes on our own key poses (reports/Свои ключевые позы ударов.md, «Доводка») played with `ani`: the
-# charged strike as T_1HCHARGEDEMO (windup, the 3-s hold loop and the release glued by finish_set.py: `ani` plays
-# one clip, cannot start the loop S_1HCHARGE nor the release while the windup runs, and goes back to the stance
-# instead of `next`; the game's logic chains the three), the shoulder
-# barge T_1HBARGE and the riposte T_1HRIPOSTE. Without a talent overlay (the fixture's re-arm puts none on: animinfo
-# logs the 20-frame S_1HRUN of HUMANS) from the side and from behind and above like the game's camera (`cam follow` angle 180 is behind the hero, 0 in front of him); then the
-# charge and the barge at talent 2 (`bladepath HUMANS_1HST2.MDS` after the re-arm, its stance holds the sword up);
-# Gothic's own T_1HATTACKL and S_1HATTACK from the side for the style; then slowed 4x from the side. Content from
-# scripts/content/anim/finish_set.py (strikes-finish.json); the look is judged by Claude from the clips, anim_pop at
-# the switches next to Gothic's own attacks. After a goto ~2 s on the ground before `ani`.
+# Our own 1H charged strike on our own key poses (reports/Свои ключевые позы ударов.md, «Доводка») played with `ani`:
+# T_1HCHARGEDEMO (windup, the 3-s hold loop and the release glued by finish_set.py: `ani` plays one clip, cannot
+# start the loop S_1HCHARGE nor the release while the windup runs, and goes back to the stance instead of `next`;
+# the game's logic chains the three). Without a talent overlay (the fixture's re-arm puts none on: animinfo logs the
+# 20-frame S_1HRUN of HUMANS) from the side and from behind and above like the game's camera (`cam follow` angle 180
+# is behind the hero, 0 in front of him); then the charge at talent 2 (`bladepath HUMANS_1HST2.MDS` after the
+# re-arm, its stance holds the sword up); Gothic's own T_1HATTACKL and S_1HATTACK from the side for the style; then
+# the charge slowed 4x from the side. The shoulder barge and the riposte left the game on 2026-11-14 (plan decisions
+# 19 and 20), their takes with them. Content from scripts/content/anim/finish_set.py (strikes-finish.json); the look
+# is judged by Claude from the clips, anim_pop at the switches next to Gothic's own attacks. After a goto ~2 s on
+# the ground before `ani`.
 # WORLD=NEWWORLD.ZEN TIMEOUT=900 OPENGOTHIC_CONTENT=/abs/content
 seed 73013
 cheat god
@@ -20,7 +21,7 @@ watch player
 clear 3000
 melee-shadow weapon 1h
 wait 1500
-animinfo S_1HRUN T_1HCHARGE S_1HCHARGE T_1HCHARGEHIT T_1HBARGE T_1HRIPOSTE
+animinfo S_1HRUN T_1HCHARGE S_1HCHARGE T_1HCHARGEHIT
 
 cam follow 420 120 270
 goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
@@ -43,57 +44,12 @@ stop
 cam follow 420 120 270
 goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
 melee-shadow weapon 1h
-wait 2000
-rec barge-side
-ani player T_1HBARGE
-wait 1300
-stop
-
-cam follow 380 170 180
-goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
-melee-shadow weapon 1h
-wait 2000
-rec barge-back
-ani player T_1HBARGE
-wait 1300
-stop
-
-cam follow 420 120 270
-goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
-melee-shadow weapon 1h
-wait 2000
-rec riposte-side
-ani player T_1HRIPOSTE
-wait 2200
-stop
-
-cam follow 380 170 180
-goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
-melee-shadow weapon 1h
-wait 2000
-rec riposte-back
-ani player T_1HRIPOSTE
-wait 2200
-stop
-
-cam follow 420 120 270
-goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
-melee-shadow weapon 1h
 bladepath HUMANS_1HST2.MDS
 animinfo S_1HRUN
 wait 2000
 rec t2-charge-side
 ani player T_1HCHARGEDEMO
 wait 4800
-stop
-
-goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
-melee-shadow weapon 1h
-bladepath HUMANS_1HST2.MDS
-wait 2000
-rec t2-barge-side
-ani player T_1HBARGE
-wait 1300
 stop
 
 goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
@@ -122,19 +78,4 @@ ani player T_1HCHARGEDEMO
 wait 4800
 stop
 
-goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
-melee-shadow weapon 1h
-wait 2000
-rec barge-slow
-ani player T_1HBARGE
-wait 1300
-stop
-
-goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
-melee-shadow weapon 1h
-wait 2000
-rec riposte-slow
-ani player T_1HRIPOSTE
-wait 2200
-stop
 slowmo 1

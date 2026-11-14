@@ -207,6 +207,13 @@ class Resources final {
       // step 4 (textureflow.h): the shortfall by state, the visible shortfall, latencies, bursts, bytes in flight
       TextureFlow::Summary flow;
       };
+    // Read-only residency snapshot for clients that journal actual texture publications (the island acceptance).
+    struct TextureInfo {
+      std::filesystem::path source;
+      uint32_t firstMip = 0, reloads = 0;
+      bool resident = false;
+      };
+    static std::vector<TextureInfo>   textureSnapshot();
     static TextureStats              textureStats();
     // Step 4: the distributions of the loads' latency, their wait for a slot and the bursts, since the start
     static TextureFlow::Distributions textureFlowDistributions();

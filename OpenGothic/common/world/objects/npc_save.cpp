@@ -112,7 +112,6 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
   endMeleeAiSpecial();
   meleeAiSpecialSlot = {};
   meleeAiSpecialEnded.reset();
-  meleeAiBargeMemory.clear();
   bodyImpactWindow.clear();
   bodyImpactLaunchCulprit.reset();
   bodyImpactPendingCulprit.reset();
@@ -124,18 +123,13 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
   Healing::clear(foodPool);
   foodPoolTick = owner.tickCount();
   collectingFood = false;
-  meleeRiposte.reset();
-  meleeRiposteHoldUntil = 0;
   meleeFighter = {};
   meleeChargePhase = ChargePhase::None;
   meleeChargeStart = 0;
   meleeChargeMult = 1.f;
   meleeChargeReleased = false;
   meleePosture.reset();
-  meleeBargeOrigin.reset();
   meleeKnockdown = false;
-  meleeBargeKnockdown = false;
-  meleeRiposteKnockdown = false;
   meleeGetupForced = false;
   meleeFallTick = meleeRiseTick = 0;
   meleeSlowSince = 0;

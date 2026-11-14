@@ -208,11 +208,11 @@ void Renderer::setupSettings() {
   }
   // OPENGOTHIC_VSM_STUDY=<bits>: the bench command `vsm study` from the environment, so one binary measures what the
   // shadow test on a mesh's facets costs (reports/render-features/2026-11-11-facet-shards): 1 the sun reads the
-  // facet's plane over one pixel and 2 the lamps keep it on facets edge-on to them, both as before 2026-11-11. The
-  // command wins over this while a scenario runs.
+  // facet's plane over one pixel and 2 the lamps keep it on facets edge-on to them, both as before 2026-11-11; 16 the
+  // lamps' first search without the point's own texels, as before 2026-11-14. The command wins while a scenario runs.
   if(const char* env = std::getenv("OPENGOTHIC_VSM_STUDY")) {
     const int v = std::atoi(env);
-    benchVsmStudy = uint32_t(v<0 ? 0 : (v>15 ? 15 : v));
+    benchVsmStudy = uint32_t(v<0 ? 0 : (v>31 ? 31 : v));
     Log::i("vsm: study bits = ", benchVsmStudy, " by OPENGOTHIC_VSM_STUDY");
     }
   // OPENGOTHIC_SSAO_STUDY=<bits>: the bench command `ssao study` from the environment, for a whole run (one binary

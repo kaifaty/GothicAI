@@ -659,15 +659,6 @@ endif()
   add_custom_target(check-meleecharge
     COMMAND $<TARGET_FILE:gothic-meleecharge-contract>
     DEPENDS gothic-meleecharge-contract USES_TERMINAL)
-  add_executable(gothic-meleeriposte-contract EXCLUDE_FROM_ALL
-    tests/meleeriposte_contract.cpp common/game/meleeriposte.cpp common/game/meleestamina.cpp)
-  target_include_directories(gothic-meleeriposte-contract PRIVATE common)
-  if(NOT MSVC)
-    target_compile_options(gothic-meleeriposte-contract PRIVATE -Wall -Wconversion -Werror)
-  endif()
-  add_custom_target(check-meleeriposte
-    COMMAND $<TARGET_FILE:gothic-meleeriposte-contract>
-    DEPENDS gothic-meleeriposte-contract USES_TERMINAL)
   add_executable(gothic-furniture-parts-contract EXCLUDE_FROM_ALL tests/furniture_parts_contract.cpp)
   target_link_libraries(gothic-furniture-parts-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_custom_target(check-physics
