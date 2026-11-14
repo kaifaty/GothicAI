@@ -182,6 +182,13 @@ void npcLayout(const NpcSnapshot::Program& program) {
     "aivar:C_NPC.AIVAR wp:C_NPC.WP exp:C_NPC.EXP exp_next:C_NPC.EXP_NEXT lp:C_NPC.LP "
     "bodystate_interruptable_override:C_NPC.BODYSTATEINTERRUPTABLEOVERRIDE no_focus:C_NPC.NOFOCUS ",
     "original NPC field order and bindings");
+  check(std::extent_v<decltype(record.name)> == 5,"original NPC name array size");
+  check(std::extent_v<decltype(record.attribute)> == 8,"original NPC attribute array size");
+  check(std::extent_v<decltype(record.hitchance)> == 5,"original NPC hitchance array size");
+  check(std::extent_v<decltype(record.protection)> == 8,"original NPC protection array size");
+  check(std::extent_v<decltype(record.damage)> == 8,"original NPC damage array size");
+  check(std::extent_v<decltype(record.mission)> == 5,"original NPC mission array size");
+  check(std::extent_v<decltype(record.aivar)> == 100,"original NPC aivar array size");
   bool rejected=false;
   try { vm.find_symbol_by_name("C_NPC.ID")->set_int(1,0,item.get()); }
   catch(const DaedalusIllegalContextType&) { rejected=true; }
