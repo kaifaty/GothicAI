@@ -101,10 +101,11 @@ wait 8000
 stop
 
 # a walk under the band, west along the foot of the lower wall, through the stretch where the tufts hang densest
-# (x 34500..34900, in the sun at 14:00); the camera follows from behind and to the left, so the band stays in the
-# frame for the whole walk; the swing shows the wind all the way, so the clip is not timed to a gust
+# (x 34500..34900, in the sun at 14:00) and stops at x 34670, before the crown of the fir west of it comes into the
+# frame; the camera follows from behind and to the left, so the band stays in the frame for the whole walk; the
+# swing shows the wind all the way, so the clip is not timed to a gust
 walkmode walk
-goto pos 35150 3640 1100
+goto pos 35400 3640 1100
 clear 3000
 face 180
 cam world 420 300 300
