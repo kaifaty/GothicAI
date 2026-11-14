@@ -338,7 +338,7 @@ void Renderer::setupSettings() {
     const auto sw = Grass::enabled();
     if(logged!=int(sw.mode)*2+int(sw.blades)) {
       logged = int(sw.mode)*2+int(sw.blades);
-      Log::i("render: grass = ", int(sw.mode), sw.blades ? "" : " (the ground only)");
+      Log::i("render: grass = ", int(sw.mode), (sw.blades || sw.mode==Grass::Off) ? "" : " (the ground only)");
       }
   }
   // SSAO over frames (reports/engine/2026-11-08-ssao-temporal), on by default: OPENGOTHIC_SSAO_HISTORY=0 traces the
