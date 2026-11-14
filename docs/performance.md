@@ -43,7 +43,7 @@
 | `shot` | `scripts/bench/perf-shot.bench` | кадры для сравнения настроек: два ракурса рынка, лес, интерьер |
 | `face` | `scripts/bench/perf-face.bench` | лицо героя крупно на рынке днём: цена волос, бровей и ресниц своей головы, запускать с её контентом (`PERF_ENV='OPENGOTHIC_CONTENT=…'`) |
 | `face-far` | `scripts/bench/perf-face-far.bench` | голова героя с 1,2, 3, 7 и 15 м там же: цена прядей, когда голова мала в кадре; после каждого вида — кадр |
-| `rock` | `scripts/bench/perf-rock.bench` | стена у дороги южнее фермы Акила, вид `road-3` съёмки материала скал: цена своего материала скалы, запускать с набором (`PERF_ENV='OPENGOTHIC_CONTENT=…'`) |
+| `rock` | `scripts/bench/perf-rock.bench` | стена у дороги южнее фермы Акила, вид `road-3` съёмки материала скал, и пучки травы у камеры, вид `ledge-near`: цена своего материала скалы и живой листвы, запускать с набором (`PERF_ENV='OPENGOTHIC_CONTENT=…'`) |
 
 `shot`, `face`, `face-far` и `rock` не входят в прогон по умолчанию. `shot` снимает PNG `market-a`, `market-b`,
 `forest`, `interior` в папку повтора с `ui on`: кадр проходит путь до экрана,
