@@ -6,6 +6,8 @@
 #pragma once
 #include "script.h"
 #include "world/records/npcrecord.h"
+#include "world/records/itemrecord.h"
+#include "world/records/focusrecord.h"
 
 #include <cstdint>
 
@@ -87,110 +89,14 @@ namespace daedalus {
 		static void register_(DaedalusScript& s);
 	};
 
-	enum class ItemFlag : std::uint32_t {
-		DAGGER = 1U << 13U,
-		SWORD = 1U << 14U,
-		AXE = 1U << 15U,
-		TWO_HANDED_SWORD = 1U << 16U,
-		TWO_HANDED_AXE = 1U << 17U,
-		BOW = 1U << 19U,
-		CROSSBOW = 1U << 20U,
-		AMULET = 1U << 22U,
-		RING = 1U << 11U,
-		BELT = 1U << 24U,
-		MISSION = 1U << 12U,
+	using ItemFlag = ::ItemFlag;
 
-		dagger = DAGGER,
-		sword = SWORD,
-		axe = AXE,
-		two_handed_sword = TWO_HANDED_SWORD,
-		two_handed_axe = TWO_HANDED_AXE,
-		bow = BOW,
-		crossbow = CROSSBOW,
-		amulet = AMULET,
-		ring = RING,
-		belt = BELT,
-		mission = MISSION,
-	};
-	FLAG(ItemFlag)
-
-	struct IItem : DaedalusInstance {
-		static constexpr std::uint32_t condition_count = 3;
-		static constexpr std::uint32_t state_count = 4;
-		static constexpr std::uint32_t text_count = 6;
-
-		var int32_t id;
-		var string name;
-		var string name_id;
-		var int32_t hp;
-		var int32_t hp_max;
-		var int32_t main_flag;
-		var ItemFlag flags;
-		var int32_t weight;
-		var int32_t value;
-		var int32_t damage_type;
-		var int32_t damage_total;
-		var int32_t damage[DamageType::NUM];
-		var int32_t wear;
-		var int32_t protection[DamageType::NUM];
-		var int32_t nutrition;
-		var int32_t cond_atr[condition_count];
-		var int32_t cond_value[condition_count];
-		var int32_t change_atr[condition_count];
-		var int32_t change_value[condition_count];
-		var func magic;
-		var func on_equip;
-		var func on_unequip;
-		var func on_state[state_count];
-		var func owner;
-		var int32_t owner_guild;
-		var int32_t disguise_guild;
-		var string visual;
-		var string visual_change;
-		var string effect;
-		var int32_t visual_skin;
-		var string scheme_name;
-		var int32_t material;
-		var int32_t munition;
-		var int32_t spell;
-		var int32_t range;
-		var int32_t mag_circle;
-		var string description;
-		var string text[text_count];
-		var int32_t count[text_count];
-		var int32_t inv_zbias;
-		var int32_t inv_rot_x;
-		var int32_t inv_rot_y;
-		var int32_t inv_rot_z;
-		var int32_t inv_animate;
-
+	struct IItem : DaedalusInstance, ItemRecord {
 		static void register_(DaedalusScript& s);
 	};
-
-	struct IFocus : DaedalusInstance {
-		var float npc_longrange;
-		var float npc_range1;
-		var float npc_range2;
-		var float npc_azi;
-		var float npc_elevdo;
-		var float npc_elevup;
-		var int32_t npc_prio;
-		var float item_range1;
-		var float item_range2;
-		var float item_azi;
-		var float item_elevdo;
-		var float item_elevup;
-		var int32_t item_prio;
-		var float mob_range1;
-		var float mob_range2;
-		var float mob_azi;
-		var float mob_elevdo;
-		var float mob_elevup;
-		var int32_t mob_prio;
-
+	struct IFocus : DaedalusInstance, FocusRecord {
 		static void register_(DaedalusScript& s);
 	};
-
 	struct IInfoChoice {
 		var string text;
 		var int32_t function = 0;
