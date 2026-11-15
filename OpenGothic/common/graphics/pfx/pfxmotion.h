@@ -43,8 +43,10 @@ struct Flicker {
 // The brightness multiplier at a world time, 1 +- amount: smooth noise at the pulse (0.7) plus the trembling (0.3).
 // The emitter and the lamp that names it call this with the same world tick and get the same value.
 float         flicker(const Flicker& f, uint64_t timeMs);
-// The lamp's trembling position: three noise channels at jitter_hz (pulse_hz without it), up to cm on each axis
-Tempest::Vec3 jitter (const Flicker& f, uint64_t timeMs, float cm);
+// The lamp's trembling position: three noise channels at swayHz, or at jitter_hz (pulse_hz without it) when swayHz
+// is 0, up to cm on each axis. A flame's bright centre wanders once or twice a second; at jitter_hz a lamp right
+// over a thing throws its shadow about
+Tempest::Vec3 jitter (const Flicker& f, uint64_t timeMs, float cm, float swayHz = 0);
 // OPENGOTHIC_FLICKER_LOG=1: the emitter and the lamp log their signal each frame, for a bench
 bool          logEnabled();
 

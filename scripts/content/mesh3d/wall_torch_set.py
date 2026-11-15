@@ -69,9 +69,14 @@ LAMP_AT = np.array([401.884857, 125.647934, -3086.54468])
 CARD, SIDE_CARD = (34.0, 44.0), (21.0, 32.0)  # the flame cards of OWN_TORCH_FLAME and _SIDE, cm (particles.d)
 TORCH_MESH = 'OW_MISC_WALL_TORCH_01.3DS'
 GONE = ('FIRE_MEDIUM.PFX', 'FIRE_SPARKS.PFX', 'ZFLARE6.TGA')  # the original's flame, sparks and flare under a torch
-# The torch's light: the flame's colour (wall-torch). It follows the flame's brightness and stands still: the club is
-# 10 cm under it, so a tremble of 1.5 cm at 12 Hz threw the club's shadow about by 10-15 cm on the wall a metre below
+# The torch's light: the flame's colour (wall-torch). It stands LIGHT_UP cm over the wrap's top, inside the upper
+# half of the flame, and sways slowly, as a flame's bright centre does: 0.6 cm at 1.5 Hz. At the flame's 12 Hz and
+# 1.5 cm, 10 cm over the head, the club's shadow jumped by 10-15 cm on the wall a metre below (the user, 2026-11-15).
+# The head still hides the light from the wall and the floor under the torch, whatever the height: a real flame wraps
+# the head and lights them from its sides, one point over the head cannot (the note, "the shadow under the torch")
+LIGHT_UP = 22.0
 LAMP = {'color': [230, 84, 15], 'near': 8}
+SWAY = {'jitter_cm': 0.6, 'sway_hz': 1.5}
 OWN_STATIC = 'FIRE_STAT'  # a static lamp that is a torch's only light (the temple); other static lamps are fills
 # Other places of the torch: every OW_MISC_WALL_TORCH_01 of NEWWORLD inside the box (x and z, world cm) that no
 # earlier place and not the trial has taken. `range` is the light of a torch that has no lamp of its own, the common
@@ -142,7 +147,7 @@ def fire(pose) -> dict:
                 ('sparks', 'OWN_TORCH_SPARKS', top + up * 5),
                 ('drops', 'OWN_TORCH_DROPS', top - axis * wrap_cm + lean * radius_cm),
                 ('soot', 'OWN_TORCH_SOOT', top + up * 24)]
-    return dict(emitters=points, light=top + up * 10 + lean, top=top, lean_deg=float(np.degrees(np.arccos(axis[1]))))
+    return dict(emitters=points, light=top + up * LIGHT_UP + lean, top=top, lean_deg=float(np.degrees(np.arccos(axis[1]))))
 
 
 def emitters(key, points, seed) -> list:
@@ -175,7 +180,7 @@ def cmd_layer(_args) -> int:
     spot = fire(POSE)
     layer = {'format': 1, 'visual': [{'id': MESH_ID, 'visual': VISUAL}], 'remove': [EFFECT_ID, FLARE_ID],
              'light': [{'id': LAMP_ID, 'color': LAMP['color'], 'near': LAMP['near'], 'flicker_from': 'wall-torch-fire-flame',
-                        'offset_cm': at(spot['light'] - LAMP_AT)}],
+                        **SWAY, 'offset_cm': at(spot['light'] - LAMP_AT)}],
              'add': emitters('wall-torch-fire', spot['emitters'], 7)}
     write_layer(LAYER, layer)
     print(f'{LAYER.relative_to(ROOT)}: the wrap\'s top at {at(spot["top"])}, the light {at(spot["light"])}, lean {spot["lean_deg"]:.1f} deg in the world')
@@ -214,7 +219,7 @@ def place_layer(name, torches) -> dict:
         layer['visual'].append({'id': torch['id'], 'visual': VISUAL})
         layer['remove'] += [c['id'] for c in children if str(c.get('visual_name', '')).upper() in GONE]
         layer['add'] += emitters(key, spot['emitters'], 7 + torch['id'] * 3)
-        signal = {'flicker_from': f'{key}-flame'}
+        signal = {'flicker_from': f'{key}-flame', **SWAY}
         lamps = [c for c in children if c['type'] == 'zCVobLight']
         own = [c for c in lamps if not c['is_static']] or [c for c in lamps if c['preset'] == OWN_STATIC]
         if len(own) > 1:

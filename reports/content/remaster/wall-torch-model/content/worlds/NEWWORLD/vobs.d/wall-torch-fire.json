@@ -2,7 +2,7 @@
  "format": 1,
  "visual": [{"id": 20157, "visual": "OWN_WALL_TORCH_01"}],
  "remove": [20158, 20161],
- "light": [{"id": 20160, "color": [230, 84, 15], "near": 8, "flicker_from": "wall-torch-fire-flame", "offset_cm": [1.2, 21.6, -0.2]}],
+ "light": [{"id": 20160, "color": [230, 84, 15], "near": 8, "flicker_from": "wall-torch-fire-flame", "jitter_cm": 0.6, "sway_hz": 1.5, "offset_cm": [1.2, 33.6, -0.2]}],
  "add": [
   {"key": "wall-torch-fire-flame", "kind": "emitter", "pfx": "OWN_TORCH_FLAME", "position": [405.3, 151.4, -3086.7], "yaw_deg": 0, "flicker": {"pulse_hz": 4.5, "jitter_hz": 12, "amount": 0.2, "seed": 7}},
   {"key": "wall-torch-fire-flame-a", "kind": "emitter", "pfx": "OWN_TORCH_FLAME_SIDE", "position": [405.4, 145.3, -3082.5], "yaw_deg": 0, "flicker": {"pulse_hz": 4.5, "jitter_hz": 12, "amount": 0.2, "seed": 8}},
