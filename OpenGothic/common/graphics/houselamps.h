@@ -23,7 +23,7 @@ class HouseLamps final {
     static constexpr float FixtureReach = 80.f;
 
     HouseLamps() = default;
-    // houses.json of the world's content folder (empty: no content); no file: no houses
+    // the files of houses.d in the world's content folder (empty: no content), sorted; none: no houses
     explicit HouseLamps(const std::filesystem::path& worldContentDir);
 
     const std::vector<HouseLights::House>& houses() const { return list; }

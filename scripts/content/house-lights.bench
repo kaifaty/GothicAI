@@ -1,5 +1,5 @@
 # One state of a house (reports/render-features/2026-11-15-night-interiors, step 2): the market house, whose ground
-# floor under the front half is Zuris's shop (houses.json: market-zuris-shop, bedtime 23:00) and the rest the inn
+# floor under the front half is Zuris's shop (houses.d: market-zuris-shop, bedtime 23:00) and the rest the inn
 # (market-inn, bedtime 00:30). Inside and outside at noon, at 22:30 (all awake), 23:20 (the shop asleep, the inn
 # awake), 00:20 (the inn's last minutes), 00:50 and 03:00 (all asleep) and 06:40 (the lamps are back): the lamps
 # inside go out before the bedtime, the lit windows of the house fade with them and never outlive them.

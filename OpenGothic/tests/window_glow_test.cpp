@@ -213,6 +213,22 @@ void houseRecords() {
     many += std::string(i==0 ? "" : ",")+R"({"key":"h)"+std::to_string(i)+R"(","center":[0,0,0],"size":[1,1,1]})";
   many += "]}";
   require(!parsedHouses(many.c_str(),houses,error), "more houses than the scene block carries are refused");
+
+  // the files of houses.d one after another
+  std::vector<HouseLights::House> all = kept, more;
+  require(parsedHouses(R"({"format":1,"houses":[{"key":"c","center":[5,5,5],"size":[1,1,1]}]})",more,error), "a second file");
+  require(HouseLights::append(all,more,error) && all.size()==3 && all[0].key=="a" && all[2].key=="c",
+          "the houses of a later file stand after those of the files before it");
+  require(!HouseLights::append(all,more,error) && all.size()==3 && !error.empty(), "a key of a file before is refused");
+  std::vector<HouseLights::House> crowd;
+  for(size_t i=0; i<HouseLights::MaxHouses-2; ++i) {
+    HouseLights::House h;
+    h.key = "n"+std::to_string(i);
+    crowd.push_back(h);
+    }
+  require(!HouseLights::append(all,crowd,error) && all.size()==3, "files that together pass the scene block's count are refused");
+  crowd.pop_back();
+  require(HouseLights::append(all,crowd,error) && all.size()==HouseLights::MaxHouses, "up to the count they fit");
   }
 
 void houseBox() {
