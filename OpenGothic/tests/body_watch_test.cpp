@@ -5,6 +5,7 @@
 
 #include "commandline.h"
 #include "gothic.h"
+#include "settings.h"
 #include "gamemusic.h"
 #include "resources.h"
 #include "game/bodyclock.h"
@@ -863,8 +864,8 @@ void staleFarRelease(Npc& actor,Npc& target,Npc& hero,PlayerControl& player) {
 void meleeRemoval(Npc& victim) {
   auto& gothic=Gothic::inst();
   auto& world=victim.world();
-  Gothic::settingsSetI("GAME","melee_blade_shadow",1);
-  Gothic::settingsSetI("GAME","melee_physics_hits",1);
+  Settings::setI("GAME","melee_blade_shadow",1);
+  Settings::setI("GAME","melee_physics_hits",1);
   const auto attackerSymbol=world.script().findSymbolIndex("BDT_1003_BANDIT_M");
   const auto sword=world.script().findSymbolIndex("ItMw_1h_Common_01");
   const auto perception=world.script().findSymbolIndex("ZS_ATTACK");
@@ -1267,8 +1268,8 @@ class NpcLogicalStateContract final {
         }};
       std::array<int,settings.size()> saved{};
       for(size_t i=0;i<settings.size();++i) {
-        saved[i]=Gothic::settingsGetI("GAME",settings[i].first);
-        Gothic::settingsSetI("GAME",settings[i].first,settings[i].second);
+        saved[i]=Settings::getI("GAME",settings[i].first);
+        Settings::setI("GAME",settings[i].first,settings[i].second);
         }
       const auto talent=actor.hitChance(TALENT_1H);
       const auto prepare=[&](float distance=150.f,float yaw=0.f) {
@@ -1324,7 +1325,7 @@ class NpcLogicalStateContract final {
 
       ++cases;
       prepare(300);
-      Gothic::settingsSetI("GAME","melee_stamina",1);
+      Settings::setI("GAME","melee_stamina",1);
       const auto now=actor.world().tickCount();
       actor.meleeStamina={0,now,now,true,true};
       queue(FightAlgo::MV_JUMPBACK);
@@ -1335,7 +1336,7 @@ class NpcLogicalStateContract final {
       expect(actor.fghAlgo.queuedAction()==FightAlgo::MV_JUMPBACK && actor.meleeAiDodgeTiming &&
              actor.meleeAiDodgeTiming->began==0 && !actor.isMeleeDodging(),
              "a no-swing dodge keeps waiting for stamina beyond 1000 ms without spending its primitive");
-      Gothic::settingsSetI("GAME","melee_stamina",0);
+      Settings::setI("GAME","melee_stamina",0);
 
       ++cases;
       prepare();
@@ -1345,7 +1346,7 @@ class NpcLogicalStateContract final {
       advance();
       BodyObservations::sampleAll(true);
       expect(action(actor,FightAlgo::PolicyAction::JumpBack)["accepted"].GetBool(),"exhausted P30 jump back is accepted");
-      Gothic::settingsSetI("GAME","melee_stamina",1);
+      Settings::setI("GAME","melee_stamina",1);
       const auto exhaustedAt=actor.world().tickCount();
       actor.meleeStamina={0,exhaustedAt,exhaustedAt,true,true};
       BodyController::tick(actor,tickMs);
@@ -1362,7 +1363,7 @@ class NpcLogicalStateContract final {
       expect(consumed,"P30 MoveBack consumes the primitive when the segment starts");
       BodyController::reset("melee_ai_fixture");
       BodyObservations::disable();
-      Gothic::settingsSetI("GAME","melee_stamina",0);
+      Settings::setI("GAME","melee_stamina",0);
 
       for(unsigned attempt=0;attempt<3;++attempt) {
         ++cases;
@@ -1390,7 +1391,7 @@ class NpcLogicalStateContract final {
       actor.meleeStamina={};
       actor.setExternalControl(false);
       for(size_t i=0;i<settings.size();++i)
-        Gothic::settingsSetI("GAME",settings[i].first,saved[i]);
+        Settings::setI("GAME",settings[i].first,saved[i]);
       }
 
     static void run(uint32_t id,const std::string& scenario,const std::filesystem::path& output) {

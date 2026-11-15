@@ -13,6 +13,7 @@
 #include "game/gamescript.h"
 #include "game/herodeed.h"
 #include "gothic.h"
+#include "settings.h"
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/submesh/packedmesh.h"
 #include "world/aiqueue.h"
@@ -50,7 +51,7 @@ void bodyImpactSurface(BodyImpact& state,World& world,const std::vector<Vec3>& v
 
 void bodyImpactClear(BodyImpact& state,const BodyImpactContext& context,World& world,Npc& player) {
   state.tracing=false;
-  if(state.guardSaved) {Gothic::settingsSetI("GAME","ragdoll_quest_guard",state.questGuard);state.guardSaved=false;}
+  if(state.guardSaved) {Settings::setI("GAME","ragdoll_quest_guard",state.questGuard);state.guardSaved=false;}
   if(state.observing) {
     Gothic::inst().onHeroDeed.ubind(&state,&BodyImpact::deed);
     Gothic::inst().onObservedPerception.ubind(&state,&BodyImpact::perception);
@@ -91,8 +92,8 @@ void bodyImpactSetup(BodyImpact& state,const BodyImpactContext& context,World& w
   state.mode=mode;state.value=value;state.player=state.culprit=&player;state.damage=state.capsuleDamage=0;
   state.impacts=state.deeds=state.murders=state.defeats=0;state.weapon=size_t(-1);
   // The numeric fall must reach its support rather than the separate quest return.
-  state.questGuard=Gothic::settingsGetI("GAME","ragdoll_quest_guard");state.guardSaved=true;
-  Gothic::settingsSetI("GAME","ragdoll_quest_guard",0);
+  state.questGuard=Settings::getI("GAME","ragdoll_quest_guard");state.guardSaved=true;
+  Settings::setI("GAME","ragdoll_quest_guard",0);
   state.maximumSpeed=0;state.launchSpeed=0;state.sawAir=false;
   const auto origin=state.anchor+Vec3(-500,0,0);
   player.clearAiQueue();player.stopWalking();player.clearSpeed();player.setPosition(origin-Vec3(0,0,180));
@@ -104,20 +105,20 @@ void bodyImpactSetup(BodyImpact& state,const BodyImpactContext& context,World& w
     state.culprit=bodyImpactActor(world,"SLD_826_SOELDNER",origin-Vec3(350,0,0));
     if(!state.culprit)return;
     }
-  Gothic::settingsSetI("GAME","ragdoll",1);Gothic::settingsSetI("GAME","spell_physics",1);
+  Settings::setI("GAME","ragdoll",1);Settings::setI("GAME","spell_physics",1);
   if(mode=="unconscious" || mode=="dead") {
     npc.setRagdollDown(mode=="dead");npc.prepareRagdoll();
     }
   else {
     // Exercise the actual posture knockdown, then exclude preparation weapon damage
     // from the observation. No transient body flag or health state is fabricated.
-    const auto stagger=Gothic::settingsGetI("GAME","melee_stagger");
-    Gothic::settingsSetI("GAME","melee_posture",1);Gothic::settingsSetI("GAME","melee_stagger",0);
+    const auto stagger=Settings::getI("GAME","melee_stagger");
+    Settings::setI("GAME","melee_posture",1);Settings::setI("GAME","melee_stagger",0);
     state.culprit->setToFistMode();
     MeleeBladeContact contact;contact.npc=&npc;contact.point=npc.collosionCenter();
     contact.velocityCmS=Vec3(0,0,4000);contact.speedCmS=4000;contact.surfaceAngleDeg=90;
     for(unsigned i=0;i<12 && !npc.isMeleeKnockedDown();++i)npc.takeDamage(*state.culprit,nullptr,true,1.f,&contact);
-    Gothic::settingsSetI("GAME","melee_stagger",stagger);
+    Settings::setI("GAME","melee_stagger",stagger);
     if(!npc.isMeleeKnockedDown() || !npc.ragdollBody() || npc.isDown()) {
       arenaAbort("body impact preparation did not create a living posture knockdown");return;
       }
@@ -191,7 +192,7 @@ void bodyImpactLaunch(BodyImpact& state,World& world,Npc& player) {
   event("body_impact_launch","\"case\":"+jsonStr(state.mode)+",\"value\":"+ragdollNumber(state.value)+
     ",\"hp_before\":"+std::to_string(state.hpBefore)+",\"normal_speed_m_s\":"+ragdollNumber(wall?state.value:0)+
     ",\"launch_speed_m_s\":"+ragdollNumber(state.launchSpeed)+
-    ",\"drop_m\":"+ragdollNumber(wall?0:state.value)+",\"feature\":"+(Gothic::physicsFlags().bodyImpactDamage?"true":"false"));
+    ",\"drop_m\":"+ragdollNumber(wall?0:state.value)+",\"feature\":"+(Settings::physicsFlags().bodyImpactDamage?"true":"false"));
   }
 
 void bodyImpactWind(BodyImpact& state,const BodyImpactContext& context,World& world,Npc& player) {
@@ -215,7 +216,7 @@ void bodyImpactWind(BodyImpact& state,const BodyImpactContext& context,World& wo
 void bodyImpactReport(BodyImpact& state,World& world,Npc& player) {
   const auto* npc=state.npc;
   if(!npc || !state.tracing) {arenaAbort("body impact report requires a launched case");return;}
-  const bool enabled=Gothic::physicsFlags().bodyImpactDamage;
+  const bool enabled=Settings::physicsFlags().bodyImpactDamage;
   const bool nonlethal=state.mode=="nonlethal",paired=nonlethal || state.mode=="lethal";
   const bool fall=state.mode=="fall",wind=state.mode=="wind_goblin",fatal=state.mode=="fatal" || state.mode=="lethal";
   const bool excluded=state.mode=="unconscious" || state.mode=="dead" || state.mode=="immortal";
@@ -310,7 +311,7 @@ void bodyImpactDuel(BodyImpact& state,const BodyImpactContext& context,World& wo
   for(auto* npc:BodyArena::actors())state.duelBodies.push_back({npc});
   state.duel=true;context.waitUntil=context.time+60100;
   event("body_impact_duel_start","\"seed\":"+std::to_string(seed)+",\"weapon\":"+jsonStr(weapon)+
-    ",\"feature\":"+(Gothic::physicsFlags().bodyImpactDamage?"true":"false"));
+    ",\"feature\":"+(Settings::physicsFlags().bodyImpactDamage?"true":"false"));
   }
 
 void bodyImpactTick(World& world) {
@@ -337,7 +338,7 @@ void bodyImpactTick(World& world) {
         }
       }
     if(BodyArena::complete()) {
-      event("body_impact_duel_result","\"feature\":"+(Gothic::physicsFlags().bodyImpactDamage?std::string("true"):std::string("false"))+
+      event("body_impact_duel_result","\"feature\":"+(Settings::physicsFlags().bodyImpactDamage?std::string("true"):std::string("false"))+
         ",\"arena\":"+BodyArena::statusJson());
       state.duel=false;context.waitUntil=context.time;endAnimationControl();
       }
@@ -355,7 +356,7 @@ bool bodyImpactCommand(BodyImpact& state,const BodyImpactContext& context,const 
   else if(c=="body-impact" && a.size()==2 && a[1]=="launch")bodyImpactLaunch(state,w,pl);
   else if(c=="body-impact" && a.size()==2 && a[1]=="report")bodyImpactReport(state,w,pl);
   else if(c=="body-impact" && a.size()==2 && a[1]=="standup") {
-    if(Gothic::physicsFlags().bodyImpactDamage) {
+    if(Settings::physicsFlags().bodyImpactDamage) {
       auto* npc=state.npc;
       if(!npc || state.mode!="nonlethal" || !npc->isUnconscious()) {
         arenaAbort("body impact standup requires the nonlethal knockout");return true;

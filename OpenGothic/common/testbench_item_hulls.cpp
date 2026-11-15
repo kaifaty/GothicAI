@@ -12,7 +12,7 @@
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 
 #include "game/gamescript.h"
-#include "gothic.h"
+#include "settings.h"
 #include "graphics/mesh/protomesh.h"
 #include "graphics/mesh/submesh/packedmesh.h"
 #include "graphics/worldview.h"
@@ -299,7 +299,7 @@ void itemHullSetup(ItemHulls& state,World& world,Npc& player,std::string_view su
     if(!item || !item->isDynamic()) {arenaAbort("item hull fixture world Item has no native body");return;}
     ItemHulls::ItemHullDrop drop;drop.item=item;drop.label=spec.label;
     drop.symbol=world.script().findSymbol(symbol)->name();drop.vertices=std::move(visibleVertices);drop.shape=hull.originalShape;
-    drop.extraPaddingCm=Gothic::settingsGetI("GAME","item_hulls")?hull.extraPaddingCm:0.f;
+    drop.extraPaddingCm=Settings::getI("GAME","item_hulls")?hull.extraPaddingCm:0.f;
     if(spec.longAxis)drop.axis=axis;
     drop.mass=item->physicsMass();state.itemHullDrops.push_back(std::move(drop));
     event("item_hulls_drop","\"surface\":"+jsonStr(surface)+",\"index\":"+std::to_string(i)+
@@ -311,7 +311,7 @@ void itemHullSetup(ItemHulls& state,World& world,Npc& player,std::string_view su
     }
   state.itemHullStart=world.tickCount();state.itemHullSample=uint64_t(-1);state.itemHullCosts.clear();state.itemHullTracing=true;
   event("item_hulls_setup","\"surface\":"+jsonStr(surface)+",\"items\":"+std::to_string(state.itemHullDrops.size())+
-    ",\"enabled\":"+(Gothic::settingsGetI("GAME","item_hulls")?"true":"false")+",\"hero_cm\":"+ragdollVector(player.position())+
+    ",\"enabled\":"+(Settings::getI("GAME","item_hulls")?"true":"false")+",\"hero_cm\":"+ragdollVector(player.position())+
     ",\"world_load_ms\":"+ragdollNumber(float(world.loadMilliseconds()))+
     ",\"static_shape_bytes\":"+std::to_string(collisionStats.shapeBytes)+",\"static_triangles\":"+std::to_string(collisionStats.triangles)+
     ",\"support_origin_cm\":"+ragdollVector(anchor)+",\"native_support_verified\":true");
@@ -380,7 +380,7 @@ float itemHullGap(ItemHulls& state,World& world,const ItemHulls::ItemHullDrop& d
 
 void itemHullReport(ItemHulls& state,World& world) {
   itemHullSample(state,world);state.itemHullTracing=false;
-  const bool enabled=Gothic::settingsGetI("GAME","item_hulls")!=0;
+  const bool enabled=Settings::getI("GAME","item_hulls")!=0;
   const bool reportOnly=false;
   bool pass=true;size_t through=0,escaped=0,below=0,jitter=0,unslept=0,unsleptSupported=0;
   for(size_t i=0;i<state.itemHullDrops.size();++i) {

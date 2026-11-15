@@ -9,6 +9,7 @@
 #include "world/objects/npc.h"
 #include "world/bodytraces.h"
 #include "gothic.h"
+#include "settings.h"
 
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <zenkit/ModelHierarchy.hh>
@@ -123,7 +124,7 @@ namespace PhysicsContract {
     }
 
   void testBodyTraces() {
-    require(Gothic::PhysicsFlags{}.bodyTraces,"body traces must default to ON");
+    require(Settings::PhysicsFlags{}.bodyTraces,"body traces must default to ON");
     require(BodyTraces::LifetimeMinutes==4320,"a body lives three game days");
     BodyTraces::Body body;
     body.clockFrom    = 1000;
@@ -183,7 +184,7 @@ namespace PhysicsContract {
     }
 
   void testBodyImpactDamage() {
-    require(Gothic::PhysicsFlags{}.bodyImpactDamage,"body impact damage must default to ON");
+    require(Settings::PhysicsFlags{}.bodyImpactDamage,"body impact damage must default to ON");
     require(Npc::canTakeBodyImpact(true,false,false,false),"a living physical body must receive impact damage");
     require(!Npc::canTakeBodyImpact(false,false,false,false),"body impact OFF must preserve the old damage path");
     require(!Npc::canTakeBodyImpact(true,true,false,false),"an unconscious body must not receive impact damage");

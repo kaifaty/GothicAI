@@ -4,6 +4,7 @@
 #include <zenkit/Vfs.hh>
 #include "commandline.h"
 #include "gothic.h"
+#include "settings.h"
 #include "game/definitions/basescripts.h"
 #include "programdata.h"
 #include "outputunits.h"
@@ -180,7 +181,7 @@ struct WorldDataContract {
     require(Resources::writeCensus(),"cannot write runtime source census");
     const auto doc=json(census);
     const auto& profile=doc["active_profile"];
-    const auto language=gothic.settingsGetI("GAME","language");
+    const auto language=Settings::getI("GAME","language");
     require(std::string_view(profile["game"].GetString())==gothic.defaultGameDatFile() &&
             std::string_view(profile["output_units"].GetString())==gothic.defaultOutputUnits() &&
             profile["language"].GetInt()==language,"runtime census active profile differs from Gothic");

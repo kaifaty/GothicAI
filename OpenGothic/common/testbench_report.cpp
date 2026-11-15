@@ -33,6 +33,7 @@
 #include "world/objects/sound.h"
 #include "world/world.h"
 #include "gothic.h"
+#include "settings.h"
 
 using namespace Tempest;
 using namespace testbench_detail;
@@ -512,7 +513,7 @@ void spellFields(World& world) {
     }
   const auto stats=world.physic()->physicsStats();
   event("spell_physics_frame","\"case\":"+jsonStr(bench.movables.spellCase)+",\"t_game_ms\":"+std::to_string(world.tickCount())+
-    ",\"feature\":"+(Gothic::settingsGetI("GAME","spell_physics")?"true":"false")+
+    ",\"feature\":"+(Settings::getI("GAME","spell_physics")?"true":"false")+
     ",\"fields\":"+std::to_string(world.spellFieldCount())+",\"world_bodies\":"+std::to_string(stats.bodies)+
     ",\"physics_ms\":"+ragdollNumber(stats.stepMilliseconds)+",\"actors\":"+actors+"],\"items\":"+items+"]");
   }

@@ -32,6 +32,7 @@
 #include "world/objects/sound.h"
 #include "world/world.h"
 #include "gothic.h"
+#include "settings.h"
 
 // resources.cpp: texture residency of a deterministic bench (`deterministic on`)
 extern bool benchTexturesFrozen;
@@ -340,7 +341,7 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
   if(bench.routine.questWait) {
     const bool observed=bench.routine.questWaterCase?bench.routine.questSawWater:bench.routine.questSawDrop;
     const uint8_t wanted=bench.routine.questWaterCase ? RagdollSave::QuestReturn::water : RagdollSave::QuestReturn::fell;
-    const bool guarded=bench.routine.questNpc->isHuman() && !bench.routine.questNpc->isPlayer() && Gothic::settingsGetI("GAME","ragdoll_quest_guard");
+    const bool guarded=bench.routine.questNpc->isHuman() && !bench.routine.questNpc->isPlayer() && Settings::getI("GAME","ragdoll_quest_guard");
     const bool reached=observed && (!guarded || (bench.routine.questNpc->ragdollQuestReturnState().hazards & wanted));
     if(!reached && bench.time<bench.routine.questDeadline) return;
     bench.routine.questWait=false;
@@ -542,16 +543,16 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
       event("placed_items_loaded","\"world\":"+jsonStr(world->name())+",\"world_load_ms\":"+
         ragdollNumber(float(world->loadMilliseconds()))+",\"classification_ms\":"+
         ragdollNumber(float(world->placedItemValidationMilliseconds()))+",\"enabled\":"+
-        (Gothic::physicsFlags().placedItems?"true":"false"));
+        (Settings::physicsFlags().placedItems?"true":"false"));
     if(std::string_view(scenarioPath).find("furniture-parts")!=std::string_view::npos)
       event("furniture_parts_loaded","\"world\":"+jsonStr(world->name())+",\"world_load_ms\":"+
         ragdollNumber(float(world->loadMilliseconds()))+",\"enabled\":"+
-        (Gothic::settingsGetI("GAME","furniture_parts")?"true":"false")+
+        (Settings::getI("GAME","furniture_parts")?"true":"false")+
         ",\"peak_rss_bytes\":"+std::to_string(furniturePeakMemory()));
     if(std::string_view(scenarioPath).find("movable-vobs")!=std::string_view::npos)
       event("movable_loaded","\"world\":"+jsonStr(world->name())+",\"world_load_ms\":"+
         ragdollNumber(float(world->loadMilliseconds()))+",\"enabled\":"+
-        (Gothic::settingsGetI("GAME","movable_vobs")?"true":"false"));
+        (Settings::getI("GAME","movable_vobs")?"true":"false"));
     // A reload observer can enable god mode before the untouched initial
     // snapshot without allowing a native world step between those commands.
     if(bench.pc+1<bench.prog.size()) {

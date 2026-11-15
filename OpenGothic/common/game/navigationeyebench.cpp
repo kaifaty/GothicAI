@@ -7,6 +7,7 @@
 #include "world/world.h"
 #include "world/objects/npc.h"
 #include "gothic.h"
+#include "settings.h"
 #include "camera.h"
 
 #include <rapidjson/stringbuffer.h>
@@ -112,7 +113,7 @@ std::string setup(World& world,Npc& player,const std::string& scene,size_t count
   if(scene!="market" && scene!="lobart" && !fence) throw std::runtime_error("eye scene must be market, lobart or lobart-fence");
   if(count!=1 && count!=10 && count!=20 && count!=50)
     throw std::runtime_error("eye actors must be 1, 10, 20 or 50");
-  Gothic::settingsSetI("GAME","living_bodies",1);
+  Settings::setI("GAME","living_bodies",1);
   for(auto* actor:state.actors) world.removeNpc(*actor);
   state.actors.clear();state.eyes.clear();
   state.scene=fence?"lobart":scene;
