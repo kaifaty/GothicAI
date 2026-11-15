@@ -150,6 +150,11 @@ void Settings::load(std::u16string_view systemIni, std::u16string_view userIni) 
   defaults->set("INTERNAL",     "vidResIndex", vidResDefault);
   defaults->set("INTERNAL",     "halfResAoFog", 1); // SSAO and fog shadows at half resolution
   defaults->set("INTERNAL",     "spatialUpscale", 1); // MetalFX for reduced resolution, where supported
+  // our own temporal upscale in place of the TAA resolve and of the spatial upscale, wherever the scene is drawn
+  // smaller than the frame (graphics plan 1g), on by default where the game draws so by default, since the user
+  // accepted the clips (2026-11-15): [INTERNAL] temporalUpscale=0 or OPENGOTHIC_UPSCALE=off bring TAA and the
+  // spatial upscale back (Renderer::setupSettings). vidResIndex 1 is 2/3 of the frame with it, 3/4 without
+  defaults->set("INTERNAL",     "temporalUpscale", vidResDefault);
   // temporal AA by the camera (Renderer::setupSettings: also -taa 0 and OPENGOTHIC_TAA) and its sharpening, 0..1
   defaults->set("INTERNAL",     "taa", 1);
   // motion vectors of objects into the G-buffer (graphics plan 1b), on since the user accepted the clips

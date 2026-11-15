@@ -162,6 +162,14 @@ float Taa::upscaleHistSharp(float sharp, uint32_t inW, uint32_t outW) {
   return 0.5f + (sharp - 0.5f)*k;
   }
 
+float Taa::internalScale(float vidResIndex, bool taau) {
+  if(vidResIndex==0)
+    return 1.f;
+  if(vidResIndex==1)
+    return taau ? 2.f/3.f : 0.75f;
+  return 0.5f;
+  }
+
 float Taa::upscaleDepthOffset(const Matrix4x4& proj) {
   // depth = (m22*z + m32)/(m23*z + m33) of the view's z: at infinity m22/m23
   const float wz = proj.at(2,3);
