@@ -1,13 +1,4 @@
 #include "benchhooks.h"
-#include "objects/npc.h"
-#include "world.h"
-
-std::string_view Bench::who(const Npc* npc) {
-  if(npc==nullptr)
-    return "none";
-  auto name = npc->world().rules().symbolName(size_t(npc->instanceSymbol()));
-  return name.empty() ? std::string_view("npc") : name;
-  }
 
 std::function<bool()> Bench::aiBusy;
 std::function<bool(std::string_view key, std::string_view stage)> Bench::aiReached;
