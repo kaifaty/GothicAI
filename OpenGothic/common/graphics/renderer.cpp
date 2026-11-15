@@ -353,23 +353,25 @@ void Renderer::setupSettings() {
       Log::i("render: ssao history = ", logged);
       }
   }
-  // A study of the temporal upscale (graphics plan 1g, reports/render-features/2026-11-05-upscale), test benches only:
-  // OPENGOTHIC_RENDER_SCALE=0.5..1 draws the scene at that share of the frame over vidResIndex;
-  // OPENGOTHIC_UPSCALE=temporal puts MetalFX Temporal in place of the TAA resolve when the scene is drawn smaller than
-  // the frame (Metal, with TAA); OPENGOTHIC_UPSCALE_MIP_BIAS overrides its mip bias, log2(in/out) - 1
+  // The temporal upscale (graphics plan 1g, reports/render-features/2026-11-05-upscale). Our own resolve stands in
+  // place of the TAA resolve when the scene is drawn smaller than the frame, on any backend, with TAA:
+  // [INTERNAL] temporalUpscale, on by default where the game draws so by default (Settings::load).
+  // Test benches: OPENGOTHIC_UPSCALE=taau turns it on, =temporal puts MetalFX Temporal there (Metal), any other
+  // value (=off) leaves TAA and the spatial upscale; OPENGOTHIC_RENDER_SCALE=0.5..1 draws the scene at that share of
+  // the frame over vidResIndex; OPENGOTHIC_UPSCALE_MIP_BIAS overrides the mip bias, log2(in/out) - 1;
+  // OPENGOTHIC_TAAU_ALPHA, _KERNEL, _CLIP_TRUST, _GAMMA, _BOX_STATIC, _BOX_MOTION, _MOVE_SHARE, _MOVE_SPEED and
+  // _HIST_SHARP are our resolve's knobs (taau_resolve.frag)
   {
     settings.renderScale = 0;
     if(const char* e = std::getenv("OPENGOTHIC_RENDER_SCALE"))
       settings.renderScale = std::clamp(std::strtof(e, nullptr), 0.5f, 1.f);
     settings.temporalUpscale = false;
-    settings.taau            = false;
-    if(const char* e = std::getenv("OPENGOTHIC_UPSCALE"); e!=nullptr && std::string_view(e)=="temporal")
-      settings.temporalUpscale = settings.taaEnabled && Resources::device().properties().temporalUpscale;
-    // OPENGOTHIC_UPSCALE=taau: our own resolve in the same place, on any backend; OPENGOTHIC_TAAU_ALPHA, _KERNEL,
-    // _CLIP_TRUST, _GAMMA, _BOX_STATIC, _BOX_MOTION, _MOVE_SHARE, _MOVE_SPEED and _HIST_SHARP are its knobs
-    // (taau_resolve.frag)
-    if(const char* e = std::getenv("OPENGOTHIC_UPSCALE"); e!=nullptr && std::string_view(e)=="taau")
-      settings.taau = settings.taaEnabled;
+    settings.taau            = settings.taaEnabled && ::Settings::getI("INTERNAL","temporalUpscale")!=0;
+    if(const char* e = std::getenv("OPENGOTHIC_UPSCALE")) {
+      settings.temporalUpscale = std::string_view(e)=="temporal" && settings.taaEnabled &&
+                                 Resources::device().properties().temporalUpscale;
+      settings.taau            = std::string_view(e)=="taau" && settings.taaEnabled;
+      }
     settings.taauAlpha     = 0.2f;
     settings.taauKernel    = 6.f;
     settings.taauClipTrust = 4.f;
@@ -415,7 +417,7 @@ void Renderer::setupSettings() {
       settings.upscaleMipBias    = std::clamp(std::strtof(e, nullptr), -3.f, 0.f);
       }
     static bool logged = false;
-    if(!logged && (settings.renderScale>0 || std::getenv("OPENGOTHIC_UPSCALE")!=nullptr)) {
+    if(!logged && (settings.renderScale>0 || settings.taau || std::getenv("OPENGOTHIC_UPSCALE")!=nullptr)) {
       logged = true;
       Log::i("render: upscale = ", settings.temporalUpscale ? "temporal" : (settings.taau ? "taau" : "off"),
              ", render scale = ",
@@ -1511,11 +1513,7 @@ Tempest::Attachment Renderer::screenshoot(uint8_t frameId, Tempest::Attachment&&
 float Renderer::internalResolutionScale() const {
   if(settings.renderScale>0)
     return settings.renderScale;
-  if(settings.vidResIndex==0)
-    return 1;
-  if(settings.vidResIndex==1)
-    return 0.75;
-  return 0.5;
+  return Taa::internalScale(settings.vidResIndex, settings.taau);
   }
 
 Size Renderer::effectResolution() const {
@@ -1530,7 +1528,7 @@ Size Renderer::internalResolution(Tempest::Size src) const {
   if(settings.vidResIndex==0)
      return src;
   if(settings.vidResIndex==1)
-    return Size(3*src.w/4, 3*src.h/4);
+    return settings.taau ? Size(2*src.w/3, 2*src.h/3) : Size(3*src.w/4, 3*src.h/4);
   return Size(src.w/2, src.h/2);
   }
 

@@ -12,6 +12,7 @@
 #include "graphics/sky/sky.h"
 #include "lightsource.h"
 #include "lightgroup.h"
+#include "houselamps.h"
 #include "sceneglobals.h"
 #include "visualobjects.h"
 
@@ -122,6 +123,8 @@ class WorldView {
     const SceneGlobals& sceneGlobals() const { return sGlobal; }
     const Sky&          sky() const { return gSky; }
     const LightGroup&   lights() const { return gLights; }
+    // the lamps of the world's houses, which go out before the house's bedtime (graphics/houselamps.h)
+    HouseLamps&         houseLamps() { return houses; }
     const DrawClusters& clusters() const;
     const DrawBuckets&  drawBuckets() const;
 
@@ -130,6 +133,7 @@ class WorldView {
     SceneGlobals  sGlobal;
     Sky           gSky;
     LightGroup    gLights;
+    HouseLamps    houses;
     VisualObjects visuals;
 
     MeshObjects   objGroup;

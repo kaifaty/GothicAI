@@ -424,6 +424,10 @@ void upscaleShares() {
   require(Taa::upscaleHistSharp(0.75f, 2304, 3456)==0.5f && Taa::upscaleHistSharp(0.75f, 3456, 3456)==0.5f, "the cubic up to 1.5x");
   const float hs = Taa::upscaleHistSharp(0.75f, 1975, 3456);
   require(hs>0.55f && hs<0.7f, "the cubic at 1.75x is " + std::to_string(hs));
+  // the share of the frame by vidResIndex: the middle step is 2/3 under our own upscale, 3/4 under the spatial one
+  require(Taa::internalScale(0.f, true)==1.f && Taa::internalScale(0.f, false)==1.f, "vidResIndex 0 is the whole frame");
+  require(std::abs(Taa::internalScale(1.f, true) - 2.f/3.f)<1e-6f && Taa::internalScale(1.f, false)==0.75f, "vidResIndex 1");
+  require(Taa::internalScale(2.f, true)==0.5f && Taa::internalScale(2.f, false)==0.5f, "vidResIndex 2 is a half");
   }
 
 // the depth test of our own upscale: 1/w from the depth by the projection's offset, and what counts as hidden
