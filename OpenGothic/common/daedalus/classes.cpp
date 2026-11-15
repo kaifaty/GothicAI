@@ -45,40 +45,40 @@ namespace daedalus {
 
 void daedalus::IGuildValues::register_(DaedalusScript& s) {
 	ZKLOG_CLASS("C_GILVALUES", "IGuildValues");
-	s.register_member("C_GILVALUES.WATER_DEPTH_KNEE", &IGuildValues::water_depth_knee);
-	s.register_member("C_GILVALUES.WATER_DEPTH_CHEST", &IGuildValues::water_depth_chest);
-	s.register_member("C_GILVALUES.JUMPUP_HEIGHT", &IGuildValues::jumpup_height);
-	s.register_member("C_GILVALUES.SWIM_TIME", &IGuildValues::swim_time);
-	s.register_member("C_GILVALUES.DIVE_TIME", &IGuildValues::dive_time);
-	s.register_member("C_GILVALUES.STEP_HEIGHT", &IGuildValues::step_height);
-	s.register_member("C_GILVALUES.JUMPLOW_HEIGHT", &IGuildValues::jumplow_height);
-	s.register_member("C_GILVALUES.JUMPMID_HEIGHT", &IGuildValues::jumpmid_height);
-	s.register_member("C_GILVALUES.SLIDE_ANGLE", &IGuildValues::slide_angle);
-	s.register_member("C_GILVALUES.SLIDE_ANGLE2", &IGuildValues::slide_angle2);
-	s.register_member("C_GILVALUES.DISABLE_AUTOROLL", &IGuildValues::disable_autoroll);
-	s.register_member("C_GILVALUES.SURFACE_ALIGN", &IGuildValues::surface_align);
-	s.register_member("C_GILVALUES.CLIMB_HEADING_ANGLE", &IGuildValues::climb_heading_angle);
-	s.register_member("C_GILVALUES.CLIMB_HORIZ_ANGLE", &IGuildValues::climb_horiz_angle);
-	s.register_member("C_GILVALUES.CLIMB_GROUND_ANGLE", &IGuildValues::climb_ground_angle);
-	s.register_member("C_GILVALUES.FIGHT_RANGE_BASE", &IGuildValues::fight_range_base);
-	s.register_member("C_GILVALUES.FIGHT_RANGE_FIST", &IGuildValues::fight_range_fist);
-	s.register_member("C_GILVALUES.FIGHT_RANGE_1HS", &IGuildValues::fight_range_1hs);
-	s.register_member("C_GILVALUES.FIGHT_RANGE_1HA", &IGuildValues::fight_range_1ha);
-	s.register_member("C_GILVALUES.FIGHT_RANGE_2HS", &IGuildValues::fight_range_2hs);
-	s.register_member("C_GILVALUES.FIGHT_RANGE_2HA", &IGuildValues::fight_range_2ha);
-	s.register_member("C_GILVALUES.FALLDOWN_HEIGHT", &IGuildValues::falldown_height);
-	s.register_member("C_GILVALUES.FALLDOWN_DAMAGE", &IGuildValues::falldown_damage);
-	s.register_member("C_GILVALUES.BLOOD_DISABLED", &IGuildValues::blood_disabled);
-	s.register_member("C_GILVALUES.BLOOD_MAX_DISTANCE", &IGuildValues::blood_max_distance);
-	s.register_member("C_GILVALUES.BLOOD_AMOUNT", &IGuildValues::blood_amount);
-	s.register_member("C_GILVALUES.BLOOD_FLOW", &IGuildValues::blood_flow);
-	s.register_member("C_GILVALUES.BLOOD_EMITTER", &IGuildValues::blood_emitter);
-	s.register_member("C_GILVALUES.BLOOD_TEXTURE", &IGuildValues::blood_texture);
-	s.register_member("C_GILVALUES.TURN_SPEED", &IGuildValues::turn_speed);
+	s.register_member<IGuildValues>("C_GILVALUES.WATER_DEPTH_KNEE", &IGuildValues::water_depth_knee);
+	s.register_member<IGuildValues>("C_GILVALUES.WATER_DEPTH_CHEST", &IGuildValues::water_depth_chest);
+	s.register_member<IGuildValues>("C_GILVALUES.JUMPUP_HEIGHT", &IGuildValues::jumpup_height);
+	s.register_member<IGuildValues>("C_GILVALUES.SWIM_TIME", &IGuildValues::swim_time);
+	s.register_member<IGuildValues>("C_GILVALUES.DIVE_TIME", &IGuildValues::dive_time);
+	s.register_member<IGuildValues>("C_GILVALUES.STEP_HEIGHT", &IGuildValues::step_height);
+	s.register_member<IGuildValues>("C_GILVALUES.JUMPLOW_HEIGHT", &IGuildValues::jumplow_height);
+	s.register_member<IGuildValues>("C_GILVALUES.JUMPMID_HEIGHT", &IGuildValues::jumpmid_height);
+	s.register_member<IGuildValues>("C_GILVALUES.SLIDE_ANGLE", &IGuildValues::slide_angle);
+	s.register_member<IGuildValues>("C_GILVALUES.SLIDE_ANGLE2", &IGuildValues::slide_angle2);
+	s.register_member<IGuildValues>("C_GILVALUES.DISABLE_AUTOROLL", &IGuildValues::disable_autoroll);
+	s.register_member<IGuildValues>("C_GILVALUES.SURFACE_ALIGN", &IGuildValues::surface_align);
+	s.register_member<IGuildValues>("C_GILVALUES.CLIMB_HEADING_ANGLE", &IGuildValues::climb_heading_angle);
+	s.register_member<IGuildValues>("C_GILVALUES.CLIMB_HORIZ_ANGLE", &IGuildValues::climb_horiz_angle);
+	s.register_member<IGuildValues>("C_GILVALUES.CLIMB_GROUND_ANGLE", &IGuildValues::climb_ground_angle);
+	s.register_member<IGuildValues>("C_GILVALUES.FIGHT_RANGE_BASE", &IGuildValues::fight_range_base);
+	s.register_member<IGuildValues>("C_GILVALUES.FIGHT_RANGE_FIST", &IGuildValues::fight_range_fist);
+	s.register_member<IGuildValues>("C_GILVALUES.FIGHT_RANGE_1HS", &IGuildValues::fight_range_1hs);
+	s.register_member<IGuildValues>("C_GILVALUES.FIGHT_RANGE_1HA", &IGuildValues::fight_range_1ha);
+	s.register_member<IGuildValues>("C_GILVALUES.FIGHT_RANGE_2HS", &IGuildValues::fight_range_2hs);
+	s.register_member<IGuildValues>("C_GILVALUES.FIGHT_RANGE_2HA", &IGuildValues::fight_range_2ha);
+	s.register_member<IGuildValues>("C_GILVALUES.FALLDOWN_HEIGHT", &IGuildValues::falldown_height);
+	s.register_member<IGuildValues>("C_GILVALUES.FALLDOWN_DAMAGE", &IGuildValues::falldown_damage);
+	s.register_member<IGuildValues>("C_GILVALUES.BLOOD_DISABLED", &IGuildValues::blood_disabled);
+	s.register_member<IGuildValues>("C_GILVALUES.BLOOD_MAX_DISTANCE", &IGuildValues::blood_max_distance);
+	s.register_member<IGuildValues>("C_GILVALUES.BLOOD_AMOUNT", &IGuildValues::blood_amount);
+	s.register_member<IGuildValues>("C_GILVALUES.BLOOD_FLOW", &IGuildValues::blood_flow);
+	s.register_member<IGuildValues>("C_GILVALUES.BLOOD_EMITTER", &IGuildValues::blood_emitter);
+	s.register_member<IGuildValues>("C_GILVALUES.BLOOD_TEXTURE", &IGuildValues::blood_texture);
+	s.register_member<IGuildValues>("C_GILVALUES.TURN_SPEED", &IGuildValues::turn_speed);
 
 	// Gothic 2 only
 	if (s.find_symbol_by_name("C_GILVALUES.FIGHT_RANGE_G") != nullptr) {
-		s.register_member("C_GILVALUES.FIGHT_RANGE_G", &IGuildValues::fight_range_g);
+		s.register_member<IGuildValues>("C_GILVALUES.FIGHT_RANGE_G", &IGuildValues::fight_range_g);
 	}
 }
 
@@ -320,18 +320,18 @@ void daedalus::IItemReact::register_(DaedalusScript& s) {
 
 void daedalus::ISpell::register_(DaedalusScript& s) {
 	ZKLOG_CLASS("C_SPELL", "ISpell");
-	s.register_member("C_SPELL.TIME_PER_MANA", &ISpell::time_per_mana);
-	s.register_member("C_SPELL.DAMAGE_PER_LEVEL", &ISpell::damage_per_level);
-	s.register_member("C_SPELL.DAMAGETYPE", &ISpell::damage_type);
-	s.register_member("C_SPELL.SPELLTYPE", &ISpell::spell_type);
-	s.register_member("C_SPELL.CANTURNDURINGINVEST", &ISpell::can_turn_during_invest);
-	s.register_member("C_SPELL.CANCHANGETARGETDURINGINVEST", &ISpell::can_change_target_during_invest);
-	s.register_member("C_SPELL.ISMULTIEFFECT", &ISpell::is_multi_effect);
-	s.register_member("C_SPELL.TARGETCOLLECTALGO", &ISpell::target_collect_algo);
-	s.register_member("C_SPELL.TARGETCOLLECTTYPE", &ISpell::target_collect_type);
-	s.register_member("C_SPELL.TARGETCOLLECTRANGE", &ISpell::target_collect_range);
-	s.register_member("C_SPELL.TARGETCOLLECTAZI", &ISpell::target_collect_azi);
-	s.register_member("C_SPELL.TARGETCOLLECTELEV", &ISpell::target_collect_elev);
+	s.register_member<ISpell>("C_SPELL.TIME_PER_MANA", &ISpell::time_per_mana);
+	s.register_member<ISpell>("C_SPELL.DAMAGE_PER_LEVEL", &ISpell::damage_per_level);
+	s.register_member<ISpell>("C_SPELL.DAMAGETYPE", &ISpell::damage_type);
+	s.register_member<ISpell>("C_SPELL.SPELLTYPE", &ISpell::spell_type);
+	s.register_member<ISpell>("C_SPELL.CANTURNDURINGINVEST", &ISpell::can_turn_during_invest);
+	s.register_member<ISpell>("C_SPELL.CANCHANGETARGETDURINGINVEST", &ISpell::can_change_target_during_invest);
+	s.register_member<ISpell>("C_SPELL.ISMULTIEFFECT", &ISpell::is_multi_effect);
+	s.register_member<ISpell>("C_SPELL.TARGETCOLLECTALGO", &ISpell::target_collect_algo);
+	s.register_member<ISpell>("C_SPELL.TARGETCOLLECTTYPE", &ISpell::target_collect_type);
+	s.register_member<ISpell>("C_SPELL.TARGETCOLLECTRANGE", &ISpell::target_collect_range);
+	s.register_member<ISpell>("C_SPELL.TARGETCOLLECTAZI", &ISpell::target_collect_azi);
+	s.register_member<ISpell>("C_SPELL.TARGETCOLLECTELEV", &ISpell::target_collect_elev);
 }
 
 #define REG_IF_SYM_EXIST(sym, ref)                                                                                     \

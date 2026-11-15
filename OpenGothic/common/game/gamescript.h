@@ -15,6 +15,7 @@
 #include "game/definitions/spelldefinitions.h"
 #include "game/aiouputpipe.h"
 #include "game/constants.h"
+#include "game/scripttypes.h"
 #include "game/aistate.h"
 #include "game/questlog.h"
 #include "game/ownsymbols.h"
@@ -30,39 +31,14 @@ class ParticleFx;
 class Serialize;
 class Gothic;
 
-class ScriptFn final {
-  public:
-    ScriptFn()=default;
-    ScriptFn(size_t v):ptr(v){}
-
-    size_t ptr=size_t(-1);
-
-    bool isValid() const { return ptr!=size_t(-1); }
-
-  friend bool operator == (const ScriptFn& a,const ScriptFn& b) {
-    return a.ptr==b.ptr;
-    }
-  };
-
 class GameScript final {
   public:
     GameScript(GameSession &owner);
     ~GameScript();
 
-    struct DlgChoice final {
-      std::string      title;
-      int32_t          sort     = 0;
-      uint32_t         scriptFn = 0;
-      bool             isTrade  = false;
-      daedalus::IInfo*   handle   = nullptr;
-      std::string      external;  // a dialog made at runtime (ai_bridge): its id; handle and scriptFn are empty
-      };
-
-    struct PerDist {
-      PerDist();
-      int32_t range[PERC_Count] = {};
-      int     at(PercType perc, int r) const;
-      };
+    using DlgChoice = ::DlgChoice;
+    using PerDist = ::PerDist;
+    using PhysicalSpell = ::PhysicalSpell;
 
     bool         hasSymbolName(std::string_view fn);
 
@@ -134,7 +110,7 @@ class GameScript final {
     const FocusRecord&           focusMelee() const { return cFocusMelee; }
     const FocusRecord&           focusRange() const { return cFocusRange; }
     const FocusRecord&           focusMage()  const { return cFocusMage;  }
-    const daedalus::IGuildValues& guildVal()   const { return *cGuildVal;  }
+    const GuildRecord&           guildVal()   const { return *cGuildVal;  }
 
     std::string_view            menuMain() const;
 
@@ -146,9 +122,8 @@ class GameScript final {
     size_t                      symbolsCount() const;
 
     const AiState&              aiState  (ScriptFn id);
-    const daedalus::ISpell&       spellDesc(int32_t splId);
+    const SpellRecord&          spellDesc(int32_t splId);
     const VisualFx*             spellVfx (int32_t splId);
-    enum class PhysicalSpell : uint8_t { None, WindFist, Whirlwind, Fireball, IceCube };
     PhysicalSpell              physicalSpell(int32_t splId) const;
 
     auto dialogChoices(std::shared_ptr<NpcRecord> self, std::shared_ptr<NpcRecord> npc, const std::vector<uint32_t> &except, bool includeImp) -> std::vector<DlgChoice>;

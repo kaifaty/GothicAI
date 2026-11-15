@@ -7,6 +7,8 @@
 #include "script.h"
 #include "world/records/npcrecord.h"
 #include "world/records/itemrecord.h"
+#include "world/records/guildrecord.h"
+#include "world/records/spellrecord.h"
 #include "world/records/focusrecord.h"
 
 #include <cstdint>
@@ -24,41 +26,7 @@
 // clang-format on
 
 namespace daedalus {
-	struct IGuildValues : DaedalusInstance {
-		static constexpr std::uint32_t count = 66;
-
-		var int32_t water_depth_knee[count];
-		var int32_t water_depth_chest[count];
-		var int32_t jumpup_height[count];
-		var int32_t swim_time[count];
-		var int32_t dive_time[count];
-		var int32_t step_height[count];
-		var int32_t jumplow_height[count];
-		var int32_t jumpmid_height[count];
-		var int32_t slide_angle[count];
-		var int32_t slide_angle2[count];
-		var int32_t disable_autoroll[count];
-		var int32_t surface_align[count];
-		var int32_t climb_heading_angle[count];
-		var int32_t climb_horiz_angle[count];
-		var int32_t climb_ground_angle[count];
-		var int32_t fight_range_base[count];
-		var int32_t fight_range_fist[count];
-		var int32_t fight_range_g[count];
-		var int32_t fight_range_1hs[count];
-		var int32_t fight_range_1ha[count];
-		var int32_t fight_range_2hs[count];
-		var int32_t fight_range_2ha[count];
-		var int32_t falldown_height[count];
-		var int32_t falldown_damage[count];
-		var int32_t blood_disabled[count];
-		var int32_t blood_max_distance[count];
-		var int32_t blood_amount[count];
-		var int32_t blood_flow[count];
-		var string blood_emitter[count];
-		var string blood_texture[count];
-		var int32_t turn_speed[count];
-
+	struct IGuildValues : DaedalusInstance, GuildRecord {
 		static void register_(DaedalusScript& s);
 	};
 
@@ -132,20 +100,7 @@ namespace daedalus {
 		static void register_(DaedalusScript& s);
 	};
 
-	struct ISpell : DaedalusInstance {
-		var float time_per_mana;
-		var int32_t damage_per_level;
-		var int32_t damage_type;
-		var int32_t spell_type;
-		var int32_t can_turn_during_invest;
-		var int32_t can_change_target_during_invest;
-		var int32_t is_multi_effect;
-		var int32_t target_collect_algo;
-		var int32_t target_collect_type;
-		var int32_t target_collect_range;
-		var int32_t target_collect_azi;
-		var int32_t target_collect_elev;
-
+	struct ISpell : DaedalusInstance, SpellRecord {
 		static void register_(DaedalusScript& s);
 	};
 
