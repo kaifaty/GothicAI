@@ -1,9 +1,10 @@
 cmake_minimum_required(VERSION 3.20)
 
-# Engine layer guard (reports/engine/2026-11-10-engine-layers/README.md, step 5): no platform file
-# of the game targets may reach the script VM (common/daedalus/) through includes. This is
-# `vm_transitive` of `census` in scripts/engine_layers.py: the layer of a file comes from its
-# LAYER_RULES, read line by line, and includes resolve the same way, so both give one answer.
+# Engine layer guard (reports/engine/2026-11-10-engine-layers/README.md, steps 5 and 7.4): no
+# platform or RPG file of the game targets may reach the script VM (common/daedalus/) through
+# includes. This is `vm_transitive` of `census` in scripts/engine_layers.py: the layer of a file
+# comes from its LAYER_RULES, read line by line, and includes resolve the same way, so both give
+# one answer.
 #
 # Configure: collect the game targets' sources, write the inputs file and add gothic-layer-guard.
 # Build (`cmake -P`): walk the includes, fail on a violation, write the stamp and its depfile.
@@ -120,7 +121,7 @@ if(NOT CMAKE_SCRIPT_MODE_FILE)
     DEPENDS ${guard_sources} "${guard_inputs}" "${guard_rules}" "${CMAKE_CURRENT_LIST_FILE}"
       "${CMAKE_CURRENT_LIST_DIR}/GuardDepfile.cmake"
     DEPFILE "${guard_stamp}.d"
-    COMMENT "Checking engine layers: platform files must not reach the script VM"
+    COMMENT "Checking engine layers: platform and RPG files must not reach the script VM"
     VERBATIM)
   add_custom_target(gothic-layer-guard DEPENDS "${guard_stamp}")
   foreach(target Gothic2Notr gothic-body-runner)
@@ -161,7 +162,9 @@ endif()
 # daedalus/ prefixes. Every include tries the file's folder, then common/, OpenGothic/, ai_bridge/.
 set(checked)
 set(vm_files)
-set(platform_files)
+set(guarded_files)
+set(platform_count 0)
+set(rpg_count 0)
 while(pending)
   list(POP_FRONT pending file)
   if(DEFINED "seen_${file}")
@@ -170,8 +173,10 @@ while(pending)
   set("seen_${file}" 1)
   list(APPEND checked "${file}")
   engine_layer_guard_layer_of("${file}" "${rule_regexes}" "${rule_layers}" layer)
-  if(layer STREQUAL "platform")
-    list(APPEND platform_files "${file}")
+  if(layer STREQUAL "platform" OR layer STREQUAL "rpg")
+    list(APPEND guarded_files "${file}")
+    math(EXPR ${layer}_count "${${layer}_count} + 1")
+    set("layer_${file}" "${layer}")
   endif()
   if(file MATCHES "^common/daedalus/")
     list(APPEND vm_files "${file}")
@@ -228,8 +233,8 @@ endwhile()
 
 set(violations)
 set(violation_count 0)
-list(SORT platform_files)
-foreach(file IN LISTS platform_files)
+list(SORT guarded_files)
+foreach(file IN LISTS guarded_files)
   if(NOT DEFINED "next_${file}")
     continue()
   endif()
@@ -250,15 +255,16 @@ foreach(file IN LISTS platform_files)
   endwhile()
   list(APPEND chain "${step}")
   list(JOIN chain " -> " chain)
-  string(APPEND violations "\n  ${chain}")
+  string(APPEND violations "\n  [${layer_${file}}] ${chain}")
 endforeach()
-list(LENGTH platform_files platform_count)
+list(LENGTH guarded_files guarded_count)
 list(LENGTH checked file_count)
 if(violations)
-  message(FATAL_ERROR "Engine layer guard: ${violation_count} of ${platform_count} platform files "
+  message(FATAL_ERROR "Engine layer guard: ${violation_count} of ${guarded_count} platform and RPG files "
     "reach the script VM (common/daedalus/) through includes; shortest chains, file:line of each include:"
     "${violations}\n"
-    "Platform files must not include the VM or game/gamescript.h, even through rpg or gothic headers. "
+    "Platform and RPG files must not include the VM or game/gamescript.h, even through gothic headers: "
+    "the RPG layer asks the script through GameRules (game/gamerules.h) and the program through GameHost. "
     "Layer rules: scripts/engine_layers.py (LAYER_RULES); plan: reports/engine/2026-11-10-engine-layers/README.md")
 endif()
 
@@ -268,4 +274,4 @@ foreach(file IN LISTS checked)
 endforeach()
 include("${CMAKE_CURRENT_LIST_DIR}/GuardDepfile.cmake")
 guard_write_depfile("${GUARD_STAMP}" ${dependencies})
-message(STATUS "Engine layer guard: ${platform_count} platform files of ${file_count} files checked, none reach the script VM")
+message(STATUS "Engine layer guard: ${platform_count} platform and ${rpg_count} RPG files of ${file_count} files checked, none reach the script VM")
