@@ -14,6 +14,7 @@
 #include "game/gamescript.h"
 #include "game/playercontrol.h"
 #include "gothic.h"
+#include "settings.h"
 #include "graphics/drawcommands.h"
 #include "graphics/renderer.h"
 #include "graphics/mesh/footik.h"
@@ -1146,7 +1147,7 @@ void capture(const CameraContext& ctx,Pixmap& frame, float uiScale) {
     cv.text(6,6,ctx.routine.questCase,2,Text);
     const auto& npc=*ctx.routine.questNpc;const auto& q=npc.ragdollQuestReturnState();char label[160];
     std::snprintf(label,sizeof(label),"IMMORTAL %d GUARD %d KO %d RETURN %u",int(npc.isImmortal()),
-      Gothic::settingsGetI("GAME","ragdoll_quest_guard"),int(npc.isUnconscious()),npc.ragdollQuestReturnCount());
+      Settings::getI("GAME","ragdoll_quest_guard"),int(npc.isUnconscious()),npc.ragdollQuestReturnCount());
     cv.text(6,26,label,2,Text);
     std::snprintf(label,sizeof(label),"REASON %s DROP %.0f CM",questReason(q.hazards),double(ctx.routine.questStable.y-npc.position().y));
     cv.text(6,46,label,2,Text);

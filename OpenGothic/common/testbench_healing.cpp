@@ -11,7 +11,7 @@
 #include "game/damagecalculator.h"
 #include "game/gamescript.h"
 #include "game/serialize.h"
-#include "gothic.h"
+#include "settings.h"
 #include "graphics/mesh/animation.h"
 #include "graphics/mesh/hitzones.h"
 #include "world/aiqueue.h"
@@ -119,9 +119,9 @@ void healingCommand(Healing& state,const std::vector<std::string>& a,World& worl
     const auto count=player.inventory().itemCount(item);
     if(count)player.delItem(item,uint32_t(count));
     test={};test.label=a[2];test.item=item;test.hp=hp;test.start=world.tickCount();
-    Gothic::settingsSetI("GAME","usePotionKeys",1);
+    Settings::setI("GAME","usePotionKeys",1);
     say("healing begin "+test.label+": hp "+std::to_string(hp)+"/1000 at "+std::to_string(test.start)+" ms, interrupt "+
-      std::to_string(Gothic::physicsFlags().meleeHealInterrupt)+", food "+std::to_string(Gothic::physicsFlags().foodOverTime));
+      std::to_string(Settings::physicsFlags().meleeHealInterrupt)+", food "+std::to_string(Settings::physicsFlags().foodOverTime));
     }
   else if(a.size()==3 && a[1]=="arm") {
     exec("melee-shadow weapon "+a[2],world,player,ctrl);
@@ -162,8 +162,8 @@ void healingCommand(Healing& state,const std::vector<std::string>& a,World& worl
     say("healing toggle "+a[2]+": walk mode "+std::to_string(int(player.walkMode())));
     }
   else if(a.size()==3 && a[1]=="original") {
-    if(a[2]=="potion")Gothic::settingsSetI("GAME","melee_heal_interrupt",0);
-    else if(a[2]=="food")Gothic::settingsSetI("GAME","food_over_time",0);
+    if(a[2]=="potion")Settings::setI("GAME","melee_heal_interrupt",0);
+    else if(a[2]=="food")Settings::setI("GAME","food_over_time",0);
     else throw std::runtime_error("healing original expects potion or food");
     }
   else if(a.size()==2 && a[1]=="npc-queue") {
@@ -219,7 +219,7 @@ void healingCommand(Healing& state,const std::vector<std::string>& a,World& worl
     say("healing second item requested at "+std::to_string(world.tickCount()-test.start)+" ms");
     }
   else if(a.size()==3 && a[1]=="action") {
-    if(!Gothic::physicsFlags().meleeUseInHand) {
+    if(!Settings::physicsFlags().meleeUseInHand) {
       say("healing action "+a[2]+": OFF holster control, no input");
       return;
       }
@@ -311,8 +311,8 @@ void healingCommand(Healing& state,const std::vector<std::string>& a,World& worl
   else if(a.size()>=3 && a[1]=="check") {
     healingObserve(state,world,player);
     auto& actor=test.npc==nullptr ? player : *test.npc;
-    const bool potion=Gothic::physicsFlags().meleeHealInterrupt;
-    const bool food=Gothic::physicsFlags().foodOverTime;
+    const bool potion=Settings::physicsFlags().meleeHealInterrupt;
+    const bool food=Settings::physicsFlags().foodOverTime;
     const auto items=actor.inventory().itemCount(test.item);
     const uint64_t first=test.firstHeal ? test.firstHeal-test.start : 0;
     const uint64_t last=test.lastHeal ? test.lastHeal-test.start : 0;
@@ -326,12 +326,12 @@ void healingCommand(Healing& state,const std::vector<std::string>& a,World& worl
       if(a[2]=="hotkey") {
         pass&=items==(potion ? 1u : 0u); // The original script also consumes a potion at full HP.
         pass&=potion ? actor.weaponState()==WeaponState::NoWeapon ||
-                      (Gothic::physicsFlags().meleeUseInHand && test.sawHand && actor.weaponState()==WeaponState::W1H) :
+                      (Settings::physicsFlags().meleeUseInHand && test.sawHand && actor.weaponState()==WeaponState::W1H) :
                       actor.weaponState()!=WeaponState::NoWeapon;
         }
       }
     else if(a[2]=="hand-potion" || a[2]=="hand-food" || a[2]=="hand-cancel" || a[2]=="hand-hit" || a[2]=="wine" || a[2]=="walk" || a[2]=="refused-action" || a[2]=="npc-queue") {
-      const bool enabled=Gothic::physicsFlags().meleeUseInHand && a[2]!="wine";
+      const bool enabled=Settings::physicsFlags().meleeUseInHand && a[2]!="wine";
       const bool cancelled=a[2]=="hand-hit" || (a[2]=="hand-cancel" && enabled);
       if(cancelled)pass=test.healed==0 && items==1 && (a[2]=="hand-hit" ? test.damage>0 : test.actionExecuted);
       else if(a[2]=="hand-food")pass=a.size()==4 && test.healed==std::stoi(a[3]) && items==0 && foodElapsed>=9900 && foodElapsed<=10100;
@@ -389,8 +389,8 @@ void healingCommand(Healing& state,const std::vector<std::string>& a,World& worl
     else if(a[2]=="original-potion" || a[2]=="original-food") {
       pass=test.healed==(a[2]=="original-potion" ? 50 : 10) && test.firstHeal==test.start && items==0 &&
            !test.sawHand && test.heldWeapon && actor.weaponState()==test.weapon && !test.actionExecuted;
-      Gothic::settingsSetI("GAME","melee_heal_interrupt",1);
-      Gothic::settingsSetI("GAME","food_over_time",1);
+      Settings::setI("GAME","melee_heal_interrupt",1);
+      Settings::setI("GAME","food_over_time",1);
       }
     else if(a[2]=="interrupted")pass=potion ? test.healed==0 && items==1 && test.damage>0 : test.healed==50 && test.firstHeal==test.start;
     else if(a[2]=="refused")pass=test.healed==0 && items==1 && !actor.hasState(BS_ITEMINTERACT);

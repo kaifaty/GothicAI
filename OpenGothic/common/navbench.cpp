@@ -6,7 +6,7 @@
 #include "world/objects/npc.h"
 #include "world/aiqueue.h"
 #include "testbench.h"
-#include "gothic.h"
+#include "settings.h"
 
 #include <algorithm>
 #include <cmath>
@@ -196,7 +196,7 @@ bool NavBench::running() { return trial.active || NavTransitions::running(); }
 void NavBench::command(const std::vector<std::string>& a,World& w,Npc& pl,const std::string& output) {
   if(a.size()<2) throw std::runtime_error("navmesh: expected build|coverage|pairs|start|follow|finish");
   if(a[1]=="build" && (a.size()==3 || a.size()==4)) {
-    if(Gothic::physicsFlags().movableVobs) throw std::runtime_error("navmesh measurement requires movable_vobs=0 before world load");
+    if(Settings::physicsFlags().movableVobs) throw std::runtime_error("navmesh measurement requires movable_vobs=0 before world load");
     if(!std::filesystem::path(a[2]).is_absolute()) throw std::runtime_error("navmesh cache must be absolute");
     const auto before=std::chrono::steady_clock::now();
     auto geometry=w.physic()->navigationGeometry();

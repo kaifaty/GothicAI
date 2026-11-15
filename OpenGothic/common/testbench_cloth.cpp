@@ -14,6 +14,7 @@
 
 #include "camera.h"
 #include "gothic.h"
+#include "settings.h"
 #include "game/gamescript.h"
 #include "game/gamesession.h"
 #include "game/serialize.h"
@@ -730,7 +731,7 @@ bool clothCommand(ClothContext ctx,const std::vector<std::string>& a,World& w,Np
   auto& state=ctx.cloth;
   const auto& c=a[0];
   if(c=="cloth" && a.size()==2 && (a[1]=="on" || a[1]=="off")) {
-    Gothic::settingsSetI("GAME","cloth",a[1]=="on");
+    Settings::setI("GAME","cloth",a[1]=="on");
     event("cloth_toggle","\"enabled\":"+std::string(w.physic()->clothEnabled()?"true":"false"));
     }
   else if(c=="cloth" && a.size()==4 && a[1]=="setup")clothSetup(ctx,w,pl,a[2],a[3]);

@@ -1,7 +1,7 @@
 #include "navdemos.h"
 #include "game/navigationeyeworld.h"
 #include "navdemos_internal.h"
-#include "gothic.h"
+#include "settings.h"
 #include "testbench.h"
 #include "navbench.h"
 #include "navkeyteacher.h"
@@ -2093,7 +2093,7 @@ bool NavDemos::nonhostileTarget(const Npc& npc) {
   return legacy.active && legacy.goalKind=="approach" && legacy.target==&npc;
 }
 bool NavDemos::forceCharacterVirtual(const Npc& npc) {
-  return (TestBench::npcDuelActor(npc) && Gothic::physicsFlags().npcCharacterVirtual) ||
+  return (TestBench::npcDuelActor(npc) && Settings::physicsFlags().npcCharacterVirtual) ||
          (settings.cv && ((legacy.active && (legacy.npc==&npc || legacy.target==&npc)) || preparingLegacy==&npc ||
                           (population.active && population.members.contains(&npc)) ||
                           NavTransitions::controls(npc)));

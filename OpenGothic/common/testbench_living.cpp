@@ -7,7 +7,7 @@
 
 #include "game/gamescript.h"
 #include "game/playercontrol.h"
-#include "gothic.h"
+#include "settings.h"
 #include "graphics/mesh/hitzones.h"
 #include "world/objects/item.h"
 #include "world/objects/npc.h"
@@ -128,7 +128,7 @@ bool livingCommand(const LivingContext& context,const std::vector<std::string>& 
       if(!item) {arenaAbort("sitting fixture dropped item unavailable");return true;}
       state.seatItems.push_back(item);
       }
-    Gothic::settingsSetI("GAME","living_bodies",1);
+    Settings::setI("GAME","living_bodies",1);
     event("living_seat_setup","\"scheme\":"+jsonStr(mob->schemeName())+",\"mob_cm\":"+ragdollVector(mob->position())+
       ",\"start_cm\":"+ragdollVector(stand)+",\"items\":2");
     }
@@ -180,7 +180,7 @@ bool livingCommand(const LivingContext& context,const std::vector<std::string>& 
     event("hero_mob","\"scheme\":"+jsonStr(a[1])+",\"found\":"+(mob?"true":"false")+",\"used\":"+(ok?"true":"false"));
     }
   else if(c=="living" && a.size()==2 && (a[1]=="on" || a[1]=="off")) {
-    Gothic::settingsSetI("GAME","living_bodies",a[1]=="on");state.livingPhase=a[1];
+    Settings::setI("GAME","living_bodies",a[1]=="on");state.livingPhase=a[1];
     }
   else if(c=="living" && a.size()==2 && a[1]=="radius-check") {
     auto* npc=context.subject;

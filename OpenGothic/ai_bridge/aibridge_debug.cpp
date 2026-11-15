@@ -13,6 +13,7 @@
 #include "npcchests.h"
 #include "npcfind.h"
 #include "physics/dynamicworld.h"
+#include "settings.h"
 #include "world/benchhooks.h"
 #include "textcodec.h"
 #include "world/objects/interactive.h"
@@ -155,7 +156,7 @@ void AiBridge::Impl::runWorldDebug(const rapidjson::Value& msg) {
     const auto  id     = world->placeBloodStain(at,pool ? BloodStains::Kind::Pool : BloodStains::Kind::Splash,radius,
                                                 pool ? body : 0);
     if(id==0) {
-      sendResult(req,false,Gothic::physicsFlags().blood ? "no ground there" : "blood is off ([GAME] blood=0)");
+      sendResult(req,false,Settings::physicsFlags().blood ? "no ground there" : "blood is off ([GAME] blood=0)");
       return;
       }
     sendResult(req,true,"","{\"id\":"+std::to_string(id)+"}");
