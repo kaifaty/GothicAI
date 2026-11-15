@@ -212,7 +212,7 @@ void Renderer::setupSettings() {
   // lamps' first search without the point's own texels, as before 2026-11-14. The command wins while a scenario runs.
   if(const char* env = std::getenv("OPENGOTHIC_VSM_STUDY")) {
     const int v = std::atoi(env);
-    benchVsmStudy = uint32_t(v<0 ? 0 : (v>31 ? 31 : v));
+    benchVsmStudy = uint32_t(v<0 ? 0 : (v>63 ? 63 : v));
     Log::i("vsm: study bits = ", benchVsmStudy, " by OPENGOTHIC_VSM_STUDY");
     }
   // OPENGOTHIC_SSAO_STUDY=<bits>: the bench command `ssao study` from the environment, for a whole run (one binary

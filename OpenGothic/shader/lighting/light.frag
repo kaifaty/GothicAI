@@ -44,6 +44,9 @@ layout(binding = 0, std140) uniform UboScene {
 layout(binding  = 1) uniform texture2D  gbufDiffuse;
 layout(binding  = 2) uniform utexture2D gbufNormal;
 layout(binding  = 3) uniform texture2D  depth;
+#if defined(VIRTUAL_SHADOW)
+#include "lighting/lamp_contact.glsl"
+#endif
 #if defined(MATERIAL_MAPS)
 layout(binding = 12) uniform texture2D gbufOrm;
 #endif
@@ -526,6 +529,9 @@ void main() {
   float z   = texelFetch(depth, ivec2(gl_FragCoord.xy), 0).x;
 
   vec4 pos = scene.viewProjectLwcInv*vec4(scr.x,scr.y,z,1.0);
+#if defined(VIRTUAL_SHADOW)
+  const vec4 clipPos = vec4(scr.x,scr.y,z,1.0)/pos.w; // the point in clip space, for the lamp's screen ray
+#endif
   pos.xyz/=pos.w;
 #if defined(VIRTUAL_SHADOW)
   // geometric normal of the visible surface, before any discard (derivatives)
@@ -601,6 +607,18 @@ void main() {
       return;
       }
     light *= shadow;
+    // what is too small for the lamp's shadow map, by a short ray through the depth buffer (lamp_contact.glsl); not
+    // on a facet edge-on to the lamp, where the ray would only find the facet itself
+    bool contact = light>0.0 && !faint && (scene.viewFlags & VF_LAMP_CONTACT)!=0u &&
+                   (scene.vsmStudy & VSM_STUDY_NO_CONTACT)==0u;
+#if defined(MATERIAL_MAPS)
+    contact = contact && !isHair; // hair takes the light by its shell, not by its surface
+#endif
+    if(contact) {
+      const float noise = interleavedGradientNoise(gl_FragCoord.xy + 5.588238*float(scene.taaFrame & 63u));
+      const float left  = lampContact(depth, clipPos, -normalize(ldir), sqrt(distanceSquare), planeN, noise);
+      light *= mix(1.0, left, smoothstep(0.05, 0.25, facetL));
+      }
 #if defined(VSM_LAMP_PROBE)
     if(push.probeStamp!=0) {
       // 0 lamp-pixel pairs at the filter, 1 pixels lit by any lamp, 2 pairs past 'faint', 3 out after the first

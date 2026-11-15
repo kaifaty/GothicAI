@@ -1,0 +1,208 @@
+# The screen ray of the lamps (../README.md, "Шаг 4"; shader/lighting/lamp_contact.glsl): every view as two shots of
+# one camera, `-off` without the ray (`vsm study 32`) and `-on` the game's. The hero's face and feet at a torch,
+# things by a candle, his feet at a lantern at night.
+#   OPENGOTHIC_RT=1 OPENGOTHIC_LIGHT_FREEZE=1 TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen \
+#     OPENGOTHIC_CONTENT=<the working content> scripts/bench.sh <this file> <out>
+# Sheets: tools/lamp_contact_sheets.py <out> <sheets dir>
+# @timeout 900
+seed 73013
+cheat god
+blink off
+overlay off
+# 1. Xardas' tower, the torch
+set time 12 0
+view clean 30
+watch nearest
+freeze nearest
+wait 500
+place 110 0
+wait 800
+watch player
+cam cut
+cam face 70 0 1
+vsm study 32
+wait 2500
+shot face-front-off
+wait 400
+vsm study 0
+wait 1500
+shot face-front-on
+wait 400
+cam cut
+cam face 70 45 1
+vsm study 32
+wait 2500
+shot face-34-off
+wait 400
+vsm study 0
+wait 1500
+shot face-34-on
+wait 400
+cam cut
+cam face 60 90 1
+vsm study 32
+wait 2500
+shot face-side-off
+wait 400
+vsm study 0
+wait 1500
+shot face-side-on
+wait 400
+cam cut
+cam face 40 20 1
+vsm study 32
+wait 2500
+shot face-near-off
+wait 400
+vsm study 0
+wait 1500
+shot face-near-on
+wait 400
+cam cut
+ui off
+view full
+cam lift off
+cam cut
+cam look 12
+cam world 110 30 0
+wait 300
+cam hold
+vsm study 32
+wait 2500
+shot tower-feet-off
+wait 400
+vsm study 0
+wait 1500
+shot tower-feet-on
+wait 400
+cam look 110
+cam world 170 130 30
+wait 300
+cam hold
+vsm study 32
+wait 2500
+shot tower-body-off
+wait 400
+vsm study 0
+wait 1500
+shot tower-body-on
+wait 400
+cam look 90
+cam world 300 140 30
+wait 300
+cam hold
+vsm study 32
+wait 2500
+shot tower-wide-off
+wait 400
+vsm study 0
+wait 1500
+shot tower-wide-on
+wait 400
+# 2. A table of the upper city at night
+set time 22 0
+goto NW_CITY_UPTOWN_HUT_01_COOK
+clear 3000
+wait 6000
+cam at 11778 1030 -5048 11739 1000 -5112
+vsm study 32
+wait 2500
+shot table-a-off
+wait 400
+vsm study 0
+wait 1500
+shot table-a-on
+wait 400
+cam at 11739 1100 -5100 11739 1000 -5112
+vsm study 32
+wait 2500
+shot table-top-off
+wait 400
+vsm study 0
+wait 1500
+shot table-top-on
+wait 400
+cam at 11815 1045 -5125 11785 1003 -5208
+vsm study 32
+wait 2500
+shot table-candle-off
+wait 400
+vsm study 0
+wait 1500
+shot table-candle-on
+wait 400
+cam at 11798 1100 -4960 11760 995 -5150
+vsm study 32
+wait 2500
+shot table-wide-off
+wait 400
+vsm study 0
+wait 1500
+shot table-wide-on
+wait 400
+# 3. A rich house: a silver cup by a candle
+goto NW_CITY_REICH03_BED_02
+clear 3000
+wait 6000
+cam at 12515 1480 -4409 12473 1450 -4465
+vsm study 32
+wait 2500
+shot cup-a-off
+wait 400
+vsm study 0
+wait 1500
+shot cup-a-on
+wait 400
+cam at 12600 1520 -4640 12473 1450 -4465
+vsm study 32
+wait 2500
+shot cup-wide-off
+wait 400
+vsm study 0
+wait 1500
+shot cup-wide-on
+wait 400
+# 4. The market at night, a lantern
+cam cut
+goto NW_CITY_MERCHANT_TRADE_04
+freeze PAL_203_LOTHAR
+watch player
+set time 22 30
+goto pos 7820 330 -4760
+wait 4000
+cam look 12
+cam world 110 30 0
+wait 300
+cam hold
+vsm study 32
+wait 2500
+shot lantern-feet-off
+wait 400
+vsm study 0
+wait 1500
+shot lantern-feet-on
+wait 400
+cam look 110
+cam world 200 140 120
+wait 300
+cam hold
+vsm study 32
+wait 2500
+shot lantern-body-off
+wait 400
+vsm study 0
+wait 1500
+shot lantern-body-on
+wait 400
+cam look 60
+cam world 320 120 45
+wait 300
+cam hold
+vsm study 32
+wait 2500
+shot lantern-wide-off
+wait 400
+vsm study 0
+wait 1500
+shot lantern-wide-on
+wait 400
