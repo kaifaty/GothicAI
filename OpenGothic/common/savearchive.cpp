@@ -2,6 +2,7 @@
 
 #include <cstring>
 #include <exception>
+#include <stdexcept>
 
 #include <Tempest/MemReader>
 #include <Tempest/MemWriter>

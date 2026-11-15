@@ -197,6 +197,8 @@ Marvin::Marvin() {
     {"toggle ragdoll_birth_guard",C_ToggleRagdollBirthGuard},
     {"toggle ragdoll_brace",      C_ToggleRagdollBrace},
     {"toggle bump_reactions",     C_ToggleBumpReactions},
+    {"toggle wall_reach",         C_ToggleWallReach},
+    {"toggle wall_stop",          C_ToggleWallStop},
     {"toggle furniture_parts",    C_ToggleFurnitureParts},
     {"toggle physics_noise",      C_TogglePhysicsNoise},
     {"toggle destruction",        C_ToggleDestruction},
@@ -682,6 +684,12 @@ bool Marvin::exec(std::string_view v) {
       return true;
     case C_ToggleBumpReactions:
       Settings::setI("GAME","bump_reactions",Settings::getI("GAME","bump_reactions")==0 ? 1 : 0);
+      return true;
+    case C_ToggleWallReach:
+      Settings::setI("GAME","wall_reach",Settings::getI("GAME","wall_reach")==0 ? 1 : 0);
+      return true;
+    case C_ToggleWallStop:
+      Settings::setI("GAME","wall_stop",Settings::getI("GAME","wall_stop")==0 ? 1 : 0);
       return true;
     case C_ToggleFurnitureParts:
       Settings::setI("GAME","furniture_parts",Settings::getI("GAME","furniture_parts")==0 ? 1 : 0);

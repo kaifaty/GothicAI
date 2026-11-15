@@ -96,6 +96,8 @@ void Settings::load(std::u16string_view systemIni, std::u16string_view userIni) 
   defaults->set("GAME", "ragdoll_birth_guard",1);
   defaults->set("GAME", "ragdoll_brace",       1); // a knocked-down human braces the fall (S_BRACE_* poses on the motors)
   defaults->set("GAME", "bump_reactions",      1);
+  defaults->set("GAME", "wall_reach",          1); // hands to the wall ahead and the stand of a body pressed into it
+  defaults->set("GAME", "wall_stop",           1); // the hero held nearly head on by a flat wall stands, he does not creep along it
   defaults->set("GAME", "furniture_parts",     1);
   defaults->set("GAME", "physics_noise",       1);
   defaults->set("GAME", "destruction",         1);
@@ -354,6 +356,8 @@ void Settings::refreshPhysicsFlags() {
     getI("GAME","body_traces")!=0,
     getI("GAME","blood")!=0,
     getI("GAME","ragdoll_brace")!=0,
-    getI("GAME","bump_reactions")!=0
+    getI("GAME","bump_reactions")!=0,
+    getI("GAME","wall_reach")!=0,
+    getI("GAME","wall_stop")!=0
     };
   }

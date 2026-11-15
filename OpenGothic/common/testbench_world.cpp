@@ -165,6 +165,8 @@ bool worldCommand(const WorldContext& context,const std::string& line,const std:
       {"ragdoll_birth_guard",&Settings::PhysicsFlags::ragdollBirthGuard},
       {"ragdoll_brace",&Settings::PhysicsFlags::ragdollBrace},
       {"bump_reactions",&Settings::PhysicsFlags::bumpReactions},
+      {"wall_reach",&Settings::PhysicsFlags::wallReach},
+      {"wall_stop",&Settings::PhysicsFlags::wallStop},
       {"furniture_parts",&Settings::PhysicsFlags::furnitureParts},
       {"placed_items",&Settings::PhysicsFlags::placedItems},
       {"cloth",&Settings::PhysicsFlags::cloth}

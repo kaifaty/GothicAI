@@ -3,6 +3,7 @@
 #include "game/aistate.h"
 #include "game/damagetypes.h"
 #include "game/fighttactic.h"
+#include "game/guildtraits.h"
 #include "game/aiouputpipe.h"
 #include "game/scripttypes.h"
 #include "world/records/focusrecord.h"
@@ -71,6 +72,7 @@ class GameRules {
     virtual const PerDist& percRanges() const = 0;
 
     // Guilds and attitudes.
+    virtual const GuildTraits& guildTraits() const = 0;
     virtual const GuildRecord& guildVal() const = 0;
     virtual Attitude personAttitude(const Npc& a, const Npc& b) const = 0;
     virtual bool isFriendlyFire(const Npc& src, const Npc& dst) const = 0;
