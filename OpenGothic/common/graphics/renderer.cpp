@@ -379,6 +379,18 @@ void Renderer::setupSettings() {
     settings.taauHistSharp = 0.75f;
     settings.taauMoveShare = 0.2f;
     settings.taauMoveSpeed = 1.f;
+    settings.taauDepthTol  = 0.01f;
+    settings.taauMoveWeight = 1.f;
+    if(const char* e = std::getenv("OPENGOTHIC_TAAU_MOVE_WEIGHT"))
+      settings.taauMoveWeight = std::clamp(std::strtof(e, nullptr), 0.05f, 100.f);
+    settings.taauDepthClip = 1.f;
+    settings.taauEdgeBox   = 1.f;
+    if(const char* e = std::getenv("OPENGOTHIC_TAAU_DEPTH_TOL"))
+      settings.taauDepthTol = std::clamp(std::strtof(e, nullptr), 0.f, 1.f);
+    if(const char* e = std::getenv("OPENGOTHIC_TAAU_DEPTH_CLIP"))
+      settings.taauDepthClip = std::clamp(std::strtof(e, nullptr), 0.f, 1.f);
+    if(const char* e = std::getenv("OPENGOTHIC_TAAU_EDGE_BOX"))
+      settings.taauEdgeBox = std::clamp(std::strtof(e, nullptr), 0.f, 1.f);
     if(const char* e = std::getenv("OPENGOTHIC_TAAU_MOVE_SPEED"))
       settings.taauMoveSpeed = std::clamp(std::strtof(e, nullptr), 0.01f, 64.f);
     if(const char* e = std::getenv("OPENGOTHIC_TAAU_HIST_SHARP"))
@@ -414,7 +426,8 @@ void Renderer::setupSettings() {
                ", clip trust = ", settings.taauClipTrust, ", gamma = ", settings.taauGamma,
                ", box static = ", settings.taauBoxStatic, ", box motion = ", settings.taauBoxMotion,
                ", move share = ", settings.taauMoveShare, ", move speed = ", settings.taauMoveSpeed,
-               ", hist sharp = ", settings.taauHistSharp);
+               ", hist sharp = ", settings.taauHistSharp, ", move weight = ", settings.taauMoveWeight, ", depth tol = ", settings.taauDepthTol,
+               ", depth clip = ", settings.taauDepthClip, ", edge box = ", settings.taauEdgeBox);
       }
   }
   // CMAA2 runs at internal resolution, so it needs a same-size target: native or the upscaler input
@@ -675,6 +688,9 @@ void Renderer::resetViewport(Tempest::Size res, Tempest::Size fullRes) {
     temporal.motion  = temporal.taau ? Attachment() : device.attachment(TextureFormat::RG16F, w, h);
     temporal.boxMid  = temporal.taau ? device.attachment(TextureFormat::RGBA16F, w, h) : Attachment();
     temporal.boxExt  = temporal.taau ? device.attachment(TextureFormat::RGBA16F, w, h) : Attachment();
+    for(auto& d : temporal.depth)
+      d = temporal.taau ? device.attachment(TextureFormat::RGBA16F, w, h) : Attachment();
+    temporal.flags   = temporal.taau ? device.attachment(TextureFormat::RG8, w, h) : Attachment();
     temporal.output  = temporal.taau ? StorageImage() : device.image2d(TextureFormat::R11G11B10UF, bw, bh);
     temporal.phases  = Taa::upscalePhases(w, h, bw, bh);
     // MetalFX takes Apple's log2(in/out) - 1; our own resolve half a level less sharp, as TAA's -0.5 at 100 %
@@ -688,6 +704,9 @@ void Renderer::resetViewport(Tempest::Size res, Tempest::Size fullRes) {
     temporal.motion  = Attachment();
     temporal.boxMid  = Attachment();
     temporal.boxExt  = Attachment();
+    temporal.depth[0] = Attachment();
+    temporal.depth[1] = Attachment();
+    temporal.flags    = Attachment();
     temporal.output  = StorageImage();
     }
 

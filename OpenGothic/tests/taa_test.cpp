@@ -412,6 +412,46 @@ void upscaleShares() {
   require(Taa::upscaleConfInMotion(0.3f, moveConf, 0.f)==0.3f, "the motion weight at rest");
   require(std::abs(Taa::upscaleConfInMotion(0.f, moveConf, 0.5f) - 0.5f*moveConf)<1e-6f, "the motion weight half way");
   require(Taa::upscaleMoveConf(0.f, wMax)==0.f, "no share gives a weight in motion");
+  // a history in motion keeps a smaller weight, and the frame's weight for the same share is smaller with it: the
+  // share in motion stays, and after a stop a sample at the centre takes half instead of a fifth
+  const float capConf = Taa::upscaleMoveConf(0.2f, 1.f);
+  const auto  capped  = Taa::upscaleShare(capConf, 1.f, 1.f, 0.f, trust, 0.f);
+  require(std::abs(capped.share - 0.2f)<1e-3f && std::abs(capped.weight - 1.f)<1e-4f, "the share against a capped history");
+  const auto  stopped = Taa::upscaleShare(1.f, capped.weight, wMax, 0.f, trust, 0.f);
+  require(std::abs(stopped.share - 0.5f)<1e-3f, "the first sample after a stop takes " + std::to_string(stopped.share));
+  // the history's cubic in motion: the asked one from 2 times, Catmull-Rom up to 1.5 times
+  require(Taa::upscaleHistSharp(0.75f, 1728, 3456)==0.75f && Taa::upscaleHistSharp(0.75f, 1152, 3456)==0.75f, "the cubic at 2x and more");
+  require(Taa::upscaleHistSharp(0.75f, 2304, 3456)==0.5f && Taa::upscaleHistSharp(0.75f, 3456, 3456)==0.5f, "the cubic up to 1.5x");
+  const float hs = Taa::upscaleHistSharp(0.75f, 1975, 3456);
+  require(hs>0.55f && hs<0.7f, "the cubic at 1.75x is " + std::to_string(hs));
+  }
+
+// the depth test of our own upscale: 1/w from the depth by the projection's offset, and what counts as hidden
+void upscaleDepth() {
+  const float n = 10.f, f = 100000.f;
+  Matrix4x4 proj;
+  proj.perspective(67.5f, 16.f/9.f, n, f);
+  const float off = Taa::upscaleDepthOffset(proj);
+  require(std::abs(off - n/(f - n))<1e-7f, "the depth offset is " + std::to_string(off));
+  // (1 - depth) + off of two view depths are in the ratio of the depths, turned over
+  auto invW = [&](float w) {
+    float x = 0, y = 0, z = w, ww = 1;
+    proj.project(x, y, z, ww);
+    return (1.f - z/ww) + off;
+    };
+  for(float w : {50.f, 400.f, 5000.f, 60000.f}) {
+    const float r = invW(w)/invW(2.f*w);
+    require(std::abs(r - 2.f)<2e-2f, "1/w at " + std::to_string(w) + " against twice that: " + std::to_string(r));
+    }
+  require(Taa::upscaleDepthOffset(Matrix4x4::mkIdentity())==0.f, "no perspective has a depth offset");
+  // the same surface, a slope within the tolerance and something farther are not hidden; a boot 10 % nearer is
+  const float tol = 0.02f, e = invW(400.f);
+  require(Taa::upscaleHidden(e, e, tol)==0.f, "a surface hides itself");
+  require(Taa::upscaleHidden(e, invW(400.f/1.015f), tol)==0.f, "a slope inside the tolerance hides");
+  require(Taa::upscaleHidden(e, invW(800.f), tol)==0.f, "what was farther hides");
+  require(Taa::upscaleHidden(e, invW(360.f), tol)==1.f, "a surface 10 % nearer does not hide");
+  const float half = Taa::upscaleHidden(e, e*1.03f, tol);
+  require(half>0.4f && half<0.6f, "between one and two tolerances: " + std::to_string(half));
   }
 
 // the resolve's blend with the reactive mask (graphics plan 1v): the mask 0 changes nothing, a spark under it keeps
@@ -445,6 +485,7 @@ int main() {
     upscaleSequence();
     upscaleTaps();
     upscaleShares();
+    upscaleDepth();
     staticCamera();
     movingCamera();
     cameraJump();

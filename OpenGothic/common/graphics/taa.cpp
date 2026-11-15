@@ -156,6 +156,25 @@ float Taa::upscaleConfInMotion(float conf, float moveConf, float move) {
   return conf + (moveConf - conf)*std::clamp(move, 0.f, 1.f);
   }
 
+float Taa::upscaleHistSharp(float sharp, uint32_t inW, uint32_t outW) {
+  const float scale = float(outW)/float(std::max(inW, 1u));
+  const float k     = std::clamp((scale - 1.5f)/0.5f, 0.f, 1.f);
+  return 0.5f + (sharp - 0.5f)*k;
+  }
+
+float Taa::upscaleDepthOffset(const Matrix4x4& proj) {
+  // depth = (m22*z + m32)/(m23*z + m33) of the view's z: at infinity m22/m23
+  const float wz = proj.at(2,3);
+  if(wz==0.f)
+    return 0.f;
+  return proj.at(2,2)/wz - 1.f;
+  }
+
+float Taa::upscaleHidden(float invWExpected, float invWStored, float tol) {
+  const float nearer = invWStored/std::max(invWExpected, 1e-12f) - 1.f;
+  return std::clamp((nearer - tol)/std::max(tol, 1e-6f), 0.f, 1.f);
+  }
+
 Matrix4x4 Taa::jitterMatrix(const Vec2& px, uint32_t w, uint32_t h) {
   auto m = Matrix4x4::mkIdentity();
   m.translate(2.f*px.x/float(std::max(w,1u)), 2.f*px.y/float(std::max(h,1u)), 0.f);

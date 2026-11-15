@@ -178,9 +178,13 @@ class Renderer final {
       float          taauGamma          = 1.f;   // OPENGOTHIC_TAAU_GAMMA: the variance box in sigmas
       float          taauBoxStatic      = 3.f;   // OPENGOTHIC_TAAU_BOX_STATIC: the colour box of a still point, times
       float          taauBoxMotion      = 20.f;  // OPENGOTHIC_TAAU_BOX_MOTION: output px a frame of the box's own size
-      float          taauHistSharp      = 0.75f; // OPENGOTHIC_TAAU_HIST_SHARP: the history's cubic in motion (Keys' -a)
+      float          taauHistSharp      = 0.75f; // OPENGOTHIC_TAAU_HIST_SHARP: the history's cubic in motion from 2x (Keys' -a)
       float          taauMoveShare      = 0.2f;  // OPENGOTHIC_TAAU_MOVE_SHARE: the enlarged frame's share in motion; 0: off
       float          taauMoveSpeed      = 1.f;   // OPENGOTHIC_TAAU_MOVE_SPEED: output px a frame of the full motion
+      float          taauMoveWeight     = 1.f;   // OPENGOTHIC_TAAU_MOVE_WEIGHT: the most weight a history keeps in motion
+      float          taauDepthTol       = 0.01f; // OPENGOTHIC_TAAU_DEPTH_TOL: a history nearer by this share of the depth hid the point; 0: no test
+      float          taauDepthClip      = 1.f;   // OPENGOTHIC_TAAU_DEPTH_CLIP: the weight a hidden point's history loses
+      float          taauEdgeBox        = 1.f;   // OPENGOTHIC_TAAU_EDGE_BOX: 1: no wider box at another surface's edge
       bool           bloomEnabled       = true;
       // the glare of the bloom (bloom_down.frag): a pixel whose brightest channel is over bloomGlareTo whites of
       // the frame gives the chain 1 + bloomGlare times its light, from bloomGlareFrom on by a smooth step.
@@ -338,6 +342,8 @@ class Renderer final {
     struct {
       Tempest::Attachment       motion;              // MetalFX, RG16F: to where the point was a frame ago, input texture coordinates
       Tempest::Attachment       boxMid, boxExt;      // our own, RGBA16F of the input's size (taau_prepare.frag): the colour box, the motion in the alphas
+      Tempest::Attachment       depth[2];            // our own, RGBA16F, by taa.cur: 1 - depth and the motion of the frame for the next one's test
+      Tempest::Attachment       flags;               // our own, RG8: what that test found (hidden, the edge)
       Tempest::StorageImage     output;              // MetalFX: linear HDR of the swapchain's size
       Tempest::Size             outSize;             // the resolved frame's size; 0 with no temporal upscale
       bool                      taau      = false;   // our own resolve, not MetalFX

@@ -301,16 +301,26 @@ void Renderer::drawTaau(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   // the nearest point and the colour box the history is clipped to
   struct Prepare {
     Matrix4x4 reproject;
-    float     gamma = 1;
+    float     gamma    = 1;
+    float     depthOff = 0;
+    float     depthTol = 0;
+    float     pad0     = 0;
     } prep;
   prep.reproject = taa.valid ? taa.reproject : Matrix4x4::mkIdentity();
   prep.gamma     = settings.taauGamma;
+  prep.depthOff  = Taa::upscaleDepthOffset(camHistory.cur.proj);
+  prep.depthTol  = taa.valid ? settings.taauDepthTol : 0.f;
+  // this frame's depth and motion; the previous frame's are the other one, as the history
+  auto& depthNow = temporal.depth[taa.cur];
   cmd.setDebugMarker("TAAU-prepare");
   cmd.setFramebuffer({{temporal.boxMid, Tempest::Discard, Tempest::Preserve},
-                      {temporal.boxExt, Tempest::Discard, Tempest::Preserve}});
+                      {temporal.boxExt, Tempest::Discard, Tempest::Preserve},
+                      {depthNow,        Tempest::Discard, Tempest::Preserve},
+                      {temporal.flags,  Tempest::Discard, Tempest::Preserve}});
   cmd.setBinding(0, zbuffer,      Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setBinding(1, gbufMotion,   Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setBinding(2, sceneLinear,  Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(3, temporal.depth[taa.cur^1], Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setPushData(prep);
   cmd.setPipeline(shaders.taauPrepare);
   cmd.draw(nullptr, 0, 3);
@@ -330,7 +340,9 @@ void Renderer::drawTaau(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
     float     histSharp   = 0.5f;
     float     moveConf    = 1;
     float     moveSpeed   = 1;
-    float     pad0        = 0;
+    float     depthClip   = 1;
+    float     edgeBox     = 1;
+    float     moveWeight  = 1;
     } push;
   push.jitter      = taa.jitter;
   push.wMax        = 1.f/settings.taauAlpha - 1.f;
@@ -341,10 +353,13 @@ void Renderer::drawTaau(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   push.clipTrust   = settings.taauClipTrust;
   push.boxStatic   = settings.taauBoxStatic;
   push.boxMotion   = settings.taauBoxMotion;
-  push.histSharp   = settings.taauHistSharp;
+  push.histSharp   = Taa::upscaleHistSharp(settings.taauHistSharp, uint32_t(sceneLinear.w()), uint32_t(temporal.outSize.w));
   // the enlarged frame's weight in motion from its share against a full history; no share: no motion at any speed
-  push.moveConf    = Taa::upscaleMoveConf(settings.taauMoveShare, push.wMax);
+  push.moveWeight  = std::min(settings.taauMoveWeight, push.wMax);
+  push.moveConf    = Taa::upscaleMoveConf(settings.taauMoveShare, push.moveWeight);
   push.moveSpeed   = settings.taauMoveShare>0.f ? settings.taauMoveSpeed : 1e9f;
+  push.depthClip   = settings.taauDepthClip;
+  push.edgeBox     = settings.taauEdgeBox;
 
   auto& next = taa.history[taa.cur];
   auto& prev = taa.history[taa.cur^1];
@@ -355,6 +370,7 @@ void Renderer::drawTaau(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   cmd.setBinding(2, temporal.boxExt, Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setBinding(3, prev,            Sampler::bilinear(ClampMode::ClampToEdge));
   cmd.setBinding(4, taa.reactive,    Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(5, temporal.flags,  Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setPushData(push);
   cmd.setPipeline(shaders.taauResolve);
   cmd.draw(nullptr, 0, 3);

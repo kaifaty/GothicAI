@@ -35,6 +35,10 @@ const float BoxEps = 1e-5;
 // their sharpness. So from `moveSpeed` output pixels a frame the new frame is its enlargement at every pixel, with
 // one weight `moveConf` for all of them (so what the box clips shows no grid of dots either), and the history's
 // cubic has deeper lobes, `histSharp`, which give back a part of what the reading takes.
+// A history that is another surface's or has its edge in it (taau_prepare.frag: `hidden` by the previous frame's
+// depth, the edge beside it and where the motion is a neighbour's) gets no wider box: the wide one would let the
+// boot's colour stay on the ground a walking leg has just left, as thin dark lines beside it. A hidden point's
+// history also loses its weight, and the point takes the enlarged frame.
 // Where the history is not trusted (reset, off the screen) the frame alone is enlarged by Catmull-Rom at the point
 // the output pixel looks at: sharp, and free of the nearest sample's blocks.
 // Under the reactive mask (a flame, smoke: they change every frame and have no motion vector) the resolve is the
@@ -54,7 +58,9 @@ layout(push_constant, std430) uniform Push {
   float histSharp;   // the history's cubic in full motion: Keys' -a, 0.5 is Catmull-Rom
   float moveConf;    // the weight of the enlarged frame in full motion, as a sample at every pixel's centre
   float moveSpeed;   // output pixels a frame from which the motion is full
-  float pad0;
+  float depthClip;   // the share of its weight that the history of a hidden point loses
+  float edgeBox;     // 1: a texel at another surface's edge keeps the box at its own size
+  float moveWeight;  // the most weight a history keeps in full motion
   } push;
 
 layout(binding = 0) uniform sampler2D current;  // linear HDR, pre-exposed, input resolution, bilinear
@@ -62,6 +68,7 @@ layout(binding = 1) uniform sampler2D boxMid;   // taau_prepare.frag: the box's 
 layout(binding = 2) uniform sampler2D boxExt;   // the box's half extent, YCoCg; a: motion y
 layout(binding = 3) uniform sampler2D history;  // bilinear, output resolution
 layout(binding = 4) uniform sampler2D reactive; // the reactive mask of this frame, R8, input resolution
+layout(binding = 5) uniform sampler2D flags;    // taau_prepare.frag: r: hidden, g: the edge
 
 layout(location = 0) out vec4 outHistory; // the tonemapping sharpens the scene from it (tonemapping.frag RCAS)
 
@@ -169,7 +176,10 @@ void main() {
   const float move  = clamp(speed/push.moveSpeed, 0.0, 1.0);
   const float conf  = exp(-push.kernel*dot(dC,dC)); // 1: a sample at this pixel's centre
   const float kS    = clamp(k*MaskSmooth, 0.0, 1.0);
-  const float kE    = max(kS, move);
+  const vec2  fl     = (push.depthClip>0.0 || push.edgeBox>0.0) ? texelFetch(flags, c, 0).rg : vec2(0);
+  const float hidden = fl.r*push.depthClip;
+  const float edge   = fl.g*push.edgeBox;
+  const float kE    = max(max(kS, move), hidden);
   vec3        cur   = texelFetch(current, c, 0).rgb;
   if(kE>0.0)
     cur = mix(cur, vec3(sampleCubic(current, pos, inSize, 0.5, unused)), kE);
@@ -181,14 +191,17 @@ void main() {
 
   const float held   = clamp((histA - WeightInit)/(1.0 - WeightInit), 0.0, 1.0);
   const hvec3 bMid   = hvec3(bm.rgb);
-  const hvec3 bExt   = hvec3(be.rgb)*hfloat(mix(1.0, push.boxStatic, still*held));
+  const hvec3 bExt   = hvec3(be.rgb)*hfloat(mix(1.0, push.boxStatic, still*held*(1.0 - max(hidden, edge))));
   const hvec3 histY0 = rgb2ycocg(hist);
   const hvec3 histY  = clipToBox(bMid, bExt, histY0);
   hist = max(ycocg2rgb(histY), hvec3(0));
 
   // The weight the history has gathered; one that the box has moved is not this point's any more and loses it
   const float moved = length(vec3(histY - histY0))/(length(vec3(bExt)) + 1e-3);
-  const float wH    = min(max(histA, 0.0), push.wMax)/(1.0 + push.clipTrust*moved);
+  // (in motion it is an average of enlarged frames, which the samples at the pixels' centres should replace soon
+  // after a stop: its weight is kept under `moveWeight`, and `moveConf` gives the same share against that)
+  const float wCap  = mix(push.wMax, push.moveWeight, move);
+  const float wH    = min(max(histA, 0.0), wCap)/(1.0 + push.clipTrust*moved)*(1.0 - hidden);
 
   // The new frame's share by the weights; in motion the frame's weight is one for all pixels (Taa::upscaleConfInMotion).
   // Under the mask the share is a full history's 1/(1 + wMax) for every pixel and
@@ -201,5 +214,5 @@ void main() {
   const float wHist = (1.0-a)/(1.0 + (1.0-k)*float(histY.x));
   const vec3  res   = (cur*wCur + vec3(hist)*wHist)/max(wCur + wHist, 1e-6);
 
-  outHistory = vec4(res, max(min(wH + confM, push.wMax)*(1.0-kS), WeightInit));
+  outHistory = vec4(res, max(min(wH + confM, wCap)*(1.0-kS), WeightInit));
   }

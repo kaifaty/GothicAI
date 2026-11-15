@@ -49,8 +49,20 @@ namespace Taa {
   // this frame's sample would keep that softened history for many frames. So from `moveSpeed` output pixels a frame
   // the new frame is its enlargement at every pixel, with one weight for all of them, `upscaleMoveConf`: the one that
   // gives it `share` against a history of `wMax`. Below that speed the two are mixed by `move` = speed/moveSpeed
+  // A history in motion is an average of enlarged frames, which the samples at the pixels' centres should replace
+  // soon after a stop: it keeps no more than the resolve's `moveWeight`, and `upscaleMoveConf` is taken against that
   float              upscaleMoveConf(float share, float wMax);
   float              upscaleConfInMotion(float conf, float moveConf, float move);
+  // The history's cubic in full motion (Keys' -a) by the enlargement: `sharp` from 2 times by the width, Catmull-Rom's
+  // 0.5 up to 1.5 times, where the enlarged frame brings more of the detail itself and deeper lobes overdo it
+  // (cobbles under a walking camera at 67 %: 1.13 of the full resolution's sharpness with 0.75, 1.01 with 0.5)
+  float              upscaleHistSharp(float sharp, uint32_t inW, uint32_t outW);
+  // The depth test of our own upscale (taau_prepare.frag). A perspective's depth is a + b/w of the view depth w, so
+  // 1/w is in proportion to (1 - depth) + (a - 1): `upscaleDepthOffset` is that a - 1, n/(f - n); 0 with no
+  // perspective. `upscaleHidden`: how much the previous frame hid a point whose 1/w was `invWExpected` then, where
+  // that frame kept `invWStored`: 0 up to `tol` nearer (in shares of the depth), 1 from twice that
+  float              upscaleDepthOffset(const Tempest::Matrix4x4& proj);
+  float              upscaleHidden(float invWExpected, float invWStored, float tol);
   // the clip-space translation that moves the picture by `px` pixels of a w×h target: J of J*proj
   Tempest::Matrix4x4 jitterMatrix(const Tempest::Vec2& px, uint32_t w, uint32_t h);
 
