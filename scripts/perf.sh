@@ -76,6 +76,13 @@ build_game() {
 if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then return; fi
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="$ROOT/OpenGothic/build-perf"
+# One Ryzen run per checkout at a time: the stand keeps one source tree and one build per checkout,
+# and a second upload during the first run's queue wait would replace what that run builds and
+# measures. The second run waits here, before it reads its sources. See docs/performance.md.
+if [[ "${1:-}" != __build && "${1:-}" != __run && "${BENCH_HOST:-local}" == ryzen && "${PERF_STAND_LOCKED:-}" != "$ROOT" ]]; then
+  mkdir -p "$ROOT/.bench"
+  PERF_STAND_LOCKED="$ROOT" exec python3 "$ROOT/scripts/perf_lock.py" "$ROOT/.bench/perf-ryzen.lock" bash "$0" "$@"
+fi
 # perf-content.sh also calls the queue entry points directly in its own source tree.
 PERF_SOURCE_FINGERPRINT="${PERF_SOURCE_FINGERPRINT:-$(source_fingerprint)}"
 export PERF_SOURCE_FINGERPRINT
@@ -93,7 +100,7 @@ PERF_WAIT="${PERF_WAIT:-600}"
 PERF_WAIT=$((10#$PERF_WAIT))
 if [[ $# == 0 ]]; then PLACES=(market harbour forest interior combat); else PLACES=("$@"); fi
 for place in "${PLACES[@]}"; do
-  case "$place" in market|harbour|harbour-night|forest|interior|combat|shot|face|face-far|rock|meadow|xardas) ;; *) fail "unknown place: $place (market harbour harbour-night forest interior combat shot face face-far rock meadow xardas)" ;; esac
+  case "$place" in market|market-walk|harbour|harbour-night|forest|interior|combat|shot|face|face-far|rock|meadow|xardas) ;; *) fail "unknown place: $place (market market-walk harbour harbour-night forest interior combat shot face face-far rock meadow xardas)" ;; esac
 done
 export PERF_WINDOW PERF_REPEAT PERF_WAIT
 export PERF_ARGS="${PERF_ARGS:-}" PERF_ENV="${PERF_ENV:-}" PERF_VID_RES="${PERF_VID_RES:-0}" PERF_INI="${PERF_INI:-}"

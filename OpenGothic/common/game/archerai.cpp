@@ -7,7 +7,7 @@
 #include <cstdlib>
 
 #include "game/archery.h"
-#include "game/damagecalculator.h"
+#include "game/gamerules.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
 #include "settings.h"
@@ -189,7 +189,7 @@ void ArcherAi::spread(Npc& npc, const Npc& tg) {
   const auto     st     = Archery::stats(npc,npc.currentRangedWeapon());
   const int32_t  talent = npc.hitChance(st.crossbow ? TALENT_CROSSBOW : TALENT_BOW);
   const float    d      = std::max((tg.position()-npc.position()).length(),100.f);
-  pv = float(DamageCalculator::vanillaChance(npc.world().script(),talent,d))/100.f;
+  pv = float(npc.world().rules().vanillaChance(talent,d))/100.f;
   // its cadence as it shoots (the fight AI's waits, the steadying, the draw), till it has one: the reload,
   // the draw, the hold
   const float reload = npc.animTime(Archery::reloadAnim(st.crossbow));

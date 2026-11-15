@@ -105,6 +105,7 @@ void writeHeader() {
   std::fprintf(bench.csv,",cue_leak");
   std::fprintf(bench.csv,",lip_tone,br_w,br_acc,br_moves,ls_w,ls_nods,ls_faces,vf_w,vf_emo");
   std::fprintf(bench.csv,",f_on,f_bend,f_yaw,f_twist,f_head,f_hits,f_str,f_ht");
+  std::fprintf(bench.csv,",b_pitch,b_roll,b_twist,b_head,b_hits");
   std::fprintf(bench.csv,",hp_player,hp_subject");
   std::fprintf(bench.csv,",stamina_player,stamina_subject");
   std::fprintf(bench.csv,",ai_on,ai_want,ai_sigma,ai_errx,ai_erry,ai_lead,ai_pv,ai_ps");
@@ -647,6 +648,8 @@ void writeRow(Npc& pl) {
   const auto& fl = bench.subject!=nullptr ? Flinch::subjectProbe : Flinch::playerProbe;
   std::fprintf(bench.csv,",%d,%.2f,%.1f,%.2f,%.2f,%u,%.2f,%.2f",int(fl.active),fl.bend,fl.bendYaw,fl.twist,fl.head,
                fl.hits,fl.strength,fl.height);
+  // its answer to a run into an obstacle: the trunk's throw (forward +), the head against the trunk
+  std::fprintf(bench.csv,",%.2f,%.2f,%.2f,%.2f,%u",fl.bumpPitch,fl.bumpRoll,fl.bumpTwist,fl.bumpHead,fl.bumps);
   // hit points: the hero's, the watched one's (a fight's course)
   std::fprintf(bench.csv,",%d,%d",pl.attribute(ATR_HITPOINTS),bench.subject!=nullptr ? bench.subject->attribute(ATR_HITPOINTS) : -1);
   std::fprintf(bench.csv,",%.3f,%.3f",double(pl.stamina()),bench.subject!=nullptr ? double(bench.subject->stamina()) : -1.0);

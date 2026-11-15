@@ -32,7 +32,6 @@ class Item;
 class WorldView;
 struct GltfHeadMesh;
 enum class NpcFlag : uint32_t;
-namespace daedalus { using NpcFlag = ::NpcFlag; }
 namespace TestBench { bool ragdollBodyDrawable(const Npc& npc); }
 
 class MdlVisual final {
@@ -123,7 +122,7 @@ class MdlVisual final {
     // an effect of the animations' events that does not start (the native PEE while an aimed one plays)
     void                           setMutedPfx(std::string_view name) { muted = name; }
     std::string_view               mutedPfx() const { return muted; }
-    void                           setNpcEffect(World& owner, Npc& npc, std::string_view s, daedalus::NpcFlag flags);
+    void                           setNpcEffect(World& owner, Npc& npc, std::string_view s, NpcFlag flags);
     void                           setFatness  (float f);
     void                           emitBlockEffect(Npc& dst, Npc& src);
 
@@ -170,6 +169,7 @@ class MdlVisual final {
     bool                           updateAim(Npc& npc, uint64_t dt);
     bool                           updateFlinch(Npc& npc, uint64_t dt);
     void                           flinch(const Npc& npc, const Flinch::Hit& hit);
+    void                           bump(const Npc& npc, const Flinch::Bump& hit);
     bool                           updateGaze(Npc& npc, uint64_t dt);
     void                           processLayers  (World& world);
     bool                           processEvents(World& world, uint64_t &barrier, Animation::EvCount &ev, NpcLogicalState* logic=nullptr);

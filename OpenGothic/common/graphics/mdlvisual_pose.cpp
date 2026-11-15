@@ -340,6 +340,11 @@ void MdlVisual::flinch(const Npc& npc, const Flinch::Hit& hit) {
   skInst->flinchIk().hit(hit,{std::cos(a), 0, std::sin(a)});
   }
 
+void MdlVisual::bump(const Npc& npc, const Flinch::Bump& hit) {
+  const float a = npc.rotationRad();
+  skInst->flinchIk().bump(hit,{std::cos(a), 0, std::sin(a)});
+  }
+
 float MdlVisual::bowSpan() const {
   // how far the string goes from rest to held drawn: the string's middle moves the most
   if(auto p = bow.view.protoMesh())

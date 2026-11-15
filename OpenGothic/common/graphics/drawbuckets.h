@@ -83,6 +83,8 @@ class DrawBuckets {
       BK_FOLIAGE = 0x8000,
       BK_GRASS = 0x10000,
       BK_WINDOW = 0x20000,
+      BK_GROUND = 0x40000,
+      BK_VERGE = 0x80000,
       };
 
     struct BucketGpu final {
@@ -137,7 +139,8 @@ class DrawBuckets {
     uint8_t currentFrame = 0;
 
     // the fringes' maps (albedo, normal, ORM) in the bindless arrays after the buckets and their frames, one entry
-    // per distinct set: BucketGpu::fringeTex is the first's index plus its place here
+    // per distinct set: BucketGpu::fringeTex is the first's index plus its place here. A meadow's two layers
+    // (Material::Layers) are two entries one after the other, the sward's first
     std::vector<std::array<const Tempest::Texture2d*,3>> fringeMaps;
 
     std::vector<Bucket>      bucketsCpu;

@@ -1,7 +1,7 @@
 #include "npc.h"
 
 #include <algorithm>
-
+#include "game/constants.h"
 #include "game/gamehost.h"
 #include "world/world.h"
 
@@ -161,7 +161,7 @@ void Npc::setAttitude(Attitude att) {
   }
 
 bool Npc::isFriend() const {
-  return hnpc->type==daedalus::NpcType::G2_FRIEND;
+  return hnpc->type==NpcType::G2_FRIEND;
   }
 
 void Npc::setTempAttitude(Attitude att) {

@@ -2,6 +2,7 @@
 #include "graphics/foliagefront.h"
 #include "settings.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdlib>
 
@@ -36,6 +37,9 @@ SceneGlobals::SceneGlobals() {
   vsmPageTbl  = nullptr;
   vsmPageHiZ  = nullptr;
   vsmDbg      = device.image2d(Tempest::TextureFormat::R32U, 64, 64);
+
+  const uint32_t noBorder[4] = {};
+  grassBorderNone = device.ssbo(noBorder,sizeof(noBorder));
 
   for(uint8_t lay=0; lay<V_Count; ++lay) {
     uboGlobal[lay] = device.ssbo(nullptr,sizeof(UboGlobal));
@@ -210,6 +214,17 @@ void SceneGlobals::setVsmLampNear(float cm) {
 
 void SceneGlobals::setLampNearKnee(float knee) {
   uboGlobalCpu.lampNearKnee = knee;
+  }
+
+void SceneGlobals::setHouses(const std::vector<HouseLights::House>& houses) {
+  const size_t count = std::min(houses.size(), HouseLights::MaxHouses);
+  uboGlobalCpu.houseCount = uint32_t(count);
+  for(size_t i=0; i<count; ++i) {
+    float v[12] = {};
+    HouseLights::pack(houses[i],v);
+    for(size_t k=0; k<3; ++k)
+      uboGlobalCpu.house[i*3+k] = Tempest::Vec4(v[k*4], v[k*4+1], v[k*4+2], v[k*4+3]);
+    }
   }
 
 void SceneGlobals::setVsmLampSides(uint32_t sides) {

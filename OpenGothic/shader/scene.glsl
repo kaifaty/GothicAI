@@ -2,6 +2,9 @@
 #define SCENE_GLSL
 
 // std140, because uniform buffer
+// the houses the scene block carries (HouseLights::MaxHouses, common/graphics/houselights.h)
+const int HOUSE_MAX = 32;
+
 struct SceneDesc {
   mat4  viewProject;
   mat4  viewProjectInv;
@@ -54,6 +57,7 @@ struct SceneDesc {
   float fogSkyVis;       // the sky seen from the camera under GI, 0..1 (fog_sky_vis.comp); 1 without it
   float lampNearKnee;    // a lamp's light never passes this many times its light at the range (light.frag); 0 off
   float dayHour;         // 0..24 of the game's day: the evening of the windows (materials/window_glow.glsl)
+  uint  houseCount;      // the houses of `house` below
   // living foliage (materials/foliage_wind.glsl): the world's wind of this frame and of the previous one
   vec4  foliageWind;      // xy: its direction in the world's x and z; z: the lean's pressure; w: 1 when it blows
   vec4  foliagePhase;     // 0..1 of the periods of the two waves and the two flutters
@@ -67,6 +71,9 @@ struct SceneDesc {
   // grass (grass/grass_common.glsl): x full density to here, cm; y the blades go into the ground from here; z the
   // ring's radius; w 1 with blades, 0.5 the ground's mark alone, 0 off
   vec4  grassRing;
+  // the houses whose windows fade with their lamps (windowHouse, materials/window_glow.glsl): three vectors a house,
+  // xyz the box's centre and w the cosine of its yaw; xyz its half size and w the sine; x the bedtime
+  vec4  house[3*HOUSE_MAX];
   };
 
 // bench `vsm study <bits>`: the shadow test on a mesh's facets (reports/render-features/2026-11-11-facet-shards)
@@ -141,6 +148,8 @@ const uint BK_FRINGE = 0x4000; // grass over the projection where the mesh's v s
 const uint BK_FOLIAGE = 0x8000; // leaves: the wind moves the vertices (foliage_wind.glsl), the sun shines through (main.frag)
 const uint BK_GRASS = 0x10000; // a ground that grows grass: its look under and beyond the blades (grass/grass_ground.glsl)
 const uint BK_WINDOW = 0x20000; // the material's glow is a window's, lit of an evening (materials/window_glow.glsl)
+const uint BK_GROUND = 0x40000; // a meadow's own two layers by world position (grass/grass_layers.glsl)
+const uint BK_VERGE = 0x80000; // the ground beside a meadow: the strip of its layers along their border
 
 // Strands in a shadow view: the first part of the list casts the shadow for all of it (the meshlets are dealt out
 // evenly, groommesh.cpp), each strand as wide as that part is small (strandShadowRibbon, vertex_process.glsl).
@@ -171,8 +180,10 @@ struct Bucket {
   uint  fringeTex;   // BK_FRINGE: its maps' index in the bindless arrays
   float fringeScale; // its repeats per repeat of the projection
   float fringeTop0, fringeTop1, fringeBottom0, fringeBottom1; // shares of v: solid to the first, tufts to the second
+                     // BK_GROUND, BK_VERGE: fringeTex the sward's maps, the earth's the next; fringeScale and
+                     // fringeTop0 their repeats per cm; fringeTop1 the far repeat's tile of the sward's
   uint  foliage;     // BK_FOLIAGE: 8 bits each of wind, flutter, translucency, anchor (FoliageWind::pack);
-                     // BK_GRASS: the record's numbers of the ground (Grass::pack);
+                     // BK_GRASS, BK_VERGE: the record's numbers of the grass (Grass::pack);
                      // BK_WINDOW: the window's share and hours (WindowGlow::pack)
   float foliageReach; // the largest arm of its mesh at rest, from the X axis; bbox is grown by the leaves' travel
   };

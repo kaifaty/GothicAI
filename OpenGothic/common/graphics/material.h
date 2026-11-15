@@ -6,6 +6,7 @@
 #include "asset/worldtypes.h"
 #include "records/definitions.h"
 #include "graphics/foliagewind.h"
+#include "graphics/grass/grassground.h"
 #include "graphics/grass/grassparams.h"
 #include "graphics/windowglow.h"
 
@@ -46,6 +47,22 @@ class Material final {
       bool  present() const { return tile>0 && albedo!=nullptr && normal!=nullptr && orm!=nullptr; }
       };
 
+    // materials.json "ground" of a texture with `grass`: the meadow's two layers by world position (grass/
+    // grassground.h, shader/grass/grass_layers.glsl); "verge" of the ground beside it: the same maps and numbers of
+    // the grass it is the verge of, and that grass's packed record
+    struct Layers final {
+      const Tempest::Texture2d* sward[3] = {}; // albedo, normal, ORM with the height in its blue
+      const Tempest::Texture2d* earth[3] = {};
+      Grass::Ground             ground;
+      Grass::Verge              verge;
+      uint32_t                  grassBits = 0;
+      bool  operator==(const Layers&) const = default;
+      bool  present() const {
+        return ground.on && sward[0]!=nullptr && sward[1]!=nullptr && sward[2]!=nullptr &&
+               earth[0]!=nullptr && earth[1]!=nullptr && earth[2]!=nullptr;
+        }
+      };
+
     const Tempest::Texture2d* tex=nullptr;
     const Tempest::Texture2d* normal=nullptr;
     const Tempest::Texture2d* orm=nullptr;
@@ -70,6 +87,7 @@ class Material final {
     bool                      eye              = false; // an eyeball (materials.json): BK_EYE
     FoliageWind::Params       foliage;                 // leaves in the wind (materials.json): BK_FOLIAGE
     Grass::Params             grass;                   // a ground that grows grass (materials.json): BK_GRASS
+    Layers                    layers;                  // its own two layers, or a verge's (materials.json): BK_GROUND, BK_VERGE
     WindowGlow::Params        window;                  // the glow is a window's (materials.json): BK_WINDOW
     float                     envMapping       = 0;
 

@@ -298,7 +298,7 @@ bool Npc::isPrehit() const {
   }
 
 bool Npc::isImmortal() const {
-  return hnpc->flags & daedalus::NpcFlag::IMMORTAL;
+  return hnpc->flags & NpcFlag::IMMORTAL;
   }
 
 Vec3 Npc::aimDirection(const Vec3& target) const {

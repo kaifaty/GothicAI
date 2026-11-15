@@ -5,6 +5,8 @@
         --content ~/.local/share/gothic-ai/content --output <new folder> [--sheet masks.png]
     uv run --no-project --with numpy --with pillow python scripts/content/window_glow.py clip <run of \
         window-glow-dusk.bench> <out.mp4>
+    uv run --no-project --with numpy --with pillow python scripts/content/window_glow.py lamps \
+        --base <the game base>
 
 A window lit of an evening is a material with `emissive` and `window` in materials.json whose ORM alpha marks what
 glows (OpenGothic/common/graphics/windowglow.h). `pilot` clones a content folder (APFS clones where the disk can),
@@ -13,6 +15,10 @@ records. The source folder is not written to. The mask comes from the albedo: li
 shows a gap - between the leaves of closed shutters, around them, between their planks - or an opening.
 The ORM's colour channels are decoded and compressed again; a set built from its source maps should write them
 from those instead.
+
+Step 2, one state of a house: `pilot` also writes worlds/NEWWORLD/houses.json with the houses below
+(OpenGothic/common/graphics/houselights.h): the lamps inside a house's box go out before its bedtime and its lit
+windows fade with them. `lamps` lists the base's lamps each house takes, by the engine's own rules.
 """
 from __future__ import annotations
 
@@ -133,6 +139,80 @@ WINDOWS = {
 }
 
 
+# The market house: the frame of scripts/content/market-house.bench, cm. `outward` leaves the front facade, the
+# tangent runs along it to the right of someone who looks out of the house
+FRAME = {'origin': (9137.0, 950.0, 3745.0), 'outward': (0.909959643, 0.414696814)}
+# key -> the box in that frame (outward, tangent, height above the world's zero) and the bedtime. The ground floor
+# under the front half is Zuris's shop; the floor above it and the back half are the inn. The first house a point
+# is in takes it, so the shop stands before the inn
+HOUSES = {
+    'market-zuris-shop': {'outward': (-1010, 5), 'tangent': (-610, 575), 'height': (220, 545), 'until': 23.0},
+    'market-inn': {'outward': (-2010, 5), 'tangent': (-610, 575), 'height': (220, 1100), 'until': 24.5},
+}
+LAMP_WALL = 20.0  # HouseLights::LampWall
+
+
+def house_records() -> list:
+    ox, _, oz = FRAME['origin']
+    c, s = FRAME['outward']
+    records = []
+    for key, box in HOUSES.items():
+        along, across, up = (sum(box[k]) / 2 for k in ('outward', 'tangent', 'height'))
+        records.append({
+            'key': key,
+            'center': [round(ox + along * c - across * s, 1), round(up, 1), round(oz + along * s + across * c, 1)],
+            'size': [box[k][1] - box[k][0] for k in ('outward', 'height', 'tangent')],
+            'yaw_deg': round(float(np.degrees(np.arctan2(s, c))), 3),
+            'until': box['until'],
+        })
+    return records
+
+
+def house_of(records: list, point, margin: float):
+    """HouseLights::houseAt: the first house whose box, grown by the margin, holds the point."""
+    for record in records:
+        yaw = np.radians(record.get('yaw_deg', 0.0))
+        dx, dy, dz = (point[i] - record['center'][i] for i in range(3))
+        local = (dx * np.cos(yaw) + dz * np.sin(yaw), dy, dz * np.cos(yaw) - dx * np.sin(yaw))
+        if all(abs(local[i]) <= record['size'][i] / 2 + margin for i in range(3)):
+            return record['key']
+    return None
+
+
+def burns(light: dict) -> bool:
+    """A base lamp the engine leaves burning at load (OpenGothic/common/world/voblight.cpp)."""
+    if not light['is_static']:
+        return bool(light['on'])
+    preset = light.get('preset') or ''
+    return not (preset in ('NW_STANDART_DARKBLUE', 'DEFAULTLIGHT_DARKBLUE', 'INROOM_DARKBLUE', 'SCHMUTZ')
+                or preset.startswith('AMBIENCE_') or light['range'] > 3000)
+
+
+def cmd_lamps(args) -> int:
+    """The base's lamps inside each house: a house whose windows glow needs at least one, or the window lies."""
+    records = house_records()
+    found = {record['key']: [] for record in records}
+
+    def walk(vob):
+        if vob.get('type') == 'zCVobLight' and burns(vob):
+            key = house_of(records, vob['position'], -LAMP_WALL)
+            if key:
+                found[key].append(vob)
+        for child in vob.get('children', []):
+            walk(child)
+
+    for vob in json.loads((args.base / 'worlds/NEWWORLD/vobs.json').read_text())['vobs']:
+        walk(vob)
+    for record in records:
+        lamps = found[record['key']]
+        print(f'{record["key"]}: bedtime {record["until"]}, {len(lamps)} lamps')
+        for lamp in sorted(lamps, key=lambda v: v['id']):
+            place = ', '.join(f'{v:.0f}' for v in lamp['position'])
+            print(f'  id {lamp["id"]}: at {place}; range {lamp["range"]:.0f}, colour {lamp["color"][:3]}, '
+                  f'{"static" if lamp["is_static"] else "flickering"}, preset {lamp.get("preset") or "-"}')
+    return 0 if all(found.values()) else 1
+
+
 def load_dds_codec():
     spec = importlib.util.spec_from_file_location('material_fixture', ROOT / 'scripts/content/test-material.py')
     module = importlib.util.module_from_spec(spec)
@@ -196,6 +276,11 @@ def cmd_pilot(args) -> int:
             sheet.append((row * 255).astype(np.uint8))
     (out / 'materials/materials.json').unlink()
     (out / 'materials/materials.json').write_text(json.dumps(index, indent=1, ensure_ascii=False) + '\n')
+    houses = out / 'worlds/NEWWORLD/houses.json'
+    houses.parent.mkdir(parents=True, exist_ok=True)
+    houses.unlink(missing_ok=True)
+    houses.write_text(json.dumps({'format': 1, 'houses': house_records()}, indent=1) + '\n')
+    print(f'houses: {", ".join(HOUSES)}')
     if args.sheet and sheet:
         Image.fromarray(np.concatenate(sheet, axis=0)).save(args.sheet)
         print(f'sheet (albedo | mask | albedo with the glow): {args.sheet}')
@@ -237,6 +322,9 @@ def main() -> int:
     clip.add_argument('shots', type=Path)
     clip.add_argument('output', type=Path)
     clip.set_defaults(run=cmd_clip)
+    lamps = sub.add_parser('lamps', help="the base's lamps inside each house of the pilot")
+    lamps.add_argument('--base', type=Path, required=True, help='the game base (its worlds/NEWWORLD/vobs.json)')
+    lamps.set_defaults(run=cmd_lamps)
     args = parser.parse_args()
     return args.run(args)
 

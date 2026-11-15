@@ -65,9 +65,14 @@ void LightGroup::Light::setEnabled(bool e) {
   auto& data = owner->lightSourceDesc[id];
   data.setEnabled(e);
 
+  // a lamp switched back on takes its range again (the lamps of a house, houselamps.h)
   auto& ssbo = owner->lightSourceData[id];
-  ssbo.range = 0;
+  ssbo.range = e ? clampRange(data.currentRange()) : 0;
   owner->markAsDurty(id);
+  }
+
+bool LightGroup::Light::isEnabled() const {
+  return owner!=nullptr && owner->lightSourceDesc[id].isEnabled();
   }
 
 void LightGroup::Light::setRange(float r) {

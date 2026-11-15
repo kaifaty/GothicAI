@@ -412,7 +412,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
   else dispatched=false;
   if(dispatched) return;
   dispatched=true;
-  if((c=="waitdown" || c=="npcaim" || c=="still" || c=="zones" || c=="open" || c=="volley" || c=="immortal" || c=="stun-drift" || c=="stun" || c=="dodge" || c=="clear" || c=="flinch" || c=="hit" || c=="strike") && npcCommandsCommand(npcCommandsContext(),line,a,w,pl,ctrl)) return;
+  if((c=="waitdown" || c=="npcaim" || c=="still" || c=="zones" || c=="open" || c=="volley" || c=="immortal" || c=="stun-drift" || c=="stun" || c=="dodge" || c=="clear" || c=="flinch" || c=="bump-form" || c=="hit" || c=="strike") && npcCommandsCommand(npcCommandsContext(),line,a,w,pl,ctrl)) return;
   else if((c=="archers" || c=="archer") && archeryCommand(archeryContext(),line,a,w,pl,ctrl)) return;
   else if(c=="aimat" && archeryCommand(archeryContext(),line,a,w,pl,ctrl)) return;
   else if((c=="aim" || c=="aimlean") && archeryCommand(archeryContext(),line,a,w,pl,ctrl)) return;

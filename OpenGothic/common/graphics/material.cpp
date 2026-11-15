@@ -4,6 +4,7 @@
 #include "utils/parser.h"
 #include "resources.h"
 
+#include <algorithm>
 #include <cmath>
 
 using namespace Tempest;
@@ -96,6 +97,7 @@ Material::Material(const asset::Material& m, bool enableAlphaTest, bool requireA
     eye = maps.eye;
     foliage = maps.foliage;
     grass = maps.grass;
+    layers = maps.layers;
     window = emissive>0.f ? maps.window : WindowGlow::Params();
     // OPENGOTHIC_EYE_SHADER=0: the eye as before the eye shader, Lambert of its colour; its roughness map is the
     // eye shader's
@@ -157,6 +159,7 @@ bool Material::operator ==(const Material& other) const {
          eye==other.eye &&
          foliage==other.foliage &&
          grass==other.grass &&
+         layers==other.layers &&
          window==other.window &&
          envMapping==other.envMapping;
   }
@@ -171,7 +174,12 @@ float Material::textureUvPerMetre(float meshUvPerMetre, bool morph) const {
   // by world position the density is the same on every face: one repeat per projectionTile metres
   if(const float k = projectionUvScale(); k>0 && !morph)
     return k*100.f;
-  return meshUvPerMetre*std::abs(uvScale);
+  const float density = meshUvPerMetre*std::abs(uvScale);
+  // the ground's two layers lie by world position, a repeat per tile: their maps are asked with the ground's own
+  // texture, so no coarser than the finer of the two needs
+  if(layers.present() && !morph)
+    return std::max(density, 1.f/std::min(layers.ground.swardTile,layers.ground.earthTile));
+  return density;
   }
 
 bool Material::isSolid() const {

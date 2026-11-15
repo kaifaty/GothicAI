@@ -98,9 +98,9 @@ LAYER_RULES: list[tuple[str, str]] = [
     # Pure mesh packing over our asset types, independent of Gothic.
     ("common/game/compatibility/phoenix", "platform"),
     ("common/game/compatibility/*", "gothic"),
-    ("common/game/constants", "gothic"),
+    ("common/game/constants", "rpg"),
     ("common/game/ownsymbols", "gothic"),
-    ("common/game/fightalgo", "gothic"),
+    ("common/game/fightalgo", "rpg"),
     ("common/game/damagecalculator", "gothic"),
     ("common/game/aistate", "rpg"),
     ("common/game/aiouputpipe", "rpg"),
