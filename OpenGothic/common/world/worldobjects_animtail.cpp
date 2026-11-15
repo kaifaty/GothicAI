@@ -8,22 +8,12 @@
 #include "world/objects/npc.h"
 #include "world/objects/npc_melee_shadow.h"
 #include "world/world.h"
-#include "game/bodyarena.h"
-#include "game/bodyobservations.h"
 #include "physics/dynamicworld.h"
 #include "frameprofile.h"
 
 // The steps of WorldObjects::updateAnimation after its parallel pass over the NPCs, in their order: faces,
 // melee shadow bodies, melee contacts, interactive objects, logical bodies. Each loop runs on this thread in
 // the order of npcArr; the pass's plan lets it pass over the NPCs it has nothing to do with (animationtail.h).
-
-bool WorldObjects::animationPassSkips(const Npc& npc, const Npc* player, bool skipFar, bool frozen) {
-  // Headless body training may skip NPCs beyond the far range (>60 m from the hero)
-  // that are not arena actors: nobody sees them, and they are most of the world.
-  if(skipFar && npc.processPolicy()==NpcProcessPolicy::AiFar2 && !BodyObservations::watched(npc))
-    return true;
-  return frozen && &npc!=player && !BodyArena::isActor(npc);
-  }
 
 bool WorldObjects::animationTailKeepsShadow() {
   // Both look at every published body, every frame.

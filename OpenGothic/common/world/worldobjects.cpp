@@ -985,6 +985,14 @@ bool WorldObjects::mustUpdateAnimation(const Npc& npc, const AnimationLod::View&
          BodyArena::isActor(npc) || NavDemos::fullSimulation(npc) || animationProbed(npc);
   }
 
+bool WorldObjects::animationPassSkips(const Npc& npc, const Npc* player, bool skipFar, bool frozen) {
+  // Headless body training may skip NPCs beyond the far range (>60 m from the hero)
+  // that are not arena actors: nobody sees them, and they are most of the world.
+  if(skipFar && npc.processPolicy()==NpcProcessPolicy::AiFar2 && !BodyObservations::watched(npc))
+    return true;
+  return frozen && &npc!=player && !BodyArena::isActor(npc);
+  }
+
 void WorldObjects::updateAnimation(uint64_t dt) {
   FrameProfile::Scope timing(FrameProfile::Zone::ParallelAnimation);
   static bool doAnim=true;
