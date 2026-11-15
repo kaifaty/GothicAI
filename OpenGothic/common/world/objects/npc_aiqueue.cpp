@@ -5,7 +5,7 @@
 #include "camera.h"
 #include "commandline.h"
 #include "game/bodycontroller.h"
-#include "gothic.h"
+#include "gameservices.h"
 #include "world/benchhooks.h"
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"
@@ -313,7 +313,7 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
       setDirection(act.point->direction());
       if(isPlayer()) {
         updateTransform();
-        Gothic::inst().camera()->reset(this);
+        GameServices::inst().camera()->reset(this);
         }
       }
       break;

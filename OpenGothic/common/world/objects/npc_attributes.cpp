@@ -2,7 +2,7 @@
 
 #include <algorithm>
 
-#include "gothic.h"
+#include "game/gamehost.h"
 #include "world/world.h"
 
 void Npc::setTalentSkill(Talent t, int32_t lvl) {
@@ -67,7 +67,7 @@ void Npc::changeAttribute(Attribute a, int32_t val, bool allowUnconscious) {
     }
 
   if(val<0 && a==ATR_HITPOINTS) {
-    if(isPlayer() && Gothic::inst().isGodMode())
+    if(isPlayer() && GameHost::inst().isGodMode())
       return;
     if(isPlayer() && owner.currentCs()!=nullptr)
       return;

@@ -5,7 +5,7 @@
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"
 #include "world/world.h"
-#include "gothic.h"
+#include "settings.h"
 #include "loadprobe.h"
 #include "navdemos.h"
 
@@ -50,7 +50,7 @@ bool Npc::setPosition(float ix, float iy, float iz) {
   z = iz;
   visual.setTextureOwner(Vec3(x,y,z),!isPlayer());
   resetCharacterVisualHeight();
-  if(!isPlayer() && (isHuman() || Gothic::physicsFlags().monsterCharacterVirtual))
+  if(!isPlayer() && (isHuman() || Settings::physicsFlags().monsterCharacterVirtual))
     mvAlgo.resetCharacterVirtual();
   if(liveTeleport) {
     // Recreate at the destination instead of sweeping a kinematic body through

@@ -1,12 +1,10 @@
 #include "world.h"
-
 #include <functional>
 #include <future>
 #include <cctype>
 #include <algorithm>
 #include <cmath>
 #include <chrono>
-
 #include <Tempest/Log>
 #include <cstdio>
 #include <cstdlib>
@@ -34,7 +32,9 @@
 #include "game/serialize.h"
 #include "game/physicssave.h"
 #include "utils/string_frm.h"
-#include "gothic.h"
+#include "settings.h"
+#include "gameservices.h"
+#include "game/gamehost.h"
 #include "focus.h"
 #include "resources.h"
 #include "worldbase.h"
@@ -132,9 +132,9 @@ const char* materialTag(asset::MaterialGroup src) {
 World::World(GameSession& game, std::string_view file, bool startup, std::function<void(int)> loadProgress)
   :wname(std::move(file)), game(game), wsound(game,*this), wobj(*this) {
   const auto loadStarted = std::chrono::steady_clock::now();
-  Resources::configureTextures(Gothic::settingsGetS("GAME","texture_budget_mb"),Gothic::settingsGetS("GAME","texture_far_skip_mips"),
-                               Gothic::settingsGetS("GAME","texture_target_mb"),Gothic::settingsGetS("GAME","texture_screen_mips"),
-                               Gothic::settingsGetS("GAME","texture_lookahead"));
+  Resources::configureTextures(Settings::getS("GAME","texture_budget_mb"),Settings::getS("GAME","texture_far_skip_mips"),
+                               Settings::getS("GAME","texture_target_mb"),Settings::getS("GAME","texture_screen_mips"),
+                               Settings::getS("GAME","texture_lookahead"));
   // Until the first frame's completion: textures that can have a tail are read at their coarsest level.
   textureStartup.begin();
   if(LoadProbe::enabled())
@@ -151,7 +151,7 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     auto worldCloth=WorldCloth::extract(worldMesh,&chunks);
     const bool clothBundle=WorldCloth::lastPath()==WorldCloth::Path::Bundle;
     // With the ray scene a chunk brings its BLAS when it is published (Landscape) and takes them when it goes
-    const bool streamLandscape=residency && !Resources::isHeadless() && !Gothic::inst().isBenchmarkMode();
+    const bool streamLandscape=residency && !Resources::isHeadless() && !GameHost::inst().isBenchmarkMode();
     if(residency && !Resources::isHeadless() && !streamLandscape)
       Tempest::Log::i("Landscape streaming disabled: built-in benchmark requires the complete landscape");
 
@@ -204,7 +204,7 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
         if(!worldCloth.original.polygons.material_indices.empty()) {
           PackedMesh originalCloth(worldCloth.original,PackedMesh::PK_VisualLnd);
           view->setOriginalClothMesh(originalCloth);
-          view->setOriginalClothVisible(!Gothic::physicsFlags().cloth);
+          view->setOriginalClothVisible(!Settings::physicsFlags().cloth);
           }
         probeViewMs = LoadProbe::msSince(t);
         return view;
@@ -234,7 +234,7 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
                     bb.first.x,bb.first.y,bb.first.z,bb.second.x,bb.second.y,bb.second.z);
       Tempest::Log::i(line);
       wview->setTextureResidency(residency.get());
-      if(residency && !Gothic::inst().isBenchmarkMode())
+      if(residency && !GameHost::inst().isBenchmarkMode())
         wview->startVobStreaming(*residency);
       }
     if(LoadProbe::enabled() && !streamLandscape)
@@ -243,7 +243,7 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
 
     probeT = LoadProbe::now();
     wdynamic = wdynamicFut.get();
-    wdynamic->setFurniturePartsEnabled(Gothic::physicsFlags().furnitureParts);
+    wdynamic->setFurniturePartsEnabled(Settings::physicsFlags().furnitureParts);
     if(LoadProbe::enabled()) {
       const auto& collision=wdynamic->staticCollisionLoadStats();
       LoadProbe::mark("physics_static",probePhysicsMs,"wait_ms="+std::to_string(LoadProbe::msSince(probeT))+probeInput+
@@ -253,13 +253,13 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
       }
     probeT = LoadProbe::now();
     wdynamic->cloth().setExposureTest([this](const Tempest::Vec3& point) { return !isIndoor(point); });
-    wdynamic->setPhysicsNoiseEnabled(Gothic::physicsFlags().physicsNoise);
-    wdynamic->setDestructionEnabled(Gothic::physicsFlags().destruction);
-    wdynamic->setBuoyancyEnabled(Gothic::physicsFlags().buoyancy);
-    wdynamic->setClothEnabled(Gothic::physicsFlags().cloth);
-    wdynamic->setItemWakeEnabled(Gothic::physicsFlags().itemWake);
-    wdynamic->setItemDeepestContactEnabled(Gothic::physicsFlags().itemDeepestContact);
-    wdynamic->setRagdollBirthGuardEnabled(Gothic::physicsFlags().ragdollBirthGuard);
+    wdynamic->setPhysicsNoiseEnabled(Settings::physicsFlags().physicsNoise);
+    wdynamic->setDestructionEnabled(Settings::physicsFlags().destruction);
+    wdynamic->setBuoyancyEnabled(Settings::physicsFlags().buoyancy);
+    wdynamic->setClothEnabled(Settings::physicsFlags().cloth);
+    wdynamic->setItemWakeEnabled(Settings::physicsFlags().itemWake);
+    wdynamic->setItemDeepestContactEnabled(Settings::physicsFlags().itemDeepestContact);
+    wdynamic->setRagdollBirthGuardEnabled(Settings::physicsFlags().ragdollBirthGuard);
     wdynamic->setPhysicsNoiseCallback([this](const PhysicsNoise& noise) { emitPhysicsNoise(noise); });
     for(auto& surface:worldCloth.surfaces)
       if(auto visual=ClothVisual::createSurface(*this,surface.mesh,surface.pins,surface.visual,surface.id,surface.stiffness,surface.linearDamping))
@@ -379,14 +379,14 @@ void World::createPlayer(std::string_view cls) {
   std::string_view waypoint = wmatrix->startPoint().name;
   auto             npc      = std::make_unique<Npc>(*this, id, waypoint, NpcProcessPolicy::Player);
   npcPlayer = wobj.insertPlayer(std::move(npc), waypoint);
-  game.script()->setInstanceNPC("HERO",*npcPlayer);
+  script().setInstanceNPC("HERO",*npcPlayer);
   }
 
 void World::insertPlayer(std::unique_ptr<Npc> &&npc, std::string_view waypoint) {
   if(npc==nullptr)
     return;
   npcPlayer = wobj.insertPlayer(std::move(npc),waypoint);
-  game.script()->setInstanceNPC("HERO",*npcPlayer);
+  script().setInstanceNPC("HERO",*npcPlayer);
   }
 
 void World::setPlayer(Npc* npc) {
@@ -509,7 +509,7 @@ Npc* World::npcForRagdoll(const Ragdoll* body) {
 bool World::stickArrow(MeshObjects::Mesh&& arrow, const Tempest::Matrix4x4& worldMatrix,
                       std::string_view visual, std::shared_ptr<const DynamicWorld::MovableVobPose> movable,
                       const Npc* culprit, const Tempest::Vec3* sightPoint, std::string_view surface) {
-  if(arrow.isEmpty() || !Gothic::physicsFlags().arrowSticking || (movable!=nullptr && movable->broken))
+  if(arrow.isEmpty() || !Settings::physicsFlags().arrowSticking || (movable!=nullptr && movable->broken))
     return false;
   if(stuckArrows.size()>=512)
     stuckArrows.erase(stuckArrows.begin());
@@ -563,7 +563,7 @@ bool World::stuckArrowAttachment(size_t index, uint32_t& zenId, Tempest::Matrix4
 
 std::vector<World::PhysicsTrace> World::physicsTraces(const Tempest::Vec3* viewer, float range) const {
   std::vector<PhysicsTrace> result;
-  if(Gothic::physicsFlags().arrowSticking) {
+  if(Settings::physicsFlags().arrowSticking) {
     for(const auto& pin:stuckArrows) {
       auto pose = pin.movable.lock();
       if(pin.mesh.isEmpty() || (pin.attached && pose==nullptr) ||
@@ -605,7 +605,7 @@ std::vector<World::PhysicsTrace> World::physicsTraces(const Tempest::Vec3* viewe
     trace.culprit = item.traceCulprit;
     result.push_back(std::move(trace));
     }
-  if(Gothic::physicsFlags().bodyTraces) {
+  if(Settings::physicsFlags().bodyTraces) {
     for(size_t i=0;i<wobj.npcCount();++i) {
       const auto& npc   = wobj.npc(i);
       const auto& state = npc.bodyTrace();
@@ -634,7 +634,7 @@ std::vector<World::PhysicsTrace> World::physicsTraces(const Tempest::Vec3* viewe
     // Grouping runs over every stain, so ids do not depend on the viewer. No culprit: the
     // engine does not record who bled whom.
     const auto present = [this](uint32_t id) { return bodyTraceInWorld(id); };
-    for(const auto& group:BloodStains::traceGroups(blood,Gothic::physicsFlags().blood,present)) {
+    for(const auto& group:BloodStains::traceGroups(blood,Settings::physicsFlags().blood,present)) {
       const auto& largest = blood[group.largest];
       if(viewer!=nullptr && (largest.pos-*viewer).length()>range)
         continue;
@@ -658,12 +658,12 @@ std::vector<World::PhysicsTrace> World::physicsTraces(const Tempest::Vec3* viewe
 
 uint32_t World::addBloodStain(BloodStains::Stain stain) {
   const auto present = [this](uint32_t id) { return bodyInWorld(id); };
-  return BloodStains::add(blood,nextBloodStainId,stain,time().toInt(),Gothic::physicsFlags().blood,present);
+  return BloodStains::add(blood,nextBloodStainId,stain,time().toInt(),Settings::physicsFlags().blood,present);
   }
 
 const std::vector<BloodStains::Stain>& World::bloodStains() const {
   static const std::vector<BloodStains::Stain> none;
-  return Gothic::physicsFlags().blood ? blood : none;
+  return Settings::physicsFlags().blood ? blood : none;
   }
 
 bool World::bodyInWorld(uint32_t bodyTraceId) const {
@@ -680,7 +680,7 @@ bool World::bodyInWorld(uint32_t bodyTraceId) const {
 bool World::bodyTraceInWorld(uint32_t bodyTraceId) const {
   // The body is reported as a `body` trace itself (the rule of the body rows above): a beast's
   // corpse, or any corpse with body_traces=0, is not, and its pool stays a find of its own.
-  if(bodyTraceId==0 || !Gothic::physicsFlags().bodyTraces)
+  if(bodyTraceId==0 || !Settings::physicsFlags().bodyTraces)
     return false;
   for(size_t i=0;i<wobj.npcCount();++i) {
     const auto& npc = wobj.npc(i);
@@ -695,7 +695,7 @@ std::string World::bloodTraceId(uint32_t stainId) const {
   }
 
 uint32_t World::placeBloodStain(const Tempest::Vec3& near, BloodStains::Kind kind, float radiusCm, uint32_t bodyId) {
-  if(!Gothic::physicsFlags().blood)
+  if(!Settings::physicsFlags().blood)
     return 0;
   const auto ground = wdynamic->landRay(near+Tempest::Vec3(0,100,0),1000);
   if(!ground.hasCol)
@@ -762,7 +762,7 @@ bool World::isStoryNpcType(int32_t type) const {
 
 BodyTraces::Body World::bodyRule(const Npc& body, const Npc* hero) const {
   BodyTraces::Body rule;
-  rule.enabled      = Gothic::physicsFlags().bodyTraces;
+  rule.enabled      = Settings::physicsFlags().bodyTraces;
   rule.dead         = body.isDead();
   rule.player       = body.isPlayer();
   rule.clockFrom    = body.bodyTrace().id!=0 ? body.bodyTrace().clockFrom : -1;
@@ -787,7 +787,7 @@ void World::sweepBodies() {
 
 void World::sweepBloodStains() {
   const auto present = [this](uint32_t id) { return bodyInWorld(id); };
-  BloodStains::sweep(blood,time().toInt(),Gothic::physicsFlags().blood,present);
+  BloodStains::sweep(blood,time().toInt(),Settings::physicsFlags().blood,present);
   }
 
 void World::saveBloodStains(Serialize& fout) const {
@@ -858,7 +858,7 @@ void World::sweepBodiesAt(int64_t now) {
     trace.clockFrom = now;
     npc.setBodyTrace(std::move(trace));
     }
-  if(!Gothic::physicsFlags().bodyTraces || hero==nullptr)
+  if(!Settings::physicsFlags().bodyTraces || hero==nullptr)
     return;
   // Stands and training hold their actors by pointer: an arena, navigation demos and any
   // bench but the one that asks for the sweep (body_traces) keep every body.
@@ -950,7 +950,7 @@ void World::updateStuckArrows() {
   }
 
 void World::saveStuckArrows(Serialize& fout) const {
-  if(!Gothic::physicsFlags().arrowSticking || (stuckArrows.empty() && nextArrowTraceId==1))
+  if(!Settings::physicsFlags().arrowSticking || (stuckArrows.empty() && nextArrowTraceId==1))
     return;
   std::vector<const StuckArrow*> pins;
   for(const auto& pin:stuckArrows) {
@@ -970,7 +970,7 @@ void World::saveStuckArrows(Serialize& fout) const {
   }
 
 void World::loadStuckArrows(Serialize& fin) {
-  if(!Gothic::physicsFlags().arrowSticking || !fin.setEntry("worlds/",wname,"/stuck-arrows"))
+  if(!Settings::physicsFlags().arrowSticking || !fin.setEntry("worlds/",wname,"/stuck-arrows"))
     return;
   try {
     uint32_t magic=0,count=0;
@@ -1227,16 +1227,16 @@ void World::scaleTime(uint64_t& dt) {
 
 void World::tick(uint64_t dt) {
   wdynamic->setTraceTime(traceTime(*this));
-  wdynamic->setFurniturePartsEnabled(Gothic::physicsFlags().furnitureParts);
-  wdynamic->setMovableVobsEnabled(Gothic::physicsFlags().movableVobs);
-  wdynamic->setPhysicsNoiseEnabled(Gothic::physicsFlags().physicsNoise);
-  wdynamic->setDestructionEnabled(Gothic::physicsFlags().destruction);
-  wdynamic->setBuoyancyEnabled(Gothic::physicsFlags().buoyancy);
-  wdynamic->setClothEnabled(Gothic::physicsFlags().cloth);
-  wdynamic->setItemWakeEnabled(Gothic::physicsFlags().itemWake);
-  wdynamic->setItemDeepestContactEnabled(Gothic::physicsFlags().itemDeepestContact);
-  wdynamic->setRagdollBirthGuardEnabled(Gothic::physicsFlags().ragdollBirthGuard);
-  if(!Gothic::physicsFlags().arrowSticking)
+  wdynamic->setFurniturePartsEnabled(Settings::physicsFlags().furnitureParts);
+  wdynamic->setMovableVobsEnabled(Settings::physicsFlags().movableVobs);
+  wdynamic->setPhysicsNoiseEnabled(Settings::physicsFlags().physicsNoise);
+  wdynamic->setDestructionEnabled(Settings::physicsFlags().destruction);
+  wdynamic->setBuoyancyEnabled(Settings::physicsFlags().buoyancy);
+  wdynamic->setClothEnabled(Settings::physicsFlags().cloth);
+  wdynamic->setItemWakeEnabled(Settings::physicsFlags().itemWake);
+  wdynamic->setItemDeepestContactEnabled(Settings::physicsFlags().itemDeepestContact);
+  wdynamic->setRagdollBirthGuardEnabled(Settings::physicsFlags().ragdollBirthGuard);
+  if(!Settings::physicsFlags().arrowSticking)
     stuckArrows.clear();
   static bool doTicks=true;
   if(!doTicks)
@@ -1257,25 +1257,25 @@ void World::tick(uint64_t dt) {
   }
 
 uint64_t World::tickCount() const {
-  return game.tickCount();
+  return GameHost::inst().sessionTickCount(game);
   }
 
 void World::setDayTime(int32_t h, int32_t min) {
-  gtime now     = game.time();
+  gtime now     = GameHost::inst().sessionTime(game);
   auto  day     = now.day();
   gtime dayTime = now.timeInDay();
   gtime next    = gtime(h,min);
 
   if(dayTime<=next){
-    game.setTime(gtime(day,h,min));
+    GameHost::inst().setSessionTime(game,gtime(day,h,min));
     } else {
-    game.setTime(gtime(day+1,h,min));
+    GameHost::inst().setSessionTime(game,gtime(day+1,h,min));
     }
   wobj.resetPositionToTA();
   }
 
 gtime World::time() const {
-  return game.time();
+  return GameHost::inst().sessionTime(game);
   }
 
 Focus World::validateFocus(const Focus &def) {
@@ -1429,7 +1429,7 @@ void World::disableCollizionZone(CollisionZone& z) {
   }
 
 void World::triggerChangeWorld(std::string_view world, std::string_view wayPoint) {
-  game.changeWorld(world,wayPoint);
+  GameHost::inst().changeWorld(game,world,wayPoint);
   }
 
 void World::setMobRoutine(gtime time, std::string_view scheme, int32_t state) {
@@ -1457,7 +1457,7 @@ void World::drawVobBoxNpcNear(DbgPainter& p) const {
   }
 
 AiOuputPipe *World::openDlgOuput(Npc &player, Npc &npc) {
-  return game.openDlgOuput(player,npc);
+  return GameHost::inst().openDlgOuput(player,npc);
   }
 
 void World::aiOutputSound(Npc &player, std::string_view msg) {
@@ -1465,7 +1465,7 @@ void World::aiOutputSound(Npc &player, std::string_view msg) {
   }
 
 bool World::isInDialog() const {
-  return game.isInDialog();
+  return GameHost::inst().isInDialog();
   }
 
 bool World::isTargeted(Npc& npc) {
@@ -1521,7 +1521,7 @@ size_t World::hasItems(std::string_view tag, size_t itemCls) {
 
 void World::applySpellImpact(int32_t spellId, const Tempest::Vec3& point, Npc* caster, Npc* target) {
   using namespace Tempest;
-  if(!Gothic::physicsFlags().spellPhysics)
+  if(!Settings::physicsFlags().spellPhysics)
     return;
   const auto kind = script().physicalSpell(spellId);
   const bool wind = kind==GameScript::PhysicalSpell::WindFist;
@@ -1600,7 +1600,7 @@ void World::applySpellImpact(int32_t spellId, const Tempest::Vec3& point, Npc* c
   }
 
 void World::startSpellField(int32_t spellId, const Tempest::Vec3& point, Npc* caster, Npc* target) {
-  if(!Gothic::physicsFlags().spellPhysics ||
+  if(!Settings::physicsFlags().spellPhysics ||
      script().physicalSpell(spellId)!=GameScript::PhysicalSpell::Whirlwind)
     return;
   int seconds = 10;
@@ -1619,7 +1619,7 @@ void World::startSpellField(int32_t spellId, const Tempest::Vec3& point, Npc* ca
 
 void World::tickSpellFields(uint64_t dt) {
   using namespace Tempest;
-  if(!Gothic::physicsFlags().spellPhysics) {
+  if(!Settings::physicsFlags().spellPhysics) {
     spellFields.clear();
     return;
     }
@@ -1834,7 +1834,7 @@ Sound World::addHitEffect(std::string_view src, std::string_view dst, std::strin
   auto ret = Sound(*this,::Sound::T_Regular,sound,pos3,2500.f,false);
 
   string_frm buf("CPFX_",scheme,'_',src,'_',dst);
-  if(Gothic::inst().loadParticleFx(buf,true)==nullptr) {
+  if(GameServices::inst().loadParticleFx(buf,true)==nullptr) {
     if(dst=="ME")
       buf = string_frm("CPFX_",scheme,"_METAL");
     else if(dst=="WO")
@@ -1844,7 +1844,7 @@ Sound World::addHitEffect(std::string_view src, std::string_view dst, std::strin
     else
       return ret;
     }
-  if(Gothic::inst().loadParticleFx(buf,true)==nullptr)
+  if(GameServices::inst().loadParticleFx(buf,true)==nullptr)
     return ret;
 
   Effect e(PfxEmitter(*this,buf),"");
@@ -1918,11 +1918,11 @@ const FocusRecord& World::searchPolicy(const Npc& pl, TargetCollect& collAlgo, T
     case WeaponState::W1H:
     case WeaponState::W2H:
       opt = WorldObjects::NoDeath;
-      return game.script()->focusMelee();
+      return script().focusMelee();
     case WeaponState::Bow:
     case WeaponState::CBow:
       opt = WorldObjects::SearchFlg(WorldObjects::NoDeath | WorldObjects::NoUnconscious);
-      return game.script()->focusRange();
+      return script().focusRange();
     case WeaponState::Mage:{
       if(auto weapon = pl.inventory().activeWeapon()) {
         int32_t id  = weapon->spellId();
@@ -1931,12 +1931,12 @@ const FocusRecord& World::searchPolicy(const Npc& pl, TargetCollect& collAlgo, T
         collType = TargetType(spl.target_collect_type);
         }
       opt = WorldObjects::SearchFlg(WorldObjects::NoDeath | WorldObjects::NoUnconscious);
-      return game.script()->focusMage();
+      return script().focusMage();
       }
     case WeaponState::NoWeapon:
-      return game.script()->focusNorm();
+      return script().focusNorm();
     }
-  return game.script()->focusNorm();
+  return script().focusNorm();
   }
 
 void World::triggerOnStart(bool firstTime) {
@@ -2104,7 +2104,7 @@ WayPath World::wayTo(const Npc &npc, const WayPoint &end) const {
   }
 
 GameScript& World::script() const {
-  return *game.script();
+  return *GameHost::inst().sessionScript(game);
   }
 
 void World::assignRoomToGuild(std::string_view r, int32_t guildId) {
@@ -2156,7 +2156,7 @@ void World::probeMemory(std::string_view stage) const {
   if(wview) wview->probeMemory(stage);
   Tempest::Log::i("[loadprobe-owner] stage=",stage," name=waynet_cpu bytes=",wmatrix->probeCpuBytes());
   Tempest::Log::i("[loadprobe-owner] stage=",stage," name=vob_objects_cpu bytes=",wobj.probeVobBytes());
-  auto& vm=game.script()->getVm();
+  auto& vm=script().getVm();
   Tempest::Log::i("[loadprobe-owner] stage=",stage," name=script_vm_cpu bytes=",
                  sizeof(vm)+vm.symbols().capacity()*sizeof(vm.symbols()[0])+vm.size());
   }

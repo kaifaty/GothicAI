@@ -6,7 +6,7 @@
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"
 #include "world/world.h"
-#include "gothic.h"
+#include "settings.h"
 #include "serialize.h"
 #include "world/benchhooks.h"
 #include "navdemos.h"
@@ -151,7 +151,7 @@ bool MoveAlgo::tryMove(float x,float y,float z, DynamicWorld::CollisionTest& out
   }
 
 bool MoveAlgo::tryMove(const Tempest::Vec3& dp, DynamicWorld::CollisionTest& out) {
-  out.trackBodyImpact=Gothic::physicsFlags().bodyImpactDamage && npc.hasBodyImpactSpellFlight() && (flags==InAir || flags==Falling);
+  out.trackBodyImpact=Settings::physicsFlags().bodyImpactDamage && npc.hasBodyImpactSpellFlight() && (flags==InAir || flags==Falling);
   if(out.trackBodyImpact) {
     out.bodyImpactVelocity=fallSpeed;
     out.bodyImpactSpeed=0;
@@ -706,14 +706,14 @@ bool MoveAlgo::useCharacterVirtual() {
   if(npc.usesSimplifiedMovement())
     return false;
   if(npc.isPlayer())
-    return Gothic::physicsFlags().characterVirtual;
+    return Settings::physicsFlags().characterVirtual;
   if(NavDemos::forceCharacterVirtual(npc) && npc.isHuman() && !npc.isDown())
     return true;
   const auto* hero = npc.world().player();
   const bool human = npc.isHuman();
-  const bool enabled = human ? Gothic::physicsFlags().npcCharacterVirtual :
-                               Gothic::physicsFlags().monsterCharacterVirtual &&
-                               Gothic::physicsFlags().allowsMonsterCharacterVirtual(npc.isDown(),canFlyOverWater());
+  const bool enabled = human ? Settings::physicsFlags().npcCharacterVirtual :
+                               Settings::physicsFlags().monsterCharacterVirtual &&
+                               Settings::physicsFlags().allowsMonsterCharacterVirtual(npc.isDown(),canFlyOverWater());
   npcVirtualInRange = MeleeFighter::keepPhysics(enabled,!npc.isDown() && hero!=nullptr,
                                                npc.isMeleeFighter(),npcVirtualInRange,
                                                hero!=nullptr ? npc.qDistTo(*hero) : 0.f);
@@ -725,7 +725,7 @@ bool MoveAlgo::tickCharacterVirtual(uint64_t dt, const Tempest::Vec3& displaceme
   auto& world = npc.world();
   std::vector<Item*> nearbyItems;
   world.detectItem(origin,DynamicWorld::characterItemRange,[&](Item& item) {
-    if(!item.isDynamic() && !(Gothic::physicsFlags().placedItems && item.isPlacedItem()))
+    if(!item.isDynamic() && !(Settings::physicsFlags().placedItems && item.isPlacedItem()))
       nearbyItems.push_back(&item);
     });
   // Creating a native body invalidates the item query index. Finish detection first,
@@ -901,7 +901,7 @@ void MoveAlgo::resetCharacterVirtual(bool mobTransition) {
   virtualGroundVelocity = {};
   virtualJumpVelocity = {};
   npcVirtualMobTransition |= mobTransition && !npc.isPlayer() &&
-                            (npc.isHuman() || Gothic::physicsFlags().monsterCharacterVirtual);
+                            (npc.isHuman() || Settings::physicsFlags().monsterCharacterVirtual);
   }
 
 void MoveAlgo::carryCharacterVirtual(uint64_t dt) {

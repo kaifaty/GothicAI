@@ -609,7 +609,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
 
     bool      perceptionProcess(Npc& pl);
     bool      perceptionProcess(Npc& pl, Npc *victim, float quadDist, PercType perc, const std::shared_ptr<HeroDeed>& deed = {});
-    // a perception held back by Gothic::interceptPerception, given to the scripts after all
+    // a perception held back by GameHost::takePerception, given to the scripts after all
     bool      passPerception(Npc& other, Npc* victim, PercType perc);
     // A physical impact has a location, independent of a known actor.
     bool      hearPhysicsNoise(const PhysicsNoise& noise);

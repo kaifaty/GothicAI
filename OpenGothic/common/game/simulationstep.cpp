@@ -1,12 +1,12 @@
 #include "simulationstep.h"
-
 #include "playercontrol.h"
 #include "bodyobservations.h"
 #include "bodycontroller.h"
 #include "bodytrajectory.h"
 #include "bodyreplay.h"
 #include "frameprofile.h"
-#include "gothic.h"
+#include "gameservices.h"
+#include "game/gamehost.h"
 #include "camera.h"
 #include "world/benchhooks.h"
 #include "world/objects/npc.h"
@@ -17,7 +17,7 @@ void SimulationStep::worldPlayerStep(uint64_t dt, PlayerControl& player,
   BodyController::pumpWatchdogs();
   BodyObservations::beginStep(BodyObservations::currentStep()+1);
   Bench::beforeWorldTick(dt);
-  Gothic::inst().tick(dt);
+  GameHost::inst().tick(dt);
   player.tickFocus();
   if(afterFocus)
     afterFocus();
@@ -26,7 +26,7 @@ void SimulationStep::worldPlayerStep(uint64_t dt, PlayerControl& player,
 
 bool SimulationStep::finishStep(uint64_t dt, PlayerControl& player,
                                  const std::function<void()>& updateCamera) {
-  Gothic::inst().updateAnimation(dt);
+  GameHost::inst().updateAnimation(dt);
   if(updateCamera)
     updateCamera();
   else
@@ -39,14 +39,14 @@ bool SimulationStep::finishStep(uint64_t dt, PlayerControl& player,
     BodyReplay::postStep();
   // Animation LOD: the game and bench cameras have moved for this frame; NPCs they
   // now see get their pose before anything is drawn or captured.
-  if(auto* world = Gothic::inst().world())
+  if(auto* world = GameServices::inst().world())
     world->catchUpAnimation();
   return capture;
   }
 
 void SimulationStep::observerCamera(uint64_t dt) {
-  auto camera = Gothic::inst().camera();
-  auto player = Gothic::inst().player();
+  auto camera = GameServices::inst().camera();
+  auto player = GameServices::inst().player();
   if(camera==nullptr)
     return;
 

@@ -1,11 +1,11 @@
 #include "npc.h"
-
 #include <algorithm>
 
 #include "game/gamescript.h"
 #include "game/herodeed.h"
 #include "graphics/mesh/skeleton.h"
-#include "gothic.h"
+#include "settings.h"
+#include "game/gamehost.h"
 #include "world/benchhooks.h"
 #include "utils/string_frm.h"
 #include "world/objects/interactive.h"
@@ -54,7 +54,7 @@ Item* Npc::takeItem(Item& item) {
     if(taken==nullptr)
       return nullptr;
     item.setCount(item.count()-serverDeedCount);
-    Gothic::inst().onHeroDeed(*deed);
+    GameHost::inst().emitHeroDeed(*deed);
     implAniWait(uint64_t(sq->totalTime()));
     return taken;
     }
@@ -79,7 +79,7 @@ Item* Npc::takeItem(Item& item) {
   if(isPlayer() && it!=nullptr)
     owner.sendPassivePerc(*this,*this,*it,PERC_ASSESSTHEFT,std::move(deed));
   else if(it!=nullptr && deed!=nullptr)
-    Gothic::inst().onHeroDeed(*deed);
+    GameHost::inst().emitHeroDeed(*deed);
 
   implAniWait(uint64_t(sq->totalTime()));
   return it;
@@ -108,7 +108,7 @@ void Npc::addItem(size_t id, Interactive &chest, size_t count) {
     if(isPlayer())
       if(auto use = chest.heroUseDeed())
         deed->witnesses = use->witnesses;
-    Gothic::inst().onHeroDeed(*deed);
+    GameHost::inst().emitHeroDeed(*deed);
     }
   }
 
@@ -234,7 +234,7 @@ bool Npc::isUsingItemInHand() const {
   }
 
 std::string Npc::itemUseInHandAnimation(const Item& item) const {
-  const auto& flags = Gothic::physicsFlags();
+  const auto& flags = Settings::physicsFlags();
   const auto main = ItmFlags(item.handle().main_flag);
   const bool deferred = ((main & ITM_CAT_POTION) && flags.meleeHealInterrupt) ||
                         ((main & ITM_CAT_FOOD) && flags.foodOverTime);
@@ -273,7 +273,7 @@ bool Npc::startItemUse(const Item& item, bool allowMissing) {
     return true;
     }
   if(Bench::isActive()) {
-    const auto& flags = Gothic::physicsFlags();
+    const auto& flags = Settings::physicsFlags();
     const auto& scheme = item.handle().scheme_name;
     const auto main = ItmFlags(item.handle().main_flag);
     const auto weapon = weaponState();
@@ -298,7 +298,7 @@ bool Npc::startItemUse(const Item& item, bool allowMissing) {
   }
 
 void Npc::beginItemUseEffect(const Item& item) {
-  const auto& flags = Gothic::physicsFlags();
+  const auto& flags = Settings::physicsFlags();
   const auto main = ItmFlags(item.handle().main_flag);
   const auto category = (main & ITM_CAT_POTION) ? Healing::Category::Potion :
                         (main & ITM_CAT_FOOD) ? Healing::Category::Food : Healing::Category::Other;
@@ -331,7 +331,7 @@ void Npc::finishItemUseEffect(const char* moment) {
   tickFoodPool();
   const auto hp = attribute(ATR_HITPOINTS), mana = attribute(ATR_MANA);
   foodHp = foodMana = 0;
-  collectingFood = use.food && Gothic::physicsFlags().foodOverTime;
+  collectingFood = use.food && Settings::physicsFlags().foodOverTime;
   if(function!=0)
     owner.script().invokeItem(this,function);
   collectingFood = false;
@@ -378,7 +378,7 @@ void Npc::tickFoodPool() {
   const auto now = owner.tickCount();
   const auto dt = now>=foodPoolTick ? now-foodPoolTick : 0;
   foodPoolTick = now;
-  if(!Gothic::physicsFlags().foodOverTime || isDown()) {
+  if(!Settings::physicsFlags().foodOverTime || isDown()) {
     Healing::clear(foodPool);
     return;
     }

@@ -7,7 +7,7 @@
 #include <memory>
 
 #include "game/serialize.h"
-#include "gothic.h"
+#include "settings.h"
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"
 #include "world/world.h"
@@ -216,7 +216,7 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
     }
   if(fin.setEntry("worlds/",fin.worldName(),directory,id,"/food-pool"))
     Healing::load(fin,foodPool);
-  if(isDown() || !Gothic::physicsFlags().foodOverTime)
+  if(isDown() || !Settings::physicsFlags().foodOverTime)
     Healing::clear(foodPool);
 
   // post-alignment
@@ -247,7 +247,7 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
           Log::e("ragdoll recovery load: ",e.what());
           }
         }
-      if(ragdollDormant && Gothic::physicsFlags().ragdoll)
+      if(ragdollDormant && Settings::physicsFlags().ragdoll)
         prepareRagdoll();
       else if(visual.pose().isRagdollBlending())
         updateAnimation(0,true); // Optional recovery must be visible before the first loaded frame.
@@ -257,7 +257,7 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
     }
   // A live posture fall has no saved body. Wounded loops resume the ordinary
   // get-up transition without entering the script's unconscious state.
-  if(Gothic::physicsFlags().meleePosture && !isDown() &&
+  if(Settings::physicsFlags().meleePosture && !isDown() &&
      (visual.pose().isInAnim("S_WOUNDED") || visual.pose().isInAnim("S_WOUNDEDB"))) {
     setAnim(Anim::Idle);
     }
@@ -267,7 +267,7 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
       !ragdollLegacyDown && !ragdollRecovering &&
       (movement==MoveAlgo::InAir || movement==MoveAlgo::Falling ||
        movement==MoveAlgo::Swim || movement==MoveAlgo::Dive);
-  if(Gothic::physicsFlags().arrowSticking &&
+  if(Settings::physicsFlags().arrowSticking &&
      fin.setEntry("worlds/",fin.worldName(),directory,id,"/stuck-arrows") &&
      !visual.loadStuckArrows(fin,owner))
     Log::e("arrows: invalid saved NPC attachments, keeping the body without arrows");

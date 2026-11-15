@@ -12,7 +12,7 @@
 #include "world/objects/npc.h"
 #include "world/world.h"
 #include "utils/dbgpainter.h"
-#include "gothic.h"
+#include "settings.h"
 
 static Npc::Anim toNpcAnim(Interactive::Anim dir) {
   switch(dir) {
@@ -850,7 +850,7 @@ bool Interactive::attach(Npc &npc) {
 
 bool Interactive::detach(Npc &npc, bool quick) {
   for(auto& i:attPos) {
-    if(i.user==&npc && (i.attachMode || (quick && Gothic::physicsFlags().meleePosture))) {
+    if(i.user==&npc && (i.attachMode || (quick && Settings::physicsFlags().meleePosture))) {
       if(quick || canQuitAtState(*i.user,state)) {
         if(!quick) {
           auto sq = npc.setAnimAngGet(Npc::Anim::InteractToStand);

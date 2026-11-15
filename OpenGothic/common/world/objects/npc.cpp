@@ -7,7 +7,6 @@
 #include "world/bodytraces.h"
 #include "world/bloodspawn.h"
 #include "graphics/mesh/protomesh.h"
-
 #include <Tempest/Matrix4x4>
 #include <Tempest/Log>
 #include <atomic>
@@ -44,7 +43,8 @@
 #include "camera.h"
 #include "commandline.h"
 #include "world/benchhooks.h"
-#include "gothic.h"
+#include "settings.h"
+#include "game/gamehost.h"
 #include "resources.h"
 #include "frameprofile.h"
 #include "navdemos.h"
@@ -500,7 +500,7 @@ void Npc::onNoHealth(bool death, HitSound sndMask) {
     updateRagdollQuestAnchor();
     const auto hazards = ragdollQuestReturn.armed ? ragdollQuestReturn.hazards : uint8_t(0);
     ragdollQuestReturn.armed = !death && !isPlayer() && isHuman() &&
-        Gothic::physicsFlags().questGuard && ragdollQuestReturn.hasAnchor;
+        Settings::physicsFlags().questGuard && ragdollQuestReturn.hasAnchor;
     ragdollQuestReturn.hazards = ragdollQuestReturn.armed ? hazards : 0;
     ragdollDormant.reset();
     }
@@ -927,7 +927,7 @@ void Npc::tickRegen(int32_t& v, const int32_t max, const int32_t chg, const uint
   }
 
 void Npc::tickAnimationTags() {
-  if(Gothic::physicsFlags().meleeBladeShadow || Gothic::physicsFlags().meleePhysicsHits || (meleeShadow && meleeShadow->window))
+  if(Settings::physicsFlags().meleeBladeShadow || Settings::physicsFlags().meleePhysicsHits || (meleeShadow && meleeShadow->window))
     syncMeleeShadowSwing();
   Animation::EvCount ev;
   if(itemUse.item!=0 && !hasItemUseAnimation())
@@ -1097,12 +1097,12 @@ void Npc::tick(uint64_t dt) {
     }
 
   const bool physicalMovement = ragdoll ||
-      (Gothic::physicsFlags().ragdoll && isDown() && !ragdollLegacyDown && !ragdollRecovering);
+      (Settings::physicsFlags().ragdoll && isDown() && !ragdollLegacyDown && !ragdollRecovering);
 
   // A nearby impact briefly interrupts idle work, including an AI_Wait. Combat,
   // conversation and sleep immediately regain control if they begin meanwhile.
   if(physicsNoiseUntil>owner.tickCount()) {
-    if(Gothic::physicsFlags().physicsNoise && canHearPhysicsNoise()) {
+    if(Settings::physicsFlags().physicsNoise && canHearPhysicsNoise()) {
       if(prepareTurn()) {
         const auto direction = physicsNoisePosition-position();
         implTurnTo(direction.x,direction.z,AnimationSolver::TurnType::Std,dt);
@@ -1166,7 +1166,7 @@ bool Npc::prepareTurn() {
     // A dialogue can queue a heading before its next line. Turn only the
     // angle; its native body layers retain ownership between voiced lines.
     if(nativeBodyAction())
-      return Gothic::inst().isNpcInDialog(*this);
+      return GameHost::inst().isNpcInDialog(*this);
     visual.stopWalkAnim(*this);
     setAnimRotate(0);
     if(!visual.pose().hasAnim())
@@ -1189,7 +1189,7 @@ bool Npc::prepareTurn() {
   }
 
 bool Npc::hasQueuedPhysicalSpellState(const AiQueue& queue) const {
-  if(!Gothic::physicsFlags().spellPhysics)
+  if(!Settings::physicsFlags().spellPhysics)
     return false;
   const auto* action = queue.front();
   if(action==nullptr || action->act!=AI_StartState)
@@ -1422,7 +1422,7 @@ bool Npc::hasStateFlag(BodyState flg) const {
   }
 
 bool Npc::spellWhirling() const {
-  if(!Gothic::physicsFlags().spellPhysics || !aiState.funcIni.isValid() || isDown())
+  if(!Settings::physicsFlags().spellPhysics || !aiState.funcIni.isValid() || isDown())
     return false;
   constexpr std::string_view whirlwind="ZS_WHIRLWIND";
   const std::string_view state=aiState.hint;
@@ -1435,7 +1435,7 @@ bool Npc::spellWhirling() const {
   }
 
 bool Npc::spellFrozen() const {
-  if(!Gothic::physicsFlags().spellPhysics || !aiState.funcIni.isValid() || isDown())
+  if(!Settings::physicsFlags().spellPhysics || !aiState.funcIni.isValid() || isDown())
     return false;
   constexpr std::string_view frozen="ZS_MAGICFREEZE";
   const std::string_view state=aiState.hint;
@@ -1575,7 +1575,7 @@ bool Npc::setInteraction(Interactive *id, bool quick) {
 
   if(id->attach(*this)) {
     currentInteract = id;
-    if(!isPlayer() && (isHuman() || Gothic::physicsFlags().monsterCharacterVirtual)) {
+    if(!isPlayer() && (isHuman() || Settings::physicsFlags().monsterCharacterVirtual)) {
       mvAlgo.resetCharacterVirtual(true);
       resetCharacterVisualHeight();
       }
@@ -1596,7 +1596,7 @@ bool Npc::setInteraction(Interactive *id, bool quick) {
 void Npc::quitInteraction() {
   if(currentInteract==nullptr)
     return;
-  if(!isPlayer() && (isHuman() || Gothic::physicsFlags().monsterCharacterVirtual)) {
+  if(!isPlayer() && (isHuman() || Settings::physicsFlags().monsterCharacterVirtual)) {
     mvAlgo.resetCharacterVirtual(true);
     resetCharacterVisualHeight();
     }

@@ -10,7 +10,7 @@
 #include "world/objects/item.h"
 #include "world/world.h"
 #include "world/benchhooks.h"
-#include "gothic.h"
+#include "settings.h"
 
 #include <cmath>
 #include <cstdlib>
@@ -57,7 +57,7 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
 
   const auto ws = weaponState();
   const auto bs = bodyStateMasked();
-  const auto& flags = Gothic::physicsFlags();
+  const auto& flags = Settings::physicsFlags();
   const bool reactions = isHuman() && ws==WeaponState::W1H;
   const bool dodgeAi = reactions && flags.meleeAiDodge && flags.meleeDodge;
   if(bodyOverride || !dodgeAi || (meleeAiDodgeTiming && meleeAiDodgeTiming->target!=currentTarget))
@@ -726,7 +726,7 @@ bool Npc::doAttack(Anim anim, BodyState bs) {
     return false;
   if(!allowMeleeStunAction(bs==BS_PARADE ? "parade" : "attack"))
     return false;
-  if(bs==BS_PARADE && Gothic::physicsFlags().meleeParry && !allowStaminaAction("parade",0.f))
+  if(bs==BS_PARADE && Settings::physicsFlags().meleeParry && !allowStaminaAction("parade",0.f))
     return false;
   const auto weaponSt = weaponState();
   const bool costsStamina = hasStamina() && bs==BS_HIT &&
@@ -800,7 +800,7 @@ bool Npc::isFinishSequence(const Animation::Sequence& seq) {
 
 bool Npc::isMeleeDownStrike(Anim anim, WeaponState ws) const {
   // lying, not yet rising: one who gets up is met by the ordinary blows at his height
-  if(!Gothic::physicsFlags().meleePhysicsHits || currentTarget==nullptr || !currentTarget->meleeKnockdown ||
+  if(!Settings::physicsFlags().meleePhysicsHits || currentTarget==nullptr || !currentTarget->meleeKnockdown ||
      currentTarget->meleeRiseTick!=0)
     return false;
   if(ws!=WeaponState::W1H && ws!=WeaponState::W2H)

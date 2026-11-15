@@ -1,5 +1,4 @@
 #include "bloodspawn.h"
-
 #include <algorithm>
 
 #include <cctype>
@@ -12,7 +11,8 @@
 #include "physics/dynamicworld.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
-#include "gothic.h"
+#include "settings.h"
+#include "gameservices.h"
 
 using namespace Tempest;
 
@@ -45,7 +45,7 @@ void particles(World& world, int32_t guild, const Vec3& wound) {
   std::string_view name = "PFX_BLOOD";
   if(guild>=0 && size_t(guild)<std::size(gv.blood_emitter) && !gv.blood_emitter[guild].empty())
     name = gv.blood_emitter[guild];
-  if(Gothic::inst().loadParticleFx(name,true)==nullptr)
+  if(GameServices::inst().loadParticleFx(name,true)==nullptr)
     return;
   Matrix4x4 m;
   m.identity();
@@ -86,7 +86,7 @@ BloodSpawn::GuildBlood BloodSpawn::guildBlood(const World& world, int32_t guild)
   }
 
 void BloodSpawn::onHit(World& world, Npc& victim, const Vec3& wound, const Vec3& dir, int32_t damage) {
-  if(!Gothic::physicsFlags().blood || damage<=0)
+  if(!Settings::physicsFlags().blood || damage<=0)
     return;
   const int32_t guild = int32_t(victim.guild());
   const auto    gb    = guildBlood(world, guild);
@@ -138,7 +138,7 @@ void BloodSpawn::onHit(World& world, Npc& victim, const Vec3& wound, const Vec3&
   }
 
 void BloodSpawn::onDead(World& world, Npc& body) {
-  if(!Gothic::physicsFlags().blood)
+  if(!Settings::physicsFlags().blood)
     return;
   const int64_t now = world.time().toInt();
   if(body.bloodHitAt()<0 || now-body.bloodHitAt()>PoolAfterHitMs)

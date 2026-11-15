@@ -1,5 +1,4 @@
 #include "inventory.h"
-
 #include <Tempest/Log>
 
 #include "world/objects/item.h"
@@ -8,7 +7,8 @@
 #include "world/world.h"
 #include "game/gamescript.h"
 #include "serialize.h"
-#include "gothic.h"
+#include "settings.h"
+#include "game/gamehost.h"
 
 using namespace Tempest;
 
@@ -918,7 +918,7 @@ bool Inventory::use(size_t cls, Npc &owner, uint8_t slotHint, bool force) {
       }
     }
 
-  const auto& physics = Gothic::physicsFlags();
+  const auto& physics = Settings::physicsFlags();
   const bool deferred = ((mainflag & ITM_CAT_POTION) && physics.meleeHealInterrupt) ||
                         ((mainflag & ITM_CAT_FOOD) && physics.foodOverTime);
   if(!owner.startItemUse(*it,deferred))
@@ -1095,7 +1095,7 @@ bool Inventory::less(const Item &il, const Item &ir) {
   }
 
 int Inventory::orderId(const Item& i) {
-  auto& invCatOrder = Gothic::invCatOrder();
+  auto& invCatOrder = GameHost::inst().inventoryCategoryOrder();
   auto  mflg        = ItmFlags(i.mainFlag());
 
   for(size_t i=0; i<invCatOrder.size(); ++i)

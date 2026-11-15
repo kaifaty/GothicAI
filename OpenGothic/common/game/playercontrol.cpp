@@ -1,8 +1,6 @@
 #include "playercontrol.h"
-
 #include <cmath>
 #include <cstring>
-
 #include "world/objects/npc.h"
 #include "world/objects/item.h"
 #include "world/objects/interactive.h"
@@ -15,7 +13,9 @@
 #include "graphics/mesh/aim.h"
 #include "graphics/mesh/aimwalk.h"
 #include "graphics/mesh/footik.h"
-#include "gothic.h"
+#include "settings.h"
+#include "gameservices.h"
+#include "game/gamehost.h"
 
 namespace {
 // the crosshair of the manual aim
@@ -84,11 +84,11 @@ PlayerControl::~PlayerControl() {
   }
 
 void PlayerControl::setupSettings() {
-  g2Ctrl = Gothic::inst().settingsGetI("GAME","USEGOTHIC1CONTROLS")==0;
+  g2Ctrl = Settings::getI("GAME","USEGOTHIC1CONTROLS")==0;
   }
 
 void PlayerControl::setTarget(Npc *other) {
-  auto w  = Gothic::inst().world();
+  auto w  = GameServices::inst().world();
   auto pl = w ? w->player() : nullptr;
   if(pl==nullptr || pl->isFinishingMove())
     return;
@@ -110,7 +110,7 @@ void PlayerControl::assessThreat(Npc& pl, Npc& other) {
   // as in the original game: an npc the armed player aims at feels threatened (B_AssessThreat);
   // repeated while the aim is held, not every frame
   constexpr uint64_t ThreatPeriodMs = 2000;
-  auto w = Gothic::inst().world();
+  auto w = GameServices::inst().world();
   if(w==nullptr || other.isDead() || other.isDown())
     return;
   const uint64_t now = w->tickCount();
@@ -122,8 +122,8 @@ void PlayerControl::assessThreat(Npc& pl, Npc& other) {
   }
 
 void PlayerControl::onKeyPressed(KeyCodec::Action a, Tempest::KeyEvent::KeyType key, KeyCodec::Mapping mapping) {
-  auto       w    = Gothic::inst().world();
-  auto       c    = Gothic::inst().camera();
+  auto       w    = GameServices::inst().world();
+  auto       c    = GameServices::inst().camera();
   auto       pl   = w  ? w->player() : nullptr;
   auto       ws   = pl ? pl->weaponState() : WeaponState::NoWeapon;
   uint8_t    slot = pl ? pl->inventory().currentSpellSlot() : Item::NSLOT;
@@ -302,12 +302,12 @@ void PlayerControl::onKeyPressed(KeyCodec::Action a, Tempest::KeyEvent::KeyType 
     }
 
   if(a==Action::FirstPerson) {
-    if(auto c = Gothic::inst().camera())
+    if(auto c = GameServices::inst().camera())
       c->setFirstPerson(!c->isFirstPerson());
     return;
     }
 
-  if(a==Action::K_O && Gothic::inst().isMarvinEnabled())
+  if(a==Action::K_O && GameHost::inst().isMarvinEnabled())
     marvinO();
 
   ctrl[a] = true;
@@ -318,7 +318,7 @@ void PlayerControl::onKeyReleased(KeyCodec::Action a, KeyCodec::Mapping mapping)
 
   handleMovementAction(KeyCodec::ActionMapping{a, mapping}, false);
 
-  auto w  = Gothic::inst().world();
+  auto w  = GameServices::inst().world();
   auto pl = w ? w->player() : nullptr;
   if(pl!=nullptr && pl->isMeleeKnockedDown()) {
     clearInput();
@@ -390,7 +390,7 @@ bool PlayerControl::onMouseWheel(int delta) {
   // is not canted: the wheel does nothing then, the camera stays)
   if(!manualAiming || delta==0)
     return false;
-  auto w  = Gothic::inst().world();
+  auto w  = GameServices::inst().world();
   auto pl = w!=nullptr ? w->player() : nullptr;
   if(pl!=nullptr && pl->weaponState()==WeaponState::Bow)
     aimCant = delta<0;
@@ -398,7 +398,7 @@ bool PlayerControl::onMouseWheel(int delta) {
   }
 
 void PlayerControl::drawVobRay(DbgPainter& p) const {
-  auto w = Gothic::inst().world();
+  auto w = GameServices::inst().world();
   if(w==nullptr || w->player()==nullptr)
     return;
   auto pl    = w->player();
@@ -415,14 +415,14 @@ void PlayerControl::drawVobRay(DbgPainter& p) const {
   }
 
 void PlayerControl::tickFocus() {
-  auto w = Gothic::inst().world();
+  auto w = GameServices::inst().world();
   if(auto pl = w!=nullptr ? w->player() : nullptr; pl!=nullptr && pl->isMeleeKnockedDown()) {
     clearFocus();
     return;
     }
   if(manualAiming) {
     // aiming by hand: the focus is under the crosshair
-    auto w = Gothic::inst().world();
+    auto w = GameServices::inst().world();
     if(auto pl = w ? w->player() : nullptr) {
       Tempest::Vec3 at;
       Npc*          npc = aimRayHit(*pl,at);
@@ -476,7 +476,7 @@ bool PlayerControl::hasActionFocus() const {
   }
 
 bool PlayerControl::interact(Interactive &it) {
-  auto w = Gothic::inst().world();
+  auto w = GameServices::inst().world();
   if(w==nullptr || w->player()==nullptr)
     return false;
   auto pl = w->player();
@@ -496,7 +496,7 @@ bool PlayerControl::interact(Interactive &it) {
   }
 
 bool PlayerControl::interact(Npc &other) {
-  auto w = Gothic::inst().world();
+  auto w = GameServices::inst().world();
   if(w==nullptr || w->player()==nullptr)
     return false;
   auto pl = w->player();
@@ -523,7 +523,7 @@ bool PlayerControl::interact(Npc &other) {
   }
 
 bool PlayerControl::interact(Item &item) {
-  auto w = Gothic::inst().world();
+  auto w = GameServices::inst().world();
   if(w==nullptr || w->player()==nullptr)
     return false;
   auto pl = w->player();
@@ -537,8 +537,8 @@ bool PlayerControl::interact(Item &item) {
   }
 
 void PlayerControl::moveFocus(FocusAction act) {
-  auto w = Gothic::inst().world();
-  auto c = Gothic::inst().camera();
+  auto w = GameServices::inst().world();
+  auto c = GameServices::inst().camera();
   if(w==nullptr || c==nullptr || currentFocus.npc==nullptr)
     return;
 
@@ -577,7 +577,7 @@ void PlayerControl::moveFocus(FocusAction act) {
   }
 
 void PlayerControl::toggleWalkMode() {
-  auto w = Gothic::inst().world();
+  auto w = GameServices::inst().world();
   if(w==nullptr || w->player()==nullptr)
     return;
   auto pl = w->player();
@@ -585,7 +585,7 @@ void PlayerControl::toggleWalkMode() {
   }
 
 void PlayerControl::toggleSneakMode() {
-  auto w = Gothic::inst().world();
+  auto w = GameServices::inst().world();
   if(w==nullptr || w->player()==nullptr)
     return;
   auto pl = w->player();
@@ -597,7 +597,7 @@ void PlayerControl::toggleSneakMode() {
   }
 
 bool PlayerControl::canInteract() const {
-  auto w = Gothic::inst().world();
+  auto w = GameServices::inst().world();
   if(w==nullptr || w->player()==nullptr)
     return false;
   auto pl = w->player();
@@ -608,8 +608,8 @@ bool PlayerControl::canInteract() const {
 
 bool PlayerControl::dodgeKeyDodges(const Npc& pl) const {
   const auto ws = pl.weaponState();
-  const auto c  = Gothic::inst().camera();
-  return Gothic::physicsFlags().meleeDodge && pl.isHuman() &&
+  const auto c  = GameServices::inst().camera();
+  return Settings::physicsFlags().meleeDodge && pl.isHuman() &&
          (ws==WeaponState::Fist || ws==WeaponState::W1H || ws==WeaponState::W2H) &&
          pl.interactive()==nullptr && (c==nullptr || !c->isFree());
   }
@@ -625,7 +625,7 @@ void PlayerControl::clearInput() {
   }
 
 void PlayerControl::marvinF8(uint64_t dt) {
-  auto w = Gothic::inst().world();
+  auto w = GameServices::inst().world();
   if(w==nullptr || w->player()==nullptr)
     return;
 
@@ -646,12 +646,12 @@ void PlayerControl::marvinF8(uint64_t dt) {
   pl.setInteraction(nullptr,true);
   pl.setAnim(AnimationSolver::Idle);
 
-  if(auto c = Gothic::inst().camera())
+  if(auto c = GameServices::inst().camera())
     c->reset();
   }
 
 void PlayerControl::marvinK(uint64_t dt) {
-  auto w = Gothic::inst().world();
+  auto w = GameServices::inst().world();
   if (w == nullptr || w->player() == nullptr)
     return;
 
@@ -671,7 +671,7 @@ void PlayerControl::marvinK(uint64_t dt) {
   }
 
 void PlayerControl::marvinO() {
-  auto w = Gothic::inst().world();
+  auto w = GameServices::inst().world();
   if (w == nullptr || w->player() == nullptr || w->player()->target() == nullptr)
     return;
 
@@ -681,8 +681,8 @@ void PlayerControl::marvinO() {
   }
 
 Focus PlayerControl::findFocus(const Focus* prev) const {
-  auto w = Gothic::inst().world();
-  auto c = Gothic::inst().camera();
+  auto w = GameServices::inst().world();
+  auto c = GameServices::inst().camera();
   if(w==nullptr)
     return Focus();
   if(w->player()!=nullptr && (w->player()->isDown() || w->player()->isMeleeKnockedDown()))
@@ -698,12 +698,12 @@ Focus PlayerControl::findFocus(const Focus* prev) const {
   }
 
 bool PlayerControl::tickCameraMove(uint64_t dt) {
-  auto w = Gothic::inst().world();
+  auto w = GameServices::inst().world();
   if(w==nullptr)
     return false;
 
   Npc*  pl     = w->player();
-  auto  camera = Gothic::inst().camera();
+  auto  camera = GameServices::inst().camera();
   if(camera==nullptr || (pl!=nullptr && !camera->isFree()))
     return false;
 
@@ -732,13 +732,13 @@ bool PlayerControl::tickCameraMove(uint64_t dt) {
   }
 
 bool PlayerControl::tickMove(uint64_t dt) {
-  auto w = Gothic::inst().world();
+  auto w = GameServices::inst().world();
   if(w==nullptr)
     return false;
   const float dtF = float(dt)/1000.f;
 
   Npc*  pl     = w->player();
-  auto  camera = Gothic::inst().camera();
+  auto  camera = GameServices::inst().camera();
 
   if(w->isCutsceneLock())
     clearInput();
@@ -746,9 +746,9 @@ bool PlayerControl::tickMove(uint64_t dt) {
   if(tickCameraMove(dt))
     return true;
 
-  if(ctrl[Action::K_F8] && Gothic::inst().isMarvinEnabled())
+  if(ctrl[Action::K_F8] && GameHost::inst().isMarvinEnabled())
     marvinF8(dt);
-  if(ctrl[Action::K_K] && Gothic::inst().isMarvinEnabled())
+  if(ctrl[Action::K_K] && GameHost::inst().isMarvinEnabled())
     marvinK(dt);
   cacheFocus = ctrl[Action::ActionGeneric];
   if(camera!=nullptr)
@@ -838,7 +838,7 @@ bool PlayerControl::tickMove(uint64_t dt) {
   }
 
 void PlayerControl::implMove(uint64_t dt) {
-  auto  w         = Gothic::inst().world();
+  auto  w         = GameServices::inst().world();
   Npc&  pl        = *w->player();
   float rot       = pl.rotation();
   float rotY      = pl.rotationY();
@@ -904,7 +904,7 @@ void PlayerControl::implMove(uint64_t dt) {
           wctrlLast = static_cast<WeaponAction>(Weapon3+i);
           if(ret) {
             if(auto spl = pl.inventory().currentSpell(i)) {
-              Gothic::inst().onPrint(spl->description());
+              GameHost::inst().emitPrint(spl->description());
               }
             }
           } else {
@@ -1210,8 +1210,8 @@ Npc* PlayerControl::aimRayHit(Npc& pl, Tempest::Vec3& at) const {
   // what the center of the screen falls on (the bones of an npc, the ground); the test bench aims at a
   // point instead
   static float reach = 10000.f; // cm
-  auto w = Gothic::inst().world();
-  auto c = Gothic::inst().camera();
+  auto w = GameServices::inst().world();
+  auto c = GameServices::inst().camera();
   Tempest::Vec3 from, dir;
   if(aimOverride || c==nullptr) {
     from = pl.mapHeadBone();
@@ -1252,7 +1252,7 @@ bool PlayerControl::implManualAim(Npc& pl, uint64_t dt) {
   if(!raised)
     return false;
 
-  auto camera = Gothic::inst().camera();
+  auto camera = GameServices::inst().camera();
   if(!ar.isRaised() && camera!=nullptr) {
     // the aim starts at the focus, else straight ahead: the center of the screen passes over the
     // shoulder, the hero turns so that it falls on the focus
@@ -1402,7 +1402,7 @@ void PlayerControl::endManualAim(Npc& pl) {
   aimStepStopped = false;
   Archer::playerProbe = Archer::Probe();
   ctrl[Action::Walk] = false;
-  if(auto camera = Gothic::inst().camera()) {
+  if(auto camera = GameServices::inst().camera()) {
     camera->setAim(false,0);
     camera->setAimStance(0,0,1);
     }
@@ -1442,7 +1442,7 @@ void PlayerControl::implMoveMobsi(Npc& pl, uint64_t /*dt*/) {
   }
 
 void PlayerControl::processPickLock(Npc& pl, Interactive& inter, KeyCodec::Action k) {
-  auto                   w             = Gothic::inst().world();
+  auto                   w             = GameServices::inst().world();
   auto&                  script        = w->script();
   const size_t           ItKE_lockpick = script.lockPickId();
 
@@ -1508,7 +1508,7 @@ void PlayerControl::quitPicklock(Npc& pl) {
 
 void PlayerControl::assignRunAngle(Npc& pl, float rotation, uint64_t dt) {
   float dtF    = (float(dt)/1000.f);
-  auto  camera = Gothic::inst().camera();
+  auto  camera = GameServices::inst().camera();
 
   float dest = 0;
   // the lean post-pass (graphics/mesh/lean) leans into a turn from the turn itself, for npcs too

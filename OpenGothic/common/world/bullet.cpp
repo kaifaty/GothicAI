@@ -12,7 +12,7 @@
 #include "world/objects/interactive.h"
 #include "world.h"
 #include "world/benchhooks.h"
-#include "gothic.h"
+#include "settings.h"
 #include "settings.h"
 
 using namespace Tempest;
@@ -153,7 +153,7 @@ void Bullet::onMove() {
   }
 
 bool Bullet::stopsAtWorldHit() const {
-  return !isSpell() && Gothic::physicsFlags().arrowSticking;
+  return !isSpell() && Settings::physicsFlags().arrowSticking;
   }
 
 void Bullet::onSpellWorldHit(const DynamicWorld::BulletWorldHit& hit) {
@@ -337,7 +337,7 @@ void Bullet::updateMatrix() {
   }
 
 void Bullet::applySpellPhysics(Npc* target) {
-  if(!isSpell() || spellPhysicsApplied || !Gothic::physicsFlags().spellPhysics)
+  if(!isSpell() || spellPhysicsApplied || !Settings::physicsFlags().spellPhysics)
     return;
   const auto kind = wrld->script().physicalSpell(spellId());
   if(kind!=GameScript::PhysicalSpell::WindFist && kind!=GameScript::PhysicalSpell::Fireball)

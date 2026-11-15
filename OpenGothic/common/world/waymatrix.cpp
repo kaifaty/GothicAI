@@ -12,7 +12,7 @@
 #include "utils/dbgpainter.h"
 #include "world/objects/interactive.h"
 #include "world.h"
-#include "gothic.h"
+#include "settings.h"
 #include "resources.h"
 
 using namespace Tempest;
@@ -44,7 +44,7 @@ const WayHeights::Profile& WayMatrix::groundProfile(const Tempest::Vec3& from,co
     try { cacheRoot=BaseStore::cacheRoot(); }
     catch(const std::exception&) { }
     const auto inputs=Resources::wayHeightInputs(world.name());
-    const auto& flags=Gothic::physicsFlags();
+    const auto& flags=Settings::physicsFlags();
     heightCache=std::make_unique<WayHeights>(cacheRoot,WayHeights::Key{inputs.baseFingerprint,
        std::filesystem::path(world.name()).stem().string(),inputs.contentFingerprint,
        uint32_t(flags.cloth)|(uint32_t(flags.movableVobs)<<1)});
@@ -67,7 +67,7 @@ void WayMatrix::buildIndex() {
       }
     inputs = Resources::wayHeightInputs(world.name());
     }
-  const auto& flags = Gothic::physicsFlags();
+  const auto& flags = Settings::physicsFlags();
   WayHeights heights(cacheRoot,{inputs.baseFingerprint,std::filesystem::path(world.name()).stem().string(),
                                inputs.contentFingerprint,uint32_t(flags.cloth) | (uint32_t(flags.movableVobs)<<1)});
   const auto keyed = std::chrono::steady_clock::now();
