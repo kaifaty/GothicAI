@@ -10,6 +10,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 using namespace Tempest;
 
@@ -314,6 +315,145 @@ void upscaleSequence() {
     }
   }
 
+// our own temporal upscale (graphics plan 1г, taau_resolve.frag): which input sample an output pixel takes
+void upscaleTaps() {
+  const float kernel = 2.29f;
+  // no upscale, no jitter: the pixel itself, at its centre, with the whole share
+  for(uint32_t x : {0u, 7u, 1727u}) {
+    const auto t = Taa::upscaleTap(x, 3, 1728, 959, 1728, 959, Vec2(0,0));
+    require(t.x==int32_t(x) && t.y==3, "1x tap is not the pixel itself");
+    require(std::abs(t.offset.x)<1e-4f && std::abs(t.offset.y)<1e-4f, "1x tap is off the centre");
+    require(std::abs(Taa::upscaleConfidence(t.offset, 1, 1, kernel) - 1.f)<1e-4f, "1x tap is not trusted");
+    }
+  // The frame moved by +jitter: texel i sampled the scene at i + 0.5 - jitter. The output pixel whose centre is
+  // that very point takes it with a zero offset; a jitter the other way would miss by twice the jitter
+  {
+    const Vec2 j(0.25f, -0.25f);
+    // 2x: output pixel 2*i has its centre at i + 0.25 of the input, i.e. texel i sampled with jitter.x = 0.25
+    const auto t = Taa::upscaleTap(200, 101, 3456, 1918, 1728, 959, j);
+    require(t.x==100 && t.y==50, "2x tap is not the texel under the pixel");
+    require(std::abs(t.offset.x)<1e-4f && std::abs(t.offset.y)<1e-4f, "2x tap by the jitter is off the centre");
+    const auto o = Taa::upscaleTap(200, 101, 3456, 1918, 1728, 959, Vec2(-j.x, -j.y));
+    require(std::abs(std::abs(o.offset.x) - 0.5f)<1e-4f, "the jitter's sign does not matter");
+    }
+  // over the sequence every output pixel of an input texel's block gets a sample near its own centre, and each
+  // frame's offset stays within half an input pixel
+  for(const auto in : {std::pair<uint32_t,uint32_t>{1728, 959}, std::pair<uint32_t,uint32_t>{2304, 1278}}) {
+    const uint32_t outW = 3456, outH = 1918;
+    const float    sx   = float(outW)/float(in.first), sy = float(outH)/float(in.second);
+    const uint32_t n    = Taa::upscalePhases(in.first, in.second, outW, outH);
+    for(uint32_t oy=600; oy<604; ++oy)
+      for(uint32_t ox=900; ox<904; ++ox) {
+        float best = 0, sum = 0;
+        for(uint32_t i=0; i<n; ++i) {
+          const auto t = Taa::upscaleTap(ox, oy, outW, outH, in.first, in.second, Taa::jitterPx(i, n));
+          require(std::abs(t.offset.x)<=0.5f+1e-4f && std::abs(t.offset.y)<=0.5f+1e-4f, "tap beyond half a texel");
+          const float c = Taa::upscaleConfidence(t.offset, sx, sy, kernel);
+          best = std::max(best, c);
+          sum += c;
+          }
+        require(best>0.8f, "an output pixel gets no sample near its centre: " + std::to_string(best));
+        require(sum/float(n)>0.15f, "an output pixel is starved over the sequence: " + std::to_string(sum/float(n)));
+        }
+    }
+  // the frame's edge: the tap stays inside the input
+  const auto e = Taa::upscaleTap(3455, 1917, 3456, 1918, 1728, 959, Vec2(0.49f, 0.49f));
+  require(e.x==1727 && e.y==958, "the tap leaves the input at the edge");
+  }
+
+// its accumulation: a fresh history takes the first near sample almost whole, a full one a small share
+void upscaleShares() {
+  const float wMax = 4.f, trust = 4.f;
+  // after a cut: the smooth frame with the starting weight, then a sample at the centre
+  const auto first = Taa::upscaleShare(1.f, Taa::UpscaleWeightInit, wMax, 0.f, trust, 0.f);
+  require(first.share>0.95f, "a fresh history keeps " + std::to_string(1.f-first.share));
+  // a far sample barely touches even a fresh history
+  const auto far = Taa::upscaleShare(0.002f, Taa::UpscaleWeightInit, wMax, 0.f, trust, 0.f);
+  require(far.share<0.05f, "a far sample takes " + std::to_string(far.share));
+  // the weight fills up to the cap and stays; a full history gives a centre sample 1/(1 + wMax)
+  float w = Taa::UpscaleWeightInit;
+  for(int i=0; i<64; ++i)
+    w = Taa::upscaleShare(0.5f, w, wMax, 0.f, trust, 0.f).weight;
+  require(std::abs(w - wMax)<1e-4f, "the weight does not fill to its cap");
+  const auto full = Taa::upscaleShare(1.f, w, wMax, 0.f, trust, 0.f);
+  require(std::abs(full.share - 1.f/(1.f + wMax))<1e-3f, "a full history's share is " + std::to_string(full.share));
+  // a history the box has moved by its own extent is trusted 1/(1 + trust) as much
+  const auto clipped = Taa::upscaleShare(1.f, w, wMax, 1.f, trust, 0.f);
+  require(clipped.share>0.5f, "a clipped history keeps " + std::to_string(1.f-clipped.share));
+  // under the mask the frame is taken whole and the weight is emptied: the next frame is taken at once too
+  const auto masked = Taa::upscaleShare(0.01f, w, wMax, 0.f, trust, 0.9f);
+  require(masked.share>0.9f, "the mask leaves " + std::to_string(1.f-masked.share) + " of the history");
+  const auto after = Taa::upscaleShare(1.f, masked.weight, wMax, 0.f, trust, 0.f);
+  require(after.share>0.7f, "the frame after the mask keeps " + std::to_string(1.f-after.share));
+  // thin smoke (a mask of 1/8 and more): a near and a far sample take the same share, so the output pixels of one
+  // input texel do not differ in what changes every frame
+  for(float m : {0.125f, 0.3f, 0.9f}) {
+    const auto nearS = Taa::upscaleShare(1.f,     w, wMax, 0.f, trust, m);
+    const auto farS  = Taa::upscaleShare(0.0001f, Taa::UpscaleWeightInit, wMax, 0.f, trust, m);
+    require(std::abs(nearS.share - farS.share)<1e-5f, "the share under the mask depends on the sample's distance");
+    require(nearS.share>=m && nearS.share>=1.f/(1.f + wMax), "the share under the mask " + std::to_string(m) + " is " + std::to_string(nearS.share));
+    require(nearS.weight==Taa::UpscaleWeightInit, "the mask keeps the gathered weight");
+    }
+  // and the mask 0 changes nothing
+  const auto plain = Taa::upscaleShare(0.3f, 2.f, wMax, 0.f, trust, 0.f);
+  require(std::abs(plain.share - 0.3f/(2.3f + 1e-4f))<1e-6f && std::abs(plain.weight - 2.3f)<1e-6f, "mask 0 changes the share");
+  // in full motion the enlarged frame has one weight at every pixel: a near and a far sample take the same share, and
+  // against a full history it is the share that was asked for; a history the box has moved gives way to it at once
+  const float moveConf = Taa::upscaleMoveConf(0.2f, wMax);
+  const float nearM = Taa::upscaleConfInMotion(1.f,     moveConf, 1.f);
+  const float farM  = Taa::upscaleConfInMotion(0.0001f, moveConf, 1.f);
+  require(nearM==farM, "the weight in motion depends on the sample's distance");
+  const auto moving = Taa::upscaleShare(farM, w, wMax, 0.f, trust, 0.f);
+  require(std::abs(moving.share - 0.2f)<1e-3f, "the share in motion is " + std::to_string(moving.share));
+  require(std::abs(moving.weight - wMax)<1e-4f, "the history loses its weight in motion");
+  const auto movingClipped = Taa::upscaleShare(farM, w, wMax, 2.f, trust, 0.f);
+  require(movingClipped.share>0.65f, "a clipped history in motion keeps " + std::to_string(1.f-movingClipped.share));
+  // at rest nothing changes, half way the weights are mixed, and no share means no weight
+  require(Taa::upscaleConfInMotion(0.3f, moveConf, 0.f)==0.3f, "the motion weight at rest");
+  require(std::abs(Taa::upscaleConfInMotion(0.f, moveConf, 0.5f) - 0.5f*moveConf)<1e-6f, "the motion weight half way");
+  require(Taa::upscaleMoveConf(0.f, wMax)==0.f, "no share gives a weight in motion");
+  // a history in motion keeps a smaller weight, and the frame's weight for the same share is smaller with it: the
+  // share in motion stays, and after a stop a sample at the centre takes half instead of a fifth
+  const float capConf = Taa::upscaleMoveConf(0.2f, 1.f);
+  const auto  capped  = Taa::upscaleShare(capConf, 1.f, 1.f, 0.f, trust, 0.f);
+  require(std::abs(capped.share - 0.2f)<1e-3f && std::abs(capped.weight - 1.f)<1e-4f, "the share against a capped history");
+  const auto  stopped = Taa::upscaleShare(1.f, capped.weight, wMax, 0.f, trust, 0.f);
+  require(std::abs(stopped.share - 0.5f)<1e-3f, "the first sample after a stop takes " + std::to_string(stopped.share));
+  // the history's cubic in motion: the asked one from 2 times, Catmull-Rom up to 1.5 times
+  require(Taa::upscaleHistSharp(0.75f, 1728, 3456)==0.75f && Taa::upscaleHistSharp(0.75f, 1152, 3456)==0.75f, "the cubic at 2x and more");
+  require(Taa::upscaleHistSharp(0.75f, 2304, 3456)==0.5f && Taa::upscaleHistSharp(0.75f, 3456, 3456)==0.5f, "the cubic up to 1.5x");
+  const float hs = Taa::upscaleHistSharp(0.75f, 1975, 3456);
+  require(hs>0.55f && hs<0.7f, "the cubic at 1.75x is " + std::to_string(hs));
+  }
+
+// the depth test of our own upscale: 1/w from the depth by the projection's offset, and what counts as hidden
+void upscaleDepth() {
+  const float n = 10.f, f = 100000.f;
+  Matrix4x4 proj;
+  proj.perspective(67.5f, 16.f/9.f, n, f);
+  const float off = Taa::upscaleDepthOffset(proj);
+  require(std::abs(off - n/(f - n))<1e-7f, "the depth offset is " + std::to_string(off));
+  // (1 - depth) + off of two view depths are in the ratio of the depths, turned over
+  auto invW = [&](float w) {
+    float x = 0, y = 0, z = w, ww = 1;
+    proj.project(x, y, z, ww);
+    return (1.f - z/ww) + off;
+    };
+  for(float w : {50.f, 400.f, 5000.f, 60000.f}) {
+    const float r = invW(w)/invW(2.f*w);
+    require(std::abs(r - 2.f)<2e-2f, "1/w at " + std::to_string(w) + " against twice that: " + std::to_string(r));
+    }
+  require(Taa::upscaleDepthOffset(Matrix4x4::mkIdentity())==0.f, "no perspective has a depth offset");
+  // the same surface, a slope within the tolerance and something farther are not hidden; a boot 10 % nearer is
+  const float tol = 0.02f, e = invW(400.f);
+  require(Taa::upscaleHidden(e, e, tol)==0.f, "a surface hides itself");
+  require(Taa::upscaleHidden(e, invW(400.f/1.015f), tol)==0.f, "a slope inside the tolerance hides");
+  require(Taa::upscaleHidden(e, invW(800.f), tol)==0.f, "what was farther hides");
+  require(Taa::upscaleHidden(e, invW(360.f), tol)==1.f, "a surface 10 % nearer does not hide");
+  const float half = Taa::upscaleHidden(e, e*1.03f, tol);
+  require(half>0.4f && half<0.6f, "between one and two tolerances: " + std::to_string(half));
+  }
+
 // the resolve's blend with the reactive mask (graphics plan 1v): the mask 0 changes nothing, a spark under it keeps
 // its light
 void reactiveWeights() {
@@ -343,6 +483,9 @@ int main() {
   try {
     jitterSequence();
     upscaleSequence();
+    upscaleTaps();
+    upscaleShares();
+    upscaleDepth();
     staticCamera();
     movingCamera();
     cameraJump();

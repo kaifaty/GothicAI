@@ -114,6 +114,8 @@ class Renderer final {
     void drawTaaSharpen   (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawUpscale      (Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawTemporalUpscale(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
+    void drawTaau         (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
+    void drawMotionCamera (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawTonemappingTemporal(Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
     bool useTemporalUpscale(Tempest::Size res, Tempest::Size fullRes) const;
     void drawReflections  (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
@@ -168,6 +170,21 @@ class Renderer final {
       float          renderScale        = 0;     // OPENGOTHIC_RENDER_SCALE=0.5..1 over vidResIndex; 0 unset
       bool           upscaleMipBiasSet  = false; // OPENGOTHIC_UPSCALE_MIP_BIAS over log2(in/out) - 1
       float          upscaleMipBias     = 0;
+      // our own temporal upscale in the same place (taau_resolve.frag), any backend
+      bool           taau               = false; // OPENGOTHIC_UPSCALE=taau
+      float          taauAlpha          = 0.2f;  // OPENGOTHIC_TAAU_ALPHA: a full history's share of a sample at the centre
+      float          taauKernel         = 6.f;   // OPENGOTHIC_TAAU_KERNEL: exp(-k*d^2), d in output pixels
+      float          taauClipTrust      = 4.f;   // OPENGOTHIC_TAAU_CLIP_TRUST: weight lost by a clipped history
+      float          taauGamma          = 1.f;   // OPENGOTHIC_TAAU_GAMMA: the variance box in sigmas
+      float          taauBoxStatic      = 3.f;   // OPENGOTHIC_TAAU_BOX_STATIC: the colour box of a still point, times
+      float          taauBoxMotion      = 20.f;  // OPENGOTHIC_TAAU_BOX_MOTION: output px a frame of the box's own size
+      float          taauHistSharp      = 0.75f; // OPENGOTHIC_TAAU_HIST_SHARP: the history's cubic in motion from 2x (Keys' -a)
+      float          taauMoveShare      = 0.2f;  // OPENGOTHIC_TAAU_MOVE_SHARE: the enlarged frame's share in motion; 0: off
+      float          taauMoveSpeed      = 1.f;   // OPENGOTHIC_TAAU_MOVE_SPEED: output px a frame of the full motion
+      float          taauMoveWeight     = 1.f;   // OPENGOTHIC_TAAU_MOVE_WEIGHT: the most weight a history keeps in motion
+      float          taauDepthTol       = 0.01f; // OPENGOTHIC_TAAU_DEPTH_TOL: a history nearer by this share of the depth hid the point; 0: no test
+      float          taauDepthClip      = 1.f;   // OPENGOTHIC_TAAU_DEPTH_CLIP: the weight a hidden point's history loses
+      float          taauEdgeBox        = 1.f;   // OPENGOTHIC_TAAU_EDGE_BOX: 1: no wider box at another surface's edge
       bool           bloomEnabled       = true;
       // the glare of the bloom (bloom_down.frag): a pixel whose brightest channel is over bloomGlareTo whites of
       // the frame gives the chain 1 + bloomGlare times its light, from bloomGlareFrom on by a smooth step.
@@ -318,14 +335,21 @@ class Renderer final {
     // residual against the camera's in texture coordinates, current -> previous; 0 where nothing moves by itself
     Tempest::Attachment       gbufMotion;
 
-    // the temporal upscale (graphics plan 1g, OPENGOTHIC_UPSCALE=temporal): MetalFX Temporal takes the place of the
-    // TAA resolve and keeps the history itself; bloom and tonemapping go on at the swapchain's resolution
+    // the temporal upscale (graphics plan 1g): the scene is drawn smaller and resolved into a frame of the
+    // swapchain's size in the place of the TAA resolve; bloom and tonemapping go on at that size.
+    // OPENGOTHIC_UPSCALE=temporal: MetalFX Temporal, which keeps the history itself and writes `output`.
+    // OPENGOTHIC_UPSCALE=taau: our own resolve (drawTaau), the history is taa.history at the swapchain's size
     struct {
-      Tempest::Attachment       motion;              // RG16F: to where the point was a frame ago, input texture coordinates
-      Tempest::StorageImage     output;              // linear HDR of the swapchain's size: bloom and tonemapping read it
+      Tempest::Attachment       motion;              // MetalFX, RG16F: to where the point was a frame ago, input texture coordinates
+      Tempest::Attachment       boxMid, boxExt;      // our own, RGBA16F of the input's size (taau_prepare.frag): the colour box, the motion in the alphas
+      Tempest::Attachment       depth[2];            // our own, RGBA16F, by taa.cur: 1 - depth and the motion of the frame for the next one's test
+      Tempest::Attachment       flags;               // our own, RG8: what that test found (hidden, the edge)
+      Tempest::StorageImage     output;              // MetalFX: linear HDR of the swapchain's size
+      Tempest::Size             outSize;             // the resolved frame's size; 0 with no temporal upscale
+      bool                      taau      = false;   // our own resolve, not MetalFX
       uint32_t                  phases    = Taa::Phases;
       float                     mipBias   = 0;
-      bool                      active    = false;   // this frame is resolved by MetalFX
+      bool                      active    = false;   // this frame is resolved by the temporal upscale
       } temporal;
 
     struct Upscale {

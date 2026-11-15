@@ -303,6 +303,11 @@ add_shader(tonemapping_up.frag       lighting/tonemapping.frag -DUPSCALE)
 # temporal upscale (graphics plan 1г): camera motion vectors, tonemapping with the bloom at the output resolution
 add_shader(motion_camera.frag        upscale/motion_camera.frag)
 add_shader(tonemapping_bloom.frag    lighting/tonemapping.frag -DBLOOM)
+# our own temporal upscale (graphics plan 1г, OPENGOTHIC_UPSCALE=taau): the resolve at the output resolution and what
+# it shares between the output pixels of one input texel, the dilated motion vectors and the colour box
+add_shader(taau_resolve.frag         upscale/taau_resolve.frag)
+add_shader(taau_resolve_h.frag       upscale/taau_resolve.frag -DFP16)
+add_shader(taau_prepare.frag         upscale/taau_prepare.frag)
 # the TAA frame at the internal resolution: the sharpening and the bloom in one pass with the tonemapping
 add_shader(tonemapping_taa.frag      lighting/tonemapping.frag -DBLOOM -DRCAS)
 
