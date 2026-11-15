@@ -17,8 +17,9 @@ Run from the repository root. reports/content/remaster/wall-torch-model: intent.
   original's flame effect and flare go, the fire's emitters sit on the wrap, the base lamp's light moves to the
   flame (vobs.d "offset_cm"). Written to reports/content/remaster/wall-torch-model/content/, in git;
 - places: the same for every wall torch of a place (PLACES) from the base's vobs.json, one layer file a place:
-  each torch's flame, sparks and flare go, its own lamp (the child lamp that is not static) moves into the flame
-  and follows it; a torch without such a lamp gets a light in the flame. Written next to the trial's layer, in git;
+  each torch's flame, sparks and flare go, its own lamp (the child lamp that is not static, or the static FIRE_STAT
+  where it is the only one) moves into the flame and follows it; a torch without such a lamp gets a light in the
+  flame. Written next to the trial's layer, in git;
 - pack: a staging set, a part of the working content (docs/remaster-pipeline.md, sets): the model as
   OWN_WALL_TORCH_01, its atlas as three materials (the wrap's with "emissive"), the layers, the effects and the
   flame atlas OWN_TORCH_FLAME.TGA. It takes the place of the part torch-fire-*: the working set is composed from
@@ -69,9 +70,13 @@ CARD, SIDE_CARD = (34.0, 44.0), (21.0, 32.0)  # the flame cards of OWN_TORCH_FLA
 TORCH_MESH = 'OW_MISC_WALL_TORCH_01.3DS'
 GONE = ('FIRE_MEDIUM.PFX', 'FIRE_SPARKS.PFX', 'ZFLARE6.TGA')  # the original's flame, sparks and flare under a torch
 LAMP = {'color': [230, 84, 15], 'near': 8, 'jitter_cm': 1.5}  # the torch's light: the flame's colour (wall-torch)
-# Other places of the torch: every OW_MISC_WALL_TORCH_01 of NEWWORLD inside the box (x and z, world cm). `range` is
-# the light of a torch that has no lamp of its own, the common range of the place's torch lamps.
-PLACES = {'xardas': dict(box=((29000, 31600), (-16300, -14100)), count=23, range=200)}
+OWN_STATIC = 'FIRE_STAT'  # a static lamp that is a torch's only light (the temple); other static lamps are fills
+# Other places of the torch: every OW_MISC_WALL_TORCH_01 of NEWWORLD inside the box (x and z, world cm) that no
+# earlier place and not the trial has taken. `range` is the light of a torch that has no lamp of its own, the common
+# range of the place's torch lamps.
+EVERYWHERE = ((-1e9, 1e9), (-1e9, 1e9))
+PLACES = {'xardas': dict(box=((29000, 31600), (-16300, -14100)), count=23, range=200),
+          'khorinis': dict(box=EVERYWHERE, count=119, range=250)}  # the rest of the island: the temple, farms, caves
 
 
 def cmd_tiles(_args) -> int:
@@ -191,6 +196,11 @@ def base_torches(vobs_json, box) -> list:
     return sorted(found, key=lambda vob: vob['id'])
 
 
+def bound(torch) -> bool:
+    """The original's fire holds other vobs under it (a lamp, two barrels): the layer cannot take it away."""
+    return any(c.get('children') for c in torch.get('children', []) if str(c.get('visual_name', '')).upper() in GONE)
+
+
 def place_layer(name, torches) -> dict:
     """The layer of a place: every torch shows the own model, loses the original's fire and gets the own one."""
     place = PLACES[name]
@@ -203,7 +213,8 @@ def place_layer(name, torches) -> dict:
         layer['remove'] += [c['id'] for c in children if str(c.get('visual_name', '')).upper() in GONE]
         layer['add'] += emitters(key, spot['emitters'], 7 + torch['id'] * 3)
         signal = {'flicker_from': f'{key}-flame', 'jitter_cm': LAMP['jitter_cm']}
-        own = [c for c in children if c['type'] == 'zCVobLight' and not c['is_static']]
+        lamps = [c for c in children if c['type'] == 'zCVobLight']
+        own = [c for c in lamps if not c['is_static']] or [c for c in lamps if c['preset'] == OWN_STATIC]
         if len(own) > 1:
             sys.exit(f'torch {torch["id"]}: {len(own)} lamps of its own')
         if own:
@@ -211,15 +222,20 @@ def place_layer(name, torches) -> dict:
             if max(abs(v) for v in offset) > 100:
                 sys.exit(f'torch {torch["id"]}: its lamp {own[0]["id"]} is {offset} cm from the flame, over the layer\'s 100')
             layer['light'].append({'id': own[0]['id'], 'color': LAMP['color'], 'near': LAMP['near'], **signal, 'offset_cm': offset})
-        else:  # a static fill lamp or none: the flame gets a light of its own, after its emitter in the file
+        else:  # a fill lamp or none: the flame gets a light of its own, after its emitter in the file
             layer['add'].append({'key': f'{key}-light', 'kind': 'light', 'position': at(spot['light']), 'yaw_deg': 0,
                                  'range': place['range'], 'color': LAMP['color'], 'near': LAMP['near'], **signal})
     return layer
 
 
 def cmd_places(args) -> int:
+    taken = {MESH_ID}
     for name, place in PLACES.items():
-        torches = base_torches(args.base / 'worlds/NEWWORLD/vobs.json', place['box'])
+        torches = [t for t in base_torches(args.base / 'worlds/NEWWORLD/vobs.json', place['box']) if t['id'] not in taken]
+        taken |= {t['id'] for t in torches}
+        for torch in filter(bound, torches):
+            print(f'{name}: torch {torch["id"]} at {at(torch["position"])} stays the original: its fire holds other vobs')
+        torches = [t for t in torches if not bound(t)]
         if len(torches) != place['count']:
             sys.exit(f'{name}: {len(torches)} torches in the box, {place["count"]} expected')
         layer = place_layer(name, torches)

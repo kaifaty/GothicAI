@@ -1,0 +1,74 @@
+# The screen ray of the lamps (../README.md, "Шаг 4"), the clips of the acceptance: the user judges
+# «без луча | с лучом» by eye. Two runs record the same clips, without the ray (OPENGOTHIC_VSM_STUDY=32) and the
+# game's; tools/lamp_contact_clips.py puts them side by side.
+#   OPENGOTHIC_RT=1 OPENGOTHIC_LIGHT_FREEZE=1 TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=ryzen \
+#     OPENGOTHIC_CONTENT=<the working content> [OPENGOTHIC_VSM_STUDY=32] scripts/bench.sh <this file> <out>
+# @timeout 900
+seed 73013
+cheat god
+blink off
+overlay off
+ui off
+view full
+cam lift off
+# 1. Xardas' tower, the torch: the hero turns on the spot before a held camera
+set time 12 0
+clear 3000
+wait 800
+watch player
+cam cut
+cam look 110
+cam world 170 130 30
+wait 3000
+cam hold
+rec tower-turn
+wait 1000
+hold turnl 6000
+wait 7000
+stop
+# 2. A table of the upper city at night: a slow pan over the candle, the mug and the bowl
+set time 22 0
+goto NW_CITY_UPTOWN_HUT_01_COOK
+clear 3000
+wait 6000
+cam at 11798 1100 -4960 11760 995 -5150
+wait 3000
+cloth camera-turn -12 1
+wait 1500
+rec table-pan
+wait 1000
+cloth camera-turn 24 7000
+wait 8000
+stop
+# 3. The market at night, a step from a lantern: the hero turns on the spot, then walks with a drawn sword before
+#    the game's camera
+goto NW_CITY_MERCHANT_TRADE_04
+freeze PAL_203_LOTHAR
+watch player
+set time 22 30
+goto pos 7820 330 -4760
+wait 4000
+cam cut
+cam look 110
+cam world 200 140 300
+wait 3000
+cam hold
+rec lantern-turn
+wait 1000
+hold turnl 6000
+wait 7000
+stop
+equip ItMw_1h_Vlk_Sword
+wait 500
+tap weapon
+wait 2500
+cam game
+wait 3000
+rec lantern-sword
+wait 1000
+hold turnl 2500
+wait 3000
+walkmode walk
+hold forward 4000
+wait 4500
+stop
