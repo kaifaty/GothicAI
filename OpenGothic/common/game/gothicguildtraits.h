@@ -7,7 +7,7 @@ static_assert(GIL_NONE==GuildNone);
 
 inline const GuildTraits& gothicGuildTraits() {
   static const GuildTraits traits = [] {
-    GuildTraits ret{GIL_NONE,GIL_PUBLIC,std::vector<uint8_t>(GIL_MAX)};
+    GuildTraits ret{GIL_NONE,GIL_PUBLIC,std::vector<uint8_t>(GIL_MAX),GuildTraits::Orc};
     for(uint32_t guild=0;guild<GIL_MAX;++guild) {
       auto& flags = ret.flags[guild];
       if(guild<GIL_SEPERATOR_HUM)

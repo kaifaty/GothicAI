@@ -20,23 +20,27 @@ int main() {
   const auto& traits = gothicGuildTraits();
   require(traits.count()==GIL_MAX,"guild count is unchanged");
   require(traits.none==GIL_NONE && traits.publicGuild==GIL_PUBLIC,"special guild numbers are unchanged");
-  for(uint32_t gil=0;gil<GIL_MAX;++gil) {
-    require(traits.has(gil,GuildTraits::Human)==(gil < GIL_SEPERATOR_HUM),"human guild parity");
-    require(traits.has(gil,GuildTraits::Monster)==(GIL_SEPERATOR_HUM<gil && gil<GIL_SEPERATOR_ORC),"monster guild parity");
-    require(traits.has(gil,GuildTraits::Orc)==(gil>GIL_SEPERATOR_ORC),"orc guild parity");
+  const auto checkGuild = [&](int64_t gil) {
+    require(traits.has(gil,GuildTraits::Human)==(gil>=0 && (gil < GIL_SEPERATOR_HUM)),"human guild parity");
+    require(traits.has(gil,GuildTraits::Monster)==(gil>=0 && (GIL_SEPERATOR_HUM<gil && gil<GIL_SEPERATOR_ORC)),"monster guild parity");
+    require(traits.has(gil,GuildTraits::Orc)==(gil>=0 && (gil>GIL_SEPERATOR_ORC)),"orc guild parity");
     const auto G2_UNDEAD = (gil == GIL_GOBBO_SKELETON ||
       gil == GIL_SUMMONED_GOBBO_SKELETON || gil == GIL_SKELETON      ||
       gil == GIL_SUMMONED_SKELETON       || gil == GIL_SKELETON_MAGE ||
       gil == GIL_SHADOWBEAST_SKELETON    || gil == GIL_ZOMBIE);
-    require(traits.has(gil,GuildTraits::Undead)==G2_UNDEAD,"undead guild parity");
+    require(traits.has(gil,GuildTraits::Undead)==(gil>=0 && G2_UNDEAD),"undead guild parity");
     const auto guild=gil;
     const bool sinks = guild==GIL_GOBBO_SKELETON || guild==GIL_SUMMONED_GOBBO_SKELETON ||
                        guild==GIL_SKELETON || guild==GIL_SUMMONED_SKELETON || guild==GIL_SKELETON_MAGE ||
                        guild==GIL_SHADOWBEAST_SKELETON || guild==GIL_STONEGOLEM || guild==GIL_SUMMONED_GOLEM ||
                        guild==GIL_Stoneguardian || guild==GIL_SummonedGuardian;
-    require(traits.has(gil,GuildTraits::SinkingBody)==sinks,"sinking body guild parity");
-    require(traits.has(gil,GuildTraits::Dragon)==(gil==GIL_DRAGON),"dragon guild parity");
-    }
+    require(traits.has(gil,GuildTraits::SinkingBody)==(gil>=0 && sinks),"sinking body guild parity");
+    require(traits.has(gil,GuildTraits::Dragon)==(gil>=0 && (gil==GIL_DRAGON)),"dragon guild parity");
+    };
+  for(uint32_t gil=0;gil<GIL_MAX;++gil)
+    checkGuild(gil);
+  for(int64_t gil:std::array<int64_t,3>{-1,GIL_MAX,GIL_MAX+5})
+    checkGuild(gil);
 
   require(NpcDeedSimulation::admitted(NpcProcessPolicy::AiNormal),
           "a fully simulated marked NPC may transfer or capture a deed");

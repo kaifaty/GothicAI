@@ -43,7 +43,7 @@ HitZones::Zone World::npcRayHitZone(const Npc& npc, const Tempest::Vec3& from,
 
 bool World::npcBodySinks(const Npc& npc) const {
   const auto guild=npc.trueGuild();
-  return guildTraits().has(uint32_t(guild),GuildTraits::SinkingBody);
+  return guildTraits().has(guild,GuildTraits::SinkingBody);
   }
 
 ItemMaterial World::itemMaterial(const Item& item) const { return ItemMaterial(item.handle().material); }

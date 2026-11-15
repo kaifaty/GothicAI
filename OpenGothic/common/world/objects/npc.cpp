@@ -1338,7 +1338,7 @@ bool Npc::isTargetableBySpell(TargetType t) const {
   if(bool(t&(TARGET_TYPE_ALL|TARGET_TYPE_NPCS)))
     return true;
 
-  const auto gil = uint32_t(trueGuild());
+  const auto gil = trueGuild();
 
   const auto G2_UNDEAD = owner.guildTraits().has(gil,GuildTraits::Undead);
 
