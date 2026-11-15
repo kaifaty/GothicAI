@@ -119,6 +119,62 @@ float Taa::upscaleMipBias(uint32_t inW, uint32_t outW) {
   return float(std::log2(double(inW)/double(outW)) - 1.0);
   }
 
+Taa::UpscaleTap Taa::upscaleTap(uint32_t outX, uint32_t outY, uint32_t outW, uint32_t outH,
+                                uint32_t inW, uint32_t inH, const Vec2& jitter) {
+  // the picture is moved by +jitter: the point at the output pixel's centre lies at uv*in + jitter of the input
+  const float px = (float(outX) + 0.5f)/float(std::max(outW,1u))*float(inW) + jitter.x;
+  const float py = (float(outY) + 0.5f)/float(std::max(outH,1u))*float(inH) + jitter.y;
+  UpscaleTap t;
+  t.x      = std::clamp(int32_t(std::floor(px)), 0, int32_t(std::max(inW,1u)) - 1);
+  t.y      = std::clamp(int32_t(std::floor(py)), 0, int32_t(std::max(inH,1u)) - 1);
+  t.offset = Vec2(float(t.x) + 0.5f - px, float(t.y) + 0.5f - py);
+  return t;
+  }
+
+float Taa::upscaleConfidence(const Vec2& offset, float scaleX, float scaleY, float kernel) {
+  const float dx = offset.x*scaleX, dy = offset.y*scaleY;
+  return std::exp(-kernel*(dx*dx + dy*dy));
+  }
+
+Taa::UpscaleShare Taa::upscaleShare(float conf, float gathered, float wMax, float moved, float clipTrust, float mask) {
+  const float wH = std::min(std::max(gathered, 0.f), wMax)/(1.f + clipTrust*moved);
+  const float kS = std::clamp(mask*UpscaleMaskSmooth, 0.f, 1.f);
+  UpscaleShare r;
+  r.share  = conf/(conf + wH + 1e-4f);
+  r.share  = r.share + (1.f/(1.f + wMax) - r.share)*kS;
+  r.share  = r.share + (1.f - r.share)*mask;
+  r.weight = std::max(std::min(wH + conf, wMax)*(1.f - kS), UpscaleWeightInit);
+  return r;
+  }
+
+float Taa::upscaleMoveConf(float share, float wMax) {
+  const float s = std::clamp(share, 0.f, 0.95f);
+  return wMax*s/(1.f - s);
+  }
+
+float Taa::upscaleConfInMotion(float conf, float moveConf, float move) {
+  return conf + (moveConf - conf)*std::clamp(move, 0.f, 1.f);
+  }
+
+float Taa::upscaleHistSharp(float sharp, uint32_t inW, uint32_t outW) {
+  const float scale = float(outW)/float(std::max(inW, 1u));
+  const float k     = std::clamp((scale - 1.5f)/0.5f, 0.f, 1.f);
+  return 0.5f + (sharp - 0.5f)*k;
+  }
+
+float Taa::upscaleDepthOffset(const Matrix4x4& proj) {
+  // depth = (m22*z + m32)/(m23*z + m33) of the view's z: at infinity m22/m23
+  const float wz = proj.at(2,3);
+  if(wz==0.f)
+    return 0.f;
+  return proj.at(2,2)/wz - 1.f;
+  }
+
+float Taa::upscaleHidden(float invWExpected, float invWStored, float tol) {
+  const float nearer = invWStored/std::max(invWExpected, 1e-12f) - 1.f;
+  return std::clamp((nearer - tol)/std::max(tol, 1e-6f), 0.f, 1.f);
+  }
+
 Matrix4x4 Taa::jitterMatrix(const Vec2& px, uint32_t w, uint32_t h) {
   auto m = Matrix4x4::mkIdentity();
   m.translate(2.f*px.x/float(std::max(w,1u)), 2.f*px.y/float(std::max(h,1u)), 0.f);

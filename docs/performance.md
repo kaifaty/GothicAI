@@ -48,6 +48,7 @@ NPC прошли цикл тел теней и сверку логических
 | Место | Сценарий | Нагрузка |
 |---|---|---|
 | `market` | `scripts/bench/perf-market.bench` | рынок Хориниса днём, торговцы и прохожие |
+| `market-walk` | `scripts/bench/perf-market-walk.bench` | тот же рынок на ходу: герой идёт, камера следует; единственное место с движущейся камерой |
 | `harbour` | `scripts/bench/perf-harbour.bench` | гавань, вода, корабль и город |
 | `harbour-night` | `scripts/bench/perf-harbour-night.bench` | то же место гавани в полночь: горят фонари, жаровни и свет слоя предметов |
 | `forest` | `scripts/bench/perf-forest.bench` | дорога за городом, дальняя прорисовка и растительность |

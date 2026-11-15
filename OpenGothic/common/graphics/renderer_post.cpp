@@ -11,7 +11,7 @@ using namespace Tempest;
 void Renderer::prepareTaa(WorldView& wview, const Camera& camera) {
   // the path tracer accumulates its own frames, with a camera that stands still
   // the temporal upscale (graphics plan 1g) takes the jitter and the history of the TAA in its own way
-  temporal.active = settings.taaEnabled && !settings.pathTraceEnabled && !temporal.output.isEmpty();
+  temporal.active = settings.taaEnabled && !settings.pathTraceEnabled && temporal.outSize.w>0;
   taa.active      = settings.taaEnabled && !settings.pathTraceEnabled && (!taa.output.isEmpty() || temporal.active);
   if(!taa.active) {
     taa.valid = false;
@@ -99,7 +99,7 @@ void Renderer::drawBloom(Encoder<CommandBuffer>& cmd, bool fused) {
   // down: the scene to half resolution (Karis-weighted), then each level to the next
   for(size_t i=0; i<bloomChain.size(); ++i) {
     cmd.setFramebuffer({{bloomChain[i], Tempest::Discard, Tempest::Preserve}});
-    if(i==0 && temporal.active)
+    if(i==0 && temporal.active && !temporal.taau)
       cmd.setBinding(0, temporal.output, Sampler::bilinear(ClampMode::ClampToEdge));
     else if(i==0 && fused)
       cmd.setBinding(0, taa.history[taa.cur^1], Sampler::bilinear(ClampMode::ClampToEdge));
@@ -279,9 +279,9 @@ void Renderer::drawTaa(Tempest::Encoder<Tempest::CommandBuffer>& cmd, bool fused
   taa.cur ^= 1;
   }
 
-void Renderer::drawTemporalUpscale(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
-  // In linear HDR after the translucent and underwater passes, where the TAA resolve would be (graphics plan 1g).
-  // The camera's motion of each pixel first: from its depth to where it was a frame ago (motion_camera.frag)
+void Renderer::drawMotionCamera(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
+  // The camera's motion of each pixel: from its depth to where it was a frame ago, plus the object's own move
+  // (motion_camera.frag)
   struct Push {
     Matrix4x4 reproject;
     } push;
@@ -293,6 +293,94 @@ void Renderer::drawTemporalUpscale(Tempest::Encoder<Tempest::CommandBuffer>& cmd
   cmd.setPushData(push);
   cmd.setPipeline(shaders.motionCamera);
   cmd.draw(nullptr, 0, 3);
+  }
+
+void Renderer::drawTaau(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
+  // Our own temporal upscale (graphics plan 1g): in linear HDR where the TAA resolve would be.
+  // First, at the input's size, what the output pixels of one input texel share (taau_prepare.frag): the motion of
+  // the nearest point and the colour box the history is clipped to
+  struct Prepare {
+    Matrix4x4 reproject;
+    float     gamma    = 1;
+    float     depthOff = 0;
+    float     depthTol = 0;
+    float     pad0     = 0;
+    } prep;
+  prep.reproject = taa.valid ? taa.reproject : Matrix4x4::mkIdentity();
+  prep.gamma     = settings.taauGamma;
+  prep.depthOff  = Taa::upscaleDepthOffset(camHistory.cur.proj);
+  prep.depthTol  = taa.valid ? settings.taauDepthTol : 0.f;
+  // this frame's depth and motion; the previous frame's are the other one, as the history
+  auto& depthNow = temporal.depth[taa.cur];
+  cmd.setDebugMarker("TAAU-prepare");
+  cmd.setFramebuffer({{temporal.boxMid, Tempest::Discard, Tempest::Preserve},
+                      {temporal.boxExt, Tempest::Discard, Tempest::Preserve},
+                      {depthNow,        Tempest::Discard, Tempest::Preserve},
+                      {temporal.flags,  Tempest::Discard, Tempest::Preserve}});
+  cmd.setBinding(0, zbuffer,      Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(1, gbufMotion,   Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(2, sceneLinear,  Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(3, temporal.depth[taa.cur^1], Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setPushData(prep);
+  cmd.setPipeline(shaders.taauPrepare);
+  cmd.draw(nullptr, 0, 3);
+
+  // Then the resolve at the swapchain's size (taau_resolve.frag). The history stays unsharpened:
+  // drawTonemappingTaa sharpens it on the way out
+  struct Push {
+    Vec2      jitter;             // this frame's offset, input pixels (Taa::jitterPx)
+    float     wMax        = 4;
+    uint32_t  reset       = 0;
+    float     reactiveMax = 0.9f;
+    uint32_t  reactive    = 0;
+    float     kernel      = 6;
+    float     clipTrust   = 4;
+    float     boxStatic   = 1;
+    float     boxMotion   = 1;
+    float     histSharp   = 0.5f;
+    float     moveConf    = 1;
+    float     moveSpeed   = 1;
+    float     depthClip   = 1;
+    float     edgeBox     = 1;
+    float     moveWeight  = 1;
+    } push;
+  push.jitter      = taa.jitter;
+  push.wMax        = 1.f/settings.taauAlpha - 1.f;
+  push.reset       = taa.valid ? 0 : 1;
+  push.reactiveMax = settings.taaReactiveMax;
+  push.reactive    = settings.taaReactive ? 1 : 0;
+  push.kernel      = settings.taauKernel;
+  push.clipTrust   = settings.taauClipTrust;
+  push.boxStatic   = settings.taauBoxStatic;
+  push.boxMotion   = settings.taauBoxMotion;
+  push.histSharp   = Taa::upscaleHistSharp(settings.taauHistSharp, uint32_t(sceneLinear.w()), uint32_t(temporal.outSize.w));
+  // the enlarged frame's weight in motion from its share against a full history; no share: no motion at any speed
+  push.moveWeight  = std::min(settings.taauMoveWeight, push.wMax);
+  push.moveConf    = Taa::upscaleMoveConf(settings.taauMoveShare, push.moveWeight);
+  push.moveSpeed   = settings.taauMoveShare>0.f ? settings.taauMoveSpeed : 1e9f;
+  push.depthClip   = settings.taauDepthClip;
+  push.edgeBox     = settings.taauEdgeBox;
+
+  auto& next = taa.history[taa.cur];
+  auto& prev = taa.history[taa.cur^1];
+  cmd.setDebugMarker("TAAU");
+  cmd.setFramebuffer({{next, Tempest::Discard, Tempest::Preserve}});
+  cmd.setBinding(0, sceneLinear,     Sampler::bilinear(ClampMode::ClampToEdge));
+  cmd.setBinding(1, temporal.boxMid, Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(2, temporal.boxExt, Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(3, prev,            Sampler::bilinear(ClampMode::ClampToEdge));
+  cmd.setBinding(4, taa.reactive,    Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(5, temporal.flags,  Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setPushData(push);
+  cmd.setPipeline(shaders.taauResolve);
+  cmd.draw(nullptr, 0, 3);
+  taa.valid = true;
+  taa.cur  ^= 1; // the frame stays in the history, as drawTaa's fused way
+  }
+
+void Renderer::drawTemporalUpscale(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
+  // In linear HDR after the translucent and underwater passes, where the TAA resolve would be (graphics plan 1g).
+  drawMotionCamera(cmd);
 
   // Apple's conventions: the jitter is the pixel's centre minus where it was sampled, in input pixels: the picture
   // moved by +jitter (Taa::jitterMatrix), so the centre shows the point at centre - jitter. The vectors are in the
@@ -337,11 +425,15 @@ void Renderer::drawTonemappingTaa(Attachment& result, Encoder<CommandBuffer>& cm
   p.bloomLevels = float(bloomChain.size());
   p.sharpness   = settings.taaSharpness;
   p.mul         = eye.mul();
+  // our own upscale comes here with the bloom off too: the frame itself stands in for it, with no share
+  const bool bloom = settings.bloomEnabled && !bloomChain[0].isEmpty();
+  if(!bloom)
+    p.bloomStrength = 0;
 
   cmd.setFramebuffer({ {result, Tempest::Discard, Tempest::Preserve} });
   cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
   cmd.setBinding(1, taa.history[taa.cur^1], Sampler::nearest(ClampMode::ClampToEdge));
-  cmd.setBinding(2, bloomChain[0], Sampler::bilinear(ClampMode::ClampToEdge));
+  cmd.setBinding(2, bloom ? bloomChain[0] : taa.history[taa.cur^1], Sampler::bilinear(ClampMode::ClampToEdge));
   cmd.setPushData(p);
   cmd.setPipeline(shaders.tonemappingTaa);
   cmd.draw(nullptr, 0, 3);

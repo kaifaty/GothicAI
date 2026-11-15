@@ -3,6 +3,7 @@
     uv run --with numpy --with pillow python -I stills.py metrics <100 % dir> <dir> [<dir> ...]
     uv run --with numpy --with pillow python -I stills.py identity <dir a> <dir b>
     uv run --with numpy --with pillow python -I stills.py crops <out dir> <shot> <x,y,w,h> <label=dir> [<label=dir> ...]
+    uv run --with numpy --with pillow python -I stills.py walk <100 % dir> <dir> [<dir> ...]
 
 metrics: for every PNG of the 100 % run that the other runs have too: the mean |difference| of the luminance with
 100 % (0..255), the gradient energy against 100 % (sharp() of the TAA report's metrics.py: mean |gradient| of the
@@ -10,6 +11,9 @@ luminance, x plus y; 1.0 is as sharp as 100 %), and the shift against 100 % by p
 that moved would show it here; Apple's sign of a correct jitter is a still scene that does not move).
 identity: pixels that differ between two runs of the same stills, and the largest difference.
 crops: the same box of one shot from each run, 1:1, side by side with the label above each.
+walk: the stills of upscale-walk.bench or upscale-stop.bench (the benches are lockstep: a still of two runs is the same instant) at 3456x1918,
+the cobbles left of the hero and the hero's legs with the ground they uncover: the gradient energy against 100 % and
+the RMS difference of the luminance with it, for each still that every run has.
 """
 import pathlib
 import sys
@@ -104,12 +108,35 @@ def crops(out, shot, box, runs):
     print(path)
 
 
+WALK_BOX = (300, 1150, 1400, 1750)  # the cobbles left of the hero, upscale-walk.bench at 3456x1918
+LEGS_BOX = (1560, 1150, 1920, 1480)  # the hero's legs and the ground they uncover
+
+
+def walk(ref, others):
+    order = ("stand", "walk", "stride", "stop")
+    shots = [p.stem for p in sorted(ref.glob("*.png"),
+                                    key=lambda p: (next((i for i, o in enumerate(order) if p.stem.startswith(o)), 9), p.stem))]
+    shots = [s for s in shots if all((d/f"{s}.png").exists() for d in others)]
+    for title, box in (("the cobbles", WALK_BOX), ("the hero's legs", LEGS_BOX)):
+        print(f"{title}: sharpness / RMS difference with 100 %")
+        print(f"{'':24s} " + "   ".join(f"{s:12s}" for s in shots))
+        truth = {s: luma(load(ref/f"{s}.png"))[box[1]:box[3], box[0]:box[2]] for s in shots}
+        for d in others:
+            cells = []
+            for s in shots:
+                f = luma(load(d/f"{s}.png"))[box[1]:box[3], box[0]:box[2]]
+                cells.append(f"{sharp(f)/sharp(truth[s]):4.2f} / {np.sqrt(((f - truth[s])**2).mean()):5.2f}")
+            print(f"{d.name:24s} " + "   ".join(cells))
+
+
 def main():
     mode = sys.argv[1]
     if mode == "metrics":
         metrics(pathlib.Path(sys.argv[2]), [pathlib.Path(p) for p in sys.argv[3:]])
     elif mode == "identity":
         identity(pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3]))
+    elif mode == "walk":
+        walk(pathlib.Path(sys.argv[2]), [pathlib.Path(p) for p in sys.argv[3:]])
     elif mode == "crops":
         crops(pathlib.Path(sys.argv[2]), sys.argv[3], sys.argv[4], [a.split("=", 1) for a in sys.argv[5:]])
     else:

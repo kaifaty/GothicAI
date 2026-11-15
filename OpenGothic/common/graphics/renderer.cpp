@@ -362,8 +362,53 @@ void Renderer::setupSettings() {
     if(const char* e = std::getenv("OPENGOTHIC_RENDER_SCALE"))
       settings.renderScale = std::clamp(std::strtof(e, nullptr), 0.5f, 1.f);
     settings.temporalUpscale = false;
+    settings.taau            = false;
     if(const char* e = std::getenv("OPENGOTHIC_UPSCALE"); e!=nullptr && std::string_view(e)=="temporal")
       settings.temporalUpscale = settings.taaEnabled && Resources::device().properties().temporalUpscale;
+    // OPENGOTHIC_UPSCALE=taau: our own resolve in the same place, on any backend; OPENGOTHIC_TAAU_ALPHA, _KERNEL,
+    // _CLIP_TRUST, _GAMMA, _BOX_STATIC, _BOX_MOTION, _MOVE_SHARE, _MOVE_SPEED and _HIST_SHARP are its knobs
+    // (taau_resolve.frag)
+    if(const char* e = std::getenv("OPENGOTHIC_UPSCALE"); e!=nullptr && std::string_view(e)=="taau")
+      settings.taau = settings.taaEnabled;
+    settings.taauAlpha     = 0.2f;
+    settings.taauKernel    = 6.f;
+    settings.taauClipTrust = 4.f;
+    settings.taauGamma   = 1.f;
+    settings.taauBoxStatic = 3.f;
+    settings.taauBoxMotion = 20.f;
+    settings.taauHistSharp = 0.75f;
+    settings.taauMoveShare = 0.2f;
+    settings.taauMoveSpeed = 1.f;
+    settings.taauDepthTol  = 0.01f;
+    settings.taauMoveWeight = 1.f;
+    if(const char* e = std::getenv("OPENGOTHIC_TAAU_MOVE_WEIGHT"))
+      settings.taauMoveWeight = std::clamp(std::strtof(e, nullptr), 0.05f, 100.f);
+    settings.taauDepthClip = 1.f;
+    settings.taauEdgeBox   = 1.f;
+    if(const char* e = std::getenv("OPENGOTHIC_TAAU_DEPTH_TOL"))
+      settings.taauDepthTol = std::clamp(std::strtof(e, nullptr), 0.f, 1.f);
+    if(const char* e = std::getenv("OPENGOTHIC_TAAU_DEPTH_CLIP"))
+      settings.taauDepthClip = std::clamp(std::strtof(e, nullptr), 0.f, 1.f);
+    if(const char* e = std::getenv("OPENGOTHIC_TAAU_EDGE_BOX"))
+      settings.taauEdgeBox = std::clamp(std::strtof(e, nullptr), 0.f, 1.f);
+    if(const char* e = std::getenv("OPENGOTHIC_TAAU_MOVE_SPEED"))
+      settings.taauMoveSpeed = std::clamp(std::strtof(e, nullptr), 0.01f, 64.f);
+    if(const char* e = std::getenv("OPENGOTHIC_TAAU_HIST_SHARP"))
+      settings.taauHistSharp = std::clamp(std::strtof(e, nullptr), 0.f, 2.f);
+    if(const char* e = std::getenv("OPENGOTHIC_TAAU_MOVE_SHARE"))
+      settings.taauMoveShare = std::clamp(std::strtof(e, nullptr), 0.f, 1.f);
+    if(const char* e = std::getenv("OPENGOTHIC_TAAU_BOX_STATIC"))
+      settings.taauBoxStatic = std::clamp(std::strtof(e, nullptr), 1.f, 1000.f);
+    if(const char* e = std::getenv("OPENGOTHIC_TAAU_BOX_MOTION"))
+      settings.taauBoxMotion = std::clamp(std::strtof(e, nullptr), 0.01f, 64.f);
+    if(const char* e = std::getenv("OPENGOTHIC_TAAU_ALPHA"))
+      settings.taauAlpha = std::clamp(std::strtof(e, nullptr), 0.01f, 1.f);
+    if(const char* e = std::getenv("OPENGOTHIC_TAAU_KERNEL"))
+      settings.taauKernel = std::clamp(std::strtof(e, nullptr), 0.f, 16.f);
+    if(const char* e = std::getenv("OPENGOTHIC_TAAU_CLIP_TRUST"))
+      settings.taauClipTrust = std::clamp(std::strtof(e, nullptr), 0.f, 64.f);
+    if(const char* e = std::getenv("OPENGOTHIC_TAAU_GAMMA"))
+      settings.taauGamma = std::clamp(std::strtof(e, nullptr), 0.25f, 4.f);
     settings.upscaleMipBiasSet = false;
     if(const char* e = std::getenv("OPENGOTHIC_UPSCALE_MIP_BIAS")) {
       settings.upscaleMipBiasSet = true;
@@ -372,9 +417,17 @@ void Renderer::setupSettings() {
     static bool logged = false;
     if(!logged && (settings.renderScale>0 || std::getenv("OPENGOTHIC_UPSCALE")!=nullptr)) {
       logged = true;
-      Log::i("render: upscale = ", settings.temporalUpscale ? "temporal" : "off", ", render scale = ",
+      Log::i("render: upscale = ", settings.temporalUpscale ? "temporal" : (settings.taau ? "taau" : "off"),
+             ", render scale = ",
              settings.renderScale, settings.upscaleMipBiasSet ? ", mip bias set = " : "",
              settings.upscaleMipBiasSet ? std::to_string(settings.upscaleMipBias) : std::string());
+      if(settings.taau)
+        Log::i("render: taau alpha = ", settings.taauAlpha, ", kernel = ", settings.taauKernel,
+               ", clip trust = ", settings.taauClipTrust, ", gamma = ", settings.taauGamma,
+               ", box static = ", settings.taauBoxStatic, ", box motion = ", settings.taauBoxMotion,
+               ", move share = ", settings.taauMoveShare, ", move speed = ", settings.taauMoveSpeed,
+               ", hist sharp = ", settings.taauHistSharp, ", move weight = ", settings.taauMoveWeight, ", depth tol = ", settings.taauDepthTol,
+               ", depth clip = ", settings.taauDepthClip, ", edge box = ", settings.taauEdgeBox);
       }
   }
   // CMAA2 runs at internal resolution, so it needs a same-size target: native or the upscaler input
@@ -630,19 +683,41 @@ void Renderer::resetViewport(Tempest::Size res, Tempest::Size fullRes) {
                                                               std::max(bw>>(i+1),1u), std::max(bh>>(i+1),1u)) : Attachment();
 
   if(temporalOn) {
-    temporal.motion  = device.attachment(TextureFormat::RG16F, w, h);
-    temporal.output  = device.image2d(TextureFormat::R11G11B10UF, bw, bh);
+    temporal.taau    = settings.taau;
+    temporal.outSize = Size(int(bw), int(bh));
+    temporal.motion  = temporal.taau ? Attachment() : device.attachment(TextureFormat::RG16F, w, h);
+    temporal.boxMid  = temporal.taau ? device.attachment(TextureFormat::RGBA16F, w, h) : Attachment();
+    temporal.boxExt  = temporal.taau ? device.attachment(TextureFormat::RGBA16F, w, h) : Attachment();
+    for(auto& d : temporal.depth)
+      d = temporal.taau ? device.attachment(TextureFormat::RGBA16F, w, h) : Attachment();
+    temporal.flags   = temporal.taau ? device.attachment(TextureFormat::RG8, w, h) : Attachment();
+    temporal.output  = temporal.taau ? StorageImage() : device.image2d(TextureFormat::R11G11B10UF, bw, bh);
     temporal.phases  = Taa::upscalePhases(w, h, bw, bh);
-    temporal.mipBias = settings.upscaleMipBiasSet ? settings.upscaleMipBias : Taa::upscaleMipBias(w, bw);
-    Log::i("render: temporal upscale ", w, "x", h, " -> ", bw, "x", bh, ", phases = ", temporal.phases,
-           ", mip bias = ", temporal.mipBias);
+    // MetalFX takes Apple's log2(in/out) - 1; our own resolve half a level less sharp, as TAA's -0.5 at 100 %
+    temporal.mipBias = settings.upscaleMipBiasSet ? settings.upscaleMipBias
+                                                  : Taa::upscaleMipBias(w, bw) + (temporal.taau ? 0.5f : 0.f);
+    Log::i("render: temporal upscale ", temporal.taau ? "(taau) " : "", w, "x", h, " -> ", bw, "x", bh,
+           ", phases = ", temporal.phases, ", mip bias = ", temporal.mipBias);
     } else {
+    temporal.taau    = false;
+    temporal.outSize = Size(0, 0);
     temporal.motion  = Attachment();
+    temporal.boxMid  = Attachment();
+    temporal.boxExt  = Attachment();
+    temporal.depth[0] = Attachment();
+    temporal.depth[1] = Attachment();
+    temporal.flags    = Attachment();
     temporal.output  = StorageImage();
     }
 
   // TAA: the frame resolved with the history is written into `output`, which then swaps with sceneLinear
-  if(settings.taaEnabled && !temporalOn) {
+  if(settings.taaEnabled && temporalOn && temporal.taau) {
+    // our own upscale: the history is the frame, at the swapchain's size; the tonemapping sharpens it on the way out
+    taa.output     = Attachment();
+    taa.history[0] = device.attachment(TextureFormat::RGBA16F,bw,bh);
+    taa.history[1] = device.attachment(TextureFormat::RGBA16F,bw,bh);
+    }
+  else if(settings.taaEnabled && !temporalOn) {
     taa.output     = device.attachment(TextureFormat::R11G11B10UF,w,h);
     taa.history[0] = device.attachment(TextureFormat::RGBA16F,w,h);
     taa.history[1] = device.attachment(TextureFormat::RGBA16F,w,h);
@@ -796,7 +871,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   // a switch between TAA and CMAA2 (settings) needs their buffers; the temporal upscale its own, of the frame's size
   const bool aaReady  = !settings.aaEnabled  || !cmaa2.workingEdges.isEmpty();
   const bool taaReady = !settings.taaEnabled ||
-                        (useTemporalUpscale(res, result.size()) ? temporal.output.size()==result.size()
+                        (useTemporalUpscale(res, result.size()) ? temporal.outSize==result.size()
                                                                 : !taa.output.isEmpty());
   if(res!=zbuffer.size() || !aaReady || !taaReady) {
     resetViewport(res, result.size());
@@ -955,11 +1030,19 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     }
 
   if(temporal.active) {
-    // the frame of the swapchain's size from here on: bloom and tonemapping read temporal.output
-    drawTemporalUpscale(cmd);
-    drawBloom(cmd);
-    cmd.setDebugMarker("Tonemapping");
-    drawTonemappingTemporal(result, cmd, wview);
+    // the frame of the swapchain's size from here on: bloom and tonemapping read temporal.output, or the history
+    // of our own resolve
+    if(temporal.taau) {
+      drawTaau(cmd);
+      drawBloom(cmd, true);
+      cmd.setDebugMarker("Tonemapping");
+      drawTonemappingTaa(result, cmd, wview);
+      } else {
+      drawTemporalUpscale(cmd);
+      drawBloom(cmd);
+      cmd.setDebugMarker("Tonemapping");
+      drawTonemappingTemporal(result, cmd, wview);
+      }
     drawMotionView(result, cmd);
     drawReactiveView(result, cmd);
     drawSsaoView(result, cmd);
@@ -1015,7 +1098,7 @@ void Renderer::drawTaaSharpen(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   }
 
 bool Renderer::useTemporalUpscale(Tempest::Size res, Tempest::Size fullRes) const {
-  return settings.temporalUpscale && settings.taaEnabled && res.w<fullRes.w && res.h<fullRes.h;
+  return (settings.temporalUpscale || settings.taau) && settings.taaEnabled && res.w<fullRes.w && res.h<fullRes.h;
   }
 
 void Renderer::drawUpscale(Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
@@ -1371,10 +1454,10 @@ Tempest::Attachment Renderer::screenshoot(uint8_t frameId, Tempest::Attachment&&
 
   uint32_t w    = uint32_t(zbuffer.w());
   uint32_t h    = uint32_t(zbuffer.h());
-  if(!temporal.output.isEmpty()) {
+  if(temporal.outSize.w>0) {
     // the temporal upscale makes the frame of the swapchain's size; a smaller one would start it over
-    w = uint32_t(temporal.output.w());
-    h = uint32_t(temporal.output.h());
+    w = uint32_t(temporal.outSize.w);
+    h = uint32_t(temporal.outSize.h);
     }
   auto     img  = std::move(reuse);
   if(img.isEmpty() || uint32_t(img.w())!=w || uint32_t(img.h())!=h)
