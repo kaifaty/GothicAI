@@ -8,16 +8,16 @@ class Npc;
 // Far NPC tick rate (world streaming, user decision 7: far NPCs live by the same rules, as simply as
 // possible). A Simplified NPC that qualifies gets Npc::tick about once per period of world time instead of
 // every frame, with all the world time since its previous tick: the dt it gets add up to the world time, and
-// nothing is lost or doubled. The remainder lives in the Npc itself (Npc::simTickPending), so NPCs added,
-// removed or re-sorted by scripts never read another one's time. It is not saved: a load starts at zero.
+// nothing is lost or doubled. The state lives in the Npc itself (Npc::simTick), so NPCs added, removed or
+// re-sorted by scripts never read another one's time. It is not saved: a load starts afresh.
 //
-// Frames per period: as many frames as make the time since the previous tick nearest to the period at the
-// current frame step (8 ms frames, 33 ms period: every 4th frame; 30 ms frames: every frame). A phase clock of
-// the world advances one period per that many frames; an NPC ticks in the frame where the clock plus its own
-// phase crosses a whole period. The phase comes from the NPC's creation number (as the animation LOD's, never
-// its address: the frames chosen change the world and must replay), so the NPCs spread evenly over the frames,
-// and a long frame that ticks everyone does not bunch them up afterwards. At a frame step not below the period
-// every NPC ticks every frame with the frame's dt, exactly as without the rule (the day stand steps 33 ms).
+// The NPC ticks in the frame where the world time since its own previous tick is nearest to the period, the
+// current frame step standing for the next one (ties tick earlier): 8 ms frames, 33 ms period - every 4th
+// frame; 30 ms frames - every frame. The first tick after the NPC begins to qualify comes at its phase within
+// the frames of one period, from its creation number (as the animation LOD's, never its address: the frames
+// chosen change the world and must replay); this spreads the NPCs evenly over the frames. The spread only
+// shifts that first frame and never adds time. At a frame step not below the period every NPC ticks every
+// frame with the frame's dt, exactly as without the rule (the day stand steps 33 ms).
 //
 // OPENGOTHIC_NPC_SIM_TICK_MS: the period, 16..66, default 33; 0 turns the rule off.
 // OPENGOTHIC_NPC_SIM_TICK_SCOPE: who qualifies, graph (default) or tier (see qualifies).
@@ -45,22 +45,15 @@ const char*   name(Scope scope);
 // but melee fighters and bodies under spell physics (frozen, whirled or in the air).
 bool qualifies(const Npc& npc, Scope scope);
 
-// The NPC's place in the period, from its creation number.
+// The NPC's place in the frames of one period, from its creation number.
 uint32_t phase(const Npc& npc);
 
-// The phase clock of one world.
-class Clock final {
-  public:
-    // A new world tick with frame step dt.
-    void advance(uint64_t dt, const Config& cfg);
-    // Every NPC ticks this frame: the rule is off or the frame step is not below the period.
-    bool everyone() const { return all; }
-    // This frame is the NPC's turn.
-    bool due(const Npc& npc) const;
-
-  private:
-    uint64_t now = 0, before = 0;
-    bool     all = true;
+struct State {
+  uint64_t pending = 0;     // world time not yet handed to Npc::tick
+  bool     rhythm  = false; // ticked by the rule since it last ticked unqualified: the next tick is not its first
   };
+
+// Whether the NPC's turn has come, if it qualifies: `owed` is its pending time plus this frame's step dt.
+bool due(const State& state, uint64_t owed, uint64_t dt, uint32_t phase, const Config& cfg);
 
 }

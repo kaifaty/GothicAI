@@ -14,9 +14,6 @@
 using namespace NpcSimTick;
 
 namespace {
-// One period of the phase clock.
-constexpr uint64_t One = uint64_t(1)<<32;
-
 std::optional<Config>& replaced() {
   static std::optional<Config> cfg;
   return cfg;
@@ -86,17 +83,17 @@ uint32_t NpcSimTick::phase(const Npc& npc) {
   return uint32_t((uint64_t(npc.animationLodSeed())*0x9e3779b97f4a7c15ull)>>32);
   }
 
-void NpcSimTick::Clock::advance(uint64_t dt, const Config& cfg) {
-  before = now;
-  all    = cfg.periodMs==0 || dt>=cfg.periodMs;
-  if(cfg.periodMs==0 || dt==0)
-    return;
-  // The least frame count whose time is at least as near to the period as one frame more: ties tick earlier.
-  const uint64_t frames = all ? 1 : (2*cfg.periodMs+dt-1)/(2*dt);
-  now += One/frames;
-  }
-
-bool NpcSimTick::Clock::due(const Npc& npc) const {
-  const uint64_t p = phase(npc);
-  return ((now+p)>>32)!=((before+p)>>32);
+bool NpcSimTick::due(const State& state, uint64_t owed, uint64_t dt, uint32_t phase, const Config& cfg) {
+  const uint64_t period = cfg.periodMs;
+  if(period==0 || dt>=period)
+    return true;
+  if(dt==0)
+    return false;
+  if(!state.rhythm) {
+    // The first tick: at the NPC's phase within the frames that make one period at this step.
+    const uint64_t frames = (2*period+dt-1)/(2*dt);
+    return (owed<<32) > uint64_t(phase)*frames*dt;
+    }
+  // Now, unless one frame more (as long as this one) would bring the time nearer to the period.
+  return 2*owed+dt>=2*period;
   }

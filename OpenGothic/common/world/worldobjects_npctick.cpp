@@ -12,7 +12,6 @@
 void WorldObjects::tickNpcs(uint64_t dt, uint64_t dtPlayer, const Npc* pl, bool freeCam, bool frozen) {
   const auto& cfg      = NpcSimTick::config();
   const bool  profiled = FrameProfile::enabled();
-  simTickClock.advance(dt,cfg);
   uint64_t simTicked = 0, simDeferred = 0, simNative = 0;
   // One clock read per run of consecutive NPCs of the same tier keeps the cost
   // proportional to tier changes along the array, not to the NPC count.
@@ -50,15 +49,19 @@ void WorldObjects::tickNpcs(uint64_t dt, uint64_t dtPlayer, const Npc* pl, bool 
     if(simplified && profiled && !npc.usesSimplifiedMovement())
       ++simNative;
     // Whether this NPC may wait is read from its own state now; one that stops qualifying ticks in this frame.
-    const uint64_t carry=npc.simTickPending()+d;
-    if(simplified && &npc!=pl && !simTickClock.everyone() && !simTickClock.due(npc) &&
-       NpcSimTick::qualifies(npc,cfg.scope)) {
-      npc.setSimTickPending(carry);
+    auto&          state = npc.simTick();
+    const uint64_t owed  = state.pending+d;
+    const bool     rule  = simplified && &npc!=pl;
+    const bool     turn  = rule && NpcSimTick::due(state,owed,dt,NpcSimTick::phase(npc),cfg);
+    if(rule && !turn && NpcSimTick::qualifies(npc,cfg.scope)) {
+      state.pending = owed;
       ++simDeferred;
       } else {
-      npc.setSimTickPending(0);
+      // A tick in its turn keeps the rhythm; any other one makes the next qualifying tick a first one.
+      state.pending = 0;
+      state.rhythm  = turn;
       simTicked += simplified ? 1 : 0;
-      npc.tick(carry);
+      npc.tick(owed);
       }
     if(tier==NpcSimTier::Simplified && (nativeCombat || npc.nativeCombatMovement()))
       ++simTiers.nativeCombatNpcTicks;

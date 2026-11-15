@@ -14,7 +14,6 @@
 #include "objects/vob.h"
 #include "npcsimtier.h"
 #include "animationlod.h"
-#include "npcsimtick.h"
 
 class Npc;
 class Item;
@@ -271,7 +270,6 @@ class WorldObjects final {
     void                              updateSimTiers(bool beforeTick);
     // worldobjects_npctick.cpp: the Npc::tick loop; far NPCs at the rate of world/npcsimtick.h
     void                              tickNpcs(uint64_t dt, uint64_t dtPlayer, const Npc* pl, bool freeCam, bool frozen);
-    NpcSimTick::Clock                 simTickClock;
     void                              updateNpcPolicies(const Npc* player, const Tempest::Vec3& position);
 
     std::vector<AbstractTrigger*>      triggers;
