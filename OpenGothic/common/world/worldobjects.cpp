@@ -528,42 +528,17 @@ void WorldObjects::loadPlacedItems(Serialize& fin) {
     }
   }
 
-void WorldObjects::updateSimTiers() {
-  const auto  mode      = NpcSimTiers::mode();
-  const auto* residency = owner.chunkResidency();
-  const auto* pl        = owner.player();
-  size_t   full = 0;
-  uint64_t toFull = 0, toSimplified = 0;
-  for(auto& ptr:npcArr) {
-    auto&      npc   = *ptr;
-    const auto pos   = npc.position();
-    const bool hero  = (&npc==pl || npc.isPlayer());
-    // Training and arena actors keep native simulation at every distance.
-    const bool keep  = NavDemos::fullSimulation(npc) || BodyArena::isActor(npc);
-    const auto prev  = npc.simTier();
-    const auto next  = !hero && !keep && npc.simTierOverride().has_value() ? *npc.simTierOverride() :
-                      NpcSimTiers::desired(mode,hero,keep,residency,ChunkId::fromPosition(pos.x,pos.z),prev);
-    if(npc.hasSimTier() && next!=prev) {
-      if(next==NpcSimTier::Full)
-        ++toFull; else
-        ++toSimplified;
-      }
-    npc.setSimTier(next);
-    full += (next==NpcSimTier::Full);
-    }
-  simTiers.mode                = mode;
-  simTiers.full                = full;
-  simTiers.simplified          = npcArr.size()-full;
-  simTiers.toFull             += toFull;
-  simTiers.toSimplified       += toSimplified;
-  simTiers.transitionsLastTick = toFull+toSimplified;
-  FrameProfile::add(FrameProfile::Amount::NpcFull,full);
-  FrameProfile::add(FrameProfile::Amount::NpcSimplified,npcArr.size()-full);
-  FrameProfile::add(FrameProfile::Amount::NpcTierTransitions,toFull+toSimplified);
+// Keep the training/arena dependencies in this translation unit, as for the animation tail.
+bool WorldObjects::keepsFullSimulation(const Npc& npc) {
+  return NavDemos::fullSimulation(npc) || BodyArena::isActor(npc);
+  }
+
+bool WorldObjects::keepsNearPolicy(const Npc& npc) {
+  return NavDemos::fullSimulation(npc);
   }
 
 void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
-  updateSimTiers();
+  updateSimTiers(true);
   const auto& logic = NpcLogicAudit::stats();
   const uint64_t logicBefore[] = {logic.ticks,logic.bodyMismatch,logic.weaponMismatch,
                                  logic.early,logic.late,logic.events,logic.eventMismatch,
@@ -571,22 +546,6 @@ void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
   tickPlacedItems();
   auto passive=std::move(sndPerc);
   sndPerc.clear();
-
-  bool needSort = false;
-  for(size_t i=1; i<npcArr.size(); ++i) {
-    auto& a = npcArr[i-1];
-    auto& b = npcArr[i-0];
-    if(a->handle().id>b->handle().id) {
-      needSort = true;
-      break;
-      }
-    }
-
-  if(needSort) {
-    std::sort(npcArr.begin(),npcArr.end(),[](std::unique_ptr<Npc>& a, std::unique_ptr<Npc>& b){
-      return a->handle().id<b->handle().id;
-      });
-    }
 
   auto       camera  = GameServices::inst().camera();
   const bool freeCam = (camera!=nullptr && camera->isFree());
@@ -602,9 +561,6 @@ void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
   Clock::time_point runStart;
   double            tierMs[2] = {};
   uint64_t          tierTicks[2] = {};
-  // Mark both participants before either moves, independent of NPC list order.
-  for(auto& npc:npcArr)
-    npc->refreshMeleeFighter();
   for(size_t i=0; i<npcArr.size(); ++i) {
     auto& npc = *npcArr[i];
     uint64_t d = (pl==&npc ? dtPlayer : dt);
@@ -666,21 +622,30 @@ void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
       }
     }
 
+  {
+  FrameProfile::Scope timing(FrameProfile::Zone::CollisionZones);
   collisionZn.erase(std::remove_if(collisionZn.begin(), collisionZn.end(), [](CollisionZone* b){
     return b==nullptr;
     }), collisionZn.end());
 
   for(CollisionZone* z:collisionZn)
     z->tick(dt);
+  }
 
+  {
+  FrameProfile::Scope timing(FrameProfile::Zone::InteractiveTick);
   if(!frozen)
     for(auto& i:interactiveObj)
       i->tick(dt);
+  }
 
+  {
+  FrameProfile::Scope timing(FrameProfile::Zone::TriggersTick);
   for(auto i:triggersTk)
     i->tick(dt);
 
   tickTriggers(dt);
+  }
 
   bullets.remove_if([](Bullet& b){
     return b.isFinished();
@@ -697,35 +662,14 @@ void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
       }
     }
 
-  npcNear.clear();
-  //const int   PERC_DIST_INTERMEDIAT = 1000;
-  const float nearDist              = 3000*3000;
-  const float farDist               = 6000*6000;
-
-  auto cpos  = camera!=nullptr ? camera->originLwc() : Vec3();
-  auto plPos = pl!=nullptr ? pl->position() : cpos;
-  for(auto& i:npcArr) {
-    float dist = (i->position()-plPos).quadLength();
-    // Training actors keep native AI/perception and animation at every distance.
-    if(dist<nearDist || NavDemos::fullSimulation(*i)){
-      npcNear.push_back(i.get());
-      if(i.get()!=pl)
-        i->setProcessPolicy(NpcProcessPolicy::AiNormal);
-      } else
-    if(dist<farDist) {
-      i->setProcessPolicy(NpcProcessPolicy::AiFar);
-      } else {
-      i->setProcessPolicy(NpcProcessPolicy::AiFar2);
-      }
-    // debug
-    // if(i.get()!=pl)
-    //   i->setProcessPolicy(NpcProcessPolicy::AiFar2);
-    }
-  tickNear(dt);
+  const auto cpos = camera!=nullptr ? camera->originLwc() : Vec3();
+  updateNpcPolicies(pl,pl!=nullptr ? pl->position() : cpos);
+  { FrameProfile::Scope timing(FrameProfile::Zone::NpcTickNear); tickNear(dt); }
 
   if(pl==nullptr)
     return;
 
+  FrameProfile::Scope perception(FrameProfile::Zone::NpcPerception);
   for(auto& ptr:npcNear) {
     Npc& i = *ptr;
     if(i.isPlayer() || i.isDead())
