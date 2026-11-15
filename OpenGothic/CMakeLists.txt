@@ -349,7 +349,7 @@ if(UNIX)
   target_link_libraries(gothic-grass-test PRIVATE OpenGothic AiBridge)
   target_include_directories(gothic-grass-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   target_compile_options(gothic-grass-test PRIVATE -Wall -Wconversion -Werror)
-  # Windows that glow at night (graphics/windowglow.h): the record, its bits and a window's evening; CPU only.
+  # Windows that glow at night (graphics/windowglow.h) and the house they go out with (graphics/houselights.h); CPU only.
   add_executable(gothic-window-glow-test EXCLUDE_FROM_ALL tests/window_glow_test.cpp)
   target_link_libraries(gothic-window-glow-test PRIVATE OpenGothic AiBridge)
   target_include_directories(gothic-window-glow-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)

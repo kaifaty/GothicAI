@@ -15,6 +15,9 @@ const float WindowMaxUntil  = 36.0;
 const float WindowDimmest   = 0.55;
 // A window's numbers drift from wall to wall over this many cm, so that two walls with the same repeats differ
 const float WindowWallCell  = 700.0;
+// The windows of a house fade over this long before its bedtime, as its lamps go out one after another
+// (HouseLights::SnuffSpread, common/graphics/houselights.h)
+const float HouseSnuffSpread = 0.15;
 
 float windowPackedLit(uint bits) {
   return float(bits & 0xFFu)/255.0;
@@ -48,6 +51,23 @@ vec3 windowWallNoise(vec3 p) {
   return mix(a, b, f.z);
   }
 
+// What is left of the light of a window at this place by the evening hour e, 0..1: a window on a wall of a house
+// of the scene block goes out with the house's lamps (HouseLights::windowShare), so a lit window means a lamp
+// burns inside; a window of no house keeps its own evening. Only where main.frag's scene block is in scope
+float windowHouse(vec3 centre, float e) {
+  for(uint i=0u; i<scene.houseCount; ++i) {
+    const vec4 at   = scene.house[i*3u];
+    const vec4 size = scene.house[i*3u + 1u];
+    const vec3 d    = centre - at.xyz;
+    const vec3 l    = vec3(d.x*at.w + d.z*size.w, d.y, d.z*at.w - d.x*size.w);
+    if(any(greaterThan(abs(l), size.xyz)))
+      continue;
+    const float bed = scene.house[i*3u + 2u].x;
+    return 1.0 - smoothstep(bed - HouseSnuffSpread, bed, e);
+    }
+  return 1.0;
+  }
+
 // The light of the window a pixel belongs to, 0..1 (WindowGlow::light with a slow flicker of the candle behind it).
 // uv: of the mesh, a repeat is a window; pos: the pixel in the world, cm; the derivatives are a pixel's steps of both;
 // dayHour: 0..24; tick: ms
@@ -76,7 +96,10 @@ float windowLight(uint bits, vec2 uv, vec3 pos, vec2 duvdx, vec2 duvdy, vec3 dpd
   if(until>=WindowDawn)
     off = WindowDawn - r.z*0.5;
   off = clamp(off, on+0.5, WindowDawn);
-  const float s = smoothstep(on, on+WindowFade, e)*(1.0 - smoothstep(off, off+WindowFade, e));
+  float s = smoothstep(on, on+WindowFade, e)*(1.0 - smoothstep(off, off+WindowFade, e));
+  if(s<=0.0)
+    return 0.0;
+  s *= windowHouse(centre, e);
   if(s<=0.0)
     return 0.0;
   // a candle behind a window: a slow sway of a tenth, each window in its own time; the clock wraps at 20 pi s

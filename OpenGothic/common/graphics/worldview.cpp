@@ -501,9 +501,10 @@ WorldView::WorldView(const PackedMesh& wmesh, std::string_view skyPreset)
   }
 
 WorldView::WorldView(std::pair<Vec3,Vec3> bounds, std::string_view skyPreset)
-    : aabb(bounds), gSky(skyPreset), gLights(sGlobal), visuals(sGlobal,bounds),
-    objGroup(visuals), pfxGroup(*this,sGlobal,visuals) {
+    : aabb(bounds), gSky(skyPreset), gLights(sGlobal), houses(Resources::worldOverrideDir(skyPreset)),
+    visuals(sGlobal,bounds), objGroup(visuals), pfxGroup(*this,sGlobal,visuals) {
   pfxGroup.resetTicks();
+  sGlobal.setHouses(houses.houses());
   // A scene without a single lamp still binds the (empty) light buffer: VSM visibility reads it unconditionally
   sGlobal.lights = &gLights.lightsSsbo();
   }
@@ -635,6 +636,7 @@ void WorldView::preFrameUpdate(const Camera& camera, uint64_t tickCount, uint8_t
   sGlobal.setUnderWater(camera.isInWater());
   sGlobal.setSky(gSky);
   sGlobal.setWorld(*this);
+  houses.tick(gSky.dayHour());
 
   pfxGroup.setViewerPos(camera.originLwc());
   pfxGroup.tick(tickCount);
