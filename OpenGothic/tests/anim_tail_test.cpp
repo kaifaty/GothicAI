@@ -24,7 +24,8 @@ struct Item final {
   int  id = 0;
   bool shadowWork = false, logicWork = false, window = false;
   bool passSkipped = false; // frozen world or OPENGOTHIC_ANIM_SKIP_FAR: the shadow loop passes it over
-  std::function<void()> script; // what the window's damage script does
+  std::function<void()> script;        // what the window's damage script does in the shadow loop
+  std::function<void()> contactScript; // and in the contacts loop
   int  reads = 0;               // how often a loop looked at this item
   };
 
@@ -53,8 +54,13 @@ void shadowStep(Item& item, Log& log) {
 
 void contactStep(Item& item, Log& log) {
   ++item.reads;
-  if(item.window)
-    log.push_back("contacts "+std::to_string(item.id));
+  if(!item.window)
+    return;
+  log.push_back("contacts "+std::to_string(item.id));
+  auto script = std::move(item.contactScript);
+  item.contactScript = {};
+  if(script)
+    script(); // may destroy item
   }
 
 void logicStep(Item& item, Log& log) {
@@ -227,6 +233,20 @@ int cases() {
     items[4]->script = [&items] {
       find(items,6)->logicWork = true;
       removeId(items,4);
+      };
+    items[9]->logicWork = true;
+    },true);
+  // A damage script in the contacts loop: the same changes after the shadow loop has run in plan.
+  compare("script in the contacts loop",[](Items& items) {
+    items[0]->shadowWork = true;
+    items[2]->window = true;
+    items[2]->contactScript = [&items] {
+      removeId(items,0);
+      removeId(items,6);
+      items.push_back(std::make_unique<Item>());
+      items.back()->id = 101;
+      items.back()->window = items.back()->logicWork = true;
+      find(items,8)->logicWork = true;
       };
     items[9]->logicWork = true;
     },true);
