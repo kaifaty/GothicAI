@@ -172,6 +172,17 @@ NpcSnapshot::Program itemProgram() {
   auto dependent=f.symbol("IT_RECORD_STATE",Type::INSTANCE,0,Flag::CONST,int32_t(itemClass));
   f.begin(dependent);
   f.op(Op::PUSHV,chapter); f.op(Op::PUSHV,f.find("C_ITEM.VALUE")); f.op(Op::MOVI); f.op(Op::RSR);
+  for(int value:{0,-1}) {
+    auto sentinel=f.symbol(value==0 ? "IT_RECORD_NULL" : "IT_RECORD_MINUS1",Type::INSTANCE,0,Flag::CONST,int32_t(itemClass));
+    f.begin(sentinel);
+    for(const char* field:{"C_ITEM.MAGIC","C_ITEM.ON_EQUIP","C_ITEM.ON_UNEQUIP","C_ITEM.OWNER"})
+      f.set(f.find(field),value);
+    for(unsigned i=0;i<ItemRecord::state_count;++i) {
+      f.op(Op::PUSHI,uint32_t(value)); f.op(Op::PUSHVV,f.find("C_ITEM.ON_STATE"));
+      f.p.bytecode.push_back(std::byte(i)); f.op(Op::MOVI);
+      }
+    f.op(Op::RSR);
+    }
   auto encoded=ProgramData::encodeProgram(f.p);
   return {std::move(f.p),encoded.name,encoded.sha256};
   }
@@ -248,8 +259,33 @@ void itemDefinitions(const fs::path& dir) {
   const auto file=base/"definitions"/p.sha256/"items.json";
   NpcSnapshot::writeItems(p,file);
   check(NpcSnapshot::verifyItems(p,file)==0,"item definitions verify from disk");
+  const auto library=ItemDefinitions::read(base,p.sha256);
+  for(int value:{0,-1}) {
+    const std::string name=value==0 ? "IT_RECORD_NULL" : "IT_RECORD_MINUS1";
+    const auto& definition=library.items.at(name);
+    const auto& record=definition.record;
+    check(record.magic==value && record.on_equip==value && record.on_unequip==value && record.owner==value,
+          name+": function and owner sentinels decode to "+std::to_string(value));
+    for(auto state:record.on_state) check(state==value,name+".on_state: sentinel is preserved");
+    for(const auto& [field,names]:definition.symbols)
+      for(const auto& symbol:names) check(symbol.empty(),name+"."+field+": sentinel has no symbol name to resolve");
+    }
   runtimeItems(p,base);
   auto changed=read(file);
+  for(auto& record:changed["records"].GetArray()) {
+    if(std::string_view(record["symbol"].GetString())!="IT_RECORD_NULL") continue;
+    auto& function=record["fields"]["on_equip"];
+    check(function.IsNull(),"zero function sentinel is written as JSON null");
+    function.SetString("",changed.GetAllocator());
+    write(file,changed);
+    bool rejected=false;
+    try { ItemDefinitions::read(base,p.sha256); }
+    catch(const std::runtime_error& e) {
+      rejected=std::string(e.what()).find("IT_RECORD_NULL: on_equip: empty symbol name")!=std::string::npos;
+      }
+    check(rejected,"empty JSON function name is rejected with its item and field");
+    function.SetNull();
+    }
   for(auto& record:changed["records"].GetArray())
     if(record.HasMember("fields")) record["fields"]["value"].SetInt(1234567);
   write(file,changed);
