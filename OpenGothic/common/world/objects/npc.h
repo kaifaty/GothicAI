@@ -231,6 +231,9 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     bool       animationLodPinned() const;
     void       setAnimationLodTargeted(bool t) { animLodTargeted = t; }
     uint32_t   animationLodSeed() const { return animLodSeed; }
+    // Far NPC tick (world/npcsimtick.h): world time not yet handed to tick(). Runtime only, not saved.
+    uint64_t   simTickPending() const { return simTickPendingDt; }
+    void       setSimTickPending(uint64_t dt) { simTickPendingDt = dt; }
 
     std::string_view displayName() const;
     auto       displayPosition() const -> Tempest::Vec3;
@@ -1108,6 +1111,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     uint64_t                       animLodPendingDt = 0;
     bool                           animLodTargeted = false;
     uint32_t                       animLodSeed = 0;
+    uint64_t                       simTickPendingDt = 0;
     Tempest::Vec3                  characterVisualSamplePosition;
     Tempest::Vec3                  characterVisualSampleNormal;
     uint64_t                       characterVisualSampleTick = 0;

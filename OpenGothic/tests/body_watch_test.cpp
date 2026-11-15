@@ -26,6 +26,7 @@
 #include "world/world.h"
 #include "world/worldobjects.h"
 #include "world/animationtail.h"
+#include "world/npcsimtick.h"
 #include "game/bodyarena.h"
 
 #include <rapidjson/document.h>
@@ -1147,6 +1148,110 @@ class NpcLogicalStateContract final {
       world.removeNpc(*first); world.removeNpc(*fighter);
       }
 
+    // Far NPC tick (world/npcsimtick.h) on real standing NPCs through WorldObjects::tick: the time a tick got is
+    // the logical body's world step (set by NpcLogicalState::Tick), the time still owed is Npc::simTickPending.
+    static void farTick(Npc& anchor) {
+      auto& world=anchor.world();
+      const auto kind=world.script().findSymbolIndex("BDT_1003_BANDIT_M");
+      const auto restore=NpcSimTick::config();
+      constexpr size_t Count=16;
+      std::vector<Npc*> npcs;
+      for(size_t i=0;i<Count;++i) {
+        // 45 m from the hero: no perception and no living body. Made in a row: consecutive creation numbers.
+        auto* npc=world.addNpc(kind,world.player()->position()+Tempest::Vec3(float(i)*150.f,0,4500));
+        npc->clearAiQueue(); npc->clearState(true); npc->clearGoTo(); npc->stopWalking();
+        npc->closeWeapon(true); npc->setTarget(nullptr); npc->setExternalControl(true);
+        npc->visual.pose().stopAllAnim(); npc->setAnim(Npc::Anim::Idle);
+        npc->setSimTierOverride(NpcSimTier::Simplified);
+        npcs.push_back(npc);
+        }
+      struct Track { std::vector<uint64_t> frame, dt; uint64_t given=0; };
+      std::vector<Track> track(Count);
+      uint64_t frames=0, worldMs=0;
+      // One world tick: how many of the NPCs ticked; each tick must get exactly the time its NPC waited.
+      const auto frame=[&](uint64_t dt) {
+        std::vector<uint64_t> waited(Count);
+        for(size_t i=0;i<Count;++i) waited[i]=npcs[i]->simTickPending();
+        world.tick(dt);
+        ++frames; worldMs+=dt;
+        size_t ticked=0;
+        for(size_t i=0;i<Count;++i) {
+          if(npcs[i]->simTickPending()>0) {
+            expect(npcs[i]->simTickPending()==waited[i]+dt,"a waiting NPC keeps the frame's time for its next tick");
+            continue;
+            }
+          const auto got=npcs[i]->logicalBodyState().worldStep;
+          expect(got==waited[i]+dt,"a far tick gets all the world time since the NPC's previous tick: got "+
+                 std::to_string(got)+", owed "+std::to_string(waited[i]+dt));
+          track[i].frame.push_back(frames); track[i].dt.push_back(got); track[i].given+=got;
+          ++ticked;
+          }
+        return ticked;
+        };
+      const auto clear=[&] { for(auto& t:track) { t.frame.clear(); t.dt.clear(); } };
+
+      ++cases;
+      NpcSimTick::setConfig({33,NpcSimTick::Scope::Graph});
+      size_t most=0;
+      for(unsigned f=0;f<48;++f) {
+        most=std::max(most,frame(8));
+        if(f==0)
+          for(auto* npc:npcs)
+            expect(NpcSimTick::qualifies(*npc,NpcSimTick::Scope::Graph),"the far tick fixture stands in graph movement");
+        }
+      expect(most*3<=Count,"8 ms frames spread the far ticks: at most a third of the NPCs in a frame, got "+
+             std::to_string(most)+" of "+std::to_string(Count));
+      for(size_t i=0;i<Count;++i) {
+        const auto& t=track[i];
+        expect(t.frame.size()>=11,"a far NPC ticks about every 33 ms of 8 ms frames");
+        // The first tick comes at the NPC's phase; from then on, each one is a period later.
+        for(size_t k=1;k<t.frame.size();++k) {
+          expect(t.frame[k]-t.frame[k-1]==4,"a far NPC ticks every 4th 8 ms frame");
+          expect(t.dt[k]>=25 && t.dt[k]<=41,"a far tick gets about 33 ms: "+std::to_string(t.dt[k]));
+          }
+        expect(t.given+npcs[i]->simTickPending()==worldMs,"the far ticks add up to the world time");
+        }
+
+      // An NPC that stops qualifying between its ticks ticks in that frame with all it waited.
+      ++cases;
+      Npc* fighter=nullptr;
+      for(unsigned f=0;f<8 && fighter==nullptr;++f) {
+        frame(8);
+        for(auto* npc:npcs)
+          if(npc->simTickPending()==8) fighter=npc; // ticked one frame ago: three frames before its turn
+        }
+      expect(fighter!=nullptr,"a far NPC waits one frame after its tick");
+      fighter->setToFistMode();
+      expect(!NpcSimTick::qualifies(*fighter,NpcSimTick::Scope::Graph),"native combat movement leaves graph scope");
+      frame(8);
+      expect(fighter->simTickPending()==0 && fighter->logicalBodyState().worldStep==16,
+             "an NPC that stops qualifying ticks in the same frame with the time it waited");
+      fighter->closeWeapon(true);
+
+      // A frame step not below the period ticks every NPC every frame with that step; the first one also
+      // hands over what was owed.
+      ++cases;
+      for(unsigned f=0;f<6;++f) {
+        clear();
+        expect(frame(33)==Count,"33 ms frames tick every far NPC every frame");
+        if(f>0)
+          for(const auto& t:track) expect(t.dt.size()==1 && t.dt[0]==33,"a 33 ms frame gives a far NPC 33 ms");
+        }
+
+      // Period 0: every NPC every frame, as without the rule.
+      ++cases;
+      NpcSimTick::setConfig({0,NpcSimTick::Scope::Graph});
+      for(unsigned f=0;f<8;++f) {
+        clear();
+        expect(frame(8)==Count,"period 0 ticks every NPC every frame");
+        for(const auto& t:track) expect(t.dt.size()==1 && t.dt[0]==8,"period 0 gives every tick the frame step");
+        }
+      for(size_t i=0;i<Count;++i)
+        expect(track[i].given==worldMs,"period 0 hands every NPC the world time");
+      NpcSimTick::setConfig(restore);
+      for(auto* npc:npcs) world.removeNpc(*npc);
+      }
+
     static void restoreStamina(Npc& actor) {
       MeleeStamina::reset(actor.meleeStamina,actor.staminaMax(),actor.world().tickCount());
       }
@@ -1962,6 +2067,8 @@ int main(int argc,const char** argv) {
     // Canonical body fixtures keep the background native; individual cases
     // explicitly opt their subject into Simplified.
     setenv("OPENGOTHIC_NPC_SIM_TIER","full",1);
+    // Every NPC ticks every frame in the other fixtures; the far tick case sets its own rate.
+    setenv("OPENGOTHIC_NPC_SIM_TICK_MS","0",1);
     Workers::setSerialExecution(true);
     CommandLine commandLine(argc,argv);
     Resources resources;
@@ -2022,6 +2129,7 @@ int main(int argc,const char** argv) {
       expect(receivedCurrent && offered==0,"NPC_CHECKINFO extra dialogs receive the current NPC instance");
       }
     if(!missingNetwork) NpcLogicalStateContract::preTickOrder(b);
+    if(!missingNetwork) NpcLogicalStateContract::farTick(b);
     if(!missingNetwork) NpcLogicalStateContract::meleeAi(a,b);
 #ifdef GOTHIC_BODY_ENGINE_NET
     if(missingNetwork) {

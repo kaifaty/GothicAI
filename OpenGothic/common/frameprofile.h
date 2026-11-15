@@ -56,7 +56,10 @@ enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, Identic
   RtTlasBuilds, RtDirtySlots,
   // -gi 1 (Renderer::readGiStats): live probes, probes traced in a frame (new), of them allocated at the hits of other
   // probes' rays, and probes freed in the frame; of a frame slot one or two frames back
-  GiProbesLive, GiProbesTraced, GiProbesFromHits, GiProbesFreed, Count };
+  GiProbesLive, GiProbesTraced, GiProbesFromHits, GiProbesFreed,
+  // WorldObjects::tickNpcs (world/npcsimtick.h): Simplified NPCs that ticked, that waited for their turn, and
+  // that execute native movement (Npc::usesSimplifiedMovement false)
+  NpcSimplifiedTicked, NpcSimplifiedDeferred, NpcSimplifiedNative, Count };
 enum class Outcome : uint8_t { Unfinished, Submitted, FenceBusy, Capture, Error };
 enum class Flag : uint32_t { SubmitCompleted=1, PresentCompleted=2,
   CaptureRequested=4, CaptureReadCompleted=8, FenceBusy=16, Error=32 };
