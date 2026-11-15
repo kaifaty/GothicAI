@@ -3,7 +3,7 @@
 
     uv run --no-project --with numpy --with pillow --with scipy python \
         scripts/content/landscape_meadow_road.py meadow-road-1 [--from meadow-ground-1] [--again] \
-        [--wander 9 --fade .6 --ragged 1] [--set NAME=VALUE ...] [--preview DIR] [--joints BASE]
+        [--wander 14 --fade .7 --ragged 1.3] [--set NAME=VALUE ...] [--preview DIR] [--joints BASE]
 
 reports/engine/2026-11-15-meadow-road. Copies a set with the meadow's ground, gives the five road textures the
 `track` field beside their `verge`, and the meadow's `ground` the `border`: the road's loose layer.
@@ -65,6 +65,7 @@ LEVEL = .85
 RELIEF = {'crust': .8, 'loose': .6}     # the scan's slopes times this
 CONTRAST = {'crust': 1.1, 'loose': 1.}
 ROUGH_FLOOR = .85
+KNOBS = dict(wander=14., fade=.7, ragged=1.3)   # the record's: the drawing's sway in cm, the ruts' fading, the fray
 OCCLUSION = 1.              # of the layers' and the ribbon's occlusion: 0 for a probe of what it does in the light
 
 
@@ -79,7 +80,7 @@ def from_hsy(hue: float, saturation: float, level: float) -> np.ndarray:
 # tint of it under 1 (crust_tone)
 CROWN = (32., .62, .100)        # PATH_06: its middle and shoulders
 STRAW = (42.3, .71, .1075)      # PATH_05: its trodden earth
-RUT = (18., .62, .040)          # PATH_06: the bed of a rut, the loose layer under its tint
+RUT = (14., .62, .026)          # PATH_06: the bed of a rut, the loose layer under its tint
 PAINTED_GRASS = from_hsy(50.4, .83, .0764)
 # The mean of the crust against crust_tone(), linear RGB: 1 - at the eye a lit layer has the tone of the paint
 # beside it. From afar the paint is darker (its mips are means of the encoded colour: 0.86-0.89 of the linear mean
@@ -89,15 +90,16 @@ CRUST_SCREEN = (1., 1., 1.)
 # The profile of PATH_06 across, in shares of u (3.86 m to a u on the pilot's median ribbon), symmetric about 0.5:
 # the world lays the T-cross on the road with u turned over. The painted ruts stand at 0.36 and 0.68
 RUTS = (.34, .66)
-HALF_BED = .0325            # half the bed of a rut
-WALL = .021                 # its wall
+HALF_BED = .03              # half the bed of a rut
+WALL = .035                 # its wall
 CRUMBS = .045               # the loose earth thrown out of it fades over this
-DEPTH_M, BERM_M, PATH_M = .05, .022, .015
-BED_WEAR, CRUMBS_WEAR, PATH_WEAR = .76, .34, .30    # what each adds to the wear of the crown, 0.16
+DEPTH_M, BERM_M, PATH_M = .06, .022, .015
+BED_WEAR, CRUMBS_WEAR, PATH_WEAR = .76, .34, .15    # what each adds to the wear of the crown, 0.16
 # The share of the rut's tone in the tint: the painted rut is a dark line of the wheel's width in a wider stain.
 # The line is the tint's alone - as a form it was a black crack at noon (the first probe)
 CORE = (.012, .034)         # from the rut's middle: the dark line whole, then gone
-CORE_DARK, BED_DARK, CRUMBS_DARK = .45, .45, .4
+CORE_DARK, BED_DARK, CRUMBS_DARK = .55, .6, .4
+CRUST_TINT = .6             # grass_track.glsl's GrassTrackCrustTint: what of the tint the crust takes
 EDGE = (.02, .06)           # the ribbon's own share grows from 0 to 1 over this
 EDGE_05 = (.14, .22)        # of the footpath: its painted grass is wider
 SHOULDER = (.06, .22)       # loose at the ribbon's edge, the crust from here on
@@ -383,7 +385,7 @@ def composed(crust: dict, loose: dict, ribbon: dict, metric, knobs: dict, length
     mine = (own >= 1) | (own * 256 + (height - .5) * 140 > 128)
     tone = 1 + noise(12800, 0x79) * .08 + noise(2080, 0x7A) * .05
     colour = np.where(is_loose[..., None], layer_at(loose['albedo'], LOOSE_TILE_M, turn_l), layer_at(crust['albedo'], CRUST_TILE_M, turn_c))
-    colour = colour * (1 + (ribbon_at(ribbon['tint']) - 1) * k[..., None]) * tone[..., None]
+    colour = colour * (1 + (ribbon_at(ribbon['tint']) - 1) * (k * np.where(is_loose, 1., CRUST_TINT))[..., None]) * tone[..., None]
     colour = np.where(mine[..., None], colour, PAINTED_GRASS)
 
     # the light of a low sun from the side: the ribbon's slopes on its own axes, the layers' turned back to them
@@ -548,7 +550,7 @@ def main() -> int:
     parser.add_argument('--crust-screen', type=float, nargs=3, default=CRUST_SCREEN, metavar=('R', 'G', 'B'))
     parser.add_argument('--loose-screen', type=float, nargs=3, default=(1., 1., 1.), metavar=('R', 'G', 'B'),
                         help='of the mean of the meadow\'s earth, which the loose layer is brought to')
-    parser.add_argument('--wander', type=float, help='cm, 0..30: the record\'s; the engine\'s default without')
+    parser.add_argument('--wander', type=float, help='cm, 0..30: the record\'s; KNOBS without')
     parser.add_argument('--fade', type=float, help='0..1')
     parser.add_argument('--ragged', type=float, help='0..2')
     parser.add_argument('--set', nargs='*', default=[], metavar='NAME=VALUE', dest='constants',
@@ -581,7 +583,7 @@ def main() -> int:
         fields = dict(DRAW[texture](RIBBON_SIZE, args.seed + 1000 * number), loose_tone=loose_tone * np.array(args.loose_screen))
         ribbons[texture] = ribbon_maps(fields, METRIC[texture], args.seed + 1000 * number)
 
-    knobs = {key: getattr(args, key) for key in ('wander', 'fade', 'ragged') if getattr(args, key) is not None}
+    knobs = dict(KNOBS, **{key: getattr(args, key) for key in KNOBS if getattr(args, key) is not None})
 
     def summary(maps):
         value = maps['albedo']
@@ -601,7 +603,7 @@ def main() -> int:
     if args.joints:
         report['joints'] = joints(args.joints, ribbons)
     if args.preview:
-        report['strip'] = preview(args.preview, pilot, crust, loose, ribbons, dict(dict(wander=9., fade=.6, ragged=1.), **knobs))
+        report['strip'] = preview(args.preview, pilot, crust, loose, ribbons, dict(KNOBS, **knobs))
         print(json.dumps(report, indent=2))
         return 0
 
