@@ -11,7 +11,7 @@
 #include "world/objects/item.h"
 #include "world/world.h"
 #include "world/benchhooks.h"
-#include "gothic.h"
+#include "settings.h"
 #include "resources.h"
 
 #include <mutex>
@@ -57,7 +57,7 @@ std::string meleeStaminaIdentity(const Pose& pose, uint64_t now) {
 }
 
 bool Npc::hasStamina() const {
-  return isHuman() && Gothic::physicsFlags().meleeStamina;
+  return isHuman() && Settings::physicsFlags().meleeStamina;
   }
 
 float Npc::staminaMax() const {
@@ -81,13 +81,13 @@ float Npc::meleeStunBonus(const Npc& attacker) const {
   const auto ws = attacker.weaponState();
   const bool humanAttack = attacker.isHuman() && (ws==WeaponState::Fist || ws==WeaponState::W1H || ws==WeaponState::W2H);
   const bool beastAttack = isHuman() && attacker.hasMeleeBeastPoise();
-  return Gothic::physicsFlags().meleeStagger && (isHuman() || hasMeleeBeastPoise()) && isMeleeStunned() &&
+  return Settings::physicsFlags().meleeStagger && (isHuman() || hasMeleeBeastPoise()) && isMeleeStunned() &&
          (humanAttack || beastAttack) ? 1.5f : 1.f;
   }
 
 MeleeImpact::BackstabKind Npc::meleeBackstabKind(const Npc& attacker) const {
   const auto ws = attacker.weaponState();
-  if(!Gothic::physicsFlags().meleeBackstab || !attacker.isHuman() ||
+  if(!Settings::physicsFlags().meleeBackstab || !attacker.isHuman() ||
      (ws!=WeaponState::Fist && ws!=WeaponState::W1H && ws!=WeaponState::W2H) ||
      isDown() || meleeKnockdown || (!isHuman() && !(isMonster() && invent.activeWeapon()==nullptr)))
     return MeleeImpact::BackstabKind::None;
@@ -108,7 +108,7 @@ float Npc::meleeBackstabMultiplier(MeleeImpact::BackstabKind kind) const {
   }
 
 bool Npc::hasMeleeBeastPoise() const {
-  return Gothic::physicsFlags().meleeBeastPoise && isMonster() && invent.activeWeapon()==nullptr;
+  return Settings::physicsFlags().meleeBeastPoise && isMonster() && invent.activeWeapon()==nullptr;
   }
 
 bool Npc::hasMeleeSuperArmor() const {
@@ -122,7 +122,7 @@ bool Npc::hasMeleeSuperArmor() const {
   if(hasMeleeBeastPoise())
     return !isDown() && !meleeKnockdown && !isMeleeStunned() &&
            MeleeImpact::beastSize(physicsMass())!=MeleeImpact::BeastSize::Small && visual.pose().isAttackAnim();
-  if(!Gothic::physicsFlags().meleeStagger || !isHuman() || isDown() || meleeKnockdown || isMeleeStunned() ||
+  if(!Settings::physicsFlags().meleeStagger || !isHuman() || isDown() || meleeKnockdown || isMeleeStunned() ||
      (weaponState()!=WeaponState::W2H && !meleeDownStrike))
     return false;
   const auto* item = invent.activeWeapon();
@@ -152,7 +152,7 @@ bool Npc::hasMeleeSuperArmor() const {
   }
 
 bool Npc::isMeleeStunned() const {
-  const bool enabled = meleeStunReason=="posture" ? Gothic::physicsFlags().meleeStagger && (isHuman() || hasMeleeBeastPoise()) : Gothic::physicsFlags().meleeParry;
+  const bool enabled = meleeStunReason=="posture" ? Settings::physicsFlags().meleeStagger && (isHuman() || hasMeleeBeastPoise()) : Settings::physicsFlags().meleeParry;
   return enabled && owner.tickCount()<meleeStunUntil;
   }
 
@@ -166,7 +166,7 @@ bool Npc::allowMeleeStunAction(std::string_view action) {
   }
 
 void Npc::startMeleeStun(Npc& by, std::string_view reason) {
-  const bool enabled = reason=="posture" ? Gothic::physicsFlags().meleeStagger : Gothic::physicsFlags().meleeParry;
+  const bool enabled = reason=="posture" ? Settings::physicsFlags().meleeStagger : Settings::physicsFlags().meleeParry;
   const bool beast = reason=="posture" && hasMeleeBeastPoise() && MeleeImpact::beastCanAccumulatePosture(physicsMass());
   if(!enabled || (!isHuman() && !beast) || isDown() || meleeKnockdown || isMeleeStunned())
     return;
@@ -227,7 +227,7 @@ void Npc::meleeStunLook(const Npc& by) {
   hit.twist    = posture ? 0.25f : 0.4f; // the weapon hand goes back first and turns the trunk after it
   hit.strength = posture ? 0.85f : 0.6f;
   flinch(hit);
-  if(!Gothic::physicsFlags().meleeReactions || !living)
+  if(!Settings::physicsFlags().meleeReactions || !living)
     return;
   const auto  ws       = weaponState();
   const float momentum = ws==WeaponState::W2H ? 30.f : (ws==WeaponState::W1H ? 22.f : 12.f);
@@ -272,13 +272,13 @@ void Npc::endMeleeStun(std::string_view reason) {
 
 void Npc::tickMeleeParry() {
   const auto now = owner.tickCount();
-  if(!Gothic::physicsFlags().meleeParryAi || !Gothic::physicsFlags().meleeParry ||
+  if(!Settings::physicsFlags().meleeParryAi || !Settings::physicsFlags().meleeParry ||
      currentTarget==nullptr || isDown() || meleeKnockdown || isMeleeStunned())
     meleeParadeTiming.reset();
-  const bool stunEnabled = meleeStunReason=="posture" ? Gothic::physicsFlags().meleeStagger && (isHuman() || hasMeleeBeastPoise()) : Gothic::physicsFlags().meleeParry;
+  const bool stunEnabled = meleeStunReason=="posture" ? Settings::physicsFlags().meleeStagger && (isHuman() || hasMeleeBeastPoise()) : Settings::physicsFlags().meleeParry;
   if(meleeStunUntil!=0 && (!stunEnabled || now>=meleeStunUntil))
     endMeleeStun(stunEnabled ? "timeout" : "reset");
-  if(!Gothic::physicsFlags().meleeParry) {
+  if(!Settings::physicsFlags().meleeParry) {
     meleeParadeOrigin.reset();
     return;
     }
@@ -424,7 +424,7 @@ void Npc::waitForMeleeStamina(uint64_t dt) {
 
 std::optional<Npc::MeleeDodgeLayer> Npc::meleeDodgeLayer() const {
   const auto& pose = visual.pose();
-  if(!Gothic::physicsFlags().meleeDodge || !pose.hasState(BS_PARADE))
+  if(!Settings::physicsFlags().meleeDodge || !pose.hasState(BS_PARADE))
     return std::nullopt;
   for(const auto& layer:pose.combatLayers(owner.tickCount()))
     if(layer.state==BS_PARADE)
@@ -569,7 +569,7 @@ void Npc::tickMeleeAiSpecial() {
   }
 
 bool Npc::tryMeleeAiCharge() {
-  const auto& flags = Gothic::physicsFlags();
+  const auto& flags = Settings::physicsFlags();
   if(!flags.meleeAiCharge || !flags.meleeCharge || !isHuman() || weaponState()!=WeaponState::W1H ||
      currentTarget==nullptr || !visual.pose().isStanding())
     return false;
@@ -623,9 +623,9 @@ bool Npc::tryMeleeAiCharge() {
 bool Npc::canMeleeCharge() const {
   const auto bs = bodyStateMasked();
   MeleeCharge::Situation s;
-  s.enabled          = Gothic::physicsFlags().meleeCharge;
+  s.enabled          = Settings::physicsFlags().meleeCharge;
   s.player           = isPlayer() && isHuman();
-  s.aiEnabled        = isHuman() && Gothic::physicsFlags().meleeAiCharge;
+  s.aiEnabled        = isHuman() && Settings::physicsFlags().meleeAiCharge;
   s.oneHand          = weaponState()==WeaponState::W1H;
   s.windupAnimation  = visual.hasAnim("T_1HCHARGE");
   s.holdAnimation    = visual.hasAnim("S_1HCHARGE");
@@ -715,7 +715,7 @@ void Npc::tickMeleeCharge() {
   if(!isPlayer() && isMeleeCharging()) {
     const auto handle = meleeAiSpecialTarget.lock();
     auto* target = owner.script().findNpc(handle.get());
-    if(!Gothic::physicsFlags().meleeAiCharge || target==nullptr || target!=currentTarget || target->isDown() ||
+    if(!Settings::physicsFlags().meleeAiCharge || target==nullptr || target!=currentTarget || target->isDown() ||
        target->isLie() || target->meleeKnockdown) {
       cancelMeleeCharge("AI target unavailable");
       return;
@@ -724,8 +724,8 @@ void Npc::tickMeleeCharge() {
                              fghAlgo.isInWRange(*this,*target,owner.script())))
       meleeChargeReleased = true;
     }
-  if(!Gothic::physicsFlags().meleeCharge || weaponState()!=WeaponState::W1H || isDown()) {
-    cancelMeleeCharge(!Gothic::physicsFlags().meleeCharge ? "flag disabled" : isDown() ? "down" : "weapon sheathed");
+  if(!Settings::physicsFlags().meleeCharge || weaponState()!=WeaponState::W1H || isDown()) {
+    cancelMeleeCharge(!Settings::physicsFlags().meleeCharge ? "flag disabled" : isDown() ? "down" : "weapon sheathed");
     meleeChargePhase = ChargePhase::None;
     return;
     }
@@ -782,7 +782,7 @@ bool Npc::meleeDodge(MeleeDodge::Direction direction) {
                              ",\"kind_wanted\":"+Bench::bodyJson(MeleeDodge::name(wanted));
 
   MeleeDodge::Situation s;
-  s.enabled     = Gothic::physicsFlags().meleeDodge;
+  s.enabled     = Settings::physicsFlags().meleeDodge;
   // a human with a melee weapon or the fists drawn: a beast (the hero transformed too) keeps its own moves
   s.meleeWeapon = isHuman() && (ws==WeaponState::Fist || ws==WeaponState::W1H || ws==WeaponState::W2H);
   s.attacking   = isAttackAnim();

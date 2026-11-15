@@ -8,7 +8,7 @@
 #include <cmath>
 
 #include "game/serialize.h"
-#include "gothic.h"
+#include "settings.h"
 #include "game/gamescript.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
@@ -218,7 +218,7 @@ void Item::setPhysicsDisable() {
   }
 
 bool Item::wakePhysics() {
-  if(Gothic::physicsFlags().placedItems && isPlacedItem() && !placedAllowed)
+  if(Settings::physicsFlags().placedItems && isPlacedItem() && !placedAllowed)
     return false;
   const bool missing = !isDynamic();
   if(missing) {
@@ -232,7 +232,7 @@ bool Item::wakePhysics() {
   }
 
 bool Item::activatePhysics() {
-  if(Gothic::physicsFlags().placedItems && isPlacedItem() && !placedAllowed)
+  if(Settings::physicsFlags().placedItems && isPlacedItem() && !placedAllowed)
     return false;
   wakePhysics();
   if(!isDynamic())
@@ -242,7 +242,7 @@ bool Item::activatePhysics() {
   }
 
 void Item::setPhysicsEnable(const ProtoMesh* mesh) {
-  if(Gothic::physicsFlags().placedItems && isPlacedItem() && !placedAllowed)
+  if(Settings::physicsFlags().placedItems && isPlacedItem() && !placedAllowed)
     return;
   if(mesh==nullptr)
     return;
@@ -250,7 +250,7 @@ void Item::setPhysicsEnable(const ProtoMesh* mesh) {
   Bounds b;
   b.assign(mesh->bboxMesh);
   physic = p.addDynamicObj(transform(),b,physicsMaterial(hitem->material),
-                           mesh,hitem->visual,Gothic::physicsFlags().itemHulls);
+                           mesh,hitem->visual,Settings::physicsFlags().itemHulls);
   physic.setItem(this);
   }
 

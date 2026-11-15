@@ -9,7 +9,7 @@
 #include "game/bodycontroller.h"
 #include "world/objects/item.h"
 #include "world/world.h"
-#include "gothic.h"
+#include "game/gamehost.h"
 #include "npcdayjournal.h"
 #include "world/benchhooks.h"
 
@@ -75,7 +75,7 @@ auto Npc::simplifiedBodyState() const -> std::optional<BodyState> {
 
 bool Npc::nativeBodyAction() const {
   const auto now=owner.tickCount();
-  if(interactive()!=nullptr || aniWaitTime>=now || outWaitTime>now || Gothic::inst().isNpcInDialog(*this))
+  if(interactive()!=nullptr || aniWaitTime>=now || outWaitTime>now || GameHost::inst().isNpcInDialog(*this))
     return true;
   const auto& pose=visual.pose();
   for(size_t i=0;i<pose.logicalLayerCount();++i) {

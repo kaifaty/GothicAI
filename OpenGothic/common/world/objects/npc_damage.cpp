@@ -2,7 +2,6 @@
 #include "npc_melee.h"
 #include "npc_melee_shadow.h"
 #include "world/bloodspawn.h"
-
 #include "graphics/visualfx.h"
 #include "graphics/effect.h"
 #include "game/damagecalculator.h"
@@ -16,7 +15,8 @@
 #include "world/objects/item.h"
 #include "world/world.h"
 #include "world/benchhooks.h"
-#include "gothic.h"
+#include "settings.h"
+#include "game/gamehost.h"
 
 #include <filesystem>
 #include <fstream>
@@ -112,7 +112,7 @@ void Npc::commitDamage() {
       Bench::destructionMeleeHit(*this,affected,blow.weaponDamage+blow.strength);
     }
   const bool physicsHits = isHuman() && (shadow!=nullptr ? shadow->physicsHits :
-      MeleeFighter::physicsHits(Gothic::physicsFlags().meleePhysicsHits,isPlayer(),
+      MeleeFighter::physicsHits(Settings::physicsFlags().meleePhysicsHits,isPlayer(),
                                !isPlayer() && mvAlgo.characterVirtualReady()));
   const auto hitTrace = [&](const char* result) {
     if(shadow!=nullptr) {
@@ -202,7 +202,7 @@ bool Npc::knockDownMelee(Npc& attacker, const Vec3& impulse, std::string_view re
   attachToPoint(nullptr);
   updateRagdollQuestAnchor();
   const auto hazards = ragdollQuestReturn.armed ? ragdollQuestReturn.hazards : uint8_t(0);
-  ragdollQuestReturn.armed = !isPlayer() && Gothic::physicsFlags().questGuard && ragdollQuestReturn.hasAnchor;
+  ragdollQuestReturn.armed = !isPlayer() && Settings::physicsFlags().questGuard && ragdollQuestReturn.hasAnchor;
   ragdollQuestReturn.hazards = ragdollQuestReturn.armed ? hazards : 0;
   meleeSavePosition = position();
   living.reset();
@@ -246,7 +246,7 @@ void Npc::applyMeleePosture(Npc& attacker, const MeleeBladeContact* contact, boo
     return;
   const bool beast = hasMeleeBeastPoise();
   const bool beastAttacker = isHuman() && attacker.hasMeleeBeastPoise();
-  if(!Gothic::physicsFlags().meleePosture || (!isHuman() && !beast) || (!attacker.isHuman() && !beastAttacker))
+  if(!Settings::physicsFlags().meleePosture || (!isHuman() && !beast) || (!attacker.isHuman() && !beastAttacker))
     return;
   if(beastAttacker && (DamageCalculator::damageTypeMask(attacker)&(1<<daedalus::DamageType::FLY))!=0)
     return;
@@ -263,7 +263,7 @@ void Npc::applyMeleePosture(Npc& attacker, const MeleeBladeContact* contact, boo
     }
   // Weapon skill is the progression of knockdowns: trained hitters knock down sooner, trained fighters stand longer.
   const float skillScale = meleePostureSkillScale(attacker);
-  const bool stagger = Gothic::physicsFlags().meleeStagger;
+  const bool stagger = Settings::physicsFlags().meleeStagger;
   const auto* armor = invent.currentArmor();
   const float armorScale = !beast && stagger && armor!=nullptr ?
       MeleeImpact::armorThresholdScale(MeleeImpact::armorClass(armor->handle().protection[PROT_EDGE])) : 1.f;
@@ -320,7 +320,7 @@ void Npc::applyMeleePosture(Npc& attacker, const MeleeBladeContact* contact, boo
 
 bool Npc::tickMeleePosture(uint64_t dt) {
   if(!meleeKnockdown) {
-    if(Gothic::physicsFlags().meleePosture && (isHuman() || hasMeleeBeastPoise()))
+    if(Settings::physicsFlags().meleePosture && (isHuman() || hasMeleeBeastPoise()))
       meleePosture.tick(owner.tickCount(),dt);
     else
       meleePosture.reset();
@@ -329,7 +329,7 @@ bool Npc::tickMeleePosture(uint64_t dt) {
   const auto now = owner.tickCount();
   lastEventTime = now;
   visual.processLayers(owner);
-  const bool enabled = Gothic::physicsFlags().meleePosture;
+  const bool enabled = Settings::physicsFlags().meleePosture;
   if(ragdoll && (now-meleeFallTick>=1200 || !enabled)) {
     // Use the same settled-body gate as KO, with a deadline for starting
     // the authored get-up rather than a deadline for finishing it.
@@ -430,7 +430,7 @@ void Npc::takeDamage(Npc &other, const Bullet* b, bool ignoreDefence, float mele
     takeDamage(other,b,COLL_DOEVERYTHING,0,false,meleeScale,contact);
     } else {
     if(isBlock) {
-      if(Gothic::physicsFlags().meleeParry && isHuman() && parade)
+      if(Settings::physicsFlags().meleeParry && isHuman() && parade)
         applyMeleeParry(other,contact);
       else
         applyMeleePosture(other,contact,true,meleePosture.value);
@@ -533,7 +533,7 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
     BodyObservations::noteEvent(*this,&other,hitResult.value>0 ? "damage_received" : "damage_no_loss",owner.tickCount());
     const int32_t lost = traceHpBefore-attribute(ATR_HITPOINTS);
     if(lost>0) {
-      Gothic::inst().onCombatHit(*this,other,lost,isSpell ? "spell" : (b==nullptr ? "melee" : "ranged"));
+      GameHost::inst().emitCombatHit(*this,other,lost,isSpell ? "spell" : (b==nullptr ? "melee" : "ranged"));
       Bench::npcDuelHit(*this,other,traceHpBefore,attribute(ATR_HITPOINTS),baseDamage,
                            hitResult.critical,meleeScale,stunBonus,backstabMult);
       }
@@ -620,7 +620,7 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
     }
 
   // throw enemy
-  const bool physicalWind = isSpell && Gothic::physicsFlags().spellPhysics &&
+  const bool physicalWind = isSpell && Settings::physicsFlags().spellPhysics &&
                             owner.script().physicalSpell(splId)==GameScript::PhysicalSpell::WindFist;
   if(hitResult.hasHit && (damageType & (1<<daedalus::DamageType::FLY)) && !physicalWind &&
      !(superArmor && (isMeleeCharging() || isMeleeChargeReleasing()))) {
@@ -630,7 +630,7 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
   if(hitResult.value>0) {
     if(heroAttack!=nullptr && !other.isPlayer()) {
       other.consumeServerAttack();
-      Gothic::inst().onHeroDeed(*heroAttack);
+      GameHost::inst().emitHeroDeed(*heroAttack);
       heroAttack.reset(); // native ASSESSOTHERSDAMAGE still runs, without changing our snapshot
       }
     currentOther = &other;
@@ -703,7 +703,7 @@ void Npc::hitReaction(const Npc& other, const Bullet* b, int32_t damage, bool st
 bool Npc::queueMeleeReaction(const Npc& other, const Vec3& at, const MeleeBladeContact* contact) {
   syncDeferredAnimation();
   // the blow pushes the struck chain on the living rig like an arrow does, its motors bring it back
-  if(!Gothic::physicsFlags().meleeReactions || !living || !isHuman())
+  if(!Settings::physicsFlags().meleeReactions || !living || !isHuman())
     return false;
   size_t bone = contact!=nullptr ? contact->bone : size_t(-1);
   if(bone>=visual.pose().boneCount()) {
@@ -749,7 +749,7 @@ Npc* Npc::bodyImpactCulprit() const {
   }
 
 void Npc::recordBodyImpact(float speedCmMs, Npc* culprit, const char* source) {
-  if(!canTakeBodyImpact(Gothic::physicsFlags().bodyImpactDamage,isUnconscious(),isDead(),isImmortal()) ||
+  if(!canTakeBodyImpact(Settings::physicsFlags().bodyImpactDamage,isUnconscious(),isDead(),isImmortal()) ||
      !std::isfinite(speedCmMs) || speedCmMs<=0.f)
     return;
   applyBodyImpact();
@@ -761,7 +761,7 @@ void Npc::recordBodyImpact(float speedCmMs, Npc* culprit, const char* source) {
   }
 
 void Npc::applyBodyImpact() {
-  if(!canTakeBodyImpact(Gothic::physicsFlags().bodyImpactDamage,isUnconscious(),isDead(),isImmortal())) {
+  if(!canTakeBodyImpact(Settings::physicsFlags().bodyImpactDamage,isUnconscious(),isDead(),isImmortal())) {
     bodyImpactWindow.clear();
     bodyImpactPendingCulprit.reset();
     return;
@@ -843,7 +843,7 @@ void Npc::takeFallDamage(const Vec3& fallSpeed) {
     }
   if(bodyImpactSpellFlight) {
     bodyImpactSpellFlight=false;
-    if(Gothic::physicsFlags().bodyImpactDamage) {
+    if(Settings::physicsFlags().bodyImpactDamage) {
       recordBodyImpact(fallSpeed.length(),bodyImpactCulprit(),"spell_landing");
       return;
       }

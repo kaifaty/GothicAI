@@ -7,7 +7,7 @@
 #include "game/deedwitness.h"
 #include "game/herodeed.h"
 #include "graphics/mesh/skeleton.h"
-#include "gothic.h"
+#include "game/gamehost.h"
 #include "physics/physicsnoise.h"
 #include "world/benchhooks.h"
 #include "world/objects/item.h"
@@ -130,7 +130,7 @@ bool Npc::perceptionProcess(Npc &pl, Npc* victim, float quadDist, PercType perc,
   if(BodyController::owns(*this)) {
     if(deed!=nullptr)
       deed->witnessed(*this);
-    Gothic::inst().onObservedPerception(*this,pl,victim,perc);
+    GameHost::inst().emitObservedPerception(*this,pl,victim,perc);
     trace("body_control_owned",false,false);
     return false;
     }
@@ -151,11 +151,11 @@ bool Npc::perceptionProcess(Npc &pl, Npc* victim, float quadDist, PercType perc,
   if(externalCtrl) {
     if(deed!=nullptr)
       deed->witnessed(*this);
-    Gothic::inst().onExternalPerception(*this,pl,victim,perc);
+    GameHost::inst().emitExternalPerception(*this,pl,victim,perc);
     trace("external_control",false,false);
     return false;
     }
-  Gothic::inst().onObservedPerception(*this,pl,victim,perc);
+  GameHost::inst().emitObservedPerception(*this,pl,victim,perc);
 
   if(isPhysicsInvestigating()) {
     constexpr auto interrupts = [](PercType observed) {
@@ -206,8 +206,8 @@ bool Npc::perceptionProcess(Npc &pl, Npc* victim, float quadDist, PercType perc,
     // passPerception has no deed, so returning it to scripts cannot add one twice.
     if(deed!=nullptr)
       deed->witnessed(*this);
-    auto& intercept = Gothic::inst().interceptPerception;
-    if(!percPassThrough && intercept && intercept(*this,pl,victim,perc,deed.get())) {
+    auto& host = GameHost::inst();
+    if(!percPassThrough && host.takePerception(*this,pl,victim,perc,deed.get())) {
       trace("intercepted",true,false);
       return true;  // taken over by an outside AI (ai_bridge); it may hand it back
       }
@@ -230,7 +230,7 @@ bool Npc::perceptionProcess(Npc &pl, Npc* victim, float quadDist, PercType perc,
 bool Npc::canHearPhysicsNoise() const {
   if(isPlayer() || processPolicy()!=NpcProcessPolicy::AiNormal || externalCtrl || isDown() ||
      isLie() || isTalk() || isAttack() || currentTarget!=nullptr || talkPartner()!=nullptr ||
-     Gothic::inst().isNpcInDialog(*this))
+     GameHost::inst().isNpcInDialog(*this))
     return false;
   const auto* state = owner.script().findSymbol(aiState.funcIni.ptr);
   return state==nullptr || (state->name()!="ZS_SLEEP" && state->name()!="ZS_MAGICSLEEP" &&
@@ -313,7 +313,7 @@ bool Npc::hearPhysicsNoise(const PhysicsNoise& noise) {
   if(noise.culprit==this || !canHearPhysicsNoise() || isPhysicsInvestigating() || now<physicsNoiseNextTime)
     return false;
   // The observer checks sight now, before either the native turn or a script callback.
-  Gothic::inst().onPhysicsNoiseHeard(*this,noise);
+  GameHost::inst().emitPhysicsNoiseHeard(*this,noise);
   physicsNoiseNextTime = now+2001;
   physicsNoisePosition = noise.position;
   physicsNoiseUntil = now+2000;

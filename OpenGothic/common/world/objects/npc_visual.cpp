@@ -1,7 +1,6 @@
 #include "npc.h"
 #include "npc_melee.h"
 #include "npc_melee_shadow.h"
-
 #include "graphics/mesh/skeleton.h"
 #include "graphics/effect.h"
 #include "game/bodycontroller.h"
@@ -15,7 +14,8 @@
 #include "utils/string_frm.h"
 #include "camera.h"
 #include "frameprofile.h"
-#include "gothic.h"
+#include "settings.h"
+#include "gameservices.h"
 #include "resources.h"
 #include "world/benchhooks.h"
 
@@ -387,7 +387,7 @@ const Animation::Sequence* Npc::setAnimAngGet(Anim a) {
 
 const Animation::Sequence* Npc::setAnimAngGet(Anim a, uint8_t comb) {
   if(a==Anim::AttackBlock && (!allowMeleeStunAction("parade") ||
-     (Gothic::physicsFlags().meleeParry && !allowStaminaAction("parade",0.f))))
+     (Settings::physicsFlags().meleeParry && !allowStaminaAction("parade",0.f))))
     return nullptr;
   if(a==Anim::MoveBack && !allowMeleeStunAction("jumpback"))
     return nullptr;
@@ -776,9 +776,9 @@ void Npc::resetCharacterVisualHeight() {
 void Npc::updateCharacterVisualHeight() {
   if(usesSimplifiedMovement())
     return;
-  const bool characterFlag = isPlayer() ? Gothic::physicsFlags().characterVirtual :
-                             isHuman() ? Gothic::physicsFlags().npcCharacterVirtual :
-                                         Gothic::physicsFlags().monsterCharacterVirtual;
+  const bool characterFlag = isPlayer() ? Settings::physicsFlags().characterVirtual :
+                             isHuman() ? Settings::physicsFlags().npcCharacterVirtual :
+                                         Settings::physicsFlags().monsterCharacterVirtual;
   if(!isPlayer() && !characterFlag && (!isHuman() || characterVisualSteps.empty())) {
     if(characterVisualHasSample)
       resetCharacterVisualHeight();
@@ -893,7 +893,7 @@ void Npc::updateAnimation(uint64_t dt, bool force) {
     }
   const bool frozen = spellFrozen();
   const bool clearedPhysicalPose = visual.clearPhysicalPose();
-  const auto camera = Gothic::inst().camera();
+  const auto camera = GameServices::inst().camera();
   if(isPlayer() && camera!=nullptr && camera->isFree())
     dt = 0;
 

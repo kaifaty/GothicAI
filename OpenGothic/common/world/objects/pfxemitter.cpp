@@ -10,12 +10,12 @@
 #include "world/objects/npc.h"
 #include "world/voblayer.h"
 #include "utils/fileext.h"
-#include "gothic.h"
+#include "gameservices.h"
 
 using namespace Tempest;
 
 PfxEmitter::PfxEmitter(World& world, std::string_view name)
-  :PfxEmitter(world,Gothic::inst().loadParticleFx(name)) {
+  :PfxEmitter(world,GameServices::inst().loadParticleFx(name)) {
   }
 
 PfxEmitter::PfxEmitter(World& world, const ParticleFx* decl) {
@@ -35,14 +35,14 @@ PfxEmitter::PfxEmitter(World& world, const asset::VirtualObject& vob) {
   LoadProbe::Vobs::Scope probe("pfx");
   if(Resources::isHeadless()) {
     if(FileExt::hasExt(vob.visual->name,"PFX")) {
-      cpuDecl = Gothic::inst().loadParticleFx(vob.visual->name);
+      cpuDecl = GameServices::inst().loadParticleFx(vob.visual->name);
       cpuWorld = &world;
       }
     return;
     }
   auto& owner = world.view()->pfxGroup;
   if(FileExt::hasExt(vob.visual->name,"PFX")) {
-    auto decl = Gothic::inst().loadParticleFx(vob.visual->name);
+    auto decl = GameServices::inst().loadParticleFx(vob.visual->name);
     if(decl==nullptr || decl->visMaterial.tex==nullptr)
       return;
     slot = PfxSlot(owner,*decl,VobLayer::flicker(vob));

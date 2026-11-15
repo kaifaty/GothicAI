@@ -93,6 +93,7 @@ LAYER_RULES: list[tuple[str, str]] = [
     # Gothic's media formats at runtime.
     ("common/daedalus/*", "gothic"),
     ("common/game/gamescript*", "gothic"),
+    ("common/game/gamesession", "gothic"),
     ("common/game/definitions/*", "gothic"),
     # Pure mesh packing over our asset types, independent of Gothic.
     ("common/game/compatibility/phoenix", "platform"),
@@ -110,6 +111,7 @@ LAYER_RULES: list[tuple[str, str]] = [
     ("common/world/triggers/*", "gothic"),
     ("common/ui/*", "gothic"),
     ("common/gothic", "gothic"),
+    ("common/gothichost", "gothic"),
     ("common/marvin", "gothic"),
     ("common/mainwindow", "gothic"),
     # The entry point assembles all layers, including the bench and AI bridge.
