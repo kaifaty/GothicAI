@@ -16,7 +16,7 @@
 #include "graphics/worldview.h"
 #include "graphics/lightgroup.h"
 #include "graphics/meshobjects.h"
-#include "game/gamescript.h"
+#include "game/gamerules.h"
 #include "physics/dynamicworld.h"
 #include "worldobjects.h"
 #include "worldsound.h"
@@ -28,6 +28,7 @@
 #include "bloodstains.h"
 
 class GameSession;
+class GameScript;
 class Focus;
 class WayMatrix;
 class VisualFx;
@@ -39,6 +40,8 @@ class ClothVisual;
 class MdlVisual;
 struct PhysicsNoise;
 struct HeroDeed;
+struct ItemRecord;
+struct FocusRecord;
 
 class World final : public ClothWorld, public BloodDecalSource, public PhysicsHost {
   public:
@@ -70,7 +73,7 @@ class World final : public ClothWorld, public BloodDecalSource, public PhysicsHo
 
     World()=delete;
     World(const World&)=delete;
-    World(GameSession& game, std::string_view file, bool startup, std::function<void(int)> loadProgress);
+    World(GameSession& game, GameRules& rules, std::string_view file, bool startup, std::function<void(int)> loadProgress);
     ~World();
 
     void                 createPlayer(std::string_view cls);
@@ -183,6 +186,7 @@ class World final : public ClothWorld, public BloodDecalSource, public PhysicsHo
     GlobalEffects*       globalFx() const { return globFx.get();   }
 
     GameScript&          script()   const;
+    GameRules&           rules()    const { return *gameRules; }
     GameSession&         gameSession() const { return game; }
 
     void                 assignRoomToGuild(std::string_view room, int32_t guildId);
@@ -195,7 +199,7 @@ class World final : public ClothWorld, public BloodDecalSource, public PhysicsHo
     GlobalFx             addGlobalEffect(std::string_view what, uint64_t len, const std::string* argv, size_t argc);
     MeshObjects::Mesh    addView(std::string_view visual) const;
     MeshObjects::Mesh    addView(std::string_view visual, int32_t headTex, int32_t teetTex, int32_t bodyColor) const;
-    MeshObjects::Mesh    addView(const daedalus::IItem& itm);
+    MeshObjects::Mesh    addView(const ItemRecord& itm);
     MeshObjects::Mesh    addView(const ProtoMesh* visual);
     MeshObjects::Mesh    addAtachView (const ProtoMesh::Attach& visual, const int32_t version);
     MeshObjects::Mesh    addStaticView(const ProtoMesh* visual, bool staticDraw) override;
@@ -317,9 +321,10 @@ class World final : public ClothWorld, public BloodDecalSource, public PhysicsHo
     double               worldLoadMs = 0;
     bool                 textureLoadingPending = true;
     Resources::TextureStartup textureStartup;
-    const daedalus::IFocus& searchPolicy(const Npc& pl, TargetCollect& collAlgo, TargetType& collType, WorldObjects::SearchFlg& opt) const;
+    const FocusRecord& searchPolicy(const Npc& pl, TargetCollect& collAlgo, TargetType& collType, WorldObjects::SearchFlg& opt) const;
     std::string                           wname;
     GameSession&                          game;
+    GameRules* const                      gameRules;
 
     std::unique_ptr<WayMatrix>            wmatrix;
     ChunkTable                            chunks;

@@ -5,9 +5,8 @@
 #include <cstdlib>
 
 #include "camera.h"
-#include "game/definitions/musicdefinitions.h"
-#include "gothic.h"
-#include "game/gamesession.h"
+#include "settings.h"
+#include "game/gamehost.h"
 #include "world/triggers/abstracttrigger.h"
 #include "world/objects/npc.h"
 #include "world/objects/sound.h"
@@ -141,7 +140,7 @@ void WorldSound::addSound(const asset::VSound &vob) {
   if(lazyVobSounds())
     s.pending[0] = vob.sound_name;
   else
-    s.eff[0] = Gothic::inst().loadSoundFx(vob.sound_name);
+    s.eff[0] = GameHost::inst().loadSoundFx(vob.sound_name);
 
   s.pos       = {vob.position.x,vob.position.y,vob.position.z};
   s.sndRadius = vob.radius;
@@ -156,7 +155,7 @@ void WorldSound::addSound(const asset::VSound &vob) {
     if(lazyVobSounds())
       s.pending[1] = prDay.sound_name2;
     else
-      s.eff[1] = Gothic::inst().loadSoundFx(prDay.sound_name2);
+      s.eff[1] = GameHost::inst().loadSoundFx(prDay.sound_name2);
     } else {
     s.sndStart = gtime(0,0);
     s.sndEnd   = gtime(24,0);
@@ -176,7 +175,7 @@ Sound WorldSound::addDlgSound(std::string_view s, const Tempest::Vec3& pos, floa
     *voice = LipSync::Track::fromSound(snd,s);
 
   auto ret = usesSimulationAudioClock() ? implAddSimulationSound(snd, 1.f, pos, range) :
-                                         implAddSound(game.loadSound(snd), pos, range);
+                                         implAddSound(GameHost::inst().loadSound(game,snd), pos, range);
   if(ret.isEmpty())
     return Sound();
 
@@ -201,7 +200,7 @@ Sound WorldSound::implAddSound(const SoundFx& eff, const Tempest::Vec3& pos, flo
     return ret;
     }
   bool loop = false;
-  auto ret = implAddSound(game.loadSound(eff,loop), pos,rangeMax);
+  auto ret = implAddSound(GameHost::inst().loadSound(game,eff,loop), pos,rangeMax);
   ret.setLooping(loop);
   return ret;
   }
@@ -230,7 +229,7 @@ Sound WorldSound::implAddSimulationSound(const Tempest::Sound& snd, float volume
   ex->simulationDuration = snd.timeLength();
   if(!Resources::isHeadless()) {
     // The SoundFx sample was already selected. Loading its raw buffer consumes no second RNG draw.
-    ex->eff = game.loadSound(snd);
+    ex->eff = GameHost::inst().loadSound(game,snd);
     ex->eff.setPosition(pos);
     ex->eff.setMaxDistance(rangeMax);
     }
@@ -245,12 +244,15 @@ void WorldSound::tick(Npc& player) {
   FrameProfile::Scope timing(FrameProfile::Zone::Sound);
   std::lock_guard<std::mutex> guard(sync);
 
-  auto cx = game.camera().listenerPosition();
+  auto* camera = GameHost::inst().sessionCamera(game);
+  if(camera==nullptr)
+    return;
+  auto cx = camera->listenerPosition();
   plPos = cx.pos;
 
-  game.updateListenerPos(cx);
+  GameHost::inst().updateListenerPos(game,cx);
 
-  const bool worldSounds = Gothic::settingsGetI("SOUND","worldSounds")!=0;
+  const bool worldSounds = Settings::getI("SOUND","worldSounds")!=0;
   unsigned loadsLeft = 2;
   for(auto& i:worldEff) {
     if(!worldSounds)
@@ -263,7 +265,7 @@ void WorldSound::tick(Npc& player) {
         if(i.pending[s].empty())
           continue;
         FrameProfile::Scope loading(FrameProfile::Zone::VobSoundLoad);
-        i.eff[s] = Gothic::inst().loadSoundFx(i.pending[s]);
+        i.eff[s] = GameHost::inst().loadSoundFx(i.pending[s]);
         // An unsuccessful load is final, just as with eager loading.
         i.pending[s].clear();
         --loadsLeft;
@@ -433,11 +435,7 @@ bool WorldSound::setMusic(std::string_view zone, GameMusic::Tags tags) {
     smode = "FGT";
 
   string_frm name(zone,'_',(isDay ? "DAY" : "NGT"),'_',smode);
-  if(auto* theme = Gothic::musicDef()[name]) {
-    GameMusic::inst().setMusic(*theme,tags);
-    return true;
-    }
-  return false;
+  return GameHost::inst().setMusic(name,uint8_t(tags));
   }
 
 bool WorldSound::isInListenerRange(const Tempest::Vec3& pos, float sndRgn) const {
@@ -458,6 +456,6 @@ bool WorldSound::canSeeSource(const Tempest::Vec3& p) const {
 void WorldSound::aiOutput(const Tempest::Vec3& pos, std::string_view outputname) {
   if(isInListenerRange(pos,talkRange)){
     std::lock_guard<std::mutex> guard(sync);
-    Gothic::inst().emitGlobalSound(Resources::loadSoundBuffer(string_frm(outputname,".wav")));
+    GameHost::inst().emitGlobalSound(Resources::loadSoundBuffer(string_frm(outputname,".wav")));
     }
   }

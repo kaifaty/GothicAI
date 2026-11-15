@@ -32,6 +32,7 @@ struct MeleeShadowBody;
 struct MeleeBladeContact;
 class PhysicsHost;
 namespace JPH { class PhysicsSystem; class GroupFilter; }
+namespace RagdollBrace { struct Contacts; }
 
 class CollisionWorld final {
   public:
@@ -394,6 +395,9 @@ class CollisionWorld final {
     void fillRagdoll(QueryResult& result, JPH::BodyID body) const;
     JPH::PhysicsSystem& physicsSystem();
     friend class ClothContractDriver;
+    friend class RagdollBraceContract;
+    // A braced rig's touches (collisionworld_brace.cpp); null stops them. Main thread, outside Update.
+    void trackBraceContacts(uint32_t group, RagdollBrace::Contacts* contacts);
     uint32_t registerRagdoll(Ragdoll& body);
 
     void unregisterRagdoll(Ragdoll& body);

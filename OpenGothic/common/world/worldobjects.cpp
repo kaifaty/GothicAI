@@ -1,6 +1,5 @@
 #include "loadprobe.h"
 #include "worldobjects.h"
-
 #include "game/serialize.h"
 #include "game/physicssave.h"
 #include "physics/placedcensuscache.h"
@@ -24,10 +23,11 @@
 #include "world.h"
 #include "utils/workers.h"
 #include "utils/dbgpainter.h"
-#include "gothic.h"
+#include "settings.h"
+#include "gameservices.h"
+#include "game/gamehost.h"
 #include "frameprofile.h"
 #include "camera.h"
-#include "game/gamesession.h"
 #include "graphics/dynamic/frustrum.h"
 #include "graphics/mesh/pose.h"
 #include "graphics/mesh/gaze.h"
@@ -39,9 +39,7 @@
 #include "graphics/mesh/lipsync.h"
 #include "graphics/worldview.h"
 #include "navdemos.h"
-
 #include "sha256.h"
-
 #include <Tempest/Painter>
 #include <Tempest/Application>
 #include <Tempest/Log>
@@ -131,7 +129,7 @@ void WorldObjects::load(Serialize &fin) {
 
   fin.setEntry("worlds/",fin.worldName(),"/items");
   fin.read(sz);
-  const auto burningTorch=owner.script().findSymbolIndex("ItLsTorchburning");
+  const auto burningTorch=owner.rules().findSymbolIndex("ItLsTorchburning");
   for(size_t i=0; i<sz; ++i) {
     auto it = std::make_unique<Item>(owner,fin,Item::T_World);
     if(burningTorch!=size_t(-1) && it->clsId()==burningTorch)
@@ -253,7 +251,7 @@ void WorldObjects::loadItemPhysics(Serialize& fin) {
       auto& item=*itemArr[state.index];
       // Linked placements use their saved matrix, but always enter the new
       // proximity set asleep. Their original ZEN census has already run.
-      if(Gothic::physicsFlags().placedItems && item.isPlacedItem())
+      if(Settings::physicsFlags().placedItems && item.isPlacedItem())
         continue;
       item.restorePhysics(state.matrix,state.velocity,state.angular,state.sleeping);
       }
@@ -267,7 +265,7 @@ void WorldObjects::linkPlacedItem(PlacedItem& source, Item& item) {
   source.item=&item;
   item.placedZenId=source.zenId;
   item.placedAllowed=source.validation.enabled;
-  if(Gothic::physicsFlags().placedItems)
+  if(Settings::physicsFlags().placedItems)
     item.setPhysicsDisable();
   }
 
@@ -308,7 +306,7 @@ std::vector<DynamicWorld::PlacedItemCensusEntry> WorldObjects::placedCensusVerdi
       // Without a derived root the census is simply computed live.
       }
     const auto inputs=Resources::wayHeightInputs(owner.name());
-    const auto& flags=Gothic::physicsFlags();
+    const auto& flags=Settings::physicsFlags();
     const uint32_t bits=uint32_t(flags.cloth)|(uint32_t(flags.movableVobs)<<1)|(uint32_t(physic.staticCollisionSplit())<<2)|
                         (uint32_t(flags.furnitureParts)<<3)|(uint32_t(flags.itemHulls)<<4)|(uint32_t(flags.placedItems)<<5)|
                         (uint32_t(flags.destruction)<<6);
@@ -399,7 +397,7 @@ void WorldObjects::finalizePlacedItems() {
     owner.physic()->cycleBodyIds(size_t(std::count_if(candidates.begin(),candidates.end(),
                                  [](const DynamicWorld::PlacedItemCandidate& c) { return c.proto!=nullptr; })));
     }
-    if(Gothic::physicsFlags().itemHulls)
+    if(Settings::physicsFlags().itemHulls)
       for(size_t i=0;i<placedItems.size();++i)
         if(placedItems[i].validation.enabled && candidates[i].proto!=nullptr) {
           LoadProbe::Startup::Scope prepareProbe(LoadProbe::Startup::PhysicsPrepare,false,"placed-items");
@@ -432,7 +430,7 @@ WorldObjects::PhysicsDigest WorldObjects::physicsDigest() const {
 
 void WorldObjects::tickPlacedItems() {
   placedCreatedThisFrame=0;
-  if(!Gothic::physicsFlags().placedItems)
+  if(!Settings::physicsFlags().placedItems)
     return;
   const auto* hero=owner.player();
   if(hero==nullptr)
@@ -590,7 +588,7 @@ void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
       });
     }
 
-  auto       camera  = Gothic::inst().camera();
+  auto       camera  = GameServices::inst().camera();
   const bool freeCam = (camera!=nullptr && camera->isFree());
   const auto pl      = owner.player();
   // Body training with a frozen world: other NPCs (but the hero) and interactive objects stand still.
@@ -745,7 +743,7 @@ void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
     }
   for(auto& r:passive)
     if(r.deed!=nullptr)
-      Gothic::inst().onHeroDeed(*r.deed);
+      GameHost::inst().emitHeroDeed(*r.deed);
   }
 
 uint32_t WorldObjects::npcId(const Npc *ptr) const {
@@ -788,11 +786,11 @@ Npc* WorldObjects::addNpc(size_t npcInstance, std::string_view at) {
     npc->setDirection (pos->direction());
     npc->attachToPoint(pos);
     npc->updateTransform();
-    owner.script().invokeRefreshAtInsert(*npc);
+    owner.rules().invokeRefreshAtInsert(*npc);
     npcArr.emplace_back(npc);
     } else {
-    const auto* sym = owner.script().findSymbol(npcInstance);
-    Log::e("addNpc: ", npcInstance, " (", (sym!=nullptr ? sym->name() : "nullptr" ), ") has invalid spawnpoint (", at, ")");
+    const auto sym = owner.rules().symbolName(npcInstance);
+    Log::e("addNpc: ", npcInstance, " (", (sym.empty() ? std::string_view("nullptr") : sym ), ") has invalid spawnpoint (", at, ")");
     auto& point = owner.deadPoint();
     npc->attachToPoint(nullptr);
     npc->setPosition(point.position());
@@ -816,7 +814,7 @@ Npc* WorldObjects::addNpc(size_t npcInstance, const Vec3& pos) {
   Npc* npc   = new Npc(owner,npcInstance,pstr);
   npc->setPosition  (pos.x,pos.y,pos.z);
   npc->updateTransform();
-  owner.script().invokeRefreshAtInsert(*npc);
+  owner.rules().invokeRefreshAtInsert(*npc);
 
   npcArr.emplace_back(npc);
   return npc;
@@ -939,14 +937,16 @@ static bool animationProbed(const Npc& npc) {
   }
 
 bool WorldObjects::makeAnimationLodView(AnimationLod::View& view) const {
-  const auto& camera = owner.gameSession().camera();
+  const auto* camera = GameHost::inst().sessionCamera(owner.gameSession());
+  if(camera==nullptr)
+    return false;
   const Tempest::Vec3* sun = nullptr;
   Tempest::Vec3 sunDir;
   if(auto* wview = owner.view()) {
     sunDir = wview->mainLight().dir();
     sun    = &sunDir;
     }
-  view.make(camera.viewProj(),camera.originLwc(),sun);
+  view.make(camera->viewProj(),camera->originLwc(),sun);
   return true;
   }
 
@@ -1167,7 +1167,7 @@ Npc *WorldObjects::findHero() {
 
 Npc *WorldObjects::findNpcByInstance(size_t instance, size_t n) {
   for(auto& i:npcArr) {
-    if(i->handle().symbol_index()==instance) {
+    if(i->instanceSymbol()==instance) {
       if(n==0)
         return i.get();
       --n;
@@ -1178,7 +1178,7 @@ Npc *WorldObjects::findNpcByInstance(size_t instance, size_t n) {
 
 Item* WorldObjects::findItemByInstance(size_t instance, size_t n) {
   for(auto& i:itemArr) {
-    if(i->handle().symbol_index()==instance) {
+    if(i->clsId()==instance) {
       if(n==0)
         return i.get();
       --n;
@@ -1297,7 +1297,7 @@ void WorldObjects::stopEffect(const VisualFx& vfx) {
   }
 
 Item* WorldObjects::addItem(const asset::VItem& vob) {
-  size_t inst = owner.script().findSymbolIndex(vob.instance);
+  size_t inst = owner.rules().findSymbolIndex(vob.instance);
   Item*  it   = addItem(inst,"");
   if(it==nullptr)
     return nullptr;
@@ -1357,7 +1357,7 @@ size_t WorldObjects::hasItems(std::string_view tag, size_t itemCls) {
 void WorldObjects::onItemRemoved(const Item& itm) {
   for(auto& i:npcArr)
     i->onWldItemRemoved(itm);
-  owner.script().onWldItemRemoved(itm);
+  owner.rules().onWldItemRemoved(itm);
   }
 
 Bullet& WorldObjects::shootBullet(const Item& itmId, const Vec3& pos, const Vec3& dir, float tgRange, float speed) {
@@ -1406,8 +1406,8 @@ Item* WorldObjects::addItem(size_t itemInstance, const Tempest::Vec3& pos, const
   }
 
 Item* WorldObjects::addItemDyn(size_t itemInstance, const Tempest::Matrix4x4& pos, size_t ownerNpc) {
-  //size_t ItLsTorchburned  = owner.script().findSymbolIndex("ItLsTorchburned");
-  size_t ItLsTorchburning = owner.script().findSymbolIndex("ItLsTorchburning");
+  //size_t ItLsTorchburned  = owner.rules().findSymbolIndex("ItLsTorchburned");
+  size_t ItLsTorchburning = owner.rules().findSymbolIndex("ItLsTorchburning");
 
   if(itemInstance==size_t(-1))
     return nullptr;
@@ -1508,7 +1508,7 @@ Npc* WorldObjects::findNpcNear(const Npc& pl, Npc* def, const SearchOpt& opt) {
       return def;
     }
   auto r = findObj(npcNear,pl,opt);
-  if(r!=nullptr && (!Gothic::options().hideFocus || !r->isDead() ||
+  if(r!=nullptr && (!Settings::options().hideFocus || !r->isDead() ||
                      r->inventory().iterator(Inventory::T_Ransack).isValid()))
     return r;
   return nullptr;
@@ -1576,7 +1576,7 @@ void WorldObjects::drawVobBoxNpcNear(DbgPainter& p) const {
   for(auto& i:npcNear)
     i->drawVobBox(p);
 
-  auto camera = Gothic::inst().camera();
+  auto camera = GameServices::inst().camera();
   const float nearDist = 3000*3000;
   for(auto& i:interactiveObj) {
     auto bbox = i->bBox();
@@ -1676,7 +1676,7 @@ void WorldObjects::sendPassivePerc(Npc &self, Npc &other, Npc* victim, Item* itm
   m.other  = &other;
   m.victim = victim;
   if(itm!=nullptr)
-    m.item   = itm->handle().symbol_index();
+    m.item   = itm->clsId();
   sndPerc.push_back(m);
   }
 
@@ -1692,7 +1692,7 @@ void WorldObjects::sendImmediatePerc(Npc& self, Npc& other, Npc& victim, Item* i
   r.other  = &other;
   r.victim = &victim;
   if(itm!=nullptr)
-    r.item   = itm->handle().symbol_index();
+    r.item   = itm->clsId();
 
   for(auto& ptr:npcNear) {
     passivePerceptionProcess(r, *ptr, *pl);
@@ -1725,7 +1725,7 @@ void WorldObjects::passivePerceptionProcess(PerceptionMsg& msg, Npc& npc, Npc& p
     }
 
   if(msg.item!=size_t(-1) && msg.other!=nullptr)
-    owner.script().setInstanceItem(*msg.other,msg.item);
+    owner.rules().setInstanceItem(*msg.other,msg.item);
   npc.perceptionProcess(*msg.other,msg.victim,distance,PercType(msg.what),msg.deed);
   }
 
@@ -1752,7 +1752,7 @@ void WorldObjects::resetPositionToTA() {
   // [GAME] body_traces: a clock leap (sleep, Wld_SetTime, world re-entry) neither retires
   // the dead nor carries them to their routine point. Bodies lie where they fell and
   // leave by the three-day rule (World::sweepBodies). Off: vanilla OpenGothic.
-  const bool keepBodies = Gothic::physicsFlags().bodyTraces;
+  const bool keepBodies = Settings::physicsFlags().bodyTraces;
   std::vector<std::unique_ptr<Npc>> retired;
   for(auto& i:npcInvalid) {
     if(i->handlePtr().use_count()<=1)
@@ -1771,11 +1771,11 @@ void WorldObjects::resetPositionToTA() {
   for(size_t i=0;i<npcArr.size();) {
     auto& n = *npcArr[i];
     LoadProbe::Startup::Detail::Scope detail("placement_npc",[&]{
-      const auto* symbol=owner.script().findSymbol(n.instanceSymbol());
-      return symbol!=nullptr ? symbol->name() : std::to_string(n.instanceSymbol());
+      const auto symbol=owner.rules().symbolName(n.instanceSymbol());
+      return symbol.empty() ? std::to_string(n.instanceSymbol()) : std::string(symbol);
       });
     if(keepBodies && n.isDead() && !n.isPlayer()) {
-      owner.script().startupFloor().beforeKeep(n);
+      owner.rules().startupFloorBeforeKeep(n);
       ++i;
       continue;
       }
@@ -1794,7 +1794,7 @@ void WorldObjects::resetPositionToTA() {
 
       auto& point = owner.deadPoint();
       auto& npc   = *npcInvalid.back();
-      owner.script().startupFloor().beforeResetMove(npc,point.position());
+      owner.rules().startupFloorBeforeResetMove(npc,point.position());
       npc.suspendRagdoll();
       npc.attachToPoint(nullptr);
       npc.setPosition(point.position());

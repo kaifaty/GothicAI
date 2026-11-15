@@ -1146,9 +1146,31 @@ def test_brace_poses_stay_inside_the_ragdoll_joints():
         assert not [j for j, v in joints.items() if not v["ok"]], name
         # a motor target on the limit leaves the motor pushing against it
         assert all(abs(v["twist"]) <= 70 for j, v in joints.items() if "HAND" in j), name
-        # elbows give way on the landing: neither locked nor folded
-        assert all(20 <= joints[f"BIP01 {s} FOREARM"]["flex"] <= 70 for s in "LR"), name
+        # reaching, the elbows give way on the landing: neither locked nor folded; landed, they are bent further
+        top = 110 if name.startswith("S_BRACELAND_") else 70
+        assert all(20 <= joints[f"BIP01 {s} FOREARM"]["flex"] <= top for s in "LR"), name
         hands[name] = {s: pos[b.gi[f"BIP01 {s} HAND"]] for s in "LR"}
-    for s, o in (("L", "R"), ("R", "L")):
-        assert np.allclose(hands["S_BRACE_R"][s], hands["S_BRACE_L"][o] * [-1, 1, 1], atol=1e-6)
+    assert {n[-1] for n in hands if n.startswith("S_BRACELAND_")} == set("FBLR")  # a landing pose for every reach
+    for family in ("S_BRACE_", "S_BRACELAND_"):
+        for s, o in (("L", "R"), ("R", "L")):
+            assert np.allclose(hands[family + "R"][s], hands[family + "L"][o] * [-1, 1, 1], atol=1e-6)
+
+
+def test_own_pose_foot_off_the_floor_keeps_the_ankle():
+    models = base_models()
+    if models is None:
+        pytest.skip("no converted base")
+    import json
+    import own_poses as op
+    import retarget_soma as rs
+    spec = json.loads((Path(__file__).resolve().parent / "poses-brace.json").read_text())
+    b = op.Builder(models, spec["stance"])
+    ps = spec["poses"]["S_BRACELAND_B"]
+    pose = b.build(ps)
+    pos = rs.world_positions(b.skel, pose["world"], pose["root"])
+    for s in "LR":
+        assert np.allclose(pos[b.gi[f"BIP01 {s} FOOT"]], ps["feet"][s]["pos"], atol=1e-3)  # the ankle is where it was asked
+        calf, foot = b.gi[f"BIP01 {s} CALF"], b.gi[f"BIP01 {s} FOOT"]
+        bind = b.bind[calf].T @ b.bind[foot]
+        assert np.allclose(pose["world"][calf].T @ pose["world"][foot], bind, atol=1e-6)  # bind angle to the shin
 

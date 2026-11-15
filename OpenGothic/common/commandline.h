@@ -30,7 +30,9 @@ class CommandLine {
     bool                isDevMode()        const { return devmode;      }
     bool                isValidationMode() const { return isDebug;      }
     bool                isWindowMode()     const { return isWindow;     }
-    bool                isRayQuery()       const { return isRQuery;     }
+    // -rt 0|1 and OPENGOTHIC_RT=0|1, each -1 when not given: Shaders::setupOptions decides with RayTracingRule
+    int                 rayTracingArg()    const { return rtArg;        }
+    int                 rayTracingEnv()    const { return rtEnv;        }
     GiMethod            isRtGi()           const { return isGi;         }
     bool                hasRtGiArg()       const { return isGiSet;      }
     bool                isMeshShading()    const { return isMeshSh;     }
@@ -40,6 +42,7 @@ class CommandLine {
     bool                doIntro()          const { return !noIntro;     }
     bool                doHeroHead()       const { return !noHeroHead;  }
     bool                doRenderRig()      const { return !noRenderRig; }
+    bool                doHandMotion()     const { return !noHandMotion; }
     Benchmark           isBenchmarkMode()  const { return isBenchmark;  }
     uint32_t            aaPreset()         const { return aaPresetId;   }
     bool                doTaa()            const { return isTaa;        }
@@ -59,12 +62,14 @@ class CommandLine {
     bool                noIntro      = false;  // -nointro: no videos, the start's dialog counts as told
     bool                noHeroHead   = false;
     bool                noRenderRig  = false;  // --no-render-rig: bodies on Gothic's skeleton (graphics/mesh/renderrig)
+    bool                noHandMotion = false;  // --no-hand-motion: no UDP receiver of hand motion (input/handmotion)
     Benchmark           isBenchmark  = Benchmark::None;
     bool                isWindow     = false;
     bool                isDebug      = false;
-    // ray tracing is off everywhere, -rt 1 turns it on: the scene rebuilt the whole TLAS
-    // whenever an object moved, 4-8 FPS indoors on an M1 (docs/performance.md, 2026-10-28)
-    bool                isRQuery     = false;
+    // ray tracing: -rt 0|1, then OPENGOTHIC_RT=0|1, then [INTERNAL] rayTracing in Gothic.ini, else the rule of
+    // graphics/raytracingrule.h — on for a discrete NVIDIA RTX on Vulkan (2026-11-14), off elsewhere, the Mac too
+    int                 rtArg        = -1;
+    int                 rtEnv        = -1;
 #if defined(__OSX__)
     bool                isMeshSh     = false;  // slower on M1 (reports/render-features/2026-10-18)
 #else

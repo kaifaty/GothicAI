@@ -58,7 +58,7 @@ bool Npc::startState(ScriptFn id, std::string_view wp, gtime endTime, bool noFin
     setPosition(point.position());
     }
 
-  auto& st = owner.script().aiState(id);
+  auto& st = owner.rules().aiState(id);
   if(isPlayer() && !isPlayerEnabledState(st)) {
     // disable for now, as it causes infinite lock in freeze state
     // https://github.com/Try/OpenGothic/issues/906
@@ -89,7 +89,7 @@ void Npc::clearState(bool noFinalize) {
   if(BodyController::deferNative(*this,[this,noFinalize] { clearState(noFinalize); })) return;
   if(aiState.funcIni.isValid() && aiState.started) {
     if(!noFinalize)
-      owner.script().invokeState(this,currentOther,currentVictim,aiState.funcEnd);  // cleanup
+      owner.rules().invokeState(this,currentOther,currentVictim,aiState.funcEnd);  // cleanup
     aiPrevState = aiState.funcIni;
     invent.putState(*this,0,0);
     visual.stopItemStateAnim(*this);
@@ -108,12 +108,12 @@ bool Npc::isPlayerEnabledState(const ::AiState& st) const {
     "ZS_WHIRLWIND"
     };
 
-  const auto* sym = owner.script().findSymbol(st.funcIni);
-  if(sym==nullptr)
+  const auto sym = owner.rules().symbolName(st.funcIni);
+  if(sym.empty())
     return false;
 
   for(auto* pState:playerEnabledStatesG2)
-    if(sym->name()==pState)
+    if(sym==pState)
       return true;
   return false;
   }
@@ -128,7 +128,7 @@ int Npc::invokeRoutine(ScriptFn function) {
     } restore{nativeCombatQueueTarget,nativeCombatQueueTarget};
   nativeCombatQueueTarget=std::string_view(aiState.hint)=="ZS_ATTACK" &&
                           (function==aiState.funcIni || function==aiState.funcLoop) ? currentTarget : nullptr;
-  return owner.script().invokeState(this,currentOther,currentVictim,function);
+  return owner.rules().invokeState(this,currentOther,currentVictim,function);
   }
 
 void Npc::tickRoutine() {
@@ -325,6 +325,6 @@ void Npc::clearRoutine() {
 
 void Npc::excRoutine(size_t callback) {
   routines.clear();
-  owner.script().invokeState(this,currentOther,currentVictim,callback);
+  owner.rules().invokeState(this,currentOther,currentVictim,callback);
   // aiState.eTime = gtime();
   }

@@ -108,7 +108,7 @@ GameSession::GameSession(std::string file) {
   if(LoadProbe::enabled())
     LoadProbe::mark("scripts_vm",LoadProbe::msSince(probeT));
 
-  setWorld(std::unique_ptr<World>(new World(*this,std::move(file),true,[&](int v){
+  setWorld(std::unique_ptr<World>(new World(*this,*vm,std::move(file),true,[&](int v){
     Gothic::inst().setLoadingProgress(int(v*0.55));
     })));
 
@@ -216,7 +216,7 @@ GameSession::GameSession(Serialize &fin) {
     vm->ownSymbols().load(fin);
 
   if(true) {
-    setWorld(std::unique_ptr<World>(new World(*this,wname,false,[&](int v){
+    setWorld(std::unique_ptr<World>(new World(*this,*vm,wname,false,[&](int v){
       Gothic::inst().setLoadingProgress(int(v*0.55));
       })));
     wrld->load(fin);
@@ -498,7 +498,7 @@ auto GameSession::implChangeWorld(std::unique_ptr<GameSession>&& game,
     };
 
   initPerceptions();
-  std::unique_ptr<World> ret = std::unique_ptr<World>(new World(*this,w,wss.isEmpty(),loadProgress));
+  std::unique_ptr<World> ret = std::unique_ptr<World>(new World(*this,*vm,w,wss.isEmpty(),loadProgress));
   setWorld(std::move(ret));
 
   probeT = LoadProbe::now();

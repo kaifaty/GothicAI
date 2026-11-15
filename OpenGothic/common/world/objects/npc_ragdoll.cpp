@@ -12,7 +12,7 @@
 #include "world/bullet.h"
 #include "world/world.h"
 #include "frameprofile.h"
-#include "gothic.h"
+#include "settings.h"
 #include "navdemos.h"
 
 using namespace Tempest;
@@ -39,7 +39,7 @@ float Npc::physicsMass() const {
   }
 
 bool Npc::addSpellImpulse(const Vec3& impulseNs, bool reaction, Npc* culprit) {
-  if(!Gothic::physicsFlags().spellPhysics || spellFrozen() ||
+  if(!Settings::physicsFlags().spellPhysics || spellFrozen() ||
      !std::isfinite(impulseNs.x) || !std::isfinite(impulseNs.y) || !std::isfinite(impulseNs.z) ||
      impulseNs.quadLength()<=0.f)
     return false;
@@ -48,24 +48,24 @@ bool Npc::addSpellImpulse(const Vec3& impulseNs, bool reaction, Npc* culprit) {
     return false;
   if(ragdoll) {
     ragdoll->addImpulse(impulseNs,culprit);
-    bodyImpactLaunchCulprit=culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<daedalus::INpc>();
+    bodyImpactLaunchCulprit=culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<NpcRecord>();
     return true;
     }
   if(isDown()) {
     pendingSpellImpulse += impulseNs;
-    spellImpulseCulprit = culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<daedalus::INpc>();
+    spellImpulseCulprit = culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<NpcRecord>();
     return true;
     }
   updateRagdollQuestAnchor();
   if(!mvAlgo.addSpellImpulse(impulseNs,physicsMass(),reaction))
     return false;
-  spellImpulseCulprit = culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<daedalus::INpc>();
+  spellImpulseCulprit = culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<NpcRecord>();
   bodyImpactLaunchCulprit=spellImpulseCulprit;
   bodyImpactSpellFlight=true;
   if(living)
     living->setNoiseCulprit(culprit);
   if(!isPlayer() && isHuman() && ragdollQuestReturn.hasAnchor &&
-     Gothic::physicsFlags().questGuard) {
+     Settings::physicsFlags().questGuard) {
     if(!ragdollQuestReturn.armed)
       ragdollQuestReturn.hazards = 0;
     ragdollQuestReturn.armed = true;
@@ -127,11 +127,11 @@ bool Npc::createRagdoll() {
   ragdoll = std::move(body);
   ragdoll->setNpc(this);
   if(const auto culprit = spellImpulseCulprit.lock())
-    ragdoll->setNoiseCulprit(static_cast<Npc*>(culprit->user_ptr));
+    ragdoll->setNoiseCulprit(owner.rules().findNpc(culprit.get()));
   dispatchArrowPhysics(*ragdoll);
-  if(Gothic::physicsFlags().spellPhysics && pendingSpellImpulse.quadLength()>0.f) {
+  if(Settings::physicsFlags().spellPhysics && pendingSpellImpulse.quadLength()>0.f) {
     const auto culprit = spellImpulseCulprit.lock();
-    ragdoll->addImpulse(pendingSpellImpulse,culprit ? reinterpret_cast<Npc*>(culprit->user_ptr) : nullptr);
+    ragdoll->addImpulse(pendingSpellImpulse,owner.rules().findNpc(culprit.get()));
     }
   pendingSpellImpulse = {};
   spellImpulseCulprit.reset();
@@ -145,6 +145,7 @@ bool Npc::createRagdoll() {
   }
 
 void Npc::releaseRagdoll(bool blend) {
+  finishRagdollBrace("release");
   const bool hadBody = ragdoll!=nullptr;
   if(hadBody)
     if(const auto* trace=std::getenv("OPENGOTHIC_RAGDOLL_TRACE");trace!=nullptr && trace[0]=='1')
@@ -175,7 +176,7 @@ bool Npc::recoverRagdoll(bool force) {
   // A timed live get-up must not release the body into a ravine before the
   // usual ten-metre hazard has had time to arm the quest return.
   if(meleeKnockdown && !floor.hasCol && ragdollQuestReturn.armed &&
-     ragdollQuestReturn.hasAnchor && Gothic::physicsFlags().questGuard && !isPlayer()) {
+     ragdollQuestReturn.hasAnchor && Settings::physicsFlags().questGuard && !isPlayer()) {
     ragdollQuestReturn.hazards |= RagdollSave::QuestReturn::fell;
     returnToAnchor = true;
     }
@@ -207,6 +208,7 @@ bool Npc::recoverRagdoll(bool force) {
     // Creatures without wounded poses retain the standard idle fallback.
     visual.startAnimAndGet("S_RUN",owner.tickCount(),true);
     }
+  finishRagdollBrace("getup");
   // Do not interpolate a world-space corpse pose across the whole ravine.
   releaseRagdoll(!returnToAnchor);
   ragdollDormant.reset();
@@ -229,8 +231,8 @@ void Npc::updateRagdollQuestAnchor() {
     return;
   if(isPlayer() || !isHuman() || isDown() || ragdoll || interactive()!=nullptr ||
      ragdollQuestReturn.armed ||
-     !Gothic::physicsFlags().questGuard ||
-     (!Gothic::physicsFlags().ragdoll && !Gothic::physicsFlags().meleePosture) || mvAlgo.state()!=MoveAlgo::Run)
+     !Settings::physicsFlags().questGuard ||
+     (!Settings::physicsFlags().ragdoll && !Settings::physicsFlags().meleePosture) || mvAlgo.state()!=MoveAlgo::Run)
     return;
   const auto now = owner.tickCount();
   if(ragdollQuestReturn.hasAnchor && now>=ragdollQuestSampleTick && now-ragdollQuestSampleTick<250)
@@ -250,11 +252,11 @@ void Npc::updateRagdollQuestAnchor() {
 
 bool Npc::needsRagdollQuestReturn() const {
   return ragdollQuestReturn.armed && ragdollQuestReturn.hasAnchor && ragdollQuestReturn.hazards!=0 &&
-         !isPlayer() && isHuman() && !isDead() && Gothic::physicsFlags().questGuard;
+         !isPlayer() && isHuman() && !isDead() && Settings::physicsFlags().questGuard;
   }
 
 void Npc::checkRagdollQuestHazard() {
-  if(!ragdollQuestReturn.armed || !Gothic::physicsFlags().questGuard)
+  if(!ragdollQuestReturn.armed || !Settings::physicsFlags().questGuard)
     return;
   auto at = position();
   if(ragdoll) {
@@ -304,13 +306,13 @@ bool Npc::recoverSpellThrow() {
 void Npc::prepareRagdoll() {
   if(usesSimplifiedMovement())
     return;
-  if(!isDown() || !Gothic::physicsFlags().spellPhysics)
+  if(!isDown() || !Settings::physicsFlags().spellPhysics)
     pendingSpellImpulse = {};
-  if(!Gothic::physicsFlags().spellPhysics || (!isDown() && !isInAir()))
+  if(!Settings::physicsFlags().spellPhysics || (!isDown() && !isInAir()))
     spellImpulseCulprit.reset();
-  if(!Gothic::physicsFlags().arrowSticking)
+  if(!Settings::physicsFlags().arrowSticking)
     visual.clearStuckArrows();
-  if(!Gothic::physicsFlags().arrowPhysics)
+  if(!Settings::physicsFlags().arrowPhysics)
     arrowImpacts.clear();
   if(!ragdollQuestSpellThrow && !ragdoll && !isDown() &&
      ragdollQuestReturn.armed && ragdollQuestReturn.hazards!=0) {
@@ -332,7 +334,7 @@ void Npc::prepareRagdoll() {
   updateRagdollQuestAnchor();
   if(meleeKnockdown)
     return;
-  const bool enabled = Gothic::physicsFlags().ragdoll;
+  const bool enabled = Settings::physicsFlags().ragdoll;
   if(!enabled) {
     if(isDown())
       arrowImpacts.clear();
@@ -437,7 +439,7 @@ void Npc::prepareLivingBody() {
     }
   const auto* hero = owner.player();
   // Fighters and population actors retain the same rig as actors near the hero.
-  const bool keep = MeleeFighter::keepPhysics(Gothic::physicsFlags().livingBodies,!isPlayer() && hero!=nullptr,
+  const bool keep = MeleeFighter::keepPhysics(Settings::physicsFlags().livingBodies,!isPlayer() && hero!=nullptr,
                                              isMeleeFighter() || NavDemos::fullSimulation(*this),bool(living),
                                              hero!=nullptr ? qDistTo(*hero) : 0.f);
   if(benchMode==MeleeBenchMode::Base || isDown() || ragdoll || interacting || (!benchRig && !frozen && !keep)) {
@@ -450,7 +452,7 @@ void Npc::prepareLivingBody() {
   if(frozen)
     arrowImpacts.clear();
   if(livingNeedsRebuild || (!benchRig && living && !living->isKinematic() &&
-                            !Gothic::physicsFlags().arrowPhysics && !Gothic::physicsFlags().meleeReactions)) {
+                            !Settings::physicsFlags().arrowPhysics && !Settings::physicsFlags().meleeReactions)) {
     living.reset();
     livingNeedsRebuild = false;
     }
@@ -483,7 +485,7 @@ void Npc::prepareLivingBody() {
                                 meleeBenchDynamicPelvis ? Ragdoll::BenchPelvis::Dynamic : Ragdoll::BenchPelvis::Kinematic))
         throw std::runtime_error("melee benchmark motor configuration failed");
     if(const auto culprit = spellImpulseCulprit.lock())
-      living->setNoiseCulprit(static_cast<Npc*>(culprit->user_ptr));
+      living->setNoiseCulprit(owner.rules().findNpc(culprit.get()));
     }
   else
     livingRetryTick = owner.tickCount()+1000;
@@ -515,7 +517,7 @@ void Npc::addCorpseArrowImpulse(const Bullet& bullet) {
 
 void Npc::queueArrowPhysics(const Bullet& bullet) {
   syncDeferredAnimation();
-  if(bullet.isSpell() || !Gothic::physicsFlags().arrowPhysics)
+  if(bullet.isSpell() || !Settings::physicsFlags().arrowPhysics)
     return;
   const auto direction = bullet.direction(); // cm/ms, as used by the projectile integrator
   const float speed = direction.length();
@@ -537,7 +539,7 @@ void Npc::queueArrowPhysics(const Bullet& bullet) {
   const float strength = std::clamp(momentum/8.f,0.1f,1.f);
   const Vec3 impulse = direction*(momentum/speed);
   arrowImpacts.push_back({bone,point,impulse,strength,
-                           bullet.origin()!=nullptr ? bullet.origin()->handlePtr() : std::weak_ptr<daedalus::INpc>()});
+                           bullet.origin()!=nullptr ? bullet.origin()->handlePtr() : std::weak_ptr<NpcRecord>()});
   arrowPhysics.bone = bone;
   arrowPhysics.point = point;
   arrowPhysics.impulseNs = impulse;
@@ -548,7 +550,7 @@ void Npc::queueArrowPhysics(const Bullet& bullet) {
 void Npc::dispatchArrowPhysics(Ragdoll& body) {
   for(const auto& hit:arrowImpacts) {
     const auto culprit = hit.culprit.lock();
-    if(body.queueHit(hit.bone,hit.point,hit.impulseNs,hit.strength,culprit ? reinterpret_cast<Npc*>(culprit->user_ptr) : nullptr,
+    if(body.queueHit(hit.bone,hit.point,hit.impulseNs,hit.strength,owner.rules().findNpc(culprit.get()),
                      hit.stiffness)) {
       auto& probe = hit.melee ? meleeReaction : arrowPhysics;
       ++probe.applied;

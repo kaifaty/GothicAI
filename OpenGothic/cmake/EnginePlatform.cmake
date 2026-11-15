@@ -32,7 +32,7 @@ target_include_directories(engine-platform SYSTEM PRIVATE "${CMAKE_CURRENT_SOURC
 # created in the root directory. New dependencies require an intentional review here.
 set(platform_allowed_dependencies
   GothicShaders edd_dbg dmusic Tempest miniz zlibstatic Recast Detour Jolt
-  shlwapi DbgHelp -lpthread -ldl "-framework AppKit"
+  shlwapi DbgHelp ws2_32 -lpthread -ldl "-framework AppKit"
   gothic-base-runtime gothic-video-runtime)
 get_target_property(platform_dependencies OpenGothic LINK_LIBRARIES)
 # The VM belongs to OpenGothic only; it has never been an input of the platform link.

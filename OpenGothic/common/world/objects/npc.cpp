@@ -7,7 +7,6 @@
 #include "world/bodytraces.h"
 #include "world/bloodspawn.h"
 #include "graphics/mesh/protomesh.h"
-
 #include <Tempest/Matrix4x4>
 #include <Tempest/Log>
 #include <atomic>
@@ -34,7 +33,7 @@
 #include "game/ragdollsave.h"
 #include "game/meleeparry.h"
 #include "game/meleecharge.h"
-#include "game/gamescript.h"
+#include "game/gamerules.h"
 #include "utils/string_frm.h"
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"
@@ -44,7 +43,8 @@
 #include "camera.h"
 #include "commandline.h"
 #include "world/benchhooks.h"
-#include "gothic.h"
+#include "settings.h"
+#include "game/gamehost.h"
 #include "resources.h"
 #include "frameprofile.h"
 #include "navdemos.h"
@@ -196,7 +196,8 @@ void Npc::GoTo::setFlee() {
 
 
 Npc::TransformBack::TransformBack(Npc& self) {
-    hnpc        = std::make_shared<daedalus::INpc>(*self.hnpc);
+    hnpc        = self.owner.rules().copyNpc(self.hnpc);
+    npcInstanceSymbol = self.npcInstanceSymbol;
     invent      = std::move(self.invent);
     self.invent = Inventory(); // cleanup
 
@@ -213,10 +214,8 @@ Npc::TransformBack::TransformBack(Npc& self) {
     skeleton = self.visual.visualSkeleton();
     }
 
-Npc::TransformBack::TransformBack(Npc& owner, daedalus::DaedalusVm& vm, Serialize& fin) {
-    hnpc           = std::make_shared<daedalus::INpc>();
-    hnpc->user_ptr = nullptr;
-    fin.readNpc(vm, hnpc);
+Npc::TransformBack::TransformBack(Npc& owner, Serialize& fin) {
+    hnpc = owner.owner.rules().loadNpc(fin,nullptr,npcInstanceSymbol);
     invent.load(fin,owner);
     fin.read(talentsSk,talentsVl);
     fin.read(body,head,vHead,vTeeth,vColor,bdColor);
@@ -227,7 +226,7 @@ Npc::TransformBack::TransformBack(Npc& owner, daedalus::DaedalusVm& vm, Serializ
     }
 
 void Npc::TransformBack::undo(Npc& self) {
-    int32_t aivar[daedalus::INpc::aivar_count]={};
+    int32_t aivar[NpcRecord::aivar_count]={};
 
     auto exp      = self.hnpc->exp;
     auto exp_next = self.hnpc->exp_next;
@@ -235,9 +234,8 @@ void Npc::TransformBack::undo(Npc& self) {
     auto level    = self.hnpc->level;
     std::memcpy(aivar,self.hnpc->aivar,sizeof(aivar));
 
-    *self.hnpc          = *hnpc;
-
-    self.hnpc->user_ptr = &self;
+    self.owner.rules().restoreNpc(self.hnpc,hnpc,self);
+    self.npcInstanceSymbol = npcInstanceSymbol;
     self.hnpc->exp      = exp;
     self.hnpc->exp_next = exp_next;
     self.hnpc->lp       = lp;
@@ -257,7 +255,7 @@ void Npc::TransformBack::undo(Npc& self) {
     }
 
 void Npc::TransformBack::save(Serialize& fout) {
-    fout.write(*hnpc);
+    fout.write(npcInstanceSymbol,*hnpc);
     invent.save(fout);
     fout.write(talentsSk,talentsVl);
     fout.write(body,head,vHead,vTeeth,vColor,bdColor);
@@ -269,17 +267,12 @@ Npc::Npc(World &owner, size_t instance, std::string_view waypoint, NpcProcessPol
   static std::atomic<uint32_t> creationCounter{0};
   creationSeqValue = ++creationCounter;
   animLodSeed    = AnimationLod::nextSeed();
-  outputPipe     = owner.script().openAiOuput();
+  outputPipe     = owner.rules().openAiOuput();
 
-  hnpc           = std::make_shared<daedalus::INpc>();
-  hnpc->user_ptr = this;
-  hnpc->id       = int32_t(instance & 0x7FFFFFFF);
-  hnpc->wp       = std::string(waypoint);
+  hnpc = owner.rules().createNpc(*this,instance,waypoint,npcInstanceSymbol);
 
   if(instance==size_t(-1))
     return;
-
-  owner.script().initializeInstanceNpc(hnpc, instance);
 
   // vanilla behavior: equip best weapon and set non-zero damage type
   if(!isPlayer())
@@ -292,7 +285,7 @@ Npc::Npc(World &owner, size_t instance, std::string_view waypoint, NpcProcessPol
 
 Npc::~Npc(){
   if(startupFloorPendingValue)
-    owner.script().startupFloor().forget(*this);
+    owner.rules().startupFloorForget(*this);
   endMeleeAiSpecial();
   clearMeleeShadow();
   if(std::getenv("OPENGOTHIC_MELEE_BENCH")!=nullptr && owner.physic()!=nullptr)
@@ -302,8 +295,7 @@ Npc::~Npc(){
   Bench::bodyForget(this);
   if(currentInteract)
     currentInteract->detach(*this,true);
-  if(hnpc && hnpc->user_ptr==this)
-    hnpc->user_ptr=nullptr;
+  owner.rules().detachNpc(hnpc,*this);
   }
 
 std::string Npc::startupFloorDigest() const {
@@ -358,7 +350,7 @@ bool Npc::performOutput(const AiQueue::AiAction &act) {
   //  return false;
   if(act.act==AI_Output           && outputPipe->output   (*this,act.s0))
     return true;
-  auto svm = owner.script().messageFromSvm(act.s0,hnpc->voice);
+  auto svm = owner.rules().messageFromSvm(act.s0,hnpc->voice);
   if(act.act==AI_OutputSvm        && outputPipe->outputSvm(*this,svm,act.s0,act.target))
     return true;
   if(act.act==AI_OutputSvmOverlay && outputPipe->outputOv(*this,svm,act.s0,act.target))
@@ -405,8 +397,8 @@ void Npc::setSimTier(NpcSimTier t) {
     if(matches<=1)
       return point;
     owner.noteGraphFpLoadResolution();
-    const auto* symbol=owner.script().findSymbol(instanceSymbol());
-    Log::i("npc_graph_fp_load_resolution npc=",symbol!=nullptr ? symbol->name() : displayName(),
+    const auto symbol=owner.rules().symbolName(instanceSymbol());
+    Log::i("npc_graph_fp_load_resolution npc=",!symbol.empty() ? symbol : displayName(),
            " world_id=",owner.npcId(this)," id=",hnpc->id," fp=",point->name," reference=",reference,
            " candidates=",matches," saved=(",loadedFpPosition.x,",",loadedFpPosition.y,",",loadedFpPosition.z,
            ") resolved=(",nearest->position().x,",",nearest->position().y,",",nearest->position().z,
@@ -473,7 +465,7 @@ bool Npc::checkHealth(bool onChange, bool allowUnconscious) {
   const int minHp = isMonster() ? 0 : 1;
   if(hnpc->attribute[ATR_HITPOINTS]<=minHp) {
     if(currentOther==nullptr || !allowUnconscious || !isHuman() ||
-       (owner.script().personAttitude(*this,*currentOther)==ATT_HOSTILE && !isNonlethalFight(*currentOther))){
+       (owner.rules().personAttitude(*this,*currentOther)==ATT_HOSTILE && !isNonlethalFight(*currentOther))){
       if(hnpc->attribute[ATR_HITPOINTS]<=0)
         onNoHealth(true,HS_Dead);
       return false;
@@ -490,6 +482,7 @@ bool Npc::checkHealth(bool onChange, bool allowUnconscious) {
 
 void Npc::onNoHealth(bool death, HitSound sndMask) {
   interruptItemUse(death ? "death" : "unconscious");
+  finishRagdollBrace(death ? "death" : "unconscious");
   Healing::clear(foodPool);
   endMeleeAiSpecial();
   const bool wasDead = isDead();
@@ -507,7 +500,7 @@ void Npc::onNoHealth(bool death, HitSound sndMask) {
     updateRagdollQuestAnchor();
     const auto hazards = ragdollQuestReturn.armed ? ragdollQuestReturn.hazards : uint8_t(0);
     ragdollQuestReturn.armed = !death && !isPlayer() && isHuman() &&
-        Gothic::physicsFlags().questGuard && ragdollQuestReturn.hasAnchor;
+        Settings::physicsFlags().questGuard && ragdollQuestReturn.hasAnchor;
     ragdollQuestReturn.hazards = ragdollQuestReturn.armed ? hazards : 0;
     ragdollDormant.reset();
     }
@@ -530,7 +523,7 @@ void Npc::onNoHealth(bool death, HitSound sndMask) {
   if(!death)
     hnpc->attribute[ATR_HITPOINTS]=1;
 
-  size_t fdead=owner.script().findSymbolIndex(state);
+  ScriptFn fdead=owner.rules().findFunction(state);
   startState(fdead,"",gtime::endOfTime(),true);
   if(BodyTraces::stampsDeath(death,wasDead,bodyTraceRecord.id,bodyTraceEntered)) {
     // Engine truth of the body trace: kept whatever [GAME] body_traces says, so the
@@ -543,8 +536,8 @@ void Npc::onNoHealth(bool death, HitSound sndMask) {
     if(lastHit!=nullptr && lastHit!=this) {
       if(lastHit->isPlayer())
         trace.culprit = "PLAYER";
-      else if(auto* symbol = owner.script().findSymbol(lastHit->instanceSymbol()))
-        trace.culprit = symbol->name();
+      else if(auto symbol = owner.rules().symbolName(lastHit->instanceSymbol()); !symbol.empty())
+        trace.culprit = symbol;
       }
     bodyTraceRecord  = std::move(trace);
     bodyTraceEntered = isDead();
@@ -591,7 +584,7 @@ bool Npc::isMeleeFighter() const {
 
 bool Npc::hasAutoroll() const {
   auto gl = std::min<uint32_t>(guild(),GIL_MAX);
-  return owner.script().guildVal().disable_autoroll[gl]==0;
+  return owner.rules().guildVal().disable_autoroll[gl]==0;
   }
 
 void Npc::stopWalkAnimation() {
@@ -934,7 +927,7 @@ void Npc::tickRegen(int32_t& v, const int32_t max, const int32_t chg, const uint
   }
 
 void Npc::tickAnimationTags() {
-  if(Gothic::physicsFlags().meleeBladeShadow || Gothic::physicsFlags().meleePhysicsHits || (meleeShadow && meleeShadow->window))
+  if(Settings::physicsFlags().meleeBladeShadow || Settings::physicsFlags().meleePhysicsHits || (meleeShadow && meleeShadow->window))
     syncMeleeShadowSwing();
   Animation::EvCount ev;
   if(itemUse.item!=0 && !hasItemUseAnimation())
@@ -1058,10 +1051,10 @@ void Npc::tick(uint64_t dt) {
 
   if(isDive()) {
     uint32_t gl = guild();
-    int32_t  v  = world().script().guildVal().dive_time[gl]*1000;
+    int32_t  v  = world().rules().guildVal().dive_time[gl]*1000;
     int32_t  t  = diveTime();
     if(v>=0 && t>v+int(dt)) {
-      int tickSz = world().script().npcDamDiveTime();
+      int tickSz = world().rules().npcDamDiveTime();
       if(tickSz>0) {
         t-=v;
         int dmg = t/tickSz - (t-int(dt))/tickSz;
@@ -1104,12 +1097,12 @@ void Npc::tick(uint64_t dt) {
     }
 
   const bool physicalMovement = ragdoll ||
-      (Gothic::physicsFlags().ragdoll && isDown() && !ragdollLegacyDown && !ragdollRecovering);
+      (Settings::physicsFlags().ragdoll && isDown() && !ragdollLegacyDown && !ragdollRecovering);
 
   // A nearby impact briefly interrupts idle work, including an AI_Wait. Combat,
   // conversation and sleep immediately regain control if they begin meanwhile.
   if(physicsNoiseUntil>owner.tickCount()) {
-    if(Gothic::physicsFlags().physicsNoise && canHearPhysicsNoise()) {
+    if(Settings::physicsFlags().physicsNoise && canHearPhysicsNoise()) {
       if(prepareTurn()) {
         const auto direction = physicsNoisePosition-position();
         implTurnTo(direction.x,direction.z,AnimationSolver::TurnType::Std,dt);
@@ -1173,7 +1166,7 @@ bool Npc::prepareTurn() {
     // A dialogue can queue a heading before its next line. Turn only the
     // angle; its native body layers retain ownership between voiced lines.
     if(nativeBodyAction())
-      return Gothic::inst().isNpcInDialog(*this);
+      return GameHost::inst().isNpcInDialog(*this);
     visual.stopWalkAnim(*this);
     setAnimRotate(0);
     if(!visual.pose().hasAnim())
@@ -1196,13 +1189,13 @@ bool Npc::prepareTurn() {
   }
 
 bool Npc::hasQueuedPhysicalSpellState(const AiQueue& queue) const {
-  if(!Gothic::physicsFlags().spellPhysics)
+  if(!Settings::physicsFlags().spellPhysics)
     return false;
   const auto* action = queue.front();
   if(action==nullptr || action->act!=AI_StartState)
     return false;
-  const auto* symbol = owner.script().findSymbol(action->func.ptr);
-  return symbol!=nullptr && (symbol->name()=="ZS_MAGICFREEZE" || symbol->name()=="ZS_WHIRLWIND");
+  const auto symbol = owner.rules().symbolName(action->func.ptr);
+  return symbol=="ZS_MAGICFREEZE" || symbol=="ZS_WHIRLWIND";
   }
 
 void Npc::setTarget(Npc *t) {
@@ -1370,7 +1363,7 @@ bool Npc::transformInto(size_t instance) {
   invent.updateView(*this);
   visual.clearOverlays();
 
-  owner.script().initializeInstanceNpc(hnpc, instance);
+  npcInstanceSymbol = owner.rules().initializeInstanceNpc(hnpc, instance);
   hnpc->level = transformSpl->hnpc->level;
   return true;
   }
@@ -1429,7 +1422,7 @@ bool Npc::hasStateFlag(BodyState flg) const {
   }
 
 bool Npc::spellWhirling() const {
-  if(!Gothic::physicsFlags().spellPhysics || !aiState.funcIni.isValid() || isDown())
+  if(!Settings::physicsFlags().spellPhysics || !aiState.funcIni.isValid() || isDown())
     return false;
   constexpr std::string_view whirlwind="ZS_WHIRLWIND";
   const std::string_view state=aiState.hint;
@@ -1442,7 +1435,7 @@ bool Npc::spellWhirling() const {
   }
 
 bool Npc::spellFrozen() const {
-  if(!Gothic::physicsFlags().spellPhysics || !aiState.funcIni.isValid() || isDown())
+  if(!Settings::physicsFlags().spellPhysics || !aiState.funcIni.isValid() || isDown())
     return false;
   constexpr std::string_view frozen="ZS_MAGICFREEZE";
   const std::string_view state=aiState.hint;
@@ -1526,11 +1519,11 @@ bool Npc::checkGoToNpcdistance(const Npc &other) {
   }
 
 bool Npc::isEnemy(const Npc &other) const {
-  return owner.script().personAttitude(*this,other)==ATT_HOSTILE;
+  return owner.rules().personAttitude(*this,other)==ATT_HOSTILE;
   }
 
 bool Npc::isDead() const {
-  return owner.script().isDead(*this);
+  return owner.rules().isDead(*this);
   }
 
 bool Npc::isLie() const {
@@ -1538,7 +1531,7 @@ bool Npc::isLie() const {
   }
 
 bool Npc::isUnconscious() const {
-  return owner.script().isUnconscious(*this);
+  return owner.rules().isUnconscious(*this);
   }
 
 bool Npc::isDown() const {
@@ -1546,11 +1539,11 @@ bool Npc::isDown() const {
   }
 
 bool Npc::isAttack() const {
-  return owner.script().isAttack(*this);
+  return owner.rules().isAttack(*this);
   }
 
 bool Npc::isTalk() const {
-  return owner.script().isTalk(*this);
+  return owner.rules().isTalk(*this);
   }
 
 void Npc::setTalkPartner(Npc* other, uint64_t ms) {
@@ -1582,7 +1575,7 @@ bool Npc::setInteraction(Interactive *id, bool quick) {
 
   if(id->attach(*this)) {
     currentInteract = id;
-    if(!isPlayer() && (isHuman() || Gothic::physicsFlags().monsterCharacterVirtual)) {
+    if(!isPlayer() && (isHuman() || Settings::physicsFlags().monsterCharacterVirtual)) {
       mvAlgo.resetCharacterVirtual(true);
       resetCharacterVisualHeight();
       }
@@ -1603,7 +1596,7 @@ bool Npc::setInteraction(Interactive *id, bool quick) {
 void Npc::quitInteraction() {
   if(currentInteract==nullptr)
     return;
-  if(!isPlayer() && (isHuman() || Gothic::physicsFlags().monsterCharacterVirtual)) {
+  if(!isPlayer() && (isHuman() || Settings::physicsFlags().monsterCharacterVirtual)) {
     mvAlgo.resetCharacterVirtual(true);
     resetCharacterVisualHeight();
     }
@@ -1649,8 +1642,8 @@ void Npc::transformBack() {
   transformSpl.reset();
   }
 
-std::vector<GameScript::DlgChoice> Npc::dialogChoices(Npc& player,const std::vector<uint32_t> &except,bool includeImp) {
-  return owner.script().dialogChoices(player.hnpc,this->hnpc,except,includeImp);
+std::vector<::DlgChoice> Npc::dialogChoices(Npc& player,const std::vector<uint32_t> &except,bool includeImp) {
+  return owner.rules().dialogChoices(player.hnpc,this->hnpc,except,includeImp);
   }
 
 bool Npc::isAiQueueEmpty() const {

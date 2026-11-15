@@ -1,11 +1,11 @@
 #include "npc.h"
-
 #include <algorithm>
 
-#include "game/gamescript.h"
+#include "game/gamerules.h"
 #include "game/herodeed.h"
 #include "graphics/mesh/skeleton.h"
-#include "gothic.h"
+#include "settings.h"
+#include "game/gamehost.h"
 #include "world/benchhooks.h"
 #include "utils/string_frm.h"
 #include "world/objects/interactive.h"
@@ -54,7 +54,7 @@ Item* Npc::takeItem(Item& item) {
     if(taken==nullptr)
       return nullptr;
     item.setCount(item.count()-serverDeedCount);
-    Gothic::inst().onHeroDeed(*deed);
+    GameHost::inst().emitHeroDeed(*deed);
     implAniWait(uint64_t(sq->totalTime()));
     return taken;
     }
@@ -62,7 +62,7 @@ Item* Npc::takeItem(Item& item) {
   if(ptr!=nullptr && ptr->isTorchBurn()) {
    if(!toggleTorch())
      return nullptr;
-    size_t torchId = owner.script().findSymbolIndex("ItLsTorch");
+    size_t torchId = owner.rules().findSymbolIndex("ItLsTorch");
     if(torchId!=size_t(-1))
       return nullptr;
     ptr.reset(new Item(owner,torchId,Item::T_Inventory));
@@ -79,7 +79,7 @@ Item* Npc::takeItem(Item& item) {
   if(isPlayer() && it!=nullptr)
     owner.sendPassivePerc(*this,*this,*it,PERC_ASSESSTHEFT,std::move(deed));
   else if(it!=nullptr && deed!=nullptr)
-    Gothic::inst().onHeroDeed(*deed);
+    GameHost::inst().emitHeroDeed(*deed);
 
   implAniWait(uint64_t(sq->totalTime()));
   return it;
@@ -108,7 +108,7 @@ void Npc::addItem(size_t id, Interactive &chest, size_t count) {
     if(isPlayer())
       if(auto use = chest.heroUseDeed())
         deed->witnesses = use->witnesses;
-    Gothic::inst().onHeroDeed(*deed);
+    GameHost::inst().emitHeroDeed(*deed);
     }
   }
 
@@ -121,15 +121,15 @@ void Npc::moveItem(size_t id, Interactive &to, size_t count) {
   }
 
 void Npc::sellItem(size_t id, Npc &to, size_t count) {
-  if(id==owner.script().goldId()->index())
+  if(id==owner.rules().goldItemId())
     return;
   int32_t price = invent.sellPriceOf(id);
   Inventory::transfer(to.invent,invent,this,id,count,owner);
-  invent.addItem(owner.script().goldId()->index(),size_t(price)*count,owner);
+  invent.addItem(owner.rules().goldItemId(),size_t(price)*count,owner);
   }
 
 void Npc::buyItem(size_t id, Npc &from, size_t count) {
-  if(id==owner.script().goldId()->index())
+  if(id==owner.rules().goldItemId())
     return;
 
   int32_t price = from.invent.priceOf(id);
@@ -137,14 +137,14 @@ void Npc::buyItem(size_t id, Npc &from, size_t count) {
     count = invent.goldCount()/size_t(price);
     }
   if(count==0) {
-    owner.script().printCannotBuyError(*this);
+    owner.rules().printCannotBuyError(*this);
     return;
     }
 
   Inventory::transfer(invent,from.invent,nullptr,id,count,owner);
   if(price>=0)
-    invent.delItem(owner.script().goldId()->index(),size_t( price)*count,*this); else
-    invent.addItem(owner.script().goldId()->index(),size_t(-price)*count,owner);
+    invent.delItem(owner.rules().goldItemId(),size_t( price)*count,*this); else
+    invent.addItem(owner.rules().goldItemId(),size_t(-price)*count,owner);
   }
 
 void Npc::dropItem(size_t id, size_t count) {
@@ -172,13 +172,13 @@ void Npc::dropItem(size_t id, size_t count) {
   if(rightHand<visual.pose().boneCount())
     mat = visual.pose().bone(rightHand);
 
-  auto it = owner.addItemDyn(id,mat,hnpc->symbol_index());
+  auto it = owner.addItemDyn(id,mat,npcInstanceSymbol);
   it->setCount(count);
   invent.delItem(id,count,*this);
   }
 
 void Npc::clearInventory() {
-  invent.clear(owner.script(),*this);
+  invent.clear(owner.rules(),*this);
   }
 
 Item* Npc::currentArmor() {
@@ -234,7 +234,7 @@ bool Npc::isUsingItemInHand() const {
   }
 
 std::string Npc::itemUseInHandAnimation(const Item& item) const {
-  const auto& flags = Gothic::physicsFlags();
+  const auto& flags = Settings::physicsFlags();
   const auto main = ItmFlags(item.handle().main_flag);
   const bool deferred = ((main & ITM_CAT_POTION) && flags.meleeHealInterrupt) ||
                         ((main & ITM_CAT_FOOD) && flags.foodOverTime);
@@ -266,14 +266,14 @@ bool Npc::startItemUse(const Item& item, bool allowMissing) {
     if(!isPlayer())
       implAniWait(uint64_t(sq->totalTime()));
     if(Bench::isActive()) {
-      const auto* symbol = owner.script().findSymbol(item.clsId());
+      const auto symbol = owner.rules().symbolName(item.clsId());
       Bench::note(("item use "+std::string(Bench::who(this))+": "+
-                      (symbol==nullptr ? item.handle().name : symbol->name())+" in hand "+sq->name+", layer 21").c_str());
+                      (symbol.empty() ? item.handle().name : std::string(symbol))+" in hand "+sq->name+", layer 21").c_str());
       }
     return true;
     }
   if(Bench::isActive()) {
-    const auto& flags = Gothic::physicsFlags();
+    const auto& flags = Settings::physicsFlags();
     const auto& scheme = item.handle().scheme_name;
     const auto main = ItmFlags(item.handle().main_flag);
     const auto weapon = weaponState();
@@ -290,15 +290,15 @@ bool Npc::startItemUse(const Item& item, bool allowMissing) {
     else if(weapon!=WeaponState::Fist && weapon!=WeaponState::W1H && weapon!=WeaponState::W2H)
       reason = weapon==WeaponState::Bow ? "bow" : weapon==WeaponState::CBow ? "crossbow" :
                weapon==WeaponState::Mage ? "spell" : "no melee weapon";
-    const auto* symbol = owner.script().findSymbol(item.clsId());
+    const auto symbol = owner.rules().symbolName(item.clsId());
     Bench::note(("item use "+std::string(Bench::who(this))+": "+
-                    (symbol==nullptr ? item.handle().name : symbol->name())+" holster path: "+reason).c_str());
+                    (symbol.empty() ? item.handle().name : std::string(symbol))+" holster path: "+reason).c_str());
     }
   return setAnimItem(item.handle().scheme_name,-1,allowMissing);
   }
 
 void Npc::beginItemUseEffect(const Item& item) {
-  const auto& flags = Gothic::physicsFlags();
+  const auto& flags = Settings::physicsFlags();
   const auto main = ItmFlags(item.handle().main_flag);
   const auto category = (main & ITM_CAT_POTION) ? Healing::Category::Potion :
                         (main & ITM_CAT_FOOD) ? Healing::Category::Food : Healing::Category::Other;
@@ -306,7 +306,7 @@ void Npc::beginItemUseEffect(const Item& item) {
                        (category==Healing::Category::Food && flags.foodOverTime);
   if(!enabled) {
     if(item.handle().on_state[0]!=0)
-      owner.script().invokeItem(this,uint32_t(item.handle().on_state[0]));
+      owner.rules().invokeItem(this,uint32_t(item.handle().on_state[0]));
     return;
     }
   const auto moment = Healing::effectMoment(category,flags.meleeHealInterrupt,flags.foodOverTime,
@@ -331,9 +331,9 @@ void Npc::finishItemUseEffect(const char* moment) {
   tickFoodPool();
   const auto hp = attribute(ATR_HITPOINTS), mana = attribute(ATR_MANA);
   foodHp = foodMana = 0;
-  collectingFood = use.food && Gothic::physicsFlags().foodOverTime;
+  collectingFood = use.food && Settings::physicsFlags().foodOverTime;
   if(function!=0)
-    owner.script().invokeItem(this,function);
+    owner.rules().invokeItem(this,function);
   collectingFood = false;
   if(use.food && !isDown()) {
     Healing::add(foodPool,foodHp,foodMana);
@@ -344,9 +344,9 @@ void Npc::finishItemUseEffect(const char* moment) {
       }
     }
   if(Bench::isActive()) {
-    const auto* symbol = owner.script().findSymbol(use.item);
+    const auto symbol = owner.rules().symbolName(use.item);
     Bench::note(("item use "+std::string(Bench::who(this))+": "+
-                    (symbol==nullptr ? name : symbol->name())+" effect at "+moment+", +"+
+                    (symbol.empty() ? name : std::string(symbol))+" effect at "+moment+", +"+
                     std::to_string(use.food ? foodHp : attribute(ATR_HITPOINTS)-hp)+" hp +"+
                     std::to_string(use.food ? foodMana : attribute(ATR_MANA)-mana)+" mana at "+
                     std::to_string(owner.tickCount()-use.started)+" ms").c_str());
@@ -359,9 +359,9 @@ void Npc::interruptItemUse(std::string_view cause) {
   if(itemUse.item==0 && !inHand)
     return;
   if(itemUse.item!=0 && Bench::isActive()) {
-    const auto* symbol = owner.script().findSymbol(itemUse.item);
+    const auto symbol = owner.rules().symbolName(itemUse.item);
     Bench::note(("item use "+std::string(Bench::who(this))+": "+
-                    (symbol==nullptr ? std::to_string(itemUse.item) : symbol->name())+
+                    (symbol.empty() ? std::to_string(itemUse.item) : std::string(symbol))+
                     (inHand ? " cancelled by " : " interrupted by ")+
                     std::string(cause)+" at "+std::to_string(owner.tickCount()-itemUse.started)+" ms, item kept").c_str());
     }
@@ -378,7 +378,7 @@ void Npc::tickFoodPool() {
   const auto now = owner.tickCount();
   const auto dt = now>=foodPoolTick ? now-foodPoolTick : 0;
   foodPoolTick = now;
-  if(!Gothic::physicsFlags().foodOverTime || isDown()) {
+  if(!Settings::physicsFlags().foodOverTime || isDown()) {
     Healing::clear(foodPool);
     return;
     }

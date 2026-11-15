@@ -154,11 +154,12 @@ class Builder:
         up_l = bf.T @ np.array([0.0, 1.0, 0.0])
         fwd = rot([0, 1, 0], foot.get("yaw", 0)) @ np.array([0.0, 0.0, 1.0])
         flat = triad(fwd_l, up_l, fwd, [0, 1, 0])
-        ankle = np.array([foot["pos"][0], self.ankle_y, foot["pos"][1]])
+        free = len(foot["pos"]) == 3  # a foot off the floor: the ankle itself, x, y, z
+        ankle = np.asarray(foot["pos"], float) if free else np.array([foot["pos"][0], self.ankle_y, foot["pos"][1]])
         toe = ankle + flat @ self.off(names[3])
         lift = rot(np.cross([0, 1, 0], fwd), foot.get("heel", 0))  # heel up, pivoting on the toe
         r_foot = lift @ flat
-        ankle = toe + lift @ (ankle - toe)
+        ankle = ankle if free else toe + lift @ (ankle - toe)
         pole = np.asarray(knee if knee is not None else fwd, float)
         hip = pos[names[0]]
         a, b = np.linalg.norm(self.off(names[1])), np.linalg.norm(self.off(names[2]))
@@ -168,8 +169,14 @@ class Builder:
         y = np.array([0.0, 1.0, 0.0])
         W[names[0]] = triad(unit(self.off(names[1])), y, k - hip, hinge)
         W[names[1]] = triad(unit(self.off(names[2])), y, end - k, hinge)
-        W[names[2]] = r_foot
-        W[names[3]] = flat @ bf.T @ B[gi[names[3]]]  # toes stay flat on the floor
+        if free:  # the ankle keeps its bind angle to the shin, bent by "heel" (> 0 points the toes)
+            to_shin = W[names[1]] @ B[gi[names[1]]].T
+            point = rot(to_shin @ np.cross([0, 1, 0], [0, 0, 1.0]), foot.get("heel", 0))
+            W[names[2]] = point @ to_shin @ bf
+            W[names[3]] = point @ to_shin @ B[gi[names[3]]]
+        else:
+            W[names[2]] = r_foot
+            W[names[3]] = flat @ bf.T @ B[gi[names[3]]]  # toes stay flat on the floor
         report["miss"][f"foot {s}"] = round(miss, 1)
         pos.update(self.positions(W, pos["BIP01"]))
 

@@ -15,7 +15,8 @@
 #include "game/definitions/spelldefinitions.h"
 #include "game/aiouputpipe.h"
 #include "game/constants.h"
-#include "game/aistate.h"
+#include "game/scripttypes.h"
+#include "game/gamerules.h"
 #include "game/questlog.h"
 #include "game/ownsymbols.h"
 #include "game/gamescript_startupfloor.h"
@@ -30,43 +31,44 @@ class ParticleFx;
 class Serialize;
 class Gothic;
 
-class ScriptFn final {
-  public:
-    ScriptFn()=default;
-    ScriptFn(size_t v):ptr(v){}
-
-    size_t ptr=size_t(-1);
-
-    bool isValid() const { return ptr!=size_t(-1); }
-
-  friend bool operator == (const ScriptFn& a,const ScriptFn& b) {
-    return a.ptr==b.ptr;
-    }
-  };
-
-class GameScript final {
+class GameScript final : public GameRules {
   public:
     GameScript(GameSession &owner);
-    ~GameScript();
+    ~GameScript() override;
 
-    struct DlgChoice final {
-      std::string      title;
-      int32_t          sort     = 0;
-      uint32_t         scriptFn = 0;
-      bool             isTrade  = false;
-      daedalus::IInfo*   handle   = nullptr;
-      std::string      external;  // a dialog made at runtime (ai_bridge): its id; handle and scriptFn are empty
-      };
+    using DlgChoice = ::DlgChoice;
+    using PerDist = ::PerDist;
+    using PhysicalSpell = ::PhysicalSpell;
 
-    struct PerDist {
-      PerDist();
-      int32_t range[PERC_Count] = {};
-      int     at(PercType perc, int r) const;
-      };
+    std::string_view symbolName(size_t id) override;
+    ScriptFn         findFunction(std::string_view name) override;
+    int32_t          intSymbol(std::string_view name, int32_t fallback) override;
+    std::string_view stringSymbol(std::string_view name) override;
+    bool             isNpcInstance(size_t id) override;
+    auto             npcRecord(size_t id) -> std::shared_ptr<NpcRecord> override;
+    size_t           goldItemId() const override;
+    int              whirlwindDuration() override;
+    void             startupFloorForget(Npc& npc) override;
+    void             startupFloorBeforeResetMove(Npc& npc, const Tempest::Vec3& destination) override;
+    void             startupFloorBeforeKeep(Npc& npc) override;
+    std::array<int32_t,3> storyNpcTypes() override;
+    size_t           scriptVmMemorySize() const override;
 
     bool         hasSymbolName(std::string_view fn);
 
-    void         initializeInstanceNpc(const std::shared_ptr<daedalus::INpc>& npc, size_t instance);
+    auto         createNpc(Npc& owner, size_t instance, std::string_view waypoint, uint32_t& kind) -> std::shared_ptr<NpcRecord> override;
+    uint32_t     initializeInstanceNpc(const std::shared_ptr<NpcRecord>& npc, size_t instance) override;
+    auto         loadNpc(Serialize& fin, Npc* owner, uint32_t& kind) -> std::shared_ptr<NpcRecord> override;
+    void         bindNpc(const std::shared_ptr<NpcRecord>& npc) override;
+    auto         copyNpc(const std::shared_ptr<NpcRecord>& npc) -> std::shared_ptr<NpcRecord> override;
+    void         restoreNpc(const std::shared_ptr<NpcRecord>& dst, const std::shared_ptr<NpcRecord>& src, Npc& owner) override;
+    void         detachNpc(const std::shared_ptr<NpcRecord>& npc, Npc& owner) override;
+    Npc*         findNpc(NpcRecord* npc) override;
+    auto         npcRecord(daedalus::DaedalusSymbol* symbol) -> std::shared_ptr<NpcRecord>;
+    auto         createItem(Item& owner, size_t instance, uint32_t& kind) -> std::shared_ptr<ItemRecord> override;
+    auto         createItem(size_t instance) -> std::shared_ptr<ItemRecord> override;
+    auto         loadItem(Serialize& fin, Item& owner, uint32_t& kind) -> std::shared_ptr<ItemRecord> override;
+    void         attachItem(const std::shared_ptr<ItemRecord>& item, Item& owner) override;
     void         initializeInstanceItem(const std::shared_ptr<daedalus::IItem>& item, size_t instance);
     void         resetVarPointers();
 
@@ -90,7 +92,7 @@ class GameScript final {
 
     // Draws for `actor` come from its own stream when the test bench isolated it; everything
     // else (and every NPC by default) shares randGen in tick order.
-    uint32_t     rand(uint32_t max, const Npc* actor = nullptr);
+    uint32_t     rand(uint32_t max, const Npc* actor = nullptr) override;
     // the random numbers start over (the test bench)
     void         setSeed(uint32_t s) { randGen.seed(s); }
     // Body arena opt-in: the actor's native choices, damage rolls and own scripts no longer
@@ -99,103 +101,103 @@ class GameScript final {
     void         clearIsolatedRandom() { isolatedRandom.clear(); }
     // Drops one actor's private stream; only the pointer value is used, the NPC may be gone.
     void         releaseIsolatedRandom(const Npc* actor) { isolatedRandom.erase(actor); }
-    std::string  randomState(const Npc* actor) const;
+    std::string  randomState(const Npc* actor) const override;
     void         removeItem(Item& it);
 
-    void         setInstanceNPC (std::string_view name, Npc& npc);
-    void         setInstanceItem(Npc& holder, size_t itemId);
+    void         setInstanceNPC (std::string_view name, Npc& npc) override;
+    void         setInstanceItem(Npc& holder, size_t itemId) override;
 
-    AiOuputPipe* openAiOuput();
-    AiOuputPipe* openDlgOuput(Npc &player, Npc &npc);
+    AiOuputPipe* openAiOuput() override;
+    AiOuputPipe* openDlgOuput(Npc &player, Npc &npc) override;
 
     auto*            goldId() const { return itMi_Gold; }
-    ScriptFn         playerPercAssessMagic();
+    ScriptFn         playerPercAssessMagic() override;
     std::string_view currencyName() const { return goldTxt; }
-    int              npcDamDiveTime();
+    int              npcDamDiveTime() override;
     // cm: G2's dice for arrows - the talent's chance at the first, none at the second (AI_Constants.d)
     float            rangedChanceMinDist() const { return rangedChanceMin; }
     float            rangedChanceMaxDist() const { return rangedChanceMax; }
     auto*            lockPickSymbol() const { return ItKE_lockpick; }
-    uint32_t         lockPickId() const;
+    uint32_t         lockPickId() const override;
 
-    const daedalus::IFocus&       focusNorm()  const { return cFocusNorm;  }
-    const daedalus::IFocus&       focusMelee() const { return cFocusMelee; }
-    const daedalus::IFocus&       focusRange() const { return cFocusRange; }
-    const daedalus::IFocus&       focusMage()  const { return cFocusMage;  }
-    const daedalus::IGuildValues& guildVal()   const { return *cGuildVal;  }
+    const FocusRecord&           focusNorm()  const override { return cFocusNorm;  }
+    const FocusRecord&           focusMelee() const override { return cFocusMelee; }
+    const FocusRecord&           focusRange() const override { return cFocusRange; }
+    const FocusRecord&           focusMage()  const override { return cFocusMage;  }
+    const GuildRecord&           guildVal()   const override { return *cGuildVal;  }
 
     std::string_view            menuMain() const;
 
     daedalus::DaedalusSymbol*     findSymbol(std::string_view s);
     daedalus::DaedalusSymbol*     findSymbol(const size_t s);
     // the hero has heard this dialog of the npc's, as when it is played (Npc_KnowsInfo)
-    void                        setNpcInfoKnown(const daedalus::INpc& npc, const daedalus::IInfo& info);
-    size_t                      findSymbolIndex(std::string_view s);
+    void                        setNpcInfoKnown(const NpcRecord& npc, const daedalus::IInfo& info);
+    size_t                      findSymbolIndex(std::string_view s) override;
     size_t                      symbolsCount() const;
 
-    const AiState&              aiState  (ScriptFn id);
-    const daedalus::ISpell&       spellDesc(int32_t splId);
-    const VisualFx*             spellVfx (int32_t splId);
-    enum class PhysicalSpell : uint8_t { None, WindFist, Whirlwind, Fireball, IceCube };
-    PhysicalSpell              physicalSpell(int32_t splId) const;
+    const AiState&              aiState  (ScriptFn id) override;
+    const SpellRecord&          spellDesc(int32_t splId) override;
+    const VisualFx*             spellVfx (int32_t splId) override;
+    PhysicalSpell              physicalSpell(int32_t splId) const override;
 
-    auto dialogChoices(std::shared_ptr<daedalus::INpc> self, std::shared_ptr<daedalus::INpc> npc, const std::vector<uint32_t> &except, bool includeImp) -> std::vector<DlgChoice>;
+    auto dialogChoices(std::shared_ptr<NpcRecord> self, std::shared_ptr<NpcRecord> npc, const std::vector<uint32_t> &except, bool includeImp) -> std::vector<DlgChoice> override;
     auto updateDialog (const GameScript::DlgChoice &dlg, Npc &player, Npc &npc) -> std::vector<GameScript::DlgChoice>;
     void exec(const DlgChoice &dlg, Npc &player, Npc &npc);
 
-    void  printCannotUseError         (Npc &npc, int32_t atr, int32_t nValue);
-    void  printCannotCastError        (Npc &npc, int32_t plM, int32_t itM);
-    void  printCannotBuyError         (Npc &npc);
-    void  printMobMissingItem         (Npc &npc);
-    void  printMobAnotherIsUsing      (Npc &npc);
-    void  printMobMissingKey          (Npc &npc);
-    void  printMobMissingKeyOrLockpick(Npc &npc);
-    void  printMobMissingLockpick     (Npc &npc);
-    void  printMobTooFar              (Npc &npc);
+    void  printCannotUseError         (Npc &npc, int32_t atr, int32_t nValue) override;
+    void  printCannotCastError        (Npc &npc, int32_t plM, int32_t itM) override;
+    void  printCannotBuyError         (Npc &npc) override;
+    void  printMobMissingItem         (Npc &npc) override;
+    void  printMobAnotherIsUsing      (Npc &npc) override;
+    void  printMobMissingKey          (Npc &npc) override;
+    void  printMobMissingKeyOrLockpick(Npc &npc) override;
+    void  printMobMissingLockpick     (Npc &npc) override;
+    void  printMobTooFar              (Npc &npc) override;
 
-    void invokeState(const std::shared_ptr<daedalus::INpc>& hnpc, const std::shared_ptr<daedalus::INpc>& hother, const char* name);
-    int  invokeState(Npc* npc, Npc* other, Npc *victim, ScriptFn fn);
-    void invokeItem (Npc* npc, ScriptFn fn);
-    int  invokeMana (Npc& npc, Npc* target, int mana);
-    int  invokeManaRelease (Npc& npc, Npc* target, int mana);
-    void invokeSpell(Npc& npc, Npc *target, Item&  fn);
-    int  invokeCond (Npc& npc, std::string_view func);
-    void invokePickLock(Npc& npc, int bSuccess, int bBrokenOpen);
-    void invokeRefreshAtInsert(Npc& npc);
-    auto canNpcCollideWithSpell(Npc& npc, Npc* shooter, int32_t spellId) -> CollideMask;
+    void invokeState(const std::shared_ptr<NpcRecord>& hnpc, const std::shared_ptr<NpcRecord>& hother, const char* name) override;
+    int  invokeState(Npc* npc, Npc* other, Npc *victim, ScriptFn fn) override;
+    void invokeItem (Npc* npc, ScriptFn fn) override;
+    int  invokeMana (Npc& npc, Npc* target, int mana) override;
+    int  invokeManaRelease (Npc& npc, Npc* target, int mana) override;
+    void invokeSpell(Npc& npc, Npc *target, Item&  fn) override;
+    int  invokeCond (Npc& npc, std::string_view func) override;
+    void invokePickLock(Npc& npc, int bSuccess, int bBrokenOpen) override;
+    void invokeRefreshAtInsert(Npc& npc) override;
+    auto canNpcCollideWithSpell(Npc& npc, Npc* shooter, int32_t spellId) -> CollideMask override;
 
-    int  playerHotKeyScreenMap(Npc& pl);
-    void playerHotLamePotion(Npc& pl);
-    void playerHotLameHeal(Npc& pl);
+    int  playerHotKeyScreenMap(Npc& pl) override;
+    void playerHotLamePotion(Npc& pl) override;
+    void playerHotLameHeal(Npc& pl) override;
 
-    const PerDist& percRanges() const { return perceptionRanges; }
+    const PerDist& percRanges() const override { return perceptionRanges; }
 
-    bool isDead       (const Npc &pl);
-    bool isUnconscious(const Npc &pl);
-    bool isTalk       (const Npc &pl);
-    bool isAttack     (const Npc &pl) const;
+    bool isDead       (const Npc &pl) override;
+    bool isUnconscious(const Npc &pl) override;
+    bool isTalk       (const Npc &pl) override;
+    bool isAttack     (const Npc &pl) const override;
     // the npc's important dialogs count as told to the player: it will not stop him to talk (test helper)
     void skipImportantInfos(Npc& npc, Npc& pl);
 
-    std::string_view spellCastAnim(Npc& npc, Item&  fn);
-    std::string_view messageFromSvm(std::string_view id,int voice) const;
+    std::string_view spellCastAnim(Npc& npc, Item&  fn) override;
+    std::string_view messageFromSvm(std::string_view id,int voice) const override;
     std::string_view messageByName (std::string_view id) const;
-    uint32_t         messageTime   (std::string_view id) const;
+    uint32_t         messageTime   (std::string_view id) const override;
 
-    void     printNothingToGet();
-    float    tradeValueMultiplier() const { return tradeValMult; }
-    void     useInteractive(const std::shared_ptr<daedalus::INpc>& hnpc, std::string_view func);
+    void     printNothingToGet() override;
+    float    tradeValueMultiplier() const override { return tradeValMult; }
+    void     useInteractive(const std::shared_ptr<NpcRecord>& hnpc, std::string_view func) override;
     Attitude guildAttitude(const Npc& p0,const Npc& p1) const;
-    Attitude personAttitude(const Npc& p0,const Npc& p1) const;
-    bool     isFriendlyFire(const Npc& src, const Npc& dst) const;
+    Attitude personAttitude(const Npc& p0,const Npc& p1) const override;
+    bool     isFriendlyFire(const Npc& src, const Npc& dst) const override;
 
-    BodyState schemeToBodystate(std::string_view sc);
+    BodyState schemeToBodystate(std::string_view sc) override;
 
-    void      onWldItemRemoved(const Item& itm);
-    void      fixNpcPosition(Npc& npc, float angle0, float distBias);
+    void      onWldItemRemoved(const Item& itm) override;
+    void      fixNpcPosition(Npc& npc, float angle0, float distBias) override;
     StartupFloor& startupFloor() { return floorDefer; }
 
   private:
+    void initializeInstanceNpc(const std::shared_ptr<daedalus::INpc>& npc, size_t instance);
     bool startHotkeyPotion(Npc& pl, bool mana);
 
     template<typename T>
@@ -489,7 +491,7 @@ class GameScript final {
     void sort(std::vector<DlgChoice>& dlg);
     // a dialog's condition, information or choice: the story graph runs it if it takes it, else the VM
     int32_t dialogFunction(daedalus::DaedalusSymbol* fn, bool returns);
-    bool doesNpcKnowInfo(const daedalus::INpc& npc, size_t infoInstance) const;
+    bool doesNpcKnowInfo(const NpcRecord& npc, size_t infoInstance) const;
 
     void saveSym(Serialize& fout, daedalus::DaedalusSymbol& s);
 

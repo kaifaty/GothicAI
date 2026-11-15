@@ -10,7 +10,7 @@
 #include "world/objects/npc.h"
 #include "world/objects/item.h"
 #include "physics/dynamicworld.h"
-#include "gothic.h"
+#include "settings.h"
 
 using namespace Tempest;
 
@@ -69,7 +69,7 @@ bool Archery::isBowStrengthEnabled() {
     const char* v = std::getenv("OPENGOTHIC_BOWSTRENGTH");
     if(v!=nullptr && v[0]!='\0')
       bowStrength = v[0]!='0' ? 1 : 0; else
-      bowStrength = Gothic::settingsGetI("GAME","bowDrawByStrength")!=0 ? 1 : 0;
+      bowStrength = Settings::getI("GAME","bowDrawByStrength")!=0 ? 1 : 0;
     }
   return bowStrength!=0;
   }

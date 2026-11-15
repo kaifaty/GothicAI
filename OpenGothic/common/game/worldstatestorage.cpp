@@ -3,7 +3,6 @@
 #include <Tempest/MemWriter>
 #include <Tempest/MemReader>
 
-#include "gamesession.h"
 #include "world/world.h"
 #include "serialize.h"
 

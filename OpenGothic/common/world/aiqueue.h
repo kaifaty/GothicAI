@@ -3,8 +3,8 @@
 #include <cstdint>
 #include <deque>
 
-#include "game/gamescript.h"
-#include "game/constants.h"
+#include "game/scripttypes.h"
+#include "game/rpgvocabulary.h"
 
 class Npc;
 class Item;

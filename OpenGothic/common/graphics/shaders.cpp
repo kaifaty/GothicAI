@@ -9,6 +9,8 @@
 #include "commandline.h"
 #include "resources.h"
 #include "loadprobe.h"
+#include "settings.h"
+#include "raytracingrule.h"
 
 #include "shader.h"
 #include "utils/string_frm.h"
@@ -68,10 +70,30 @@ const Shaders::Options& Shaders::options() {
   return instance->opts;
   }
 
+static RayTracingRule::Backend activeBackend() {
+#if defined(__APPLE__)
+  return RayTracingRule::Backend::Metal;
+#elif defined(_MSC_VER)
+  return CommandLine::inst().graphicsApi()==CommandLine::DirectX12 ? RayTracingRule::Backend::DirectX12
+                                                                    : RayTracingRule::Backend::Vulkan;
+#else
+  return RayTracingRule::Backend::Vulkan;  // main.cpp: -dx12 falls back to Vulkan outside MSVC
+#endif
+  }
+
+static bool chooseRayTracing(const Tempest::Device::Props& gpu) {
+  const auto& cmd = CommandLine::inst();
+  const int   ini = Settings::has("INTERNAL","rayTracing") ? (Settings::getI("INTERNAL","rayTracing")!=0 ? 1 : 0) : -1;
+  const auto  dec = RayTracingRule::choose(cmd.rayTracingArg(), cmd.rayTracingEnv(), ini,
+                                           {activeBackend(), gpu.type, gpu.name, gpu.raytracing.rayQuery});
+  Log::i("render: ray tracing ", dec.on ? "on" : "off", " - ", dec.reason);
+  return dec.on;
+  }
+
 void Shaders::setupOptions() {
   auto& gpu = Resources::device().properties();
   opts.doBindless       = hasBindless() && CommandLine::inst().isBindless();
-  opts.doRtScene        = gpu.raytracing.rayQuery && CommandLine::inst().isRayQuery();
+  opts.doRtScene        = gpu.raytracing.rayQuery && chooseRayTracing(gpu);
   opts.doRayQuery       = opts.doRtScene && opts.doBindless;
   opts.doMeshShading    = gpu.meshlets.meshShader && CommandLine::inst().isMeshShading();
   opts.doVirtualShadow  = Shaders::isVsmSupported()  && CommandLine::inst().isVirtualShadow();

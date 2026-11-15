@@ -7,7 +7,7 @@
 #include <memory>
 
 #include "game/serialize.h"
-#include "gothic.h"
+#include "settings.h"
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"
 #include "world/world.h"
@@ -23,7 +23,7 @@ constexpr uint32_t BodyTraceMagic = 0x31544442; // "BDT1": /body-trace of a dead
 void Npc::save(Serialize &fout, size_t id, std::string_view directory) {
   tickFoodPool();
   fout.setEntry("worlds/",fout.worldName(),directory,id,"/data");
-  fout.write(*hnpc);
+  fout.write(npcInstanceSymbol,*hnpc);
   fout.write(body,head,vHead,vTeeth,bdColor,vColor,bdFatness);
   if(meleeKnockdown)
     fout.write(meleeSavePosition.x,meleeSavePosition.y,meleeSavePosition.z,angle,sz);
@@ -145,14 +145,10 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
   ragdollQuestFrom = {};
   fin.setEntry("worlds/",fin.worldName(),directory,id,"/data");
 
-  hnpc = std::make_shared<daedalus::INpc>();
-  hnpc->user_ptr        = this;
-  fin.readNpc(owner.script().getVm(), hnpc);
+  hnpc = owner.rules().loadNpc(fin,this,npcInstanceSymbol);
   fin.read(body,head,vHead,vTeeth,bdColor,vColor,bdFatness);
 
-  auto* sym = owner.script().findSymbol(hnpc->symbol_index());
-  if (sym != nullptr)
-    sym->set_instance(hnpc);
+  owner.rules().bindNpc(hnpc);
 
   fin.read(x,y,z,angle,sz);
   loadedFpPosition = position();
@@ -220,7 +216,7 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
     }
   if(fin.setEntry("worlds/",fin.worldName(),directory,id,"/food-pool"))
     Healing::load(fin,foodPool);
-  if(isDown() || !Gothic::physicsFlags().foodOverTime)
+  if(isDown() || !Settings::physicsFlags().foodOverTime)
     Healing::clear(foodPool);
 
   // post-alignment
@@ -251,7 +247,7 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
           Log::e("ragdoll recovery load: ",e.what());
           }
         }
-      if(ragdollDormant && Gothic::physicsFlags().ragdoll)
+      if(ragdollDormant && Settings::physicsFlags().ragdoll)
         prepareRagdoll();
       else if(visual.pose().isRagdollBlending())
         updateAnimation(0,true); // Optional recovery must be visible before the first loaded frame.
@@ -261,7 +257,7 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
     }
   // A live posture fall has no saved body. Wounded loops resume the ordinary
   // get-up transition without entering the script's unconscious state.
-  if(Gothic::physicsFlags().meleePosture && !isDown() &&
+  if(Settings::physicsFlags().meleePosture && !isDown() &&
      (visual.pose().isInAnim("S_WOUNDED") || visual.pose().isInAnim("S_WOUNDEDB"))) {
     setAnim(Anim::Idle);
     }
@@ -271,7 +267,7 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
       !ragdollLegacyDown && !ragdollRecovering &&
       (movement==MoveAlgo::InAir || movement==MoveAlgo::Falling ||
        movement==MoveAlgo::Swim || movement==MoveAlgo::Dive);
-  if(Gothic::physicsFlags().arrowSticking &&
+  if(Settings::physicsFlags().arrowSticking &&
      fin.setEntry("worlds/",fin.worldName(),directory,id,"/stuck-arrows") &&
      !visual.loadStuckArrows(fin,owner))
     Log::e("arrows: invalid saved NPC attachments, keeping the body without arrows");
@@ -354,8 +350,8 @@ void Npc::loadAiState(Serialize& fin) {
   fin.read(aiPrevState);
 
   aiState.hint = "";
-  if(auto s = owner.script().findSymbol(aiState.funcIni.ptr)) {
-    aiState.hint = s->name().c_str();
+  if(auto s = owner.rules().symbolName(aiState.funcIni.ptr); !s.empty()) {
+    aiState.hint = s.data();
     }
 
   aiQueue.load(fin);
@@ -384,5 +380,5 @@ void Npc::loadTrState(Serialize& fin) {
   bool hasTr = false;
   fin.read(hasTr);
   if(hasTr)
-    transformSpl.reset(new TransformBack(*this, owner.script().getVm(), fin));
+    transformSpl.reset(new TransformBack(*this, fin));
   }

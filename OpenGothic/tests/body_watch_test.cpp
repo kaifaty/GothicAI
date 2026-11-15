@@ -1788,6 +1788,36 @@ class NpcLogicalStateContract final {
       expect(samples.ticks==3 && samples.bodyMismatch==0,
              "body overrides cannot turn hidden layer forecasts into body comparisons");
 
+      {
+        ++cases;
+        auto& world=*gothic.world();
+        const auto originalKind=static_cast<const daedalus::INpc&>(npc->handle()).symbol_index();
+        const auto sheep=world.script().findSymbolIndex("SHEEP");
+        expect(sheep!=size_t(-1) && sheep!=originalKind,"transformation fixture uses a different stock NPC kind");
+        expect(npc->transformInto(sheep),"transformation fixture changes the real NPC instance");
+        std::vector<uint8_t> bytes;
+        {
+          Tempest::MemWriter writer(bytes);
+          Serialize out(writer);
+          out.setContext(&world);
+          out.setEntry("transform-kind");
+          npc->saveTrState(out);
+          npc->transformBack();
+          npc->save(out,id,"/npc/");
+          }
+        Tempest::MemReader reader(bytes);
+        Serialize in(reader);
+        in.setContext(&world);
+        expect(in.setEntry("transform-kind"),"transformation snapshot entry exists");
+        bool transformed=false;
+        uint32_t kind=uint32_t(-1);
+        in.read(transformed,kind);
+        expect(transformed && kind==originalKind,"transformation snapshot stores the original NPC kind");
+        expect(in.setEntry("worlds/",in.worldName(),"/npc/",id,"/data"),"restored NPC save entry exists");
+        in.read(kind);
+        expect(kind==originalKind && npc->instanceSymbol()==originalKind,"restored NPC save stores the original kind");
+        }
+
       ++cases;
       auto retained=npc->handlePtr(); // Keep the invalid actor eligible for revival.
       const auto* waypoint=npc->world().findWayPoint(npc->position());
@@ -1888,6 +1918,28 @@ int main(int argc,const char** argv) {
     const auto wireStatus=parse(BodyController::statusJson(&a));
     for(const char* field:{"process_policy","segment_remaining_ms","fai_gate","ani_gate","ai_gate","output_gate","interruptible"})
       expect(!wireStatus["actors"][0].HasMember(field),"wire status keeps the strict server schema; boundary diagnostics are opt-in");
+    if(!missingNetwork) {
+      ++cases;
+      auto& script=gothic.world()->script();
+      auto& vm=script.getVm();
+      const auto current=std::static_pointer_cast<daedalus::INpc>(gothic.player()->handlePtr());
+      const auto copied=std::static_pointer_cast<daedalus::INpc>(script.copyNpc(gothic.player()->handlePtr()));
+      expect(copied!=current,"dialog fixture uses a copied NPC instance");
+      const auto previousOther=vm.global_other()->get_instance();
+      auto previousExtra=std::move(gothic.dialogExtraFn);
+      bool receivedCurrent=false;
+      vm.global_other()->set_instance(current);
+      gothic.dialogExtraFn=[&](const daedalus::INpc& npc,bool,std::vector<GameScript::DlgChoice>&) {
+        receivedCurrent=&npc==current.get();
+        };
+      vm.push_instance(copied);
+      vm.push_int(1);
+      expect(vm.unsafe_call_external(vm.find_symbol_by_name("NPC_CHECKINFO")),"NPC_CHECKINFO external is registered");
+      const auto offered=vm.pop_int();
+      vm.global_other()->set_instance(previousOther);
+      gothic.dialogExtraFn=std::move(previousExtra);
+      expect(receivedCurrent && offered==0,"NPC_CHECKINFO extra dialogs receive the current NPC instance");
+      }
     if(!missingNetwork) NpcLogicalStateContract::meleeAi(a,b);
 #ifdef GOTHIC_BODY_ENGINE_NET
     if(missingNetwork) {
@@ -1937,6 +1989,66 @@ int main(int argc,const char** argv) {
 #ifdef GOTHIC_BODY_ENGINE_NET
       }
 #endif
+    {
+      auto& script=gothic.world()->script();
+      auto& vm=script.getVm();
+      GameRules& rules=script;
+      auto* integer=vm.add_int_symbol("RULES_INT_CONTRACT");
+      expect(integer!=nullptr,"rules fixture adds an integer symbol");
+      integer->set_int(314);
+      expect(rules.intSymbol("RULES_INT_CONTRACT",19)==314,"rules read the integer value rather than its index");
+      expect(rules.intSymbol("RULES_MISSING_CONTRACT",19)==19 && rules.intSymbol("ZS_DEAD",23)==23,
+             "rules preserve missing and non-integer fallbacks");
+      expect(rules.findSymbolIndex("PC_HERO")==11471 && rules.findSymbolIndex("RULES_MISSING_CONTRACT")==size_t(-1),
+             "rules preserve the Gothic II NPC kind index and missing-symbol sentinel");
+      expect(rules.symbolName(rules.findSymbolIndex("RULES_INT_CONTRACT"))=="RULES_INT_CONTRACT" &&
+             rules.symbolName(size_t(-1)).empty(),"rules resolve the requested symbol and reject an invalid index");
+      expect(rules.findFunction("ZS_DEAD").ptr==13035 && rules.symbolName(rules.findFunction("ZS_DEAD").ptr)=="ZS_DEAD" &&
+             !rules.findFunction("RULES_INT_CONTRACT").isValid() && !rules.findFunction("RULES_MISSING_CONTRACT").isValid(),
+             "rules return a function handle only for a function symbol");
+      expect(rules.goldItemId()==6929 && rules.symbolName(rules.goldItemId())=="ITMI_GOLD","rules identify the currency item");
+      const auto& state=rules.aiState(ScriptFn(13063));
+      expect(state.funcIni==13063 && state.funcLoop==13064 && state.funcEnd==13065 &&
+             std::string_view(state.name())=="ZS_UNCONSCIOUS","rules preserve the state callbacks and their name");
+      const auto npcId=gothic.player()->instanceSymbol();
+      expect(rules.isNpcInstance(npcId) && !rules.isNpcInstance(rules.goldItemId()) && !rules.isNpcInstance(size_t(-1)),
+             "rules distinguish the NPC class from item and missing symbols");
+      expect(rules.npcRecord(npcId).get()==gothic.player()->handlePtr().get(),
+             "rules expose the current NPC instance rather than a copy");
+      bool foundString=false;
+      for(const auto& symbol:vm.symbols()) {
+        if(symbol.type()!=daedalus::DaedalusDataType::STRING || symbol.is_member() || symbol.count()==0)
+          continue;
+        auto* text=vm.find_symbol_by_index(symbol.index());
+        const auto saved=text->get_string();
+        text->set_string("Rules string contract");
+        const auto actual=std::string(rules.stringSymbol(symbol.name()));
+        text->set_string(saved);
+        expect(actual=="Rules string contract","rules read the requested string value");
+        foundString=true;
+        break;
+        }
+      expect(foundString,"rules fixture exercises a string symbol");
+      const char* names[]={"NPCTYPE_MAIN","NPCTYPE_OCMAIN","NPCTYPE_BL_MAIN"};
+      const int32_t values[]={31,43,59};
+      for(size_t i=0;i<3;++i) {
+        auto* symbol=vm.find_symbol_by_name(names[i]);
+        if(symbol==nullptr) symbol=vm.add_int_symbol(names[i]);
+        expect(symbol!=nullptr,"rules fixture has a story type integer");
+        symbol->set_int(values[i]);
+        }
+      expect(rules.storyNpcTypes()==std::array<int32_t,3>{31,43,59},"rules read all three story types from the VM");
+      auto* duration=vm.find_symbol_by_name("SPL_TIME_WHIRLWIND");
+      if(duration==nullptr) duration=vm.add_int_symbol("SPL_TIME_WHIRLWIND");
+      expect(duration!=nullptr,"rules fixture has the whirlwind duration");
+      duration->set_int(17);
+      expect(rules.whirlwindDuration()==17,"rules use the scripted whirlwind duration");
+      duration->set_int(-4);
+      expect(rules.whirlwindDuration()==1,"rules preserve the lower whirlwind duration clamp");
+      duration->set_int(91);
+      expect(rules.whirlwindDuration()==60,"rules preserve the upper whirlwind duration clamp");
+      expect(rules.scriptVmMemorySize()>10000000,"rules include the symbol table in the VM memory probe");
+      }
     TestBench::flushOutput();
     gothic.clearGame().reset();
     std::filesystem::current_path(workingDirectory);

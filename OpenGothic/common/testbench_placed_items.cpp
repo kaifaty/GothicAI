@@ -37,7 +37,7 @@ void PlacedItems::deed(const HeroDeed& value) {
 }
 
 void PlacedItems::perception(Npc& self,Npc&,Npc*,PercType value) {
-  if(value==PERC_ASSESSTHEFT)theftRecipients.push_back(self.handle().symbol_index());
+  if(value==PERC_ASSESSTHEFT)theftRecipients.push_back(self.instanceSymbol());
 }
 
 namespace {

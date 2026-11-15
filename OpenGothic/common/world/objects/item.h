@@ -1,6 +1,6 @@
 #pragma once
 
-#include "daedalus/classes.h"
+#include "world/records/itemrecord.h"
 
 #include "graphics/objvisual.h"
 #include "physics/dynamicworld.h"
@@ -102,10 +102,10 @@ class Item : public Vob {
     bool                checkCondUse (const Npc& other,int32_t& atr,int32_t& nv) const;
     bool                checkCondRune(const Npc& other,int32_t& cPl,int32_t& cIt) const;
 
-    const daedalus::IItem&                   handle() const { return *hitem; }
-    daedalus::IItem&                         handle() { return *hitem; }
-    const std::shared_ptr<daedalus::IItem>&  handlePtr()    { return hitem; }
-    size_t                                 clsId() const;
+    const ItemRecord&                    handle() const { return *hitem; }
+    ItemRecord&                          handle() { return *hitem; }
+    const std::shared_ptr<ItemRecord>&    handlePtr()    { return hitem; }
+    size_t                              clsId() const;
 
   protected:
     void                moveEvent() override;
@@ -113,13 +113,15 @@ class Item : public Vob {
 
   private:
     friend class WorldObjects;
+    friend class GameScript;
     void                savePhysics(Serialize& fout) const;
     void                restorePhysics(const Tempest::Matrix4x4& matrix, const Tempest::Vec3& velocity,
                                        const Tempest::Vec3& angular, bool sleeping);
     void                updateMatrix();
 
-    std::shared_ptr<daedalus::IItem> hitem={};
-    Tempest::Vec3                  pos={};
+    std::shared_ptr<ItemRecord>     hitem={};
+    uint32_t                       itemInstanceSymbol=uint32_t(-1);
+    Tempest::Vec3                   pos={};
 
     uint32_t                       amount   = 0;
     uint8_t                        equipped = 0;

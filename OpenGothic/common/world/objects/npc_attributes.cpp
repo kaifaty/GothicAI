@@ -2,7 +2,7 @@
 
 #include <algorithm>
 
-#include "gothic.h"
+#include "game/gamehost.h"
 #include "world/world.h"
 
 void Npc::setTalentSkill(Talent t, int32_t lvl) {
@@ -30,7 +30,7 @@ int32_t Npc::talentValue(Talent t) const {
   }
 
 int32_t Npc::hitChance(Talent t) const {
-  if(t<daedalus::INpc::hitchance_count)
+  if(t<NpcRecord::hitchance_count)
     return hnpc->hitchance[t];
   return 0;
   }
@@ -67,7 +67,7 @@ void Npc::changeAttribute(Attribute a, int32_t val, bool allowUnconscious) {
     }
 
   if(val<0 && a==ATR_HITPOINTS) {
-    if(isPlayer() && Gothic::inst().isGodMode())
+    if(isPlayer() && GameHost::inst().isGodMode())
       return;
     if(isPlayer() && owner.currentCs()!=nullptr)
       return;
@@ -107,7 +107,7 @@ void Npc::changeProtection(Protection p, int32_t val) {
   }
 
 uint32_t Npc::instanceSymbol() const {
-  return uint32_t(hnpc->symbol_index());
+  return npcInstanceSymbol;
   }
 
 uint32_t Npc::guild() const {

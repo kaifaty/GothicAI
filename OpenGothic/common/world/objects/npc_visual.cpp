@@ -1,12 +1,11 @@
 #include "npc.h"
 #include "npc_melee.h"
 #include "npc_melee_shadow.h"
-
 #include "graphics/mesh/skeleton.h"
 #include "graphics/effect.h"
 #include "game/bodycontroller.h"
 #include "game/bodyobservations.h"
-#include "game/gamescript.h"
+#include "game/gamerules.h"
 #include "world/animationlod.h"
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"
@@ -15,7 +14,8 @@
 #include "utils/string_frm.h"
 #include "camera.h"
 #include "frameprofile.h"
-#include "gothic.h"
+#include "settings.h"
+#include "gameservices.h"
 #include "resources.h"
 #include "world/benchhooks.h"
 
@@ -120,8 +120,8 @@ void Npc::dropTorch(bool burnout) {
 
   size_t torchId = 0;
   if(burnout)
-    torchId = owner.script().findSymbolIndex("ItLsTorchburned"); else
-    torchId = owner.script().findSymbolIndex("ItLsTorchburning");
+    torchId = owner.rules().findSymbolIndex("ItLsTorchburned"); else
+    torchId = owner.rules().findSymbolIndex("ItLsTorchburning");
 
   size_t leftHand = sk->findNode("ZS_LEFTHAND");
   if(torchId!=size_t(-1) && leftHand!=size_t(-1)) {
@@ -130,7 +130,7 @@ void Npc::dropTorch(bool burnout) {
     if(leftHand<visual.pose().boneCount())
       mat = visual.pose().bone(leftHand);
 
-    owner.addItemDyn(torchId,mat,hnpc->symbol_index());
+    owner.addItemDyn(torchId,mat,npcInstanceSymbol);
     }
   }
 
@@ -387,7 +387,7 @@ const Animation::Sequence* Npc::setAnimAngGet(Anim a) {
 
 const Animation::Sequence* Npc::setAnimAngGet(Anim a, uint8_t comb) {
   if(a==Anim::AttackBlock && (!allowMeleeStunAction("parade") ||
-     (Gothic::physicsFlags().meleeParry && !allowStaminaAction("parade",0.f))))
+     (Settings::physicsFlags().meleeParry && !allowStaminaAction("parade",0.f))))
     return nullptr;
   if(a==Anim::MoveBack && !allowMeleeStunAction("jumpback"))
     return nullptr;
@@ -509,7 +509,7 @@ void Npc::setTalkMood(std::string_view mood, std::string_view line, uint64_t hol
 void Npc::listenTo(uint64_t ms, const Npc* speaker) {
   auto toward = TalkGestures::Mood::Neutral;
   if(speaker!=nullptr)
-    switch(owner.script().personAttitude(*this,*speaker)) {  // as Npc_GetAttitude
+    switch(owner.rules().personAttitude(*this,*speaker)) {  // as Npc_GetAttitude
       case ATT_FRIENDLY: toward = TalkGestures::Mood::Friendly; break;
       case ATT_ANGRY:    toward = TalkGestures::Mood::Angry;    break;
       case ATT_HOSTILE:  toward = TalkGestures::Mood::Hostile;  break;
@@ -696,7 +696,7 @@ bool Npc::isAlignedToGround() const {
     return false;
   auto gl = guild();
   // four-legged creatures stand on the ground with foot IK instead of tilting as a whole
-  const bool align = owner.script().guildVal().surface_align[gl]!=0 && !visual.hasQuadrupedIk();
+  const bool align = owner.rules().guildVal().surface_align[gl]!=0 && !visual.hasQuadrupedIk();
   return align || isDead() || isLie();
   }
 
@@ -776,9 +776,9 @@ void Npc::resetCharacterVisualHeight() {
 void Npc::updateCharacterVisualHeight() {
   if(usesSimplifiedMovement())
     return;
-  const bool characterFlag = isPlayer() ? Gothic::physicsFlags().characterVirtual :
-                             isHuman() ? Gothic::physicsFlags().npcCharacterVirtual :
-                                         Gothic::physicsFlags().monsterCharacterVirtual;
+  const bool characterFlag = isPlayer() ? Settings::physicsFlags().characterVirtual :
+                             isHuman() ? Settings::physicsFlags().npcCharacterVirtual :
+                                         Settings::physicsFlags().monsterCharacterVirtual;
   if(!isPlayer() && !characterFlag && (!isHuman() || characterVisualSteps.empty())) {
     if(characterVisualHasSample)
       resetCharacterVisualHeight();
@@ -893,7 +893,7 @@ void Npc::updateAnimation(uint64_t dt, bool force) {
     }
   const bool frozen = spellFrozen();
   const bool clearedPhysicalPose = visual.clearPhysicalPose();
-  const auto camera = Gothic::inst().camera();
+  const auto camera = GameServices::inst().camera();
   if(isPlayer() && camera!=nullptr && camera->isFree())
     dt = 0;
 

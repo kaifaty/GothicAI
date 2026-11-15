@@ -678,9 +678,9 @@ bool DialogGraph::evaluate(World& world, Npc* npc, const rapidjson::Value& expr,
   auto  prevSelf  = self->get_instance();
   auto  prevOther = other->get_instance();
   if(npc!=nullptr)
-    self->set_instance(npc->handlePtr());
+    self->set_instance(std::static_pointer_cast<daedalus::INpc>(npc->handlePtr()));
   if(world.player()!=nullptr)
-    other->set_instance(world.player()->handlePtr());
+    other->set_instance(std::static_pointer_cast<daedalus::INpc>(world.player()->handlePtr()));
   storygraph::VmExternals engine(*v);
   storygraph::Evaluator   ev(*v,rt.predicates().helpers(),engine);
   auto r = ev.eval(e);

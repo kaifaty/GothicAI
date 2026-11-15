@@ -12,7 +12,7 @@
 #include "world/objects/npc.h"
 #include "world/world.h"
 #include "utils/dbgpainter.h"
-#include "gothic.h"
+#include "settings.h"
 
 static Npc::Anim toNpcAnim(Interactive::Anim dir) {
   switch(dir) {
@@ -142,7 +142,7 @@ void Interactive::load(Serialize &fin) {
 
   if(fin.setEntry("worlds/",fin.worldName(),"/mobsi/",vobObjectID,"/inventory"))
     invent.load(fin,*this,world); else
-    invent.clear(world.script(),*this,true);
+    invent.clear(world.rules(),*this,true);
 
   fin.setEntry("worlds/", fin.worldName(), "/mobsi/", vobObjectID, "/visual");
   visual.load(fin, *this);
@@ -468,17 +468,17 @@ std::string_view Interactive::displayName() const {
     return "";
 
   string_frm strId(focName);
-  if(world.script().findSymbolIndex(strId)==size_t(-1))
+  if(world.rules().findSymbolIndex(strId)==size_t(-1))
     strId = string_frm("MOBNAME_",strId);
 
-  if(world.script().findSymbolIndex(strId)==size_t(-1))
+  if(world.rules().findSymbolIndex(strId)==size_t(-1))
     return "";
 
-  auto* s=world.script().findSymbol(strId);
-  if(s==nullptr)
+  auto s=world.rules().stringSymbol(strId);
+  if(s.empty())
     return "";
 
-  return s->get_string();
+  return s;
   }
 
 const Tempest::Vec3* Interactive::bBox() const {
@@ -509,7 +509,7 @@ void Interactive::invokeStateFunc(Npc& npc) {
 
   // TODO: hero only?
   string_frm func(onStateFunc,"_S",state);
-  auto& sc = npc.world().script();
+  auto& sc = npc.world().rules();
   sc.useInteractive(npc.handlePtr(), func);
   }
 
@@ -562,7 +562,7 @@ bool Interactive::isLadder() const {
   }
 
 bool Interactive::needToLockpick(const Npc& pl) const {
-  const size_t keyInst = keyInstance.empty() ? size_t(-1) : world.script().findSymbolIndex(keyInstance);
+  const size_t keyInst = keyInstance.empty() ? size_t(-1) : world.rules().findSymbolIndex(keyInstance);
   if(keyInst!=size_t(-1) && pl.inventory().itemCount(keyInst)>0)
     return false;
   return !(pickLockStr.empty() || isLockCracked);
@@ -578,7 +578,7 @@ void Interactive::setSlotItem(MeshObjects::Mesh&& itm, std::string_view slot, in
 
 uint32_t Interactive::stateMask() const {
   std::string_view s = schemeName();
-  return world.script().schemeToBodystate(s);
+  return world.rules().schemeToBodystate(s);
   }
 
 bool Interactive::canSeeNpc(const Npc& npc, bool freeLos) const {
@@ -670,7 +670,7 @@ void Interactive::autoDetachNpc() {
 bool Interactive::checkUseConditions(Npc& npc) {
   const bool isPlayer = npc.isPlayer();
 
-  auto& sc = world.script();
+  auto& sc = world.rules();
 
   if(isPlayer) {
     const size_t           ItKE_lockpick  = sc.lockPickId();
@@ -788,7 +788,7 @@ bool Interactive::attach(Npc& npc, Interactive::Pos& to) {
 
   if((npc.centerPosition()-mv).quadLength()>MAX_AI_USE_DISTANCE*MAX_AI_USE_DISTANCE) {
     if(npc.isPlayer()) {
-      auto& sc = npc.world().script();
+      auto& sc = npc.world().rules();
       sc.printMobTooFar(npc);
       }
     if(npc.isPlayer())
@@ -799,7 +799,7 @@ bool Interactive::attach(Npc& npc, Interactive::Pos& to) {
     return false;
 
   if(!useWithItem.empty()) {
-    size_t it = world.script().findSymbolIndex(useWithItem);
+    size_t it = world.rules().findSymbolIndex(useWithItem);
     npc.setCurrentItem(it);
     }
 
@@ -835,7 +835,7 @@ bool Interactive::attach(Npc &npc) {
 
   if(!isAvailable()) {
     if(npc.isPlayer() && !attPos.empty())
-      world.script().printMobAnotherIsUsing(npc);
+      world.rules().printMobAnotherIsUsing(npc);
     return false;
     }
 
@@ -844,13 +844,13 @@ bool Interactive::attach(Npc &npc) {
     return attach(npc,*p);
 
   if(npc.isPlayer() && !attPos.empty())
-    world.script().printMobAnotherIsUsing(npc);
+    world.rules().printMobAnotherIsUsing(npc);
   return false;
   }
 
 bool Interactive::detach(Npc &npc, bool quick) {
   for(auto& i:attPos) {
-    if(i.user==&npc && (i.attachMode || (quick && Gothic::physicsFlags().meleePosture))) {
+    if(i.user==&npc && (i.attachMode || (quick && Settings::physicsFlags().meleePosture))) {
       if(quick || canQuitAtState(*i.user,state)) {
         if(!quick) {
           auto sq = npc.setAnimAngGet(Npc::Anim::InteractToStand);
@@ -886,7 +886,7 @@ bool Interactive::isAttached(const Npc& to) {
 bool Interactive::setPos(Npc &npc,const Tempest::Vec3& pos) {
   auto prev = npc.position();
   npc.setPosition(pos);
-  world.script().fixNpcPosition(npc,0,0);
+  world.rules().fixNpcPosition(npc,0,0);
   if(npc.hasCollision()) {
     npc.setPosition(prev);
     return false;

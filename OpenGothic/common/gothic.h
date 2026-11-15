@@ -13,6 +13,7 @@
 #include "daedalus/vm.h"
 #include "settings.h"
 #include "gameservices.h"
+#include "game/gamehost.h"
 
 #include "game/chronicle.h"
 #include "game/gamesession.h"
@@ -32,7 +33,7 @@ class Serialize;
 struct PhysicsNoise;
 struct HeroDeed;
 
-class Gothic final : public GameServices {
+class Gothic final : public GameServices, public GameHost {
   public:
     Gothic();
     ~Gothic();
@@ -87,8 +88,8 @@ class Gothic final : public GameServices {
     int          loadingProgress() const;
     void         setLoadingProgress(int v);
 
-    SoundFx*     loadSoundFx   (std::string_view name);
-    SoundFx*     loadSoundWavFx(std::string_view name);
+    SoundFx*     loadSoundFx   (std::string_view name) override;
+    SoundFx*     loadSoundWavFx(std::string_view name) override;
 
     auto         loadParticleFx(std::string_view name, bool relaxed=false) -> const ParticleFx* override;
     auto         loadParticleFx(const ParticleFx* base, const VisualFx::Key* key) -> const ParticleFx* override;
@@ -96,7 +97,7 @@ class Gothic final : public GameServices {
 
     void         emitGlobalSound(std::string_view   sfx);
     void         emitGlobalSound(const SoundFx*     sfx);
-    void         emitGlobalSound(const Tempest::Sound& sfx);
+    void         emitGlobalSound(const Tempest::Sound& sfx) override;
 
     void         emitGlobalSoundWav(std::string_view wav);
 
@@ -106,13 +107,13 @@ class Gothic final : public GameServices {
     void         popPause();
     bool         isPause() const override;
 
-    bool         isMarvinEnabled() const;
+    bool         isMarvinEnabled() const override;
     void         setMarvinEnabled(bool m);
 
     static auto  options() -> const Options& { return Settings::options(); }
     static float interfaceScale(const Tempest::Widget* w);
 
-    bool         isGodMode() const { return godMode; }
+    bool         isGodMode() const override { return godMode; }
     void         setGodMode(bool g) { godMode = g; }
     // a scene of its own (the AI bridge's endings): no bars, no focus, no messages over it
     bool         isHudHidden() const { return hudHidden; }
@@ -136,12 +137,12 @@ class Gothic final : public GameServices {
     bool         doVobRays() const { return vobRays; }
     void         setVobRays(bool v) { vobRays = v; }
 
-    bool         doMeleeBladeDraw() const { return meleeBladeDraw; }
+    bool         doMeleeBladeDraw() const override { return meleeBladeDraw; }
     void         setMeleeBladeDraw(bool v) { meleeBladeDraw = v; }
-    bool         doMeleeBladeLabels() const { return meleeBladeLabels; }
+    bool         doMeleeBladeLabels() const override { return meleeBladeLabels; }
     void         setMeleeBladeLabels(bool v) { meleeBladeLabels = v; }
 
-    bool         isBenchmarkMode() const;
+    bool         isBenchmarkMode() const override;
     bool         isBenchmarkModeCi() const;
     void         setBenchmarkMode(Benchmark b);
 
@@ -151,9 +152,9 @@ class Gothic final : public GameServices {
     void         startSave(Tempest::Texture2d&& tex, const std::function<std::unique_ptr<GameSession>(std::unique_ptr<GameSession>&&)> f);
     void         cancelLoading();
 
-    void         tick(uint64_t dt);
+    void         tick(uint64_t dt) override;
 
-    void         updateAnimation(uint64_t dt);
+    void         updateAnimation(uint64_t dt) override;
     void         quickSave();
     void         quickLoad();
     void         save(std::string_view slot, std::string_view usrName);
@@ -162,9 +163,9 @@ class Gothic final : public GameServices {
     auto         updateDialog(const GameScript::DlgChoice& dlg, Npc& player, Npc& npc) -> std::vector<GameScript::DlgChoice>;
     void         dialogExec  (const GameScript::DlgChoice& dlg, Npc& player, Npc& npc);
 
-    void         openDialogPipe (Npc& player, Npc& npc, AiOuputPipe*& pipe);
-    bool         isNpcInDialog(const Npc& npc) const;
-    bool         isInDialog() const;
+    void         openDialogPipe (Npc& player, Npc& npc, AiOuputPipe*& pipe) override;
+    bool         isNpcInDialog(const Npc& npc) const override;
+    bool         isInDialog() const override;
 
     Tempest::Signal<void(std::string_view)>                             onStartGame;
     Tempest::Signal<void(std::string_view)>                             onLoadGame;
@@ -262,6 +263,25 @@ class Gothic final : public GameServices {
     DynamicWorld* physicsWorld() const override;
 
   private:
+    void emitHeroDeed(const HeroDeed& deed) override;
+    void emitCombatHit(Npc& npc, Npc& other, int32_t lost, std::string_view kind) override;
+    void emitObservedPerception(Npc& npc, Npc& player, Npc* victim, PercType type) override;
+    void emitExternalPerception(Npc& npc, Npc& player, Npc* victim, PercType type) override;
+    void emitPhysicsNoiseHeard(Npc& npc, const PhysicsNoise& noise) override;
+    void emitPrint(std::string_view text) override;
+    bool takePerception(Npc& npc, Npc& player, Npc* victim, PercType type, const HeroDeed* deed) override;
+    bool setMusic(std::string_view name, uint8_t tags) override;
+    const std::vector<ItmFlags>& inventoryCategoryOrder() const override;
+    Camera* sessionCamera(GameSession& session) override;
+    GameScript* sessionScript(GameSession& session) override;
+    uint64_t sessionTickCount(GameSession& session) const override;
+    gtime sessionTime(GameSession& session) const override;
+    void setSessionTime(GameSession& session, gtime time) override;
+    void changeWorld(GameSession& session, std::string_view world, std::string_view waypoint) override;
+    Tempest::SoundEffect loadSound(GameSession& session, const Tempest::Sound& sound) override;
+    Tempest::SoundEffect loadSound(GameSession& session, const SoundFx& sound, bool& looped) override;
+    void updateListenerPos(GameSession& session, const Camera::ListenerPos& position) override;
+
     Settings                                settings;
     std::mt19937                            randGen;
     uint16_t                                pauseSum=0;

@@ -1,4 +1,5 @@
 #include "npcchests.h"
+#include "game/gamescript.h"
 
 #include <algorithm>
 #include <cctype>

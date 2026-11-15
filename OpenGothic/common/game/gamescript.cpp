@@ -31,7 +31,7 @@ using namespace Tempest;
 template <typename T>
 struct ScopeVar final {
   ScopeVar(daedalus::DaedalusSymbol& sym, const std::shared_ptr<T>& h) : prev(sym.get_instance()), sym(sym) {
-    sym.set_instance(h);
+    sym.set_instance(std::static_pointer_cast<daedalus::INpc>(h));
     }
 
   ScopeVar(const ScopeVar&)=delete;
@@ -79,21 +79,6 @@ bool GameScript::GlobalOutput::printScr(Npc& npc, int time, std::string_view msg
 bool GameScript::GlobalOutput::isFinished() {
   return true;
   }
-
-GameScript::PerDist::PerDist() {
-  for(auto& i:range)
-    i = -1;
-  }
-
-int GameScript::PerDist::at(PercType perc, int r) const {
-  if(perc>=PERC_Count)
-    return r;
-  auto rr = range[perc];
-  if(rr>0)
-    return rr;
-  return r;
-  }
-
 
 GameScript::GameScript(GameSession &owner)
     :owner(owner), vm(createVm(Gothic::inst())) {
@@ -610,18 +595,18 @@ void GameScript::loadVar(Serialize &fin) {
             break;
           if(dataClass==1) {
             auto npc = world().npcById(id);
-            s->set_instance(npc ? npc->handlePtr() : nullptr);
+            s->set_instance(npc ? std::static_pointer_cast<daedalus::INpc>(npc->handlePtr()) : nullptr);
             }
           else if(dataClass==2) {
             auto itm = world().itmById(id);
-            s->set_instance(itm != nullptr ? itm->handlePtr() : nullptr);
+            s->set_instance(itm != nullptr ? std::static_pointer_cast<daedalus::IItem>(itm->handlePtr()) : nullptr);
             }
           else if(dataClass==3) {
             uint32_t itmClass=0;
             fin.read(itmClass);
             if(auto npc = world().npcById(id)) {
               auto itm = npc->getItem(itmClass);
-              s->set_instance(itm ? itm->handlePtr() : nullptr);
+              s->set_instance(itm ? std::static_pointer_cast<daedalus::IItem>(itm->handlePtr()) : nullptr);
               }
             }
           }
@@ -705,7 +690,7 @@ void GameScript::saveSym(Serialize &fout, daedalus::DaedalusSymbol& i) {
         }
       else if(i.is_instance_of<daedalus::IItem>()){
         auto     item = reinterpret_cast<const daedalus::IItem*>(i.get_instance().get());
-        uint32_t id   = w.itmId(item);
+        uint32_t id   = w.itmId(static_cast<const ItemRecord*>(item));
         if(id!=uint32_t(-1) || item==nullptr) {
           fout.write(uint8_t(2),i.name(),id);
           } else {
@@ -811,7 +796,7 @@ daedalus::IFocus GameScript::findFocus(std::string_view name) {
 void GameScript::storeItem(Item *itm) {
   auto* s = vm.global_item();
   if(itm!=nullptr) {
-    s->set_instance(itm->handlePtr());
+    s->set_instance(std::static_pointer_cast<daedalus::IItem>(itm->handlePtr()));
     } else {
     s->set_instance(nullptr);
     }
@@ -834,15 +819,7 @@ size_t GameScript::symbolsCount() const {
   return vm.symbols().size();
   }
 
-const AiState& GameScript::aiState(ScriptFn id) {
-  auto it = aiStates.find(id.ptr);
-  if(it!=aiStates.end())
-    return it->second;
-  auto ins = aiStates.emplace(id.ptr,AiState(*this,id.ptr));
-  return ins.first->second;
-  }
-
-const daedalus::ISpell& GameScript::spellDesc(int32_t splId) {
+const SpellRecord& GameScript::spellDesc(int32_t splId) {
   auto& tag = spellFxInstanceNames->get_string(uint16_t(splId));
   return spells->find(tag);
   }
@@ -870,15 +847,15 @@ GameScript::PhysicalSpell GameScript::physicalSpell(int32_t splId) const {
   return PhysicalSpell::None;
   }
 
-std::vector<GameScript::DlgChoice> GameScript::dialogChoices(std::shared_ptr<daedalus::INpc> player,
-                                                             std::shared_ptr<daedalus::INpc> hnpc,
+std::vector<GameScript::DlgChoice> GameScript::dialogChoices(std::shared_ptr<NpcRecord> player,
+                                                             std::shared_ptr<NpcRecord> hnpc,
                                                              const std::vector<uint32_t>& except,
                                                              bool includeImp) {
   ScopeVar self (*vm.global_self(),  hnpc);
   ScopeVar other(*vm.global_other(), player);
   std::vector<daedalus::IInfo*> hDialog;
   for(auto& info : dialogsInfo) {
-    if(info->npc==static_cast<int>(hnpc->symbol_index())) {
+    if(info->npc==static_cast<int>(static_cast<const daedalus::INpc&>(*hnpc).symbol_index())) {
       hDialog.push_back(info.get());
       }
     }
@@ -925,7 +902,7 @@ std::vector<GameScript::DlgChoice> GameScript::dialogChoices(std::shared_ptr<dae
       choice.emplace_back(std::move(ch));
       }
     if(Gothic::inst().dialogExtraFn)
-      Gothic::inst().dialogExtraFn(*hnpc,important!=0,choice);
+      Gothic::inst().dialogExtraFn(static_cast<const daedalus::INpc&>(*hnpc),important!=0,choice);
     if(!choice.empty()){
       sort(choice);
       return choice;
@@ -1106,7 +1083,7 @@ void GameScript::printMobTooFar(Npc& npc) {
   vm.call_function<void>(id);
   }
 
-void GameScript::invokeState(const std::shared_ptr<daedalus::INpc>& hnpc, const std::shared_ptr<daedalus::INpc>& oth, const char *name) {
+void GameScript::invokeState(const std::shared_ptr<NpcRecord>& hnpc, const std::shared_ptr<NpcRecord>& oth, const char *name) {
   auto id = vm.find_symbol_by_name(name);
   if(id==nullptr)
     return;
@@ -1388,7 +1365,7 @@ bool GameScript::isUnconscious(const Npc &pl) {
 
 void GameScript::skipImportantInfos(Npc& npc, Npc& pl) {
   for(auto& info:dialogsInfo)
-    if(info->npc==int32_t(npc.handle().symbol_index()) && info->important && !info->permanent)
+    if(info->npc==int32_t(npc.instanceSymbol()) && info->important && !info->permanent)
       setNpcInfoKnown(pl.handle(),*info);
   }
 
@@ -1453,7 +1430,7 @@ void GameScript::printNothingToGet() {
   vm.call_function<void>(id);
   }
 
-void GameScript::useInteractive(const std::shared_ptr<daedalus::INpc>& hnpc, std::string_view func) {
+void GameScript::useInteractive(const std::shared_ptr<NpcRecord>& hnpc, std::string_view func) {
   auto fn = vm.find_symbol_by_name(func);
   if(fn == nullptr)
     return;
@@ -1517,7 +1494,7 @@ BodyState GameScript::schemeToBodystate(std::string_view sc) {
   }
 
 void GameScript::onWldItemRemoved(const Item& itm) {
-  onWldInstanceRemoved(&itm.handle());
+  onWldInstanceRemoved(&static_cast<const daedalus::IItem&>(itm.handle()));
   }
 
 void GameScript::onWldInstanceRemoved(const daedalus::DaedalusInstance* obj) {
@@ -1529,7 +1506,7 @@ void GameScript::makeCurrent(Item* w) {
     return;
   auto* s = vm.find_symbol_by_index(uint32_t(w->clsId()));
   if(s != nullptr)
-    s->set_instance(w->handlePtr());
+    s->set_instance(std::static_pointer_cast<daedalus::IItem>(w->handlePtr()));
   }
 
 bool GameScript::searchScheme(std::string_view sc, std::string_view listName) {
@@ -1654,7 +1631,7 @@ Npc* GameScript::findNpcById(size_t id) {
   auto hnpc = reinterpret_cast<daedalus::INpc*>(handle->get_instance().get());
   if(hnpc==nullptr) {
     auto obj = world().findNpcByInstance(id);
-    handle->set_instance(obj ? obj->handlePtr() : nullptr);
+    handle->set_instance(obj ? std::static_pointer_cast<daedalus::INpc>(obj->handlePtr()) : nullptr);
     hnpc = reinterpret_cast<daedalus::INpc*>(handle->get_instance().get());
     }
   return findNpc(hnpc);
@@ -1680,7 +1657,7 @@ void GameScript::setInstanceNPC(std::string_view name, Npc &npc) {
     Tempest::Log::e("Cannot set NPC instance ", name, ": Symbol not found.");
     return;
     }
-  sym->set_instance(npc.handlePtr());
+  sym->set_instance(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()));
   }
 
 void GameScript::setInstanceItem(Npc &holder, size_t itemId) {
@@ -1732,14 +1709,4 @@ void GameScript::sort(std::vector<GameScript::DlgChoice> &dlg) {
   std::sort(dlg.begin(),dlg.end(),[](const GameScript::DlgChoice& l,const GameScript::DlgChoice& r){
     return std::tie(l.sort,l.scriptFn)<std::tie(r.sort,r.scriptFn); // small hack with scriptfn to reproduce behavior of original game
     });
-  }
-
-void GameScript::setNpcInfoKnown(const daedalus::INpc& npc, const daedalus::IInfo& info) {
-  auto id = std::make_pair(vm.find_symbol_by_instance(npc)->index(),vm.find_symbol_by_instance(info)->index());
-  dlgKnownInfos.insert(id);
-  }
-
-bool GameScript::doesNpcKnowInfo(const daedalus::INpc& npc, size_t infoInstance) const {
-  auto id = std::make_pair(vm.find_symbol_by_instance(npc)->index(),infoInstance);
-  return dlgKnownInfos.find(id)!=dlgKnownInfos.end();
   }

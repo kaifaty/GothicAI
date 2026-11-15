@@ -1,4 +1,5 @@
 #include "triggerscript.h"
+#include "game/gamescript.h"
 
 #include "asset/worldtypes.h"
 #include <Tempest/Log>

@@ -14,7 +14,7 @@
 #include "game/inventory.h"
 #include "game/fightalgo.h"
 #include "game/archerai.h"
-#include "game/gamescript.h"
+#include "game/gamerules.h"
 #include "game/ragdollsave.h"
 #include "game/meleedodge.h"
 #include "game/meleeai.h"
@@ -39,7 +39,7 @@
 #include <string>
 #include <vector>
 
-#include "daedalus/classes.h"
+#include "world/records/npcrecord.h"
 
 class Interactive;
 class Bullet;
@@ -609,7 +609,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
 
     bool      perceptionProcess(Npc& pl);
     bool      perceptionProcess(Npc& pl, Npc *victim, float quadDist, PercType perc, const std::shared_ptr<HeroDeed>& deed = {});
-    // a perception held back by Gothic::interceptPerception, given to the scripts after all
+    // a perception held back by GameHost::takePerception, given to the scripts after all
     bool      passPerception(Npc& other, Npc* victim, PercType perc);
     // A physical impact has a location, independent of a known actor.
     bool      hearPhysicsNoise(const PhysicsNoise& noise);
@@ -730,10 +730,10 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     bool      transformInto(size_t instance); // shape change spell: another creature until transformBack
     void      transformBack();
 
-    auto      dialogChoices(Npc &player, const std::vector<uint32_t> &except, bool includeImp) -> std::vector<GameScript::DlgChoice>;
+    auto      dialogChoices(Npc &player, const std::vector<uint32_t> &except, bool includeImp) -> std::vector<::DlgChoice>;
 
-    daedalus::INpc&                        handle() { return *hnpc; }
-    const std::shared_ptr<daedalus::INpc>& handlePtr() const { return hnpc; }
+    NpcRecord&                        handle() { return *hnpc; }
+    const std::shared_ptr<NpcRecord>& handlePtr() const { return hnpc; }
 
     auto      inventory() const -> const Inventory& { return invent; }
     size_t    itemCount  (size_t id) const;
@@ -1069,7 +1069,8 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     std::array<uint64_t,2>          visibilityDiagnosticTime={};
     std::array<std::string,2>       visibilityDiagnosticKey;
     // main props
-    std::shared_ptr<daedalus::INpc>  hnpc={};
+    std::shared_ptr<NpcRecord>      hnpc={};
+    uint32_t                       npcInstanceSymbol=uint32_t(-1);
     float                          x=0.f;
     float                          y=0.f;
     float                          z=0.f;
@@ -1159,15 +1160,15 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
       size_t bone;
       Tempest::Vec3 point, impulseNs;
       float strength;
-      std::weak_ptr<daedalus::INpc> culprit;
+      std::weak_ptr<NpcRecord> culprit;
       bool melee = false;
       float stiffness = 1.f;
       };
     std::vector<ArrowImpact>       arrowImpacts;
     Tempest::Vec3                  pendingSpellImpulse = {};
-    std::weak_ptr<daedalus::INpc>     spellImpulseCulprit;
+    std::weak_ptr<NpcRecord>     spellImpulseCulprit;
     BodyImpactWindow              bodyImpactWindow;
-    std::weak_ptr<daedalus::INpc>     bodyImpactLaunchCulprit,bodyImpactPendingCulprit;
+    std::weak_ptr<NpcRecord>     bodyImpactLaunchCulprit,bodyImpactPendingCulprit;
     const char*                   bodyImpactSource = "ragdoll";
     bool                          bodyImpactSpellFlight = false;
     void                          applyBodyImpact();
@@ -1203,6 +1204,10 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     void                          interruptItemUse(std::string_view cause);
     void                          tickFoodPool();
     bool                          knockDownMelee(Npc& attacker, const Tempest::Vec3& impulse, std::string_view reason);
+    // A protective fall (npc_brace.cpp): the knocked-off body's motors take the S_BRACE_* pose.
+    void                          startRagdollBrace(const Tempest::Vec3& thrown);
+    void                          finishRagdollBrace(std::string_view end);
+    std::string                   ragdollBraceField() const;
     enum class ChargePhase : uint8_t { None, Windup, Hold, Release };
     ChargePhase                   meleeChargePhase = ChargePhase::None;
     uint64_t                      meleeChargeStart = 0;
@@ -1252,7 +1257,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     std::optional<MeleeAiDodgeTiming> meleeAiDodgeTiming;
     MeleeAi::DodgeStreak            meleeAiDodgeStreak;
     MeleeAi::SpecialSlot           meleeAiSpecialSlot; // held by an attacker of this NPC
-    std::weak_ptr<daedalus::INpc>    meleeAiSpecialTarget;
+    std::weak_ptr<NpcRecord>    meleeAiSpecialTarget;
     MeleeAi::Special               meleeAiSpecial = MeleeAi::Special::None;
     std::optional<uint64_t>        meleeAiSpecialEnded;
     uint64_t                      meleeAiChargeHold = 0;
@@ -1285,7 +1290,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     Tempest::Vec3                 ragdollQuestFrom;
 
     WalkBit                        wlkMode                 =WalkBit::WM_Run;
-    int32_t                        trGuild                 =GIL_NONE;
+    int32_t                        trGuild                 =0;
     int32_t                        talentsSk[TALENT_MAX_G2]={};
     int32_t                        talentsVl[TALENT_MAX_G2]={};
     uint64_t                       refuseTalkMilis         =0;
@@ -1435,6 +1440,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
 
     Sound                          sfxWeapon;
 
+  friend class GameScript;
   friend class MoveAlgo;
   friend class BodyController;
   friend class BodyArena;

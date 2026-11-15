@@ -1,7 +1,5 @@
 #include "npc_melee_shadow.h"
-
 #include <Tempest/Matrix4x4>
-
 #include "graphics/mesh/skeleton.h"
 #include "graphics/effect.h"
 #include "game/damagecalculator.h"
@@ -12,7 +10,9 @@
 #include "utils/dbgpainter.h"
 #include "camera.h"
 #include "world/benchhooks.h"
-#include "gothic.h"
+#include "settings.h"
+#include "gameservices.h"
+#include "game/gamehost.h"
 #include "resources.h"
 
 #include <algorithm>
@@ -54,10 +54,10 @@ namespace NpcMeleeShadow {
 std::string meleeShadowWho(const Npc* npc) {
   if(npc==nullptr)
     return "null";
-  const auto* symbol = npc->world().script().findSymbol(npc->instanceSymbol());
+  const auto symbol = npc->world().rules().symbolName(npc->instanceSymbol());
   return "{\"id\":" + std::to_string(npc->world().npcId(npc)) +
          ",\"instance\":" + std::to_string(npc->instanceSymbol()) + ",\"name\":" +
-         Bench::bodyJson(symbol!=nullptr ? std::string_view(symbol->name()) : std::string_view("npc")) +
+         Bench::bodyJson(!symbol.empty() ? symbol : std::string_view("npc")) +
          ",\"position_cm\":" + meleeShadowPoint(npc->position()) + "}";
   }
 
@@ -438,7 +438,7 @@ Npc::MeleeReach Npc::sampleMeleeReach(const Npc& target, Pose& sampled, const Po
 
 void Npc::syncMeleeShadowSwing() {
   const auto mode = weaponState();
-  const bool enabled = Gothic::physicsFlags().meleeBladeShadow || Gothic::physicsFlags().meleePhysicsHits;
+  const bool enabled = Settings::physicsFlags().meleeBladeShadow || Settings::physicsFlags().meleePhysicsHits;
   if(meleeShadowSuspended || !isHuman() || isDown() || meleeKnockdown ||
      (mode!=WeaponState::Fist && mode!=WeaponState::W1H && mode!=WeaponState::W2H)) {
     finishMeleeShadowSwing(true,meleeShadowSuspended);
@@ -524,10 +524,10 @@ void Npc::syncMeleeShadowSwing() {
   shadow.speed = attack->speed;
   shadow.attacker = meleeShadowWho(this);
   shadow.animation = seq->name;
-  const auto* weaponSymbol = item!=nullptr ? owner.script().findSymbol(item->clsId()) : nullptr;
+  const auto weaponSymbol = item!=nullptr ? owner.rules().symbolName(item->clsId()) : std::string_view();
   shadow.weapon = "{\"mode\":" + Bench::bodyJson(mode==WeaponState::Fist ? "fist" :
                                                    (mode==WeaponState::W1H ? "1h" : "2h")) +
-                  ",\"name\":" + Bench::bodyJson(weaponSymbol!=nullptr ? std::string_view(weaponSymbol->name()) : std::string_view("unarmed")) +
+                  ",\"name\":" + Bench::bodyJson(!weaponSymbol.empty() ? weaponSymbol : std::string_view("unarmed")) +
                   ",\"visual\":" + Bench::bodyJson(item==nullptr ? "" : item->handle().visual) +
                   ",\"length_cm\":" + std::to_string(length) + "}";
   shadow.legacyTarget = "null";
@@ -540,7 +540,7 @@ void Npc::syncMeleeShadowSwing() {
   shadow.stopped = false;
   refreshMeleeFighter();
   // The previous movement tick can still report a controller after its gates changed.
-  shadow.physicsHits = MeleeFighter::physicsHits(Gothic::physicsFlags().meleePhysicsHits,isPlayer(),
+  shadow.physicsHits = MeleeFighter::physicsHits(Settings::physicsFlags().meleePhysicsHits,isPlayer(),
                                                 !isPlayer() && mvAlgo.characterVirtualReady());
   const auto* hero = owner.player();
   shadow.heroDistanceCm = hero!=nullptr ? std::sqrt(qDistTo(*hero)) : 0.f;
@@ -592,7 +592,7 @@ void Npc::syncMeleeShadowSwing() {
   }
 
 bool Npc::wantsMeleeShadowBody() const {
-  return !meleeShadowSuspended && (Gothic::physicsFlags().meleeBladeShadow || Gothic::physicsFlags().meleePhysicsHits ||
+  return !meleeShadowSuspended && (Settings::physicsFlags().meleeBladeShadow || Settings::physicsFlags().meleePhysicsHits ||
                                    (meleeShadow && meleeShadow->window));
   }
 
@@ -786,12 +786,12 @@ void Npc::updateMeleeShadow() {
     }
   if(shadow.stopped)
     return;
-  const float walkableCos = std::cos(float(owner.script().guildVal().slide_angle[guild()])*float(M_PI)/180.f);
+  const float walkableCos = std::cos(float(owner.rules().guildVal().slide_angle[guild()])*float(M_PI)/180.f);
   const auto weapon=weaponState()==WeaponState::Fist ? MeleeImpact::Weapon::Fist :
                     weaponState()==WeaponState::W2H ? MeleeImpact::Weapon::TwoHand : MeleeImpact::Weapon::OneHand;
   owner.physic()->updateShadowBlade(this,shadow.id,blade,owner.tickCount(),activeBegin,activeEnd,walkableCos,
                                     Vec3(std::cos(rotationRad()),0,std::sin(rotationRad())),weapon);
-  if(Gothic::inst().doMeleeBladeDraw()) {
+  if(GameHost::inst().doMeleeBladeDraw()) {
     const double now = double(owner.tickCount());
     meleeShadowDrawPose   = blade;
     meleeShadowDrawActive = now>=activeBegin && now<activeEnd;
@@ -992,7 +992,7 @@ void Npc::consumeMeleeContacts() {
       continue;
       }
     const int partyMember = 15;
-    const bool sameParty = owner.script().isFriendlyFire(*this,*target) ||
+    const bool sameParty = owner.rules().isFriendlyFire(*this,*target) ||
                            (handle().aivar[partyMember]!=0 && target->handle().aivar[partyMember]!=0);
     if(skipMeleeAlly(isPlayer(),target==currentTarget,guild()==target->guild(),sameParty,isEnemy(*target))) {
       entry.result = "ally_skipped";
@@ -1042,7 +1042,7 @@ void Npc::consumeMeleeContacts() {
   }
 
 void Npc::meleeHitStop(Npc& target, const MeleeBladeContact& hit, float multiplier, bool blocked) {
-  if(!Gothic::physicsFlags().meleeHitStop)
+  if(!Settings::physicsFlags().meleeHitStop)
     return;
   // The blade bites and both bodies hold their frame for a moment, then go on: the weight of the
   // blow. A blocked one holds only the guard, the blow itself rebounds into the stance.
@@ -1056,7 +1056,7 @@ void Npc::meleeHitStop(Npc& target, const MeleeBladeContact& hit, float multipli
     visual.hitStop(until,hold);
   target.visual.hitStop(until,hold);
   if(isPlayer() || target.isPlayer()) {
-    if(auto camera = Gothic::inst().camera()) {
+    if(auto camera = GameServices::inst().camera()) {
       const float deg = target.isPlayer() ? (blocked ? .5f : 1.2f) : (blocked ? .3f : .5f);
       camera->impact(hit.velocityCmS,deg*(blocked ? 1.f : std::clamp(multiplier,.8f,1.3f)));
       }
@@ -1067,7 +1067,7 @@ void Npc::meleeHitStop(Npc& target, const MeleeBladeContact& hit, float multipli
   }
 
 void Npc::noteMeleeShadowMarks(const std::vector<MeleeBladeContact>& contacts) {
-  if(!Gothic::inst().doMeleeBladeDraw())
+  if(!GameHost::inst().doMeleeBladeDraw())
     return;
   const uint64_t now = owner.tickCount();
   for(const auto& hit:contacts) {
@@ -1098,7 +1098,7 @@ void Npc::drawMeleeShadow(DbgPainter& p, uint64_t now) const {
     p.setBrush(mark.world ? Tempest::Color(0.2f,0.4f,1) : Tempest::Color(1,0,0));
     p.setPen(mark.world ? Tempest::Color(0.2f,0.4f,1) : Tempest::Color(1,0,0));
     p.drawPoint(mark.point,6);
-    if(Gothic::inst().doMeleeBladeLabels())
+    if(GameHost::inst().doMeleeBladeLabels())
       p.drawText(mark.point,mark.label);
     }
   }

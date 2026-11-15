@@ -59,6 +59,7 @@ class Settings final {
       bool meleeAiCharge = true;
       bool bodyTraces = true;
       bool blood = true;
+      bool ragdollBrace = true;
 
       bool allowsMonsterCharacterVirtual(bool down, bool flying) const {
         return monsterCharacterVirtual && !down && !flying;
@@ -95,6 +96,8 @@ class Settings final {
     // Refreshed by the game on settings changes and before each world tick.
     static const PhysicsFlags& physicsFlags() { return inst().physicsFlagsCache; }
     static bool has(std::string_view sec);
+    // a key in the user's or the system Gothic.ini, not in the defaults; false before load
+    static bool has(std::string_view sec, std::string_view name);
     static int getI(std::string_view sec, std::string_view name);
     static void setI(std::string_view sec, std::string_view name, int val);
     static float getF(std::string_view sec, std::string_view name);

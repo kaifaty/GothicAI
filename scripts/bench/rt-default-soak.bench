@@ -1,0 +1,107 @@
+# A long flythrough under ray tracing (reports/render-features/2026-11-08-rt-revisit/step-default.md, «Приёмка»):
+# the route of streaming-flythrough, market -> harbour -> forest and back, ten laps at 10 m/s on the normal clock
+# (about 2 min a lap), so chunks and their landscape BLAS come and go many times. Each lap is a perf segment
+# `streaming-flythrough/lap-N` that ends in the market after the streaming settles: its `streaming_end` event carries
+# the probe's GPU bytes. The `render: rt landscape` / `render: rt scene` lines and those events exist only in the
+# frame-profile build, which scripts/ryzen.sh makes for a scenario named streaming-flythrough; so run a copy of this
+# file under that name (the flythrough's own report then fails: it wants the passes run and fly):
+#   mkdir -p /tmp/soak && cp scripts/bench/rt-default-soak.bench /tmp/soak/streaming-flythrough.bench
+#   BENCH_HOST=ryzen RYZEN_MAX=60m scripts/bench.sh /tmp/soak/streaming-flythrough.bench
+# and compare the process's video memory (nvidia-smi) and the ray scene's lines at the laps' ends with lap 1.
+# @timeout 3600
+seed 73030
+cheat god
+world-check NEWWORLD.ZEN
+set time 12 0
+cadence normal
+overlay off
+ui off
+view full
+cam lift off
+watch player
+cam look 120
+cam world 700 280 180
+goto NW_CITY_MERCHANT_TRADE_04
+wait 10000
+streaming wait
+mark lap-0
+perf sample streaming-flythrough/lap-1
+route 1000 NW_CITY_MERCHANT_TRADE_04 NW_CITY_HABOUR_BENCH_01 NW_FOREST_PATH_16
+streaming wait
+route 1000 NW_FOREST_PATH_16 NW_CITY_HABOUR_BENCH_01 NW_CITY_MERCHANT_TRADE_04
+streaming wait
+wait 5000
+perf stop
+mark lap-1
+perf sample streaming-flythrough/lap-2
+route 1000 NW_CITY_MERCHANT_TRADE_04 NW_CITY_HABOUR_BENCH_01 NW_FOREST_PATH_16
+streaming wait
+route 1000 NW_FOREST_PATH_16 NW_CITY_HABOUR_BENCH_01 NW_CITY_MERCHANT_TRADE_04
+streaming wait
+wait 5000
+perf stop
+mark lap-2
+perf sample streaming-flythrough/lap-3
+route 1000 NW_CITY_MERCHANT_TRADE_04 NW_CITY_HABOUR_BENCH_01 NW_FOREST_PATH_16
+streaming wait
+route 1000 NW_FOREST_PATH_16 NW_CITY_HABOUR_BENCH_01 NW_CITY_MERCHANT_TRADE_04
+streaming wait
+wait 5000
+perf stop
+mark lap-3
+perf sample streaming-flythrough/lap-4
+route 1000 NW_CITY_MERCHANT_TRADE_04 NW_CITY_HABOUR_BENCH_01 NW_FOREST_PATH_16
+streaming wait
+route 1000 NW_FOREST_PATH_16 NW_CITY_HABOUR_BENCH_01 NW_CITY_MERCHANT_TRADE_04
+streaming wait
+wait 5000
+perf stop
+mark lap-4
+perf sample streaming-flythrough/lap-5
+route 1000 NW_CITY_MERCHANT_TRADE_04 NW_CITY_HABOUR_BENCH_01 NW_FOREST_PATH_16
+streaming wait
+route 1000 NW_FOREST_PATH_16 NW_CITY_HABOUR_BENCH_01 NW_CITY_MERCHANT_TRADE_04
+streaming wait
+wait 5000
+perf stop
+mark lap-5
+perf sample streaming-flythrough/lap-6
+route 1000 NW_CITY_MERCHANT_TRADE_04 NW_CITY_HABOUR_BENCH_01 NW_FOREST_PATH_16
+streaming wait
+route 1000 NW_FOREST_PATH_16 NW_CITY_HABOUR_BENCH_01 NW_CITY_MERCHANT_TRADE_04
+streaming wait
+wait 5000
+perf stop
+mark lap-6
+perf sample streaming-flythrough/lap-7
+route 1000 NW_CITY_MERCHANT_TRADE_04 NW_CITY_HABOUR_BENCH_01 NW_FOREST_PATH_16
+streaming wait
+route 1000 NW_FOREST_PATH_16 NW_CITY_HABOUR_BENCH_01 NW_CITY_MERCHANT_TRADE_04
+streaming wait
+wait 5000
+perf stop
+mark lap-7
+perf sample streaming-flythrough/lap-8
+route 1000 NW_CITY_MERCHANT_TRADE_04 NW_CITY_HABOUR_BENCH_01 NW_FOREST_PATH_16
+streaming wait
+route 1000 NW_FOREST_PATH_16 NW_CITY_HABOUR_BENCH_01 NW_CITY_MERCHANT_TRADE_04
+streaming wait
+wait 5000
+perf stop
+mark lap-8
+perf sample streaming-flythrough/lap-9
+route 1000 NW_CITY_MERCHANT_TRADE_04 NW_CITY_HABOUR_BENCH_01 NW_FOREST_PATH_16
+streaming wait
+route 1000 NW_FOREST_PATH_16 NW_CITY_HABOUR_BENCH_01 NW_CITY_MERCHANT_TRADE_04
+streaming wait
+wait 5000
+perf stop
+mark lap-9
+perf sample streaming-flythrough/lap-10
+route 1000 NW_CITY_MERCHANT_TRADE_04 NW_CITY_HABOUR_BENCH_01 NW_FOREST_PATH_16
+streaming wait
+route 1000 NW_FOREST_PATH_16 NW_CITY_HABOUR_BENCH_01 NW_CITY_MERCHANT_TRADE_04
+streaming wait
+wait 5000
+perf stop
+mark lap-10

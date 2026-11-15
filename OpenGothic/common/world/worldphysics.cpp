@@ -11,9 +11,9 @@ void World::setOriginalClothVisible(bool visible) {
   }
 
 PhysicsHost::PhysicalSpell World::physicalSpell(int32_t spellId) const {
-  switch(script().physicalSpell(spellId)) {
-    case GameScript::PhysicalSpell::Fireball: return PhysicsHost::PhysicalSpell::Fireball;
-    case GameScript::PhysicalSpell::WindFist: return PhysicsHost::PhysicalSpell::WindFist;
+  switch(rules().physicalSpell(spellId)) {
+    case ::PhysicalSpell::Fireball: return PhysicsHost::PhysicalSpell::Fireball;
+    case ::PhysicalSpell::WindFist: return PhysicsHost::PhysicalSpell::WindFist;
     default: return PhysicsHost::PhysicalSpell::None;
     }
   }
@@ -21,15 +21,13 @@ PhysicsHost::PhysicalSpell World::physicalSpell(int32_t spellId) const {
 std::weak_ptr<void> World::npcHandle(const Npc& npc) const { return npc.handlePtr(); }
 
 Npc* World::resolveNpc(const std::shared_ptr<void>& handle) const {
-  return handle!=nullptr ? static_cast<Npc*>(static_cast<daedalus::INpc*>(handle.get())->user_ptr) : nullptr;
+  return rules().findNpc(static_cast<NpcRecord*>(handle.get()));
   }
 
 std::string World::npcTraceName(const Npc& npc) const {
   if(npc.isPlayer())
     return "PLAYER";
-  if(auto symbol=npc.world().script().findSymbol(size_t(npc.instanceSymbol())))
-    return std::string(symbol->name());
-  return {};
+  return std::string(npc.world().rules().symbolName(size_t(npc.instanceSymbol())));
   }
 
 Tempest::Vec3 World::npcPosition(const Npc& npc) const { return npc.position(); }
