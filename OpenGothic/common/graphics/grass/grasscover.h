@@ -34,12 +34,11 @@ constexpr int32_t CoverBreaks    = 110;// of 256 of the level: the noise of 11 c
 // none where a spot's sward thins and this far past it, all of them CoverClearSoft further
 constexpr int32_t CoverClearFrom = 5;  // cm
 constexpr int32_t CoverClearSoft = 30; // cm
-// and of a border with a verge or an open edge: none nearer than this, all of them from that
-constexpr int32_t CoverBroadFrom = 45; // cm
-constexpr int32_t CoverBroadTo   = 90;
-// nor where the band at an open edge lowers the grass and leans it out: none under this of the band's 256, all from that
-constexpr int32_t CoverBroadLow  = 96;
-constexpr int32_t CoverBroadHigh = 176;
+// and of a border with a verge or an open edge: none nearer than this, all of them from that. The band at an open
+// edge (Params::edge) has fewer of them and neither lowers them nor leans them out: a broad blade half as high is
+// a wedge
+constexpr int32_t CoverBroadFrom = 25; // cm
+constexpr int32_t CoverBroadTo   = 70;
 // Between none and all the blades do not thin to single ones: each tuft has its own line (Tuft::gate) and stands
 // whole on its side of it, so the last broad blades towards bare ground are a tuft's, in company
 

@@ -540,8 +540,6 @@ CellBlades buildCell(const CellInput& in) {
           const Segment* near = nullptr;
           const int32_t  d    = edgeDistance(bx,bz,CoverBroadTo,near);
           clear = std::clamp((d-CoverBroadFrom)*256/(CoverBroadTo-CoverBroadFrom), 0, 256);
-          // and where the edge's band lowers the grass and leans it out
-          clear = std::min(clear,std::clamp((edgeQ8-CoverBroadLow)*256/(CoverBroadHigh-CoverBroadLow), 0, 256));
           }
         if(dice<pick && clear>int32_t(tuft->gate) && in.patch<0)
           clear = std::min(clear,coverClear(bx,bz));
@@ -594,7 +592,8 @@ CellBlades buildCell(const CellInput& in) {
       const double  k  = 1.0/double(at->area2);
       const double  b0 = double(w[0])*k, b1 = double(w[1])*k, b2 = double(w[2])*k;
 
-      const float edgeShare  = float(edgeQ8)/256.f;
+      // a sward's broad blade is whole or is not there: the edge's band neither lowers it nor leans it out
+      const float edgeShare  = broad ? 1.f : float(edgeQ8)/256.f;
       const float slopeShare = float(slopeQ8)/256.f;
       const float fromCentre = float(std::sqrt(double(near)/65536.0))*(1.f-float(pull)/256.f)/float(TuftStep);
       float height = fp.height*tuft->height*(0.9f + tuft->spread*(float((h >> 35) & 0xFFu)/255.f - 0.5f));
