@@ -322,6 +322,12 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
           bx.foliage = Grass::pack(i.mat.grass);
           bx.flags  |= BK_GRASS;
           }
+        // A window lit of an evening (graphics/windowglow.h): its hours in the same slot; the record excludes
+        // `grass`, and a window with leaves keeps the leaves
+        if(i.mat.window.on && i.mat.emissive>0.f && (bx.flags & (BK_FOLIAGE|BK_GRASS))==0) {
+          bx.foliage = WindowGlow::pack(i.mat.window);
+          bx.flags  |= BK_WINDOW;
+          }
         }
       }
     else if(i.animMesh!=nullptr) {

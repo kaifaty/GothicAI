@@ -9,6 +9,7 @@
 
 #include "materials_common.glsl"
 #include "foliage_wind.glsl"
+#include "window_glow.glsl"
 // FLAT_NORMAL: the landscape's variants (a fragment shader is not told MESH_TYPE)
 #if defined(GBUFFER) && defined(MATERIAL_MAPS) && defined(FLAT_NORMAL)
 #include "grass/grass_ground.glsl"
@@ -618,9 +619,24 @@ void mainGBuffer(vec4 t) {
     // charcoal is black under its own light: a lamp must not paint the heat as orange wood (r5), so the albedo goes
     // dark by the share and the ambient pass adds the glow in the colour of its heat (emberColour, common.glsl)
     const float mask = textureGrad(sampler2D(textureOrm[tId], samplerMain), uv, duvdx*scene.mipGradScale, duvdy*scene.mipGradScale).a;
-    const float share = clamp(glow*mask*emberBreath(shInp.pos), 0.0, 1.0);
-    outOrm.a = 1.0 - EmissiveOrmCode*share;
-    outDiffuse.rgb *= 1.0 - share;
+    if((bucket[bucketId].flags & BK_WINDOW)!=0) {
+      // a window lit of an evening (window_glow.glsl): the candle behind it, by the hour and the window's own
+      // numbers; the shutters and the frame keep their albedo
+      // only the texels the mask marks ask for the window's numbers
+      float light = 0.0;
+      if(mask>0.004)
+        light = windowLight(bucket[bucketId].foliage, uv, shInp.pos, duvdx, duvdy, dpdx, dpdy,
+                            scene.dayHour, scene.tickCount32);
+      const float share = clamp(glow*mask*light, 0.0, 1.0);
+      if(share>0.0) {
+        outOrm.a     = 1.0 - EmissiveOrmCode*share;
+        outDiffuse.a = float(int(outDiffuse.a*255.0 + 0.5) | GBufWindowBit)/255.0;
+        }
+      } else {
+      const float share = clamp(glow*mask*emberBreath(shInp.pos), 0.0, 1.0);
+      outOrm.a = 1.0 - EmissiveOrmCode*share;
+      outDiffuse.rgb *= 1.0 - share;
+      }
     }
 #endif
 #endif

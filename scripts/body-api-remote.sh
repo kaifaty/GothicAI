@@ -150,14 +150,14 @@ suite_args=()
 binary="$task_root/build/opengothic/gothic-body-runner"
 out="$task_root/runs/$run_name"
 source_root="$task_root/source"
-engine_library="$task_root/build/libOpenGothic.a"
+engine_library="$task_root/build"
 if gq_available; then
   # Freeze binaries and their library together; release this workspace lock
   # before waiting in the queue so later builds can prepare their own runs.
   exec 8>"$task_root/build.lock"
   flock -n 8 || { echo 'Another build owns workspace' >&2; exit 1; }
 fi
-[[ -x "$binary" && -f "$task_root/build/libOpenGothic.a" ]] || { echo 'Build runner first' >&2; exit 1; }
+[[ -x "$binary" ]] || { echo 'Build runner first' >&2; exit 1; }
 [[ ! -e "$task_root/build-active" ]] || { echo 'Wait for build' >&2; exit 1; }
 if ! gq_available; then
   exec 9>"$HOME/gothic-ai/body-simulation.lock"
@@ -180,8 +180,16 @@ if gq_available; then
   source_root="$out/reference/source"
   mkdir -p "$source_root"
   tar -xzf "$out/source.tar.gz" -C "$source_root"
-  cp "$engine_library" "$out/reference/libOpenGothic.a"
-  engine_library="$out/reference/libOpenGothic.a"
+  mkdir -p "$out/reference/engine-libraries"
+  for library in libOpenGothic.a libengine-platform.a; do
+    [[ -f "$engine_library/$library" ]] || { echo "Engine library missing: $library" >&2; exit 1; }
+  done
+  while IFS= read -r -d '' library; do
+    relative="${library#"$engine_library"/}"
+    mkdir -p "$out/reference/engine-libraries/$(dirname "$relative")"
+    cp "$library" "$out/reference/engine-libraries/$relative"
+  done < <(find "$engine_library" -type d \( -name lib -o -name _deps \) -prune -o -name '*.a' ! -name libminiz.a -print0)
+  engine_library="$out/reference/engine-libraries"
   exec 8>&-
 fi
 unit="gothic-body-api-$run_name"

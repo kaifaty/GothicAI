@@ -256,6 +256,18 @@ DynamicWorld::NpcItem::VirtualMoveResult DynamicWorld::NpcItem::implMoveVirtual(
           result.collision.npc = obstacle.body->toNpc();
           result.collision.npcCol = depth;
           result.collision.normal = Tempest::Vec3::normalize(normal);
+          Tempest::Vec3 opposing(normal.x,0,normal.z);
+          if(opposing.quadLength()>0.f) {
+            opposing = Tempest::Vec3::normalize(opposing);
+            if(Tempest::Vec3::dotProduct(opposing,displacement)>0.f)
+              opposing = -opposing;
+            if(Tempest::Vec3::dotProduct(opposing,displacement)<
+               Tempest::Vec3::dotProduct(result.obstacleNormal,displacement)) {
+              result.obstacleNormal = opposing;
+              result.obstacleNpc = obstacle.body->toNpc();
+              result.obstacleDynamic = false;
+              }
+            }
           if(diagnosticCollision!=nullptr) {
             diagnosticCollision->npc = obstacle.body->toNpc();
             diagnosticCollision->position = obstacle.body->pos;
@@ -336,6 +348,12 @@ DynamicWorld::NpcItem::VirtualMoveResult DynamicWorld::NpcItem::implMoveVirtual(
   result.steep = moved.steep;
   result.steepContact = moved.steepContact;
   result.steepContactNormal = moved.steepContactNormal;
+  if(Tempest::Vec3::dotProduct(moved.obstacleNormal,displacement)<
+     Tempest::Vec3::dotProduct(result.obstacleNormal,displacement)) {
+    result.obstacleNormal = moved.obstacleNormal;
+    result.obstacleDynamic = moved.obstacleDynamic;
+    result.obstacleNpc = nullptr;
+    }
   result.blocked = preFall;
   result.supportMoved = moved.supportMoved;
   const Tempest::Vec3 horizontal(displacement.x,0,displacement.z);

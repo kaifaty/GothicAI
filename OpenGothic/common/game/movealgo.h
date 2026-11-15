@@ -9,6 +9,7 @@
 
 #include "physics/dynamicworld.h"
 #include "graphics/mesh/animationsolver.h"
+#include "bumpsignal.h"
 
 class Npc;
 class World;
@@ -123,7 +124,10 @@ class MoveAlgo final {
     void    tickClimb (uint64_t dt);
     void    tickJumpup(uint64_t dt);
     bool    implTick  (uint64_t dt, MvFlags fai);
-    bool    tickCharacterVirtual(uint64_t dt, const Tempest::Vec3& displacement, bool standing = false);
+    bool    tickCharacterVirtual(uint64_t dt, const Tempest::Vec3& displacement, bool standing = false,
+                                 bool meleeStep = false);
+    void    tickBumpSignal(uint64_t dt, const Tempest::Vec3& origin, const Tempest::Vec3& displacement,
+                           const DynamicWorld::NpcItem::VirtualMoveResult& moved, bool meleeStep);
     bool    useCharacterVirtual();
     bool    preserveMovementImpulse(uint64_t generation, State previousState, std::string_view backend);
 
@@ -189,6 +193,7 @@ class MoveAlgo final {
     bool                npcVirtualMobTransition = false;
     Tempest::Vec3       virtualGroundVelocity = {}; // cm/s
     Tempest::Vec3       virtualJumpVelocity = {};   // cm/ms, inherited during jump root motion
+    BumpSignal::State    bumpSignal;
 
     uint64_t            climbStart=0;
     Tempest::Vec3       climbPos0={};

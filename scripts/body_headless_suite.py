@@ -31,6 +31,22 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def engine_library_provenance(directory: Path) -> dict[str, Any]:
+    """Hash our build archives by name; vendored archives are outside this set."""
+    for name in ("libOpenGothic.a", "libengine-platform.a"):
+        if not (directory / name).is_file():
+            raise FileNotFoundError(f"engine library missing: {directory / name}")
+    libraries = {}
+    for path in sorted(directory.rglob("*.a")):
+        if {"lib", "_deps"} & set(path.relative_to(directory).parts) or path.name == "libminiz.a":
+            continue
+        if path.name in libraries:
+            raise ValueError(f"duplicate engine library name: {path.name}")
+        libraries[path.name] = sha256(path)
+    digest = hashlib.sha256(json.dumps(libraries, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return {"engine_libraries": libraries, "engine_library_sha256": digest}
+
+
 def command_output(argv: list[str]) -> str:
     return subprocess.run(argv, capture_output=True, text=True, timeout=15).stdout.strip()
 
@@ -122,6 +138,7 @@ def provenance(args: argparse.Namespace) -> dict[str, Any]:
             "host": platform.node(), "platform": platform.platform(),
             "python": platform.python_version(), "headless": True,
             "binary_sha256": sha256(args.runner), "source_sha256": source.hexdigest(),
+            **(engine_library_provenance(args.engine_library) if args.engine_library else {}),
             "source_files_hashed": source_files,
             "save_sha256": sha256(args.save), "config_sha256": sha256(args.config),
             "assets": observed, "asset_hash_coverage": "all regular files in assets",
@@ -741,7 +758,7 @@ def main() -> int:
     parser.add_argument("--save", type=Path, required=True)
     parser.add_argument("--reference", type=Path, required=True)
     parser.add_argument("--source", type=Path, required=True)
-    parser.add_argument("--engine-library", type=Path)
+    parser.add_argument("--engine-library", type=Path, help="directory containing our build archives")
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--scenario", type=Path)
     parser.add_argument("--senses-scenario", type=Path)
@@ -890,7 +907,7 @@ def main() -> int:
                     "--scenario", str(args.scenario), "--reference", str(args.reference), "--output", str(output)]
             if args.engine_library:
                 argv += ["--engine-library", str(args.engine_library),
-                         "--expected-library-sha256", sha256(args.engine_library)]
+                         "--expected-library-sha256", manifest["engine_library_sha256"]]
             completed = subprocess.run(argv, check=False, timeout=180)
             evidence = json.loads((output / "ipc-probe.json").read_text())
             if completed.returncode or evidence.get("status") != "passed":

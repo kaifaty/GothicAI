@@ -95,6 +95,7 @@ void Settings::load(std::u16string_view systemIni, std::u16string_view userIni) 
   defaults->set("GAME", "item_deepest_contact",1);
   defaults->set("GAME", "ragdoll_birth_guard",1);
   defaults->set("GAME", "ragdoll_brace",       1); // a knocked-down human braces the fall (S_BRACE_* poses on the motors)
+  defaults->set("GAME", "bump_reactions",      1);
   defaults->set("GAME", "furniture_parts",     1);
   defaults->set("GAME", "physics_noise",       1);
   defaults->set("GAME", "destruction",         1);
@@ -347,6 +348,7 @@ void Settings::refreshPhysicsFlags() {
     getI("GAME","melee_ai_charge")!=0,
     getI("GAME","body_traces")!=0,
     getI("GAME","blood")!=0,
-    getI("GAME","ragdoll_brace")!=0
+    getI("GAME","ragdoll_brace")!=0,
+    getI("GAME","bump_reactions")!=0
     };
   }

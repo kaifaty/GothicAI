@@ -175,7 +175,8 @@ class SceneGlobals final {
       uint32_t                        viewFlags       = 0; // VF_* of scene.glsl: VF_HIZ in V_HiZ only (commitUbo), VF_TAA
       float                           fogSkyVis       = 1; // the sky seen from the camera under GI (fog_sky_vis.comp)
       float                           lampNearKnee    = 0; // lamps: the limit of the light near a lamp (light.frag), 0 off
-      float                           foliagePadding[2] = {}; // std140: the vectors below start at 16 bytes
+      float                           dayHour         = 12; // 0..24 of the game's day: the windows' evening (windowglow.h)
+      float                           foliagePadding  = 0; // std140: the vectors below start at 16 bytes
       // living foliage (graphics/foliagewind.h): the world's wind of this frame and of the previous one (setTime)
       Tempest::Vec4                   foliageWind;
       Tempest::Vec4                   foliagePhase;

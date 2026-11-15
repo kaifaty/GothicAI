@@ -60,6 +60,7 @@ class Settings final {
       bool bodyTraces = true;
       bool blood = true;
       bool ragdollBrace = true;
+      bool bumpReactions = true;
 
       bool allowsMonsterCharacterVirtual(bool down, bool flying) const {
         return monsterCharacterVirtual && !down && !flying;

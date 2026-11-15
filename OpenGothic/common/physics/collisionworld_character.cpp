@@ -1,5 +1,6 @@
 #include "collisionworld_internal.h"
 #include "physicshost.h"
+#include "characterobstacle.h"
 
 #include <Jolt/Geometry/Plane.h>
 #include <Jolt/Physics/Body/BodyLock.h>
@@ -594,6 +595,7 @@ CollisionWorld::CharacterMoveResult CollisionWorld::VirtualCharacter::move(
   auto inheritedGroundVelocity = character.GetGroundVelocity();
   bool inferredGroundVelocity = false;
   bool climbedStep = false;
+  CharacterMoveResult result;
   if(seconds>0.f) {
     bool onGround = character.GetGroundState()==JPH::CharacterBase::EGroundState::OnGround;
     auto carriedVelocity = JPH::Vec3::sZero();
@@ -678,6 +680,7 @@ CollisionWorld::CharacterMoveResult CollisionWorld::VirtualCharacter::move(
     if(restOnDebris)
       character.SetMass(state.pushMass);
     state.idleSupportMotionObserved = false;
+    recordCharacterObstacle(result,character,world.system,displacement);
     // RefreshContacts only classifies the initial overlap. Let the first
     // physical solve after creation/teleport recover penetration with native
     // gravity. Only a verified nonpenetrating static plane can start at rest;
@@ -828,7 +831,7 @@ CollisionWorld::CharacterMoveResult CollisionWorld::VirtualCharacter::move(
     else
       state.ground = JPH::BodyID();
     }
-  CharacterMoveResult result;
+  recordCharacterObstacle(result,character,world.system,displacement);
   result.position = toCentimeters(JPH::Vec3(character.GetPosition()));
   // Jolt keeps its requested velocity after moving. Resolve the carried
   // velocity against actual contacts so downhill acceleration survives, while

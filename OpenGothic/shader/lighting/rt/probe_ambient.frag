@@ -240,7 +240,7 @@ void main() {
   color *= scene.exposure;
 #if defined(MATERIAL_MAPS)
   // own glow (embers, burning wood): common.glsl, emissiveMeshGlow - the same as without the probes
-  color += emissiveMeshGlow(orm, scene.GSunIntensity, scene.exposure);
+  color += emissiveMeshGlow(orm, diff4.a, scene.GSunIntensity, scene.exposure);
 #endif
   outColor = vec4(color, 1);
 

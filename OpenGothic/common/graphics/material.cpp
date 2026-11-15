@@ -96,6 +96,7 @@ Material::Material(const asset::Material& m, bool enableAlphaTest, bool requireA
     eye = maps.eye;
     foliage = maps.foliage;
     grass = maps.grass;
+    window = emissive>0.f ? maps.window : WindowGlow::Params();
     // OPENGOTHIC_EYE_SHADER=0: the eye as before the eye shader, Lambert of its colour; its roughness map is the
     // eye shader's
     if(eye && !eyeShaderEnabled())
@@ -156,6 +157,7 @@ bool Material::operator ==(const Material& other) const {
          eye==other.eye &&
          foliage==other.foliage &&
          grass==other.grass &&
+         window==other.window &&
          envMapping==other.envMapping;
   }
 
