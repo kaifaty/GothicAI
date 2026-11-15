@@ -634,6 +634,24 @@ bool npcCommandsCommand(const NpcCommandsContext& context,const std::string& lin
       Flinch::setEnabled(m=="on"); else
       say("unknown flinch command: " + line);
     }
+  else if(c=="bump-form") {
+    // bump-form <wall|waist|person|pushed> <trunk|twist|head|freq|damp|headfreq|headdamp|floor> <value>:
+    // the answer to a run into an obstacle (Flinch::BumpForm), tuned without a rebuild
+    static const char* kinds[]  = {"wall","waist","person","pushed"};
+    static const char* fields[] = {"trunk","twist","head","freq","damp","headfreq","headdamp","floor"};
+    const std::string k = a.size()>1 ? a[1] : "", f = a.size()>2 ? a[2] : "";
+    size_t ki = 0, fi = 0;
+    while(ki<4 && k!=kinds[ki])  ++ki;
+    while(fi<8 && f!=fields[fi]) ++fi;
+    if(ki==4 || fi==8 || a.size()<4) {
+      say("unknown bump-form command: " + line);
+      return true;
+      }
+    auto& form = Flinch::bumpForm(Flinch::Bump::Kind(ki));
+    float* values[] = {&form.trunk,&form.twist,&form.head,&form.freq,&form.damp,&form.headFreq,&form.headDamp,&form.floor};
+    *values[fi] = num(a,3,*values[fi]);
+    say("bump-form " + k + " " + f + " " + std::to_string(*values[fi]));
+    }
   else if(c=="hit") {
     // hit <npc|player> <angle> [strength] [height] [twist]: a blow from that side of it (angle from its
     // facing, 0 in front, as place), only the flinch: no damage, no stumble

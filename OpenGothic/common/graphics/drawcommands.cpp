@@ -136,6 +136,8 @@ void DrawCommands::setBindings(Tempest::Encoder<CommandBuffer>& cmd, const DrawC
     if(cx.isBindless()) {
       cmd.setBinding(L_Normal, buckets.normals());
       cmd.setBinding(L_Orm, buckets.orm());
+      if(cx.type==Landscape)
+        cmd.setBinding(L_GrassBorder, scene.grassBorder!=nullptr ? *scene.grassBorder : scene.grassBorderNone);
       } else {
       cmd.setBinding(L_Normal, bx.mat.normal!=nullptr ? *bx.mat.normal : Resources::fallbackTexture());
       cmd.setBinding(L_Orm, bx.mat.orm!=nullptr ? *bx.mat.orm : Resources::fallbackTexture());

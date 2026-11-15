@@ -16,6 +16,9 @@ Five passes, each a render of its own, written to `bake.npz` with the top image 
   rough   the scan's roughness
   light   the share of a white sky a blade receives (diffuse, with bounces): the shadow between the blades
 `patch.json` beside it lists what was scattered.
+
+meadow_patch.py bakes the meadow's ground with the materials and the passes of this file, and with one pass more,
+`kind`: what the pixel is, a colour per material.
 """
 import argparse
 import json
@@ -144,6 +147,16 @@ def link(tree, source, target):
     tree.links.new(source, target)
 
 
+KIND_GROUND, KIND_GRASS = (0, 0, 0), (1, 0, 0)
+
+
+def kind_node(nodes, colour):
+    """The colour of the `kind` pass of a material."""
+    node = nodes.new('ShaderNodeRGB')
+    node.outputs[0].default_value = (*colour, 1)
+    return node.outputs[0]
+
+
 def grass_material(material, alpha: Path):
     """Rewire the imported material: one emission (or diffuse) surface whose colour is chosen by `passes`.
     The glTF names the colour JPEG alone; the cut-out of the seed heads and leaf tips lies beside it, in `alpha`."""
@@ -234,7 +247,8 @@ def grass_material(material, alpha: Path):
     link(tree, math_node('GREATER_THAN', opacity.outputs['Color'], .5), cut.inputs[0])
     link(tree, transparent.outputs[0], cut.inputs[1])
     link(tree, cut.outputs[0], nodes['Material Output'].inputs['Surface'])
-    sources = dict(colour=tinted, height=height.outputs[0], normal=packed, rough=roughness.outputs[0])
+    sources = dict(colour=tinted, height=height.outputs[0], normal=packed, rough=roughness.outputs[0],
+                   kind=kind_node(nodes, KIND_GRASS))
 
     def choose(name):
         if name == 'light':
@@ -278,7 +292,7 @@ def ground_material(folder: Path, tile_m: float, relief_m: float, shade: float):
         link(tree, rough.outputs[1], socket)
     # the plane lies in XY with the image's axes: the scan's normal map is already the pass
     sources = dict(colour=scaled(texture('diff_4k.jpg', False), shade), height=scaled(texture('disp_4k.png', True), relief_m),
-                   normal=texture('nor_gl_4k.png', True), rough=roughness.outputs[0])
+                   normal=texture('nor_gl_4k.png', True), rough=roughness.outputs[0], kind=kind_node(nodes, KIND_GROUND))
     emission, diffuse = nodes.new('ShaderNodeEmission'), nodes.new('ShaderNodeBsdfDiffuse')
     diffuse.inputs['Color'].default_value = (LEAF,) * 3 + (1,)
     surface = nodes['Material Output'].inputs['Surface']
@@ -290,6 +304,81 @@ def ground_material(folder: Path, tile_m: float, relief_m: float, shade: float):
             link(tree, sources[name], emission.inputs['Color'])
             link(tree, emission.outputs[0], surface)
     return material, choose
+
+
+def stage(scene, tile, size, device):
+    """The camera straight down on one tile, the sky and the renderer. Returns the sky's inputs and the settings."""
+    camera = bpy.data.cameras.new('down')
+    camera.type, camera.ortho_scale, camera.clip_end = 'ORTHO', tile, 50
+    eye = bpy.data.objects.new('down', camera)
+    eye.location = (tile / 2, tile / 2, 10)
+    scene.collection.objects.link(eye)
+    scene.camera = eye
+
+    world = bpy.data.worlds.new('sky')
+    world.use_nodes = True
+    scene.world = world
+    sky = world.node_tree.nodes['Background'].inputs
+    scene.render.engine = 'CYCLES'
+    scene.render.resolution_x = scene.render.resolution_y = size
+    scene.render.resolution_percentage = 100
+    scene.render.image_settings.file_format = 'OPEN_EXR'
+    scene.render.image_settings.color_depth = '32'
+    scene.render.image_settings.color_mode = 'RGB'
+    scene.view_settings.view_transform = 'Raw'
+    cycles = scene.cycles
+    cycles.use_adaptive_sampling = False
+    cycles.transparent_max_bounces = 256
+    cycles.device = 'CPU'
+    if device == 'gpu':
+        preferences = bpy.context.preferences.addons['cycles'].preferences
+        for kind in ('METAL', 'OPTIX', 'CUDA'):
+            try:
+                preferences.compute_device_type = kind
+            except TypeError:
+                continue
+            preferences.refresh_devices()
+            devices = [d for d in preferences.devices if d.type == kind]
+            if devices:
+                for device in preferences.devices:
+                    device.use = device.type == kind
+                cycles.device = 'GPU'
+                break
+    return sky, cycles
+
+
+def render_passes(scene, sky, cycles, out, size, names, choosers, samples, light_samples):
+    """Render the passes `names`, each with the materials switched by `choosers`: arrays with the top row first."""
+    arrays, seconds = {}, {}
+    for name in names:
+        for choose in choosers:
+            choose(name)
+        lit = name == 'light'
+        sky[0].default_value = (1, 1, 1, 1) if lit else (0, 0, 0, 1)
+        cycles.samples = light_samples if lit else samples
+        cycles.max_bounces = cycles.diffuse_bounces = 3 if lit else 0
+        cycles.transmission_bounces = 3 if lit else 0
+        cycles.use_denoising = lit
+        scene.render.filepath = str(out / f'{name}.exr')
+        started = time.monotonic()
+        bpy.ops.render.render(write_still=True)
+        seconds[name] = round(time.monotonic() - started, 1)
+        print(f'grass_patch: {name} {seconds[name]} s', flush=True)
+        image = bpy.data.images.load(scene.render.filepath)
+        pixels = np.empty(size * size * 4, np.float32)
+        image.pixels.foreach_get(pixels)
+        bpy.data.images.remove(image)
+        pixels = pixels.reshape(size, size, 4)[::-1, :, :3]   # top row first
+        if name == 'normal':
+            pixels = pixels * 2 - 1
+            pixels = pixels / np.maximum(np.linalg.norm(pixels, axis=2, keepdims=True), 1e-6)
+        elif name == 'light':
+            pixels = pixels[..., 0] / LEAF
+        elif name not in ('colour', 'kind'):
+            pixels = pixels[..., 0]
+        arrays[name] = pixels.astype(np.float16)
+        Path(scene.render.filepath).unlink()
+    return arrays, seconds
 
 
 def main():
@@ -339,72 +428,9 @@ def main():
     mesh.materials.append(ground)
     patch.objects.link(bpy.data.objects.new('ground', mesh))
 
-    camera = bpy.data.cameras.new('down')
-    camera.type, camera.ortho_scale, camera.clip_end = 'ORTHO', tile, 50
-    eye = bpy.data.objects.new('down', camera)
-    eye.location = (tile / 2, tile / 2, 10)
-    scene.collection.objects.link(eye)
-    scene.camera = eye
-
-    world = bpy.data.worlds.new('sky')
-    world.use_nodes = True
-    scene.world = world
-    sky = world.node_tree.nodes['Background'].inputs
-    scene.render.engine = 'CYCLES'
-    scene.render.resolution_x = scene.render.resolution_y = args.size
-    scene.render.resolution_percentage = 100
-    scene.render.image_settings.file_format = 'OPEN_EXR'
-    scene.render.image_settings.color_depth = '32'
-    scene.render.image_settings.color_mode = 'RGB'
-    scene.view_settings.view_transform = 'Raw'
-    cycles = scene.cycles
-    cycles.use_adaptive_sampling = False
-    cycles.transparent_max_bounces = 256
-    cycles.device = 'CPU'
-    if args.device == 'gpu':
-        preferences = bpy.context.preferences.addons['cycles'].preferences
-        for kind in ('METAL', 'OPTIX', 'CUDA'):
-            try:
-                preferences.compute_device_type = kind
-            except TypeError:
-                continue
-            preferences.refresh_devices()
-            devices = [d for d in preferences.devices if d.type == kind]
-            if devices:
-                for device in preferences.devices:
-                    device.use = device.type == kind
-                cycles.device = 'GPU'
-                break
-
-    arrays, seconds = {}, {}
-    for name in ('colour', 'height', 'normal', 'rough', 'light'):
-        choose_grass(name)
-        choose_ground(name)
-        lit = name == 'light'
-        sky[0].default_value = (1, 1, 1, 1) if lit else (0, 0, 0, 1)
-        cycles.samples = args.light_samples if lit else args.samples
-        cycles.max_bounces = cycles.diffuse_bounces = 3 if lit else 0
-        cycles.transmission_bounces = 3 if lit else 0
-        cycles.use_denoising = lit
-        scene.render.filepath = str(out / f'{name}.exr')
-        started = time.monotonic()
-        bpy.ops.render.render(write_still=True)
-        seconds[name] = round(time.monotonic() - started, 1)
-        print(f'grass_patch: {name} {seconds[name]} s', flush=True)
-        image = bpy.data.images.load(scene.render.filepath)
-        pixels = np.empty(args.size * args.size * 4, np.float32)
-        image.pixels.foreach_get(pixels)
-        bpy.data.images.remove(image)
-        pixels = pixels.reshape(args.size, args.size, 4)[::-1, :, :3]   # top row first
-        if name == 'normal':
-            pixels = pixels * 2 - 1
-            pixels = pixels / np.maximum(np.linalg.norm(pixels, axis=2, keepdims=True), 1e-6)
-        elif name == 'light':
-            pixels = pixels[..., 0] / LEAF
-        elif name != 'colour':
-            pixels = pixels[..., 0]
-        arrays[name] = pixels.astype(np.float16)
-        Path(scene.render.filepath).unlink()
+    sky, cycles = stage(scene, tile, args.size, args.device)
+    arrays, seconds = render_passes(scene, sky, cycles, out, args.size, ('colour', 'height', 'normal', 'rough', 'light'),
+                                    (choose_grass, choose_ground), args.samples, args.light_samples)
     np.savez(out / 'bake.npz', **arrays)
     kinds = {}
     for tuft in placed:

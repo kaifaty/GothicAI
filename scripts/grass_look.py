@@ -7,6 +7,20 @@ Reads the frames of scripts/bench/landscape-meadow.bench and landscape-meadow-pa
   tone    <mask.png> <frame>...          the mean luminance (of the light) and luma (of the coded values) and the
                                          colour of that area in each frame, against the first
   cover   <paint.png> <bands.png>        the share of the ground the blades cover, by the band of the distance
+  blades  <mask.png> <paint.png> <frame> <ground>
+                                         the colour of the blades (red in the paint, inside the mask) in the frame
+                                         against the ground under them, in the frame without blades
+  variety <mask.png> <cells.png> [--light <mask-view.png>] <frame>...
+                                         how varied the meadow is (reports/engine/2026-11-14-meadow-ground, «Что
+                                         отняло жизнь»): the spread of the luminance (of its logarithm) and of the hue
+                                         (degrees) between squares of 5 m, between squares of 0.5 m within one of 5 m,
+                                         and between pixels within a square of 0.5 m; linear light, the mask's area.
+                                         <cells.png> is the frame painted by `grass parts 8385`. The first frame is
+                                         what the others are measured against: `variety` is the geometric mean of
+                                         the four ratios of the two larger scales. --light takes the light out:
+                                         each pixel is divided by the one of the painted frame (`grass parts 193`:
+                                         one colour under the same sun and shade), so what is left is the ground's
+                                         and the blades' own
   columns <clip> [--half left|right] [--rows a:b] [--strips n] [--step s]
                                          the tone of the frame's vertical strips in time: a gust that crosses
   still   <clip> [--half left|right] [--crop x0:y0:x1:y1]
@@ -145,6 +159,149 @@ def cmd_cover(a: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_blades(a: argparse.Namespace) -> int:
+    paint = read_image(a.paint).astype(np.int32)
+    blades = (paint[..., 0] > 40) & (3*paint[..., 1] < paint[..., 0]) & (3*paint[..., 2] < paint[..., 0])
+    area = blades & (read_image(a.mask)[..., 0] > 127)
+    grass, ground = tone_of(read_image(a.frame), area), tone_of(read_image(a.ground), area)
+    print(json.dumps({"blades_share_of_mask": round(float(area.sum())/max(int((read_image(a.mask)[..., 0] > 127).sum()), 1), 3),
+                      "blades": grass, "ground": ground, "hue_difference": round(grass["hue"] - ground["hue"], 1),
+                      "saturation_ratio": round(grass["saturation"]/max(ground["saturation"], 1e-6), 3),
+                      "luminance_ratio": round(grass["luminance"]/max(ground["luminance"], 1e-9), 3)}, ensure_ascii=False))
+    return 0
+
+
+def label_runs(m: np.ndarray) -> np.ndarray:
+    """Connected areas of a mask, by four neighbours: runs of each row joined to those of the row above."""
+    h, w = m.shape
+    parent: list[int] = [0]
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    rows, prev = [], []
+    for y in range(h):
+        d = np.flatnonzero(np.diff(np.concatenate(([0], m[y].view(np.int8), [0]))))
+        cur, k = [], 0
+        for a, b in zip(d[0::2].tolist(), d[1::2].tolist()):
+            lab = len(parent)
+            parent.append(lab)
+            while k < len(prev) and prev[k][1] <= a:
+                k += 1
+            j = k
+            while j < len(prev) and prev[j][0] < b:
+                ra, rb = find(prev[j][2]), find(lab)
+                if ra != rb:
+                    parent[max(ra, rb)] = min(ra, rb)
+                j += 1
+            cur.append((a, b, lab))
+        rows.append(cur)
+        prev = cur
+    out = np.zeros((h, w), np.int32)
+    for y, cur in enumerate(rows):
+        for a, b, lab in cur:
+            out[y, a:b] = find(lab)
+    return out
+
+
+def squares(painted: np.ndarray, mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """The squares of 0.5 m and of 5 m of the ground, numbered: each a chessboard in the paint, red and green."""
+    p = painted.astype(np.int32)
+    r, g, b = p[..., 0], p[..., 1], p[..., 2]
+    ground = mask & (b > 24)
+    out = []
+    for bit in (2*r > b, 2*g > b):
+        on, off = label_runs(erode(ground & bit, 1)), label_runs(erode(ground & ~bit, 1))
+        off[off > 0] += int(on.max())
+        out.append(on + off)
+    return out[0], out[1]
+
+
+def hue_of(lin: np.ndarray) -> np.ndarray:
+    """The hue, degrees, of colours in linear light: of their coded values, as tone_of."""
+    c = np.where(lin <= 0.0031308, lin*12.92, 1.055*np.maximum(lin, 1e-9)**(1/2.4) - 0.055)
+    r, g, b = c[..., 0], c[..., 1], c[..., 2]
+    top, low = c.max(axis=-1), c.min(axis=-1)
+    span = np.maximum(top - low, 1e-9)
+    h = np.where(top == r, ((g - b)/span) % 6.0, np.where(top == g, (b - r)/span + 2.0, (r - g)/span + 4.0))
+    return h*60.0
+
+
+def turn(deg: np.ndarray) -> np.ndarray:
+    return (deg + 180.0) % 360.0 - 180.0
+
+
+def spread(values: np.ndarray, weight: np.ndarray) -> float:
+    return float(np.sqrt((weight*values**2).sum()/max(float(weight.sum()), 1e-9)))
+
+
+COEF = np.array([0.2126, 0.7152, 0.0722])
+
+
+def variety_of(rgb: np.ndarray, small: np.ndarray, big: np.ndarray, light: np.ndarray | None = None) -> dict:
+    lin = linear(rgb)
+    if light is not None:
+        lin = lin/light[..., None]
+
+    def means(labels: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        flat = labels.ravel()
+        n = np.bincount(flat)
+        m = np.stack([np.bincount(flat, weights=lin[..., c].ravel()) for c in range(3)], axis=1)/np.maximum(n, 1)[:, None]
+        n[0] = 0  # what is no square
+        return n, m
+
+    nb, mb = means(big)
+    ns, ms = means(small)
+    # squares of 5 m, against the mean of them all
+    ok = nb >= 400
+    w = nb[ok].astype(np.float64)
+    ly, hb = np.log(np.maximum(mb @ COEF, 1e-6)), hue_of(mb)
+    mean_h = np.degrees(np.arctan2((w*np.sin(np.radians(hb[ok]))).sum(), (w*np.cos(np.radians(hb[ok]))).sum()))
+    out = {"squares_5m": int(ok.sum()), "lum_5m": spread(ly[ok] - (w*ly[ok]).sum()/w.sum(), w),
+           "hue_5m": spread(turn(hb[ok] - mean_h), w)}
+    # squares of 0.5 m, each against its square of 5 m: the one most of its pixels lie in
+    both = (small > 0) & (big > 0)
+    pair = small[both].astype(np.int64)*int(len(nb)) + big[both]
+    pairs, count = np.unique(pair, return_counts=True)
+    order = np.lexsort((count, pairs//len(nb)))
+    last = np.flatnonzero(np.diff(np.concatenate((pairs[order]//len(nb), [-1]))))
+    home = np.zeros(len(ns), np.int64)
+    home[pairs[order][last]//len(nb)] = pairs[order][last] % len(nb)
+    ok = (ns >= 12) & (home > 0) & (nb[home] >= 400)
+    w = ns[ok].astype(np.float64)
+    lys, hs = np.log(np.maximum(ms @ COEF, 1e-6)), hue_of(ms)
+    out.update({"squares_05m": int(ok.sum()), "lum_05m": spread(lys[ok] - ly[home[ok]], w),
+                "hue_05m": spread(turn(hs[ok] - hb[home[ok]]), w)})
+    # pixels, each against its square of 0.5 m: blade to blade
+    px = (small > 0) & ok[small]
+    idx = small[px]
+    one = np.ones(int(px.sum()))
+    out.update({"lum_px": spread(np.log(np.maximum(lin[px] @ COEF, 1e-4)) - lys[idx], one),
+                "hue_px": spread(turn(hue_of(lin[px]) - hs[idx]), one)})
+    return {k: (v if isinstance(v, int) else round(v, 4)) for k, v in out.items()}
+
+
+def cmd_variety(a: argparse.Namespace) -> int:
+    mask = read_image(a.mask)[..., 0] > 127
+    small, big = squares(read_image(a.cells), mask)
+    # the painted ground is magenta: its red is the light that fell on it
+    light = np.maximum(linear(read_image(a.light))[..., 0], 1e-3) if a.light else None
+    first = None
+    for path in a.frames:
+        v = variety_of(read_image(path), small, big, light)
+        if first is None:
+            first = v
+        keys = ("lum_5m", "hue_5m", "lum_05m", "hue_05m")
+        v["ratios"] = {k: round(v[k]/max(first[k], 1e-9), 3) for k in keys + ("lum_px", "hue_px")}
+        v["variety"] = round(float(np.prod([v["ratios"][k] for k in keys]))**0.25, 3)
+        v["frame"] = path
+        print(json.dumps(v, ensure_ascii=False))
+    return 0
+
+
 def clip_frames(path: str, half: str | None, scale: int):
     w, h = probe(path)
     crop = {"left": f"crop=iw/2:ih:0:0,", "right": f"crop=iw/2:ih:iw/2:0,", None: ""}[half]
@@ -211,6 +368,10 @@ def main() -> int:
     p = sub.add_parser("mask"); p.add_argument("frame"); p.add_argument("out"); p.set_defaults(fn=cmd_mask)
     p = sub.add_parser("tone"); p.add_argument("mask"); p.add_argument("frames", nargs="+"); p.set_defaults(fn=cmd_tone)
     p = sub.add_parser("cover"); p.add_argument("paint"); p.add_argument("bands"); p.set_defaults(fn=cmd_cover)
+    p = sub.add_parser("blades"); p.add_argument("mask"); p.add_argument("paint"); p.add_argument("frame")
+    p.add_argument("ground"); p.set_defaults(fn=cmd_blades)
+    p = sub.add_parser("variety"); p.add_argument("mask"); p.add_argument("cells"); p.add_argument("--light"); p.add_argument("frames", nargs="+")
+    p.set_defaults(fn=cmd_variety)
     p = sub.add_parser("columns"); p.add_argument("clip"); p.add_argument("--half", choices=["left", "right"])
     p.add_argument("--rows", default="0.45:0.95"); p.add_argument("--strips", type=int, default=8)
     p.add_argument("--step", type=float, default=0.5); p.set_defaults(fn=cmd_columns)
