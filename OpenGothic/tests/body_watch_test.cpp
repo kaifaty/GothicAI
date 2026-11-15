@@ -1211,7 +1211,7 @@ class NpcLogicalStateContract final {
       // The first tick's output callback observes the later attacker's fighter mark. Refreshing
       // only immediately before each actor's tick is too late, even if the final marks are equal.
       ++cases;
-      auto* first=make(NpcSimTier::Full,{100,0,0});
+      auto* first=make(NpcSimTier::Simplified,{100,0,0});
       auto* fighter=make(NpcSimTier::Full,{200,0,0});
       first->handle().id=std::numeric_limits<int32_t>::min()+1;
       fighter->handle().id=std::numeric_limits<int32_t>::min()+2;
@@ -1219,6 +1219,9 @@ class NpcLogicalStateContract final {
       expect(fighter->startState(world.script().findFunction("ZS_ATTACK"),""),"order fixture enters the native attack state");
       expect(fighter->playAnimByName("S_1HATTACK",BS_HIT)!=nullptr && fighter->isAttack(),"order fixture has a real attack");
       first->meleeFighter={}; fighter->meleeFighter={};
+      // Graph locomotion keeps this fresh observer out of the first native gravity step, which
+      // could enter InAir and defer its output until a later world tick.
+      first->setExternalControl(false);
       first->handle().voice=14;
       first->aiPush(AiQueue::aiOutputSvm(*hero,"$NOTNOW",0));
       unsigned outputs=0; bool marked=false;
@@ -1228,7 +1231,8 @@ class NpcLogicalStateContract final {
         };
       objects.tick(33,33);
       gothic.interceptSvm={};
-      expect(outputs==1 && marked,"all melee fighters are refreshed before the first NPC tick callback");
+      expect(outputs==1 && marked,"all melee fighters are refreshed before the first NPC tick callback: outputs="+
+             std::to_string(outputs)+" marked="+std::to_string(marked));
       expect(objects.npcArr[0].get()==first && objects.npcArr[1].get()==fighter,"tick establishes handle order before any NPC tick");
       world.removeNpc(*first); world.removeNpc(*fighter);
       }
