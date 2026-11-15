@@ -11,6 +11,7 @@
 #include "utils/gthfont.h"
 #include "utils/keycodec.h"
 #include "gothic.h"
+#include "settings.h"
 #include "resources.h"
 #include "world/benchhooks.h"
 
@@ -83,7 +84,7 @@ InventoryMenu::InventoryMenu(const KeyCodec& key)
   selU = Resources::loadTexture("INV_SLOT_EQUIPPED.TGA");
   tex  = Resources::loadTexture("INV_BACK.TGA"); // INV_TITEL.TGA
 
-  int invMaxColumns = Gothic::settingsGetI("GAME","invMaxColumns");
+  int invMaxColumns = Settings::getI("GAME","invMaxColumns");
   if(invMaxColumns>0)
     columsCount = size_t(invMaxColumns); else
     columsCount = 5;
@@ -426,7 +427,7 @@ void InventoryMenu::paintNumOverlay(PaintEvent& e) {
 
 Size InventoryMenu::slotSize() const {
   const float scale = Gothic::interfaceScale(this);
-  const float cell  = float(Gothic::options().inventoryCellSize);
+  const float cell  = float(Settings::options().inventoryCellSize);
   return Size(int(cell*scale),int(cell*scale));
   }
 

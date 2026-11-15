@@ -16,6 +16,7 @@
 #include "serialize.h"
 #include "camera.h"
 #include "gothic.h"
+#include "settings.h"
 #include "resources.h"
 #include "loadprobe.h"
 
@@ -309,7 +310,7 @@ void GameSession::save(Serialize &fout, std::string_view name, const Pixmap& scr
   }
 
 void GameSession::setupSettings() {
-  const float soundVolume = Gothic::settingsSoundVolume();
+  const float soundVolume = Settings::soundVolume();
   if(sound)
     sound->setGlobalVolume(soundVolume);
   }

@@ -18,6 +18,7 @@
 #include "world/objects/npc.h"
 #include "world/world.h"
 #include "gothic.h"
+#include "settings.h"
 #include "appcadence.h"
 
 using namespace Tempest;
@@ -93,7 +94,7 @@ std::vector<World::PhysicsTrace> bloodTraces(World& world) {
   }
 
 std::string common(World& world) {
-  return "\"world\":"+jsonStr(world.name())+",\"blood\":"+(Gothic::physicsFlags().blood ? "true" : "false")+
+  return "\"world\":"+jsonStr(world.name())+",\"blood\":"+(Settings::physicsFlags().blood ? "true" : "false")+
          ",\"game_minute\":"+std::to_string(world.gameMinute());
   }
 
@@ -151,9 +152,9 @@ Vec3 ground(World& world, Vec3 at, float maxR = 200.f) {
 
 void place(World& world, const std::string& role, const Vec3& at, BloodStains::Kind kind, float radius, uint32_t body = 0) {
   const auto id = world.placeBloodStain(ground(world,at,30.f),kind,radius,body);
-  if(Gothic::physicsFlags().blood && id==0)
+  if(Settings::physicsFlags().blood && id==0)
     fail("placeBloodStain failed for "+role);
-  if(!Gothic::physicsFlags().blood && id!=0)
+  if(!Settings::physicsFlags().blood && id!=0)
     fail("blood OFF: placeBloodStain added "+role);
   if(id!=0)
     st.ids[role] = id;
@@ -161,7 +162,7 @@ void place(World& world, const std::string& role, const Vec3& at, BloodStains::K
 
 void add(World& world, const std::string& role, BloodStains::Stain s) {
   const auto id = world.addBloodStain(s);
-  if(Gothic::physicsFlags().blood!=(id!=0))
+  if(Settings::physicsFlags().blood!=(id!=0))
     fail(std::string("addBloodStain ")+(id==0 ? "refused " : "added with blood OFF: ")+role);
   if(id!=0)
     st.ids[role] = id;
@@ -247,7 +248,7 @@ void setup(World& world, Npc& hero) {
   add(world,"in",indoor);
 
   // The layout the checks rely on: pairs within 2 m, groups apart.
-  if(Gothic::physicsFlags().blood) {
+  if(Settings::physicsFlags().blood) {
     const auto pos = [&](const char* role) { return stainById(world,st.ids.at(role))->pos; };
     const auto near = [&](const char* x, const char* y) { return (pos(x)-pos(y)).length(); };
     if(near("a1","a2")>BloodStains::GroupLinkCm || near("pool","near_pool")>BloodStains::GroupLinkCm)
@@ -273,7 +274,7 @@ void advance(World& world, int64_t minutes) {
 std::string check(World& world, const std::string& label) {
   const auto require = [&](bool ok, const std::string& why) { if(!ok) fail(label+": "+why); };
   const auto traces  = bloodTraces(world);
-  const bool on      = Gothic::physicsFlags().blood;
+  const bool on      = Settings::physicsFlags().blood;
   if(!on) {
     require(world.bloodStains().empty(),"blood OFF keeps stains");
     require(traces.empty(),"blood OFF has blood traces");
@@ -396,7 +397,7 @@ std::string BloodStainsBench::command(const std::vector<std::string>& a, World& 
 #ifdef OPENGOTHIC_ENABLE_APP_CADENCE
   if(c=="measure") {
     // the cost bench's normal-clock window, after `cadence normal`; its mode is the blood flag
-    const bool on = Gothic::physicsFlags().blood;
+    const bool on = Settings::physicsFlags().blood;
     if(!AppCadence::normalClock() || !AppCadence::arm(on))
       fail("measure: the normal-clock cadence window could not start");
     AppCadence::counts(true,uint32_t(world.bloodStains().size()),0,0,0,0);

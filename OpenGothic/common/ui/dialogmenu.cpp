@@ -9,6 +9,7 @@
 #include "utils/string_frm.h"
 #include "world/objects/npc.h"
 #include "gothic.h"
+#include "settings.h"
 #include "inventorymenu.h"
 #include "resources.h"
 
@@ -55,11 +56,11 @@ DialogMenu::~DialogMenu() {
   }
 
 void DialogMenu::setupSettings() {
-  dlgAnimation        = Gothic::settingsGetI("GAME","animatedWindows");
-  showSubtitles       = Gothic::settingsGetI("GAME","subTitles");
-  showSubtitlesPlayer = Gothic::settingsGetI("GAME","subTitlesPlayer");
+  dlgAnimation        = Settings::getI("GAME","animatedWindows");
+  showSubtitles       = Settings::getI("GAME","subTitles");
+  showSubtitlesPlayer = Settings::getI("GAME","subTitlesPlayer");
 
-  const float volume = Gothic::settingsSoundVolume();
+  const float volume = Settings::soundVolume();
   soundDevice.setGlobalVolume(volume);
   }
 

@@ -14,6 +14,7 @@
 #include "game/gamescript.h"
 #include "game/serialize.h"
 #include "gothic.h"
+#include "settings.h"
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/submesh/packedmesh.h"
 #include "resources.h"
@@ -613,7 +614,7 @@ void monsterCharacterBegin(MonsterCharacter& state,World& world) {
     else route.npc->aiPush(AiQueue::aiGoToPoint(route.destination));
     }
   event("monster_character_route_begin","\"route\":"+jsonStr(route.name)+",\"cv_enabled\":"+
-    (Gothic::settingsGetI("GAME","monster_character_virtual")?"true":"false")+",\"start_cm\":"+ragdollVector(route.lastPosition));
+    (Settings::getI("GAME","monster_character_virtual")?"true":"false")+",\"start_cm\":"+ragdollVector(route.lastPosition));
   }
 
 void monsterCharacterEnd(MonsterCharacter& state,const MonsterCharacterContext& context,World& world) {
@@ -631,7 +632,7 @@ void monsterCharacterEnd(MonsterCharacter& state,const MonsterCharacterContext& 
     ",\"attack_distance_cm\":"+ragdollNumber(route.attackDistance)+",\"attack_rise_cm\":"+ragdollNumber(route.attackRise)+
     ",\"attack_duration_ms\":"+(route.attackEnded?std::to_string(route.attackEnded-route.began):"null")+
     ",\"charge_collision_callbacks\":"+std::to_string(route.callbacks)+",\"barrel_displacement_cm\":"+ragdollNumber(context.character.characterPropTravel)+
-    ",\"cv_enabled\":"+(Gothic::settingsGetI("GAME","monster_character_virtual")?"true":"false"));
+    ",\"cv_enabled\":"+(Settings::getI("GAME","monster_character_virtual")?"true":"false"));
   for(auto& actor:state.monsterCharacterExtras)if(actor.npc) {
     event("monster_character_actor_end","\"route\":"+jsonStr(route.name)+",\"role\":"+jsonStr(actor.role)+
       ",\"npc_id\":"+std::to_string(world.npcId(actor.npc))+",\"instance\":"+jsonStr(symName(world,actor.npc))+
@@ -698,7 +699,7 @@ void monsterCharacterSnapshot(World& world,Npc& player,std::string_view label) {
       ",\"root_cm\":"+ragdollVector(npc->position())+",\"cv_active\":"+(npc->characterVirtualActive()?"true":"false")+"}";
     }
   event("monster_character_snapshot","\"label\":"+jsonStr(label)+",\"world\":"+jsonStr(world.name())+
-    ",\"cv_enabled\":"+(Gothic::settingsGetI("GAME","monster_character_virtual")?"true":"false")+",\"actors\":"+actors+"]");
+    ",\"cv_enabled\":"+(Settings::getI("GAME","monster_character_virtual")?"true":"false")+",\"actors\":"+actors+"]");
   }
 
 void monsterCharacterSave(MonsterCharacter& state,World& world,Npc& player) {
@@ -731,7 +732,7 @@ void monsterCharacterFields(MonsterCharacter& state,const MonsterCharacterContex
   if(route.active || state.monsterCharacterCrowd)for(auto& actor:state.monsterCharacterExtras)if(actor.npc) {
     auto& npc=*actor.npc;const auto at=npc.position(),visual=npc.characterVisualPosition();
     if(!state.monsterCharacterCrowd)state.monsterCharacterFrames.push_back({route.name+"_"+actor.role,npc.animNames(),world.tickCount(),dt,
-      world.npcId(&npc),at,visual,bool(Gothic::settingsGetI("GAME","monster_character_virtual")),npc.characterVirtualActive(),
+      world.npcId(&npc),at,visual,bool(Settings::getI("GAME","monster_character_virtual")),npc.characterVirtualActive(),
       npc.navigationGoal().active,npc.isInAir(),npc.isFalling(),npc.isSwim(),npc.rotation(),characterMoveFrame(npc)});
     actor.maxPhysicalJump=std::max(actor.maxPhysicalJump,std::abs(at.y-actor.lastPosition.y));
     actor.maxVisualJump=std::max(actor.maxVisualJump,std::abs(visual.y-actor.lastVisual.y));
@@ -796,7 +797,7 @@ void monsterCharacterFields(MonsterCharacter& state,const MonsterCharacterContex
   if(!route.active)return;
   const auto at=npc->position(),visual=npc->characterVisualPosition();const auto animation=npc->animNames();
   state.monsterCharacterFrames.push_back({route.name,animation,world.tickCount(),dt,world.npcId(npc),at,visual,
-    bool(Gothic::settingsGetI("GAME","monster_character_virtual")),npc->characterVirtualActive(),npc->navigationGoal().active,
+    bool(Settings::getI("GAME","monster_character_virtual")),npc->characterVirtualActive(),npc->navigationGoal().active,
     npc->isInAir(),npc->isFalling(),npc->isSwim(),npc->rotation(),characterMoveFrame(*npc)});
   if(route.name=="wolf_stairs") {
     CharacterVirtualDiagnostics d;
@@ -872,7 +873,7 @@ void monsterCharacterFields(MonsterCharacter& state,const MonsterCharacterContex
 bool monsterCharacterCommand(MonsterCharacter& state,const MonsterCharacterContext& context,const std::vector<std::string>& a,World& w,Npc& pl) {
   const std::string& c = a[0];
   if(c=="monstercharacter" && a.size()==2 && (a[1]=="on" || a[1]=="off")) {
-    Gothic::settingsSetI("GAME","monster_character_virtual",a[1]=="on");
+    Settings::setI("GAME","monster_character_virtual",a[1]=="on");
     event("monster_character_toggle","\"enabled\":"+std::string(a[1]=="on"?"true":"false"));
     }
   else if(c=="monstercharacter" && a.size()==3 && a[1]=="route")monsterCharacterPrepare(state,context,w,pl,a[2]);
@@ -889,7 +890,7 @@ bool monsterCharacterCommand(MonsterCharacter& state,const MonsterCharacterConte
     state.monsterCharacterMeasuring=true;state.monsterCharacterHasWall=false;state.monsterCharacterPerformance.clear();
     state.monsterCharacterMinNearby=20;state.monsterCharacterMaxNearby=0;state.monsterCharacterMaximumDistance=0;
     AppCadence::counts(true,uint32_t(state.monsterCharacterExtras.size()),0,uint32_t(w.physic()->physicsStats().bodies),0,0);
-    event("monster_character_measure_begin","\"cv_enabled\":"+std::string(Gothic::settingsGetI("GAME","monster_character_virtual")?"true":"false"));
+    event("monster_character_measure_begin","\"cv_enabled\":"+std::string(Settings::getI("GAME","monster_character_virtual")?"true":"false"));
     }
   else if(c=="monstercharacter" && a.size()==2 && a[1]=="report") {
     state.monsterCharacterMeasuring=false;

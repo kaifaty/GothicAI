@@ -4,7 +4,7 @@
 #include <cmath>
 
 #include "game/gamescript.h"
-#include "gothic.h"
+#include "settings.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
 #include <Tempest/MemReader>
@@ -98,12 +98,12 @@ void questFields(World& world, Npc& npc, bool csv) {
   const auto ns=uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
   const double wall=benchState.questWallNs ? double(ns-benchState.questWallNs)/1e6 : 0;benchState.questWallNs=ns;
   std::fprintf(context.csv,",%d,%d,%d,%d,%u,%u,%s,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%d,%d,%.6f",
-    int(npc.isImmortal()),Gothic::settingsGetI("GAME","ragdoll_quest_guard"),int(q.hasAnchor),int(q.armed),unsigned(q.hazards),count,
+    int(npc.isImmortal()),Settings::getI("GAME","ragdoll_quest_guard"),int(q.hasAnchor),int(q.armed),unsigned(q.hazards),count,
     questReason(q.hazards),double(q.anchor.x),double(q.anchor.y),double(q.anchor.z),double(pos.x),double(pos.y),double(pos.z),
     double(benchState.questStable.y-pos.y),int(submerged),int(npc.isUnconscious()),wall);
   event("immortal_guard_frame","\"case\":"+jsonStr(benchState.questCase)+
     ",\"actor_id\":"+std::to_string(world.npcId(&npc))+",\"t_game_ms\":"+std::to_string(world.tickCount())+
-    ",\"immortal\":"+(npc.isImmortal()?"true":"false")+",\"enabled\":"+(Gothic::settingsGetI("GAME","ragdoll_quest_guard")?"true":"false")+
+    ",\"immortal\":"+(npc.isImmortal()?"true":"false")+",\"enabled\":"+(Settings::getI("GAME","ragdoll_quest_guard")?"true":"false")+
     ",\"has_anchor\":"+(q.hasAnchor?"true":"false")+",\"armed\":"+(q.armed?"true":"false")+
     ",\"hazards\":"+std::to_string(q.hazards)+",\"returns\":"+std::to_string(count)+",\"reason\":"+jsonStr(questReason(q.hazards))+
     ",\"anchor_cm\":"+ragdollVector(q.anchor)+",\"position_cm\":"+ragdollVector(pos)+",\"pelvis_cm\":"+ragdollVector(pelvis)+
@@ -450,7 +450,7 @@ bool routineCommand(const RoutineContext& context,const std::vector<std::string>
       }
     auto& site=water ? benchState.questWater : benchState.questCliff;
     if(!chooseQuestSite(w,water,site)) { arenaAbort("no supported dry quest-guard hazard site");return true; }
-    Gothic::settingsSetI("GAME","ragdoll_quest_guard",enabled);
+    Settings::setI("GAME","ragdoll_quest_guard",enabled);
     auto& flags=npc->handle().flags;
     flags=daedalus::NpcFlag(uint32_t(flags)&~uint32_t(daedalus::NpcFlag::IMMORTAL));
     npc->setAttitude(ATT_NEUTRAL);
@@ -480,7 +480,7 @@ bool routineCommand(const RoutineContext& context,const std::vector<std::string>
   else if(c=="guard" && (a.size()==2 || (a.size()==3 && a[2]=="safe")) && a[1]=="launch") {
     auto* npc=benchState.questNpc;if(npc==nullptr || npc->isDown()) {arenaAbort("guard launch needs living actor");return true;}
     benchState.questStable=npc->position();const auto& q=npc->ragdollQuestReturnState();
-    if(npc->isHuman() && !npc->isPlayer() && Gothic::settingsGetI("GAME","ragdoll_quest_guard") && (!q.hasAnchor || (q.anchor-benchState.questStable).length()>3)) {
+    if(npc->isHuman() && !npc->isPlayer() && Settings::getI("GAME","ragdoll_quest_guard") && (!q.hasAnchor || (q.anchor-benchState.questStable).length()>3)) {
       arenaAbort("guard launch lacks a real stable dry anchor");return true;
       }
     event("immortal_guard_launch","\"case\":"+jsonStr(benchState.questCase)+",\"stable_cm\":"+ragdollVector(benchState.questStable)+

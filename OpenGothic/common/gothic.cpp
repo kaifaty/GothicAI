@@ -1,4 +1,5 @@
 #include "gothic.h"
+#include "settings.h"
 #include "loadprobe.h"
 
 #include <Tempest/Log>
@@ -681,32 +682,32 @@ void Gothic::setupCommonScriptClasses(daedalus::DaedalusScript& sc) {
   }
 
 void Gothic::setupSettings() {
-  Resources::configureTextures(settingsGetS("GAME","texture_budget_mb"),settingsGetS("GAME","texture_far_skip_mips"),
-                               settingsGetS("GAME","texture_target_mb"),settingsGetS("GAME","texture_screen_mips"),
-                               settingsGetS("GAME","texture_lookahead"));
-  Resources::censusProfile(gameDatDef,ouDef,settingsGetI("GAME","language"));
-  // settingsSetI/S/F emit onSettingsChanged synchronously. Publish before any
+  Resources::configureTextures(Settings::getS("GAME","texture_budget_mb"),Settings::getS("GAME","texture_far_skip_mips"),
+                               Settings::getS("GAME","texture_target_mb"),Settings::getS("GAME","texture_screen_mips"),
+                               Settings::getS("GAME","texture_lookahead"));
+  Resources::censusProfile(gameDatDef,ouDef,Settings::getI("GAME","language"));
+  // Settings::setI/S/F emit onSettingsChanged synchronously. Publish before any
   // same-dispatch actor creation, prepare or input query can consume the change.
   settings.refreshPhysicsFlags();
   if(game!=nullptr)
     game->setupSettings();
   if(auto* activeWorld = world()) {
-    activeWorld->physic()->setFurniturePartsEnabled(physicsFlags().furnitureParts);
-    activeWorld->physic()->setMovableVobsEnabled(physicsFlags().movableVobs);
-    activeWorld->physic()->setPhysicsNoiseEnabled(physicsFlags().physicsNoise);
-    activeWorld->physic()->setDestructionEnabled(physicsFlags().destruction);
-    activeWorld->physic()->setBuoyancyEnabled(physicsFlags().buoyancy);
-    activeWorld->physic()->setClothEnabled(physicsFlags().cloth);
-    activeWorld->physic()->setItemWakeEnabled(physicsFlags().itemWake);
-    activeWorld->physic()->setItemDeepestContactEnabled(physicsFlags().itemDeepestContact);
-    activeWorld->physic()->setRagdollBirthGuardEnabled(physicsFlags().ragdollBirthGuard);
+    activeWorld->physic()->setFurniturePartsEnabled(Settings::physicsFlags().furnitureParts);
+    activeWorld->physic()->setMovableVobsEnabled(Settings::physicsFlags().movableVobs);
+    activeWorld->physic()->setPhysicsNoiseEnabled(Settings::physicsFlags().physicsNoise);
+    activeWorld->physic()->setDestructionEnabled(Settings::physicsFlags().destruction);
+    activeWorld->physic()->setBuoyancyEnabled(Settings::physicsFlags().buoyancy);
+    activeWorld->physic()->setClothEnabled(Settings::physicsFlags().cloth);
+    activeWorld->physic()->setItemWakeEnabled(Settings::physicsFlags().itemWake);
+    activeWorld->physic()->setItemDeepestContactEnabled(Settings::physicsFlags().itemDeepestContact);
+    activeWorld->physic()->setRagdollBirthGuardEnabled(Settings::physicsFlags().ragdollBirthGuard);
     }
 
-  const float soundVolume = settingsSoundVolume();
+  const float soundVolume = Settings::soundVolume();
   if(sndDev)
     sndDev->setGlobalVolume(soundVolume);
 
-  auto ord  = Gothic::settingsGetS("GAME","invCatOrder");
+  auto ord  = Settings::getS("GAME","invCatOrder");
   while(!ord.empty()) {
     auto l    = ord.find_first_of(" \t,");
     auto name = ord.substr(0,l);

@@ -24,6 +24,7 @@
 #include "world/objects/npc.h"
 #include "world/world.h"
 #include "gothic.h"
+#include "settings.h"
 #include "testbench.h"
 
 using namespace Tempest;
@@ -234,7 +235,7 @@ std::string actorsJson(World& world, const Npc& hero) {
   }
 
 std::string common(World& world, const Npc& hero) {
-  return "\"world\":"+jsonStr(world.name())+",\"body_traces\":"+(Gothic::physicsFlags().bodyTraces?"true":"false")+
+  return "\"world\":"+jsonStr(world.name())+",\"body_traces\":"+(Settings::physicsFlags().bodyTraces?"true":"false")+
          ",\"game_minute\":"+std::to_string(world.gameMinute())+",\"hero_cm\":"+vec(hero.position());
   }
 
@@ -344,7 +345,7 @@ void placeObserver(World& world, Npc& obs, const Npc& body) {
 std::string view(World& world, Npc& hero, const std::string& label) {
   if(!::Bench::npcView)
     fail("the AI bridge did not install Bench::npcView (GOTHIC_AI=0?)");
-  const bool on = Gothic::physicsFlags().bodyTraces;
+  const bool on = Settings::physicsFlags().bodyTraces;
   auto& obs = *findObserver(world,hero,label=="legacy");
   // The body this view is about: the victim, or the plain body of a legacy save.
   Actor* subject = nullptr;
@@ -473,7 +474,7 @@ void moveHero(World& world, Npc& hero, const std::string& where) {
       center += a.npc->position();
       }
   if(bodies.empty()) {
-    if(!Gothic::physicsFlags().bodyTraces)
+    if(!Settings::physicsFlags().bodyTraces)
       return; // OFF: vanilla clock leaps may have retired them all
     fail("no bodies to stand by");
     }
@@ -524,7 +525,7 @@ void moveHero(World& world, Npc& hero, const std::string& where) {
   }
 
 std::string check(World& world, Npc& hero, const std::string& label) {
-  const bool on = Gothic::physicsFlags().bodyTraces;
+  const bool on = Settings::physicsFlags().bodyTraces;
   const auto has = [&](const char* r) { auto it = st.actors.find(r); return it!=st.actors.end() && it->second.npc!=nullptr; };
   const auto present = [&](const char* r) { return inWorld(world,actor(r).npc); };
   const auto moved = [&](const char* r) {

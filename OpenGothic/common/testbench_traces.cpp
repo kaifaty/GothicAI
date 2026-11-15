@@ -5,7 +5,7 @@
 #include <span>
 
 #include "game/gamescript.h"
-#include "gothic.h"
+#include "settings.h"
 #include "world/aiqueue.h"
 #include "world/bullet.h"
 #include "world/objects/item.h"
@@ -35,7 +35,7 @@ bool physicsTracesDebug(const PhysicsTracesContext& context,World& world,Npc& pl
     };
   if(command=="setup" || command.starts_with("reload ")) {
     world.physic()->setMovableVobsEnabled(true);
-    Gothic::settingsSetI("GAME","arrow_sticking",1);
+    Settings::setI("GAME","arrow_sticking",1);
     context.traceHost=nullptr;
     for(uint32_t i=0;i<world.npcCount();++i) {
       auto* npc=world.npcById(i);if(!npc)continue;
