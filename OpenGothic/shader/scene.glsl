@@ -81,6 +81,7 @@ const uint VSM_STUDY_SUN_PIXEL  = 1u; // the sun: the facet's plane over one pix
 const uint VSM_STUDY_LAMP_FACET = 2u; // lamps: the facet's plane also where it stands edge-on to the lamp (light.frag)
 const uint VSM_STUDY_CLASS      = 4u; // facets by their cosine to the light and the shadow's answer, as colours
 const uint VSM_STUDY_SUN_DIFF   = 8u; // the sun: where the plane over a texel's footprint changes the shadow, as colours
+const uint VSM_STUDY_NO_CONTACT = 32u; // lamps: without the screen ray of lamp_contact.glsl, as before 2026-11-15 (light.frag)
 const uint VSM_STUDY_LAMP_FAR   = 16u; // lamps: the first search without the point's own texels, as before 2026-11-14 (light.frag)
 
 struct LightSource {
@@ -128,6 +129,7 @@ struct Cluster {
 const uint VF_HIZ = 0x1; // the occluder pass (V_HiZ): it draws into the main view's depth ahead of the G-buffer
 const uint VF_TAA = 0x2; // TAA resolves the frame (also with MetalFX temporal)
 const uint VF_SHADOW = 0x8; // a shadow view: the sun's cascades and the virtual shadow map
+const uint VF_LAMP_CONTACT = 0x10; // lamps darken what their shadow map is too coarse for by a screen ray (lighting/lamp_contact.glsl)
 const uint VF_HAIR_DEBUG = 0x4; // hair pixels show the strand's direction as a colour instead of light (OPENGOTHIC_HAIR_DEBUG=1)
 
 const uint BK_SOLID = 0x1;

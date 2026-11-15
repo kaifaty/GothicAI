@@ -33,6 +33,7 @@ class SceneGlobals final {
       VF_TAA = 0x2,
       VF_HAIR_DEBUG = 0x4,
       VF_SHADOW = 0x8,
+      VF_LAMP_CONTACT = 0x10,
       };
 
     static bool isShadowView(VisCamera v);
