@@ -70,6 +70,10 @@ grass parts 256
 wait 1200
 shot cover-track-low
 wait 200
+grass parts 16384
+wait 1200
+shot track-low-16384
+wait 200
 grass parts 0
 cam game
 
