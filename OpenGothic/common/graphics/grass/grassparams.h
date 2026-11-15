@@ -12,8 +12,10 @@
 // shader/grass/grass_ground.glsl. Keep the numbers here and in shader/grass/grass_common.glsl in step.
 namespace Grass {
 
-// The share of the short sward's broad blades left among the fine ones, where the record does not say
-constexpr float BroadShare = 0.6f;
+// The share of the short sward's broad blades left among the fine ones, where the record does not say: all of
+// them. Chosen by the eye from the game's camera on a strip of 0.4, 0.7 and 1 (reports/engine/2026-11-14-meadow-ground,
+// "Четвёртый круг"): at less, the broad blades that are left stand apart in the fine sward, and a blade apart is a wedge
+constexpr float BroadShare = 1.f;
 
 struct Params final {
   bool  on           = false;

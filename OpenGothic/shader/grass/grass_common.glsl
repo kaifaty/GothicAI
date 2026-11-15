@@ -79,8 +79,8 @@ const vec3  GrassSwardLush   = vec3(0.87, 0.985, 0.97);
 const float GrassSwardDryAt  = 14000.0;                  // of the patches' noise
 const float GrassSwardLushAt = 46000.0;
 // the earth of a bare spot in such a sward (grass_layers.glsl): the layer's earth is of the road's tone; in the
-// meadow it lies dry under the sun, a warm tan of about the sward's lightness, so a spot is a dry place and no dark
-// blotch. By the layer's height: the clods and the stones are pale, what lies between them is deeper and in their
+// meadow it lies dry under the sun, a warm brown a little under the sward's lightness (0.072 against 0.078 on
+// `bare-low`), so a spot is a dry place, no dark blotch and no pale pad. By the layer's height: the clods and the stones are pale, what lies between them is deeper and in their
 // shade; a slow noise makes one part of a spot paler than another, and the earth's normal is steeper than on a road
 const vec3  GrassSpotEarthHigh = vec3(1.34, 1.33, 1.30);
 const vec3  GrassSpotEarthLow  = vec3(0.81, 0.78, 0.72);
