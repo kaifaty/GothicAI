@@ -10,8 +10,8 @@
 
 #include "graphics/windowglow.h"
 
-// One state of a house (reports/render-features/2026-11-15-night-interiors, step 2): a record of
-// worlds/<WORLD>/houses.json in the content names a house by its box and the hour it goes to bed. The lamps inside
+// One state of a house (reports/render-features/2026-11-15-night-interiors, step 2): a record of a file of
+// worlds/<WORLD>/houses.d/ in the content names a house by its box and the hour it goes to bed. The lamps inside
 // the box go out one after another before that hour and come back in the morning (graphics/houselamps.h); the lit
 // windows on its walls fade with them (shader/materials/window_glow.glsl), so a lit window means a lamp burns
 // inside. A window or a lamp outside every box lives as before. Keep the numbers here and in the shader in step.
@@ -105,7 +105,7 @@ inline void pack(const House& h, float out[12]) {
   out[8] = allNight(h) ? 1.e6f : h.bed; out[9] = 0; out[10] = 0; out[11] = 0;
   }
 
-// houses.json: {"format":1,"houses":[{"key":"..","center":[x,y,z],"size":[x,y,z],"yaw_deg":0,"until":23.5}]}, cm.
+// A file of houses.d: {"format":1,"houses":[{"key":"..","center":[x,y,z],"size":[x,y,z],"yaw_deg":0,"until":23.5}]}, cm.
 // `yaw_deg` and `until` may be left out. False with the reason on anything else; out is then untouched.
 // Value: rapidjson's
 template<class Value>
@@ -160,6 +160,23 @@ bool parse(const Value& doc, std::vector<House>& out, std::string& error) {
     houses.push_back(std::move(h));
     }
   out = std::move(houses);
+  return true;
+  }
+
+// The houses of one more file after those of the files before it: the keys stay unique and the scene block's
+// count holds. False with the reason; houses is then untouched
+inline bool append(std::vector<House>& houses, const std::vector<House>& more, std::string& error) {
+  if(houses.size()+more.size()>MaxHouses) {
+    error = "more houses than the scene block carries ("+std::to_string(MaxHouses)+")";
+    return false;
+    }
+  for(const auto& h:more)
+    for(const auto& other:houses)
+      if(other.key==h.key) {
+        error = "house "+h.key+": the key is taken by a file before this one";
+        return false;
+        }
+  houses.insert(houses.end(), more.begin(), more.end());
   return true;
   }
 

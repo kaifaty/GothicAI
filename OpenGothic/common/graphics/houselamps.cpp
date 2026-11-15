@@ -14,20 +14,29 @@
 HouseLamps::HouseLamps(const std::filesystem::path& worldContentDir) {
   if(const char* e = std::getenv("OPENGOTHIC_HOUSES"); e!=nullptr && std::string_view(e)=="0")
     return;
-  const auto file = worldContentDir/"houses.json";
+  const auto dir = worldContentDir/"houses.d";
   std::error_code ec;
-  if(worldContentDir.empty() || !std::filesystem::is_regular_file(file,ec))
+  if(worldContentDir.empty() || !std::filesystem::is_directory(dir,ec))
     return;
-  std::ifstream in(file, std::ios::binary);
-  const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-  rapidjson::Document doc;
-  doc.Parse(text.data(), text.size());
-  std::string error;
-  if(doc.HasParseError())
-    error = "not a json document";
-  if(!error.empty() || !HouseLights::parse(doc,list,error)) {
+  // every part of the content brings the houses it rebuilt as its own file; sorted, as the vob layer's files
+  std::vector<std::filesystem::path> files;
+  for(const auto& entry:std::filesystem::directory_iterator(dir,ec))
+    if(entry.is_regular_file(ec) && entry.path().extension()==".json")
+      files.push_back(entry.path());
+  std::sort(files.begin(), files.end());
+  for(const auto& file:files) {
+    std::ifstream in(file, std::ios::binary);
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    rapidjson::Document doc;
+    doc.Parse(text.data(), text.size());
+    std::vector<HouseLights::House> more;
+    std::string error;
+    if(doc.HasParseError())
+      error = "not a json document";
+    if(error.empty() && HouseLights::parse(doc,more,error) && HouseLights::append(list,more,error))
+      continue;
+    // a refused file leaves the houses of the files before it alone
     Tempest::Log::e("houses: ", file.generic_string(), ": ", error);
-    list.clear();
     }
   }
 
