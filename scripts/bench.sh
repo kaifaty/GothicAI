@@ -38,6 +38,7 @@
 #      ITEM_HULLS    optional initial GAME item_hulls setting (0 or 1), for new item bodies
 #      ITEM_DEEPEST_CONTACT optional initial GAME item_deepest_contact setting (0 or 1)
 #      RAGDOLL_BIRTH_GUARD optional initial GAME ragdoll_birth_guard setting (0 or 1)
+#      BUMP_REACTIONS optional initial GAME bump_reactions setting (0 or 1): controller bump signal and reaction
 #      RAGDOLL_BRACE optional initial GAME ragdoll_brace setting (0 or 1): the protective fall of a knockdown
 #      FURNITURE_PARTS optional initial GAME furniture_parts setting (0 or 1)
 #      ARROW_STICKING optional initial GAME arrow_sticking setting (0 or 1), before world loading
@@ -308,7 +309,7 @@ musicVolume=${MUSIC:-0}
 musicEnabled=$([[ "${MUSIC:-0}" == 0 || "${MUSIC:-0}" == 0.0 ]] && echo 0 || echo 1)
 worldSounds=${WORLD_SOUNDS:-1}
 EOF
-if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${ITEM_DEEPEST_CONTACT:-}${RAGDOLL_BIRTH_GUARD:-}${RAGDOLL_BRACE:-}${FURNITURE_PARTS:-}${ARROW_STICKING:-}${PHYSICS_NOISE:-}${DESTRUCTION:-}${BUOYANCY:-}${CLOTH:-}${ITEM_WAKE:-}${PLACED_ITEMS:-}${BODY_IMPACT_DAMAGE:-}${BODY_TRACES:-}${BLOOD:-}${STATIC_COLLISION_SPLIT:-}${CHARACTER_VIRTUAL:-}${NPC_CHARACTER_VIRTUAL:-}${MONSTER_CHARACTER_VIRTUAL:-}${MELEE_BLADE_SHADOW:-}${MELEE_PHYSICS_HITS:-}${MELEE_POSTURE:-}${MELEE_REACTIONS:-}${MELEE_DOWN_TACTICS:-}${MELEE_HITSTOP:-}${MELEE_STAMINA:-}${MELEE_PARRY:-}${MELEE_PARRY_AI:-}${MELEE_AI_DODGE:-}${MELEE_AI_CHARGE:-}${MELEE_STAGGER:-}${MELEE_BEAST_POISE:-}${MELEE_BACKSTAB:-}${MELEE_DODGE:-}${MELEE_CHARGE:-}${MELEE_HEAL_INTERRUPT:-}${MELEE_USE_IN_HAND:-}${FOOD_OVER_TIME:-}" ]]; then
+if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${ITEM_DEEPEST_CONTACT:-}${RAGDOLL_BIRTH_GUARD:-}${RAGDOLL_BRACE:-}${BUMP_REACTIONS:-}${FURNITURE_PARTS:-}${ARROW_STICKING:-}${PHYSICS_NOISE:-}${DESTRUCTION:-}${BUOYANCY:-}${CLOTH:-}${ITEM_WAKE:-}${PLACED_ITEMS:-}${BODY_IMPACT_DAMAGE:-}${BODY_TRACES:-}${BLOOD:-}${STATIC_COLLISION_SPLIT:-}${CHARACTER_VIRTUAL:-}${NPC_CHARACTER_VIRTUAL:-}${MONSTER_CHARACTER_VIRTUAL:-}${MELEE_BLADE_SHADOW:-}${MELEE_PHYSICS_HITS:-}${MELEE_POSTURE:-}${MELEE_REACTIONS:-}${MELEE_DOWN_TACTICS:-}${MELEE_HITSTOP:-}${MELEE_STAMINA:-}${MELEE_PARRY:-}${MELEE_PARRY_AI:-}${MELEE_AI_DODGE:-}${MELEE_AI_CHARGE:-}${MELEE_STAGGER:-}${MELEE_BEAST_POISE:-}${MELEE_BACKSTAB:-}${MELEE_DODGE:-}${MELEE_CHARGE:-}${MELEE_HEAL_INTERRUPT:-}${MELEE_USE_IN_HAND:-}${FOOD_OVER_TIME:-}" ]]; then
   printf '\n[GAME]\n' >>"$RUN/Gothic.ini"
   if [[ -n "${MOVABLE_VOBS:-}" ]]; then
     [[ "$MOVABLE_VOBS" == 0 || "$MOVABLE_VOBS" == 1 ]] || { echo "MOVABLE_VOBS must be 0 or 1" >&2; exit 2; }
@@ -329,6 +330,10 @@ if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${ITEM_DEEPEST_CONTACT:-}${RAGDOLL_BIR
   if [[ -n "${RAGDOLL_BRACE:-}" ]]; then
     [[ "$RAGDOLL_BRACE" == 0 || "$RAGDOLL_BRACE" == 1 ]] || { echo "RAGDOLL_BRACE must be 0 or 1" >&2; exit 2; }
     printf 'ragdoll_brace=%s\n' "$RAGDOLL_BRACE" >>"$RUN/Gothic.ini"
+  fi
+  if [[ -n "${BUMP_REACTIONS:-}" ]]; then
+    [[ "$BUMP_REACTIONS" == 0 || "$BUMP_REACTIONS" == 1 ]] || { echo "BUMP_REACTIONS must be 0 or 1" >&2; exit 2; }
+    printf 'bump_reactions=%s\n' "$BUMP_REACTIONS" >>"$RUN/Gothic.ini"
   fi
   if [[ -n "${FURNITURE_PARTS:-}" ]]; then
     [[ "$FURNITURE_PARTS" == 0 || "$FURNITURE_PARTS" == 1 ]] || { echo "FURNITURE_PARTS must be 0 or 1" >&2; exit 2; }
@@ -685,5 +690,8 @@ if [[ "$NAME" == streaming-flythrough ]]; then
 fi
 echo "bench: ran on $HOST"
 echo "$OUT"
+if [[ "$NAME" == ragdoll-brace-death ]]; then
+  python3 "$ROOT/scripts/brace_death_check.py" "$RUN/melee-posture.jsonl" || REPORT_RC=1
+fi
 if [[ "$GAME_RC" != 0 ]]; then exit "$GAME_RC"; fi
 exit "$REPORT_RC"

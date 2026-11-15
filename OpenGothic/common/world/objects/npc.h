@@ -117,6 +117,13 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     // writes this NPC only: the parallel animation pass calls it after the pose.
     void       prepareMeleeShadowBody();
     void       resolveMeleeContacts();
+    bool       hasMeleeWindow() const;
+    // Which steps after the animation pass can change this NPC (world/animationtail.h), decided by the pass.
+    // shadowSkipped: the shadow loop passes it over (frozen world, OPENGOTHIC_ANIM_SKIP_FAR); keepShadow: it
+    // runs for every body (bench body tracing, OPENGOTHIC_MELEE_SHADOW_CHECK).
+    uint8_t    animationTailPlan(bool shadowSkipped, bool keepShadow) const;
+    // OPENGOTHIC_ANIM_TAIL_CHECK: runs a step the plan skipped the old way and reports whether it changed anything.
+    void       checkSkippedTailStep(uint8_t step);
     static bool skipMeleeAlly(bool player, bool selectedTarget, bool sameGuild, bool sameParty, bool enemy) {
       return !player && !selectedTarget && (sameGuild || sameParty || !enemy);
       }
@@ -570,6 +577,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     bool      isAttackAnim() const;
     auto      animNames() const -> std::string; // the playing animations, for debugging
     void      flinch(const Flinch::Hit& hit); // the upper body gives way to a blow (also the test bench)
+    void      bumpReaction(const BumpHit& hit);
     bool      isPrehit() const;
     bool      isImmortal() const;
 
@@ -1131,9 +1139,12 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
       uint64_t                     bones = 0, shape = 0;
       uint32_t                     scale = 0; // the bits of the visual's scale
       size_t                       slot  = size_t(-1); // in the published bodies, a hint
+      uint64_t                     published = 0; // the serial this NPC published last; only it publishes its body
       };
     MeleeShadowPose               meleeShadowPose;
     bool          wantsMeleeShadowBody() const;
+    bool          meleeShadowPoseCurrent(uint32_t& scale, uint64_t& shape) const;
+    bool          meleeShadowSettled() const;
     void          poseMeleeShadowBody();
     struct MeleeShadowMark final {
       Tempest::Vec3 point;

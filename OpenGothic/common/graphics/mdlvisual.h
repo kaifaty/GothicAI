@@ -253,6 +253,8 @@ class MdlVisual final {
     // the own head's face (FaceRig): its eyes and weights to the deformation of the head, near only; after the pose
     // of the frame (the eyes aim from the head as drawn), on the main thread (the upload)
     void                           updateFace     (Npc& npc);
+    // updateFace has work for this NPC: its own head's face, or it is the eye probe's subject
+    bool                           updatesFace    (const Npc& npc) const;
     // the other one speaks to it, it thinks of an answer (TalkGestures)
     // toward: the mood its attitude to the one speaking gives (the face it listens with, ListenFace)
     void                           listen         (uint64_t until, TalkGestures::Mood toward) { gestures.listen(until); heardMood = toward; }

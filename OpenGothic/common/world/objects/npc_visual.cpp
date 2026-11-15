@@ -7,6 +7,7 @@
 #include "game/bodyobservations.h"
 #include "game/gamerules.h"
 #include "world/animationlod.h"
+#include "world/animationtail.h"
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"
 #include "world/world.h"
@@ -880,6 +881,8 @@ void Npc::updateCharacterVisualHeight() {
 
 void Npc::updateAnimation(uint64_t dt, bool force) {
   FrameProfile::Scope timing(FrameProfile::Zone::ActorAnimationCpu,FrameProfile::watchedActor(this));
+  // After the animation pass: the steps it planned may no longer hold for this NPC.
+  AnimationTail::noteAnimationUpdate();
   // Frames the animation LOD skipped: the pose follows the world clock, the
   // smoothing filters and effects get the whole interval at once.
   dt += animLodPendingDt;

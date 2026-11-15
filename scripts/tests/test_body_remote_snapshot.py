@@ -94,6 +94,10 @@ result = {"suite": "v1", "dependency": snapshot_dependency.VERSION}
 for name in ("engine_library", "config", "scenario", "melee_scenario", "senses_scenario", "runner", "rendered"):
     path = getattr(args, name)
     if path is not None:
+        if name == "engine_library":
+            for library in path.rglob("*.a"):
+                result[library.name] = library.read_text()
+            path = path / "libOpenGothic.a"
         result[name] = path.read_text()
 if args.scenario is None:
     result["scenario"] = (args.source.parent / "scripts/bench/body-melee.bench").read_text()
@@ -211,7 +215,10 @@ import sys
 (Path(os.environ["FAKE_REMOTE"]) / "base-ensure-call.json").write_text(json.dumps({
     "version": "v1", "args": sys.argv[1:], "queued": os.environ.get("FAKE_GQ_JOB")}))
 ''')
-    (build / "libOpenGothic.a").write_text("v1")
+    for name in ("libOpenGothic.a", "libengine-platform.a", "ai_bridge/libAiBridge.a"):
+        path = build / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("v1")
     return task
 
 
@@ -273,6 +280,7 @@ def test_queued_body_suite_runs_archived_snapshot_after_sync(remote, script, act
         assert process.returncode == 0, stdout + stderr + (out / "launcher.log").read_text()
         result = json.loads((out / "snapshot-result.json").read_text())
         assert result and set(result.values()) == {"v1"}
+        assert {"libOpenGothic.a", "libengine-platform.a", "libAiBridge.a"} <= result.keys()
         if task_name == "body":
             assert set(json.loads((out / "snapshot-report.json").read_text()).values()) == {"v1"}
         with tarfile.open(out / "source.tar.gz") as archive:
@@ -296,7 +304,7 @@ def test_legacy_body_launch_keeps_shared_paths_and_unit_properties(remote, scrip
     assert str(task / "source/scripts" / suite) in args
     assert args[args.index("--source") + 1] == str(engine_task(task) / "source/OpenGothic")
     assert args[args.index("--config") + 1] == str(task / "source/evals/npc-body" / config)
-    assert args[args.index("--engine-library") + 1] == str(engine_task(task) / "build/libOpenGothic.a")
+    assert args[args.index("--engine-library") + 1] == str(engine_task(task) / "build")
     assert "--property=CPUQuota=200%" in args
     assert "--property=MemoryMax=12G" in args
     assert (remote["root"] / "pgrep-called").exists()
@@ -480,7 +488,10 @@ def test_queued_bc_phase_keeps_frozen_native_inputs(remote, existing_snapshot):
     engine = engine_task(task)
     if existing_snapshot:
         shutil.copytree(engine / "source/OpenGothic", out / "reference/source/OpenGothic")
-        shutil.copyfile(engine / "build/libOpenGothic.a", out / "reference/libOpenGothic.a")
+        for name in ("libOpenGothic.a", "libengine-platform.a", "ai_bridge/libAiBridge.a"):
+            destination = out / "reference/engine-libraries" / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(engine / "build" / name, destination)
     # Native source belongs to the prepared archive, including older runs that
     # do not yet have an extracted reference. Existing snapshots stay intact.
     (engine / "source/OpenGothic/native.cpp").write_text("v2")
@@ -496,13 +507,15 @@ def test_queued_bc_phase_keeps_frozen_native_inputs(remote, existing_snapshot):
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         command = json.loads((remote["root"] / "command.json").read_text())["command"]
         assert command[command.index("--source") + 1] == str(out / "reference/source/OpenGothic")
-        assert command[command.index("--engine-library") + 1] == str(out / "reference/libOpenGothic.a")
+        assert command[command.index("--engine-library") + 1] == str(out / "reference/engine-libraries")
         (engine / "source/OpenGothic/native.cpp").write_text("v3")
-        (engine / "build/libOpenGothic.a").write_text("v3")
+        for library in (engine / "build").rglob("*.a"):
+            library.write_text("v3")
         (remote["root"] / "release").touch()
         stdout, stderr = process.communicate(timeout=5)
         assert process.returncode == 0, stdout + stderr + (out / "launcher-setup.log").read_text()
         result = json.loads((out / "setup-probe/snapshot-result.json").read_text())
+        assert all(result[name] == "v1" for name in ("libOpenGothic.a", "libengine-platform.a", "libAiBridge.a"))
         assert {key: result[key] for key in ("suite", "dependency", "source", "engine_library", "runner")} == {
             key: "v1" for key in ("suite", "dependency", "source", "engine_library", "runner")}
     finally:
@@ -519,9 +532,9 @@ def test_legacy_bc_phase_keeps_shared_native_paths(remote):
     assert result.returncode == 0, result.stdout + result.stderr
     args = json.loads((remote["root"] / "legacy-command.json").read_text())
     assert args[args.index("--source") + 1] == str(engine_task(task) / "source/OpenGothic")
-    assert args[args.index("--engine-library") + 1] == str(engine_task(task) / "build/libOpenGothic.a")
+    assert args[args.index("--engine-library") + 1] == str(engine_task(task) / "build")
     assert not (out / "reference/source").exists()
-    assert not (out / "reference/libOpenGothic.a").exists()
+    assert not (out / "reference/engine-libraries").exists()
 
 
 @pytest.mark.parametrize("id_published", [False, True], ids=["submit-pending", "wait-pending"])

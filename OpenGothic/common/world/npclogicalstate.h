@@ -88,6 +88,9 @@ struct NpcLogicalState final {
   float animProgress(std::string_view name, uint64_t now) const;
 
   void sync(Npc& npc, bool rebuild=false, Action admitted=AI_None, const Animation::Sequence* requested=nullptr);
+  // sync(npc) would change nothing: no admission or executor input, nothing due on the clock, every
+  // observed state as last synced (world/animationtail.h). Reads this NPC only; never with the audit on.
+  bool settled(const Npc& npc) const;
   void advance(uint64_t now);
   void auditTick(Npc& npc, bool bodyInput=false, bool weaponInput=false);
   void admit(Npc& npc, Action kind, const Animation::Sequence* requested);
