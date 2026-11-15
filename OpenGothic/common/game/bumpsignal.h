@@ -46,6 +46,8 @@ namespace BumpSignal {
   struct Result final {
     bool contactStarted = false; // Log every start, including zero strength and cooldown.
     bool react = false;
+    bool eligible = false;       // The body is one that may answer: on the ground, a human, no fight move.
+    bool contact = false;        // The obstacle holds a quarter of the move or more.
     float avgSpeed = 0, speed = 0, angleDeg = 0, lost = 0, strength = 0;
     };
 

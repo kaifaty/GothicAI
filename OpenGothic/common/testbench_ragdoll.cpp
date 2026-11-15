@@ -16,6 +16,7 @@
 #include "game/playercontrol.h"
 #include "game/serialize.h"
 #include "gothic.h"
+#include "settings.h"
 #include "camera.h"
 #include "graphics/mesh/protomesh.h"
 #include "frameprofile.h"
@@ -125,7 +126,7 @@ void ragdollNpcArchive(const std::vector<std::string>& args, World& world, Npc& 
     RagdollBench::SavedNpc saved;
     saved.npc=npc; saved.position=npc->position(); saved.hp=npc->attribute(ATR_HITPOINTS);
     saved.dead=npc->isDead(); saved.unconscious=npc->isUnconscious();
-    saved.enabled=Gothic::settingsGetI("GAME","ragdoll")!=0;
+    saved.enabled=Settings::getI("GAME","ragdoll")!=0;
     const auto& probe=npc==&player ? Pose::playerProbe : Pose::subjectProbe;
     if(!probe.valid || probe.skeleton==nullptr || npc!=&context.subjectOf(player))
       throw std::runtime_error("NPC archive fixture needs the watched actor's complete bone probe");
@@ -169,7 +170,7 @@ void ragdollNpcArchive(const std::vector<std::string>& args, World& world, Npc& 
   npc->load(in,id,"/npc/"); npc->postValidate();
   }
   npc->prepareRagdoll(); npc->updateAnimation(0,true);
-  const bool enabled=Gothic::settingsGetI("GAME","ragdoll")!=0;
+  const bool enabled=Settings::getI("GAME","ragdoll")!=0;
   const auto* body=npc->ragdollBody();
   bool matches=npc->attribute(ATR_HITPOINTS)==saved.hp && npc->isDead()==saved.dead && npc->isUnconscious()==saved.unconscious;
   const bool expectedBody=!old && enabled && saved.body.has_value();
@@ -264,7 +265,7 @@ void ragdollSessionArchive(const std::vector<std::string>& args, World& world, N
     ",\"actor\":"+jsonStr(TestBench::who(npc))+",\"symbol\":"+jsonStr(symName(world,npc))+
     ",\"handle_id\":"+std::to_string(npc->handle().id)+",\"t_game_ms\":"+std::to_string(world.tickCount())+
     ",\"initial_dt\":"+(initial ? std::to_string(initialDt) : "null")+
-    ",\"feature_enabled\":"+(Gothic::settingsGetI("GAME","ragdoll")!=0 ? "true" : "false")+
+    ",\"feature_enabled\":"+(Settings::getI("GAME","ragdoll")!=0 ? "true" : "false")+
     ",\"dead\":"+(npc->isDead() ? "true" : "false")+
     ",\"unconscious\":"+(npc->isUnconscious() ? "true" : "false")+
     ",\"melee_knockdown\":"+(npc->isMeleeKnockedDown() ? "true" : "false")+
@@ -617,7 +618,7 @@ bool ragdollCommand(const RagdollContext& context,const std::string& line,const 
   auto& benchState=context.ragdoll;
   const auto& c=a[0];
   if(c=="ragdoll" && a.size()==2 && (a[1]=="on" || a[1]=="off")) {
-    Gothic::settingsSetI("GAME","ragdoll",a[1]=="on" ? 1 : 0);
+    Settings::setI("GAME","ragdoll",a[1]=="on" ? 1 : 0);
     say("ragdoll "+a[1]);
     event("ragdoll_toggle","\"enabled\":"+std::string(a[1]=="on" ? "true" : "false"));
     }

@@ -17,6 +17,7 @@
 #include "game/playercontrol.h"
 #include "game/serialize.h"
 #include "gothic.h"
+#include "settings.h"
 #include "graphics/mesh/protomesh.h"
 #include "resources.h"
 #include "world/bullet.h"
@@ -393,7 +394,7 @@ void placedItemsPerformance(PlacedItems& state,World& world,Npc& player) {
   state.started=world.tickCount();state.samples.clear();state.lastNative=world.physic()->simulationStep();
   state.frameWall=std::chrono::steady_clock::now();state.hasFrame=true;state.performance=true;
   event("placed_items_performance_begin","\"world\":"+jsonStr(world.name())+
-    ",\"enabled\":"+(Gothic::physicsFlags().placedItems?"true":"false")+
+    ",\"enabled\":"+(Settings::physicsFlags().placedItems?"true":"false")+
     ",\"center_cm\":"+ragdollVector(center)+",\"observer_cm\":"+ragdollVector(floor.v)+",\"total_within_20m\":"+std::to_string(total)+
     ",\"eligible_within_20m\":"+std::to_string(count));
 }
@@ -414,7 +415,7 @@ void placedItemsPerformanceReport(PlacedItems& state,World& world) {
   if(physics.empty()) {arenaAbort("placed Item performance has no native samples after warmup");return;}
   std::sort(physics.begin(),physics.end());
   event("placed_items_performance","\"world\":"+jsonStr(world.name())+
-    ",\"enabled\":"+(Gothic::physicsFlags().placedItems?"true":"false")+
+    ",\"enabled\":"+(Settings::physicsFlags().placedItems?"true":"false")+
     ",\"samples\":"+std::to_string(physics.size())+",\"physics_p95_ms\":"+
     ragdollNumber(physics[size_t(.95*double(physics.size()-1))])+",\"worst_frame_ms\":"+ragdollNumber(worst)+
     ",\"maximum_bodies\":"+std::to_string(maximumBodies)+",\"maximum_placed_bodies\":"+std::to_string(maximumPlaced)+
@@ -504,13 +505,13 @@ void placedItemsWalk(PlacedItems& state,World& world,Npc& player) {
 void placedItemsWalkReport(PlacedItems& state,World& world,Npc& player) {
   state.walking=false;state.tracing=false;
   const auto& row=world.placedItemCensus()[state.target];
-  const auto shift=state.travel[state.target];const bool enabled=Gothic::physicsFlags().placedItems;
+  const auto shift=state.travel[state.target];const bool enabled=Settings::physicsFlags().placedItems;
   const auto elapsed=(state.walkArrived?state.walkArrived:world.tickCount())-state.walkSince;
   const bool pass=state.walkArrived && elapsed<=2500 && state.walkMaximumCrossTrack<25.f && state.walkMaximumStep<20.f &&
     (!enabled || shift>.1f);
   event("placed_items_walk",placedItemRow(world,row)+",\"placed_items\":"+(enabled?"true":"false")+
-    ",\"character_virtual\":"+(Gothic::physicsFlags().characterVirtual?"true":"false")+
-    ",\"npc_character_virtual\":"+(Gothic::physicsFlags().npcCharacterVirtual?"true":"false")+
+    ",\"character_virtual\":"+(Settings::physicsFlags().characterVirtual?"true":"false")+
+    ",\"npc_character_virtual\":"+(Settings::physicsFlags().npcCharacterVirtual?"true":"false")+
     ",\"body_before_walk\":"+(state.walkBodyBefore?"true":"false")+
     ",\"body_after_walk\":"+(row.item && row.item->isDynamic()?"true":"false")+
     ",\"npc_contact\":"+(row.item && row.item->physicsTouchedByNpc()?"true":"false")+
@@ -554,7 +555,7 @@ void placedItemsArrowReport(PlacedItems& state,World& world) {
   state.tracing=false;
   const auto& row=world.placedItemCensus()[state.target];const auto shift=state.travel[state.target];
   const bool pass=shift>.1f;
-  event("placed_items_arrow",placedItemRow(world,row)+",\"placed_items\":"+(Gothic::physicsFlags().placedItems?"true":"false")+
+  event("placed_items_arrow",placedItemRow(world,row)+",\"placed_items\":"+(Settings::physicsFlags().placedItems?"true":"false")+
     ",\"max_shift_cm\":"+ragdollNumber(shift)+",\"pass\":"+(pass?"true":"false"));
 }
 
@@ -632,7 +633,7 @@ void placedItemsTableReport(PlacedItems& state,World& world) {
     items+='{'+placedItemRow(world,row)+",\"max_shift_cm\":"+ragdollNumber(shift)+'}';
   }
   const auto table=furnitureBody(world,state.tableZen);const auto tableShift=table?(movablePosition(table->transform)-movablePosition(state.tableOrigin)).length():0.f;
-  const bool enabled=Gothic::physicsFlags().placedItems,pass=table && tableShift>1.f && (!enabled || (admittedMoved>0 && excludedMoved==0));
+  const bool enabled=Settings::physicsFlags().placedItems,pass=table && tableShift>1.f && (!enabled || (admittedMoved>0 && excludedMoved==0));
   event("placed_items_table","\"placed_items\":"+std::string(enabled?"true":"false")+",\"table_zen_id\":"+
     std::to_string(state.tableZen)+",\"table_shift_cm\":"+ragdollNumber(tableShift)+",\"admitted_moved\":"+
     std::to_string(admittedMoved)+",\"excluded_moved\":"+std::to_string(excludedMoved)+",\"items\":"+items+
@@ -730,7 +731,7 @@ void placedItemsPickupReport(PlacedItems& state,World& world,Npc& player) {
   const bool owned=!state.theftOwner.empty() || state.theftOwnerGuild>int32_t(GIL_NONE) || !state.theftRoomOwner.empty() ||
                    (state.theftRoomGuild>int32_t(GIL_NONE) && state.theftRoomGuild!=int32_t(GIL_PUBLIC));
   const bool pass=state.pickupAccepted && after==state.pickupBefore+state.pickupCount && state.theftDeeds==1 && owned;
-  event("placed_items_pickup","\"placed_items\":"+std::string(Gothic::physicsFlags().placedItems?"true":"false")+
+  event("placed_items_pickup","\"placed_items\":"+std::string(Settings::physicsFlags().placedItems?"true":"false")+
     ",\"inventory_before\":"+std::to_string(state.pickupBefore)+",\"inventory_after\":"+std::to_string(after)+
     ",\"count\":"+std::to_string(state.pickupCount)+",\"deeds\":"+std::to_string(state.theftDeeds)+
     ",\"item\":"+jsonStr(state.theftItem)+",\"owner\":"+jsonStr(state.theftOwner)+",\"owner_guild\":"+

@@ -1,5 +1,6 @@
 #include "gamemusic.h"
 #include "gothic.h"
+#include "settings.h"
 #include "world/benchhooks.h"
 
 #include <Tempest/Sound>
@@ -394,13 +395,13 @@ void GameMusic::stopMusic() {
   }
 
 void GameMusic::setupSettings() {
-  const int   musicEnabled  = Gothic::settingsGetI("SOUND",    "musicEnabled");
+  const int   musicEnabled  = Settings::getI("SOUND",    "musicEnabled");
   if(!device) {
     setEnabled(musicEnabled!=0);
     return;
     }
-  const float musicVolume   = Gothic::settingsGetF("SOUND",    "musicVolume");
-  const int   providerIndex = Gothic::settingsGetI("INTERNAL", "soundProviderIndex");
+  const float musicVolume   = Settings::getF("SOUND",    "musicVolume");
+  const int   providerIndex = Settings::getI("INTERNAL", "soundProviderIndex");
 
   if(providerIndex != provider || musicEnabled!=isEnabled()) {
     Log::i("Switching music provider to ", providerIndex == PROVIDER_OPENGOTHIC ? "'OpenGothic'" : "'GothicKit'");

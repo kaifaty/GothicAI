@@ -17,6 +17,7 @@
 #include "graphics/lightgroup.h"
 #include "graphics/meshobjects.h"
 #include "game/gamerules.h"
+#include "game/rpgvocabulary.h"
 #include "physics/dynamicworld.h"
 #include "worldobjects.h"
 #include "worldsound.h"
@@ -50,6 +51,7 @@ class World final : public ClothWorld, public BloodDecalSource, public PhysicsHo
     std::weak_ptr<void> npcHandle(const Npc& npc) const override;
     Npc* resolveNpc(const std::shared_ptr<void>& handle) const override;
     std::string npcTraceName(const Npc& npc) const override;
+    std::string_view npcSymbolName(const Npc* npc) const override;
     Tempest::Vec3 npcPosition(const Npc& npc) const override;
     uint64_t npcTickCount(const Npc& npc) const override;
     bool npcUsesSimplifiedMovement(const Npc& npc) const override;
@@ -187,6 +189,7 @@ class World final : public ClothWorld, public BloodDecalSource, public PhysicsHo
 
     GameScript&          script()   const;
     GameRules&           rules()    const { return *gameRules; }
+    const GuildTraits&   guildTraits() const { return guildKinds; }
     GameSession&         gameSession() const { return game; }
 
     void                 assignRoomToGuild(std::string_view room, int32_t guildId);
@@ -325,13 +328,14 @@ class World final : public ClothWorld, public BloodDecalSource, public PhysicsHo
     std::string                           wname;
     GameSession&                          game;
     GameRules* const                      gameRules;
+    const GuildTraits&                    guildKinds;
 
     std::unique_ptr<WayMatrix>            wmatrix;
     ChunkTable                            chunks;
     std::unique_ptr<ChunkResidency>        residency;
 
     struct BspSector final {
-      int32_t guild=GIL_NONE;
+      int32_t guild=GuildNone;
       };
 
     struct {

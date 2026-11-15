@@ -847,8 +847,8 @@ int main(int argc, char** argv) {
     if((args.size()==3 || args.size()==4) && (args[0]=="check-vob-layer" || args[0]=="check-vob-tree")) {
       std::vector<std::shared_ptr<asset::VirtualObject>> tree;
       const auto content=args.size()==4 ? fs::path(args[3]) : fs::path();
-      const auto result=args[0]=="check-vob-tree" ? VobLayer::readTree(tree,args[1],args[2],content)
-                                                  : VobLayer::check(args[1],args[2],content);
+      const auto result=args[0]=="check-vob-tree" ? VobLayer::readTree(tree,args[1],args[2],ParticleContent::nameChecker(),content)
+                                                  : VobLayer::check(args[1],args[2],ParticleContent::nameChecker(),content);
       for(const auto& error:result.errors)
         std::cerr << error << '\n';
       if(!result.errors.empty()) return 1;

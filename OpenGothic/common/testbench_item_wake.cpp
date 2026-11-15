@@ -7,7 +7,7 @@
 
 #include "game/gamescript.h"
 #include "game/playercontrol.h"
-#include "gothic.h"
+#include "settings.h"
 #include "graphics/mesh/pose.h"
 #include "graphics/mesh/protomesh.h"
 #include "graphics/mesh/skeleton.h"
@@ -385,7 +385,7 @@ void itemWakeSetup(World& world,Npc& player,std::string_view name) {
     return;
     }
   if(name=="sword") {
-    Gothic::settingsSetI("GAME","melee_blade_shadow",1);
+    Settings::setI("GAME","melee_blade_shadow",1);
     const auto symbol=world.script().findSymbolIndex("BDT_1013_BANDIT_L");
     const auto sword=world.script().findSymbolIndex("ITMW_1H_COMMON_01");
     const auto at=state.itemWakeCenter+Vec3(0,0,-150);
@@ -434,7 +434,7 @@ void itemWakeSetup(World& world,Npc& player,std::string_view name) {
     const auto floor=world.physic()->landRay(at+Vec3(0,100,0),300);
     if(!floor.hasCol || floor.n.y<.98f) {arenaAbort("item wake preparation: item lacks level native support");return;}
     auto pose=Matrix4x4::mkIdentity();
-    if(Gothic::physicsFlags().itemHulls) {pose.rotateOX(20);pose.rotateOY(37);}
+    if(Settings::physicsFlags().itemHulls) {pose.rotateOX(20);pose.rotateOY(37);}
     pose.set(3,0,at.x);pose.set(3,1,floor.v.y+100.f);pose.set(3,2,at.z);
     auto* item=world.addItemDyn(symbol,pose,world.npcId(&player));
     if(!item || !item->isDynamic()) {arenaAbort("item wake preparation: item has no native body");return;}
@@ -500,8 +500,8 @@ void itemWakeSetup(World& world,Npc& player,std::string_view name) {
   if(initialOverlaps) {arenaAbort("item wake preparation: initial item AABBs overlap");return;}
   state.itemWakePreparing=true;
   event("item_wake_setup","\"case\":"+jsonStr(name)+",\"enabled\":"+
-    (Gothic::settingsGetI("GAME","item_wake")?"true":"false")+
-    ",\"item_hulls\":"+(Gothic::physicsFlags().itemHulls?"true":"false")+
+    (Settings::getI("GAME","item_wake")?"true":"false")+
+    ",\"item_hulls\":"+(Settings::physicsFlags().itemHulls?"true":"false")+
     ",\"items\":"+std::to_string(count)+",\"initial_item_overlaps\":"+std::to_string(initialOverlaps)+
     ",\"maximum_release_height_cm\":"+ragdollNumber(maximumReleaseHeight)+
     ",\"grid_spacing_cm\":"+ragdollNumber(gridSpacing)+",\"hero_distance_cm\":"+
@@ -704,7 +704,7 @@ void itemWakeCheckpoint(World& world) {
     }
   auto times=state.itemWakePhysics;std::sort(times.begin(),times.end());
   const float p95=times.empty()?0.f:times[size_t(.95*double(times.size()-1))];
-  const bool enabled=Gothic::settingsGetI("GAME","item_wake")!=0;
+  const bool enabled=Settings::getI("GAME","item_wake")!=0;
   const bool reportOnly=state.itemWakeCase=="pile",far=state.itemWakeCase=="pile-far",eventCase=state.itemWakeCase.starts_with("event-");
   const auto elapsed=state.itemWakeSample-state.itemWakeStart;
   const auto checkpointElapsed=world.tickCount()-state.itemWakeStart;
@@ -715,7 +715,7 @@ void itemWakeCheckpoint(World& world) {
     checkpointElapsed>=3000 && times.size()>=179 && times.size()<=180 && p95<=2.f :
     enabled ? moved>0 && created>0 && (!weapon || moved==state.itemWakeItems.size()) : moved==0 && created==0));
   event("item_wake_checkpoint","\"case\":"+jsonStr(state.itemWakeCase)+",\"enabled\":"+
-    (enabled?"true":"false")+",\"item_hulls\":"+(Gothic::physicsFlags().itemHulls?"true":"false")+
+    (enabled?"true":"false")+",\"item_hulls\":"+(Settings::physicsFlags().itemHulls?"true":"false")+
     ",\"report_only\":"+(reportOnly?"true":"false")+",\"initially_bodyless_items\":"+std::to_string(state.itemWakeInitiallyBodyless)+
     ",\"moved_over_5cm\":"+std::to_string(moved)+",\"bodies_created\":"+std::to_string(created)+
     ",\"floor_falls\":"+std::to_string(falls)+",\"below_world\":"+std::to_string(below)+

@@ -1,6 +1,7 @@
 #pragma once
 
-#include "constants.h"
+#include "rpgvocabulary.h"
+#include "guildtraits.h"
 
 // A marked NPC deed must still have native simulation at its transfer/capture point.
 // Shared with the queued ground pickup, which can run before the bridge's next tick.
@@ -35,14 +36,14 @@ struct DeedWitness final {
   bool simulated = true;
   bool stateStarted = true;
   bool foreignFight = false;
-  uint32_t guild = GIL_NONE;
+  uint32_t guild = GuildNone;
   bool perceptionEnabled = true;
   float distanceSquared = 0;
   float range = 0;
 
-  constexpr bool admitted() const {
+  bool admitted(const GuildTraits& traits) const {
     return !culprit && !victim && !player && !down && !lying && !sleeping &&
-           simulated && stateStarted && !foreignFight && guild<GIL_SEPERATOR_HUM &&
+           simulated && stateStarted && !foreignFight && traits.has(guild,GuildTraits::Human) &&
            perceptionEnabled && distanceSquared<=range*range;
     }
   };

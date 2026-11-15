@@ -7,7 +7,7 @@
 
 #include "game/gamescript.h"
 #include "game/playercontrol.h"
-#include "gothic.h"
+#include "settings.h"
 #include "graphics/mesh/protomesh.h"
 #include "graphics/mesh/skeleton.h"
 #include "resources.h"
@@ -1091,7 +1091,7 @@ void prepareWaterSpell(Water& state,const WaterContext& context,World& world,Npc
   if(spell<0) {arenaAbort("water fixture real spell rune is missing");return;}
   player.closeWeapon(true);player.setPosition(caster);player.setDirection(direction);player.updateTransform();
   player.handle().attribute[ATR_MANA]=player.handle().attribute[ATR_MANAMAX]=50000;player.setTalentSkill(TALENT_MAGE,6);
-  Gothic::settingsSetI("GAME","spell_physics",1);
+  Settings::setI("GAME","spell_physics",1);
   player.useItem(context.spellRunes[spell],Item::NSLOT,true);
   if(player.drawSpell(spell))context.spellCastingId=spell;
   else {context.spellEquipPending=spell;context.spellEquipUntil=world.tickCount()+3000;}
@@ -1112,7 +1112,7 @@ void prepareWaterSpell(Water& state,const WaterContext& context,World& world,Npc
 bool waterCommand(Water& waterState,const WaterContext& context,const std::vector<std::string>& a,World& w,Npc& pl,PlayerControl& ctrl) {
   const std::string& c = a[0];
   if(c=="water" && a.size()==2 && (a[1]=="on" || a[1]=="off")) {
-    Gothic::settingsSetI("GAME","buoyancy",a[1]=="on");
+    Settings::setI("GAME","buoyancy",a[1]=="on");
     w.physic()->setBuoyancyEnabled(a[1]=="on");
     }
   else if(c=="water" && a.size()==3 && a[1]=="setup")prepareWaterFixture(waterState,context,w,pl,a[2]);

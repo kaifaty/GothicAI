@@ -17,6 +17,7 @@
 #include "game/playercontrol.h"
 #include "game/serialize.h"
 #include "gothic.h"
+#include "settings.h"
 #include "graphics/mesh/hitzones.h"
 #include "graphics/mesh/protomesh.h"
 #include "world/aiqueue.h"
@@ -107,7 +108,7 @@ void prepareSpellFixture(World& world,Npc& player,std::string_view fixture) {
   const auto target=center+Vec3(0,90,0);
   context.cam=C_Hold;lookFrom(target+Vec3(600,280,-300),target);
   event("spell_physics_setup","\"fixture\":"+jsonStr(fixture)+",\"default_enabled\":"+
-    std::string(Gothic::settingsGetI("GAME","spell_physics")?"true":"false"));
+    std::string(Settings::getI("GAME","spell_physics")?"true":"false"));
   }
 
 Vec3 movablePosition(const Matrix4x4& matrix) {
@@ -825,7 +826,7 @@ void prepareMovableCast(World& world,Npc& player) {
     if(item->spellId()==23) {state.spellRunes[23]=i;player.addItem(i,item->isRune()?1:5);}
     }
   player.handle().attribute[ATR_MANA]=player.handle().attribute[ATR_MANAMAX]=50000;player.setTalentSkill(TALENT_MAGE,6);
-  Gothic::settingsSetI("GAME","spell_physics",1);
+  Settings::setI("GAME","spell_physics",1);
   event("movable_cast_setup","\"spell_id\":23,\"npc_free_lane_radius_cm\":100,\"target_cm\":"+
     ragdollVector(target)+",\"caster_cm\":"+ragdollVector(player.position()));
   }
@@ -854,8 +855,8 @@ void movableSaveSnapshot(World& world,std::string_view label) {
     }
   event("movable_save_snapshot","\"label\":"+jsonStr(label)+",\"world\":"+jsonStr(world.name())+
     ",\"t_game_ms\":"+std::to_string(world.tickCount())+
-    ",\"movable_vobs\":"+(Gothic::physicsFlags().movableVobs?"true":"false")+
-    ",\"arrow_sticking\":"+(Gothic::physicsFlags().arrowSticking?"true":"false")+
+    ",\"movable_vobs\":"+(Settings::physicsFlags().movableVobs?"true":"false")+
+    ",\"arrow_sticking\":"+(Settings::physicsFlags().arrowSticking?"true":"false")+
     ",\"bodies\":"+movableRows(world,true)+",\"npc_pins\":"+npcPins+"],\"world_pins\":"+worldPins+"]");
   }
 
@@ -964,7 +965,7 @@ bool noiseCommand(const MovablesContext& context,const std::vector<std::string>&
   auto& state=context.movables;
   const auto& c=a[0];
   if(c=="noise" && a.size()==2 && (a[1]=="on" || a[1]=="off")) {
-    Gothic::settingsSetI("GAME","physics_noise",a[1]=="on");
+    Settings::setI("GAME","physics_noise",a[1]=="on");
     w.physic()->setPhysicsNoiseEnabled(a[1]=="on");
     }
   else if(c=="noise" && a.size()==2 && a[1]=="setup") prepareNoiseFixture(w,pl,true);
@@ -990,7 +991,7 @@ bool movableCommand(const MovablesContext& context,const std::vector<std::string
   auto& state=context.movables;
   const auto& c=a[0];
   if(c=="movable" && a.size()==2 && (a[1]=="on" || a[1]=="off")) {
-    Gothic::settingsSetI("GAME","movable_vobs",a[1]=="on");
+    Settings::setI("GAME","movable_vobs",a[1]=="on");
     w.physic()->setMovableVobsEnabled(a[1]=="on");
     }
   else if(c=="movable" && a.size()==2 && a[1]=="setup") prepareMovableFixture(w,pl);
@@ -1277,7 +1278,7 @@ bool spellCommand(const MovablesContext& context,const std::vector<std::string>&
     npc->clearAiQueue();npc->clearState(false);npc->setExternalControl(true);
     npc->setPosition(site.dry);npc->setDirection(site.direction);npc->updateTransform();
     pl.setPosition(hero);pl.setDirection(site.direction);pl.updateTransform();
-    Gothic::settingsSetI("GAME","spell_physics",1);Gothic::settingsSetI("GAME","ragdoll_quest_guard",1);
+    Settings::setI("GAME","spell_physics",1);Settings::setI("GAME","ragdoll_quest_guard",1);
     state.spellGuardTrace=true;state.spellGuardObservedReturns=0;
     context.subject=npc;exec("watch watched",w,pl,ctrl);
     event("spell_guard_setup","\"actor_id\":"+std::to_string(w.npcId(npc))+
@@ -1311,7 +1312,7 @@ bool spellCommand(const MovablesContext& context,const std::vector<std::string>&
     event("spell_physics_case","\"case\":"+jsonStr(a[2]));
     }
   else if(c=="spell" && a.size()==3 && a[1]=="feature")
-    Gothic::settingsSetI("GAME","spell_physics",a[2]=="on");
+    Settings::setI("GAME","spell_physics",a[2]=="on");
   else if(c=="spell" && a.size()==3 && a[1]=="equip") {
     const int32_t id=int32_t(num(a,2,0));
     const auto rune=state.spellRunes.find(id);

@@ -403,7 +403,7 @@ void Npc::waitForMeleeStamina(uint64_t dt) {
     }
   stopWalkAnimation();
   implTurnToFai(*currentTarget,dt);
-  if(fghAlgo.isInWRange(*currentTarget,*this,owner.script())) {
+  if(fghAlgo.isInWRange(*currentTarget,*this,owner.rules())) {
     if(currentTarget->isPrehit()) {
       if(weaponState()==WeaponState::Fist ? blockFist() : blockSword()) {
         implFaiWait(visual.pose().animationTotalTime());
@@ -578,7 +578,7 @@ bool Npc::tryMeleeAiCharge() {
       Bench::note(("melee ai charge "+std::string(Bench::who(this))+": "+std::string(Bench::who(currentTarget))+
                       " skipped "+std::string(reason)).c_str());
     };
-  if(!fghAlgo.isInWRange(*this,*currentTarget,owner.script()) || !fghAlgo.isInFocusAngle(*this,*currentTarget,5.f)) {
+  if(!fghAlgo.isInWRange(*this,*currentTarget,owner.rules()) || !fghAlgo.isInFocusAngle(*this,*currentTarget,5.f)) {
     skip("range");
     return false;
     }
@@ -721,7 +721,7 @@ void Npc::tickMeleeCharge() {
       return;
       }
     if(MeleeAi::chargeRelease(owner.tickCount()-meleeChargeStart,meleeAiChargeHold,
-                             fghAlgo.isInWRange(*this,*target,owner.script())))
+                             fghAlgo.isInWRange(*this,*target,owner.rules())))
       meleeChargeReleased = true;
     }
   if(!Settings::physicsFlags().meleeCharge || weaponState()!=WeaponState::W1H || isDown()) {

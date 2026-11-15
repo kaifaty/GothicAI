@@ -5,6 +5,7 @@
 
 #include "commandline.h"
 #include "gothic.h"
+#include "settings.h"
 #include "gamemusic.h"
 #include "resources.h"
 #include "game/bodyclock.h"
@@ -12,6 +13,7 @@
 #include "game/bodyobservations.h"
 #include "game/bodyenginepolicy.h"
 #include "game/gamescript.h"
+#include "game/definitions/fightaidefinitions.h"
 #include "game/playercontrol.h"
 #include "game/serialize.h"
 #include "game/simulationstep.h"
@@ -20,6 +22,7 @@
 #include "utils/workers.h"
 #include "world/objects/npc.h"
 #include "world/objects/item.h"
+#include "world/bullet.h"
 #include "world/waypoint.h"
 #include "world/world.h"
 #include "world/worldobjects.h"
@@ -860,8 +863,8 @@ void staleFarRelease(Npc& actor,Npc& target,Npc& hero,PlayerControl& player) {
 void meleeRemoval(Npc& victim) {
   auto& gothic=Gothic::inst();
   auto& world=victim.world();
-  Gothic::settingsSetI("GAME","melee_blade_shadow",1);
-  Gothic::settingsSetI("GAME","melee_physics_hits",1);
+  Settings::setI("GAME","melee_blade_shadow",1);
+  Settings::setI("GAME","melee_physics_hits",1);
   const auto attackerSymbol=world.script().findSymbolIndex("BDT_1003_BANDIT_M");
   const auto sword=world.script().findSymbolIndex("ItMw_1h_Common_01");
   const auto perception=world.script().findSymbolIndex("ZS_ATTACK");
@@ -1096,6 +1099,55 @@ class NpcLogicalStateContract final {
     }
 
   public:
+    static void preTickOrder(Npc& anchor) {
+      ++cases;
+      auto& world=anchor.world();
+      auto& gothic=Gothic::inst();
+      const auto kind=world.script().findSymbolIndex("BDT_1003_BANDIT_M");
+      const auto hero=world.player();
+      auto make=[&](NpcSimTier tier,const Tempest::Vec3& offset) {
+        auto* npc=world.addNpc(kind,hero->position()+offset);
+        npc->clearAiQueue(); npc->clearState(true); npc->clearGoTo(); npc->stopWalking();
+        npc->closeWeapon(true); npc->setTarget(nullptr); npc->setExternalControl(true);
+        npc->visual.pose().stopAllAnim(); npc->setAnim(Npc::Anim::Idle);
+        npc->setSimTierOverride(tier);
+        npc->setSimTier(tier); npc->updateSimpleMovement();
+        // The pre-tick pass must replace this deliberately wrong tier before either actor ticks.
+        npc->setSimTier(tier==NpcSimTier::Full ? NpcSimTier::Simplified : NpcSimTier::Full);
+        npc->waitTime=npc->aniWaitTime=npc->outWaitTime=npc->faiWaitTime=0;
+        return npc;
+        };
+      auto* first=make(NpcSimTier::Simplified,{100,0,0});
+      auto* fighter=make(NpcSimTier::Full,{200,0,0});
+      first->handle().id=std::numeric_limits<int32_t>::min()+1;
+      fighter->handle().id=std::numeric_limits<int32_t>::min()+2;
+      expect(world.npcById(0)!=first,"order fixture starts with an unsorted NPC array");
+      fighter->setToFightMode(world.script().findSymbolIndex("ItMw_1h_Common_01")); fighter->setTarget(first);
+      expect(fighter->startState(world.script().findFunction("ZS_ATTACK"),""),"order fixture enters the native attack state");
+      expect(fighter->playAnimByName("S_1HATTACK",BS_HIT)!=nullptr && fighter->isAttack(),"order fixture has a real attack");
+      first->meleeFighter={}; fighter->meleeFighter={};
+      // Graph locomotion keeps the observer out of native gravity before its queued output callback.
+      first->setExternalControl(false);
+      first->handle().voice=14;
+      first->aiPush(AiQueue::aiOutputSvm(*hero,"$NOTNOW",0));
+      unsigned outputs=0; bool marked=false, tiers=false, sorted=false;
+      gothic.interceptSvm=[&](Npc& self,std::string_view,std::string_view,Npc*,bool) {
+        if(&self==first) {
+          ++outputs;
+          marked=first->isMeleeFighter() && fighter->isMeleeFighter();
+          tiers=first->simTier()==NpcSimTier::Simplified && fighter->simTier()==NpcSimTier::Full;
+          sorted=world.npcById(0)==first && world.npcById(1)==fighter;
+          }
+        return true;
+        };
+      world.tick(33);
+      gothic.interceptSvm={};
+      expect(outputs==1 && marked,"all melee fighters are refreshed before the first NPC tick callback: outputs="+
+             std::to_string(outputs)+" marked="+std::to_string(marked));
+      expect(tiers && sorted,"simulation tiers and handle order are established before the first NPC tick callback");
+      world.removeNpc(*first); world.removeNpc(*fighter);
+      }
+
     static void restoreStamina(Npc& actor) {
       MeleeStamina::reset(actor.meleeStamina,actor.staminaMax(),actor.world().tickCount());
       }
@@ -1111,8 +1163,8 @@ class NpcLogicalStateContract final {
         }};
       std::array<int,settings.size()> saved{};
       for(size_t i=0;i<settings.size();++i) {
-        saved[i]=Gothic::settingsGetI("GAME",settings[i].first);
-        Gothic::settingsSetI("GAME",settings[i].first,settings[i].second);
+        saved[i]=Settings::getI("GAME",settings[i].first);
+        Settings::setI("GAME",settings[i].first,settings[i].second);
         }
       const auto talent=actor.hitChance(TALENT_1H);
       const auto prepare=[&](float distance=150.f,float yaw=0.f) {
@@ -1168,7 +1220,7 @@ class NpcLogicalStateContract final {
 
       ++cases;
       prepare(300);
-      Gothic::settingsSetI("GAME","melee_stamina",1);
+      Settings::setI("GAME","melee_stamina",1);
       const auto now=actor.world().tickCount();
       actor.meleeStamina={0,now,now,true,true};
       queue(FightAlgo::MV_JUMPBACK);
@@ -1179,7 +1231,7 @@ class NpcLogicalStateContract final {
       expect(actor.fghAlgo.queuedAction()==FightAlgo::MV_JUMPBACK && actor.meleeAiDodgeTiming &&
              actor.meleeAiDodgeTiming->began==0 && !actor.isMeleeDodging(),
              "a no-swing dodge keeps waiting for stamina beyond 1000 ms without spending its primitive");
-      Gothic::settingsSetI("GAME","melee_stamina",0);
+      Settings::setI("GAME","melee_stamina",0);
 
       ++cases;
       prepare();
@@ -1189,7 +1241,7 @@ class NpcLogicalStateContract final {
       advance();
       BodyObservations::sampleAll(true);
       expect(action(actor,FightAlgo::PolicyAction::JumpBack)["accepted"].GetBool(),"exhausted P30 jump back is accepted");
-      Gothic::settingsSetI("GAME","melee_stamina",1);
+      Settings::setI("GAME","melee_stamina",1);
       const auto exhaustedAt=actor.world().tickCount();
       actor.meleeStamina={0,exhaustedAt,exhaustedAt,true,true};
       BodyController::tick(actor,tickMs);
@@ -1206,7 +1258,7 @@ class NpcLogicalStateContract final {
       expect(consumed,"P30 MoveBack consumes the primitive when the segment starts");
       BodyController::reset("melee_ai_fixture");
       BodyObservations::disable();
-      Gothic::settingsSetI("GAME","melee_stamina",0);
+      Settings::setI("GAME","melee_stamina",0);
 
       for(unsigned attempt=0;attempt<3;++attempt) {
         ++cases;
@@ -1234,7 +1286,7 @@ class NpcLogicalStateContract final {
       actor.meleeStamina={};
       actor.setExternalControl(false);
       for(size_t i=0;i<settings.size();++i)
-        Gothic::settingsSetI("GAME",settings[i].first,saved[i]);
+        Settings::setI("GAME",settings[i].first,saved[i]);
       }
 
     static void run(uint32_t id,const std::string& scenario,const std::filesystem::path& output) {
@@ -1970,6 +2022,7 @@ int main(int argc,const char** argv) {
       gothic.dialogExtraFn=std::move(previousExtra);
       expect(receivedCurrent && offered==0,"NPC_CHECKINFO extra dialogs receive the current NPC instance");
       }
+    if(!missingNetwork) NpcLogicalStateContract::preTickOrder(b);
     if(!missingNetwork) NpcLogicalStateContract::meleeAi(a,b);
 #ifdef GOTHIC_BODY_ENGINE_NET
     if(missingNetwork) {
@@ -2079,6 +2132,113 @@ int main(int argc,const char** argv) {
       duration->set_int(91);
       expect(rules.whirlwindDuration()==60,"rules preserve the upper whirlwind duration clamp");
       expect(rules.scriptVmMemorySize()>10000000,"rules include the symbol table in the VM memory probe");
+      ++cases;
+      auto& source=*gothic.player();
+      auto* target=gothic.world()->addNpc(rules.findSymbolIndex("BDT_1003_BANDIT_M"),source.position()+Tempest::Vec3(150,0,0));
+      expect(target!=nullptr,"damage rules fixture has a distinct victim");
+      const auto savedSource=source.handle();
+      const auto savedTarget=target->handle();
+      auto* weapon=source.activeWeapon();
+      const auto savedWeaponMask=weapon!=nullptr ? weapon->handle().damage_type : 0;
+      source.handle().damage_type=64;
+      if(weapon!=nullptr) weapon->handle().damage_type=64;
+      source.handle().attribute[ATR_DEXTERITY]=17;
+      std::fill(std::begin(source.handle().damage),std::end(source.handle().damage),0);
+      std::fill(std::begin(source.handle().protection),std::end(source.handle().protection),0);
+      source.handle().damage[DamageType::POINT]=33;
+      source.handle().damage[DamageType::EDGE]=9;
+      target->handle().attribute[ATR_DEXTERITY]=91;
+      target->handle().damage_type=4;
+      expect(rules.damageTypeMask(source)==64,"damage rules read the attacker's damage mask");
+      const auto ranged=rules.rangeDamageValue(source);
+      expect(ranged.val[DamageType::POINT]==50 && ranged.val[DamageType::EDGE]==0,
+             "ranged damage uses the attacker's dexterity and damage mask");
+      target->handle().protection[DamageType::POINT]=17;
+      target->handle().protection[DamageType::EDGE]=23;
+      Damage spellDamage;
+      spellDamage[DamageType::POINT]=59;
+      spellDamage[DamageType::EDGE]=83;
+      const auto spellHit=rules.damageValue(source,*target,nullptr,true,spellDamage,COLL_APPLYDOUBLEDAMAGE);
+      expect(spellHit.value==244 && spellHit.hasHit && !spellHit.invincible && !spellHit.critical,
+             "damage rules retain the victim, spell damage and collision multiplier");
+      source.handle().attribute[ATR_STRENGTH]=31;
+      std::fill(std::begin(source.handle().hitchance),std::end(source.handle().hitchance),100);
+      Item ammunition(source.world(),rules.findSymbolIndex("ITRW_ARROW"),Item::T_Inventory);
+      Bullet arrow(source.world(),ammunition,source.position());
+      Damage arrowDamage;
+      arrowDamage[DamageType::POINT]=71;
+      arrow.setDamage(arrowDamage);
+      arrow.setPrecise(1.f);
+      const auto arrowHit=rules.damageValue(source,*target,&arrow,false,{},COLL_APPLYDAMAGE);
+      const auto meleeHit=rules.damageValue(source,*target,nullptr,false,{},COLL_APPLYDAMAGE);
+      expect(arrowHit.value==54 && arrowHit.hasHit && !arrowHit.invincible && !arrowHit.critical,
+             "damage rules preserve the physical arrow and its damage");
+      expect(meleeHit.value==47 && meleeHit.hasHit && !meleeHit.invincible && meleeHit.critical,
+             "damage rules distinguish an arrow from the melee fallback");
+      auto& guild=const_cast<GuildRecord&>(rules.guildVal());
+      const auto sourceGuild=source.guild();
+      const auto savedFallHeight=guild.falldown_height[sourceGuild];
+      const auto savedFallDamage=guild.falldown_damage[sourceGuild];
+      guild.falldown_height[sourceGuild]=-300;
+      guild.falldown_damage[sourceGuild]=7;
+      source.handle().protection[DamageType::FALL]=4;
+      const auto standingFall=rules.damageFall(source,0.f);
+      const auto movingFall=rules.damageFall(source,1.f);
+      guild.falldown_height[sourceGuild]=savedFallHeight;
+      guild.falldown_damage[sourceGuild]=savedFallDamage;
+      expect(standingFall.value==17 && standingFall.hasHit && movingFall.value==52 && movingFall.hasHit,
+             "fall damage rules retain the selected NPC, guild and speed");
+      source.handle()=savedSource;
+      target->handle()=savedTarget;
+      if(weapon!=nullptr) weapon->handle().damage_type=savedWeaponMask;
+      expect(std::abs(rules.meleeMultiplier(200.f,100.f,1.f,90.f,1)-.9f)<.00001f,
+             "melee multiplier rules preserve speed, blade geometry and target index");
+      expect(rules.vanillaChance(60,0.f)==100 && rules.vanillaChance(60,750.f)==80 &&
+             rules.vanillaChance(60,1501.f)==39 && rules.vanillaChance(60,4500.f)==0,
+             "arrow chance rules retain talent, distance and Gothic's distance step");
+      auto& tacticOne=const_cast<FightTactic&>(Gothic::fai()[1]);
+      auto& tacticTwo=const_cast<FightTactic&>(Gothic::fai()[2]);
+      expect(&tacticOne!=&tacticTwo,"fight rules fixture has two distinct tactic tables");
+      const auto savedOne=tacticOne.my_w_focus.move[0];
+      const auto savedTwo=tacticTwo.my_w_focus.move[0];
+      tacticOne.my_w_focus.move[0]=Def::FightMove(7);
+      tacticTwo.my_w_focus.move[0]=Def::FightMove(11);
+      const auto actualOne=int(rules.fightAi(1).my_w_focus.move[0]);
+      const auto actualTwo=int(rules.fightAi(2).my_w_focus.move[0]);
+      tacticOne.my_w_focus.move[0]=savedOne;
+      tacticTwo.my_w_focus.move[0]=savedTwo;
+      expect(actualOne==7 && actualTwo==11,"fight rules select the requested tactic table");
+      auto* finishDistance=vm.find_symbol_by_name("NPC_ATTACK_FINISH_DISTANCE");
+      expect(finishDistance!=nullptr,"fight rules fixture has the finishing distance");
+      if(finishDistance->type()==daedalus::DaedalusDataType::FLOAT) {
+        const auto saved=finishDistance->get_float();
+        finishDistance->set_float(247.5f);
+        const auto actual=rules.attackFinishDistance();
+        finishDistance->set_float(saved);
+        expect(actual==247.5f,"fight rules retain a fractional scripted finishing distance");
+        } else {
+        expect(finishDistance->type()==daedalus::DaedalusDataType::INT,"fight rules fixture has a numeric finishing distance");
+        const auto saved=finishDistance->get_int();
+        finishDistance->set_int(247);
+        const auto actual=rules.attackFinishDistance();
+        finishDistance->set_int(saved);
+        expect(actual==247.f,"fight rules retain an integer scripted finishing distance");
+        }
+      }
+    {
+      ++cases;
+      GameHost& host=gothic;
+      expect(!host.isDialogActive(),"dialog activity defaults to false without a menu");
+      auto previous=std::move(gothic.isDialogActiveFn);
+      bool active=false;
+      gothic.isDialogActiveFn=[&]() { return active; };
+      expect(!host.isDialogActive() && !host.isInDialog(),"dialog activity preserves an inactive menu response");
+      active=true;
+      expect(host.isDialogActive() && !host.isInDialog(),
+             "dialog activity preserves pending text even when no NPC dialog is open");
+      active=false;
+      expect(!host.isDialogActive(),"dialog activity reflects the menu becoming inactive again");
+      gothic.isDialogActiveFn=std::move(previous);
       }
     TestBench::flushOutput();
     gothic.clearGame().reset();

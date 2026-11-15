@@ -263,7 +263,7 @@ bool Npc::canWitnessDeed(const Npc& culprit, const Npc* victim, PercType perc) c
   // so delivery measures range from the victim, while OTHER names the culprit.
   gates.distanceSquared = perc==PERC_ASSESSOTHERSDAMAGE && victim!=nullptr ?
                           qDistTo(*victim) : qDistTo(culprit);
-  return gates.admitted() && canSeeNpc(culprit,false);
+  return gates.admitted(owner.guildTraits()) && canSeeNpc(culprit,false);
   }
 
 void Npc::setServerDeed(std::string_view kind, Npc* victim, size_t count, std::string_view expectedOwner) {

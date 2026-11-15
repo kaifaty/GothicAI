@@ -1,4 +1,5 @@
 #include "touchdamage.h"
+#include "daedalus/classes.h"
 
 #include "world/objects/npc.h"
 #include "world/world.h"

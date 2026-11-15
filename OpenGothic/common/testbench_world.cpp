@@ -12,7 +12,7 @@
 #include "appcadence.h"
 #include "frameprofile.h"
 #include "game/gamescript.h"
-#include "gothic.h"
+#include "settings.h"
 #include "graphics/mesh/footik.h"
 #include "graphics/mesh/skeleton.h"
 #include "loadprobe.h"
@@ -148,40 +148,42 @@ bool worldCommand(const WorldContext& context,const std::string& line,const std:
     physicsDump(w,pl,size_t(std::clamp(num(a,2,100000),1.f,1000000.f)),uint32_t(num(a,3,73013)),a.size()>4 ? a[4] : "");
     }
   else if(c=="physics" && a.size()==2 && a[1]=="flags-check") {
-    struct Flag {const char* key;bool Gothic::PhysicsFlags::*member;};
+    struct Flag {const char* key;bool Settings::PhysicsFlags::*member;};
     const Flag flags[]{
-      {"ragdoll",&Gothic::PhysicsFlags::ragdoll},
-      {"ragdoll_quest_guard",&Gothic::PhysicsFlags::questGuard},
-      {"living_bodies",&Gothic::PhysicsFlags::livingBodies},
-      {"arrow_physics",&Gothic::PhysicsFlags::arrowPhysics},
-      {"arrow_sticking",&Gothic::PhysicsFlags::arrowSticking},
-      {"spell_physics",&Gothic::PhysicsFlags::spellPhysics},
-      {"body_impact_damage",&Gothic::PhysicsFlags::bodyImpactDamage},
-      {"body_traces",&Gothic::PhysicsFlags::bodyTraces},
-      {"blood",&Gothic::PhysicsFlags::blood},
-      {"movable_vobs",&Gothic::PhysicsFlags::movableVobs},
-      {"item_hulls",&Gothic::PhysicsFlags::itemHulls},
-      {"item_deepest_contact",&Gothic::PhysicsFlags::itemDeepestContact},
-      {"ragdoll_birth_guard",&Gothic::PhysicsFlags::ragdollBirthGuard},
-      {"ragdoll_brace",&Gothic::PhysicsFlags::ragdollBrace},
-      {"bump_reactions",&Gothic::PhysicsFlags::bumpReactions},
-      {"furniture_parts",&Gothic::PhysicsFlags::furnitureParts},
-      {"placed_items",&Gothic::PhysicsFlags::placedItems},
-      {"cloth",&Gothic::PhysicsFlags::cloth}
+      {"ragdoll",&Settings::PhysicsFlags::ragdoll},
+      {"ragdoll_quest_guard",&Settings::PhysicsFlags::questGuard},
+      {"living_bodies",&Settings::PhysicsFlags::livingBodies},
+      {"arrow_physics",&Settings::PhysicsFlags::arrowPhysics},
+      {"arrow_sticking",&Settings::PhysicsFlags::arrowSticking},
+      {"spell_physics",&Settings::PhysicsFlags::spellPhysics},
+      {"body_impact_damage",&Settings::PhysicsFlags::bodyImpactDamage},
+      {"body_traces",&Settings::PhysicsFlags::bodyTraces},
+      {"blood",&Settings::PhysicsFlags::blood},
+      {"movable_vobs",&Settings::PhysicsFlags::movableVobs},
+      {"item_hulls",&Settings::PhysicsFlags::itemHulls},
+      {"item_deepest_contact",&Settings::PhysicsFlags::itemDeepestContact},
+      {"ragdoll_birth_guard",&Settings::PhysicsFlags::ragdollBirthGuard},
+      {"ragdoll_brace",&Settings::PhysicsFlags::ragdollBrace},
+      {"bump_reactions",&Settings::PhysicsFlags::bumpReactions},
+      {"wall_reach",&Settings::PhysicsFlags::wallReach},
+      {"wall_stop",&Settings::PhysicsFlags::wallStop},
+      {"furniture_parts",&Settings::PhysicsFlags::furnitureParts},
+      {"placed_items",&Settings::PhysicsFlags::placedItems},
+      {"cloth",&Settings::PhysicsFlags::cloth}
       };
     auto& npc=context.subjectOf(pl);
     const auto tick=w.tickCount();
     bool pass=true;
     for(const auto& flag:flags) {
-      const int original=Gothic::settingsGetI("GAME",flag.key);
-      pass&=(Gothic::physicsFlags().*flag.member)==(original!=0);
+      const int original=Settings::getI("GAME",flag.key);
+      pass&=(Settings::physicsFlags().*flag.member)==(original!=0);
       for(const std::string_view phase:{"off","on","restore"}) {
         const int value=phase=="restore" ? original : int(phase=="on");
-        Gothic::settingsSetI("GAME",flag.key,value);
-        const bool immediate=Gothic::physicsFlags().*flag.member;
+        Settings::setI("GAME",flag.key,value);
+        const bool immediate=Settings::physicsFlags().*flag.member;
         npc.prepareRagdoll();npc.prepareLivingBody();
-        const int configured=Gothic::settingsGetI("GAME",flag.key);
-        const bool cached=Gothic::physicsFlags().*flag.member;
+        const int configured=Settings::getI("GAME",flag.key);
+        const bool cached=Settings::physicsFlags().*flag.member;
         const bool same=w.tickCount()==tick;
         const bool ok=immediate==(value!=0) && cached==(configured!=0) && configured==value && same;
         pass&=ok;

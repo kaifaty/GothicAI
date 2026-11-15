@@ -34,6 +34,7 @@
 
 #include "commandline.h"
 #include "gothic.h"
+#include "settings.h"
 #include "world/benchhooks.h"
 #include "frameprofile.h"
 #include "marvin.h"
@@ -117,7 +118,7 @@ MainWindow::MainWindow(Device& device)
   Gothic::inst().onVideo       .bind(this,&MainWindow::onVideo);
 
   if(CommandLine::inst().doIntro() && !Gothic::inst().isBenchmarkMode() &&
-     Gothic::settingsGetI("GAME","scaleVideos")>=0)
+     Settings::getI("GAME","scaleVideos")>=0)
     Resources::startVideoBase();
 
   Gothic::inst().onBenchmarkFinished.bind(this,&MainWindow::onBenchmarkFinished);
@@ -203,9 +204,9 @@ void MainWindow::setupUi() {
 #endif
 
   rootMenu.setMainMenu();
-
   Gothic::inst().onDialogPipe  .bind(&dialogs,&DialogMenu::openPipe);
   Gothic::inst().isNpcInDialogFn = std::bind(&DialogMenu::isNpcInDialog, &dialogs, std::placeholders::_1);
+  Gothic::inst().isDialogActiveFn = [this]() { return dialogs.isActive(); };
   Gothic::inst().dialogEntriesFn = [this]() { return dialogs.entries(); };
   Gothic::inst().dialogPickFn    = [this](size_t i) { return dialogs.pick(i); };
 
@@ -268,7 +269,7 @@ void MainWindow::paintEvent(PaintEvent& event) {
 
       if(auto pl = Gothic::inst().player()){
         if (!Gothic::inst().isDesktop()) {
-          auto& opt = Gothic::options();
+          auto& opt = Settings::options();
           float hp  = float(pl->attribute(ATR_HITPOINTS))/float(pl->attribute(ATR_HITPOINTSMAX));
           float mp  = float(pl->attribute(ATR_MANA))     /float(pl->attribute(ATR_MANAMAX));
 
@@ -566,7 +567,7 @@ void MainWindow::tickMouse(uint64_t dt) {
     return;
     }
 
-  const bool enableMouse = Gothic::inst().settingsGetI("GAME","enableMouse");
+  const bool enableMouse = Settings::getI("GAME","enableMouse");
   if(enableMouse==0) {
     dMouse = Point();
     return;
@@ -575,8 +576,8 @@ void MainWindow::tickMouse(uint64_t dt) {
   if(dMouse==Point())
     return;
 
-  const bool  camLookaroundInverse = Gothic::inst().settingsGetI("GAME","camLookaroundInverse");
-  const float mouseSensitivity     = Gothic::inst().settingsGetF("GAME","mouseSensitivity")/MouseUtil::mouseSysSpeed();
+  const bool  camLookaroundInverse = Settings::getI("GAME","camLookaroundInverse");
+  const float mouseSensitivity     = Settings::getF("GAME","mouseSensitivity")/MouseUtil::mouseSysSpeed();
   PointF dpScaled = PointF(float(dMouse.x)*mouseSensitivity,float(dMouse.y)*mouseSensitivity);
   dpScaled.x/=float(w());
   dpScaled.y/=float(h());
@@ -603,9 +604,9 @@ void MainWindow::tickMouse(uint64_t dt) {
   }
 
 void MainWindow::onSettings() {
-  auto zMaxFps = Gothic::options().fpsLimit;
+  auto zMaxFps = Settings::options().fpsLimit;
   if(zMaxFps<=0)
-    zMaxFps = Gothic::inst().settingsGetI("ENGINE", "zMaxFps");
+    zMaxFps = Settings::getI("ENGINE", "zMaxFps");
   if(zMaxFps>0)
     maxFpsInv = 1000u/uint64_t(zMaxFps); else
     maxFpsInv = 0;
@@ -823,7 +824,7 @@ void MainWindow::paintFocus(Painter& p, const Focus& focus, const Matrix4x4& vp)
     drawBar(p,barHp, w()/2,10, hp, AlignHCenter|AlignTop);
     }
 
-  const int foc = Gothic::settingsGetI("GAME","highlightMeleeFocus");
+  const int foc = Settings::getI("GAME","highlightMeleeFocus");
   if(focus.npc!=nullptr  &&
      (foc==1 || foc==3) &&
      player.isPressed(KeyCodec::ActionGeneric) &&
@@ -1025,8 +1026,8 @@ void MainWindow::drawSaving(Painter &p) {
     return;
 
   const float scale = Gothic::interfaceScale(this);
-  int         szX   = Gothic::options().saveGameImageSize.w;
-  int         szY   = Gothic::options().saveGameImageSize.h;
+  int         szX   = Settings::options().saveGameImageSize.w;
+  int         szY   = Settings::options().saveGameImageSize.h;
 
   if(szX<=460 || szY<=300) {
     // way too small otherwise
@@ -1080,7 +1081,7 @@ void MainWindow::onMarvinKey() {
         }
       break;
     case Event::K_F5: {
-      const bool useQuickSaveKeys = Gothic::settingsGetI("GAME", "useQuickSaveKeys")!=0;
+      const bool useQuickSaveKeys = Settings::getI("GAME", "useQuickSaveKeys")!=0;
 #ifdef NDEBUG
       const bool debug = false;
 #else
@@ -1118,7 +1119,7 @@ void MainWindow::onMarvinKey() {
       break;
 
     case Event::K_F9: {
-      const bool useQuickSaveKeys = Gothic::settingsGetI("GAME", "useQuickSaveKeys")!=0;
+      const bool useQuickSaveKeys = Settings::getI("GAME", "useQuickSaveKeys")!=0;
       if(Gothic::inst().isMarvinEnabled()) {
         if(runtimeMode==R_Normal)
           runtimeMode = R_Suspended; else
@@ -1429,7 +1430,7 @@ void MainWindow::saveGame(std::string_view slot, std::string_view name) {
 void MainWindow::onVideo(std::string_view fname, bool explicitRequest) {
   // -nointro (autotests): no videos, Xardas's first dialog plays the addon's intro for over a minute
   if(!explicitRequest && (Gothic::inst().isBenchmarkMode() || !CommandLine::inst().doIntro() ||
-                         Gothic::settingsGetI("GAME","scaleVideos")<0))
+                         Settings::getI("GAME","scaleVideos")<0))
     return;
   video.pushVideo(fname);
   }
@@ -1556,7 +1557,7 @@ void MainWindow::render(){
     if(once) {
       // the start's jingle is music (43 s in the addon) played on the sound channel: it stays off with the music,
       // else it plays under the first takes of a bench filmed with music off
-      if(Gothic::settingsGetI("SOUND","musicEnabled")!=0)
+      if(Settings::getI("SOUND","musicEnabled")!=0)
         Gothic::inst().emitGlobalSoundWav("GAMESTART.WAV");
       once=false;
       }

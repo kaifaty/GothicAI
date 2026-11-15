@@ -1,15 +1,20 @@
 // Windows that glow at night (reports/render-features/2026-11-15-night-interiors): the `window` field of a record,
 // its bits for the shader and the evening of a window - dark by day, lit as the rooms go dark, out by its hour, the
-// share of the windows that are lit at all, the all-night ones until dawn. CPU only: no device, no game data.
+// share of the windows that are lit at all, the all-night ones until dawn. And the house of step 2
+// (graphics/houselights.h): its record, its box, the lamps that go out before its bedtime and the windows that
+// fade with them. CPU only: no device, no game data.
 #include "graphics/windowglow.h"
+#include "graphics/houselights.h"
 
 #include <rapidjson/document.h>
 
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 size_t assertions = 0;
@@ -163,6 +168,148 @@ void fades() {
 
 }
 
+bool parsedHouses(const char* json, std::vector<HouseLights::House>& out, std::string& error) {
+  rapidjson::Document d;
+  d.Parse(json);
+  require(!d.HasParseError(), std::string("the test's own json: ")+json);
+  return HouseLights::parse(d,out,error);
+  }
+
+void houseRecords() {
+  std::vector<HouseLights::House> houses;
+  std::string error;
+  require(parsedHouses(R"({"format":1,"houses":[]})",houses,error) && houses.empty(), "no houses is a valid file");
+  require(parsedHouses(R"({"format":1,"houses":[
+            {"key":"a","center":[100,200,300],"size":[1000,400,600],"yaw_deg":90,"until":23.5},
+            {"key":"b","center":[0,0,0],"size":[2,2,2]}]})",houses,error) && houses.size()==2,
+          "two houses: "+error);
+  const auto& a = houses[0];
+  require(a.key=="a" && a.centre[0]==100.f && a.centre[1]==200.f && a.centre[2]==300.f, "the centre is the record's");
+  require(a.half[0]==500.f && a.half[1]==200.f && a.half[2]==300.f, "the half size is half the record's size");
+  require(std::fabs(a.yaw-1.5707963f)<1e-5f && a.until==23.5f && a.bed==23.5f, "the yaw and the bedtime are the record's");
+  const auto& b = houses[1];
+  require(b.yaw==0.f && b.until<0.f, "a house without yaw and bedtime");
+  require(b.bed>=HouseLights::BedFrom && b.bed<HouseLights::BedFrom+HouseLights::BedSpread,
+          "a house without a bedtime goes to bed by its key");
+  require(a.wake>=HouseLights::WakeFrom && a.wake<HouseLights::WakeFrom+HouseLights::WakeSpread,
+          "a house wakes within the morning hour");
+
+  const auto kept = houses;
+  for(const char* bad:{R"([])", R"({"format":2,"houses":[]})", R"({"format":1})", R"({"format":1,"houses":{}})",
+                       R"({"format":1,"houses":[{"center":[0,0,0],"size":[1,1,1]}]})",
+                       R"({"format":1,"houses":[{"key":"","center":[0,0,0],"size":[1,1,1]}]})",
+                       R"({"format":1,"houses":[{"key":"a","center":[0,0],"size":[1,1,1]}]})",
+                       R"({"format":1,"houses":[{"key":"a","center":[0,0,0],"size":[1,0,1]}]})",
+                       R"({"format":1,"houses":[{"key":"a","center":[0,0,0],"size":[1,1,1],"yaw_deg":"n"}]})",
+                       R"({"format":1,"houses":[{"key":"a","center":[0,0,0],"size":[1,1,1],"until":17}]})",
+                       R"({"format":1,"houses":[{"key":"a","center":[0,0,0],"size":[1,1,1]},
+                                               {"key":"a","center":[9,9,9],"size":[1,1,1]}]})"}) {
+    error.clear();
+    require(!parsedHouses(bad,houses,error) && !error.empty(), std::string("a bad houses file must be refused: ")+bad);
+    require(houses.size()==kept.size() && houses[0].key==kept[0].key, "a refused file leaves the houses alone");
+    }
+  std::string many = R"({"format":1,"houses":[)";
+  for(size_t i=0; i<=HouseLights::MaxHouses; ++i)
+    many += std::string(i==0 ? "" : ",")+R"({"key":"h)"+std::to_string(i)+R"(","center":[0,0,0],"size":[1,1,1]})";
+  many += "]}";
+  require(!parsedHouses(many.c_str(),houses,error), "more houses than the scene block carries are refused");
+
+  // the files of houses.d one after another
+  std::vector<HouseLights::House> all = kept, more;
+  require(parsedHouses(R"({"format":1,"houses":[{"key":"c","center":[5,5,5],"size":[1,1,1]}]})",more,error), "a second file");
+  require(HouseLights::append(all,more,error) && all.size()==3 && all[0].key=="a" && all[2].key=="c",
+          "the houses of a later file stand after those of the files before it");
+  require(!HouseLights::append(all,more,error) && all.size()==3 && !error.empty(), "a key of a file before is refused");
+  std::vector<HouseLights::House> crowd;
+  for(size_t i=0; i<HouseLights::MaxHouses-2; ++i) {
+    HouseLights::House h;
+    h.key = "n"+std::to_string(i);
+    crowd.push_back(h);
+    }
+  require(!HouseLights::append(all,crowd,error) && all.size()==3, "files that together pass the scene block's count are refused");
+  crowd.pop_back();
+  require(HouseLights::append(all,crowd,error) && all.size()==HouseLights::MaxHouses, "up to the count they fit");
+  }
+
+void houseBox() {
+  HouseLights::House h;
+  h.centre = {1000.f, 500.f, -2000.f};
+  h.half   = {400.f, 300.f, 100.f};
+  h.yaw    = 0.5235988f; // 30 degrees: the long side runs along (cos,0,sin)
+  const float c = std::cos(h.yaw), s = std::sin(h.yaw);
+  auto at = [&](float along, float up, float across) {
+    return std::array<float,3>{h.centre[0]+along*c-across*s, h.centre[1]+up, h.centre[2]+along*s+across*c};
+    };
+  require( HouseLights::inside(h,at(390,0,0).data(),0),    "a point near the end of the long side is inside");
+  require(!HouseLights::inside(h,at(0,0,390).data(),0),    "the same distance across the short side is outside");
+  require(!HouseLights::inside(h,at(410,0,0).data(),0),    "past the end is outside");
+  require( HouseLights::inside(h,at(430,0,0).data(),HouseLights::WindowWall),  "a window on the outside of the wall is the house's");
+  require(!HouseLights::inside(h,at(390,0,0).data(),-HouseLights::LampWall),   "a lamp in the wall is not the house's");
+  require( HouseLights::inside(h,at(370,0,0).data(),-HouseLights::LampWall),   "a lamp inside is");
+  require(!HouseLights::inside(h,at(0,310,0).data(),0) && HouseLights::inside(h,at(0,-290,0).data(),0), "the box has a floor and a roof");
+
+  std::vector<HouseLights::House> two = {h,h};
+  two[1].centre = {5000.f, 500.f, -2000.f};
+  const float far[3] = {9000.f, 500.f, -2000.f};
+  require(HouseLights::houseAt(two,at(0,0,0).data(),0)==0, "the first house a point is in");
+  require(HouseLights::houseAt(two,two[1].centre.data(),0)==1, "the second house");
+  require(HouseLights::houseAt(two,far,HouseLights::WindowWall)==-1, "a point of no house");
+
+  float v[12] = {};
+  HouseLights::settle(h);
+  HouseLights::pack(h,v);
+  require(v[0]==h.centre[0] && v[1]==h.centre[1] && v[2]==h.centre[2] && std::fabs(v[3]-c)<1e-6f, "the block's first vector: the centre and the cosine");
+  require(v[4]==h.half[0]+HouseLights::WindowWall && v[6]==h.half[2]+HouseLights::WindowWall && std::fabs(v[7]-s)<1e-6f,
+          "the block's second vector: the half size with the windows' margin and the sine");
+  require(v[8]==h.bed, "the block's third vector: the bedtime");
+  }
+
+void houseEvening() {
+  HouseLights::House h;
+  h.key   = "market-house";
+  h.until = 23.5f;
+  HouseLights::settle(h);
+  const float turns[] = {0.f, 0.25f, 0.5f, 1.f};
+
+  for(float hour:{6.75f, 9.f, 12.f, 15.f, 20.f, 22.f, 23.3f})
+    for(float r:turns)
+      require(HouseLights::lampOn(h,r,hour), "the lamps of a house burn by day and through the evening, at "+std::to_string(hour));
+  for(float hour:{23.51f, 0.f, 2.f, 4.f, 5.4f})
+    for(float r:turns)
+      require(!HouseLights::lampOn(h,r,hour), "no lamp of a sleeping house burns at "+std::to_string(hour));
+  require( HouseLights::lampOn(h,0.f,23.49f) && !HouseLights::lampOn(h,1.f,23.49f), "the lamps go out one after another");
+  require( HouseLights::lampOn(h,0.f,h.wake-24.f+0.01f) && !HouseLights::lampOn(h,1.f,h.wake-24.f+0.01f),
+          "and come back one after another in the morning");
+
+  // a window of the house is lit only while a lamp burns inside: the lamp with turn 0 outlives the windows
+  float before = 1.f;
+  for(float e=20.f; e<36.f; e+=0.005f) {
+    const float hour  = e>=24.f ? e-24.f : e;
+    const float share = HouseLights::windowShare(h,hour);
+    require(share>=0.f && share<=1.f, "the share stays within 0..1");
+    if(e<WindowGlow::Dawn) {
+      require(share<=before+1e-6f, "the windows of a house only fade through the night");
+      before = share;
+      }
+    if(e<WindowGlow::Dawn+WindowGlow::Fade)
+      require(share<=0.f || HouseLights::lampOn(h,0.f,hour), "a lit window means a lamp burns inside, at "+std::to_string(hour));
+    }
+  require(HouseLights::windowShare(h,23.3f)==1.f, "before the lamps start to go out the windows are untouched");
+  require(HouseLights::windowShare(h,23.5f)==0.f && HouseLights::windowShare(h,2.f)==0.f, "the windows of a sleeping house are dark");
+
+  HouseLights::House tavern;
+  tavern.key   = "tavern";
+  tavern.until = 29.f;
+  HouseLights::settle(tavern);
+  for(float hour=0.f; hour<24.f; hour+=0.25f) {
+    require(HouseLights::lampOn(tavern,1.f,hour), "an all-night house keeps its lamps");
+    require(HouseLights::windowShare(tavern,hour)==1.f, "and leaves its windows their own evening");
+    }
+  float v[12] = {};
+  HouseLights::pack(tavern,v);
+  require(v[8]>100.f, "an all-night house has no bedtime in the block");
+  }
+
 int main() {
   try {
     records();
@@ -170,6 +317,9 @@ int main() {
     evening();
     allNight();
     fades();
+    houseRecords();
+    houseBox();
+    houseEvening();
     std::cout << "{\"test\":\"window-glow\",\"passed\":true,\"assertions\":" << assertions << "}\n";
     return 0;
     }

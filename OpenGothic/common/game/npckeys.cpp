@@ -1,5 +1,5 @@
 #include "npckeys.h"
-
+#include "game/rpgvocabulary.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
 
@@ -118,7 +118,7 @@ void NpcKeys::applyKeys(Npc& npc, const KeyState& input, uint64_t dt) {
     else if(npc.isInWater()) {
       auto& g = npc.world().rules().guildVal();
       const auto gl = npc.guild();
-      if(0<=gl && gl<GIL_MAX && npc.isStanding()) {
+      if(0<=gl && gl<npc.world().guildTraits().count() && npc.isStanding()) {
         Npc::JumpStatus jump;
         jump.anim = Npc::Anim::JumpUp;
         jump.height = float(g.jumpup_height[gl])+npc.position().y;

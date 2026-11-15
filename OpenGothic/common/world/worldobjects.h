@@ -265,6 +265,10 @@ class WorldObjects final {
     std::vector<std::unique_ptr<Npc>>  npcRemoved; // removed, but may have a dangling references in game
     std::vector<Npc*>                  npcNear;
     NpcSimTiers::Stats                 simTiers;
+    static bool                       keepsFullSimulation(const Npc& npc);
+    static bool                       keepsNearPolicy(const Npc& npc);
+    void                              updateSimTiers(bool beforeTick);
+    void                              updateNpcPolicies(const Npc* player, const Tempest::Vec3& position);
 
     std::vector<AbstractTrigger*>      triggers;
     std::vector<AbstractTrigger*>      triggersTk;

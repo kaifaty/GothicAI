@@ -7,9 +7,11 @@
 #include "graphics/mesh/hitzones.h"
 #include "graphics/mesh/submesh/packedmesh.h"
 #include "game/serialize.h"
+#include "game/damagecalculator.h"
 #include "world/objects/npc.h"
 #include "world/bloodstains.h"
 #include "gothic.h"
+#include "settings.h"
 
 #include <Tempest/MemReader>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
@@ -32,7 +34,7 @@ namespace {
   void testBloodStains() {
     using namespace BloodStains;
     using Tempest::Vec3;
-    require(Gothic::PhysicsFlags{}.blood,"blood must default to ON");
+    require(Settings::PhysicsFlags{}.blood,"blood must default to ON");
     require(Limit==256,"a world keeps 256 stains");
 
     // Lifetime: outdoors one game day, indoors three.

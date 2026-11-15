@@ -1,5 +1,5 @@
 #include "npc.h"
-
+#include "game/rpgvocabulary.h"
 #include "graphics/mesh/skeleton.h"
 #include "game/gamerules.h"
 #include "world/objects/interactive.h"
@@ -134,7 +134,7 @@ float Npc::angleDir(float x, float z) {
 bool Npc::resetPositionToTA() {
   LoadProbe::Startup::Detail::Scope reset("reset_npc");
   endMeleeAiSpecial();
-  const bool isDragon = (guild()==GIL_DRAGON);
+  const bool isDragon = (owner.guildTraits().has(guild(),GuildTraits::Dragon));
   const bool isDead   = this->isDead();
 
   if(isDead && !invent.hasMissionItems() && !isDragon)

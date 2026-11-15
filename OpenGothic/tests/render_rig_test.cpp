@@ -993,6 +993,15 @@ int main() {
           require(maxDiff(linearOnly(o[h]),linearOnly(p[h]))<=1e-4,"the hand keeps its turn"+at);
           }
         require(distance(position(o[fl]),apply(o[hl],position(body.local[fl])))<=1e-3,"the finger follows the solved hand"+at);
+        // a palm laid flat (Hands::openLeft): the finger lies in the hand as in the bind pose, whatever its source does
+        // (through a quaternion in floats: a fifth of a degree of room);
+        // the right hand's weight does not open the left one
+        require(armsRig->solve(w.data(),w.size(),o.data(),RenderRig::Hands{0,1,1,0}),"an open hand is solved"+at);
+        const double openTurn = turnAngle(relative(o[hl],o[fl]),relative(body.world[hl],body.world[fl]));
+        require(openTurn<=0.2,"open: the finger as in the bind pose's hand"+at+": "+std::to_string(openTurn));
+        require(armsRig->solve(w.data(),w.size(),o.data(),RenderRig::Hands{0,1,0,1}) &&
+                plainRig->solve(w.data(),w.size(),p.data()),"the other hand's weight is solved"+at);
+        require(maxDiff(linearOnly(o[fl]),linearOnly(p[fl]))<=1e-4,"open right: the left finger as the other bones"+at);
 
         require(armsRig->solve(w.data(),w.size(),o.data(),RenderRig::Hands{1,0}),"held hands are solved"+at);
         for(size_t i:{ur,lr,hr})
