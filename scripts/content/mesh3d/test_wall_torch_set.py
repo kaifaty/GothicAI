@@ -71,6 +71,8 @@ def test_every_torch_of_a_place_gets_the_model_its_fire_and_one_light_in_the_fla
         seeds = [e['flicker']['seed'] for e in layer['add'] if 'flicker' in e]
         assert len(seeds) == len(set(seeds)) == 3 * len(ids), 'no two flames pulse in step'
         assert all(max(abs(v) for v in lamp['offset_cm']) <= 100 for lamp in layer['light'])
+        # a lamp added to a flame only where the base gave the torch none to move there
+        assert len(layer['light']) + len(lights) == len(ids)
         keys = [e['key'] for e in layer['add']]
         for light in lights:
             flame = np.array(added[light['flicker_from']]['position'])
