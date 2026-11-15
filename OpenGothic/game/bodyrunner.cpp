@@ -21,7 +21,6 @@
 #include "testbench.h"
 #include "stucklogger.h"
 #include "world/animationtail.h"
-#include "world/worldwalk.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
 #include "world/waypoint.h"
@@ -322,7 +321,6 @@ public:
     finishMeleeShadowSwings();
     // A forked runner leaves with _exit, past the summary atexit would print.
     AnimationTail::reportCheck();
-    WorldWalk::reportCheck();
     saveSummary();
     observationFile.close(); timingFile.close(); controlFile.close(); arenaFile.close();
   }

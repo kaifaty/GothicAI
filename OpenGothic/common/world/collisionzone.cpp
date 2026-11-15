@@ -5,7 +5,6 @@
 #include "world/objects/npc.h"
 #include "worldobjects.h"
 #include "world.h"
-#include "worldwalk.h"
 
 #include "game/serialize.h"
 #include "graphics/pfx/particlefx.h"
@@ -141,10 +140,8 @@ void CollisionZone::onIntersect(Npc& npc) {
       return;
   intersect.push_back(&npc);
 
-  if(cb) {
-    WorldWalk::invalidate();
+  if(cb)
     cb(npc);
-    }
   }
 
 void CollisionZone::tick(uint64_t /*dt*/) {

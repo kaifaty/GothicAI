@@ -11,7 +11,6 @@
 #include "physics/collisionworld.h"
 #include "world/bullet.h"
 #include "world/world.h"
-#include "world/worldwalk.h"
 #include "frameprofile.h"
 #include "settings.h"
 #include "navdemos.h"
@@ -101,7 +100,6 @@ bool Npc::createRagdoll() {
   const auto* skeleton = visual.visualSkeleton();
   if(skeleton==nullptr || !visual.hitZoneShape().isValid())
     return false;
-  WorldWalk::invalidate();
   updateAnimation(0,true);
   Vec3 velocity;
   const auto now = owner.tickCount();
@@ -126,7 +124,6 @@ bool Npc::createRagdoll() {
     return false;
     }
   ragdollDormant.reset();
-  WorldWalk::ragdollCreated();
   ragdoll = std::move(body);
   ragdoll->setNpc(this);
   if(const auto culprit = spellImpulseCulprit.lock())
@@ -476,7 +473,6 @@ void Npc::prepareLivingBody() {
     }
   // Only birth needs a forced solve. Subsequent targets come from the normal
   // animation update, including IK/aim/flinch, without solving the pose twice.
-  WorldWalk::invalidate();
   updateAnimation(0,true);
   living = owner.physic()->createKinematicBody(*skeleton,visual.hitZoneShape(),visual.pose().transform(),
                                              visual.pose().boneCount(),visual.transform());
@@ -579,6 +575,5 @@ void Npc::syncRagdoll() {
   physic.setPosition(position());
   visual.pose().setRagdollPose(visual.visualSkeleton(),ragdollPose,ragdoll->poseIndices());
   durtyTranform = TR_Pos|TR_Rot|TR_Scale;
-  WorldWalk::invalidate();
   { FrameProfile::Scope timing(FrameProfile::Zone::ForcedSyncAnimation,FrameProfile::watchedActor(this)); updateAnimation(0,true); }
   }

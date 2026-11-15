@@ -24,9 +24,6 @@
 #include "world/world.h"
 #include "world/worldobjects.h"
 #include "world/animationtail.h"
-#include "world/worldwalk.h"
-#include "world/collisionzone.h"
-#include "settings.h"
 #include "game/bodyarena.h"
 
 #include <rapidjson/document.h>
@@ -1099,10 +1096,9 @@ class NpcLogicalStateContract final {
     }
 
   public:
-    static void worldWalk(Npc& anchor) {
+    static void preTickOrder(Npc& anchor) {
       ++cases;
       auto& world=anchor.world();
-      auto& objects=world.wobj;
       auto& gothic=Gothic::inst();
       const auto kind=world.script().findSymbolIndex("BDT_1003_BANDIT_M");
       const auto hero=world.player();
@@ -1111,129 +1107,40 @@ class NpcLogicalStateContract final {
         npc->clearAiQueue(); npc->clearState(true); npc->clearGoTo(); npc->stopWalking();
         npc->closeWeapon(true); npc->setTarget(nullptr); npc->setExternalControl(true);
         npc->visual.pose().stopAllAnim(); npc->setAnim(Npc::Anim::Idle);
-        npc->setSimTierOverride(tier); npc->setSimTier(tier); npc->updateSimpleMovement();
+        npc->setSimTierOverride(tier);
+        // The pre-tick pass must replace this deliberately wrong tier before either actor ticks.
+        npc->setSimTier(tier==NpcSimTier::Full ? NpcSimTier::Simplified : NpcSimTier::Full);
         npc->waitTime=npc->aniWaitTime=npc->outWaitTime=npc->faiWaitTime=0;
         return npc;
         };
-      auto* simple=make(NpcSimTier::Simplified,{10000,0,0});
-      auto* native=make(NpcSimTier::Full,{100,0,0});
-      expect(simple->worldWalkPlan()==0,"graph NPC has neither prepare nor sync work");
-      expect((native->worldWalkPlan()&WorldWalk::Prepare)!=0,"native NPC retains preparation");
-      const auto livingBefore=Settings::physicsFlags().livingBodies;
-      Gothic::settingsSetI("GAME","living_bodies",1);
-      native->prepareLivingBody();
-      expect(native->living!=nullptr,"world walk fixture has a real living rig");
-      native->setSimTier(NpcSimTier::Simplified);
-      expect((native->worldWalkPlan()&WorldWalk::Prepare)!=0,"graph entry still discards an existing living rig");
-      native->prepareLivingBody();
-      expect(native->living==nullptr,"graph preparation discards the rig");
-      native->setSimTier(NpcSimTier::Full);
-      Gothic::settingsSetI("GAME","living_bodies",livingBefore ? 1 : 0);
-
-      // Settle existing native bodies before measuring skip counts; births conservatively stale a plan.
-      objects.prepareRagdolls(); objects.syncRagdolls();
-      // This is the production policy/prepare path, with genuine NPCs rather than a copy of its predicate.
-      objects.updateNpcPolicies(hero,hero->position());
-      expect(objects.preparePlan.skips(objects.npcId(simple),simple,WorldWalk::Prepare),"policy plans a graph skip");
-      const auto checked=WorldWalk::checkedCount(), mismatches=WorldWalk::mismatchedCount();
-      objects.prepareRagdolls(); objects.syncRagdolls();
-      expect(!simple->ragdollHasLastPosition,"skipped graph preparation leaves native history untouched");
-      if(WorldWalk::checking())
-        expect(WorldWalk::checkedCount()>checked && WorldWalk::mismatchedCount()==mismatches,
-               "world walk check exercises real skipped steps without a mismatch");
-
-      const auto ragdollsBefore=Settings::physicsFlags().ragdoll;
-      Gothic::settingsSetI("GAME","ragdoll",1);
-      objects.updateNpcPolicies(hero,hero->position()); objects.prepareRagdolls();
-      expect(native->setRagdollDown(false),"sync fixture enters the native down state");
-      native->prepareRagdoll();
-      expect(native->hasRagdoll() && (native->worldWalkPlan()&WorldWalk::Sync)!=0,
-             "a real ragdoll retains sync work even when born after the sync decision");
-      const auto bodyPosition=native->position();
-      native->x+=10.f; // Disturb the export, not the native body's root.
-      objects.syncRagdolls();
-      expect(native->position()==bodyPosition,"ragdoll birth invalidates an earlier sync skip");
-      Gothic::settingsSetI("GAME","ragdoll",ragdollsBefore ? 1 : 0);
-
-      // A collision script runs after the decisions and changes a remote NPC, removes another slot,
-      // and appends a native NPC. All must receive preparation at their current slots.
-      objects.updateNpcPolicies(hero,hero->position());
-      Npc* added=nullptr;
-      unsigned callbacks=0;
-      {
-        CollisionZone zone(world,native->position(),Tempest::Vec3(25,25,25));
-        zone.setCallback([&](Npc&) {
-          if(callbacks++!=0) return;
-          simple->setTarget(hero);
-          world.removeNpc(*native);
-          added=make(NpcSimTier::Full,{15000,0,0});
-          });
-        objects.tickNear(0);
-      }
-      expect(callbacks>0 && added!=nullptr && simple->nativeCombatMovement(),"post-policy script changed and replaced real NPCs");
-      objects.prepareRagdolls();
-      expect(simple->ragdollHasLastPosition && added->ragdollHasLastPosition,
-             "post-script preparation ignores stale decisions and stale slots");
-      objects.syncRagdolls();
-      expect(WorldWalk::mismatchedCount()==mismatches,"script invalidation leaves no erroneous skip to the checker");
-
-      // Force one wrong decision in a child: the real old path must change the NPC, record the mismatch,
-      // name it immediately, and report once even on the runner's _exit path.
-      if(WorldWalk::checking()) {
-        int fds[2]; expect(pipe(fds)==0,"world walk check pipe opens");
-        const auto pid=fork(); expect(pid>=0,"world walk check child forks");
-        if(pid==0) {
-          close(fds[0]); dup2(fds[1],STDERR_FILENO); close(fds[1]);
-          const auto before=WorldWalk::mismatchedCount();
-          simple->setPosition(simple->position()+Tempest::Vec3(10,0,0));
-          objects.updateNpcPolicies(hero,hero->position());
-          objects.preparePlan.entries[objects.npcId(simple)].steps &= uint8_t(~WorldWalk::Prepare);
-          objects.prepareRagdolls();
-          const bool caught=WorldWalk::mismatchedCount()==before+1 &&
-                            WorldWalk::firstMismatchNpc()==simple->displayName() && WorldWalk::firstMismatchStep()=="prepare";
-          WorldWalk::reportCheck(); WorldWalk::reportCheck();
-          _exit(caught ? 0 : 1);
-          }
-        close(fds[1]);
-        std::string diagnostic; char buffer[1024];
-        for(ssize_t n; (n=read(fds[0],buffer,sizeof(buffer)))>0;) diagnostic.append(buffer,size_t(n));
-        close(fds[0]); int status=0;
-        expect(waitpid(pid,&status,0)==pid && WIFEXITED(status) && WEXITSTATUS(status)==0,
-               "wrong world walk plan registers a real state mismatch");
-        const std::string marker="[world-walk-check] checked=";
-        const auto line=diagnostic.find(marker);
-        expect(diagnostic.find("first mismatch: npc=")!=std::string::npos && line!=std::string::npos &&
-               diagnostic.find(marker,line+marker.size())==std::string::npos,
-               "world walk mismatch prints immediately and reports exactly once before _exit");
-        }
-      world.removeNpc(*simple); world.removeNpc(*added);
-
-      // The first tick's output callback observes the later attacker's fighter mark. Refreshing
-      // only immediately before each actor's tick is too late, even if the final marks are equal.
-      ++cases;
       auto* first=make(NpcSimTier::Simplified,{100,0,0});
       auto* fighter=make(NpcSimTier::Full,{200,0,0});
       first->handle().id=std::numeric_limits<int32_t>::min()+1;
       fighter->handle().id=std::numeric_limits<int32_t>::min()+2;
+      expect(world.npcById(0)!=first,"order fixture starts with an unsorted NPC array");
       fighter->setToFightMode(world.script().findSymbolIndex("ItMw_1h_Common_01")); fighter->setTarget(first);
       expect(fighter->startState(world.script().findFunction("ZS_ATTACK"),""),"order fixture enters the native attack state");
       expect(fighter->playAnimByName("S_1HATTACK",BS_HIT)!=nullptr && fighter->isAttack(),"order fixture has a real attack");
       first->meleeFighter={}; fighter->meleeFighter={};
-      // Graph locomotion keeps this fresh observer out of the first native gravity step, which
-      // could enter InAir and defer its output until a later world tick.
+      // Graph locomotion keeps the observer out of native gravity before its queued output callback.
       first->setExternalControl(false);
       first->handle().voice=14;
       first->aiPush(AiQueue::aiOutputSvm(*hero,"$NOTNOW",0));
-      unsigned outputs=0; bool marked=false;
+      unsigned outputs=0; bool marked=false, tiers=false, sorted=false;
       gothic.interceptSvm=[&](Npc& self,std::string_view,std::string_view,Npc*,bool) {
-        if(&self==first) { ++outputs; marked=first->isMeleeFighter() && fighter->isMeleeFighter(); }
+        if(&self==first) {
+          ++outputs;
+          marked=first->isMeleeFighter() && fighter->isMeleeFighter();
+          tiers=first->simTier()==NpcSimTier::Simplified && fighter->simTier()==NpcSimTier::Full;
+          sorted=world.npcById(0)==first && world.npcById(1)==fighter;
+          }
         return true;
         };
-      objects.tick(33,33);
+      world.tick(33);
       gothic.interceptSvm={};
       expect(outputs==1 && marked,"all melee fighters are refreshed before the first NPC tick callback: outputs="+
              std::to_string(outputs)+" marked="+std::to_string(marked));
-      expect(objects.npcArr[0].get()==first && objects.npcArr[1].get()==fighter,"tick establishes handle order before any NPC tick");
+      expect(tiers && sorted,"simulation tiers and handle order are established before the first NPC tick callback");
       world.removeNpc(*first); world.removeNpc(*fighter);
       }
 
@@ -2111,6 +2018,7 @@ int main(int argc,const char** argv) {
       gothic.dialogExtraFn=std::move(previousExtra);
       expect(receivedCurrent && offered==0,"NPC_CHECKINFO extra dialogs receive the current NPC instance");
       }
+    if(!missingNetwork) NpcLogicalStateContract::preTickOrder(b);
     if(!missingNetwork) NpcLogicalStateContract::meleeAi(a,b);
 #ifdef GOTHIC_BODY_ENGINE_NET
     if(missingNetwork) {
@@ -2136,7 +2044,6 @@ int main(int argc,const char** argv) {
     meleeRemoval(b);
     meleeShadowLoopChanges(b);
     frozenArenaTail(b);
-    NpcLogicalStateContract::worldWalk(b);
     NpcLogicalStateContract::run(gothic.world()->npcId(&b),scenario,output);
     {
       const auto statsScenario=output/"melee-stats.bench";

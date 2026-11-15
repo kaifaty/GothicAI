@@ -2,8 +2,6 @@
 
 #include "world/objects/npc.h"
 #include "world/world.h"
-#include "game/bodyarena.h"
-#include "navdemos.h"
 #include "frameprofile.h"
 
 #include <algorithm>
@@ -27,7 +25,7 @@ void WorldObjects::updateSimTiers(bool beforeTick) {
     const auto pos   = npc.position();
     const bool hero  = (&npc==pl || npc.isPlayer());
     // Training and arena actors keep native simulation at every distance.
-    const bool keep  = NavDemos::fullSimulation(npc) || BodyArena::isActor(npc);
+    const bool keep  = keepsFullSimulation(npc);
     const auto prev  = npc.simTier();
     const auto next  = !hero && !keep && npc.simTierOverride().has_value() ? *npc.simTierOverride() :
                       NpcSimTiers::desired(mode,hero,keep,residency,ChunkId::fromPosition(pos.x,pos.z),prev);
@@ -69,12 +67,10 @@ void WorldObjects::updateSimTiers(bool beforeTick) {
 void WorldObjects::updateNpcPolicies(const Npc* player, const Tempest::Vec3& position) {
   FrameProfile::Scope timing(FrameProfile::Zone::NpcPolicy);
   npcNear.clear();
-  preparePlan.entries.resize(npcArr.size());
-  preparePlan.stamp = WorldWalk::revision(WorldWalk::Prepare);
   for(size_t at=0; at<npcArr.size(); ++at) {
     auto& npc = *npcArr[at];
     const float dist = (npc.position()-position).quadLength();
-    if(dist<3000.f*3000.f || NavDemos::fullSimulation(npc)) {
+    if(dist<3000.f*3000.f || keepsNearPolicy(npc)) {
       npcNear.push_back(&npc);
       if(&npc!=player)
         npc.setProcessPolicy(NpcProcessPolicy::AiNormal);
@@ -83,39 +79,5 @@ void WorldObjects::updateNpcPolicies(const Npc* player, const Tempest::Vec3& pos
       } else {
       npc.setProcessPolicy(NpcProcessPolicy::AiFar2);
       }
-    preparePlan.entries[at] = {&npc,npc.worldWalkPlan()};
     }
-  }
-
-void WorldObjects::prepareRagdolls() {
-  const bool check = WorldWalk::checking();
-  syncPlan.entries.resize(npcArr.size());
-  syncPlan.stamp = WorldWalk::revision(WorldWalk::Sync);
-  for(size_t at=0; at<npcArr.size(); ++at) {
-    auto* npc = npcArr[at].get();
-    if(preparePlan.skips(at,npc,WorldWalk::Prepare)) {
-      syncPlan.entries[at] = preparePlan.entries[at];
-      if(check)
-        npc->checkSkippedWorldWalk(WorldWalk::Prepare);
-      continue;
-      }
-    npc->prepareRagdoll();
-    npc->prepareLivingBody();
-    syncPlan.entries[at] = {npc,uint8_t(npc->hasRagdoll() ? WorldWalk::Sync : 0)};
-    }
-  }
-
-void WorldObjects::syncRagdolls() {
-  const bool check = WorldWalk::checking();
-  for(size_t at=0; at<npcArr.size(); ++at) {
-    auto* npc = npcArr[at].get();
-    if(syncPlan.skips(at,npc,WorldWalk::Sync)) {
-      if(check)
-        npc->checkSkippedWorldWalk(WorldWalk::Sync);
-      continue;
-      }
-    npc->syncRagdoll();
-    }
-  // No plan survives into the next world step or a standalone call from a tool.
-  preparePlan.stamp = syncPlan.stamp = uint64_t(-1);
   }

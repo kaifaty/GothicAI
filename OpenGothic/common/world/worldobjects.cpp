@@ -528,6 +528,15 @@ void WorldObjects::loadPlacedItems(Serialize& fin) {
     }
   }
 
+// Keep the training/arena dependencies in this translation unit, as for the animation tail.
+bool WorldObjects::keepsFullSimulation(const Npc& npc) {
+  return NavDemos::fullSimulation(npc) || BodyArena::isActor(npc);
+  }
+
+bool WorldObjects::keepsNearPolicy(const Npc& npc) {
+  return NavDemos::fullSimulation(npc);
+  }
+
 void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
   updateSimTiers(true);
   const auto& logic = NpcLogicAudit::stats();
@@ -668,22 +677,17 @@ void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
 
     const uint64_t percNextTime = i.percNextTime();
     if(percNextTime<=owner.tickCount()) {
-      WorldWalk::invalidate();
       i.perceptionProcess(*pl);
       }
 
     if(i.processPolicy()==NpcProcessPolicy::AiNormal) {
-      if(!passive.empty())
-        WorldWalk::invalidate();
       for(auto& r:passive)
         passivePerceptionProcess(r, *ptr, *pl);
       }
     }
   for(auto& r:passive)
-    if(r.deed!=nullptr) {
-      WorldWalk::invalidate();
+    if(r.deed!=nullptr)
       GameHost::inst().emitHeroDeed(*r.deed);
-      }
   }
 
 uint32_t WorldObjects::npcId(const Npc *ptr) const {
@@ -855,6 +859,18 @@ bool WorldObjects::execTriggerEvent(const TriggerEvent& e) {
     }
 
   return emitted;
+  }
+
+void WorldObjects::prepareRagdolls() {
+  for(auto& npc:npcArr) {
+    npc->prepareRagdoll();
+    npc->prepareLivingBody();
+    }
+  }
+
+void WorldObjects::syncRagdolls() {
+  for(auto& npc:npcArr)
+    npc->syncRagdoll();
   }
 
 static bool animationProbed(const Npc& npc) {
