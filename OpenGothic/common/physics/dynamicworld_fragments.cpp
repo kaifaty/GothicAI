@@ -63,7 +63,7 @@ std::unique_ptr<CollisionWorld::DynamicBody> addFragmentBody(CollisionWorld& wor
   float largest=0;
   for(int axis=0;axis<3;++axis) {
     const float scale=Tempest::Vec3(matrix.at(axis,0),matrix.at(axis,1),matrix.at(axis,2)).length();
-    largest=std::max(largest,size[uint(axis)]*scale);
+    largest=std::max(largest,size[JPH::uint(axis)]*scale);
     }
   const int category=largest>=CollisionWorld::fragmentBlockSize ? DynamicWorld::C_Fragment : DynamicWorld::C_FragmentSmall;
   auto body=world.addDynamicBody(shape,matrix,friction,mass,category);

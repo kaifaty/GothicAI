@@ -31,7 +31,7 @@ class Flinch final {
     // A run into a wall, a table, a person (game/bumpsignal): the trunk is thrown off the obstacle or folds
     // over it, the head lags behind. Its own springs beside the blow's, shorter and stiffer.
     struct Bump final {
-      enum Kind : uint8_t { Wall, Waist, Person, Pushed, KindCount };
+      enum Kind : uint8_t { Wall, Waist, Person, Pushed, Braced, KindCount };
       Kind          kind     = Wall;
       Tempest::Vec3 normal   = {};  // world, horizontal: off the obstacle; Pushed: the way the runner goes
       float         strength = 0;   // 0..1

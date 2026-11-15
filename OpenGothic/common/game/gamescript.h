@@ -17,6 +17,7 @@
 #include "game/constants.h"
 #include "game/scripttypes.h"
 #include "game/gamerules.h"
+#include "game/gothicguildtraits.h"
 #include "game/questlog.h"
 #include "game/ownsymbols.h"
 #include "game/gamescript_startupfloor.h"
@@ -134,6 +135,7 @@ class GameScript final : public GameRules {
     const FocusRecord&           focusRange() const override { return cFocusRange; }
     const FocusRecord&           focusMage()  const override { return cFocusMage;  }
     const GuildRecord&           guildVal()   const override { return *cGuildVal;  }
+    const GuildTraits&           guildTraits() const override { return gothicGuildTraits(); }
 
     std::string_view            menuMain() const;
 

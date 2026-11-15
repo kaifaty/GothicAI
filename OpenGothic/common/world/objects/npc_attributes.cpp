@@ -1,7 +1,7 @@
 #include "npc.h"
 
 #include <algorithm>
-#include "game/constants.h"
+#include "game/rpgvocabulary.h"
 #include "game/gamehost.h"
 #include "world/world.h"
 
@@ -111,15 +111,15 @@ uint32_t Npc::instanceSymbol() const {
   }
 
 uint32_t Npc::guild() const {
-  return std::min(uint32_t(hnpc->guild), uint32_t(GIL_MAX-1));
+  return std::min(uint32_t(hnpc->guild), owner.guildTraits().count()-1);
   }
 
 bool Npc::isMonster() const {
-  return GIL_SEPERATOR_HUM<guild() && guild()<GIL_SEPERATOR_ORC;
+  return owner.guildTraits().has(guild(),GuildTraits::Monster);
   }
 
 bool Npc::isHuman() const {
-  return guild() < GIL_SEPERATOR_HUM;
+  return owner.guildTraits().has(guild(),GuildTraits::Human);
   }
 
 void Npc::setTrueGuild(int32_t g) {
@@ -127,7 +127,7 @@ void Npc::setTrueGuild(int32_t g) {
   }
 
 int32_t Npc::trueGuild() const {
-  if(trGuild==GIL_NONE)
+  if(trGuild==int32_t(owner.guildTraits().none))
     return hnpc->guild;
   return trGuild;
   }

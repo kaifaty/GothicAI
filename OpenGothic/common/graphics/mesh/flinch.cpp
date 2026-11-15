@@ -39,6 +39,8 @@ Flinch::BumpForm bumpForms[Flinch::Bump::KindCount] = {
   {20.f, 0.f, -6.f, 14.f, 1.f,   16.f, 0.7f,  0.35f}, // Waist: folds over it and comes up, no swing back
   {16.f, 8.f, 18.f, 14.f, 0.75f, 18.f, 0.55f, 0.35f}, // Person: as off a wall; the other body gives
   {18.f, 0.f, 16.f, 11.f, 0.8f,  15.f, 0.5f,  0.35f}, // Pushed: the runner's way, a body at rest is softer
+  {9.f,  0.f, -8.f, 10.f, 0.9f,  12.f, 0.7f,  0.35f}, // Braced: the palms are on the wall, the chest goes on to them
+                                                      // and comes back, the head with it
   };
 
 // the speed that carries a damped spring to this peak
@@ -159,7 +161,7 @@ void Flinch::bump(const Bump& b, const Vec3& fwd) {
   bHeadDamp = std::clamp(form.headDamp,0.1f,1.f);
 
   // where the top of the trunk is thrown, and where the obstacle is
-  const Vec3 thrown   = b.kind==Bump::Waist ? n*-1.f : n;
+  const Vec3 thrown   = (b.kind==Bump::Waist || b.kind==Bump::Braced) ? n*-1.f : n;
   const Vec3 obstacle = b.kind==Bump::Pushed ? Vec3() : n*-1.f;
   const Vec3 axis     = toBody(cross(Up,thrown),forward);
   bTrunkV += axis*(kickFor(form.trunk*Deg,bFreq,bDamp)*a);

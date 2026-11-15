@@ -6,6 +6,8 @@ Builds this fork's game, with its AI bridge, and the story graph converter on Wi
 The Windows counterpart of scripts/build-engine.sh, plus the converter the AI server and TTS run:
   OpenGothic\build\opengothic\Gothic2Notr.exe            the game; Tempest.dll, dxcompiler.dll, dxil.dll beside it
   OpenGothic\build\opengothic\content-convert.exe        the base and video converter the launcher runs first
+  OpenGothic\build\opengothic\engine-platform-link.exe   the platform's complete link check
+  OpenGothic\build\opengothic\engine-island.exe          the standalone island (also in ALL)
   OpenGothic\ai_bridge\storygraph\build\storygraph.exe    the story graph converter (STORYGRAPH_TOOL)
 
 Needs Visual Studio 2022 or its Build Tools with "Desktop development with C++" (MSVC x64, Windows SDK and
@@ -65,7 +67,7 @@ $keepGoing = @('--', '-k', '0')
 $engine = Join-Path $Root 'OpenGothic'
 $build = Join-Path $engine 'build'
 Invoke-Step @('-S', $engine, '-B', $build, '-G', 'Ninja', "-DCMAKE_BUILD_TYPE=$BuildType")
-Invoke-Step (@('--build', $build, '--target', 'Gothic2Notr') + $parallel + $keepGoing)
+Invoke-Step (@('--build', $build, '--target', 'Gothic2Notr', 'engine-platform-link', 'engine-island') + $parallel + $keepGoing)
 
 $graph = Join-Path $engine 'ai_bridge\storygraph'
 $graphBuild = Join-Path $graph 'build'
@@ -75,7 +77,8 @@ Invoke-Step (@('--build', $graphBuild, '--target', 'storygraph') + $parallel + $
 # The runtime output folder already holds the game, its converter (a dependency of the game target),
 # Tempest.dll and the shader compiler DLLs Tempest copies.
 $out = Join-Path $build 'opengothic'
-$expected = @('Gothic2Notr.exe', 'content-convert.exe', 'Tempest.dll', 'dxcompiler.dll', 'dxil.dll' |
+$expected = @('Gothic2Notr.exe', 'content-convert.exe', 'engine-platform-link.exe', 'engine-island.exe',
+    'Tempest.dll', 'dxcompiler.dll', 'dxil.dll' |
     ForEach-Object { Join-Path $out $_ })
 $expected += Join-Path $graphBuild 'storygraph.exe'
 $absent = @($expected | Where-Object { -not (Test-Path -LiteralPath $_) })

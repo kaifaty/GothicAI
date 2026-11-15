@@ -4,7 +4,7 @@
 #include <cctype>
 #include <string>
 
-#include "game/constants.h"
+#include "game/rpgvocabulary.h"
 #include "game/gamerules.h"
 #include "graphics/effect.h"
 #include "world/objects/pfxemitter.h"
@@ -67,7 +67,7 @@ BloodSpawn::GuildBlood BloodSpawn::guildBlood(const World& world, int32_t guild)
   const std::string_view tex = gv.blood_texture[guild];
   if(tex.empty()) {
     // people use the engine's default red; a beast without a texture (skeletons) leaves none
-    ret.decal = guild<int32_t(GIL_SEPERATOR_HUM);
+    ret.decal = world.guildTraits().has(uint32_t(guild),GuildTraits::Human);
     }
   else {
     ret.decal = true;

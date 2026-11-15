@@ -143,6 +143,9 @@ class RenderRig final {
     struct Hands final {
       float hold  = 0;  // two hands on one thing: a 2H weapon, a bow, a crossbow, a spell
       float world = 0;  // the hands on the world: a ladder, a workbench, a chest
+      // a palm flat on something (graphics/mesh/reach): the fingers under that hand go from the fist the rig holds
+      // them in to the rig's own bind pose, the open hand; the left arm's and the right one's (by source_hand)
+      float openLeft = 0, openRight = 0;
       };
 
     // what the legs keep between solves (render-rigs.json, root: heel): one per body, reset (valid = false) when the
@@ -201,6 +204,9 @@ class RenderRig final {
       float              share = 0;      // of the finger's bend
       size_t             shoulder = None; // the clavicle's rhythm
       bool               afterArms = false; // below an arm's forearm: placed once the arms are solved
+      size_t             openHand = None;   // below an arm's hand: that hand's bone (Hands::open*)
+      bool               openLeft = false;  // ... of the left arm
+      IkMath::Mat3       openRel = {};      // R_hand_bind^T * R_bind: as it lies in the open hand
       };
     struct Leg final {
       size_t        thigh = None, calf = None, foot = None, ball = None;

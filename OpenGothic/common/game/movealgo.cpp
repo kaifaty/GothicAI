@@ -92,6 +92,8 @@ MoveAlgo::MoveAlgo(Npc& unit)
 void MoveAlgo::load(Serialize &fin) {
   resetCharacterVirtual();
   bumpSignal = {};
+  reachSignal = {};
+  reach = {};
   npcVirtualInRange = false;
   npcVirtualMobTransition = false;
   fin.read(reinterpret_cast<uint32_t&>(flags));
@@ -337,7 +339,7 @@ bool MoveAlgo::implTick(uint64_t dt, MvFlags moveFlg) {
     // down a walkable slope (the controller's static friction).
     const bool standing = bs==BS_STAND && assist==Tempest::Vec3() && state!=Slide;
     const auto assistOrigin = npc.position();
-    const bool moved = tickCharacterVirtual(dt,dp,standing,assist!=Tempest::Vec3());
+    const bool moved = tickCharacterVirtual(dt,wallStop(dp),standing,assist!=Tempest::Vec3());
     npc.noteMeleeStep(root,assist,npc.position()-assistOrigin,dt);
     if(impulseGeneration!=movementImpulseGeneration)
       return moved;

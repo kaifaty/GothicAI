@@ -10,6 +10,9 @@
 #include "game/gamescript.h"
 #include "game/serialize.h"
 #include "world/objects/item.h"
+#include "world/objects/npc.h"
+#include "world/benchhooks.h"
+#include "testbench.h"
 
 #include <Tempest/MemReader>
 #include <Tempest/MemWriter>
@@ -26,6 +29,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <unistd.h>
 #include <vector>
 
 namespace {
@@ -444,6 +448,48 @@ void irregularSupport() {
           "an irregular support must exclude the entire Item support chain to a fixed point");
   }
 
+void benchHelpers(Npc& npc) {
+  require(BenchProbe::get()==nullptr,"bench helpers start without an adapter");
+  const std::string text = std::string("\"\\\n\r\t\b\f\x01\x1f\0",10)+"UTF-8: \xc3\xa9\xe7\x8c\xab";
+  const std::string json = "\"\\\"\\\\\\n\\r\\t\\u0008\\u000c\\u0001\\u001f\\u0000UTF-8: \xc3\xa9\xe7\x8c\xab\"";
+  const auto* symbol = npc.world().script().findSymbol(size_t(npc.instanceSymbol()));
+  require(symbol!=nullptr && !symbol->name().empty(),"real NPC has a script symbol");
+  const std::string expectedName(symbol->name()); // The former TestBench::who lookup.
+  for(bool installed:{false,true}) {
+    if(installed)
+      TestBench::install();
+    require(Bench::bodyJson(text)==json,"JSON escaping preserves the legacy bytes with and without an adapter");
+    require(Bench::who(nullptr)=="none","a null NPC has no name with and without an adapter");
+    require(Bench::who(&npc)==expectedName,"NPC symbol matches the former TestBench lookup with and without an adapter");
+    require(npc.world().npcSymbolName(&npc)==expectedName,"physics uses the same NPC symbol name");
+    }
+  BenchProbe::install(nullptr);
+  require(Bench::frameDt(37)==37,"frame dt is unchanged without an adapter");
+  require(Bench::bodyBlockVariant(npc,2)==2,"block variant falls back without an adapter");
+  std::FILE* output = std::tmpfile();
+  require(output!=nullptr,"open bench event output capture");
+  std::fflush(nullptr);
+  const int savedOut = dup(STDOUT_FILENO), savedErr = dup(STDERR_FILENO);
+  require(savedOut>=0 && savedErr>=0,"save bench event output streams");
+  const int redirectOut = dup2(fileno(output),STDOUT_FILENO);
+  const int redirectErr = dup2(fileno(output),STDERR_FILENO);
+  require(redirectOut>=0 && redirectErr>=0,"capture bench event output streams");
+  Bench::note("uninstalled bench");
+  Bench::arrowAt(&npc,1,2,3);
+  Bench::bodyEvent(npc,nullptr,"uninstalled",0);
+  Bench::destructionBreak(1,2,3);
+  std::fflush(nullptr);
+  const auto written = std::ftell(output);
+  const int restoreOut = dup2(savedOut,STDOUT_FILENO);
+  const int restoreErr = dup2(savedErr,STDERR_FILENO);
+  close(savedOut);
+  close(savedErr);
+  std::fclose(output);
+  require(restoreOut>=0 && restoreErr>=0,"restore bench event output streams");
+  require(written==0,"bench events must not write stdout or stderr without an adapter");
+  std::puts("Bench helpers: JSON bytes, null and real NPC names, physics name, dt, block fallback and silent events passed");
+  }
+
 void moverChildSave() {
   const auto* game=std::getenv("GOTHIC_DIR");
   require(game!=nullptr && *game!='\0',"GOTHIC_DIR must point to prepared Gothic II settings");
@@ -455,6 +501,8 @@ void moverChildSave() {
   gothic.setupGlobalScripts();
   GameMusic music;
   gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
+  require(gothic.player()!=nullptr,"bench helper fixture has a player");
+  benchHelpers(*gothic.player());
   const auto findChild=[](World& world) -> const WorldObjects::PlacedItem& {
     const auto& catalogue=world.placedItemCensus();
     const auto child=std::find_if(catalogue.begin(),catalogue.end(),[](const auto& row) { return row.zenId==2839; });

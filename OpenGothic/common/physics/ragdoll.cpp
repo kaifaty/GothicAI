@@ -7,6 +7,7 @@
 #include "graphics/mesh/hitzones.h"
 #include "graphics/mesh/skeleton.h"
 #include "benchprobe.h"
+#include "utils/jsonescape.h"
 
 #include <Jolt/Physics/Body/BodyInterface.h>
 #include <Jolt/Physics/Body/BodyLock.h>
@@ -1248,8 +1249,8 @@ void Ragdoll::sampleBirth(float deltaSeconds) {
       for(size_t j=0;j<other->partCount();++j) {
         if(!system.WereBodiesInContact(id,other->impl->native->GetBodyID(int(j)))) continue;
         if(!contacts.empty()) contacts+=',';
-        contacts+="{\"part\":"+probe->bodyJson(name)+",\"rig\":"+probe->bodyJson(probe->who(other->noiseNpc()))+
-          ",\"rig_part\":"+probe->bodyJson(other->impl->rig->parts[j].name)+",\"group\":"+std::to_string(other->impl->group)+
+        contacts+="{\"part\":"+jsonEscape(name)+",\"rig\":"+jsonEscape(other->impl->host->npcSymbolName(other->noiseNpc()))+
+          ",\"rig_part\":"+jsonEscape(other->impl->rig->parts[j].name)+",\"group\":"+std::to_string(other->impl->group)+
           ",\"protected\":"+(std::find(groups.begin(),groups.end(),other->impl->group)!=groups.end() ? "true" : "false")+"}";
         }
       }
