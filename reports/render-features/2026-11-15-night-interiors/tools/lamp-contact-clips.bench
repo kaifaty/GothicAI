@@ -13,10 +13,7 @@ view full
 cam lift off
 # 1. Xardas' tower, the torch: the hero turns on the spot before a held camera
 set time 12 0
-watch nearest
-freeze nearest
-wait 500
-place 110 0
+clear 3000
 wait 800
 watch player
 cam cut
