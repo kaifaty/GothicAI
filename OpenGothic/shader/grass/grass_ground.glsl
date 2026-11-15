@@ -47,7 +47,10 @@ void grassGround(uint bits, vec3 pos, vec3 normal, float sward, inout vec4 diffu
     bare         = grassBare(place);
     diffuse.rgb *= mix(vec3(1.0), GrassEarthTint, bare*grows);
     }
-  const float stand    = grassStand(grassPatch(place))*(1.0-bare)*grows;
+  const int   noise    = grassPatch(place);
+  if(sward>0.5)
+    diffuse.rgb *= mix(GrassSwardDry, GrassSwardLush, smoothstep(GrassSwardDryAt, GrassSwardLushAt, float(noise)));
+  const float stand    = grassStand(noise)*(1.0-bare)*grows;
   if(stand<=0.0)
     return;
 
@@ -56,11 +59,9 @@ void grassGround(uint bits, vec3 pos, vec3 normal, float sward, inout vec4 diffu
   const bool  plain = (partsOff & GrassPartFar)!=0u;
   const float far   = plain ? 0.0 : smoothstep(ring.y*0.5, ring.y, d);
   const float graze = plain ? 0.0 : 1.0 - smoothstep(GrassGrazeFrom, GrassGrazeTo, dot(gn,toEye)/max(d,1.0));
-  // the shade and the far tint of a ground with its own layers; the bench takes them back, or the layers alone
-  const bool  own   = (partsOff & GrassPartOwnShade)==0u && (sward>=0.0 || (partsOff & GrassPartLayers)!=0u);
-  const float nearShade = (partsOff & GrassPartGroundShade)!=0u ? 1.0 : (own ? GrassOwnGroundShade : GrassGroundShade);
+  const float nearShade = (partsOff & GrassPartGroundShade)!=0u ? 1.0 : (sward>=0.0 ? GrassOwnGroundShade : GrassGroundShade);
   const float along = plain ? 0.0 : max(max(far,graze), smoothstep(ring.x, ring.y*0.5, d));
-  vec3 tint = mix(vec3(mix(1.0, nearShade, stand)), mix(vec3(1.0), own ? GrassOwnFarTint : GrassFarTint, stand), along);
+  vec3 tint = mix(vec3(mix(1.0, nearShade, stand)), mix(vec3(1.0), GrassFarTint, stand), along);
   if(far>0.0) {
     // the far grass under the gust: the pressure of the place tilts the normal and lightens the tone, as the
     // blades' own (grass.vert), so the band of the gust does not stop where the blades end

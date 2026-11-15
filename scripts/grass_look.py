@@ -10,14 +10,17 @@ Reads the frames of scripts/bench/landscape-meadow.bench and landscape-meadow-pa
   blades  <mask.png> <paint.png> <frame> <ground>
                                          the colour of the blades (red in the paint, inside the mask) in the frame
                                          against the ground under them, in the frame without blades
-  variety <mask.png> <cells.png> <frame>...
+  variety <mask.png> <cells.png> [--light <mask-view.png>] <frame>...
                                          how varied the meadow is (reports/engine/2026-11-14-meadow-ground, «Что
                                          отняло жизнь»): the spread of the luminance (of its logarithm) and of the hue
                                          (degrees) between squares of 5 m, between squares of 0.5 m within one of 5 m,
                                          and between pixels within a square of 0.5 m; linear light, the mask's area.
                                          <cells.png> is the frame painted by `grass parts 8385`. The first frame is
                                          what the others are measured against: `variety` is the geometric mean of
-                                         the four ratios of the two larger scales
+                                         the four ratios of the two larger scales. --light takes the light out:
+                                         each pixel is divided by the one of the painted frame (`grass parts 193`:
+                                         one colour under the same sun and shade), so what is left is the ground's
+                                         and the blades' own
   columns <clip> [--half left|right] [--rows a:b] [--strips n] [--step s]
                                          the tone of the frame's vertical strips in time: a gust that crosses
   still   <clip> [--half left|right] [--crop x0:y0:x1:y1]
@@ -238,8 +241,10 @@ def spread(values: np.ndarray, weight: np.ndarray) -> float:
 COEF = np.array([0.2126, 0.7152, 0.0722])
 
 
-def variety_of(rgb: np.ndarray, small: np.ndarray, big: np.ndarray) -> dict:
+def variety_of(rgb: np.ndarray, small: np.ndarray, big: np.ndarray, light: np.ndarray | None = None) -> dict:
     lin = linear(rgb)
+    if light is not None:
+        lin = lin/light[..., None]
 
     def means(labels: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         flat = labels.ravel()
@@ -282,9 +287,11 @@ def variety_of(rgb: np.ndarray, small: np.ndarray, big: np.ndarray) -> dict:
 def cmd_variety(a: argparse.Namespace) -> int:
     mask = read_image(a.mask)[..., 0] > 127
     small, big = squares(read_image(a.cells), mask)
+    # the painted ground is magenta: its red is the light that fell on it
+    light = np.maximum(linear(read_image(a.light))[..., 0], 1e-3) if a.light else None
     first = None
     for path in a.frames:
-        v = variety_of(read_image(path), small, big)
+        v = variety_of(read_image(path), small, big, light)
         if first is None:
             first = v
         keys = ("lum_5m", "hue_5m", "lum_05m", "hue_05m")
@@ -363,7 +370,7 @@ def main() -> int:
     p = sub.add_parser("cover"); p.add_argument("paint"); p.add_argument("bands"); p.set_defaults(fn=cmd_cover)
     p = sub.add_parser("blades"); p.add_argument("mask"); p.add_argument("paint"); p.add_argument("frame")
     p.add_argument("ground"); p.set_defaults(fn=cmd_blades)
-    p = sub.add_parser("variety"); p.add_argument("mask"); p.add_argument("cells"); p.add_argument("frames", nargs="+")
+    p = sub.add_parser("variety"); p.add_argument("mask"); p.add_argument("cells"); p.add_argument("--light"); p.add_argument("frames", nargs="+")
     p.set_defaults(fn=cmd_variety)
     p = sub.add_parser("columns"); p.add_argument("clip"); p.add_argument("--half", choices=["left", "right"])
     p.add_argument("--rows", default="0.45:0.95"); p.add_argument("--strips", type=int, default=8)

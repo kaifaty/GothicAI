@@ -8,15 +8,16 @@ namespace Grass {
 
 namespace {
 
-// The spots: the lattice and the chance of the first round's (grasspatch.cpp), so a spot stays where it was. The
-// radius, 45 to 105 cm, is bent by a noise of 80 cm by up to 1.7 of itself and by one of 24 cm by up to 0.65: an
+// The spots: the lattice of the first round's (grasspatch.cpp) and two thirds of its spots, so a spot that stays
+// is where it was. The
+// radius, 30 to 70 cm, is bent by a noise of 80 cm by up to 1.7 of itself and by one of 24 cm by up to 0.65: an
 // outline half as long again as a circle's of the same area. The bend is held under 0.9 of the radius, so a spot
 // ends within 2 m of its centre: the four squares round a place are all that can reach it
 constexpr int32_t  BareStep    = 400*Unit;
-constexpr uint32_t BareChance  = 140;
-constexpr int32_t  BareRadius  = 45*Unit;
-constexpr int32_t  BareSpread  = 60*Unit;
-constexpr int32_t  BareSoft    = 45*Unit;
+constexpr uint32_t BareChance  = 90;
+constexpr int32_t  BareRadius  = 30*Unit;
+constexpr int32_t  BareSpread  = 40*Unit;
+constexpr int32_t  BareSoft    = 30*Unit;
 constexpr int32_t  BareBend1   = 435; // of 256
 constexpr int32_t  BareBend2   = 166;
 constexpr int32_t  BareStep1   = 80*Unit;

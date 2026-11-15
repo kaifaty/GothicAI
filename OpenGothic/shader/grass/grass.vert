@@ -33,11 +33,12 @@ layout(push_constant, std430) uniform Push {
   float swardK;       // repeats of the sward's map in a cm; 0: a ground without its own layers
   } push;
 
-layout(location = 0) out vec4 outColor;      // w: the share of the sward's own palette (grass.frag)
+layout(location = 0) out vec4 outColor;      // the painted ground under the root; w: 1 on a ground with its own layers
 layout(location = 1) out vec3 outNormal;
 layout(location = 2) out vec4 outShade;      // the share of the blade's length, of the sun through, the dryness, the sheen
 layout(location = 3) out vec3 outPrevStatic; // as Varyings of materials_common.glsl
 layout(location = 4) out vec3 outPrevDelta;
+layout(location = 5) out vec3 outRoot;       // on a ground with its own layers: the sward under the root
 
 out gl_PerVertex {
   vec4 gl_Position;
@@ -138,6 +139,7 @@ void main() {
     outShade      = vec4(0);
     outPrevStatic = vec3(0,0,1);
     outPrevDelta  = vec3(0);
+    outRoot       = vec3(0);
     return;
     }
   const float depth = (scene.viewProject*vec4(root,1.0)).w;
@@ -182,13 +184,14 @@ void main() {
     outPrevDelta  = vec3(0);
     }
 
-  // The colour of the ground under the root, from a coarse level of its texture: the strokes of the painted grass
-  // pass into the blades as patches. The pixel makes the blade's tone of it (grass.frag)
-  const bool  own  = push.swardK>0.0;
+  // The colour of the painted ground under the root, from a coarse level of its texture: the strokes of the
+  // painted grass pass into the blades as patches. The pixel makes the blade's tone of it (grass.frag). On a ground
+  // with its own layers the painted texture is not drawn, but the blades keep its colours: the root alone is of
+  // the sward it stands in
+  const bool  own  = push.swardK>0.0 && (partsOff & GrassPartLayers)==0u;
   const float lean = length(tilt.lean);
-  if(own && (partsOff & GrassPartOwnBase)==0u)
-    outColor = vec4(textureLod(sward, root.xz*push.swardK, max(float(textureQueryLevels(sward)) - 6.0, 0.0)).rgb, 1.0); else
-    outColor = vec4(textureLod(ground, uv, max(float(textureQueryLevels(ground)) - 6.0, 0.0)).rgb, own ? 1.0 : 0.0);
+  outColor = vec4(textureLod(ground, uv, max(float(textureQueryLevels(ground)) - 6.0, 0.0)).rgb, own ? 1.0 : 0.0);
+  outRoot  = own ? textureLod(sward, root.xz*push.swardK, max(float(textureQueryLevels(sward)) - 6.0, 0.0)).rgb : outColor.rgb;
   outShade = vec4(t, push.translucency, dry, GrassLeanSheen*min(lean/(0.5*GrassLeanMaxTan), 1.0));
 
   // Three quarters the ground's normal, a quarter the blade's own, rounded across it; the lean turns it against

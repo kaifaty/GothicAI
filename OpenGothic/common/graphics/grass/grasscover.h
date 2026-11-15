@@ -14,14 +14,15 @@
 // last decimetres into tufts.
 namespace Grass {
 
-constexpr int32_t CoverNotch  = 35;  // cm: a bay of earth goes this far into the meadow
-constexpr int32_t CoverSpan   = 125; // cm: from the deepest bay to the longest tongue, at a reach of 90
+constexpr int32_t CoverNotch  = 20;  // cm: a bay of earth goes this far into the meadow
+constexpr int32_t CoverSpan   = 110; // cm: from the deepest bay to the longest tongue, at a reach of 90
 constexpr int32_t CoverRipple = 15;  // cm: the quick noise on the line, to either side
 constexpr int32_t CoverSoft   = 40;  // cm: the sward thins over this across the line
 constexpr int32_t CoverInside = 80;  // cm: deeper in the meadow the border is not felt
 constexpr int32_t CoverReach  = 90;  // cm: the reach the span is given for
 constexpr int32_t CoverSward  = 128; // of 256: the ground is sward where the level is over it
 constexpr int32_t CoverBlades = 96;  // blades stand from this level: single ones on the earth of the rim
+constexpr int32_t CoverSparse = 56;  // of 256: the share of the fine blades that stand on a spot of bare earth
 
 // cm past the border where no sward comes, at this reach of the record
 constexpr int32_t coverBeyond(int32_t reach) {
@@ -52,6 +53,14 @@ inline int32_t coverLevel(int32_t x, int32_t z, int32_t border) {
 inline int32_t coverBlades(int32_t level) {
   const int32_t q = (level-CoverBlades)*256/(224-CoverBlades);
   return q<0 ? 0 : (q>256 ? 256 : q);
+  }
+
+// The share of the fine blades that stand at a place, 0..256: a spot of bare earth keeps a few of them, the earth
+// of a border none. level: coverLevel at the place; border: as given to it
+inline int32_t coverFine(int32_t level, int32_t border) {
+  const int32_t stand = coverBlades(level), edge = coverBlades(border);
+  const int32_t least = edge<CoverSparse ? edge : CoverSparse;
+  return stand>least ? stand : least;
   }
 
 }

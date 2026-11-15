@@ -1,12 +1,12 @@
 # How varied the meadow is, by measure (reports/engine/2026-11-14-meadow-ground, «Что отняло жизнь»), in still air:
 # five views of landscape-meadow.bench, each with the meadow's ground painted (`grass parts 193`, mask-<view>), its
 # squares of 0.5 m and of 5 m painted (`grass parts 8385`, cells-<view>) and the frame itself (<view>-0).
-#   scripts/grass_look.py mask mask-<view>.png m.png; scripts/grass_look.py variety m.png cells-<view>.png <frames>
-# On game-verge-along, walk-mid (a place of the walk of meadow-walk, the game's camera) and far the look of a ground
-# with its own layers is also taken back to a painted ground's, a part at a time (Grass::Part): <view>-512 the
-# blades' tips and root shade, -1024 the colour a blade starts from, -1536 both, -2048 the ground's shade and far
-# tint, -4096 the painted ground in place of the layers, -6144 both, -7680 all four. OPENGOTHIC_GRASS_FINE=0 gives
-# the short sward its broad blades back.
+#   scripts/grass_look.py mask mask-<view>.png m.png
+#   scripts/grass_look.py variety m.png cells-<view>.png --light mask-<view>.png <frame of «было»> <view>-0.png
+# On game-verge-along, walk-mid (a place of the walk of meadow-walk, the game's camera) and far a ground with its
+# own layers is also shown as a painted ground (`grass parts 4096`, <view>-4096): what the layers alone change.
+# OPENGOTHIC_GRASS_FINE=0 gives the short sward its broad blades back. The table of the note was made at commit
+# 1a9e32c0d, where this bench took back more parts of that round's look.
 #   OPENGOTHIC_CONTENT=<set> TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh landscape-meadow-variety
 # @timeout 600
 seed 73013
@@ -72,33 +72,9 @@ grass parts 0
 wait 1200
 shot far-0
 wait 200
-grass parts 512
-wait 1200
-shot far-512
-wait 200
-grass parts 1024
-wait 1200
-shot far-1024
-wait 200
-grass parts 1536
-wait 1200
-shot far-1536
-wait 200
-grass parts 2048
-wait 1200
-shot far-2048
-wait 200
 grass parts 4096
 wait 1200
 shot far-4096
-wait 200
-grass parts 6144
-wait 1200
-shot far-6144
-wait 200
-grass parts 7680
-wait 1200
-shot far-7680
 wait 200
 grass parts 0
 grass stats
@@ -122,33 +98,9 @@ grass parts 0
 wait 1200
 shot game-verge-along-0
 wait 200
-grass parts 512
-wait 1200
-shot game-verge-along-512
-wait 200
-grass parts 1024
-wait 1200
-shot game-verge-along-1024
-wait 200
-grass parts 1536
-wait 1200
-shot game-verge-along-1536
-wait 200
-grass parts 2048
-wait 1200
-shot game-verge-along-2048
-wait 200
 grass parts 4096
 wait 1200
 shot game-verge-along-4096
-wait 200
-grass parts 6144
-wait 1200
-shot game-verge-along-6144
-wait 200
-grass parts 7680
-wait 1200
-shot game-verge-along-7680
 wait 200
 grass parts 0
 grass stats
@@ -169,33 +121,9 @@ grass parts 0
 wait 1200
 shot walk-mid-0
 wait 200
-grass parts 512
-wait 1200
-shot walk-mid-512
-wait 200
-grass parts 1024
-wait 1200
-shot walk-mid-1024
-wait 200
-grass parts 1536
-wait 1200
-shot walk-mid-1536
-wait 200
-grass parts 2048
-wait 1200
-shot walk-mid-2048
-wait 200
 grass parts 4096
 wait 1200
 shot walk-mid-4096
-wait 200
-grass parts 6144
-wait 1200
-shot walk-mid-6144
-wait 200
-grass parts 7680
-wait 1200
-shot walk-mid-7680
 wait 200
 grass parts 0
 grass stats

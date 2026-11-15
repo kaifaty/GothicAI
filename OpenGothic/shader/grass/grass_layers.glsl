@@ -21,7 +21,8 @@ const float GrassLayerFarFrom  = 1500.0; // cm: the sward's colour passes to its
 const float GrassLayerFarTo    = 4000.0;
 const float GrassLayerNormalTo = 3000.0; // cm: no normal map beyond; fading from 0.7 of it
 const float GrassVergeSoft     = 30.0;   // cm: the earth of the strip gives way to the road over this
-const float GrassVergeWander   = 25.0;   // cm: the strip's end wanders to either side, at a margin of 50 and more
+const float GrassVergeWander   = 10.0;   // cm: the strip's end wanders to either side, at a margin of 50 and more
+const float GrassVergeRipple   = 5.0;    // cm: and by a quick noise
 const float GrassLiesFrom      = 0.50;   // the normal's y: steeper ground keeps its painted texture
 const float GrassLiesTo        = 0.65;
 
@@ -69,7 +70,7 @@ float grassLayers(uint flags, uint tex, float swardK, float earthK, float farK, 
       ormE = fringeTexture(2u, tex+1u, uvE, dxE*mip, dyE*mip).rgb;
     haveE = true;
     const float end = margin + float(grassValueNoise(place,1600,0x66u)-32640)*(GrassVergeWander*min(margin/50.0,1.0)/32640.0)
-                             + float(grassValueNoise(place,320,0x65u)-32640)*(10.0/32640.0);
+                             + float(grassValueNoise(place,320,0x65u)-32640)*(GrassVergeRipple/32640.0);
     // clods and stones are the last of the earth: its height shifts where a pixel of it ends
     share *= smoothstep(0.2, 0.8, (end-dist)/GrassVergeSoft + ormE.b);
     if(share<=0.0)

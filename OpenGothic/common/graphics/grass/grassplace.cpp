@@ -519,6 +519,8 @@ CellBlades buildCell(const CellInput& in) {
       int32_t pull = 0, fx = px, fz = pz;
       if(past<0 && onVerge<0) {
         pull = std::min(int32_t(std::lround((20.f + float((h >> 30) & 31u))*par.clumps*2.56f))*tuft->pullQ8/256, 166);
+        if(fine)
+          pull /= 2; // a sward is a carpet more than it is tufts
         fx   = px + int32_t(int64_t(tuft->x-px)*pull/256);
         fz   = pz + int32_t(int64_t(tuft->z-pz)*pull/256);
         at   = locate(fx,fz,w,y);
@@ -540,6 +542,8 @@ CellBlades buildCell(const CellInput& in) {
             border = coverBorder(fx,fz,-d,near->reach);
           }
         stand = coverBlades(in.patch<0 ? coverLevel(fx,fz,border) : border);
+        if(fine && in.patch<0)
+          stand = coverFine(coverLevel(fx,fz,border),border);
         if(roll*nodes*(int64_t(1) << 40) >= (share >> 8)*stand*int64_t(BladesPerM2)*1024)
           continue;
         }
@@ -574,6 +578,12 @@ CellBlades buildCell(const CellInput& in) {
       dirZ = dirZ/out1*tuft->fan + tuft->leanZ*(1.f-tuft->fan);
       float angle = std::atan2(dirZ,dirX) + (float((h >> 43) & 0xFFu)/255.f-0.5f)*2.2f;
       float lean  = (10.f + 25.f*float((h >> 51) & 0x3Fu)/63.f*(0.4f + 0.6f*std::min(fromCentre*2.f,1.f)))*tuft->lean;
+      if(fine) {
+        // a fine blade stands nearly upright and faces where it will: fanned out of their tufts and leant over, the
+        // blades of a short sward read as whorls of fur from above
+        angle = float((h >> 43) & 0xFFu)*(6.2831853f/256.f);
+        lean  = 8.f + 12.f*float((h >> 51) & 0x3Fu)/63.f;
+        }
       if(edge!=nullptr && edgeShare<1.f) {
         const float out = std::atan2(edge->outZ,edge->outX);
         float d = angle-out;
@@ -597,7 +607,9 @@ CellBlades buildCell(const CellInput& in) {
       // a blade of the sward is broad for its length, a blade of a tall clump is broad
       r.width  = fine ? uint8_t((h >> 57) & 7u) :
                  uint8_t(std::clamp(int((h >> 57) & 7u) + (tuft->clump ? 5 : (tuft->sward ? 3 : 0)),0,15));
-      r.tint   = uint8_t(std::clamp(int(tuft->tint) + int((h >> 60) & 3u) - 1,0,15));
+      // a tuft is green or dry as one, its blades within a step of it; the fine ones differ blade from blade
+      r.tint   = fine ? uint8_t(std::clamp(int(tuft->tint) + int((h >> 60) & 7u) - 3,0,15)) :
+                 uint8_t(std::clamp(int(tuft->tint) + int((h >> 60) & 3u) - 1,0,15));
       const double nx = b0*t.nx[0] + b1*t.nx[1] + b2*t.nx[2];
       const double ny = b0*t.ny[0] + b1*t.ny[1] + b2*t.ny[2];
       const double nz = b0*t.nz[0] + b1*t.nz[1] + b2*t.nz[2];

@@ -6,8 +6,8 @@
 // Where the sward lies on a meadow's own ground (reports/engine/2026-11-14-meadow-ground): the rule of
 // common/graphics/grass/grasscover.h, in the same whole numbers at a place in 1/16 cm, so the ground's two layers
 // end where the blades do. Keep the numbers here and there in step.
-const int GrassCoverNotch  = 35;
-const int GrassCoverSpan   = 125;
+const int GrassCoverNotch  = 20;
+const int GrassCoverSpan   = 110;
 const int GrassCoverRipple = 15;
 const int GrassCoverSoft   = 40;
 const int GrassCoverInside = 80;
@@ -19,14 +19,14 @@ int grassCoverBeyond(int reach) { return reach + GrassCoverRipple + GrassCoverSo
 
 // Grass::coverBare: a spot of bare earth, 0..256
 int grassCoverBare(ivec2 p) {
-  const int step = 6400, radius = 720, spread = 960, soft = 720;
+  const int step = 6400, radius = 480, spread = 640, soft = 480;
   const int cx = grassFloorDiv(p.x-step/2,step), cz = grassFloorDiv(p.y-step/2,step);
   int  bare = 0, bend = 0;
   bool bent = false;
   for(int j=cz; j<=cz+1; ++j)
     for(int i=cx; i<=cx+1; ++i) {
       const uint h = grassHash(i,j,0xB3u);
-      if((h & 0xFFu)>=140u)
+      if((h & 0xFFu)>=90u)
         continue;
       const ivec2 c = ivec2(i,j)*step + ivec2((((h >> 8) & 0xFFFu)*uint(step)) >> 12, (((h >> 20) & 0xFFFu)*uint(step)) >> 12);
       const int   r = radius + int(((grassHash(i,j,0xB4u) & 0xFFu)*uint(spread)) >> 8);

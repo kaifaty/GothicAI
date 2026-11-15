@@ -27,11 +27,7 @@ const uint GrassPartNormal      = 32u;
 const uint GrassPartPaint       = 64u;
 const uint GrassPartHide        = 128u;
 const uint GrassPartCover       = 256u; // the paint of the meadow's own ground (grass_layers.glsl): sward green, earth red
-// a ground with its own layers taken back to what a painted ground has
-const uint GrassPartOwnTip      = 512u;
-const uint GrassPartOwnBase     = 1024u;
-const uint GrassPartOwnShade    = 2048u;
-const uint GrassPartLayers      = 4096u;
+const uint GrassPartLayers      = 4096u; // a ground with its own layers as a painted ground: no layers, its blades as there
 const uint GrassPartCells       = 8192u;
 
 uint grassPartsOff(float ringW) { return uint(max(ringW - 1.0, 0.0)*0.5 + 0.25); }
@@ -60,10 +56,6 @@ const float GrassRoughness   = 0.92;
 const float GrassRootShade   = 0.55;                     // of the ground's colour at the root
 const vec3  GrassTipGreen    = vec3(1.10, 1.40, 0.90);   // of it at the tip, by the tuft's dryness
 const vec3  GrassTipStraw    = vec3(1.46, 1.38, 0.96);
-// of a ground with its own layers (grass_layers.glsl): the colour under the root is the sward's own
-const float GrassOwnRootShade= 0.62;
-const vec3  GrassOwnTipGreen = vec3(1.12, 1.24, 1.02);
-const vec3  GrassOwnTipStraw = vec3(1.30, 1.24, 1.02);
 const float GrassRootAo      = 0.35;
 const float GrassWidth       = 1.3;                      // cm at the root, and per step of the blade's four bits
 const float GrassWidthStep   = 0.11;
@@ -75,10 +67,14 @@ const float GrassTaper       = 0.7;                      // of the width is gone
 // gone from where the blades start to thin to half of the distance where they start to go (grass_ground.glsl)
 const float GrassGroundShade = 0.72;
 const vec3  GrassFarTint     = vec3(1.00, 1.10, 0.74);
-// of a ground with its own layers: its sward is grass already, the far look only leans it to the blades' colour,
-// and the shade between the blades is in part baked into it
-const vec3  GrassOwnFarTint  = vec3(1.00, 1.03, 0.80);
+// of a ground with its own layers (grass_layers.glsl): the shade between the blades is in part baked into its sward
 const float GrassOwnGroundShade = 0.82;
+// and its sward differs from place to place by the patches' noise (grassPatch): dry and lighter where the short
+// sward is, greener and deeper towards the clumps. Patches of 2 to 10 m: the tile of the sward's map has none
+const vec3  GrassSwardDry    = vec3(1.20, 1.08, 0.80);
+const vec3  GrassSwardLush   = vec3(0.82, 0.96, 0.96);
+const float GrassSwardDryAt  = 22000.0;                  // of the patches' noise
+const float GrassSwardLushAt = 44000.0;
 const float GrassFarAo       = 0.95;
 const float GrassGrazeFrom   = 0.25;
 const float GrassGrazeTo     = 0.70;
