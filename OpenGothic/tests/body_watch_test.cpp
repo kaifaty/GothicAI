@@ -1108,6 +1108,7 @@ class NpcLogicalStateContract final {
         npc->closeWeapon(true); npc->setTarget(nullptr); npc->setExternalControl(true);
         npc->visual.pose().stopAllAnim(); npc->setAnim(Npc::Anim::Idle);
         npc->setSimTierOverride(tier);
+        npc->setSimTier(tier); npc->updateSimpleMovement();
         // The pre-tick pass must replace this deliberately wrong tier before either actor ticks.
         npc->setSimTier(tier==NpcSimTier::Full ? NpcSimTier::Simplified : NpcSimTier::Full);
         npc->waitTime=npc->aniWaitTime=npc->outWaitTime=npc->faiWaitTime=0;
