@@ -1098,6 +1098,55 @@ class NpcLogicalStateContract final {
     }
 
   public:
+    static void preTickOrder(Npc& anchor) {
+      ++cases;
+      auto& world=anchor.world();
+      auto& gothic=Gothic::inst();
+      const auto kind=world.script().findSymbolIndex("BDT_1003_BANDIT_M");
+      const auto hero=world.player();
+      auto make=[&](NpcSimTier tier,const Tempest::Vec3& offset) {
+        auto* npc=world.addNpc(kind,hero->position()+offset);
+        npc->clearAiQueue(); npc->clearState(true); npc->clearGoTo(); npc->stopWalking();
+        npc->closeWeapon(true); npc->setTarget(nullptr); npc->setExternalControl(true);
+        npc->visual.pose().stopAllAnim(); npc->setAnim(Npc::Anim::Idle);
+        npc->setSimTierOverride(tier);
+        npc->setSimTier(tier); npc->updateSimpleMovement();
+        // The pre-tick pass must replace this deliberately wrong tier before either actor ticks.
+        npc->setSimTier(tier==NpcSimTier::Full ? NpcSimTier::Simplified : NpcSimTier::Full);
+        npc->waitTime=npc->aniWaitTime=npc->outWaitTime=npc->faiWaitTime=0;
+        return npc;
+        };
+      auto* first=make(NpcSimTier::Simplified,{100,0,0});
+      auto* fighter=make(NpcSimTier::Full,{200,0,0});
+      first->handle().id=std::numeric_limits<int32_t>::min()+1;
+      fighter->handle().id=std::numeric_limits<int32_t>::min()+2;
+      expect(world.npcById(0)!=first,"order fixture starts with an unsorted NPC array");
+      fighter->setToFightMode(world.script().findSymbolIndex("ItMw_1h_Common_01")); fighter->setTarget(first);
+      expect(fighter->startState(world.script().findFunction("ZS_ATTACK"),""),"order fixture enters the native attack state");
+      expect(fighter->playAnimByName("S_1HATTACK",BS_HIT)!=nullptr && fighter->isAttack(),"order fixture has a real attack");
+      first->meleeFighter={}; fighter->meleeFighter={};
+      // Graph locomotion keeps the observer out of native gravity before its queued output callback.
+      first->setExternalControl(false);
+      first->handle().voice=14;
+      first->aiPush(AiQueue::aiOutputSvm(*hero,"$NOTNOW",0));
+      unsigned outputs=0; bool marked=false, tiers=false, sorted=false;
+      gothic.interceptSvm=[&](Npc& self,std::string_view,std::string_view,Npc*,bool) {
+        if(&self==first) {
+          ++outputs;
+          marked=first->isMeleeFighter() && fighter->isMeleeFighter();
+          tiers=first->simTier()==NpcSimTier::Simplified && fighter->simTier()==NpcSimTier::Full;
+          sorted=world.npcById(0)==first && world.npcById(1)==fighter;
+          }
+        return true;
+        };
+      world.tick(33);
+      gothic.interceptSvm={};
+      expect(outputs==1 && marked,"all melee fighters are refreshed before the first NPC tick callback: outputs="+
+             std::to_string(outputs)+" marked="+std::to_string(marked));
+      expect(tiers && sorted,"simulation tiers and handle order are established before the first NPC tick callback");
+      world.removeNpc(*first); world.removeNpc(*fighter);
+      }
+
     static void restoreStamina(Npc& actor) {
       MeleeStamina::reset(actor.meleeStamina,actor.staminaMax(),actor.world().tickCount());
       }
@@ -1972,6 +2021,7 @@ int main(int argc,const char** argv) {
       gothic.dialogExtraFn=std::move(previousExtra);
       expect(receivedCurrent && offered==0,"NPC_CHECKINFO extra dialogs receive the current NPC instance");
       }
+    if(!missingNetwork) NpcLogicalStateContract::preTickOrder(b);
     if(!missingNetwork) NpcLogicalStateContract::meleeAi(a,b);
 #ifdef GOTHIC_BODY_ENGINE_NET
     if(missingNetwork) {
