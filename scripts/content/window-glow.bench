@@ -1,0 +1,162 @@
+# Windows lit of an evening (reports/render-features/2026-11-15-night-interiors, step 1): the market house, whose
+# fachwerk panels carry closed shutters (NW_CITY_WINDOW_03) and whose plinth has small openings
+# (NW_CITY_FACHWERKBASEMENT_WINDOW_01). The views of market-house.bench, each at noon, through the evening and at
+# night: no glow by day and at sunset (21:00), the windows come up one after another from 21:15, burn at 22:30 and
+# are out by 00:30.
+# Run with OPENGOTHIC_CONTENT=<a folder made by scripts/content/window_glow.py pilot>; with the working content the
+# same shots show the house without the glow.
+# @timeout 420
+cheat god
+overlay off
+view hide animated morph
+cam lift off
+
+
+
+# front
+set time 12 0
+cam look -1240
+goto pos 9137 2000 3745
+cam world 1650 -1560 24.462
+wait 34
+cam hold
+wait 6000
+set time 12 0
+wait 3500
+shot front-1200
+wait 300
+set time 21 0
+wait 3500
+shot front-2100
+wait 300
+set time 21 45
+wait 3500
+shot front-2145
+wait 300
+set time 22 30
+wait 3500
+shot front-2230
+wait 300
+set time 23 30
+wait 3500
+shot front-2330
+wait 300
+set time 0 30
+wait 3500
+shot front-0030
+wait 300
+set time 2 0
+wait 3500
+shot front-0200
+wait 300
+
+# side
+set time 12 0
+cam look -1270
+goto pos 8436.212 2000 3968.510
+cam world 1500 -1560 114.462
+wait 34
+cam hold
+wait 6000
+set time 12 0
+wait 3500
+shot side-1200
+wait 300
+set time 21 0
+wait 3500
+shot side-2100
+wait 300
+set time 21 45
+wait 3500
+shot side-2145
+wait 300
+set time 22 30
+wait 3500
+shot side-2230
+wait 300
+set time 23 30
+wait 3500
+shot side-2330
+wait 300
+set time 0 30
+wait 3500
+shot side-0030
+wait 300
+set time 2 0
+wait 3500
+shot side-0200
+wait 300
+
+# facade
+set time 12 0
+cam look 45
+goto pos 9137 905 3745
+cam world 479.218 102.698 24.462
+wait 34
+cam hold
+wait 6000
+set time 12 0
+wait 3500
+shot facade-1200
+wait 300
+set time 21 0
+wait 3500
+shot facade-2100
+wait 300
+set time 21 45
+wait 3500
+shot facade-2145
+wait 300
+set time 22 30
+wait 3500
+shot facade-2230
+wait 300
+set time 23 30
+wait 3500
+shot facade-2330
+wait 300
+set time 0 30
+wait 3500
+shot facade-0030
+wait 300
+set time 2 0
+wait 3500
+shot facade-0200
+wait 300
+
+# basement-window
+set time 12 0
+cam look -540.000
+goto pos 8970.000 940.000 4008.000
+cam world 397.271 -500.000 25.016893
+wait 34
+cam hold
+wait 6000
+set time 12 0
+wait 3500
+shot basement-window-1200
+wait 300
+set time 21 0
+wait 3500
+shot basement-window-2100
+wait 300
+set time 21 45
+wait 3500
+shot basement-window-2145
+wait 300
+set time 22 30
+wait 3500
+shot basement-window-2230
+wait 300
+set time 23 30
+wait 3500
+shot basement-window-2330
+wait 300
+set time 0 30
+wait 3500
+shot basement-window-0030
+wait 300
+set time 2 0
+wait 3500
+shot basement-window-0200
+wait 300

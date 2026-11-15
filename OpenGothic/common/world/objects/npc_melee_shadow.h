@@ -15,6 +15,8 @@ using Tempest::Vec3;
 namespace NpcMeleeShadow {
 std::string meleeShadowWho(const Npc* npc);
 void        writeMeleeShadow(const std::string& row);
+// OPENGOTHIC_MELEE_SHADOW_CHECK=1: every published body is compared with the one posed in place.
+bool        checking();
 }
 
 using NpcMeleeShadow::meleeShadowWho;

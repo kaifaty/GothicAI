@@ -9,6 +9,7 @@
 
 #include "materials_common.glsl"
 #include "foliage_wind.glsl"
+#include "window_glow.glsl"
 // FLAT_NORMAL: the landscape's variants (a fragment shader is not told MESH_TYPE)
 #if defined(GBUFFER) && defined(MATERIAL_MAPS) && defined(FLAT_NORMAL)
 #include "grass/grass_ground.glsl"
@@ -450,6 +451,10 @@ float emberBreath(vec3 pos) {
   }
 #endif
 
+#if defined(BINDLESS) && defined(MATERIAL_MAPS) && defined(FLAT_NORMAL)
+#include "grass/grass_layers.glsl"
+#endif
+
 #if defined(ANTITILE_MATERIAL)
 void mainGBuffer(vec4 t, MaterialSampling maps) {
 #else
@@ -618,9 +623,24 @@ void mainGBuffer(vec4 t) {
     // charcoal is black under its own light: a lamp must not paint the heat as orange wood (r5), so the albedo goes
     // dark by the share and the ambient pass adds the glow in the colour of its heat (emberColour, common.glsl)
     const float mask = textureGrad(sampler2D(textureOrm[tId], samplerMain), uv, duvdx*scene.mipGradScale, duvdy*scene.mipGradScale).a;
-    const float share = clamp(glow*mask*emberBreath(shInp.pos), 0.0, 1.0);
-    outOrm.a = 1.0 - EmissiveOrmCode*share;
-    outDiffuse.rgb *= 1.0 - share;
+    if((bucket[bucketId].flags & BK_WINDOW)!=0) {
+      // a window lit of an evening (window_glow.glsl): the candle behind it, by the hour and the window's own
+      // numbers; the shutters and the frame keep their albedo
+      // only the texels the mask marks ask for the window's numbers
+      float light = 0.0;
+      if(mask>0.004)
+        light = windowLight(bucket[bucketId].foliage, uv, shInp.pos, duvdx, duvdy, dpdx, dpdy,
+                            scene.dayHour, scene.tickCount32);
+      const float share = clamp(glow*mask*light, 0.0, 1.0);
+      if(share>0.0) {
+        outOrm.a     = 1.0 - EmissiveOrmCode*share;
+        outDiffuse.a = float(int(outDiffuse.a*255.0 + 0.5) | GBufWindowBit)/255.0;
+        }
+      } else {
+      const float share = clamp(glow*mask*emberBreath(shInp.pos), 0.0, 1.0);
+      outOrm.a = 1.0 - EmissiveOrmCode*share;
+      outDiffuse.rgb *= 1.0 - share;
+      }
     }
 #endif
 #endif
@@ -976,8 +996,19 @@ void main() {
 #endif
   outMotion = motionResidual();
 #if defined(MATERIAL_MAPS) && defined(FLAT_NORMAL)
-  if((bucket[bucketId].flags & BK_GRASS)!=0u)
-    grassGround(bucket[bucketId].foliage, shInp.pos, shInp.normal, outDiffuse, outNormal, outOrm);
+  {
+  const uint ground = bucket[bucketId].flags;
+  float sward = -1.0;
+#if defined(BINDLESS)
+  // the meadow's own two layers, and the strip of them along a road (grass/grass_layers.glsl)
+  if((ground & (BK_GROUND | BK_VERGE))!=0u)
+    sward = grassLayers(ground, bucket[bucketId].fringeTex, bucket[bucketId].fringeScale, bucket[bucketId].fringeTop0,
+                        bucket[bucketId].fringeTop1, shInp.pos, shInp.normal, maps.dpdx, maps.dpdy,
+                        outDiffuse, outNormal, outOrm);
+#endif
+  if(sward>-1.5 && ((ground & BK_GRASS)!=0u || sward>0.0))
+    grassGround(bucket[bucketId].foliage, shInp.pos, shInp.normal, sward, outDiffuse, outNormal, outOrm);
+  }
 #endif
 #if defined(ATEST) && defined(MATERIAL_MAPS)
   if(alphaTest<alphaThreshold())

@@ -110,6 +110,8 @@ class WorldObjects final {
     void           removeNpc(Npc& npc);
 
     void           updateAnimation(uint64_t dt);
+    // The animation pass and the shadow loop after it pass this NPC over (frozen world, OPENGOTHIC_ANIM_SKIP_FAR).
+    static bool    animationPassSkips(const Npc& npc, const Npc* player, bool skipFar, bool frozen);
     // Animation LOD: deferred NPCs the camera now sees get their pose (after the
     // camera tick, before drawing); before a save every deferred NPC does.
     void           catchUpAnimation();
@@ -205,8 +207,12 @@ class WorldObjects final {
     bool           makeAnimationLodView(AnimationLod::View& view) const;
     void           pinAnimationLodTargets();
     bool           mustUpdateAnimation(const Npc& npc, const AnimationLod::View& view) const;
+    // worldobjects_animtail.cpp: the main-thread steps after the animation pass (world/animationtail.h)
+    static bool    animationTailKeepsShadow();
+    void           updateAnimationTail(uint64_t dt, const Npc* player, bool skipFar, bool frozen);
     uint32_t       animationLodFrame = 0;
     uint64_t       animationLodDeferred = 0;
+    std::vector<uint8_t> tailPlan; // per npcArr slot, AnimationTail::Step bits
     std::vector<Tempest::Vec3> fighters;
     friend struct WorldDataContract;
     void           saveItemPhysics(Serialize& fout) const;

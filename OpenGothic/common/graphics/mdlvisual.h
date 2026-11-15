@@ -169,6 +169,7 @@ class MdlVisual final {
     bool                           updateAim(Npc& npc, uint64_t dt);
     bool                           updateFlinch(Npc& npc, uint64_t dt);
     void                           flinch(const Npc& npc, const Flinch::Hit& hit);
+    void                           bump(const Npc& npc, const Flinch::Bump& hit);
     bool                           updateGaze(Npc& npc, uint64_t dt);
     void                           processLayers  (World& world);
     bool                           processEvents(World& world, uint64_t &barrier, Animation::EvCount &ev, NpcLogicalState* logic=nullptr);
@@ -253,6 +254,8 @@ class MdlVisual final {
     // the own head's face (FaceRig): its eyes and weights to the deformation of the head, near only; after the pose
     // of the frame (the eyes aim from the head as drawn), on the main thread (the upload)
     void                           updateFace     (Npc& npc);
+    // updateFace has work for this NPC: its own head's face, or it is the eye probe's subject
+    bool                           updatesFace    (const Npc& npc) const;
     // the other one speaks to it, it thinks of an answer (TalkGestures)
     // toward: the mood its attitude to the one speaking gives (the face it listens with, ListenFace)
     void                           listen         (uint64_t until, TalkGestures::Mood toward) { gestures.listen(until); heardMood = toward; }

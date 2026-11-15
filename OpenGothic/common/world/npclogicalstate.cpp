@@ -530,6 +530,36 @@ void NpcLogicalState::sync(Npc& npc, bool rebuild, Action admitted, const Animat
   admissions.clear();
   }
 
+bool NpcLogicalState::settled(const Npc& npc) const {
+  // auditTick counts every sync, and admissions or inputs are consumed by it.
+  if(!initialized || NpcLogicAudit::enabled() || !admissions.empty() || !npc.visual.pose().logicalInputs().empty())
+    return false;
+  const auto mobState=npc.interactive() ? std::optional<BodyState>(BodyState(npc.interactive()->stateMask())) : std::nullopt;
+  if(mobState!=interactiveState || externalBody(npc)!=externalState || npc.simplifiedBodyState()!=executorState)
+    return false;
+  if(actionWait && npc.aniWaitTime!=nativeWaitEnd)
+    return false;
+  // advance(now) finishes nothing and fires no weapon event; updateBody then gives the body held now.
+  const auto now=npc.world().tickCount();
+  uint32_t state=BS_NONE;
+  for(const auto& layer:layers) {
+    if(layer.finished)
+      return false;
+    for(const auto& event:layer.weaponEvents)
+      if(event.first<=now)
+        return false;
+    if(layer.expectedEnd!=0 && now>=layer.expectedEnd && !layer.sequence->isRotate() &&
+       (layer.state&BS_ITEMINTERACT)!=BS_ITEMINTERACT && layer.sequence->nextPtr!=layer.sequence)
+      return false;
+    if(!(layer.state==BS_ITEMINTERACT && layer.sequence->layer==21))
+      state=std::max(state,uint32_t(layer.state&(BS_MAX|BS_FLAG_MASK)));
+    }
+  if(executorState) state=uint32_t(*executorState);
+  if(interactiveState) state=uint32_t(*interactiveState);
+  if(externalState) state=uint32_t(*externalState);
+  return body==BodyState(state);
+  }
+
 void NpcLogicalState::auditTick(Npc& npc, bool bodyInput, bool weaponInput) {
   if(!NpcLogicAudit::enabled()) return;
   ++totals.ticks;

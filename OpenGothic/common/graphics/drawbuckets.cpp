@@ -322,6 +322,40 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
           bx.foliage = Grass::pack(i.mat.grass);
           bx.flags  |= BK_GRASS;
           }
+        // Its own two layers by world position, and the strip of them on the ground beside it (shader/grass/
+        // grass_layers.glsl): their maps after the buckets in the bindless arrays, as a fringe's - the records
+        // exclude `projection`, so the fringe's slots are free. Bindless only: without it the ground is as before
+        if(i.mat.layers.present() && Shaders::options().doMaterialMaps && Shaders::options().doBindless &&
+           Grass::enabled().mode!=Grass::Off && i.mat.projectionUvScale()<=0) {
+          const auto& l = i.mat.layers;
+          const std::array<const Tempest::Texture2d*,3> sward = {l.sward[0],l.sward[1],l.sward[2]};
+          const std::array<const Tempest::Texture2d*,3> earth = {l.earth[0],l.earth[1],l.earth[2]};
+          size_t at = 0;
+          while(at+1<fringeMaps.size() && !(fringeMaps[at]==sward && fringeMaps[at+1]==earth))
+            ++at;
+          if(at+1>=fringeMaps.size()) {
+            at = fringeMaps.size();
+            fringeMaps.push_back(sward);
+            fringeMaps.push_back(earth);
+            }
+          bx.fringeTex   = fringeBase+uint32_t(at);
+          bx.fringeScale = 1.f/(l.ground.swardTile*100.f);
+          bx.fringeTop0  = 1.f/(l.ground.earthTile*100.f);
+          bx.fringeTop1  = l.ground.far;
+          if(l.verge.on) {
+            bx.foliage = l.grassBits;
+            bx.flags  |= BK_VERGE;
+            }
+          else if(i.mat.grass.on) {
+            bx.flags  |= BK_GROUND;
+            }
+          }
+        // A window lit of an evening (graphics/windowglow.h): its hours in the same slot; the record excludes
+        // `grass`, and a window with leaves keeps the leaves, a verge its grass's numbers
+        if(i.mat.window.on && i.mat.emissive>0.f && (bx.flags & (BK_FOLIAGE|BK_GRASS|BK_VERGE))==0) {
+          bx.foliage = WindowGlow::pack(i.mat.window);
+          bx.flags  |= BK_WINDOW;
+          }
         }
       }
     else if(i.animMesh!=nullptr) {

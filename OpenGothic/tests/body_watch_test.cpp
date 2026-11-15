@@ -21,8 +21,12 @@
 #include "utils/workers.h"
 #include "world/objects/npc.h"
 #include "world/objects/item.h"
+#include "world/bullet.h"
 #include "world/waypoint.h"
 #include "world/world.h"
+#include "world/worldobjects.h"
+#include "world/animationtail.h"
+#include "game/bodyarena.h"
 
 #include <rapidjson/document.h>
 #include <rapidjson/stringbuffer.h>
@@ -1024,6 +1028,33 @@ void meleeShadowLoopChanges(Npc& victim) {
   world.removeNpc(*newcomer);
   world.removeNpc(*mover);
   }
+
+// A frozen world (OPENGOTHIC_FREEZE_WORLD) through the production rules on real NPCs: the animation pass and the
+// shadow loop keep the hero and the arena actors and pass any other NPC over; a passed-over NPC's tail plan has
+// no shadow step, a kept one asked for every body has it (world/animationtail.h).
+void frozenArenaTail(Npc& bystander) {
+  ++cases;
+  auto& world=bystander.world();
+  auto* hero=Gothic::inst().player();
+  expect(hero!=nullptr,"frozen arena pin has a hero");
+  BodyArena::configure(BodyArena::Config{},1);
+  BodyArena::setup(world,*hero);
+  const auto actors=BodyArena::actors();
+  expect(actors.size()==2,"frozen arena pin sets up two real actors");
+  for(auto* actor:actors) {
+    expect(BodyArena::isActor(*actor),"an arena actor is an actor");
+    expect(!WorldObjects::animationPassSkips(*actor,hero,false,true),"a frozen world keeps an arena actor in the pass");
+    expect((actor->animationTailPlan(false,true)&AnimationTail::Shadow)!=0,"a kept actor's plan has its shadow step");
+    }
+  expect(!WorldObjects::animationPassSkips(*hero,hero,false,true),"a frozen world keeps the hero in the pass");
+  expect(!BodyArena::isActor(bystander) && WorldObjects::animationPassSkips(bystander,hero,false,true),
+         "a frozen world passes a bystander over");
+  expect(!WorldObjects::animationPassSkips(bystander,hero,false,false),"a live world keeps the bystander");
+  expect((bystander.animationTailPlan(true,true)&AnimationTail::Shadow)==0,"a passed-over NPC's plan has no shadow step");
+  for(auto* actor:actors)
+    world.removeNpc(*actor);
+  BodyArena::disable();
+  }
 }
 
 // Uses a fresh full session, so unsaved Pose speed overrides cannot survive in
@@ -1965,6 +1996,7 @@ int main(int argc,const char** argv) {
     BodyObservations::disable();
     meleeRemoval(b);
     meleeShadowLoopChanges(b);
+    frozenArenaTail(b);
     NpcLogicalStateContract::run(gothic.world()->npcId(&b),scenario,output);
     {
       const auto statsScenario=output/"melee-stats.bench";
@@ -2078,6 +2110,20 @@ int main(int argc,const char** argv) {
       const auto spellHit=rules.damageValue(source,*target,nullptr,true,spellDamage,COLL_APPLYDOUBLEDAMAGE);
       expect(spellHit.value==244 && spellHit.hasHit && !spellHit.invincible && !spellHit.critical,
              "damage rules retain the victim, spell damage and collision multiplier");
+      source.handle().attribute[ATR_STRENGTH]=31;
+      std::fill(std::begin(source.handle().hitchance),std::end(source.handle().hitchance),100);
+      Item ammunition(source.world(),rules.findSymbolIndex("ITRW_ARROW"),Item::T_Inventory);
+      Bullet arrow(source.world(),ammunition,source.position());
+      Damage arrowDamage;
+      arrowDamage[DamageType::POINT]=71;
+      arrow.setDamage(arrowDamage);
+      arrow.setPrecise(1.f);
+      const auto arrowHit=rules.damageValue(source,*target,&arrow,false,{},COLL_APPLYDAMAGE);
+      const auto meleeHit=rules.damageValue(source,*target,nullptr,false,{},COLL_APPLYDAMAGE);
+      expect(arrowHit.value==54 && arrowHit.hasHit && !arrowHit.invincible && !arrowHit.critical,
+             "damage rules preserve the physical arrow and its damage");
+      expect(meleeHit.value==47 && meleeHit.hasHit && !meleeHit.invincible && meleeHit.critical,
+             "damage rules distinguish an arrow from the melee fallback");
       auto& guild=const_cast<GuildRecord&>(rules.guildVal());
       const auto sourceGuild=source.guild();
       const auto savedFallHeight=guild.falldown_height[sourceGuild];

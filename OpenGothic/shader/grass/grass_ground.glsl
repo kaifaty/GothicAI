@@ -15,7 +15,9 @@
 // under it, and a mark that came in with the distance would be a step of the light. A ground with maps of its own
 // keeps its mark and what the maps wrote: the far look is mixed in over them. Its metal is not kept where the far
 // look begins: under the foliage bit that channel is the share of the sun let through.
-void grassGround(uint bits, vec3 pos, vec3 normal, inout vec4 diffuse, inout uint normalOut, inout vec4 orm) {
+// sward: of the ground's own layers (grass_layers.glsl), 1 a pixel of sward, 0 of earth; under 0 without them: the
+// spots of bare earth are then the first round's, a tint of the painted ground
+void grassGround(uint bits, vec3 pos, vec3 normal, float sward, inout vec4 diffuse, inout uint normalOut, inout vec4 orm) {
   const vec4 ring = scene.grassRing;
   if(ring.w<=0.0)
     return;
@@ -27,7 +29,8 @@ void grassGround(uint bits, vec3 pos, vec3 normal, inout vec4 diffuse, inout uin
   const uint  partsOff = grassPartsOff(ring.w);
   if((partsOff & GrassPartPaint)!=0u) {
     // with the ground's shade off as well: the whole ground of the grass, the mask of the tone's measure
-    diffuse.rgb = (partsOff & GrassPartGroundShade)!=0u ? vec3(1,0,1) : grassPaintBand(distance(pos.xz, scene.camPos.xz));
+    diffuse.rgb = (partsOff & GrassPartGroundShade)==0u ? grassPaintBand(distance(pos.xz, scene.camPos.xz)) :
+                  ((partsOff & GrassPartCells)!=0u ? grassPaintCells(pos.xz) : vec3(1,0,1));
     return;
     }
   const vec3  gn       = normalize(normal);
@@ -39,9 +42,15 @@ void grassGround(uint bits, vec3 pos, vec3 normal, inout vec4 diffuse, inout uin
     return;
   // a spot of bare earth in the sward: earth, lit as the ground it is
   const ivec2 place    = ivec2(floor(pos.xz*16.0));
-  const float bare     = grassBare(place);
-  diffuse.rgb         *= mix(vec3(1.0), GrassEarthTint, bare*grows);
-  const float stand    = grassStand(grassPatch(place))*(1.0-bare)*grows;
+  float bare = 1.0 - sward;
+  if(sward<0.0) {
+    bare         = grassBare(place);
+    diffuse.rgb *= mix(vec3(1.0), GrassEarthTint, bare*grows);
+    }
+  const int   noise    = grassPatch(place);
+  if(sward>0.5)
+    diffuse.rgb *= mix(GrassSwardDry, GrassSwardLush, smoothstep(GrassSwardDryAt, GrassSwardLushAt, float(noise)));
+  const float stand    = grassStand(noise)*(1.0-bare)*grows;
   if(stand<=0.0)
     return;
 
@@ -50,7 +59,7 @@ void grassGround(uint bits, vec3 pos, vec3 normal, inout vec4 diffuse, inout uin
   const bool  plain = (partsOff & GrassPartFar)!=0u;
   const float far   = plain ? 0.0 : smoothstep(ring.y*0.5, ring.y, d);
   const float graze = plain ? 0.0 : 1.0 - smoothstep(GrassGrazeFrom, GrassGrazeTo, dot(gn,toEye)/max(d,1.0));
-  const float nearShade = (partsOff & GrassPartGroundShade)!=0u ? 1.0 : GrassGroundShade;
+  const float nearShade = (partsOff & GrassPartGroundShade)!=0u ? 1.0 : (sward>=0.0 ? GrassOwnGroundShade : GrassGroundShade);
   const float along = plain ? 0.0 : max(max(far,graze), smoothstep(ring.x, ring.y*0.5, d));
   vec3 tint = mix(vec3(mix(1.0, nearShade, stand)), mix(vec3(1.0), GrassFarTint, stand), along);
   if(far>0.0) {

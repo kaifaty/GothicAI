@@ -41,10 +41,19 @@ struct WaterTri final {
   int32_t x[3] = {}, y[3] = {}, z[3] = {};
   };
 
+// A triangle of a ground with `verge` (a road beside a meadow, grassborder.h): the sward of the grass `slot` comes
+// onto it
+struct VergeTri final {
+  int32_t  x[3] = {}, y[3] = {}, z[3] = {};
+  uint16_t slot   = 0;
+  uint8_t  reach  = 0, margin = 0;               // cm, the record's
+  };
+
 struct Summary final {
   std::vector<Tri>      grass;
   std::vector<WaterTri> water;
   std::vector<WaterTri> beside; // ground of other materials that touches the grass
+  std::vector<VergeTri> verge;  // of them the ground with `verge`, whole
   bool empty() const { return grass.empty(); }
   };
 
@@ -67,12 +76,13 @@ struct Blade final {
 
 struct Batch final {
   uint16_t slot  = 0;
+  uint8_t  kind  = 0;          // 1: the fine blades of the short sward (Params::fine), a ring of their own
   uint32_t first = 0;
   uint32_t count = 0;
   };
 
 struct CellBlades final {
-  std::vector<Blade> blades;   // by slot, then by rank: a start of a batch is an even sample of it
+  std::vector<Blade> blades;   // by slot and kind, then by rank: a start of a batch is an even sample of it
   std::vector<Batch> batches;
   int32_t            minY = 0; // units
   int32_t            maxY = 0;
@@ -88,6 +98,7 @@ struct CellInput final {
   std::span<const Params>        params;         // by slot
   std::span<const Disc>          items;
   uint32_t                       rankLimit = 256; // blades of a rank below it only (a cell far from the camera)
+  uint32_t                       rankLimitFine = 256; // the same of the fine blades: their ring is shorter
   float                          density   = 1.f; // of the records' (the quality)
   int32_t                        patch     = -1;  // every tuft is of this patches' noise (a bench's measure)
   };

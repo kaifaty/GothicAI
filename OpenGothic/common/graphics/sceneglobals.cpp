@@ -37,6 +37,9 @@ SceneGlobals::SceneGlobals() {
   vsmPageHiZ  = nullptr;
   vsmDbg      = device.image2d(Tempest::TextureFormat::R32U, 64, 64);
 
+  const uint32_t noBorder[4] = {};
+  grassBorderNone = device.ssbo(noBorder,sizeof(noBorder));
+
   for(uint8_t lay=0; lay<V_Count; ++lay) {
     uboGlobal[lay] = device.ssbo(nullptr,sizeof(UboGlobal));
     }
@@ -165,6 +168,7 @@ void SceneGlobals::setSky(const Sky& s) {
   uboGlobalCpu.cloudsDir[0]  = s.cloudsOffset(0, tickCount);
   uboGlobalCpu.cloudsDir[1]  = s.cloudsOffset(1, tickCount);
   uboGlobalCpu.isNight       = s.isNight();
+  uboGlobalCpu.dayHour       = s.dayHour();
   uboGlobalCpu.exposure      = 1;
   }
 

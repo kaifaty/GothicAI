@@ -2,12 +2,67 @@
 import importlib.util
 import json
 from pathlib import Path
+import sys
 
 import pytest
 
 spec = importlib.util.spec_from_file_location("body_headless_suite", Path(__file__).parents[1] / "body_headless_suite.py")
 suite = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(suite)
+
+
+def test_engine_library_set_binds_every_archive_and_ipc_expectation(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).parents[1]))
+    import body_headless_ipc_probe as probe
+
+    first, second = tmp_path / "first", tmp_path / "second"
+    names = ("libOpenGothic.a", "libengine-platform.a", "ai_bridge/libAiBridge.a")
+    for directory in (first, second):
+        for name in (*names, "lib/libdependency.a", "_deps/vendor/libvendor.a", "libminiz.a"):
+            path = directory / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"original")
+    baseline = suite.engine_library_provenance(first)
+    assert baseline["engine_libraries"] == {Path(name).name: suite.sha256(first / name) for name in names}
+    expected = baseline["engine_library_sha256"]
+    assert expected != suite.sha256(first / "libOpenGothic.a")
+    assert suite.engine_library_provenance(second) == baseline
+
+    reference = tmp_path / "reference"
+    (reference / "run").mkdir(parents=True)
+    (reference / "run/Gothic.ini").write_text("settings")
+    fixture = tmp_path / "fixture"
+    fixture.write_text("fixture")
+    monkeypatch.setattr(sys, "platform", "linux")
+
+    def stop_before_engine(*args, **kwargs):
+        raise RuntimeError("library check passed; engine must not run in this test")
+
+    monkeypatch.setattr(probe.suite, "Runner", stop_before_engine)
+
+    def ipc(directory, digest, label):
+        output = tmp_path / label
+        monkeypatch.setattr(sys, "argv", [str(probe.__file__), "--runner", str(fixture),
+                            "--assets", str(tmp_path), "--save", str(fixture), "--scenario", str(fixture),
+                            "--reference", str(reference), "--output", str(output),
+                            "--engine-library", str(directory), "--expected-library-sha256", digest])
+        assert probe.main() == 2
+        return json.loads((output / "ipc-probe.json").read_text())
+
+    accepted = ipc(first, expected, "accepted")
+    assert accepted["error"].startswith("library check passed")
+    assert accepted["provenance"]["engine_libraries"] == baseline["engine_libraries"]
+    for index, name in enumerate(names):
+        (second / name).write_bytes(b"changed")
+        assert suite.engine_library_provenance(second)["engine_library_sha256"] != expected
+        rejected = ipc(second, expected, f"changed-{index}")
+        assert rejected["error"] == "engine library set differs from the recorded full mechanics build"
+        (second / name).write_bytes(b"original")
+    legacy = ipc(first, suite.sha256(first / "libOpenGothic.a"), "legacy")
+    assert legacy["error"] == "engine library set differs from the recorded full mechanics build"
+    (second / "libengine-platform.a").unlink()
+    missing = ipc(second, expected, "missing")
+    assert "engine library missing:" in missing["error"] and "libengine-platform.a" in missing["error"]
 
 
 def write_trace(tmp_path, attempts):

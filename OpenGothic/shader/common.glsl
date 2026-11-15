@@ -26,17 +26,31 @@ const float EmissiveMeshPeak  = 0.6;
 const float EmissiveOrmCode   = 0.49;
 // Glowing charcoal by its share of heat: dull red where a block glows through (about 700 C) to orange deep in a crack
 // (about 1000 C). Albedo as the colour went white at a peak of 4 (r3) and read as lamp-lit orange paint below it (r5).
+// A window lit of an evening (materials/window_glow.glsl): bit 7 of the hint bits next to the glow's share in the ORM
+// alpha. Its light is a candle's off the walls of the room behind, not the heat of embers; the albedo stays
+const int   GBufWindowBit  = 1 << 7;
+const vec3  WindowColour   = vec3(1.0, 0.45, 0.10);
+const float WindowMeshPeak = 0.17;
+
+bool isGBufWindow(float v) {
+  int x = int(v*255+0.5);
+  return (x & GBufWindowBit)!=0;
+  }
+
 vec3 emberColour(float share) {
   return mix(vec3(0.5, 0.04, 0.004), vec3(1.0, 0.3, 0.04), share);
   }
 // The glow of an own mesh by the raw G-buffer ORM of its pixel (main.frag mainGBuffer): its own luminance under the
 // exposure, as a flame's. Every pass of the ambient light adds it after the exposure - ambient_light.frag and the
 // probes' probe_ambient.frag; a pass without it leaves the embers as dark as their albedo
-vec3 emissiveMeshGlow(vec4 orm, float sunIntensity, float exposure) {
+vec3 emissiveMeshGlow(vec4 orm, float hint, float sunIntensity, float exposure) {
   if(orm.a<=0.5 || orm.a>=0.999)
     return vec3(0);
   const float share = (1.0 - orm.a)/EmissiveOrmCode;
-  return emberColour(share) * (share*EmissiveMeshPeak) * min(EmissiveSunRatio * sunIntensity * exposure, EmissiveMaxGain);
+  const float gain  = min(EmissiveSunRatio * sunIntensity * exposure, EmissiveMaxGain);
+  if(isGBufWindow(hint))
+    return WindowColour * (share*WindowMeshPeak) * gain;
+  return emberColour(share) * (share*EmissiveMeshPeak) * gain;
   }
 const float SoftParticleDepth = 15.0;
 const vec2  SoftParticleNear  = vec2(30.0, 100.0);

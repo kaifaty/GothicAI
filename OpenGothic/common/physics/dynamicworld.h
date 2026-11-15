@@ -202,6 +202,9 @@ class DynamicWorld final {
         struct VirtualMoveResult {
           Tempest::Vec3 position = {}, velocity = {}, groundNormal = {}, groundVelocity = {};
           Tempest::Vec3 steepContactNormal = {};
+          Tempest::Vec3 obstacleNormal = {};
+          Npc* obstacleNpc = nullptr;
+          bool obstacleDynamic = false;
           CollisionTest collision;
           float advancementRatio = 1.f;
           bool grounded = false;

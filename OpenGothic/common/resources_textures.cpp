@@ -226,6 +226,13 @@ void Resources::indexMaterialMaps() {
       else
         maps.emissive = float(emissive->value.GetDouble());
       }
+    // A window lit of an evening (graphics/windowglow.h): the glow above is a candle's behind the texels the ORM's
+    // alpha marks, each repeat of the texture a window with its own hours. {} takes the defaults; without
+    // `emissive` the record is dropped
+    if(const auto window = entry.value.FindMember("window"); window!=entry.value.MemberEnd()) {
+      if(!(maps.emissive>0.f) || !WindowGlow::parse(window->value,maps.window))
+        valid = false;
+      }
     // Hair cards (reports/content/2026-11-npc-hair): strands run along v, the root at v=0; `orm` is the hair map
     // (R shade, G the strand's number, B its depth in the clump), the surface is lit by the hair BRDF.
     if(const auto hair = entry.value.FindMember("hair"); hair!=entry.value.MemberEnd()) {
@@ -340,10 +347,51 @@ void Resources::indexMaterialMaps() {
     // Grass (reports/engine/2026-11-14-grass-system): the ground of this texture grows blades round the camera. The
     // field alone leaves the ground's look as it is; with `foliage` or `antitile` the record is dropped
     if(const auto grass = entry.value.FindMember("grass"); grass!=entry.value.MemberEnd()) {
-      if(maps.foliage.on || maps.antitile!=Material::Antitile::Off || !Grass::parse(grass->value,maps.grass))
+      if(maps.foliage.on || maps.window.on || maps.antitile!=Material::Antitile::Off ||
+         !Grass::parse(grass->value,maps.grass))
         valid = false;
       maps.grassOnly = entry.value.MemberCount()==1;
       }
+    if(maps.window.on && maps.foliage.on)
+      valid = false; // the two share the slot of their numbers (Bucket::foliage)
+    // The meadow's own ground (reports/engine/2026-11-14-meadow-ground): two layers by world position under a
+    // texture with `grass`, all six maps; `verge` of the ground beside it names that grass. Neither replaces the
+    // texture: a record of these fields alone keeps the one the ground has. Not with `projection`: the layers lie
+    // by the world's x and z
+    if(const auto ground = entry.value.FindMember("ground"); ground!=entry.value.MemberEnd()) {
+      const auto& value = ground->value;
+      auto layer = [&](const char* name, std::string& albedo, std::string& normal, std::string& orm) {
+        const auto it = value.FindMember(name);
+        if(it==value.MemberEnd() || !it->value.IsObject())
+          return false;
+        const auto& l = it->value;
+        return l.HasMember("albedo") && l.HasMember("normal") && l.HasMember("orm") &&
+               pathIn(l,"albedo",albedo) && pathIn(l,"normal",normal) && pathIn(l,"orm",orm);
+        };
+      if(!maps.grass.on || maps.projectionTile>0 || !Grass::parse(value,maps.ground) ||
+         !layer("sward",maps.swardAlbedo,maps.swardNormal,maps.swardOrm) ||
+         !layer("earth",maps.earthAlbedo,maps.earthNormal,maps.earthOrm))
+        valid = false;
+      }
+    if(const auto verge = entry.value.FindMember("verge"); verge!=entry.value.MemberEnd()) {
+      const auto& value = verge->value;
+      // not with `window`: the verge keeps its grass's numbers in the slot of the window's (Bucket::foliage)
+      bool ok = !maps.grass.on && !maps.foliage.on && !maps.window.on && maps.projectionTile<=0 && Grass::parse(value,maps.verge);
+      if(ok) {
+        const auto of = value.FindMember("of");
+        ok = of!=value.MemberEnd() && of->value.IsString() && of->value.GetStringLength()>0;
+        if(ok) {
+          maps.vergeOf.assign(of->value.GetString(), of->value.GetStringLength());
+          for(auto& c:maps.vergeOf)
+            c = char(std::toupper(uint8_t(c)));
+          }
+        }
+      if(!ok)
+        valid = false;
+      }
+    if(maps.grass.on || maps.verge.on)
+      maps.grassOnly = entry.value.MemberCount()==rapidjson::SizeType(entry.value.HasMember("grass")) +
+                       rapidjson::SizeType(entry.value.HasMember("ground")) + rapidjson::SizeType(entry.value.HasMember("verge"));
     if(!valid) {
       Log::e("materials: invalid entry \"",entry.name.GetString(),"\"");
       continue;
@@ -863,9 +911,13 @@ void Resources::textureDemand(const Material& material, TextureCategory category
 void Resources::implTextureDemand(const Material& material, TextureCategory category, const TextureNeed* release,
                                   const TextureNeed* add) {
   ++textureDemandCalls;
-  // the fringe's maps are asked at the density of its material: finer than the layer's own tile needs, never coarser
-  std::array<const Texture2d*,6> maps={material.tex,material.normal,material.orm,
-                                       material.fringe.albedo,material.fringe.normal,material.fringe.orm};
+  // the fringe's maps are asked at the density of its material: finer than the layer's own tile needs, never coarser.
+  // The maps of the ground's two layers (Material::layers) as well: of the meadow and of the road with its verge
+  const auto& ground=material.layers;
+  std::array<const Texture2d*,12> maps={material.tex,material.normal,material.orm,
+                                        material.fringe.albedo,material.fringe.normal,material.fringe.orm,
+                                        ground.sward[0],ground.sward[1],ground.sward[2],
+                                        ground.earth[0],ground.earth[1],ground.earth[2]};
   const auto unique=[&](const Texture2d* texture, size_t index) {
     for(size_t i=0;i<index && i<maps.size();++i)
       if(maps[i]==texture)
@@ -1367,6 +1419,24 @@ Resources::MaterialMaps Resources::loadMaterialMaps(std::string_view name) {
   ret.eye = files.eye;
   ret.foliage = files.foliage;
   ret.grass = files.grass;
+  // the meadow's layers: the record's own, or those of the grass a verge names
+  if(const auto* of = files.verge.on ? inst->groundOf(files.vergeOf) : (files.ground.on ? &files : nullptr); of!=nullptr) {
+    auto& l = ret.layers;
+    l.sward[0] = inst->implLoadMaterialTexture(of->swardAlbedo,TextureKind::Color);
+    l.sward[1] = inst->implLoadMaterialTexture(of->swardNormal,TextureKind::Normal);
+    l.sward[2] = inst->implLoadMaterialTexture(of->swardOrm,TextureKind::Orm);
+    l.earth[0] = inst->implLoadMaterialTexture(of->earthAlbedo,TextureKind::Color);
+    l.earth[1] = inst->implLoadMaterialTexture(of->earthNormal,TextureKind::Normal);
+    l.earth[2] = inst->implLoadMaterialTexture(of->earthOrm,TextureKind::Orm);
+    l.ground    = of->ground;
+    l.verge     = files.verge;
+    l.grassBits = Grass::pack(of->grass);
+    if(!l.present()) {
+      Log::e("materials: \"",name,"\": a map of the ground's layers does not load, drawn without them");
+      l = {};
+      }
+    }
+  ret.window = files.window;
   ret.present = !files.grassOnly;
   ret.hasAlbedo = !files.albedo.empty();
   return ret;
@@ -1381,6 +1451,31 @@ Grass::Params Resources::grassParams(std::string_view name) {
     c = char(std::toupper(uint8_t(c)));
   const auto it = inst->materialMaps.find(key);
   return it==inst->materialMaps.end() ? Grass::Params{} : it->second.grass;
+  }
+
+const Resources::MaterialMapFiles* Resources::groundOf(const std::string& key) const {
+  const auto it = materialMaps.find(key);
+  return it!=materialMaps.end() && it->second.grass.on && it->second.ground.on ? &it->second : nullptr;
+  }
+
+Resources::GroundParams Resources::groundParams(std::string_view name) {
+  if(isHeadless() || name.empty())
+    return {};
+  std::lock_guard<std::recursive_mutex> g(inst->sync);
+  std::string key(name);
+  for(auto& c:key)
+    c = char(std::toupper(uint8_t(c)));
+  const auto it = inst->materialMaps.find(key);
+  if(it==inst->materialMaps.end())
+    return {};
+  GroundParams ret;
+  ret.ground = it->second.ground;
+  // a verge of a record that is not a meadow's ground is none
+  if(it->second.verge.on && inst->groundOf(it->second.vergeOf)!=nullptr) {
+    ret.verge = it->second.verge;
+    ret.of    = it->second.vergeOf;
+    }
+  return ret;
   }
 
 const Texture2d* Resources::loadMaterialAlbedo(std::string_view name) {

@@ -3,12 +3,29 @@
 
 #include <Tempest/Platform>
 #include <Tempest/Log>
+#include <cerrno>
+#include <cstdlib>
 #include <stdexcept>
 
 namespace {
 std::atomic_bool serialRequested{false};
 std::atomic_bool executionStarted{false};
 std::atomic_bool poolCreated{false};
+
+constexpr size_t defaultGrain=64, minGrain=16, maxGrain=1024;
+
+size_t readGrain() {
+  const char* v = std::getenv("OPENGOTHIC_WORKERS_GRAIN");
+  if(v==nullptr || v[0]=='\0')
+    return defaultGrain;
+  char* end = nullptr;
+  errno = 0;
+  const auto n = std::strtoull(v,&end,10);
+  if(v[0]>='0' && v[0]<='9' && end!=v && *end=='\0' && errno==0 && n>=minGrain && n<=maxGrain)
+    return size_t(n);
+  Tempest::Log::e("OPENGOTHIC_WORKERS_GRAIN=\"",v,"\" is not a number 16..1024: using ",defaultGrain);
+  return defaultGrain;
+  }
 }
 
 #if defined(__WINDOWS__)
@@ -79,8 +96,9 @@ void Workers::setThreadName(const char* threadName) { (void)threadName; }
 
 using namespace Tempest;
 
-const size_t Workers::taskPerThread = 128;
-const size_t Workers::taskPerStep   = 16;
+// Arrays this short run on the calling thread at any grain: waking the pool costs more.
+const size_t Workers::serialElements = 128;
+const size_t Workers::taskPerStep    = 16;
 
 Workers::Workers() {
   size_t id=0;
@@ -124,6 +142,25 @@ bool Workers::workerPoolCreated() {
 bool Workers::useSerialExecution() {
   executionStarted.store(true,std::memory_order_relaxed);
   return serialExecution();
+  }
+
+size_t Workers::taskGrain() {
+  static const size_t grain = readGrain();
+  return grain;
+  }
+
+uint32_t Workers::poolTasks(size_t elements, size_t grain, uint32_t maxThreads) {
+  uint32_t tasks = uint32_t((elements+grain-1)/grain);
+  tasks--; // main thread also do tasks
+  if(tasks>maxThreads)
+    tasks = maxThreads;
+  if(tasks<=0)
+    tasks = 1;
+  return tasks;
+  }
+
+uint32_t Workers::lastPoolTasks() {
+  return inst().taskCount;
   }
 
 uint8_t Workers::maxThreads() {
@@ -205,13 +242,7 @@ void Workers::execWork(uint32_t& minElts) {
     return;
 
   if(workSet!=nullptr) {
-    const auto maxTheads = maxThreads();
-    taskCount = uint32_t((workSize+taskPerThread-1)/taskPerThread);
-    taskCount--; // main thread also do tasks
-    if(taskCount>maxTheads)
-      taskCount = maxTheads;
-    if(taskCount<=0)
-      taskCount = 1;
+    taskCount = poolTasks(workSize,taskGrain(),maxThreads());
     } else {
     taskCount = uint32_t(workSize);
     }
@@ -221,7 +252,7 @@ void Workers::execWork(uint32_t& minElts) {
     return;
     }
 
-  minElts = std::max<uint32_t>(minElts, taskPerThread);
+  minElts = std::max<uint32_t>(minElts, uint32_t(serialElements));
 
   if(workSet!=nullptr && workSize<=minElts && true) {
     workFunc(workSet, workSize);
