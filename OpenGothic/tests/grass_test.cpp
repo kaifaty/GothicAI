@@ -24,6 +24,9 @@
 #include <utility>
 #include <vector>
 
+// the meadow's own ground: grass_cover_test.cpp
+size_t grassCoverTests();
+
 namespace {
 size_t assertions = 0;
 
@@ -737,6 +740,7 @@ int main() {
     placementEdge();
     placementItems();
     windFront();
+    assertions += grassCoverTests();
     std::cout << "{\"test\":\"grass\",\"passed\":true,\"assertions\":" << assertions << "}\n";
     return 0;
     }

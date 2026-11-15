@@ -345,7 +345,7 @@ if(UNIX)
   target_compile_options(gothic-raytracing-rule-test PRIVATE -Wall -Wconversion -Werror)
   # The grass system (graphics/grass, graphics/foliagefront.h): the record, the placement on synthetic ground, the
   # wind's travelling front; CPU only, no device or game data.
-  add_executable(gothic-grass-test EXCLUDE_FROM_ALL tests/grass_test.cpp)
+  add_executable(gothic-grass-test EXCLUDE_FROM_ALL tests/grass_test.cpp tests/grass_cover_test.cpp)
   target_link_libraries(gothic-grass-test PRIVATE OpenGothic AiBridge)
   target_include_directories(gothic-grass-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   target_compile_options(gothic-grass-test PRIVATE -Wall -Wconversion -Werror)

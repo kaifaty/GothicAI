@@ -130,6 +130,7 @@ Tuft tuft(int32_t tx, int32_t tz, int32_t patch) {
   t.lean      = 0.6f + 0.8f*float((h >> 52) & 0x3Fu)/63.f;
   t.phase     = uint8_t((h >> 40) & 0xFFu);
   t.tint      = uint8_t((h >> 48) & 15u);
+  t.gate      = uint8_t(((h >> 58) & 63u)*4u + 2u);
   return t;
   }
 

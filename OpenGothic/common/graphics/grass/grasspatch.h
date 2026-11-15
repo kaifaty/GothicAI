@@ -84,6 +84,7 @@ struct Tuft final {
   float    lean      = 1.f;    // of the lean's angle
   uint8_t  phase     = 0;
   uint8_t  tint      = 0;
+  uint8_t  gate      = 0;      // 2..254: how near bare ground a sward's broad blades of this tuft come (grasscover.h)
   bool     sward     = false;
   bool     clump     = false;
   };

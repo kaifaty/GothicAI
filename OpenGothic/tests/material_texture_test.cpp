@@ -715,6 +715,117 @@ void grassRecords(Tempest::Device& device, const Fixture& fixture) {
              name).c_str());
   }
 
+// materials.json "ground" and "verge": the meadow's two layers and the road's strip beside it
+// (reports/engine/2026-11-14-meadow-ground). Neither replaces the texture the ground has; where the sward lies is
+// tests/grass_cover_test.cpp's
+void groundRecords(Tempest::Device& device, const Fixture& fixture) {
+  const std::string maps  = R"("albedo":"solid.dds","normal":"alpha.dds","orm":"alpha.dds")";
+  const std::string sward = R"("sward":{"albedo":"solid.dds","normal":"alpha.dds","orm":"alpha.dds"})";
+  const std::string earth = R"("earth":{"albedo":"alpha.dds","normal":"alpha.dds","orm":"solid.dds"})";
+  textFile(fixture.root/"materials/materials.json", std::string("{") +
+    R"("MEADOW.TGA":{"grass":{"fine":1},"ground":{)" + sward + "," + earth + R"(}},)" +
+    R"("MEADOW_SET.TGA":{"grass":{},"ground":{"sward":{)" + maps + R"(,"tile_m":3},"earth":{)" + maps + R"(,"tile_m":0.5},"far":0}},)" +
+    R"("MEADOW_OWN.TGA":{)" + maps + R"(,"grass":{},"ground":{)" + sward + "," + earth + R"(}},)" +
+    R"("MEADOW_PLAIN.TGA":{"grass":{}},)" +
+    R"("MEADOW_LOST.TGA":{"grass":{},"ground":{"sward":{"albedo":"absent.dds","normal":"alpha.dds","orm":"alpha.dds"},)" + earth + R"(}},)" +
+    R"("ROAD.TGA":{"verge":{"of":"meadow.tga"}},)" +
+    R"("ROAD_SET.TGA":{)" + maps + R"(,"verge":{"of":"MEADOW_SET.TGA","reach":60,"margin":0}},)" +
+    R"("ROAD_ORPHAN.TGA":{"verge":{"of":"UNLISTED.TGA"}},)" +
+    R"("ROAD_OF_PLAIN.TGA":{"verge":{"of":"MEADOW_PLAIN.TGA"}},)" +
+    R"("BAD_NO_GRASS.TGA":{"ground":{)" + sward + "," + earth + R"(}},)" +
+    R"("BAD_ONE_LAYER.TGA":{"grass":{},"ground":{)" + sward + R"(}},)" +
+    R"("BAD_NO_MAP.TGA":{"grass":{},"ground":{"sward":{"albedo":"solid.dds","normal":"alpha.dds"},)" + earth + R"(}},)" +
+    R"("BAD_TILE.TGA":{"grass":{},"ground":{"sward":{)" + maps + R"(,"tile_m":0.1},)" + earth + R"(}},)" +
+    R"("BAD_FAR.TGA":{"grass":{},"ground":{)" + sward + "," + earth + R"(,"far":1}},)" +
+    R"("BAD_NUMBER.TGA":{"grass":{},"ground":1},)" +
+    R"("BAD_PROJECTED.TGA":{)" + maps + R"(,"projection":{"tile_m":2},"grass":{},"ground":{)" + sward + "," + earth + R"(}},)" +
+    R"("BAD_FINE.TGA":{"grass":{"fine":2}},)" +
+    R"("BAD_VERGE_GRASS.TGA":{"grass":{},"verge":{"of":"MEADOW.TGA"}},)" +
+    R"("BAD_VERGE_NAMELESS.TGA":{"verge":{}},)" +
+    R"("BAD_VERGE_REACH.TGA":{"verge":{"of":"MEADOW.TGA","reach":121}},)" +
+    R"("BAD_VERGE_MARGIN.TGA":{"verge":{"of":"MEADOW.TGA","margin":-1}},)" +
+    R"("BAD_VERGE_NUMBER.TGA":{"verge":1},)" +
+    R"("BAD_VERGE_WINDOW.TGA":{)" + maps + R"(,"emissive":1,"window":{},"verge":{"of":"MEADOW.TGA"}})" +
+    "}");
+  Resources resources(device);
+  const Material unlisted(source("UNLISTED.TGA"),true);
+
+  const auto meadow = Resources::loadMaterialMaps("MEADOW.TGA");
+  const auto params = Resources::groundParams("meadow.tga");
+  require(!meadow.present && !meadow.hasAlbedo && meadow.grass.on && meadow.grass.fine && meadow.layers.present() &&
+          meadow.layers.ground==params.ground && params.ground.on && !params.verge.on && params.of.empty() &&
+          params.ground.swardTile==4.f && params.ground.earthTile==2.f && params.ground.far==5.3f &&
+          meadow.layers.grassBits==Grass::pack(meadow.grass) && !meadow.layers.verge.on,
+          "a record of grass and ground alone carries the two layers, the defaults and no maps of its own");
+  require(meadow.layers.sward[0]!=meadow.layers.earth[0] && meadow.layers.sward[2]!=meadow.layers.earth[2] &&
+          meadow.layers.sward[1]==meadow.layers.earth[1],
+          "each layer has the maps its part of the record names");
+  const Material ground(source("MEADOW.TGA"),true);
+  require(ground.layers==meadow.layers && !ground.hasMaterialMaps() && ground.normal==nullptr && ground.orm==nullptr &&
+          ground.uvScale==unlisted.uvScale && ground.antitile==unlisted.antitile && !(ground==unlisted) &&
+          !(ground==Material(source("MEADOW_PLAIN.TGA"),true)),
+          "a ground of two layers keeps the texture it has, in a bucket of its own");
+  const auto set = Resources::groundParams("MEADOW_SET.TGA").ground;
+  require(set.on && set.swardTile==3.f && set.earthTile==0.5f && set.far==0.f, "ground must carry the record's numbers");
+  const auto own = Resources::loadMaterialMaps("MEADOW_OWN.TGA");
+  require(own.present && own.layers.present() && Material(source("MEADOW_OWN.TGA"),true).hasMaterialMaps(),
+          "the layers beside the maps of an own material keep the material");
+  const auto plain = Resources::loadMaterialMaps("MEADOW_PLAIN.TGA");
+  require(plain.grass.on && !plain.grass.fine && !plain.layers.present() && plain.layers==Material::Layers() &&
+          !Resources::groundParams("MEADOW_PLAIN.TGA").ground.on && !Resources::groundParams("UNLISTED.TGA").ground.on &&
+          !Resources::groundParams("").verge.on && unlisted.layers==Material::Layers(),
+          "a record without the field has no layers");
+  const auto lost = Resources::loadMaterialMaps("MEADOW_LOST.TGA");
+  require(lost.grass.on && !lost.layers.present() && lost.layers==Material::Layers(),
+          "layers with a map that does not load are none: the ground is drawn as without them");
+
+  const auto road  = Resources::loadMaterialMaps("ROAD.TGA");
+  const auto verge = Resources::groundParams("road.tga");
+  require(verge.verge.on && verge.verge.reach==90.f && verge.verge.margin==50.f && verge.of=="MEADOW.TGA" && !verge.ground.on,
+          "a verge names its grass in upper case and takes the defaults");
+  require(!road.present && !road.grass.on && road.layers.present() && road.layers.verge==verge.verge &&
+          road.layers.ground==meadow.layers.ground && road.layers.grassBits==meadow.layers.grassBits &&
+          road.layers.sward[0]==meadow.layers.sward[0] && road.layers.earth[2]==meadow.layers.earth[2],
+          "a verge carries the layers, the numbers and the packed grass of the meadow it lies beside");
+  const Material way(source("ROAD.TGA"),true);
+  require(way.layers==road.layers && !way.grass.on && !way.hasMaterialMaps() && way.uvScale==unlisted.uvScale &&
+          !(way==unlisted) && !(way==ground),
+          "a road with a verge keeps the texture it has, in a bucket of its own");
+  const auto roadSet = Resources::loadMaterialMaps("ROAD_SET.TGA");
+  require(roadSet.present && roadSet.layers.present() && roadSet.layers.verge.reach==60.f && roadSet.layers.verge.margin==0.f &&
+          roadSet.layers.ground.swardTile==3.f && Resources::groundParams("ROAD_SET.TGA").of=="MEADOW_SET.TGA",
+          "a verge beside the maps of an own material keeps the material and carries the record's numbers");
+  for(const auto* name:{"ROAD_ORPHAN.TGA","ROAD_OF_PLAIN.TGA"})
+    require(!Resources::groundParams(name).verge.on && Resources::groundParams(name).of.empty() &&
+            !Resources::loadMaterialMaps(name).layers.present() && Material(source(name),true).layers==Material::Layers(),
+            (std::string("a verge of a texture that is no ground of two layers is none: ")+name).c_str());
+
+  for(const auto* name:{"BAD_NO_GRASS.TGA","BAD_ONE_LAYER.TGA","BAD_NO_MAP.TGA","BAD_TILE.TGA","BAD_FAR.TGA","BAD_NUMBER.TGA",
+                       "BAD_PROJECTED.TGA","BAD_FINE.TGA","BAD_VERGE_GRASS.TGA","BAD_VERGE_NAMELESS.TGA","BAD_VERGE_REACH.TGA",
+                       "BAD_VERGE_MARGIN.TGA","BAD_VERGE_NUMBER.TGA","BAD_VERGE_WINDOW.TGA"}) {
+    const auto bad = Resources::groundParams(name);
+    require(!Resources::loadMaterialMaps(name).present && !Resources::grassParams(name).on && !bad.ground.on && !bad.verge.on &&
+            !Resources::loadMaterialMaps(name).layers.present(),
+            (std::string("ground or verge of a wrong type or range, without its grass or its maps, or beside a projection "
+                        "or a window must reject the record whole: ")+name).c_str());
+    }
+
+  // The layers' maps are of their ground's demand, at the density of the finer tile: with no owner asking they
+  // would stay at the coarse level they are read at
+  const auto asked = [] { return Resources::textureStats().categoryCount[size_t(Resources::TextureCategory::Landscape)]; };
+  Material layered;
+  layered.layers = meadow.layers;
+  const auto before = asked();
+  Resources::textureDemand(layered,Resources::TextureCategory::Landscape,true);
+  const auto with = asked();
+  Resources::textureDemand(layered,Resources::TextureCategory::Landscape,false);
+  require(with-before==5,"the owner of a ground of two layers must demand each of their five maps once");
+  require(ground.textureUvPerMetre(0.1f)==0.5f && ground.textureUvPerMetre(3.f)==3.f*std::abs(ground.uvScale) &&
+          ground.textureUvPerMetre(0.f)==0.f && way.textureUvPerMetre(0.1f)==0.5f &&
+          Material(source("MEADOW_PLAIN.TGA"),true).textureUvPerMetre(0.1f)==0.1f*std::abs(unlisted.uvScale),
+          "a ground of two layers is asked no coarser than a repeat per its finer tile, the others by their mesh");
+  }
+
 // graphics/foliagewind.h: the processor's copy of the rule of shader/materials/foliage_wind.glsl
 void foliageWindMaths() {
   using namespace FoliageWind;
@@ -2985,6 +3096,7 @@ int main(int argc, char** argv) {
     fringeRecords(device,fixture);
     foliageRecords(device,fixture);
     grassRecords(device,fixture);
+    groundRecords(device,fixture);
     textureResidency(device,fixture);
     textureMipResidency(device,fixture);
     textureScreenLevels(device,fixture);
