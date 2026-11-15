@@ -25,9 +25,10 @@ const float LampContactLift   = 0.3;
 const float LampContactLiftK  = 0.0015;
 
 // clip: the point in clip space, (ndc, 1)*w; dir: the unit direction to the lamp in the world; dist: the distance to
-// the lamp, cm; planeN: the surface's plane; noise: 0..1 of this pixel and frame. Returns the light left, 0..1
+// the lamp, cm; planeN: the surface's plane; view: the unit direction to the eye; noise: 0..1 of this pixel and
+// frame. Returns the light left, 0..1
 float lampContact(in texture2D depthTex, const vec4 clip, const vec3 dir, const float dist, const vec3 planeN,
-                  const float noise) {
+                  const vec3 view, const float noise) {
   // a lamp's own fixture casts no shadow (scene.vsmLampNear): the ray stops before it
   const float len = min(LampContactLength, dist - scene.vsmLampNear);
   if(len<=1.0)
@@ -47,6 +48,11 @@ float lampContact(in texture2D depthTex, const vec4 clip, const vec3 dir, const 
   if(pxLen < LampContactMinPx)
     return 1.0;
 
+  // A facet that stands edge-on or with its back to the lamp while its smooth normal still takes the light: the
+  // ray runs under the facet's own plane, and the facet would shadow itself whole, a low mesh's facets drawn in
+  // shadow. What is as near to the eye as that plane is the surface itself, not a thing in the ray's way
+  const float rise  = dot(dir, planeN)*len;         // the ray's height over the plane at its end, cm
+  const float slant = 1.0/max(dot(view, planeN), 0.15);
   const int   steps = clamp(int(pxLen/LampContactStepPx), 4, LampContactSteps);
   const ivec2 self  = ivec2(px0);
   for(int i=0; i<steps; ++i) {
@@ -62,7 +68,8 @@ float lampContact(in texture2D depthTex, const vec4 clip, const vec3 dir, const 
       continue;
     const float ray   = linearDepth(n.z, scene.clipInfo);
     const float there = linearDepth(texelFetch(depthTex, at, 0).x, scene.clipInfo);
-    const float under = ray - there;
+    const float own   = max(0.0, -(lift + rise*t))*slant;
+    const float under = ray - there - own;
     if(under > 0.2 + 0.002*ray && under < LampContactThick) {
       // towards its end the ray hands over to the shadow map
       return smoothstep(0.75, 1.0, t);
