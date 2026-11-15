@@ -113,6 +113,7 @@ extern bool benchTexturesFrozen;
 #include "utils/keycodec.h"
 #include "camera.h"
 #include "gothic.h"
+#include "settings.h"
 #include "marvin.h"
 
 using namespace Tempest;
@@ -1022,7 +1023,7 @@ int TestBench::bodyBlockVariant(const Npc& npc, int fallback) {
 void TestBench::ragdollBirthPeak(const Npc& npc, const Npc* culprit, const std::string& fields) {
   if(!isActive() || !bench.started || bench.done) return;
   event("ragdoll_birth_peak","\"actor\":"+jsonStr(who(&npc))+",\"culprit\":"+(culprit ? jsonStr(who(culprit)) : "null")+
-    ",\"guard_enabled\":"+(Gothic::physicsFlags().ragdollBirthGuard ? "true" : "false")+","+fields);
+    ",\"guard_enabled\":"+(Settings::physicsFlags().ragdollBirthGuard ? "true" : "false")+","+fields);
   }
 
 void TestBench::note(const char* text) {

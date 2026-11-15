@@ -5,7 +5,7 @@
 #include <cmath>
 
 #include "game/gamescript.h"
-#include "gothic.h"
+#include "settings.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
 #include "appcadence.h"
@@ -105,7 +105,7 @@ bool meleeCommand(const MeleeContext& context,const std::vector<std::string>& a,
       return true;
       };
     if(a.size()==3 && a[1]=="setup") {
-      Gothic::settingsSetI("GAME","USEGOTHIC1CONTROLS",1);
+      Settings::setI("GAME","USEGOTHIC1CONTROLS",1);
       const Vec3 forward=facing(pl),side(-forward.z,0,forward.x);
       const auto wall=w.physic()->ray(pl.position()+Vec3(0,148,0),pl.position()+Vec3(0,148,0)+forward*450.f);
       if(!wall.hasCol || std::abs(wall.n.y)>.35f) {arenaAbort("melee shadow needs a real wall ahead (corner right go 0)");return true;}
@@ -146,7 +146,7 @@ bool meleeCommand(const MeleeContext& context,const std::vector<std::string>& a,
       }
     else if(a.size()==3 && a[1]=="weapon") equip(a[2]);
     else if(a.size()==3 && a[1]=="controls" && (a[2]=="g2" || a[2]=="classic")) {
-      Gothic::settingsSetI("GAME","USEGOTHIC1CONTROLS",a[2]=="classic");
+      Settings::setI("GAME","USEGOTHIC1CONTROLS",a[2]=="classic");
       say("melee shadow controls " + a[2]);
       }
     else if((a.size()==3 || a.size()==4) && a[1]=="bandit") {
@@ -249,7 +249,7 @@ bool meleeCommand(const MeleeContext& context,const std::vector<std::string>& a,
     exec("clear 2500",w,pl,ctrl);
     // "game" keeps the ordinary living bodies the fighters have in play
     if(mode!="game")
-      Gothic::settingsSetI("GAME","living_bodies",0);
+      Settings::setI("GAME","living_bodies",0);
     w.physic()->configureMeleeBench(substeps);
     state.meleeMode=mode;state.meleePelvis=pelvis;
     const auto symbol=w.script().findSymbolIndex("BDT_1013_BANDIT_L");

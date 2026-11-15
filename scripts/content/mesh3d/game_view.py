@@ -38,7 +38,7 @@ from scipy import ndimage
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from hearth_targets import BASE_CACHE, ROOT, model_parts  # noqa: E402
 
-FOV_Y = 67.5          # Gothic::options().cameraFov when SystemPack.ini sets none (common/gothic.cpp)
+FOV_Y = 67.5          # Settings::options().cameraFov when SystemPack.ini sets none (common/gothic.cpp)
 FRAME = (1280, 720)   # TEMPEST_WINDOW_SIZE of capture-quality-pilot.sh
 SPLIT_MM = 30.0       # broad and fine contrast part at 3 cm, as hessian_cloth.match_contrast
 AMBIENT = 1.0         # scene.ambient over the zenith sky's light (sky.cpp has no closed form for the sky LUT)

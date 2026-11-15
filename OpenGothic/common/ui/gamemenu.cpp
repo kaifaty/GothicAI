@@ -18,6 +18,7 @@
 #include "game/serialize.h"
 #include "game/savegameheader.h"
 #include "gothic.h"
+#include "settings.h"
 #include "resources.h"
 #include "build.h"
 
@@ -312,7 +313,7 @@ GameMenu::GameMenu(MenuRoot &owner, KeyCodec& keyCodec, daedalus::DaedalusVm& vm
   }
 
 GameMenu::~GameMenu() {
-  Gothic::flushSettings();
+  Settings::flush();
   Gothic::inst().popPause();
   Resources::device().waitIdle(); // safe-delete savethumb
   }
@@ -508,7 +509,7 @@ void GameMenu::drawItem(Painter& p, Item& hItem) {
   else if(item->type==daedalus::MenuItemType::INPUT) {
     string_frm textBuf;
     if(item->on_chg_set_option_section=="KEYS") {
-      auto keys = Gothic::settingsGetS(item->on_chg_set_option_section, item->on_chg_set_option);
+      auto keys = Settings::getS(item->on_chg_set_option_section, item->on_chg_set_option);
       if(&hItem!=ctrlInput)
         textBuf = KeyCodec::keysStr(keys); else
         textBuf = "_";
@@ -541,7 +542,7 @@ void GameMenu::drawSlider(Painter& p, Item& it, int x, int y, int sw, int sh) {
   if(sec.empty() || opt.empty())
     return;
 
-  float v  = Gothic::settingsGetF(sec, opt);
+  float v  = Settings::getF(sec, opt);
   int   dx = int(float(sw-w)*std::max(0.f,std::min(v,1.f)));
   p.drawRect(x+dx,y+(sh-h)/2,w,h,
              0,0,p.brush().w(),p.brush().h());
@@ -779,7 +780,7 @@ bool GameMenu::isHidden(const std::shared_ptr<daedalus::IMenuItem>& item) {
   if(item->hide_if_option_set.empty())
     return false;
 
-  auto opt = Gothic::inst().settingsGetI(item->hide_if_option_section_set,
+  auto opt = Settings::getI(item->hide_if_option_section_set,
                                          item->hide_if_option_set);
   return opt==item->hide_on_value;
   }
@@ -911,9 +912,9 @@ void GameMenu::execChgOption(Item &item, int slideDx) {
 
   if(item.handle->type==daedalus::MenuItemType::SLIDER && slideDx!=0) {
     updateItem(item);
-    float v = Gothic::settingsGetF(sec, opt);
+    float v = Settings::getF(sec, opt);
     v  = std::max(0.f,std::min(v+float(slideDx)*0.03f,1.f));
-    Gothic::settingsSetF(sec, opt, v);
+    Settings::setF(sec, opt, v);
     }
   if(item.handle->type==daedalus::MenuItemType::CHOICEBOX) {
     updateItem(item);
@@ -925,7 +926,7 @@ void GameMenu::execChgOption(Item &item, int slideDx) {
     if(cnt>0)
       item.value = std::clamp(item.value,0,cnt-1);  else
       item.value = 0;
-    Gothic::settingsSetI(sec, opt, item.value);
+    Settings::setI(sec, opt, item.value);
     }
   }
 
@@ -997,7 +998,7 @@ void GameMenu::execCommands(std::string str, bool isClick, KeyCodec::Action hint
 
 void GameMenu::updateItem(GameMenu::Item &item) {
   auto& it   = item.handle;
-  item.value = Gothic::settingsGetI(it->on_chg_set_option_section, it->on_chg_set_option);
+  item.value = Settings::getI(it->on_chg_set_option_section, it->on_chg_set_option);
   updateSavTitle(item);
   }
 

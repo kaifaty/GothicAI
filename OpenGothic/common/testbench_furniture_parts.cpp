@@ -11,7 +11,7 @@
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 
 #include "game/gamescript.h"
-#include "gothic.h"
+#include "settings.h"
 #include "graphics/mesh/protomesh.h"
 #include "resources.h"
 #include "world/aiqueue.h"
@@ -79,7 +79,7 @@ bool furnitureDrop(FurnitureParts& state,World& world,Npc& player,std::string ro
   mesh->appendItemVertices(drop.vertices);
   if(drop.vertices.empty()) {arenaAbort("furniture preparation: Item source vertices unavailable");return false;}
   const auto& hull=world.physic()->itemHullShape(*mesh,definition.handle().visual);
-  if(Gothic::physicsFlags().itemHulls && hull.shape!=nullptr) {
+  if(Settings::physicsFlags().itemHulls && hull.shape!=nullptr) {
     const auto& shape=static_cast<const JPH::ConvexHullShape&>(*hull.shape);
     for(JPH::uint i=0;i<shape.GetNumPoints();++i) {
       const auto point=(shape.GetPoint(i)+shape.GetCenterOfMass())*100.f;
@@ -103,7 +103,7 @@ bool furnitureDrop(FurnitureParts& state,World& world,Npc& player,std::string ro
     }
   event("furniture_parts_drop","\"role\":"+jsonStr(drop.role)+",\"symbol\":"+jsonStr(instance)+
     ",\"bottom_cm\":"+ragdollVector(bottom)+",\"velocity_cm_s\":"+ragdollVector(speed)+
-    ",\"support_y_cm\":"+ragdollNumber(supportY)+",\"item_hulls\":"+(Gothic::physicsFlags().itemHulls?"true":"false")+
+    ",\"support_y_cm\":"+ragdollNumber(supportY)+",\"item_hulls\":"+(Settings::physicsFlags().itemHulls?"true":"false")+
     ",\"extra_padding_cm\":"+ragdollNumber(hull.extraPaddingCm));
   state.drops.push_back(std::move(drop));return true;
   }
@@ -436,7 +436,7 @@ void furnitureWalkReport(FurnitureParts& state,World& world,Npc& player) {
     ",\"window_ms\":"+std::to_string(world.tickCount()-fixture.walkStartTick)+",\"start_cm\":"+ragdollVector(fixture.walkStart)+
     ",\"goal_cm\":"+ragdollVector(fixture.walkGoal)+",\"end_cm\":"+ragdollVector(end)+",\"travel_cm\":"+ragdollNumber(std::hypot(delta.x,delta.z))+
     ",\"max_cross_track_cm\":"+ragdollNumber(fixture.walkMaxCrossTrack)+",\"max_vertical_step_cm\":"+ragdollNumber(fixture.walkMaxStep)+
-    ",\"character_virtual\":"+(Gothic::physicsFlags().characterVirtual?"true":"false")+",\"pass\":"+(pass?"true":"false"));
+    ",\"character_virtual\":"+(Settings::physicsFlags().characterVirtual?"true":"false")+",\"pass\":"+(pass?"true":"false"));
   if(fixture.walker) {world.removeNpc(*fixture.walker);fixture.walker=nullptr;}
   if(!pass)arenaAbort("furniture passage failed to arrive without a stall or vertical jump");
   }
