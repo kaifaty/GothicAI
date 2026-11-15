@@ -11,11 +11,13 @@ Blender from scans seen straight down (mesh3d/blender/meadow_patch.py; once, int
 
 - sward: the low growth and the thatch over the soil. Colour times the shadow between the blades (the share of the
   sky times a root-to-tip curve, as landscape_grass_layer.py), the soil under them darker. The scan's growth is of
-  one green, so the growth is turned fresher or drier and lighter or darker in patches of 0.2 to 0.8 m and blade
-  by blade (DRY_*, TONE_*): the painted ground it replaces is as varied. No wider patches: a few to a tile would
-  show its repeat, and the wide ones are the shader's, by the noise of the grass's patches (grass_ground.glsl). What the bake itself has wider than half a
-  metre is levelled in part, so the tile has little to find again; the mean is brought to the meadow's painted
-  ground, times the on-screen correction SWARD_SCREEN;
+  one green and its shade is even, so the sward is given the variety of the painted ground it replaces, at the
+  size of a tuft: the bake's tall tufts fresh and light, dry thatch over pale soil in places of 10 to 60 cm
+  between them, single blades drier or fresher, dark gaps (DRY_*, TONE_TUFT, HUE_BY_TONE). No wider patches: a
+  few to a tile would show its repeat, and the wide ones are the shader's, by the noise of the grass's patches
+  (grass_ground.glsl). What the bake itself has wider than half a metre is levelled in part, so the tile has
+  little to find again; the mean is brought to the meadow's painted ground, times the on-screen correction
+  SWARD_SCREEN;
 - earth: the soil of the scan with its green sprouts turned to straw and its tone drawn to the road's earth, the
   pebbles greyer and lighter than it, hollows darker; the mean is brought to the earth of the road's texture, times
   EARTH_SCREEN: the strip along a road reads as the road's own shoulder, a bare spot as the same dry earth;
@@ -52,16 +54,24 @@ FAR = 5.3                   # the sward's far repeat: 21.2 m, no multiple of the
 REACH_CM, MARGIN_CM = 90, 50
 SOIL_SHADE = .5             # the soil under the growth against the growth's own albedo
 CANOPY_M = .035             # the root-to-tip curve of the sward: against the tallest growth this near
-CURVE, FLOOR = 1.3, .35
+CURVE, FLOOR = 1.3, .2
 LEVEL_M, LEVEL = .5, .5     # patches of the bake wider than this are levelled by this share
-# The sward's own variety: the growth between fresh and dry, and lighter or darker, by tiling noises
-LUSH, DRY = (.80, 1.02, .92), (1.30, 1.06, .68)   # of the growth's colour, linear RGB
-DRY_PATCH_M, DRY_PATCH = (.25, .8), .34         # wavelengths of the patches, and their share of the dryness
+# The sward's own variety, at the size of a tuft: what the game's camera sees of it from 3 to 10 m, where a blade
+# of the bake is under a pixel (reports/engine/2026-11-14-meadow-ground, "Что отняло жизнь"). The bake's tall tufts
+# are fresh and catch the light; between them lies dry thatch over pale soil, in places of 10 to 60 cm by a tiling
+# noise that is the stronger the longer its wave; single blades differ as well. Nothing wider than 60 cm: the tile
+# shows no repeat
+LUSH, DRY = (.60, 1.15, .80), (1.40, .92, .82)   # of the growth's colour, linear RGB
+TUFT_M, TUFT_FROM, TUFT_TO = .03, .8, 1.5       # a tuft: the canopy smoothed by this, against its mean
+DRY_TUFT = .5                                   # the share of the dryness the tufts take away
+DRY_PLACE_M, DRY_PLACE, DRY_SLOPE = (.10, .60), .50, 1.5   # wavelengths of the dry places, their share, the slope
 DRY_BLADE_M, DRY_BLADE = (.012, .05), .30       # of single blades
-TONE_PATCH_M, TONE_PATCH = (.2, .7), .25       # the tone of the patches: the logarithm's spread
+DRY_SOIL = 1.7                                  # the soil under dry thatch against the soil under fresh growth
+TONE_TUFT = 1.2             # the tone of the tufts against the thatch between: the logarithm's spread
+HUE_BY_TONE = .09           # the light of the sward is greener, its shade browner: red against green by this power
 SWARD_UP, EARTH_UP = .3, .0     # share of the plane's normal in the layer's
 AO_POWER = .3
-SWARD_STEMS = .55          # the thatch against its baked colour: pale straw, but no glitter over the growth
+SWARD_STEMS = .4           # the thatch against its baked colour: pale straw, but no glitter over the growth
 EARTH_LEVEL = .6
 ROUGH_FLOOR = .85
 SOIL_TO_ROAD = .85          # the soil's chroma drawn to the road's earth by this share
@@ -72,7 +82,7 @@ SWARD_SCREEN = (1., 1., 1.)
 # a lit layer comes out lighter than the road's paint beside it: down to the road's. Measured on the verge's strip
 # against the road past it (reports/engine/2026-11-14-meadow-ground, "Тон и палитра")
 EARTH_SCREEN = (.82, .82, .70)
-SWARD_CONTRAST = 1.35
+SWARD_CONTRAST = 1.9
 EARTH_CONTRAST = 1.2
 
 
@@ -142,17 +152,20 @@ def spread(value: np.ndarray, exponent: float) -> np.ndarray:
     return value * ((level / middle) ** (exponent - 1))[..., None]
 
 
-def noise(size: int, tile: float, waves: tuple[float, float], seed: int) -> np.ndarray:
-    """A tiling noise of wavelengths between the two, metres; mean 0, spread 1."""
+def noise(size: int, tile: float, waves: tuple[float, float], seed: int, slope: float = 0.) -> np.ndarray:
+    """A tiling noise of wavelengths between the two, metres; mean 0, spread 1. slope: a wave's strength falls with
+    its frequency by this power."""
     freq = np.fft.fftfreq(size, d=tile / size)
     radius = np.hypot(freq[:, None], freq[None, :])
-    band = (radius >= 1 / waves[1]) & (radius <= 1 / waves[0])
+    band = ((radius >= 1 / waves[1]) & (radius <= 1 / waves[0])) * np.maximum(radius, 1e-6) ** -slope
     value = np.fft.ifft2(np.fft.fft2(np.random.default_rng(seed).standard_normal((size, size))) * band).real
     return ((value - value.mean()) / value.std()).astype(np.float32)
 
 
 def to_mean(value: np.ndarray, target: np.ndarray, screen) -> tuple[np.ndarray, np.ndarray]:
-    gains = target * np.array(screen) / value.reshape(-1, 3).mean(axis=0)
+    gains = np.ones(3)
+    for _ in range(4):      # the brightest texels stop at 1: the mean is met all the same
+        gains = gains * target * np.array(screen) / np.clip(value * gains, 0, 1).reshape(-1, 3).mean(axis=0)
     return np.clip(value * gains, 0, 1), gains
 
 
@@ -167,14 +180,22 @@ def sward_maps(passes: dict, tile: float, meadow: np.ndarray, road: np.ndarray, 
     colour = passes['colour'] * (1 - earth) + soil(passes['colour'], road) * SOIL_SHADE * earth
     colour = colour * (1 - (1 - SWARD_STEMS) * passes['stem'][..., None])
     size, seed = height.shape[0], passes['patch']['seed']
-    dry = np.clip(.5 + DRY_PATCH * noise(size, tile, DRY_PATCH_M, seed + 1) + DRY_BLADE * noise(size, tile, DRY_BLADE_M, seed + 2),
-                  0, 1)[..., None]
-    turned = (np.array(LUSH) * (1 - dry) + np.array(DRY) * dry) * np.exp(TONE_PATCH * noise(size, tile, TONE_PATCH_M, seed + 3))[..., None]
+    tuft = gaussian_filter(canopy, TUFT_M / texel, mode='wrap')
+    tuft = np.clip((tuft / tuft.mean() - TUFT_FROM) / (TUFT_TO - TUFT_FROM), 0, 1)
+    place = .5 - DRY_TUFT * (tuft - .5) + DRY_PLACE * noise(size, tile, DRY_PLACE_M, seed + 1, DRY_SLOPE)
+    dry = np.clip(place + DRY_BLADE * noise(size, tile, DRY_BLADE_M, seed + 2), 0, 1)[..., None]
+    turned = np.array(LUSH) * (1 - dry) + np.array(DRY) * dry
     grown = passes['growth'][..., None]
     colour = colour * (1 - grown + grown * turned)
+    # the soil shows pale between dry thatch and lies in the shade of fresh growth
+    colour = colour * (1 + (DRY_SOIL - 1) * np.clip(place, 0, 1)[..., None] * earth)
+    colour = colour * np.exp(TONE_TUFT * (tuft - tuft.mean()))[..., None]
     value = spread(colour * shade[..., None], contrast)
     low = gaussian_filter(luma(value), LEVEL_M / texel, mode='wrap')
     value = value / ((low / low.mean()) ** LEVEL)[..., None]
+    level = np.maximum(luma(value), 1e-5)
+    tilt = (level / np.exp(np.log(level).mean())) ** HUE_BY_TONE
+    value = value * np.stack([1 / tilt, tilt, np.ones_like(tilt)], axis=2)
     value, gains = to_mean(value, meadow, screen)
     normal = passes['normal'] * (1 - SWARD_UP) + np.array((0, 0, SWARD_UP))
     rough = ROUGH_FLOOR + (1 - ROUGH_FLOOR) * np.clip(passes['rough'], 0, 1)

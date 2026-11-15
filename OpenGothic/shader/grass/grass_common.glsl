@@ -67,14 +67,18 @@ const float GrassTaper       = 0.7;                      // of the width is gone
 // gone from where the blades start to thin to half of the distance where they start to go (grass_ground.glsl)
 const float GrassGroundShade = 0.72;
 const vec3  GrassFarTint     = vec3(1.00, 1.10, 0.74);
-// of a ground with its own layers (grass_layers.glsl): the shade between the blades is in part baked into its sward
-const float GrassOwnGroundShade = 0.82;
-// and its sward differs from place to place by the patches' noise (grassPatch): dry and lighter where the short
-// sward is, greener and deeper towards the clumps. Patches of 2 to 10 m: the tile of the sward's map has none
-const vec3  GrassSwardDry    = vec3(1.20, 1.08, 0.80);
-const vec3  GrassSwardLush   = vec3(0.82, 0.96, 0.96);
-const float GrassSwardDryAt  = 22000.0;                  // of the patches' noise
-const float GrassSwardLushAt = 44000.0;
+// of a ground with its own layers (grass_layers.glsl): as deep as a painted ground's against the blades over it
+const float GrassOwnGroundShade = 0.74;
+// and its sward differs from place to place by the patches' noise (grassPatch): drier and a little lighter where
+// the short sward is, greener and deeper towards the clumps. Patches of 2 to 10 m: the tile of the sward's map has
+// none. A turn of the tone, not a coat: the green and the straw of the map are both seen in a dry place
+const vec3  GrassSwardDry    = vec3(1.09, 1.035, 0.90);
+const vec3  GrassSwardLush   = vec3(0.87, 0.985, 0.97);
+const float GrassSwardDryAt  = 14000.0;                  // of the patches' noise
+const float GrassSwardLushAt = 46000.0;
+// the earth of a bare spot in such a sward: the layer's earth is of the road's tone; in the meadow it lies dry and
+// pale under the sun, of the sward's own lightness, so a spot is a dry place and no dark blotch
+const vec3  GrassSpotEarth   = vec3(1.12, 1.42, 0.80);
 const float GrassFarAo       = 0.95;
 const float GrassGrazeFrom   = 0.25;
 const float GrassGrazeTo     = 0.70;
