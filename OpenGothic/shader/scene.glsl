@@ -2,6 +2,9 @@
 #define SCENE_GLSL
 
 // std140, because uniform buffer
+// the houses the scene block carries (HouseLights::MaxHouses, common/graphics/houselights.h)
+const int HOUSE_MAX = 32;
+
 struct SceneDesc {
   mat4  viewProject;
   mat4  viewProjectInv;
@@ -54,6 +57,7 @@ struct SceneDesc {
   float fogSkyVis;       // the sky seen from the camera under GI, 0..1 (fog_sky_vis.comp); 1 without it
   float lampNearKnee;    // a lamp's light never passes this many times its light at the range (light.frag); 0 off
   float dayHour;         // 0..24 of the game's day: the evening of the windows (materials/window_glow.glsl)
+  uint  houseCount;      // the houses of `house` below
   // living foliage (materials/foliage_wind.glsl): the world's wind of this frame and of the previous one
   vec4  foliageWind;      // xy: its direction in the world's x and z; z: the lean's pressure; w: 1 when it blows
   vec4  foliagePhase;     // 0..1 of the periods of the two waves and the two flutters
@@ -67,6 +71,9 @@ struct SceneDesc {
   // grass (grass/grass_common.glsl): x full density to here, cm; y the blades go into the ground from here; z the
   // ring's radius; w 1 with blades, 0.5 the ground's mark alone, 0 off
   vec4  grassRing;
+  // the houses whose windows fade with their lamps (windowHouse, materials/window_glow.glsl): three vectors a house,
+  // xyz the box's centre and w the cosine of its yaw; xyz its half size and w the sine; x the bedtime
+  vec4  house[3*HOUSE_MAX];
   };
 
 // bench `vsm study <bits>`: the shadow test on a mesh's facets (reports/render-features/2026-11-11-facet-shards)
