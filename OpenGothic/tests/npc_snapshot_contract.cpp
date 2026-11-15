@@ -307,11 +307,119 @@ void focusLayout() {
   auto instance=vm.allocate_instance<IFocus>("FOCUS_TEST");
   recordLayout(*instance,static_cast<FocusRecord&>(*instance),vm,[](auto& v,auto f) { focusFields(v,f); },19);
   }
+template<class F> void guildFields(IGuildValues& v,F f) {
+  const auto begin=reinterpret_cast<uintptr_t>(static_cast<GuildRecord*>(&v));
+#ifdef __APPLE__
+  constexpr unsigned textureOffset=8976,turnOffset=10560;
+#else
+  constexpr unsigned textureOffset=9504,turnOffset=11616;
+#endif
+#define GUILD_FIELD(name,script,offset) \
+  check(reinterpret_cast<uintptr_t>(&v.name)-begin==offset,"original guild offset for " #name); \
+  check(std::extent_v<decltype(v.name)> == 66,"original guild array size for " #name); \
+  f(#name,v.name,false,"C_GILVALUES." script)
+  GUILD_FIELD(water_depth_knee,"WATER_DEPTH_KNEE",0);
+  GUILD_FIELD(water_depth_chest,"WATER_DEPTH_CHEST",264);
+  GUILD_FIELD(jumpup_height,"JUMPUP_HEIGHT",528);
+  GUILD_FIELD(swim_time,"SWIM_TIME",792);
+  GUILD_FIELD(dive_time,"DIVE_TIME",1056);
+  GUILD_FIELD(step_height,"STEP_HEIGHT",1320);
+  GUILD_FIELD(jumplow_height,"JUMPLOW_HEIGHT",1584);
+  GUILD_FIELD(jumpmid_height,"JUMPMID_HEIGHT",1848);
+  GUILD_FIELD(slide_angle,"SLIDE_ANGLE",2112);
+  GUILD_FIELD(slide_angle2,"SLIDE_ANGLE2",2376);
+  GUILD_FIELD(disable_autoroll,"DISABLE_AUTOROLL",2640);
+  GUILD_FIELD(surface_align,"SURFACE_ALIGN",2904);
+  GUILD_FIELD(climb_heading_angle,"CLIMB_HEADING_ANGLE",3168);
+  GUILD_FIELD(climb_horiz_angle,"CLIMB_HORIZ_ANGLE",3432);
+  GUILD_FIELD(climb_ground_angle,"CLIMB_GROUND_ANGLE",3696);
+  GUILD_FIELD(fight_range_base,"FIGHT_RANGE_BASE",3960);
+  GUILD_FIELD(fight_range_fist,"FIGHT_RANGE_FIST",4224);
+  GUILD_FIELD(fight_range_g,"FIGHT_RANGE_G",4488);
+  GUILD_FIELD(fight_range_1hs,"FIGHT_RANGE_1HS",4752);
+  GUILD_FIELD(fight_range_1ha,"FIGHT_RANGE_1HA",5016);
+  GUILD_FIELD(fight_range_2hs,"FIGHT_RANGE_2HS",5280);
+  GUILD_FIELD(fight_range_2ha,"FIGHT_RANGE_2HA",5544);
+  GUILD_FIELD(falldown_height,"FALLDOWN_HEIGHT",5808);
+  GUILD_FIELD(falldown_damage,"FALLDOWN_DAMAGE",6072);
+  GUILD_FIELD(blood_disabled,"BLOOD_DISABLED",6336);
+  GUILD_FIELD(blood_max_distance,"BLOOD_MAX_DISTANCE",6600);
+  GUILD_FIELD(blood_amount,"BLOOD_AMOUNT",6864);
+  GUILD_FIELD(blood_flow,"BLOOD_FLOW",7128);
+  GUILD_FIELD(blood_emitter,"BLOOD_EMITTER",7392);
+  GUILD_FIELD(blood_texture,"BLOOD_TEXTURE",textureOffset);
+  GUILD_FIELD(turn_speed,"TURN_SPEED",turnOffset);
+#undef GUILD_FIELD
+  }
+void guildLayout() {
+#ifdef __APPLE__
+  check(sizeof(GuildRecord)==10824 && sizeof(IGuildValues)==10856,"original Mac guild sizes");
+#else
+  check(sizeof(GuildRecord)==11880 && sizeof(IGuildValues)==11912,"original Linux guild sizes");
+#endif
+  check(GuildRecord::count==66,"original guild count");
+  Fixture f;
+  auto cls=f.symbol("C_GILVALUES",Type::CLASS);
+  f.p.symbols[cls].class_size=sizeof(IGuildValues);
+  IGuildValues value{};
+  guildFields(value,[&](const char*,auto& field,bool,const char* binding) {
+    using T=std::remove_all_extents_t<std::remove_reference_t<decltype(field)>>;
+    f.symbol(binding,std::is_same_v<T,std::string> ? Type::STRING : Type::INT,66,Flag::MEMBER,int32_t(cls));
+    });
+  f.symbol("GUILD_TEST",Type::INSTANCE,0,Flag::CONST,int32_t(cls));
+  auto script=DaedalusScript::from_program(std::move(f.p));
+  IGuildValues::register_(script);
+  DaedalusVm vm(std::move(script));
+  auto instance=vm.allocate_instance<IGuildValues>("GUILD_TEST");
+  auto& record=static_cast<GuildRecord&>(*instance);
+  check(reinterpret_cast<uintptr_t>(&record)-reinterpret_cast<uintptr_t>(instance.get())==32,"original guild record base offset");
+  recordLayout(*instance,record,vm,[](auto& v,auto f) { guildFields(v,f); },31);
+  }
+template<class F> void spellFields(ISpell& v,F f) {
+  const auto begin=reinterpret_cast<uintptr_t>(static_cast<SpellRecord*>(&v));
+#define SPELL_FIELD(name,script,offset) \
+  check(reinterpret_cast<uintptr_t>(&v.name)-begin==offset,"original spell offset for " #name); \
+  f(#name,v.name,false,"C_SPELL." script)
+  SPELL_FIELD(time_per_mana,"TIME_PER_MANA",0);
+  SPELL_FIELD(damage_per_level,"DAMAGE_PER_LEVEL",4);
+  SPELL_FIELD(damage_type,"DAMAGETYPE",8);
+  SPELL_FIELD(spell_type,"SPELLTYPE",12);
+  SPELL_FIELD(can_turn_during_invest,"CANTURNDURINGINVEST",16);
+  SPELL_FIELD(can_change_target_during_invest,"CANCHANGETARGETDURINGINVEST",20);
+  SPELL_FIELD(is_multi_effect,"ISMULTIEFFECT",24);
+  SPELL_FIELD(target_collect_algo,"TARGETCOLLECTALGO",28);
+  SPELL_FIELD(target_collect_type,"TARGETCOLLECTTYPE",32);
+  SPELL_FIELD(target_collect_range,"TARGETCOLLECTRANGE",36);
+  SPELL_FIELD(target_collect_azi,"TARGETCOLLECTAZI",40);
+  SPELL_FIELD(target_collect_elev,"TARGETCOLLECTELEV",44);
+#undef SPELL_FIELD
+  }
+void spellLayout() {
+  check(sizeof(SpellRecord)==48 && sizeof(ISpell)==80,"original spell sizes");
+  Fixture f;
+  auto cls=f.symbol("C_SPELL",Type::CLASS);
+  f.p.symbols[cls].class_size=sizeof(ISpell);
+  ISpell value{};
+  spellFields(value,[&](const char*,auto& field,bool,const char* binding) {
+    auto type=std::is_same_v<std::remove_reference_t<decltype(field)>,float> ? Type::FLOAT : Type::INT;
+    f.symbol(binding,type,1,Flag::MEMBER,int32_t(cls));
+    });
+  f.symbol("SPELL_TEST",Type::INSTANCE,0,Flag::CONST,int32_t(cls));
+  auto script=DaedalusScript::from_program(std::move(f.p));
+  ISpell::register_(script);
+  DaedalusVm vm(std::move(script));
+  auto instance=vm.allocate_instance<ISpell>("SPELL_TEST");
+  auto& record=static_cast<SpellRecord&>(*instance);
+  check(reinterpret_cast<uintptr_t>(&record)-reinterpret_cast<uintptr_t>(instance.get())==32,"original spell record base offset");
+  recordLayout(*instance,record,vm,[](auto& v,auto f) { spellFields(v,f); },12);
+  }
 void fixture(const fs::path& dir) {
   auto p=Fixture().make();
   npcLayout(p);
   itemLayout(p);
   focusLayout();
+  guildLayout();
+  spellLayout();
   auto a=dir/"a",b=dir/"b";
   NpcSnapshot::write(p,a); check(NpcSnapshot::verify(p,a)==0,"fixture verifies");
   NpcSnapshot::write(p,b);
