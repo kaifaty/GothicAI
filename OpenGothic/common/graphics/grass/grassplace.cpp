@@ -543,7 +543,7 @@ CellBlades buildCell(const CellInput& in) {
           }
         stand = coverBlades(in.patch<0 ? coverLevel(fx,fz,border) : border);
         if(fine && in.patch<0)
-          stand = coverFine(coverLevel(fx,fz,border),border);
+          stand = coverFine(coverLevel(fx,fz,border),coverEdge(fx,fz,border));
         if(roll*nodes*(int64_t(1) << 40) >= (share >> 8)*stand*int64_t(BladesPerM2)*1024)
           continue;
         }

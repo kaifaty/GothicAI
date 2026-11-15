@@ -6,6 +6,7 @@
 #include "graphics/grass/grasscover.h"
 #include "graphics/grass/grassground.h"
 #include "graphics/grass/grassparams.h"
+#include "graphics/grass/grasspatch.h"
 #include "graphics/grass/grassplace.h"
 
 #include <rapidjson/document.h>
@@ -253,11 +254,11 @@ void placement() {
   Grass::addVerge(wall,stand,side,0,90.f,50.f);
   require(wall.verge.empty(), "a wall is no verge");
 
-  const int32_t         border = 1600*U;
+  const int32_t         border = 1600*U, deep = 1400*U;
   const Grass::Summary* plain[1] = {&plainRoad};
   const Grass::Summary* verge[1] = {&vergeRoad};
   const Grass::Summary* alone[1] = {&field};
-  size_t onSpot = 0, onSpotFine = 0, onRim = 0, sward = 0, fineCount = 0, coarse = 0, past = 0, bay = 0, bayPlain = 0;
+  size_t onSpot = 0, onSpotFine = 0, onWholeFine = 0, sward = 0, fineCount = 0, coarse = 0, past = 0, bay = 0, bayPlain = 0;
   int32_t furthest = 0;
   for(int32_t cz=-1; cz<3; ++cz)
     for(int32_t cx=-1; cx<3; ++cx) {
@@ -282,12 +283,16 @@ void placement() {
           const int32_t edge = Grass::coverBorder(b.x,b.z,b.x-border,90);
           const int32_t level = Grass::coverLevel(b.x,b.z,edge);
           if(batch.kind==1)
-            require(Grass::coverFine(level,edge)>0, "a fine blade stands on sward, on its rim or on a spot of bare earth"+at); else
+            require(Grass::coverFine(level,Grass::coverEdge(b.x,b.z,edge))>0, "a fine blade stands on sward, on its rim or on a spot of bare earth"+at); else
             require(level>Grass::CoverBlades, "a blade stands where the cover has sward or its rim"+at);
-          if(Grass::coverBare(b.x,b.z)>=256)
-            ++(batch.kind==1 ? onSpotFine : onSpot);
-          if(batch.kind==1 && edge>=256 && level>=224 && level<256)
-            ++onRim;
+          if(Grass::coverBare(b.x,b.z)>=256) {
+            if(batch.kind==0)
+              ++onSpot;
+            else if(b.x<deep)
+              ++onSpotFine;
+            }
+          if(batch.kind==1 && b.x<deep && Grass::coverBare(b.x,b.z)==0 && Grass::patchSward(Grass::patchNoise(b.x,b.z)))
+            ++onWholeFine;
           if(batch.kind==1) {
             ++fineCount;
             require(((w.w[3] >> 24) & 0xFu)<=7u, "a fine blade's width is of three bits"+at);
@@ -330,9 +335,20 @@ void placement() {
         require(same(fine,build(alone,cx,cz,meadow(true,true))), "the blades 8 m from the border do not know of it"+at);
       }
   require(onSpot==0, "no blade of the main grass in a spot of bare earth");
-  // the rim next to a spot, about as wide, has the sward's whole count
-  require(onSpotFine>0 && onSpotFine*2<onRim, "a spot of bare earth keeps a few fine blades: "+std::to_string(onSpotFine)+
-          " against "+std::to_string(onRim)+" on the rims");
+  // the fine blades per area of the spots against the whole short sward's, away from the border: CoverSparse of 256
+  size_t spotArea = 0, wholeArea = 0;
+  for(int32_t z=-800; z<2400; z+=4)
+    for(int32_t x=-800; x<1400; x+=4) {
+      const int32_t bare = Grass::coverBare(x*U,z*U);
+      if(bare>=256)
+        ++spotArea;
+      else if(bare==0 && Grass::patchSward(Grass::patchNoise(x*U,z*U)))
+        ++wholeArea;
+      }
+  require(spotArea>200 && wholeArea>50000 && onSpotFine>50 && onWholeFine>10000, "the meadow has spots and short sward to count on: "+
+          std::to_string(spotArea)+", "+std::to_string(wholeArea)+", "+std::to_string(onSpotFine)+", "+std::to_string(onWholeFine));
+  const double sparse = (double(onSpotFine)/double(spotArea))/(double(onWholeFine)/double(wholeArea));
+  require(sparse>0.08 && sparse<0.45, "a spot of bare earth keeps about a fifth of the fine blades: "+std::to_string(sparse));
   require(sward>100000 && fineCount>20000 && coarse>50000, "the meadow has its grass: "+std::to_string(sward)+" blades, "+
           std::to_string(fineCount)+" fine");
   require(past>500 && furthest>=60 && furthest<=Grass::coverBeyond(90),
@@ -421,8 +437,11 @@ void borders() {
         continue;
       const auto hit = Grass::nearestBorder(grid,float(i.x)/float(U),float(i.z)/float(U),180.f);
       require(hit.found && std::abs(hit.dist-float(i.z-1600*U)/float(U))<0.07f, "a blade on the verge is by the buffer's border");
-      const int32_t level = Grass::coverLevel(i.x,i.z,Grass::coverBorder(i.x,i.z,int32_t(hit.dist*float(U)),int32_t(hit.reach)));
-      require(level>Grass::CoverBlades-8, "the ground's shader has sward or its rim under a blade on the verge");
+      const int32_t edge  = Grass::coverBorder(i.x,i.z,int32_t(hit.dist*float(U)),int32_t(hit.reach));
+      const int32_t level = Grass::coverLevel(i.x,i.z,edge);
+      // a spot of bare earth on a tongue keeps a few fine blades, as in the meadow
+      require(level>Grass::CoverBlades-8 || (Grass::coverBare(i.x,i.z)>0 && Grass::coverEdge(i.x,i.z,edge)>Grass::CoverBlades-8),
+              "the ground's shader has sward, its rim or a spot of bare earth under a blade on the verge");
       ++past;
       }
     }

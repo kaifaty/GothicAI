@@ -35,7 +35,7 @@ int grassCoverBare(ivec2 p) {
       if(d2>=4*r*r || grassPatch(c)>=int(GrassPatchMain0))
         continue;
       if(!bent) {
-        bend = (grassValueNoise(p,1280,0xB6u)-32640)*435/32640 + (grassValueNoise(p,384,0xB7u)-32640)*166/32640;
+        bend = (grassValueNoise(p,864,0xB6u)-32640)*435/32640 + (grassValueNoise(p,256,0xB7u)-32640)*166/32640;
         bent = true;
         }
       const int warp = clamp(bend*r/256, -r*9/10, r*9/10);

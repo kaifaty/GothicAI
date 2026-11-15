@@ -55,11 +55,16 @@ inline int32_t coverBlades(int32_t level) {
   return q<0 ? 0 : (q>256 ? 256 : q);
   }
 
+// The level of the border alone, as coverLevel without the spots of bare earth
+inline int32_t coverEdge(int32_t x, int32_t z, int32_t border) {
+  return (border<=0 || border>=256) ? border : border + coverTuft(x,z);
+  }
+
 // The share of the fine blades that stand at a place, 0..256: a spot of bare earth keeps a few of them, the earth
-// of a border none. level: coverLevel at the place; border: as given to it
-inline int32_t coverFine(int32_t level, int32_t border) {
-  const int32_t stand = coverBlades(level), edge = coverBlades(border);
-  const int32_t least = edge<CoverSparse ? edge : CoverSparse;
+// of a border none. level: coverLevel at the place; edge: coverEdge there
+inline int32_t coverFine(int32_t level, int32_t edge) {
+  const int32_t stand = coverBlades(level), beside = coverBlades(edge);
+  const int32_t least = beside<CoverSparse ? beside : CoverSparse;
   return stand>least ? stand : least;
   }
 
