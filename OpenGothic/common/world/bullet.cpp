@@ -13,7 +13,6 @@
 #include "world.h"
 #include "world/benchhooks.h"
 #include "settings.h"
-#include "settings.h"
 
 using namespace Tempest;
 
