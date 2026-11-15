@@ -34,11 +34,13 @@ class MoveAlgo final {
       Tempest::Vec3 normal;             // of the obstacle ahead or the one that holds, along the ground
       bool          flat      = false;  // what holds is a wall that stands flat to both sides of the body
       bool          plant     = false;  // the body is still or on its way: a palm's point is kept in the world
+      bool          stop      = false;  // the wall stop holds the hero: his move asks only the way into the wall
       uint64_t      tick      = 0;
       };
     WallReach wallReach(uint64_t now) const;
-    // A trial (GAME wall_stop): the hero held nearly head on by a flat wall asks only the way into it - it does
-    // not slide along the wall with the key held. Turned further than 25 degrees off, it slides as before
+    // The wall stop (GAME wall_stop, game/reachsignal): the hero held nearly head on by a flat wall asks only the
+    // way into it - he does not creep along the wall with the key held. Turned further than 25 degrees off, at a
+    // door's jamb or a corner he slides as before
     Tempest::Vec3 wallStop(const Tempest::Vec3& displacement);
 
     struct JumpStatus {

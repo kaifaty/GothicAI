@@ -2,6 +2,23 @@
 
 #include <algorithm>
 
+bool ReachSignal::flatWall(const WallLook* looks, size_t count, float radius) {
+  if(count==0)
+    return false;
+  float nearest = looks[0].gap, furthest = looks[0].gap;
+  for(size_t i=0; i<count; ++i) {
+    if(!looks[i].hit || looks[i].facing<FlatFacing)
+      return false;
+    nearest  = std::min(nearest, looks[i].gap);
+    furthest = std::max(furthest,looks[i].gap);
+    }
+  return furthest-nearest<=FlatStep && furthest<=radius+FlatRoom;
+  }
+
+bool ReachSignal::stops(bool stopping, bool flat, float into) {
+  return flat && into>=(stopping ? StopKeep : StopBegin);
+  }
+
 bool ReachSignal::wantsProbe(const Input& input) {
   return input.enabled && input.eligible && input.moving && !input.contact && input.avgSpeed>=ProbeSpeed;
   }
