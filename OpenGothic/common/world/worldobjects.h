@@ -14,6 +14,7 @@
 #include "objects/vob.h"
 #include "npcsimtier.h"
 #include "animationlod.h"
+#include "worldwalk.h"
 
 class Npc;
 class Item;
@@ -241,6 +242,7 @@ class WorldObjects final {
       uint64_t timeUntil = 0;
       };
 
+    friend class NpcLogicalStateContract;
     World&                             owner;
 
     std::vector<CollisionZone*>        collisionZn;
@@ -265,6 +267,9 @@ class WorldObjects final {
     std::vector<std::unique_ptr<Npc>>  npcRemoved; // removed, but may have a dangling references in game
     std::vector<Npc*>                  npcNear;
     NpcSimTiers::Stats                 simTiers;
+    WorldWalk::Plan                   preparePlan, syncPlan;
+    void                              updateSimTiers(bool beforeTick);
+    void                              updateNpcPolicies(const Npc* player, const Tempest::Vec3& position);
 
     std::vector<AbstractTrigger*>      triggers;
     std::vector<AbstractTrigger*>      triggersTk;

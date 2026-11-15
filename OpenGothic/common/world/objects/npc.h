@@ -715,6 +715,8 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     uint32_t ragdollQuestReturnCount() const { return ragdollQuestReturns; }
     const Tempest::Vec3& ragdollQuestReturnFrom() const { return ragdollQuestFrom; }
     void      prepareRagdoll();
+    uint8_t   worldWalkPlan() const;
+    void      checkSkippedWorldWalk(uint8_t step);
     void      prepareLivingBody();
     void      refreshMeleeFighter();
     bool      isMeleeFighter() const;

@@ -316,6 +316,7 @@ class World final : public ClothWorld, public BloodDecalSource, public PhysicsHo
     std::vector<Vob::AttachmentSnapshot> vobAttachmentSnapshot(uint32_t zenId) const { return wobj.vobAttachmentSnapshot(zenId); }
 
   private:
+    friend class NpcLogicalStateContract;
     friend struct WorldDataContract;
     friend struct WayHeightsContract;
     double               worldLoadMs = 0;
