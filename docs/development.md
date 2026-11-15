@@ -235,7 +235,7 @@ SCENARIO=m3 ASR=voxtral scripts/e2e.sh
 
 ## Windows
 
-`scripts/build-engine.ps1` явно собирает `Gothic2Notr` (с `content-convert`), `engine-platform-link`, `engine-island` и отдельный `storygraph`; проверяет наличие всех исполняемых файлов. Остров входит в `ALL` и на MSVC. В выпуске Windows его только собирают; проверка смешанных runtime на MSVC читает журнал `/VERBOSE:LIB` через ту же проверку слоёв, что карты Linux и Mac. Для захвата журнала нужен генератор Ninja или Makefiles.
+`scripts/build-engine.ps1` явно собирает `Gothic2Notr` (с `content-convert`), `engine-platform-link`, `engine-island` и отдельный `storygraph`; проверяет наличие всех исполняемых файлов. Остров входит в `ALL` и на MSVC. В выпуске Windows его только собирают; проверка смешанных runtime на MSVC читает журнал `/VERBOSE` через ту же проверку слоёв, что карты Linux и Mac. Для захвата журнала нужен генератор Ninja или Makefiles.
 
 Готовый архив для Windows 10/11 x64 собирает GitHub Actions ([`release.yml`](../.github/workflows/release.yml), job `windows`): движок этого форка с ИИ-мостом и граф сюжета компилируются MSVC, тесты ядра и входа ChatGPT идут на Windows. Запускается только вручную, перед выпуском; на PR сборка Windows не идёт. Выпуск описан в разделе [«Выпуск»](#выпуск). Игроку компилятор не нужен; инструкция — [`START_HERE.ru.md`](../START_HERE.ru.md). Сборка из исходников — `scripts/build-engine.ps1` (Visual Studio 2022 C++, Vulkan SDK, Git), затем `Setup-GothicAI.cmd`. Только при первой настройке `setup` выбирает профиль без своих серверов: ChatGPT — мозг NPC, Inworld — распознавание с запасным ChatGPT и оригинальные голоса; повторный запуск сохраняет выбор игрока. Игра, графика и микрофон на настоящем ПК ещё не проверены.
 

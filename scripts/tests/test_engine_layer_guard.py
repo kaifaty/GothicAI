@@ -224,23 +224,57 @@ def test_msvc_link_map(tmp_path, target, allowed, record, error):
 
 
 @pytest.mark.parametrize("exit_code", [0, 7])
+@pytest.mark.skipif(shutil.which("ninja") is None, reason="no ninja")
 def test_msvc_link_output_capture(tmp_path, exit_code):
-    log = tmp_path / "with space.link.log"
-    log.write_text("stale output")
-    linker = tmp_path / "linker with space.py"
+    directory = tmp_path / "with space"
+    directory.mkdir()
+    build = directory / "build"
+    log = build / "engine-platform-link-Release.map.link.log"
+    linker = directory / "linker.py"
     linker.write_text("import os, sys\n"
+                      "from pathlib import Path\n"
                       "assert os.environ['VERBOSE'] == '1'\n"
-                      "assert sys.argv[1] == 'argument with space'\n"
-                      "print('    Loaded gothic-base-runtime.lib(sha256.cpp.obj)')\n"
+                      "Path(sys.argv[1]).touch()\n"
+                      "if '/VERBOSE' in sys.argv:\n"
+                      "    print('    Loaded gothic-base-runtime.lib(sha256.cpp.obj)')\n"
+                      "else:\n"
+                      "    print('    Searching gothic-base-runtime.lib:')\n"
                       "print('linker diagnostic', file=sys.stderr)\n"
                       f"sys.exit({exit_code})\n")
-    result = subprocess.run(["cmake", f"-DPLATFORM_CAPTURE_LOG={log}", "-P", str(PLATFORM_MAP),
-                             "--", sys.executable, str(linker), "argument with space"],
+    # Run the actual target configuration: testing capture alone missed /VERBOSE:LIB,
+    # which native MSVC 14.44 prints without any Loaded records (release run 43744732687).
+    platform = GUARD.with_name("EnginePlatform.cmake").read_text()
+    start = platform.index("function(engine_link_map_check ")
+    end = platform.index("\nendfunction()", start) + len("\nendfunction()")
+    shutil.copy(GUARD, directory / GUARD.name)
+    (directory / "main.obj").touch()
+    (directory / "inputs.cmake").write_text(
+        f"set(PLATFORM_RULES [==[{RULES}]==])\n"
+        "set(PLATFORM_MEMBERS gothic-base-runtime|sha256.cpp.obj|common/sha256.cpp)\n")
+    (directory / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.20)\nproject(capture NONE)\nset(MSVC TRUE)\n"
+        f'set(guard_rules "{RULES.as_posix()}")\n'
+        f'set(ENGINE_LINK_MAP_CHECK "{PLATFORM_MAP.as_posix()}")\n'
+        'set(ENGINE_LINK_MAP_INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/inputs.cmake")\n'
+        f'set(CMAKE_CXX_LINK_EXECUTABLE "\\\"{Path(sys.executable).as_posix()}\\\" '
+        f'\\\"{linker.as_posix()}\\\" <TARGET> <LINK_FLAGS>")\n'
+        f"{platform[start:end]}\n"
+        "add_executable(engine-platform-link main.obj)\n"
+        "set_target_properties(engine-platform-link PROPERTIES LINKER_LANGUAGE CXX)\n"
+        "engine_link_map_check(engine-platform-link platform)\n")
+    configured = subprocess.run(["cmake", "-S", str(directory), "-B", str(build), "-G", "Ninja",
+                                 "-DCMAKE_BUILD_TYPE=Release"], capture_output=True, text=True)
+    assert configured.returncode == 0, configured.stdout + configured.stderr
+    log.write_text("stale output")
+    result = subprocess.run(["cmake", "--build", str(build)],
                             capture_output=True, text=True)
     assert (result.returncode == 0) == (exit_code == 0)
     assert "Loaded gothic-base-runtime.lib(sha256.cpp.obj)" in log.read_text()
     assert "linker diagnostic" in log.read_text()
     assert "stale output" not in log.read_text()
-    assert "linker diagnostic" in result.stderr
+    output = result.stdout + result.stderr
+    assert "linker diagnostic" in output
     if exit_code:
-        assert f"MSVC link failed ({exit_code})" in result.stderr
+        assert f"MSVC link failed ({exit_code})" in output
+    else:
+        assert "1 mixed runtime objects checked, all platform" in output

@@ -82,9 +82,10 @@ function(engine_link_map_check target layers)
     if(NOT CMAKE_GENERATOR MATCHES "Ninja|Makefiles")
       message(FATAL_ERROR "${target}: MSVC mixed-runtime checking requires Ninja or Makefiles to capture linker output")
     endif()
-    # /MAP lists public symbols only. /VERBOSE:LIB records archive extraction before
+    # /MAP lists public symbols only. Full /VERBOSE records archive extraction before
     # /OPT:REF and /OPT:ICF remove/fold COMDATs, including objects absent from /MAP.
-    target_link_options(${target} PRIVATE "/MAP:${map}" /VERBOSE:LIB)
+    # /VERBOSE:LIB only lists searched libraries on current MSVC.
+    target_link_options(${target} PRIVATE "/MAP:${map}" /VERBOSE)
     set(map "${map}.link.log")
     set(format MSVC)
     # Wrap the complete link rule (including cmake -E vs_link_exe) on CMake 3.20.
