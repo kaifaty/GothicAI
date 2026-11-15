@@ -67,12 +67,14 @@ const float GrassTaper       = 0.7;                      // of the width is gone
 // gone from where the blades start to thin to half of the distance where they start to go (grass_ground.glsl)
 const float GrassGroundShade = 0.72;
 const vec3  GrassFarTint     = vec3(1.00, 1.10, 0.74);
-// of a ground with its own layers (grass_layers.glsl): as deep as a painted ground's against the blades over it
-const float GrassOwnGroundShade = 0.74;
+// of a ground with its own layers (grass_layers.glsl): the shade between the blades is in part baked into its
+// sward, and its fine blades cover less of it than broad ones. At 0.74 the nearest ground came out at 0.83 to 0.88
+// of the meadow with broad blades (reports/engine/2026-11-14-meadow-ground, "Вторая попытка")
+const float GrassOwnGroundShade = 0.82;
 // and its sward differs from place to place by the patches' noise (grassPatch): drier and a little lighter where
 // the short sward is, greener and deeper towards the clumps. Patches of 2 to 10 m: the tile of the sward's map has
 // none. A turn of the tone, not a coat: the green and the straw of the map are both seen in a dry place
-const vec3  GrassSwardDry    = vec3(1.09, 1.035, 0.90);
+const vec3  GrassSwardDry    = vec3(1.13, 1.07, 0.92);
 const vec3  GrassSwardLush   = vec3(0.87, 0.985, 0.97);
 const float GrassSwardDryAt  = 14000.0;                  // of the patches' noise
 const float GrassSwardLushAt = 46000.0;
