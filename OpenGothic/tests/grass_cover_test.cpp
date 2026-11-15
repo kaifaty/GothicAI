@@ -12,6 +12,7 @@
 #include <rapidjson/document.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <span>
@@ -66,6 +67,10 @@ void records() {
 
   Grass::Params p;
   require(parsed("{}",p) && !p.fine && !p.cover && p.tile==0.f, "grass without `fine` has the blades it had");
+  require(p.broad==Grass::BroadShare && parsed(R"({"broad":0.25})",p) && p.broad==0.25f && parsed(R"({"broad":0})",p) && p.broad==0.f &&
+          parsed(R"({"broad":1})",p) && p.broad==1.f, "`broad` is a share, the default where the record has none");
+  for(const char* bad:{R"({"broad":1.5})", R"({"broad":-0.1})", R"({"broad":"1"})", R"({"broad":true})"})
+    require(!parsed(bad,p) && p.broad==1.f, std::string("`broad` of another value is refused: ")+bad);
   require(parsed(R"({"fine":1})",p) && p.fine && parsed(R"({"fine":0})",p) && !p.fine, "`fine` is 0 or 1");
   for(const char* bad:{R"({"fine":2})", R"({"fine":true})", R"({"fine":0.5})"})
     require(!parsed(bad,p), std::string("`fine` of another value is refused: ")+bad);
@@ -81,16 +86,35 @@ void spots() {
   auto cell = [](int32_t x, int32_t z) { return size_t(z)*size_t(N) + size_t(x); };
   for(const auto& from:{std::pair<int32_t,int32_t>{40000,-3000}, std::pair<int32_t,int32_t>{-20000,10000}}) {
     std::vector<uint8_t> bare(size_t(N)*size_t(N));
-    size_t count = 0;
+    size_t count = 0, thin = 0, gaps = 0, isles = 0, rim = 0;
     for(int32_t j=0; j<N; ++j)
       for(int32_t i=0; i<N; ++i) {
-        const int32_t b = Grass::coverBare(from.first*U + i*Step, from.second*U + j*Step);
+        const int32_t x = from.first*U + i*Step, z = from.second*U + j*Step;
+        const int32_t b = Grass::coverBare(x,z);
         require(b>=0 && b<=256, "the bare earth is a share of 256");
+        if((i+j)%7==0) {
+          const int32_t clear = Grass::coverClear(x,z), level = Grass::coverLevel(x,z,256);
+          require(clear>=0 && clear<=256 && (b==0 || clear==0), "no place where a spot's sward thins is clear of the spot");
+          require(b==0 ? level==256 : (b>=256 ? level==0 : std::abs(level-(256-b))<=Grass::CoverTuft+Grass::CoverIsles),
+                  "the sward is whole away from a spot, none on it, broken up between the two");
+          if(b>0 && b<256) {
+            ++thin;
+            if(b<Grass::CoverSward && level<=Grass::CoverBlades)
+              ++gaps;
+            if(b>Grass::CoverSward && level>Grass::CoverSward)
+              ++isles;
+            }
+          if(clear>0 && clear<256)
+            ++rim;
+          }
         bare[cell(i,j)] = b>Grass::CoverSward ? 1 : 0;
         count += bare[cell(i,j)];
         }
     const double share = double(count)/double(bare.size());
     require(share>0.003 && share<0.015, "the bare earth is a quiet accent, about a hundredth of the meadow: "+std::to_string(share*100.0));
+    // towards a spot the sward breaks up: earth shows in its half, isles of sward stand in the earth's half
+    require(thin>1000 && gaps*20>thin && isles*20>thin && rim>200, "a spot has no line for an edge: "+std::to_string(thin)+" places of thinning sward, "+
+            std::to_string(gaps)+" of earth in the sward's half, "+std::to_string(isles)+" of sward in the earth's, "+std::to_string(rim)+" beside it");
 
     // each spot's outline against the circle of its area; cells' sides count as 4/pi of a line's length
     std::vector<int32_t> stack;
@@ -202,11 +226,12 @@ void addRoad(Grass::Summary& out, float x0, float z0, float x1, float z1, bool v
       }
   }
 
-Grass::Params meadow(bool cover, bool fine) {
+Grass::Params meadow(bool cover, bool fine, float broad = 0.f) {
   Grass::Params p;
   p.on    = true;
   p.edge  = 150.f;
   p.fine  = fine;
+  p.broad = broad;
   p.cover = cover;
   p.tile  = cover ? 400.f : 0.f;
   return p;
@@ -356,6 +381,90 @@ void placement() {
   require(bay>0 && bayPlain>0, "the grass stands at the border");
   }
 
+// The short sward's broad blades among its fine ones (Params::broad): in whole sward only, the fine ones stay
+void broadBlades() {
+  Grass::Summary ground;
+  addField(ground,-1600.f,-1600.f,1600.f,3200.f,0);
+  addRoad(ground,1600.f,-1600.f,2400.f,3200.f,true);
+  const Grass::Summary* verge[1] = {&ground};
+  const int32_t border = 1600*U;
+  auto key = [](const Grass::Blade& b) { return std::array<uint32_t,4>{b.w[0],b.w[1],b.w[2],b.w[3]}; };
+  size_t whole = 0, half = 0, without = 0, fineWithout = 0, fineWhole = 0, atBorder = 0, inMeadow = 0;
+  for(int32_t cz=-1; cz<3; ++cz)
+    for(int32_t cx=-1; cx<3; ++cx) {
+      const std::string at = " (cell "+std::to_string(cx)+","+std::to_string(cz)+")";
+      const auto none = build(verge,cx,cz,meadow(true,true,0.f));
+      const auto all  = build(verge,cx,cz,meadow(true,true,1.f));
+      const auto some = build(verge,cx,cz,meadow(true,true,0.5f));
+      const auto old  = build(verge,cx,cz,meadow(true,false,1.f));
+      require(same(all,build(verge,cx,cz,meadow(true,true,1.f))), "the mixed sward repeats"+at);
+      require(same(old,build(verge,cx,cz,meadow(true,false,0.f))) &&
+              same(build(verge,cx,cz,meadow(false,true,1.f)),build(verge,cx,cz,meadow(false,false,0.f))),
+              "`broad` changes no blade without the fine ones"+at);
+      // the blades of the main grass and the clumps are the same in every one of them
+      std::vector<std::array<uint32_t,4>> main;
+      for(const auto& batch:none.batches)
+        for(uint32_t i=0; i<batch.count; ++i) {
+          if(batch.kind==0)
+            main.push_back(key(none.blades[batch.first+i])); else
+            ++fineWithout;
+          }
+      std::sort(main.begin(),main.end());
+      auto count = [&](const Grass::CellBlades& cell, bool check) {
+        size_t n = 0, mainSeen = 0;
+        for(const auto& batch:cell.batches)
+          for(uint32_t i=0; i<batch.count; ++i) {
+            const auto& w = cell.blades[batch.first+i];
+            if(batch.kind!=0)
+              continue;
+            if(std::binary_search(main.begin(),main.end(),key(w))) {
+              ++mainSeen;
+              continue;
+              }
+            ++n;
+            if(!check)
+              continue;
+            const auto    b     = Grass::decode(w,cx,cz,cell.minY);
+            const int32_t level = Grass::coverLevel(b.x,b.z,Grass::coverBorder(b.x,b.z,b.x-border,90));
+            require(b.x<border && level>=256 && Grass::coverClear(b.x,b.z)>0 && Grass::coverBare(b.x,b.z)==0,
+                    "a broad blade of the sward stands in whole sward, clear of the spots and off the verge"+at);
+            require(((w.w[3] >> 24) & 0xFu)>=3u, "a broad blade of the sward is as broad as it was"+at);
+            if(b.x>border-Grass::CoverBroadFrom*U)
+              ++atBorder;
+            else if(b.x>border-(2*Grass::CoverBroadTo+Grass::CoverBroadFrom)*U && b.x<=border-2*Grass::CoverBroadTo*U)
+              ++inMeadow;
+            }
+        require(mainSeen==main.size(), "the main grass does not know of the sward's mix"+at);
+        return n;
+        };
+      whole += count(all,true);
+      half  += count(some,true);
+      for(const auto& batch:all.batches)
+        if(batch.kind==1)
+          fineWhole += batch.count;
+      // the sward's blades without the fine ones: every broad one of the mix is one of them
+      size_t was = 0;
+      for(const auto& batch:old.batches)
+        was += batch.kind==0 ? batch.count : 0;
+      require(was>=main.size(), "the sward had its blades before the fine ones"+at);
+      without += was-main.size();
+      // a node is of one kind at any distance: a far cell has the same broad blades, fewer of the fine ones
+      const auto far = build(verge,cx,cz,meadow(true,true,0.5f),96);
+      require(count(far,false)==count(some,false), "the two kinds do not change places with the distance"+at);
+      const auto past = build(verge,cx,cz,meadow(true,true,1.f),0);
+      for(const auto& b:past.batches)
+        require(b.kind==0, "a cell past the fine blades' ring has none"+at);
+      require(count(past,false)==count(all,false), "past the fine blades' ring the sward keeps its broad ones"+at);
+      }
+  require(whole>5000 && whole<=without && whole*10>without*5, "with `broad` 1 the sward has the broad blades it had, but for the spots and "
+          "the borders: "+std::to_string(whole)+" of "+std::to_string(without));
+  require(half*10>whole*4 && half*10<whole*6, "`broad` is the share of them: "+std::to_string(half)+" of "+std::to_string(whole));
+  require(fineWhole*10>fineWithout*2 && fineWhole<fineWithout, "the fine blade stays in the mix: "+std::to_string(fineWhole)+" of "+
+          std::to_string(fineWithout));
+  require(inMeadow>100 && atBorder*10<inMeadow, "no broad blade of the sward stands at the border: "+std::to_string(atBorder)+" within "+
+          std::to_string(Grass::CoverBroadFrom)+" cm, "+std::to_string(inMeadow)+" in a band as wide in the meadow");
+  }
+
 // The pieces of the border: found from the chunks, packed for the shader, read back
 void borders() {
   // two chunks of meadow side by side, a road along both
@@ -455,6 +564,7 @@ size_t grassCoverTests() {
   spots();
   borderLine();
   placement();
+  broadBlades();
   borders();
   return assertions;
   }

@@ -141,6 +141,8 @@ uint16_t GrassField::slotOf(const asset::Material& m) {
       params.cover = true;
       params.tile  = g.ground.swardTile*100.f;
       params.fine  = params.fine && !Grass::fineOff();
+      if(const int32_t forced = Grass::forcedBroad(); forced>=0)
+        params.broad = float(forced)*0.01f;
       }
     }
   uint16_t id = uint16_t(-1);

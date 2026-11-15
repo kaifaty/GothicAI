@@ -2,7 +2,6 @@
 #define GRASS_GROUND_GLSL
 
 #include "grass/grass_common.glsl"
-#include "grass/grass_cover.glsl"
 #include "materials/foliage_wind.glsl"
 
 // The ground of a material with `grass` (BK_GRASS; reports/engine/2026-11-14-grass-system), in the landscape's
@@ -47,10 +46,6 @@ void grassGround(uint bits, vec3 pos, vec3 normal, float sward, inout vec4 diffu
   if(sward<0.0) {
     bare         = grassBare(place);
     diffuse.rgb *= mix(vec3(1.0), GrassEarthTint, bare*grows);
-    }
-  else if(sward<0.5) {
-    // the earth of a spot, not of a border: there it stays the road's
-    diffuse.rgb *= mix(vec3(1.0), GrassSpotEarth, smoothstep(0.2, 0.5, float(grassCoverBare(place))/256.0));
     }
   const int   noise    = grassPatch(place);
   if(sward>0.5)

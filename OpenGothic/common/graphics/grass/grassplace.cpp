@@ -131,7 +131,7 @@ CellBlades buildCell(const CellInput& in) {
     };
   std::vector<Slot> slots(in.params.size());
   int32_t maxEdge = 0, maxDensity = 0;
-  bool    anyFine = false;
+  bool    anyFine = false, anyBroad = false;
   for(size_t i=0; i<slots.size(); ++i) {
     const auto& p = in.params[i];
     if(!p.on)
@@ -141,6 +141,7 @@ CellBlades buildCell(const CellInput& in) {
     slots[i].tanFull   = int32_t(std::lround(std::tan(double(std::max(p.slope-10.f,0.f))*M_PI/180.0)*4096.0));
     slots[i].edgeCm    = int32_t(std::lround(p.edge));
     anyFine            = anyFine || (p.cover && p.fine);
+    anyBroad           = anyBroad || (p.cover && p.fine && p.broad>0.f);
     maxEdge    = std::max(maxEdge,slots[i].edgeCm);
     maxDensity = std::max(maxDensity,slots[i].densityQ8);
     }
@@ -161,7 +162,9 @@ CellBlades buildCell(const CellInput& in) {
       }
     }
   // an open edge is felt to twice the record's band (the noise on the distance), a verge's to the tongues' end
-  const int32_t band  = verge.empty() ? 2*maxEdge*Unit : std::max(2*maxEdge*Unit,VergeBand);
+  // and by a sward's broad blades as far as they keep clear of it
+  const int32_t band  = std::max({2*maxEdge*Unit, verge.empty() ? 0 : VergeBand,
+                                  (anyBroad && maxEdge>0) ? CoverBroadTo*Unit : 0});
   const int32_t reach = CellMargin + band + 100*Unit;
 
   // the triangles round the cell, in an order that does not depend on the chunks'
@@ -481,8 +484,12 @@ CellBlades buildCell(const CellInput& in) {
         continue;
       const Slot&   slot = slots[at->t->slot];
       const Params& par  = in.params[at->t->slot];
-      const bool    fine = par.cover && par.fine && (tuft->sward || onVerge>=0);
-      if(fine ? rank>=in.rankLimitFine : (!kept || rank>=in.rankLimit))
+      const bool    sward = par.cover && par.fine && (tuft->sward || onVerge>=0);
+      if(!sward && (!kept || rank>=in.rankLimit))
+        continue;
+      // of a sward past its fine blades' ring a broad one alone may stand
+      const bool mayBroad = sward && par.broad>0.f && kept && onVerge<0 && past<0 && rank<in.rankLimit;
+      if(sward && !mayBroad && rank>=in.rankLimitFine)
         continue;
       if(at->tanQ12>=slot.tanMax)
         continue;
@@ -492,11 +499,12 @@ CellBlades buildCell(const CellInput& in) {
       int32_t edgeQ8 = 256;
       if(past>=0 && slot.edgeCm<=0)
         continue;
+      int32_t toEdge = INT32_MAX; // cm to an open edge, where it was asked
       if(past<0 && slot.edgeCm>0 && !segments.empty()) {
         // on a verge: as at the border itself
-        const int32_t d = onVerge>=0 ? 0 : edgeDistance(px,pz,slot.edgeCm*2,edge);
+        toEdge = onVerge>=0 ? 0 : edgeDistance(px,pz,slot.edgeCm*2,edge);
         const int32_t n = valueNoise(px,pz,150*Unit,0x33u) - 32640;
-        edgeQ8 = std::clamp((d*256 + int32_t(int64_t(n)*slot.edgeCm*154/32640))/slot.edgeCm, 0, 256);
+        edgeQ8 = std::clamp((toEdge*256 + int32_t(int64_t(n)*slot.edgeCm*154/32640))/slot.edgeCm, 0, 256);
         }
       // 55 % of the patch's grass at the edge; past it from 45 % down to none at PastEdge
       int32_t edgeDensity = 141 + 115*edgeQ8/256;
@@ -507,18 +515,49 @@ CellBlades buildCell(const CellInput& in) {
       // a spot of bare earth in the sward: no blade in it, fewer and lower ones on its rim. With the cover that
       // is asked at the root below
       const int32_t bare  = (in.patch<0 && !par.cover) ? patchBare(px,pz) : 0;
+      // of 2^40, the patch's count
+      const int64_t shareBroad = int64_t(tuft->densityQ8)*slot.densityQ8*slopeQ8*edgeDensity*(256-bare);
+      // gathered towards the tuft's centre, as far as this
+      const int32_t pullBroad  = (past<0 && onVerge<0) ?
+          std::min(int32_t(std::lround((20.f + float((h >> 30) & 31u))*par.clumps*2.56f))*tuft->pullQ8/256, 166) : 0;
+      // A sward's broad blades among its fine ones (Params::broad): the blades the sward had before the fine ones,
+      // a share of them that differs from tuft to tuft, so they stand in company. A short broad blade alone against
+      // bare ground reads as a wedge: none stands on a verge, near a border or an open edge, where a spot's sward
+      // thins or right beside that. Which a node is, it is at any distance: the two kinds do not change places
+      bool broad = false;
+      if(sward && par.broad>0.f && kept && past<0 && onVerge<0 &&
+         roll*NodesPerM2*(int64_t(1) << 40) < shareBroad*int64_t(BladesPerM2)*1024) {
+        // not by the rank: the kind is the node's
+        const float   room  = std::min(par.broad,1.f-par.broad);
+        int32_t       pick  = int32_t(std::lround((par.broad + (float(tuft->phase)/255.f-0.5f)*2.f*room)*65536.f));
+        const int32_t dice  = int32_t(hash64(i,j,0x12u) & 0xFFFFu);
+        if(dice<pick && !segments.empty()) {
+          if(toEdge==INT32_MAX || slot.edgeCm*2<CoverBroadTo) {
+            const Segment* near = nullptr;
+            toEdge = edgeDistance(px,pz,CoverBroadTo,near);
+            }
+          const int32_t clear = std::clamp((toEdge-CoverBroadFrom)*256/(CoverBroadTo-CoverBroadFrom), 0, 256);
+          // and where the edge's band lowers the grass and leans it out
+          pick = int32_t(int64_t(pick)*std::min(clear,std::clamp((edgeQ8-160)*256/96, 0, 256))/256);
+          }
+        if(dice<pick && in.patch<0)
+          pick = int32_t(int64_t(pick)*coverClear(px + int32_t(int64_t(tuft->x-px)*pullBroad/256),
+                                                  pz + int32_t(int64_t(tuft->z-pz)*pullBroad/256))/256);
+        broad = dice<pick;
+        }
+      const bool fine = sward && !broad;
+      if(fine ? rank>=in.rankLimitFine : rank>=in.rankLimit)
+        continue;
       // of 2^40; a fine blade: the record's count to 1, of the lattice's every node
-      const int64_t share = fine ? int64_t(std::min(slot.densityQ8,256))*slopeQ8*edgeDensity*(int64_t(1) << 16)
-                                 : int64_t(tuft->densityQ8)*slot.densityQ8*slopeQ8*edgeDensity*(256-bare);
+      const int64_t share = fine ? int64_t(std::min(slot.densityQ8,256))*slopeQ8*edgeDensity*(int64_t(1) << 16) : shareBroad;
       const int64_t nodes = fine ? int64_t(BladesPerM2) : NodesPerM2;
       if(roll*nodes*(int64_t(1) << 40) >= share*int64_t(BladesPerM2)*1024)
         continue;
 
-      // gathered towards the tuft's centre; the root must still stand on grass and out of the water. A root past
-      // an edge stays where its node put it
+      // the root must still stand on grass and out of the water. A root past an edge stays where its node put it
       int32_t pull = 0, fx = px, fz = pz;
       if(past<0 && onVerge<0) {
-        pull = std::min(int32_t(std::lround((20.f + float((h >> 30) & 31u))*par.clumps*2.56f))*tuft->pullQ8/256, 166);
+        pull = pullBroad;
         if(fine)
           pull /= 2; // a sward is a carpet more than it is tufts
         fx   = px + int32_t(int64_t(tuft->x-px)*pull/256);
@@ -541,9 +580,12 @@ CellBlades buildCell(const CellInput& in) {
           if(near!=nullptr)
             border = coverBorder(fx,fz,-d,near->reach);
           }
-        stand = coverBlades(in.patch<0 ? coverLevel(fx,fz,border) : border);
+        const int32_t level = in.patch<0 ? coverLevel(fx,fz,border) : border;
+        if(broad && level<256)
+          continue; // in whole sward only: never a thinned and lowered one
+        stand = coverBlades(level);
         if(fine && in.patch<0)
-          stand = coverFine(coverLevel(fx,fz,border),coverEdge(fx,fz,border));
+          stand = coverFine(level,coverEdge(fx,fz,border));
         if(roll*nodes*(int64_t(1) << 40) >= (share >> 8)*stand*int64_t(BladesPerM2)*1024)
           continue;
         }

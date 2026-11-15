@@ -12,6 +12,9 @@
 // shader/grass/grass_ground.glsl. Keep the numbers here and in shader/grass/grass_common.glsl in step.
 namespace Grass {
 
+// The share of the short sward's broad blades left among the fine ones, where the record does not say
+constexpr float BroadShare = 0.6f;
+
 struct Params final {
   bool  on           = false;
   float density      = 1.f;   // 0..2 of BladesPerM2
@@ -22,6 +25,7 @@ struct Params final {
   float wind         = 1.f;   // 0..4: the lean and the swing, as `foliage`'s
   float translucency = 0.6f;  // 0..1: the share of the sun through a blade
   bool  fine         = false; // the short sward's blades are fine ones (reports/engine/2026-11-14-meadow-ground)
+  float broad        = BroadShare; // 0..1 of the short sward's broad blades stand among the fine ones
   // not of the record's field: the field sets them where the ground has its two layers (grassground.h)
   bool  cover        = false; // the sward lies by grasscover.h: its spots, its border with a verge
   float tile         = 0.f;   // cm: a blade takes its colour from the sward's map, laid by the world's x and z
@@ -54,7 +58,7 @@ bool parse(const Value& v, Params& out) {
     };
   if(!number("density",p.density,0,MaxDensity) || !number("height",p.height,5,MaxHeight) ||
      !number("clumps",p.clumps,0,1) || !number("slope",p.slope,0,60) || !number("edge",p.edge,0,400) ||
-     !number("wind",p.wind,0,MaxWind) || !number("translucency",p.translucency,0,1))
+     !number("wind",p.wind,0,MaxWind) || !number("translucency",p.translucency,0,1) || !number("broad",p.broad,0,1))
     return false;
   if(const auto it = v.FindMember("fine"); it!=v.MemberEnd()) {
     if(!it->value.IsNumber() || (it->value.GetDouble()!=0 && it->value.GetDouble()!=1))

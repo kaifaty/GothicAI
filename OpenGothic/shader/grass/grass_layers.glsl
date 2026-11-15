@@ -10,7 +10,8 @@
 // (grass_cover.glsl), so the grass stands on sward and stops with it; where the rule is between none and whole the
 // layers' heights (the blue of their ORM) move the line by more than the rule's own noise does: the sward ends in
 // its own tufts, its low thatch gives way first, and stones lie in its edge. A pixel is one or the other: colour,
-// normal and ORM all come from one.
+// normal and ORM all come from one. The earth of a spot in the meadow is dressed as a dry place: paler, its clods
+// and its low parts apart by the layer's height (grass_common.glsl, GrassSpotEarth*).
 // On a ground with `verge` only the strip along the border is touched: sward as far as its tongues come, then the
 // meadow's earth about as far as the record's margin, where it gives way to the road's own paint from its low
 // parts on, the end of it wandering; past the strip the pixel is the road's, as without the record.
@@ -49,7 +50,8 @@ float grassLayers(uint flags, uint tex, float swardK, float earthK, float farK, 
   if(verge && (!near || dist>=max(float(grassCoverBeyond(int(reach))), margin)))
     return -1.0;
   const int   border = near ? grassCoverBorder(place, verge ? int(dist*16.0) : -int(dist*16.0), int(reach)) : 256;
-  const int   level  = grassCoverLevel(place, border);
+  int bare;
+  const int   level  = grassCoverLevel(place, border, bare);
 
   const float mip = scene.mipGradScale;
   const vec2  uvS = pos.xz*swardK, dxS = dpdx.xz*swardK, dyS = dpdy.xz*swardK;
@@ -102,9 +104,24 @@ float grassLayers(uint flags, uint tex, float swardK, float earthK, float farK, 
     if(mapped)
       nm = fringeTexture(1u, tex+1u, uvE, dxE*mip, dyE*mip);
     }
+  // the earth of a spot in the meadow, not of a border: there it stays the road's
+  const float spot = (sward || verge) ? 0.0 : smoothstep(0.0, 0.3, float(bare)/256.0);
+  if(spot>0.0) {
+    const float high = smoothstep(0.25, 0.75, o.b);
+    const float slow = float(grassValueNoise(place,560,0x68u)-32640)*(GrassSpotEarthSlow/32640.0);
+    albedo *= mix(vec3(1.0), mix(GrassSpotEarthLow, GrassSpotEarthHigh, high)*(1.0+slow), spot);
+    o.r    *= mix(1.0, mix(GrassSpotEarthAo, 1.0, high), spot);
+    }
   vec3 n = gn;
   if(mapped) {
-    n = sward ? mappedNormal(normal, dpdx, dpdy, dxS, dyS, nm) : mappedNormal(normal, dpdx, dpdy, dxE, dyE, nm);
+    if(sward) {
+      n = mappedNormal(normal, dpdx, dpdy, dxS, dyS, nm);
+      } else {
+      // DXT5nm, as mappedNormal reads it; the slope steeper on a spot
+      const vec2 xy = nm.ag*2.0 - 1.0;
+      n = mappedNormal(normal, dpdx, dpdy, dxE, dyE,
+                       vec3(xy*mix(1.0, GrassSpotEarthBump, spot), sqrt(max(0.0, 1.0 - dot(xy,xy)))));
+      }
     n = normalize(mix(n, gn, smoothstep(0.7*GrassLayerNormalTo, GrassLayerNormalTo, d)));
     }
   // the blue was the height: neither layer has metal

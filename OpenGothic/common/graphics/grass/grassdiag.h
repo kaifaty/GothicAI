@@ -4,7 +4,8 @@
 #include <cstdlib>
 
 // What the look of the grass is measured with (reports/engine/2026-11-14-grass-system, "Круг правки вида"). Nothing
-// here changes a frame until a bench asks: `grass parts <mask>`, OPENGOTHIC_GRASS_PATCH and OPENGOTHIC_GRASS_FINE.
+// here changes a frame until a bench asks: `grass parts <mask>`, OPENGOTHIC_GRASS_PATCH, OPENGOTHIC_GRASS_FINE and
+// OPENGOTHIC_GRASS_BROAD.
 namespace Grass {
 
 // Parts of the look a bench switches off one at a time, to weigh what each does to the tone; the last two measure
@@ -37,6 +38,19 @@ inline bool fineOff() {
   static const bool value = [] {
     const char* e = std::getenv("OPENGOTHIC_GRASS_FINE");
     return e!=nullptr && e[0]=='0' && e[1]=='\0';
+    }();
+  return value;
+  }
+
+// OPENGOTHIC_GRASS_BROAD=<0..100>: this many of a hundred of the short sward's broad blades stand among the fine
+// ones, whatever the record's `broad` says. -1 without
+inline int32_t forcedBroad() {
+  static const int32_t value = [] {
+    const char* e = std::getenv("OPENGOTHIC_GRASS_BROAD");
+    if(e==nullptr || *e=='\0')
+      return int32_t(-1);
+    const long v = std::strtol(e,nullptr,10);
+    return int32_t(v<0 ? 0 : (v>100 ? 100 : v));
     }();
   return value;
   }
