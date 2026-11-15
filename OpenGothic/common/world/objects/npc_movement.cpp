@@ -166,11 +166,11 @@ auto Npc::pendingSimpleGoTo() const -> const AiQueue::AiAction* {
 
 void Npc::fallbackSimpleMovement(std::string_view reason, bool ground) {
   if(!simpleMovement.nativeFallback) {
-    const auto* symbol=owner.script().findSymbol(instanceSymbol());
+    const auto symbol=owner.rules().symbolName(instanceSymbol());
     const auto from=position();
     const auto to=go2.empty() ? from : go2.target();
     Log::e("npc_graph_fallback_",ground ? "ground" : "segment",": npc=",
-           symbol!=nullptr ? symbol->name() : std::to_string(instanceSymbol()),
+           !symbol.empty() ? symbol : std::to_string(instanceSymbol()),
            " world_id=",owner.npcId(this)," id=",hnpc->id,
            " tick=",owner.tickCount()," game_ms=",owner.time().toInt(),
            " segment=",from.x,",",from.y,",",from.z," -> ",to.x,",",to.y,",",to.z,
@@ -567,7 +567,7 @@ bool Npc::implSimpleGoTo(uint64_t dt, float destDist) {
       // Its ground endpoint also comes from the waynet, without a tick ray.
       target.y = near->groundPos.y;
       }
-    const auto& guild=owner.script().guildVal();
+    const auto& guild=owner.rules().guildVal();
     const float step=guild.step_height[this->guild()]>0 ? float(guild.step_height[this->guild()]) : 50.f;
     const float slope=std::clamp(std::sin((90.f-float(guild.slide_angle[this->guild()]))*(float(M_PI)/180.f)),0.f,1.f);
     try {

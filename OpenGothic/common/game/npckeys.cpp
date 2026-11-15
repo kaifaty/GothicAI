@@ -116,7 +116,7 @@ void NpcKeys::applyKeys(Npc& npc, const KeyState& input, uint64_t dt) {
     else if(npc.isSwim())
       npc.startDive();
     else if(npc.isInWater()) {
-      auto& g = npc.world().script().guildVal();
+      auto& g = npc.world().rules().guildVal();
       const auto gl = npc.guild();
       if(0<=gl && gl<GIL_MAX && npc.isStanding()) {
         Npc::JumpStatus jump;

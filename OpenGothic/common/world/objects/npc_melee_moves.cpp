@@ -91,9 +91,9 @@ MeleeImpact::BackstabKind Npc::meleeBackstabKind(const Npc& attacker) const {
      (ws!=WeaponState::Fist && ws!=WeaponState::W1H && ws!=WeaponState::W2H) ||
      isDown() || meleeKnockdown || (!isHuman() && !(isMonster() && invent.activeWeapon()==nullptr)))
     return MeleeImpact::BackstabKind::None;
-  const auto* state = owner.script().findSymbol(aiState.funcIni.ptr);
-  const bool sleeping = state!=nullptr && (state->name()=="ZS_SLEEP" || state->name()=="ZS_MAGICSLEEP" ||
-                                          state->name()=="ZS_MM_RTN_SLEEP");
+  const auto state = owner.rules().symbolName(aiState.funcIni.ptr);
+  const bool sleeping = (state=="ZS_SLEEP" || state=="ZS_MAGICSLEEP" ||
+                                          state=="ZS_MM_RTN_SLEEP");
   const bool recentHit = std::any_of(meleeRecentHits.begin(),meleeRecentHits.end(),[&](const auto& hit) {
     return hit.first==&attacker && MeleeImpact::backstabRecentHit(owner.tickCount(),hit.second);
     });
@@ -410,7 +410,7 @@ void Npc::waitForMeleeStamina(uint64_t dt) {
         return;
         }
       } else {
-      const auto step = owner.script().rand(2,this)==0 ? FightAlgo::MV_STRAFEL : FightAlgo::MV_STRAFER;
+      const auto step = owner.rules().rand(2,this)==0 ? FightAlgo::MV_STRAFEL : FightAlgo::MV_STRAFER;
       if(setAnim(step==FightAlgo::MV_STRAFEL ? Anim::MoveL : Anim::MoveR)) {
         visual.setAnimRotate(*this,0);
         implFaiWait(visual.pose().animationTotalTime());
@@ -529,7 +529,7 @@ void Npc::endMeleeAiSpecial() {
   if(meleeAiSpecial==MeleeAi::Special::None)
     return;
   const auto handle = meleeAiSpecialTarget.lock();
-  auto* target = owner.script().findNpc(handle.get());
+  auto* target = owner.rules().findNpc(handle.get());
   if(target!=nullptr)
     target->meleeAiSpecialSlot.release(this);
   const auto move = meleeAiSpecial;
@@ -602,10 +602,10 @@ bool Npc::tryMeleeAiCharge() {
     }
   const int talent = hitChance(TALENT_1H);
   const float chance = MeleeAi::chargeChance(talent);
-  const float uniform = float(owner.script().rand(1u<<24,this))/float(1u<<24);
+  const float uniform = float(owner.rules().rand(1u<<24,this))/float(1u<<24);
   const bool charge = MeleeAi::chargeRoll(talent,uniform) && beginMeleeCharge();
   if(charge) {
-    meleeAiChargeHold = MeleeAi::chargeHoldMs(float(owner.script().rand(1u<<24,this))/float(1u<<24));
+    meleeAiChargeHold = MeleeAi::chargeHoldMs(float(owner.rules().rand(1u<<24,this))/float(1u<<24));
     meleeAiChargeTurn = 0.f;
     meleeAiDodgeStreak.reset();
     }
@@ -714,7 +714,7 @@ void Npc::tickMeleeCharge() {
     return;
   if(!isPlayer() && isMeleeCharging()) {
     const auto handle = meleeAiSpecialTarget.lock();
-    auto* target = owner.script().findNpc(handle.get());
+    auto* target = owner.rules().findNpc(handle.get());
     if(!Settings::physicsFlags().meleeAiCharge || target==nullptr || target!=currentTarget || target->isDown() ||
        target->isLie() || target->meleeKnockdown) {
       cancelMeleeCharge("AI target unavailable");

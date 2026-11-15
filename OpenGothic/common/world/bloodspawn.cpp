@@ -5,7 +5,7 @@
 #include <string>
 
 #include "game/constants.h"
-#include "game/gamescript.h"
+#include "game/gamerules.h"
 #include "graphics/effect.h"
 #include "world/objects/pfxemitter.h"
 #include "physics/dynamicworld.h"
@@ -41,7 +41,7 @@ uint8_t variantOf(const Vec3& p, uint32_t salt) {
 
 // Blood particles at the wound, the guild's own emitter (vanilla PFX_BLOOD for people).
 void particles(World& world, int32_t guild, const Vec3& wound) {
-  const auto& gv = world.script().guildVal();
+  const auto& gv = world.rules().guildVal();
   std::string_view name = "PFX_BLOOD";
   if(guild>=0 && size_t(guild)<std::size(gv.blood_emitter) && !gv.blood_emitter[guild].empty())
     name = gv.blood_emitter[guild];
@@ -59,7 +59,7 @@ void particles(World& world, int32_t guild, const Vec3& wound) {
 
 BloodSpawn::GuildBlood BloodSpawn::guildBlood(const World& world, int32_t guild) {
   GuildBlood ret;
-  const auto& gv = world.script().guildVal();
+  const auto& gv = world.rules().guildVal();
   if(guild<0 || size_t(guild)>=std::size(gv.blood_disabled))
     return ret;
   if(gv.blood_disabled[guild]!=0)

@@ -198,7 +198,7 @@ void MoveAlgo::tickJumpup(uint64_t dt) {
 void MoveAlgo::tickClimb(uint64_t dt) {
   if(npc.bodyStateMasked()!=BS_CLIMB) {
     //NOTE: climb allows npc to violate collision detection, need to readjust
-    npc.owner.script().fixNpcPosition(npc, 0, 0);
+    npc.owner.rules().fixNpcPosition(npc, 0, 0);
     setState(Run);
 
     Tempest::Vec3 p={}, v={0,0,climbMove};
@@ -1075,7 +1075,7 @@ bool MoveAlgo::testSlide(const Tempest::Vec3& pos, const Tempest::Vec3& norm, Dy
 
 float MoveAlgo::stepHeight() const {
   auto gl = npc.guild();
-  auto v  = float(npc.world().script().guildVal().step_height[gl]);
+  auto v  = float(npc.world().rules().guildVal().step_height[gl]);
   if(v>0.f)
     return v;
   return 50;
@@ -1187,33 +1187,33 @@ float MoveAlgo::edgeMoveFraction(const Tempest::Vec3& from, const Tempest::Vec3&
 float MoveAlgo::slideAngle() const {
   auto  gl = npc.guild();
   float k  = float(M_PI)/180.f;
-  return std::sin((90.f-float(npc.world().script().guildVal().slide_angle[gl]))*k);
+  return std::sin((90.f-float(npc.world().rules().guildVal().slide_angle[gl]))*k);
   }
 
 float MoveAlgo::slideAngle2() const {
   auto  gl = npc.guild();
   float k  = float(M_PI)/180.f;
-  return std::sin(float(npc.world().script().guildVal().slide_angle2[gl])*k);
+  return std::sin(float(npc.world().rules().guildVal().slide_angle2[gl])*k);
   }
 
 float MoveAlgo::waterDepthKnee() const {
   auto gl = npc.guild();
-  return float(npc.world().script().guildVal().water_depth_knee[gl]);
+  return float(npc.world().rules().guildVal().water_depth_knee[gl]);
   }
 
 float MoveAlgo::waterDepthChest() const {
   auto gl = npc.guild();
-  return float(npc.world().script().guildVal().water_depth_chest[gl]);
+  return float(npc.world().rules().guildVal().water_depth_chest[gl]);
   }
 
 float MoveAlgo::falldownHeight() const {
   auto gl = npc.guild();
-  return float(npc.world().script().guildVal().falldown_height[gl]);
+  return float(npc.world().rules().guildVal().falldown_height[gl]);
   }
 
 bool MoveAlgo::canFlyOverWater() const {
   auto  gl = npc.guild();
-  auto& g  = npc.world().script().guildVal();
+  auto& g  = npc.world().rules().guildVal();
   return g.water_depth_chest[gl]==flyOverWaterHint &&
          g.water_depth_knee [gl]==flyOverWaterHint;
   }

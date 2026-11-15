@@ -129,7 +129,7 @@ void WorldObjects::load(Serialize &fin) {
 
   fin.setEntry("worlds/",fin.worldName(),"/items");
   fin.read(sz);
-  const auto burningTorch=owner.script().findSymbolIndex("ItLsTorchburning");
+  const auto burningTorch=owner.rules().findSymbolIndex("ItLsTorchburning");
   for(size_t i=0; i<sz; ++i) {
     auto it = std::make_unique<Item>(owner,fin,Item::T_World);
     if(burningTorch!=size_t(-1) && it->clsId()==burningTorch)
@@ -786,11 +786,11 @@ Npc* WorldObjects::addNpc(size_t npcInstance, std::string_view at) {
     npc->setDirection (pos->direction());
     npc->attachToPoint(pos);
     npc->updateTransform();
-    owner.script().invokeRefreshAtInsert(*npc);
+    owner.rules().invokeRefreshAtInsert(*npc);
     npcArr.emplace_back(npc);
     } else {
-    const auto* sym = owner.script().findSymbol(npcInstance);
-    Log::e("addNpc: ", npcInstance, " (", (sym!=nullptr ? sym->name() : "nullptr" ), ") has invalid spawnpoint (", at, ")");
+    const auto sym = owner.rules().symbolName(npcInstance);
+    Log::e("addNpc: ", npcInstance, " (", (sym.empty() ? std::string_view("nullptr") : sym ), ") has invalid spawnpoint (", at, ")");
     auto& point = owner.deadPoint();
     npc->attachToPoint(nullptr);
     npc->setPosition(point.position());
@@ -814,7 +814,7 @@ Npc* WorldObjects::addNpc(size_t npcInstance, const Vec3& pos) {
   Npc* npc   = new Npc(owner,npcInstance,pstr);
   npc->setPosition  (pos.x,pos.y,pos.z);
   npc->updateTransform();
-  owner.script().invokeRefreshAtInsert(*npc);
+  owner.rules().invokeRefreshAtInsert(*npc);
 
   npcArr.emplace_back(npc);
   return npc;
@@ -1297,7 +1297,7 @@ void WorldObjects::stopEffect(const VisualFx& vfx) {
   }
 
 Item* WorldObjects::addItem(const asset::VItem& vob) {
-  size_t inst = owner.script().findSymbolIndex(vob.instance);
+  size_t inst = owner.rules().findSymbolIndex(vob.instance);
   Item*  it   = addItem(inst,"");
   if(it==nullptr)
     return nullptr;
@@ -1357,7 +1357,7 @@ size_t WorldObjects::hasItems(std::string_view tag, size_t itemCls) {
 void WorldObjects::onItemRemoved(const Item& itm) {
   for(auto& i:npcArr)
     i->onWldItemRemoved(itm);
-  owner.script().onWldItemRemoved(itm);
+  owner.rules().onWldItemRemoved(itm);
   }
 
 Bullet& WorldObjects::shootBullet(const Item& itmId, const Vec3& pos, const Vec3& dir, float tgRange, float speed) {
@@ -1406,8 +1406,8 @@ Item* WorldObjects::addItem(size_t itemInstance, const Tempest::Vec3& pos, const
   }
 
 Item* WorldObjects::addItemDyn(size_t itemInstance, const Tempest::Matrix4x4& pos, size_t ownerNpc) {
-  //size_t ItLsTorchburned  = owner.script().findSymbolIndex("ItLsTorchburned");
-  size_t ItLsTorchburning = owner.script().findSymbolIndex("ItLsTorchburning");
+  //size_t ItLsTorchburned  = owner.rules().findSymbolIndex("ItLsTorchburned");
+  size_t ItLsTorchburning = owner.rules().findSymbolIndex("ItLsTorchburning");
 
   if(itemInstance==size_t(-1))
     return nullptr;
@@ -1725,7 +1725,7 @@ void WorldObjects::passivePerceptionProcess(PerceptionMsg& msg, Npc& npc, Npc& p
     }
 
   if(msg.item!=size_t(-1) && msg.other!=nullptr)
-    owner.script().setInstanceItem(*msg.other,msg.item);
+    owner.rules().setInstanceItem(*msg.other,msg.item);
   npc.perceptionProcess(*msg.other,msg.victim,distance,PercType(msg.what),msg.deed);
   }
 
@@ -1771,11 +1771,11 @@ void WorldObjects::resetPositionToTA() {
   for(size_t i=0;i<npcArr.size();) {
     auto& n = *npcArr[i];
     LoadProbe::Startup::Detail::Scope detail("placement_npc",[&]{
-      const auto* symbol=owner.script().findSymbol(n.instanceSymbol());
-      return symbol!=nullptr ? symbol->name() : std::to_string(n.instanceSymbol());
+      const auto symbol=owner.rules().symbolName(n.instanceSymbol());
+      return symbol.empty() ? std::to_string(n.instanceSymbol()) : std::string(symbol);
       });
     if(keepBodies && n.isDead() && !n.isPlayer()) {
-      owner.script().startupFloor().beforeKeep(n);
+      owner.rules().startupFloorBeforeKeep(n);
       ++i;
       continue;
       }
@@ -1794,7 +1794,7 @@ void WorldObjects::resetPositionToTA() {
 
       auto& point = owner.deadPoint();
       auto& npc   = *npcInvalid.back();
-      owner.script().startupFloor().beforeResetMove(npc,point.position());
+      owner.rules().startupFloorBeforeResetMove(npc,point.position());
       npc.suspendRagdoll();
       npc.attachToPoint(nullptr);
       npc.setPosition(point.position());

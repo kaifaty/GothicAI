@@ -416,13 +416,13 @@ size_t MdlVisual::bodyNodesCount() const {
 
 // Mdl_SetVisualBody
 void MdlVisual::setVisualBody(Npc& npc, MeshObjects::Mesh &&h, MeshObjects::Mesh &&body, int32_t version) {
-  const auto* instance=npc.world().script().findSymbol(npc.instanceSymbol());
-  if(instance!=nullptr)
-    if(const auto* own=Resources::loadCharacterHead(instance->name()))
+  const auto instance=npc.world().rules().symbolName(npc.instanceSymbol());
+  if(!instance.empty())
+    if(const auto* own=Resources::loadCharacterHead(instance))
       h=npc.world().addView(own);
   bind(head,std::move(h),"BIP01 HEAD");
   // the strands of an own head: hair and beard as ribbons, rigid on the head's bone
-  const ProtoMesh* strands=instance!=nullptr ? Resources::loadCharacterGroom(instance->name()) : nullptr;
+  const ProtoMesh* strands=!instance.empty() ? Resources::loadCharacterGroom(instance) : nullptr;
   bind(groom,strands!=nullptr ? npc.world().addView(strands) : MeshObjects::Mesh(),"BIP01 HEAD");
   groom.view.setAsGhost(hnpcFlagGhost);
   // a new view of the head: the face goes to it again (the anims go on)
@@ -932,11 +932,11 @@ void MdlVisual::setTorch(bool t, World& owner) {
     torch.view.reset();
     return;
     }
-  size_t torchId = owner.script().findSymbolIndex("ItLsTorchburning");
+  size_t torchId = owner.rules().findSymbolIndex("ItLsTorchburning");
   if(torchId==size_t(-1))
     return;
 
-  auto hitem = owner.script().createItem(torchId);
+  auto hitem = owner.rules().createItem(torchId);
   const auto* residency=owner.chunkResidency();
   Resources::TextureLoadScope textureLoadScope(textureOwnerKnown && textureOwnerSpatial && residency &&
       residency->textureDistance(ChunkId::fromPosition(textureOwnerPosition.x,textureOwnerPosition.z))>2);

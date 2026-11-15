@@ -212,14 +212,14 @@ bool Npc::perceptionProcess(Npc &pl, Npc* victim, float quadDist, PercType perc,
       return true;  // taken over by an outside AI (ai_bridge); it may hand it back
       }
     trace("native_callback",true,true);
-    owner.script().invokeState(this,&pl,victim,perception[perc].func);
+    owner.rules().invokeState(this,&pl,victim,perception[perc].func);
     return true;
     }
   if(perc==PERC_ASSESSMAGIC && isPlayer()) {
-    auto defaultFn = owner.script().playerPercAssessMagic();
+    auto defaultFn = owner.rules().playerPercAssessMagic();
     if(defaultFn.isValid()) {
       trace("native_magic_callback",true,true);
-      owner.script().invokeState(this,&pl,victim,defaultFn);
+      owner.rules().invokeState(this,&pl,victim,defaultFn);
       }
     return true;
     }
@@ -232,17 +232,17 @@ bool Npc::canHearPhysicsNoise() const {
      isLie() || isTalk() || isAttack() || currentTarget!=nullptr || talkPartner()!=nullptr ||
      GameHost::inst().isNpcInDialog(*this))
     return false;
-  const auto* state = owner.script().findSymbol(aiState.funcIni.ptr);
-  return state==nullptr || (state->name()!="ZS_SLEEP" && state->name()!="ZS_MAGICSLEEP" &&
-                            state->name()!="ZS_MM_RTN_SLEEP");
+  const auto state = owner.rules().symbolName(aiState.funcIni.ptr);
+  return (state!="ZS_SLEEP" && state!="ZS_MAGICSLEEP" &&
+                            state!="ZS_MM_RTN_SLEEP");
   }
 
 float Npc::perceptionRange(PercType perc) const {
-  return float(world().script().percRanges().at(perc,hnpc->senses_range));
+  return float(world().rules().percRanges().at(perc,hnpc->senses_range));
   }
 
 bool Npc::canWitnessDeed(const Npc& culprit, const Npc* victim, PercType perc) const {
-  const auto* state = owner.script().findSymbol(aiState.funcIni.ptr);
+  const auto state = owner.rules().symbolName(aiState.funcIni.ptr);
   DeedWitness gates;
   gates.culprit = this==&culprit;
   gates.victim = this==victim;
@@ -253,8 +253,8 @@ bool Npc::canWitnessDeed(const Npc& culprit, const Npc* victim, PercType perc) c
   gates.lying = isLie();
   gates.simulated = processPolicy()==NpcProcessPolicy::AiNormal;
   gates.stateStarted = aiState.started || !aiState.funcIni.isValid();
-  gates.sleeping = state!=nullptr && (state->name()=="ZS_SLEEP" || state->name()=="ZS_MAGICSLEEP" ||
-                                    state->name()=="ZS_MM_RTN_SLEEP");
+  gates.sleeping = (state=="ZS_SLEEP" || state=="ZS_MAGICSLEEP" ||
+                                    state=="ZS_MM_RTN_SLEEP");
   // A participant in an unrelated fight is occupied. A defender already fighting
   // this culprit may still see a fresh deed against somebody else.
   gates.foreignFight = DeedWitness::foreignCombat(isAttack(),currentTarget==&culprit);
@@ -322,7 +322,7 @@ bool Npc::hearPhysicsNoise(const PhysicsNoise& noise) {
   const bool callbackDispatched = noise.culprit!=nullptr && hasPerc(PERC_ASSESSQUIETSOUND);
   if(callbackDispatched) {
     physicsNoiseCallback = true;
-    owner.script().invokeState(this,noise.culprit,nullptr,perception[PERC_ASSESSQUIETSOUND].func);
+    owner.rules().invokeState(this,noise.culprit,nullptr,perception[PERC_ASSESSQUIETSOUND].func);
     physicsNoiseCallback = false;
     // B_AssessQuietSound clears perceptions before queuing its state. Run only
     // that transition and its initializer now; its queued actions still wait

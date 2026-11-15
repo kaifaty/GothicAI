@@ -451,7 +451,7 @@ bool NavTransitions::command(const std::vector<std::string>& args,World& world,N
     if(args.size()!=4 && args.size()!=5) throw std::runtime_error("navmesh "+args[1]+" NPC /abs/links.txt [attempt_ms]");
     if(session.active) throw std::runtime_error("navmesh probe already running");
     if(!std::filesystem::path(args[3]).is_absolute()) throw std::runtime_error("navmesh probe-links: input must be absolute");
-    auto* npc=world.findNpcByInstance(world.script().findSymbolIndex(args[2]));
+    auto* npc=world.findNpcByInstance(world.rules().findSymbolIndex(args[2]));
     if(!npc) throw std::runtime_error("navmesh probe-links: missing actor");
     std::ifstream input(args[3]);
     if(!input) throw std::runtime_error("navmesh probe-links: cannot read input");
@@ -484,7 +484,7 @@ bool NavTransitions::command(const std::vector<std::string>& args,World& world,N
   if(args.size()!=5 && args.size()!=6)
     throw std::runtime_error("navmesh probe NPC FROM TO [attempt_ms]");
   if(session.active) throw std::runtime_error("navmesh probe already running");
-  auto* npc=world.findNpcByInstance(world.script().findSymbolIndex(args[2]));
+  auto* npc=world.findNpcByInstance(world.rules().findSymbolIndex(args[2]));
   const auto* from=world.findPoint(args[3],false);
   const auto* to=world.findPoint(args[4],false);
   if(!npc || !from || !to) throw std::runtime_error("navmesh probe: missing actor or waypoint");

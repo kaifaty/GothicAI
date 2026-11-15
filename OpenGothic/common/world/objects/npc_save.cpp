@@ -145,10 +145,10 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
   ragdollQuestFrom = {};
   fin.setEntry("worlds/",fin.worldName(),directory,id,"/data");
 
-  hnpc = owner.script().loadNpc(fin,this,npcInstanceSymbol);
+  hnpc = owner.rules().loadNpc(fin,this,npcInstanceSymbol);
   fin.read(body,head,vHead,vTeeth,bdColor,vColor,bdFatness);
 
-  owner.script().bindNpc(hnpc);
+  owner.rules().bindNpc(hnpc);
 
   fin.read(x,y,z,angle,sz);
   loadedFpPosition = position();
@@ -350,8 +350,8 @@ void Npc::loadAiState(Serialize& fin) {
   fin.read(aiPrevState);
 
   aiState.hint = "";
-  if(auto s = owner.script().findSymbol(aiState.funcIni.ptr)) {
-    aiState.hint = s->name().c_str();
+  if(auto s = owner.rules().symbolName(aiState.funcIni.ptr); !s.empty()) {
+    aiState.hint = s.data();
     }
 
   aiQueue.load(fin);

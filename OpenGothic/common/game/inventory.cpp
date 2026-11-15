@@ -5,7 +5,7 @@
 #include "world/objects/npc.h"
 #include "world/objects/interactive.h"
 #include "world/world.h"
-#include "game/gamescript.h"
+#include "game/gamerules.h"
 #include "serialize.h"
 #include "settings.h"
 #include "game/gamehost.h"
@@ -241,7 +241,7 @@ Item* Inventory::addItem(std::unique_ptr<Item> &&p) {
   }
 
 Item* Inventory::addItem(std::string_view name, size_t count, World &owner) {
-  auto&  vm = owner.script();
+  auto&  vm = owner.rules();
   size_t id = vm.findSymbolIndex(name);
   if(id!=size_t(-1))
     return addItem(id,count,owner);
@@ -395,7 +395,7 @@ void Inventory::unequip(Item *it, Npc &owner) {
   }
 
 bool Inventory::setSlot(Item *&slot, Item* next, Npc& owner, bool force) {
-  GameScript& vm = owner.world().script();
+  GameRules& vm = owner.world().rules();
 
   if(next!=nullptr) {
     int32_t atr=0,nValue=0,plMag=0,itMag=0;
@@ -552,7 +552,7 @@ void Inventory::updateRuneView(Npc &owner) {
   if(!sp->isSpellOrRune())
     return;
 
-  const VisualFx* vfx = owner.world().script().spellVfx(sp->spellId());
+  const VisualFx* vfx = owner.world().rules().spellVfx(sp->spellId());
   owner.setMagicWeapon(Effect(*vfx,owner.world(),owner,SpellFxKey::Init));
   }
 
@@ -568,17 +568,17 @@ void Inventory::equipBestRangedWeapon(Npc &owner) {
     setSlot(range,a,owner,false);
   }
 
-void Inventory::unequipWeapons(GameScript &, Npc &owner) {
+void Inventory::unequipWeapons(GameRules &, Npc &owner) {
   setSlot(melee, nullptr,owner,false);
   setSlot(range, nullptr,owner,false);
   setSlot(shield,nullptr,owner,false);
   }
 
-void Inventory::unequipArmor(GameScript &, Npc &owner) {
+void Inventory::unequipArmor(GameRules &, Npc &owner) {
   setSlot(armor,nullptr,owner,false);
   }
 
-void Inventory::clear(GameScript&, Npc&, bool includeMissionItm) {
+void Inventory::clear(GameRules&, Npc&, bool includeMissionItm) {
   std::vector<std::unique_ptr<Item>> used;
   for(auto& i:items)
     if(i->isEquipped() || (i->isMission() && !includeMissionItm)){
@@ -587,7 +587,7 @@ void Inventory::clear(GameScript&, Npc&, bool includeMissionItm) {
   items = std::move(used); // Gothic don't clear items, which are in use
   }
 
-void Inventory::clear(GameScript& vm, Interactive& owner, bool includeMissionItm) {
+void Inventory::clear(GameRules& vm, Interactive& owner, bool includeMissionItm) {
   std::vector<std::unique_ptr<Item>> used;
   for(auto& i:items)
     if(i->isMission() && !includeMissionItm){
