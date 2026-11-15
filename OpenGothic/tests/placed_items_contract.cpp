@@ -29,6 +29,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <unistd.h>
 #include <vector>
 
 namespace {
@@ -465,11 +466,27 @@ void benchHelpers(Npc& npc) {
   BenchProbe::install(nullptr);
   require(Bench::frameDt(37)==37,"frame dt is unchanged without an adapter");
   require(Bench::bodyBlockVariant(npc,2)==2,"block variant falls back without an adapter");
-  // These calls must be safe and silent with no installed event sink.
+  std::FILE* output = std::tmpfile();
+  require(output!=nullptr,"open bench event output capture");
+  std::fflush(nullptr);
+  const int savedOut = dup(STDOUT_FILENO), savedErr = dup(STDERR_FILENO);
+  require(savedOut>=0 && savedErr>=0,"save bench event output streams");
+  const int redirectOut = dup2(fileno(output),STDOUT_FILENO);
+  const int redirectErr = dup2(fileno(output),STDERR_FILENO);
+  require(redirectOut>=0 && redirectErr>=0,"capture bench event output streams");
   Bench::note("uninstalled bench");
   Bench::arrowAt(&npc,1,2,3);
   Bench::bodyEvent(npc,nullptr,"uninstalled",0);
   Bench::destructionBreak(1,2,3);
+  std::fflush(nullptr);
+  const auto written = std::ftell(output);
+  const int restoreOut = dup2(savedOut,STDOUT_FILENO);
+  const int restoreErr = dup2(savedErr,STDERR_FILENO);
+  close(savedOut);
+  close(savedErr);
+  std::fclose(output);
+  require(restoreOut>=0 && restoreErr>=0,"restore bench event output streams");
+  require(written==0,"bench events must not write stdout or stderr without an adapter");
   std::puts("Bench helpers: JSON bytes, null and real NPC names, physics name, dt, block fallback and silent events passed");
   }
 
