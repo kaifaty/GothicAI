@@ -15,7 +15,7 @@
 #include "settings.h"
 #include "gameservices.h"
 #include "game/gamehost.h"
-
+#include "game/constants.h"
 namespace {
 // the crosshair of the manual aim
 constexpr float MaxSpread   = 6.f*float(M_PI)/180.f; // wide open: the bow being raised, reloaded

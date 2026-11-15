@@ -1,7 +1,7 @@
 #include "npc.h"
 
 #include <algorithm>
-
+#include "game/constants.h"
 #include "game/gamehost.h"
 #include "world/world.h"
 

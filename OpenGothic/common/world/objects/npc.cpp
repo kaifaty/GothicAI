@@ -14,7 +14,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-
+#include "game/constants.h"
 #include "graphics/mesh/skeleton.h"
 #include "graphics/visualfx.h"
 #include "graphics/effect.h"

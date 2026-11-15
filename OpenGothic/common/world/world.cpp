@@ -10,7 +10,7 @@
 #include <cstdlib>
 #include <string_view>
 #include <Tempest/Painter>
-
+#include "game/constants.h"
 #include "graphics/mesh/submesh/packedmesh.h"
 #include "graphics/shaders.h"
 #include "commandline.h"
