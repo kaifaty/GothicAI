@@ -1759,6 +1759,10 @@ void MdlVisual::updateEyes(Npc& npc, uint64_t now) {
   face.setEyes(eyes.turn(0),eyes.turn(1));
   }
 
+bool MdlVisual::updatesFace(const Npc& npc) const {
+  return face.isActive() || &npc==Eyes::probeNpc;
+  }
+
 void MdlVisual::updateFace(Npc& npc) {
   if(!face.isActive()) {
     if(&npc==Eyes::probeNpc)

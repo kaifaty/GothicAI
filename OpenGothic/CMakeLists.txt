@@ -309,6 +309,16 @@ if(UNIX)
   target_link_libraries(gothic-body-watch-test PRIVATE OpenGothic AiBridge)
   target_include_directories(gothic-body-watch-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   target_compile_options(gothic-body-watch-test PRIVATE -Wall -Wconversion -Werror)
+  # The worker pool (utils/workers): OPENGOTHIC_WORKERS_GRAIN, short arrays on the caller, the serial mode; a process
+  # per grain. No engine or game data.
+  add_executable(gothic-workers-test EXCLUDE_FROM_ALL tests/workers_test.cpp common/utils/workers.cpp)
+  target_include_directories(gothic-workers-test PRIVATE common)
+  target_link_libraries(gothic-workers-test PRIVATE Tempest)
+  set_source_files_properties(tests/workers_test.cpp PROPERTIES COMPILE_OPTIONS "-Wall;-Wconversion;-Werror")
+  # The loops after the animation pass (world/animationtail) against the full loops they replace; stand-in items.
+  add_executable(gothic-anim-tail-test EXCLUDE_FROM_ALL tests/anim_tail_test.cpp common/world/animationtail.cpp)
+  target_include_directories(gothic-anim-tail-test PRIVATE common)
+  target_compile_options(gothic-anim-tail-test PRIVATE -Wall -Wconversion -Werror)
   if(OPENGOTHIC_ENABLE_FRAME_PROFILE)
     # Standalone recorder capacity and late-callback checks; no engine or game data.
     add_executable(gothic-frame-profile-test EXCLUDE_FROM_ALL tests/frame_profile_test.cpp common/frameprofile.cpp)
