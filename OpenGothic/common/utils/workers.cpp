@@ -149,6 +149,20 @@ size_t Workers::taskGrain() {
   return grain;
   }
 
+uint32_t Workers::poolTasks(size_t elements, size_t grain, uint32_t maxThreads) {
+  uint32_t tasks = uint32_t((elements+grain-1)/grain);
+  tasks--; // main thread also do tasks
+  if(tasks>maxThreads)
+    tasks = maxThreads;
+  if(tasks<=0)
+    tasks = 1;
+  return tasks;
+  }
+
+uint32_t Workers::lastPoolTasks() {
+  return inst().taskCount;
+  }
+
 uint8_t Workers::maxThreads() {
   int32_t th = int32_t(std::thread::hardware_concurrency());
   if(th<=0)
@@ -228,14 +242,7 @@ void Workers::execWork(uint32_t& minElts) {
     return;
 
   if(workSet!=nullptr) {
-    const auto maxTheads = maxThreads();
-    const auto grain     = taskGrain();
-    taskCount = uint32_t((workSize+grain-1)/grain);
-    taskCount--; // main thread also do tasks
-    if(taskCount>maxTheads)
-      taskCount = maxTheads;
-    if(taskCount<=0)
-      taskCount = 1;
+    taskCount = poolTasks(workSize,taskGrain(),maxThreads());
     } else {
     taskCount = uint32_t(workSize);
     }

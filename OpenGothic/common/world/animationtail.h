@@ -48,6 +48,10 @@ bool checking();
 void checked(const char* step, std::string_view npc, bool same);
 uint64_t checkedCount();
 uint64_t mismatchedCount();
+std::string_view firstMismatchNpc();
+std::string_view firstMismatchStep();
+// The summary line once per process: at exit, or earlier from a path that leaves with _exit (the body runner).
+void reportCheck();
 
 // Runs `run(item,planned)` over the items in their order. A step may add, remove or move items: the loop
 // follows the current item by its pointer, as the full loops always did. While the plan holds (not stale,

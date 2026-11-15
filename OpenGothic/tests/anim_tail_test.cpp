@@ -24,6 +24,7 @@ struct Item final {
   int  id = 0;
   bool shadowWork = false, logicWork = false, window = false;
   bool passSkipped = false; // frozen world or OPENGOTHIC_ANIM_SKIP_FAR: the shadow loop passes it over
+  bool planLies = false;    // the pass leaves out its logical-body step although it has work (a wrong plan)
   std::function<void()> script;        // what the window's damage script does in the shadow loop
   std::function<void()> contactScript; // and in the contacts loop
   int  reads = 0;               // how often a loop looked at this item
@@ -107,7 +108,7 @@ std::vector<uint8_t> passPlan(const Items& items) {
   for(const auto& item:items)
     plan.push_back(uint8_t((item->window ? Contacts : 0) |
                            (!item->passSkipped && (item->shadowWork || item->window) ? Shadow : 0) |
-                           (item->logicWork ? Logic : 0)));
+                           (item->logicWork && !item->planLies ? Logic : 0)));
   return plan;
   }
 
@@ -250,6 +251,19 @@ int cases() {
       };
     items[9]->logicWork = true;
     },true);
+  // A script changes an NPC planned as settled for its logical body, the array as it was: only the plan's going
+  // stale makes the logical-body loop look at it.
+  compare("shadow script changes a settled NPC",[](Items& items) {
+    items[3]->window = true;
+    items[3]->script = [&items] { find(items,7)->logicWork = true; };
+    items[9]->logicWork = true;
+    },true);
+  // The same from the contacts loop; the owner is frozen, so the shadow loop does not touch the plan first.
+  compare("contacts script changes a settled NPC",[](Items& items) {
+    items[2]->passSkipped = true;
+    items[2]->window = true;
+    items[2]->contactScript = [&items] { find(items,7)->logicWork = true; };
+    },true);
   // A frozen window owner: the shadow loop skips it, its contacts still run.
   compare("pass-skipped window owner",[](Items& items) {
     items[5]->passSkipped = true;
@@ -259,6 +273,19 @@ int cases() {
   return 0;
   }
 
+// A wrong plan: the pass leaves out the logical-body step of NPC 6, which has work. Only the check runs it
+// (the planned loops alone would skip it); the check must report NPC 6 and the step.
+void wrongPlan() {
+  compare("wrong plan",[](Items& items) {
+    items[6]->logicWork = true;
+    items[6]->planLies = true;
+    },false);
+  require(AnimationTail::mismatchedCount()==1 && AnimationTail::firstMismatchNpc()=="6" &&
+          AnimationTail::firstMismatchStep()=="logic",
+          "the check did not report the wrong plan: mismatched="+std::to_string(AnimationTail::mismatchedCount())+
+          " first="+std::string(AnimationTail::firstMismatchNpc())+" step="+std::string(AnimationTail::firstMismatchStep()));
+  }
+
 int child(bool check) {
   try {
     if(check)
@@ -266,8 +293,13 @@ int child(bool check) {
       unsetenv("OPENGOTHIC_ANIM_TAIL_CHECK");
     require(AnimationTail::checking()==check,"OPENGOTHIC_ANIM_TAIL_CHECK is not read");
     cases();
-    if(check)
+    if(check) {
       require(AnimationTail::checkedCount()>0 && AnimationTail::mismatchedCount()==0,"the check counted nothing");
+      wrongPlan();
+      }
+    // What the body runner does before its _exit; a second call and the report at exit print nothing more.
+    AnimationTail::reportCheck();
+    AnimationTail::reportCheck();
     std::fflush(stdout);
     return 0;
     }
@@ -279,19 +311,48 @@ int child(bool check) {
 }
 
 int main() {
+  // Each run's stderr goes through a pipe: the summary line must come exactly once with the check, never without,
+  // both when the process leaves with _exit (the forked body runner) and when it returns through exit().
+  struct Run final { bool check, quick; };
+  const Run runs[] = {{false,true},{true,true},{true,false}};
   int failed = 0;
-  for(const bool check:{false,true}) {
-    std::printf("== %s\n",check ? "OPENGOTHIC_ANIM_TAIL_CHECK=1" : "plan");
+  for(const auto& run:runs) {
+    std::printf("== %s, %s\n",run.check ? "OPENGOTHIC_ANIM_TAIL_CHECK=1" : "plan",run.quick ? "_exit" : "exit");
     std::fflush(stdout);
+    int fds[2];
+    if(pipe(fds)!=0)
+      return 1;
     const auto pid = fork();
-    if(pid==0)
-      _exit(child(check));
+    if(pid==0) {
+      close(fds[0]);
+      dup2(fds[1],2);
+      close(fds[1]);
+      const int code = child(run.check);
+      if(run.quick)
+        _exit(code);
+      std::exit(code);
+      }
+    close(fds[1]);
+    std::string err;
+    char buf[4096];
+    for(ssize_t n; (n=read(fds[0],buf,sizeof(buf)))>0;)
+      err.append(buf,size_t(n));
+    close(fds[0]);
+    std::fputs(err.c_str(),stderr);
     int status = 0;
-    if(pid<0 || waitpid(pid,&status,0)!=pid || !WIFEXITED(status) || WEXITSTATUS(status)!=0)
+    const bool exited = pid>0 && waitpid(pid,&status,0)==pid && WIFEXITED(status) && WEXITSTATUS(status)==0;
+    size_t lines = 0;
+    for(size_t at=0; (at=err.find("[anim-tail-check] checked=",at))!=std::string::npos; ++at)
+      ++lines;
+    const bool summary = run.check ? lines==1 && err.find("mismatched=1 first=6 step=logic")!=std::string::npos
+                                   : lines==0;
+    if(!summary)
+      std::fprintf(stderr,"anim tail: %zu summary lines, expected %d\n",lines,run.check ? 1 : 0);
+    if(!exited || !summary)
       ++failed;
     }
   if(failed>0) {
-    std::fprintf(stderr,"anim tail: %d of 2 runs failed\n",failed);
+    std::fprintf(stderr,"anim tail: %d of %zu runs failed\n",failed,sizeof(runs)/sizeof(runs[0]));
     return 1;
     }
   std::printf("anim tail: passed\n");

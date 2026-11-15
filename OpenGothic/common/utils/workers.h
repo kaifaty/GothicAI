@@ -57,6 +57,10 @@ class Workers final {
     // Elements of a parallelFor per pool thread: OPENGOTHIC_WORKERS_GRAIN (16..1024, default 64),
     // read once at the first pool dispatch. Arrays of up to 128 elements stay on the caller.
     static size_t  taskGrain();
+    // Pool tasks of a parallelFor over `elements` (the caller runs alone at 1): the rule execWork uses.
+    static uint32_t poolTasks(size_t elements, size_t grain, uint32_t maxThreads);
+    // The tasks the last dispatch asked for (tests): parallelFor over more than 128 elements wakes this many.
+    static uint32_t lastPoolTasks();
     // the calling thread's CPU time, µs (POSIX CLOCK_THREAD_CPUTIME_ID, Windows GetThreadTimes)
     static double  threadCpuUs();
 

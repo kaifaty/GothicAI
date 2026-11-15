@@ -14,7 +14,12 @@ namespace {
 uint64_t    checks = 0, mismatches = 0;
 std::string firstNpc, firstStep;
 
+bool reported = false;
+
 void report() {
+  if(reported)
+    return;
+  reported = true;
   std::fprintf(stderr,"[anim-tail-check] checked=%llu mismatched=%llu%s%s%s%s\n",
                static_cast<unsigned long long>(checks),static_cast<unsigned long long>(mismatches),
                mismatches>0 ? " first=" : "",mismatches>0 ? firstNpc.c_str() : "",
@@ -55,6 +60,13 @@ void checked(const char* step, std::string_view npc, bool same) {
     }
   }
 
+void reportCheck() {
+  if(checking())
+    report();
+  }
+
+std::string_view firstMismatchNpc()  { return firstNpc; }
+std::string_view firstMismatchStep() { return firstStep; }
 uint64_t checkedCount()    { return checks; }
 uint64_t mismatchedCount() { return mismatches; }
 

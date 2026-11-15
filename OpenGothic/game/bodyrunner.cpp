@@ -20,6 +20,7 @@
 #include "societyexport.h"
 #include "testbench.h"
 #include "stucklogger.h"
+#include "world/animationtail.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
 #include "world/waypoint.h"
@@ -318,6 +319,8 @@ public:
   // A fork ending its episode: flush its own journals without tearing down the shared world.
   void flushForExit() {
     finishMeleeShadowSwings();
+    // A forked runner leaves with _exit, past the summary atexit would print.
+    AnimationTail::reportCheck();
     saveSummary();
     observationFile.close(); timingFile.close(); controlFile.close(); arenaFile.close();
   }

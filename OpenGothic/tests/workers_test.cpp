@@ -53,6 +53,13 @@ void dispatch(size_t grain, bool serial) {
     for(size_t i=0; i<n; ++i)
       require(seen[i].load()==1,"parallelFor of "+std::to_string(n)+" handled element "+std::to_string(i)+" "+
                                 std::to_string(seen[i].load())+" times");
+    if(!serial && n>128) {
+      // The tasks the dispatch woke, against the grain this case set: an execWork that ignored the grain fails here.
+      const size_t tasks = std::max<size_t>(1,std::min<size_t>((n+grain-1)/grain-1,Workers::maxThreads()));
+      require(Workers::lastPoolTasks()==tasks,"parallelFor of "+std::to_string(n)+" at grain "+std::to_string(grain)+
+                                             " asked "+std::to_string(Workers::lastPoolTasks())+" pool tasks, not "+
+                                             std::to_string(tasks));
+      }
     const std::set<std::thread::id> threads(who.begin(),who.end());
     const size_t bound = serial ? 1 : threadBound(n,grain);
     require(threads.size()<=bound,"parallelFor of "+std::to_string(n)+" at grain "+std::to_string(grain)+" ran on "+
@@ -95,7 +102,28 @@ int child(const char* grain, size_t expected, bool serial) {
   }
 }
 
+// The rule itself, on a 32-thread machine (maxThreads 16) and on one core.
+void poolRule() {
+  struct Row final { size_t n, grain; uint32_t cap, tasks; };
+  const Row rows[] = {
+    {129,128,16,1}, {256,128,16,1}, {257,128,16,2}, {1053,128,16,8}, {5000,128,16,16},
+    {129,64,16,2},  {1053,64,16,16}, {1053,64,10,10}, {1053,16,16,16}, {129,16,16,8}, {1053,64,1,1},
+    };
+  for(const auto& r:rows)
+    require(Workers::poolTasks(r.n,r.grain,r.cap)==r.tasks,"poolTasks("+std::to_string(r.n)+","+std::to_string(r.grain)+","+
+                                                          std::to_string(r.cap)+") is "+
+                                                          std::to_string(Workers::poolTasks(r.n,r.grain,r.cap))+", not "+
+                                                          std::to_string(r.tasks));
+  }
+
 int main() {
+  try {
+    poolRule();
+    }
+  catch(const std::exception& e) {
+    std::fprintf(stderr,"workers: %s\n",e.what());
+    return 1;
+    }
   struct Case final { const char* grain; size_t expected; bool serial; };
   const Case cases[] = {
     {"128",128,false}, {"64",64,false}, {"16",16,false},
