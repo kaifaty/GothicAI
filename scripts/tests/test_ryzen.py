@@ -1910,15 +1910,22 @@ remote_run e2e "$TEST_ROOT/worktree" run
     def test_clean_removes_only_its_worktree(self):
         engine = self.entry(self.engine_digest, age=3 * 3600)
         storygraph = self.entry(self.story_digest, 'storygraph', age=3 * 3600)
+        shutil.copyfile(SCRIPT.with_name('perf.sh'), self.source / 'scripts/perf.sh')
+        stand = self.home / 'gothic-ai/perf-stand'
+        for name in ('other-checkout', 'source', 'runs'):
+            (stand / name).mkdir(parents=True)
         (self.state / 'owned-file').touch()
         clean = re.search(r'^if \[\[ "\$ACTION" == clean \]\]; then\n.*?^fi',
                           SCRIPT.read_text(), re.M | re.S)
         self.assertIsNotNone(clean)
         self.shell(r'''
-ACTION=clean STATE="$TEST_ROOT/worktree" REMOTE=gothic-ai/e2e/test
+ACTION=clean STATE="$TEST_ROOT/worktree" REMOTE=gothic-ai/e2e/test REMOTE_HOME="$HOME"
+source "$ROOT/scripts/perf.sh"
+mkdir -p "$HOME/gothic-ai/perf-stand/$(perf_checkout "$ROOT")/source/OpenGothic/build-perf"
 remote() { "$@"; }
 '''+clean.group(0))
         self.assertFalse(self.state.exists())
+        self.assertEqual(sorted(path.name for path in stand.iterdir()), ['other-checkout', 'runs', 'source'])
         self.assertTrue((engine / 'Gothic2Notr').exists())
         self.assertTrue((storygraph / 'storygraph').exists())
 

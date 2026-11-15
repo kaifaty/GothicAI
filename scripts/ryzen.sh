@@ -1497,8 +1497,10 @@ run_game() {
 }
 
 if [[ "$ACTION" == clean ]]; then
-  remote rm -rf -- "$STATE"
-  echo "Ryzen: removed $REMOTE"
+  source "$ROOT/scripts/perf.sh"
+  PERF_STATE="$REMOTE_HOME/gothic-ai/perf-stand/$(perf_checkout "$ROOT")"
+  remote rm -rf -- "$STATE" "$PERF_STATE"
+  echo "Ryzen: removed $REMOTE and $PERF_STATE"
   exit
 fi
 

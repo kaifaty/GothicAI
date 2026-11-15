@@ -795,6 +795,18 @@ def delta(a, b, repeats_a, repeats_b, getter):
 
 
 def compare_reports(a, b):
+    warnings = []
+    for label, report in (("A", a), ("B", b)):
+        missing = [key for key in ("binary_sha256", "source_fingerprint") if not report["metadata"].get(key)]
+        if missing:
+            warnings.append(f"{label} ({report['directory']}): missing {', '.join(missing)} "
+                            "(old run); binary/source identity cannot be verified")
+    if (a["metadata"].get("source_fingerprint")
+            and a["metadata"]["source_fingerprint"] == b["metadata"].get("source_fingerprint")
+            and a["metadata"].get("binary_sha256") and b["metadata"].get("binary_sha256")
+            and a["metadata"]["binary_sha256"] != b["metadata"]["binary_sha256"]):
+        warnings.append("A and B have different binary_sha256 with the same source_fingerprint; "
+                        "check which engine binaries were measured")
     places = {}
     for place in sorted(set(a["places"]) & set(b["places"])):
         left, right = a["places"][place], b["places"][place]
@@ -817,6 +829,7 @@ def compare_reports(a, b):
     if not places:
         raise ValueError("Runs have no places in common")
     return {"schema_version": 1, "a": a["directory"], "b": b["directory"],
+            "warnings": warnings,
             "metadata_a": a["metadata"], "metadata_b": b["metadata"],
             "only_a": sorted(set(a["places"]) - set(b["places"])),
             "only_b": sorted(set(b["places"]) - set(a["places"])),
@@ -833,6 +846,7 @@ def noise_label(change):
 
 def compare_markdown(report):
     lines = ["# Performance comparison", "", f"A: `{report['a']}`  \nB: `{report['b']}`", "",
+             *[f"> **Warning:** {warning}\n" for warning in report["warnings"]],
              "A metadata: `" + json.dumps(report["metadata_a"], ensure_ascii=False, sort_keys=True) + "`", "",
              "B metadata: `" + json.dumps(report["metadata_b"], ensure_ascii=False, sort_keys=True) + "`", "",
              report["noise_method"], "", "| Place | FPS A → B | p95 ms A → B | FPS / p95 noise |",
