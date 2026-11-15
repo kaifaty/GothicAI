@@ -29,6 +29,15 @@ const float EmissiveOrmCode   = 0.49;
 vec3 emberColour(float share) {
   return mix(vec3(0.5, 0.04, 0.004), vec3(1.0, 0.3, 0.04), share);
   }
+// The glow of an own mesh by the raw G-buffer ORM of its pixel (main.frag mainGBuffer): its own luminance under the
+// exposure, as a flame's. Every pass of the ambient light adds it after the exposure - ambient_light.frag and the
+// probes' probe_ambient.frag; a pass without it leaves the embers as dark as their albedo
+vec3 emissiveMeshGlow(vec4 orm, float sunIntensity, float exposure) {
+  if(orm.a<=0.5 || orm.a>=0.999)
+    return vec3(0);
+  const float share = (1.0 - orm.a)/EmissiveOrmCode;
+  return emberColour(share) * (share*EmissiveMeshPeak) * min(EmissiveSunRatio * sunIntensity * exposure, EmissiveMaxGain);
+  }
 const float SoftParticleDepth = 15.0;
 const vec2  SoftParticleNear  = vec2(30.0, 100.0);
 const float WaterF0        = 0.0204; // ((1.333-1)/(1.333+1))^2
