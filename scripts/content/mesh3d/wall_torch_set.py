@@ -69,7 +69,9 @@ LAMP_AT = np.array([401.884857, 125.647934, -3086.54468])
 CARD, SIDE_CARD = (34.0, 44.0), (21.0, 32.0)  # the flame cards of OWN_TORCH_FLAME and _SIDE, cm (particles.d)
 TORCH_MESH = 'OW_MISC_WALL_TORCH_01.3DS'
 GONE = ('FIRE_MEDIUM.PFX', 'FIRE_SPARKS.PFX', 'ZFLARE6.TGA')  # the original's flame, sparks and flare under a torch
-LAMP = {'color': [230, 84, 15], 'near': 8, 'jitter_cm': 1.5}  # the torch's light: the flame's colour (wall-torch)
+# The torch's light: the flame's colour (wall-torch). It follows the flame's brightness and stands still: the club is
+# 10 cm under it, so a tremble of 1.5 cm at 12 Hz threw the club's shadow about by 10-15 cm on the wall a metre below
+LAMP = {'color': [230, 84, 15], 'near': 8}
 OWN_STATIC = 'FIRE_STAT'  # a static lamp that is a torch's only light (the temple); other static lamps are fills
 # Other places of the torch: every OW_MISC_WALL_TORCH_01 of NEWWORLD inside the box (x and z, world cm) that no
 # earlier place and not the trial has taken. `range` is the light of a torch that has no lamp of its own, the common
@@ -173,7 +175,7 @@ def cmd_layer(_args) -> int:
     spot = fire(POSE)
     layer = {'format': 1, 'visual': [{'id': MESH_ID, 'visual': VISUAL}], 'remove': [EFFECT_ID, FLARE_ID],
              'light': [{'id': LAMP_ID, 'color': LAMP['color'], 'near': LAMP['near'], 'flicker_from': 'wall-torch-fire-flame',
-                        'jitter_cm': LAMP['jitter_cm'], 'offset_cm': at(spot['light'] - LAMP_AT)}],
+                        'offset_cm': at(spot['light'] - LAMP_AT)}],
              'add': emitters('wall-torch-fire', spot['emitters'], 7)}
     write_layer(LAYER, layer)
     print(f'{LAYER.relative_to(ROOT)}: the wrap\'s top at {at(spot["top"])}, the light {at(spot["light"])}, lean {spot["lean_deg"]:.1f} deg in the world')
@@ -212,7 +214,7 @@ def place_layer(name, torches) -> dict:
         layer['visual'].append({'id': torch['id'], 'visual': VISUAL})
         layer['remove'] += [c['id'] for c in children if str(c.get('visual_name', '')).upper() in GONE]
         layer['add'] += emitters(key, spot['emitters'], 7 + torch['id'] * 3)
-        signal = {'flicker_from': f'{key}-flame', 'jitter_cm': LAMP['jitter_cm']}
+        signal = {'flicker_from': f'{key}-flame'}
         lamps = [c for c in children if c['type'] == 'zCVobLight']
         own = [c for c in lamps if not c['is_static']] or [c for c in lamps if c['preset'] == OWN_STATIC]
         if len(own) > 1:
