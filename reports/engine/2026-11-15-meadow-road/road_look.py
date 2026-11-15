@@ -5,7 +5,8 @@
 
 <runs> holds one folder per run, f-<side>-<bench>: `off` is main with OPENGOTHIC_GRASS=0, `was` and `was2` two runs
 of main with the set meadow-ground-1, `now` the branch with meadow-road-1, `same` the branch with meadow-ground-1,
-`nowoff` the branch with meadow-road-1 and OPENGOTHIC_GRASS=0. The benches: landscape-meadow, landscape-meadow-road,
+`nowoff` the branch with meadow-road-1 and OPENGOTHIC_GRASS=0, `now2` a second run of `now`; `waseye`, `waseye2`
+and `noweye` are `was`, `was2` and `now` with OPENGOTHIC_EYE=0 (landscape-meadow-variety only). The benches: landscape-meadow, landscape-meadow-road,
 landscape-meadow-variety, landscape-meadow-parts. Linear light throughout; the helpers are scripts/grass_look.py's.
 
   tone    the road's own pixels (the cover's paint of the branch: `grass parts 256`, the track's crust blue and its
@@ -21,7 +22,8 @@ landscape-meadow-variety, landscape-meadow-parts. Linear light throughout; the h
           of landscape-meadow-parts) and its variety against «было» (grass_look.py variety --light)
   away    what changed on the meadow by the distance from a road: the meadow's squares of 0.5 m, counted in rings
           from those that touch the road (a ring n lies (n-1)*0.5 m from it or further); the mean difference of
-          «стало» from «было» in each ring beside that of two runs of «было»
+          «стало» from «было» in each ring beside that of two runs of «было», the eye's adaptation off; and the
+          top of the frame with it on - what the eye does to the whole frame when the road's look changes
   same    the frames of a set without the new fields on the branch against main, and of the branch with the grass
           off against main with it off: the mean difference of a frame, of 255, beside that of two runs of main
 """
@@ -250,7 +252,8 @@ def cmd_away() -> None:
              ('5–8', 5, 8, 'от 2 м'), ('9 и дальше', 9, 99, 'от 4 м'))
     for view in ('game-verge-along', 'walk-mid', 'meadow-3', 'meadow-1', 'far'):
         ring, road = rings_of(view)
-        was, was2, now = (frame(side, bench, f'{view}-0') for side in ('was', 'was2', 'now'))
+        # the eye's adaptation off (OPENGOTHIC_EYE=0): with it the whole frame follows the road's look
+        was, was2, now = (frame(side, bench, f'{view}-0') for side in ('waseye', 'waseye2', 'noweye'))
         d_now = np.abs(now.astype(np.int32) - was).mean(axis=2)
         d_run = np.abs(was2.astype(np.int32) - was).mean(axis=2)
         lw, l2, ln = g.luminance(was), g.luminance(was2), g.luminance(now)
@@ -261,7 +264,12 @@ def cmd_away() -> None:
                 continue
             rows.append([name, metres, int(m.sum()), num(d_run[m].mean(), 2), num(d_now[m].mean(), 2),
                          num(l2[m].mean()/lw[m].mean()), num(ln[m].mean()/lw[m].mean())])
-        print(f'`{view}`: дорога в кадре {num(100*road.mean(), 1)} %')
+        top = slice(0, int(0.12*lw.shape[0]))
+        eye = [g.luminance(frame(side, bench, f'{view}-0'))[top].mean() for side in ('was', 'was2', 'now', 'now2')]
+        print(f'`{view}`: дорога в кадре {num(100*road.mean(), 1)} %; верх кадра (12 % высоты) без привыкания глаза: '
+              f'два прогона «было» {num(l2[top].mean()/lw[top].mean())}, «стало» к «было» {num(ln[top].mean()/lw[top].mean())}; '
+              f'с привыканием: второй прогон «было» {num(eye[1]/eye[0])}, два прогона «стало» {num(eye[2]/eye[0])} и '
+              f'{num(eye[3]/eye[0])}')
         print()
         table(['Кольцо', 'От дороги', 'Пикселей', 'Два прогона «было», из 255', '«стало» к «было», из 255',
                'Яркость: два прогона «было»', '«стало» к «было»'], rows)
