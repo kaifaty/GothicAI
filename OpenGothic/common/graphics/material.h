@@ -7,6 +7,7 @@
 #include "records/definitions.h"
 #include "graphics/foliagewind.h"
 #include "graphics/grass/grassparams.h"
+#include "graphics/windowglow.h"
 
 class Material final {
   public:
@@ -69,6 +70,7 @@ class Material final {
     bool                      eye              = false; // an eyeball (materials.json): BK_EYE
     FoliageWind::Params       foliage;                 // leaves in the wind (materials.json): BK_FOLIAGE
     Grass::Params             grass;                   // a ground that grows grass (materials.json): BK_GRASS
+    WindowGlow::Params        window;                  // the glow is a window's (materials.json): BK_WINDOW
     float                     envMapping       = 0;
 
     bool operator == (const Material& other) const;

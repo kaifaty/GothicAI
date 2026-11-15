@@ -83,6 +83,7 @@ void Sky::updateLight(int64_t gameTime) {
   const int64_t hourMs   = 60*minuteMs;
   const int64_t dayMs    = 24*hourMs;
   const int64_t now = gameTime%dayMs;
+  hour = float(now)/float(hourMs);
 
   // https://www.suncalc.org/#/52.4561,13.4033,5/2020.06.28/13:09/1/3
   const int64_t rise         = 4*hourMs+45*minuteMs;

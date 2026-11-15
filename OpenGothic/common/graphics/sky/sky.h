@@ -32,12 +32,14 @@ class Sky final {
     const State&              cloudsNight() const { return clouds[1]; }
     Tempest::Vec2             cloudsOffset(int layer, uint64_t tickCount) const;
     float                     isNight() const;
+    float                     dayHour() const { return hour; } // 0..24 of the game's day (updateLight)
 
   private:
     const Tempest::Texture2d*     skyTexture(std::string_view name, bool day, size_t id);
     const Tempest::Texture2d*     implSkyTexture(std::string_view name, bool day, size_t id);
 
     LightSource                   sun;
+    float                         hour = 12.f;
     Tempest::Vec3                 ambient;
 
     State                         clouds[2]; //day, night;

@@ -1,0 +1,300 @@
+# Windows lit of an evening, the dusk as a time-lapse (reports/render-features/2026-11-15-night-interiors, step 1):
+# the side view of the market house from 21:00 to 00:30, a shot every three game minutes (dusk-000 .. dusk-070).
+# scripts/content/window_glow.py clip joins them. Content as for window-glow.bench.
+# @timeout 420
+cheat god
+overlay off
+view hide animated morph
+cam lift off
+
+set time 21 0
+cam look -1270
+goto pos 8436.212 2000 3968.510
+cam world 1500 -1560 114.462
+wait 34
+cam hold
+wait 6000
+set time 21 0
+wait 1100
+shot dusk-000
+wait 100
+set time 21 3
+wait 1100
+shot dusk-001
+wait 100
+set time 21 6
+wait 1100
+shot dusk-002
+wait 100
+set time 21 9
+wait 1100
+shot dusk-003
+wait 100
+set time 21 12
+wait 1100
+shot dusk-004
+wait 100
+set time 21 15
+wait 1100
+shot dusk-005
+wait 100
+set time 21 18
+wait 1100
+shot dusk-006
+wait 100
+set time 21 21
+wait 1100
+shot dusk-007
+wait 100
+set time 21 24
+wait 1100
+shot dusk-008
+wait 100
+set time 21 27
+wait 1100
+shot dusk-009
+wait 100
+set time 21 30
+wait 1100
+shot dusk-010
+wait 100
+set time 21 33
+wait 1100
+shot dusk-011
+wait 100
+set time 21 36
+wait 1100
+shot dusk-012
+wait 100
+set time 21 39
+wait 1100
+shot dusk-013
+wait 100
+set time 21 42
+wait 1100
+shot dusk-014
+wait 100
+set time 21 45
+wait 1100
+shot dusk-015
+wait 100
+set time 21 48
+wait 1100
+shot dusk-016
+wait 100
+set time 21 51
+wait 1100
+shot dusk-017
+wait 100
+set time 21 54
+wait 1100
+shot dusk-018
+wait 100
+set time 21 57
+wait 1100
+shot dusk-019
+wait 100
+set time 22 0
+wait 1100
+shot dusk-020
+wait 100
+set time 22 3
+wait 1100
+shot dusk-021
+wait 100
+set time 22 6
+wait 1100
+shot dusk-022
+wait 100
+set time 22 9
+wait 1100
+shot dusk-023
+wait 100
+set time 22 12
+wait 1100
+shot dusk-024
+wait 100
+set time 22 15
+wait 1100
+shot dusk-025
+wait 100
+set time 22 18
+wait 1100
+shot dusk-026
+wait 100
+set time 22 21
+wait 1100
+shot dusk-027
+wait 100
+set time 22 24
+wait 1100
+shot dusk-028
+wait 100
+set time 22 27
+wait 1100
+shot dusk-029
+wait 100
+set time 22 30
+wait 1100
+shot dusk-030
+wait 100
+set time 22 33
+wait 1100
+shot dusk-031
+wait 100
+set time 22 36
+wait 1100
+shot dusk-032
+wait 100
+set time 22 39
+wait 1100
+shot dusk-033
+wait 100
+set time 22 42
+wait 1100
+shot dusk-034
+wait 100
+set time 22 45
+wait 1100
+shot dusk-035
+wait 100
+set time 22 48
+wait 1100
+shot dusk-036
+wait 100
+set time 22 51
+wait 1100
+shot dusk-037
+wait 100
+set time 22 54
+wait 1100
+shot dusk-038
+wait 100
+set time 22 57
+wait 1100
+shot dusk-039
+wait 100
+set time 23 0
+wait 1100
+shot dusk-040
+wait 100
+set time 23 3
+wait 1100
+shot dusk-041
+wait 100
+set time 23 6
+wait 1100
+shot dusk-042
+wait 100
+set time 23 9
+wait 1100
+shot dusk-043
+wait 100
+set time 23 12
+wait 1100
+shot dusk-044
+wait 100
+set time 23 15
+wait 1100
+shot dusk-045
+wait 100
+set time 23 18
+wait 1100
+shot dusk-046
+wait 100
+set time 23 21
+wait 1100
+shot dusk-047
+wait 100
+set time 23 24
+wait 1100
+shot dusk-048
+wait 100
+set time 23 27
+wait 1100
+shot dusk-049
+wait 100
+set time 23 30
+wait 1100
+shot dusk-050
+wait 100
+set time 23 33
+wait 1100
+shot dusk-051
+wait 100
+set time 23 36
+wait 1100
+shot dusk-052
+wait 100
+set time 23 39
+wait 1100
+shot dusk-053
+wait 100
+set time 23 42
+wait 1100
+shot dusk-054
+wait 100
+set time 23 45
+wait 1100
+shot dusk-055
+wait 100
+set time 23 48
+wait 1100
+shot dusk-056
+wait 100
+set time 23 51
+wait 1100
+shot dusk-057
+wait 100
+set time 23 54
+wait 1100
+shot dusk-058
+wait 100
+set time 23 57
+wait 1100
+shot dusk-059
+wait 100
+set time 0 0
+wait 1100
+shot dusk-060
+wait 100
+set time 0 3
+wait 1100
+shot dusk-061
+wait 100
+set time 0 6
+wait 1100
+shot dusk-062
+wait 100
+set time 0 9
+wait 1100
+shot dusk-063
+wait 100
+set time 0 12
+wait 1100
+shot dusk-064
+wait 100
+set time 0 15
+wait 1100
+shot dusk-065
+wait 100
+set time 0 18
+wait 1100
+shot dusk-066
+wait 100
+set time 0 21
+wait 1100
+shot dusk-067
+wait 100
+set time 0 24
+wait 1100
+shot dusk-068
+wait 100
+set time 0 27
+wait 1100
+shot dusk-069
+wait 100
+set time 0 30
+wait 1100
+shot dusk-070
+wait 100
