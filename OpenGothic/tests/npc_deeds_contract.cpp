@@ -1,4 +1,5 @@
 #include "game/deedwitness.h"
+#include "game/gothicguildtraits.h"
 
 #include <array>
 #include <cstdio>
@@ -16,6 +17,27 @@ void require(bool condition, const char* message) {
 }
 
 int main() {
+  const auto& traits = gothicGuildTraits();
+  require(traits.count()==GIL_MAX,"guild count is unchanged");
+  require(traits.none==GIL_NONE && traits.publicGuild==GIL_PUBLIC,"special guild numbers are unchanged");
+  for(uint32_t gil=0;gil<GIL_MAX;++gil) {
+    require(traits.has(gil,GuildTraits::Human)==(gil < GIL_SEPERATOR_HUM),"human guild parity");
+    require(traits.has(gil,GuildTraits::Monster)==(GIL_SEPERATOR_HUM<gil && gil<GIL_SEPERATOR_ORC),"monster guild parity");
+    require(traits.has(gil,GuildTraits::Orc)==(gil>GIL_SEPERATOR_ORC),"orc guild parity");
+    const auto G2_UNDEAD = (gil == GIL_GOBBO_SKELETON ||
+      gil == GIL_SUMMONED_GOBBO_SKELETON || gil == GIL_SKELETON      ||
+      gil == GIL_SUMMONED_SKELETON       || gil == GIL_SKELETON_MAGE ||
+      gil == GIL_SHADOWBEAST_SKELETON    || gil == GIL_ZOMBIE);
+    require(traits.has(gil,GuildTraits::Undead)==G2_UNDEAD,"undead guild parity");
+    const auto guild=gil;
+    const bool sinks = guild==GIL_GOBBO_SKELETON || guild==GIL_SUMMONED_GOBBO_SKELETON ||
+                       guild==GIL_SKELETON || guild==GIL_SUMMONED_SKELETON || guild==GIL_SKELETON_MAGE ||
+                       guild==GIL_SHADOWBEAST_SKELETON || guild==GIL_STONEGOLEM || guild==GIL_SUMMONED_GOLEM ||
+                       guild==GIL_Stoneguardian || guild==GIL_SummonedGuardian;
+    require(traits.has(gil,GuildTraits::SinkingBody)==sinks,"sinking body guild parity");
+    require(traits.has(gil,GuildTraits::Dragon)==(gil==GIL_DRAGON),"dragon guild parity");
+    }
+
   require(NpcDeedSimulation::admitted(NpcProcessPolicy::AiNormal),
           "a fully simulated marked NPC may transfer or capture a deed");
   require(NpcDeedSimulation::refusal(NpcProcessPolicy::AiNormal)==nullptr,
@@ -43,36 +65,36 @@ int main() {
   require(!DeedWitness::foreignCombat(true,true),"a defender fighting this culprit can witness a fresh deed");
   DeedWitness witness;
   witness.range = 2000;
-  require(witness.admitted(),"ready nearby witness is admitted");
+  require(witness.admitted(traits),"ready nearby witness is admitted");
   witness.distanceSquared = 2000*2000;
-  require(witness.admitted(),"perception range includes its exact boundary");
+  require(witness.admitted(traits),"perception range includes its exact boundary");
   witness.distanceSquared += 1;
-  require(!witness.admitted(),"one centimetre squared beyond native range is rejected");
+  require(!witness.admitted(traits),"one centimetre squared beyond native range is rejected");
   witness.distanceSquared = 0;
   for(bool DeedWitness::* flag:std::array{
       &DeedWitness::culprit,&DeedWitness::victim,&DeedWitness::player,
       &DeedWitness::down,&DeedWitness::lying,&DeedWitness::sleeping,&DeedWitness::foreignFight}) {
     auto candidate = witness;
     candidate.*flag = true;
-    require(!candidate.admitted(),"excluded participants, sleeping/down NPCs and foreign combat cannot witness");
+    require(!candidate.admitted(traits),"excluded participants, sleeping/down NPCs and foreign combat cannot witness");
     candidate.*flag = false;
-    require(candidate.admitted(),"the same otherwise ready witness is admitted after its gate clears");
+    require(candidate.admitted(traits),"the same otherwise ready witness is admitted after its gate clears");
     }
   witness.simulated = false;
-  require(!witness.admitted(),"far simulation cannot witness an engine deed");
+  require(!witness.admitted(traits),"far simulation cannot witness an engine deed");
   witness.simulated = true;
   witness.stateStarted = false;
-  require(!witness.admitted(),"a pending native state cannot receive a perception yet");
+  require(!witness.admitted(traits),"a pending native state cannot receive a perception yet");
   witness.stateStarted = true;
   witness.guild = GIL_SHEEP;
-  require(!witness.admitted(),"a sheep never becomes a human crime witness");
+  require(!witness.admitted(traits),"a sheep never becomes a human crime witness");
   witness.guild = GIL_SEPERATOR_HUM;
-  require(!witness.admitted(),"the vanilla human guild separator is excluded");
+  require(!witness.admitted(traits),"the vanilla human guild separator is excluded");
   witness.guild = GIL_OUT;
-  require(witness.admitted(),"an outlander below the human guild separator may witness");
+  require(witness.admitted(traits),"an outlander below the human guild separator may witness");
   witness.perceptionEnabled = false;
-  require(!witness.admitted(),"disabled perception cannot witness even with native range and visibility");
+  require(!witness.admitted(traits),"disabled perception cannot witness even with native range and visibility");
   witness.perceptionEnabled = true;
-  require(witness.admitted(),"enabling the relevant perception admits the otherwise ready human");
+  require(witness.admitted(traits),"enabling the relevant perception admits the otherwise ready human");
   std::printf("NPC deed witness contract: %d checks passed\n",checks);
   }

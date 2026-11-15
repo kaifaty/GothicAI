@@ -1,5 +1,5 @@
 #include "world.h"
-#include "game/constants.h"
+#include "game/rpgvocabulary.h"
 #include "objects/item.h"
 #include "objects/npc.h"
 
@@ -43,10 +43,7 @@ HitZones::Zone World::npcRayHitZone(const Npc& npc, const Tempest::Vec3& from,
 
 bool World::npcBodySinks(const Npc& npc) const {
   const auto guild=npc.trueGuild();
-  return guild==GIL_GOBBO_SKELETON || guild==GIL_SUMMONED_GOBBO_SKELETON ||
-         guild==GIL_SKELETON || guild==GIL_SUMMONED_SKELETON || guild==GIL_SKELETON_MAGE ||
-         guild==GIL_SHADOWBEAST_SKELETON || guild==GIL_STONEGOLEM || guild==GIL_SUMMONED_GOLEM ||
-         guild==GIL_Stoneguardian || guild==GIL_SummonedGuardian;
+  return guildTraits().has(uint32_t(guild),GuildTraits::SinkingBody);
   }
 
 ItemMaterial World::itemMaterial(const Item& item) const { return ItemMaterial(item.handle().material); }

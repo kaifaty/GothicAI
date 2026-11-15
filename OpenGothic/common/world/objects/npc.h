@@ -14,7 +14,8 @@
 #include "game/fightalgo.h"
 #include "game/archerai.h"
 #include "game/gamerules.h"
-#include "game/constants.h"
+#include "game/rpgvocabulary.h"
+#include "game/guildtraits.h"
 #include "game/ragdollsave.h"
 #include "game/meleedodge.h"
 #include "game/meleeai.h"
@@ -1302,7 +1303,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     Tempest::Vec3                 ragdollQuestFrom;
 
     WalkBit                        wlkMode                 =WalkBit::WM_Run;
-    int32_t                        trGuild                 =GIL_NONE;
+    int32_t                        trGuild                 =GuildNone;
     int32_t                        talentsSk[TALENT_MAX_G2]={};
     int32_t                        talentsVl[TALENT_MAX_G2]={};
     uint64_t                       refuseTalkMilis         =0;
