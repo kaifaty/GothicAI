@@ -946,7 +946,7 @@ void BodyController::postStep() {
       if(!safeBoundary(actor) || !boundTarget(actor,l.target)) continue;
       const auto& target=*actor.target();
       const bool reached=c.action==PolicyAction::Approach ?
-                         actor.fghAlgo.isInWRange(actor,target,actor.world().script()) :
+                         actor.fghAlgo.isInWRange(actor,target,actor.world().rules()) :
                          actor.fghAlgo.isInFocusAngle(actor,target,5.f);
       if(reached && stopOwnedMovement(actor)) {
         // Stop through normal locomotion APIs at this legal owned boundary. A running

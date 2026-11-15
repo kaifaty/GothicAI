@@ -4,7 +4,7 @@
 #include "world/bloodspawn.h"
 #include "graphics/visualfx.h"
 #include "graphics/effect.h"
-#include "game/damagecalculator.h"
+#include "game/gamerules.h"
 #include "game/bodyimpact.h"
 #include "game/herodeed.h"
 #include "game/bodyobservations.h"
@@ -131,7 +131,7 @@ void Npc::commitDamage() {
     hitTrace("no_target");
     return;
     }
-  if(!fghAlgo.isInAttackRange(*this,*currentTarget,owner.script())) {
+  if(!fghAlgo.isInAttackRange(*this,*currentTarget,owner.rules())) {
     hitTrace("out_of_range");
     return;
     }
@@ -248,7 +248,7 @@ void Npc::applyMeleePosture(Npc& attacker, const MeleeBladeContact* contact, boo
   const bool beastAttacker = isHuman() && attacker.hasMeleeBeastPoise();
   if(!Settings::physicsFlags().meleePosture || (!isHuman() && !beast) || (!attacker.isHuman() && !beastAttacker))
     return;
-  if(beastAttacker && (DamageCalculator::damageTypeMask(attacker)&(1<<daedalus::DamageType::FLY))!=0)
+  if(beastAttacker && (owner.rules().damageTypeMask(attacker)&(1<<DamageType::FLY))!=0)
     return;
   const auto mode = attacker.weaponState();
   if(!beastAttacker && mode!=WeaponState::Fist && mode!=WeaponState::W1H && mode!=WeaponState::W2H)
@@ -474,18 +474,18 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
     lastHitType='A'; else
     lastHitType='B';
 
-  DamageCalculator::Damage dmg={};
-  DamageCalculator::Val    hitResult;
+  Damage                   dmg={};
+  DamageValue              hitResult;
   SpellCategory            splCat     = SpellCategory::SPELL_BAD;
   const bool               dontKill   = isNonlethalFight(other) ||
                                        (((b==nullptr && splId==0) || (bMask & COLL_DONTKILL)) && (!isSwim()));
-  int32_t                  damageType = DamageCalculator::damageTypeMask(other);
+  int32_t                  damageType = owner.rules().damageTypeMask(other);
 
   if(isSpell) {
     auto& spl  = owner.rules().spellDesc(splId);
     splCat     = SpellCategory(spl.spell_type);
     damageType = spl.damage_type;
-    for(size_t i=0; i<daedalus::DamageType::NUM; ++i)
+    for(size_t i=0; i<DamageType::NUM; ++i)
       if((damageType&(1<<i))!=0)
         dmg[i] = spl.damage_per_level;
     }
@@ -509,7 +509,7 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
       }
     }
 
-  hitResult = DamageCalculator::damageValue(other,*this,b,isSpell,dmg,bMask);
+  hitResult = owner.rules().damageValue(other,*this,b,isSpell,dmg,bMask);
   const int32_t baseDamage = hitResult.value;
   if((contact!=nullptr || stunBonus!=1.f || backstabMult!=1.f || chargeMult!=1.f) && hitResult.hasHit && !hitResult.invincible)
     hitResult.value = int32_t(std::lround(float(hitResult.value)*meleeScale*stunBonus*backstabMult*chargeMult));
@@ -611,10 +611,10 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
         visual.interrupt(); // TODO: put down in pipeline, at Pose and merge with setAnimAngGet
         }
 
-      if((damageType & (1<<daedalus::DamageType::FLY))==0)
+      if((damageType & (1<<DamageType::FLY))==0)
         stumble = setAnimAngGet(lastHitType=='A' ? Anim::StumbleA  : Anim::StumbleB)!=nullptr;
       }
-    if((damageType & (1<<daedalus::DamageType::FLY))==0 &&
+    if((damageType & (1<<DamageType::FLY))==0 &&
        !(superArmor && (isMeleeCharging() || isMeleeChargeReleasing())))
       hitReaction(other,b,hitResult.value,stumble,contact);
     }
@@ -622,7 +622,7 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
   // throw enemy
   const bool physicalWind = isSpell && Settings::physicsFlags().spellPhysics &&
                             owner.rules().physicalSpell(splId)==::PhysicalSpell::WindFist;
-  if(hitResult.hasHit && (damageType & (1<<daedalus::DamageType::FLY)) && !physicalWind &&
+  if(hitResult.hasHit && (damageType & (1<<DamageType::FLY)) && !physicalWind &&
      !(superArmor && (isMeleeCharging() || isMeleeChargeReleasing()))) {
     mvAlgo.accessDamFly(x-other.x, z-other.z, lastHitType);
     }
@@ -771,7 +771,7 @@ void Npc::applyBodyImpact() {
   const auto culpritHandle=bodyImpactPendingCulprit.lock();
   auto* culprit=owner.rules().findNpc(culpritHandle.get());
   bodyImpactPendingCulprit.reset();
-  const auto damage=DamageCalculator::damageFall(*this,speed);
+  const auto damage=owner.rules().damageFall(*this,speed);
   const int32_t before=attribute(ATR_HITPOINTS);
   if(damage.hasHit) {
     const auto decision=BodyImpact::decide(culprit!=nullptr && isNonlethalFight(*culprit),isHuman(),isPlayer(),
@@ -834,7 +834,7 @@ void Npc::takeFallDamage(const Vec3& fallSpeed) {
       setAnim(Anim::Fallen);
       }
     }
-  auto dmg = DamageCalculator::damageFall(*this,fallSpeed.length());
+  auto dmg = owner.rules().damageFall(*this,fallSpeed.length());
   int32_t hp = attribute(ATR_HITPOINTS);
   // Keep vanilla landing feedback immediate; only HP joins the impact window.
   if(dmg.hasHit && hp>dmg.value) {

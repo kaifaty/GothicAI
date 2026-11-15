@@ -74,7 +74,7 @@ WorldBaseResult tryWorldData(WorldData::Data& world, asset::WorldMesh& worldMesh
     if(!data.waynet)
       throw std::runtime_error("world waynet missing");
     probeT = LoadProbe::now();
-    VobLayer::apply(data,dir,overrideDir,ownMeshes);
+    VobLayer::apply(data,dir,overrideDir,GameHost::inst().particleNameCheck(),ownMeshes);
     if(LoadProbe::enabled())
       LoadProbe::mark("voblayer",LoadProbe::msSince(probeT));
     ChunkTable chunkTable;
@@ -134,7 +134,7 @@ bool readVobTreeLayer(Resources::VobTree& bundle, std::string_view filename) {
           if(candidate!=name || !entry.is_regular_file()) continue;
           file=entry.path();
           const auto ownMeshes=Resources::meshReplacementFiles();
-          const auto result=VobLayer::readTree(bundle,Resources::baseDir(),file,content,&ownMeshes);
+          const auto result=VobLayer::readTree(bundle,Resources::baseDir(),file,GameHost::inst().particleNameCheck(),content,&ownMeshes);
           overridden=result.errors.empty();
           if(!overridden) {
             std::string errors;

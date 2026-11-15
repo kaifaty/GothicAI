@@ -119,8 +119,8 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
   if(targetKnockdown || targetStunned) {
     const bool rising = currentTarget->meleeRiseTick!=0;
     // Use the same root-transformed distance as isInFinishRange, bounded by its script limit.
-    const float finishRange = std::min(fghAlgo.attackFinishDistance(owner.script()),ws==WeaponState::W1H ? 165.f : 170.f);
-    const bool inRange = targetStunned || rising ? fghAlgo.isInWRange(*this,*currentTarget,owner.script()) :
+    const float finishRange = std::min(fghAlgo.attackFinishDistance(owner.rules()),ws==WeaponState::W1H ? 165.f : 170.f);
+    const bool inRange = targetStunned || rising ? fghAlgo.isInWRange(*this,*currentTarget,owner.rules()) :
                                  fghAlgo.qDistTo(*this,*currentTarget)<=finishRange*finishRange;
     const bool focus = fghAlgo.isInFocusAngle(*this,*currentTarget,5.f);
     auto action = FightAlgo::resolveDownTactics(downTactics,currentTarget->meleeKnockdown,rising,inRange,focus);
@@ -166,7 +166,7 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
     return true;
     }
 
-  const auto act = bodyOverride ? bodyAction : fghAlgo.nextFromQueue(*this,*currentTarget,owner.script());
+  const auto act = bodyOverride ? bodyAction : fghAlgo.nextFromQueue(*this,*currentTarget,owner.rules());
   if(act!=FightAlgo::MV_BLOCK)
     meleeParadeTiming.reset();
   const auto consume = [&] {
@@ -187,7 +187,7 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
   // test case: wolf jump-back quite often when close, but programmed to jump only if attacked
   // so far promoting wait to jump seem to work best
   FightAlgo::ResolverState nativeResolution;
-  nativeResolution.inCloseup = fghAlgo.isInCloseupRange(*this,*currentTarget,owner.script());
+  nativeResolution.inCloseup = fghAlgo.isInCloseupRange(*this,*currentTarget,owner.rules());
   nativeResolution.focus30 = nativeResolution.inCloseup && fghAlgo.isInFocusAngle(*this,*currentTarget);
   const bool jmp = FightAlgo::resolveNative(FightAlgo::MV_WAIT,nativeResolution)==FightAlgo::MV_JUMPBACK;
   const bool jumpBack = act==FightAlgo::MV_JUMPBACK || ((act==FightAlgo::MV_WAIT || act==FightAlgo::MV_TURN) && jmp);
@@ -208,7 +208,7 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
     // separate shared policy mask invalid. Hidden geometry never enters capture features.
     auto resolver=nativeResolution;
     resolver.focus5=fghAlgo.isInFocusAngle(*this,*currentTarget,5.f);
-    resolver.inWRange=fghAlgo.isInWRange(*this,*currentTarget,owner.script());
+    resolver.inWRange=fghAlgo.isInWRange(*this,*currentTarget,owner.rules());
     trajectoryEffective=FightAlgo::resolveNative(act,resolver);
     // Native TURN uses the same approach executor as MOVE outside weapon range. Inside
     // range that branch only rotates. Policy TurnToTarget uses TURN2HIT, so labels must
@@ -338,7 +338,7 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
 
     static const Anim ani[4] = {Anim::Attack, Anim::AttackL, Anim::AttackR};
     if((act!=FightAlgo::MV_ATTACK && bodyState()!=BS_RUN) &&
-       !fghAlgo.isInWRange(*this,*currentTarget,owner.script())) {
+       !fghAlgo.isInWRange(*this,*currentTarget,owner.rules())) {
       consume();
       return true;
       }
@@ -555,7 +555,7 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
               return true;
               }
             }
-          if((swing || timing.sequence!=nullptr) && !fghAlgo.isInWRange(*currentTarget,*this,owner.script())) {
+          if((swing || timing.sequence!=nullptr) && !fghAlgo.isInWRange(*currentTarget,*this,owner.rules())) {
             skip("out_of_reach");
             return true;
             }
@@ -619,8 +619,8 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
       return true;
       }
 
-    const bool prGRange = fghAlgo.isInGRange(*this, *currentTarget, owner.script());
-    const bool prWRange = fghAlgo.isInWRange(*this, *currentTarget, owner.script());
+    const bool prGRange = fghAlgo.isInGRange(*this, *currentTarget, owner.rules());
+    const bool prWRange = fghAlgo.isInWRange(*this, *currentTarget, owner.rules());
     const auto prBs     = bs;
 
     const float distance = qDistTo(*currentTarget);
@@ -665,8 +665,8 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
       wayPath.clear();
       }
 
-    const bool isGRange = fghAlgo.isInGRange(*this, *currentTarget, owner.script());
-    const bool isWRange = fghAlgo.isInWRange(*this, *currentTarget, owner.script());
+    const bool isGRange = fghAlgo.isInGRange(*this, *currentTarget, owner.rules());
+    const bool isWRange = fghAlgo.isInWRange(*this, *currentTarget, owner.rules());
     const bool isFocus  = fghAlgo.isInFocusAngle(*this, *currentTarget, 5.f);
 
     if((isWRange || (isGRange!=prGRange) || prBs!=bodyStateMasked()) && isFocus) {
@@ -714,7 +714,7 @@ bool Npc::canFinish(Npc& oth) {
   if(!oth.isUnconscious())
     return false;
 
-  if(!fghAlgo.isInFinishRange(*this,oth,owner.script()))
+  if(!fghAlgo.isInFinishRange(*this,oth,owner.rules()))
     return false;
   return true;
   }
@@ -807,7 +807,7 @@ bool Npc::isMeleeDownStrike(Anim anim, WeaponState ws) const {
     return false;
   if(anim!=Anim::Attack && anim!=Anim::AttackL && anim!=Anim::AttackR)
     return false;
-  return fghAlgo.isInFinishRange(*this,*currentTarget,owner.script());
+  return fghAlgo.isInFinishRange(*this,*currentTarget,owner.rules());
   }
 
 bool Npc::finishingMove() {

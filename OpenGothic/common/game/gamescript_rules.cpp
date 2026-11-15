@@ -1,5 +1,9 @@
 #include "gamescript.h"
 
+#include "damagecalculator.h"
+#include "definitions/fightaidefinitions.h"
+#include "gothic.h"
+
 #include "world/bodytraces.h"
 
 #include <algorithm>
@@ -95,4 +99,43 @@ std::array<int32_t,3> GameScript::storyNpcTypes() {
 
 size_t GameScript::scriptVmMemorySize() const {
   return sizeof(vm)+vm.symbols().capacity()*sizeof(vm.symbols()[0])+vm.size();
+  }
+
+DamageValue GameScript::damageValue(Npc& src, Npc& other, const Bullet* bullet, bool isSpell, const Damage& spellDamage, CollideMask mask) {
+  return DamageCalculator::damageValue(src,other,bullet,isSpell,spellDamage,mask);
+  }
+
+float GameScript::meleeMultiplier(float speedCmS, float typicalCmS, float bladeFraction, float surfaceAngleDeg, size_t targetIndex) {
+  return DamageCalculator::meleeMultiplier(speedCmS,typicalCmS,bladeFraction,surfaceAngleDeg,targetIndex);
+  }
+
+DamageValue GameScript::damageFall(Npc& npc, float speed) {
+  return DamageCalculator::damageFall(npc,speed);
+  }
+
+int32_t GameScript::vanillaChance(int32_t hitChance, float distance) {
+  return DamageCalculator::vanillaChance(*this,hitChance,distance);
+  }
+
+Damage GameScript::rangeDamageValue(Npc& npc) {
+  return DamageCalculator::rangeDamageValue(npc);
+  }
+
+int32_t GameScript::damageTypeMask(Npc& npc) {
+  return DamageCalculator::damageTypeMask(npc);
+  }
+
+const FightTactic& GameScript::fightAi(size_t tactic) {
+  return Gothic::fai()[tactic];
+  }
+
+float GameScript::attackFinishDistance() {
+  float NPC_ATTACK_FINISH_DISTANCE = 180;
+  if(auto var = findSymbol("NPC_ATTACK_FINISH_DISTANCE")) {
+    if(var->type()==daedalus::DaedalusDataType::INT)
+      NPC_ATTACK_FINISH_DISTANCE = float(var->get_int());
+    else if(var->type()==daedalus::DaedalusDataType::FLOAT)
+      NPC_ATTACK_FINISH_DISTANCE = var->get_float();
+    }
+  return NPC_ATTACK_FINISH_DISTANCE;
   }

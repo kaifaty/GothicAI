@@ -1,5 +1,5 @@
 #include "npckeys.h"
-
+#include "game/constants.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
 

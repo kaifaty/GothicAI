@@ -1,5 +1,5 @@
 #include "world.h"
-
+#include "game/constants.h"
 #include "objects/item.h"
 #include "objects/npc.h"
 

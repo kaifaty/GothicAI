@@ -3,6 +3,8 @@
 #include <Tempest/SoundEffect>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
+#include <functional>
 #include <string_view>
 #include <vector>
 
@@ -22,6 +24,8 @@ struct PhysicsNoise;
 // modes and dialogs are off, sounds are empty and notifications have no listeners.
 class GameHost {
   public:
+    using ParticleNameCheck = std::function<bool(std::string_view, const std::filesystem::path&,
+                                               const std::filesystem::path&, std::vector<std::string>&)>;
     virtual ~GameHost() { if(instance==this) instance = nullptr; }
 
     static GameHost& inst() {
@@ -37,6 +41,8 @@ class GameHost {
 
     virtual bool isNpcInDialog(const Npc&) const { return false; }
     virtual bool isInDialog() const { return false; }
+    virtual bool isDialogActive() const { return false; }
+    virtual ParticleNameCheck particleNameCheck() { return {}; }
     virtual void openDialogPipe(Npc&, Npc&, AiOuputPipe*& pipe) { pipe = nullptr; }
     AiOuputPipe* openDlgOuput(Npc& player, Npc& npc) {
       AiOuputPipe* pipe = nullptr;

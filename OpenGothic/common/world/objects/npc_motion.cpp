@@ -1,5 +1,5 @@
 #include "npc.h"
-
+#include "game/constants.h"
 #include "graphics/mesh/skeleton.h"
 #include "game/gamerules.h"
 #include "world/objects/interactive.h"

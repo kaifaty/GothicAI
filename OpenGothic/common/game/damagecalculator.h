@@ -1,6 +1,6 @@
 #pragma once
 
-#include "daedalus/classes.h"
+#include "game/damagetypes.h"
 
 #include "game/constants.h"
 
@@ -14,23 +14,8 @@ class DamageCalculator {
       MinDamage = 5, //TODO: NPC_MINIMAL_DAMAGE?
       };
 
-    struct Val final {
-      Val()=default;
-      Val(int32_t v,bool b):value(v),hasHit(b){}
-      Val(int32_t v,bool b,bool i):value(v),hasHit(b),invincible(i){}
-
-      int32_t value      = 0;
-      bool    hasHit     = false;
-      bool    invincible = false;
-      bool    critical   = false;
-      };
-
-    struct Damage final {
-      int32_t  val[daedalus::DamageType::NUM] = {};
-      int32_t& operator[](size_t i) { return val[i]; }
-      void     operator *= (int32_t v) { for(auto& i:val) i*=v; }
-      void     operator /= (int32_t v) { for(auto& i:val) i/=v; }
-      };
+    using Val = DamageValue;
+    using Damage = ::Damage;
 
     static Val     damageValue(Npc& src, Npc& other, const Bullet* b, bool isSpell, const DamageCalculator::Damage& splDmg, const CollideMask bMsk);
     static float   meleeMultiplier(float speedCmS, float typicalCmS, float bladeFraction, float surfaceAngleDeg, size_t targetIndex);

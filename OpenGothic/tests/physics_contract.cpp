@@ -7,6 +7,7 @@
 #include "graphics/mesh/hitzones.h"
 #include "graphics/mesh/submesh/packedmesh.h"
 #include "game/serialize.h"
+#include "game/damagecalculator.h"
 #include "world/objects/npc.h"
 #include "world/bloodstains.h"
 #include "gothic.h"

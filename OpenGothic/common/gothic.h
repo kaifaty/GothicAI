@@ -166,6 +166,8 @@ class Gothic final : public GameServices, public GameHost {
     void         openDialogPipe (Npc& player, Npc& npc, AiOuputPipe*& pipe) override;
     bool         isNpcInDialog(const Npc& npc) const override;
     bool         isInDialog() const override;
+    bool         isDialogActive() const override;
+    ParticleNameCheck particleNameCheck() override;
 
     Tempest::Signal<void(std::string_view)>                             onStartGame;
     Tempest::Signal<void(std::string_view)>                             onLoadGame;
@@ -173,6 +175,7 @@ class Gothic final : public GameServices, public GameHost {
 
     Tempest::Signal<void(Npc&,Npc&,AiOuputPipe*&)>                      onDialogPipe;
     std::function<bool(const Npc*)>                                     isNpcInDialogFn;
+    std::function<bool()>                                              isDialogActiveFn = [] { return false; };
     // the dialog window: what it offers now and picking the i-th as the player does (debug and test tools)
     std::function<std::vector<std::string>()>                           dialogEntriesFn;
     std::function<bool(size_t)>                                         dialogPickFn;

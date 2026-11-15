@@ -17,6 +17,7 @@
 #include "graphics/lightgroup.h"
 #include "graphics/meshobjects.h"
 #include "game/gamerules.h"
+#include "game/constants.h"
 #include "physics/dynamicworld.h"
 #include "worldobjects.h"
 #include "worldsound.h"
