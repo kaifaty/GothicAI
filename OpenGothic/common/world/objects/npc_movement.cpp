@@ -236,7 +236,7 @@ void Npc::beginSimpleGoTo(AiQueue::AiAction&& action, const WayPoint& point) {
     }
   float distance=MoveAlgo::closeToPointThreshold*(mvAlgo.checkLastBounce() ? .5f : 1.5f);
   if(terminal.npc!=nullptr)
-    distance=fghAlgo.prefferedAttackDistance(*this,*terminal.npc,owner.script());
+    distance=fghAlgo.prefferedAttackDistance(*this,*terminal.npc,owner.rules());
   else if(terminal.wp!=nullptr && terminal.wp->useCounter()>1)
     distance=float(MAX_AI_USE_DISTANCE);
   if(terminal.pointDistance>0.f)
@@ -280,7 +280,7 @@ void Npc::refreshSimpleGoTo() {
       terminal.set(pending->target,GT_Point);
       terminal.pointDistance=float(pending->i0);
       distance=terminal.pointDistance>0.f ? terminal.pointDistance :
-               fghAlgo.prefferedAttackDistance(*this,*terminal.npc,owner.script());
+               fghAlgo.prefferedAttackDistance(*this,*terminal.npc,owner.rules());
       } else {
       terminal.flag=GT_Item;
       terminal.pos=target;
@@ -354,7 +354,7 @@ bool Npc::finishSimpleGoTo(uint64_t dt) {
     }
   float distance=MoveAlgo::closeToPointThreshold*(mvAlgo.checkLastBounce() ? .5f : 1.5f);
   if(go2.npc!=nullptr)
-    distance=fghAlgo.prefferedAttackDistance(*this,*go2.npc,owner.script());
+    distance=fghAlgo.prefferedAttackDistance(*this,*go2.npc,owner.rules());
   else if(go2.wp!=nullptr && go2.wp->useCounter()>1)
     distance=float(MAX_AI_USE_DISTANCE);
   if(go2.pointDistance>0.f)
@@ -379,7 +379,7 @@ bool Npc::implGoTo(uint64_t dt) {
   refreshSimpleGoTo();
   float dist = 0;
   if(go2.npc) {
-    dist = fghAlgo.prefferedAttackDistance(*this,*go2.npc,owner.script());
+    dist = fghAlgo.prefferedAttackDistance(*this,*go2.npc,owner.rules());
     } else {
     // use smaller threshold, to avoid edge-looping in script
     dist = MoveAlgo::closeToPointThreshold*0.5f;

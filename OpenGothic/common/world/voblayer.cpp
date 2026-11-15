@@ -1,7 +1,6 @@
 #include "voblayer.h"
 #include "movablevobs.h"
 #include "gothicglb.h"
-#include "game/definitions/particlecontent.h"
 
 #include <Tempest/Log>
 #include <rapidjson/document.h>
@@ -29,8 +28,8 @@ struct LayerVob final : asset::VirtualObject, Added {};
 struct Context {
   std::vector<Vob> removed;
   const std::map<std::string,fs::path>* ownMeshes = nullptr;
-  std::unique_ptr<daedalus::DaedalusVm> particles;
-  ParticleContent::Result ownParticles;
+  GameHost::ParticleNameCheck particleNames;
+  std::vector<std::string> particleErrors;
   };
 
 [[noreturn]] void fail(const std::string& reason) { throw std::runtime_error(reason); }
@@ -78,11 +77,7 @@ std::string particleName(std::string name, Context& context, const fs::path& bas
   const auto extension=fs::path(name).extension().string();
   require(extension.empty() || extension==".PFX","expected PFX name");
   if(!extension.empty()) name.resize(name.size()-extension.size());
-  if(context.particles==nullptr) {
-    context.particles=ParticleContent::openProgram(baseRoot);
-    context.ownParticles=ParticleContent::load(*context.particles,contentRoot);
-    }
-  require(context.ownParticles.effects.count(name)!=0 || ParticleContent::hasBase(*context.particles,name),
+  require(context.particleNames && context.particleNames(name,baseRoot,contentRoot,context.particleErrors),
           "unknown PFX "+name);
   return name+".PFX";
   }
@@ -634,7 +629,7 @@ const std::string& key(const asset::VirtualObject& vob) {
   return empty;
   }
 
-Result apply(WorldData::Data& data,const fs::path& baseWorldDir,const fs::path& worldContentDir,
+Result apply(WorldData::Data& data,const fs::path& baseWorldDir,const fs::path& worldContentDir, GameHost::ParticleNameCheck particleNames,
              const std::map<std::string,fs::path>* ownMeshes) {
   Result total;
   if(const char* flag=std::getenv("OPENGOTHIC_VOB_LAYERS"); flag!=nullptr && std::string_view(flag)=="0")
@@ -649,6 +644,7 @@ Result apply(WorldData::Data& data,const fs::path& baseWorldDir,const fs::path& 
     return total;
     }
   Context context;
+  context.particleNames=std::move(particleNames);
   context.ownMeshes = ownMeshes;
   for(const auto& file:files) {
     const auto result=applyFile(data,context,baseWorldDir.parent_path().parent_path(),file,worldContentDir.parent_path().parent_path());
@@ -659,27 +655,30 @@ Result apply(WorldData::Data& data,const fs::path& baseWorldDir,const fs::path& 
     total.added+=result.added; total.removed+=result.removed; total.moved+=result.moved; total.lit+=result.lit; total.swapped+=result.swapped;
     total.errors.insert(total.errors.end(),result.errors.begin(),result.errors.end());
     }
-  total.errors.insert(total.errors.end(),context.ownParticles.errors.begin(),context.ownParticles.errors.end());
+  total.errors.insert(total.errors.end(),context.particleErrors.begin(),context.particleErrors.end());
   return total;
   }
 
-Result check(const fs::path& baseWorldDir,const fs::path& file,const fs::path& contentRoot) {
+Result check(const fs::path& baseWorldDir,const fs::path& file,GameHost::ParticleNameCheck particleNames,
+             const fs::path& contentRoot) {
   const auto world=contentRoot.empty() ? fs::path{} : contentRoot/"worlds"/baseWorldDir.filename();
   auto data=WorldData::read(baseWorldDir,world);
   Context context;
+  context.particleNames=std::move(particleNames);
   for(const auto& previous:layerFiles(world)) {
     if(previous.filename()>=file.filename()) break;
     applyFile(data,context,baseWorldDir.parent_path().parent_path(),previous,contentRoot);
     }
   auto result=applyFile(data,context,baseWorldDir.parent_path().parent_path(),file,contentRoot);
-  result.errors.insert(result.errors.end(),context.ownParticles.errors.begin(),context.ownParticles.errors.end());
+  result.errors.insert(result.errors.end(),context.particleErrors.begin(),context.particleErrors.end());
   return result;
   }
 
-Result readTree(std::vector<Vob>& tree, const fs::path& baseRoot, const fs::path& file,
+Result readTree(std::vector<Vob>& tree, const fs::path& baseRoot, const fs::path& file, GameHost::ParticleNameCheck particleNames,
                 const fs::path& contentRoot, const std::map<std::string,fs::path>* ownMeshes) {
   WorldData::Data data;
   Context context;
+  context.particleNames=std::move(particleNames);
   context.ownMeshes=ownMeshes;
   auto result=applyFile(data,context,baseRoot,file,contentRoot,true);
   if(result.errors.empty()) tree=std::move(data.vobs);

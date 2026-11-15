@@ -54,6 +54,15 @@ class GameScript final : public GameRules {
     std::array<int32_t,3> storyNpcTypes() override;
     size_t           scriptVmMemorySize() const override;
 
+    DamageValue damageValue(Npc& src, Npc& other, const Bullet* bullet, bool isSpell, const Damage& spellDamage, CollideMask mask) override;
+    float meleeMultiplier(float speedCmS, float typicalCmS, float bladeFraction, float surfaceAngleDeg, size_t targetIndex) override;
+    DamageValue damageFall(Npc& npc, float speed) override;
+    int32_t vanillaChance(int32_t hitChance, float distance) override;
+    Damage rangeDamageValue(Npc& npc) override;
+    int32_t damageTypeMask(Npc& npc) override;
+    const FightTactic& fightAi(size_t tactic) override;
+    float attackFinishDistance() override;
+
     bool         hasSymbolName(std::string_view fn);
 
     auto         createNpc(Npc& owner, size_t instance, std::string_view waypoint, uint32_t& kind) -> std::shared_ptr<NpcRecord> override;

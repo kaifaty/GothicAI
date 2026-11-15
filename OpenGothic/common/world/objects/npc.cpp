@@ -19,7 +19,6 @@
 #include "graphics/visualfx.h"
 #include "graphics/effect.h"
 #include "world/objects/pfxemitter.h"
-#include "game/damagecalculator.h"
 #include "game/bodyimpact.h"
 #include "game/herodeed.h"
 #include "game/deedwitness.h"
@@ -135,7 +134,7 @@ Vec3 Npc::GoTo::target() const {
 
 bool Npc::GoTo::isClose(const Npc& self, float dist) const {
   if(flag==GT_Enemy)
-    return self.fghAlgo.isInWRange(self, *npc, self.owner.script()); // consistent with implAttack
+    return self.fghAlgo.isInWRange(self, *npc, self.owner.rules()); // consistent with implAttack
   if(npc!=nullptr && pointDistance>0.f && !self.canSeeNpc(*npc,true))
     return false;
   if(npc!=nullptr)
@@ -1515,7 +1514,7 @@ Vec3 Npc::mapBone(std::string_view bone) const {
   }
 
 bool Npc::checkGoToNpcdistance(const Npc &other) {
-  return fghAlgo.isInAttackRange(*this,other,owner.script());
+  return fghAlgo.isInAttackRange(*this,other,owner.rules());
   }
 
 bool Npc::isEnemy(const Npc &other) const {

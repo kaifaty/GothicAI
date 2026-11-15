@@ -100,7 +100,7 @@ LAYER_RULES: list[tuple[str, str]] = [
     ("common/game/compatibility/*", "gothic"),
     ("common/game/constants", "gothic"),
     ("common/game/ownsymbols", "gothic"),
-    ("common/game/fightalgo", "gothic"),
+    ("common/game/fightalgo", "rpg"),
     ("common/game/damagecalculator", "gothic"),
     ("common/game/aistate", "rpg"),
     ("common/game/aiouputpipe", "rpg"),

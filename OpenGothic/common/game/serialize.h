@@ -8,10 +8,6 @@
 #include <ctime>
 #include <memory>
 
-namespace daedalus {
-  enum class DaedalusDataType : std::uint32_t;
-  }
-
 class WayPoint;
 class Npc;
 struct NpcRecord;
@@ -48,9 +44,6 @@ class Serialize : public SaveArchive {
     friend class SaveArchive;
     using SaveArchive::implWrite;
     using SaveArchive::implRead;
-
-    void implWrite(daedalus::DaedalusDataType  i)    { write((uint32_t) i); }
-    void implRead (daedalus::DaedalusDataType& i)    { read((uint32_t&) i); }
 
     // typedef
     void implWrite(gtime  i)    { writeBytes(&i,sizeof(i)); }

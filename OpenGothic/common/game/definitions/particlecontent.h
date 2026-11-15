@@ -1,6 +1,7 @@
 #pragma once
 
 #include "records/definitions.h"
+#include "game/gamehost.h"
 
 #include "daedalus/vm.h"
 #include <filesystem>
@@ -49,6 +50,7 @@ struct Result {
   std::vector<std::string> errors;
   };
 
+GameHost::ParticleNameCheck nameChecker();
 std::string canonicalName(std::string_view name);
 bool hasBase(const daedalus::DaedalusScript& script, std::string_view name);
 std::shared_ptr<Def::ParticleEffect> base(daedalus::DaedalusVm& vm, std::string_view name);

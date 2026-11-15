@@ -203,9 +203,9 @@ void MainWindow::setupUi() {
 #endif
 
   rootMenu.setMainMenu();
-
   Gothic::inst().onDialogPipe  .bind(&dialogs,&DialogMenu::openPipe);
   Gothic::inst().isNpcInDialogFn = std::bind(&DialogMenu::isNpcInDialog, &dialogs, std::placeholders::_1);
+  Gothic::inst().isDialogActiveFn = [this]() { return dialogs.isActive(); };
   Gothic::inst().dialogEntriesFn = [this]() { return dialogs.entries(); };
   Gothic::inst().dialogPickFn    = [this](size_t i) { return dialogs.pick(i); };
 

@@ -255,4 +255,20 @@ Result check(const fs::path& baseRoot, const fs::path& contentRoot) {
   return load(*vm,contentRoot);
   }
 
+GameHost::ParticleNameCheck nameChecker() {
+  struct State {
+    std::unique_ptr<daedalus::DaedalusVm> program;
+    Result own;
+    };
+  return [state=std::make_shared<State>()](std::string_view name, const fs::path& baseRoot,
+                                         const fs::path& contentRoot, std::vector<std::string>& errors) {
+    if(state->program==nullptr) {
+      state->program=openProgram(baseRoot);
+      state->own=load(*state->program,contentRoot);
+      }
+    errors=state->own.errors;
+    return state->own.effects.count(std::string(name))!=0 || hasBase(*state->program,name);
+    };
+  }
+
 } // namespace ParticleContent

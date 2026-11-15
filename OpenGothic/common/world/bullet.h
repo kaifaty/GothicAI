@@ -4,7 +4,7 @@
 
 #include "physics/dynamicworld.h"
 
-#include "game/damagecalculator.h"
+#include "game/damagetypes.h"
 #include "graphics/meshobjects.h"
 #include "graphics/effect.h"
 #include "graphics/mesh/hitzones.h"
@@ -48,8 +48,8 @@ class Bullet final : public DynamicWorld::BulletCallback {
     Flg      flags()     const { return flg;  }
     ItemMaterial itemMaterial() const;
 
-    auto     damage() const -> const DamageCalculator::Damage& { return dmg; }
-    void     setDamage(DamageCalculator::Damage d) { dmg=d; }
+    auto     damage() const -> const Damage& { return dmg; }
+    void     setDamage(Damage d) { dmg=d; }
 
     float    hitChance() const { return hitCh; }
     void     setHitChance(float v) { hitCh=v; }
@@ -83,7 +83,7 @@ class Bullet final : public DynamicWorld::BulletCallback {
     World*                    wrld=nullptr;
     Npc*                      ow=nullptr;
 
-    DamageCalculator::Damage  dmg        = {};
+    Damage  dmg        = {};
     float                     hitCh      = 1.f;
     bool                      precise    = false;
     float                     drawK      = 1.f;

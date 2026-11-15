@@ -784,7 +784,7 @@ void MdlVisual::stopEffect(int32_t slot) {
     }
   }
 
-void MdlVisual::setNpcEffect(World& owner, Npc& npc, std::string_view s, daedalus::NpcFlag flags) {
+void MdlVisual::setNpcEffect(World& owner, Npc& npc, std::string_view s, NpcFlag flags) {
   if(hnpcVisualName!=s) {
     hnpcVisualName = s;
     auto vfx = GameServices::inst().loadVisualFx(s);
@@ -800,7 +800,7 @@ void MdlVisual::setNpcEffect(World& owner, Npc& npc, std::string_view s, daedalu
     hnpcVisual.view.setMesh(&view,bodySkin());
     }
 
-  const bool nextGhost = (flags & daedalus::NpcFlag::GHOST);
+  const bool nextGhost = (flags & NpcFlag::GHOST);
   if(hnpcFlagGhost!=nextGhost) {
     hnpcFlagGhost=nextGhost;
     view.setAsGhost(hnpcFlagGhost);

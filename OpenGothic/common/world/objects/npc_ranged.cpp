@@ -4,7 +4,6 @@
 
 #include "graphics/visualfx.h"
 #include "graphics/effect.h"
-#include "game/damagecalculator.h"
 #include "game/gamerules.h"
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"
@@ -31,8 +30,8 @@ void Npc::commitSpell() {
 
   if(active->isSpellShoot()) {
     const int lvl = (castLevel-CS_Emit_0)+1;
-    DamageCalculator::Damage dmg={};
-    for(size_t i=0; i<daedalus::DamageType::NUM; ++i)
+    Damage dmg={};
+    for(size_t i=0; i<DamageType::NUM; ++i)
       if((spl.damage_type&(1<<i))!=0) {
         dmg[i] = spl.damage_per_level*lvl;
         }
@@ -318,7 +317,7 @@ bool Npc::shootBow(Interactive* focOverride) {
   invent.delItem(size_t(munition),1,*this);
   setQuiverTaken(0);
   b.setOrigin(this);
-  b.setDamage(DamageCalculator::rangeDamageValue(*this));
+  b.setDamage(owner.rules().rangeDamageValue(*this));
 
   auto rgn = currentRangedWeapon();
   if(rgn!=nullptr && rgn->isCrossbow())
@@ -440,7 +439,7 @@ bool Npc::releaseArrow(float draw, const Archery::Stats& st) {
   // the inventory shows as it is again (the arrow taken from the quiver is gone)
   setQuiverTaken(0);
   b.setOrigin(this);
-  b.setDamage(DamageCalculator::rangeDamageValue(*this));
+  b.setDamage(owner.rules().rangeDamageValue(*this));
   b.setPrecise(draw);
   return true;
   }

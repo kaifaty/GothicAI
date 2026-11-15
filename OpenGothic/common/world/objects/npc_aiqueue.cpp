@@ -349,7 +349,7 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
       }
     case AI_Attack:
       if(!BodyController::owns(*this) && currentTarget!=nullptr) {
-        if(!fghAlgo.fetchInstructions(*this,*currentTarget,owner.script()))
+        if(!fghAlgo.fetchInstructions(*this,*currentTarget,owner.rules()))
           queue.pushFront(std::move(act));
         }
       break;
@@ -482,11 +482,11 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
       if(act.target==nullptr || !act.target->isUnconscious())
         break;
 
-      if(!fghAlgo.isInFinishRange(*this,*act.target,owner.script())){
+      if(!fghAlgo.isInFinishRange(*this,*act.target,owner.rules())){
         queue.pushFront(std::move(act));
         go2.set(act.target);
         setAnim(Npc::Anim::Move);
-        implGoTo(dt,fghAlgo.attackFinishDistance(owner.script()));
+        implGoTo(dt,fghAlgo.attackFinishDistance(owner.rules()));
         }
       else if(!isStanding()) {
         clearGoTo();

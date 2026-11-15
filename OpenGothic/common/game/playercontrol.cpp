@@ -5,7 +5,6 @@
 #include "world/objects/item.h"
 #include "world/objects/interactive.h"
 #include "world/world.h"
-#include "ui/dialogmenu.h"
 #include "ui/inventorymenu.h"
 #include "physics/dynamicworld.h"
 #include "game/meleecharge.h"
@@ -915,7 +914,7 @@ void PlayerControl::implMove(uint64_t dt) {
       }
     }
 
-  if(!pl.isInState(ScriptFn()) || (dlg!=nullptr && dlg->isActive())) {
+  if(!pl.isInState(ScriptFn()) || (dlg!=nullptr && GameHost::inst().isDialogActive())) {
     runAngleDest = 0;
     return;
     }

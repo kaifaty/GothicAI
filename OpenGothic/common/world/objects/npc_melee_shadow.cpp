@@ -2,7 +2,7 @@
 #include <Tempest/Matrix4x4>
 #include "graphics/mesh/skeleton.h"
 #include "graphics/effect.h"
-#include "game/damagecalculator.h"
+#include "game/gamerules.h"
 #include "game/bodyobservations.h"
 #include "game/bodyarena.h"
 #include "world/objects/item.h"
@@ -1014,7 +1014,7 @@ void Npc::consumeMeleeContacts() {
       entry.stunBonus = backstab==MeleeImpact::BackstabKind::None ? target->meleeStunBonus(*this) : 1.f;
       entry.superArmor = target->hasMeleeSuperArmor();
       // The sampled MAN peak is fixed per animation/window, not learned from outcomes.
-      entry.multiplier = DamageCalculator::meleeMultiplier(hit.speedCmS,swing.window->peakCmS*.7f,
+      entry.multiplier = owner.rules().meleeMultiplier(hit.speedCmS,swing.window->peakCmS*.7f,
                                                           hit.bladeFraction,hit.surfaceAngleDeg,swing.targetsHit++);
       swing.outcome = "hit";
       }

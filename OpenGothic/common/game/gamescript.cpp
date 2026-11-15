@@ -655,7 +655,7 @@ void GameScript::saveSym(Serialize &fout, daedalus::DaedalusSymbol& i) {
   switch(i.type()) {
     case daedalus::DaedalusDataType::INT:
       if(i.count()>0 && !i.is_member() && !i.is_const()){
-        fout.write(i.type(), i.name(), i.count());
+        fout.write(uint32_t(i.type()), i.name(), i.count());
 
         for (unsigned j = 0; j < i.count(); ++j)
           fout.write(i.get_int(uint16_t(j)));
@@ -664,7 +664,7 @@ void GameScript::saveSym(Serialize &fout, daedalus::DaedalusSymbol& i) {
       break;
     case daedalus::DaedalusDataType::FLOAT:
       if(i.count()>0 && !i.is_member() && !i.is_const()){
-        fout.write(i.type(), i.name(), i.count());
+        fout.write(uint32_t(i.type()), i.name(), i.count());
 
         for (unsigned j = 0; j < i.count(); ++j)
           fout.write(i.get_float(uint16_t(j)));
@@ -673,7 +673,7 @@ void GameScript::saveSym(Serialize &fout, daedalus::DaedalusSymbol& i) {
       break;
     case daedalus::DaedalusDataType::STRING:
       if(i.count()>0 && !i.is_member() && !i.is_const()){
-        fout.write(i.type(), i.name(), i.count());
+        fout.write(uint32_t(i.type()), i.name(), i.count());
 
         for (unsigned j = 0; j < i.count(); ++j)
           fout.write(i.get_string(uint16_t(j)));
@@ -681,7 +681,7 @@ void GameScript::saveSym(Serialize &fout, daedalus::DaedalusSymbol& i) {
         }
       break;
     case daedalus::DaedalusDataType::INSTANCE:
-      fout.write(i.type());
+      fout.write(uint32_t(i.type()));
 
       if(i.is_instance_of<daedalus::INpc>()){
         auto hnpc = reinterpret_cast<const daedalus::INpc*>(i.get_instance().get());
