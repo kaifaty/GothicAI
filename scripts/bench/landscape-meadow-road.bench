@@ -10,7 +10,8 @@
 #   track-along-eve, track-down-eve, track-low-eve   19:30: the sun behind the camera, then against it, then the rut
 # cover-<view>: the ground painted by its cover (`grass parts 256`: the road's crust blue, its loose earth cyan, the
 # verge's strip magenta to orange, the meadow's sward green and earth red) - the mask the road's tone is read by;
-# <view>-16384: the road as with its `verge` alone (`grass parts 16384`) - what the track's own material changes.
+# <view>-16384, on the five views where the tone is measured: the road as with its `verge` alone (`grass parts
+# 16384`) - what the track's own material changes.
 # Run it for «было» and «стало» with the same scenario:
 #   OPENGOTHIC_CONTENT=<set> TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh landscape-meadow-road
 # @timeout 600
@@ -88,6 +89,10 @@ wait 200
 grass parts 256
 wait 1200
 shot cover-meadow-2
+wait 200
+grass parts 16384
+wait 1200
+shot meadow-2-16384
 wait 200
 grass parts 0
 
