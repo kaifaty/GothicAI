@@ -213,6 +213,34 @@ pin `BENCH_HOST=dev-ubuntu`, `BENCH_HOST=ryzen` or `BENCH_HOST=local`.
 
 `ragdoll-brace-places` — тот же нокдаун на склоне и у стены. Склон — открытый травяной, 16,5°, над фермой Лобарта (`NW_FARM1_OUT_07`): падение вниз назад, вперёд и на бок, вверх — вперёд. Стена — дощатая хижина в порту: назад в стену с метра и вперёд в стену с полутора. Каждое падение — два дубля сбоку, второй замедлен втрое: `<место>-<падение>[-slow]`. Сценарий пишет [`places_bench.py`](../../reports/physics/2026-11-14-fall-bracing/places_bench.py); пара для сравнения — та же, что у `ragdoll-brace-look`. Лестницы в сценарии нет: поиск `stairs` ставит героя у кровати рядом с лестницей в доме, а городские ступени из `character route` на вид — травяной склон.
 
+`ragdoll-brace-death` checks early release of the protective fall (#1382), without filming.
+It runs headless with native ragdoll physics: three posture knockdowns on the flat field used by
+`ragdoll-brace-look`, in the order `death`, `unconscious`, `control`. After 165 game ms,
+the existing `down SLD_815_SOELDNER dead|ko` command calls the production `Npc::onNoHealth` path;
+the control instead waits for the ordinary get-up. No new engine command is needed.
+
+```bash
+RAGDOLL_BRACE=1 MELEE_POSTURE=1 MELEE_STAGGER=1 WORLD=NEWWORLD.ZEN \
+  OPENGOTHIC_CONTENT="$HOME/.local/share/gothic-ai/content" \
+  scripts/bench.sh ragdoll-brace-death /absolute/out
+python3 scripts/brace_death_check.py /absolute/out/run/melee-posture.jsonl
+```
+
+The content must contain `S_BRACE_*`; a knockdown without an active protective pose fails.
+`bench.sh` runs the checker automatically. The checker requires exactly one `brace` event per body/fall:
+`end=death|unconscious` within 300 ms of `fall_ms`, or an ordinary end for the control.
+Any supplied subsequent posture row for that body with `brace` other than `none` fails, including
+the end's own tick. Known limitation: the engine writes `brace` only on knockdown, with no pose or
+motor samples after the termination event. Inactive protection after that event is therefore not
+independently verified by this bench. Same-step release is inferred from the `brace` event written
+immediately after `endBrace()`. Synthetic `sample` rows test only the checker's rejection rule;
+independent verification would require engine instrumentation, outside this bench-only change.
+The checker reports this limit explicitly, and its `PASS` covers termination events.
+Run it first on dev-ubuntu (the `# @headless` default); `BENCH_HOST=ryzen` pins the fallback host.
+To verify sensitivity, temporarily remove only the `finishRagdollBrace` call in `Npc::onNoHealth`,
+rebuild and rerun in a separate output directory: both early-end cells must fail. Restore the call
+afterwards and verify `git diff origin/main -- OpenGothic/common/world` is empty.
+
 `game.log` must contain `[bench] done` for a complete scenario (including an explicit `quit`).
 Closing the window, a crash, `TIMEOUT` (default 300 seconds), or the stall watchdog before that marker
 returns code 1 and prints one reason with elapsed/limit seconds to stderr. Partial output still goes

@@ -1,0 +1,102 @@
+# Early death / unconsciousness must release an active protective fall in the same step.
+# Requires RAGDOLL_BRACE=1 and OPENGOTHIC_CONTENT containing S_BRACE_*.
+# @headless
+# @timeout 300
+cheat god
+set time 12 0
+release all
+ragdoll on
+
+# Cell death; the journal's three knockdowns follow this order.
+seed 93820
+release all
+watch player
+clear 3000
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 500
+clear 3000
+arc SLD_826_SOELDNER 1 600 0
+freeze SLD_826_SOELDNER
+knockdown-launch-equip
+arc SLD_815_SOELDNER 1 1000 0
+freeze SLD_815_SOELDNER
+stats npc SLD_815_SOELDNER hpmax 100000 hp 100000
+wait 600
+watch SLD_826_SOELDNER
+place 500 180
+put SLD_815_SOELDNER 540 0
+watch SLD_815_SOELDNER
+wait 1200
+log brace-cell death
+ani SLD_826_SOELDNER T_2HATTACKL
+wait 100
+stun SLD_815_SOELDNER posture
+strike SLD_815_SOELDNER SLD_826_SOELDNER
+wait 165
+down SLD_815_SOELDNER dead
+wait 4500
+watch player
+clear 3000
+
+# Cell unconscious; the journal's three knockdowns follow this order.
+seed 93821
+release all
+watch player
+clear 3000
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 500
+clear 3000
+arc SLD_826_SOELDNER 1 600 0
+freeze SLD_826_SOELDNER
+knockdown-launch-equip
+arc SLD_815_SOELDNER 1 1000 0
+freeze SLD_815_SOELDNER
+stats npc SLD_815_SOELDNER hpmax 100000 hp 100000
+wait 600
+watch SLD_826_SOELDNER
+place 500 180
+put SLD_815_SOELDNER 540 0
+watch SLD_815_SOELDNER
+wait 1200
+log brace-cell unconscious
+ani SLD_826_SOELDNER T_2HATTACKL
+wait 100
+stun SLD_815_SOELDNER posture
+strike SLD_815_SOELDNER SLD_826_SOELDNER
+wait 165
+down SLD_815_SOELDNER ko
+wait 4500
+watch player
+clear 3000
+
+# Cell control; the journal's three knockdowns follow this order.
+seed 93822
+release all
+watch player
+clear 3000
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 500
+clear 3000
+arc SLD_826_SOELDNER 1 600 0
+freeze SLD_826_SOELDNER
+knockdown-launch-equip
+arc SLD_815_SOELDNER 1 1000 0
+freeze SLD_815_SOELDNER
+stats npc SLD_815_SOELDNER hpmax 100000 hp 100000
+wait 600
+watch SLD_826_SOELDNER
+place 500 180
+put SLD_815_SOELDNER 540 0
+watch SLD_815_SOELDNER
+wait 1200
+log brace-cell control
+ani SLD_826_SOELDNER T_2HATTACKL
+wait 100
+stun SLD_815_SOELDNER posture
+strike SLD_815_SOELDNER SLD_826_SOELDNER
+wait 165
+wait 4500
+watch player
+clear 3000
+
+quit
