@@ -1,5 +1,6 @@
 #include "movealgo.h"
 
+#include "game/gamerules.h"
 #include "settings.h"
 #include "world/objects/npc.h"
 #include "world/objects/npc_melee.h"
@@ -18,7 +19,7 @@ std::string bumpWho(const Npc* npc) {
     return "null";
   if(npc->isPlayer())
     return "\"player\"";
-  const auto name = npc->world().rules().symbolName(npc->instanceSymbol());
+  const auto name = npc->world().rules().symbolName(size_t(npc->instanceSymbol()));
   // Daedalus instance names are identifiers, so they need no JSON escaping.
   return "\""+std::string(name.empty() ? "npc" : name)+"\"";
   }

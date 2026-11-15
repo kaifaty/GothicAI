@@ -158,6 +158,7 @@ class Resources final {
       bool                     eye = false; // an eyeball: wet highlight, the lid's shade (reports/content/2026-11-hero-head/eye-shader.md)
       FoliageWind::Params      foliage; // "foliage": leaves in the wind, the sun through them (graphics/foliagewind.h)
       Grass::Params            grass;   // "grass": the ground grows grass (graphics/grass/grassparams.h)
+      WindowGlow::Params       window;  // "window": the glow is a window's, lit of an evening (graphics/windowglow.h)
       bool                     present = false; // the material is drawn by its record; not for a record of `grass` alone
       bool                     hasAlbedo = false;
       };
@@ -714,6 +715,7 @@ class Resources final {
       bool        eye = false;
       FoliageWind::Params foliage; // `on` with the field
       Grass::Params grass;         // `on` with the field
+      WindowGlow::Params window;   // `on` with the field
       bool        grassOnly = false; // nothing but `grass`: the ground keeps the look it has without a record
       };
     std::unordered_map<std::string,MaterialMapFiles>                  materialMaps;
