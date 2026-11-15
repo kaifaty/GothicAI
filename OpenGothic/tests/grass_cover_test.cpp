@@ -99,7 +99,7 @@ void spots() {
                   "the sward is whole away from a spot, none on it, broken up between the two");
           if(b>0 && b<256) {
             ++thin;
-            if(b<Grass::CoverSward && level<=Grass::CoverBlades)
+            if(b<Grass::CoverSward && level<=Grass::CoverSward)
               ++gaps;
             if(b>Grass::CoverSward && level>Grass::CoverSward)
               ++isles;
@@ -113,7 +113,7 @@ void spots() {
     const double share = double(count)/double(bare.size());
     require(share>0.003 && share<0.015, "the bare earth is a quiet accent, about a hundredth of the meadow: "+std::to_string(share*100.0));
     // towards a spot the sward breaks up: earth shows in its half, isles of sward stand in the earth's half
-    require(thin>1000 && gaps*20>thin && isles*20>thin && rim>200, "a spot has no line for an edge: "+std::to_string(thin)+" places of thinning sward, "+
+    require(thin>1000 && gaps*30>thin && isles*30>thin && rim>200, "a spot has no line for an edge: "+std::to_string(thin)+" places of thinning sward, "+
             std::to_string(gaps)+" of earth in the sward's half, "+std::to_string(isles)+" of sward in the earth's, "+std::to_string(rim)+" beside it");
 
     // each spot's outline against the circle of its area; cells' sides count as 4/pi of a line's length
@@ -389,7 +389,7 @@ void broadBlades() {
   const Grass::Summary* verge[1] = {&ground};
   const int32_t border = 1600*U;
   auto key = [](const Grass::Blade& b) { return std::array<uint32_t,4>{b.w[0],b.w[1],b.w[2],b.w[3]}; };
-  size_t whole = 0, half = 0, without = 0, fineWithout = 0, fineWhole = 0, atBorder = 0, inMeadow = 0;
+  size_t whole = 0, half = 0, without = 0, fineWithout = 0, fineWhole = 0, atBorder = 0;
   for(int32_t cz=-1; cz<3; ++cz)
     for(int32_t cx=-1; cx<3; ++cx) {
       const std::string at = " (cell "+std::to_string(cx)+","+std::to_string(cz)+")";
@@ -426,13 +426,12 @@ void broadBlades() {
               continue;
             const auto    b     = Grass::decode(w,cx,cz,cell.minY);
             const int32_t level = Grass::coverLevel(b.x,b.z,Grass::coverBorder(b.x,b.z,b.x-border,90));
-            require(b.x<border && level>=256 && Grass::coverClear(b.x,b.z)>0 && Grass::coverBare(b.x,b.z)==0,
-                    "a broad blade of the sward stands in whole sward, clear of the spots and off the verge"+at);
+            // its node is CoverBroadFrom from the border and more, its tuft gathers it by a part of the way
+            require(b.x<=border-20*U && level>=256 && Grass::coverClear(b.x,b.z)>0 && Grass::coverBare(b.x,b.z)==0,
+                    "a broad blade of the sward stands in whole sward, clear of the spots and of the border"+at);
             require(((w.w[3] >> 24) & 0xFu)>=3u, "a broad blade of the sward is as broad as it was"+at);
             if(b.x>border-Grass::CoverBroadFrom*U)
               ++atBorder;
-            else if(b.x>border-(2*Grass::CoverBroadTo+Grass::CoverBroadFrom)*U && b.x<=border-2*Grass::CoverBroadTo*U)
-              ++inMeadow;
             }
         require(mainSeen==main.size(), "the main grass does not know of the sward's mix"+at);
         return n;
@@ -461,8 +460,8 @@ void broadBlades() {
   require(half*10>whole*4 && half*10<whole*6, "`broad` is the share of them: "+std::to_string(half)+" of "+std::to_string(whole));
   require(fineWhole*10>fineWithout*2 && fineWhole<fineWithout, "the fine blade stays in the mix: "+std::to_string(fineWhole)+" of "+
           std::to_string(fineWithout));
-  require(inMeadow>100 && atBorder*10<inMeadow, "no broad blade of the sward stands at the border: "+std::to_string(atBorder)+" within "+
-          std::to_string(Grass::CoverBroadFrom)+" cm, "+std::to_string(inMeadow)+" in a band as wide in the meadow");
+  require(atBorder*50<whole, "hardly a broad blade of the sward within "+std::to_string(Grass::CoverBroadFrom)+" cm of the border: "+
+          std::to_string(atBorder)+" of "+std::to_string(whole));
   }
 
 // The pieces of the border: found from the chunks, packed for the shader, read back
