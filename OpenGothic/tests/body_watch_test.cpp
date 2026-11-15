@@ -1299,11 +1299,17 @@ class NpcLogicalStateContract final {
                std::to_string(most)+" of "+std::to_string(Count));
         }
 
-      // 30 ms frames, below the period: every frame by the 1.5-period limit. Then 33, 34 and 50 ms.
+      // 25 and 30 ms frames, below the period: every frame by the 1.5-period limit, 25 ms at its edge (one more
+      // frame would give 50 > 49.5 ms); at 24 ms an NPC off its node waits. Then 33, 34 and 50 ms.
       ++cases;
-      expect(frame(30)==Count,"a 30 ms frame ticks every far NPC");
+      expect(frame(25)==Count,"a 25 ms frame ticks every far NPC");
+      everyFrame(25,10,"a 25 ms frame");
       everyFrame(30,10,"a 30 ms frame");
+      size_t fewest=Count;
+      for(unsigned f=0;f<10;++f) fewest=std::min(fewest,frame(24));
+      expect(fewest<Count,"24 ms frames let a far NPC off its node wait");
       ++cases;
+      expect(frame(Period)==Count,"a 33 ms frame ticks every far NPC");
       for(const uint64_t step:{uint64_t(33),uint64_t(34),uint64_t(50)})
         everyFrame(step,3,"a frame step not below the period");
 
@@ -1348,6 +1354,24 @@ class NpcLogicalStateContract final {
       expect(world.npcId(npcs[0])!=place && world.npcId(npcs[0])>world.npcId(npcs[1]),"the phase fixture re-sorts npcArr");
       for(size_t i=0;i<Count;++i)
         expect(after[i]==before[i],"a far NPC ticks in the frames of its own phase, not of its place in npcArr");
+
+      // Tier scope also takes native movement: a standing NPC in Fist without a target or a physics body, as the
+      // monsters at rest, waits for its turn; graph scope ticks it every frame.
+      ++cases;
+      NpcSimTick::setConfig({Period,NpcSimTick::Scope::Tier});
+      auto* native=npcs[0];
+      const auto* ground=world.findWayPoint(native->position());
+      expect(ground!=nullptr,"the tier fixture stands at a waypoint");
+      native->setPosition(ground->groundPos); native->updateTransform(); // native movement stands on the ground
+      native->setToFistMode();
+      for(unsigned f=0;f<4;++f) frame(8);
+      expect(native->weaponState()==WeaponState::Fist && native->target()==nullptr && !native->usesSimplifiedMovement() &&
+             !native->hasRagdoll() && native->livingBody()==nullptr && NpcSimTick::qualifies(*native,NpcSimTick::Scope::Tier),
+             "tier scope takes a standing Simplified NPC in Fist on its native path");
+      bool waited=false;
+      for(unsigned f=0;f<33;++f) { frame(8); waited|=native->simTick().pending>0; }
+      expect(waited,"tier scope defers the ticks of a standing NPC in Fist");
+      native->closeWeapon(true);
 
       // Period 0: every NPC every frame, as without the rule.
       ++cases;
