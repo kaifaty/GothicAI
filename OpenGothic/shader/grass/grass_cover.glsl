@@ -17,6 +17,7 @@ const int GrassCoverTuft   = 72;
 const int GrassCoverSpotSoft  = 70;
 const int GrassCoverIsles     = 120;
 const int GrassCoverIslesFade = 64;
+const int GrassCoverBreaks    = 110;
 
 int grassCoverBeyond(int reach) { return reach + GrassCoverRipple + GrassCoverSoft; }
 
@@ -63,8 +64,8 @@ int grassCoverBorder(ivec2 p, int s, int reach) {
   return clamp((line-s)*256/(GrassCoverSoft*16) + 128, 0, 256);
   }
 
-// Grass::coverLevel: with the tufts' noise on what is neither none nor whole, and the isles' on the sward that
-// thins towards a spot. bare: grassCoverBare at the place
+// Grass::coverLevel: with the tufts' noise on what is neither none nor whole, and the isles' and the breaks' on the
+// sward that thins towards a spot. bare: grassCoverBare at the place
 int grassCoverLevel(ivec2 p, int border, out int bare) {
   bare = grassCoverBare(p);
   const int level = min(border, 256-bare);
@@ -72,7 +73,9 @@ int grassCoverLevel(ivec2 p, int border, out int bare) {
     return level;
   const int inside = min(bare, 256-bare);
   const int isles  = inside<=0 ? 0 :
-                     (grassValueNoise(p,720,0x67u)-32640)*GrassCoverIsles/32640*min(inside,GrassCoverIslesFade)/GrassCoverIslesFade;
+                     ((grassValueNoise(p,720,0x67u)-32640)*GrassCoverIsles/32640 +
+                      clamp((grassValueNoise(p,176,0x69u)-32640)*3, -32640, 32640)*GrassCoverBreaks/32640)*
+                     min(inside,GrassCoverIslesFade)/GrassCoverIslesFade;
   return level + (grassValueNoise(p,288,0x64u)-32640)*GrassCoverTuft/32640 + isles;
   }
 

@@ -9,7 +9,8 @@
 //
 // The sward is whole but for two things. A spot of bare earth in the short sward: an outline bent by two noises, no
 // circle, and no line either: the sward thins towards it over CoverSpotSoft and breaks up on the way, into isles of
-// the size of a few tufts and then into tufts, so earth shows between them before the earth alone is left. And the
+// the size of a few tufts and into tufts of a hand's width, so earth shows between them well before the earth alone
+// is left, and tufts stand on the earth well after. And the
 // border with the ground beside the meadow (a road with `verge`): the line where the sward ends
 // wanders about the mesh's edge, from a bay of earth in the meadow to a tongue of sward over the road, by a slow
 // noise and a quick one, so no stretch of it is straight. On both a third noise, of the size of a tuft, breaks the
@@ -28,13 +29,19 @@ constexpr int32_t CoverSparse = 56;  // of 256: the share of the fine blades tha
 constexpr int32_t CoverSpotSoft  = 70; // cm: the sward thins over this towards a spot of bare earth
 constexpr int32_t CoverIsles     = 120;// of 256 of the level: the noise of 45 cm that breaks that sward into isles
 constexpr int32_t CoverIslesFade = 64; // of 256: the isles' noise comes in over this from either end of the thinning
+constexpr int32_t CoverBreaks    = 110;// of 256 of the level: the noise of 11 cm, steep, that breaks it into tufts
 // The short sward's broad blades (Params::broad) keep clear of bare ground, where a single one reads as a wedge:
 // none where a spot's sward thins and this far past it, all of them CoverClearSoft further
 constexpr int32_t CoverClearFrom = 5;  // cm
 constexpr int32_t CoverClearSoft = 30; // cm
 // and of a border with a verge or an open edge: none nearer than this, all of them from that
-constexpr int32_t CoverBroadFrom = 70; // cm
-constexpr int32_t CoverBroadTo   = 150;
+constexpr int32_t CoverBroadFrom = 45; // cm
+constexpr int32_t CoverBroadTo   = 90;
+// nor where the band at an open edge lowers the grass and leans it out: none under this of the band's 256, all from that
+constexpr int32_t CoverBroadLow  = 96;
+constexpr int32_t CoverBroadHigh = 176;
+// Between none and all the blades do not thin to single ones: each tuft has its own line (Tuft::gate) and stands
+// whole on its side of it, so the last broad blades towards bare ground are a tuft's, in company
 
 // cm past the border where no sward comes, at this reach of the record
 constexpr int32_t coverBeyond(int32_t reach) {
@@ -57,6 +64,8 @@ constexpr int32_t CoverTuft = 72;
 int32_t coverTuft(int32_t x, int32_t z);
 // The noise of the isles on the sward that thins towards a spot, about 0: -CoverIsles..CoverIsles
 int32_t coverIsles(int32_t x, int32_t z);
+// And of its breaking into tufts, about 0: -CoverBreaks..CoverBreaks, at either end as often as between
+int32_t coverBreaks(int32_t x, int32_t z);
 
 // The level of the sward, 0..256 with the tufts' noise on what is neither none nor whole. border: 256 where no
 // border is near
@@ -67,7 +76,7 @@ inline int32_t coverLevel(int32_t x, int32_t z, int32_t border) {
     return level;
   // the isles: none at either end of the thinning, so the level has no step where it begins
   const int32_t in    = bare<256-bare ? bare : 256-bare;
-  const int32_t isles = in<=0 ? 0 : coverIsles(x,z)*(in<CoverIslesFade ? in : CoverIslesFade)/CoverIslesFade;
+  const int32_t isles = in<=0 ? 0 : (coverIsles(x,z)+coverBreaks(x,z))*(in<CoverIslesFade ? in : CoverIslesFade)/CoverIslesFade;
   return level + coverTuft(x,z) + isles;
   }
 

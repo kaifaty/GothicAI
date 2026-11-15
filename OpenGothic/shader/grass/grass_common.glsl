@@ -82,8 +82,8 @@ const float GrassSwardLushAt = 46000.0;
 // meadow it lies dry under the sun, a warm tan of about the sward's lightness, so a spot is a dry place and no dark
 // blotch. By the layer's height: the clods and the stones are pale, what lies between them is deeper and in their
 // shade; a slow noise makes one part of a spot paler than another, and the earth's normal is steeper than on a road
-const vec3  GrassSpotEarthHigh = vec3(1.62, 1.82, 1.74);
-const vec3  GrassSpotEarthLow  = vec3(1.00, 1.08, 0.96);
+const vec3  GrassSpotEarthHigh = vec3(1.13, 1.06, 1.30);
+const vec3  GrassSpotEarthLow  = vec3(0.68, 0.62, 0.72);
 const float GrassSpotEarthAo   = 0.62;                   // of the layer's, in the low parts
 const float GrassSpotEarthSlow = 0.12;                   // the slow noise, to either side
 const float GrassSpotEarthBump = 1.7;                    // of the normal map's slope

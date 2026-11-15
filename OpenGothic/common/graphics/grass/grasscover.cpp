@@ -91,4 +91,8 @@ int32_t coverIsles(int32_t x, int32_t z) {
   return (valueNoise(x,z,45*Unit,0x67u)-32640)*CoverIsles/32640;
   }
 
+int32_t coverBreaks(int32_t x, int32_t z) {
+  return std::clamp((valueNoise(x,z,11*Unit,0x69u)-32640)*3, -32640, 32640)*CoverBreaks/32640;
+  }
+
 }

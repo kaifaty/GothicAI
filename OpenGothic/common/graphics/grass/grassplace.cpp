@@ -523,7 +523,8 @@ CellBlades buildCell(const CellInput& in) {
       // A sward's broad blades among its fine ones (Params::broad): the blades the sward had before the fine ones,
       // a share of them that differs from tuft to tuft, so they stand in company. A short broad blade alone against
       // bare ground reads as a wedge: none stands on a verge, near a border or an open edge, where a spot's sward
-      // thins or right beside that. Which a node is, it is at any distance: the two kinds do not change places
+      // thins or right beside that, and towards those a tuft's broad blades end all at the tuft's own line
+      // (Tuft::gate), not one by one. Which a node is, it is at any distance: the two kinds do not change places
       bool broad = false;
       if(sward && par.broad>0.f && kept && past<0 && onVerge<0 &&
          roll*NodesPerM2*(int64_t(1) << 40) < shareBroad*int64_t(BladesPerM2)*1024) {
@@ -531,19 +532,20 @@ CellBlades buildCell(const CellInput& in) {
         const float   room  = std::min(par.broad,1.f-par.broad);
         int32_t       pick  = int32_t(std::lround((par.broad + (float(tuft->phase)/255.f-0.5f)*2.f*room)*65536.f));
         const int32_t dice  = int32_t(hash64(i,j,0x12u) & 0xFFFFu);
-        if(dice<pick && !segments.empty()) {
-          if(toEdge==INT32_MAX || slot.edgeCm*2<CoverBroadTo) {
-            const Segment* near = nullptr;
-            toEdge = edgeDistance(px,pz,CoverBroadTo,near);
-            }
-          const int32_t clear = std::clamp((toEdge-CoverBroadFrom)*256/(CoverBroadTo-CoverBroadFrom), 0, 256);
+        // where its root would be
+        const int32_t bx = px + int32_t(int64_t(tuft->x-px)*pullBroad/256);
+        const int32_t bz = pz + int32_t(int64_t(tuft->z-pz)*pullBroad/256);
+        int32_t clear = (bx<lo[0] || bx>=hi[0] || bz<lo[1] || bz>=hi[1]) ? 0 : 256;
+        if(dice<pick && clear>0 && !segments.empty()) {
+          const Segment* near = nullptr;
+          const int32_t  d    = edgeDistance(bx,bz,CoverBroadTo,near);
+          clear = std::clamp((d-CoverBroadFrom)*256/(CoverBroadTo-CoverBroadFrom), 0, 256);
           // and where the edge's band lowers the grass and leans it out
-          pick = int32_t(int64_t(pick)*std::min(clear,std::clamp((edgeQ8-160)*256/96, 0, 256))/256);
+          clear = std::min(clear,std::clamp((edgeQ8-CoverBroadLow)*256/(CoverBroadHigh-CoverBroadLow), 0, 256));
           }
-        if(dice<pick && in.patch<0)
-          pick = int32_t(int64_t(pick)*coverClear(px + int32_t(int64_t(tuft->x-px)*pullBroad/256),
-                                                  pz + int32_t(int64_t(tuft->z-pz)*pullBroad/256))/256);
-        broad = dice<pick;
+        if(dice<pick && clear>int32_t(tuft->gate) && in.patch<0)
+          clear = std::min(clear,coverClear(bx,bz));
+        broad = dice<pick && clear>int32_t(tuft->gate);
         }
       const bool fine = sward && !broad;
       if(fine ? rank>=in.rankLimitFine : rank>=in.rankLimit)

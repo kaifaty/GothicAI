@@ -95,7 +95,7 @@ void spots() {
         if((i+j)%7==0) {
           const int32_t clear = Grass::coverClear(x,z), level = Grass::coverLevel(x,z,256);
           require(clear>=0 && clear<=256 && (b==0 || clear==0), "no place where a spot's sward thins is clear of the spot");
-          require(b==0 ? level==256 : (b>=256 ? level==0 : std::abs(level-(256-b))<=Grass::CoverTuft+Grass::CoverIsles),
+          require(b==0 ? level==256 : (b>=256 ? level==0 : std::abs(level-(256-b))<=Grass::CoverTuft+Grass::CoverIsles+Grass::CoverBreaks),
                   "the sward is whole away from a spot, none on it, broken up between the two");
           if(b>0 && b<256) {
             ++thin;
@@ -426,11 +426,10 @@ void broadBlades() {
               continue;
             const auto    b     = Grass::decode(w,cx,cz,cell.minY);
             const int32_t level = Grass::coverLevel(b.x,b.z,Grass::coverBorder(b.x,b.z,b.x-border,90));
-            // its node is CoverBroadFrom from the border and more, its tuft gathers it by a part of the way
-            require(b.x<=border-20*U && level>=256 && Grass::coverClear(b.x,b.z)>0 && Grass::coverBare(b.x,b.z)==0,
+            require(b.x<=border-(Grass::CoverBroadFrom-1)*U && level>=256 && Grass::coverClear(b.x,b.z)>0 && Grass::coverBare(b.x,b.z)==0,
                     "a broad blade of the sward stands in whole sward, clear of the spots and of the border"+at);
             require(((w.w[3] >> 24) & 0xFu)>=3u, "a broad blade of the sward is as broad as it was"+at);
-            if(b.x>border-Grass::CoverBroadFrom*U)
+            if(b.x>border-Grass::CoverBroadTo*U)
               ++atBorder;
             }
         require(mainSeen==main.size(), "the main grass does not know of the sward's mix"+at);
@@ -460,8 +459,9 @@ void broadBlades() {
   require(half*10>whole*4 && half*10<whole*6, "`broad` is the share of them: "+std::to_string(half)+" of "+std::to_string(whole));
   require(fineWhole*10>fineWithout*2 && fineWhole<fineWithout, "the fine blade stays in the mix: "+std::to_string(fineWhole)+" of "+
           std::to_string(fineWithout));
-  require(atBorder*50<whole, "hardly a broad blade of the sward within "+std::to_string(Grass::CoverBroadFrom)+" cm of the border: "+
-          std::to_string(atBorder)+" of "+std::to_string(whole));
+  // by the tufts' own lines: some of them, far from all
+  require(atBorder>0 && atBorder*8<whole, "the sward's broad blades come to the border tuft by tuft: "+std::to_string(atBorder)+" within "+
+          std::to_string(Grass::CoverBroadTo)+" cm of "+std::to_string(whole));
   }
 
 // The pieces of the border: found from the chunks, packed for the shader, read back
