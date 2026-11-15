@@ -609,15 +609,17 @@ void main() {
     light *= shadow;
     // what is too small for the lamp's shadow map, by a short ray through the depth buffer (lamp_contact.glsl); not
     // on a facet edge-on to the lamp, where the ray would only find the facet itself
-    bool contact = light>0.0 && !faint && (scene.viewFlags & VF_LAMP_CONTACT)!=0u &&
-                   (scene.vsmStudy & VSM_STUDY_NO_CONTACT)==0u;
+    const float contactFade = smoothstep(0.05, 0.25, facetL);
+    bool contact = contactFade>0.0 && (scene.viewFlags & VF_LAMP_CONTACT)!=0u &&
+                   (scene.vsmStudy & VSM_STUDY_NO_CONTACT)==0u &&
+                   max(color.r, max(color.g, color.b))*light*max(1.0, scene.exposure)*0.25 >= LampContactFaint;
 #if defined(MATERIAL_MAPS)
     contact = contact && !isHair; // hair takes the light by its shell, not by its surface
 #endif
     if(contact) {
       const float noise = interleavedGradientNoise(gl_FragCoord.xy + 5.588238*float(scene.taaFrame & 63u));
       const float left  = lampContact(depth, clipPos, -normalize(ldir), sqrt(distanceSquare), planeN, noise);
-      light *= mix(1.0, left, smoothstep(0.05, 0.25, facetL));
+      light *= mix(1.0, left, contactFade);
       }
 #if defined(VSM_LAMP_PROBE)
     if(push.probeStamp!=0) {

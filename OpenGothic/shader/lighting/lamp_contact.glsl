@@ -10,11 +10,15 @@
 // bench `vsm study 32` shows the frame without it.
 
 const float LampContactLength = 20.0; // cm: how far towards the lamp a thing still shadows the point
-const int   LampContactSteps  = 12;
+const int   LampContactSteps  = 12;   // at most; a ray that is short on the screen takes fewer, one per StepPx
+const float LampContactStepPx = 4.0;
+// a lamp's light under this share of white before the tonemapper shows no small shadow: no ray for it. Most of a
+// lamp's pixels are such, and a room of many lamps pays for every one of them
+const float LampContactFaint  = 0.03;
 // cm: a surface this much nearer to the eye than the ray is still the thing in its way; nearer than that it is
 // something else in front of both (a weapon before the camera, an arm before a far wall)
 const float LampContactThick  = 10.0;
-const float LampContactMinPx  = 3.0;  // a ray shorter than this on the screen sees nothing the shadow map does not
+const float LampContactMinPx  = 12.0; // a ray shorter than this on the screen sees nothing the shadow map does not
 // the ray leaves the surface along its plane's normal by this, cm, and by a share of the distance to the eye: the
 // depth of the pixel is not the depth of its neighbours
 const float LampContactLift   = 0.3;
@@ -39,13 +43,15 @@ float lampContact(in texture2D depthTex, const vec4 clip, const vec3 dir, const 
   const vec2  size = vec2(textureSize(depthTex, 0));
   const vec2  px0  = (c0.xy/c0.w*0.5 + 0.5)*size;
   const vec2  px1  = (c1.xy/c1.w*0.5 + 0.5)*size;
-  if(dot(px1-px0, px1-px0) < LampContactMinPx*LampContactMinPx)
+  const float pxLen = length(px1-px0);
+  if(pxLen < LampContactMinPx)
     return 1.0;
 
-  const ivec2 self = ivec2(px0);
-  for(int i=0; i<LampContactSteps; ++i) {
+  const int   steps = clamp(int(pxLen/LampContactStepPx), 4, LampContactSteps);
+  const ivec2 self  = ivec2(px0);
+  for(int i=0; i<steps; ++i) {
     // denser near the point: the thing that touches it is the one the shadow map misses
-    const float s = (float(i) + noise)/float(LampContactSteps);
+    const float s = (float(i) + noise)/float(steps);
     const float t = s*sqrt(s);
     const vec4  c = c0 + dc*t;
     const vec3  n = c.xyz/c.w;

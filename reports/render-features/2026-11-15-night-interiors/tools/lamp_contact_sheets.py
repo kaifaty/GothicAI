@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Sheets of the lamps' screen ray (../README.md, "Шаг 4") from a run of lamp-contact.bench: every view as a
-crop of its two shots, without the ray | with it, and what the ray took away (the difference, brightened).
+"""Sheets of the lamps' screen ray (../README.md, "Шаг 4") from two runs of lamp-contact.bench, without the ray
+(OPENGOTHIC_VSM_STUDY=32) and with it: every view as a crop of its two shots and what the ray took away (the
+difference, brightened).
 
-    uv run --no-project --with numpy --with pillow python lamp_contact_sheets.py <run> <out dir> [view ...]
+    uv run --no-project --with numpy --with pillow python lamp_contact_sheets.py <without> <with> <out dir> [view ...]
 
 With --whole a view goes on its sheet uncropped.
 """
@@ -16,20 +17,23 @@ from PIL import Image, ImageDraw
 VIEWS = {
     'face-front': (900, 250, 1700, 1050),
     'face-34': (950, 350, 1650, 1050),
-    'face-side': (900, 300, 1700, 1100),
     'face-near': (700, 150, 1900, 1350),
-    'tower-feet': (800, 650, 1800, 1150),
     'tower-body': (800, 100, 1800, 1300),
     'tower-wide': (700, 300, 1900, 1200),
     'table-a': (1000, 560, 1900, 1160),
-    'table-top': (1000, 560, 1900, 1160),
     'table-candle': (900, 750, 1700, 1200),
-    'table-wide': (500, 400, 1900, 1200),
     'cup-a': (1000, 700, 1800, 1300),
-    'cup-wide': (800, 500, 1800, 1100),
     'lantern-feet': (700, 650, 1700, 1150),
-    'lantern-body': (800, 100, 1800, 1300),
+    'lantern-back': (800, 100, 1800, 1300),
+    'lantern-front': (800, 100, 1800, 1300),
     'lantern-wide': (1400, 300, 2400, 1100),
+    'lantern-face-front': (900, 250, 1700, 1050),
+    'lantern-face-34': (950, 350, 1650, 1050),
+    'lantern-face-side': (900, 300, 1700, 1100),
+    'lantern-face-far': (900, 300, 1700, 1100),
+    'trap-sword-game': (300, 100, 2260, 1340),
+    'trap-sword-near': (300, 100, 2260, 1340),
+    'trap-edge': (0, 100, 1960, 1340),
 }
 HEIGHT = 560
 
@@ -45,19 +49,19 @@ def tile(img: Image.Image, label: str) -> Image.Image:
 def main() -> int:
     args = [a for a in sys.argv[1:] if a != '--whole']
     whole = '--whole' in sys.argv[1:]
-    if len(args) < 2:
+    if len(args) < 3:
         print(__doc__)
         return 2
-    run, out = Path(args[0]), Path(args[1])
+    without, with_ray, out = Path(args[0]), Path(args[1]), Path(args[2])
     out.mkdir(parents=True, exist_ok=True)
-    for view in args[2:] or VIEWS:
-        off = Image.open(run / f'{view}-off.png').convert('RGB')
-        on = Image.open(run / f'{view}-on.png').convert('RGB')
+    for view in args[3:] or VIEWS:
+        off = Image.open(without / f'{view}.png').convert('RGB')
+        on = Image.open(with_ray / f'{view}.png').convert('RGB')
         if not whole:
             off, on = off.crop(VIEWS[view]), on.crop(VIEWS[view])
         a = np.asarray(off).astype(np.int16)
         b = np.asarray(on).astype(np.int16)
-        # darker with the ray: white; brighter (which the ray never does: noise of the two shots): red
+        # darker with the ray: white; brighter (which the ray never does: what moved between the runs): red
         gone = np.clip((a - b).max(axis=2) * 4, 0, 255).astype(np.uint8)
         came = np.clip((b - a).max(axis=2) * 4, 0, 255).astype(np.uint8)
         diff = Image.fromarray(np.stack([np.maximum(gone, came), gone, gone], axis=2))
