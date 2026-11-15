@@ -1350,8 +1350,10 @@ void Renderer::prepareSSAO(Encoder<CommandBuffer>& cmd, WorldView& wview) {
     ssao.valid = false;
     return;
     }
-  // the probes of -gi 1 trace the occlusion of their light themselves: their ambient takes no SSAO (probe_ambient.frag)
-  if(settings.giMethod==GiMethod::Probes) {
+  // the probes of -gi 1 trace the occlusion of their light themselves: their ambient takes only the short occlusion
+  // of what they do not see (graphics/contactao.h, probe_ambient.frag)
+  const bool contact = settings.giMethod==GiMethod::Probes;
+  if(contact && !ContactAo::enabled()) {
     ssao.valid = false;
     return;
     }
@@ -1361,7 +1363,7 @@ void Renderer::prepareSSAO(Encoder<CommandBuffer>& cmd, WorldView& wview) {
     uint32_t  frame   = 0;
     uint32_t  reset   = 0;
     uint32_t  fullSet = 0; // the whole set this frame, no history
-    uint32_t  behindOld = 0; // bench `ssao study 1`
+    uint32_t  flags   = 0; // 1 bench `ssao study 1`, 2 the short sphere over the GI probes
     } push;
   if(!camHistory.continuous)
     ssao.valid = false;
@@ -1372,7 +1374,7 @@ void Renderer::prepareSSAO(Encoder<CommandBuffer>& cmd, WorldView& wview) {
   push.frame     = ssao.frame;
   push.reset     = ssao.valid && settings.ssaoHistory ? 0 : 1;
   push.fullSet   = settings.ssaoHistory ? 0 : 1;
-  push.behindOld = benchSsaoStudy & 1u;
+  push.flags     = (benchSsaoStudy & 1u) | (contact ? 2u : 0u);
 
   auto& device = Resources::device();
   const auto aoSize = effectResolution();

@@ -46,36 +46,42 @@ def tile(img: Image.Image, label: str) -> Image.Image:
     return img
 
 
+def sheets(without: Path, with_it: Path, out: Path, views: dict, names: list, whole: bool,
+           labels=('no ray', 'ray'), prefix='lamp-contact-') -> None:
+    """A sheet per view: the shot of each run and what the second run took away. Other notes use it with their own
+    views, labels and prefix (2026-11-16-contact-ambient/tools/contact_ambient_sheets.py)."""
+    out.mkdir(parents=True, exist_ok=True)
+    for view in names or views:
+        off = Image.open(without / f'{view}.png').convert('RGB')
+        on = Image.open(with_it / f'{view}.png').convert('RGB')
+        if not whole:
+            off, on = off.crop(views[view]), on.crop(views[view])
+        a = np.asarray(off).astype(np.int16)
+        b = np.asarray(on).astype(np.int16)
+        # darker in the second run: white; brighter (which the ray never does: what moved between the runs): red
+        gone = np.clip((a - b).max(axis=2) * 4, 0, 255).astype(np.uint8)
+        came = np.clip((b - a).max(axis=2) * 4, 0, 255).astype(np.uint8)
+        diff = Image.fromarray(np.stack([np.maximum(gone, came), gone, gone], axis=2))
+        tiles = [tile(off, f'{view}: {labels[0]}'), tile(on, labels[1]), tile(diff, 'difference x4')]
+        sheet = Image.new('RGB', (sum(t.width for t in tiles) + 12, HEIGHT), (20, 20, 20))
+        x = 0
+        for t in tiles:
+            sheet.paste(t, (x, 0))
+            x += t.width + 6
+        name = out / f'{prefix}{view}.jpg'
+        sheet.save(name, quality=88)
+        darker = float((gone > 16).mean()) * 100
+        brighter = float((came > 16).mean()) * 100
+        print(f'{name}: darker {darker:.2f} % of the crop, brighter {brighter:.2f} %')
+
+
 def main() -> int:
     args = [a for a in sys.argv[1:] if a != '--whole']
     whole = '--whole' in sys.argv[1:]
     if len(args) < 3:
         print(__doc__)
         return 2
-    without, with_ray, out = Path(args[0]), Path(args[1]), Path(args[2])
-    out.mkdir(parents=True, exist_ok=True)
-    for view in args[3:] or VIEWS:
-        off = Image.open(without / f'{view}.png').convert('RGB')
-        on = Image.open(with_ray / f'{view}.png').convert('RGB')
-        if not whole:
-            off, on = off.crop(VIEWS[view]), on.crop(VIEWS[view])
-        a = np.asarray(off).astype(np.int16)
-        b = np.asarray(on).astype(np.int16)
-        # darker with the ray: white; brighter (which the ray never does: what moved between the runs): red
-        gone = np.clip((a - b).max(axis=2) * 4, 0, 255).astype(np.uint8)
-        came = np.clip((b - a).max(axis=2) * 4, 0, 255).astype(np.uint8)
-        diff = Image.fromarray(np.stack([np.maximum(gone, came), gone, gone], axis=2))
-        tiles = [tile(off, f'{view}: no ray'), tile(on, 'ray'), tile(diff, 'difference x4')]
-        sheet = Image.new('RGB', (sum(t.width for t in tiles) + 12, HEIGHT), (20, 20, 20))
-        x = 0
-        for t in tiles:
-            sheet.paste(t, (x, 0))
-            x += t.width + 6
-        name = out / f'lamp-contact-{view}.jpg'
-        sheet.save(name, quality=88)
-        darker = float((gone > 16).mean()) * 100
-        brighter = float((came > 16).mean()) * 100
-        print(f'{name}: darker {darker:.2f} % of the crop, brighter {brighter:.2f} %')
+    sheets(Path(args[0]), Path(args[1]), Path(args[2]), VIEWS, args[3:], whole)
     return 0
 
 
