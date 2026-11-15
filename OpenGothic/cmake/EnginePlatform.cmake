@@ -92,8 +92,8 @@ function(engine_link_map_check target layers)
     # RULE_LAUNCH_LINK does not promise generator expressions on CMake 3.20.
     set(map "${CMAKE_CURRENT_BINARY_DIR}/${target}-${CMAKE_BUILD_TYPE}.map.link.log")
     set(format MSVC)
-    # Wrap the complete link rule (including cmake -E vs_link_exe) on CMake 3.20.
-    # VERBOSE=1 inside the wrapper makes vs_link_exe forward successful linker output.
+    # The rule wrapper installs capture directly around link.exe, before vs_link_exe
+    # can suppress its output. Keep the manifest command and support CMake 3.20.
     set_property(TARGET ${target} PROPERTY RULE_LAUNCH_LINK
       "\"${CMAKE_COMMAND}\" \"-DPLATFORM_CAPTURE_LOG=${map}\" -P \"${ENGINE_LINK_MAP_CHECK}\" --")
   elseif(APPLE)

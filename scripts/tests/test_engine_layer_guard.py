@@ -233,6 +233,18 @@ def test_msvc_link_output_capture(tmp_path, generator, exit_code):
     build = directory / "build"
     log = build / "engine-platform-link-Release.map.link.log"
     linker = directory / "linker.py"
+    vs_link = directory / "vs_link.py"
+    # Reproduce CMake RunCommand's successful-output filter; capturing outside this
+    # wrapper loses all Loaded records when link.exe prints the resource banner.
+    vs_link.write_text("import os, subprocess, sys\n"
+                       "assert os.environ['VERBOSE'] == '1'\n"
+                       "command = sys.argv[sys.argv.index('--') + 1:]\n"
+                       "print('LINK:')\n"
+                       "result = subprocess.run(command, capture_output=True, text=True)\n"
+                       "output = result.stdout + result.stderr\n"
+                       "if result.returncode or 'Resource Compiler Version' not in output:\n"
+                       "    print(output)\n"
+                       "sys.exit(result.returncode)\n")
     linker.write_text("import os, sys\n"
                       "from pathlib import Path\n"
                       "assert os.environ['VERBOSE'] == '1'\n"
@@ -241,6 +253,7 @@ def test_msvc_link_output_capture(tmp_path, generator, exit_code):
                       "    print('    Loaded gothic-base-runtime.lib(sha256.cpp.obj)')\n"
                       "else:\n"
                       "    print('    Searching gothic-base-runtime.lib:')\n"
+                      "print('Microsoft (R) Windows (R) Resource Compiler Version 10.0')\n"
                       "print('linker diagnostic', file=sys.stderr)\n"
                       f"sys.exit({exit_code})\n")
     # Run the actual target configuration: testing capture alone missed /VERBOSE:LIB,
@@ -259,7 +272,8 @@ def test_msvc_link_output_capture(tmp_path, generator, exit_code):
         f'set(ENGINE_LINK_MAP_CHECK "{PLATFORM_MAP.as_posix()}")\n'
         'set(ENGINE_LINK_MAP_INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/inputs.cmake")\n'
         f'set(CMAKE_CXX_LINK_EXECUTABLE "\\\"{Path(sys.executable).as_posix()}\\\" '
-        f'\\\"{linker.as_posix()}\\\" <TARGET> <LINK_FLAGS>")\n'
+        f'\\\"{vs_link.as_posix()}\\\" vs_link_exe -- '
+        f'\\\"{Path(sys.executable).as_posix()}\\\" \\\"{linker.as_posix()}\\\" <TARGET> <LINK_FLAGS>")\n'
         f"{platform[start:end]}\n"
         "add_executable(engine-platform-link main.obj)\n"
         "set_target_properties(engine-platform-link PROPERTIES LINKER_LANGUAGE CXX)\n"
@@ -284,10 +298,12 @@ def test_msvc_link_output_capture(tmp_path, generator, exit_code):
     assert (result.returncode == 0) == (exit_code == 0)
     assert "Loaded gothic-base-runtime.lib(sha256.cpp.obj)" in log.read_text()
     assert "linker diagnostic" in log.read_text()
+    assert "Resource Compiler Version" in log.read_text()
     assert "stale output" not in log.read_text()
     output = result.stdout + result.stderr
-    assert "linker diagnostic" in output
     if exit_code:
+        assert "linker diagnostic" in output
         assert f"MSVC link failed ({exit_code})" in output
     else:
+        assert "linker diagnostic" not in output  # Suppressed by vs_link_exe, retained in the raw log.
         assert "1 mixed runtime objects checked, all platform" in output

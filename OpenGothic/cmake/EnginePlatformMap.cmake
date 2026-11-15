@@ -12,10 +12,25 @@ if(DEFINED PLATFORM_CAPTURE_LOG)
       set(arguments TRUE)
     endif()
   endforeach()
-  execute_process(COMMAND "${CMAKE_COMMAND}" -E env VERBOSE=1 ${command}
-    OUTPUT_FILE "${PLATFORM_CAPTURE_LOG}" ERROR_FILE "${PLATFORM_CAPTURE_LOG}" RESULT_VARIABLE result)
-  file(READ "${PLATFORM_CAPTURE_LOG}" output)
-  message("${output}")
+  if(NOT PLATFORM_CAPTURE_APPEND)
+    file(WRITE "${PLATFORM_CAPTURE_LOG}" "")
+  endif()
+  list(FIND command vs_link_exe vs_link)
+  if(NOT vs_link EQUAL -1)
+    # vs_link_exe suppresses successful output containing "Resource Compiler Version",
+    # even with VERBOSE=1. Capture link.exe itself, preserving the manifest wrapper.
+    list(FIND command -- separator)
+    math(EXPR linker "${separator} + 1")
+    list(INSERT command ${linker} "${CMAKE_COMMAND}" "-DPLATFORM_CAPTURE_LOG=${PLATFORM_CAPTURE_LOG}"
+      -DPLATFORM_CAPTURE_APPEND=ON -P "${CMAKE_CURRENT_LIST_FILE}" --)
+    execute_process(COMMAND "${CMAKE_COMMAND}" -E env VERBOSE=1 ${command} RESULT_VARIABLE result)
+  else()
+    execute_process(COMMAND "${CMAKE_COMMAND}" -E env VERBOSE=1 ${command}
+      OUTPUT_VARIABLE output ERROR_VARIABLE output RESULT_VARIABLE result)
+    # The manifest wrapper can invoke the linker more than once; keep every pass.
+    file(APPEND "${PLATFORM_CAPTURE_LOG}" "${output}")
+    message("${output}")
+  endif()
   if(NOT result STREQUAL "0")
     message(FATAL_ERROR "MSVC link failed (${result}); see ${PLATFORM_CAPTURE_LOG}")
   endif()
