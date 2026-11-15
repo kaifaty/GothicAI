@@ -1,5 +1,6 @@
 #include "navbench.h"
 #include "game/navigationeyeworld.h"
+#include "game/gamescript.h"
 #include "navtransitions.h"
 #include "physics/navmesh.h"
 #include "world/world.h"

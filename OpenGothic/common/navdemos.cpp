@@ -1,5 +1,6 @@
 #include "navdemos.h"
 #include "game/navigationeyeworld.h"
+#include "game/gamescript.h"
 #include "navdemos_internal.h"
 #include "settings.h"
 #include "testbench.h"
