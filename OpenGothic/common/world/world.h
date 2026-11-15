@@ -51,6 +51,7 @@ class World final : public ClothWorld, public BloodDecalSource, public PhysicsHo
     std::weak_ptr<void> npcHandle(const Npc& npc) const override;
     Npc* resolveNpc(const std::shared_ptr<void>& handle) const override;
     std::string npcTraceName(const Npc& npc) const override;
+    std::string_view npcSymbolName(const Npc* npc) const override;
     Tempest::Vec3 npcPosition(const Npc& npc) const override;
     uint64_t npcTickCount(const Npc& npc) const override;
     bool npcUsesSimplifiedMovement(const Npc& npc) const override;

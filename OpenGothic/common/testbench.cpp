@@ -4,6 +4,7 @@ extern bool benchTexturesSettle;
 extern bool benchTexturesFrozen;
 
 #include "testbench.h"
+#include "utils/jsonescape.h"
 #include "testbench_internal.h"
 #include "ui/gamemenu.h"
 #include "navbench.h"
@@ -219,25 +220,7 @@ bool isNumber(const std::string& s) {
 namespace testbench_detail {
 
 std::string jsonStr(std::string_view s) {
-  std::string r = "\"";
-  for(char ch:s) {
-    switch(ch) {
-      case '"':  r += "\\\""; break;
-      case '\\': r += "\\\\"; break;
-      case '\n': r += "\\n"; break;
-      case '\r': r += "\\r"; break;
-      case '\t': r += "\\t"; break;
-      default:
-        if(uint8_t(ch)<0x20) {
-          char buf[8];
-          std::snprintf(buf,sizeof(buf),"\\u%04x",unsigned(uint8_t(ch)));
-          r += buf;
-          } else {
-          r += ch;
-          }
-      }
-    }
-  return r + "\"";
+  return jsonEscape(s);
   }
 
 }
@@ -1070,14 +1053,6 @@ void TestBench::ownMeshArrowHit(uint32_t zenId,const Vec3& point,const Vec3& nor
     ",\"point_cm\":"+ragdollVector(point)+",\"normal\":"+ragdollVector(normal)+
     ",\"axis_distance_cm\":"+ragdollNumber(std::hypot(delta.x,delta.z))+
     ",\"half_height_error_cm\":"+ragdollNumber(delta.y));
-  }
-
-std::string_view TestBench::who(const Npc* npc) {
-  auto w = Gothic::inst().world();
-  if(npc==nullptr || w==nullptr)
-    return "none";
-  auto sym = w->script().findSymbol(size_t(npc->instanceSymbol()));
-  return sym!=nullptr ? std::string_view(sym->name()) : std::string_view("npc");
   }
 
 bool TestBench::filming() {

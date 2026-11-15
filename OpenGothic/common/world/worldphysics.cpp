@@ -2,6 +2,7 @@
 #include "game/constants.h"
 #include "objects/item.h"
 #include "objects/npc.h"
+#include "benchhooks.h"
 
 #include <algorithm>
 
@@ -29,6 +30,8 @@ std::string World::npcTraceName(const Npc& npc) const {
     return "PLAYER";
   return std::string(npc.world().rules().symbolName(size_t(npc.instanceSymbol())));
   }
+
+std::string_view World::npcSymbolName(const Npc* npc) const { return Bench::who(npc); }
 
 Tempest::Vec3 World::npcPosition(const Npc& npc) const { return npc.position(); }
 uint64_t World::npcTickCount(const Npc& npc) const { return npc.world().tickCount(); }
