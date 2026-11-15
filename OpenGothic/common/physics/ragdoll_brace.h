@@ -36,8 +36,8 @@ struct Profile final {
   float armsHold  = .70f;  // held until the arm's hand, fingers or forearm touches, no longer than this from birth
   float armsDrop  = .25f;  // after the touch the limit falls to armsLevel in this time
   float armsLevel = .70f;
-  float armsRest  = .25f;  // with a landing pose, hold armsLevel before yielding
-  float armsYield = .40f;  // then to zero in this time
+  float armsRest  = .10f;  // with a landing pose, hold armsLevel before yielding
+  float armsYield = .20f;  // then to zero in this time
   float armsTorque = 90.f;
   float armsStiff = 25.f;  // spring frequency of an arm's motors once it has touched, Hz; 6 is the ordinary fade's
   float neckEnter = .25f;
