@@ -83,11 +83,16 @@ def test_posture_metrics_reject_missing_and_foreign_duel_rows(tmp_path):
         bench.add_posture_metrics(episodes, path, enabled=True)
 
 
-@pytest.mark.parametrize("cell,defect", [("all", "valid")] + [
-    (cell, defect) for cell in brace_death_check.CELLS
+@pytest.mark.parametrize("cell,defect,end_reason", [("all", "valid", None)] + [
+    (cell, defect, None) for cell in brace_death_check.CELLS
     for defect in ("missing", "duplicate", "active")
-] + [(cell, "late") for cell in ("death", "unconscious")])
-def test_brace_death_journal(tmp_path, capsys, cell, defect):
+] + [(cell, "late", None) for cell in ("death", "unconscious")] + [
+    ("death", "wrong_end", "getup"),
+    ("unconscious", "wrong_end", "death"),
+    ("control", "wrong_end", "death"),
+    ("control", "wrong_end", "unconscious"),
+])
+def test_brace_death_journal(tmp_path, capsys, cell, defect, end_reason):
     rows = []
     for index, name in enumerate(brace_death_check.CELLS):
         start = 1000 + index * 5000
@@ -100,6 +105,8 @@ def test_brace_death_journal(tmp_path, capsys, cell, defect):
                      "fall_ms": start, "brace": "S_BRACE_B"})
         if name == cell and defect == "late":
             end["tick_ms"] = start + 301
+        if name == cell and defect == "wrong_end":
+            end["end"] = end_reason
         if name != cell or defect != "missing":
             rows.append(end)
         if name == cell and defect == "duplicate":
@@ -115,8 +122,10 @@ def test_brace_death_journal(tmp_path, capsys, cell, defect):
     output = capsys.readouterr().out
     if defect == "valid":
         assert "PASS: death, unconscious, control" in output
+        assert "LIMIT: post-end pose is not sampled" in output
     else:
         message = {"missing": "expected exactly 1 brace event, got 0",
                    "duplicate": "expected exactly 1 brace event, got 2",
-                   "late": "brace ended 301 ms", "active": "active brace S_BRACE_B after end"}[defect]
+                   "late": "brace ended 301 ms", "active": "active brace S_BRACE_B after end",
+                   "wrong_end": "expected ordinary brace end" if cell == "control" else f"expected end={cell}"}[defect]
         assert f"FAIL: {cell}: {message}" in output

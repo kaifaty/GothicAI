@@ -38,7 +38,8 @@ def check(rows: list[dict]) -> tuple[list[str], list[str]]:
             failures.append(f"{cell}: brace ended {elapsed} ms after fall; expected 0..300 ms")
         if end.get("pose", "none") == "none":
             failures.append(f"{cell}: brace event has no protective pose")
-        # Include later rows at the event's tick: protection must stop in this step.
+        # Reject supplied post-end brace rows, including the end's tick. Production
+        # currently has none, so this does not independently observe pose inactivity.
         after = body[body.index(end) + 1:]
         for row in after:
             if "brace" in row and row["brace"] != "none":
@@ -62,7 +63,8 @@ def main(argv: list[str] | None = None) -> int:
     for failure in failures:
         print(f"FAIL: {failure}")
     if not failures:
-        print("PASS: death, unconscious, control")
+        print("PASS: death, unconscious, control (brace termination events)")
+        print("LIMIT: post-end pose is not sampled; pose inactivity is not independently verified")
     return int(bool(failures))
 
 

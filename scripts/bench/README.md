@@ -227,9 +227,13 @@ python3 scripts/brace_death_check.py /absolute/out/run/melee-posture.jsonl
 The content must contain `S_BRACE_*`; a knockdown without an active protective pose fails.
 `bench.sh` runs the checker automatically. The checker requires exactly one `brace` event per body/fall:
 `end=death|unconscious` within 300 ms of `fall_ms`, or an ordinary end for the control.
-Any subsequent posture row for that body with `brace` other than `none` fails, including the end's
-own tick. The journal currently writes `brace` on knockdown, not continuous pose samples;
-the termination event is the production observation of `endBrace()` in this step.
+Any supplied subsequent posture row for that body with `brace` other than `none` fails, including
+the end's own tick. Known limitation: the engine writes `brace` only on knockdown, with no pose or
+motor samples after the termination event. Inactive protection after that event is therefore not
+independently verified by this bench. Same-step release is inferred from the `brace` event written
+immediately after `endBrace()`. Synthetic `sample` rows test only the checker's rejection rule;
+independent verification would require engine instrumentation, outside this bench-only change.
+The checker reports this limit explicitly, and its `PASS` covers termination events.
 Run it first on dev-ubuntu (the `# @headless` default); `BENCH_HOST=ryzen` pins the fallback host.
 To verify sensitivity, temporarily remove only the `finishRagdollBrace` call in `Npc::onNoHealth`,
 rebuild and rerun in a separate output directory: both early-end cells must fail. Restore the call
