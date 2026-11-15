@@ -7,6 +7,7 @@
 #include "world/world.h"
 
 #include <array>
+#include <cmath>
 #include <cstdlib>
 #include <string>
 
@@ -76,6 +77,7 @@ void MoveAlgo::tickBumpSignal(uint64_t dt, const Vec3& origin, const Vec3& displ
   input.ragdoll = npc.hasRagdoll();
   input.interactive = npc.interactive()!=nullptr;
   const auto signal = BumpSignal::update(bumpSignal,input);
+  tickReachSignal(dt,origin,displacement,moved,signal);
   if(!signal.contactStarted)
     return;
 
@@ -107,4 +109,121 @@ void MoveAlgo::tickBumpSignal(uint64_t dt, const Vec3& origin, const Vec3& displ
     logBump(*other,&npc,hit,false,signal);
     other->bumpReaction(hit);
     }
+  }
+
+MoveAlgo::WallReach MoveAlgo::wallReach(uint64_t now) const {
+  // a body the controller did not move this while shows nothing
+  if(now<reach.tick || now-reach.tick>200)
+    return WallReach();
+  return reach;
+  }
+
+void MoveAlgo::tickReachSignal(uint64_t dt, const Vec3& origin, const Vec3& displacement,
+                              const DynamicWorld::NpcItem::VirtualMoveResult& moved, const BumpSignal::Result& bump) {
+  const uint64_t now = npc.world().tickCount();
+  if(now<reach.tick || now-reach.tick>200) {
+    reachSignal = {};
+    reach = {};
+    }
+  const float length = std::hypot(displacement.x,displacement.z);
+  ReachSignal::Input input;
+  input.dtMs     = dt;
+  input.enabled  = Settings::physicsFlags().wallReach;
+  input.eligible = bump.eligible;
+  input.moving   = length>0;
+  input.obstacle = moved.obstacleNormal!=Vec3();
+  input.contact  = bump.contact;
+  input.moved    = length>0 ? std::hypot(moved.position.x-origin.x,moved.position.z-origin.z)/length : 1.f;
+  input.avgSpeed = bump.avgSpeed;
+  input.radius   = npc.physic.capsuleRadius();
+  Vec3 ahead;
+  if(ReachSignal::wantsProbe(input)) {
+    // the look ahead along the move, at the chest and at the hip: what stands there, not a floor and not a person
+    const Vec3  dir = Vec3(displacement.x,0,displacement.z)/length;
+    const float far = ReachSignal::probeLength(input.avgSpeed,input.radius);
+    for(const float height : {130.f,90.f}) {
+      const Vec3 from = moved.position+Vec3(0,height,0);
+      const auto ray  = npc.world().physic()->navigationRay(from,from+dir*far,npc.livingBody());
+      if(!ray.hasCol || std::abs(ray.normal.y)>0.5f)
+        continue;
+      using Hit = DynamicWorld::NavigationHit;
+      if(ray.kind!=Hit::World && ray.kind!=Hit::StaticVob && ray.kind!=Hit::MovableVob)
+        continue;
+      const Vec3  normal   = Vec3::normalize(Vec3(ray.normal.x,0,ray.normal.z));
+      const float distance = (ray.point-from).length();
+      if(input.ahead && distance>=input.distance)
+        continue;
+      input.ahead    = true;
+      input.distance = distance;
+      input.cosine   = -Vec3::dotProduct(dir,normal);
+      ahead          = normal;
+      }
+    }
+  const bool wasWarn  = reach.warn;
+  const bool wasPress = reach.press>=0.5f;
+  const auto signal = ReachSignal::update(reachSignal,input);
+  reach.press     = signal.press;
+  reach.warn      = signal.warn;
+  reach.hands     = signal.hands;
+  reach.plant     = signal.plant;
+  reach.timeToHit = signal.timeToHit;
+  reach.person    = moved.obstacleNpc!=nullptr;
+  reach.tick      = now;
+  if(signal.warn)
+    reach.normal = ahead;
+  else if(input.obstacle && input.eligible)
+    reach.normal = Vec3::normalize(Vec3(moved.obstacleNormal.x,0,moved.obstacleNormal.z));
+  // the wall-stop trial: is what holds the hero a wall that stands flat to both sides of the body?
+  reach.flat = false;
+  if(Settings::physicsFlags().wallStop && npc.isPlayer() && input.enabled && input.eligible && input.obstacle &&
+     !reach.person && !moved.obstacleDynamic && reach.normal!=Vec3()) {
+    using Hit = DynamicWorld::NavigationHit;
+    const Vec3 n     = reach.normal;
+    const Vec3 along = Vec3(n.z,0,-n.x);
+    float gap[2] = {}, facing[2] = {};
+    bool  hit[2] = {};
+    for(int side=0; side<2; ++side) {
+      const Vec3 from = moved.position + Vec3(0,130,0) + along*(side==0 ? -1.f : 1.f)*input.radius*1.2f;
+      const auto ray  = npc.world().physic()->navigationRay(from,from-n*(input.radius+40.f),npc.livingBody());
+      hit[side]    = ray.hasCol && (ray.kind==Hit::World || ray.kind==Hit::StaticVob);
+      facing[side] = Vec3::dotProduct(ray.normal,n);
+      gap[side]    = (ray.point-from).length();
+      }
+    // planks and beams are not a plane: 20 degrees and a hand's breadth of room
+    reach.flat = hit[0] && hit[1] && facing[0]>=0.94f && facing[1]>=0.94f && std::abs(gap[0]-gap[1])<=10.f &&
+                 std::max(gap[0],gap[1])<=input.radius+25.f;
+    if(bump.contactStarted)
+      writeMeleePosture("{\"event\":\"wall_flat\",\"tick_ms\":"+std::to_string(now)+",\"flat\":"+(reach.flat ? "true" : "false")+
+                        ",\"hit\":["+std::to_string(int(hit[0]))+","+std::to_string(int(hit[1]))+
+                        "],\"gap\":["+std::to_string(gap[0])+","+std::to_string(gap[1])+
+                        "],\"facing\":["+std::to_string(facing[0])+","+std::to_string(facing[1])+
+                        "],\"radius\":"+std::to_string(input.radius)+"}");
+    }
+  const bool press = reach.press>=0.5f;
+  if((signal.warn && !wasWarn) || press!=wasPress)
+    writeMeleePosture("{\"event\":\"reach\",\"tick_ms\":"+std::to_string(now)+",\"who\":"+bumpWho(&npc)+
+                      ",\"phase\":\""+(signal.warn && !wasWarn ? "warn" : (press ? "press" : "free"))+
+                      "\",\"time_to_hit_s\":"+std::to_string(signal.timeToHit)+
+                      ",\"closing_cm_s\":"+std::to_string(signal.closing)+
+                      ",\"moved\":"+std::to_string(input.moved)+
+                      ",\"person\":"+(reach.person ? "true" : "false")+"}");
+  }
+
+Vec3 MoveAlgo::wallStop(const Vec3& displacement) {
+  const uint64_t now    = npc.world().tickCount();
+  const float    length = std::hypot(displacement.x,displacement.z);
+  if(!Settings::physicsFlags().wallStop || !npc.isPlayer() || !reach.flat || now<reach.tick || now-reach.tick>200 ||
+     length<=0) {
+    wallStopping = false;
+    return displacement;
+    }
+  const Vec3  n    = reach.normal;
+  const float into = -(displacement.x*n.x+displacement.z*n.z)/length;
+  // 25 degrees off head on to begin, 30 to go on
+  if(into<(wallStopping ? 0.866f : 0.906f)) {
+    wallStopping = false;
+    return displacement;
+    }
+  wallStopping = true;
+  return Vec3(-n.x*into*length,displacement.y,-n.z*into*length);
   }
