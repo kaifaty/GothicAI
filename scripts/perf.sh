@@ -40,8 +40,7 @@ PY
 }
 
 check_build_fingerprint() {
-  local built=''
-  if [[ -r "$BUILD/source_fingerprint" ]]; then built="$(cat "$BUILD/source_fingerprint")"; fi
+  local built="$1"
   [[ -n "${PERF_SOURCE_FINGERPRINT:-}" && "$built" == "$PERF_SOURCE_FINGERPRINT" ]] ||
     fail "build source_fingerprint ${built:-missing} does not match run ${PERF_SOURCE_FINGERPRINT:-missing}; rerun without NO_BUILD=1"
 }
@@ -52,6 +51,10 @@ build_game() {
   rm -f "$BUILD/source_fingerprint"
   local flags=(-DCMAKE_POLICY_VERSION_MINIMUM=3.5)
   if [[ "${PERF_REMOTE:-0}" == 1 ]]; then
+    local actual_fingerprint
+    actual_fingerprint="$(source_fingerprint)"
+    [[ "$actual_fingerprint" == "$PERF_SOURCE_FINGERPRINT" ]] ||
+      fail "uploaded source_fingerprint $actual_fingerprint does not match run $PERF_SOURCE_FINGERPRINT; rerun perf.sh to upload current sources"
     export VULKAN_SDK="$HOME/gothic-ai/body-baseline/toolchain/vulkan-1.4.341.0"
     export PATH="$HOME/.local/bin:$VULKAN_SDK/bin:$PATH"
     [[ -r "$VULKAN_SDK/include/vulkan/vulkan.h" && -r "$VULKAN_SDK/lib/libvulkan.so" ]] || fail 'incomplete Ryzen Vulkan SDK'
@@ -116,6 +119,10 @@ if [[ "$REMOTE_RUN" == 0 ]]; then
     mkdir -p "$OUT"
     TASK="$REMOTE_HOME/gothic-ai/perf-stand"
     SOURCE="$TASK/$(perf_checkout "$ROOT")/source"
+    if [[ "${NO_BUILD:-0}" == 1 ]]; then
+      REMOTE_BUILT_FINGERPRINT="$(remote bash -c 'cat "$1" 2>/dev/null || true' -- "$SOURCE/OpenGothic/build-perf/source_fingerprint")"
+      check_build_fingerprint "$REMOTE_BUILT_FINGERPRINT"
+    fi
     REMOTE_OUT="$TASK/runs/${OUT##*/}"
     NAS_OUT="/mnt/shared/gothic-ai/perf-stand/runs/${OUT##*/}"
     remote mkdir -p "$SOURCE/OpenGothic" "$SOURCE/scripts/bench" "$REMOTE_OUT"
@@ -155,7 +162,9 @@ if [[ "$REMOTE_RUN" == 0 ]]; then
 fi
 
 mkdir -p "$OUT"
-if [[ "$REMOTE_RUN" == 1 ]]; then check_build_fingerprint; fi
+if [[ "$REMOTE_RUN" == 1 ]]; then
+  check_build_fingerprint "$(cat "$BUILD/source_fingerprint" 2>/dev/null || true)"
+fi
 GAME_BIN="${GAME_BIN:-$BUILD/opengothic/Gothic2Notr}"
 GOTHIC_DIR="${GOTHIC_DIR:-/Volumes/DevSSD/Dev/games/Gothic II}"
 if [[ "${NO_BUILD:-0}" != 1 ]]; then build_game "$OUT/build"; fi

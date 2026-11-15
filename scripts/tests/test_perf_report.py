@@ -62,7 +62,7 @@ def test_perf_source_fingerprint_hashes_content_without_builds(tmp_path):
     assert fingerprint() == original
 
 
-@pytest.mark.parametrize("built", ("missing", "foreign", "stale"))
+@pytest.mark.parametrize("built", ("missing", "foreign", "stale", "match", "explicit_mismatch", "explicit_match"))
 def test_perf_no_build_rejects_mismatched_run_before_launch(tmp_path, built):
     scripts = tmp_path / "scripts"
     scripts.mkdir()
@@ -75,18 +75,56 @@ def test_perf_no_build_rejects_mismatched_run_before_launch(tmp_path, built):
         ["bash", "-c", 'source "$1"; ROOT="$2"; source_fingerprint',
          "bash", str(scripts / "perf.sh"), str(tmp_path)], text=True).strip()
     if built != "missing":
-        (build / "source_fingerprint").write_text((fingerprint if built == "stale" else "b" * 64) + "\n")
-    source.write_text("after")
-    environment = dict(os.environ, NO_BUILD="1")
+        (build / "source_fingerprint").write_text(("b" * 64 if built == "foreign" else fingerprint) + "\n")
+    if built in ("stale", "explicit_match"):
+        source.write_text("after")
+    environment = dict(os.environ, NO_BUILD="1", GAME_BIN=str(build / "missing-game"))
     environment.pop("PERF_SOURCE_FINGERPRINT", None)
+    if built == "explicit_mismatch":
+        environment["PERF_SOURCE_FINGERPRINT"] = "b" * 64
+    elif built == "explicit_match":
+        environment["PERF_SOURCE_FINGERPRINT"] = fingerprint
     result = subprocess.run(
         ["bash", str(scripts / "perf.sh"), "__run", str(tmp_path / "run"), "interior"],
         env=environment,
         capture_output=True, text=True, timeout=5)
     assert result.returncode == 2
-    assert "does not match run" in result.stderr
-    assert "rerun without NO_BUILD=1" in result.stderr
+    if built in ("match", "explicit_match"):
+        assert "does not match run" not in result.stderr
+        assert "missing game executable" in result.stderr
+    else:
+        assert "does not match run" in result.stderr
+        assert "rerun without NO_BUILD=1" in result.stderr
     assert not (tmp_path / "run/metadata.json").exists()
+
+
+def test_perf_remote_build_rejects_changed_tree_before_cmake(tmp_path):
+    script = Path(__file__).parents[1] / "perf.sh"
+    (tmp_path / "OpenGothic/build-perf").mkdir(parents=True)
+    (tmp_path / "OpenGothic/main.cpp").write_text("before")
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts/ryzen-build.sh").write_text("RYZEN_CMAKE_FLAGS=(-DTEST=ON)\n")
+    sdk = tmp_path / "gothic-ai/body-baseline/toolchain/vulkan-1.4.341.0"
+    for name in ("include/vulkan/vulkan.h", "lib/libvulkan.so"):
+        path = sdk / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    result = subprocess.run(
+        ["bash", "-c", r'''
+source "$1"
+ROOT="$2" BUILD="$2/OpenGothic/build-perf" PERF_REMOTE=1
+PERF_SOURCE_FINGERPRINT="$(source_fingerprint)"
+printf '%s\n' "$PERF_SOURCE_FINGERPRINT" >"$BUILD/source_fingerprint"
+printf changed >"$ROOT/OpenGothic/main.cpp"
+cmake() { touch "$ROOT/cmake-called"; return 1; }
+build_game "$ROOT/logs"
+''', "bash", str(script), str(tmp_path)],
+        env=dict(os.environ, HOME=str(tmp_path)), capture_output=True, text=True, timeout=5)
+    assert not (tmp_path / "cmake-called").exists(), result.stderr
+    assert result.returncode == 2
+    assert "uploaded source_fingerprint" in result.stderr
+    assert "does not match run" in result.stderr
+    assert not (tmp_path / "OpenGothic/build-perf/source_fingerprint").exists()
 
 
 @pytest.mark.parametrize("cache", (None, "/custom/base-cache"))
