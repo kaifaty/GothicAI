@@ -49,6 +49,8 @@ BumpSignal::Result BumpSignal::update(State& state, const Input& input) {
       !input.attacking && !input.blocking && !input.dodging && !input.rolling && !input.meleeStep &&
       !input.down && !input.ragdoll && !input.interactive;
   const bool contact = eligible && input.obstacle && normalLength>0 && requestedLength>0 && result.lost>=0.25f;
+  result.eligible = eligible;
+  result.contact = contact;
   result.contactStarted = contact && !state.contact;
   result.react = result.contactStarted && result.strength>0 &&
                  (!state.reacted || input.nowMs-state.lastReactionMs>=500);

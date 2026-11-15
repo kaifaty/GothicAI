@@ -61,6 +61,8 @@ class Settings final {
       bool blood = true;
       bool ragdollBrace = true;
       bool bumpReactions = true;
+      bool wallReach = true;
+      bool wallStop = false;
 
       bool allowsMonsterCharacterVirtual(bool down, bool flying) const {
         return monsterCharacterVirtual && !down && !flying;

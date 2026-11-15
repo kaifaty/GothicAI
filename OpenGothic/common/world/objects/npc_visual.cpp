@@ -953,6 +953,7 @@ void Npc::updateAnimation(uint64_t dt, bool force) {
   syncAtt |= visual.updateAim(*this,dt);
   syncAtt |= visual.updateGaze(*this,dt);
   syncAtt |= visual.updateFlinch(*this,dt);
+  syncAtt |= visual.updateReach(*this,dt);
   syncAtt |= updateLyingVisualHeight();
   if(living)
     livingNeedsRebuild = !living->moveKinematic(visual.pose().transform(),visual.pose().boneCount(),visual.transform(),
