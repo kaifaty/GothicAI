@@ -35,8 +35,8 @@ namespace BumpSignal {
       uint64_t beginMs = 0, endMs = 0;
       float speed = 0;
       };
-    // At most 300 positive-duration, millisecond moves fit in the averaging window.
-    std::array<Sample,300> speeds;
+    // 64 moves cover the 300 ms window down to 4.7 ms a move; faster frames keep the newest ones.
+    std::array<Sample,64> speeds;
     size_t first = 0, count = 0;
     uint64_t lastReactionMs = 0;
     bool reacted = false;

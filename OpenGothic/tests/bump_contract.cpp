@@ -119,6 +119,14 @@ int main() {
   const auto at500 = cooldown.hit();
   check(at500.contactStarted && at500.react,"cooldown_500");
   std::printf("cooldown: at400_react=%d at500_react=%d\n",at400.react,at500.react);
+  Moves cooldownEdge;
+  cooldownEdge.seed(332);
+  check(cooldownEdge.hit().react,"cooldown_edge_first");
+  for(int i=0; i<48; ++i)
+    cooldownEdge.move(332);
+  cooldownEdge.move(332,9);
+  const auto at499 = cooldownEdge.hit();
+  check(at499.contactStarted && !at499.react && at499.strength>0,"cooldown_499");
 
   Moves missing;
   missing.seed(332);
@@ -128,6 +136,10 @@ int main() {
   smallLoss.seed(332);
   const auto lost20 = smallLoss.move(332,10,true,0.8f);
   check(near(lost20.lost,0.2f) && !lost20.contactStarted && !lost20.react,"loss_20_percent");
+  Moves nearLoss;
+  nearLoss.seed(332);
+  const auto lost24 = nearLoss.move(332,10,true,0.76f);
+  check(near(lost24.lost,0.24f) && !lost24.contactStarted && !lost24.react,"loss_24_percent");
   const auto lost25 = smallLoss.move(332,10,true,0.75f);
   check(near(lost25.lost,0.25f) && lost25.contactStarted && lost25.react,"loss_25_percent");
   std::printf("loss_threshold: no_obstacle=%d lost20=%.6f start20=%d lost25=%.6f start25=%d\n",

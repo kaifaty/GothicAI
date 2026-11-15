@@ -191,7 +191,7 @@ VM-адаптер базовых программ — свободные фун�
 
 CharacterVirtual героя и NPC и проверка спящих предметов рядом с ними — в [`collisionworld_character.cpp`](../../OpenGothic/common/physics/collisionworld_character.cpp); общий `CollisionWorld::Impl` и фильтры — в [`collisionworld_internal.h`](../../OpenGothic/common/physics/collisionworld_internal.h).
 
-Препятствие в итоге CharacterVirtual — [`characterobstacle.*`](../../OpenGothic/common/physics/characterobstacle.h); чистый сигнал врезания — [`bumpsignal.*`](../../OpenGothic/common/game/bumpsignal.h), склейка с ходом и журнал — [`movealgo_bump.cpp`](../../OpenGothic/common/game/movealgo_bump.cpp), реакция-заглушка — [`npc_bump.cpp`](../../OpenGothic/common/world/objects/npc_bump.cpp). Флаг `[GAME] bump_reactions`, контракт `gothic-bump-contract`; [текущее поведение](../physics-character.md#как-работает-сейчас).
+Препятствие в итоге CharacterVirtual — [`characterobstacle.*`](../../OpenGothic/common/physics/characterobstacle.h); чистый сигнал врезания — [`bumpsignal.*`](../../OpenGothic/common/game/bumpsignal.h), склейка с ходом и журнал — [`movealgo_bump.cpp`](../../OpenGothic/common/game/movealgo_bump.cpp), ответ тела — [`npc_bump.cpp`](../../OpenGothic/common/world/objects/npc_bump.cpp) и пружины врезания в [`flinch.*`](../../OpenGothic/common/graphics/mesh/flinch.h). Флаг `[GAME] bump_reactions`, контракт `gothic-bump-contract`; [текущее поведение](../physics-character.md#как-работает-сейчас).
 
 Ragdoll, физические тела живых NPC, возврат после падения, импульсы заклинаний и стрел — в [`npc_ragdoll.cpp`](../../OpenGothic/common/world/objects/npc_ragdoll.cpp).
 
