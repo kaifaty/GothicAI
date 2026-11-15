@@ -309,6 +309,16 @@ if(UNIX)
   target_link_libraries(gothic-body-watch-test PRIVATE OpenGothic AiBridge)
   target_include_directories(gothic-body-watch-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   target_compile_options(gothic-body-watch-test PRIVATE -Wall -Wconversion -Werror)
+  # The worker pool (utils/workers): OPENGOTHIC_WORKERS_GRAIN, short arrays on the caller, the serial mode; a process
+  # per grain. No engine or game data.
+  add_executable(gothic-workers-test EXCLUDE_FROM_ALL tests/workers_test.cpp common/utils/workers.cpp)
+  target_include_directories(gothic-workers-test PRIVATE common)
+  target_link_libraries(gothic-workers-test PRIVATE Tempest)
+  set_source_files_properties(tests/workers_test.cpp PROPERTIES COMPILE_OPTIONS "-Wall;-Wconversion;-Werror")
+  # The loops after the animation pass (world/animationtail) against the full loops they replace; stand-in items.
+  add_executable(gothic-anim-tail-test EXCLUDE_FROM_ALL tests/anim_tail_test.cpp common/world/animationtail.cpp)
+  target_include_directories(gothic-anim-tail-test PRIVATE common)
+  target_compile_options(gothic-anim-tail-test PRIVATE -Wall -Wconversion -Werror)
   if(OPENGOTHIC_ENABLE_FRAME_PROFILE)
     # Standalone recorder capacity and late-callback checks; no engine or game data.
     add_executable(gothic-frame-profile-test EXCLUDE_FROM_ALL tests/frame_profile_test.cpp common/frameprofile.cpp)
@@ -339,6 +349,11 @@ if(UNIX)
   target_link_libraries(gothic-grass-test PRIVATE OpenGothic AiBridge)
   target_include_directories(gothic-grass-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   target_compile_options(gothic-grass-test PRIVATE -Wall -Wconversion -Werror)
+  # Windows that glow at night (graphics/windowglow.h): the record, its bits and a window's evening; CPU only.
+  add_executable(gothic-window-glow-test EXCLUDE_FROM_ALL tests/window_glow_test.cpp)
+  target_link_libraries(gothic-window-glow-test PRIVATE OpenGothic AiBridge)
+  target_include_directories(gothic-window-glow-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
+  target_compile_options(gothic-window-glow-test PRIVATE -Wall -Wconversion -Werror)
   # The own head's face (graphics/mesh/facerig): a synthetic head and profile, the bridge's say cues; CPU only, no device or game data.
   add_executable(gothic-facerig-test EXCLUDE_FROM_ALL tests/facerig_test.cpp)
   target_link_libraries(gothic-facerig-test PRIVATE OpenGothic AiBridge)
@@ -762,6 +777,12 @@ endif()
     DEPENDS gothic-cloth-contract gothic-clothgeometry-contract gothic-worldcloth-contract USES_TERMINAL)
   add_executable(gothic-ragdoll-contract EXCLUDE_FROM_ALL tests/physics_ragdoll_contract.cpp tests/physics_ragdoll_brace_contract.cpp)
   target_link_libraries(gothic-ragdoll-contract PRIVATE OpenGothic AiBridge gothic-base-import)
+  add_executable(gothic-bump-contract EXCLUDE_FROM_ALL tests/bump_contract.cpp common/game/bumpsignal.cpp)
+  target_include_directories(gothic-bump-contract PRIVATE
+    common lib/Tempest/Engine/include lib/Tempest/Engine)
+  if(NOT MSVC)
+    target_compile_options(gothic-bump-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
   add_executable(gothic-ragdoll-save-contract EXCLUDE_FROM_ALL tests/ragdoll_save_contract.cpp)
   target_link_libraries(gothic-ragdoll-save-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_custom_target(check-ragdoll-save

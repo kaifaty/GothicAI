@@ -226,6 +226,13 @@ void Resources::indexMaterialMaps() {
       else
         maps.emissive = float(emissive->value.GetDouble());
       }
+    // A window lit of an evening (graphics/windowglow.h): the glow above is a candle's behind the texels the ORM's
+    // alpha marks, each repeat of the texture a window with its own hours. {} takes the defaults; without
+    // `emissive` the record is dropped
+    if(const auto window = entry.value.FindMember("window"); window!=entry.value.MemberEnd()) {
+      if(!(maps.emissive>0.f) || !WindowGlow::parse(window->value,maps.window))
+        valid = false;
+      }
     // Hair cards (reports/content/2026-11-npc-hair): strands run along v, the root at v=0; `orm` is the hair map
     // (R shade, G the strand's number, B its depth in the clump), the surface is lit by the hair BRDF.
     if(const auto hair = entry.value.FindMember("hair"); hair!=entry.value.MemberEnd()) {
@@ -340,10 +347,13 @@ void Resources::indexMaterialMaps() {
     // Grass (reports/engine/2026-11-14-grass-system): the ground of this texture grows blades round the camera. The
     // field alone leaves the ground's look as it is; with `foliage` or `antitile` the record is dropped
     if(const auto grass = entry.value.FindMember("grass"); grass!=entry.value.MemberEnd()) {
-      if(maps.foliage.on || maps.antitile!=Material::Antitile::Off || !Grass::parse(grass->value,maps.grass))
+      if(maps.foliage.on || maps.window.on || maps.antitile!=Material::Antitile::Off ||
+         !Grass::parse(grass->value,maps.grass))
         valid = false;
       maps.grassOnly = entry.value.MemberCount()==1;
       }
+    if(maps.window.on && maps.foliage.on)
+      valid = false; // the two share the slot of their numbers (Bucket::foliage)
     // The meadow's own ground (reports/engine/2026-11-14-meadow-ground): two layers by world position under a
     // texture with `grass`, all six maps; `verge` of the ground beside it names that grass. Neither replaces the
     // texture: a record of these fields alone keeps the one the ground has. Not with `projection`: the layers lie
@@ -365,7 +375,8 @@ void Resources::indexMaterialMaps() {
       }
     if(const auto verge = entry.value.FindMember("verge"); verge!=entry.value.MemberEnd()) {
       const auto& value = verge->value;
-      bool ok = !maps.grass.on && !maps.foliage.on && maps.projectionTile<=0 && Grass::parse(value,maps.verge);
+      // not with `window`: the verge keeps its grass's numbers in the slot of the window's (Bucket::foliage)
+      bool ok = !maps.grass.on && !maps.foliage.on && !maps.window.on && maps.projectionTile<=0 && Grass::parse(value,maps.verge);
       if(ok) {
         const auto of = value.FindMember("of");
         ok = of!=value.MemberEnd() && of->value.IsString() && of->value.GetStringLength()>0;
@@ -1425,6 +1436,7 @@ Resources::MaterialMaps Resources::loadMaterialMaps(std::string_view name) {
       l = {};
       }
     }
+  ret.window = files.window;
   ret.present = !files.grassOnly;
   ret.hasAlbedo = !files.albedo.empty();
   return ret;

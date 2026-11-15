@@ -159,6 +159,7 @@ class Resources final {
       FoliageWind::Params      foliage; // "foliage": leaves in the wind, the sun through them (graphics/foliagewind.h)
       Grass::Params            grass;   // "grass": the ground grows grass (graphics/grass/grassparams.h)
       Material::Layers         layers;  // "ground" or "verge": the meadow's two layers, loaded (graphics/grass/grassground.h)
+      WindowGlow::Params       window;  // "window": the glow is a window's, lit of an evening (graphics/windowglow.h)
       bool                     present = false; // the material is drawn by its record; not for a record of `grass`, `ground`, `verge` alone
       bool                     hasAlbedo = false;
       };
@@ -723,6 +724,7 @@ class Resources final {
       bool        eye = false;
       FoliageWind::Params foliage; // `on` with the field
       Grass::Params grass;         // `on` with the field
+      WindowGlow::Params window;   // `on` with the field
       bool        grassOnly = false; // nothing but `grass`, `ground`, `verge`: the ground keeps the texture it has without a record
       Grass::Ground ground;        // `on` with the field: the six maps below
       std::string swardAlbedo, swardNormal, swardOrm, earthAlbedo, earthNormal, earthOrm;

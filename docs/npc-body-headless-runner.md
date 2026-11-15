@@ -2,6 +2,10 @@
 
 Статус: **этап 2 готов**, 13 октября 2026 года. Полная серверная серия `stage2-v3` прошла; [отчёт с критериями, ресурсами и provenance](../reports/npc-body/2026-10-13-headless/headless-report.md), [компактный JSON](../reports/npc-body/2026-10-13-headless/headless-report.json). Этот документ описывает runtime и протокол. Контекст — [план](npc-body-control-plan.md), [боевой контракт](npc-body-combat-contract.md) и [сохранённый reference этапа 1](../reports/npc-body/2026-10-13-melee-reference/run-notes.md).
 
+## Как работает сейчас
+
+Происхождение проб и оценок тел (`body_headless_suite`, `body_observe_suite` и их приёмники) фиксирует SHA-256 всех наших `.a` из дерева сборки: обязательны `libOpenGothic.a` и `libengine-platform.a`, также учитываются архивы моста, шейдеров, VM и runtime. Сторонние `lib/`, `_deps/` и `libminiz.a` исключены. `--engine-library` принимает каталог набора; `engine_libraries` хранит хеши по именам, а прежнее поле `engine_library_sha256` — SHA-256 канонического JSON этой карты (имена отсортированы, без пробелов). `--expected-library-sha256` сверяет сводную сумму; старый хеш одного архива не подходит, отсутствие обязательного архива даёт ошибку с его именем. Launcher’ы очереди сохраняют весь набор в `reference/engine-libraries/`; повторные BC-фазы используют первый снимок. Проверка — `scripts/tests/test_body_headless_suite.py`, без запуска движка.
+
 ## Исполнение настоящего движка
 
 Linux target `gothic-body-runner` запускает `Gothic`, `GameSession`, Daedalus VM, настоящий мир и native NPC AI. Entry point — [bodyrunner.cpp](../OpenGothic/game/bodyrunner.cpp). Он загружает контрольный save через `Serialize` и синхронно создаёт `GameSession`. Физика, waypoint graph, очереди AI, perceptions, урон, CPU pose и animation tags остаются в движке.
@@ -166,3 +170,7 @@ python3 scripts/body_headless_report.py data/npc-body/headless/stage2-v3 \
 Основной parity gate относится к native human melee-v1. CPU morph rendering, все виды PFX/spell interactions, полноценный dialogue UI, другие camera paths, archery и навигационные задачи этим набором не подтверждаются. Некоторые adapters сохраняют необходимые CPU callbacks/geometry, но это не равнозначно parity всех игровых систем.
 
 ASR/TTS latency и latency `body-service` не измеряются этим suite. Проверяются присутствие прежних сервисов и shared host resource evidence; причинное влияние на latency требует отдельного замера. Этап 4 реализовал [боевой API, ownership и masks](npc-body-api.md), этап 5 — [headless арену и runner эпизодов](npc-body-arena.md). Контракт parity этапа 2 сохраняется; GRU, inference, обучающие trajectories, BC/PPO и parallel arena pool остаются следующими этапами плана.
+
+## План и журнал
+
+2026-11-15: происхождение проб и оценок учитывает весь набор наших статических библиотек, включая выделенную платформу (#1331). Снимки очереди сохраняют все архивы; сверка старого одиночного хеша отклоняется.

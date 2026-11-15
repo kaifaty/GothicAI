@@ -25,7 +25,7 @@ LOCK_WAIT_SECONDS="${GOTHIC_BODY_LOCK_WAIT_SECONDS:-0}"
 [[ "$LOCK_WAIT_SECONDS" =~ ^[0-9]{1,5}$ ]] && ((LOCK_WAIT_SECONDS <= 36000)) || { echo 'Lock wait must be an integer from 0 to 36000 seconds' >&2; exit 2; }
 
 freeze_engine_reference() {
-  local out="$1" engine_root="$2" lock_held="${3:-false}" snapshot_tmp
+  local out="$1" engine_root="$2" lock_held="${3:-false}" snapshot_tmp library relative
   if [[ "$lock_held" != true ]]; then
     exec 8>"$engine_root/build.lock"
     flock -n 8 || { echo 'Build owns the engine snapshot; wait for its owner' >&2; exit 1; }
@@ -34,7 +34,7 @@ freeze_engine_reference() {
   # Reuse this run's prepared source and retain the first library snapshot.
   # A later sync/build must not change the inputs while a phase is queued.
   engine_source="$out/reference/source/OpenGothic"
-  engine_library="$out/reference/libOpenGothic.a"
+  engine_library="$out/reference/engine-libraries"
   if [[ ! -d "$engine_source" ]]; then
     snapshot_tmp=$(mktemp -d "$out/reference/.source.XXXXXX")
     if ! tar -xzf "$out/source.tar.gz" -C "$snapshot_tmp" OpenGothic; then
@@ -45,12 +45,17 @@ freeze_engine_reference() {
     mv "$snapshot_tmp/OpenGothic" "$engine_source"
     rmdir "$snapshot_tmp"
   fi
-  if [[ ! -f "$engine_library" ]]; then
-    snapshot_tmp=$(mktemp "$out/reference/.library.XXXXXX")
-    if ! cp "$engine_root/build/libOpenGothic.a" "$snapshot_tmp"; then
-      rm -f "$snapshot_tmp"
-      return 1
-    fi
+  if [[ ! -d "$engine_library" ]]; then
+    [[ ! -e "$out/reference/libOpenGothic.a" ]] || { echo 'Legacy engine library snapshot lacks libengine-platform.a; prepare a fresh run' >&2; return 1; }
+    snapshot_tmp=$(mktemp -d "$out/reference/.libraries.XXXXXX")
+    for library in libOpenGothic.a libengine-platform.a; do
+      [[ -f "$engine_root/build/$library" ]] || { echo "Engine library missing: $library" >&2; rm -rf "$snapshot_tmp"; return 1; }
+    done
+    while IFS= read -r -d '' library; do
+      relative="${library#"$engine_root/build"/}"
+      mkdir -p "$snapshot_tmp/$(dirname "$relative")"
+      cp "$library" "$snapshot_tmp/$relative"
+    done < <(find "$engine_root/build" -type d \( -name lib -o -name _deps \) -prune -o -name '*.a' ! -name libminiz.a -print0)
     mv "$snapshot_tmp" "$engine_library"
   fi
   if [[ "$lock_held" != true ]]; then
@@ -226,13 +231,15 @@ task_root="$HOME/$1"
 engine_root="$HOME/$2"
 out="$task_root/data/$3"
 engine_source="$engine_root/source/OpenGothic"
-engine_library="$engine_root/build/libOpenGothic.a"
+engine_library="$engine_root/build"
 if gq_available; then freeze_engine_reference "$out" "$engine_root"; fi
 CUDA_VISIBLE_DEVICES='' "$task_root/.venv/bin/python" - "$out" "$engine_source" "$engine_library" "$task_root/.venv/bin/python" <<'PY'
 import datetime,hashlib,json,sys
 from pathlib import Path
 out,engine_source,engine_library,python=Path(sys.argv[1]),Path(sys.argv[2]),Path(sys.argv[3]),sys.argv[4]
 retry=out/'faults-retry-v1';code=out/'code';home=Path.home()
+sys.path.insert(0,str(code/'scripts'))
+from body_headless_suite import engine_library_provenance
 def sha(path):
     digest=hashlib.sha256()
     with path.open('rb') as stream:
@@ -259,7 +266,7 @@ declaration={'schema_version':1,'kind':'body_stage8_missing_bench_retry','record
     'original_run':str(out),'phase':'stage8-faults-retry','allowed_changes':['scenario_fixture_path','output_path'],
     'original_files':{name:sha(out/name) for name in originals},
     'retry_files':{str(path.relative_to(retry)):sha(path) for path in sorted((retry/'code').rglob('*')) if path.is_file()},
-    'engine_library':{'path':str(engine_library),'sha256':sha(engine_library)},
+    'engine_library':{'path':str(engine_library),**engine_library_provenance(engine_library)},
     'argv':argv,'resources':{'cpu_quota_percent':200,'memory_max':'6G','runtime_max_seconds':2400,'nice':10,'tasks_max':128,
         'working_directory':str(out),'simulation_lock':str(home/'gothic-ai/body-simulation.lock')},
     'execution_environment':{'PYTHONPATH':str(code/'body-service/src')+':'+str(code/'scripts'),
@@ -380,7 +387,7 @@ if [[ "$use_gq" != true && "$simulation_phase" == true ]] && pgrep -x 'gothic-bo
 fi
 python="$task_root/.venv/bin/python"
 engine_source="$engine_root/source/OpenGothic"
-engine_library="$engine_root/build/libOpenGothic.a"
+engine_library="$engine_root/build"
 if [[ "$use_gq" == true ]]; then freeze_engine_reference "$out" "$engine_root"; fi
 common=(--runner "$out/reference/gothic-body-runner" --assets "$HOME/gothic-ai/body-baseline/assets"
  --save "$HOME/gothic-ai/body-baseline/runs/melee-reference-stage1-v4/run/save_slot_1.sav"
@@ -565,7 +572,9 @@ for name,expected in declaration['original_files'].items():assert sha(out/name)=
 for name,expected in declaration['retry_files'].items():assert sha(retry/name)==expected,'Retry fixture/launcher changed: '+name
 environment=json.loads((out/'environment.json').read_text())
 for name,expected in environment['frozen_files'].items():assert sha(out/name)==expected,'Original frozen code changed: '+name
-assert sha(Path(declaration['engine_library']['path']))==declaration['engine_library']['sha256'],'Private engine library changed before retry'
+sys.path.insert(0,str(out/'code/scripts'))
+from body_headless_suite import engine_library_provenance
+assert engine_library_provenance(Path(declaration['engine_library']['path']))['engine_library_sha256']==declaration['engine_library']['engine_library_sha256'],'Private engine library set changed before retry'
 PY
     ;;
   realtime-probe)

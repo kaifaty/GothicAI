@@ -720,7 +720,7 @@ def put(section, key, value):
     ini.set(section, key, value)
 
 put("ENGINE", "zMaxFps", str(int(sys.argv[2])))
-for name in ("CHARACTER_VIRTUAL", "NPC_CHARACTER_VIRTUAL", "MONSTER_CHARACTER_VIRTUAL", "MELEE_BLADE_SHADOW", "MELEE_PHYSICS_HITS", "MELEE_POSTURE", "MELEE_REACTIONS"):
+for name in ("CHARACTER_VIRTUAL", "NPC_CHARACTER_VIRTUAL", "MONSTER_CHARACTER_VIRTUAL", "MELEE_BLADE_SHADOW", "MELEE_PHYSICS_HITS", "MELEE_POSTURE", "MELEE_REACTIONS", "BUMP_REACTIONS"):
     value = os.environ.get(name, "")
     if value:
         if value not in ("0", "1"):

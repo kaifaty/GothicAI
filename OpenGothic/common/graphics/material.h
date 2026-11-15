@@ -8,6 +8,7 @@
 #include "graphics/foliagewind.h"
 #include "graphics/grass/grassground.h"
 #include "graphics/grass/grassparams.h"
+#include "graphics/windowglow.h"
 
 class Material final {
   public:
@@ -87,6 +88,7 @@ class Material final {
     FoliageWind::Params       foliage;                 // leaves in the wind (materials.json): BK_FOLIAGE
     Grass::Params             grass;                   // a ground that grows grass (materials.json): BK_GRASS
     Layers                    layers;                  // its own two layers, or a verge's (materials.json): BK_GROUND, BK_VERGE
+    WindowGlow::Params        window;                  // the glow is a window's (materials.json): BK_WINDOW
     float                     envMapping       = 0;
 
     bool operator == (const Material& other) const;

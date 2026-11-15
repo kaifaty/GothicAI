@@ -744,7 +744,8 @@ void groundRecords(Tempest::Device& device, const Fixture& fixture) {
     R"("BAD_VERGE_NAMELESS.TGA":{"verge":{}},)" +
     R"("BAD_VERGE_REACH.TGA":{"verge":{"of":"MEADOW.TGA","reach":121}},)" +
     R"("BAD_VERGE_MARGIN.TGA":{"verge":{"of":"MEADOW.TGA","margin":-1}},)" +
-    R"("BAD_VERGE_NUMBER.TGA":{"verge":1})" +
+    R"("BAD_VERGE_NUMBER.TGA":{"verge":1},)" +
+    R"("BAD_VERGE_WINDOW.TGA":{)" + maps + R"(,"emissive":1,"window":{},"verge":{"of":"MEADOW.TGA"}})" +
     "}");
   Resources resources(device);
   const Material unlisted(source("UNLISTED.TGA"),true);
@@ -801,12 +802,12 @@ void groundRecords(Tempest::Device& device, const Fixture& fixture) {
 
   for(const auto* name:{"BAD_NO_GRASS.TGA","BAD_ONE_LAYER.TGA","BAD_NO_MAP.TGA","BAD_TILE.TGA","BAD_FAR.TGA","BAD_NUMBER.TGA",
                        "BAD_PROJECTED.TGA","BAD_FINE.TGA","BAD_VERGE_GRASS.TGA","BAD_VERGE_NAMELESS.TGA","BAD_VERGE_REACH.TGA",
-                       "BAD_VERGE_MARGIN.TGA","BAD_VERGE_NUMBER.TGA"}) {
+                       "BAD_VERGE_MARGIN.TGA","BAD_VERGE_NUMBER.TGA","BAD_VERGE_WINDOW.TGA"}) {
     const auto bad = Resources::groundParams(name);
     require(!Resources::loadMaterialMaps(name).present && !Resources::grassParams(name).on && !bad.ground.on && !bad.verge.on &&
             !Resources::loadMaterialMaps(name).layers.present(),
             (std::string("ground or verge of a wrong type or range, without its grass or its maps, or beside a projection "
-                        "must reject the record whole: ")+name).c_str());
+                        "or a window must reject the record whole: ")+name).c_str());
     }
 
   // The layers' maps are of their ground's demand, at the density of the finer tile: with no owner asking they

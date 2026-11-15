@@ -165,6 +165,9 @@ class CollisionWorld final {
       Tempest::Vec3 position = {}, velocity = {}, groundNormal = {}, groundVelocity = {};
       // Opposing, non-walkable world contact left unresolved by the stair pass.
       Tempest::Vec3 steepContactNormal = {};
+      // Strongest opposing non-floor contact, including movable bodies and stairs.
+      Tempest::Vec3 obstacleNormal = {};
+      bool obstacleDynamic = false;
       bool grounded = false;
       bool steep = false;
       bool steepContact = false;

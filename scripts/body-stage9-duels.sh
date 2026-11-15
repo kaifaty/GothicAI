@@ -57,7 +57,7 @@ for name in ${DUELS_MODELS:-bc round2}; do
       --runner "$runner" --assets "$HOME/gothic-ai/body-baseline/assets" \
       --save "$HOME/gothic-ai/body-baseline/runs/melee-reference-stage1-v4/run/save_slot_1.sav" \
       --reference "$HOME/gothic-ai/body-baseline/runs/melee-reference-stage1-v4" \
-      --source "$engine_root/source/OpenGothic" --engine-library "$engine_root/build/libOpenGothic.a" \
+      --source "$engine_root/source/OpenGothic" --engine-library "$engine_root/build" \
       --scenario "$code/scripts/bench/body-arena.bench" --melee-scenario "$code/scripts/bench/body-melee.bench" \
       --native-reference "$HOME/gothic-ai/body-headless/runs/stage3-v1/native-off" \
       --config "$config" --phase "$phase" --policy-code-root "$code" \

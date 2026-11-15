@@ -21,7 +21,7 @@ import sys
 import time
 from typing import Any
 
-from body_headless_suite import (process_sample, rng_environment,
+from body_headless_suite import (engine_library_provenance, process_sample, rng_environment,
                                  service_snapshot, sha256, write_json)
 
 
@@ -141,7 +141,7 @@ def provenance(args: argparse.Namespace) -> dict[str, Any]:
     return {"schema_version": 1, "kind": "body_observe_stage3",
             "recorded_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
             "host": platform.node(), "platform": platform.platform(), "python": platform.python_version(),
-            "binary_sha256": sha256(args.runner), "engine_library_sha256": sha256(args.engine_library),
+            "binary_sha256": sha256(args.runner), **engine_library_provenance(args.engine_library),
             "source_sha256": digest.hexdigest(), "source_files_hashed": files,
             "save_sha256": sha256(args.save), "settings_sha256": baseline["settings_sha256"],
             "game_version": baseline["game_version"],

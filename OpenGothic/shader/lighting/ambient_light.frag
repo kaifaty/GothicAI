@@ -165,7 +165,7 @@ void main() {
 #endif
 #if defined(MATERIAL_MAPS)
   // own glow (embers, burning wood): common.glsl, emissiveMeshGlow
-  color += emissiveMeshGlow(texelFetch(gbufOrm, fragCoord, 0), scene.GSunIntensity, scene.exposure);
+  color += emissiveMeshGlow(texelFetch(gbufOrm, fragCoord, 0), diff4.a, scene.GSunIntensity, scene.exposure);
 #endif
 
 #if defined(SURFEL_GI) && 1

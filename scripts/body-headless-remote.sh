@@ -155,7 +155,7 @@ binary="$task_root/build/opengothic/gothic-body-runner"
 rendered="$task_root/build/opengothic/Gothic2Notr"
 out="$task_root/runs/$run_name"
 source_root="$task_root/source"
-engine_library="$task_root/build/libOpenGothic.a"
+engine_library="$task_root/build"
 if gq_available; then
   # Keep the runner, rendered engine and IPC probe library from one build.
   exec 8>"$task_root/build.lock"
@@ -192,8 +192,16 @@ if gq_available; then
   source_root="$out/reference/source"
   mkdir -p "$source_root"
   tar -xzf "$out/source.tar.gz" -C "$source_root"
-  cp "$engine_library" "$out/reference/libOpenGothic.a"
-  engine_library="$out/reference/libOpenGothic.a"
+  mkdir -p "$out/reference/engine-libraries"
+  for library in libOpenGothic.a libengine-platform.a; do
+    [[ -f "$engine_library/$library" ]] || { echo "Engine library missing: $library" >&2; exit 1; }
+  done
+  while IFS= read -r -d '' library; do
+    relative="${library#"$engine_library"/}"
+    mkdir -p "$out/reference/engine-libraries/$(dirname "$relative")"
+    cp "$library" "$out/reference/engine-libraries/$relative"
+  done < <(find "$engine_library" -type d \( -name lib -o -name _deps \) -prune -o -name '*.a' ! -name libminiz.a -print0)
+  engine_library="$out/reference/engine-libraries"
   exec 8>&-
 else
   nice -n 10 tar -czf "$out/source.tar.gz" -C "$task_root/source" OpenGothic
