@@ -171,7 +171,7 @@ class Renderer final {
       bool           upscaleMipBiasSet  = false; // OPENGOTHIC_UPSCALE_MIP_BIAS over log2(in/out) - 1
       float          upscaleMipBias     = 0;
       // our own temporal upscale in the same place (taau_resolve.frag), any backend
-      bool           taau               = false; // OPENGOTHIC_UPSCALE=taau
+      bool           taau               = false; // [INTERNAL] temporalUpscale, OPENGOTHIC_UPSCALE=taau|off
       float          taauAlpha          = 0.2f;  // OPENGOTHIC_TAAU_ALPHA: a full history's share of a sample at the centre
       float          taauKernel         = 6.f;   // OPENGOTHIC_TAAU_KERNEL: exp(-k*d^2), d in output pixels
       float          taauClipTrust      = 4.f;   // OPENGOTHIC_TAAU_CLIP_TRUST: weight lost by a clipped history

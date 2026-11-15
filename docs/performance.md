@@ -106,12 +106,15 @@ PERF_ARGS='-rt 0' PERF_ENV='OPENGOTHIC_FOOTIK=0' scripts/perf.sh market
 в её справке: стенд не придумывает универсального выключателя.
 
 `PERF_VID_RES` задаёт внутреннее разрешение рендера, как пункт меню
-«разрешение»: `0` — полное (по умолчанию у стенда), `1` — 75 %, `2` — 50 %
-drawable, с растяжением до экрана. В самой игре на Metal по умолчанию 75 %
+«разрешение»: `0` — полное (по умолчанию у стенда), `1` — средняя ступень, `2` — 50 %
+drawable, с растяжением до экрана. В самой игре на Metal по умолчанию средняя ступень
 (`vidResIndex=1`, если в `Gothic.ini` ключа нет), на остальных бэкендах — 100 %.
 `PERF_VID_RES=game` не пишет ключ и меряет то, что получит игрок. Значение пишется в `metadata.json` (`vid_res`).
-На Metal растягивает MetalFX Spatial, на остальных бэкендах и с
-`PERF_INI='INTERNAL.spatialUpscale=0'` — прежний Lanczos в тонмаппинге.
+На Metal уменьшенный кадр с 2026-11-15 собирает свой временной апскейл TAAU
+(`[INTERNAL] temporalUpscale`, по умолчанию 1 на Metal), и средняя ступень при нём — 2/3 кадра.
+`PERF_ENV='OPENGOTHIC_UPSCALE=off'` или `PERF_INI='INTERNAL.temporalUpscale=0'` возвращают
+прежний путь: TAA во внутреннем разрешении, средняя ступень 75 %, растягивает MetalFX Spatial;
+на остальных бэкендах и с `PERF_INI='INTERNAL.spatialUpscale=0'` — Lanczos в тонмаппинге.
 
 ```bash
 NO_BUILD=1 PERF_VID_RES=1 scripts/perf.sh market forest interior
