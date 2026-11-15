@@ -18,9 +18,9 @@ std::string bumpWho(const Npc* npc) {
     return "null";
   if(npc->isPlayer())
     return "\"player\"";
-  const auto* symbol = npc->world().script().findSymbol(npc->instanceSymbol());
+  const auto name = npc->world().rules().symbolName(npc->instanceSymbol());
   // Daedalus instance names are identifiers, so they need no JSON escaping.
-  return "\""+std::string(symbol!=nullptr ? symbol->name() : "npc")+"\"";
+  return "\""+std::string(name.empty() ? "npc" : name)+"\"";
   }
 
 const char* bumpKind(BumpHit::Kind kind) {
