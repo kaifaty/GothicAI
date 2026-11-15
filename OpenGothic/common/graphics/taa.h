@@ -57,6 +57,9 @@ namespace Taa {
   // 0.5 up to 1.5 times, where the enlarged frame brings more of the detail itself and deeper lobes overdo it
   // (cobbles under a walking camera at 67 %: 1.13 of the full resolution's sharpness with 0.75, 1.01 with 0.5)
   float              upscaleHistSharp(float sharp, uint32_t inW, uint32_t outW);
+  // The share of the frame the scene is drawn at by [INTERNAL] vidResIndex: 0 the whole, 2 and more a half, 1 the
+  // step between: 3/4 for the spatial upscale and 2/3 for our own temporal one, whose look was accepted at 2/3
+  float              internalScale(float vidResIndex, bool taau);
   // The depth test of our own upscale (taau_prepare.frag). A perspective's depth is a + b/w of the view depth w, so
   // 1/w is in proportion to (1 - depth) + (a - 1): `upscaleDepthOffset` is that a - 1, n/(f - n); 0 with no
   // perspective. `upscaleHidden`: how much the previous frame hid a point whose 1/w was `invWExpected` then, where
