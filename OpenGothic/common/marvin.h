@@ -101,6 +101,7 @@ class Marvin {
       C_ToggleRagdollBrace,
       C_ToggleBumpReactions,
       C_ToggleWallReach,
+      C_ToggleWallStop,
       C_ToggleFurnitureParts,
       C_TogglePhysicsNoise,
       C_ToggleDestruction,

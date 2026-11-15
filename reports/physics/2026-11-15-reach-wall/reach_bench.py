@@ -7,7 +7,8 @@
 
 The wall and the table are the spots of step 2's scenario. The wall takes are filmed from behind the shoulder, `_side`
 by a fixed camera along the wall, `_back` from straight behind, as the player sees the hero; `_slow` run three
-times slower. In `wall_run_13` the hero meets the wall 13 degrees off and slides along it. In `wall_turn`
+times slower. In `wall_run_13` the hero meets the wall 13 degrees off: with the wall stop (`WALL_STOP=0` for «было») he stands,
+without it he slides along it; the `stop_*` takes are the stop's own. In `wall_turn`
 the hero, pressed into the wall, turns round with the key held and runs away; in `wall_sword` the right hand holds
 a sword and only the left one goes to the wall.
 """
@@ -96,11 +97,12 @@ character cleanup
 
 
 # The wall stands 13 degrees off the world's axes: facing 76 the hero meets it head on and stops dead, facing 90 he
-# meets it 13 degrees off and slides along it at 0.75 m/s with the key held.
+# meets it 13 degrees off and, without the wall stop, slides along it at 0.75 m/s with the key held.
 HEAD_ON = ((3250, -4300), 76)
 SIDE = "at 3581 24 -3895 3372 8 -3785"   # fixed, along the wall: the arms between the body and the wall
 BACK = "follow 320 140 180"               # as the player sees the hero
 HAND = "at 3275 33 -3807 3376 28 -3771"   # fixed, a metre from where the palms come to stand
+SCAN = (2950, 3050, 3125, 3400, 3550, 3700)   # 3250 is `wall_run_13`
 text = """# Step 3, acceptance: the hands to the wall, the stand of a body pressed into it.
 # @timeout 1800
 seed 92203
@@ -127,6 +129,15 @@ TAKES = {
     "wall_release": lambda t: wall(t, *HEAD_ON, ms=2200, during="wait 4200"),
     "wall_sword": lambda t: wall(t, *HEAD_ON, before="equip ItMw_1h_Vlk_Sword\ntap weapon\nwait 1500",
                                  during="wait 3500\ntap weapon\nwait 1500"),
+    # the wall stop: met 13 and 20 degrees off head on the hero stands, at 35 he slides as before; pressed, he turns
+    # 20 degrees more (held), then 20 again (let go)
+    "stop_20": lambda t: wall(t, (3250, -4300), 96, cam=BACK),
+    "stop_35": lambda t: wall(t, (3250, -4300), 111, cam=BACK),
+    "stop_turn": lambda t: wall(t, (3250, -4300), 90, cam=BACK, ms=5200,
+                                during="wait 2600\nturn 14\nwait 1300\nturn 20\nwait 2400"),
+    # along the house, 13 degrees off: planks, a post, a window's niche, the wall's ends - where it is not flat 45 cm
+    # to both sides the hero slides as before
+    **{f"stop_scan_{x}": (lambda t, x=x: wall(t, (x, -4300), 90, cam=BACK)) for x in SCAN},
     "npc_run": person,
     "table_run": table,
     "table_run_slow": lambda t: table(t, slow=True),

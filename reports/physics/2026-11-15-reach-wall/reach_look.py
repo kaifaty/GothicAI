@@ -5,7 +5,8 @@
 
 Reads metrics.csv (the hero's rc_* columns) and the `reach` events of run/melee-posture.jsonl. For every take: when
 the root stopped, when the warning came and the palms stood on the wall, how the planted palm keeps its place (gap
-to the surface, slip along it), the elbow and the wrist, when the stand is fully shown. With a second folder: the
+to the surface, slip along it), the elbow and the wrist, when the stand is fully shown, how long the wall stop
+held the hero and how far the root went on after it stopped. With a second folder: the
 largest distance between the hero's root in the two runs, frame by frame of each take.
 """
 import csv
@@ -68,7 +69,12 @@ for take, frames in takes.items():
                     f"gap {min(gap[i] for i in on):+.1f}..{max(gap[i] for i in on):+.1f} cm, "
                     f"slip max {max(slip[i] for i in on):.1f} cm, wrist max {max(wrist[i] for i in on):.0f}")
     print(" ".join(line))
-    print(f"    arm {float(frames[0]['rc_arm']):.1f} cm; press max {max(press):.2f}")
+    # the wall stop: how long it held, how far the root went on after it stopped (a slide along the wall)
+    held = [i for i in range(len(frames)) if "rc_stop" in frames[i] and float(frames[i]["rc_stop"]) > 0]
+    crept = max(math.hypot(x[i] - x[stop], z[i] - z[stop]) for i in range(stop, len(frames)))
+    print(f"    arm {float(frames[0]['rc_arm']):.1f} cm; press max {max(press):.2f}; stand max {max(halt):.2f}; "
+          f"wall stop {'%.0f ms' % (t[held[-1]] - t[held[0]]) if held else 'none'}; "
+          f"went on {crept:.0f} cm after the stop")
 
 if len(sys.argv) > 2:
     other = load(sys.argv[2])

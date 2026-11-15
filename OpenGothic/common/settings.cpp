@@ -97,7 +97,7 @@ void Settings::load(std::u16string_view systemIni, std::u16string_view userIni) 
   defaults->set("GAME", "ragdoll_brace",       1); // a knocked-down human braces the fall (S_BRACE_* poses on the motors)
   defaults->set("GAME", "bump_reactions",      1);
   defaults->set("GAME", "wall_reach",          1); // hands to the wall ahead and the stand of a body pressed into it
-  defaults->set("GAME", "wall_stop",           0); // a trial: the hero held nearly head on by a flat wall does not slide along it
+  defaults->set("GAME", "wall_stop",           1); // the hero held nearly head on by a flat wall stands, he does not creep along it
   defaults->set("GAME", "furniture_parts",     1);
   defaults->set("GAME", "physics_noise",       1);
   defaults->set("GAME", "destruction",         1);
