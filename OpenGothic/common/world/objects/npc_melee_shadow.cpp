@@ -54,10 +54,10 @@ namespace NpcMeleeShadow {
 std::string meleeShadowWho(const Npc* npc) {
   if(npc==nullptr)
     return "null";
-  const auto* symbol = npc->world().script().findSymbol(npc->instanceSymbol());
+  const auto symbol = npc->world().rules().symbolName(npc->instanceSymbol());
   return "{\"id\":" + std::to_string(npc->world().npcId(npc)) +
          ",\"instance\":" + std::to_string(npc->instanceSymbol()) + ",\"name\":" +
-         Bench::bodyJson(symbol!=nullptr ? std::string_view(symbol->name()) : std::string_view("npc")) +
+         Bench::bodyJson(!symbol.empty() ? symbol : std::string_view("npc")) +
          ",\"position_cm\":" + meleeShadowPoint(npc->position()) + "}";
   }
 
@@ -524,10 +524,10 @@ void Npc::syncMeleeShadowSwing() {
   shadow.speed = attack->speed;
   shadow.attacker = meleeShadowWho(this);
   shadow.animation = seq->name;
-  const auto* weaponSymbol = item!=nullptr ? owner.script().findSymbol(item->clsId()) : nullptr;
+  const auto weaponSymbol = item!=nullptr ? owner.rules().symbolName(item->clsId()) : std::string_view();
   shadow.weapon = "{\"mode\":" + Bench::bodyJson(mode==WeaponState::Fist ? "fist" :
                                                    (mode==WeaponState::W1H ? "1h" : "2h")) +
-                  ",\"name\":" + Bench::bodyJson(weaponSymbol!=nullptr ? std::string_view(weaponSymbol->name()) : std::string_view("unarmed")) +
+                  ",\"name\":" + Bench::bodyJson(!weaponSymbol.empty() ? weaponSymbol : std::string_view("unarmed")) +
                   ",\"visual\":" + Bench::bodyJson(item==nullptr ? "" : item->handle().visual) +
                   ",\"length_cm\":" + std::to_string(length) + "}";
   shadow.legacyTarget = "null";
@@ -786,7 +786,7 @@ void Npc::updateMeleeShadow() {
     }
   if(shadow.stopped)
     return;
-  const float walkableCos = std::cos(float(owner.script().guildVal().slide_angle[guild()])*float(M_PI)/180.f);
+  const float walkableCos = std::cos(float(owner.rules().guildVal().slide_angle[guild()])*float(M_PI)/180.f);
   const auto weapon=weaponState()==WeaponState::Fist ? MeleeImpact::Weapon::Fist :
                     weaponState()==WeaponState::W2H ? MeleeImpact::Weapon::TwoHand : MeleeImpact::Weapon::OneHand;
   owner.physic()->updateShadowBlade(this,shadow.id,blade,owner.tickCount(),activeBegin,activeEnd,walkableCos,
@@ -992,7 +992,7 @@ void Npc::consumeMeleeContacts() {
       continue;
       }
     const int partyMember = 15;
-    const bool sameParty = owner.script().isFriendlyFire(*this,*target) ||
+    const bool sameParty = owner.rules().isFriendlyFire(*this,*target) ||
                            (handle().aivar[partyMember]!=0 && target->handle().aivar[partyMember]!=0);
     if(skipMeleeAlly(isPlayer(),target==currentTarget,guild()==target->guild(),sameParty,isEnemy(*target))) {
       entry.result = "ally_skipped";

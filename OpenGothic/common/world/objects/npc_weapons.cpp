@@ -1,7 +1,7 @@
 #include "npc.h"
 
 #include "graphics/mesh/skeleton.h"
-#include "game/gamescript.h"
+#include "game/gamerules.h"
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"
 #include "world/world.h"

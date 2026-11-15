@@ -129,8 +129,8 @@ const char* materialTag(asset::MaterialGroup src) {
   return "UD";
   }
 
-World::World(GameSession& game, std::string_view file, bool startup, std::function<void(int)> loadProgress)
-  :wname(std::move(file)), game(game), wsound(game,*this), wobj(*this) {
+World::World(GameSession& game, GameRules& rules, std::string_view file, bool startup, std::function<void(int)> loadProgress)
+  :wname(std::move(file)), game(game), gameRules(&rules), wsound(game,*this), wobj(*this) {
   const auto loadStarted = std::chrono::steady_clock::now();
   Resources::configureTextures(Settings::getS("GAME","texture_budget_mb"),Settings::getS("GAME","texture_far_skip_mips"),
                                Settings::getS("GAME","texture_target_mb"),Settings::getS("GAME","texture_screen_mips"),
@@ -373,20 +373,20 @@ void World::updateLandscape(const Camera& camera) {
   }
 
 void World::createPlayer(std::string_view cls) {
-  size_t id = script().findSymbolIndex(cls);
+  size_t id = rules().findSymbolIndex(cls);
   if(id==size_t(-1))
     return;
   std::string_view waypoint = wmatrix->startPoint().name;
   auto             npc      = std::make_unique<Npc>(*this, id, waypoint, NpcProcessPolicy::Player);
   npcPlayer = wobj.insertPlayer(std::move(npc), waypoint);
-  script().setInstanceNPC("HERO",*npcPlayer);
+  rules().setInstanceNPC("HERO",*npcPlayer);
   }
 
 void World::insertPlayer(std::unique_ptr<Npc> &&npc, std::string_view waypoint) {
   if(npc==nullptr)
     return;
   npcPlayer = wobj.insertPlayer(std::move(npc),waypoint);
-  script().setInstanceNPC("HERO",*npcPlayer);
+  rules().setInstanceNPC("HERO",*npcPlayer);
   }
 
 void World::setPlayer(Npc* npc) {
@@ -409,9 +409,9 @@ void World::setPlayer(Npc* npc) {
 
 void World::postInit() {
   // NOTE: level inspector override player stats globaly
-  // lvlInspector.reset(new Npc(*this,script().getSymbolIndex("PC_Levelinspektor"),""));
+  // lvlInspector.reset(new Npc(*this,rules().getSymbolIndex("PC_Levelinspektor"),""));
 
-  // game.script()->inserNpc("Snapper",wmatrix->startPoint().name);
+  // game.rules()->inserNpc("Snapper",wmatrix->startPoint().name);
   }
 
 void World::load(Serialize &fin) {
@@ -491,8 +491,8 @@ void World::logStartupFloorDigest() {
     auto* npc = npcById(i);
     if(npc==nullptr)
       continue;
-    const auto* sym = script().findSymbol(npc->instanceSymbol());
-    Tempest::Log::i("[loadprobe-floor-digest] i=",i," npc=",sym!=nullptr ? sym->name() : std::to_string(npc->instanceSymbol()),
+    const auto sym = rules().symbolName(npc->instanceSymbol());
+    Tempest::Log::i("[loadprobe-floor-digest] i=",i," npc=",sym.empty() ? std::to_string(npc->instanceSymbol()) : std::string(sym),
                     " ",npc->startupFloorDigest());
     }
   }
@@ -525,8 +525,8 @@ bool World::stickArrow(MeshObjects::Mesh&& arrow, const Tempest::Matrix4x4& worl
   if(culprit!=nullptr) {
     if(culprit->isPlayer())
       pin.culprit = "PLAYER";
-    else if(auto* symbol = script().findSymbol(culprit->instanceSymbol()))
-      pin.culprit = symbol->name();
+    else if(auto symbol = rules().symbolName(culprit->instanceSymbol()); !symbol.empty())
+      pin.culprit = symbol;
     }
   if(movable!=nullptr) {
     pin.local = movable->transform;
@@ -623,8 +623,8 @@ std::vector<World::PhysicsTrace> World::physicsTraces(const Tempest::Vec3* viewe
       trace.sightPoints = bodySightPoints(npc);
       trace.appearedAt  = state.diedAt; // -1: a body of an older save, its age unknown
       trace.culprit     = state.culprit;
-      if(auto* symbol = script().findSymbol(npc.instanceSymbol()))
-        trace.npc = symbol->name();
+      if(auto symbol = rules().symbolName(npc.instanceSymbol()); !symbol.empty())
+        trace.npc = symbol;
       result.push_back(std::move(trace));
       }
     }
@@ -748,14 +748,7 @@ bool World::heroSeesBody(const Npc& hero, const Npc& body) const {
 bool World::isStoryNpcType(int32_t type) const {
   if(!storyNpcTypesRead) {
     storyNpcTypesRead = true;
-    const char* names[] = {"NPCTYPE_MAIN","NPCTYPE_OCMAIN","NPCTYPE_BL_MAIN"};
-    std::array<std::optional<int32_t>,3> symbols;
-    for(size_t i=0;i<symbols.size();++i) {
-      auto* symbol = script().getVm().find_symbol_by_name(names[i]);
-      if(symbol!=nullptr && symbol->type()==daedalus::DaedalusDataType::INT)
-        symbols[i] = symbol->get_int(0);
-      }
-    storyNpcTypes = BodyTraces::storyTypes(symbols);
+    storyNpcTypes = rules().storyNpcTypes();
     }
   return BodyTraces::isStoryType(type,storyNpcTypes);
   }
@@ -880,8 +873,8 @@ void World::sweepBodiesAt(int64_t now) {
       gone.push_back(&npc);
     }
   for(auto* npc:gone) {
-    const auto* symbol = script().findSymbol(npc->instanceSymbol());
-    Tempest::Log::i("body traces: ",bodyTraceId(*npc)," (",symbol!=nullptr ? symbol->name() : std::string("?"),
+    const auto symbol = rules().symbolName(npc->instanceSymbol());
+    Tempest::Log::i("body traces: ",bodyTraceId(*npc)," (",symbol.empty() ? std::string_view("?") : symbol,
                     ") leaves the world with its inventory");
     wobj.removeNpc(*npc);
     }
@@ -1473,7 +1466,7 @@ bool World::isTargeted(Npc& npc) {
   }
 
 Npc *World::addNpc(std::string_view name, std::string_view at) {
-  size_t id = script().findSymbolIndex(name);
+  size_t id = rules().findSymbolIndex(name);
   if(id==size_t(-1))
     return nullptr;
   return wobj.addNpc(id,at);
@@ -1523,9 +1516,9 @@ void World::applySpellImpact(int32_t spellId, const Tempest::Vec3& point, Npc* c
   using namespace Tempest;
   if(!Settings::physicsFlags().spellPhysics)
     return;
-  const auto kind = script().physicalSpell(spellId);
-  const bool wind = kind==GameScript::PhysicalSpell::WindFist;
-  if(!wind && kind!=GameScript::PhysicalSpell::Fireball)
+  const auto kind = rules().physicalSpell(spellId);
+  const bool wind = kind==::PhysicalSpell::WindFist;
+  if(!wind && kind!=::PhysicalSpell::Fireball)
     return;
   if(wind && caster==nullptr)
     return;
@@ -1601,11 +1594,9 @@ void World::applySpellImpact(int32_t spellId, const Tempest::Vec3& point, Npc* c
 
 void World::startSpellField(int32_t spellId, const Tempest::Vec3& point, Npc* caster, Npc* target) {
   if(!Settings::physicsFlags().spellPhysics ||
-     script().physicalSpell(spellId)!=GameScript::PhysicalSpell::Whirlwind)
+     rules().physicalSpell(spellId)!=::PhysicalSpell::Whirlwind)
     return;
-  int seconds = 10;
-  if(auto* duration = script().findSymbol("SPL_TIME_WHIRLWIND"))
-    seconds = std::clamp(duration->get_int(),1,60);
+  const int seconds = rules().whirlwindDuration();
   if(spellFields.size()>=16)
     spellFields.erase(spellFields.begin());
   spellFields.push_back({point,caster,target,tickCount()+uint64_t(seconds)*1000,spellId});
@@ -1672,7 +1663,7 @@ void World::tickSpellFields(uint64_t dt) {
 Bullet& World::shootSpell(const Item &itm, const Npc &npc, const Npc *target) {
   Tempest::Vec3   dir     = {1.f,0.f,0.f};
   auto            pos     = npc.collosionCenter();
-  const VisualFx* vfx     = script().spellVfx(itm.spellId());
+  const VisualFx* vfx     = rules().spellVfx(itm.spellId());
   float           tgRange = vfx==nullptr ? 0 : vfx->emTrjTargetRange;
 
   if(target!=nullptr) {
@@ -1918,25 +1909,25 @@ const FocusRecord& World::searchPolicy(const Npc& pl, TargetCollect& collAlgo, T
     case WeaponState::W1H:
     case WeaponState::W2H:
       opt = WorldObjects::NoDeath;
-      return script().focusMelee();
+      return rules().focusMelee();
     case WeaponState::Bow:
     case WeaponState::CBow:
       opt = WorldObjects::SearchFlg(WorldObjects::NoDeath | WorldObjects::NoUnconscious);
-      return script().focusRange();
+      return rules().focusRange();
     case WeaponState::Mage:{
       if(auto weapon = pl.inventory().activeWeapon()) {
         int32_t id  = weapon->spellId();
-        auto&   spl = script().spellDesc(id);
+        auto&   spl = rules().spellDesc(id);
         collAlgo = TargetCollect(spl.target_collect_algo);
         collType = TargetType(spl.target_collect_type);
         }
       opt = WorldObjects::SearchFlg(WorldObjects::NoDeath | WorldObjects::NoUnconscious);
-      return script().focusMage();
+      return rules().focusMage();
       }
     case WeaponState::NoWeapon:
-      return script().focusNorm();
+      return rules().focusNorm();
     }
-  return script().focusNorm();
+  return rules().focusNorm();
   }
 
 void World::triggerOnStart(bool firstTime) {
@@ -2156,9 +2147,8 @@ void World::probeMemory(std::string_view stage) const {
   if(wview) wview->probeMemory(stage);
   Tempest::Log::i("[loadprobe-owner] stage=",stage," name=waynet_cpu bytes=",wmatrix->probeCpuBytes());
   Tempest::Log::i("[loadprobe-owner] stage=",stage," name=vob_objects_cpu bytes=",wobj.probeVobBytes());
-  auto& vm=script().getVm();
   Tempest::Log::i("[loadprobe-owner] stage=",stage," name=script_vm_cpu bytes=",
-                 sizeof(vm)+vm.symbols().capacity()*sizeof(vm.symbols()[0])+vm.size());
+                 rules().scriptVmMemorySize());
   }
 
 void World::animationPfx(const Animation::MdsParticleEffect& p, MdlVisual& visual) {

@@ -1,4 +1,5 @@
 #include "fightalgo.h"
+#include "game/gamescript.h"
 
 #include <Tempest/Log>
 #include <algorithm>

@@ -5,7 +5,7 @@
 #include "graphics/effect.h"
 #include "game/bodycontroller.h"
 #include "game/bodyobservations.h"
-#include "game/gamescript.h"
+#include "game/gamerules.h"
 #include "world/animationlod.h"
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"
@@ -120,8 +120,8 @@ void Npc::dropTorch(bool burnout) {
 
   size_t torchId = 0;
   if(burnout)
-    torchId = owner.script().findSymbolIndex("ItLsTorchburned"); else
-    torchId = owner.script().findSymbolIndex("ItLsTorchburning");
+    torchId = owner.rules().findSymbolIndex("ItLsTorchburned"); else
+    torchId = owner.rules().findSymbolIndex("ItLsTorchburning");
 
   size_t leftHand = sk->findNode("ZS_LEFTHAND");
   if(torchId!=size_t(-1) && leftHand!=size_t(-1)) {
@@ -509,7 +509,7 @@ void Npc::setTalkMood(std::string_view mood, std::string_view line, uint64_t hol
 void Npc::listenTo(uint64_t ms, const Npc* speaker) {
   auto toward = TalkGestures::Mood::Neutral;
   if(speaker!=nullptr)
-    switch(owner.script().personAttitude(*this,*speaker)) {  // as Npc_GetAttitude
+    switch(owner.rules().personAttitude(*this,*speaker)) {  // as Npc_GetAttitude
       case ATT_FRIENDLY: toward = TalkGestures::Mood::Friendly; break;
       case ATT_ANGRY:    toward = TalkGestures::Mood::Angry;    break;
       case ATT_HOSTILE:  toward = TalkGestures::Mood::Hostile;  break;
@@ -696,7 +696,7 @@ bool Npc::isAlignedToGround() const {
     return false;
   auto gl = guild();
   // four-legged creatures stand on the ground with foot IK instead of tilting as a whole
-  const bool align = owner.script().guildVal().surface_align[gl]!=0 && !visual.hasQuadrupedIk();
+  const bool align = owner.rules().guildVal().surface_align[gl]!=0 && !visual.hasQuadrupedIk();
   return align || isDead() || isLie();
   }
 

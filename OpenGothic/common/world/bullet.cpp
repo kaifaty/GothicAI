@@ -27,7 +27,7 @@ Bullet::Bullet(World& owner, const Item& itm, const Vec3& pos)
   if(itm.isSpellOrRune()) {
     material   = ItemMaterial::MAT_COUNT;
     int32_t id = itm.spellId();
-    const VisualFx* vfx = owner.script().spellVfx(id);
+    const VisualFx* vfx = owner.rules().spellVfx(id);
     if(vfx!=nullptr) {
       auto e = Effect(*vfx,owner,pos,SpellFxKey::Cast);
       setView(std::move(e));
@@ -268,7 +268,7 @@ bool Bullet::onCollide(Npc& npc) {
   const bool passes = !isSpell() && npc.isMeleeDodgeInvulnerable();
   if(ow!=nullptr) {
     // no damage between ally npc's, only emit pfx effect
-    const bool friendlyFire = wrld->script().isFriendlyFire(*ow, npc);
+    const bool friendlyFire = wrld->rules().isFriendlyFire(*ow, npc);
     if(!friendlyFire) {
       if(isSpell())
         npc.takeDamage(*ow,this,vfx.handle(),spellId()); else
@@ -338,8 +338,8 @@ void Bullet::updateMatrix() {
 void Bullet::applySpellPhysics(Npc* target) {
   if(!isSpell() || spellPhysicsApplied || !Settings::physicsFlags().spellPhysics)
     return;
-  const auto kind = wrld->script().physicalSpell(spellId());
-  if(kind!=GameScript::PhysicalSpell::WindFist && kind!=GameScript::PhysicalSpell::Fireball)
+  const auto kind = wrld->rules().physicalSpell(spellId());
+  if(kind!=::PhysicalSpell::WindFist && kind!=::PhysicalSpell::Fireball)
     return;
   spellPhysicsApplied = true;
   const auto point = target!=nullptr ? target->collosionCenter() : impactPoint();

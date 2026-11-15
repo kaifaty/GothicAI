@@ -6,7 +6,7 @@
 #include "game/bodycontroller.h"
 #include "game/bodytrajectory.h"
 #include "game/meleeparry.h"
-#include "game/gamescript.h"
+#include "game/gamerules.h"
 #include "world/objects/item.h"
 #include "world/world.h"
 #include "world/benchhooks.h"
@@ -270,8 +270,8 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
       const int talent = std::clamp(hitChance(ws==WeaponState::W2H ? TALENT_2H : TALENT_1H),0,100);
       if(swing && (meleeParadeTiming->sequence!=swing->sequence || meleeParadeTiming->origin!=swing->origin)) {
         const auto began = meleeParadeTiming->began;
-        const double u = (double(owner.script().rand(1u<<24,this))+.5)/double(1u<<24);
-        const double v = (double(owner.script().rand(1u<<24,this))+.5)/double(1u<<24);
+        const double u = (double(owner.rules().rand(1u<<24,this))+.5)/double(1u<<24);
+        const double v = (double(owner.rules().rand(1u<<24,this))+.5)/double(1u<<24);
         const float error = MeleeParry::timingSigmaMs(talent)*float(std::sqrt(-2.*std::log(u))*std::cos(2.*M_PI*v));
         meleeParadeTiming = MeleeParadeTiming{currentTarget,swing->sequence,swing->origin,began,swing->contact,error};
         if(Bench::bodyTracing()) {
@@ -349,9 +349,9 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
         auto hit = owner.physic()->rayNpc(this->mapWeaponBone(),currentTarget->centerPosition(),this);
         if(hit.hasCol && hit.npcHit!=currentTarget) {
           obsticle = true;
-          // if(hit.npcHit!=nullptr && owner.script().personAttitude(*this,*hit.npcHit)==ATT_HOSTILE)
+          // if(hit.npcHit!=nullptr && owner.rules().personAttitude(*this,*hit.npcHit)==ATT_HOSTILE)
           //   obsticle = false;
-          if(hit.npcHit!=nullptr && hit.npcHit!=currentTarget && owner.script().isFriendlyFire(*this,*hit.npcHit))
+          if(hit.npcHit!=nullptr && hit.npcHit!=currentTarget && owner.rules().isFriendlyFire(*this,*hit.npcHit))
             obsticle = false;
           }
         }
@@ -360,7 +360,7 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
           obsticle = false;
         }
       if(obsticle) {
-        auto anim = (owner.script().rand(2,this)==0 ? Npc::Anim::MoveL : Npc::Anim::MoveR);
+        auto anim = (owner.rules().rand(2,this)==0 ? Npc::Anim::MoveL : Npc::Anim::MoveR);
         if(setAnim(anim)){
           visual.setAnimRotate(*this,0);
           implFaiWait(visual.pose().animationTotalTime());
@@ -509,7 +509,7 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
         const auto back = choose(MeleeDodge::Direction::Back);
         if(back || (!bodyOverride && (choose(MeleeDodge::Direction::Left) || choose(MeleeDodge::Direction::Right)))) {
           const auto direction = bodyOverride ? MeleeDodge::Direction::Back :
-                                 MeleeAi::dodgeDirection(float(owner.script().rand(1u<<24,this))/float(1u<<24));
+                                 MeleeAi::dodgeDirection(float(owner.rules().rand(1u<<24,this))/float(1u<<24));
           auto move = choose(direction);
           if(!move)
             move = back;
@@ -561,8 +561,8 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
             }
           const int talent = hitChance(TALENT_1H);
           if(swing && (timing.sequence!=swing->sequence || timing.origin!=swing->origin)) {
-            const double u = (double(owner.script().rand(1u<<24,this))+.5)/double(1u<<24);
-            const double v = (double(owner.script().rand(1u<<24,this))+.5)/double(1u<<24);
+            const double u = (double(owner.rules().rand(1u<<24,this))+.5)/double(1u<<24);
+            const double v = (double(owner.rules().rand(1u<<24,this))+.5)/double(1u<<24);
             timing.sequence = swing->sequence;
             timing.origin = swing->origin;
             timing.errorMs = MeleeParry::timingSigmaMs(talent)*float(std::sqrt(-2.*std::log(u))*std::cos(2.*M_PI*v));

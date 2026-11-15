@@ -819,14 +819,6 @@ size_t GameScript::symbolsCount() const {
   return vm.symbols().size();
   }
 
-const AiState& GameScript::aiState(ScriptFn id) {
-  auto it = aiStates.find(id.ptr);
-  if(it!=aiStates.end())
-    return it->second;
-  auto ins = aiStates.emplace(id.ptr,AiState(*this,id.ptr));
-  return ins.first->second;
-  }
-
 const SpellRecord& GameScript::spellDesc(int32_t splId) {
   auto& tag = spellFxInstanceNames->get_string(uint16_t(splId));
   return spells->find(tag);

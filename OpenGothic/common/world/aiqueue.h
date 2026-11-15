@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <deque>
 
-#include "game/gamescript.h"
+#include "game/scripttypes.h"
 #include "game/rpgvocabulary.h"
 
 class Npc;

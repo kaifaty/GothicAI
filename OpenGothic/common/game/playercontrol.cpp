@@ -326,13 +326,13 @@ void PlayerControl::onKeyReleased(KeyCodec::Action a, KeyCodec::Mapping mapping)
     }
 
   if(a==KeyCodec::Map && pl!=nullptr) {
-    w->script().playerHotKeyScreenMap(*pl);
+    w->rules().playerHotKeyScreenMap(*pl);
     }
   if(a==KeyCodec::Heal && pl!=nullptr) {
-    w->script().playerHotLameHeal(*pl);
+    w->rules().playerHotLameHeal(*pl);
     }
   if(a==KeyCodec::Potion && pl!=nullptr) {
-    w->script().playerHotLamePotion(*pl);
+    w->rules().playerHotLamePotion(*pl);
     }
 
   auto ws = pl==nullptr ? WeaponState::NoWeapon : pl->weaponState();
@@ -513,7 +513,7 @@ bool PlayerControl::interact(Npc &other) {
     if(inv==nullptr)
       return false;
     if(!inv->ransack(*w->player(),other))
-      w->script().printNothingToGet();
+      w->rules().printNothingToGet();
     } else {
     if((state&BS_MAX)!=BS_NONE)
       return false;
@@ -1126,7 +1126,7 @@ void PlayerControl::implMove(uint64_t dt) {
       pl.startDive();
       }
     else if(pl.isInWater()) {
-      auto& g  = w->script().guildVal();
+      auto& g  = w->rules().guildVal();
       auto  gl = pl.guild();
 
       if(0<=gl && gl<GIL_MAX && pl.isStanding()) {
@@ -1443,7 +1443,7 @@ void PlayerControl::implMoveMobsi(Npc& pl, uint64_t /*dt*/) {
 
 void PlayerControl::processPickLock(Npc& pl, Interactive& inter, KeyCodec::Action k) {
   auto                   w             = GameServices::inst().world();
-  auto&                  script        = w->script();
+  auto&                  script        = w->rules();
   const size_t           ItKE_lockpick = script.lockPickId();
 
   char ch = '\0';
@@ -1549,7 +1549,7 @@ void PlayerControl::processAutoRotate(Npc& pl, float& rot, uint64_t dt) {
     else if(!pl.isAttack()) {
       auto  dp   = other->centerPosition() - pl.centerPosition();
       auto  gl   = pl.guild();
-      float step = float(pl.world().script().guildVal().turn_speed[gl]);
+      float step = float(pl.world().rules().guildVal().turn_speed[gl]);
       if(actrl[ActGeneric])
         step*=2.f;
       pl.rotateTo(dp.x,dp.z,step,AnimationSolver::TurnType::Std,dt);

@@ -127,11 +127,11 @@ bool Npc::createRagdoll() {
   ragdoll = std::move(body);
   ragdoll->setNpc(this);
   if(const auto culprit = spellImpulseCulprit.lock())
-    ragdoll->setNoiseCulprit(owner.script().findNpc(culprit.get()));
+    ragdoll->setNoiseCulprit(owner.rules().findNpc(culprit.get()));
   dispatchArrowPhysics(*ragdoll);
   if(Settings::physicsFlags().spellPhysics && pendingSpellImpulse.quadLength()>0.f) {
     const auto culprit = spellImpulseCulprit.lock();
-    ragdoll->addImpulse(pendingSpellImpulse,owner.script().findNpc(culprit.get()));
+    ragdoll->addImpulse(pendingSpellImpulse,owner.rules().findNpc(culprit.get()));
     }
   pendingSpellImpulse = {};
   spellImpulseCulprit.reset();
@@ -485,7 +485,7 @@ void Npc::prepareLivingBody() {
                                 meleeBenchDynamicPelvis ? Ragdoll::BenchPelvis::Dynamic : Ragdoll::BenchPelvis::Kinematic))
         throw std::runtime_error("melee benchmark motor configuration failed");
     if(const auto culprit = spellImpulseCulprit.lock())
-      living->setNoiseCulprit(owner.script().findNpc(culprit.get()));
+      living->setNoiseCulprit(owner.rules().findNpc(culprit.get()));
     }
   else
     livingRetryTick = owner.tickCount()+1000;
@@ -550,7 +550,7 @@ void Npc::queueArrowPhysics(const Bullet& bullet) {
 void Npc::dispatchArrowPhysics(Ragdoll& body) {
   for(const auto& hit:arrowImpacts) {
     const auto culprit = hit.culprit.lock();
-    if(body.queueHit(hit.bone,hit.point,hit.impulseNs,hit.strength,owner.script().findNpc(culprit.get()),
+    if(body.queueHit(hit.bone,hit.point,hit.impulseNs,hit.strength,owner.rules().findNpc(culprit.get()),
                      hit.stiffness)) {
       auto& probe = hit.melee ? meleeReaction : arrowPhysics;
       ++probe.applied;

@@ -78,7 +78,7 @@ bool Npc::meleeDestructionBlow(MeleeDestructionBlow& blow) const {
   const auto mode=weaponState();
   if(mode!=WeaponState::Fist && mode!=WeaponState::W1H && mode!=WeaponState::W2H)
     return false;
-  const auto& guild=owner.script().guildVal();
+  const auto& guild=owner.rules().guildVal();
   const auto gl=this->guild();
   blow={};
   blow.rangeCm=float(guild.fight_range_base[gl]+guild.fight_range_fist[gl]);
@@ -451,7 +451,7 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const VisualFx* vfx, int32_t s
   if(!isPlayer())
     setOther(&other);
 
-  CollideMask bMask = owner.script().canNpcCollideWithSpell(*this,&other,splId);
+  CollideMask bMask = owner.rules().canNpcCollideWithSpell(*this,&other,splId);
   if(bMask!=COLL_DONOTHING)
     Effect::onCollide(owner,vfx,position(),this,&other,splId);
   takeDamage(other,b,bMask,splId,true);
@@ -482,7 +482,7 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
   int32_t                  damageType = DamageCalculator::damageTypeMask(other);
 
   if(isSpell) {
-    auto& spl  = owner.script().spellDesc(splId);
+    auto& spl  = owner.rules().spellDesc(splId);
     splCat     = SpellCategory(spl.spell_type);
     damageType = spl.damage_type;
     for(size_t i=0; i<daedalus::DamageType::NUM; ++i)
@@ -621,7 +621,7 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
 
   // throw enemy
   const bool physicalWind = isSpell && Settings::physicsFlags().spellPhysics &&
-                            owner.script().physicalSpell(splId)==GameScript::PhysicalSpell::WindFist;
+                            owner.rules().physicalSpell(splId)==::PhysicalSpell::WindFist;
   if(hitResult.hasHit && (damageType & (1<<daedalus::DamageType::FLY)) && !physicalWind &&
      !(superArmor && (isMeleeCharging() || isMeleeChargeReleasing()))) {
     mvAlgo.accessDamFly(x-other.x, z-other.z, lastHitType);
@@ -645,7 +645,7 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
         owner.sendPassivePerc(*this,other,*this,PERC_ASSESSMURDER);
         }
       else {
-        if(owner.script().rand(2,this)==0) {
+        if(owner.rules().rand(2,this)==0) {
           emitSoundSVM("SVM_%d_AARGH");
           }
         }
@@ -745,7 +745,7 @@ bool Npc::queueMeleeReaction(const Npc& other, const Vec3& at, const MeleeBladeC
 
 Npc* Npc::bodyImpactCulprit() const {
   const auto culprit=bodyImpactLaunchCulprit.lock();
-  return owner.script().findNpc(culprit.get());
+  return owner.rules().findNpc(culprit.get());
   }
 
 void Npc::recordBodyImpact(float speedCmMs, Npc* culprit, const char* source) {
@@ -769,7 +769,7 @@ void Npc::applyBodyImpact() {
   const float speed=bodyImpactWindow.take(owner.tickCount());
   if(speed<=0.f) return;
   const auto culpritHandle=bodyImpactPendingCulprit.lock();
-  auto* culprit=owner.script().findNpc(culpritHandle.get());
+  auto* culprit=owner.rules().findNpc(culpritHandle.get());
   bodyImpactPendingCulprit.reset();
   const auto damage=DamageCalculator::damageFall(*this,speed);
   const int32_t before=attribute(ATR_HITPOINTS);

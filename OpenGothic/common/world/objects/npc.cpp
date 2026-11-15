@@ -33,7 +33,7 @@
 #include "game/ragdollsave.h"
 #include "game/meleeparry.h"
 #include "game/meleecharge.h"
-#include "game/gamescript.h"
+#include "game/gamerules.h"
 #include "utils/string_frm.h"
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"
@@ -196,7 +196,7 @@ void Npc::GoTo::setFlee() {
 
 
 Npc::TransformBack::TransformBack(Npc& self) {
-    hnpc        = self.owner.script().copyNpc(self.hnpc);
+    hnpc        = self.owner.rules().copyNpc(self.hnpc);
     npcInstanceSymbol = self.npcInstanceSymbol;
     invent      = std::move(self.invent);
     self.invent = Inventory(); // cleanup
@@ -215,7 +215,7 @@ Npc::TransformBack::TransformBack(Npc& self) {
     }
 
 Npc::TransformBack::TransformBack(Npc& owner, Serialize& fin) {
-    hnpc = owner.owner.script().loadNpc(fin,nullptr,npcInstanceSymbol);
+    hnpc = owner.owner.rules().loadNpc(fin,nullptr,npcInstanceSymbol);
     invent.load(fin,owner);
     fin.read(talentsSk,talentsVl);
     fin.read(body,head,vHead,vTeeth,vColor,bdColor);
@@ -234,7 +234,7 @@ void Npc::TransformBack::undo(Npc& self) {
     auto level    = self.hnpc->level;
     std::memcpy(aivar,self.hnpc->aivar,sizeof(aivar));
 
-    self.owner.script().restoreNpc(self.hnpc,hnpc,self);
+    self.owner.rules().restoreNpc(self.hnpc,hnpc,self);
     self.npcInstanceSymbol = npcInstanceSymbol;
     self.hnpc->exp      = exp;
     self.hnpc->exp_next = exp_next;
@@ -267,9 +267,9 @@ Npc::Npc(World &owner, size_t instance, std::string_view waypoint, NpcProcessPol
   static std::atomic<uint32_t> creationCounter{0};
   creationSeqValue = ++creationCounter;
   animLodSeed    = AnimationLod::nextSeed();
-  outputPipe     = owner.script().openAiOuput();
+  outputPipe     = owner.rules().openAiOuput();
 
-  hnpc = owner.script().createNpc(*this,instance,waypoint,npcInstanceSymbol);
+  hnpc = owner.rules().createNpc(*this,instance,waypoint,npcInstanceSymbol);
 
   if(instance==size_t(-1))
     return;
@@ -285,7 +285,7 @@ Npc::Npc(World &owner, size_t instance, std::string_view waypoint, NpcProcessPol
 
 Npc::~Npc(){
   if(startupFloorPendingValue)
-    owner.script().startupFloor().forget(*this);
+    owner.rules().startupFloorForget(*this);
   endMeleeAiSpecial();
   clearMeleeShadow();
   if(std::getenv("OPENGOTHIC_MELEE_BENCH")!=nullptr && owner.physic()!=nullptr)
@@ -295,7 +295,7 @@ Npc::~Npc(){
   Bench::bodyForget(this);
   if(currentInteract)
     currentInteract->detach(*this,true);
-  owner.script().detachNpc(hnpc,*this);
+  owner.rules().detachNpc(hnpc,*this);
   }
 
 std::string Npc::startupFloorDigest() const {
@@ -350,7 +350,7 @@ bool Npc::performOutput(const AiQueue::AiAction &act) {
   //  return false;
   if(act.act==AI_Output           && outputPipe->output   (*this,act.s0))
     return true;
-  auto svm = owner.script().messageFromSvm(act.s0,hnpc->voice);
+  auto svm = owner.rules().messageFromSvm(act.s0,hnpc->voice);
   if(act.act==AI_OutputSvm        && outputPipe->outputSvm(*this,svm,act.s0,act.target))
     return true;
   if(act.act==AI_OutputSvmOverlay && outputPipe->outputOv(*this,svm,act.s0,act.target))
@@ -397,8 +397,8 @@ void Npc::setSimTier(NpcSimTier t) {
     if(matches<=1)
       return point;
     owner.noteGraphFpLoadResolution();
-    const auto* symbol=owner.script().findSymbol(instanceSymbol());
-    Log::i("npc_graph_fp_load_resolution npc=",symbol!=nullptr ? symbol->name() : displayName(),
+    const auto symbol=owner.rules().symbolName(instanceSymbol());
+    Log::i("npc_graph_fp_load_resolution npc=",!symbol.empty() ? symbol : displayName(),
            " world_id=",owner.npcId(this)," id=",hnpc->id," fp=",point->name," reference=",reference,
            " candidates=",matches," saved=(",loadedFpPosition.x,",",loadedFpPosition.y,",",loadedFpPosition.z,
            ") resolved=(",nearest->position().x,",",nearest->position().y,",",nearest->position().z,
@@ -465,7 +465,7 @@ bool Npc::checkHealth(bool onChange, bool allowUnconscious) {
   const int minHp = isMonster() ? 0 : 1;
   if(hnpc->attribute[ATR_HITPOINTS]<=minHp) {
     if(currentOther==nullptr || !allowUnconscious || !isHuman() ||
-       (owner.script().personAttitude(*this,*currentOther)==ATT_HOSTILE && !isNonlethalFight(*currentOther))){
+       (owner.rules().personAttitude(*this,*currentOther)==ATT_HOSTILE && !isNonlethalFight(*currentOther))){
       if(hnpc->attribute[ATR_HITPOINTS]<=0)
         onNoHealth(true,HS_Dead);
       return false;
@@ -523,7 +523,7 @@ void Npc::onNoHealth(bool death, HitSound sndMask) {
   if(!death)
     hnpc->attribute[ATR_HITPOINTS]=1;
 
-  size_t fdead=owner.script().findSymbolIndex(state);
+  ScriptFn fdead=owner.rules().findFunction(state);
   startState(fdead,"",gtime::endOfTime(),true);
   if(BodyTraces::stampsDeath(death,wasDead,bodyTraceRecord.id,bodyTraceEntered)) {
     // Engine truth of the body trace: kept whatever [GAME] body_traces says, so the
@@ -536,8 +536,8 @@ void Npc::onNoHealth(bool death, HitSound sndMask) {
     if(lastHit!=nullptr && lastHit!=this) {
       if(lastHit->isPlayer())
         trace.culprit = "PLAYER";
-      else if(auto* symbol = owner.script().findSymbol(lastHit->instanceSymbol()))
-        trace.culprit = symbol->name();
+      else if(auto symbol = owner.rules().symbolName(lastHit->instanceSymbol()); !symbol.empty())
+        trace.culprit = symbol;
       }
     bodyTraceRecord  = std::move(trace);
     bodyTraceEntered = isDead();
@@ -584,7 +584,7 @@ bool Npc::isMeleeFighter() const {
 
 bool Npc::hasAutoroll() const {
   auto gl = std::min<uint32_t>(guild(),GIL_MAX);
-  return owner.script().guildVal().disable_autoroll[gl]==0;
+  return owner.rules().guildVal().disable_autoroll[gl]==0;
   }
 
 void Npc::stopWalkAnimation() {
@@ -1051,10 +1051,10 @@ void Npc::tick(uint64_t dt) {
 
   if(isDive()) {
     uint32_t gl = guild();
-    int32_t  v  = world().script().guildVal().dive_time[gl]*1000;
+    int32_t  v  = world().rules().guildVal().dive_time[gl]*1000;
     int32_t  t  = diveTime();
     if(v>=0 && t>v+int(dt)) {
-      int tickSz = world().script().npcDamDiveTime();
+      int tickSz = world().rules().npcDamDiveTime();
       if(tickSz>0) {
         t-=v;
         int dmg = t/tickSz - (t-int(dt))/tickSz;
@@ -1194,8 +1194,8 @@ bool Npc::hasQueuedPhysicalSpellState(const AiQueue& queue) const {
   const auto* action = queue.front();
   if(action==nullptr || action->act!=AI_StartState)
     return false;
-  const auto* symbol = owner.script().findSymbol(action->func.ptr);
-  return symbol!=nullptr && (symbol->name()=="ZS_MAGICFREEZE" || symbol->name()=="ZS_WHIRLWIND");
+  const auto symbol = owner.rules().symbolName(action->func.ptr);
+  return symbol=="ZS_MAGICFREEZE" || symbol=="ZS_WHIRLWIND";
   }
 
 void Npc::setTarget(Npc *t) {
@@ -1363,7 +1363,7 @@ bool Npc::transformInto(size_t instance) {
   invent.updateView(*this);
   visual.clearOverlays();
 
-  npcInstanceSymbol = owner.script().initializeInstanceNpc(hnpc, instance);
+  npcInstanceSymbol = owner.rules().initializeInstanceNpc(hnpc, instance);
   hnpc->level = transformSpl->hnpc->level;
   return true;
   }
@@ -1519,11 +1519,11 @@ bool Npc::checkGoToNpcdistance(const Npc &other) {
   }
 
 bool Npc::isEnemy(const Npc &other) const {
-  return owner.script().personAttitude(*this,other)==ATT_HOSTILE;
+  return owner.rules().personAttitude(*this,other)==ATT_HOSTILE;
   }
 
 bool Npc::isDead() const {
-  return owner.script().isDead(*this);
+  return owner.rules().isDead(*this);
   }
 
 bool Npc::isLie() const {
@@ -1531,7 +1531,7 @@ bool Npc::isLie() const {
   }
 
 bool Npc::isUnconscious() const {
-  return owner.script().isUnconscious(*this);
+  return owner.rules().isUnconscious(*this);
   }
 
 bool Npc::isDown() const {
@@ -1539,11 +1539,11 @@ bool Npc::isDown() const {
   }
 
 bool Npc::isAttack() const {
-  return owner.script().isAttack(*this);
+  return owner.rules().isAttack(*this);
   }
 
 bool Npc::isTalk() const {
-  return owner.script().isTalk(*this);
+  return owner.rules().isTalk(*this);
   }
 
 void Npc::setTalkPartner(Npc* other, uint64_t ms) {
@@ -1642,8 +1642,8 @@ void Npc::transformBack() {
   transformSpl.reset();
   }
 
-std::vector<GameScript::DlgChoice> Npc::dialogChoices(Npc& player,const std::vector<uint32_t> &except,bool includeImp) {
-  return owner.script().dialogChoices(player.hnpc,this->hnpc,except,includeImp);
+std::vector<::DlgChoice> Npc::dialogChoices(Npc& player,const std::vector<uint32_t> &except,bool includeImp) {
+  return owner.rules().dialogChoices(player.hnpc,this->hnpc,except,includeImp);
   }
 
 bool Npc::isAiQueueEmpty() const {

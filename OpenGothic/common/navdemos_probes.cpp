@@ -1,6 +1,7 @@
 #include "navdemos_internal.h"
 #include "game/navigationeyeworld.h"
 #include "navdemos.h"
+#include "game/gamescript.h"
 #include "navbench.h"
 #include "game/knownroadsbench.h"
 #include "world/world.h"

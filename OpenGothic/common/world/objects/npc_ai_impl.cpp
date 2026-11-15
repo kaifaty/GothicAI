@@ -1,7 +1,7 @@
 #include "npc.h"
 
 #include "game/bodycontroller.h"
-#include "game/gamescript.h"
+#include "game/gamerules.h"
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"
 #include "world/world.h"
@@ -92,7 +92,7 @@ bool Npc::implTurnAway(const Npc &oth, uint64_t dt) {
   auto dx = x-oth.x;
   auto dz = z-oth.z;
   auto  gl   = guild();
-  float step = float(owner.script().guildVal().turn_speed[gl]);
+  float step = float(owner.rules().guildVal().turn_speed[gl]);
   return rotateTo(dx,dz,step,AnimationSolver::TurnType::Std,dt);
   }
 
@@ -107,7 +107,7 @@ bool Npc::implTurnToFai(const Npc& oth, uint64_t dt) {
     return false;
 
   auto  gl   = guild();
-  auto& gv   = owner.script().guildVal();
+  auto& gv   = owner.rules().guildVal();
   float step = float(gv.turn_speed[gl]);
   //auto  dpos = fghAlgo.distVec(*currentTarget, *this);
   auto dpos = currentTarget->collosionCenter() - collosionCenter();
@@ -152,7 +152,7 @@ bool Npc::implTurnTo(const WayPoint* wp, AnimationSolver::TurnType anim, uint64_
 
 bool Npc::implTurnTo(float dx, float dz, AnimationSolver::TurnType anim, uint64_t dt) {
   auto  gl   = guild();
-  float step = float(owner.script().guildVal().turn_speed[gl]);
+  float step = float(owner.rules().guildVal().turn_speed[gl]);
   return rotateTo(dx,dz,step,anim,dt);
   }
 
