@@ -837,6 +837,8 @@ def pending_input_binding(proof,binary_sha256,source_sha256,library_sha256,envir
     require((folder/"manifest.json").is_file() and (folder/"probe.json").is_file() and helper.is_file(),
             "runtime scheduling transition lacks its native pending-input proof")
     manifest=read(folder/"manifest.json");result=read(folder/"probe.json")
+    require({"libOpenGothic.a","libengine-platform.a"} <= set(manifest.get("engine_libraries",{})),
+            "native scheduling proof lacks engine library set provenance; legacy single-library hashes cannot be compared")
     require(manifest.get("binary_sha256")==binary_sha256 and manifest.get("source_sha256")==source_sha256 and
             manifest.get("engine_library_sha256")==library_sha256 and manifest.get("driver_sha256")==sha(helper)==
             environment["frozen_files"].get(str(helper.relative_to(proof))) and manifest.get("scheduling_diagnostics") is True and
