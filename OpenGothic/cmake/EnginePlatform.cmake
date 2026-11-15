@@ -79,14 +79,18 @@ function(engine_link_map_check target layers)
   set(map "${CMAKE_CURRENT_BINARY_DIR}/${target}-$<CONFIG>.map")
   set(format native)
   if(MSVC)
-    if(NOT CMAKE_GENERATOR MATCHES "Ninja|Makefiles")
-      message(FATAL_ERROR "${target}: MSVC mixed-runtime checking requires Ninja or Makefiles to capture linker output")
+    target_link_options(${target} PRIVATE "/MAP:${map}")
+    if(NOT CMAKE_GENERATOR MATCHES "^(Ninja|.*Makefiles.*)$")
+      message(WARNING "${target}: mixed-runtime map check disabled for ${CMAKE_GENERATOR}; "
+        "linker output capture requires single-config Ninja or Makefiles; the link itself remains")
+      return()
     endif()
     # /MAP lists public symbols only. Full /VERBOSE records archive extraction before
     # /OPT:REF and /OPT:ICF remove/fold COMDATs, including objects absent from /MAP.
     # /VERBOSE:LIB only lists searched libraries on current MSVC.
-    target_link_options(${target} PRIVATE "/MAP:${map}" /VERBOSE)
-    set(map "${map}.link.log")
+    target_link_options(${target} PRIVATE /VERBOSE)
+    # RULE_LAUNCH_LINK does not promise generator expressions on CMake 3.20.
+    set(map "${CMAKE_CURRENT_BINARY_DIR}/${target}-${CMAKE_BUILD_TYPE}.map.link.log")
     set(format MSVC)
     # Wrap the complete link rule (including cmake -E vs_link_exe) on CMake 3.20.
     # VERBOSE=1 inside the wrapper makes vs_link_exe forward successful linker output.

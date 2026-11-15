@@ -223,9 +223,11 @@ def test_msvc_link_map(tmp_path, target, allowed, record, error):
         assert "mixed runtime object gothic-base-runtime(sha256.cpp.obj)" in result.stdout
 
 
-@pytest.mark.parametrize("exit_code", [0, 7])
+@pytest.mark.parametrize("generator,exit_code", [
+    ("Ninja", 0), ("Ninja", 7), ("Visual Studio 17 2022", 0),
+])
 @pytest.mark.skipif(shutil.which("ninja") is None, reason="no ninja")
-def test_msvc_link_output_capture(tmp_path, exit_code):
+def test_msvc_link_output_capture(tmp_path, generator, exit_code):
     directory = tmp_path / "with space"
     directory.mkdir()
     build = directory / "build"
@@ -261,10 +263,21 @@ def test_msvc_link_output_capture(tmp_path, exit_code):
         f"{platform[start:end]}\n"
         "add_executable(engine-platform-link main.obj)\n"
         "set_target_properties(engine-platform-link PROPERTIES LINKER_LANGUAGE CXX)\n"
-        "engine_link_map_check(engine-platform-link platform)\n")
+        # Exercise the Visual Studio branch without needing its toolchain on this host.
+        f'set(CMAKE_GENERATOR "{generator}")\n'
+        "engine_link_map_check(engine-platform-link platform)\n"
+        "get_target_property(launcher engine-platform-link RULE_LAUNCH_LINK)\n"
+        'file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/launcher.txt" "${launcher}")\n')
     configured = subprocess.run(["cmake", "-S", str(directory), "-B", str(build), "-G", "Ninja",
                                  "-DCMAKE_BUILD_TYPE=Release"], capture_output=True, text=True)
     assert configured.returncode == 0, configured.stdout + configured.stderr
+    launcher = (build / "launcher.txt").read_text()
+    if generator != "Ninja":
+        assert "mixed-runtime map check disabled for Visual Studio" in " ".join(configured.stderr.split())
+        assert launcher == "launcher-NOTFOUND"
+        return
+    assert "$<" not in launcher
+    assert log.as_posix() in launcher
     log.write_text("stale output")
     result = subprocess.run(["cmake", "--build", str(build)],
                             capture_output=True, text=True)
