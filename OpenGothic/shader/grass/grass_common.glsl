@@ -26,6 +26,9 @@ const uint GrassPartRootAo      = 16u;
 const uint GrassPartNormal      = 32u;
 const uint GrassPartPaint       = 64u;
 const uint GrassPartHide        = 128u;
+const uint GrassPartCover       = 256u; // the paint of the meadow's own ground (grass_layers.glsl): sward green, earth red
+const uint GrassPartLayers      = 4096u; // a ground with its own layers as a painted ground: no layers, its blades as there
+const uint GrassPartCells       = 8192u;
 
 uint grassPartsOff(float ringW) { return uint(max(ringW - 1.0, 0.0)*0.5 + 0.25); }
 
@@ -37,6 +40,13 @@ vec3 grassPaintBand(float d) {
   if(abs(d- 500.0)< 62.0) return vec3(0,1,0);
   if(abs(d-1000.0)<125.0) return vec3(1,1,0);
   return vec3(0);
+  }
+
+// The paint of the squares: red by the squares of 0.5 m, green by those of 5 m, as a chessboard each; blue the
+// ground's mark. scripts/grass_look.py `variety` reads the spread of the meadow's tone between them
+vec3 grassPaintCells(vec2 xz) {
+  const ivec2 a = ivec2(floor(xz/50.0)), b = ivec2(floor(xz/500.0));
+  return vec3(float((a.x+a.y) & 1)*0.5, float((b.x+b.y) & 1)*0.5, 0.5);
   }
 
 // The look. A blade takes the colour of the ground under its root (a coarse level of its texture) and is darker
@@ -57,6 +67,26 @@ const float GrassTaper       = 0.7;                      // of the width is gone
 // gone from where the blades start to thin to half of the distance where they start to go (grass_ground.glsl)
 const float GrassGroundShade = 0.72;
 const vec3  GrassFarTint     = vec3(1.00, 1.10, 0.74);
+// of a ground with its own layers (grass_layers.glsl): the shade between the blades is in part baked into its
+// sward, and its fine blades cover less of it than broad ones. At 0.74 the nearest ground came out at 0.83 to 0.88
+// of the meadow with broad blades (reports/engine/2026-11-14-meadow-ground, "Вторая попытка")
+const float GrassOwnGroundShade = 0.82;
+// and its sward differs from place to place by the patches' noise (grassPatch): drier and a little lighter where
+// the short sward is, greener and deeper towards the clumps. Patches of 2 to 10 m: the tile of the sward's map has
+// none. A turn of the tone, not a coat: the green and the straw of the map are both seen in a dry place
+const vec3  GrassSwardDry    = vec3(1.13, 1.07, 0.92);
+const vec3  GrassSwardLush   = vec3(0.87, 0.985, 0.97);
+const float GrassSwardDryAt  = 14000.0;                  // of the patches' noise
+const float GrassSwardLushAt = 46000.0;
+// the earth of a bare spot in such a sward (grass_layers.glsl): the layer's earth is of the road's tone; in the
+// meadow it lies dry under the sun, a warm brown a little under the sward's lightness (0.072 against 0.078 on
+// `bare-low`), so a spot is a dry place, no dark blotch and no pale pad. By the layer's height: the clods and the stones are pale, what lies between them is deeper and in their
+// shade; a slow noise makes one part of a spot paler than another, and the earth's normal is steeper than on a road
+const vec3  GrassSpotEarthHigh = vec3(1.34, 1.33, 1.30);
+const vec3  GrassSpotEarthLow  = vec3(0.81, 0.78, 0.72);
+const float GrassSpotEarthAo   = 0.62;                   // of the layer's, in the low parts
+const float GrassSpotEarthSlow = 0.12;                   // the slow noise, to either side
+const float GrassSpotEarthBump = 1.7;                    // of the normal map's slope
 const float GrassFarAo       = 0.95;
 const float GrassGrazeFrom   = 0.25;
 const float GrassGrazeTo     = 0.70;

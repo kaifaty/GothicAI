@@ -4,6 +4,9 @@
 # game-bare, game-short), the walk along the cart track, a turn of the game's camera, a gust crossing the field,
 # the low sun behind the grass, the night. The camera spots stand on surveyed ground: change them only with the
 # note.
+# The meadow's own ground (reports/engine/2026-11-14-meadow-ground): the border with the road from the game's
+# camera, across the track and along it (game-verge-across, game-verge-along), a spot of bare earth from 80 cm
+# over the ground (bare-low), the walk back along the track's edge from a low camera (meadow-verge).
 # Run it twice in the same window and put the halves side by side («выключено | включено»):
 #   OPENGOTHIC_GRASS=0 OPENGOTHIC_CONTENT=<set> TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh landscape-meadow
 #                      OPENGOTHIC_CONTENT=<set> TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh landscape-meadow
@@ -90,6 +93,25 @@ grass wait
 wait 5000
 shot game-short
 wait 200
+# the border of the meadow and the road: across the track, then along it
+goto pos 41701 3320 795
+face 0
+grass wait
+wait 5000
+shot game-verge-across
+wait 200
+turn 270
+wait 2500
+shot game-verge-along
+wait 200
+# a spot of bare earth 2.5 m away, from 80 cm over the ground; the hero behind the camera
+goto pos 41650 3385 560
+cam at 41792 3460 483 42020 3405 383
+grass wait
+wait 3000
+shot bare-low
+wait 200
+cam game
 
 # the walk along the cart track
 walkmode walk
@@ -102,7 +124,26 @@ wait 500
 walkto NW_TAVERNE_TROLLAREA_05
 wait 11500
 stop
+# the walk ends before the next place: a walk still in the queue goes on after the jump and takes the hero away
+waitarrive 20000
 walkmode run
+
+# back along the track's edge, the camera low behind the hero and to a side: the verge passes in the foreground
+walkmode walk
+goto NW_TAVERNE_TROLLAREA_05
+face wp NW_TAVERNE_TROLLAREA_03
+cam follow 260 110 160
+cam look 60
+grass wait
+wait 3000
+rec meadow-verge
+wait 500
+walkto NW_TAVERNE_TROLLAREA_03
+wait 10000
+stop
+waitarrive 20000
+walkmode run
+cam game
 
 # a full circle in 12 s from the place of the game's camera behind the hero
 goto NW_TAVERNE_TROLLAREA_03

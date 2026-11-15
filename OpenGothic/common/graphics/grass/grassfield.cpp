@@ -39,12 +39,22 @@ constexpr size_t  RankCounts   = 257;
 constexpr float   RootsBeyond  = 100.f;    // cm: a root lies no nearer to the camera than its cell less this
 constexpr size_t  MaxJobs      = 6;
 
+// The fine blades of the short sward (Grass::Params::fine): a ring of their own, cm. All of them to FineFull, a
+// share FineFull/d from there, into the ground between FineFade and FineRadius; two links near, one further
+constexpr float   FineFull     = 400.f;
+constexpr float   FineFade     = 1600.f;
+constexpr float   FineRadius   = 2000.f;
+constexpr float   FineWidth    = 0.5f;     // cm at the root, and per step of the blade's three bits
+constexpr float   FineWidthStep= 0.036f;
+
 struct Push final {
   Vec4     origin;
   float    wind         = 1.f;
   float    translucency = 0.f;
   uint32_t first        = 0;
   uint32_t segments     = 0;
+  Vec4     shape;                  // the width at the root and per step, cm; the ring's full and fade, 0 the scene's
+  float    swardK       = 0.f;     // repeats of the sward's map in a cm, by the world's x and z; 0 without own layers
   };
 
 int32_t floorDiv(int32_t a, int32_t b) {
@@ -83,8 +93,10 @@ GrassField::GrassField(SceneGlobals& scene, std::vector<ChunkId> ids)
     }
   ibo = Resources::ibo(index.data(), index.size());
 
+  // six more maps a ground: with bindless textures alone (DrawBuckets::commit)
+  layers = Shaders::options().doBindless;
   scene.setGrassRing(Vec4(ring.full, ring.fadeFrom, ring.radius, blades ? 1.f : 0.5f));
-  if(blades)
+  if(blades || layers)
     worker = std::thread([this] { run(); });
   }
 
@@ -97,6 +109,9 @@ GrassField::~GrassField() {
   if(worker.joinable())
     worker.join();
   scene.setGrassRing(Vec4());
+  scene.grassBorder = nullptr;
+  if(!borderCpu.empty())
+    Resources::recycle(std::move(borderGpu));
   }
 
 uint32_t GrassField::rankLimit(uint8_t level) const {
@@ -119,7 +134,17 @@ uint16_t GrassField::slotOf(const asset::Material& m) {
     c = char(std::toupper(static_cast<unsigned char>(c)));
   if(const auto it = slotByTexture.find(name); it!=slotByTexture.end())
     return it->second;
-  const auto params = Resources::grassParams(name);
+  auto params = Resources::grassParams(name);
+  if(params.on && layers) {
+    // the ground's own layers: the sward lies by the cover's rule, a blade takes its colour from the sward's map
+    if(const auto g = Resources::groundParams(name); g.ground.on) {
+      params.cover = true;
+      params.tile  = g.ground.swardTile*100.f;
+      params.fine  = params.fine && !Grass::fineOff();
+      if(const int32_t forced = Grass::forcedBroad(); forced>=0)
+        params.broad = float(forced)*0.01f;
+      }
+    }
   uint16_t id = uint16_t(-1);
   if(params.on && slots.size()<0xFFFF) {
     id = uint16_t(slots.size());
@@ -132,20 +157,41 @@ uint16_t GrassField::slotOf(const asset::Material& m) {
   return id;
   }
 
+GrassField::VergeOf GrassField::vergeOf(const asset::Material& m) {
+  std::string name = m.texture;
+  for(auto& c:name)
+    c = char(std::toupper(static_cast<unsigned char>(c)));
+  if(const auto it = vergeByTexture.find(name); it!=vergeByTexture.end())
+    return it->second;
+  VergeOf ret;
+  if(const auto g = Resources::groundParams(name); g.verge.on) {
+    asset::Material grass;
+    grass.texture = g.of;
+    ret.slot   = slotOf(grass);
+    ret.reach  = g.verge.reach;
+    ret.margin = g.verge.margin;
+    }
+  vergeByTexture.emplace(std::move(name),ret);
+  return ret;
+  }
+
 void GrassField::addChunk(ChunkId id, const asset::WorldMesh& mesh) {
-  if(!blades)
+  if(!blades && !layers)
     return;
   auto  summary = std::make_shared<Grass::Summary>();
   auto& p       = mesh.polygons;
 
   std::vector<uint16_t> slot(mesh.materials.size(), uint16_t(-1));
   std::vector<bool>     water(mesh.materials.size(), false);
+  std::vector<VergeOf>  verge(mesh.materials.size());
   {
   std::lock_guard guard(sync);
   for(size_t i=0; i<mesh.materials.size(); ++i) {
     water[i] = mesh.materials[i].group==asset::MaterialGroup::WATER;
     if(!water[i])
       slot[i] = slotOf(mesh.materials[i]);
+    if(layers && !water[i] && slot[i]==uint16_t(-1))
+      verge[i] = vergeOf(mesh.materials[i]);
     }
   }
 
@@ -163,7 +209,9 @@ void GrassField::addChunk(ChunkId id, const asset::WorldMesh& mesh) {
     if(m>=slot.size())
       continue;
     const bool beside = slot[m]==uint16_t(-1) && !water[m];
-    if(beside && !corner[p.vertex_indices[i*3]] && !corner[p.vertex_indices[i*3+1]] && !corner[p.vertex_indices[i*3+2]])
+    const bool road   = verge[m].slot!=uint16_t(-1); // kept whole: the strip is wider than a row of its triangles
+    const bool shares = corner[p.vertex_indices[i*3]] || corner[p.vertex_indices[i*3+1]] || corner[p.vertex_indices[i*3+2]];
+    if(beside && !shares && !road)
       continue;
     if(i<p.flags.size()) {
       const auto& f = p.flags[i];
@@ -180,8 +228,12 @@ void GrassField::addChunk(ChunkId id, const asset::WorldMesh& mesh) {
       }
     if(water[m])
       Grass::addWater(*summary,pos);
-    else if(beside)
-      Grass::addBeside(*summary,pos,normal);
+    else if(beside) {
+      if(shares)
+        Grass::addBeside(*summary,pos,normal);
+      if(road)
+        Grass::addVerge(*summary,pos,normal,verge[m].slot,verge[m].reach,verge[m].margin);
+      }
     else
       Grass::addGrass(*summary,pos,uv,normal,slot[m]);
     }
@@ -191,27 +243,128 @@ void GrassField::addChunk(ChunkId id, const asset::WorldMesh& mesh) {
   c.summary = std::move(summary);
   c.epoch   = ++epoch;
   dirty.store(true);
+  if(layers) {
+    borderWant.store(epoch);
+    wake.notify_one();
+    }
   }
 
 void GrassField::dropChunk(ChunkId id) {
-  if(!blades)
+  if(!blades && !layers)
     return;
   std::lock_guard guard(sync);
   if(chunks.erase(key(id.x,id.z))!=0) {
     ++epoch;
     dirty.store(true);
+    if(layers) {
+      borderWant.store(epoch);
+      wake.notify_one();
+      }
     }
+  }
+
+// The worker's: the borders of the chunks that are in. A chunk's pieces are found anew when it or one of the eight
+// round it came or went
+void GrassField::buildBorder() {
+  std::unordered_map<uint64_t,Chunk> snap;
+  uint64_t                           want = 0;
+  {
+  std::lock_guard guard(sync);
+  snap = chunks;
+  want = epoch;
+  }
+  std::vector<uint64_t> keys;
+  for(auto& i:snap)
+    if(i.second.summary!=nullptr && !i.second.summary->grass.empty())
+      keys.push_back(i.first);
+  std::sort(keys.begin(),keys.end());
+
+  std::vector<Grass::BorderSeg>       all;
+  std::unordered_map<uint64_t,Border> next;
+  for(uint64_t k:keys) {
+    const int32_t x = int32_t(uint32_t(k >> 32)), z = int32_t(uint32_t(k));
+    const Grass::Summary* around[9] = {};
+    size_t   count = 0;
+    uint64_t from  = 0;
+    bool     any   = false;
+    for(int32_t i=-1; i<=1; ++i)
+      for(int32_t j=-1; j<=1; ++j) {
+        const auto it = snap.find(key(x+i,z+j));
+        from = from*0x9E3779B97F4A7C15ull + (it!=snap.end() ? it->second.epoch : 0);
+        if(it==snap.end() || it->second.summary==nullptr)
+          continue;
+        around[count++] = it->second.summary.get();
+        any = any || !it->second.summary->verge.empty();
+        }
+    if(!any)
+      continue;
+    Border b;
+    if(const auto it = borderOf.find(k); it!=borderOf.end() && it->second.from==from) {
+      b = std::move(it->second);
+      } else {
+      b.from = from;
+      try {
+        b.segs = Grass::chunkBorder(*snap[k].summary, std::span<const Grass::Summary*const>(around,count));
+        }
+      catch(const std::exception& e) {
+        Log::e("grass: the border of chunk ",x,",",z," failed: ",e.what());
+        }
+      }
+    all.insert(all.end(), b.segs.begin(), b.segs.end());
+    next.emplace(k,std::move(b));
+    }
+  borderOf = std::move(next);
+  auto grid = Grass::packBorder(all);
+
+  std::lock_guard guard(sync);
+  borderGrid  = std::move(grid);
+  borderNew   = true;
+  borderBuilt = want;
+  }
+
+// The main thread's: the worker's borders into the buffer of the ground's shader
+void GrassField::takeBorder() {
+  std::vector<uint32_t> grid;
+  uint64_t              built = 0;
+  {
+  std::lock_guard guard(sync);
+  if(!borderNew)
+    return;
+  grid      = std::move(borderGrid);
+  built     = borderBuilt;
+  borderNew = false;
+  }
+  if(grid!=borderCpu) {
+    if(!borderCpu.empty())
+      Resources::recycle(std::move(borderGpu));
+    borderGpu = Resources::ssbo(grid.data(), grid.size()*sizeof(uint32_t));
+    borderCpu = std::move(grid);
+    scene.grassBorder = &borderGpu;
+    }
+  borderHave.store(built);
   }
 
 void GrassField::run() {
   Workers::setThreadName("Grass placement");
   for(;;) {
-    Job job;
+    Job  job;
+    bool border = false;
     {
     std::unique_lock guard(sync);
-    wake.wait(guard,[&] { return stopping || !jobs.empty(); });
+    wake.wait(guard,[&] { return stopping || !jobs.empty() || (layers && borderBuilt!=epoch); });
     if(stopping)
       return;
+    border = layers && borderBuilt!=epoch;
+    }
+    if(border) {
+      // before any cell: the ground under the blades is on the screen first
+      buildBorder();
+      continue;
+      }
+    {
+    std::unique_lock guard(sync);
+    if(jobs.empty())
+      continue;
     // the nearest cell first
     auto at = std::min_element(jobs.begin(),jobs.end(),[](const Job& a, const Job& b) { return a.dist<b.dist; });
     job = std::move(*at);
@@ -228,6 +381,8 @@ void GrassField::run() {
     in.params    = job.params;
     in.items     = job.items;
     in.rankLimit = rankLimit(job.level);
+    // the fine blades' ring: whole in a cell of the first level, the share at its near edge in the next, none beyond
+    in.rankLimitFine = job.level==0 ? 256u : (job.level==1 ? uint32_t(std::ceil(256.f*RankShare*FineFull/(LevelFrom[1]*ring.full))) : 0u);
     in.density   = ring.density;
     in.patch     = Grass::forcedPatch();
 
@@ -283,6 +438,8 @@ void GrassField::upload(Cell& c, Done&& d) {
   }
 
 void GrassField::update() {
+  if(layers)
+    takeBorder();
   if(!blades)
     return;
   scene.setGrassRing(Vec4(ring.full, ring.fadeFrom, ring.radius, 1.f + 2.f*float(Grass::partsOff())));
@@ -330,7 +487,11 @@ void GrassField::update() {
     std::lock_guard guard(sync);
     m = slots[slotTex.size()].material;
     }
-    slotTex.push_back(Resources::loadMaterial(m,true).tex);
+    // of a ground with its own layers the sward's map as well, laid by the world's x and z (Grass::Params::tile)
+    const auto& mat = Resources::loadMaterial(m,true);
+    const bool  own = slotParams[slotTex.size()].cover && mat.layers.present();
+    slotSward.push_back(own ? mat.layers.sward[0] : nullptr);
+    slotTex.push_back(mat.tex);
     }
 
   // buffers: a budget a frame, the nearest results first
@@ -424,7 +585,7 @@ void GrassField::update() {
       job.dist  = dist;
       for(int32_t i=-1; i<=1; ++i)
         for(int32_t j=-1; j<=1; ++j)
-          if(const auto& n = near[kx+i][kz+j]; n.summary!=nullptr && !n.summary->empty())
+          if(const auto& n = near[kx+i][kz+j]; n.summary!=nullptr && (!n.summary->empty() || !n.summary->verge.empty()))
             job.summaries.push_back(n.summary);
       ask.push_back(std::move(job));
       }
@@ -494,12 +655,18 @@ void GrassField::draw(Encoder<CommandBuffer>& cmd) {
       }
     cmd.setBinding(1, c.gpu);
     for(size_t bi=0; bi<c.batches.size(); ++bi) {
-      const auto&    b     = c.batches[bi];
-      const uint32_t count = c.below[bi*RankCounts+ranks];
+      const auto& b    = c.batches[bi];
+      const bool  fine = b.kind==1;
+      if(fine && c.dist>=FineRadius)
+        continue;
+      const size_t   rk    = fine ? size_t(std::min(256.f, std::ceil(256.f*RankShare*FineFull/std::max(c.dist-RootsBeyond,1.f)))) : ranks;
+      const uint8_t  links = fine ? uint8_t(c.dist<FineFull ? 2 : 1) : segments;
+      const uint32_t count = c.below[bi*RankCounts+rk];
       if(b.slot>=slotTex.size() || slotTex[b.slot]==nullptr || count==0)
         continue;
       st.drawn     += count;
-      st.triangles += size_t(count)*size_t(2*segments-1);
+      st.fine      += fine ? count : 0;
+      st.triangles += size_t(count)*size_t(2*links-1);
       const auto& p = slotParams[b.slot];
       Push push;
       push.origin       = Vec4(float(c.cx)*CellCm - float(Grass::CellMargin/Grass::Unit), float(c.minY)/float(Grass::Unit),
@@ -507,10 +674,14 @@ void GrassField::draw(Encoder<CommandBuffer>& cmd) {
       push.wind         = p.wind;
       push.translucency = p.translucency;
       push.first        = b.first;
-      push.segments     = segments;
+      push.segments     = links;
+      push.shape        = fine ? Vec4(FineWidth,FineWidthStep,FineFull,FineFade) : Vec4(0.f,0.f,0.f,0.f);
+      const auto* sward = slotSward[b.slot];
+      push.swardK       = (sward!=nullptr && p.tile>0.f) ? 1.f/p.tile : 0.f;
       cmd.setBinding(2, *slotTex[b.slot], Sampler::trillinear());
+      cmd.setBinding(3, sward!=nullptr ? *sward : *slotTex[b.slot], Sampler::trillinear());
       cmd.setPushData(push);
-      cmd.draw(nullptr, ibo, indexOffset(segments), size_t(2*segments-1)*3, 0, count);
+      cmd.draw(nullptr, ibo, indexOffset(links), size_t(2*links-1)*3, 0, count);
       }
     }
   last = st;

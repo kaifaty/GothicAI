@@ -14,11 +14,12 @@ layout(binding = 0, std140) uniform UboScene {
   SceneDesc scene;
   };
 
-layout(location = 0) in vec3 inColor;
+layout(location = 0) in vec4 inColor;     // the painted ground under the root; w: 1 on a ground with its own layers
 layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec4 inShade;     // the share of the blade's length, of the sun through, the dryness, the sheen
 layout(location = 3) in vec3 inPrevStatic;
 layout(location = 4) in vec3 inPrevDelta;
+layout(location = 5) in vec3 inRoot;      // on a ground with its own layers: the sward under the root
 
 layout(location = 0) out vec4 outDiffuse;
 layout(location = 1) out uint outNormal;
@@ -33,7 +34,10 @@ void main() {
   const float tone     = grassTone(t);
   const vec3  tip      = (partsOff & GrassPartTip)!=0u ? vec3(1.0) : mix(GrassTipGreen, GrassTipStraw, inShade.z);
   const float root     = (partsOff & GrassPartRoot)!=0u ? 1.0 : GrassRootShade;
-  vec3  color   = min(inColor*mix(vec3(root), tip, tone)*(1.0 + inShade.w*t), vec3(1.0));
+  // on a ground with its own layers the root is of the sward the blade stands in, so the blade grows out of its
+  // ground; the tip is what it is on a painted ground: green or straw by the blade, over the painted colours
+  vec3  color   = inColor.a>0.5 ? mix(inRoot*root, inColor.rgb*tip, tone) : inColor.rgb*mix(vec3(root), tip, tone);
+  color         = min(color*(1.0 + inShade.w*t), vec3(1.0));
   float ao      = (partsOff & GrassPartRootAo)!=0u ? 1.0 : mix(GrassRootAo, 1.0, tone);
   float through = inShade.y;
   if((partsOff & GrassPartPaint)!=0u) {
