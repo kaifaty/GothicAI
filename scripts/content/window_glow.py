@@ -7,6 +7,8 @@
         window-glow-dusk.bench> <out.mp4>
     uv run --no-project --with numpy --with pillow python scripts/content/window_glow.py lamps \
         --base <the game base>
+    uv run --no-project --with numpy --with pillow python scripts/content/window_glow.py part \
+        --from market-15 --set market-16
 
 A window lit of an evening is a material with `emissive` and `window` in materials.json whose ORM alpha marks what
 glows (OpenGothic/common/graphics/windowglow.h). `pilot` clones a content folder (APFS clones where the disk can),
@@ -16,15 +18,20 @@ shows a gap - between the leaves of closed shutters, around them, between their 
 The ORM's colour channels are decoded and compressed again; a set built from its source maps should write them
 from those instead.
 
-Step 2, one state of a house: `pilot` also writes worlds/NEWWORLD/houses.json with the houses below
-(OpenGothic/common/graphics/houselights.h): the lamps inside a house's box go out before its bedtime and its lit
-windows fade with them. `lamps` lists the base's lamps each house takes, by the engine's own rules.
+Step 2, one state of a house: `pilot` also writes worlds/NEWWORLD/houses.d/market-house.json with the houses
+below (OpenGothic/common/graphics/houselights.h): the lamps inside a house's box go out before its bedtime and its
+lit windows fade with them. `lamps` lists the base's lamps each house takes, by the engine's own rules.
+
+`part` makes the same of a staging set (scripts/content/building_set.py): a copy of the part that holds the window
+textures, under a new name, with the masks, the fields and the houses. It takes the old part's place in the next
+working set (`building_set.py compose`).
 """
 from __future__ import annotations
 
 import argparse
 import importlib.util
 import json
+import os
 import shutil
 import struct
 import subprocess
@@ -245,13 +252,9 @@ def clone(src: Path, dst: Path) -> None:
     shutil.copytree(src, dst)
 
 
-def cmd_pilot(args) -> int:
-    src, out = args.content.expanduser().resolve(), args.output.expanduser().resolve()
+def glow(src: Path, out: Path, sheet_path: Path | None) -> None:
+    """The masks, the fields and the houses, written into `out`, a copy of the content-like folder `src`."""
     index = json.loads((src / 'materials/materials.json').read_text())
-    missing = [name for name in WINDOWS if name not in index or 'orm' not in index[name]]
-    if missing:
-        sys.exit(f'no own record with an ORM for: {", ".join(missing)}')
-    clone(src, out)
     dds = load_dds_codec()
     sheet = []
     for name, spec in WINDOWS.items():
@@ -270,21 +273,51 @@ def cmd_pilot(args) -> int:
         lit = float((mask > 0.05).mean() * 100)
         print(f'{name}: glow on {lit:.2f} % of the texels, peak {mask.max():.2f}; emissive {spec["emissive"]}, '
               f'window {spec["window"]}')
-        if args.sheet:
-            glow = np.clip(albedo * 0.35 + mask[..., None] * np.array([1.0, 0.52, 0.16]), 0, 1)
-            row = np.concatenate([albedo, np.repeat(mask[..., None], 3, axis=2), glow], axis=1)
+        if sheet_path:
+            lit_albedo = np.clip(albedo * 0.35 + mask[..., None] * np.array([1.0, 0.52, 0.16]), 0, 1)
+            row = np.concatenate([albedo, np.repeat(mask[..., None], 3, axis=2), lit_albedo], axis=1)
             sheet.append((row * 255).astype(np.uint8))
+    indent = 2 if (src / 'materials/materials.json').read_text().startswith('{\n  "') else 1
     (out / 'materials/materials.json').unlink()
-    (out / 'materials/materials.json').write_text(json.dumps(index, indent=1, ensure_ascii=False) + '\n')
-    houses = out / 'worlds/NEWWORLD/houses.json'
+    (out / 'materials/materials.json').write_text(json.dumps(index, indent=indent, ensure_ascii=False) + '\n')
+    houses = out / 'worlds/NEWWORLD/houses.d/market-house.json'
     houses.parent.mkdir(parents=True, exist_ok=True)
     houses.unlink(missing_ok=True)
     houses.write_text(json.dumps({'format': 1, 'houses': house_records()}, indent=1) + '\n')
     print(f'houses: {", ".join(HOUSES)}')
-    if args.sheet and sheet:
-        Image.fromarray(np.concatenate(sheet, axis=0)).save(args.sheet)
-        print(f'sheet (albedo | mask | albedo with the glow): {args.sheet}')
+    if sheet_path and sheet:
+        Image.fromarray(np.concatenate(sheet, axis=0)).save(sheet_path)
+        print(f'sheet (albedo | mask | albedo with the glow): {sheet_path}')
+
+
+def missing_windows(src: Path) -> list:
+    index = json.loads((src / 'materials/materials.json').read_text())
+    return [name for name in WINDOWS if name not in index or 'orm' not in index[name]]
+
+
+def cmd_pilot(args) -> int:
+    src, out = args.content.expanduser().resolve(), args.output.expanduser().resolve()
+    if missing := missing_windows(src):
+        sys.exit(f'no own record with an ORM for: {", ".join(missing)}')
+    clone(src, out)
+    glow(src, out, args.sheet)
     print(f'content: {out}')
+    return 0
+
+
+def cmd_part(args) -> int:
+    """A staging set like `--from` with the windows glowing and the houses, under the name `--set`."""
+    staging = Path(os.environ.get('GOTHIC_AI_DATA', Path.home() / '.local/share/gothic-ai')) / 'content-staging'
+    src, out = staging / args.source, staging / args.set
+    if not (src / 'materials/materials.json').is_file():
+        sys.exit(f'{src}: no materials/materials.json')
+    if (src / 'composition.json').is_file():
+        sys.exit(f'{src}: a composed set; give the part that holds the window textures')
+    if missing := missing_windows(src):
+        sys.exit(f'{args.source} has no record with an ORM for: {", ".join(missing)}')
+    clone(src, out)
+    glow(src, out, args.sheet)
+    print(f'part: {out}')
     return 0
 
 
@@ -325,6 +358,11 @@ def main() -> int:
     lamps = sub.add_parser('lamps', help="the base's lamps inside each house of the pilot")
     lamps.add_argument('--base', type=Path, required=True, help='the game base (its worlds/NEWWORLD/vobs.json)')
     lamps.set_defaults(run=cmd_lamps)
+    part = sub.add_parser('part', help='a staging set with the windows glowing and the houses')
+    part.add_argument('--from', dest='source', required=True, help='the staging set that holds the window textures')
+    part.add_argument('--set', required=True, help='the new staging set')
+    part.add_argument('--sheet', type=Path)
+    part.set_defaults(run=cmd_part)
     args = parser.parse_args()
     return args.run(args)
 

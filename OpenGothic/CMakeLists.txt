@@ -783,6 +783,12 @@ endif()
   if(NOT MSVC)
     target_compile_options(gothic-bump-contract PRIVATE -Wall -Wconversion -Werror)
   endif()
+  add_executable(gothic-reach-contract EXCLUDE_FROM_ALL tests/reach_contract.cpp common/game/reachsignal.cpp)
+  target_include_directories(gothic-reach-contract PRIVATE
+    common lib/Tempest/Engine/include lib/Tempest/Engine)
+  if(NOT MSVC)
+    target_compile_options(gothic-reach-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
   add_executable(gothic-ragdoll-save-contract EXCLUDE_FROM_ALL tests/ragdoll_save_contract.cpp)
   target_link_libraries(gothic-ragdoll-save-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_custom_target(check-ragdoll-save

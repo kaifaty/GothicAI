@@ -26,11 +26,15 @@ Flinch::Bump::Kind bumpKind(BumpHit::Kind kind) {
 void Npc::bumpReaction(const BumpHit& hit) {
   Flinch::Bump bump;
   bump.kind     = bumpKind(hit.kind);
+  // the hands are out on the wall already (graphics/mesh/reach): they take the body, the chest goes on to them
+  const bool braced = hit.kind==BumpHit::Kind::Wall && visual.pose().reachIk().weight()>0.5f;
+  if(braced)
+    bump.kind = Flinch::Bump::Braced;
   bump.normal   = hit.normal;
   bump.strength = hit.strength;
 
   // near the hero the living rig takes the push on its motors too, as it takes a blow: the arms sway
-  const Vec3 thrown = hit.kind==BumpHit::Kind::Waist ? hit.normal*-1.f : hit.normal;
+  const Vec3 thrown = (hit.kind==BumpHit::Kind::Waist || braced) ? hit.normal*-1.f : hit.normal;
   queueBumpChain(thrown,hit.strength,hit.kind==BumpHit::Kind::Waist ? 0.45f : 0.75f);
   visual.bump(*this,bump);
 
@@ -63,4 +67,12 @@ bool Npc::queueBumpChain(const Vec3& thrown, float strength, float height) {
   const float s = std::clamp(strength,0.f,1.f);
   arrowImpacts.push_back({bone,at,d*(2.f+4.f*s),0.3f+0.25f*s,{},false,2.f});
   return true;
+  }
+
+MoveAlgo::WallReach Npc::wallReach() const {
+  return mvAlgo.wallReach(owner.tickCount());
+  }
+
+float Npc::haltShown() const {
+  return visual.pose().haltWeight();
   }

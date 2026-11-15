@@ -345,6 +345,72 @@ void MdlVisual::bump(const Npc& npc, const Flinch::Bump& hit) {
   skInst->flinchIk().bump(hit,{std::cos(a), 0, std::sin(a)});
   }
 
+bool MdlVisual::updateReach(Npc& npc, uint64_t dt) {
+  Pose& pose = *skInst;
+  auto& rc   = pose.reachIk();
+  if(!rc.isValid()) {
+    if(npc.isPlayer())
+      Reach::playerProbe = Reach::Probe();
+    if(&npc==Reach::probeNpc)
+      Reach::subjectProbe = Reach::Probe();
+    return false;
+    }
+  const auto wall = npc.wallReach();
+  Reach::Input in;
+  in.dt     = dt;
+  in.active = wall.hands && !wall.person && wall.normal!=Vec3();
+  if(in.active) {
+    // a hand is free when it holds nothing: a weapon drawn, a torch, a thing in use take theirs
+    const auto ws   = npc.weaponState();
+    const bool none = ws==WeaponState::W2H || ws==WeaponState::Bow || ws==WeaponState::CBow || ws==WeaponState::Mage ||
+                      npc.interactive()!=nullptr || npc.isTalk() || pose.isUsingItemInHand();
+    in.free[0] = !none && !isUsingTorch();
+    in.free[1] = !none && ws!=WeaponState::W1H;
+    in.toward  = wall.normal*-1.f;
+
+    using Hit = DynamicWorld::NavigationHit;
+    const float arm   = rc.armLength();
+    const Vec3  down  = Vec3(0,-1,0);
+    const Vec3  dirs[3] = {in.toward,
+                           Vec3::normalize(in.toward*0.866f + down*0.5f),
+                           Vec3::normalize(in.toward*0.574f + down*0.819f)};
+    // straight on the wall may still be a run away; down, onto a table's top, only what is in reach
+    const float far[3] = {wall.warn ? 260.f : arm*1.15f, arm*1.15f, arm*1.15f};
+    const Vec3  sh[2]  = {IkMath::position(pose.bone(rc.upperBone(0))),IkMath::position(pose.bone(rc.upperBone(1)))};
+    for(size_t i=0; i<2; ++i) {
+      if(!in.free[i])
+        continue;
+      Vec3 out = sh[i]-sh[1-i];
+      out = Vec3::normalize(Vec3(out.x,0,out.z));
+      // wider than the shoulders and a little above them: seen from behind too
+      const Vec3 from = sh[i] + out*Reach::form().side + Vec3(0,Reach::form().rise,0);
+      for(size_t r=0; r<3; ++r) {
+        const auto ray = npc.world().physic()->navigationRay(from,from+dirs[r]*far[r],npc.livingBody());
+        if(!ray.hasCol || (ray.kind!=Hit::World && ray.kind!=Hit::StaticVob && ray.kind!=Hit::MovableVob))
+          continue;
+        if(Vec3::dotProduct(ray.normal,dirs[r])>-0.3f)
+          continue;
+        if(!rc.isOut(i) && (ray.point-sh[i]).length()<arm*0.35f)
+          break; // right at the shoulder: no room to put an arm out (one that is out folds)
+        in.target[i].found  = true;
+        // a body that slides on along the wall takes its palms with it
+        in.target[i].fixed  = ray.kind!=Hit::MovableVob && wall.plant;
+        in.target[i].point  = ray.point;
+        in.target[i].normal = Vec3::normalize(ray.normal);
+        break;
+        }
+      }
+    }
+  const bool changed = pose.updateReach(in);
+  if(npc.isPlayer())
+    rc.probe(Reach::playerProbe);
+  if(&npc==Reach::probeNpc)
+    rc.probe(Reach::subjectProbe);
+  if(changed)
+    pushBodyPose();
+  return changed;
+  }
+
 float MdlVisual::bowSpan() const {
   // how far the string goes from rest to held drawn: the string's middle moves the most
   if(auto p = bow.view.protoMesh())

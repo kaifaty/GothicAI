@@ -635,15 +635,15 @@ bool npcCommandsCommand(const NpcCommandsContext& context,const std::string& lin
       say("unknown flinch command: " + line);
     }
   else if(c=="bump-form") {
-    // bump-form <wall|waist|person|pushed> <trunk|twist|head|freq|damp|headfreq|headdamp|floor> <value>:
+    // bump-form <wall|waist|person|pushed|braced> <trunk|twist|head|freq|damp|headfreq|headdamp|floor> <value>:
     // the answer to a run into an obstacle (Flinch::BumpForm), tuned without a rebuild
-    static const char* kinds[]  = {"wall","waist","person","pushed"};
+    static const char* kinds[]  = {"wall","waist","person","pushed","braced"};
     static const char* fields[] = {"trunk","twist","head","freq","damp","headfreq","headdamp","floor"};
     const std::string k = a.size()>1 ? a[1] : "", f = a.size()>2 ? a[2] : "";
     size_t ki = 0, fi = 0;
-    while(ki<4 && k!=kinds[ki])  ++ki;
+    while(ki<5 && k!=kinds[ki])  ++ki;
     while(fi<8 && f!=fields[fi]) ++fi;
-    if(ki==4 || fi==8 || a.size()<4) {
+    if(ki==5 || fi==8 || a.size()<4) {
       say("unknown bump-form command: " + line);
       return true;
       }
@@ -651,6 +651,23 @@ bool npcCommandsCommand(const NpcCommandsContext& context,const std::string& lin
     float* values[] = {&form.trunk,&form.twist,&form.head,&form.freq,&form.damp,&form.headFreq,&form.headDamp,&form.floor};
     *values[fi] = num(a,3,*values[fi]);
     say("bump-form " + k + " " + f + " " + std::to_string(*values[fi]));
+    }
+  else if(c=="reach-form") {
+    // reach-form <guard|in|out|follow|wrist|lean|elbow|side|rise|palmflip> <value>: the hands to a wall
+    // (Reach::Form), tuned without a rebuild
+    static const char* fields[] = {"guard","in","out","follow","wrist","lean","elbow","side","rise","palmflip"};
+    const std::string f = a.size()>1 ? a[1] : "";
+    size_t fi = 0;
+    while(fi<10 && f!=fields[fi]) ++fi;
+    if(fi==10 || a.size()<3) {
+      say("unknown reach-form command: " + line);
+      return true;
+      }
+    auto& form = Reach::form();
+    float* values[] = {&form.guard,&form.in,&form.out,&form.follow,&form.wrist,&form.lean,&form.elbow,&form.side,&form.rise,
+                       &form.palmFlip};
+    *values[fi] = num(a,2,*values[fi]);
+    say("reach-form " + f + " " + std::to_string(*values[fi]));
     }
   else if(c=="hit") {
     // hit <npc|player> <angle> [strength] [height] [twist]: a blow from that side of it (angle from its

@@ -5,12 +5,13 @@
 #include "gothic.h"
 #include "loadprobe.h"
 #include "programdata.h"
+#include "settings.h"
 
 #include <cstdlib>
 #include <cstring>
 
 daedalus::DaedalusVm GameScript::createVm(Gothic& gothic, ItemDefinitionRuntime::Definitions& items) {
-  const auto lang=gothic.settingsGetI("GAME", "language");
+  const auto lang=Settings::getI("GAME", "language");
   std::string sha256;
   auto script=loadBaseProgram(gothic.defaultGameDatFile(),lang,&sha256);
   const auto* enabled=std::getenv("OPENGOTHIC_ITEM_RECORDS");

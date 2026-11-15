@@ -15,8 +15,6 @@ class Probe final : public BenchHooks {
     void destructionRetire(uintptr_t body, size_t piece, bool expired, float observerDistanceCm) override {
       TestBench::destructionRetire(body,piece,expired,observerDistanceCm);
       }
-    std::string bodyJson(std::string_view text) const override { return TestBench::bodyJson(text); }
-    std::string_view who(const Npc* npc) const override { return TestBench::who(npc); }
     void ragdollBirthPeak(const Npc& npc, const Npc* culprit, const std::string& fields) override {
       TestBench::ragdollBirthPeak(npc,culprit,fields);
       }
@@ -154,4 +152,8 @@ class Probe final : public BenchHooks {
 void TestBench::install() {
   static Probe probe;
   BenchHooks::install(&probe);
+  }
+
+std::string_view TestBench::who(const Npc* npc) {
+  return Bench::who(npc);
   }

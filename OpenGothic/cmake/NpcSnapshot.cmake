@@ -44,7 +44,9 @@ function(npc_snapshot_fields root npc_output item_output)
     # Keep the pre-move schema spelling: the owning base is an implementation detail.
     # Function retains the old func annotation without depending on the VM header.
     string(REPLACE "\t\tusing Function = int32_t;\n" "" CLASS_BODY "${CLASS_BODY}")
-    string(REGEX REPLACE "\n\t\t([A-Za-z0-9_:]+) ([A-Za-z0-9_]+)(\\[[A-Za-z0-9_:]+\\])?;" "\n\t\tvar \\1 \\2\\3;" CLASS_BODY "${CLASS_BODY}")
+    # Older CMake versions reject a replacement backreference to an unmatched optional group.
+    string(REGEX REPLACE "\n\t\t([A-Za-z0-9_:]+) ([A-Za-z0-9_]+)(\\[[A-Za-z0-9_:]+\\]);" "\n\t\tvar \\1 \\2\\3;" CLASS_BODY "${CLASS_BODY}")
+    string(REGEX REPLACE "\n\t\t([A-Za-z0-9_:]+) ([A-Za-z0-9_]+);" "\n\t\tvar \\1 \\2;" CLASS_BODY "${CLASS_BODY}")
     string(REPLACE "std::string" "string" CLASS_BODY "${CLASS_BODY}")
     string(REPLACE "Function" "func" CLASS_BODY "${CLASS_BODY}")
     string(REGEX REPLACE "\n[ \t\n]*$" "" CLASS_BODY "${CLASS_BODY}")

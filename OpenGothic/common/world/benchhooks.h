@@ -1,6 +1,7 @@
 #pragma once
 
 #include "benchprobe.h"
+#include "utils/jsonescape.h"
 
 #include <functional>
 #include <Tempest/Vec>
@@ -260,9 +261,7 @@ namespace Bench {
     }
 
   inline std::string bodyJson(std::string_view text) {
-    if(auto* hooks = BenchHooks::get())
-      return hooks->bodyJson(text);
-    return {};
+    return jsonEscape(text);
     }
 
   inline int bodyBlockVariant(const Npc& npc, int fallback) {
@@ -271,11 +270,7 @@ namespace Bench {
     return fallback;
     }
 
-  inline std::string_view who(const Npc* npc) {
-    if(auto* hooks = BenchHooks::get())
-      return hooks->who(npc);
-    return "none";
-    }
+  std::string_view who(const Npc* npc);
 
   inline void npcOutput(const Npc& npc, std::string_view name, const Npc* target, uint64_t ms) {
     if(auto* hooks = BenchHooks::get())

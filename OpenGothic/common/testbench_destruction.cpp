@@ -9,6 +9,7 @@
 #include "game/gamescript.h"
 #include "game/playercontrol.h"
 #include "gothic.h"
+#include "settings.h"
 #include "graphics/mesh/protomesh.h"
 #include "graphics/mesh/pose.h"
 #include "physics/fracture.h"
@@ -500,9 +501,9 @@ void destructionSupportSample(Destruction& state,const DestructionContext& conte
     ",\"kinematic\":"+(rig && rig->isKinematic()?"true":"false")+
     ",\"sleeping\":"+(rig && rig->isSleeping()?"true":"false")+
     ",\"reaction_weight\":"+ragdollNumber(rig?rig->reactionWeight():0.f)+
-    ",\"ragdoll_enabled\":"+(Gothic::physicsFlags().ragdoll?"true":"false")+
-    ",\"spell_physics_enabled\":"+(Gothic::physicsFlags().spellPhysics?"true":"false")+
-    ",\"npc_character_virtual\":"+(Gothic::physicsFlags().npcCharacterVirtual?"true":"false")+
+    ",\"ragdoll_enabled\":"+(Settings::physicsFlags().ragdoll?"true":"false")+
+    ",\"spell_physics_enabled\":"+(Settings::physicsFlags().spellPhysics?"true":"false")+
+    ",\"npc_character_virtual\":"+(Settings::physicsFlags().npcCharacterVirtual?"true":"false")+
     ",\"cv_active\":"+(npc.characterVirtualActive()?"true":"false")+
     ",\"visual_root_cm\":"+ragdollVector(npc.characterVisualPosition())+
     ",\"external_control\":"+(npc.isExternalControl()?"true":"false")+
@@ -835,7 +836,7 @@ bool destructionCommand(Destruction& state,const DestructionContext& context,con
     event("destruction_traces_debug","\"command\":"+jsonStr(command)+",\"sample\":"+value);
     }
   else if(c=="destruction" && a.size()==2 && (a[1]=="on" || a[1]=="off")) {
-    Gothic::settingsSetI("GAME","destruction",a[1]=="on");
+    Settings::setI("GAME","destruction",a[1]=="on");
     w.physic()->setDestructionEnabled(a[1]=="on");
     }
   else if(c=="destruction" && a.size()==3 && a[1]=="setup") destructionSetup(state,context,w,pl,a[2]);
@@ -939,7 +940,7 @@ bool destructionTracesDebug(Destruction& state,const DestructionContext& context
       try {zenId=uint32_t(std::stoul(std::string(command.substr(7))));}
       catch(const std::exception&) {return fail("destruction trace reload requires a map-vob zen id");}
       }
-    Gothic::settingsSetI("GAME","destruction",1);
+    Settings::setI("GAME","destruction",1);
     world.physic()->setDestructionEnabled(true);
     const auto bodies=world.physic()->movableVobSnapshot();
     const auto found=std::find_if(bodies.begin(),bodies.end(),[&](const auto& body){return body.zenId==zenId;});

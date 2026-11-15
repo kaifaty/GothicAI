@@ -17,6 +17,7 @@
 #include "game/gamescript.h"
 #include "game/playercontrol.h"
 #include "gothic.h"
+#include "settings.h"
 #include "graphics/mesh/animationsolver.h"
 #include "graphics/mesh/skeleton.h"
 #include "physics/charactervirtualdiagnostics.h"
@@ -297,7 +298,7 @@ bool prepareCharacterRoute(Character& state,const CharacterContext& context,Worl
 void characterSnapshot(World& world,Npc& player,std::string_view operation) {
   event("character_snapshot","\"operation\":"+jsonStr(operation)+",\"world\":"+jsonStr(world.name())+
     ",\"root_cm\":"+ragdollVector(player.position())+",\"visual_root_cm\":"+ragdollVector(player.characterVisualPosition())+",\"cv_enabled\":"+
-    (Gothic::physicsFlags().characterVirtual?"true":"false")+
+    (Settings::physicsFlags().characterVirtual?"true":"false")+
     ",\"cv_active\":"+(player.characterVirtualActive()?"true":"false"));
   }
 
@@ -363,7 +364,7 @@ void characterFields(Character& state,const CharacterContext& context,World& wor
   const std::string label=state.characterMeasuring?"performance":route.active?route.name:state.characterRiding?rideLabel:state.characterPropRole;
   if(!normal || wall>0)state.characterFrames.push_back({label,state.characterFrame++,world.tickCount(),dt,position,
     character.characterVirtualGroundVelocity(),character.characterVisualPosition(),move,character.isInAir(),character.isFalling(),character.isSwim(),
-    state.characterRideNpc?bool(Gothic::settingsGetI("GAME","npc_character_virtual")):Gothic::physicsFlags().characterVirtual,
+    state.characterRideNpc?bool(Settings::getI("GAME","npc_character_virtual")):Settings::physicsFlags().characterVirtual,
     character.characterVirtualActive(),context.rec && context.recVideo,normal,
     world.physic()->physicsStats().stepMilliseconds,wall});
   if(state.characterMeasuring) {
@@ -629,8 +630,8 @@ std::string npcCharacterSample(World& world,const Npc& npc,float physicalJump,fl
     ",\"output_wait_ms\":"+std::to_string(observed.outputWaitMs)+",\"fai_wait_ms\":"+std::to_string(observed.faiWaitMs)+
     ",\"animations\":"+jsonStr(npc.animNames())+",\"ai_queue_empty\":"+(npc.isAiQueueEmpty()?"true":"false")+
     ",\"ai_busy\":"+(npc.isAiBusy()?"true":"false")+",\"move_hint\":"+std::to_string(unsigned(npc.moveHint()))+
-    ",\"cv_enabled\":"+((npc.isPlayer() ? Gothic::physicsFlags().characterVirtual :
-                                         Gothic::physicsFlags().npcCharacterVirtual)?"true":"false")+
+    ",\"cv_enabled\":"+((npc.isPlayer() ? Settings::physicsFlags().characterVirtual :
+                                         Settings::physicsFlags().npcCharacterVirtual)?"true":"false")+
     ",\"cv_active\":"+(npc.characterVirtualActive()?"true":"false")+",\"diagnostics_valid\":"+(valid?"true":"false")+
     ",\"nav_goal\":{\"active\":"+(goal.active?"true":"false")+",\"kind\":"+jsonStr(goal.kind)+",\"name\":"+jsonStr(goal.name)+
     ",\"position_cm\":"+ragdollVector(goal.position)+",\"npc_id\":"+(target?std::to_string(goalId):"null")+
@@ -712,7 +713,7 @@ void npcCharacterSnapshot(World& world,Npc& player,std::string_view label) {
       ",\"interactive\":"+(npc->interactive()?"true":"false")+"}";
     }
   event("npc_character_snapshot","\"label\":"+jsonStr(label)+",\"world\":"+jsonStr(world.name())+
-    ",\"cv_enabled\":"+(Gothic::settingsGetI("GAME","npc_character_virtual")?"true":"false")+
+    ",\"cv_enabled\":"+(Settings::getI("GAME","npc_character_virtual")?"true":"false")+
     ",\"hero_cm\":"+ragdollVector(player.position())+",\"actors\":"+rows+"]");
   }
 
@@ -1052,7 +1053,7 @@ void npcCharacterBegin(Character& state,World& world,std::string_view phase) {
   state.npcCharacterHasWall=false;
   event("npc_character_route_begin","\"route\":"+jsonStr(route.name)+",\"npc_id\":"+std::to_string(world.npcId(route.npc))+
     ",\"start_cm\":"+ragdollVector(route.npc->position())+",\"goal_cm\":"+ragdollVector(route.goal)+
-    ",\"cv_enabled\":"+(Gothic::settingsGetI("GAME","npc_character_virtual")?"true":"false"));
+    ",\"cv_enabled\":"+(Settings::getI("GAME","npc_character_virtual")?"true":"false"));
   }
 
 
@@ -1072,12 +1073,12 @@ void npcCharacterEnd(Character& state,World& world) {
     ",\"stalls\":"+std::to_string(route.stalls)+",\"max_visual_jump_cm\":"+ragdollNumber(route.maxVisualJump)+
     ",\"max_physical_jump_cm\":"+ragdollNumber(route.maxPhysicalJump)+",\"max_above_floor_cm\":"+ragdollNumber(route.maxAboveFloor)+
     ",\"sat\":"+(route.sat?"true":"false")+",\"standing\":"+(route.standing?"true":"false")+
-    ",\"cv_enabled\":"+(Gothic::settingsGetI("GAME","npc_character_virtual")?"true":"false")+mug);
+    ",\"cv_enabled\":"+(Settings::getI("GAME","npc_character_virtual")?"true":"false")+mug);
   }
 
 
 void characterStairPerformance(World& world,Npc& player) {
-  if(!Gothic::physicsFlags().characterVirtual || !Gothic::settingsGetI("GAME","npc_character_virtual")) {
+  if(!Settings::physicsFlags().characterVirtual || !Settings::getI("GAME","npc_character_virtual")) {
     arenaAbort("stair performance requires both human CharacterVirtual flags on");return;
     }
   std::vector<const Npc*> sources{&player};
@@ -1294,7 +1295,7 @@ void npcCharacterFields(Character& state,const CharacterContext& context,World& 
   state.npcCharacterFrames.push_back({state.npcCharacterMeasuring?"performance":route.name,
     uint64_t(state.npcCharacterFrames.size()),world.tickCount(),dt,npc?uint64_t(world.npcId(npc)):uint64_t(-1),
     npc?npc->position():player.position(),npc?npc->characterVisualPosition():player.characterVisualPosition(),
-    bool(Gothic::settingsGetI("GAME","npc_character_virtual")),npc && npc->characterVirtualActive(),
+    bool(Settings::getI("GAME","npc_character_virtual")),npc && npc->characterVirtualActive(),
     npc && npc->navigationGoal().active,npc && npc->isInAir(),npc && npc->interactive(),context.rec && context.recVideo,normal,
     world.physic()->physicsStats().stepMilliseconds,wall,nearby,virtualNearby,movingNearby,movingVirtualNearby,
     npc?characterMoveFrame(*npc):CharacterMoveFrame()});
@@ -1434,7 +1435,7 @@ void writeCharacterMoveFrame(std::FILE* file,const CharacterMoveFrame& move) {
 bool characterCommand(Character& state,const CharacterContext& context,const std::vector<std::string>& a,World& w,Npc& pl,PlayerControl& ctrl) {
   const std::string& c = a[0];
   if(c=="npccharacter" && a.size()==2 && (a[1]=="on" || a[1]=="off")) {
-    Gothic::settingsSetI("GAME","npc_character_virtual",a[1]=="on");
+    Settings::setI("GAME","npc_character_virtual",a[1]=="on");
     event("npc_character_toggle","\"enabled\":"+std::string(a[1]=="on"?"true":"false"));
     }
   else if(c=="npccharacter" && a.size()>=3 && a[1]=="trace") {
@@ -1634,7 +1635,7 @@ bool characterCommand(Character& state,const CharacterContext& context,const std
     state.npcCharacterGoals.clear();state.npcCharacterWalkers.clear();state.npcCharacterArrivals=0;
     state.npcCharacterObservedFrames=0;state.npcCharacterCvFrames=0;state.npcCharacterMaxNearby=0;state.npcCharacterObserveStart=w.tickCount();
     event("npc_character_observe_begin","\"window\":"+jsonStr(state.npcCharacterWindow)+",\"radius_cm\":3000,\"humans_only\":true,\"cv_enabled\":"+
-      (Gothic::settingsGetI("GAME","npc_character_virtual")?"true":"false"));
+      (Settings::getI("GAME","npc_character_virtual")?"true":"false"));
     }
   else if(c=="npccharacter" && a.size()==3 && a[1]=="observe" && a[2]=="end") {
     state.npcCharacterObserving=false;
@@ -1642,7 +1643,7 @@ bool characterCommand(Character& state,const CharacterContext& context,const std
       ",\"radius_cm\":3000,\"humans_only\":true,\"unique_walkers\":"+std::to_string(state.npcCharacterWalkers.size())+
       ",\"reached_goals\":"+std::to_string(state.npcCharacterArrivals)+",\"frames\":"+std::to_string(state.npcCharacterObservedFrames)+
       ",\"cv_actor_frames\":"+std::to_string(state.npcCharacterCvFrames)+",\"max_nearby_humans\":"+std::to_string(state.npcCharacterMaxNearby)+
-      ",\"cv_enabled\":"+(Gothic::settingsGetI("GAME","npc_character_virtual")?"true":"false"));
+      ",\"cv_enabled\":"+(Settings::getI("GAME","npc_character_virtual")?"true":"false"));
     }
   else if(c=="npccharacter" && a.size()==3 && a[1]=="snapshot") npcCharacterSnapshot(w,pl,a[2]);
   else if(c=="npccharacter" && a.size()==3 && a[1]=="distance") {
@@ -1684,7 +1685,7 @@ bool characterCommand(Character& state,const CharacterContext& context,const std
     state.npcCharacterMeasuring=true;state.npcCharacterHasWall=false;
     state.npcCharacterCrowdMinNearby=20;state.npcCharacterCrowdMaxNearby=0;state.npcCharacterCrowdMaximumDistance=0;
     AppCadence::counts(true,uint32_t(state.npcCharacterCrowd.size()),0,uint32_t(w.physic()->physicsStats().bodies),0,0);
-    event("npc_character_measure_begin","\"cv_enabled\":"+std::string(Gothic::settingsGetI("GAME","npc_character_virtual")?"true":"false"));
+    event("npc_character_measure_begin","\"cv_enabled\":"+std::string(Settings::getI("GAME","npc_character_virtual")?"true":"false"));
     }
   else if(c=="npccharacter" && a.size()==2 && a[1]=="report") {
     state.npcCharacterMeasuring=false;
@@ -1700,7 +1701,7 @@ bool characterCommand(Character& state,const CharacterContext& context,const std
   else if(c=="character" && a.size()==4 && a[1]=="idle" && a[2]=="weapon") characterIdleWeapon(state,w,a[3]);
   else if(c=="character" && a.size()==4 && a[1]=="idle" && a[2]=="snapshot") characterIdleSnapshot(state,context,w,a[3]);
   else if(c=="character" && a.size()==2 && (a[1]=="on" || a[1]=="off")) {
-    Gothic::settingsSetI("GAME","character_virtual",a[1]=="on");
+    Settings::setI("GAME","character_virtual",a[1]=="on");
     event("character_toggle","\"enabled\":"+std::string(a[1]=="on"?"true":"false"));
     }
   else if(c=="character" && a.size()==2 && a[1]=="probe") {
@@ -1742,7 +1743,7 @@ bool characterCommand(Character& state,const CharacterContext& context,const std
     event("character_route_begin","\"route\":"+jsonStr(route.name)+",\"start_cm\":"+ragdollVector(route.start)+
       ",\"visual_start_cm\":"+ragdollVector(pl.characterVisualPosition())+
       ",\"goal_cm\":"+ragdollVector(route.goal)+",\"tolerance_cm\":"+ragdollNumber(route.tolerance)+
-      ",\"cv_enabled\":"+(Gothic::physicsFlags().characterVirtual?"true":"false"));
+      ",\"cv_enabled\":"+(Settings::physicsFlags().characterVirtual?"true":"false"));
     }
   else if(c=="character" && a.size()==2 && a[1]=="end") characterRouteEnd(state,w,pl);
   else if(c=="character" && a.size()==3 && a[1]=="snapshot") characterSnapshot(w,pl,a[2]);
@@ -1858,7 +1859,7 @@ bool characterCommand(Character& state,const CharacterContext& context,const std
     if(!AppCadence::normalClock() || !AppCadence::arm(a[2]=="on")) {arenaAbort("character normal cadence arm failed");return true;}
     state.characterMeasuring=true;state.characterHasWall=false;state.characterMeasureStart=w.tickCount();
     AppCadence::counts(true,1,0,uint32_t(w.physic()->physicsStats().bodies),0,0);
-    event("character_measure_begin","\"cv_enabled\":"+std::string(Gothic::physicsFlags().characterVirtual?"true":"false"));
+    event("character_measure_begin","\"cv_enabled\":"+std::string(Settings::physicsFlags().characterVirtual?"true":"false"));
     }
   else if(c=="character" && a.size()==2 && a[1]=="report") {
     state.characterMeasuring=false;

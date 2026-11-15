@@ -6,9 +6,11 @@
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/hitzones.h"
 #include "game/damagecalculator.h"
+#include "game/gothicguildtraits.h"
 #include "world/objects/npc.h"
 #include "world/bodytraces.h"
 #include "gothic.h"
+#include "settings.h"
 
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <zenkit/ModelHierarchy.hh>
@@ -123,7 +125,7 @@ namespace PhysicsContract {
     }
 
   void testBodyTraces() {
-    require(Gothic::PhysicsFlags{}.bodyTraces,"body traces must default to ON");
+    require(Settings::PhysicsFlags{}.bodyTraces,"body traces must default to ON");
     require(BodyTraces::LifetimeMinutes==4320,"a body lives three game days");
     BodyTraces::Body body;
     body.clockFrom    = 1000;
@@ -149,13 +151,13 @@ namespace PhysicsContract {
     require(!with([](auto& b){ b.clockFrom=-1; }),"a body without a lifetime start must stay");
     require(with([](auto& b){ b.now+=100000; b.heroDistance=1e6f; }),"an old far body must leave");
 
-    require(BodyTraces::isTrace(true,true,false,GIL_NONE,GIL_SEPERATOR_HUM),"a dead person is a trace");
-    require(BodyTraces::isTrace(true,true,false,GIL_SEPERATOR_HUM-1,GIL_SEPERATOR_HUM),"every human guild is a trace");
-    require(!BodyTraces::isTrace(true,true,false,GIL_SEPERATOR_HUM,GIL_SEPERATOR_HUM),"a monster's body is not a trace");
-    require(!BodyTraces::isTrace(true,true,false,GIL_DRAGON,GIL_SEPERATOR_HUM),"a dragon's body is not a trace");
-    require(!BodyTraces::isTrace(false,true,false,GIL_NONE,GIL_SEPERATOR_HUM),"body traces OFF: no body trace");
-    require(!BodyTraces::isTrace(true,false,false,GIL_NONE,GIL_SEPERATOR_HUM),"a living person is not a body trace");
-    require(!BodyTraces::isTrace(true,true,true,GIL_NONE,GIL_SEPERATOR_HUM),"the dead hero is not a body trace");
+    require(BodyTraces::isTrace(true,true,false,gothicGuildTraits().has(GIL_NONE,GuildTraits::Human)),"a dead person is a trace");
+    require(BodyTraces::isTrace(true,true,false,gothicGuildTraits().has(GIL_SEPERATOR_HUM-1,GuildTraits::Human)),"every human guild is a trace");
+    require(!BodyTraces::isTrace(true,true,false,gothicGuildTraits().has(GIL_SEPERATOR_HUM,GuildTraits::Human)),"a monster's body is not a trace");
+    require(!BodyTraces::isTrace(true,true,false,gothicGuildTraits().has(GIL_DRAGON,GuildTraits::Human)),"a dragon's body is not a trace");
+    require(!BodyTraces::isTrace(false,true,false,gothicGuildTraits().has(GIL_NONE,GuildTraits::Human)),"body traces OFF: no body trace");
+    require(!BodyTraces::isTrace(true,false,false,gothicGuildTraits().has(GIL_NONE,GuildTraits::Human)),"a living person is not a body trace");
+    require(!BodyTraces::isTrace(true,true,true,gothicGuildTraits().has(GIL_NONE,GuildTraits::Human)),"the dead hero is not a body trace");
 
     for(int32_t type:{1,4,7})
       require(BodyTraces::isStoryType(type,BodyTraces::StoryTypes),"NPCTYPE_MAIN, NPCTYPE_OCMAIN and NPCTYPE_BL_MAIN are story types");
@@ -183,7 +185,7 @@ namespace PhysicsContract {
     }
 
   void testBodyImpactDamage() {
-    require(Gothic::PhysicsFlags{}.bodyImpactDamage,"body impact damage must default to ON");
+    require(Settings::PhysicsFlags{}.bodyImpactDamage,"body impact damage must default to ON");
     require(Npc::canTakeBodyImpact(true,false,false,false),"a living physical body must receive impact damage");
     require(!Npc::canTakeBodyImpact(false,false,false,false),"body impact OFF must preserve the old damage path");
     require(!Npc::canTakeBodyImpact(true,true,false,false),"an unconscious body must not receive impact damage");

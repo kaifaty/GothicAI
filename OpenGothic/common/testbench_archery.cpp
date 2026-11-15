@@ -8,7 +8,7 @@
 #include "game/archery.h"
 #include "game/gamescript.h"
 #include "game/playercontrol.h"
-#include "gothic.h"
+#include "settings.h"
 #include "graphics/mesh/aim.h"
 #include "graphics/mesh/bowdraw.h"
 #include "graphics/mesh/flinch.h"
@@ -163,7 +163,7 @@ void stickingFields(World& world) {
     }
   event("arrow_sticking_frame","\"case\":"+jsonStr(state.stickingCase)+
     ",\"t_game_ms\":"+std::to_string(world.tickCount())+
-    ",\"feature\":"+(Gothic::settingsGetI("GAME","arrow_sticking")?"true":"false")+
+    ",\"feature\":"+(Settings::getI("GAME","arrow_sticking")?"true":"false")+
     ",\"npc_present\":"+(npc?"true":"false")+
     ",\"root_cm\":"+ragdollVector(npc?npc->position():Vec3())+
     ",\"yaw_deg\":"+ragdollNumber(npc?npc->rotation():0.f)+
@@ -216,7 +216,7 @@ void arrowFields(World& world) {
   const auto& flinch=Flinch::subjectProbe;
   event("arrow_reaction_frame","\"case\":"+jsonStr(state.arrowCase)+
     ",\"t_game_ms\":"+std::to_string(world.tickCount())+
-    ",\"feature\":"+(Gothic::settingsGetI("GAME","arrow_physics") ? "true" : "false")+
+    ",\"feature\":"+(Settings::getI("GAME","arrow_physics") ? "true" : "false")+
     ",\"root_cm\":"+ragdollVector(npc->position())+
     ",\"dead\":"+(npc->isDead()?"true":"false")+",\"ko\":"+(npc->isUnconscious()?"true":"false")+
     ",\"living_parts\":"+std::to_string(living ? living->partCount() : 0)+
@@ -308,7 +308,7 @@ bool archeryCommand(const ArcheryContext& context,const std::string& line,const 
   if(c=="sticking" && a.size()==2 && a[1]=="setup") {
     state.stickingTrace=true;state.arrowTrace=false;
     event("arrow_sticking_setup","\"default_enabled\":"+
-      std::string(Gothic::settingsGetI("GAME","arrow_sticking")?"true":"false"));
+      std::string(Settings::getI("GAME","arrow_sticking")?"true":"false"));
     }
   else if(c=="sticking" && a.size()==3 && a[1]=="case") {
     state.stickingCase=a[2];state.stickingTrace=true;
@@ -317,7 +317,7 @@ bool archeryCommand(const ArcheryContext& context,const std::string& line,const 
       ",\"world_pins_before\":"+std::to_string(w.stuckArrowCount()));
     }
   else if(c=="sticking" && a.size()==3 && a[1]=="feature")
-    Gothic::settingsSetI("GAME","arrow_sticking",a[2]=="on");
+    Settings::setI("GAME","arrow_sticking",a[2]=="on");
   else if(c=="sticking" && a.size()==2 && a[1]=="world") {
     const auto ahead=facing(pl),side=Vec3(-ahead.z,0,ahead.x);
     const auto target=pl.position()+ahead*450.f+side*220.f;
@@ -390,7 +390,7 @@ bool archeryCommand(const ArcheryContext& context,const std::string& line,const 
     state.aimNpc=nullptr;state.aimFixed=false;
     }
   else if(c=="arrow" && a.size()==3 && a[1]=="feature")
-    Gothic::settingsSetI("GAME","arrow_physics",a[2]=="on");
+    Settings::setI("GAME","arrow_physics",a[2]=="on");
   else if(c=="arrow" && a.size()==2 && a[1]=="ko-on-hit")
     state.arrowKoOnHit=true;
   else if(c=="arrow" && a.size()==2 && a[1]=="cleanup") {

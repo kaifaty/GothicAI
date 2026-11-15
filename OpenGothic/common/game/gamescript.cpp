@@ -21,6 +21,7 @@
 #include "utils/fileutil.h"
 #include "commandline.h"
 #include "gothic.h"
+#include "settings.h"
 #include "loadprobe.h"
 #include "outputunits.h"
 #include "navdemos.h"
@@ -86,7 +87,7 @@ GameScript::GameScript(GameSession &owner)
       vm.global_victim() == nullptr || vm.global_hero() == nullptr)
     throw std::runtime_error("Cannot find script symbol SELF, OTHER, ITEM, VICTIM, or HERO! Cannot proceed!");
 
-  vmLang = Gothic::inst().settingsGetI("GAME", "language");
+  vmLang = Settings::getI("GAME", "language");
   vm.register_exception_handler(daedalus::lenient_vm_exception_handler);
   Gothic::inst().setupCommonScriptClasses(vm);
   Gothic::inst().setupVmCommonApi(vm);
@@ -414,7 +415,7 @@ void GameScript::initCommon() {
   }
 
 void GameScript::initSettings() {
-  auto lang = Gothic::inst().settingsGetI("GAME", "language");
+  auto lang = Settings::getI("GAME", "language");
   if(vmLang!=lang) {
     vmLang = lang;
     //vm     = createVm(Gothic::inst());
@@ -1231,7 +1232,7 @@ int GameScript::playerHotKeyScreenMap(Npc& pl) {
   }
 
 void GameScript::playerHotLamePotion(Npc& pl) {
-  auto opt = Gothic::inst().settingsGetI("GAME", "usePotionKeys");
+  auto opt = Settings::getI("GAME", "usePotionKeys");
   if(opt==0)
     return;
 
@@ -1239,7 +1240,7 @@ void GameScript::playerHotLamePotion(Npc& pl) {
   if(fn==nullptr)
     return;
 
-  if(Gothic::physicsFlags().meleeHealInterrupt && startHotkeyPotion(pl,true))
+  if(Settings::physicsFlags().meleeHealInterrupt && startHotkeyPotion(pl,true))
     return;
 
   ScopeVar self(*vm.global_self(), pl.handlePtr());
@@ -1247,7 +1248,7 @@ void GameScript::playerHotLamePotion(Npc& pl) {
   }
 
 void GameScript::playerHotLameHeal(Npc& pl) {
-  auto opt = Gothic::inst().settingsGetI("GAME", "usePotionKeys");
+  auto opt = Settings::getI("GAME", "usePotionKeys");
   if(opt==0)
     return;
 
@@ -1255,7 +1256,7 @@ void GameScript::playerHotLameHeal(Npc& pl) {
   if(fn==nullptr)
     return;
 
-  if(Gothic::physicsFlags().meleeHealInterrupt && startHotkeyPotion(pl,false))
+  if(Settings::physicsFlags().meleeHealInterrupt && startHotkeyPotion(pl,false))
     return;
 
   ScopeVar self(*vm.global_self(), pl.handlePtr());

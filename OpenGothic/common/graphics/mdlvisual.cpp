@@ -327,7 +327,8 @@ void MdlVisual::pushBodyPose() {
   // the legs' memory: every push of a frame is one step from what the last frame left (rigGait), so pushing twice
   // in a frame - the place first, the pose after - does not step twice
   RenderRig::Gait gait = rigGait;
-  const bool solved = bodyRig->solve(source,skInst->boneCount(),rigPalette.data(),RenderRig::Hands{rigHold,rigWorld},
+  const bool solved = bodyRig->solve(source,skInst->boneCount(),rigPalette.data(),RenderRig::Hands{rigHold,std::max(rigWorld,skInst->reachIk().weight()),
+                                                                                       skInst->reachIk().weight(0),skInst->reachIk().weight(1)},
                                      &gait,rigStep);
   if(solved)
     rigGaitNow = gait;
@@ -351,7 +352,8 @@ const Matrix4x4* MdlVisual::skinOf(const Matrix4x4* bones, size_t n, std::vector
   if(bodyRig!=nullptr) {
     rig.resize(bodyRig->bones());
     // without the legs' memory: these poses are not the drawn one (the bind pose, a pose asked for a fit)
-    if(bodyRig->solve(bones,n,rig.data(),RenderRig::Hands{rigHold,rigWorld})) {
+    if(bodyRig->solve(bones,n,rig.data(),RenderRig::Hands{rigHold,std::max(rigWorld,skInst->reachIk().weight()),
+                                               skInst->reachIk().weight(0),skInst->reachIk().weight(1)})) {
       count = rig.size();
       return rig.data();
       }
@@ -986,6 +988,11 @@ bool MdlVisual::updateAnimation(Npc* npc, Interactive* mobsi, World& world, uint
 
   solver.update(tickCount);
   pose.setObjectMatrix(pos,false);
+  {
+    // pressed into an obstacle the body stands, the run under the stand plays on (reports/physics/2026-11-15-reach-wall)
+    const float halt = npc!=nullptr ? npc->wallReach().press : 0.f;
+    pose.setHalt(halt>0.f ? solver.solveAnim(AnimationSolver::Idle,npc->weaponState(),npc->walkMode(),pose) : nullptr,halt);
+  }
   const bool changed=[&] { FrameProfile::Scope timing(FrameProfile::Zone::PoseCpu,FrameProfile::watchedActor(npc));
     return pose.update(tickCount, force); }();
   if(npc!=nullptr && npc->isPlayer()) {

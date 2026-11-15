@@ -170,6 +170,7 @@ class MdlVisual final {
     bool                           updateFlinch(Npc& npc, uint64_t dt);
     void                           flinch(const Npc& npc, const Flinch::Hit& hit);
     void                           bump(const Npc& npc, const Flinch::Bump& hit);
+    bool                           updateReach(Npc& npc, uint64_t dt);
     bool                           updateGaze(Npc& npc, uint64_t dt);
     void                           processLayers  (World& world);
     bool                           processEvents(World& world, uint64_t &barrier, Animation::EvCount &ev, NpcLogicalState* logic=nullptr);

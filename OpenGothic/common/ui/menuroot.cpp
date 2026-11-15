@@ -4,6 +4,7 @@
 
 #include "ui/gamemenu.h"
 #include "gothic.h"
+#include "settings.h"
 
 using namespace Tempest;
 
@@ -20,7 +21,7 @@ MenuRoot::~MenuRoot() {
   }
 
 void MenuRoot::initSettings() {
-  const auto lang = Gothic::inst().settingsGetI("GAME", "language");
+  const auto lang = Settings::getI("GAME", "language");
   if(lang==vmLang && vm!=nullptr)
     return;
 

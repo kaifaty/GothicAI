@@ -49,9 +49,6 @@ class Gothic final : public GameServices, public GameHost {
       FailedSave = 5
       };
 
-    using PhysicsFlags = Settings::PhysicsFlags;
-    using Options = Settings::Options;
-
     bool         isInGame() const;
     bool         isInGameAndAlive() const;
 
@@ -110,7 +107,6 @@ class Gothic final : public GameServices, public GameHost {
     bool         isMarvinEnabled() const override;
     void         setMarvinEnabled(bool m);
 
-    static auto  options() -> const Options& { return Settings::options(); }
     static float interfaceScale(const Tempest::Widget* w);
 
     bool         isGodMode() const override { return godMode; }
@@ -247,17 +243,6 @@ class Gothic final : public GameServices, public GameHost {
     static const SoundDefinitions&        sfx();
     static const MusicDefinitions&        musicDef();
     static const CameraDefinitions&       cameraDef();
-
-    static const PhysicsFlags& physicsFlags() { return Settings::physicsFlags(); }
-    static bool settingsHasSection(std::string_view sec) { return Settings::has(sec); }
-    static int settingsGetI(std::string_view sec, std::string_view name) { return Settings::getI(sec,name); }
-    static void settingsSetI(std::string_view sec, std::string_view name, int val) { Settings::setI(sec,name,val); }
-    static std::string_view settingsGetS(std::string_view sec, std::string_view name) { return Settings::getS(sec,name); }
-    static void settingsSetS(std::string_view sec, std::string_view name, std::string_view val) { Settings::setS(sec,name,val); }
-    static float settingsGetF(std::string_view sec, std::string_view name) { return Settings::getF(sec,name); }
-    static void settingsSetF(std::string_view sec, std::string_view name, float val) { Settings::setF(sec,name,val); }
-    static float settingsSoundVolume() { return Settings::soundVolume(); }
-    static void flushSettings() { Settings::flush(); }
 
     const CameraPresets& cameraDefinitions() const override;
     const Def::SoundEffect& soundEffect(std::string_view name) const override;
