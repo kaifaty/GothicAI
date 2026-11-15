@@ -6,6 +6,7 @@
 
 namespace {
 template<class T>
+  requires (!std::is_array_v<T>)
 void copyField(T& to, const T& from) {
   to = from;
   }
