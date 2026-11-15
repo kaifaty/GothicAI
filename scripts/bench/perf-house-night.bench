@@ -1,0 +1,46 @@
+# The market house in the evening (reports/render-features/2026-11-15-night-interiors): its shutters and plinth
+# openings glow and the lamps of its shop and inn burn, all before the shop's bedtime (23:00). Four views: the whole
+# front from the square, the plinth's openings close, the shop from its front wall, the inn's floor above it.
+# The price of the glow and of the houses is the difference between a content with the house's records and masks
+# and one without them (PERF_ENV='OPENGOTHIC_CONTENT=<set>').
+seed 73013
+cheat god
+set time 22 5
+cadence normal
+overlay off
+ui off
+view full
+cam lift off
+cam look -1240
+goto pos 9137 2000 3745
+cam world 1650 -1560 24.462
+# Ten real seconds after the teleport for loading and native simulation.
+wait 10000
+cam hold
+perf sample perf-house-night/view-1
+wait 8000
+perf stop
+cam look -540
+goto pos 8970 940 4008
+cam world 397.271 -500 25.016893
+wait 3000
+cam hold
+perf sample perf-house-night/view-2
+wait 8000
+perf stop
+cam look -1530
+goto pos 8632.5 2000 3405.2
+cam world 380 -1497 24.462
+wait 3000
+cam hold
+perf sample perf-house-night/view-3
+wait 8000
+perf stop
+cam look -1300
+goto pos 8785.7 2000 3310.2
+cam world 300 -1260 204.462
+wait 3000
+cam hold
+perf sample perf-house-night/view-4
+wait 8000
+perf stop

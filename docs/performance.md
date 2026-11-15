@@ -66,6 +66,7 @@ NPC прошли цикл тел теней и сверку логических
 | `market-walk` | `scripts/bench/perf-market-walk.bench` | тот же рынок на ходу: герой идёт, камера следует; единственное место с движущейся камерой |
 | `harbour` | `scripts/bench/perf-harbour.bench` | гавань, вода, корабль и город |
 | `harbour-night` | `scripts/bench/perf-harbour-night.bench` | то же место гавани в полночь: горят фонари, жаровни и свет слоя предметов |
+| `house-night` | `scripts/bench/perf-house-night.bench` | дом у рынка в 22:05: фасад с площади, проёмы цоколя крупно, лавка и этаж гостиницы изнутри; цена свечения окон и состояния домов — разница между контентом с масками и записями дома и без них |
 | `forest` | `scripts/bench/perf-forest.bench` | дорога за городом, дальняя прорисовка и растительность |
 | `interior` | `scripts/bench/perf-interior.bench` | интерьер с локальными источниками света |
 | `combat` | `scripts/bench/perf-combat.bench` | восемь бойцов рядом с героем, физика и анимация |
