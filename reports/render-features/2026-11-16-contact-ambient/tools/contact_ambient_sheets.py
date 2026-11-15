@@ -20,6 +20,17 @@ _spec.loader.exec_module(_sheets)
 
 # view -> the box of the 2560x1440 shot that goes on the sheet
 VIEWS = {
+    'shade-feet': (700, 500, 1900, 1100),
+    'shade-wide': (400, 200, 2200, 1300),
+    'shade-face': (600, 100, 2000, 1300),
+    'shade-game': (600, 300, 1900, 1300),
+    'morning-feet': (700, 500, 1900, 1100),
+    'table-day': (300, 150, 2000, 1100),
+    'room-day': (0, 0, 2560, 1440),
+    'cup-day': (600, 400, 2000, 1300),
+    'tower-feet': (400, 300, 2200, 1300),
+    'grass-low': (0, 300, 2560, 1440),
+    'grass-noon': (0, 300, 2560, 1440),
 }
 
 
