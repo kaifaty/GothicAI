@@ -76,6 +76,13 @@ build_game() {
 if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then return; fi
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="$ROOT/OpenGothic/build-perf"
+# One Ryzen run per checkout at a time: the stand keeps one source tree and one build per checkout,
+# and a second upload during the first run's queue wait would replace what that run builds and
+# measures. The second run waits here, before it reads its sources. See docs/performance.md.
+if [[ "${1:-}" != __build && "${1:-}" != __run && "${BENCH_HOST:-local}" == ryzen && "${PERF_STAND_LOCKED:-}" != "$ROOT" ]]; then
+  mkdir -p "$ROOT/.bench"
+  PERF_STAND_LOCKED="$ROOT" exec python3 "$ROOT/scripts/perf_lock.py" "$ROOT/.bench/perf-ryzen.lock" bash "$0" "$@"
+fi
 # perf-content.sh also calls the queue entry points directly in its own source tree.
 PERF_SOURCE_FINGERPRINT="${PERF_SOURCE_FINGERPRINT:-$(source_fingerprint)}"
 export PERF_SOURCE_FINGERPRINT
