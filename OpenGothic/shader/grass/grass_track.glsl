@@ -17,7 +17,8 @@
 // glsl, `strip`) the pixel is the loose earth whatever the ribbon says, by the same lattice and tone as the earth
 // of the meadow's notches. Outside a meadow the ribbon's edge stays painted.
 // From GrassTrackFarFrom on the two layers are mixed by the wear and the ORM is a constant: the tone and the
-// ribbon's drawing stay, the grain is gone with the distance. What the grain's normals and occlusion took from
+// ribbon's drawing stay, the grain is gone with the distance - and the drawing itself is read softer, by a foot of
+// GrassTrackFarSoft: wide soft ruts, as a road's are from 15 m. What the grain's normals and occlusion took from
 // the light near (0.88 by the layers' slopes alone) stays as GrassTrackFarShade: the painted road too is darker
 // from afar - its mips are means of the encoded colour, 0.86-0.89 of the linear mean at the third and fourth. By
 // the frames the layers near stand at 0.99-1.06 of the painted road and at 0.85 of this shade at 0.89-0.93 from
@@ -25,6 +26,7 @@
 const float GrassTrackHeight   = 140.0;  // of 256 of the wear: what the heights' difference is worth
 const float GrassTrackFarFrom  = 1200.0; // cm: the hard choice of a layer passes to their mix
 const float GrassTrackFarTo    = 1500.0;
+const float GrassTrackFarSoft  = 34.0;   // cm: the foot the ribbon's maps are read by from afar
 const float GrassTrackRibbonTo = 6000.0; // cm: no normal of the ribbon beyond; fading from 0.7 of it
 const float GrassTrackRough    = 0.9;    // the roughness from afar
 const float GrassTrackFarShade = 0.9;    // the layers' colour from afar: the shade of their grain
@@ -65,21 +67,27 @@ void grassTrack(uint tex, float crustK, float looseK, float knobs, vec2 uv, vec2
     const vec2  f = fract(uv);
     uvR += clamp(vec2(dot(t,w), dot(b,w))/det, vec2(-0.1), vec2(0.1))*smoothstep(vec2(0.0), vec2(0.08), min(f, 1.0-f));
     }
-  const vec3  mask = fringeTexture(2u, rib, uvR, duvdx*mip, duvdy*mip).rgb;
+  // from afar the ribbon's maps are read by a wider foot, the same along and across the road: the fray and the
+  // grain that break a rut's edge near are gone there, and its narrow dark bed would be a ruled line
+  const float d   = distance(pos, scene.camPos);
+  const float far = smoothstep(GrassTrackFarFrom, GrassTrackFarTo, d);
+  vec2 dxR = duvdx*mip, dyR = duvdy*mip;
+  if(far>0.0 && abs(det)>1e-12) {
+    const float soft = far*GrassTrackFarSoft/abs(det);
+    dxR.x += length(t)*(dxR.x<0.0 ? -soft : soft);
+    dyR.y += length(b)*(dyR.y<0.0 ? -soft : soft);
+    }
+  const vec3  mask = fringeTexture(2u, rib, uvR, dxR, dyR).rgb;
   const float own  = max(mask.b, strip);
   if(own<=0.004)
     return;
 
-  // where the ruts fade: 1 at their full depth and tone; by 2.8 m and by 0.9 m - one rut of the two may fade
-  // alone, and over the whole of the noise: a rut at its full tone on most of its length is a ruled line from
-  // 15 m on, where the fray of its edges is gone
-  const float k    = 1.0 - fade*smoothstep(-0.3, 0.6, grassTrackNoise(place,4480,0x75u)*0.45 +
-                                                      grassTrackNoise(place,1440,0x76u)*0.55);
-  const float lean = (mask.g*mix(1.0, k, 0.7) + strip)*256.0 - 128.0 +
+  // where the ruts fade: 1 at their full depth and tone; by 6 m and by 2.2 m - one rut of the two may fade alone
+  const float k    = 1.0 - fade*smoothstep(0.05, 0.55, grassTrackNoise(place,9600,0x75u)*0.6 +
+                                                       grassTrackNoise(place,3520,0x76u)*0.4);
+  const float lean = (mask.g*mix(1.0, k, 0.5) + strip)*256.0 - 128.0 +
                      (grassTrackNoise(place,3840,0x77u)*90.0 + grassTrackNoise(place,560,0x78u)*40.0)*ragged;
 
-  const float d   = distance(pos, scene.camPos);
-  const float far = smoothstep(GrassTrackFarFrom, GrassTrackFarTo, d);
   const vec2  uvC = grassCrustUv(pos.xz)*crustK, dxC = grassCrustUv(dpdx.xz)*crustK, dyC = grassCrustUv(dpdy.xz)*crustK;
   const vec2  uvL = grassLooseUv(pos.xz)*looseK, dxL = grassLooseUv(dpdx.xz)*looseK, dyL = grassLooseUv(dpdy.xz)*looseK;
   // the share of the loose earth: near one layer or the other, from afar their mix
@@ -116,7 +124,7 @@ void grassTrack(uint tex, float crustK, float looseK, float knobs, vec2 uv, vec2
     albedo = fringeTexture(0u, tex, uvC, dxC*mip, dyC*mip).rgb;
   if(wl>0.0)
     albedo = mix(albedo, fringeTexture(0u, tex+1u, uvL, dxL*mip, dyL*mip).rgb, wl);
-  albedo *= mix(vec3(1.0), fringeTexture(0u, rib, uvR, duvdx*mip, duvdy*mip).rgb, k*mix(GrassTrackCrustTint, 1.0, wl))*
+  albedo *= mix(vec3(1.0), fringeTexture(0u, rib, uvR, dxR, dyR).rgb, k*mix(GrassTrackCrustTint, 1.0, wl))*
             (grassTrackTone(place)*mix(1.0, GrassTrackFarShade, far));
 
   // the normal: the ribbon's large forms, the layer's grain over them
@@ -126,7 +134,7 @@ void grassTrack(uint tex, float crustK, float looseK, float knobs, vec2 uv, vec2
     const float lt = dot(t,t), lb = dot(b,b);
     if(lt>1e-20 && lb>1e-20) {
       // each axis by its own length: the ribbon's maps are made for its metres across and along
-      const vec2 xy = (fringeTexture(1u, rib, uvR, duvdx*mip, duvdy*mip).ag*2.0 - 1.0)*form;
+      const vec2 xy = (fringeTexture(1u, rib, uvR, dxR, dyR).ag*2.0 - 1.0)*form;
       n = normalize(t*(inversesqrt(lt)*xy.x) + b*(inversesqrt(lb)*xy.y) + gn*sqrt(max(0.0, 1.0 - dot(xy,xy))));
       }
     }
