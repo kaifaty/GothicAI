@@ -1269,6 +1269,9 @@ void Npc::emitSoundEffect(std::string_view sound, float range, bool freeSlot) {
   }
 
 void Npc::emitSoundGround(std::string_view sound, float range, bool freeSlot) {
+  // pressed into a wall the body stands (Pose::setHalt): the run loop under the stand does not step aloud
+  if(wallReach().press>0.5f)
+    return;
   auto mat = mvAlgo.groundMaterial();
   string_frm buf(sound,"_",MaterialGroupNames[uint8_t(mat)]);
   auto sfx = ::Sound(owner,::Sound::T_Regular,buf,{x,y,z},range,freeSlot);

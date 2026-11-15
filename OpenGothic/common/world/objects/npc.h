@@ -579,6 +579,9 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     auto      animNames() const -> std::string; // the playing animations, for debugging
     void      flinch(const Flinch::Hit& hit); // the upper body gives way to a blow (also the test bench)
     void      bumpReaction(const BumpHit& hit);
+    // the hands to a wall ahead, the stand of a body pressed into it (game/reachsignal): seen only
+    MoveAlgo::WallReach wallReach() const;
+    float     haltShown() const; // 0..1 of the stand shown instead of the run (the bench)
     bool      queueBumpChain(const Tempest::Vec3& thrown, float strength, float height);
     bool      isPrehit() const;
     bool      isImmortal() const;

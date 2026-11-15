@@ -623,6 +623,15 @@ std::unique_ptr<RenderRig> RenderRig::build(const RenderRigSpec& spec, const ass
         r->bone[i].afterArms = true;
         r->afterArms.push_back(i);
         }
+      // under a hand: where the bone lies in the hand of the bind pose, the open one
+      for(size_t p=r->bone[i].parent; p!=None; p=r->bone[p].parent)
+        if(r->bone[p].role==Role::ArmHand) {
+          const auto& arm = r->arms[r->bone[p].part];
+          r->bone[i].openHand = p;
+          r->bone[i].openLeft = src.nodes[arm.sourceHand].name.find(" L ")!=std::string::npos;
+          r->bone[i].openRel  = IkMath::mul(IkMath::transpose(IkMath::rotationOf(rig.tr[p])),IkMath::rotationOf(rig.tr[i]));
+          break;
+          }
       }
   }
 
@@ -694,8 +703,22 @@ bool RenderRig::solve(const Matrix4x4* source, size_t sourceCount, Matrix4x4* ou
     }
   for(const auto& a:arms)
     solveArm(a,source,out,hands);
-  for(const size_t i:afterArms)
+  for(const size_t i:afterArms) {
     out[i] = place(i,source,out,rise);
+    const Bone& b    = bone[i];
+    const float open = b.openHand!=None ? std::clamp(b.openLeft ? hands.openLeft : hands.openRight,0.f,1.f) : 0.f;
+    if(open>0) {
+      // a palm laid flat: from the fist to where the bone lies in the open hand
+      const Mat3 flat = IkMath::mul(IkMath::rotationOf(out[b.openHand]),b.openRel);
+      Mat3 turned = IkMath::toMat3(IkMath::slerp(IkMath::toQuat(IkMath::rotationOf(out[i])),IkMath::toQuat(flat),open));
+      // the model's scale stays in the bone
+      const float size = Vec3(out[i].at(0,0),out[i].at(0,1),out[i].at(0,2)).length();
+      for(auto& row:turned.m)
+        for(auto& v:row)
+          v *= size;
+      setLinear(out[i],turned);
+      }
+    }
   for(const auto& t:twists)
     solveTwist(t,out);
   return true;
