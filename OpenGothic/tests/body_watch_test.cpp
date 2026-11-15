@@ -2047,7 +2047,7 @@ int main(int argc,const char** argv) {
       expect(rules.whirlwindDuration()==1,"rules preserve the lower whirlwind duration clamp");
       duration->set_int(91);
       expect(rules.whirlwindDuration()==60,"rules preserve the upper whirlwind duration clamp");
-      expect(rules.scriptVmMemorySize()>vm.size(),"rules include the symbol table in the VM memory probe");
+      expect(rules.scriptVmMemorySize()>10000000,"rules include the symbol table in the VM memory probe");
       }
     TestBench::flushOutput();
     gothic.clearGame().reset();

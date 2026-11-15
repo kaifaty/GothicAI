@@ -1,4 +1,5 @@
 #include "damagecalculator.h"
+#include "game/gamescript.h"
 
 #include <cmath>
 
