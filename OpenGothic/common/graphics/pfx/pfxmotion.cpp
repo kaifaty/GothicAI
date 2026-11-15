@@ -121,11 +121,11 @@ float flicker(const Flicker& f, uint64_t timeMs) {
   return 1.f + f.amount*s;
   }
 
-Vec3 jitter(const Flicker& f, uint64_t timeMs, float cm) {
+Vec3 jitter(const Flicker& f, uint64_t timeMs, float cm, float swayHz) {
   if(cm<=0)
     return Vec3();
   const double t  = double(timeMs)/1000.0;
-  const double hz = (f.jitterHz>0 ? f.jitterHz : f.pulseHz)*KnotsPerPeriod;
+  const double hz = (swayHz>0 ? swayHz : (f.jitterHz>0 ? f.jitterHz : f.pulseHz))*KnotsPerPeriod;
   return Vec3(noise(t*hz, f.seed^0x1B56C4E9u),
               noise(t*hz, f.seed^0x7F4A7C15u),
               noise(t*hz, f.seed^0x2545F491u))*cm;

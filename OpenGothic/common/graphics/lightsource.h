@@ -38,7 +38,8 @@ class LightSource final {
 
     // the brightness follows a flame's signal at the world time and the position trembles by jitterCm
     // (vobs.d "flicker_from", "jitter_cm"): the same signal as the emitter's particles
-    void                 setFlicker(const PfxMotion::Flicker& f, float jitterCm);
+    // swayHz: the trembling's own frequency ("sway_hz"), 0: the signal's
+    void                 setFlicker(const PfxMotion::Flicker& f, float jitterCm, float swayHz = 0);
 
     void                 setTimeOffset(uint64_t t);
 
@@ -73,6 +74,7 @@ class LightSource final {
 
     PfxMotion::Flicker flicker;
     float              flickerJitterCm = 0;
+    float              flickerSwayHz   = 0;
 
     bool               enable = true;
   };

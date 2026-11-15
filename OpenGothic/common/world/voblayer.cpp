@@ -162,6 +162,12 @@ void layerLamp(const Json& entry, LampExtra& lamp, bool animated) {
       require(lamp.jitterCm>=0 && lamp.jitterCm<=10,"jitter_cm must be in 0..10");
       }
     } else require(!entry.HasMember("jitter_cm"),"jitter_cm without flicker_from");
+  // the trembling's own frequency, slower than the flame's tips: a lamp close over a thing sways its shadow
+  if(entry.HasMember("sway_hz")) {
+    require(lamp.jitterCm>0,"sway_hz without jitter_cm");
+    lamp.swayHz=layerFloat(entry["sway_hz"]);
+    require(lamp.swayHz>0 && lamp.swayHz<=30,"sway_hz must be in 0..30");
+    }
   }
 rapidjson::Document layerIndex(const fs::path& file) {
   const auto bytes=gothicglb::readFile(file);
@@ -415,7 +421,7 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
             v->visual=std::move(visual);
             v->visual_name=v->visual->name; v->associated_visual_type=v->visual->type;
             } else if(kind=="light") {
-            layerFields(entry,{"key","kind","position","rotation","yaw_deg","range","color","color_ani","range_ani","ani_fps","cookie","source_cm","near","flicker_from","jitter_cm"});
+            layerFields(entry,{"key","kind","position","rotation","yaw_deg","range","color","color_ani","range_ani","ani_fps","cookie","source_cm","near","flicker_from","jitter_cm","sway_hz"});
             auto light=std::make_shared<Light>();
             light->type=VirtualObjectType::zCVobLight; light->light_type=LightType::POINT;
             light->range=layerFloat(member(entry,"range")); require(light->range>0,"range must be positive");
@@ -484,7 +490,7 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
           const auto* lamp=dynamic_cast<const asset::VLight*>(&target);
           require(lamp!=nullptr,"class "+std::string(className(target.type))+" is not a lamp");
           require(std::none_of(relit.begin(),relit.end(),[&](const auto& r) { return r.first==id; }),"duplicate light id");
-          layerFields(entry,{"id","color","range","near","source_cm","flicker_from","jitter_cm","offset_cm"});
+          layerFields(entry,{"id","color","range","near","source_cm","flicker_from","jitter_cm","sway_hz","offset_cm"});
           require(entry.MemberCount()>1,"nothing to change");
           const auto* earlier=dynamic_cast<const BaseLight*>(lamp);
           auto edited=earlier!=nullptr ? std::make_shared<BaseLight>(*earlier) : std::make_shared<BaseLight>(*lamp);

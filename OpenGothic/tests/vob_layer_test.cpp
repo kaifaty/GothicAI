@@ -724,6 +724,22 @@ void particleMotion() {
     require(std::abs(d.x)<=2.f && std::abs(d.y)<=2.f && std::abs(d.z)<=2.f,"the light trembles within jitter_cm");
     }
   require(lo>=0.8f && hi<=1.2f && hi-lo>0.2f,"the signal swings within 1 +- amount");
+  // the trembling's own frequency ("sway_hz"): at 1.5 Hz the light moves several times less in a frame than at the
+  // signal's 12 Hz, and stays within jitter_cm
+  const auto step=[&](float swayHz) {
+    light.setFlicker(flicker,2.f,swayHz);
+    double sum=0; Tempest::Vec3 last;
+    for(uint64_t t=0;t<5000;t+=17) {
+      light.update(t);
+      const auto d=light.currentPosition()-Tempest::Vec3(10,20,30);
+      require(std::abs(d.x)<=2.f && std::abs(d.y)<=2.f && std::abs(d.z)<=2.f,"the light sways within jitter_cm");
+      if(t>0) sum+=(light.currentPosition()-last).length();
+      last=light.currentPosition();
+      }
+    return sum;
+    };
+  const double fast=step(0.f), slow=step(1.5f);
+  require(slow>0 && slow*4<fast,"sway_hz slows the light's trembling");
   }
 
 // A layer emitter's flame signal ("flicker") and the light that takes it ("flicker_from", "jitter_cm")
