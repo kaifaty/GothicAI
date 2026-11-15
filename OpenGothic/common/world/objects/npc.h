@@ -570,6 +570,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     bool      isAttackAnim() const;
     auto      animNames() const -> std::string; // the playing animations, for debugging
     void      flinch(const Flinch::Hit& hit); // the upper body gives way to a blow (also the test bench)
+    void      bumpReaction(const BumpHit& hit);
     bool      isPrehit() const;
     bool      isImmortal() const;
 
