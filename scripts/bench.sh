@@ -685,5 +685,8 @@ if [[ "$NAME" == streaming-flythrough ]]; then
 fi
 echo "bench: ran on $HOST"
 echo "$OUT"
+if [[ "$NAME" == ragdoll-brace-death ]]; then
+  python3 "$ROOT/scripts/brace_death_check.py" "$RUN/melee-posture.jsonl" || REPORT_RC=1
+fi
 if [[ "$GAME_RC" != 0 ]]; then exit "$GAME_RC"; fi
 exit "$REPORT_RC"

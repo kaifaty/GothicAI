@@ -7,6 +7,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import body_sim_bench as bench
+import brace_death_check
 
 
 def duel_journals(tmp_path, policy):
@@ -80,3 +81,42 @@ def test_posture_metrics_reject_missing_and_foreign_duel_rows(tmp_path):
     saved.write_text(json.dumps({"arena_seed": 999}) + "\n")
     with pytest.raises(RuntimeError, match="unknown duel seed"):
         bench.add_posture_metrics(episodes, path, enabled=True)
+
+
+@pytest.mark.parametrize("cell,defect", [("all", "valid")] + [
+    (cell, defect) for cell in brace_death_check.CELLS
+    for defect in ("missing", "duplicate", "active")
+] + [(cell, "late") for cell in ("death", "unconscious")])
+def test_brace_death_journal(tmp_path, capsys, cell, defect):
+    rows = []
+    for index, name in enumerate(brace_death_check.CELLS):
+        start = 1000 + index * 5000
+        # Slots can be reused after clear: match both the body and this fall.
+        target = {"id": 7, "name": brace_death_check.TARGET}
+        end = {"event": "brace", "target": target, "fall_ms": start,
+               "tick_ms": start + (1500 if name == "control" else 165),
+               "end": "getup_start" if name == "control" else name, "pose": "S_BRACE_B"}
+        rows.append({"event": "knockdown", "target": target, "tick_ms": start,
+                     "fall_ms": start, "brace": "S_BRACE_B"})
+        if name == cell and defect == "late":
+            end["tick_ms"] = start + 301
+        if name != cell or defect != "missing":
+            rows.append(end)
+        if name == cell and defect == "duplicate":
+            rows.append(end.copy())
+        # Same tick as end, including the failing active pose: no grace step.
+        rows.append({"event": "sample", "target": target, "tick_ms": end["tick_ms"],
+                     "brace": "S_BRACE_B" if name == cell and defect == "active" else "none"})
+        # Another actor's active pose must not affect this body's result.
+        rows.append({"event": "sample", "target": {"id": 8}, "tick_ms": end["tick_ms"], "brace": "S_BRACE_F"})
+    journal = tmp_path / "melee-posture.jsonl"
+    journal.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    assert brace_death_check.main([str(journal)]) == (0 if defect == "valid" else 1)
+    output = capsys.readouterr().out
+    if defect == "valid":
+        assert "PASS: death, unconscious, control" in output
+    else:
+        message = {"missing": "expected exactly 1 brace event, got 0",
+                   "duplicate": "expected exactly 1 brace event, got 2",
+                   "late": "brace ended 301 ms", "active": "active brace S_BRACE_B after end"}[defect]
+        assert f"FAIL: {cell}: {message}" in output
