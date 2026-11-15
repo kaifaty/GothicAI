@@ -1,14 +1,55 @@
 #!/usr/bin/env bash
 # Repeatable normal-clock frame profiling. See docs/performance.md.
 set -euo pipefail
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BUILD="$ROOT/OpenGothic/build-perf"
 
 fail() { echo "perf: $*" >&2; exit 2; }
+
+perf_checkout() {
+  python3 - "$1" <<'PY'
+import hashlib
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1]).resolve()
+# Codex worktrees use .../worktrees/<name>/<repo>, like ryzen.sh.
+name = root.parent.name if '/worktrees/' in str(root.parent) else root.name
+print(name + '-' + hashlib.sha256(str(root).encode()).hexdigest()[:12])
+PY
+}
+
+source_fingerprint() {
+  python3 - "$ROOT/OpenGothic" <<'PY'
+import hashlib
+import os
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+digest = hashlib.sha256()
+for directory, dirs, files in os.walk(root):
+    dirs[:] = sorted(name for name in dirs if name != '.git'
+                     and not name.startswith(('build', 'cmake-build-')))
+    for name in sorted(files):
+        if name == '.git':
+            continue
+        path = Path(directory) / name
+        digest.update(path.relative_to(root).as_posix().encode() + b'\0')
+        digest.update(hashlib.sha256(path.read_bytes()).digest())
+print(digest.hexdigest())
+PY
+}
+
+check_build_fingerprint() {
+  local built=''
+  if [[ -r "$BUILD/source_fingerprint" ]]; then built="$(cat "$BUILD/source_fingerprint")"; fi
+  [[ -n "${PERF_SOURCE_FINGERPRINT:-}" && "$built" == "$PERF_SOURCE_FINGERPRINT" ]] ||
+    fail "build source_fingerprint ${built:-missing} does not match run ${PERF_SOURCE_FINGERPRINT:-missing}; rerun without NO_BUILD=1"
+}
 
 build_game() {
   local out="$1"
   mkdir -p "$out"
+  rm -f "$BUILD/source_fingerprint"
   local flags=(-DCMAKE_POLICY_VERSION_MINIMUM=3.5)
   if [[ "${PERF_REMOTE:-0}" == 1 ]]; then
     export VULKAN_SDK="$HOME/gothic-ai/body-baseline/toolchain/vulkan-1.4.341.0"
@@ -24,8 +65,17 @@ build_game() {
     "${flags[@]}" >"$out/configure.log" 2>&1 || { tail -60 "$out/configure.log"; return 1; }
   cmake --build "$BUILD" --target Gothic2Notr --parallel "${RYZEN_JOBS:-8}" \
     >"$out/build.log" 2>&1 || { tail -80 "$out/build.log"; return 1; }
+  printf '%s\n' "$PERF_SOURCE_FINGERPRINT" >"$BUILD/source_fingerprint"
   tail -5 "$out/build.log"
 }
+
+# ryzen.sh clean and shell tests reuse the checkout and fingerprint helpers.
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then return; fi
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+BUILD="$ROOT/OpenGothic/build-perf"
+# perf-content.sh also calls the queue entry points directly in its own source tree.
+PERF_SOURCE_FINGERPRINT="${PERF_SOURCE_FINGERPRINT:-$(source_fingerprint)}"
+export PERF_SOURCE_FINGERPRINT
 
 # These entry points run only inside the queue on Ryzen.
 if [[ "${1:-}" == __build ]]; then shift; build_game "$1"; exit; fi
@@ -65,19 +115,19 @@ if [[ "$REMOTE_RUN" == 0 ]]; then
     remote env ${GAME_ENV[@]+"${GAME_ENV[@]}"} python3 -c "$(cat "$ROOT/scripts/ryzen_game.py")" --check
     mkdir -p "$OUT"
     TASK="$REMOTE_HOME/gothic-ai/perf-stand"
-    SOURCE="$TASK/source"
+    SOURCE="$TASK/$(perf_checkout "$ROOT")/source"
     REMOTE_OUT="$TASK/runs/${OUT##*/}"
     NAS_OUT="/mnt/shared/gothic-ai/perf-stand/runs/${OUT##*/}"
     remote mkdir -p "$SOURCE/OpenGothic" "$SOURCE/scripts/bench" "$REMOTE_OUT"
     remote df -h "$REMOTE_HOME"
-    # The stand's build tree is shared by every checkout that runs here. Copy by content and stamp the
-    # copied files now: kept source times older than the last build's objects would skip their rebuild.
-    rsync -a --checksum --no-times --delete --exclude='/build*/' --exclude='.git' "$ROOT/OpenGothic/" "$RYZEN_HOST:$SOURCE/OpenGothic/"
+    # Stamp changed sources now: old source mtimes could otherwise skip rebuilding newer objects.
+    rsync -a --checksum --no-times --delete --exclude='build*/' --exclude='cmake-build-*/' --exclude='.git' "$ROOT/OpenGothic/" "$RYZEN_HOST:$SOURCE/OpenGothic/"
     rsync -a "$ROOT/scripts/ryzen-build.sh" "$ROOT/scripts/perf.sh" "$ROOT/scripts/perf_report.py" "$ROOT/scripts/base-ensure.sh" "$ROOT/scripts/ryzen_game.py" "$RYZEN_HOST:$SOURCE/scripts/"
     rsync -a --delete --exclude='/build*/' "$ROOT/scripts/convert/" "$RYZEN_HOST:$SOURCE/scripts/convert/"
     rsync -a "$ROOT"/scripts/bench/perf-*.bench "$RYZEN_HOST:$SOURCE/scripts/bench/"
     REMOTE_ENV=(PERF_REMOTE=1 "PERF_VID_RES=$PERF_VID_RES" "PERF_INI=$PERF_INI" "PERF_WINDOW=$PERF_WINDOW" "PERF_REPEAT=$PERF_REPEAT" "PERF_WAIT=$PERF_WAIT"
       "PERF_ARGS=$PERF_ARGS" "PERF_ENV=$PERF_ENV" "PERF_COMMIT=$PERF_COMMIT" "PERF_DIRTY=$PERF_DIRTY"
+      "PERF_SOURCE_FINGERPRINT=$PERF_SOURCE_FINGERPRINT"
       ${GAME_ENV[@]+"${GAME_ENV[@]}"})
     if [[ "${NO_BUILD:-0}" != 1 ]]; then
       "$ROOT/scripts/gq" --host "$RYZEN_HOST" run --class quick --threads "${RYZEN_JOBS:-8}" --mem 12G \
@@ -105,6 +155,7 @@ if [[ "$REMOTE_RUN" == 0 ]]; then
 fi
 
 mkdir -p "$OUT"
+if [[ "$REMOTE_RUN" == 1 ]]; then check_build_fingerprint; fi
 GAME_BIN="${GAME_BIN:-$BUILD/opengothic/Gothic2Notr}"
 GOTHIC_DIR="${GOTHIC_DIR:-/Volumes/DevSSD/Dev/games/Gothic II}"
 if [[ "${NO_BUILD:-0}" != 1 ]]; then build_game "$OUT/build"; fi
@@ -141,6 +192,7 @@ if [[ "$REMOTE_RUN" == 1 ]]; then
 fi
 export GAME_BIN GOTHIC_DIR
 python3 - "$OUT" "${PLACES[@]}" <<'PY'
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -157,7 +209,9 @@ for item in shlex.split(os.environ['PERF_ENV']):
     if not sep or not key.isidentifier():
         raise SystemExit(f'perf: invalid PERF_ENV assignment: {item!r}')
     extra_env[key] = value
-meta = dict(git_commit=os.environ.get('PERF_COMMIT'),
+meta = dict(binary_sha256=hashlib.sha256(Path(os.environ['GAME_BIN']).read_bytes()).hexdigest(),
+            source_fingerprint=os.environ['PERF_SOURCE_FINGERPRINT'],
+            git_commit=os.environ.get('PERF_COMMIT'),
             dirty_files=int(os.environ.get('PERF_DIRTY', 0)),
             requested_window=os.environ['PERF_WINDOW'],
             backend='Metal' if platform.system() == 'Darwin' else 'Vulkan',

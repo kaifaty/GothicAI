@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import subprocess
@@ -19,6 +20,75 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 import perf_content as content
 
 
+def test_perf_checkout_paths_are_stable_and_isolated(tmp_path):
+    script = Path(__file__).parents[1] / "perf.sh"
+    roots = [tmp_path / name / "worktrees/task/gothic" for name in ("a", "b")]
+    result = subprocess.run(
+        ["bash", "-c", 'source "$1"; perf_checkout "$2"; perf_checkout "$2"; perf_checkout "$3"',
+         "bash", str(script), *map(str, roots)], check=True, capture_output=True, text=True)
+    first, again, second = result.stdout.splitlines()
+    assert first == again
+    assert re.fullmatch(r"task-[0-9a-f]{12}", first)
+    assert first != second
+    assert len({f"perf-stand/{name}/source/OpenGothic/build-perf" for name in (first, second)}) == 2
+
+
+def test_perf_source_fingerprint_hashes_content_without_builds(tmp_path):
+    script = Path(__file__).parents[1] / "perf.sh"
+    engine = tmp_path / "OpenGothic"
+    engine.mkdir()
+    source = engine / "main.cpp"
+    source.write_text("original")
+
+    def fingerprint():
+        return subprocess.check_output(
+            ["bash", "-c", 'source "$1"; ROOT="$2"; source_fingerprint',
+             "bash", str(script), str(tmp_path)], text=True).strip()
+
+    original = fingerprint()
+    for name in ("build-perf", "lib/ZenKit/build", "cmake-build-debug", ".git"):
+        directory = engine / name
+        directory.mkdir(parents=True)
+        (directory / "output").write_text("ignored")
+    os.utime(source, (1, 1))
+    assert fingerprint() == original
+    source.write_text("changed")
+    assert fingerprint() != original
+    source.write_text("original")
+    added = engine / "new.cpp"
+    added.write_text("new")
+    assert fingerprint() != original
+    added.unlink()
+    assert fingerprint() == original
+
+
+@pytest.mark.parametrize("built", ("missing", "foreign", "stale"))
+def test_perf_no_build_rejects_mismatched_run_before_launch(tmp_path, built):
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    shutil.copyfile(Path(__file__).parents[1] / "perf.sh", scripts / "perf.sh")
+    build = tmp_path / "OpenGothic/build-perf"
+    build.mkdir(parents=True)
+    source = tmp_path / "OpenGothic/main.cpp"
+    source.write_text("before")
+    fingerprint = subprocess.check_output(
+        ["bash", "-c", 'source "$1"; ROOT="$2"; source_fingerprint',
+         "bash", str(scripts / "perf.sh"), str(tmp_path)], text=True).strip()
+    if built != "missing":
+        (build / "source_fingerprint").write_text((fingerprint if built == "stale" else "b" * 64) + "\n")
+    source.write_text("after")
+    environment = dict(os.environ, NO_BUILD="1")
+    environment.pop("PERF_SOURCE_FINGERPRINT", None)
+    result = subprocess.run(
+        ["bash", str(scripts / "perf.sh"), "__run", str(tmp_path / "run"), "interior"],
+        env=environment,
+        capture_output=True, text=True, timeout=5)
+    assert result.returncode == 2
+    assert "does not match run" in result.stderr
+    assert "rerun without NO_BUILD=1" in result.stderr
+    assert not (tmp_path / "run/metadata.json").exists()
+
+
 @pytest.mark.parametrize("cache", (None, "/custom/base-cache"))
 def test_remote_perf_uses_setup_cache_unless_caller_overrides(monkeypatch, cache):
     source = (Path(__file__).parents[1] / "perf.sh").read_text()
@@ -29,7 +99,7 @@ def test_remote_perf_uses_setup_cache_unless_caller_overrides(monkeypatch, cache
         monkeypatch.setenv("OPENGOTHIC_BASE_CACHE", cache)
     harness = r'''
 set -euo pipefail
-for name in PERF_VID_RES PERF_INI PERF_WINDOW PERF_REPEAT PERF_WAIT PERF_ARGS PERF_ENV PERF_COMMIT PERF_DIRTY; do
+for name in PERF_VID_RES PERF_INI PERF_WINDOW PERF_REPEAT PERF_WAIT PERF_ARGS PERF_ENV PERF_COMMIT PERF_DIRTY PERF_SOURCE_FINGERPRINT; do
   printf -v "$name" '%s' fixture
 done
 TASK=/remote/task
@@ -566,6 +636,26 @@ def test_compare_repeat_noise_sorted_regressions_and_leaf_inputs(tmp_path):
     leaf = json.loads((right / "compare.json").read_text())
     assert leaf["places"]["market"]["zones"][0]["within_noise"] is None
     assert (right / "compare.md").exists()
+
+
+def test_compare_warns_about_binary_identity_and_legacy_runs(tmp_path, capsys):
+    a = profile(tmp_path / "a", cadence_rows(10))
+    b = profile(tmp_path / "b", cadence_rows(10))
+
+    def metadata(directory, **values):
+        (directory / "metadata.json").write_text(json.dumps(values))
+
+    metadata(a, binary_sha256="a" * 64, source_fingerprint="c" * 64)
+    metadata(b, binary_sha256="b" * 64, source_fingerprint="c" * 64)
+    assert report.main(["compare", str(a), str(b)]) == 0
+    assert "**Warning:** A and B have different binary_sha256 with the same source_fingerprint" in capsys.readouterr().out
+    assert "**Warning:**" in (b / "compare.md").read_text()
+    metadata(b, binary_sha256="b" * 64, source_fingerprint="d" * 64)
+    assert report.compare_reports(report.build_report(a), report.build_report(b))["warnings"] == []
+    metadata(b)
+    assert report.main(["compare", str(a), str(b)]) == 0
+    assert "missing binary_sha256, source_fingerprint (old run)" in capsys.readouterr().out
+    assert len(json.loads((b / "compare.json").read_text())["warnings"]) == 1
 
 
 def test_compare_graphics_card_time_where_the_frame_waits_on_the_processor(tmp_path):
