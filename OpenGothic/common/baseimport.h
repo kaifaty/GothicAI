@@ -23,6 +23,8 @@ int convertFonts(const std::filesystem::path& gothic, const std::filesystem::pat
 // .DAT of the runtime VFS, below the nine _compiled directories and the server's GOTHIC.DAT.
 // An installation without programs gives an empty index.
 int convertPrograms(const std::filesystem::path& gothic, const std::filesystem::path& out, bool verifyOnly);
+// D2: definitions/<program SHA>/items.json, verified against fresh constructor executions.
+int convertItemDefinitions(const std::filesystem::path& base, bool verifyOnly);
 // P14: outputunits/outputunits.json and one record per distinct cutscene library (common/outputunits.h)
 // for every .BIN/.DAT of the runtime VFS, the engine's host and language candidates and the server's
 // and storygraph's choices. Fails when the server's native message view differs from its original

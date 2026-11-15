@@ -390,6 +390,16 @@ J envelope(const char* kind,const NpcSnapshot::Program& p,A& a) {
   put(j,"native_schema",std::move(schema),a);
   return j;
   }
+J itemEnvelope(const NpcSnapshot::Program& p,A& a) {
+  J j(rapidjson::kObjectType);
+  put(j,"format",text("gothic-item-definitions",a),a);
+  put(j,"version",J(1),a);
+  put(j,"program_name",text(p.name,a),a);
+  put(j,"program_sha256",text(p.sha256,a),a);
+  put(j,"string_encoding",text("unicode-byte-mapping",a),a);
+  put(j,"native_schema",text(IItemSchema,a),a);
+  return j;
+  }
 void difference(const J& expected,const J& actual,const std::string& path,int& errors) {
   if(expected==actual) return;
   if(expected.IsObject() && actual.IsObject()) {
@@ -520,5 +530,51 @@ int NpcSnapshot::verify(const Program& p,const fs::path& input) {
   auto report=readJson(input/"report.json");
   difference(summary.finish(p,reportAllocator),report,"report",errors);
   std::cout<<"NPC snapshot verification: "<<errors<<" differences\n";
+  return errors;
+  }
+
+NpcSnapshot::ItemCounts NpcSnapshot::writeItems(const Program& p,const fs::path& file) {
+  fs::create_directories(file.parent_path());
+  rapidjson::Document storage;
+  auto& a=storage.GetAllocator();
+  auto doc=itemEnvelope(p,a);
+  J records(rapidjson::kArrayType);
+  Runner runner(p);
+  ItemCounts counts;
+  const auto ids=corpus(p).at("items");
+  for(auto id:ids) {
+    auto c=runner.run(id,"items",a);
+    ++counts.total;
+    if(c.item) ++counts.captured;
+    records.PushBack(c.record,a);
+    }
+  put(doc,"records",std::move(records),a);
+  writeJson(file,doc);
+  return counts;
+  }
+
+int NpcSnapshot::verifyItems(const Program& p,const fs::path& file) {
+  auto doc=readJson(file);
+  require(doc.IsObject(),file.string()+": expected item definitions object");
+  auto& a=doc.GetAllocator();
+  auto expected=itemEnvelope(p,a);
+  int errors=0;
+  for(auto it=expected.MemberBegin();it!=expected.MemberEnd();++it)
+    difference(it->value,at(doc,it->name.GetString()),file.string()+"."+it->name.GetString(),errors);
+  const auto& records=at(doc,"records");
+  require(records.IsArray(),file.string()+": expected records array");
+  const auto ids=corpus(p).at("items");
+  require(records.Size()==ids.size(),file.string()+": item record count differs");
+  Runner runner(p);
+  for(size_t i=0;i<ids.size();++i) {
+    const auto path="items."+p.data.symbols[ids[i]].name;
+    auto c=runner.run(ids[i],"items",a);
+    const auto& actual=records[rapidjson::SizeType(i)];
+    try {
+      if(c.item) verifyFields(*c.item,at(actual,"fields"),*c.vm);
+      }
+    catch(const std::exception& e) { throw std::runtime_error(path+".fields."+e.what()); }
+    difference(c.record,actual,path,errors);
+    }
   return errors;
   }

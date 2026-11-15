@@ -21,6 +21,7 @@ endif()
 set(BASE_RUNTIME_SOURCES
   common/baseidentity.cpp common/sha256.cpp common/worldchunks.cpp common/worlddata.cpp common/modeldata.cpp
   common/fontdata.cpp common/programdata.cpp common/outputunits.cpp common/audiodata.cpp common/basemesh.cpp
+  common/itemdefinitions.cpp
   common/gothicglb.cpp common/gltfmesh.cpp common/utils/fileutil.cpp common/musicdata.cpp common/dmusic/musicrecord.cpp common/musicnative.c
   common/dmusic/dlsruntime.cpp common/dmusic/styleruntime.cpp common/dmusic/waveruntime.cpp
   common/dmusic/hydra.cpp common/dmusic/soundfont.cpp)
@@ -48,6 +49,8 @@ target_include_directories(gothic-base-import SYSTEM PRIVATE "${BASE_ROOT}/lib/r
 # including project) and reads its parsed structures, which need C11.
 set_target_properties(gothic-base-import PROPERTIES C_STANDARD 11)
 target_link_libraries(gothic-base-import PUBLIC zenkit miniz dmusic)
+include("${CMAKE_CURRENT_LIST_DIR}/NpcSnapshot.cmake")
+target_link_libraries(gothic-base-import PUBLIC gothic-npc-snapshot)
 if(TARGET Tempest)
   target_link_libraries(gothic-base-runtime PUBLIC Tempest)
 else()

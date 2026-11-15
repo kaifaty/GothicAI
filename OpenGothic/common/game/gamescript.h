@@ -20,6 +20,7 @@
 #include "game/questlog.h"
 #include "game/ownsymbols.h"
 #include "game/gamescript_startupfloor.h"
+#include "game/itemdefinitionruntime.h"
 #include "asset/worldtypes.h"
 
 class GameSession;
@@ -279,7 +280,7 @@ class GameScript final : public GameRules {
 
     bool searchScheme(std::string_view sc, std::string_view listName);
 
-    static daedalus::DaedalusVm createVm(Gothic& gothic);
+    static daedalus::DaedalusVm createVm(Gothic& gothic, ItemDefinitionRuntime::Definitions& items);
 
     bool game_initgerman     ();
     bool game_initenglish    ();
@@ -508,6 +509,7 @@ class GameScript final : public GameRules {
     void makeCurrent(Item* w);
 
     GameSession&                                                owner;
+    ItemDefinitionRuntime::Definitions                          itemDefinitions;
     daedalus::DaedalusVm                                          vm;
     StartupFloor                                                floorDefer{*this};
     OwnSymbols                                                  own{vm};

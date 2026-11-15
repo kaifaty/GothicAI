@@ -21,6 +21,7 @@
 #include <Tempest/Texture2d>
 
 #include "resources.h"
+#include "itemloadprobe.h"
 #include <Tempest/LoadProbe>
 
 #if defined(__APPLE__)
@@ -545,6 +546,15 @@ inline void mark(std::string_view stage, double stageMs = -1, std::string_view e
   if(!enabled())
     return;
   const double elapsed = msSince(origin());
+  if(stage=="session_begin") {
+    Items::constructors=0;
+    Items::constructorNs=0;
+    }
+  char itemLine[224];
+  std::snprintf(itemLine,sizeof(itemLine),"[loadprobe-items] stage=%.*s vm_constructors=%llu vm_ms=%.6f",
+                int(stage.size()),stage.data(),(unsigned long long)Items::constructors.load(),
+                double(Items::constructorNs.load())/1e6);
+  Tempest::Log::i(itemLine);
 #if defined(__APPLE__) || defined(__linux__)
   if(stage=="session_begin" || stage=="change_begin") {
     double load[3]={};
