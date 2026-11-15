@@ -6,7 +6,8 @@
     python3 reports/physics/2026-11-15-run-bumps/bump_look.py <abs out dir>
 
 The same takes as was_bench.py, filmed for the eye: the wall in the morning light from behind the left shoulder,
-the person and the table from the side. Takes with `_slow` run three times slower.
+the person and the table from the side. Takes with `_slow` run three times slower; `npc_run_other` writes the numbers
+of the one the hero runs into; in `wall_run_20` the hero first meets a herb stand of the yard, then slides along the wall.
 """
 import sys
 NPC = "SLD_815_SOELDNER"
@@ -63,16 +64,19 @@ walkmode run
 clear 3000
 """
 
-def table(take, cam, slow=False):
+def table(take, slow=False):
+    # the stand is inside a tavern: a following camera runs into a post and under the ceiling, so it is fixed.
+    # The table is put anew for every take: a take pushes it
     return f"""
 release all
+character prop table
 clear 3000
 goto pos 8470 128 1080
 wait 700
 face 90
 walkmode run
 watch player
-cam follow 330 120 {cam}
+cam at 8770 260 1230 8470 215 1270
 wait 900
 {"slowmo 3" if slow else "slowmo 1"}
 rec {take}
@@ -82,6 +86,7 @@ wait 2700
 pos
 stop
 slowmo 1
+character cleanup
 """
 
 text = """# Step 2, acceptance: a run into a wall, a person, a table.
@@ -96,22 +101,13 @@ npccharacter trace player
 text += wall("wall_run", (3125, -4300), 90)
 text += wall("wall_run_slow", (3125, -4300), 90, slow=True)
 text += wall("wall_walk", (3120, -4000), 90, mode="walk", ms=3000)
-text += wall("wall_run_45a", (2950, -4130), 45)
-text += wall("wall_run_45b", (3500, -4130), 135, cam=120)
+text += wall("wall_run_45", (2950, -4130), 45)
 text += wall("wall_run_20", (2500, -3990), 20, ms=3200)
 text += person("npc_run", "run", 700, 2600)
 text += person("npc_run_slow", "run", 700, 2600, slow=True)
 text += person("npc_run_other", "run", 700, 2600, watch=NPC)
 text += person("npc_walk", "walk", 350, 3200)
-text += """
-release all
-character prop table
-"""
-text += table("table_run", 90)
-text += table("table_run_slow", 90, slow=True)
-text += table("table_run_c270", 270)
-text += """
-character cleanup
-"""
+text += table("table_run")
+text += table("table_run_slow", slow=True)
 open(sys.argv[1], "w").write(text + "\nquit\n")
 print(text.count("\nrec "), "takes")
