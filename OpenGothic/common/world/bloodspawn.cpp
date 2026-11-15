@@ -1,18 +1,18 @@
 #include "bloodspawn.h"
-
 #include <algorithm>
 
 #include <cctype>
 #include <string>
 
 #include "game/constants.h"
-#include "game/gamescript.h"
+#include "game/gamerules.h"
 #include "graphics/effect.h"
 #include "world/objects/pfxemitter.h"
 #include "physics/dynamicworld.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
-#include "gothic.h"
+#include "settings.h"
+#include "gameservices.h"
 
 using namespace Tempest;
 
@@ -41,11 +41,11 @@ uint8_t variantOf(const Vec3& p, uint32_t salt) {
 
 // Blood particles at the wound, the guild's own emitter (vanilla PFX_BLOOD for people).
 void particles(World& world, int32_t guild, const Vec3& wound) {
-  const auto& gv = world.script().guildVal();
+  const auto& gv = world.rules().guildVal();
   std::string_view name = "PFX_BLOOD";
   if(guild>=0 && size_t(guild)<std::size(gv.blood_emitter) && !gv.blood_emitter[guild].empty())
     name = gv.blood_emitter[guild];
-  if(Gothic::inst().loadParticleFx(name,true)==nullptr)
+  if(GameServices::inst().loadParticleFx(name,true)==nullptr)
     return;
   Matrix4x4 m;
   m.identity();
@@ -59,7 +59,7 @@ void particles(World& world, int32_t guild, const Vec3& wound) {
 
 BloodSpawn::GuildBlood BloodSpawn::guildBlood(const World& world, int32_t guild) {
   GuildBlood ret;
-  const auto& gv = world.script().guildVal();
+  const auto& gv = world.rules().guildVal();
   if(guild<0 || size_t(guild)>=std::size(gv.blood_disabled))
     return ret;
   if(gv.blood_disabled[guild]!=0)
@@ -86,7 +86,7 @@ BloodSpawn::GuildBlood BloodSpawn::guildBlood(const World& world, int32_t guild)
   }
 
 void BloodSpawn::onHit(World& world, Npc& victim, const Vec3& wound, const Vec3& dir, int32_t damage) {
-  if(!Gothic::physicsFlags().blood || damage<=0)
+  if(!Settings::physicsFlags().blood || damage<=0)
     return;
   const int32_t guild = int32_t(victim.guild());
   const auto    gb    = guildBlood(world, guild);
@@ -138,7 +138,7 @@ void BloodSpawn::onHit(World& world, Npc& victim, const Vec3& wound, const Vec3&
   }
 
 void BloodSpawn::onDead(World& world, Npc& body) {
-  if(!Gothic::physicsFlags().blood)
+  if(!Settings::physicsFlags().blood)
     return;
   const int64_t now = world.time().toInt();
   if(body.bloodHitAt()<0 || now-body.bloodHitAt()>PoolAfterHitMs)

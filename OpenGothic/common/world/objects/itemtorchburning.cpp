@@ -28,7 +28,7 @@ ItemTorchBurning::ItemTorchBurning(Item&& loaded)
   }
 
 void ItemTorchBurning::setPhysicsEnable(World& owner) {
-  auto& sc = owner.script();
+  auto& sc = owner.rules();
   size_t torchId = sc.findSymbolIndex("ItLsTorchburned");
   if(torchId!=size_t(-1)) {
     auto hitem = sc.createItem(torchId);

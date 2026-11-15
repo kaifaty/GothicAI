@@ -8,8 +8,8 @@
 #include <cmath>
 
 #include "game/serialize.h"
-#include "gothic.h"
-#include "game/gamescript.h"
+#include "settings.h"
+#include "game/gamerules.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
 #include "utils/fileext.h"
@@ -39,7 +39,7 @@ Item::Item(World &owner, size_t itemInstance, Type type, const Tempest::Matrix4x
   LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Item);
   LoadProbe::Startup::Scope::bytes(LoadProbe::Startup::Item,sizeof(Item));
   assert(itemInstance!=size_t(-1));
-  hitem = owner.script().createItem(*this,itemInstance,itemInstanceSymbol);
+  hitem = owner.rules().createItem(*this,itemInstance,itemInstanceSymbol);
   setCount(1);
   // Mass and native inertia are fixed when physics is created. The default
   // Vob transform is zero, so establish the final pose and scale first.
@@ -60,7 +60,7 @@ Item::Item(World &owner, size_t itemInstance, Type type, const Tempest::Matrix4x
 
 Item::Item(World &owner, Serialize &fin, Type type)
   :Vob(owner) {
-  hitem = owner.script().loadItem(fin,*this,itemInstanceSymbol);
+  hitem = owner.rules().loadItem(fin,*this,itemInstanceSymbol);
   Tempest::Matrix4x4 mat;
   fin.read(amount);
   fin.read(pos,equipped,itSlot);
@@ -87,7 +87,7 @@ Item::Item(Item &&it)
   : Vob(it.world), hitem(std::move(it.hitem)),itemInstanceSymbol(it.itemInstanceSymbol),
     pos(it.pos),amount(it.amount),equipped(it.equipped),itSlot(it.itSlot),
     placedZenId(it.placedZenId),placedAllowed(it.placedAllowed),proto(it.proto),visual(std::move(it.visual)) {
-  world.script().attachItem(hitem,*this);
+  world.rules().attachItem(hitem,*this);
   setLocalTransform(it.localTransform());
   physic = std::move(it.physic);
   if(!physic.isEmpty())
@@ -218,7 +218,7 @@ void Item::setPhysicsDisable() {
   }
 
 bool Item::wakePhysics() {
-  if(Gothic::physicsFlags().placedItems && isPlacedItem() && !placedAllowed)
+  if(Settings::physicsFlags().placedItems && isPlacedItem() && !placedAllowed)
     return false;
   const bool missing = !isDynamic();
   if(missing) {
@@ -232,7 +232,7 @@ bool Item::wakePhysics() {
   }
 
 bool Item::activatePhysics() {
-  if(Gothic::physicsFlags().placedItems && isPlacedItem() && !placedAllowed)
+  if(Settings::physicsFlags().placedItems && isPlacedItem() && !placedAllowed)
     return false;
   wakePhysics();
   if(!isDynamic())
@@ -242,7 +242,7 @@ bool Item::activatePhysics() {
   }
 
 void Item::setPhysicsEnable(const ProtoMesh* mesh) {
-  if(Gothic::physicsFlags().placedItems && isPlacedItem() && !placedAllowed)
+  if(Settings::physicsFlags().placedItems && isPlacedItem() && !placedAllowed)
     return;
   if(mesh==nullptr)
     return;
@@ -250,7 +250,7 @@ void Item::setPhysicsEnable(const ProtoMesh* mesh) {
   Bounds b;
   b.assign(mesh->bboxMesh);
   physic = p.addDynamicObj(transform(),b,physicsMaterial(hitem->material),
-                           mesh,hitem->visual,Gothic::physicsFlags().itemHulls);
+                           mesh,hitem->visual,Settings::physicsFlags().itemHulls);
   physic.setItem(this);
   }
 
@@ -308,7 +308,7 @@ Vec3 Item::midPosition() const {
   }
 
 bool Item::isGold() const {
-  return itemInstanceSymbol==world.script().goldId()->index();
+  return itemInstanceSymbol==world.rules().goldItemId();
   }
 
 ItmFlags Item::mainFlag() const {
@@ -326,7 +326,7 @@ bool Item::isMulti() const {
 bool Item::isSpellShoot() const {
   if(!isSpellOrRune())
     return false;
-  auto& spl = world.script().spellDesc(spellId());
+  auto& spl = world.rules().spellDesc(spellId());
   return spl.target_collect_algo!=TargetCollect::TARGET_COLLECT_NONE &&
          spl.target_collect_algo!=TargetCollect::TARGET_COLLECT_CASTER &&
          spl.target_collect_algo!=TargetCollect::TARGET_COLLECT_FOCUS &&
@@ -396,7 +396,7 @@ int32_t Item::cost() const {
   }
 
 int32_t Item::sellCost() const {
-  return int32_t(std::ceil(world.script().tradeValueMultiplier()*float(cost())));
+  return int32_t(std::ceil(world.rules().tradeValueMultiplier()*float(cost())));
   }
 
 bool Item::checkCond(const Npc &other) const {

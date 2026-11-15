@@ -16,7 +16,7 @@
 #include "graphics/worldview.h"
 #include "graphics/lightgroup.h"
 #include "graphics/meshobjects.h"
-#include "game/gamescript.h"
+#include "game/gamerules.h"
 #include "physics/dynamicworld.h"
 #include "worldobjects.h"
 #include "worldsound.h"
@@ -28,6 +28,7 @@
 #include "bloodstains.h"
 
 class GameSession;
+class GameScript;
 class Focus;
 class WayMatrix;
 class VisualFx;
@@ -72,7 +73,7 @@ class World final : public ClothWorld, public BloodDecalSource, public PhysicsHo
 
     World()=delete;
     World(const World&)=delete;
-    World(GameSession& game, std::string_view file, bool startup, std::function<void(int)> loadProgress);
+    World(GameSession& game, GameRules& rules, std::string_view file, bool startup, std::function<void(int)> loadProgress);
     ~World();
 
     void                 createPlayer(std::string_view cls);
@@ -185,6 +186,7 @@ class World final : public ClothWorld, public BloodDecalSource, public PhysicsHo
     GlobalEffects*       globalFx() const { return globFx.get();   }
 
     GameScript&          script()   const;
+    GameRules&           rules()    const { return *gameRules; }
     GameSession&         gameSession() const { return game; }
 
     void                 assignRoomToGuild(std::string_view room, int32_t guildId);
@@ -322,6 +324,7 @@ class World final : public ClothWorld, public BloodDecalSource, public PhysicsHo
     const FocusRecord& searchPolicy(const Npc& pl, TargetCollect& collAlgo, TargetType& collType, WorldObjects::SearchFlg& opt) const;
     std::string                           wname;
     GameSession&                          game;
+    GameRules* const                      gameRules;
 
     std::unique_ptr<WayMatrix>            wmatrix;
     ChunkTable                            chunks;

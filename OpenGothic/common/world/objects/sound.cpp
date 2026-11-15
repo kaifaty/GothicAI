@@ -2,7 +2,7 @@
 
 #include "world/world.h"
 #include "utils/fileext.h"
-#include "gothic.h"
+#include "game/gamehost.h"
 
 Sound::Sound() {
   }
@@ -25,8 +25,8 @@ Sound::Sound(World& world, Sound::Type type, std::string_view s, const Tempest::
 
   SoundFx* snd = nullptr;
   if(FileExt::hasExt(s,"WAV"))
-    snd = Gothic::inst().loadSoundWavFx(s); else
-    snd = Gothic::inst().loadSoundFx(s);
+    snd = GameHost::inst().loadSoundWavFx(s); else
+    snd = GameHost::inst().loadSoundFx(s);
 
   if(snd==nullptr)
     return;

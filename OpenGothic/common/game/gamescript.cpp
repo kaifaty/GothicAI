@@ -80,21 +80,6 @@ bool GameScript::GlobalOutput::isFinished() {
   return true;
   }
 
-GameScript::PerDist::PerDist() {
-  for(auto& i:range)
-    i = -1;
-  }
-
-int GameScript::PerDist::at(PercType perc, int r) const {
-  if(perc>=PERC_Count)
-    return r;
-  auto rr = range[perc];
-  if(rr>0)
-    return rr;
-  return r;
-  }
-
-
 GameScript::GameScript(GameSession &owner)
     :owner(owner), vm(createVm(Gothic::inst())) {
   if (vm.global_self() == nullptr || vm.global_other() == nullptr || vm.global_item() == nullptr ||
@@ -834,15 +819,7 @@ size_t GameScript::symbolsCount() const {
   return vm.symbols().size();
   }
 
-const AiState& GameScript::aiState(ScriptFn id) {
-  auto it = aiStates.find(id.ptr);
-  if(it!=aiStates.end())
-    return it->second;
-  auto ins = aiStates.emplace(id.ptr,AiState(*this,id.ptr));
-  return ins.first->second;
-  }
-
-const daedalus::ISpell& GameScript::spellDesc(int32_t splId) {
+const SpellRecord& GameScript::spellDesc(int32_t splId) {
   auto& tag = spellFxInstanceNames->get_string(uint16_t(splId));
   return spells->find(tag);
   }

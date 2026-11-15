@@ -4,7 +4,7 @@
 
 #include "world/world.h"
 #include "world/movablevobs.h"
-#include "gothic.h"
+#include "settings.h"
 #include "utils/string_frm.h"
 
 using namespace Tempest;
@@ -21,7 +21,7 @@ StaticObj::StaticObj(Vob* parent, World& world, const asset::VirtualObject& vob,
 
   if(rule!=nullptr && visual.protoMesh()!=nullptr) {
     auto& physics = *world.physic();
-    physics.setMovableVobsEnabled(Gothic::physicsFlags().movableVobs);
+    physics.setMovableVobsEnabled(Settings::physicsFlags().movableVobs);
     movable = physics.addMovableVob(*visual.protoMesh(),scheme,transform(),rule->massMultiplier,
                                    rule->blocksWalking,rule->className,vob.cd_dynamic,vob.id);
     if(!movable.isEmpty()) {

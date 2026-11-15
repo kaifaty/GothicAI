@@ -5,7 +5,7 @@
 #include "graphics/visualfx.h"
 #include "graphics/effect.h"
 #include "game/damagecalculator.h"
-#include "game/gamescript.h"
+#include "game/gamerules.h"
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"
 #include "world/world.h"
@@ -25,9 +25,9 @@ void Npc::commitSpell() {
     return;
 
   const int32_t splId = active->spellId();
-  const auto&   spl   = owner.script().spellDesc(splId);
+  const auto&   spl   = owner.rules().spellDesc(splId);
 
-  owner.script().invokeSpell(*this,currentTarget,*active);
+  owner.rules().invokeSpell(*this,currentTarget,*active);
 
   if(active->isSpellShoot()) {
     const int lvl = (castLevel-CS_Emit_0)+1;
@@ -44,7 +44,7 @@ void Npc::commitSpell() {
     visual.setMagicWeaponKey(owner,SpellFxKey::Init);
     } else {
     // NOTE: use pfx_ppsIsLoopingChg ?
-    const VisualFx* vfx = owner.script().spellVfx(splId);
+    const VisualFx* vfx = owner.rules().spellVfx(splId);
     if(vfx!=nullptr) {
       auto e = Effect(*vfx,owner,Vec3(x,y,z),SpellFxKey::Cast);
       e.setOrigin(this);
@@ -58,7 +58,7 @@ void Npc::commitSpell() {
       currentTarget->lastHitSpell = splId;
       currentTarget->perceptionProcess(*this,nullptr,0,PERC_ASSESSMAGIC);
       }
-    if(owner.script().physicalSpell(splId)==GameScript::PhysicalSpell::Whirlwind)
+    if(owner.rules().physicalSpell(splId)==::PhysicalSpell::Whirlwind)
       owner.startSpellField(splId,currentTarget!=nullptr ? currentTarget->position() : position(),this,currentTarget);
     }
 
@@ -110,7 +110,7 @@ Npc::BeginCastResult Npc::beginCastSpell() {
   hnpc->aivar[88]  = 0; // HACK: clear AIV_SpellLevel
   manaInvested     = 0;
 
-  const SpellCode code = SpellCode(owner.script().invokeMana(*this,currentTarget,manaInvested));
+  const SpellCode code = SpellCode(owner.rules().invokeMana(*this,currentTarget,manaInvested));
   switch(code) {
     case SPL_SENDSTOP:
     case SPL_DONTINVEST:
@@ -123,7 +123,7 @@ Npc::BeginCastResult Npc::beginCastSpell() {
     case SPL_RECEIVEINVEST:
     case SPL_NEXTLEVEL: {
       ++manaInvested;
-      auto ani = owner.script().spellCastAnim(*this,*active);
+      auto ani = owner.rules().spellCastAnim(*this,*active);
       if(!visual.startAnimSpell(*this,ani,true))
         Log::d("Couldn't start animation for spell '",currentSpellCast,"'");
       castLevel = CS_Invest_0;
@@ -165,7 +165,7 @@ bool Npc::tickCast(uint64_t dt) {
   if(CS_Cast_0<=castLevel && castLevel<=CS_Cast_Last) {
     // cast anim
     if(active!=nullptr) {
-      auto ani = owner.script().spellCastAnim(*this,*active);
+      auto ani = owner.rules().spellCastAnim(*this,*active);
       if(!visual.startAnimSpell(*this,ani,false))
         return true;
       }
@@ -196,7 +196,7 @@ bool Npc::tickCast(uint64_t dt) {
   if(owner.tickCount()<castNextTime)
     return true;
 
-  const SpellCode code = SpellCode(owner.script().invokeMana(*this,currentTarget,manaInvested));
+  const SpellCode code = SpellCode(owner.rules().invokeMana(*this,currentTarget,manaInvested));
 
   if(!isPlayer() && aiExpectedInvest<=manaInvested) {
     endCastSpell();
@@ -213,7 +213,7 @@ bool Npc::tickCast(uint64_t dt) {
           castLevel = CastState(castLevel+1);
         visual.setMagicWeaponKey(owner,SpellFxKey::Invest,castLvl+1);
         }
-      auto& spl = owner.script().spellDesc(active->spellId());
+      auto& spl = owner.rules().spellDesc(active->spellId());
       castNextTime += uint64_t(spl.time_per_mana);
       ++manaInvested;
       return true;
@@ -241,7 +241,7 @@ void Npc::endCastSpell(bool playerCtrl) {
     castLevel = CastState(castLvl+CS_Cast_0);
     return;
     }
-  SpellCode code = SpellCode(owner.script().invokeManaRelease(*this,currentTarget,manaInvested));
+  SpellCode code = SpellCode(owner.rules().invokeManaRelease(*this,currentTarget,manaInvested));
   if(code==SpellCode::SPL_SENDCAST)
     castLevel = CastState(castLvl+CS_Cast_0); else
     castLevel = CS_Finalize;
@@ -415,7 +415,7 @@ bool Npc::releaseArrow(float draw, const Archery::Stats& st) {
 
   // the release throws it off, up to the cone
   if(st.cone>0.f) {
-    auto&               script = owner.script();
+    auto&               script = owner.rules();
     const float         r      = st.cone*std::sqrt(float(script.rand(10000,this))/10000.f);
     const float         a      = 2.f*float(M_PI)*float(script.rand(10000,this))/10000.f;
     Tempest::Vec3       side   = Tempest::Vec3::crossProduct(dir,Tempest::Vec3(0,1,0));

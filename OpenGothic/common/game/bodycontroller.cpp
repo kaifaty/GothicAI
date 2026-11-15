@@ -593,7 +593,7 @@ std::string BodyController::statusJson(const Npc* actor,bool boundaryDiagnostics
     rapidjson::Value queue(rapidjson::kArrayType);
     for(auto primitive:npc.fghAlgo.queueSnapshot()) queue.PushBack(uint64_t(primitive),pure.GetAllocator());
     pure.AddMember("queue",queue,pure.GetAllocator());
-    str(pure,"rng_state",npc.owner.script().randomState(&npc));
+    str(pure,"rng_state",npc.owner.rules().randomState(&npc));
     row.AddMember("purity_state",rapidjson::Value(pure,row.GetAllocator()),row.GetAllocator());
     }
     actors.PushBack(rapidjson::Value(row,d.GetAllocator()),d.GetAllocator());

@@ -9,7 +9,7 @@
 
 class Item;
 class World;
-class GameScript;
+class GameRules;
 class Npc;
 class Interactive;
 class Serialize;
@@ -81,10 +81,10 @@ class Inventory final {
     void   equipBestArmor       (Npc &owner);
     void   equipBestMeleeWeapon (Npc &owner);
     void   equipBestRangedWeapon(Npc &owner);
-    void   unequipWeapons(GameScript &vm, Npc &owner);
-    void   unequipArmor(GameScript &vm, Npc &owner);
-    void   clear(GameScript &vm, Npc &owner, bool includeMissionItm = false);
-    void   clear(GameScript &vm, Interactive &owner, bool includeMissionItm = false);
+    void   unequipWeapons(GameRules &vm, Npc &owner);
+    void   unequipArmor(GameRules &vm, Npc &owner);
+    void   clear(GameRules &vm, Npc &owner, bool includeMissionItm = false);
+    void   clear(GameRules &vm, Interactive &owner, bool includeMissionItm = false);
     bool   hasSpell(int32_t spl) const;
     bool   hasMissionItems() const;
     bool   hasRangedWeaponWithAmmo() const;

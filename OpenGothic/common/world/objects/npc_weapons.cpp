@@ -1,12 +1,12 @@
 #include "npc.h"
 
 #include "graphics/mesh/skeleton.h"
-#include "game/gamescript.h"
+#include "game/gamerules.h"
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"
 #include "world/world.h"
 #include "camera.h"
-#include "gothic.h"
+#include "settings.h"
 
 #include <algorithm>
 #include <cmath>
@@ -246,7 +246,7 @@ Gaze::Source Npc::gazeTarget(Tempest::Vec3& at, const Npc** whom) const {
       *whom = other;
     return Gaze::Source::Talk;
     }
-  if(physicsNoiseUntil>owner.tickCount() && Gothic::physicsFlags().physicsNoise && canHearPhysicsNoise()) {
+  if(physicsNoiseUntil>owner.tickCount() && Settings::physicsFlags().physicsNoise && canHearPhysicsNoise()) {
     at = physicsNoisePosition;
     return Gaze::Source::Script;
     }

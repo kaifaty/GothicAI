@@ -5,7 +5,7 @@
 #include "camera.h"
 #include "commandline.h"
 #include "game/bodycontroller.h"
-#include "gothic.h"
+#include "gameservices.h"
 #include "world/benchhooks.h"
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"
@@ -189,8 +189,8 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
       }
     case AI_Wait:
       if(isExternalControl() && CommandLine::inst().isDevMode()) {
-        const auto* symbol = owner.script().findSymbol(instanceSymbol());
-        Log::i("[ai] queue_wait ",symbol!=nullptr ? symbol->name() : ""," game_ms=",owner.tickCount(),
+        const auto symbol = owner.rules().symbolName(instanceSymbol());
+        Log::i("[ai] queue_wait ",symbol," game_ms=",owner.tickCount(),
                " duration_ms=",act.i0);
         }
       implAiWait(uint64_t(act.i0));
@@ -245,7 +245,7 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
         }
       /*
        * Rhademes doesn't quit talk properly
-      if(owner.script().isTalk(*this)) {
+      if(owner.rules().isTalk(*this)) {
         queue.pushFront(std::move(act));
         break;
         }*/
@@ -313,7 +313,7 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
       setDirection(act.point->direction());
       if(isPlayer()) {
         updateTransform();
-        Gothic::inst().camera()->reset(this);
+        GameServices::inst().camera()->reset(this);
         }
       }
       break;
@@ -366,10 +366,10 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
         }
       break;
     case AI_UnEquipWeapons:
-      invent.unequipWeapons(owner.script(),*this);
+      invent.unequipWeapons(owner.rules(),*this);
       break;
     case AI_UnEquipArmor:
-      invent.unequipArmor(owner.script(),*this);
+      invent.unequipArmor(owner.rules(),*this);
       break;
     case AI_Output:
     case AI_OutputSvm:
@@ -378,10 +378,10 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
         uint64_t msgTime = 0;
         if(aiPolicy!=NpcProcessPolicy::AiFar2) {
           if(act.act==AI_Output) {
-            msgTime = owner.script().messageTime(act.s0);
+            msgTime = owner.rules().messageTime(act.s0);
             } else {
-            auto svm  = owner.script().messageFromSvm(act.s0,hnpc->voice);
-            msgTime   = owner.script().messageTime(svm);
+            auto svm  = owner.rules().messageFromSvm(act.s0,hnpc->voice);
+            msgTime   = owner.rules().messageTime(svm);
             }
           visual.startFaceAnim(*this,"VISEME",1,msgTime);
           // the speaker and the one it speaks to look at each other while the line lasts
@@ -427,7 +427,7 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
       if(interactive()==nullptr && !isAiBusy())
         stopWalkAnimation();
 
-      if(auto p = owner.script().openDlgOuput(*this,*act.target)) {
+      if(auto p = owner.rules().openDlgOuput(*this,*act.target)) {
         outputPipe = p;
         setOther(act.target);
         act.target->setOther(this);
@@ -439,9 +439,9 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
       break;
     case AI_StopProcessInfo:
       if(outputPipe->close()) {
-        outputPipe = owner.script().openAiOuput();
+        outputPipe = owner.rules().openAiOuput();
         if(currentOther!=nullptr)
-          currentOther->outputPipe = owner.script().openAiOuput();
+          currentOther->outputPipe = owner.rules().openAiOuput();
         } else {
         queue.pushFront(std::move(act));
         }

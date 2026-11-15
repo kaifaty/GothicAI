@@ -209,6 +209,8 @@ pin `BENCH_HOST=dev-ubuntu`, `BENCH_HOST=ryzen` or `BENCH_HOST=local`.
 
 `ragdoll-brace-look` снимает для глаза нокдаун по стойкости в четыре стороны на ровном поле: назад, вперёд и на оба бока. Жертва всегда стоит лицом к герою, атакующий — перед ней, за ней или сбоку. Каждое падение — три дубля: сбоку от падения, в три четверти и сбоку с замедлением втрое, имена `<сторона>-<вид>[-slow]`. Сценарий пишет [`look_bench.py`](../../reports/physics/2026-11-14-fall-bracing/look_bench.py); его гоняют на игре до и после правки и сводят дубли по именам ([заметка](../../reports/physics/2026-11-14-fall-bracing/README.md)). Сценарий ждёт 4,5 с после удара, поэтому события `brace` пишутся при подъёме, с `getup_start`; пара для сравнения — `RAGDOLL_BRACE=1` и `RAGDOLL_BRACE=0 OPENGOTHIC_BRACE_MEASURE=1`.
 
+`ragdoll-brace-places` — тот же нокдаун на склоне и у стены. Склон — открытый травяной, 16,5°, над фермой Лобарта (`NW_FARM1_OUT_07`): падение вниз назад, вперёд и на бок, вверх — вперёд. Стена — дощатая хижина в порту: назад в стену с метра и вперёд в стену с полутора. Каждое падение — два дубля сбоку, второй замедлен втрое: `<место>-<падение>[-slow]`. Сценарий пишет [`places_bench.py`](../../reports/physics/2026-11-14-fall-bracing/places_bench.py); пара для сравнения — та же, что у `ragdoll-brace-look`. Лестницы в сценарии нет: поиск `stairs` ставит героя у кровати рядом с лестницей в доме, а городские ступени из `character route` на вид — травяной склон.
+
 `game.log` must contain `[bench] done` for a complete scenario (including an explicit `quit`).
 Closing the window, a crash, `TIMEOUT` (default 300 seconds), or the stall watchdog before that marker
 returns code 1 and prints one reason with elapsed/limit seconds to stderr. Partial output still goes
@@ -346,6 +348,18 @@ clips 1-5 (the torch with its sparks, standing and passed by; braziers and smoke
 waterfall); run it with `OPENGOTHIC_CONTENT=<abs>/reports/content/remaster/wall-torch/particles/content` (the sparks
 layer), `OPENGOTHIC_TAA_REACTIVE=0`, `=1`, `=1` with the view and `OPENGOTHIC_TAA=0` at 1920x1080 on Ryzen with
 `WORLD=NEWWORLD.ZEN`, and measure with `reports/render-features/2026-11-10-taa-reactive/metrics.py`.
+
+`rt-default-sheet`, `rt-default-soak` and `rt-default-unload` belong to ray tracing by default on a PC
+([step-default](../../reports/render-features/2026-11-08-rt-revisit/step-default.md#сделано-1415112026)): since
+2026-11-14 the engine turns ray tracing (with the GI probes and the eye) on by itself on a discrete NVIDIA RTX on
+Vulkan, so every bench on Ryzen runs with it unless `OPENGOTHIC_RT=0` or `-rt 0`; the Mac stays without.
+`rt-default-sheet` shoots the views accepted without GI (the torch of the Red Lantern, the harbour at night, the
+harbour house, the market, the hut, the hero's face); run it with `OPENGOTHIC_RT=0` and without, the same build, and
+put the halves side by side. `rt-default-soak` (ten laps of the flythrough route) and `rt-default-unload` (eighteen
+cycles: the market, 2 km outside the world, Xardas' valley, the big farm, back to the market, so every chunk unloads
+and its landscape BLAS is freed) run as a copy named `streaming-flythrough` for the frame-profile build and its
+`render: rt landscape` lines; run `rt-default-unload` with `TEMPEST_OFFSCREEN=1`: a covered window on Ryzen drops to
+1 FPS, and its streaming waits then time out.
 
 ## План и журнал
 
@@ -1606,7 +1620,7 @@ the native physics step; observer wall throughput is informative and is not ordi
 |---|---|
 | `ragdoll on\|off` | Set the same `GAME/ragdoll` switch as the Marvin toggle. Enabled by default; set `[GAME] ragdoll=0` or use Marvin `toggle ragdoll` to disable it. |
 | `down <npc> dead\|ko` | Invoke the normal NPC down lifecycle and prepare its body. |
-| `brace-profile [<group> <key> <value>]` | Edit the protective fall's `RagdollBrace::Profile` for the next knockdowns; bare, print it. Keys: `arms enter\|hold\|drop\|level\|rest\|yield\|torque\|stiff`, `neck enter\|hold\|yield\|torque`, `spine enter`, `legs enter\|front\|back\|side`, `land enter\|hold\|yield\|torque`. Leg switches accept only 0 or 1. Defaults: arms drop 0.25 s, level 0.70, rest 0.25 s, torque 90 N·m/kg, stiff 25 Hz; land enter 0.18 s, hold 0.12 s, yield 0.30 s, torque 10 N·m/kg; legs front/back/side 1/1/1. Arm springs use 6 Hz until their own contact, then stiff (at least 1 Hz); the other arm, neck, spine and legs stay at 6 Hz. Without `S_BRACELAND_*`, only land values, arms rest and leg switches have no effect; the old profile with arms stiff 6 preserves the single-pose fall bit for bit. Event `brace_profile`; unknown, negative or nonfinite values abort the scenario; arms level is 0..1. With `RAGDOLL_BRACE=0 OPENGOTHIC_BRACE_MEASURE=1`, event `brace` measures the unchanged unprotected fall with `"pose":"none"`. |
+| `brace-profile [<group> <key> <value>]` | Edit the protective fall's `RagdollBrace::Profile` for the next knockdowns; bare, print it. Keys: `arms enter\|hold\|drop\|level\|rest\|yield\|torque\|stiff`, `neck enter\|hold\|yield\|torque`, `spine enter`, `legs enter\|front\|back\|side`, `land enter\|hold\|yield\|torque`. Leg switches accept only 0 or 1. Defaults: arms drop 0.25 s, level 0.70, rest 0.10 s, yield 0.20 s, torque 90 N·m/kg, stiff 25 Hz; land enter 0.18 s, hold 0.12 s, yield 0.30 s, torque 10 N·m/kg; legs front/back/side 1/1/1. Arm springs use 6 Hz until their own contact, then stiff (at least 1 Hz); the other arm, neck, spine and legs stay at 6 Hz. Without `S_BRACELAND_*`, only land values, arms rest and leg switches have no effect; the old profile with arms yield 0.4 and stiff 6 preserves the single-pose fall bit for bit. Event `brace_profile`; unknown, negative or nonfinite values abort the scenario; arms level is 0..1. With `RAGDOLL_BRACE=0 OPENGOTHIC_BRACE_MEASURE=1`, event `brace` measures the unchanged unprotected fall with `"pose":"none"`. |
 | `push <npc> <x> <y> <z> <impulse>` | Apply an impulse in Newton seconds along a finite nonzero direction. Requires a physical body. |
 | `waitragdoll <npc> sleep\|recovery\|getup [timeout ms]` | Wait for the actual body/animation state; a bounded timeout is an explicit command error. |
 | `standup <npc>` | End the controlled unconscious state and queue the normal AI stand-up action. The test controls the state end; this does not measure the natural script loop's timing. |

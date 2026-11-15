@@ -6,7 +6,7 @@
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"
 #include "world/world.h"
-#include "gothic.h"
+#include "settings.h"
 #include "serialize.h"
 #include "world/benchhooks.h"
 #include "navdemos.h"
@@ -151,7 +151,7 @@ bool MoveAlgo::tryMove(float x,float y,float z, DynamicWorld::CollisionTest& out
   }
 
 bool MoveAlgo::tryMove(const Tempest::Vec3& dp, DynamicWorld::CollisionTest& out) {
-  out.trackBodyImpact=Gothic::physicsFlags().bodyImpactDamage && npc.hasBodyImpactSpellFlight() && (flags==InAir || flags==Falling);
+  out.trackBodyImpact=Settings::physicsFlags().bodyImpactDamage && npc.hasBodyImpactSpellFlight() && (flags==InAir || flags==Falling);
   if(out.trackBodyImpact) {
     out.bodyImpactVelocity=fallSpeed;
     out.bodyImpactSpeed=0;
@@ -198,7 +198,7 @@ void MoveAlgo::tickJumpup(uint64_t dt) {
 void MoveAlgo::tickClimb(uint64_t dt) {
   if(npc.bodyStateMasked()!=BS_CLIMB) {
     //NOTE: climb allows npc to violate collision detection, need to readjust
-    npc.owner.script().fixNpcPosition(npc, 0, 0);
+    npc.owner.rules().fixNpcPosition(npc, 0, 0);
     setState(Run);
 
     Tempest::Vec3 p={}, v={0,0,climbMove};
@@ -706,14 +706,14 @@ bool MoveAlgo::useCharacterVirtual() {
   if(npc.usesSimplifiedMovement())
     return false;
   if(npc.isPlayer())
-    return Gothic::physicsFlags().characterVirtual;
+    return Settings::physicsFlags().characterVirtual;
   if(NavDemos::forceCharacterVirtual(npc) && npc.isHuman() && !npc.isDown())
     return true;
   const auto* hero = npc.world().player();
   const bool human = npc.isHuman();
-  const bool enabled = human ? Gothic::physicsFlags().npcCharacterVirtual :
-                               Gothic::physicsFlags().monsterCharacterVirtual &&
-                               Gothic::physicsFlags().allowsMonsterCharacterVirtual(npc.isDown(),canFlyOverWater());
+  const bool enabled = human ? Settings::physicsFlags().npcCharacterVirtual :
+                               Settings::physicsFlags().monsterCharacterVirtual &&
+                               Settings::physicsFlags().allowsMonsterCharacterVirtual(npc.isDown(),canFlyOverWater());
   npcVirtualInRange = MeleeFighter::keepPhysics(enabled,!npc.isDown() && hero!=nullptr,
                                                npc.isMeleeFighter(),npcVirtualInRange,
                                                hero!=nullptr ? npc.qDistTo(*hero) : 0.f);
@@ -725,7 +725,7 @@ bool MoveAlgo::tickCharacterVirtual(uint64_t dt, const Tempest::Vec3& displaceme
   auto& world = npc.world();
   std::vector<Item*> nearbyItems;
   world.detectItem(origin,DynamicWorld::characterItemRange,[&](Item& item) {
-    if(!item.isDynamic() && !(Gothic::physicsFlags().placedItems && item.isPlacedItem()))
+    if(!item.isDynamic() && !(Settings::physicsFlags().placedItems && item.isPlacedItem()))
       nearbyItems.push_back(&item);
     });
   // Creating a native body invalidates the item query index. Finish detection first,
@@ -901,7 +901,7 @@ void MoveAlgo::resetCharacterVirtual(bool mobTransition) {
   virtualGroundVelocity = {};
   virtualJumpVelocity = {};
   npcVirtualMobTransition |= mobTransition && !npc.isPlayer() &&
-                            (npc.isHuman() || Gothic::physicsFlags().monsterCharacterVirtual);
+                            (npc.isHuman() || Settings::physicsFlags().monsterCharacterVirtual);
   }
 
 void MoveAlgo::carryCharacterVirtual(uint64_t dt) {
@@ -1075,7 +1075,7 @@ bool MoveAlgo::testSlide(const Tempest::Vec3& pos, const Tempest::Vec3& norm, Dy
 
 float MoveAlgo::stepHeight() const {
   auto gl = npc.guild();
-  auto v  = float(npc.world().script().guildVal().step_height[gl]);
+  auto v  = float(npc.world().rules().guildVal().step_height[gl]);
   if(v>0.f)
     return v;
   return 50;
@@ -1187,33 +1187,33 @@ float MoveAlgo::edgeMoveFraction(const Tempest::Vec3& from, const Tempest::Vec3&
 float MoveAlgo::slideAngle() const {
   auto  gl = npc.guild();
   float k  = float(M_PI)/180.f;
-  return std::sin((90.f-float(npc.world().script().guildVal().slide_angle[gl]))*k);
+  return std::sin((90.f-float(npc.world().rules().guildVal().slide_angle[gl]))*k);
   }
 
 float MoveAlgo::slideAngle2() const {
   auto  gl = npc.guild();
   float k  = float(M_PI)/180.f;
-  return std::sin(float(npc.world().script().guildVal().slide_angle2[gl])*k);
+  return std::sin(float(npc.world().rules().guildVal().slide_angle2[gl])*k);
   }
 
 float MoveAlgo::waterDepthKnee() const {
   auto gl = npc.guild();
-  return float(npc.world().script().guildVal().water_depth_knee[gl]);
+  return float(npc.world().rules().guildVal().water_depth_knee[gl]);
   }
 
 float MoveAlgo::waterDepthChest() const {
   auto gl = npc.guild();
-  return float(npc.world().script().guildVal().water_depth_chest[gl]);
+  return float(npc.world().rules().guildVal().water_depth_chest[gl]);
   }
 
 float MoveAlgo::falldownHeight() const {
   auto gl = npc.guild();
-  return float(npc.world().script().guildVal().falldown_height[gl]);
+  return float(npc.world().rules().guildVal().falldown_height[gl]);
   }
 
 bool MoveAlgo::canFlyOverWater() const {
   auto  gl = npc.guild();
-  auto& g  = npc.world().script().guildVal();
+  auto& g  = npc.world().rules().guildVal();
   return g.water_depth_chest[gl]==flyOverWaterHint &&
          g.water_depth_knee [gl]==flyOverWaterHint;
   }

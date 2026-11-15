@@ -166,6 +166,8 @@ void Settings::load(std::u16string_view systemIni, std::u16string_view userIni) 
   // OPENGOTHIC_GRASS overrides it
   defaults->set("INTERNAL",     "grass", 2);
   defaults->set("INTERNAL",     "taaSharpness", 0.75f);
+  // [INTERNAL] rayTracing=0|1 has no default on purpose: without the key the device rule decides
+  // (graphics/raytracingrule.h, Shaders::setupOptions); -rt and OPENGOTHIC_RT are stronger
   // VSM lamp shadows: the soft PCSS, or 0 hard in one gather (Renderer::setupSettings); hard on Metal, where the PCSS
   // costs ~11 ms GPU indoors on an M1 Pro
 #if defined(__APPLE__)
@@ -226,6 +228,13 @@ bool Settings::has(std::string_view sec) {
     return true;
   // no defaults
   return false;
+  }
+
+bool Settings::has(std::string_view sec, std::string_view name) {
+  if(instance==nullptr)
+    return false;
+  return (instance->iniFile!=nullptr     && instance->iniFile->has(sec,name)) ||
+         (instance->baseIniFile!=nullptr && instance->baseIniFile->has(sec,name));
   }
 
 int Settings::getI(std::string_view sec, std::string_view name) {

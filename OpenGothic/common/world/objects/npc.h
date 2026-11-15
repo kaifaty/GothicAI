@@ -14,7 +14,7 @@
 #include "game/inventory.h"
 #include "game/fightalgo.h"
 #include "game/archerai.h"
-#include "game/gamescript.h"
+#include "game/gamerules.h"
 #include "game/ragdollsave.h"
 #include "game/meleedodge.h"
 #include "game/meleeai.h"
@@ -609,7 +609,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
 
     bool      perceptionProcess(Npc& pl);
     bool      perceptionProcess(Npc& pl, Npc *victim, float quadDist, PercType perc, const std::shared_ptr<HeroDeed>& deed = {});
-    // a perception held back by Gothic::interceptPerception, given to the scripts after all
+    // a perception held back by GameHost::takePerception, given to the scripts after all
     bool      passPerception(Npc& other, Npc* victim, PercType perc);
     // A physical impact has a location, independent of a known actor.
     bool      hearPhysicsNoise(const PhysicsNoise& noise);
@@ -730,7 +730,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     bool      transformInto(size_t instance); // shape change spell: another creature until transformBack
     void      transformBack();
 
-    auto      dialogChoices(Npc &player, const std::vector<uint32_t> &except, bool includeImp) -> std::vector<GameScript::DlgChoice>;
+    auto      dialogChoices(Npc &player, const std::vector<uint32_t> &except, bool includeImp) -> std::vector<::DlgChoice>;
 
     NpcRecord&                        handle() { return *hnpc; }
     const std::shared_ptr<NpcRecord>& handlePtr() const { return hnpc; }
@@ -1290,7 +1290,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     Tempest::Vec3                 ragdollQuestFrom;
 
     WalkBit                        wlkMode                 =WalkBit::WM_Run;
-    int32_t                        trGuild                 =GIL_NONE;
+    int32_t                        trGuild                 =0;
     int32_t                        talentsSk[TALENT_MAX_G2]={};
     int32_t                        talentsVl[TALENT_MAX_G2]={};
     uint64_t                       refuseTalkMilis         =0;

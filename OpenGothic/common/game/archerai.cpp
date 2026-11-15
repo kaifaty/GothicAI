@@ -10,7 +10,7 @@
 #include "game/damagecalculator.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
-#include "gothic.h"
+#include "settings.h"
 #include "world/benchhooks.h"
 
 using namespace Tempest;
@@ -93,7 +93,7 @@ bool ArcherAi::isEnabled() {
     const char* v = std::getenv("OPENGOTHIC_NPCAIM");
     if(v!=nullptr && v[0]!='\0')
       enabled = v[0]!='0' ? 1 : 0; else
-      enabled = Gothic::settingsGetI("GAME","npcManualAim")!=0 ? 1 : 0;
+      enabled = Settings::getI("GAME","npcManualAim")!=0 ? 1 : 0;
     }
   return enabled!=0;
   }

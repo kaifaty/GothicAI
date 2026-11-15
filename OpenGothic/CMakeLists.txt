@@ -329,6 +329,10 @@ if(UNIX)
   add_executable(gothic-taa-test EXCLUDE_FROM_ALL tests/taa_test.cpp)
   target_link_libraries(gothic-taa-test PRIVATE OpenGothic AiBridge)
   target_compile_options(gothic-taa-test PRIVATE -Wall -Wconversion -Werror)
+  # Who gets ray tracing by default (graphics/raytracingrule): the device table and who decides over it; CPU only.
+  add_executable(gothic-raytracing-rule-test EXCLUDE_FROM_ALL tests/raytracing_rule_test.cpp)
+  target_link_libraries(gothic-raytracing-rule-test PRIVATE OpenGothic AiBridge)
+  target_compile_options(gothic-raytracing-rule-test PRIVATE -Wall -Wconversion -Werror)
   # The grass system (graphics/grass, graphics/foliagefront.h): the record, the placement on synthetic ground, the
   # wind's travelling front; CPU only, no device or game data.
   add_executable(gothic-grass-test EXCLUDE_FROM_ALL tests/grass_test.cpp tests/grass_cover_test.cpp)

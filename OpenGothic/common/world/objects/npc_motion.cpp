@@ -1,11 +1,11 @@
 #include "npc.h"
 
 #include "graphics/mesh/skeleton.h"
-#include "game/gamescript.h"
+#include "game/gamerules.h"
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"
 #include "world/world.h"
-#include "gothic.h"
+#include "settings.h"
 #include "loadprobe.h"
 #include "navdemos.h"
 
@@ -50,7 +50,7 @@ bool Npc::setPosition(float ix, float iy, float iz) {
   z = iz;
   visual.setTextureOwner(Vec3(x,y,z),!isPlayer());
   resetCharacterVisualHeight();
-  if(!isPlayer() && (isHuman() || Gothic::physicsFlags().monsterCharacterVirtual))
+  if(!isPlayer() && (isHuman() || Settings::physicsFlags().monsterCharacterVirtual))
     mvAlgo.resetCharacterVirtual();
   if(liveTeleport) {
     // Recreate at the destination instead of sweeping a kinematic body through
@@ -171,10 +171,10 @@ bool Npc::resetPositionToTA() {
     if(p!=nullptr)
       at = p;
     }
-  owner.script().startupFloor().beforeResetMove(*this,at->position());
+  owner.rules().startupFloorBeforeResetMove(*this,at->position());
   setPosition (at->position() );
   setDirection(at->direction());
-  owner.script().fixNpcPosition(*this,0,100);
+  owner.rules().fixNpcPosition(*this,0,100);
 
   if(!isDead) {
     attachToPoint(at);
@@ -182,7 +182,7 @@ bool Npc::resetPositionToTA() {
     invent.autoEquipWeapons(*this);
     }
 
-  owner.script().invokeRefreshAtInsert(*this);
+  owner.rules().invokeRefreshAtInsert(*this);
   return true;
   }
 
@@ -408,7 +408,7 @@ Npc::JumpStatus Npc::tryJump() {
   float s   = std::sin(rot), c = std::cos(rot);
   Vec3  dp  = Vec3{len*c, 0, len*s};
 
-  auto& g  = owner.script().guildVal();
+  auto& g  = owner.rules().guildVal();
   auto  gl = guild();
 
   if(isSlide() || isSwim() || isDive()) {
