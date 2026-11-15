@@ -17,12 +17,12 @@
 // melee shadow bodies, melee contacts, interactive objects, logical bodies. Each loop runs on this thread in
 // the order of npcArr; the pass's plan lets it pass over the NPCs it has nothing to do with (animationtail.h).
 
-bool WorldObjects::animationPassSkips(const Npc& npc, bool skipFar, bool frozen) const {
+bool WorldObjects::animationPassSkips(const Npc& npc, const Npc* player, bool skipFar, bool frozen) {
   // Headless body training may skip NPCs beyond the far range (>60 m from the hero)
   // that are not arena actors: nobody sees them, and they are most of the world.
   if(skipFar && npc.processPolicy()==NpcProcessPolicy::AiFar2 && !BodyObservations::watched(npc))
     return true;
-  return frozen && &npc!=owner.player() && !BodyArena::isActor(npc);
+  return frozen && &npc!=player && !BodyArena::isActor(npc);
   }
 
 bool WorldObjects::animationTailKeepsShadow() {
@@ -30,7 +30,7 @@ bool WorldObjects::animationTailKeepsShadow() {
   return Bench::bodyTracing() || NpcMeleeShadow::checking();
   }
 
-void WorldObjects::updateAnimationTail(uint64_t dt, bool skipFar, bool frozen) {
+void WorldObjects::updateAnimationTail(uint64_t dt, const Npc* player, bool skipFar, bool frozen) {
   using namespace AnimationTail;
   struct Watch final {
     Watch()  { begin(); }
@@ -50,7 +50,7 @@ void WorldObjects::updateAnimationTail(uint64_t dt, bool skipFar, bool frozen) {
   // append or remove NPCs, so retain neither vector iterators nor references.
   FrameProfile::Scope meleeShadow(FrameProfile::Zone::MeleeShadow);
   loop(npcArr,plan,Shadow,[&](Npc& npc,bool planned) {
-    if(!planned && animationPassSkips(npc,skipFar,frozen))
+    if(!planned && animationPassSkips(npc,player,skipFar,frozen))
       return;
     ++shadows;
     const bool window = npc.hasMeleeWindow();
@@ -59,7 +59,7 @@ void WorldObjects::updateAnimationTail(uint64_t dt, bool skipFar, bool frozen) {
     if(window || npc.hasMeleeWindow())
       touch();
     },[&](Npc& npc) {
-    if(animationPassSkips(npc,skipFar,frozen))
+    if(animationPassSkips(npc,player,skipFar,frozen))
       return; // the full loop passes it over as well
     const bool window = npc.hasMeleeWindow();
     npc.checkSkippedTailStep(Shadow);

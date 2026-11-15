@@ -1016,7 +1016,7 @@ void WorldObjects::updateAnimation(uint64_t dt) {
   AnimationLod::beginPass();
   Workers::parallelTasks(npcArr,[&](std::unique_ptr<Npc>& i){
     auto& plan = tailPlan[size_t(&i-npcArr.data())];
-    if(animationPassSkips(*i,skipFar,frozen)) {
+    if(animationPassSkips(*i,pl,skipFar,frozen)) {
       plan = i->animationTailPlan(true,keepShadow);
       return;
       }
@@ -1048,7 +1048,7 @@ void WorldObjects::updateAnimation(uint64_t dt) {
   npcPass.finish();
   animationLodDeferred = deferred.load(std::memory_order_relaxed);
   FrameProfile::add(FrameProfile::Amount::NpcAnimDeferred,animationLodDeferred);
-  updateAnimationTail(dt,skipFar,frozen);
+  updateAnimationTail(dt,pl,skipFar,frozen);
   }
 
 void WorldObjects::catchUpAnimation() {
