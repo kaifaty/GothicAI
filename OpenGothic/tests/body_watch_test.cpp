@@ -2051,11 +2051,7 @@ int main(int argc,const char** argv) {
       expect(rules.scriptVmMemorySize()>10000000,"rules include the symbol table in the VM memory probe");
       ++cases;
       auto& source=*gothic.player();
-      Npc* target=nullptr;
-      for(uint32_t i=0;i<gothic.world()->npcCount();++i) {
-        auto* candidate=gothic.world()->npcById(i);
-        if(candidate!=nullptr && candidate!=&source) { target=candidate; break; }
-        }
+      auto* target=gothic.world()->addNpc(rules.findSymbolIndex("BDT_1003_BANDIT_M"),source.position()+Tempest::Vec3(150,0,0));
       expect(target!=nullptr,"damage rules fixture has a distinct victim");
       const auto savedSource=source.handle();
       const auto savedTarget=target->handle();
