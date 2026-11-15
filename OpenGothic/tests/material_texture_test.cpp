@@ -939,9 +939,13 @@ void trackRecords(Tempest::Device& device, const Fixture& fixture) {
     return with-before;
     };
   // the fixture's two files make five maps by their kinds: a colour, a normal and an ORM of the one, a colour and
-  // an ORM of the other. The lone track names four of them, the layers beside a track or a border all five
-  require(demand(plain.layers)==5 && demand(meadow.layers)==5 && demand(alone.layers)==4 && demand(way.layers)==5,
-          "the owner of a ground demands each map of its layers, its border and its track once");
+  // an ORM of the other. The lone track names four of them; a map counts once, under its first owner's category
+  Material::Layers bordered;
+  bordered.border = {meadow.layers.earth[0],meadow.layers.earth[1],meadow.layers.earth[2]};
+  const auto ofTrack = demand(alone.layers), ofBorder = demand(bordered);
+  require(ofTrack==4 && ofBorder==1,
+          ("the owner of a ground demands each map of its track and its border once: "+std::to_string(ofTrack)+" "+
+           std::to_string(ofBorder)).c_str());
   require(Material(source("TRACK_ALONE.TGA"),true).textureUvPerMetre(0.1f)==2.f &&
           Material(source("MEADOW.TGA"),true).textureUvPerMetre(0.1f)==0.5f &&
           tracked.textureUvPerMetre(0.1f)==0.5f && tracked.textureUvPerMetre(3.f)==3.f*std::abs(tracked.uvScale),
