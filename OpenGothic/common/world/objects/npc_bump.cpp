@@ -44,6 +44,7 @@ void Npc::bumpReaction(const BumpHit& hit) {
 bool Npc::queueBumpChain(const Vec3& thrown, float strength, float height) {
   if(!living || !isHuman())
     return false;
+  syncDeferredAnimation(); // the bone is chosen by the pose
   const Vec3 dir = Vec3(thrown.x,0,thrown.z);
   if(dir.quadLength()<=0.f || strength<=0.f)
     return false;
