@@ -29,11 +29,13 @@ const float GrassLiesTo        = 0.65;
 
 // The loose earth of a road with its own material (grass/grass_track.glsl): of the road's strip, and of the
 // meadow's notches by it (`ground.border`). One lattice on both sides of the mesh's edge, turned from the world's
-// axes so that a stone does not come back along a straight road; one slow tone over both
+// axes so that a stone does not come back along a straight road; one tone over both: slow by 8 m and 1.3 m, and
+// blotches by 1.2 m and 0.4 m - what the earth still has from 15 m on, where the layers' grain is gone
 vec2 grassLooseUv(vec2 xz) { return vec2(0.93358*xz.x + 0.35837*xz.y, -0.35837*xz.x + 0.93358*xz.y); }
 float grassTrackNoise(ivec2 p, int step, uint salt) { return float(grassValueNoise(p,step,salt)-32640)*(1.0/32640.0); }
 float grassTrackTone(ivec2 place) {
-  return 1.0 + grassTrackNoise(place,12800,0x79u)*0.08 + grassTrackNoise(place,2080,0x7Au)*0.05;
+  return 1.0 + grassTrackNoise(place,12800,0x79u)*0.08 + grassTrackNoise(place,2080,0x7Au)*0.05 +
+         grassTrackNoise(place,1920,0x7Bu)*0.14 + grassTrackNoise(place,640,0x7Cu)*0.09;
   }
 
 // tex: the sward's maps in the bindless arrays, the earth's are the next; swardK, earthK: repeats per cm; farK: the

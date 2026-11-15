@@ -70,10 +70,12 @@ void grassTrack(uint tex, float crustK, float looseK, float knobs, vec2 uv, vec2
   if(own<=0.004)
     return;
 
-  // where the ruts fade: 1 at their full depth and tone; by 6 m and by 2.2 m - one rut of the two may fade alone
-  const float k    = 1.0 - fade*smoothstep(0.05, 0.55, grassTrackNoise(place,9600,0x75u)*0.6 +
-                                                       grassTrackNoise(place,3520,0x76u)*0.4);
-  const float lean = (mask.g*mix(1.0, k, 0.5) + strip)*256.0 - 128.0 +
+  // where the ruts fade: 1 at their full depth and tone; by 2.8 m and by 0.9 m - one rut of the two may fade
+  // alone, and over the whole of the noise: a rut at its full tone on most of its length is a ruled line from
+  // 15 m on, where the fray of its edges is gone
+  const float k    = 1.0 - fade*smoothstep(-0.3, 0.6, grassTrackNoise(place,4480,0x75u)*0.45 +
+                                                      grassTrackNoise(place,1440,0x76u)*0.55);
+  const float lean = (mask.g*mix(1.0, k, 0.7) + strip)*256.0 - 128.0 +
                      (grassTrackNoise(place,3840,0x77u)*90.0 + grassTrackNoise(place,560,0x78u)*40.0)*ragged;
 
   const float d   = distance(pos, scene.camPos);

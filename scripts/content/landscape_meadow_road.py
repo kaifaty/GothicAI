@@ -3,7 +3,7 @@
 
     uv run --no-project --with numpy --with pillow --with scipy python \
         scripts/content/landscape_meadow_road.py meadow-road-1 [--from meadow-ground-1] [--again] \
-        [--wander 14 --fade .7 --ragged 1.3] [--set NAME=VALUE ...] [--preview DIR] [--joints BASE]
+        [--wander 14 --fade .8 --ragged 1.6] [--set NAME=VALUE ...] [--preview DIR] [--joints BASE]
 
 reports/engine/2026-11-15-meadow-road. Copies a set with the meadow's ground, gives the five road textures the
 `track` field beside their `verge`, and the meadow's `ground` the `border`: the road's loose layer.
@@ -65,7 +65,7 @@ LEVEL = .85
 RELIEF = {'crust': .8, 'loose': .6}     # the scan's slopes times this
 CONTRAST = {'crust': 1.1, 'loose': 1.}
 ROUGH_FLOOR = .85
-KNOBS = dict(wander=14., fade=.7, ragged=1.3)   # the record's: the drawing's sway in cm, the ruts' fading, the fray
+KNOBS = dict(wander=14., fade=.8, ragged=1.6)   # the record's: the drawing's sway in cm, the ruts' fading, the fray
 OCCLUSION = 1.              # of the layers' and the ribbon's occlusion: 0 for a probe of what it does in the light
 
 
@@ -375,15 +375,15 @@ def composed(crust: dict, loose: dict, ribbon: dict, metric, knobs: dict, length
         return image[np.floor(lv * size).astype(int) % size, np.floor(lu * size).astype(int) % size]
     turn_c, turn_l = (.84805, -.52992), (.93358, .35837)
     mask = ribbon_at(ribbon['mask'])
-    k = 1 - knobs['fade'] * smooth(noise(9600, 0x75) * .6 + noise(3520, 0x76) * .4, .05, .55)
-    lean = mask[..., 1] * (1 + (k - 1) * .5) * 256 - 128 + (noise(3840, 0x77) * 90 + noise(560, 0x78) * 40) * knobs['ragged']
+    k = 1 - knobs['fade'] * smooth(noise(4480, 0x75) * .45 + noise(1440, 0x76) * .55, -.3, .6)
+    lean = mask[..., 1] * (1 + (k - 1) * .7) * 256 - 128 + (noise(3840, 0x77) * 90 + noise(560, 0x78) * 40) * knobs['ragged']
     high_c = layer_at(rank(crust['orm'][..., 2]), CRUST_TILE_M, turn_c)
     high_l = layer_at(rank(loose['orm'][..., 2]), LOOSE_TILE_M, turn_l)
     is_loose = np.where(np.abs(lean) < 70, lean + (high_l - high_c) * 140 > 0, lean > 0)
     height = np.where(is_loose, high_l, high_c)
     own = mask[..., 2]
     mine = (own >= 1) | (own * 256 + (height - .5) * 140 > 128)
-    tone = 1 + noise(12800, 0x79) * .08 + noise(2080, 0x7A) * .05
+    tone = 1 + noise(12800, 0x79) * .08 + noise(2080, 0x7A) * .05 + noise(1920, 0x7B) * .14 + noise(640, 0x7C) * .09
     colour = np.where(is_loose[..., None], layer_at(loose['albedo'], LOOSE_TILE_M, turn_l), layer_at(crust['albedo'], CRUST_TILE_M, turn_c))
     colour = colour * (1 + (ribbon_at(ribbon['tint']) - 1) * (k * np.where(is_loose, 1., CRUST_TINT))[..., None]) * tone[..., None]
     colour = np.where(mine[..., None], colour, PAINTED_GRASS)
