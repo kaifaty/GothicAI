@@ -42,9 +42,10 @@ CommandLine::CommandLine(int argc, const char** argv) {
   // OPENGOTHIC_MS=0|1: the default of -ms (mesh shaders) for benches; -ms wins
   if(const char* ms = std::getenv("OPENGOTHIC_MS"))
     isMeshSh = boolArg(ms);
-  // OPENGOTHIC_RT=0|1 and OPENGOTHIC_GI=0|1|2: the same for -rt and -gi (the GI clips of a bench); the flags win
-  if(const char* rt = std::getenv("OPENGOTHIC_RT"))
-    isRQuery = boolArg(rt);
+  // OPENGOTHIC_RT=0|1 and OPENGOTHIC_GI=0|1|2: the same for -rt and -gi (the GI clips of a bench); the flags win.
+  // Empty means not given: ray tracing then follows Gothic.ini and the device rule (Shaders::setupOptions)
+  if(const char* rt = std::getenv("OPENGOTHIC_RT"); rt!=nullptr && *rt!='\0')
+    rtEnv = boolArg(rt) ? 1 : 0;
   if(const char* gi = std::getenv("OPENGOTHIC_GI"); gi!=nullptr && *gi!='\0') {
     isGi    = GiMethod(std::clamp(std::max(0, intArg(gi)), 0, GiMethod::Count-1));
     isGiSet = true;
@@ -121,7 +122,7 @@ CommandLine::CommandLine(int argc, const char** argv) {
     else if(arg=="-rt") {
       ++i;
       if(i<argc)
-        isRQuery = boolArg(argv[i]);
+        rtArg = boolArg(argv[i]) ? 1 : 0;
       }
     else if(arg=="-taa") {
       ++i;
