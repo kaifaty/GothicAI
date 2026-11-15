@@ -91,6 +91,7 @@ MoveAlgo::MoveAlgo(Npc& unit)
 
 void MoveAlgo::load(Serialize &fin) {
   resetCharacterVirtual();
+  bumpSignal = {};
   npcVirtualInRange = false;
   npcVirtualMobTransition = false;
   fin.read(reinterpret_cast<uint32_t&>(flags));
@@ -336,7 +337,7 @@ bool MoveAlgo::implTick(uint64_t dt, MvFlags moveFlg) {
     // down a walkable slope (the controller's static friction).
     const bool standing = bs==BS_STAND && assist==Tempest::Vec3() && state!=Slide;
     const auto assistOrigin = npc.position();
-    const bool moved = tickCharacterVirtual(dt,dp,standing);
+    const bool moved = tickCharacterVirtual(dt,dp,standing,assist!=Tempest::Vec3());
     npc.noteMeleeStep(root,assist,npc.position()-assistOrigin,dt);
     if(impulseGeneration!=movementImpulseGeneration)
       return moved;
@@ -720,7 +721,7 @@ bool MoveAlgo::useCharacterVirtual() {
   return npcVirtualInRange;
   }
 
-bool MoveAlgo::tickCharacterVirtual(uint64_t dt, const Tempest::Vec3& displacement, bool standing) {
+bool MoveAlgo::tickCharacterVirtual(uint64_t dt, const Tempest::Vec3& displacement, bool standing, bool meleeStep) {
   const auto origin = npc.position();
   auto& world = npc.world();
   std::vector<Item*> nearbyItems;
@@ -743,6 +744,7 @@ bool MoveAlgo::tickCharacterVirtual(uint64_t dt, const Tempest::Vec3& displaceme
   npc.setViewPosition(moved.position);
   virtualMovementActive = true;
   virtualGroundVelocity = moved.groundVelocity;
+  tickBumpSignal(dt,origin,displacement,moved,meleeStep);
 
   auto collision = moved.collision;
   const bool faceTravel = limitStairAdvance && moved.steepContact && isForward(displacement) &&

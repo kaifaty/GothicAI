@@ -99,6 +99,7 @@ class Marvin {
       C_ToggleItemDeepestContact,
       C_ToggleRagdollBirthGuard,
       C_ToggleRagdollBrace,
+      C_ToggleBumpReactions,
       C_ToggleFurnitureParts,
       C_TogglePhysicsNoise,
       C_ToggleDestruction,

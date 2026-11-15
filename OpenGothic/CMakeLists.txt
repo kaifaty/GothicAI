@@ -762,6 +762,12 @@ endif()
     DEPENDS gothic-cloth-contract gothic-clothgeometry-contract gothic-worldcloth-contract USES_TERMINAL)
   add_executable(gothic-ragdoll-contract EXCLUDE_FROM_ALL tests/physics_ragdoll_contract.cpp tests/physics_ragdoll_brace_contract.cpp)
   target_link_libraries(gothic-ragdoll-contract PRIVATE OpenGothic AiBridge gothic-base-import)
+  add_executable(gothic-bump-contract EXCLUDE_FROM_ALL tests/bump_contract.cpp common/game/bumpsignal.cpp)
+  target_include_directories(gothic-bump-contract PRIVATE
+    common lib/Tempest/Engine/include lib/Tempest/Engine)
+  if(NOT MSVC)
+    target_compile_options(gothic-bump-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
   add_executable(gothic-ragdoll-save-contract EXCLUDE_FROM_ALL tests/ragdoll_save_contract.cpp)
   target_link_libraries(gothic-ragdoll-save-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_custom_target(check-ragdoll-save
