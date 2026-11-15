@@ -5,8 +5,9 @@
 #   scripts/grass_look.py variety m.png cells-<view>.png --light mask-<view>.png <frame of «было»> <view>-0.png
 # On game-verge-along, walk-mid (a place of the walk of meadow-walk, the game's camera) and far a ground with its
 # own layers is also shown as a painted ground (`grass parts 4096`, <view>-4096): what the layers alone change.
-# OPENGOTHIC_GRASS_FINE=0 gives the short sward its broad blades back. The table of the note was made at commit
-# 1a9e32c0d, where this bench took back more parts of that round's look.
+# OPENGOTHIC_GRASS_FINE=0 gives the short sward its broad blades back; OPENGOTHIC_GRASS_BROAD=<percent> (0..100)
+# forces the share of the broad blades that stand among the fine ones («Четвёртый круг» of the note). The table of
+# «Что отняло жизнь» was made at commit 1a9e32c0d, where this bench took back more parts of that round's look.
 #   OPENGOTHIC_CONTENT=<set> TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh landscape-meadow-variety
 # @timeout 600
 seed 73013
