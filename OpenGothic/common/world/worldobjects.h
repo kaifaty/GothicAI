@@ -270,6 +270,7 @@ class WorldObjects final {
     void                              updateSimTiers(bool beforeTick);
     // worldobjects_npctick.cpp: the Npc::tick loop; far NPCs at the rate of world/npcsimtick.h
     void                              tickNpcs(uint64_t dt, uint64_t dtPlayer, const Npc* pl, bool freeCam, bool frozen);
+    uint64_t                          simTickClock = 0; // the sum of the dt the loop handed out (not dtPlayer)
     void                              updateNpcPolicies(const Npc* player, const Tempest::Vec3& position);
 
     std::vector<AbstractTrigger*>      triggers;

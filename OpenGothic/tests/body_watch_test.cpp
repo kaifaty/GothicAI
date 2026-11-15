@@ -43,6 +43,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <limits>
 #include <map>
@@ -1149,6 +1150,54 @@ class NpcLogicalStateContract final {
       world.removeNpc(*first); world.removeNpc(*fighter);
       }
 
+    // Frame steps of the far tick cases: random 7/8 or 6..10 ms from a fixed seed, the same on every platform.
+    static uint64_t farTickStep(uint64_t seed, uint64_t frame, uint64_t from, uint64_t count) {
+      uint64_t z=seed+frame+0x9e3779b97f4a7c15ull;
+      z=(z^(z>>30))*0xbf58476d1ce4e5b9ull;
+      z=(z^(z>>27))*0x94d049bb133111ebull;
+      return from+(z^(z>>31))%count;
+      }
+
+    // The far tick rule itself on 728 NPC states, without game objects: at most 40 % of them tick in a frame
+    // at 8 ms, after a 33 ms frame and at random 7/8 and 6..10 ms steps, and the ticks hand over all the time.
+    static void farTickRule() {
+      ++cases;
+      constexpr uint64_t Period=33;
+      constexpr size_t   States=728;
+      std::vector<NpcSimTick::State> state(States);
+      std::vector<uint64_t> phase(States), given(States,0);
+      for(size_t i=0;i<States;++i) phase[i]=NpcSimTick::phase(uint32_t(i),Period);
+      uint64_t clock=0;
+      const auto frame=[&](uint64_t dt) {
+        clock+=dt;
+        size_t ticked=0;
+        for(size_t i=0;i<States;++i) {
+          const auto owed=state[i].pending+dt;
+          if(NpcSimTick::due(clock,dt,owed,phase[i],Period)) { given[i]+=owed; state[i].pending=0; ++ticked; }
+          else state[i].pending=owed;
+          }
+        return ticked;
+        };
+      const std::array<std::pair<const char*,std::function<uint64_t(uint64_t)>>,4> blocks{{
+        {"8 ms",[](uint64_t) { return uint64_t(8); }},
+        {"8 ms after a 33 ms frame",[](uint64_t f) { return f==0 ? Period : 8; }},
+        {"random 7/8 ms",[](uint64_t f) { return farTickStep(1,f,7,2); }},
+        {"random 6..10 ms",[](uint64_t f) { return farTickStep(2,f,6,5); }},
+        }};
+      for(const auto& [name,step]:blocks) {
+        size_t most=0;
+        for(uint64_t f=0;f<2001;++f) {
+          const auto dt=step(f);
+          const auto ticked=frame(dt);
+          if(dt<Period) most=std::max(most,ticked);
+          }
+        expect(most*10<=States*4,std::string("the far tick rule spreads 728 NPCs at ")+name+": at most 40 % in a frame, got "+
+               std::to_string(most));
+        }
+      for(size_t i=0;i<States;++i)
+        expect(given[i]+state[i].pending==clock,"the far tick rule hands every NPC the world time");
+      }
+
     // Far NPC tick (world/npcsimtick.h) on real standing NPCs through WorldObjects::tick. What a tick really got
     // is measured by its effect: regeneration of 1000 hit points a second gives one hit point per ms of every
     // Npc::tick (Npc::tickRegen); the time still owed is Npc::simTick().pending.
@@ -1156,12 +1205,13 @@ class NpcLogicalStateContract final {
       auto& world=anchor.world();
       const auto kind=world.script().findSymbolIndex("BDT_1003_BANDIT_M");
       const auto restore=NpcSimTick::config();
-      constexpr size_t Count=16;
+      // 96: with fewer, the Fibonacci hash of consecutive numbers is not even enough for a third at 10 ms steps.
+      constexpr size_t Count=96;
       constexpr uint64_t Period=33;
       std::vector<Npc*> npcs;
       for(size_t i=0;i<Count;++i) {
         // 45 m from the hero: no perception and no living body. Made in a row: consecutive creation numbers.
-        auto* npc=world.addNpc(kind,world.player()->position()+Tempest::Vec3(float(i)*150.f,0,4500));
+        auto* npc=world.addNpc(kind,world.player()->position()+Tempest::Vec3(float(i%16)*150.f,0,4500+float(i/16)*150.f));
         npc->clearAiQueue(); npc->clearState(true); npc->clearGoTo(); npc->stopWalking();
         npc->closeWeapon(true); npc->setTarget(nullptr); npc->setExternalControl(true);
         npc->visual.pose().stopAllAnim(); npc->setAnim(Npc::Anim::Idle);
@@ -1173,15 +1223,14 @@ class NpcLogicalStateContract final {
         }
       struct Track { std::vector<uint64_t> frame, dt; };
       std::vector<Track> track(Count);
-      std::vector<uint64_t> steps;
-      uint64_t worldMs=0;
+      uint64_t frames=0, worldMs=0;
       const auto hp=[](const Npc* npc) { return uint64_t(npc->attribute(ATR_HITPOINTS)); };
       // One world tick: how many of the NPCs ticked; each tick must get, once, exactly the time its NPC waited.
       const auto frame=[&](uint64_t dt) {
         std::vector<uint64_t> waited(Count), before(Count);
         for(size_t i=0;i<Count;++i) { waited[i]=npcs[i]->simTick().pending; before[i]=hp(npcs[i]); }
         world.tick(dt);
-        steps.push_back(dt); worldMs+=dt;
+        ++frames; worldMs+=dt;
         size_t ticked=0;
         for(size_t i=0;i<Count;++i) {
           const auto got=hp(npcs[i])-before[i];
@@ -1193,70 +1242,79 @@ class NpcLogicalStateContract final {
           expect(got==waited[i]+dt && npcs[i]->logicalBodyState().worldStep==got,
                  "a far tick gets, once, all the world time since the NPC's previous tick: got "+std::to_string(got)+
                  ", owed "+std::to_string(waited[i]+dt));
-          track[i].frame.push_back(steps.size()); track[i].dt.push_back(got);
+          track[i].frame.push_back(frames); track[i].dt.push_back(got);
           ++ticked;
           }
         return ticked;
         };
       const auto clear=[&] { for(auto& t:track) { t.frame.clear(); t.dt.clear(); } };
-      const auto distance=[&](uint64_t t) { return t>Period ? t-Period : Period-t; };
+      const auto everyFrame=[&](uint64_t step,unsigned count,const char* what) {
+        for(unsigned f=0;f<count;++f) {
+          clear();
+          expect(frame(step)==Count,std::string(what)+" ticks every far NPC every frame");
+          for(const auto& t:track) expect(t.dt.size()==1 && t.dt[0]==step,std::string(what)+" gives a far NPC the frame's step");
+          }
+        };
 
+      // Constant 8 ms: after the first tick steps of 32 or 40 ms, 303 +- 1 ticks in 10 s, a third at most in a frame.
       ++cases;
       NpcSimTick::setConfig({Period,NpcSimTick::Scope::Graph});
       size_t most=0;
-      for(unsigned f=0;f<48;++f) {
+      std::vector<size_t> inTenSeconds(Count);
+      for(unsigned f=0;f<2000;++f) {
         most=std::max(most,frame(8));
         if(f==0)
           for(auto* npc:npcs)
             expect(NpcSimTick::qualifies(*npc,NpcSimTick::Scope::Graph),"the far tick fixture stands in graph movement");
+        if(frames==1250)
+          for(size_t i=0;i<Count;++i) inTenSeconds[i]=track[i].dt.size();
         }
       expect(most*3<=Count,"8 ms frames spread the far ticks: at most a third of the NPCs in a frame, got "+
              std::to_string(most)+" of "+std::to_string(Count));
-      std::vector<uint64_t> first(Count);
       for(size_t i=0;i<Count;++i) {
         const auto& t=track[i];
-        expect(t.frame.size()>=11,"a far NPC ticks about every 33 ms of 8 ms frames");
-        first[i]=t.frame[0];
-        // The first tick comes at the NPC's phase; from then on, each one is a period later.
-        for(size_t k=1;k<t.frame.size();++k) {
-          expect(t.frame[k]-t.frame[k-1]==4,"a far NPC ticks every 4th 8 ms frame");
-          expect(t.dt[k]>=25 && t.dt[k]<=41,"a far tick gets about 33 ms: "+std::to_string(t.dt[k]));
-          }
+        expect(inTenSeconds[i]>=302 && inTenSeconds[i]<=304,"a far NPC ticks 303 +- 1 times in 10 s of 8 ms frames, got "+
+               std::to_string(inTenSeconds[i]));
+        for(size_t k=1;k<t.dt.size();++k)
+          expect(t.dt[k]==32 || t.dt[k]==40,"8 ms frames give a far NPC steps of 32 or 40 ms: "+std::to_string(t.dt[k]));
         }
 
-      // After a long frame the next tick comes by the time since the NPC's own tick in it: a 30 ms frame is
-      // the nearest to the period for every NPC, a 33 ms one ticks everyone.
-      for(const uint64_t step:{uint64_t(30),Period}) {
+      // The spread holds after a long frame and at random steps: the nodes of the grid do not move.
+      const std::array<std::pair<const char*,std::function<uint64_t(uint64_t)>>,3> blocks{{
+        {"8 ms after a 33 ms frame",[](uint64_t f) { return f==0 ? Period : 8; }},
+        {"random 7/8 ms",[](uint64_t f) { return farTickStep(1,f,7,2); }},
+        {"random 6..10 ms",[](uint64_t f) { return farTickStep(2,f,6,5); }},
+        }};
+      for(const auto& [name,step]:blocks) {
         ++cases;
-        expect(frame(step)==Count,"a frame of at least 30 ms ticks every far NPC");
         clear();
-        for(unsigned f=0;f<8;++f) frame(8);
-        for(const auto& t:track)
-          expect(t.dt==std::vector<uint64_t>{32,32},"after a long frame a far NPC next ticks 32 ms later, by its own time");
-        }
-
-      // Alternating 7 and 8 ms: each tick is at least as near to the period as one frame earlier or later.
-      ++cases;
-      clear();
-      const size_t from=steps.size();
-      for(unsigned f=0;f<40;++f) frame(7+f%2);
-      for(const auto& t:track) {
-        expect(t.dt.size()>=8,"alternating 7/8 ms frames tick a far NPC about every 33 ms");
-        for(size_t k=0;k<t.dt.size();++k) {
-          const auto at=t.frame[k];
-          if(at==from+1 || at==steps.size()) continue;
-          expect(distance(t.dt[k])<=distance(t.dt[k]-steps[at-1]) && distance(t.dt[k])<=distance(t.dt[k]+steps[at]),
-                 "a far tick comes in the frame nearest to the period: "+std::to_string(t.dt[k])+" ms");
+        most=0;
+        for(uint64_t f=0;f<2001;++f) {
+          const auto dt=step(f);
+          const auto ticked=frame(dt);
+          if(dt<Period) most=std::max(most,ticked);
+          else expect(ticked==Count,"a 33 ms frame ticks every far NPC");
           }
+        expect(most*3<=Count,std::string(name)+" spreads the far ticks: at most a third of the NPCs in a frame, got "+
+               std::to_string(most)+" of "+std::to_string(Count));
         }
 
-      // An NPC that stops qualifying between its ticks ticks in that frame with all it waited.
+      // 30 ms frames, below the period: every frame by the 1.5-period limit. Then 33, 34 and 50 ms.
       ++cases;
+      expect(frame(30)==Count,"a 30 ms frame ticks every far NPC");
+      everyFrame(30,10,"a 30 ms frame");
+      ++cases;
+      for(const uint64_t step:{uint64_t(33),uint64_t(34),uint64_t(50)})
+        everyFrame(step,3,"a frame step not below the period");
+
+      // An NPC that stops qualifying between its ticks ticks in that frame with all it waited, then every frame.
+      ++cases;
+      for(unsigned f=0;f<8;++f) frame(8); // back on the grid after the long frames
       Npc* fighter=nullptr;
       for(unsigned f=0;f<8 && fighter==nullptr;++f) {
         frame(8);
         for(auto* npc:npcs)
-          if(npc->simTick().pending==8) fighter=npc; // ticked one frame ago: three frames before its turn
+          if(npc->simTick().pending==8) fighter=npc; // ticked at its node one frame ago: the next is 33 ms on
         }
       expect(fighter!=nullptr,"a far NPC waits one frame after its tick");
       fighter->setToFistMode();
@@ -1264,41 +1322,38 @@ class NpcLogicalStateContract final {
       frame(8);
       expect(fighter->simTick().pending==0 && fighter->logicalBodyState().worldStep==16,
              "an NPC that stops qualifying ticks in the same frame with the time it waited");
+      for(unsigned f=0;f<3;++f) {
+        frame(8);
+        expect(fighter->simTick().pending==0 && fighter->logicalBodyState().worldStep==8,"an NPC that does not qualify ticks every frame");
+        }
       fighter->closeWeapon(true);
 
-      // The first tick's frame comes from the creation number, wherever the NPC stands in npcArr.
+      // The frames come from the creation number, not from the place in npcArr: at 8 ms the grid repeats every
+      // 33 frames (264 ms), so a re-sorted npcArr ticks every NPC in the same frames of the next 33.
       ++cases;
-      for(auto* npc:npcs) npc->setToFistMode();
-      expect(frame(8)==Count,"unqualified far NPCs tick every frame");
+      for(unsigned f=0;f<8;++f) frame(8);
+      const auto window=[&] {
+        clear();
+        for(unsigned f=0;f<33;++f) frame(8);
+        std::vector<std::vector<uint64_t>> at(Count);
+        for(size_t i=0;i<Count;++i)
+          for(const auto t:track[i].frame) at[i].push_back(t-(frames-33));
+        return at;
+        };
+      const auto before=window();
       const auto place=world.npcId(npcs[0]);
       // Reversed and lowest: the pre-tick pass re-sorts npcArr before the next ticks.
       for(size_t i=0;i<Count;++i) npcs[i]->handle().id=std::numeric_limits<int32_t>::min()+int32_t(Count-i);
-      for(auto* npc:npcs) npc->closeWeapon(true);
-      clear();
-      for(unsigned f=0;f<4;++f) frame(8);
+      const auto after=window();
       expect(world.npcId(npcs[0])!=place && world.npcId(npcs[0])>world.npcId(npcs[1]),"the phase fixture re-sorts npcArr");
       for(size_t i=0;i<Count;++i)
-        expect(track[i].frame.size()==1 && track[i].frame[0]+4-steps.size()==first[i],
-               "a far NPC's first tick comes at its own phase, not at its place in npcArr");
-
-      // A frame step not below the period ticks every NPC every frame with that step; the first one also
-      // hands over what was owed.
-      ++cases;
-      for(unsigned f=0;f<6;++f) {
-        clear();
-        expect(frame(33)==Count,"33 ms frames tick every far NPC every frame");
-        if(f>0)
-          for(const auto& t:track) expect(t.dt.size()==1 && t.dt[0]==33,"a 33 ms frame gives a far NPC 33 ms");
-        }
+        expect(after[i]==before[i],"a far NPC ticks in the frames of its own phase, not of its place in npcArr");
 
       // Period 0: every NPC every frame, as without the rule.
       ++cases;
       NpcSimTick::setConfig({0,NpcSimTick::Scope::Graph});
-      for(unsigned f=0;f<8;++f) {
-        clear();
-        expect(frame(8)==Count,"period 0 ticks every NPC every frame");
-        for(const auto& t:track) expect(t.dt.size()==1 && t.dt[0]==8,"period 0 gives every tick the frame step");
-        }
+      frame(8);
+      everyFrame(8,8,"period 0");
       for(auto* npc:npcs)
         expect(hp(npc)-1==worldMs,"the far ticks hand every NPC the world time, each ms once");
       NpcSimTick::setConfig(restore);
@@ -2102,6 +2157,7 @@ int main(int argc,const char** argv) {
       }
     if(scenario.empty()) throw std::runtime_error("--scenario scripts/bench/body-api.bench is required");
     clockSwitching();
+    NpcLogicalStateContract::farTickRule();
     bool missingNetwork=false;
 #ifdef GOTHIC_BODY_ENGINE_NET
     // A fresh process exercises the one-time startup load with absent weights.

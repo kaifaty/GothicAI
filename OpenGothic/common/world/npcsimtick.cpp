@@ -78,22 +78,24 @@ bool NpcSimTick::qualifies(const Npc& npc, Scope scope) {
   return !npc.isMeleeFighter() && !npc.spellFrozen() && !npc.spellWhirling() && !npc.isInAir();
   }
 
-uint32_t NpcSimTick::phase(const Npc& npc) {
+uint64_t NpcSimTick::phase(uint32_t creation, uint64_t periodMs) {
   // Fibonacci hashing of the creation number: consecutive numbers fall evenly over the period.
-  return uint32_t((uint64_t(npc.animationLodSeed())*0x9e3779b97f4a7c15ull)>>32);
+  const uint64_t fraction = (uint64_t(creation)*0x9e3779b97f4a7c15ull)>>32;
+  return (fraction*periodMs)>>32;
   }
 
-bool NpcSimTick::due(const State& state, uint64_t owed, uint64_t dt, uint32_t phase, const Config& cfg) {
-  const uint64_t period = cfg.periodMs;
-  if(period==0 || dt>=period)
-    return true;
-  if(dt==0)
+uint64_t NpcSimTick::phase(const Npc& npc, uint64_t periodMs) {
+  return phase(npc.animationLodSeed(),periodMs);
+  }
+
+bool NpcSimTick::due(uint64_t clock, uint64_t dt, uint64_t owed, uint64_t phase, uint64_t periodMs) {
+  if(periodMs==0 || dt>=periodMs)
+    return true; // such a frame holds a node of every NPC
+  if(2*(owed+dt)>3*periodMs)
+    return true; // one more frame like this would stretch the NPC's step past 1.5 periods
+  if(dt==0 || clock<dt)
     return false;
-  if(!state.rhythm) {
-    // The first tick: at the NPC's phase within the frames that make one period at this step.
-    const uint64_t frames = (2*period+dt-1)/(2*dt);
-    return (owed<<32) > uint64_t(phase)*frames*dt;
-    }
-  // Now, unless one frame more (as long as this one) would bring the time nearer to the period.
-  return 2*owed+dt>=2*period;
+  // Nodes phase + k*period up to t; one in (clock - dt, clock] is this NPC's turn.
+  const auto nodes = [&](uint64_t t) { return t<phase ? 0 : (t-phase)/periodMs+1; };
+  return nodes(clock)>nodes(clock-dt);
   }
