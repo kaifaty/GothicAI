@@ -27,6 +27,7 @@ class PhysicsHost {
     virtual std::weak_ptr<void> npcHandle(const Npc& npc) const = 0;
     virtual Npc* resolveNpc(const std::shared_ptr<void>& handle) const = 0;
     virtual std::string npcTraceName(const Npc& npc) const = 0;
+    virtual std::string_view npcSymbolName(const Npc* npc) const = 0;
     virtual Tempest::Vec3 npcPosition(const Npc& npc) const = 0;
     virtual uint64_t npcTickCount(const Npc& npc) const = 0;
     virtual bool npcUsesSimplifiedMovement(const Npc& npc) const = 0;
