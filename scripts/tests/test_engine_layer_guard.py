@@ -179,3 +179,68 @@ def test_island_link_map(tmp_path, link_map, error):
     else:
         assert result.returncode == 0, result.stderr
         assert "engine-island: 1 mixed runtime objects checked, all platform or island" in result.stdout
+
+
+@pytest.mark.parametrize("target,allowed", [
+    ("engine-platform-link", "platform"), ("engine-island", "platform,island"),
+])
+@pytest.mark.parametrize("record,error", [
+    ("Loaded C:\\build with space\\gothic-base-runtime.lib(common\\sha256.cpp.obj)", ""),
+    ("Loaded gothic-base-runtime.lib(programdata.cpp.obj)",
+     "gothic-base-runtime(programdata.cpp.obj) from common/programdata.cpp belongs to gothic, not platform"),
+    ("Loaded gothic-video-runtime.lib(unknown.cpp.obj)", "unknown mixed runtime object"),
+    ("", "no mixed runtime objects found"),
+], ids=["platform", "gothic-object", "unknown-object", "no-runtime-objects"])
+def test_msvc_link_map(tmp_path, target, allowed, record, error):
+    # /MAP symbols, references, discarded/folded COMDATs and searched libraries
+    # cannot stand in for extraction records, even when they name a known member.
+    trace = ("Searching C:\\build with space\\gothic-base-runtime.lib:\r\n"
+             "  Found ?readIndex@ProgramData@@\r\n"
+             "    Referenced in gothic-base-runtime.lib(programdata.cpp.obj)\r\n"
+             " 0001:00000000 ?sha256@@ 0000000140001000 f gothic-base-runtime:sha256.cpp.obj\r\n"
+             "  Discarded ?sha256@@ from gothic-base-runtime.lib(sha256.cpp.obj)\r\n"
+             "  Folded ?sha256@@ from gothic-base-runtime.lib(sha256.cpp.obj)\r\n")
+    # A loaded object remains subject to the guard even if it has no public symbols.
+    trace += f"    {record}\r\n    {record}\r\n"
+    map_file = tmp_path / "link.log"
+    map_file.write_bytes(trace.encode() if record else b"")
+    inputs = tmp_path / "inputs.cmake"
+    inputs.write_text(f"set(PLATFORM_RULES [==[{RULES}]==])\n"
+                      "set(PLATFORM_MEMBERS [==[gothic-base-runtime|sha256.cpp.obj|common/sha256.cpp;"
+                      "gothic-base-runtime|programdata.cpp.obj|common/programdata.cpp]==])\n")
+    result = subprocess.run(["cmake", f"-DPLATFORM_MAP={map_file}", f"-DPLATFORM_INPUTS={inputs}",
+                             "-DPLATFORM_MAP_FORMAT=MSVC", f"-DPLATFORM_TARGET={target}",
+                             f"-DPLATFORM_LAYERS={allowed}", "-P", str(PLATFORM_MAP)],
+                            capture_output=True, text=True)
+    if error:
+        assert result.returncode != 0
+        assert error in " ".join(result.stderr.split())
+        if "unknown" in error:
+            assert "unknown.cpp.obj" in result.stderr
+    else:
+        assert result.returncode == 0, result.stderr
+        assert f"{target}: 1 mixed runtime objects checked, all {allowed.replace(',', ' or ')}" in result.stdout
+        assert "mixed runtime object gothic-base-runtime(sha256.cpp.obj)" in result.stdout
+
+
+@pytest.mark.parametrize("exit_code", [0, 7])
+def test_msvc_link_output_capture(tmp_path, exit_code):
+    log = tmp_path / "with space.link.log"
+    log.write_text("stale output")
+    linker = tmp_path / "linker with space.py"
+    linker.write_text("import os, sys\n"
+                      "assert os.environ['VERBOSE'] == '1'\n"
+                      "assert sys.argv[1] == 'argument with space'\n"
+                      "print('    Loaded gothic-base-runtime.lib(sha256.cpp.obj)')\n"
+                      "print('linker diagnostic', file=sys.stderr)\n"
+                      f"sys.exit({exit_code})\n")
+    result = subprocess.run(["cmake", f"-DPLATFORM_CAPTURE_LOG={log}", "-P", str(PLATFORM_MAP),
+                             "--", sys.executable, str(linker), "argument with space"],
+                            capture_output=True, text=True)
+    assert (result.returncode == 0) == (exit_code == 0)
+    assert "Loaded gothic-base-runtime.lib(sha256.cpp.obj)" in log.read_text()
+    assert "linker diagnostic" in log.read_text()
+    assert "stale output" not in log.read_text()
+    assert "linker diagnostic" in result.stderr
+    if exit_code:
+        assert f"MSVC link failed ({exit_code})" in result.stderr
