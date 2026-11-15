@@ -209,6 +209,8 @@ pin `BENCH_HOST=dev-ubuntu`, `BENCH_HOST=ryzen` or `BENCH_HOST=local`.
 
 `ragdoll-brace-look` снимает для глаза нокдаун по стойкости в четыре стороны на ровном поле: назад, вперёд и на оба бока. Жертва всегда стоит лицом к герою, атакующий — перед ней, за ней или сбоку. Каждое падение — три дубля: сбоку от падения, в три четверти и сбоку с замедлением втрое, имена `<сторона>-<вид>[-slow]`. Сценарий пишет [`look_bench.py`](../../reports/physics/2026-11-14-fall-bracing/look_bench.py); его гоняют на игре до и после правки и сводят дубли по именам ([заметка](../../reports/physics/2026-11-14-fall-bracing/README.md)). Сценарий ждёт 4,5 с после удара, поэтому события `brace` пишутся при подъёме, с `getup_start`; пара для сравнения — `RAGDOLL_BRACE=1` и `RAGDOLL_BRACE=0 OPENGOTHIC_BRACE_MEASURE=1`.
 
+`ragdoll-brace-places` — тот же нокдаун на склоне и у стены. Склон — открытый травяной, 16,5°, над фермой Лобарта (`NW_FARM1_OUT_07`): падение вниз назад, вперёд и на бок, вверх — вперёд. Стена — дощатая хижина в порту: назад в стену с метра и вперёд в стену с полутора. Каждое падение — два дубля сбоку, второй замедлен втрое: `<место>-<падение>[-slow]`. Сценарий пишет [`places_bench.py`](../../reports/physics/2026-11-14-fall-bracing/places_bench.py); пара для сравнения — та же, что у `ragdoll-brace-look`. Лестницы в сценарии нет: поиск `stairs` ставит героя у кровати рядом с лестницей в доме, а городские ступени из `character route` на вид — травяной склон.
+
 `game.log` must contain `[bench] done` for a complete scenario (including an explicit `quit`).
 Closing the window, a crash, `TIMEOUT` (default 300 seconds), or the stall watchdog before that marker
 returns code 1 and prints one reason with elapsed/limit seconds to stderr. Partial output still goes
