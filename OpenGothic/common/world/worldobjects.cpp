@@ -992,8 +992,6 @@ void WorldObjects::updateAnimation(uint64_t dt) {
     return;
   if(dt==0)
     return;
-  // Headless body training may skip NPCs beyond the far range (>60 m from the hero)
-  // that are not arena actors: nobody sees them, and they are most of the world.
   static const bool skipFar = [] {
     const char* v = std::getenv("OPENGOTHIC_ANIM_SKIP_FAR");
     return v!=nullptr && v[0]=='1';
@@ -1009,19 +1007,27 @@ void WorldObjects::updateAnimation(uint64_t dt) {
   const uint32_t frame = animationLodFrame++;
   if(lod)
     pinAnimationLodTargets();
+  const bool keepShadow = animationTailKeepsShadow();
+  // What the steps after the pass have to do for each NPC (world/animationtail.h); the pass
+  // decides it at the end of its work on that NPC, the skipped ones included.
+  tailPlan.assign(npcArr.size(),0);
   std::atomic<uint64_t> deferred{0};
   FrameProfile::Scope npcPass(FrameProfile::Zone::AnimationNpcPass);
   AnimationLod::beginPass();
   Workers::parallelTasks(npcArr,[&](std::unique_ptr<Npc>& i){
-    if(skipFar && i->processPolicy()==NpcProcessPolicy::AiFar2 && !BodyObservations::watched(*i))
+    auto& plan = tailPlan[size_t(&i-npcArr.data())];
+    if(animationPassSkips(*i,skipFar,frozen)) {
+      plan = i->animationTailPlan(true,keepShadow);
       return;
-    if(frozen && i.get()!=pl && !BodyArena::isActor(*i))
-      return;
+      }
     if(lod && i.get()!=pl && (frame+AnimationLod::phase(*i))%rate!=0 &&
        !view.visible(*i) && !mustUpdateAnimation(*i,view)) {
       // Outside the frustum and its shadow: the next update applies this dt.
       i->deferAnimation(dt);
       deferred.fetch_add(1,std::memory_order_relaxed);
+      // The same bones the shadow loop would pose this body from in place.
+      i->prepareMeleeShadowBody();
+      plan = i->animationTailPlan(false,keepShadow);
       return;
       }
     if(animationProbe) {
@@ -1036,76 +1042,13 @@ void WorldObjects::updateAnimation(uint64_t dt) {
       }
     // The melee shadow loop below publishes this body unless its bones move first.
     i->prepareMeleeShadowBody();
+    plan = i->animationTailPlan(false,keepShadow);
     });
   AnimationLod::endPass();
   npcPass.finish();
-  // the own heads' faces: the eyes aim from the heads as posed now; the deformation goes out on this thread
-  for(auto& i:npcArr)
-    i->updateFace();
   animationLodDeferred = deferred.load(std::memory_order_relaxed);
   FrameProfile::add(FrameProfile::Amount::NpcAnimDeferred,animationLodDeferred);
-  // Retiring a shadow window can also run damage scripts here. Scripts may
-  // append or remove NPCs, so retain neither vector iterators nor references.
-  FrameProfile::Scope meleeShadow(FrameProfile::Zone::MeleeShadow);
-  for(size_t i=0;i<npcArr.size();) {
-    auto* npc = npcArr[i].get();
-    if(skipFar && npc->processPolicy()==NpcProcessPolicy::AiFar2 && !BodyObservations::watched(*npc))
-      ++i;
-    else if(frozen && npc!=pl && !BodyArena::isActor(*npc))
-      ++i;
-    else {
-      npc->updateMeleeShadow();
-      if(i<npcArr.size() && npcArr[i].get()==npc)
-        ++i;
-      else if(const auto at=npcId(npc); at!=uint32_t(-1))
-        i=size_t(at)+1;
-      }
-    }
-  // Query the final published interval before callers can decide a terminal
-  // combat outcome. The flush does not advance physics, animation or clocks.
-  meleeShadow.finish();
-  FrameProfile::Scope meleeContacts(FrameProfile::Zone::MeleeContacts);
-  owner.physic()->flushShadowBlades();
-  for(size_t i=0;i<npcArr.size();) {
-    auto* npc = npcArr[i].get();
-    npc->resolveMeleeContacts();
-    if(i<npcArr.size() && npcArr[i].get()==npc)
-      ++i;
-    else if(const auto at=npcId(npc); at!=uint32_t(-1))
-      i=size_t(at)+1;
-    }
-  meleeContacts.finish();
-  if(!frozen) {
-    FrameProfile::Scope interactive(FrameProfile::Zone::InteractiveAnimation);
-    AnimationLod::beginPass();
-    interactiveObj.parallelFor([dt](Interactive& i){
-      i.updateAnimation(dt);
-      });
-    AnimationLod::endPass();
-    }
-  // Audit the previous prediction after the body has advanced, then consume
-  // this tick's mutation inputs on the main thread (including worker speed changes).
-  const auto& logic = NpcLogicAudit::stats();
-  const uint64_t logicBefore[] = {logic.ticks,logic.bodyMismatch,logic.weaponMismatch,
-                                 logic.early,logic.late,logic.events,logic.eventMismatch,
-                                 logic.waitEarly,logic.waitLate,logic.reanchoredCount(),logic.bodySamples,logic.weaponSamples};
-  {
-  FrameProfile::Scope logicalBodies(FrameProfile::Zone::LogicalBodySync);
-  for(auto& npc:npcArr)
-    npc->syncLogicalBodyState();
-  }
-  FrameProfile::add(FrameProfile::Amount::NpcLogicSamples,logic.ticks-logicBefore[0]);
-  FrameProfile::add(FrameProfile::Amount::NpcLogicBodyMismatch,logic.bodyMismatch-logicBefore[1]);
-  FrameProfile::add(FrameProfile::Amount::NpcLogicWeaponMismatch,logic.weaponMismatch-logicBefore[2]);
-  FrameProfile::add(FrameProfile::Amount::NpcLogicEarly,logic.early-logicBefore[3]);
-  FrameProfile::add(FrameProfile::Amount::NpcLogicLate,logic.late-logicBefore[4]);
-  FrameProfile::add(FrameProfile::Amount::NpcLogicEvents,logic.events-logicBefore[5]);
-  FrameProfile::add(FrameProfile::Amount::NpcLogicEventMismatch,logic.eventMismatch-logicBefore[6]);
-  FrameProfile::add(FrameProfile::Amount::NpcLogicWaitEarly,logic.waitEarly-logicBefore[7]);
-  FrameProfile::add(FrameProfile::Amount::NpcLogicWaitLate,logic.waitLate-logicBefore[8]);
-  FrameProfile::add(FrameProfile::Amount::NpcLogicReanchored,logic.reanchoredCount()-logicBefore[9]);
-  FrameProfile::add(FrameProfile::Amount::NpcLogicBodySamples,logic.bodySamples-logicBefore[10]);
-  FrameProfile::add(FrameProfile::Amount::NpcLogicWeaponSamples,logic.weaponSamples-logicBefore[11]);
+  updateAnimationTail(dt,skipFar,frozen);
   }
 
 void WorldObjects::catchUpAnimation() {

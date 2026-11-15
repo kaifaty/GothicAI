@@ -47,6 +47,8 @@ enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, Identic
   NpcLogicEarly, NpcLogicLate, NpcLogicEvents, NpcLogicEventMismatch,
   NpcLogicWaitEarly, NpcLogicWaitLate, NpcLogicReanchored, NpcLogicBodySamples, NpcLogicWeaponSamples,
   NpcAnimDeferred, NpcAnimCatchUp, NpcAnimSyncOnRead,
+  // WorldObjects::updateAnimationTail: shadow and logical-body steps run, 1 if a change made its plan stale
+  NpcTailShadow, NpcTailLogic, NpcTailFull,
   // RtScene::commit: builds of the TLAS in the frame, slots of the ray scene written into it
   RtTlasBuilds, RtDirtySlots,
   // -gi 1 (Renderer::readGiStats): live probes, probes traced in a frame (new), of them allocated at the hits of other

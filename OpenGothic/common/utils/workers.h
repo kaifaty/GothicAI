@@ -54,6 +54,9 @@ class Workers final {
       }
 
     static uint8_t maxThreads();
+    // Elements of a parallelFor per pool thread: OPENGOTHIC_WORKERS_GRAIN (16..1024, default 64),
+    // read once at the first pool dispatch. Arrays of up to 128 elements stay on the caller.
+    static size_t  taskGrain();
     // the calling thread's CPU time, µs (POSIX CLOCK_THREAD_CPUTIME_ID, Windows GetThreadTimes)
     static double  threadCpuUs();
 
@@ -100,7 +103,7 @@ class Workers final {
       execWork(minWorkSize<void,F>());
       }
 
-    static const size_t               taskPerThread;
+    static const size_t               serialElements;
     static const size_t               taskPerStep;
     bool                              running=true;
 

@@ -205,8 +205,13 @@ class WorldObjects final {
     bool           makeAnimationLodView(AnimationLod::View& view) const;
     void           pinAnimationLodTargets();
     bool           mustUpdateAnimation(const Npc& npc, const AnimationLod::View& view) const;
+    // worldobjects_animtail.cpp: the main-thread steps after the animation pass (world/animationtail.h)
+    bool           animationPassSkips(const Npc& npc, bool skipFar, bool frozen) const;
+    static bool    animationTailKeepsShadow();
+    void           updateAnimationTail(uint64_t dt, bool skipFar, bool frozen);
     uint32_t       animationLodFrame = 0;
     uint64_t       animationLodDeferred = 0;
+    std::vector<uint8_t> tailPlan; // per npcArr slot, AnimationTail::Step bits
     std::vector<Tempest::Vec3> fighters;
     friend struct WorldDataContract;
     void           saveItemPhysics(Serialize& fout) const;

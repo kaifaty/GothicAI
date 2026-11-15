@@ -601,14 +601,22 @@ void Npc::prepareMeleeShadowBody() {
     poseMeleeShadowBody();
   }
 
-void Npc::poseMeleeShadowBody() {
-  auto& cached = meleeShadowPose;
+bool Npc::meleeShadowPoseCurrent(uint32_t& scale, uint64_t& shape) const {
+  const auto& cached = meleeShadowPose;
   const auto& pose = visual.pose();
   const auto& matrix = visual.transform();
   // The scale exactly as MdlVisual::hitZonesPosed computes it.
-  const auto scale = std::bit_cast<uint32_t>(Vec3(matrix.at(0,0),matrix.at(0,1),matrix.at(0,2)).length());
-  const auto shape = visual.hitZoneShape().revision();
-  if(cached.pose==&pose && cached.bones==pose.revision() && cached.shape==shape && cached.scale==scale)
+  scale = std::bit_cast<uint32_t>(Vec3(matrix.at(0,0),matrix.at(0,1),matrix.at(0,2)).length());
+  shape = visual.hitZoneShape().revision();
+  return cached.pose==&pose && cached.bones==pose.revision() && cached.shape==shape && cached.scale==scale;
+  }
+
+void Npc::poseMeleeShadowBody() {
+  auto& cached = meleeShadowPose;
+  const auto& pose = visual.pose();
+  uint32_t scale = 0;
+  uint64_t shape = 0;
+  if(meleeShadowPoseCurrent(scale,shape))
     return;
   visual.hitZonesPosed(cached.zones);
   auto& capsules = cached.body.capsules;
@@ -628,12 +636,16 @@ void Npc::poseMeleeShadowBody() {
 // OPENGOTHIC_MELEE_SHADOW_CHECK=1: after each publication, poses the body again
 // the way it was always posed in place and compares it bit by bit with the
 // published one. Counts go to stderr every 100000 bodies and on every mismatch.
-static void checkMeleeShadowBody(const Npc& npc, const World& world) {
+bool NpcMeleeShadow::checking() {
   static const bool enabled = [] {
     const char* v = std::getenv("OPENGOTHIC_MELEE_SHADOW_CHECK");
     return v!=nullptr && v[0]=='1';
     }();
-  if(!enabled)
+  return enabled;
+  }
+
+static void checkMeleeShadowBody(const Npc& npc, const World& world) {
+  if(!NpcMeleeShadow::checking())
     return;
   static uint64_t checked = 0, mismatched = 0;
   std::vector<HitZones::Posed> zones;
@@ -672,6 +684,7 @@ void Npc::updateMeleeShadow() {
   poseMeleeShadowBody();
   const auto& zones = meleeShadowPose.zones;
   owner.physic()->updateShadowBody(this,meleeShadowPose.body,&meleeShadowPose.slot);
+  meleeShadowPose.published = meleeShadowPose.body.serial;
   meleeShadowBody = true;
   checkMeleeShadowBody(*this,owner);
   if(Bench::bodyTracing() && isHuman() && currentTarget!=nullptr && owner.npcId(currentTarget)!=uint32_t(-1)) {
@@ -1108,6 +1121,7 @@ void Npc::clearMeleeShadow() {
   if(meleeShadowBody && owner.physic()!=nullptr) {
     owner.physic()->removeShadowBody(this);
     meleeShadowBody = false;
+    meleeShadowPose.published = 0;
     }
   }
 
