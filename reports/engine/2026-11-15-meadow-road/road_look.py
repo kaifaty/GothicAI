@@ -15,6 +15,10 @@ landscape-meadow-variety, landscape-meadow-parts. Linear light throughout; the h
           they are. The squares of `grass parts 8385` are painted on the meadow's ground only, so the road's
           variety is by squares of the screen: the spread of the luminance (of its logarithm) and of the hue
           between blocks of 64 px, between blocks of 8 px within one of 64, between pixels within one of 8
+  colour  the same pixels in OKLab, a pixel at a time: the red and the yellow axes (a, b; of 1000), the hue of
+          their mean, the mean chroma and the spread of the lightness - «было», «стало» and, where its folder is
+          there, `grey`: the branch's first filming, whose road had the luminance and had lost the colour. The
+          hue and the saturation of `tone` are those of the mean colour, and they hid the loss
   bands   goal Б on the views along and across the track: the earth of the verge's strip (the paint's magenta to
           orange beside the road), the road's edge (the outer eighth of its width on each side) and the road
           further in (the next quarter): how far the neighbours' mean luminance is apart
@@ -127,6 +131,33 @@ def cmd_tone() -> None:
            '«стало»'], relief)
     table(['Вид', 'Яркость, блоки 64 px', 'блоки 8 px', 'пиксели', 'Оттенок, блоки 64 px', 'блоки 8 px', 'пиксели',
            'Пестрота крупного', 'Пиксели: яркость', 'оттенок'], variety)
+
+
+def oklab(lin: np.ndarray) -> np.ndarray:
+    lms = np.cbrt(np.maximum(lin @ np.array([[0.4122214708, 0.5363325363, 0.0514459929],
+                                             [0.2119034982, 0.6806995451, 0.1073969566],
+                                             [0.0883024619, 0.2817188376, 0.6299787005]]).T, 0))
+    return lms @ np.array([[0.2104542553, 0.7936177850, -0.0040720468], [1.9779984951, -2.4285922050, 0.4505937099],
+                           [0.0259040371, 0.7827717662, -0.8086757660]]).T
+
+
+def cmd_colour() -> None:
+    bench = 'landscape-meadow-road'
+    sides = [('«было»', 'was')] + ([('серое', 'grey')] if (RUNS / f'f-grey-{bench}').is_dir() else []) + [('«стало»', 'now')]
+    rows = []
+    for view in ROAD_VIEWS:
+        lit = road_masks(frame('now', bench, f'cover-{view}'))[0]
+        cells = {k: [] for k in ('a', 'b', 'hue', 'chroma', 'spread')}
+        for _, side in sides:
+            lab = oklab(g.linear(frame(side, bench, view))[lit])
+            mean = lab.mean(axis=0)
+            cells['a'].append(num(1000*mean[1], 1)); cells['b'].append(num(1000*mean[2], 1))
+            cells['hue'].append(num(float(np.degrees(np.arctan2(mean[2], mean[1]))), 1) + '°')
+            cells['chroma'].append(num(1000*float(np.hypot(lab[:, 1], lab[:, 2]).mean()), 1))
+            cells['spread'].append(num(float(lab[:, 0].std()), 3))
+        rows.append([f'`{view}`'] + [' → '.join(cells[k]) for k in ('a', 'b', 'hue', 'chroma', 'spread')])
+    table(['Вид (' + ' → '.join(name for name, _ in sides) + ')', 'Красное a, из 1000', 'Жёлтое b', 'Оттенок', 'Насыщенность (хрома)',
+           'Разброс светлоты'], rows)
 
 
 def runs_of(mask: np.ndarray, axis: int):
@@ -299,11 +330,11 @@ def cmd_same() -> None:
 
 def main() -> int:
     global RUNS
-    if len(sys.argv) != 3 or sys.argv[1] not in ('tone', 'bands', 'guards', 'away', 'same'):
+    if len(sys.argv) != 3 or sys.argv[1] not in ('tone', 'colour', 'bands', 'guards', 'away', 'same'):
         print(__doc__)
         return 2
     RUNS = Path(sys.argv[2]).expanduser()
-    {'tone': cmd_tone, 'bands': cmd_bands, 'guards': cmd_guards, 'away': cmd_away, 'same': cmd_same}[sys.argv[1]]()
+    {'tone': cmd_tone, 'colour': cmd_colour, 'bands': cmd_bands, 'guards': cmd_guards, 'away': cmd_away, 'same': cmd_same}[sys.argv[1]]()
     return 0
 
 
