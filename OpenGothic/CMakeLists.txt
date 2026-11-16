@@ -75,7 +75,7 @@ endif()
 
 # sources
 file(GLOB_RECURSE OPENGOTHIC_SOURCES "common/*.h" "common/*.cpp")
-foreach(source zenkitlog daedalus/vm daedalus/script daedalus/classes baseidentity basestoreimport sha256 baseimport basesources worldchunks worldchunksruntime worldchunkmanifest worldchunkbinary worldchunkindex worldchunkcook worldchunkassemble worldchunkcookedsource physics/worldcloth physics/worldclothbundle physics/worldcollisionmesh worlddata modeldata fontdata programdata outputunits audiodata basemesh gothicglb gltfmesh asset/fromzenkit asset/worldfromzenkit asset/modelfromzenkit asset/programfromzenkit
+foreach(source zenkitlog daedalus/vm daedalus/script daedalus/classes baseidentity basestoreimport sha256 baseimport basesources worldchunks worldchunksruntime worldchunkmanifest worldchunkbinary worldchunkindex worldchunkcook worldchunkassemble worldchunkcookedsource worldchunkcatalogue physics/worldcloth physics/worldclothbundle physics/worldcollisionmesh worlddata modeldata fontdata programdata outputunits audiodata basemesh gothicglb gltfmesh asset/fromzenkit asset/worldfromzenkit asset/modelfromzenkit asset/programfromzenkit
                utils/fileutil dmusic/sourcefile dmusic/riff dmusic/segment dmusic/track dmusic/style dmusic/band
                dmusic/reference dmusic/info dmusic/pattern musicdata dmusic/musicrecord dmusic/dlscollection dmusic/wave dmusic/soundfont
                dmusic/hydra dmusic/directmusicimport dmusic/dlsruntime dmusic/styleruntime dmusic/waveruntime
@@ -700,6 +700,13 @@ endif()
   add_executable(gothic-wcb-source-contract EXCLUDE_FROM_ALL tests/wcb_source_contract.cpp)
   target_link_libraries(gothic-wcb-source-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
   target_include_directories(gothic-wcb-source-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
+  # The catalogue start (worldchunkcatalogue.h): the same table, materials, bounds, cloth, collision and cells.
+  add_executable(gothic-world-catalogue-contract EXCLUDE_FROM_ALL tests/world_catalogue_contract.cpp)
+  target_link_libraries(gothic-world-catalogue-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
+  target_include_directories(gothic-world-catalogue-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
+  if(NOT MSVC)
+    target_compile_options(gothic-world-catalogue-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
   if(TARGET content-convert)
     add_executable(gothic-worldcloth-cooked-contract EXCLUDE_FROM_ALL tests/worldcloth_cooked_contract.cpp)
     target_link_libraries(gothic-worldcloth-cooked-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)

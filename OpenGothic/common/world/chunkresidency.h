@@ -64,6 +64,8 @@ class ChunkResidency {
 
     explicit ChunkResidency(const ChunkTable& table);
     static std::unique_ptr<ChunkResidency> create(const ChunkTable& table);
+    // false with OPENGOTHIC_STREAMING=0: create gives no residency.
+    static bool enabled();
 
     void update(const Tempest::Vec3& hero, const Tempest::Vec3& camera, float zFar);
     // The same at `now` (tests).

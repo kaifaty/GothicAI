@@ -324,30 +324,53 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
           }
         // Its own two layers by world position, and the strip of them on the ground beside it (shader/grass/
         // grass_layers.glsl): their maps after the buckets in the bindless arrays, as a fringe's - the records
-        // exclude `projection`, so the fringe's slots are free. Bindless only: without it the ground is as before
-        if(i.mat.layers.present() && Shaders::options().doMaterialMaps && Shaders::options().doBindless &&
+        // exclude `projection`, so the fringe's slots are free. Bindless only: without it the ground is as before.
+        // A meadow's `ground.border` is the third triple; a road's `track` (shader/grass/grass_track.glsl) adds
+        // its crust, loose earth and ribbon after the verge's two, or stands alone
+        const bool layered = i.mat.layers.present() || i.mat.layers.hasTrack();
+        if(layered && Shaders::options().doMaterialMaps && Shaders::options().doBindless &&
            Grass::enabled().mode!=Grass::Off && i.mat.projectionUvScale()<=0) {
-          const auto& l = i.mat.layers;
-          const std::array<const Tempest::Texture2d*,3> sward = {l.sward[0],l.sward[1],l.sward[2]};
-          const std::array<const Tempest::Texture2d*,3> earth = {l.earth[0],l.earth[1],l.earth[2]};
+          const auto& l      = i.mat.layers;
+          const bool  ground = l.present(), track = l.hasTrack() && !i.mat.grass.on;
+          std::vector<std::array<const Tempest::Texture2d*,3>> run;
+          if(ground) {
+            run.push_back({l.sward[0],l.sward[1],l.sward[2]});
+            run.push_back({l.earth[0],l.earth[1],l.earth[2]});
+            }
+          if(ground && !l.verge.on && l.hasBorder())
+            run.push_back(l.border);
+          if(track) {
+            run.push_back(l.crust);
+            run.push_back(l.loose);
+            run.push_back(l.ribbon);
+            }
           size_t at = 0;
-          while(at+1<fringeMaps.size() && !(fringeMaps[at]==sward && fringeMaps[at+1]==earth))
+          while(at+run.size()<=fringeMaps.size() && !std::equal(run.begin(),run.end(),fringeMaps.begin()+ptrdiff_t(at)))
             ++at;
-          if(at+1>=fringeMaps.size()) {
+          if(at+run.size()>fringeMaps.size()) {
             at = fringeMaps.size();
-            fringeMaps.push_back(sward);
-            fringeMaps.push_back(earth);
+            fringeMaps.insert(fringeMaps.end(),run.begin(),run.end());
             }
-          bx.fringeTex   = fringeBase+uint32_t(at);
-          bx.fringeScale = 1.f/(l.ground.swardTile*100.f);
-          bx.fringeTop0  = 1.f/(l.ground.earthTile*100.f);
-          bx.fringeTop1  = l.ground.far;
-          if(l.verge.on) {
-            bx.foliage = l.grassBits;
-            bx.flags  |= BK_VERGE;
+          bx.fringeTex = fringeBase+uint32_t(at);
+          if(ground) {
+            bx.fringeScale = 1.f/(l.ground.swardTile*100.f);
+            bx.fringeTop0  = 1.f/(l.ground.earthTile*100.f);
+            bx.fringeTop1  = l.ground.far;
+            if(l.verge.on) {
+              bx.foliage = l.grassBits;
+              bx.flags  |= BK_VERGE;
+              }
+            else if(i.mat.grass.on) {
+              bx.flags  |= BK_GROUND;
+              if(l.hasBorder())
+                bx.fringeBottom0 = 1.f/(l.borderTile*100.f);
+              }
             }
-          else if(i.mat.grass.on) {
-            bx.flags  |= BK_GROUND;
+          if(track) {
+            bx.fringeBottom0 = 1.f/(l.track.crustTile*100.f);
+            bx.fringeBottom1 = 1.f/(l.track.looseTile*100.f);
+            bx.foliageReach  = Grass::pack(l.track);
+            bx.flags        |= BK_TRACK;
             }
           }
         // A window lit of an evening (graphics/windowglow.h): its hours in the same slot; the record excludes

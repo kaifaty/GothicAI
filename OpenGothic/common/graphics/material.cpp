@@ -177,8 +177,15 @@ float Material::textureUvPerMetre(float meshUvPerMetre, bool morph) const {
   const float density = meshUvPerMetre*std::abs(uvScale);
   // the ground's two layers lie by world position, a repeat per tile: their maps are asked with the ground's own
   // texture, so no coarser than the finer of the two needs
-  if(layers.present() && !morph)
-    return std::max(density, 1.f/std::min(layers.ground.swardTile,layers.ground.earthTile));
+  float tile = 1e9f;
+  if(layers.present())
+    tile = std::min(layers.ground.swardTile,layers.ground.earthTile);
+  if(layers.hasBorder())
+    tile = std::min(tile,layers.borderTile);
+  if(layers.hasTrack())
+    tile = std::min({tile,layers.track.crustTile,layers.track.looseTile});
+  if(tile<1e9f && !morph)
+    return std::max(density, 1.f/tile);
   return density;
   }
 

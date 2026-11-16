@@ -4,8 +4,8 @@ Blender 5.2, started by world_edit.py (world_edit_blender.py is the entry):
 
     Blender -b --factory-startup --python scripts/content/world/world_edit_blender.py -- <job.json>
 
-job.json: {"base": <base chunk .glb>, "out": <edited .glb>, "allowed": <allowed.json>, "meta": <meta.json>,
-"edits": [<edit .py>, ...], "names": {<edit .py>: <path in git>}, "world": <WORLD>, "repo": <repository>,
+job.json: {"base": <base chunk .glb>, "out": <edited .glb>, "dropped": <dropped.json>, "allowed": <allowed.json>,
+"meta": <meta.json>, "edits": [<edit .py>, ...], "names": {<edit .py>: <path in git>}, "world": <WORLD>, "repo": <repository>,
 "chunk": <x>_<z>, "base_chunks": <the base's chunks folder>, "gui": false}. The base chunk is imported twice: the chunk the edits change, and the original as an underlay to
 measure against (wireframe, cannot be selected, not rendered). Each edit is a script with one function,
 `edit(ctx)`, run in order on the same mesh, so edits of several steps in one chunk add up. The underlay is removed
@@ -310,11 +310,16 @@ def remove_underlay_on_save(*_):
 
 
 def main(job_path):
+    import world_region_dropped as dropped
+
     job = json.loads(Path(job_path).read_text())
     bpy.ops.wm.read_factory_settings(use_empty=True)
     obj = import_chunk(job['base'])
     underlay = make_underlay(import_chunk(job['base']))
     world, chunk = job.get('world', ''), job.get('chunk') or Path(job['base']).stem
+    entries = []
+    if not job.get('gui') and obj.data.attributes.get('_FEATURE') is not None:
+        entries = dropped.find(obj.data, [chunk], [job['base']])
     ctx = Context(obj, underlay, world, chunk, job.get('base_chunks'))
     meta = run_edits(ctx, job)
     kept, lit = bake_light(obj, underlay)
@@ -325,6 +330,9 @@ def main(job_path):
     remove_underlay()
     Path(job['allowed']).write_text(json.dumps({'edits': ctx.allowed}) + '\n')
     Path(job['meta']).write_text(json.dumps(meta) + '\n')
+    Path(job['dropped']).write_text(json.dumps(dropped.resolve(obj.data, entries)) + '\n')
+    if entries:
+        obj.data.attributes.remove(obj.data.attributes[dropped.ORIGIN])
     tris = sum(len(p.vertices) - 2 for p in obj.data.polygons)
     print(f'chunk: {len(obj.data.polygons)} faces, {tris} triangles after the edits')
     for o in bpy.data.objects:

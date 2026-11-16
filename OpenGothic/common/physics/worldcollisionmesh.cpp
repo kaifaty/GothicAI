@@ -1,5 +1,6 @@
 #include "worldcollisionmesh.h"
 
+#include "worldchunkcatalogue.h"
 #include "worldchunkcook.h"
 #include "worldchunkcookedsource.h"
 #include "worldclothbundle.h"
@@ -134,6 +135,12 @@ const asset::WorldMesh& WorldCollisionSource::operator()() {
   ++count;
   if(!built)
     built = worldCollisionInput(table,clothBundle);
+  // A catalogue start has no stitched landscape: the world is read and stitched now, as the old start had it.
+  if(!built->mesh && table.source && table.source->catalogue()) {
+    if(!stitched)
+      stitched = table.source->catalogue()->stitchedLandscape();
+    return *stitched;
+    }
   return built->select(landscape);
   }
 

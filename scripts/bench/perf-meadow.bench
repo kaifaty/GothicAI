@@ -1,6 +1,9 @@
 # The meadow east of the tavern under the grass system (reports/engine/2026-11-14-grass-system): the frame's GPU
 # time where the blades fill the frame, over the whole meadow from afar, and while walking the cart track. Run with the set under test in
 # PERF_ENV='OPENGOTHIC_CONTENT=<path on the host>'; off with OPENGOTHIC_GRASS=0 in the same PERF_ENV.
+# view-5 stands on the track and looks along it (reports/engine/2026-11-15-meadow-road). The samples `-noroad` repeat
+# views 1, 3 and 5 with the road as its `verge` alone (`grass parts 16384`): the track's own material by difference
+# within one run.
 seed 73013
 cheat god
 set time 12 0
@@ -24,6 +27,12 @@ wait 8000
 perf stop
 shot meadow-dense
 wait 200
+grass parts 16384
+wait 3000
+perf sample perf-meadow/view-1-noroad
+wait 8000
+perf stop
+grass parts 0
 # 70 cm over the ground among the clumps, to the east: the view `stone` of landscape-meadow.bench
 goto pos 40003 3790 -1503
 cam at 40503 3581 -902 41503 3480 -902
@@ -44,6 +53,12 @@ wait 8000
 perf stop
 shot far
 wait 200
+grass parts 16384
+wait 3000
+perf sample perf-meadow/view-3-noroad
+wait 8000
+perf stop
+grass parts 0
 # the walk of `meadow-walk`: the cells built and dropped on the way
 cam game
 walkmode walk
@@ -55,3 +70,18 @@ walkto NW_TAVERNE_TROLLAREA_05
 wait 12000
 perf stop
 grass stats
+# standing on the track, the game's camera along it up the slope: the view `track-along` of landscape-meadow-road.bench
+walkmode run
+goto pos 41940 3300 -317
+face -122
+wait 20000
+grass stats
+perf sample perf-meadow/view-5
+wait 8000
+perf stop
+grass parts 16384
+wait 3000
+perf sample perf-meadow/view-5-noroad
+wait 8000
+perf stop
+grass parts 0
