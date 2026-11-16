@@ -330,7 +330,7 @@ def status(args):
         print('Status unavailable: destination_unavailable')
         return 0
     errors = []
-    for name, mode, whole in selected_roots(args.only):
+    for name, mode, whole in ROOTS:
         missing = changed = size = 0
         root, directory = args.source_root / name, args.dest / name
         try:
@@ -384,22 +384,24 @@ def main(argv=None):
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument('--source-root', type=Path, default=DEFAULT_SOURCE)
     common.add_argument('--dest', type=Path, default=DEFAULT_DEST)
-    common.add_argument('--state-dir', type=Path, default=DEFAULT_STATE)
-    common.add_argument('--settle-minutes', type=float, default=30)
-    common.add_argument('--rsync-host', default='dev-ubuntu')
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
     run_parser = commands.add_parser('run', parents=[common])
     run_parser.add_argument('--dry-run', action='store_true')
     run_parser.add_argument('--only', choices=[row[0] for row in ROOTS])
-    status_parser = commands.add_parser('status', parents=[common])
-    status_parser.add_argument('--only', choices=[row[0] for row in ROOTS])
+    commands.add_parser('status', parents=[common])
     plist_parser = commands.add_parser('plist', parents=[common])
+    for subparser in (run_parser, plist_parser):
+        subparser.add_argument('--state-dir', type=Path, default=DEFAULT_STATE)
+        subparser.add_argument('--settle-minutes', type=float, default=30)
+        subparser.add_argument('--rsync-host', default='dev-ubuntu')
     plist_parser.add_argument('--hour', type=int, choices=range(24), default=4)
     plist_parser.add_argument('--minute', type=int, choices=range(60), default=30)
     args = parser.parse_args(argv)
-    for name in ('source_root', 'dest', 'state_dir'):
+    for name in ('source_root', 'dest'):
         setattr(args, name, getattr(args, name).expanduser().absolute())
+    if args.command != 'status':
+        args.state_dir = args.state_dir.expanduser().absolute()
     return {'run': run, 'status': status, 'plist': print_plist}[args.command](args)
 
 

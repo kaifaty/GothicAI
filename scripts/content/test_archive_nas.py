@@ -32,8 +32,10 @@ def prepared(tmp_path, monkeypatch):
 
 def invoke(prepared, command='run', *extra):
     source, dest, state = prepared
-    return archive.main([command, '--source-root', str(source), '--dest', str(dest),
-        '--state-dir', str(state), '--rsync-host', '', *extra])
+    arguments = [command, '--source-root', str(source), '--dest', str(dest)]
+    if command != 'status':
+        arguments += ['--state-dir', str(state), '--rsync-host', '']
+    return archive.main([*arguments, *extra])
 
 
 def asset(prepared, path='content-staging/set-a/texture.bin', data=b'original'):
@@ -67,7 +69,7 @@ def snapshot(dest):
 ])
 def test_new_unit_is_readable_and_manifest_hash_matches(prepared, root, unit):
     relative = '/'.join(part for part in (root, unit, 'texture.bin') if part)
-    source = asset(prepared, relative)
+    source = asset(prepared, relative, b'x' * (1024 * 1024) + b'y')
     assert invoke(prepared) == 0
     name = unit or root
     target = prepared[1] / root / f'{name}.tar'
@@ -96,9 +98,9 @@ def test_changed_unit_replaces_tar_and_manifest(prepared):
     assert invoke(prepared) == 0
     old_entry = manifest(prepared)['set-a']
     old_tar = (prepared[1] / 'content-staging/set-a.tar').read_bytes()
-    source.write_bytes(b'updated asset')
-    old = time.time() - 3500
-    os.utime(source, (old, old))
+    old = source.stat().st_mtime_ns + 100 * 1_000_000_000
+    source.write_bytes(b'updated!')
+    os.utime(source, ns=(old, old))
     assert invoke(prepared) == 0
     target = prepared[1] / 'content-staging/set-a.tar'
     assert target.read_bytes() != old_tar
@@ -106,7 +108,7 @@ def test_changed_unit_replaces_tar_and_manifest(prepared):
     assert entry['fingerprint'] != old_entry['fingerprint']
     assert entry['sha256'] == hashlib.sha256(target.read_bytes()).hexdigest()
     with tarfile.open(target) as stream:
-        assert stream.extractfile('set-a/texture.bin').read() == b'updated asset'
+        assert stream.extractfile('set-a/texture.bin').read() == b'updated!'
 
 
 def test_bad_readback_preserves_old_tar_and_manifest(prepared, monkeypatch):
@@ -148,22 +150,24 @@ def test_tar_keeps_symlink_without_dereferencing(prepared):
         assert link.linkname == 'texture.bin'
 
 
-def test_fresh_unit_waits_until_files_settle(prepared):
+def test_fresh_unit_waits_until_files_settle(prepared, monkeypatch):
     source = asset(prepared)
-    os.utime(source, None)
+    now = time.time_ns()
+    monkeypatch.setattr(archive.time, 'time_ns', lambda: now)
+    cutoff = now - 30 * 60 * 1_000_000_000
+    os.utime(source, ns=(cutoff + 1, cutoff + 1))
     assert invoke(prepared) == 0
     assert not (prepared[1] / 'content-staging/set-a.tar').exists()
     stats = report(prepared)['roots']['content-staging']
     assert stats['skipped'] == 1
     assert stats['skipped_reasons']['set-a'] == 'still_settling'
-    old = time.time() - 3600
-    os.utime(source, (old, old))
+    os.utime(source, ns=(cutoff - 1, cutoff - 1))
     assert invoke(prepared) == 0
     assert (prepared[1] / 'content-staging/set-a.tar').is_file()
 
 
-def test_files_mode_copies_new_file_and_verifies_hash(prepared):
-    source = asset(prepared, 'content-sources/imagegen/source.png')
+def test_files_mode_copies_new_file_and_verifies_hash(prepared, monkeypatch):
+    source = asset(prepared, 'content-sources/imagegen/source.png', b'x' * (1024 * 1024) + b'y')
     assert invoke(prepared) == 0
     target = prepared[1] / 'content-sources/imagegen/source.png'
     assert target.read_bytes() == source.read_bytes()
@@ -172,6 +176,14 @@ def test_files_mode_copies_new_file_and_verifies_hash(prepared):
     assert entry['size'] == source.stat().st_size
     assert entry['mtime_ns'] == source.stat().st_mtime_ns
     assert not target.with_name('source.png.partial').exists()
+    asset(prepared, 'content-sources/imagegen/bad.png')
+    read_hash = archive.file_sha256
+    monkeypatch.setattr(archive, 'file_sha256', lambda path:
+        '0' * 64 if Path(path).name == 'bad.png.partial' else read_hash(path))
+    assert invoke(prepared) == 1
+    assert not target.with_name('bad.png').exists()
+    assert not target.with_name('bad.png.partial').exists()
+    assert 'imagegen/bad.png' not in manifest(prepared, 'content-sources')
 
 
 def test_cached_matching_file_skips_destination_read(prepared, monkeypatch):
@@ -204,7 +216,7 @@ def test_existing_equal_file_is_verified_then_cached(prepared):
 
 
 def test_conflicting_source_file_is_not_overwritten(prepared):
-    asset(prepared, 'content-sources/source.png', b'local asset')
+    source = asset(prepared, 'content-sources/source.png', b'local asset')
     target = prepared[1] / 'content-sources/source.png'
     target.parent.mkdir(parents=True)
     target.write_bytes(b'other asset')
@@ -213,6 +225,16 @@ def test_conflicting_source_file_is_not_overwritten(prepared):
     assert target.read_bytes() == b'other asset'
     assert snapshot(prepared[1]) == before
     assert any('source.png' in error for error in report(prepared)['errors'])
+    assert report(prepared)['roots']['content-sources']['errors'] == 1
+    target.write_bytes(source.read_bytes())
+    assert invoke(prepared) == 0
+    before = snapshot(prepared[1])
+    old = source.stat().st_mtime_ns + 100 * 1_000_000_000
+    source.write_bytes(b'other asset')
+    os.utime(source, ns=(old, old))
+    assert invoke(prepared) == 1
+    assert target.read_bytes() == b'local asset'
+    assert snapshot(prepared[1]) == before
     assert report(prepared)['roots']['content-sources']['errors'] == 1
 
 
@@ -290,9 +312,15 @@ def test_unreadable_source_metadata_does_not_block_next_file(prepared, monkeypat
 
 def test_dry_run_does_not_write_destination_or_start_rsync(prepared):
     asset(prepared)
-    asset(prepared, 'content-sources/source.png')
+    source = asset(prepared, 'content-sources/source.png')
     assert invoke(prepared, 'run', '--dry-run', '--rsync-host', 'test-host') == 0
     assert not prepared[1].exists()
+    target = prepared[1] / 'content-sources/source.png'
+    target.parent.mkdir(parents=True)
+    target.write_bytes(source.read_bytes())
+    before = snapshot(prepared[1])
+    assert invoke(prepared, 'run', '--dry-run', '--rsync-host', 'test-host') == 0
+    assert snapshot(prepared[1]) == before
 
 
 def test_status_reports_missing_and_changed_without_destination_writes(prepared, capsys):
@@ -316,6 +344,8 @@ def test_rsync_failure_is_reported_after_nas_archive(prepared, monkeypatch):
 
     def failed_rsync(command, **kwargs):
         commands.append(command)
+        assert (prepared[1] / 'content-staging/set-a.tar').is_file()
+        assert (prepared[1] / 'content-sources/source.png').is_file()
         assert command[0] == 'rsync'
         assert '-a' in command
         assert '--delete' not in command
