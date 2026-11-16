@@ -951,6 +951,7 @@ void trackRecords(Tempest::Device& device, const Fixture& fixture) {
           tracked.textureUvPerMetre(0.1f)==0.5f && tracked.textureUvPerMetre(3.f)==3.f*std::abs(tracked.uvScale),
           "a ground with a track or a border is asked no coarser than a repeat per the finest of its tiles");
   }
+#include "foliage_tree_test.h" // foliageTreeMaths, foliageTreeRecords
 
 // graphics/foliagewind.h: the processor's copy of the rule of shader/materials/foliage_wind.glsl
 void foliageWindMaths() {
@@ -3210,6 +3211,7 @@ int main(int argc, char** argv) {
       return 0;
       }
     foliageWindMaths();
+    foliageTreeMaths();
     variants();
     Fixture fixture;
     CommandLine commandLine(0,nullptr);
@@ -3221,6 +3223,7 @@ int main(int argc, char** argv) {
     projectionRecords(device,fixture);
     fringeRecords(device,fixture);
     foliageRecords(device,fixture);
+    foliageTreeRecords(device,fixture);
     grassRecords(device,fixture);
     groundRecords(device,fixture);
     trackRecords(device,fixture);

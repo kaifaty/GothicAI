@@ -7,7 +7,7 @@
 #include "asset/material.h"
 #include "asset/worldtypes.h"
 #include "records/definitions.h"
-#include "graphics/foliagewind.h"
+#include "graphics/foliagetree.h"
 #include "graphics/grass/grassground.h"
 #include "graphics/grass/grassparams.h"
 #include "graphics/grass/grasstrack.h"

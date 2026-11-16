@@ -303,7 +303,9 @@ class Resources final {
     // the strands of that head (characters.json "groom"), nullptr without them
     static const ProtoMesh*          loadCharacterGroom(std::string_view instance);
     // All static visual readers share the selected base and content overrides.
-    static asset::StaticMesh loadVisualMesh(std::string_view name, bool* replaced = nullptr);
+    // colors: COLOR_0 of the own GLB for PackedMesh (gltfmeshcolor.h); left empty for a mesh without it
+    static asset::StaticMesh loadVisualMesh(std::string_view name, bool* replaced = nullptr,
+                                            std::vector<std::vector<uint32_t>>* colors = nullptr);
     struct MeshReplacementSource {
       std::filesystem::path file;
       size_t size = 0;

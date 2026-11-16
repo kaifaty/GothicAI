@@ -26,11 +26,11 @@ struct Params final {
   float   wind         = 1.f;   // times the bend, 0..4
   float   flutter      = 1.f;   // times the flutter, 0..4
   float   translucency = 0.6f;  // the share of the sun a leaf lets through, 0..1
-  uint8_t anchor       = 0;     // AnchorLine: the roots on the mesh's X axis
+  uint8_t anchor       = 0;     // AnchorLine: the roots on the mesh's X axis; AnchorTree: a tree (foliagetree.h)
   bool    operator==(const Params&) const = default;
   };
 
-enum : uint8_t { AnchorLine = 0 };
+enum : uint8_t { AnchorLine = 0, AnchorTree = 1 };
 
 // the halves of the switch
 enum : uint8_t { Wind = 1, Light = 2, Both = 3 };

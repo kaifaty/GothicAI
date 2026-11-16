@@ -316,8 +316,9 @@ void Resources::indexMaterialMaps() {
       else
         maps.fringe.tile = float(tile);
       }
-    // Living foliage (reports/engine/2026-11-14-living-foliage): the wind moves the mesh's vertices about its X axis
-    // and the low sun shines through (graphics/foliagewind.h). {} takes the defaults; a wrong value drops the record
+    // Living foliage (reports/engine/2026-11-14-living-foliage): the wind moves the mesh's vertices about its X axis,
+    // or as a tree's with "anchor": "tree" (graphics/foliagetree.h), and the low sun shines through
+    // (graphics/foliagewind.h). {} takes the defaults; a wrong value drops the record
     if(const auto foliage = entry.value.FindMember("foliage"); foliage!=entry.value.MemberEnd()) {
       const auto& value = foliage->value;
       FoliageWind::Params p;
@@ -336,8 +337,11 @@ void Resources::indexMaterialMaps() {
         };
       bool ok = value.IsObject();
       if(ok)
-        if(const auto it = value.FindMember("anchor"); it!=value.MemberEnd())
-          ok = it->value.IsString() && std::string_view(it->value.GetString())=="line";
+        if(const auto it = value.FindMember("anchor"); it!=value.MemberEnd()) {
+          const std::string_view anchor = it->value.IsString() ? it->value.GetString() : "";
+          p.anchor = anchor=="tree" ? FoliageWind::AnchorTree : FoliageWind::AnchorLine;
+          ok       = anchor=="tree" || anchor=="line";
+          }
       if(!ok || !number("wind",p.wind,FoliageWind::MaxScale) || !number("flutter",p.flutter,FoliageWind::MaxScale) ||
          !number("translucency",p.translucency,1.0))
         valid = false;
