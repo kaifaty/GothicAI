@@ -14,6 +14,9 @@
 #include "graphics/worldview.h"
 #include "graphics/objvisual.h"
 #include "world/chunkresidency.h"
+#include "physics/worldcloth.h"
+#include "worldchunkcatalogue.h"
+#include "worldchunkcook.h"
 #include "loadprobe.h"
 #include "graphics/mesh/submesh/pfxemittermesh.h"
 #include "physics/fracture.h"
@@ -1853,6 +1856,25 @@ void landscapeLifetime(const Fixture& fixture, Tempest::Device& device) {
   Tempest::Log::setOutputCallback({});
   require(errors==1 && view.landscapeReady() && residency.stats().pending==0 && residency.stats().published==1,
           "an exhausted Near retry must log once and never retry on later frames or residency changes");
+  }
+  {
+  // The catalogue start (worldchunkcatalogue.h): no stitched mesh; the Near chunk comes from its .wcb into the
+  // same page range.
+  cookWorldChunks(directory);
+  ChunkTable catalogueTable;
+  auto landscape=startWorldChunks(directory,{},readWorldChunkManifest(directory),catalogueTable,true);
+  (void)WorldCloth::extract(landscape,&catalogueTable);
+  require(catalogueTable.source && catalogueTable.source->catalogue() && landscape.polygons.material_indices.empty(),
+          "a cooked world must take the catalogue start");
+  ChunkResidency residency(catalogueTable);
+  WorldView view(packed.bbox(),"CONTRACT.ZEN");
+  view.startLandscapeStreaming(std::move(landscape),residency,0);
+  view.prepareLandscapeWork();
+  residency.update({100,100,100},{100,100,100},1000);
+  view.finishLandscapeUpdate();
+  require(view.landscapeReady() && residency.stats().published==1 && catalogueTable.source->reads().cooked==1 &&
+          residency.stats().landscapePageUsedBytes==packed.vertices.size()*sizeof(packed.vertices[0])+packed.indices8.size(),
+          "the catalogue start must publish the Near chunk from its .wcb into the same page range");
   }
   device.waitIdle();
   for(uint8_t frame=0;frame<Resources::MaxFramesInFlight;++frame)
