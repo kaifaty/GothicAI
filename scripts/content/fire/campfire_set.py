@@ -3,7 +3,7 @@
 
     python3 scripts/content/fire/campfire_set.py effects
     python3 scripts/content/fire/campfire_set.py layer [--base DIR]
-    python3 scripts/content/fire/campfire_set.py pack --set campfire-1
+    python3 scripts/content/fire/campfire_set.py pack --set campfire-1 --smoke wispy03b.dds
 
 reports/content/remaster/campfire/README.md. Only the fire changes: the original's model (NW_MISC_FIREPLACE_01, a
 ring of stones 1.8 m wide with a tipi of logs 45 cm over its centre) stays. `effects` writes
@@ -12,7 +12,7 @@ campfire loses FIRE_HOT with the smoke under it and gets the own flames, sparks 
 flame's colour, flicker and slow sway (a fire without a lamp gets one). `pack` makes the staging part: the two
 files. Every flame is the torch's atlas OWN_TORCH_FLAME.TGA of the part torch-model-* at another size and speed
 (the wider Flame03 of the same set fills a third of its cell: at a campfire's size its texel is over 1 cm); the
-smoke is OWN_HUT_SMOKE.TGA of motion-*.
+smoke is the wispy puff of smoke_atlas.py (Unity Labs WispySmoke03b, CC0) as OWN_SMOKE_WISPY.TGA, in the part.
 """
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ BASE_CACHE = Path.home() / '.cache/gothic-ai/base'
 MESH = 'NW_MISC_FIREPLACE_01.3DS'
 GONE = {'FIRE_HOT.PFX', 'FIRE_SPARKS.PFX'}
 TONGUE = 'OWN_TORCH_FLAME.TGA'
-SMOKE = 'OWN_HUT_SMOKE.TGA'
+SMOKE = ('OWN_SMOKE_WISPY.TGA', 'own-smoke-wispy/albedo.dds')
 
 # cm over the mesh's origin: the ash mound's top is at +4, the logs' tips at +45, the ground at about -45
 # the fuel bed is the tipi's foot, about 0.9 m wide: a fire that size stands over a metre high
@@ -76,12 +76,16 @@ def effects() -> dict:
                       'flyGravity_S': '0 0.00015 0', 'visSizeStart_S': '0.4 0.4', 'visSizeEndScale': 0.6,
                       'visAlphaStart': 255.0, 'visAlphaEnd': 40.0, 'visAlphaFunc_S': 'ADD'},
               'curl': {'strength': 2.0, 'frequency': 2.5, 'speed': 0.3}, 'drag': 1.4, 'stretch': 0.025, 'minPixels': 1.5}
+    # the smoke of dry wood: thin wisps that turn and unwind (a simulated puff's 64 frames, each particle from its
+    # own frame), leave the flame's tips fast and slow down, widen and drift; lit by the sun, the sky and the fire
     smoke = {'name': 'OWN_CAMP_SMOKE', 'base': 'LIGHTSMOKE',
-             'set': {'visName_S': SMOKE, 'visAlphaFunc_S': 'BLEND', 'visAlphaStart': 30.0, 'visAlphaEnd': 0.0,
-                     'visSizeStart_S': '22 22', 'visSizeEndScale': 6.0, 'lspPartAvg': 4200.0, 'lspPartVar': 900.0,
-                     'ppsValue': 6.0, 'shpType_S': 'CIRCLE', 'shpDim_S': '8 0 8', 'shpOffsetVec_S': '0 0 0',
-                     'dirMode_S': 'DIR', 'velAvg': 0.07, 'velVar': 0.02, 'flyGravity_S': '0 0 0'},
-             'curl': {'strength': 0.8, 'frequency': 1.5, 'speed': 0.2}, 'drag': 0.5}
+             'flipbook': {'cols': 8, 'rows': 8, 'frames': 64, 'fps': 9},
+             'set': {'visName_S': SMOKE[0], 'visAlphaFunc_S': 'BLEND', 'visAlphaStart': 150.0, 'visAlphaEnd': 0.0,
+                     'visTexColorStart_S': '255 255 255', 'visTexColorEnd_S': '255 255 255',
+                     'visSizeStart_S': '45 45', 'visSizeEndScale': 4.5, 'lspPartAvg': 6000.0, 'lspPartVar': 1200.0,
+                     'ppsValue': 4.0, 'shpType_S': 'CIRCLE', 'shpDim_S': '14 0 14', 'shpOffsetVec_S': '0 0 0',
+                     'dirMode_S': 'DIR', 'velAvg': 0.11, 'velVar': 0.03, 'flyGravity_S': '0 0 0'},
+             'curl': {'strength': 0.7, 'frequency': 0.8, 'speed': 0.25}, 'drag': 0.35}
     return {'format': 1, 'effects': [card('OWN_CAMP_FLAME', TONGUE, CORE, 34), card('OWN_CAMP_FLAME_MID', TONGUE, MID, 38),
                                      card('OWN_CAMP_FLAME_SIDE', TONGUE, SIDE, 46), licks, sparks, smoke]}
 
@@ -192,11 +196,17 @@ def cmd_pack(args) -> int:
     output = STAGING / args.set
     if output.exists():
         sys.exit(f'{output}: the staging set exists; choose a new name')
+    if not args.smoke.is_file():
+        sys.exit(f'{args.smoke}: the smoke atlas is missing')
     for source in (PARTICLES, LAYER):
         target = output / source.relative_to(CONTENT)
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
-    print(f'{output}: the campfires\' fire as a part; it needs {TONGUE} of torch-model-* and {SMOKE} of motion-*')
+    smoke = output / 'materials' / SMOKE[1]
+    smoke.parent.mkdir(parents=True)
+    shutil.copyfile(args.smoke, smoke)
+    (output / 'materials/materials.json').write_text(json.dumps({SMOKE[0]: {'albedo': SMOKE[1]}}, indent=2) + '\n')
+    print(f'{output}: the campfires\' fire as a part; it needs {TONGUE} of torch-model-*')
     return 0
 
 
@@ -209,6 +219,7 @@ def main() -> int:
     one.set_defaults(func=cmd_layer)
     pack = sub.add_parser('pack')
     pack.add_argument('--set', required=True)
+    pack.add_argument('--smoke', type=Path, required=True)
     pack.set_defaults(func=cmd_pack)
     args = parser.parse_args()
     return args.func(args)
