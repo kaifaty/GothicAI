@@ -133,7 +133,23 @@ std::vector<uint32_t> landscapeSources(const CookedChunk& chunk, const CookedInd
   if(ranked.size()!=kept)
     throw std::runtime_error(name+": the world cloth bundle leaves "+std::to_string(kept)+" triangles of the cell, "+
                              std::to_string(ranked.size())+" are left of its "+std::to_string(triangles.size()));
-  std::sort(ranked.begin(),ranked.end());
+  // A GLB holds a cell's triangles by material, each primitive in source order: merge those ascending runs.
+  std::vector<size_t> runs {0};
+  for(size_t k=1;k<ranked.size();++k)
+    if(ranked[k]<ranked[k-1])
+      runs.push_back(k);
+  runs.push_back(ranked.size());
+  while(runs.size()>2) {
+    std::vector<size_t> merged {0};
+    for(size_t r=0;r+1<runs.size();r+=2) {
+      const auto end = r+2<runs.size() ? runs[r+2] : runs[r+1];
+      if(r+2<runs.size())
+        std::inplace_merge(ranked.begin()+ptrdiff_t(runs[r]),ranked.begin()+ptrdiff_t(runs[r+1]),
+                           ranked.begin()+ptrdiff_t(end));
+      merged.push_back(end);
+      }
+    runs = std::move(merged);
+    }
   std::vector<uint32_t> out(ranked.size());
   for(size_t k=0;k<ranked.size();++k) {
     if(k>0 && ranked[k]>>32==ranked[k-1]>>32)
