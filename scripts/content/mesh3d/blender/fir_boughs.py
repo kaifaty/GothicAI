@@ -309,8 +309,8 @@ def bake(obj, size: int, width_m: float, height_m: float, out: Path, samples: in
     sc.cycles.filter_width = 1.5
     sc.render.film_transparent = transparent
     sc.render.resolution_x = sc.render.resolution_y = size
-    sc.render.pixel_aspect_x, sc.render.pixel_aspect_y = (height_m / width_m, 1.) if height_m > width_m \
-        else (1., width_m / height_m)
+    sc.render.pixel_aspect_x, sc.render.pixel_aspect_y = (1., height_m / width_m) if height_m > width_m \
+        else (width_m / height_m, 1.)
     sc.render.resolution_percentage = 100
     sc.view_settings.view_transform = 'Raw'
     sc.render.image_settings.file_format = 'OPEN_EXR'
