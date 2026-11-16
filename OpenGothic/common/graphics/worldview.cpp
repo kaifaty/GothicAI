@@ -202,22 +202,18 @@ struct WorldView::LandscapeStreaming {
   bool firstUpdate=true;
   double preloadMs=0;
   double initialPackMs=0;
+  double initialReadMs=0; // the Near cells' reads within initialPackMs
   double initialUploadMs=0;
   uint64_t subscription=0;
   std::thread worker;
 
   LandscapeStreaming(WorldView& view, asset::WorldMesh&& mesh, ChunkResidency& residency, double preloadMs)
     :view(view),residency(residency),source(residency.table().source),
-     triangles(residency.table().entries.size()),materials(PackedMesh::landscapeMaterialMap(mesh)),
-     chunks(triangles.size()),preloadMs(preloadMs) {
+     triangles(chunkSourceLists(residency.table())),materials(PackedMesh::landscapeMaterialMap(mesh)),
+     chunks(residency.table().entries.size()),preloadMs(preloadMs) {
     if(!source)
       throw std::runtime_error("Landscape streaming requires a file-backed chunk source");
-    const auto& table=residency.table();
-    for(size_t i=0;i<triangles.size();++i)
-      triangles[i].reserve(table.entries[i].triangleCount);
-    for(size_t i=0;i<table.triangleChunks.size();++i)
-      triangles.at(table.triangleChunks[i]).push_back(table.triangleSources.at(i));
-    // Physics and cloth have consumed the stitched mesh. Repacking reads only
+    // Physics and cloth have consumed the stitched mesh (a catalogue start has none). Repacking reads only
     // the selected chunk; no dense world geometry survives on the CPU.
     releasedSourceBytes=mesh.vertices.capacity()*sizeof(mesh.vertices[0])+
                         mesh.features.capacity()*sizeof(mesh.features[0])+
@@ -267,7 +263,7 @@ struct WorldView::LandscapeStreaming {
               }
             else {
               try {
-                packed=pack(i);
+                packed=pack(i,false,firstUpdate ? &initialReadMs : nullptr);
                 }
               catch(...) {
                 packed=pack(i,true);
@@ -400,8 +396,11 @@ struct WorldView::LandscapeStreaming {
       }
     }
 
-  std::unique_ptr<PackedMesh> pack(size_t i, bool currentFile=false) const {
-    auto chunk=source->read(i,triangles[i],currentFile);
+  std::unique_ptr<PackedMesh> pack(size_t i, bool currentFile=false, double* readMs=nullptr) const {
+    const auto t=ChunkResidency::Clock::now();
+    auto chunk=source->catalogue() ? source->readLandscape(i,currentFile) : source->read(i,triangles[i],currentFile);
+    if(readMs!=nullptr)
+      *readMs+=std::chrono::duration<double,std::milli>(ChunkResidency::Clock::now()-t).count();
     if(view.grass)
       view.grass->addChunk(residency.table().entries[i].id,chunk.mesh);
     std::vector<uint32_t> selected(chunk.mesh.polygons.material_indices.size());
@@ -483,7 +482,7 @@ struct WorldView::LandscapeStreaming {
         size_t sourceBytes=source->memoryBytes()+materials.capacity()*sizeof(materials[0]);
         for(const auto& list:triangles)
           sourceBytes+=list.capacity()*sizeof(list[0]);
-        LoadProbe::mark("landscape_pack",initialPackMs,"near_chunks="+std::to_string(residency.stats().near));
+        LoadProbe::mark("landscape_pack",initialPackMs,"near_chunks="+std::to_string(residency.stats().near)+" read_ms="+std::to_string(initialReadMs));
         LoadProbe::mark("landscape_view",preloadMs+initialPackMs+initialUploadMs,
                         "streaming=1 published="+std::to_string(residency.stats().published)+
                         " source_geometry_bytes="+std::to_string(sourceBytes)+

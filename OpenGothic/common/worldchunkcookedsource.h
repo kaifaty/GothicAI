@@ -25,6 +25,10 @@
 // leaves no index; an older index put back by hand beside newer cells is
 // outside this contract, and content-convert verify-cooked-world finds it (it
 // compares each cell's hash with the index).
+// After a catalogue start (worldchunkcatalogue.h) there are no totals of
+// readWorldChunks to compare: the start loads the index it validated itself
+// (loadCatalogue), every GLB had its entry's length, and a cell that falls back
+// reads its GLB through the catalogue.
 
 #include "worldchunkindex.h"
 #include "worldchunksruntime.h"
@@ -73,11 +77,18 @@ class CookedChunkSource {
     // index, opens no .wcb. files are the cells' GLBs in world.json order.
     void load(const std::filesystem::path& dir, const std::filesystem::path& overrideDir,
               const WorldCellManifest& manifest, std::span<const WorldChunkFile> files, const asset::WorldMesh& mesh);
+    // The catalogue start's load: the index and set it validated, every cell on the cooked path. Logs nothing.
+    void loadCatalogue(CookedIndex validated, CookedSet loaded, const WorldCellManifest& manifest);
     // Cell i from its .wcb, or from glb() when the cooked path cannot be taken
     // or currentFile is set. Throws, naming the file, for a source ordinal past
     // the cell's triangles. Safe to call from several threads at once.
     WorldChunkMesh read(size_t cell, std::span<const uint32_t> sources, bool currentFile, const World& world,
                         const std::function<WorldChunkMesh()>& glb) const;
+    // Cell i's landscape after world cloth from its .wcb: its triangles in stitched order (by the index's ranks)
+    // without the ascending exclusions, which must leave kept; or glb() when the cooked path cannot be taken, the
+    // .wcb disagrees with the index or the exclusions, or currentFile is set. Counts as read() does.
+    WorldChunkMesh readLandscape(size_t cell, std::span<const uint32_t> exclusions, uint32_t kept, bool currentFile,
+                                 const World& world, const std::function<WorldChunkMesh()>& glb) const;
     bool            active() const { return index.has_value(); }
     // The set the index in use came from, and that index as the load read it; null without one.
     const CookedSet*   cookedSet() const { return index ? &set : nullptr; }
@@ -95,5 +106,12 @@ class CookedChunkSource {
     std::unique_ptr<std::atomic<uint8_t>[]>    states;
     mutable std::atomic<uint64_t>              cookedReads {0}, glbReads {0}, cookedNs {0}, glbNs {0};
 
-    std::optional<WorldChunkMesh> readCooked(size_t cell, std::span<const uint32_t> sources, const World& world) const;
+    struct Landscape {
+      std::span<const uint32_t> exclusions;
+      uint32_t                  kept = 0;
+      };
+    std::optional<WorldChunkMesh> readCooked(size_t cell, std::span<const uint32_t> sources, const Landscape* landscape,
+                                             const World& world) const;
+    WorldChunkMesh readCell(size_t cell, std::span<const uint32_t> sources, const Landscape* landscape,
+                            bool currentFile, const World& world, const std::function<WorldChunkMesh()>& glb) const;
   };
