@@ -23,6 +23,8 @@ const float GrassContactDark   = 0.85;  // a blade lets some of the sun through
 const float GrassContactLift   = 0.3;   // cm off the surface, and a share of the distance to the eye
 const float GrassContactLiftK  = 0.0015;
 const float GrassContactOwn    = 1.5;   // cm: the receiver's own surface within this of its plane casts nothing on it
+const float GrassContactOwnK   = 0.6;   // and within this share of the ray's depth under the plane: a blade leans and bends
+const float GrassContactSkip   = 3.0;   // cm: what a blade's ray meets nearer than this is the blade itself
 
 // frag: gl_FragCoord.xy; d: the pixel's depth; surfN: the surface's normal, vec3(0) for a blade's pixel (its card
 // turns its width to the eye, its normal is three quarters the ground's). Returns the share of the sun left, 0..1
@@ -69,7 +71,7 @@ float grassContact(in sampler2D depthTex, in sampler2D diffTex, const vec2 frag,
     if(any(greaterThanEqual(abs(n.xy), vec2(1.0))))
       break;
     const ivec2 at = ivec2((n.xy*0.5 + 0.5)*size);
-    if(at==self)
+    if(at==self || (blade && t*GrassContactLength<GrassContactSkip))
       continue;
     const float ray   = linearDepth(n.z, scene.clipInfo);
     const float there = linearDepth(texelFetch(depthTex, at, 0).x, scene.clipInfo);
@@ -77,7 +79,7 @@ float grassContact(in sampler2D depthTex, in sampler2D diffTex, const vec2 frag,
     if(under <= 0.2 + 0.002*ray || under >= GrassContactThick)
       continue;
     const float own = sink*t;
-    if(own>0.0 && abs(under-own) < GrassContactOwn + 0.25*own)
+    if(own>0.0 && abs(under-own) < GrassContactOwn + GrassContactOwnK*own)
       continue;
     if(!isGBufGrass(texelFetch(diffTex, at, 0).a))
       continue;
