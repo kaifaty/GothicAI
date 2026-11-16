@@ -312,6 +312,7 @@ void refusals(const fs::path& root) {
   // A copy of the base and the override; the set's index and bundle lie in the override.
   auto copy=[&] {
     const auto dir=root/("refusal-"+std::to_string(++number));
+    fs::create_directories(dir);
     fs::copy(cooked,dir/"base",fs::copy_options::recursive);
     fs::copy(over,dir/"over",fs::copy_options::recursive);
     return std::pair{dir/"base",dir/"over"};
