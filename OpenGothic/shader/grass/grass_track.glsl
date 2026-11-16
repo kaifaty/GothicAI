@@ -13,6 +13,10 @@
 // The ribbon's drawing itself wanders by the world's noise, the ruts lose their depth and tone in places, and the
 // crust left in a rut keeps only GrassTrackCrustTint of its dark: a profile alone would draw ruled bands along
 // the road.
+// The road's colour is the painted one's palette: the crust has the red-brown of the painted earth, and stains
+// lie on the body by the world's noise - darker and redder (GrassTrackStain), denser beside a rut that has not
+// faded, none at the ribbon's edge. Where the edge is the tint says: its lightest channel falls from 1 there to
+// GrassTrackBody inside (the shoulders' green and the ruts' red are darker still).
 // The loose layer is one earth with the meadow beside: where the sward of a verge ends on the road (grass_layers.
 // glsl, `strip`) the pixel is the loose earth whatever the ribbon says, by the same lattice and tone as the earth
 // of the meadow's notches. Outside a meadow the ribbon's edge stays painted.
@@ -31,6 +35,11 @@ const float GrassTrackRibbonTo = 6000.0; // cm: no normal of the ribbon beyond; 
 const float GrassTrackRough    = 0.9;    // the roughness from afar
 const float GrassTrackFarShade = 0.9;    // the layers' colour from afar: the shade of their grain
 const float GrassTrackCrustTint = 0.6;   // of the ribbon's tint on the crust; the loose earth takes it whole
+const float GrassTrackBody     = 0.86;   // the tint's lightest channel inside the ribbon: the builder's BODY
+const vec3  GrassTrackStain    = vec3(0.78, 0.58, 0.58); // a stain of the body: the builder's STAIN
+const float GrassTrackStainFrom = -0.05; // of the stains' noise: none below, whole from GrassTrackStainTo
+const float GrassTrackStainTo  = 0.45;
+const float GrassTrackStainRut = 1.2;    // what the tint's dark beside a rut adds to the noise
 
 // the crust's lattice, turned the other way from the loose earth's
 vec2 grassCrustUv(vec2 xz) { return vec2(0.84805*xz.x - 0.52992*xz.y, 0.52992*xz.x + 0.84805*xz.y); }
@@ -124,7 +133,13 @@ void grassTrack(uint tex, float crustK, float looseK, float knobs, vec2 uv, vec2
     albedo = fringeTexture(0u, tex, uvC, dxC*mip, dyC*mip).rgb;
   if(wl>0.0)
     albedo = mix(albedo, fringeTexture(0u, tex+1u, uvL, dxL*mip, dyL*mip).rgb, wl);
-  albedo *= mix(vec3(1.0), fringeTexture(0u, rib, uvR, dxR, dyR).rgb, k*mix(GrassTrackCrustTint, 1.0, wl))*
+  const vec3  tint   = fringeTexture(0u, rib, uvR, dxR, dyR).rgb;
+  // the stains by the world: by 2.6 m and by 0.7 m
+  const float inside = clamp((1.0 - max(tint.r, max(tint.g, tint.b)))*(1.0/(1.0 - GrassTrackBody)), 0.0, 1.0);
+  const float spots  = grassTrackNoise(place,4160,0x7Du)*0.55 + grassTrackNoise(place,1120,0x7Eu)*0.45 +
+                       clamp(GrassTrackBody - tint.g, 0.0, 0.3)*k*GrassTrackStainRut;
+  const float stain  = smoothstep(GrassTrackStainFrom, GrassTrackStainTo, spots)*inside*(1.0 - strip);
+  albedo *= mix(vec3(1.0), tint, k*mix(GrassTrackCrustTint, 1.0, wl))*mix(vec3(1.0), GrassTrackStain, stain)*
             (grassTrackTone(place)*mix(1.0, GrassTrackFarShade, far));
 
   // the normal: the ribbon's large forms, the layer's grain over them

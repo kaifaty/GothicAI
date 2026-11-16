@@ -11,17 +11,17 @@ reports/engine/2026-11-15-meadow-road. Copies a set with the meadow's ground, gi
 - crust, loose: the two layers that lie by the world's x and z, from two scans (Poly Haven, CC0) by numpy alone.
   What a scan has longer than FLAT_M is levelled in colour and in relief - a mark of it would come back with every
   repeat along the road (the loose scan carries a tyre's tread: its relief is cut shorter). The crust's mean
-  colour is the painted road's crown, lifted so far that the footpath's straw is a tint of it; the loose layer's is
-  the mean of the meadow's earth: one earth on the road's strip and in the meadow's notches. In the blue of the
+  colour has the hue of the painted road's earth, the red-brown it is known by, and is lighter than the road: the
+  body's grey tint and the footpath's straw are tints of it; the loose layer's is the mean of the meadow's earth: one earth on the road's strip and in the meadow's notches. In the blue of the
   ORMs the height, ranked per mip (landscape_fringe.write_orm): the shader lets the higher layer win where the wear
   is between;
 - the ribbon's maps of each road texture, 512 px in its own uv, drawn here from curves and a profile: `tint` (the
-  ruts' beds darker and redder, the footpath's straw), `normal` (the ruts' walls, the berm beside, the trodden
+  ruts' beds darker and redder, the shoulders greener, the footpath's straw), `normal` (the ruts' walls, the berm beside, the trodden
   middle; slopes in the ribbon's own metres per u and per v) and `mask` - red the occlusion of the large forms,
   green the wear (0 the crust, 1 the loose earth), blue the ribbon's own share (0 at its painted edge). Along v
   the ruts of the road stand still - the world's pieces of the T-cross meet it at any v, and u turned over; they
-  wander, fade and fray by the world's noise in the shader, which no joint cuts. Only the stains and the depth
-  change along v.
+  wander, fade and fray by the world's noise in the shader, which no joint cuts, and so do the stains of the
+  body (STAIN: the shader's constants, mirrored here). Only the ruts' own stains and the depth change along v.
 
 No pixel of the original goes into a map: its textures are read for mean colours only (and for the previews).
 `--again` rebuilds the maps of a set this script made (it holds `meadow-road.json`); no other set is written to.
@@ -75,13 +75,26 @@ def from_hsy(hue: float, saturation: float, level: float) -> np.ndarray:
 
 
 # The painted road's bands, linear light (the note, "Нарисованная PATH_06 по полосам"): what the layers and the
-# tint are toned to, as (hue, saturation, luminance). The crust has the crown's hue - where the tint is none, at
-# the ribbon's edge, it must not turn to straw - and is lighter than it by so much that the footpath's straw is a
-# tint of it under 1 (crust_tone)
-CROWN = (32., .62, .100)        # PATH_06: its middle and shoulders
+# tint are toned to, as (hue, saturation, luminance). The crust has the hue of the painted earth between the
+# shoulders, the red-brown the road is known by - its crown alone, the lightest and yellowest tenth of the
+# painting, made the road a pale grey-beige (the note, "Куда ушёл цвет"). Its luminance is set by the frames
+EARTH = (30., .64, .130)         # PATH_06: the earth from shoulder to shoulder; the luminance of the crust untinted
 STRAW = (42.3, .71, .1075)      # PATH_05: its trodden earth
 RUT = (14., .62, .026)          # PATH_06: the bed of a rut, the loose layer under its tint
 PAINTED_GRASS = from_hsy(50.4, .83, .0764)
+# The tint of the road's body, a grey: the crust under it is the road's tone. grass_track.glsl reads by it where
+# the ribbon's inside is (GrassTrackBody: the tint's lightest channel from 1 at the edge down to this) and lays its
+# stains there. The footpath's straw is lighter: under TOP, a third of the stains
+BODY, TOP = .86, .96
+# grass_track.glsl's stains by the world, mirrored in composed(): the multiplier of a stain (GrassTrackStain: the
+# painted ruts' band against the crown - darker, redder), the noise it stands from and is whole at, what the
+# tint's dark beside a rut adds to the noise, the two steps of the noise in 1/16 cm
+STAIN = (.78, .58, .58)
+STAIN_AT = (-.05, .45)
+STAIN_RUT = 1.2
+STAIN_STEPS = (4160, 1120)
+SHOULDER_TINT = (.76, 1., .62)  # the shoulders a little greener: the painted ones are the yellow-green of the road
+SHOULDER_AT = (.07, .25)        # from the ribbon's edge: whole between, gone at either end
 # The mean of the crust against crust_tone(), linear RGB: 1 - at the eye a lit layer has the tone of the paint
 # beside it. From afar the paint is darker (its mips are means of the encoded colour: 0.86-0.89 of the linear mean
 # at the third and fourth), and so is the track - GrassTrackFarShade of grass_track.glsl
@@ -113,8 +126,13 @@ END_VERGE = dict(reach=120, margin=100)     # the end piece is all border
 
 
 def crust_tone() -> np.ndarray:
-    crown, straw = from_hsy(*CROWN), from_hsy(*STRAW)
-    return crown * (straw / crown).max()
+    return from_hsy(*EARTH)
+
+
+def body_tint(straw) -> np.ndarray:
+    """The tint of the body: the grey of the track, the footpath's straw against the crust at its share."""
+    walk = from_hsy(*STRAW) / crust_tone()
+    return BODY * (1 - straw) + walk / walk.max() * TOP * straw
 
 
 def override(pairs: list[str]) -> dict:
@@ -299,9 +317,13 @@ def ribbon_maps(fields: dict, metric: tuple[float, float], seed: int) -> dict:
     dark = np.clip(core * (CORE_DARK + .2 * n((.05, .4), 12, 1.)) + bed * (BED_DARK + .25 * n((.06, .5), 10, 1.)) +
                    CRUMBS_DARK * crumbs * stain, 0, 1)[..., None]
     straw = (np.zeros((size, size), np.float32) + fields['straw'])[..., None]
-    base = (from_hsy(*CROWN) * (1 - straw) + from_hsy(*STRAW) * straw) / crust_tone()
+    # the shoulders: greener in patches along the road, the track's only
+    at = fields['inside'] - fields['edge'][1] + .02 * n((.06, .4), 13)
+    shoulder = (smooth(at, 0., SHOULDER_AT[0]) * (1 - smooth(at, SHOULDER_AT[0], SHOULDER_AT[1])) *
+                np.clip(.6 + .6 * n((.1, .7), 14, 1.5), 0, 1))[..., None] * (1 - straw)
+    base = body_tint(straw) * (1 - shoulder * (1 - np.array(SHOULDER_TINT)))
     tint = base * (1 - dark) + np.clip(from_hsy(*RUT) / fields['loose_tone'], 0, 1) * dark
-    inner = smooth(fields['inside'], fields['edge'][1], fields['edge'][1] + .1)[..., None]
+    inner = smooth(fields['inside'], fields['edge'][1], fields['edge'][1] + .14)[..., None]
     tint = np.clip(1 - (1 - tint) * inner, 0, 1)
     return dict(tint=tint.astype(np.float32), slope=slope.astype(np.float32), height=height,
                 mask=np.stack([occlusion, wear, own], axis=2).astype(np.float32))
@@ -385,7 +407,14 @@ def composed(crust: dict, loose: dict, ribbon: dict, metric, knobs: dict, length
     mine = (own >= 1) | (own * 256 + (height - .5) * 140 > 128)
     tone = 1 + noise(12800, 0x79) * .08 + noise(2080, 0x7A) * .05 + noise(1920, 0x7B) * .14 + noise(640, 0x7C) * .09
     colour = np.where(is_loose[..., None], layer_at(loose['albedo'], LOOSE_TILE_M, turn_l), layer_at(crust['albedo'], CRUST_TILE_M, turn_c))
-    colour = colour * (1 + (ribbon_at(ribbon['tint']) - 1) * (k * np.where(is_loose, 1., CRUST_TINT))[..., None]) * tone[..., None]
+    tint = ribbon_at(ribbon['tint'])
+    # the stains: inside the ribbon, denser where the tint is dark beside a rut that has not faded
+    inside = np.clip((1 - tint.max(axis=2)) / (1 - BODY), 0, 1)
+    spots = (noise(STAIN_STEPS[0], 0x7D) * .55 + noise(STAIN_STEPS[1], 0x7E) * .45 +
+             np.clip(BODY - tint[..., 1], 0, .3) * k * STAIN_RUT)
+    stain = (smooth(spots, STAIN_AT[0], STAIN_AT[1]) * inside)[..., None]
+    colour = (colour * (1 + (tint - 1) * (k * np.where(is_loose, 1., CRUST_TINT))[..., None]) *
+              (1 + (np.array(STAIN) - 1) * stain) * tone[..., None])
     colour = np.where(mine[..., None], colour, PAINTED_GRASS)
 
     # the light of a low sun from the side: the ribbon's slopes on its own axes, the layers' turned back to them
@@ -399,7 +428,8 @@ def composed(crust: dict, loose: dict, ribbon: dict, metric, knobs: dict, length
     normal /= np.linalg.norm(normal, axis=2, keepdims=True)
     light = np.array(sun) / np.linalg.norm(sun)
     lit = colour * (np.clip(normal @ light, 0, None) / light[2] * .8 + .2)[..., None]
-    return dict(colour=colour, lit=np.where(mine[..., None], lit, PAINTED_GRASS), loose=is_loose, mine=mine, k=k)
+    return dict(colour=colour, lit=np.where(mine[..., None], lit, PAINTED_GRASS), loose=is_loose, mine=mine, k=k,
+                stain=stain[..., 0])
 
 
 def painted_strip(pilot, texture: str, metric, length_m=40., texel_m=.02) -> np.ndarray:
