@@ -109,3 +109,14 @@
 - А: «One Norway spruce in its natural proportion, 18 m tall and 10 m wide at the base, a broad cone with a living skirt of branches reaching down to the ground; the lowest boughs are 4.5 m long and droop until their tips touch the grass.»
 - Б: «One old squat Norway spruce, only 12 m tall but 10 m wide at the base, almost as wide as it is tall, very heavy long lower boughs resting on the ground and sweeping outward, a blunt broad pyramid.»
 - В: «One forest-grown Norway spruce, 22 m tall and 7 m wide, a narrow tall crown; the lowest 6 m of the trunk carry only dead bare grey snags and stubs with pale lichen, the living dark crown starts 6 m above the ground, so one can see under it. It stands just inside the forest edge among other dark spruces.»
+
+### Лапа и комель
+
+Рабочие концепты для модели, 2026-11-16: лапа сверху — для атласа веток, комель — для коры, корневых лап и сухих сучьев. Листа видов спереди, сбоку и сверху у дерева нет: его форму задают числа конструкции, а не контур. Полные PNG — `fir-concept-bough.png` и `fir-concept-foot.png` там же.
+
+| Лапа | Комель |
+|---|---|
+| ![Лапа](shots/concept-bough.jpg) | ![Комель](shots/concept-foot.jpg) |
+
+- Лапа: «One single bough of a wild Norway spruce cut from the tree and laid flat, photographed straight from above, orthographic top-down view, on a plain uniform mid-grey background. The bough is 2.5 m long, the main woody branch runs horizontally from the cut end at the left edge to the tip at the right; from it grow side branches left and right in a flat herringbone fan, each with smaller twigs densely covered in short dark needles 1.5 to 2 cm long; the fan is 1.2 m wide at its widest and narrows to the tip; the outer shoots are slightly lighter. Irregular and natural: uneven side branches, a few gaps, one broken dry twig. Needles dark cold muted green, average #1c2620, lighter shoot tips olive #3a472e; bark of the branch grey-brown #4a4038. Even soft overcast light, no cast shadow on the background, no highlights, sharp focus over the whole bough, the whole bough inside the frame with a margin. Realistic photograph for a botanical reference. No cones, no snow, no text, no logos, no hands, no tools.»
+- Комель: «The foot of an old wild Norway spruce trunk seen from 3 m away at eye height, the lowest 2.5 m of the trunk in frame. Trunk 0.6 m thick, slightly tapering, low root flares spreading 1.2 m into a floor of brown fallen needles and a little moss; bark of thin round scales, cold grey-brown #4a4038 with darker cracks #1f1a16, a few pale resin streaks and patches of grey-green lichen, moss on the root flares on one side. Four dead bare branch stubs and thin dry grey twigs stick out of the trunk at 1.5 to 2.5 m. Dim even forest shade, no direct sun, dark blurred spruce forest behind. Realistic photograph, plain and slightly grim, muted low saturation. No fantasy shapes, no twisted trunk, no glowing moss, no mushrooms, no people, no text, no logos.»
