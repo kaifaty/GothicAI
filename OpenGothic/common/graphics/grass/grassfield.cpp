@@ -109,6 +109,7 @@ GrassField::~GrassField() {
   if(worker.joinable())
     worker.join();
   scene.setGrassRing(Vec4());
+  scene.setGrassDrawn(false);
   scene.grassBorder = nullptr;
   if(!borderCpu.empty())
     Resources::recycle(std::move(borderGpu));
@@ -622,6 +623,7 @@ void GrassField::draw(Encoder<CommandBuffer>& cmd) {
   st.waiting = last.waiting;
   if(!blades || cells.empty()) {
     last = st;
+    scene.setGrassDrawn(false);
     return;
     }
   const auto& fr  = scene.frustrum[SceneGlobals::V_Main];
@@ -685,4 +687,5 @@ void GrassField::draw(Encoder<CommandBuffer>& cmd) {
       }
     }
   last = st;
+  scene.setGrassDrawn(st.drawn>0);
   }
