@@ -147,17 +147,7 @@ void textFile(const std::filesystem::path& path, std::string_view text) {
     throw std::runtime_error("unable to write mesh fixture");
   }
 
-void word(std::vector<uint8_t>& bytes, uint32_t value) {
-  for(size_t i=0;i<4;++i)
-    bytes.push_back(uint8_t(value>>(i*8)));
-  }
-
-void real(std::vector<uint8_t>& bytes, float value) {
-  uint32_t bits = 0;
-  static_assert(sizeof(bits)==sizeof(value));
-  std::memcpy(&bits,&value,sizeof(bits));
-  word(bytes,bits);
-  }
+#include "mesh_gltf_color.h" // word, real; colorCases
 
 struct GlbOptions {
   size_t positions = 3;
@@ -2922,6 +2912,7 @@ int main() {
     fixture.index();
     resourcePaths(fixture,true);
     converterCases(fixture);
+    colorCases(fixture.root/"meshes/test/color.glb");
     headConverterCases(fixture);
     headManifestCases(fixture);
     generatedBarrel(fixture);

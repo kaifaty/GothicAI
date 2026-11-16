@@ -9,7 +9,7 @@
 #include "frameprofile.h"
 #include "commandline.h"
 #include "graphics/eyeshader.h"
-#include "graphics/foliagewind.h"
+#include "graphics/foliagetree.h"
 
 using namespace Tempest;
 
@@ -307,8 +307,8 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
           if((bits & 0xFFFFFFu)!=0) {
             // the box the culling tests is the one the leaves stay in (visibility_pass.comp); the shader takes the
             // arm of the mesh at rest
-            const float reach = FoliageWind::reach(bbox[0],bbox[1]);
-            const float grow  = FoliageWind::travel(bits,reach);
+            const float reach = FoliageTree::reach(i.mat.foliage,bbox[0],bbox[1]);
+            const float grow  = FoliageTree::travel(bits,reach);
             bx.foliage      = bits;
             bx.foliageReach = reach;
             bx.bbox[0]     -= Vec4(grow,grow,grow,0.f);

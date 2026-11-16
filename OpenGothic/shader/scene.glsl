@@ -189,7 +189,7 @@ struct Bucket {
   uint  foliage;     // BK_FOLIAGE: 8 bits each of wind, flutter, translucency, anchor (FoliageWind::pack);
                      // BK_GRASS, BK_VERGE: the record's numbers of the grass (Grass::pack);
                      // BK_WINDOW: the window's share and hours (WindowGlow::pack)
-  float foliageReach; // the largest arm of its mesh at rest, from the X axis; bbox is grown by the leaves' travel
+  float foliageReach; // the largest arm of its mesh at rest, from the X axis; of a tree, its height; bbox is grown by the travel
   };
 
 #endif

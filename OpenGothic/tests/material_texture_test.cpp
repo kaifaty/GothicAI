@@ -826,6 +826,8 @@ void groundRecords(Tempest::Device& device, const Fixture& fixture) {
           "a ground of two layers is asked no coarser than a repeat per its finer tile, the others by their mesh");
   }
 
+#include "foliage_tree_test.h" // foliageTreeMaths, foliageTreeRecords
+
 // graphics/foliagewind.h: the processor's copy of the rule of shader/materials/foliage_wind.glsl
 void foliageWindMaths() {
   using namespace FoliageWind;
@@ -3084,6 +3086,7 @@ int main(int argc, char** argv) {
       return 0;
       }
     foliageWindMaths();
+    foliageTreeMaths();
     variants();
     Fixture fixture;
     CommandLine commandLine(0,nullptr);
@@ -3095,6 +3098,7 @@ int main(int argc, char** argv) {
     projectionRecords(device,fixture);
     fringeRecords(device,fixture);
     foliageRecords(device,fixture);
+    foliageTreeRecords(device,fixture);
     grassRecords(device,fixture);
     groundRecords(device,fixture);
     textureResidency(device,fixture);

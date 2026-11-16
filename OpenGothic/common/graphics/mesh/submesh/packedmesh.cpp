@@ -212,7 +212,7 @@ void PackedMesh::Meshlet::flush(std::vector<Vertex>& vertices, std::vector<Verte
       vx.norm[2] = v.normal.z;
       vx.uv[0]   = v.texture.x;
       vx.uv[1]   = v.texture.y;
-      vx.color    = 0xFFFFFFFF;
+      vx.color    = v.color;
       vertices[vboSz+i]   = vx;
       if(verticesId!=nullptr)
         (*verticesId)[vboSz+i] = vert[i].first;

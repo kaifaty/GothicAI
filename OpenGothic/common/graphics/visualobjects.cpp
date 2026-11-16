@@ -160,7 +160,7 @@ void VisualObjects::Item::setDeformation(const Tempest::Vec4* vertices, size_t p
     obj.deformFirst = 0;
     if(auto mesh=obj.bucketId->staticMesh) {
       owner->clustersMem[obj.clusterId].r = mesh->bbox.rConservative+obj.bucketId->mat.waveMaxAmplitude+
-                                            FoliageWind::travel(obj.bucketId->mat.foliage,mesh->bbox.bbox[0],mesh->bbox.bbox[1]);
+                                            FoliageTree::travel(obj.bucketId->mat.foliage,mesh->bbox.bbox[0],mesh->bbox.bbox[1]);
       owner->clustersMem.markClusters(obj.clusterId);
       }
     owner->updateInstance(id);
