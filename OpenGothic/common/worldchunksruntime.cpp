@@ -404,7 +404,8 @@ struct ChunkMeshSource::Impl {
 
 size_t ChunkMeshSource::memoryBytes() const {
   size_t bytes=sizeof(*this)+sizeof(Impl)+impl->files.capacity()*sizeof(WorldChunkFile)+
-               impl->materials.capacity()*sizeof(asset::Material)+impl->cooked.memoryBytes();
+               impl->materials.capacity()*sizeof(asset::Material)+impl->cooked.memoryBytes()+
+               (impl->catalogue ? impl->catalogue->memoryBytes() : 0);
   for(const auto& file:impl->files)
     bytes+=file.path.native().capacity()*sizeof(std::filesystem::path::value_type);
   for(const auto& material:impl->materials)

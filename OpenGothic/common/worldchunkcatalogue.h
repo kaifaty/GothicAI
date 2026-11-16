@@ -56,6 +56,8 @@ class WorldCatalogue {
     // WorldCloth::extract's result on this start: the bundle's surfaces and original mesh, every mesh named name.
     WorldCloth::Extracted      cloth(const std::string& name) const;
     const std::filesystem::path& clothPath() const { return clothFile; }
+    // The bundle's bytes and, once built, the stitched fallback's source and lists.
+    size_t                     memoryBytes() const;
 
     // The landscape the old start would have after WorldCloth::extract (readWorldChunks with the bundle's
     // exclusions), read now: static collision's fallback. Throws std::runtime_error.

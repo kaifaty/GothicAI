@@ -213,7 +213,7 @@ struct WorldView::LandscapeStreaming {
      chunks(residency.table().entries.size()),preloadMs(preloadMs) {
     if(!source)
       throw std::runtime_error("Landscape streaming requires a file-backed chunk source");
-    // Physics and cloth have consumed the stitched mesh (a catalogue start has none: its cells read their triangles). Repacking reads only
+    // Physics and cloth have consumed the stitched mesh (a catalogue start has none). Repacking reads only
     // the selected chunk; no dense world geometry survives on the CPU.
     releasedSourceBytes=mesh.vertices.capacity()*sizeof(mesh.vertices[0])+
                         mesh.features.capacity()*sizeof(mesh.features[0])+

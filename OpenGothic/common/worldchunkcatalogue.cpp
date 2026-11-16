@@ -85,6 +85,17 @@ asset::WorldMesh WorldCatalogue::read() const {
   return mesh;
   }
 
+size_t WorldCatalogue::memoryBytes() const {
+  std::lock_guard guard(sync);
+  size_t bytes = sizeof(*this)+bundle.byteSize();
+  if(stitched) {
+    bytes += stitched->source->memoryBytes();
+    for(const auto& list:stitched->lists)
+      bytes += list.capacity()*sizeof(list[0]);
+    }
+  return bytes;
+  }
+
 asset::WorldMesh WorldCatalogue::stitchedLandscape() const {
   std::lock_guard guard(sync);
   return read();
