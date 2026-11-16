@@ -1,9 +1,11 @@
 # The tree's wind on a probe (reports/engine/2026-11-16-modern-trees/tree-wind.md): six rough spruces of 12 m on
 # the meadow east of the tavern, built by scripts/content/tree_wind_probe.py; run with OPENGOTHIC_CONTENT=<that
-# set>. Stills only: `far`, 30 m west of the first spruce and 5.5 m over its root, at the peak of a gust and
+# set>. Stills only: `far`, 26 m west of the first spruce and 5.3 m over its root, at the peak of a gust and
 # `far-lull` in the calm after it; `near`, 5 m from its trunk, up into the two lower tiers, at the next peak. The
 # world's wind blows along +Z, across both views; the sun of 10:00 is behind the camera and to its side, the
-# shadows lie away from it on bare ground. The cameras stand by SPOTS of the script: change both together.
+# shadows lie away from it on bare ground. The cameras stand by SPOTS of the script: change both together. The far
+# one is as far as the meadow lets it: the original fir at (38350, 44) is behind it, the one at (39318, -591) to
+# its right.
 # Run it twice in the same window and compare the stills of one name (the tree at rest | in the wind):
 #   OPENGOTHIC_FOLIAGE=0 OPENGOTHIC_CONTENT=<set> TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh tree-wind-probe
 #                        OPENGOTHIC_CONTENT=<set> TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh tree-wind-probe
@@ -19,7 +21,7 @@ set time 10 0
 goto pos 38450 3790 -600
 clear 3000
 streaming wait
-cam at 38300 3920 0 41300 3950 0
+cam at 38750 3900 300 41300 3950 0
 wait 5000
 foliage wait-gust 1500 0
 wait 1500
