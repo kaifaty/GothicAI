@@ -123,6 +123,9 @@ class ParticleFx final {
     float         hdrFrom   = 0.f;
     float         hdrTo     = 0.f;  // 0: off
     float         hdrEdge   = 1.f;
+    // particles.d "haze": the shimmer of hot air, cm; hazeShift 0: off. Such an effect is Material::Ghost
+    float         hazeShift = 0.f;
+    float         hazeCell  = 0.f;
 
     const Tempest::Texture2d* trlTexture = nullptr;
     float         trlFadeSpeed         = 0.f;

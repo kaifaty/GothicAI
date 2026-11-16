@@ -105,6 +105,22 @@ void PfxObjects::drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd, 
     i.drawTranslucent(cmd, scene, fId);
   }
 
+bool PfxObjects::hasHaze(uint8_t fId) const {
+  if(hiddenByBench())
+    return false;
+  for(auto& i:bucket)
+    if(i.hasHaze(fId))
+      return true;
+  return false;
+  }
+
+void PfxObjects::drawHaze(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId) {
+  if(hiddenByBench())
+    return;
+  for(auto& i:bucket)
+    i.drawHaze(cmd, scene, fId);
+  }
+
 PfxBucket& PfxObjects::getBucket(const ParticleFx &decl) {
   for(auto& i:bucket)
     if(&i.decl==&decl)
