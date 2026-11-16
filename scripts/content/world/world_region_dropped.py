@@ -1,4 +1,4 @@
-"""The base triangles Blender cannot hold, on the Blender side of build-region (world_region_bpy.py).
+"""The base triangles Blender cannot hold during a chunk or region edit.
 
 The glTF importer drops a triangle with a corner twice and one over the same corners as another (a double-sided
 pair); the region's weld removes the triangles left with two corners at one place. The converter has them (up to 10
@@ -47,8 +47,11 @@ def _mesh_arrays(me):
     me.loops.foreach_get('vertex_index', lv)
     vid = np.empty(len(me.vertices), np.float32)
     me.attributes['_VERTEX'].data.foreach_get('value', vid)
-    fid = np.empty(len(me.loops), np.float32)
-    me.attributes['_FEATURE'].data.foreach_get('value', fid)
+    feature = me.attributes['_FEATURE']
+    fid = np.empty(len(feature.data), np.float32)
+    feature.data.foreach_get('value', fid)
+    if feature.domain == 'POINT':
+        fid = fid[lv]
     return lv, vid, fid
 
 
@@ -60,12 +63,12 @@ def _cyclic(a, b):
     return len(a) == len(b) and any(list(a[k:]) + list(a[:k]) == list(b) for k in range(len(a)))
 
 
-def find(me, chunks, bases, chunk_attribute):
-    """The base triangles of each chunk the joined mesh does not have; sets ORIGIN on every face."""
-    me.attributes.new(ORIGIN, 'INT', 'FACE').data.foreach_set('value', list(range(1, len(me.polygons) + 1)))
+def find(me, chunks, bases, chunk_attribute=None):
+    """The base triangles the mesh does not have; tags their surviving twins before edits."""
     lv, vid, fid = _mesh_arrays(me)
-    chunk = np.empty(len(me.polygons), np.int64)
-    me.attributes[chunk_attribute].data.foreach_get('value', chunk)
+    chunk = np.ones(len(me.polygons), np.int64)
+    if chunk_attribute is not None:
+        me.attributes[chunk_attribute].data.foreach_get('value', chunk)
     faces, by_vids = {}, {}
     for p in me.polygons:
         pairs = _pairs(p, lv, vid, fid)
@@ -98,12 +101,14 @@ def find(me, chunks, bases, chunk_attribute):
                                 'kind': 'degenerate' if degenerate else 'duplicate' if twin else 'other',
                                 'twin': None if degenerate or twin is None else twin[0] + 1,
                                 'twin_pairs': None if degenerate or twin is None else twin[1]})
+    if entries:
+        me.attributes.new(ORIGIN, 'INT', 'FACE').data.foreach_set('value', list(range(1, len(me.polygons) + 1)))
     return entries
 
 
-def _chain(bm_verts, start, end, vid):
-    """The shortest chain of new vertices (_VERTEX < 0) between two vertices, by the mesh's edges; None if none."""
-    seen, queue = {start: None}, deque([start])
+def _chain(bm_verts, starts, ends, vid):
+    """Shortest edge path through new vertices, choosing among coincident endpoints on a feature seam."""
+    seen, queue = dict.fromkeys(starts), deque(starts)
     while queue:
         v = queue.popleft()
         depth, back = 0, v
@@ -115,8 +120,8 @@ def _chain(bm_verts, start, end, vid):
             w = e.other_vert(bm_verts[v]).index
             if w in seen:
                 continue
-            if w == end:
-                path, back = [end], v
+            if w in ends:
+                path, back = [w], v
                 while back is not None:
                     path.append(back)
                     back = seen[back]
@@ -128,8 +133,10 @@ def _chain(bm_verts, start, end, vid):
 
 
 def resolve(me, entries):
-    """After the edits (all faces triangles): fill each entry's 'triangles' (corners [_VERTEX, _FEATURE, glTF
+    """After the edits: fill each entry's 'triangles' (corners [_VERTEX, _FEATURE, glTF
     position]), 'unchanged' or 'problem'."""
+    if not entries:
+        return entries
     lv, vid, fid = _mesh_arrays(me)
     co = np.empty(len(me.vertices) * 3, np.float32)
     me.vertices.foreach_get('co', co)
@@ -142,9 +149,12 @@ def resolve(me, entries):
             by_vid.setdefault(int(i), []).append(v)
     wanted = {e['twin'] for e in entries if e['kind'] == 'duplicate'}
     children = {}
-    for p in me.polygons:
-        if origin[p.index] in wanted:
-            children.setdefault(int(origin[p.index]), []).append(p)
+    if wanted:
+        me.calc_loop_triangles()
+        for t in me.loop_triangles:
+            parent = int(origin[t.polygon_index])
+            if parent in wanted:
+                children.setdefault(parent, []).append(tuple(t.loops))
 
     def gltf(v):
         return [float(x) for x in world_bpy.to_gltf(Vector(co[v]))]
@@ -156,18 +166,19 @@ def resolve(me, entries):
             if not kids:
                 e['problem'] = f'{place}, which Blender cannot hold (it repeats another): the edits removed the other'
                 continue
-            e['triangles'] = [[[int(vid[lv[k]]), int(fid[k]), gltf(lv[k])] for k in p.loop_indices] for p in kids]
-            e['unchanged'] = len(kids) == 1 and sorted(str([v, pos]) for v, _, pos in e['triangles'][0]) == \
-                sorted(str([v, pos]) for v, _, pos in e['corners'])
+            e['triangles'] = [[[int(vid[lv[k]]), int(fid[k]), gltf(lv[k])] for k in loops] for loops in kids]
+            e['unchanged'] = len(kids) == 1 and sorted((v, pos) for v, _, pos in e['triangles'][0]) == \
+                sorted((v, pos) for v, _, pos in e['corners'])
             continue
         verts, problem = [], None
         for (v, f, pos), held in zip(e['corners'], e['held']):
-            places = by_vid.get(v, [])
-            if held and not places:
+            vertices = by_vid.get(v, [])
+            places = {tuple(co[i]) for i in vertices}
+            if held and not vertices:
                 problem = f'{place}, which Blender cannot hold: the edits removed its vertex {v}'
             elif len(places) > 1:
                 problem = f'{place}, which Blender cannot hold: its vertex {v} is at {len(places)} places'
-            verts.append(places[0] if held and len(places) == 1 else None)
+            verts.append(vertices[0] if held and len(places) == 1 else None)
         if problem:
             e['problem'] = problem
             continue
@@ -194,12 +205,12 @@ def resolve(me, entries):
             bm.from_mesh(me)
             bm.verts.index_update()
             bm.verts.ensure_lookup_table()
-        if any(edge.other_vert(bm.verts[a]).index == b for edge in bm.verts[a].link_edges):
-            continue
-        chain = _chain(bm.verts, a, b, vid)
+        chain = _chain(bm.verts, by_vid[int(vid[a])], set(by_vid[int(vid[b])]), vid)
         if chain is None:
             e['problem'] = f'{place}, which Blender cannot hold (two corners at one place): the edits removed the edge ' \
                            f'it lies on'
+            continue
+        if len(chain) == 2:
             continue
         pieces, last = [], len(chain) - 2
         for k in range(last + 1):

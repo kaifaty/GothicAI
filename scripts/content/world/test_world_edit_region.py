@@ -210,6 +210,15 @@ def test_a_region_edit_that_changes_nothing_publishes_nothing(tmp_path, capsys):
     assert entry['replaces'] == [] and entry['files'] == {'glb': []}
     assert [c['chunk'] for c in entry['chunks']] == [f'TESTWORLD/{n}' for n in INSIDE]
 
+    # The same source triangles must also survive a single-chunk build with the feature seam intact.
+    work = tmp_path / 'single-chunk'
+    code = world_edit.main(['build', 'test-chunk', '--set', 'test-single', '--chunk', 'TESTWORLD/2_1',
+                            '--base', str(base), '--staging', str(staging), '--registry', str(registry),
+                            '--work', str(work), '--dry-run', *edit_args('region_nothing')])
+    assert code == 0, capsys.readouterr().out
+    src, _ = chunk_paths(base, staging, '2_1')
+    assert world_edit.main(['compare', str(src), str(work / 'out.glb'), '--full']) == 0
+
 
 @blender
 def test_an_inner_border_vertex_moves_in_every_chunk_with_it(tmp_path, capsys):
