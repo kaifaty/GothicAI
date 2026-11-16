@@ -22,8 +22,8 @@ textures.json:
 `probe` copies a working set by hard links into ~/.local/share/gothic-ai/remaster/trees-fir/NAME and adds, in
 new files only, the two materials, PROBE spruces built by mesh3d/blender/fir_tree.py (the vob layer has no scale,
 so every size is its own GLB; each is checked by tree_check.py and tree_density.py) and the layer
-worlds/NEWWORLD/vobs.d/fir-probe.json: meshes without collision beside the original's spruces at the road to
-Onar's farm. Both materials say `"foliage": {"anchor": "tree"}` (FOLIAGE; the engine's rule is
+worlds/NEWWORLD/vobs.d/fir-probe.json: meshes without collision beside the original's firs at the north edge of
+the meadow east of the tavern. Both materials say `"foliage": {"anchor": "tree"}` (FOLIAGE; the engine's rule is
 reports/engine/2026-11-16-modern-trees/tree-wind.md): the bark and the boughs bend as one body, so their `wind`
 is the same, and only the boughs flutter and let the light through.
 """
