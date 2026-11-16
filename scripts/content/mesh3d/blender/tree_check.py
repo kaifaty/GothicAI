@@ -8,8 +8,9 @@ The numbers it prints are the acceptance of the layout (tree_glb.py, engine-plan
 - the trunk (the wood that reaches lowest) has R = G = B = 0 and A = 255;
 - every other piece of wood is a branch: B = 0, one G of its own, R is 0 at the trunk and grows along it;
 - every card has the G of a branch (0 on the trunk and round the leader), one vertex with B = 0, the stem, which
-  lies on that branch's axis, B = 255 at the free edge, and the R of the branch at the stem; past 255 branches
-  the phases repeat, and the card's branch is the nearest one of its phase;
+  lies on that branch's axis, B = 255 at the free edge and B between the two on the way, not one step, and the
+  R of the branch at the stem; past 255 branches the phases repeat, and the card's branch is the nearest one of
+  its phase;
 - A grows from the trunk to the crown's outline;
 - every triangle of a card has a twin wound the other way over the same vertices;
 - no closed piece of wood is inside out.
@@ -159,7 +160,7 @@ def check(path: Path) -> dict:
     out['cards'] = dict(triangles=int(len(index)), pairs=twins, unpaired=int(len(index) - 2 * twins))
     rule(len(index) == 2 * twins, f"{len(index) - 2 * twins} card triangles without a twin wound the other way")
     label = components(index, len(position))
-    wrong_phase = stemless = edgeless = 0
+    wrong_phase = stemless = edgeless = stepped = 0
     r_error, b_growth, spans, off_axis = [], [], [], []
     for part in np.unique(label):
         mine = np.flatnonzero(label == part)
@@ -168,6 +169,7 @@ def check(path: Path) -> dict:
         stem = mine[b == 0]
         stemless += len(stem) != 1
         edgeless += int(b.max() != 255)
+        stepped += int(not ((b > 0) & (b < 255)).any())
         if len(g) != 1 or (g[0] != 0 and int(g[0]) not in branches):
             wrong_phase += 1
             continue
@@ -183,7 +185,8 @@ def check(path: Path) -> dict:
         r_error.append(abs(colour[stem[0], 0] - weight))
     count = len(np.unique(label))
     out['cards'] |= dict(count=count, wrong_phase=int(wrong_phase), without_one_stem=int(stemless),
-                         without_free_edge_255=int(edgeless), stem_off_branch_axis_max_m=round(float(np.max(off_axis)), 4),
+                         without_free_edge_255=int(edgeless), without_b_between=int(stepped),
+                         stem_off_branch_axis_max_m=round(float(np.max(off_axis)), 4),
                          b_growth_corr_mean=round(float(np.mean(b_growth)), 3),
                          b_growth_corr_min=round(float(np.min(b_growth)), 3),
                          r_vs_branch_mean=round(float(np.mean(r_error)), 2), r_vs_branch_max=round(float(np.max(r_error)), 2),
@@ -191,6 +194,7 @@ def check(path: Path) -> dict:
     rule(wrong_phase == 0, f'{wrong_phase} cards with a phase G of no branch')
     rule(stemless == 0, f'{stemless} cards without exactly one stem vertex (B = 0)')
     rule(edgeless == 0, f'{edgeless} cards whose free edge does not reach B = 255')
+    rule(stepped == 0, f'{stepped} cards whose B is a step: no vertex between 0 and 255')
     rule(np.max(off_axis) <= .03, f'the stem of a card is {np.max(off_axis):.3f} m off the axis of its branch')
     rule(float(np.min(b_growth)) > 0, f'B does not grow from the stem: correlation {np.min(b_growth):.3f}')
     rule(np.max(r_error) <= 4, f'R of a card is {np.max(r_error):.1f} of 255 off its branch at the stem')

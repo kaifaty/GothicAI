@@ -4,9 +4,11 @@ layout of COLOR_0 the engine's tree wind reads (reports/content/2026-11-trees/fi
 import json
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 import fir
+import tree_density
 import tree_glb
 
 HERE = Path(__file__).resolve().parent
@@ -41,6 +43,17 @@ def test_the_crown_is_dense_from_both_sides(spruce):
         assert 9. <= view['crown_width_m'] <= 10.
 
 
+def test_the_outline_takes_in_a_hole_and_leaves_out_a_notch_wider_than_the_closing_disc():
+    solid = np.zeros((240, 240), bool)
+    solid[60:180, 60:180] = True
+    hole, notch = (slice(100, 120), slice(100, 120)), (slice(60, 100), slice(140, 154))
+    solid[hole] = solid[notch] = False
+    inside = tree_density.outline(solid, tree_density.PX, tree_density.CLOSE)
+    assert inside[solid].all() and inside[hole].all()
+    assert not inside[:60].any() and inside[notch].mean() < .1
+    assert 400 <= (inside & ~solid).sum() <= 400 + .1 * 40 * 14
+
+
 def test_colour_0_is_laid_out_for_the_tree_wind(spruce):
     layout = spruce['metrics']['colour_0']
     assert layout['colour_format'] == 'VEC4 UNSIGNED_BYTE normalized'
@@ -50,7 +63,8 @@ def test_colour_0_is_laid_out_for_the_tree_wind(spruce):
     assert branches['mixed_phase'] == branches['with_b'] == branches['r_not_0_at_trunk'] == 0
     assert branches['r_growth_corr_min'] > .99
     assert cards['unpaired'] == cards['wrong_phase'] == cards['without_one_stem'] == 0
-    assert cards['without_free_edge_255'] == 0 and cards['pairs'] * 2 == cards['triangles']
+    assert cards['without_free_edge_255'] == cards['without_b_between'] == 0
+    assert cards['pairs'] * 2 == cards['triangles']
     assert layout['openness']['corr_with_radius_share'] > .9
     wood, boughs = tree_glb.read(spruce['glb'])
     assert (wood['material']['name'], boughs['material']['name']) == ('OWN_TREE_FIR_BARK', 'OWN_TREE_FIR_BOUGHS')
