@@ -4,7 +4,7 @@
     uv run --no-project --with numpy --with pillow --with scipy python scripts/content/fir_set.py \
         textures --boughs DIR --bark DIR --out WORK
     uv run --no-project --with numpy --with pillow --with scipy python scripts/content/fir_set.py \
-        probe fir-probe-1 --textures WORK [--from working-27]
+        probe fir-probe-1 --textures WORK [--from working-28]
 
 `textures` reads what mesh3d/blender/fir_boughs.py and fir_bark.py baked (boughs.npz, bark.npz) and writes
 WORK/{boughs,bark}-{albedo,normal,orm}.dds, PNG previews for mesh3d/blender/fir_views.py, boughs-mask.npz (the
@@ -23,8 +23,9 @@ textures.json:
 new files only, the two materials, PROBE spruces built by mesh3d/blender/fir_tree.py (the vob layer has no scale,
 so every size is its own GLB; each is checked by tree_check.py and tree_density.py) and the layer
 worlds/NEWWORLD/vobs.d/fir-probe.json: meshes without collision beside the original's spruces at the road to
-Onar's farm. `"foliage": {"anchor": "tree"}` of both materials goes to materials/trees_fir/foliage.stub.json:
-the engine's parser accepts only the anchor "line" today and would drop the whole record.
+Onar's farm. Both materials say `"foliage": {"anchor": "tree"}` (FOLIAGE; the engine's rule is
+reports/engine/2026-11-16-modern-trees/tree-wind.md): the bark and the boughs bend as one body, so their `wind`
+is the same, and only the boughs flutter and let the light through.
 """
 from __future__ import annotations
 
@@ -48,6 +49,8 @@ VISUAL = 'OWN_TREE_FIR_A'
 FLAT = .6                   # share of the needles' tilt kept in the atlas's normals
 AO_NEEDLES, AO_BARK = 1., .7    # share of the baked occlusion that goes into the colour
 ROUGH_NEEDLES, ROUGH_BARK = .85, .9
+FOLIAGE = dict(bark=dict(anchor='tree', wind=1., flutter=0., translucency=0.),
+               boughs=dict(anchor='tree', wind=1., flutter=1., translucency=.35))
 # Gothic centimetres: x, the ground's height, z; yaw; scale; seed. The forest edge south of the road to Onar's
 # farm, ground NW_NATURE_WALDBODEN_03, 5 to 8 m from the original's spruces. The third is spruce A itself.
 PROBE = (((39700., 3422.9, 600.), 40., 1.1, 21),
@@ -188,15 +191,13 @@ def probe(args) -> int:
 
     directory = work / 'materials' / FOLDER
     directory.mkdir()
-    materials, stub = {}, {}
+    materials = {}
     for part, name in config['materials'].items():
         for kind in ('albedo', 'normal', 'orm'):
             shutil.copyfile(args.textures / f'{part}-{kind}.dds', directory / f'{part}-{kind}.dds')
         materials[f'{name}.TGA'] = dict({kind: f'{FOLDER}/{part}-{kind}.dds' for kind in ('albedo', 'normal', 'orm')},
-                                        scale=1., antitile='off', antitile_cell=1.)
-        stub[f'{name}.TGA'] = dict(foliage=dict(anchor='tree'))
+                                        scale=1., antitile='off', antitile_cell=1., foliage=FOLIAGE[part])
     rewrite(work / 'materials/materials.json', materials)
-    (directory / 'foliage.stub.json').write_text(json.dumps(stub, indent=2) + '\n')
 
     folder = work / 'meshes' / FOLDER
     folder.mkdir()
@@ -228,8 +229,7 @@ def probe(args) -> int:
     layer = work / 'worlds' / WORLD / 'vobs.d/fir-probe.json'
     layer.write_text(json.dumps(dict(format=1, add=added), indent=1) + '\n')
     report = dict(set=args.set, source=args.source, trees=trees,
-                  textures=json.loads((args.textures / 'textures.json').read_text()),
-                  foliage_stub=f'materials/{FOLDER}/foliage.stub.json')
+                  textures=json.loads((args.textures / 'textures.json').read_text()), materials=materials)
     (work / 'fir-probe.json').write_text(json.dumps(report, indent=1) + '\n')
     work.rename(output)
     print(json.dumps(dict(set=str(output), trees=trees), indent=1))
@@ -247,7 +247,7 @@ def main() -> int:
     command = commands.add_parser('probe')
     command.add_argument('set')
     command.add_argument('--textures', type=Path, required=True)
-    command.add_argument('--from', dest='source', default='working-27')
+    command.add_argument('--from', dest='source', default='working-28')
     args = parser.parse_args()
     return textures(args) if args.command == 'textures' else probe(args)
 
