@@ -14,6 +14,7 @@
 #include "game/gamescript.h"
 #include "game/playercontrol.h"
 #include "gothic.h"
+#include "settings.h"
 #include "graphics/drawcommands.h"
 #include "graphics/renderer.h"
 #include "graphics/mesh/footik.h"
@@ -866,8 +867,8 @@ bool cameraCommand(const CameraContext& ctx,const std::string& line,const std::v
     // vsm study <bits>: the shadow test on a mesh's facets, for shots of one frame
     // (reports/render-features/2026-11-11-facet-shards): 1 the sun takes the facet's plane over one pixel and 2 the
     // lamps keep it on facets edge-on to them, both as before 2026-11-11; 4 the facets' classes and 8 the change of
-    // the sun's shadow as colours; 16 the lamps' first search as before 2026-11-14 (2026-11-14-lamp-stipple); 0 the game's
-    Renderer::benchVsmStudy = uint32_t(std::clamp(int(num(a,2,0)), 0, 31));
+    // the sun's shadow as colours; 16 the lamps' first search as before 2026-11-14 (2026-11-14-lamp-stipple); 32 the lamps without their screen ray; 0 the game's
+    Renderer::benchVsmStudy = uint32_t(std::clamp(int(num(a,2,0)), 0, 63));
     }
   else if(c=="ssao" && a.size()>2 && a[1]=="study") {
     // ssao study <bits>: for shots of one frame (reports/engine/2026-11-13-ssao-behind-camera): 1 the samples behind
@@ -1146,7 +1147,7 @@ void capture(const CameraContext& ctx,Pixmap& frame, float uiScale) {
     cv.text(6,6,ctx.routine.questCase,2,Text);
     const auto& npc=*ctx.routine.questNpc;const auto& q=npc.ragdollQuestReturnState();char label[160];
     std::snprintf(label,sizeof(label),"IMMORTAL %d GUARD %d KO %d RETURN %u",int(npc.isImmortal()),
-      Gothic::settingsGetI("GAME","ragdoll_quest_guard"),int(npc.isUnconscious()),npc.ragdollQuestReturnCount());
+      Settings::getI("GAME","ragdoll_quest_guard"),int(npc.isUnconscious()),npc.ragdollQuestReturnCount());
     cv.text(6,26,label,2,Text);
     std::snprintf(label,sizeof(label),"REASON %s DROP %.0f CM",questReason(q.hazards),double(ctx.routine.questStable.y-npc.position().y));
     cv.text(6,46,label,2,Text);

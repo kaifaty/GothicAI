@@ -2,6 +2,9 @@
 #define SCENE_GLSL
 
 // std140, because uniform buffer
+// the houses the scene block carries (HouseLights::MaxHouses, common/graphics/houselights.h)
+const int HOUSE_MAX = 32;
+
 struct SceneDesc {
   mat4  viewProject;
   mat4  viewProjectInv;
@@ -54,6 +57,7 @@ struct SceneDesc {
   float fogSkyVis;       // the sky seen from the camera under GI, 0..1 (fog_sky_vis.comp); 1 without it
   float lampNearKnee;    // a lamp's light never passes this many times its light at the range (light.frag); 0 off
   float dayHour;         // 0..24 of the game's day: the evening of the windows (materials/window_glow.glsl)
+  uint  houseCount;      // the houses of `house` below
   // living foliage (materials/foliage_wind.glsl): the world's wind of this frame and of the previous one
   vec4  foliageWind;      // xy: its direction in the world's x and z; z: the lean's pressure; w: 1 when it blows
   vec4  foliagePhase;     // 0..1 of the periods of the two waves and the two flutters
@@ -67,6 +71,9 @@ struct SceneDesc {
   // grass (grass/grass_common.glsl): x full density to here, cm; y the blades go into the ground from here; z the
   // ring's radius; w 1 with blades, 0.5 the ground's mark alone, 0 off
   vec4  grassRing;
+  // the houses whose windows fade with their lamps (windowHouse, materials/window_glow.glsl): three vectors a house,
+  // xyz the box's centre and w the cosine of its yaw; xyz its half size and w the sine; x the bedtime
+  vec4  house[3*HOUSE_MAX];
   };
 
 // bench `vsm study <bits>`: the shadow test on a mesh's facets (reports/render-features/2026-11-11-facet-shards)
@@ -74,6 +81,7 @@ const uint VSM_STUDY_SUN_PIXEL  = 1u; // the sun: the facet's plane over one pix
 const uint VSM_STUDY_LAMP_FACET = 2u; // lamps: the facet's plane also where it stands edge-on to the lamp (light.frag)
 const uint VSM_STUDY_CLASS      = 4u; // facets by their cosine to the light and the shadow's answer, as colours
 const uint VSM_STUDY_SUN_DIFF   = 8u; // the sun: where the plane over a texel's footprint changes the shadow, as colours
+const uint VSM_STUDY_NO_CONTACT = 32u; // lamps: without the screen ray of lamp_contact.glsl, as before 2026-11-15 (light.frag)
 const uint VSM_STUDY_LAMP_FAR   = 16u; // lamps: the first search without the point's own texels, as before 2026-11-14 (light.frag)
 
 struct LightSource {
@@ -121,6 +129,9 @@ struct Cluster {
 const uint VF_HIZ = 0x1; // the occluder pass (V_HiZ): it draws into the main view's depth ahead of the G-buffer
 const uint VF_TAA = 0x2; // TAA resolves the frame (also with MetalFX temporal)
 const uint VF_SHADOW = 0x8; // a shadow view: the sun's cascades and the virtual shadow map
+const uint VF_LAMP_CONTACT = 0x10; // lamps darken what their shadow map is too coarse for by a screen ray (lighting/lamp_contact.glsl)
+const uint VF_CONTACT_AO = 0x20; // the light of the GI probes takes the short occlusion of ssao.comp (lighting/rt/probe_ambient.frag)
+const uint VF_GRASS_CONTACT = 0x40; // blades shade the ground and each other by the sun's screen ray (grass/grass_contact.glsl)
 const uint VF_HAIR_DEBUG = 0x4; // hair pixels show the strand's direction as a colour instead of light (OPENGOTHIC_HAIR_DEBUG=1)
 
 const uint BK_SOLID = 0x1;

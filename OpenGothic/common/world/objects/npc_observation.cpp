@@ -322,7 +322,7 @@ Npc::BodyObservationState Npc::bodyObservationState() const {
 
 Npc::BodyObservationTarget Npc::bodyObservationTarget(const Npc& tg) const {
   BodyObservationTarget s;
-  auto& script = owner.script();
+  auto& script = owner.rules();
   s.fightDistanceCm = fightDistanceTo(tg).length();
   s.attackRangeCm = fghAlgo.prefferedAttackDistance(*this,tg,script);
   s.gRangeCm = fghAlgo.prefferedGDistance(*this,tg,script);

@@ -19,8 +19,9 @@ Definitions are those of the research census (reports/engine/2026-11-12-world-de
 - objects: vobs of vobs.json with all children, by the class of their visual name; with a region, a vob belongs to
   the chunk of its position.
 
-With --content DIR, a chunk <DIR>/worlds/<WORLD>/chunks/<x>_<z>.glb replaces the base chunk of the same name (as
-OpenGothic/common/worldchunksruntime.cpp does), <DIR>/worlds/<WORLD>/vobs.json replaces the base vobs.json, the
+A chunk of the manifest is the draw level 0 mesh of a cell of world.json (world_manifest.py: a string entry or an
+object with a list of meshes). With --content DIR, a chunk <DIR>/worlds/<WORLD>/<file> replaces the base chunk of the
+same file (as OpenGothic/common/worldchunksruntime.cpp does), <DIR>/worlds/<WORLD>/vobs.json replaces the base vobs.json, the
 vob layers <DIR>/worlds/<WORLD>/vobs.d/*.json are applied in name order (docs/asset-migration.md, «Данные мира»)
 and the meshes of <DIR>/meshes/meshes.json replace base meshes of the same name for the triangle counts.
 """
@@ -41,6 +42,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import chunk_glb as cg  # noqa: E402
 import world_classes as wc  # noqa: E402
+import world_manifest  # noqa: E402
 
 CHUNK_M = 64.0
 LAYER_GAP_M = 2.0
@@ -76,16 +78,16 @@ class ChunkFile:
 
 
 def chunk_files(base: Path, world: str, content: Path | None = None) -> list[ChunkFile]:
-    """The chunks of the world's manifest, each from the content folder when it has a file of the same name."""
+    """The draw level 0 mesh of each cell of the world's manifest (world_manifest.py), from the content folder when
+    it has a file of the same name."""
     wdir = base / 'worlds' / world
-    manifest = json.loads((wdir / 'world.json').read_text())
     out = []
-    for rel in manifest['chunks']:
-        over = content / 'worlds' / world / rel if content else None
+    for cell in world_manifest.cells(wdir):
+        over = content / 'worlds' / world / cell.draw if content else None
         if over is not None and over.is_file():
-            out.append(ChunkFile(Path(rel).stem, over, True))
+            out.append(ChunkFile(cell.name, over, True))
         else:
-            out.append(ChunkFile(Path(rel).stem, wdir / rel, False))
+            out.append(ChunkFile(cell.name, wdir / cell.draw, False))
     return out
 
 

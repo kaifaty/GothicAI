@@ -7,6 +7,7 @@
 #include "rtscene.h"
 #include "resources.h"
 #include "graphics/foliagewind.h"
+#include "graphics/houselights.h"
 
 class Sky;
 class WorldView;
@@ -32,6 +33,9 @@ class SceneGlobals final {
       VF_TAA = 0x2,
       VF_HAIR_DEBUG = 0x4,
       VF_SHADOW = 0x8,
+      VF_LAMP_CONTACT = 0x10,
+      VF_CONTACT_AO = 0x20,
+      VF_GRASS_CONTACT = 0x40,
       };
 
     static bool isShadowView(VisCamera v);
@@ -57,6 +61,8 @@ class SceneGlobals final {
     // VSM lamps: an object nearer than this to a light (cm, along its cube face's axis) is no blocker of it
     void setVsmLampNear(float cm);
     void setLampNearKnee(float knee);
+    // the houses whose windows fade with their lamps (graphics/houselights.h), once a world
+    void setHouses(const std::vector<HouseLights::House>& houses);
     // VSM lamps: the sides of a surface a cube face keeps: 1 the far one, 2 both for the world mesh, 3 for objects too
     void setVsmLampSides(uint32_t sides);
     // bench `vsm study <bits>`: the shadow test on a mesh's facets, VSM_STUDY_* of scene.glsl (0: the game's)
@@ -86,6 +92,8 @@ class SceneGlobals final {
     Tempest::Vec3             camPos()    const { return uboGlobalCpu.camPos;    }
     // SceneDesc::grassRing: the field of grass says where its blades end (GrassField); zero without it
     void                      setGrassRing(const Tempest::Vec4& ring) { uboGlobalCpu.grassRing = ring; }
+    // the last frame drew blades: the sun's screen ray over them runs in the next (graphics/grasscontact.h)
+    void                      setGrassDrawn(bool drawn) { grassDrawn = drawn; }
     Tempest::Point            screenRes() const { return uboGlobalCpu.screenRes; }
 
     const Tempest::Matrix4x4  viewProjectLwc() const;
@@ -180,7 +188,7 @@ class SceneGlobals final {
       float                           fogSkyVis       = 1; // the sky seen from the camera under GI (fog_sky_vis.comp)
       float                           lampNearKnee    = 0; // lamps: the limit of the light near a lamp (light.frag), 0 off
       float                           dayHour         = 12; // 0..24 of the game's day: the windows' evening (windowglow.h)
-      float                           foliagePadding  = 0; // std140: the vectors below start at 16 bytes
+      uint32_t                        houseCount      = 0; // the houses of `house` below (graphics/houselights.h)
       // living foliage (graphics/foliagewind.h): the world's wind of this frame and of the previous one (setTime)
       Tempest::Vec4                   foliageWind;
       Tempest::Vec4                   foliagePhase;
@@ -192,6 +200,8 @@ class SceneGlobals final {
       Tempest::Vec4                   foliageFront;
       Tempest::Vec4                   foliageFrontK;
       Tempest::Vec4                   grassRing;
+      // the houses whose windows fade with their lamps (HouseLights::pack): three vectors a house
+      Tempest::Vec4                   house[3*HouseLights::MaxHouses];
       };
 
     Tempest::UniformBuffer<UboGlobal> uboGlobalPf[Resources::MaxFramesInFlight][V_Count];
@@ -200,6 +210,7 @@ class SceneGlobals final {
     Frustrum                          frustrum[V_Count];
 
     bool                              zWindEnabled = false;
+    bool                              grassDrawn   = false; // setGrassDrawn
     bool                              legacyWind = true;
     float                             windScale = 1.f;
     uint64_t                          windPeriod = 6000;

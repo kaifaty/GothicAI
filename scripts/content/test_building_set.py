@@ -131,6 +131,32 @@ def test_compose_joins_parts_and_rejects_shared_texture(tmp_path, monkeypatch):
         building_set.compose('hut-4-review', ['roofs-1', 'hut-4'])
 
 
+def test_compose_carries_the_maps_of_a_records_layers(tmp_path, monkeypatch):
+    monkeypatch.setenv('GOTHIC_AI_DATA', str(tmp_path))
+    staged(tmp_path, 'roofs-1', {'ROOF_01.TGA': 'roofs-1-roof-01'})
+    folder = tmp_path / 'content-staging/meadow-1/materials'
+    maps = lambda stem: {k: f'{stem}/{k}.dds' for k in ('albedo', 'normal', 'orm')}
+    for stem in ('sward', 'earth', 'rock', 'tufts'):
+        (folder / stem).mkdir(parents=True)
+        for path in maps(stem).values():
+            (folder / path).write_bytes(f'meadow-1/{path}'.encode())
+    index = {'MEADOW.TGA': {'grass': {'fine': 1}, 'ground': {'sward': maps('sward') | {'tile_m': 4.},
+                                                            'earth': maps('earth') | {'tile_m': 2.}, 'far': 5.3}},
+             'PATH.TGA': {'verge': {'of': 'MEADOW.TGA', 'reach': 90, 'margin': 50}},
+             'STEIN.TGA': maps('rock') | {'projection': {'tile_m': 5.75}, 'fringe': maps('tufts') | {'tile_m': 4.}}}
+    (folder / 'materials.json').write_text(json.dumps(index))
+    result = building_set.compose('working-2', ['roofs-1', 'meadow-1'])
+    assert result['parts'] == {'roofs-1': 1, 'meadow-1': 3}
+    out = tmp_path / 'content-staging/working-2'
+    assert json.loads((out / 'materials/materials.json').read_text()) | index == json.loads(
+        (out / 'materials/materials.json').read_text())
+    for stem in ('sward', 'earth', 'rock', 'tufts'):
+        for path in maps(stem).values():
+            assert (out / 'materials' / path).read_bytes() == f'meadow-1/{path}'.encode()
+    digests = json.loads((out / 'composition.json').read_text())['dds_sha256']
+    assert {'sward/albedo.dds', 'earth/orm.dds', 'tufts/normal.dds'} <= set(digests)
+
+
 def staged_prop(root, name, prefix='OWN'):
     """A prop like the barrel: two materials on one atlas and a GLB with its fresh pieces."""
     staged(root, name, {f'{prefix}_WOOD.TGA': name})
@@ -329,6 +355,19 @@ def test_compose_and_enable_carry_a_vob_layer(tmp_path, monkeypatch):
     building_set.enable('city-1')
     assert (tmp_path / 'content/worlds/NEWWORLD/vobs.d/harbour-life.json').read_text() == layer.read_text()
 
+    # the houses a part rebuilt come along like its vob layer (worlds/<WORLD>/houses.d)
+    houses = tmp_path / 'content-staging/market-2/worlds/NEWWORLD/houses.d/market-house.json'
+    houses.parent.mkdir(parents=True)
+    houses.write_text('{"format": 1, "houses": []}\n')
+    result = building_set.compose('city-2', ['city-1', 'market-2'])
+    assert result['parts'] == {'city-1': 2, 'market-2': 1}
+    composition = json.loads((tmp_path / 'content-staging/city-2/composition.json').read_text())
+    assert composition['parts']['market-2'] == ['worlds/NEWWORLD/houses.d/market-house.json']
+    building_set.enable('city-2')
+    assert (tmp_path / 'content/worlds/NEWWORLD/houses.d/market-house.json').read_text() == houses.read_text()
+    with pytest.raises(ValueError, match='chunk NEWWORLD/HOUSES.D/MARKET-HOUSE.JSON: in both city-2 and market-2'):
+        building_set.compose('twice', ['city-2', 'market-2'])
+
     particles = tmp_path / 'content-staging/smoke-1/particles.d/smoke.json'
     particles.parent.mkdir(parents=True)
     particles.write_text(json.dumps({'format': 1, 'effects': [
@@ -408,6 +447,20 @@ def test_compose_takes_a_composed_set_as_a_part_and_keeps_its_parts(tmp_path, mo
     (tmp_path / 'content-staging/life-1/worlds/NEWWORLD/vobs.d/harbour-life.json').rename(layer.with_name('other.json'))
     with pytest.raises(ValueError, match='life-1: a part twice'):
         building_set.compose('working-3', ['working-2', 'smoke-1', 'life-1'])
+    # a new part takes the place of an old one of the composed set
+    staged(tmp_path, 'roofs-2', {'ROOF_01.TGA': 'roofs-2-roof-01'})
+    with pytest.raises(ValueError, match='ROOF_01.TGA: in both working-2 and roofs-2'):
+        building_set.compose('working-5', ['working-2', 'roofs-2'])
+    with pytest.raises(ValueError, match='roofs-9: no such part in a composed set to leave behind'):
+        building_set.compose('working-5', ['working-2', 'roofs-2'], without=('roofs-9',))
+    result = building_set.compose('working-5', ['working-2', 'roofs-2'], without=('roofs-1',))
+    assert result['parts'] == {'working-2': 2, 'roofs-2': 1}
+    swapped = tmp_path / 'content-staging/working-5'
+    assert json.loads((swapped / 'composition.json').read_text())['parts'] == {
+        'life-1': ['worlds/NEWWORLD/vobs.d/harbour-life.json'], 'torch-1': ['OWN_TORCH_FLAME.TGA'],
+        'roofs-2': ['ROOF_01.TGA']}
+    assert (swapped / 'materials/roofs-2-roof-01/orm.dds').read_bytes() == b'roofs-2/roofs-2-roof-01/orm'
+    assert not (swapped / 'materials/roofs-1-roof-01').exists()
     # a set changed after it was composed is refused
     (out / 'materials/materials.json').write_text(json.dumps({'ROOF_01.TGA': {'albedo': 'roofs-1-roof-01/albedo.dds'}}))
     with pytest.raises(ValueError, match='working-2: composition.json does not list what the set holds'):

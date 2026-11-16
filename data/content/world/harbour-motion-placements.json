@@ -130,15 +130,15 @@
   {
    "name": "OWN_HUT_SMOKE_04",
    "base": "LIGHTSMOKE",
-   "why": "Smoke of a hut fired without a chimney, from the hole in its roof: a veil, not a column (reports/Дым очага в игровом мире.md; reports/content/remaster/harbour-motion/README.md, r5). One source as large as the hole, a static soft sprite OWN_HUT_SMOKE (content/materials, made from the base by harbour_motion.py texture), warm grey 75 that is a little darker than the noon sky and lighter than the crowns; 8 particles/s at alpha 104, about four times the optical depth of the card's veil (r7 d4: it reads by day, a third of the background covered, no column, no glow at night), 0.75 m/s up, a cone of 10 deg, 10 s, drifting with the wind through flyGravity along +z; the rate breathes over 24 s.",
+   "why": "Smoke of a hut fired without a chimney, from the hole in its roof: a veil, not a column (reports/Дым очага в игровом мире.md; reports/content/remaster/harbour-motion/README.md, r5). One source as large as the hole, a static soft sprite OWN_HUT_SMOKE (content/materials, made from the base by harbour_motion.py texture), warm grey 75 that is a little darker than the noon sky and lighter than the crowns; 8 particles/s at alpha 104, about four times the optical depth of the card's veil (r7 d4: it reads by day, a third of the background covered, no column, no glow at night), 0.75 m/s up, a cone of 10 deg, 10 s, drifting with the wind through flyGravity along +z; the rate breathes over 24 s. Since 2026-11-16 the sprite is a simulated puff played frame by frame (OWN_SMOKE_DENSE of the part smoke-*, Unity Labs WispySmoke01, CC0; reports/content/remaster/smoke/README.md): its grey is 0.41 and its mean alpha 0.174 against the old sprite's white and 0.118, so the tint went from 75 to 183 and the alpha from 104 to 55: 70 keeps the mean optical depth, but the puff's own shading made the column read darker than the accepted veil.",
    "set": {
-    "visName_S": "OWN_HUT_SMOKE.TGA",
+    "visName_S": "OWN_SMOKE_DENSE.TGA",
     "visTexAniFPS": 0.0,
     "visTexAniIsLooping": 0,
     "visAlphaFunc_S": "BLEND",
-    "visTexColorStart_S": "75 72 66",
-    "visTexColorEnd_S": "85 82 76",
-    "visAlphaStart": 104.0,
+    "visTexColorStart_S": "183 176 161",
+    "visTexColorEnd_S": "207 200 185",
+    "visAlphaStart": 55.0,
     "visAlphaEnd": 0.0,
     "visSizeStart_S": "70 70",
     "visSizeEndScale": 5.0,
@@ -161,6 +161,12 @@
     "flyGravity_S": "0 0 0.00001",
     "shpDim_S": "30 0 12",
     "ppsScaleKeys_S": "0.7 1 1.3 1 0.8 1.2"
+   },
+   "flipbook": {
+    "cols": 8,
+    "rows": 8,
+    "frames": 64,
+    "fps": 6
    }
   },
   {
@@ -170,6 +176,12 @@
    "set": {
     "shpDim_S": "15 0 10",
     "ppsScaleKeys_S": "1 0.8 1.2 0.7 1 1.3"
+   },
+   "flipbook": {
+    "cols": 8,
+    "rows": 8,
+    "frames": 64,
+    "fps": 6
    }
   }
  ]

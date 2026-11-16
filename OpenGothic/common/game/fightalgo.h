@@ -6,7 +6,7 @@
 #include <Tempest/Vec>
 
 class Npc;
-class GameScript;
+class GameRules;
 class Serialize;
 
 class FightAlgo final {
@@ -60,7 +60,7 @@ class FightAlgo final {
     static Action resolveDownTactics(bool enabled, bool knockdown, bool rising, bool inRange, bool focus);
     static std::array<bool,12> actionMask(const ResolverState& state);
 
-    Action nextFromQueue(Npc &npc, Npc &tg, GameScript& owner);
+    Action nextFromQueue(Npc &npc, Npc &tg, GameRules& owner);
     void   consumeAction();
     void   onClearTarget();
     void   onTargetKnockdown();
@@ -72,29 +72,29 @@ class FightAlgo final {
     uint64_t traceEntrySerial() const { return traceEntry; }
     int traceParentInstruction() const { return traceInstruction; }
     std::array<Action,MV_MAX> queueSnapshot() const;
-    bool   fetchInstructions(Npc &npc, Npc &tg, GameScript& owner);
+    bool   fetchInstructions(Npc &npc, Npc &tg, GameRules& owner);
     float  qDistTo(const Npc& npc, const Npc& tg) const;
 
-    float  baseDistance           (const Npc &npc, const Npc &tg, GameScript &owner) const;
-    float  prefferedAttackDistance(const Npc &npc, const Npc &tg, GameScript &owner) const;
-    float  prefferedGDistance     (const Npc &npc, const Npc &tg, GameScript &owner) const;
-    float  attackFinishDistance   (GameScript &owner) const;
+    float  baseDistance           (const Npc &npc, const Npc &tg, GameRules &owner) const;
+    float  prefferedAttackDistance(const Npc &npc, const Npc &tg, GameRules &owner) const;
+    float  prefferedGDistance     (const Npc &npc, const Npc &tg, GameRules &owner) const;
+    float  attackFinishDistance   (GameRules &owner) const;
 
-    bool   isInAttackRange        (const Npc &npc, const Npc &tg, GameScript &owner) const;
-    bool   isInFinishRange        (const Npc &npc, const Npc &tg, GameScript &owner) const;
-    bool   isInCloseupRange       (const Npc &npc, const Npc &tg, GameScript &owner) const;
-    bool   isInWRange             (const Npc &npc, const Npc &tg, GameScript &owner) const;
-    bool   isInGRange             (const Npc &npc, const Npc &tg, GameScript &owner) const;
+    bool   isInAttackRange        (const Npc &npc, const Npc &tg, GameRules &owner) const;
+    bool   isInFinishRange        (const Npc &npc, const Npc &tg, GameRules &owner) const;
+    bool   isInCloseupRange       (const Npc &npc, const Npc &tg, GameRules &owner) const;
+    bool   isInWRange             (const Npc &npc, const Npc &tg, GameRules &owner) const;
+    bool   isInGRange             (const Npc &npc, const Npc &tg, GameRules &owner) const;
     bool   isInFocusAngle         (const Npc &npc, const Npc &tg) const;
     bool   isInFocusAngle         (const Npc &npc, const Npc &tg, float ang) const;
     bool   isInJumpBackAngle      (const Npc &npc, const Npc &tg) const;
 
   private:
-    void   fillQueue(Npc &npc, Npc &tg, GameScript& owner);
-    bool   fillQueue(const Npc& npc, GameScript& owner, const Def::FightAi& src);
+    void   fillQueue(Npc &npc, Npc &tg, GameRules& owner);
+    bool   fillQueue(const Npc& npc, GameRules& owner, const Def::FightAi& src);
 
     static bool   angleTest(const Npc& npc, const Npc& tg, float cosMax);
-    static float  weaponRange(GameScript &owner,const Npc &npc);
+    static float  weaponRange(GameRules &owner,const Npc &npc);
 
     Def::FightMove queueId = Def::FightMove::NOP;
     Action              tr   [MV_MAX]={};

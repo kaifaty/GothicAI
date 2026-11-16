@@ -17,6 +17,7 @@
 #include "game/constants.h"
 #include "game/scripttypes.h"
 #include "game/gamerules.h"
+#include "game/gothicguildtraits.h"
 #include "game/questlog.h"
 #include "game/ownsymbols.h"
 #include "game/gamescript_startupfloor.h"
@@ -53,6 +54,15 @@ class GameScript final : public GameRules {
     void             startupFloorBeforeKeep(Npc& npc) override;
     std::array<int32_t,3> storyNpcTypes() override;
     size_t           scriptVmMemorySize() const override;
+
+    DamageValue damageValue(Npc& src, Npc& other, const Bullet* bullet, bool isSpell, const Damage& spellDamage, CollideMask mask) override;
+    float meleeMultiplier(float speedCmS, float typicalCmS, float bladeFraction, float surfaceAngleDeg, size_t targetIndex) override;
+    DamageValue damageFall(Npc& npc, float speed) override;
+    int32_t vanillaChance(int32_t hitChance, float distance) override;
+    Damage rangeDamageValue(Npc& npc) override;
+    int32_t damageTypeMask(Npc& npc) override;
+    const FightTactic& fightAi(size_t tactic) override;
+    float attackFinishDistance() override;
 
     bool         hasSymbolName(std::string_view fn);
 
@@ -125,6 +135,7 @@ class GameScript final : public GameRules {
     const FocusRecord&           focusRange() const override { return cFocusRange; }
     const FocusRecord&           focusMage()  const override { return cFocusMage;  }
     const GuildRecord&           guildVal()   const override { return *cGuildVal;  }
+    const GuildTraits&           guildTraits() const override { return gothicGuildTraits(); }
 
     std::string_view            menuMain() const;
 

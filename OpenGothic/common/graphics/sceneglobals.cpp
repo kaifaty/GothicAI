@@ -1,7 +1,11 @@
 #include "sceneglobals.h"
 #include "graphics/foliagefront.h"
+#include "graphics/contactao.h"
+#include "graphics/grasscontact.h"
+#include "graphics/lampcontact.h"
 #include "settings.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdlib>
 
@@ -192,7 +196,8 @@ void SceneGlobals::setTaaFrame(bool taa, bool lampTaa, uint32_t frame) {
   uboGlobalCpu.taaFrame  = taa ? frame : 0;
   // OPENGOTHIC_HAIR_DEBUG=1: hair shows the direction of its strands as a colour (the acceptance of the direction)
   static const bool hairDebug = []{ const char* e = std::getenv("OPENGOTHIC_HAIR_DEBUG"); return e!=nullptr && e[0]=='1'; }();
-  uboGlobalCpu.viewFlags = (taa ? VF_TAA : 0) | (hairDebug ? VF_HAIR_DEBUG : 0);
+  uboGlobalCpu.viewFlags = (taa ? VF_TAA : 0) | (hairDebug ? VF_HAIR_DEBUG : 0) | (LampContact::enabled() ? VF_LAMP_CONTACT : 0) |
+                           (ContactAo::enabled() ? VF_CONTACT_AO : 0) | (grassDrawn && GrassContact::enabled() ? VF_GRASS_CONTACT : 0);
   }
 
 void SceneGlobals::setMotion(bool enabled, const Tempest::Matrix4x4& reprojectClip,
@@ -213,6 +218,17 @@ void SceneGlobals::setVsmLampNear(float cm) {
 
 void SceneGlobals::setLampNearKnee(float knee) {
   uboGlobalCpu.lampNearKnee = knee;
+  }
+
+void SceneGlobals::setHouses(const std::vector<HouseLights::House>& houses) {
+  const size_t count = std::min(houses.size(), HouseLights::MaxHouses);
+  uboGlobalCpu.houseCount = uint32_t(count);
+  for(size_t i=0; i<count; ++i) {
+    float v[12] = {};
+    HouseLights::pack(houses[i],v);
+    for(size_t k=0; k<3; ++k)
+      uboGlobalCpu.house[i*3+k] = Tempest::Vec4(v[k*4], v[k*4+1], v[k*4+2], v[k*4+3]);
+    }
   }
 
 void SceneGlobals::setVsmLampSides(uint32_t sides) {

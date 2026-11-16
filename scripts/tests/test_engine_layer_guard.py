@@ -21,8 +21,10 @@ pytestmark = pytest.mark.skipif(shutil.which("cmake") is None, reason="no cmake"
 
 TREE = {
     "common/daedalus/vm.h": "#pragma once\n",
-    "common/game/gamescript.h": '#pragma once\n#include "daedalus/vm.h"\n',
-    "common/world/world.h": '#include "game/gamescript.h"\n',
+    "common/game/gamerules.h": "#pragma once\n",
+    "common/game/gamescript.h": '#pragma once\n#include "daedalus/vm.h"\n#include "game/gamerules.h"\n',
+    "common/game/gamescript.cpp": '#include "gamescript.h"\n#include "world/world.h"\n',
+    "common/world/world.h": '#include "game/gamerules.h"\n',
     "common/world/world.cpp": '#include "world.h"\n#include <graphics/mesh.h>\n',
     "common/graphics/mesh.h": "#pragma once\n#include <vector>\n",
     "common/graphics/mesh.cpp": '#include "mesh.h"\n',
@@ -43,10 +45,10 @@ def guard(tmp_path: Path, tree: dict[str, str], rules: Path = RULES) -> subproce
                            "-P", str(GUARD)], capture_output=True, text=True)
 
 
-def test_clean_tree_and_rpg_reaching_the_vm_pass(tmp_path):
+def test_clean_tree_and_gothic_reaching_the_vm_pass(tmp_path):
     result = guard(tmp_path, TREE)
     assert result.returncode == 0, result.stderr
-    assert "2 platform files of 6 files checked, none reach the script VM" in result.stdout
+    assert "2 platform and 3 RPG files of 8 files checked, none reach the script VM" in result.stdout
     stamp = tmp_path / "with space/guard.stamp"
     assert stamp.is_file()
     depfile = (tmp_path / "with space/guard.stamp.d").read_text()
@@ -54,18 +56,32 @@ def test_clean_tree_and_rpg_reaching_the_vm_pass(tmp_path):
     assert "with\\ space/OpenGothic/common/world/world.cpp" in depfile
 
 
-def test_platform_reaching_the_vm_through_rpg_fails_with_the_chain(tmp_path):
+def test_platform_reaching_the_vm_fails_with_the_chain(tmp_path):
     tree = dict(TREE)
-    tree["common/graphics/mesh.cpp"] = '#include "mesh.h"\n// draws the world\n#include "world/world.h"\n'
-    tree["common/graphics/light.cpp"] = '#include "game/gamescript.h"\n'
+    tree["common/graphics/mesh.cpp"] = '#include "mesh.h"\n// draws the script\n#include "game/gamescript.h"\n'
+    tree["common/graphics/light.cpp"] = '#include "daedalus/vm.h"\n'
     result = guard(tmp_path, tree)
     assert result.returncode != 0
     message = " ".join(result.stderr.split())
-    assert "2 of 3 platform files reach the script VM" in message
-    assert ("common/graphics/light.cpp:1 -> common/game/gamescript.h:2 -> common/daedalus/vm.h") in message
-    assert ("common/graphics/mesh.cpp:3 -> common/world/world.h:1 -> common/game/gamescript.h:2"
-            " -> common/daedalus/vm.h") in message
+    assert "2 of 6 platform and RPG files reach the script VM" in message
+    assert "[platform] common/graphics/light.cpp:1 -> common/daedalus/vm.h" in message
+    assert "[platform] common/graphics/mesh.cpp:3 -> common/game/gamescript.h:2 -> common/daedalus/vm.h" in message
+    assert "[rpg]" not in message
     assert "scripts/engine_layers.py" in message
+
+
+def test_rpg_reaching_the_vm_through_a_gothic_header_fails_with_the_chain(tmp_path):
+    tree = dict(TREE)
+    tree["common/world/world.h"] = '#include "game/gamerules.h"\n#include "game/gamescript.h"\n'
+    result = guard(tmp_path, tree)
+    assert result.returncode != 0
+    message = " ".join(result.stderr.split())
+    assert "2 of 5 platform and RPG files reach the script VM" in message
+    assert ("[rpg] common/world/world.cpp:1 -> common/world/world.h:2 -> common/game/gamescript.h:2"
+            " -> common/daedalus/vm.h") in message
+    assert "[rpg] common/world/world.h:2 -> common/game/gamescript.h:2 -> common/daedalus/vm.h" in message
+    assert "[platform]" not in message
+    assert "game/gamerules.h" in message
 
 
 def test_rules_read_by_the_guard_are_layer_rules(tmp_path):

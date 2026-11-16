@@ -65,9 +65,14 @@ void LightGroup::Light::setEnabled(bool e) {
   auto& data = owner->lightSourceDesc[id];
   data.setEnabled(e);
 
+  // a lamp switched back on takes its range again (the lamps of a house, houselamps.h)
   auto& ssbo = owner->lightSourceData[id];
-  ssbo.range = 0;
+  ssbo.range = e ? clampRange(data.currentRange()) : 0;
   owner->markAsDurty(id);
+  }
+
+bool LightGroup::Light::isEnabled() const {
+  return owner!=nullptr && owner->lightSourceDesc[id].isEnabled();
   }
 
 void LightGroup::Light::setRange(float r) {
@@ -193,11 +198,11 @@ LightGroup::Light LightGroup::add(const asset::VLight& vob) {
     lightSourceData[l.id].nearLimit = nearLimit;
     markAsDurtyNoSync(l.id);
     }
-  float jitterCm = 0;
-  if(const auto* flicker = VobLayer::flicker(vob, &jitterCm)) {
+  float jitterCm = 0, swayHz = 0;
+  if(const auto* flicker = VobLayer::flicker(vob, &jitterCm, &swayHz)) {
     // the brightness of a lamp follows its emitter's flame signal (vobs.d "flicker_from")
     std::lock_guard<std::mutex> guard(sync);
-    lightSourceDesc[l.id].setFlicker(*flicker, jitterCm);
+    lightSourceDesc[l.id].setFlicker(*flicker, jitterCm, swayHz);
     animatedLights.insert(l.id);
     }
   if(!vob.cookie.empty()) {

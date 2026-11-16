@@ -857,6 +857,9 @@ void Renderer::drawAmbient(Encoder<CommandBuffer>& cmd, const WorldView& view) {
     cmd.setPipeline(shaders.ambientLightSurf);
     }
   else if(settings.giMethod==GiMethod::Probes && settings.zCloudShadowScale) {
+    if(ContactAo::enabled())
+      cmd.setBinding(3, ssao.ssaoBlur, Sampler::nearest(ClampMode::ClampToEdge)); else
+      cmd.setBinding(3, Resources::fallbackBlack(), Sampler::nearest());
     cmd.setBinding(4, zbuffer,       Sampler::nearest());
     cmd.setBinding(5, gi.hashTable);
     cmd.setBinding(6, gi.probes);

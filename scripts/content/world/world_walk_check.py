@@ -14,7 +14,9 @@ vobs.json replaces the base one, vobs.d layers are applied. The waynet is the ba
 
 What is measured, and how it follows the engine:
 - Collision is the world mesh without water and without materials with disable_collision
-  (OpenGothic/common/physics/dynamicworld.cpp, landMesh). Rays ignore back faces (collisionworld.cpp rayCast), so a
+  (OpenGothic/common/physics/dynamicworld.cpp, landMesh). The world mesh is the draw level 0 mesh of each cell
+  (world_manifest.py), the one the game builds its collision from today; a "collision" mesh of world.json is not
+  read until Д4 of docs/landscape-plan.md. Rays ignore back faces (collisionworld.cpp rayCast), so a
   ray straight down only hits up-facing triangles. Static objects' own collision (C_Object) is not modelled.
 - Waypoint: WayHeights::adjust casts DynamicWorld::landRay straight down from the stored position over 200 m
   (worldHeight); the ground is the highest up-facing hit at or below the stored height. "Starts below the surface":

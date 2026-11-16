@@ -12,7 +12,7 @@
 #include "videodata.h"
 #include "graphics/shaders.h"
 #include "gamemusic.h"
-#include "gothic.h"
+#include "settings.h"
 
 using namespace Tempest;
 
@@ -102,7 +102,7 @@ struct VideoWidget::Context {
       sndCtx[i].reset(new SoundContext(*this,sndDev,uint16_t(aud.sampleRate),aud.channels==1));
       }
 
-    const float volume = Gothic::settingsSoundVolume();
+    const float volume = Settings::soundVolume();
     sndDev.setGlobalVolume(volume);
     for(auto& sound:sndCtx)
       sound->play();
@@ -296,7 +296,7 @@ void VideoWidget::tick() {
 
   try {
     auto read=Resources::loadVideo(filename);
-    if(!read || Gothic::settingsGetI("GAME", "scaleVideos")<0) {
+    if(!read || Settings::getI("GAME", "scaleVideos")<0) {
       stopVideo();
       return;
       }

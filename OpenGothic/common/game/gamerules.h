@@ -1,6 +1,9 @@
 #pragma once
 
 #include "game/aistate.h"
+#include "game/damagetypes.h"
+#include "game/fighttactic.h"
+#include "game/guildtraits.h"
 #include "game/aiouputpipe.h"
 #include "game/scripttypes.h"
 #include "world/records/focusrecord.h"
@@ -15,6 +18,7 @@
 #include <string_view>
 #include <vector>
 
+class Bullet;
 class Item;
 class Npc;
 class Serialize;
@@ -68,9 +72,20 @@ class GameRules {
     virtual const PerDist& percRanges() const = 0;
 
     // Guilds and attitudes.
+    virtual const GuildTraits& guildTraits() const = 0;
     virtual const GuildRecord& guildVal() const = 0;
     virtual Attitude personAttitude(const Npc& a, const Npc& b) const = 0;
     virtual bool isFriendlyFire(const Npc& src, const Npc& dst) const = 0;
+
+    // Damage and native combat tactics.
+    virtual DamageValue damageValue(Npc& src, Npc& other, const Bullet* bullet, bool isSpell, const Damage& spellDamage, CollideMask mask) = 0;
+    virtual float meleeMultiplier(float speedCmS, float typicalCmS, float bladeFraction, float surfaceAngleDeg, size_t targetIndex) = 0;
+    virtual DamageValue damageFall(Npc& npc, float speed) = 0;
+    virtual int32_t vanillaChance(int32_t hitChance, float distance) = 0;
+    virtual Damage rangeDamageValue(Npc& npc) = 0;
+    virtual int32_t damageTypeMask(Npc& npc) = 0;
+    virtual const FightTactic& fightAi(size_t tactic) = 0;
+    virtual float attackFinishDistance() = 0;
 
     // Spells.
     virtual const SpellRecord& spellDesc(int32_t spellId) = 0;

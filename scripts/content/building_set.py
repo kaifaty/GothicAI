@@ -31,7 +31,8 @@ with a staging set as base, it is that set with only these entries replaced.
 each texture belongs to exactly one part, so a shared texture lives in its own asset. Meshes of a
 part (a prop's GLB with its `.convex-parts` and `.fracture` caches and its `.debris.glb`), particle descriptions
 (`particles.d/*.json`) and vob trees (`vobtrees.d/*.json`) come along. A part may be a composed set: the working
-set plus one new part keeps the names of the working set's parts.
+set plus one new part keeps the names of the working set's parts. `--without PART` leaves a part of such a
+composed set behind, so that a new part takes its place.
 
 `enable SET` copies a staging set into the working content `~/.local/share/gothic-ai/content`, which
 the game reads by default; only on the user's word (gate `enable`). A movable table or cupboard GLB
@@ -363,27 +364,45 @@ def pack(records: list[dict], spec: dict, derived_root: Path) -> dict:
     return dict(entries=len(index), replaced=sorted(names), unchanged_entries=len(index) - len(names))
 
 
-def compose(name: str, parts: list[str]) -> dict:
+def entry_maps(entry: dict) -> list[str]:
+    """The files a record of materials.json names: its own maps (a particle texture has only an albedo) and those
+    of its layers - a rock's `fringe`, a meadow's `ground.sward` and `ground.earth`. A record of fields alone
+    (`grass`, `verge`) names none."""
+    ground = entry.get('ground') or {}
+    holders = [entry, entry.get('fringe'), ground.get('sward'), ground.get('earth')]
+    return [holder[channel] for holder in holders if isinstance(holder, dict)
+            for channel in ('albedo', 'normal', 'orm') if channel in holder]
+
+
+def compose(name: str, parts: list[str], without: tuple[str, ...] = ()) -> dict:
     """Join the staging sets `parts` into a new set; a texture or a visual may come from one part only.
 
     A part's meshes (`meshes/meshes.json` and its GLB files, a prop like the barrel) come along with its
     materials. Entries of one part may share files: the barrel's wood and iron use one atlas. A part's
     world chunk edits (`worlds/<WORLD>/chunks/*.glb`, like the harbour stairs) and vob layer files
-    (`worlds/<WORLD>/vobs.d/*.json`, like the harbour's traces of life) come along too; such a part may have no
+    (`worlds/<WORLD>/vobs.d/*.json`, like the harbour's traces of life) and its houses
+    (`worlds/<WORLD>/houses.d/*.json`, OpenGothic/common/graphics/houselights.h) come along too; such a part may have no
     materials at all. Particle descriptions (`particles.d/*.json`) and vob trees (`vobtrees.d/*.json`)
     come along as well; file and effect names must belong to one part only. A part may be a composed set
     itself: `compose working-16 working-15 torch-fire-1` is the working set with one more part, its files byte
-    for byte with their caches, and `composition.json` lists the parts of `working-15` by their own names."""
+    for byte with their caches, and `composition.json` lists the parts of `working-15` by their own names.
+
+    `without` names parts of such a composed set that stay behind: `compose working-20 working-19 market-16`
+    with `without=('market-15',)` is the working set with a new part in the place of an old one."""
     if len(parts) < 2 or len(set(parts)) != len(parts):
         raise ValueError('compose needs two or more distinct parts')
     staging = remaster.data_root() / 'content-staging'
-    indexes, meshes, chunks, particles, trees, owner = {}, {}, {}, {}, {}, {}
+    indexes, meshes, chunks, particles, trees, owner, dropped = {}, {}, {}, {}, {}, {}, {}
+    inner_names = {inner for part in parts if (staging / part / 'composition.json').is_file()
+                   for inner in json.loads((staging / part / 'composition.json').read_text())['parts']}
+    if missing := sorted(set(without) - inner_names):
+        raise ValueError(f'{", ".join(missing)}: no such part in a composed set to leave behind')
     for part in parts:
         material_index = staging / part / 'materials/materials.json'
         indexes[part] = json.loads(material_index.read_text()) if material_index.is_file() else {}
         worlds = staging / part / 'worlds'
         chunks[part] = sorted(f.relative_to(worlds) for f in worlds.rglob('*') if f.is_file() and (
-            f.suffix == '.glb' or f.suffix == '.json' and f.parent.name == 'vobs.d')) if worlds.is_dir() else []
+            f.suffix == '.glb' or f.suffix == '.json' and f.parent.name in ('vobs.d', 'houses.d'))) if worlds.is_dir() else []
         mesh_index = staging / part / 'meshes/meshes.json'
         meshes[part] = json.loads(mesh_index.read_text()) if mesh_index.is_file() else {}
         particle_dir = staging / part / 'particles.d'
@@ -392,6 +411,16 @@ def compose(name: str, parts: list[str]) -> dict:
         trees[part] = sorted(p.name for p in tree_dir.glob('*.json') if p.is_file())
         if not material_index.is_file() and not meshes[part] and not chunks[part] and not particles[part] and not trees[part]:
             raise ValueError(f'{part}: no materials, meshes, world chunks, particle descriptions or vob trees')
+        inner = staging / part / 'composition.json'
+        inner_parts = json.loads(inner.read_text())['parts'] if inner.is_file() else {}
+        for name_out in without:
+            for entry in inner_parts.get(name_out, []):
+                dropped.setdefault(part, {}).setdefault(name_out, []).append(entry)
+                indexes[part].pop(entry, None)
+                meshes[part].pop(entry, None)
+                chunks[part] = [c for c in chunks[part] if f'worlds/{c.as_posix()}' != entry]
+                particles[part] = [f for f in particles[part] if f'particles.d/{f}' != entry]
+                trees[part] = [f for f in trees[part] if f'vobtrees.d/{f}' != entry]
         # the engine finds a visual by name without case
         for key in [*indexes[part], *(f'visual {visual.upper()}' for visual in meshes[part]),
                     *(f'chunk {chunk.as_posix().upper()}' for chunk in chunks[part]),
@@ -428,9 +457,8 @@ def compose(name: str, parts: list[str]) -> dict:
     index, mesh_index = {}, {}
     for part, part_index in indexes.items():
         for texture, entry in part_index.items():
-            for channel in ('albedo', 'normal', 'orm'):
-                if channel in entry:  # a particle texture has only an albedo
-                    take(part, 'materials', Path(entry[channel]))
+            for path in entry_maps(entry):
+                take(part, 'materials', Path(path))
             index[texture] = entry
         for visual, entry in meshes[part].items():
             take(part, 'meshes', Path(entry['glb']))
@@ -464,6 +492,7 @@ def compose(name: str, parts: list[str]) -> dict:
                    + [f'particles.d/{f}' for f in particles[part]] + [f'vobtrees.d/{f}' for f in trees[part]])
         inner = staging / part / 'composition.json'
         entries = json.loads(inner.read_text())['parts'] if inner.is_file() else {part: listing}
+        entries = {inner_part: names for inner_part, names in entries.items() if inner_part not in dropped.get(part, {})}
         if sorted(entry for names in entries.values() for entry in names) != sorted(listing):
             raise ValueError(f'{part}: composition.json does not list what the set holds')
         for inner_part, names in entries.items():
@@ -624,10 +653,12 @@ def main(argv=None) -> int:
     parser.add_argument('command', choices=('prepare', 'build', 'compose', 'enable'))
     parser.add_argument('asset', help='asset, the new set name for compose, or the set to enable')
     parser.add_argument('parts', nargs='*', help='compose: staging sets to join')
+    parser.add_argument('--without', action='append', default=[], metavar='PART',
+                        help='compose: a part of a composed set among the parts that stays behind (a new part takes its place)')
     args = parser.parse_args(argv)
     try:
         if args.command == 'compose':
-            print(json.dumps(compose(args.asset, args.parts), sort_keys=True), flush=True)
+            print(json.dumps(compose(args.asset, args.parts, tuple(args.without)), sort_keys=True), flush=True)
             return 0
         if args.command == 'enable':
             print(json.dumps(enable(args.asset), sort_keys=True, ensure_ascii=False), flush=True)

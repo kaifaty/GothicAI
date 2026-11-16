@@ -112,7 +112,7 @@ struct Fixture {
     }
   WorldData::Data read() const {
     auto data=WorldData::read(world,content/"worlds/TEST");
-    VobLayer::apply(data,world,content/"worlds/TEST");
+    VobLayer::apply(data,world,content/"worlds/TEST",ParticleContent::nameChecker());
     return data;
     }
   };
@@ -153,7 +153,7 @@ void validLayers(const Fixture& f) {
            mesh("own-ghost","VOB_LAYER_TEST_CUBE","none")+
            R"(,{"key":"lamp","kind":"light","position":[1,2,3],"rotation":[[0,0,1],[0,1,0],[-1,0,0]],"range":450,"color":[255,128,0],"color_ani":[[255,128,0],[200,90,10],[240,120,30]],"range_ani":[1,0.85],"ani_fps":12,"cookie":"own_lamp_cookie.tga","source_cm":1.5,"near":12}],"remove":[19],"move":[{"id":7,"position":[11,22,33],"yaw_deg":0}]})");
   textFile(f.layers/"20-move.json",R"({"format":1,"move":[{"id":7,"position":[44,55,66],"rotation":[[0,0,1],[0,1,0],[-1,0,0]]},{"id":43,"position":[10,20,30],"yaw_deg":90}]})");
-  const auto checked=VobLayer::check(f.world,f.layers/"10-add.json",f.content);
+  const auto checked=VobLayer::check(f.world,f.layers/"10-add.json",ParticleContent::nameChecker(),f.content);
   require(checked.errors.empty() && checked.added==3 && checked.removed==1 && checked.moved==1,"offline checker valid layer counts");
   const auto data=f.read();
   require(data.vobs.size()==5 && WorldData::vobCount(data.vobs)==6,"add three roots and remove one base root");
@@ -221,7 +221,7 @@ void rejectedLayers(const Fixture& f) {
     const auto file=f.layers/("10-"+name+".json");
     textFile(file,transaction);
     textFile(f.layers/"20-valid.json","{\"format\":1,\"add\":["+mesh("after-error")+"]}");
-    const auto checked=VobLayer::check(f.world,file,f.content);
+    const auto checked=VobLayer::check(f.world,file,ParticleContent::nameChecker(),f.content);
     require(!checked.errors.empty(),name+": offline validation must reject");
     require(checked.errors.front().find(file.string())!=std::string::npos,name+": error must identify file");
     if(name=="missing-id" || name=="missing-move-id")
@@ -270,7 +270,7 @@ void baseLamps(const Fixture& f) {
   textFile(f.layers/"10-lamp.json",R"({"format":1,"light":[{"id":950,"color":[230,84,15],"near":8}],"remove":[951]})");
   textFile(f.layers/"20-lamp.json",R"({"format":1,"light":[{"id":950,"range":350,"source_cm":9,"offset_cm":[1.5,-2,30]}]})");
   auto data=lampWorld();
-  const auto result=VobLayer::apply(data,f.world,f.content/"worlds/TEST");
+  const auto result=VobLayer::apply(data,f.world,f.content/"worlds/TEST",ParticleContent::nameChecker());
   require(result.errors.empty() && result.lit==2 && result.removed==1 && result.added==0 && result.moved==0,
           "two files edit one base lamp");
   const auto* lamp=dynamic_cast<const asset::VLight*>(find(data,950));
@@ -290,7 +290,7 @@ void baseLamps(const Fixture& f) {
   require(lamp->children.empty() && find(data,951)==nullptr,"a vob under the lamp removed by the same file is gone");
   setenv("OPENGOTHIC_VOB_LAYERS","0",1);
   auto plain=lampWorld();
-  require(VobLayer::apply(plain,f.world,f.content/"worlds/TEST").lit==0 &&
+  require(VobLayer::apply(plain,f.world,f.content/"worlds/TEST",ParticleContent::nameChecker()).lit==0 &&
           WorldData::compare(lampWorld(),plain).empty(),"OPENGOTHIC_VOB_LAYERS=0 leaves the base lamp as it is");
   unsetenv("OPENGOTHIC_VOB_LAYERS");
 
@@ -318,7 +318,7 @@ void baseLamps(const Fixture& f) {
     textFile(file,"{\"format\":1,\"add\":["+mesh("rolled-back")+"],\"light\":["+c.entry+"]}");
     textFile(f.layers/"20-valid.json",R"({"format":1,"light":[{"id":950,"near":4}]})");
     auto rejected=lampWorld();
-    const auto failed=VobLayer::apply(rejected,f.world,f.content/"worlds/TEST");
+    const auto failed=VobLayer::apply(rejected,f.world,f.content/"worlds/TEST",ParticleContent::nameChecker());
     std::string errors;
     for(const auto& error:failed.errors) errors+=error;
     require(failed.errors.size()==1 && errors.find(file.string())!=std::string::npos &&
@@ -340,7 +340,7 @@ void baseVisuals(const Fixture& f) {
   f.clearLayers();
   textFile(f.layers/"10-visual.json",R"({"format":1,"visual":[{"id":31,"visual":"vob_layer_test_cube"}],"light":[{"id":950,"near":8}]})");
   auto data=lampWorld();
-  const auto result=VobLayer::apply(data,f.world,f.content/"worlds/TEST");
+  const auto result=VobLayer::apply(data,f.world,f.content/"worlds/TEST",ParticleContent::nameChecker());
   require(result.errors.empty() && result.swapped==1 && result.lit==1 && result.removed==0 && result.added==0 && result.moved==0,
           "a base mesh vob takes a content model in place");
   const auto* vob=find(data,31);
@@ -362,7 +362,7 @@ void baseVisuals(const Fixture& f) {
     f.clearLayers();
     textFile(f.layers/"10-bad.json","{\"format\":1,\"visual\":["+c.json+"]}");
     auto world=lampWorld();
-    const auto failed=VobLayer::apply(world,f.world,f.content/"worlds/TEST");
+    const auto failed=VobLayer::apply(world,f.world,f.content/"worlds/TEST",ParticleContent::nameChecker());
     require(failed.errors.size()==1 && failed.swapped==0 && failed.errors.front().find(c.id)!=std::string::npos &&
             failed.errors.front().find(c.message)!=std::string::npos,"visual "+c.name+": the file is rejected with the id and the cause");
     require(find(world,31)->visual_name=="BASE.3DS","visual "+c.name+": a rejected file leaves the vob its model");
@@ -370,7 +370,7 @@ void baseVisuals(const Fixture& f) {
   f.clearLayers();
   textFile(f.layers/"10-both.json",R"({"format":1,"visual":[{"id":7,"visual":"VOB_LAYER_TEST_CUBE"}],"remove":[7]})");
   auto world=lampWorld();
-  require(!VobLayer::apply(world,f.world,f.content/"worlds/TEST").errors.empty() && find(world,7)!=nullptr &&
+  require(!VobLayer::apply(world,f.world,f.content/"worlds/TEST",ParticleContent::nameChecker()).errors.empty() && find(world,7)!=nullptr &&
           find(world,7)->visual_name=="BASE.3DS","one file cannot give a vob a model and remove it");
   Tempest::Log::setOutputCallback({});
   }
@@ -383,7 +383,7 @@ void removedReferences(const Fixture& f) {
     const auto operation=move ? R"("move":[{"id":19,"position":[999,0,0],"yaw_deg":0}])" : R"("remove":[19])";
     textFile(file,"{\"format\":1,\"add\":["+mesh("rolled-back")+"],"+operation+"}");
     textFile(f.layers/"20-valid.json","{\"format\":1,\"add\":["+mesh("after-removed-error")+"]}");
-    const auto checked=VobLayer::check(f.world,file,f.content);
+    const auto checked=VobLayer::check(f.world,file,ParticleContent::nameChecker(),f.content);
     require(!checked.errors.empty() && checked.errors.front().find("19")!=std::string::npos &&
             checked.errors.front().find(file.string())!=std::string::npos,"offline checker rejects an already removed id with file and id");
     size_t errors=0;
@@ -408,7 +408,7 @@ void unreadableLayers(const Fixture& f) {
     if(mode==Tempest::Log::Error && std::string_view(line).find(f.layers.string())!=std::string::npos) ++errors;
     });
   VobLayer::Result result;
-  try { result=VobLayer::apply(data,f.world,f.content/"worlds/TEST"); }
+  try { result=VobLayer::apply(data,f.world,f.content/"worlds/TEST",ParticleContent::nameChecker()); }
   catch(...) {
     fs::permissions(f.layers,permissions);
     Tempest::Log::setOutputCallback({});
@@ -459,7 +459,7 @@ void saveBoundPolicy(const Fixture& f) {
       const auto operation=move ? R"("move":[{"id":900,"position":[999,0,0],"yaw_deg":0}])" : R"("remove":[900])";
       textFile(file,"{\"format\":1,\"add\":["+mesh("rolled-back")+"],"+operation+"}");
       textFile(f.layers/"20-valid.json","{\"format\":1,\"add\":["+mesh("after-policy-error")+"]}");
-      const auto result=VobLayer::apply(data,f.world,f.content/"worlds/TEST");
+      const auto result=VobLayer::apply(data,f.world,f.content/"worlds/TEST",ParticleContent::nameChecker());
       require(!result.errors.empty(),className+": remove/move must reject save-bound objects");
       std::string errors;
       for(const auto& error:result.errors) errors+=error;
@@ -724,6 +724,22 @@ void particleMotion() {
     require(std::abs(d.x)<=2.f && std::abs(d.y)<=2.f && std::abs(d.z)<=2.f,"the light trembles within jitter_cm");
     }
   require(lo>=0.8f && hi<=1.2f && hi-lo>0.2f,"the signal swings within 1 +- amount");
+  // the trembling's own frequency ("sway_hz"): at 1.5 Hz the light moves several times less in a frame than at the
+  // signal's 12 Hz, and stays within jitter_cm
+  const auto step=[&](float swayHz) {
+    light.setFlicker(flicker,2.f,swayHz);
+    double sum=0; Tempest::Vec3 last;
+    for(uint64_t t=0;t<5000;t+=17) {
+      light.update(t);
+      const auto d=light.currentPosition()-Tempest::Vec3(10,20,30);
+      require(std::abs(d.x)<=2.f && std::abs(d.y)<=2.f && std::abs(d.z)<=2.f,"the light sways within jitter_cm");
+      if(t>0) sum+=(light.currentPosition()-last).length();
+      last=light.currentPosition();
+      }
+    return sum;
+    };
+  const double fast=step(0.f), slow=step(1.5f);
+  require(slow>0 && slow*4<fast,"sway_hz slows the light's trembling");
   }
 
 // A layer emitter's flame signal ("flicker") and the light that takes it ("flicker_from", "jitter_cm")
@@ -734,7 +750,7 @@ void flameLayer(const Fixture& f, const fs::path& baseRoot) {
   textFile(file,"{\"format\":1,\"add\":["+flame+R"(,{"key":"flame-light","kind":"light","position":[420,110,-3070],"yaw_deg":0,)"
                 R"("range":400,"color":[255,150,60],"flicker_from":"flame","jitter_cm":2}]})");
   Resources::VobTree tree;
-  const auto checked=VobLayer::readTree(tree,baseRoot,file,f.content);
+  const auto checked=VobLayer::readTree(tree,baseRoot,file,ParticleContent::nameChecker(),f.content);
   require(checked.errors.empty() && tree.size()==2,"an emitter with flicker and a light with flicker_from are accepted");
   float jitter=-1;
   const auto* emitterSignal=VobLayer::flicker(*tree[0]);
@@ -753,7 +769,7 @@ void flameLayer(const Fixture& f, const fs::path& baseRoot) {
     textFile(file,"{\"format\":1,\"add\":["+entry+R"(,{"key":"flame-light","kind":"light","position":[0,0,0],"yaw_deg":0,)"
                   R"("range":400,"color":[255,150,60],"flicker_from":"flame"}]})");
     Resources::VobTree rejected;
-    const auto result=VobLayer::readTree(rejected,baseRoot,file,f.content);
+    const auto result=VobLayer::readTree(rejected,baseRoot,file,ParticleContent::nameChecker(),f.content);
     require(!result.errors.empty() && rejected.empty(),"flicker "+reason+": the file is rejected");
     }
   fs::remove_all(file.parent_path());
@@ -763,7 +779,7 @@ void flameLayer(const Fixture& f, const fs::path& baseRoot) {
   textFile(lampLayers/"00-flame.json","{\"format\":1,\"add\":["+flame+"]}");
   textFile(lampLayers/"10-lamp.json",R"({"format":1,"light":[{"id":950,"color":[230,84,15],"flicker_from":"flame","jitter_cm":1.5}]})");
   auto data=lampWorld();
-  const auto relit=VobLayer::apply(data,baseRoot/"worlds/LAMPTEST",f.content/"worlds/LAMPTEST");
+  const auto relit=VobLayer::apply(data,baseRoot/"worlds/LAMPTEST",f.content/"worlds/LAMPTEST",ParticleContent::nameChecker());
   const auto* lamp=dynamic_cast<const asset::VLight*>(find(data,950));
   float lampJitter=-1;
   const auto* lampSignal=lamp!=nullptr ? VobLayer::flicker(*lamp,&lampJitter) : nullptr;
@@ -813,7 +829,7 @@ struct WorldDataContract {
                      R"(,{"key":"slot-light","kind":"light","position":[1,2,3],"rotation":[[0,0,1],[0,1,0],[-1,0,0]],"range":450,"color":[255,128,0],"color_ani":[[255,128,0],[200,90,10]],"range_ani":[1,0.85],"ani_fps":12}]})";
     textFile(file,valid);
     Resources::VobTree checkedTree;
-    const auto checked=VobLayer::readTree(checkedTree,baseRoot,file,fixture.content);
+    const auto checked=VobLayer::readTree(checkedTree,baseRoot,file,ParticleContent::nameChecker(),fixture.content);
     require(checked.errors.empty() && checked.added==4 && checkedTree.size()==4,
             "offline tree validation accepts the shared emitter, mesh and light entries");
     require(subprocess({GOTHIC_CONTENT_CONVERT,"check-vob-tree",baseRoot.string(),file.string(),fixture.content.string()})==0,
@@ -874,11 +890,14 @@ struct WorldDataContract {
       textFile(file,json);
       resources.zenCache.clear();
       checkedTree.clear();
-      const auto rejected=VobLayer::readTree(checkedTree,baseRoot,file,fixture.content);
+      const auto rejected=VobLayer::readTree(checkedTree,baseRoot,file,ParticleContent::nameChecker(),fixture.content);
       require(!rejected.errors.empty() && checkedTree.empty() &&
               rejected.errors.front().find(file.string())!=std::string::npos &&
               rejected.errors.front().find(reason)!=std::string::npos,
               reason+": offline tree validation rejects the complete file with its name and reason");
+      if(reason=="NO_SUCH_PFX")
+        require(subprocess({GOTHIC_CONTENT_CONVERT,"check-vob-tree",baseRoot.string(),file.string(),fixture.content.string()})!=0,
+                "converter tree validation rejects an unknown PFX");
       size_t errors=0;
       std::string logged;
       Tempest::Log::setOutputCallback([&](Tempest::Log::Mode mode,const char* line) {
@@ -919,7 +938,7 @@ struct WorldDataContract {
       resources.automaticBase.path=fixture.base;
       textFile(index,originalIndex);
       textFile(file,"{\"format\":1,\"add\":["+mesh("late-mesh","VOB_LAYER_TEST_CUBE")+"]}");
-      require(VobLayer::check(fixture.world,file,fixture.content).errors.empty(),"offline checker sees the current on-disk mesh registry");
+      require(VobLayer::check(fixture.world,file,ParticleContent::nameChecker(),fixture.content).errors.empty(),"offline checker sees the current on-disk mesh registry");
       size_t errors=0;
       Tempest::Log::setOutputCallback([&](Tempest::Log::Mode mode,const char* line) {
         if(mode==Tempest::Log::Error && std::string_view(line).find(file.filename().string())!=std::string::npos) ++errors;
@@ -1066,7 +1085,7 @@ struct WorldDataContract {
                  emitter("save-sparks","Fire_Sparks.PfX")+
                  R"(,{"key":"save-flies","kind":"emitter","pfx":"FLIES","position":[10,20,30],"rotation":[[0,0,1],[0,1,0],[-1,0,0]]},{"key":"save-light","kind":"light","position":[10,20,30],"yaw_deg":0,"range":400,"color":[255,100,20]}]})");
         const auto baseWorld=Resources::baseDir()/"worlds/NEWWORLD";
-        const auto checked=VobLayer::check(baseWorld,layer,fixture.content);
+        const auto checked=VobLayer::check(baseWorld,layer,ParticleContent::nameChecker(),fixture.content);
         require(checked.errors.empty() && checked.added==6 && checked.lit==1,"offline checker accepts base and custom PFX names in different cases with optional suffix");
         require(subprocess({GOTHIC_CONTENT_CONVERT,"check-vob-layer",baseWorld.string(),layer.string(),fixture.content.string()})==0,
                 "converter CLI resolves emitters from base programs and particles.d");
@@ -1074,11 +1093,13 @@ struct WorldDataContract {
         textFile(invalid,"{\"format\":1,\"move\":[{\"id\":"+std::to_string(moved)+
                  ",\"position\":[999,0,0],\"yaw_deg\":0}],\"add\":["+
                  emitter("rolled-back","FIRE_SMOKE")+","+emitter("missing-pfx","NO_SUCH_PFX")+"]}");
-        const auto rejected=VobLayer::check(baseWorld,invalid,fixture.content);
+        const auto rejected=VobLayer::check(baseWorld,invalid,ParticleContent::nameChecker(),fixture.content);
         require(!rejected.errors.empty() && rejected.errors.front().find("missing-pfx")!=std::string::npos &&
                 rejected.errors.front().find(invalid.string())!=std::string::npos,"unknown PFX error names its file and key");
+        require(subprocess({GOTHIC_CONTENT_CONVERT,"check-vob-layer",baseWorld.string(),invalid.string(),fixture.content.string()})!=0,
+                "converter layer validation rejects an unknown PFX");
         auto data=WorldData::read(baseWorld);
-        const auto applied=VobLayer::apply(data,baseWorld,layer.parent_path().parent_path());
+        const auto applied=VobLayer::apply(data,baseWorld,layer.parent_path().parent_path(),GameHost::inst().particleNameCheck());
         require(applied.errors.size()==1 && applied.added==6 && find(data,moved)->position.x==111,
                 "unknown PFX skips the entire file including its valid emitter and move");
         const auto* relit=dynamic_cast<const asset::VLight*>(find(data,lamp));

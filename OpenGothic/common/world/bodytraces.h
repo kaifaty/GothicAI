@@ -25,7 +25,7 @@ namespace BodyTraces {
     int64_t now          = 0;     // game minutes
     float   heroDistance = 0;     // cm
     bool    missionItems = false; // Inventory::hasMissionItems()
-    bool    dragon       = false; // Gothic II GIL_DRAGON
+    bool    dragon       = false; // guild with the Dragon trait
     bool    immortal     = false; // NpcFlag::IMMORTAL
     bool    storyType    = false; // npctype is one of the main script types
     bool    heroSees     = false; // a ray from the hero's eyes reaches a sight point
@@ -43,8 +43,8 @@ namespace BodyTraces {
     }
 
   // Only a person's body is a trace; a monster's is not evidence.
-  inline bool isTrace(bool enabled, bool dead, bool player, int32_t guild, int32_t separatorHum) {
-    return enabled && dead && !player && guild<separatorHum;
+  inline bool isTrace(bool enabled, bool dead, bool player, bool human) {
+    return enabled && dead && !player && human;
     }
 
   // The three main types as the scripts define them (std::nullopt: no such symbol). No symbol at

@@ -322,6 +322,7 @@ void Pose::setSkeleton(const Skeleton* sk) {
   bowDraw.setSkeleton(skeleton);
   qhand.setSkeleton(skeleton);
   flinch.setSkeleton(skeleton);
+  reach.setSkeleton(skeleton);
   trY          = skeleton==nullptr ? 0.f : skeleton->rootTr.y;
   needToUpdate = true;
   if(lay.size()>0) //TODO
@@ -563,6 +564,7 @@ bool Pose::update(uint64_t tickCount, bool force) {
       std::copy_n(raw,numBones,base);
     else
       needMkSkeleton |= blend.apply(raw,base,numBones,tickCount);
+    needMkSkeleton |= applyHalt(tickCount);
     lastUpdate   = tickCount;
     needToUpdate = needMkSkeleton;
     }
@@ -687,6 +689,7 @@ void Pose::mkSkeleton(const Tempest::Matrix4x4& mt, float ikFloorY) {
   qhand.apply(tr,numBones);
   gaze.apply(tr,numBones);
   flinch.apply(tr,numBones);
+  reach.apply(tr,numBones);
   if(!physical.empty())
     applyRagdollPose();
   else if(physicalReturning)
@@ -1474,6 +1477,40 @@ std::string Pose::animNames() const {
   return s;
   }
 
+void Pose::setHalt(const Animation::Sequence* stand, float weight) {
+  haltSeq = weight>0.f ? stand : nullptr;
+  haltK   = haltSeq!=nullptr ? std::min(weight,1.f) : 0.f;
+  }
+
+bool Pose::applyHalt(uint64_t now) {
+  if(haltSeq==nullptr || haltSeq->data==nullptr || !(haltK>0.f))
+    return false;
+  auto&        d      = *haltSeq->data;
+  const size_t idSize = d.nodeIndex.size();
+  if(d.numFrames==0 || idSize==0 || d.samples.size()<size_t(d.numFrames)*idSize)
+    return false;
+  // the stand plays its own time under the weight: the body breathes
+  const bool  loop = haltSeq->animCls==Animation::Loop;
+  const auto  k    = AnimSample::keys(now,d.fpsRate,loop ? d.loopFrames() : d.numFrames,loop,false);
+  const auto* a    = &d.samples[k.a*idSize];
+  const auto* b    = &d.samples[k.b*idSize];
+  const float w    = haltK*haltK*(3.f-2.f*haltK);
+  for(size_t i=0; i<idSize; ++i) {
+    const size_t idx = d.nodeIndex[i];
+    if(idx>=numBones || hasSamples[idx]!=S_Valid)
+      continue;
+    base[idx] = mix(base[idx],mix(a[i],b[i],k.t),w);
+    }
+  return true;
+  }
+
+bool Pose::updateReach(const Reach::Input& in) {
+  if(!reach.update(in))
+    return false;
+  mkSkeleton(pos);
+  return true;
+  }
+
 bool Pose::updateFlinch(const Flinch::Input& in) {
   if(!flinch.update(in))
     return false;
@@ -1842,9 +1879,11 @@ Vec3 Pose::mkBaseTranslation() {
   auto  b0 = rootNode();
 
   // rootShift: the root of a clip on a curve is that far off the body, which travels on a straight line
-  float dx = b0.at(3,0)-rootShift.x;
+  // (a body that stands pressed into a wall is not carried by the loop under the stand)
+  const float carried = 1.f-haltWeight()*haltWeight()*(3.f-2.f*haltWeight());
+  float dx = b0.at(3,0)-rootShift.x*carried;
   float dy = 0;
-  float dz = b0.at(3,2)-rootShift.z;
+  float dz = b0.at(3,2)-rootShift.z*carried;
 
   if((flag&NoTranslation)==NoTranslation) {
     dy = b0.at(3,1);

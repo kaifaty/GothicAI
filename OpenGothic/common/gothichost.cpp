@@ -1,7 +1,12 @@
 #include "gothic.h"
 
 #include "game/definitions/musicdefinitions.h"
+#include "game/definitions/particlecontent.h"
 #include "gamemusic.h"
+
+bool Gothic::isDialogActive() const {
+  return isDialogActiveFn();
+  }
 
 void Gothic::emitHeroDeed(const HeroDeed& deed) {
   onHeroDeed(deed);
@@ -77,4 +82,8 @@ Tempest::SoundEffect Gothic::loadSound(GameSession& session, const SoundFx& soun
 
 void Gothic::updateListenerPos(GameSession& session, const Camera::ListenerPos& position) {
   session.updateListenerPos(position);
+  }
+
+GameHost::ParticleNameCheck Gothic::particleNameCheck() {
+  return ParticleContent::nameChecker();
   }

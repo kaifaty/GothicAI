@@ -16,6 +16,7 @@
 #include "bowdraw.h"
 #include "quiverhand.h"
 #include "flinch.h"
+#include "reach.h"
 #include "resources.h"
 
 class Skeleton;
@@ -137,6 +138,13 @@ class Pose final {
     bool               updateQuiverHand(const QuiverHand::Input& in);
     Flinch&            flinchIk() { return flinch; }
     bool               updateFlinch(const Flinch::Input& in);
+    Reach&             reachIk() { return reach; }
+    const Reach&       reachIk() const { return reach; }
+    bool               updateReach(const Reach::Input& in);
+    // A body pressed into an obstacle stands (reports/physics/2026-11-15-reach-wall): the pose shown goes over to
+    // `stand` by `weight`, the animation under it plays on and asks its move. nullptr or 0: the animation alone
+    void               setHalt(const Animation::Sequence* stand, float weight);
+    float              haltWeight() const { return haltSeq!=nullptr ? haltK : 0.f; }
     bool               updateLean(const Lean::Input& in);
     // Physical bone frames are world-space, in centimetres, indexed by the same skeleton as tr.
     // Only mapped bones are replaced; their unmapped children retain the animated local relation.
@@ -281,6 +289,7 @@ class Pose final {
       };
     // rootShift from this frame's root; true if it changed
     bool settleRootShift(uint64_t now);
+    bool applyHalt(uint64_t now);
 
     const Animation::Sequence* solveNext(const AnimationSolver& solver, const Layer& lay);
 
@@ -327,6 +336,9 @@ class Pose final {
     BowDraw                         bowDraw;
     QuiverHand                      qhand;
     Flinch                          flinch;
+    Reach                           reach;
+    const Animation::Sequence*      haltSeq = nullptr;
+    float                           haltK   = 0;
 
     std::vector<Tempest::Matrix4x4> physical;
     std::vector<uint8_t>            physicalMask;

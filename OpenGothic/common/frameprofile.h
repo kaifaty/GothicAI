@@ -37,7 +37,10 @@ enum class Zone : size_t {
   // WorldView::updateRtScene: the changed objects into their slots of the ray scene, and in a frame with changes their
   // upload and the TLAS build recorded into it (pass RT-TLAS); new descriptor arrays included. A chunk's landscape
   // BLAS are built at its publication, outside this zone.
-  RtScene, Count
+  RtScene,
+  // WorldLogic outside Npc::tick; scopes enclose whole loops, never an individual NPC.
+  NpcPreTick, NpcSort, NpcPolicy, CollisionZones, InteractiveTick, TriggersTick, NpcTickNear, NpcPerception,
+  Count
   };
 enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, IdenticalBytes,
   PatchCalls, PatchBytes, PatchBlocks, GrowBytes, UploadBytes, DrawCalls, DispatchCalls,

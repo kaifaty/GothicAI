@@ -9,6 +9,7 @@
     python3 scripts/content/world/world_edit.py compare <a.glb> <b.glb> [--full]
     python3 scripts/content/world/world_edit.py build-region <id> [--set <set> --region <WORLD>/<x0>,<z0>,<x1>,<z1>] \\
         [--edit <script> ...] [--materials <materials.json> ...] [--dry-run] [--gui]
+    python3 scripts/content/world/world_edit.py cook <set>/<WORLD> [--converter <content-convert>]
 
 An edit is a Blender script in git with one function, edit(ctx) (world_bpy.Context): harbour_stairs.py,
 roof_holes.py. A chunk's record in data/content/world-edits.jsonl holds its list of edits; build applies the whole
@@ -24,6 +25,12 @@ fails. A passing chunk goes to <staging>/<set>/worlds/<WORLD>/chunks/<x>_<z>.glb
 the base chunk and its SHA-256, the edits with the SHA-256 of their scripts and data, the output's SHA-256. A
 chunk equal to the one already published (same triangles, UV, normals, colours, materials) is left as it is: the
 exact boolean of roof_holes.py orders the cut roof's vertices differently from run to run.
+
+build and build-region publish the set's cooked files with the GLB (world_cook.py, Д3 of docs/landscape-plan.md):
+the set's index chunks.wci is removed before the first GLB is written, content-convert cook-world cooks the set
+folder, and its .wcb beside each GLB, the cloth bundle and last the index are written. --converter (else
+CONTENT_CONVERT, else OpenGothic/build/opengothic/content-convert) names the converter; without one the GLB is still
+published, the set is left uncooked and cook <set>/<WORLD> cooks it later.
 
 The base: --base, else OPENGOTHIC_BASE, else the newest base in ~/.cache/gothic-ai/base/current/. The base and its
 cache are only read. Materials a base world does not have must be keys of the set's materials/materials.json or
@@ -51,6 +58,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import chunk_canon  # noqa: E402
 import chunk_glb  # noqa: E402
+import world_cook  # noqa: E402
 from edit_error import EditError  # noqa: E402,F401
 
 REPO = Path(__file__).resolve().parents[3]
@@ -287,11 +295,11 @@ def cmd_build(a) -> int:
         return 0
 
     target = staging / set_name / 'worlds' / world / 'chunks' / f'{name}.glb'
-    target.parent.mkdir(parents=True, exist_ok=True)
+    publication = publication_of(a, base, staging, set_name, world)
     if target.exists() and not chunk_glb.same_geometry(target, out, full=True):
         print(f'{target}: the same chunk as published, left as it is')
     else:
-        shutil.copyfile(out, target)
+        publication.write(out, target)
         print(f'{target}: published')
 
     meta = json.loads((work / 'meta.json').read_text())
@@ -323,7 +331,27 @@ def cmd_build(a) -> int:
         entries = [entry if e['id'] == a.id else e for e in entries]
     write_registry(registry_path, entries)
     print(f'{a.id}: recorded in {registry_path}')
-    return 0
+    return publication.finish()
+
+
+def publication_of(a, base: Path, staging: Path, set_name: str, world: str) -> world_cook.Publication:
+    """The cooked publication of a set folder (world_cook.py) with the command that cooks it again."""
+    hint = f'python3 {TOOL} cook {set_name}/{world} --base {base} --staging {staging}'
+    return world_cook.Publication(base / 'worlds' / world, staging / set_name / 'worlds' / world,
+                                  world_cook.converter(a.converter), hint)
+
+
+def cmd_cook(a) -> int:
+    set_name, _, world = a.set_world.partition('/')
+    if not set_name or not re.fullmatch(r'[A-Z0-9_]+', world):
+        raise EditError(f'{a.set_world}: expected <set>/<WORLD>')
+    staging = Path(a.staging).expanduser()
+    if not (staging / set_name / 'worlds' / world).is_dir():
+        raise EditError(f'{staging / set_name / "worlds" / world}: no such set folder')
+    publication = publication_of(a, resolve_base(a.base), staging, set_name, world)
+    if publication.convert is None:
+        raise EditError('no content-convert: pass --converter or set CONTENT_CONVERT')
+    return publication.finish()
 
 
 def cmd_check(a) -> int:
@@ -376,6 +404,13 @@ def main(argv=None) -> int:
     for name, default in (('--notes', None), ('--base', None), ('--staging', str(STAGING)),
                           ('--registry', str(REGISTRY)), ('--work', None)):
         r.add_argument(name, default=default)
+    k = sub.add_parser('cook', help="cook a set folder's published chunks with content-convert")
+    k.add_argument('set_world', metavar='<set>/<WORLD>')
+    k.add_argument('--base')
+    k.add_argument('--staging', default=str(STAGING))
+    for p in (b, r, k):
+        p.add_argument('--converter', help="content-convert to cook with ('' for none); else CONTENT_CONVERT, else "
+                                           'OpenGothic/build/opengothic/content-convert')
     r.add_argument('--dry-run', action='store_true', help='build and check in the work folder only')
     r.add_argument('--gui', action='store_true', help='open the joined region in Blender with the underlay')
     m = sub.add_parser('compare', help='are two chunks the same geometry')
@@ -387,7 +422,8 @@ def main(argv=None) -> int:
         if a.command == 'build-region':
             import world_region
             return world_region.cmd_build_region(a)
-        return {'take': cmd_take, 'build': cmd_build, 'check': cmd_check, 'compare': cmd_compare}[a.command](a)
+        return {'take': cmd_take, 'build': cmd_build, 'check': cmd_check, 'compare': cmd_compare,
+                'cook': cmd_cook}[a.command](a)
     except EditError as error:
         print(f'world_edit: {error}', file=sys.stderr)
         return 2

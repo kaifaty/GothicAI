@@ -1,0 +1,197 @@
+# One state of a house (reports/render-features/2026-11-15-night-interiors, step 2): the market house, whose ground
+# floor under the front half is Zuris's shop (houses.d: market-zuris-shop, bedtime 23:00) and the rest the inn
+# (market-inn, bedtime 00:30). Inside and outside at noon, at 22:30 (all awake), 23:20 (the shop asleep, the inn
+# awake), 00:20 (the inn's last minutes), 00:50 and 03:00 (all asleep) and 06:40 (the lamps are back): the lamps
+# inside go out before the bedtime, the lit windows of the house fade with them and never outlive them.
+# Run with OPENGOTHIC_CONTENT=<a folder made by scripts/content/window_glow.py pilot>; with OPENGOTHIC_HOUSES=0 the
+# same shots show the lamps burning round the clock.
+# @timeout 480
+cheat god
+overlay off
+view hide animated morph
+cam lift off
+
+# the shop from its front wall: eye 220 cm inside the facade, 150 cm above the floor
+set time 12 0
+cam look -1530
+goto pos 8632.5 2000 3405.2
+cam world 380 -1497 24.462
+wait 34
+cam hold
+wait 6000
+set time 12 0
+wait 3500
+shot shop-in-1200
+wait 300
+set time 22 30
+wait 3500
+shot shop-in-2230
+wait 300
+set time 23 20
+wait 3500
+shot shop-in-2320
+wait 300
+set time 0 20
+wait 3500
+shot shop-in-0020
+wait 300
+set time 0 50
+wait 3500
+shot shop-in-0050
+wait 300
+set time 3 0
+wait 3500
+shot shop-in-0300
+wait 300
+set time 6 40
+wait 3500
+shot shop-in-0640
+wait 300
+
+# the shop from its back towards the street
+set time 12 0
+cam look -1530
+goto pos 8814.5 2000 3488.1
+cam world 400 -1497 204.462
+wait 34
+cam hold
+wait 6000
+set time 12 0
+wait 3500
+shot shop-back-1200
+wait 300
+set time 22 30
+wait 3500
+shot shop-back-2230
+wait 300
+set time 23 20
+wait 3500
+shot shop-back-2320
+wait 300
+set time 0 20
+wait 3500
+shot shop-back-0020
+wait 300
+set time 0 50
+wait 3500
+shot shop-back-0050
+wait 300
+set time 3 0
+wait 3500
+shot shop-back-0300
+wait 300
+set time 6 40
+wait 3500
+shot shop-back-0640
+wait 300
+
+# the inn's floor above the shop, from its middle towards the hearth at the front wall
+set time 12 0
+cam look -1300
+goto pos 8785.7 2000 3310.2
+cam world 300 -1260 204.462
+wait 34
+cam hold
+wait 6000
+set time 12 0
+wait 3500
+shot inn-room-1200
+wait 300
+set time 22 30
+wait 3500
+shot inn-room-2230
+wait 300
+set time 23 20
+wait 3500
+shot inn-room-2320
+wait 300
+set time 0 20
+wait 3500
+shot inn-room-0020
+wait 300
+set time 0 50
+wait 3500
+shot inn-room-0050
+wait 300
+set time 3 0
+wait 3500
+shot inn-room-0300
+wait 300
+set time 6 40
+wait 3500
+shot inn-room-0640
+wait 300
+
+# the whole front from the square (window-glow.bench)
+set time 12 0
+cam look -1240
+goto pos 9137 2000 3745
+cam world 1650 -1560 24.462
+wait 34
+cam hold
+wait 6000
+set time 12 0
+wait 3500
+shot front-1200
+wait 300
+set time 22 30
+wait 3500
+shot front-2230
+wait 300
+set time 23 20
+wait 3500
+shot front-2320
+wait 300
+set time 0 20
+wait 3500
+shot front-0020
+wait 300
+set time 0 50
+wait 3500
+shot front-0050
+wait 300
+set time 3 0
+wait 3500
+shot front-0300
+wait 300
+set time 6 40
+wait 3500
+shot front-0640
+wait 300
+
+# the shop's openings in the plinth (window-glow.bench, basement-window)
+set time 12 0
+cam look -540.000
+goto pos 8970.000 940.000 4008.000
+cam world 397.271 -500.000 25.016893
+wait 34
+cam hold
+wait 6000
+set time 12 0
+wait 3500
+shot plinth-1200
+wait 300
+set time 22 30
+wait 3500
+shot plinth-2230
+wait 300
+set time 23 20
+wait 3500
+shot plinth-2320
+wait 300
+set time 0 20
+wait 3500
+shot plinth-0020
+wait 300
+set time 0 50
+wait 3500
+shot plinth-0050
+wait 300
+set time 3 0
+wait 3500
+shot plinth-0300
+wait 300
+set time 6 40
+wait 3500
+shot plinth-0640
+wait 300
