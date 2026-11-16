@@ -30,6 +30,9 @@ def main() -> int:
     parser.add_argument('with_ray', type=Path)
     parser.add_argument('out', type=Path)
     parser.add_argument('--font', type=Path, help='a font with Cyrillic for the labels')
+    # other notes glue their own pairs with it (2026-11-16-contact-ambient)
+    parser.add_argument('--labels', nargs=2, default=('без луча', 'с лучом'), metavar=('LEFT', 'RIGHT'))
+    parser.add_argument('--prefix', default='lamp-contact-')
     args = parser.parse_args()
     font_path = args.font or next((Path(f) for f in FONTS if Path(f).exists()), None)
     if font_path is None:
@@ -40,10 +43,10 @@ def main() -> int:
     if not clips:
         sys.exit(f'no clips common to {args.without} and {args.with_ray}')
     with tempfile.TemporaryDirectory() as tmp:
-        off = label('без луча', font, Path(tmp) / 'off.png')
-        on = label('с лучом', font, Path(tmp) / 'on.png')
+        off = label(args.labels[0], font, Path(tmp) / 'off.png')
+        on = label(args.labels[1], font, Path(tmp) / 'on.png')
         for clip in clips:
-            out = args.out / f'lamp-contact-{clip}'
+            out = args.out / f'{args.prefix}{clip}'
             graph = ('[0:v]crop=iw/2:ih[a0];[a0][2:v]overlay=16:16[a];'
                      '[1:v]crop=iw/2:ih[b0];[b0][3:v]overlay=16:16[b];[a][b]hstack=inputs=2:shortest=1[v]')
             subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-i', str(args.without / clip),

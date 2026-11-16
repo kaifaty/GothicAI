@@ -130,6 +130,7 @@ const uint VF_HIZ = 0x1; // the occluder pass (V_HiZ): it draws into the main vi
 const uint VF_TAA = 0x2; // TAA resolves the frame (also with MetalFX temporal)
 const uint VF_SHADOW = 0x8; // a shadow view: the sun's cascades and the virtual shadow map
 const uint VF_LAMP_CONTACT = 0x10; // lamps darken what their shadow map is too coarse for by a screen ray (lighting/lamp_contact.glsl)
+const uint VF_CONTACT_AO = 0x20; // the light of the GI probes takes the short occlusion of ssao.comp (lighting/rt/probe_ambient.frag)
 const uint VF_HAIR_DEBUG = 0x4; // hair pixels show the strand's direction as a colour instead of light (OPENGOTHIC_HAIR_DEBUG=1)
 
 const uint BK_SOLID = 0x1;
