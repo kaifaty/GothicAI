@@ -1,7 +1,9 @@
 """Helpers of the world edit tests (test_world_edit.py, test_world_edit_region.py): synthetic chunks as the
-converter writes them, and the mark of the tests that need Blender."""
+converter writes them, the mark of the tests that need Blender, and a stand-in for content-convert's cook."""
+import hashlib
 import json
 import struct
+import sys
 
 import numpy as np
 import pytest
@@ -68,3 +70,60 @@ def have_blender():
 
 
 blender = pytest.mark.skipif(not have_blender(), reason='no Blender')
+
+
+FAKE_CONVERTER = '''
+import hashlib, json, os, sys
+from pathlib import Path
+command, world = sys.argv[1], Path(sys.argv[2])
+options = dict(zip(sys.argv[3::2], sys.argv[4::2]))
+content, out = Path(options['--content']), Path(options['--out'])
+if os.environ.get('FAKE_CONVERTER_FAIL'):
+    sys.exit('content-convert: ' + os.environ['FAKE_CONVERTER_FAIL'])
+if command == 'verify-cooked-world':
+    sys.exit(0)
+index = hashlib.sha256()
+for entry in json.loads((world / 'world.json').read_text())['chunks']:
+    file = entry if isinstance(entry, str) else \\
+        next(m['file'] for m in entry['meshes'] if m['role'] == 'draw' and m.get('level', 0) == 0)
+    glb = content / file if (content / file).is_file() else world / file
+    data = b'WCB' + hashlib.sha256(glb.read_bytes()).digest()
+    (out / file).with_suffix('.wcb').parent.mkdir(parents=True, exist_ok=True)
+    (out / file).with_suffix('.wcb').write_bytes(data)
+    index.update(data)
+(out / 'cloth.wcl').write_bytes(b'WCL' + index.digest())
+(out / 'chunks.wci').write_bytes(b'WCI' + index.digest())
+'''
+
+
+def fake_converter(folder):
+    """A stand-in for content-convert cook-world/verify-cooked-world with --content and --out: per cell b'WCB' and
+    the SHA-256 of the GLB it reads, the index and cloth bundle b'WCI'/b'WCL' and the SHA-256 of all cells';
+    FAKE_CONVERTER_FAIL=<reason> makes it fail."""
+    path = folder / 'content-convert'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f'#!{sys.executable}\n' + FAKE_CONVERTER)
+    path.chmod(0o755)
+    return path
+
+
+def fake_wcb(glb):
+    return b'WCB' + hashlib.sha256(glb.read_bytes()).digest()
+
+
+def follow_writes(monkeypatch):
+    """[(op, path)] of every write and removal world_cook.py makes, in order."""
+    import world_cook
+    ops = []
+    write, remove = world_cook._write, world_cook._remove
+
+    def logged_write(path, data):
+        ops.append(('write', path))
+        write(path, data)
+
+    def logged_remove(path):
+        ops.append(('remove', path))
+        remove(path)
+    monkeypatch.setattr(world_cook, '_write', logged_write)
+    monkeypatch.setattr(world_cook, '_remove', logged_remove)
+    return ops

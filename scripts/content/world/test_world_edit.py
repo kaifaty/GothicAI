@@ -1,10 +1,14 @@
 """Tests of the world edit tool (world_edit.py, chunk_glb.py, world_bpy.py).
 
 The check runs on synthetic chunks without Blender. The Blender tests build a synthetic world of two chunks and
-apply the test edits of test_edits/; they skip without Blender. The rebuild tests compare the records of
+apply the test edits of test_edits/; they skip without Blender. The publication tests cook with a stand-in for
+content-convert (world_fixtures.fake_converter); one publishes an edit of NEWWORLD of the base with content-convert
+and checks it with verify-cooked-world, and skips without them. The rebuild tests compare the records of
 data/content/world-edits.jsonl with the chunks published on this machine; they skip without the base or the sets.
 """
+import hashlib
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -14,8 +18,16 @@ import pytest
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import chunk_glb  # noqa: E402
+import world_cook  # noqa: E402
 import world_edit  # noqa: E402
-from world_fixtures import MATERIALS, blender, write_glb  # noqa: E402
+from world_fixtures import (  # noqa: E402
+    MATERIALS,
+    blender,
+    fake_converter,
+    fake_wcb,
+    follow_writes,
+    write_glb,
+)
 
 EDITS = HERE / 'test_edits'
 
@@ -206,12 +218,149 @@ def test_canonical_writes_source_triangles_back_exactly(tmp_path):
     assert report.summary['source'] == {'exact': 6, 'other': 0}
 
 
+# --- publication of the cooked files (world_cook.py)
+
+def cooked_world(tmp_path, objects):
+    """world(tmp_path) with its chunks in world.json, as strings or as objects with a list of meshes."""
+    base = world(tmp_path)
+    names = [('0_0', (0, 0)), ('1_0', (1, 0))]
+    chunks = [{'cell': list(xz), 'meshes': [{'file': f'chunks/{n}.glb', 'role': 'draw', 'level': 0},
+                                             {'file': f'chunks/{n}.lod1.glb', 'role': 'draw', 'level': 1},
+                                             {'file': f'chunks/{n}.collision.glb', 'role': 'collision'}]}
+              if objects else f'chunks/{n}.glb' for n, xz in names]
+    (base / 'worlds/TESTWORLD/world.json').write_text(json.dumps({'chunks': chunks, 'materials': MATERIALS}))
+    return base / 'worlds/TESTWORLD', tmp_path / 'staging/test-1/worlds/TESTWORLD'
+
+
+def edited_chunk(tmp_path, lift):
+    pos, ids, tris = grid(0, 2)
+    pos[4] = (100.0, lift, 100.0)
+    out = tmp_path / f'edited-{lift}.glb'
+    write_glb(out, [(0, pos, ids, tris)])
+    return out
+
+
+@pytest.mark.parametrize('objects', [False, True])
+def test_publication_removes_the_index_first_and_writes_it_last(tmp_path, monkeypatch, capsys, objects):
+    base_world, set_world = cooked_world(tmp_path, objects)
+    convert = fake_converter(tmp_path / 'bin')
+    for name, data in (('chunks.wci', b'old index'), ('cloth.wcl', b'old cloth'), ('chunks/0_0.wcb', b'old'),
+                       ('chunks/1_0.wcb', b'no GLB beside it')):
+        (set_world / name).parent.mkdir(parents=True, exist_ok=True)
+        (set_world / name).write_bytes(data)
+    ops = follow_writes(monkeypatch)
+    publication = world_cook.Publication(base_world, set_world, convert, 'cook it')
+    target = set_world / 'chunks/0_0.glb'
+    publication.write(edited_chunk(tmp_path, 5.0), target)
+    assert publication.finish() == 0, capsys.readouterr()
+    assert ops[0] == ('remove', set_world / 'chunks.wci') and ops[1] == ('write', target)
+    assert ops[-1] == ('write', set_world / 'chunks.wci')
+    assert set(ops[2:-1]) == {('write', set_world / 'chunks/0_0.wcb'), ('remove', set_world / 'chunks/1_0.wcb'),
+                              ('write', set_world / 'cloth.wcl')}
+    index = (set_world / 'chunks.wci').read_bytes()
+    assert (set_world / 'chunks/0_0.wcb').read_bytes() == fake_wcb(target)
+    assert index[3:] == hashlib.sha256(fake_wcb(target) + fake_wcb(base_world / 'chunks/1_0.glb')).digest()
+    assert sorted(p.relative_to(set_world).as_posix() for p in set_world.rglob('*')) == \
+        ['chunks', 'chunks.wci', 'chunks/0_0.glb', 'chunks/0_0.wcb', 'cloth.wcl']
+    # publishing the same again changes nothing, the index stays
+    ops.clear()
+    again = world_cook.Publication(base_world, set_world, convert, 'cook it')
+    assert again.finish() == 0 and ops == []
+    assert '.wcb 0 written, 1 left as they were; cloth bundle left; index left' in capsys.readouterr().out
+
+
+def test_without_a_converter_the_glb_is_published_and_no_stale_index_is_left(tmp_path, monkeypatch, capsys):
+    base_world, set_world = cooked_world(tmp_path, False)
+    target = set_world / 'chunks/0_0.glb'
+    first = world_cook.Publication(base_world, set_world, fake_converter(tmp_path / 'bin'), 'cook it')
+    first.write(edited_chunk(tmp_path, 5.0), target)
+    assert first.finish() == 0 and (set_world / 'chunks.wci').exists()
+    ops = follow_writes(monkeypatch)
+    publication = world_cook.Publication(base_world, set_world, None, 'python3 world_edit.py cook test-1/TESTWORLD')
+    publication.write(edited_chunk(tmp_path, 7.0), target)
+    assert publication.finish() == 0
+    assert ops[:2] == [('remove', set_world / 'chunks.wci'), ('write', target)]
+    assert sorted(p.relative_to(set_world).as_posix() for p in set_world.rglob('*')) == ['chunks', 'chunks/0_0.glb']
+    out = capsys.readouterr().out.splitlines()
+    assert out[-1].endswith('not cooked, the game reads its GLBs (no content-convert: pass --converter or set '
+                            'CONTENT_CONVERT); cook it with: python3 world_edit.py cook test-1/TESTWORLD '
+                            '--converter <content-convert>')
+    # cook <set>/<WORLD> cooks it later
+    code = world_edit.main(['cook', 'test-1/TESTWORLD', '--base', str(base_world.parent.parent),
+                            '--staging', str(tmp_path / 'staging'), '--converter', str(tmp_path / 'bin/content-convert')])
+    assert code == 0 and (set_world / 'chunks/0_0.wcb').read_bytes() == fake_wcb(target)
+    # a converter that fails leaves the set without an index
+    monkeypatch.setenv('FAKE_CONVERTER_FAIL', 'broken')
+    failed = world_cook.Publication(base_world, set_world, tmp_path / 'bin/content-convert', 'cook it')
+    failed.write(edited_chunk(tmp_path, 5.0), target)
+    assert failed.finish() == 1 and not (set_world / 'chunks.wci').exists()
+    assert 'not cooked, the game reads its GLBs: cook-world exited 1: content-convert: broken' in capsys.readouterr().out
+
+
+def add_triangle(src, dst):
+    """A real base chunk with one new triangle, as an edit adds one: its corners copy the first triangle's, 1 m up."""
+    import chunk_canon
+    doc, prims = chunk_canon._primitives(src)
+    names = [m['name'] for m in doc['materials']]
+    corners, rows = [], []
+    for m, tris, order, flags, light in prims:
+        rows.append((names.index(m['name']), [[len(corners) + 3 * t + k for k in range(3)] for t in range(len(tris))],
+                     order, flags, light))
+        corners += list(tris.reshape(-1))
+    new = prims[0][1][0].copy()
+    new['pos'][:, 1] += 100
+    new['vid'] = new['fid'] = -1
+    rows.append((rows[0][0], [[len(corners), len(corners) + 1, len(corners) + 2]], None, None, None))
+    corners += list(new)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    chunk_canon._write(dst, doc, doc, np.array(corners, chunk_canon.CORNER), rows)
+
+
+def test_a_published_edit_of_the_base_passes_verify_cooked_world(tmp_path, capsys):
+    convert = world_cook.converter(None)
+    if convert is None:
+        pytest.skip('no content-convert: set CONTENT_CONVERT')
+    try:
+        base = world_edit.resolve_base(None)
+    except world_edit.EditError:
+        pytest.skip('no base')
+    source = base / 'worlds/NEWWORLD'
+    if not (source / 'world.json').is_file():
+        pytest.skip('no NEWWORLD in the base')
+    # a scratch copy of the world: its files as links, the chunks a folder of its own for the base's .wcb
+    world_dir = tmp_path / 'base/worlds/NEWWORLD'
+    for path in source.rglob('*'):
+        if path.is_file() and path.suffix not in ('.wcb', '.wci', '.wcl'):
+            (world_dir / path.relative_to(source)).parent.mkdir(parents=True, exist_ok=True)
+            (world_dir / path.relative_to(source)).symlink_to(path)
+
+    def run(*args):
+        result = subprocess.run([str(convert), *map(str, args)], capture_output=True, text=True, check=False)
+        assert result.returncode == 0, result.stderr
+    run('cook-world', world_dir)        # the base's own cook, beside its GLBs
+    set_world = tmp_path / 'staging/test-1/worlds/NEWWORLD'
+    edited = tmp_path / 'edited.glb'
+    add_triangle(world_dir / 'chunks/1_-1.glb', edited)
+    publication = world_cook.Publication(world_dir, set_world, convert, 'cook it')
+    publication.write(edited, set_world / 'chunks/1_-1.glb')
+    assert publication.finish() == 0, capsys.readouterr()
+    assert sorted(p.name for p in set_world.rglob('*') if p.is_file()) == ['1_-1.glb', '1_-1.wcb', 'chunks.wci',
+                                                                            'cloth.wcl']
+    run('verify-cooked-world', world_dir, '--content', set_world)
+    # a cook of the set in one folder: its unedited cells are the base's own, its edited cell the published one
+    run('cook-world', world_dir, '--content', set_world, '--out', tmp_path / 'all')
+    for wcb in (tmp_path / 'all/chunks').glob('*.wcb'):
+        own = set_world / 'chunks' / wcb.name if wcb.name == '1_-1.wcb' else world_dir / 'chunks' / wcb.name
+        assert wcb.read_bytes() == own.read_bytes(), wcb.name
+    assert (tmp_path / 'all/chunks/1_-1.wcb').read_bytes() != (world_dir / 'chunks/1_-1.wcb').read_bytes()
+
+
 # --- Blender
 
 def build(tmp_path, base, *args, record_id='test-chunk'):
     staging, registry = tmp_path / 'staging', tmp_path / 'world-edits.jsonl'
     argv = ['build', record_id, '--base', str(base), '--staging', str(staging), '--registry', str(registry),
-            '--work', str(tmp_path / 'work'), *args]
+            '--work', str(tmp_path / 'work'), '--converter', '', *args]
     return world_edit.main(argv), staging, registry
 
 
