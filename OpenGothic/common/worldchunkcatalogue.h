@@ -9,8 +9,8 @@
 //
 // The start is taken (startWorldChunks) when all of these hold; otherwise readWorldChunks runs as before, with the
 // same result and one line "[world-catalogue] <file> not used, the world is read and stitched: <reason>":
-//   - the caller asks for it: streaming on, not the built-in benchmark (worldbase.cpp; the path without streaming is
-//     task 9), OPENGOTHIC_WORLD_CATALOGUE is not 0 and OPENGOTHIC_WCB is not 0 (no line for these);
+//   - the caller asks for it (not the built-in benchmark, worldbase.cpp) and none of OPENGOTHIC_STREAMING,
+//     OPENGOTHIC_WORLD_CATALOGUE and OPENGOTHIC_WCB is 0 (no line for these; the path without streaming is task 9);
 //   - the index lies where cookedIndexPath (worldchunkcook.h) puts it without an output directory (no line when it
 //     does not), opens, and names world.json's source world and cells (checkCookedIndex);
 //   - every cell's GLB has the byte length of its index entry, and its .wcb is there;
@@ -60,7 +60,8 @@ class WorldCatalogue {
     size_t                     memoryBytes() const;
 
     // The landscape the old start would have after WorldCloth::extract (readWorldChunks with the bundle's
-    // exclusions), read now: static collision's fallback. Throws std::runtime_error.
+    // exclusions, or the island search when they do not fit the read), read now: static collision's fallback.
+    // Throws std::runtime_error when the read fails, as the old start would at load; a failure is not retried.
     asset::WorldMesh stitchedLandscape() const;
     // Cell i from its GLB against the ids of a stitched read of the set (built once, then kept): the triangles of
     // sources, or without sources those the bundle leaves, in stitched order. Throws std::runtime_error.
@@ -78,9 +79,13 @@ class WorldCatalogue {
     size_t                 totalTriangles = 0;
     mutable std::mutex     sync;
     mutable std::shared_ptr<const Stitched> stitched;
+    mutable std::string    failure; // a stitched read that threw: later fallbacks throw it again without a read
 
-    // A stitched read of the set with the bundle's exclusions taken out; fills stitched when it is empty.
+    // A stitched read of the set with the bundle's exclusions taken out, or the island search's when they do not fit
+    // it (the set changed since the start); fills stitched when it is empty.
     asset::WorldMesh read() const;
+    // read() at most once: a failure is kept and thrown again. Called with sync held.
+    asset::WorldMesh readOnce() const;
 
     friend asset::WorldMesh startWorldChunks(const std::filesystem::path&, const std::filesystem::path&,
                                              const WorldCellManifest&, ChunkTable&, bool);

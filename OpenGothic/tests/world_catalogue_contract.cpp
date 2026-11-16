@@ -11,6 +11,7 @@
 // Needs GOTHIC_DIR and a ready base for NEWWORLD.
 
 #include "commandline.h"
+#include "graphics/landscapestart.h"
 #include "graphics/mesh/submesh/packedmesh.h"
 #include "physics/worldcloth.h"
 #include "physics/worldclothbundle.h"
@@ -25,6 +26,7 @@
 
 #include <Tempest/Log>
 
+#include <algorithm>
 #include <bit>
 #include <chrono>
 #include <cstdio>
@@ -118,33 +120,6 @@ std::unique_ptr<Start> start(const fs::path& dir, const fs::path& over, bool cat
   return s;
   }
 
-// The materials the streaming view decodes, by representative, in their order (graphics/landscapestart.cpp).
-std::vector<uint32_t> decoded(const Start& s) {
-  const auto map=PackedMesh::landscapeMaterialMap(s.landscape);
-  std::vector<uint32_t> ids;
-  if(s.catalogue()!=nullptr) {
-    const auto list=s.catalogue()->landscapeMaterials();
-    ids.assign(list.begin(),list.end());
-    }
-  else
-    ids=s.landscape.polygons.material_indices;
-  std::vector<char> seen(map.size(),0);
-  std::vector<uint32_t> out;
-  for(const auto id:ids)
-    if(!seen[map.at(id)]) {
-      seen[map[id]]=1;
-      out.push_back(map[id]);
-      }
-  return out;
-  }
-
-std::pair<Tempest::Vec3,Tempest::Vec3> bounds(const Start& s) {
-  if(s.catalogue()==nullptr)
-    return PackedMesh::landscapeBbox(s.landscape);
-  const auto [min,max]=s.catalogue()->landscapeBounds();
-  return {{min.x,min.y,min.z},{max.x,max.y,max.z}};
-  }
-
 // Everything the streaming load takes from a start; the stitched start's is expected. Collision goes first, as at
 // load: its fallback leaves the stitched read the cells' fallback reuses.
 void compareStarts(const std::string& label, Start& expected, Start& actual) {
@@ -168,10 +143,11 @@ void compareStarts(const std::string& label, Start& expected, Start& actual) {
     fail("the landscape's name differs");
   if(PackedMesh::landscapeMaterialMap(expected.landscape)!=PackedMesh::landscapeMaterialMap(actual.landscape))
     fail("the packing representatives differ");
-  if(decoded(expected)!=decoded(actual))
+  // What streamingWorldView decodes and the bounds it gives the view (graphics/landscapestart.h).
+  const auto es=landscapeStart(expected.landscape,expected.table), as=landscapeStart(actual.landscape,actual.table);
+  if(es.materials!=as.materials)
     fail("the streaming view decodes other materials or in another order");
-  const auto eb=bounds(expected), ab=bounds(actual);
-  if(!sameBits(eb.first,ab.first) || !sameBits(eb.second,ab.second))
+  if(!sameBits(es.bounds.first,as.bounds.first) || !sameBits(es.bounds.second,as.bounds.second))
     fail("the landscape's bounds differ");
   if(expected.clothBundle!=actual.clothBundle)
     fail("WorldCloth::extract took the bundle on one start only");
@@ -324,7 +300,7 @@ void refusals(const fs::path& root) {
   expectStitched("no index",dir,set,0);
 
   std::tie(dir,set)=copy();
-  for(const auto* flag:{"OPENGOTHIC_WCB","OPENGOTHIC_WORLD_CATALOGUE"}) {
+  for(const auto* flag:{"OPENGOTHIC_WCB","OPENGOTHIC_WORLD_CATALOGUE","OPENGOTHIC_STREAMING"}) {
     setEnv(flag,"0");
     try {
       expectStitched(std::string(flag)+"=0",dir,set,0);
@@ -335,12 +311,6 @@ void refusals(const fs::path& root) {
       }
     setEnv(flag,nullptr);
     }
-  {
-  // Streaming off or the built-in benchmark: the caller does not ask (worldbase.cpp).
-  const auto stitched=start(dir,set,false);
-  require(stitched->catalogue()==nullptr && tagged(stitched->log,"[world-catalogue] ")==0,
-          "a start not asked for must be the stitched one, silently");
-  }
 
   std::tie(dir,set)=copy();
   writeBytes(dir/"chunks/0_0.glb",padJson(fileBytes(dir/"chunks/0_0.glb")));
@@ -399,6 +369,76 @@ void refusals(const fs::path& root) {
           "the cell and the collision must log their fallbacks, logged: "+lines);
   const auto reads=catalogue->table.source->reads();
   require(reads.glb==1 && reads.cooked+1==catalogue->table.entries.size(),"only 0_0 may read its GLB");
+  }
+
+  // After the start the set no longer fits the bundle: 0_0.glb replaced at the index's length by the cell without the
+  // ship flag, its .wcb truncated. The collision fallback runs the island search on its stitched read, as the start
+  // without the bundle does, instead of failing the load; the cell then reads its GLB against that read, no second one.
+  {
+  const auto edited=root/"refusal-changed";
+  writeWorldChunks(world.mesh,clothSource,edited);
+  writeRemovedClothCell(root/"refusal-changed-edit",world);
+  auto original=fileBytes(edited/"chunks/0_0.glb"), changed=fileBytes(root/"refusal-changed-edit/chunks/0_0.glb");
+  require(original.size()%4==0 && changed.size()%4==0,"GLBs are 4-byte aligned");
+  while(original.size()<changed.size())
+    original=padJson(original);
+  while(changed.size()<original.size())
+    changed=padJson(changed);
+  writeBytes(edited/"chunks/0_0.glb",original);
+  cookWorldChunks(edited);
+  writeBytes(edited/"chunks/0_0.glb",changed);
+  bytes=fileBytes(edited/"chunks/0_0.wcb");
+  bytes.pop_back();
+  writeBytes(edited/"chunks/0_0.wcb",bytes);
+  setEnv("OPENGOTHIC_WCB","0");
+  const auto plain=start(edited,{},false);
+  setEnv("OPENGOTHIC_WCB",nullptr);
+  const auto catalogue=start(edited,{},true);
+  require(catalogue->catalogue()!=nullptr,"a GLB changed at the same length is not noticed at the start");
+  LogCapture log;
+  WorldCollisionSource ec(plain->table,plain->clothBundle,plain->landscape);
+  WorldCollisionSource ac(catalogue->table,catalogue->clothBundle,catalogue->landscape);
+  const auto difference=compareWorldMeshes(ec(),ac());
+  require(difference.empty(),"the collision fallback must give the island search's landscape: "+difference);
+  const auto& entries=catalogue->table.entries;
+  const auto cell=size_t(std::find_if(entries.begin(),entries.end(),[](const auto& e) { return e.id==ChunkId{0,0}; })-
+                         entries.begin());
+  (void)catalogue->table.source->readLandscape(cell);
+  const auto lines=log.take();
+  std::printf("a set changed after the start: %s\n",lines.c_str());
+  require(lines.find("does not fit the stitched read, the island search runs")!=std::string::npos &&
+          tagged(lines,"[world-catalogue] ")==2,"one stitched read with the island search must serve both, logged: "+lines);
+  }
+
+  // A stitched read that fails is not repeated: 0_0.glb unreadable at its length and its .wcb truncated; the cell's
+  // second read throws the kept failure even after the GLB is back.
+  {
+  std::tie(dir,set)=copy();
+  bytes=fileBytes(dir/"chunks/0_0.wcb");
+  bytes.pop_back();
+  writeBytes(dir/"chunks/0_0.wcb",bytes);
+  const auto glb=fileBytes(dir/"chunks/0_0.glb");
+  auto broken=glb;
+  broken[0]='X';
+  writeBytes(dir/"chunks/0_0.glb",broken);
+  const auto catalogue=start(dir,set,true);
+  require(catalogue->catalogue()!=nullptr,"a broken GLB of the index's length is not noticed at the start");
+  const auto& entries=catalogue->table.entries;
+  const auto cell=size_t(std::find_if(entries.begin(),entries.end(),[](const auto& e) { return e.id==ChunkId{0,0}; })-
+                         entries.begin());
+  std::string errors[2];
+  for(auto& error:errors) {
+    try {
+      (void)catalogue->table.source->readLandscape(cell);
+      }
+    catch(const std::exception& e) {
+      error=e.what();
+      }
+    writeBytes(dir/"chunks/0_0.glb",glb);
+    }
+  std::printf("a failed stitched read: %s; again: %s\n",errors[0].c_str(),errors[1].c_str());
+  require(errors[0].find("the stitched read of the fallback failed")!=std::string::npos && errors[1]==errors[0],
+          "the second read must throw the kept failure without reading again");
   }
   }
 

@@ -27,7 +27,7 @@ const std::vector<std::shared_ptr<asset::VirtualObject>>* loadVobBundle(std::str
 // Select a complete world against the selected base identity, without opening its ZEN.
 // Failure leaves outputs untouched. With chunks and catalogue the world may take the catalogue
 // start (worldchunkcatalogue.h): the landscape then holds only its materials. loadWorld asks for
-// it with streaming on, outside the built-in benchmark.
+// it outside the built-in benchmark; startWorldChunks refuses it without streaming.
 WorldBaseResult tryWorldData(WorldData::Data& world, asset::WorldMesh& worldMesh,
                             std::string_view name, const std::filesystem::path& dir,
                             const std::filesystem::path& overrideDir,

@@ -46,15 +46,16 @@ asset::WorldMesh WorldCatalogue::read() const {
   const auto started = Clock::now();
   ChunkTable table;
   auto mesh = readWorldChunksGlb(dir,overrideDir,table);
+  std::string mismatch;
   if(table.entries.size()!=bundle.cells())
-    fail("the stitched read has "+std::to_string(table.entries.size())+" cells, the world cloth bundle "+
-         std::to_string(bundle.cells()));
+    mismatch = "the stitched read has "+std::to_string(table.entries.size())+" cells, the world cloth bundle "+
+               std::to_string(bundle.cells());
   // The cells' triangles in stitched order; the bundle's exclusions are taken out of both, as extract does.
   std::vector<std::vector<uint32_t>> lists(table.entries.size());
   std::vector<uint32_t> remaining;
   remaining.reserve(table.triangleChunks.size());
   std::vector<size_t> next(table.entries.size(),0);
-  for(size_t t=0;t<table.triangleChunks.size();++t) {
+  for(size_t t=0;mismatch.empty() && t<table.triangleChunks.size();++t) {
     const auto c = table.triangleChunks[t], ordinal = table.triangleSources[t];
     const auto leave = bundle.exclusions(c);
     // Within a cell, exclusions are ascending; the stitched order is not, so look the ordinal up.
@@ -65,12 +66,19 @@ asset::WorldMesh WorldCatalogue::read() const {
       remaining.push_back(uint32_t(t));
       }
     }
-  for(size_t c=0;c<lists.size();++c)
+  for(size_t c=0;mismatch.empty() && c<lists.size();++c)
     if(next[c]!=bundle.exclusions(c).size() || lists[c].size()!=kept(c))
-      fail("cell "+table.entries[c].file+": the stitched read leaves "+std::to_string(lists[c].size())+
-           " triangles after "+std::to_string(next[c])+" exclusions, the world cloth bundle "+
-           std::to_string(kept(c))+" after "+std::to_string(bundle.exclusions(c).size()));
-  if(remaining.size()!=table.triangleChunks.size())
+      mismatch = "cell "+table.entries[c].file+": the stitched read leaves "+std::to_string(lists[c].size())+
+                 " triangles after "+std::to_string(next[c])+" exclusions, the world cloth bundle "+
+                 std::to_string(kept(c))+" after "+std::to_string(bundle.exclusions(c).size());
+  if(!mismatch.empty()) {
+    // The set changed since the start (a GLB of the same length): the old start would have run the island search.
+    Tempest::Log::e("[world-catalogue] ",clothFile.string()," does not fit the stitched read, the island search runs: ",
+                    mismatch);
+    (void)WorldCloth::searchIslands(mesh,&table);
+    lists = chunkSourceLists(table);
+    }
+  else if(remaining.size()!=table.triangleChunks.size())
     retainWorldTriangles(mesh,remaining,&table);
   if(!stitched) {
     auto s = std::make_shared<Stitched>();
@@ -96,9 +104,21 @@ size_t WorldCatalogue::memoryBytes() const {
   return bytes;
   }
 
+asset::WorldMesh WorldCatalogue::readOnce() const {
+  if(!failure.empty())
+    fail(failure);
+  try {
+    return read();
+    }
+  catch(const std::exception& e) {
+    failure = std::string("the stitched read of the fallback failed: ")+e.what();
+    fail(failure);
+    }
+  }
+
 asset::WorldMesh WorldCatalogue::stitchedLandscape() const {
   std::lock_guard guard(sync);
-  return read();
+  return readOnce();
   }
 
 WorldChunkMesh WorldCatalogue::readGlb(size_t cell, const std::span<const uint32_t>* sources, bool currentFile) const {
@@ -106,7 +126,7 @@ WorldChunkMesh WorldCatalogue::readGlb(size_t cell, const std::span<const uint32
   {
   std::lock_guard guard(sync);
   if(!stitched)
-    (void)read();
+    (void)readOnce();
   s = stitched;
   }
   return s->source->read(cell,sources!=nullptr ? *sources : std::span<const uint32_t>(s->lists.at(cell)),currentFile);
@@ -114,7 +134,9 @@ WorldChunkMesh WorldCatalogue::readGlb(size_t cell, const std::span<const uint32
 
 asset::WorldMesh startWorldChunks(const fs::path& dir, const fs::path& overrideDir, const WorldCellManifest& manifest,
                                   ChunkTable& chunks, bool catalogue) {
-  if(!catalogue || switchedOff("OPENGOTHIC_WORLD_CATALOGUE") || switchedOff("OPENGOTHIC_WCB"))
+  // Without streaming the whole landscape is drawn from the stitched mesh (ChunkResidency::create gives none).
+  if(!catalogue || switchedOff("OPENGOTHIC_STREAMING") || switchedOff("OPENGOTHIC_WORLD_CATALOGUE") ||
+     switchedOff("OPENGOTHIC_WCB"))
     return readWorldChunks(dir,overrideDir,&chunks);
   const auto indexPath = cookedIndexPath(dir,overrideDir);
   std::error_code error;

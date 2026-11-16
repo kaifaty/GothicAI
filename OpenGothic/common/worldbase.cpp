@@ -2,7 +2,6 @@
 
 #include "worldchunkcatalogue.h"
 #include "worldchunksruntime.h"
-#include "world/chunkresidency.h"
 #include "world/voblayer.h"
 #include "loadprobe.h"
 #include "resources.h"
@@ -107,9 +106,9 @@ WorldBaseResult tryWorldData(WorldData::Data& world, asset::WorldMesh& worldMesh
 void loadWorld(WorldData::Data& world, asset::WorldMesh& worldMesh, std::string_view name, ChunkTable* chunks) {
   const auto dir = Resources::worldBaseDir(name);
   const auto ownMeshes = Resources::meshReplacementFiles();
-  // The catalogue start serves the streaming landscape; the whole landscape (OPENGOTHIC_STREAMING=0, the built-in
-  // benchmark) still comes from the stitched mesh (docs/landscape-plan.md, Д3, task 9).
-  const bool catalogue = chunks!=nullptr && ChunkResidency::enabled() && !GameHost::inst().isBenchmarkMode();
+  // The catalogue start serves the streaming landscape; the built-in benchmark's whole landscape still comes from
+  // the stitched mesh (docs/landscape-plan.md, Д3, task 9), as without streaming (startWorldChunks).
+  const bool catalogue = chunks!=nullptr && !GameHost::inst().isBenchmarkMode();
   const auto result = tryWorldData(world,worldMesh,name,dir,Resources::worldOverrideDir(name),Resources::baseArchiveFiles(),
                                    &ownMeshes,chunks,catalogue);
   if(result.replaced) {
