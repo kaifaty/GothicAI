@@ -35,6 +35,7 @@ class SceneGlobals final {
       VF_SHADOW = 0x8,
       VF_LAMP_CONTACT = 0x10,
       VF_CONTACT_AO = 0x20,
+      VF_GRASS_CONTACT = 0x40,
       };
 
     static bool isShadowView(VisCamera v);
@@ -91,6 +92,8 @@ class SceneGlobals final {
     Tempest::Vec3             camPos()    const { return uboGlobalCpu.camPos;    }
     // SceneDesc::grassRing: the field of grass says where its blades end (GrassField); zero without it
     void                      setGrassRing(const Tempest::Vec4& ring) { uboGlobalCpu.grassRing = ring; }
+    // the last frame drew blades: the sun's screen ray over them runs in the next (graphics/grasscontact.h)
+    void                      setGrassDrawn(bool drawn) { grassDrawn = drawn; }
     Tempest::Point            screenRes() const { return uboGlobalCpu.screenRes; }
 
     const Tempest::Matrix4x4  viewProjectLwc() const;
@@ -207,6 +210,7 @@ class SceneGlobals final {
     Frustrum                          frustrum[V_Count];
 
     bool                              zWindEnabled = false;
+    bool                              grassDrawn   = false; // setGrassDrawn
     bool                              legacyWind = true;
     float                             windScale = 1.f;
     uint64_t                          windPeriod = 6000;
