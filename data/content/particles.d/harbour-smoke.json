@@ -4,14 +4,20 @@
   {
    "name": "OWN_HUT_SMOKE_04",
    "base": "LIGHTSMOKE",
+   "flipbook": {
+    "cols": 8,
+    "rows": 8,
+    "frames": 64,
+    "fps": 6
+   },
    "set": {
-    "visName_S": "OWN_HUT_SMOKE.TGA",
+    "visName_S": "OWN_SMOKE_DENSE.TGA",
     "visTexAniFPS": 0.0,
     "visTexAniIsLooping": 0,
     "visAlphaFunc_S": "BLEND",
-    "visTexColorStart_S": "75 72 66",
-    "visTexColorEnd_S": "85 82 76",
-    "visAlphaStart": 104.0,
+    "visTexColorStart_S": "183 176 161",
+    "visTexColorEnd_S": "207 200 185",
+    "visAlphaStart": 55.0,
     "visAlphaEnd": 0.0,
     "visSizeStart_S": "70 70",
     "visSizeEndScale": 5.0,
@@ -39,6 +45,12 @@
   {
    "name": "OWN_HUT_SMOKE_06",
    "base": "OWN_HUT_SMOKE_04",
+   "flipbook": {
+    "cols": 8,
+    "rows": 8,
+    "frames": 64,
+    "fps": 6
+   },
    "set": {
     "shpDim_S": "15 0 10",
     "ppsScaleKeys_S": "1 0.8 1.2 0.7 1 1.3"
