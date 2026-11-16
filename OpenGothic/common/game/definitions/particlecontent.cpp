@@ -107,6 +107,12 @@ void readMotion(const Json& entry, Motion& motion) {
     motion.hdrEdge=number(member(hdr,"edge"),"hdr.edge",0,1,"0..1");
     require(motion.hdrTo>motion.hdrFrom,"hdr.to: must be over hdr.from");
     }
+  if(entry.HasMember("haze")) {
+    const auto& haze=entry["haze"];
+    fields(haze,{"shift","cell"});
+    motion.hazeShift=number(member(haze,"shift"),"haze.shift",0,10,"0..10");
+    motion.hazeCell =number(member(haze,"cell"),"haze.cell",1,200,"1..200");
+    }
   }
 } // namespace
 
@@ -181,7 +187,7 @@ Result load(daedalus::DaedalusVm& vm, const fs::path& contentRoot) {
       decltype(result.flipbooks) pendingFlipbooks;
       decltype(result.motions) pendingMotions;
       for(const auto& entry:effects.GetArray()) {
-        fields(entry,{"name","base","set","flipbook","curl","drag","stretch","minPixels","hdr"});
+        fields(entry,{"name","base","set","flipbook","curl","drag","stretch","minPixels","hdr","haze"});
         const auto name=text(member(entry,"name"));
         require(!name.empty() && std::all_of(name.begin(),name.end(),[](char c) {
           return (c>='A' && c<='Z') || (c>='0' && c<='9') || c=='_';
@@ -238,6 +244,7 @@ Result load(daedalus::DaedalusVm& vm, const fs::path& contentRoot) {
           }
         require(motion.minPixels==0 || pendingFlipbooks.count(name)==0,"minPixels: not with a flipbook");
         require(motion.hdrTo==0 || uppercase(definition->vis_alpha_func_s)=="ADD","hdr: needs visAlphaFunc_S ADD");
+        require(motion.hazeShift==0 || (motion.hdrTo==0 && pendingFlipbooks.count(name)==0),"haze: not with hdr or a flipbook");
         if(!motion.empty()) pendingMotions.emplace(name,motion);
         pending.emplace(name,std::move(definition));
         }

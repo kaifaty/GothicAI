@@ -772,6 +772,18 @@ void WorldView::drawMultiply(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId) 
   pfxGroup.drawMultiply(cmd, fId);
   }
 
+bool WorldView::hasHaze(uint8_t fId) const {
+  return pfxGroup.hasHaze(fId);
+  }
+
+void WorldView::setHazeImage(const Tempest::Texture2d& frame) {
+  sGlobal.sceneHaze = &frame;
+  }
+
+void WorldView::drawHaze(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId) {
+  pfxGroup.drawHaze(cmd, fId);
+  }
+
 void WorldView::drawTranslucent(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId) {
   visuals.drawTranslucent(cmd);
   pfxGroup.drawTranslucent(cmd, fId);

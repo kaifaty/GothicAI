@@ -107,6 +107,10 @@ class WorldView {
     void drawWater      (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawMultiply   (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t frameId);
     void drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t frameId);
+    // the shimmer of hot air (particles.d "haze"): drawn last, over a copy of the frame
+    bool hasHaze        (uint8_t frameId) const;
+    void setHazeImage   (const Tempest::Texture2d& frame);
+    void drawHaze       (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t frameId);
 
     MeshObjects::Mesh   addView      (std::string_view visual, int32_t headTex, int32_t teethTex, int32_t bodyColor);
     MeshObjects::Mesh   addView      (const ProtoMesh* visual, int32_t material = 0);

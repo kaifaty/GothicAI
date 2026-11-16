@@ -47,6 +47,7 @@ SWAY = {'jitter_cm': 2.0, 'sway_hz': 1.0}
 LIGHT_UP = 55.0
 LIGHT_RANGE = 500
 HDR = {'from': 1, 'to': 10, 'edge': 0.06}
+HAZE = {'shift': 3.0, 'cell': 5.0}  # cm: the largest shift of the frame behind the hot air and its noise cell
 
 
 def card(name, texture, size, fps) -> dict:
@@ -80,14 +81,30 @@ def effects() -> dict:
     # own frame), leave the flame's tips fast and slow down, widen and drift; lit by the sun, the sky and the fire
     smoke = {'name': 'OWN_CAMP_SMOKE', 'base': 'LIGHTSMOKE',
              'flipbook': {'cols': 8, 'rows': 8, 'frames': 64, 'fps': 9},
-             'set': {'visName_S': SMOKE, 'visAlphaFunc_S': 'BLEND', 'visAlphaStart': 150.0, 'visAlphaEnd': 0.0,
-                     'visTexColorStart_S': '255 255 255', 'visTexColorEnd_S': '255 255 255',
-                     'visSizeStart_S': '45 45', 'visSizeEndScale': 4.5, 'lspPartAvg': 6000.0, 'lspPartVar': 1200.0,
-                     'ppsValue': 4.0, 'shpType_S': 'CIRCLE', 'shpDim_S': '14 0 14', 'shpOffsetVec_S': '0 0 0',
-                     'dirMode_S': 'DIR', 'velAvg': 0.11, 'velVar': 0.03, 'flyGravity_S': '0 0 0'},
+             # a good fire's smoke is thin: a grey veil, many faint overlapping puffs and no single cloud. Grey and not
+             # white, or the fire below lights it into a pale glowing cotton against the night sky
+             'set': {'visName_S': SMOKE, 'visAlphaFunc_S': 'BLEND', 'visAlphaStart': 46.0, 'visAlphaEnd': 0.0,
+                     'visTexColorStart_S': '128 130 136', 'visTexColorEnd_S': '150 152 158',
+                     'visSizeStart_S': '70 70', 'visSizeEndScale': 3.4, 'lspPartAvg': 5200.0, 'lspPartVar': 1200.0,
+                     'ppsValue': 11.0, 'shpType_S': 'CIRCLE', 'shpDim_S': '18 0 18', 'shpOffsetVec_S': '0 0 0',
+                     'dirMode_S': 'DIR', 'velAvg': 0.12, 'velVar': 0.03, 'flyGravity_S': '0 0 0'},
              'curl': {'strength': 0.7, 'frequency': 0.8, 'speed': 0.25}, 'drag': 0.35}
     return {'format': 1, 'effects': [card('OWN_CAMP_FLAME', TONGUE, CORE, 34), card('OWN_CAMP_FLAME_MID', TONGUE, MID, 38),
-                                     card('OWN_CAMP_FLAME_SIDE', TONGUE, SIDE, 46), licks, sparks, smoke]}
+                                     card('OWN_CAMP_FLAME_SIDE', TONGUE, SIDE, 46), licks, sparks, smoke,
+                                     haze('OWN_CAMP_HAZE', 80, 28, 1900)]}
+
+
+def haze(name, size, spread, life_ms, shift=HAZE['shift'], cell=HAZE['cell']) -> dict:
+    """The shimmer of hot air over a fire (particles.d "haze", reports/render-features/2026-11-16-heat-haze): sprites
+    without a colour that shift the frame behind them. They leave the flames at about 0.9 m/s, widen and fade."""
+    return {'name': name, 'base': 'LIGHTSMOKE', 'haze': {'shift': shift, 'cell': cell},
+            'set': {'visName_S': SMOKE, 'visAlphaFunc_S': 'BLEND', 'visAlphaStart': 255.0, 'visAlphaEnd': 0.0,
+                    'visTexColorStart_S': '255 255 255', 'visTexColorEnd_S': '255 255 255',
+                    'visSizeStart_S': f'{size} {size}', 'visSizeEndScale': 1.5, 'lspPartAvg': float(life_ms),
+                    'lspPartVar': life_ms * 0.2, 'ppsValue': 6.0, 'shpType_S': 'CIRCLE',
+                    'shpDim_S': f'{spread} 0 {spread}', 'shpOffsetVec_S': '0 0 0', 'dirMode_S': 'DIR',
+                    'velAvg': 0.09, 'velVar': 0.02, 'flyGravity_S': '0 0 0', 'visOrientation_S': 'NONE'},
+            'curl': {'strength': 0.5, 'frequency': 0.8, 'speed': 0.25}, 'drag': 0.3}
 
 
 def base_dir(given) -> Path:
@@ -131,7 +148,8 @@ def fire(vob) -> dict:
               ('flame-c', 'OWN_CAMP_FLAME_SIDE', ring(40, 2 * third, BED + SIDE[1] / 2 - 6)),
               ('licks', 'OWN_CAMP_LICKS', origin + [0, BED + 10, 0]),
               ('sparks', 'OWN_CAMP_SPARKS', origin + [0, BED + 50, 0]),
-              ('smoke', 'OWN_CAMP_SMOKE', origin + [0, BED + 115, 0])]
+              ('smoke', 'OWN_CAMP_SMOKE', origin + [0, BED + 85, 0]),
+              ('haze', 'OWN_CAMP_HAZE', origin + [0, BED + 55, 0])]
     return dict(emitters=points, light=origin + [0, LIGHT_UP, 0])
 
 
