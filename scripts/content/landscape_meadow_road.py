@@ -78,7 +78,7 @@ def from_hsy(hue: float, saturation: float, level: float) -> np.ndarray:
 # tint are toned to, as (hue, saturation, luminance). The crust has the hue of the painted earth between the
 # shoulders, the red-brown the road is known by - its crown alone, the lightest and yellowest tenth of the
 # painting, made the road a pale grey-beige (the note, "Куда ушёл цвет"). Its luminance is set by the frames
-EARTH = (30., .64, .130)         # PATH_06: the earth from shoulder to shoulder; the luminance of the crust untinted
+EARTH = (30., .64, .140)         # PATH_06: the earth from shoulder to shoulder; the luminance of the crust untinted
 STRAW = (42.3, .71, .1075)      # PATH_05: its trodden earth
 RUT = (14., .62, .026)          # PATH_06: the bed of a rut, the loose layer under its tint
 PAINTED_GRASS = from_hsy(50.4, .83, .0764)
@@ -90,8 +90,8 @@ BODY, TOP = .86, .96
 # painted ruts' band against the crown - darker, redder), the noise it stands from and is whole at, what the
 # tint's dark beside a rut adds to the noise, the two steps of the noise in 1/16 cm
 STAIN = (.78, .58, .58)
-STAIN_AT = (-.05, .45)
-STAIN_RUT = 1.2
+STAIN_AT = (-.10, .32)
+STAIN_RUT = 4.
 STAIN_STEPS = (4160, 1120)
 SHOULDER_TINT = (.76, 1., .62)  # the shoulders a little greener: the painted ones are the yellow-green of the road
 SHOULDER_AT = (.07, .25)        # from the ribbon's edge: whole between, gone at either end
@@ -408,11 +408,11 @@ def composed(crust: dict, loose: dict, ribbon: dict, metric, knobs: dict, length
     tone = 1 + noise(12800, 0x79) * .08 + noise(2080, 0x7A) * .05 + noise(1920, 0x7B) * .14 + noise(640, 0x7C) * .09
     colour = np.where(is_loose[..., None], layer_at(loose['albedo'], LOOSE_TILE_M, turn_l), layer_at(crust['albedo'], CRUST_TILE_M, turn_c))
     tint = ribbon_at(ribbon['tint'])
-    # the stains: inside the ribbon, denser where the tint is dark beside a rut that has not faded
+    # the stains: inside the ribbon, none in a rut that has not faded (its tint times a stain is a streak of wine)
     inside = np.clip((1 - tint.max(axis=2)) / (1 - BODY), 0, 1)
-    spots = (noise(STAIN_STEPS[0], 0x7D) * .55 + noise(STAIN_STEPS[1], 0x7E) * .45 +
-             np.clip(BODY - tint[..., 1], 0, .3) * k * STAIN_RUT)
-    stain = (smooth(spots, STAIN_AT[0], STAIN_AT[1]) * inside)[..., None]
+    spots = noise(STAIN_STEPS[0], 0x7D) * .55 + noise(STAIN_STEPS[1], 0x7E) * .45
+    rut = np.clip((BODY - tint[..., 1]) * STAIN_RUT, 0, 1) * k
+    stain = (smooth(spots, STAIN_AT[0], STAIN_AT[1]) * inside * (1 - rut))[..., None]
     colour = (colour * (1 + (tint - 1) * (k * np.where(is_loose, 1., CRUST_TINT))[..., None]) *
               (1 + (np.array(STAIN) - 1) * stain) * tone[..., None])
     colour = np.where(mine[..., None], colour, PAINTED_GRASS)
