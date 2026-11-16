@@ -517,7 +517,15 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
     case Material::Solid:
     case Material::AlphaTest:
     case Material::Water:
+      break;
     case Material::Ghost:
+      if(t==DrawCommands::Pfx) {
+        // a haze (particles.d "haze"): the frame shifted, no surface of its own. Blended for the TAA reactive mask:
+        // the colour goes out with alpha 1, the mask with the haze's strength as alpha (main.frag mainGhost)
+        state.setBlendSource  (RenderState::BlendMode::SrcAlpha);
+        state.setBlendDest    (RenderState::BlendMode::OneMinusSrcAlpha);
+        state.setZWriteEnabled(false);
+        }
       break;
     case Material::Transparent:
       state.setBlendSource  (RenderState::BlendMode::SrcAlpha); // premultiply in shader
