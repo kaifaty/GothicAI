@@ -1,6 +1,6 @@
 # The short occlusion over the light of the GI probes (../README.md): what stands on a surface where no direct light
-# comes. The market in the evening shade and in the morning, a table and a cup in the houses, Xardas' tower, the
-# meadow, the forest. Runs of the same shots, all with OPENGOTHIC_RT=1 OPENGOTHIC_LIGHT_FREEZE=1
+# comes. The market in the evening shade and in the morning, a table and a cup in the houses, a room with a bed,
+# the meadow, the forest. Runs of the same shots, all with OPENGOTHIC_RT=1 OPENGOTHIC_LIGHT_FREEZE=1
 # TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen OPENGOTHIC_CONTENT=<the working content>:
 #   without   OPENGOTHIC_GI_CONTACT_AO=0
 #   with      (the default)
@@ -110,7 +110,7 @@ cam at 12600 1520 -4640 12473 1450 -4465
 wait 2500
 shot cup-day-wide
 wait 400
-# 4. Xardas' tower: the hero among the torches
+# 4. Meant as Xardas' tower; `place` after a `goto` lands in a room of the rich house instead: the hero by a bed
 set time 12 0
 place 110 0
 clear 3000
