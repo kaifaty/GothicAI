@@ -2,12 +2,13 @@
 
     blender -b --factory-startup -P fir_views.py -- --glb TREE.glb --out DIR
         [--boughs ATLAS.png] [--boughs-normal N.png] [--bark BARK.png] [--bark-normal N.png]
-        [--views concept,side,close,foot] [--width 936] [--samples 96]
+        [--views concept,side,close,foot,plain_y,plain_x] [--width 936] [--samples 96]
 
 compare.py cannot do this: it has no cutout, aims at the middle of the bounding box and lights like a studio.
 Here the tree stands on a meadow under a noon sun from the upper left, as in the concept, with a 1.8 m figure at
 its foot; the camera of `concept` is 30 m away at eye height, `side` is the same turned a quarter, `close` looks
-at the lower boughs from 3 m, `foot` at the foot of the trunk from 3 m.
+at the lower boughs from 3 m, `foot` at the foot of the trunk from 3 m. `plain_y` and `plain_x` are the two side
+views tree_density.py measures: no ground, no figure, one colour behind the tree, no perspective.
 
 The cards are shaded as the game will shade them: one side drawn twice, both sides with the authored normal (the
 crown's hull), the cutout by the atlas's alpha at one half. Without --boughs the cards are flat olive polygons:
@@ -32,6 +33,7 @@ import tree_glb  # noqa: E402
 
 GRASS = (0.078, 0.066, 0.030)      # the meadow of the scene measurement, #4f472e, as albedo
 SKY = (0.10, 0.19, 0.42)
+PLAIN = (0.55, 0.60, 0.66)         # behind the tree in the plain views: lighter than any needle
 
 
 def image(path: Path, colour: bool):
@@ -125,14 +127,18 @@ def scene(args) -> dict:
     tree = fir.mesh_object(parts, 'tree')
     position = np.concatenate([p['position'] for p in parts])
 
+    around = []
     bpy.ops.mesh.primitive_plane_add(size=600)
     bpy.context.object.data.materials.append(flat('meadow', GRASS))
+    around.append(bpy.context.object)
     # a man 1.8 m tall at the foot of the tree, as in the concept
     dark = flat('figure', (.02, .018, .016))
     bpy.ops.mesh.primitive_cylinder_add(radius=.2, depth=1.55, location=(-1.3, -1.2, .775))
     bpy.context.object.data.materials.append(dark)
+    around.append(bpy.context.object)
     bpy.ops.mesh.primitive_uv_sphere_add(radius=.125, location=(-1.3, -1.2, 1.675))
     bpy.context.object.data.materials.append(dark)
+    around.append(bpy.context.object)
 
     sun = bpy.data.objects.new('sun', bpy.data.lights.new('sun', 'SUN'))
     sun.data.energy, sun.data.angle, sun.data.color = 4.2, math.radians(.6), (1., .95, .86)
@@ -140,9 +146,21 @@ def scene(args) -> dict:
     sc.collection.objects.link(sun)
     world = bpy.data.worlds.new('sky')
     world.use_nodes = True
-    background = world.node_tree.nodes['Background']
+    nodes, links = world.node_tree.nodes, world.node_tree.links
+    background = nodes['Background']
     background.inputs['Color'].default_value = (*SKY, 1)
     background.inputs['Strength'].default_value = 1.
+    # the plain views: the sky still lights the tree, the camera sees one colour
+    plain = nodes.new('ShaderNodeBackground')
+    plain.inputs['Color'].default_value = (*PLAIN, 1)
+    seen = nodes.new('ShaderNodeMixShader')
+    seen.name = 'seen'
+    seen.inputs[0].default_value = 0.
+    links.new(background.outputs[0], seen.inputs[1])
+    links.new(plain.outputs[0], seen.inputs[2])
+    links.new(seen.outputs[0], nodes['World Output'].inputs['Surface'])
+    camera = nodes.new('ShaderNodeLightPath')
+    camera.name = 'camera'
     sc.world = world
 
     sc.render.engine = 'CYCLES'
@@ -163,16 +181,26 @@ def scene(args) -> dict:
             sc.cycles.device = 'GPU'
     except Exception as error:  # no device: the CPU renders the same picture
         print('cycles device:', error)
-    return dict(tree=tree, top=float(position[:, 2].max()),
+    return dict(tree=tree, top=float(position[:, 2].max()), around=around,
                 reach=float(np.hypot(position[:, 0], position[:, 1]).max()))
 
 
-def shot(name: str, place, target, fov_deg: float, size, out: Path) -> None:
+def shot(name: str, place, target, fov_deg: float, size, out: Path, around=(), tall: float = 0.) -> None:
+    """tall: the height in metres of a view without perspective, with nothing round the tree."""
     sc = bpy.context.scene
     data = bpy.data.cameras.new(name)
     data.sensor_fit = 'VERTICAL'
     data.angle = math.radians(fov_deg)
     data.clip_end = 2000
+    if tall:
+        data.type, data.ortho_scale = 'ORTHO', tall
+    for item in around:
+        item.hide_render = bool(tall)
+    world = sc.world.node_tree
+    for link in list(world.nodes['seen'].inputs[0].links):
+        world.links.remove(link)
+    if tall:
+        world.links.new(world.nodes['camera'].outputs['Is Camera Ray'], world.nodes['seen'].inputs[0])
     cam = bpy.data.objects.new(name, data)
     cam.location = place
     cam.rotation_euler = (Vector(target) - Vector(place)).to_track_quat('-Z', 'Y').to_euler()
@@ -205,8 +233,15 @@ def main() -> None:
         side=((30., 1.5, 1.7), (0., -.6, top * .47), 37., tall),
         close=((reach * .55, -(reach * .8 + 3.), 1.7), (reach * .1, -reach * .45, 1.9), 62., wide),
         foot=((2.4, -2.4, 1.6), (0., 0., 1.05), 52., tall))
+    height = math.ceil(top + 1.)
+    square = (round(args.width * 1024 / 936),) * 2
+    plain = dict(plain_y=((0., -60., height / 2), (0., 0., height / 2), 37., square),
+                 plain_x=((60., 0., height / 2), (0., 0., height / 2), 37., square))
     for name in args.views.split(','):
-        shot(name, *views[name], args.out)
+        if name in plain:
+            shot(name, *plain[name], args.out, info['around'], tall=height)
+        else:
+            shot(name, *views[name], args.out, info['around'])
 
 
 if __name__ == '__main__':

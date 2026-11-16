@@ -2,10 +2,12 @@
 
     blender -b --factory-startup -P fir.py -- --out DIR [--config fir.json] [--seed N] [--scale S] [--name NAME]
 
-Writes DIR/NAME.glb, DIR/metrics.json and DIR/NAME.blend (the tree as one object, its cards one-sided). NAME is the
-config's id unless given. The shape is fir_tree.py, the file and its layout tree_glb.py; metrics.json holds the
-generator's numbers and what tree_check.py reads back from the written file: triangles, the bounding box,
-inside_out_parts, the layout of COLOR_0. Exits 1 when the file breaks a rule or the budget of triangles.
+Writes DIR/NAME.glb, DIR/metrics.json, DIR/NAME-density.png and DIR/NAME.blend (the tree as one object, its cards
+one-sided). NAME is the config's id unless given. The shape is fir_tree.py, the file and its layout tree_glb.py;
+metrics.json holds the generator's numbers and what is read back from the written file: by tree_check.py the
+triangles, the bounding box, inside_out_parts and the layout of COLOR_0, by tree_density.py (`density`) how much
+of the background and of the trunk shows through the crown in two side views and the crown's width at the
+ground. Exits 1 when the file breaks a rule, the budget of triangles or a limit of the config's `density`.
 
 The same runs without Blender (python fir.py ...), then no .blend is written.
 """
@@ -22,6 +24,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import fir_tree  # noqa: E402
 import tree_check  # noqa: E402
+import tree_density  # noqa: E402
 import tree_glb  # noqa: E402
 
 try:
@@ -78,8 +81,11 @@ def build(config: dict, out: Path, name: str, seed: int | None = None, scale: fl
         file=glb.name, bytes=glb.stat().st_size, seed=config['seed'] if seed is None else seed,
         triangles=read['triangles_total'], inside_out_parts=read['inside_out_parts'],
         closed_parts=read['closed_parts'], colour_0=read, fails=list(read['fails']))
-    if metrics['triangles'] > config['budget_tris'] * 1.:
+    if metrics['triangles'] > config['budget_tris']:
         metrics['fails'].append(f"{metrics['triangles']} triangles, the budget is {config['budget_tris']}")
+    mask = tree_density.load_mask(HERE / config['atlas']['mask'])
+    metrics['density'] = tree_density.measure(glb, mask, picture=out / f'{name}-density.png')
+    metrics['fails'] += tree_density.rules(metrics['density'], config['density'], scale)
     (out / 'metrics.json').write_text(json.dumps(metrics, indent=1, ensure_ascii=False) + '\n')
     return dict(tree=tree, metrics=metrics, glb=glb)
 
@@ -104,7 +110,7 @@ def main() -> int:
         bpy.ops.wm.save_as_mainfile(filepath=str(args.out / f'{name}.blend'))
     print(json.dumps({k: metrics[k] for k in ('file', 'triangles', 'triangles_by_material', 'height_m',
                                               'crown_width_m', 'trunk_diameter_m', 'root_spread_m', 'branches',
-                                              'cards_total', 'inside_out_parts', 'fails')}, indent=1))
+                                              'cards_total', 'inside_out_parts', 'density', 'fails')}, indent=1))
     return 1 if metrics['fails'] else 0
 
 

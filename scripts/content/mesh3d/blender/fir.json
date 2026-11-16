@@ -7,10 +7,18 @@
     "bark": "OWN_TREE_FIR_BARK",
     "boughs": "OWN_TREE_FIR_BOUGHS"
   },
-  "budget_tris": 30000,
+  "budget_tris": 45000,
   "palette": {
-    "needles_srgb": [33, 40, 23],
-    "bark_srgb": [74, 64, 56]
+    "needles_srgb": [
+      33,
+      40,
+      23
+    ],
+    "bark_srgb": [
+      74,
+      64,
+      56
+    ]
   },
   "trunk": {
     "radius": 0.3,
@@ -30,89 +38,304 @@
     "branch_span": 0.25
   },
   "whorl": {
-    "first": 1.4,
-    "step": [0.5, 0.8],
-    "branches": [6.2, 4.6],
-    "top_step": 0.7,
-    "missing": 0.08,
-    "weak": 0.15
+    "first": 1.3,
+    "step": [
+      0.5,
+      0.75
+    ],
+    "top_step": 0.55,
+    "branches": [
+      6.0,
+      5.0
+    ],
+    "skirt": 3,
+    "between": [
+      2,
+      2,
+      0.85
+    ],
+    "missing": 0.06,
+    "weak": 0.12,
+    "skirt_reach": 4.7
   },
   "branch": {
-    "length": [4.5, 0.5],
-    "profile": 0.58,
-    "radius": [0.012, 0.0065],
+    "length": [
+      4.6,
+      0.45
+    ],
+    "profile": 1.0,
+    "radius": [
+      0.012,
+      0.0065
+    ],
     "tip_radius": 0.004,
     "wood": 1.0,
-    "pitch_low": [-6, -22, 8],
-    "pitch_high": [55, 40, 50],
-    "pitch_rise": [2.5, 2.2, 2.0],
-    "segment": 0.8,
-    "asymmetry": 0.12,
-    "ground": 0.25
+    "pitch_low": [
+      -10,
+      -24,
+      6
+    ],
+    "pitch_high": [
+      55,
+      40,
+      50
+    ],
+    "pitch_rise": [
+      2.5,
+      2.2,
+      2.0
+    ],
+    "segment": 1.0,
+    "asymmetry": 0.1,
+    "ground": 0.25,
+    "round": 3.2
   },
   "stubs": {
     "count": 4,
-    "height": [0.45, 0.95],
-    "length": [0.3, 0.7],
+    "height": [
+      0.45,
+      0.95
+    ],
+    "length": [
+      0.3,
+      0.7
+    ],
     "weight": 0.15
   },
   "cards": {
-    "step": 0.42,
-    "start": 0.3,
-    "curtain": {
-      "from": 0.18,
-      "drop": [0.15, 0.42],
-      "top_hang": 0.35,
-      "long": 0.9,
-      "lean": [0.05, 0.4],
-      "turn_deg": 65,
-      "overlap": 0.6
-    },
-    "slope_deg": [58, 28],
+    "from_m": 0.3,
+    "top": [
+      0.5,
+      0.8
+    ],
     "hull_share": 0.65,
     "ground": 0.03,
-    "fans_from": 0.42,
-    "fan_lift": 0.025
+    "fans_from": 0.45,
+    "fan_lift": 0.025,
+    "fan": {
+      "length": [
+        0.3,
+        0.25
+      ],
+      "limits": [
+        0.5,
+        1.1
+      ],
+      "on": 0.7,
+      "overlap": 0.2,
+      "ridge": 0.9,
+      "most": 3
+    },
+    "bough": {
+      "step": 0.15,
+      "length": [
+        0.5,
+        0.2,
+        0.98
+      ],
+      "bands": [
+        "level",
+        "along",
+        "slant",
+        "out",
+        "slant"
+      ],
+      "roll_deg": {
+        "level": [
+          -12,
+          22
+        ],
+        "slant": [
+          24,
+          58
+        ],
+        "along": [
+          62,
+          98
+        ],
+        "out": [
+          62,
+          98
+        ]
+      },
+      "top_lift": 25,
+      "turn_deg": 35,
+      "ridge": 0.95,
+      "stand_deg": [
+        50,
+        88
+      ]
+    }
+  },
+  "leader_boughs": 8,
+  "inner": {
+    "from": 2.2,
+    "per_m": 26,
+    "length": [
+      0.6,
+      0.95
+    ],
+    "top": 0.75,
+    "pitch_deg": [
+      35,
+      70
+    ],
+    "rise": [
+      0.45,
+      0.8
+    ],
+    "rise_deg": [
+      45,
+      72
+    ],
+    "turn_deg": 30
+  },
+  "density": {
+    "background_max": 0.15,
+    "trunk_open_max": 0.1,
+    "width_m": [
+      9.0,
+      10.0
+    ]
   },
   "atlas": {
     "size": 2048,
     "px_per_m": 700,
     "cells": {
       "fan": {
-        "cell": [0, 0, 1440, 992],
+        "cell": [
+          0,
+          0,
+          1440,
+          992
+        ],
         "spine": true,
-        "sections": [[0.3, 1.0], [0.72, 0.86]]
+        "sections": [
+          [
+            0.3,
+            1.0
+          ],
+          [
+            0.72,
+            0.86
+          ]
+        ]
       },
       "hang_1": {
-        "cell": [0, 1008, 1172, 496],
+        "cell": [
+          0,
+          1008,
+          1172,
+          496
+        ],
         "spine": true,
-        "sections": [[0.22, 0.92], [0.74, 1.0]]
+        "sections": [
+          [
+            0.22,
+            0.92
+          ],
+          [
+            0.74,
+            1.0
+          ]
+        ]
       },
       "hang_2": {
-        "cell": [0, 1520, 1172, 496],
+        "cell": [
+          0,
+          1520,
+          1172,
+          496
+        ],
         "spine": true,
-        "sections": [[0.22, 0.92], [0.74, 1.0]]
+        "sections": [
+          [
+            0.22,
+            0.92
+          ],
+          [
+            0.74,
+            1.0
+          ]
+        ]
       },
       "side": {
-        "cell": [1196, 1008, 812, 540],
+        "cell": [
+          1196,
+          1008,
+          812,
+          540
+        ],
         "spine": false,
-        "sections": [[0.3, 1.0], [0.72, 0.88]]
+        "sections": [
+          [
+            0.3,
+            1.0
+          ],
+          [
+            0.72,
+            0.88
+          ]
+        ]
       },
       "sparse": {
-        "cell": [1196, 1564, 812, 452],
+        "cell": [
+          1196,
+          1564,
+          812,
+          452
+        ],
         "spine": false,
-        "sections": [[0.3, 1.0], [0.72, 0.88]]
+        "sections": [
+          [
+            0.3,
+            1.0
+          ],
+          [
+            0.72,
+            0.88
+          ]
+        ]
       },
       "twig_1": {
-        "cell": [1464, 16, 540, 360],
+        "cell": [
+          1464,
+          16,
+          540,
+          360
+        ],
         "spine": false,
-        "sections": [[0.3, 1.0], [0.72, 0.88]]
+        "sections": [
+          [
+            0.3,
+            1.0
+          ],
+          [
+            0.72,
+            0.88
+          ]
+        ]
       },
       "twig_2": {
-        "cell": [1464, 392, 540, 360],
+        "cell": [
+          1464,
+          392,
+          540,
+          360
+        ],
         "spine": false,
-        "sections": [[0.3, 1.0], [0.72, 0.88]]
+        "sections": [
+          [
+            0.3,
+            1.0
+          ],
+          [
+            0.72,
+            0.88
+          ]
+        ]
       }
-    }
+    },
+    "mask": "fir-boughs-mask.npz"
   }
 }

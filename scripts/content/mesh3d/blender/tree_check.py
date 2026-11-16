@@ -7,8 +7,9 @@ The numbers it prints are the acceptance of the layout (tree_glb.py, engine-plan
 - the colour is four normalised bytes;
 - the trunk (the wood that reaches lowest) has R = G = B = 0 and A = 255;
 - every other piece of wood is a branch: B = 0, one G of its own, R is 0 at the trunk and grows along it;
-- every card has the G of a branch (0 round the leader), one vertex with B = 0, the stem, which lies on that
-  branch's axis, B = 255 at the free edge, and the R of the branch at the stem;
+- every card has the G of a branch (0 on the trunk and round the leader), one vertex with B = 0, the stem, which
+  lies on that branch's axis, B = 255 at the free edge, and the R of the branch at the stem; past 255 branches
+  the phases repeat, and the card's branch is the nearest one of its phase;
 - A grows from the trunk to the crown's outline;
 - every triangle of a card has a twin wound the other way over the same vertices;
 - no closed piece of wood is inside out.
@@ -134,7 +135,7 @@ def check(path: Path) -> dict:
         base = position[mine][r == r.min()].mean(axis=0)
         growth.append(corr(r, np.linalg.norm(position[mine] - base, axis=1)))
         tips.append(int(r.max()))
-        branches[int(g[0])] = axis(position[mine], r)
+        branches.setdefault(int(g[0]), []).append(axis(position[mine], r))
     out['branches'] = dict(count=len(growth), phases=len(branches), mixed_phase=int(mixed), with_b=int(flutter),
                            r_not_0_at_trunk=int(rootless), r_growth_corr_min=round(min(growth), 3),
                            r_growth_corr_mean=round(float(np.mean(growth)), 3),
@@ -143,7 +144,7 @@ def check(path: Path) -> dict:
     rule(flutter == 0, f'{flutter} branches with B above 0')
     rule(rootless == 0, f'{rootless} branches whose R does not start at 0')
     rule(min(growth) >= .9, f'R does not grow along a branch: correlation {min(growth):.3f}')
-    rule(len(branches) == len(growth) or len(growth) > 255, 'two branches share a phase')
+    rule(len(branches) == min(len(growth), 255), 'two branches share a phase while phases are free')
     closed, inside_out = closed_parts(position, wood['index'])
     out['closed_parts'], out['inside_out_parts'] = closed, inside_out
     rule(inside_out == 0, f'{inside_out} closed parts are inside out')
@@ -177,7 +178,7 @@ def check(path: Path) -> dict:
         if g[0] == 0:
             r_error.append(int(colour[stem[0], 0]))
             continue
-        distance, weight = on_axis(position[stem[0]], *branches[int(g[0])])
+        distance, weight = min(on_axis(position[stem[0]], *line) for line in branches[int(g[0])])
         off_axis.append(distance)
         r_error.append(abs(colour[stem[0], 0] - weight))
     count = len(np.unique(label))

@@ -7,7 +7,9 @@
         probe fir-probe-1 --textures WORK [--from working-27]
 
 `textures` reads what mesh3d/blender/fir_boughs.py and fir_bark.py baked (boughs.npz, bark.npz) and writes
-WORK/{boughs,bark}-{albedo,normal,orm}.dds, PNG previews for mesh3d/blender/fir_views.py and textures.json:
+WORK/{boughs,bark}-{albedo,normal,orm}.dds, PNG previews for mesh3d/blender/fir_views.py, boughs-mask.npz (the
+atlas's coverage for mesh3d/blender/tree_density.py; its copy in git is mesh3d/blender/fir-boughs-mask.npz) and
+textures.json:
 
 - albedo is the baked colour times the baked occlusion (the engine's map AO dims only the sky's light, so the
   shade between needles and in the cracks of the bark has to be in the colour), then brought per channel to the
@@ -19,7 +21,7 @@ WORK/{boughs,bark}-{albedo,normal,orm}.dds, PNG previews for mesh3d/blender/fir_
 
 `probe` copies a working set by hard links into ~/.local/share/gothic-ai/remaster/trees-fir/NAME and adds, in
 new files only, the two materials, PROBE spruces built by mesh3d/blender/fir_tree.py (the vob layer has no scale,
-so every size is its own GLB; each is checked by tree_check.py) and the layer
+so every size is its own GLB; each is checked by tree_check.py and tree_density.py) and the layer
 worlds/NEWWORLD/vobs.d/fir-probe.json: meshes without collision beside the original's spruces at the road to
 Onar's farm. `"foliage": {"anchor": "tree"}` of both materials goes to materials/trees_fir/foliage.stub.json:
 the engine's parser accepts only the anchor "line" today and would drop the whole record.
@@ -119,7 +121,12 @@ def textures(args) -> int:
     png(out / 'boughs.png', np.concatenate([pilot.encode(cards.spread_colour(albedo, alpha)),
                                            np.rint(alpha * 255).astype(np.uint8)[..., None]], axis=2))
     png(out / 'boughs-normal.png', np.rint((normal * .5 + .5) * 255).astype(np.uint8))
+    # the coverage mask tree_density.py reads: a quarter of the side, as much of it covered as of the atlas
+    quarter = halved(alpha[..., None], 2)[..., 0]
+    level = np.quantile(quarter, 1 - float((alpha > .5).mean()))
+    np.savez_compressed(out / 'boughs-mask.npz', bits=np.packbits(quarter > level), size=quarter.shape[0])
     report['boughs'] = dict(size=int(alpha.shape[0]), coverage_by_mip=[round(c, 4) for c in coverage],
+                            mask=dict(size=int(quarter.shape[0]), coverage=round(float((quarter > level).mean()), 4)),
                             baked_mean_srgb=srgb(mean), gain=gain.round(3).tolist(),
                             mean_srgb=srgb((albedo * alpha[..., None]).sum(axis=(0, 1), dtype=np.float64)
                                            / alpha.sum(dtype=np.float64)))
@@ -165,6 +172,7 @@ def probe(args) -> int:
     sys.path.insert(0, str(BLENDER))
     import fir_tree
     import tree_check
+    import tree_density
     import tree_glb
     source, output = STAGING / args.source, PROBES / args.set
     if output.exists():
@@ -193,6 +201,7 @@ def probe(args) -> int:
     folder = work / 'meshes' / FOLDER
     folder.mkdir()
     meshes, added, trees = {}, [], []
+    mask = tree_density.load_mask(BLENDER / config['atlas']['mask'])
     for number, (position, yaw, scale, seed) in enumerate(PROBE, 1):
         visual = f'{VISUAL}_{number}'
         tree = fir_tree.build(config, seed, scale)
@@ -203,6 +212,8 @@ def probe(args) -> int:
         fails = list(read['fails'])
         if read['triangles_total'] > config['budget_tris']:
             fails.append(f"{read['triangles_total']} triangles, the budget is {config['budget_tris']}")
+        density = tree_density.measure(glb, mask)
+        fails += tree_density.rules(density, config['density'], scale)
         if fails:
             raise SystemExit(f'{visual}: {fails}')
         meshes[visual] = dict(glb=f'{FOLDER}/{glb.name}')
@@ -210,8 +221,9 @@ def probe(args) -> int:
                           yaw_deg=yaw, collision='none'))
         trees.append(dict(visual=visual, seed=config['seed'] if seed is None else seed, scale=scale, yaw_deg=yaw,
                           position_cm=list(position), triangles=read['triangles_total'],
-                          height_m=tree.metrics['height_m'], crown_width_m=tree.metrics['crown_width_m'],
-                          bytes=glb.stat().st_size))
+                          height_m=tree.metrics['height_m'], crown_width_m=density['crown_width_m'],
+                          background_share=density['background_share'],
+                          trunk_open_length_share=density['trunk_open_length_share'], bytes=glb.stat().st_size))
     rewrite(work / 'meshes/meshes.json', meshes)
     layer = work / 'worlds' / WORLD / 'vobs.d/fir-probe.json'
     layer.write_text(json.dumps(dict(format=1, add=added), indent=1) + '\n')
