@@ -267,6 +267,12 @@ def test_publication_removes_the_index_first_and_writes_it_last(tmp_path, monkey
     again = world_cook.Publication(base_world, set_world, convert, 'cook it')
     assert again.finish() == 0 and ops == []
     assert '.wcb 0 written, 1 left as they were; cloth bundle left; index left' in capsys.readouterr().out
+    # a .wcb of the set that is not the cook's: the index goes before it is rewritten and comes back last
+    (set_world / 'chunks/0_0.wcb').write_bytes(b'changed by hand')
+    assert world_cook.Publication(base_world, set_world, convert, 'cook it').finish() == 0
+    assert ops == [('remove', set_world / 'chunks.wci'), ('write', set_world / 'chunks/0_0.wcb'),
+                   ('write', set_world / 'chunks.wci')]
+    assert (set_world / 'chunks/0_0.wcb').read_bytes() == fake_wcb(target)
 
 
 def test_without_a_converter_the_glb_is_published_and_no_stale_index_is_left(tmp_path, monkeypatch, capsys):
@@ -406,6 +412,22 @@ def test_build_adds_edits_up_and_records_them(tmp_path, capsys):
     code, _, _ = build(tmp_path, base)
     assert code == 0 and out.stat().st_mtime_ns == before
     assert 'left as it is' in capsys.readouterr().out
+
+
+@blender
+def test_build_publishes_the_cooked_files_index_first_and_last(tmp_path, monkeypatch, capsys):
+    base_world, set_world = cooked_world(tmp_path, False)
+    for name in ('chunks.wci', 'chunks/0_0.wcb'):
+        (set_world / name).parent.mkdir(parents=True, exist_ok=True)
+        (set_world / name).write_bytes(b'old')
+    ops = follow_writes(monkeypatch)
+    code, _, _ = build(tmp_path, base_world.parent.parent, '--set', 'test-1', '--chunk', 'TESTWORLD/0_0',
+                       *edit_args('raise_middle'), '--converter', str(fake_converter(tmp_path / 'bin')))
+    assert code == 0, capsys.readouterr()
+    target = set_world / 'chunks/0_0.glb'
+    assert ops[:2] == [('remove', set_world / 'chunks.wci'), ('write', target)]
+    assert ops[-1] == ('write', set_world / 'chunks.wci')
+    assert (set_world / 'chunks/0_0.wcb').read_bytes() == fake_wcb(target)
 
 
 @blender
