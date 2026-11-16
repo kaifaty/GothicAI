@@ -39,8 +39,13 @@ struct Motion {
   float hdrFrom       = 0;
   float hdrTo         = 0;
   float hdrEdge       = 1;
+  // "haze" (main.frag mainHaze): the sprite has no colour of its own and shifts the finished frame behind it by a
+  // rising noise, the shimmer of hot air. hazeShift the largest shift in cm at the sprite's centre and full alpha,
+  // hazeCell the size of a noise cell in cm; hazeShift 0: off
+  float hazeShift     = 0;
+  float hazeCell      = 0;
 
-  bool empty() const { return curlStrength==0 && drag==0 && stretch==0 && minPixels==0 && hdrTo==0; }
+  bool empty() const { return curlStrength==0 && drag==0 && stretch==0 && minPixels==0 && hdrTo==0 && hazeShift==0; }
   };
 
 struct Result {

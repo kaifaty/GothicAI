@@ -81,6 +81,10 @@ void MeshObjects::Mesh::setFatness(float f) {
   }
 
 void MeshObjects::Mesh::setWind(asset::AnimationType m, float intensity) {
+  // a tree's material moves it in the vertex shader (graphics/foliagetree.h): the object is not shifted as a whole too
+  for(size_t i=0;i<subCount;++i)
+    if(!sub[i].isEmpty() && FoliageTree::isTree(sub[i].material().foliage))
+      intensity = 0;
   for(size_t i=0;i<subCount;++i)
     sub[i].setWind(m,intensity);
   }

@@ -30,9 +30,13 @@ ChunkResidency::ChunkResidency(const ChunkTable& table):chunks(table),states(tab
   counters.outside=states.size();
   }
 
-std::unique_ptr<ChunkResidency> ChunkResidency::create(const ChunkTable& table) {
+bool ChunkResidency::enabled() {
   const auto* enabled=std::getenv("OPENGOTHIC_STREAMING");
-  if(enabled!=nullptr && std::strcmp(enabled,"0")==0)
+  return enabled==nullptr || std::strcmp(enabled,"0")!=0;
+  }
+
+std::unique_ptr<ChunkResidency> ChunkResidency::create(const ChunkTable& table) {
+  if(!enabled())
     return nullptr;
   return std::make_unique<ChunkResidency>(table);
   }

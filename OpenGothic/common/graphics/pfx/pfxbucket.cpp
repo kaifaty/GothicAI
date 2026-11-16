@@ -46,7 +46,8 @@ bool PfxBucket::Draw::isEmpty() const {
 
 PfxBucket::PfxBucket(const ParticleFx &decl, PfxObjects& parent, const SceneGlobals& scene, VisualObjects& visual)
   :decl(decl), parent(parent),
-   push{decl.taaReactive(), decl.hdrFrom, decl.hdrTo>decl.hdrFrom ? 1.f/(decl.hdrTo-decl.hdrFrom) : 0.f, decl.hdrEdge},
+   push{decl.hazeShift>0 ? Push{0.f, decl.hazeShift, 1.f/decl.hazeCell, 0.f}
+                         : Push{decl.taaReactive(), decl.hdrFrom, decl.hdrTo>decl.hdrFrom ? 1.f/(decl.hdrTo-decl.hdrFrom) : 0.f, decl.hdrEdge}},
    visual(visual)  {
   uint64_t lt      = decl.maxLifetime();
   uint64_t pps     = uint64_t(std::ceil(decl.maxPps()));
@@ -854,7 +855,7 @@ uint32_t PfxBucket::mkTrailColor(float clA) const {
     color.b = uint8_t(255*clA);
     color.a = uint8_t(255);
     }
-  else if(decl.visMaterial.alpha==Material::AlphaFunc::Transparent) {
+  else if(decl.visMaterial.alpha==Material::AlphaFunc::Transparent || decl.hazeShift>0) {
     color.r = 255;
     color.g = 255;
     color.b = 255;
@@ -918,10 +919,21 @@ void PfxBucket::drawMultiply(Tempest::Encoder<Tempest::CommandBuffer>& cmd, cons
   }
 
 void PfxBucket::drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals& scene, uint8_t fId) {
+  if(decl.hazeShift>0)
+    return; // drawHaze
   for(auto i:{/*Material::Water, */Material::Transparent, Material::AdditiveLight, Material::Ghost}) {
     drawCommon(cmd, scene, item[fId],    SceneGlobals::V_Main, i, false);
     drawCommon(cmd, scene, itemTrl[fId], SceneGlobals::V_Main, i, true);
     }
+  }
+
+bool PfxBucket::hasHaze(uint8_t fId) const {
+  return decl.hazeShift>0 && item[fId].pMain!=nullptr && !item[fId].pfxGpu.isEmpty();
+  }
+
+void PfxBucket::drawHaze(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals& scene, uint8_t fId) {
+  if(decl.hazeShift>0)
+    drawCommon(cmd, scene, item[fId], SceneGlobals::V_Main, Material::Ghost, false);
   }
 
 void PfxBucket::drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals& scene, const Draw& itm,
@@ -973,7 +985,8 @@ void PfxBucket::drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const 
     }
 
   if(view==SceneGlobals::V_Main && mat.isSceneInfoRequired()) {
-    cmd.setBinding(L_SceneClr, *scene.sceneColor, Sampler::bilinear(ClampMode::MirroredRepeat));
+    // a haze shifts the finished frame (the copy made before its pass), a ghost the opaque scene
+    cmd.setBinding(L_SceneClr, decl.hazeShift>0 ? *scene.sceneHaze : *scene.sceneColor, Sampler::bilinear(ClampMode::MirroredRepeat));
     cmd.setBinding(L_GDepth,   *scene.sceneDepth, Sampler::nearest (ClampMode::MirroredRepeat));
     }
 
@@ -990,7 +1003,7 @@ void PfxBucket::drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const 
 
   cmd.setBinding(L_Scene, scene.uboGlobal[view]);
   cmd.setBinding(L_Pfx,   itm.pfxGpu);
-  if(view==SceneGlobals::V_Main && (mat.alpha==Material::Transparent || mat.alpha==Material::AdditiveLight)) {
+  if(view==SceneGlobals::V_Main && (mat.alpha==Material::Transparent || mat.alpha==Material::AdditiveLight || mat.alpha==Material::Ghost)) {
     // the weight of the TAA reactive mask (graphics plan 1v), the "hdr" of an additive effect (main.frag PushPfx)
     cmd.setPushData(push);
     }

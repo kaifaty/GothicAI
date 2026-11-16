@@ -535,16 +535,19 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
   textFile(directory/"40-motion.json",R"({"format":1,"effects":[
     {"name":"OWN_TEST_SPARKS","base":"FIRE_SPARKS","set":{"visOrientation_S":"VELO","visAlphaFunc_S":"ADD"},"curl":{"strength":1.5,"frequency":4,"speed":0.3},"drag":2,"stretch":0.025,"minPixels":1.5,"hdr":{"from":1,"to":9,"edge":0.25}},
     {"name":"OWN_TEST_SPARKS_CHILD","base":"OWN_TEST_SPARKS","set":{},"drag":3}]})");
+  textFile(directory/"50-haze.json",R"({"format":1,"effects":[
+    {"name":"OWN_TEST_HAZE","base":"FIRE_SMOKE","set":{"visAlphaFunc_S":"BLEND"},"haze":{"shift":3,"cell":5}}]})");
   auto vm=ParticleContent::openProgram(baseRoot);
   const auto original=ParticleContent::base(*vm,"FIRE_SMOKE");
   require(original!=nullptr,"base FIRE_SMOKE definition");
   const auto loaded=ParticleContent::load(*vm,f.content);
-  require(loaded.errors.empty() && loaded.effects.size()==8,"own definitions load in filename and declaration order");
+  require(loaded.errors.empty() && loaded.effects.size()==9,"own definitions load in filename and declaration order");
   const auto& sparks=loaded.motions.at("OWN_TEST_SPARKS_CHILD");
   require(sparks.curlStrength==1.5f && sparks.curlFrequency==4.f && sparks.curlSpeed==0.3f && sparks.drag==3.f &&
           sparks.stretch==0.025f && sparks.minPixels==1.5f && loaded.motions.at("OWN_TEST_SPARKS").drag==2.f &&
           sparks.hdrFrom==1.f && sparks.hdrTo==9.f && sparks.hdrEdge==0.25f,
           "curl, drag, stretch, minPixels and hdr are read and inherited field by field from an own base");
+  require(loaded.motions.at("OWN_TEST_HAZE").hazeShift==3.f && loaded.motions.at("OWN_TEST_HAZE").hazeCell==5.f,"haze is read");
   require(loaded.motions.count("OWN_TEST_SMOKE")==0 && loaded.motions.count("OWN_TEST_FLIP")==0,"effects without them have no motion");
   const auto flip=loaded.flipbooks.find("OWN_TEST_FLIP");
   require(flip!=loaded.flipbooks.end() && flip->second.cols==8 && flip->second.rows==4 && flip->second.frames==30 &&
@@ -584,7 +587,10 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
     {"min-pixels-flipbook",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"minPixels":1.5,"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24}})"},
     {"hdr-blend",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{"visAlphaFunc_S":"BLEND"},"hdr":{"from":1,"to":9,"edge":0.25}})"},
     {"hdr-range",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{"visAlphaFunc_S":"ADD"},"hdr":{"from":4,"to":4,"edge":0.25}})"},
-    {"hdr-field",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{"visAlphaFunc_S":"ADD"},"hdr":{"from":1,"to":9}})"}
+    {"hdr-field",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{"visAlphaFunc_S":"ADD"},"hdr":{"from":1,"to":9}})"},
+    {"haze-field",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"haze":{"shift":3}})"},
+    {"haze-range",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"haze":{"shift":30,"cell":5}})"},
+    {"haze-flipbook",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"haze":{"shift":3,"cell":5},"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24}})"}
     };
   const auto errorsRoot=f.root/"particle-errors";
   for(const auto& [kind,entry]:invalid) {
@@ -633,6 +639,10 @@ void runtimeParticles(Gothic& gothic, const Fixture& f, const fs::path& baseRoot
           std::abs(sparks->stretchMs-25.f)<1e-4f && sparks->minPixels==1.5f &&
           sparks->hdrFrom==1.f && sparks->hdrTo==9.f && sparks->hdrEdge==0.25f &&
           sparks->visOrientation==ParticleFx::Orientation::Velocity,"own motion and hdr reach the native effect in cm and ms");
+  const auto* haze=gothic.loadParticleFx("OWN_TEST_HAZE");
+  require(haze && haze->hazeShift==3.f && haze->hazeCell==5.f && haze->visMaterial.alpha==Material::Ghost,
+          "a haze reaches the native effect as a ghost material");
+  require(custom->hazeShift==0 && custom->visMaterial.alpha!=Material::Ghost,"effects without a haze keep their material");
   require(!custom->motion.active() && custom->stretchMs==0 && custom->minPixels==0 && custom->hdrTo==0 &&
           custom->hdrEdge==1.f && !original->motion.active(),"base effects and effects without own motion keep the native path");
   }

@@ -1,6 +1,7 @@
 #include "worldclothbundle.h"
 
 #include "gothicglb.h"
+#include "worldchunkcatalogue.h"
 #include "worldchunkcook.h"
 #include "worldchunkcookedsource.h"
 #include "worldchunksruntime.h"
@@ -22,6 +23,8 @@ static_assert(sizeof(wcl::Surface)==32 && offsetof(wcl::Surface,visual)==12 && o
 static_assert(sizeof(wcl::Mesh)==56 && offsetof(wcl::Mesh,vertices)==24 && offsetof(wcl::Mesh,features)==32 &&
               offsetof(wcl::Mesh,triangles)==40 && offsetof(wcl::Mesh,materials)==48);
 static_assert(sizeof(wcl::Vertex)==12 && sizeof(wcl::Range)==8);
+static_assert(sizeof(wcl::Cell)==40 && offsetof(wcl::Cell,triangles)==8 && offsetof(wcl::Cell,min)==16 &&
+              offsetof(wcl::Cell,max)==28);
 static_assert(sizeof(wcl::Feature)==24 && offsetof(wcl::Feature,light)==8 && offsetof(wcl::Feature,nx)==12);
 static_assert(sizeof(wcl::Triangle)==36 && offsetof(wcl::Triangle,material)==24 && offsetof(wcl::Triangle,lightmap)==28 &&
               offsetof(wcl::Triangle,flags)==32 && offsetof(wcl::Triangle,sector)==34);
@@ -31,7 +34,7 @@ constexpr char what[]   = "cloth bundle";
 
 enum Section : uint32_t {
   Surfaces=1, Meshes=2, Pins=3, Vertices=4, Features=5, Triangles=6, Materials=7, Cells=8, Exclusions=9, Strings=10,
-  SectionEnd=11
+  LandscapeMaterials=11, SectionEnd=12
   };
 
 constexpr wcb::SectionSpec specs[] = {
@@ -42,9 +45,10 @@ constexpr wcb::SectionSpec specs[] = {
   {"features",sizeof(wcl::Feature)},
   {"triangles",sizeof(wcl::Triangle)},
   {"materials",sizeof(wcb::Material)},
-  {"cells",sizeof(wcl::Range)},
+  {"cells",sizeof(wcl::Cell)},
   {"exclusions",4},
   {"strings",1},
+  {"landscape materials",4},
   };
 static_assert(std::size(specs)==SectionEnd-1);
 
@@ -174,8 +178,13 @@ std::vector<uint8_t> encodeClothBundle(const ClothBundleData& data) {
   w.u32(0);
   w.u64(wcl::HeaderSize);
   w.u64(0);
+  for(const auto* v:{&h.landscapeMin,&h.landscapeMax})
+    for(unsigned axis=0;axis<3;++axis)
+      w.f32((*v)[axis]);
   if(w.out.size()!=wcl::HeaderSize)
     fail("header layout");
+  if(data.cells.size()!=data.exclusions.size())
+    fail(std::to_string(data.cells.size())+" cell records for "+std::to_string(data.exclusions.size())+" cells");
 
   w.directory(SectionEnd-1);
   std::string strings;
@@ -258,12 +267,18 @@ std::vector<uint8_t> encodeClothBundle(const ClothBundleData& data) {
       for(const auto& material:m->materials)
         w.material(wcb::None,material,strings);
     });
-  w.section(Cells,sizeof(wcl::Range),data.exclusions.size(),"cells",[&] {
+  w.section(Cells,sizeof(wcl::Cell),data.exclusions.size(),"cells",[&] {
     uint32_t first = 0;
-    for(const auto& cell:data.exclusions) {
+    for(size_t c=0;c<data.exclusions.size();++c) {
+      const auto& cell = data.exclusions[c];
       w.u32(first);
       w.u32(count32(cell.size(),"exclusions"));
       first += uint32_t(cell.size());
+      w.u32(data.cells[c].triangles);
+      w.u32(0);
+      for(const auto* v:{&data.cells[c].min,&data.cells[c].max})
+        for(unsigned axis=0;axis<3;++axis)
+          w.f32((*v)[axis]);
       }
     });
   w.section(Exclusions,4,exclusionCount,"exclusions",[&] {
@@ -272,6 +287,10 @@ std::vector<uint8_t> encodeClothBundle(const ClothBundleData& data) {
         w.u32(ordinal);
     });
   w.strings(Strings,strings);
+  w.section(LandscapeMaterials,4,data.landscapeMaterials.size(),"landscape materials",[&] {
+    for(const auto id:data.landscapeMaterials)
+      w.u32(id);
+    });
   w.put64(fileSizeAt,w.out.size());
   return std::move(w.out);
   }
@@ -298,6 +317,10 @@ ClothBundle ClothBundle::open(std::span<const uint8_t> bytes, const std::string&
     };
   if(le32(b+116)!=0 || le64(b+128)!=0)
     reject("header","the reserved fields are not zero");
+  float bounds[6];
+  std::memcpy(bounds,b+136,sizeof(bounds));
+  h.landscapeMin = {bounds[0],bounds[1],bounds[2]};
+  h.landscapeMax = {bounds[3],bounds[4],bounds[5]};
   const auto sections = wcb::readDirectory(bytes,wcl::HeaderSize,le32(b+112),le64(b+120),specs,what,name);
   if(sections[Surfaces-1].count!=h.surfaces)
     reject("surfaces","the header counts "+std::to_string(h.surfaces)+", the section holds "+
@@ -315,9 +338,10 @@ ClothBundle ClothBundle::open(std::span<const uint8_t> bytes, const std::string&
   x.featureSpan   = wcb::view<wcl::Feature>(bytes,sections[Features-1]);
   x.triangleSpan  = wcb::view<wcl::Triangle>(bytes,sections[Triangles-1]);
   x.materialSpan  = wcb::view<wcb::Material>(bytes,sections[Materials-1]);
-  x.cellSpan      = wcb::view<wcl::Range>(bytes,sections[Cells-1]);
+  x.cellSpan      = wcb::view<wcl::Cell>(bytes,sections[Cells-1]);
   x.exclusionSpan = wcb::view<uint32_t>(bytes,sections[Exclusions-1]);
   x.stringSpan    = bytes.subspan(size_t(sections[Strings-1].offset),sections[Strings-1].count);
+  x.landscapeMaterialSpan = wcb::view<uint32_t>(bytes,sections[LandscapeMaterials-1]);
 
   // Mesh ranges back to back, in mesh order, filling their sections; every triangle inside its own mesh.
   const char* kinds[4] = {"vertices","features","triangles","materials"};
@@ -376,10 +400,13 @@ ClothBundle ClothBundle::open(std::span<const uint8_t> bytes, const std::string&
   if(pins!=x.pinSpan.size())
     reject("pins",std::to_string(x.pinSpan.size()-pins)+" entries belong to no surface");
 
-  // Exclusions back to back in cell order, ascending within a cell.
+  // Exclusions back to back in cell order, ascending within a cell, each below the cell's triangles with them.
   uint64_t exclusions = 0;
   for(size_t c=0;c<x.cellSpan.size();++c) {
-    const auto& r = x.cellSpan[c];
+    const auto& cell = x.cellSpan[c];
+    const auto& r = cell.exclusions;
+    if(cell.zero!=0)
+      reject("cells","cell "+std::to_string(c)+": the reserved field is not zero");
     if(r.first!=exclusions || !fits(r,x.exclusionSpan.size()))
       reject("cells","cell "+std::to_string(c)+": exclusions "+std::to_string(r.first)+"+"+std::to_string(r.count)+
              " are not the next ones of "+std::to_string(x.exclusionSpan.size()));
@@ -387,9 +414,17 @@ ClothBundle ClothBundle::open(std::span<const uint8_t> bytes, const std::string&
     for(uint32_t e=r.first+1;e<r.first+r.count;++e)
       if(x.exclusionSpan[e]<=x.exclusionSpan[e-1])
         reject("exclusions","cell "+std::to_string(c)+": ordinals are not ascending at entry "+std::to_string(e));
+    if(r.count>0 && x.exclusionSpan[r.first+r.count-1]>=uint64_t(cell.triangles)+r.count)
+      reject("exclusions","cell "+std::to_string(c)+": ordinal "+std::to_string(x.exclusionSpan[r.first+r.count-1])+
+             " past the cell's "+std::to_string(uint64_t(cell.triangles)+r.count)+" triangles");
     }
   if(exclusions!=x.exclusionSpan.size())
     reject("exclusions",std::to_string(x.exclusionSpan.size()-exclusions)+" entries belong to no cell");
+  std::vector<uint32_t> materials(x.landscapeMaterialSpan.begin(),x.landscapeMaterialSpan.end());
+  std::sort(materials.begin(),materials.end());
+  if(std::adjacent_find(materials.begin(),materials.end())!=materials.end())
+    reject("landscape materials","material "+std::to_string(*std::adjacent_find(materials.begin(),materials.end()))+
+           " is listed twice");
   return x;
   }
 
@@ -464,7 +499,12 @@ size_t ClothBundle::originalTriangles() const {
   }
 
 std::span<const uint32_t> ClothBundle::exclusions(size_t cell) const {
-  return exclusionSpan.subspan(cellSpan[cell].first,cellSpan[cell].count);
+  return exclusionSpan.subspan(cellSpan[cell].exclusions.first,cellSpan[cell].exclusions.count);
+  }
+
+ClothBundleCell ClothBundle::cell(size_t i) const {
+  const auto& c = cellSpan[i];
+  return {c.triangles,{c.min[0],c.min[1],c.min[2]},{c.max[0],c.max[1],c.max[2]}};
   }
 
 ClothBundleData ClothBundle::data() const {
@@ -476,7 +516,9 @@ ClothBundleData ClothBundle::data() const {
   for(size_t c=0;c<cells();++c) {
     const auto list = exclusions(c);
     out.exclusions.emplace_back(list.begin(),list.end());
+    out.cells.push_back(cell(c));
     }
+  out.landscapeMaterials.assign(landscapeMaterialSpan.begin(),landscapeMaterialSpan.end());
   return out;
   }
 
@@ -510,7 +552,27 @@ ClothBundleData cookClothBundle(asset::WorldMesh& mesh, ChunkTable& table, const
   if(kept!=table.triangleChunks.size() || excluded!=data.cloth.original.polygons.material_indices.size())
     fail("the island search took "+std::to_string(n-kept)+" triangles out of the chunk table, its original mesh has "+
          std::to_string(data.cloth.original.polygons.material_indices.size()));
+  // What the search leaves: the table's entries, the landscape's bounds as PackedMesh::landscapeBbox takes them and
+  // its materials in first use, as the world load's streaming view decodes them.
+  for(const auto& entry:table.entries)
+    data.cells.push_back({entry.triangleCount,entry.min,entry.max});
   auto& h = data.header;
+  const auto& vertices = mesh.vertices;
+  const auto& corners = mesh.polygons.vertex_indices;
+  if(!corners.empty()) {
+    h.landscapeMin = h.landscapeMax = vertices[corners[0]];
+    for(const auto v:corners)
+      for(unsigned axis=0;axis<3;++axis) {
+        h.landscapeMin[axis] = std::min(h.landscapeMin[axis],vertices[v][axis]);
+        h.landscapeMax[axis] = std::max(h.landscapeMax[axis],vertices[v][axis]);
+        }
+    }
+  std::vector<char> used(mesh.materials.size(),0);
+  for(const auto m:mesh.polygons.material_indices)
+    if(!used.at(m)) {
+      used[m] = 1;
+      data.landscapeMaterials.push_back(m);
+      }
   h.worldSize   = source.size;
   h.worldCrc32  = source.crc32;
   h.cells       = wcb::count32(data.exclusions.size(),"cells");
@@ -547,6 +609,13 @@ WorldCloth::Extracted applyClothBundle(const ClothBundle& bundle, asset::WorldMe
 std::optional<WorldCloth::Extracted> takeClothBundle(asset::WorldMesh& landscape, ChunkTable& table) {
   if(!table.source)
     return std::nullopt;
+  if(const auto* catalogue = table.source->catalogue()) {
+    // The catalogue start checked the bundle and built the table from what it leaves: nothing is taken out here.
+    auto cloth = catalogue->cloth(landscape.name);
+    Tempest::Log::i("[world-cloth] bundle ",catalogue->clothPath().string(),": ",uint64_t(cloth.surfaces.size()),
+                    " surfaces, ",uint64_t(cloth.original.polygons.material_indices.size())," triangles");
+    return cloth;
+    }
   const auto* set = table.source->cooked().cookedSet();
   if(set==nullptr)
     return std::nullopt;
@@ -616,5 +685,16 @@ std::string compareClothBundles(const ClothBundleData& e, const ClothBundleData&
   for(size_t c=0;c<e.exclusions.size();++c)
     if(e.exclusions[c]!=a.exclusions[c])
       return "exclusions of cell "+std::to_string(c)+" differ";
+  if(e.cells.size()!=a.cells.size())
+    return "cells: "+std::to_string(e.cells.size())+" vs "+std::to_string(a.cells.size());
+  for(size_t c=0;c<e.cells.size();++c)
+    if(e.cells[c].triangles!=a.cells[c].triangles || !sameBits(e.cells[c].min,a.cells[c].min) ||
+       !sameBits(e.cells[c].max,a.cells[c].max))
+      return "what the search leaves of cell "+std::to_string(c)+" differs: "+std::to_string(e.cells[c].triangles)+
+             " vs "+std::to_string(a.cells[c].triangles)+" triangles, or their bounds";
+  if(!sameBits(x.landscapeMin,y.landscapeMin) || !sameBits(x.landscapeMax,y.landscapeMax))
+    return "header: the landscape's bounds differ";
+  if(e.landscapeMaterials!=a.landscapeMaterials)
+    return "the landscape's materials in first use differ";
   return {};
   }

@@ -357,7 +357,8 @@ python3 scripts/perf_report.py compare .bench/perf-A .bench/perf-B
 python3 scripts/perf_report.py compare .bench/perf-A/market/repeat-1 .bench/perf-A/market/repeat-2
 ```
 
-Отчёт делится по месту и `view-1`…`view-4`, показывает число кадров, FPS,
+Отчёт делится по месту и `view-1`…`view-4` (у места могут быть ещё `view-N` и
+повторный замер вида `view-N-<метка>`, как у `meadow`), показывает число кадров, FPS,
 mean/p50/p95/p99 в миллисекундах. Источник времени — `begin_ns` соседних
 попыток профайлера на монотонных реальных часах. Интервалы между отправленными
 кадрами включают промежуточные попытки `FenceBusy`: их нельзя считать новыми

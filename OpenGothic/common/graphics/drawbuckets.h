@@ -85,6 +85,7 @@ class DrawBuckets {
       BK_WINDOW = 0x20000,
       BK_GROUND = 0x40000,
       BK_VERGE = 0x80000,
+      BK_TRACK = 0x100000,
       };
 
     struct BucketGpu final {
@@ -116,7 +117,7 @@ class DrawBuckets {
       uint32_t       foliage          = 0;   // BK_FOLIAGE: FoliageWind::pack of Material::foliage;
                                              // BK_GRASS: Grass::pack of Material::grass;
                                              // BK_WINDOW: WindowGlow::pack of Material::window
-      float          foliageReach     = 0.f; // the largest arm of its mesh at rest (FoliageWind::reach)
+      float          foliageReach     = 0.f; // its mesh at rest: the largest arm, or a tree's height (FoliageTree::reach)
       };
     static_assert(sizeof(BucketGpu)==128); // GPU array stride of Bucket in scene.glsl
 
