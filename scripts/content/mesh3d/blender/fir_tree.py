@@ -10,8 +10,10 @@ the height of each whorl, the number, turn, length and sag of its branches, the 
 - **Branch**: a tube in the vertical plane of its azimuth; the low ones sag and turn up at the tip, the top ones
   rise. A few dead stubs under the crown carry no boughs.
 - **Bough**: a card of the atlas, cut to 6 or 8 vertices, listed twice (tree_glb.py). The cards of a branch lie in
-  the slope of its tier, a roof that falls outward: a fan along the branch's end with its sides drooping, boughs
-  to both sides, curtains down the slope at the tip. A card that would go under the ground lies on it.
+  the slope of its tier, a roof that falls outward: a fan along the branch's end with its sides drooping and
+  boughs to both sides. Under the branch hang its sprays, a curtain to each side and one at the tip, each turned
+  its own way about the vertical: a branch seen from the side shows the curtain, one seen end-on the turned
+  sprays and the roof. A card that would go under the ground lies on it.
 - **Normals of the cards** are those of the crown's hull (outward and up, more up to the top) mixed with the
   card's own, so the crown is lit as a volume and still shows its boughs.
 - **COLOR_0** is the layout of tree_glb.py. The openness A is the distance from the axis against the crown's own
@@ -214,7 +216,7 @@ class Fir:
         self.tube(rings, normal, texture, colour, 0, breaks)
 
     def branch(self, base: np.ndarray, azimuth: float, length: float, pitches, height: float, weight: float = 1.,
-               wobble: float = .1) -> Branch:
+               wobble: float = .1, wood: float = 1.) -> Branch:
         b = self.cfg['branch']
         segments = int(np.clip(math.ceil(length / b['segment']), 3, 6))
         s = np.linspace(0, 1, segments + 1)
@@ -234,6 +236,10 @@ class Fir:
                         float(self.phases[len(self.branches) % 255]) / 255, weight)
         self.branches.append(branch)
 
+        # the tube ends at `wood` of the length: the thin end is the stem painted on the fan that lies on it
+        wood = np.linspace(0, wood, segments + 1)
+        points = np.stack([np.interp(wood, branch.arc, points[:, k]) for k in range(3)], axis=1)
+        radius = np.interp(wood, branch.arc, radius)
         sides = 4 if length > 2.5 else 3
         tangent = np.gradient(points, axis=0)
         tangent /= np.linalg.norm(tangent, axis=1, keepdims=True)
@@ -245,10 +251,10 @@ class Fir:
         rings = points[:, None] + radius[:, None, None] * around
         span = self.cfg['bark_uv']['branch_span']
         u = self.rng.uniform(0, 1) + angle / (2 * math.pi) * span
-        along = self.bark_v(branch.arc * length, self.rng.uniform(0, 4))
+        along = self.bark_v(wood * length, self.rng.uniform(0, 4))
         texture = np.stack(np.broadcast_arrays(u[None], 1 - along[:, None]), axis=-1)
         colour = np.zeros((segments + 1, sides + 1, 4))
-        colour[..., 0] = (branch.arc * weight)[:, None]
+        colour[..., 0] = (wood * weight)[:, None]
         colour[..., 1] = branch.phase
         colour[..., 3] = -1          # by place, filled in openness()
         self.tube(rings, around, texture, colour, branch.number)
@@ -257,18 +263,20 @@ class Fir:
     # --- boughs
 
     def card(self, kind: str, origin, spine, normal, length: float, width: float, branch: Branch | None,
-             weight, droop: float = 0., fold: float = 0.) -> None:
+             weight, droop: float = 0., fold: float = 0., ridge: bool | None = None) -> None:
         """A bough from the atlas: its stem at origin, its spine along `spine`, facing `normal`. droop bends the
         spine down from the normal over the length, fold lowers both edges. weight: R, a number or a function of
-        the share of the card's length."""
+        the share of the card's length. ridge: vertices along the spine, 8 a card instead of 6; the cell's own
+        choice unless given."""
         cell = self.cfg['atlas']['cells'][kind]
         size = self.cfg['atlas']['size']
+        ridge = cell['spine'] if ridge is None else ridge
         d = unit(spine)
         n = unit(np.asarray(normal, np.float64) - d * np.dot(normal, d))
         w = np.cross(n, d)
         (t1, h1), (t2, h2) = cell['sections']
-        rows = [(0., ()), (t1, (h1, 0., -h1) if cell['spine'] else (h1, -h1)),
-                (t2, (h2, 0., -h2) if cell['spine'] else (h2, -h2)), (1., ())]
+        rows = [(0., ()), (t1, (h1, 0., -h1) if ridge else (h1, -h1)),
+                (t2, (h2, 0., -h2) if ridge else (h2, -h2)), (1., ())]
         ground = self.cfg['cards']['ground']
         if d[2] < -.05:
             length = max(.45 * length, min(length, (origin[2] - ground) / -d[2] * 1.1))
@@ -287,7 +295,7 @@ class Fir:
                 share.append(t)
         position = np.array(position)
         position[:, 2] = np.maximum(position[:, 2], ground + .04 * np.array(flutter) * self.rng.uniform(.3, 1.))
-        if cell['spine']:
+        if ridge:
             tris = [(0, 2, 1), (0, 3, 2), (1, 2, 5), (1, 5, 4), (2, 3, 6), (2, 6, 5), (4, 5, 7), (5, 6, 7)]
         else:
             tris = [(0, 2, 1), (1, 2, 4), (1, 4, 3), (3, 4, 5)]
@@ -341,42 +349,52 @@ class Fir:
             origin, tangent = branch.at(start)
             _, end = branch.at(min(1., start + .72 * long / branch.length))
             tangent = unit(tangent + end)
-            self.card('fan', origin, tangent, np.cross(np.cross(tangent, UP), tangent), long, wide, branch,
+            above = np.cross(np.cross(tangent, UP), tangent)
+            self.card('fan', origin + above * c['fan_lift'], tangent, above, long, wide, branch,
                       lambda t, start=start, long=long: min(1., start + t * long / branch.length) * branch.weight,
                       droop=math.radians(rng.uniform(4, 14)), fold=math.radians(rng.uniform(24, 38)))
             reach = start + .25 * long / branch.length
             if reach < c['fans_from'] + .72 * long / branch.length:
                 break
-        if branch.length < 1.:
-            return
-        # curtains down the slope at the tip
-        for _ in range(1 if branch.length < 2.2 else 2):
-            s = rng.uniform(.86, .99)
-            origin, _ = branch.at(s)
-            normal, down = roof(14.)
-            kind = rng.choice(['hang_1', 'hang_2'])
-            long, wide = metres(kind) * size * rng.uniform(.8, 1.1)
-            spine = unit(down + across * rng.uniform(-.5, .5) - UP * rng.uniform(.1, .5))
-            self.card(kind, origin, spine, normal, long, wide, branch, s * branch.weight,
-                      droop=math.radians(rng.uniform(10, 30)), fold=math.radians(rng.uniform(-10, 14)))
-        # boughs to both sides
+        # boughs to both sides, in the slope of the tier
         step = c['step'] * (.7 + .3 * size) / branch.length
         s, side = c['start'] + rng.uniform(0, step), rng.choice([-1., 1.])
-        while s < .95:
+        while s < .95 and branch.length >= 1.:
             origin, tangent = branch.at(s)
             normal, down = roof()
             sparse = s < c['start'] + .12 and rng.uniform() < .6
-            kind = 'sparse' if sparse else rng.choice(['side', 'hang_1', 'hang_2', 'twig_1', 'twig_2'],
-                                                      p=[.36, .16, .16, .16, .16])
+            kind = 'sparse' if sparse else rng.choice(['side', 'twig_1', 'twig_2'], p=[.5, .25, .25])
             long, wide = metres(kind) * size * rng.uniform(.8, 1.15)
-            hanging = kind.startswith('hang')
-            sweep = math.radians(rng.uniform(55, 85) if hanging else rng.uniform(15, 55))
+            sweep = math.radians(rng.uniform(15, 55))
             spine = unit(math.cos(sweep) * side * across + math.sin(sweep) * down + tangent * rng.uniform(.1, .5))
             roll = math.radians(rng.uniform(-18, 18))
             normal = unit(normal * math.cos(roll) + np.cross(spine, normal) * math.sin(roll))
             self.card(kind, origin, spine, normal, long, wide, branch, s * branch.weight,
                       droop=math.radians(rng.uniform(8, 30)), fold=math.radians(rng.uniform(-8, 12)))
             s += step * rng.uniform(.75, 1.25)
+            side = -side
+        # the sprays that hang from the branch: a curtain to each side, each spray turned about the vertical
+        k = c['curtain']
+        drop = min(metres('hang_1')[0] * size, k['drop'][0] + k['drop'][1] * branch.length)
+        hang = lerp(1., k['top_hang'], smooth((branch.height - .55) / .35))   # the top's sprays stand out, not down
+        s, side = k['from'] + rng.uniform(0, .08), rng.choice([-1., 1.])
+        while True:
+            tip = s >= 1.
+            kind = rng.choice(['hang_1', 'hang_2', 'fan'] if drop > k['long'] else ['side', 'twig_1', 'twig_2'])
+            cell = metres(kind)
+            origin, tangent = branch.at(min(s, 1.))
+            long = drop * rng.uniform(.75, 1.15) * (1. if tip else lerp(.8, 1., min(s / .6, 1.)))
+            wide = cell[1] * long / cell[0] * rng.uniform(1., 1.3)
+            long = min(long, max(.25, (origin[2] - c['ground']) * 1.2))      # short over the ground, not laid on it
+            turn = math.radians(rng.uniform(-k['turn_deg'], k['turn_deg']))
+            face = radial if tip else side * (math.cos(turn) * across + math.sin(turn) * radial)
+            spine = unit(-UP * hang + face * (rng.uniform(*k['lean']) + .6 * (1 - hang))
+                         + tangent * (rng.uniform(0., .3) + 1 - hang))
+            self.card(kind, origin, spine, face, long, wide, branch, min(s, 1.) * branch.weight,
+                      droop=math.radians(rng.uniform(-10, 8)), ridge=False)
+            if tip:
+                break
+            s += k['overlap'] * wide / branch.length / 2 * rng.uniform(.8, 1.2)
             side = -side
 
     def crown(self) -> None:
@@ -396,12 +414,11 @@ class Fir:
                     continue
                 azimuth = turn + 2 * math.pi * (k + rng.uniform(-.22, .22)) / count
                 length = reach * rng.uniform(.82, 1.08) * (1 + b['asymmetry'] * math.cos(azimuth - lean))
-                pitches = (lerp(low[0], high[0], height ** 1.5), lerp(low[1], high[1], height ** 1.3),
-                           lerp(low[2], high[2], height ** 1.2)) + rng.uniform(-6, 6, 3)
+                pitches = lerp(low, high, height ** np.array(b['pitch_rise'])) + rng.uniform(-6, 6, 3)
                 r = float(self.trunk_radius(np.array(z), np.array(azimuth))) * .4
                 base = np.array([r * math.cos(azimuth), r * math.sin(azimuth), z + rng.uniform(-.08, .08)])
-                self.dress(self.branch(base, azimuth, length, pitches, height))
-            z += rng.uniform(*w['step']) * lerp(1., .8, t)
+                self.dress(self.branch(base, azimuth, length, pitches, height, wood=b['wood']))
+            z += rng.uniform(*w['step']) * lerp(1., w['top_step'], t)
         # the leader: three small boughs round the straight shoot
         px = self.cfg['atlas']['px_per_m']
         for k in range(3):

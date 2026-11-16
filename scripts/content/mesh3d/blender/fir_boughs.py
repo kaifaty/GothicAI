@@ -38,8 +38,8 @@ NEEDLE_OLD = np.array((.010, .015, .009))
 NEEDLE = np.array((.018, .028, .013))
 NEEDLE_YOUNG = np.array((.036, .055, .024))
 NEEDLE_DRY = np.array((.060, .040, .020))
-TWIG = np.array((.070, .050, .036))
-TWIG_YOUNG = np.array((.085, .055, .030))
+TWIG = np.array((.045, .034, .026))
+TWIG_YOUNG = np.array((.055, .040, .024))
 
 HABIT = dict(
     fan=dict(nodes=(.05, .075), angle=(64, 40), curve=-10, reach=(.74, .98), missing=.06, sub=(.03, .045),

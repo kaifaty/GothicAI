@@ -8,6 +8,10 @@
     "boughs": "OWN_TREE_FIR_BOUGHS"
   },
   "budget_tris": 30000,
+  "palette": {
+    "needles_srgb": [33, 40, 23],
+    "bark_srgb": [74, 64, 56]
+  },
   "trunk": {
     "radius": 0.3,
     "top_radius": 0.008,
@@ -28,17 +32,20 @@
   "whorl": {
     "first": 1.4,
     "step": [0.5, 0.8],
-    "branches": [5.6, 3.6],
+    "branches": [6.2, 4.6],
+    "top_step": 0.7,
     "missing": 0.08,
     "weak": 0.15
   },
   "branch": {
     "length": [4.5, 0.5],
-    "profile": 0.85,
+    "profile": 0.58,
     "radius": [0.012, 0.0065],
     "tip_radius": 0.004,
+    "wood": 1.0,
     "pitch_low": [-6, -22, 8],
     "pitch_high": [55, 40, 50],
+    "pitch_rise": [2.5, 2.2, 2.0],
     "segment": 0.8,
     "asymmetry": 0.12,
     "ground": 0.25
@@ -50,12 +57,22 @@
     "weight": 0.15
   },
   "cards": {
-    "step": 0.2,
+    "step": 0.42,
     "start": 0.3,
+    "curtain": {
+      "from": 0.18,
+      "drop": [0.15, 0.42],
+      "top_hang": 0.35,
+      "long": 0.9,
+      "lean": [0.05, 0.4],
+      "turn_deg": 65,
+      "overlap": 0.6
+    },
     "slope_deg": [58, 28],
     "hull_share": 0.65,
     "ground": 0.03,
-    "fans_from": 0.42
+    "fans_from": 0.42,
+    "fan_lift": 0.025
   },
   "atlas": {
     "size": 2048,
