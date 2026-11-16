@@ -1,12 +1,15 @@
 # The modern spruce A on a probe (reports/content/2026-11-trees/fir/README.md, «Модель»): five spruces of 14 to
-# 22 m on the meadow's forest edge west of the cart track east of the tavern, 5 to 8 m from the original's firs,
-# built by scripts/content/fir_set.py probe; run with OPENGOTHIC_CONTENT=<that set>. Stills only, at noon, each in
-# the calm after a gust:
-#   row    38 m south of the edge and 4.4 m over spruce A's root: the five spruces and the original's firs behind;
-#   far    30 m from spruce A (seed 7, 18 m), across the track, the eye 1.7 m over the ground;
+# 22 m along the north edge of the meadow east of the tavern, 5 to 8 m south of the original's firs, built by
+# scripts/content/fir_set.py probe; run with OPENGOTHIC_CONTENT=<that set>. Stills only, at noon, each in the calm
+# after a gust. The noon sun stands in the west (-x), 57 degrees high: the cameras look north-east, the sun to
+# their left and a little behind.
+#   row    from the meadow's south-west corner, 6 m over spruce A's root: the five spruces and the firs behind;
+#   far    the same place, 30 m from spruce A (seed 7, 18 m), the eye 1.7 m over the ground;
 #   near   9.5 m from its trunk, 5 m from its lower boughs;
 #   close  6.5 m from the trunk, 2 m from the skirt, up into the lower tiers.
-# The cameras stand by PROBE of the script: change both together.
+# The cameras stand by PROBE of the script: change both together. Elsewhere the meadow's views are taken: the
+# crowns of the original's trees at (42681, -352) and (41111, -2898) are 30 m wide, and from the south-east the
+# spruces stand against the sun.
 #   OPENGOTHIC_CONTENT=<set> TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh fir-probe
 # @timeout 600
 seed 73013
@@ -16,36 +19,36 @@ ui off
 view full
 set time 12 0
 
-# the hero stands aside of the first two views
-goto pos 42750 3470 -2150
+# the hero stands behind the first two views
+goto pos 39400 3790 -2000
 clear 3000
 streaming wait
 grass wait
-cam at 41300 3935 -3200 41000 4050 650
+cam at 39550 3946 -1820 39900 4150 1150
 wait 5000
 foliage wait-lull 1500 0
 wait 1500
 shot row
 wait 200
 
-cam at 42600 3645 -2000 41250 4200 650
+cam at 39550 3946 -1820 41250 4210 650
 wait 2000
 foliage wait-lull 1500 0
 wait 1500
 shot far
 wait 200
 
-goto pos 41900 3305 -300
+goto pos 40550 3420 -350
 streaming wait
 grass wait
-cam at 41770 3510 -150 41250 3700 650
+cam at 40710 3580 -130 41250 3725 650
 wait 4000
 foliage wait-lull 1500 0
 wait 1500
 shot near
 wait 200
 
-cam at 41580 3513 90 41250 3760 650
+cam at 40880 3555 115 41250 3775 650
 wait 2000
 foliage wait-lull 1500 0
 wait 1500

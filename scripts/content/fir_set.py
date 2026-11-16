@@ -51,12 +51,14 @@ AO_NEEDLES, AO_BARK = 1., .7    # share of the baked occlusion that goes into th
 ROUGH_NEEDLES, ROUGH_BARK = .85, .9
 FOLIAGE = dict(bark=dict(anchor='tree', wind=1., flutter=0., translucency=0.),
                boughs=dict(anchor='tree', wind=1., flutter=1., translucency=.35))
-# Gothic centimetres: x, the ground's height, z; yaw; scale; seed. The forest edge south of the road to Onar's
-# farm, ground NW_NATURE_WALDBODEN_03, 5 to 8 m from the original's spruces. The third is spruce A itself.
-PROBE = (((39700., 3422.9, 600.), 40., 1.1, 21),
-         ((40500., 3389.9, 450.), 115., 1.2, 33),
+# Gothic centimetres: x, the ground's height, z; yaw; scale; seed. The north edge of the meadow east of the tavern,
+# ground NW_NATURE_WALDBODEN_03, 5 to 8 m south of the original's firs. The fourth is spruce A itself: the noon
+# sun stands in the west (-x), so its western neighbour is the smallest and stands north of the line from the
+# far camera of scripts/bench/fir-probe.bench, and the larger ones are further west.
+PROBE = (((38700., 3456.2, 1000.), 40., 1.2, 33),
+         ((39650., 3412.5, 700.), 115., 1.1, 21),
+         ((40400., 3378., 950.), 250., .8, 48),
          ((41250., 3323.5, 650.), 0., 1., None),
-         ((41950., 3254.7, 950.), 250., .8, 48),
          ((42100., 3227.1, 1600.), 170., .9, 59))
 
 
