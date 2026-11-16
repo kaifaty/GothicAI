@@ -339,35 +339,6 @@ void requireVector(const cgltf_accessor* accessor, cgltf_type type, const char* 
     reject(std::string(name)+" must use non-normalized float vectors");
   }
 
-// COLOR_0 is data for the vertex shader (the tree's wind: reports/engine/2026-11-16-modern-trees), not a tint: its
-// four bytes go to Resources::Vertex::color as they are, with no gamma. RGB without alpha gets alpha one
-void requireColor(const cgltf_accessor* color, size_t count) {
-  if(color==nullptr)
-    return;
-  const bool real = color->component_type==cgltf_component_type_r_32f && !color->normalized;
-  const bool norm = (color->component_type==cgltf_component_type_r_8u || color->component_type==cgltf_component_type_r_16u) &&
-                    color->normalized;
-  if((color->type!=cgltf_type_vec3 && color->type!=cgltf_type_vec4) || !(real || norm))
-    reject("COLOR_0 must use float or normalized unsigned RGB or RGBA");
-  if(color->count!=count)
-    reject("vertex attribute counts do not match");
-  }
-
-uint32_t vertexColor(const cgltf_accessor* color, size_t index) {
-  if(color==nullptr)
-    return 0xFFFFFFFFu;
-  float c[4] = {1.f,1.f,1.f,1.f};
-  if(!cgltf_accessor_read_float(color,index,c,color->type==cgltf_type_vec3 ? 3 : 4))
-    reject("cannot read COLOR_0");
-  uint32_t ret = 0;
-  for(unsigned i=0; i<4; ++i) {
-    if(!std::isfinite(c[i]))
-      reject("non-finite COLOR_0");
-    ret |= uint32_t(std::lround(std::clamp(c[i],0.f,1.f)*255.f)) << (8u*i);
-    }
-  return ret;
-  }
-
 struct PositionStream {
   const cgltf_accessor* source;
   size_t base;
@@ -378,7 +349,6 @@ struct WedgeStream {
   const cgltf_accessor* position;
   const cgltf_accessor* normal;
   const cgltf_accessor* uv;
-  const cgltf_accessor* color;
   size_t base;
   };
 
@@ -475,7 +445,6 @@ class Converter {
       const auto* position = attribute(primitive,cgltf_attribute_type_position);
       const auto* normal = attribute(primitive,cgltf_attribute_type_normal);
       const auto* uv = attribute(primitive,cgltf_attribute_type_texcoord);
-      const auto* color = attribute(primitive,cgltf_attribute_type_color);
       requireVector(position,cgltf_type_vec3,"POSITION");
       requireVector(normal,cgltf_type_vec3,"NORMAL");
       if(normal->count!=position->count || (uv!=nullptr && uv->count!=position->count))
@@ -484,7 +453,6 @@ class Converter {
          !((uv->component_type==cgltf_component_type_r_32f && !uv->normalized) ||
            ((uv->component_type==cgltf_component_type_r_8u || uv->component_type==cgltf_component_type_r_16u) && uv->normalized))))
         reject("TEXCOORD_0 must use float or normalized unsigned vectors");
-      requireColor(color,position->count);
       const size_t count = primitive.indices==nullptr ? position->count : primitive.indices->count;
       if(count==0 || count%3!=0)
         reject("triangle index count must be a non-zero multiple of three");
@@ -498,8 +466,7 @@ class Converter {
       size_t wedgeBase = submesh.wedges.size();
       bool existing = false;
       for(const auto& stream:state.streams)
-        if(head==nullptr && stream.node==&node && stream.position==position && stream.normal==normal && stream.uv==uv &&
-           stream.color==color) {
+        if(head==nullptr && stream.node==&node && stream.position==position && stream.normal==normal && stream.uv==uv) {
           wedgeBase = stream.base;
           existing = true;
           break;
@@ -513,11 +480,11 @@ class Converter {
             reject("cannot read NORMAL or TEXCOORD_0");
           if(!std::isfinite(tex[0]) || !std::isfinite(tex[1]))
             reject("non-finite TEXCOORD_0");
-          submesh.wedges.push_back({transform.normal(n),{tex[0],tex[1]},uint16_t(posBase+i),vertexColor(color,i)});
+          submesh.wedges.push_back({transform.normal(n),{tex[0],tex[1]},uint16_t(posBase+i)});
           if(head!=nullptr)
             mesh.normals.push_back(submesh.wedges.back().normal);
           }
-        state.streams.push_back({&node,position,normal,uv,color,wedgeBase});
+        state.streams.push_back({&node,position,normal,uv,wedgeBase});
         }
       if(head!=nullptr)
         addTargets(primitive,transform,names,posBase,*normal);

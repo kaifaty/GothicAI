@@ -5,6 +5,7 @@
 #include "graphics/pfx/particlefx.h"
 #include "graphics/visualfx.h"
 #include "gltfmesh.h"
+#include "gltfmeshcolor.h"
 #include "graphics/shaders.h"
 #include "graphics/mesh/protomesh.h"
 #include "graphics/mesh/facerig.h"

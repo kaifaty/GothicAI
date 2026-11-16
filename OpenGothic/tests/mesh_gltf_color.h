@@ -80,49 +80,76 @@ void colorGlbFile(const std::filesystem::path& path, unsigned first, unsigned se
   }
 
 // the colour of the packed vertex of each wedge: what the vertex shader reads
-void packedColors(const asset::StaticMesh& mesh, std::string_view message) {
-  PackedMesh packed(mesh,PackedMesh::PK_Visual);
-  for(const auto& wedge:mesh.sub_meshes[0].wedges) {
-    const auto& at = mesh.positions[wedge.index];
+void packedColors(const asset::StaticMesh& mesh, const GltfMeshColors& colors, std::string_view message) {
+  PackedMesh packed(mesh,PackedMesh::PK_Visual,false,&colors);
+  for(size_t i=0;i<mesh.sub_meshes[0].wedges.size();++i) {
+    const auto& at = mesh.positions[mesh.sub_meshes[0].wedges[i].index];
     size_t found = 0;
     for(const auto& v:packed.vertices)
-      if(v.pos[0]==at.x && v.pos[1]==at.y && v.pos[2]==at.z && v.color==wedge.color)
+      if(v.pos[0]==at.x && v.pos[1]==at.y && v.pos[2]==at.z && v.color==colors[0][i])
         ++found;
     require(found>=1,message);
     }
   }
 
 void colorCases(const std::filesystem::path& path) {
+  std::vector<uint8_t> bytes;
   colorGlbFile(path,2);
-  auto mesh = loadGltfMesh(path);
-  require(mesh.sub_meshes.size()==1 && mesh.sub_meshes[0].wedges.size()==3,"a triangle with COLOR_0 must load");
+  auto mesh   = loadGltfMesh(path,&bytes);
+  auto colors = loadGltfMeshColors(bytes,mesh);
+  require(mesh.sub_meshes.size()==1 && mesh.sub_meshes[0].wedges.size()==3 && colors.size()==1 && colors[0].size()==3,
+          "a triangle with COLOR_0 must load with a colour for each wedge");
   for(size_t i=0;i<3;++i)
-    require(mesh.sub_meshes[0].wedges[i].color==ColorFirst[i],"the bytes of COLOR_0 must reach the wedge as R, G, B, A from the low byte");
-  packedColors(mesh,"the bytes of COLOR_0 must reach the vertex of the static mesh");
+    require(colors[0][i]==ColorFirst[i],"the bytes of COLOR_0 must reach the wedge as R, G, B, A from the low byte");
+  packedColors(mesh,colors,"the bytes of COLOR_0 must reach the vertex of the static mesh");
 
   colorGlbFile(path,4);
-  mesh = loadGltfMesh(path);
-  for(const auto& wedge:mesh.sub_meshes[0].wedges)
-    require(wedge.color==ColorReal,"float RGB must become bytes without a gamma curve, with alpha one");
+  mesh   = loadGltfMesh(path,&bytes);
+  colors = loadGltfMeshColors(bytes,mesh);
+  require(colors.size()==1 && colors[0].size()==3,"float RGB must load");
+  for(const auto c:colors[0])
+    require(c==ColorReal,"float RGB must become bytes without a gamma curve, with alpha one");
 
   colorGlbFile(path,0);
-  mesh = loadGltfMesh(path);
-  for(const auto& wedge:mesh.sub_meshes[0].wedges)
-    require(wedge.color==0xFFFFFFFFu,"a mesh without COLOR_0 must keep the ones in its vertex colour");
-  {
-  PackedMesh packed(mesh,PackedMesh::PK_Visual);
-  size_t ones = 0;
-  for(const auto& v:packed.vertices)
-    ones += (v.color==0xFFFFFFFFu ? 1u : 0u);
-  require(ones==3,"the three vertices of a mesh without COLOR_0 must be drawn with ones");
-  }
+  mesh = loadGltfMesh(path,&bytes);
+  require(loadGltfMeshColors(bytes,mesh).empty(),"a mesh without COLOR_0 must have no colours");
+  // a list that is not of the sub-mesh's size must not paint it either
+  colors = {{ColorSecond}};
+  for(const auto* list:{static_cast<const GltfMeshColors*>(nullptr),&std::as_const(colors)}) {
+    PackedMesh packed(mesh,PackedMesh::PK_Visual,false,list);
+    size_t ones = 0;
+    for(const auto& v:packed.vertices)
+      ones += (v.color==0xFFFFFFFFu ? 1u : 0u);
+    require(ones==3,"the three vertices of a mesh without COLOR_0 must be drawn with ones");
+    }
 
-  // the same positions and normals with another colour are other vertices
-  colorGlbFile(path,2,3);
-  mesh = loadGltfMesh(path);
-  require(mesh.sub_meshes[0].wedges.size()==6 && mesh.sub_meshes[0].wedges[5].color==ColorSecond &&
-          mesh.sub_meshes[0].wedges[0].color==ColorFirst[0],"primitives that differ in COLOR_0 alone must not share wedges");
+  // primitives with the same positions and normals share their wedges, as before: one colour for both, or none
   colorGlbFile(path,2,2);
-  mesh = loadGltfMesh(path);
-  require(mesh.sub_meshes[0].wedges.size()==3,"primitives with the same streams must share wedges as before");
+  mesh   = loadGltfMesh(path,&bytes);
+  colors = loadGltfMeshColors(bytes,mesh);
+  require(mesh.sub_meshes[0].wedges.size()==3 && colors[0].size()==3 && colors[0][2]==ColorFirst[2],
+          "primitives with the same streams must share wedges and their colour");
+  colorGlbFile(path,2,3);
+  mesh = loadGltfMesh(path,&bytes);
+  require(mesh.sub_meshes[0].wedges.size()==3,"COLOR_0 must not change the wedges of the mesh");
+  bool thrown = false;
+  try {
+    loadGltfMeshColors(bytes,mesh);
+    }
+  catch(const std::runtime_error&) {
+    thrown = true;
+    }
+  require(thrown,"primitives that share wedges and differ in COLOR_0 must be rejected, not painted by one of them");
+  // a walk out of step with the loader's must not paint a wrong vertex: here the mesh has lost a wedge
+  colorGlbFile(path,2);
+  mesh = loadGltfMesh(path,&bytes);
+  mesh.sub_meshes[0].wedges.pop_back();
+  thrown = false;
+  try {
+    loadGltfMeshColors(bytes,mesh);
+    }
+  catch(const std::runtime_error&) {
+    thrown = true;
+    }
+  require(thrown,"colours that are not of the mesh's wedges must be rejected");
   }

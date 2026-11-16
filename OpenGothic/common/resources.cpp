@@ -52,6 +52,7 @@
 
 #include "contentcensus.h"
 #include "gltfmesh.h"
+#include "gltfmeshcolor.h"
 #include "basemesh.h"
 #include "modeldata.h"
 #include "fontdata.h"
@@ -515,7 +516,7 @@ bool Resources::meshReplacementLoaded(std::string_view name, MeshReplacementSour
   return true;
   }
 
-asset::StaticMesh Resources::loadVisualMesh(std::string_view name, bool* replaced) {
+asset::StaticMesh Resources::loadVisualMesh(std::string_view name, bool* replaced, std::vector<std::vector<uint32_t>>* colors) {
   LoadProbe::Vobs::Scope probe("mesh_read");
   std::lock_guard<std::recursive_mutex> guard(inst->sync);
   if(replaced!=nullptr)
@@ -531,6 +532,14 @@ asset::StaticMesh Resources::loadVisualMesh(std::string_view name, bool* replace
       try {
         std::vector<uint8_t> bytes;
         auto mesh = loadGltfMesh(it->second.file,&bytes);
+        if(colors!=nullptr) {
+          try {
+            *colors = loadGltfMeshColors(bytes,mesh);
+            }
+          catch(const std::exception& error) {
+            Log::e("meshes: \"",it->second.file.string(),"\" is drawn without its vertex colour: ",error.what());
+            }
+          }
         if(inst->census)
           inst->census->replaced(key+".MRM",it->second.replacement);
         if(replaced!=nullptr)
@@ -720,12 +729,13 @@ std::unique_ptr<ProtoMesh> Resources::implLoadMeshMain(std::string name) {
     FileExt::exchangeExt(name,"3DS","MRM");
 
     bool replaced = false;
-    auto zmsh = loadVisualMesh(name,&replaced);
+    GltfMeshColors colors;
+    auto zmsh = loadVisualMesh(name,&replaced,&colors);
 
     if(zmsh.sub_meshes.empty())
       return nullptr;
 
-    PackedMesh packed(zmsh,PackedMesh::PK_Visual,replaced);
+    PackedMesh packed(zmsh,PackedMesh::PK_Visual,replaced,colors.empty() ? nullptr : &colors);
     return std::unique_ptr<ProtoMesh>{new ProtoMesh(std::move(packed),name)};
     }
 

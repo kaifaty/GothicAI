@@ -12,8 +12,6 @@ struct MeshWedge {
   Vec3 normal;
   Vec2 texture;
   uint16_t index;
-  // glTF COLOR_0 as R | G<<8 | B<<16 | A<<24 (Resources::Vertex::color); ones without it. Not a part of the base
-  uint32_t color = 0xFFFFFFFFu;
   };
 struct SubMesh {
   Material mat;
