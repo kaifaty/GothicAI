@@ -1,0 +1,101 @@
+{
+  "id": "fir-a",
+  "seed": 7,
+  "height": 18.0,
+  "leader": 0.8,
+  "materials": {
+    "bark": "OWN_TREE_FIR_BARK",
+    "boughs": "OWN_TREE_FIR_BOUGHS"
+  },
+  "budget_tris": 30000,
+  "trunk": {
+    "radius": 0.3,
+    "top_radius": 0.008,
+    "taper": 0.85,
+    "sides": 14,
+    "sunk": 0.4,
+    "flare_radius": 0.6,
+    "flare_height": 0.35,
+    "roots": 5,
+    "ring_step": 1.2
+  },
+  "bark_uv": {
+    "width_m": 2.0,
+    "height_m": 4.0,
+    "root_share": 0.4,
+    "branch_span": 0.25
+  },
+  "whorl": {
+    "first": 1.4,
+    "step": [0.5, 0.8],
+    "branches": [5.6, 3.6],
+    "missing": 0.08,
+    "weak": 0.15
+  },
+  "branch": {
+    "length": [4.5, 0.5],
+    "profile": 0.85,
+    "radius": [0.012, 0.0065],
+    "tip_radius": 0.004,
+    "pitch_low": [-6, -22, 8],
+    "pitch_high": [55, 40, 50],
+    "segment": 0.8,
+    "asymmetry": 0.12,
+    "ground": 0.25
+  },
+  "stubs": {
+    "count": 4,
+    "height": [0.45, 0.95],
+    "length": [0.3, 0.7],
+    "weight": 0.15
+  },
+  "cards": {
+    "step": 0.2,
+    "start": 0.3,
+    "slope_deg": [58, 28],
+    "hull_share": 0.65,
+    "ground": 0.03,
+    "fans_from": 0.42
+  },
+  "atlas": {
+    "size": 2048,
+    "px_per_m": 700,
+    "cells": {
+      "fan": {
+        "cell": [0, 0, 1440, 992],
+        "spine": true,
+        "sections": [[0.3, 1.0], [0.72, 0.86]]
+      },
+      "hang_1": {
+        "cell": [0, 1008, 1172, 496],
+        "spine": true,
+        "sections": [[0.22, 0.92], [0.74, 1.0]]
+      },
+      "hang_2": {
+        "cell": [0, 1520, 1172, 496],
+        "spine": true,
+        "sections": [[0.22, 0.92], [0.74, 1.0]]
+      },
+      "side": {
+        "cell": [1196, 1008, 812, 540],
+        "spine": false,
+        "sections": [[0.3, 1.0], [0.72, 0.88]]
+      },
+      "sparse": {
+        "cell": [1196, 1564, 812, 452],
+        "spine": false,
+        "sections": [[0.3, 1.0], [0.72, 0.88]]
+      },
+      "twig_1": {
+        "cell": [1464, 16, 540, 360],
+        "spine": false,
+        "sections": [[0.3, 1.0], [0.72, 0.88]]
+      },
+      "twig_2": {
+        "cell": [1464, 392, 540, 360],
+        "spine": false,
+        "sections": [[0.3, 1.0], [0.72, 0.88]]
+      }
+    }
+  }
+}
