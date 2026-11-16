@@ -772,3 +772,13 @@ def test_series_requires_at_least_two_runs_per_side(tmp_path, capsys, short_side
         report.main(args)
     assert error.value.code == 2
     assert "at least two" in capsys.readouterr().err
+
+
+def test_segment_takes_a_fifth_view_and_a_view_measured_again():
+    assert report.segment_parts("perf-meadow/view-4") == ("meadow", "view-4")
+    assert report.segment_parts("perf-meadow/view-5") == ("meadow", "view-5")
+    assert report.segment_parts("perf-meadow/view-5-noroad") == ("meadow", "view-5-noroad")
+    assert report.segment_parts("perf-meadow/view-0") is None
+    assert report.segment_parts("perf-meadow/view-5-") is None
+    assert report.segment_parts("perf-meadow/view-5-No Road") is None
+    assert report.segment_parts("meadow/view-5") is None

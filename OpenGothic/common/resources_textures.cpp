@@ -372,6 +372,13 @@ void Resources::indexMaterialMaps() {
          !layer("sward",maps.swardAlbedo,maps.swardNormal,maps.swardOrm) ||
          !layer("earth",maps.earthAlbedo,maps.earthNormal,maps.earthOrm))
         valid = false;
+      // the earth of the notches by a road with `track`: that road's loose layer (graphics/grass/grasstrack.h)
+      if(const auto border = value.FindMember("border"); valid && border!=value.MemberEnd()) {
+        maps.borderTile = 3.f;
+        if(!Grass::parseTile(border->value,maps.borderTile) ||
+           !layer("border",maps.border[0],maps.border[1],maps.border[2]))
+          valid = false;
+        }
       }
     if(const auto verge = entry.value.FindMember("verge"); verge!=entry.value.MemberEnd()) {
       const auto& value = verge->value;
@@ -389,9 +396,29 @@ void Resources::indexMaterialMaps() {
       if(!ok)
         valid = false;
       }
-    if(maps.grass.on || maps.verge.on)
+    // The cart track's own material (reports/engine/2026-11-15-meadow-road): two layers by world position and the
+    // ribbon's three maps in the mesh's uv, all nine; with `verge` or without. Not with what moves the uv or
+    // shares the bucket's slots: `projection`, `antitile`, `foliage`, `grass`, `window`
+    if(const auto track = entry.value.FindMember("track"); track!=entry.value.MemberEnd()) {
+      const auto& value = track->value;
+      auto triple = [&](const char* name, const char* a, const char* b, const char* c, std::array<std::string,3>& out) {
+        const auto it = value.FindMember(name);
+        if(it==value.MemberEnd() || !it->value.IsObject())
+          return false;
+        const auto& l = it->value;
+        return l.HasMember(a) && l.HasMember(b) && l.HasMember(c) &&
+               pathIn(l,a,out[0]) && pathIn(l,b,out[1]) && pathIn(l,c,out[2]);
+        };
+      if(maps.grass.on || maps.foliage.on || maps.window.on || maps.projectionTile>0 ||
+         maps.antitile!=Material::Antitile::Off || !Grass::parse(value,maps.track) ||
+         !triple("crust","albedo","normal","orm",maps.crust) || !triple("loose","albedo","normal","orm",maps.loose) ||
+         !triple("ribbon","tint","normal","mask",maps.ribbon))
+        valid = false;
+      }
+    if(maps.grass.on || maps.verge.on || maps.track.on)
       maps.grassOnly = entry.value.MemberCount()==rapidjson::SizeType(entry.value.HasMember("grass")) +
-                       rapidjson::SizeType(entry.value.HasMember("ground")) + rapidjson::SizeType(entry.value.HasMember("verge"));
+                       rapidjson::SizeType(entry.value.HasMember("ground")) + rapidjson::SizeType(entry.value.HasMember("verge")) +
+                       rapidjson::SizeType(entry.value.HasMember("track"));
     if(!valid) {
       Log::e("materials: invalid entry \"",entry.name.GetString(),"\"");
       continue;
@@ -914,10 +941,14 @@ void Resources::implTextureDemand(const Material& material, TextureCategory cate
   // the fringe's maps are asked at the density of its material: finer than the layer's own tile needs, never coarser.
   // The maps of the ground's two layers (Material::layers) as well: of the meadow and of the road with its verge
   const auto& ground=material.layers;
-  std::array<const Texture2d*,12> maps={material.tex,material.normal,material.orm,
+  std::array<const Texture2d*,24> maps={material.tex,material.normal,material.orm,
                                         material.fringe.albedo,material.fringe.normal,material.fringe.orm,
                                         ground.sward[0],ground.sward[1],ground.sward[2],
-                                        ground.earth[0],ground.earth[1],ground.earth[2]};
+                                        ground.earth[0],ground.earth[1],ground.earth[2],
+                                        ground.border[0],ground.border[1],ground.border[2],
+                                        ground.crust[0],ground.crust[1],ground.crust[2],
+                                        ground.loose[0],ground.loose[1],ground.loose[2],
+                                        ground.ribbon[0],ground.ribbon[1],ground.ribbon[2]};
   const auto unique=[&](const Texture2d* texture, size_t index) {
     for(size_t i=0;i<index && i<maps.size();++i)
       if(maps[i]==texture)
@@ -1431,9 +1462,38 @@ Resources::MaterialMaps Resources::loadMaterialMaps(std::string_view name) {
     l.ground    = of->ground;
     l.verge     = files.verge;
     l.grassBits = Grass::pack(of->grass);
+    if(files.borderTile>0) {
+      l.border     = {inst->implLoadMaterialTexture(files.border[0],TextureKind::Color),
+                      inst->implLoadMaterialTexture(files.border[1],TextureKind::Normal),
+                      inst->implLoadMaterialTexture(files.border[2],TextureKind::Orm)};
+      l.borderTile = files.borderTile;
+      if(!l.hasBorder()) {
+        Log::e("materials: \"",name,"\": a map of the ground's border does not load, its notches keep the ground's earth");
+        l.border     = {};
+        l.borderTile = 0.f;
+        }
+      }
     if(!l.present()) {
       Log::e("materials: \"",name,"\": a map of the ground's layers does not load, drawn without them");
       l = {};
+      }
+    }
+  // the road's own material, beside the verge's layers or alone
+  if(files.track.on) {
+    auto& l = ret.layers;
+    const auto triple = [&](const std::array<std::string,3>& f) {
+      return Material::Layers::Maps{inst->implLoadMaterialTexture(f[0],TextureKind::Color),
+                                    inst->implLoadMaterialTexture(f[1],TextureKind::Normal),
+                                    inst->implLoadMaterialTexture(f[2],TextureKind::Orm)};
+      };
+    l.crust  = triple(files.crust);
+    l.loose  = triple(files.loose);
+    l.ribbon = triple(files.ribbon);
+    l.track  = files.track;
+    if(!l.hasTrack()) {
+      Log::e("materials: \"",name,"\": a map of the track does not load, drawn without it");
+      l.crust = {}; l.loose = {}; l.ribbon = {};
+      l.track = {};
       }
     }
   ret.window = files.window;

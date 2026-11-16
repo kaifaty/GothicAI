@@ -24,7 +24,8 @@ enum Part : uint32_t {
   // (reports/engine/2026-11-14-meadow-ground, "Что отняло жизнь": the table was made with them); unused since
   PartLayers      = 4096, // a ground with its own layers as a painted ground: no layers, its blades as there
   PartCells       = 8192, // with the mask's paint (1+64+128): squares of 0.5 m in red, of 5 m in green, by the world's x and z
-  PartAll         = 16383,
+  PartTrack       = 16384, // a road with `track` as with its `verge` alone: the painted road and the strip (grass_track.glsl)
+  PartAll         = 32767,
   };
 
 // SceneDesc::grassRing.w carries it: 1 + 2*mask
