@@ -766,6 +766,7 @@ void Renderer::resetViewport(Tempest::Size res, Tempest::Size fullRes) {
   hiz.hiZ       = device.image2d(TextureFormat::R16,  hw, hh, true);
 
   sceneOpaque   = device.attachment(TextureFormat::R11G11B10UF,w,h);
+  sceneHaze     = Attachment();
   sceneDepth    = device.attachment(TextureFormat::R32F,       w,h);
 
   gbufDiffuse   = device.attachment(TextureFormat::RGBA8,w,h);
@@ -1014,6 +1015,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
                      {zbuffer, Tempest::Preserve, Tempest::Preserve});
   cmd.setDebugMarker("Translucent");
   wview.drawTranslucent(cmd, fId);
+  drawHaze(cmd, fId, wview);
   translucentTiming.finish();
 
   //drawHashDbg(sceneLinear, cmd, wview);
@@ -1112,6 +1114,31 @@ void Renderer::drawUpscale(Tempest::Attachment& result, Tempest::Encoder<Tempest
   cmd.setBinding(0, upscale.output, Sampler::nearest());
   cmd.setPipeline(shaders.copy);
   cmd.draw(nullptr, 0, 3);
+  }
+
+// The shimmer of hot air (particles.d "haze", main.frag mainHaze): its sprites shift the finished frame, with water,
+// fog, flames and smoke in it, so they are drawn after everything translucent and read a copy of the frame. No haze
+// in view: no copy and no pass
+void Renderer::drawHaze(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wview) {
+  if(!wview.hasHaze(fId))
+    return;
+  auto& device = Resources::device();
+  if(!device.properties().hasSamplerFormat(zBufferFormat))
+    return; // no sceneDepth to keep the shift off what stands in front (stashSceneAux)
+  if(sceneHaze.isEmpty())
+    sceneHaze = device.attachment(TextureFormat::R11G11B10UF, uint32_t(sceneLinear.w()), uint32_t(sceneLinear.h()));
+  wview.setHazeImage(textureCast<const Texture2d&>(sceneHaze));
+
+  cmd.setFramebuffer({{sceneHaze, Tempest::Discard, Tempest::Preserve}});
+  cmd.setDebugMarker("Haze-copy");
+  cmd.setBinding(0, sceneLinear, Sampler::nearest());
+  cmd.setPipeline(shaders.copy);
+  cmd.draw(nullptr, 0, 3);
+
+  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}, {taa.reactive, Tempest::Preserve, Tempest::Preserve}},
+                     {zbuffer, Tempest::Preserve, Tempest::Preserve});
+  cmd.setDebugMarker("Haze");
+  wview.drawHaze(cmd, fId);
   }
 
 void Renderer::stashSceneAux(Encoder<CommandBuffer>& cmd) {

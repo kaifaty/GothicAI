@@ -63,7 +63,8 @@ class PfxBucket {
 
     const ParticleFx&           decl;
     PfxObjects&                 parent;
-    // the push data of main_pfx_f/_e (main.frag PushPfx)
+    // the push data of main_pfx_f/_e (main.frag PushPfx); of a haze (main_pfx_x) hdrFrom is its shift and hdrInvRange
+    // one over its cell, cm
     struct Push {
       float reactive    = 0; // ParticleFx::taaReactive (graphics plan 1v)
       float hdrFrom     = 0; // particles.d "hdr": the night's gain over a texel's brightness
@@ -80,6 +81,8 @@ class PfxBucket {
     void                        drawShadow     (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals &scene, uint8_t fId, int layer);
     void                        drawMultiply   (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals &scene, uint8_t fId);
     void                        drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals &scene, uint8_t fId);
+    void                        drawHaze       (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals &scene, uint8_t fId);
+    bool                        hasHaze        (uint8_t fId) const;
 
     size_t                      allocEmitter();
     void                        freeEmitter(size_t& id);

@@ -58,11 +58,12 @@ layout(location = 0) out vec4 outColor;
     !defined(GBUFFER) && !defined(WATER)
 #define TAA_REACTIVE
 layout(location = 1) out vec4 outReactive;
-#if (MESH_TYPE==T_PFX) && !defined(GHOST)
+#if (MESH_TYPE==T_PFX)
 layout(push_constant, std430) uniform PushPfx {
   float reactive;    // ParticleFx::taaReactive: 1 for particles, 0 for rain and snow
   float hdrFrom;     // particles.d "hdr" (mainEmissive): the night's gain over a texel's brightness
-  float hdrInvRange; // 1/(to - from); 0: off
+                     // of a haze (GHOST, mainHaze): its largest shift, cm
+  float hdrInvRange; // 1/(to - from); 0: off. Of a haze: one over its noise cell, 1/cm
   float hdrEdge;
   } pushPfx;
 #endif
@@ -778,7 +779,65 @@ void mainEmissive(vec4 t) {
   }
 #endif
 
-#if defined(GHOST)
+#if defined(GHOST) && (MESH_TYPE==T_PFX)
+// The shimmer of hot air over a fire (particles.d "haze"). The sprite has no colour: it shows the finished frame
+// behind it (sceneColor is the copy Renderer::drawHaze makes after everything translucent) shifted by a noise that
+// rises and changes. The shift is in cm of the world at the sprite's distance, so it shrinks with distance as the
+// real one does; it fades to the sprite's rim and with the particle's alpha. A sample that would land on something
+// in front of the sprite (a man before the fire) is not shifted, or his outline would smear into the air.
+float hazeHash(vec3 p) {
+  p = fract(p*vec3(0.1031, 0.1030, 0.0973));
+  p += dot(p, p.yxz + 33.33);
+  return fract((p.x + p.y)*p.z);
+  }
+
+float hazeNoise(vec3 p) {
+  const vec3 i = floor(p);
+  vec3       f = fract(p);
+  f = f*f*(3.0-2.0*f);
+  const float a = mix(mix(hazeHash(i),               hazeHash(i+vec3(1,0,0)), f.x),
+                      mix(hazeHash(i+vec3(0,1,0)),   hazeHash(i+vec3(1,1,0)), f.x), f.y);
+  const float b = mix(mix(hazeHash(i+vec3(0,0,1)),   hazeHash(i+vec3(1,0,1)), f.x),
+                      mix(hazeHash(i+vec3(0,1,1)),   hazeHash(i+vec3(1,1,1)), f.x), f.y);
+  return mix(a, b, f.z);
+  }
+
+void mainGhost(vec4 t) {
+  const vec2  uv   = gl_FragCoord.xy*scene.screenResInv;
+  const vec2  c    = shInp.uv*2.0 - vec2(1.0);
+  const float rim  = clamp(1.0 - dot(c,c), 0.0, 1.0);
+  const float k    = rim*rim*shInp.color.a;
+
+  const float own  = linearDepth(gl_FragCoord.z, scene.clipInfo);
+  vec4        wpos = scene.viewProjectInv*vec4(uv*2.0-vec2(1.0), gl_FragCoord.z, 1.0);
+  wpos.xyz /= wpos.w;
+
+  // hot air rises at about 1 m/s and its cells live for a fraction of a second
+  const float time = float(scene.tickCount32 % 1000000u)*0.001;
+  vec3        q    = wpos.xyz*pushPfx.hdrInvRange;
+  q.y -= time*100.0*pushPfx.hdrInvRange;
+  const vec3  morph = vec3(0.0, 0.0, time*1.7);
+  // two octaves; the shift is mostly sideways, as of rising streams
+  vec2 n = vec2(hazeNoise(q + morph), hazeNoise(q.zyx + vec3(17.3, 5.1, 9.7) - morph)) - vec2(0.5);
+  n     += (vec2(hazeNoise(q*2.3 - morph), hazeNoise(q.zyx*2.3 + vec3(3.1, 11.9, 1.3) + morph)) - vec2(0.5))*0.5;
+  n     *= vec2(1.0, 0.6);
+
+  // cm of the world to the screen by the size of a pixel at the sprite
+  const float cmPerPx = max(length(dFdx(wpos.xyz)), 1e-3);
+  vec2 shift = n*(2.0*k*pushPfx.hdrFrom/cmPerPx)*scene.screenResInv;
+  const float behind = linearDepth(textureLod(gbufferDepth, uv+shift, 0).r, scene.clipInfo);
+  if(behind<own)
+    shift = vec2(0.0);
+
+  outColor = vec4(textureLod(sceneColor, uv+shift, 0).rgb, 1.0);
+#if defined(TAA_REACTIVE)
+  // The frame under a haze changes every frame with no motion vector: the temporal resolve would average the shimmer
+  // into a blur with a stipple, so the mask goes up with the shift. Blended over the mask of the flames and smoke
+  // under it, which stays where the haze is weak
+  outReactive = vec4(1.0, 0, 0, smoothstep(0.0, 0.25, k));
+#endif
+  }
+#elif defined(GHOST)
 void mainGhost(vec4 t) {
   vec3  color  = textureAlbedo(t.rgb) * 5.0;
   vec3  normal = normalize(shInp.normal);
