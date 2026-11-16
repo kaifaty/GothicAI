@@ -1868,13 +1868,14 @@ void landscapeLifetime(const Fixture& fixture, Tempest::Device& device) {
   require(catalogueTable.source && catalogueTable.source->catalogue() && landscape.polygons.material_indices.empty(),
           "a cooked world must take the catalogue start");
   ChunkResidency residency(catalogueTable);
-  // The view as the world load makes it (graphics/landscapestart.h): the bounds of the packed landscape.
+  // The view as the world load makes it (graphics/landscapestart.h): the stitched landscape's bounds, as the start
+  // without the catalogue gives them (packed.bbox() also holds the meshlets' padding).
   const auto made=streamingWorldView(landscape,catalogueTable,"CONTRACT.ZEN");
   auto& view=*made;
-  const auto bounds=view.bbox(), expected=packed.bbox();
+  const auto bounds=view.bbox(), expected=PackedMesh::landscapeBbox(readWorldChunks(directory));
   require(bounds.first.x==expected.first.x && bounds.first.y==expected.first.y && bounds.first.z==expected.first.z &&
           bounds.second.x==expected.second.x && bounds.second.y==expected.second.y && bounds.second.z==expected.second.z,
-          "the catalogue start's view must take the packed landscape's bounds");
+          "the catalogue start's view must take the stitched landscape's bounds");
   view.startLandscapeStreaming(std::move(landscape),residency,0);
   view.prepareLandscapeWork();
   residency.update({100,100,100},{100,100,100},1000);
