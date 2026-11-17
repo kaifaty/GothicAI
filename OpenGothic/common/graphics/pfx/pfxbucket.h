@@ -36,7 +36,11 @@ class PfxBucket {
       std::pair<int32_t,int32_t> textureChunk;
 
       Tempest::Vec3 pos          = {};
-      Tempest::Vec3 steadyAt     = {}; // where the emitter was when its steady particles were last carried
+      Tempest::Vec3 steadyAt     = {}; // where the emitter was when its particles were last carried
+      bool          carried      = false; // steadyAt is set
+      // the air that passes the emitter, cm/ms: minus its own motion, through a spring (particles.d "lean")
+      Tempest::Vec3 air          = {};
+      Tempest::Vec3 airRate      = {};
       Tempest::Vec3 direction[3] = {{1,0,0}, {0,1,0}, {0,0,1}};
       bool          isLoop       = false;
 
@@ -125,6 +129,7 @@ class PfxBucket {
 
       Tempest::Vec3 pos       = {};
       float         flicker   = 1.f;  // the emitter's brightness this frame (ImplEmitter::flicker)
+      Tempest::Vec3 lean      = {0,1,0}; // a leaning card's lower edge to its upper, in card heights (pfx.vert)
       };
 
     struct Trail final {

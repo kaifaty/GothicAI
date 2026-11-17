@@ -3,6 +3,7 @@
 #include "definitiontypes.h"
 
 #include <Tempest/Log>
+#include <cmath>
 
 #include "graphics/pfx/particlefx.h"
 #include "gothic.h"
@@ -63,6 +64,10 @@ const ParticleFx* ParticlesDefinitions::implGet(std::string_view name, bool rela
     p->motion.drag         = own.drag*1e-3f;
     p->stretchMs           = own.stretch*1000.f;
     p->minPixels           = own.minPixels;
+    p->leanRise            = own.leanRise*0.1f;               // m/s -> cm/ms
+    p->leanMaxTan          = std::tan(own.leanMaxDeg*3.14159265f/180.f);
+    p->leanResponseMs      = own.leanResponse*1000.f;
+    p->inherit             = own.inherit;
     p->hdrFrom             = own.hdrFrom;
     p->hdrTo               = own.hdrTo;
     p->hdrEdge             = own.hdrEdge;

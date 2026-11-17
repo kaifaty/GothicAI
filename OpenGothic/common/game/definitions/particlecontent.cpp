@@ -107,6 +107,15 @@ void readMotion(const Json& entry, Motion& motion) {
     motion.hdrEdge=number(member(hdr,"edge"),"hdr.edge",0,1,"0..1");
     require(motion.hdrTo>motion.hdrFrom,"hdr.to: must be over hdr.from");
     }
+  if(entry.HasMember("lean")) {
+    const auto& lean=entry["lean"];
+    require(lean.IsObject(),"lean: expected object");
+    fields(lean,{"rise","max_deg","response"});
+    motion.leanRise=number(member(lean,"rise"),"lean.rise",0.1,20,"0.1..20");
+    if(lean.HasMember("max_deg"))  motion.leanMaxDeg  =number(lean["max_deg"],"lean.max_deg",0,80,"0..80");
+    if(lean.HasMember("response")) motion.leanResponse=number(lean["response"],"lean.response",0.02,2,"0.02..2");
+    }
+  if(entry.HasMember("inherit")) motion.inherit=number(entry["inherit"],"inherit",0,1,"0..1");
   if(entry.HasMember("haze")) {
     const auto& haze=entry["haze"];
     fields(haze,{"shift","cell"});
@@ -187,7 +196,7 @@ Result load(daedalus::DaedalusVm& vm, const fs::path& contentRoot) {
       decltype(result.flipbooks) pendingFlipbooks;
       decltype(result.motions) pendingMotions;
       for(const auto& entry:effects.GetArray()) {
-        fields(entry,{"name","base","set","flipbook","curl","drag","stretch","minPixels","hdr","haze"});
+        fields(entry,{"name","base","set","flipbook","curl","drag","stretch","minPixels","hdr","haze","lean","inherit"});
         const auto name=text(member(entry,"name"));
         require(!name.empty() && std::all_of(name.begin(),name.end(),[](char c) {
           return (c>='A' && c<='Z') || (c>='0' && c<='9') || c=='_';
@@ -243,6 +252,13 @@ Result load(daedalus::DaedalusVm& vm, const fs::path& contentRoot) {
           require(orientation=="VELO" || orientation=="VELO3D","stretch: needs visOrientation_S VELO or VELO3D");
           }
         require(motion.minPixels==0 || pendingFlipbooks.count(name)==0,"minPixels: not with a flipbook");
+        {
+        const auto book=pendingFlipbooks.find(name);
+        const bool steady=book!=pendingFlipbooks.end() && book->second.steady;
+        require(motion.leanRise==0 || steady,"lean: needs a steady flipbook");
+        require(motion.inherit==0 || !steady,"inherit: not with a steady flipbook");
+        require(motion.stretch==0 || book==pendingFlipbooks.end(),"stretch: not with a flipbook");
+        }
         require(motion.hdrTo==0 || uppercase(definition->vis_alpha_func_s)=="ADD","hdr: needs visAlphaFunc_S ADD");
         require(motion.hazeShift==0 || (motion.hdrTo==0 && pendingFlipbooks.count(name)==0),"haze: not with hdr or a flipbook");
         if(!motion.empty()) pendingMotions.emplace(name,motion);

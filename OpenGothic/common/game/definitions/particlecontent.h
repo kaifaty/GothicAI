@@ -44,8 +44,18 @@ struct Motion {
   // hazeCell the size of a noise cell in cm; hazeShift 0: off
   float hazeShift     = 0;
   float hazeCell      = 0;
+  // "lean" of a steady flame card (pfxbucket.cpp, pfx.vert): the card stands on its lower edge and leans with the
+  // air that passes its emitter (minus the emitter's own motion). leanRise is the flame gas's rise in m/s: the
+  // tangent of the lean is the air's speed over it; leanRise 0: off. leanMaxDeg caps the angle, leanResponse is the
+  // time in s the flame takes to answer a change of the air
+  float leanRise      = 0;
+  float leanMaxDeg    = 70;
+  float leanResponse  = 0.12f;
+  // "inherit": the share 0..1 of its emitter's motion a living particle takes, so the tail behind a carried flame
+  // is short: at 0.75 a tongue trails at a quarter of the carrier's speed
+  float inherit       = 0;
 
-  bool empty() const { return curlStrength==0 && drag==0 && stretch==0 && minPixels==0 && hdrTo==0 && hazeShift==0; }
+  bool empty() const { return curlStrength==0 && drag==0 && stretch==0 && minPixels==0 && hdrTo==0 && hazeShift==0 && leanRise==0 && inherit==0; }
   };
 
 struct Result {

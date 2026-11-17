@@ -603,18 +603,25 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
     {"name":"OWN_TEST_SPARKS","base":"FIRE_SPARKS","set":{"visOrientation_S":"VELO","visAlphaFunc_S":"ADD"},"curl":{"strength":1.5,"frequency":4,"speed":0.3},"drag":2,"stretch":0.025,"minPixels":1.5,"hdr":{"from":1,"to":9,"edge":0.25}},
     {"name":"OWN_TEST_SPARKS_CHILD","base":"OWN_TEST_SPARKS","set":{},"drag":3}]})");
   textFile(directory/"50-haze.json",R"({"format":1,"effects":[
-    {"name":"OWN_TEST_HAZE","base":"FIRE_SMOKE","set":{"visAlphaFunc_S":"BLEND"},"haze":{"shift":3,"cell":5}}]})");
+    {"name":"OWN_TEST_HAZE","base":"FIRE_SMOKE","set":{"visAlphaFunc_S":"BLEND"},"haze":{"shift":3,"cell":5}},
+    {"name":"OWN_TEST_LEAN","base":"OWN_TEST_FLIP","set":{},"lean":{"rise":1.8,"max_deg":45}},
+    {"name":"OWN_TEST_TAIL","base":"FIRE_SMOKE","set":{},"inherit":0.75}]})");
   auto vm=ParticleContent::openProgram(baseRoot);
   const auto original=ParticleContent::base(*vm,"FIRE_SMOKE");
   require(original!=nullptr,"base FIRE_SMOKE definition");
   const auto loaded=ParticleContent::load(*vm,f.content);
-  require(loaded.errors.empty() && loaded.effects.size()==9,"own definitions load in filename and declaration order");
+  require(loaded.errors.empty() && loaded.effects.size()==11,"own definitions load in filename and declaration order");
   const auto& sparks=loaded.motions.at("OWN_TEST_SPARKS_CHILD");
   require(sparks.curlStrength==1.5f && sparks.curlFrequency==4.f && sparks.curlSpeed==0.3f && sparks.drag==3.f &&
           sparks.stretch==0.025f && sparks.minPixels==1.5f && loaded.motions.at("OWN_TEST_SPARKS").drag==2.f &&
           sparks.hdrFrom==1.f && sparks.hdrTo==9.f && sparks.hdrEdge==0.25f,
           "curl, drag, stretch, minPixels and hdr are read and inherited field by field from an own base");
   require(loaded.motions.at("OWN_TEST_HAZE").hazeShift==3.f && loaded.motions.at("OWN_TEST_HAZE").hazeCell==5.f,"haze is read");
+  {
+  const auto& lean=loaded.motions.at("OWN_TEST_LEAN");
+  require(lean.leanRise==1.8f && lean.leanMaxDeg==45.f && lean.leanResponse==0.12f && lean.inherit==0 &&
+          loaded.motions.at("OWN_TEST_TAIL").inherit==0.75f,"lean and inherit are read");
+  }
   require(loaded.motions.count("OWN_TEST_SMOKE")==0 && loaded.motions.count("OWN_TEST_FLIP")==0,"effects without them have no motion");
   const auto flip=loaded.flipbooks.find("OWN_TEST_FLIP");
   require(flip!=loaded.flipbooks.end() && flip->second.cols==8 && flip->second.rows==4 && flip->second.frames==30 &&
@@ -647,6 +654,10 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
     {"flip-field",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24,"loop":1}})"},
     {"flip-yaw",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24,"yaw":1}})"},
     {"flip-steady",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24,"steady":1}})"},
+    {"lean-no-steady",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"lean":{"rise":1.8}})"},
+    {"lean-no-rise",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24,"steady":true},"lean":{"max_deg":45}})"},
+    {"inherit-steady",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24,"steady":true},"inherit":0.5})"},
+    {"inherit-range",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"inherit":1.5})"},
     {"curl-frequency",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"curl":{"strength":1,"frequency":0}})"},
     {"curl-field",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"curl":{"strength":1,"frequency":2,"octaves":3}})"},
     {"drag-range",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"drag":60})"},
@@ -706,6 +717,13 @@ void runtimeParticles(Gothic& gothic, const Fixture& f, const fs::path& baseRoot
           std::abs(sparks->stretchMs-25.f)<1e-4f && sparks->minPixels==1.5f &&
           sparks->hdrFrom==1.f && sparks->hdrTo==9.f && sparks->hdrEdge==0.25f &&
           sparks->visOrientation==ParticleFx::Orientation::Velocity,"own motion and hdr reach the native effect in cm and ms");
+  {
+  const auto* lean=gothic.loadParticleFx("OWN_TEST_LEAN");
+  const auto* tail=gothic.loadParticleFx("OWN_TEST_TAIL");
+  require(lean && std::abs(lean->leanRise-0.18f)<1e-5f && std::abs(lean->leanMaxTan-1.f)<1e-4f &&
+          std::abs(lean->leanResponseMs-120.f)<1e-3f && tail && tail->inherit==0.75f && tail->leanRise==0,
+          "lean and inherit reach the particle declaration in engine units");
+  }
   const auto* haze=gothic.loadParticleFx("OWN_TEST_HAZE");
   require(haze && haze->hazeShift==3.f && haze->hazeCell==5.f && haze->visMaterial.alpha==Material::Ghost,
           "a haze reaches the native effect as a ghost material");

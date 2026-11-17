@@ -16,7 +16,7 @@
   {
    "key": "hand-flame",
    "kind": "emitter",
-   "pfx": "OWN_TORCH_FLAME",
+   "pfx": "OWN_HAND_FLAME",
    "position": [
     -40.5,
     -0.8,
@@ -34,7 +34,7 @@
   {
    "key": "hand-flame-a",
    "kind": "emitter",
-   "pfx": "OWN_TORCH_FLAME_SIDE",
+   "pfx": "OWN_HAND_FLAME_SIDE",
    "position": [
     -35.5,
     -0.8,
@@ -52,7 +52,7 @@
   {
    "key": "hand-flame-b",
    "kind": "emitter",
-   "pfx": "OWN_TORCH_FLAME_SIDE",
+   "pfx": "OWN_HAND_FLAME_SIDE",
    "position": [
     -44.5,
     -0.8,
@@ -70,7 +70,7 @@
   {
    "key": "hand-licks",
    "kind": "emitter",
-   "pfx": "OWN_TORCH_LICKS",
+   "pfx": "OWN_HAND_LICKS",
    "position": [
     -40.5,
     -0.8,
