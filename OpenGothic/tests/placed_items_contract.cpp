@@ -43,11 +43,13 @@
 #include <set>
 #include <type_traits>
 
-void npcLiveSynthetic(void (*compare)(World&));
+void npcLiveSynthetic(void (*compare)(World&), void (*disabled)(World&));
 
 // Test-only access keeps the production creation entry point unchanged.
 struct NpcDefinitionContract {
   static auto& definitions(GameScript& script) { return script.npcDefinitions; }
+  static const auto& items(GameScript& script) { return script.itemDefinitions; }
+  static const auto& routines(GameScript& script) { return script.routineDefinitions; }
   static auto& random(GameScript& script) { return script.randGen; }
   };
 
@@ -761,7 +763,8 @@ void npcDefinitions(World& world) {
         difference(name,"reference constructor executed","yes",constructorInstructions>0 ? "yes" : "no");
         if(syntheticEquip) {
           difference(name,"reference on_equip executed","yes",onEquipCalls>0 ? "yes" : "no");
-          difference(name,"reference final attribute[0]","30",std::to_string(expected->handle().attribute[0]));
+          difference(name,"reference final attribute[0]","40",std::to_string(expected->handle().attribute[0]));
+          difference(name,"reference helper result","30",std::to_string(expected->handle().exp));
           difference(name,"reference final level","30",std::to_string(expected->handle().level));
           }
         prepareSyntheticPhysics(*expected);
@@ -839,6 +842,36 @@ void npcDefinitions(World& world) {
     throw std::runtime_error("live NPC differs: "+std::to_string(differences.size())+" differences; "+differences.front());
   std::printf("Live NPC equality: %zu captured NPCs and one director template; %zu startup daily routines; record, appearance, ordered inventory, equipped and active items, talents, attitudes, routines, ITEM and RNG match\n",
               count-1,dailyCount);
+  }
+
+void npcDefinitionsDisabled(World& world) {
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  require(NpcDefinitionContract::definitions(script).npcs.empty(),"NPC switch must leave the game's definitions empty");
+  require(NpcDefinitionContract::items(script).items.empty(),"item switch must leave the game's definitions empty");
+  require(NpcDefinitionContract::routines(script).routines.empty(),"routine switch must leave the game's definitions empty");
+  const auto* npcSymbol=vm.find_symbol_by_name("NPC_NO_ID");
+  const auto* itemSymbol=vm.find_symbol_by_name("IT_NPC_RING");
+  const auto* routine=vm.find_symbol_by_name("RTN_START_123");
+  require(npcSymbol && itemSymbol && routine,"disabled creation fixtures must exist");
+  size_t constructors=0,itemConstructors=0,dailyRoutines=0;
+  vm.observe_instructions([&](const daedalus::DaedalusInstruction&) {
+    if(vm.pc()==npcSymbol->address()) ++constructors;
+    if(vm.pc()==itemSymbol->address()) ++itemConstructors;
+    if(vm.pc()==routine->address()) ++dailyRoutines;
+    });
+  try {
+    Npc npc(world,npcSymbol->index(),world.startPoint().name,NpcProcessPolicy::AiNormal);
+    require(constructors>0,"disabled NPC records must execute a constructor in the game VM");
+    require(itemConstructors>0,"disabled item records must execute a constructor in the game VM");
+    require(dailyRoutines>0,"disabled routine records must execute the startup routine in the game VM");
+    require(npc.handle().attribute[0]==40 && npc.handle().exp==30 && npc.handle().level==30,
+            "disabled game creation must preserve helper and field order");
+    vm.observe_instructions({});
+    }
+  catch(...) { vm.observe_instructions({}); throw; }
+  std::printf("Live record switches: empty NPC/item/routine sections; VM constructors %zu NPC/%zu item, startup routines %zu\n",
+              constructors,itemConstructors,dailyRoutines);
   }
 
 void moverChildSave() {
@@ -964,9 +997,11 @@ int main() {
     groundBelowSupport();
     asymmetricLowestPoint();
     irregularSupport();
-    npcLiveSynthetic(npcDefinitions);
-    if(const auto* game=std::getenv("GOTHIC_DIR"); game && *game) moverChildSave();
-    else std::puts("SKIP real game corpus and mover-child save: GOTHIC_DIR is not selected");
+    npcLiveSynthetic(npcDefinitions,npcDefinitionsDisabled);
+    const auto* noGameData=std::getenv("OPENGOTHIC_CONTRACT_NO_GAME_DATA");
+    if(noGameData && std::strcmp(noGameData,"1")==0)
+      std::puts("SKIP real game corpus and mover-child save: OPENGOTHIC_CONTRACT_NO_GAME_DATA=1");
+    else moverChildSave();
     std::puts("Placed item census contracts passed");
     return EXIT_SUCCESS;
     }

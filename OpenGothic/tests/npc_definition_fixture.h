@@ -80,10 +80,15 @@ inline NpcSnapshot::Program program() {
   f.set(f.find("C_NPC.LEVEL"),5); f.op(Op::RSR);
   const auto addAfterEquip=f.fn("ADD_AFTER_EQUIP"); f.begin(addAfterEquip);
   f.op(Op::PUSHV,f.find("C_NPC.ATTRIBUTE")); f.op(Op::PUSHI,15); f.op(Op::ADD);
-  f.op(Op::PUSHV,f.find("C_NPC.ATTRIBUTE")); f.op(Op::MOVI); f.op(Op::RSR);
+  f.op(Op::PUSHV,f.find("C_NPC.ATTRIBUTE")); f.op(Op::MOVI);
+  f.op(Op::PUSHV,f.find("C_NPC.ATTRIBUTE")); f.op(Op::PUSHV,f.find("C_NPC.EXP")); f.op(Op::MOVI); f.op(Op::RSR);
   const auto item=f.symbol("IT_NPC_RING",Type::INSTANCE,0,Flag::CONST,int32_t(itemClass)); f.begin(item);
   f.set(f.find("C_ITEM.FLAGS"),1<<11);
   f.set(f.find("C_ITEM.VALUE"),7); f.set(f.find("C_ITEM.ON_EQUIP"),int(callback)); f.op(Op::RSR);
+  const auto ambientItem=f.symbol("IT_NPC_AMBIENT",Type::INSTANCE,0,Flag::CONST,int32_t(itemClass)); f.begin(ambientItem);
+  f.set(f.find("C_ITEM.VALUE"),11); f.op(Op::RSR);
+  const auto trailerItem=f.symbol("IT_NPC_TRAILER",Type::INSTANCE,0,Flag::CONST,int32_t(itemClass)); f.begin(trailerItem);
+  f.set(f.find("C_ITEM.VALUE"),13); f.op(Op::RSR);
   const auto itemPrototype=f.symbol("IT_NPC_PROTOTYPE",Type::PROTOTYPE,0,Flag::CONST,int32_t(itemClass));
   f.begin(itemPrototype); f.set(f.find("C_ITEM.VALUE"),1); f.op(Op::RSR);
   const auto ambient=f.fn("B_CREATEAMBIENTINV",{Type::INSTANCE});
@@ -91,7 +96,7 @@ inline NpcSnapshot::Program program() {
   f.begin(ambient); f.op(Op::PUSHV,ambient+1); f.op(Op::MOVVI);
   f.op(Op::PUSHI,7); f.op(Op::BE,random); f.op(Op::PUSHI,1); f.op(Op::ADD);
   f.op(Op::PUSHV,count); f.op(Op::MOVI);
-  f.op(Op::PUSHV,ambient+1); f.op(Op::PUSHI,item); f.op(Op::PUSHV,count); f.op(Op::BE,create); f.op(Op::RSR);
+  f.op(Op::PUSHV,ambient+1); f.op(Op::PUSHI,ambientItem); f.op(Op::PUSHV,count); f.op(Op::BE,create); f.op(Op::RSR);
   const auto point=f.symbol("POINT",Type::STRING,1,Flag::CONST); f.p.symbols[point].string_values[0]="TEST_WP";
   const auto state=f.fn("ZS_TEST"); f.begin(state); f.op(Op::RSR);
   const auto routine=f.fn("RTN_START_123"); f.begin(routine);
@@ -112,9 +117,13 @@ inline NpcSnapshot::Program program() {
   f.op(Op::PUSHV,self); f.op(Op::PUSHI,item); f.op(Op::BE,equip);
   // The helper must read the attribute after on_equip added five, then add fifteen.
   f.call(addAfterEquip);
+  // Moving the helper to the end reads forty instead of fifteen; EXP preserves its result.
+  f.set(f.find("C_NPC.ATTRIBUTE"),40);
   f.set(f.find("C_NPC.LEVEL"),30);
   f.op(Op::PUSHV,self); f.op(Op::PUSHI,std::bit_cast<uint32_t>(1.25f)); f.op(Op::BE,fatness);
-  f.op(Op::PUSHV,self); f.call(ambient); f.op(Op::RSR);
+  f.op(Op::PUSHV,self); f.call(ambient);
+  // The ambient item must precede this distinct item, and ITEM must end on the trailer.
+  f.op(Op::PUSHV,self); f.op(Op::PUSHI,trailerItem); f.op(Op::PUSHI,1); f.op(Op::BE,create); f.op(Op::RSR);
   const auto named=f.symbol("NPC_WITH_ID",Type::INSTANCE,0,Flag::CONST,int32_t(prototype)); f.begin(named);
   f.call(prototype); f.set(f.find("C_NPC.ID"),123); f.op(Op::RSR);
   const auto dependent=f.symbol("NPC_GLOBAL",Type::INSTANCE,0,Flag::CONST,int32_t(npcClass)); f.begin(dependent);

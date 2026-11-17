@@ -101,12 +101,22 @@ class Runner {
   public:
     explicit Runner(const NpcSnapshot::Program& program):program(program),analysis(DaedalusScript::from_program(program.data)) {}
     Capture run(uint32_t id) const {
-      std::set<uint32_t> deferred;
-      for(;;) {
-        try { return capture(id,deferred); }
-        catch(const Defer& function) {
-          require(deferred.insert(function.address).second,"NPC dependency replay did not advance");
+      try {
+        std::set<uint32_t> deferred;
+        for(;;) {
+          try { return capture(id,deferred); }
+          catch(const Defer& function) {
+            require(deferred.insert(function.address).second,"NPC dependency replay did not advance");
+            }
+          catch(const Stop& error) {
+            Capture result;
+            result.reason=error.reason; result.detail=error.detail;
+            return result;
+            }
           }
+        }
+      catch(const std::exception& error) {
+        throw std::runtime_error("NPC definitions: "+program.data.symbols.at(id).name+": "+error.what());
         }
       }
   private:
@@ -124,6 +134,7 @@ class Runner {
         });
       auto npc=std::make_shared<INpc>();
       auto* root=vm.find_symbol_by_index(id);
+      require(root!=nullptr,"missing NPC symbol "+std::to_string(id));
       bool engineState=false;
       std::vector<const DaedalusSymbol*> frames;
       auto overridden=[&](const DaedalusSymbol& function) {
@@ -139,6 +150,7 @@ class Runner {
         while(!todo.empty()) {
           const auto address=todo.back(); todo.pop_back();
           if(!visited.insert(address).second) continue;
+          require(analysis.functions.contains(address),"missing script function at address "+std::to_string(address));
           const auto next=analysis.functions.upper_bound(address);
           const auto end=next==analysis.functions.end() ? vm.size() : next->first;
           for(auto pc=address;pc<end;) {
@@ -146,14 +158,16 @@ class Runner {
             if(op.op==Op::BL) todo.push_back(op.address);
             if(op.op==Op::BE) {
               const auto* external=vm.find_symbol_by_index(op.symbol);
-              if(!external || (!engineCalls.count(external->name()) && external->name()!="HLP_RANDOM"))
-                throw Stop("unsupported_external",external ? external->name() : std::to_string(op.symbol));
+              require(external!=nullptr,"missing external symbol "+std::to_string(op.symbol));
+              if(!engineCalls.count(external->name()) && external->name()!="HLP_RANDOM")
+                throw Stop("unsupported_external",external->name());
               if(external->has_return() && external->name()!="HLP_RANDOM")
                 throw Stop("external_query",external->name());
               }
             if(op.op==Op::PUSHV || op.op==Op::PUSHVI || op.op==Op::PUSHVV || op.op==Op::GMOVI) {
               const auto* symbol=vm.find_symbol_by_index(op.symbol);
-              if(symbol && mutableGlobal(*symbol,vm)) throw Stop("game_state",symbol->name());
+              require(symbol!=nullptr,"missing symbol "+std::to_string(op.symbol));
+              if(mutableGlobal(*symbol,vm)) throw Stop("game_state",symbol->name());
               if(symbol==vm.global_self() && pc+op.size<end && vm.instruction_at(pc+op.size).op==Op::MOVVI)
                 throw Stop("game_state_write",symbol->name());
               }
@@ -228,6 +242,7 @@ class Runner {
               if(vm.top_is_reference()) {
                 auto [symbol,index,context]=vm.pop_reference();
                 (void)index; (void)context;
+                require(symbol!=nullptr,"missing instance argument symbol for "+function.name());
                 if(mutableGlobal(*symbol,vm)) throw Stop("game_state",symbol->name());
                 const auto instance=symbol->get_instance();
                 if(instance==npc || symbol==vm.global_self()) value.kind=Value::Kind::Self;
@@ -262,13 +277,18 @@ class Runner {
         std::reverse(values.begin(),values.end());
         return values;
         };
+      auto findSymbol=[&](const std::string& name) {
+        auto* symbol=vm.find_symbol_by_name(name);
+        require(symbol!=nullptr,"missing symbol "+name);
+        return symbol;
+        };
       auto boundNpc=[&](const Value& target) {
         return target.kind==Value::Kind::Self ||
             (target.kind==Value::Kind::Symbol &&
-             std::dynamic_pointer_cast<INpc>(vm.find_symbol_by_name(target.text)->get_instance())!=nullptr);
+             std::dynamic_pointer_cast<INpc>(findSymbol(target.text)->get_instance())!=nullptr);
         };
       auto integer=[&](const Value& value) {
-        return value.kind==Value::Kind::Symbol ? int32_t(vm.find_symbol_by_name(value.text)->index()) : value.integer;
+        return value.kind==Value::Kind::Symbol ? int32_t(findSymbol(value.text)->index()) : value.integer;
         };
       auto validateItemAllocation=[&](const Call& call) {
         if(!boundNpc(call.args.at(0))) return;
@@ -311,8 +331,14 @@ class Runner {
       for(const auto& [address,index]:analysis.functions) {
         (void)address;
         auto* function=vm.find_symbol_by_index(index);
+        require(function!=nullptr,"missing script function symbol "+std::to_string(index));
         if(!overridden(*function)) continue;
-        vm.override_function_custom(*function,[&,function](DaedalusVm&) { event(*function,true); });
+        vm.override_function_custom(*function,[&,function](DaedalusVm&) {
+          // Validate only helpers reached by this constructor, before replacing
+          // their body with a deferred call. Unrelated random functions may read globals.
+          if(analysis.random.count(function->address())) validateDeferred(*function);
+          event(*function,true);
+          });
         }
       vm.register_default_external_custom([&](DaedalusVm&,DaedalusSymbol& function) {
         if(!engineCalls.count(function.name())) throw Stop("unsupported_external",function.name());
@@ -322,8 +348,7 @@ class Runner {
         vm.init_instance(npc,root);
         flush();
         }
-      catch(const Stop& error) { result.reason=error.reason; result.detail=error.detail; result.definition.steps.clear(); }
-      catch(const std::exception& error) { result.reason="execution_error"; result.detail=error.what(); result.definition.steps.clear(); }
+      catch(const DaedalusScriptError& error) { result.reason="execution_error"; result.detail=error.what(); result.definition.steps.clear(); }
       return result;
       }
     const NpcSnapshot::Program& program;

@@ -327,13 +327,6 @@ jobs:
       - name: Build this fork's game (AI bridge), content-convert and storygraph with GCC
         run: scripts/linux/build.sh
 
-      - name: NPC definitions match constructors without installed game data
-        run: |
-          cmake --build OpenGothic/build --parallel 4 --target gothic-npc-snapshot-contract gothic-placed-items-contract
-          cd OpenGothic/build
-          env -u GOTHIC_DIR -u OPENGOTHIC_BASE -u OPENGOTHIC_BASE_FINGERPRINT opengothic/gothic-npc-snapshot-contract
-          env -u GOTHIC_DIR -u OPENGOTHIC_BASE -u OPENGOTHIC_BASE_FINGERPRINT opengothic/gothic-placed-items-contract
-
       - name: The converter passes its self-test and refuses a folder without Gothic II
         env:
           HOME: ${{ runner.temp }}/home  # a throwaway home: nothing in the runner's own

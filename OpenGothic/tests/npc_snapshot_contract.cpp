@@ -488,6 +488,63 @@ void npcDefinitions(const fs::path& dir) {
   check(NpcSnapshot::verifyNpcs(program,file)>0,"fresh import verification rejects a changed NPC field on disk");
   NpcSnapshot::writeNpcs(program,file);
 
+  auto instruction=[&](NpcSnapshot::Program& value,uint32_t pc,Op op,uint32_t operand) {
+    check(size_t(pc)+5<=value.data.bytecode.size(),"NPC fixture instruction is within bytecode");
+    value.data.bytecode[pc]=std::byte(op);
+    for(uint32_t i=0;i<4;++i) value.data.bytecode[pc+1+i]=std::byte((operand>>(8*i))&255);
+    };
+  auto encode=[](NpcSnapshot::Program& value) {
+    const auto encoded=ProgramData::encodeProgram(value.data);
+    value.name=encoded.name; value.sha256=encoded.sha256;
+    };
+  {
+    auto randomGlobal=program;
+    auto script=DaedalusScript::from_program(program.data);
+    const auto* helper=script.find_symbol_by_name("B_CREATEAMBIENTINV");
+    const auto* random=script.find_symbol_by_name("HLP_RANDOM");
+    const auto* global=script.find_symbol_by_name("CHAPTER");
+    bool changedBound=false;
+    for(auto pc=helper->address();;) {
+      const auto op=script.instruction_at(pc);
+      if(op.op==Op::RSR) break;
+      if(op.op==Op::PUSHI && op.immediate==7) {
+        const auto next=script.instruction_at(pc+op.size);
+        if(next.op==Op::BE && next.symbol==random->index()) {
+          instruction(randomGlobal,pc,Op::PUSHV,global->index());
+          changedBound=true; break;
+          }
+        }
+      pc+=op.size;
+      }
+    check(changedBound,"random helper fixture contains the expected random bound");
+    encode(randomGlobal);
+    const auto unsafeBase=dir/"npc-random-global";
+    NpcSnapshot::writeNpcs(randomGlobal,unsafeBase/"definitions"/randomGlobal.sha256/"npcs.json");
+    const auto unsafe=NpcDefinitions::read(unsafeBase,randomGlobal.sha256);
+    check(unsafe.uncaptured.contains("NPC_NO_ID") && unsafe.uncaptured.at("NPC_NO_ID")=="game_state: CHAPTER",
+          "a deferred random helper must not hide a mutable global read");
+    check(unsafe.npcs.contains("NPC_WITH_ID"),"an unreachable unsafe random helper does not reject another NPC");
+    }
+  {
+    auto malformed=program;
+    auto script=DaedalusScript::from_program(program.data);
+    auto pc=script.find_symbol_by_name("NPC_WITH_ID")->address();
+    pc+=script.instruction_at(pc).size; // The inherited constructor remains valid.
+    const auto field=pc+script.instruction_at(pc).size;
+    check(script.instruction_at(pc).op==Op::PUSHI && script.instruction_at(field).op==Op::PUSHV,
+          "NPC fixture contains its direct field assignment");
+    instruction(malformed,pc,Op::PUSHI,0x7fffffff);
+    instruction(malformed,field,Op::PUSHV,script.find_symbol_by_name("C_NPC.DAILY_ROUTINE")->index());
+    encode(malformed);
+    const auto broken=dir/"npc-invalid-reference.json";
+    std::string error;
+    try { NpcSnapshot::writeNpcs(malformed,broken); }
+    catch(const std::runtime_error& failure) { error=failure.what(); }
+    check(error=="NPC definitions: NPC_WITH_ID: invalid symbol reference 2147483647",
+          "a snapshot invariant aborts import with the NPC name instead of recording execution_error");
+    check(!fs::exists(broken),"an invariant failure does not publish a partial NPC section");
+    }
+
   const auto* setting=std::getenv("OPENGOTHIC_NPC_RECORDS");
   const bool present=setting!=nullptr;
   const std::string previous=setting ? setting : "";

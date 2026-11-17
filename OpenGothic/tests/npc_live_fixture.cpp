@@ -132,7 +132,8 @@ void mutations(const fs::path& file, World& world, void (*compare)(World&)) {
          step["index"].GetUint()==0 && step["value"]["value"].GetInt()==10) attribute=i;
       if(!step.HasMember("function")) continue;
       const auto function=std::string_view(step["function"].GetString());
-      if(function=="CREATEINVITEMS") create=i;
+      if(function=="CREATEINVITEMS" && step["arguments"][1].HasMember("value") &&
+         std::string_view(step["arguments"][1]["value"].GetString())=="IT_NPC_RING") create=i;
       if(function=="EQUIPITEM") equip=i;
       if(function=="MDL_SETMODELFATNESS") fatness=i;
       if(function=="B_CREATEAMBIENTINV") deferred=i;
@@ -178,7 +179,7 @@ void mutations(const fs::path& file, World& world, void (*compare)(World&)) {
 
 // The same live comparator as the installed-game corpus runs on a complete, tiny own-format
 // base. The fixture needs neither Gothic archives nor a graphics or sound device.
-void npcLiveSynthetic(void (*compare)(World&)) {
+void npcLiveSynthetic(void (*compare)(World&), void (*disabled)(World&)) {
   const auto root=fs::temp_directory_path()/("gothic-npc-live-"+
       std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
   struct Cleanup {
@@ -215,6 +216,12 @@ void npcLiveSynthetic(void (*compare)(World&)) {
   gothic.setGame(std::make_unique<GameSession>("NPC_CONTRACT.ZEN"));
   compare(*gothic.world());
   mutations(definitions,*gothic.world(),compare);
+  gothic.clearGame().reset();
+  environment.set("OPENGOTHIC_NPC_RECORDS","0");
+  environment.set("OPENGOTHIC_ITEM_RECORDS","0");
+  environment.set("OPENGOTHIC_ROUTINE_RECORDS","0");
+  gothic.setGame(std::make_unique<GameSession>("NPC_CONTRACT.ZEN"));
+  disabled(*gothic.world());
   gothic.clearGame().reset();
   std::puts("Synthetic live NPC definitions: normal GameSession and engine externals, no game data");
   }
