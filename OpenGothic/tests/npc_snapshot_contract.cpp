@@ -136,6 +136,11 @@ NpcSnapshot::Program itemProgram() {
   f.symbol("SELF",Type::INSTANCE,1,0,int32_t(npcClass));
   f.symbol("ITEM",Type::INSTANCE,1,0,int32_t(itemClass));
   auto chapter=f.symbol("CHAPTER",Type::INT);
+  auto globalString=f.symbol("GLOBAL_STRING",Type::STRING);
+  auto globalFloat=f.symbol("GLOBAL_FLOAT",Type::FLOAT);
+  auto globalInstance=f.symbol("GLOBAL_INSTANCE",Type::INSTANCE,1,0,int32_t(npcClass));
+  auto text=f.symbol("GLOBAL_TEXT",Type::STRING,1,Flag::CONST);
+  f.p.symbols[text].string_values[0]="written by constructor";
   auto owner=f.symbol("ITEM_OWNER",Type::INSTANCE,0,Flag::CONST,int32_t(npcClass));
   f.begin(owner); f.op(Op::RSR);
   std::vector<uint32_t> callbacks;
@@ -174,6 +179,15 @@ NpcSnapshot::Program itemProgram() {
   f.op(Op::PUSHV,chapter); f.op(Op::PUSHV,f.find("C_ITEM.VALUE")); f.op(Op::MOVI); f.op(Op::RSR);
   auto writer=f.symbol("IT_RECORD_WRITE",Type::INSTANCE,0,Flag::CONST,int32_t(itemClass));
   f.begin(writer); f.set(chapter,7); f.op(Op::RSR);
+  auto stringWriter=f.symbol("IT_RECORD_WRITE_STRING",Type::INSTANCE,0,Flag::CONST,int32_t(itemClass));
+  f.begin(stringWriter);
+  f.op(Op::PUSHV,text); f.op(Op::PUSHV,globalString); f.op(Op::MOVS); f.op(Op::RSR);
+  auto floatWriter=f.symbol("IT_RECORD_WRITE_FLOAT",Type::INSTANCE,0,Flag::CONST,int32_t(itemClass));
+  f.begin(floatWriter);
+  f.op(Op::PUSHI,std::bit_cast<uint32_t>(1.25f)); f.op(Op::PUSHV,globalFloat); f.op(Op::MOVF); f.op(Op::RSR);
+  auto instanceWriter=f.symbol("IT_RECORD_WRITE_INSTANCE",Type::INSTANCE,0,Flag::CONST,int32_t(itemClass));
+  f.begin(instanceWriter);
+  f.op(Op::PUSHV,owner); f.op(Op::PUSHV,globalInstance); f.op(Op::MOVVI); f.op(Op::RSR);
   for(int value:{0,-1}) {
     auto sentinel=f.symbol(value==0 ? "IT_RECORD_NULL" : "IT_RECORD_MINUS1",Type::INSTANCE,0,Flag::CONST,int32_t(itemClass));
     f.begin(sentinel);
@@ -264,16 +278,20 @@ void itemDefinitions(const fs::path& dir) {
   NpcSnapshot::writeItems(p,file);
   check(NpcSnapshot::verifyItems(p,file)==0,"item definitions verify from disk");
   auto snapshot=read(file);
-  bool foundWriter=false;
-  for(const auto& record:snapshot["records"].GetArray()) {
-    if(std::string_view(record["symbol"].GetString())!="IT_RECORD_WRITE") continue;
-    foundWriter=true;
-    check(std::string_view(record["status"].GetString())=="uncaptured","global-writing item is not captured");
-    check(std::string_view(record["reason"].GetString())=="game_state_write","global-writing item names the refusal reason");
-    check(std::string_view(record["detail"].GetString())=="CHAPTER","global-writing item names the changed variable");
-    check(!record.HasMember("fields"),"global-writing item has no captured fields");
+  for(const auto& [name,global]:std::initializer_list<std::pair<const char*,const char*>>{
+        {"IT_RECORD_WRITE","CHAPTER"},{"IT_RECORD_WRITE_STRING","GLOBAL_STRING"},
+        {"IT_RECORD_WRITE_FLOAT","GLOBAL_FLOAT"},{"IT_RECORD_WRITE_INSTANCE","GLOBAL_INSTANCE"}}) {
+    bool foundWriter=false;
+    for(const auto& record:snapshot["records"].GetArray()) {
+      if(std::string_view(record["symbol"].GetString())!=name) continue;
+      foundWriter=true;
+      check(std::string_view(record["status"].GetString())=="uncaptured",std::string(name)+": global-writing item is not captured");
+      check(std::string_view(record["reason"].GetString())=="game_state_write",std::string(name)+": names the refusal reason");
+      check(std::string_view(record["detail"].GetString())==global,std::string(name)+": names the changed variable");
+      check(!record.HasMember("fields"),std::string(name)+": has no captured fields");
+      }
+    check(foundWriter,std::string(name)+": global-writing item remains in definitions");
     }
-  check(foundWriter,"global-writing item remains in definitions");
   const auto library=ItemDefinitions::read(base,p.sha256);
   auto vm=itemVm(p);
   auto definitions=ItemDefinitionRuntime::resolve(library,*vm);

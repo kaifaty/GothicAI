@@ -536,6 +536,7 @@ void moverChildSave() {
     LoadProbe::Vobs::active.store(previousVobs);
     std::puts("Item query probes: loading counts and times unchanged; one VM fallback; world creation counted");
   }
+  else std::puts("SKIP item query probes: OPENGOTHIC_LOADPROBE=1 is not enabled");
   benchHelpers(*gothic.player());
   const auto findChild=[](World& world) -> const WorldObjects::PlacedItem& {
     const auto& catalogue=world.placedItemCensus();
