@@ -171,12 +171,14 @@
 | Манифест, лист замысла, концепция, журнал решений, спецификация сборки | `reports/content/remaster/<ассет>/` | да |
 | Вердикты рецензента, пакет, уменьшенная пара | `reports/content/remaster/<ассет>/reviews/<id>/` | да |
 | Сравнения для пользователя (JPEG ≤1 МБ) | `reports/content/remaster/<ассет>/` | да |
-| Исходники `image_gen`: PNG + JSON (промпт, время, тред, родитель, C2PA) | `~/.local/share/gothic-ai/content-sources/<ассет>/`, только чтение | нет; копия на dev-ubuntu `~/gothic-ai/content-backup/sources/<ассет>/`, сверка SHA-256 (`remaster.py backup`) |
+| Исходники `image_gen`: PNG + JSON (промпт, время, тред, родитель, C2PA) | `~/.local/share/gothic-ai/content-sources/<ассет>/`, только чтение | нет; две копии ночным заданием: на NAS и на dev-ubuntu `~/gothic-ai/content-backup/sources/<ассет>/`, сверка SHA-256; отдельная команда копии — `remaster.py backup` |
 | Рецепты и попытки с SHA | `data/content/remaster/<ассет>.jsonl` (`registry.py check`) | да |
-| Кадры оригинала и наши в полном размере, полные пакеты рецензента, подготовленные PNG | `~/.local/share/gothic-ai/remaster/<ассет>/` | нет |
-| Набор для игры | `~/.local/share/gothic-ai/content-staging/<набор>/`; рядом с GLB лежат его кэши `.convex-parts` и `.fracture` и обломки `.debris.glb`, `compose` переносит их вместе с ним | нет; пересобирается из исходников |
-| Правки кусков мира: скрипты правок, реестр `world-edits.jsonl`; рабочая папка правки | `scripts/content/world/`, `data/content/world-edits.jsonl`; `~/.local/share/gothic-ai/world-edit/<id>/` | скрипты и реестр — да; рабочая папка — нет |
-| Рабочий контент | `~/.local/share/gothic-ai/content/` на Mac: `materials/`, `meshes/`, `enabled.json` с составом; игра читает его без `OPENGOTHIC_CONTENT` | нет; копия набора из staging |
+| Кадры оригинала и наши в полном размере, полные пакеты рецензента, подготовленные PNG | `~/.local/share/gothic-ai/remaster/<ассет>/` | нет; копия на NAS ночным заданием |
+| Набор для игры | `~/.local/share/gothic-ai/content-staging/<набор>/`; рядом с GLB лежат его кэши `.convex-parts` и `.fracture` и обломки `.debris.glb`, `compose` переносит их вместе с ним | нет; пересобирается из исходников; копия на NAS ночным заданием |
+| Правки кусков мира: скрипты правок, реестр `world-edits.jsonl`; рабочая папка правки | `scripts/content/world/`, `data/content/world-edits.jsonl`; `~/.local/share/gothic-ai/world-edit/<id>/` | скрипты и реестр — да; рабочая папка — нет, копия на NAS ночным заданием |
+| Рабочий контент | `~/.local/share/gothic-ai/content/` на Mac: `materials/`, `meshes/`, `enabled.json` с составом; игра читает его без `OPENGOTHIC_CONTENT` | нет; копия набора из staging; копия на NAS ночным заданием |
+
+Ночное задание [`scripts/content/archive_nas.py`](../scripts/content/archive_nas.py) (`run`) дополняет `/Volumes/shared/gothic-ai/content-archive-mac`: сначала исходники пофайлово, затем tar без сжатия по папкам наборов, кадров и правок мира, рабочий `content` целиком; сверяет SHA-256 чтением с NAS и копирует исходники на dev-ubuntu. `python3 scripts/content/archive_nas.py status` показывает недостающие и изменённые единицы и объём без записи на NAS; `plist --hour 4 --minute 30` печатает агент для отдельной установки лидом. Вернуть единицу: `tar -xf /Volumes/shared/gothic-ai/content-archive-mac/content-staging/<набор>.tar -C <папка-восстановления>`. Журнал — `~/Library/Logs/gothic-ai/content-archive.log`, итог — `~/.local/share/gothic-ai/content-archive/last-run.json`.
 
 Исходник `image_gen` не пересобрать: у генератора нет сида. Поэтому каждый PNG, включая невыбранные попытки, хранится неизменным, с копией и записью в реестре.
 
@@ -212,6 +214,8 @@
 ## План и журнал
 
 - **2026-11-17.** Одиночный `build` получил восстановление треугольников из `build-region`. Пустые правки `NEWWORLD/6_0` и `NEWWORLD/4_1` возвращают соответственно 9 и 10 отброшенных треугольников и совпадают с базой по `compare --full`. [#1294](https://github.com/kaifaty/GothicAI/issues/1294)
+
+**2026-11-16 — ночная доархивация Mac на NAS.** Добавлен `archive_nas.py`: сверенные копии исходников и tar изменившихся единиц, отчёт, `status` и печать plist. Установку агента и первый прогон на настоящем NAS выполняет лид отдельно.
 
 ### Очередь переделки
 
