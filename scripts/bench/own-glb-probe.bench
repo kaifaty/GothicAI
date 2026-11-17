@@ -5,8 +5,8 @@
 # The sides of a material (`"two_sided"`, reports/engine/2026-11-16-modern-trees/two-sided.md): the second group
 # of the set, a row of cards along Z over a grey plate 2 m over the meadow east of the tavern, tilted to the noon
 # sun at -X. `sides-sun` looks from the sun's side at the lit sides and the shadows behind the cards, `sides-lee`
-# from the other side at the sides in shade and the shadows before them. The cameras stand by SIDES_CENTRE of the
-# script: change both together.
+# from the other side at the sides in shade and the shadows before them, `sides-through` from the lee side and
+# low, toward the sun. The cameras stand by SIDES_CENTRE of the script: change both together.
 seed 73013
 cheat god
 overlay off
@@ -42,4 +42,9 @@ wait 200
 cam at 40970 3740 400 40580 3585 400
 wait 4000
 shot sides-lee
+wait 200
+# from the lee side and low, up toward the sun through the cards: the sun a leaf's material lets through
+cam at 40950 3490 400 40550 3605 400
+wait 4000
+shot sides-through
 wait 200
