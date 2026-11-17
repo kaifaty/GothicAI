@@ -151,6 +151,7 @@ class Half:
         self.actions_host = torch.zeros(n, contract.HEADS, dtype=torch.uint8, pin_memory=True)
         self.actions_np = self.actions_host.numpy()
         self.stream = torch.cuda.Stream()
+        self.vector_stream = torch.cuda.Stream()
         self.done = torch.cuda.Event()
         self.computed = torch.cuda.Event()
         self.spans = []
@@ -160,6 +161,7 @@ class Half:
         self.trace_round = 0
         # Buffers were zeroed and uploaded on the current stream; the half's stream must see them.
         self.stream.wait_stream(torch.cuda.current_stream())
+        self.vector_stream.wait_stream(torch.cuda.current_stream())
         self.graph = None
         self.read_graph = None
         self.policy_graph = None
@@ -279,10 +281,14 @@ class Half:
             self.done.record()
 
     def launch_policy(self, batch, after=None):
-        with self.torch.cuda.stream(self.stream):
+        # B often finishes while the map readout is still running. Upload its
+        # vector in parallel and join the copy before the policy reads it.
+        with self.torch.cuda.stream(self.vector_stream):
             self.mark("vector_copy_start")
             self.measured("vector_copy", lambda: self.finish_staging.copy_(batch.tensor, non_blocking=True))
             self.mark("vector_copy_end")
+        with self.torch.cuda.stream(self.stream):
+            self.stream.wait_stream(self.vector_stream)
             if after is not None:
                 self.stream.wait_event(after)
             self.mark("net_start")
