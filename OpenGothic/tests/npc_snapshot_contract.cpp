@@ -226,10 +226,10 @@ NpcSnapshot::Program routineProgram() {
   for(unsigned parameter=1;parameter<=5;++parameter) f.op(Op::PUSHV,wrapper+parameter);
   f.op(Op::PUSHI,state); f.op(Op::PUSHV,wrapper+6); f.op(Op::BE,ta); f.op(Op::RSR);
   const auto routine=f.fn("RTN_START_123"); f.begin(routine);
-  // At least seventeen tied rows are needed to distinguish std::sort from stable_sort.
-  // End minutes identify call order independently of either table-building path.
+  // Adjacent pairs share starts; interleaved starts distinguish std::sort from stable_sort.
+  // End minutes identify input order independently of either table-building path.
   for(unsigned row=0;row<48;++row) {
-    f.op(Op::PUSHV,self); f.op(Op::PUSHI,row%2==0 ? 20 : 8); f.op(Op::PUSHI,5);
+    f.op(Op::PUSHV,self); f.op(Op::PUSHI,row%4<2 ? 20 : 8); f.op(Op::PUSHI,5);
     f.op(Op::PUSHI,23); f.op(Op::PUSHI,row); f.op(Op::PUSHV,row%3==0 ? unknown : known);
     f.call(wrapper);
     }
@@ -278,7 +278,9 @@ void routineDefinitions(const fs::path& dir) {
     append(expected,sh,sm,eh,em,uint32_t(state),point);
     });
   auto* function=vm.find_symbol_by_name("RTN_START_123");
+  size_t callIndex=0;
   RoutineDefinitionRuntime::initialize(vm,function,definitions,[&](const RoutineDefinitionRuntime::Row& row) {
+    check(row.endMinute==int(callIndex++),"record fill follows TA_Min input order before sorting");
     append(actual,row.startHour,row.startMinute,row.endHour,row.endMinute,row.state,row.waypoint);
     });
   check(expected.empty(),"captured routine does not execute TA_Min in the VM");
@@ -287,8 +289,8 @@ void routineDefinitions(const fs::path& dir) {
   for(size_t index=0;index<actual.size();++index) {
     const auto& row=actual[index];
     const auto& original=expected[index];
-    const auto call=unsigned(index<24 ? index*2+1 : (index-24)*2);
-    check(row.start==gtime(call%2==0 ? 20 : 8,5) && row.end==gtime(23,int(call)),
+    const auto call=unsigned(index<24 ? (index/2)*4+2+index%2 : ((index-24)/2)*4+(index-24)%2);
+    check(row.start==gtime(call%4<2 ? 20 : 8,5) && row.end==gtime(23,int(call)),
           "tied rows retain their original TA_Min call order");
     check(row.start==original.start && row.end==original.end && row.callback==original.callback &&
           row.point==original.point && row.fallbackName==original.fallbackName && row.wayPointName()==original.wayPointName(),
@@ -316,7 +318,7 @@ void routineDefinitions(const fs::path& dir) {
   std::ifstream first(file,std::ios::binary),second(otherFile,std::ios::binary);
   check(std::string(std::istreambuf_iterator<char>(first),{})==std::string(std::istreambuf_iterator<char>(second),{}),
         "routine sections are byte-identical across repeated captures");
-  std::cout<<"Routine runtime equality: 48 rows, 24 tied rows per start, known and unknown points; VM state preserved\n";
+  std::cout<<"Routine runtime equality: 48 rows, adjacent equal starts, 24 tied rows per start, known and unknown points; VM state preserved\n";
   }
 
 void routineSelection(const fs::path& dir) {
