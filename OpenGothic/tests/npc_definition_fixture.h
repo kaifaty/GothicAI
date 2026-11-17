@@ -80,6 +80,8 @@ inline NpcSnapshot::Program program() {
   const auto item=f.symbol("IT_NPC_RING",Type::INSTANCE,0,Flag::CONST,int32_t(itemClass)); f.begin(item);
   f.set(f.find("C_ITEM.FLAGS"),1<<11);
   f.set(f.find("C_ITEM.VALUE"),7); f.set(f.find("C_ITEM.ON_EQUIP"),int(callback)); f.op(Op::RSR);
+  const auto itemPrototype=f.symbol("IT_NPC_PROTOTYPE",Type::PROTOTYPE,0,Flag::CONST,int32_t(itemClass));
+  f.begin(itemPrototype); f.set(f.find("C_ITEM.VALUE"),1); f.op(Op::RSR);
   const auto ambient=f.fn("B_CREATEAMBIENTINV",{Type::INSTANCE});
   const auto count=f.symbol("B_CREATEAMBIENTINV.COUNT",Type::INT);
   f.begin(ambient); f.op(Op::PUSHV,ambient+1); f.op(Op::MOVVI);
@@ -100,6 +102,8 @@ inline NpcSnapshot::Program program() {
   // A string argument must reuse its constant literal rather than alter VM scratch strings.
   f.op(Op::PUSHV,self); f.op(Op::PUSHI,0); f.op(Op::PUSHI,0); f.op(Op::PUSHI,8); f.op(Op::PUSHI,0);
   f.op(Op::PUSHI,state); f.op(Op::PUSHV,point); f.op(Op::BE,ta);
+  // CreateInvItems does not allocate an item for a zero amount, even for a prototype symbol.
+  f.op(Op::PUSHV,self); f.op(Op::PUSHI,itemPrototype); f.op(Op::PUSHI,0); f.op(Op::BE,create);
   f.op(Op::PUSHV,self); f.op(Op::PUSHI,item); f.op(Op::PUSHI,3); f.op(Op::BE,create);
   f.op(Op::PUSHV,self); f.op(Op::PUSHI,item); f.op(Op::BE,equip);
   // on_equip changed attribute[0]; this later assignment must occur after that call.
@@ -114,6 +118,8 @@ inline NpcSnapshot::Program program() {
   f.set(chapter,9); f.op(Op::RSR);
   const auto unsupported=f.symbol("NPC_UNKNOWN",Type::INSTANCE,0,Flag::CONST,int32_t(npcClass)); f.begin(unsupported);
   f.op(Op::PUSHV,self); f.op(Op::BE,unknown); f.op(Op::RSR);
+  const auto invalidItem=f.symbol("NPC_BAD_ITEM",Type::INSTANCE,0,Flag::CONST,int32_t(npcClass)); f.begin(invalidItem);
+  f.op(Op::PUSHV,self); f.op(Op::PUSHI,itemPrototype); f.op(Op::PUSHI,1); f.op(Op::BE,create); f.op(Op::RSR);
   const auto encoded=ProgramData::encodeProgram(f.p);
   return {std::move(f.p),encoded.name,encoded.sha256};
   }

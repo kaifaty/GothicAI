@@ -435,11 +435,25 @@ void npcDefinitions(const fs::path& dir) {
   const auto program=NpcDefinitionFixture::program();
   const auto base=dir/"npc-definitions",file=base/"definitions"/program.sha256/"npcs.json";
   const auto counts=NpcSnapshot::writeNpcs(program,file);
-  check(counts.total==5 && counts.captured==2,"NPC definitions capture only supported pure constructors");
+  check(counts.total==6,"all six fixture NPC definitions are imported");
   check(NpcSnapshot::verifyNpcs(program,file)==0,"NPC definitions verify independently from disk");
   const auto library=NpcDefinitions::read(base,program.sha256);
   for(const auto* refused:{"NPC_GLOBAL","NPC_WRITER","NPC_UNKNOWN"})
     check(library.uncaptured.contains(refused),std::string(refused)+": refuses unsafe constructor");
+  check(library.uncaptured.contains("NPC_BAD_ITEM"),"NPC_BAD_ITEM: invalid item prototype retains its VM script error");
+  check(counts.captured==2 && library.uncaptured.size()==4,"two fixture NPCs are captured and four retain the VM fallback");
+  auto invalid=read(file);
+  for(auto& record:invalid["records"].GetArray()) {
+    if(std::string_view(record["symbol"].GetString())!="NPC_BAD_ITEM") continue;
+    check(std::string_view(record["reason"].GetString())=="script_error","item allocation errors use the generic script_error reason");
+    check(std::string_view(record["detail"].GetString())=="Cannot init IT_NPC_PROTOTYPE: not an instance",
+          "item allocation preserves the original VM exception message");
+    record["status"].SetString("captured",invalid.GetAllocator());
+    record.RemoveMember("reason"); record.RemoveMember("detail");
+    }
+  write(file,invalid);
+  check(NpcSnapshot::verifyNpcs(program,file)>0,"verification independently rejects a captured NPC with an invalid item prototype");
+  NpcSnapshot::writeNpcs(program,file);
   const auto second=dir/"npc-identical.json";
   NpcSnapshot::writeNpcs(program,second);
   std::ifstream a(file,std::ios::binary),b(second,std::ios::binary);

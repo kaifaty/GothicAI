@@ -99,6 +99,12 @@ class Runner {
       INpc::register_(script);
       if(script.find_symbol_by_name("C_ITEM")) IItem::register_(script);
       DaedalusVm vm(std::move(script));
+      vm.register_exception_handler([](DaedalusVm&,const DaedalusScriptError& error,const DaedalusInstruction&)
+                                      -> DaedalusVmExceptionStrategy {
+        // The game's lenient handler continues after script errors. Such a
+        // constructor needs the original VM path, rather than a partial record.
+        throw Stop("script_error",error.what());
+        });
       auto npc=std::make_shared<INpc>();
       auto* root=vm.find_symbol_by_index(id);
       std::set<std::string> functionFields;
@@ -185,10 +191,42 @@ class Runner {
         std::reverse(values.begin(),values.end());
         return values;
         };
+      auto validateItemAllocation=[&](const Call& call) {
+        const auto& target=call.args.at(0);
+        const bool boundNpc=target.kind==Value::Kind::Self ||
+            (target.kind==Value::Kind::Symbol &&
+             std::dynamic_pointer_cast<INpc>(vm.find_symbol_by_name(target.text)->get_instance())!=nullptr);
+        if(!boundNpc) return;
+        auto integer=[&](const Value& value) {
+          return value.kind==Value::Kind::Symbol ? int32_t(vm.find_symbol_by_name(value.text)->index()) : value.integer;
+          };
+        size_t argument=1;
+        if(call.function=="CREATEINVITEMS") {
+          if(integer(call.args.at(2))<=0) return;
+          }
+        else if(call.function=="MDL_SETVISUALBODY") {
+          argument=7;
+          if(integer(call.args.at(argument))<=0) return;
+          }
+        else if(call.function=="NPC_SETTOFIGHTMODE") {
+          if(integer(call.args.at(argument))<0) return;
+          }
+        else if(call.function!="CREATEINVITEM" && call.function!="EQUIPITEM") return;
+        auto* item=vm.find_symbol_by_index(uint32_t(integer(call.args.at(argument))));
+        // GameScript also returns without initialization for a missing symbol.
+        if(item==nullptr) return;
+        const auto previous=item->type()==Type::INSTANCE ? item->get_instance() : nullptr;
+        // Use the game's allocation checks, including class/parent validation.
+        // Only validate here: the engine call and item constructor run in game.
+        vm.allocate_instance<IItem>(item);
+        item->set_instance(previous);
+        };
       auto event=[&](const DaedalusSymbol& function,bool deferred) {
         flush();
         if(function.has_return()) throw Stop(deferred ? "random_return" : "external_query",function.name());
-        result.definition.steps.emplace_back(Call{function.name(),arguments(function),deferred});
+        Call call{function.name(),arguments(function),deferred};
+        if(!deferred) validateItemAllocation(call);
+        result.definition.steps.emplace_back(std::move(call));
         };
       for(auto address:analysis.random) {
         auto* function=vm.find_symbol_by_address(address);
