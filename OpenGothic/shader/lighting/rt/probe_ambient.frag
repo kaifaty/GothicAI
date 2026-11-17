@@ -265,12 +265,14 @@ void main() {
     // Probe zero contains unoccluded sky only, unlike the local GI radiance.
     const vec3 sky = probeReadIrradiance(probesLighting, 0, norm);
     const vec3 reflectedSky = mix(sharpSky, sky, orm.g*orm.g);
-    // a tree's crown (crown_light.glsl): its occlusion takes the sky's reflection as well, and the light of the
-    // probes behind a leaf comes through it under the same occlusion
     color += reflectedSky * materialEnvBrdf(materialF0(linear, orm.b), orm.g, noV) *
-             materialSpecularWeight(orm.g, orm.b) * clamp(skyVisibilitySum, 0.0, 1.0) * ao * (crown ? orm.r : 1.0);
+             materialSpecularWeight(orm.g, orm.b) * clamp(skyVisibilitySum, 0.0, 1.0) * ao;
+    // a tree's crown (crown_light.glsl): the light of the probes behind a leaf comes through it under the map's
+    // occlusion, and the shade of the crown's depth takes its share of all of it
     if(through>0.0)
       color += linear * FoliageThroughTint * throughSum * (through * orm.r);
+    if(crown)
+      color *= gbufCrownShade(ormG, diff4.a);
     }
 #endif
   color *= scene.exposure;

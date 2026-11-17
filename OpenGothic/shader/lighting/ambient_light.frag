@@ -128,11 +128,8 @@ void main() {
   if(orm.a>0.5) {
     // Map AO occludes only diffuse sky light. Screen-space visibility below
     // remains shared with the old ambient path, including inside buildings.
-    // A tree's crown (crown_light.glsl): its occlusion is the map's AO and the crown's shade in one, and it takes
-    // all of the light below - nothing else here shades the inside of a crown
-    const bool crown = isGBufCrown(diff4.a);
     const vec3 sky = skyIrradiance(norm);
-    const vec3 diffuseLight = scene.ambient + sky*0.8*(crown ? 1.0 : orm.r) +
+    const vec3 diffuseLight = scene.ambient + sky*0.8*orm.r +
                               (norm.y*0.25+0.75) * NightAmbient * Fd_Lambert;
     color = linear * diffuseLight * (1.0 - orm.b);
 
@@ -147,13 +144,14 @@ void main() {
     const vec3 reflectedSky = mix(sharpSky, sky, orm.g*orm.g);
     color += reflectedSky * materialEnvBrdf(materialF0(linear, orm.b), orm.g, noV) *
              materialSpecularWeight(orm.g, orm.b);
-    if(crown) {
+    if(isGBufCrown(diff4.a)) {
+      // A tree's crown (crown_light.glsl): the same light from behind a leaf comes through it, and the shade of
+      // the crown's depth takes its share of all of it
       if(isGBufFoliage(diff4.a)) {
-        // the same light from behind the leaf comes through it
-        const vec3 behind = scene.ambient + skyIrradiance(-view)*0.8 + (0.75-view.y*0.25) * NightAmbient * Fd_Lambert;
+        const vec3 behind = scene.ambient + skyIrradiance(-view)*0.8*orm.r + (0.75-view.y*0.25) * NightAmbient * Fd_Lambert;
         color += linear * FoliageThroughTint * behind * crownSkyThrough(ormG.b, norm, view);
         }
-      color *= orm.r;
+      color *= gbufCrownShade(ormG, diff4.a);
       }
     } else
 #endif

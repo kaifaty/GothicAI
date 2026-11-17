@@ -633,12 +633,14 @@ void mainGBuffer(vec4 t) {
       }
     }
   if((bucket[bucketId].flags & BK_CROWN)!=0u) {
-    // A tree's crown (crown_light.glsl): the shade of its depth joins the map's AO, under the crown bit
+    // A tree's crown (crown_light.glsl): the shade of its depth goes to the light passes in the ORM alpha, under the
+    // crown bit (common.glsl, gbufCrownShade); a material without its own maps has no such alpha and no crown
     const float openness = crownOpenness(shInp.normal);
     if((scene.viewFlags & VF_CROWN_MASK)!=0u) {
       outDiffuse.rgb = crownMask(openness, outOrm.b);
-      } else {
-      outOrm.r    *= crownShade(openness);
+      }
+    else if(outOrm.a>0.5) {
+      outOrm.a     = gbufCrownShadeCode(crownShade(openness));
       outDiffuse.a = float(int(outDiffuse.a*255.0 + 0.5) | GBufCrownBit)/255.0;
       }
     }

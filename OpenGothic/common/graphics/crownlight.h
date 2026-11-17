@@ -47,24 +47,36 @@ inline bool enabled() {
   return mode()!=Off;
   }
 
-// The processor's copy of the numbers of shader/lighting/crown_light.glsl and of the ride of the openness in the
-// normal's length (shader/materials/vertex_process.glsl)
+// The processor's copy of the numbers of shader/lighting/crown_light.glsl and shader/common.glsl, and of the ride
+// of the openness in the normal's length (shader/materials/vertex_process.glsl)
 static constexpr float ShadeFloor = 0.25f; // CrownShadeFloor
+static constexpr float OpenTop    = 0.9f;  // CrownOpenTop
 static constexpr float SkyLobe    = 0.4f;  // CrownSkyLobe
+static constexpr float OrmCode    = 0.49f; // EmissiveOrmCode
 
 // the length the vertex shader gives the normal of a vertex with this alpha of COLOR_0
 inline float normalLength(uint8_t alpha) {
   return 0.5f + 0.5f*(float(alpha)/255.f);
   }
 
-// crownOpenness: the openness out of that length
+// crownOpenness: the openness out of that length; its top tenth reads as 1 (normals of different directions come
+// out shorter between the vertices)
 inline float openness(float normalLength) {
-  return std::clamp(normalLength*2.f - 1.f, 0.f, 1.f);
+  return std::clamp((normalLength*2.f - 1.f)/OpenTop, 0.f, 1.f);
   }
 
-// crownShade: what the crown leaves of the ambient light at this openness
+// crownShade: what the crown leaves of the light of a pixel at this openness
 inline float shade(float openness) {
   return ShadeFloor + (1.f - ShadeFloor)*openness;
+  }
+
+// gbufCrownShadeCode and gbufCrownShade through the eight bits of the G-buffer's ORM alpha
+inline uint8_t shadeCode(float shade) {
+  return uint8_t((1.f - OrmCode*(1.f - shade))*255.f + 0.5f);
+  }
+
+inline float shadeOfCode(uint8_t code) {
+  return std::clamp(1.f - (1.f - float(code)/255.f)/OrmCode, 0.f, 1.f);
   }
 
 // crownSkyThrough: the share of the irradiance behind a leaf that comes through it; facing: the cosine between the
@@ -73,9 +85,10 @@ inline float skyThrough(float translucency, float facing) {
   return SkyLobe * translucency * std::clamp(1.f + 1.5f*facing, 0.f, 1.f);
   }
 
-// BK_CROWN of a material: a tree's, while the light of the foliage is on (FoliageWind::enabled)
-inline bool lit(const FoliageWind::Params& p, uint8_t halves, bool on) {
-  return on && p.on && p.anchor==FoliageWind::AnchorTree && (halves & FoliageWind::Light)!=0;
+// BK_CROWN of a material: a tree's, while the light of the foliage is on (FoliageWind::enabled). A glowing material
+// is none: the glow's share and the crown's shade ride in the same alpha of the G-buffer
+inline bool lit(const FoliageWind::Params& p, uint8_t halves, bool on, float emissive = 0.f) {
+  return on && emissive<=0.f && p.on && p.anchor==FoliageWind::AnchorTree && (halves & FoliageWind::Light)!=0;
   }
 
 }

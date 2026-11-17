@@ -25,20 +25,29 @@ void crownLightMaths() {
           "a tuft and a material without the field are lit as before");
   require(!lit(leaf,FoliageWind::Both,false) && !lit(leaf,FoliageWind::Wind,true) && !lit(leaf,0,true),
           "the flag and the light half of the foliage switch the crown's light off");
+  require(lit(leaf,FoliageWind::Both,true,0.f) && !lit(leaf,FoliageWind::Both,true,0.5f),
+          "a glowing material is no crown: the glow and the crown's shade ride in the same alpha of the G-buffer");
 
-  // the openness rides to the pixel in the normal's length and comes back to the byte of COLOR_0
+  // the openness rides to the pixel in the normal's length; its top tenth reads as fully open
   for(uint32_t a=0; a<256; ++a) {
-    const float len = normalLength(uint8_t(a));
-    require(len>=0.5f && len<=1.f && std::abs(openness(len)*255.f-float(a))<1e-3f,
+    const float len  = normalLength(uint8_t(a));
+    const float open = std::min(float(a)/(255.f*OpenTop),1.f);
+    require(len>=0.5f && len<=1.f && std::abs(openness(len)-open)<1e-5f,
             "the alpha of a vertex survives the ride in the normal's length");
     if(a>0)
-      require(shade(openness(len))>shade(openness(normalLength(uint8_t(a-1)))),"a more open vertex is lit more");
+      require(shade(openness(len))>=shade(openness(normalLength(uint8_t(a-1)))),"a more open vertex is not lit less");
+    // the shade through the eight bits of the ORM alpha: it stays an own material's and comes back within a step
+    const uint8_t code = shadeCode(shade(openness(len)));
+    require(code>127 && std::abs(shadeOfCode(code)-shade(openness(len)))<=0.5f/(255.f*OrmCode)+1e-5f,
+            "the shade of a crown survives the alpha of the G-buffer");
     }
-  require(normalLength(255)==1.f && openness(1.f)==1.f && shade(1.f)==1.f,
-          "a mesh without COLOR_0 (alpha 1) keeps the normal's length and all of its light");
+  require(normalLength(255)==1.f && openness(1.f)==1.f && shade(1.f)==1.f && shadeCode(1.f)==255 && shadeOfCode(255)==1.f,
+          "a mesh without COLOR_0 (alpha 1) keeps the normal's length, the alpha of any own material and all of its light");
+  // a trunk of ten sides: the normal between two of its vertices is cos(18 deg) long
+  require(openness(0.9511f)==1.f && openness(0.94f)<1.f,
+          "a round mesh without the colour is lit as before although its normals come out shorter between the vertices");
   require(shade(0.f)==ShadeFloor && ShadeFloor>=0.1f && ShadeFloor<=0.3f,
-          "the depth of a crown keeps 10-30 % of the diffuse light, as the needles by a spruce's trunk");
-  // interpolation shortens a normal between vertices that differ: it may only darken, never brighten past 1
+          "the depth of a crown keeps 10-30 % of the light, as the needles by a spruce's trunk");
   require(openness(0.4f)==0.f && openness(1.2f)==1.f,"a short or a long normal stays in the range of the openness");
 
   require(skyThrough(0.f,1.f)==0.f && skyThrough(0.35f,1.f)==SkyLobe*0.35f && skyThrough(0.35f,-0.7f)==0.f &&

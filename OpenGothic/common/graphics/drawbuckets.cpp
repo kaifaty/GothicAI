@@ -317,7 +317,7 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
             bx.flags       |= BK_FOLIAGE;
             }
           // a tree's crown (graphics/crownlight.h): with the foliage's light, whatever the material lets through
-          if(CrownLight::lit(i.mat.foliage, FoliageWind::enabled(), CrownLight::enabled()))
+          if(CrownLight::lit(i.mat.foliage, FoliageWind::enabled(), CrownLight::enabled(), i.mat.emissive))
             bx.flags |= BK_CROWN;
           }
         // A ground that grows grass (graphics/grass/grassfield.h): its look under the blades and beyond them, in

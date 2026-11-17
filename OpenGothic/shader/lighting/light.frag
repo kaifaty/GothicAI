@@ -701,6 +701,8 @@ void main() {
     if(isHair && (scene.viewFlags & VF_HAIR_DEBUG)!=0u)
       ret = vec3(0);
     ret += linear * FoliageThroughTint * (color * lightThrough) * max(1.0, scene.exposure) * Fd_Lambert * 0.25;
+    // the depth of a tree's crown gets its share of a lamp as of any light
+    ret *= gbufCrownShade(ormG, hint);
     }
 #endif
 
