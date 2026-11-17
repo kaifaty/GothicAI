@@ -1,0 +1,7 @@
+{
+ "format": 1,
+ "add": [
+  {"key": "crown-light-fire", "kind": "emitter", "pfx": "FIRE_MEDIUM", "position": [39570, 3590, 147], "yaw_deg": 0},
+  {"key": "crown-light-lamp", "kind": "light", "position": [39570, 3620, 147], "yaw_deg": 0, "range": 1200, "color": [255, 170, 90], "source_cm": 50}
+ ]
+}
