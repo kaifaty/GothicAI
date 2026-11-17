@@ -4,7 +4,7 @@
     uv run --no-project --with numpy --with pillow --with scipy python scripts/content/fir_set.py \
         textures --boughs DIR --bark DIR --out WORK
     uv run --no-project --with numpy --with pillow --with scipy python scripts/content/fir_set.py \
-        probe fir-probe-1 --textures WORK [--from working-28]
+        probe fir-probe-2 --textures WORK [--from working-28]
 
 `textures` reads what mesh3d/blender/fir_boughs.py and fir_bark.py baked (boughs.npz, bark.npz) and writes
 WORK/{boughs,bark}-{albedo,normal,orm}.dds, PNG previews for mesh3d/blender/fir_views.py, boughs-mask.npz (the
