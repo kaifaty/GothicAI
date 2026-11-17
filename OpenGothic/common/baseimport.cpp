@@ -766,7 +766,7 @@ void build(const fs::path& gothic, const fs::path& out, const Progress& progress
     if(progress) progress(std::string("base import: ")+world);
     require(convertWorld(gothic,std::string(world)+".ZEN",out/"worlds"/world)==0,"world import failed");
     }
-  for(const char* kind:{"zen","textures","meshes","models","fonts","programs","outputunits","audio","music","sources"}) fs::remove_all(out/kind);
+  for(const char* kind:{"zen","textures","meshes","models","fonts","programs","definitions","outputunits","audio","music","sources"}) fs::remove_all(out/kind);
   if(progress) progress("base import: ZEN files");
   require(convertZen(gothic,out/"zen",false)==0,"ZEN import failed");
   if(progress) progress("base import: textures");
@@ -779,6 +779,8 @@ void build(const fs::path& gothic, const fs::path& out, const Progress& progress
   require(convertFonts(gothic,out/"fonts",false)==0,"font import failed");
   if(progress) progress("base import: programs");
   require(convertPrograms(gothic,out/"programs",false)==0,"program import failed");
+  if(progress) progress("base import: item definitions");
+  require(convertItemDefinitions(out,false)==0,"item definition import failed");
   if(progress) progress("base import: dialog line library");
   require(convertOutputUnits(gothic,out/"outputunits",false)==0,"dialog line library import failed");
   if(progress) progress("base import: sounds and speech");

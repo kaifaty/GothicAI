@@ -9,6 +9,7 @@
 #include "gothic.h"
 #include "game/gamescript.h"
 #include "game/serialize.h"
+#include "loadprobe.h"
 #include "world/objects/item.h"
 #include "world/objects/npc.h"
 #include "world/benchhooks.h"
@@ -502,6 +503,39 @@ void moverChildSave() {
   GameMusic music;
   gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
   require(gothic.player()!=nullptr,"bench helper fixture has a player");
+  if(LoadProbe::enabled()) {
+    auto& script=gothic.world()->script();
+    auto& vm=script.getVm();
+    auto* gold=vm.find_symbol_by_name("ITMI_GOLD");
+    auto* broken=vm.find_symbol_by_name("ITMI_INNOSEYE_BROKEN_MIS");
+    require(gold && broken,"query probe fixtures must contain captured and uncaptured items");
+    const auto goldBefore=gold->get_instance(),brokenBefore=broken->get_instance();
+    const auto part=std::find_if(std::begin(LoadProbe::Vobs::partNames),std::end(LoadProbe::Vobs::partNames),
+                                 [](const char* name) { return std::strcmp(name,"script_item")==0; });
+    require(part!=std::end(LoadProbe::Vobs::partNames),"item loading probe must exist");
+    auto& vobs=LoadProbe::Vobs::parts[size_t(part-std::begin(LoadProbe::Vobs::partNames))];
+    const bool previousVobs=LoadProbe::Vobs::active.exchange(true);
+    {
+      LoadProbe::Startup::Scope loading(LoadProbe::Startup::Other,true,"placed-items");
+      const auto count=vobs.count.load(),ns=vobs.ns.load(),inclusiveNs=vobs.inclusiveNs.load();
+      auto& startup=LoadProbe::Startup::counters[LoadProbe::Startup::Script];
+      const auto startupBefore=startup;
+      const auto constructors=LoadProbe::Items::constructors.load();
+      script.createItemForQuery(gold->index());
+      script.createItemForQuery(broken->index());
+      require(vobs.count.load()==count && vobs.ns.load()==ns && vobs.inclusiveNs.load()==inclusiveNs &&
+              startup.count==startupBefore.count && startup.ns==startupBefore.ns && startup.inclusiveNs==startupBefore.inclusiveNs,
+              "item queries must not count or time world loading");
+      require(LoadProbe::Items::constructors.load()==constructors+1,"only the uncaptured query must execute a VM constructor");
+      script.createItem(gold->index());
+      require(vobs.count.load()==count+1 && startup.count==startupBefore.count+1,
+              "world item creation must increment both armed loading probes");
+    }
+    gold->set_instance(goldBefore);
+    broken->set_instance(brokenBefore);
+    LoadProbe::Vobs::active.store(previousVobs);
+    std::puts("Item query probes: loading counts and times unchanged; one VM fallback; world creation counted");
+  }
   benchHelpers(*gothic.player());
   const auto findChild=[](World& world) -> const WorldObjects::PlacedItem& {
     const auto& catalogue=world.placedItemCensus();

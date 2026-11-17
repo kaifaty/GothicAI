@@ -82,7 +82,7 @@ bool GameScript::GlobalOutput::isFinished() {
   }
 
 GameScript::GameScript(GameSession &owner)
-    :owner(owner), vm(createVm(Gothic::inst())) {
+    :owner(owner), vm(createVm(Gothic::inst(),itemDefinitions)) {
   if (vm.global_self() == nullptr || vm.global_other() == nullptr || vm.global_item() == nullptr ||
       vm.global_victim() == nullptr || vm.global_hero() == nullptr)
     throw std::runtime_error("Cannot find script symbol SELF, OTHER, ITEM, VICTIM, or HERO! Cannot proceed!");
@@ -344,8 +344,7 @@ void GameScript::initCommon() {
   auto* currency = vm.find_symbol_by_name("TRADE_CURRENCY_INSTANCE");
   itMi_Gold      = currency!=nullptr ? vm.find_symbol_by_name(currency->get_string()) : nullptr;
   if(itMi_Gold!=nullptr){ // FIXME
-    auto item = vm.init_instance<daedalus::IItem>(itMi_Gold);
-    goldTxt = item->name;
+    goldTxt = createItemForQuery(itMi_Gold->index())->name;
     }
   auto* tradeMul = vm.find_symbol_by_name("TRADE_VALUE_MULTIPLIER");
   tradeValMult   = tradeMul != nullptr ? tradeMul->get_float() : 1.0f;
@@ -475,19 +474,6 @@ void GameScript::initializeInstanceNpc(const std::shared_ptr<daedalus::INpc>& np
       vm.call_function(daily_routine);
       }
     }
-  }
-
-void GameScript::initializeInstanceItem(const std::shared_ptr<daedalus::IItem>& item, size_t instance) {
-  LoadProbe::Vobs::Scope probe("script_item");
-  LoadProbe::Startup::Scope itemProbe(LoadProbe::Startup::Script,false,"placed-items");
-  auto sym = vm.find_symbol_by_index(uint32_t(instance));
-
-  if(sym == nullptr) {
-    Tempest::Log::e("Cannot initialize item ", instance, ": Symbol not found.");
-    return;
-    }
-
-  vm.init_instance(item, sym);
   }
 
 void GameScript::saveQuests(Serialize &fout) {
@@ -1523,13 +1509,6 @@ bool GameScript::searchScheme(std::string_view sc, std::string_view listName) {
       }
     }
   return false;
-  }
-
-daedalus::DaedalusVm GameScript::createVm(Gothic& gothic) {
-  auto lang   = Settings::getI("GAME", "language");
-  auto script = gothic.loadScript(gothic.defaultGameDatFile(), ScriptLang(lang));
-  auto exef   = daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS;
-  return daedalus::DaedalusVm(std::move(script), exef);
   }
 
 bool GameScript::hasSymbolName(std::string_view name) {
