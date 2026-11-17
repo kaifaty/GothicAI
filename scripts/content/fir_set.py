@@ -4,7 +4,7 @@
     uv run --no-project --with numpy --with pillow --with scipy python scripts/content/fir_set.py \
         textures --boughs DIR --bark DIR --out WORK
     uv run --no-project --with numpy --with pillow --with scipy python scripts/content/fir_set.py \
-        probe fir-probe-2 --textures WORK [--from working-28]
+        probe fir-probe-3 --textures WORK [--from working-28] [--pairs | --sides flip]
 
 `textures` reads what mesh3d/blender/fir_boughs.py and fir_bark.py baked (boughs.npz, bark.npz) and writes
 WORK/{boughs,bark}-{albedo,normal,orm}.dds, PNG previews for mesh3d/blender/fir_views.py, boughs-mask.npz (the
@@ -30,7 +30,11 @@ so every size is its own GLB; each passes the checks of mesh3d/blender/fir.py) a
 worlds/NEWWORLD/vobs.d/fir-probe.json: meshes without collision beside the original's firs at the north edge of
 the meadow east of the tavern. Both materials say `"foliage": {"anchor": "tree"}` (FOLIAGE; the engine's rule is
 reports/engine/2026-11-16-modern-trees/tree-wind.md): the bark and the boughs bend as one body, so their `wind`
-is the same, and only the boughs flutter and let the light through.
+is the same, and only the boughs flutter and let the light through. A bough's triangles are listed once and the
+boughs' record says `"two_sided": "same"`: the engine draws both sides and lights them by the card's normals, as
+it lit the two copies before (reports/engine/2026-11-16-modern-trees/two-sided.md). `--sides flip` writes the
+other value of the field, the side away from the winding lit by the normal turned to the eye; `--pairs` lists
+the triangles twice under a one-sided record, as fir-probe-2 has them.
 """
 from __future__ import annotations
 
@@ -227,6 +231,8 @@ def probe(args) -> int:
             shutil.copyfile(args.textures / f'{part}-{kind}.dds', directory / f'{part}-{kind}.dds')
         materials[f'{name}.TGA'] = dict({kind: f'{FOLDER}/{part}-{kind}.dds' for kind in ('albedo', 'normal', 'orm')},
                                         scale=1., antitile='off', antitile_cell=1., foliage=FOLIAGE[part])
+        if part == 'boughs' and not args.pairs:
+            materials[f'{name}.TGA']['two_sided'] = args.sides
     rewrite(work / 'materials/materials.json', materials)
 
     folder = work / 'meshes' / FOLDER
@@ -235,7 +241,7 @@ def probe(args) -> int:
     mask = tree_density.load_mask(BLENDER / config['atlas']['mask'])
     for number, (position, yaw, scale, seed) in enumerate(PROBE, 1):
         visual = f'{VISUAL}_{number}'
-        tree = fir_tree.build(config, seed, scale)
+        tree = fir_tree.build(config, seed, scale, args.pairs)
         glb = folder / f'{visual}.glb'
         tree_glb.write(glb, [{k: v for k, v in p.items() if k != 'owner'} for p in tree.parts], visual,
                        extras=dict(tree=config['id'], seed=config['seed'] if seed is None else seed, scale=scale))
@@ -278,6 +284,10 @@ def main() -> int:
     command.add_argument('set')
     command.add_argument('--textures', type=Path, required=True)
     command.add_argument('--from', dest='source', default='working-28')
+    command.add_argument('--pairs', action='store_true',
+                         help="a bough's triangles twice under a one-sided record, as before two-sided materials")
+    command.add_argument('--sides', choices=('same', 'flip'), default='same',
+                         help='the value of "two_sided" in the record of the boughs')
     args = parser.parse_args()
     return textures(args) if args.command == 'textures' else probe(args)
 
