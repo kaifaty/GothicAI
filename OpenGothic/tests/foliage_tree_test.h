@@ -5,7 +5,50 @@
 // graphics/foliagetree.h: the processor's copy of the rule of shader/materials/foliage_tree.glsl, the tree's wind
 // (reports/engine/2026-11-16-modern-trees/tree-wind.md). A spruce 12 m high stands in its mesh's axes, the root at
 // the origin.
+// graphics/crownlight.h: the flag of the crown's light, which materials it marks, and the processor's copy of the
+// numbers of shader/lighting/crown_light.glsl (reports/engine/2026-11-16-modern-trees/crown-light.md)
+void crownLightMaths() {
+  using namespace CrownLight;
+  using FoliageWind::Params;
+
+  require(parse("",true)==On && parse("",false)==Off && parse("0",true)==Off && parse("1",false)==On &&
+          parse("mask",false)==Mask && parse("mask",true)==Mask,
+          "the crown's light is on by default; OPENGOTHIC_CROWN_LIGHT wins over [INTERNAL] crownLight, `mask` is the measure");
+
+  Params bark, leaf, tuft;
+  bark.on = true; bark.anchor = FoliageWind::AnchorTree; bark.translucency = 0.f;
+  leaf.on = true; leaf.anchor = FoliageWind::AnchorTree;
+  tuft.on = true;
+  require(lit(bark,FoliageWind::Both,true) && lit(leaf,FoliageWind::Light,true),
+          "the bark and the leaves of a tree are both of its crown, whatever they let through");
+  require(!lit(tuft,FoliageWind::Both,true) && !lit(Params(),FoliageWind::Both,true),
+          "a tuft and a material without the field are lit as before");
+  require(!lit(leaf,FoliageWind::Both,false) && !lit(leaf,FoliageWind::Wind,true) && !lit(leaf,0,true),
+          "the flag and the light half of the foliage switch the crown's light off");
+
+  // the openness rides to the pixel in the normal's length and comes back to the byte of COLOR_0
+  for(uint32_t a=0; a<256; ++a) {
+    const float len = normalLength(uint8_t(a));
+    require(len>=0.5f && len<=1.f && std::abs(openness(len)*255.f-float(a))<1e-3f,
+            "the alpha of a vertex survives the ride in the normal's length");
+    if(a>0)
+      require(shade(openness(len))>shade(openness(normalLength(uint8_t(a-1)))),"a more open vertex is lit more");
+    }
+  require(normalLength(255)==1.f && openness(1.f)==1.f && shade(1.f)==1.f,
+          "a mesh without COLOR_0 (alpha 1) keeps the normal's length and all of its light");
+  require(shade(0.f)==ShadeFloor && ShadeFloor>=0.1f && ShadeFloor<=0.3f,
+          "the depth of a crown keeps 10-30 % of the diffuse light, as the needles by a spruce's trunk");
+  // interpolation shortens a normal between vertices that differ: it may only darken, never brighten past 1
+  require(openness(0.4f)==0.f && openness(1.2f)==1.f,"a short or a long normal stays in the range of the openness");
+
+  require(skyThrough(0.f,1.f)==0.f && skyThrough(0.35f,1.f)==SkyLobe*0.35f && skyThrough(0.35f,-0.7f)==0.f &&
+          skyThrough(0.35f,-0.3f)<skyThrough(0.35f,0.f) && skyThrough(1.f,1.f)<0.5f,
+          "the sky comes through a leaf by its translucency, less than half of what lights its other side, and fades "
+          "where the normal already faces that sky");
+  }
+
 void foliageTreeMaths() {
+  crownLightMaths();
   using namespace FoliageTree;
   using FoliageWind::Both;
   using FoliageWind::Params;

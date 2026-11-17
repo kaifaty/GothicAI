@@ -208,6 +208,16 @@ bool isGBufFoliage(float v) {
   return (x & GBufFoliageBit)!=0;
   }
 
+// A tree's crown (lighting/crown_light.glsl): bit 0 of the hint bits. Such a pixel keeps in gbufOrm.r the map's AO
+// times the shade of the crown at its depth, and that takes the whole of its ambient light; with the foliage bit
+// the sky and the lamps come through the leaf as the sun does
+const int GBufCrownBit = 1 << 0;
+
+bool isGBufCrown(float v) {
+  int x = int(v*255+0.5);
+  return (x & GBufCrownBit)!=0;
+  }
+
 // gbufOrm as the material's AO, roughness and metal: a leaf has no metal
 vec4 gbufOrmMaterial(vec4 orm, float hint) {
   if(orm.a>0.5 && isGBufFoliage(hint))

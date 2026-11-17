@@ -6,6 +6,7 @@
 #include "graphics/dynamic/frustrum.h"
 #include "rtscene.h"
 #include "resources.h"
+#include "graphics/crownlight.h"
 #include "graphics/foliagewind.h"
 #include "graphics/houselights.h"
 

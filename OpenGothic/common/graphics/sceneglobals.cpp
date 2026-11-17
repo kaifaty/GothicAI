@@ -1,7 +1,6 @@
 #include "sceneglobals.h"
 #include "graphics/foliagefront.h"
 #include "graphics/contactao.h"
-#include "graphics/crownlight.h"
 #include "graphics/grasscontact.h"
 #include "graphics/lampcontact.h"
 #include "settings.h"

@@ -2,6 +2,7 @@
 
 #include <Tempest/Log>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <string_view>
@@ -44,6 +45,32 @@ inline Mode mode() {
 
 inline bool enabled() {
   return mode()!=Off;
+  }
+
+// The processor's copy of the numbers of shader/lighting/crown_light.glsl and of the ride of the openness in the
+// normal's length (shader/materials/vertex_process.glsl)
+static constexpr float ShadeFloor = 0.25f; // CrownShadeFloor
+static constexpr float SkyLobe    = 0.4f;  // CrownSkyLobe
+
+// the length the vertex shader gives the normal of a vertex with this alpha of COLOR_0
+inline float normalLength(uint8_t alpha) {
+  return 0.5f + 0.5f*(float(alpha)/255.f);
+  }
+
+// crownOpenness: the openness out of that length
+inline float openness(float normalLength) {
+  return std::clamp(normalLength*2.f - 1.f, 0.f, 1.f);
+  }
+
+// crownShade: what the crown leaves of the ambient light at this openness
+inline float shade(float openness) {
+  return ShadeFloor + (1.f - ShadeFloor)*openness;
+  }
+
+// crownSkyThrough: the share of the irradiance behind a leaf that comes through it; facing: the cosine between the
+// leaf's normal and the eye
+inline float skyThrough(float translucency, float facing) {
+  return SkyLobe * translucency * std::clamp(1.f + 1.5f*facing, 0.f, 1.f);
   }
 
 // BK_CROWN of a material: a tree's, while the light of the foliage is on (FoliageWind::enabled)

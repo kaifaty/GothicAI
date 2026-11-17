@@ -10,6 +10,7 @@
 #if defined(MATERIAL_MAPS) && !defined(SURFEL_GI)
 #include "lighting/material_brdf.glsl"
 #include "lighting/eye_brdf.glsl"
+#include "lighting/crown_light.glsl"
 #endif
 #if defined(MATERIAL_MAPS)
 #include "lighting/hair_brdf.glsl"
@@ -100,7 +101,8 @@ void main() {
   vec3 color;
   vec3 eyeReflection = vec3(0); // the tear film's reflection of the sky, over the screen-space visibility below
 #if defined(MATERIAL_MAPS) && !defined(SURFEL_GI)
-  const vec4 orm = gbufOrmMaterial(texelFetch(gbufOrm, fragCoord, 0), diff4.a);
+  const vec4 ormG = texelFetch(gbufOrm, fragCoord, 0);
+  const vec4 orm  = gbufOrmMaterial(ormG, diff4.a);
   if(orm.a>0.5 && isGBufHair(diff4.a)) {
     // Hair cards: the ORM channels are the hair's own (no metal, no map AO); the sky and the ambient light it as a
     // matte surface of the hair's colour, the highlights belong to the sun and the lamps
@@ -126,8 +128,11 @@ void main() {
   if(orm.a>0.5) {
     // Map AO occludes only diffuse sky light. Screen-space visibility below
     // remains shared with the old ambient path, including inside buildings.
+    // A tree's crown (crown_light.glsl): its occlusion is the map's AO and the crown's shade in one, and it takes
+    // all of the light below - nothing else here shades the inside of a crown
+    const bool crown = isGBufCrown(diff4.a);
     const vec3 sky = skyIrradiance(norm);
-    const vec3 diffuseLight = scene.ambient + sky*0.8*orm.r +
+    const vec3 diffuseLight = scene.ambient + sky*0.8*(crown ? 1.0 : orm.r) +
                               (norm.y*0.25+0.75) * NightAmbient * Fd_Lambert;
     color = linear * diffuseLight * (1.0 - orm.b);
 
@@ -142,6 +147,14 @@ void main() {
     const vec3 reflectedSky = mix(sharpSky, sky, orm.g*orm.g);
     color += reflectedSky * materialEnvBrdf(materialF0(linear, orm.b), orm.g, noV) *
              materialSpecularWeight(orm.g, orm.b);
+    if(crown) {
+      if(isGBufFoliage(diff4.a)) {
+        // the same light from behind the leaf comes through it
+        const vec3 behind = scene.ambient + skyIrradiance(-view)*0.8 + (0.75-view.y*0.25) * NightAmbient * Fd_Lambert;
+        color += linear * FoliageThroughTint * behind * crownSkyThrough(ormG.b, norm, view);
+        }
+      color *= orm.r;
+      }
     } else
 #endif
     {

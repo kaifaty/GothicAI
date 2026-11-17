@@ -633,8 +633,14 @@ void mainGBuffer(vec4 t) {
       }
     }
   if((bucket[bucketId].flags & BK_CROWN)!=0u) {
-    if((scene.viewFlags & VF_CROWN_MASK)!=0u)
-      outDiffuse.rgb = crownMask(crownOpenness(shInp.normal), outOrm.b);
+    // A tree's crown (crown_light.glsl): the shade of its depth joins the map's AO, under the crown bit
+    const float openness = crownOpenness(shInp.normal);
+    if((scene.viewFlags & VF_CROWN_MASK)!=0u) {
+      outDiffuse.rgb = crownMask(openness, outOrm.b);
+      } else {
+      outOrm.r    *= crownShade(openness);
+      outDiffuse.a = float(int(outDiffuse.a*255.0 + 0.5) | GBufCrownBit)/255.0;
+      }
     }
   const float glow = bucket[bucketId].emissive;
   if(glow>0.0 && !maps.antitile && (bucket[bucketId].flags & BK_ORM)!=0) {
