@@ -38,6 +38,7 @@ constexpr size_t  UploadBytes  = 512*1024; // a frame; one cell at least
 constexpr size_t  RankCounts   = 257;
 constexpr float   RootsBeyond  = 100.f;    // cm: a root lies no nearer to the camera than its cell less this
 constexpr size_t  MaxJobs      = 6;
+constexpr uint32_t WasteEvery  = 30;       // frames between two counts of Grass::Waste
 
 // The fine blades of the short sward (Grass::Params::fine): a ring of their own, cm. All of them to FineFull, a
 // share FineFull/d from there, into the ground between FineFade and FineRadius; two links near, one further
@@ -408,6 +409,7 @@ void GrassField::release(Cell& c) {
     Resources::recycle(std::move(c.gpu));
   c.gpu     = StorageBuffer();
   c.batches.clear();
+  c.cpu.clear();
   c.below.clear();
   c.count   = 0;
   c.live    = false;
@@ -436,6 +438,8 @@ void GrassField::upload(Cell& c, Done&& d) {
       below[r] += below[r-1];
     }
   c.gpu     = Resources::ssbo(d.blades.blades.data(), d.blades.blades.size()*sizeof(Grass::Blade));
+  if(Grass::wasteOn())
+    c.cpu = std::move(d.blades.blades);
   }
 
 void GrassField::update() {
@@ -621,6 +625,10 @@ void GrassField::update() {
 void GrassField::draw(Encoder<CommandBuffer>& cmd) {
   Stats st;
   st.waiting = last.waiting;
+  // the count of the blades submitted for nothing walks every drawn blade: one frame of WasteEvery, kept between
+  const bool waste = Grass::wasteOn() && (wasteFrame++ % WasteEvery)==0;
+  if(!waste)
+    st.waste = last.waste;
   if(!blades || cells.empty()) {
     last = st;
     scene.setGrassDrawn(false);
@@ -669,6 +677,30 @@ void GrassField::draw(Encoder<CommandBuffer>& cmd) {
       st.drawn     += count;
       st.fine      += fine ? count : 0;
       st.triangles += size_t(count)*size_t(2*links-1);
+      ++st.draws;
+      if(waste && !c.cpu.empty()) {
+        Grass::WasteRule rule;
+        rule.full        = fine ? FineFull   : ring.full;
+        rule.fadeFrom    = fine ? FineFade   : ring.fadeFrom;
+        rule.radius      = fine ? FineRadius : ring.radius;
+        rule.cellRadius  = ring.radius;
+        rule.rankShare   = RankShare;
+        rule.rootsBeyond = RootsBeyond;
+        rule.fine        = fine;
+        rule.segmentsTo  = SegmentsTo;
+        rule.segmentsN   = std::size(SegmentsTo);
+        rule.maxSegments = MaxSegments;
+        Grass::WasteCell wc;
+        wc.origin = Vec3(float(c.cx)*CellCm - float(Grass::CellMargin/Grass::Unit), float(c.minY)/float(Grass::Unit),
+                         float(c.cz)*CellCm - float(Grass::CellMargin/Grass::Unit));
+        wc.x0     = float(c.cx)*CellCm;
+        wc.z0     = float(c.cz)*CellCm;
+        wc.size   = CellCm;
+        wc.minY   = min.y;
+        wc.maxY   = max.y;
+        wc.pad    = pad;
+        Grass::countWaste(st.waste, fr, scene.camPos(), rule, wc, std::span<const Grass::Blade>(c.cpu.data()+b.first, count), links);
+        }
       const auto& p = slotParams[b.slot];
       Push push;
       push.origin       = Vec4(float(c.cx)*CellCm - float(Grass::CellMargin/Grass::Unit), float(c.minY)/float(Grass::Unit),
