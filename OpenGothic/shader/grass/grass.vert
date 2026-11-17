@@ -204,4 +204,7 @@ void main() {
   outNormal = normalize(gn*0.75 + face*0.25 - vec3(tilt.lean.x, 0.0, tilt.lean.y)*(t*GrassNormalLean*0.5));
   if((partsOff & GrassPartNormal)!=0u)
     outNormal = gn;
+  // the vertex stage's cost by difference: everything above is done, and the vertex leaves by the right plane
+  if((partsOff & GrassPartOffscreen)!=0u)
+    gl_Position = vec4(4.0*(abs(clip.w)+1.0), clip.y, clip.z, abs(clip.w)+1.0);
   }

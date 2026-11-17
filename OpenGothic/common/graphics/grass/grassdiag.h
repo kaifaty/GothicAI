@@ -25,7 +25,9 @@ enum Part : uint32_t {
   PartLayers      = 4096, // a ground with its own layers as a painted ground: no layers, its blades as there
   PartCells       = 8192, // with the mask's paint (1+64+128): squares of 0.5 m in red, of 5 m in green, by the world's x and z
   PartTrack       = 16384, // a road with `track` as with its `verge` alone: the painted road and the strip (grass_track.glsl)
-  PartAll         = 32767,
+  PartOffscreen   = 32768, // the blades go through the whole vertex stage and then leave the screen: nothing is rasterised,
+                           // so a frame less this one is the blades' rasterising and pixels, this one less PartHide their vertex stage
+  PartAll         = 65535,
   };
 
 // SceneDesc::grassRing.w carries it: 1 + 2*mask
