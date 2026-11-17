@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """A staging set that answers by one filming how the engine draws a card of an own GLB with an alpha mask.
 
-    uv run --no-project --with numpy --with scipy python scripts/content/own_glb_probe.py glb-probe-2
+    uv run --no-project --with numpy --with scipy --with pillow python scripts/content/own_glb_probe.py glb-probe-2
     TEMPEST_WINDOW_SIZE=2560x1440 OPENGOTHIC_CONTENT=~/.local/share/gothic-ai/content-staging/glb-probe-2 \
         scripts/bench.sh own-glb-probe <out>
 
@@ -20,8 +20,8 @@ away from the first camera, and stand the pennant up.
 
 The sides of a material (`"two_sided"` of its record, reports/engine/2026-11-16-modern-trees/two-sided.md) are a
 second group over the meadow east of the tavern: a row of cards along Z over a grey plate that takes their
-shadows, every card tilted to the noon sun (it stands at -X, 57 degrees high), shot from the sun's side and from
-the lee one. Seven cards, SIDES, twice: wound to the sun at -Z and wound away from it at +Z, the normals written
+shadows, every card tilted to the noon sun (it stands at -X, 57 degrees high), shot from the sun's side, from
+the lee one and from the lee side low toward the sun. Seven cards, SIDES, twice: wound to the sun at -Z and wound away from it at +Z, the normals written
 for the side of the winding.
 
     one          one copy, a one-sided material: one side is drawn
