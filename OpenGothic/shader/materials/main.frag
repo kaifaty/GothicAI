@@ -122,9 +122,10 @@ float encodeHintBits() {
 #if defined(GBUFFER)
 // The vertex normal of the side the pixel shows. A material of two sides (materials.json "two_sided": "flip") turns
 // it to the eye on the side away from the winding: Tempest's front face is clockwise and the pipelines cull it, so
-// the side every material shows is the back one, and the other side is gl_FrontFacing
+// the side every material shows is the back one, and the other side is gl_FrontFacing. A fragment shader is not told
+// MESH_TYPE: the bit is set for objects' meshes alone (DrawBuckets::commit)
 vec3 sideNormal() {
-#if (MESH_TYPE==T_OBJ)
+#if (MESH_TYPE!=T_PFX)
   if(gl_FrontFacing && (bucket[bucketId].flags & BK_TWO_SIDED_FLIP)!=0u)
     return -shInp.normal;
 #endif
