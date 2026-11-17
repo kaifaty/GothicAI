@@ -1,0 +1,30 @@
+{
+ "format": 1,
+ "visual": [
+  {"id": 3047, "visual": "OWN_WALL_TORCH_01"},
+  {"id": 7860, "visual": "OWN_WALL_TORCH_01"}
+ ],
+ "effect": [
+  {"id": 3055, "pfx": "OWN_TORCH_SPARKS"},
+  {"id": 7861, "pfx": "OWN_TORCH_LICKS"}
+ ],
+ "remove": [3049, 3053, 7864, 7866],
+ "light": [
+  {"id": 3051, "color": [230, 84, 15], "near": 8, "flicker_from": "wall-torch-newworld-3047-flame", "jitter_cm": 0.6, "sway_hz": 1.5, "offset_cm": [1.0, 33.8, -0.7]}
+ ],
+ "add": [
+  {"key": "wall-torch-newworld-3047-flame", "kind": "emitter", "pfx": "OWN_TORCH_FLAME", "position": [36658.0, 5401.2, 29581.7], "yaw_deg": 0, "flicker": {"pulse_hz": 4.5, "jitter_hz": 12, "amount": 0.2, "seed": 9148}},
+  {"key": "wall-torch-newworld-3047-flame-a", "kind": "emitter", "pfx": "OWN_TORCH_FLAME_SIDE", "position": [36653.8, 5395.0, 29582.6], "yaw_deg": 0, "flicker": {"pulse_hz": 4.5, "jitter_hz": 12, "amount": 0.2, "seed": 9149}},
+  {"key": "wall-torch-newworld-3047-flame-b", "kind": "emitter", "pfx": "OWN_TORCH_FLAME_SIDE", "position": [36662.1, 5395.0, 29580.6], "yaw_deg": 0, "flicker": {"pulse_hz": 4.5, "jitter_hz": 12, "amount": 0.2, "seed": 9150}},
+  {"key": "wall-torch-newworld-3047-licks", "kind": "emitter", "pfx": "OWN_TORCH_LICKS", "position": [36658.4, 5379.5, 29583.3], "yaw_deg": 0},
+  {"key": "wall-torch-newworld-3047-drops", "kind": "emitter", "pfx": "OWN_TORCH_DROPS", "position": [36658.6, 5361.2, 29584.4], "yaw_deg": 0},
+  {"key": "wall-torch-newworld-3047-soot", "kind": "emitter", "pfx": "OWN_TORCH_SOOT", "position": [36657.6, 5410.8, 29580.1], "yaw_deg": 0},
+  {"key": "wall-torch-newworld-7860-flame", "kind": "emitter", "pfx": "OWN_TORCH_FLAME", "position": [49043.2, 5203.2, 17784.5], "yaw_deg": 0, "flicker": {"pulse_hz": 4.5, "jitter_hz": 12, "amount": 0.2, "seed": 23587}},
+  {"key": "wall-torch-newworld-7860-flame-a", "kind": "emitter", "pfx": "OWN_TORCH_FLAME_SIDE", "position": [49039.5, 5197.0, 17782.4], "yaw_deg": 0, "flicker": {"pulse_hz": 4.5, "jitter_hz": 12, "amount": 0.2, "seed": 23588}},
+  {"key": "wall-torch-newworld-7860-flame-b", "kind": "emitter", "pfx": "OWN_TORCH_FLAME_SIDE", "position": [49047.0, 5197.0, 17786.4], "yaw_deg": 0, "flicker": {"pulse_hz": 4.5, "jitter_hz": 12, "amount": 0.2, "seed": 23589}},
+  {"key": "wall-torch-newworld-7860-sparks", "kind": "emitter", "pfx": "OWN_TORCH_SPARKS", "position": [49044.0, 5193.8, 17783.0], "yaw_deg": 0},
+  {"key": "wall-torch-newworld-7860-drops", "kind": "emitter", "pfx": "OWN_TORCH_DROPS", "position": [49041.9, 5163.2, 17787.0], "yaw_deg": 0},
+  {"key": "wall-torch-newworld-7860-soot", "kind": "emitter", "pfx": "OWN_TORCH_SOOT", "position": [49044.0, 5212.8, 17783.0], "yaw_deg": 0},
+  {"key": "wall-torch-newworld-7860-light", "kind": "light", "position": [49044.4, 5210.8, 17782.2], "yaw_deg": 0, "range": 250, "color": [230, 84, 15], "near": 8, "flicker_from": "wall-torch-newworld-7860-flame", "jitter_cm": 0.6, "sway_hz": 1.5}
+ ]
+}
