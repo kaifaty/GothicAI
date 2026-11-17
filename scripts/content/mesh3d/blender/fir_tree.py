@@ -2,8 +2,9 @@
 
     build(config, seed=None, scale=1.0, pairs=False) -> Tree
 
-card_planes() and axis_cover() measure a built tree: how far apart the planes of each bough are and how much of
-the branches' axes is under boughs.
+card_planes(), clusters() and axis_cover() measure a built tree: how far apart the planes of each bough are and how
+many blades it has, how many shoots a cluster has and how far apart they stand, how much of the branches' axes is
+under boughs.
 
 The shape is the construction table of reports/content/2026-11-trees/fir/README.md; the numbers of a variant live
 in its config (fir.json is spruce A, the spruce of the forest edge), the seed moves everything that is chance:
@@ -16,17 +17,24 @@ the height of each whorl, the number, turn, length and sag of its branches, the 
   The normals of a living branch look down: it is bark in the crown's own shade, the sun does not light it.
 - **Bough**: a picture of the atlas at about the size it was baked at, and never one plane (frond()): two wings
   lowered from the spine like a roof, the spine sagging with the end raised, a long one bent once more at its
-  middle. A hanging bough and the fan on a branch's end carry a third blade across the two wings, so no side
-  shows them as a sheet's edge. All blades of a bough share its stem and are one piece; every triangle is
-  listed once for a two-sided material, or twice with `pairs` (tree_glb.py).
+  middle. All blades of a bough share its stem and are one piece; every triangle is listed once for a
+  two-sided material, or twice with `pairs` (tree_glb.py).
+- **Cluster**: several boughs, its shoots, that read as one bough with a volume; each shoot has its own stem
+  on the branch's axis. A hanging bough is a cluster (cluster()): a main shoot along the bough's axis and two
+  to four smaller ones round it, each leaning off the axis to its own side and turned away from it. A
+  branch's end is a hand (hand()): a narrow leader over the axis with a third blade across its wings, and two
+  or three shoots beside and under it.
 - **A branch's boughs** (dress()): a roof of fans along its axis from the end back to the first `cover_from`
   of its length, each over the stem of the next, their spines lifted over the wood: from above the axis is
   under shoots, bare only in the depth of the crown. Round the axis, side after side, slanting boughs and
-  hanging ones, along the branch (a curtain) and across it (seen from the branch's end); in the top of the
-  crown the hanging ones stand on the branch instead. Short boughs on the trunk itself between the branches are
-  a sleeve that closes it. A card that would go under the ground lies on it.
+  hanging clusters, along the branch (a curtain) and across it (seen from the branch's end); in the top of
+  the crown the hanging ones stand on the branch instead, one bough each. Short boughs on the trunk itself
+  between the branches are a sleeve that closes it. A card that would go under the ground lies on it.
 - **Normals of the cards** are those of the crown's hull (outward and up, more up to the top) mixed with the
-  blade's own, so the crown is lit as a volume and a bough's wings still differ.
+  blade's own, so the crown is lit as a volume and a bough's wings still differ. A cluster's shoots take more
+  of their own (`cards.cluster.hull_share`): they face different sides, so the light tells them apart.
+- **Chance** has two streams: the tree's own draws the skeleton and every bough there was before the clusters,
+  the clusters' stream draws their other shoots, so the skeleton of a seed does not depend on them.
 - **COLOR_0** is the layout of tree_glb.py. The openness A is the distance from the axis against the crown's own
   outline at that height.
 
@@ -427,6 +435,32 @@ class Fir:
                        vault=math.radians(rng.uniform(*g['vault_deg'])), bow=0. if deep else -rng.uniform(*g['arch']),
                        twist=math.radians(rng.uniform(-25, 25)), bend=not deep, cluster=self.clusters, rng=rng)
 
+    def hand(self, branch: Branch, start: float, long: float) -> None:
+        """The shoots beside the leader of a branch's end, of the cluster counted last: their stems on the axis
+        within the leader's length, one to each side of it and a third under it. A shoot goes out and forward,
+        lower than the leader, its upper side leans away from it and its end hangs. `long` is the leader's
+        length, `start` the share of the branch it starts at."""
+        g, rng = self.cfg['cards']['hand'], self.own
+        side = float(rng.choice([-1., 1.]))
+        for k in range(int(rng.integers(g['shoots'][0], g['shoots'][1] + 1))):
+            at = float(np.clip(start + rng.uniform(*g['at']) * long / branch.length, .02, .99))
+            origin, tangent = branch.at(at)
+            across = unit(np.cross(tangent, UP))
+            above = np.cross(across, tangent)
+            under = k == 2
+            splay = math.radians(rng.uniform(-12, 12) if under else rng.uniform(*g['splay_deg']))
+            droop = math.radians(rng.uniform(*g['under_deg' if under else 'droop_deg']))
+            out = tangent * math.cos(splay) + across * (side * math.sin(splay))
+            spine = out * math.cos(droop) - above * math.sin(droop)
+            face = above * math.cos(droop) + out * math.sin(droop)
+            roll = math.radians(rng.uniform(-30, 30) if under else side * rng.uniform(*g['roll_deg']))
+            face = face * math.cos(roll) + np.cross(spine, face) * math.sin(roll)
+            kind, own, wide = self.fit(long * rng.uniform(*g['length']), *g['side'], rng=rng)
+            self.frond(kind, origin, spine, face, own, wide, branch, at * branch.weight, 'tip',
+                       vault=math.radians(rng.uniform(*g['vault_deg'])), bow=-rng.uniform(*g['arch']),
+                       twist=math.radians(rng.uniform(-25, 25)), bend=True, cluster=self.clusters, rng=rng)
+            side = -side
+
     def dress(self, branch: Branch) -> None:
         """The boughs of one living branch: a roof of fans over its axis and second-order boughs round it."""
         c, rng = self.cfg['cards'], self.rng
@@ -465,11 +499,17 @@ class Fir:
             sag = -float(np.dot(middle - (stem + end) / 2, above)) / long
             last = start <= inner + 1e-6
             lean = math.radians(rng.uniform(-f['lean_deg'], f['lean_deg']))
+            if role == 'end':
+                # the branch's end is a hand: a narrow leader over the axis, shoots to both sides of it
+                self.clusters += 1
+                kind, _, wide = self.fit(long, *c['hand']['kinds'], rng=self.own)
+                self.hand(branch, start, long)
             self.frond(kind, stem, spine, above * math.cos(lean) + np.cross(spine, above) * math.sin(lean), long, wide,
                        branch, lambda t, start=start, long=long: min(1., start + t * long / length) * branch.weight,
                        role, vault=math.radians(rng.uniform(*f['vault_deg'])), bow=min(sag, 0.) - rng.uniform(*f['arch']),
                        rise=thick + f['rise'], twist=math.radians(rng.uniform(-12, 12)),
-                       bend=role == 'end' or long > c['bend_from'], keel=-1 if role == 'end' else 0)
+                       bend=role == 'end' or long > c['bend_from'], keel=-1 if role == 'end' else 0,
+                       cluster=self.clusters if role == 'end' else 0)
             if last:
                 break
             reach, on, role = start + f['overlap'] * long / length, 1., 'roof'
@@ -651,9 +691,14 @@ def build(config: dict, seed: int | None = None, scale: float = 1., pairs: bool 
     return Fir(config, seed, pairs).build(scale)
 
 
+BLADE_DEG = 30.     # triangles whose planes are closer than this are one blade of a bough
+
+
 def card_planes(tree: Tree) -> dict:
     """How far from one plane the boughs are. The spread of a bough is the largest angle between the planes of
-    two of its triangles (a plane has no side: 0 to 90 degrees). Per role: the count and the smallest spread."""
+    two of its triangles (a plane has no side: 0 to 90 degrees). Its blades are counted as the groups of its
+    triangles: a triangle opens a new group when its plane is BLADE_DEG or more from the first triangle of
+    every group before it. Per role: the count, the smallest spread and the least number of blades."""
     part = next(p for p in tree.parts if p['cutout'])
     position, index = part['position'].astype(np.float64), np.asarray(part['index'])
     _, first = np.unique(np.sort(index, axis=1), axis=0, return_index=True)
@@ -666,41 +711,55 @@ def card_planes(tree: Tree) -> dict:
     for number, card in enumerate(tree.cards):
         mine = face[owner == number]
         spread = math.degrees(math.acos(float(np.clip(np.abs(mine @ mine.T).min(), 0, 1))))
-        role = out.setdefault(card['role'], dict(count=0, spread_min_deg=90.))
+        blades: list = []
+        for plane in mine:
+            if all(abs(float(plane @ other)) <= math.cos(math.radians(BLADE_DEG)) for other in blades):
+                blades.append(plane)
+        role = out.setdefault(card['role'], dict(count=0, spread_min_deg=90., blades_min=len(blades)))
         role['count'] += 1
         role['spread_min_deg'] = round(min(role['spread_min_deg'], spread), 1)
+        role['blades_min'] = min(role['blades_min'], len(blades))
     return out
 
 
 def clusters(tree: Tree) -> dict:
-    """The hanging boughs as clusters of shoots. A shoot's plane is the plane nearest to its vertices, its
-    spine runs from its stem to its tip. Per cluster: the number of shoots, `planes` — the largest angle between
-    the planes of two of its shoots (0 to 90 degrees), `splay` — the largest angle between two of its spines.
-    Of all clusters: their count, the least and the largest number of shoots and the least of both angles."""
+    """The clusters of shoots: `hang` are the hanging boughs, `end` the hands on the branches' ends.
+
+    A shoot's plane is the plane nearest to its vertices, its spine runs from its stem to its tip. Per cluster:
+    the number of shoots, `planes` — the largest angle between the planes of two of its shoots (0 to 90
+    degrees), `splay` — the largest angle between two of its spines. Of all clusters of a kind: their count,
+    the least, the largest and the mean number of shoots, the shoots in all and the least of both angles."""
     position = next(p for p in tree.parts if p['cutout'])['position'].astype(np.float64)
     groups: dict = {}
     for card in tree.cards:
         if card.get('cluster'):
-            groups.setdefault(card['cluster'], []).append(position[card['first']:card['first'] + card['count']])
-    shoots, planes, splay = [], [], []
+            groups.setdefault(card['cluster'], []).append(card)
+    kinds: dict = {}
     for cards in groups.values():
-        normal = np.array([np.linalg.svd(p - p.mean(axis=0))[2][2] for p in cards])
-        spine = np.array([unit(p[3] - p[0]) for p in cards])
-        shoots.append(len(cards))
-        planes.append(math.degrees(math.acos(float(np.clip(np.abs(normal @ normal.T).min(), 0, 1)))))
-        splay.append(math.degrees(math.acos(float(np.clip((spine @ spine.T).min(), -1, 1)))))
-    return dict(count=len(groups), shoots=[min(shoots, default=0), max(shoots, default=0)],
-                shoots_mean=round(float(np.mean(shoots)), 2) if shoots else 0.,
-                planes_min_deg=round(min(planes, default=0.), 1), splay_min_deg=round(min(splay, default=0.), 1))
+        points = [position[card['first']:card['first'] + card['count']] for card in cards]
+        normal = np.array([np.linalg.svd(p - p.mean(axis=0))[2][2] for p in points])
+        spine = np.array([unit(p[3] - p[0]) for p in points])
+        kind = 'end' if any(card['role'] == 'end' for card in cards) else 'hang'
+        kinds.setdefault(kind, []).append((
+            len(cards), math.degrees(math.acos(float(np.clip(np.abs(normal @ normal.T).min(), 0, 1)))),
+            math.degrees(math.acos(float(np.clip((spine @ spine.T).min(), -1, 1))))))
+    out = {}
+    for kind, rows in sorted(kinds.items()):
+        shoots, planes, splay = (np.array(column) for column in zip(*rows))
+        out[kind] = dict(count=len(rows), shoots=[int(shoots.min()), int(shoots.max())],
+                         shoots_mean=round(float(shoots.mean()), 2), shoots_total=int(shoots.sum()),
+                         planes_min_deg=round(float(planes.min()), 1), splay_min_deg=round(float(splay.min()), 1))
+    return out
 
 
-def axis_cover(tree: Tree, mask: np.ndarray, start: float, step: float = .1, px: int = 100) -> dict:
+def axis_cover(tree: Tree, mask: np.ndarray, start: float, step: float = .1, px: int = 100, clear: float = .01) -> dict:
     """How much of the living branches' axes is under their own boughs, seen from straight above.
 
     The axis of every branch is sampled each `step` metres from the share `start` of its length to its end. A
     sample is covered when a card of the same branch, there where the atlas's coverage mask is solid, lies
-    over the top of the wood at that place (half a centimetre of slack). `covered` is the share of all
-    samples, `branch_min` the share of the worst branch with five samples or more."""
+    `clear` metres or more over the top of the wood at that place: a card that passes through the wood, over
+    the axis's centre but not over the bark, leaves it open. `covered` is the share of all samples,
+    `branch_min` the share of the worst branch with five samples or more."""
     import tree_density
     part = next(p for p in tree.parts if p['cutout'])
     scale = tree.metrics['scale']
@@ -724,7 +783,7 @@ def axis_cover(tree: Tree, mask: np.ndarray, start: float, step: float = .1, px:
         height = -tree_density.raster(seen, mine, (size[1], size[0]), uv, mask)
         column = np.clip(((points[:, 0] - low[0]) * px).astype(int), 0, size[0] - 1)
         row = np.clip(((points[:, 1] - low[1]) * px).astype(int), 0, size[1] - 1)
-        under = height[row, column] >= top - .005
+        under = height[row, column] >= top + clear
         total += len(shares)
         covered += int(under.sum())
         if len(shares) >= 5:

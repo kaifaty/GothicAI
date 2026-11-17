@@ -165,7 +165,7 @@
         "sprig",
         "tuft"
       ],
-      "hull_share": 0.65,
+      "hull_share": 0.4,
       "length": [
         0.5,
         0.85
@@ -177,6 +177,54 @@
       "around": 0.2,
       "roll_deg": 30,
       "along_m": 0.03,
+      "vault_deg": [
+        16,
+        30
+      ],
+      "arch": [
+        0.03,
+        0.1
+      ]
+    },
+    "hand": {
+      "kinds": [
+        "hang",
+        "top",
+        "twig"
+      ],
+      "shoots": [
+        2,
+        3
+      ],
+      "side": [
+        "sprig",
+        "tuft",
+        "shoot"
+      ],
+      "at": [
+        0.08,
+        0.5
+      ],
+      "length": [
+        0.45,
+        0.7
+      ],
+      "splay_deg": [
+        28,
+        50
+      ],
+      "droop_deg": [
+        6,
+        24
+      ],
+      "under_deg": [
+        35,
+        60
+      ],
+      "roll_deg": [
+        10,
+        35
+      ],
       "vault_deg": [
         16,
         30
@@ -223,13 +271,35 @@
     "rules": {
       "planes_deg": {
         "end": 45,
-        "hang": 45,
+        "hang": 30,
+        "tip": 25,
         "roof": 20,
         "side": 20,
         "sleeve": 20,
         "leader": 20
       },
-      "cover_min": 0.85
+      "blades": {
+        "end": 3
+      },
+      "cluster": {
+        "hang": {
+          "shoots": [
+            3,
+            5
+          ],
+          "planes_deg": 25,
+          "splay_deg": 20
+        },
+        "end": {
+          "shoots": [
+            3,
+            4
+          ],
+          "planes_deg": 10,
+          "splay_deg": 45
+        }
+      },
+      "cover_min": 0.9
     }
   },
   "leader_boughs": 8,
