@@ -7,7 +7,7 @@
     "bark": "OWN_TREE_FIR_BARK",
     "boughs": "OWN_TREE_FIR_BOUGHS"
   },
-  "budget_tris": 50000,
+  "budget_tris": 48000,
   "palette": {
     "needles_srgb": [
       31,
@@ -154,6 +154,86 @@
         0.08
       ]
     },
+    "cluster": {
+      "shoots": [
+        3,
+        5
+      ],
+      "deep": 0.3,
+      "kinds": [
+        "shoot",
+        "sprig",
+        "tuft"
+      ],
+      "hull_share": 0.4,
+      "length": [
+        0.5,
+        0.85
+      ],
+      "tilt_deg": [
+        14,
+        34
+      ],
+      "around": 0.2,
+      "roll_deg": 30,
+      "along_m": 0.03,
+      "vault_deg": [
+        16,
+        30
+      ],
+      "arch": [
+        0.03,
+        0.1
+      ]
+    },
+    "hand": {
+      "kinds": [
+        "hang",
+        "top",
+        "twig"
+      ],
+      "shoots": [
+        2,
+        3
+      ],
+      "side": [
+        "sprig",
+        "tuft",
+        "shoot"
+      ],
+      "at": [
+        0.08,
+        0.5
+      ],
+      "length": [
+        0.45,
+        0.7
+      ],
+      "splay_deg": [
+        28,
+        50
+      ],
+      "droop_deg": [
+        6,
+        24
+      ],
+      "under_deg": [
+        35,
+        60
+      ],
+      "roll_deg": [
+        10,
+        35
+      ],
+      "vault_deg": [
+        16,
+        30
+      ],
+      "arch": [
+        0.03,
+        0.1
+      ]
+    },
     "cover_from": 0.3,
     "lift": 0.025,
     "bend_from": 0.7,
@@ -191,13 +271,35 @@
     "rules": {
       "planes_deg": {
         "end": 45,
-        "hang": 45,
+        "hang": 30,
+        "tip": 25,
         "roof": 20,
         "side": 20,
         "sleeve": 20,
         "leader": 20
       },
-      "cover_min": 0.85
+      "blades": {
+        "end": 3
+      },
+      "cluster": {
+        "hang": {
+          "shoots": [
+            3,
+            5
+          ],
+          "planes_deg": 25,
+          "splay_deg": 20
+        },
+        "end": {
+          "shoots": [
+            3,
+            4
+          ],
+          "planes_deg": 10,
+          "splay_deg": 45
+        }
+      },
+      "cover_min": 0.9
     }
   },
   "leader_boughs": 8,
@@ -398,6 +500,118 @@
           [
             0.72,
             0.88
+          ]
+        ]
+      },
+      "shoot_1": {
+        "cell": [
+          1752,
+          0,
+          296,
+          700
+        ],
+        "turn": true,
+        "sections": [
+          [
+            0.2,
+            0.85
+          ],
+          [
+            0.7,
+            1.0
+          ]
+        ]
+      },
+      "shoot_2": {
+        "cell": [
+          1752,
+          716,
+          296,
+          700
+        ],
+        "turn": true,
+        "sections": [
+          [
+            0.2,
+            0.85
+          ],
+          [
+            0.7,
+            1.0
+          ]
+        ]
+      },
+      "sprig_1": {
+        "cell": [
+          1016,
+          1794,
+          500,
+          254
+        ],
+        "sections": [
+          [
+            0.3,
+            1.0
+          ],
+          [
+            0.72,
+            0.8
+          ]
+        ]
+      },
+      "sprig_2": {
+        "cell": [
+          1532,
+          1794,
+          500,
+          254
+        ],
+        "sections": [
+          [
+            0.3,
+            1.0
+          ],
+          [
+            0.72,
+            0.8
+          ]
+        ]
+      },
+      "tuft_1": {
+        "cell": [
+          616,
+          1628,
+          184,
+          420
+        ],
+        "turn": true,
+        "sections": [
+          [
+            0.3,
+            1.0
+          ],
+          [
+            0.75,
+            0.85
+          ]
+        ]
+      },
+      "tuft_2": {
+        "cell": [
+          816,
+          1628,
+          184,
+          420
+        ],
+        "turn": true,
+        "sections": [
+          [
+            0.3,
+            1.0
+          ],
+          [
+            0.75,
+            0.85
           ]
         ]
       }

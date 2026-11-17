@@ -247,8 +247,9 @@ def probe(args) -> int:
                        extras=dict(tree=config['id'], seed=config['seed'] if seed is None else seed, scale=scale))
         read = tree_check.check(glb)
         fails = list(read['fails'])
-        if read['triangles_total'] > config['budget_tris']:
-            fails.append(f"{read['triangles_total']} triangles, the budget is {config['budget_tris']}")
+        drawn = read['triangles_total'] - read['cards']['pairs']
+        if drawn > config['budget_tris']:
+            fails.append(f"{drawn} triangles without the twins, the budget is {config['budget_tris']}")
         density = tree_density.measure(glb, mask)
         fails += tree_density.rules(density, config['density'], scale)
         if fails:

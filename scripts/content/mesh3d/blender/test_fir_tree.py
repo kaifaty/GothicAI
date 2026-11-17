@@ -1,8 +1,9 @@
 """Spruce A as fir.py writes it without Blender: the size of the intent, the budget, the crown's density, the
-boughs' planes and the cover of the branches' axes, the layout of COLOR_0 the engine's tree wind reads
+boughs' planes, the clusters of shoots and the cover of the branches' axes, the layout of COLOR_0 the engine's tree wind reads
 (reports/content/2026-11-trees/fir/README.md, «Модель») and the cards' sides: once under a two-sided material, or
 twice in the mode of pairs (reports/engine/2026-11-16-modern-trees/two-sided.md)."""
 
+import copy
 import json
 from pathlib import Path
 
@@ -30,8 +31,8 @@ def spruce(config, tmp_path_factory):
 def test_spruce_a_has_the_size_of_the_intent_within_the_budget(spruce, config):
     metrics = spruce['metrics']
     assert metrics['fails'] == []
-    assert metrics['triangles'] <= config['budget_tris'] == 50000
-    assert 26500 <= metrics['triangles'] <= 27000       # a bough's triangle is drawn once: 47 096 with the twins
+    assert metrics['triangles'] <= config['budget_tris'] == 48000
+    assert 44900 <= metrics['triangles'] <= 45400       # a bough's triangle is drawn once: 83 912 with the twins
     assert 17.5 <= metrics['height_m'] <= 18.5
     assert .5 <= metrics['trunk_diameter_m'][1] <= .7 < metrics['trunk_diameter_m'][0]
     assert metrics['inside_out_parts'] == 0
@@ -49,13 +50,53 @@ def test_the_crown_is_dense_from_both_sides(spruce):
 
 def test_no_bough_is_one_plane_and_the_branches_axes_are_under_shoots(spruce, config):
     planes, cover = spruce['metrics']['card_planes'], spruce['metrics']['axis_cover']
-    assert set(planes) == {'end', 'roof', 'hang', 'side', 'sleeve', 'leader'}
+    assert set(planes) == {'end', 'tip', 'roof', 'hang', 'side', 'sleeve', 'leader'}
     for role, numbers in planes.items():
         assert numbers['count'] > 0
-        assert numbers['spread_min_deg'] >= (45 if role in ('end', 'hang') else 20), role
+        assert numbers['spread_min_deg'] >= dict(end=45, hang=30, tip=25).get(role, 20), role
+    assert planes['end']['blades_min'] == 3             # two wings and the blade across them
     assert config['cards']['cover_from'] == .3
-    assert cover['samples'] > 1000 and cover['covered'] >= .85
+    assert cover['samples'] > 1000 and cover['covered'] >= .9
     assert cover['branch_min'] >= .5
+
+
+def test_a_hanging_bough_and_a_branchs_end_are_clusters_of_shoots(spruce):
+    """The rule of the clusters: a hanging bough is 3 to 5 shoots, a branch's end 3 or 4, each shoot a bough of
+    its own. In every cluster two shoots lie in planes 25 degrees apart or more (10 on an end, whose leader has
+    three blades) and two spines go 20 degrees apart or more (45 on an end): no side shows it as one sheet."""
+    planes, found = spruce['metrics']['card_planes'], spruce['metrics']['clusters']
+    hang, end = found['hang'], found['end']
+    assert hang['count'] > 900 and hang['shoots'] == [3, 5] and 3.5 <= hang['shoots_mean'] <= 4.2
+    assert hang['planes_min_deg'] >= 25 and hang['splay_min_deg'] >= 20
+    assert end['count'] == planes['end']['count'] > 200 and end['shoots'] == [3, 4]
+    assert end['planes_min_deg'] >= 10 and end['splay_min_deg'] >= 45
+    assert planes['hang']['count'] == hang['shoots_total']         # no hanging bough is left a single card
+    assert planes['tip']['count'] == end['shoots_total'] - end['count']
+    cards = spruce['metrics']['colour_0']['cards']
+    assert cards['count'] == sum(role['count'] for role in planes.values()) and cards['without_one_stem'] == 0
+
+
+def test_a_roof_sunk_into_the_wood_and_an_end_of_two_wings_break_the_rules(spruce, config, monkeypatch):
+    mask = tree_density.load_mask(HERE / config['atlas']['mask'])
+    frond = fir_tree.Fir.frond
+    assert spruce['metrics']['fails'] == []
+
+    def sunk(self, *args, **kwargs):
+        return frond(self, *args, **kwargs | (dict(rise=0.) if args[8] in ('roof', 'end') else {}))
+
+    def two_wings(self, *args, **kwargs):
+        return frond(self, *args, **kwargs | (dict(keel=0) if args[8] == 'end' else {}))
+
+    on_the_axis = copy.deepcopy(config)
+    on_the_axis['cards']['lift'] = 0.
+    monkeypatch.setattr(fir_tree.Fir, 'frond', sunk)
+    measured, fails = fir.card_rules(fir_tree.build(on_the_axis), on_the_axis, mask)
+    assert measured['axis_cover']['covered'] < .86
+    assert [text for text in fails if "of the branches' axes is under boughs" in text]
+    monkeypatch.setattr(fir_tree.Fir, 'frond', two_wings)
+    measured, fails = fir.card_rules(fir_tree.build(config), config, mask)
+    assert measured['card_planes']['end']['blades_min'] == 2
+    assert fails == ['a bough of the role end has 2 blades, the least is 3']
 
 
 def test_a_flat_card_and_a_bare_branch_are_measured_as_such():
@@ -69,11 +110,16 @@ def test_a_flat_card_and_a_bare_branch_are_measured_as_such():
                              [dict(role='hang', kind='hang_1', branch=0, first=0, count=4)])
 
     under, beside = tree((.2, 0, -.2), (1.8, 0, -.2)), tree((.2, .5, -.2), (1.8, .5, -.2))
-    assert fir_tree.card_planes(under)['hang'] == dict(count=1, spread_min_deg=0.)
+    assert fir_tree.card_planes(under)['hang'] == dict(count=1, spread_min_deg=0., blades_min=1)
+    assert fir_tree.clusters(under) == {}
     solid = np.ones((8, 8), bool)
     assert fir_tree.axis_cover(under, solid, 0.)['covered'] == 1.
     assert fir_tree.axis_cover(beside, solid, 0.) == dict(start=0., step_m=.1, samples=16, covered=0., branch_min=0.)
     assert fir_tree.axis_cover(under, ~solid, 0.)['covered'] == 0.
+    # the card over the axis's centre but inside the wood, and on the bark without the clearance: the axis is open
+    for depth in (-.005, -.018):
+        assert fir_tree.axis_cover(tree((.2, 0, depth), (1.8, 0, depth)), solid, 0.)['covered'] == 0.
+    assert fir_tree.axis_cover(tree((.2, 0, -.035), (1.8, 0, -.035)), solid, 0.)['covered'] == 1.
 
 
 def test_the_outline_takes_in_a_hole_and_leaves_out_a_notch_wider_than_the_closing_disc():
@@ -121,8 +167,8 @@ def test_the_mode_of_pairs_only_adds_the_twins(config, spruce, tmp_path):
     cards = metrics['colour_0']['cards']
     assert cards['sides'] == 'pairs' and cards['single'] == 0
     assert cards['pairs'] == single['colour_0']['cards']['triangles'] == cards['triangles'] // 2
-    assert metrics['triangles'] == single['triangles'] + cards['pairs'] == 47096
-    for name in ('density', 'card_planes', 'axis_cover'):
+    assert metrics['triangles'] == single['triangles'] + cards['pairs'] == 83912
+    for name in ('density', 'card_planes', 'clusters', 'axis_cover'):
         assert metrics[name] == single[name]
     (_, twice), (_, once) = tree_glb.read(pairs['glb']), tree_glb.read(spruce['glb'])
     assert not twice['material']['doubleSided']

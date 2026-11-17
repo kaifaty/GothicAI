@@ -10,9 +10,11 @@ one-sided material, as before reports/engine/2026-11-16-modern-trees/two-sided.m
 metrics.json holds the generator's numbers and what is read back from the written file: by tree_check.py the
 triangles, the bounding box, inside_out_parts and the layout of COLOR_0, by tree_density.py (`density`) how much
 of the background and of the trunk shows through the crown in two side views and the crown's width at the
-ground, by fir_tree.py how far from one plane the boughs of each role are (`card_planes`) and how much of the
+ground, by fir_tree.py how far from one plane the boughs of each role are and how many blades they have
+(`card_planes`), how many shoots the clusters have and how far apart they stand (`clusters`) and how much of the
 branches' axes is under boughs seen from above (`axis_cover`). Exits 1 when the file breaks a rule, the budget
-of triangles, a limit of the config's `density` or a rule of its `cards.rules`.
+of triangles (a bough's triangle counts once, with --pairs too), a limit of the config's `density` or a rule of
+its `cards.rules`.
 
 The same runs without Blender (python fir.py ...), then no .blend is written.
 """
@@ -76,6 +78,32 @@ def mesh_object(parts: list[dict], name: str):
     return obj
 
 
+def card_rules(tree: fir_tree.Tree, config: dict, mask: np.ndarray) -> tuple[dict, list[str]]:
+    """The boughs of a built tree against the config's `cards.rules`: the measures and the rules they break."""
+    rules, fails = config['cards']['rules'], []
+    planes, clusters = fir_tree.card_planes(tree), fir_tree.clusters(tree)
+    cover = fir_tree.axis_cover(tree, mask, config['cards']['cover_from'])
+    for role, deg in rules['planes_deg'].items():
+        if planes[role]['spread_min_deg'] < deg:
+            fails.append(f"a bough of the role {role} is within {planes[role]['spread_min_deg']} degrees of one plane, "
+                         f'the least is {deg}')
+    for role, least in rules['blades'].items():
+        if planes[role]['blades_min'] < least:
+            fails.append(f"a bough of the role {role} has {planes[role]['blades_min']} blades, the least is {least}")
+    for kind, rule in rules['cluster'].items():
+        found = clusters.get(kind) or dict(shoots=[0, 0], planes_min_deg=0., splay_min_deg=0.)
+        if not rule['shoots'][0] <= found['shoots'][0] <= found['shoots'][1] <= rule['shoots'][1]:
+            fails.append(f"the clusters of the kind {kind} have {found['shoots'][0]} to {found['shoots'][1]} shoots, "
+                         f"the rule is {rule['shoots'][0]} to {rule['shoots'][1]}")
+        for name in ('planes', 'splay'):
+            if found[f'{name}_min_deg'] < rule[f'{name}_deg']:
+                fails.append(f"the {name} of a cluster of the kind {kind} is {found[f'{name}_min_deg']} degrees, "
+                             f"the least is {rule[f'{name}_deg']}")
+    if cover['covered'] < rules['cover_min']:
+        fails.append(f"{cover['covered']:.1%} of the branches' axes is under boughs, the least is {rules['cover_min']:.0%}")
+    return dict(card_planes=planes, clusters=clusters, axis_cover=cover), fails
+
+
 def build(config: dict, out: Path, name: str, seed: int | None = None, scale: float = 1., pairs: bool = False) -> dict:
     tree = fir_tree.build(config, seed, scale, pairs)
     glb = out / f'{name}.glb'
@@ -86,21 +114,15 @@ def build(config: dict, out: Path, name: str, seed: int | None = None, scale: fl
         file=glb.name, bytes=glb.stat().st_size, seed=config['seed'] if seed is None else seed,
         triangles=read['triangles_total'], inside_out_parts=read['inside_out_parts'],
         closed_parts=read['closed_parts'], colour_0=read, fails=list(read['fails']))
-    if metrics['triangles'] > config['budget_tris']:
-        metrics['fails'].append(f"{metrics['triangles']} triangles, the budget is {config['budget_tris']}")
+    drawn = metrics['triangles'] - read['cards']['pairs']
+    if drawn > config['budget_tris']:
+        metrics['fails'].append(f"{drawn} triangles without the twins, the budget is {config['budget_tris']}")
     mask = tree_density.load_mask(HERE / config['atlas']['mask'])
     metrics['density'] = tree_density.measure(glb, mask, picture=out / f'{name}-density.png')
     metrics['fails'] += tree_density.rules(metrics['density'], config['density'], scale)
-    rules = config['cards']['rules']
-    metrics['card_planes'] = fir_tree.card_planes(tree)
-    metrics['axis_cover'] = fir_tree.axis_cover(tree, mask, config['cards']['cover_from'])
-    for role, deg in rules['planes_deg'].items():
-        spread = metrics['card_planes'][role]['spread_min_deg']
-        if spread < deg:
-            metrics['fails'].append(f'a bough of the role {role} is within {spread} degrees of one plane, the least is {deg}')
-    if metrics['axis_cover']['covered'] < rules['cover_min']:
-        metrics['fails'].append(f"{metrics['axis_cover']['covered']:.1%} of the branches' axes is under boughs, "
-                                f"the least is {rules['cover_min']:.0%}")
+    measured, fails = card_rules(tree, config, mask)
+    metrics |= measured
+    metrics['fails'] += fails
     (out / 'metrics.json').write_text(json.dumps(metrics, indent=1, ensure_ascii=False) + '\n')
     return dict(tree=tree, metrics=metrics, glb=glb)
 

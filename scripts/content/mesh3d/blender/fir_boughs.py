@@ -17,6 +17,12 @@ habit:
     sparse   the shaded inside of the crown: thin, with bare and dry shoots
     twig     a small end shoot
     top      the short shoots along the top of a branch's axis
+    shoot    a long narrow shoot of a hanging cluster: side shoots close to the axis, uneven, hanging deep
+    sprig    a shorter shoot of a cluster
+    tuft     the slender short shoot of a cluster
+
+A cell with `"turn": true` stands on the sheet: its bough's axis runs down the picture from the middle of the
+cell's upper edge. The picture inside is the same bough turned a quarter.
 
 One orthographic camera looks straight down at all cells; three renders give the passes: colour (flat, the
 needle's own, no light), the share of the sky a point sees straight above itself within SKY_REACH (the shade
@@ -66,7 +72,13 @@ HABIT = dict(
     twig=dict(nodes=(.042, .064), angle=(54, 38), curve=-10, reach=(.75, .98), missing=.06, sub=(.036, .050),
               sub_share=.38, droop=(14, 30), needles=1750, axis_radius=.0035, dry=0, top=.7),
     top=dict(nodes=(.042, .060), angle=(46, 30), curve=-8, reach=(.80, .98), missing=.04, sub=(.036, .050),
-             sub_share=.40, droop=(10, 24), needles=1750, axis_radius=.004, dry=0, top=1.))
+             sub_share=.40, droop=(10, 24), needles=1750, axis_radius=.004, dry=0, top=1.),
+    shoot=dict(nodes=(.048, .072), angle=(40, 22), curve=-20, reach=(.55, .98), missing=.10, sub=(.038, .058),
+               sub_share=.40, droop=(26, 46), needles=1700, axis_radius=.004, dry=0, top=.5),
+    sprig=dict(nodes=(.042, .064), angle=(46, 28), curve=-14, reach=(.60, .98), missing=.10, sub=(.036, .050),
+               sub_share=.38, droop=(18, 36), needles=1750, axis_radius=.0035, dry=0, top=.6),
+    tuft=dict(nodes=(.040, .060), angle=(36, 22), curve=-12, reach=(.60, .98), missing=.08, sub=(.034, .048),
+              sub_share=.36, droop=(16, 32), needles=1750, axis_radius=.003, dry=0, top=.6))
 
 
 def smooth(x: float) -> float:
@@ -79,6 +91,8 @@ class Outline:
 
     def __init__(self, cell: dict, px_per_m: float):
         _, _, w, h = cell['cell']
+        if cell.get('turn'):
+            w, h = h, w
         self.length, half = w / px_per_m, h / px_per_m / 2
         (t1, h1), (t2, h2) = cell['sections']
         top = [(0., 0.), (t1 * self.length, h1 * half), (t2 * self.length, h2 * half), (self.length, 0.)]
@@ -415,8 +429,12 @@ def main() -> None:
             continue
         outline = Outline(cell, ppm)
         geometry = Bough(kind, outline, np.random.default_rng([args.seed, number]), margin=.022).geometry()
-        x, y, _, h = cell['cell']
-        place = geometry['position'] + np.array([x / ppm, -(y + h / 2) / ppm, 0.])
+        x, y, w, h = cell['cell']
+        if cell.get('turn'):
+            place = geometry['position'][:, (1, 0, 2)] * (1, -1, 1) + np.array([(x + w / 2) / ppm, -y / ppm, 0.])
+            w, h = h, w
+        else:
+            place = geometry['position'] + np.array([x / ppm, -(y + h / 2) / ppm, 0.])
         position.append(place)
         colour.append(geometry['colour'])
         index.append(geometry['index'] + count)
