@@ -24,7 +24,7 @@ import sys
 
 import numpy as np
 
-from campfire_set import BASE_CACHE, HDR, ROOT, SMOKE, STAGING, TONGUE, at, base_dir, card, write_layer
+from campfire_set import BASE_CACHE, HDR, ROOT, SMOKE, STAGING, TONGUE, at, base_dir, card, haze, write_layer
 
 CONTENT = ROOT / 'reports/content/remaster/brazier/content'
 PARTICLES = CONTENT / 'particles.d/brazier.json'
@@ -67,7 +67,9 @@ def effects() -> dict:
                      'dirMode_S': 'DIR', 'velAvg': 0.1, 'velVar': 0.025, 'flyGravity_S': '0 0 0'},
              'curl': {'strength': 0.7, 'frequency': 0.9, 'speed': 0.25}, 'drag': 0.35}
     return {'format': 1, 'effects': [card('OWN_BRAZIER_FLAME', TONGUE, CORE, 44), card('OWN_BRAZIER_FLAME_SIDE', TONGUE, SIDE, 52),
-                                     licks, sparks, smoke]}
+                                     licks, sparks, smoke,
+                                     # the campfire's shimmer at the basket's size: gone 1.3 m over the coals
+                                     haze('OWN_BRAZIER_HAZE', 48, 10, 1500)]}
 
 
 def braziers(vobs_json) -> list:
@@ -94,7 +96,8 @@ def fire(vob) -> dict:
               ('flame-b', 'OWN_BRAZIER_FLAME_SIDE', ring(10, math.pi + 0.4, SIDE[1] / 2 - 4)),
               ('licks', 'OWN_BRAZIER_LICKS', coals + [0, 6, 0]),
               ('sparks', 'OWN_BRAZIER_SPARKS', coals + [0, 25, 0]),
-              ('smoke', 'OWN_BRAZIER_SMOKE', coals + [0, 42, 0])]
+              ('smoke', 'OWN_BRAZIER_SMOKE', coals + [0, 42, 0]),
+              ('haze', 'OWN_BRAZIER_HAZE', coals + [0, 36, 0])]
     return dict(emitters=points, light=coals + [0, LIGHT_UP, 0])
 
 
