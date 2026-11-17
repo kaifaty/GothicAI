@@ -120,6 +120,18 @@ float encodeHintBits() {
   }
 
 #if defined(GBUFFER)
+// The vertex normal of the side the pixel shows. A material of two sides (materials.json "two_sided": "flip") turns
+// it to the eye on the side away from the winding: Tempest's front face is clockwise and the pipelines cull it, so
+// the side every material shows is the back one, and the other side is gl_FrontFacing. A fragment shader is not told
+// MESH_TYPE: the bit is set for objects' meshes alone (DrawBuckets::commit)
+vec3 sideNormal() {
+#if (MESH_TYPE!=T_PFX)
+  if(gl_FrontFacing && (bucket[bucketId].flags & BK_TWO_SIDED_FLIP)!=0u)
+    return -shInp.normal;
+#endif
+  return shInp.normal;
+  }
+
 vec3 flatNormal() {
 #if defined(FLAT_NORMAL)
   vec3 pos   = shInp.pos;
@@ -463,7 +475,8 @@ void mainGBuffer(vec4 t) {
 #endif
   outDiffuse.rgb = t.rgb;
   outDiffuse.a   = encodeHintBits();
-  outNormal      = encodeNormal(shInp.normal);
+  const vec3 normal = sideNormal();
+  outNormal      = encodeNormal(normal);
 #if defined(MATERIAL_MAPS)
   outOrm = vec4(1,1,0,0);
 #if (MESH_TYPE!=T_PFX)
@@ -512,7 +525,7 @@ void mainGBuffer(vec4 t) {
               weights.z * antitileOrm(tId, maps.c);
       }
     if(hasNormal)
-      outNormal = encodeNormal(mappedNormal(shInp.normal, dpdx, dpdy, duvdx, duvdy,
+      outNormal = encodeNormal(mappedNormal(normal, dpdx, dpdy, duvdx, duvdy,
                                            vec3(slope,1)));
     if(hasOrm)
       outOrm.rgb = orm;
@@ -521,7 +534,7 @@ void mainGBuffer(vec4 t) {
     } else {
     if((bucket[bucketId].flags & BK_NORMAL)!=0) {
       vec4 nm = textureGrad(sampler2D(textureNormal[tId], samplerMain), uv, duvdx*scene.mipGradScale, duvdy*scene.mipGradScale);
-      outNormal = encodeNormal(mappedNormal(shInp.normal, dpdx, dpdy, duvdx, duvdy, nm));
+      outNormal = encodeNormal(mappedNormal(normal, dpdx, dpdy, duvdx, duvdy, nm));
       }
     if((bucket[bucketId].flags & BK_ORM)!=0)
       outOrm.rgb = textureGrad(sampler2D(textureOrm[tId], samplerMain), uv, duvdx*scene.mipGradScale, duvdy*scene.mipGradScale).rgb;

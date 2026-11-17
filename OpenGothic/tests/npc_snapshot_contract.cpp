@@ -3,6 +3,8 @@
 #include "daedalus/vm.h"
 #include "npcsnapshotfields.h"
 #include "programdata.h"
+#include "itemdefinitions.h"
+#include "game/itemdefinitionruntime.h"
 #include <rapidjson/document.h>
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
@@ -127,6 +129,192 @@ void write(const fs::path& path,const rapidjson::Document& j) {
   std::ofstream f(path,std::ios::binary);
   f.write(bytes.GetString(),std::streamsize(bytes.GetSize()));
   check(bool(f),"write fixture JSON");
+  }
+NpcSnapshot::Program itemProgram() {
+  Fixture f;
+  auto npcClass=f.cls<INpc>("C_NPC"),itemClass=f.cls<IItem>("C_ITEM");
+  f.symbol("SELF",Type::INSTANCE,1,0,int32_t(npcClass));
+  f.symbol("ITEM",Type::INSTANCE,1,0,int32_t(itemClass));
+  auto chapter=f.symbol("CHAPTER",Type::INT);
+  auto owner=f.symbol("ITEM_OWNER",Type::INSTANCE,0,Flag::CONST,int32_t(npcClass));
+  f.begin(owner); f.op(Op::RSR);
+  std::vector<uint32_t> callbacks;
+  for(unsigned i=0;i<7;++i) {
+    auto callback=f.fn(("ITEM_CALLBACK_"+std::to_string(i)).c_str());
+    f.begin(callback); f.op(Op::RSR); callbacks.push_back(callback);
+    }
+  auto item=f.symbol("IT_RECORD_TEST",Type::INSTANCE,0,Flag::CONST,int32_t(itemClass));
+  f.begin(item);
+  unsigned number=100,callback=0;
+  IItem fields{};
+  snapshotFields(fields,[&](const char* name,auto& field,bool function,const char* binding) {
+    const auto member=f.find(binding);
+    auto assign=[&](auto& value,unsigned index) {
+      using T=std::remove_reference_t<decltype(value)>;
+      if constexpr(std::is_same_v<T,std::string>) {
+        auto constant=f.symbol("TEXT_"+std::to_string(number++),Type::STRING,1,Flag::CONST);
+        f.p.symbols[constant].string_values[0]=std::string(name)+std::to_string(index)+std::string("\0\x80\xff",3);
+        f.op(Op::PUSHV,constant);
+        }
+      else {
+        auto n=function ? (std::string_view(name)=="owner" ? owner : callbacks.at(callback++)) : number++;
+        f.op(Op::PUSHI,n);
+        }
+      f.op(Op::PUSHVV,member); f.p.bytecode.push_back(std::byte(index));
+      f.op(std::is_same_v<T,std::string> ? Op::MOVS : Op::MOVI);
+      };
+    if constexpr(std::is_array_v<std::remove_reference_t<decltype(field)>>) {
+      for(unsigned i=0;i<std::extent_v<std::remove_reference_t<decltype(field)>>;++i) assign(field[i],i);
+      }
+    else assign(field,0);
+    });
+  f.op(Op::RSR);
+  auto dependent=f.symbol("IT_RECORD_STATE",Type::INSTANCE,0,Flag::CONST,int32_t(itemClass));
+  f.begin(dependent);
+  f.op(Op::PUSHV,chapter); f.op(Op::PUSHV,f.find("C_ITEM.VALUE")); f.op(Op::MOVI); f.op(Op::RSR);
+  auto writer=f.symbol("IT_RECORD_WRITE",Type::INSTANCE,0,Flag::CONST,int32_t(itemClass));
+  f.begin(writer); f.set(chapter,7); f.op(Op::RSR);
+  for(int value:{0,-1}) {
+    auto sentinel=f.symbol(value==0 ? "IT_RECORD_NULL" : "IT_RECORD_MINUS1",Type::INSTANCE,0,Flag::CONST,int32_t(itemClass));
+    f.begin(sentinel);
+    for(const char* field:{"C_ITEM.MAGIC","C_ITEM.ON_EQUIP","C_ITEM.ON_UNEQUIP","C_ITEM.OWNER"})
+      f.set(f.find(field),value);
+    for(unsigned i=0;i<ItemRecord::state_count;++i) {
+      f.op(Op::PUSHI,uint32_t(value)); f.op(Op::PUSHVV,f.find("C_ITEM.ON_STATE"));
+      f.p.bytecode.push_back(std::byte(i)); f.op(Op::MOVI);
+      }
+    f.op(Op::RSR);
+    }
+  auto encoded=ProgramData::encodeProgram(f.p);
+  return {std::move(f.p),encoded.name,encoded.sha256};
+  }
+template<class T> bool sameValue(const T& a,const T& b) {
+  if constexpr(std::is_array_v<T>) {
+    for(size_t i=0;i<std::extent_v<T>;++i) if(!sameValue(a[i],b[i])) return false;
+    return true;
+    }
+  else return a==b;
+  }
+void sameItem(IItem& expected,IItem& actual,const std::string& symbol) {
+  snapshotFields(expected,[&](const char* name,auto& value,bool,const char*) {
+    bool equal=false;
+    snapshotFields(actual,[&](const char* other,auto& result,bool,const char*) {
+      if constexpr(std::is_same_v<std::remove_reference_t<decltype(value)>,std::remove_reference_t<decltype(result)>>)
+        if(std::string_view(name)==other) equal=sameValue(value,result);
+      });
+    check(equal,symbol+"."+name+": runtime definition differs from constructor");
+    });
+  }
+std::unique_ptr<DaedalusVm> itemVm(const NpcSnapshot::Program& p) {
+  auto script=DaedalusScript::from_program(p.data);
+  IItem::register_(script);
+  return std::make_unique<DaedalusVm>(std::move(script));
+  }
+void runtimeItems(const NpcSnapshot::Program& p,const fs::path& base) {
+  auto library=ItemDefinitions::read(base,p.sha256);
+  auto script=DaedalusScript::from_program(p.data);
+  auto definitions=ItemDefinitionRuntime::load(base,script,p.sha256);
+  IItem::register_(script);
+  auto records=std::make_unique<DaedalusVm>(std::move(script));
+  size_t captured=0,fallback=0;
+  for(auto& symbol:records->symbols()) {
+    if(symbol.type()!=Type::INSTANCE || !symbol.is_const()) continue;
+    auto* parent=records->find_symbol_by_index(symbol.parent());
+    while(parent && parent->type()!=Type::CLASS) parent=records->find_symbol_by_index(parent->parent());
+    if(!parent || parent->name()!="C_ITEM") continue;
+    auto original=itemVm(p);
+    auto self=std::make_shared<INpc>();
+    auto previousItem=std::make_shared<IItem>();
+    auto prepare=[&](DaedalusVm& vm) {
+      if(vm.global_self()) vm.global_self()->set_instance(self);
+      if(vm.global_item()) vm.global_item()->set_instance(previousItem);
+      vm.unsafe_set_gi(self);
+      vm.push_int(0x12345678);
+      };
+    prepare(*records); prepare(*original);
+    const auto recordPc=records->pc(),originalPc=original->pc();
+    auto actual=std::make_shared<IItem>();
+    actual->user_ptr=&fallback;
+    auto* boundSymbol=records->find_symbol_by_index(symbol.index());
+    const bool usedRecord=ItemDefinitionRuntime::initialize(*records,actual,boundSymbol,definitions);
+    auto expected=original->init_instance<IItem>(original->find_symbol_by_index(symbol.index()));
+    sameItem(*expected,*actual,symbol.name());
+    check(usedRecord==library.items.contains(symbol.name()),symbol.name()+": captured item uses runtime definition");
+    check(actual->symbol_index()==expected->symbol_index(),symbol.name()+": symbol binding is preserved");
+    check(boundSymbol->get_instance()==actual,symbol.name()+": VM symbol points to the new item");
+    check(actual->user_ptr==&fallback,symbol.name()+": native owner is preserved");
+    auto state=[&](DaedalusVm& vm,uint32_t pc) {
+      check(!vm.global_self() || vm.global_self()->get_instance()==self,symbol.name()+": SELF is restored");
+      check(!vm.global_item() || vm.global_item()->get_instance()==previousItem,symbol.name()+": ITEM is preserved");
+      check(vm.unsafe_get_gi()==self,symbol.name()+": VM context is restored");
+      check(vm.pc()==pc,symbol.name()+": VM program counter is restored");
+      check(vm.pop_int()==0x12345678,symbol.name()+": VM stack is preserved");
+      };
+    state(*records,recordPc); state(*original,originalPc);
+    if(usedRecord) ++captured; else ++fallback;
+    }
+  check(captured==library.items.size(),"every captured definition was compared in the runtime");
+  check(fallback==library.uncaptured.size(),"every uncaptured item used its constructor");
+  std::cout<<"Item runtime equality: "<<captured<<" captured, "<<fallback<<" VM fallback; every ItemRecord field and VM state match\n";
+  }
+void itemDefinitions(const fs::path& dir) {
+  auto p=itemProgram();
+  const auto base=dir/"definitions-fixture";
+  const auto file=base/"definitions"/p.sha256/"items.json";
+  NpcSnapshot::writeItems(p,file);
+  check(NpcSnapshot::verifyItems(p,file)==0,"item definitions verify from disk");
+  auto snapshot=read(file);
+  bool foundWriter=false;
+  for(const auto& record:snapshot["records"].GetArray()) {
+    if(std::string_view(record["symbol"].GetString())!="IT_RECORD_WRITE") continue;
+    foundWriter=true;
+    check(std::string_view(record["status"].GetString())=="uncaptured","global-writing item is not captured");
+    check(std::string_view(record["reason"].GetString())=="game_state_write","global-writing item names the refusal reason");
+    check(std::string_view(record["detail"].GetString())=="CHAPTER","global-writing item names the changed variable");
+    check(!record.HasMember("fields"),"global-writing item has no captured fields");
+    }
+  check(foundWriter,"global-writing item remains in definitions");
+  const auto library=ItemDefinitions::read(base,p.sha256);
+  auto vm=itemVm(p);
+  auto definitions=ItemDefinitionRuntime::resolve(library,*vm);
+  check(!ItemDefinitionRuntime::initialize(*vm,std::make_shared<IItem>(),vm->find_symbol_by_name("IT_RECORD_WRITE"),definitions),
+        "global-writing item uses the VM constructor");
+  check(vm->find_symbol_by_name("CHAPTER")->get_int()==7,"VM fallback preserves the constructor's global write");
+  for(int value:{0,-1}) {
+    const std::string name=value==0 ? "IT_RECORD_NULL" : "IT_RECORD_MINUS1";
+    const auto& definition=library.items.at(name);
+    const auto& record=definition.record;
+    check(record.magic==value && record.on_equip==value && record.on_unequip==value && record.owner==value,
+          name+": function and owner sentinels decode to "+std::to_string(value));
+    for(auto state:record.on_state) check(state==value,name+".on_state: sentinel is preserved");
+    for(const auto& [field,names]:definition.symbols)
+      for(const auto& symbol:names) check(symbol.empty(),name+"."+field+": sentinel has no symbol name to resolve");
+    }
+  runtimeItems(p,base);
+  auto changed=read(file);
+  for(auto& record:changed["records"].GetArray()) {
+    if(std::string_view(record["symbol"].GetString())!="IT_RECORD_NULL") continue;
+    auto& function=record["fields"]["on_equip"];
+    check(function.IsNull(),"zero function sentinel is written as JSON null");
+    function.SetString("",changed.GetAllocator());
+    write(file,changed);
+    bool rejected=false;
+    try { ItemDefinitions::read(base,p.sha256); }
+    catch(const std::runtime_error& e) {
+      rejected=std::string(e.what()).find("IT_RECORD_NULL: on_equip: empty symbol name")!=std::string::npos;
+      }
+    check(rejected,"empty JSON function name is rejected with its item and field");
+    function.SetNull();
+    }
+  for(auto& record:changed["records"].GetArray())
+    if(record.HasMember("fields")) record["fields"]["value"].SetInt(1234567);
+  write(file,changed);
+  bool rejected=false;
+  try { runtimeItems(p,base); }
+  catch(const std::runtime_error& e) {
+    rejected=std::string(e.what()).find("IT_RECORD_TEST.value")!=std::string::npos;
+    }
+  check(rejected,"runtime equality rejects a changed item number with its symbol and field");
   }
 void npcLayout(const NpcSnapshot::Program& program) {
   auto script=DaedalusScript::from_program(program.data);
@@ -413,6 +601,59 @@ void spellLayout() {
   check(reinterpret_cast<uintptr_t>(&record)-reinterpret_cast<uintptr_t>(instance.get())==32,"original spell record base offset");
   recordLayout(*instance,record,vm,[](auto& v,auto f) { spellFields(v,f); },12);
   }
+void itemSelection(const fs::path& dir) {
+  const auto base=dir/"selection-fixture";
+  auto selected=itemProgram(),other=selected;
+  bool changed=false;
+  for(auto& symbol:other.data.symbols)
+    if(!symbol.string_values.empty() && symbol.string_values[0].starts_with("name0")) {
+      symbol.string_values[0]="another program";
+      changed=true;
+      }
+  check(changed,"selection fixture has distinct program names");
+  auto encoded=ProgramData::encodeProgram(other.data);
+  other.name=encoded.name; other.sha256=encoded.sha256;
+  check(other.sha256!=selected.sha256,"selection programs have different identities");
+  const auto programs=base/"programs";
+  fs::create_directories(programs);
+  for(const auto* program:{&selected,&other}) {
+    ProgramData::writeProgram(program->data,programs);
+    NpcSnapshot::writeItems(*program,base/"definitions"/program->sha256/"items.json");
+    }
+  std::string selectedSha,otherSha;
+  auto program=DaedalusScript::from_program(ProgramData::readProgram(programs/(selected.name+".json"),&selectedSha));
+  auto otherProgram=DaedalusScript::from_program(ProgramData::readProgram(programs/(other.name+".json"),&otherSha));
+  check(selectedSha==selected.sha256 && otherSha==other.sha256,"selection uses the verified loaded record identities");
+  const auto symbol=program.find_symbol_by_name("IT_RECORD_TEST")->index();
+  const auto expected=ItemDefinitions::read(base,selected.sha256).items.at("IT_RECORD_TEST").record.name;
+  const char* previous=std::getenv("OPENGOTHIC_ITEM_RECORDS");
+  const bool hadPrevious=previous!=nullptr;
+  const std::string saved=previous ? previous : "";
+  auto environment=[](const char* value) {
+#ifdef _WIN32
+    check(_putenv_s("OPENGOTHIC_ITEM_RECORDS",value ? value : "")==0,"set item records environment");
+#else
+    check((value ? setenv("OPENGOTHIC_ITEM_RECORDS",value,1) : unsetenv("OPENGOTHIC_ITEM_RECORDS"))==0,
+          "set item records environment");
+#endif
+    };
+  try {
+    environment(nullptr);
+    auto defaults=ItemDefinitionRuntime::load(base,program,selectedSha);
+    check(defaults.items.contains(symbol),"item records enabled by default");
+    check(defaults.items.at(symbol).name==expected,"default section uses the loaded program SHA");
+    environment("0");
+    check(ItemDefinitionRuntime::load(base/"absent",program,selectedSha).items.empty(),"zero disables records without reading the base");
+    environment("1");
+    auto enabled=ItemDefinitionRuntime::load(base,program,selectedSha);
+    check(enabled.items.contains(symbol),"nonzero enables item records");
+    check(enabled.items.at(symbol).name==expected,"enabled section uses the loaded program SHA");
+    check(ItemDefinitionRuntime::load(base,otherProgram,otherSha).items.at(symbol).name=="another program",
+          "changing the loaded program changes the selected section");
+    }
+  catch(...) { environment(hadPrevious ? saved.c_str() : nullptr); throw; }
+  environment(hadPrevious ? saved.c_str() : nullptr);
+  }
 void fixture(const fs::path& dir) {
   auto p=Fixture().make();
   npcLayout(p);
@@ -420,6 +661,8 @@ void fixture(const fs::path& dir) {
   focusLayout();
   guildLayout();
   spellLayout();
+  itemDefinitions(dir);
+  itemSelection(dir);
   auto a=dir/"a",b=dir/"b";
   NpcSnapshot::write(p,a); check(NpcSnapshot::verify(p,a)==0,"fixture verifies");
   NpcSnapshot::write(p,b);
@@ -498,6 +741,7 @@ int main() {
       auto program=NpcSnapshot::load(base);
       NpcSnapshot::write(program,dir/"real");
       check(NpcSnapshot::verify(program,dir/"real")==0,"real corpus verifies");
+      runtimeItems(program,base);
       }
     fs::remove_all(dir);
     std::cout<<"NPC snapshot contract passed: "<<assertions<<" assertions\n";

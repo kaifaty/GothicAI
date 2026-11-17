@@ -1,9 +1,12 @@
 """Build a spruce's near level of detail: the GLB with wind data in COLOR_0, its numbers and the Blender scene.
 
     blender -b --factory-startup -P fir.py -- --out DIR [--config fir.json] [--seed N] [--scale S] [--name NAME]
+        [--pairs]
 
 Writes DIR/NAME.glb, DIR/metrics.json, DIR/NAME-density.png and DIR/NAME.blend (the tree as one object, its cards
-one-sided). NAME is the config's id unless given. The shape is fir_tree.py, the file and its layout tree_glb.py;
+one-sided). NAME is the config's id unless given. A bough's triangles are listed once and its material is
+two-sided (`"two_sided": "same"` in its record, scripts/content/fir_set.py); --pairs lists them twice for a
+one-sided material, as before reports/engine/2026-11-16-modern-trees/two-sided.md. The shape is fir_tree.py, the file and its layout tree_glb.py;
 metrics.json holds the generator's numbers and what is read back from the written file: by tree_check.py the
 triangles, the bounding box, inside_out_parts and the layout of COLOR_0, by tree_density.py (`density`) how much
 of the background and of the trunk shows through the crown in two side views and the crown's width at the
@@ -36,7 +39,7 @@ except ImportError:
 
 
 def front_faces(index: np.ndarray) -> np.ndarray:
-    """A card's triangles are listed twice; the first of each pair is its front."""
+    """A card's triangles once each: in the mode of pairs the first of each pair is its front."""
     _, first = np.unique(np.sort(index, axis=1), axis=0, return_index=True)
     return index[np.sort(first)]
 
@@ -73,8 +76,8 @@ def mesh_object(parts: list[dict], name: str):
     return obj
 
 
-def build(config: dict, out: Path, name: str, seed: int | None = None, scale: float = 1.) -> dict:
-    tree = fir_tree.build(config, seed, scale)
+def build(config: dict, out: Path, name: str, seed: int | None = None, scale: float = 1., pairs: bool = False) -> dict:
+    tree = fir_tree.build(config, seed, scale, pairs)
     glb = out / f'{name}.glb'
     tree_glb.write(glb, [{k: v for k, v in p.items() if k != 'owner'} for p in tree.parts], name,
                    extras=dict(tree=config['id'], seed=config['seed'] if seed is None else seed, scale=scale))
@@ -110,11 +113,13 @@ def main() -> int:
     parser.add_argument('--seed', type=int)
     parser.add_argument('--scale', type=float, default=1.)
     parser.add_argument('--name')
+    parser.add_argument('--pairs', action='store_true',
+                        help="list a bough's triangles twice for a one-sided material")
     args = parser.parse_args(argv)
     config = json.loads(args.config.read_text())
     name = args.name or config['id']
     args.out.mkdir(parents=True, exist_ok=True)
-    result = build(config, args.out, name, args.seed, args.scale)
+    result = build(config, args.out, name, args.seed, args.scale, args.pairs)
     metrics = result['metrics']
     if bpy:
         bpy.ops.wm.read_factory_settings(use_empty=True)

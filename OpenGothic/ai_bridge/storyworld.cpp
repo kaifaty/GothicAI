@@ -498,7 +498,7 @@ std::string StoryWorld::state(World& world, const rapidjson::Value& msg) {
     // the engine reads names the same way (the gold's); the symbol keeps the instance it had
     auto prev = s->get_instance();
     try {
-      auto item = vm.init_instance<daedalus::IItem>(s);
+      auto item = world.script().createItemForQuery(s->index());
       auto text = TextCodec::toUtf8(item->name);
       key(name);
       w.String(text.data(),rapidjson::SizeType(text.size()));

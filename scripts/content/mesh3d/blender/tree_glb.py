@@ -10,8 +10,10 @@ COLOR_0 — four normalised bytes, no gamma (reports/engine/2026-11-16-modern-tr
     B  weight of the leaf's flutter: 0 at the stem, 1 at the card's free edge; 0 on wood
     A  openness of the crown: 1 outside, 0 in its depth; 1 on the trunk
 
-The engine draws one side of a triangle, so a card is listed twice, the second time wound the other way over the
-same vertices: both sides carry the same normal and are lit alike.
+A card is listed once and its part is `two_sided`: the material's record of materials.json says
+`"two_sided": "same"`, the engine draws both sides and lights them by the same normal
+(reports/engine/2026-11-16-modern-trees/two-sided.md). In the mode of pairs a part is one-sided and a card is
+listed twice, the second time wound the other way over the same vertices.
 """
 from __future__ import annotations
 
@@ -36,8 +38,8 @@ def from_gltf(vectors: np.ndarray) -> np.ndarray:
 
 
 def write(path: Path, parts: list[dict], name: str | None = None, extras: dict | None = None) -> dict:
-    """parts: one per material — name, group, cutout, position (n, 3) Z up, normal, uv, colour (n, 4) uint8,
-    index (t, 3). Returns the triangle count per material."""
+    """parts: one per material — name, group, cutout, two_sided, position (n, 3) Z up, normal, uv, colour (n, 4)
+    uint8, index (t, 3). Returns the triangle count per material."""
     chunks, views, accessors, primitives, materials, offset = [], [], [], [], [], 0
 
     def push(array: np.ndarray, target: int | None, kind: str, component: int, **more) -> int:
@@ -71,7 +73,7 @@ def write(path: Path, parts: list[dict], name: str | None = None, extras: dict |
             COLOR_0=push(colour, 34962, 'VEC4', UBYTE, normalized=True))
         primitives.append(dict(attributes=attributes, material=len(materials),
                                indices=push(index.astype(np.uint16).reshape(-1), 34963, 'SCALAR', USHORT)))
-        material = dict(name=part['name'], doubleSided=False, extras=dict(group=part.get('group', 'WOOD')),
+        material = dict(name=part['name'], doubleSided=bool(part.get('two_sided')), extras=dict(group=part.get('group', 'WOOD')),
                         pbrMetallicRoughness=dict(metallicFactor=0.0, roughnessFactor=1.0))
         if part.get('cutout'):
             material |= dict(alphaMode='MASK', alphaCutoff=.5)

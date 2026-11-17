@@ -12,7 +12,8 @@ The numbers it prints are the acceptance of the layout (tree_glb.py, engine-plan
   R of the branch at the stem; past 255 branches the phases repeat, and the card's branch is the nearest one of
   its phase;
 - A grows from the trunk to the crown's outline;
-- every triangle of a card has a twin wound the other way over the same vertices;
+- the cards' material is two-sided and no triangle of a card has a twin, or (the mode of pairs) it is one-sided
+  and every triangle has a twin wound the other way over the same vertices;
 - no closed piece of wood is inside out.
 
 Exits 1 when a rule fails.
@@ -157,8 +158,13 @@ def check(path: Path) -> dict:
     parity = np.array([(tuple(t) in ((a, b, c), (b, c, a), (c, a, b))) for t, (a, b, c) in zip(index.tolist(), order.tolist())])
     even = np.bincount(inverse.reshape(-1), weights=parity, minlength=len(copies))
     twins = int(((copies == 2) & (even == 1)).sum())
-    out['cards'] = dict(triangles=int(len(index)), pairs=twins, unpaired=int(len(index) - 2 * twins))
-    rule(len(index) == 2 * twins, f"{len(index) - 2 * twins} card triangles without a twin wound the other way")
+    two_sided = bool(cards['material'].get('doubleSided'))
+    single = int(len(index) - 2 * twins)
+    out['cards'] = dict(triangles=int(len(index)), sides='material' if two_sided else 'pairs', pairs=twins, single=single)
+    if two_sided:
+        rule(single == len(index), f'{2 * twins} card triangles are listed twice under a two-sided material')
+    else:
+        rule(single == 0, f'{single} card triangles without a twin wound the other way')
     label = components(index, len(position))
     wrong_phase = stemless = edgeless = stepped = 0
     r_error, b_growth, spans, off_axis = [], [], [], []

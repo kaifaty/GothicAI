@@ -155,6 +155,8 @@ const uint BK_WINDOW = 0x20000; // the material's glow is a window's, lit of an 
 const uint BK_GROUND = 0x40000; // a meadow's own two layers by world position (grass/grass_layers.glsl)
 const uint BK_VERGE = 0x80000; // the ground beside a meadow: the strip of its layers along their border
 const uint BK_TRACK = 0x100000; // a road's own material: two layers by world position, the ribbon's maps (grass/grass_track.glsl)
+const uint BK_TWO_SIDED = 0x200000; // an object's mesh drawn from both sides: the shadow pages' mesh shader keeps both (main.vert)
+const uint BK_TWO_SIDED_FLIP = 0x400000; // the side away from the winding is lit by the normal turned to the eye (main.frag)
 
 // Strands in a shadow view: the first part of the list casts the shadow for all of it (the meshlets are dealt out
 // evenly, groommesh.cpp), each strand as wide as that part is small (strandShadowRibbon, vertex_process.glsl).

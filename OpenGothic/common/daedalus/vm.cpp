@@ -372,6 +372,7 @@ namespace daedalus {
 				    !(_m_flags & DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS)) {
 					if (_m_read_observer) _m_read_observer(*ref);
 					auto result = ref->get_int(idx, context.get()) + value;
+					if (_m_write_observer) _m_write_observer(*ref);
 					ref->set_int(result, idx, context.get());
 				} else if (ref->is_member()) {
 					log(LogLevel::ERROR, "DaedalusVm", "Accessing member \"%s\" without an instance set", ref->name().c_str());
@@ -391,6 +392,7 @@ namespace daedalus {
 				    !(_m_flags & DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS)) {
 					if (_m_read_observer) _m_read_observer(*ref);
 					auto result = ref->get_int(idx, context.get()) - value;
+					if (_m_write_observer) _m_write_observer(*ref);
 					ref->set_int(result, idx, context.get());
 				} else if (ref->is_member()) {
 					log(LogLevel::ERROR, "DaedalusVm", "Accessing member \"%s\" without an instance set", ref->name().c_str());
@@ -409,6 +411,7 @@ namespace daedalus {
 				    !(_m_flags & DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS)) {
 					if (_m_read_observer) _m_read_observer(*ref);
 					auto result = ref->get_int(idx, context.get()) * value;
+					if (_m_write_observer) _m_write_observer(*ref);
 					ref->set_int(result, idx, context.get());
 				} else if (ref->is_member()) {
 					log(LogLevel::ERROR, "DaedalusVm", "Accessing member \"%s\" without an instance set", ref->name().c_str());
@@ -432,6 +435,7 @@ namespace daedalus {
 				    !(_m_flags & DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS)) {
 					if (_m_read_observer) _m_read_observer(*ref);
 					auto result = ref->get_int(idx, context.get()) / value;
+					if (_m_write_observer) _m_write_observer(*ref);
 					ref->set_int(result, idx, context.get());
 				} else if (ref->is_member()) {
 					log(LogLevel::ERROR, "DaedalusVm", "Accessing member \"%s\" without an instance set", ref->name().c_str());
@@ -441,7 +445,9 @@ namespace daedalus {
 			}
 			case DaedalusOpcode::MOVVI: {
 				auto [target, target_idx, _] = pop_reference();
-				target->set_instance(pop_instance());
+				auto value = pop_instance();
+				if (_m_write_observer) _m_write_observer(*target);
+				target->set_instance(value);
 				break;
 			}
 			case DaedalusOpcode::B:
@@ -1160,6 +1166,7 @@ namespace daedalus {
 
 		if (!ref->is_member() || context != nullptr ||
 		    !(_m_flags & DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS)) {
+			if (_m_write_observer) _m_write_observer(*ref);
 			ref->set_int(value, index, context.get());
 		} else if (ref->is_member()) {
 			log(LogLevel::ERROR, "DaedalusVm", "Accessing member \"%s\" without an instance set", ref->name().c_str());
@@ -1176,6 +1183,7 @@ namespace daedalus {
 
 		if (!ref->is_member() || context != nullptr ||
 		    !(_m_flags & DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS)) {
+			if (_m_write_observer) _m_write_observer(*ref);
 			ref->set_float(value, index, context.get());
 		} else if (ref->is_member()) {
 			log(LogLevel::ERROR, "DaedalusVm", "Accessing member \"%s\" without an instance set", ref->name().c_str());
@@ -1192,6 +1200,7 @@ namespace daedalus {
 
 		if (!ref->is_member() || context != nullptr ||
 		    !(_m_flags & DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS)) {
+			if (_m_write_observer) _m_write_observer(*ref);
 			ref->set_string(value, index, context.get());
 		} else if (ref->is_member()) {
 			log(LogLevel::ERROR, "DaedalusVm", "Accessing member \"%s\" without an instance set", ref->name().c_str());

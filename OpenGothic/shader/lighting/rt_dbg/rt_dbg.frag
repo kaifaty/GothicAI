@@ -81,7 +81,7 @@ vec4 raySampleScene(const vec3 rayOrigin, const vec3 rayDirection) {
 
   const float rayT   = rayQueryGetIntersectionTEXT(rayQuery, true);
   const bool  face   = !(rayQueryGetIntersectionFrontFaceEXT(rayQuery, true)); //NOTE: not working on vegetation
-  if(face)
+  if(face && !hit.twoSided)
     return vec4(1,1,0,1);
 
   const uint  id     = hit.instanceId;
@@ -101,6 +101,8 @@ vec4 raySampleScene(const vec3 rayOrigin, const vec3 rayDirection) {
 
   const mat3x3 matrix = mat3x3(rayQueryGetIntersectionObjectToWorldEXT(rayQuery, true));
   norm = normalize(matrix*norm);
+  if(face && hit.flip)
+    norm = -norm;
 
   //const float mip    = log2(rayT / 500.0);
   const float mip    = computeTextureLOD(rayT,rayDirection,norm);

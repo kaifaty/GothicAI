@@ -284,7 +284,7 @@ def main() -> int:
     shutil.copytree(source, work)
     for shape, parts in SHAPES.items():
         for scale in SIZES:
-            mesh = cards.Mesh()
+            mesh = cards.Mesh(pairs=True)   # the grass system draws one side: a blade stays two copies
             for kind, card, how in parts:
                 if kind == 'hang':
                     hang_card(mesh, cells[card], args.normal_up, **how)

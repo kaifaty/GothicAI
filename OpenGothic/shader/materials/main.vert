@@ -346,7 +346,13 @@ void meshShader(const uvec4 task) {
 #else
     const bool twoSided = scene.vsmLampSides>=2u;
 #endif
-    gl_MeshPrimitivesEXT[laneID].gl_CullPrimitiveEXT = det>0.0 && (!omni || !twoSided);
+#if (MESH_TYPE==T_OBJ)
+    // a material of two sides (materials.json "two_sided") is in every page with both, as its pipelines draw it
+    const bool bothSides = (bucket[bucketId].flags & BK_TWO_SIDED)!=0u;
+#else
+    const bool bothSides = false;
+#endif
+    gl_MeshPrimitivesEXT[laneID].gl_CullPrimitiveEXT = det>0.0 && (!omni || !twoSided) && !bothSides;
     }
 #endif
   }

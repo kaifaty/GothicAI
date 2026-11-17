@@ -1,6 +1,6 @@
 """The spruce's near level of detail as arrays: trunk, whorls of first-order branches, bough cards. NumPy only.
 
-    build(config, seed=None, scale=1.0) -> Tree
+    build(config, seed=None, scale=1.0, pairs=False) -> Tree
 
 card_planes() and axis_cover() measure a built tree: how far apart the planes of each bough are and how much of
 the branches' axes is under boughs.
@@ -18,7 +18,7 @@ the height of each whorl, the number, turn, length and sag of its branches, the 
   lowered from the spine like a roof, the spine sagging with the end raised, a long one bent once more at its
   middle. A hanging bough and the fan on a branch's end carry a third blade across the two wings, so no side
   shows them as a sheet's edge. All blades of a bough share its stem and are one piece; every triangle is
-  listed twice (tree_glb.py).
+  listed once for a two-sided material, or twice with `pairs` (tree_glb.py).
 - **A branch's boughs** (dress()): a roof of fans along its axis from the end back to the first `cover_from`
   of its length, each over the stem of the next, their spines lifted over the wood: from above the axis is
   under shoots, bare only in the depth of the crown. Round the axis, side after side, slanting boughs and
@@ -59,8 +59,8 @@ def lerp(a, b, t):
 class Buffers:
     """One material's vertices and triangles."""
 
-    def __init__(self, name: str, group: str, cutout: bool):
-        self.name, self.group, self.cutout = name, group, cutout
+    def __init__(self, name: str, group: str, cutout: bool, two_sided: bool = False):
+        self.name, self.group, self.cutout, self.two_sided = name, group, cutout, two_sided
         self.position, self.normal, self.uv, self.colour, self.index, self.owner = [], [], [], [], [], []
         self.count = 0
 
@@ -80,7 +80,7 @@ class Buffers:
 
     def arrays(self, scale: float) -> dict:
         colour = np.rint(np.clip(np.concatenate(self.colour), 0, 1) * 255).astype(np.uint8)
-        return dict(name=self.name, group=self.group, cutout=self.cutout,
+        return dict(name=self.name, group=self.group, cutout=self.cutout, two_sided=self.two_sided,
                     position=(np.concatenate(self.position) * scale).astype(np.float32),
                     normal=np.concatenate(self.normal).astype(np.float32),
                     uv=np.concatenate(self.uv).astype(np.float32), colour=colour,
@@ -126,13 +126,14 @@ def signed_volume(position: np.ndarray, index: np.ndarray) -> float:
 
 
 class Fir:
-    def __init__(self, config: dict, seed: int | None = None):
+    def __init__(self, config: dict, seed: int | None = None, pairs: bool = False):
         self.cfg = config
+        self.pairs = pairs          # a bough's triangles twice under a one-sided material: the way before two_sided
         self.rng = np.random.default_rng(config['seed'] if seed is None else seed)
         self.height = float(config['height'])
         names = config['materials']
         self.bark = Buffers(names['bark'], 'WOOD', False)
-        self.boughs = Buffers(names['boughs'], 'UNDEF', True)
+        self.boughs = Buffers(names['boughs'], 'UNDEF', True, two_sided=not pairs)
         self.branches: list[Branch] = []
         self.inside_out = 0
         self.tubes = 0
@@ -354,7 +355,7 @@ class Fir:
         colour[:, 2] = flutter
         colour[:, 3] = -1
         first = self.boughs.add(position, normals, uv, colour, branch.number if branch else 0)
-        self.boughs.triangles(np.concatenate([tris, tris[:, ::-1]]) + first)
+        self.boughs.triangles((np.concatenate([tris, tris[:, ::-1]]) if self.pairs else tris) + first)
         self.cards[kind] = self.cards.get(kind, 0) + 1
         self.records.append(dict(role=role, kind=kind, branch=branch.number if branch else 0, first=first,
                                  count=len(position)))
@@ -595,8 +596,8 @@ class Fir:
         return Tree(parts, metrics, self.branches, self.records, stubs)
 
 
-def build(config: dict, seed: int | None = None, scale: float = 1.) -> Tree:
-    return Fir(config, seed).build(scale)
+def build(config: dict, seed: int | None = None, scale: float = 1., pairs: bool = False) -> Tree:
+    return Fir(config, seed, pairs).build(scale)
 
 
 def card_planes(tree: Tree) -> dict:
