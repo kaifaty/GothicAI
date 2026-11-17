@@ -513,7 +513,6 @@ class Fir:
         while z < top + 1e-6:
             t = (z - w['first']) / (top - w['first'])
             # the lowest whorls give the crown its width: full and even; the next ones pass to the crown's own
-            skirt = number < w['skirt']
             even = float(np.clip(1 - (number - w['skirt'] + 1) / (w['skirt'] + 1), 0, 1))
             count = int(round(lerp(w['branches'][0], w['branches'][1], t) + rng.uniform(-.6, .6)))
             reach = lerp(b['length'][1], b['length'][0], (1 - t) ** b['profile'])
