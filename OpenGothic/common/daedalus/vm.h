@@ -620,6 +620,8 @@ namespace daedalus {
 		// Optional offline instrumentation. Unset in the game; reads are observed when consumed,
 		// not when a reference is pushed (a pushed reference may be a store destination).
 		void observe_reads(std::function<void(DaedalusSymbol const&)> callback) { _m_read_observer = std::move(callback); }
+		// Writes are observed before bytecode assignments, not internal scratch/local restoration.
+		void observe_writes(std::function<void(DaedalusSymbol const&)> callback) { _m_write_observer = std::move(callback); }
 		void observe_instructions(std::function<void(DaedalusInstruction const&)> callback) { _m_instruction_observer = std::move(callback); }
 		// Like override_function, with a signature read from program records by the caller.
 		void override_function_custom(DaedalusSymbol const& sym, std::function<void(DaedalusVm&)> callback) {
@@ -1028,6 +1030,7 @@ namespace daedalus {
 		std::optional<std::function<void(DaedalusVm&, DaedalusSymbol&)>> _m_default_external {std::nullopt};
 		std::function<void(DaedalusSymbol&)> _m_access_trap;
 		std::function<void(DaedalusSymbol const&)> _m_read_observer;
+		std::function<void(DaedalusSymbol const&)> _m_write_observer;
 		std::function<void(DaedalusInstruction const&)> _m_instruction_observer;
 		std::optional<std::function<
 		    DaedalusVmExceptionStrategy(DaedalusVm&, DaedalusScriptError const&, DaedalusInstruction const&)>>

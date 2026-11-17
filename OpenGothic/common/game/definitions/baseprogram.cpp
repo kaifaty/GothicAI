@@ -15,11 +15,11 @@
 using ResourcesInternal::censusSourcePath;
 using ResourcesInternal::scriptDirectory;
 
-daedalus::DaedalusScript loadBaseProgram(std::string_view request, int language) {
+daedalus::DaedalusScript loadBaseProgram(std::string_view request, int language, std::string* recordSha256) {
   try {
     std::string_view branch;
     if(baseProgramIndex().findVfs(request,&branch)!=nullptr)
-      return loadBaseProgram(request,language,branch);
+      return loadBaseProgram(request,language,branch,{},recordSha256);
     const std::string name(request.substr(0,255));
     std::string path="_work/Data/Scripts/_compiled/"+name;
     const ProgramData::Source* source=baseProgramIndex().findHost(path);
@@ -38,14 +38,14 @@ daedalus::DaedalusScript loadBaseProgram(std::string_view request, int language)
       }
     if(source==nullptr)
       throw std::runtime_error("no source in program base index");
-    return loadBaseProgram(request,language,branch,std::filesystem::path(source->path).u16string());
+    return loadBaseProgram(request,language,branch,std::filesystem::path(source->path).u16string(),recordSha256);
     }
   catch(const BaseStore::Error&) { throw; }
   catch(const std::exception& error) { throw BaseStore::Error("program "+std::string(request)+": "+error.what()); }
   }
 
 daedalus::DaedalusScript loadBaseProgram(std::string_view request, int language,
-                                       std::string_view branch, std::u16string_view hostPath) {
+                                       std::string_view branch, std::u16string_view hostPath, std::string* recordSha256) {
   try {
     const auto& index = baseProgramIndex();
     const ProgramData::Source* source = nullptr;
@@ -65,6 +65,7 @@ daedalus::DaedalusScript loadBaseProgram(std::string_view request, int language,
     auto program = ProgramData::readProgram(file,&actualSha256);
     if(actualSha256!=source->recordSha256)
       throw std::runtime_error("program record identity differs from base index");
+    if(recordSha256) *recordSha256=actualSha256;
     auto script = daedalus::DaedalusScript::from_program(std::move(program));
     if(Resources::contentCensus()) {
       const auto record = "base/programs/"+file.filename().generic_string();
