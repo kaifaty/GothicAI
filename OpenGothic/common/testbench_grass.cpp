@@ -19,7 +19,7 @@ std::string grassFields(const GrassField* field) {
   std::string waste;
   if(Grass::wasteOn()) {
     const auto& w = st.waste;
-    waste = ",\"waste\":{\"gone\":"+std::to_string(w.gone)+",\"gone_triangles\":"+std::to_string(w.goneTriangles)+
+    waste = ",\"draw_us\":"+std::to_string(st.drawUs)+",\"waste\":{\"gone\":"+std::to_string(w.gone)+",\"gone_triangles\":"+std::to_string(w.goneTriangles)+
             ",\"out\":"+std::to_string(w.out)+",\"out_triangles\":"+std::to_string(w.outTriangles)+",\"squares\":[";
     for(size_t i=0; i<Grass::Waste::Subs; ++i)
       waste += std::string(i==0 ? "" : ",")+"{\"cm\":"+std::to_string(int(Grass::Waste::SubCm[i]))+
