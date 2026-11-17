@@ -8,7 +8,8 @@
 reports/content/remaster/campfire/README.md. Only the fire changes: the original's model (NW_MISC_FIREPLACE_01, a
 ring of stones 1.8 m wide with a tipi of logs 45 cm over its centre) stays. `effects` writes
 particles.d/campfire.json, `layer` reads the base's vobs and writes worlds/NEWWORLD/vobs.d/campfire.json: every
-campfire loses FIRE_HOT with the smoke under it and gets the own flames, sparks and smoke; its own lamp takes the
+campfire loses FIRE_HOT and the smoke under it (removed by its own id: the layer leaves a removed vob's children
+in place) and gets the own flames, sparks and smoke; its own lamp takes the
 flame's colour, flicker and slow sway (a fire without a lamp gets one). `pack` makes the staging part: the two
 files. Every flame is the torch's atlas OWN_TORCH_FLAME.TGA of the part torch-model-* at another size and speed
 (the wider Flame03 of the same set fills a third of its cell: at a campfire's size its texel is over 1 cm); the
@@ -23,6 +24,8 @@ from pathlib import Path
 import shutil
 import sys
 
+from fire_wind import with_wind
+
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -33,6 +36,7 @@ STAGING = Path.home() / '.local/share/gothic-ai/content-staging'
 BASE_CACHE = Path.home() / '.cache/gothic-ai/base'
 MESH = 'NW_MISC_FIREPLACE_01.3DS'
 GONE = {'FIRE_HOT.PFX', 'FIRE_SPARKS.PFX'}
+UNDER = {'FIRE_SMOKE.PFX'}  # the original's smoke hangs under FIRE_HOT: a removed vob leaves its children in place
 TONGUE = 'OWN_TORCH_FLAME.TGA'
 SMOKE = 'OWN_SMOKE_WISPY.TGA'
 
@@ -165,6 +169,7 @@ def layer(fires) -> tuple[dict, list]:
         key = f'campfire-{vob["id"]}'
         spot = fire(vob)
         out['remove'] += [c['id'] for c in gone]
+        out['remove'] += [g['id'] for c in gone for g in c.get('children', []) if str(g.get('visual_name', '')).upper() in UNDER]
         for end, pfx, position in spot['emitters']:
             entry = {'key': f'{key}-{end}', 'kind': 'emitter', 'pfx': pfx, 'position': at(position), 'yaw_deg': 0}
             if 'flame' in end:
@@ -193,7 +198,7 @@ def write_layer(path, data) -> None:
 
 def cmd_effects(_args) -> int:
     PARTICLES.parent.mkdir(parents=True, exist_ok=True)
-    PARTICLES.write_text(json.dumps(effects()) + '\n')
+    PARTICLES.write_text(json.dumps(with_wind(effects())) + '\n')
     print(f'{PARTICLES.relative_to(ROOT)}: {len(effects()["effects"])} effects')
     return 0
 

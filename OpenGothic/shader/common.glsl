@@ -37,6 +37,28 @@ bool isGBufWindow(float v) {
   return (x & GBufWindowBit)!=0;
   }
 
+// A tree's crown (lighting/crown_light.glsl): bit 0 of the hint bits. Such a pixel keeps the shade of the crown at
+// its depth in the ORM alpha, in the code of a glow's share (1 at the outside: the alpha of any own material) - a
+// crown does not glow. Every light pass multiplies its light by it; with the foliage bit the sky and the lamps come
+// through the leaf as the sun does
+const int   GBufCrownBit = 1 << 0;
+
+bool isGBufCrown(float v) {
+  int x = int(v*255+0.5);
+  return (x & GBufCrownBit)!=0;
+  }
+
+float gbufCrownShadeCode(float shade) {
+  return 1.0 - EmissiveOrmCode*(1.0 - shade);
+  }
+
+// what the crown leaves of the light of the pixel; 1 for any other pixel. orm: the raw G-buffer ORM
+float gbufCrownShade(vec4 orm, float hint) {
+  if(orm.a<=0.5 || !isGBufCrown(hint))
+    return 1.0;
+  return clamp(1.0 - (1.0 - orm.a)/EmissiveOrmCode, 0.0, 1.0);
+  }
+
 vec3 emberColour(float share) {
   return mix(vec3(0.5, 0.04, 0.004), vec3(1.0, 0.3, 0.04), share);
   }
@@ -44,7 +66,7 @@ vec3 emberColour(float share) {
 // exposure, as a flame's. Every pass of the ambient light adds it after the exposure - ambient_light.frag and the
 // probes' probe_ambient.frag; a pass without it leaves the embers as dark as their albedo
 vec3 emissiveMeshGlow(vec4 orm, float hint, float sunIntensity, float exposure) {
-  if(orm.a<=0.5 || orm.a>=0.999)
+  if(orm.a<=0.5 || orm.a>=0.999 || isGBufCrown(hint))
     return vec3(0);
   const float share = (1.0 - orm.a)/EmissiveOrmCode;
   const float gain  = min(EmissiveSunRatio * sunIntensity * exposure, EmissiveMaxGain);

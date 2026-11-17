@@ -1,10 +1,12 @@
 #include "worldchunkcookedsource.h"
 
 #include "gothicglb.h"
+#include "worldchunkcatalogue.h"
 #include "worldchunkcook.h"
 
 #include <Tempest/Log>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <stdexcept>
@@ -104,6 +106,60 @@ WorldChunkMesh build(const CookedChunk& chunk, const CookedIndex& index, size_t 
   return out;
   }
 
+// The cell's triangles in stitched order — by rank: a source triangle's from its order, the k-th Added one's
+// addedStart + k — without the ascending exclusions. Throws, naming the .wcb, unless the index places every
+// triangle once, every exclusion is a triangle of the cell and kept triangles are left.
+std::vector<uint32_t> landscapeSources(const CookedChunk& chunk, const CookedIndex& index, size_t cell,
+                                       std::span<const uint32_t> exclusions, uint32_t kept, const std::string& name) {
+  const auto triangles = chunk.triangles();
+  std::vector<uint64_t> ranked;
+  ranked.reserve(triangles.size());
+  uint64_t added = index.cells()[cell].addedStart;
+  size_t next = 0;
+  for(size_t i=0;i<triangles.size();++i) {
+    const auto& t = triangles[i];
+    const uint64_t rank = t.order==wcb::Added ? added++ : index.sourceRank(t.order);
+    if(rank>=index.header().triangles)
+      throw std::runtime_error(name+": triangle "+std::to_string(i)+" of order "+std::to_string(t.order)+
+                               " has no place in the index");
+    if(next<exclusions.size() && exclusions[next]==i) {
+      ++next;
+      continue;
+      }
+    ranked.push_back(rank<<32 | i);
+    }
+  if(next!=exclusions.size())
+    throw std::runtime_error(name+": the world cloth bundle leaves out triangle "+std::to_string(exclusions[next])+
+                             ", the cell holds "+std::to_string(triangles.size()));
+  if(ranked.size()!=kept)
+    throw std::runtime_error(name+": the world cloth bundle leaves "+std::to_string(kept)+" triangles of the cell, "+
+                             std::to_string(ranked.size())+" are left of its "+std::to_string(triangles.size()));
+  // A GLB holds a cell's triangles by material, each primitive in source order: merge those ascending runs.
+  std::vector<size_t> runs {0};
+  for(size_t k=1;k<ranked.size();++k)
+    if(ranked[k]<ranked[k-1])
+      runs.push_back(k);
+  runs.push_back(ranked.size());
+  while(runs.size()>2) {
+    std::vector<size_t> merged {0};
+    for(size_t r=0;r+1<runs.size();r+=2) {
+      const auto end = r+2<runs.size() ? runs[r+2] : runs[r+1];
+      if(r+2<runs.size())
+        std::inplace_merge(ranked.begin()+ptrdiff_t(runs[r]),ranked.begin()+ptrdiff_t(runs[r+1]),
+                           ranked.begin()+ptrdiff_t(end));
+      merged.push_back(end);
+      }
+    runs = std::move(merged);
+    }
+  std::vector<uint32_t> out(ranked.size());
+  for(size_t k=0;k<ranked.size();++k) {
+    if(k>0 && ranked[k]>>32==ranked[k-1]>>32)
+      throw std::runtime_error(name+": two triangles take rank "+std::to_string(ranked[k]>>32));
+    out[k] = uint32_t(ranked[k]);
+    }
+  return out;
+  }
+
 }
 
 void WorldChunkFile::verify() const {
@@ -168,11 +224,33 @@ void CookedChunkSource::load(const fs::path& dir, const fs::path& overrideDir, c
     }
   }
 
+void CookedChunkSource::loadCatalogue(CookedIndex validated, CookedSet loaded, const WorldCellManifest& manifest) {
+  states = std::make_unique<std::atomic<uint8_t>[]>(manifest.cells.size());
+  cells.clear();
+  for(const auto& cell:manifest.cells)
+    cells.push_back(cell.id);
+  set = std::move(loaded);
+  index = std::move(validated);
+  }
+
 WorldChunkMesh CookedChunkSource::read(size_t cell, std::span<const uint32_t> sources, bool currentFile,
                                        const World& world, const std::function<WorldChunkMesh()>& glb) const {
+  return readCell(cell,sources,nullptr,currentFile,world,glb);
+  }
+
+WorldChunkMesh CookedChunkSource::readLandscape(size_t cell, std::span<const uint32_t> exclusions, uint32_t kept,
+                                                bool currentFile, const World& world,
+                                                const std::function<WorldChunkMesh()>& glb) const {
+  const Landscape landscape {exclusions,kept};
+  return readCell(cell,{},&landscape,currentFile,world,glb);
+  }
+
+WorldChunkMesh CookedChunkSource::readCell(size_t cell, std::span<const uint32_t> sources, const Landscape* landscape,
+                                           bool currentFile, const World& world,
+                                           const std::function<WorldChunkMesh()>& glb) const {
   if(!currentFile && index) {
     const auto start = Clock::now();
-    if(auto mesh = readCooked(cell,sources,world)) {
+    if(auto mesh = readCooked(cell,sources,landscape,world)) {
       cookedNs += nanoseconds(start);
       ++cookedReads;
       return std::move(*mesh);
@@ -180,13 +258,41 @@ WorldChunkMesh CookedChunkSource::read(size_t cell, std::span<const uint32_t> so
     }
   const auto start = Clock::now();
   ++glbReads;
-  auto mesh = glb();
+  std::optional<WorldChunkMesh> mesh;
+  if(world.catalogue!=nullptr && !currentFile && world.catalogue->canRecoverIndexedChunk()) {
+    try {
+      world.glb.verify();
+      const auto materials = std::span<const asset::Material>(world.materials);
+      const auto chunk = recoverIndexedChunk(world.glb.path,*index,cell,
+                                             materials.first(materials.size()-index->appendedMaterials()));
+      const auto name = world.glb.path.filename().string();
+      checkCookedCell(chunk,cell,cells[cell],set.source,*index,name);
+      mesh = readMesh(chunk,cell,sources,landscape,world,name);
+      }
+    catch(const SourceError&) {
+      throw;
+      }
+    catch(const std::exception&) {
+      // If the recovered cell cannot use the loaded index, fall back to the stitched world.
+      }
+    }
+  if(!mesh)
+    mesh = glb();
   glbNs += nanoseconds(start);
-  return mesh;
+  return std::move(*mesh);
+  }
+
+WorldChunkMesh CookedChunkSource::readMesh(const CookedChunk& chunk, size_t cell, std::span<const uint32_t> sources,
+                                          const Landscape* landscape, const World& world, const std::string& name) const {
+  if(landscape!=nullptr) {
+    const auto list = landscapeSources(chunk,*index,cell,landscape->exclusions,landscape->kept,name);
+    return build(chunk,*index,cell,list,world,name);
+    }
+  return build(chunk,*index,cell,sources,world,name);
   }
 
 std::optional<WorldChunkMesh> CookedChunkSource::readCooked(size_t cell, std::span<const uint32_t> sources,
-                                                            const World& world) const {
+                                                            const Landscape* landscape, const World& world) const {
   auto& state = states[cell];
   const auto mode = state.load(std::memory_order_relaxed);
   if(mode==Glb)
@@ -208,7 +314,7 @@ std::optional<WorldChunkMesh> CookedChunkSource::readCooked(size_t cell, std::sp
     const auto name = path.filename().string();
     checkCookedCell(chunk,cell,cells[cell],set.source,*index,name);
     world.glb.verify();
-    return build(chunk,*index,cell,sources,world,name);
+    return readMesh(chunk,cell,sources,landscape,world,name);
     }
   catch(const SourceError&) {
     throw;

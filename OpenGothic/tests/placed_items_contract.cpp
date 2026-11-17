@@ -8,7 +8,12 @@
 #include "gamemusic.h"
 #include "gothic.h"
 #include "game/gamescript.h"
+#include "game/definitions/basescripts.h"
 #include "game/serialize.h"
+#include "npcsnapshot.h"
+#include "programdata.h"
+#include "routinedefinitions.h"
+#include "loadprobe.h"
 #include "world/objects/item.h"
 #include "world/objects/npc.h"
 #include "world/benchhooks.h"
@@ -490,6 +495,112 @@ void benchHelpers(Npc& npc) {
   std::puts("Bench helpers: JSON bytes, null and real NPC names, physics name, dt, block fallback and silent events passed");
   }
 
+void routineTables(Npc& npc) {
+  auto& script=npc.world().script();
+  auto& vm=script.getVm();
+  const auto base=baseProgramIndex().dir.parent_path();
+  const auto program=NpcSnapshot::load(base);
+  const auto library=RoutineDefinitions::read(base,program.sha256);
+  require(!library.routines.empty(),"the real program must have captured routine definitions");
+  struct Row {
+    gtime start,end;
+    ScriptFn state;
+    std::string point;
+    const WayPoint* waypoint;
+    };
+  auto rows=[](const Npc& who) {
+    std::vector<Row> result;
+    who.forEachRoutine([&](const Npc::RoutineInfo& row) {
+      result.push_back({row.start,row.end,row.state,std::string(row.point),row.waypoint});
+      });
+    return result;
+    };
+  auto compare=[](const std::vector<Row>& expected,const std::vector<Row>& actual,const std::string& name) {
+    if(actual.size()!=expected.size())
+      throw std::runtime_error(name+": NPC routine table row count differs");
+    for(size_t index=0;index<actual.size();++index) {
+      const auto& a=actual[index];
+      const auto& e=expected[index];
+      if(a.start!=e.start || a.end!=e.end || a.state!=e.state || a.point!=e.point || a.waypoint!=e.waypoint)
+        throw std::runtime_error(name+": NPC routine table row "+std::to_string(index+1)+" differs");
+      }
+    };
+  const auto previous=rows(npc);
+  const auto oldSelf=vm.global_self()->get_instance();
+  vm.global_self()->set_instance(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()));
+  size_t count=0,rowCount=0;
+  const auto* configured=std::getenv("OPENGOTHIC_ROUTINE_RECORDS");
+  const bool recordsEnabled=configured==nullptr || std::strcmp(configured,"0")!=0;
+  size_t instructions=0;
+  try {
+    for(const auto& [name,definition]:library.routines) {
+      auto* function=vm.find_symbol_by_name(name);
+      require(function!=nullptr,"captured routine must exist in the game's VM");
+      npc.clearRoutine();
+      vm.observe_instructions([&](const daedalus::DaedalusInstruction&) { ++instructions; });
+      instructions=0;
+      vm.call_function<void>(function);
+      require(instructions>0,"the routine reference must execute the VM");
+      const auto expected=rows(npc);
+      instructions=0;
+      npc.excRoutine(function->index());
+      if(recordsEnabled ? instructions!=0 : instructions==0)
+        throw std::runtime_error(name+": routine exchange chose the wrong record/VM path");
+      vm.observe_instructions({});
+      const auto actual=rows(npc);
+      if(actual.size()!=definition.size())
+        throw std::runtime_error(name+": NPC routine table row count differs");
+      compare(expected,actual,name);
+      ++count;
+      rowCount+=actual.size();
+      }
+    }
+  catch(...) { vm.observe_instructions({}); vm.global_self()->set_instance(oldSelf); throw; }
+  vm.global_self()->set_instance(oldSelf);
+  npc.clearRoutine();
+  for(const auto& row:previous)
+    npc.addRoutine(row.start,row.end,uint32_t(row.state.ptr),row.point);
+  require(count==library.routines.size(),"every captured routine must be compared on a live NPC");
+  std::printf("NPC routine table equality: %zu captured functions, %zu rows; times, state, point pointers, fallback names and order match\n",
+              count,rowCount);
+
+  auto* xardas=npc.world().findNpcByInstance(script.findSymbolIndex("NONE_100_XARDAS"));
+  auto* ritual=vm.find_symbol_by_name("RTN_RITUALINNOSEYE_100");
+  auto* exchange=vm.find_symbol_by_name("NPC_EXCHANGEROUTINE");
+  require(xardas && ritual && exchange,"the story routine fixture must contain Xardas and his Innos Eye ritual");
+  require(library.routines.at(ritual->name()).size()==2,"the Innos Eye ritual must contain two captured rows");
+  const auto beforeRitual=rows(*xardas);
+  const auto beforeRecord=xardas->handle();
+  vm.global_self()->set_instance(std::static_pointer_cast<daedalus::INpc>(xardas->handlePtr()));
+  size_t exchanges=0;
+  try {
+    xardas->clearRoutine();
+    vm.call_function<void>(ritual);
+    const auto expected=rows(*xardas);
+    require(expected.size()==2 && (beforeRitual.empty() || expected[0].state!=beforeRitual[0].state ||
+                                  expected[0].point!=beforeRitual[0].point),
+            "the story fixture must change Xardas's current routine");
+    xardas->clearRoutine();
+    for(const auto& row:beforeRitual)
+      xardas->addRoutine(row.start,row.end,uint32_t(row.state.ptr),row.point);
+    vm.observe_instructions([&](const daedalus::DaedalusInstruction& instruction) {
+      if(instruction.op==daedalus::DaedalusOpcode::BE && instruction.symbol==exchange->index()) ++exchanges;
+      });
+    vm.call_function<void>("B_STARTOTHERROUTINE",std::static_pointer_cast<daedalus::INpc>(xardas->handlePtr()),
+                           std::string_view("RITUALINNOSEYE"));
+    vm.observe_instructions({});
+    require(exchanges==1,"the story helper must call Npc_ExchangeRoutine exactly once");
+    compare(expected,rows(*xardas),"B_STARTOTHERROUTINE(Xardas,RITUALINNOSEYE)");
+    }
+  catch(...) { vm.observe_instructions({}); vm.global_self()->set_instance(oldSelf); throw; }
+  xardas->handle()=beforeRecord;
+  xardas->clearRoutine();
+  for(const auto& row:beforeRitual)
+    xardas->addRoutine(row.start,row.end,uint32_t(row.state.ptr),row.point);
+  vm.global_self()->set_instance(oldSelf);
+  std::puts("Story routine change: B_StartOtherRoutine(Xardas,RITUALINNOSEYE) -> Npc_ExchangeRoutine; two live rows match the VM reference");
+  }
+
 void moverChildSave() {
   const auto* game=std::getenv("GOTHIC_DIR");
   require(game!=nullptr && *game!='\0',"GOTHIC_DIR must point to prepared Gothic II settings");
@@ -502,6 +613,41 @@ void moverChildSave() {
   GameMusic music;
   gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
   require(gothic.player()!=nullptr,"bench helper fixture has a player");
+  routineTables(*gothic.player());
+  if(LoadProbe::enabled()) {
+    auto& script=gothic.world()->script();
+    auto& vm=script.getVm();
+    auto* gold=vm.find_symbol_by_name("ITMI_GOLD");
+    auto* broken=vm.find_symbol_by_name("ITMI_INNOSEYE_BROKEN_MIS");
+    require(gold && broken,"query probe fixtures must contain captured and uncaptured items");
+    const auto goldBefore=gold->get_instance(),brokenBefore=broken->get_instance();
+    const auto part=std::find_if(std::begin(LoadProbe::Vobs::partNames),std::end(LoadProbe::Vobs::partNames),
+                                 [](const char* name) { return std::strcmp(name,"script_item")==0; });
+    require(part!=std::end(LoadProbe::Vobs::partNames),"item loading probe must exist");
+    auto& vobs=LoadProbe::Vobs::parts[size_t(part-std::begin(LoadProbe::Vobs::partNames))];
+    const bool previousVobs=LoadProbe::Vobs::active.exchange(true);
+    {
+      LoadProbe::Startup::Scope loading(LoadProbe::Startup::Other,true,"placed-items");
+      const auto count=vobs.count.load(),ns=vobs.ns.load(),inclusiveNs=vobs.inclusiveNs.load();
+      auto& startup=LoadProbe::Startup::counters[LoadProbe::Startup::Script];
+      const auto startupBefore=startup;
+      const auto constructors=LoadProbe::Items::constructors.load();
+      script.createItemForQuery(gold->index());
+      script.createItemForQuery(broken->index());
+      require(vobs.count.load()==count && vobs.ns.load()==ns && vobs.inclusiveNs.load()==inclusiveNs &&
+              startup.count==startupBefore.count && startup.ns==startupBefore.ns && startup.inclusiveNs==startupBefore.inclusiveNs,
+              "item queries must not count or time world loading");
+      require(LoadProbe::Items::constructors.load()==constructors+1,"only the uncaptured query must execute a VM constructor");
+      script.createItem(gold->index());
+      require(vobs.count.load()==count+1 && startup.count==startupBefore.count+1,
+              "world item creation must increment both armed loading probes");
+    }
+    gold->set_instance(goldBefore);
+    broken->set_instance(brokenBefore);
+    LoadProbe::Vobs::active.store(previousVobs);
+    std::puts("Item query probes: loading counts and times unchanged; one VM fallback; world creation counted");
+  }
+  else std::puts("SKIP item query probes: OPENGOTHIC_LOADPROBE=1 is not enabled");
   benchHelpers(*gothic.player());
   const auto findChild=[](World& world) -> const WorldObjects::PlacedItem& {
     const auto& catalogue=world.placedItemCensus();

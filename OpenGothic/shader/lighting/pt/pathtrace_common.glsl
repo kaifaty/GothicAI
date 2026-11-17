@@ -74,7 +74,8 @@ HitResolve rayQueryProceedPrimary(const vec3 rayOrigin, const vec3 rayDirection,
   const HitDesc hit = pullCommitedHitDesc(rayQuery);
 
   const float rayT   = rayQueryGetIntersectionTEXT(rayQuery, true);
-  const bool  face   = !(rayQueryGetIntersectionFrontFaceEXT(rayQuery, true)); //NOTE: not working on vegetation
+  const bool  back   = !(rayQueryGetIntersectionFrontFaceEXT(rayQuery, true)); //NOTE: not working on vegetation
+  const bool  face   = back && !hit.twoSided;
 
   const uint  id     = hit.instanceId;
   const uvec3 index  = pullTrinagleIds(id,hit.primitiveId);
@@ -93,6 +94,8 @@ HitResolve rayQueryProceedPrimary(const vec3 rayOrigin, const vec3 rayDirection,
 
   const mat3x3 matrix = mat3x3(rayQueryGetIntersectionObjectToWorldEXT(rayQuery, true));
   norm = normalize(matrix*norm);
+  if(back && hit.flip)
+    norm = -norm;
 
   const float mip    = mipOverride>=0 ? mipOverride : rayPathTextureLOD(rayT,rayDirection,norm);
   const vec4  diff   = textureLod(sampler2D(textures[nonuniformEXT(id)], smp),uv,mip);

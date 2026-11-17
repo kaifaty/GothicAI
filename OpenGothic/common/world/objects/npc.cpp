@@ -104,11 +104,6 @@ struct Npc::BodyMovementTrace final {
   Vec3 start = {};
   };
 
-std::string_view Npc::Routine::wayPointName() const {
-  return point!=nullptr ? point->name : fallbackName;
-  }
-
-
 void Npc::GoTo::save(Serialize& fout) const {
   fout.write(npc, uint8_t(flag), wp, pos);
   }

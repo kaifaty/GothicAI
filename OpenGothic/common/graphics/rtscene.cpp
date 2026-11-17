@@ -47,8 +47,11 @@ std::vector<const T*> padded(const std::vector<const T*>& v) {
   return ret;
   }
 
-RtInstanceFlags instanceFlags(Material::AlphaFunc alpha) {
-  const auto flags = (alpha==Material::Solid || alpha==Material::Water) ? RtInstanceFlags::Opaque : RtInstanceFlags::NonOpaque;
+RtInstanceFlags instanceFlags(Material::AlphaFunc alpha, Material::TwoSided sides = Material::TwoSided::Off) {
+  auto flags = (alpha==Material::Solid || alpha==Material::Water) ? RtInstanceFlags::Opaque : RtInstanceFlags::NonOpaque;
+  // a material of two sides (materials.json "two_sided"): a ray that culls back faces takes both of its sides
+  if(sides!=Material::TwoSided::Off)
+    flags = flags | RtInstanceFlags::CullDisable;
   return flags | RtInstanceFlags::CullFlip;
   }
 }
@@ -223,7 +226,7 @@ uint32_t RtScene::bucketId(const Texture2d* t, const StorageBuffer* v, const Sto
   return id;
   }
 
-RtScene::RtObjectDesc RtScene::objectDesc(const Geometry& geom, Material::AlphaFunc alpha) {
+RtScene::RtObjectDesc RtScene::objectDesc(const Geometry& geom, Material::AlphaFunc alpha, Material::TwoSided sides) {
   RtObjectDesc desc = {};
   desc.instanceId     = bucketId(geom.tex, geom.vbo, geom.ibo);
   desc.firstPrimitive = uint32_t(geom.firstIndex/3) & 0x00FFFFFF; // 24 bit for primmitive + 8 for utility
@@ -231,6 +234,11 @@ RtScene::RtObjectDesc RtScene::objectDesc(const Geometry& geom, Material::AlphaF
     desc.bits |= 0x1;
   if(alpha==Material::Water)
     desc.bits |= 0x2;
+  // rt_common.glsl: the alpha test keeps a hit on the back side (0x4), a hit's normal is turned to the ray there (0x8)
+  if(sides!=Material::TwoSided::Off)
+    desc.bits |= 0x4;
+  if(sides==Material::TwoSided::Flip)
+    desc.bits |= 0x8;
   return desc;
   }
 
@@ -279,12 +287,13 @@ void RtScene::freeSlot(uint32_t slot) {
   freeSlots.push(slot);
   }
 
-void RtScene::writeSlot(uint32_t slot, RtInstance ix, Material::AlphaFunc alpha, const Geometry* geom, size_t count) {
+void RtScene::writeSlot(uint32_t slot, RtInstance ix, Material::AlphaFunc alpha, Material::TwoSided sides,
+                        const Geometry* geom, size_t count) {
   thread_local std::vector<RtObjectDesc> desc;
   desc.resize(count);
   uint64_t triangles = 0;
   for(size_t i=0; i<count; ++i) {
-    desc[i]    = objectDesc(geom[i], alpha);
+    desc[i]    = objectDesc(geom[i], alpha, sides);
     triangles += geom[i].indices/3;
     }
 
@@ -319,7 +328,7 @@ void RtScene::setSlot(uint32_t slot, const Matrix4x4& pos, const AccelerationStr
   RtInstance ix;
   ix.mat   = pos;
   ix.blas  = &blas;
-  ix.flags = instanceFlags(mat.alpha);
+  ix.flags = instanceFlags(mat.alpha, mat.twoSided);
 
   if(!visible)
     ix.mask = 0;
@@ -333,7 +342,7 @@ void RtScene::setSlot(uint32_t slot, const Matrix4x4& pos, const AccelerationStr
     ix.mask = CullMask::CM_Unknown;
 
   const Geometry geom = {mat.tex, &mesh.vboBuffer(), &mesh.rtIbo(), mesh.rtFirstIndex(firstIndex), iboLength};
-  writeSlot(slot, ix, mat.alpha, &geom, 1);
+  writeSlot(slot, ix, mat.alpha, mat.twoSided, &geom, 1);
   }
 
 void RtScene::setLandscapeSlot(uint32_t slot, const AccelerationStructure& blas, Material::AlphaFunc alpha,
@@ -349,7 +358,7 @@ void RtScene::setLandscapeSlot(uint32_t slot, const AccelerationStructure& blas,
   ix.blas  = &blas;
   ix.flags = instanceFlags(alpha);
   ix.mask  = visible ? 0xFF : 0;
-  writeSlot(slot, ix, alpha, geom, count);
+  writeSlot(slot, ix, alpha, Material::TwoSided::Off, geom, count);
 
   if(added) {
     s.landscape = true;

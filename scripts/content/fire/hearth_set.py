@@ -21,9 +21,11 @@ from pathlib import Path
 import shutil
 import sys
 
+from fire_wind import with_wind
+
 import numpy as np
 
-from campfire_set import ROOT, SMOKE, STAGING, TONGUE, at, base_dir, card, write_layer
+from campfire_set import ROOT, SMOKE, STAGING, TONGUE, at, base_dir, card, haze, write_layer
 
 CONTENT = ROOT / 'reports/content/remaster/hearth/content'
 PARTICLES = CONTENT / 'particles.d/hearth.json'
@@ -66,7 +68,10 @@ def effects() -> dict:
                      'dirMode_S': 'DIR', 'velAvg': 0.05, 'velVar': 0.012, 'flyGravity_S': '0 0 0'},
              'curl': {'strength': 0.3, 'frequency': 0.9, 'speed': 0.25}, 'drag': 0.2}
     return {'format': 1, 'effects': [card('OWN_HEARTH_FLAME', TONGUE, CORE, 38), card('OWN_HEARTH_FLAME_SIDE', TONGUE, SIDE, 46),
-                                     licks, sparks, smoke]}
+                                     licks, sparks, smoke,
+                                     # the hot air goes up the flue: the shimmer fills the opening over the flames
+                                     # and is gone at the lintel
+                                     haze('OWN_HEARTH_HAZE', 60, 16, 800)]}
 
 
 def census(vobs_json) -> tuple[list, list]:
@@ -111,7 +116,8 @@ def layer(fires, places) -> tuple[dict, list]:
                   ('flame-b', 'OWN_HEARTH_FLAME_SIDE', bed - wide * 25 + [0, SIDE[1] / 2 - 4, 0]),
                   ('licks', 'OWN_HEARTH_LICKS', bed + [0, 5, 0]),
                   ('sparks', 'OWN_HEARTH_SPARKS', bed + [0, 30, 0]),
-                  ('smoke', 'OWN_HEARTH_SMOKE', bed + [0, 82, 0])]
+                  ('smoke', 'OWN_HEARTH_SMOKE', bed + [0, 82, 0]),
+                  ('haze', 'OWN_HEARTH_HAZE', bed + [0, 50, 0])]
         for end, pfx, position in points:
             entry = {'key': f'{key}-{end}', 'kind': 'emitter', 'pfx': pfx, 'position': at(position), 'yaw_deg': 0}
             if 'flame' in end:
@@ -132,7 +138,7 @@ def layer(fires, places) -> tuple[dict, list]:
 
 def cmd_effects(_args) -> int:
     PARTICLES.parent.mkdir(parents=True, exist_ok=True)
-    PARTICLES.write_text(json.dumps(effects()) + '\n')
+    PARTICLES.write_text(json.dumps(with_wind(effects())) + '\n')
     print(f'{PARTICLES.relative_to(ROOT)}: {len(effects()["effects"])} effects')
     return 0
 

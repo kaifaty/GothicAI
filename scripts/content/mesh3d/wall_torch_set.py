@@ -222,12 +222,13 @@ def place_layer(name, torches) -> dict:
         signal = {'flicker_from': f'{key}-flame', **SWAY}
         lamps = [c for c in children if c['type'] == 'zCVobLight']
         own = [c for c in lamps if not c['is_static']] or [c for c in lamps if c['preset'] == OWN_STATIC]
-        if len(own) > 1:
-            sys.exit(f'torch {torch["id"]}: {len(own)} lamps of its own')
+        offset = at(spot['light'] - np.array(own[0]['position'])) if own else None
+        if len(own) > 1 or (own and max(abs(v) for v in offset) > 100):
+            # several lamps, or one hung over a metre from its torch (Jharkendar): the layer cannot bring a lamp's
+            # light to the flame, so the flame gets a light of its own
+            print(f'torch {torch["id"]}: {len(own)} lamps of its own, the nearest {offset} cm from the flame; a light is added')
+            own = []
         if own:
-            offset = at(spot['light'] - np.array(own[0]['position']))
-            if max(abs(v) for v in offset) > 100:
-                sys.exit(f'torch {torch["id"]}: its lamp {own[0]["id"]} is {offset} cm from the flame, over the layer\'s 100')
             layer['light'].append({'id': own[0]['id'], 'color': LAMP['color'], 'near': LAMP['near'], **signal, 'offset_cm': offset})
         else:  # a fill lamp or none: the flame gets a light of its own, after its emitter in the file
             layer['add'].append({'key': f'{key}-light', 'kind': 'light', 'position': at(spot['light']), 'yaw_deg': 0,

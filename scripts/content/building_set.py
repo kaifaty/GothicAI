@@ -366,12 +366,14 @@ def pack(records: list[dict], spec: dict, derived_root: Path) -> dict:
 
 def entry_maps(entry: dict) -> list[str]:
     """The files a record of materials.json names: its own maps (a particle texture has only an albedo) and those
-    of its layers - a rock's `fringe`, a meadow's `ground.sward` and `ground.earth`. A record of fields alone
-    (`grass`, `verge`) names none."""
-    ground = entry.get('ground') or {}
-    holders = [entry, entry.get('fringe'), ground.get('sward'), ground.get('earth')]
+    of its layers - a rock's `fringe`, a meadow's `ground.sward`, `ground.earth` and `ground.border`, a road's
+    `track.crust`, `track.loose` and `track.ribbon` (tint, normal, mask). A record of fields alone (`grass`,
+    `verge`) names none."""
+    ground, track = entry.get('ground') or {}, entry.get('track') or {}
+    holders = [entry, entry.get('fringe'), ground.get('sward'), ground.get('earth'), ground.get('border'),
+               track.get('crust'), track.get('loose'), track.get('ribbon')]
     return [holder[channel] for holder in holders if isinstance(holder, dict)
-            for channel in ('albedo', 'normal', 'orm') if channel in holder]
+            for channel in ('albedo', 'normal', 'orm', 'tint', 'mask') if channel in holder]
 
 
 def compose(name: str, parts: list[str], without: tuple[str, ...] = ()) -> dict:

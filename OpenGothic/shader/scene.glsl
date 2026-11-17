@@ -132,6 +132,7 @@ const uint VF_SHADOW = 0x8; // a shadow view: the sun's cascades and the virtual
 const uint VF_LAMP_CONTACT = 0x10; // lamps darken what their shadow map is too coarse for by a screen ray (lighting/lamp_contact.glsl)
 const uint VF_CONTACT_AO = 0x20; // the light of the GI probes takes the short occlusion of ssao.comp (lighting/rt/probe_ambient.frag)
 const uint VF_GRASS_CONTACT = 0x40; // blades shade the ground and each other by the sun's screen ray (grass/grass_contact.glsl)
+const uint VF_CROWN_MASK = 0x80; // a crown shows its openness as a colour instead of its albedo (OPENGOTHIC_CROWN_LIGHT=mask)
 const uint VF_HAIR_DEBUG = 0x4; // hair pixels show the strand's direction as a colour instead of light (OPENGOTHIC_HAIR_DEBUG=1)
 
 const uint BK_SOLID = 0x1;
@@ -154,6 +155,10 @@ const uint BK_GRASS = 0x10000; // a ground that grows grass: its look under and 
 const uint BK_WINDOW = 0x20000; // the material's glow is a window's, lit of an evening (materials/window_glow.glsl)
 const uint BK_GROUND = 0x40000; // a meadow's own two layers by world position (grass/grass_layers.glsl)
 const uint BK_VERGE = 0x80000; // the ground beside a meadow: the strip of its layers along their border
+const uint BK_TRACK = 0x100000; // a road's own material: two layers by world position, the ribbon's maps (grass/grass_track.glsl)
+const uint BK_TWO_SIDED = 0x200000; // an object's mesh drawn from both sides: the shadow pages' mesh shader keeps both (main.vert)
+const uint BK_TWO_SIDED_FLIP = 0x400000; // the side away from the winding is lit by the normal turned to the eye (main.frag)
+const uint BK_CROWN = 0x800000; // a tree's crown: the openness of the vertex darkens it into the depth (lighting/crown_light.glsl)
 
 // Strands in a shadow view: the first part of the list casts the shadow for all of it (the meshlets are dealt out
 // evenly, groommesh.cpp), each strand as wide as that part is small (strandShadowRibbon, vertex_process.glsl).
@@ -186,10 +191,14 @@ struct Bucket {
   float fringeTop0, fringeTop1, fringeBottom0, fringeBottom1; // shares of v: solid to the first, tufts to the second
                      // BK_GROUND, BK_VERGE: fringeTex the sward's maps, the earth's the next; fringeScale and
                      // fringeTop0 their repeats per cm; fringeTop1 the far repeat's tile of the sward's
+                     // BK_GROUND: fringeBottom0 the repeats per cm of the border's earth, its maps the third; 0 without
+                     // BK_TRACK: the crust's, the loose earth's and the ribbon's maps after the verge's two, or
+                     // from fringeTex without a verge; fringeBottom0, fringeBottom1 the layers' repeats per cm
   uint  foliage;     // BK_FOLIAGE: 8 bits each of wind, flutter, translucency, anchor (FoliageWind::pack);
                      // BK_GRASS, BK_VERGE: the record's numbers of the grass (Grass::pack);
                      // BK_WINDOW: the window's share and hours (WindowGlow::pack)
-  float foliageReach; // the largest arm of its mesh at rest, from the X axis; bbox is grown by the leaves' travel
+  float foliageReach; // the largest arm of its mesh at rest, from the X axis; of a tree, its height; bbox is grown by the travel
+                      // BK_TRACK: the record's wander, fade and raggedness (Grass::pack of grasstrack.h)
   };
 
 #endif

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <string>
 
@@ -35,9 +36,11 @@ constexpr float   SegmentsTo[] = {1000.f, 2500.f, 4500.f};
 constexpr uint8_t MaxSegments  = 4;
 
 constexpr size_t  UploadBytes  = 512*1024; // a frame; one cell at least
-constexpr size_t  RankCounts   = 257;
+constexpr float   SquareCm     = float(Grass::SquareSize/Grass::Unit);
+constexpr size_t  SpanCount    = size_t(Grass::CellSquares*Grass::CellSquares); // of a draw in the table; GrassSpans of grass.vert
 constexpr float   RootsBeyond  = 100.f;    // cm: a root lies no nearer to the camera than its cell less this
 constexpr size_t  MaxJobs      = 6;
+constexpr uint32_t WasteEvery  = 30;       // frames between two counts of Grass::Waste
 
 // The fine blades of the short sward (Grass::Params::fine): a ring of their own, cm. All of them to FineFull, a
 // share FineFull/d from there, into the ground between FineFade and FineRadius; two links near, one further
@@ -51,7 +54,7 @@ struct Push final {
   Vec4     origin;
   float    wind         = 1.f;
   float    translucency = 0.f;
-  uint32_t first        = 0;
+  uint32_t table        = 0;     // of the draw's spans in the frame's table (grass.vert)
   uint32_t segments     = 0;
   Vec4     shape;                  // the width at the root and per step, cm; the ring's full and fade, 0 the scene's
   float    swardK       = 0.f;     // repeats of the sward's map in a cm, by the world's x and z; 0 without own layers
@@ -113,6 +116,9 @@ GrassField::~GrassField() {
   scene.grassBorder = nullptr;
   if(!borderCpu.empty())
     Resources::recycle(std::move(borderGpu));
+  for(auto& i:spanGpu)
+    if(i.byteSize()!=0)
+      Resources::recycle(std::move(i));
   }
 
 uint32_t GrassField::rankLimit(uint8_t level) const {
@@ -386,6 +392,7 @@ void GrassField::run() {
     in.rankLimitFine = job.level==0 ? 256u : (job.level==1 ? uint32_t(std::ceil(256.f*RankShare*FineFull/(LevelFrom[1]*ring.full))) : 0u);
     in.density   = ring.density;
     in.patch     = Grass::forcedPatch();
+    in.squares   = !Grass::squaresOff();
 
     Done d;
     d.cx    = job.cx;
@@ -408,7 +415,8 @@ void GrassField::release(Cell& c) {
     Resources::recycle(std::move(c.gpu));
   c.gpu     = StorageBuffer();
   c.batches.clear();
-  c.below.clear();
+  c.cpu.clear();
+  c.ranks.clear();
   c.count   = 0;
   c.live    = false;
   }
@@ -422,20 +430,16 @@ void GrassField::upload(Cell& c, Done&& d) {
   c.minY    = d.blades.minY;
   c.maxY    = d.blades.maxY;
   c.count   = uint32_t(d.blades.blades.size());
-  c.below.clear();
+  c.ranks.clear();
   if(c.count==0)
     return;
   c.batches = std::move(d.blades.batches);
-  c.below.assign(c.batches.size()*RankCounts, 0);
-  for(size_t i=0; i<c.batches.size(); ++i) {
-    const auto& b     = c.batches[i];
-    uint32_t*   below = &c.below[i*RankCounts];
-    for(uint32_t k=0; k<b.count; ++k)
-      ++below[(d.blades.blades[b.first+k].w[1] >> 24) + 1];
-    for(size_t r=1; r<RankCounts; ++r)
-      below[r] += below[r-1];
-    }
+  c.ranks.resize(c.count);
+  for(size_t i=0; i<c.count; ++i)
+    c.ranks[i] = uint8_t(d.blades.blades[i].w[1] >> 24);
   c.gpu     = Resources::ssbo(d.blades.blades.data(), d.blades.blades.size()*sizeof(Grass::Blade));
+  if(Grass::wasteOn())
+    c.cpu = std::move(d.blades.blades);
   }
 
 void GrassField::update() {
@@ -618,9 +622,15 @@ void GrassField::update() {
   last.waiting = waiting;
   }
 
-void GrassField::draw(Encoder<CommandBuffer>& cmd) {
+void GrassField::draw(Encoder<CommandBuffer>& cmd, uint8_t fId) {
   Stats st;
   st.waiting = last.waiting;
+  // the count of the blades submitted for nothing walks every drawn blade: one frame of WasteEvery, kept between
+  const bool waste = Grass::wasteOn() && (wasteFrame++ % WasteEvery)==0;
+  if(!waste)
+    st.waste = last.waste;
+  st.drawUs = last.drawUs;
+  const auto t0 = Grass::wasteOn() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
   if(!blades || cells.empty()) {
     last = st;
     scene.setGrassDrawn(false);
@@ -628,7 +638,26 @@ void GrassField::draw(Encoder<CommandBuffer>& cmd) {
     }
   const auto& fr  = scene.frustrum[SceneGlobals::V_Main];
   const float pad = float(Grass::CellMargin/Grass::Unit) + 80.f;
-  bool        bound = false;
+  const bool  squares = !Grass::squaresOff();
+  const Vec3  cam     = scene.camPos();
+
+  // A cell is drawn by its squares (reports/engine/2026-11-17-grass-cost): each is tested against the view and has
+  // the ranks of its own nearest point, so the blades out of the view and those that by their distance have gone
+  // into the ground are not submitted with the rest of the cell. The squares of a ground and a kind go in one draw:
+  // its instances are the squares' blades one after another, and a table of the frame tells the vertex shader which
+  // blade of the cell's buffer an instance is (grass.vert). The links of a blade are the cell's, as before the
+  // squares, so the look is the same to a blade
+  struct Draw final {
+    const Cell* cell  = nullptr;
+    uint16_t    slot  = 0;
+    bool        fine  = false;
+    uint8_t     links = 0;
+    uint32_t    count = 0;
+    uint32_t    table = 0;
+    };
+  std::vector<Draw> draws;
+  draws.reserve(128);
+  spanCpu.clear();
   for(auto& i:cells) {
     auto& c = i.second;
     if(!c.live || c.count==0)
@@ -640,50 +669,151 @@ void GrassField::draw(Encoder<CommandBuffer>& cmd) {
       continue;
     const Vec3 min(float(c.cx)*CellCm-pad,   float(c.minY)/float(Grass::Unit)-10.f, float(c.cz)*CellCm-pad);
     const Vec3 max(float(c.cx+1)*CellCm+pad, float(c.maxY)/float(Grass::Unit)+80.f, float(c.cz+1)*CellCm+pad);
-    if(fr.testBbox(min,max)==Frustrum::T_Invisible)
+    const auto cellView = fr.testBbox(min,max);
+    if(cellView==Frustrum::T_Invisible)
       continue;
 
     uint8_t segments = MaxSegments;
     for(float to:SegmentsTo)
       if(c.dist>=to)
         --segments;
-    // the ranks that stand at the nearest of the cell (grass.vert)
-    const auto ranks = size_t(std::min(256.f, std::ceil(256.f*RankShare*ring.full/std::max(c.dist-RootsBeyond,1.f))));
 
-    if(!bound) {
-      cmd.setPipeline(Shaders::inst().grass);
-      cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
-      bound = true;
-      }
-    cmd.setBinding(1, c.gpu);
+    float   dist   = c.dist;
+    int32_t tested = -1;
+    bool    inView = true;
+    Draw    dr;
+    size_t  spans  = 0;
+    uint32_t end   = 0; // the buffer's blade after the last span's
+    auto flush = [&]() {
+      if(dr.count==0)
+        return;
+      spanCpu.resize(size_t(dr.table)+2*SpanCount, 0xFFFFFFFFu);
+      st.drawn     += dr.count;
+      st.fine      += dr.fine ? dr.count : 0;
+      st.triangles += size_t(dr.count)*size_t(2*dr.links-1);
+      draws.push_back(dr);
+      dr.count = 0;
+      };
     for(size_t bi=0; bi<c.batches.size(); ++bi) {
       const auto& b    = c.batches[bi];
       const bool  fine = b.kind==1;
-      if(fine && c.dist>=FineRadius)
+      if(dr.count!=0 && (dr.slot!=b.slot || dr.fine!=fine))
+        flush();
+      if(squares && int32_t(b.square)!=tested) {
+        tested = int32_t(b.square);
+        const float sx = float(c.cx)*CellCm + float(b.square/Grass::CellSquares)*SquareCm;
+        const float sz = float(c.cz)*CellCm + float(b.square%Grass::CellSquares)*SquareCm;
+        const float dx = std::max(0.f, std::max(sx - cam.x, cam.x - (sx+SquareCm)));
+        const float dz = std::max(0.f, std::max(sz - cam.z, cam.z - (sz+SquareCm)));
+        dist   = std::sqrt(dx*dx + dz*dz);
+        inView = dist<=ring.radius && (cellView==Frustrum::T_Full ||
+                 fr.testBbox(Vec3(sx-pad,min.y,sz-pad), Vec3(sx+SquareCm+pad,max.y,sz+SquareCm+pad))!=Frustrum::T_Invisible);
+        }
+      if(!inView || (fine && dist>=FineRadius))
         continue;
-      const size_t   rk    = fine ? size_t(std::min(256.f, std::ceil(256.f*RankShare*FineFull/std::max(c.dist-RootsBeyond,1.f)))) : ranks;
+      // the ranks that stand at the nearest of the square (grass.vert)
+      const size_t   rk    = size_t(std::min(256.f, std::ceil(256.f*RankShare*(fine ? FineFull : ring.full)/std::max(dist-RootsBeyond,1.f))));
       const uint8_t  links = fine ? uint8_t(c.dist<FineFull ? 2 : 1) : segments;
-      const uint32_t count = c.below[bi*RankCounts+rk];
+      const uint8_t* r0    = c.ranks.data()+b.first;
+      const auto     count = uint32_t(std::lower_bound(r0, r0+b.count, rk, [](uint8_t r, size_t lim) { return size_t(r)<lim; }) - r0);
       if(b.slot>=slotTex.size() || slotTex[b.slot]==nullptr || count==0)
         continue;
-      st.drawn     += count;
-      st.fine      += fine ? count : 0;
-      st.triangles += size_t(count)*size_t(2*links-1);
-      const auto& p = slotParams[b.slot];
+      if(waste && !c.cpu.empty()) {
+        Grass::WasteRule rule;
+        rule.full        = fine ? FineFull   : ring.full;
+        rule.fadeFrom    = fine ? FineFade   : ring.fadeFrom;
+        rule.radius      = fine ? FineRadius : ring.radius;
+        rule.cellRadius  = ring.radius;
+        rule.rankShare   = RankShare;
+        rule.rootsBeyond = RootsBeyond;
+        rule.fine        = fine;
+        rule.segmentsTo  = SegmentsTo;
+        rule.segmentsN   = std::size(SegmentsTo);
+        rule.maxSegments = MaxSegments;
+        Grass::WasteCell wc;
+        wc.origin = Vec3(float(c.cx)*CellCm - float(Grass::CellMargin/Grass::Unit), float(c.minY)/float(Grass::Unit),
+                         float(c.cz)*CellCm - float(Grass::CellMargin/Grass::Unit));
+        wc.x0     = float(c.cx)*CellCm;
+        wc.z0     = float(c.cz)*CellCm;
+        wc.size   = CellCm;
+        wc.minY   = min.y;
+        wc.maxY   = max.y;
+        wc.pad    = pad;
+        Grass::countWaste(st.waste, fr, cam, rule, wc, std::span<const Grass::Blade>(c.cpu.data()+b.first, count), links);
+        }
+      if(dr.count==0) {
+        dr.cell  = &c;
+        dr.slot  = b.slot;
+        dr.fine  = fine;
+        dr.links = links;
+        dr.table = uint32_t(spanCpu.size());
+        spans    = 0;
+        end      = 0;
+        }
+      if(spans>0 && end==b.first) {
+        // goes on from the span before it
+        spanCpu[spanCpu.size()-2] += count;
+        } else {
+        // a span: the instance after its last, and what to add to an instance for its blade in the buffer
+        spanCpu.push_back(dr.count+count);
+        spanCpu.push_back(b.first-dr.count);
+        ++spans;
+        }
+      dr.count += count;
+      end       = b.first+count;
+      }
+    flush();
+    }
+
+  if(!draws.empty()) {
+    auto&        device = Resources::device();
+    auto&        buf    = spanGpu[fId];
+    const size_t bytes  = spanCpu.size()*sizeof(uint32_t);
+    if(buf.byteSize()<bytes) {
+      Resources::recycle(std::move(buf));
+      buf = device.ssbo(BufferHeap::Upload, Uninitialized, std::max<size_t>(bytes+bytes/2, 4096));
+      }
+    buf.update(spanCpu.data(), 0, bytes);
+
+    cmd.setPipeline(Shaders::inst().grass);
+    cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
+    cmd.setBinding(4, buf);
+    const Cell* cellBound = nullptr;
+    size_t      slotBound = size_t(-1);
+    for(const auto& dr:draws) {
+      const auto& c = *dr.cell;
+      const auto& p = slotParams[dr.slot];
       Push push;
       push.origin       = Vec4(float(c.cx)*CellCm - float(Grass::CellMargin/Grass::Unit), float(c.minY)/float(Grass::Unit),
                                float(c.cz)*CellCm - float(Grass::CellMargin/Grass::Unit), 0.f);
       push.wind         = p.wind;
       push.translucency = p.translucency;
-      push.first        = b.first;
-      push.segments     = links;
-      push.shape        = fine ? Vec4(FineWidth,FineWidthStep,FineFull,FineFade) : Vec4(0.f,0.f,0.f,0.f);
-      const auto* sward = slotSward[b.slot];
+      push.table        = dr.table;
+      push.segments     = dr.links;
+      push.shape        = dr.fine ? Vec4(FineWidth,FineWidthStep,FineFull,FineFade) : Vec4(0.f,0.f,0.f,0.f);
+      const auto* sward = slotSward[dr.slot];
       push.swardK       = (sward!=nullptr && p.tile>0.f) ? 1.f/p.tile : 0.f;
-      cmd.setBinding(2, *slotTex[b.slot], Sampler::trillinear());
-      cmd.setBinding(3, sward!=nullptr ? *sward : *slotTex[b.slot], Sampler::trillinear());
+      if(cellBound!=&c) {
+        cmd.setBinding(1, c.gpu);
+        cellBound = &c;
+        }
+      if(slotBound!=dr.slot) {
+        cmd.setBinding(2, *slotTex[dr.slot], Sampler::trillinear());
+        cmd.setBinding(3, sward!=nullptr ? *sward : *slotTex[dr.slot], Sampler::trillinear());
+        slotBound = dr.slot;
+        }
       cmd.setPushData(push);
-      cmd.draw(nullptr, ibo, indexOffset(links), size_t(2*links-1)*3, 0, count);
+      cmd.draw(nullptr, ibo, indexOffset(dr.links), size_t(2*dr.links-1)*3, 0, dr.count);
+      ++st.draws;
+      }
+    }
+  if(Grass::wasteOn() && !waste) {
+    // the mean of the frames between two counts
+    drawNs += uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-t0).count());
+    if(++drawFrames==WasteEvery-1) {
+      st.drawUs  = size_t(drawNs/(1000u*drawFrames));
+      drawNs     = 0;
+      drawFrames = 0;
       }
     }
   last = st;

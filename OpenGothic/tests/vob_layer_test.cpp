@@ -375,6 +375,73 @@ void baseVisuals(const Fixture& f) {
   Tempest::Log::setOutputCallback({});
   }
 
+// A base vob that shows a particle effect given another effect in place ("effect"): a trigger with an effect and an
+// effect with a lamp under it cannot be removed, so their effect changes under the same id, class, place and tree
+WorldData::Data effectWorld() {
+  auto data=lampWorld();
+  auto pfx=[](asset::VirtualObjectType type,uint32_t id) {
+    auto vob=std::make_shared<asset::VirtualObject>();
+    vob->type=type; vob->id=id; vob->position={float(id),0,0};
+    auto visual=std::make_shared<asset::VisualParticleEffect>();
+    visual->type=asset::VisualType::PARTICLE_EFFECT; visual->name="FIRE_SMOKE.PFX";
+    vob->visual=visual; vob->visual_name=visual->name; vob->associated_visual_type=visual->type;
+    return vob;
+    };
+  auto fire=pfx(asset::VirtualObjectType::zCVob,960);
+  auto lamp=std::make_shared<asset::VLight>();
+  lamp->type=asset::VirtualObjectType::zCVobLight; lamp->id=961; lamp->range=300; lamp->on=true;
+  fire->children.push_back(lamp);
+  data.vobs.push_back(fire);
+  data.vobs.push_back(pfx(asset::VirtualObjectType::zCPFXController,962));
+  return data;
+  }
+
+void baseEffects(const Fixture& f) {
+  f.clearLayers();
+  // the fixture's base has no script data: the names of two base effects stand in for the content's checker
+  const GameHost::ParticleNameCheck names=[](std::string_view name,const fs::path&,const fs::path&,std::vector<std::string>&) {
+    return name=="FIRE_SPARKS" || name=="FIRE_SMOKE";
+    };
+  textFile(f.layers/"10-effect.json",R"({"format":1,"effect":[{"id":960,"pfx":"fire_sparks"},{"id":962,"pfx":"FIRE_SPARKS.PFX"}]})");
+  auto data=effectWorld();
+  const auto result=VobLayer::apply(data,f.world,f.content/"worlds/TEST",names);
+  require(result.errors.empty() && result.swapped==2 && result.removed==0 && result.added==0,
+          "a base effect vob and a base effect trigger take a content effect in place");
+  for(uint32_t id:{960u,962u}) {
+    const auto* vob=find(data,id);
+    require(vob!=nullptr && !VobLayer::isAdded(*vob) && vob->position.x==float(id) && vob->visual!=nullptr &&
+            vob->visual->type==asset::VisualType::PARTICLE_EFFECT && vob->visual_name=="FIRE_SPARKS.PFX" &&
+            vob->visual->name=="FIRE_SPARKS.PFX","the vob keeps its id and place and burns the content effect");
+    }
+  require(find(data,960)->type==asset::VirtualObjectType::zCVob && find(data,960)->children.size()==1 &&
+          find(data,960)->children[0]->id==961,"the lamp under the effect stays in the tree");
+  require(find(data,962)->type==asset::VirtualObjectType::zCPFXController,"the trigger keeps its class");
+  struct Case { std::string name,json,id,message; };
+  Tempest::Log::setOutputCallback([](Tempest::Log::Mode,const char*) {});
+  for(const auto& c:std::initializer_list<Case>{
+    {"unknown-id",R"({"id":98765,"pfx":"FIRE_SPARKS"})","98765","unknown base ID"},
+    {"not-an-effect",R"({"id":31,"pfx":"FIRE_SPARKS"})","31","is not a vob with a particle effect"},
+    {"unknown-pfx",R"({"id":960,"pfx":"MISSING"})","960","unknown PFX"},
+    {"twice",R"({"id":960,"pfx":"FIRE_SPARKS"},{"id":960,"pfx":"FIRE_SPARKS"})","960","duplicate effect id"},
+    {"field",R"({"id":960,"pfx":"FIRE_SMOKE","yaw_deg":0})","960","yaw_deg"}
+    }) {
+    f.clearLayers();
+      textFile(f.layers/"10-bad.json","{\"format\":1,\"effect\":["+c.json+"]}");
+    auto world=effectWorld();
+    const auto failed=VobLayer::apply(world,f.world,f.content/"worlds/TEST",names);
+    require(failed.errors.size()==1 && failed.swapped==0 && failed.errors.front().find(c.id)!=std::string::npos &&
+            failed.errors.front().find(c.message)!=std::string::npos,"effect "+c.name+": the file is rejected with the id and the cause");
+    require(find(world,960)->visual_name=="FIRE_SMOKE.PFX","effect "+c.name+": a rejected file leaves the vob its effect");
+    }
+  f.clearLayers();
+  textFile(f.layers/"10-both.json",R"({"format":1,"effect":[{"id":962,"pfx":"FIRE_SPARKS"}],"remove":[962]})");
+  auto world=effectWorld();
+  require(!VobLayer::apply(world,f.world,f.content/"worlds/TEST",names).errors.empty() &&
+          find(world,962)!=nullptr && find(world,962)->visual_name=="FIRE_SMOKE.PFX","one file cannot give a vob an effect and remove it");
+  Tempest::Log::setOutputCallback({});
+  f.clearLayers();
+  }
+
 void removedReferences(const Fixture& f) {
   for(bool move:{false,true}) {
     f.clearLayers();
@@ -536,18 +603,27 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
     {"name":"OWN_TEST_SPARKS","base":"FIRE_SPARKS","set":{"visOrientation_S":"VELO","visAlphaFunc_S":"ADD"},"curl":{"strength":1.5,"frequency":4,"speed":0.3},"drag":2,"stretch":0.025,"minPixels":1.5,"hdr":{"from":1,"to":9,"edge":0.25}},
     {"name":"OWN_TEST_SPARKS_CHILD","base":"OWN_TEST_SPARKS","set":{},"drag":3}]})");
   textFile(directory/"50-haze.json",R"({"format":1,"effects":[
-    {"name":"OWN_TEST_HAZE","base":"FIRE_SMOKE","set":{"visAlphaFunc_S":"BLEND"},"haze":{"shift":3,"cell":5}}]})");
+    {"name":"OWN_TEST_HAZE","base":"FIRE_SMOKE","set":{"visAlphaFunc_S":"BLEND"},"haze":{"shift":3,"cell":5}},
+    {"name":"OWN_TEST_LEAN","base":"OWN_TEST_FLIP","set":{},"lean":{"rise":1.8,"max_deg":45},"wind":0.5},
+    {"name":"OWN_TEST_TAIL","base":"FIRE_SMOKE","set":{},"inherit":0.75,"drag":1,"wind":1,"plume":{"height":42,"rise":2.2,"wind":0.5}}]})");
   auto vm=ParticleContent::openProgram(baseRoot);
   const auto original=ParticleContent::base(*vm,"FIRE_SMOKE");
   require(original!=nullptr,"base FIRE_SMOKE definition");
   const auto loaded=ParticleContent::load(*vm,f.content);
-  require(loaded.errors.empty() && loaded.effects.size()==9,"own definitions load in filename and declaration order");
+  require(loaded.errors.empty() && loaded.effects.size()==11,"own definitions load in filename and declaration order");
   const auto& sparks=loaded.motions.at("OWN_TEST_SPARKS_CHILD");
   require(sparks.curlStrength==1.5f && sparks.curlFrequency==4.f && sparks.curlSpeed==0.3f && sparks.drag==3.f &&
           sparks.stretch==0.025f && sparks.minPixels==1.5f && loaded.motions.at("OWN_TEST_SPARKS").drag==2.f &&
           sparks.hdrFrom==1.f && sparks.hdrTo==9.f && sparks.hdrEdge==0.25f,
           "curl, drag, stretch, minPixels and hdr are read and inherited field by field from an own base");
   require(loaded.motions.at("OWN_TEST_HAZE").hazeShift==3.f && loaded.motions.at("OWN_TEST_HAZE").hazeCell==5.f,"haze is read");
+  {
+  const auto& lean=loaded.motions.at("OWN_TEST_LEAN");
+  require(lean.leanRise==1.8f && lean.leanMaxDeg==45.f && lean.leanResponse==0.12f && lean.inherit==0 &&
+          loaded.motions.at("OWN_TEST_TAIL").inherit==0.75f && lean.wind==0.5f &&
+          loaded.motions.at("OWN_TEST_TAIL").wind==1.f && loaded.motions.at("OWN_TEST_TAIL").plumeHeight==42.f &&
+          loaded.motions.at("OWN_TEST_TAIL").plumeRise==2.2f,"lean, inherit, wind and plume are read");
+  }
   require(loaded.motions.count("OWN_TEST_SMOKE")==0 && loaded.motions.count("OWN_TEST_FLIP")==0,"effects without them have no motion");
   const auto flip=loaded.flipbooks.find("OWN_TEST_FLIP");
   require(flip!=loaded.flipbooks.end() && flip->second.cols==8 && flip->second.rows==4 && flip->second.frames==30 &&
@@ -580,6 +656,14 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
     {"flip-field",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24,"loop":1}})"},
     {"flip-yaw",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24,"yaw":1}})"},
     {"flip-steady",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24,"steady":1}})"},
+    {"lean-no-steady",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"lean":{"rise":1.8}})"},
+    {"lean-no-rise",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24,"steady":true},"lean":{"max_deg":45}})"},
+    {"inherit-steady",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24,"steady":true},"inherit":0.5})"},
+    {"plume-no-wind",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"drag":1,"plume":{"height":42,"rise":2.2,"wind":0.5}})"},
+    {"plume-no-rise",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"drag":1,"wind":1,"plume":{"height":42,"wind":0.5}})"},
+    {"wind-no-drag",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"wind":1})"},
+    {"wind-range",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"drag":1,"wind":3})"},
+    {"inherit-range",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"inherit":1.5})"},
     {"curl-frequency",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"curl":{"strength":1,"frequency":0}})"},
     {"curl-field",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"curl":{"strength":1,"frequency":2,"octaves":3}})"},
     {"drag-range",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"drag":60})"},
@@ -639,6 +723,15 @@ void runtimeParticles(Gothic& gothic, const Fixture& f, const fs::path& baseRoot
           std::abs(sparks->stretchMs-25.f)<1e-4f && sparks->minPixels==1.5f &&
           sparks->hdrFrom==1.f && sparks->hdrTo==9.f && sparks->hdrEdge==0.25f &&
           sparks->visOrientation==ParticleFx::Orientation::Velocity,"own motion and hdr reach the native effect in cm and ms");
+  {
+  const auto* lean=gothic.loadParticleFx("OWN_TEST_LEAN");
+  const auto* tail=gothic.loadParticleFx("OWN_TEST_TAIL");
+  require(lean && std::abs(lean->leanRise-0.18f)<1e-5f && std::abs(lean->leanMaxTan-1.f)<1e-4f &&
+          std::abs(lean->leanResponseMs-120.f)<1e-3f && tail && tail->inherit==0.75f && tail->leanRise==0 &&
+          lean->wind==0.5f && tail->wind==1.f && tail->plumeCm==42.f && std::abs(tail->plumeRise-0.22f)<1e-5f && tail->plumeWind==0.5f &&
+          lean->plumeCm==0,
+          "lean and inherit reach the particle declaration in engine units");
+  }
   const auto* haze=gothic.loadParticleFx("OWN_TEST_HAZE");
   require(haze && haze->hazeShift==3.f && haze->hazeCell==5.f && haze->visMaterial.alpha==Material::Ghost,
           "a haze reaches the native effect as a ghost material");
@@ -694,6 +787,20 @@ void particleMotion() {
               " ms differs from 1 ms steps by "+std::to_string(error*100.f)+" %");
       }
     }
+  {
+  // wind: a particle with drag ends at the wind's velocity and is carried by it; without wind nothing changes
+  PfxMotion::Params still;
+  still.drag=0.002f;
+  const Tempest::Vec3 wind(0.1f,0,0.2f);
+  Tempest::Vec3 pos, vel(0,0.1f,0), pos0, vel0(0,0.1f,0);
+  for(int i=0;i<300;++i) {
+    PfxMotion::step(still,Tempest::Vec3(),pos,vel,Tempest::Vec3(),float(i*17),17.f,wind);
+    PfxMotion::step(still,Tempest::Vec3(),pos0,vel0,Tempest::Vec3(),float(i*17),17.f);
+    }
+  const Tempest::Vec3 lag=wind*(1.f/still.drag);  // the way lost while the particle takes the wind's speed
+  require((vel-wind).length()<1e-3f && (pos-(wind*5100.f-lag+pos0)).length()<1.f && std::abs(pos0.x)<1e-4f,
+          "wind carries a particle with drag: it takes the wind's velocity");
+  }
   p.drag=0;
   require((run(15,1000,1)[0].pos-run(1000,1000,1)[0].pos).length()<
           0.05f*(run(1000,1000,1)[0].pos-start(1)[0].pos).length(),"curl without drag keeps the path at 15 fps");
@@ -782,6 +889,16 @@ void flameLayer(const Fixture& f, const fs::path& baseRoot) {
     const auto result=VobLayer::readTree(rejected,baseRoot,file,ParticleContent::nameChecker(),f.content);
     require(!result.errors.empty() && rejected.empty(),"flicker "+reason+": the file is rejected");
     }
+  // a tree entry up the world's vertical from its place in the slot ("up_cm"): the fire of a torch in a hand
+  textFile(file,R"({"format":1,"add":[{"key":"up","kind":"emitter","pfx":"FIRE_SMOKE","position":[-40,0,3],"yaw_deg":0,"up_cm":18},)"
+                R"({"key":"flat","kind":"emitter","pfx":"FIRE_SMOKE","position":[0,0,0],"yaw_deg":0}]})");
+  Resources::VobTree lifted;
+  require(VobLayer::readTree(lifted,baseRoot,file,ParticleContent::nameChecker(),f.content).errors.empty() && lifted.size()==2 &&
+          VobLayer::upCm(*lifted[0])==18.f && VobLayer::upCm(*lifted[1])==0.f,"a tree entry keeps its up_cm");
+  textFile(file,R"({"format":1,"add":[{"key":"up","kind":"emitter","pfx":"FIRE_SMOKE","position":[0,0,0],"yaw_deg":0,"up_cm":201}]})");
+  Resources::VobTree tooFar;
+  require(!VobLayer::readTree(tooFar,baseRoot,file,ParticleContent::nameChecker(),f.content).errors.empty() && tooFar.empty(),
+          "up_cm over 200 is rejected");
   fs::remove_all(file.parent_path());
 
   // a base lamp edited in place takes the signal as well: its own colour and range keys go
@@ -1185,6 +1302,7 @@ int main() {
     removedReferences(fixture);
     baseLamps(fixture);
     baseVisuals(fixture);
+    baseEffects(fixture);
     unreadableLayers(fixture);
     saveBoundPolicy(fixture);
     particleMotion();

@@ -267,6 +267,13 @@ void fallbacks(const fs::path& root, const ClothWorld& world) {
   auto data = ClothBundle::read(dir/wcl::FileName).data();
   data.exclusions[zero].back() = 1000000;
   writeBytes(dir/wcl::FileName,encodeClothBundle(data));
+  expectSearch("an exclusion past the triangles the bundle gives its cell",dir,"ordinal 1000000 past the cell's");
+  // The bundle's own count of the cell raised with it (version 2): the loaded table still refuses it.
+  dir = copy();
+  data = ClothBundle::read(dir/wcl::FileName).data();
+  data.exclusions[zero].back() = 1000000;
+  data.cells[zero].triangles = 1000000;
+  writeBytes(dir/wcl::FileName,encodeClothBundle(data));
   expectSearch("an exclusion past a cell's triangles",dir,"cell 0,0 excludes triangle 1000000, past the cell's");
 
   dir = copy();

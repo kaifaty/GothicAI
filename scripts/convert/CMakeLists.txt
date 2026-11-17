@@ -55,62 +55,16 @@ if(NOT MSVC)
   target_compile_options(content-convert PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wconversion>)
 endif()
 # Offline particle checks (check-particles) use the game's particlecontent loader and VM without writing base data.
-# Base import never executes this VM, so gothic-daedalus stays outside the base format digest.
+# Definitions import executes item constructors through the shared snapshot library.
 target_link_libraries(content-convert PRIVATE gothic-base-import gothic-video-import gothic-daedalus)
 
-# Derive the complete native field list from the declarations, rather than maintaining a
-# snapshot whitelist. Reconfiguration after an NpcRecord/ItemRecord field addition makes old records fail.
-set(ITEM_RECORD "${CMAKE_CURRENT_SOURCE_DIR}/../../OpenGothic/common/world/records/itemrecord.h")
-set(NPC_RECORD "${CMAKE_CURRENT_SOURCE_DIR}/../../OpenGothic/common/world/records/npcrecord.h")
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${ITEM_RECORD}" "${NPC_RECORD}" "${CMAKE_CURRENT_SOURCE_DIR}/../../OpenGothic/common/daedalus/classes.cpp")
-file(READ "${ITEM_RECORD}" ITEM_RECORD_TEXT)
-file(READ "${NPC_RECORD}" NPC_RECORD_TEXT)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../../OpenGothic/common/daedalus/classes.cpp" NPC_BINDINGS)
-set(NPC_FIELDS "// Generated from every NpcRecord/ItemRecord field declaration.\n")
-foreach(NATIVE INpc IItem)
-  if(NATIVE STREQUAL "INpc")
-    string(REGEX MATCH "struct NpcRecord \\{([^}]*)\\};" RECORD_DECL "${NPC_RECORD_TEXT}")
-  else()
-    string(REGEX MATCH "struct ItemRecord \\{([^}]*)\\};" RECORD_DECL "${ITEM_RECORD_TEXT}")
-  endif()
-  set(CLASS_BODY "${CMAKE_MATCH_1}")
-  # Keep the pre-move schema spelling: the owning base is an implementation detail.
-  # Function retains the old func annotation without depending on the VM header.
-  string(REPLACE "\t\tusing Function = int32_t;\n" "" CLASS_BODY "${CLASS_BODY}")
-  # Older CMake versions reject a replacement backreference to an unmatched optional group.
-  string(REGEX REPLACE "\n\t\t([A-Za-z0-9_:]+) ([A-Za-z0-9_]+)(\\[[A-Za-z0-9_:]+\\]);" "\n\t\tvar \\1 \\2\\3;" CLASS_BODY "${CLASS_BODY}")
-  string(REGEX REPLACE "\n\t\t([A-Za-z0-9_:]+) ([A-Za-z0-9_]+);" "\n\t\tvar \\1 \\2;" CLASS_BODY "${CLASS_BODY}")
-  string(REPLACE "std::string" "string" CLASS_BODY "${CLASS_BODY}")
-  string(REPLACE "Function" "func" CLASS_BODY "${CLASS_BODY}")
-  string(REGEX REPLACE "\n[ \t\n]*$" "" CLASS_BODY "${CLASS_BODY}")
-  set(CLASS_BODY "struct ${NATIVE} : DaedalusInstance {${CLASS_BODY}\n\n\t\t")
-  string(SHA256 CLASS_SCHEMA "${CLASS_BODY}")
-  string(APPEND NPC_FIELDS "inline constexpr char ${NATIVE}Schema[] = \"${CLASS_SCHEMA}\";\n")
-  string(REGEX MATCHALL "var[ \t]+[A-Za-z0-9_:]+[ \t]+[A-Za-z0-9_]+(\\[[A-Za-z0-9_:]+\\])?" FIELDS "${CLASS_BODY}")
-  string(APPEND NPC_FIELDS "template<class F> void snapshotFields(daedalus::${NATIVE}& v, F f) {\n")
-  foreach(FIELD IN LISTS FIELDS)
-    string(REGEX MATCH "var[ \t]+([A-Za-z0-9_:]+)[ \t]+([A-Za-z0-9_]+)" MATCHED "${FIELD}")
-    set(FIELD_TYPE "${CMAKE_MATCH_1}")
-    set(FIELD_NAME "${CMAKE_MATCH_2}")
-    set(IS_FUNCTION false)
-    if(FIELD_TYPE STREQUAL "func")
-      set(IS_FUNCTION true)
-    endif()
-    string(REGEX MATCH "register_member(<${NATIVE}>)?\\(\"([^\"]+)\", &${NATIVE}::${FIELD_NAME}\\)" BINDING "${NPC_BINDINGS}")
-    set(SYMBOL "${CMAKE_MATCH_2}")
-    string(APPEND NPC_FIELDS "  f(\"${FIELD_NAME}\", v.${FIELD_NAME}, ${IS_FUNCTION}, \"${SYMBOL}\");\n")
-  endforeach()
-  string(APPEND NPC_FIELDS "}\n")
-endforeach()
-file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/npc-generated/npcsnapshotfields.h" CONTENT "@NPC_FIELDS@" @ONLY)
-add_library(gothic-npc-snapshot STATIC npcsnapshot.cpp)
-target_include_directories(gothic-npc-snapshot PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}"
-  PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/npc-generated")
-target_include_directories(gothic-npc-snapshot SYSTEM PRIVATE ../../OpenGothic/lib/rapidjson/include)
-target_link_libraries(gothic-npc-snapshot PUBLIC gothic-daedalus gothic-base-runtime)
 target_link_libraries(content-convert PRIVATE gothic-npc-snapshot)
-add_executable(gothic-npc-snapshot-contract EXCLUDE_FROM_ALL ../../OpenGothic/tests/npc_snapshot_contract.cpp)
-target_include_directories(gothic-npc-snapshot-contract PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/npc-generated")
+add_executable(gothic-npc-snapshot-contract EXCLUDE_FROM_ALL ../../OpenGothic/tests/npc_snapshot_contract.cpp
+  ../../OpenGothic/common/game/itemdefinitionruntime.cpp
+  ../../OpenGothic/common/game/routinedefinitionruntime.cpp
+  ../../OpenGothic/common/world/objects/npcroutinetable.cpp
+  ../../OpenGothic/common/world/waypoint.cpp)
+target_include_directories(gothic-npc-snapshot-contract PRIVATE "${NPC_SNAPSHOT_GENERATED_DIR}")
 target_include_directories(gothic-npc-snapshot-contract SYSTEM PRIVATE ../../OpenGothic/lib/rapidjson/include)
 target_link_libraries(gothic-npc-snapshot-contract PRIVATE gothic-npc-snapshot)
 if(NOT MSVC)

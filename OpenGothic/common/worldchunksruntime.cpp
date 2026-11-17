@@ -10,6 +10,7 @@
 #include <tuple>
 
 #include "gothicglb.h"
+#include "worldchunkcatalogue.h"
 #include "worldchunkcookedsource.h"
 
 void retainWorldTriangles(asset::WorldMesh& mesh, std::span<const uint32_t> triangles, ChunkTable* chunks) {
@@ -69,6 +70,19 @@ void retainWorldTriangles(asset::WorldMesh& mesh, std::span<const uint32_t> tria
     chunks->triangleChunks=std::move(ownership);
     chunks->triangleSources=std::move(sources);
     }
+  }
+
+std::vector<std::vector<uint32_t>> chunkSourceLists(const ChunkTable& chunks) {
+  if(chunks.source && chunks.source->catalogue())
+    return {};
+  if(chunks.triangleSources.size()!=chunks.triangleChunks.size())
+    throw std::runtime_error("world triangles: chunk source IDs do not match the chunk ownership");
+  std::vector<std::vector<uint32_t>> result(chunks.entries.size());
+  for(size_t i=0;i<result.size();++i)
+    result[i].reserve(chunks.entries[i].triangleCount);
+  for(size_t t=0;t<chunks.triangleChunks.size();++t)
+    result.at(chunks.triangleChunks[t]).push_back(chunks.triangleSources[t]);
+  return result;
   }
 
 std::vector<std::vector<uint32_t>> chunkTriangleLists(const asset::WorldMesh& mesh, const ChunkTable& chunks) {
@@ -174,8 +188,11 @@ class ChunkReader {
     std::vector<Triangle>     triangles;
 
     void read(const std::filesystem::path& path) {
+      read(parseGlb(path));
+      }
+
+    void read(const ParsedGlb& glb) {
       triangleStart=triangles.size();
-      auto glb = parseGlb(path);
       const auto& d = *glb.data;
       std::vector<const cgltf_node*> pending;
       for(size_t i=0; i<d.scene->nodes_count; ++i)
@@ -373,6 +390,83 @@ class ChunkReader {
 
 }
 
+CookedChunk recoverIndexedChunk(const std::filesystem::path& path, const CookedIndex& index, size_t cell,
+                                std::span<const asset::Material> baseMaterials) {
+  // Verify the bytes we parse, so the index still refers to these local slots and triangle ordinals.
+  const auto glb = gothicglb::parseGlb(path);
+  const auto& entry = index.cells()[cell];
+  const auto hash = sha256Bytes(glb.bytes);
+  if(glb.bytes.size()!=entry.glbSize || !std::equal(hash.begin(),hash.end(),entry.glbSha256))
+    fail(path.string()+": the GLB differs from the cooked index (length or SHA-256)");
+  ChunkReader reader;
+  reader.read(glb);
+
+  CookedChunkData data;
+  auto& header = data.header;
+  header.cell       = {entry.x,entry.z};
+  header.glbSize    = glb.bytes.size();
+  header.glbSha256  = hash;
+  header.worldSize  = index.header().worldSize;
+  header.worldCrc32 = index.header().worldCrc32;
+
+  // The cook writes each array in GLB first-use order. Equal keys are a single local slot even
+  // when the index resolves it to a split or appended ID in the complete set.
+  std::map<VertexKey,uint32_t> vertices;
+  std::map<FeatureKey,uint32_t> features;
+  std::map<std::string,uint32_t> addedMaterials;
+  std::vector<uint32_t> materials(reader.materials.size(),wcb::None);
+  data.triangles.reserve(reader.triangles.size());
+  for(const auto& triangle:reader.triangles) {
+    auto& material = materials[triangle.material];
+    if(material==wcb::None) {
+      const auto& record = reader.materials[triangle.material];
+      const auto next = uint32_t(data.materials.size());
+      if(record.index>=0 && size_t(record.index)<baseMaterials.size() &&
+         gothicglb::sameMaterial(baseMaterials[size_t(record.index)],record.material)) {
+        material = next;
+        data.materials.emplace_back(uint32_t(record.index),record.material);
+        } else {
+        const auto [it,inserted] = addedMaterials.emplace(gothicglb::materialJson(record.material,0),next);
+        material = it->second;
+        if(inserted)
+          data.materials.emplace_back(wcb::None,record.material);
+        }
+      }
+    wcb::Triangle cooked {};
+    cooked.material = material;
+    cooked.order    = triangle.order<0 ? wcb::Added : uint32_t(triangle.order);
+    cooked.lightmap = triangle.lightmap;
+    cooked.flags    = wcb::packFlags(triangle.flags);
+    cooked.sector   = triangle.flags.sector_index;
+    for(size_t c=0;c<triangle.corners.size();++c) {
+      const auto& corner = triangle.corners[c];
+      const auto& p = corner.position;
+      const auto [v,newVertex] = vertices.emplace(corner.vertex,uint32_t(data.positions.size()));
+      if(newVertex) {
+        if(data.positions.empty())
+          header.min = header.max = p;
+        else
+          for(unsigned axis=0;axis<3;++axis) {
+            header.min[axis] = std::min(header.min[axis],p[axis]);
+            header.max[axis] = std::max(header.max[axis],p[axis]);
+            }
+        data.positions.push_back({p.x,p.y,p.z,uint32_t(corner.vertex.id)});
+        }
+      const auto [f,newFeature] = features.emplace(corner.feature,uint32_t(data.features.size()));
+      if(newFeature) {
+        const auto& x = corner.value;
+        data.features.push_back({x.texture.x,x.texture.y,x.light,x.normal.x,x.normal.y,x.normal.z,
+                                 uint32_t(corner.feature.id)});
+        }
+      cooked.vertex[c]  = v->second;
+      cooked.feature[c] = f->second;
+      }
+    data.triangles.push_back(cooked);
+    }
+  auto bytes = std::make_shared<const std::vector<uint8_t>>(encodeCookedChunk(data));
+  return CookedChunk::open(*bytes,path.string(),bytes);
+  }
+
 struct ChunkMeshSource::Impl {
   std::vector<WorldChunkFile> files;
   std::vector<asset::Material> materials;
@@ -385,11 +479,13 @@ struct ChunkMeshSource::Impl {
   size_t vertexCount = 0;
   size_t featureCount = 0;
   CookedChunkSource cooked; // the cells' .wcb files, when the world is cooked beside its GLBs
+  std::shared_ptr<const WorldCatalogue> catalogue; // a catalogue start's; its GLB reads take the catalogue's ids
   };
 
 size_t ChunkMeshSource::memoryBytes() const {
   size_t bytes=sizeof(*this)+sizeof(Impl)+impl->files.capacity()*sizeof(WorldChunkFile)+
-               impl->materials.capacity()*sizeof(asset::Material)+impl->cooked.memoryBytes();
+               impl->materials.capacity()*sizeof(asset::Material)+impl->cooked.memoryBytes()+
+               (impl->catalogue ? impl->catalogue->memoryBytes() : 0);
   for(const auto& file:impl->files)
     bytes+=file.path.native().capacity()*sizeof(std::filesystem::path::value_type);
   for(const auto& material:impl->materials)
@@ -404,10 +500,38 @@ size_t ChunkMeshSource::memoryBytes() const {
 
 WorldChunkMesh ChunkMeshSource::read(size_t chunk, std::span<const uint32_t> sources, bool currentFile) const {
   return impl->cooked.read(chunk,sources,currentFile,{impl->files.at(chunk),impl->materials,impl->vertexCount,
-                           impl->featureCount},[&] { return readGlb(chunk,sources,currentFile); });
+                           impl->featureCount,impl->catalogue.get()},[&] {
+    return impl->catalogue ? impl->catalogue->readGlb(chunk,&sources,currentFile) : readGlb(chunk,sources,currentFile);
+    });
   }
 
+WorldChunkMesh ChunkMeshSource::readLandscape(size_t chunk, bool currentFile) const {
+  const auto* catalogue = impl->catalogue.get();
+  if(catalogue==nullptr)
+    fail("ChunkMeshSource::readLandscape needs a catalogue start");
+  return impl->cooked.readLandscape(chunk,catalogue->exclusions(chunk),catalogue->kept(chunk),currentFile,
+                                    {impl->files.at(chunk),impl->materials,impl->vertexCount,impl->featureCount,catalogue},
+                                    [&] { return catalogue->readGlb(chunk,nullptr,currentFile); });
+  }
+
+const WorldCatalogue* ChunkMeshSource::catalogue() const { return impl->catalogue.get(); }
+
 const CookedChunkSource& ChunkMeshSource::cooked() const { return impl->cooked; }
+
+std::shared_ptr<const ChunkMeshSource> ChunkMeshSource::fromCatalogue(std::shared_ptr<const WorldCatalogue> catalogue,
+                                                                      std::vector<WorldChunkFile> files,
+                                                                      std::vector<asset::Material> materials,
+                                                                      CookedIndex index, CookedSet set,
+                                                                      const WorldCellManifest& manifest) {
+  auto source = std::make_shared<Impl>();
+  source->files        = std::move(files);
+  source->materials    = std::move(materials);
+  source->vertexCount  = index.header().vertices;
+  source->featureCount = index.header().features;
+  source->catalogue    = std::move(catalogue);
+  source->cooked.loadCatalogue(std::move(index),std::move(set),manifest);
+  return std::shared_ptr<const ChunkMeshSource>(new ChunkMeshSource(std::move(source)));
+  }
 
 WorldChunkMesh ChunkMeshSource::readGlb(size_t chunk, std::span<const uint32_t> sources, bool currentFile) const {
   auto file=impl->files.at(chunk);
@@ -480,6 +604,16 @@ asset::WorldMesh canonicalWorldMesh(const asset::WorldMesh& mesh) {
 
 asset::WorldMesh readWorldChunks(const std::filesystem::path& dir, const std::filesystem::path& overrideDir,
                                  ChunkTable* chunks, WorldChunkTrace* trace) {
+  return ChunkMeshSource::readStitched(dir,overrideDir,chunks,trace,true);
+  }
+
+asset::WorldMesh readWorldChunksGlb(const std::filesystem::path& dir, const std::filesystem::path& overrideDir,
+                                    ChunkTable& chunks) {
+  return ChunkMeshSource::readStitched(dir,overrideDir,&chunks,nullptr,false);
+  }
+
+asset::WorldMesh ChunkMeshSource::readStitched(const std::filesystem::path& dir, const std::filesystem::path& overrideDir,
+                                               ChunkTable* chunks, WorldChunkTrace* trace, bool cookedCells) {
   const auto manifest = readWorldChunkManifest(dir);
   ChunkTable table;
   auto source=chunks!=nullptr ? std::make_shared<ChunkMeshSource::Impl>() : nullptr;
@@ -636,7 +770,8 @@ asset::WorldMesh readWorldChunks(const std::filesystem::path& dir, const std::fi
     source->features.assign(newFeatures.begin(),newFeatures.end());
     source->vertexCount=out.vertices.size();
     source->featureCount=out.features.size();
-    source->cooked.load(dir,overrideDir,manifest,source->files,out);
+    if(cookedCells)
+      source->cooked.load(dir,overrideDir,manifest,source->files,out);
     table.source=std::shared_ptr<const ChunkMeshSource>(new ChunkMeshSource(std::move(source)));
     *chunks=std::move(table);
     }

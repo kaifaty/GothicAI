@@ -1,0 +1,15 @@
+{
+ "format": 1,
+ "remove": [49, 117, 168, 175, 183, 227, 232],
+ "light": [
+ ],
+ "add": [
+  {"key": "candle-49-flame", "kind": "emitter", "pfx": "OWN_CANDLE_FLAME", "position": [-9712.0, 43.7, -17395.7], "yaw_deg": 0, "flicker": {"pulse_hz": 1.3, "jitter_hz": 8, "amount": 0.08, "seed": 178}},
+  {"key": "candle-117-flame", "kind": "emitter", "pfx": "OWN_CANDLE_FLAME", "position": [-9322.2, 49.4, -12301.5], "yaw_deg": 0, "flicker": {"pulse_hz": 1.3, "jitter_hz": 8, "amount": 0.08, "seed": 382}},
+  {"key": "candle-168-flame", "kind": "emitter", "pfx": "OWN_CANDLE_FLAME", "position": [-9665.0, 321.5, -18288.7], "yaw_deg": 0, "flicker": {"pulse_hz": 1.3, "jitter_hz": 8, "amount": 0.08, "seed": 535}},
+  {"key": "candle-175-flame", "kind": "emitter", "pfx": "OWN_CANDLE_FLAME", "position": [-9416.1, 321.5, -17798.4], "yaw_deg": 0, "flicker": {"pulse_hz": 1.3, "jitter_hz": 8, "amount": 0.08, "seed": 556}},
+  {"key": "candle-183-flame", "kind": "emitter", "pfx": "OWN_CANDLE_FLAME", "position": [-10847.1, 342.3, -18244.1], "yaw_deg": 0, "flicker": {"pulse_hz": 1.3, "jitter_hz": 8, "amount": 0.08, "seed": 580}},
+  {"key": "candle-227-flame", "kind": "emitter", "pfx": "OWN_CANDLE_FLAME", "position": [-10382.8, 731.9, -18877.7], "yaw_deg": 0, "flicker": {"pulse_hz": 1.3, "jitter_hz": 8, "amount": 0.08, "seed": 712}},
+  {"key": "candle-232-flame", "kind": "emitter", "pfx": "OWN_CANDLE_FLAME", "position": [-9905.9, 850.8, -19523.6], "yaw_deg": 0, "flicker": {"pulse_hz": 1.3, "jitter_hz": 8, "amount": 0.08, "seed": 727}}
+ ]
+}

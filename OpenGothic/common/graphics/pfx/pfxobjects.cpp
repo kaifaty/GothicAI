@@ -31,6 +31,14 @@ void PfxObjects::setViewerPos(const Vec3& pos) {
   viewerPos = pos;
   }
 
+void PfxObjects::setWind(const Vec3& w) {
+  wind = w;
+  }
+
+void PfxObjects::setShelter(std::function<float(const Vec3&,const Vec3&)> open) {
+  shelter = std::move(open);
+  }
+
 void PfxObjects::resetTicks() {
   lastUpdate = size_t(-1);
   }

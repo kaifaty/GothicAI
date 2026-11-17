@@ -1,0 +1,19 @@
+{
+ "format": 1,
+ "visual": [
+  {"id": 8631, "visual": "OWN_WALL_TORCH_01"}
+ ],
+ "effect": [
+  {"id": 8635, "pfx": "OWN_TORCH_SPARKS"}
+ ],
+ "remove": [8633, 8638],
+ "add": [
+  {"key": "wall-torch-addonworld-8631-flame", "kind": "emitter", "pfx": "OWN_TORCH_FLAME", "position": [30741.8, -3909.2, 10832.2], "yaw_deg": 0, "flicker": {"pulse_hz": 4.5, "jitter_hz": 12, "amount": 0.2, "seed": 25900}},
+  {"key": "wall-torch-addonworld-8631-flame-a", "kind": "emitter", "pfx": "OWN_TORCH_FLAME_SIDE", "position": [30742.7, -3915.4, 10828.0], "yaw_deg": 0, "flicker": {"pulse_hz": 4.5, "jitter_hz": 12, "amount": 0.2, "seed": 25901}},
+  {"key": "wall-torch-addonworld-8631-flame-b", "kind": "emitter", "pfx": "OWN_TORCH_FLAME_SIDE", "position": [30741.0, -3915.4, 10836.4], "yaw_deg": 0, "flicker": {"pulse_hz": 4.5, "jitter_hz": 12, "amount": 0.2, "seed": 25902}},
+  {"key": "wall-torch-addonworld-8631-licks", "kind": "emitter", "pfx": "OWN_TORCH_LICKS", "position": [30740.1, -3930.9, 10831.9], "yaw_deg": 0},
+  {"key": "wall-torch-addonworld-8631-drops", "kind": "emitter", "pfx": "OWN_TORCH_DROPS", "position": [30739.0, -3949.3, 10831.7], "yaw_deg": 0},
+  {"key": "wall-torch-addonworld-8631-soot", "kind": "emitter", "pfx": "OWN_TORCH_SOOT", "position": [30743.4, -3899.6, 10832.5], "yaw_deg": 0},
+  {"key": "wall-torch-addonworld-8631-light", "kind": "light", "position": [30744.4, -3901.6, 10832.7], "yaw_deg": 0, "range": 250, "color": [230, 84, 15], "near": 8, "flicker_from": "wall-torch-addonworld-8631-flame", "jitter_cm": 0.6, "sway_hz": 1.5}
+ ]
+}

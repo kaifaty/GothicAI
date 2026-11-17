@@ -57,6 +57,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import chunk_canon  # noqa: E402
+import chunk_dropped  # noqa: E402
 import chunk_glb  # noqa: E402
 import world_cook  # noqa: E402
 from edit_error import EditError  # noqa: E402,F401
@@ -262,8 +263,10 @@ def cmd_build(a) -> int:
 
     out = work / 'out.glb'
     out.unlink(missing_ok=True)
+    dropped_path = work / 'dropped.json'
     job = {'base': str(base_copy), 'out': str(out), 'allowed': str(work / 'allowed.json'),
-           'meta': str(work / 'meta.json'), 'world': world, 'gui': bool(a.gui), 'repo': str(REPO),
+           'meta': str(work / 'meta.json'), 'dropped': str(dropped_path), 'world': world,
+           'gui': bool(a.gui), 'repo': str(REPO),
            'chunk': name, 'base_chunks': str(src.parent),
            'edits': [str(REPO / e) for e in edits], 'names': {str(REPO / e): e for e in edits}}
     print(f'{a.id}: {chunk} of {base.name}, edits {", ".join(edits)}')
@@ -273,6 +276,12 @@ def cmd_build(a) -> int:
     canon = chunk_canon.canonical(base_copy, out, out)
     print(f'source triangles written back from the base: {canon["kept"]} of {canon["source"]}; new or changed: '
           f'{canon["changed"]}')
+    missing = json.loads(dropped_path.read_text())
+    recovery_problems = []
+    if missing:
+        back, recovery_problems = chunk_dropped.write(base_copy, out, missing, chunk_dropped.new_corners([out]))
+        print(f'triangles Blender cannot hold: {back["unchanged"]} written back as they were, '
+              f'{back["moved"]} moved with their corners as {back["triangles"]} triangles')
 
     allowed = json.loads((work / 'allowed.json').read_text())
     materials = list(a.materials or [])
@@ -285,6 +294,7 @@ def cmd_build(a) -> int:
             indexes.append(index)
     report = chunk_glb.check(src, out, allowed_open=allowed_edges(allowed), material_indexes=indexes,
                              world_json=src.parent.parent / 'world.json')
+    report.problems.extend(recovery_problems)
     (work / 'report.json').write_text(json.dumps({'problems': report.problems, **report.summary}, indent=1) + '\n')
     print(chunk_glb.format_report(report))
     if not report.ok:

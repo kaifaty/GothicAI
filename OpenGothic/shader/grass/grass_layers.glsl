@@ -27,11 +27,27 @@ const float GrassVergeRipple   = 5.0;    // cm: and by a quick noise
 const float GrassLiesFrom      = 0.50;   // the normal's y: steeper ground keeps its painted texture
 const float GrassLiesTo        = 0.65;
 
+// The loose earth of a road with its own material (grass/grass_track.glsl): of the road's strip, and of the
+// meadow's notches by it (`ground.border`). One lattice on both sides of the mesh's edge, turned from the world's
+// axes so that a stone does not come back along a straight road; one tone over both: slow by 8 m and 1.3 m, and
+// blotches by 1.2 m and 0.4 m - what the earth still has from 15 m on, where the layers' grain is gone
+vec2 grassLooseUv(vec2 xz) { return vec2(0.93358*xz.x + 0.35837*xz.y, -0.35837*xz.x + 0.93358*xz.y); }
+float grassTrackNoise(ivec2 p, int step, uint salt) { return float(grassValueNoise(p,step,salt)-32640)*(1.0/32640.0); }
+float grassTrackTone(ivec2 place) {
+  return 1.0 + grassTrackNoise(place,12800,0x79u)*0.08 + grassTrackNoise(place,2080,0x7Au)*0.05 +
+         grassTrackNoise(place,1920,0x7Bu)*0.14 + grassTrackNoise(place,640,0x7Cu)*0.09;
+  }
+
 // tex: the sward's maps in the bindless arrays, the earth's are the next; swardK, earthK: repeats per cm; farK: the
-// far repeat's tile of the sward's, 0 without. Returns 1 on a pixel of sward, 0 of earth; -1 where the pixel is
-// not the layers'; -2 where the cover's paint took it
-float grassLayers(uint flags, uint tex, float swardK, float earthK, float farK, vec3 pos, vec3 normal,
-                  vec3 dpdx, vec3 dpdy, inout vec4 diffuse, inout uint normalOut, inout vec4 orm) {
+// far repeat's tile of the sward's, 0 without. otherTex, otherK: the maps and the repeats per cm of a road's loose
+// earth, 0 without - on a meadow the earth of its notches by the road, on a verge the road's own material under
+// the sward: a pixel of the strip that is not sward is then left to grass_track.glsl, its share in `strip`.
+// Returns 1 on a pixel of sward, 0 of earth; -1 where the pixel is not the layers'; -2 where the cover's paint
+// took it
+float grassLayers(uint flags, uint tex, float swardK, float earthK, float farK, uint otherTex, float otherK,
+                  vec3 pos, vec3 normal, vec3 dpdx, vec3 dpdy, inout vec4 diffuse, inout uint normalOut,
+                  inout vec4 orm, out float strip) {
+  strip = 0.0;
   const vec4 ring = scene.grassRing;
   if(ring.w<=0.0)
     return -1.0;
@@ -56,27 +72,45 @@ float grassLayers(uint flags, uint tex, float swardK, float earthK, float farK, 
   const float mip = scene.mipGradScale;
   const vec2  uvS = pos.xz*swardK, dxS = dpdx.xz*swardK, dyS = dpdy.xz*swardK;
   const vec2  uvE = pos.xz*earthK, dxE = dpdx.xz*earthK, dyE = dpdy.xz*earthK;
+  // the road's loose earth: under the sward of a road's strip, and in a notch of the meadow by the road - there a
+  // bare spot keeps the meadow's earth, and where the two meet the heights say which a pixel is
+  const bool  other = otherK>0.0;
+  const vec2  uvO = grassLooseUv(pos.xz)*otherK, dxO = grassLooseUv(dpdx.xz)*otherK, dyO = grassLooseUv(dpdy.xz)*otherK;
+  const bool  notch = other && !verge && near && border<256;
+  bool loose = other && (verge || (notch && bare<=0));
   bool sward = level>=256;
   vec3 ormS = vec3(0), ormE = vec3(0);
   const bool between = level>0 && level<256;
-  if(between) {
-    ormS  = fringeTexture(2u, tex,    uvS, dxS*mip, dyS*mip).rgb;
-    ormE  = fringeTexture(2u, tex+1u, uvE, dxE*mip, dyE*mip).rgb;
-    sward = float(level) + (ormS.b-ormE.b)*GrassLayerHeight>float(GrassCoverSward);
+  if(!sward) {
+    if(between)
+      ormS = fringeTexture(2u, tex, uvS, dxS*mip, dyS*mip).rgb;
+    if(loose)
+      ormE = fringeTexture(2u, otherTex, uvO, dxO*mip, dyO*mip).rgb; else
+      ormE = fringeTexture(2u, tex+1u, uvE, dxE*mip, dyE*mip).rgb;
+    if(notch && !loose) {
+      const vec3 ormO = fringeTexture(2u, otherTex, uvO, dxO*mip, dyO*mip).rgb;
+      if(float(256-border)*(1.0 + 2.0*(ormO.b-ormE.b))>float(bare)) {
+        loose = true;
+        ormE  = ormO;
+        }
+      }
+    if(between)
+      sward = float(level) + (ormS.b-ormE.b)*GrassLayerHeight>float(GrassCoverSward);
     }
   // the earth on a verge: the strip to the margin, the road's own beyond
   float share = lies;
-  bool  haveE = between;
   if(!sward && verge) {
-    if(!haveE)
-      ormE = fringeTexture(2u, tex+1u, uvE, dxE*mip, dyE*mip).rgb;
-    haveE = true;
     const float end = margin + float(grassValueNoise(place,1600,0x66u)-32640)*(GrassVergeWander*min(margin/50.0,1.0)/32640.0)
                              + float(grassValueNoise(place,320,0x65u)-32640)*(GrassVergeRipple/32640.0);
     // clods and stones are the last of the earth: its height shifts where a pixel of it ends
-    share *= smoothstep(0.2, 0.8, (end-dist)/GrassVergeSoft + ormE.b);
+    const float left = smoothstep(0.2, 0.8, (end-dist)/GrassVergeSoft + ormE.b);
+    share *= left;
     if(share<=0.0)
       return -1.0;
+    if(other) {
+      strip = left;
+      return -1.0;
+      }
     }
 
   if((partsOff & GrassPartCover)!=0u) {
@@ -99,13 +133,19 @@ float grassLayers(uint flags, uint tex, float swardK, float earthK, float farK, 
     if(mapped)
       nm = fringeTexture(1u, tex, uvS, dxS*mip, dyS*mip);
     } else {
-    albedo = fringeTexture(0u, tex+1u, uvE, dxE*mip, dyE*mip).rgb;
-    o      = haveE ? ormE : fringeTexture(2u, tex+1u, uvE, dxE*mip, dyE*mip).rgb;
-    if(mapped)
-      nm = fringeTexture(1u, tex+1u, uvE, dxE*mip, dyE*mip);
+    o = ormE;
+    if(loose) {
+      albedo = fringeTexture(0u, otherTex, uvO, dxO*mip, dyO*mip).rgb*grassTrackTone(place);
+      if(mapped)
+        nm = fringeTexture(1u, otherTex, uvO, dxO*mip, dyO*mip);
+      } else {
+      albedo = fringeTexture(0u, tex+1u, uvE, dxE*mip, dyE*mip).rgb;
+      if(mapped)
+        nm = fringeTexture(1u, tex+1u, uvE, dxE*mip, dyE*mip);
+      }
     }
   // the earth of a spot in the meadow, not of a border: there it stays the road's
-  const float spot = (sward || verge) ? 0.0 : smoothstep(0.0, 0.3, float(bare)/256.0);
+  const float spot = (sward || verge || loose) ? 0.0 : smoothstep(0.0, 0.3, float(bare)/256.0);
   if(spot>0.0) {
     const float high = smoothstep(0.25, 0.75, o.b);
     const float slow = float(grassValueNoise(place,560,0x68u)-32640)*(GrassSpotEarthSlow/32640.0);
@@ -119,7 +159,7 @@ float grassLayers(uint flags, uint tex, float swardK, float earthK, float farK, 
       } else {
       // DXT5nm, as mappedNormal reads it; the slope steeper on a spot
       const vec2 xy = nm.ag*2.0 - 1.0;
-      n = mappedNormal(normal, dpdx, dpdy, dxE, dyE,
+      n = mappedNormal(normal, dpdx, dpdy, loose ? dxO : dxE, loose ? dyO : dyE,
                        vec3(xy*mix(1.0, GrassSpotEarthBump, spot), sqrt(max(0.0, 1.0 - dot(xy,xy)))));
       }
     n = normalize(mix(n, gn, smoothstep(0.7*GrassLayerNormalTo, GrassLayerNormalTo, d)));

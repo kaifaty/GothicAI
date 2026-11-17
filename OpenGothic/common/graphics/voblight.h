@@ -13,6 +13,7 @@ inline constexpr float DefaultLightSourceCm = 6.f;
 struct Added {
   virtual ~Added() = default;
   std::string key;
+  float upCm = 0; // a tree entry: cm up the world's vertical from its place in the slot
   };
 struct Emitter final : asset::VirtualObject, Added {
   PfxMotion::Flicker flicker; // the flame's signal ("flicker"), off by default

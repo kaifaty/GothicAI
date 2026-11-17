@@ -24,13 +24,26 @@ enum Part : uint32_t {
   // (reports/engine/2026-11-14-meadow-ground, "Что отняло жизнь": the table was made with them); unused since
   PartLayers      = 4096, // a ground with its own layers as a painted ground: no layers, its blades as there
   PartCells       = 8192, // with the mask's paint (1+64+128): squares of 0.5 m in red, of 5 m in green, by the world's x and z
-  PartAll         = 16383,
+  PartTrack       = 16384, // a road with `track` as with its `verge` alone: the painted road and the strip (grass_track.glsl)
+  PartOffscreen   = 32768, // the blades go through the whole vertex stage and then leave the screen: nothing is rasterised,
+                           // so a frame less this one is the blades' rasterising and pixels, this one less PartHide their vertex stage
+  PartAll         = 65535,
   };
 
 // SceneDesc::grassRing.w carries it: 1 + 2*mask
 inline uint32_t& partsOff() {
   static uint32_t mask = 0;
   return mask;
+  }
+
+// OPENGOTHIC_GRASS_SQUARES=0: a cell is drawn and thinned whole, as before the squares (reports/engine/2026-11-17-
+// grass-cost): the pair of their measure
+inline bool squaresOff() {
+  static const bool value = [] {
+    const char* e = std::getenv("OPENGOTHIC_GRASS_SQUARES");
+    return e!=nullptr && e[0]=='0' && e[1]=='\0';
+    }();
+  return value;
   }
 
 // OPENGOTHIC_GRASS_FINE=0: the short sward keeps its broad blades where the record asks for fine ones

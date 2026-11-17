@@ -136,6 +136,26 @@ vec4 processVertex(out Varyings shOut, in Vertex v, uint instanceId, uint vboOff
       top  = -v.dir;
       left = -cross(top,depth);
       }
+    else if(visOrientation==PfxOrientationStretch && bitfieldExtract(v.bits0, 6, 1)!=0) {
+      // a leaning flame card (pfxbucket.cpp, particles.d "lean"): it stands on its lower edge, dir is the way to
+      // its upper edge in card heights. The card faces the camera about that way as seen on screen; seen along
+      // the flame (from behind a runner) it keeps three quarters of its height: a flame's body glows through
+      const vec3  base  = v.pos - vec3(0, v.size.y*0.5, 0);
+      const vec3  tip   = v.dir*v.size.y;
+      const vec3  tp    = tip - dot(tip,depth)*depth;
+      const float lp    = length(tp);
+      const vec3  up    = lp>1e-3 ? tp/lp : -scene.pfxTop;
+      const float len   = max(lp, 0.75*v.size.y);
+      vec3        side  = cross(up,depth);
+      const float ls    = length(side);
+      side = ls>1e-4 ? side/ls : left;
+      if(dot(side,left)<0.0)
+        side = -side;
+      left     = side;
+      top      = -up;
+      v.pos    = base + up*(len*0.5);
+      v.size.y = len;
+      }
     else if(visOrientation==PfxOrientationStretch) {
       // a card facing the camera along the velocity as seen on screen: size.y plus the path size.z (cm) foreshortened,
       // its head at the particle and the streak behind it

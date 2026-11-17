@@ -304,19 +304,7 @@ void Npc::setStateTime(int64_t time) {
 
 void Npc::addRoutine(gtime s, gtime e, uint32_t callback, std::string_view point) {
   auto wp = world().findPoint(point,false);
-
-  Routine r;
-  r.start    = s;
-  r.end      = e;
-  r.callback = callback;
-  r.point    = wp;
-  if(wp==nullptr)
-    r.fallbackName = point;
-  routines.push_back(r);
-
-  std::stable_sort(routines.begin(), routines.end(), [](const Routine& l, const Npc::Routine& r) {
-    return l.start < r.start;
-    });
+  NpcRoutineTable::add(routines,s,e,callback,wp,point);
   }
 
 void Npc::clearRoutine() {

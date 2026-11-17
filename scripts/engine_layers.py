@@ -60,6 +60,7 @@ ALLOWED = {
 LAYER_RULES: list[tuple[str, str]] = [
     # Import of the original install into our formats (ZenKit, DirectMusic, Bink).
     ("common/asset/*fromzenkit*", "import"),
+    ("common/import/*", "import"),
     ("common/zenkitlog", "import"),
     ("common/baseimport", "import"),
     ("common/basestoreimport", "import"),
@@ -93,6 +94,8 @@ LAYER_RULES: list[tuple[str, str]] = [
     # Gothic's media formats at runtime.
     ("common/daedalus/*", "gothic"),
     ("common/game/gamescript*", "gothic"),
+    ("common/game/itemdefinitionruntime", "gothic"),
+    ("common/game/routinedefinitionruntime", "gothic"),
     ("common/game/gamesession", "gothic"),
     ("common/game/definitions/*", "gothic"),
     # Pure mesh packing over our asset types, independent of Gothic.
@@ -120,6 +123,9 @@ LAYER_RULES: list[tuple[str, str]] = [
     ("common/gamemusic", "gothic"),
     ("common/dmusic/*", "gothic"),
     ("common/programdata", "gothic"),
+    ("common/itemdefinitions", "rpg"),
+    ("common/routinedefinitions", "rpg"),
+    ("common/itemloadprobe", "platform"),
     ("common/outputunits", "gothic"),
     # Our own GLB format reader and writer, independent of Gothic rules.
     ("common/gothicglb", "platform"),
