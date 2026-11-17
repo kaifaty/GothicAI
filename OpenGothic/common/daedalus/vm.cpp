@@ -106,6 +106,7 @@ namespace daedalus {
 	}
 
 	void DaedalusVm::unsafe_call(DaedalusSymbol const* sym) {
+		if (_m_call_observer && !sym->is_external()) _m_call_observer(*sym);
 		push_call(sym);
 		jump(sym->address());
 
@@ -119,6 +120,7 @@ namespace daedalus {
 	void DaedalusVm::unsafe_call_bl(DaedalusSymbol const* sym) {
 		// the same as the BL instruction
 		if (auto cb = _m_function_overrides.find(sym->address()); cb != _m_function_overrides.end()) {
+			if (_m_call_observer) _m_call_observer(*sym);
 			StackGuard guard {this, sym->rtype()};
 			cb->second(*this);
 			guard.inhibit();
@@ -277,6 +279,7 @@ namespace daedalus {
 				// Check if the function is overridden and if it is, call the resulting external.
 				sym = find_symbol_by_address(instr.address);
 				if (auto cb = _m_function_overrides.find(instr.address); cb != _m_function_overrides.end()) {
+					if (_m_call_observer) _m_call_observer(*sym);
 					// Guard against exceptions during external invocation.
 					StackGuard guard {this, sym->rtype()};
 					// Call maybe naked.
@@ -374,6 +377,7 @@ namespace daedalus {
 					auto result = ref->get_int(idx, context.get()) + value;
 					if (_m_write_observer) _m_write_observer(*ref);
 					ref->set_int(result, idx, context.get());
+					if (_m_member_write_observer && ref->is_member()) _m_member_write_observer(*ref, idx, context.get());
 				} else if (ref->is_member()) {
 					log(LogLevel::ERROR, "DaedalusVm", "Accessing member \"%s\" without an instance set", ref->name().c_str());
 				}
@@ -394,6 +398,7 @@ namespace daedalus {
 					auto result = ref->get_int(idx, context.get()) - value;
 					if (_m_write_observer) _m_write_observer(*ref);
 					ref->set_int(result, idx, context.get());
+					if (_m_member_write_observer && ref->is_member()) _m_member_write_observer(*ref, idx, context.get());
 				} else if (ref->is_member()) {
 					log(LogLevel::ERROR, "DaedalusVm", "Accessing member \"%s\" without an instance set", ref->name().c_str());
 				}
@@ -413,6 +418,7 @@ namespace daedalus {
 					auto result = ref->get_int(idx, context.get()) * value;
 					if (_m_write_observer) _m_write_observer(*ref);
 					ref->set_int(result, idx, context.get());
+					if (_m_member_write_observer && ref->is_member()) _m_member_write_observer(*ref, idx, context.get());
 				} else if (ref->is_member()) {
 					log(LogLevel::ERROR, "DaedalusVm", "Accessing member \"%s\" without an instance set", ref->name().c_str());
 				}
@@ -437,6 +443,7 @@ namespace daedalus {
 					auto result = ref->get_int(idx, context.get()) / value;
 					if (_m_write_observer) _m_write_observer(*ref);
 					ref->set_int(result, idx, context.get());
+					if (_m_member_write_observer && ref->is_member()) _m_member_write_observer(*ref, idx, context.get());
 				} else if (ref->is_member()) {
 					log(LogLevel::ERROR, "DaedalusVm", "Accessing member \"%s\" without an instance set", ref->name().c_str());
 				}
@@ -1168,6 +1175,7 @@ namespace daedalus {
 		    !(_m_flags & DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS)) {
 			if (_m_write_observer) _m_write_observer(*ref);
 			ref->set_int(value, index, context.get());
+			if (_m_member_write_observer && ref->is_member()) _m_member_write_observer(*ref, index, context.get());
 		} else if (ref->is_member()) {
 			log(LogLevel::ERROR, "DaedalusVm", "Accessing member \"%s\" without an instance set", ref->name().c_str());
 		}
@@ -1185,6 +1193,7 @@ namespace daedalus {
 		    !(_m_flags & DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS)) {
 			if (_m_write_observer) _m_write_observer(*ref);
 			ref->set_float(value, index, context.get());
+			if (_m_member_write_observer && ref->is_member()) _m_member_write_observer(*ref, index, context.get());
 		} else if (ref->is_member()) {
 			log(LogLevel::ERROR, "DaedalusVm", "Accessing member \"%s\" without an instance set", ref->name().c_str());
 		}
@@ -1202,6 +1211,7 @@ namespace daedalus {
 		    !(_m_flags & DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS)) {
 			if (_m_write_observer) _m_write_observer(*ref);
 			ref->set_string(value, index, context.get());
+			if (_m_member_write_observer && ref->is_member()) _m_member_write_observer(*ref, index, context.get());
 		} else if (ref->is_member()) {
 			log(LogLevel::ERROR, "DaedalusVm", "Accessing member \"%s\" without an instance set", ref->name().c_str());
 		}

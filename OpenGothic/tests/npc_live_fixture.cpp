@@ -1,0 +1,217 @@
+#include "npc_definition_fixture.h"
+
+#include "baseidentity.h"
+#include "commandline.h"
+#include "game/gamesession.h"
+#include "gothic.h"
+#include "programdata.h"
+#include "resources.h"
+#include "world/world.h"
+#include "worldchunks.h"
+#include "worlddata.h"
+
+#include <rapidjson/document.h>
+#include <rapidjson/stringbuffer.h>
+#include <rapidjson/writer.h>
+
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <memory>
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+namespace {
+namespace fs = std::filesystem;
+
+void write(const fs::path& file, const std::string& bytes) {
+  fs::create_directories(file.parent_path());
+  std::ofstream out(file,std::ios::binary);
+  out.write(bytes.data(),std::streamsize(bytes.size()));
+  if(!out) throw std::runtime_error("cannot write synthetic NPC fixture: "+file.string());
+  }
+
+struct Environment {
+  std::vector<std::pair<std::string,std::optional<std::string>>> saved;
+  void set(const char* name, const std::string& value) {
+    const auto* previous=std::getenv(name);
+    saved.emplace_back(name,previous ? std::optional<std::string>(previous) : std::nullopt);
+    setenv(name,value.c_str(),1);
+    }
+  ~Environment() {
+    for(auto it=saved.rbegin();it!=saved.rend();++it) {
+      if(it->second) setenv(it->first.c_str(),it->second->c_str(),1);
+      else unsetenv(it->first.c_str());
+      }
+    }
+  };
+
+void emptyIndices(const fs::path& base) {
+  for(const auto* kind:{"textures","meshes","zen","models","fonts"}) {
+    const auto entries=std::string_view(kind)=="models" || std::string_view(kind)=="zen" ? "files" : kind;
+    write(base/kind/(std::string(kind)+".json"),
+          "{\"format\":\"gothic-"+std::string(kind)+"\",\"version\":1,\"archives\":[],\"loose_files\":[],\""+entries+"\":{}}\n");
+    }
+  write(base/"audio/audio.json",
+        "{\"format\":\"gothic-audio\",\"version\":1,\"archives\":[],\"loose_files\":[],\"payloads\":{},\"sounds\":{}}\n");
+  write(base/"music/music.json",
+        "{\"format\":\"gothic-music\",\"version\":1,\"archives\":[],\"loose_files\":[],\"records\":{},\"sources\":[],\"gk\":{},\"dx8\":{}}\n");
+  write(base/"outputunits/outputunits.json",
+        "{\"format\":\"gothic-outputunits\",\"version\":1,\"archives\":[],\"loose_files\":[],\"records\":{},\"sources\":[],\"vfs\":{},\"host\":{},\"selections\":[],\"server\":{\"ou_py\":null}}\n");
+  write(base/"sources/sources.json","{\"format\":\"gothic-sources\",\"version\":1}\n");
+  }
+
+void world(const fs::path& base) {
+  const auto dir=base/"worlds/NPC_CONTRACT";
+  const WorldChunkSource source{"NPC_CONTRACT.ZEN",1,0};
+  writeWorldChunks(asset::WorldMesh{},source,dir);
+  // Runtime world selection also binds the archive membership of the source installation.
+  const auto path=dir/"world.json";
+  std::ifstream input(path);
+  std::string json{std::istreambuf_iterator<char>(input),{}};
+  json.insert(json.find('{')+1,"\"archives\":[],");
+  write(path,json);
+  WorldData::Data data;
+  data.source=source;
+  data.name="NPC_CONTRACT";
+  data.waynet=std::make_shared<asset::WayNet>();
+  auto point=std::make_shared<asset::WayPoint>();
+  point->name="TEST_WP";
+  point->position={0,0,0};
+  point->direction={0,0,1};
+  point->water_depth=0;
+  point->under_water=false;
+  data.waynet->points.push_back(point);
+  WorldData::write(data,dir);
+  }
+
+fs::path program(const fs::path& base) {
+  const auto value=NpcDefinitionFixture::program();
+  fs::create_directories(base/"programs");
+  std::string name;
+  const auto sha=ProgramData::writeProgram(value.data,base/"programs",&name);
+  const auto source="{\"origin\":\"host\",\"path\":\"system/GOTHIC.DAT\",\"archive\":null,\"size\":1,\"sha256\":\""+
+                    std::string(64,'0')+"\",\"program\":\""+name+"\",\"trailing_bytes\":0,\"skipped\":null}";
+  write(base/"programs/programs.json",
+        "{\"format\":\"gothic-programs\",\"version\":1,\"archives\":[],\"loose_files\":[],\"programs\":{\""+name+"\":\""+sha+
+        "\"},\"sources\":["+source+"],\"vfs\":{\"GOTHIC.DAT\":0},\"host\":{},\"selections\":[{\"request\":\"GOTHIC.DAT\",\"language\":-1,\"step\":\"vfs_find_request\",\"path\":\"GOTHIC.DAT\",\"source\":0}],\"server\":{\"storygraph_dat\":0}}\n");
+  const auto definitions=base/"definitions"/sha;
+  NpcSnapshot::writeItems(value,definitions/"items.json");
+  NpcSnapshot::writeRoutines(value,definitions/"routines.json");
+  NpcSnapshot::writeNpcs(value,definitions/"npcs.json");
+  return definitions/"npcs.json";
+  }
+
+void mutations(const fs::path& file, World& world, void (*compare)(World&)) {
+  std::ifstream input(file);
+  const std::string original{std::istreambuf_iterator<char>(input),{}};
+  struct Restore {
+    fs::path file;
+    const std::string& bytes;
+    ~Restore() { write(file,bytes); }
+    } restore{file,original};
+  for(unsigned mutation=0;mutation<6;++mutation) {
+    rapidjson::Document document;
+    document.Parse(original.data(),original.size());
+    if(document.HasParseError()) throw std::runtime_error("invalid synthetic NPC definitions JSON");
+    rapidjson::Value* target=nullptr;
+    for(auto& record:document["records"].GetArray())
+      if(std::string_view(record["symbol"].GetString())=="NPC_NO_ID") target=&record["steps"];
+    if(!target) throw std::runtime_error("synthetic NPC mutation target missing");
+    auto& steps=*target;
+    size_t attribute=steps.Size(),create=steps.Size(),equip=steps.Size(),fatness=steps.Size(),deferred=steps.Size();
+    for(rapidjson::SizeType i=0;i<steps.Size();++i) {
+      const auto& step=steps[i];
+      if(step.HasMember("field") && std::string_view(step["field"].GetString())=="C_NPC.ATTRIBUTE" &&
+         step["index"].GetUint()==0 && step["value"]["value"].GetInt()==30) attribute=i;
+      if(!step.HasMember("function")) continue;
+      const auto function=std::string_view(step["function"].GetString());
+      if(function=="CREATEINVITEMS") create=i;
+      if(function=="EQUIPITEM") equip=i;
+      if(function=="MDL_SETMODELFATNESS") fatness=i;
+      if(function=="B_CREATEAMBIENTINV") deferred=i;
+      }
+    if(attribute>=steps.Size() || create>=steps.Size() || equip>=steps.Size() || fatness>=steps.Size() || deferred>=steps.Size())
+      throw std::runtime_error("synthetic NPC mutation steps missing");
+    const auto index=[](size_t value) { return rapidjson::SizeType(value); };
+    switch(mutation) {
+      case 0: steps[index(attribute)]["value"]["value"].SetInt(31); break;
+      case 1: steps[index(create)].Swap(steps[index(equip)]); break;
+      case 2: steps.Erase(steps.Begin()+ptrdiff_t(fatness)); break;
+      case 3: {
+        rapidjson::Value field;
+        field.CopyFrom(steps[index(attribute)],document.GetAllocator());
+        field["field"].SetString("C_NPC.ID",document.GetAllocator());
+        field["value"]["value"].SetInt(0);
+        steps.PushBack(field,document.GetAllocator());
+        break;
+        }
+      case 4: steps.Erase(steps.Begin()+ptrdiff_t(deferred)); break;
+      case 5: {
+        rapidjson::Value call;
+        call.CopyFrom(steps[index(deferred)],document.GetAllocator());
+        steps.PushBack(call,document.GetAllocator());
+        break;
+        }
+      }
+    rapidjson::StringBuffer bytes;
+    rapidjson::Writer<rapidjson::StringBuffer> writer(bytes);
+    if(!document.Accept(writer)) throw std::runtime_error("cannot encode synthetic NPC mutation");
+    write(file,{bytes.GetString(),bytes.GetSize()});
+    std::string error;
+    try { compare(world); }
+    catch(const std::exception& failure) { error=failure.what(); }
+    const auto expected=mutation>=4 ? "game random generator differs" : "live NPC differs";
+    if(error.find(expected)==std::string::npos)
+      throw std::runtime_error("live NPC mutation "+std::to_string(mutation+1)+" was not rejected by parity: "+error);
+    write(file,original);
+    }
+  std::puts("Live NPC mutations: attribute, call order, missing call, untouched id, missing/extra random call rejected");
+  }
+}
+
+// The same live comparator as the installed-game corpus runs on a complete, tiny own-format
+// base. The fixture needs neither Gothic archives nor a graphics or sound device.
+void npcLiveSynthetic(void (*compare)(World&)) {
+  const auto root=fs::temp_directory_path()/("gothic-npc-live-"+
+      std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  struct Cleanup {
+    fs::path path;
+    ~Cleanup() { std::error_code ignored; fs::remove_all(path,ignored); }
+    } cleanup{root};
+  const auto game=root/"game",base=root/"base";
+  fs::create_directories(game/"Data");
+  write(game/"system/Gothic.ini","[GAME]\nlanguage=-1\n");
+  write(game/"system/SystemPack.ini","");
+  emptyIndices(base);
+  world(base);
+  const auto definitions=program(base);
+  BaseImport::writeBaseMetadata(base,BaseImport::identify(game,BaseImport::Files{}));
+  Environment environment;
+  environment.set("OPENGOTHIC_BASE",base.string());
+  environment.set("OPENGOTHIC_BASE_FINGERPRINT","");
+  environment.set("OPENGOTHIC_BASE_CACHE",(root/"cache").string());
+  environment.set("OPENGOTHIC_BASE_STORE",(root/"store").string());
+  environment.set("OPENGOTHIC_VIDEOS_FINGERPRINT","");
+  environment.set("OPENGOTHIC_CONTENT","");
+  environment.set("OPENGOTHIC_TEXTURES","");
+  environment.set("OPENGOTHIC_NPC_RECORDS","1");
+  environment.set("OPENGOTHIC_ITEM_RECORDS","1");
+  environment.set("OPENGOTHIC_ROUTINE_RECORDS","1");
+  const auto directory=game.string();
+  const char* args[]={"gothic-placed-items-contract","-g",directory.c_str(),"-benchmark","ci"};
+  CommandLine commandLine(5,args);
+  Resources resources;
+  Gothic gothic;
+  gothic.isNpcInDialogFn=[](const Npc*) { return false; };
+  gothic.setGame(std::make_unique<GameSession>("NPC_CONTRACT.ZEN"));
+  compare(*gothic.world());
+  mutations(definitions,*gothic.world(),compare);
+  gothic.clearGame().reset();
+  std::puts("Synthetic live NPC definitions: normal GameSession and engine externals, no game data");
+  }

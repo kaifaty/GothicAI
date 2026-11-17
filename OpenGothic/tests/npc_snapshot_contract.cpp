@@ -1,9 +1,11 @@
 #include "npcsnapshot.h"
+#include "npc_definition_fixture.h"
 #include "daedalus/classes.h"
 #include "daedalus/vm.h"
-#include "npcsnapshotfields.h"
 #include "programdata.h"
 #include "itemdefinitions.h"
+#include "npcdefinitions.h"
+#include "game/npcdefinitionruntime.h"
 #include "game/itemdefinitionruntime.h"
 #include "routinedefinitions.h"
 #include "game/routinedefinitionruntime.h"
@@ -429,6 +431,67 @@ void runtimeItems(const NpcSnapshot::Program& p,const fs::path& base) {
   check(fallback==library.uncaptured.size(),"every uncaptured item used its constructor");
   std::cout<<"Item runtime equality: "<<captured<<" captured, "<<fallback<<" VM fallback; every ItemRecord field and VM state match\n";
   }
+void npcDefinitions(const fs::path& dir) {
+  const auto program=NpcDefinitionFixture::program();
+  const auto base=dir/"npc-definitions",file=base/"definitions"/program.sha256/"npcs.json";
+  const auto counts=NpcSnapshot::writeNpcs(program,file);
+  check(counts.total==5 && counts.captured==2,"NPC definitions capture only supported pure constructors");
+  check(NpcSnapshot::verifyNpcs(program,file)==0,"NPC definitions verify independently from disk");
+  const auto library=NpcDefinitions::read(base,program.sha256);
+  for(const auto* refused:{"NPC_GLOBAL","NPC_WRITER","NPC_UNKNOWN"})
+    check(library.uncaptured.contains(refused),std::string(refused)+": refuses unsafe constructor");
+  const auto second=dir/"npc-identical.json";
+  NpcSnapshot::writeNpcs(program,second);
+  std::ifstream a(file,std::ios::binary),b(second,std::ios::binary);
+  check(std::string(std::istreambuf_iterator<char>(a),{})==std::string(std::istreambuf_iterator<char>(b),{}),
+        "NPC definitions are byte-identical across fresh imports");
+  {
+    auto script=DaedalusScript::from_program(program.data);
+    INpc::register_(script); IItem::register_(script);
+    DaedalusVm vm(std::move(script));
+    const auto definitions=NpcDefinitionRuntime::resolve(library,vm);
+    auto npc=std::make_shared<INpc>();
+    check(!NpcDefinitionRuntime::initialize(vm,npc,vm.find_symbol_by_name("NPC_WRITER"),definitions),
+          "uncaptured NPC uses the same VM fallback as the game");
+    check(vm.find_symbol_by_name("CHAPTER")->get_int()==9,"fallback preserves constructor side effects");
+    }
+  auto changed=read(file);
+  for(auto& record:changed["records"].GetArray()) {
+    if(std::string_view(record["symbol"].GetString())!="NPC_NO_ID") continue;
+    for(auto& step:record["steps"].GetArray())
+      if(step.HasMember("field") && std::string_view(step["field"].GetString())=="C_NPC.ATTRIBUTE" &&
+         step["value"]["value"].GetInt()==30) step["value"]["value"].SetInt(999);
+    }
+  write(file,changed);
+  check(NpcSnapshot::verifyNpcs(program,file)>0,"fresh import verification rejects a changed NPC field on disk");
+  NpcSnapshot::writeNpcs(program,file);
+
+  const auto* setting=std::getenv("OPENGOTHIC_NPC_RECORDS");
+  const bool present=setting!=nullptr;
+  const std::string previous=setting ? setting : "";
+  auto environment=[](const char* value) {
+#ifdef _WIN32
+    check(_putenv_s("OPENGOTHIC_NPC_RECORDS",value ? value : "")==0,"set NPC records environment");
+#else
+    check((value ? setenv("OPENGOTHIC_NPC_RECORDS",value,1) : unsetenv("OPENGOTHIC_NPC_RECORDS"))==0,"set NPC records environment");
+#endif
+    };
+  try {
+    auto script=DaedalusScript::from_program(program.data);
+    environment(nullptr);
+    check(NpcDefinitionRuntime::enabled() && NpcDefinitionRuntime::load(base,script,program.sha256).npcs.size()==2,
+          "NPC records are enabled by default through the game's shared switch");
+    environment("0");
+    check(!NpcDefinitionRuntime::enabled() && NpcDefinitionRuntime::load(base/"absent",script,program.sha256).npcs.empty(),
+          "zero disables NPC records without reading the base");
+    environment("1");
+    check(NpcDefinitionRuntime::enabled() && NpcDefinitionRuntime::load(base,script,program.sha256).npcs.size()==2,
+          "nonzero enables NPC records");
+    }
+  catch(...) { environment(present ? previous.c_str() : nullptr); throw; }
+  environment(present ? previous.c_str() : nullptr);
+  }
+
 void itemDefinitions(const fs::path& dir) {
   auto p=itemProgram();
   const auto base=dir/"definitions-fixture";
@@ -838,6 +901,7 @@ void fixture(const fs::path& dir) {
   guildLayout();
   spellLayout();
   itemDefinitions(dir);
+  npcDefinitions(dir);
   itemSelection(dir);
   routineDefinitions(dir);
   routineSelection(dir);

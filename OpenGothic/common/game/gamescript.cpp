@@ -82,7 +82,7 @@ bool GameScript::GlobalOutput::isFinished() {
   }
 
 GameScript::GameScript(GameSession &owner)
-    :owner(owner), vm(createVm(Gothic::inst(),itemDefinitions,routineDefinitions)) {
+    :owner(owner), vm(createVm(Gothic::inst(),itemDefinitions,routineDefinitions,npcDefinitions)) {
   if (vm.global_self() == nullptr || vm.global_other() == nullptr || vm.global_item() == nullptr ||
       vm.global_victim() == nullptr || vm.global_hero() == nullptr)
     throw std::runtime_error("Cannot find script symbol SELF, OTHER, ITEM, VICTIM, or HERO! Cannot proceed!");
@@ -463,7 +463,7 @@ void GameScript::initializeInstanceNpc(const std::shared_ptr<daedalus::INpc>& np
   if(auto* like = own.likeOf(sym->index()))
     mine.emplace(*like,npc);
 
-  vm.init_instance(npc, sym);
+  initializeNpcDefinition(npc,sym);
 
   if(npc->daily_routine!=0) {
     ScopeVar self(*vm.global_self(), npc);
