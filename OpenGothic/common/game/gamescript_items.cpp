@@ -7,18 +7,10 @@
 #include "programdata.h"
 #include "settings.h"
 
-#include <cstdlib>
-#include <cstring>
-
 daedalus::DaedalusVm GameScript::createVm(Gothic& gothic, ItemDefinitionRuntime::Definitions& items) {
   const auto lang=Settings::getI("GAME", "language");
-  std::string sha256;
-  auto script=loadBaseProgram(gothic.defaultGameDatFile(),lang,&sha256);
-  const auto* enabled=std::getenv("OPENGOTHIC_ITEM_RECORDS");
-  if(enabled==nullptr || std::strcmp(enabled,"0")!=0) {
-    const auto base=baseProgramIndex().dir.parent_path();
-    items=ItemDefinitionRuntime::resolve(ItemDefinitions::read(base,sha256),script);
-    }
+  auto script=loadBaseProgram(gothic.defaultGameDatFile(),lang);
+  items=ItemDefinitionRuntime::load(baseProgramIndex().dir.parent_path(),script);
   const auto flags=daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS;
   return daedalus::DaedalusVm(std::move(script),flags);
   }

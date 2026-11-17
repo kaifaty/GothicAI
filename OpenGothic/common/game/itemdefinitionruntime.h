@@ -11,6 +11,8 @@ struct Definitions {
   std::unordered_map<uint32_t,ItemRecord> items;
   };
 Definitions resolve(const ItemDefinitions::Library& library, const daedalus::DaedalusScript& script);
+// Select the section from the loaded, unbound program, applying the game's environment switch.
+Definitions load(const std::filesystem::path& base, const daedalus::DaedalusScript& program);
 // Both the game and its contract use this complete choice of initialization path.
 // Returns true when a definition supplied the fields, false after a VM constructor.
 bool initialize(daedalus::DaedalusVm& vm, const std::shared_ptr<daedalus::IItem>& item,

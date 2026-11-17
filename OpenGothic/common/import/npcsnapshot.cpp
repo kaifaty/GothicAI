@@ -234,6 +234,10 @@ class Runner {
           }
         else throw Stop("game_state",sym.name());
         });
+      if(kind=="items") vm.observe_writes([&](const DaedalusSymbol& sym) {
+        if(&sym==vm.global_self() || &sym==vm.global_item() || !mutableGlobal(sym,vm)) return;
+        throw Stop("game_state_write",sym.name());
+        });
       vm.observe_instructions([&](const DaedalusInstruction& op) {
         if(++instructions>1000000) throw Stop("execution_limit",root->name());
         if(!pending.empty() && op.op==Op::BZ) throw Stop("game_state",pending+" before state branch");

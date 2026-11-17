@@ -1,7 +1,10 @@
 #include "itemdefinitionruntime.h"
 #include "itemrecordfields.h"
 #include "itemloadprobe.h"
+#include "programdata.h"
 
+#include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 #include <type_traits>
 
@@ -44,6 +47,16 @@ ItemDefinitionRuntime::Definitions ItemDefinitionRuntime::resolve(const ItemDefi
     catch(const std::exception& e) { throw std::runtime_error("item definitions: "+name+": "+e.what()); }
     }
   return definitions;
+  }
+
+ItemDefinitionRuntime::Definitions ItemDefinitionRuntime::load(const std::filesystem::path& base,
+                                                               const daedalus::DaedalusScript& program) {
+  const auto* enabled=std::getenv("OPENGOTHIC_ITEM_RECORDS");
+  if(enabled==nullptr || std::strcmp(enabled,"0")!=0) {
+    const auto sha256=ProgramData::encodeProgram(program.export_program()).sha256;
+    return resolve(ItemDefinitions::read(base,sha256),program);
+    }
+  return {};
   }
 
 bool ItemDefinitionRuntime::initialize(daedalus::DaedalusVm& vm, const std::shared_ptr<daedalus::IItem>& item,
