@@ -30,6 +30,8 @@ struct HitDesc {
   vec3 baryCoord;
   bool opaque;
   bool water;
+  bool twoSided; // materials.json "two_sided": the hit counts on the back side as on the front one
+  bool flip;     // "two_sided": "flip": on the back side the surface's normal is turned to the ray
   };
 
 #if defined(RAY_QUERY_AT)
@@ -85,6 +87,8 @@ HitDesc pullHitDesc(in rayQueryEXT rayQuery) {
 
   d.opaque       = (desc.firstPrimitive & 0x01000000)!=0;
   d.water        = (desc.firstPrimitive & 0x02000000)!=0;
+  d.twoSided     = (desc.firstPrimitive & 0x04000000)!=0;
+  d.flip         = (desc.firstPrimitive & 0x08000000)!=0;
 
   return d;
   }
@@ -108,6 +112,8 @@ HitDesc pullCommitedHitDesc(in rayQueryEXT rayQuery) {
 
   d.opaque       = (desc.firstPrimitive & 0x01000000)!=0;
   d.water        = (desc.firstPrimitive & 0x02000000)!=0;
+  d.twoSided     = (desc.firstPrimitive & 0x04000000)!=0;
+  d.flip         = (desc.firstPrimitive & 0x08000000)!=0;
 
   return d;
   }
@@ -140,6 +146,13 @@ bool isOpaqueHit(in rayQueryEXT rayQuery) {
   vec4 d = resolveHit(rayQuery);
   return (d.a>0.5);
   }
+
+bool isTwoSidedHit(in rayQueryEXT rayQuery) {
+  uint descId = 0;
+  descId += rayQueryGetIntersectionInstanceCustomIndexEXT(rayQuery, false);
+  descId += rayQueryGetIntersectionGeometryIndexEXT(rayQuery, false);
+  return (rtDesc[descId].firstPrimitive & 0x04000000)!=0;
+  }
 #endif
 
 #if defined(RAY_QUERY_AT)
@@ -147,7 +160,8 @@ void rayQueryProceedAlphaTest(in rayQueryEXT rayQuery) {
   while(rayQueryProceedEXT(rayQuery)) {
     const uint type = rayQueryGetIntersectionTypeEXT(rayQuery,false);
     if(type==gl_RayQueryCandidateIntersectionTriangleEXT) {
-      if(!rayQueryGetIntersectionFrontFaceEXT(rayQuery, false))
+      // the back side stops a ray only on a material of two sides: its instance is not culled (RtScene)
+      if(!rayQueryGetIntersectionFrontFaceEXT(rayQuery, false) && !isTwoSidedHit(rayQuery))
         continue;
       if(!isOpaqueHit(rayQuery))
         continue;

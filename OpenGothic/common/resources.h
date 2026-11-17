@@ -157,6 +157,7 @@ class Resources final {
       bool                     strand = false; // strands as ribbons: the albedo is the hair's colour ramp
       bool                     eye = false; // an eyeball: wet highlight, the lid's shade (reports/content/2026-11-hero-head/eye-shader.md)
       FoliageWind::Params      foliage; // "foliage": leaves in the wind, the sun through them (graphics/foliagewind.h)
+      Material::TwoSided       twoSided = Material::TwoSided::Off; // "two_sided": both sides of an object's mesh
       Grass::Params            grass;   // "grass": the ground grows grass (graphics/grass/grassparams.h)
       Material::Layers         layers;  // "ground", "verge", "track": the layers by world position, loaded (graphics/grass/)
       WindowGlow::Params       window;  // "window": the glow is a window's, lit of an evening (graphics/windowglow.h)
@@ -725,6 +726,7 @@ class Resources final {
       bool        strand = false;
       bool        eye = false;
       FoliageWind::Params foliage; // `on` with the field
+      Material::TwoSided twoSided = Material::TwoSided::Off;
       Grass::Params grass;         // `on` with the field
       WindowGlow::Params window;   // `on` with the field
       bool        grassOnly = false; // nothing but `grass`, `ground`, `verge`, `track`: the ground keeps the texture it has without a record

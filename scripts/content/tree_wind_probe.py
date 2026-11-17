@@ -72,7 +72,7 @@ def part(cards):
     """glb_cards.Mesh whose corners carry a colour as well: (position, normal, uv, colour 0..1)."""
     class Part(cards.Mesh):
         def __init__(self):
-            super().__init__()
+            super().__init__(pairs=True)    # the probe of the wind stays as it was filmed: its records have one side
             self.colour = []
 
         def triangle(self, corners, front) -> None:

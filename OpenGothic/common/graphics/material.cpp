@@ -96,6 +96,7 @@ Material::Material(const asset::Material& m, bool enableAlphaTest, bool requireA
     strand = maps.strand;
     eye = maps.eye;
     foliage = maps.foliage;
+    twoSided = maps.twoSided;
     grass = maps.grass;
     layers = maps.layers;
     window = emissive>0.f ? maps.window : WindowGlow::Params();
@@ -158,6 +159,7 @@ bool Material::operator ==(const Material& other) const {
          strand==other.strand &&
          eye==other.eye &&
          foliage==other.foliage &&
+         twoSided==other.twoSided &&
          grass==other.grass &&
          layers==other.layers &&
          window==other.window &&

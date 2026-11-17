@@ -257,6 +257,21 @@ void Resources::indexMaterialMaps() {
       else
         maps.eye = eye->value.GetBool();
       }
+    // Both sides of an object's mesh (reports/engine/2026-11-16-modern-trees/two-sided.md): "same" keeps the vertex
+    // normal on the side away from the winding, "flip" turns it to the eye; a card is then listed once
+    if(const auto sides = entry.value.FindMember("two_sided"); sides!=entry.value.MemberEnd()) {
+      if(!sides->value.IsString()) {
+        valid = false;
+        } else {
+        const std::string_view value(sides->value.GetString(), sides->value.GetStringLength());
+        if(value=="same")
+          maps.twoSided = Material::TwoSided::Same;
+        else if(value=="flip")
+          maps.twoSided = Material::TwoSided::Flip;
+        else if(value!="off")
+          valid = false;
+        }
+      }
     if(const auto scale = entry.value.FindMember("scale"); scale!=entry.value.MemberEnd()) {
       if(!scale->value.IsNumber()) {
         valid = false;
@@ -1453,6 +1468,7 @@ Resources::MaterialMaps Resources::loadMaterialMaps(std::string_view name) {
   ret.strand = files.strand;
   ret.eye = files.eye;
   ret.foliage = files.foliage;
+  ret.twoSided = files.twoSided;
   ret.grass = files.grass;
   // the meadow's layers: the record's own, or those of the grass a verge names
   if(const auto* of = files.verge.on ? inst->groundOf(files.vergeOf) : (files.ground.on ? &files : nullptr); of!=nullptr) {

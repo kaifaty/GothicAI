@@ -1,6 +1,7 @@
 """Spruce A as fir.py writes it without Blender: the size of the intent, the budget, the crown's density, the
-boughs' planes and the cover of the branches' axes, and the layout of COLOR_0 the engine's tree wind reads
-(reports/content/2026-11-trees/fir/README.md, «Модель»)."""
+boughs' planes and the cover of the branches' axes, the layout of COLOR_0 the engine's tree wind reads
+(reports/content/2026-11-trees/fir/README.md, «Модель») and the cards' sides: once under a two-sided material, or
+twice in the mode of pairs (reports/engine/2026-11-16-modern-trees/two-sided.md)."""
 
 import json
 from pathlib import Path
@@ -30,6 +31,7 @@ def test_spruce_a_has_the_size_of_the_intent_within_the_budget(spruce, config):
     metrics = spruce['metrics']
     assert metrics['fails'] == []
     assert metrics['triangles'] <= config['budget_tris'] == 50000
+    assert 26500 <= metrics['triangles'] <= 27000       # a bough's triangle is drawn once: 47 096 with the twins
     assert 17.5 <= metrics['height_m'] <= 18.5
     assert .5 <= metrics['trunk_diameter_m'][1] <= .7 < metrics['trunk_diameter_m'][0]
     assert metrics['inside_out_parts'] == 0
@@ -93,13 +95,14 @@ def test_colour_0_is_laid_out_for_the_tree_wind(spruce):
     assert branches['phases'] == branches['count'] > 200
     assert branches['mixed_phase'] == branches['with_b'] == branches['r_not_0_at_trunk'] == 0
     assert branches['r_growth_corr_min'] > .99
-    assert cards['unpaired'] == cards['wrong_phase'] == cards['without_one_stem'] == 0
+    assert cards['wrong_phase'] == cards['without_one_stem'] == 0
     assert cards['without_free_edge_255'] == cards['without_b_between'] == 0
-    assert cards['pairs'] * 2 == cards['triangles']
+    assert cards['sides'] == 'material' and cards['pairs'] == 0 and cards['single'] == cards['triangles']
     assert layout['openness']['corr_with_radius_share'] > .9
     wood, boughs = tree_glb.read(spruce['glb'])
     assert (wood['material']['name'], boughs['material']['name']) == ('OWN_TREE_FIR_BARK', 'OWN_TREE_FIR_BOUGHS')
     assert wood['material'].get('alphaMode') != 'MASK' and boughs['material']['alphaMode'] == 'MASK'
+    assert boughs['material']['doubleSided'] and not wood['material']['doubleSided']
     assert wood['colour'].shape[1] == boughs['colour'].shape[1] == 4
 
 
@@ -109,3 +112,19 @@ def test_a_seed_and_a_scale_give_another_spruce_of_the_same_kind(config, spruce,
     assert other['height_m'] == pytest.approx(.8 * 18, abs=.5)
     assert other['triangles'] != spruce['metrics']['triangles']
     assert other['density']['background_share'] <= .15
+
+
+def test_the_mode_of_pairs_only_adds_the_twins(config, spruce, tmp_path):
+    pairs = fir.build(config, tmp_path, 'fir-pairs', pairs=True)
+    metrics, single = pairs['metrics'], spruce['metrics']
+    assert metrics['fails'] == []
+    cards = metrics['colour_0']['cards']
+    assert cards['sides'] == 'pairs' and cards['single'] == 0
+    assert cards['pairs'] == single['colour_0']['cards']['triangles'] == cards['triangles'] // 2
+    assert metrics['triangles'] == single['triangles'] + cards['pairs'] == 47096
+    for name in ('density', 'card_planes', 'axis_cover'):
+        assert metrics[name] == single[name]
+    (_, twice), (_, once) = tree_glb.read(pairs['glb']), tree_glb.read(spruce['glb'])
+    assert not twice['material']['doubleSided']
+    for name in ('position', 'normal', 'uv', 'colour'):
+        assert np.array_equal(twice[name], once[name])

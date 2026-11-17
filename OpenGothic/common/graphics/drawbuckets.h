@@ -86,6 +86,8 @@ class DrawBuckets {
       BK_GROUND = 0x40000,
       BK_VERGE = 0x80000,
       BK_TRACK = 0x100000,
+      BK_TWO_SIDED = 0x200000,
+      BK_TWO_SIDED_FLIP = 0x400000,
       };
 
     struct BucketGpu final {
