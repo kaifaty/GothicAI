@@ -41,6 +41,14 @@ class PfxBucket {
       // the air that passes the emitter, cm/ms: minus its own motion, through a spring (particles.d "lean")
       Tempest::Vec3 air          = {};
       Tempest::Vec3 airRate      = {};
+      // the world's wind at the emitter this frame, cm/ms (particles.d "wind"), and how open its place is to it:
+      // asked where the emitter first burns and again when it has gone a metre (PfxObjects::shelter)
+      Tempest::Vec3 wind         = {};
+      float         open         = 1.f;
+      float         openTo       = 1.f;
+      Tempest::Vec3 openAt       = {};
+      uint64_t      openTime     = 0;
+      bool          openAsked    = false;
       Tempest::Vec3 direction[3] = {{1,0,0}, {0,1,0}, {0,0,1}};
       bool          isLoop       = false;
 

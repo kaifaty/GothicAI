@@ -604,8 +604,8 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
     {"name":"OWN_TEST_SPARKS_CHILD","base":"OWN_TEST_SPARKS","set":{},"drag":3}]})");
   textFile(directory/"50-haze.json",R"({"format":1,"effects":[
     {"name":"OWN_TEST_HAZE","base":"FIRE_SMOKE","set":{"visAlphaFunc_S":"BLEND"},"haze":{"shift":3,"cell":5}},
-    {"name":"OWN_TEST_LEAN","base":"OWN_TEST_FLIP","set":{},"lean":{"rise":1.8,"max_deg":45}},
-    {"name":"OWN_TEST_TAIL","base":"FIRE_SMOKE","set":{},"inherit":0.75}]})");
+    {"name":"OWN_TEST_LEAN","base":"OWN_TEST_FLIP","set":{},"lean":{"rise":1.8,"max_deg":45},"wind":0.5},
+    {"name":"OWN_TEST_TAIL","base":"FIRE_SMOKE","set":{},"inherit":0.75,"drag":1,"wind":1}]})");
   auto vm=ParticleContent::openProgram(baseRoot);
   const auto original=ParticleContent::base(*vm,"FIRE_SMOKE");
   require(original!=nullptr,"base FIRE_SMOKE definition");
@@ -620,7 +620,8 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
   {
   const auto& lean=loaded.motions.at("OWN_TEST_LEAN");
   require(lean.leanRise==1.8f && lean.leanMaxDeg==45.f && lean.leanResponse==0.12f && lean.inherit==0 &&
-          loaded.motions.at("OWN_TEST_TAIL").inherit==0.75f,"lean and inherit are read");
+          loaded.motions.at("OWN_TEST_TAIL").inherit==0.75f && lean.wind==0.5f &&
+          loaded.motions.at("OWN_TEST_TAIL").wind==1.f,"lean, inherit and wind are read");
   }
   require(loaded.motions.count("OWN_TEST_SMOKE")==0 && loaded.motions.count("OWN_TEST_FLIP")==0,"effects without them have no motion");
   const auto flip=loaded.flipbooks.find("OWN_TEST_FLIP");
@@ -657,6 +658,8 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
     {"lean-no-steady",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"lean":{"rise":1.8}})"},
     {"lean-no-rise",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24,"steady":true},"lean":{"max_deg":45}})"},
     {"inherit-steady",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24,"steady":true},"inherit":0.5})"},
+    {"wind-no-drag",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"wind":1})"},
+    {"wind-range",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"drag":1,"wind":3})"},
     {"inherit-range",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"inherit":1.5})"},
     {"curl-frequency",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"curl":{"strength":1,"frequency":0}})"},
     {"curl-field",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"curl":{"strength":1,"frequency":2,"octaves":3}})"},
@@ -721,7 +724,8 @@ void runtimeParticles(Gothic& gothic, const Fixture& f, const fs::path& baseRoot
   const auto* lean=gothic.loadParticleFx("OWN_TEST_LEAN");
   const auto* tail=gothic.loadParticleFx("OWN_TEST_TAIL");
   require(lean && std::abs(lean->leanRise-0.18f)<1e-5f && std::abs(lean->leanMaxTan-1.f)<1e-4f &&
-          std::abs(lean->leanResponseMs-120.f)<1e-3f && tail && tail->inherit==0.75f && tail->leanRise==0,
+          std::abs(lean->leanResponseMs-120.f)<1e-3f && tail && tail->inherit==0.75f && tail->leanRise==0 &&
+          lean->wind==0.5f && tail->wind==1.f,
           "lean and inherit reach the particle declaration in engine units");
   }
   const auto* haze=gothic.loadParticleFx("OWN_TEST_HAZE");
@@ -779,6 +783,20 @@ void particleMotion() {
               " ms differs from 1 ms steps by "+std::to_string(error*100.f)+" %");
       }
     }
+  {
+  // wind: a particle with drag ends at the wind's velocity and is carried by it; without wind nothing changes
+  PfxMotion::Params still;
+  still.drag=0.002f;
+  const Tempest::Vec3 wind(0.1f,0,0.2f);
+  Tempest::Vec3 pos, vel(0,0.1f,0), pos0, vel0(0,0.1f,0);
+  for(int i=0;i<300;++i) {
+    PfxMotion::step(still,Tempest::Vec3(),pos,vel,Tempest::Vec3(),float(i*17),17.f,wind);
+    PfxMotion::step(still,Tempest::Vec3(),pos0,vel0,Tempest::Vec3(),float(i*17),17.f);
+    }
+  const Tempest::Vec3 lag=wind*(1.f/still.drag);  // the way lost while the particle takes the wind's speed
+  require((vel-wind).length()<1e-3f && (pos-(wind*5100.f-lag+pos0)).length()<1.f && std::abs(pos0.x)<1e-4f,
+          "wind carries a particle with drag: it takes the wind's velocity");
+  }
   p.drag=0;
   require((run(15,1000,1)[0].pos-run(1000,1000,1)[0].pos).length()<
           0.05f*(run(1000,1000,1)[0].pos-start(1)[0].pos).length(),"curl without drag keeps the path at 15 fps");

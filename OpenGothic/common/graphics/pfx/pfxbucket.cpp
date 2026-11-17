@@ -26,6 +26,10 @@ static constexpr uint64_t LeanLongFrameMs = 250;
 static constexpr float LeanSubstepMs   = 8.f;
 static constexpr float LeanDamping     = 0.6f;
 static constexpr float LeanStretch     = 0.2f;
+// particles.d "wind": the shelter is asked again a metre on, not more often than this, and fades in over this
+static constexpr float    WindAskCm  = 100.f;
+static constexpr uint64_t WindAskMs  = 300;
+static constexpr float    WindFadeMs = 500.f;
 
 
 static uint64_t ppsDiff(const ParticleFx& decl, bool loop, uint64_t time0, uint64_t time1) {
@@ -489,7 +493,8 @@ void PfxBucket::tick(Block& sys, ImplEmitter& emitter, size_t particle, uint64_t
     // own curl and drag (particles.d): substeps, drag integrated exactly, the field in world space
     const Vec3  origin = decl.useEmittersFOR ? emitter.pos : Vec3();
     const float t0     = float((parent.now>=dt ? parent.now-dt : 0)%3600000u);
-    PfxMotion::step(decl.motion, decl.flyGravity, ps.pos, ps.dir, origin, t0, dtF);
+    PfxMotion::step(decl.motion, decl.flyGravity, ps.pos, ps.dir, origin, t0, dtF,
+                    decl.useEmittersFOR ? Vec3() : emitter.wind);
     } else {
     ps.pos  += ps.dir*dtF;
     ps.dir  += decl.flyGravity*dtF;
@@ -588,6 +593,21 @@ void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
         }
       }
 
+    if(decl.wind>0 && nearby && emitter.st==S_Active) {
+      const bool moved = (emitter.pos-emitter.openAt).quadLength()>WindAskCm*WindAskCm;
+      if(!emitter.openAsked || (moved && parent.now-emitter.openTime>=WindAskMs)) {
+        emitter.openTo   = parent.shelter ? std::clamp(parent.shelter(emitter.pos,parent.wind),0.f,1.f) : 1.f;
+        if(!emitter.openAsked)
+          emitter.open = emitter.openTo;
+        emitter.openAsked = true;
+        emitter.openAt    = emitter.pos;
+        emitter.openTime  = parent.now;
+        }
+      // a carried flame comes out of a door: the wind rises over about half a second
+      emitter.open += (emitter.openTo-emitter.open)*std::min(1.f,float(dt)/WindFadeMs);
+      emitter.wind  = parent.wind*(decl.wind*emitter.open);
+      }
+
     if(decl.flipSteady || decl.inherit>0) {
       // a steady particle is its emitter's flame: it goes where the emitter goes (a torch in a hand); a living one
       // takes the share "inherit" of the way, so the tail behind a carried flame stays short
@@ -602,9 +622,9 @@ void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
       if(decl.leanRise>0 && dt>0) {
         // the air past the wick is minus the emitter's motion; a jump (a teleport, the first frame) is no motion
         const bool jump   = !emitter.carried || moved.quadLength()>LeanJumpCm*LeanJumpCm || dt>LeanLongFrameMs;
-        const Vec3 target = jump ? Vec3() : moved*(-1.f/float(dt));
-        if(jump) {
-          emitter.air     = Vec3();
+        const Vec3 target = emitter.wind - (jump ? Vec3() : moved*(1.f/float(dt)));
+        if(dt>LeanLongFrameMs) {
+          emitter.air     = target;
           emitter.airRate = Vec3();
           } else {
           // a damped spring: the flame answers in about leanResponseMs and swings a little past

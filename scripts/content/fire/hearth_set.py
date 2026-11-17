@@ -21,6 +21,8 @@ from pathlib import Path
 import shutil
 import sys
 
+from fire_wind import with_wind
+
 import numpy as np
 
 from campfire_set import ROOT, SMOKE, STAGING, TONGUE, at, base_dir, card, haze, write_layer
@@ -136,7 +138,7 @@ def layer(fires, places) -> tuple[dict, list]:
 
 def cmd_effects(_args) -> int:
     PARTICLES.parent.mkdir(parents=True, exist_ok=True)
-    PARTICLES.write_text(json.dumps(effects()) + '\n')
+    PARTICLES.write_text(json.dumps(with_wind(effects())) + '\n')
     print(f'{PARTICLES.relative_to(ROOT)}: {len(effects()["effects"])} effects')
     return 0
 
