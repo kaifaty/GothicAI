@@ -69,6 +69,9 @@ const ParticleFx* ParticlesDefinitions::implGet(std::string_view name, bool rela
     p->leanResponseMs      = own.leanResponse*1000.f;
     p->inherit             = own.inherit;
     p->wind                = own.wind;
+    p->plumeCm             = own.plumeHeight;
+    p->plumeRise           = own.plumeRise*0.1f;              // m/s -> cm/ms
+    p->plumeWind           = own.wind>0 ? own.plumeWind/own.wind : 0.f;
     p->hdrFrom             = own.hdrFrom;
     p->hdrTo               = own.hdrTo;
     p->hdrEdge             = own.hdrEdge;

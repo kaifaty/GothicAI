@@ -124,6 +124,9 @@ class ParticleFx final {
     float         leanMaxTan     = 0.f;
     float         leanResponseMs = 0.f;
     float         inherit        = 0.f;
+    float         plumeCm        = 0.f;  // particles.d "plume": cm over the fire; 0: off
+    float         plumeRise      = 0.f;  // cm/ms
+    float         plumeWind      = 0.f;  // the flame's share of the wind over this effect's own
     float         wind           = 0.f;  // particles.d "wind": the share of the world's wind
     // particles.d "hdr" (ParticleContent::Motion): the night's gain of the emission over a texel's brightness
     float         hdrFrom   = 0.f;

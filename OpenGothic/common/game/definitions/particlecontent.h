@@ -57,8 +57,13 @@ struct Motion {
   // "wind": the share of the world's wind (physics/worldwind.h; none under a roof, less behind a wall) the effect
   // feels: a leaning card leans with it, a particle with drag is carried by it
   float wind          = 0;
+  // "plume": the emitter stands plumeHeight cm over a fire whose gas rises at plumeRise m/s. In moving air its
+  // particles are born that far along the leaning flame and with the wind's velocity: smoke leaves the flame's tip
+  float plumeHeight   = 0;
+  float plumeRise     = 0;
+  float plumeWind     = 0;  // the flame's own "wind" share: its lean differs from the smoke's drift
 
-  bool empty() const { return curlStrength==0 && drag==0 && stretch==0 && minPixels==0 && hdrTo==0 && hazeShift==0 && leanRise==0 && inherit==0 && wind==0; }
+  bool empty() const { return curlStrength==0 && drag==0 && stretch==0 && minPixels==0 && hdrTo==0 && hazeShift==0 && leanRise==0 && inherit==0 && wind==0 && plumeHeight==0; }
   };
 
 struct Result {

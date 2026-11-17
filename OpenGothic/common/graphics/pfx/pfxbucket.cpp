@@ -30,6 +30,9 @@ static constexpr float LeanStretch     = 0.2f;
 static constexpr float    WindAskCm  = 100.f;
 static constexpr uint64_t WindAskMs  = 300;
 static constexpr float    WindFadeMs = 500.f;
+// particles.d "plume": the air's spring as a flame's default (lean.response), the largest lean as a flame's cap
+static constexpr float PlumeResponseMs = 120.f;
+static constexpr float PlumeMaxTan     = 2.747f;  // 70 degrees
 
 
 static uint64_t ppsDiff(const ParticleFx& decl, bool loop, uint64_t time0, uint64_t time1) {
@@ -463,6 +466,22 @@ void PfxBucket::init(PfxBucket::Block& block, ImplEmitter& emitter, size_t parti
     float velocity = randf(decl.velAvg,decl.velVar);
     p.dir = p.dir*velocity/l;
     }
+
+  if(decl.plumeCm>0 && !decl.useEmittersFOR) {
+    // born on the leaning flame (particles.d "plume"): plumeCm along it instead of straight over the fire, and
+    // with the wind the flame's gas has taken
+    // the flame feels its own share of the wind, not this effect's
+    const Vec3  wind = emitter.wind*decl.plumeWind;
+    const Vec3  air  = emitter.air-emitter.wind+wind;
+    const Vec3  flat = Vec3(air.x,0,air.z);
+    const float len  = flat.length();
+    const float t    = std::min(len/decl.plumeRise, PlumeMaxTan);
+    if(t>1e-4f) {
+      const float cs = 1.f/std::sqrt(1.f+t*t);
+      p.pos += flat*(decl.plumeCm*t*cs/len) - Vec3(0,decl.plumeCm*(1.f-cs),0);
+      }
+    p.dir += wind;
+    }
   }
 
 void PfxBucket::finalize(size_t particle) {
@@ -608,7 +627,7 @@ void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
       emitter.wind  = parent.wind*(decl.wind*emitter.open);
       }
 
-    if(decl.flipSteady || decl.inherit>0) {
+    if(decl.flipSteady || decl.inherit>0 || decl.plumeCm>0) {
       // a steady particle is its emitter's flame: it goes where the emitter goes (a torch in a hand); a living one
       // takes the share "inherit" of the way, so the tail behind a carried flame stays short
       const auto  moved = emitter.pos-emitter.steadyAt;
@@ -619,7 +638,7 @@ void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
           if(particles[p.offset+i].life!=0)
             particles[p.offset+i].pos += moved*share;
         }
-      if(decl.leanRise>0 && dt>0) {
+      if((decl.leanRise>0 || decl.plumeCm>0) && dt>0) {
         // the air past the wick is minus the emitter's motion; a jump (a teleport, the first frame) is no motion
         const bool jump   = !emitter.carried || moved.quadLength()>LeanJumpCm*LeanJumpCm || dt>LeanLongFrameMs;
         const Vec3 target = emitter.wind - (jump ? Vec3() : moved*(1.f/float(dt)));
@@ -628,7 +647,7 @@ void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
           emitter.airRate = Vec3();
           } else {
           // a damped spring: the flame answers in about leanResponseMs and swings a little past
-          const float w = 2.f/decl.leanResponseMs;
+          const float w = 2.f/(decl.leanRise>0 ? decl.leanResponseMs : PlumeResponseMs);
           const int   n = std::max(1, int(std::ceil(float(dt)/LeanSubstepMs)));
           const float h = float(dt)/float(n);
           for(int i=0; i<n; ++i) {
@@ -636,7 +655,7 @@ void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
             emitter.air     += emitter.airRate*h;
             }
           }
-        if(emitter.block!=size_t(-1)) {
+        if(emitter.block!=size_t(-1) && decl.leanRise>0) {
           const Vec3  flat = Vec3(emitter.air.x,0,emitter.air.z);
           const float t    = std::min(flat.length()/decl.leanRise, decl.leanMaxTan);
           const float len  = 1.f + LeanStretch*(decl.leanMaxTan>0 ? t/decl.leanMaxTan : 0.f);
