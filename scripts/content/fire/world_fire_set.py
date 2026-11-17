@@ -14,7 +14,8 @@ main world's parts already hold (torch-model-*, torch-haze-*, campfire-*, brazie
   without one gets a light. A fire the layer cannot remove (a zCPFXController, an effect with a lamp or a sound
   under it: saved state hangs on them) burns the set's small tongues in place (the layer's "effect");
 - the smoke that is left: the brazier's thin smoke;
-- the vob tree FIRETREE_MEDIUM of the tall pole fires (FIREPLACE_HIGH, FIREPLACE_HIGH2): the brazier's fire.
+- the vob tree FIRETREE_MEDIUM of the tall pole fires (FIREPLACE_HIGH, FIREPLACE_HIGH2): the brazier's fire;
+- the vob tree ITLSTORCHBURNING of the torch in a hand (written with NEWWORLD): the torch's fire.
 FIRETREE_LARGE.ZEN is not in the game's archives: a MOB that names it burns only what the level put beside it.
 """
 from __future__ import annotations
@@ -40,6 +41,10 @@ import rest_set as rest  # noqa: E402
 ROOT = camp.ROOT
 CONTENT = ROOT / 'reports/content/remaster/fire-worlds/content'
 TREE = CONTENT / 'vobtrees.d/FIRETREE_MEDIUM.json'
+HAND = CONTENT / 'vobtrees.d/ITLSTORCHBURNING.json'
+# ITLSTORCHBURNING.ZEN, the torch in a hand: the mesh at the tree's origin, TORCH.PFX and the lamp at its head
+HAND_MESH, HAND_HEAD = 'ITLS_TORCHBURNED_01', [-40.5, -0.8, 2.7]
+HAND_RANGE = 1000  # the original's: the torch is the player's working light (800 left the street dark, round 1)
 KIT = {'TORCH.PFX': 'torch', 'FIRE.PFX': 'brazier', 'FIRE_MEDIUM.PFX': 'brazier', 'FIRE_HOT.PFX': 'brazier'}
 NEAR_LAMP = 150.0         # a lamp of the level this close already lights the fire's place: the own light stays short
 # Where the fuel's top is against the original effect's origin, cm up, by the frames of round 1: TORCH.PFX starts on
@@ -85,6 +90,19 @@ def hold(layer, everything, kit, licks) -> int:
         layer['add'] = [e for e in layer['add'] if e['key'] != key]
         layer['effect'].append({'id': vob_id, 'pfx': licks})
     return len(layer['effect'])
+
+
+def hand_tree() -> dict:
+    """The torch a hand carries. The slot turns with the hand, so every part of the fire sits at the torch's head in
+    the slot and stands up the world's vertical from there (the tree's "up_cm")."""
+    add = [{'key': 'hand-torch', 'kind': 'mesh', 'visual': HAND_MESH, 'position': [0, 0, 0], 'yaw_deg': 0, 'collision': 'none'}]
+    for entry in rest.torch_fire('hand', [0, 0, 0], 61):
+        x, y, z = entry['position']
+        add.append({**entry, 'position': camp.at(np.array(HAND_HEAD) + [x, 0, z]), 'up_cm': y})
+    add.append({'key': 'hand-light', 'kind': 'light', 'position': HAND_HEAD, 'up_cm': TORCH_LIGHT_UP, 'yaw_deg': 0,
+                'range': HAND_RANGE, 'color': rest.LAMP['color'], 'near': torch.LAMP['near'], 'flicker_from': 'hand-flame',
+                **torch.SWAY})
+    return {'format': 1, 'add': add}
 
 
 def rest_layer(everything, taken) -> tuple[dict, dict]:
@@ -210,6 +228,9 @@ def cmd_build(args) -> int:
         write_layer(out / f'wall-torch-{place}-held.json', held)
     print(f'wall torches whose fire holds other vobs: {len(held["visual"])}, {len(held["effect"])} effects in place')
     if world == 'NEWWORLD':  # the main world's other fire is the parts' of its own scripts
+        HAND.parent.mkdir(parents=True, exist_ok=True)
+        HAND.write_text(json.dumps(hand_tree(), indent=1) + '\n')
+        print(f'{HAND.relative_to(ROOT)}: {len(hand_tree()["add"])} entries')
         taken = set()
         for path in sorted((ROOT / 'reports/content/remaster').glob('**/content/worlds/NEWWORLD/vobs.d/*.json')):
             if path.name != 'fire-left.json':

@@ -579,6 +579,18 @@ void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
         }
       }
 
+    if(decl.flipSteady) {
+      // a steady particle is its emitter's flame: it goes where the emitter goes (a torch in a hand)
+      const auto moved = emitter.pos-emitter.steadyAt;
+      if(emitter.block!=size_t(-1) && moved.quadLength()>0) {
+        auto& p = getBlock(emitter);
+        for(size_t i=0;i<blockSize;++i)
+          if(particles[p.offset+i].life!=0)
+            particles[p.offset+i].pos += moved;
+        }
+      emitter.steadyAt = emitter.pos;
+      }
+
     if(emitter.block!=size_t(-1)) {
       auto& p = getBlock(emitter);
       if(p.count>0) {

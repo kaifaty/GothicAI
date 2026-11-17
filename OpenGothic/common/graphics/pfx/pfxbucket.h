@@ -36,6 +36,7 @@ class PfxBucket {
       std::pair<int32_t,int32_t> textureChunk;
 
       Tempest::Vec3 pos          = {};
+      Tempest::Vec3 steadyAt     = {}; // where the emitter was when its steady particles were last carried
       Tempest::Vec3 direction[3] = {{1,0,0}, {0,1,0}, {0,0,1}};
       bool          isLoop       = false;
 
