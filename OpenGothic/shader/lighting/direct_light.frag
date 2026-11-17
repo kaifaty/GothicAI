@@ -54,6 +54,8 @@ layout(binding = 4) uniform utexture3D pageTbl;
 layout(binding = 6) uniform texture2D  pageData;
 #endif
 
+#include "grass/grass_contact.glsl"
+
 // geometric normal of the visible surface (LWC), from the depth buffer; vec3(0) where it cannot be told
 vec3 geomNormal = vec3(0);
 
@@ -285,6 +287,8 @@ void main(void) {
   float       light  = shadowFactor(d, shadowNormal, isHair ? hairShell(dot(scene.sunDir,normal)) :
                                     (through>0.0 ? max(dot(scene.sunDir,normal),0.0) + through :
                                     (isFlat ? 0 : dot(scene.sunDir,normal))));
+  if((scene.viewFlags & VF_GRASS_CONTACT)!=0u && light>0.0)
+    light *= grassContact(depth, gbufDiffuse, gl_FragCoord.xy, d, isGBufGrass(diff.a) ? vec3(0) : normal);
   float lightThrough = 0.0;
   if(through>0.0) {
     const float lit = light/(max(dot(scene.sunDir,normal),0.0) + through); // what the shadow leaves of the sun

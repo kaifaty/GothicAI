@@ -126,6 +126,38 @@ def test_a_content_chunk_replaces_the_base_chunk(tmp_path):
     assert R['layers']['natural']['cells'] == 32 + 64
 
 
+def as_objects(base, rename=False):
+    """world.json of base with each chunk as an object entry: its draw level 0 mesh, a level 1 mesh and a collision
+    mesh that are not there (nothing reads them); with rename the draw file is chunks/<x>_<z>.lod0.glb."""
+    path = base / 'worlds' / 'TEST' / 'world.json'
+    manifest = json.loads(path.read_text())
+    entries = []
+    for rel in manifest['chunks']:
+        name = Path(rel).stem
+        draw = f'chunks/{name}.lod0.glb' if rename else rel
+        if rename:
+            (base / 'worlds' / 'TEST' / rel).rename(base / 'worlds' / 'TEST' / draw)
+        entries.append({'cell': [int(v) for v in name.split('_')], 'meshes': [
+            {'file': f'chunks/{name}.collision.glb', 'role': 'collision'},
+            {'file': draw, 'role': 'draw', 'level': 0}, {'file': f'chunks/{name}.lod1.glb', 'role': 'draw', 'level': 1}]})
+    path.write_text(json.dumps({**manifest, 'chunks': entries}))
+
+
+@pytest.mark.parametrize('rename', [False, True])
+def test_object_entries_of_world_json_give_the_numbers_of_strings(tmp_path, rename):
+    chunks = {n: [square(64 * x, 64 * z, 8, y=x)] for n, (x, z) in {'0_0': (0, 0), '1_0': (1, 0), '-1_0': (-1, 0)}.items()}
+    base = make_world(tmp_path / 'base', chunks, vobs=[(1, 'NW_NATURE_TANNE_75P.3DS', (500, 0, 500))])
+    content = tmp_path / 'content'
+    over = content / 'worlds' / 'TEST' / 'chunks' / '1_0.glb'
+    chunk(over, square(64, 0, 4), material=1)
+    regions = (None, {(0, 0), (1, 0)})
+    strings = [census.census(base, 'TEST', content, region, 1.0) for region in regions]
+    assert strings[0]['totals']['chunk_files'] == 3 and strings[0]['content_chunks'] == ['1_0']
+    as_objects(base, rename)
+    if rename:          # a content chunk replaces the base chunk of the same file
+        over.rename(over.with_name('1_0.lod0.glb'))
+    assert [census.census(base, 'TEST', content, region, 1.0) for region in regions] == strings
+
 def test_a_vob_layer_adds_a_mesh_and_removes_an_id(tmp_path):
     base = make_world(tmp_path / 'base', {'0_0': [square(0, 0, 8)]},
                       vobs=[(1, 'NW_NATURE_TANNE_75P.3DS', (100, 0, 100)), (2, 'NW_NATURE_TANNE_75P.3DS', (200, 0, 200))])

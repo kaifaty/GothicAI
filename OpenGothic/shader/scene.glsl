@@ -81,6 +81,7 @@ const uint VSM_STUDY_SUN_PIXEL  = 1u; // the sun: the facet's plane over one pix
 const uint VSM_STUDY_LAMP_FACET = 2u; // lamps: the facet's plane also where it stands edge-on to the lamp (light.frag)
 const uint VSM_STUDY_CLASS      = 4u; // facets by their cosine to the light and the shadow's answer, as colours
 const uint VSM_STUDY_SUN_DIFF   = 8u; // the sun: where the plane over a texel's footprint changes the shadow, as colours
+const uint VSM_STUDY_NO_CONTACT = 32u; // lamps: without the screen ray of lamp_contact.glsl, as before 2026-11-15 (light.frag)
 const uint VSM_STUDY_LAMP_FAR   = 16u; // lamps: the first search without the point's own texels, as before 2026-11-14 (light.frag)
 
 struct LightSource {
@@ -128,6 +129,9 @@ struct Cluster {
 const uint VF_HIZ = 0x1; // the occluder pass (V_HiZ): it draws into the main view's depth ahead of the G-buffer
 const uint VF_TAA = 0x2; // TAA resolves the frame (also with MetalFX temporal)
 const uint VF_SHADOW = 0x8; // a shadow view: the sun's cascades and the virtual shadow map
+const uint VF_LAMP_CONTACT = 0x10; // lamps darken what their shadow map is too coarse for by a screen ray (lighting/lamp_contact.glsl)
+const uint VF_CONTACT_AO = 0x20; // the light of the GI probes takes the short occlusion of ssao.comp (lighting/rt/probe_ambient.frag)
+const uint VF_GRASS_CONTACT = 0x40; // blades shade the ground and each other by the sun's screen ray (grass/grass_contact.glsl)
 const uint VF_HAIR_DEBUG = 0x4; // hair pixels show the strand's direction as a colour instead of light (OPENGOTHIC_HAIR_DEBUG=1)
 
 const uint BK_SOLID = 0x1;
@@ -150,6 +154,7 @@ const uint BK_GRASS = 0x10000; // a ground that grows grass: its look under and 
 const uint BK_WINDOW = 0x20000; // the material's glow is a window's, lit of an evening (materials/window_glow.glsl)
 const uint BK_GROUND = 0x40000; // a meadow's own two layers by world position (grass/grass_layers.glsl)
 const uint BK_VERGE = 0x80000; // the ground beside a meadow: the strip of its layers along their border
+const uint BK_TRACK = 0x100000; // a road's own material: two layers by world position, the ribbon's maps (grass/grass_track.glsl)
 
 // Strands in a shadow view: the first part of the list casts the shadow for all of it (the meshlets are dealt out
 // evenly, groommesh.cpp), each strand as wide as that part is small (strandShadowRibbon, vertex_process.glsl).
@@ -182,10 +187,14 @@ struct Bucket {
   float fringeTop0, fringeTop1, fringeBottom0, fringeBottom1; // shares of v: solid to the first, tufts to the second
                      // BK_GROUND, BK_VERGE: fringeTex the sward's maps, the earth's the next; fringeScale and
                      // fringeTop0 their repeats per cm; fringeTop1 the far repeat's tile of the sward's
+                     // BK_GROUND: fringeBottom0 the repeats per cm of the border's earth, its maps the third; 0 without
+                     // BK_TRACK: the crust's, the loose earth's and the ribbon's maps after the verge's two, or
+                     // from fringeTex without a verge; fringeBottom0, fringeBottom1 the layers' repeats per cm
   uint  foliage;     // BK_FOLIAGE: 8 bits each of wind, flutter, translucency, anchor (FoliageWind::pack);
                      // BK_GRASS, BK_VERGE: the record's numbers of the grass (Grass::pack);
                      // BK_WINDOW: the window's share and hours (WindowGlow::pack)
-  float foliageReach; // the largest arm of its mesh at rest, from the X axis; bbox is grown by the leaves' travel
+  float foliageReach; // the largest arm of its mesh at rest, from the X axis; of a tree, its height; bbox is grown by the travel
+                      // BK_TRACK: the record's wander, fade and raggedness (Grass::pack of grasstrack.h)
   };
 
 #endif

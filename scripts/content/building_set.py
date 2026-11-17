@@ -364,6 +364,16 @@ def pack(records: list[dict], spec: dict, derived_root: Path) -> dict:
     return dict(entries=len(index), replaced=sorted(names), unchanged_entries=len(index) - len(names))
 
 
+def entry_maps(entry: dict) -> list[str]:
+    """The files a record of materials.json names: its own maps (a particle texture has only an albedo) and those
+    of its layers - a rock's `fringe`, a meadow's `ground.sward` and `ground.earth`. A record of fields alone
+    (`grass`, `verge`) names none."""
+    ground = entry.get('ground') or {}
+    holders = [entry, entry.get('fringe'), ground.get('sward'), ground.get('earth')]
+    return [holder[channel] for holder in holders if isinstance(holder, dict)
+            for channel in ('albedo', 'normal', 'orm') if channel in holder]
+
+
 def compose(name: str, parts: list[str], without: tuple[str, ...] = ()) -> dict:
     """Join the staging sets `parts` into a new set; a texture or a visual may come from one part only.
 
@@ -447,9 +457,8 @@ def compose(name: str, parts: list[str], without: tuple[str, ...] = ()) -> dict:
     index, mesh_index = {}, {}
     for part, part_index in indexes.items():
         for texture, entry in part_index.items():
-            for channel in ('albedo', 'normal', 'orm'):
-                if channel in entry:  # a particle texture has only an albedo
-                    take(part, 'materials', Path(entry[channel]))
+            for path in entry_maps(entry):
+                take(part, 'materials', Path(path))
             index[texture] = entry
         for visual, entry in meshes[part].items():
             take(part, 'meshes', Path(entry['glb']))

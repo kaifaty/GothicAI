@@ -32,6 +32,8 @@ class PfxObjects final {
     void       drawShadow     (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, int layer);
     void       drawMultiply   (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
     void       drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
+    bool       hasHaze        (uint8_t fId) const;
+    void       drawHaze       (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
 
   private:
     struct SpriteEmitter {

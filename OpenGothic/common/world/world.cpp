@@ -12,6 +12,7 @@
 #include <Tempest/Painter>
 #include "game/rpgvocabulary.h"
 #include "graphics/mesh/submesh/packedmesh.h"
+#include "graphics/landscapestart.h"
 #include "graphics/shaders.h"
 #include "commandline.h"
 #include "camera.h"
@@ -176,22 +177,8 @@ World::World(GameSession& game, GameRules& rules, std::string_view file, bool st
         const auto t = LoadProbe::now();
         std::unique_ptr<WorldView> view;
         if(streamLandscape) {
-          const auto map=PackedMesh::landscapeMaterialMap(worldMesh);
-          {
-          Resources::TextureLoadScope textureLoadScope(true);
-          std::vector<bool> loaded(worldMesh.materials.size());
-          // Decode initially used materials before publishing landscape chunks.
-          for(auto id:worldMesh.polygons.material_indices) {
-            id=map[id];
-            if(!loaded[id]) {
-              Resources::loadMaterial(worldMesh.materials[id],true);
-              loaded[id]=true;
-              }
-            }
-          }
-          // worldMesh.bbox is zero for compiled worlds; the sky and fog take the
-          // observer's height from the lowest landscape vertex (SceneGlobals::setWorld).
-          view=std::make_unique<WorldView>(PackedMesh::landscapeBbox(worldMesh),wname);
+          // Initially used materials are decoded before publishing landscape chunks.
+          view=streamingWorldView(worldMesh,chunks,wname);
           }
         else {
           PackedMesh vmesh(worldMesh,PackedMesh::PK_VisualLnd);

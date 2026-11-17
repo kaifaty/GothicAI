@@ -1,0 +1,196 @@
+# The cart track through the meadow east of the tavern (reports/engine/2026-11-15-meadow-road): the road's own
+# views, in still air. The camera spots stand on the road's middle line as the chunks of the base have it (survey of
+# the note): change them only with the note.
+#   track-along   standing on the track, the game's camera along it up the slope
+#   game-verge-across, meadow-2, far   the views of landscape-meadow.bench where the road's tone is measured
+#   track-low     70 cm over the track: a rut, the crust and its stones
+#   track-cross, track-cross-2, track-end   the T-cross from the game's camera, another from 2.5 m above, the end piece
+#   track-path05  the footpath PATH_05 up to its turn into the track
+#   track-rock, track-sweet   the same road texture outside the meadow: at the rock and in the sweet grass
+#   track-along-eve, track-down-eve, track-low-eve   19:30: the sun behind the camera, then against it, then the rut
+# cover-<view>: the ground painted by its cover (`grass parts 256`: the road's crust blue, its loose earth cyan, the
+# verge's strip magenta to orange, the meadow's sward green and earth red) - the mask the road's tone is read by;
+# <view>-16384, on the five views where the tone is measured: the road as with its `verge` alone (`grass parts
+# 16384`) - what the track's own material changes.
+# Run it for «было» and «стало» with the same scenario:
+#   OPENGOTHIC_CONTENT=<set> TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh landscape-meadow-road
+# @timeout 600
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+walkmode run
+watch player
+cam game
+set time 12 0
+cloth wind calm
+
+goto pos 41940 3300 -317
+clear 3000
+face -122
+streaming wait
+grass wait
+wait 5000
+shot track-along
+wait 200
+grass parts 256
+wait 1200
+shot cover-track-along
+wait 200
+grass parts 16384
+wait 1200
+shot track-along-16384
+wait 200
+grass parts 0
+
+goto pos 41701 3320 795
+face 0
+grass wait
+wait 5000
+shot game-verge-across
+wait 200
+grass parts 256
+wait 1200
+shot cover-game-verge-across
+wait 200
+grass parts 16384
+wait 1200
+shot game-verge-across-16384
+wait 200
+grass parts 0
+
+# the hero behind the camera
+goto pos 42300 3230 140
+cam at 42186 3317 10 42083 3279 -280
+grass wait
+wait 3000
+shot track-low
+wait 200
+grass parts 256
+wait 1200
+shot cover-track-low
+wait 200
+grass parts 16384
+wait 1200
+shot track-low-16384
+wait 200
+grass parts 0
+cam game
+
+goto NW_TAVERNE_TROLLAREA_03
+face wp NW_TAVERNE_TROLLAREA_05
+grass wait
+wait 1500
+turn 90
+wait 5000
+shot meadow-2
+wait 200
+grass parts 256
+wait 1200
+shot cover-meadow-2
+wait 200
+grass parts 16384
+wait 1200
+shot meadow-2-16384
+wait 200
+grass parts 0
+
+goto NW_TAVERNE_TROLLAREA_04
+cam at 38907 4994 -1252 42532 2685 438
+grass wait
+wait 3000
+shot far
+wait 200
+grass parts 256
+wait 1200
+shot cover-far
+wait 200
+grass parts 16384
+wait 1200
+shot far-16384
+wait 200
+grass parts 0
+cam game
+
+# the T-cross: along the road to where a branch leaves it and ends
+goto pos 39090 3815 -2850
+clear 3000
+face 94
+streaming wait
+grass wait
+wait 5000
+shot track-cross
+wait 200
+grass parts 256
+wait 1200
+shot cover-track-cross
+wait 200
+grass parts 0
+# the end piece of that branch from 1.7 m, then the next T-cross from 2.5 m above
+cam at 38950 3990 -2252 38550 3825 -2252
+wait 3000
+shot track-end
+wait 200
+cam at 39075 4060 -2900 39050 3808 -3600
+wait 3000
+shot track-cross-2
+wait 200
+cam game
+
+# the footpath up the slope to its turn into the track
+goto pos 37981 3215 2376
+clear 3000
+face -100
+streaming wait
+grass wait
+wait 5000
+shot track-path05
+wait 200
+grass parts 256
+wait 1200
+shot cover-track-path05
+wait 200
+grass parts 0
+
+# the same road texture outside the meadow
+goto pos 29012 3190 6182
+clear 3000
+face -10
+streaming wait
+grass wait
+wait 5000
+shot track-rock
+wait 200
+goto pos 41855 2985 -11760
+clear 3000
+face 139
+streaming wait
+grass wait
+wait 5000
+shot track-sweet
+wait 200
+
+# the low sun: behind the camera, against it, and on a rut
+set time 19 30
+goto pos 41940 3300 -317
+clear 3000
+face -122
+streaming wait
+grass wait
+wait 6000
+shot track-along-eve
+wait 200
+goto pos 41506 3395 -985
+face 56
+grass wait
+wait 5000
+shot track-down-eve
+wait 200
+goto pos 42300 3230 140
+cam at 42186 3317 10 42083 3279 -280
+grass wait
+wait 3000
+shot track-low-eve
+wait 200
+cam game

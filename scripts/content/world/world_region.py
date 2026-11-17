@@ -21,7 +21,8 @@ converter wrote them (base_materials: Blender writes [9.99999975e-05, 0] as [9.9
 changes nothing gives every chunk equal to its base.
 
 A passing chunk the edits changed goes to <staging>/<set>/worlds/<WORLD>/chunks/<x>_<z>.glb (left as it is when it
-is the same as the published one); a chunk equal to its base is not published. The region's record in the registry
+is the same as the published one); a chunk equal to its base is not published. The set's cooked files follow as with
+build (world_cook.py): index removed first, .wcb and cloth bundle cooked by content-convert, index written last. The region's record in the registry
 (kind worldregion) holds the region, the set, the edits and per chunk the base chunk's SHA-256, the output with its
 SHA-256 and the check. A chunk of a set belongs to one record: a region over a chunk another record of the set
 holds fails, and so does build on a chunk of a region. build-region <id> of an existing record rebuilds it, --edit
@@ -313,16 +314,16 @@ def cmd_build_region(a) -> int:
 
     published = {c['chunk']: c['output']['path'] for c in (record or {}).get('chunks', []) if c.get('output')}
     rows, stale = [], []      # chunks the edits no longer change: removed once the record no longer lists them
+    publication = world_edit.publication_of(a, base, staging, set_name, world)
     for name, out in zip(names, outs):
         chunk = f'{world}/{name}'
         target = staging / set_name / 'worlds' / world / 'chunks' / f'{name}.glb'
         row = {'chunk': chunk, 'base_sha256': base_sha[name], 'check': reports[name].summary}
         if name in changed:
-            target.parent.mkdir(parents=True, exist_ok=True)
             if target.exists() and not chunk_glb.same_geometry(target, out, full=True):
                 print(f'{target}: the same chunk as published, left as it is')
             else:
-                shutil.copyfile(out, target)
+                publication.write(out, target)
                 print(f'{target}: published')
             row['output'] = {'path': target.relative_to(staging).as_posix(), 'sha256': world_edit.sha256(target)}
         elif chunk in published and (staging / published[chunk]).exists():
@@ -353,11 +354,11 @@ def cmd_build_region(a) -> int:
     registry.validate_entry(entry, content_root=staging)
     if record is not None and {**entry, 'utc': None} == {**record, 'utc': None}:
         print(f'{a.id}: the same as its record, the registry is left as it is')
-        return 0
+        return publication.finish()
     entries = [entry if e['id'] == a.id else e for e in entries] if record is not None else entries + [entry]
     world_edit.write_registry(registry_path, entries)
     print(f'{a.id}: recorded in {registry_path}')
     for path in stale:
-        path.unlink()
+        publication.remove(path)
         print(f'{path}: the edits no longer change it, removed')
-    return 0
+    return publication.finish()

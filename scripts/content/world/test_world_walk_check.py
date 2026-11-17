@@ -13,7 +13,7 @@ import pytest
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import world_walk_check as walk  # noqa: E402
-from test_world_census import chunk, make_world, square  # noqa: E402
+from test_world_census import as_objects, chunk, make_world, square  # noqa: E402
 
 # Gothic cm. P0 -> P1 runs along z = 8.5 m; P2 stands 0.5 m above tile (5, 3); the tree is on tile (10, 3).
 POINTS = {'P0': (200, 50, 850), 'P1': (1400, 50, 850), 'P2': (550, 50, 350)}
@@ -68,6 +68,14 @@ def test_an_empty_content_folder_changes_nothing(tmp_path):
     assert R['edges']['height_change_m'] == zero(1)
     assert R['ground']['layers_a'] == 256 + 16 and R['ground']['change_m'] == zero(256 + 16)
     assert R['objects']['change_m'] == zero(1)
+
+
+def test_object_entries_of_world_json_give_the_result_of_strings(tmp_path):
+    base, content = world(tmp_path, raised({(5, 3)} | {(i, 8) for i in range(8, 12)}, 0.62))
+    strings = check(base, content)
+    assert not strings['passed'] and strings['edges']['failed']
+    as_objects(base)
+    assert check(base, content) == strings
 
 
 def test_a_bump_under_a_waypoint_is_flagged_with_its_size(tmp_path):

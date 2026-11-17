@@ -66,6 +66,12 @@ const ParticleFx* ParticlesDefinitions::implGet(std::string_view name, bool rela
     p->hdrFrom             = own.hdrFrom;
     p->hdrTo               = own.hdrTo;
     p->hdrEdge             = own.hdrEdge;
+    if(own.hazeShift>0) {
+      // drawn after everything translucent, over a copy of the frame (Renderer, PfxBucket::drawHaze)
+      p->hazeShift          = own.hazeShift;
+      p->hazeCell           = own.hazeCell;
+      p->visMaterial.alpha  = Material::Ghost;
+      }
     }
   auto elt = pfx.insert(std::make_pair(std::move(cname),std::move(p)));
 

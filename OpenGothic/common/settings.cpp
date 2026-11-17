@@ -180,9 +180,15 @@ void Settings::load(std::u16string_view systemIni, std::u16string_view userIni) 
   // costs ~11 ms GPU indoors on an M1 Pro
 #if defined(__APPLE__)
   defaults->set("INTERNAL",     "vsmLampSoft", 0);
+  defaults->set("INTERNAL",     "lampContact", 0); // graphics/lampcontact.h
+  defaults->set("INTERNAL",     "grassContact", 0); // graphics/grasscontact.h
 #else
   defaults->set("INTERNAL",     "vsmLampSoft", 1);
+  defaults->set("INTERNAL",     "lampContact", 1);
+  defaults->set("INTERNAL",     "grassContact", 1);
 #endif
+
+  defaults->set("INTERNAL",     "giContactAo", 1); // graphics/contactao.h
 
   defaults->set("VIDEO", "zVidBrightness", 0.5f);
   defaults->set("VIDEO", "zVidContrast",   0.5f);

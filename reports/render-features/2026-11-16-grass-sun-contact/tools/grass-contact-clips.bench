@@ -1,0 +1,76 @@
+# The sun's screen ray over the grass (../README.md), the clips of the acceptance: the user judges
+# «без луча | с лучом» by eye. Two runs record the same clips, without it (OPENGOTHIC_GRASS_CONTACT=0) and the
+# game's; ../../2026-11-15-night-interiors/tools/lamp_contact_clips.py puts them side by side:
+#   lamp_contact_clips.py <without> <with> <out> --prefix grass-contact-
+#   OPENGOTHIC_RT=1 OPENGOTHIC_LIGHT_FREEZE=1 TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=ryzen \
+#     OPENGOTHIC_CONTENT=<the working content> [OPENGOTHIC_GRASS_CONTACT=0] scripts/bench.sh <this file> <out>
+# The wind is the game's: the shadows move with the blades.
+# @timeout 900
+seed 73013
+cheat god
+blink off
+overlay off
+ui off
+view full
+cam lift off
+goto pos 41001 3440 -507
+clear 3000
+streaming wait
+grass wait
+watch player
+# 1. Noon: a held camera at the hero's feet while he turns on the spot, then he walks before the game's camera
+set time 12 0
+wait 4000
+cam cut
+cam look 10
+cam world 110 35 0
+wait 3000
+cam hold
+rec noon-feet-turn
+wait 1000
+hold turnl 6000
+wait 7000
+stop
+cam game
+wait 3000
+rec noon-walk
+wait 1000
+walkmode walk
+hold forward 6000
+wait 6500
+stop
+# 2. The morning, a lower sun: a low held camera along the grass, the wind moves it
+set time 9 0
+wait 4000
+cam cut
+cam look 20
+cam world 150 25 60
+wait 3000
+cam hold
+rec morning-low-wind
+wait 1000
+wait 7000
+stop
+cam game
+wait 3000
+rec morning-walk
+wait 1000
+walkmode walk
+hold turnl 1500
+wait 2000
+hold forward 6000
+wait 6500
+stop
+# 3. The late afternoon: long shadows, the hero walks before the game's camera
+set time 17 30
+wait 4000
+cam game
+wait 3000
+rec late-walk
+wait 1000
+walkmode walk
+hold turnl 1500
+wait 2000
+hold forward 6000
+wait 6500
+stop

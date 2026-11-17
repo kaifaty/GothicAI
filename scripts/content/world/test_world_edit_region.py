@@ -18,7 +18,14 @@ import chunk_canon  # noqa: E402
 import chunk_glb  # noqa: E402
 import world_edit  # noqa: E402
 import world_region  # noqa: E402
-from world_fixtures import MATERIALS, blender, write_glb  # noqa: E402
+from world_fixtures import (  # noqa: E402
+    MATERIALS,
+    blender,
+    fake_converter,
+    fake_wcb,
+    follow_writes,
+    write_glb,
+)
 
 EDITS = HERE / 'test_edits'
 CELLS, STEP, SIZE = 9, 100.0, 230.0
@@ -86,7 +93,7 @@ def region_world(tmp_path):
 def build_region(tmp_path, base, *args, record_id='test-region'):
     staging, registry = tmp_path / 'staging', tmp_path / 'world-edits.jsonl'
     argv = ['build-region', record_id, '--base', str(base), '--staging', str(staging), '--registry', str(registry),
-            '--work', str(tmp_path / 'work'), *args]
+            '--work', str(tmp_path / 'work'), '--converter', '', *args]
     return world_edit.main(argv), staging, registry
 
 
@@ -203,6 +210,15 @@ def test_a_region_edit_that_changes_nothing_publishes_nothing(tmp_path, capsys):
     assert entry['replaces'] == [] and entry['files'] == {'glb': []}
     assert [c['chunk'] for c in entry['chunks']] == [f'TESTWORLD/{n}' for n in INSIDE]
 
+    # The same source triangles must also survive a single-chunk build with the feature seam intact.
+    work = tmp_path / 'single-chunk'
+    code = world_edit.main(['build', 'test-chunk', '--set', 'test-single', '--chunk', 'TESTWORLD/2_1',
+                            '--base', str(base), '--staging', str(staging), '--registry', str(registry),
+                            '--work', str(work), '--dry-run', *edit_args('region_nothing')])
+    assert code == 0, capsys.readouterr().out
+    src, _ = chunk_paths(base, staging, '2_1')
+    assert world_edit.main(['compare', str(src), str(work / 'out.glb'), '--full']) == 0
+
 
 @blender
 def test_an_inner_border_vertex_moves_in_every_chunk_with_it(tmp_path, capsys):
@@ -264,6 +280,33 @@ def test_a_subdivided_region(tmp_path, capsys):
                             '--staging', str(staging), '--registry', str(registry), '--work', str(tmp_path / 'w2'),
                             *edit_args('region_nothing')])
     assert code == 2 and 'test-region' in capsys.readouterr().err
+
+
+@blender
+def test_a_region_publishes_the_cooked_files_of_its_chunks(tmp_path, capsys, monkeypatch):
+    base = region_world(tmp_path)
+    world_dir = base / 'worlds/TESTWORLD'
+    names = sorted(p.stem for p in (world_dir / 'chunks').glob('*.glb'))
+    (world_dir / 'world.json').write_text(json.dumps({'materials': MATERIALS, 'chunks': [
+        {'cell': [int(v) for v in n.split('_')], 'meshes': [{'file': f'chunks/{n}.glb', 'role': 'draw'}]}
+        for n in names]}))
+    convert = str(fake_converter(tmp_path / 'bin'))
+    ops = follow_writes(monkeypatch)
+    code, staging, _ = build_region(tmp_path, base, *NEW, *edit_args('region_lift'), '--converter', convert)
+    out = capsys.readouterr().out
+    assert code == 0, out
+    set_world = staging / 'test-r/worlds/TESTWORLD'
+    glbs = sorted(set_world.glob('chunks/*.glb'))
+    assert [g.stem for g in glbs] == INSIDE
+    assert ops[0] == ('remove', set_world / 'chunks.wci') and ops[-1] == ('write', set_world / 'chunks.wci')
+    assert [p for op, p in ops[1:5]] == glbs
+    for glb in glbs:
+        assert glb.with_suffix('.wcb').read_bytes() == fake_wcb(glb)
+    assert '.wcb 4 written, 0 left as they were; cloth bundle written; index written' in out
+    # a rebuild that changes nothing writes nothing
+    ops.clear()
+    code, _, _ = build_region(tmp_path, base, '--converter', convert, record_id='test-region')
+    assert code == 0 and ops == []
 
 
 @blender

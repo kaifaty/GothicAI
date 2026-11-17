@@ -167,12 +167,14 @@ def tilt_matrix(degrees: float) -> list[list[float]]:
 
 
 def particle_document(effects: list[dict]) -> dict:
-    """particles.d file of own PFX: name, base and the C_PARTICLEFX fields to set; notes are left out."""
+    """particles.d file of own PFX: name, base, the own fields (an atlas flipbook, motion) and the C_PARTICLEFX
+    fields to set; notes are left out."""
     out = []
     for effect in effects:
         if not re.fullmatch(r'[A-Z0-9_]+', effect['name']):
             raise ValueError(f"particle name {effect['name']!r}: expected [A-Z0-9_]+")
-        out.append(dict(name=effect['name'], base=effect['base'], set=dict(effect['set'])))
+        own = {key: effect[key] for key in ('flipbook', 'curl', 'drag') if key in effect}  # docs/asset-migration.md
+        out.append(dict(name=effect['name'], base=effect['base'], **own, set=dict(effect['set'])))
     if len({e['name'] for e in out}) != len(out):
         raise ValueError('duplicate particle names')
     return dict(format=1, effects=out)

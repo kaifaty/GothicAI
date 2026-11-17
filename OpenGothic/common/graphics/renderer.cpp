@@ -212,7 +212,7 @@ void Renderer::setupSettings() {
   // lamps' first search without the point's own texels, as before 2026-11-14. The command wins while a scenario runs.
   if(const char* env = std::getenv("OPENGOTHIC_VSM_STUDY")) {
     const int v = std::atoi(env);
-    benchVsmStudy = uint32_t(v<0 ? 0 : (v>31 ? 31 : v));
+    benchVsmStudy = uint32_t(v<0 ? 0 : (v>63 ? 63 : v));
     Log::i("vsm: study bits = ", benchVsmStudy, " by OPENGOTHIC_VSM_STUDY");
     }
   // OPENGOTHIC_SSAO_STUDY=<bits>: the bench command `ssao study` from the environment, for a whole run (one binary
@@ -766,6 +766,7 @@ void Renderer::resetViewport(Tempest::Size res, Tempest::Size fullRes) {
   hiz.hiZ       = device.image2d(TextureFormat::R16,  hw, hh, true);
 
   sceneOpaque   = device.attachment(TextureFormat::R11G11B10UF,w,h);
+  sceneHaze     = Attachment();
   sceneDepth    = device.attachment(TextureFormat::R32F,       w,h);
 
   gbufDiffuse   = device.attachment(TextureFormat::RGBA8,w,h);
@@ -1014,6 +1015,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
                      {zbuffer, Tempest::Preserve, Tempest::Preserve});
   cmd.setDebugMarker("Translucent");
   wview.drawTranslucent(cmd, fId);
+  drawHaze(cmd, fId, wview);
   translucentTiming.finish();
 
   //drawHashDbg(sceneLinear, cmd, wview);
@@ -1112,6 +1114,31 @@ void Renderer::drawUpscale(Tempest::Attachment& result, Tempest::Encoder<Tempest
   cmd.setBinding(0, upscale.output, Sampler::nearest());
   cmd.setPipeline(shaders.copy);
   cmd.draw(nullptr, 0, 3);
+  }
+
+// The shimmer of hot air (particles.d "haze", main.frag mainHaze): its sprites shift the finished frame, with water,
+// fog, flames and smoke in it, so they are drawn after everything translucent and read a copy of the frame. No haze
+// in view: no copy and no pass
+void Renderer::drawHaze(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wview) {
+  if(!wview.hasHaze(fId))
+    return;
+  auto& device = Resources::device();
+  if(!device.properties().hasSamplerFormat(zBufferFormat))
+    return; // no sceneDepth to keep the shift off what stands in front (stashSceneAux)
+  if(sceneHaze.isEmpty())
+    sceneHaze = device.attachment(TextureFormat::R11G11B10UF, uint32_t(sceneLinear.w()), uint32_t(sceneLinear.h()));
+  wview.setHazeImage(textureCast<const Texture2d&>(sceneHaze));
+
+  cmd.setFramebuffer({{sceneHaze, Tempest::Discard, Tempest::Preserve}});
+  cmd.setDebugMarker("Haze-copy");
+  cmd.setBinding(0, sceneLinear, Sampler::nearest());
+  cmd.setPipeline(shaders.copy);
+  cmd.draw(nullptr, 0, 3);
+
+  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}, {taa.reactive, Tempest::Preserve, Tempest::Preserve}},
+                     {zbuffer, Tempest::Preserve, Tempest::Preserve});
+  cmd.setDebugMarker("Haze");
+  wview.drawHaze(cmd, fId);
   }
 
 void Renderer::stashSceneAux(Encoder<CommandBuffer>& cmd) {
@@ -1350,8 +1377,10 @@ void Renderer::prepareSSAO(Encoder<CommandBuffer>& cmd, WorldView& wview) {
     ssao.valid = false;
     return;
     }
-  // the probes of -gi 1 trace the occlusion of their light themselves: their ambient takes no SSAO (probe_ambient.frag)
-  if(settings.giMethod==GiMethod::Probes) {
+  // the probes of -gi 1 trace the occlusion of their light themselves: their ambient takes only the short occlusion
+  // of what they do not see (graphics/contactao.h, probe_ambient.frag)
+  const bool contact = settings.giMethod==GiMethod::Probes;
+  if(contact && !ContactAo::enabled()) {
     ssao.valid = false;
     return;
     }
@@ -1361,7 +1390,7 @@ void Renderer::prepareSSAO(Encoder<CommandBuffer>& cmd, WorldView& wview) {
     uint32_t  frame   = 0;
     uint32_t  reset   = 0;
     uint32_t  fullSet = 0; // the whole set this frame, no history
-    uint32_t  behindOld = 0; // bench `ssao study 1`
+    uint32_t  flags   = 0; // 1 bench `ssao study 1`, 2 the short sphere over the GI probes
     } push;
   if(!camHistory.continuous)
     ssao.valid = false;
@@ -1372,7 +1401,7 @@ void Renderer::prepareSSAO(Encoder<CommandBuffer>& cmd, WorldView& wview) {
   push.frame     = ssao.frame;
   push.reset     = ssao.valid && settings.ssaoHistory ? 0 : 1;
   push.fullSet   = settings.ssaoHistory ? 0 : 1;
-  push.behindOld = benchSsaoStudy & 1u;
+  push.flags     = (benchSsaoStudy & 1u) | (contact ? 2u : 0u);
 
   auto& device = Resources::device();
   const auto aoSize = effectResolution();

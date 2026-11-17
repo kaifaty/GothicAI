@@ -158,9 +158,9 @@ class Resources final {
       bool                     eye = false; // an eyeball: wet highlight, the lid's shade (reports/content/2026-11-hero-head/eye-shader.md)
       FoliageWind::Params      foliage; // "foliage": leaves in the wind, the sun through them (graphics/foliagewind.h)
       Grass::Params            grass;   // "grass": the ground grows grass (graphics/grass/grassparams.h)
-      Material::Layers         layers;  // "ground" or "verge": the meadow's two layers, loaded (graphics/grass/grassground.h)
+      Material::Layers         layers;  // "ground", "verge", "track": the layers by world position, loaded (graphics/grass/)
       WindowGlow::Params       window;  // "window": the glow is a window's, lit of an evening (graphics/windowglow.h)
-      bool                     present = false; // the material is drawn by its record; not for a record of `grass`, `ground`, `verge` alone
+      bool                     present = false; // the material is drawn by its record; not for a record of `grass`, `ground`, `verge`, `track` alone
       bool                     hasAlbedo = false;
       };
     static MaterialMaps              loadMaterialMaps(std::string_view name);
@@ -303,7 +303,9 @@ class Resources final {
     // the strands of that head (characters.json "groom"), nullptr without them
     static const ProtoMesh*          loadCharacterGroom(std::string_view instance);
     // All static visual readers share the selected base and content overrides.
-    static asset::StaticMesh loadVisualMesh(std::string_view name, bool* replaced = nullptr);
+    // colors: COLOR_0 of the own GLB for PackedMesh (gltfmeshcolor.h); left empty for a mesh without it
+    static asset::StaticMesh loadVisualMesh(std::string_view name, bool* replaced = nullptr,
+                                            std::vector<std::vector<uint32_t>>* colors = nullptr);
     struct MeshReplacementSource {
       std::filesystem::path file;
       size_t size = 0;
@@ -725,11 +727,15 @@ class Resources final {
       FoliageWind::Params foliage; // `on` with the field
       Grass::Params grass;         // `on` with the field
       WindowGlow::Params window;   // `on` with the field
-      bool        grassOnly = false; // nothing but `grass`, `ground`, `verge`: the ground keeps the texture it has without a record
+      bool        grassOnly = false; // nothing but `grass`, `ground`, `verge`, `track`: the ground keeps the texture it has without a record
       Grass::Ground ground;        // `on` with the field: the six maps below
       std::string swardAlbedo, swardNormal, swardOrm, earthAlbedo, earthNormal, earthOrm;
       Grass::Verge verge;          // `on` with the field
       std::string vergeOf;         // upper-case: the record of the grass this ground is the verge of
+      Grass::Track track;          // `on` with the field: the nine maps below (graphics/grass/grasstrack.h)
+      std::array<std::string,3> crust, loose, ribbon; // albedo, normal, orm; the ribbon's tint, normal, mask
+      float       borderTile = 0.f; // `ground.border`: the earth of the notches by a road, its three maps
+      std::array<std::string,3> border;
       };
     std::unordered_map<std::string,MaterialMapFiles>                  materialMaps;
     // the record of a grass with `ground` by its upper-case name, or none

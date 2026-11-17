@@ -20,14 +20,16 @@
 #include "lighting/eye_brdf.glsl"
 #endif
 
-// No SSAO on the light of the probes: they trace what hides the sky and the lit surfaces from them, SSAO (1 m
-// around a pixel) would take that occlusion away a second time. The path tracer has no SSAO either.
+// No SSAO of a metre on the light of the probes: they trace what hides the sky and the lit surfaces from them, it
+// would take that occlusion away a second time. What they do not see - anything nearer than their 25 cm grid, the
+// hero, the people, the things - is the short occlusion of ssao.comp (VF_CONTACT_AO, graphics/contactao.h).
 
 layout(binding  = 0, std140) uniform UboScene {
   SceneDesc scene;
   };
 layout(binding  = 1) uniform sampler2D  gbufDiffuse;
 layout(binding  = 2) uniform usampler2D gbufNormal;
+layout(binding  = 3) uniform sampler2D  contactAo;
 layout(binding  = 4) uniform sampler2D  depth;
 layout(binding  = 5, std430) readonly buffer Hbo0 { uint hashTable[]; };
 layout(binding  = 6, std430) readonly buffer Pbo  { ProbesHeader probeHeader; Probe probe[]; };
@@ -210,8 +212,18 @@ void main() {
   vec3 luminance  = vec3(0);
   luminance += colorSum.rgb;
 
+  float ao = 1.0;
+  if((scene.viewFlags & VF_CONTACT_AO)!=0u)
+    ao = textureLod(contactAo, gl_FragCoord.xy*scene.screenResInv, 0).r;
+#if defined(MATERIAL_MAPS)
+  // a leaf and a blade of grass carry their own occlusion (the root's shade of grass.frag, the crown's of the
+  // leaves): cards in the depth buffer would take it away a second time, and as noise
+  if(orm.a>0.5 && isGBufFoliage(diff4.a))
+    ao = 1.0;
+#endif
+
   vec3 color = linear;
-  color *= luminance;
+  color *= luminance * ao;
 #if defined(MATERIAL_MAPS)
   if(ownMaterial && isGBufEye(diff4.a)) {
     // an eyeball (eye_brdf.glsl): the lids' shade takes the light of the probes and the sky's reflection in full
@@ -234,7 +246,7 @@ void main() {
     const vec3 sky = probeReadIrradiance(probesLighting, 0, norm);
     const vec3 reflectedSky = mix(sharpSky, sky, orm.g*orm.g);
     color += reflectedSky * materialEnvBrdf(materialF0(linear, orm.b), orm.g, noV) *
-             materialSpecularWeight(orm.g, orm.b) * clamp(skyVisibilitySum, 0.0, 1.0);
+             materialSpecularWeight(orm.g, orm.b) * clamp(skyVisibilitySum, 0.0, 1.0) * ao;
     }
 #endif
   color *= scene.exposure;
