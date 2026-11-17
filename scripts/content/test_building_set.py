@@ -157,6 +157,34 @@ def test_compose_carries_the_maps_of_a_records_layers(tmp_path, monkeypatch):
     assert {'sward/albedo.dds', 'earth/orm.dds', 'tufts/normal.dds'} <= set(digests)
 
 
+def test_compose_carries_the_maps_of_a_road_and_of_the_meadows_border(tmp_path, monkeypatch):
+    monkeypatch.setenv('GOTHIC_AI_DATA', str(tmp_path))
+    staged(tmp_path, 'roofs-1', {'ROOF_01.TGA': 'roofs-1-roof-01'})
+    folder = tmp_path / 'content-staging/road-1/materials'
+    maps = lambda stem, keys=('albedo', 'normal', 'orm'): {k: f'{stem}/{k}.dds' for k in keys}
+    ribbon = maps('ribbon', ('tint', 'normal', 'mask'))
+    layers = [maps(stem) for stem in ('sward', 'earth', 'crust', 'loose')] + [ribbon]
+    for layer in layers:
+        for path in layer.values():
+            (folder / path).parent.mkdir(parents=True, exist_ok=True)
+            (folder / path).write_bytes(f'road-1/{path}'.encode())
+    index = {'MEADOW.TGA': {'grass': {'fine': 1}, 'ground': {'sward': maps('sward'), 'earth': maps('earth'),
+                                                            'border': maps('loose') | {'tile_m': 3.}}},
+             'PATH.TGA': {'verge': {'of': 'MEADOW.TGA', 'reach': 120, 'margin': 100},
+                          'track': {'crust': maps('crust') | {'tile_m': 4.}, 'loose': maps('loose') | {'tile_m': 3.},
+                                    'ribbon': ribbon, 'wander': 14.}}}
+    (folder / 'materials.json').write_text(json.dumps(index))
+    building_set.compose('working-2', ['roofs-1', 'road-1'])
+    out = tmp_path / 'content-staging/working-2'
+    assert json.loads((out / 'materials/materials.json').read_text()) | index == json.loads(
+        (out / 'materials/materials.json').read_text())
+    for layer in layers:
+        for path in layer.values():
+            assert (out / 'materials' / path).read_bytes() == f'road-1/{path}'.encode()
+    digests = json.loads((out / 'composition.json').read_text())['dds_sha256']
+    assert {'crust/albedo.dds', 'loose/orm.dds', 'ribbon/tint.dds', 'ribbon/mask.dds'} <= set(digests)
+
+
 def staged_prop(root, name, prefix='OWN'):
     """A prop like the barrel: two materials on one atlas and a GLB with its fresh pieces."""
     staged(root, name, {f'{prefix}_WOOD.TGA': name})
