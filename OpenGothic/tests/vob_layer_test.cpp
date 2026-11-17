@@ -849,6 +849,16 @@ void flameLayer(const Fixture& f, const fs::path& baseRoot) {
     const auto result=VobLayer::readTree(rejected,baseRoot,file,ParticleContent::nameChecker(),f.content);
     require(!result.errors.empty() && rejected.empty(),"flicker "+reason+": the file is rejected");
     }
+  // a tree entry up the world's vertical from its place in the slot ("up_cm"): the fire of a torch in a hand
+  textFile(file,R"({"format":1,"add":[{"key":"up","kind":"emitter","pfx":"FIRE_SMOKE","position":[-40,0,3],"yaw_deg":0,"up_cm":18},)"
+                R"({"key":"flat","kind":"emitter","pfx":"FIRE_SMOKE","position":[0,0,0],"yaw_deg":0}]})");
+  Resources::VobTree lifted;
+  require(VobLayer::readTree(lifted,baseRoot,file,ParticleContent::nameChecker(),f.content).errors.empty() && lifted.size()==2 &&
+          VobLayer::upCm(*lifted[0])==18.f && VobLayer::upCm(*lifted[1])==0.f,"a tree entry keeps its up_cm");
+  textFile(file,R"({"format":1,"add":[{"key":"up","kind":"emitter","pfx":"FIRE_SMOKE","position":[0,0,0],"yaw_deg":0,"up_cm":201}]})");
+  Resources::VobTree tooFar;
+  require(!VobLayer::readTree(tooFar,baseRoot,file,ParticleContent::nameChecker(),f.content).errors.empty() && tooFar.empty(),
+          "up_cm over 200 is rejected");
   fs::remove_all(file.parent_path());
 
   // a base lamp edited in place takes the signal as well: its own colour and range keys go
