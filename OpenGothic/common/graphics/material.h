@@ -31,6 +31,15 @@ class Material final {
       AdditiveLight,
       };
 
+    // "two_sided" of a record: an object's mesh is drawn, casts its shadow and is seen by rays from both sides
+    // (reports/engine/2026-11-16-modern-trees/two-sided.md). Same: the side away from the winding is lit by the
+    // vertex normal as it is, as the second copy of a card listed twice was; Flip: by the normal turned to the eye
+    enum class TwoSided : uint8_t {
+      Off,
+      Same,
+      Flip,
+      };
+
     enum class Antitile : uint8_t {
       Off,
       Offset,
@@ -100,6 +109,7 @@ class Material final {
     bool                      strand           = false; // strands as ribbons (materials.json): BK_STRAND
     bool                      eye              = false; // an eyeball (materials.json): BK_EYE
     FoliageWind::Params       foliage;                 // leaves in the wind (materials.json): BK_FOLIAGE
+    TwoSided                  twoSided         = TwoSided::Off; // both sides (materials.json): BK_TWO_SIDED, BK_TWO_SIDED_FLIP
     Grass::Params             grass;                   // a ground that grows grass (materials.json): BK_GRASS
     Layers                    layers;                  // its own two layers, or a verge's (materials.json): BK_GROUND, BK_VERGE
     WindowGlow::Params        window;                  // the glow is a window's (materials.json): BK_WINDOW

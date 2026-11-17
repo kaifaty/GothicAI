@@ -186,7 +186,72 @@ void foliageTreeMaths() {
   }
 
 // materials.json "foliage": {"anchor": "tree"}
+// "two_sided" of a record (reports/engine/2026-11-16-modern-trees/two-sided.md): the field's values, a bucket of
+// its own, a pipeline without culling for an object's mesh in every pass and the old ones for everything else.
+void twoSidedRecords(Tempest::Device& device, const Fixture& fixture) {
+  const auto record = [](std::string_view name, std::string_view sides) {
+    return "\"" + std::string(name) + R"(":{"albedo":"solid.dds","normal":"alpha.dds","orm":"alpha.dds")" +
+           std::string(sides) + "}";
+    };
+  textFile(fixture.root/"materials/materials.json", "{" +
+    record("SIDES_NONE.TGA", "") + "," +
+    record("SIDES_OFF.TGA",  R"(,"two_sided":"off")") + "," +
+    record("SIDES_SAME.TGA", R"(,"two_sided":"same")") + "," +
+    record("SIDES_FLIP.TGA", R"(,"two_sided":"flip","foliage":{"anchor":"tree","translucency":0.25})") + "," +
+    record("SIDES_BOOL.TGA", R"(,"two_sided":true)") + "," +
+    record("SIDES_NUMBER.TGA", R"(,"two_sided":1)") + "," +
+    record("SIDES_CASE.TGA", R"(,"two_sided":"Flip")") + "," +
+    record("SIDES_BOTH.TGA", R"(,"two_sided":"both")") + "," +
+    record("SIDES_EMPTY.TGA", R"(,"two_sided":"")") +
+    "}");
+  Resources resources(device);
+  Shaders shaders;
+  shaders.waitCompiler();
+  using Sides = Material::TwoSided;
+  require(Resources::loadMaterialMaps("SIDES_NONE.TGA").twoSided==Sides::Off &&
+          Resources::loadMaterialMaps("SIDES_OFF.TGA").twoSided==Sides::Off &&
+          Resources::loadMaterialMaps("SIDES_OFF.TGA").present &&
+          Resources::loadMaterialMaps("SIDES_SAME.TGA").twoSided==Sides::Same &&
+          Resources::loadMaterialMaps("SIDES_FLIP.TGA").twoSided==Sides::Flip &&
+          FoliageTree::isTree(Resources::loadMaterialMaps("SIDES_FLIP.TGA").foliage),
+          "\"two_sided\" is \"off\", \"same\" or \"flip\"; a record without it has one side; foliage stays beside it");
+  for(const auto* name:{"SIDES_BOOL.TGA","SIDES_NUMBER.TGA","SIDES_CASE.TGA","SIDES_BOTH.TGA","SIDES_EMPTY.TGA"})
+    require(!Resources::loadMaterialMaps(name).present,
+            (std::string("\"two_sided\" that is not one of its three words must reject the record whole: ")+name).c_str());
+
+  const Material none(source("SIDES_NONE.TGA"),true), off(source("SIDES_OFF.TGA"),true);
+  const Material same(source("SIDES_SAME.TGA"),true), flip(source("SIDES_FLIP.TGA"),true);
+  require(none.twoSided==Sides::Off && off.twoSided==Sides::Off && same.twoSided==Sides::Same && flip.twoSided==Sides::Flip &&
+          Material(source("SIDES_SAME.TGA"),false).twoSided==Sides::Off,
+          "a material takes the sides of its record, and none with the material maps off");
+  Material sameOfNone = none, flipOfNone = none, sameAgain = none;
+  sameOfNone.twoSided = Sides::Same;
+  flipOfNone.twoSided = Sides::Flip;
+  sameAgain.twoSided  = Sides::Same;
+  require(none==Material(none) && !(none==sameOfNone) && !(none==flipOfNone) && !(sameOfNone==flipOfNone) && sameOfNone==sameAgain,
+          "the sides are a part of the material: one, two alike and two turned do not share a bucket");
+
+  for(const bool bindless:{false,true}) {
+    if(bindless && !Shaders::options().doBindless)
+      continue;
+    for(const auto pass:{Shaders::T_Main,Shaders::T_Depth,Shaders::T_Shadow,Shaders::T_Vsm}) {
+      const auto* one      = shaders.materialPipeline(none,DrawCommands::Static,pass,bindless);
+      const auto* two      = shaders.materialPipeline(sameOfNone,DrawCommands::Static,pass,bindless);
+      const auto* turned   = shaders.materialPipeline(flipOfNone,DrawCommands::Movable,pass,bindless);
+      require(one!=nullptr && two!=nullptr && two!=one && turned==two &&
+              shaders.materialPipeline(off,DrawCommands::Movable,pass,bindless)==one &&
+              shaders.materialPipeline(none,DrawCommands::Static,pass,bindless)==one,
+              "an object's two-sided material takes one more pipeline per pass, the same for both of its kinds; "
+              "a one-sided material keeps its own");
+      for(const auto type:{DrawCommands::Landscape,DrawCommands::Animated,DrawCommands::Morph})
+        require(shaders.materialPipeline(sameOfNone,type,pass,bindless)==shaders.materialPipeline(none,type,pass,bindless),
+                "the world mesh, a skin and a morph are drawn by the pipeline of a one-sided material");
+      }
+    }
+  }
+
 void foliageTreeRecords(Tempest::Device& device, const Fixture& fixture) {
+  twoSidedRecords(device,fixture);
   const auto record = [](std::string_view name, std::string_view foliage) {
     return "\"" + std::string(name) + R"(":{"albedo":"solid.dds","normal":"alpha.dds","orm":"alpha.dds","foliage":)" +
            std::string(foliage) + "}";

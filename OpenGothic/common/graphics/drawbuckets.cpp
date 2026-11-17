@@ -379,6 +379,13 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
           bx.foliage = WindowGlow::pack(i.mat.window);
           bx.flags  |= BK_WINDOW;
           }
+        // Both sides of an object's mesh: the pipelines do not cull it (Shaders::materialPipeline); the bits are for
+        // the mesh shader of the shadow pages, which culls by itself, and for the normal of the other side
+        if(i.mat.twoSided!=Material::TwoSided::Off) {
+          bx.flags |= BK_TWO_SIDED;
+          if(i.mat.twoSided==Material::TwoSided::Flip)
+            bx.flags |= BK_TWO_SIDED_FLIP;
+          }
         }
       }
     else if(i.animMesh!=nullptr) {
