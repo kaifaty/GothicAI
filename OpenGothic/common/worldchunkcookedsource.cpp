@@ -1,6 +1,7 @@
 #include "worldchunkcookedsource.h"
 
 #include "gothicglb.h"
+#include "worldchunkcatalogue.h"
 #include "worldchunkcook.h"
 
 #include <Tempest/Log>
@@ -257,9 +258,37 @@ WorldChunkMesh CookedChunkSource::readCell(size_t cell, std::span<const uint32_t
     }
   const auto start = Clock::now();
   ++glbReads;
-  auto mesh = glb();
+  std::optional<WorldChunkMesh> mesh;
+  if(world.catalogue!=nullptr && !currentFile && world.catalogue->canRecoverIndexedChunk()) {
+    try {
+      world.glb.verify();
+      const auto materials = std::span<const asset::Material>(world.materials);
+      const auto chunk = recoverIndexedChunk(world.glb.path,*index,cell,
+                                             materials.first(materials.size()-index->appendedMaterials()));
+      const auto name = world.glb.path.filename().string();
+      checkCookedCell(chunk,cell,cells[cell],set.source,*index,name);
+      mesh = readMesh(chunk,cell,sources,landscape,world,name);
+      }
+    catch(const SourceError&) {
+      throw;
+      }
+    catch(const std::exception&) {
+      // If the recovered cell cannot use the loaded index, fall back to the stitched world.
+      }
+    }
+  if(!mesh)
+    mesh = glb();
   glbNs += nanoseconds(start);
-  return mesh;
+  return std::move(*mesh);
+  }
+
+WorldChunkMesh CookedChunkSource::readMesh(const CookedChunk& chunk, size_t cell, std::span<const uint32_t> sources,
+                                          const Landscape* landscape, const World& world, const std::string& name) const {
+  if(landscape!=nullptr) {
+    const auto list = landscapeSources(chunk,*index,cell,landscape->exclusions,landscape->kept,name);
+    return build(chunk,*index,cell,list,world,name);
+    }
+  return build(chunk,*index,cell,sources,world,name);
   }
 
 std::optional<WorldChunkMesh> CookedChunkSource::readCooked(size_t cell, std::span<const uint32_t> sources,
@@ -285,11 +314,7 @@ std::optional<WorldChunkMesh> CookedChunkSource::readCooked(size_t cell, std::sp
     const auto name = path.filename().string();
     checkCookedCell(chunk,cell,cells[cell],set.source,*index,name);
     world.glb.verify();
-    if(landscape!=nullptr) {
-      const auto list = landscapeSources(chunk,*index,cell,landscape->exclusions,landscape->kept,name);
-      return build(chunk,*index,cell,list,world,name);
-      }
-    return build(chunk,*index,cell,sources,world,name);
+    return readMesh(chunk,cell,sources,landscape,world,name);
     }
   catch(const SourceError&) {
     throw;

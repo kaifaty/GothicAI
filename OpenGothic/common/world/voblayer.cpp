@@ -396,7 +396,7 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
             v->visual=visuals.at(name);
             v->visual_name=v->visual->name; v->associated_visual_type=v->visual->type;
             } else if(kind=="emitter") {
-            layerFields(entry,{"key","kind","position","rotation","yaw_deg","pfx","flicker"});
+            layerFields(entry,{"key","kind","position","rotation","yaw_deg","pfx","flicker","up_cm"});
             auto visual=std::make_shared<VisualParticleEffect>();
             visual->type=VisualType::PARTICLE_EFFECT;
             visual->name=particleName(layerString(member(entry,"pfx")),context,baseRoot,contentRoot);
@@ -421,7 +421,7 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
             v->visual=std::move(visual);
             v->visual_name=v->visual->name; v->associated_visual_type=v->visual->type;
             } else if(kind=="light") {
-            layerFields(entry,{"key","kind","position","rotation","yaw_deg","range","color","color_ani","range_ani","ani_fps","cookie","source_cm","near","flicker_from","jitter_cm","sway_hz"});
+            layerFields(entry,{"key","kind","position","rotation","yaw_deg","range","color","color_ani","range_ani","ani_fps","cookie","source_cm","near","flicker_from","jitter_cm","sway_hz","up_cm"});
             auto light=std::make_shared<Light>();
             light->type=VirtualObjectType::zCVobLight; light->light_type=LightType::POINT;
             light->range=layerFloat(member(entry,"range")); require(light->range>0,"range must be positive");
@@ -461,6 +461,14 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
             v=std::move(light);
             } else fail("expected kind mesh, light or emitter");
           v->position=layerPosition(entry); v->rotation=layerRotation(entry);
+          // a tree's fire over a wick that turns with a hand: the entry stands this far up the world's vertical from
+          // its place in the slot, whatever the slot's tilt (the burning torch)
+          if(entry.HasMember("up_cm")) {
+            require(treeOnly,"up_cm belongs to a vob tree");
+            const float up=layerFloat(entry["up_cm"]);
+            require(up>=-200 && up<=200,"up_cm must be in -200..200");
+            dynamic_cast<Added&>(*v).upCm=up;
+            }
           dynamic_cast<Added&>(*v).key=key; v->vob_name=key; v->vob_static=true; v->cd_dynamic=v->cd_static; v->physics_enabled=false;
           uint32_t hash=2166136261u;
           for(const char c:key) hash=(hash^uint8_t(c))*16777619u;
@@ -655,6 +663,11 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
 
 bool isAdded(const asset::VirtualObject& vob) {
   return dynamic_cast<const Added*>(&vob)!=nullptr;
+  }
+
+float upCm(const asset::VirtualObject& vob) {
+  const auto* added=dynamic_cast<const Added*>(&vob);
+  return added ? added->upCm : 0.f;
   }
 
 const std::string& key(const asset::VirtualObject& vob) {

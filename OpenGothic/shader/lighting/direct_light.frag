@@ -361,6 +361,8 @@ void main(void) {
   if(isHair && (scene.viewFlags & VF_HAIR_DEBUG)!=0u)
     luminance = vec3(0);
   luminance += linear * scene.sunColor * (lightThrough*Fd_Lambert) * FoliageThroughTint;
+  // the depth of a tree's crown (lighting/crown_light.glsl) gets its share of the sun as of any light
+  luminance *= gbufCrownShade(ormG, diff.a);
 #endif
 
   outColor = vec4(luminance * scene.exposure, 0.0);

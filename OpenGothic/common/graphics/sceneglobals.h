@@ -6,6 +6,7 @@
 #include "graphics/dynamic/frustrum.h"
 #include "rtscene.h"
 #include "resources.h"
+#include "graphics/crownlight.h"
 #include "graphics/foliagewind.h"
 #include "graphics/houselights.h"
 
@@ -36,6 +37,7 @@ class SceneGlobals final {
       VF_LAMP_CONTACT = 0x10,
       VF_CONTACT_AO = 0x20,
       VF_GRASS_CONTACT = 0x40,
+      VF_CROWN_MASK = 0x80,
       };
 
     static bool isShadowView(VisCamera v);

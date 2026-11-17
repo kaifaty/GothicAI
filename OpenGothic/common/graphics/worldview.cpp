@@ -19,6 +19,9 @@
 #include "loadprobe.h"
 #include "frameprofile.h"
 #include "utils/workers.h"
+#include "gameservices.h"
+#include "physics/dynamicworld.h"
+#include "physics/worldwind.h"
 
 using namespace Tempest;
 
@@ -503,6 +506,21 @@ WorldView::WorldView(std::pair<Vec3,Vec3> bounds, std::string_view skyPreset)
     : aabb(bounds), gSky(skyPreset), gLights(sGlobal), houses(Resources::worldOverrideDir(skyPreset)),
     visuals(sGlobal,bounds), objGroup(visuals), pfxGroup(*this,sGlobal,visuals) {
   pfxGroup.resetTicks();
+  // how open a fire's place is to the wind (particles.d "wind"): none under a roof within 30 m, a third behind a
+  // wall within 6 m upwind. Static geometry only; without a physics world every place is open
+  pfxGroup.setShelter([](const Vec3& at, const Vec3& wind) {
+    const auto* physics = GameServices::inst().physicsWorld();
+    if(physics==nullptr)
+      return 1.f;
+    const Vec3 from = at+Vec3(0,30,0);
+    if(physics->rayStatic(from, from+Vec3(0,3000,0)).hasCol)
+      return 0.f;
+    const Vec3  flat = Vec3(wind.x,0,wind.z);
+    const float len  = flat.length();
+    if(len>0 && physics->rayStatic(from, from-flat*(600.f/len)).hasCol)
+      return 0.35f;
+    return 1.f;
+    });
   sGlobal.setHouses(houses.houses());
   // A scene without a single lamp still binds the (empty) light buffer: VSM visibility reads it unconditionally
   sGlobal.lights = &gLights.lightsSsbo();
@@ -638,6 +656,8 @@ void WorldView::preFrameUpdate(const Camera& camera, uint64_t tickCount, uint8_t
   houses.tick(gSky.dayHour());
 
   pfxGroup.setViewerPos(camera.originLwc());
+  // the same wind as the cloth's and the vegetation's, m/s -> cm/ms
+  pfxGroup.setWind(WorldWind::sample(tickCount, sGlobal.windPeriod, sGlobal.zWindEnabled, sGlobal.windScale)*0.1f);
   pfxGroup.tick(tickCount);
   gLights.tick(tickCount);
   sGlobal.setTime(tickCount);

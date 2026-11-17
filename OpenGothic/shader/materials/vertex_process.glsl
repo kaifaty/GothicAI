@@ -350,6 +350,11 @@ vec3 processVertexCommon(out Varyings shOut, in Vertex v, uint bucketId, uint in
       }
     shOut.normal = normalize(normal)*(0.5 + 0.5*lid);
     }
+  if((bucket[bucketId].flags & BK_CROWN)!=0u) {
+    // A tree's crown (lighting/crown_light.glsl): the openness of the vertex (COLOR_0 A of the own GLB, 1 without
+    // it) rides to main.frag in the normal's length, as the lid's shade does
+    shOut.normal = normal*inversesqrt(max(dot(normal,normal), 1e-12))*(0.5 + 0.5*unpackUnorm4x8(v.color).a);
+    }
 #endif
 #endif
 
