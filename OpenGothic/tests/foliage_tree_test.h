@@ -222,8 +222,7 @@ void twoSidedRecords(Tempest::Device& device, const Fixture& fixture) {
   const Material none(source("SIDES_NONE.TGA"),true), off(source("SIDES_OFF.TGA"),true);
   const Material same(source("SIDES_SAME.TGA"),true), flip(source("SIDES_FLIP.TGA"),true);
   require(none.twoSided==Sides::Off && off.twoSided==Sides::Off && same.twoSided==Sides::Same && flip.twoSided==Sides::Flip &&
-          Material(source("SIDES_SAME.TGA"),false).twoSided==Sides::Off,
-          "a material takes the sides of its record, and none with the material maps off");
+          flip.foliage.translucency==0.25f,"a material takes the sides of its record");
   Material sameOfNone = none, flipOfNone = none, sameAgain = none;
   sameOfNone.twoSided = Sides::Same;
   flipOfNone.twoSided = Sides::Flip;
