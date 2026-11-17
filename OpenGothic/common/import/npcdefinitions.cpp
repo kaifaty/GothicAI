@@ -1,6 +1,6 @@
 #include "baseimport.h"
 #include "npcsnapshot.h"
-#include "npcdefinitions.h"
+#include "asset/npcdefinitions.h"
 #include "daedalus/classes.h"
 #include "daedalus/vm.h"
 #include "npcsnapshotfields.h"
