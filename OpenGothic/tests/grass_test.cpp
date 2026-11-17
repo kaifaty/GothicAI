@@ -177,6 +177,7 @@ struct Build final {
   uint32_t                     rankLimit = 256;
   float                        density   = 1.f;
   std::vector<Grass::Disc>     items;
+  bool                         squares   = true;
   };
 
 Grass::CellBlades build(std::span<const Grass::Summary*const> ground, int32_t cx, int32_t cz,
@@ -189,6 +190,7 @@ Grass::CellBlades build(std::span<const Grass::Summary*const> ground, int32_t cx
   in.items     = b.items;
   in.rankLimit = b.rankLimit;
   in.density   = b.density;
+  in.squares   = b.squares;
   return Grass::buildCell(in);
   }
 
@@ -256,15 +258,41 @@ void placementRepeats() {
       if(w.empty())
         continue;
       require(cell.minY==0 && cell.maxY==0, "blades of a flat ground stand at its height"+at(cx,cz));
-      require(cell.batches.size()==1 && cell.batches[0].slot==0 && cell.batches[0].first==0 &&
-              cell.batches[0].count==w.size(), "one material: one batch of all the blades"+at(cx,cz));
+      // one material: a batch per square of 2 m with a blade in it, one after another; a root of the margin is of
+      // the nearest square
+      size_t  next = 0;
+      int32_t last = -1;
+      for(const auto& bt:cell.batches) {
+        require(bt.slot==0 && bt.kind==0 && bt.first==next && bt.count>0 && int32_t(bt.square)>last &&
+                bt.square<Grass::CellSquares*Grass::CellSquares, "one material: a batch per square, in their order"+at(cx,cz));
+        next += bt.count;
+        last  = int32_t(bt.square);
+        const int32_t qx = bt.square/Grass::CellSquares, qz = bt.square%Grass::CellSquares;
+        const int32_t x0 = cx*Grass::CellSize + qx*Grass::SquareSize, z0 = cz*Grass::CellSize + qz*Grass::SquareSize;
+        for(uint32_t k=0; k<bt.count; ++k) {
+          const auto b = Grass::decode(cell.blades[bt.first+k],cx,cz,cell.minY);
+          require((b.x>=x0 || qx==0) && (b.x<x0+Grass::SquareSize || qx==Grass::CellSquares-1) &&
+                  (b.z>=z0 || qz==0) && (b.z<z0+Grass::SquareSize || qz==Grass::CellSquares-1),
+                  "a root lies in the square of its batch"+at(cx,cz));
+          require(k==0 || rankOf(w[bt.first+k-1])<=rankOf(w[bt.first+k]),
+                  "the blades of a batch are in the order of their ranks"+at(cx,cz));
+          }
+        }
+      require(next==w.size(), "the batches hold all the blades"+at(cx,cz));
+      Build uncut;
+      uncut.squares = false;
+      const auto one = build(flat,cx,cz,par,uncut);
+      require(one.batches.size()==1 && one.batches[0].count==w.size() && sorted(words(one))==sorted(w),
+              "without the squares: one batch of the same blades"+at(cx,cz));
+      const auto ow = words(one);
+      for(size_t i=1; i<ow.size(); ++i)
+        require(rankOf(ow[i-1])<=rankOf(ow[i]), "and in the order of their ranks"+at(cx,cz));
       for(size_t i=0; i<w.size(); ++i) {
         const auto b = Grass::decode(cell.blades[i],cx,cz,cell.minY);
         require(b.x>=cx*Grass::CellSize-Grass::CellMargin && b.x<(cx+1)*Grass::CellSize+Grass::CellMargin &&
                 b.z>=cz*Grass::CellSize-Grass::CellMargin && b.z<(cz+1)*Grass::CellSize+Grass::CellMargin,
                 "a root lies in its cell or on its margin"+at(cx,cz));
         require(b.height>=2.f && b.height<=63.f && b.y==0, "a blade is 2 to 63 cm and stands on the ground"+at(cx,cz));
-        require(i==0 || rankOf(w[i-1])<=rankOf(w[i]), "the blades of a batch are in the order of their ranks"+at(cx,cz));
         if(rankOf(w[i])<64)
           ++low;
         }
@@ -359,8 +387,9 @@ void placementGround() {
       uint32_t next = 0;
       for(size_t i=0; i<pair.batches.size(); ++i) {
         const auto& batch = pair.batches[i];
-        require(batch.first==next && batch.count>0 && (i==0 || pair.batches[i-1].slot<batch.slot),
-                "the batches follow one another by material"+at(cx,cz));
+        require(batch.first==next && batch.count>0 && (i==0 || pair.batches[i-1].slot<batch.slot ||
+                (pair.batches[i-1].slot==batch.slot && pair.batches[i-1].square<batch.square)),
+                "the batches follow one another by material, then by square"+at(cx,cz));
         for(uint32_t k=batch.first; k<batch.first+batch.count; ++k) {
           const int32_t x = Grass::decode(pair.blades[k],cx,cz,pair.minY).x;
           require(batch.slot==0 ? x<=border : x>=border, "a blade is of the material it stands on"+at(cx,cz));

@@ -19,16 +19,16 @@
 // one line per world load, none when it is missing; a cell whose .wcb is there
 // but cannot be used logs one line and reads its GLB from then on. A missing
 // .wcb is not logged. OPENGOTHIC_WCB=0 at world load turns the cooked path off.
-// The game writes no cooked file and hashes no GLB: a GLB changed at the same
-// length after the cook is not noticed. The cook removes the index before it
+// The game writes no cooked file. A healthy cooked read does not hash the GLB,
+// so it does not notice a same-length edit. The cook removes the index before it
 // writes cells and writes it last (worldchunkcook.h), so an interrupted cook
 // leaves no index; an older index put back by hand beside newer cells is
 // outside this contract, and content-convert verify-cooked-world finds it (it
 // compares each cell's hash with the index).
 // After a catalogue start (worldchunkcatalogue.h) there are no totals of
 // readWorldChunks to compare: the start loads the index it validated itself
-// (loadCatalogue), every GLB had its entry's length, and a cell that falls back
-// reads its GLB through the catalogue.
+// (loadCatalogue), every GLB had its entry's length. A cell that falls back uses
+// the index directly if its GLB still matches, otherwise it reads through the catalogue.
 
 #include "worldchunkindex.h"
 #include "worldchunksruntime.h"
@@ -71,6 +71,7 @@ class CookedChunkSource {
       const WorldChunkFile&               glb;
       const std::vector<asset::Material>& materials;
       size_t                              vertices = 0, features = 0;
+      const WorldCatalogue*               catalogue = nullptr;
       };
 
     // Called once by readWorldChunks with its result: finds and validates the
@@ -110,6 +111,8 @@ class CookedChunkSource {
       std::span<const uint32_t> exclusions;
       uint32_t                  kept = 0;
       };
+    WorldChunkMesh readMesh(const CookedChunk& chunk, size_t cell, std::span<const uint32_t> sources,
+                            const Landscape* landscape, const World& world, const std::string& name) const;
     std::optional<WorldChunkMesh> readCooked(size_t cell, std::span<const uint32_t> sources, const Landscape* landscape,
                                              const World& world) const;
     WorldChunkMesh readCell(size_t cell, std::span<const uint32_t> sources, const Landscape* landscape,

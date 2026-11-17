@@ -8,6 +8,9 @@
 
 namespace {
 constexpr int Warp = 32;
+constexpr int PassageLanes = 16;
+constexpr int ReadThreads = 256;
+constexpr int ReadTiles = (gm::Outputs + ReadThreads - 1) / ReadThreads;
 
 template <int L> __global__ void prepareKernel(gm::Ctx c) {
   const int64_t thread = int64_t(blockIdx.x) * blockDim.x + threadIdx.x;
@@ -21,17 +24,28 @@ template <int L> __global__ void ingestKernel(gm::Ctx c) {
   if (worker < 2 * c.N) gm::ingestAgent<L>(c, worker / 2, int(worker % 2), int(thread % L));
 }
 
-__global__ void readKernel(gm::Ctx c, const int32_t* agents, int64_t count, float* near, float* far) {
-  const int64_t thread = int64_t(blockIdx.x) * blockDim.x + threadIdx.x;
-  if (thread >= count * gm::Outputs) return;
-  const int64_t k = thread / gm::Outputs;
-  gm::readOutput(c, agents[k], k, int(thread % gm::Outputs), near, far);
+__global__ void readKernel(gm::Ctx c, const int32_t* agents, float* near, float* far) {
+  const int64_t k = blockIdx.x / ReadTiles;
+  const int r = int(blockIdx.x % ReadTiles) * ReadThreads + int(threadIdx.x);
+  // All cells in a tile use the same pose and movement limits.
+  __shared__ int32_t agent;
+  __shared__ gm::Body pose;
+  if (threadIdx.x == 0) {
+    agent = agents[k];
+    pose = gm::body(c, agent);
+  }
+  __syncthreads();
+  if (r < gm::Outputs) gm::readOutput(c, agent, pose, k, r, near, far);
 }
 
 __global__ void passageKernel(gm::Ctx c, const int32_t* agents, const float* segments,
                               int64_t count, uint8_t* verdicts) {
-  const int64_t q = int64_t(blockIdx.x) * blockDim.x + threadIdx.x;
-  if (q < count) verdicts[q] = gm::passage::check(c, agents[q], segments + 8 * q);
+  const int64_t q = (int64_t(blockIdx.x) * blockDim.x + threadIdx.x) / PassageLanes;
+  if (q >= count) return;
+  const int lane = int(threadIdx.x % PassageLanes);
+  const unsigned mask = 0xffffu << (threadIdx.x % Warp - lane);
+  const auto verdict = gm::passage::check<PassageLanes>(c, agents[q], segments + 8 * q, lane, mask);
+  if (lane == 0) verdicts[q] = verdict;
 }
 
 __global__ void scatterKernel(gm::Ctx c, gm::Table t, const int32_t* updates) {
@@ -66,9 +80,8 @@ void memoryRead(int64_t address, torch::Tensor agents, torch::Tensor near, torch
   TORCH_CHECK(near.numel() >= count * 10 * gm::NearOutputs && far.numel() >= count * 10 * gm::FarOutputs,
               "output too small");
   if (count == 0) return;
-  const int64_t block = 256;
-  readKernel<<<blocks(count * gm::Outputs, block), block, 0, at::cuda::getCurrentCUDAStream()>>>(
-      context(address), agents.data_ptr<int32_t>(), count, near.data_ptr<float>(), far.data_ptr<float>());
+  readKernel<<<count * ReadTiles, ReadThreads, 0, at::cuda::getCurrentCUDAStream()>>>(
+      context(address), agents.data_ptr<int32_t>(), near.data_ptr<float>(), far.data_ptr<float>());
   check();
 }
 
@@ -81,10 +94,8 @@ void memoryPassage(int64_t address, torch::Tensor agents, torch::Tensor segments
   const int64_t count = agents.numel();
   TORCH_CHECK(segments.numel() == count * 8 && verdicts.numel() == count, "one segment and verdict per query");
   if (count == 0) return;
-  // A half has only ~1,200 queries at N=2,048. One warp per block
-  // spreads independent serial scans across SMs instead of launching ~10 blocks.
-  const int64_t block = Warp;
-  passageKernel<<<blocks(count, block), block, 0, at::cuda::getCurrentCUDAStream()>>>(
+  const int64_t block = 128;
+  passageKernel<<<blocks(count * PassageLanes, block), block, 0, at::cuda::getCurrentCUDAStream()>>>(
       context(address), agents.data_ptr<int32_t>(), segments.data_ptr<float>(), count, verdicts.data_ptr<uint8_t>());
   check();
 }

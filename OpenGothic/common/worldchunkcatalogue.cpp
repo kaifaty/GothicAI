@@ -121,6 +121,13 @@ asset::WorldMesh WorldCatalogue::stitchedLandscape() const {
   return readOnce();
   }
 
+bool WorldCatalogue::canRecoverIndexedChunk() const {
+  std::lock_guard guard(sync);
+  if(!failure.empty())
+    fail(failure);
+  return !stitched;
+  }
+
 WorldChunkMesh WorldCatalogue::readGlb(size_t cell, const std::span<const uint32_t>* sources, bool currentFile) const {
   std::shared_ptr<const Stitched> s;
   {

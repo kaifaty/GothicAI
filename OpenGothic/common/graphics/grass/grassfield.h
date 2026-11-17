@@ -59,7 +59,7 @@ class GrassField final {
 
     // the main thread, once a frame: what the ring needs, the worker's results into buffers
     void update();
-    void draw(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
+    void draw(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
 
     struct Stats final {
       size_t cells     = 0; // with blades
@@ -68,6 +68,7 @@ class GrassField final {
       size_t fine      = 0; // of those the fine blades of the short sward
       size_t triangles = 0; // of those
       size_t draws     = 0; // draw calls of the last frame
+      size_t drawUs    = 0; // with OPENGOTHIC_GRASS_WASTE=1: the mean time of draw() on the CPU, microseconds
       size_t bytes     = 0; // of the buffers
       size_t waiting   = 0; // cells not built yet
       Grass::Waste waste;      // with OPENGOTHIC_GRASS_WASTE=1: of the drawn those submitted for nothing
@@ -110,7 +111,7 @@ class GrassField final {
       std::vector<Grass::Blade> cpu;             // with OPENGOTHIC_GRASS_WASTE=1 alone (grasswaste.h)
       int32_t                   minY = 0, maxY = 0;
       uint32_t                  count = 0;
-      std::vector<uint32_t>     below;           // by batch: 257 counts of its blades of a rank under i
+      std::vector<uint8_t>      ranks;           // of each blade: within a batch they rise
       float                     dist = 0;        // cm: from the camera to the nearest of the cell, in x and z
       bool                      live = false;
       uint8_t                   level = 0;
@@ -184,5 +185,10 @@ class GrassField final {
     Tempest::StorageBuffer              borderGpu;
     std::vector<uint32_t>               borderCpu;
     Stats                               last;
+    // a frame's draws and the table of their spans (draw)
+    std::vector<uint32_t>               spanCpu;
+    Tempest::StorageBuffer              spanGpu[2];      // by the frame in flight (Resources::MaxFramesInFlight)
     uint32_t                            wasteFrame = 0;
+    uint64_t                            drawNs     = 0;
+    uint32_t                            drawFrames = 0;
   };
