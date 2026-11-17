@@ -18,6 +18,7 @@
 #include "lighting/shadow_sampling.glsl"
 #include "lighting/tonemapping.glsl"
 #include "lighting/material_brdf.glsl"
+#include "lighting/crown_light.glsl"
 #if defined(MAT_SUN_SHADOW)
 #include "virtual_shadow/vsm_sun_shadow.glsl"
 #endif
@@ -630,6 +631,10 @@ void mainGBuffer(vec4 t) {
       outOrm.b     = through;
       outDiffuse.a = float(int(outDiffuse.a*255.0 + 0.5) | GBufFoliageBit)/255.0;
       }
+    }
+  if((bucket[bucketId].flags & BK_CROWN)!=0u) {
+    if((scene.viewFlags & VF_CROWN_MASK)!=0u)
+      outDiffuse.rgb = crownMask(crownOpenness(shInp.normal), outOrm.b);
     }
   const float glow = bucket[bucketId].emissive;
   if(glow>0.0 && !maps.antitile && (bucket[bucketId].flags & BK_ORM)!=0) {

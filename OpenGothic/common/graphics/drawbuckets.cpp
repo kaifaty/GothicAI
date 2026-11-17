@@ -8,6 +8,7 @@
 #include "graphics/shaders.h"
 #include "frameprofile.h"
 #include "commandline.h"
+#include "graphics/crownlight.h"
 #include "graphics/eyeshader.h"
 #include "graphics/foliagetree.h"
 
@@ -315,6 +316,9 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
             bx.bbox[1]     += Vec4(grow,grow,grow,0.f);
             bx.flags       |= BK_FOLIAGE;
             }
+          // a tree's crown (graphics/crownlight.h): with the foliage's light, whatever the material lets through
+          if(CrownLight::lit(i.mat.foliage, FoliageWind::enabled(), CrownLight::enabled()))
+            bx.flags |= BK_CROWN;
           }
         // A ground that grows grass (graphics/grass/grassfield.h): its look under the blades and beyond them, in
         // the landscape's G-buffer pass. The record excludes `foliage`, so the slot of its bits is free
