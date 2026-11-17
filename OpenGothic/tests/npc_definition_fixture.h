@@ -97,6 +97,9 @@ inline NpcSnapshot::Program program() {
   const auto npc=f.symbol("NPC_NO_ID",Type::INSTANCE,0,Flag::CONST,int32_t(prototype)); f.begin(npc);
   f.call(prototype);
   f.op(Op::PUSHV,text); f.op(Op::PUSHV,f.find("C_NPC.NAME")); f.op(Op::MOVS);
+  // A string argument must reuse its constant literal rather than alter VM scratch strings.
+  f.op(Op::PUSHV,self); f.op(Op::PUSHI,0); f.op(Op::PUSHI,0); f.op(Op::PUSHI,8); f.op(Op::PUSHI,0);
+  f.op(Op::PUSHI,state); f.op(Op::PUSHV,point); f.op(Op::BE,ta);
   f.op(Op::PUSHV,self); f.op(Op::PUSHI,item); f.op(Op::PUSHI,3); f.op(Op::BE,create);
   f.op(Op::PUSHV,self); f.op(Op::PUSHI,item); f.op(Op::BE,equip);
   // on_equip changed attribute[0]; this later assignment must occur after that call.

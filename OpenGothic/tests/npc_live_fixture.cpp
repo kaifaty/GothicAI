@@ -4,6 +4,7 @@
 #include "commandline.h"
 #include "game/gamesession.h"
 #include "gothic.h"
+#include "gamemusic.h"
 #include "programdata.h"
 #include "resources.h"
 #include "world/world.h"
@@ -99,7 +100,7 @@ fs::path program(const fs::path& base) {
                     std::string(64,'0')+"\",\"program\":\""+name+"\",\"trailing_bytes\":0,\"skipped\":null}";
   write(base/"programs/programs.json",
         "{\"format\":\"gothic-programs\",\"version\":1,\"archives\":[],\"loose_files\":[],\"programs\":{\""+name+"\":\""+sha+
-        "\"},\"sources\":["+source+"],\"vfs\":{\"GOTHIC.DAT\":0},\"host\":{},\"selections\":[{\"request\":\"GOTHIC.DAT\",\"language\":-1,\"step\":\"vfs_find_request\",\"path\":\"GOTHIC.DAT\",\"source\":0}],\"server\":{\"storygraph_dat\":0}}\n");
+        "\"},\"sources\":["+source+"],\"vfs\":{\"GOTHIC.DAT\":0,\"FIGHT.DAT\":0,\"CAMERA.DAT\":0,\"SFX.DAT\":0,\"PARTICLEFX.DAT\":0,\"VISUALFX.DAT\":0,\"MUSIC.DAT\":0},\"host\":{},\"selections\":[{\"request\":\"GOTHIC.DAT\",\"language\":-1,\"step\":\"vfs_find_request\",\"path\":\"GOTHIC.DAT\",\"source\":0}],\"server\":{\"storygraph_dat\":0}}\n");
   const auto definitions=base/"definitions"/sha;
   NpcSnapshot::writeItems(value,definitions/"items.json");
   NpcSnapshot::writeRoutines(value,definitions/"routines.json");
@@ -209,6 +210,8 @@ void npcLiveSynthetic(void (*compare)(World&)) {
   Resources resources;
   Gothic gothic;
   gothic.isNpcInDialogFn=[](const Npc*) { return false; };
+  gothic.setupGlobalScripts();
+  GameMusic music;
   gothic.setGame(std::make_unique<GameSession>("NPC_CONTRACT.ZEN"));
   compare(*gothic.world());
   mutations(definitions,*gothic.world(),compare);
