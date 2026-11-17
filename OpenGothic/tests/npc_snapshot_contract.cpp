@@ -435,7 +435,7 @@ void npcDefinitions(const fs::path& dir) {
   const auto program=NpcDefinitionFixture::program();
   const auto base=dir/"npc-definitions",file=base/"definitions"/program.sha256/"npcs.json";
   const auto counts=NpcSnapshot::writeNpcs(program,file);
-  check(counts.total==7,"all seven fixture NPC definitions are imported");
+  check(counts.total==8,"all eight fixture NPC definitions are imported");
   check(NpcSnapshot::verifyNpcs(program,file)==0,"NPC definitions verify independently from disk");
   const auto library=NpcDefinitions::read(base,program.sha256);
   for(const auto* refused:{"NPC_GLOBAL","NPC_WRITER","NPC_UNKNOWN"})
@@ -444,7 +444,10 @@ void npcDefinitions(const fs::path& dir) {
   check(library.uncaptured.contains("NPC_ENGINE_READ") &&
         library.uncaptured.at("NPC_ENGINE_READ").starts_with("engine_state_read: C_NPC.ATTRIBUTE[0]"),
         "a constructor-body read after equipment has no safe helper boundary");
-  check(counts.captured==2 && library.uncaptured.size()==5,"two fixture NPCs are captured and five retain the VM fallback");
+  check(library.uncaptured.contains("NPC_INITIAL_READ") &&
+        library.uncaptured.at("NPC_INITIAL_READ")=="engine_state_read: C_NPC.ID[0] before assignment",
+        "a constructor reading the engine's initial field retains the VM fallback");
+  check(counts.captured==2 && library.uncaptured.size()==6,"two fixture NPCs are captured and six retain the VM fallback");
   const auto& steps=library.npcs.at("NPC_NO_ID").steps;
   check(std::any_of(steps.begin(),steps.end(),[](const auto& step) {
     const auto* call=std::get_if<NpcDefinitions::Call>(&step);

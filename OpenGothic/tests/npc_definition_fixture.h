@@ -139,6 +139,8 @@ inline NpcSnapshot::Program program() {
   f.op(Op::PUSHV,self); f.op(Op::PUSHI,item); f.op(Op::BE,equip);
   // A read in the constructor itself has no helper boundary that can be deferred.
   f.op(Op::PUSHV,f.find("C_NPC.ATTRIBUTE")); f.op(Op::PUSHV,f.find("C_NPC.LEVEL")); f.op(Op::MOVI); f.op(Op::RSR);
+  const auto initialRead=f.symbol("NPC_INITIAL_READ",Type::INSTANCE,0,Flag::CONST,int32_t(npcClass)); f.begin(initialRead);
+  f.op(Op::PUSHV,f.find("C_NPC.ID")); f.op(Op::PUSHV,f.find("C_NPC.LEVEL")); f.op(Op::MOVI); f.op(Op::RSR);
   const auto encoded=ProgramData::encodeProgram(f.p);
   return {std::move(f.p),encoded.name,encoded.sha256};
   }

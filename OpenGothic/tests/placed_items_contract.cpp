@@ -684,9 +684,16 @@ void npcDefinitions(World& world) {
   const auto library=NpcDefinitions::read(base,program.sha256);
   const auto routines=RoutineDefinitions::read(base,program.sha256);
   require(!library.npcs.empty(),"the real program must have captured NPC definitions");
+  auto records=NpcDefinitionRuntime::resolve(library,vm);
+  const auto& gameRecords=NpcDefinitionContract::definitions(script).npcs;
+  require(!gameRecords.empty(),"the game must load NPC definitions when records are enabled");
+  require(gameRecords.size()==records.npcs.size(),"the game must load all captured NPC definitions");
+  for(const auto& [symbol,steps]:records.npcs) {
+    (void)steps;
+    require(gameRecords.contains(symbol),"the game must load each captured NPC definition");
+    }
   auto loaded=std::move(NpcDefinitionContract::definitions(script));
   const auto random=NpcDefinitionContract::random(script);
-  auto records=NpcDefinitionRuntime::resolve(library,vm);
   const auto oldSelf=vm.global_self()->get_instance();
   const auto oldItem=vm.global_item()->get_instance();
   auto prepareSyntheticPhysics=[&](Npc& npc) {
@@ -812,6 +819,7 @@ void npcDefinitions(World& world) {
           difference(name,"record NPC startup daily_routine must use the configured routine record/VM path",
                      routineRecords ? "record" : "VM",routineInstructions==0 ? "record" : "VM");
         difference(name,"SELF restored","yes",vm.global_self()->get_instance()==oldSelf ? "yes" : "no");
+        difference(name,"VM member context restored","yes",vm.unsafe_get_gi()==previousContext ? "yes" : "no");
         }
       catch(const std::exception& error) { difference(name,"creation exception","none",error.what()); }
       vm.observe_instructions({});

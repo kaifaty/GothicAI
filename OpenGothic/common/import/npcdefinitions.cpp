@@ -182,6 +182,7 @@ class Runner {
       // Fields in a call-free interval commute. Keep each assigned element's last value;
       // every engine/script boundary flushes the interval before recording that call.
       std::map<std::pair<std::string,uint16_t>,Value> pending;
+      std::set<std::pair<std::string,uint16_t>> assigned;
       auto flush=[&] {
         for(auto& [key,value]:pending)
           result.definition.steps.emplace_back(Field{key.first,key.second,std::move(value)});
@@ -191,7 +192,13 @@ class Runner {
         if(mutableGlobal(symbol,vm)) throw Stop("game_state",symbol.name());
         });
       vm.observe_member_reads([&](const DaedalusSymbol& symbol,uint16_t index,const DaedalusInstance* context) {
-        if(!engineState) return;
+        // The engine may supply any untouched field, including on a reused hero.
+        // An empty import instance cannot determine that constructor's result.
+        if(!engineState) {
+          if(context!=npc.get() || !assigned.contains({symbol.name(),index}))
+            throw Stop("engine_state_read",symbol.name()+"["+std::to_string(index)+"] before assignment");
+          return;
+          }
         const auto detail=symbol.name()+"["+std::to_string(index)+"] after engine call";
         if(context!=npc.get()) throw Stop("engine_state_read",detail+": unsupported NPC context");
         const auto helper=std::find_if(frames.begin(),frames.end(),[](const auto* frame) {
@@ -222,6 +229,7 @@ class Runner {
           default: throw Stop("unsupported_field",symbol.name());
           }
         pending[{symbol.name(),index}]=std::move(value);
+        assigned.emplace(symbol.name(),index);
         });
       size_t instructions=0;
       vm.observe_instructions([&](const DaedalusInstruction& op) {
