@@ -1,22 +1,29 @@
 """The atlas of spruce boughs: every bough built as geometry and photographed from above.
 
     blender -b --factory-startup -P fir_boughs.py -- --out DIR [--config fir.json] [--seed N] [--samples 48]
+        [--only KIND,KIND]
 
-Each cell of the config's atlas gets one bough laid flat: the woody axis from the stem at the middle of the cell's
-left edge to its right edge, side shoots in a herringbone, their own shoots, and needles 1.5 to 2 cm long on all
-of them. A bough is grown inside the outline its card is cut to (fir_tree.py), a margin inside it, so the card
-loses nothing. The kinds differ in habit:
+Each cell of the config's atlas gets one bough at the size of the card that shows it (fir_tree.py): the woody
+axis from the stem at the middle of the cell's left edge to its right edge, side shoots in a herringbone, their
+own shoots. The bough has depth: a side shoot leaves the axis downward and hangs, its end turns up again, the
+shoots of the next order hang from it, short shoots stand on the axis and cover it. A shoot is a bottle brush:
+needles 13 to 19 mm long stand all round it, leaning to its end, none in the quarter that faces down. A bough is
+grown inside the outline its card is cut to, a margin inside it, so the card loses nothing. The kinds differ in
+habit:
 
     fan      the end of a branch seen from above: wide herringbone
-    hang     a spray that hangs from a branch: long shoots that turn along the axis
+    hang     a spray that hangs from a branch: long shoots that turn along the axis and hang deep
     side     a shorter herringbone to the side of a branch
     sparse   the shaded inside of the crown: thin, with bare and dry shoots
     twig     a small end shoot
+    top      the short shoots along the top of a branch's axis
 
-One orthographic camera looks straight down at all cells; four renders give the passes: colour (flat, the
-needle's own, no light), normal, ambient occlusion over a few centimetres and height. DIR/boughs.npz holds them
-as float arrays, row 0 is the top of the atlas: colour (linear), alpha, normal (x right, y up the picture, z to
-the viewer), ao, height in metres. The concept of the bough is a reference for the habit only; no picture is used.
+One orthographic camera looks straight down at all cells; three renders give the passes: colour (flat, the
+needle's own, no light), the share of the sky a point sees straight above itself within SKY_REACH (the shade
+between the shoots and under them, whatever way the needle itself faces) and height. DIR/boughs.npz holds them
+as float arrays, row 0 is the top of the atlas: colour (linear, premultiplied by alpha), alpha, ao (the sky's
+share), height in metres over the plane of the axis. The normal map is made of the height by fir_set.py. The
+concept of the bough is a reference for the habit only; no picture is used.
 """
 from __future__ import annotations
 
@@ -32,26 +39,39 @@ import numpy as np
 
 HERE = Path(__file__).resolve().parent
 
-# Linear albedo. Needles: dark cold olive, the texture of the original averages (33, 40, 8) in sRGB bytes and is
-# yellow; ours keeps that darkness and loses the yellow. Young growth at the shoot ends is lighter.
-NEEDLE_OLD = np.array((.010, .015, .009))
-NEEDLE = np.array((.018, .028, .013))
-NEEDLE_YOUNG = np.array((.036, .055, .024))
+# Linear albedo; fir_set.py brings the mean of the sheet to the palette, so only the differences matter here.
+# The year's growth at the shoot ends is a little lighter, the needles deep on an old shoot darker. A twig is
+# bark in the crown's shade, darker than a needle in the sun.
+NEEDLE = np.array((.018, .028, .014))
+NEEDLE_YOUNG = NEEDLE * (1.28, 1.32, 1.15)
+NEEDLE_OLD = NEEDLE * .78
 NEEDLE_DRY = np.array((.060, .040, .020))
-TWIG = np.array((.045, .034, .026))
-TWIG_YOUNG = np.array((.055, .040, .024))
+TWIG = np.array((.020, .015, .011))
+TWIG_DRY = np.array((.050, .043, .036))
+SKY_REACH = .10             # metres: how far above itself a point looks for what shades it
+HEIGHT = (-.5, .5)          # metres the height pass spans
 
+# nodes: metres between side shoots; angle: of a side shoot to the axis at the stem and at the tip, degrees;
+# curve: its turn over its length; reach: its length as a share of the room to the outline; droop: degrees a
+# side shoot leaves the axis downward; needles: per metre of a shoot; top: chance of a standing shoot at a node
 HABIT = dict(
-    fan=dict(nodes=(.05, .075), angle=(64, 40), curve=-10, reach=(.74, .98), missing=.06, sub=(.03, .045),
-             sub_share=.36, needles=900, axis_radius=.011, dry=1),
-    hang=dict(nodes=(.045, .07), angle=(46, 20), curve=-26, reach=(.6, .97), missing=.05, sub=(.03, .045),
-              sub_share=.32, needles=900, axis_radius=.006, dry=0),
-    side=dict(nodes=(.045, .065), angle=(60, 40), curve=-12, reach=(.7, .97), missing=.08, sub=(.03, .042),
-              sub_share=.36, needles=900, axis_radius=.006, dry=0),
-    sparse=dict(nodes=(.07, .11), angle=(58, 38), curve=-8, reach=(.5, .95), missing=.28, sub=(.05, .08),
-                sub_share=.30, needles=520, axis_radius=.007, dry=4),
-    twig=dict(nodes=(.04, .055), angle=(56, 38), curve=-10, reach=(.7, .97), missing=.06, sub=(.028, .04),
-              sub_share=.36, needles=920, axis_radius=.004, dry=0))
+    fan=dict(nodes=(.050, .078), angle=(60, 42), curve=-10, reach=(.78, .98), missing=.05, sub=(.040, .062),
+             sub_share=.42, droop=(16, 32), needles=1700, axis_radius=.006, dry=0, top=.8),
+    hang=dict(nodes=(.050, .075), angle=(44, 24), curve=-22, reach=(.70, .98), missing=.05, sub=(.040, .060),
+              sub_share=.40, droop=(30, 50), needles=1700, axis_radius=.005, dry=0, top=.5),
+    side=dict(nodes=(.048, .074), angle=(58, 40), curve=-12, reach=(.75, .98), missing=.07, sub=(.038, .056),
+              sub_share=.42, droop=(16, 34), needles=1700, axis_radius=.0045, dry=0, top=.7),
+    sparse=dict(nodes=(.065, .100), angle=(58, 38), curve=-8, reach=(.55, .95), missing=.15, sub=(.050, .080),
+                sub_share=.32, droop=(20, 40), needles=1000, axis_radius=.005, dry=3, top=.3),
+    twig=dict(nodes=(.042, .064), angle=(54, 38), curve=-10, reach=(.75, .98), missing=.06, sub=(.036, .050),
+              sub_share=.38, droop=(14, 30), needles=1750, axis_radius=.0035, dry=0, top=.7),
+    top=dict(nodes=(.042, .060), angle=(46, 30), curve=-8, reach=(.80, .98), missing=.04, sub=(.036, .050),
+             sub_share=.40, droop=(10, 24), needles=1750, axis_radius=.004, dry=0, top=1.))
+
+
+def smooth(x: float) -> float:
+    x = min(max(x, 0.), 1.)
+    return x * x * (3 - 2 * x)
 
 
 class Outline:
@@ -80,29 +100,31 @@ class Bough:
         self.shoots: list[dict] = []
         self.grow()
 
-    def shoot(self, start, angle: float, length: float, curve: float, order: int, z: float, dry: bool = False,
-              wobble: float = .08) -> dict | None:
-        """A polyline that turns by `curve` over its length and stops at the outline."""
+    def shoot(self, start, heading: float, length: float, turn: float, order: int, pitch=(0., 0.),
+              dry: bool = False, wobble: float = .08, bare: bool = False) -> dict | None:
+        """A polyline from `start`: its heading in the picture's plane turns by `turn` over its length, its pitch
+        (up is positive) goes from pitch[0] to pitch[1]. It stops at the outline."""
         rng = self.rng
-        steps = max(2, int(math.ceil(length / .02)))
+        steps = max(3, int(math.ceil(length / .015)))
         step = length / steps
         phase, wave = rng.uniform(0, 6.28), rng.uniform(1.5, 4.)
-        points = [np.array([start[0], start[1], z])]
+        points = [np.asarray(start, np.float64)]
         for i in range(steps):
             t = (i + .5) / steps
-            a = angle + curve * t + wobble * math.sin(phase + wave * t * 3.)
-            nxt = points[-1] + np.array([math.cos(a), math.sin(a), -.06 * (order > 0)]) * step
+            a = heading + turn * t + wobble * math.sin(phase + wave * t * 3.)
+            p = pitch[0] + (pitch[1] - pitch[0]) * smooth(t)
+            nxt = points[-1] + np.array([math.cos(a) * math.cos(p), math.sin(a) * math.cos(p), math.sin(p)]) * step
             if self.outline.depth(nxt) < (self.margin if order else .002) or nxt[0] > self.outline.length - .02:
                 break
             points.append(nxt)
         if len(points) < 3:
             return None
-        shoot = dict(points=np.array(points), order=order, dry=dry, length=step * (len(points) - 1))
+        shoot = dict(points=np.array(points), order=order, dry=dry, bare=bare, length=step * (len(points) - 1))
         self.shoots.append(shoot)
         return shoot
 
-    def children(self, parent: dict, spacing, angle, curve: float, reach, order: int, share: float,
-                 start: float = .1, missing: float = 0.) -> list[dict]:
+    def children(self, parent: dict, spacing, angle, curve: float, reach, order: int, share: float, droop,
+                 start: float = .1, missing: float = 0., top: float = 0.) -> list[dict]:
         rng, points = self.rng, parent['points']
         along = np.concatenate([[0.], np.cumsum(np.linalg.norm(np.diff(points, axis=0), axis=1))])
         total, out = along[-1], []
@@ -110,24 +132,32 @@ class Bough:
         while s < total * .97:
             i = int(np.clip(np.searchsorted(along, s) - 1, 0, len(points) - 2))
             base = points[i] + (points[i + 1] - points[i]) * (s - along[i]) / max(along[i + 1] - along[i], 1e-9)
-            heading = math.atan2(*(points[i + 1] - points[i])[1::-1])
+            tangent = (points[i + 1] - points[i]) / max(along[i + 1] - along[i], 1e-9)
+            heading, lie = math.atan2(tangent[1], tangent[0]), math.asin(float(np.clip(tangent[2], -1, 1)))
             t = s / total
             for turn in ((side, -side) if order == 1 else (side,)):
                 if rng.uniform() < missing:
                     continue
                 a = math.radians(angle[0] + (angle[1] - angle[0]) * t + rng.uniform(-8, 8))
+                down = math.radians(rng.uniform(*droop))
                 if order == 1:
-                    length = self.room(base, heading + turn * a) * rng.uniform(*reach)
+                    length = self.room(base, heading + turn * a) * rng.uniform(*reach) / math.cos(down * .6)
                     if rng.uniform() < .1:
                         length *= rng.uniform(.35, .6)
+                    pitch = (-down, -down + math.radians(rng.uniform(22, 44)))      # hangs, the end turns up
                 else:
                     length = parent['length'] * share * (1 - .65 * t) * rng.uniform(.6, 1.15)
+                    pitch = (lie - down * .7, lie - down * .7 + math.radians(rng.uniform(15, 35)))
                 if length < .03:
                     continue
                 child = self.shoot(base, heading + turn * a, length, turn * math.radians(curve) * rng.uniform(.5, 1.3),
-                                   order, base[2] - .004 * order + rng.uniform(-.003, .003), parent['dry'])
+                                   order, pitch, parent['dry'])
                 if child:
                     out.append(child)
+            if rng.uniform() < top and not parent['dry']:
+                # a short shoot that stands on the parent and leans along it: what covers an axis from above
+                self.shoot(base, heading + math.radians(rng.uniform(-28, 28)), rng.uniform(.04, .09), 0., 3,
+                           (lie + math.radians(rng.uniform(22, 48)), lie + math.radians(rng.uniform(0, 18))))
             s += rng.uniform(*spacing)
             side = -side
         return out
@@ -146,17 +176,18 @@ class Bough:
 
     def grow(self) -> None:
         h, rng = self.habit, self.rng
-        axis = self.shoot((.004, 0.), 0., self.outline.length, rng.uniform(-.04, .04), 0, .03, wobble=.04)
-        first = self.children(axis, h['nodes'], h['angle'], h['curve'], h['reach'], 1, 0., start=.05,
-                              missing=h['missing'])
+        axis = self.shoot((.004, 0., 0.), 0., self.outline.length, rng.uniform(-.04, .04), 0, wobble=.04)
+        first = self.children(axis, h['nodes'], h['angle'], h['curve'], h['reach'], 1, 0., h['droop'], start=.04,
+                              missing=h['missing'], top=h['top'])
         for index in rng.permutation(len(first))[:h['dry']]:
             first[index]['dry'] = True
         for shoot in first:
-            if shoot['length'] < .1:
+            if shoot['length'] < .08:
                 continue
-            for second in self.children(shoot, h['sub'], (50, 36), h['curve'] * .5, None, 2, h['sub_share'], start=.12):
+            for second in self.children(shoot, h['sub'], (50, 36), h['curve'] * .5, None, 2, h['sub_share'],
+                                        (10, 28), start=.12, top=h['top'] * .35):
                 if second['length'] > .07 and not second['dry']:
-                    self.children(second, (.025, .036), (48, 38), 0., None, 3, .4, start=.2)
+                    self.children(second, (h['sub'][0] * .8, h['sub'][1] * .8), (48, 38), 0., None, 3, .4, (8, 22), start=.2)
 
     def geometry(self) -> dict:
         """Twigs as thin tubes and needles as flat spindles: position, colour, triangles."""
@@ -177,8 +208,8 @@ class Bough:
             if order == 0:
                 radius = h['axis_radius'] * (1 - share) ** .8 + .0022
             else:
-                radius = (.0026 if order == 1 else .0016 if order == 2 else .0012) * (1 - .6 * share) \
-                    * (1 + 1.2 * shoot['length'] * (order == 1))
+                radius = (.0015 if order == 1 else .0011 if order == 2 else .0009) * (1 - .5 * share) \
+                    * (1 + 1.5 * shoot['length'] * (order == 1))
             tangent = np.gradient(points, axis=0)
             tangent /= np.linalg.norm(tangent, axis=1, keepdims=True)
             across = np.cross(tangent, (0, 0, 1.))
@@ -192,50 +223,44 @@ class Bough:
                 for k in range(5):
                     a, b = i * 5 + k, i * 5 + (k + 1) % 5
                     tris += [(a, b, b + 5), (a, b + 5, a + 5)]
-            tone = (TWIG if order < 2 else TWIG_YOUNG) * rng.uniform(.8, 1.15)
-            if shoot['dry']:
-                tone = np.array((.085, .075, .065)) * rng.uniform(.8, 1.1)
+            tone = (TWIG_DRY if shoot['dry'] else TWIG) * rng.uniform(.8, 1.15)
             push(tube.reshape(-1, 3), tone, tris)
             if shoot['dry'] and rng.uniform() < .7:
                 continue
-            # needles
+            # needles: all round the shoot but its underside, leaning to its end; a brush of them closes the end
             lengths = np.concatenate([[0.], np.cumsum(np.linalg.norm(np.diff(points, axis=0), axis=1))])
             total = lengths[-1]
-            start = total * (.3 if order == 0 else .04)
-            density = h['needles'] * (.35 if shoot['dry'] else 1.)
-            m = int((total - start) * density)
+            start = total * (.06 if order == 0 else .04)
+            m = int((total - start) * h['needles'] * (.35 if shoot['dry'] else 1.))
             if m <= 0:
                 continue
-            s = np.sort(rng.uniform(start, total + .004, m))
+            s = np.sort(rng.uniform(start, total + .003, m))
             i = np.clip(np.searchsorted(lengths, s) - 1, 0, n - 2)
             w = ((s - lengths[i]) / np.maximum(lengths[i + 1] - lengths[i], 1e-9))[:, None]
             base = points[i] * (1 - w) + points[np.minimum(i + 1, n - 1)] * w
-            heading = np.arctan2(tangent[i, 1], tangent[i, 0])
-            top = rng.uniform(size=m) < .3
-            side = np.where(rng.uniform(size=m) < .5, -1., 1.)
-            spread = np.where(top, rng.uniform(0, 28, m), rng.uniform(42, 74, m))
-            spread = np.where(s > total, rng.uniform(0, 40, m), spread)        # the bud's brush at the very end
-            a = heading + side * np.radians(spread)
-            lift = np.where(top, rng.uniform(.25, .7, m), rng.uniform(-.25, .3, m))
-            direction = np.stack([np.cos(a), np.sin(a), lift], axis=1)
-            direction /= np.linalg.norm(direction, axis=1, keepdims=True)
+            around = np.radians(rng.uniform(-135, 135, m))           # from the shoot's top
+            lean = np.where(np.abs(around) < math.radians(45), rng.uniform(28, 52, m), rng.uniform(42, 68, m))
+            lean = np.radians(np.where(s > total - .012, rng.uniform(8, 36, m), lean))
+            radial = np.cos(around)[:, None] * up[i] + np.sin(around)[:, None] * across[i]
+            direction = np.cos(lean)[:, None] * tangent[i] + np.sin(lean)[:, None] * radial
             age = np.clip((s - start) / max(total - start, 1e-6), 0, 1)        # 1 at the shoot's end
-            long = rng.uniform(.016, .022, m) * np.where(age > .9, .8, 1.) * (1.1 if order == 0 else 1.)
-            wide = rng.uniform(.0022, .0028, m)
-            roll = np.radians(rng.uniform(-40, 40, m))
+            long = rng.uniform(.013, .019, m) * np.where(age > .9, .85, 1.)
+            wide = rng.uniform(.0020, .0026, m)
             flat = np.cross(direction, (0, 0, 1.))
+            short = np.linalg.norm(flat, axis=1) < 1e-3
+            flat[short] = across[i][short]
             flat /= np.linalg.norm(flat, axis=1, keepdims=True)
             rise = np.cross(flat, direction)
+            roll = np.radians(rng.uniform(-35, 35, m))
             edge = (flat * np.cos(roll)[:, None] + rise * np.sin(roll)[:, None]) * (wide / 2)[:, None]
-            base = base + np.array([0, 0, .002]) + rise * (radius[i] * .6)[:, None]
+            base = base + radial * radius[i][:, None]
             mid, tip = base + direction * (long * .45)[:, None], base + direction * long[:, None]
             quads = np.stack([base, mid - edge, tip, mid + edge], axis=1)
-            young = np.clip((age - .55) / .45, 0, 1) * (order >= 2) + np.clip((age - .8) / .2, 0, 1) * (order < 2)
-            young = np.clip(young * rng.uniform(.5, 1., m), 0, 1)[:, None]
-            old = np.clip(1.2 - age * 2.2, 0, 1)[:, None] * rng.uniform(.3, 1., (m, 1)) * (order < 3)
-            tone = NEEDLE * (1 - young) + NEEDLE_YOUNG * young
-            tone = tone * (1 - old) + NEEDLE_OLD * old
-            tone = tone * rng.uniform(.78, 1.22, (m, 1)) * (1 + rng.uniform(-.06, .06, (m, 3)))
+            young = np.clip((age - .6) / .4, 0, 1) * (order >= 1) * rng.uniform(.3, 1., m)
+            old = np.clip(1. - age * 2.5, 0, 1) * rng.uniform(.3, 1., m) * (order < 2)
+            tone = NEEDLE + (NEEDLE_YOUNG - NEEDLE) * young[:, None]
+            tone = tone + (NEEDLE_OLD - tone) * old[:, None]
+            tone = tone * rng.uniform(.86, 1.14, (m, 1)) * (1 + rng.uniform(-.04, .04, (m, 3)))
             if shoot['dry']:
                 tone = NEEDLE_DRY * rng.uniform(.6, 1.1, (m, 1))
             tris = np.array([(0, 1, 2), (0, 2, 3)])[None] + (np.arange(m) * 4)[:, None, None]
@@ -255,8 +280,9 @@ def emission(name: str, build) -> bpy.types.Material:
     return mat
 
 
-def passes(height_range: tuple[float, float], ao_distance: float) -> dict:
-    """The four materials of the bake: colour, normal, occlusion, height."""
+def passes(height_range: tuple[float, float], ao_distance: float, above: bool = False) -> dict:
+    """The four materials of the bake: colour, normal, occlusion, height. With `above` the occlusion is the share
+    of the sky a point sees straight over itself, whatever way its own face looks."""
     def colour(nodes, links):
         node = nodes.new('ShaderNodeAttribute')
         node.attribute_name = 'Col'
@@ -274,6 +300,10 @@ def passes(height_range: tuple[float, float], ao_distance: float) -> dict:
         node = nodes.new('ShaderNodeAmbientOcclusion')
         node.samples = 16
         node.inputs['Distance'].default_value = ao_distance
+        if above:
+            up = nodes.new('ShaderNodeCombineXYZ')
+            up.inputs['Z'].default_value = 1.
+            links.new(up.outputs[0], node.inputs['Normal'])
         return node.outputs['AO']
 
     def height(nodes, links):
@@ -290,8 +320,9 @@ def passes(height_range: tuple[float, float], ao_distance: float) -> dict:
 
 
 def bake(obj, size: int, width_m: float, height_m: float, out: Path, samples: int, height_range, ao_distance=.03,
-         transparent: bool = True) -> dict:
-    """Photograph the object from above: x 0..width_m to the right, y 0..-height_m down the picture."""
+         transparent: bool = True, above: bool = False, skip=()) -> dict:
+    """Photograph the object from above: x 0..width_m to the right, y 0..-height_m down the picture. The passes
+    named in `skip` are not rendered."""
     sc = bpy.context.scene
     data = bpy.data.cameras.new('top')
     data.type = 'ORTHO'
@@ -327,7 +358,9 @@ def bake(obj, size: int, width_m: float, height_m: float, out: Path, samples: in
     except Exception as error:
         print('cycles device:', error)
     result = {}
-    for name, mat in passes(height_range, ao_distance).items():
+    for name, mat in passes(height_range, ao_distance, above).items():
+        if name in skip:
+            continue
         sc.cycles.samples = samples if name == 'colour' else max(8, samples // 4)
         obj.data.materials.clear()
         obj.data.materials.append(mat)
@@ -368,17 +401,20 @@ def main() -> None:
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--seed', type=int, default=11)
     parser.add_argument('--samples', type=int, default=48)
+    parser.add_argument('--only', default='', help='bake these cells only, a look at a habit: fan,top')
     parser.add_argument('--blend', action='store_true', help='keep the scene as DIR/boughs.blend')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
     atlas = json.loads(args.config.read_text())['atlas']
     size, ppm = atlas['size'], atlas['px_per_m']
     args.out.mkdir(parents=True, exist_ok=True)
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    rng = np.random.default_rng(args.seed)
+    only = set(filter(None, args.only.split(',')))
     position, colour, index, count, report = [], [], [], 0, {}
-    for kind, cell in atlas['cells'].items():
+    for number, (kind, cell) in enumerate(atlas['cells'].items()):
+        if only and kind not in only:
+            continue
         outline = Outline(cell, ppm)
-        geometry = Bough(kind, outline, rng, margin=.03).geometry()
+        geometry = Bough(kind, outline, np.random.default_rng([args.seed, number]), margin=.022).geometry()
         x, y, _, h = cell['cell']
         place = geometry['position'] + np.array([x / ppm, -(y + h / 2) / ppm, 0.])
         position.append(place)
@@ -387,17 +423,24 @@ def main() -> None:
         count += len(place)
         report[kind] = dict(shoots=geometry['shoots'], twig_m=geometry['twig_m'],
                             triangles=int(len(geometry['index'])),
-                            size_m=[round(outline.length, 3), round(h / ppm, 3)])
+                            size_m=[round(outline.length, 3), round(h / ppm, 3)],
+                            height_m=[round(float(v), 3) for v in (place[:, 2].min(), place[:, 2].max())])
     obj = mesh('boughs', np.concatenate(position), np.concatenate(colour), np.concatenate(index))
     extent = size / ppm
-    baked = bake(obj, size, extent, extent, args.out, args.samples, (-.08, .08))
+    baked = bake(obj, size, extent, extent, args.out, args.samples, HEIGHT, SKY_REACH, above=True,
+                 skip=('normal',))
     if args.blend:
         bpy.ops.wm.save_as_mainfile(filepath=str(args.out / 'boughs.blend'))
+
+    def plain(name: str, empty: float) -> np.ndarray:
+        """A pass without the film's alpha in it: its value where the bough is, `empty` elsewhere."""
+        value, alpha = baked[name][..., 0], baked[name][..., 3]
+        return np.where(alpha > 1e-3, value / np.maximum(alpha, 1e-3), empty)
+
     np.savez_compressed(args.out / 'boughs.npz', colour=baked['colour'][..., :3].astype(np.float16),
                         alpha=baked['colour'][..., 3].astype(np.float16),
-                        normal=(baked['normal'][..., :3] * 2 - 1).astype(np.float16),
-                        ao=baked['ao'][..., 0].astype(np.float16),
-                        height=(baked['height'][..., 0] * .16 - .08).astype(np.float16))
+                        ao=np.clip(plain('ao', 1.), 0, 1).astype(np.float16),
+                        height=(plain('height', .5) * (HEIGHT[1] - HEIGHT[0]) + HEIGHT[0]).astype(np.float16))
     report = dict(seed=args.seed, size=size, px_per_m=ppm, triangles=int(sum(len(i) for i in index)), cells=report)
     (args.out / 'boughs.json').write_text(json.dumps(report, indent=1) + '\n')
     print(json.dumps(report))

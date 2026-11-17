@@ -7,12 +7,12 @@
     "bark": "OWN_TREE_FIR_BARK",
     "boughs": "OWN_TREE_FIR_BOUGHS"
   },
-  "budget_tris": 45000,
+  "budget_tris": 50000,
   "palette": {
     "needles_srgb": [
-      33,
-      40,
-      23
+      31,
+      38,
+      24
     ],
     "bark_srgb": [
       74,
@@ -73,7 +73,7 @@
     "pitch_low": [
       -10,
       -24,
-      6
+      12
     ],
     "pitch_high": [
       55,
@@ -85,10 +85,12 @@
       2.2,
       2.0
     ],
-    "segment": 1.0,
+    "segment": 0.7,
     "asymmetry": 0.1,
     "ground": 0.25,
-    "round": 3.2
+    "round": 4.2,
+    "segments_max": 6,
+    "shade_spread": 0.35
   },
   "stubs": {
     "count": 4,
@@ -110,41 +112,20 @@
     ],
     "hull_share": 0.65,
     "ground": 0.03,
-    "fans_from": 0.45,
-    "fan_lift": 0.025,
-    "fan": {
-      "length": [
-        0.3,
-        0.25
-      ],
-      "limits": [
-        0.5,
-        1.1
-      ],
-      "on": 0.7,
-      "overlap": 0.2,
-      "ridge": 0.9,
-      "most": 3
-    },
     "bough": {
-      "step": 0.15,
+      "step": 0.195,
       "length": [
         0.5,
         0.2,
         0.98
       ],
       "bands": [
-        "level",
+        "slant",
         "along",
         "slant",
-        "out",
-        "slant"
+        "out"
       ],
       "roll_deg": {
-        "level": [
-          -12,
-          22
-        ],
         "slant": [
           24,
           58
@@ -160,11 +141,63 @@
       },
       "top_lift": 25,
       "turn_deg": 35,
-      "ridge": 0.95,
       "stand_deg": [
         50,
         88
+      ],
+      "vault_deg": [
+        18,
+        32
+      ],
+      "bow": [
+        0.03,
+        0.08
       ]
+    },
+    "cover_from": 0.3,
+    "lift": 0.025,
+    "bend_from": 0.7,
+    "scale": [
+      0.75,
+      1.3
+    ],
+    "roof": {
+      "length": [
+        0.35,
+        0.25
+      ],
+      "limits": [
+        0.4,
+        1.1
+      ],
+      "on": 0.75,
+      "overlap": 0.5,
+      "vault_deg": [
+        28,
+        40
+      ],
+      "rise": 0.03,
+      "before": 0.1,
+      "tilt": [
+        0.06,
+        0.2
+      ],
+      "lean_deg": 14,
+      "arch": [
+        0.0,
+        0.05
+      ]
+    },
+    "rules": {
+      "planes_deg": {
+        "end": 45,
+        "hang": 45,
+        "roof": 20,
+        "side": 20,
+        "sleeve": 20,
+        "leader": 20
+      },
+      "cover_min": 0.85
     }
   },
   "leader_boughs": 8,
@@ -188,7 +221,11 @@
       45,
       72
     ],
-    "turn_deg": 30
+    "turn_deg": 30,
+    "vault_deg": [
+      15,
+      28
+    ]
   },
   "density": {
     "background_max": 0.15,
@@ -200,16 +237,15 @@
   },
   "atlas": {
     "size": 2048,
-    "px_per_m": 700,
+    "px_per_m": 1000,
     "cells": {
       "fan": {
         "cell": [
           0,
           0,
-          1440,
-          992
+          1000,
+          700
         ],
-        "spine": true,
         "sections": [
           [
             0.3,
@@ -224,11 +260,10 @@
       "hang_1": {
         "cell": [
           0,
-          1008,
-          1172,
-          496
+          716,
+          900,
+          440
         ],
-        "spine": true,
         "sections": [
           [
             0.22,
@@ -243,11 +278,10 @@
       "hang_2": {
         "cell": [
           0,
-          1520,
           1172,
-          496
+          900,
+          440
         ],
-        "spine": true,
         "sections": [
           [
             0.22,
@@ -259,14 +293,49 @@
           ]
         ]
       },
-      "side": {
+      "top": {
         "cell": [
-          1196,
-          1008,
-          812,
-          540
+          0,
+          1628,
+          600,
+          300
         ],
-        "spine": false,
+        "sections": [
+          [
+            0.25,
+            1.0
+          ],
+          [
+            0.75,
+            0.9
+          ]
+        ]
+      },
+      "side_1": {
+        "cell": [
+          1016,
+          0,
+          720,
+          480
+        ],
+        "sections": [
+          [
+            0.3,
+            1.0
+          ],
+          [
+            0.72,
+            0.88
+          ]
+        ]
+      },
+      "side_2": {
+        "cell": [
+          1016,
+          496,
+          720,
+          480
+        ],
         "sections": [
           [
             0.3,
@@ -280,12 +349,11 @@
       },
       "sparse": {
         "cell": [
-          1196,
-          1564,
-          812,
-          452
+          1016,
+          992,
+          720,
+          440
         ],
-        "spine": false,
         "sections": [
           [
             0.3,
@@ -299,12 +367,11 @@
       },
       "twig_1": {
         "cell": [
-          1464,
-          16,
-          540,
-          360
+          1016,
+          1448,
+          480,
+          330
         ],
-        "spine": false,
         "sections": [
           [
             0.3,
@@ -318,12 +385,11 @@
       },
       "twig_2": {
         "cell": [
-          1464,
-          392,
-          540,
-          360
+          1512,
+          1448,
+          480,
+          330
         ],
-        "spine": false,
         "sections": [
           [
             0.3,
