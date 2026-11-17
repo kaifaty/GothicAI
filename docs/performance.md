@@ -76,6 +76,7 @@ NPC прошли цикл тел теней и сверку логических
 | `rock` | `scripts/bench/perf-rock.bench` | стена у дороги южнее фермы Акила, вид `road-3` съёмки материала скал, и пучки травы у камеры, вид `ledge-near`: цена своего материала скалы и живой листвы, запускать с набором (`PERF_ENV='OPENGOTHIC_CONTENT=…'`) |
 | `temple` | `scripts/bench/perf-temple.bench` | храм в землях троллей в полночь, 48 настенных факелов со статичной лампой 700–900: зал, факел в 3 м, факел с двумя за проёмом, факел на фризе; сравнение наборов — `scripts/perf-content.sh A B temple` |
 | `xardas` | `scripts/bench/perf-xardas.bench` | башня Ксардаса в полночь, 23 настенных факела первой сцены: стартовая комната с двумя факелами в 5 м, проход у входа с тремя, нижний зал, факел лестницы в 1,3 м; цена своей модели и огня факела, сравнение наборов — `scripts/perf-content.sh A B xardas` |
+| `fires` | `scripts/bench/perf-fires.bench` | свой огонь костров, жаровен и очагов: костёр порта в полночь с 4 м (пламя, дым, марево), он же в полдень с 2 м, жаровня города в полночь, широкий камин верхнего квартала с пятью огнями; сравнение наборов — `scripts/perf-content.sh A B fires` |
 
 `shot`, `face`, `face-far` и `rock` не входят в прогон по умолчанию. `shot` снимает PNG `market-a`, `market-b`,
 `forest`, `interior` в папку повтора с `ui on`: кадр проходит путь до экрана,
@@ -282,7 +283,7 @@ scripts/perf-content.sh none working-8 harbour market --noise-pct 2 --threshold-
 `scripts/perf-content.sh <A> <B> [места]` сравнивает наборы из
 `~/.local/share/gothic-ai/content-staging/<набор>/` на Mac; `none` задаёт
 игре пустой `OPENGOTHIC_CONTENT=`. По умолчанию места — `harbour market`;
-доступны также `harbour-night` (порт в полночь, для ночного света), `forest`, `interior`, `combat`, `xardas` (башня Ксардаса в полночь, 23 настенных факела), `temple` (храм в землях троллей, 48 факелов). Запуск только на Ryzen, без
+доступны также `harbour-night` (порт в полночь, для ночного света), `forest`, `interior`, `combat`, `xardas` (башня Ксардаса в полночь, 23 настенных факела), `temple` (храм в землях троллей, 48 факелов), `fires` (костёр, жаровня и широкий камин). Запуск только на Ryzen, без
 автоматического перехода на Mac. Окно и настройки — те же `PERF_WINDOW`,
 `PERF_VID_RES`, `PERF_ARGS`, `PERF_ENV`, `PERF_INI`, что у `perf.sh`;
 `OPENGOTHIC_CONTENT` всегда определяется аргументом A/B.
