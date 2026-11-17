@@ -1,5 +1,6 @@
-"""Spruce A as fir.py writes it without Blender: the size of the intent, the budget, the crown's density and the
-layout of COLOR_0 the engine's tree wind reads (reports/content/2026-11-trees/fir/README.md, «Модель»)."""
+"""Spruce A as fir.py writes it without Blender: the size of the intent, the budget, the crown's density, the
+boughs' planes and the cover of the branches' axes, and the layout of COLOR_0 the engine's tree wind reads
+(reports/content/2026-11-trees/fir/README.md, «Модель»)."""
 
 import json
 from pathlib import Path
@@ -8,6 +9,7 @@ import numpy as np
 import pytest
 
 import fir
+import fir_tree
 import tree_density
 import tree_glb
 
@@ -27,7 +29,7 @@ def spruce(config, tmp_path_factory):
 def test_spruce_a_has_the_size_of_the_intent_within_the_budget(spruce, config):
     metrics = spruce['metrics']
     assert metrics['fails'] == []
-    assert metrics['triangles'] <= config['budget_tris'] == 45000
+    assert metrics['triangles'] <= config['budget_tris'] == 50000
     assert 17.5 <= metrics['height_m'] <= 18.5
     assert .5 <= metrics['trunk_diameter_m'][1] <= .7 < metrics['trunk_diameter_m'][0]
     assert metrics['inside_out_parts'] == 0
@@ -41,6 +43,35 @@ def test_the_crown_is_dense_from_both_sides(spruce):
         assert view['background_share'] <= .15
         assert view['trunk_open_length_share'] <= .1
         assert 9. <= view['crown_width_m'] <= 10.
+
+
+def test_no_bough_is_one_plane_and_the_branches_axes_are_under_shoots(spruce, config):
+    planes, cover = spruce['metrics']['card_planes'], spruce['metrics']['axis_cover']
+    assert set(planes) == {'end', 'roof', 'hang', 'side', 'sleeve', 'leader'}
+    for role, numbers in planes.items():
+        assert numbers['count'] > 0
+        assert numbers['spread_min_deg'] >= (45 if role in ('end', 'hang') else 20), role
+    assert config['cards']['cover_from'] == .3
+    assert cover['samples'] > 1000 and cover['covered'] >= .85
+    assert cover['branch_min'] >= .5
+
+
+def test_a_flat_card_and_a_bare_branch_are_measured_as_such():
+    position = np.array([(0, 0, 0), (1, .3, 0), (1, -.3, 0), (2, 0, 0)], np.float32)
+    flat = dict(cutout=True, position=position, index=np.array([(0, 1, 2), (1, 3, 2)]),
+                uv=np.zeros((4, 2), np.float32), owner=np.zeros(4, np.int64))
+
+    def tree(*axis):
+        branch = fir_tree.Branch(0, np.array(axis, np.float64), np.array([.02, .01]), 1.6, 0., .5, 0.)
+        return fir_tree.Tree([dict(cutout=False), flat], dict(scale=1.), [branch],
+                             [dict(role='hang', kind='hang_1', branch=0, first=0, count=4)])
+
+    under, beside = tree((.2, 0, -.2), (1.8, 0, -.2)), tree((.2, .5, -.2), (1.8, .5, -.2))
+    assert fir_tree.card_planes(under)['hang'] == dict(count=1, spread_min_deg=0.)
+    solid = np.ones((8, 8), bool)
+    assert fir_tree.axis_cover(under, solid, 0.)['covered'] == 1.
+    assert fir_tree.axis_cover(beside, solid, 0.) == dict(start=0., step_m=.1, samples=16, covered=0., branch_min=0.)
+    assert fir_tree.axis_cover(under, ~solid, 0.)['covered'] == 0.
 
 
 def test_the_outline_takes_in_a_hole_and_leaves_out_a_notch_wider_than_the_closing_disc():

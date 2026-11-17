@@ -7,7 +7,9 @@ one-sided). NAME is the config's id unless given. The shape is fir_tree.py, the 
 metrics.json holds the generator's numbers and what is read back from the written file: by tree_check.py the
 triangles, the bounding box, inside_out_parts and the layout of COLOR_0, by tree_density.py (`density`) how much
 of the background and of the trunk shows through the crown in two side views and the crown's width at the
-ground. Exits 1 when the file breaks a rule, the budget of triangles or a limit of the config's `density`.
+ground, by fir_tree.py how far from one plane the boughs of each role are (`card_planes`) and how much of the
+branches' axes is under boughs seen from above (`axis_cover`). Exits 1 when the file breaks a rule, the budget
+of triangles, a limit of the config's `density` or a rule of its `cards.rules`.
 
 The same runs without Blender (python fir.py ...), then no .blend is written.
 """
@@ -86,6 +88,16 @@ def build(config: dict, out: Path, name: str, seed: int | None = None, scale: fl
     mask = tree_density.load_mask(HERE / config['atlas']['mask'])
     metrics['density'] = tree_density.measure(glb, mask, picture=out / f'{name}-density.png')
     metrics['fails'] += tree_density.rules(metrics['density'], config['density'], scale)
+    rules = config['cards']['rules']
+    metrics['card_planes'] = fir_tree.card_planes(tree)
+    metrics['axis_cover'] = fir_tree.axis_cover(tree, mask, config['cards']['cover_from'])
+    for role, deg in rules['planes_deg'].items():
+        spread = metrics['card_planes'][role]['spread_min_deg']
+        if spread < deg:
+            metrics['fails'].append(f'a bough of the role {role} is within {spread} degrees of one plane, the least is {deg}')
+    if metrics['axis_cover']['covered'] < rules['cover_min']:
+        metrics['fails'].append(f"{metrics['axis_cover']['covered']:.1%} of the branches' axes is under boughs, "
+                                f"the least is {rules['cover_min']:.0%}")
     (out / 'metrics.json').write_text(json.dumps(metrics, indent=1, ensure_ascii=False) + '\n')
     return dict(tree=tree, metrics=metrics, glb=glb)
 

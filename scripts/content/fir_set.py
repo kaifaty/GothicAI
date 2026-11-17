@@ -12,16 +12,21 @@ atlas's coverage for mesh3d/blender/tree_density.py; its copy in git is mesh3d/b
 textures.json:
 
 - albedo is the baked colour times the baked occlusion (the engine's map AO dims only the sky's light, so the
-  shade between needles and in the cracks of the bark has to be in the colour), then brought per channel to the
-  palette of mesh3d/blender/fir.json: the mean of the needles, and of the bark above the foot. The palette comes
-  from the scene measurement of reports/content/2026-11-trees/fir/README.md, not from the concept;
+  shade between the shoots and in the cracks of the bark has to be in the colour), then brought per channel to
+  the palette of mesh3d/blender/fir.json: the mean of the needles, and of the bark above the foot. The palette
+  comes from the scene measurement of reports/content/2026-11-trees/fir/README.md, not from the concept;
+- the boughs' lights are held down (LIGHT_KNEE, LIGHT_SLOPE): the shoots on top of a bough are in the sun in
+  the game as well, and a sheet whose lightest tenth is twice its mean gave a crown with yellow-green sparks
+  where the scene has dark needles. textures.json says the ratio that is left (light_to_mean);
 - the bough atlas keeps coverage in alpha and every mip averages it (glb_cards.write_cutout); its normals are
-  flattened by FLAT: single needles tilt up to 90 degrees and would sparkle on a card lit by the crown's hull;
-- normals are baked +Y up the picture and written for the engine, whose bitangent follows V down.
+  the slopes of the baked height, smoothed over RELIEF_BLUR pixels, so they follow the round of a shoot and the
+  step from a shoot to the one under it, not single needles, which would sparkle; no slope is steeper than
+  RELIEF_MAX degrees;
+- normals have +Y up the picture and are written for the engine, whose bitangent follows V down.
 
 `probe` copies a working set by hard links into ~/.local/share/gothic-ai/remaster/trees-fir/NAME and adds, in
 new files only, the two materials, PROBE spruces built by mesh3d/blender/fir_tree.py (the vob layer has no scale,
-so every size is its own GLB; each is checked by tree_check.py and tree_density.py) and the layer
+so every size is its own GLB; each passes the checks of mesh3d/blender/fir.py) and the layer
 worlds/NEWWORLD/vobs.d/fir-probe.json: meshes without collision beside the original's firs at the north edge of
 the meadow east of the tavern. Both materials say `"foliage": {"anchor": "tree"}` (FOLIAGE; the engine's rule is
 reports/engine/2026-11-16-modern-trees/tree-wind.md): the bark and the boughs bend as one body, so their `wind`
@@ -46,8 +51,10 @@ PROBES = Path.home() / '.local/share/gothic-ai/remaster/trees-fir'
 FOLDER = 'trees_fir'
 WORLD = 'NEWWORLD'
 VISUAL = 'OWN_TREE_FIR_A'
-FLAT = .6                   # share of the needles' tilt kept in the atlas's normals
-AO_NEEDLES, AO_BARK = 1., .7    # share of the baked occlusion that goes into the colour
+AO_NEEDLES, AO_BARK = .85, .7   # share of the baked occlusion that goes into the colour
+LIGHT_KNEE, LIGHT_SLOPE = 1.15, .4      # needles lighter than KNEE means of the sheet keep SLOPE of the excess
+RELIEF_BLUR, RELIEF, RELIEF_MAX = 3., .6, 50.       # pixels; share of the height's slope kept; degrees
+LUMA = np.array((.2126, .7152, .0722), np.float32)
 ROUGH_NEEDLES, ROUGH_BARK = .85, .9
 FOLIAGE = dict(bark=dict(anchor='tree', wind=1., flutter=0., translucency=0.),
                boughs=dict(anchor='tree', wind=1., flutter=1., translucency=.35))
@@ -89,9 +96,23 @@ def halved(image: np.ndarray, times: int) -> np.ndarray:
     return image
 
 
+def relief(height: np.ndarray, alpha: np.ndarray, px_per_m: float) -> np.ndarray:
+    """Normals of the baked height: x to the right, y up the picture, z out of the sheet."""
+    from scipy import ndimage
+    weight = ndimage.gaussian_filter(alpha, RELIEF_BLUR)
+    smooth = ndimage.gaussian_filter(height * alpha, RELIEF_BLUR) / np.maximum(weight, 1e-4)
+    down, right = np.gradient(smooth)
+    slope = np.stack([-right, down], axis=2) * (px_per_m * RELIEF)
+    steep = np.linalg.norm(slope, axis=2, keepdims=True)
+    slope *= np.minimum(1., np.tan(np.radians(RELIEF_MAX)) / np.maximum(steep, 1e-6))
+    normal = np.concatenate([slope, np.ones_like(steep)], axis=2)
+    return (normal / np.linalg.norm(normal, axis=2, keepdims=True)).astype(np.float32)
+
+
 def textures(args) -> int:
     cards, dds, pilot = sibling('glb_cards.py'), sibling('test-material.py'), sibling('megascans_pilot.py')
-    palette = json.loads(args.config.read_text())['palette']
+    config = json.loads(args.config.read_text())
+    palette = config['palette']
     out = args.out
     out.mkdir(parents=True, exist_ok=True)
     report = {}
@@ -109,14 +130,21 @@ def textures(args) -> int:
     colour = np.where(covered[..., None], data['colour'].astype(np.float32) / np.maximum(alpha, 1e-3)[..., None], 0)
     ao = data['ao'].astype(np.float32)
     albedo = colour * (1 - AO_NEEDLES * (1 - ao))[..., None]
-    mean = (albedo * alpha[..., None]).sum(axis=(0, 1), dtype=np.float64) / alpha.sum(dtype=np.float64)
+
+    def mean_of(image: np.ndarray) -> np.ndarray:
+        return (image * alpha[..., None]).sum(axis=(0, 1), dtype=np.float64) / alpha.sum(dtype=np.float64)
+
+    light = albedo @ LUMA
+    knee = LIGHT_KNEE * float(mean_of(light[..., None])[0])
+    albedo *= np.where(light > knee, (knee + (light - knee) * LIGHT_SLOPE) / np.maximum(light, 1e-9), 1.)[..., None]
+    mean = mean_of(albedo)
     gain = target('needles_srgb') / mean
     albedo = np.clip(albedo * gain, 0, 1).astype(np.float32)
+    solid = alpha > .5
+    light = (albedo @ LUMA)[solid]
+    lightest = albedo[solid][light >= np.quantile(light, .9)].mean(axis=0, dtype=np.float64)
     coverage = cards.write_cutout(dds, pilot.encode, out / 'boughs-albedo.dds', albedo, alpha)
-    normal = data['normal'].astype(np.float32)
-    normal[..., :2] *= FLAT
-    normal[..., 2] = np.maximum(normal[..., 2], .05)
-    normal /= np.linalg.norm(normal, axis=2, keepdims=True)
+    normal = relief(data['height'].astype(np.float32), alpha, config['atlas']['px_per_m'])
     normal = np.where(covered[..., None], normal, (0., 0., 1.)).astype(np.float32)
     normal = cards.spread_colour(normal, alpha)
     dds.write_dds(out / 'boughs-normal.dds', engine_normal(normal), normal=True)
@@ -132,9 +160,9 @@ def textures(args) -> int:
     np.savez_compressed(out / 'boughs-mask.npz', bits=np.packbits(quarter > level), size=quarter.shape[0])
     report['boughs'] = dict(size=int(alpha.shape[0]), coverage_by_mip=[round(c, 4) for c in coverage],
                             mask=dict(size=int(quarter.shape[0]), coverage=round(float((quarter > level).mean()), 4)),
-                            baked_mean_srgb=srgb(mean), gain=gain.round(3).tolist(),
-                            mean_srgb=srgb((albedo * alpha[..., None]).sum(axis=(0, 1), dtype=np.float64)
-                                           / alpha.sum(dtype=np.float64)))
+                            baked_mean_srgb=srgb(mean), gain=gain.round(3).tolist(), mean_srgb=srgb(mean_of(albedo)),
+                            lightest_tenth_srgb=srgb(lightest),
+                            light_to_mean=(lightest / albedo[solid].mean(axis=0, dtype=np.float64)).round(2).tolist())
 
     # the bark
     data = np.load(args.bark / 'bark.npz')
