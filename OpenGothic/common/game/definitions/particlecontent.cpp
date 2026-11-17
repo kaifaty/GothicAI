@@ -116,6 +116,7 @@ void readMotion(const Json& entry, Motion& motion) {
     if(lean.HasMember("response")) motion.leanResponse=number(lean["response"],"lean.response",0.02,2,"0.02..2");
     }
   if(entry.HasMember("inherit")) motion.inherit=number(entry["inherit"],"inherit",0,1,"0..1");
+  if(entry.HasMember("wind"))    motion.wind   =number(entry["wind"],"wind",0,2,"0..2");
   if(entry.HasMember("haze")) {
     const auto& haze=entry["haze"];
     fields(haze,{"shift","cell"});
@@ -196,7 +197,7 @@ Result load(daedalus::DaedalusVm& vm, const fs::path& contentRoot) {
       decltype(result.flipbooks) pendingFlipbooks;
       decltype(result.motions) pendingMotions;
       for(const auto& entry:effects.GetArray()) {
-        fields(entry,{"name","base","set","flipbook","curl","drag","stretch","minPixels","hdr","haze","lean","inherit"});
+        fields(entry,{"name","base","set","flipbook","curl","drag","stretch","minPixels","hdr","haze","lean","inherit","wind"});
         const auto name=text(member(entry,"name"));
         require(!name.empty() && std::all_of(name.begin(),name.end(),[](char c) {
           return (c>='A' && c<='Z') || (c>='0' && c<='9') || c=='_';
@@ -258,6 +259,7 @@ Result load(daedalus::DaedalusVm& vm, const fs::path& contentRoot) {
         require(motion.leanRise==0 || steady,"lean: needs a steady flipbook");
         require(motion.inherit==0 || !steady,"inherit: not with a steady flipbook");
         require(motion.stretch==0 || book==pendingFlipbooks.end(),"stretch: not with a flipbook");
+        require(motion.wind==0 || motion.leanRise>0 || (motion.drag>0 && !steady),"wind: needs lean or drag");
         }
         require(motion.hdrTo==0 || uppercase(definition->vis_alpha_func_s)=="ADD","hdr: needs visAlphaFunc_S ADD");
         require(motion.hazeShift==0 || (motion.hdrTo==0 && pendingFlipbooks.count(name)==0),"haze: not with hdr or a flipbook");

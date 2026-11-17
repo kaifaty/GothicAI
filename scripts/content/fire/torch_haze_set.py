@@ -19,6 +19,7 @@ import shutil
 import sys
 
 from campfire_set import ROOT, SMOKE, STAGING, haze, write_layer
+from fire_wind import with_wind
 
 TORCH = ROOT / 'reports/content/remaster/wall-torch-model/content/worlds/NEWWORLD/vobs.d'
 CONTENT = ROOT / 'reports/content/remaster/wall-torch-model/haze/content'
@@ -40,7 +41,7 @@ def cmd_build(_args) -> int:
     if not add:
         sys.exit(f'{TORCH}: no torch layers')
     PARTICLES.parent.mkdir(parents=True, exist_ok=True)
-    PARTICLES.write_text(json.dumps({'format': 1, 'effects': [EFFECT]}) + '\n')
+    PARTICLES.write_text(json.dumps(with_wind({'format': 1, 'effects': [EFFECT]})) + '\n')
     write_layer(LAYER, {'format': 1, 'remove': [], 'light': [], 'add': add})
     print(f'{LAYER.relative_to(ROOT)}: {len(add)} torches')
     return 0

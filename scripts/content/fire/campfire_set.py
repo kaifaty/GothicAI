@@ -24,6 +24,8 @@ from pathlib import Path
 import shutil
 import sys
 
+from fire_wind import with_wind
+
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -196,7 +198,7 @@ def write_layer(path, data) -> None:
 
 def cmd_effects(_args) -> int:
     PARTICLES.parent.mkdir(parents=True, exist_ok=True)
-    PARTICLES.write_text(json.dumps(effects()) + '\n')
+    PARTICLES.write_text(json.dumps(with_wind(effects())) + '\n')
     print(f'{PARTICLES.relative_to(ROOT)}: {len(effects()["effects"])} effects')
     return 0
 

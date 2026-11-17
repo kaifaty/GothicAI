@@ -68,6 +68,7 @@ const ParticleFx* ParticlesDefinitions::implGet(std::string_view name, bool rela
     p->leanMaxTan          = std::tan(own.leanMaxDeg*3.14159265f/180.f);
     p->leanResponseMs      = own.leanResponse*1000.f;
     p->inherit             = own.inherit;
+    p->wind                = own.wind;
     p->hdrFrom             = own.hdrFrom;
     p->hdrTo               = own.hdrTo;
     p->hdrEdge             = own.hdrEdge;

@@ -29,7 +29,7 @@ struct Motion {
   float curlStrength  = 0;  // m/s^2, the rms acceleration of a divergence-free noise field
   float curlFrequency = 0;  // periods per metre
   float curlSpeed     = 0;  // m/s, the field's drift
-  float drag          = 0;  // 1/s, velocity decays towards zero
+  float drag          = 0;  // 1/s, velocity decays towards the air's (zero, with "wind" the wind's)
   float stretch       = 0;  // s of path: a VELO/VELO3D sprite is size + |v|*stretch long
   float minPixels     = 0;  // px: a smaller sprite is drawn this size, its alpha down by the area
   // "hdr" of an additive effect (main.frag mainEmissive): how the night's gain of the emission (up to x6) goes over
@@ -54,8 +54,11 @@ struct Motion {
   // "inherit": the share 0..1 of its emitter's motion a living particle takes, so the tail behind a carried flame
   // is short: at 0.75 a tongue trails at a quarter of the carrier's speed
   float inherit       = 0;
+  // "wind": the share of the world's wind (physics/worldwind.h; none under a roof, less behind a wall) the effect
+  // feels: a leaning card leans with it, a particle with drag is carried by it
+  float wind          = 0;
 
-  bool empty() const { return curlStrength==0 && drag==0 && stretch==0 && minPixels==0 && hdrTo==0 && hazeShift==0 && leanRise==0 && inherit==0; }
+  bool empty() const { return curlStrength==0 && drag==0 && stretch==0 && minPixels==0 && hdrTo==0 && hazeShift==0 && leanRise==0 && inherit==0 && wind==0; }
   };
 
 struct Result {
