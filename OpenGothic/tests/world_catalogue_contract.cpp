@@ -6,8 +6,8 @@
 //     table and packing representatives, the materials the streaming view decodes in their order, the landscape's
 //     bounds, WorldCloth::extract's result, static collision's input and every cell of the ring (its triangles in
 //     stitched order with their ids) equal the stitched start's (readWorldChunks and extract).
-//   - Every case that refuses the start gives the stitched start's result and its own line; a cell whose .wcb fails
-//     after the start and a collision builder that gives nothing read the world then, once, with the same result.
+//   - Every case that refuses the start gives the stitched start's result and its own line. A cell whose .wcb fails
+//     after the start can still supply its geometry to streaming and collision from its unchanged GLB.
 // Needs GOTHIC_DIR and a ready base for NEWWORLD.
 
 #include "commandline.h"
@@ -214,6 +214,47 @@ void expectStitched(const std::string& label, const fs::path& dir, const fs::pat
   compareStarts(label,*stitched,*refused);
   }
 
+void expectLateChunkRecovery(const fs::path& dir, const fs::path& over, ChunkId id) {
+  const auto healthy=start(dir,over,true);
+  const auto catalogue=start(dir,over,true);
+  require(healthy->catalogue()!=nullptr && catalogue->catalogue()!=nullptr,"both worlds must start from the catalogue");
+  const auto& entries=catalogue->table.entries;
+  const auto entry=std::find_if(entries.begin(),entries.end(),[id](const auto& e) { return e.id==id; });
+  require(entry!=entries.end(),"the cell to damage must exist");
+  const size_t cell=size_t(entry-entries.begin());
+  const auto path=cookedChunkPath(dir,over,entry->file);
+  const auto label="a .wcb truncated after the start: "+path.filename().string();
+  const auto want=healthy->table.source->readLandscape(cell);
+  require(healthy->table.source->reads().cooked==1,label+": the reference cell must come from its .wcb");
+  WorldCollisionSource expected(healthy->table,healthy->clothBundle,healthy->landscape);
+  const auto& expectedCollision=expected();
+  require(expected.probe().find(" input=chunks")!=std::string::npos,label+": reference collision must come from chunks");
+
+  auto bytes=fileBytes(path);
+  bytes.pop_back();
+  writeBytes(path,bytes);
+  LogCapture log;
+  // Read the damaged cell before collision has a chance to prepare a fallback.
+  const auto difference=compareReads(want,catalogue->table.source->readLandscape(cell));
+  require(difference.empty(),label+": the recovered cell differs: "+difference);
+  for(size_t i=0;i<entries.size();++i)
+    if(i!=cell)
+      (void)catalogue->table.source->readLandscape(i);
+  const auto reads=catalogue->table.source->reads();
+  require(reads.glb==1 && reads.cooked+1==entries.size(),label+": only the damaged cell may read its GLB");
+
+  WorldCollisionSource actual(catalogue->table,catalogue->clothBundle,catalogue->landscape);
+  const auto collisionDifference=compareWorldMeshes(expectedCollision,actual());
+  require(collisionDifference.empty(),label+": the collision input differs: "+collisionDifference);
+  require(actual.probe().find(" input=chunks")!=std::string::npos,label+": collision must still come from chunks");
+  const auto lines=log.take();
+  std::printf("%s: %s\n",label.c_str(),lines.c_str());
+  require(lines.find(path.filename().string()+" not used, the cell reads its GLB")!=std::string::npos,
+          label+": the fallback must name the damaged chunk, logged: "+lines);
+  require(lines.find("read and stitched for a fallback")==std::string::npos,
+          label+": the world must not be stitched, logged: "+lines);
+  }
+
 // ---- the fixtures, cooked beside their GLBs ----
 
 void fixtureSets(const fs::path& root) {
@@ -259,6 +300,8 @@ void fixtureSets(const fs::path& root) {
     cookWorldChunks(strip,*over);
     expectCatalogue("strip with the override "+over->filename().string(),strip,*over);
     }
+  // The second override's added IDs, material and triangle ranks also depend on the first one.
+  expectLateChunkRecovery(strip,both,{2,0});
 
   // The cloth world: islands across a cell border and several in a cell, with each of its three edits.
   const auto world=clothWorld();
@@ -348,28 +391,9 @@ void refusals(const fs::path& root) {
   writeBytes(set/wcl::FileName,bytes);
   expectStitched("a bundle of version 1",dir,set,1,"version");
 
-  // After the start: 0_0.wcb broken at its end. The collision builder gives nothing and reads the world; the cell
-  // falls back to its GLB against that read's ids; both equal the stitched start on the same files.
+  // The original cell contributes to cloth; its excluded triangles must stay out of streaming and collision.
   std::tie(dir,set)=copy();
-  bytes=fileBytes(dir/"chunks/0_0.wcb");
-  bytes.pop_back();
-  writeBytes(dir/"chunks/0_0.wcb",bytes);
-  {
-  const auto stitched=start(dir,set,false);
-  const auto catalogue=start(dir,set,true);
-  require(catalogue->catalogue()!=nullptr,"a truncated .wcb is found when it is read, not at the start");
-  LogCapture log;
-  compareStarts("a .wcb truncated after the start",*stitched,*catalogue);
-  const auto lines=log.take();
-  std::printf("a .wcb truncated after the start: %s\n",lines.c_str());
-  require(tagged(lines,"[world-catalogue] ")==1 && lines.find("read and stitched for a fallback")!=std::string::npos,
-          "one stitched read must serve the collision and the cell, logged: "+lines);
-  require(lines.find("0_0.wcb not used, the cell reads its GLB")!=std::string::npos &&
-          lines.find("the collision comes from the stitched landscape")!=std::string::npos,
-          "the cell and the collision must log their fallbacks, logged: "+lines);
-  const auto reads=catalogue->table.source->reads();
-  require(reads.glb==1 && reads.cooked+1==catalogue->table.entries.size(),"only 0_0 may read its GLB");
-  }
+  expectLateChunkRecovery(dir,set,{0,0});
 
   // After the start the set no longer fits the bundle: 0_0.glb replaced at the index's length by the cell without the
   // ship flag, its .wcb truncated. The collision fallback runs the island search on its stitched read, as the start

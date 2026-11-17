@@ -27,10 +27,9 @@
 //     surfaces and original mesh and changes nothing (worldclothbundle.cpp);
 //   - the streaming view's start from landscapeMaterials() and landscapeBounds() (graphics/landscapestart.h);
 //   - static collision from the cooked cells (physics/worldcollisionmesh.h) when its cache misses. If that builder
-//     gives nothing, stitchedLandscape() reads and stitches the world then, once, as the old start would have had it.
-// A cell whose .wcb cannot be used reads its GLB against the ids of a stitched read of the set, which the first such
-// read builds once (the old start's ids; a hitch of the old load time, logged). The game hashes no GLB: a GLB
-// changed at the same length after the cook is not noticed, as on the cooked cell path.
+//     gives nothing, stitchedLandscape() reads and stitches the world as the old start would have had it.
+// After a .wcb read fails, the ring and collision builder can recover the cell from the GLB named by the index's
+// hash. For changed GLB data they use the stitched fallback. Healthy .wcb reads do not hash the GLB.
 
 #include "worldchunkcookedsource.h"
 #include "physics/worldclothbundle.h"
@@ -58,6 +57,8 @@ class WorldCatalogue {
     const std::filesystem::path& clothPath() const { return clothFile; }
     // The bundle's bytes and, once built, the stitched fallback's source and lists.
     size_t                     memoryBytes() const;
+    // Recovery can use the original index until a stitched fallback establishes new IDs or fails.
+    bool                       canRecoverIndexedChunk() const;
 
     // The landscape the old start would have after WorldCloth::extract (readWorldChunks with the bundle's
     // exclusions, or the island search when they do not fit the read), read now: static collision's fallback.

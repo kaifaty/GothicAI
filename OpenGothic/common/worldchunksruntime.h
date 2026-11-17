@@ -8,6 +8,7 @@
 #include <utility>
 
 class ChunkMeshSource;
+class CookedChunk;
 class CookedChunkSource;
 class CookedIndex;
 struct CookedSet;
@@ -116,6 +117,10 @@ asset::WorldMesh readWorldChunks(const std::filesystem::path& dir, const std::fi
 // about one. The catalogue start's fallback (worldchunkcatalogue.h).
 asset::WorldMesh readWorldChunksGlb(const std::filesystem::path& dir, const std::filesystem::path& overrideDir,
                                     ChunkTable& chunks);
+
+// Rebuild a single cell's cooked arrays in memory, from the exact GLB bytes named by the index.
+CookedChunk recoverIndexedChunk(const std::filesystem::path& path, const CookedIndex& index, size_t cell,
+                                std::span<const asset::Material> baseMaterials);
 
 // Keep an increasing, unique list of source triangle IDs in source order.
 // Only polygon arrays and their corresponding triangleChunks/triangleSources are filtered;
