@@ -756,9 +756,14 @@ void WorldView::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   }
 
 void WorldView::drawGBuffer(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId) {
-  visuals.drawGBuffer(cmd);
-  if(grass)
+  // The blades go first: the ground under them then fails the depth test before its layers are shaded
+  // (reports/engine/2026-11-17-grass-cost). Their own marker gives them a row of their own in the pass timings
+  if(grass) {
+    cmd.setDebugMarker("Grass");
     grass->draw(cmd);
+    cmd.setDebugMarker("GBuffer");
+    }
+  visuals.drawGBuffer(cmd);
   pfxGroup.drawGBuffer(cmd, fId);
   }
 
