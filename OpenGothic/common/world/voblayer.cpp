@@ -358,7 +358,7 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
       layerFields(doc,{"format","add"});
       array(member(doc,"add"));
       } else {
-      layerFields(doc,{"format","add","remove","move","light","visual"});
+      layerFields(doc,{"format","add","remove","move","light","visual","effect"});
       }
     std::unordered_map<uint32_t,Vob> base;
     std::set<uint32_t> ids;
@@ -571,6 +571,34 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
         catch(const std::exception& e) { error(entryContext,e); }
         }
       }
+    // A base vob that shows a particle effect given another effect in place, by its id ("effect"): a fire that
+    // cannot be removed, because it is a trigger (zCPFXController) or a lamp hangs under it, burns an effect of the
+    // content. The id, the class, the place and the tree stay, so a save fits
+    if(doc.HasMember("effect")) {
+      array(doc["effect"]);
+      for(const auto& entry:doc["effect"].GetArray()) {
+        std::string entryContext="effect: ";
+        try {
+          const auto& value=member(entry,"id");
+          if(value.IsInt64()) entryContext="id "+std::to_string(value.GetInt64())+": ";
+          else if(value.IsUint64()) entryContext="id "+std::to_string(value.GetUint64())+": ";
+          require(value.IsUint(),"expected unsigned base ID");
+          const auto id=value.GetUint();
+          require(base.count(id)!=0,"unknown base ID");
+          const auto& target=base.at(id);
+          layerFields(entry,{"id","pfx"});
+          require((target->type==VirtualObjectType::zCVob || target->type==VirtualObjectType::zCPFXController) &&
+                  target->visual!=nullptr && target->visual->type==VisualType::PARTICLE_EFFECT,
+                  "class "+std::string(className(target->type))+" is not a vob with a particle effect");
+          require(std::none_of(swaps.begin(),swaps.end(),[&](const Swap& s) { return s.target->id==id; }),"duplicate effect id");
+          auto visual=std::make_shared<asset::VisualParticleEffect>();
+          visual->type=VisualType::PARTICLE_EFFECT;
+          visual->name=particleName(layerString(member(entry,"pfx")),context,baseRoot,contentRoot);
+          swaps.push_back({target,visual});
+          }
+        catch(const std::exception& e) { error(entryContext,e); }
+        }
+      }
     for(const char* operation:{"remove","move"}) if(doc.HasMember(operation)) {
       array(doc[operation]);
       for(const auto& entry:doc[operation].GetArray()) {
@@ -590,7 +618,7 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
             fail("class "+kind+" cannot "+operation+": "+affected+" has base-ID or tree-bound saved state");
             }
           require(moving || std::none_of(swaps.begin(),swaps.end(),[&](const Swap& s) { return s.target->id==id; }),
-                  "visual and remove of one id");
+                  "visual or effect and remove of one id");
           if(moving) {
             layerFields(entry,{"id","position","rotation","yaw_deg"});
             moves.push_back({base.at(id),layerPosition(entry),layerRotation(entry)});

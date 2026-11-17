@@ -375,6 +375,73 @@ void baseVisuals(const Fixture& f) {
   Tempest::Log::setOutputCallback({});
   }
 
+// A base vob that shows a particle effect given another effect in place ("effect"): a trigger with an effect and an
+// effect with a lamp under it cannot be removed, so their effect changes under the same id, class, place and tree
+WorldData::Data effectWorld() {
+  auto data=lampWorld();
+  auto pfx=[](asset::VirtualObjectType type,uint32_t id) {
+    auto vob=std::make_shared<asset::VirtualObject>();
+    vob->type=type; vob->id=id; vob->position={float(id),0,0};
+    auto visual=std::make_shared<asset::VisualParticleEffect>();
+    visual->type=asset::VisualType::PARTICLE_EFFECT; visual->name="FIRE_SMOKE.PFX";
+    vob->visual=visual; vob->visual_name=visual->name; vob->associated_visual_type=visual->type;
+    return vob;
+    };
+  auto fire=pfx(asset::VirtualObjectType::zCVob,960);
+  auto lamp=std::make_shared<asset::VLight>();
+  lamp->type=asset::VirtualObjectType::zCVobLight; lamp->id=961; lamp->range=300; lamp->on=true;
+  fire->children.push_back(lamp);
+  data.vobs.push_back(fire);
+  data.vobs.push_back(pfx(asset::VirtualObjectType::zCPFXController,962));
+  return data;
+  }
+
+void baseEffects(const Fixture& f) {
+  f.clearLayers();
+  // the fixture's base has no script data: the names of two base effects stand in for the content's checker
+  const GameHost::ParticleNameCheck names=[](std::string_view name,const fs::path&,const fs::path&,std::vector<std::string>&) {
+    return name=="FIRE_SPARKS" || name=="FIRE_SMOKE";
+    };
+  textFile(f.layers/"10-effect.json",R"({"format":1,"effect":[{"id":960,"pfx":"fire_sparks"},{"id":962,"pfx":"FIRE_SPARKS.PFX"}]})");
+  auto data=effectWorld();
+  const auto result=VobLayer::apply(data,f.world,f.content/"worlds/TEST",names);
+  require(result.errors.empty() && result.swapped==2 && result.removed==0 && result.added==0,
+          "a base effect vob and a base effect trigger take a content effect in place");
+  for(uint32_t id:{960u,962u}) {
+    const auto* vob=find(data,id);
+    require(vob!=nullptr && !VobLayer::isAdded(*vob) && vob->position.x==float(id) && vob->visual!=nullptr &&
+            vob->visual->type==asset::VisualType::PARTICLE_EFFECT && vob->visual_name=="FIRE_SPARKS.PFX" &&
+            vob->visual->name=="FIRE_SPARKS.PFX","the vob keeps its id and place and burns the content effect");
+    }
+  require(find(data,960)->type==asset::VirtualObjectType::zCVob && find(data,960)->children.size()==1 &&
+          find(data,960)->children[0]->id==961,"the lamp under the effect stays in the tree");
+  require(find(data,962)->type==asset::VirtualObjectType::zCPFXController,"the trigger keeps its class");
+  struct Case { std::string name,json,id,message; };
+  Tempest::Log::setOutputCallback([](Tempest::Log::Mode,const char*) {});
+  for(const auto& c:std::initializer_list<Case>{
+    {"unknown-id",R"({"id":98765,"pfx":"FIRE_SPARKS"})","98765","unknown base ID"},
+    {"not-an-effect",R"({"id":31,"pfx":"FIRE_SPARKS"})","31","is not a vob with a particle effect"},
+    {"unknown-pfx",R"({"id":960,"pfx":"MISSING"})","960","unknown PFX"},
+    {"twice",R"({"id":960,"pfx":"FIRE_SPARKS"},{"id":960,"pfx":"FIRE_SPARKS"})","960","duplicate effect id"},
+    {"field",R"({"id":960,"pfx":"FIRE_SMOKE","yaw_deg":0})","960","yaw_deg"}
+    }) {
+    f.clearLayers();
+      textFile(f.layers/"10-bad.json","{\"format\":1,\"effect\":["+c.json+"]}");
+    auto world=effectWorld();
+    const auto failed=VobLayer::apply(world,f.world,f.content/"worlds/TEST",names);
+    require(failed.errors.size()==1 && failed.swapped==0 && failed.errors.front().find(c.id)!=std::string::npos &&
+            failed.errors.front().find(c.message)!=std::string::npos,"effect "+c.name+": the file is rejected with the id and the cause");
+    require(find(world,960)->visual_name=="FIRE_SMOKE.PFX","effect "+c.name+": a rejected file leaves the vob its effect");
+    }
+  f.clearLayers();
+  textFile(f.layers/"10-both.json",R"({"format":1,"effect":[{"id":962,"pfx":"FIRE_SPARKS"}],"remove":[962]})");
+  auto world=effectWorld();
+  require(!VobLayer::apply(world,f.world,f.content/"worlds/TEST",names).errors.empty() &&
+          find(world,962)!=nullptr && find(world,962)->visual_name=="FIRE_SMOKE.PFX","one file cannot give a vob an effect and remove it");
+  Tempest::Log::setOutputCallback({});
+  f.clearLayers();
+  }
+
 void removedReferences(const Fixture& f) {
   for(bool move:{false,true}) {
     f.clearLayers();
@@ -1185,6 +1252,7 @@ int main() {
     removedReferences(fixture);
     baseLamps(fixture);
     baseVisuals(fixture);
+    baseEffects(fixture);
     unreadableLayers(fixture);
     saveBoundPolicy(fixture);
     particleMotion();
