@@ -6,9 +6,9 @@
    "kind": "emitter",
    "pfx": "OWN_TORCH_FLAME",
    "position": [
-    0,
+    0.0,
     -2.0,
-    0
+    0.0
    ],
    "yaw_deg": 0,
    "flicker": {
@@ -23,9 +23,9 @@
    "kind": "emitter",
    "pfx": "OWN_TORCH_FLAME_SIDE",
    "position": [
-    5,
+    5.0,
     -10.0,
-    2
+    2.0
    ],
    "yaw_deg": 0,
    "flicker": {
@@ -40,9 +40,9 @@
    "kind": "emitter",
    "pfx": "OWN_TORCH_FLAME_SIDE",
    "position": [
-    -4,
+    -4.0,
     -10.0,
-    -3
+    -3.0
    ],
    "yaw_deg": 0,
    "flicker": {
@@ -57,9 +57,9 @@
    "kind": "emitter",
    "pfx": "OWN_TORCH_LICKS",
    "position": [
-    0,
+    0.0,
     -22.0,
-    0
+    0.0
    ],
    "yaw_deg": 0
   },
@@ -68,9 +68,9 @@
    "kind": "emitter",
    "pfx": "OWN_TORCH_SPARKS",
    "position": [
-    0,
+    0.0,
     -15.0,
-    0
+    0.0
    ],
    "yaw_deg": 0
   },
@@ -79,9 +79,9 @@
    "kind": "emitter",
    "pfx": "OWN_TORCH_HAZE",
    "position": [
-    0,
+    0.0,
     20.0,
-    0
+    0.0
    ],
    "yaw_deg": 0
   },

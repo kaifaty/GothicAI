@@ -1,0 +1,120 @@
+{
+ "format": 1,
+ "add": [
+  {
+   "key": "pole-flame",
+   "kind": "emitter",
+   "pfx": "OWN_BRAZIER_FLAME",
+   "position": [
+    0.0,
+    39.0,
+    0.0
+   ],
+   "yaw_deg": 0,
+   "flicker": {
+    "pulse_hz": 2.4,
+    "jitter_hz": 10,
+    "amount": 0.25,
+    "seed": 71
+   }
+  },
+  {
+   "key": "pole-flame-a",
+   "kind": "emitter",
+   "pfx": "OWN_BRAZIER_FLAME_SIDE",
+   "position": [
+    -4.1,
+    29.5,
+    -8.0
+   ],
+   "yaw_deg": 0,
+   "flicker": {
+    "pulse_hz": 3.4,
+    "jitter_hz": 10,
+    "amount": 0.25,
+    "seed": 72
+   }
+  },
+  {
+   "key": "pole-flame-b",
+   "kind": "emitter",
+   "pfx": "OWN_BRAZIER_FLAME_SIDE",
+   "position": [
+    0.8,
+    27.5,
+    10.0
+   ],
+   "yaw_deg": 0,
+   "flicker": {
+    "pulse_hz": 3.4,
+    "jitter_hz": 10,
+    "amount": 0.25,
+    "seed": 73
+   }
+  },
+  {
+   "key": "pole-licks",
+   "kind": "emitter",
+   "pfx": "OWN_BRAZIER_LICKS",
+   "position": [
+    0.0,
+    14.0,
+    0.0
+   ],
+   "yaw_deg": 0
+  },
+  {
+   "key": "pole-sparks",
+   "kind": "emitter",
+   "pfx": "OWN_BRAZIER_SPARKS",
+   "position": [
+    0.0,
+    33.0,
+    0.0
+   ],
+   "yaw_deg": 0
+  },
+  {
+   "key": "pole-haze",
+   "kind": "emitter",
+   "pfx": "OWN_BRAZIER_HAZE",
+   "position": [
+    0.0,
+    44.0,
+    0.0
+   ],
+   "yaw_deg": 0
+  },
+  {
+   "key": "pole-smoke",
+   "kind": "emitter",
+   "pfx": "OWN_BRAZIER_SMOKE",
+   "position": [
+    0.0,
+    50.0,
+    0.0
+   ],
+   "yaw_deg": 0
+  },
+  {
+   "key": "pole-light",
+   "kind": "light",
+   "position": [
+    0.0,
+    38.0,
+    0.0
+   ],
+   "yaw_deg": 0,
+   "range": 700,
+   "color": [
+    230,
+    84,
+    15
+   ],
+   "near": 12,
+   "flicker_from": "pole-flame",
+   "jitter_cm": 1.2,
+   "sway_hz": 1.3
+  }
+ ]
+}

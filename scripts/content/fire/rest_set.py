@@ -47,17 +47,45 @@ LAMP_RANGE = 550
 LAMP_LIGHT = -85.0
 
 
+def brazier_fire(key, coals, turn_of, seed, smoke) -> list:
+    """The `add` entries of the brazier's fire on a bed of coals, world or slot cm: flames, tongues, sparks, haze."""
+    turn = (turn_of * 2.39996) % (2 * math.pi)
+    ring = lambda r, a, y: coals + np.array([r * math.cos(turn + a), y, r * math.sin(turn + a)])
+    points = [('flame', 'OWN_BRAZIER_FLAME', coals + [0, CORE[1] / 2 - 3, 0]),
+              ('flame-a', 'OWN_BRAZIER_FLAME_SIDE', ring(9, 0, SIDE[1] / 2 - 2)),
+              ('flame-b', 'OWN_BRAZIER_FLAME_SIDE', ring(10, math.pi + 0.4, SIDE[1] / 2 - 4)),
+              ('licks', 'OWN_BRAZIER_LICKS', coals + [0, 6, 0]),
+              ('sparks', 'OWN_BRAZIER_SPARKS', coals + [0, 25, 0]),
+              ('haze', 'OWN_BRAZIER_HAZE', coals + [0, 36, 0])]
+    if smoke:
+        points.append(('smoke', 'OWN_BRAZIER_SMOKE', coals + [0, 42, 0]))
+    entries = []
+    for end, pfx, position in points:
+        entry = {'key': f'{key}-{end}', 'kind': 'emitter', 'pfx': pfx, 'position': at(position), 'yaw_deg': 0}
+        if 'flame' in end:
+            entry['flicker'] = {'pulse_hz': 2.4 if end == 'flame' else 3.4, 'jitter_hz': 10, 'amount': 0.25,
+                                'seed': seed + len(entries)}
+        entries.append(entry)
+    return entries
+
+
+def torch_fire(key, wick, seed) -> list:
+    """The `add` entries of the wall torch's fire on a wick, world or slot cm (the street lamp's set)."""
+    flick = lambda n: {'pulse_hz': 4.5, 'jitter_hz': 12, 'amount': 0.2, 'seed': seed + n}
+    wick = np.array(wick, float)
+    entry = lambda end, pfx, offset: {'key': f'{key}-{end}', 'kind': 'emitter', 'pfx': pfx, 'position': at(wick + offset), 'yaw_deg': 0}
+    return [{**entry('flame', 'OWN_TORCH_FLAME', [0, 18, 0]), 'flicker': flick(0)},
+            {**entry('flame-a', 'OWN_TORCH_FLAME_SIDE', [5, 10, 2]), 'flicker': flick(1)},
+            {**entry('flame-b', 'OWN_TORCH_FLAME_SIDE', [-4, 10, -3]), 'flicker': flick(2)},
+            entry('licks', 'OWN_TORCH_LICKS', [0, -2, 0]),
+            entry('sparks', 'OWN_TORCH_SPARKS', [0, 5, 0]),
+            entry('haze', 'OWN_TORCH_HAZE', [0, 40, 0])]
+
+
 def lamp_tree() -> dict:
-    flick = lambda seed: {'pulse_hz': 4.5, 'jitter_hz': 12, 'amount': 0.2, 'seed': seed}
-    entry = lambda end, pfx, y: {'key': f'lamp-{end}', 'kind': 'emitter', 'pfx': pfx, 'position': [0, y, 0], 'yaw_deg': 0}
-    add = [{**entry('flame', 'OWN_TORCH_FLAME', LAMP_WICK + 18), 'flicker': flick(41)},
-           {**entry('flame-a', 'OWN_TORCH_FLAME_SIDE', LAMP_WICK + 10), 'position': [5, LAMP_WICK + 10, 2], 'flicker': flick(42)},
-           {**entry('flame-b', 'OWN_TORCH_FLAME_SIDE', LAMP_WICK + 10), 'position': [-4, LAMP_WICK + 10, -3], 'flicker': flick(43)},
-           entry('licks', 'OWN_TORCH_LICKS', LAMP_WICK - 2),
-           entry('sparks', 'OWN_TORCH_SPARKS', LAMP_WICK + 5),
-           entry('haze', 'OWN_TORCH_HAZE', LAMP_WICK + 40),
-           {'key': 'lamp-light', 'kind': 'light', 'position': [0, LAMP_LIGHT, 0], 'yaw_deg': 0, 'range': LAMP_RANGE,
-            'color': LAMP['color'], 'near': 8, 'flicker_from': 'lamp-flame', 'jitter_cm': 0.6, 'sway_hz': 1.5}]
+    add = torch_fire('lamp', [0, LAMP_WICK, 0], 41)
+    add.append({'key': 'lamp-light', 'kind': 'light', 'position': [0, LAMP_LIGHT, 0], 'yaw_deg': 0, 'range': LAMP_RANGE,
+                'color': LAMP['color'], 'near': 8, 'flicker_from': 'lamp-flame', 'jitter_cm': 0.6, 'sway_hz': 1.5})
     return {'format': 1, 'add': add}
 
 
@@ -85,26 +113,11 @@ def layer(vobs_json, taken) -> tuple[dict, dict]:
         kind = HOSTS[name(host)]
         key = f'{kind}-{vob["id"]}'
         coals = spot - [0, COALS_UNDER_FIRE, 0]
-        turn = (vob['id'] * 2.39996) % (2 * math.pi)
-        ring = lambda r, a, y: coals + np.array([r * math.cos(turn + a), y, r * math.sin(turn + a)])
         siblings = parent.get('children', []) if parent and parent['type'] == 'zCVobLight' else []
         smoke = [c for c in siblings if name(c) == 'FIRE_SMOKE.PFX']
         out['remove'] += [vob['id']] + [c['id'] for c in smoke]
         taken |= {c['id'] for c in smoke}
-        points = [('flame', 'OWN_BRAZIER_FLAME', coals + [0, CORE[1] / 2 - 3, 0]),
-                  ('flame-a', 'OWN_BRAZIER_FLAME_SIDE', ring(9, 0, SIDE[1] / 2 - 2)),
-                  ('flame-b', 'OWN_BRAZIER_FLAME_SIDE', ring(10, math.pi + 0.4, SIDE[1] / 2 - 4)),
-                  ('licks', 'OWN_BRAZIER_LICKS', coals + [0, 6, 0]),
-                  ('sparks', 'OWN_BRAZIER_SPARKS', coals + [0, 25, 0]),
-                  ('haze', 'OWN_BRAZIER_HAZE', coals + [0, 36, 0])]
-        if smoke:
-            points.append(('smoke', 'OWN_BRAZIER_SMOKE', coals + [0, 42, 0]))
-        for end, pfx, position in points:
-            entry = {'key': f'{key}-{end}', 'kind': 'emitter', 'pfx': pfx, 'position': at(position), 'yaw_deg': 0}
-            if 'flame' in end:
-                entry['flicker'] = {'pulse_hz': 2.4 if end == 'flame' else 3.4, 'jitter_hz': 10, 'amount': 0.25,
-                                    'seed': 53 + vob['id'] * 3 + len(out['add'])}
-            out['add'].append(entry)
+        out['add'] += brazier_fire(key, coals, vob['id'], 53 + vob['id'] * 3 + len(out['add']), bool(smoke))
         light = coals + [0, LIGHT_UP, 0]
         signal = {'flicker_from': f'{key}-flame', **SWAY}
         if parent and parent['type'] == 'zCVobLight' and not parent['is_static']:
