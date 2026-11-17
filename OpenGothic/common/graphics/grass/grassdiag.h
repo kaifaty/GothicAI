@@ -36,6 +36,16 @@ inline uint32_t& partsOff() {
   return mask;
   }
 
+// OPENGOTHIC_GRASS_SQUARES=0: a cell is drawn and thinned whole, as before the squares (reports/engine/2026-11-17-
+// grass-cost): the pair of their measure
+inline bool squaresOff() {
+  static const bool value = [] {
+    const char* e = std::getenv("OPENGOTHIC_GRASS_SQUARES");
+    return e!=nullptr && e[0]=='0' && e[1]=='\0';
+    }();
+  return value;
+  }
+
 // OPENGOTHIC_GRASS_FINE=0: the short sward keeps its broad blades where the record asks for fine ones
 inline bool fineOff() {
   static const bool value = [] {

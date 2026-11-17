@@ -760,7 +760,7 @@ void WorldView::drawGBuffer(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId) {
   // (reports/engine/2026-11-17-grass-cost). Their own marker gives them a row of their own in the pass timings
   if(grass) {
     cmd.setDebugMarker("Grass");
-    grass->draw(cmd);
+    grass->draw(cmd,fId);
     cmd.setDebugMarker("GBuffer");
     }
   visuals.drawGBuffer(cmd);

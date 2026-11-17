@@ -47,6 +47,7 @@ struct Raw final { // a blade before it is packed
   int32_t  x = 0, y = 0, z = 0;
   uint16_t slot = 0;
   uint8_t  kind = 0;
+  uint8_t  square = 0;
   uint8_t  rank = 0, height = 0, facing = 0, phase = 0, lean = 0, width = 0, tint = 0, nx = 0, nz = 0;
   uint16_t u = 0, v = 0;
   };
@@ -642,6 +643,9 @@ CellBlades buildCell(const CellInput& in) {
       r.z      = fz;
       r.slot   = t.slot;
       r.kind   = fine ? 1 : 0;
+      if(in.squares)
+        r.square = uint8_t(std::clamp(floorDiv(fx-x0,SquareSize),0,CellSquares-1)*CellSquares +
+                           std::clamp(floorDiv(fz-z0,SquareSize),0,CellSquares-1));
       r.rank   = uint8_t(rank);
       r.height = uint8_t(std::clamp(int(std::lround(height*4.f)),1,255));
       r.facing = uint8_t(int(std::floor((turn-std::floor(turn))*256.f)) & 0xFF);
@@ -669,9 +673,9 @@ CellBlades buildCell(const CellInput& in) {
   if(raw.empty())
     return ret;
 
-  // by slot, then by rank; the lattice's order within a rank
+  // by slot and square, then by rank; the lattice's order within a rank
   std::stable_sort(raw.begin(),raw.end(),[](const Raw& a, const Raw& b) {
-    return std::tie(a.slot,a.kind,a.rank)<std::tie(b.slot,b.kind,b.rank);
+    return std::tie(a.slot,a.kind,a.square,a.rank)<std::tie(b.slot,b.kind,b.square,b.rank);
     });
   ret.minY = minY;
   ret.maxY = maxY;
@@ -683,8 +687,9 @@ CellBlades buildCell(const CellInput& in) {
     b.w[1] = uint32_t(std::min((r.y-minY)/2,0xFFFF)) | (uint32_t(r.height) << 16) | (uint32_t(r.rank) << 24);
     b.w[2] = uint32_t(r.facing) | (uint32_t(r.phase) << 8) | (uint32_t(r.nx) << 16) | (uint32_t(r.nz) << 24);
     b.w[3] = uint32_t(r.u) | (uint32_t(r.v) << 12) | (uint32_t(r.width) << 24) | (uint32_t(r.tint) << 28);
-    if(ret.batches.empty() || ret.batches.back().slot!=r.slot || ret.batches.back().kind!=r.kind)
-      ret.batches.push_back(Batch{r.slot,r.kind,uint32_t(i),0});
+    if(ret.batches.empty() || ret.batches.back().slot!=r.slot || ret.batches.back().kind!=r.kind ||
+       ret.batches.back().square!=r.square)
+      ret.batches.push_back(Batch{r.slot,r.kind,r.square,uint32_t(i),0});
     ++ret.batches.back().count;
     }
   return ret;
