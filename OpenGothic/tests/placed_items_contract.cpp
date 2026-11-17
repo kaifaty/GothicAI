@@ -11,6 +11,7 @@
 #include "game/definitions/basescripts.h"
 #include "game/serialize.h"
 #include "npcsnapshot.h"
+#include "programdata.h"
 #include "routinedefinitions.h"
 #include "loadprobe.h"
 #include "world/objects/item.h"
@@ -507,14 +508,24 @@ void routineTables(Npc& npc) {
     std::string point;
     const WayPoint* waypoint;
     };
-  auto rows=[&] {
+  auto rows=[](const Npc& who) {
     std::vector<Row> result;
-    npc.forEachRoutine([&](const Npc::RoutineInfo& row) {
+    who.forEachRoutine([&](const Npc::RoutineInfo& row) {
       result.push_back({row.start,row.end,row.state,std::string(row.point),row.waypoint});
       });
     return result;
     };
-  const auto previous=rows();
+  auto compare=[](const std::vector<Row>& expected,const std::vector<Row>& actual,const std::string& name) {
+    if(actual.size()!=expected.size())
+      throw std::runtime_error(name+": NPC routine table row count differs");
+    for(size_t index=0;index<actual.size();++index) {
+      const auto& a=actual[index];
+      const auto& e=expected[index];
+      if(a.start!=e.start || a.end!=e.end || a.state!=e.state || a.point!=e.point || a.waypoint!=e.waypoint)
+        throw std::runtime_error(name+": NPC routine table row "+std::to_string(index+1)+" differs");
+      }
+    };
+  const auto previous=rows(npc);
   const auto oldSelf=vm.global_self()->get_instance();
   vm.global_self()->set_instance(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()));
   size_t count=0,rowCount=0;
@@ -530,21 +541,16 @@ void routineTables(Npc& npc) {
       instructions=0;
       vm.call_function<void>(function);
       require(instructions>0,"the routine reference must execute the VM");
-      const auto expected=rows();
+      const auto expected=rows(npc);
       instructions=0;
       npc.excRoutine(function->index());
       if(recordsEnabled ? instructions!=0 : instructions==0)
         throw std::runtime_error(name+": routine exchange chose the wrong record/VM path");
       vm.observe_instructions({});
-      const auto actual=rows();
-      if(actual.size()!=expected.size() || actual.size()!=definition.size())
+      const auto actual=rows(npc);
+      if(actual.size()!=definition.size())
         throw std::runtime_error(name+": NPC routine table row count differs");
-      for(size_t index=0;index<actual.size();++index) {
-        const auto& a=actual[index];
-        const auto& e=expected[index];
-        if(a.start!=e.start || a.end!=e.end || a.state!=e.state || a.point!=e.point || a.waypoint!=e.waypoint)
-          throw std::runtime_error(name+": NPC routine table row "+std::to_string(index+1)+" differs");
-        }
+      compare(expected,actual,name);
       ++count;
       rowCount+=actual.size();
       }
@@ -557,6 +563,42 @@ void routineTables(Npc& npc) {
   require(count==library.routines.size(),"every captured routine must be compared on a live NPC");
   std::printf("NPC routine table equality: %zu captured functions, %zu rows; times, state, point pointers, fallback names and order match\n",
               count,rowCount);
+
+  auto* xardas=npc.world().findNpcByInstance(script.findSymbolIndex("NONE_100_XARDAS"));
+  auto* ritual=vm.find_symbol_by_name("RTN_RITUALINNOSEYE_100");
+  auto* exchange=vm.find_symbol_by_name("NPC_EXCHANGEROUTINE");
+  require(xardas && ritual && exchange,"the story routine fixture must contain Xardas and his Innos Eye ritual");
+  require(library.routines.at(ritual->name()).size()==2,"the Innos Eye ritual must contain two captured rows");
+  const auto beforeRitual=rows(*xardas);
+  const auto beforeRecord=xardas->handle();
+  vm.global_self()->set_instance(std::static_pointer_cast<daedalus::INpc>(xardas->handlePtr()));
+  size_t exchanges=0;
+  try {
+    xardas->clearRoutine();
+    vm.call_function<void>(ritual);
+    const auto expected=rows(*xardas);
+    require(expected.size()==2 && (beforeRitual.empty() || expected[0].state!=beforeRitual[0].state ||
+                                  expected[0].point!=beforeRitual[0].point),
+            "the story fixture must change Xardas's current routine");
+    xardas->clearRoutine();
+    for(const auto& row:beforeRitual)
+      xardas->addRoutine(row.start,row.end,uint32_t(row.state.ptr),row.point);
+    vm.observe_instructions([&](const daedalus::DaedalusInstruction& instruction) {
+      if(instruction.op==daedalus::DaedalusOpcode::BE && instruction.symbol==exchange->index()) ++exchanges;
+      });
+    vm.call_function<void>("B_STARTOTHERROUTINE",std::static_pointer_cast<daedalus::INpc>(xardas->handlePtr()),
+                           std::string_view("RITUALINNOSEYE"));
+    vm.observe_instructions({});
+    require(exchanges==1,"the story helper must call Npc_ExchangeRoutine exactly once");
+    compare(expected,rows(*xardas),"B_STARTOTHERROUTINE(Xardas,RITUALINNOSEYE)");
+    }
+  catch(...) { vm.observe_instructions({}); vm.global_self()->set_instance(oldSelf); throw; }
+  xardas->handle()=beforeRecord;
+  xardas->clearRoutine();
+  for(const auto& row:beforeRitual)
+    xardas->addRoutine(row.start,row.end,uint32_t(row.state.ptr),row.point);
+  vm.global_self()->set_instance(oldSelf);
+  std::puts("Story routine change: B_StartOtherRoutine(Xardas,RITUALINNOSEYE) -> Npc_ExchangeRoutine; two live rows match the VM reference");
   }
 
 void moverChildSave() {
