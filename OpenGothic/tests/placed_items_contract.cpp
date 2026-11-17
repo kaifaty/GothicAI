@@ -669,6 +669,11 @@ void npcDefinitions(World& world) {
   auto records=NpcDefinitionRuntime::resolve(library,vm);
   const auto oldSelf=vm.global_self()->get_instance();
   const auto oldItem=vm.global_item()->get_instance();
+  auto prepareSyntheticPhysics=[&](Npc& npc) {
+    // These script fixtures have no model. Native NPC saves require a physical object.
+    if(library.npcs.contains("NPC_NO_ID"))
+      npc.setPhysic(world.physic()->addGhostObj(nullptr));
+    };
   std::vector<std::string> names;
   for(const auto& [name,definition]:library.npcs) { (void)definition; names.push_back(name); }
   const std::string templateName=library.npcs.contains("NPC_NO_ID") ? "NPC_NO_ID" : "NONE_100_XARDAS";
@@ -714,6 +719,7 @@ void npcDefinitions(World& world) {
         require(onEquipCalls>=1,"synthetic reference EquipItem must execute on_equip in the game VM");
         require(expected->handle().attribute[0]==30,"synthetic constructor writes the final attribute after on_equip");
         }
+      prepareSyntheticPhysics(*expected);
       const auto expectedState=npcState(*expected);
       const auto expectedItem=itemState(script);
       const auto expectedRandom=script.randomState(nullptr);
@@ -743,6 +749,7 @@ void npcDefinitions(World& world) {
         throw std::runtime_error(name+": VM temporary strings differ from constructor");
       if(script.randomState(nullptr)!=expectedRandom)
         throw std::runtime_error(name+": game random generator differs from constructor");
+      prepareSyntheticPhysics(*actual);
       const auto actualState=npcState(*actual);
       for(const auto& [entry,payload]:expectedState) {
         const auto found=actualState.find(entry);
