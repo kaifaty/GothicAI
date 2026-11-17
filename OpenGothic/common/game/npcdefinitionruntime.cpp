@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <unordered_set>
 
 namespace {
 using Type = daedalus::DaedalusDataType;
@@ -136,9 +137,41 @@ NpcDefinitionRuntime::Definitions NpcDefinitionRuntime::load(const std::filesyst
   return enabled() ? resolve(NpcDefinitions::read(base,sha256),program) : Definitions{};
   }
 
+void NpcDefinitionRuntime::observeCalls(daedalus::DaedalusVm& vm, const Definitions& definitions,
+                                       const std::filesystem::path& base, std::string_view sha256) {
+  if(!LoadProbe::Npcs::enabled()) return;
+  std::unordered_set<uint32_t> functions;
+  if(enabled()) {
+    for(const auto& [npc,steps]:definitions.npcs) {
+      (void)npc;
+      for(const auto& step:steps)
+        if(const auto* call=std::get_if<Call>(&step); call && call->deferred)
+          functions.insert(call->function);
+      }
+    }
+  else {
+    // Probe the same set of script functions on the constructor path, including
+    // nested calls. Disabled playback otherwise needs no NPC definition file.
+    const auto library=NpcDefinitions::read(base,sha256);
+    for(const auto& [npc,definition]:library.npcs) {
+      (void)npc;
+      for(const auto& step:definition.steps)
+        if(const auto* call=std::get_if<NpcDefinitions::Call>(&step); call && call->deferred) {
+          const auto* function=vm.find_symbol_by_name(call->function);
+          if(function==nullptr) throw std::runtime_error("NPC definitions: unknown probe function "+call->function);
+          functions.insert(function->index());
+          }
+      }
+    }
+  vm.observe_calls([functions=std::move(functions)](const auto& function) {
+    if(LoadProbe::Npcs::initializationDepth && functions.contains(function.index())) LoadProbe::Npcs::deferred();
+    });
+  }
+
 bool NpcDefinitionRuntime::initialize(daedalus::DaedalusVm& vm, const std::shared_ptr<daedalus::INpc>& npc,
                                       daedalus::DaedalusSymbol* symbol, const Definitions& definitions,
                                       daedalus::DaedalusSymbol* definitionSymbol) {
+  LoadProbe::Npcs::Initialization probe;
   const auto* source=definitionSymbol ? definitionSymbol : symbol;
   const auto found=source ? definitions.npcs.find(source->index()) : definitions.npcs.end();
   if(found==definitions.npcs.end()) {
@@ -161,7 +194,6 @@ bool NpcDefinitionRuntime::initialize(daedalus::DaedalusVm& vm, const std::share
       for(const auto& argument:call.args) push(vm,argument,npc);
       const auto* function=vm.find_symbol_by_index(call.function);
       if(call.deferred) {
-        LoadProbe::Npcs::deferred();
         vm.unsafe_call_bl(function);
         }
       else if(!vm.unsafe_call_external(function))

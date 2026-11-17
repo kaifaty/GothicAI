@@ -32,6 +32,8 @@ bool enabled();
 Definitions resolve(const NpcDefinitions::Library& library, const daedalus::DaedalusScript& script);
 Definitions load(const std::filesystem::path& base, const daedalus::DaedalusScript& program,
                  std::string_view sha256);
+void observeCalls(daedalus::DaedalusVm& vm, const Definitions& definitions,
+                  const std::filesystem::path& base, std::string_view sha256);
 // The game and its contract share this choice of definition or VM constructor.
 // Engine calls use the VM's registered external, exactly as a script BE instruction does.
 bool initialize(daedalus::DaedalusVm& vm, const std::shared_ptr<daedalus::INpc>& npc,

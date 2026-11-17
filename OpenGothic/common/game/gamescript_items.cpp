@@ -4,7 +4,6 @@
 #include "game/definitions/basescripts.h"
 #include "gothic.h"
 #include "loadprobe.h"
-#include "npcloadprobe.h"
 #include "programdata.h"
 #include "settings.h"
 
@@ -19,8 +18,7 @@ daedalus::DaedalusVm GameScript::createVm(Gothic& gothic, ItemDefinitionRuntime:
   npcs=NpcDefinitionRuntime::load(baseProgramIndex().dir.parent_path(),script,sha256);
   const auto flags=daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS;
   daedalus::DaedalusVm vm(std::move(script),flags);
-  if(LoadProbe::Npcs::enabled())
-    vm.observe_calls([](const auto& function) { LoadProbe::Npcs::scriptCall(function.name()); });
+  NpcDefinitionRuntime::observeCalls(vm,npcs,baseProgramIndex().dir.parent_path(),sha256);
   return vm;
   }
 

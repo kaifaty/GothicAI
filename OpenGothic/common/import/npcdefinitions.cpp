@@ -34,6 +34,13 @@ struct Stop : std::runtime_error {
   std::string reason,detail;
   Stop(std::string reason,std::string detail):std::runtime_error(reason+": "+detail),reason(std::move(reason)),detail(std::move(detail)) {}
   };
+struct Defer {
+  uint32_t address;
+  };
+const std::set<std::string> engineCalls={
+  "MDL_SETVISUAL","MDL_SETVISUALBODY","MDL_SETMODELFATNESS","MDL_SETMODELSCALE","MDL_APPLYOVERLAYMDS",
+  "EQUIPITEM","CREATEINVITEM","CREATEINVITEMS","NPC_SETTALENTSKILL","NPC_SETTALENTVALUE",
+  "NPC_SETTOFIGHTMODE","NPC_SETTOFISTMODE","NPC_SETATTITUDE","NPC_SETTEMPATTITUDE","TA_MIN"};
 bool mutableGlobal(const DaedalusSymbol& symbol,const DaedalusVm& vm) {
   const auto* parent=vm.find_symbol_by_index(symbol.parent());
   const auto dot=symbol.name().find('.');
@@ -94,6 +101,16 @@ class Runner {
   public:
     explicit Runner(const NpcSnapshot::Program& program):program(program),analysis(DaedalusScript::from_program(program.data)) {}
     Capture run(uint32_t id) const {
+      std::set<uint32_t> deferred;
+      for(;;) {
+        try { return capture(id,deferred); }
+        catch(const Defer& function) {
+          require(deferred.insert(function.address).second,"NPC dependency replay did not advance");
+          }
+        }
+      }
+  private:
+    Capture capture(uint32_t id,const std::set<uint32_t>& deferred) const {
       Capture result;
       auto script=DaedalusScript::from_program(program.data);
       INpc::register_(script);
@@ -107,6 +124,43 @@ class Runner {
         });
       auto npc=std::make_shared<INpc>();
       auto* root=vm.find_symbol_by_index(id);
+      bool engineState=false;
+      std::vector<const DaedalusSymbol*> frames;
+      auto overridden=[&](const DaedalusSymbol& function) {
+        return function.type()==Type::FUNCTION &&
+            (analysis.random.count(function.address()) || deferred.count(function.address()));
+        };
+      vm.observe_calls([&](const DaedalusSymbol& function) {
+        if(!overridden(function)) frames.push_back(&function);
+        });
+      auto validateDeferred=[&](const DaedalusSymbol& function) {
+        std::set<uint32_t> visited;
+        std::vector<uint32_t> todo{function.address()};
+        while(!todo.empty()) {
+          const auto address=todo.back(); todo.pop_back();
+          if(!visited.insert(address).second) continue;
+          const auto next=analysis.functions.upper_bound(address);
+          const auto end=next==analysis.functions.end() ? vm.size() : next->first;
+          for(auto pc=address;pc<end;) {
+            const auto op=vm.instruction_at(pc);
+            if(op.op==Op::BL) todo.push_back(op.address);
+            if(op.op==Op::BE) {
+              const auto* external=vm.find_symbol_by_index(op.symbol);
+              if(!external || (!engineCalls.count(external->name()) && external->name()!="HLP_RANDOM"))
+                throw Stop("unsupported_external",external ? external->name() : std::to_string(op.symbol));
+              if(external->has_return() && external->name()!="HLP_RANDOM")
+                throw Stop("external_query",external->name());
+              }
+            if(op.op==Op::PUSHV || op.op==Op::PUSHVI || op.op==Op::PUSHVV || op.op==Op::GMOVI) {
+              const auto* symbol=vm.find_symbol_by_index(op.symbol);
+              if(symbol && mutableGlobal(*symbol,vm)) throw Stop("game_state",symbol->name());
+              if(symbol==vm.global_self() && pc+op.size<end && vm.instruction_at(pc+op.size).op==Op::MOVVI)
+                throw Stop("game_state_write",symbol->name());
+              }
+            pc+=op.size;
+            }
+          }
+        };
       std::set<std::string> functionFields;
       snapshotFields(*npc,[&](const char*,auto&,bool function,const char* binding) {
         if(function) functionFields.insert(binding);
@@ -121,6 +175,19 @@ class Runner {
         };
       vm.observe_reads([&](const DaedalusSymbol& symbol) {
         if(mutableGlobal(symbol,vm)) throw Stop("game_state",symbol.name());
+        });
+      vm.observe_member_reads([&](const DaedalusSymbol& symbol,uint16_t index,const DaedalusInstance* context) {
+        if(!engineState) return;
+        const auto detail=symbol.name()+"["+std::to_string(index)+"] after engine call";
+        if(context!=npc.get()) throw Stop("engine_state_read",detail+": unsupported NPC context");
+        const auto helper=std::find_if(frames.begin(),frames.end(),[](const auto* frame) {
+          return frame->type()==Type::FUNCTION;
+          });
+        if(helper==frames.end() || (*helper)->has_return()) throw Stop("engine_state_read",detail);
+        // Restart the whole constructor in a fresh VM. No pending fields, calls or
+        // local/global effects from the partially executed helper survive a retry.
+        validateDeferred(**helper);
+        throw Defer{(*helper)->address()};
         });
       vm.observe_writes([&](const DaedalusSymbol& symbol) {
         if(mutableGlobal(symbol,vm) || &symbol==vm.global_self())
@@ -143,8 +210,12 @@ class Runner {
         pending[{symbol.name(),index}]=std::move(value);
         });
       size_t instructions=0;
-      vm.observe_instructions([&](const DaedalusInstruction&) {
+      vm.observe_instructions([&](const DaedalusInstruction& op) {
         if(++instructions>1000000) throw Stop("execution_limit",root->name());
+        if(op.op==Op::RSR) {
+          require(!frames.empty(),"NPC capture call stack is empty");
+          frames.pop_back();
+          }
         });
       auto arguments=[&](const DaedalusSymbol& function) {
         std::vector<Value> values;
@@ -191,15 +262,16 @@ class Runner {
         std::reverse(values.begin(),values.end());
         return values;
         };
-      auto validateItemAllocation=[&](const Call& call) {
-        const auto& target=call.args.at(0);
-        const bool boundNpc=target.kind==Value::Kind::Self ||
+      auto boundNpc=[&](const Value& target) {
+        return target.kind==Value::Kind::Self ||
             (target.kind==Value::Kind::Symbol &&
              std::dynamic_pointer_cast<INpc>(vm.find_symbol_by_name(target.text)->get_instance())!=nullptr);
-        if(!boundNpc) return;
-        auto integer=[&](const Value& value) {
-          return value.kind==Value::Kind::Symbol ? int32_t(vm.find_symbol_by_name(value.text)->index()) : value.integer;
-          };
+        };
+      auto integer=[&](const Value& value) {
+        return value.kind==Value::Kind::Symbol ? int32_t(vm.find_symbol_by_name(value.text)->index()) : value.integer;
+        };
+      auto validateItemAllocation=[&](const Call& call) {
+        if(!boundNpc(call.args.at(0))) return;
         size_t argument=1;
         if(call.function=="CREATEINVITEMS") {
           if(integer(call.args.at(2))<=0) return;
@@ -226,19 +298,24 @@ class Runner {
         if(function.has_return()) throw Stop(deferred ? "random_return" : "external_query",function.name());
         Call call{function.name(),arguments(function),deferred};
         if(!deferred) validateItemAllocation(call);
+        // These engine paths can write C_NPC fields or execute item scripts.
+        // Talent, attitude, appearance-only and routine calls do neither.
+        if(deferred || (boundNpc(call.args.at(0)) &&
+            (call.function=="EQUIPITEM" || call.function=="CREATEINVITEM" ||
+             (call.function=="CREATEINVITEMS" && integer(call.args.at(2))>0) ||
+             (call.function=="MDL_SETVISUALBODY" && integer(call.args.at(7))>0) ||
+             (call.function=="NPC_SETTOFIGHTMODE" && integer(call.args.at(1))>=0) ||
+             call.function=="NPC_SETTOFISTMODE"))) engineState=true;
         result.definition.steps.emplace_back(std::move(call));
         };
-      for(auto address:analysis.random) {
-        auto* function=vm.find_symbol_by_address(address);
-        if(!function || function->type()!=Type::FUNCTION) continue;
+      for(const auto& [address,index]:analysis.functions) {
+        (void)address;
+        auto* function=vm.find_symbol_by_index(index);
+        if(!overridden(*function)) continue;
         vm.override_function_custom(*function,[&,function](DaedalusVm&) { event(*function,true); });
         }
       vm.register_default_external_custom([&](DaedalusVm&,DaedalusSymbol& function) {
-        static const std::set<std::string> supported={
-          "MDL_SETVISUAL","MDL_SETVISUALBODY","MDL_SETMODELFATNESS","MDL_SETMODELSCALE","MDL_APPLYOVERLAYMDS",
-          "EQUIPITEM","CREATEINVITEM","CREATEINVITEMS","NPC_SETTALENTSKILL","NPC_SETTALENTVALUE",
-          "NPC_SETTOFIGHTMODE","NPC_SETTOFISTMODE","NPC_SETATTITUDE","NPC_SETTEMPATTITUDE","TA_MIN"};
-        if(!supported.count(function.name())) throw Stop("unsupported_external",function.name());
+        if(!engineCalls.count(function.name())) throw Stop("unsupported_external",function.name());
         event(function,false);
         });
       try {
@@ -249,7 +326,6 @@ class Runner {
       catch(const std::exception& error) { result.reason="execution_error"; result.detail=error.what(); result.definition.steps.clear(); }
       return result;
       }
-  private:
     const NpcSnapshot::Program& program;
     Analysis analysis;
   };

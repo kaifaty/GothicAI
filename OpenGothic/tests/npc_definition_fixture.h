@@ -76,6 +76,10 @@ inline NpcSnapshot::Program program() {
   f.p.symbols[text].string_values[0]=std::string("NPC\0\x80\xff",6);
   const auto callback=f.fn("ON_EQUIP"); f.begin(callback);
   f.op(Op::PUSHV,f.find("C_NPC.ATTRIBUTE")); f.op(Op::PUSHI,5); f.op(Op::ADD);
+  f.op(Op::PUSHV,f.find("C_NPC.ATTRIBUTE")); f.op(Op::MOVI);
+  f.set(f.find("C_NPC.LEVEL"),5); f.op(Op::RSR);
+  const auto addAfterEquip=f.fn("ADD_AFTER_EQUIP"); f.begin(addAfterEquip);
+  f.op(Op::PUSHV,f.find("C_NPC.ATTRIBUTE")); f.op(Op::PUSHI,15); f.op(Op::ADD);
   f.op(Op::PUSHV,f.find("C_NPC.ATTRIBUTE")); f.op(Op::MOVI); f.op(Op::RSR);
   const auto item=f.symbol("IT_NPC_RING",Type::INSTANCE,0,Flag::CONST,int32_t(itemClass)); f.begin(item);
   f.set(f.find("C_ITEM.FLAGS"),1<<11);
@@ -106,8 +110,9 @@ inline NpcSnapshot::Program program() {
   f.op(Op::PUSHV,self); f.op(Op::PUSHI,itemPrototype); f.op(Op::PUSHI,0); f.op(Op::BE,create);
   f.op(Op::PUSHV,self); f.op(Op::PUSHI,item); f.op(Op::PUSHI,3); f.op(Op::BE,create);
   f.op(Op::PUSHV,self); f.op(Op::PUSHI,item); f.op(Op::BE,equip);
-  // on_equip changed attribute[0]; this later assignment must occur after that call.
-  f.set(f.find("C_NPC.ATTRIBUTE"),30);
+  // The helper must read the attribute after on_equip added five, then add fifteen.
+  f.call(addAfterEquip);
+  f.set(f.find("C_NPC.LEVEL"),30);
   f.op(Op::PUSHV,self); f.op(Op::PUSHI,std::bit_cast<uint32_t>(1.25f)); f.op(Op::BE,fatness);
   f.op(Op::PUSHV,self); f.call(ambient); f.op(Op::RSR);
   const auto named=f.symbol("NPC_WITH_ID",Type::INSTANCE,0,Flag::CONST,int32_t(prototype)); f.begin(named);
@@ -120,6 +125,11 @@ inline NpcSnapshot::Program program() {
   f.op(Op::PUSHV,self); f.op(Op::BE,unknown); f.op(Op::RSR);
   const auto invalidItem=f.symbol("NPC_BAD_ITEM",Type::INSTANCE,0,Flag::CONST,int32_t(npcClass)); f.begin(invalidItem);
   f.op(Op::PUSHV,self); f.op(Op::PUSHI,itemPrototype); f.op(Op::PUSHI,1); f.op(Op::BE,create); f.op(Op::RSR);
+  const auto engineRead=f.symbol("NPC_ENGINE_READ",Type::INSTANCE,0,Flag::CONST,int32_t(prototype)); f.begin(engineRead);
+  f.call(prototype);
+  f.op(Op::PUSHV,self); f.op(Op::PUSHI,item); f.op(Op::BE,equip);
+  // A read in the constructor itself has no helper boundary that can be deferred.
+  f.op(Op::PUSHV,f.find("C_NPC.ATTRIBUTE")); f.op(Op::PUSHV,f.find("C_NPC.LEVEL")); f.op(Op::MOVI); f.op(Op::RSR);
   const auto encoded=ProgramData::encodeProgram(f.p);
   return {std::move(f.p),encoded.name,encoded.sha256};
   }

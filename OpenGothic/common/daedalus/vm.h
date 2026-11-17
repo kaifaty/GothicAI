@@ -620,6 +620,8 @@ namespace daedalus {
 		// Optional offline instrumentation. Unset in the game; reads are observed when consumed,
 		// not when a reference is pushed (a pushed reference may be a store destination).
 		void observe_reads(std::function<void(DaedalusSymbol const&)> callback) { _m_read_observer = std::move(callback); }
+		// Consumed member values include the reference's context, which can differ from the current context.
+		void observe_member_reads(std::function<void(DaedalusSymbol const&, uint16_t, DaedalusInstance const*)> callback) { _m_member_read_observer = std::move(callback); }
 		// Writes are observed before bytecode assignments, not internal scratch/local restoration.
 		void observe_writes(std::function<void(DaedalusSymbol const&)> callback) { _m_write_observer = std::move(callback); }
 		// Assigned member elements are reported after the write, with their exact context and index.
@@ -1034,6 +1036,7 @@ namespace daedalus {
 		std::optional<std::function<void(DaedalusVm&, DaedalusSymbol&)>> _m_default_external {std::nullopt};
 		std::function<void(DaedalusSymbol&)> _m_access_trap;
 		std::function<void(DaedalusSymbol const&)> _m_read_observer;
+		std::function<void(DaedalusSymbol const&, uint16_t, DaedalusInstance const*)> _m_member_read_observer;
 		std::function<void(DaedalusSymbol const&)> _m_write_observer;
 		std::function<void(DaedalusSymbol const&, uint16_t, DaedalusInstance const*)> _m_member_write_observer;
 		std::function<void(DaedalusInstruction const&)> _m_instruction_observer;

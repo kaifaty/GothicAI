@@ -12,7 +12,7 @@
 
 namespace LoadProbe::Npcs {
 inline std::atomic<uint64_t> constructors{0}, constructorNs{0}, deferredCalls{0};
-inline thread_local unsigned constructorDepth=0;
+inline thread_local unsigned initializationDepth=0;
 inline bool enabled() {
   static const bool value=[] {
     const auto* env=std::getenv("OPENGOTHIC_LOADPROBE");
@@ -20,10 +20,14 @@ inline bool enabled() {
     }();
   return value;
   }
+class Initialization {
+  public:
+    Initialization() { ++initializationDepth; }
+    ~Initialization() { --initializationDepth; }
+  };
 class Constructor {
   public:
     Constructor() {
-      ++constructorDepth;
       if(enabled()) {
         constructors.fetch_add(1,std::memory_order_relaxed);
         started=std::chrono::steady_clock::now();
@@ -32,16 +36,12 @@ class Constructor {
     ~Constructor() {
       if(enabled()) constructorNs.fetch_add(uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
           std::chrono::steady_clock::now()-started).count()),std::memory_order_relaxed);
-      --constructorDepth;
       }
   private:
     std::chrono::steady_clock::time_point started;
   };
 inline void deferred() {
   if(enabled()) deferredCalls.fetch_add(1,std::memory_order_relaxed);
-  }
-inline void scriptCall(std::string_view name) {
-  if(constructorDepth && name=="B_CREATEAMBIENTINV") deferred();
   }
 inline void mark(std::string_view stage) {
   if(stage=="session_begin") { constructors=0; constructorNs=0; deferredCalls=0; }

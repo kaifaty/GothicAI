@@ -435,13 +435,21 @@ void npcDefinitions(const fs::path& dir) {
   const auto program=NpcDefinitionFixture::program();
   const auto base=dir/"npc-definitions",file=base/"definitions"/program.sha256/"npcs.json";
   const auto counts=NpcSnapshot::writeNpcs(program,file);
-  check(counts.total==6,"all six fixture NPC definitions are imported");
+  check(counts.total==7,"all seven fixture NPC definitions are imported");
   check(NpcSnapshot::verifyNpcs(program,file)==0,"NPC definitions verify independently from disk");
   const auto library=NpcDefinitions::read(base,program.sha256);
   for(const auto* refused:{"NPC_GLOBAL","NPC_WRITER","NPC_UNKNOWN"})
     check(library.uncaptured.contains(refused),std::string(refused)+": refuses unsafe constructor");
   check(library.uncaptured.contains("NPC_BAD_ITEM"),"NPC_BAD_ITEM: invalid item prototype retains its VM script error");
-  check(counts.captured==2 && library.uncaptured.size()==4,"two fixture NPCs are captured and four retain the VM fallback");
+  check(library.uncaptured.contains("NPC_ENGINE_READ") &&
+        library.uncaptured.at("NPC_ENGINE_READ").starts_with("engine_state_read: C_NPC.ATTRIBUTE[0]"),
+        "a constructor-body read after equipment has no safe helper boundary");
+  check(counts.captured==2 && library.uncaptured.size()==5,"two fixture NPCs are captured and five retain the VM fallback");
+  const auto& steps=library.npcs.at("NPC_NO_ID").steps;
+  check(std::any_of(steps.begin(),steps.end(),[](const auto& step) {
+    const auto* call=std::get_if<NpcDefinitions::Call>(&step);
+    return call && call->function=="ADD_AFTER_EQUIP" && call->deferred;
+    }),"a helper reading an engine-modified field is deferred independently of its name");
   auto invalid=read(file);
   for(auto& record:invalid["records"].GetArray()) {
     if(std::string_view(record["symbol"].GetString())!="NPC_BAD_ITEM") continue;
@@ -474,7 +482,7 @@ void npcDefinitions(const fs::path& dir) {
     if(std::string_view(record["symbol"].GetString())!="NPC_NO_ID") continue;
     for(auto& step:record["steps"].GetArray())
       if(step.HasMember("field") && std::string_view(step["field"].GetString())=="C_NPC.ATTRIBUTE" &&
-         step["value"]["value"].GetInt()==30) step["value"]["value"].SetInt(999);
+         step["value"]["value"].GetInt()==10) step["value"]["value"].SetInt(999);
     }
   write(file,changed);
   check(NpcSnapshot::verifyNpcs(program,file)>0,"fresh import verification rejects a changed NPC field on disk");

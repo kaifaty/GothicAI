@@ -374,6 +374,7 @@ namespace daedalus {
 				if (!ref->is_member() || context != nullptr ||
 				    !(_m_flags & DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS)) {
 					if (_m_read_observer) _m_read_observer(*ref);
+					if (_m_member_read_observer && ref->is_member()) _m_member_read_observer(*ref, idx, context.get());
 					auto result = ref->get_int(idx, context.get()) + value;
 					if (_m_write_observer) _m_write_observer(*ref);
 					ref->set_int(result, idx, context.get());
@@ -395,6 +396,7 @@ namespace daedalus {
 				if (!ref->is_member() || context != nullptr ||
 				    !(_m_flags & DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS)) {
 					if (_m_read_observer) _m_read_observer(*ref);
+					if (_m_member_read_observer && ref->is_member()) _m_member_read_observer(*ref, idx, context.get());
 					auto result = ref->get_int(idx, context.get()) - value;
 					if (_m_write_observer) _m_write_observer(*ref);
 					ref->set_int(result, idx, context.get());
@@ -415,6 +417,7 @@ namespace daedalus {
 				if (!ref->is_member() || context != nullptr ||
 				    !(_m_flags & DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS)) {
 					if (_m_read_observer) _m_read_observer(*ref);
+					if (_m_member_read_observer && ref->is_member()) _m_member_read_observer(*ref, idx, context.get());
 					auto result = ref->get_int(idx, context.get()) * value;
 					if (_m_write_observer) _m_write_observer(*ref);
 					ref->set_int(result, idx, context.get());
@@ -440,6 +443,7 @@ namespace daedalus {
 				if (!ref->is_member() || context != nullptr ||
 				    !(_m_flags & DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS)) {
 					if (_m_read_observer) _m_read_observer(*ref);
+					if (_m_member_read_observer && ref->is_member()) _m_member_read_observer(*ref, idx, context.get());
 					auto result = ref->get_int(idx, context.get()) / value;
 					if (_m_write_observer) _m_write_observer(*ref);
 					ref->set_int(result, idx, context.get());
@@ -843,6 +847,7 @@ namespace daedalus {
 		static std::string empty {};
 		auto [s, i, context] = pop_reference();
 		if (_m_read_observer) _m_read_observer(*s);
+		if (_m_member_read_observer && s->is_member()) _m_member_read_observer(*s, i, context.get());
 
 		// compatibility: sometimes the context might be zero, but we can't fail so when
 		//                the compatibility flag is set, we just return 0
@@ -1127,6 +1132,7 @@ namespace daedalus {
 	                    uint16_t index) const {
 		auto* sym = std::get<DaedalusSymbol*>(value);
 		if (_m_read_observer) _m_read_observer(*sym);
+		if (_m_member_read_observer && sym->is_member()) _m_member_read_observer(*sym, index, context.get());
 
 		// compatibility: sometimes the context might be zero, but we can't fail so when
 		//                the compatibility flag is set, we just return 0
@@ -1148,6 +1154,7 @@ namespace daedalus {
 	                      uint16_t index) const {
 		auto* sym = std::get<DaedalusSymbol*>(value);
 		if (_m_read_observer) _m_read_observer(*sym);
+		if (_m_member_read_observer && sym->is_member()) _m_member_read_observer(*sym, index, context.get());
 
 		// compatibility: sometimes the context might be zero, but we can't fail so when
 		//                the compatibility flag is set, we just return 0

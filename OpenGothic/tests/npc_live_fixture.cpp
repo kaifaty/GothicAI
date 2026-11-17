@@ -129,7 +129,7 @@ void mutations(const fs::path& file, World& world, void (*compare)(World&)) {
     for(rapidjson::SizeType i=0;i<steps.Size();++i) {
       const auto& step=steps[i];
       if(step.HasMember("field") && std::string_view(step["field"].GetString())=="C_NPC.ATTRIBUTE" &&
-         step["index"].GetUint()==0 && step["value"]["value"].GetInt()==30) attribute=i;
+         step["index"].GetUint()==0 && step["value"]["value"].GetInt()==10) attribute=i;
       if(!step.HasMember("function")) continue;
       const auto function=std::string_view(step["function"].GetString());
       if(function=="CREATEINVITEMS") create=i;

@@ -11,6 +11,7 @@
 #include "game/definitions/basescripts.h"
 #include "game/serialize.h"
 #include "npcsnapshot.h"
+#include "npcsnapshotfields.h"
 #include "programdata.h"
 #include "routinedefinitions.h"
 #include "npcdefinitions.h"
@@ -40,6 +41,7 @@
 #include <vector>
 #include <map>
 #include <set>
+#include <type_traits>
 
 void npcLiveSynthetic(void (*compare)(World&));
 
@@ -656,6 +658,22 @@ ArchiveEntries itemState(GameScript& script) {
   return archiveEntries(bytes);
   }
 
+std::map<std::string,std::string> npcRecordFields(Npc& npc) {
+  std::map<std::string,std::string> fields;
+  auto append=[&](auto&& again,const auto& value,const std::string& name) -> void {
+    using Type=std::remove_cvref_t<decltype(value)>;
+    if constexpr(std::is_array_v<Type>) {
+      for(size_t index=0;index<std::extent_v<Type>;++index)
+        again(again,value[index],name+"["+std::to_string(index)+"]");
+      }
+    else if constexpr(std::is_same_v<Type,std::string>) fields[name]=Bench::bodyJson(value);
+    else fields[name]=std::to_string(int64_t(value));
+    };
+  auto native=std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  snapshotFields(*native,[&](const char* name,const auto& value,bool,const char*) { append(append,value,name); });
+  return fields;
+  }
+
 void npcDefinitions(World& world) {
   auto& script=world.script();
   auto& vm=script.getVm();
@@ -692,83 +710,114 @@ void npcDefinitions(World& world) {
   const auto* configured=std::getenv("OPENGOTHIC_ROUTINE_RECORDS");
   const bool routineRecords=configured==nullptr || std::strcmp(configured,"0")!=0;
   size_t count=0,dailyCount=0;
+  std::vector<std::string> differences;
+  std::set<std::string> differentNpcs;
+  auto difference=[&](const std::string& name,const std::string& field,const std::string& expected,const std::string& actual) {
+    if(expected==actual) return;
+    differentNpcs.insert(name);
+    differences.push_back(name+": "+field+" expected="+expected+" actual="+actual);
+    };
+  auto archiveDifference=[&](const std::string& name,const std::string& field,const ArchiveEntries& expected,const ArchiveEntries& actual) {
+    for(const auto& [entry,payload]:expected) {
+      const auto found=actual.find(entry);
+      if(found==actual.end()) { difference(name,field+"."+entry,"present","absent"); continue; }
+      difference(name,field+"."+entry+".size",std::to_string(payload.size()),std::to_string(found->second.size()));
+      for(size_t index=0;index<std::min(payload.size(),found->second.size());++index)
+        if(payload[index]!=found->second[index])
+          difference(name,field+"."+entry+".byte["+std::to_string(index)+"]",
+                     std::to_string(payload[index]),std::to_string(found->second[index]));
+      }
+    for(const auto& [entry,payload]:actual) {
+      (void)payload;
+      if(!expected.contains(entry)) difference(name,field+"."+entry,"absent","present");
+      }
+    };
   try {
     for(const auto& name:names) {
       auto* symbol=vm.find_symbol_by_name(name);
       require(symbol!=nullptr,"captured NPC must exist in the game's VM");
       const auto previous=symbol->get_instance();
-      const auto policy=name=="PC_HERO" ? NpcProcessPolicy::Player : NpcProcessPolicy::AiNormal;
-      const bool syntheticEquip=library.npcs.contains("NPC_NO_ID") &&
-                                (name=="NPC_NO_ID" || name=="DIR_NPC_RECORD_CONTRACT");
-      const auto* onEquip=vm.find_symbol_by_name("ON_EQUIP");
-      if(syntheticEquip) require(onEquip!=nullptr,"synthetic equipment has an on_equip callback");
-      const auto onEquipAddress=onEquip ? onEquip->address() : uint32_t(-1);
-      size_t routineInstructions=0,constructorInstructions=0,onEquipCalls=0;
-      const auto constructorAddress=symbol->address();
-      vm.observe_instructions([&](const daedalus::DaedalusInstruction&) {
-        if(routineAddresses.contains(vm.pc())) ++routineInstructions;
-        if(vm.pc()==constructorAddress) ++constructorInstructions;
-        if(vm.pc()==onEquipAddress) ++onEquipCalls;
-        });
-      NpcDefinitionContract::definitions(script)={};
-      script.setSeed(0x12345678);
-      vm.global_item()->set_instance(oldItem);
-      auto expected=std::make_unique<Npc>(world,symbol->index(),world.startPoint().name,policy);
-      require(constructorInstructions>0,"reference NPC must execute its VM constructor");
-      if(syntheticEquip) {
-        require(onEquipCalls>=1,"synthetic reference EquipItem must execute on_equip in the game VM");
-        require(expected->handle().attribute[0]==30,"synthetic constructor writes the final attribute after on_equip");
+      const auto previousContext=vm.unsafe_get_gi();
+      std::unique_ptr<Npc> expected,actual;
+      bool recordsActive=false;
+      try {
+        const auto policy=name=="PC_HERO" ? NpcProcessPolicy::Player : NpcProcessPolicy::AiNormal;
+        const bool syntheticEquip=library.npcs.contains("NPC_NO_ID") &&
+                                  (name=="NPC_NO_ID" || name=="DIR_NPC_RECORD_CONTRACT");
+        const auto* onEquip=vm.find_symbol_by_name("ON_EQUIP");
+        if(syntheticEquip) require(onEquip!=nullptr,"synthetic equipment has an on_equip callback");
+        const auto onEquipAddress=onEquip ? onEquip->address() : uint32_t(-1);
+        size_t routineInstructions=0,constructorInstructions=0,onEquipCalls=0;
+        const auto constructorAddress=symbol->address();
+        vm.observe_instructions([&](const daedalus::DaedalusInstruction&) {
+          if(routineAddresses.contains(vm.pc())) ++routineInstructions;
+          if(vm.pc()==constructorAddress) ++constructorInstructions;
+          if(vm.pc()==onEquipAddress) ++onEquipCalls;
+          });
+        NpcDefinitionContract::definitions(script)={};
+        script.setSeed(0x12345678);
+        vm.global_item()->set_instance(oldItem);
+        expected=std::make_unique<Npc>(world,symbol->index(),world.startPoint().name,policy);
+        difference(name,"reference constructor executed","yes",constructorInstructions>0 ? "yes" : "no");
+        if(syntheticEquip) {
+          difference(name,"reference on_equip executed","yes",onEquipCalls>0 ? "yes" : "no");
+          difference(name,"reference final attribute[0]","30",std::to_string(expected->handle().attribute[0]));
+          difference(name,"reference final level","30",std::to_string(expected->handle().level));
+          }
+        prepareSyntheticPhysics(*expected);
+        const auto expectedFields=npcRecordFields(*expected);
+        const auto expectedState=npcState(*expected);
+        const auto expectedItem=itemState(script);
+        const auto expectedRandom=script.randomState(nullptr);
+        auto temporaryStrings=[&] {
+          std::vector<std::string> result;
+          for(const auto& value:vm.symbols())
+            if(value.name()=="$PHOENIX_FAKE_STRINGS")
+              for(uint16_t index=0;index<value.count();++index) result.push_back(value.get_string(index));
+          return result;
+          };
+        const auto expectedStrings=temporaryStrings();
+        const auto expectedDaily=vm.find_symbol_by_index(uint32_t(expected->handle().daily_routine));
+        const bool capturedDaily=expectedDaily && routines.routines.contains(expectedDaily->name());
+        if(capturedDaily) {
+          ++dailyCount;
+          difference(name,"NPC startup daily_routine must use the configured routine record/VM path",
+                     routineRecords ? "record" : "VM",routineInstructions==0 ? "record" : "VM");
+          }
+        NpcDefinitionContract::definitions(script).npcs.swap(records.npcs);
+        recordsActive=true;
+        script.setSeed(0x12345678);
+        vm.global_item()->set_instance(oldItem);
+        routineInstructions=0; constructorInstructions=0; onEquipCalls=0;
+        actual=std::make_unique<Npc>(world,symbol->index(),world.startPoint().name,policy);
+        difference(name,"record constructor calls","0",std::to_string(constructorInstructions));
+        if(syntheticEquip) {
+          difference(name,"record on_equip executed","yes",onEquipCalls>0 ? "yes" : "no");
+          difference(name,"record final level","30",std::to_string(actual->handle().level));
+          }
+        const auto actualStrings=temporaryStrings();
+        difference(name,"VM temporary string count",std::to_string(expectedStrings.size()),std::to_string(actualStrings.size()));
+        for(size_t index=0;index<std::min(expectedStrings.size(),actualStrings.size());++index)
+          difference(name,"VM temporary string["+std::to_string(index)+"]",Bench::bodyJson(expectedStrings[index]),Bench::bodyJson(actualStrings[index]));
+        difference(name,"game random generator differs",expectedRandom,script.randomState(nullptr));
+        prepareSyntheticPhysics(*actual);
+        const auto actualFields=npcRecordFields(*actual);
+        for(const auto& [field,value]:expectedFields) difference(name,field,value,actualFields.at(field));
+        archiveDifference(name,"NPC",expectedState,npcState(*actual));
+        archiveDifference(name,"ITEM",expectedItem,itemState(script));
+        if(capturedDaily)
+          difference(name,"record NPC startup daily_routine must use the configured routine record/VM path",
+                     routineRecords ? "record" : "VM",routineInstructions==0 ? "record" : "VM");
+        difference(name,"SELF restored","yes",vm.global_self()->get_instance()==oldSelf ? "yes" : "no");
         }
-      prepareSyntheticPhysics(*expected);
-      const auto expectedState=npcState(*expected);
-      const auto expectedItem=itemState(script);
-      const auto expectedRandom=script.randomState(nullptr);
-      auto temporaryStrings=[&] {
-        std::vector<std::string> result;
-        for(const auto& value:vm.symbols())
-          if(value.name()=="$PHOENIX_FAKE_STRINGS")
-            for(uint16_t index=0;index<value.count();++index) result.push_back(value.get_string(index));
-        return result;
-        };
-      const auto expectedStrings=temporaryStrings();
-      const auto expectedDaily=vm.find_symbol_by_index(uint32_t(expected->handle().daily_routine));
-      if(expectedDaily && routines.routines.contains(expectedDaily->name())) {
-        ++dailyCount;
-        require(routineRecords ? routineInstructions==0 : routineInstructions>0,
-                "NPC startup daily_routine must use the configured routine record/VM path");
-        }
-      NpcDefinitionContract::definitions(script).npcs.swap(records.npcs);
-      script.setSeed(0x12345678);
-      vm.global_item()->set_instance(oldItem);
-      routineInstructions=0; constructorInstructions=0; onEquipCalls=0;
-      auto actual=std::make_unique<Npc>(world,symbol->index(),world.startPoint().name,policy);
-      require(constructorInstructions==0,"record NPC and director template must skip the VM constructor");
-      if(syntheticEquip)
-        require(onEquipCalls>=1,"synthetic record EquipItem must execute on_equip in the game VM");
-      if(temporaryStrings()!=expectedStrings)
-        throw std::runtime_error(name+": VM temporary strings differ from constructor");
-      if(script.randomState(nullptr)!=expectedRandom)
-        throw std::runtime_error(name+": game random generator differs from constructor");
-      prepareSyntheticPhysics(*actual);
-      const auto actualState=npcState(*actual);
-      for(const auto& [entry,payload]:expectedState) {
-        const auto found=actualState.find(entry);
-        if(found==actualState.end() || found->second!=payload)
-          throw std::runtime_error(name+": live NPC differs from constructor at "+entry);
-        }
-      if(actualState.size()!=expectedState.size())
-        throw std::runtime_error(name+": live NPC archive entry count differs");
-      if(syntheticEquip) require(actual->handle().attribute[0]==30,"synthetic record retains the final attribute after on_equip");
-      if(itemState(script)!=expectedItem)
-        throw std::runtime_error(name+": global ITEM differs from constructor");
-      if(expectedDaily && routines.routines.contains(expectedDaily->name()))
-        require(routineRecords ? routineInstructions==0 : routineInstructions>0,
-                "record NPC startup daily_routine must use the configured routine record/VM path");
-      require(vm.global_self()->get_instance()==oldSelf,"NPC creation must restore SELF");
+      catch(const std::exception& error) { difference(name,"creation exception","none",error.what()); }
       vm.observe_instructions({});
-      NpcDefinitionContract::definitions(script).npcs.swap(records.npcs);
+      if(recordsActive) NpcDefinitionContract::definitions(script).npcs.swap(records.npcs);
       actual.reset(); expected.reset();
       symbol->set_instance(previous);
+      vm.global_self()->set_instance(oldSelf);
+      vm.global_item()->set_instance(oldItem);
+      vm.unsafe_set_gi(previousContext);
       ++count;
       }
     }
@@ -784,6 +833,10 @@ void npcDefinitions(World& world) {
   vm.global_item()->set_instance(oldItem);
   NpcDefinitionContract::random(script)=random;
   require(count==library.npcs.size()+1 && dailyCount>0,"all captured NPCs and actual startup routines must be compared");
+  for(const auto& value:differences) std::fprintf(stderr,"[npc-definition-difference] %s\n",value.c_str());
+  std::fprintf(stderr,"NPC definition differences: %zu NPCs, %zu fields\n",differentNpcs.size(),differences.size());
+  if(!differences.empty())
+    throw std::runtime_error("live NPC differs: "+std::to_string(differences.size())+" differences; "+differences.front());
   std::printf("Live NPC equality: %zu captured NPCs and one director template; %zu startup daily routines; record, appearance, ordered inventory, equipped and active items, talents, attitudes, routines, ITEM and RNG match\n",
               count-1,dailyCount);
   }
