@@ -321,6 +321,37 @@ void foliageTreeMaths() {
     }
   require(travel(barkBits,H)>0.12f*H && travel(barkBits,H)<0.14f*H,"a tree's bounds grow by an eighth of its height");
 
+  // a tree of 60 m with boughs longer than BranchTopK allows and wider than BranchReach of its height: what the
+  // branch adds to the trunk's move stays within the branch's share of the travel, and comes near it
+  {
+  const float tall = 6000.f, wide = 0.6f*tall;
+  for(const Params& m:{bark,strong}) {
+    const uint32_t bits = pack(m,Both);
+    const float    most = tall*FoliageWind::packedWind(bits)*BranchReach*BranchGive*BranchTopK*(1.f + BranchGust);
+    float          far  = 0.f;
+    for(int i=0; i<4000; ++i) {
+      const float a = rnd()*6.2831853f;
+      Scene sc;
+      sc.wind  = Tempest::Vec4(std::sin(a),std::cos(a),rnd(),1.f);
+      sc.phase = Tempest::Vec4(rnd(),rnd(),rnd(),rnd());
+      sc.swing = Tempest::Vec4(rnd(),0.065f*rnd(),2.f*rnd(),0.f);
+      auto front = FoliageFront::make(123456,6000,true,1.f,false);
+      front.phase = Tempest::Vec4(rnd(),rnd(),rnd(),rnd());
+      front.k.w   = (i%3)==0 ? 0.f : 1.f;
+      const Vec3     p(wide*(2.f*rnd()-1.f), tall*rnd(), wide*(2.f*rnd()-1.f));
+      const uint32_t R = (i%2)==0 ? 255u : uint32_t(rnd()*255.99f), G = uint32_t(rnd()*255.99f);
+      const Vec3*    axes = (i%2)==0 ? upright : turned;
+      const Vec3     at   = place+Vec3(float(i)*37.f,0,float(i)*11.f);
+      const Vec3     onTrunk = move(p,color(0,G,0,255),bits,tall,axes,at,sc,front);
+      const Vec3     r       = move(p,color(R,G,0,255),bits,tall,axes,at,sc,front);
+      far = std::max(far,(r-onTrunk).length());
+      require((r-onTrunk).length()<=most*1.001f && (r-p).length()<=travel(bits,tall),
+              "a long branch of a wide crown stays within the branch's share of the bounds' travel");
+      }
+    require(far>0.8f*most,"the branch's share of the bounds' travel is what a long branch does reach");
+    }
+  }
+
   // equal ticks give equal answers; no wind and the wind half off leave the tree at rest
   const Scene same = FoliageWind::scene(4242,10000,true,1.f,false);
   const Vec3  tip(120,1010,-35);
