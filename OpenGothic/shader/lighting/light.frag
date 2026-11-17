@@ -17,6 +17,7 @@
 #include "lighting/material_brdf.glsl"
 #include "lighting/hair_brdf.glsl"
 #include "lighting/eye_brdf.glsl"
+#include "lighting/crown_light.glsl"
 #endif
 
 layout(early_fragment_tests) in;
@@ -553,17 +554,30 @@ void main() {
 #if defined(MATERIAL_MAPS)
   // hair cards take the light by the shell term, not by the cosine of the hair's surface (hair_brdf.glsl)
   const float hint   = texelFetch(gbufDiffuse, ivec2(gl_FragCoord.xy), 0).a;
-  const vec4 orm    = gbufOrmMaterial(texelFetch(gbufOrm, ivec2(gl_FragCoord.xy), 0), hint);
+  const vec4 ormG   = texelFetch(gbufOrm, ivec2(gl_FragCoord.xy), 0);
+  const vec4 orm    = gbufOrmMaterial(ormG, hint);
   const bool isHair = orm.a>0.5 && isGBufHair(hint);
   const bool isEye  = orm.a>0.5 && isGBufEye(hint);
   float lambert = isHair ? hairShell(-dot(normalize(ldir),normal)) : max(0.0,-dot(normalize(ldir),normal));
   // the lid's soft shade over the eye, which the lamp's shadow is too coarse to see (eye_brdf.glsl)
   if(isEye)
     lambert *= eyeLidDirect(orm.b);
+  // A leaf of a tree's crown (crown_light.glsl) also takes the lamp that comes through it, by the sun's lobe
+  // (foliage_light.glsl). The shadow is looked up once for both parts; a leaf turned from the lamp looks it up
+  // from the lamp's side, or the offset along its normal would put the point behind its own card
+  float through      = 0.0;
+  vec3  shadowNormal = normal;
+  if(orm.a>0.5 && isGBufCrown(hint) && isGBufFoliage(hint)) {
+    through = foliageThrough(ormG.b, normal, normalize(scene.camPos - pos.xyz), -normalize(ldir));
+    if(through>0.0 && dot(ldir,normal)>0.0)
+      shadowNormal = -normal;
+    }
 #else
   float lambert = max(0.0,-dot(normalize(ldir),normal));
+  const float through      = 0.0;
+  const vec3  shadowNormal = normal;
 #endif
-  float light   = (lambert/max(factor, 0.005)) * (smoothFactor*smoothFactor);
+  float light   = ((lambert + through)/max(factor, 0.005)) * (smoothFactor*smoothFactor);
   // The inverse square runs 100 times over the light at the range 40 cm from a torch, and the wall behind it burned
   // out to white, the flame on it lost. Up to 0.4 of the limit the light is as it was, above it bends over and never
   // passes the limit (reports/content/remaster/wall-torch/fire-on-wall.md). A lamp may bring a limit of its own
@@ -586,8 +600,8 @@ void main() {
   {
     // the plane for the shadow's depth test: the geometric one, unless it disagrees much (a silhouette, a normal map)
     geomNormal = dot(geomNormal,geomNormal)>1e-12 ? normalize(geomNormal) : vec3(0);
-    geomNormal *= sign(dot(geomNormal, normal));
-    vec3 planeN = dot(geomNormal, normal)>=0.3 ? geomNormal : normal;
+    geomNormal *= sign(dot(geomNormal, shadowNormal));
+    vec3 planeN = dot(geomNormal, shadowNormal)>=0.3 ? geomNormal : shadowNormal;
     // A facet that stands edge-on or with its back to the lamp while the shading normal still takes its light (a
     // dense mesh with smooth normals, at the edge of its own shadow): its plane's depth on the texels' rays runs off
     // to nothing and every texel read as lit, bright triangles on the dark side of a face. The shading normal's plane
@@ -595,7 +609,7 @@ void main() {
     const vec3  facetN = planeN;
     const float facetL = -dot(normalize(ldir), planeN);
     if(facetL<OmniFacetMinCos && (scene.vsmStudy & VSM_STUDY_LAMP_FACET)==0u)
-      planeN = normal;
+      planeN = shadowNormal;
     // too faint to show a soft edge: under ~1/500 of white before the tonemapper
     const bool  faint  = max(color.r, max(color.g, color.b))*light*max(1.0, scene.exposure)*0.25 < 0.002;
     const float shadow = omniShadow(pos.xyz - cenPosition.xyz, planeN, cenPosition.w, lights[lightId].sourceSize, faint);
@@ -614,6 +628,7 @@ void main() {
 #if defined(MATERIAL_MAPS)
     contact = contact && !isHair; // hair takes the light by its shell, not by its surface
 #endif
+    contact = contact && through<=0.0; // a leaf between the eye and the lamp: the ray would start behind its own card
     if(contact) {
       const float noise = interleavedGradientNoise(gl_FragCoord.xy + 5.588238*float(scene.taaFrame & 63u));
       light *= lampContact(depth, clipPos, -normalize(ldir), sqrt(distanceSquare), facetN,
@@ -655,7 +670,7 @@ void main() {
   }
 #else
   const float NormalBias = 2.0;
-  pos.xyz = pos.xyz + NormalBias*normal; //bias
+  pos.xyz = pos.xyz + NormalBias*shadowNormal; //bias
   if(isShadow(pos.xyz, pos.xyz-cenPosition.xyz, cenPosition.w))
     discard;
 #endif
@@ -667,6 +682,14 @@ void main() {
   const vec3 d      = texelFetch(gbufDiffuse, ivec2(gl_FragCoord.xy), 0).xyz;
   const vec3 linear = textureAlbedo(d.rgb);
 
+#if defined(MATERIAL_MAPS)
+  float lightThrough = 0.0;
+  if(through>0.0) {
+    const float lit = light/(lambert + through); // what the lamp's falloff and shadow leave of it
+    lightThrough = through*lit;
+    light        = lambert*lit;
+    }
+#endif
   vec3 ret = linear * (color * light) * max(1.0, scene.exposure) * Fd_Lambert * 0.25;
 #if defined(MATERIAL_MAPS)
   if(orm.a>0.5) {
@@ -677,6 +700,9 @@ void main() {
     ret = brdf * (color * light) * max(1.0, scene.exposure) * 0.25 * (isHair ? hairShade(orm.r) : 1.0);
     if(isHair && (scene.viewFlags & VF_HAIR_DEBUG)!=0u)
       ret = vec3(0);
+    ret += linear * FoliageThroughTint * (color * lightThrough) * max(1.0, scene.exposure) * Fd_Lambert * 0.25;
+    // the depth of a tree's crown gets its share of a lamp as of any light
+    ret *= gbufCrownShade(ormG, hint);
     }
 #endif
 

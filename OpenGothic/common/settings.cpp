@@ -189,6 +189,7 @@ void Settings::load(std::u16string_view systemIni, std::u16string_view userIni) 
 #endif
 
   defaults->set("INTERNAL",     "giContactAo", 1); // graphics/contactao.h
+  defaults->set("INTERNAL",     "crownLight", 1); // graphics/crownlight.h
 
   defaults->set("VIDEO", "zVidBrightness", 0.5f);
   defaults->set("VIDEO", "zVidContrast",   0.5f);

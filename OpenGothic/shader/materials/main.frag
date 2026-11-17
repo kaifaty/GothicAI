@@ -18,6 +18,7 @@
 #include "lighting/shadow_sampling.glsl"
 #include "lighting/tonemapping.glsl"
 #include "lighting/material_brdf.glsl"
+#include "lighting/crown_light.glsl"
 #if defined(MAT_SUN_SHADOW)
 #include "virtual_shadow/vsm_sun_shadow.glsl"
 #endif
@@ -629,6 +630,18 @@ void mainGBuffer(vec4 t) {
     if(through>0.0) {
       outOrm.b     = through;
       outDiffuse.a = float(int(outDiffuse.a*255.0 + 0.5) | GBufFoliageBit)/255.0;
+      }
+    }
+  if((bucket[bucketId].flags & BK_CROWN)!=0u) {
+    // A tree's crown (crown_light.glsl): the shade of its depth goes to the light passes in the ORM alpha, under the
+    // crown bit (common.glsl, gbufCrownShade); a material without its own maps has no such alpha and no crown
+    const float openness = crownOpenness(shInp.normal);
+    if((scene.viewFlags & VF_CROWN_MASK)!=0u) {
+      outDiffuse.rgb = crownMask(openness, outOrm.b);
+      }
+    else if(outOrm.a>0.5) {
+      outOrm.a     = gbufCrownShadeCode(crownShade(openness));
+      outDiffuse.a = float(int(outDiffuse.a*255.0 + 0.5) | GBufCrownBit)/255.0;
       }
     }
   const float glow = bucket[bucketId].emissive;
