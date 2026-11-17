@@ -130,6 +130,9 @@ class Fir:
         self.cfg = config
         self.pairs = pairs          # a bough's triangles twice under a one-sided material: the way before two_sided
         self.rng = np.random.default_rng(config['seed'] if seed is None else seed)
+        # the chance inside a cluster has a stream of its own: the tree's shape does not depend on the clusters
+        self.own = np.random.default_rng([config['seed'] if seed is None else seed, 1])
+        self.clusters = 0
         self.height = float(config['height'])
         names = config['materials']
         self.bark = Buffers(names['bark'], 'WOOD', False)
@@ -280,7 +283,7 @@ class Fir:
 
     def frond(self, kind: str, origin, spine, normal, length: float, width: float, branch: Branch | None,
               weight, role: str, vault: float = 0., bow: float = 0., rise: float = 0., twist: float = 0.,
-              bend: bool = False, keel: int = 0) -> None:
+              bend: bool = False, keel: int = 0, cluster: int = 0, rng=None) -> None:
         """A bough from the atlas: its stem at origin, its spine along `spine`, its upper side to `normal`.
 
         vault lowers both wings from the spine, bow is the share of the length the spine's middle sags from
@@ -288,7 +291,10 @@ class Fir:
         twist turns the bough about its spine over the length, bend puts a vertex on the spine's middle, so the
         spine itself follows the bow. keel adds a third blade from the spine: 1 to the normal's side, -1 away
         from it; it shows one half of the picture. weight: R, a number or a function of the share of the
-        length. role names the bough's place for the checks."""
+        length. role names the bough's place for the checks, cluster is the number of the cluster the bough is
+        a shoot of. A blade is wound to the side its authored normals look to: the side a `flip` material
+        lights by them. rng: the stream the bough's own chance is taken from."""
+        rng = rng or self.rng
         cell = self.cfg['atlas']['cells'][kind]
         size = self.cfg['atlas']['size']
         d = unit(spine)
@@ -298,7 +304,7 @@ class Fir:
         ground = self.cfg['cards']['ground']
         if d[2] < -.05:
             length = max(.45 * length, min(length, (origin[2] - ground) / -d[2] * 1.1))
-        half = float(self.rng.choice([-1., 1.]))
+        half = float(rng.choice([-1., 1.]))
         rows = [(0., 0., 0), (t1, h1, 0), (t2, h2, 0), (1., 0., 0), (t2, -h2, 0), (t1, -h1, 0)]
         if bend:
             rows.append(((t1 + t2) / 2, 0., 0))
@@ -317,11 +323,12 @@ class Fir:
             else:
                 point = point + wide * (math.copysign(reach, h) * math.cos(vault)) - turned * (reach * math.sin(vault))
             position.append(point)
-            uv.append(((x + t * cw) / size, (y + ch / 2 - h * ch / 2) / size))
+            uv.append(((x + cw / 2 + h * cw / 2) / size, (y + t * ch) / size) if cell.get('turn')
+                      else ((x + t * cw) / size, (y + ch / 2 - h * ch / 2) / size))
             flutter.append(max(t, abs(h)))
             share.append(t)
         position = np.array(position)
-        position[:, 2] = np.maximum(position[:, 2], ground + .04 * np.array(flutter) * self.rng.uniform(.3, 1.))
+        position[:, 2] = np.maximum(position[:, 2], ground + .04 * np.array(flutter) * rng.uniform(.3, 1.))
         S, A1, A2, T, B2, B1 = range(6)
         M = 6 if bend else None
         K1 = len(rows) - 2
@@ -332,23 +339,26 @@ class Fir:
             blades = [[(S, A1, A2), (S, A2, T)], [(S, T, B2), (S, B2, B1)]]
             blades += [[(S, K1, K1 + 1), (S, K1 + 1, T)]] if keel else []
         own = np.tile(n, (len(position), 1))
-        tris = []
+        faces = []
         for number, blade in enumerate(blades):
             blade = np.array(blade)
             face = np.cross(position[blade[:, 1]] - position[blade[:, 0]],
                             position[blade[:, 2]] - position[blade[:, 0]]).sum(axis=0)
             if number < 2 and np.dot(face, n) < 0:
                 blade, face = blade[:, ::-1], -face
-            tris.append(blade)
+            blades[number] = blade
+            faces.append(face)
             edge = (A1, A2) if number == 0 else (B2, B1) if number == 1 else (K1, K1 + 1)
             own[list(edge)] = unit(face)
-        tris = np.concatenate(tris)
-        hull_share = self.cfg['cards']['hull_share']
+        hull_share = self.cfg['cards']['cluster']['hull_share'] if cluster else self.cfg['cards']['hull_share']
         fallback = np.array([math.cos(branch.azimuth), math.sin(branch.azimuth), 0.]) if branch else unit(n * (1, 1, 0))
         normals = []
         for p, mine in zip(position, own):
             hull = self.hull_normal(p, fallback)
             normals.append(unit(hull_share * hull + (1 - hull_share) * (mine if np.dot(mine, hull) >= 0 else -mine)))
+        normals = np.array(normals)
+        tris = np.concatenate([blade if np.dot(face, normals[np.unique(blade)].sum(axis=0)) >= 0 else blade[:, ::-1]
+                               for blade, face in zip(blades, faces)])
         colour = np.zeros((len(position), 4))
         colour[:, 0] = [weight(t) for t in share] if callable(weight) else weight
         colour[:, 1] = branch.phase if branch else 0.
@@ -358,7 +368,7 @@ class Fir:
         self.boughs.triangles((np.concatenate([tris, tris[:, ::-1]]) if self.pairs else tris) + first)
         self.cards[kind] = self.cards.get(kind, 0) + 1
         self.records.append(dict(role=role, kind=kind, branch=branch.number if branch else 0, first=first,
-                                 count=len(position)))
+                                 count=len(position), cluster=cluster))
 
     def hull_normal(self, p, fallback) -> np.ndarray:
         r = math.hypot(p[0], p[1])
@@ -367,18 +377,55 @@ class Fir:
 
     def metres(self, kind: str) -> np.ndarray:
         """Length and width of an atlas cell as it was baked."""
-        return np.array(self.cfg['atlas']['cells'][kind]['cell'][2:]) / self.cfg['atlas']['px_per_m']
+        cell = self.cfg['atlas']['cells'][kind]
+        return np.array(cell['cell'][:1:-1] if cell.get('turn') else cell['cell'][2:]) / self.cfg['atlas']['px_per_m']
 
-    def fit(self, long: float, *families: str) -> tuple[str, float, float]:
+    def fit(self, long: float, *families: str, rng=None) -> tuple[str, float, float]:
         """The picture whose baked length is nearest to the length wanted: its cell, the length within the
         scale a picture may be shown at, and the width that goes with it."""
+        rng = rng or self.rng
         cells = self.cfg['atlas']['cells']
         family = min(families, key=lambda f: abs(math.log(long / self.metres(next(k for k in cells if k.startswith(f)))[0])))
-        kind = str(self.rng.choice([k for k in cells if k.startswith(family)]))
+        kind = str(rng.choice([k for k in cells if k.startswith(family)]))
         shape = self.metres(kind)
         low, high = self.cfg['cards']['scale']
         long = float(np.clip(long, low * shape[0], high * shape[0]))
-        return kind, long, long * shape[1] / shape[0] * self.rng.uniform(1., 1.15)
+        return kind, long, long * shape[1] / shape[0] * rng.uniform(1., 1.15)
+
+    def cluster(self, branch: Branch, s: float, axis, normal, kind: str, long: float, wide: float, vault: float,
+                twist: float) -> None:
+        """A hanging bough at the share s of a branch: a cluster of shoots, each a bough of its own with its
+        stem on the branch's axis.
+
+        The main shoot hangs along `axis` with its upper side to `normal`. The others stand round it, each its
+        own length: a shoot leans off the axis to its own side, its upper side looks away from the axis, turned
+        about its spine, its wings fold back to the axis and its end hangs. In the depth of the crown, before
+        `deep` of the branch's length, a cluster has the least number of shoots and they are not bent. The
+        main shoot takes its chance from the tree's stream as the one bough it replaces did, the others from
+        the clusters' own."""
+        g, rng = self.cfg['cards']['cluster'], self.own
+        self.clusters += 1
+        deep = s < g['deep']
+        d = unit(axis)
+        n = unit(np.asarray(normal, np.float64) - d * np.dot(normal, d))
+        w = np.cross(n, d)
+        self.frond(kind, branch.at(s)[0], d, n, long, wide, branch, s * branch.weight, 'hang', vault=vault,
+                   twist=twist, cluster=self.clusters)
+        count = g['shoots'][0] if deep else int(rng.integers(g['shoots'][0], g['shoots'][1] + 1))
+        start = rng.uniform(0, 2 * math.pi)
+        for k in range(count - 1):
+            around = start + 2 * math.pi * (k + rng.uniform(-g['around'], g['around'])) / (count - 1)
+            aside = n * math.cos(around) + w * math.sin(around)
+            tilt = math.radians(rng.uniform(*g['tilt_deg']))
+            spine = d * math.cos(tilt) + aside * math.sin(tilt)
+            face = aside * math.cos(tilt) - d * math.sin(tilt)
+            roll = math.radians(rng.uniform(-g['roll_deg'], g['roll_deg']))
+            face = face * math.cos(roll) + np.cross(spine, face) * math.sin(roll)
+            kind, own, wide = self.fit(long * rng.uniform(*g['length']), *g['kinds'], rng=rng)
+            at = float(np.clip(s + rng.uniform(-g['along_m'], g['along_m']) / branch.length, .02, .99))
+            self.frond(kind, branch.at(at)[0], spine, face, own, wide, branch, at * branch.weight, 'hang',
+                       vault=math.radians(rng.uniform(*g['vault_deg'])), bow=0. if deep else -rng.uniform(*g['arch']),
+                       twist=math.radians(rng.uniform(-25, 25)), bend=not deep, cluster=self.clusters, rng=rng)
 
     def dress(self, branch: Branch) -> None:
         """The boughs of one living branch: a roof of fans over its axis and second-order boughs round it."""
@@ -462,13 +509,17 @@ class Fir:
             if s < first + .1 and rng.uniform() < .4:
                 kind, long, wide = self.fit(long, 'sparse')
             elif hanging:
-                kind, long, wide = self.fit(long, 'hang', 'side', 'twig')
+                kind, long, wide = self.fit(long, *c['cluster']['kinds'])
             else:
                 kind, long, wide = self.fit(long, 'side', 'twig')
-            self.frond(kind, origin, spine, normal, long, wide, branch, s * branch.weight,
-                       'hang' if hanging else 'side', vault=math.radians(rng.uniform(*b['vault_deg'])),
-                       bow=rng.uniform(*b['bow']), twist=math.radians(rng.uniform(-30, 30)),
-                       bend=long > c['bend_from'] and not hanging, keel=int(rng.choice([-1, 1])) if hanging else 0)
+            vault, bow = math.radians(rng.uniform(*b['vault_deg'])), rng.uniform(*b['bow'])
+            twist = math.radians(rng.uniform(-30, 30))
+            if hanging:
+                rng.choice([-1, 1])         # the side of the third blade a hanging bough had: the stream stays
+                self.cluster(branch, s, spine, normal, kind, long, wide, vault, twist)
+            else:
+                self.frond(kind, origin, spine, normal, long, wide, branch, s * branch.weight, 'side', vault=vault,
+                           bow=bow, twist=twist, bend=long > c['bend_from'])
             if tip:
                 break
             s += step * rng.uniform(.75, 1.25)
@@ -619,6 +670,28 @@ def card_planes(tree: Tree) -> dict:
         role['count'] += 1
         role['spread_min_deg'] = round(min(role['spread_min_deg'], spread), 1)
     return out
+
+
+def clusters(tree: Tree) -> dict:
+    """The hanging boughs as clusters of shoots. A shoot's plane is the plane nearest to its vertices, its
+    spine runs from its stem to its tip. Per cluster: the number of shoots, `planes` — the largest angle between
+    the planes of two of its shoots (0 to 90 degrees), `splay` — the largest angle between two of its spines.
+    Of all clusters: their count, the least and the largest number of shoots and the least of both angles."""
+    position = next(p for p in tree.parts if p['cutout'])['position'].astype(np.float64)
+    groups: dict = {}
+    for card in tree.cards:
+        if card.get('cluster'):
+            groups.setdefault(card['cluster'], []).append(position[card['first']:card['first'] + card['count']])
+    shoots, planes, splay = [], [], []
+    for cards in groups.values():
+        normal = np.array([np.linalg.svd(p - p.mean(axis=0))[2][2] for p in cards])
+        spine = np.array([unit(p[3] - p[0]) for p in cards])
+        shoots.append(len(cards))
+        planes.append(math.degrees(math.acos(float(np.clip(np.abs(normal @ normal.T).min(), 0, 1)))))
+        splay.append(math.degrees(math.acos(float(np.clip((spine @ spine.T).min(), -1, 1)))))
+    return dict(count=len(groups), shoots=[min(shoots, default=0), max(shoots, default=0)],
+                shoots_mean=round(float(np.mean(shoots)), 2) if shoots else 0.,
+                planes_min_deg=round(min(planes, default=0.), 1), splay_min_deg=round(min(splay, default=0.), 1))
 
 
 def axis_cover(tree: Tree, mask: np.ndarray, start: float, step: float = .1, px: int = 100) -> dict:
