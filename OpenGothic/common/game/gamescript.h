@@ -22,6 +22,7 @@
 #include "game/ownsymbols.h"
 #include "game/gamescript_startupfloor.h"
 #include "game/itemdefinitionruntime.h"
+#include "game/routinedefinitionruntime.h"
 #include "asset/worldtypes.h"
 
 class GameSession;
@@ -282,12 +283,10 @@ class GameScript final : public GameRules {
     bool aiOutputSvm(Npc &from, std::string_view name, std::string_view svm, Npc* target, bool overlay);
 
     bool searchScheme(std::string_view sc, std::string_view listName);
-
-    static daedalus::DaedalusVm createVm(Gothic& gothic, ItemDefinitionRuntime::Definitions& items);
-
+    static daedalus::DaedalusVm createVm(Gothic& gothic, ItemDefinitionRuntime::Definitions& items, RoutineDefinitionRuntime::Definitions& routines);
+    int initializeRoutine(const std::shared_ptr<daedalus::INpc>& npc, daedalus::DaedalusSymbol* function);
     bool game_initgerman     ();
     bool game_initenglish    ();
-
     int  hlp_random          (int bound);
     bool hlp_isvalidnpc      (std::shared_ptr<daedalus::INpc> npcRef);
     bool hlp_isitem          (std::shared_ptr<daedalus::IItem> itemRef, int instanceSymbol);
@@ -513,6 +512,7 @@ class GameScript final : public GameRules {
 
     GameSession&                                                owner;
     ItemDefinitionRuntime::Definitions                          itemDefinitions;
+    RoutineDefinitionRuntime::Definitions                       routineDefinitions;
     daedalus::DaedalusVm                                          vm;
     StartupFloor                                                floorDefer{*this};
     OwnSymbols                                                  own{vm};

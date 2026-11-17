@@ -781,6 +781,8 @@ void build(const fs::path& gothic, const fs::path& out, const Progress& progress
   require(convertPrograms(gothic,out/"programs",false)==0,"program import failed");
   if(progress) progress("base import: item definitions");
   require(convertItemDefinitions(out)==0,"item definition import failed");
+  if(progress) progress("base import: routine definitions");
+  require(convertRoutineDefinitions(out)==0,"routine definition import failed");
   if(progress) progress("base import: dialog line library");
   require(convertOutputUnits(gothic,out/"outputunits",false)==0,"dialog line library import failed");
   if(progress) progress("base import: sounds and speech");

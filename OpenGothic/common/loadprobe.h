@@ -22,8 +22,8 @@
 
 #include "resources.h"
 #include "itemloadprobe.h"
+#include "routineloadprobe.h"
 #include <Tempest/LoadProbe>
-
 #if defined(__APPLE__)
 #include <mach/mach.h>
 #include <malloc/malloc.h>
@@ -540,12 +540,12 @@ inline void countTexture(const Tempest::Texture2d& t, std::chrono::steady_clock:
   Startup::Scope::bytes(Startup::Texture,textureBytes(t));
   texNs    += uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-started).count());
   }
-
 // one line per stage: name, stage time, wall time since the first mark, memory, textures so far
 inline void mark(std::string_view stage, double stageMs = -1, std::string_view extra = {}) {
   if(!enabled())
     return;
   const double elapsed = msSince(origin());
+  Routines::mark(stage);
   if(stage=="session_begin") {
     Items::constructors=0;
     Items::constructorNs=0;
