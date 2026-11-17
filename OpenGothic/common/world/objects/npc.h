@@ -30,6 +30,7 @@
 #include "world/npclogicalstate.h"
 #include "world/objects/attention.h"
 #include "world/objects/archer.h"
+#include "world/objects/npcroutinetable.h"
 #include "world/fplock.h"
 #include "world/waypath.h"
 #include "world/wayheights.h"
@@ -908,15 +909,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     void      runEffect  (Effect&& e);
 
   private:
-    struct Routine final {
-      gtime            start;
-      gtime            end;
-      ScriptFn         callback;
-      const WayPoint*  point = nullptr;
-      std::string      fallbackName;
-
-      std::string_view wayPointName() const;
-      };
+    using Routine = NpcRoutineTable::Row;
 
     enum TransformBit : uint8_t {
       TR_Pos  =1,

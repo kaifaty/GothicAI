@@ -5,6 +5,10 @@
 #include "programdata.h"
 #include "itemdefinitions.h"
 #include "game/itemdefinitionruntime.h"
+#include "routinedefinitions.h"
+#include "game/routinedefinitionruntime.h"
+#include "world/objects/npcroutinetable.h"
+#include "world/waypoint.h"
 #include <rapidjson/document.h>
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
@@ -136,6 +140,11 @@ NpcSnapshot::Program itemProgram() {
   f.symbol("SELF",Type::INSTANCE,1,0,int32_t(npcClass));
   f.symbol("ITEM",Type::INSTANCE,1,0,int32_t(itemClass));
   auto chapter=f.symbol("CHAPTER",Type::INT);
+  auto globalString=f.symbol("GLOBAL_STRING",Type::STRING);
+  auto globalFloat=f.symbol("GLOBAL_FLOAT",Type::FLOAT);
+  auto globalInstance=f.symbol("GLOBAL_INSTANCE",Type::INSTANCE,1,0,int32_t(npcClass));
+  auto text=f.symbol("GLOBAL_TEXT",Type::STRING,1,Flag::CONST);
+  f.p.symbols[text].string_values[0]="written by constructor";
   auto owner=f.symbol("ITEM_OWNER",Type::INSTANCE,0,Flag::CONST,int32_t(npcClass));
   f.begin(owner); f.op(Op::RSR);
   std::vector<uint32_t> callbacks;
@@ -174,6 +183,15 @@ NpcSnapshot::Program itemProgram() {
   f.op(Op::PUSHV,chapter); f.op(Op::PUSHV,f.find("C_ITEM.VALUE")); f.op(Op::MOVI); f.op(Op::RSR);
   auto writer=f.symbol("IT_RECORD_WRITE",Type::INSTANCE,0,Flag::CONST,int32_t(itemClass));
   f.begin(writer); f.set(chapter,7); f.op(Op::RSR);
+  auto stringWriter=f.symbol("IT_RECORD_WRITE_STRING",Type::INSTANCE,0,Flag::CONST,int32_t(itemClass));
+  f.begin(stringWriter);
+  f.op(Op::PUSHV,text); f.op(Op::PUSHV,globalString); f.op(Op::MOVS); f.op(Op::RSR);
+  auto floatWriter=f.symbol("IT_RECORD_WRITE_FLOAT",Type::INSTANCE,0,Flag::CONST,int32_t(itemClass));
+  f.begin(floatWriter);
+  f.op(Op::PUSHI,std::bit_cast<uint32_t>(1.25f)); f.op(Op::PUSHV,globalFloat); f.op(Op::MOVF); f.op(Op::RSR);
+  auto instanceWriter=f.symbol("IT_RECORD_WRITE_INSTANCE",Type::INSTANCE,0,Flag::CONST,int32_t(itemClass));
+  f.begin(instanceWriter);
+  f.op(Op::PUSHV,owner); f.op(Op::PUSHV,globalInstance); f.op(Op::MOVVI); f.op(Op::RSR);
   for(int value:{0,-1}) {
     auto sentinel=f.symbol(value==0 ? "IT_RECORD_NULL" : "IT_RECORD_MINUS1",Type::INSTANCE,0,Flag::CONST,int32_t(itemClass));
     f.begin(sentinel);
@@ -187,6 +205,160 @@ NpcSnapshot::Program itemProgram() {
     }
   auto encoded=ProgramData::encodeProgram(f.p);
   return {std::move(f.p),encoded.name,encoded.sha256};
+  }
+NpcSnapshot::Program routineProgram() {
+  Fixture f;
+  const auto npcClass=f.cls<INpc>("C_NPC");
+  const auto self=f.symbol("SELF",Type::INSTANCE,1,0,int32_t(npcClass));
+  const auto global=f.symbol("CHAPTER",Type::INT);
+  const auto known=f.symbol("KNOWN_POINT",Type::STRING,1,Flag::CONST);
+  const auto unknown=f.symbol("UNKNOWN_POINT",Type::STRING,1,Flag::CONST);
+  f.p.symbols[known].string_values[0]="TEST_WP";
+  f.p.symbols[unknown].string_values[0]=std::string("UNKNOWN_WP\x80\xff",12);
+  const auto ta=f.fn("TA_MIN",{Type::INSTANCE,Type::INT,Type::INT,Type::INT,Type::INT,Type::INT,Type::STRING},true);
+  const auto state=f.fn("ZS_ROUTINE"); f.begin(state); f.op(Op::RSR);
+  const auto wrapper=f.fn("TA_RECORD",{Type::INSTANCE,Type::INT,Type::INT,Type::INT,Type::INT,Type::STRING});
+  f.begin(wrapper);
+  for(int parameter=6;parameter>0;--parameter) {
+    f.op(Op::PUSHV,wrapper+uint32_t(parameter));
+    f.op(parameter==6 ? Op::MOVS : parameter==1 ? Op::MOVVI : Op::MOVI);
+    }
+  for(unsigned parameter=1;parameter<=5;++parameter) f.op(Op::PUSHV,wrapper+parameter);
+  f.op(Op::PUSHI,state); f.op(Op::PUSHV,wrapper+6); f.op(Op::BE,ta); f.op(Op::RSR);
+  const auto routine=f.fn("RTN_START_123"); f.begin(routine);
+  // Adjacent pairs share starts; interleaved starts distinguish std::sort from stable_sort.
+  // End minutes identify input order independently of either table-building path.
+  for(unsigned row=0;row<48;++row) {
+    f.op(Op::PUSHV,self); f.op(Op::PUSHI,row%4<2 ? 20 : 8); f.op(Op::PUSHI,5);
+    f.op(Op::PUSHI,23); f.op(Op::PUSHI,row); f.op(Op::PUSHV,row%3==0 ? unknown : known);
+    f.call(wrapper);
+    }
+  f.op(Op::RSR);
+  const auto read=f.fn("RTN_READ_123");
+  const auto local=f.symbol("RTN_READ_123.VALUE",Type::INT);
+  f.begin(read); f.op(Op::PUSHV,global); f.op(Op::PUSHV,local); f.op(Op::MOVI); f.op(Op::RSR);
+  const auto write=f.fn("RTN_WRITE_123"); f.begin(write); f.set(global,9); f.op(Op::RSR);
+  const auto helper=f.fn("OTHER_HELPER"); f.begin(helper); f.op(Op::RSR);
+  const auto unsupported=f.fn("RTN_HELPER_123"); f.begin(unsupported); f.call(helper); f.op(Op::RSR);
+  const auto encoded=ProgramData::encodeProgram(f.p);
+  return {std::move(f.p),encoded.name,encoded.sha256};
+  }
+
+void routineDefinitions(const fs::path& dir) {
+  const auto p=routineProgram();
+  const auto base=dir/"routine-definitions";
+  const auto file=base/"definitions"/p.sha256/"routines.json";
+  const auto counts=NpcSnapshot::writeRoutines(p,file);
+  check(counts.total==4 && counts.captured==1,"only the pure routine is captured");
+  check(NpcSnapshot::verifyRoutines(p,file)==0,"routine definitions verify from disk");
+  const auto library=RoutineDefinitions::read(base,p.sha256);
+  for(const char* name:{"RTN_READ_123","RTN_WRITE_123","RTN_HELPER_123"})
+    check(library.uncaptured.contains(name),std::string(name)+": unsafe routine retains its refusal");
+  const auto& source=library.routines.at("RTN_START_123");
+  check(source.size()==48,"all routine calls retain their order in the section");
+  for(size_t row=0;row<source.size();++row)
+    check(source[row].endMinute==int(row),"section rows follow TA_Min call order");
+
+  WayPoint known;
+  known.name="TEST_WP";
+  std::vector<NpcRoutineTable::Row> actual,expected;
+  auto append=[&](auto& table,int sh,int sm,int eh,int em,uint32_t state,std::string_view point) {
+    NpcRoutineTable::add(table,gtime(sh,sm),gtime(eh,em),state,point==known.name ? &known : nullptr,point);
+    };
+  auto script=DaedalusScript::from_program(p.data);
+  INpc::register_(script);
+  auto definitions=RoutineDefinitionRuntime::load(base,script,p.sha256);
+  DaedalusVm vm(std::move(script));
+  auto self=vm.allocate_instance<INpc>(vm.global_self());
+  vm.unsafe_set_gi(self);
+  vm.push_int(0x12345678);
+  const auto pc=vm.pc();
+  vm.register_external("TA_MIN",[&](std::shared_ptr<INpc> npc,int sh,int sm,int eh,int em,int state,std::string_view point) {
+    check(npc==self,"VM routine rows belong to the same NPC");
+    append(expected,sh,sm,eh,em,uint32_t(state),point);
+    });
+  auto* function=vm.find_symbol_by_name("RTN_START_123");
+  size_t callIndex=0;
+  RoutineDefinitionRuntime::initialize(vm,function,definitions,[&](const RoutineDefinitionRuntime::Row& row) {
+    check(row.endMinute==int(callIndex++),"record fill follows TA_Min input order before sorting");
+    append(actual,row.startHour,row.startMinute,row.endHour,row.endMinute,row.state,row.waypoint);
+    });
+  check(expected.empty(),"captured routine does not execute TA_Min in the VM");
+  vm.call_function<void>(function);
+  check(actual.size()==48 && actual.size()==expected.size(),"record and VM tables have every row");
+  for(size_t index=0;index<actual.size();++index) {
+    const auto& row=actual[index];
+    const auto& original=expected[index];
+    const auto call=unsigned(index<24 ? (index/2)*4+2+index%2 : ((index-24)/2)*4+(index-24)%2);
+    check(row.start==gtime(call%4<2 ? 20 : 8,5) && row.end==gtime(23,int(call)),
+          "tied rows retain their original TA_Min call order");
+    check(row.start==original.start && row.end==original.end && row.callback==original.callback &&
+          row.point==original.point && row.fallbackName==original.fallbackName && row.wayPointName()==original.wayPointName(),
+          "record and VM tables have identical times, state, point identity and fallback name");
+    check(row.point==(call%3==0 ? nullptr : &known),"known points resolve to their original pointer");
+    check(row.fallbackName==(call%3==0 ? std::string("UNKNOWN_WP\x80\xff",12) : ""),
+          "unknown points retain every fallback byte");
+    }
+  check(vm.global_self()->get_instance()==self && vm.unsafe_get_gi()==self && vm.pc()==pc,
+        "routine paths preserve SELF, VM context and program counter");
+  check(vm.pop_int()==0x12345678,"routine paths preserve the caller's stack");
+  RoutineDefinitionRuntime::initialize(vm,vm.find_symbol_by_name("RTN_WRITE_123"),definitions,
+                                       [](const RoutineDefinitionRuntime::Row&) {});
+  check(vm.find_symbol_by_name("CHAPTER")->get_int()==9,"uncaptured routine keeps its VM side effect");
+
+  auto changed=read(file);
+  for(auto& record:changed["records"].GetArray())
+    if(std::string_view(record["symbol"].GetString())=="RTN_START_123")
+      record["rows"][0]["start"][1].SetInt(6);
+  write(file,changed);
+  check(NpcSnapshot::verifyRoutines(p,file)>0,"routine verification rejects a changed time with its row");
+  NpcSnapshot::writeRoutines(p,file);
+  const auto otherFile=dir/"routines-again.json";
+  NpcSnapshot::writeRoutines(p,otherFile);
+  std::ifstream first(file,std::ios::binary),second(otherFile,std::ios::binary);
+  check(std::string(std::istreambuf_iterator<char>(first),{})==std::string(std::istreambuf_iterator<char>(second),{}),
+        "routine sections are byte-identical across repeated captures");
+  std::cout<<"Routine runtime equality: 48 rows, adjacent equal starts, 24 tied rows per start, known and unknown points; VM state preserved\n";
+  }
+
+void routineSelection(const fs::path& dir) {
+  const auto base=dir/"routine-selection";
+  auto selected=routineProgram(),other=selected;
+  for(auto& symbol:other.data.symbols)
+    if(symbol.name=="KNOWN_POINT") symbol.string_values[0]="OTHER_WP";
+  const auto encoded=ProgramData::encodeProgram(other.data);
+  other.name=encoded.name; other.sha256=encoded.sha256;
+  for(const auto* p:{&selected,&other})
+    NpcSnapshot::writeRoutines(*p,base/"definitions"/p->sha256/"routines.json");
+  auto program=DaedalusScript::from_program(selected.data);
+  auto another=DaedalusScript::from_program(other.data);
+  const auto symbol=program.find_symbol_by_name("RTN_START_123")->index();
+  const char* previous=std::getenv("OPENGOTHIC_ROUTINE_RECORDS");
+  const bool hadPrevious=previous!=nullptr;
+  const std::string saved=previous ? previous : "";
+  auto environment=[](const char* value) {
+#ifdef _WIN32
+    check(_putenv_s("OPENGOTHIC_ROUTINE_RECORDS",value ? value : "")==0,"set routine records environment");
+#else
+    check((value ? setenv("OPENGOTHIC_ROUTINE_RECORDS",value,1) : unsetenv("OPENGOTHIC_ROUTINE_RECORDS"))==0,
+          "set routine records environment");
+#endif
+    };
+  try {
+    environment(nullptr);
+    check(RoutineDefinitionRuntime::load(base,program,selected.sha256).routines.at(symbol)[1].waypoint=="TEST_WP",
+          "routine records are enabled by default and use the loaded program section");
+    environment("0");
+    check(RoutineDefinitionRuntime::load(base/"absent",program,selected.sha256).routines.empty(),
+          "zero disables routine records without reading the base");
+    environment("1");
+    check(RoutineDefinitionRuntime::load(base,program,selected.sha256).routines.contains(symbol),
+          "nonzero enables routine records");
+    check(RoutineDefinitionRuntime::load(base,another,other.sha256).routines.at(symbol)[1].waypoint=="OTHER_WP",
+          "changing the loaded program changes the routine section");
+    }
+  catch(...) { environment(hadPrevious ? saved.c_str() : nullptr); throw; }
+  environment(hadPrevious ? saved.c_str() : nullptr);
   }
 template<class T> bool sameValue(const T& a,const T& b) {
   if constexpr(std::is_array_v<T>) {
@@ -264,16 +436,20 @@ void itemDefinitions(const fs::path& dir) {
   NpcSnapshot::writeItems(p,file);
   check(NpcSnapshot::verifyItems(p,file)==0,"item definitions verify from disk");
   auto snapshot=read(file);
-  bool foundWriter=false;
-  for(const auto& record:snapshot["records"].GetArray()) {
-    if(std::string_view(record["symbol"].GetString())!="IT_RECORD_WRITE") continue;
-    foundWriter=true;
-    check(std::string_view(record["status"].GetString())=="uncaptured","global-writing item is not captured");
-    check(std::string_view(record["reason"].GetString())=="game_state_write","global-writing item names the refusal reason");
-    check(std::string_view(record["detail"].GetString())=="CHAPTER","global-writing item names the changed variable");
-    check(!record.HasMember("fields"),"global-writing item has no captured fields");
+  for(const auto& [name,global]:std::initializer_list<std::pair<const char*,const char*>>{
+        {"IT_RECORD_WRITE","CHAPTER"},{"IT_RECORD_WRITE_STRING","GLOBAL_STRING"},
+        {"IT_RECORD_WRITE_FLOAT","GLOBAL_FLOAT"},{"IT_RECORD_WRITE_INSTANCE","GLOBAL_INSTANCE"}}) {
+    bool foundWriter=false;
+    for(const auto& record:snapshot["records"].GetArray()) {
+      if(std::string_view(record["symbol"].GetString())!=name) continue;
+      foundWriter=true;
+      check(std::string_view(record["status"].GetString())=="uncaptured",std::string(name)+": global-writing item is not captured");
+      check(std::string_view(record["reason"].GetString())=="game_state_write",std::string(name)+": names the refusal reason");
+      check(std::string_view(record["detail"].GetString())==global,std::string(name)+": names the changed variable");
+      check(!record.HasMember("fields"),std::string(name)+": has no captured fields");
+      }
+    check(foundWriter,std::string(name)+": global-writing item remains in definitions");
     }
-  check(foundWriter,"global-writing item remains in definitions");
   const auto library=ItemDefinitions::read(base,p.sha256);
   auto vm=itemVm(p);
   auto definitions=ItemDefinitionRuntime::resolve(library,*vm);
@@ -663,6 +839,8 @@ void fixture(const fs::path& dir) {
   spellLayout();
   itemDefinitions(dir);
   itemSelection(dir);
+  routineDefinitions(dir);
+  routineSelection(dir);
   auto a=dir/"a",b=dir/"b";
   NpcSnapshot::write(p,a); check(NpcSnapshot::verify(p,a)==0,"fixture verifies");
   NpcSnapshot::write(p,b);

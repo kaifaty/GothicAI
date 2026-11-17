@@ -82,7 +82,7 @@ bool GameScript::GlobalOutput::isFinished() {
   }
 
 GameScript::GameScript(GameSession &owner)
-    :owner(owner), vm(createVm(Gothic::inst(),itemDefinitions)) {
+    :owner(owner), vm(createVm(Gothic::inst(),itemDefinitions,routineDefinitions)) {
   if (vm.global_self() == nullptr || vm.global_other() == nullptr || vm.global_item() == nullptr ||
       vm.global_victim() == nullptr || vm.global_hero() == nullptr)
     throw std::runtime_error("Cannot find script symbol SELF, OTHER, ITEM, VICTIM, or HERO! Cannot proceed!");
@@ -468,10 +468,9 @@ void GameScript::initializeInstanceNpc(const std::shared_ptr<daedalus::INpc>& np
   if(npc->daily_routine!=0) {
     ScopeVar self(*vm.global_self(), npc);
     auto* daily_routine = vm.find_symbol_by_index(uint32_t(npc->daily_routine));
-
     if(daily_routine != nullptr) {
       LoadProbe::Startup::Detail::Scope routine("daily_routine",[&]{return daily_routine->name();});
-      vm.call_function(daily_routine);
+      initializeRoutine(npc,daily_routine);
       }
     }
   }
@@ -1101,17 +1100,18 @@ int GameScript::invokeState(Npc* npc, Npc* oth, Npc* vic, ScriptFn fn) {
   ScopeVar self  (*vm.global_self(),   npc != nullptr ? npc->handlePtr() : nullptr);
   ScopeVar other (*vm.global_other(),  oth != nullptr ? oth->handlePtr() : nullptr);
   ScopeVar victim(*vm.global_victim(), vic != nullptr ? vic->handlePtr() : nullptr);
-
   auto* sym = vm.find_symbol_by_index(uint32_t(fn.ptr));
   int   ret = 0;
-  if(sym!=nullptr && sym->rtype() == daedalus::DaedalusDataType::INT) {
+  if(sym!=nullptr && sym->name().starts_with("RTN_")) {
+    ret = initializeRoutine(npc!=nullptr ? std::static_pointer_cast<daedalus::INpc>(npc->handlePtr()) : nullptr,sym);
+    }
+  else if(sym!=nullptr && sym->rtype() == daedalus::DaedalusDataType::INT) {
     ret = vm.call_function<int>(sym);
     }
   else if(sym!=nullptr) {
     vm.call_function<void>(sym);
     ret = 0;
     }
-
   if(vm.global_other()->is_instance_of<daedalus::INpc>()){
     auto oth2 = reinterpret_cast<daedalus::INpc*>(vm.global_other()->get_instance().get());
     if(oth!=nullptr && oth2!=&oth->handle()) {

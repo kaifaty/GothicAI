@@ -60,7 +60,10 @@ target_link_libraries(content-convert PRIVATE gothic-base-import gothic-video-im
 
 target_link_libraries(content-convert PRIVATE gothic-npc-snapshot)
 add_executable(gothic-npc-snapshot-contract EXCLUDE_FROM_ALL ../../OpenGothic/tests/npc_snapshot_contract.cpp
-  ../../OpenGothic/common/game/itemdefinitionruntime.cpp)
+  ../../OpenGothic/common/game/itemdefinitionruntime.cpp
+  ../../OpenGothic/common/game/routinedefinitionruntime.cpp
+  ../../OpenGothic/common/world/objects/npcroutinetable.cpp
+  ../../OpenGothic/common/world/waypoint.cpp)
 target_include_directories(gothic-npc-snapshot-contract PRIVATE "${NPC_SNAPSHOT_GENERATED_DIR}")
 target_include_directories(gothic-npc-snapshot-contract SYSTEM PRIVATE ../../OpenGothic/lib/rapidjson/include)
 target_link_libraries(gothic-npc-snapshot-contract PRIVATE gothic-npc-snapshot)

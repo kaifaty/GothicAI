@@ -9,7 +9,7 @@
 
 namespace fs = std::filesystem;
 
-int BaseImport::convertItemDefinitions(const fs::path& base, bool verifyOnly) {
+int BaseImport::convertItemDefinitions(const fs::path& base) {
   const auto start=std::chrono::steady_clock::now();
   const auto index=ProgramData::readIndex(base/"programs");
   size_t total=0,captured=0,programs=0;
@@ -27,17 +27,15 @@ int BaseImport::convertItemDefinitions(const fs::path& base, bool verifyOnly) {
     if(!hasItems) continue;
     ++programs;
     const auto file=base/"definitions"/sha/"items.json";
-    if(!verifyOnly) {
-      const auto counts=NpcSnapshot::writeItems(program,file);
-      total+=counts.total;
-      captured+=counts.captured;
-      }
+    const auto counts=NpcSnapshot::writeItems(program,file);
+    total+=counts.total;
+    captured+=counts.captured;
     if(NpcSnapshot::verifyItems(program,file)!=0)
       throw std::runtime_error("item definitions: constructor comparison failed: "+name);
     }
   const auto ms=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-start).count();
-  std::cout<<(verifyOnly ? "verified " : "written and verified ")<<programs<<" item definition programs";
-  if(!verifyOnly) std::cout<<"; "<<total<<" items, "<<captured<<" captured, "<<(total-captured)<<" uncaptured";
+  std::cout<<"written and verified "<<programs<<" item definition programs";
+  std::cout<<"; "<<total<<" items, "<<captured<<" captured, "<<(total-captured)<<" uncaptured";
   std::cout<<"; 0 failed ("<<ms<<" ms)\n";
   return 0;
   }

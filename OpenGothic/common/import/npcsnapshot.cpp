@@ -212,7 +212,7 @@ struct Capture {
 class Runner {
   public:
     Runner(const NpcSnapshot::Program& p):program(p),analysis(DaedalusScript::from_program(p.data)) {}
-    Capture run(uint32_t id,const std::string& kind,A& a) const {
+    Capture run(uint32_t id,const std::string& kind,A& a,bool routineDefinition=false) const {
       Capture c;
       auto script=DaedalusScript::from_program(program.data);
       // Only these two classes execute in D1; other classes need no binding.
@@ -226,6 +226,7 @@ class Runner {
       std::string pending;
       size_t instructions=0;
       vm.observe_reads([&](const DaedalusSymbol& sym) {
+        if(routineDefinition && sym.is_member()) throw Stop("game_state",sym.name());
         if(!mutableGlobal(sym,vm)) return;
         if(kind=="population") {
           if(pending.empty()) pending=sym.name();
@@ -234,13 +235,21 @@ class Runner {
           }
         else throw Stop("game_state",sym.name());
         });
-      if(kind=="items") vm.observe_writes([&](const DaedalusSymbol& sym) {
+      if(kind=="items" || routineDefinition) vm.observe_writes([&](const DaedalusSymbol& sym) {
+        if(routineDefinition && (sym.is_member() || &sym==vm.global_self()))
+          throw Stop("game_state_write",sym.name());
+        if(routineDefinition && &sym==vm.global_item()) throw Stop("game_state_write",sym.name());
         if(&sym==vm.global_self() || &sym==vm.global_item() || !mutableGlobal(sym,vm)) return;
         throw Stop("game_state_write",sym.name());
         });
       vm.observe_instructions([&](const DaedalusInstruction& op) {
         if(++instructions>1000000) throw Stop("execution_limit",root->name());
         if(!pending.empty() && op.op==Op::BZ) throw Stop("game_state",pending+" before state branch");
+        if(routineDefinition && op.op==Op::BL) {
+          const auto* function=vm.find_symbol_by_address(op.address);
+          if(function==nullptr || !function->name().starts_with("TA_"))
+            throw Stop("unsupported_call",function!=nullptr ? function->name() : std::to_string(op.address));
+          }
         });
       auto arguments=[&](const DaedalusSymbol& fn) {
         J args(rapidjson::kArrayType);
@@ -303,6 +312,7 @@ class Runner {
         return call;
         };
       for(auto address:analysis.random) {
+        if(routineDefinition) continue;
         auto* fn=vm.find_symbol_by_address(address);
         if(fn==nullptr || fn->type()!=Type::FUNCTION) continue;
         vm.override_function_custom(*fn,[&,fn](DaedalusVm&) {
@@ -312,6 +322,7 @@ class Runner {
           });
         }
       vm.register_default_external_custom([&](DaedalusVm&,DaedalusSymbol& fn) {
+        if(routineDefinition && fn.name()!="TA_MIN") throw Stop("unsupported_call",fn.name());
         if(fn.name()=="HLP_RANDOM") throw Stop("random_root",root->name());
         // A value-returning external queries the world. A dummy return would bake game state.
         if(fn.has_return()) throw Stop("external_query",fn.name());
@@ -319,6 +330,12 @@ class Runner {
         if(kind=="routines" && fn.name()=="TA_MIN") {
           auto& args=call["arguments"];
           require(args.Size()==7,"TA_Min signature differs");
+          if(routineDefinition) {
+            if(!args[0].IsString() || string(args[0])!="self") throw Stop("unsupported_target",fn.name());
+            if(!args[5].IsString()) throw Stop("unsupported_state",fn.name());
+            const auto* state=vm.find_symbol_by_name(string(args[5]));
+            if(state==nullptr || state->type()!=Type::FUNCTION) throw Stop("unsupported_state",string(args[5]));
+            }
           J row(rapidjson::kObjectType),start(rapidjson::kArrayType),end(rapidjson::kArrayType);
           start.PushBack(copy(args[1],a),a).PushBack(copy(args[2],a),a);
           end.PushBack(copy(args[3],a),a).PushBack(copy(args[4],a),a);
@@ -330,6 +347,11 @@ class Runner {
             fn.name()=="WLD_ASSIGNROOMTOGUILD" || fn.name()=="WLD_SETMOBROUTINE") calls.PushBack(call,a);
         });
       try {
+        if(routineDefinition) {
+          if(root->count()!=0 || root->has_return()) throw Stop("unsupported_signature",root->name());
+          require(vm.global_self()!=nullptr,"routine definition requires SELF");
+          vm.global_self()->set_instance(std::make_shared<INpc>());
+          }
         if(kind=="npcs") { c.npc=std::make_shared<INpc>(); vm.init_instance(c.npc,root); }
         else if(kind=="items") { c.item=std::make_shared<IItem>(); vm.init_instance(c.item,root); }
         else vm.unsafe_call(root);
@@ -351,15 +373,17 @@ class Runner {
       if(c.npc) put(c.record,"fields",fields(*c.npc,vm,a),a);
       if(c.item) put(c.record,"fields",fields(*c.item,vm,a),a);
       if(kind=="routines") {
-        auto name=root->name(); auto split=name.find_last_of('_');
-        put(c.record,"routine",text(name.substr(4,split-4),a),a);
-        const auto number=name.substr(split+1);
-        if(!number.empty() && number.find_first_not_of("0123456789")==std::string::npos)
-          put(c.record,"npc_id",J(std::stoi(number)),a);
-        else put(c.record,"npc_id",J(),a);
+        if(!routineDefinition) {
+          auto name=root->name(); auto split=name.find_last_of('_');
+          put(c.record,"routine",text(name.substr(4,split-4),a),a);
+          const auto number=name.substr(split+1);
+          if(!number.empty() && number.find_first_not_of("0123456789")==std::string::npos)
+            put(c.record,"npc_id",J(std::stoi(number)),a);
+          else put(c.record,"npc_id",J(),a);
+          }
         put(c.record,"rows",std::move(rows),a);
         }
-      put(c.record,"calls",std::move(calls),a);
+      if(!routineDefinition) put(c.record,"calls",std::move(calls),a);
       return c;
       }
   private:
@@ -402,6 +426,15 @@ J itemEnvelope(const NpcSnapshot::Program& p,A& a) {
   put(j,"program_sha256",text(p.sha256,a),a);
   put(j,"string_encoding",text("unicode-byte-mapping",a),a);
   put(j,"native_schema",text(IItemSchema,a),a);
+  return j;
+  }
+J routineEnvelope(const NpcSnapshot::Program& p,A& a) {
+  J j(rapidjson::kObjectType);
+  put(j,"format",text("gothic-routine-definitions",a),a);
+  put(j,"version",J(1),a);
+  put(j,"program_name",text(p.name,a),a);
+  put(j,"program_sha256",text(p.sha256,a),a);
+  put(j,"string_encoding",text("unicode-byte-mapping",a),a);
   return j;
   }
 void difference(const J& expected,const J& actual,const std::string& path,int& errors) {
@@ -578,6 +611,56 @@ int NpcSnapshot::verifyItems(const Program& p,const fs::path& file) {
       if(c.item) verifyFields(*c.item,at(actual,"fields"),*c.vm);
       }
     catch(const std::exception& e) { throw std::runtime_error(path+".fields."+e.what()); }
+    difference(c.record,actual,path,errors);
+    }
+  return errors;
+  }
+
+NpcSnapshot::RoutineCounts NpcSnapshot::writeRoutines(const Program& p,const fs::path& file) {
+  fs::create_directories(file.parent_path());
+  rapidjson::Document storage;
+  auto& a=storage.GetAllocator();
+  auto doc=routineEnvelope(p,a);
+  J records(rapidjson::kArrayType);
+  Runner runner(p);
+  RoutineCounts counts;
+  const auto ids=corpus(p).at("routines");
+  for(auto id:ids) {
+    auto c=runner.run(id,"routines",a,true);
+    ++counts.total;
+    if(string(c.record["status"])=="captured") ++counts.captured;
+    records.PushBack(c.record,a);
+    }
+  put(doc,"records",std::move(records),a);
+  writeJson(file,doc);
+  return counts;
+  }
+
+int NpcSnapshot::verifyRoutines(const Program& p,const fs::path& file) {
+  auto doc=readJson(file);
+  require(doc.IsObject(),file.string()+": expected routine definitions object");
+  auto& a=doc.GetAllocator();
+  auto expected=routineEnvelope(p,a);
+  int errors=0;
+  for(auto it=expected.MemberBegin();it!=expected.MemberEnd();++it)
+    difference(it->value,at(doc,it->name.GetString()),file.string()+"."+it->name.GetString(),errors);
+  const auto& records=at(doc,"records");
+  require(records.IsArray(),file.string()+": expected records array");
+  const auto ids=corpus(p).at("routines");
+  require(records.Size()==ids.size(),file.string()+": routine record count differs");
+  Runner runner(p);
+  for(size_t i=0;i<ids.size();++i) {
+    const auto path="routines."+p.data.symbols[ids[i]].name;
+    auto c=runner.run(ids[i],"routines",a,true);
+    auto actual=copy(records[rapidjson::SizeType(i)],a);
+    const auto& expectedRows=at(c.record,"rows");
+    const auto& actualRows=at(actual,"rows");
+    require(actualRows.IsArray(),path+": expected rows array");
+    if(expectedRows.Size()!=actualRows.Size()) { ++errors; std::cerr<<path<<": row count differs\n"; }
+    for(rapidjson::SizeType row=0;row<std::min(expectedRows.Size(),actualRows.Size());++row)
+      difference(expectedRows[row],actualRows[row],path+".row["+std::to_string(row+1)+"]",errors);
+    c.record.RemoveMember("rows");
+    actual.RemoveMember("rows");
     difference(c.record,actual,path,errors);
     }
   return errors;
