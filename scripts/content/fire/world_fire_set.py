@@ -42,6 +42,8 @@ ROOT = camp.ROOT
 CONTENT = ROOT / 'reports/content/remaster/fire-worlds/content'
 TREE = CONTENT / 'vobtrees.d/FIRETREE_MEDIUM.json'
 HAND = CONTENT / 'vobtrees.d/ITLSTORCHBURNING.json'
+# after wall-torch-fire.json by name: an own base must be declared before its heir
+HAND_EFFECTS = CONTENT / 'particles.d/wall-torch-hand.json'
 # ITLSTORCHBURNING.ZEN, the torch in a hand: the mesh at the tree's origin, TORCH.PFX and the lamp at its head
 HAND_MESH, HAND_HEAD = 'ITLS_TORCHBURNED_01', [-40.5, -0.8, 2.7]
 HAND_RANGE = 1000  # the original's: the torch is the player's working light (800 left the street dark, round 1)
@@ -92,13 +94,29 @@ def hold(layer, everything, kit, licks) -> int:
     return len(layer['effect'])
 
 
+# The carried torch's own effects (moving-flame.md): the flame cards lean with the air past the wick, the tongues take
+# a share of the carrier's way. Rise 1.8 m/s: 40 degrees at a walk (1.5 m/s), the cap of 70 at a run (5 m/s).
+HAND_PFX = {'OWN_TORCH_FLAME': 'OWN_HAND_FLAME', 'OWN_TORCH_FLAME_SIDE': 'OWN_HAND_FLAME_SIDE',
+            'OWN_TORCH_LICKS': 'OWN_HAND_LICKS'}
+HAND_LEAN = {'rise': 1.8, 'max_deg': 70, 'response': 0.12}
+HAND_INHERIT = 0.75
+
+
+def hand_effects() -> dict:
+    effects = [{'name': 'OWN_HAND_FLAME', 'base': 'OWN_TORCH_FLAME', 'set': {}, 'lean': HAND_LEAN},
+               {'name': 'OWN_HAND_FLAME_SIDE', 'base': 'OWN_TORCH_FLAME_SIDE', 'set': {}, 'lean': HAND_LEAN},
+               {'name': 'OWN_HAND_LICKS', 'base': 'OWN_TORCH_LICKS', 'set': {}, 'inherit': HAND_INHERIT}]
+    return {'format': 1, 'effects': effects}
+
+
 def hand_tree() -> dict:
     """The torch a hand carries. The slot turns with the hand, so every part of the fire sits at the torch's head in
     the slot and stands up the world's vertical from there (the tree's "up_cm")."""
     add = [{'key': 'hand-torch', 'kind': 'mesh', 'visual': HAND_MESH, 'position': [0, 0, 0], 'yaw_deg': 0, 'collision': 'none'}]
     for entry in rest.torch_fire('hand', [0, 0, 0], 61):
         x, y, z = entry['position']
-        add.append({**entry, 'position': camp.at(np.array(HAND_HEAD) + [x, 0, z]), 'up_cm': y})
+        add.append({**entry, 'pfx': HAND_PFX.get(entry['pfx'], entry['pfx']),
+                    'position': camp.at(np.array(HAND_HEAD) + [x, 0, z]), 'up_cm': y})
     add.append({'key': 'hand-light', 'kind': 'light', 'position': HAND_HEAD, 'up_cm': TORCH_LIGHT_UP, 'yaw_deg': 0,
                 'range': HAND_RANGE, 'color': rest.LAMP['color'], 'near': torch.LAMP['near'], 'flicker_from': 'hand-flame',
                 **torch.SWAY})
@@ -231,6 +249,9 @@ def cmd_build(args) -> int:
         HAND.parent.mkdir(parents=True, exist_ok=True)
         HAND.write_text(json.dumps(hand_tree(), indent=1) + '\n')
         print(f'{HAND.relative_to(ROOT)}: {len(hand_tree()["add"])} entries')
+        HAND_EFFECTS.parent.mkdir(parents=True, exist_ok=True)
+        HAND_EFFECTS.write_text(json.dumps(hand_effects()) + '\n')
+        print(f'{HAND_EFFECTS.relative_to(ROOT)}: {len(hand_effects()["effects"])} effects')
         taken = set()
         for path in sorted((ROOT / 'reports/content/remaster').glob('**/content/worlds/NEWWORLD/vobs.d/*.json')):
             if path.name != 'fire-left.json':

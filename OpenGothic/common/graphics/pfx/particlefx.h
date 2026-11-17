@@ -119,6 +119,11 @@ class ParticleFx final {
     PfxMotion::Params motion;
     float         stretchMs = 0.f;  // a velocity-oriented sprite grows by |v|*stretchMs along its path
     float         minPixels = 0.f;  // a smaller sprite is drawn this size on screen, its alpha down by the area
+    // particles.d "lean" of a steady card and "inherit" of a living particle (ParticleContent::Motion)
+    float         leanRise       = 0.f;  // cm/ms; 0: off
+    float         leanMaxTan     = 0.f;
+    float         leanResponseMs = 0.f;
+    float         inherit        = 0.f;
     // particles.d "hdr" (ParticleContent::Motion): the night's gain of the emission over a texel's brightness
     float         hdrFrom   = 0.f;
     float         hdrTo     = 0.f;  // 0: off
