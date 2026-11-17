@@ -24,6 +24,7 @@
 #include "asset/worldmesh.h"
 #include "graphics/grass/grassborder.h"
 #include "graphics/grass/grassplace.h"
+#include "graphics/grass/grasswaste.h"
 #include "worldchunkmanifest.h"
 
 class SceneGlobals;
@@ -66,8 +67,10 @@ class GrassField final {
       size_t drawn     = 0; // of them the last frame drew: in view, of a rank the ring keeps at the cell's distance
       size_t fine      = 0; // of those the fine blades of the short sward
       size_t triangles = 0; // of those
+      size_t draws     = 0; // draw calls of the last frame
       size_t bytes     = 0; // of the buffers
       size_t waiting   = 0; // cells not built yet
+      Grass::Waste waste;      // with OPENGOTHIC_GRASS_WASTE=1: of the drawn those submitted for nothing
       };
     Stats stats() const { return last; }
     // nothing is being built for the camera's place of the last frame, and no chunk came since; without the blades
@@ -104,6 +107,7 @@ class GrassField final {
       int32_t                   cx = 0, cz = 0;
       Tempest::StorageBuffer    gpu;
       std::vector<Grass::Batch> batches;
+      std::vector<Grass::Blade> cpu;             // with OPENGOTHIC_GRASS_WASTE=1 alone (grasswaste.h)
       int32_t                   minY = 0, maxY = 0;
       uint32_t                  count = 0;
       std::vector<uint32_t>     below;           // by batch: 257 counts of its blades of a rank under i
@@ -180,4 +184,5 @@ class GrassField final {
     Tempest::StorageBuffer              borderGpu;
     std::vector<uint32_t>               borderCpu;
     Stats                               last;
+    uint32_t                            wasteFrame = 0;
   };

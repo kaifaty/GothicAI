@@ -4,6 +4,7 @@
 
 #include "graphics/grass/grassdiag.h"
 #include "graphics/grass/grassfield.h"
+#include "graphics/grass/grasswaste.h"
 #include "graphics/worldview.h"
 #include "world/world.h"
 
@@ -15,11 +16,22 @@ std::string grassFields(const GrassField* field) {
   if(field==nullptr)
     return "\"field\":false";
   const auto st = field->stats();
+  std::string waste;
+  if(Grass::wasteOn()) {
+    const auto& w = st.waste;
+    waste = ",\"waste\":{\"gone\":"+std::to_string(w.gone)+",\"gone_triangles\":"+std::to_string(w.goneTriangles)+
+            ",\"out\":"+std::to_string(w.out)+",\"out_triangles\":"+std::to_string(w.outTriangles)+",\"squares\":[";
+    for(size_t i=0; i<Grass::Waste::Subs; ++i)
+      waste += std::string(i==0 ? "" : ",")+"{\"cm\":"+std::to_string(int(Grass::Waste::SubCm[i]))+
+               ",\"blades\":"+std::to_string(w.subDrawn[i])+",\"triangles\":"+std::to_string(w.subTriangles[i])+
+               ",\"draws\":"+std::to_string(w.subDraws[i])+"}";
+    waste += "]}";
+    }
   return "\"field\":true,\"ready\":"+std::string(field->ready() ? "true" : "false")+
          ",\"cells\":"+std::to_string(st.cells)+",\"blades_stored\":"+std::to_string(st.stored)+
          ",\"blades_drawn\":"+std::to_string(st.drawn)+",\"blades_fine\":"+std::to_string(st.fine)+
-         ",\"triangles\":"+std::to_string(st.triangles)+
-         ",\"buffer_bytes\":"+std::to_string(st.bytes)+",\"cells_waiting\":"+std::to_string(st.waiting);
+         ",\"triangles\":"+std::to_string(st.triangles)+",\"draws\":"+std::to_string(st.draws)+
+         ",\"buffer_bytes\":"+std::to_string(st.bytes)+",\"cells_waiting\":"+std::to_string(st.waiting)+waste;
   }
 
 }
