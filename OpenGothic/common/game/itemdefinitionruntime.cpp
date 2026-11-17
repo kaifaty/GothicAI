@@ -1,7 +1,6 @@
 #include "itemdefinitionruntime.h"
 #include "itemrecordfields.h"
 #include "itemloadprobe.h"
-#include "programdata.h"
 
 #include <cstdlib>
 #include <cstring>
@@ -50,10 +49,10 @@ ItemDefinitionRuntime::Definitions ItemDefinitionRuntime::resolve(const ItemDefi
   }
 
 ItemDefinitionRuntime::Definitions ItemDefinitionRuntime::load(const std::filesystem::path& base,
-                                                               const daedalus::DaedalusScript& program) {
+                                                               const daedalus::DaedalusScript& program,
+                                                               std::string_view sha256) {
   const auto* enabled=std::getenv("OPENGOTHIC_ITEM_RECORDS");
   if(enabled==nullptr || std::strcmp(enabled,"0")!=0) {
-    const auto sha256=ProgramData::encodeProgram(program.export_program()).sha256;
     return resolve(ItemDefinitions::read(base,sha256),program);
     }
   return {};

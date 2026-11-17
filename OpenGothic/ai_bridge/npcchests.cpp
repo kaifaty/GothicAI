@@ -63,7 +63,7 @@ std::string itemName(World& world, std::string_view inst) {
   std::string out;
   auto prev = s->get_instance();
   try {
-    out = TextCodec::toUtf8(world.script().createItem(s->index())->name);
+    out = TextCodec::toUtf8(world.script().createItemForQuery(s->index())->name);
     }
   catch(const std::exception&) {
     }

@@ -344,9 +344,7 @@ void GameScript::initCommon() {
   auto* currency = vm.find_symbol_by_name("TRADE_CURRENCY_INSTANCE");
   itMi_Gold      = currency!=nullptr ? vm.find_symbol_by_name(currency->get_string()) : nullptr;
   if(itMi_Gold!=nullptr){ // FIXME
-    auto item = std::make_shared<daedalus::IItem>();
-    initializeInstanceItem(item,itMi_Gold->index());
-    goldTxt = item->name;
+    goldTxt = createItemForQuery(itMi_Gold->index())->name;
     }
   auto* tradeMul = vm.find_symbol_by_name("TRADE_VALUE_MULTIPLIER");
   tradeValMult   = tradeMul != nullptr ? tradeMul->get_float() : 1.0f;

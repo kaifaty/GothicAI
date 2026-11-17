@@ -213,7 +213,7 @@ std::unique_ptr<DaedalusVm> itemVm(const NpcSnapshot::Program& p) {
 void runtimeItems(const NpcSnapshot::Program& p,const fs::path& base) {
   auto library=ItemDefinitions::read(base,p.sha256);
   auto script=DaedalusScript::from_program(p.data);
-  auto definitions=ItemDefinitionRuntime::load(base,script);
+  auto definitions=ItemDefinitionRuntime::load(base,script,p.sha256);
   IItem::register_(script);
   auto records=std::make_unique<DaedalusVm>(std::move(script));
   size_t captured=0,fallback=0;
@@ -614,10 +614,16 @@ void itemSelection(const fs::path& dir) {
   auto encoded=ProgramData::encodeProgram(other.data);
   other.name=encoded.name; other.sha256=encoded.sha256;
   check(other.sha256!=selected.sha256,"selection programs have different identities");
-  for(const auto* program:{&selected,&other})
+  const auto programs=base/"programs";
+  fs::create_directories(programs);
+  for(const auto* program:{&selected,&other}) {
+    ProgramData::writeProgram(program->data,programs);
     NpcSnapshot::writeItems(*program,base/"definitions"/program->sha256/"items.json");
-  auto program=DaedalusScript::from_program(selected.data);
-  auto otherProgram=DaedalusScript::from_program(other.data);
+    }
+  std::string selectedSha,otherSha;
+  auto program=DaedalusScript::from_program(ProgramData::readProgram(programs/(selected.name+".json"),&selectedSha));
+  auto otherProgram=DaedalusScript::from_program(ProgramData::readProgram(programs/(other.name+".json"),&otherSha));
+  check(selectedSha==selected.sha256 && otherSha==other.sha256,"selection uses the verified loaded record identities");
   const auto symbol=program.find_symbol_by_name("IT_RECORD_TEST")->index();
   const auto expected=ItemDefinitions::read(base,selected.sha256).items.at("IT_RECORD_TEST").record.name;
   const char* previous=std::getenv("OPENGOTHIC_ITEM_RECORDS");
@@ -633,16 +639,16 @@ void itemSelection(const fs::path& dir) {
     };
   try {
     environment(nullptr);
-    auto defaults=ItemDefinitionRuntime::load(base,program);
+    auto defaults=ItemDefinitionRuntime::load(base,program,selectedSha);
     check(defaults.items.contains(symbol),"item records enabled by default");
     check(defaults.items.at(symbol).name==expected,"default section uses the loaded program SHA");
     environment("0");
-    check(ItemDefinitionRuntime::load(base/"absent",program).items.empty(),"zero disables records without reading the base");
+    check(ItemDefinitionRuntime::load(base/"absent",program,selectedSha).items.empty(),"zero disables records without reading the base");
     environment("1");
-    auto enabled=ItemDefinitionRuntime::load(base,program);
+    auto enabled=ItemDefinitionRuntime::load(base,program,selectedSha);
     check(enabled.items.contains(symbol),"nonzero enables item records");
     check(enabled.items.at(symbol).name==expected,"enabled section uses the loaded program SHA");
-    check(ItemDefinitionRuntime::load(base,otherProgram).items.at(symbol).name=="another program",
+    check(ItemDefinitionRuntime::load(base,otherProgram,otherSha).items.at(symbol).name=="another program",
           "changing the loaded program changes the selected section");
     }
   catch(...) { environment(hadPrevious ? saved.c_str() : nullptr); throw; }

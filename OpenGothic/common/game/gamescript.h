@@ -78,6 +78,7 @@ class GameScript final : public GameRules {
     auto         npcRecord(daedalus::DaedalusSymbol* symbol) -> std::shared_ptr<NpcRecord>;
     auto         createItem(Item& owner, size_t instance, uint32_t& kind) -> std::shared_ptr<ItemRecord> override;
     auto         createItem(size_t instance) -> std::shared_ptr<ItemRecord> override;
+    auto         createItemForQuery(size_t instance) -> std::shared_ptr<ItemRecord>;
     auto         loadItem(Serialize& fin, Item& owner, uint32_t& kind) -> std::shared_ptr<ItemRecord> override;
     void         attachItem(const std::shared_ptr<ItemRecord>& item, Item& owner) override;
     void         initializeInstanceItem(const std::shared_ptr<daedalus::IItem>& item, size_t instance);
