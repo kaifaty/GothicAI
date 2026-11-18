@@ -595,7 +595,7 @@ void placementDefinitions(const fs::path& dir) {
         std::get<PlacementDefinitions::Call>(library.placements.at("STARTUP_GLOBAL").steps[0]).function=="GAME_INITGERMAN",
         "an ignored external result at the void function boundary is captured");
   const auto& mutableSteps=library.placements.at("STARTUP_MUTABLE_ROOT").steps;
-  check(mutableSteps.size()==4 && std::get<PlacementDefinitions::Call>(mutableSteps[0]).function=="GAME_INITGERMAN",
+  check(mutableSteps.size()==6 && std::get<PlacementDefinitions::Call>(mutableSteps[0]).function=="GAME_INITGERMAN",
         "an ignored external result before constant assignments is captured");
   const auto& integerWrite=std::get<PlacementDefinitions::GlobalWrite>(mutableSteps[1]);
   const auto& stringWrite=std::get<PlacementDefinitions::GlobalWrite>(mutableSteps[2]);
@@ -605,9 +605,17 @@ void placementDefinitions(const fs::path& dir) {
   check(stringWrite.symbol=="PLACEMENT_TEXT" && stringWrite.index==0 &&
         stringWrite.value.kind==PlacementDefinitions::Value::Kind::String && stringWrite.value.text==std::string("NPC\0\x80\xff",6),
         "a constant string assignment preserves every original byte");
-  check(std::get<PlacementDefinitions::Call>(mutableSteps[3]).function=="PLACE_DEPENDENT" &&
-        std::get<PlacementDefinitions::Call>(mutableSteps[3]).deferred,
-        "the global-dependent engine helper remains after both assignments");
+  const auto& indexedWrite=std::get<PlacementDefinitions::GlobalWrite>(mutableSteps[3]);
+  const auto& floatWrite=std::get<PlacementDefinitions::GlobalWrite>(mutableSteps[4]);
+  check(indexedWrite.symbol=="PLACEMENT_LIMITS" && indexedWrite.index==1 &&
+        indexedWrite.value.kind==PlacementDefinitions::Value::Kind::Int && indexedWrite.value.integer==27,
+        "a constant array assignment records its nonzero element");
+  check(floatWrite.symbol=="PLACEMENT_SCALE" && floatWrite.index==0 &&
+        floatWrite.value.kind==PlacementDefinitions::Value::Kind::Float && floatWrite.value.real==1.25f,
+        "a constant float assignment records its fractional value");
+  check(std::get<PlacementDefinitions::Call>(mutableSteps[5]).function=="PLACE_DEPENDENT" &&
+        std::get<PlacementDefinitions::Call>(mutableSteps[5]).deferred,
+        "the global-dependent engine helper remains after the assignments");
   check(library.uncaptured.at("STARTUP_STATE_ROOT").starts_with("game_state: CHAPTER at pc="),
         "a root assignment depending on mutable state retains the complete VM path");
   check(library.uncaptured.at("STARTUP_QUERY_ROOT").starts_with("external_query: GAME_INITGERMAN at pc="),
@@ -664,8 +672,17 @@ void placementDefinitions(const fs::path& dir) {
     check(!PlacementDefinitionRuntime::enabled() && PlacementDefinitionRuntime::load(base/"absent",script,program.sha256).placements.empty(),
           "zero disables placement records without reading the base");
     environment("1");
-    check(PlacementDefinitionRuntime::enabled() && PlacementDefinitionRuntime::load(base,script,program.sha256).placements.size()==4,
+    DaedalusVm vm(DaedalusScript::from_program(program.data));
+    const auto definitions=PlacementDefinitionRuntime::load(base,vm,program.sha256);
+    check(PlacementDefinitionRuntime::enabled() && definitions.placements.size()==4,
           "nonzero enables placement records");
+    vm.register_external("GAME_INITGERMAN",[] { return int32_t(0); });
+    vm.register_external("WLD_SETGUILDATTITUDE",[](int32_t,int32_t,int32_t) {});
+    check(PlacementDefinitionRuntime::execute(vm,vm.find_symbol_by_name("STARTUP_MUTABLE_ROOT"),definitions),
+          "placement runtime replays the captured global assignments");
+    const auto* limits=vm.find_symbol_by_name("PLACEMENT_LIMITS");
+    check(limits->get_int(0)==4 && limits->get_int(1)==27,"placement replay writes array element 1 only");
+    check(vm.find_symbol_by_name("PLACEMENT_SCALE")->get_float(0)==1.25f,"placement replay writes the fractional float");
     const auto otherScript=DaedalusScript::from_program(other.data);
     const auto selected=PlacementDefinitionRuntime::load(base,otherScript,other.sha256);
     const auto startup=otherScript.find_symbol_by_name("STARTUP_TEST")->index();
