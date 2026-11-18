@@ -115,6 +115,65 @@ def firebolt() -> list:
     ]
 
 
+def fireball() -> list:
+    """The fire ball (INSTANTFIREBALL; fireball.md): the bolt's fire, larger and round, and a real explosion."""
+    return [
+        # in the hand: a round white-hot core inside a flame twice the bolt's, so it reads as a ball and not a candle
+        {'name': 'OWN_BALL_HAND_CORE', 'base': 'OWN_BOLT_HEAD',
+         'set': {'ppsValue': 40.0, 'lspPartAvg': 160.0, 'lspPartVar': 30.0, 'visSizeStart_S': '20 20', 'visSizeEndScale': 0.7,
+                 'shpDim_S': '1.5'}},
+        {'name': 'OWN_BALL_HAND_LICKS', 'base': 'OWN_HAND_LICKS', 'inherit': 0.9,
+         'set': {'ppsValue': 30.0, 'shpType_S': 'SPHERE', 'shpIsVolume': 0, 'shpDim_S': '7', 'visSizeStart_S': '9 13',
+                 'lspPartAvg': 320.0, 'lspPartVar': 80.0}},
+        {'name': 'MFX_FIREBALL_INIT', 'base': 'OWN_HAND_FLAME', 'replaces': True,
+         'with': ['OWN_BALL_HAND_CORE', 'OWN_BALL_HAND_LICKS'],
+         'set': {'visSizeStart_S': '20 26', **foot(20)}, 'lean': {'rise': 1.4, 'max_deg': 70, 'response': 0.1}},
+        # flying: the bolt's one body on one axis, twice as thick, with a ball of tongues at its head
+        {'name': 'OWN_BALL_HEAD', 'base': 'OWN_BOLT_HEAD',
+         'set': {'ppsValue': 80.0, 'lspPartAvg': 120.0, 'lspPartVar': 25.0, 'visSizeStart_S': '48 48', 'shpDim_S': '4'}},
+        {'name': 'OWN_BALL_LICKS', 'base': 'OWN_HAND_LICKS', 'inherit': 0.8,
+         'set': {'ppsValue': 90.0, 'shpType_S': 'SPHERE', 'shpIsVolume': 0, 'shpDim_S': '16', 'visSizeStart_S': '20 28',
+                 'visSizeEndScale': 0.6, 'lspPartAvg': 260.0, 'lspPartVar': 70.0, 'velAvg': 0.02, 'velVar': 0.01}},
+        {'name': 'OWN_BALL_ROOT', 'base': 'OWN_BOLT_ROOT', 'set': {'visSizeStart_S': '70 90', **foot(90)}},
+        {'name': 'OWN_BALL_EMBERS', 'base': 'OWN_BOLT_EMBERS',
+         'set': {'ppsValue': 220.0, 'shpDim_S': '12', 'lspPartAvg': 1100.0, 'lspPartVar': 450.0}},
+        haze('OWN_BALL_HEAT', 5.0, inherit=1.0, ppsValue=24.0, lspPartAvg=170.0, lspPartVar=40.0, shpDim_S='10',
+             visSizeStart_S='120 120', visSizeEndScale=1.2),
+        haze('OWN_BALL_WAKE', 8.0, inherit=0.1, ppsValue=45.0, lspPartAvg=520.0, lspPartVar=100.0, shpDim_S='10',
+             visSizeStart_S='70 70', visSizeEndScale=2.0),
+        {'name': 'MFX_IFB_PFXTRAIL', 'base': 'OWN_HAND_FLAME', 'replaces': True,
+         'with': ['OWN_BALL_HEAD', 'OWN_BALL_LICKS', 'OWN_BALL_ROOT', 'OWN_BALL_EMBERS', 'OWN_BALL_HEAT', 'OWN_BALL_WAKE'],
+         'set': {'visSizeStart_S': '80 170', **foot(170)},
+         'lean': {'rise': 1.8, 'max_deg': 87, 'response': 0.03, 'along': 0.3, 'grow': 0.3, 'grow_from': 0.25}},
+        # the game's second trail (clouds of fire along the way to the target) would stand beside ours as another kind
+        # of fire: it becomes a thin second scatter of embers
+        {'name': 'MFX_IFB_CAST', 'base': 'OWN_BOLT_EMBERS', 'replaces': True,
+         'set': {'ppsValue': 40.0, 'shpDim_S': '14', 'lspPartAvg': 1300.0, 'lspPartVar': 500.0}},
+        # the explosion, one burst (README, "Взрыв огненного шара"): a flash, a ball of fire thrown out and stopped by
+        # the air, a second slower one that rolls up, sparks on arcs, smoke that stays, hot air, and its own light
+        {'name': 'OWN_BALL_HIT_FLASH', 'base': 'OWN_BOLT_HIT_FLASH',
+         'set': {'ppsValue': 8.0, 'lspPartAvg': 200.0, 'lspPartVar': 30.0, 'visSizeStart_S': '150 150', 'shpDim_S': '10'}},
+        {'name': 'OWN_BALL_HIT_ROLL', 'base': 'OWN_HAND_LICKS', 'inherit': 0.0, 'drag': 2.0,
+         'set': {**BURST, 'ppsValue': 30.0, 'shpType_S': 'SPHERE', 'shpIsVolume': 1, 'shpDim_S': '35', 'velAvg': 0.22,
+                 'velVar': 0.1, 'flyGravity_S': '0 0.0003 0', 'visSizeStart_S': '60 80', 'visSizeEndScale': 1.5,
+                 'lspPartAvg': 750.0, 'lspPartVar': 200.0, **ALL_AROUND}},
+        {'name': 'OWN_BALL_HIT_SPARKS', 'base': 'OWN_BOLT_HIT_SPARKS',
+         'set': {'ppsValue': 180.0, 'shpDim_S': '12', 'velAvg': 0.75, 'velVar': 0.45, 'lspPartAvg': 1300.0,
+                 'lspPartVar': 500.0, 'visSizeStart_S': '0.8 0.8'}},
+        {'name': 'OWN_BALL_HIT_SMOKE', 'base': 'OWN_BOLT_HIT_PUFF',
+         'set': {'ppsValue': 9.0, 'shpDim_S': '45', 'visSizeStart_S': '70 70', 'visSizeEndScale': 2.8, 'visAlphaStart': 80.0,
+                 'lspPartAvg': 2800.0, 'lspPartVar': 500.0, 'velAvg': 0.05, 'velVar': 0.02, 'flyGravity_S': '0 4e-05 0'}},
+        haze('OWN_BALL_HIT_HEAT', 9.0, inherit=0.0, **BURST, ppsValue=5.0, lspPartAvg=600.0, lspPartVar=100.0, shpDim_S='25',
+             visSizeStart_S='160 160', visSizeEndScale=1.8),
+        {'name': 'MFX_FIREBALL_COLLIDE1', 'base': 'OWN_HAND_LICKS', 'replaces': True, 'inherit': 0.0, 'drag': 3.5,
+         'with': ['OWN_BALL_HIT_FLASH', 'OWN_BALL_HIT_ROLL', 'OWN_BALL_HIT_SPARKS', 'OWN_BALL_HIT_SMOKE', 'OWN_BALL_HIT_HEAT'],
+         'light': {'range': 800, 'color': [255, 170, 80], 'fps': 8.0, 'keys': [1, 1, 0.85, 0.6, 0.4, 0.22, 0.1, 0]},
+         'set': {**BURST, 'ppsValue': 150.0, 'shpType_S': 'SPHERE', 'shpIsVolume': 1, 'shpDim_S': '14', 'velAvg': 0.8,
+                 'velVar': 0.3, 'flyGravity_S': '0 0.0001 0', 'visSizeStart_S': '30 42', 'visSizeEndScale': 1.9,
+                 'lspPartAvg': 480.0, 'lspPartVar': 130.0, **ALL_AROUND}},
+    ]
+
+
 def body_fire() -> list:
     """The fire on a burning body (body-fire.md, concept A: the body burns like a wick).
 
@@ -163,8 +222,8 @@ def body_fire() -> list:
 
 def cmd_build(_args) -> int:
     PARTICLES.parent.mkdir(parents=True, exist_ok=True)
-    PARTICLES.write_text(json.dumps({'format': 1, 'effects': firebolt() + body_fire()}, indent=1) + '\n')
-    print(f'{PARTICLES.relative_to(ROOT)}: {len(firebolt()) + len(body_fire())} effects')
+    PARTICLES.write_text(json.dumps({'format': 1, 'effects': firebolt() + fireball() + body_fire()}, indent=1) + '\n')
+    print(f'{PARTICLES.relative_to(ROOT)}: {len(firebolt()) + len(fireball()) + len(body_fire())} effects')
     return 0
 
 
