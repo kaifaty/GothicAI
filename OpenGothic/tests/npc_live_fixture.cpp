@@ -1,4 +1,5 @@
 #include "npc_definition_fixture.h"
+#include "npcdaymeasurement.h"
 
 #include "baseidentity.h"
 #include "commandline.h"
@@ -109,6 +110,32 @@ fs::path program(const fs::path& base) {
   NpcSnapshot::writeNpcs(value,definitions/"npcs.json");
   NpcSnapshot::writePlacements(value,definitions/"placement.json",base/"worlds");
   return definitions/"npcs.json";
+  }
+
+void npcDayRandom(World& world) {
+  const auto directory=std::filesystem::temp_directory_path()/("gothic-npc-day-live-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  std::filesystem::create_directories(directory);
+  const auto check=[](bool value,const char* message) { if(!value) throw std::runtime_error(message); };
+  auto& script=world.script();
+  std::string error;
+  if(!NpcDayMeasurement::start(world,directory.string(),0,false,{},error)) throw std::runtime_error(error);
+  script.invokeState(nullptr,nullptr,nullptr,script.getVm().find_symbol_by_name("ZS_TEST")->index());
+  NpcDayMeasurement::stop(world);
+  std::ifstream file(directory/"npc-day-script.json");
+  const std::string bytes{std::istreambuf_iterator<char>(file),{}};
+  std::filesystem::remove_all(directory);
+  rapidjson::Document document;
+  document.Parse(bytes.c_str());
+  check(!document.HasParseError(),"live day counters must be valid JSON");
+  const auto& stats=document["stats"];
+  const auto& phase=stats["states"]["ZS_TEST"]["phases"]["init"];
+  check(phase["engine"].GetUint64()==1 && phase["random"].GetUint64()==1,
+          "invokeState must attribute the real Hlp_Random draw to its phase");
+  const auto& sources=stats["random_sources"];
+  check(stats["random"].GetUint64()==1 && sources.HasMember("HLP_RANDOM/ZS_TEST/init") &&
+          sources["HLP_RANDOM/ZS_TEST/init"].GetUint64()==1,
+          "GameScript random origin must reach the measurement probe");
+  std::puts("Live NPC day random: invokeState, VM Hlp_Random, engine rand and measurement attributed one draw");
   }
 
 void mutations(const fs::path& file, Gothic& gothic, void (*compare)(World&)) {
@@ -222,6 +249,7 @@ void npcLiveSynthetic(void (*compare)(World&), void (*disabled)(World&),
   GameMusic music;
   gothic.setGame(std::make_unique<GameSession>("NPC_CONTRACT.ZEN"));
   compare(*gothic.world());
+  npcDayRandom(*gothic.world());
   placement(*gothic.world());
   mutations(definitions,gothic,compare);
   gothic.clearGame().reset();

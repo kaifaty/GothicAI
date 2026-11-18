@@ -1836,7 +1836,6 @@ bool worldCommand(const WorldContext& context,const std::string& line,const std:
 NpcCommandsContext npcCommandsContext();
 bool npcDayCommand(const NpcCommandsContext& context,const std::vector<std::string>& args,World& world);
 bool npcDayCheckpointTick(World& world);
-bool npcDayInitialCommand(const std::vector<std::string>& args);
 bool npcDayCheckpointRunning();
 bool npcCommandsCommand(const NpcCommandsContext& context,const std::string& line,const std::vector<std::string>& a,
                         World& w,Npc& pl,PlayerControl& ctrl);

@@ -8,7 +8,6 @@
 #include "world/world.h"
 #include <Tempest/MemWriter>
 #include <Tempest/Pixmap>
-#include <algorithm>
 #include <cstring>
 #include <fstream>
 #include <memory>
@@ -34,12 +33,6 @@ class Checkpoint final : public NpcActivityProbe {
   };
 std::unique_ptr<Checkpoint> checkpoint;
 }
-
-bool npcDayInitialCommand(const std::vector<std::string>& args) {
-  return !args.empty() && args[0]=="npcday" && std::any_of(args.begin(),args.end(),[](const auto& arg) {
-    return arg=="probe" || arg.starts_with("trace=");
-    });
-  }
 
 bool npcDayCheckpointRunning() {return bool(checkpoint);}
 

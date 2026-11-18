@@ -62,28 +62,37 @@ std::string run() {
     vm.call_function<void>(name);
     stats->end();
     }
+  stats->begin("ZS_A_LOOP");
+  for(const auto name:{"ZS_B_LOOP","OUTSIDE"}) {
+    stats->begin(name);
+    vm.call_function<void>(name);
+    stats->end();
+    }
+  stats->end();
   vm.call_function<void>("OUTSIDE");
   stats->random(false,true);
   stats->random(false,false);
-  check(sources==std::vector<std::string>{"HLP_RANDOM/ZS_A/loop","HLP_RANDOM/ZS_B/loop","HLP_RANDOM/outside/OUTSIDE"},"random ownership follows the executing phase and restores outside top-level");
+  check(sources==std::vector<std::string>{"HLP_RANDOM/ZS_A/loop","HLP_RANDOM/ZS_B/loop","HLP_RANDOM/ZS_B/loop",
+                                        "HLP_RANDOM/outside/OUTSIDE","HLP_RANDOM/outside/OUTSIDE"},
+        "random ownership follows nested states and perceptions, then restores outside top-level");
   const auto bytes=stats->json();
   rapidjson::Document j;
   j.Parse(bytes.c_str());
   check(!j.HasParseError(),"valid counter JSON");
-  check(j["calls"].GetUint64()==6 && previousCalls==6,"all nested script calls and existing observer included");
-  check(j["states"]["ZS_A"]["phases"]["loop"]["engine"]==1,"engine phase counted once");
+  check(j["calls"].GetUint64()==10 && previousCalls==10,"all nested script calls and existing observer included");
+  check(j["states"]["ZS_A"]["phases"]["loop"]["engine"]==2,"engine phase entries counted separately from VM calls");
   check(j["states"]["ZS_A"]["phases"]["loop"]["nested"]==1,"nested call belongs to phase");
   check(j["states"]["ZS_A"]["phases"]["loop"]["instructions"]==4,"inclusive VM instruction count");
-  check(j["states"]["ZS_B"]["phases"]["loop"]["externals"]["HLP_RANDOM"]==1,"external attributed by name and state");
+  check(j["states"]["ZS_B"]["phases"]["loop"]["externals"]["HLP_RANDOM"]==2,"external attributed to the innermost state");
   uint64_t total=0;
   for(const auto& value:j["families"].GetObject()) total+=value.value.GetUint64();
   check(total==j["calls"].GetUint64(),"family counts converge");
   total=0;
   for(const auto& value:j["random_sources"].GetObject()) total+=value.value.GetUint64();
-  check(total==5 && total==j["random"].GetUint64(),"all random sources converge");
+  check(total==7 && total==j["random"].GetUint64(),"all random sources converge");
   stats->stop(vm);
   vm.call_function<void>("OUTSIDE");
-  check(stats->json()==bytes && previousCalls==8,"stopped interval is inert, original observer retained");
+  check(stats->json()==bytes && previousCalls==12,"stopped interval is inert, original observer retained");
   return bytes;
   }
 }

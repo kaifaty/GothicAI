@@ -41,7 +41,7 @@ class AiQueue {
     size_t   size() const { return aiActions.size(); }
     const AiAction* front() const { return aiActions.empty() ? nullptr : &aiActions.front(); }
     void     clear();
-    void     pushBack (AiAction&& a, const Npc* actor = nullptr);
+    void     pushBack (AiAction&& a, const Npc* actor);
     void     pushFront(AiAction&& a);
     AiAction pop();
     AiAction popPhysicsNoiseState();
