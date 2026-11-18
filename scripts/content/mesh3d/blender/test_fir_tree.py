@@ -174,3 +174,31 @@ def test_the_mode_of_pairs_only_adds_the_twins(config, spruce, tmp_path):
     assert not twice['material']['doubleSided']
     for name in ('position', 'normal', 'uv', 'colour'):
         assert np.array_equal(twice[name], once[name])
+
+
+def digest(tree) -> str:
+    """The arrays of a built tree at a millimetre: the same spruce on every platform gives the same digest."""
+    import hashlib
+    h = hashlib.sha256()
+    for p in tree.parts:
+        h.update(np.rint(p['position'] * 1000).astype(np.int64).tobytes())
+        h.update(p['index'].astype(np.int64).tobytes())
+        h.update(np.rint(p['uv'] * 1e4).astype(np.int64).tobytes())
+        h.update(p['colour'].tobytes())
+    return h.hexdigest()
+
+
+def test_spruce_a_is_built_as_before_and_thin_is_a_separate_step(config):
+    """thin() of the cost stand (reports/engine/2026-11-16-modern-trees/tree-cost.md) does not touch spruce A:
+    the digest is that of the generator before it; share 1 gives the tree itself."""
+    tree = fir_tree.build(config)
+    assert digest(tree) == 'c6e92de4460a137d725f6f97a5442c30865f6c786054bf300da110c85ef9d79b'
+    assert fir_tree.thin(tree, 1.) is tree
+    full_width = sum(tree.metrics['crown_width_m'])
+    for share in (.5, .25, .125):
+        thinned = fir_tree.thin(tree, share)
+        assert abs(thinned.metrics['triangles'] / tree.metrics['triangles'] - share) < .01
+        assert abs(sum(thinned.metrics['crown_width_m']) / full_width - 1) < .03
+        assert thinned.metrics['thin']['card_growth'] == pytest.approx(thinned.metrics['thin']['cards_share'] ** -.5,
+                                                                       abs=1e-3)
+    assert digest(fir_tree.build(config)) == digest(tree)

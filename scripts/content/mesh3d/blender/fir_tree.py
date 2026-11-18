@@ -1,8 +1,10 @@
 """The spruce's near level of detail as arrays: trunk, whorls of first-order branches, bough cards. NumPy only.
 
     build(config, seed=None, scale=1.0, pairs=False) -> Tree
+    thin(tree, share, seed=0) -> Tree
 
-card_planes(), clusters() and axis_cover() measure a built tree: how far apart the planes of each bough are and how
+thin() makes a lighter copy of a built tree for the cost stand (reports/engine/2026-11-16-modern-trees/tree-cost.md):
+not a level of detail whose look is accepted, only the same crown with fewer and larger cards. card_planes(), clusters() and axis_cover() measure a built tree: how far apart the planes of each bough are and how
 many blades it has, how many shoots a cluster has and how far apart they stand, how much of the branches' axes is
 under boughs.
 
@@ -689,6 +691,83 @@ class Fir:
 
 def build(config: dict, seed: int | None = None, scale: float = 1., pairs: bool = False) -> Tree:
     return Fir(config, seed, pairs).build(scale)
+
+
+def thin(tree: Tree, share: float, seed: int = 0) -> Tree:
+    """A copy of the tree with about `share` of its triangles, for measuring what fewer triangles buy.
+
+    Both materials lose the same share. The bark keeps the trunk and the dead stubs and then the longest
+    branches. The cards are kept at random, p of them, and each is scaled about its centre by 1 / sqrt(p): the
+    cards cover the area all of them covered, so the crown keeps its density (the background through the outline
+    of spruce A: 10.6 % full, 11.5 / 12.4 / 14.8 % at 1/2, 1/4 and 1/8) and about the pixels it fills, and a
+    thinned tree differs from the full one in its triangles more than in its overdraw. Keeping the outline's
+    cards first (by A) left holes: 23-24 % at 1/4 and 1/8. The grown cards of the outline reach further out, so
+    the cards are then brought back to the crown's width about the trunk's axis. Branches, phases and wind
+    weights stay as they are; a card's stem leaves its branch's axis by the growth of the card."""
+    if not 0 < share <= 1:
+        raise ValueError(f'share {share} is not in (0, 1]')
+    if share == 1:
+        return tree
+    rng = np.random.default_rng(seed)
+    bark, boughs = (dict(p) for p in tree.parts)
+
+    def keep_triangles(part: dict, keep: np.ndarray) -> dict:
+        index = part['index'][keep]
+        used = np.unique(index)
+        remap = np.full(len(part['position']), -1, np.int64)
+        remap[used] = np.arange(len(used))
+        out = {k: (v[used] if isinstance(v, np.ndarray) and len(v) == len(part['position']) else v)
+               for k, v in part.items()}
+        out['index'] = remap[index]
+        return out
+
+    # bark: the trunk (owner 0) and the stubs, then the branches from the longest
+    owner = bark['owner'][bark['index'][:, 0]]
+    lengths = {b.number: b.length for b in tree.branches}
+    budget = share * len(bark['index'])
+    keep = owner <= tree.stubs
+    for number in sorted(lengths, key=lambda n: -lengths[n]):
+        if number <= tree.stubs:
+            continue
+        mine = owner == number
+        if keep.sum() + mine.sum() > budget:
+            break
+        keep |= mine
+    bark = keep_triangles(bark, keep)
+
+    # cards: at random, then scaled about their centres
+    first = np.array([c['first'] for c in tree.cards])
+    count = np.array([c['count'] for c in tree.cards])
+    card = np.searchsorted(first, boughs['index'][:, 0], side='right') - 1
+    triangles = np.bincount(card, minlength=len(first))
+    order = rng.permutation(len(first))
+    taken = np.cumsum(triangles[order]) <= share * len(boughs['index'])
+    chosen = np.zeros(len(first), bool)
+    chosen[order[taken]] = True
+    p = chosen.sum() / len(first)
+    grow = p ** -.5
+    position = boughs['position'].astype(np.float64)
+    for f, n in zip(first[chosen], count[chosen]):
+        centre = position[f:f + n].mean(axis=0)
+        position[f:f + n] = centre + (position[f:f + n] - centre) * grow
+    boughs = keep_triangles(dict(boughs, position=position), chosen[card])
+    # the grown cards of the outline reach further out: the crown is brought back to its width about the axis
+    width = lambda p: float(np.ptp(p[:, 0]) + np.ptp(p[:, 1]))
+    narrow = width(tree.parts[1]['position']) / width(boughs['position'])
+    boughs['position'] = (boughs['position'] * (narrow, narrow, 1.)).astype(np.float32)
+
+    parts = [bark, boughs]
+    everything = np.concatenate([p['position'] for p in parts])
+    metrics = dict(tree.metrics, triangles=int(sum(len(p['index']) for p in parts)),
+                   triangles_by_material={p['name']: int(len(p['index'])) for p in parts},
+                   vertices={p['name']: int(len(p['position'])) for p in parts},
+                   bbox_min_m=[round(float(v), 3) for v in everything.min(axis=0)],
+                   bbox_max_m=[round(float(v), 3) for v in everything.max(axis=0)],
+                   crown_width_m=[round(float(np.ptp(everything[:, 0])), 3), round(float(np.ptp(everything[:, 1])), 3)],
+                   thin=dict(share=share, seed=seed, cards_kept=int(chosen.sum()), cards_share=round(float(p), 4),
+                             card_growth=round(float(grow), 3), narrowed=round(narrow, 3),
+                             branches_with_wood=int(len(np.unique(bark['owner'][bark['owner'] > tree.stubs])))))
+    return Tree(parts, metrics, tree.branches, [], tree.stubs)
 
 
 BLADE_DEG = 30.     # triangles whose planes are closer than this are one blade of a bough
