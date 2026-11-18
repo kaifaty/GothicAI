@@ -58,7 +58,7 @@ struct Fixture {
   void call(uint32_t id) { op(Op::BL,uint32_t(p.symbols[id].address)); }
   };
 // D4.1: routine states of the activity template with Gothic 2's own bytecode, names and external
-// signatures. ZS_SMITH_ANVIL is accepted, ZS_SMITH_FIRE is captured but not accepted.
+// signatures. ZS_SMITH_ANVIL is accepted, ZS_SMITH_FIRE is captured but not accepted, ZS_SMITH_SWAPPED is refused.
 inline void activities(Fixture& f,uint32_t self,uint32_t perceptionHandler,uint32_t ta,uint32_t point) {
   auto constant=[&](const char* name,int value) {
     const auto id=f.symbol(name,Type::INT,1,Flag::CONST); f.p.symbols[id].int_values[0]=value; return id;
@@ -116,11 +116,13 @@ inline void activities(Fixture& f,uint32_t self,uint32_t perceptionHandler,uint3
   land(notContained); f.op(Op::PUSHV,no); f.op(Op::RSR);
   land(after); f.op(Op::RSR);
 
-  auto mobState=[&](const std::string& name,const char* scheme) {
+  // `walkFirst` sets the walk mode before B_ResetAll: correct phases, one call out of the template's order.
+  auto mobState=[&](const std::string& name,const char* scheme,bool walkFirst=false) {
     const auto init=f.fn(name.c_str()); f.begin(init);
     f.call(perceptions);
+    if(walkFirst) { f.op(Op::PUSHVI,self); f.op(Op::PUSHV,walk); f.op(Op::BE,setWalk); }
     f.op(Op::PUSHVI,self); f.call(reset);
-    f.op(Op::PUSHVI,self); f.op(Op::PUSHV,walk); f.op(Op::BE,setWalk);
+    if(!walkFirst) { f.op(Op::PUSHVI,self); f.op(Op::PUSHV,walk); f.op(Op::BE,setWalk); }
     f.op(Op::PUSHV,no); f.op(Op::PUSHVI,self); f.op(Op::BE,nearest);
     f.op(Op::GMOVI,self); f.op(Op::PUSHV,wp); f.op(Op::BE,compare); f.op(Op::EQ);
     auto atPoint=jump(Op::BZ);
@@ -138,8 +140,9 @@ inline void activities(Fixture& f,uint32_t self,uint32_t perceptionHandler,uint3
     };
   const auto anvil=mobState("ZS_SMITH_ANVIL","BSANVIL");
   const auto fire=mobState("ZS_SMITH_FIRE","BSFIRE");
+  const auto swapped=mobState("ZS_SMITH_SWAPPED","BSCOOL",true);
   const auto routine=f.fn("RTN_SMITH_7"); f.begin(routine);
-  for(auto [from,to,state]:{std::tuple{8u,12u,anvil},std::tuple{12u,16u,fire}}) {
+  for(auto [from,to,state]:{std::tuple{8u,12u,anvil},std::tuple{12u,16u,fire},std::tuple{16u,20u,swapped}}) {
     f.op(Op::PUSHVI,self); f.op(Op::PUSHI,from); f.op(Op::PUSHI,0u); f.op(Op::PUSHI,to); f.op(Op::PUSHI,0u);
     f.op(Op::PUSHI,state); f.op(Op::PUSHV,point); f.op(Op::BE,ta);
     }

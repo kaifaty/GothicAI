@@ -91,9 +91,8 @@ ActivityDefinitions::Library ActivityDefinitions::read(const std::filesystem::pa
           continue;
           }
         require(status=="captured","unsupported capture status");
-        require(record.MemberCount()==5,"unexpected captured activity field");
+        require(record.MemberCount()==4,"unexpected captured activity field");
         require(string(at(record,"template"))=="mob","unsupported activity template");
-        require(at(record,"situations").IsUint64() && at(record,"situations").GetUint64()>0,"no compared situations");
         result.activities.emplace(name,mob(at(record,"parameters")));
         }
       catch(const std::exception& e) { throw std::runtime_error(name+": "+e.what()); }

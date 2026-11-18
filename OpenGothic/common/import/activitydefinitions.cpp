@@ -410,20 +410,30 @@ class Recognizer {
     const std::string&          state;
   };
 
-// The human routine states: every state of a captured row of routines.json, by name.
-std::vector<std::string> corpus(const fs::path& routines) {
+// The human routine states: every state of a captured row of routines.json, by name. The file
+// must belong to the program; a row without a state or an uncaptured routine with rows fails.
+std::vector<std::string> corpus(const NpcSnapshot::Program& program,const fs::path& routines) {
   std::ifstream input(routines,std::ios::binary);
   require(bool(input),"cannot read routine definitions: "+routines.string());
   const std::string text{std::istreambuf_iterator<char>(input),{}};
   rapidjson::Document json;
   json.Parse(text.data(),text.size());
-  require(!json.HasParseError() && json.IsObject() && json.HasMember("records") && json["records"].IsArray(),
-          "invalid routine definitions: "+routines.string());
+  const auto where="routine definitions "+routines.string()+": ";
+  require(!json.HasParseError() && json.IsObject() && json.HasMember("records") && json["records"].IsArray(),where+"invalid JSON");
+  require(json.HasMember("program_sha256") && json["program_sha256"].IsString() &&
+          json["program_sha256"].GetString()==program.sha256,where+"program SHA differs");
   std::set<std::string> states;
-  for(const auto& record:json["records"].GetArray())
-    if(record.HasMember("rows") && record["rows"].IsArray())
-      for(const auto& row:record["rows"].GetArray())
-        if(row.HasMember("state") && row["state"].IsString()) states.insert(row["state"].GetString());
+  for(const auto& record:json["records"].GetArray()) {
+    require(record.IsObject() && record.HasMember("status") && record["status"].IsString() &&
+            record.HasMember("rows") && record["rows"].IsArray(),where+"record without status or rows");
+    const std::string_view status=record["status"].GetString();
+    require(status=="captured" || (status=="uncaptured" && record["rows"].Empty()),where+"unsupported routine record");
+    for(const auto& row:record["rows"].GetArray()) {
+      require(row.IsObject() && row.HasMember("state") && row["state"].IsString() && row["state"].GetStringLength()>0,
+              where+"row without a state");
+      states.insert(row["state"].GetString());
+      }
+    }
   return {states.begin(),states.end()};
   }
 Json text(std::string_view value,Allocator& allocator) { return Json(value.data(),rapidjson::SizeType(value.size()),allocator); }
@@ -461,7 +471,6 @@ Json recordJson(const std::string& symbol,const Capture& capture,Allocator& allo
   put(parameters,"loop_result",Json(a.loopResult),allocator);
   put(json,"template",text("mob",allocator),allocator);
   put(json,"parameters",std::move(parameters),allocator);
-  put(json,"situations",Json(uint64_t(capture.situations)),allocator);
   return json;
   }
 Json envelope(const NpcSnapshot::Program& program,Allocator& allocator) {
@@ -476,6 +485,8 @@ Json envelope(const NpcSnapshot::Program& program,Allocator& allocator) {
 void difference(const Json& expected,const Json& actual,const std::string& path,int& errors) {
   if(expected==actual) return;
   if(expected.IsObject() && actual.IsObject()) {
+    // A repeated key would hide behind the first one with the same name.
+    if(expected.MemberCount()!=actual.MemberCount()) { ++errors; std::cerr<<path<<": field count differs\n"; }
     for(auto it=expected.MemberBegin();it!=expected.MemberEnd();++it) {
       const auto found=actual.FindMember(it->name);
       if(found==actual.MemberEnd()) { ++errors; std::cerr<<path<<'.'<<it->name.GetString()<<": missing field\n"; }
@@ -500,7 +511,7 @@ NpcSnapshot::ActivityCounts NpcSnapshot::writeActivities(const Program& program,
   auto json=envelope(program,allocator);
   Json records(rapidjson::kArrayType);
   ActivityCounts counts;
-  for(const auto& state:corpus(routines)) {
+  for(const auto& state:corpus(program,routines)) {
     const auto capture=Recognizer(program,state).capture();
     ++counts.total;
     if(capture.reason.empty()) { ++counts.captured; counts.situations+=capture.situations; }
@@ -534,7 +545,7 @@ int NpcSnapshot::verifyActivities(const Program& program,const fs::path& file,co
     }
   require(json.HasMember("records") && json["records"].IsArray(),file.string()+": expected records array");
   const auto& records=json["records"];
-  const auto states=corpus(routines);
+  const auto states=corpus(program,routines);
   require(records.Size()==states.size(),file.string()+": activity record count differs");
   for(size_t i=0;i<states.size();++i)
     difference(recordJson(states[i],Recognizer(program,states[i]).capture(),allocator),records[rapidjson::SizeType(i)],

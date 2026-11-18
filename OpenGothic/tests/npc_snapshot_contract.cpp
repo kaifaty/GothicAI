@@ -22,6 +22,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <set>
 #include <stdexcept>
 
 namespace fs=std::filesystem;
@@ -1105,7 +1106,7 @@ void activityDefinitions(const fs::path& dir) {
   const auto routines=definitions/"routines.json",file=definitions/"activities.json";
   NpcSnapshot::writeRoutines(program,routines);
   const auto counts=NpcSnapshot::writeActivities(program,file,routines);
-  check(counts.total==3 && counts.captured==2,"activity corpus: two template states captured, ZS_TEST refused");
+  check(counts.total==4 && counts.captured==2,"activity corpus: two template states captured, ZS_SMITH_SWAPPED and ZS_TEST refused");
   check(NpcSnapshot::verifyActivities(program,file,routines)==0,"every activity verifies from disk against a fresh VM");
   const auto library=ActivityDefinitions::read(base,program.sha256);
   const auto& anvil=library.activities.at("ZS_SMITH_ANVIL");
@@ -1115,6 +1116,9 @@ void activityDefinitions(const fs::path& dir) {
         "the anvil record holds the parameters its script passes");
   check(library.activities.at("ZS_SMITH_FIRE").scheme=="BSFIRE","the same template captures another object");
   check(library.uncaptured.at("ZS_TEST").starts_with("missing_phase: ZS_TEST_LOOP"),"a state without Loop keeps its reason");
+  check(library.uncaptured.at("ZS_SMITH_SWAPPED").starts_with("template_mismatch: ZS_SMITH_SWAPPED with ") &&
+        library.uncaptured.at("ZS_SMITH_SWAPPED").find("call 2 VM AI_SETWALKMODE(self,1), template NPC_GETLOOKATTARGET")!=std::string::npos,
+        "a state with correct phases and a call out of order is refused at that call");
   const auto second=dir/"activities-identical.json";
   NpcSnapshot::writeActivities(program,second,routines);
   std::ifstream a(file,std::ios::binary),b(second,std::ios::binary);
@@ -1132,6 +1136,14 @@ void activityDefinitions(const fs::path& dir) {
   }
   std::cerr<<"expected activity difference follows:\n";
   check(NpcSnapshot::verifyActivities(program,file,routines)!=0,"a changed object scheme in a ready base fails the comparison");
+  auto repeated=original;
+  repeated.insert(at+9,",\n                \"scheme\": \"BSFIRE\"");
+  {
+    std::ofstream out(file,std::ios::binary);
+    out<<repeated;
+  }
+  std::cerr<<"expected activity difference follows:\n";
+  check(NpcSnapshot::verifyActivities(program,file,routines)!=0,"a repeated parameter key in a ready base fails the comparison");
   std::ofstream(file,std::ios::binary)<<original;
   }
 
@@ -1143,7 +1155,16 @@ void realActivities(const NpcSnapshot::Program& program,const fs::path& base,con
   const auto ms=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-start).count();
   check(NpcSnapshot::verifyActivities(program,file,routines)==0,"real activities verify from disk against a fresh VM");
   const auto library=ActivityDefinitions::read(fresh,program.sha256);
+  // The states come from the game's own routine reader, not from the import's corpus.
+  std::set<std::string> states,recorded;
+  for(const auto& [name,rows]:RoutineDefinitions::read(base,program.sha256).routines)
+    for(const auto& row:rows) states.insert(row.state);
+  for(const auto& [name,activity]:library.activities) recorded.insert(name);
+  for(const auto& [name,reason]:library.uncaptured) recorded.insert(name);
+  check(states.size()==counts.total && recorded==states,"every state of the base's routines has one activity record");
   check(library.activities.contains("ZS_SMITH_ANVIL"),"the real ZS_SMITH_ANVIL is captured by the template");
+  check(library.uncaptured.contains("ZS_SIT_THRONE") && library.uncaptured.at("ZS_SIT_THRONE").starts_with("template_mismatch: "),
+        "the real ZS_SIT_THRONE, whose Init asks the body state first, is refused by the comparison");
   const auto& anvil=library.activities.at("ZS_SMITH_ANVIL");
   check(anvil.scheme=="BSANVIL" && anvil.perceptions=="PERCEPTION_SET_NORMAL" && anvil.walkMode==1 && anvil.useState==1 &&
         anvil.leaveState==-1 && anvil.busyBodyState==32784,"the real anvil parameters");
